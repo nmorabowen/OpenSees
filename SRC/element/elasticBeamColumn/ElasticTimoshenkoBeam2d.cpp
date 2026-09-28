@@ -625,8 +625,12 @@ const Vector& ElasticTimoshenkoBeam2d::getResistingForceIncInertia()
     theVector = this->getResistingForce();
     
     // subtract external load
-    theVector.addVector(1.0, theLoad, -1.0);
-    
+    // Ladruno WP-119: getResistingForce() above already subtracts theLoad
+    // whenever rho != 0 -- the only case it is non-zero (it holds only the
+    // ground-motion inertia load). Subtracting it again drove element mass with
+    // 2*a_g under UniformExcitation.
+    // theVector.addVector(1.0, theLoad, -1.0);
+
     // add the damping forces from rayleigh damping
     if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
         theVector.addVector(1.0, this->getRayleighDampingForces(), 1.0);

@@ -47,6 +47,7 @@
 #include <ID.h>
 #include <Vector.h>
 #include <Matrix.h>
+#include <LadrunoElementShell.h>   // Ladruno (WP-124): shared Element-contract helpers
 #include <Element.h>
 #include <Node.h>
 #include <Domain.h>
@@ -543,7 +544,7 @@ const Matrix &  LadrunoBrick20::getInitialStiff(void)
     return *Ki;
 
   formStiffness(1);
-  Ki = new Matrix(stiff);
+  LadrunoShell::cacheKi(Ki, stiff);
   LADRUNO_MUTATE_TANGENT(CONTINUUM, *Ki);   // ADR-87 D2 gate
   return *Ki;
 }
@@ -609,16 +610,11 @@ LadrunoBrick20::addInertiaLoadToUnbalance(const Vector &accel)
   // A diagonal M0 makes addMatrixVector below a per-DOF scaling — correct.  // Ladruno
   this->ensureMassCache();
 
-  int count = 0;
-  for (int i = 0; i < NEN; i++) {
-    const Vector &Raccel = nodePointers[i]->getRV(accel);
-    for (int j = 0; j < NDF; j++)
-      resid(count++) = Raccel(j);
-  }
-
+  // Ladruno (WP-124): LadrunoShell::addGroundInertia; resid is the R a_g scratch as
+  // before. checkSize=false: the historical no-check behaviour (gap C13).
   if (load == 0) load = new Vector(NDOF);
-  load->addMatrixVector(1.0, *M0, resid, -1.0);
-  return 0;
+  return LadrunoShell::addGroundInertia(*load, *M0, nodePointers, NEN, NDF, false,
+                                        accel, resid, "LadrunoBrick20", false);
 }
 
 //residual
@@ -1166,14 +1162,9 @@ LadrunoBrick20::setResponse(const char **argv, int argc, OPS_Stream &output)
     theResponse = new ElementResponse(this, 9, Vector(1));
   }
 
-  output.endTag(); // ElementOutput
-
-  // Ladruno — base vocabulary (globalForce, dampingForce, dynamicForce,
-  // inertialForce); Element::setResponse opens its own ElementOutput tag, so
-  // this MUST come after endTag().
-  if (theResponse == 0)
-    return this->Element::setResponse(argv, argc, output);
-  return theResponse;
+  // Ladruno (WP-124): endTag() FIRST, then the base vocabulary (globalForce,
+  // dampingForce, dynamicForce, inertialForce) -- LadrunoShell::finishResponse.
+  return LadrunoShell::finishResponse(this, theResponse, argv, argc, output);
 }
 
 int
@@ -1277,21 +1268,12 @@ LadrunoBrick20::setParameter(const char **argv, int argc, Parameter &param)
   }
 
   // specific material point
-  if (strstr(argv[0], "material") != 0) {
-    if (argc < 3) return -1;
-    int pointNum = atoi(argv[1]);
-    if (pointNum > 0 && pointNum <= this->nGP())
-      return materialPointers[pointNum - 1]->setParameter(&argv[2], argc - 2, param);
-    else
-      return -1;
-  }
+  if (LadrunoShell::isMaterialPointToken(argv[0]))   // Ladruno (WP-124 C10)
+    return LadrunoShell::forwardToMaterialPoint(materialPointers, this->nGP(), false,
+                                                argv, argc, param);
 
   // all material points
-  for (int i = 0; i < this->nGP(); i++) {
-    int matRes = materialPointers[i]->setParameter(argv, argc, param);
-    if (matRes != -1) res = matRes;
-  }
-  return res;
+  return LadrunoShell::forwardToMaterials(materialPointers, this->nGP(), argv, argc, param);
 }
 
 //F7: honest aggregation — any GP material failing (<0) fails the element
@@ -1464,7 +1446,7 @@ int  LadrunoBrick20::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBrok
   badGeom = false;
   warnedBadUse = false;
   if (M0 != 0) { delete M0; M0 = 0; }
-  if (Ki != 0) { delete Ki; Ki = 0; }
+  LadrunoShell::dropKi(Ki);
 
   for (int i = 0; i < this->nGP(); i++) {
     int matClassTag = idData(i);
@@ -1519,6 +1501,23 @@ int  LadrunoBrick20::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBrok
         theDamping[i] = 0;
       }
     }
+  }
+
+  // Ladruno (WP-124 C14): a restore into a LIVE element does NOT go through
+  // setDomain. Domain::recvSelf with an unchanged geometry tag calls recvSelf
+  // then update() on the existing element, so the geometry cache cleared above
+  // stayed empty: cacheUsable() failed, K / resid / M came back zero and even
+  // Newton hit a singular system. Rebuild here what setDomain would: node
+  // pointers (connectivity was re-received), the geometry cache + detJ gate,
+  // and the rho signature. Damping::setDomain is NOT re-run -- it would reset
+  // the damping history just received. A broker-built element has no Domain
+  // yet (getDomain() == 0) and still gets the full setDomain from addElement.
+  Domain *theDomain = this->getDomain();
+  if (theDomain != 0) {
+    for (int i = 0; i < NEN; i++)
+      nodePointers[i] = theDomain->getNode(connectedExternalNodes(i));
+    this->buildGeometryCache();
+    this->refreshMassState();
   }
 
   return res;

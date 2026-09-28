@@ -81,6 +81,10 @@ namespace ladruno {
 		// ships serial-correct; the actual MPI reduce is v3b (NOT implemented
 		// here — this only sets the routing flag).
 		bool requiresPartitionReduction() const override { return true; }
+		// WP-126: NOT "SUM" -- KE at a node shared by two partitions is counted in both,
+		// and RES/ERR are derived from the other components, so a componentwise sum of
+		// the partition files is wrong. Only the v3b Allreduce + recompute can merge it.
+		const char* partitionReduction() const override { return "UNSUPPORTED"; }
 
 	private:
 		void buildSchema();

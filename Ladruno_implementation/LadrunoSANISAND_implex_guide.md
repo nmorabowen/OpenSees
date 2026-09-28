@@ -99,7 +99,7 @@ generator unconditionally and only turn `-implex` on where you mean it.
 | `-implexGuard on\|off` | force `f = 0` (elastic predictor) on a step whose committed predecessor showed a loading reversal or `Kp <= 0` | `on` | ADR-92 P2-2; see §11 |
 | `-implexTrialGuard on\|off` | on a trial whose `-implexControl` error exceeds `tol` (floor not reached), retry that Gauss point with `f = 0` before refusing | `on` | ADR-92 P2-6; see §11 |
 | `-reversalTol $tol` / `-reversalRel $rel` | magnitude guard on the loading-reversal reset (`α_in := α_n`): skip the reset when `‖Δε‖ < max($tol, $rel·‖Δε_lastCommitted‖)` | `tol=1e-10`, `rel=0.05` | ADR-92 P2-5/P2-5b; relative because a hold's per-point strain increment is Newton-tolerance-scale noise (measured median 4e-9, max 1.4e-6) that no fixed absolute threshold clears — see §11 |
-| `-flipAlphaIn init\|vanilla` | at the `updateMaterialStage 0 -> 1` flip, leave initialisation to the sign test (`vanilla`, deterministic on a real deck) or force `α_in := α` unconditionally at every point (`init`, a declared modelling variant) | `vanilla` | ADR-92 P2-7; see §11 |
+| `-flipAlphaIn init\|vanilla` | at the `updateMaterialStage 0 -> 1` flip, force `α_in := α` at every point (`init`) or leave initialisation to vanilla's loading-reversal sign test (`vanilla`, which reproduces real `ManzariDafalias` and reads the sign of round-off after elastic holds) | **`init`** (since WP-112; was `vanilla`) | ADR-92 P2-7, WP-112 (TIMs F14); `vanilla` warns once per Gauss point when it meets a round-off `α − α_in`; see §11 |
 | `-implexFlipAbsorb on\|off` | under `-implex`, whether the flip's first plastic trial also runs a zero-increment companion return to absorb the drift-correction jump (`implexGuards[5]` counts it when `on`) | `off` | ADR-92 P2-7c; opt-in — `on` unconditionally changes the committed state at the flip and fails ADR-92 gate 5 (zero-free-DOF ON/OFF identity); see §11 |
 | `-pRe $p` | **elastic-only** confinement floor (ADR-93 II.1): the three `GetElasticModuli` overloads read `G, K ~ sqrt(max(p + $p, p_min)/P_atm)` and **nothing else in the model changes** | `0` = OFF | not IMPL-EX-specific and not gated on `-implex`; `-Pelastic` is accepted as a synonym. Refused below `0` and refused if given twice (it is a constitutive constant, and the echo can report only one value); **warns** above `0.1*P_atm`; prints a NOTE when `pRe <= p_min`, where the clamp already dominates as `p -> 0`. **Inert at stage 0** — see §3.1 and §4 |
 | `-implexFactor fixed\|control\|controlIter` | how `f` is CHOSEN: `fixed` = the clock ratio `alpha*dt_{n+1}/dt_n` (the pre-P2-9 operator, and the only mode gate-passed); `control` = the closed-form minimiser of `\|\|sigma~(f) - sigma_impl\|\|`, computed ONCE at the first trial of the step and frozen — **R3 REFUTED** (biased by the elastic-predictor first iterate); `controlIter` = the same minimiser recomputed at EVERY trial from that iterate's own `d_eps` — **R3 PASSES**, at a wall-time/Newton-churn cost; both control modes keep the clock ratio as the upper bound `f_max` | `fixed` | ADR-92 P2-9; **requires `-implexControl`** (refused without it, not silently downgraded); see §12 |
@@ -320,6 +320,16 @@ generates thousands of refusals. `implexGuards` (ADR-92 P2, §11) is the same ki
 the three P2 events — none of them prints anything per occurrence (they are designed behaviour,
 not warnings), so this response is the only record any of them fired at all.
 
+**"Process-wide" means *within one model*, since WP-104.** `wipe` zeroes every process-wide
+counter above — `implexRefusals` slots 0–3 and 5, all of `implexGuards`, `avgImplexError` and its
+commit-round marker — so a fresh material in a new model reads `[0,0,0,0,0,0]` whatever ran
+before it in the process (before WP-104 it inherited the previous model's totals, measured as
+`[9,0,0,9,0,9]` on a fresh tag by the apeGmsh live test). `reset()` / `revertToStart()` do **not**
+zero them: they rewind the *same* model, and a multi-leg campaign reads its legs as deltas over a
+running total (`LEDGER_quirks`, "read it as DELTAS"). The 10-per-process `opserr` throttles are
+untouched by either. Regression: `tests/test_wp104_implex_refusals_wipe_reset.py` and the
+classic-Tcl twin `tests/tcl/wp104_implex_refusals_wipe.tcl`.
+
 Since WP-86d, `implexError`, `avgImplexError`, `implexDetail` and `implexRefusals` also emit
 `output.tag("ResponseType", ...)` in `setResponse` (the `FSAM`/`ASDConcrete3DMaterial` idiom), so a
 `recorder Element -xml`/`-file` or the fork's own `recorder ladruno` names each column instead of
@@ -378,6 +388,85 @@ f   = ops.eleResponse(eleTag, "material", intPtNum, "yieldDistance")[0]
 
 Vanilla `ManzariDafalias` does not answer either name (empty response). Both are inherited by the
 3D and plane-strain wrappers. Test: `tests/test_ladruno_sanisand_responses.py`.
+
+### 6.2 `substepStats` — what the integrator cost, per point, since `revertToStart` (WP-127, F20(a))
+
+`substeps` (ADR-86b) reports the LAST update only, and is zeroed by the next one — including the
+zero-increment settle pass `analyze` pushes through every material after a failed step. So right
+after a failed `analyze` it reads 0 everywhere (the TIMs ring dump). `substepStats` is the
+post-mortem counter: **every column is per integration point** (one material instance), none is
+process-wide; the cumulative ones count since `revertToStart` (`reset()`), are **not** reset by
+`revertToLastCommit`, cross `getCopy` and the MP/database wire. Reading them never changes a number
+(byte-identity pinned, `tests/test_ladruno_sanisand_replay_counters.py`). Only `ModifiedEuler`
+(IntScheme 1, and 0 through `MaxEnergyInc`) is instrumented; on other schemes the substep columns stay 0.
+
+| slot | name (`substepStats_*`) | meaning |
+|---|---|---|
+| 0 | `updates` | material updates (`integrate()` calls, any stage/scheme) |
+| 1 | `meCalls` | `ModifiedEuler()` calls |
+| 2 | `substeps` | substep ATTEMPTS; closes as `[3]+[4]+[5]+[7]+[8]+[9]` |
+| 3 | `accepted` | passed the error test |
+| 4 | `rejectedErr` | failed it at `dT > dT_min`, retried smaller |
+| 5 | `forcedAtDTmin` | **failed it at `dT == dT_min` (1e-6) and was ACCEPTED anyway** — elastic tangent, `alpha` re-derived, see `LEDGER_quirks` "ACCEPTS a substep that FAILED" |
+| 6 | `forcedClampMc` | of `[5]`, those where the radial `eta -> Mc` stress clamp fired |
+| 7 | `rejectedLowP` | `p < p_r` inside a substep: `dT` cut by 10 |
+| 8 | `abandonedLowP` | `p < p_r` at `dT == dT_min`: ModifiedEuler **returned at `T < 1`**, silently |
+| 9 | `capHits` | `-maxSubsteps` fired (update refused) |
+| 10 | `entryPminClamps` | stress below `p_min + p_r` on entry: rebuilt at `p_min` |
+| 11 | `pnResets` | `explicit_integrator`'s `p_n < p_r` reset (`sigma := p_min I`, `alpha := 0`) |
+| 12 | `maxSubstepsOneUpdate` | most substeps any single update took |
+| 13 | `lastSubsteps` | substeps of the last update that entered ModifiedEuler |
+| 14 | `lastForcedAtDTmin` | `[5]` for that update |
+| 15 | `lastAbandonedLowP` | `[8]` for that update |
+| 16 | `lastCapHit` | 0/1 for that update |
+
+```python
+s = ops.eleResponse(ele, "material", ip, "substepStats")
+substeps, forced, abandoned, caps = s[2], s[5], s[8], s[9]
+```
+
+### 6.3 Replaying one material point: `ladrunoSANISANDReplay` (WP-127, F21)
+
+Puts a **private copy** of the `nDMaterial LadrunoSANISAND` prototype into a given state and drives
+one strain increment through the same `setTrialStrain` an element uses. No element, domain or
+analysis; nothing survives the call (the stage flag is forced to 1 and `ops_Dt` set for the call,
+then both restored).
+
+```
+ladrunoSANISANDReplay $matTag -convention compressionPositive|tensionPositive
+    -sigma s11 s22 s33 s12 s23 s31   -alpha a..6   -alphaIn ai..6   -fabric z..6
+    -voidRatio $e   -dStrain d11 d22 d33 g12 g23 g31
+    <-type 3D|PlaneStrain> <-trace $maxRecords (10000)> <-dt $dt (1.0)>
+    <-primed 0|1 (1)> <-prevIncrNorm $norm (0)>
+```
+
+- **`-convention` is required.** `compressionPositive` = the model's internal `mSigma`
+  (and compression-positive strain); `tensionPositive` = what `eleResponse ... stress` returns and
+  an element strain. `alpha`, `alpha_in`, `z` are ratios and are never flipped. Shear strain is
+  engineering (gamma). **The TIMs ring CSVs are compression-positive** despite their README
+  (`LEDGER_quirks`, finding A).
+- `alpha`, `alpha_in`, `z` are projected to their deviatoric parts (warning above 1e-6 relative);
+  the given traces are returned.
+- The state is committed through the base `commitState()`, so `K`, `G` and `e` are exactly what a
+  converged step leaves for the next one: replaying step k+1 from the committed state of step k
+  reproduces the analysis' stress (pinned to 1e-9, `test_replay_reproduces_an_analysis_step`).
+- `-primed`/`-prevIncrNorm` feed the ADR-92 P2-5 reversal-noise guard; the defaults (armed, 0) are
+  a plastic point with no history. `-dt 0` makes the call a hold.
+- `-type PlaneStrain` requires `d33 = g23 = g31 = 0`.
+
+Returns one flat list (format 1): `[1, rc, 17, nRec, 5, dropped]`, the 17 `substepStats` columns of
+this one update, 34 state values (`sigma` in the request convention, `alpha`, `alpha_in`, `z`, `e`,
+`p` (compression-positive), `q`, `f` before, `f` after, path code, elastic ratio, given `tr(alpha)`,
+`tr(alpha_in)`, `tr(z)`), then `nRec` records `T, dT, err, code, atDTmin`. Path codes: -1 not the
+explicit path, 0 elastic, 1 start outside the yield surface, 2 elastic->plastic, 3 plastic,
+4 unload-then-plastic, 5 `p_n < p_r` reset. Trace codes: 0 accept, 1 reject (error), 2 forced at
+`dT_min`, 3 forced + `Mc` clamp, 4/5 low-p cut, 6 low-p abandon, 7 cap. The trace buffer lives only
+for the call and is capped (`dropped` counts the rest). Classic Tcl prints the list with `%35.20f`,
+so read tiny `err`/`dT` from Python.
+
+Python helper (reads the attached CSVs, runs the documented probes):
+`Ladruno_scripts/sanisand_replay.py` — `replay(...)`, `read_ring_csv(...)`, `probes(delta)`;
+`python -S <bootstrap> Ladruno_scripts/sanisand_replay.py --delta 1e-5`.
 
 ## 7. Choosing the tolerance
 
@@ -540,6 +629,10 @@ apart, so the declaration has to arrive out of band. That is exactly what the co
   +5.99 % at 0.0070 and **+19.40 % at 0.0085** against the refusal-free arm on the same deck.
   Compare reach and refusal counts freely; compare `q` only against an arm that ran refusal-free.
   Full tables and the three-candidate verdict: [[92b_implex_selfweight_wall_note]].
+- **F10's bare-`-implex` recipe did not transfer to a finer strip (TIMs, 2026-09-18).** On the
+  TIMs act's own self-weight strip, bare `-implex` (control off, as above) aborts at
+  `s/B = 0.0004` on the footing-edge Gauss point on every build: the fork's F10 deck was too
+  coarse to resolve the edge, so its 0.0500 reach says nothing about a mesh that does.
 
 - **No plateau measured.** On the fork's own footing-corner deck, no arm — `control`, the
   uncontrolled `-implex` leg, or the registered controlled leg — reaches a plateau on the
@@ -686,7 +779,7 @@ reference is kept across a zero-increment commit so a run of holds does not drif
 Still building; no holds inside a reported push on either material until the hold acceptance
 passes (hold probe `alpha_in` changed = 0 on both arms).
 
-### `alpha_in` at the stage flip is decided by the sign test — deterministic, not noise (`-flipAlphaIn`, P2-7)
+### `alpha_in` at the stage flip — `init` by default since WP-112 (`-flipAlphaIn`, P2-7 / F14)
 
 Vanilla `ManzariDafalias` never explicitly initialises `α_in` at the `updateMaterialStage 0 -> 1`
 flip; it relies on the loading-reversal sign test inside `integrate()` firing on the first plastic
@@ -703,6 +796,35 @@ run, and the implicit twin's first-step stiffness returns to the pre-P2 number t
 `ManzariDafalias` exactly; `-flipAlphaIn init` (opt-in) forces `α_in := α` unconditionally at
 every point at the flip on both the implicit and IMPL-EX paths — a declared modelling variant,
 not a defect fix. Every P2-7 curve names which flag it used.
+
+**Default moved to `init` (WP-112, TIMs F14, 2026-09-18) — the paragraph above is the P2-7c
+record, and it missed one case.** The sign test reads only the SIGN of
+`(α_n − α_in_n) : Ce : Δε`, with no magnitude guard on either factor, and vanilla runs it in the
+elastic stage too. A `LoadControl(0)` hold's `Δε` is solver noise, so each hold sets
+`α_in := α_n` at a coin-flip of points, and afterwards `α_n − α_in_n` is only the round-off by
+which `α` has moved since. On the first plastic step the direction of a round-off perturbation
+then picks the branch — and the thread count of MKL's solve is such a perturbation. The TIMs
+self-weight strip (9 720 Gauss points) read the **first push step at 1.511 / 1.824 / 1.824 /
+1.489 kPa at 1 / 2 / 4 / 8 MKL threads under `vanilla`** on Windows (1.597 / 1.824 / 1.824 on
+Linux), and the branches it opened were 30 % apart by `s/B = 0.035`; under **`init` the same leg
+reads 1.824 / 14.339 / 36.586 kPa at rows 1 / 8 / 15 on every thread count and both builds**. The
+fork reproduces the mechanism on a 12 × 6 `LadrunoQuad` self-weight strip
+(`tests/test_ladruno_sanisand_flip_determinism.py`): two elastic holds leave 229 of 288 Gauss
+points with `‖α − α_in‖` below `1e-12` of `max(‖α‖, m)`, and vanilla's first push step then
+reads 4.107 / FAIL / 8.332 / 9.483 kN/m after 0 / 1 / 2 / 3 holds, while `init` reads 9.659 kN/m
+after every one of them (to 3e-14) and is bit-identical at 1 / 2 / 4 / 8 threads for ten steps.
+So `init` is the default now. `-flipAlphaIn vanilla` stays, for reproducing real
+`ManzariDafalias` (A/B against vanilla decks and golden files), and prints a warning once per
+Gauss point (10 per process) when a plastic-stage trial meets `0 < ‖α_n − α_in_n‖ ≤ 1e-8 ·
+max(‖α_n‖, m)`. **The R3 numbers do not move:** P2-7c measured the Esmeralda implicit twin under
+`init` identical to `vanilla` to the digit (6.511 / 11.539 / 16.117 / 20.528 kN, "the RC14 price
+on this column is zero"). What does move is the IMPL-EX dense refuse arm's `fixed` reference wall,
+0.01689 under `vanilla` vs 0.01754 under `init` (also P2-7c) — P2-9's ship/refute bars were set
+against the former, and `controlIter` has not been re-measured under `init`. One limit stays: on
+the fork's deck the `init` curve still moves with the hold count from step 4 on (step 10: 35.5 –
+36.1 kN/m after 0 – 4 holds), because the holds change the committed state by round-off and later
+branch decisions amplify it. `init` removes the flip's sign lottery, not every sensitivity of the
+model to its state.
 
 **The zero-increment companion return at the flip is opt-in, default off (`-implexFlipAbsorb`,
 P2-7c).** The first cut of P2-7 had this absorption run unconditionally under `-implex`: at the
@@ -955,3 +1077,115 @@ It is **not** a fix for the p = 0 confinement ring (ADR 93, `93_ladruno_sanisand
 it. It requires `-implexControl` (the companion computation this factor is built on) and is
 refused without it. `-implexFactor fixed` (the clock-ratio default, unchanged since before
 P2-9) remains what every deck should reach for unless the situation above applies.
+
+
+## 13. Choosing an IntScheme — and SAS-ME (`IntScheme 129`, WP-129)
+
+The scheme is the 20th positional argument (`IntScheme`, after the 18 model parameters and the
+tag). What each one is, measured against WP-134's independent oracle (`uw_model`: the DM04 rate
+equations with the UW constitutive additions, integrated exactly):
+
+| IntScheme | what | use it? |
+|---|---|---|
+| **1** ModifiedEuler (the fork's default) | explicit Heun, stress-only error at a hardcoded `1e-4` (unless `-honorTolR 1`), moduli frozen at the committed state (U9), a loading stage with a negative denominator read as elastic + uncapped step growth (the "err = 0 path"), force-accept at `dT_min`, a drift correction that can give up with `f > 0` | the calibrated default; know its quirks rows. Ring states: α can leave the bounding surface (WP-128). Benign states: up to 15–100 % stress error on 1e-4 increments against the oracle (WP-129 §13.3) |
+| **2** BackwardEuler_CPPM | implicit, consistent tangent under TanType 2 | accurate per increment; fragile under a global Newton (§9, WP-105; WP-130) |
+| **45** RungeKutta45 | explicit Sloan RK45 | **not a reference**: dT_min 1e-3 hard-coded, Mc-clamp force-accept, no drift correction, and `dAlpha3/dAlpha4` never computed (α weights sum to 301/336) |
+| 3, 5 | RK4 / Forward Euler, no error control | no |
+| 0, 4, 6–9 | MaxEnergy / MaxStrain wrappers | no; IntScheme 4 is even non-deterministic (uninitialised moduli) |
+| **129 SAS-ME** | this section | when the answer at low confinement / after reversals matters more than the cost |
+
+### 13.1 Syntax
+
+```tcl
+nDMaterial LadrunoSANISAND $tag $G0 $nu $e_init $Mc $c $lambda_c $e0 $ksi $P_atm $m $h0 $ch $nb \
+    $A0 $nd $z_max $cz $Rho  129 $TanType $JacoType $TolF $TolR \
+    <-errFloor $sigRef> <-alphaBoundTol $kappa> <-alphaProject 0|1> \
+    <-sasAlphaIn reseat|bracket|stale> <-sasErrorVars full|stress> \
+    <-maxSubsteps $n> <-Pmin ...> <-Presidual ...> ...
+```
+
+- `TolR` IS the substep tolerance of the PLASTIC part (`-honorTolR` is inert and warned); the
+  elastic part is exact (closed form, below), so it has no tolerance to honour. Recommended range
+  **1e-4 to 1e-7**: `1e-4` is ModifiedEuler's scale, `1e-7` lands on the oracle to ~1e-7. Below
+  ~1e-8 the first-substep error of a large low-p increment (~6e2·dT² at 20 kPa, 1e-3 shear) cannot
+  meet the tolerance above `dT_min = 1e-6`, so the update refuses (`errorAtDTmin`) or hits
+  `-maxSubsteps`: a global cut then handles it, at a cost. The default `1e-7` is inside the range.
+- `-errFloor` σ_ref of the stress error `‖dσ₂−dσ₁‖ / max(2‖σ‖, σ_ref)`; default `P_atm/101`
+  (1 kPa at P_atm 101 — exactly ModifiedEuler's implicit floor, WP-128 §5.1). α and z use the unit
+  reference (`max(2‖α‖, 1)`): the α error is a stress error in units of p. **The floor is not the
+  lever** — at low p the cost is stability-limited (WP-128 §5.3).
+- `-alphaBoundTol κ` (default 0.1): ρ_α = √(3/2)‖α‖ / α^b(θ_α, ψ) with α's OWN Lode angle. An
+  accepted substep is rejected (refused at dT_min) only when PLASTIC FLOW carried α outward past
+  1 + κ (ρ_α with the substep's end surface is larger than with its start α) — never because ψ moved
+  the surface: the continuum itself carries α outside when elastic compression raises ψ (review of
+  #871: proportional compression from ρ_α 0.999 at 20 kPa gives 1.13 at 430 kPa, 2.04 at 12.5 MPa).
+- `-alphaEntryTol κ_e` (default 2): a START with ρ_α > 1 + κ_e is refused
+  (`startAlphaOutsideBounding`); 1 + κ < ρ_α ≤ 1 + κ_e is counted (`entryOverKappa`), not refused.
+  Why 2: on that compression path ρ_α reaches 3 only past ~30 MPa, far outside the model's range,
+  while the dumped TIMs states b8 1950/2-3 sit at 6.8/7.3 (b:n = −8.2).
+- `-alphaProject 1`: instead, project α radially onto the bounding surface (the deviatoric stress
+  follows by p·Δα, so f, n, p and ψ are unchanged); counted. OFF by default: it rewrites history,
+  and the stress jump is ≥ 9 % of p·‖α‖ whenever it fires (review of #871).
+- `-sasAlphaIn`: `reseat` (DEFAULT) = the paper's rule — wherever (α − α_in):n < 0 a new loading
+  process starts, α_in := α there; integrate()'s once-per-increment trial test is undone.
+  `bracket` = keep UW's trial test and only use h = 1e10 where (α − α_in):n ≤ 0. `stale` and
+  `-sasErrorVars stress` reproduce ModifiedEuler's defects G and E — attribution only.
+- `-implex` is refused with 129 (not qualified as a companion). `-maxSubsteps` binds (refusal).
+- TanType 1 and 2 both return the continuum tangent at the end state; 0 = Ce at the end state.
+
+### 13.2 What it does, per substep
+
+1. Elastic predictor, EXACT: with G = g·√max(p + pRe, p_min) and K = cG, √p is linear in the
+   volumetric strain (√x = √x₀ + c·g·t·dε_v/2 above p_min, linear below) and ∫G dt is exact for the
+   deviatoric part (review of #871: one Heun step was 4–32 % off, independent of TolR). Elastic if
+   f_trial ≤ TolF. Otherwise: on the surface with (α − α_in):n < 0, α_in := α (the oracle's t = 0
+   rule); the loading test on the TRUE gradient ∂f/∂σ = n − ⅓(n:α + √(2/3)m)I; the intersection by
+   Pegasus on the SAME exact path (unload-then-reload: 64 samples to bracket the exit), so the
+   plastic part starts on the surface.
+2. Two Heun stages, each evaluated entirely at its own state (K, G, n, b, d, h, D, B, C — U9).
+   Stage classification from N = ∂f/∂σ : C : dε: N ≤ 0 elastic (α, z unchanged); N > 0, H > 0
+   plastic; N > 0, H ≤ 0 has no plastic solution — REFUSED at stage 1, cut at stage 2.
+3. Error on σ, α, z; accept iff err ≤ TolR; q = clamp(0.9√(TolR/err), 0.1, 1.1), no growth after a
+   rejection.
+4. Drift correction (consistent with σ, α, z; then normal); if neither direction reduces |f| the
+   substep is cut, refused at dT_min — never returned with f > TolF. Both-sided (|f| ≤ TolF) only
+   for an all-plastic substep that STARTED on the surface; otherwise only f > TolF is corrected.
+5. ρ_α check (above). α_in, the paper's rule, decided only ON the surface: a stage whose start is
+   on the surface with (α − α_in):n < 0 re-seats there; a reversal detected at stage 2 of a plastic
+   substep cuts the substep (so it is located at a substep start), re-seating at dT_min only; an
+   accepted substep ending on the surface with it negative re-seats at its end.
+
+Refusal codes (`sasStats` column `lastRefuseCode`, and the warning text): 1 startOutsideYield,
+2 startAlphaOutsideBounding, 3 startInadmissible (trace / tension / non-finite), 4 errorAtDTmin,
+5 loadingNonPosH, 6 tensionAtDTmin, 7 driftFailed, 8 alphaOutsideAtDTmin, 9 maxSubsteps. A refusal
+leaves the trial on the committed state and returns `LADRUNO_MATERIAL_REFUSED` (element roster:
+LEDGER_quirks "element refusal roster").
+
+**Discarding elements** (SSPquad, stdBrick, BbarBrick, the SSP/brick u-p variants, LadrunoSolidShell,
+...: the roster) drop that code, so their Newton "converges" on the refused state. WP-129 (review of
+#871) makes the COMMIT refuse instead: `commitState` sees the refused update, declares it to
+`Domain::commit()` (the WP-99 channel), the analysis step fails, and the point latches (cleared by
+`revertToStart`). The same now holds for the ModifiedEuler `-maxSubsteps` cap, which used to commit
+the strain without the stress. Use a forwarding element (quad, LadrunoQuad/CST/LST, LadrunoBrick,
+the u-p family) to get a recoverable, cuttable refusal.
+
+### 13.3 Measured (WP-129, `Ladruno_files/testbed/wp129_sasme/`)
+
+- **Oracle, benign** (K0 states 20/50/100 kPa × active/passive/shear × 1e-5/1e-4): SAS-ME at TolR
+  1e-7 within 2e-7 relative of `uw_model`; at TolR 1e-4 within 5e-5. ModifiedEuler (campaign
+  options): 6–15 % on 1e-4 increments, 100 % on the reproducer.
+- **WP-128 reproducer** (σ = 0.0101 I, α = α_in = z = 0, dε_yy = 1e-4): ρ 0.252, η 0.531 in 251
+  substeps (oracle 0.252 / 0.531; ModifiedEuler 5.14 in 1 substep).
+- **Ring** (80 rows × ± iso, ± shear at 1e-6, 1e-5): 624/640 integrated, the 16 of b8 1950/2-3
+  refused `startAlphaOutsideBounding`; max f at exit 1e-7, max ρ_α 0.983 (= the start value); median
+  substeps 17 (ModifiedEuler 4), p95 153 (82), max 520 (1336). Against the oracle (`uw_model`, 624
+  admissible cases): median 8e-6 / p95 5e-5 / max 2.3e-4 relative in σ at TolR 1e-4; median 4e-9 /
+  p95 3e-8 at TolR 1e-7.
+- **Reversal chains** (WP-128 vertUnload / extShear from p0 2 kPa at 1e-4): ρ ≤ 0.61 / 0.46
+  (ModifiedEuler 5.2 / 7.1); the increments that drive p to the floor are REFUSED
+  (38–39 of 90: `tensionAtDTmin` / `errorAtDTmin`) where ModifiedEuler resets the stress to p_min·I — use smaller
+  increments there, or accept the global cutback.
+- **Cost**, smooth monotonic chains: 4–6 substeps per 1e-5 increment (ModifiedEuler 1–3); the
+  profile split at a ring state is ~60 % stages (half state-dependent quantities), 10 % drift,
+  6 % α check; at a deep state the tangent and drift are ~11 % each.
+

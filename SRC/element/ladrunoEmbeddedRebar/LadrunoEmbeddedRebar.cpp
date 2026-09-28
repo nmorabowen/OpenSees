@@ -53,7 +53,7 @@ LadrunoEmbeddedRebar::LadrunoEmbeddedRebar(int tag, int ndm_, int rebarNode,
         int hostEleTag_, bool ktAuto_, double ktAlpha_, bool corot_,
         const Vector* shapeB, int enforce_,
         bool bipenalty_, int bpMode_, double bpDt_, double bpBeta_)
-  : Element(tag, ELE_TAG_LadrunoEmbeddedRebar),
+  : LadrunoUndampedElement(tag, ELE_TAG_LadrunoEmbeddedRebar),
     ndm(ndm_), nHost(hostNodes.Size()), nDOF((1 + hostNodes.Size()) * ndm_),
     connectedNodes(1 + hostNodes.Size()), Nshape(shape), dir(ndm_),
     corot(corot_), NshapeB(), dirCur(ndm_),
@@ -63,7 +63,7 @@ LadrunoEmbeddedRebar::LadrunoEmbeddedRebar(int tag, int ndm_, int rebarNode,
     hostEleTag(hostEleTag_), ktAuto(ktAuto_), ktAlpha(ktAlpha_), ktResolved(false),
     bipenalty(bipenalty_), bpMode(bpMode_), bpDt(bpDt_), bpBeta(bpBeta_),
     mPenalty(0.0), bpResolved(false),
-    theNodes(0), K(0), P(0), M0(0), C0(0), dampF(0), bondEnergyResp(0)
+    theNodes(0), K(0), P(0), M0(0), bondEnergyResp(0)
 {
   connectedNodes(0) = rebarNode;
   for (int i = 0; i < nHost; i++)
@@ -89,12 +89,10 @@ LadrunoEmbeddedRebar::LadrunoEmbeddedRebar(int tag, int ndm_, int rebarNode,
   K  = new Matrix(nDOF, nDOF);
   P  = new Vector(nDOF);
   M0 = new Matrix(nDOF, nDOF);   // stays zero
-  C0 = new Matrix(nDOF, nDOF); C0->Zero();   // damping is identically zero
-  dampF = new Vector(nDOF); dampF->Zero();
 }
 
 LadrunoEmbeddedRebar::LadrunoEmbeddedRebar()
-  : Element(0, ELE_TAG_LadrunoEmbeddedRebar),
+  : LadrunoUndampedElement(0, ELE_TAG_LadrunoEmbeddedRebar),
     ndm(0), nHost(0), nDOF(0), connectedNodes(0), Nshape(), dir(),
     corot(false), NshapeB(), dirCur(),
     kt(0.0), bondScale(1.0), kAxialPerfect(0.0),
@@ -103,7 +101,7 @@ LadrunoEmbeddedRebar::LadrunoEmbeddedRebar()
     hostEleTag(-1), ktAuto(false), ktAlpha(0.0), ktResolved(false),
     bipenalty(false), bpMode(0), bpDt(0.0), bpBeta(0.0),
     mPenalty(0.0), bpResolved(false),
-    theNodes(0), K(0), P(0), M0(0), C0(0), dampF(0), bondEnergyResp(0)
+    theNodes(0), K(0), P(0), M0(0), bondEnergyResp(0)
 {
 }
 
@@ -114,8 +112,6 @@ LadrunoEmbeddedRebar::~LadrunoEmbeddedRebar()
   if (K != 0) delete K;
   if (P != 0) delete P;
   if (M0 != 0) delete M0;
-  if (C0 != 0) delete C0;
-  if (dampF != 0) delete dampF;
   if (bondEnergyResp != 0) delete bondEnergyResp;
 }
 
@@ -255,29 +251,9 @@ void LadrunoEmbeddedRebar::resolveBipenalty(void)
   bpResolved = true;
 }
 
-// ADR 20 §10.6 (D-bp-5): a penalty coupling carries no physical Rayleigh damping
-// — refuse the factors so they stay zero and never shrink the reported dt_cr.
-int LadrunoEmbeddedRebar::setRayleighDampingFactors(double, double, double, double)
-{
-  return 0;   // ignored on purpose
-}
-
-// ADR 20 §10.6 (D-bp-5) — D == 0 for a pure penalty coupling. The base Element::getDamp
-// lazily allocates its damping matrix inside setRayleighDampingFactors, which we no-op
-// above; with that allocation suppressed the base would dereference theMatrices[-1] and
-// crash the first implicit-transient step (Newmark/HHT c2·C nonzero ⇒ addCtoTang → getDamp;
-// addD_Force residual). Return our own pre-zeroed C0 / damping force instead.
-const Matrix& LadrunoEmbeddedRebar::getDamp(void)
-{
-  C0->Zero();
-  return *C0;
-}
-
-const Vector& LadrunoEmbeddedRebar::getRayleighDampingForces(void)
-{
-  dampF->Zero();
-  return *dampF;
-}
+// ADR 20 §10.6 (D-bp-5): a penalty coupling carries no physical Rayleigh damping.
+// setRayleighDampingFactors (refused, so dt_cr never shrinks) / getDamp (zero):
+// inherited from LadrunoUndampedElement (WP-123).
 
 // ADR 20 §10.6.1 — self-reported explicit critical step. The per-element
 // CriticalTimeStep eigensolve sees this coupling element as λ_max=0 (the massless
@@ -643,8 +619,6 @@ int LadrunoEmbeddedRebar::recvSelf(int commitTag, Channel& theChannel,
   if (K != 0) delete K;  K = new Matrix(nDOF, nDOF);
   if (P != 0) delete P;  P = new Vector(nDOF);
   if (M0 != 0) delete M0; M0 = new Matrix(nDOF, nDOF);
-  if (C0 != 0) delete C0; C0 = new Matrix(nDOF, nDOF); C0->Zero();
-  if (dampF != 0) delete dampF; dampF = new Vector(nDOF); dampF->Zero();
   return 0;
 }
 

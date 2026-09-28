@@ -1,0 +1,2 @@
+[exact/vanilla/W=100] files=3333 code_lines=867749 dup_lines=331946 (38.25%) clone_pairs=42517 families=241
+[norm/vanilla/W=100] files=3333 code_lines=867749 dup_lines=538626 (62.07%) clone_pairs=102290 families=188

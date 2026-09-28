@@ -70,6 +70,7 @@
 #include <Node.h>
 #include <NDMaterial.h>
 #include <Matrix.h>
+#include <LadrunoElementShell.h>   // Ladruno (WP-124): shared Element-contract helpers
 #include <Vector.h>
 #include <ID.h>
 #include <Domain.h>
@@ -201,10 +202,6 @@ BezierTri6::BezierTri6(int tag,
         controlPts[i][1] = 0.0;
     }
 
-    // Zero initial stiffness data
-    for (int i = 0; i < NELD * NELD; i++)
-        Ki_data[i] = 0.0;
-
     // Allocate materials at Gauss points
     // Use NGAUSS points for stiffness/stress, NGAUSS_MASS is only
     // used in getMass() where we don't store materials.
@@ -238,8 +235,6 @@ BezierTri6::BezierTri6()
         controlPts[i][1] = 0.0;
     }
 
-    for (int i = 0; i < NELD * NELD; i++)
-        Ki_data[i] = 0.0;
 }
 
 
@@ -591,11 +586,7 @@ const Matrix &BezierTri6::getInitialStiff()
             }
     }
 
-    // Cache the initial stiffness
-    Ki = new Matrix(Ki_data, NELD, NELD);
-    *Ki = K_return;
-
-    return *Ki;
+    return LadrunoShell::cacheKi(Ki, K_return);
 }
 
 
@@ -732,23 +723,15 @@ int BezierTri6::addInertiaLoadToUnbalance(const Vector &accel)
     if (!hasMass)
         return 0;
 
-    // Get accelerations at nodes
     static Vector a(NELD);
-    for (int i = 0; i < NEN; i++) {
-        const Vector &Raccel = theNodes[i]->getRV(accel);
-        if (Raccel.Size() != NDOF) {
-            opserr << "BezierTri6::addInertiaLoadToUnbalance - "
-                   << "matrix and target sizes mismatch\n";
-            return -1;
-        }
-        a(2*i)     = Raccel(0);
-        a(2*i + 1) = Raccel(1);
-    }
-
-    // Q += M × a
-    Q.addMatrixVector(1.0, M, a, 1.0);
-
-    return 0;
+    // Q -= M × R·a_g  (the OpenSees convention: getResistingForce() subtracts Q,
+    // so the unbalance gains -M·R·a_g, the ground-motion inertia load). This
+    // was `+1.0` until WP-117, which drove Bezier element mass with -a_g: a
+    // UniformExcitation run shook the Bezier mesh the wrong way, and a mixed
+    // model (Bezier soil + nodal-mass frame) in opposite directions. Matches
+    // FourNodeQuad / LadrunoBrick / every other fork element.  // Ladruno
+    return LadrunoShell::addGroundInertia(Q, M, theNodes, NEN, NDOF, false, accel, a,
+                                          "BezierTri6");
 }
 
 
@@ -835,8 +818,14 @@ const Vector &BezierTri6::getResistingForce()
 
 const Vector &BezierTri6::getResistingForceIncInertia()
 {
-    // Get static resisting force (fills P_return)
-    this->getResistingForce();
+    // SNAPSHOT into a function-local buffer before anything else runs:
+    // getMass() and the betaK Rayleigh re-entry (getTangentStiff) must not be
+    // able to reach the vector being accumulated. Returning `res` also keeps it
+    // distinct from P_return, which getResistingForce() returns. Same operations
+    // in the same order -- ((f - Q) + M*a) + R -- so results are bit-identical
+    // (WP-115; LEDGER_quirks "MUST snapshot the shared static `resid`").  // Ladruno
+    static Vector res(NELD);
+    res = this->getResistingForce();
 
     // ─── Add inertia: R += M × a ──────────────────────────────
     // Mass may come from the element rho OR the material density, so
@@ -847,24 +836,17 @@ const Vector &BezierTri6::getResistingForceIncInertia()
         if (M(i, i) != 0.0) hasMass = true;
 
     if (hasMass) {
-        static Vector a(NELD);
-        for (int i = 0; i < NEN; i++) {
-            const Vector &accel = theNodes[i]->getTrialAccel();
-            a(2*i)     = accel(0);
-            a(2*i + 1) = accel(1);
-        }
-        P_return.addMatrixVector(1.0, M, a, 1.0);
+        static Vector a(NELD);   // Ladruno (WP-124 stage 5)
+        LadrunoShell::addNodalInertia(res, M, theNodes, NEN, NDOF, false, a);
     }
 
     // ─── Add Rayleigh damping if present ──────────────────────
     // Independent of mass: stiffness-proportional damping (betaK) must
     // still be added even when there is no mass.
-    if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0) {
-        const Vector &v = this->getRayleighDampingForces();
-        P_return += v;
-    }
+    if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
+        res += this->getRayleighDampingForces();
 
-    return P_return;
+    return res;
 }
 
 
@@ -1000,19 +982,26 @@ void BezierTri6::computeBBarMatrix(const double dN_dx[2][NEN],
                                     const double dN_avg[2][NEN],
                                     double Bbar[NSTRESS][NELD]) const
 {
-    //  B-bar formulation (Kadapa Eq. 45, adapted for 2D):
+    //  B-bar formulation, plane strain (2D mean-dilatation split):
     //
-    //  Replace the volumetric (dilatational) part of B with its
-    //  volume-weighted average. The deviatoric part stays local.
+    //  Replace the in-plane dilatation θ = εxx+εyy with its element
+    //  average θ̄. The deviatoric part stays local.
+    //
+    //  Ladruno WP-114: the split is 1/2, NOT the 3D 1/3 (Kadapa Eq. 45).
+    //  With εzz ≡ 0 the 3-row B cannot carry the 1/3 rule's εzz row
+    //  (B̄-B)/3, so the old form gave the material a trace of (θ+2θ̄)/3.
+    //  Under isochoric flow (ψ=0, critical state) that kept all 3
+    //  point-wise volumetric constraints, i.e. no relief over the plain
+    //  element. Same split as LadrunoQuad.
     //
     //  For node a, column for u_x DOF:
-    //    row 0 (ε_xx): (B̄₁ + 2B₁)/3
-    //    row 1 (ε_yy): (B̄₁ - B₁)/3
+    //    row 0 (ε_xx): B₁ + (B̄₁ - B₁)/2
+    //    row 1 (ε_yy): (B̄₁ - B₁)/2
     //    row 2 (γ_xy): B₂             (unchanged)
     //
     //  For node a, column for u_y DOF:
-    //    row 0 (ε_xx): (B̄₂ - B₂)/3
-    //    row 1 (ε_yy): (B̄₂ + 2B₂)/3
+    //    row 0 (ε_xx): (B̄₂ - B₂)/2
+    //    row 1 (ε_yy): B₂ + (B̄₂ - B₂)/2
     //    row 2 (γ_xy): B₁             (unchanged)
     //
     //  where B₁ = ∂Nₐ/∂x, B₂ = ∂Nₐ/∂y at the current GP
@@ -1032,13 +1021,13 @@ void BezierTri6::computeBBarMatrix(const double dN_dx[2][NEN],
         int col_y = 2 * a + 1;
 
         // u_x DOF column
-        Bbar[0][col_x] = (Bbar1 + 2.0 * B1) / 3.0;
-        Bbar[1][col_x] = (Bbar1 - B1) / 3.0;
+        Bbar[0][col_x] = B1 + 0.5 * (Bbar1 - B1);
+        Bbar[1][col_x] = 0.5 * (Bbar1 - B1);
         Bbar[2][col_x] = B2;
 
         // u_y DOF column
-        Bbar[0][col_y] = (Bbar2 - B2) / 3.0;
-        Bbar[1][col_y] = (Bbar2 + 2.0 * B2) / 3.0;
+        Bbar[0][col_y] = 0.5 * (Bbar2 - B2);
+        Bbar[1][col_y] = B2 + 0.5 * (Bbar2 - B2);
         Bbar[2][col_y] = B1;
     }
 }
@@ -1282,6 +1271,9 @@ int BezierTri6::recvSelf(int commitTag, Channel &theChannel,
     // sig-exempt as construction-fixed, but recvSelf just rewrote it -- a
     // guard hit on a live element would serve the pre-recv mass structure.
     massCache.invalidate();
+    // Ladruno (WP-124 C6): Ki was formed from the pre-recv material, thickness and
+    // formulation; a restore into a LIVE element must not keep serving it.
+    LadrunoShell::dropKi(Ki);
 
     return res;
 }
@@ -1626,8 +1618,10 @@ Response *BezierTri6::setResponse(const char **argv, int argc,
         theResponse = new ElementResponse(this, 7, Vector(1));
     }
 
-    output.endTag();  // ElementOutput
-    return theResponse;
+    // Ladruno (WP-124 C2): close ElementOutput FIRST, then fall back to the base
+    // vocabulary (globalForce, dampingForce, dynamicForce, inertialForce), which
+    // this element never offered -- a recorder on those tokens wrote nothing.
+    return LadrunoShell::finishResponse(this, theResponse, argv, argc, output);
 }
 
 
@@ -1784,7 +1778,8 @@ int BezierTri6::getResponse(int responseID, Information &eleInfo)
     }
 
     default:
-        return -1;
+        // Ladruno (WP-124 C2): the base IDs 111111..444444 (globalForce, ...)
+        return this->Element::getResponse(responseID, eleInfo);
     }
 }
 
@@ -1816,31 +1811,17 @@ BezierTri6::setParameter(const char **argv, int argc, Parameter &param)
     if (argc < 1)
         return -1;
 
-    int res = -1;
-
     // surface pressure on the element itself
     if (strcmp(argv[0], "pressure") == 0)
         return param.addObject(2, this);
 
     // a specific Gauss-point material: "material $gp <args>"
     if ((strstr(argv[0], "material") != 0) &&
-        (strcmp(argv[0], "materialState") != 0)) {
-        if (argc < 3)
-            return -1;
-        int pointNum = atoi(argv[1]);
-        if (pointNum > 0 && pointNum <= NGAUSS)
-            return theMaterial[pointNum-1]->setParameter(&argv[2], argc-2, param);
-        return -1;
-    }
+        (strcmp(argv[0], "materialState") != 0))
+        return LadrunoShell::forwardToMaterialPoint(theMaterial, NGAUSS, false, argv, argc, param);
 
     // otherwise a forall-material parameter — broadcast to every GP
-    for (int i = 0; i < NGAUSS; i++) {
-        int matRes = theMaterial[i]->setParameter(argv, argc, param);
-        if (matRes != -1)
-            res = matRes;
-    }
-
-    return res;
+    return LadrunoShell::forwardToMaterials(theMaterial, NGAUSS, argv, argc, param);
 }
 
 int

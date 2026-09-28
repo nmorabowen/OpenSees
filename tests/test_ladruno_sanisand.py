@@ -280,6 +280,12 @@ _OPTS_PR0 = ("-Presidual", 0.0, "-Pmin", _VANILLA_PMIN, "-honorTolR", 0)
 # endpoint and is producible by no default, so a leg run at it is a plain
 # quantitative sample of the same continuous parameter.  Same `-Pmin` pin.
 _OPTS_PR05 = ("-Presidual", 0.5, "-Pmin", _VANILLA_PMIN, "-honorTolR", 0)
+# WP-112 (F14): the fork's -flipAlphaIn default is `init` (alpha_in := alpha_n
+# at the elastic->plastic stage flip). Vanilla ManzariDafalias has no such
+# rule, so a leg that claims to BE vanilla must name vanilla's flip rule too.
+# Appended only where a LadrunoSANISAND leg is compared against a
+# ManzariDafalias one; Ladruno-vs-Ladruno A/Bs share the default either way.
+_FLIP_VANILLA = ("-flipAlphaIn", "vanilla")
 
 
 # ---------------------------------------------------------------------------
@@ -726,11 +732,18 @@ def test_vanilla_equivalence():
     order-dependent answer.  Both legs are built in a freshly wipe()d model
     with their own explicit updateMaterialStage calls, and the pair is run in
     BOTH orders; all four results must agree.
+
+    WP-112 (F14): `-flipAlphaIn vanilla` is passed EXPLICITLY on the
+    LadrunoSANISAND legs. The fork's default became `init` (alpha_in :=
+    alpha_n at the stage flip), which is a different constitutive choice
+    from vanilla's at the flip by design, so "handed vanilla's constants IS
+    vanilla" now has to hand it vanilla's flip rule too. The tolerance is
+    unchanged (1e-12, measured 0.0).
     """
     md_first = _drive('ManzariDafalias', 1)
-    sani_second = _drive('LadrunoSANISAND', 2, _OPTS_VANILLA)
+    sani_second = _drive('LadrunoSANISAND', 2, _OPTS_VANILLA + _FLIP_VANILLA)
 
-    sani_first = _drive('LadrunoSANISAND', 3, _OPTS_VANILLA)
+    sani_first = _drive('LadrunoSANISAND', 3, _OPTS_VANILLA + _FLIP_VANILLA)
     md_second = _drive('ManzariDafalias', 4)
 
     assert md_first == md_second, (

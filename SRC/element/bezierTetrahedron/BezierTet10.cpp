@@ -63,6 +63,7 @@
 #include <Node.h>
 #include <NDMaterial.h>
 #include <Matrix.h>
+#include <LadrunoElementShell.h>   // Ladruno (WP-124): shared Element-contract helpers
 #include <Vector.h>
 #include <ID.h>
 #include <Domain.h>
@@ -210,9 +211,6 @@ BezierTet10::BezierTet10(int tag,
         controlPts[i][0] = controlPts[i][1] = controlPts[i][2] = 0.0;
     }
 
-    for (int i = 0; i < NELD * NELD; i++)
-        Ki_data[i] = 0.0;
-
     // Allocate 3D materials at the NGAUSS Gauss points
     theMaterial = new NDMaterial*[NGAUSS];
     for (int i = 0; i < NGAUSS; i++) {
@@ -246,8 +244,6 @@ BezierTet10::BezierTet10()
         controlPts[i][0] = controlPts[i][1] = controlPts[i][2] = 0.0;
     }
 
-    for (int i = 0; i < NELD * NELD; i++)
-        Ki_data[i] = 0.0;
 }
 
 
@@ -517,9 +513,7 @@ const Matrix &BezierTet10::getInitialStiff()
         theGeom->globalizeStiff(K_return, zeroF, K_return);
     }
 
-    Ki = new Matrix(Ki_data, NELD, NELD);
-    *Ki = K_return;
-    return *Ki;
+    return LadrunoShell::cacheKi(Ki, K_return);
 }
 
 
@@ -657,20 +651,12 @@ int BezierTet10::addInertiaLoadToUnbalance(const Vector &accel)
         return 0;
 
     static Vector a(NELD);
-    for (int i = 0; i < NEN; i++) {
-        const Vector &Raccel = theNodes[i]->getRV(accel);
-        if (Raccel.Size() != NDOF) {
-            opserr << "BezierTet10::addInertiaLoadToUnbalance - "
-                   << "matrix and target sizes mismatch\n";
-            return -1;
-        }
-        a(3*i)     = Raccel(0);
-        a(3*i + 1) = Raccel(1);
-        a(3*i + 2) = Raccel(2);
-    }
-
-    Q.addMatrixVector(1.0, M, a, 1.0);
-    return 0;
+    // Q -= M × R·a_g  (the OpenSees convention: getResistingForce() subtracts Q,
+    // so the unbalance gains -M·R·a_g). Was `+1.0` until WP-117, which drove
+    // the element mass with -a_g under UniformExcitation. Matches
+    // TenNodeTetrahedron / LadrunoBrick / every other fork element.  // Ladruno
+    return LadrunoShell::addGroundInertia(Q, M, theNodes, NEN, NDOF, false, accel, a,
+                                          "BezierTet10");
 }
 
 
@@ -1209,7 +1195,14 @@ void BezierTet10::formResidAndTangentFinite(int tangFlag, Vector &fInt, Matrix *
 
 const Vector &BezierTet10::getResistingForceIncInertia()
 {
-    this->getResistingForce();
+    // SNAPSHOT into a function-local buffer before anything else runs:
+    // getMass() and the betaK Rayleigh re-entry (getTangentStiff) must not be
+    // able to reach the vector being accumulated. Returning `res` also keeps it
+    // distinct from P_return, which getResistingForce() returns. Same operations
+    // in the same order -- ((f - Q) + M*a) + R -- so results are bit-identical
+    // (WP-115; LEDGER_quirks "MUST snapshot the shared static `resid`").  // Ladruno
+    static Vector res(NELD);
+    res = this->getResistingForce();
 
     const Matrix &M = this->getMass();
     bool hasMass = false;
@@ -1217,22 +1210,14 @@ const Vector &BezierTet10::getResistingForceIncInertia()
         if (M(i, i) != 0.0) hasMass = true;
 
     if (hasMass) {
-        static Vector a(NELD);
-        for (int i = 0; i < NEN; i++) {
-            const Vector &accel = theNodes[i]->getTrialAccel();
-            a(3*i)     = accel(0);
-            a(3*i + 1) = accel(1);
-            a(3*i + 2) = accel(2);
-        }
-        P_return.addMatrixVector(1.0, M, a, 1.0);
+        static Vector a(NELD);   // Ladruno (WP-124 stage 5)
+        LadrunoShell::addNodalInertia(res, M, theNodes, NEN, NDOF, false, a);
     }
 
-    if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0) {
-        const Vector &v = this->getRayleighDampingForces();
-        P_return += v;
-    }
+    if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
+        res += this->getRayleighDampingForces();
 
-    return P_return;
+    return res;
 }
 
 
@@ -1694,6 +1679,9 @@ int BezierTet10::recvSelf(int commitTag, Channel &theChannel,
     // sig-exempt as construction-fixed, but recvSelf just rewrote it -- a
     // guard hit on a live element would serve the pre-recv mass structure.
     massCache.invalidate();
+    // Ladruno (WP-124 C6): Ki was formed from the pre-recv material, thickness and
+    // formulation; a restore into a LIVE element must not keep serving it.
+    LadrunoShell::dropKi(Ki);
 
     return res;
 }
@@ -1947,8 +1935,10 @@ Response *BezierTet10::setResponse(const char **argv, int argc,
         theResponse = new ElementResponse(this, 7, Vector(1));
     }
 
-    output.endTag();  // ElementOutput
-    return theResponse;
+    // Ladruno (WP-124 C2): close ElementOutput FIRST, then fall back to the base
+    // vocabulary (globalForce, dampingForce, dynamicForce, inertialForce), which
+    // this element never offered -- a recorder on those tokens wrote nothing.
+    return LadrunoShell::finishResponse(this, theResponse, argv, argc, output);
 }
 
 
@@ -2058,7 +2048,8 @@ int BezierTet10::getResponse(int responseID, Information &eleInfo)
     }
 
     default:
-        return -1;
+        // Ladruno (WP-124 C2): the base IDs 111111..444444 (globalForce, ...)
+        return this->Element::getResponse(responseID, eleInfo);
     }
 }
 
@@ -2091,31 +2082,17 @@ BezierTet10::setParameter(const char **argv, int argc, Parameter &param)
     if (argc < 1)
         return -1;
 
-    int res = -1;
-
     // "pressure" on the element itself (+z volume hack, as the response)
     if (strcmp(argv[0], "pressure") == 0)
         return param.addObject(2, this);
 
     // a specific Gauss-point material: "material $gp <args>"
     if ((strstr(argv[0], "material") != 0) &&
-        (strcmp(argv[0], "materialState") != 0)) {
-        if (argc < 3)
-            return -1;
-        int pointNum = atoi(argv[1]);
-        if (pointNum > 0 && pointNum <= NGAUSS)
-            return theMaterial[pointNum-1]->setParameter(&argv[2], argc-2, param);
-        return -1;
-    }
+        (strcmp(argv[0], "materialState") != 0))
+        return LadrunoShell::forwardToMaterialPoint(theMaterial, NGAUSS, false, argv, argc, param);
 
     // otherwise a forall-material parameter — broadcast to every GP
-    for (int i = 0; i < NGAUSS; i++) {
-        int matRes = theMaterial[i]->setParameter(argv, argc, param);
-        if (matRes != -1)
-            res = matRes;
-    }
-
-    return res;
+    return LadrunoShell::forwardToMaterials(theMaterial, NGAUSS, argv, argc, param);
 }
 
 int

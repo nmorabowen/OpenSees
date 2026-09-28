@@ -1,0 +1,95 @@
+LadrunoSANISAND nDMaterial - Ladruno subclass of ManzariDafalias (model: A.Ghofrani, P.Arduino, U.Washington); settable p_residual/p_min. ADR 86.
+LadrunoSANISAND tag 1: p_residual = 0 (default, cohesionless), pRe = 0 (default, OFF: G, K ~ sqrt(max(p, p_min)/P_atm), no stiffness floor), p_min = 0.101 (user), honorTolR = 0 (ModifiedEuler substep TolE = 0.0001, vanilla's hardcoded value), TanType = 2 (consistent mCep_Consistent (unsymmetric)), maxSubsteps = 20000 (ModifiedEuler FAILS the update past this many substeps, so the step can be cut), reversalTol 1e-10 (undoes integrate()'s mAlpha_in loading-reversal reset when ||eps - eps_n|| falls below this, i.e. treats it as round-off noise), reversalRel 0.05 (SECOND threshold = reversalRel * ||last committed d_eps||; a hold's noise tracks the solver tolerance, not round-off, so the absolute test alone under-catches it); reversal test skipped on dt == 0 (ops_Dt, unconditionally -- a hold has no loading to test for a reversal in); hold-skip commits counted in implexGuards[5] [D5b: D_factor sigmoid non-dimensionalised in vanilla (PR-2), an exact no-op at P_atm = 101; D5a: whether it should exist at all once the residual pressure is zero is still OPEN]
+LadrunoSANISAND tag 1: -flipAlphaIn init (flip: alpha_in := alpha (init, opt-in -- an alternative Dafalias-Manzari modelling choice)), -implexFlipAbsorb OFF (the DEFAULT: the flip commits nothing beyond mElastFlag's own effect on the next real step -- required for the ADR-92 gate-5 -implex ON-vs-OFF byte-identity on a zero-free-DOF deck)
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.121154 (max: 0.11772, Norm deltaX: 2.68859e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0187365
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.178628 (max: 0.11772, Norm deltaX: 5.52226e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0219365
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.285413 (max: 0.11772, Norm deltaX: 5.8684e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0232165
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.302582 (max: 0.11772, Norm deltaX: 8.27554e-06)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0244965
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.316929 (max: 0.11772, Norm deltaX: 1.06867e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0257765
+OpenSees > analyze failed, returned: -3 error flag
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.417118, dT = 1e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING LadrunoBrick::update - element 90: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 0). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.466114, dT = 2.02494e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.416973, dT = 1e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.466214, dT = 1.97648e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.459911, dT = 1.56963e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.503227, dT = 1e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.459839, dT = 1.53877e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.503435, dT = 1e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.520177, dT = 1e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING LadrunoBrick::update - element 120: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 0). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.568457, dT = 1e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING ManzariDafalias: further ModifiedEuler() substep-cap warnings suppressed (budget 10 per process).
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+WARNING LadrunoBrick::update - element 90: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 0). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING LadrunoBrick::update - element 120: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 0). Failing the step so the analysis can cut it; the committed state is unchanged.
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0257765
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.457718 (max: 0.11772, Norm deltaX: 1.72781e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0270565
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.264362 (max: 0.11772, Norm deltaX: 8.95797e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0270565
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.529579 (max: 0.11772, Norm deltaX: 2.09935e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0283365
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.760622 (max: 0.11772, Norm deltaX: 1.77377e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0283365
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1.08252 (max: 0.11772, Norm deltaX: 4.22577e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0308965
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.899556 (max: 0.11772, Norm deltaX: 3.8651e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0334565
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 1.14637 (max: 0.11772, Norm deltaX: 4.54404e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0360165
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.421215 (max: 0.11772, Norm deltaX: 1.68875e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0370965
+OpenSees > analyze failed, returned: -3 error flag
