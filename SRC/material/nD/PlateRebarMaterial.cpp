@@ -35,6 +35,7 @@ Earthquake Engineering & Structural Dynamics, 2013, 42(5): 705-723*/
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <MaterialResponse.h>   //Antonios Vytiniotis used for the recorder
+#include <DummyStream.h>        // Ladruno (WP-142): silent probe in setResponse
 #include <math.h>
 #include <elementAPI.h>
 
@@ -90,6 +91,16 @@ void* OPS_PlateRebarMaterial()
 }
 
 
+// Ladruno (WP-142): the ONE expression for the bar direction cosines, shared
+// by the constructor and recvSelf so the two can never diverge again.
+static void
+plateRebarCosines(double ang, double &c, double &s)
+{
+  double rang = ang * 4.0 * asin(1.0)/360.0;
+  c = cos(rang);
+  s = sin(rang);
+}
+
 //full constructor
 PlateRebarMaterial::PlateRebarMaterial(int tag,
                                        UniaxialMaterial &uniMat,
@@ -98,9 +109,7 @@ NDMaterial( tag, ND_TAG_PlateRebarMaterial ),
 strain(5),angle(ang)
 {
   theMat = uniMat.getCopy() ;
-  double rang = ang * 4.0 * asin(1.0)/360.0;
-  c = cos(rang);
-  s = sin(rang);
+  plateRebarCosines(ang, c, s);   // Ladruno (WP-142): same expression as before
 }
 
 
@@ -386,9 +395,10 @@ PlateRebarMaterial::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroke
     return res;
   }
   angle = vecData(0);
-  double rang = angle * 0.0174532925;
-  c = cos(rang);
-  s = sin(rang);
+  // Ladruno (WP-142): upstream bug -- recvSelf used angle * 0.0174532925, the
+  // ctor uses angle * 4.0 * asin(1.0)/360.0; a received copy (MP/SP, database
+  // restore) differed ~1e-9 relative off-axis. Now both use plateRebarCosines.
+  plateRebarCosines(angle, c, s);
 
   // now receive the materials data
   res = theMat->recvSelf(commitTag, theChannel, theBroker);
@@ -401,5 +411,53 @@ PlateRebarMaterial::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroke
 int PlateRebarMaterial::setParameter(const char** argv, int argc, Parameter& param)
 {
     return theMat->setParameter(argv, argc, param);
+}
+
+// Ladruno (WP-142): response forwarding to the wrapped uniaxial (theMat).
+// Without it the bar's own state (plastic strain, back stress, damage,
+// buckling state, ...) is unreachable inside a LayeredShell section.
+//  * "material <args...>" -> theMat->setResponse(<args...>), so keys that
+//    collide with the NDMaterial base ("stress", "strain", "tangent") can
+//    reach the bar: "... fiber k material stress" is the scalar bar stress.
+//  * a key the NDMaterial base answers keeps its 5-component plate response.
+//  * any other key is forwarded unchanged.
+// The Response is built by THIS copy's theMat, so it binds to this layer's
+// own uniaxial (LayeredShell and every Gauss point hold separate copies).
+// Recorder metadata: the base is probed on a silent stream (it writes an
+// NdMaterialOutput tag even when it returns null), and a forwarded request
+// is wrapped in ONE NdMaterialOutput block enclosing the bar's own block.
+// The wrapper is load-bearing: MPCO needs a material node per fiber even
+// when the bar emits no tags for a key (LadrunoUniaxialJ2 plasticStrain).
+Response*
+PlateRebarMaterial::setResponse(const char **argv, int argc, OPS_Stream &output)
+{
+  if (argc < 1 || argv == 0)
+    return 0;
+
+  const char **fwdArgv = argv;
+  int fwdArgc = argc;
+  if (strcmp(argv[0], "material") == 0) {
+    if (argc < 2 || theMat == 0)
+      return 0;
+    fwdArgv = argv + 1;
+    fwdArgc = argc - 1;
+  }
+  else {
+    DummyStream probe;
+    Response *theResponse = NDMaterial::setResponse(argv, argc, probe);
+    if (theResponse != 0) {
+      delete theResponse;
+      return NDMaterial::setResponse(argv, argc, output);
+    }
+    if (theMat == 0)
+      return 0;
+  }
+
+  output.tag("NdMaterialOutput");
+  output.attr("matType", this->getClassType());
+  output.attr("matTag", this->getTag());
+  Response *theResponse = theMat->setResponse(fwdArgv, fwdArgc, output);
+  output.endTag(); // NdMaterialOutput
+  return theResponse;
 }
  
