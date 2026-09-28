@@ -802,9 +802,13 @@ driven at c = 0.80: a sensitivity test, not a c = 0.80 footing run. That run is 
 2. **A calibration with c ≥ 0.78**: at c = 0.80 the extension strength M_e = c·M_c rises 13 %; it also
    removes the extension ill-conditioning of §4.9.
 
-**Published precedent.** Chen, Ghorbani, Zhang & Kodikara (2022), *Comput. Geotech.* 152, 105008: their
-SANISAND04 plane-strain footing aborts when (α−α_in):n suddenly drops to 0, and it gets worse with finer
-steps and a tighter tolerance (#892 memo).
+**Related literature.** Stress overshooting of bounding-surface models at load reversals, where the
+reversal memory is re-seated, is a documented source of numerical instability in boundary-value
+problems: Chen, Ghorbani, Zhang & Kodikara (2022), "Stress overshooting solution for soil plasticity
+models", *Comput. Geotech.* 152, 105008, which finds that the definition of the plastic modulus and
+hardening law governs it; and Ghorbani, Chen, Kodikara, Carter & McCartney (2023), "Memory repositioning
+in soil plasticity models used in contact problems", *Comput. Mech.* 71, 385–408. We have not verified a
+published SANISAND footing that stops on this exact singular set.
 
 ### 4.7 Sensitivity ladders — final
 
@@ -1139,4 +1143,5 @@ al. (2016), *SpringerPlus* 5, 1482. Full list in the WP-150 memo.
 |---|---|
 | 2026-09-28 | First issue. F18(a), (b), (e), F20, F21, F22 (mode), F23(a), (b) answered from merged work; F18(c), (d), F19 step 2, the F22 guide paragraph and the WP-138 footing A/B pending; placeholders in §4. |
 | 2026-09-28 | Second issue. §4 final from the WP-138 Esmeralda arms (#878 at `762be8332`): the wall table, the verdict (SAS-ME moves the wall from s/B 0.0292 to 0.0508 and does not remove it; no peak; constitutive), accuracy and cost, the replay figures reconciled, the mechanism (#892), the interim sensitivity ladders (16:20) with caution 6 re-measured, B/16 and non-associated localization, the calibration caveat (#892 §10), Lode convexity c ≥ 7/9, the classical capacity bands (#892 §11 at `00198f278`), the integrator recommendation; placeholders removed. §5: D1 and D3 revised, D7–D9 added (calibration, c, R1), the regularization route and §5.1 "What we need from you". §6: the WP-150 decision procedure, T6 targets, the SAS-ME + IMPL-EX status, #874 and #876 merged, TolR 1e-3 and TanType 1 off the performance list. §0, §2 scope note, §3 cautions 1, 4, 6 and the E_B configuration line (TolR 1e-4, not 1e-7) updated to match. |
-| 2026-09-28 | Third issue. §4.7 ladders FINAL (#878 at `1f22e2bad`): every leg walls on `loadingNonPosH`; dilatancy off only delays the onset (0.0363 → 0.0426), so the interim "only killing the dilatancy clears it" is withdrawn. §4.6: the wall states need the non-convex extension side (c = 0.71 < 7/9; c = 0.80 takes the wall fan 102/320 → 0/320, WP-151 §2.5), the wall and the bands are separate phenomena, two routes out (R1 or c ≥ 0.78), and the Chen et al. (2022) precedent. R1 and the CTXu finding now cite the WP-151 memo (#893) instead of "preliminary". D8 and the roadmap updated; the R1, c = 0.80 and R2 footing runs are running. |
+| 2026-09-28 | Third issue. §4.7 ladders FINAL (#878 at `1f22e2bad`): every leg walls on `loadingNonPosH`; dilatancy off only delays the onset (0.0363 → 0.0426), so the interim "only killing the dilatancy clears it" is withdrawn. §4.6: the wall states need the non-convex extension side (c = 0.71 < 7/9; c = 0.80 takes the wall fan 102/320 → 0/320, WP-151 §2.5), the wall and the bands are separate phenomena, two routes out (R1 or c ≥ 0.78), and related literature on reversal-memory stress overshooting. R1 and the CTXu finding now cite the WP-151 memo (#893) instead of "preliminary". D8 and the roadmap updated; the R1, c = 0.80 and R2 footing runs are running. |
+| 2026-09-28 | Fourth issue. §4.6: the Chen et al. (2022) citation corrected. It is a stress-overshooting study, not a documented SANISAND footing that stops on this singular set; Ghorbani et al. (2023, memory repositioning) added as related literature. |
