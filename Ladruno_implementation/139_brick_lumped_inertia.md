@@ -1,8 +1,9 @@
 # WP-139 — LadrunoBrick `-lumped`: one mass model for the residual AND the tangent
 
-Revision 0 (scoping). Opened 2026-09-27 by the owner from WP-124 gap **C8**
+Revision 1 (implemented). Opened 2026-09-27 by the owner from WP-124 gap **C8**
 ([[124_continuum_shell_helpers]]). Branch `wp/139-brick-lumped-inertia`, cut from `ladruno` @ `64a0341a6`
-(WP-124 merged). Status: **scoping; draft PR.** No production code changed yet.
+(WP-124 merged). Status: **option A implemented and proven (see Results); draft PR #879.** The owner chose
+option A on 2026-09-27; upstream `Brick` left alone (no decision to change vanilla).
 
 ## Problem
 
@@ -53,7 +54,34 @@ flag's main purpose (explicit Δt) is consistent today. To be verified per expli
 - Ledgers: LEDGER_implementations row, LEDGER_quirks entry (the hybrid and why it hid: Windows/explicit runs
   never see it), the `ladruno-new-element` guide item "one mass model for residual AND tangent".
 
+## Results (2026-09-27)
+
+**Change** (`1771c6bf7`): in `formInertiaTerms`, under `massType == 1` the residual no longer adds the consistent
+`N_j dV ρ Σ_k N_k a_k`; it accumulates `mL[j] += (N_j dV) ρ` in the SAME Gauss-point order as the mass diagonal
+and adds `mL[j] a_j` after the loop, so the residual carries exactly `M_L(c,c) a(c)` (Brick20's F-1).
+
+**Fingerprint** (WP-124 suite, unchanged-code baseline built in this worktree): **11 of 707 series differ, all
+inside `Brick/lumped`**: every implicit dynamic series (Newmark per Rayleigh factor, HHT, Linear algorithm,
+UniformExcitation, the ρ-parameter ground run) and the two explicit lanes. `Brick/lumped` static, eigen,
+`-initial`, Linear-static, responses and parameter series are byte-identical; every other variant is
+byte-identical.
+
+**Correction to the scoping note on explicit runs.** `CentralDifferenceLadruno` is **byte-identical** (a
+dedicated probe, 1,440 displacement values, undamped and αM): its Azero residual never reads the inertia pass.
+But vanilla **`CentralDifference` changes**: it forms the residual at a NONZERO trial acceleration, so under
+`-lumped` it was integrating the same hybrid and is now consistently lumped. This is the intended correction,
+not a side effect — and a result change for vanilla-CD `-lumped` users.
+
+**Tests** (`tests/test_ladrunoBrick_lumped_inertia.py`, zone_a; regular unit cube, lumped nodal mass ρV/8):
+residual inertia == `M_L a` node by node for an arbitrary acceleration field (baseline: 0.0722 vs 0.175 at dof 0 —
+the consistent coupling); Newton ≤ 3 iterations per Newmark step with and without αM (baseline: no convergence
+in 4); consistent mass unchanged (same row-sum total, nodes still coupled). 3 fail on the baseline, 4 pass after.
+
+**Mutation rows** (`wp139_brick_lumped/mutation_rows.py`): L1 (the pre-fix hybrid) → ROW_L1; L2 (the lumped
+residual reads the committed instead of the trial acceleration) → ROW_L2.
+
 ## Open questions (owner)
 
-- Confirm option A. It changes implicit `-lumped` LadrunoBrick results by design.
-- Upstream `Brick` carries the same hybrid: leave it (vanilla), or fix it too as a separate vanilla edit?
+- ~~Confirm option A.~~ Confirmed 2026-09-27.
+- Upstream `Brick` carries the same hybrid (`Brick.cpp:882-890`); left alone. Fix it as a separate vanilla edit
+  only if asked.
