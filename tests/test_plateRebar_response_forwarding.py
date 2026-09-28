@@ -366,14 +366,21 @@ def _analysis(algo='Newton'):
     ops.analysis('Static')
 
 
-def test_forwarded_key_leaves_no_empty_material_block(tmp_path):
-    # NDMaterial::setResponse writes an NdMaterialOutput tag even when it returns null;
-    # the fallback must probe it on a silent stream, so a forwarded key's metadata
-    # carries the bar's block only.
+def test_recorder_metadata_is_one_material_block_per_fiber(tmp_path):
+    """-xml element recorder metadata: each fiber carries exactly ONE material block.
+
+    NDMaterial::setResponse writes an NdMaterialOutput tag even when it returns null, so a
+    plain "base first, then forward" left an EMPTY NdMaterialOutput beside the bar's own
+    block. PlateRebar probes the base on a silent stream and wraps a forwarded request in
+    one NdMaterialOutput enclosing the bar's block. The wrapper stays even when the bar
+    emits no tags (LadrunoUniaxialJ2 plasticStrain): MPCO needs a material node per fiber,
+    see test_mpco_section_fiber_forwarded_key.
+    """
+    import xml.etree.ElementTree as ET
     _small_shell()
     pre = ('-ele', 1, 'section', '1', 'fiber', '2')
     cases = {'fwd': ('stressStrain',), 'prefixed': ('material', 'stress'),
-             'base': ('stress',)}
+             'tagless': ('plasticStrain',), 'base': ('stress',)}
     files = {}
     for name, key in cases.items():
         files[name] = str(tmp_path / f'{name}.xml')
@@ -383,15 +390,15 @@ def test_forwarded_key_leaves_no_empty_material_block(tmp_path):
     assert ops.analyze(1) == 0
     ops.remove('recorders')
     ops.wipe()
-    head = {}
+    kids = {}
     for name, fn in files.items():
-        with open(fn) as f:
-            txt = f.read()
-        head[name] = txt[:txt.find('<Data>')] if '<Data>' in txt else txt
-    for name in ('fwd', 'prefixed'):
-        assert 'NdMaterialOutput' not in head[name], (name, head[name])
-        assert 'UniaxialMaterialOutput' in head[name], (name, head[name])
-    assert 'NdMaterialOutput' in head['base'] and 'UniaxialMaterialOutput' not in head['base']
+        (fiber,) = list(ET.parse(fn).getroot().iter('FiberOutput'))
+        kids[name] = [(c.tag, [g.tag for g in c]) for c in fiber]
+    assert kids['fwd'] == [('NdMaterialOutput', ['UniaxialMaterialOutput'])], kids['fwd']
+    assert kids['prefixed'] == [('NdMaterialOutput', ['UniaxialMaterialOutput'])], kids['prefixed']
+    assert kids['tagless'] == [('NdMaterialOutput', [])], kids['tagless']
+    (base,) = kids['base']
+    assert base[0] == 'NdMaterialOutput' and base[1] and set(base[1]) == {'ResponseType'}, base
 
 
 def test_mpco_section_fiber_forwarded_key(tmp_path):
@@ -420,6 +427,12 @@ def test_mpco_section_fiber_forwarded_key(tmp_path):
         (name,) = list(grp.keys())                          # one element class -> one bucket
         return grp[name]
 
+    def step(b):
+        # one analysis step -> one dataset, but its STEP_<n> name is not always STEP_0
+        # (in the full module run, after other analyses, STEP_0 was absent): read the one
+        (ds,) = list(b['DATA'].values())
+        return [float(v) for v in ds[0]]
+
     with h5py.File(fn, 'r') as f:
         pl = bucket(f, 'section.fiber.plasticStrain')
         # the rebar-layer bucket: per Gauss point only the bar fibers (the concrete layers
@@ -430,13 +443,13 @@ def test_mpco_section_fiber_forwarded_key(tmp_path):
         mult = [int(v) for v in pl['META/MULTIPLICITY'][:].ravel()]
         ncmp = [int(v) for v in pl['META/NUM_COMPONENTS'][:].ravel()]
         assert [m * c for m, c in zip(mult, ncmp)] == [len(bars)] * len(GPS), (mult, ncmp)
-        assert [float(v) for v in pl['DATA/STEP_0'][0]] == want_pl
+        assert step(pl) == want_pl
         st = bucket(f, 'section.fiber.stress')
         # the plate-stress bucket: every layer, the 5-component plate stress
         assert int(st.attrs['NUM_COLUMNS'][0]) == len(GPS) * nfib * 5
         assert list(st['META/MULTIPLICITY'][:].ravel()) == [nfib] * len(GPS)
         assert list(st['META/NUM_COMPONENTS'][:].ravel()) == [5] * len(GPS)
-        assert [float(v) for v in st['DATA/STEP_0'][0]] == want_st
+        assert step(st) == want_st
 
 
 RT_ANGLES = (30.0, 17.0)                   # off-axis: exercises c, s (0/90 take shortcuts)
@@ -444,13 +457,60 @@ RT_PATH = [(2.0e-3, 5.0e-4, 1.5e-3), (4.0e-3, 1.0e-3, 3.0e-3), (1.0e-3, 2.0e-3, 
 RT_NEXT = (-2.0e-3, 1.0e-3, -4.0e-3)
 
 
-def _rt_read():
+def _rt_shell(angles):
+    """Every shell DOF fixed and set exactly by setNodeDisp: the bar strains are then pure
+    functions of the imposed displacements, with no global solve in between. (A Penalty
+    solve has condition number ~alpha/K, so it amplifies any ulp-level difference in the
+    restored state -- e.g. LadrunoUniaxialJ2::recvSelf re-derives Tstress, 1 ulp off -- to
+    ~1e-9 and would hide the angle bug this test is for.) One free dummy equation keeps the
+    system non-empty. EAS off: this gates the material's send/recv, not the element's.
+    """
+    ops.wipe()
+    ops.model('basic', '-ndm', 3, '-ndf', 6)
+    for n, (x, y) in NODES.items():
+        ops.node(n, x, y, 0.0)
+        ops.fix(n, 1, 1, 1, 1, 1, 1)
+    ops.node(98, 0.0, 0.0, 1.0)
+    ops.node(99, 1.0, 0.0, 1.0)
+    ops.fix(98, 1, 1, 1, 1, 1, 1)
+    ops.fix(99, 0, 1, 1, 1, 1, 1)
+    _j2(11)
+    ops.uniaxialMaterial('Elastic', 99, 1.0)
+    ops.element('Truss', 99, 98, 99, 1.0, 99)
+    ops.nDMaterial('ElasticIsotropic', 1, E_C, NU_C)
+    layers = [(1, T_C)]
+    for k, ang in enumerate(angles):
+        ops.nDMaterial('PlateRebar', 20 + k, 11, ang)
+        layers += [(20 + k, T_S), (1, T_C)]
+    ops.section('LayeredShell', 10, len(layers), *[v for lay in layers for v in lay])
+    ops.element('ASDShellQ4', 1, 1, 2, 3, 4, 10, '-noeas')
+
+
+def _rt_analysis():
+    ops.constraints('Plain')
+    ops.numberer('Plain')
+    ops.system('FullGeneral')
+    ops.test('NormDispIncr', 1.0e-12, 10, 0)
+    ops.algorithm('Linear')
+    ops.integrator('LoadControl', 1.0)
+    ops.analysis('Static')
+
+
+def _rt_step(exx, eyy, gxy):
+    for n, (x, y) in NODES.items():
+        ops.setNodeDisp(n, 1, exx * x + 0.5 * gxy * y, '-commit')
+        ops.setNodeDisp(n, 2, 0.5 * gxy * x + eyy * y, '-commit')
+    assert ops.analyze(1) == 0
+
+
+def _rt_read(state_only=False):
     out = []
     for gp in GPS:
         for fib in (2, 4):
             pre = (1, 'section', str(gp), 'fiber', str(fib))
-            out += _resp(*pre, 'material', 'strain') + _resp(*pre, 'material', 'stress')
-            out += _resp(*pre, 'plasticStrain') + _resp(*pre, 'stress')
+            out += _resp(*pre, 'material', 'strain') + _resp(*pre, 'plasticStrain')
+            if not state_only:
+                out += _resp(*pre, 'material', 'stress') + _resp(*pre, 'stress')
     return out
 
 
@@ -462,21 +522,20 @@ def test_database_roundtrip_off_axis_bar_is_bit_identical(tmp_path):
     strain (~1e-9 relative) from the first step after the restore.
     """
     # A: uninterrupted
-    _small_shell(RT_ANGLES)
-    _analysis('Linear')
-    for i, e in enumerate(RT_PATH + [RT_NEXT]):
-        _impose(*e, first=(i == 0))
-        assert ops.analyze(1) == 0
+    _rt_shell(RT_ANGLES)
+    _rt_analysis()
+    for e in RT_PATH + [RT_NEXT]:
+        _rt_step(*e)
     ref = _rt_read()
+    assert max(abs(v) for v in ref[1::8]) > 1.0e-4        # the bars carry plastic strain
     ops.wipe()
 
     # B: same history, save after RT_PATH, wipe, restore, then RT_NEXT
-    _small_shell(RT_ANGLES)
-    _analysis('Linear')
-    for i, e in enumerate(RT_PATH):
-        _impose(*e, first=(i == 0))
-        assert ops.analyze(1) == 0
-    before = _rt_read()
+    _rt_shell(RT_ANGLES)
+    _rt_analysis()
+    for e in RT_PATH:
+        _rt_step(*e)
+    before = _rt_read(state_only=True)
     db = str(tmp_path / 'o6rt')
     try:
         ops.database('File', db)
@@ -484,13 +543,12 @@ def test_database_roundtrip_off_axis_bar_is_bit_identical(tmp_path):
         pytest.skip(f'database() unsupported in this build: {exc}')
     ops.save(1)
     ops.wipe()
-    _small_shell(RT_ANGLES)                # skeleton for the restore to land on
+    _rt_shell(RT_ANGLES)                   # skeleton for the restore to land on
     ops.database('File', db)
     ops.restore(1)
-    assert _rt_read() == before            # the committed state came back bit for bit
-    _analysis('Linear')
-    _impose(*RT_NEXT, first=False)
-    assert ops.analyze(1) == 0
+    assert _rt_read(state_only=True) == before     # committed bar state came back exactly
+    _rt_analysis()
+    _rt_step(*RT_NEXT)
     got = _rt_read()
     ops.wipe()
     assert got == ref

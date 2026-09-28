@@ -423,27 +423,41 @@ int PlateRebarMaterial::setParameter(const char** argv, int argc, Parameter& par
 //  * any other key is forwarded unchanged.
 // The Response is built by THIS copy's theMat, so it binds to this layer's
 // own uniaxial (LayeredShell and every Gauss point hold separate copies).
+// Recorder metadata: the base is probed on a silent stream (it writes an
+// NdMaterialOutput tag even when it returns null), and a forwarded request
+// is wrapped in ONE NdMaterialOutput block enclosing the bar's own block.
+// The wrapper is load-bearing: MPCO needs a material node per fiber even
+// when the bar emits no tags for a key (LadrunoUniaxialJ2 plasticStrain).
 Response*
 PlateRebarMaterial::setResponse(const char **argv, int argc, OPS_Stream &output)
 {
   if (argc < 1 || argv == 0)
     return 0;
 
+  const char **fwdArgv = argv;
+  int fwdArgc = argc;
   if (strcmp(argv[0], "material") == 0) {
     if (argc < 2 || theMat == 0)
       return 0;
-    return theMat->setResponse(&argv[1], argc - 1, output);
+    fwdArgv = argv + 1;
+    fwdArgc = argc - 1;
+  }
+  else {
+    DummyStream probe;
+    Response *theResponse = NDMaterial::setResponse(argv, argc, probe);
+    if (theResponse != 0) {
+      delete theResponse;
+      return NDMaterial::setResponse(argv, argc, output);
+    }
+    if (theMat == 0)
+      return 0;
   }
 
-  // Probe the base on a silent stream first: NDMaterial::setResponse writes
-  // an NdMaterialOutput tag even when it returns null, which would leave an
-  // empty material block in the recorder metadata ahead of the bar's own.
-  DummyStream probe;
-  Response *theResponse = NDMaterial::setResponse(argv, argc, probe);
-  if (theResponse != 0) {
-    delete theResponse;
-    return NDMaterial::setResponse(argv, argc, output);
-  }
-  return (theMat != 0) ? theMat->setResponse(argv, argc, output) : 0;
+  output.tag("NdMaterialOutput");
+  output.attr("matType", this->getClassType());
+  output.attr("matTag", this->getTag());
+  Response *theResponse = theMat->setResponse(fwdArgv, fwdArgc, output);
+  output.endTag(); // NdMaterialOutput
+  return theResponse;
 }
  
