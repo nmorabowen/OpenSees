@@ -74,6 +74,7 @@ GLOBS = [
     "SRC/material/LadrunoMaterialStatus.h",
     "SRC/material/nD/LadrunoSANISAND.*",
     "SRC/material/nD/LadrunoSANISAND3D.*",
+    "SRC/material/nD/LadrunoSANISANDSasME.cpp",
     "SRC/material/nD/LadrunoSANISANDPlaneStrain.*",
     "SRC/material/nD/LadrunoConcrete3D.*", "SRC/material/nD/LadrunoConcrete3DKernel.h",
     "SRC/material/nD/LadrunoHardening.h",
@@ -138,6 +139,7 @@ GLOBS = [
     "SRC/analysis/integrator/LadrunoLoadControl.*",
     "SRC/analysis/numberer/LadrunoParallelNumberer.*",
     "SRC/domain/pattern/drm/DRMHigherOrderNode.h",
+    "SRC/element/LadrunoElementShell.h",   # WP-124 shared Element-contract helpers
     "SRC/element/LadrunoMassCache.h",
     "SRC/element/LadrunoResponseTokens.h",
     "SRC/interpreter/PythonMPIModule.cpp",

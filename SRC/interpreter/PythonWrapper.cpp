@@ -800,6 +800,13 @@ static PyObject *Py_ops_LadrunoThreads(PyObject *self, PyObject *args)  // Ladru
     return wrapper->getResults();
 }
 
+static PyObject *Py_ops_LadrunoSANISANDReplay(PyObject *self, PyObject *args)  // Ladruno WP-127
+{
+    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
+    if (OPS_LadrunoSANISANDReplay() < 0) { opserr<<(void*)0; return NULL; }
+    return wrapper->getResults();
+}
+
 static PyObject *Py_ops_LadrunoMutation(PyObject *self, PyObject *args)  // Ladruno ADR-87 D2 mutation query
 {
     wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
@@ -3376,6 +3383,7 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("ladrunoEndAugment", &Py_ops_LadrunoEndAugment);                // Ladruno ADR-41 D1
     addCommand("ladrunoBuild", &Py_ops_LadrunoBuild);                          // Ladruno build-stamp query
     addCommand("ladrunoThreads", &Py_ops_LadrunoThreads);                      // Ladruno WP-107 element-loop thread count
+    addCommand("ladrunoSANISANDReplay", &Py_ops_LadrunoSANISANDReplay);        // Ladruno WP-127
     addCommand("ladrunoMutation", &Py_ops_LadrunoMutation);                    // Ladruno ADR-87 D2 mutation-gate query
     addCommand("ladrunoContactForce", &Py_ops_LadrunoContactForce);  // Ladruno ADR-39 B3
     addCommand("eigen", &Py_ops_eigen);

@@ -111,6 +111,7 @@ class LadrunoCSTPair : public Element
     void Print(OPS_Stream &s, int flag = 0);
 
     Response *setResponse(const char **argv, int argc, OPS_Stream &s);
+    int setParameter(const char **argv, int argc, Parameter &param);   // Ladruno (WP-124 C3)
     int getResponse(int responseID, Information &eleInformation);
 
   protected:

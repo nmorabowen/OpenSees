@@ -1195,3 +1195,124 @@ Test-side companion: a module-level `skipif` probe so a build without the option
 skips with a reason instead of failing 10 times — biased to **RUN** on every
 ambiguous outcome, so the skip can never quietly un-gate the WP beyond the one gap
 recorded above. See [[107_ladruno_openmp_element_loop]] §3.1.
+
+### 14.5 RESOLVED — the "gcc segfault" was a LINK defect in this fork's `CMakeLists.txt`, not codegen; the default is now **ON** (WP-109, 2026-09-17)
+
+§14.4's residual — *"gcc's `-fopenmp` codegen/link turning the singular-mass
+failure path into a hard crash; needs a Linux ASAN/gdb work package"* — is closed
+by [WP-109](https://github.com/nmorabowen/OpenSees/pull/846). The singular-mass path was never involved beyond being the first
+place that run printed an `int` through `opserr` under Python. **The fix is two
+lines of CMake and one pinning test; nothing in `SRC/` changed.**
+
+**Reproduction — where it does and does not happen.** A fresh shallow clone on
+esmeralda (gcc 11.4, Ubuntu 22.04, apt-MKL LAPACK; Release + `-g` +
+`LADRUNO_OPENMP=ON`, and a second tree under `-fsanitize=address`) does **not**
+reproduce: the Tcl twin deck, a Python twin of `_run_massless`, and the real
+`test_adr30_projection_p0.py` all pass. The ubuntu-latest runner (gcc 13.3, glibc
+2.39, the bundled reference LAPACK, Python 3.11) reproduces on every run. So a
+`workflow_dispatch` debug workflow was put on the WP branch and the runner itself
+ran Zone-A under gdb ([run 35171085324](https://github.com/nmorabowen/OpenSees/actions/runs/35171085324)):
+
+```
+#0  std::codecvt<char16_t,char,__mbstate_t>::do_unshift(...) const   from tests/opensees.so
+#1  std::basic_ostream<char>::_M_insert<long>(long)                   from tests/opensees.so
+#2  PythonStream::err_out<int> (this=&sserr, err=0)                   SRC/interpreter/PythonStream.h:67
+#3  PythonStream::operator<< (this=&sserr, n=0)                       SRC/interpreter/PythonStream.cpp:48
+#4  DiagonalDirectSolver::solve                                       DiagonalDirectSolver.cpp:113   (opserr << i)
+#5  CentralDifferenceLadruno::newStep                                 CentralDifferenceLadruno.cpp:680 (starter solve)
+#6  DirectIntegrationAnalysis::analyzeStep / analyze
+#7  OPS_analyze -> Py_ops_analyze
+```
+
+`_M_insert<long>` asks the stream's locale for its `num_put<char>` facet and
+dispatches through whatever comes back; it got a `codecvt<char16_t>` facet, whose
+vtable at that slot is `do_unshift`. A wrong facet out of `std::locale` means the
+facet-id / facet-array bookkeeping is inconsistent, which happens when **two copies
+of libstdc++ are live in one process**. The tell is already in the trace: frames
+#0 and #1 are libstdc++ internals resolved *inside `opensees.so`*, not in
+`libstdc++.so.6`.
+
+**Root cause (build, not code).** The GNU branch of `CMakeLists.txt` sets
+`CMAKE_EXE_LINKER_FLAGS "-static-libgcc -static-libstdc++"` (the Tcl executable is
+meant to be self-contained). `FindOpenMP`'s probe is a `try_compile` of an
+*executable*, so the probe's verbose link line carries
+`-Bstatic -lstdc++ -Bdynamic … -lgomp -lpthread`; CMake's implicit-link parser
+records the static archive by path and, because the name it derives (`libstdc++`,
+with the prefix) is not in `CMAKE_CXX_IMPLICIT_LINK_LIBRARIES` (`stdc++;m;gcc_s;…`),
+keeps it as an OpenMP "implicit library". Measured in the cache:
+
+```
+OpenMP_CXX_LIB_NAMES:STRING=libstdc++;gomp;pthread
+OpenMP_libstdc++_LIBRARY:FILEPATH=/usr/lib/gcc/x86_64-linux-gnu/11/libstdc++.a
+OpenMP_pthread_LIBRARY:FILEPATH=/usr/lib/x86_64-linux-gnu/libpthread.a
+OpenMP_C_LIB_NAMES:STRING=gomp;pthread              <- the C probe, no C++ runtime, is clean
+```
+
+WP-107 then appended `${OpenMP_CXX_LIBRARIES}` to all five targets — including the
+**SHARED** `OpenSeesPy` / `OpenSeesPyMP` modules, which are meant to use, and still
+`DT_NEED`, `libstdc++.so.6`. Measured on esmeralda's OpenMP build: the module
+`DEFINES` **179** libstdc++ internals in its dynamic symbol table
+(`std::locale::classic`, `ios_base::Init`, every facet `id`, …) while `readelf -d`
+lists `libstdc++.so.6` as NEEDED; `LD_DEBUG=bindings` shows `std::num_put<char>::id`
+bound to **both** copies for different references. Which reference lands on which
+copy depends on which archive members the link pulled in and on load order, which is
+why gcc 13 / Ubuntu 24.04 crashes and gcc 11 / 22.04 happens to survive — a
+toolchain-flavoured symptom of one defect, not a compiler bug. The Tcl executable was
+never at risk: it is `-static-libstdc++` by design, one copy.
+
+**Fix (`CMakeLists.txt`, WP-109).**
+
+1. `find_package(OpenMP)` runs with `CMAKE_EXE_LINKER_FLAGS` temporarily cleared, so
+   the static-libstdc++ flag cannot leak into the probe's implicit-library scan. A
+   fresh configure now records `OpenMP_CXX_LIB_NAMES = gomp;pthread`.
+2. Independently — a pre-existing `CMakeCache.txt` still carries the bad list — the
+   targets link **`LADRUNO_OPENMP_LINK_LIBS`**, built from `OpenMP_CXX_LIBRARIES` by
+   keeping only the OpenMP runtime (`gomp` / `omp` / `iomp5`) and dropping the rest
+   with a `STATUS` line naming it (`libstdc++.a` and the empty-stub `libpthread.a`
+   on glibc ≥ 2.34). If a C++/pthread static runtime survives the filter, configure
+   `FATAL_ERROR`s. Nothing in the file may link `${OpenMP_CXX_LIBRARIES}` directly.
+3. `option(LADRUNO_OPENMP … ON)` — the flip §14.4 promised.
+
+**Pinned.** `tests/test_wp109_module_single_libstdcxx.py` (zone_a) parses the loaded
+module's ELF `.dynsym` with a pure-Python reader (no binutils, so it cannot skip for a
+missing tool) and fails if the module defines any `std::locale` / `std::ios_base` /
+`std::codecvt<char16_t|char32_t>` symbol, or does not `DT_NEED` `libstdc++.so.6`;
+PE modules skip with a reason. **Mutation gate measured:** red on the unfixed
+esmeralda module (179 leaked symbols), green after relink (0), with
+`test_adr30_projection_p0.py` 3/3 alongside. The runner then verified the fixed
+branch under the same gdb harness ([run 35172780503](https://github.com/nmorabowen/OpenSees/actions/runs/35172780503)), and
+`ladruno.yml` was dispatched on the branch so Zone-A ran with the WP-107 file
+**executing, not skipping**. Measured on ubuntu-latest (gcc 13.3), fixed branch:
+
+| gate | result |
+|---|---|
+| debug workflow, gdb job: whole collection under `gdb -batch` | **2562 passed, 124 skipped, 4 xfailed**, `exited normally` (run 35172780503) |
+| `ladruno.yml` Zone-A (Ubuntu), `pytest -m zone_a` | **2500 passed, 118 skipped, 69 deselected, 3 xfailed** (run 35173119941) |
+| `tests/test_wp107_threaded_update.py` on that Zone-A | **18 PASSED, 0 SKIPPED** (was 18 skipped under #843) |
+| `test_massless_dof_is_not_policeable_by_the_soe_layer` | PASSED (was exit 139) |
+| `tests/test_wp109_module_single_libstdcxx.py` | PASSED |
+| Tcl verification suite / LAPACK singular regression | 19 checks OK / all solvers reject |
+
+Against #843's green baseline (2481 passed, 136 skipped) that is +19 passed / −18
+skipped: the 18 WP-107 cases now execute, plus the one new pin.
+
+**ASAN, stated plainly.** The debug workflow's `-fsanitize=address -O1 -g` job never
+finished on the hosted runner — both attempts (unfixed and fixed branch) died with
+*"the runner has received a shutdown signal"* while compiling the ASDPlastic
+template set (at 92 % / 59 min), the signature of the 16 GB VM running out of memory
+under a sanitizer build at `-j8`. It was not pursued: the gdb frame plus the link-map
+facts are dispositive, and ASAN on esmeralda (gcc 11.4, unfixed module with 126
+leaked symbols) ran `test_adr30_projection_p0.py` 3/3 with no report. If a hosted
+ASAN build is ever wanted, build a single object library at a time or `-j2`.
+
+**What changes in §14.4's list.** Zone-A now gates WP-107 (its 18 cases run on gcc);
+the fork *can* be built with OpenMP on gcc; build.bat's explicit `-DLADRUNO_OPENMP=ON`
+/ `=OFF` stays (it is about stale caches, not the default). §3 P-1 is untouched: the
+runtime default is still 1 thread.
+
+**Transferable rule.** When `CMAKE_EXE_LINKER_FLAGS` carries any `-static-*`, every
+`find_package` that probes with an executable can return a *static system runtime* in
+its `_LIBRARIES` list; never append such a list to a `SHARED` target without
+inspecting it, and never let a shared Python module define libstdc++ symbols. The
+same trap is waiting for any future `find_package(MPI)` / `find_package(Threads)`
+list that reaches `OpenSeesPy`. BUILD_GOTCHAS §16 has the detection recipe.
