@@ -156,7 +156,8 @@ def element_table(x, y):
 GP_XI = ((-1, -1), (1, -1), (1, 1), (-1, 1))
 
 
-def build(mat, scheme, extra, maxsub, dp_phi, dp_g, deterministic, tolr=1.0e-7):
+def build(mat, scheme, extra, maxsub, dp_phi, dp_g, deterministic, tolr=1.0e-7,
+          tantype=0):
     x, y = mesh_coords()
     nx, ny = len(x), len(y)
 
@@ -172,7 +173,7 @@ def build(mat, scheme, extra, maxsub, dp_phi, dp_g, deterministic, tolr=1.0e-7):
     ops.node(REF, 0.0, 0.0, "-ndf", 3)
 
     if mat == "sanisand":
-        args = ["LadrunoSANISAND", MAT, *SAN, int(scheme), 0, 1, 1.0e-7, float(tolr),
+        args = ["LadrunoSANISAND", MAT, *SAN, int(scheme), int(tantype), 1, 1.0e-7, float(tolr),
                 "-flipAlphaIn", "init", "-Pmin", 0.0101,
                 "-maxSubsteps", int(maxsub), "-Presidual", 0.0,
                 "-honorTolR", 0, *extra]
@@ -517,6 +518,8 @@ def main(argv=None):
     ap.add_argument("--scheme", type=int, default=1)
     ap.add_argument("--extra", default="", help="extra material tokens, space separated")
     ap.add_argument("--maxsub", type=int, default=2000)
+    ap.add_argument("--tantype", type=int, default=0,
+                    help="positional TanType (0 = elastic Ce, the campaign's; 1 = continuum)")
     ap.add_argument("--tolr", type=float, default=1.0e-7,
                     help="positional TolR (IS the substep tolerance under IntScheme 129)")
     ap.add_argument("--dp-phi", type=float, default=38.0)
@@ -553,7 +556,7 @@ def main(argv=None):
     if san and args.scheme == 129:
         CENSUS = CENSUS_SAS
     deck = build(args.mat, args.scheme, extra, args.maxsub, args.dp_phi, args.dp_g,
-                 bool(args.deterministic), args.tolr)
+                 bool(args.deterministic), args.tolr, args.tantype)
     log(f"material: {deck['matdesc']}")
     log(f"mesh: {len(deck['tags'])} elements, {4*len(deck['tags'])} Gauss points, "
         f"solver {deck['solver']}, applied vertical load {deck['applied']:.3f} kN/m")
