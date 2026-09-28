@@ -77,8 +77,8 @@ residual inertia == `M_L a` node by node for an arbitrary acceleration field (ba
 the consistent coupling); Newton ≤ 3 iterations per Newmark step with and without αM (baseline: no convergence
 in 4); consistent mass unchanged (same row-sum total, nodes still coupled). 3 fail on the baseline, 4 pass after.
 
-**Mutation rows** (`wp139_brick_lumped/mutation_rows.py`): L1 (the pre-fix hybrid) → ROW_L1; L2 (the lumped
-residual reads the committed instead of the trial acceleration) → ROW_L2.
+**Mutation rows** (`wp139_brick_lumped/mutation_rows.py`): L1 (the pre-fix hybrid) → **caught** (3: the residual test and both Newton arms — exactly the baseline failures); L2 (the lumped
+residual reads the committed instead of the trial acceleration) → **caught** (2: both Newton arms; the residual test commits its accelerations, so trial == committed there — which is why the convergence test exists).
 
 ## Open questions (owner)
 
