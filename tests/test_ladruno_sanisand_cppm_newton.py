@@ -8,8 +8,11 @@ What is pinned here:
    incl. a huge-increment leg that drives the CPPM's halving ladder into its
    explicit fallback, the TIMs campaign set in plane strain incl. a reversal
    and a free-DOF global-Newton deck whose iteration counts are pinned too)
-   reproduce, bit for bit, what the PRE-WP-130 binary produced.  WP-127's
-   IntScheme-1 decks are pinned by its own test, unchanged.
+   reproduce, bit for bit, what the PRE-WP-130 binary produced (on win32, the
+   baselines' platform; elsewhere per entry, and the round-off-branching decks
+   structurally -- LEDGER_quirks "CPPM at low p and at strain reversals
+   branches on ROUND-OFF").  WP-127's IntScheme-1 decks are pinned by its own
+   test, unchanged.
 2. THE PARSER refuses every flag combination that would be inert or is not
    qualified (-implex).
 3. THE CENSUS: `substepStats` has 29 columns; at the defaults the vanilla
@@ -61,13 +64,26 @@ def _as_float(v):
     return v
 
 
-def _compare(got, ref, what):
-    """Exact on win32 (the baselines' platform); elsewhere the fork's 1e-6
-    cross-platform floor on floats (test_adr97_p4_inertness.py convention, as
-    WP-127: GCC/libm differ from MSVC in the last bits), non-float entries
-    (rc, Newton iteration counts) still exact."""
+# float groups of one snapshot row, after the leading ints (rc [, testIter]):
+# stress | strain | state | tangent, by the number of floats in the row
+_GROUPS = {41: (3, 3, 26, 9), 74: (6, 6, 26, 36)}
+# per-entry relative bound + a floor relative to the largest |ref| of the SAME
+# group in the SAME row (absorbs round-off zeros such as ~1e-16 shear terms).
+# Measured GCC/reflapack vs MSVC/MKL on the compared decks (WP-130 Linux
+# diagnosis): worst per-entry 1.3e-8, smallest margin under this bound 78x.
+_REL, _FLOOR = 1e-6, 1e-10
+
+
+def _compare(got, ref, what, windows_only=()):
+    """Bit-exact on win32 (the baselines' platform).  Elsewhere every float
+    obeys |a - b| <= 1e-6*max(|a|,|b|) + 1e-10*max|ref group in row|, ints (rc,
+    Newton iteration counts) stay exact -- except the `windows_only` decks,
+    whose path through the CPPM ladder is ROUND-OFF-SELECTED (LEDGER_quirks
+    "CPPM at low p and at reversals branches on round-off"): a one-ulp input
+    change reproduces the other platform's numbers, so off win32 they get a
+    structural check only (rows, rc per row, the census shows the ladder ran)."""
     assert sorted(got) == sorted(ref), what
-    # ci-coverage: partial -- runs everywhere at the 1e-6 cross-platform floor; bit equality to the MSVC baselines (and the sign-only tangent check below) is Windows-only (local-only until a Windows CI job exists, WP-143)
+    # ci-coverage: partial -- runs everywhere; bit equality to the MSVC baselines, the round-off-branching decks' numbers (ls_ps_s2_cyc, ls_ps_s2_free, ls_ps_s2_free50 where listed) and the sign-only tangent check below are Windows-only (local-only until a Windows CI job exists, WP-143)
     for name in ref:
         assert len(got[name]) == len(ref[name]), (what, name)
         if sys.platform == "win32":
@@ -75,20 +91,30 @@ def _compare(got, ref, what):
                 assert a == b, f"{what}: deck {name} row {k}: first differing entry " \
                     f"{next(i for i, (x, y) in enumerate(zip(a, b)) if x != y)}"
             continue
-        scale = max((abs(_as_float(x)) for row in ref[name] for x in row
-                     if isinstance(_as_float(x), float)
-                     and math.isfinite(_as_float(x))), default=1.0)
-        tol = 1e-6 * max(scale, 1.0)
+        if name in windows_only:
+            assert [r[0] for r in got[name]] == [r[0] for r in ref[name]], (what, name, "rc")
+            c = b130.CENSUS.get(name)
+            assert c is not None and c[0] > 0 and c[1] > 0 and c[2] > 0, (
+                what, name, "the CPPM ladder did not run", c)
+            continue
         for k, (a, b) in enumerate(zip(got[name], ref[name])):
             assert len(a) == len(b), f"{what}: deck {name} row {k}: length"
-            for i, (x, y) in enumerate(zip(a, b)):
-                fx, fy = _as_float(x), _as_float(y)
-                if isinstance(fx, float) and isinstance(fy, float):
-                    assert abs(fx - fy) <= tol or (fx != fx and fy != fy), (
-                        f"{what}: deck {name} row {k} entry {i}: {fx!r} vs {fy!r} beyond "
-                        f"the 1e-6 cross-platform floor ({tol:.3e}) on {sys.platform}")
-                else:
-                    assert fx == fy, f"{what}: deck {name} row {k} entry {i}: {x!r} vs {y!r}"
+            nint = sum(1 for x in b if not isinstance(_as_float(x), float))
+            fa = [_as_float(x) for x in a[nint:]]
+            fb = [_as_float(x) for x in b[nint:]]
+            assert a[:nint] == b[:nint], f"{what}: deck {name} row {k}: ints {a[:nint]} vs {b[:nint]}"
+            bounds, i0 = [], 0
+            for n in _GROUPS.get(len(fb), (len(fb),)):
+                g = max((abs(y) for y in fb[i0:i0 + n] if math.isfinite(y)), default=0.0)
+                bounds += [_FLOOR * g] * n
+                i0 += n
+            for i, (fx, fy, flo) in enumerate(zip(fa, fb, bounds)):
+                if fx != fx and fy != fy:
+                    continue
+                tol = _REL * max(abs(fx), abs(fy)) + flo
+                assert abs(fx - fy) <= tol, (
+                    f"{what}: deck {name} row {k} float {i}: {fx!r} vs {fy!r} beyond "
+                    f"{tol:.3e} (1e-6 rel + 1e-10 of its group) on {sys.platform}")
 
 
 def test_optout_reproduces_the_pre_wp130_binary():
@@ -97,7 +123,11 @@ def test_optout_reproduces_the_pre_wp130_binary():
     stack-local LU, the de-static NewtonIter and the census move nothing."""
     with open(b130.BASELINE) as fh:
         ref = json.load(fh)["decks"]
-    _compare(b130.run_all(("-cppmTangent", "vanilla")), ref, "opt-out vs pre-WP-130")
+    # the opt-out (wrong-sign) tangent makes the free decks' global Newton wander
+    # too: their iteration counts differ GCC vs MSVC (9 vs 8, 31 vs 18) -- the
+    # pre-WP-130 source built on Linux is bit-identical to this opt-out there
+    _compare(b130.run_all(("-cppmTangent", "vanilla")), ref, "opt-out vs pre-WP-130",
+             windows_only=("ls_ps_s2_cyc", "ls_ps_s2_free", "ls_ps_s2_free50"))
 
 
 def test_default_fixed_tangent_regression_pin():
@@ -123,7 +153,9 @@ def test_default_fixed_tangent_regression_pin():
     with open(b130.BASELINE) as fh:
         ref_pre = json.load(fh)["decks"]
     got = b130.run_all()
-    _compare(got, ref_fixed, "default vs fixed baseline")
+    # the fixed-tangent free decks are platform-stable (rc and iteration counts
+    # match GCC vs MSVC); the reversal deck branches on round-off at row 15
+    _compare(got, ref_fixed, "default vs fixed baseline", windows_only=("ls_ps_s2_cyc",))
     if sys.platform != "win32":
         return
     assert got["md3d_s2"] == ref_pre["md3d_s2"]
@@ -581,10 +613,16 @@ def test_cppm_halvings_bound_the_ladder(h):
     """`-cppmHalvings h` (1..8): per top-level CPPM call at most 2^(h+1) - 2
     half-increment solves, i.e. the ladder is exactly h levels deep; a refused
     update went all the way down."""
-    rc, wall, s = _free_push(("-cppmOnFail", "refuse", "-cppmHalvings", h))
-    assert s[CPPM_HALV] <= s[CPPM_CALLS] * (2 ** (h + 1) - 2), (h, s[CPPM_HALV], s[CPPM_CALLS])
-    assert rc < 0 and s[CPPM_REF] >= 1, (rc, s)
-    assert s[CPPM_HALV] >= h, (h, s[CPPM_HALV])
+    rc, wall, _ = _free_push(("-cppmOnFail", "refuse", "-cppmHalvings", h))
+    # all four GPs: the quad is homogeneous, so WHICH of them refuses is
+    # round-off-selected (all 4 on MSVC; GP 2-4, 3-4 or only 3 on GCC)
+    per_gp = [_stats(1, gp) for gp in range(1, 5)]
+    for gp, s in enumerate(per_gp, 1):
+        assert s[CPPM_HALV] <= s[CPPM_CALLS] * (2 ** (h + 1) - 2), (h, gp, s[CPPM_HALV], s[CPPM_CALLS])
+    refusing = [s for s in per_gp if s[CPPM_REF] >= 1]
+    assert rc < 0 and refusing, (rc, [s[CPPM_REF] for s in per_gp])
+    for s in refusing:
+        assert s[CPPM_HALV] >= h, (h, s[CPPM_HALV])
 
 
 def test_guess_and_line_search_actually_act():

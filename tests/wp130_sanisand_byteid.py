@@ -195,13 +195,41 @@ DECKS = {
 }
 
 
+# Filled by run_all: per deck, element 1's CPPM census (substepStats columns
+# 17..21 = calls, local-Newton failures, halvings, explicit, low-p) SUMMED over
+# its Gauss points, or None where the material has no substepStats (vanilla
+# ManzariDafalias).  Which Gauss point of a homogeneous element takes which
+# local route is round-off-selected, so only the sum is platform-stable.
+CENSUS = {}
+_CENSUS_COLS = slice(17, 22)
+
+
+def _census(n_gp):
+    tot = None
+    for gp in range(1, n_gp + 1):
+        try:
+            s = list(ops.eleResponse(1, "material", gp, "substepStats"))
+        except Exception:
+            return None
+        if len(s) < _CENSUS_COLS.stop:
+            return None
+        c = s[_CENSUS_COLS]
+        tot = c if tot is None else [a + b for a, b in zip(tot, c)]
+    return tot
+
+
 def run_all(ls_extra=()):
     """Every deck; `ls_extra` is appended to every LadrunoSANISAND command
-    (the vanilla ManzariDafalias deck ignores it)."""
+    (the vanilla ManzariDafalias deck ignores it).  Also fills CENSUS."""
     global LS_EXTRA
     LS_EXTRA = tuple(ls_extra)
+    CENSUS.clear()
     try:
-        return {name: fn() for name, fn in DECKS.items()}
+        out = {}
+        for name, fn in DECKS.items():
+            out[name] = fn()
+            CENSUS[name] = _census(4 if name.startswith("ls_ps") else 8)
+        return out
     finally:
         LS_EXTRA = ()
 
