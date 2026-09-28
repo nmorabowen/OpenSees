@@ -43,7 +43,7 @@ def gmax(e):
     return np.sqrt((e[:, 0] - e[:, 1]) ** 2 + e[:, 2] ** 2)
 
 
-def band_geometry(f0, f1):
+def band_geometry(f0, f1, hnom=float('nan')):
     a, b = np.load(f0, allow_pickle=True), np.load(f1, allow_pickle=True)
     dg = gmax(b["eps"] - a["eps"])
     x, y = b["gx"], b["gy"]
@@ -52,10 +52,17 @@ def band_geometry(f0, f1):
     dy = np.median(np.diff(ys)) if len(ys) > 1 else 0.1
     xs = np.unique(np.round(x[fine], 3))
     cx = np.median(np.diff(xs)) if len(xs) > 1 else 0.1
+    hn = hnom if hnom == hnom else 0.19
+    scattered = len(ys) > 3 * (2 * 2.3 / hn)          # far more distinct GP rows than 2 per element row: jitter
+    if scattered:
+        dy, cx = 0.5 * hn, 0.5 * hn
     out = []
     for y0 in np.arange(-0.2, -2.3, -0.25):
         dmin = float(np.min(np.abs(ys - y0)))
-        m = fine & (np.abs(y - y0) <= dmin + 0.25 * dy + 1e-9)     # the nearest GP row (a band of rows on jitter)
+        half = dmin + 0.25 * dy + 1e-9                               # the nearest GP row (regular meshes)
+        if scattered:
+            half = 0.3 * hn                                          # a band of rows on jittered meshes
+        m = fine & (np.abs(y - y0) <= half)
         if m.sum() < 5:
             continue
         xx, gg = x[m], dg[m]
@@ -100,6 +107,9 @@ def main():
     ap.add_argument("--sb", default="0.002,0.005,0.01,0.02,0.03,0.05,0.075,0.10,0.15")
     ap.add_argument("--h", default="", help="label=h pairs for w2/h, e.g. b4=0.375,b8=0.1875")
     ap.add_argument("--png", default="")
+    ap.add_argument("--at", type=float, default=float("nan"),
+                    help="measure the band over the checkpoint pair ending nearest this s/B (default: each leg's last pair)")
+    ap.add_argument("--back", type=int, default=1, help="how many saved checkpoints back the interval starts")
     a = ap.parse_args()
     legs = dict(l.split("=", 1) for l in a.legs)
     hmap = dict((k, float(v)) for k, v in (p.split("=") for p in a.h.split(",") if p)) if a.h else {}
@@ -136,11 +146,23 @@ def main():
     print("|---|---|---|---|---|---|---|")
     paths = {}
     for k, d in legs.items():
-        fs = ckpts(d)
+        fs = [f for f in ckpts(d) if "last_converged" not in f]
         if len(fs) < 2:
-            print(f"| {k} | no checkpoint pair | | | | |")
+            print(f"| {k} | no checkpoint pair | | | | | |")
             continue
-        out, incl, s1, s0 = band_geometry(fs[-2], fs[-1])
+        i1 = len(fs) - 1
+        if a.at == a.at:
+            sbs = dict(zip(*[[int(v) for v in np.loadtxt(os.path.join(d, "steps.csv"), delimiter=",", skiprows=1,
+                                                           usecols=0, ndmin=1)],
+                              list(np.loadtxt(os.path.join(d, "steps.csv"), delimiter=",", skiprows=1, usecols=2, ndmin=1))]))
+            stp = [int(re.search(r"step(\d+)", f).group(1)) for f in fs]
+            cand = [(abs(sbs.get(t, 9.9) - a.at), i) for i, t in enumerate(stp) if t in sbs]
+            i1 = min(cand)[1] if cand else i1
+        i0 = max(0, i1 - a.back)
+        if i0 == i1:
+            print(f"| {k} | no checkpoint pair near s/B {a.at} | | | | | |")
+            continue
+        out, incl, s1, s0 = band_geometry(fs[i0], fs[i1], hmap.get(k, float('nan')))
         paths[k] = out
         pick = {round(o["y"], 2): o["x_band"] for o in out}
         xb = " / ".join(f"{pick.get(v, float('nan')):.2f}" for v in (-0.2, -1.2, -2.2))

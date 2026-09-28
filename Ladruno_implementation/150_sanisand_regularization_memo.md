@@ -673,6 +673,61 @@ It is a gravel near its CSL (ψ0 −0.03 to −0.09), not a dense sand.
 
 ---
 
+## 13. R2 first read (mid-run pull, 2026-09-28 20:52; campaign set, WP-151 build, R1 = full set)
+
+The legs all use E_B settings:
+- R1_EB_fhc (B/8), R1_EB16_fhc (B/16, partial to s/B 0.010), R2_b4_fhc (B/4, to 0.115);
+- R2_b8shear15_fhc, R2_b8jit01_fhc;
+- C080_EB_off (c = 0.80, R1 OFF).
+
+Baselines are E_B and E_B16 (R1 OFF). Tool: `r2_analysis.py --at <s/B> --back 2`, which measures bands over matched
+checkpoint intervals. Outputs: `out_r2_pull1_at009.md` and `out_r2_pull1_bands.md`.
+
+**1. R1 acceptance holds on the footing.**
+- R1 B/8 vs E_B: ±0.01 % to s/B 0.01, and +0.17 / −0.22 % at 0.02 / 0.03 (the orchestrator's matched-s/B deltas).
+- There has been **no loadingNonPosH on any leg**, including C080 past E_B's onset (0.0363).
+
+**2. q–s is not converging in h once the bands form.**
+
+| s/B | 0.002 | 0.005 | 0.008 | 0.010 | 0.015 | 0.020 | 0.030 |
+|---|---|---|---|---|---|---|---|
+| B/4 → B/8 | −1.6 % | −1.4 % | −2.0 % | −2.4 % | −5.9 % | −9.1 % | −11.5 % |
+| B/8 → B/16 | −0.6 % | −0.3 % | −0.8 % | −3.6 % | — | — | — |
+| ratio | 0.35 | 0.23 | 0.40 | **1.48** | | | |
+
+- The gaps contract (ratio 0.23–0.40) until the non-associated bands form (~s/B 0.01, §2).
+- After that they grow: B/8 is 11.5 % softer than B/4 by 0.03, and B/16 was already softer than B/8 at 0.010.
+
+**3. The band is ONE ELEMENT wide at every mesh** (FWHM/h at s/B 0.03: B/4 1.02, B/8 1.03, B/16 1.12 at 0.010,
+jitter 1.02, c 0.80 1.02). So the width is ∝ h (0.38 / 0.19 / 0.10 m), as expected for an ill-posed problem. The
+physical band (4–10 mm) is sub-grid regardless (D-d).
+
+**4. The band follows the mesh (the physics criterion of §4 R2 FAILS).**
+- **Aligned meshes (B/4, B/8, B/16, c 0.80):** a vertical band (−1.7 to 0°) on the first element column outside the
+  footing edge.
+- **shear:15:** from y = −0.95 to −2.2 m the band sits on ONE original mesh column (x₀ = 0.977, the second element
+  column outside the edge). Its x traces that column's bow exactly: 1.068 → 1.070 → 1.060 → 1.039 → 1.019 → 0.982.
+  Near the surface it hops between columns.
+- **jitter:0.1:** a vertical band, one element wide, shifted one GP column outward at depth.
+- **The load follows the path.** At s/B 0.03, on the same element size, q is +10.3 % on shear:15 and +4.0 % on
+  jitter against the aligned B/8. Mesh orientation alone opens a 4–10 % spread.
+
+**5. c = 0.80 (R1 OFF):** the same vertical one-element band, and q +4.8 → +12.9 % (a higher M_e by construction).
+This is consistent with §2.3: the bands are compression-side non-associated localization, and c does not drive them.
+
+**Reading for the decision procedure (§9.1).**
+- After s/B ≈ 0.01 the unregularized campaign-set footing, with R1 on, is mesh-dependent in size (≥ 11 % and growing)
+  and in orientation (4–10 %), and its band path is set by the mesh.
+- Whether that exceeds half the test scatter (D-b) still needs the scatter number. On any tolerance below ~20 % it
+  does, so **R3 is indicated for the campaign set.**
+- **The decision should be taken on the REFERENCE sand (Gate 1), not on the campaign set.** The campaign set's
+  near-zero dilatancy (§10) maximizes the non-associativity that drives the bands. Toyoura dilates ~20× more, so its
+  hardening-regime ellipticity loss may start later, or be milder.
+- Recommended Gate 1 legs: B/8, B/16 and B/8 shear:15, with R1 ON, run the same way. The R3 decision follows from their
+  spread and paths.
+
+---
+
 ## References
 
 - Dafalias, Y. F. & Manzari, M. T. (2004). Simple plasticity sand model accounting for fabric change effects. *J. Eng.
