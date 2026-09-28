@@ -21,6 +21,18 @@
 #include <Parameter.h>
 #include <string.h>
 #include <elementAPI.h>
+#include <LadrunoMaterialStatus.h>  // Ladruno WP-135
+// Ladruno WP-135: bound the substep count. setSubStrainRate() sized its loop as
+// Ladruno WP-135: |d eps|/unit with no cap and an int conversion (undefined past
+// Ladruno WP-135: INT_MAX); one wild Newton iterate (|d eps| ~ 1e4) asked for ~1e9
+// Ladruno WP-135: substeps and analyze() never returned. Same expressions as
+// Ladruno WP-135: numOfSub1/numOfSub2, so below the cap nothing changes.
+static const double ladrunoPdmyMaxSubIncre = 1.0e5;  // Ladruno WP-135
+static bool ladrunoPdmyTooManySubIncre(const T2Vector &rate)  // Ladruno WP-135
+{  // Ladruno WP-135
+  return rate.octahedralShear(1) / 1.0e-5 > ladrunoPdmyMaxSubIncre  // Ladruno WP-135
+      || rate.volume() / 1.e-5 > ladrunoPdmyMaxSubIncre;  // Ladruno WP-135
+}  // Ladruno WP-135
 
 int PressureDependMultiYield03::matCount=0;
 int* PressureDependMultiYield03::loadStagex = 0;  //=0 if elastic; =1 if plastic
@@ -661,6 +673,11 @@ int PressureDependMultiYield03::setTrialStrain (const Vector &strain)
   workV6 -= currentStrain.t2Vector(1);
   strainRate.setData(workV6, 1);
 
+  if (loadStagex[matN] == 1 && ladrunoPdmyTooManySubIncre(strainRate)) {  // Ladruno WP-135
+    opserr << "WARNING PressureDependMultiYield03::setTrialStrain - trial strain increment needs more than "  // Ladruno WP-135
+           << ladrunoPdmyMaxSubIncre << " substeps; refusing it (cut the step)\n";  // Ladruno WP-135
+    return LADRUNO_MATERIAL_REFUSED;  // Ladruno WP-135
+  }  // Ladruno WP-135
   return 0;
 }
 
@@ -693,6 +710,11 @@ int PressureDependMultiYield03::setTrialStrainIncr (const Vector &strain)
   }
 
   strainRate.setData(workV6,1);
+  if (loadStagex[matN] == 1 && ladrunoPdmyTooManySubIncre(strainRate)) {  // Ladruno WP-135
+    opserr << "WARNING PressureDependMultiYield03::setTrialStrainIncr - trial strain increment needs more than "  // Ladruno WP-135
+           << ladrunoPdmyMaxSubIncre << " substeps; refusing it (cut the step)\n";  // Ladruno WP-135
+    return LADRUNO_MATERIAL_REFUSED;  // Ladruno WP-135
+  }  // Ladruno WP-135
   return 0;
 }
 
@@ -2213,6 +2235,12 @@ int PressureDependMultiYield03::setSubStrainRate(void)
   int numOfSub = totalCross/singleCross + 1;
   if (numOfSub > numOfSurfaces) numOfSub = numOfSurfaces;
 
+  if (ladrunoPdmyTooManySubIncre(strainRate)) {  // Ladruno WP-135: bound the loop; a host
+    numOfSub = (int)ladrunoPdmyMaxSubIncre;  // Ladruno WP-135: that swallows the refusal
+    workV6.addVector(0.0, strainRate.t2Vector(), 1.0/numOfSub);  // Ladruno WP-135: still
+    subStrainRate.setData(workV6);  // Ladruno WP-135: reaches getStress()
+    return numOfSub;  // Ladruno WP-135
+  }  // Ladruno WP-135
   int numOfSub1 = strainRate.octahedralShear(1) / 1.0e-5;
   int numOfSub2 = strainRate.volume() / 1.e-5;
   if (numOfSub1 > numOfSub) numOfSub = numOfSub1;
