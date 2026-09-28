@@ -46,6 +46,14 @@ before — but don't rely on that: branch on the target when you generate the de
 
 A build without MKL simply does not register the verb; fall back to `UmfPack`.
 
+**Linux:** a default Linux build (Zone-A CI, a plain esmeralda build) has **no**
+`system Pardiso`; the serial binary warns and the command fails. It is an
+opt-in at configure time, `-DLADRUNO_MKL_PARDISO_LINUX=ON` (plus
+`-DLADRUNO_MKL_PARDISO_LINUX_THREADED=ON` for the threaded layer); the proven
+esmeralda recipe is in `Ladruno_internal/02_esmeralda_linux_build_guide.md` §8.
+Measured there on the cluster-bench tower deck (nlev=20, one core): UmfPack
+30.1 s, Pardiso 1.7 s, same floor displacements.
+
 ---
 
 ## 2. Options
@@ -230,10 +238,13 @@ On an Intel CPU, where MKL reports the branch AUTO resolved to, it is shown as
   in the same interpreter, and this command has no way to turn it off. MKL
   refuses to set it (`MKL_CBWR_ERR_MODE_CHANGE_FAILURE`) once its BLAS/LAPACK
   dispatch has started in the process. Measured: an `eigen` solve before
-  `system Pardiso -deterministic` triggers the refusal. An earlier PARDISO solve
-  does not. If you see that warning, set the environment variable before the
-  process starts:
-  `set MKL_CBWR=AUTO` (or the branch). A bare `-deterministic` keeps a branch
+  `system Pardiso -deterministic` triggers the refusal. On Windows an earlier
+  PARDISO solve does not. **On Linux it does**, and so does an earlier UmfPack
+  solve (UMFPACK calls MKL's BLAS there), so on Linux `-deterministic` must
+  come before the first solve of the process, or use the environment variable.
+  If you see that warning, set the environment variable before the process
+  starts:
+  `set MKL_CBWR=AUTO` (or the branch; `export MKL_CBWR=AUTO` on Linux). A bare `-deterministic` keeps a branch
   already fixed by `MKL_CBWR`, so the launcher line stays in charge. Tcl stops
   on a refused mode. Python warns and continues, and the first-solve notice
   then says `CNR NOT ACTIVE`.
