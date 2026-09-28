@@ -2,7 +2,7 @@
 title: "WP-150 — Regularizing SANISAND on the TIMs strip footing: two mechanisms, and a staged design"
 project: Ladruno
 type: design memo
-status: "PROPOSED — research only, NO code. Awaiting orchestrator/owner agreement; R1 also needs TIMs (it is a model option)."
+status: "OWNER DECIDED 2026-09-28: D-a YES (R1 opt-in, oracle-first); D-b/c/d by measurement against physical evidence (§9.1). R1 in progress; R2/R3 not started."
 owner: nmora
 related:
   - "[[90_ladruno_viscoplastic_regularization_adr]]"
@@ -326,22 +326,62 @@ MKL_CBWR COMPATIBLE).
 | T2 | R1 | E_B and E_B16 with c_A = 1, plus c_A ∈ {½, 2} on B/8 | past 0.0508 / 0.0135, no singular-set refusal, q within the solver floor across c_A |
 | T3 | R2 | B/4, B/8, B/16 and skewed B/8, to s/B 0.15 | the decision rule of §4 R2; acoustic census; w₂; band paths |
 | T4 | R3 | τ ∈ {τ/2, τ, 2τ} × {B/4, B/8, B/16}, ds ≤ 2τ, plus one leg at ds_max/2 | C8 elliptic; h-contraction at fixed τ; Δt-convergence; bias reported |
+| T5 | physics, element | plane-strain and triaxial element tests of the campaign set at p′ ∈ {10, 50, 150, 500} kPa, R1 on and off | φ′_peak, the strain at peak and the dilatancy against Bolton (1986) and TIMs' lab data |
+| T6 | physics, footing | the T3 curves against the dense-sand footing evidence (§9.1 step 4) | q_u / N_γ, s/B at peak and rupture pattern inside the published ranges; mesh spread against test scatter (D-b) |
 
 **The pass criterion TIMs asked for** (mesh-independent q–s past s/B 0.05 at B/8 and B/16, and B/4) is T3 if R2
 suffices, and T4 otherwise.
 
 ---
 
-## 9. Decisions requested
+## 9. Decisions — owner, 2026-09-28 (relayed by the TIMs orchestrator)
 
-- **D-a** (owner and TIMs): adopt R1 as an **opt-in DM04 variant**, and decide whether a_min is tied to m (proposed) or free.
-- **D-b** (TIMs, ADR-90 OQ2): the matched-settlement tolerance that decides between R2's "disclose" and R3.
-- **D-c** (owner): where the stages live.
-  - R1 as an **ADR-86 follow-up WP**: a SANISAND model option, no class tag.
-  - R3 as a **revision of ADR-90**: retire the wrapper, re-cast WP-F from "Duvaut–Lions in-model" to "Perzyna
-    in-model". 33022 stays reserved and unused, because R3 is not a wrapper.
-  - No new ADR number.
-- **D-d** (TIMs): is band **width** a deliverable? If not, Cosserat and gradient stay closed.
+- **D-a: YES.** R1 is an opt-in DM04 variant, default OFF, and it is built **oracle-first**: the WP-134 reference
+  integrator with the cap comes before any C++. a_min is tied to m, as proposed (§5).
+- **D-b, D-c, D-d: "measure and decide; physics and real-world behaviour is the judge."** No tolerance, ADR filing or
+  width deliverable is fixed up front. §9.1 is the procedure that decides them.
+
+### 9.1 The decision procedure
+
+Each step ends in a number, and each open decision is settled by the numbers of the steps before it.
+
+1. **R1, oracle first** (T1, T2).
+   - The WP-134 oracle suite runs with the cap. The 1950/3 shear row must now integrate *through* the former 0/0.
+   - Then the C++, then E_B and E_B16 with c_A = 1 past their walls.
+2. **The material against the sand's own physics** (T5).
+   - Element tests at the footing's stress range (p′ ≈ 10–500 kPa), in plane strain and triaxial: φ′_peak(ψ), the
+     strain at peak, and the dilatancy.
+   - Checks: the Bolton (1986) relation φ′_peak − φ′_cs ≈ 5·I_R in plane strain, and TIMs' lab data if they have it.
+   - The footing cannot be more right than its element. The campaign set already gives q = 967 kPa at s/B 0.05 and
+     still rising, against DP's 824 and PDMY's 418. This step says which one is physical.
+3. **R2, the footing mesh study with R1 ON** (T3): B/4, B/8, B/16 and a skewed B/8, to s/B 0.15.
+4. **The footing against real footings** (T6).
+   - The benchmark numbers:
+     - q_u or N_γ, compared with the dense-sand evidence for relative density and stress level: Perkins & Madson
+       2000; Loukidis & Salgado 2011; Lau & Bolton 2011; De Beer's and Tatsuoka's scale effect;
+     - s/B at peak: dense sand in general shear typically peaks at a few percent of B and punches beyond ~10 % in loose
+       sand (Vesić 1973). The range is re-read from the sources at this step;
+     - the rupture pattern: a wedge plus radial shear zone, versus the present straight vertical bands.
+   - Check each band path against the skewed mesh (§2.1) before comparing it with the physical mechanism.
+5. **D-d, band width, decided by scale.**
+   - Rule: if 20·d50 is below one third of the finest element, a mesh-converged band width is **not a meaningful
+     deliverable** and Cosserat or gradient stays closed. For typical sands (d50 ≈ 0.2–0.5 mm), the band is 4–10 mm
+     against h = 94–188 mm.
+   - TIMs supply d50. The rule does not depend on the answer unless the sand is gravel.
+6. **D-b, the tolerance, decided by test scatter.**
+   - The tolerance is the scatter of comparable footing tests at matched s/B (repeat tests, or N_γ scatter at the same
+     D_r), taken from the step-4 sources.
+   - If the step-3 spread (B/4, B/8, B/16, extrapolated) is **below half that scatter**, the answer is disclose; R2 is
+     the result.
+   - If it is above, **R3** is built, and the same test decides it: its τ-bias must also sit inside the scatter.
+7. **D-c, the filing, decided last.**
+   - R1 alone suffices → an **ADR-86 follow-up** (model option, no class tag).
+   - R3 needed → **ADR-90 revision** (retire the wrapper; WP-F becomes in-model Perzyna; 33022 stays reserved unused).
+   - Either way, no new ADR number unless step 4 shows the model itself is the problem. If it does, the answer is the
+     survey's NorSand-BA track (WP-144), not a regularizer.
+
+**Inputs owed by TIMs:** the sand's grading (d50), the target D_r, and any triaxial or plane-strain data. Also any
+footing test they consider the reference.
 
 ---
 
@@ -377,5 +417,15 @@ suffices, and T4 otherwise.
   327–334.
 - Siddiquee, M. S. A., Tanaka, T., Tatsuoka, F., Tani, K. & Morimoto, T. (1999). FEM simulation of scale effect in
   bearing capacity of strip footing on sand. *Soils Found.* 39(4), 91–109.
+- Bolton, M. D. (1986). The strength and dilatancy of sands. *Géotechnique* 36(1), 65–78.
+- Vesić, A. S. (1973). Analysis of ultimate loads of shallow foundations. *JSMFD* 99(SM1), 45–73.
+- Perkins, S. W. & Madson, C. R. (2000). Bearing capacity of shallow foundations on sand: a relative density
+  approach. *JGGE* 126(6), 521–530.
+- Loukidis, D. & Salgado, R. (2011). Effect of relative density and stress level on the bearing capacity of footings
+  on sand. *Géotechnique* 61(2), 107–119.
+- Lau, C. K. & Bolton, M. D. (2011). The bearing capacity of footings on granular soils. I: Numerical analysis; II:
+  Experimental evidence. *Géotechnique* 61(8), 627–638 and 639–650.
+- Tatsuoka, F., Okahara, M., Tanaka, T., Tani, K., Morimoto, T. & Siddiquee, M. S. A. (1991). Progressive failure
+  and particle size effect in bearing capacity of a footing on sand. *ASCE GSP* 27, 788–802.
 - Wang, W. M., Sluys, L. J. & de Borst, R. (1997). Viscoplasticity for instabilities due to strain softening and
   strain-rate softening. *IJNME* 40, 3839–3864. The consistency-viscoplasticity alternative to Perzyna.
