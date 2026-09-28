@@ -477,6 +477,53 @@ D_r ≈ 0.83 with e_max 0.977 and e_min 0.597. That matches the D_r the campaign
 
 ---
 
+## 11. T6 target bands (assembled; the physics answer waits on TIMs' φ′)
+
+`t6_capacity_bands.py` → `out_t6_capacity.md`. The classical capacity of THIS deck (γ′ 9.81, B 1.5 m, surcharge
+7.65 kPa) is q_u = ½·γ′·B·N_γ + q·N_q.
+- N_γ: the exact rough-strip values by characteristics (Martin 2005, reproduced by Han et al. 2016, Table 2), used
+  only at the four sourced angles and log-interpolated between them.
+- N_q: exact (Prandtl–Reissner).
+
+| φ′ ° | N_γ | N_q | q_u kPa | source |
+|---|---|---|---|---|
+| 30 | 14.8 | 18.4 | 250 | Martin |
+| 33 | 24.6 | 26.1 | 381 | interp. |
+| 35 | 34.5 | 33.3 | 509 | Martin |
+| 38 | 59.5 | 48.9 | 812 | interp. |
+| 40 | 85.6 | 64.2 | 1 121 | Martin |
+| 42 | 128.0 | 85.4 | 1 595 | interp. |
+| 45 | 234.0 | 134.9 | 2 753 | Martin |
+
+**The three controls against their own cones.** This is a check on the FE, not on the physics:
+
+| control | FE result | classical q_u for its own φ′ | reading |
+|---|---|---|---|
+| PDMY01 33° (TIMs) | 417.6 kPa at s/B 0.116 | 381 kPa | +10 % |
+| DP 38°, ψ = 0 (WP-138 control) | oscillating plateau ~700–820 kPa, s/B 0.06–0.15 | 812 kPa | at or below the associated value, as Martin predicts for ψ < φ |
+| SANISAND (campaign set) | 967 kPa at s/B 0.05, rising | its own element φ′_ps,peak at the footing's p′ ≈ 50–150 kPa is 51–55° (T5), so q_u ≥ 2 753 kPa (the 45° value) | the footing has mobilized ~⅓ of its classical capacity; the late element peak (4–16 %) predicts exactly that |
+
+So each curve is consistent with its constitutive strength. **"Which curve is physical" is the same question as
+"what is TIMs' sand's operative φ′".**
+
+**The physical target bands for T6, once TIMs supply the sand data:**
+- **Capacity:** q_u(φ′_op) from the table.
+  - φ′_op lies between φ′_cs,ps and φ′_ps,peak at the footing's mean stress level: progressive failure and stress
+    level (Lau & Bolton 2011; Perkins & Madson 2000; Loukidis & Salgado 2011).
+  - So the band is [q_u(φ′_cs,ps), q_u(φ′_ps,peak at p′_mean)], from TIMs' lab φ′.
+- **Settlement at peak:**
+  - dense sand in general shear develops the full mechanism at s/B ≈ 6–8 % (the closure to *Effect of relative
+    density and particle morphology on the bearing capacity and collapse mechanism of strip footings in sand*, JGGE
+    150(8), doi:10.1061/JGGEFK.GTENG-12726);
+  - Vesić: general shear above D_r ≈ 70 %, and take q at s/B = 10 % when no clear peak forms.
+- **Failure mode:** a peak and a general-shear mechanism (a wedge plus a radial zone reaching the surface) for dense
+  sand. The present straight vertical bands are to be re-judged on the shear:15 leg first.
+- **Band thickness:** 10–20·d50, i.e. sub-grid. D-d is expected to close as "not a deliverable" (§9.1 step 5).
+- **D-b (the tolerance):** the scatter of measured N_γ at matched φ′ and D_r, to be read from the Perkins & Madson and
+  Lau & Bolton data compilations. **Not yet extracted.** No number is claimed here.
+
+---
+
 ## References
 
 - Dafalias, Y. F. & Manzari, M. T. (2004). Simple plasticity sand model accounting for fabric change effects. *J. Eng.
@@ -519,5 +566,7 @@ D_r ≈ 0.83 with e_max 0.977 and e_min 0.597. That matches the D_r the campaign
   Experimental evidence. *Géotechnique* 61(8), 627–638 and 639–650.
 - Tatsuoka, F., Okahara, M., Tanaka, T., Tani, K., Morimoto, T. & Siddiquee, M. S. A. (1991). Progressive failure
   and particle size effect in bearing capacity of a footing on sand. *ASCE GSP* 27, 788–802.
+- Martin, C. M. (2005). Exact bearing capacity calculations using the method of characteristics. *Proc. 11th IACMAG*, Turin, 4, 441–450.
+- Han, D., Xie, X., Zhou, L. & Huang, L. (2016). The bearing capacity factor N_γ of strip footings on c–φ–γ soil using the method of characteristics. *SpringerPlus* 5, 1482.
 - Wang, W. M., Sluys, L. J. & de Borst, R. (1997). Viscoplasticity for instabilities due to strain softening and
   strain-rate softening. *IJNME* 40, 3839–3864. The consistency-viscoplasticity alternative to Perzyna.
