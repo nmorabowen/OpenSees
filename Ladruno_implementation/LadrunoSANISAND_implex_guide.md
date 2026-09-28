@@ -420,6 +420,7 @@ process-wide; the cumulative ones count since `revertToStart` (`reset()`), are *
 | 14 | `lastForcedAtDTmin` | `[5]` for that update |
 | 15 | `lastAbandonedLowP` | `[8]` for that update |
 | 16 | `lastCapHit` | 0/1 for that update |
+| 16' | `lastCapHit` = **2** | the cap hit was RESCUED by `-meFallback cppm` (refused cap hits = `capHits` - `meFallbackOk`) |
 | 17 | `cppmCalls` | top-level `BackwardEuler_CPPM` calls (IntScheme 2 plastic-branch updates + ME fallbacks) |
 | 18 | `cppmNewtonFail` | local Newton (+ `Check`) did not return a valid state, at any halving level |
 | 19 | `cppmHalvings` | recursive half-increment calls that did work |
@@ -430,7 +431,11 @@ process-wide; the cumulative ones count since `revertToStart` (`reset()`), are *
 | 24 | `meFallbackOk` | ... and the CPPM returned it (the update stands) |
 | 25 | `lastCppmRefused` | 0/1 for the last update whose top-level CPPM call left the elastic branch |
 | 26 | `cppmGuessTries` | `-cppmStart explicit`: local Newton restarted from the explicit guess |
-| 27 | `cppmGuessOk` | ... and that returned a valid state |
+| 27 | `cppmGuessOk` | ... and the gate ACCEPTED the root (admissible, within 2 % of the explicit walk) |
+| 28 | `cppmLineSearchCuts` | `-cppmLineSearch on`: step halvings the search took |
+
+`cppmOptions` (response id 33100, per instance, 7 values): onFail, halvings, lineSearch,
+meFallback, start, tangentFixed, latchCause (0 -implex companion, 1 CPPM refusal).
 
 ```python
 s = ops.eleResponse(ele, "material", ip, "substepStats")
@@ -721,28 +726,42 @@ parser refuses the combination). A flag that could not act on the deck is refuse
 - **`-cppmTangent fixed` -- the DEFAULT on LadrunoSANISAND.** Vanilla's CPPM hands the element MINUS its
   algorithmic tangent (`NewtonSol`: `Cep = -1.0 * CSigma`): a negative-definite stiffness, so the
   global Newton diverges from its first iteration and only a Krylov/relaxed rung ever commits a
-  step. `fixed` hands out `+CSigma`, which matches a finite difference of the return map to 1.2e-3
-  (`LEDGER_quirks`, "IntScheme 2's TanType-2 tangent is MINUS"); the plane-strain wrapper hands
+  step. `fixed` hands out `+CSigma` -- the right SIGN -- and also corrects the low-p D_factor
+  derivative in the local Jacobian (vanilla: wrong sign, and it drops the dilative D < 0 branch).
+  **It is still not a fully consistent tangent** (review r1): it is one local iterate stale (and the
+  local convergence norm mixes strain and stress units, so at the default TolR 1e-7 the staleness
+  reaches 0.27-0.53 relative on a shear column); the void-ratio dependence (eps -> e -> psi) is
+  missing from dR/deps (1e-4..1e-3 on the volumetric column); and after a SUCCESSFUL halving the
+  tangent handed out is the second half-increment's (O(1) errors). The plane-strain wrapper hands
   out the same object (FD-checked). `-cppmTangent vanilla` is kept for reproduction only.
 - **A CPPM refusal under a DISCARDING element** (SSPquad, stdBrick, BbarBrick, SSPbrick, BrickUP,
   LadrunoSolidShell) is caught at `commitState`: the refusal is declared to `Domain::commit()`
-  (WP-99's channel), the commit aborts and the point latches -- analyze < 0, nothing drifts.
-  Recover by restarting with a smaller step or the forwarding element family.
+  (WP-99's channel), the commit aborts and the point latches -- analyze < 0, nothing drifts. **The
+  latch is sticky until `reset()` (revertToStart)**: a smaller step does NOT clear it (measured:
+  a 1000x smaller step still returns -3). Under a discarding element the only recovery is a
+  restart; use a forwarding element (quad, LadrunoQuad/Brick, u-p family) so the step is cut.
 - **`-cppmOnFail refuse`**: where vanilla, after a failed local Newton and the halving ladder,
   integrates the increment explicitly and reports success, the material REFUSES
   (`LADRUNO_MATERIAL_REFUSED`), so a forwarding element fails `Domain::update` and the step is
   cut. With `-cppmHalvings 0` that happens on the first try: measured 8-22 ms per refused step on a
   one-quad deck against 5.6 s at the defaults. The trial-`p < p_min` explicit branch is kept (it is
   the designed low-p route, and ModifiedEuler's own `-maxSubsteps` guards it).
-- **`-cppmStart explicit`**: when the local Newton from the elastic trial fails, retry it once from
-  a 50-substep ForwardEuler guess before halving. It targets the first plastic increment after a
-  reversal or the stage flip (`alpha_in = alpha`, `h = 1e10`), where the trial start is worst.
+- **`-cppmStart explicit`** -- NOT in the recommended recipe (review r1): when the local Newton from
+  the elastic trial fails, retry it once from a 50-substep ForwardEuler guess before halving. A root
+  found that way is ONE backward-Euler step over an increment on which the ladder would have
+  halved, so it is less accurate. The acceptance gate (dGamma >= 0, p > 0, and agreement with the
+  explicit walk to 2 %) rejects most of the bad ones, but on the review's 300-increment oracle set
+  the gated guess still doubled the error on 74 of 171 increments (median 0.021 vs 0.007 relative,
+  worst 0.40 vs 0.09). Use it only where speed is worth that.
 - **`-cppmLineSearch on`**: backtracking (halving, at most 8 cuts) on the residual norm the local
   convergence test reads; a full step is taken if no cut helps.
 - **`-meFallback cppm`** (IntScheme 1, F10b(b)): when ModifiedEuler hits `-maxSubsteps`, the SAME
   increment goes to `BackwardEuler_CPPM` (halving allowed, NO explicit exit); the update is refused
   only if the CPPM fails too. One-element test: a leg that `-maxSubsteps 20` refuses at step 1 runs
   all 10 steps with the fallback, stress within 1.3 % of the uncapped integration.
+- **Recommended recipe** (IntScheme 2 under a global Newton): `2 2 ... -cppmOnFail refuse
+  -cppmHalvings 3 -cppmLineSearch on` (`-cppmTangent fixed` is the default). `refuse` without
+  `-cppmHalvings` now bounds the ladder at 3 by itself (<= 15 local Newtons per refused update).
 - **What it buys on a BVP** (`Ladruno_files/testbed/hypo_bearing/wp130_f18c/tables.md`): F12's bearing deck (x10z8, `h1.0_e0.6944`, 1200 s budget, TanType 2, driver unchanged): IntScheme 1 reaches s/B 0.00762 at 1200 s (0.00890 at 1374 s, 16.8 global iterations per committed step); vanilla IntScheme 2 0.00002; with `-cppmTangent fixed` alone 0.00378; `fixed + refuse + -cppmHalvings 3 + -cppmStart explicit + -cppmLineSearch on` 0.00876 in 1081 s (0.00797 at 900 s against IntScheme 1's 0.00634), 3.9 iterations per committed step, 448 of 607 steps on the plain Newton rung, load-settlement within 0.5-2.1 % of IntScheme 1 -- and it stops on the driver's pinned 80-subdivision budget, not the wall. The global Newton is NOT quadratic even with the fixed tangent: the median observed order on the last three residuals is 1.24 (21 % of committed calls >= 1.8); the tangent is one local iterate stale and the refused iterates cut the step.
   Recipe measured there: `2 2 ... -cppmTangent fixed -cppmOnFail refuse -cppmHalvings 3
   -cppmStart explicit -cppmLineSearch on`. Without `fixed`, no combination of the other flags got

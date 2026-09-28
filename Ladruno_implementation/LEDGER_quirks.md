@@ -7810,3 +7810,44 @@ Three things to carry forward:
   wrapper). **Owner decision (WP-130): `fixed` is the LadrunoSANISAND DEFAULT**; `-cppmTangent
   vanilla` reproduces the old binary; vanilla `ManzariDafalias` keeps the wrong sign (upstream
   report deferred). F12's bearing deck (x10z8, `h1.0_e0.6944`, 1200 s budget, TanType 2, driver unchanged): IntScheme 1 reaches s/B 0.00762 at 1200 s (0.00890 at 1374 s, 16.8 global iterations per committed step); vanilla IntScheme 2 0.00002; with `-cppmTangent fixed` alone 0.00378; `fixed + refuse + -cppmHalvings 3 + -cppmStart explicit + -cppmLineSearch on` 0.00876 in 1081 s (0.00797 at 900 s against IntScheme 1's 0.00634), 3.9 iterations per committed step, 448 of 607 steps on the plain Newton rung, load-settlement within 0.5-2.1 % of IntScheme 1 -- and it stops on the driver's pinned 80-subdivision budget, not the wall. The global Newton is NOT quadratic even with the fixed tangent: the median observed order on the last three residuals is 1.24 (21 % of committed calls >= 1.8); the tangent is one local iterate stale and the refused iterates cut the step.
+
+### The sign-corrected CPPM tangent is still NOT the consistent tangent -- four separate error sources (WP-130 review r1)
+- **Bites:** "`-cppmTangent fixed` = the algorithmic tangent, one iterate stale" (the WP-130 first
+  claim) is wrong in degree. A reviewer's FD campaign (`review130/p1_tangent.py`) separates:
+  (a) **staleness**, and the local convergence test `||R|| < TolR (1 + ||R0||)` mixes strain,
+  back-stress and stress units, so R1 converges only to ~TolR*|F|: at the default TolR 1e-7 the
+  g12 column is off by 0.27-0.53 relative (the first "1.2e-3" was one lucky state);
+  (b) the **void-ratio dependence** eps -> e (inVar(37)) -> psi -> M^b, M^d, b0 is absent from
+  dR/deps: 1.3-2.3e-4 on the volumetric column at p ~ 170, 1.24e-3 at p ~ 1.9, TolR-independent;
+  (c) the **low-p D_factor derivative** in `NewtonSol` had the wrong sign and dropped the D < 0
+  branch (`- one3*Macauley(D)*be*t/(1+t)^2` vs the correct `+ one3*(D/D_factor)*be*t/(1+t)^2`);
+  it enters the local Jacobian too, i.e. Newton's rate;
+  (d) after a SUCCESSFUL halving the tangent handed out is the SECOND half-increment's (O(1)).
+- **Status (WP-130, #868):** (c) FIXED under `-cppmTangent fixed` (the LadrunoSANISAND default;
+  vanilla ManzariDafalias and `-cppmTangent vanilla` keep the vanilla expression, byte-identical);
+  it moves the local iterates, not the root, where p < 0.05 P_atm -- the fixed-default baseline
+  was re-pinned. (a), (b), (d) documented, not fixed: (a) needs a unit-consistent local norm (a
+  change to the return map's convergence semantics), (b) a d/de block in NewtonSol, (d) a
+  chain-rule product across the halving tree. So the order-1.24 global convergence on the bearing
+  deck has several causes, not one.
+
+### `-cppmStart explicit` clobbered the ladder's errFlag, and a successful guess accepted a coarse one-step BE root (WP-130 review r1)
+- **Bites:** the guess's `NewtonIter2` wrote `errFlag` before `if (errFlag == -1) SchemeControl = 3`,
+  so trial non-convergence (0: halve) followed by a singular guess (-1) skipped halving and went
+  straight to explicit/refuse (17 of 228 guess tries in the review's set). And an accepted guess
+  root is one backward-Euler step over an increment the ladder would have halved: errors up to 0.77
+  relative vs an oracle (`Check()` cannot see it: its p < 0 test is commented out).
+- **Fixed / status (WP-130, #868):** the trial's errFlag and state are restored when the guess is
+  not accepted; `gZ` joins the NaN check; the root is accepted only if dGamma >= 0, p > 0 and it
+  agrees with the 50-substep explicit walk to 2 % (`LADRUNO_GUESS_AGREE`). Measured on the same
+  300-increment oracle set: still 74 of 171 increments with >= 2x the default ladder's error
+  (median 0.021 vs 0.007) -- so `-cppmStart explicit` is REMOVED from the recommended recipe and
+  documented as a speed-for-accuracy trade.
+
+### A WP-130 flag given with its DEFAULT value on a deck where it cannot act was accepted; `refuse` still ground the full ladder (WP-130 review r1)
+- **Fixed (WP-130, #868):** every flag is validated on having been GIVEN (`-cppmOnFail explicit`
+  on IntScheme 1, `-cppmTangent` under TanType 0/1, `-meFallback off` without a cap: refused).
+  `-cppmOnFail refuse` without `-cppmHalvings` bounds the ladder at 3 (echoed): vanilla's 9 cost up
+  to 1.1 s per refused update. After a RESCUED ME cap hit `lastCapHit` is 2 (capHits still counts
+  it). The WP-99 latch warning names its cause (companion vs CPPM refusal) and says it is sticky
+  until `reset()`.
