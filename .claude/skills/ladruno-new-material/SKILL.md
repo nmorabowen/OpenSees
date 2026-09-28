@@ -99,6 +99,9 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 - [ ] Pin a number only from a step a RESIDUAL test converged, and re-measure pins after merging
       `ladruno`. A determinism gate needs no convergence: use `FixedNumIter`. Quirks: "where ONE
       tangent stopped".
+- [ ] **[lint]** A `zone_a` test that branches on the platform declares `# ci-coverage:` (L8): PR CI
+      is Ubuntu, so a win32-only leg never runs there. Gate only the MKL-specific leg. Quirks:
+      "A win32-only `zone_a` test is NEVER run by PR CI".
 
 Found a new trap? Add it to `LEDGER_quirks.md`, then add one line here pointing to it. If the
 trap has a greppable pattern, add a rule to `ci/check_quirk_patterns.py` instead.

@@ -575,3 +575,61 @@ def test_l7_stale_waiver(tmp_path):
              "  res = this->getResistingForce();\n}\n")
     out = _l7(tmp_path, stale, stamped=True)
     assert len(out) == 1 and out[0].startswith("W ") and "stale sequence-ok" in out[0]
+
+# ---------------------------------------------------------------- L8
+def _l8(tmp_path, body, name="tests/test_x.py"):
+    root = _tree(tmp_path, {name: body})
+    return cq.check_ci_coverage(root, _rel(root))
+
+
+_ZA = "import os, sys, platform\nimport pytest\npytestmark = [pytest.mark.zone_a]\n"
+
+
+@pytest.mark.parametrize("gate", [
+    'pytestmark.append(pytest.mark.skipif(sys.platform != "win32", reason="mkl"))',   # the WP-136 incident
+    'if os.name == "nt":\n    pass',                                                   # adr74's cleanup branch
+    'if platform.system() == "Windows":\n    pass',
+    'if sys.platform.startswith("win"):\n    pass',
+    'TOL = 0.0\nif "win32" != sys.platform:\n    TOL = 1e-9',                            # reversed operands
+])
+def test_l8_flags_an_undeclared_platform_branch(tmp_path, gate):
+    out = _l8(tmp_path, _ZA + gate + "\n")
+    assert len(out) == 1 and out[0].startswith("L8 ") and "ci-coverage" in out[0], out
+
+
+@pytest.mark.parametrize("kind", ["local-only", "partial", "portable", "nightly-windows", "pr-windows"])
+def test_l8_passes_a_declared_branch(tmp_path, kind):
+    body = _ZA + f"# ci-coverage: {kind} because the MKL leg needs Pardiso\n" + \
+        'pytestmark.append(pytest.mark.skipif(sys.platform != "win32", reason="mkl"))\n'
+    assert _l8(tmp_path, body) == []
+
+
+def test_l8_ignores_a_ternary_value_selection(tmp_path):
+    body = _ZA + 'EXE = "OpenSees.exe" if os.name == "nt" else "OpenSees"\n'
+    assert _l8(tmp_path, body) == []
+
+
+def test_l8_ignores_non_zone_a_files_and_text_mentions(tmp_path):
+    # zone_b / unmarked files are out of scope; a platform test named only in a
+    # docstring or comment is not a branch (ast, not grep).
+    assert _l8(tmp_path, 'import sys\nif sys.platform != "win32":\n    pass\n') == []
+    body = _ZA + '"""we used to skip when sys.platform != "win32"."""\n# os.name == "nt"\n'
+    assert _l8(tmp_path, body) == []
+
+
+def test_l8_rejects_unknown_kind_and_short_reason(tmp_path):
+    gate = 'pytestmark.append(pytest.mark.skipif(sys.platform != "win32", reason="mkl"))\n'
+    out = _l8(tmp_path, _ZA + "# ci-coverage: sometimes whenever the moon is right\n" + gate)
+    assert len(out) == 1 and "not one of" in out[0], out
+    out = _l8(tmp_path, _ZA + "# ci-coverage: local-only mkl\n" + gate)
+    assert len(out) == 1 and "too short" in out[0], out
+
+
+def test_l8_flags_a_stale_annotation(tmp_path):
+    out = _l8(tmp_path, _ZA + "# ci-coverage: local-only the Pardiso leg used to be Windows-only\n")
+    assert len(out) == 1 and out[0].startswith("W ") and "stale ci-coverage" in out[0], out
+
+
+def test_l8_reports_an_unparseable_test_file(tmp_path):
+    out = _l8(tmp_path, _ZA + "def broken(:\n")
+    assert len(out) == 1 and "cannot parse" in out[0], out
