@@ -412,6 +412,14 @@ MKL_CBWR COMPATIBLE).
 | T5 | physics, element | plane-strain and triaxial element tests of the campaign set at p′ ∈ {10, 50, 150, 500} kPa, R1 on and off | φ′_peak, the strain at peak and the dilatancy against Bolton (1986) and TIMs' lab data |
 | T6 | physics, footing | the T3 curves against the dense-sand footing evidence (§9.1 step 4) | q_u / N_γ, s/B at peak and rupture pattern inside the published ranges; mesh spread against test scatter (D-b) |
 
+**T3 analysis:** `r2_analysis.py`.
+- R1-OFF baseline (E_B step 215→370, E_B16 step 55→last): the band under the right edge runs at x ≈ 0.79 m at every depth.
+  - Inclination from vertical: −0.4° (B/8), −2.1° (B/16).
+  - FWHM/h = 1.02 (B/8) and 1.08 (B/16): a vertical, mesh-aligned, one-element band.
+- R2 passes on the physics side only if the path stops depending on the mesh:
+  - on shear:15, the same path as on b8, not the leaning columns;
+  - on jitter, a path that is not erratic.
+
 **The pass criterion TIMs asked for** (mesh-independent q–s past s/B 0.05 at B/8 and B/16, and B/4) is T3 if R2
 suffices, and T4 otherwise.
 
