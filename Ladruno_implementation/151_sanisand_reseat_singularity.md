@@ -596,6 +596,26 @@ The physical acceptance is WP-150 §9.1:
 - q–s unchanged up to E_B's first NonPosH (s/B < 0.036) within the SAS-ME error band;
 - then what happens past 0.0508 (peak, plateau or continued hardening), judged against dense-sand physics.
 
+**Interim footing result** (orchestrator, Esmeralda, 2026-09-28 ~21:00; bd93c558d, GCC 11.4; E_B settings).
+The gate at s/B < 0.03 is MET. q_R1 − q_E_B, relative, at matched s/B (linear interpolation of `steps.csv`):
+
+| s/B | 0.005 | 0.010 | 0.020 | 0.030 |
+|---|---|---|---|---|
+| E_B q (kPa) | 160.16 | 286.40 | 494.53 | 672.71 |
+| floor alone | −0.01 % | −0.01 % | +0.17 % | −0.12 % |
+| hysteresis alone | +0.00 % | +0.01 % | +0.09 % | −0.22 % |
+| floor + hysteresis | −0.01 % | −0.00 % | +0.16 % | −0.05 % |
+| floor + hysteresis + cap | −0.01 % | −0.00 % | +0.16 % | −0.05 % |
+
+- Every leg is within ±0.22 %, with mixed sign: inside the ModifiedEuler-vs-SAS-ME curve band (0.5–0.64 %).
+- The cap never binds below 0.03 (fhc ≡ fh).
+- For scale, the mesh-orientation legs of WP-150 R2 differ by +3.75 % / +10.3 % (a mesh skewed 15°) and
+  +2.05 % / +4.03 % (jittered nodes) at s/B 0.020 / 0.030. Mesh dependence, not R1, dominates.
+- Refusals so far: no `loadingNonPosH` on any leg. The floor-only leg shows the discretized Zeno cascade
+  (553 `maxSubsteps` census lines vs 79–87), as predicted.
+- Still to come: the legs past E_B's onset (0.0363) and wall (0.0508), and the c = 0.80 control
+  (`C080_EB_off`) past its own.
+
 ## 10. Open items and not verified
 
 - **BVP acceptance not run yet** (the Esmeralda matrix above; the orchestrator launches it). Everything here
