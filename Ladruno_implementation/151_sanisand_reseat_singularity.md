@@ -28,6 +28,10 @@ updated: 2026-09-28
 >    1879/1; E_D 1962/1, 2058/1; E_B16 7820/4) × 32 directions × 2 Newton-scale magnitudes, today's C++ refuses
 >    **exactly** the 102/320 trials where the exact oracle fails, and accepts exactly the 218 where it
 >    integrates (§2.3). The integrator is faithful; the model has no answer there.
+> 2b. **It lives on the non-convex extension side.** The campaign Lode parameter c = 0.71 < 7/9 makes the
+>    bounding surface concave on the extension meridian, and every wall refuser has n there. On the same states
+>    and trials, c = 0.80 gives 0/320 failures, against 102/320 at c = 0.71 (§2.5). The footing's bands are a
+>    separate, compression-side matter (WP-150).
 > 3. **Neither piece works alone.** Bounded h alone: 97/320 still fail (Zeno). WP-150's floor gated on b:n ≤ 0:
 >    102/320 (the blow-up is on the b:n → 0⁺ side). The hysteretic re-seat alone leaves h = ∞ (or < 0) in its
 >    band. **Floor everywhere + hysteretic re-seat: 0/320**; with the softening cap also 0/320 and H ≥ ½X
@@ -165,6 +169,36 @@ update. Put plainly: the WP-129 integrator is doing its job, and the wall is in 
   0/320.
 - **The cap** closes what a fixed floor cannot: deep softening at low p, where b0 ∝ p^−½ makes b0/ε large and
   ⅔ p (b0/ε)|b:n| can exceed X (b8 1950/3: b:n = −0.09 at p = 0.35 kPa gives H → 0⁺ with the floor alone).
+
+### 2.5 The non-convex extension side (c < 7/9) is what makes the wall states singular
+
+WP-150's acoustic-tensor split (#892 §2.3) found a clean separation on the footing: the localization **bands**
+are compression-side (cos3θ(n) ≈ +0.5 to +0.8 at 99.8 % of the non-elliptic points), while the **wall**
+refusers have n on the extension side (cos3θ = −1.00, −0.36, −0.88). The same wall fan was therefore rerun with
+the Lode parameter changed alone (`fan_c080.py`, DM04, exact oracle, the SAME committed states and trials):
+
+| state | ρ_α / ρ_b at c = 0.71 | failed at c = 0.71 | ρ_α / ρ_b at c = 0.80 | failed at c = 0.80 |
+|---|---|---|---|---|
+| E_B 1880/1 | 0.957 / 1.306 | 34/64 | 0.945 / 1.158 | **0/64** |
+| E_B 1879/1 | 0.949 / 1.174 | 18/64 | 0.937 / 1.075 | **0/64** |
+| E_D 1962/1 | 0.953 / 1.078 | 16/64 | 0.938 / 1.015 | **0/64** |
+| E_D 2058/1 | 0.935 / 0.937 | 0/64 | 0.919 / 0.920 | 0/64 |
+| E_B16 7820/4 | 0.926 / 1.238 | 34/64 | 0.913 / 1.104 | **0/64** |
+| all | | **102/320** | | **0/320** |
+
+- With a convex Lode interpolation (c = 0.80 > 7/9), not one trial chatters, hits the 0/0, or reaches H ≤ 0.
+  This holds although ρ_b(θ_n) is still above 1 at four of the five states.
+- So at these states the Zeno sequence of §2.2 needs the **concave extension meridian**. The scaling there
+  kept only the relative motion of α and n. Once the image point α^b(θ_n) itself moves as n rotates, its
+  curvature decides the sign of dβ/dt, and on a concave meridian it drives β = b:n down instead of back
+  up [I; the measurement is the evidence].
+- **Caveat.** These are c = 0.71 states, driven at c = 0.80. A c = 0.80 footing would follow a different
+  history and could meet other states. This measures sensitivity, not the outcome of a c = 0.80 BVP.
+- **Two routes out.**
+  1. R1 (§8) removes the singular set at any c, with no recalibration.
+  2. A calibration with c ≥ 0.78 (convex; c = 0.80 raises the extension strength M_e = c·M_c by 13 %) removes it at these states.
+     That is TIMs' call. A c = 0.80 footing leg would test it, and WP-150 flags it in #892 §2.3.
+- Either way, the bands are a separate, compression-side matter (WP-150 R2/R3).
 
 ## 3. Literature: how bounding-surface models handle the reversal singularity
 

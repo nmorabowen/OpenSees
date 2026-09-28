@@ -29,6 +29,7 @@ Variant names in `r1common.variants()`: `B<c_A>` = floor, `T<c_rev>` = hysteresi
 | `zeno_trace.py` | the Zeno re-seat sequence at E_B 1880/1 | `out/zeno_trace.json` |
 | `b_tests.py`, `b_run.py [--variants a,b] [tests…]`, `b_analyse.py` | (b) calibrated behaviour: monotonic + cyclic element tests | `out/b_metrics.json`, `out/b_summary.md` (histories not committed, ~100 MB) |
 | `cyc_pilot.py`, `cyc_sensitivity.py`, `cyc_gate.py`, `cyc_toyoura.py` | the CTXu gate: DM04's own perturbation sensitivity, every variant × perturbation, the c = 0.80 control, Toyoura | `out/cyc_*.json` |
+| `fan_c080.py` | the wall fan with the Lode parameter c = 0.80 vs 0.71 (DM04), the same states: does the extension-side non-convexity make the wall singular? | `out/fan_c080.json` |
 | `c_jitter.py [c1 c2 c3]` | (c) jitter chains, objectivity (λ → 0), trial-direction continuity | `out/c1.json`, `c2.json`, `c3.json` |
 | `r1plots.py [zeno fan mono gate continuity objectivity]` | the memo's figures | `out/fig/` |
 | `cxx_fan.py <bin> <out> [flags…]` (CPython 3.12 `-S`) | the same fan on a C++ build | `out/cxx_fan_before.json` (pre-WP-151 binary) |

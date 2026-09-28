@@ -7879,7 +7879,7 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
   - Both the TIMs campaign set (c = 0.71) and DM04's own Toyoura set (c = 0.712) are below it.
   - In undrained cyclic triaxial (campaign e0 0.6944, CSR 0.2), every model, DM04 included, breaks axisymmetry in the first extension half-cycle. |σ_yy − σ_zz| grows from round-off to 27–40 kPa.
   - A σ_zz perturbation of ±1e-9 decides between 5 % DA at N = 8 and no liquefaction by N = 20. Without a perturbation, round-off decides (rtol, build, any model change).
-  - At c = 0.80 the path stays axisymmetric (|σ_yy − σ_zz| ≤ 1e-7 kPa) and the test is well conditioned.
+  - At c = 0.80 the path stays axisymmetric (|σ_yy − σ_zz| ≤ 1e-7 kPa) and the test is well conditioned. **The same non-convexity makes the footing's WALL states singular:** every `loadingNonPosH` refuser has n on the extension side, and on the same five wall states × 64 trials DM04 fails 102/320 at c = 0.71 and 0/320 at c = 0.80 (`sanisand_reseat_r1/fan_c080.py`). The compression-side bands are a separate matter (WP-150).
 - **Rule:** With c < 7/9:
   - Do not read a single axisymmetric-extension element test (CTXu, TE) as the model's answer. Report both branches, or perturb explicitly.
   - A comparison of two model variants on such a test is decided by round-off unless the SAME perturbation is imposed on both.
