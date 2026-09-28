@@ -24,11 +24,15 @@ was run or edited; the deck is built from the intake's §1 spec
 wall is a constitutive singularity, not an integration defect. There is no peak and
 no plateau on this deck.**
 
-> **Calibration caveat** (WP-150 memo §10, on #892 at 86bb27606). The campaign SANISAND set has very-dense-sand strength: plane-strain φ′_peak 60° → 45° over p0 10 → 500 kPa. It dilates ~3–20× less than Bolton's stress–dilatancy requires in plane strain, and ~15–25× less in triaxial, because A0 = 0.05 is 14× below DM04's Toyoura value. It peaks at 4–16 % axial strain.
+> **Calibration caveat** (WP-150 memo §10 on #892, commit e14703ca7). The campaign SANISAND set has very-dense-sand strength: plane-strain φ′_peak 60° → 45° over p0 10 → 500 kPa. But it dilates much less than stress–dilatancy (Bolton 1986) requires:
+> - ~20–23× less in triaxial (φ′_cs 33.0° from Mc);
+> - ~8–14× less in plane strain, using an estimated plane-strain critical-state angle (≈ 39.5°).
 >
-> So the "no peak or plateau to s/B 0.05" finding is at least partly a CALIBRATION effect. No footing curve here is to be called "physical" until TIMs confirm the calibration against their lab data. That covers SANISAND, the DP 38° control and PDMY01 33°.
+> It peaks at 4–16 % axial strain, and A0 = 0.05 is 14× below DM04's Toyoura value. uw_model includes D_factor, but it never fires at T5's p′ ≥ 10 kPa, so the deck's ring (p′ ≈ 3–5 kPa) dilates even less.
 >
-> The IntScheme 129 recommendation (§12) stands as the INTEGRATOR recommendation. It says nothing about the calibration.
+> So the "no peak or plateau to s/B 0.05" finding is at least partly a CALIBRATION effect. No footing curve here is to be called "physical" until TIMs confirm the calibration against their lab data. That covers SANISAND, the DP 38° control and PDMY01 33°. The fork's WP-133 PDMY03 stand-in has no peak and is unusable as a physical reference, which leaves TIMs' lab data as the only anchor.
+>
+> The IntScheme 129 recommendation (§12) is the INTEGRATOR recommendation only. It says nothing about the calibration.
 
 - **E_A, ModifiedEuler** (IntScheme 1): stops on the step floor at **s/B 0.0292, q 701.8 kPa**. That is inside TIMs' own ModifiedEuler wall band (s/B 0.026–0.041), so the fork reproduces TIMs. On the way in, ModifiedEuler force-accepts at dt_min and commits ρ_α up to 13.09. The result is a spurious +6 % stiffening against SAS-ME at the same s/B (§8.4).
 - **E_B, SAS-ME** (IntScheme 129, TanType 0, TolR 1e-4): stops on the step floor at **s/B 0.0508, q 966.7 kPa**. q is still rising there: the slope over the last 0.005 s/B is 0.24 × the initial slope, and q_max = q_end. The first `loadingNonPosH` refusal comes at s/B 0.0363. From then on NonPosH refusals accumulate, and they end the run.
@@ -273,10 +277,10 @@ Hours / 1e9 substeps per 0.01 s/B, by interval (`wall_table.py`; a partial inter
 - **Substeps per unit settlement: SAS-ME ≈ ModifiedEuler** (0.48 vs 0.49 and 0.94 vs 1.02 per 0.01 s/B). This confirms the local finding (§5.2).
 - **Wall clock: SAS-ME is 1.3–1.45× cheaper per unit s/B** (0.40 vs 0.58, 0.82 vs 1.14, 0.93 vs 1.24 h).
 - **E_B's cost is flat from s/B 0.01 to its wall**, about 1 h per 0.01 s/B, so the 0.0508 wall is not a budget stop.
-- **Krylov carries the settlement.** The KrylovNewton rung at tol × 10 carries 80–90 % of the settlement in every arm: `frac_settlement_on_K` in `walls_summary.json` is E_A 0.89, E_B 0.91, E_D 0.93, E_B16 0.82.
-  - Accepting at 10× the tolerance costs about ±1.5 kPa on q.
-  - The deck's own curve gate is 0.028 kPa (0.0415 kN / 1.5 m).
-  - Read the curves with that band.
+- **Krylov carries the settlement.** The KrylovNewton rung accepts at 10× the test tolerance: an unbalance norm of 0.415 kN against the 0.0415 kN test. The share of the settlement accepted on that rung is Σ ds over K-accepted steps ÷ total settlement, from `steps.csv`:
+  - E_A 88.5 % (156 of 189 steps), E_B 90.9 % (342 / 377), E_D 92.9 % (358 / 389), E_B16 81.7 % (47 / 77).
+  - For comparison, E_C2, with Krylov at 1×, has 69.6 % (1 275 / 2 283).
+  - **The effect on q of the 10× acceptance is NOT isolated by any arm.** E_C2 changes TanType and -maxSubsteps together with the Krylov tolerance. Its q differs from E_B by up to 4.65 kPa (median −1.78 kPa), but that bounds nothing about the Krylov tolerance on its own.
 
 ### 8.3 E_B — SAS-ME to its wall
 
@@ -308,10 +312,8 @@ Hours / 1e9 substeps per 0.01 s/B, by interval (`wall_table.py`; a partial inter
   - Its cost per unit s/B equals E_B's up to s/B 0.038: 0.98 vs 0.93 h per 0.01 in 0.02–0.03.
   - Near its wall the cost rises to 4.6× E_B's (0.038–0.041) and 8× (0.040–0.041).
   - It had 13 316 maxSubsteps refusals against E_B's 209.
-  - Its q runs **−3.5 % (median) below E_B** over s/B 0.02–0.041, with a range of −4.3 % to +1.6 %.
-- **The campaign's own TolR study,** from the orchestrator (not in this branch's records), reports TolR 1e-3 as **27× slower and +0.54 % biased**, and refutes the "2× faster" lever.
-  - The two sets of figures measure different things. Their conclusion is the same: **no saving, and an earlier wall.**
-  - The source of the 27× / +0.54 % figures should be named wherever they are quoted.
+  - Its q runs **−3.7 % (median) below E_B** over s/B 0.02–0.041, range −4.3 % to −1.9 %. Over 0.001–0.02 the median is −1.4 % (range −2.2 % to +1.6 %), and over every step past s/B 0.001 it is −3.5 %.
+- **Conclusion:** no saving, and an earlier wall. The "TolR 1e-3 is 2× faster" lever does not hold on this deck. Keep 1e-4.
 
 ### 8.6 E_C2 — the consistent tangent (TanType 1) is not viable here
 
@@ -374,6 +376,10 @@ The wall is DM04's hardening-modulus singularity at an α_in re-seat.
 - `loadingNonPosH` is only the b:n < 0 exit of that sequence.
 - The same accumulation plausibly explains the re-seat chatter (10.1 M in E_B) and S4's cost.
 
+**The calibration is a separate question** (WP-150 memo §10 on #892, commit e14703ca7; caveat in §0). The campaign set dilates ~20–23× (triaxial) and ~8–14× (plane strain) less than Bolton's stress–dilatancy requires. D_factor never fires at T5's p′ ≥ 10 kPa, so the ring at p′ ≈ 3–5 kPa dilates even less.
+- This diagnosis is about why the integration stops. It does not say where a correctly calibrated footing curve would peak.
+- Until TIMs confirm the calibration against their lab data, no curve here is "physical". The WP-133 PDMY03 stand-in has no peak, so it cannot serve as the reference.
+
 ## 11. Sensitivity ladders — interim snapshot 2026-09-28 16:20
 
 > **INTERIM.** Taken at 16:20. At that time S1–S4, L_pres_1/2/5/10/20, L_e_0p65 and L_e_0p80 were still RUNNING.
@@ -413,7 +419,7 @@ The refusal counts come from two sources:
 - **Only killing the dilatancy (S4) clears `loadingNonPosH`.**
   - It persists through S1 (fabric off), S2 (+ no peak) and S3 (+ critical-state dilatancy: 1 event).
   - It is ABSENT in S4 (+ A0 = 0.001) at s/B 0.0374, which is past E_B's onset (0.0363).
-  - S4 is not cheap. Per the campaign it costs ~27 M substeps per step (the committed interim records give a median of 2.4e7 over its last 20 steps, against 7.3e6 for E_B), with maxSubsteps refusals. That cost is plausibly the re-seat accumulation (§10), which the R1 hysteresis targets (§13).
+  - S4 is not cheap. The committed interim records give a median of 2.4e7 substeps per step over its last 20 steps (max 9.4e7), against 7.3e6 for E_B, with maxSubsteps refusals. That cost is plausibly the re-seat accumulation (§10), which the R1 hysteresis targets (§13).
 - **Presidual 0.5–20 kPa never clears NonPosH.**
   - Its onset is non-monotonic: 0.5 kPa brings it to 0.0182, EARLIER than Presidual 0.
   - Larger Presidual walls later and stiffens q (q at s/B 0.03: 675 → 835 kPa from 0.5 to 20 kPa). That is an apparent cohesion, not a cure.
@@ -448,7 +454,7 @@ LadrunoSANISAND $tag 264.32 0.312885 0.6944 1.3309 0.71 0.027 0.83 0.45 101 0.00
 - TanType 1: step-size collapse, 13× cost (§8.6).
 - `-maxSubsteps` above 2000: only tested inside E_C2.
 
-**What it does NOT say: anything about the calibration** (see the caveat in §0). **What it does NOT buy: a capacity.** The wall stays. A SANISAND q–s past s/B ≈ 0.036 on this deck is carried through NonPosH refusals, and it ends at 0.0508 with no peak. Read q with the Krylov ±1.5 kPa band (§8.2).
+**What it does NOT say: anything about the calibration** (see the caveat in §0). **What it does NOT buy: a capacity.** The wall stays. A SANISAND q–s past s/B ≈ 0.036 on this deck is carried through NonPosH refusals, and it ends at 0.0508 with no peak. About 90 % of that settlement is accepted at the Krylov rung's 10× tolerance, and the effect on q is not isolated (§8.2).
 
 ## 13. Follow-ups — owner/TIMs decisions (R1: owner-approved as opt-in; TIMs decide on its use)
 
@@ -460,7 +466,10 @@ LadrunoSANISAND $tag 264.32 0.312885 0.6944 1.3309 0.71 0.027 0.83 0.45 101 0.00
    - **The oracle test:** 320 exact Radau increments from 5 real refuser states. Together the two flags fail **0/320**. Each alone fails.
    - **The earlier single-flag form does NOT work:** a floor only where b:n ≤ 0 fails 102/320, the same as DM04.
    - **The hysteresis is part of the well-posedness fix,** not a separate cost lever. It plausibly also removes the re-seat chatter behind S4's cost.
-   - **Still open:** a cyclic check (CTXu, e 0.6944, CSR 0.2).
+   - **Cyclic gate (CTXu, e 0.6944, CSR 0.2): RESOLVED** by the R1 session (2026-09-28).
+     - The outlier is a round-off-selected bifurcation of DM04's OWN axisymmetric extension path. It is identical with and without R1.
+     - With c = 0.71 < 7/9 the Lode interpolation is non-convex at the extension meridian. At c = 0.80, DM04 = R1 (N 16 = 16).
+     - This is a **separate calibration item for TIMs: keep c ≥ 0.78.**
    - **Who decides:** the owner approved R1 as an opt-in variant; TIMs decide on its use.
 4. **R2 — B/4, B/8, B/16 after R1.** Re-measure the mesh dependence of the wall and of the bands (§9) once the singularity is bounded.
 5. **R3 — Perzyna viscoplasticity inside SANISAND,** only if TIMs' matched-settlement tolerance (ADR-90 OQ2) requires it. A nonlocal ψ̄ or a crack band does **not** treat this onset and is not proposed. No ADR-90 Duvaut–Lions regularization is recommended.
@@ -480,7 +489,8 @@ LadrunoSANISAND $tag 264.32 0.312885 0.6944 1.3309 0.71 0.027 0.83 0.45 101 0.00
 **Not verified here (quoted, with source):**
 - The acoustic-tensor scan, the 10.1 M re-seats and the h-singularity mechanism: per #892.
 - The R1 oracle result (0/320 vs 102/320) and the Zeno re-seat reading: the R1 session, preliminary.
-- The 27× / +0.54 % TolR figures and the ±1.5 kPa Krylov band: campaign-verified, not recomputed on this branch.
+- The calibration caveat (§0) and the CTXu c-bifurcation finding (§13): WP-150 memo §10 on #892 (e14703ca7) and the R1 session.
+- The effect on q of the Krylov 10× acceptance: not isolated by any arm (§8.2).
 - No material-point replay at the Esmeralda walls (§5.3).
 
 **Not verified at all:**

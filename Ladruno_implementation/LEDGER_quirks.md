@@ -7719,7 +7719,7 @@ Three things to carry forward:
   - TanType 1 + `-maxSubsteps 20000` collapses ds to ~1e-6 m and floors at 0.0114, at 13× the cost per unit s/B;
   - ModifiedEuler floors at 0.0292.
   The refusing points are pre-peak (ρ_α < 1). The set is {(α − α_in):n = 0, b:n ≤ 0}: h = b0/a hits its 1e10 cap and K_p → −∞ (WP-150 memo, #892). The WP-134 oracle hits the same 0/0.
-- **Workaround/status:** none on the integrator side. Only A0 → 0.001 (dilatancy off) removed the refusal in the ablation, and it cost ~27 M substeps per step. Presidual 0.5–20 kPa and e_init 0.65–0.85 do not remove it. The candidate fix is constitutive: R1 in `138_footing_sas_me_ab.md` §13, preliminary. It has two coupled opt-in flags, an h floor everywhere plus a hysteretic α_in re-seat.
+- **Workaround/status:** none on the integrator side. Only A0 → 0.001 (dilatancy off) removed the refusal in the ablation, and it cost a median 2.4e7 substeps per step over its last 20 steps (E_B: 7.3e6; interim). Presidual 0.5–20 kPa and e_init 0.65–0.85 do not remove it. The candidate fix is constitutive: R1 in `138_footing_sas_me_ab.md` §13, preliminary. It has two coupled opt-in flags, an h floor everywhere plus a hysteretic α_in re-seat.
   - The R1 oracle: 0/320 failures with both flags; each flag alone fails; a floor only where b:n ≤ 0 fails 102/320.
   - The wall is a Zeno accumulation of re-seats on b:n → 0⁺. NonPosH is only its b:n < 0 exit.
   - The owner approved R1 as opt-in; TIMs decide on its use. *2026-09-28.*
