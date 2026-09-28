@@ -2,7 +2,7 @@
 title: "WP-138 — strip-footing A/B: ModifiedEuler (IntScheme 1) vs SAS-ME (IntScheme 129)"
 project: Ladruno
 type: measurement report
-status: IN PROGRESS — phase 1 done (control + ModifiedEuler baseline to s/B 0.0174); phase 2 leg B (SAS-ME, beb6d8333) running; C2/D run by another agent
+status: IN PROGRESS — local legs closed (control; A ModifiedEuler and B SAS-ME beb6d8333 both to s/B 0.01737); continuation on Esmeralda (E_A/E_B/E_C2/E_B16), results relayed by the orchestrator
 related:
   - "[[_tims_2d_model_requests_2026-09-25]]"
   - "[[LadrunoSANISAND_implex_guide]]"
@@ -66,12 +66,23 @@ Builds, in order:
 1. `cdf43685f`. Source-identical to WP-129 head 5c8dcd0e0: `git diff -- SRC` is empty. **Provisional**: it carries the known α-bounding dead-end and a non-error-controlled elastic path. Leg `runs/B_sasme_provisional_cdf43685f/`, stopped at step 45 (s/B 0.01104, q 311.9 kPa). **Dead-end census on it: zero.** No refusal of any kind, no committed ρ_α > 1.1 (max 0.966), no step cut. The defect never fired on this deck up to s/B 0.011.
 2. **`beb6d8333`** (WP-129 review fixes, snapshot `binB_beb6d8333/`, md5 420e34d2…). **This is the result that counts.** Leg `runs/B_sasme_beb6d8333/`: IntScheme 129, TanType 0, TolR 1e-4, `-alphaEntryTol` 2 (default), κ 0.1, `-maxSubsteps` 2000.
 
-**B, in progress** (step 67, s/B 0.01604, q 416.8 kPa, at 2026-09-28 01:10):
-- 3 ladder failures, absorbed.
+**B, final local state.** B was stopped by the orchestrator (owner: moved to Esmeralda) after its last completed **step 70: s/B 0.017373, q 443.28 kPa**. That is the same s/B at which A ended, where A had 441.58 kPa.
+- 4 ladder failures, absorbed.
 - 134 refusals, all `maxSubsteps`, in ONE step (58). They are on 70 points in the TOP ROW at x = +1.8–2.0 m (x/B 1.2–1.35, the surface ring) and were absorbed by the ladder.
-- 0 dead-ends; max ρ_α 0.98.
+- 0 dead-ends; max ρ_α < 1.
 
-Final numbers pending.
+**Cross-platform handover (E_B on Esmeralda, build 7936ed6e0, vs local B, beb6d8333).**
+- Identical s/B sequence and q to 1e-5 kPa through step 40 (0.053 kPa by step 46).
+- The step control forked at step 47: E_B converged on the Krylov rung at ds 1e-3 m; B failed one attempt and cut to 5e-4 m.
+- Cost to step 65: E_B 0.98 h, B 5.59 h.
+
+| s/B | E_B q (kPa) | B q (kPa) | E_B − B |
+|---|---|---|---|
+| 0.016040 | 416.787 | 416.801 | −0.014 |
+| 0.016373 | 423.334 | 423.321 | +0.013 |
+| 0.017040 | 436.436 | 436.708 | −0.27 (both real steps, after the fork) |
+
+E_B reached step 65 at s/B 0.017373, q 443.145 kPa, with 0 refusals and 0 failed attempts after step 48. From here the WP-138 footing results come from the Esmeralda legs (E_A / E_B / E_C2 / E_B16).
 
 ## 5. Comparison (so far)
 
@@ -81,16 +92,22 @@ Final numbers pending.
 |---|---|
 | 0 – 0.001 | **5.5 %** (at the first step: A accepts s/B 1.3e-5 on the LineSearch rung at 13.76 kPa, B at 13.00; both are ~12–14 kPa) |
 | 0.001 – 0.005 | 0.64 % |
-| 0.005 – 0.016 | 0.51 % (worst absolute 2.0 kPa at s/B 0.0150) |
+| 0.005 – 0.0174 | 0.51 % (worst absolute 2.05 kPa at s/B 0.0170; at the common end 443.28 vs 441.58 kPa, +0.38 %) |
 
 An earlier message quoted "within 0.31 %". That figure is the worst **absolute** difference (1.1 kPa) over s/B ≤ 0.0134, taken as relative at that point. It is not the worst relative difference, and it does not hold below s/B 0.005. The table above is the corrected statement.
 
-### 5.2 Cost to a common s/B 0.01604
+Plots: `Ladruno_files/testbed/footing_sas_me_ab/qs_local_zoom.png` (A, B, DP to s/B 0.018) and `qs_local.png` (all local legs). The wall-clock panel has jumps, and they are not integrator cost:
+- A's jump near s/B 0.009 is the 2.75 h machine pause.
+- B's jump near s/B 0.012 is one 49-min step, 47, which ran while four runs shared the machine.
+
+### 5.2 Cost to the common end s/B 0.01737
 
 | leg | push wall | substeps | Newton iterations | steps | failed attempts | caps / refusals |
 |---|---|---|---|---|---|---|
-| A (ModifiedEuler) | 8.66 h (≈ 5.9 h without the 2.75 h pause) | 1.09e9 | 1 326 | 72 | 5 | 69 cap hits (trial iterates) |
-| B (SAS-ME beb6d8333) | 5.96 h | 1.08e9 | 1 166 | 67 | 3 | 134 refusals (one step) |
+| A (ModifiedEuler) | 10.05 h (≈ 7.3 h without the 2.75 h pause) | 1.22e9 | 1 514 | 79 | 6 | 148 cap hits (trial iterates) |
+| B (SAS-ME beb6d8333) | 7.03 h | 1.24e9 | 1 287 | 70 | 4 | 134 refusals (one step) |
+
+B's wall clock also shares the machine with up to three other runs; the substep and iteration counts are the load-independent measure.
 
 On this deck SAS-ME costs about the same substeps per unit settlement as ModifiedEuler. The expected 1.5–3× substep overhead per increment did not materialise at the global level.
 
