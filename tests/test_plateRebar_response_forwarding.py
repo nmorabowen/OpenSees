@@ -332,3 +332,165 @@ def test_reachability_and_null_keys():
     assert len(ops.eleResponse(*pre, 'buckling')) == 1
     assert len(ops.eleResponse(*pre, 'material', 'reduction')) == 1
     assert len(ops.eleResponse(*pre, 'plasticStrain')) == 1
+
+
+# ---------------------------------------------------------------------------
+# recorder metadata, MPCO end-to-end, database round trip
+# ---------------------------------------------------------------------------
+def _small_shell(angles=(0.0,)):
+    """ASDShellQ4 + [concrete, bar(angles[0]), concrete, bar(angles[1]), concrete ...]."""
+    ops.wipe()
+    ops.model('basic', '-ndm', 3, '-ndf', 6)
+    for n, (x, y) in NODES.items():
+        ops.node(n, x, y, 0.0)
+        ops.fix(n, 0, 0, 1, 1, 1, 1)
+    _j2(11)
+    ops.nDMaterial('ElasticIsotropic', 1, E_C, NU_C)
+    layers = [(1, T_C)]
+    for k, ang in enumerate(angles):
+        ops.nDMaterial('PlateRebar', 20 + k, 11, ang)
+        layers += [(20 + k, T_S), (1, T_C)]
+    ops.section('LayeredShell', 10, len(layers), *[v for lay in layers for v in lay])
+    ops.element('ASDShellQ4', 1, 1, 2, 3, 4, 10)
+    ops.timeSeries('Constant', 1)
+    return layers
+
+
+def _analysis(algo='Newton'):
+    ops.constraints('Penalty', 1.0e12, 1.0e12)
+    ops.numberer('Plain')
+    ops.system('FullGeneral')
+    ops.test('NormDispIncr', 1.0e-14, 50, 0)
+    ops.algorithm(algo)
+    ops.integrator('LoadControl', 1.0)
+    ops.analysis('Static')
+
+
+def test_forwarded_key_leaves_no_empty_material_block(tmp_path):
+    # NDMaterial::setResponse writes an NdMaterialOutput tag even when it returns null;
+    # the fallback must probe it on a silent stream, so a forwarded key's metadata
+    # carries the bar's block only.
+    _small_shell()
+    pre = ('-ele', 1, 'section', '1', 'fiber', '2')
+    cases = {'fwd': ('stressStrain',), 'prefixed': ('material', 'stress'),
+             'base': ('stress',)}
+    files = {}
+    for name, key in cases.items():
+        files[name] = str(tmp_path / f'{name}.xml')
+        ops.recorder('Element', '-xml', files[name], *pre, *key)
+    _impose(1.0e-3, 0.0, 0.0, first=True)
+    _analysis()
+    assert ops.analyze(1) == 0
+    ops.remove('recorders')
+    ops.wipe()
+    head = {}
+    for name, fn in files.items():
+        with open(fn) as f:
+            txt = f.read()
+        head[name] = txt[:txt.find('<Data>')] if '<Data>' in txt else txt
+    for name in ('fwd', 'prefixed'):
+        assert 'NdMaterialOutput' not in head[name], (name, head[name])
+        assert 'UniaxialMaterialOutput' in head[name], (name, head[name])
+    assert 'NdMaterialOutput' in head['base'] and 'UniaxialMaterialOutput' not in head['base']
+
+
+def test_mpco_section_fiber_forwarded_key(tmp_path):
+    h5py = pytest.importorskip('h5py')
+    os.environ.setdefault('HDF5_USE_FILE_LOCKING', 'FALSE')
+    layers = _small_shell(angles=(0.0, 30.0))
+    nfib = len(layers)
+    bars = [i + 1 for i, (m, _) in enumerate(layers) if m != 1]
+    fn = str(tmp_path / 'o6.mpco')
+    ops.recorder('mpco', fn, '-E', 'section.fiber.stress', 'section.fiber.plasticStrain')
+    _impose(4.0e-3, 1.0e-3, 3.0e-3, first=True)
+    _analysis()
+    assert ops.analyze(1) == 0
+    want_pl, want_st = [], []
+    for gp in GPS:
+        for fib in bars:
+            want_pl += _resp(1, 'section', str(gp), 'fiber', str(fib), 'plasticStrain')
+        for fib in range(1, nfib + 1):
+            want_st += _resp(1, 'section', str(gp), 'fiber', str(fib), 'stress')
+    assert max(abs(v) for v in want_pl) > 1.0e-4          # the bars did yield
+    ops.remove('recorders')
+    ops.wipe()
+
+    def bucket(f, result):
+        grp = f[f'MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/{result}']
+        (name,) = list(grp.keys())                          # one element class -> one bucket
+        return grp[name]
+
+    with h5py.File(fn, 'r') as f:
+        pl = bucket(f, 'section.fiber.plasticStrain')
+        # the rebar-layer bucket: per Gauss point only the bar fibers (the concrete layers
+        # answer nothing), one scalar each. LadrunoUniaxialJ2 emits no ResponseType tag for
+        # this key, so MPCO groups a point's bars as ONE entry of len(bars) components
+        # ("C1,C2"); the product is what is fixed.
+        assert int(pl.attrs['NUM_COLUMNS'][0]) == len(GPS) * len(bars)
+        mult = [int(v) for v in pl['META/MULTIPLICITY'][:].ravel()]
+        ncmp = [int(v) for v in pl['META/NUM_COMPONENTS'][:].ravel()]
+        assert [m * c for m, c in zip(mult, ncmp)] == [len(bars)] * len(GPS), (mult, ncmp)
+        assert [float(v) for v in pl['DATA/STEP_0'][0]] == want_pl
+        st = bucket(f, 'section.fiber.stress')
+        # the plate-stress bucket: every layer, the 5-component plate stress
+        assert int(st.attrs['NUM_COLUMNS'][0]) == len(GPS) * nfib * 5
+        assert list(st['META/MULTIPLICITY'][:].ravel()) == [nfib] * len(GPS)
+        assert list(st['META/NUM_COMPONENTS'][:].ravel()) == [5] * len(GPS)
+        assert [float(v) for v in st['DATA/STEP_0'][0]] == want_st
+
+
+RT_ANGLES = (30.0, 17.0)                   # off-axis: exercises c, s (0/90 take shortcuts)
+RT_PATH = [(2.0e-3, 5.0e-4, 1.5e-3), (4.0e-3, 1.0e-3, 3.0e-3), (1.0e-3, 2.0e-3, -2.0e-3)]
+RT_NEXT = (-2.0e-3, 1.0e-3, -4.0e-3)
+
+
+def _rt_read():
+    out = []
+    for gp in GPS:
+        for fib in (2, 4):
+            pre = (1, 'section', str(gp), 'fiber', str(fib))
+            out += _resp(*pre, 'material', 'strain') + _resp(*pre, 'material', 'stress')
+            out += _resp(*pre, 'plasticStrain') + _resp(*pre, 'stress')
+    return out
+
+
+def test_database_roundtrip_off_axis_bar_is_bit_identical(tmp_path):
+    """save/wipe/restore (FE_Datastore File), then one more step == the uninterrupted run.
+
+    PlateRebarMaterial::recvSelf used to rebuild (c, s) with angle * 0.0174532925 while the
+    constructor uses angle * 4 asin(1)/360, so a restored off-axis bar saw a different bar
+    strain (~1e-9 relative) from the first step after the restore.
+    """
+    # A: uninterrupted
+    _small_shell(RT_ANGLES)
+    _analysis('Linear')
+    for i, e in enumerate(RT_PATH + [RT_NEXT]):
+        _impose(*e, first=(i == 0))
+        assert ops.analyze(1) == 0
+    ref = _rt_read()
+    ops.wipe()
+
+    # B: same history, save after RT_PATH, wipe, restore, then RT_NEXT
+    _small_shell(RT_ANGLES)
+    _analysis('Linear')
+    for i, e in enumerate(RT_PATH):
+        _impose(*e, first=(i == 0))
+        assert ops.analyze(1) == 0
+    before = _rt_read()
+    db = str(tmp_path / 'o6rt')
+    try:
+        ops.database('File', db)
+    except Exception as exc:  # noqa: BLE001 - build without FE_Datastore
+        pytest.skip(f'database() unsupported in this build: {exc}')
+    ops.save(1)
+    ops.wipe()
+    _small_shell(RT_ANGLES)                # skeleton for the restore to land on
+    ops.database('File', db)
+    ops.restore(1)
+    assert _rt_read() == before            # the committed state came back bit for bit
+    _analysis('Linear')
+    _impose(*RT_NEXT, first=False)
+    assert ops.analyze(1) == 0
+    got = _rt_read()
+    ops.wipe()
+    assert got == ref
