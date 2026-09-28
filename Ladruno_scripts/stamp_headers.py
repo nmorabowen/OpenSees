@@ -74,6 +74,7 @@ GLOBS = [
     "SRC/material/LadrunoMaterialStatus.h",
     "SRC/material/nD/LadrunoSANISAND.*",
     "SRC/material/nD/LadrunoSANISAND3D.*",
+    "SRC/material/nD/LadrunoSANISANDSasME.cpp",
     "SRC/material/nD/LadrunoSANISANDPlaneStrain.*",
     "SRC/material/nD/LadrunoConcrete3D.*", "SRC/material/nD/LadrunoConcrete3DKernel.h",
     "SRC/material/nD/LadrunoHardening.h",
