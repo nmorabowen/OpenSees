@@ -1192,23 +1192,41 @@ def return_map_tensor(sig_n, deps, mp, kp_n, hardening=True):
 
     SUB-INCREMENTATION (B1; mp["max_subincr"] > 0, hardening map only): if the direct return fails, the
     strain increment is halved (OOFEM ConcreteDPM2::performPlasticityReturn) and the sub-increments are
-    integrated in sequence from the committed state, doubling back up after each success, down to a floor
-    of 2^-max_subincr of the increment. max_subincr = 0 (the oracle default) => the direct return only,
-    byte-identical to the pre-B1 map. The damage update downstream sees only the final effective state."""
+    integrated in sequence from the committed state, doubling back up (to at most 2x the size that just
+    succeeded) after each success, down to a floor of 2^-max_subincr of the increment. max_subincr = 0
+    (the oracle default) => the direct return only, byte-identical to the pre-B1 map. The damage update
+    downstream sees only the final effective state.
+
+    ATTEMPT BUDGET (WP concrete3d-hang-diagnosis): a Gauss point that only ever succeeds near the floor
+    alternates fail/succeed and can legally spend up to ~2 * 2^max_subincr return maps (of up to 100
+    Newton iterations each -- see return_map_hardening) reaching done=1.0. At max_subincr=10 (the CDPM2
+    wrapper default, LadrunoConcrete3D.cpp -- ensureGcTable's Params) that is ~2048 attempts per material
+    point per Newton iteration; over a full mesh x algorithm iterations that is the multi-hour hang
+    (C3/B1 vecchio_shim, sheikh_uzumeri confined column) diagnosed 2026-09-27 -- nothing ever failed, so
+    the analysis never cut the step and nothing was logged. max_sub_attempts caps the TOTAL number of
+    _return_map_tensor_1 calls (successes + failures) in this loop; once exhausted, return the honest
+    failure (the direct-return fallback) so the caller's status != 0 cuts the step, exactly like any
+    other non-convergence. Default 64 keeps the worst case at 64 * 100 Newton iterations -- bounded and
+    fast -- instead of up to 2048 * 100."""
     out = _return_map_tensor_1(sig_n, deps, mp, kp_n, hardening)
     nmax = int(mp.get("max_subincr", 0))
     if out[3] or nmax <= 0 or not hardening:
         return out
+    max_attempts = int(mp.get("max_sub_attempts", 64))
     s = np.array(sig_n, float).copy()
     k = kp_n
     done, frac, floor = 0.0, 0.5, 0.5 ** nmax
     deps = np.asarray(deps, float)
+    attempts = 0
     while done < 1.0:
+        if attempts >= max_attempts:
+            return out                         # honest failure: budget exhausted, keep the elastic fallback
+        attempts += 1
         f = min(frac, 1.0 - done)
         sn, kn, _pl, cv = _return_map_tensor_1(s, deps * f, mp, k, True)
         if cv:
             s, k, done = sn, kn, done + f
-            frac = min(2.0 * frac, 1.0)
+            frac = min(2.0 * f, 1.0)           # at most 2x the size that just succeeded, not the stale frac
         else:
             frac *= 0.5
             if frac < floor:

@@ -139,6 +139,14 @@ struct Params {
     // Return-map sub-incrementation depth (B1): if the direct return fails, halve the strain increment down to
     // 2^-maxSubIncr (OOFEM performPlasticityReturn). 0 => the direct return only (byte-identical legacy).
     int    maxSubIncr = 0;
+    // TOTAL attempt budget for the sub-increment loop in returnMapTensor (successes + failures), WP
+    // concrete3d-hang-diagnosis: a GP that only ever succeeds near the 2^-maxSubIncr floor alternates
+    // fail/succeed and can legally spend up to ~2 * 2^maxSubIncr attempts (of up to 100 Newton iterations
+    // each) reaching done=1.0 -- at the CDPM2 wrapper default maxSubIncr=10 that is ~2048 attempts per
+    // material point per global Newton iteration, which is the multi-hour analyze(1) hang (nothing ever
+    // fails, so nothing is logged and the step is never cut). Independent of maxSubIncr; only matters when
+    // maxSubIncr > 0. Default 64 bounds the worst case to 64 * 100 Newton iterations per call.
+    int    maxSubAttempts = 64;
     // Compressive damage drive (B2, WP concrete3d-damage-drive). 0 = legacy fork drive ((1-wc)(-sig_min) = fc exp(..),
     // histories from the onset only; the kernel/oracle default). 1 = CDPM2 Eq.47-49/53/55 (OOFEM computeDamage /
     // computeDamageParamCompression): eqc += alpha_c d(eps_tilde), kappa_dc = max eqc, kdc2 from the start, kdc1 with
@@ -2070,9 +2078,20 @@ inline int returnMapTensor1(const Params& mp, const double sig_n[6], const doubl
 
 // Tensor return with OOFEM-style SUB-INCREMENTATION (B1; mirror of the oracle return_map_tensor). The direct
 // return first; if it fails and mp.maxSubIncr > 0 (hardening map), the strain increment is halved and the
-// sub-increments integrated in sequence from the committed state (doubling back after each success) down to
-// 2^-maxSubIncr. The reported tangent is the LAST sub-increment's consistent tangent (an approximation of the
-// sub-stepped algorithmic tangent). maxSubIncr = 0 => byte-identical to the direct return.
+// sub-increments integrated in sequence from the committed state (doubling back, to at most 2x the size that
+// just succeeded, after each success) down to 2^-maxSubIncr. The reported tangent is the LAST sub-increment's
+// consistent tangent (an approximation of the sub-stepped algorithmic tangent). maxSubIncr = 0 => byte-identical
+// to the direct return.
+//
+// ATTEMPT BUDGET (WP concrete3d-hang-diagnosis, 2026-09-27): mp.maxSubAttempts caps the TOTAL number of
+// returnMapTensor1 calls in this loop (successes + failures). Without it, a GP that only ever succeeds at the
+// 2^-maxSubIncr floor alternates fail/succeed and can legally run ~2 * 2^maxSubIncr attempts (~2048 at the
+// CDPM2 wrapper's maxSubIncr=10) of up to 100 Newton iterations each, PER material point PER global Newton
+// iteration -- with nothing ever failing, so nothing is logged and the step is never cut. That is the observed
+// analyze(1) hang (C3/B1 vecchio_shim, sheikh_uzumeri confined column): 100% CPU, no opserr output, no
+// recorder output, for 30-40+ minutes on a single step. Once the budget is exhausted, return the honest
+// failure (st0, the direct-return fallback) exactly like any other non-convergence, so the caller's status
+// != 0 cuts the step. maxSubIncr = 0 stays byte-identical (the budget only applies inside this loop).
 inline int returnMapTensor(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
                            bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
                            bool doTangent, int* subInfo)
@@ -2081,19 +2100,22 @@ inline int returnMapTensor(const Params& mp, const double sig_n[6], const double
     const int st0 = returnMapTensor1(mp, sig_n, deps, kp_n, hardening, sig_new, kp_new, Dtan6, doTangent);
     if (subInfo) *subInfo = (st0 == 0) ? 0 : -1;
     if (st0 == 0 || mp.maxSubIncr <= 0 || !hardening) return st0;
-    int pieces = 0;
+    const int maxAttempts = (mp.maxSubAttempts > 0) ? mp.maxSubAttempts : 64;
+    int pieces = 0, attempts = 0;
     double s[6], k = kp_n, done = 0.0, frac = 0.5;
     const double floorFrac = std::ldexp(1.0, -mp.maxSubIncr);
     for (int i = 0; i < 6; ++i) s[i] = sig_n[i];
     double sn[6], kn, Dt[6][6];
     while (done < 1.0) {
+        if (attempts >= maxAttempts) return st0;        // honest failure: budget exhausted, keep the fallback
+        ++attempts;
         const double f = (frac < 1.0 - done) ? frac : 1.0 - done;
         double d[6]; for (int i = 0; i < 6; ++i) d[i] = deps[i] * f;
         const int st = returnMapTensor1(mp, s, d, k, true, sn, kn, Dt, doTangent && (done + f >= 1.0));
         if (st == 0) {
             for (int i = 0; i < 6; ++i) s[i] = sn[i];
             k = kn; done += f; ++pieces;
-            frac = (2.0 * frac < 1.0) ? 2.0 * frac : 1.0;
+            frac = (2.0 * f < 1.0) ? 2.0 * f : 1.0;     // at most 2x the size that just succeeded (not the stale frac)
         } else {
             frac *= 0.5;
             if (frac < floorFrac) return st0;          // honest failure: keep the direct-return fallback
