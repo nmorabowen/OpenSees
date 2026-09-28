@@ -11,6 +11,7 @@ SANISAND kernel formulas (`LadrunoSANISANDSasME.cpp:335-411`, `ManzariDafalias::
 |---|---|---|
 | `h_decomp.py f1.npz,f2.npz,...` | Is any committed GP near the SAS-ME refusal H = Kp + 2G − K·D·qv ≤ 0? It prints the term split and the lowest-H GPs. | `out_h_decomp.txt` |
 | `refuser_stats.py <analysis dir>` | H split and cumulative SAS counters (re-seats, reversal rejections) at the GPs that refused at the wall (`tables/floor_refusers_in_band.csv`) | `out_refusers.txt` |
+| `t5_element_physics.py [eps_max] [SET=toyoura] [E0=..] [NAME=value]` | T5: drained plane-strain and triaxial compression on the EXACT WP-134 oracle (no engine), with Bolton (1986) stress–dilatancy checks | `out_t5*.md`, `out_t5*.json` |
 | `acoustic_vec.py f1.npz,...` | Plane-strain acoustic tensor of the continuum tangent at every GP, against an associated control and the ADR-90 V4 viscous blend | `out_acoustic.txt` |
 
 The inputs came from the WP-138 analysis copy. The legs are E_B (B/8, SAS-ME, TolR 1e-4) and E_B16 (B/16), Esmeralda

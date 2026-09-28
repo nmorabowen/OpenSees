@@ -26,8 +26,15 @@ updated: 2026-09-28
 >    - The refusing points sit **at an α_in re-seat** (a = (α−α_in):n ≈ 0, h → ∞), **near the bounding surface** (b:n small).
 >      There, Kp = ⅔·p·(b0/a)·(b:n) is ∞·0, and it goes to −∞ as soon as b:n ≤ 0.
 >    - The same 0/0 stopped WP-134's exact Radau oracle at ring point 1950/3.
+>    - *Corrected 2026-09-28 by the R1 session's oracle:* the exact rate equations reach this point through a
+>      **Zeno accumulation of re-seats**, with b:n → 0 **from above**. H ≤ 0 is only the b:n < 0 exit.
 >    - No regularization of the boundary-value problem can lift an unbounded negative modulus at a point.
->      The cure is a model-level fix of that set (**R1**).
+>      The cure is a model-level fix (**R1: the h floor everywhere plus a hysteretic re-seat, coupled**).
+> 3. **The campaign parameter set violates stress–dilatancy** (T5, §10).
+>    - Plane-strain φ′_peak is 45–60° with a peak dilation angle of only 0.8–1.9°, and the peak comes at 4–16 %
+>      axial strain.
+>    - A lab-calibrated DM04 set (Toyoura) at the same implied density peaks at 1–5 % with ψ_max 14–23°.
+>    - Before any footing curve is called physical, TIMs' calibration must be checked against their sand's data.
 > 2. **The bands are non-associated localization in the HARDENING regime.**
 >    - At s/B 0.011, 17 % of the Gauss points already have a singular acoustic tensor (det ≤ 0).
 >      At those points H/2G ≈ 1.05 and Kp/2G ≈ 0.03, i.e. still hardening.
@@ -37,7 +44,7 @@ updated: 2026-09-28
 >      B/8 from s/B 0.010.
 >    - A regularizer that acts on ψ-softening (nonlocal void ratio) or on fracture energy (crack band) does not touch it.
 >
-> **Recommendation.** R0 (confirm, no code) → **R1** (opt-in bounded memory modulus on the softening side) →
+> **Recommendation.** R0 (confirm, no code) → **R1** (opt-in h floor everywhere + hysteretic re-seat, coupled) →
 > **R2** (unregularized B/4–B/8–B/16 re-measure past 0.05) → **R3 only if R2 fails TIMs' tolerance**.
 > R3 is Perzyna-type viscoplasticity *inside* `LadrunoSANISAND`. Rejected: the Duvaut–Lions wrapper (it inherits the
 > refusal), and nonlocal ψ̄ for this stage (it acts on the wrong mechanism). Cosserat or gradient-in-λ only if a band
@@ -108,6 +115,34 @@ The loading index L = a·N/H_s is 0/0 when b:n → 0, and there is no solution w
 DM04's h = ∞ at a re-seat encodes an elastic-like restart from *inside* the bounding surface. Near the peak, a small
 rotation of n (non-coaxial loading in the edge zone, or iterate jitter) re-seats α_in while b:n' ≤ 0. The model then
 asks for an infinitely *negative* modulus.
+
+> [!important] Corrected 2026-09-28 — how the set is reached (the R1 session's oracle, exact Radau)
+> **Test set:** 5 real refuser states rebuilt from the checkpoints (E_B 1880/1, 1879/1; E_D 1962/1, 2058/1; E_B16
+> 7820/4) × 32 directions × 2 magnitudes = 320 increments.
+>
+> **Mechanism: a Zeno accumulation of re-seats, with b:n → 0 from above.**
+> - After a re-seat, h = ∞ makes α slide along b.
+> - With b nearly perpendicular to n, that slide rotates n on the m = 0.005 cone, so a < 0 again and the next
+>   re-seat follows.
+> - At 1880/1 the re-seat intervals are 1.7e-2, 1.5e-3, 5.6e-5, 2.4e-6, … They accumulate at a finite t*, where
+>   a = 0, b:n = 1.9e-8 > 0 and |dα/dt| ≈ 2e5.
+> - H ≤ 0 is only the b:n < 0 exit of that sequence.
+> - The refusers sit with n at an extension-side Lode angle: ρ_b(θ_n) = 1.17–1.31 while ρ_α = 0.93–0.96.
+>
+> **Consequence: the "b:n ≤ 0 only" floor of the first R1 draft does not work.**
+>
+> | variant | failures (of 320) |
+> |---|---|
+> | DM04 | 102 |
+> | "b:n ≤ 0 only" floor | 102 |
+> | + hysteresis | 102 |
+> | floor everywhere alone | 97 |
+> | floor everywhere (c_A = 1) **+** re-seat only when a < −c_rev·√(2/3)·m | **0** (min H/X 0.17), for c_rev ∈ {½, 1, 2} |
+>
+> The dilatancy reading of the ablation below is therefore weakened:
+> - the sequence also runs with b:n > 0;
+> - S4 carries ~⅓ of E_B's load at the same s/B;
+> - ψ-contraction may feed the set, but it is not required.
 
 **Corroboration.**
 - WP-134's Radau oracle **stopped** at ring point 1950/3 under shear, where "(α−α_in):n → 1e-10 and b:n → 4e-7
@@ -202,29 +237,31 @@ ADR-90 §3.3's honest-framing test applies to ℓ exactly as it does to τ: neve
 - **Gate:** a ≈ 0 re-seat with b:n' ≤ 0 at the refusing stage in all three.
 - If it fails, §1 is wrong and this memo is re-scoped before any code.
 
-**R1 — bounded memory modulus on the softening side (opt-in model option; owner and TIMs decide).**
-- Wherever **b:n ≤ 0**, take h = b0 / max(a, a_min), with **a_min = c_A·√(2/3)·m** (c_A = 1 → 4.1e-3). The α update
-  uses the same h.
-- **Where b:n > 0, DM04 is untouched.** That includes the h = ∞ elastic-like restart inside the bounding surface,
-  which is the cyclic behaviour DM04 is calibrated for.
-- Kp stays continuous across b:n = 0 (only its slope has a kink).
-- At a re-seat with b:n ≈ 0⁻, Kp ≈ 0⁻ and H ≈ 2G − K·D·n:r > 0. The new loading process starts *on* the bounding
-  surface, nearly perfectly plastic: the physically expected response to a small rotation of the loading direction at
-  the peak.
-- Genuine softening can still refuse, but only at finite Kp. At p = 334 kPa, c_A = 1 it needs b:n < −0.09, and it
-  still refuses as RC_NONPOS_H.
-- Flag `-hCap c_A`, default 0: the sentinel path, byte-identical. New counter `hCapped` in `sasStats`.
-- *R1b, separate flag, measured separately:* a hysteretic re-seat (re-seat only when a < −a_rev) against the 88 M
-  reversal chatter.
-  - S4 shows the substep cost survives without NonPosH: 26.9 M substeps in one step.
-  - This changes α_in memory semantics for small cycles.
+**R1 — the h floor everywhere + a hysteretic re-seat, as COUPLED flags (opt-in; owner D-a YES).**
+
+**Owned by the "SANISAND α_in re-seat singularity fix" session, oracle first.** This section records the spec as
+corrected by that session's oracle (§1.4 box). The first draft here, a floor only where b:n ≤ 0, fails as often as
+DM04.
+
+- **Floor everywhere:** h = b0 / max(a, a_min), with **a_min = c_A·√(2/3)·m** (c_A ≈ 1 → 4.1e-3). The α update uses
+  the same h.
+- **Hysteretic re-seat:** α_in := α only when a < −c_rev·√(2/3)·m (c_rev ∈ {½, 1, 2} all pass).
+  - This is half of the well-posedness fix, not only a cost lever: it plausibly explains the 88 M rejected reversals
+    and S4's 26.9 M substeps.
   - It is not WP-129's strain-norm `-reversalTol/-reversalRel`, which IntScheme 129 refuses.
+- **Each part alone fails:** floor alone 97/320, c_A = ¼ + hysteresis 90/320. Together: 0/320, min H/X = 0.17.
+  An optional softening cap H ≥ ½X also gives 0/320 and never activates in element tests.
+- **Element-test cost at c_A = 1:**
+  - monotonic |Δq| ≤ 2.7e-4·q_max;
+  - drained cycles identical to 4 digits;
+  - undrained cyclic N unchanged **except one open outlier, a BLOCKING gate**: CTXu, e0 0.6944, CSR 0.2. DM04 reaches
+    5 % DA at N = 8; the variants do not by N = 20. DM04 itself breaks axisymmetry in extension there (c = 0.71 < 7/9).
+- **Ablation legs on the footing:** floor alone, hysteresis alone, both, and both + cap.
 - **Gate:**
-  1. The WP-134 oracle suite: monotonic drained/undrained triaxial and plane strain move by < 0.1 % in q and ε_v (the
-     cap is inactive while b:n > 0). The change in cyclic undrained cycles-to-liquefaction is reported, and TIMs set
-     the tolerance.
-  2. E_B and E_B16 with c_A = 1 pass s/B 0.0508 / 0.0135 with no singular-set refusal.
-  3. c_A ∈ {½, 1, 2} moves q at matched s/B by less than the solver floor (0.8–1.4 %, ADR-90 §1.2(iii)).
+  1. The oracle suite above, including the CTXu outlier.
+  2. E_B and E_B16 with both flags pass s/B 0.0508 / 0.0135 with no singular-set refusal, and q–s is unchanged below
+     s/B 0.036.
+  3. c_A and c_rev ∈ {½, 1, 2} move q at matched s/B by less than the solver floor (0.8–1.4 %, ADR-90 §1.2(iii)).
 
 **R2 — the unregularized re-measure (no code; Esmeralda).**
 - Run B/4, B/8, B/16 and one skewed or unstructured B/8 fine zone, with R1, to s/B 0.15.
@@ -265,7 +302,8 @@ mechanism, and at this scale that width is numerical anyway. Open them only on a
 
 | parameter | stage | what it is | calibration | forbidden |
 |---|---|---|---|---|
-| c_A (a_min = c_A·√(2/3)·m) | R1 | smallest α travel since the last reversal that the memory resolves | tied to the yield cone, so no fit. Default 1, sensitivity {½, 1, 2}. Every refuser had \|a\| < √(2/3)·m | fitting c_A to a load |
+| c_A (a_min = c_A·√(2/3)·m) | R1 | smallest α travel since the last reversal that the memory resolves | tied to the yield cone, so no fit. Default 1, sensitivity {½, 1, 2}. Every refuser had \|a\| < √(2/3)·m; c_A = ¼ fails | fitting c_A to a load |
+| c_rev | R1 | re-seat hysteresis, in cone radii | ½, 1 and 2 all pass the oracle set; the owner of R1 picks the default | as above |
 | τ (m of settlement; η = 2G·τ) | R3 | relaxation time in pseudo-time | the smallest τ that keeps C8 elliptic at the deck's ds_max (§2.1 gives τ/Δt ≥ 0.45 with margin), then {τ/2, τ, 2τ} | tuning τ to a target q or width (ADR-90 §3.3) |
 | ℓ | R4 | nonlocal radius | ≥ 3·h of the coarsest mesh (numerical; the physical ℓ is ~mm), reported at {ℓ/2, ℓ, 2ℓ} | as above |
 
@@ -298,8 +336,8 @@ mechanism, and at this scale that width is numerical anyway. Open them only on a
     (ADR-90 D11).
   - The campaign's TanType 0 (modified Newton) is unaffected.
 - **State and wire.**
-  - R1 is one option double in `LadrunoSasOptions`. That struct is a Ladruno block in the vanilla `ManzariDafalias.h`,
-    so it gets a vanilla-ledger row.
+  - R1 is two option doubles in `LadrunoSasOptions` (c_A, c_rev). That struct is a Ladruno block in the vanilla
+    `ManzariDafalias.h`, so it gets a vanilla-ledger row. The R1 session owns this.
   - R3 adds τ, the committed overstress and the latched Δt: getCopy, sendSelf/recvSelf, revertToLastCommit.
   - No statics, so it is thread-safe for WP-131/146.
 - **IMPL-EX.** SAS-ME + IMPL-EX is unqualified (concrete session's study), so R1/R3 are SAS-ME-only. R3 hard-refuses
@@ -345,7 +383,7 @@ suffices, and T4 otherwise.
 
 Each step ends in a number, and each open decision is settled by the numbers of the steps before it.
 
-1. **R1, oracle first** (T1, T2).
+1. **R1, oracle first** (T1, T2; the R1 session). The spec is the coupled floor-everywhere + hysteresis of §4.
    - The WP-134 oracle suite runs with the cap. The 1950/3 shear row must now integrate *through* the former 0/0.
    - Then the C++, then E_B and E_B16 with c_A = 1 past their walls.
 2. **The material against the sand's own physics** (T5).
@@ -380,8 +418,50 @@ Each step ends in a number, and each open decision is settled by the numbers of 
    - Either way, no new ADR number unless step 4 shows the model itself is the problem. If it does, the answer is the
      survey's NorSand-BA track (WP-144), not a regularizer.
 
-**Inputs owed by TIMs:** the sand's grading (d50), the target D_r, and any triaxial or plane-strain data. Also any
-footing test they consider the reference.
+**Inputs owed by TIMs:**
+- the sand's grading (d50), e_max/e_min and the target D_r;
+- any triaxial or plane-strain data;
+- the calibration target for undrained cyclic CSR–N (it decides R1's CTXu outlier);
+- the exact PDMY01 33° parameter set behind the 417.6 kPa control;
+- any footing test they consider the reference.
+
+Quote each control with its cone: TIMs' limit-point control is **PDMY01 at 33°**; the WP-138 comparison curve is
+**UW DruckerPrager, ψ = 0, at 38°**.
+
+---
+
+## 10. T5 results — the campaign set against sand physics (flag OFF baseline)
+
+`t5_element_physics.py` runs drained compression from isotropic states on the exact WP-134 oracle (`uw_model`
+options, ε_a to 25 %). Outputs: `out_t5.md` and `out_t5_toyoura_e0.66.md`.
+
+The contrast is DM04's own lab-calibrated Toyoura set (Verdugo & Ishihara data). It runs at e0 = 0.66, i.e.
+D_r ≈ 0.83 with e_max 0.977 and e_min 0.597. That matches the D_r the campaign set's strength implies.
+
+| set | test | p0 kPa | φ′_peak ° | ε_a at peak | peak dilatancy | reached critical state by 25 %? | Bolton (1986) check |
+|---|---|---|---|---|---|---|---|
+| campaign (e0 0.6944) | PS | 10 / 50 / 150 / 500 | 60.1 / 55.0 / 50.7 / 44.9 | 4.4 / 7.2 / 10.2 / 15.5 % | ψ_max 1.9 / 1.6 / 1.3 / 0.8° | **no** (ψ_end −0.09…−0.04) | stress–dilatancy missed by ~3–20× |
+| campaign | TX | 10 / 50 / 150 / 500 | 48.6 / 45.8 / 43.1 / 39.1 | 4.1 / 7.3 / 10.7 / 16.6 % | (−dε_v/dε₁)max 0.067 / 0.058 / 0.048 / 0.031 | no | Δφ 15.6 / 12.8 / 10.1 / 6.1° vs 10·(−dε_v/dε₁)max ≤ 0.7°. Strength alone implies D_r 0.80–0.88 |
+| Toyoura DM04 (e0 0.66) | PS | same | 51.1 / 49.2 / 47.0 / 43.2 | 1.1 / 2.0 / 3.0 / 4.8 % | ψ_max 23.4 / 21.5 / 19.0 / 14.0° | nearly (ψ_end ≈ −0.03) | Δφ = 0.5–0.7 × (0.8·ψ_max) |
+| Toyoura DM04 | TX | same | 40.5 / 39.6 / 38.5 / 36.4 | 1.0 / 1.8 / 2.9 / 4.7 % | 1.10 / 1.00 / 0.88 / 0.64 | nearly | Δφ 9.3 vs 11.0° … 5.3 vs 6.4°: within ~17 % |
+
+**Reading.**
+- The campaign set's strength is that of a very dense sand. Its peak comes 3–4× too late in strain against Toyoura at the same D_r.
+- It dilates ~15–25× less than such a sand must, by stress–dilatancy (Rowe; Bolton): the triaxial Δφ needs (−dε_v/dε₁)max ≈ 0.6–1.6; the model gives 0.03–0.07.
+- A0 = 0.05 is 14× below DM04's Toyoura value. The high strength comes from nb = 3.5 through M_b = M·e^(−n_b·ψ),
+  almost decoupled from volume change.
+- Three consequences for the footing:
+  1. The flow rule is extremely non-associated (friction ~45–60° against dilation ~1–2°). That is the §2 loss of
+     ellipticity at positive hardening: the bands are partly a product of the calibration.
+  2. A late peak (4–16 %) means the footing needs large settlements to mobilize. That is consistent with "no plateau
+     to s/B 0.05" in every WP-138 leg.
+  3. None of the three footing curves (SANISAND 967 kPa, DP 38° 824 kPa, PDMY01 33° 418 kPa at their own s/B) can be
+     called physical until TIMs' lab data pin φ′_peak, ε at peak and dilatancy for their sand.
+- **For the decision procedure:**
+  - T6 (the footing benchmarks) is only meaningful after a calibration check.
+  - Regularization cannot fix a constitutive mismatch of this size.
+  - If TIMs confirm the set is what their data say, the physics check moves to their data. If not, recalibration comes
+    first (or the NorSand-BA track, WP-144).
 
 ---
 
