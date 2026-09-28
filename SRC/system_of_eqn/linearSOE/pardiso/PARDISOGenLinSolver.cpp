@@ -53,9 +53,10 @@
 // bearing "wall" move 30 % between two identical runs. CNR needs BOTH halves:
 //   * mkl_cbwr_set(branch) — process-wide, sticky, and refused
 //     (MKL_CBWR_ERR_MODE_CHANGE_FAILURE) once MKL's BLAS/LAPACK dispatch is
-//     initialized (measured: an earlier LAPACK eigen solve triggers it, an
-//     earlier PARDISO solve does not), so it is called at `system` time, and
-//     the MKL_CBWR environment variable is the documented fallback;
+//     initialized (measured on Windows: an earlier LAPACK eigen solve
+//     triggers it, an earlier PARDISO solve does not; on Linux an earlier
+//     PARDISO or UmfPack solve triggers it too), so it is called at `system`
+//     time, and the MKL_CBWR environment variable is the documented fallback;
 //     the instruction-set branches (SSE4_2 ... AVX10) exist on Intel CPUs
 //     only — on AMD only AUTO and COMPATIBLE are accepted (measured);
 //   * iparm(34) = iparm[33] = the thread count — PARDISO's own CNR switch,
@@ -110,7 +111,13 @@ static const struct { const char *name; int code; } ops_cbwr_table[] = {
 	{"AVX512",        MKL_CBWR_AVX512},
 	{"AVX512_MIC_E1", MKL_CBWR_AVX512_MIC_E1},
 	{"AVX512_E1",     MKL_CBWR_AVX512_E1},
+	// Ladruno (pardiso-linux): MKL_CBWR_AVX10 first appears in oneMKL 2025.0.
+	// The Linux PARDISO opt-in builds against oneMKL 2024.2 on esmeralda, where
+	// an unguarded entry is a compile error. Without it, `-cbwr AVX10` is
+	// reported as an unknown branch, which is true for that MKL.
+#ifdef MKL_CBWR_AVX10
 	{"AVX10",         MKL_CBWR_AVX10},
+#endif
 };
 
 static const char *
