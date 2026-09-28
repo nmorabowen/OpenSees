@@ -33,6 +33,7 @@ from _testbed import ops  # noqa: E402
 
 # Same gating as test_pardiso_solver.py: PARDISO is MKL-only, Windows/oneAPI
 # build; Zone-A's Ubuntu reference-LAPACK runner never compiles it.
+# ci-coverage: local-only -- the whole file needs system Pardiso (MKL, Windows/oneAPI build); no CI builds it until a Windows job does (WP-143)
 pytestmark = [
     pytest.mark.zone_a,
     pytest.mark.skipif(sys.platform != "win32",
