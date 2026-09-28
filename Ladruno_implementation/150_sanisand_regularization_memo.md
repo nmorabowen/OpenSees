@@ -602,6 +602,77 @@ So each curve is consistent with its constitutive strength. **"Which curve is ph
 
 ---
 
+## 12. GATE 0 — the reference sand (DM04 Toyoura), owner GO 2026-09-28
+
+**Purpose:** test the whole chain on a physically consistent, published calibration before any footing verdict. The
+constants are DM04's Table 1, verified here against the PDF (journal p. 626):
+- G0 125, ν 0.05, M 1.25, c 0.712, λc 0.019, e0 0.934, ξ 0.7;
+- m 0.01, h0 7.05, ch 0.968, nb 1.1, A0 0.704, nd 3.5, zmax 4, cz 600;
+- p_at is not tabulated; 100 kPa is used, an explicit choice.
+
+Scripts: `gate0_toyoura_oracle.py`, `gate0_cxx_driver.py`, `gate0_compare.py`, `gate0_overlay.py`,
+`t5_element_physics.py` and their `out_*` tables.
+
+**(a) Reproducing DM04's own simulations of Verdugo & Ishihara (1996). PASS.**
+- The test matrix is the paper's Figs. 5–9 (17 triaxial tests to 25 %):
+  - undrained: e 0.735 / 0.833 / 0.907, p0 100–3000;
+  - drained: p0 500 (e0 0.96 / 0.886 / 0.81) and p0 100 (e0 0.996 / 0.917 / 0.831).
+- **The exact oracle (DM04 as published), overlaid on the paper's own figure panels, lies on DM04's simulation curves
+  to about line width in all nine panels.**
+  - The exception is Fig. 6's e = 0.833, p0 = 3000 undrained peak: ≈ 3 % low (1 409 vs ≈ 1 450 kPa).
+  - The steady states agree (e.g. Fig. 5: q 3 584–3 589 at p 2 867–2 871; Fig. 6: 1 354–1 357 at 1 082–1 085).
+  - Axes were calibrated from the dotted gridlines, to ≤ 1 px. The overlays are regenerated from the reader's own copy
+    of the paper and are not committed (copyright).
+  - Fig. 7b in the journal duplicates Fig. 6b, so only Fig. 7a is used.
+- The paper's equations and the UW options the fork's C++ carries differ by ≤ 0.3 % (identical in undrained tests).
+- **C++ SAS-ME (IntScheme 129, TolR 1e-4) against the exact oracle: max |Δq|/q_max ≤ 1.9e-3** on all 17 paths
+  (`out_gate0_compare.md`). The C++ runs through a mixed-control `ladrunoSANISANDReplay` loop, with no refusal.
+- **R1 ON (WP-151: `-sasHFloor 1 -sasReseatHyst 1 -sasSoftCap 0.5`) against OFF: max |Δq|/q_max ≤ 6.2e-4**, and the
+  final void ratio moves ≤ 8e-6. R1 does not move the calibrated response.
+
+**(b) T5 physics on the Toyoura set. PASS, as a checked extrapolation.**
+- **e_max / e_min, sourced:** DM04's own D_r labels (e 0.735 → 63.7 %, 0.833 → 37.9 %, 0.907 → 18.5 %) give
+  e_max = 0.977 and e_min = 0.597, the Verdugo & Ishihara values.
+- **At Kimura's D_r 86–90 %: e0 = 0.650 – 0.635, centre 0.643 (D_r 0.88).** Results at 0.643, exact oracle:
+
+| | p′0 = 10 | 50 | 150 | 500 kPa |
+|---|---|---|---|---|
+| PS φ′_peak ° (ε_a at peak) | 52.4 (1.0 %) | 50.3 (1.9 %) | 47.9 (2.8 %) | 43.9 (4.5 %) |
+| TX φ′_peak ° (ε_a at peak) | 41.2 (0.9 %) | 40.3 (1.8 %) | 39.1 (2.7 %) | 36.9 (4.5 %) |
+| PS ψ_max ° | 24.6 | 22.7 | 20.1 | 14.9 |
+| TX (−dε_v/dε₁)max | 1.18 | 1.08 | 0.95 | 0.70 |
+| TX Δφ vs 10·(−dε_v/dε₁)max | 10.0 vs 11.8 | 9.1 vs 10.8 | 8.0 vs 9.5 | 5.8 vs 7.0 |
+| TX φ′_peak vs Bolton (φ_crit 31.2° + 3·I_R, sourced D_r) | 41.2 vs 43.2 | 40.3 vs 43.2 | 39.1 vs 41.4 | 36.9 vs 38.2 |
+
+- **Every physics check the campaign set fails is passed here:**
+  - peak at 0.9–4.5 % strain;
+  - dilatancy consistent with the strength within ~15–20 %;
+  - φ′_peak 1.3–2.9° below Bolton's triaxial value, inside his scatter.
+- **Caveat:** DM04 was calibrated on D_r 18–64 % (e 0.735–0.996). D_r 88 % is an extrapolation of the ψ-laws (nb,
+  nd). This check says it stays physical; it does not make it calibrated.
+- **C++ against the oracle at e 0.643:** max |Δq|/q_max ≤ 1.4e-3. **R1 ON against OFF: ≤ 3.4e-4**
+  (`out_t5_cxx_compare_toyoura_e0.643.md`).
+- *Correction:* the first Toyoura T5 run (§10, e0 0.66) used the preset's e_init 0.8 in the UW options. The harness now
+  sets e_init = e0. The §10 Toyoura numbers move by ≤ 0.1° in φ′ and ≤ 0.05 % in ε at peak.
+
+**(c) Same-group contrast: Gorini's Messina Gravels MONOTONIC set** (Gorini's PhD thesis, Table 3.8, e_ini 0.35; P_atm 101 is
+assumed). It is stress–dilatancy-consistent:
+- triaxial Δφ 3.2 / 2.5 / 1.6 / 0.1° against 10·(−dε_v/dε₁)max 4.4 / 3.4 / 2.2 / 0.1;
+- plane-strain Δφ 7.4° against 0.8·ψ_max 8.4°;
+- its c = 0.875 is above 7/9.
+
+It is a gravel near its CSL (ψ0 −0.03 to −0.09), not a dense sand.
+
+**Carry-forward for Gate 1 (the Toyoura footing):**
+1. **Toyoura's c = 0.712 is also below 7/9.** The concave extension meridian that makes the campaign's wall states
+   singular (§2.3, WP-151 §2.5) is present in the reference sand too. Run the Gate 1 footing **with R1 ON**; Gate 0
+   shows it costs ≤ 6e-4·q_max at the element level. An R1-OFF leg shows whether the wall appears.
+2. **Use e_init 0.643 (D_r 0.88)** unless Kimura et al. report their own e_max/e_min. Toyoura batches differ, so use
+   their values when available.
+3. The p_at = 100 choice should be kept consistent across Gate 0 and Gate 1.
+
+---
+
 ## References
 
 - Dafalias, Y. F. & Manzari, M. T. (2004). Simple plasticity sand model accounting for fabric change effects. *J. Eng.
@@ -653,5 +724,9 @@ So each curve is consistent with its constitutive strength. **"Which curve is ph
   and particle size effect in bearing capacity of a footing on sand. *ASCE GSP* 27, 788–802.
 - Martin, C. M. (2005). Exact bearing capacity calculations using the method of characteristics. *Proc. 11th IACMAG*, Turin, 441–450.
 - Han, D., Xie, X., Zheng, L. & Huang, L. (2016). The bearing capacity factor N_γ of strip footings on c–φ–γ soil using the method of characteristics. *SpringerPlus* 5, 1482.
+- Verdugo, R. & Ishihara, K. (1996). The steady state of sandy soils. *Soils Found.* 36(2), 81–91. doi:10.3208/sandf.36.2_81.
+- Gorini, D. N. *Soil-structure interaction for bridge abutments: two complementary macro-elements.* PhD thesis,
+  Department of Structural and Geotechnical Engineering, XXXI cycle, academic year 2017–2018 (supervisor
+  L. Callisto). Table 3.8: the Messina Gravels SANISAND calibrations.
 - Wang, W. M., Sluys, L. J. & de Borst, R. (1997). Viscoplasticity for instabilities due to strain softening and
   strain-rate softening. *IJNME* 40, 3839–3864. The consistency-viscoplasticity alternative to Perzyna.

@@ -28,9 +28,19 @@ EPS_MAX = float(sys.argv[1]) if len(sys.argv) > 1 and "=" not in sys.argv[1] els
 over = dict(a.split("=") for a in sys.argv[1:] if "=" in a)
 SET = over.pop("SET", "campaign")
 E0 = float(over.pop("E0", 0.6944))
-P = {"campaign": CAMPAIGN, "toyoura": TOYOURA}[SET]
+EMAX = float(over.pop("EMAX", "nan")); EMIN = float(over.pop("EMIN", "nan"))   # for Bolton's I_R (sourced per set)
+from dataclasses import replace  # noqa: E402
+from sanisand_reference.model import Params  # noqa: E402
+# Gorini (2019) PhD thesis, Table 3.8 "Monotonic cond." (Messina Gravels): G0 90, nu 0.2, e_ini 0.35, M 1.55, c 0.875,
+# lambda_c 0.0219, e0 0.4478, xi 0.7, m 0.01, h0 4.75, ch 1.1, nb 1.0, A0 1.0, nd 2.0, no fabric (zmax, cz "-" -> 0).
+# P_atm is not tabulated: 101 kPa assumed.
+GORINI_MONO = Params.from_opensees([90.0, 0.2, 0.35, 1.55, 0.875, 0.0219, 0.4478, 0.7, 101.0, 0.01,
+                                    4.75, 1.1, 1.0, 1.0, 2.0, 0.0, 0.0])
+P = {"campaign": CAMPAIGN, "toyoura": TOYOURA, "gorini_mono": GORINI_MONO}[SET]
+# FIX (2026-09-28): e_init feeds the UW options U4/U5 (G and the void-ratio law); it must be the test's own e0.
+# The TOYOURA preset carries e_init 0.8, which made the first Toyoura T5 run (e0 0.66) use a ~19 % lower G.
+P = replace(P, e_init=E0)
 if over:
-    from dataclasses import replace
     P = replace(P, **{k: float(v) for k, v in over.items()})
 O = ring_variants()["uw_model"]
 P0S = (10.0, 50.0, 150.0, 500.0)
@@ -97,6 +107,10 @@ def main():
             pred = 0.8 * a["dil_max"]
             chk = f"Δφ = {a['phi_peak'] - a['phi_end']:.1f}° vs 0.8·ψ_max = {pred:.1f}°"
             dil = f"ψ_max = {a['dil_max']:.1f}°"
+            if EMAX == EMAX:
+                Dr = (EMAX - E0) / (EMAX - EMIN)
+                IR = min(max(Dr * (10.0 - math.log(a["p0"])) - 1.0, 0.0), 4.0)
+                chk += f"; D_r {Dr:.2f} → Bolton 5·I_R = {5 * IR:.1f}° (vs Δφ to the model's own large-strain φ)"
         else:
             pred = 10.0 * a["dil_max"]
             chk = f"Δφ = {a['phi_peak'] - phi_cs_tx:.1f}° vs 10·(−dε_v/dε_1)max = {pred:.1f}°"
@@ -105,6 +119,10 @@ def main():
             IR = (a["phi_peak"] - phi_cs_tx) / 3.0
             Dr = (IR + 1.0) / (10.0 - math.log(a["p0"]))
             chk += f"; implied D_r (Δφ = 3 I_R) = {Dr:.2f}"
+            if EMAX == EMAX:
+                Drs = (EMAX - E0) / (EMAX - EMIN)
+                IRs = min(max(Drs * (10.0 - math.log(a["p0"])) - 1.0, 0.0), 4.0)
+                chk += f"; sourced D_r {Drs:.2f} → Bolton 3·I_R = {3 * IRs:.1f}°"
         L.append(f"| {a['kind']} | {a['p0']:.0f} | {a['psi0']:+.3f} | {a['phi_peak']:.1f} | {a['eps_a_peak']:.4f} | "
                  f"{a['phi_end']:.1f} | {a['psi_end']:+.3f} | {dil} | {chk} |")
     txt = (f"T5 {SET} set{(' with ' + str(over)) if over else ''}, e0 = {E0}, ε_a to {EPS_MAX}; "
