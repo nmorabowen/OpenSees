@@ -70,6 +70,23 @@ bodies are seen whole).
                 skipped, never guessed. Waive the accumulation statement:
                     // ladruno-lint: sign-ok <reason>
 
+  L7 sequence   Arithmetic (+ - *) combining TWO or more calls to element accessors
+                that return references into element storage -- getResistingForce*,
+                getRayleighDampingForces, get*Force*, getTangentStiff,
+                getInitialStiff, getMass, getDamp -- in ONE statement. C++ leaves the
+                call order unspecified and each call may overwrite the storage an
+                earlier reference points at (the plane elements return the same P
+                from both residual accessors; LadrunoBrick's GRFII refills the resid
+                getResistingForce returns). Vanilla Element::getResponse
+                `inertialForce` was exactly `GRFII() - damping() - resisting()`:
+                EXACTLY 0.0 on GCC, right on MSVC (WP-124 C15, a2004e0a7). Scans
+                every SRC file, vanilla included. Fix: copy the first result into an
+                owned Vector, then apply the others in separate statements. Calls
+                that are separate function ARGUMENTS (a top-level comma between
+                them) are not flagged. Waive the statement (its lines or the line
+                above):
+                    // ladruno-lint: sequence-ok <reason>
+
   L3 pointers   Every `Quirks: "..."` pointer in .claude/skills/*/SKILL.md must
                 still match text in LEDGER_quirks.md.
 
@@ -111,7 +128,7 @@ STAMP = "LADRUNO-HEADER-START"
 MIN_REASON = 12
 SUFFIXES = (".cpp", ".h", ".hpp", ".cc", ".cxx")
 
-WAIVER = re.compile(r"//\s*ladruno-lint:\s*(rayleigh-ok|wipe-ok|commit-ok|double-ok|sign-ok)\b(.*)$")
+WAIVER = re.compile(r"//\s*ladruno-lint:\s*(rayleigh-ok|wipe-ok|commit-ok|double-ok|sign-ok|sequence-ok)\b(.*)$")
 RAYLEIGH = re.compile(r"(?:\bthis\s*->\s*)?\bgetRayleighDampingForces\s*\(\s*\)")
 SINGLETON = re.compile(r"\bstatic\s+([A-Za-z_]\w*)\s*&\s*instance\s*\(")
 RESET_CALL = re.compile(r"\b([A-Za-z_]\w*)::instance\s*\(\s*\)\s*(?:\.|->)\s*reset\w*\s*\(")
@@ -729,6 +746,77 @@ def check_ground_sign(root, rel, used_waivers=None, stamped_only=False):
     return findings
 
 
+# --------------------------------------------------------------------------
+# L7
+# --------------------------------------------------------------------------
+ACCESSOR = re.compile(
+    r"(?:\b\w+\s*(?:->|\.)\s*|\b\w+\s*::\s*)?"
+    r"\b(getResistingForce\w*|getRayleighDampingForces|get\w*Force\w*|getTangentStiff|getInitialStiff"
+    r"|getMass|getDamp)\s*\(")
+ACC_NEEDLES = ("getResistingForce", "getRayleighDampingForces", "Force", "getTangentStiff",
+               "getInitialStiff", "getMass", "getDamp")
+
+
+def _accessor_calls(s):
+    """[(start, end)] spans of accessor calls in statement s (end = index after the ')')."""
+    out = []
+    for m in ACCESSOR.finditer(s):
+        end = _balanced_end(s, m.end() - 1)
+        if end < 0:
+            continue
+        if out and m.start() < out[-1][1]:
+            continue                                  # nested inside a previous call's arguments
+        out.append((m.start(), end + 1))
+    return out
+
+
+def _arith_between(text):
+    """True if `text` (between two calls) joins them arithmetically: an operator + - * and no
+    comma at its own paren level (separate function arguments are not arithmetic)."""
+    t = re.sub(r"->", "", text)
+    depth, lowest, comma_at_lowest = 0, 0, False
+    for ch in t:                                      # the level both calls sit at is the lowest reached
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth < lowest:
+                lowest, comma_at_lowest = depth, False
+        elif ch == "," and depth == lowest:
+            comma_at_lowest = True
+    if comma_at_lowest:
+        return False
+    return re.search(r"[+\-*]", t) is not None
+
+
+def check_sequence(root, rel, used_waivers=None):
+    findings = []
+    used = set() if used_waivers is None else used_waivers
+    for path, raw, cl in _sources(root, stamped_only=False, needles=ACC_NEEDLES):
+        for f in functions(cl):
+            for stmt, a, b in statements(cl, f):
+                calls = _accessor_calls(stmt)
+                if len(calls) < 2:
+                    continue
+                if not any(_arith_between(stmt[calls[k][1]:calls[k + 1][0]]) for k in range(len(calls) - 1)):
+                    continue
+                wl, reason = waiver_at(raw, b, "sequence-ok", above=b - a + 1)
+                if wl is not None:
+                    used.add((str(path), wl))
+                    if len(reason) >= MIN_REASON:
+                        continue
+                    findings.append(f"L7 {rel(path)}:{a + 1}: sequence-ok waiver reason too short")
+                    continue
+                names = ", ".join(ACCESSOR.search(stmt[s:e]).group(1) + "()" for s, e in calls)
+                findings.append(
+                    f"L7 {rel(path)}:{a + 1}: {f.name} combines {names} arithmetically in ONE statement -- "
+                    "the call order is unspecified and each may overwrite the storage an earlier reference "
+                    "points at (inertialForce was exactly 0.0 on GCC, WP-124 C15). Copy the first into an "
+                    "owned Vector/Matrix and apply the rest in separate statements, or waive with "
+                    "'// ladruno-lint: sequence-ok <reason>'")
+    return findings
+
+
 def check_stale_waivers(root, rel, used):
     findings = []
     for path, raw, _ in _sources(root, stamped_only=True, needles=("ladruno-lint",)):
@@ -858,7 +946,7 @@ def list_waivers(root, rel):
 def main():
     ap = argparse.ArgumentParser(description="Quirk-pattern gate (WP-115).")
     ap.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent)
-    ap.add_argument("--only", default="L1,L2,L3,L4,L5,L6,L8", help="comma list of L1..L6, L8")
+    ap.add_argument("--only", default="L1,L2,L3,L4,L5,L6,L7,L8", help="comma list of L1..L8")
     ap.add_argument("--list-waivers", action="store_true")
     args = ap.parse_args()
     root = args.root.resolve()
@@ -885,7 +973,9 @@ def main():
         findings += check_double_load(root, rel, used)
     if "L6" in wanted:
         findings += check_ground_sign(root, rel, used)
-    if {"L1", "L2", "L4", "L5", "L6"} <= wanted:    # stale detection needs every waiver consumer
+    if "L7" in wanted:
+        findings += check_sequence(root, rel, used)
+    if {"L1", "L2", "L4", "L5", "L6", "L7"} <= wanted:    # stale detection needs every waiver consumer
         findings += check_stale_waivers(root, rel, used)
     if "L3" in wanted:
         findings += check_pointers(root, rel)
