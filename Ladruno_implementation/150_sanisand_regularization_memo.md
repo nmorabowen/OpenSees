@@ -567,6 +567,6 @@ So each curve is consistent with its constitutive strength. **"Which curve is ph
 - Tatsuoka, F., Okahara, M., Tanaka, T., Tani, K., Morimoto, T. & Siddiquee, M. S. A. (1991). Progressive failure
   and particle size effect in bearing capacity of a footing on sand. *ASCE GSP* 27, 788–802.
 - Martin, C. M. (2005). Exact bearing capacity calculations using the method of characteristics. *Proc. 11th IACMAG*, Turin, 4, 441–450.
-- Han, D., Xie, X., Zhou, L. & Huang, L. (2016). The bearing capacity factor N_γ of strip footings on c–φ–γ soil using the method of characteristics. *SpringerPlus* 5, 1482.
+- Han, D., Xie, X., Zheng, L. & Huang, L. (2016). The bearing capacity factor N_γ of strip footings on c–φ–γ soil using the method of characteristics. *SpringerPlus* 5, 1482.
 - Wang, W. M., Sluys, L. J. & de Borst, R. (1997). Viscoplasticity for instabilities due to strain softening and
   strain-rate softening. *IJNME* 40, 3839–3864. The consistency-viscoplasticity alternative to Perzyna.
