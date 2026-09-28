@@ -37,6 +37,7 @@ from _testbed import ops
 # FEAST lives in the MKL Extended Eigensolver: linked on the Windows/oneAPI
 # build only (Zone-A Ubuntu CI uses reference LAPACK — the classes compile
 # there but solve() refuses). The G-B gate is enforced on the Windows box.
+# ci-coverage: local-only -- the whole file needs FEAST (MKL, Windows/oneAPI build); no CI builds it until a Windows job does (WP-143)
 pytestmark = [
     pytest.mark.zone_a,
     pytest.mark.skipif(sys.platform != "win32",
