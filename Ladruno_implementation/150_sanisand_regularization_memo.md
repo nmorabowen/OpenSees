@@ -152,8 +152,15 @@ asks for an infinitely *negative* modulus.
 > - Ghorbani, Chen, Kodikara, Carter & McCartney (2023, *Comput. Mech.* 71, 385–408).
 > - Both treat how the plastic-modulus / memory (α_in-type) definitions of bounding-surface sand models, SANISAND04
 >   included, make the stress overshoot on reversals. The 2023 paper does this in contact problems.
-> - A footing aborting on (α−α_in):n → 0 is **not** verified in either paper (corrected 2026-09-28). No direct
->   published precedent of this wall is claimed.
+> - **The one published footing on the same singular factor** (sourced 2026-09-28 by WP-151, #893 5b8815b34; the
+>   primary text was read by that session, not here). It is in Liuxin Chen's Monash PhD thesis (2023,
+>   doi:10.26180/23639730.v1), whose Chapter 3 is the C&G 2022 paper.
+>   - §3.9.1, pp. 3-37 to 3-39: a SANISAND04 plane-strain flexible footing on LOOSE Karlsruhe sand (e0 0.98).
+>   - It completes at the coarsest time step, and aborts at finer steps and at a tighter stress tolerance.
+>   - The authors attribute this to the sudden drop of (α−α_in):n to 0 (their Fig. 3-23).
+>   - It shares the singular factor and the insensitivity to refinement. It is **not** evidence for this memo's
+>     specific mechanism (the Zeno sequence, b:n → 0⁺, the concave extension meridian): it is loose sand, the symptom
+>     is overshooting, and there is no b:n analysis.
 >
 > **The earlier dilatancy reading of the ablation is WITHDRAWN.** It rested on a provisional snapshot. In the final
 > ladders, S4 (A0 = 0.001) also walls on loadingNonPosH (see below). The set needs the concave extension meridian
@@ -613,6 +620,8 @@ So each curve is consistent with its constitutive strength. **"Which curve is ph
   critical state model. *Comput. Geotech.* 124, 103572.
 - Chen, L., Ghorbani, J., Zhang, C. & Kodikara, J. (2022). Stress overshooting solution for soil plasticity models.
   *Comput. Geotech.* 152, 105008. doi:10.1016/j.compgeo.2022.105008.
+- Chen, L. (2023). *Modelling of hydro-mechanical shakedown and ratcheting of unsaturated granular materials.* PhD
+  thesis, Monash University. doi:10.26180/23639730.v1. (Ch. 3 = Chen et al. 2022; §3.9.1 as read by WP-151.)
 - Ghorbani, J., Chen, L., Kodikara, J., Carter, J. P. & McCartney, J. S. (2023). Memory repositioning in soil plasticity
   models used in contact problems. *Comput. Mech.* 71, 385–408. doi:10.1007/s00466-022-02245-z.
 - Galavi, V. & Schweiger, H. F. (2010). Nonlocal multilaminate model for strain softening analysis. *Int. J. Geomech.*
