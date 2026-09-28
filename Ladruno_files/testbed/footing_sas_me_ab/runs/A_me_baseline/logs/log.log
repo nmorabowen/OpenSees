@@ -741,3 +741,66 @@ LoadControl::update - model failed to update for new dU
 WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
 StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0316326
 OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 60 iterations  current Norm: 0.492097 (max: 0.41521, Norm deltaX: 8.9685e-05)
+AcceleratedNewton::solveCurrentStep() -The ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0316326
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-27 23:58:02] [  35223.3s]   step 77: ladder failed, ds -> 2.5000e-04 m (s/B 0.016873)
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.549352 (max: 0.041521, Norm deltaX: 3.42587e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0313826
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0313826
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-28 00:06:26] [  35727.2s] step    77 s/B 0.017040 q   434.661 kPa ds 2.500e-04 rung K it  28 fails 1 wall  1451.80s | sub 44110817 maxpt 74800 cap 79 rejErr 4628768 dtmin 11 | p'min 3.965 eta_max 1.894 rho_max 0.998 n>1 0
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.525721 (max: 0.041521, Norm deltaX: 3.41935e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0316326
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 1.39156 (max: 0.041521, Norm deltaX: 0.000100011)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0316326
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-28 00:10:23] [  35963.7s] step    78 s/B 0.017207 q   438.244 kPa ds 2.500e-04 rung K it  20 fails 0 wall   235.95s | sub 11818281 maxpt 10195 cap 0 rejErr 1722723 dtmin 0 | p'min 3.975 eta_max 1.895 rho_max 0.999 n>1 0
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.547471 (max: 0.041521, Norm deltaX: 3.42297e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0318826
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.441955 (max: 0.041521, Norm deltaX: 2.27197e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0318826
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-28 00:14:44] [  36225.2s] step    79 s/B 0.017373 q   441.583 kPa ds 2.500e-04 rung K it  33 fails 0 wall   261.02s | sub 12697910 maxpt 17187 cap 0 rejErr 1770946 dtmin 1 | p'min 3.967 eta_max 1.896 rho_max 0.999 n>1 0
+[2026-09-28 00:14:44] [  36225.2s] MODE = WALL  s/B reached 0.017373  q_end 441.583 kPa  q_max 441.583 kPa  steps 79  failed attempts 6  push wall 36221.0s
+[2026-09-28 00:14:45] [  36226.1s] state at the last converged step:
+    rho_a  0.9991 eta   1.858 p'  115.187 ele 1842 gp 3 x -0.790 y -0.040
+    rho_a  0.9990 eta   1.859 p'  115.140 ele 1950 gp 4 x +0.790 y -0.040
+    rho_a  0.9890 eta   1.895 p'   50.297 ele 1841 gp 4 x -0.898 y -0.227
+    rho_a  0.9890 eta   1.895 p'   50.215 ele 1949 gp 3 x +0.898 y -0.227
+    rho_a  0.9866 eta   1.890 p'   51.341 ele 1841 gp 3 x -0.790 y -0.227
+    rho_a  0.9866 eta   1.890 p'   51.271 ele 1949 gp 4 x +0.790 y -0.227
+    rho_a  0.9858 eta   1.896 p'   44.395 ele 1949 gp 2 x +0.898 y -0.335
+    rho_a  0.9858 eta   1.896 p'   44.455 ele 1841 gp 1 x -0.898 y -0.335
+    rho_a  0.9829 eta   1.890 p'   45.345 ele 1949 gp 1 x +0.790 y -0.335
+    rho_a  0.9828 eta   1.890 p'   45.393 ele 1841 gp 2 x -0.790 y -0.335
+    lowest p':
+    p'   3.9669 eta   1.644 rho_a  0.8106 ele 2058 gp 2 x +2.585 y -0.148
+    p'   3.9721 eta   1.670 rho_a  0.8243 ele 2058 gp 1 x +2.477 y -0.148
+    p'   3.9728 eta   1.075 rho_a  0.5167 ele 2010 gp 1 x +1.727 y -0.148
+    p'   3.9828 eta   1.666 rho_a  0.8228 ele 1734 gp 1 x -2.585 y -0.148
+    p'   3.9964 eta   1.663 rho_a  0.8208 ele 1734 gp 2 x -2.477 y -0.148
+[2026-09-28 00:14:45] [  36226.4s] wrote replay_wall_last_pair.csv (state at step n-1 + dStrain of the last converged step n)
+[2026-09-28 00:14:45] [  36226.4s] DONE
+==== 2026-09-28 00:14:46 exit 0 after 36227.5s
