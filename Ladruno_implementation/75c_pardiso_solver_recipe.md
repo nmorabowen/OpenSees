@@ -198,7 +198,7 @@ MKL's Conditional Numerical Reproducibility (CNR):
 
 ```tcl
 system Pardiso -deterministic              ;# CNR on the AUTO branch
-system Pardiso -cbwr AVX2                  ;# explicit branch; implies -deterministic
+system Pardiso -cbwr COMPATIBLE            ;# explicit branch; implies -deterministic
 ```
 ```python
 ops.system('Pardiso', '-deterministic')
@@ -261,6 +261,24 @@ Measured 2026-09-27, AMD Ryzen AI 7 PRO 350, 5 runs each: mode on gave 1
 distinct result. Mode off gave 5 distinct displacement fields and 2 distinct
 curves, with a largest relative spread of 1.5e-16 (1 ULP) in the load factor.
 On a smooth hardening model the drift stays in the last bit.
+
+**Repeatable is not the same as reliable.** Every threaded run is equally
+correct to machine precision. The one-thread answer, or the answer with the
+mode on, is not more accurate; it is only the same every time. So when a
+last-bit difference grows into a visible one, the solver is not the problem.
+The model is sitting on a knife edge: a limit point, softening or
+localization, a contact or yield state that can flip, a Newton iteration that
+converges right at the tolerance, or an adaptive step cut that goes one way or
+the other. At such a point a different tolerance, step size, mesh or compiler
+would also move the answer. TIMs' 30 % wall shift is this case. The smooth J2
+deck above drifts by 1.5e-16, and their bearing drifts by 30 % from the same
+cause.
+
+Use `-deterministic` when you need two runs to agree: regression tests,
+debugging a failure you cannot otherwise reproduce, comparing nodes. Do not
+use it to settle a result. If the mode-off runs scatter visibly, report that
+the result is not well determined at that point. Then check it the usual way,
+by varying the tolerance, the step size and the mesh.
 
 ---
 

@@ -29,6 +29,11 @@ them. This is observation-only — fixes we actually applied are tracked in
 
 ## Quirks
 
+### LadrunoConcrete3D: hydrostatic compression silently ELASTIC; `Gc` was not an energy; tension over-dissipated `Gf` (fixed 2026-09 — read before comparing to OOFEM)
+- **Bites (pre-WP `concrete3d-oracle-diagnosis`):** (1) a hydrostatic-compression trial never yielded: the hardening return overshot `ρ<0`, the apex branch projected onto the TENSION vertex, the PR #249 gate rejected it and the wrapper fell back to the elastic predictor with only a warning (OOFEM `con2dpm3`: −21.43 vs −2.96 MPa); 4.6 % of plastic fuzz trials with a compressive mean stress were *accepted* at the tension vertex (admissible, so the gate let them through). (2) `Gc` mapped to `εfc = Gc/(fc·lch)` while the compressive driver is scaled by `βc/xs`, so the element dissipated ~20× `Gc`. (3) The tension history `κdt2 = κdt−ε0` stretched the exponential softening (+25–40 % over `Gf`; Grassl Fig. 7 at 0.2 mm/m: 2.80 vs 0.96 MPa).
+- **Also (single-element tension benchmarks):** with only one top node displacement-controlled and the others load-controlled, the softening brick BIFURCATES into a non-uniform (rotating-face) mode — some GPs unload with frozen `ωt<1` and carry `(1−ωt)σ̄` of a strongly hardened effective stress (`Hp=0.5` ⇒ `σ̄` ~ 30× ft), so the curve never reaches zero and "dissipates" ~190 N/m for Gf = 120 regardless of `Df`. Tie the loaded face (`equalDOF` on uz) for a material-point test: it then dissipates Gf exactly. And `ωt = 1` exactly (bilinear) made the tangent singular ⇒ residual tangent stiffness `(1−ω) ≥ 1e-6` (2026-09).
+- **Workaround/status:** dedicated vertex return; `-tensionLaw bilinear` (CDPM2 Eq.58) default; `Gc` calibrated as a physical energy by default (`-epsFc` = raw CDPM2 `εfc`). OOFEM's regression values are themselves ONE coarse step (5e-4): converged CDPM2 differs by up to 25 % (uniaxial compression step 5), so compare fork-vs-OOFEM at the SAME step size. Still open: compressive drive `−σ̄min/fc` erases confinement strength at damage onset (ADR-31 §11-4b). See [[31_ladruno_concrete3d_adr]] §11.
+
 ### A new element registered ONLY in `OpenSeesElementCommands.cpp` (Python functionMap) is SILENTLY unreachable from the Tcl `OpenSees.exe` — the `element` command has a SEPARATE dispatch and the miss looks like a DLL-load failure, not a wiring bug
 - **Bites:** you add a modern C++ element (`void* OPS_Foo()`), register it in `SRC/interpreter/OpenSeesElementCommands.cpp`'s `functionMap` (which serves **openseespy** + the interpreter runtime), smoke-test it in Python — `ops.element('Foo', ...)` works — and ship. But `OpenSees.exe` (classic Tcl) prints `checking library: OPS_Foo` then `ERROR -- element of type Foo not known` and fails. It reads like a missing DLL / build-staleness problem; it is actually a **second, independent registration** you never did. (Real instance: `BezierTri6`/`BezierTet10` were functionMap-only for weeks; only caught by a Tcl smoke test after a clean rebuild "should have" fixed it — the rebuild couldn't, because the source was never wired for Tcl.)
 - **Why:** two element dispatchers coexist. (1) `OpenSeesElementCommands.cpp` `functionMap` → Python/interpreter. (2) The classic Tcl `element` command lives in `SRC/element/TclElementCommands.cpp` as a big `strcmp(argv[1], ...)` if/else chain; on a miss it calls `OPS_GetElementType()` (`elementAPI_TCL.cpp`), which searches only the **legacy C `eleObj`/function-pointer** registry (NOT the modern functionMap), and on a further miss falls through to `getLibraryFunction()` — hence the misleading `checking library: OPS_Foo` message before "not known". Modern C++ `OPS_*` factories are never in that legacy registry, so a Tcl-side element MUST be added to the `TclElementCommands.cpp` chain explicitly.
@@ -7601,6 +7606,7 @@ Three things to carry forward:
   `substeps` response's `mSubstepsTakenInME` (non-zero iff `ModifiedEuler` ran) alongside
   `TanType 2` output — there is no dedicated flag for it.
 
+## gcc + `-fopenmp` SEGFAULTED the zero-mass `system Diagonal` path — RESOLVED (WP-109): `FindOpenMP` + `-static-libstdc++` linked a SECOND libstdc++ into `opensees.so`
 ### `ManzariDafalias` TanType 1 under IntScheme 1 (and 0) was a STALE matrix — `ModifiedEuler` never wrote `mCep` — FIXED (WP-110, F15c)
 - **Bites:** you set `TanType 1` (continuum elastoplastic tangent) with the recommended `IntScheme 1` and get modified-Newton convergence, or a tangent that is plainly Ce at a plastic state. Nothing warns.
 - **Why:** `ManzariDafalias::ModifiedEuler` computes `aCep1`/`aCep2` for its `aCep_Consistent` chain (TanType 2) but never assigned `aCep` itself. `mCep` therefore kept whatever the last writer left: Ce from the last elastic step (`elastic_integrator` / the elastic branch of `explicit_integrator`), or a `Stress_Correction` leftover on a step whose last substep needed a correction. Scheme 0 (`MaxEnergyInc`) inherits it through `nCep`. `RungeKutta4` (scheme 3) has the same hole and is NOT fixed (scheme 3 is already warned against at construction).
@@ -7631,7 +7637,7 @@ Three things to carry forward:
   in the crashing file. Nor is it a dormant-pragma activation (`#pragma omp` / `_OPENMP` exist
   only in PFEM — `OPS_Element`, deliberately un-flagged — the interpreter, and WP-107's own
   code), nor an ODR/ABI split (no class layout is `#ifdef`-conditional).
-- **What is left is codegen/link.** `-fopenmp` on `OPS_Domain` + `OPS_Utilities`, plus libgomp
+- **What was left was "codegen/link" — and it was LINK (see RESOLVED below; this bullet is the pre-fix reasoning).** `-fopenmp` on `OPS_Domain` + `OPS_Utilities`, plus libgomp
   and `-pthread` on the link line, changes optimization and the glibc allocator's threading
   path — enough to turn a **latent defect in the singular-mass failure path** into a hard crash.
   That path is already on record two entries' worth: a free DOF with **zero lumped mass** makes
@@ -7640,6 +7646,30 @@ Three things to carry forward:
   `Domain::revertToLastCommit()` on the shared element iterator — the recorded reentrancy trap.
 - **Does NOT reproduce on MSVC.** The same source with `LADRUNO_OPENMP=ON` passes that file
   locally (3/3), and the whole WP-107 file passes 18/18.
+- **Status 2026-09-16 (PR #843):** banked, not fixed — `option(LADRUNO_OPENMP … OFF)`, build.bat ON, Zone-A
+  skipping the WP-107 file. Superseded the next day:
+- **RESOLVED 2026-09-17 ([WP-109](https://github.com/nmorabowen/OpenSees/pull/846)) — root cause is this fork's `CMakeLists.txt`, not gcc.** The runner
+  itself ran Zone-A under gdb ([run 35171085324](https://github.com/nmorabowen/OpenSees/actions/runs/35171085324)): the fault is in
+  `std::codecvt<char16_t>::do_unshift` called from `std::ostream::_M_insert<long>` from
+  `PythonStream::err_out<int>` from `DiagonalDirectSolver::solve`'s `opserr << i` — a stream asked its
+  locale for `num_put` and got a `codecvt` facet, i.e. **two libstdc++ runtimes in one process**. The GNU
+  branch sets `CMAKE_EXE_LINKER_FLAGS "-static-libgcc -static-libstdc++"`; `FindOpenMP` probes with an
+  executable `try_compile`, sees `-Bstatic -lstdc++`, and records `OpenMP_CXX_LIB_NAMES =
+  libstdc++;gomp;pthread` with `OpenMP_libstdc++_LIBRARY = …/libstdc++.a`; WP-107 appended
+  `${OpenMP_CXX_LIBRARIES}` to the SHARED Python modules, which also `DT_NEED` `libstdc++.so.6`.
+  esmeralda's module exported 179 libstdc++ internals; `LD_DEBUG=bindings` bound `num_put::id` to both
+  copies. gcc 13 / 24.04 crashed, gcc 11 / 22.04 did not — load-order luck, not a compiler difference;
+  esmeralda (Release, and ASAN) never reproduced, which is why the runner had to be the debugger.
+  **Fix:** probe `FindOpenMP` with the EXE flags cleared AND link only `LADRUNO_OPENMP_LINK_LIBS` (the
+  OpenMP runtime, everything else dropped loudly, `FATAL_ERROR` if a static C++/pthread runtime survives);
+  `option(LADRUNO_OPENMP … ON)`. **Pinned:** `tests/test_wp109_module_single_libstdcxx.py` (pure-Python ELF
+  `.dynsym` reader: no libstdc++ symbol defined, `libstdc++.so.6` NEEDED; red on the unfixed module, green
+  after). Zone-A now runs the WP-107 file on Linux. See ADR-75b §14.5, BUILD_GOTCHAS §16,
+  WORKFLOW_GOTCHAS §10.
+- **Generalisation worth keeping:** any `find_package` that probes by linking an executable can return a
+  static system runtime when `CMAKE_EXE_LINKER_FLAGS` carries `-static-*`; never append its `_LIBRARIES`
+  to a `SHARED` target unread, and a Python extension must never define `std::locale`/`std::ios_base`
+  symbols. `nm -D --defined-only module.so | grep -c _ZNSt6locale` must print 0.
 - **Workaround/status (2026-09-16, PR #843, owner decision — not fixed).** `option(LADRUNO_OPENMP … OFF)`
   in `CMakeLists.txt`; `Ladruno_scripts\build.bat` turns it ON, so the ON path is the Windows/MSVC
   canonical build and nothing else. Consequence to keep in view: **Zone-A does not exercise the
@@ -7918,7 +7948,7 @@ Three things to carry forward:
 - **Workaround/status:** fixed in WP-129: the plain commit path checks `mLadrunoSas.refused || mSubstepCapHitInME` and uses the WP-99 channel (`ladrunoNoteCommitRefusal()` → `Domain::commit()` fails, latch, trial restored), exactly as the IMPL-EX companion path. This also changes the ModifiedEuler cap on discarding elements from silent corruption to a failed analysis. Pinned by `tests/test_ladruno_sanisand_sasme.py::test_refusal_under_discarding_element_is_not_committed` (SSPquad and stdBrick).
 ### `Element::getResponse` `inertialForce` read three accessors in ONE expression — unspecified call order + returned references into shared storage = exactly 0.0 on GCC
 - **Bites:** the base `inertialForce` response (ID `444444`) was `getResistingForceIncInertia() - getRayleighDampingForces() - getResistingForce()`. C++ does not specify the order of those calls, and each returns a `const Vector &` into element storage: LadrunoQuad/CST/LST/CSTPair return the SAME `P` from both residual accessors (the upstream FourNodeQuad pattern — but upstream FourNodeQuad never falls back to the base vocabulary, so it does not offer the token at all); LadrunoBrick/Brick20's GRFII refills the member `resid` that `getResistingForce` returns. Evaluated in GCC's order the later call overwrites the storage the earlier reference points at and the difference cancels to EXACTLY 0.0; MSVC's order happens to copy first. So on those elements `recorder Element … inertialForce` wrote zeros on every Linux build and correct values on Windows — the Windows batteries could never see it. Found by WP-124's `test_inertia_residual_is_M_a` in its first Zone-A (Ubuntu) run: six elements `0.0` vs `rho V a0`; Bezier (GRFII returns its own `res`) passed.
-- **Rule:** never combine two accessor calls that return references into element storage in one expression — copy the first into an owned `Vector`, then apply the others in sequence. Any "passes on Windows, zero on Linux" is an evaluation-order suspect first. Reproducible on MSVC by forcing the GCC order (mutation row C15 in `wp124_shells/mutation_rows.py`).
+- **Rule:** never combine two accessor calls that return references into element storage in one expression — copy the first into an owned `Vector`, then apply the others in sequence. Any "passes on Windows, zero on Linux" is an evaluation-order suspect first. Reproducible on MSVC by forcing the GCC order (mutation row C15 in `wp124_shells/mutation_rows.py`). **Enforced by lint L7** (`ci/check_quirk_patterns.py`, WP-140): arithmetic on two or more accessor calls in one statement fails CI, vanilla included; waive with `// ladruno-lint: sequence-ok <reason>`.
 - **Workaround/status:** ✅ FIXED in vanilla `Element.cpp` (WP-124, owner-approved upstream fix; LEDGER_vanilla_files). *2026-09-27.*
 
 ### Two WPs indexed their sendSelf/recvSelf blocks at the SAME offset (35 + LMS_COUNT) -- a textual merge conflicted only in sendSelf, recvSelf AUTO-MERGED (WP-130 x WP-129, review #868 item 1)
@@ -7934,3 +7964,6 @@ Three things to carry forward:
   `test_wire_round_trip_both_blocks_after_the_129_merge` (non-default options of BOTH blocks saved,
   restored into a DEFAULT-built skeleton; options, both censuses and the next two steps exact).
   **Rule: a new wire block gets its own named offset, never "35 + LMS_COUNT + k".**
+### A win32-only `zone_a` test is NEVER run by PR CI — Zone-A is Ubuntu, and the self-hosted Windows nightly was cancelled on every run for three months (WP-143, found by WP-136)
+- **Bites:** `pytest.mark.skipif(sys.platform != "win32", ...)` on a `zone_a` test reads as "Windows covers it". It doesn't: PR CI is `zone-a-ubuntu`, where the test is a silent skip. The Windows jobs (`zone-b-nightly`, `cross-tier-nightly`, `[self-hosted, windows, ladruno-perf]`) were `cancelled` on all 100 scheduled runs from 2026-06-20 to 2026-09-27, and `gh api repos/nmorabowen/OpenSees/actions/runners` lists ZERO runners. So 9 files (Pardiso ×4, FEAST, SANISAND flip-determinism + replay counters, ADR-97 P4) had no CI at all, and their PRs merged on the author's local Windows run only. Even with a runner online, `cross-tier-nightly` has no build step: it tests whatever `opensees.pyd` the box has installed, not the commit it checked out. WP-136's two failures sat red on `ladruno` for 8 days this way.
+- **Workaround/status:** quirk lint **L8** (`ci/check_quirk_patterns.py`, WP-143): a `zone_a` test file that branches on the platform (an `ast` scan: `sys.platform` / `os.name` / `platform.system()` compared to a platform name, or `.startswith`; a ternary value selection such as an exe suffix is ignored) must carry `# ci-coverage: <local-only|partial|portable|nightly-windows|pr-windows> <reason>`. `python ci/check_quirk_patterns.py --list-waivers` prints the inventory; the `local-only` lines ARE the gap. Portable legs moved out of it (flip-determinism's hold + warning legs now run on Ubuntu under `system FullGeneral`). Rule: keep only the MKL-specific leg platform-gated. Until a Windows CI job builds and runs the tree, a PR touching Pardiso, FEAST or SANISAND determinism merges on a stated local Windows pytest log for its head SHA, never on a green Zone-A. Owner items (open): register the runner, add a build step to the nightly jobs, optionally a path-filtered PR Windows job.

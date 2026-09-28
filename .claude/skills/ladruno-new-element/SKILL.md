@@ -81,6 +81,12 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       element size" (the base `getCharacteristicLength` is wrong for high-order elements).
 - [ ] Never iterate the Domain from inside an element callback. Quirks: "`Domain::getElements()`
       is a SHARED singleton iterator".
+- [ ] **[lint]** Never combine two element accessors (`getResistingForce*`, `getRayleighDampingForces`,
+      `getTangentStiff`, `getMass`, ...) arithmetically in ONE expression: the call order is
+      unspecified and they return references into storage the other calls overwrite (GCC
+      recorded `inertialForce` = 0.0). Copy the first into an owned `Vector`, then apply the
+      rest in separate statements. Quirks: "`Element::getResponse` `inertialForce` read three
+      accessors in ONE expression".
 - [ ] Size every `static Vector` in `getResponse` exactly: `Vector::operator()` is unchecked in
       release. Quirks: "`Vector::operator()` is UNCHECKED".
 - [ ] `setResponse`: chain to `Element::setResponse` AFTER `output.endTag()`. Quirks:

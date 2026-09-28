@@ -499,3 +499,137 @@ def test_l3_flags_an_orphaned_pointer(tmp_path):
     })
     out = cq.check_pointers(root, _rel(root))
     assert len(out) == 1 and "renamed heading" in out[0]
+
+# ---------------------------------------------------------------- L7: sequence
+def _l7(tmp_path, body, stamped=False, where="SRC/element/Element.cpp"):
+    src = (STAMP if stamped else "") + body
+    root = _tree(tmp_path, {where: src})
+    used = set()
+    out = cq.check_sequence(root, _rel(root), used)
+    return out + cq.check_stale_waivers(root, _rel(root), used)
+
+
+def _resp(body):
+    return "int Element::getResponse(int responseID, Information &eleInfo)\n{\n" + body + "\n}\n"
+
+
+def test_l7_flags_the_c15_incident_in_a_vanilla_file(tmp_path):
+    """The exact pre-a2004e0a7 line of vanilla Element.cpp (WP-124 C15)."""
+    out = _l7(tmp_path, _resp(
+        "  switch (responseID) {\n  case 444444:\n"
+        "    return eleInfo.setVector(this->getResistingForceIncInertia()-this->getRayleighDampingForces()"
+        "-this->getResistingForce());\n  default:\n    return -1;\n  }"))
+    assert len(out) == 1 and out[0].startswith("L7 SRC/element/Element.cpp:4:")
+    assert "getResistingForceIncInertia(), getRayleighDampingForces(), getResistingForce()" in out[0]
+
+
+def test_l7_passes_the_c15_fix(tmp_path):
+    assert _l7(tmp_path, _resp(
+        "  switch (responseID) {\n  case 444444: {\n"
+        "    Vector inertial(this->getResistingForceIncInertia());\n"
+        "    inertial -= this->getRayleighDampingForces();\n"
+        "    inertial -= this->getResistingForce();\n"
+        "    return eleInfo.setVector(inertial);\n  }\n  default:\n    return -1;\n  }")) == []
+
+
+def test_l7_flags_vector_plus_matrix_times_vector(tmp_path):
+    """Cross-type too: a getMass() that forms the mass can refill the residual storage as a
+    side effect (LadrunoBrick's formInertiaTerms(1) writes resid)."""
+    out = _l7(tmp_path, "const Vector &E::getResistingForceIncInertia(void)\n{\n"
+                        "  res = this->getResistingForce() + this->getMass() * accel;\n  return res;\n}\n")
+    assert len(out) == 1 and "getResistingForce(), getMass()" in out[0]
+
+
+@pytest.mark.parametrize("body", [
+    "  theMatrix->addMatrix(1.0, this->getTangentStiff(), betaK);",                 # one call, args
+    "  foo(this->getMass(), this->getTangentStiff());",                               # separate ARGUMENTS
+    "  theVector->addMatrixVector(0.0, this->getMass(), vel, alphaM);",
+    "  res = this->getMass() * accel;",                                             # one call, arithmetic
+    "  res = this->getResistingForce();\n  res += this->getRayleighDampingForces();", # separate statements
+    "  // res = this->getResistingForce() - this->getRayleighDampingForces();\n  x = 1;",
+    "  opserr << \"getResistingForce() - getMass()\" << endln;",
+    "  K = theEle->getTangentStiff();\n  M = theEle->getMass();\n  A = K - M;",      # owned copies
+])
+def test_l7_passes_non_arithmetic_or_sequenced_uses(tmp_path, body):
+    assert _l7(tmp_path, "void E::f(void)\n{\n" + body + "\n}\n") == []
+
+
+def test_l7_flags_a_pointer_receiver_and_an_other_file(tmp_path):
+    out = _l7(tmp_path, "void FE::g(void)\n{\n  r = myEle->getResistingForceIncInertia() - "
+                        "myEle->getResistingForce();\n}\n", where="SRC/analysis/fe_ele/FE.cpp")
+    assert len(out) == 1 and out[0].startswith("L7 SRC/analysis/fe_ele/FE.cpp:3:")
+
+
+def test_l7_waiver(tmp_path):
+    ok = ("void E::f(void)\n{\n  // ladruno-lint: sequence-ok getMass never writes resid in this element\n"
+          "  res = this->getResistingForce() + this->getMass() * a;\n}\n")
+    assert _l7(tmp_path, ok, stamped=True) == []
+    short = ("void E::f(void)\n{\n  res = this->getResistingForce() + this->getMass() * a;"
+             "   // ladruno-lint: sequence-ok ok\n}\n")
+    out = _l7(tmp_path, short, stamped=True)
+    assert len(out) == 1 and "reason too short" in out[0]
+
+
+def test_l7_stale_waiver(tmp_path):
+    stale = ("void E::f(void)\n{\n  // ladruno-lint: sequence-ok this used to combine two accessors\n"
+             "  res = this->getResistingForce();\n}\n")
+    out = _l7(tmp_path, stale, stamped=True)
+    assert len(out) == 1 and out[0].startswith("W ") and "stale sequence-ok" in out[0]
+
+# ---------------------------------------------------------------- L8
+def _l8(tmp_path, body, name="tests/test_x.py"):
+    root = _tree(tmp_path, {name: body})
+    return cq.check_ci_coverage(root, _rel(root))
+
+
+_ZA = "import os, sys, platform\nimport pytest\npytestmark = [pytest.mark.zone_a]\n"
+
+
+@pytest.mark.parametrize("gate", [
+    'pytestmark.append(pytest.mark.skipif(sys.platform != "win32", reason="mkl"))',   # the WP-136 incident
+    'if os.name == "nt":\n    pass',                                                   # adr74's cleanup branch
+    'if platform.system() == "Windows":\n    pass',
+    'if sys.platform.startswith("win"):\n    pass',
+    'TOL = 0.0\nif "win32" != sys.platform:\n    TOL = 1e-9',                            # reversed operands
+])
+def test_l8_flags_an_undeclared_platform_branch(tmp_path, gate):
+    out = _l8(tmp_path, _ZA + gate + "\n")
+    assert len(out) == 1 and out[0].startswith("L8 ") and "ci-coverage" in out[0], out
+
+
+@pytest.mark.parametrize("kind", ["local-only", "partial", "portable", "nightly-windows", "pr-windows"])
+def test_l8_passes_a_declared_branch(tmp_path, kind):
+    body = _ZA + f"# ci-coverage: {kind} because the MKL leg needs Pardiso\n" + \
+        'pytestmark.append(pytest.mark.skipif(sys.platform != "win32", reason="mkl"))\n'
+    assert _l8(tmp_path, body) == []
+
+
+def test_l8_ignores_a_ternary_value_selection(tmp_path):
+    body = _ZA + 'EXE = "OpenSees.exe" if os.name == "nt" else "OpenSees"\n'
+    assert _l8(tmp_path, body) == []
+
+
+def test_l8_ignores_non_zone_a_files_and_text_mentions(tmp_path):
+    # zone_b / unmarked files are out of scope; a platform test named only in a
+    # docstring or comment is not a branch (ast, not grep).
+    assert _l8(tmp_path, 'import sys\nif sys.platform != "win32":\n    pass\n') == []
+    body = _ZA + '"""we used to skip when sys.platform != "win32"."""\n# os.name == "nt"\n'
+    assert _l8(tmp_path, body) == []
+
+
+def test_l8_rejects_unknown_kind_and_short_reason(tmp_path):
+    gate = 'pytestmark.append(pytest.mark.skipif(sys.platform != "win32", reason="mkl"))\n'
+    out = _l8(tmp_path, _ZA + "# ci-coverage: sometimes whenever the moon is right\n" + gate)
+    assert len(out) == 1 and "not one of" in out[0], out
+    out = _l8(tmp_path, _ZA + "# ci-coverage: local-only mkl\n" + gate)
+    assert len(out) == 1 and "too short" in out[0], out
+
+
+def test_l8_flags_a_stale_annotation(tmp_path):
+    out = _l8(tmp_path, _ZA + "# ci-coverage: local-only the Pardiso leg used to be Windows-only\n")
+    assert len(out) == 1 and out[0].startswith("W ") and "stale ci-coverage" in out[0], out
+
+
+def test_l8_reports_an_unparseable_test_file(tmp_path):
+    out = _l8(tmp_path, _ZA + "def broken(:\n")
+    assert len(out) == 1 and "cannot parse" in out[0], out

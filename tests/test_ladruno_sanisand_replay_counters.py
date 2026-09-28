@@ -73,6 +73,7 @@ def test_counters_are_byte_identical():
         ref = json.load(fh)["decks"]
     got = byteid.run_all()
     assert sorted(got) == sorted(ref)
+    # ci-coverage: partial -- runs everywhere at the 1e-6 cross-platform floor; bit equality to the MSVC baseline is Windows-only (local-only until a Windows CI job exists, WP-143)
     if sys.platform != "win32":
         # The baseline was written by the pre-WP-127 WINDOWS/MSVC binary.  On
         # another platform GCC/libm differ from MSVC in the last bits (Zone-A
