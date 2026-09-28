@@ -46,6 +46,14 @@ before — but don't rely on that: branch on the target when you generate the de
 
 A build without MKL simply does not register the verb; fall back to `UmfPack`.
 
+**Linux:** a default Linux build (Zone-A CI, a plain esmeralda build) has **no**
+`system Pardiso`; the serial binary warns and the command fails. It is an
+opt-in at configure time, `-DLADRUNO_MKL_PARDISO_LINUX=ON` (plus
+`-DLADRUNO_MKL_PARDISO_LINUX_THREADED=ON` for the threaded layer); the proven
+esmeralda recipe is in `Ladruno_internal/02_esmeralda_linux_build_guide.md` §8.
+Measured there on the cluster-bench tower deck (nlev=20, one core): UmfPack
+30.1 s, Pardiso 1.7 s, same floor displacements.
+
 ---
 
 ## 2. Options
@@ -198,7 +206,7 @@ MKL's Conditional Numerical Reproducibility (CNR):
 
 ```tcl
 system Pardiso -deterministic              ;# CNR on the AUTO branch
-system Pardiso -cbwr AVX2                  ;# explicit branch; implies -deterministic
+system Pardiso -cbwr COMPATIBLE            ;# explicit branch; implies -deterministic
 ```
 ```python
 ops.system('Pardiso', '-deterministic')
@@ -230,10 +238,13 @@ On an Intel CPU, where MKL reports the branch AUTO resolved to, it is shown as
   in the same interpreter, and this command has no way to turn it off. MKL
   refuses to set it (`MKL_CBWR_ERR_MODE_CHANGE_FAILURE`) once its BLAS/LAPACK
   dispatch has started in the process. Measured: an `eigen` solve before
-  `system Pardiso -deterministic` triggers the refusal. An earlier PARDISO solve
-  does not. If you see that warning, set the environment variable before the
-  process starts:
-  `set MKL_CBWR=AUTO` (or the branch). A bare `-deterministic` keeps a branch
+  `system Pardiso -deterministic` triggers the refusal. On Windows an earlier
+  PARDISO solve does not. **On Linux it does**, and so does an earlier UmfPack
+  solve (UMFPACK calls MKL's BLAS there), so on Linux `-deterministic` must
+  come before the first solve of the process, or use the environment variable.
+  If you see that warning, set the environment variable before the process
+  starts:
+  `set MKL_CBWR=AUTO` (or the branch; `export MKL_CBWR=AUTO` on Linux). A bare `-deterministic` keeps a branch
   already fixed by `MKL_CBWR`, so the launcher line stays in charge. Tcl stops
   on a refused mode. Python warns and continues, and the first-solve notice
   then says `CNR NOT ACTIVE`.
@@ -261,6 +272,24 @@ Measured 2026-09-27, AMD Ryzen AI 7 PRO 350, 5 runs each: mode on gave 1
 distinct result. Mode off gave 5 distinct displacement fields and 2 distinct
 curves, with a largest relative spread of 1.5e-16 (1 ULP) in the load factor.
 On a smooth hardening model the drift stays in the last bit.
+
+**Repeatable is not the same as reliable.** Every threaded run is equally
+correct to machine precision. The one-thread answer, or the answer with the
+mode on, is not more accurate; it is only the same every time. So when a
+last-bit difference grows into a visible one, the solver is not the problem.
+The model is sitting on a knife edge: a limit point, softening or
+localization, a contact or yield state that can flip, a Newton iteration that
+converges right at the tolerance, or an adaptive step cut that goes one way or
+the other. At such a point a different tolerance, step size, mesh or compiler
+would also move the answer. TIMs' 30 % wall shift is this case. The smooth J2
+deck above drifts by 1.5e-16, and their bearing drifts by 30 % from the same
+cause.
+
+Use `-deterministic` when you need two runs to agree: regression tests,
+debugging a failure you cannot otherwise reproduce, comparing nodes. Do not
+use it to settle a result. If the mode-off runs scatter visibly, report that
+the result is not well determined at that point. Then check it the usual way,
+by varying the tolerance, the step size and the mesh.
 
 ---
 

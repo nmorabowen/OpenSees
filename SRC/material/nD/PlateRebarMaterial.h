@@ -95,6 +95,11 @@ class PlateRebarMaterial: public NDMaterial{
 
     int setParameter(const char** argv, int argc, Parameter& param);
 
+    // Ladruno (WP-142): forward recorder queries to the wrapped uniaxial.
+    // "material <args...>" always reaches the bar; any key the NDMaterial
+    // base does not answer is forwarded unchanged. Base keys are untouched.
+    Response *setResponse(const char **argv, int argc, OPS_Stream &output);
+
 private :
     UniaxialMaterial *theMat ;
     double angle, c, s;

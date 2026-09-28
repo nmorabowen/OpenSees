@@ -84,6 +84,62 @@ jobs:
           HEAD_REV: ${{ github.event.pull_request.head.sha || 'HEAD' }}
         run: python ci/check_viewer_ledger.py --base "$BASE_REV" --head "$HEAD_REV"
 
+  # ---- MKL compatibility: MKL-gated sources vs the OLDEST MKL (WP-148) ----
+  # Zone-A configures WITHOUT MKL, so SRC/system_of_eqn/linearSOE/pardiso/, the
+  # FEAST code under _LADRUNO_MKL_FEAST and the _PARDISO blocks of the two
+  # command files never reach a compiler on Linux. WP-132 (#864) used a oneMKL
+  # 2025.0 macro there: Windows (2025.1) built, esmeralda (spack oneMKL 2024.2.2)
+  # did not, and nothing noticed for two days (#886). This job configures both
+  # Linux MKL opt-ins against the oneMKL 2024.2.2 PyPI wheels and compiles ONLY
+  # the units that touch MKL (M1), then checks that every MKL symbol they
+  # reference is defined by the 2024.2.2 libraries the opt-in links (M2) -- the
+  # FEAST sources declare their MKL routines by hand, so only M2 sees a too-new
+  # routine there. --self-test proves both rules still fire (M1 on the #864
+  # incident itself). No full build: seconds of compiling, so it runs on drafts
+  # too, like the static gates. check_mkl_compat.py's docstring has the details.
+  mkl-compat:
+    name: MKL 2024.2 compat (WP-148)
+    if: github.repository == 'nmorabowen/OpenSees'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Restore only: Zone-A saves this cache under the same key.
+      - name: Restore Conan packages
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.conan2
+          key: conan2-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
+          restore-keys: |
+            conan2-${{ runner.os }}-
+      # Unpacked into a private tree, NOT pip-installed: the mkl-devel wheel ships
+      # lib/cmake/mkl/MKLConfig.cmake, which the root find_package(MKL) can find
+      # through PATH, moving the configure off the Linux opt-in path this gate is
+      # about. Wheels carry no symlinks, so the unversioned libmkl_*.so names that
+      # find_library() looks for are made here.
+      - name: oneMKL 2024.2.2 headers + libraries (PyPI wheels)
+        run: |
+          pip download --no-deps --only-binary=:all: -d "$RUNNER_TEMP/whl" mkl==2024.2.2 mkl-include==2024.2.2
+          MKL="$RUNNER_TEMP/mkl2024"
+          mkdir -p "$MKL/lib" "$MKL/include"
+          for w in "$RUNNER_TEMP"/whl/*.whl; do python -m zipfile -e "$w" "$RUNNER_TEMP/x"; done
+          mv "$RUNNER_TEMP"/x/mkl-*.data/data/lib/* "$MKL/lib/"
+          mv "$RUNNER_TEMP"/x/mkl_include-*.data/data/include/* "$MKL/include/"
+          (cd "$MKL/lib" && for f in libmkl_*.so.2; do ln -s "$f" "${f%.2}"; done)
+          grep "define INTEL_MKL_VERSION" "$MKL/include/mkl_version.h"
+          echo "LADRUNO_MKL_2024=$MKL" >> "$GITHUB_ENV"
+      - name: Configure with both Linux MKL opt-ins (no build)
+        run: |
+          pip install conan
+          conan profile detect --force
+          conan install . --build=missing
+          cmake -S . -B build/mkl -DCMAKE_TOOLCHAIN_FILE=build/Release/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DLADRUNO_MKL_PARDISO_LINUX=ON -DLADRUNO_MKL_FEAST_LINUX=ON -DMKL_RT_HINT="$LADRUNO_MKL_2024/lib"
+      - name: MKL-touching units vs oneMKL 2024.2.2 (M1 compile, M2 symbols, self-test)
+        run: python ci/check_mkl_compat.py --build-dir build/mkl --self-test
+
   # ---- Zone-A: build + pytest(zone_a) + gated Tcl suite ------------------
   zone-a-ubuntu:
     name: Zone-A (Ubuntu)
