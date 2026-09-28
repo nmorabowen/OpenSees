@@ -1,0 +1,381 @@
+---
+title: "WP-150 — Regularizing SANISAND on the TIMs strip footing: two mechanisms, and a staged design"
+project: Ladruno
+type: design memo
+status: "PROPOSED — research only, NO code. Awaiting orchestrator/owner agreement; R1 also needs TIMs (it is a model option)."
+owner: nmora
+related:
+  - "[[90_ladruno_viscoplastic_regularization_adr]]"
+  - "[[134_sanisand_reference_integrator]]"
+  - "[[86_ladruno_sanisand_adr]]"
+  - "[[59_ladruno_gradient_concrete_adr]]"
+  - "[[_sand_model_survey_2026-09-27]]"
+  - "127_tims_2d_model_report (PR #887)"
+  - "138_footing_sas_me_ab (PR #878)"
+tags: [memo, sanisand, regularization, localization, ellipticity, tims, wp-150]
+updated: 2026-09-28
+---
+
+# WP-150 — Regularizing SANISAND on the TIMs strip footing
+
+> [!summary] The short version
+> The WP-138 Esmeralda legs stop for **two different reasons**. Only one of them is what a regularizer treats.
+>
+> 1. **The wall (`loadingNonPosH`) is a singularity of the DM04 rate equations, not band softening.**
+>    - No committed Gauss point is anywhere near H = 0: min H/2G = 0.92 at E_B's wall.
+>    - The refusing points sit **at an α_in re-seat** (a = (α−α_in):n ≈ 0, h → ∞), **near the bounding surface** (b:n small).
+>      There, Kp = ⅔·p·(b0/a)·(b:n) is ∞·0, and it goes to −∞ as soon as b:n ≤ 0.
+>    - The same 0/0 stopped WP-134's exact Radau oracle at ring point 1950/3.
+>    - No regularization of the boundary-value problem can lift an unbounded negative modulus at a point.
+>      The cure is a model-level fix of that set (**R1**).
+> 2. **The bands are non-associated localization in the HARDENING regime.**
+>    - At s/B 0.011, 17 % of the Gauss points already have a singular acoustic tensor (det ≤ 0).
+>      At those points H/2G ≈ 1.05 and Kp/2G ≈ 0.03, i.e. still hardening.
+>    - The **same state with associated flow is elliptic everywhere**.
+>    - Only 17 of 9720 points are post-peak even at s/B 0.0508.
+>    - This is Rudnicki–Rice / Sabet & de Borst "structural softening", and it is what makes B/16 run 4–5 % softer than
+>      B/8 from s/B 0.010.
+>    - A regularizer that acts on ψ-softening (nonlocal void ratio) or on fracture energy (crack band) does not touch it.
+>
+> **Recommendation.** R0 (confirm, no code) → **R1** (opt-in bounded memory modulus on the softening side) →
+> **R2** (unregularized B/4–B/8–B/16 re-measure past 0.05) → **R3 only if R2 fails TIMs' tolerance**.
+> R3 is Perzyna-type viscoplasticity *inside* `LadrunoSANISAND`. Rejected: the Duvaut–Lions wrapper (it inherits the
+> refusal), and nonlocal ψ̄ for this stage (it acts on the wrong mechanism). Cosserat or gradient-in-λ only if a band
+> **width** deliverable is ever named.
+
+Reproducers: `Ladruno_files/testbed/hypo_bearing/wp150_regularization/`. The scripts read the WP-138 Esmeralda
+checkpoints read-only (`field_*.npz`: committed stress, state, ψ and SAS counters per GP) and mirror the kernel
+formulas cited below.
+
+---
+
+## 1. The wall: a singular set of the rate equations
+
+### 1.1 The refusal criterion
+
+The SAS-ME stage (`LadrunoSANISANDSasME.cpp:335-411`) refuses a *loading* stage (N > 0) whose plastic denominator
+is not positive:
+
+```
+H = Kp + 2G - K·D·qv            (B - C tr n³ ≡ 1, WP-134 §2 derived fact (b); qv = n:α + √(2/3)·m)
+Kp = ⅔·p·h·(b:n),   h = b0 / a,   a = (α − α_in):n,   a < 1e-10 → h = 1e10   (ladrunoSasBracketH :162-172)
+```
+
+At stage 1 H depends only on the substep's START state. A reversal found there re-seats α_in := α
+(`:568-572`), so a = 0 and h = 1e10. The refusal code is RC_NONPOS_H (`:578-582`), and "no cut can change it".
+
+### 1.2 No committed state is close to H = 0
+
+`h_decomp.py` evaluates H term by term at every committed GP:
+
+| checkpoint | s/B | GPs | H ≤ 0 | min H/(2G) | post-peak (b:n < 0) | h at the 1e10 sentinel |
+|---|---|---|---|---|---|---|
+| E_B step 215 | 0.0407 | 9 720 | **0** | 1.039 | 59 | 7 |
+| E_B step 370 | 0.0508 | 9 720 | **0** | 1.038 | 61 | 90 |
+| E_B last converged | 0.0508 | 9 720 | **0** | 0.917 | 17 | 99 |
+| E_B16 last converged | 0.0135 | 38 880 | **0** | 1.036 | 7 | 1 635 |
+
+Genuine softening is marginal. For the 17 post-peak GPs at E_B's wall, a would have to shrink ≥ 6.7× before
+H ≤ 0 (x_crit/x ≤ 0.149).
+
+### 1.3 The refusing points sit at a re-seat, near the bounding surface
+
+The points are from `floor_refusers_in_band.csv`. The state is the last committed one; the counters are cumulative
+for that GP (`refuser_stats.py`):
+
+| leg | ele/gp | (x, y) m | p kPa | ψ | a = (α−α_in):n | h | b:n | α_in re-seats | rejected reversals |
+|---|---|---|---|---|---|---|---|---|---|
+| E_B | 1880/1 | (−0.148, −2.023) | 366 | −0.089 | +2.2e-4 | 2.8e5 | +0.193 | 1 237 | 7 162 |
+| E_B | 1879/1 | (−0.148, −2.210) | 334 | −0.091 | −1.6e-3 | **1e10** | +0.030 | 880 | 9 075 |
+| E_B16 | 7820/4 | (+0.957, −0.395) | 50 | −0.116 | −3.3e-3 | **1e10** | +0.046 | 602 | 11 109 |
+
+- **All three have |a| below the yield cone's α-space radius √(2/3)·m = 4.1e-3.**
+- All three are dense (ψ ≈ −0.1) and inside the bounding surface, with b:n > 0 and ρ_α ≈ 0.95.
+- Domain totals: E_B has **10.1 M re-seats and 88.5 M reversal-rejected substeps**; E_B16 has 5.7 M and 63.6 M.
+  The band points chatter between "loading" and "reversal" from one Newton iterate to the next.
+
+### 1.4 The mechanism
+
+WP-134 already gives the exact continuous extension (`134_sanisand_reference_integrator.md` §2, derived fact (c)):
+
+```
+H_s = a·H = ⅔·p·b0·(b:n) + a·(2G − K·D·n:r)      at a = 0:  H_s = ⅔·p·b0·(b:n)
+```
+
+The loading index L = a·N/H_s is 0/0 when b:n → 0, and there is no solution when b:n < 0. So the singular set is
+**{a = 0, b:n ≤ 0}**: a new loading process that starts **on or outside** the bounding surface along the new n.
+
+DM04's h = ∞ at a re-seat encodes an elastic-like restart from *inside* the bounding surface. Near the peak, a small
+rotation of n (non-coaxial loading in the edge zone, or iterate jitter) re-seats α_in while b:n' ≤ 0. The model then
+asks for an infinitely *negative* modulus.
+
+**Corroboration.**
+- WP-134's Radau oracle **stopped** at ring point 1950/3 under shear, where "(α−α_in):n → 1e-10 and b:n → 4e-7
+  together" (134 §6.6, row at `:462`). So the singularity is in the DM04 continuum, not in SAS-ME's discretization.
+- The WP-138 ablation (provisional, B/8, SAS-ME):
+
+  | leg | NonPosH events | first at s/B |
+  |---|---|---|
+  | S1 (no fabric) | 8 | 0.0355 |
+  | S2 (no peak, nb = 0) | 22 | 0.0269 |
+  | S3 (nd = 0) | 1 | 0.0347 |
+  | S4 (A0 = 0.001) | **0** | — (run to 0.0374) |
+
+  - Every S1–S3 leg sits at ~⅓ of E_B's load at the same s/B.
+  - **Reading:** dilation raises ψ in the band, which contracts the bounding surface onto α. That is how b:n reaches
+    0⁻. Without dilatancy, the bounding surface stays an attractor (dα ∝ b) and b:n > 0.
+  - h0 × 3 walls much earlier (0.0091): α reaches the bounding surface sooner.
+  - `-Presidual` 0.5–20 kPa and e_init 0.65–0.85 all still hit it.
+  - The onset is **non-monotonic** in A0 and in Presidual. That is the fingerprint of a singular event, not of a
+    smooth limit.
+
+**Owed (R0).** A replay of the *refusing* substep, to show a ≈ 0 and b:n' ≤ 0 at the refusing stage. Use the WP-138
+FixedNumIter-1 recipe plus `ladrunoSANISANDReplay -trace` on the SAS-ME snapshot binary.
+
+---
+
+## 2. The bands: non-associated loss of ellipticity at positive hardening
+
+### 2.1 Acoustic tensor of the continuum tangent
+
+`acoustic_vec.py` builds, at every committed GP, D = Cₑ − (Cₑ:R)⊗(Q:Cₑ)/H with Q = n − ⅓·qv·I and the kernel's R.
+It then scans the plane-strain acoustic tensor over 721 band orientations. **Associated control:** R → Q, same Kp.
+**Blend:** (1−β)·Cₑ + β·D, as in ADR-90 V4.
+
+| checkpoint | s/B | GPs with det ≤ 0 | H/2G there, median (min) | Kp/2G there, median | min det ratio | associated det ≤ 0 | blend det ≤ 0 at β = 0.5 / 0.9 / 0.99 |
+|---|---|---|---|---|---|---|---|
+| E_B step 45 | 0.0110 | 1 636 (16.8 %) | 1.074 (1.052) | +0.032 | −0.156 | **0** | 0 / 91 / 1 487 |
+| E_B step 120 | 0.0294 | 1 924 (19.8 %) | 1.067 (1.047) | +0.022 | −0.172 | **0** | 0 / 199 / 1 691 |
+| E_B last | 0.0508 | 2 187 (22.5 %) | 1.060 (0.917) | +0.031 | −0.478 | 1 ¹ | 0 / 588 / 1 949 |
+| E_B16 step 55 | 0.0096 | 3 534 (9.1 %) | 1.076 (1.050) | +0.035 | −0.248 | **0** | 0 / 82 / 3 285 |
+| E_B16 last | 0.0135 | 6 576 (16.9 %) | 1.072 (1.041) | +0.033 | −0.318 | **0** | 0 / 1 728 / 6 016 |
+
+¹ The footing-edge surface GP at p = 9 kPa, the one genuinely softening point (Kp/2G = −0.16).
+
+**Reading.**
+- Ellipticity is lost while every one of these points is still **hardening** (H/2G ≈ 1.05). The associated flow at
+  the same Kp is elliptic.
+- The cause is the flow rule. R has a volumetric part D/3 ≈ −0.01 against Q's −qv/3 ≈ −0.5.
+- At the campaign's h0 = 1.3 the plastic modulus is small against G: Kp/2G ≈ 0.03 once α has travelled a ≈ 1 from α_in.
+- This is Rudnicki & Rice (1975), and in FE terms Sabet & de Borst (2019): structural softening from non-associated
+  flow with no strain softening at all.
+- **Mesh-orientation warning.** The bands in `fields_shear_strain.png` run straight down the element columns at
+  x = ±B/2. The late inclined band at E_B's wall runs along element diagonals. An ill-posed problem picks mesh-aligned
+  paths, so R2 must include an orientation variant.
+
+### 2.2 What it costs the curve
+
+E_B (B/8) against E_B16 (B/16), q at matched s/B:
+
+| s/B | 0.001 | 0.002 | 0.004 | 0.006 | 0.008 | 0.010 | 0.012 | 0.0135 |
+|---|---|---|---|---|---|---|---|---|
+| (q16 − q8)/q8 | −0.53 % | −0.58 % | +0.16 % | −0.81 % | −0.91 % | **−3.89 %** | **−4.95 %** | **−3.84 %** |
+
+The two meshes agree to 1 % until the band forms at B/16 (~0.009), then separate by 4–5 %. GATE U (ADR-90 §1.2) saw
+the matched-settlement band *contract* on the 3-D deck. Whether this one contracts needs B/4 and B/32-class points (R2).
+
+---
+
+## 3. Options compared
+
+The physical band in sand is 10–20·d50 ≈ 3–6 mm (Mühlhaus & Vardoulakis 1987; Desrues & Viggiani 2004). The
+elements here are 94–188 mm. **Any intrinsic length at this scale is a declared numerical ℓ, not the soil's.**
+ADR-90 §3.3's honest-framing test applies to ℓ exactly as it does to τ: never tune it against a target load.
+
+| option | regularizes | band WIDTH objective? | lifts the wall (H ≤ 0)? | ellipticity at H > 0 (non-assoc.)? | fork fit | sand-footing evidence | verdict |
+|---|---|---|---|---|---|---|---|
+| **Duvaut–Lions** (ADR-90 wrapper `LadrunoOverstress` 33022, or WP-F in-model) | rate | no (quasi-static: width is De- and imperfection-set, ADR-90 A0/V3) | **no** — needs the inviscid σ̄ for the same Δε, i.e. the refusing computation | yes, for β ≲ 0.7 (V4; §2.1) | wrapper: V1–V3, stale Cₑ, β per Newton iterate (ADR-90 §4–5); in-model: no closest-point projection exists for a bounding-surface model with a tiny cone | none | **reject** |
+| **Perzyna-type viscoplasticity inside LadrunoSANISAND** | rate | no (as above; the length comes only through wave dispersion, de Borst & Duretz 2020) | **yes for bounded Kp** (denominator H + 2Gτ/Δt); not for the ∞·0 set, so it needs R1 first | **yes**: §2.1 needs H_v/2G ≥ 0.17 (s/B 0.011) … 0.44 (0.0508) | intrinsic: the real Cₑ(p) (fixes V1), +2 doubles on the wire, per-instance, latched Δt (ADR-90 D4), refuse with `-implex` (Concrete3D `-eta` precedent) | viscosity regularizes non-associated plasticity (Hageman, Sabet & de Borst 2021) | **R3, conditional** |
+| **Nonlocal void ratio / ψ̄** (Gao, Li & Lu 2022; Mallikarachchi & Soga 2020) | ψ-softening | yes, when h < ℓ | no | **no** — it changes how H *evolves* in the band, not the current tangent; the onset here is at Kp > 0 | lagged integral average via a domain component, no new DOF; MP halo needed | **yes**: strip footing (Gao), biaxial (M&S) | **R4, post-peak only** |
+| Implicit gradient (u–ē element, ADR-59 architecture) | the averaged variable | yes | no | only if the averaged variable is the plastic multiplier | new ndf-3 element family, mixed-ndf seams, conditioning (ADR-59 R-M4/M5) | clays / concrete | not now |
+| Gradient plasticity in λ (de Borst & Mühlhaus 1992) | the plastic multiplier field | yes | partly | yes | mixed u–λ element, research for SANISAND | granular (Vardoulakis & Aifantis 1991) | not now |
+| Cosserat / micropolar | rotation gradients | yes (ℓ_c) | no | **yes** (Sabet & de Borst 2019; Hageman et al. 2021) | new element family (ux, uy, ω), no Cosserat SANISAND in the literature, none in `SRC/` | micropolar hypoplastic footings (Tejchman) | only if a WIDTH deliverable is named |
+| Element lch / crack band (Pietruszczak & Mróz 1981; Siddiquee et al. 1999) | softening energy | no (1 element) | **worse**: w_phys ≪ h steepens the element's softening (snap-back) | no — there is no fracture energy before the peak | the fork's lch seam exists | yes (scale effect, Tatsuoka group) | not applicable |
+| **R1 — model fix of {a = 0, b:n ≤ 0}** | nothing (not a regularizer) | — | **yes** | no | intrinsic, SAS-ME bracket only, default off | — | **do first** |
+
+---
+
+## 4. Recommendation — staged, each stage with its gate
+
+**R0 — confirm the mechanism (no code, about 1 day).**
+- Replay the three refusers' failing substep with the WP-138 recipe.
+- **Gate:** a ≈ 0 re-seat with b:n' ≤ 0 at the refusing stage in all three.
+- If it fails, §1 is wrong and this memo is re-scoped before any code.
+
+**R1 — bounded memory modulus on the softening side (opt-in model option; owner and TIMs decide).**
+- Wherever **b:n ≤ 0**, take h = b0 / max(a, a_min), with **a_min = c_A·√(2/3)·m** (c_A = 1 → 4.1e-3). The α update
+  uses the same h.
+- **Where b:n > 0, DM04 is untouched.** That includes the h = ∞ elastic-like restart inside the bounding surface,
+  which is the cyclic behaviour DM04 is calibrated for.
+- Kp stays continuous across b:n = 0 (only its slope has a kink).
+- At a re-seat with b:n ≈ 0⁻, Kp ≈ 0⁻ and H ≈ 2G − K·D·n:r > 0. The new loading process starts *on* the bounding
+  surface, nearly perfectly plastic: the physically expected response to a small rotation of the loading direction at
+  the peak.
+- Genuine softening can still refuse, but only at finite Kp. At p = 334 kPa, c_A = 1 it needs b:n < −0.09, and it
+  still refuses as RC_NONPOS_H.
+- Flag `-hCap c_A`, default 0: the sentinel path, byte-identical. New counter `hCapped` in `sasStats`.
+- *R1b, separate flag, measured separately:* a hysteretic re-seat (re-seat only when a < −a_rev) against the 88 M
+  reversal chatter.
+  - S4 shows the substep cost survives without NonPosH: 26.9 M substeps in one step.
+  - This changes α_in memory semantics for small cycles.
+  - It is not WP-129's strain-norm `-reversalTol/-reversalRel`, which IntScheme 129 refuses.
+- **Gate:**
+  1. The WP-134 oracle suite: monotonic drained/undrained triaxial and plane strain move by < 0.1 % in q and ε_v (the
+     cap is inactive while b:n > 0). The change in cyclic undrained cycles-to-liquefaction is reported, and TIMs set
+     the tolerance.
+  2. E_B and E_B16 with c_A = 1 pass s/B 0.0508 / 0.0135 with no singular-set refusal.
+  3. c_A ∈ {½, 1, 2} moves q at matched s/B by less than the solver floor (0.8–1.4 %, ADR-90 §1.2(iii)).
+
+**R2 — the unregularized re-measure (no code; Esmeralda).**
+- Run B/4, B/8, B/16 and one skewed or unstructured B/8 fine zone, with R1, to s/B 0.15.
+- Report q(s/B), the §2.1 acoustic census every 5 checkpoints, w₂ (ADR-90 §7.3) and the band paths.
+- **Decision rule:** if the matched-settlement band at s/B ∈ {0.05, 0.10} contracts under refinement and sits inside
+  TIMs' tolerance (ADR-90 OQ2, still unsupplied), the answer is **disclose** (ADR-90's close-out stands).
+  Otherwise go to R3.
+- On present evidence (−4 to −5 % B/16 vs B/8 at 0.010–0.013), R3 is likely if the tolerance is below about 5 %.
+
+**R3 — Perzyna-type viscoplastic SANISAND (conditional; C++ behind a default-off flag).**
+- Rate form λ̇ = ⟨f⟩ / (2G·τ), with f = SANISAND's own yield function (the stress's distance outside the α-cone).
+  The backward-Euler denominator is **H + 2G·τ/Δt**.
+- Why Perzyna and not Duvaut–Lions: Perzyna **never needs an inviscid solution**, so it cannot inherit the refusal.
+  It uses the real Cₑ(p). It is an ODE in pseudo-time, so SAS-ME's error control integrates it unchanged.
+- η = 2G·τ (∝ √p) keeps the Deborah number uniform over the domain.
+- **The trade-off, stated up front.**
+  - The incremental problem stays elliptic only while τ ≳ 0.2–0.45·Δt_step (§2.1: H_v/2G = τ/Δt).
+  - So either the deck caps ds at about 2τ (cost up to ~10×: E_B's mean ds was 2e-4 m against a 2e-5 base), or τ
+    grows and so does the rate bias.
+  - The bias estimate is f ≈ 2G·τ·λ̇: about 7 kPa in the band at τ = 1e-5 m, and it must be measured.
+  - There is **no intrinsic width** (quasi-statics, ADR-90 A0/V3). R3 claims a q–s that converges in h at a declared
+    (τ, Δt), never a width.
+- **Gate:** C8 (the algorithmic acoustic tensor is elliptic at every committed state); q(s/B) at fixed τ contracts in
+  h; Δt-convergence at fixed τ; q(τ)/q(τ → 0) reported per leg at {τ/2, τ, 2τ}; zero steps committed with τ > 0 but
+  Δt = 0 (the revert path, ADR-90 §4.2).
+
+**R4 — nonlocal ψ̄ (only if a post-peak branch appears in R2/R3).**
+- Gao-type: a nonlocal volumetric-strain increment drives e, averaged with a lag by a domain component, with a
+  declared ℓ ≥ 3·h_coarse.
+- It is the right tool once ψ-softening dominates, not before.
+
+**Not recommended now:** Cosserat and gradient-in-λ. They are the only routes to an objective *width* for this
+mechanism, and at this scale that width is numerical anyway. Open them only on a named width deliverable (ADR-59's gate).
+
+---
+
+## 5. Parameters and how to justify them
+
+| parameter | stage | what it is | calibration | forbidden |
+|---|---|---|---|---|
+| c_A (a_min = c_A·√(2/3)·m) | R1 | smallest α travel since the last reversal that the memory resolves | tied to the yield cone, so no fit. Default 1, sensitivity {½, 1, 2}. Every refuser had \|a\| < √(2/3)·m | fitting c_A to a load |
+| τ (m of settlement; η = 2G·τ) | R3 | relaxation time in pseudo-time | the smallest τ that keeps C8 elliptic at the deck's ds_max (§2.1 gives τ/Δt ≥ 0.45 with margin), then {τ/2, τ, 2τ} | tuning τ to a target q or width (ADR-90 §3.3) |
+| ℓ | R4 | nonlocal radius | ≥ 3·h of the coarsest mesh (numerical; the physical ℓ is ~mm), reported at {ℓ/2, ℓ, 2ℓ} | as above |
+
+---
+
+## 6. At the ring (p′ → 0)
+
+- **R1.**
+  - b0 ∝ 1/√p, so the capped Kp = ⅔·p·(b0/a_min)·(b:n) ∝ √p. That is the scaling of 2G.
+  - The cap's effect is therefore p-independent, and it adds no strength at the free surface.
+- **R3.**
+  - η must scale with G. With a constant η the ring (G → G(p_min)) is viscosity-dominated, and the overstress acts as
+    an apparent cohesion. That is the same failure as `-Presidual` 20 kPa (+30 % q at s/B 0.05, ablation).
+  - The absolute overstress 2G·τ·λ̇ → 0 with G.
+- **Where genuine softening starts.** The acoustic scan puts it at the footing-edge surface point (p = 9 kPa,
+  Kp/2G = −0.16). The ring is where R3's local-uniqueness role would appear first.
+- **Unchanged by all of this:** `-Pmin`, `-Presidual` and the UW D_factor sigmoid (< 5.05 kPa). The survey's p′-floor
+  rule (§7.1) still governs them.
+
+---
+
+## 7. Tangent, refusal and fork plumbing
+
+- **Refusals.** R1 removes one refusal class and keeps RC_NONPOS_H for genuine softening. Both still leave through
+  `LADRUNO_MATERIAL_REFUSED` to the element and to `analyze()`. `LadrunoQuad` is a forwarder (LEDGER_quirks "Element
+  refusal roster"). The WP-99 latch is IMPL-EX commit-time only and is not touched.
+- **Tangent.**
+  - SAS-ME hands out one continuum tangent at the end state. R1 changes only Kp and h inside it.
+  - R3's tangent is Cₑ − (Cₑ:R)⊗(Q:Cₑ)/(H + 2G·τ/Δt) and is non-symmetric, so the unsymmetric solver stays mandatory
+    (ADR-90 D11).
+  - The campaign's TanType 0 (modified Newton) is unaffected.
+- **State and wire.**
+  - R1 is one option double in `LadrunoSasOptions`. That struct is a Ladruno block in the vanilla `ManzariDafalias.h`,
+    so it gets a vanilla-ledger row.
+  - R3 adds τ, the committed overstress and the latched Δt: getCopy, sendSelf/recvSelf, revertToLastCommit.
+  - No statics, so it is thread-safe for WP-131/146.
+- **IMPL-EX.** SAS-ME + IMPL-EX is unqualified (concrete session's study), so R1/R3 are SAS-ME-only. R3 hard-refuses
+  `-implex`.
+- **Checklist.** Implementation follows `.claude/skills/ladruno-new-material/SKILL.md`.
+
+---
+
+## 8. Test plan (the WP-138 footing)
+
+Deck: `~/ladruno_wp138/deck/footing_ab.py` on Esmeralda (E_B settings: IntScheme 129, TolR 1e-4, Pardiso sequential,
+MKL_CBWR COMPATIBLE).
+
+**New flags:**
+- `--hcap c_A` and `--tau τ`;
+- `--dsmax`, to cap ds for R3;
+- `--mesh b4`: the graded counts must be integers, so b4 needs its own counts; it cannot be r = ½ of b8;
+- a skewed-mesh variant.
+
+| id | stage | legs | pass |
+|---|---|---|---|
+| T0 | R0 | replay of E_B 1880/1, 1879/1 and E_B16 7820/4 | a ≈ 0 and b:n' ≤ 0 at the refusing stage |
+| T1 | R1 | WP-134 oracle suite ± cap, C++ vs oracle | < 0.1 % monotonic; cyclic change reported |
+| T2 | R1 | E_B and E_B16 with c_A = 1, plus c_A ∈ {½, 2} on B/8 | past 0.0508 / 0.0135, no singular-set refusal, q within the solver floor across c_A |
+| T3 | R2 | B/4, B/8, B/16 and skewed B/8, to s/B 0.15 | the decision rule of §4 R2; acoustic census; w₂; band paths |
+| T4 | R3 | τ ∈ {τ/2, τ, 2τ} × {B/4, B/8, B/16}, ds ≤ 2τ, plus one leg at ds_max/2 | C8 elliptic; h-contraction at fixed τ; Δt-convergence; bias reported |
+
+**The pass criterion TIMs asked for** (mesh-independent q–s past s/B 0.05 at B/8 and B/16, and B/4) is T3 if R2
+suffices, and T4 otherwise.
+
+---
+
+## 9. Decisions requested
+
+- **D-a** (owner and TIMs): adopt R1 as an **opt-in DM04 variant**, and decide whether a_min is tied to m (proposed) or free.
+- **D-b** (TIMs, ADR-90 OQ2): the matched-settlement tolerance that decides between R2's "disclose" and R3.
+- **D-c** (owner): where the stages live.
+  - R1 as an **ADR-86 follow-up WP**: a SANISAND model option, no class tag.
+  - R3 as a **revision of ADR-90**: retire the wrapper, re-cast WP-F from "Duvaut–Lions in-model" to "Perzyna
+    in-model". 33022 stays reserved and unused, because R3 is not a wrapper.
+  - No new ADR number.
+- **D-d** (TIMs): is band **width** a deliverable? If not, Cosserat and gradient stay closed.
+
+---
+
+## References
+
+- Dafalias, Y. F. & Manzari, M. T. (2004). Simple plasticity sand model accounting for fabric change effects. *J. Eng.
+  Mech.* 130(6), 622–634. The h = b0/((α−α_in):n) rule.
+- Rudnicki, J. W. & Rice, J. R. (1975). Conditions for the localization of deformation in pressure-sensitive dilatant
+  materials. *JMPS* 23, 371–394.
+- Sabet, S. A. & de Borst, R. (2019). Structural softening, mesh dependence, and regularisation in non-associated
+  plastic flow. *IJNAMG* 43(13), 2170–2183. doi:10.1002/nag.2973.
+- Hageman, T., Sabet, S. A. & de Borst, R. (2021). Convergence in non-associated plasticity and fracture propagation
+  for standard, rate-dependent, and Cosserat continua. *IJNME* 122, 777–795. doi:10.1002/nme.6561.
+- de Borst, R. & Duretz, T. (2020). On viscoplastic regularisation of strain-softening rocks and soils. *IJNAMG* 44(6),
+  890–903. doi:10.1002/nag.3046.
+- Gao, Z., Li, X. & Lu, D. (2022). Nonlocal regularization of an anisotropic critical state model for sand.
+  *Acta Geotech.* 17, 427–439. doi:10.1007/s11440-021-01236-3.
+- Mallikarachchi, H. & Soga, K. (2020). Post-localisation analysis of drained and undrained dense sand with a nonlocal
+  critical state model. *Comput. Geotech.* 124, 103572.
+- Galavi, V. & Schweiger, H. F. (2010). Nonlocal multilaminate model for strain softening analysis. *Int. J. Geomech.*
+  10(1), 30–44.
+- Liu, H. Y., Abell, J. A., Diambra, A. & Pisanò, F. (2019). Modelling the cyclic ratcheting of sands through
+  memory-enhanced bounding surface plasticity. *Géotechnique* 69(9), 783–800. The memory-surface alternative to α_in.
+- de Borst, R. & Mühlhaus, H.-B. (1992). Gradient-dependent plasticity: formulation and algorithmic aspects. *IJNME*
+  35, 521–539.
+- Vardoulakis, I. & Aifantis, E. C. (1991). A gradient flow theory of plasticity for granular materials. *Acta Mech.*
+  87, 197–217.
+- Mühlhaus, H.-B. & Vardoulakis, I. (1987). The thickness of shear bands in granular materials. *Géotechnique* 37(3),
+  271–283.
+- Desrues, J. & Viggiani, G. (2004). Strain localization in sand: an overview of the experimental results obtained in
+  Grenoble using stereophotogrammetry. *IJNAMG* 28, 279–321.
+- Pietruszczak, S. & Mróz, Z. (1981). Finite element analysis of deformation of strain-softening materials. *IJNME* 17,
+  327–334.
+- Siddiquee, M. S. A., Tanaka, T., Tatsuoka, F., Tani, K. & Morimoto, T. (1999). FEM simulation of scale effect in
+  bearing capacity of strip footing on sand. *Soils Found.* 39(4), 91–109.
+- Wang, W. M., Sluys, L. J. & de Borst, R. (1997). Viscoplasticity for instabilities due to strain softening and
+  strain-rate softening. *IJNME* 40, 3839–3864. The consistency-viscoplasticity alternative to Perzyna.

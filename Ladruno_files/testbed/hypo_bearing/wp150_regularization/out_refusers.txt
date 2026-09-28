@@ -1,0 +1,17 @@
+
+=== E_B last converged s/B 0.0508
+ refuser ele 1880 gp 1 (-0.148,-2.023) loadingNonPosHx27  -> k 7516
+   p 366.1 psi -0.089 x=(a-ain):n +2.154e-04 h 2.76e+05 b:n +1.934e-01 Kp/T2 +41.909 T3/T2 +0.020 H/T2 +42.929 D -0.020 z:n -4.52
+   updates=39729  substeps=833310  rejectedNonPosH=53  rejectedAlpha=0  alphaInReseats=1237  hBrackets=0  refusals=98  refNonPosH=98  maxAlphaRatio=1  rejectedReversal=7162
+ refuser ele 1879 gp 1 (-0.148,-2.210) loadingNonPosHx3  -> k 7512
+   p 334.4 psi -0.091 x=(a-ain):n -1.575e-03 h 1.00e+10 b:n +3.020e-02 Kp/T2 +226704.914 T3/T2 +0.042 H/T2 +226705.956 D -0.032 z:n -5.90
+   updates=39729  substeps=857468  rejectedNonPosH=0  rejectedAlpha=0  alphaInReseats=880  hBrackets=0  refusals=3  refNonPosH=3  maxAlphaRatio=1  rejectedReversal=9075
+ post-peak GPs (b:n<0): 17; x_crit/x  max 0.149  (>1 would already be H<=0); count x_crit/x > 0.1: 1
+  domain totals: rejectedNonPosH=3500  alphaInReseats=10064908  hBrackets=620179  refusals=468  refNonPosH=258  rejectedReversal=88486670
+
+=== E_B16 last converged s/B 0.0135
+ refuser ele 7820 gp 4 (+0.957,-0.395) loadingNonPosHx35  -> k 31279
+   p 50.3 psi -0.116 x=(a-ain):n -3.301e-03 h 1.00e+10 b:n +4.641e-02 Kp/T2 +135215.712 T3/T2 +0.048 H/T2 +135216.761 D -0.037 z:n -2.11
+   updates=5964  substeps=642730  rejectedNonPosH=18  rejectedAlpha=0  alphaInReseats=602  hBrackets=99  refusals=35  refNonPosH=35  maxAlphaRatio=1  rejectedReversal=11109
+ post-peak GPs (b:n<0): 7; x_crit/x  max 0.004  (>1 would already be H<=0); count x_crit/x > 0.1: 0
+  domain totals: rejectedNonPosH=18  alphaInReseats=5660872  hBrackets=513794  refusals=150  refNonPosH=35  rejectedReversal=63596034
