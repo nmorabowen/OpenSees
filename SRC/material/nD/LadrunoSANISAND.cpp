@@ -56,6 +56,7 @@
 #include <vector>                         // Ladruno WP-127: replay output
 #include <string>                         // Ladruno WP-127
 #include <limits>                         // Ladruno WP-127
+#include <cctype>                         // Ladruno WP-151: tolower
 
 // ===========================================================================
 //  OPS parser
@@ -194,7 +195,8 @@ OPS_LadrunoSANISAND(void)
                << " <-flipAlphaIn init|vanilla (default init)>"                 // Ladruno WP-112 (F14)
                << " <-errFloor sigRef?> <-alphaBoundTol kappa?> <-alphaEntryTol kappaEntry?> <-alphaProject 0|1>"  // Ladruno WP-129
                << " <-sasAlphaIn reseat|bracket|stale> <-sasErrorVars full|stress>"   // Ladruno WP-129
-               << " (the last five: IntScheme 129 = SAS-ME only)"                     // Ladruno WP-129
+               << " <-sasHFloor cA?> <-sasReseatHyst cRev?> <-sasSoftCap kappa?>"     // Ladruno WP-151
+               << " (-errFloor .. -sasSoftCap: IntScheme 129 = SAS-ME only)"         // Ladruno WP-129/151
                << endln;
         return 0;
     }
@@ -853,6 +855,36 @@ OPS_LadrunoSANISAND(void)
             }
             if (isAin) sasOpt.alphaInMode = mode; else sasOpt.errorVars = mode;
         }
+        // Ladruno WP-151 (R1): opt-in regularization of DM04's alpha_in re-seat
+        // singularity, SAS-ME only. All OFF by default (DM04, byte-identical).
+        else if (strcmp(argTok, "-sasHFloor") == 0 || strcmp(argTok, "-sashfloor") == 0 ||
+                 strcmp(argTok, "-sasReseatHyst") == 0 || strcmp(argTok, "-sasreseathyst") == 0 ||
+                 strcmp(argTok, "-sasSoftCap") == 0 || strcmp(argTok, "-sassoftcap") == 0) {
+            seenFlag = true;
+            sawSasToken = true;
+            const char k = (char)tolower((unsigned char)argTok[4]);   // h | r | s
+            double v = 0.0;
+            numData = 1;
+            if (OPS_GetDoubleInput(&numData, &v) != 0) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag << ": " << argTok
+                       << " wants one value" << endln;
+                return 0;
+            }
+            const bool okV = std::isfinite(v) && v >= 0.0 && (k != 's' || v < 1.0);
+            if (!okV) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag << ": " << argTok
+                       << (k == 'h' ? " wants c_A >= 0 (h = b0/max((alpha-alpha_in):n, c_A sqrt(2/3) m);"
+                                      " 0 = OFF, the DM04 default; 1 = one yield-cone radius)"
+                           : k == 'r' ? " wants c_rev >= 0 (alpha_in re-seats only when"
+                                        " (alpha-alpha_in):n < -c_rev sqrt(2/3) m; 0 = OFF)"
+                                      : " wants 0 <= kappa < 1 (softening cap: H >= kappa X; 0 = OFF)")
+                       << " (got " << v << ")" << endln;
+                return 0;
+            }
+            if (k == 'h') sasOpt.hFloor = v;
+            else if (k == 'r') sasOpt.reseatHyst = v;
+            else sasOpt.softCap = v;
+        }
         else {
             // Not one of our flags, so it must be a positional optional.
             if (seenFlag) {
@@ -879,7 +911,8 @@ OPS_LadrunoSANISAND(void)
                        << " -implexFlipAbsorb / -implexFactor /"                     // Ladruno ADR-92 P2-7c / P2-9
                        << " -reversalTol / -reversalRel /"
                        << " -flipAlphaIn / -errFloor / -alphaBoundTol / -alphaProject /"   // Ladruno WP-129
-                       << " -sasAlphaIn / -sasErrorVars" << endln;                         // Ladruno WP-129
+                       << " -sasAlphaIn / -sasErrorVars /"                                 // Ladruno WP-129
+                       << " -sasHFloor / -sasReseatHyst / -sasSoftCap" << endln;           // Ladruno WP-151
                 return 0;
             }
             nPos++;
@@ -947,6 +980,7 @@ OPS_LadrunoSANISAND(void)
     if (sawSasToken && (int)oData[0] != LADRUNO_INT_SAS_ME) {
         opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
                << ": -errFloor / -alphaBoundTol / -alphaProject / -sasAlphaIn / -sasErrorVars"
+                  " / -sasHFloor / -sasReseatHyst / -sasSoftCap"   // Ladruno WP-151
                   " are SAS-ME options and are read ONLY by IntScheme " << LADRUNO_INT_SAS_ME
                << " (this deck asks for IntScheme " << (int)oData[0] << "). Refused rather than"
                   " accepted and ignored." << endln;
@@ -1247,6 +1281,13 @@ LadrunoSANISAND::setLadrunoSasOptions(const LadrunoSasOptions &opt, bool verbose
                << "; TanType 1 and 2 both return the continuum tangent at the end state."
                << " Refusals reach the element as " << LADRUNO_MATERIAL_REFUSED
                << "; census: the `sasStats` response." << endln;
+        if (opt.hFloor > 0.0 || opt.reseatHyst > 0.0 || opt.softCap > 0.0)   // Ladruno WP-151
+            opserr << "LadrunoSANISAND tag " << this->getTag()
+                   << ": WP-151 R1, an OPT-IN DM04 variant (the alpha_in re-seat singularity):"
+                   << " h floor c_A = " << opt.hFloor << (opt.hFloor > 0.0 ? "" : " (OFF)")
+                   << ", re-seat hysteresis c_rev = " << opt.reseatHyst << (opt.reseatHyst > 0.0 ? "" : " (OFF)")
+                   << ", softening cap kappa = " << opt.softCap << (opt.softCap > 0.0 ? "" : " (OFF)")
+                   << " (lengths in yield-cone radii sqrt(2/3) m = " << root23 * m_m << ")." << endln;
         if (mHonorTolR != 0)
             opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
                    << ": -honorTolR has NO EFFECT under SAS-ME, which always uses TolR." << endln;
@@ -1890,6 +1931,20 @@ LadrunoSANISAND::getCopy(const char *type)
 //  reads them back in the same order.
 // ===========================================================================
 
+// Ladruno WP-151: the size of the Ladruno block on the wire. FE_Datastore keys a
+// sent Vector by its SIZE (FileDatastore: one file per `<size>.<commitTag>`) and
+// then by dbTag, and the vanilla base sends its own Vector(97) under the SAME
+// dbTag and commitTag -- so a Ladruno block that is also 97 long silently
+// OVERWRITES the base state in the datastore. WP-151's six new entries made it
+// exactly 97 (35 + 17 + 6 + 36 + 3) and every database round trip came back
+// corrupted (tests/test_ladruno_sanisand.py::test_db_roundtrip_carries_presidual).
+// One trailing layout tag keeps the block off the base size, and a
+// static_assert in sendSelf/recvSelf keeps any future column count from landing
+// on it again (LEDGER_quirks, WP-151). (LMS_COUNT is a protected member enum of
+// the base, so the size is a local enum inside the two members.)
+#define LADRUNO_SAN_WIRE_SIZE (35 + LMS_COUNT + 6 + LSAS_COUNT + 3 + 1)
+static const double kLadrunoSanWireTag = 151.0;   // the last entry: the layout's WP
+
 int
 LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
 {
@@ -1899,7 +1954,10 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
         return -1;
     }
 
-    static Vector ladrunoData(35 + LMS_COUNT + 6 + LSAS_COUNT);                     // Ladruno WP-127: 35 -> 52; WP-129: + SAS-ME
+    enum { kLadrunoSanWire = LADRUNO_SAN_WIRE_SIZE };                        // Ladruno WP-151
+    static_assert(kLadrunoSanWire != 97, "LadrunoSANISAND wire block must not be the size of "
+                  "ManzariDafalias::sendSelf's Vector(97): the datastore keys vectors by size");
+    static Vector ladrunoData(kLadrunoSanWire);   // Ladruno WP-127: 35 -> 52; WP-129: + SAS-ME; WP-151: + 3 options + layout tag
 
     ladrunoData(0) = mPresidualInput;
     ladrunoData(1) = mPminInput;
@@ -1979,7 +2037,11 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
         ladrunoData(b + 5) = mLadrunoSas.opt.alphaEntryTol;
         for (int i = 0; i < LSAS_COUNT; i++)
             ladrunoData(b + 6 + i) = mLadrunoSas.stats[i];
+        ladrunoData(b + 6 + LSAS_COUNT + 0) = mLadrunoSas.opt.hFloor;       // Ladruno WP-151
+        ladrunoData(b + 6 + LSAS_COUNT + 1) = mLadrunoSas.opt.reseatHyst;   // Ladruno WP-151
+        ladrunoData(b + 6 + LSAS_COUNT + 2) = mLadrunoSas.opt.softCap;      // Ladruno WP-151
     }
+    ladrunoData(kLadrunoSanWire - 1) = kLadrunoSanWireTag;                 // Ladruno WP-151
 
     res = theChannel.sendVector(this->getDbTag(), commitTag, ladrunoData);
     if (res < 0) {
@@ -2000,7 +2062,10 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
         return -1;
     }
 
-    static Vector ladrunoData(35 + LMS_COUNT + 6 + LSAS_COUNT);                     // Ladruno WP-127: 35 -> 52; WP-129: + SAS-ME
+    enum { kLadrunoSanWire = LADRUNO_SAN_WIRE_SIZE };                        // Ladruno WP-151
+    static_assert(kLadrunoSanWire != 97, "LadrunoSANISAND wire block must not be the size of "
+                  "ManzariDafalias::sendSelf's Vector(97): the datastore keys vectors by size");
+    static Vector ladrunoData(kLadrunoSanWire);   // Ladruno WP-127: 35 -> 52; WP-129: + SAS-ME; WP-151: + 3 options + layout tag
 
     res = theChannel.recvVector(this->getDbTag(), commitTag, ladrunoData);
     if (res < 0) {
@@ -2023,7 +2088,14 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
         mLadrunoSas.opt.alphaEntryTol = ladrunoData(b + 5);
         for (int i = 0; i < LSAS_COUNT; i++)
             mLadrunoSas.stats[i] = ladrunoData(b + 6 + i);
+        mLadrunoSas.opt.hFloor     = ladrunoData(b + 6 + LSAS_COUNT + 0);   // Ladruno WP-151
+        mLadrunoSas.opt.reseatHyst = ladrunoData(b + 6 + LSAS_COUNT + 1);   // Ladruno WP-151
+        mLadrunoSas.opt.softCap    = ladrunoData(b + 6 + LSAS_COUNT + 2);   // Ladruno WP-151
     }
+    if (ladrunoData(kLadrunoSanWire - 1) != kLadrunoSanWireTag)           // Ladruno WP-151
+        opserr << "WARNING: LadrunoSANISAND::recvSelf - the Ladruno block's layout tag is "
+               << ladrunoData(kLadrunoSanWire - 1) << ", expected " << kLadrunoSanWireTag
+               << " (a stream from another build, or an overwritten datastore slot)" << endln;
     mPminInput      = ladrunoData(1);
     m_Presidual     = ladrunoData(2);   // overwritten by applyLadrunoConstants below;
                                         // restored first so a future divergence is visible
@@ -4767,6 +4839,11 @@ constexpr int LadrunoSanisandSubstepStatsResponseID    = 33097;   // Ladruno WP-
 // TanType -- TIMs F20(c)). Same band, same rule.
 constexpr int LadrunoSanisandSasStatsResponseID        = 33098;   // Ladruno WP-129
 constexpr int LadrunoSanisandTangentEPResponseID       = 33099;   // Ladruno WP-129
+// Ladruno WP-151: `sasOptions`, the SAS-ME option set this instance RUNS (the
+// deck's flags as parsed, or as received over the wire): errFloor,
+// alphaBoundTol, alphaEntryTol, alphaProject, alphaInMode, errorVars, hFloor,
+// reseatHyst, softCap.
+constexpr int LadrunoSanisandSasOptionsResponseID      = 33100;   // Ladruno WP-151
 constexpr int LadrunoSanisandImplexGuardsResponseID    = 33096;   // Ladruno ADR-92 P2 (33094/33095 taken by TIMs F4 psi/yieldDistance)
 
 Response *
@@ -4915,7 +4992,8 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
             "sas_refLowP", "sas_refDrift", "sas_refAlpha", "sas_refCap",
             "sas_maxSubstepsOneUpdate", "sas_lastSubsteps", "sas_lastRefuseCode",
             "sas_maxAlphaRatio", "sas_lastAlphaRatio", "sas_lastF", "sas_entryOverKappa",
-            "sas_rejectedReversal"};
+            "sas_rejectedReversal",
+            "sas_hFloored", "sas_hSoftCapped", "sas_reseatHeld"};   // Ladruno WP-151
         output.tag("NdMaterialOutput");
         output.attr("matType", getClassType());
         output.attr("matTag", getTag());
@@ -4924,6 +5002,20 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
         output.endTag();
         Vector probe(LSAS_COUNT);
         return new MaterialResponse(this, LadrunoSanisandSasStatsResponseID, probe);
+    }
+    // Ladruno WP-151: the SAS-ME option set (9 values, see the ID's comment).
+    if (argc > 0 && (strcmp(argv[0], "sasOptions") == 0 || strcmp(argv[0], "SasOptions") == 0)) {
+        static const char *names[9] = {
+            "sas_errFloor", "sas_alphaBoundTol", "sas_alphaEntryTol", "sas_alphaProject",
+            "sas_alphaInMode", "sas_errorVars", "sas_hFloor", "sas_reseatHyst", "sas_softCap"};
+        output.tag("NdMaterialOutput");
+        output.attr("matType", getClassType());
+        output.attr("matTag", getTag());
+        for (int i = 0; i < 9; i++)
+            output.tag("ResponseType", names[i]);
+        output.endTag();
+        Vector probe(9);
+        return new MaterialResponse(this, LadrunoSanisandSasOptionsResponseID, probe);
     }
     // Ladruno WP-129 (TIMs F20(c)): 6x6, internal (compression-positive) Voigt,
     // which is also the element convention for a tangent (both signs flip).
@@ -5069,6 +5161,14 @@ LadrunoSANISAND::getResponse(int responseID, Information &matInformation)
     }
     if (responseID == LadrunoSanisandTangentEPResponseID)
         return matInformation.setMatrix(this->ladrunoTangentEP());
+    if (responseID == LadrunoSanisandSasOptionsResponseID) {                // Ladruno WP-151
+        const LadrunoSasOptions &o = mLadrunoSas.opt;
+        Vector out(9);
+        out(0) = o.errFloor;           out(1) = o.alphaBoundTol;       out(2) = o.alphaEntryTol;
+        out(3) = (double)o.alphaProject; out(4) = (double)o.alphaInMode; out(5) = (double)o.errorVars;
+        out(6) = o.hFloor;             out(7) = o.reseatHyst;          out(8) = o.softCap;
+        return matInformation.setVector(out);
+    }
     return ManzariDafalias::getResponse(responseID, matInformation);
 }
 

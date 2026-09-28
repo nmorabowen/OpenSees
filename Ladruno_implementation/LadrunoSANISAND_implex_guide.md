@@ -1101,8 +1101,12 @@ nDMaterial LadrunoSANISAND $tag $G0 $nu $e_init $Mc $c $lambda_c $e0 $ksi $P_atm
     $A0 $nd $z_max $cz $Rho  129 $TanType $JacoType $TolF $TolR \
     <-errFloor $sigRef> <-alphaBoundTol $kappa> <-alphaProject 0|1> \
     <-sasAlphaIn reseat|bracket|stale> <-sasErrorVars full|stress> \
+    <-sasHFloor $cA> <-sasReseatHyst $cRev> <-sasSoftCap $kappa> \
     <-maxSubsteps $n> <-Pmin ...> <-Presidual ...> ...
 ```
+
+The three `-sas{HFloor,ReseatHyst,SoftCap}` flags are WP-151's opt-in DM04 variant (§13.4). All are
+OFF by default, and with them off SAS-ME is byte-identical to WP-129.
 
 - `TolR` IS the substep tolerance of the PLASTIC part (`-honorTolR` is inert and warned); the
   elastic part is exact (closed form, below), so it has no tolerance to honour. Recommended range
@@ -1189,3 +1193,38 @@ the u-p family) to get a recoverable, cuttable refusal.
   profile split at a ring state is ~60 % stages (half state-dependent quantities), 10 % drift,
   6 % α check; at a deep state the tangent and drift are ~11 % each.
 
+
+### 13.4 Re-seat regularization — WP-151 R1, an OPT-IN DM04 variant
+
+**What it is for.** Near the peak, with the campaign set's thin yield cone (m = 0.005) and
+near-neutral or rotating loading, the exact DM04 rate equations re-seat α_in again and again in
+finite pseudo-time (a Zeno accumulation). Meanwhile b:n → 0⁺ and |dα/dt| → ∞. The discrete image of
+this is the `loadingNonPosH` refusal wall of the WP-138 footing: the refusals match the oracle's
+failures one-to-one on the wall states. Full study:
+[[151_sanisand_reseat_singularity]].
+
+```tcl
+... 129 $TanType $JacoType $TolF $TolR -sasHFloor 1 -sasReseatHyst 1 -sasSoftCap 0.5 ...
+```
+
+| flag | equation (ρ_c = √(2/3)·m, the yield-cone radius) | DM04 |
+|---|---|---|
+| `-sasHFloor c_A` | h = b0 / max((α−α_in):n, c_A·ρ_c), bounded everywhere | h = b0/((α−α_in):n), ∞ at a re-seat |
+| `-sasReseatHyst c_rev` | α_in := α only when (α−α_in):n < −c_rev·ρ_c (a FINITE reversal) | … when < 0 |
+| `-sasSoftCap κ` | where b:n < 0: h ≤ (1−κ)X/(⅔p\|b:n\|), so H = K_p + X ≥ κX | no cap |
+
+- **Use the floor and the hysteresis together.** On the wall fan (5 states × 64 trials), each alone
+  leaves 97–102 of 320 trials singular, and together 0. The cap closes deep softening at low p and
+  makes the result insensitive to c_A (0.5–2 all pass with it).
+- **Recommended: c_A = 1, c_rev = 1, κ = 0.5.** No parameter is fitted: c_A and c_rev are in units
+  of the calibrated m.
+- **Calibrated behaviour is unchanged** (oracle, campaign set):
+  - monotonic element tests |Δq| ≤ 2.7e-4·q_max;
+  - drained cycles identical to 4 digits;
+  - undrained cycles to liquefaction identical;
+  - the cap never binds in an element test.
+- **Census** (`sasStats`, appended columns): `sas_hFloored` counts stages where the floor bound,
+  `sas_hSoftCapped` stages where the cap bound, and `sas_reseatHeld` sub-threshold reversals that
+  kept α_in.
+- It removes the singular set and the re-seat chatter. It does **not** regularize strain
+  localization (mesh dependence): that is WP-150 R2/R3.

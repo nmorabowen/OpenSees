@@ -7849,3 +7849,39 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
 ### A win32-only `zone_a` test is NEVER run by PR CI — Zone-A is Ubuntu, and the self-hosted Windows nightly was cancelled on every run for three months (WP-143, found by WP-136)
 - **Bites:** `pytest.mark.skipif(sys.platform != "win32", ...)` on a `zone_a` test reads as "Windows covers it". It doesn't: PR CI is `zone-a-ubuntu`, where the test is a silent skip. The Windows jobs (`zone-b-nightly`, `cross-tier-nightly`, `[self-hosted, windows, ladruno-perf]`) were `cancelled` on all 100 scheduled runs from 2026-06-20 to 2026-09-27, and `gh api repos/nmorabowen/OpenSees/actions/runners` lists ZERO runners. So 9 files (Pardiso ×4, FEAST, SANISAND flip-determinism + replay counters, ADR-97 P4) had no CI at all, and their PRs merged on the author's local Windows run only. Even with a runner online, `cross-tier-nightly` has no build step: it tests whatever `opensees.pyd` the box has installed, not the commit it checked out. WP-136's two failures sat red on `ladruno` for 8 days this way.
 - **Workaround/status:** quirk lint **L8** (`ci/check_quirk_patterns.py`, WP-143): a `zone_a` test file that branches on the platform (an `ast` scan: `sys.platform` / `os.name` / `platform.system()` compared to a platform name, or `.startswith`; a ternary value selection such as an exe suffix is ignored) must carry `# ci-coverage: <local-only|partial|portable|nightly-windows|pr-windows> <reason>`. `python ci/check_quirk_patterns.py --list-waivers` prints the inventory; the `local-only` lines ARE the gap. Portable legs moved out of it (flip-determinism's hold + warning legs now run on Ubuntu under `system FullGeneral`). Rule: keep only the MKL-specific leg platform-gated. Until a Windows CI job builds and runs the tree, a PR touching Pardiso, FEAST or SANISAND determinism merges on a stated local Windows pytest log for its head SHA, never on a green Zone-A. Owner items (open): register the runner, add a build step to the nightly jobs, optionally a path-filtered PR Windows job.
+### DM04's paper α_in rule has a Zeno accumulation of re-seats near the peak: b:n → 0⁺ and |dα/dt| → ∞ in FINITE pseudo-time — that, not H ≤ 0 alone, is the SAS-ME `loadingNonPosH` wall (WP-151)
+- **Bites:** The WP-138 footing (E_B, E_D, E_B16) walls on `loadingNonPosH`, with 10 M α_in re-seats and 88 M rejected reversals in E_B. The exact oracle (WP-134, Radau) shows why:
+  - After a re-seat, h = ∞ makes α slide along b.
+  - With b nearly normal to n, that slide rotates n on the thin cone (√(2/3)m = 0.004 for m = 0.005). (α−α_in):n turns negative again, and the next re-seat fires.
+  - The intervals shrink geometrically (∝ (b:n)², ×0.04 per re-seat) while b:n → 0 from ABOVE and |dα/dt| ∝ 1/b:n → ∞. H ≤ 0 is only the b:n < 0 exit.
+  - On the five real wall states × 64 trials, today's SAS-ME refuses exactly the 102/320 trials the exact oracle cannot integrate, one-to-one.
+  - Every refuser has |α−α_in| of about one cone radius (a re-seat a moment ago) and ρ_b > 1 > ρ_α (n at an extension-side Lode angle).
+  - Chen, Ghorbani, Zhang & Kodikara (2022) report a SANISAND04 footing that aborts the same way, and worse with smaller steps.
+- **Rule:** Neither piece alone cures it:
+  - a floor on h alone: 97/320 still chatter, and the C++ discretizes that into `-maxSubsteps`;
+  - a floor gated on b:n ≤ 0: it misses the b:n → 0⁺ side (102/320);
+  - a re-seat threshold alone: h stays 1e10 in its band (102/320).
+
+  Use the everywhere floor AND the hysteresis together. Two re-seats then need a finite α travel, so they cannot accumulate.
+- **Workaround/status:** WP-151's opt-in flags `-sasHFloor 1 -sasReseatHyst 1 -sasSoftCap 0.5` (SAS-ME only; default OFF and byte-identical) give 0/320 with calibrated behaviour unchanged. BVP acceptance on Esmeralda is pending. [[151_sanisand_reseat_singularity]].
+### FE_Datastore keys a sent Vector by its SIZE: a fork `sendSelf` block of the SAME length as the base's vector, under the same dbTag and commitTag, OVERWRITES the base state (WP-151)
+- **Bites:** `LadrunoSANISAND::sendSelf` sends two vectors, both with `this->getDbTag()` and `commitTag`: the base `ManzariDafalias` state as a `Vector(97)`, then its own Ladruno block. FileDatastore files vectors per `<size>.<commitTag>`, then by dbTag.
+  - WP-151 added six entries, and the Ladruno block became exactly 97 long (35 + 17 + 6 + 36 + 3). It landed in the base's slot.
+  - Every database round trip then restored the material on another state, silently.
+  - Four existing tests caught it: `test_db_roundtrip_carries_presidual`, the two `-implex` round trips, and `test_pre_floor_crosses_the_datastore_wire`.
+- **Rule:** A subclass that appends its own send block to a base `sendSelf` under the same dbTag and commitTag must give that Vector a length different from every length the base sends. Sizes are arithmetic, so no grep finds this: `static_assert` it where the size is defined.
+- **Workaround/status:** ✅ Fixed (WP-151) with three pieces:
+  - a trailing layout-tag slot (size 98);
+  - `static_assert(size != 97)` in both `sendSelf` and `recvSelf`;
+  - a receive-side warning if the tag does not match.
+### DM04's Lode interpolation with c < 7/9 is NON-CONVEX on the extension meridian: the axisymmetric extension path is unstable, and a 1e-9 perturbation decides whether a CTXu test liquefies (WP-151)
+- **Bites:** g(θ) = 2c/((1+c) − (1−c)cos3θ) is a convex polar curve only for c ≥ 7/9. At θ = 60°, g = c, g′ = 0 and g″ = 4.5c(1−c), so r² − r·r″ ≥ 0 needs c ≥ 7/9 ≈ 0.78.
+  - Both the TIMs campaign set (c = 0.71) and DM04's own Toyoura set (c = 0.712) are below it.
+  - In undrained cyclic triaxial (campaign e0 0.6944, CSR 0.2), every model, DM04 included, breaks axisymmetry in the first extension half-cycle. |σ_yy − σ_zz| grows from round-off to 27–40 kPa.
+  - A σ_zz perturbation of ±1e-9 decides between 5 % DA at N = 8 and no liquefaction by N = 20. Without a perturbation, round-off decides (rtol, build, any model change).
+  - At c = 0.80 the path stays axisymmetric (|σ_yy − σ_zz| ≤ 1e-7 kPa) and the test is well conditioned.
+- **Rule:** With c < 7/9:
+  - Do not read a single axisymmetric-extension element test (CTXu, TE) as the model's answer. Report both branches, or perturb explicitly.
+  - A comparison of two model variants on such a test is decided by round-off unless the SAME perturbation is imposed on both.
+  - A test harness that perturbs a state by wrapping a shared function must wrap the PRISTINE function. Re-wrapping per task compounds the perturbations inside a pool worker; WP-151's first gate run had this defect.
+- **Workaround/status:** Not a code change: it is a calibration item for TIMs (keep c ≥ 0.78, or accept the ill-conditioning), raised in #887. [[151_sanisand_reseat_singularity]] §6.3.
