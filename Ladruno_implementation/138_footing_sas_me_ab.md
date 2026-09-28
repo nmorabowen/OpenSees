@@ -35,7 +35,10 @@ no plateau on this deck.**
   - The WP-134 oracle hits the same 0/0.
   - No integrator knob lifts it: TolR 1e-3 walls EARLIER (0.0410), and the consistent tangent walls at 0.0114.
   - Neither does a BVP regularizer.
-- **Default** (§12; recommendation, owner/TIMs decide): IntScheme 129, TanType 0, TolR 1e-4 with the step policy these runs used. **Follow-ups** (§13): R1 is a CONSTITUTIVE change (bounded h), and that decision belongs to the owner/TIMs.
+- **Default** (§12; recommendation, owner/TIMs decide): IntScheme 129, TanType 0, TolR 1e-4 with the step policy these runs used.
+- **Follow-ups** (§13): R1 is a CONSTITUTIVE change and is preliminary.
+  - It has two coupled parts: an h floor everywhere, plus a hysteretic re-seat.
+  - The owner approved it as an opt-in variant; TIMs decide on its use.
 
 | arm | integrator | s/B at FLOOR | q (kPa) | first NonPosH s/B | refusals (converged-step census) | push wall (h) |
 |---|---|---|---|---|---|---|
@@ -358,7 +361,12 @@ The wall is DM04's hardening-modulus singularity at an α_in re-seat.
 - The WP-134 independent oracle hits the same 0/0.
 - No integrator setting lifts it: TolR 1e-3 walls earlier (§8.5), TanType 1 walls at 0.0114 (§8.6), and ModifiedEuler walls earlier still and commits ρ_α 13 states (§8.4).
 - No BVP regularizer lifts it either. A nonlocal ψ̄ or a crack band does not act on this onset, which is set at the material point by a = 0 with b:n ≤ 0.
-- So it is **constitutive, not an integration defect**. Any change must be made in the model (R1, §13), and that is an owner/TIMs decision.
+- So it is **constitutive, not an integration defect**. Any change must be made in the model (R1, §13).
+
+**Refinement from the R1 session's oracle (preliminary, relayed by the orchestrator).** The sequence behind the wall is a **Zeno accumulation of α_in re-seats**.
+- The re-seats pile up on the b:n → 0⁺ side toward a finite time.
+- `loadingNonPosH` is only the b:n < 0 exit of that sequence.
+- The same accumulation plausibly explains the re-seat chatter (10.1 M in E_B) and S4's cost.
 
 ## 11. Sensitivity ladders — interim snapshot 2026-09-28 16:20
 
@@ -399,7 +407,7 @@ The refusal counts come from two sources:
 - **Only killing the dilatancy (S4) clears `loadingNonPosH`.**
   - It persists through S1 (fabric off), S2 (+ no peak) and S3 (+ critical-state dilatancy: 1 event).
   - It is ABSENT in S4 (+ A0 = 0.001) at s/B 0.0374, which is past E_B's onset (0.0363).
-  - S4 is not cheap. Per the campaign it costs ~27 M substeps per step (the committed interim records give a median of 2.4e7 over its last 20 steps, against 7.3e6 for E_B), with maxSubsteps refusals. That cost is the re-seat chatter (R1b, §13).
+  - S4 is not cheap. Per the campaign it costs ~27 M substeps per step (the committed interim records give a median of 2.4e7 over its last 20 steps, against 7.3e6 for E_B), with maxSubsteps refusals. That cost is plausibly the re-seat accumulation (§10), which the R1 hysteresis targets (§13).
 - **Presidual 0.5–20 kPa never clears NonPosH.**
   - Its onset is non-monotonic: 0.5 kPa brings it to 0.0182, EARLIER than Presidual 0.
   - Larger Presidual walls later and stiffens q (q at s/B 0.03: 675 → 835 kPa from 0.5 to 20 kPa). That is an apparent cohesion, not a cure.
@@ -436,14 +444,20 @@ LadrunoSANISAND $tag 264.32 0.312885 0.6944 1.3309 0.71 0.027 0.83 0.45 101 0.00
 
 **What it does NOT buy: a capacity.** The wall stays. A SANISAND q–s past s/B ≈ 0.036 on this deck is carried through NonPosH refusals, and it ends at 0.0508 with no peak. Read q with the Krylov ±1.5 kPa band (§8.2).
 
-## 13. Follow-ups — each is an owner/TIMs decision
+## 13. Follow-ups — owner/TIMs decisions (R1: owner-approved as opt-in; TIMs decide on its use)
 
 1. **SAS-ME follow-up WP.** Carry IntScheme 129 as the campaign integrator (guide default, counters in the TIMs deliverables). Look at its two cost items on this deck: the maxSubsteps refusals on the surface ring (209 in E_B), and the re-seat chatter (10.1 M re-seats in E_B, per #892).
 2. **Refusal-aware line search.** `rung_fail.csv` shows the LineSearch rung failing on a material refusal 119 times in E_B (41 in E_A, 180 in E_D). A line search that treats a refusal as "backtrack" rather than "rung failed" would keep those attempts on the ladder. Algorithm-side, no constitutive change.
-3. **R1 — bounded h, opt-in.** h = b0 / max(a, c_A·√(2/3)·m), applied only where b:n ≤ 0. It is a **CONSTITUTIVE change** to DM04, so it needs an owner/TIMs decision before any code.
-4. **R1b — hysteretic re-seat, a separate flag.** S4's cost (~27 M substeps per step) is the re-seat chatter; a re-seat hysteresis addresses that independently of R1.
-5. **R2 — B/4, B/8, B/16 after R1.** Re-measure the mesh dependence of the wall and of the bands (§9) once the singularity is bounded.
-6. **R3 — Perzyna viscoplasticity inside SANISAND,** only if TIMs' matched-settlement tolerance (ADR-90 OQ2) requires it. A nonlocal ψ̄ or a crack band does **not** treat this onset and is not proposed. No ADR-90 Duvaut–Lions regularization is recommended.
+3. **R1 — floor everywhere + hysteretic re-seat.** Two COUPLED opt-in flags; a **CONSTITUTIVE change** to DM04. The source is the R1 session's oracle; it is **preliminary**.
+   - **(a) A floor everywhere:** h = b0 / max(a, c_A·√(2/3)·m), with c_A ≈ 1.
+   - **(b) A hysteretic α_in re-seat,** only when a < −c_rev·√(2/3)·m.
+   - **The oracle test:** 320 exact Radau increments from 5 real refuser states. Together the two flags fail **0/320**. Each alone fails.
+   - **The earlier single-flag form does NOT work:** a floor only where b:n ≤ 0 fails 102/320, the same as DM04.
+   - **The hysteresis is part of the well-posedness fix,** not a separate cost lever. It plausibly also removes the re-seat chatter behind S4's cost.
+   - **Still open:** a cyclic check (CTXu, e 0.6944, CSR 0.2).
+   - **Who decides:** the owner approved R1 as an opt-in variant; TIMs decide on its use.
+4. **R2 — B/4, B/8, B/16 after R1.** Re-measure the mesh dependence of the wall and of the bands (§9) once the singularity is bounded.
+5. **R3 — Perzyna viscoplasticity inside SANISAND,** only if TIMs' matched-settlement tolerance (ADR-90 OQ2) requires it. A nonlocal ψ̄ or a crack band does **not** treat this onset and is not proposed. No ADR-90 Duvaut–Lions regularization is recommended.
 
 ## 14. Verified / not verified
 
@@ -459,6 +473,7 @@ LadrunoSANISAND $tag 264.32 0.312885 0.6944 1.3309 0.71 0.027 0.83 0.45 101 0.00
 
 **Not verified here (quoted, with source):**
 - The acoustic-tensor scan, the 10.1 M re-seats and the h-singularity mechanism: per #892.
+- The R1 oracle result (0/320 vs 102/320) and the Zeno re-seat reading: the R1 session, preliminary.
 - The 27× / +0.54 % TolR figures and the ±1.5 kPa Krylov band: campaign-verified, not recomputed on this branch.
 - No material-point replay at the Esmeralda walls (§5.3).
 
