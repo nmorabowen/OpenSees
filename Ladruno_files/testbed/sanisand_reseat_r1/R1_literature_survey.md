@@ -1,5 +1,17 @@
 # R1 - Literature survey: the h singularity at load reversal in SANISAND-type bounding-surface models
 
+> **Post-hoc verification (main session, 2026-09-28).**
+> - Chen et al. (2022), §3.9.1 (the SANISAND04 footing that aborts as (α − α_in):n drops to 0, worse with
+>   finer steps or a tighter STOL) is re-read in Chen (2023), Monash PhD thesis, doi:10.26180/23639730.v1,
+>   pp. 3-37–3-39. That thesis declares its Chapter 3 to be the published C&G 2022 paper, with sections not
+>   renumbered. The journal PDF itself was not accessed.
+> - The quotations the WP-151 memo §3 takes from this survey were re-checked against the saved primary texts.
+>   PM4Sand v3.3 p. 25: "to avoid division by zero" and the numerical-stability sentence are verbatim.
+>   Ghorbani et al. (2023) says "spurious oscillations" (without "numerical").
+>   Jeremić et al. (2008) says "the denominator of Equation (32a) becomes negative".
+>   The PM4Sand init-guard sentence below is the agent's paraphrase, not a quotation.
+
+
 Survey date: 2026-09-28. Read-only; no repository file was modified.
 
 Tags:

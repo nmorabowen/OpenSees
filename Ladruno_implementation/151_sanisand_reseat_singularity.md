@@ -218,7 +218,8 @@ The full survey is `Ladruno_files/testbed/sanisand_reseat_r1/R1_literature_surve
 its URL and what was paywalled. What follows is the part that bears on the decision.
 
 **DM04 itself** (paywalled; secondary sources, several co-authored by Dafalias) [E-sec]:
-- h = b0/((α−α_in):n), with α_in updated "when the denominator becomes negative", following Dafalias (1986).
+- h = b0/((α−α_in):n), with α_in updated when the denominator of h becomes negative (as Jeremić et al. 2008
+  restate it), following Dafalias (1986).
 - h = ∞ at the initiation of loading is intended (Taiebat & Dafalias 2008, p. 926).
 - α outside the bounding image (b:n < 0) during softening is standard DM04 behaviour (Yang, Taiebat & Dafalias
   2022, p. 232) [E].
@@ -237,23 +238,39 @@ its URL and what was paywalled. What follows is the part that bears on the decis
 | reversal threshold (hysteresis) | Pisanò UDSM; Itasca P2PSand; Limnaiou & Papadimitriou (2022) | re-seat only if x < −1e-6; `ratio-reverse` = 0.02; "informal" reversals until a tolerance | [E]; [E]; [E-sec] |
 | unloading alone is not a reversal | SANISAND-F (Petalas et al. 2020) | re-seat only if the NEW n gives x ≤ 0 | [E] |
 | plastic-strain-weighted memory | Dafalias (1986); SANISAND-Z (2016); Kan & Taiebat (2014) | α_in weighted by m = ⟨1 − (ε_q^p/ε̄_q^p)^j⟩, ε̄ = 0.01 % | [E-sec] |
-| positive floor after spurious reversals | **Ghorbani et al. (2023)**, Comput. Mech. 71:385 | after a trivial reversal x := J^r m_q > 0 (for "spurious numerical oscillations"); it cut iterations and CPU in FE contact runs | [E] |
-| apparent α_in | PM4Sand v3+ | α_in^app from the component-wise history, C_rev; α_in at init ≤ 0.9 M^b ("otherwise the stresses cannot change": a zero-distance degeneracy like ours) | [E] |
+| positive floor after spurious reversals | **Ghorbani et al. (2023)**, Comput. Mech. 71:385 | after a trivial reversal x := J^r m_q > 0 (for "spurious oscillations"); it cut iterations and CPU in FE contact runs | [E] |
+| apparent α_in | PM4Sand v3+ | α_in^app from the component-wise history, C_rev; α_in at init ≤ 0.9 M^b (without it, a start above the bounding surface has K_p = 0 at zero distance and cannot evolve: a
+zero-distance degeneracy like ours) | [E] |
 | K_p sign | PM4Sand v3.3 | K_p = 0 outside the bounding surface; "This restriction on the plastic modulus improved numerical stability" | [E] |
 | model-intrinsic cancellation | SANISAND-MSf (Yang et al. 2022) eqs. 9–10 | a vanishing denominator in the memory-surface h^M is cancelled by reformulating with \|·\|, ⟨·⟩, sgn | [E] |
 | no memory reset at all | Hashiguchi subloading surface | normal-yield ratio R; the plastic modulus is singular only at the elastic core, not at a reversal | [E] |
 
-**The closest precedents to our failure** [E]:
-- **Chen et al. (2022), §3.9.1**: a SANISAND04 plane-strain **footing** (loose Karlsruhe sand). Coarse steps
-  complete. With finer steps the analysis **aborts**, "caused primarily by the sudden reduction of
-  (α − α_in):n to zero", and tighter STOL makes it worse. The Dafalias–Taiebat threshold remedy fixes the coarse
-  cases but fails at the finest. Their explanation: h takes two very different values (finite and infinite) at
-  the same state, and small substeps resolve that discontinuity instead of stepping over it.
-  - This is the WP-138 picture: the wall does not move with the step size, and B/16 walls earlier.
-  - They also show that a threshold scheme **can still fall back to h = ∞** after the weighted update. The
+**The closest precedents to our failure:**
+- **Chen, Ghorbani, Zhang & Kodikara (2022), §3.9.1** [E].
+  - Where it was read: Chapter 3 of Chen's published-works thesis (Monash 2023,
+    [doi:10.26180/23639730.v1](https://doi.org/10.26180/23639730.v1), pp. 3-37–3-39). The thesis's declaration
+    and the chapter preamble state that the chapter *is* this paper, with sections not renumbered. The journal PDF
+    itself was not accessed.
+  - The case: a SANISAND04 plane-strain **flexible footing** on loose Karlsruhe sand (e0 0.98; 288 quadratic
+    elements; 120 kPa).
+  - The result: the coarsest time step completes. At finer steps the stress "overshooting" becomes pronounced
+    and **the analysis aborts**, and a tighter stress tolerance aborts it too. The authors attribute it to the
+    sudden drop of (α − α_in):n to zero.
+  - Their Dafalias–Taiebat threshold variant (SANISAND-ZO) fixes the coarser cases but fails at the finest.
+    Their explanation: h takes two very different values (finite and infinite) at the same state, and small
+    substeps resolve that discontinuity instead of stepping over it.
+  - **What it does and does not establish** [I]. It is the same singular factor aborting a SANISAND04 footing,
+    with the same insensitivity to refinement (in WP-138 the wall does not move with the step size, and B/16
+    walls earlier). It is a loose sand with an "overshooting" symptom, and b:n is not analysed. So it is not
+    evidence for this memo's specific mechanism (the Zeno sequence with b:n → 0⁺ on the non-convex extension
+    side).
+  - They also show that a threshold scheme can still fall back to h = ∞ after its weighted update. The
     everywhere floor of §8 is what rules that out here.
-- **Ghorbani et al. (2023)**: spurious reversals from numerical oscillations re-seat α_in to (α−α_in):n = 0,
-  giving "a very large K_p". A positive floor removes it "without changing the model for genuine reversals".
+- **Ghorbani, Chen, Kodikara, Carter & McCartney (2023)**, Comput. Mech. 71:385 [E].
+  - Spurious reversals from numerical oscillations re-seat α_in so that (α−α_in):n = 0, which makes the plastic
+    modulus very large.
+  - They keep a positive (α−α_in):n after trivial reversals.
+  - [I] That removes the h = ∞ spike while leaving genuine reversals to the plain rule.
 - **Pisanò & Jeremić (2014)**: a distance-based reversal test near the bounding surface "can be easily
   corrupted even by numerical inaccuracies".
 - **Jeremić et al. (2008)**: an explicit step across the yield cone is evaluated with the derivatives of the
@@ -625,6 +642,9 @@ site-packages>`. The site-packages entry is needed because the WP-129 byte-ident
   15/01, 23/01; *PM4Silt (Version 2.1)*, UCD/CGM-23/02.
 - Chen, L., Ghorbani, J., Zhang, C. & Kodikara, J. (2022). Stress overshooting solution for soil plasticity
   models. *Computers and Geotechnics* 152:105008. doi:10.1016/j.compgeo.2022.105008.
+- Chen, L. (2023). *Modelling of hydro-mechanical shakedown and ratcheting of unsaturated granular materials.*
+  PhD thesis (including published works), Monash University. doi:10.26180/23639730.v1. Chapter 3 = Chen et al.
+  (2022); §3.9.1 (the footing) read there, pp. 3-37–3-39.
 - Dafalias, Y.F. (1986). Bounding surface plasticity. I: Mathematical foundation and hypoplasticity. *J. Eng.
   Mech.* 112(9):966–987.
 - Dafalias, Y.F. & Manzari, M.T. (2004). Simple plasticity sand model accounting for fabric change effects.

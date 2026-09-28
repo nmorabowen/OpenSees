@@ -7856,7 +7856,7 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
   - The intervals shrink geometrically (∝ (b:n)², ×0.04 per re-seat) while b:n → 0 from ABOVE and |dα/dt| ∝ 1/b:n → ∞. H ≤ 0 is only the b:n < 0 exit.
   - On the five real wall states × 64 trials, today's SAS-ME refuses exactly the 102/320 trials the exact oracle cannot integrate, one-to-one.
   - Every refuser has |α−α_in| of about one cone radius (a re-seat a moment ago) and ρ_b > 1 > ρ_α (n at an extension-side Lode angle).
-  - Chen, Ghorbani, Zhang & Kodikara (2022) report a SANISAND04 footing that aborts the same way, and worse with smaller steps.
+  - Chen, Ghorbani, Zhang & Kodikara (2022, §3.9.1; verified in Chen's published-works thesis, doi:10.26180/23639730.v1, Ch. 3) report a SANISAND04 plane-strain footing on loose sand that aborts when (α − α_in):n drops suddenly to 0, and worse with finer steps or a tighter tolerance. It is the same singular factor; b:n is not analysed there.
 - **Rule:** Neither piece alone cures it:
   - a floor on h alone: 97/320 still chatter, and the C++ discretizes that into `-maxSubsteps`;
   - a floor gated on b:n ≤ 0: it misses the b:n → 0⁺ side (102/320);
