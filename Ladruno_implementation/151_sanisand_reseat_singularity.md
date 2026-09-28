@@ -172,10 +172,14 @@ update. Put plainly: the WP-129 integrator is doing its job, and the wall is in 
 
 ### 2.5 The non-convex extension side (c < 7/9) is what makes the wall states singular
 
-WP-150's acoustic-tensor split (#892 §2.3) found a clean separation on the footing: the localization **bands**
-are compression-side (cos3θ(n) ≈ +0.5 to +0.8 at 99.8 % of the non-elliptic points), while the **wall**
-refusers have n on the extension side (cos3θ = −1.00, −0.36, −0.88). The same wall fan was therefore rerun with
-the Lode parameter changed alone (`fan_c080.py`, DM04, exact oracle, the SAME committed states and trials):
+WP-150's acoustic-tensor split (#892 §2.3, `lode_split.py`) found a clean separation on the footing:
+- **The localization bands are compression-side.** Among the non-elliptic (det ≤ 0) points, cos3θ(n) spans
+  +0.68 … +0.80 at E_B's wall and +0.51 … +0.79 at E_B16's (5–95 %). Only 0.09 % and 0.14 % of them are on the
+  extension side (cos3θ < −0.5).
+- **The wall refusers have n on the extension side** (cos3θ = −1.00, −0.36, −0.88).
+
+The same wall fan was therefore rerun with the Lode parameter changed alone (`fan_c080.py`, DM04, exact
+oracle, the SAME committed states and trials):
 
 | state | ρ_α / ρ_b at c = 0.71 | failed at c = 0.71 | ρ_α / ρ_b at c = 0.80 | failed at c = 0.80 |
 |---|---|---|---|---|
