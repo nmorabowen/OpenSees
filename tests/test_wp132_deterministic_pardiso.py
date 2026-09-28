@@ -22,8 +22,9 @@ a boot .pth.
   test_refused_after_lapack_warns_not_active
                                      eigen (LAPACK) first -> rc -8, relaunch hint,
                                      notice says CNR NOT ACTIVE
-  test_prior_pardiso_solve_does_not_block
-                                     a PARDISO solve first does NOT block it
+  test_prior_pardiso_solve_platform_rule
+                                     a PARDISO solve first does NOT block it on
+                                     Windows; on Linux it does (rc -8)
   test_mode_on_byte_identical        [slow] ~22k-DOF J2 push at 8 threads, N
                                      runs with the mode on: ONE distinct result
   test_mode_off_reported             [slow] the same N runs with the mode off:
@@ -47,6 +48,7 @@ import pytest
 
 from _testbed import ops  # noqa: E402  (the parent's pyd — its dir goes to the child)
 
+# ci-coverage: local-only -- the whole file needs system Pardiso (MKL: the Windows/oneAPI build, or Linux with -DLADRUNO_MKL_PARDISO_LINUX=ON, where it passes with this skip lifted, #886); no CI builds either until a Windows job does (WP-143)
 pytestmark = [
     pytest.mark.zone_a,
     pytest.mark.skipif(sys.platform != "win32",
@@ -67,7 +69,7 @@ THREADS = "8"
 CHILD = r'''
 import hashlib, json, os, struct, sys
 d = os.environ["WP132_PYD_DIR"]
-os.add_dll_directory(d)
+getattr(os, "add_dll_directory", lambda _d: None)(d)  # Windows-only API
 sys.path.insert(0, d)
 import opensees as ops
 assert os.path.dirname(os.path.abspath(ops.__file__)) == os.path.abspath(d), ops.__file__
@@ -212,13 +214,22 @@ def test_refused_after_lapack_warns_not_active():
     assert len(ln) == 1 and "CNR NOT ACTIVE" in ln[0], err
 
 
-def test_prior_pardiso_solve_does_not_block():
-    # The opposite, also measured: a PARDISO solve (no flag) earlier in the
-    # SAME process does not stop the mode from being set afterwards.
+def test_prior_pardiso_solve_platform_rule():
+    # Whether a PARDISO solve (no flag) earlier in the SAME process stops the
+    # mode from being set afterwards depends on the platform. Both halves were
+    # measured:
+    #   Windows, oneMKL 2025.1 (mkl_intel_thread): it does NOT block.
+    #   Linux (esmeralda, 2026-09-28): it DOES, rc -8, with oneMKL 2024.2 and
+    #   2025.1 and with the gnu_thread and sequential layers alike. An earlier
+    #   UmfPack solve blocks it too there, because UMFPACK calls MKL's BLAS.
     _, err = _child(["Pardiso", "-deterministic"],
                     extra_env={"WP132_PARDISO_FIRST": "1"})
     ln = _notice(err)
-    assert len(ln) == 1 and "CNR ACTIVE" in ln[0], err
+    assert len(ln) == 1, err
+    if sys.platform == "win32":
+        assert "CNR ACTIVE" in ln[0], err
+    else:
+        assert "failed (rc -8" in err and "CNR NOT ACTIVE" in ln[0], err
 
 
 # ---------------------------------------------------------------- the F22 gate
