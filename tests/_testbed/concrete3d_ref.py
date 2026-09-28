@@ -835,13 +835,33 @@ def return_map_hardening(sig_tr, mp, kp_n, tol=1.0e-11):
         # at isolated strains => a DISCONTINUOUS stress(strain) map with spurious roots for the element Newton
         # (OOFEM con2dpm2 at one sub-step: C++ -3.22 vs -2.55). A trial whose solution is the VERTEX cannot
         # satisfy R2 with rho pinned at 0 => it stops early (rho stuck at 0) and returns apex=True.
+        #
+        # WP concrete3d-hang-diagnosis review, defect 2 (MAJOR), option A: the ORIGINAL scheme projected
+        # (rho, dlam, kp) onto their admissible ranges on EVERY line-search trial iterate, not just the
+        # accepted one. In a TENSION-dominated trial at kappa_p < 1 (m0*RR > 1, the hardening system is
+        # locally INDEFINITE there -- df/dkappa_p > 0), that per-iterate projection repeatedly pins the
+        # iterate back onto the same clamped face: the line search bottoms out at a=1/64 almost every
+        # step, and the loop burns its full 100-iteration budget (~800 residual evaluations) before
+        # falling through to the plain Newton anyway -- which measured orders of magnitude faster on the
+        # same trial. Clamping every iterate also makes the scheme's OWN internal trajectory
+        # path-dependent in a way the unclamped Newton is not, part of why the direct and sub-incremented
+        # returns can land on visibly different states near first cracking.
+        #
+        # Fix: clamp ONLY at acceptance. The line search still evaluates the residual at the raw
+        # (unprojected) `un` to decide whether to keep halving `a`; the projection that used to feed BACK
+        # into `u` (and so into the next Jacobian and the "stuck" apex heuristic) is gone. The physically-
+        # required projection (rho>=0, dlam>=0, kp>=kp_n) is enforced exactly once, on the FINAL returned
+        # iterate -- the caller already runs u through the ADMISSIBILITY gate (dlam>=-1e-12,
+        # kp>=kp_n-1e-12, on-surface f_after) before accepting "converged", so a root this raw Newton
+        # finds outside the admissible cone is rejected there and falls through to the plain scheme /
+        # vertex return, exactly as for any other non-convergence.
         sc = np.array([1.0 / fc, 1.0 / fc, 1.0, 1.0])
         u = np.array([xi_tr, rho_tr, 0.0, kp_n])
         Rr = resid(u)
         stuck = 0
         for _ in range(100):
             if (abs(Rr[0]) < tol * fc and abs(Rr[1]) < tol * fc and abs(Rr[2]) < tol and abs(Rr[3]) < tol):
-                return u, True, False
+                break
             J = np.zeros((4, 4))
             for j in range(4):
                 du = 1.0e-8 * (abs(u[j]) + 1.0e-6)
@@ -857,24 +877,38 @@ def return_map_hardening(sig_tr, mp, kp_n, tol=1.0e-11):
             n0 = float(np.linalg.norm(Rr * sc))
             a = 1.0
             while True:
-                un = u + a * step
-                un[1] = max(un[1], 0.0); un[2] = max(un[2], 0.0); un[3] = max(un[3], kp_n)
+                un = u + a * step            # UNPROJECTED -- no per-iterate clamp (option A)
                 Rn = resid(un)
                 if (np.all(np.isfinite(Rn)) and float(np.linalg.norm(Rn * sc)) < (1.0 - 1.0e-4 * a) * n0) or a < 1.0 / 64.0:
                     break
                 a *= 0.5
             u, Rr = un, Rn
-            stuck = stuck + 1 if u[1] == 0.0 else 0
+            stuck = stuck + 1 if u[1] <= 0.0 else 0
             if stuck >= 3:
+                u[1] = max(u[1], 0.0); u[2] = max(u[2], 0.0); u[3] = max(u[3], kp_n)
                 return u, False, True
-        return u, False, False
+        else:
+            return u, False, False
+        # Converged (residual small at the raw iterate): project onto the admissible cone once, here, at
+        # acceptance -- downstream sign conventions (rho used as a norm, kp used in qh1Of/qh2Of ranges)
+        # assume the physical ranges; the caller's admissibility gate is still the real honesty check.
+        u[1] = max(u[1], 0.0); u[2] = max(u[2], 0.0); u[3] = max(u[3], kp_n)
+        return u, True, False
 
     if cdpm2_flow:                            # globalized first; plain scheme (+ vertex + clamped retry) as fallback
         u, converged, apex = _newton_glob()
         if not converged and not apex:
             u, converged, apex = _newton(False)
     else:
+        # LEGACY flow (WP concrete3d-hang-diagnosis review #877 follow-up): the direct plain Newton runs FIRST
+        # exactly as before (every converging case, hence every pinned fixture, is byte-identical); only on
+        # a non-convergent, non-apex outcome does the globalized (unprojected-line-search, option A) Newton
+        # get its turn as a rescue before the honest failure. Measured on the legacy plain Newton alone:
+        # 10-13 % of ordinary tension-dominated first-cracking increments (expansive lateral strain, the
+        # kind an FE Newton iterate produces) failed the return map and silently fell to the elastic trial.
         u, converged, apex = _newton(False)
+        if not converged and not apex:
+            u, converged, apex = _newton_glob()
     xi, rho, dlam, kp = u
     if not apex:
         p_new = xi / SQRT3

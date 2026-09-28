@@ -443,7 +443,7 @@ void LadrunoConcrete3D::integrate(bool doTangent)
   p.lch = lch; p.lch_ref = lch;
   p.tensionLaw = tensionLaw;                      // CDPM2 bilinear (default) / legacy exponential
   p.flowPotential = flowPotential;                // B1: CDPM2 Eq.22-29 potential (default) / legacy v1 flow
-  p.maxSubIncr = (flowPotential == 1) ? 10 : 0;   // B1: return-map sub-incrementation with the CDPM2 potential
+  p.maxSubIncr = 10;   // B1 sub-incrementation (bounded by maxSubAttempts) for BOTH flows: legacy gets it too (#877 follow-up), it only engages after a direct-return failure
   p.compDrive = compDrive;                        // B2: CDPM2 compressive damage drive (default) / legacy
   p.tcTemper = tcTemper;                          // PV20: tension->compression damage temper (proj default / none)
   p.epsFc = this->compressiveEpsFc(lch);          // -epsFc, or Gc (physical energy) -> eps_fc at this lch
@@ -798,7 +798,7 @@ void LadrunoConcrete3D::ensureGcTable(void)
   p.Gf = Gf; p.Gc = Gc; p.Df = Df; p.As = As;
   p.qh0 = qh0; p.Hp = Hp; p.Ah = Ah; p.Bh = Bh; p.Ch = Ch; p.Dh = Dh;
   p.ctTemper = ctTemper; p.tensionLaw = tensionLaw; p.lch = lchFixed; p.lch_ref = lchFixed;
-  p.flowPotential = flowPotential; p.maxSubIncr = (flowPotential == 1) ? 10 : 0;
+  p.flowPotential = flowPotential; p.maxSubIncr = 10;   // both flows (#877 follow-up)
   p.compDrive = compDrive;
   Ladruno::Concrete3D::calibrateEpsFcTable(p, gcEfc, gcG);
   gcTabReady = true;

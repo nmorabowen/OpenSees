@@ -820,13 +820,24 @@ inline bool returnMapVertex(double sigV_tr, double rho_tr, const Params& mp, dou
 // Residual R[4] (and, if J != nullptr, the analytic 4x4 Jacobian) of the hardening return system with the FULL
 // CDPM2 plastic potential (B1): R1 = xi - xi_tr + 3K dlam m_v, R2 = rho - rho_tr + 2G dlam m_s, R3 = f_p (frozen
 // Lode r), R4 = kp - kp_n - dlam ||m||/xh cos2. Used by the globalized Newton (line search needs R alone).
+//   legacyFlow = true (WP concrete3d-hang-diagnosis #877 follow-up): the SAME system with the legacy v1 flow
+//   (m_v = Df m0/(sqrt3 fc) constant, m_s = 3 rho/fc^2 + m0/(sqrt6 fc)) so the globalized Newton can be the
+//   rescue for flowPotential = legacy too; the Hessian terms are dmv = 0 and dms = (0, 3/fc^2, 0), which
+//   reproduces the legacy-branch Jacobian rows of the plain newton() exactly.
 inline void cdpm2HardeningResidual(double xi, double rho, double dlam, double kp, double xi_tr, double rho_tr,
                                    double kp_n, double r, double cos2, const Params& mp, double R[4],
-                                   double J[4][4] = nullptr)
+                                   double J[4][4] = nullptr, bool legacyFlow = false)
 {
     const double fc = mp.fc, m0 = mp.m0, K = bulkK(mp), G = shearG(mp);
     double m_v, m_s, dmv[3], dms[3];
-    cdpm2FlowGradJac(xi, rho, kp, mp, m_v, m_s, dmv, dms);
+    if (legacyFlow) {
+        m_v = mp.Df * m0 / (SQRT3 * fc);
+        m_s = 3.0 * rho / (fc * fc) + m0 / (SQRT6 * fc);
+        dmv[0] = dmv[1] = dmv[2] = 0.0;
+        dms[0] = 0.0; dms[1] = 3.0 / (fc * fc); dms[2] = 0.0;
+    } else {
+        cdpm2FlowGradJac(xi, rho, kp, mp, m_v, m_s, dmv, dms);
+    }
     const double mnorm = std::sqrt(m_v * m_v + m_s * m_s);
     const double sigV = xi / SQRT3;
     const double xh = ductilityXh(sigV, fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh);
@@ -978,16 +989,33 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
     // then made the stress a DISCONTINUOUS function of the strain (spurious element-Newton roots: OOFEM con2dpm2
     // at one sub-step gave -3.22 MPa + return-map warnings in the C++ build). A vertex solution cannot satisfy R2
     // with rho pinned at 0 => stop early (rho stuck at 0 for 3 iterations) and flag apex => vertex candidate.
+    //
+    // WP concrete3d-hang-diagnosis review #877, defect 2 (MAJOR), option A (mirror of the oracle _newton_glob):
+    // the ORIGINAL scheme projected (rho, dlam, kp) onto their admissible ranges on EVERY line-search trial
+    // iterate, not just the accepted one. In a TENSION-dominated trial at kappa_p < 1 (m0*RR > 1, the hardening
+    // system is locally INDEFINITE there -- df/dkappa_p > 0) that per-iterate projection repeatedly pins the
+    // iterate back onto the same clamped face: the line search bottoms out at a=1/64 nearly every step and the
+    // loop burns its 100-iteration budget (~800 residual evaluations) before falling through to the plain Newton
+    // anyway, which is also what made the direct and sub-incremented returns land on different states near
+    // first cracking (stress discontinuous in strain). Fix: the line search evaluates the UNPROJECTED iterate;
+    // the physically-required projection (rho>=0, dlam>=0, kp>=kp_n) is applied exactly once, to the FINAL
+    // returned iterate (on convergence and on the rho-stuck apex exit). The caller's admissibility gate
+    // (dlam>=-1e-12, kp>=kp_n-1e-12, on-surface f_after) remains the honesty check on whatever root is found.
     auto newtonGlob = [&]() {
         xi = xi_tr; rho = rho_tr; dlam = 0.0; kp = kp_n; apex = false; converged = false;
         double Rr[4];
-        cdpm2HardeningResidual(xi, rho, dlam, kp, xi_tr, rho_tr, kp_n, r, cos2, mp, Rr);
+        cdpm2HardeningResidual(xi, rho, dlam, kp, xi_tr, rho_tr, kp_n, r, cos2, mp, Rr, nullptr, !cdpm2Flow);
         int stuck = 0;
+        auto project = [&]() {
+            if (rho < 0.0) rho = 0.0;
+            if (dlam < 0.0) dlam = 0.0;
+            if (kp < kp_n) kp = kp_n;
+        };
         for (int it = 0; it < 100; ++it) {
             if (std::fabs(Rr[0]) < tol * fc && std::fabs(Rr[1]) < tol * fc
-                && std::fabs(Rr[2]) < tol && std::fabs(Rr[3]) < tol) { converged = true; return; }
+                && std::fabs(Rr[2]) < tol && std::fabs(Rr[3]) < tol) { project(); converged = true; return; }
             double Rj[4], J[4][4];
-            cdpm2HardeningResidual(xi, rho, dlam, kp, xi_tr, rho_tr, kp_n, r, cos2, mp, Rj, J);
+            cdpm2HardeningResidual(xi, rho, dlam, kp, xi_tr, rho_tr, kp_n, r, cos2, mp, Rj, J, !cdpm2Flow);
             double M[4][5];
             for (int i = 0; i < 4; ++i) { for (int j = 0; j < 4; ++j) M[i][j] = J[i][j]; M[i][4] = -Rr[i]; }
             for (int c = 0; c < 4; ++c) {
@@ -1004,10 +1032,8 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
             double a = 1.0, un[4], Rn[4];
             for (;;) {
                 un[0] = xi + a * step[0]; un[1] = rho + a * step[1]; un[2] = dlam + a * step[2]; un[3] = kp + a * step[3];
-                if (un[1] < 0.0) un[1] = 0.0;
-                if (un[2] < 0.0) un[2] = 0.0;
-                if (un[3] < kp_n) un[3] = kp_n;
-                cdpm2HardeningResidual(un[0], un[1], un[2], un[3], xi_tr, rho_tr, kp_n, r, cos2, mp, Rn);
+                // UNPROJECTED (option A): no per-iterate clamp; see the block comment above newtonGlob.
+                cdpm2HardeningResidual(un[0], un[1], un[2], un[3], xi_tr, rho_tr, kp_n, r, cos2, mp, Rn, nullptr, !cdpm2Flow);
                 double nn = 0.0; bool fin = true;
                 for (int i = 0; i < 4; ++i) { fin = fin && std::isfinite(Rn[i]); nn += (Rn[i] * sc[i]) * (Rn[i] * sc[i]); }
                 if ((fin && std::sqrt(nn) < (1.0 - 1.0e-4 * a) * n0) || a < 1.0 / 64.0) break;
@@ -1015,14 +1041,20 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
             }
             xi = un[0]; rho = un[1]; dlam = un[2]; kp = un[3];
             for (int i = 0; i < 4; ++i) Rr[i] = Rn[i];
-            stuck = (rho == 0.0) ? stuck + 1 : 0;
-            if (stuck >= 3) { apex = true; return; }
+            stuck = (rho <= 0.0) ? stuck + 1 : 0;
+            if (stuck >= 3) { project(); apex = true; return; }
         }
     };
     // cdpm2: the globalized Newton first; if it fails (not an axis overshoot), fall back to the plain scheme
     // (whose rho<0 abort feeds the vertex test + the clamped retry below) before giving up.
+    // legacy (WP concrete3d-hang-diagnosis #877 follow-up): the direct plain Newton runs first EXACTLY as
+    // before (every converging case, hence every pinned fixture, is byte-identical); only a non-convergent,
+    // non-apex outcome hands over to the globalized Newton (legacy-flow residual, unprojected line search) as
+    // a rescue, and only then to the honest failure. Measured on the plain legacy Newton alone: 10-13 % of
+    // ordinary tension-dominated first-cracking increments (expansive lateral strain, what an FE Newton
+    // iterate produces) failed the return map and silently fell to the elastic trial.
     if (cdpm2Flow) { newtonGlob(); if (!converged && !apex) newton(false); }
-    else newton(false);
+    else { newton(false); if (!converged && !apex) newtonGlob(); }
     const bool overshot = apex;
 
     R.xi = xi; R.rho = rho; R.dlam = dlam; R.kp = kp; R.plastic = true;
