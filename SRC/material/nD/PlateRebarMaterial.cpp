@@ -35,6 +35,7 @@ Earthquake Engineering & Structural Dynamics, 2013, 42(5): 705-723*/
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <MaterialResponse.h>   //Antonios Vytiniotis used for the recorder
+#include <DummyStream.h>        // Ladruno (WP-142): silent probe in setResponse
 #include <math.h>
 #include <elementAPI.h>
 
@@ -90,6 +91,16 @@ void* OPS_PlateRebarMaterial()
 }
 
 
+// Ladruno (WP-142): the ONE expression for the bar direction cosines, shared
+// by the constructor and recvSelf so the two can never diverge again.
+static void
+plateRebarCosines(double ang, double &c, double &s)
+{
+  double rang = ang * 4.0 * asin(1.0)/360.0;
+  c = cos(rang);
+  s = sin(rang);
+}
+
 //full constructor
 PlateRebarMaterial::PlateRebarMaterial(int tag,
                                        UniaxialMaterial &uniMat,
@@ -98,9 +109,7 @@ NDMaterial( tag, ND_TAG_PlateRebarMaterial ),
 strain(5),angle(ang)
 {
   theMat = uniMat.getCopy() ;
-  double rang = ang * 4.0 * asin(1.0)/360.0;
-  c = cos(rang);
-  s = sin(rang);
+  plateRebarCosines(ang, c, s);   // Ladruno (WP-142): same expression as before
 }
 
 
@@ -386,9 +395,10 @@ PlateRebarMaterial::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroke
     return res;
   }
   angle = vecData(0);
-  double rang = angle * 0.0174532925;
-  c = cos(rang);
-  s = sin(rang);
+  // Ladruno (WP-142): upstream bug -- recvSelf used angle * 0.0174532925, the
+  // ctor uses angle * 4.0 * asin(1.0)/360.0; a received copy (MP/SP, database
+  // restore) differed ~1e-9 relative off-axis. Now both use plateRebarCosines.
+  plateRebarCosines(angle, c, s);
 
   // now receive the materials data
   res = theMat->recvSelf(commitTag, theChannel, theBroker);
@@ -425,9 +435,15 @@ PlateRebarMaterial::setResponse(const char **argv, int argc, OPS_Stream &output)
     return theMat->setResponse(&argv[1], argc - 1, output);
   }
 
-  Response *theResponse = NDMaterial::setResponse(argv, argc, output);
-  if (theResponse == 0 && theMat != 0)
-    theResponse = theMat->setResponse(argv, argc, output);
-  return theResponse;
+  // Probe the base on a silent stream first: NDMaterial::setResponse writes
+  // an NdMaterialOutput tag even when it returns null, which would leave an
+  // empty material block in the recorder metadata ahead of the bar's own.
+  DummyStream probe;
+  Response *theResponse = NDMaterial::setResponse(argv, argc, probe);
+  if (theResponse != 0) {
+    delete theResponse;
+    return NDMaterial::setResponse(argv, argc, output);
+  }
+  return (theMat != 0) ? theMat->setResponse(argv, argc, output) : 0;
 }
  
