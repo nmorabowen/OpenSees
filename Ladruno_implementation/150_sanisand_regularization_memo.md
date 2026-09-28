@@ -139,6 +139,16 @@ asks for an infinitely *negative* modulus.
 > | floor everywhere alone | 97 |
 > | floor everywhere (c_A = 1) **+** re-seat only when a < −c_rev·√(2/3)·m | **0** (min H/X 0.17), for c_rev ∈ {½, 1, 2} |
 >
+> **Final write-up:** WP-151 (draft PR #893), `Ladruno_implementation/151_sanisand_reseat_singularity.md`:
+> - §2: the mechanism, with the traced sequence at E_B 1880/1;
+> - §2.3: today's SAS-ME refuses exactly the oracle's 102/320 failures, one-to-one;
+> - §5–6: the fix and its calibrated-behaviour cost;
+> - §9: the C++ opt-in flags `-sasHFloor`, `-sasReseatHyst`, `-sasSoftCap`.
+>
+> **Closest published precedent:** Chen, Ghorbani, Zhang & Kodikara (2022), *Comput. Geotech.* 152, 105008. Their
+> SANISAND04 plane-strain footing aborts when (α−α_in):n suddenly drops to 0, and it gets worse with finer steps and
+> a tighter tolerance.
+>
 > The dilatancy reading of the ablation below is therefore weakened:
 > - the sequence also runs with b:n > 0;
 > - S4 carries ~⅓ of E_B's load at the same s/B;
@@ -208,6 +218,26 @@ E_B (B/8) against E_B16 (B/16), q at matched s/B:
 
 The two meshes agree to 1 % until the band forms at B/16 (~0.009), then separate by 4–5 %. GATE U (ADR-90 §1.2) saw
 the matched-settlement band *contract* on the 3-D deck. Whether this one contracts needs B/4 and B/32-class points (R2).
+
+### 2.3 Which side of the Lode interpolation? (bands vs wall)
+
+The campaign c = 0.71 is below 7/9, so DM04's g(θ, c) is non-convex near the extension meridian (WP-151 §6.3).
+`lode_split.py` → `out_lode_split.txt` splits the §2.1 points by cos3θ of n (+1 = compression, −1 = extension):
+
+| checkpoint | det ≤ 0 GPs | cos3θ(n) of det ≤ 0 GPs, 5–95 % | extension-side GPs (cos3θ < −0.5) | det ≤ 0 fraction among them |
+|---|---|---|---|---|
+| E_B step 45, s/B 0.011 | 1 636 | +0.76 … +0.80 | 0 | — |
+| E_B last, 0.0508 | 2 187 | +0.68 … +0.80 | 18 of 9 720 | 11 % (vs 23 % on the compression side) |
+| E_B16 last, 0.0135 | 6 576 | +0.51 … +0.79 | 361 of 38 880 | 2.5 % (vs 17 %) |
+
+- **The bands are a compression-side phenomenon.** The extension-side non-convexity does not drive the §2 loss of
+  ellipticity.
+- **The wall is extension-side.** All three §1.3 refusers have n on the extension side at their committed state:
+  cos3θ = −1.00 (E_B 1880/1), −0.36 (1879/1) and −0.88 (E_B16 7820/4). That matches WP-151's ρ_b(θ_n) 1.17–1.31: the
+  bounding image along n is closest there.
+- So c < 7/9 plausibly feeds the Zeno re-seat singularity (§1.4), not the bands.
+- A c ≥ 7/9 control leg (WP-151 uses c = 0.80) would test that on the footing. It is a calibration change, so it is
+  TIMs' decision.
 
 ---
 
@@ -540,6 +570,8 @@ So each curve is consistent with its constitutive strength. **"Which curve is ph
   *Acta Geotech.* 17, 427–439. doi:10.1007/s11440-021-01236-3.
 - Mallikarachchi, H. & Soga, K. (2020). Post-localisation analysis of drained and undrained dense sand with a nonlocal
   critical state model. *Comput. Geotech.* 124, 103572.
+- Chen, L., Ghorbani, J., Zhang, C. & Kodikara, J. (2022). Stress overshooting solution for soil plasticity models.
+  *Comput. Geotech.* 152, 105008. doi:10.1016/j.compgeo.2022.105008.
 - Galavi, V. & Schweiger, H. F. (2010). Nonlocal multilaminate model for strain softening analysis. *Int. J. Geomech.*
   10(1), 30ff.
 - Liu, H. Y., Abell, J. A., Diambra, A. & Pisanò, F. (2019). Modelling the cyclic ratcheting of sands through

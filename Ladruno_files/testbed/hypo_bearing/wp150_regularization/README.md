@@ -14,6 +14,7 @@ SANISAND kernel formulas (`LadrunoSANISANDSasME.cpp:335-411`, `ManzariDafalias::
 | `t5_element_physics.py [eps_max] [SET=toyoura] [E0=..] [NAME=value]` | T5: drained plane-strain and triaxial compression on the EXACT WP-134 oracle (no engine), with Bolton (1986) stress–dilatancy checks | `out_t5*.md`, `out_t5*.json` |
 | `t5_pdmy_control.py <dist/bin>` | T5 control: the fork's WP-133 PDMY03 stand-in (NOT TIMs' PDMY01), drained plane strain | `out_t5_pdmy03_standin.md` |
 | `t6_capacity_bands.py` | T6: the classical rough-strip capacity band of the deck (Martin 2005 exact N_γ, exact N_q) | `out_t6_capacity.md` |
+| `lode_split.py f1.npz,...` | The §2.1 non-elliptic GPs split by the Lode angle of n (does c < 7/9 extension non-convexity drive the bands?) | `out_lode_split.txt` |
 | `acoustic_vec.py f1.npz,...` | Plane-strain acoustic tensor of the continuum tangent at every GP, against an associated control and the ADR-90 V4 viscous blend | `out_acoustic.txt` |
 
 The inputs came from the WP-138 analysis copy. The legs are E_B (B/8, SAS-ME, TolR 1e-4) and E_B16 (B/16), Esmeralda

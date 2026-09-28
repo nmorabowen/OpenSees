@@ -72,7 +72,7 @@ def run(npz):
     ra, _ = ratio(CeQ, CeQ, Ha, G, K)
     # viscous blend (1-beta)Ce + beta*D = Ce - beta CeR (x) QCe / H  -> H/beta
     rb = {beta: ratio(CeR, CeQ, H / beta, G, K)[0] for beta in (0.5, 0.9, 0.99)}
-    return dict(sb=sb, x=d["gx"], y=d["gy"], p=p, psi=d["psi"], H2G=H / (2 * G), r=r, th=th,
+    return dict(sb=sb, x=d["gx"], y=d["gy"], p=p, psi=d["psi"], H2G=H / (2 * G), r=r, th=th, c3=c3,
                 ra=ra, rb=rb, Kp2G=Kp / (2 * G), D=D, f=d["f"])
 
 

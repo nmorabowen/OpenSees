@@ -1,0 +1,24 @@
+
+== E_B/field_step00045.npz s/B 0.0110: det<=0 1636 of 9720
+   det<=0    cos3theta(n) quantiles 5/25/50/75/95 %: +0.76 +0.77 +0.78 +0.79 +0.80   share with cos3theta < -0.5 (extension side): 0.00%
+   elliptic  cos3theta(n) quantiles 5/25/50/75/95 %: +0.74 +0.78 +0.79 +0.80 +0.84   share with cos3theta < -0.5 (extension side): 0.00%
+   cos3theta in [+0.5,+1.0):  9720 GPs, det<=0 fraction 16.83%
+
+== E_B/field_last_converged.npz s/B 0.0508: det<=0 2187 of 9720
+   det<=0    cos3theta(n) quantiles 5/25/50/75/95 %: +0.68 +0.75 +0.78 +0.79 +0.80   share with cos3theta < -0.5 (extension side): 0.09%
+   elliptic  cos3theta(n) quantiles 5/25/50/75/95 %: +0.69 +0.80 +0.81 +0.83 +0.96   share with cos3theta < -0.5 (extension side): 0.21%
+   cos3theta in [-1.0,-0.5):    18 GPs, det<=0 fraction 11.11%
+   cos3theta in [-0.5,+0.0):    23 GPs, det<=0 fraction 8.70%
+   cos3theta in [+0.0,+0.5):    65 GPs, det<=0 fraction 16.92%
+   cos3theta in [+0.5,+1.0):  9614 GPs, det<=0 fraction 22.59%
+
+== E_B16/field_last_converged.npz s/B 0.0135: det<=0 6576 of 38880
+   det<=0    cos3theta(n) quantiles 5/25/50/75/95 %: +0.51 +0.74 +0.77 +0.78 +0.79   share with cos3theta < -0.5 (extension side): 0.14%
+   elliptic  cos3theta(n) quantiles 5/25/50/75/95 %: +0.68 +0.78 +0.80 +0.82 +0.94   share with cos3theta < -0.5 (extension side): 1.09%
+   cos3theta in [-1.0,-0.5):   361 GPs, det<=0 fraction 2.49%
+   cos3theta in [-0.5,+0.0):   390 GPs, det<=0 fraction 10.77%
+   cos3theta in [+0.0,+0.5):   736 GPs, det<=0 fraction 36.82%
+   cos3theta in [+0.5,+1.0): 37393 GPs, det<=0 fraction 16.73%
+refuser k 7516 (-0.148,-2.023): cos3theta(n) -1.000  det ratio +0.977  H/2G 4.293e+01
+refuser k 7512 (-0.148,-2.210): cos3theta(n) -0.358  det ratio +1.000  H/2G 2.267e+05
+refuser k 31279 (+0.957,-0.395): cos3theta(n) -0.881  det ratio +1.000  H/2G 1.352e+05
