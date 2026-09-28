@@ -95,11 +95,13 @@ NDMaterial *OPS_getNDMaterial(int tag)
 // vanilla's own idiom for these hooks (commands.cpp:55-63), and it keeps the
 // SANISAND header out of the base-class file. Defined in LadrunoSANISAND.cpp.
 extern void ladrunoSanisandResetImplexGlobals(void);   // Ladruno WP-104
+extern void ladrunoConcrete3dResetWarningBudget(void); // Ladruno WP concrete3d-hang-diagnosis review
 
 void OPS_clearAllNDMaterial(void)
 {
     theNDMaterialObjects.clearAll();
-    ladrunoSanisandResetImplexGlobals();   // Ladruno WP-104
+    ladrunoSanisandResetImplexGlobals();      // Ladruno WP-104
+    ladrunoConcrete3dResetWarningBudget();    // Ladruno WP concrete3d-hang-diagnosis review
 }
 
 void OPS_printNDMaterial(OPS_Stream &s, int flag) {

@@ -125,10 +125,22 @@ def _run(mat_fn, eps_target, nsteps):
 def _drive_adaptive(mat_fn, eps_target, base_steps, max_cuts=7, solver="FullGeneral"):
     """Displacement-control driver with step-CUTTING through the softening limit point — the only
     way a single implicit element gets past an unconfined tension/compression peak (the snap-back
-    regime). Returns [(eps_xx, sig_xx, omega_t)] for every converged increment."""
+    regime). Returns [(eps_xx, sig_xx, omega_t)] for every converged increment.
+
+    WP concrete3d-hang-diagnosis review follow-up (2026-09-28): a refusal right at first cracking
+    (the WP-99 commit-time latch going live for the first time surfaced this -- see
+    test_cttemper_parses_and_runs[proj]) can leave DisplacementControl's own internal deltaLambda
+    computation degenerate on the immediately-following analyze() call, printing an astronomic
+    "domain at load factor -3.5e+161"-style diagnostic even though `step` itself is still sane and
+    `cuts` is correctly bounded by max_cuts. That's cosmetic (the assertion below already fails
+    cleanly either way), but a floor on `step` makes the failure mode explicit and stops the driver
+    from ever proposing a step so small it could not possibly integrate anything, rather than
+    relying solely on max_cuts consecutive-failure counting to notice.
+    """
     _build(mat_fn, solver=solver)
     out = []
     step = eps_target / base_steps
+    step_floor = abs(eps_target) * 1.0e-8
     cuts = 0
     guard = 0
     while abs(ops.nodeDisp(2, 1)) < abs(eps_target) and guard < base_steps * 40:
@@ -140,7 +152,7 @@ def _drive_adaptive(mat_fn, eps_target, base_steps, max_cuts=7, solver="FullGene
                 step *= 2.0; cuts -= 1
         else:
             step *= 0.5; cuts += 1
-            if cuts > max_cuts:
+            if cuts > max_cuts or abs(step) < step_floor:
                 break                                     # genuinely stuck — keep what converged
     return out
 

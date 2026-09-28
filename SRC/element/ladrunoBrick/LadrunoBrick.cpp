@@ -531,8 +531,21 @@ int  LadrunoBrick::commitState(void)
         hypoFeedCommit[g][c] = hypoFeed[g][c];
 
   // Ladruno (C3a): advance the shadow Gauss-point damage probes (never fails the commit).
-  if (hgShadow[0] != 0)
+  //
+  // WP concrete3d-hang-diagnosis review, defect 1 CAREFUL note: the shadow copies run their OWN
+  // decoupled setTrialStrain()/commitState() cycle purely to drive the hourglass regularization
+  // omega -- they are NOT the real Gauss points formed into this element's residual, so a refusal
+  // there is a diagnostic hiccup in a throwaway probe, not a statement about this element's real
+  // state. Since LadrunoConcrete3D::commitState() now declares refusals via the process-wide WP-99
+  // ladrunoNoteCommitRefusal() counter (the same counter the REAL materialPointers[] commits above
+  // may have just used correctly), a shadow copy's commitState() must not be allowed to add to it --
+  // that would fail this element's real, otherwise-good step over a shadow-probe artifact. Snapshot
+  // and restore the counter around the shadow commit so anything it declares is discarded.
+  if (hgShadow[0] != 0) {
+    int refusalsBeforeShadow = ladrunoPendingCommitRefusals();
     this->commitHgShadows();
+    ladrunoCommitRefusalCounter() = refusalsBeforeShadow;
+  }
 
   // Ladruno — accumulate viscous-hourglass dissipation. The FB viscous force
   // stores no energy, so we integrate the work done against it over committed

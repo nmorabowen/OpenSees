@@ -31,6 +31,7 @@
 
 #include <LadrunoConcrete3D.h>
 #include <LadrunoConcrete3DKernel.h>   // the header-only OpenSees-free CDPM2 kernel
+#include <LadrunoMaterialStatus.h>     // Ladruno (WP concrete3d-hang-diagnosis, ADR-86b/WP-99): LADRUNO_MATERIAL_REFUSED
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <Information.h>
@@ -44,6 +45,18 @@
 
 using Ladruno::Concrete3D::Params;
 using Ladruno::Concrete3D::State;
+
+// WP concrete3d-hang-diagnosis review (minor item): the return-map warning throttle below is a
+// process-wide log-volume budget (SRC/material/nD/LadrunoSANISAND.cpp's LadrunoImplexGlobals
+// documents the same design for its own refusal throttles: a warning budget is deliberately NOT a
+// per-model census, so a leg's running counts are read as deltas, LEDGER_quirks). Reset on `wipe`
+// anyway (not on revertToStart/revertToLastCommit -- those rewind the SAME model) so a driver that
+// builds, wipes, and rebuilds several models IN ONE PROCESS (measured: apeGmsh live tests, pytest
+// modules) does not have an early model's spam silently swallow a later model's real diagnostics --
+// same failure mode WP-104 fixed for LadrunoSANISAND's implexRefusals census.
+static long s_returnMapWarnPrinted = 0;
+
+void ladrunoConcrete3dResetWarningBudget(void) { s_returnMapWarnPrinted = 0; }
 
 // ===========================================================================
 //  OPS parser
@@ -478,14 +491,20 @@ void LadrunoConcrete3D::integrate(bool doTangent)
 
   // B2 diagnostics: count sub-incremented rescues and FINAL failures; warn only on a FINAL failure (the
   // elastic-trial fallback), rate-limited across ALL instances unless -verbose (the L&W beam printed 572k lines).
+  //
+  // WP concrete3d-hang-diagnosis review (defect 1): this per-call message reports the KERNEL's own
+  // return-map outcome for THIS integrate() call, which is NOT necessarily the material's final word --
+  // the condensed (PlaneStress/PlateFiber) sigma_22 Newton in setTrialStrain calls integrate() up to 30
+  // times per trial, and an early failing call there can still be superseded by a later converging one.
+  // So this message must not claim "step-cut": whether the STEP is actually cut is decided once, by
+  // setTrialStrain's return value (see below), not by every intermediate kernel call.
   if (out.subInfo >= 2) { nSub += 1.0; nSubStep += 1.0; }
   if (lastStatus != 0) {
     nFail += 1.0; nFailStep += 1.0;
-    static long printed = 0;
-    if (verbose || printed < 20)
+    if (verbose || s_returnMapWarnPrinted < 20)
       opserr << "WARNING LadrunoConcrete3D: return map did not converge (tag "
-             << this->getTag() << ") - elastic-trial fallback, step-cut\n";
-    if (!verbose && ++printed == 20)
+             << this->getTag() << ") - elastic-trial fallback this call\n";
+    if (!verbose && ++s_returnMapWarnPrinted == 20)
       opserr << "WARNING LadrunoConcrete3D: further return-map warnings suppressed (use -verbose, or "
              << "getResponse \"returnFailures\" / \"substeps\" per material point)\n";
   }
@@ -500,6 +519,17 @@ void LadrunoConcrete3D::integrate(bool doTangent)
 //  / PlateFiber) eps_22 is an internal unknown solved so sigma_22 = 0 — preserve
 //  its running value as the Newton starting guess.
 // ===========================================================================
+// WP concrete3d-hang-diagnosis review, defect 1 (CRITICAL): setTrialStrain used to `return 0`
+// unconditionally on every path, no matter what lastStatus said -- so a return-map failure never
+// reached the element (LadrunoBrick's own ladrunoBrickMustCut(rc) check was dead code for this
+// material) and commitState() copied the elastic-trial fallback into the committed state as if it
+// were a converged answer. Measured (review probe_absorb.cpp): one wild failing increment committed
+// into an already-cracked point gives a NOMINAL stress of hundreds of MPa at fc=30 and an effective
+// stress over a GPa -- an absorbing garbage state that then poisons every subsequent small, ordinary
+// step at that Gauss point. Every path below now reports LADRUNO_MATERIAL_REFUSED (ADR-86b's ONE
+// "I did not integrate this increment" sentinel) whenever the material could not actually produce a
+// converged answer, so the caller (element) can propagate it and the analysis can cut the step --
+// exactly what the (now corrected) warning text in integrate() says happens.
 int LadrunoConcrete3D::setTrialStrain(const Vector& e)
 {
   if (confined) {
@@ -514,7 +544,7 @@ int LadrunoConcrete3D::setTrialStrain(const Vector& e)
       strain6[full] = val;
     }
     this->integrate(true);
-    return 0;
+    return (lastStatus != 0) ? LADRUNO_MATERIAL_REFUSED : 0;
   }
 
   double eps22 = strain6[2];
@@ -530,13 +560,14 @@ int LadrunoConcrete3D::setTrialStrain(const Vector& e)
 
   if (!condense) {
     this->integrate(true);
-    return 0;
+    return (lastStatus != 0) ? LADRUNO_MATERIAL_REFUSED : 0;
   }
 
   // enforce sigma_22 = 0: Newton on eps_22 (= strain6[2]); dSNPO sec 9.2.3. The
   // CDPM2 tangent can soften/lose definiteness post-peak (snap-back) — guard the
   // pivot and warn rather than diverge silently.
   const int maxIt = 30;
+  bool sigma22Converged = false;
   for (int it = 0; it < maxIt; it++) {
     this->integrate(true);
     double d22 = Dtan6[2][2];
@@ -544,7 +575,7 @@ int LadrunoConcrete3D::setTrialStrain(const Vector& e)
     for (int i = 0; i < 6; i++) smag += stress6[i]*stress6[i];
     smag = sqrt(smag);
     double tol22 = 1.0e-9 * (smag > 1.0 ? smag : 1.0);
-    if (fabs(stress6[2]) <= tol22) break;
+    if (fabs(stress6[2]) <= tol22) { sigma22Converged = true; break; }
     if (fabs(d22) < 1.0e-300) break;
     strain6[2] -= stress6[2] / d22;
     if (it == maxIt - 1)
@@ -552,7 +583,10 @@ int LadrunoConcrete3D::setTrialStrain(const Vector& e)
              << this->getTag() << ", |s22|=" << fabs(stress6[2]) << ")\n";
   }
   this->condenseTangent();
-  return 0;
+  // refuse if the KERNEL's own return map failed on the final call OR the sigma_22 condensation
+  // Newton itself never converged within maxIt -- either way the reported stress/tangent is not
+  // a valid converged answer for this trial.
+  return (lastStatus != 0 || !sigma22Converged) ? LADRUNO_MATERIAL_REFUSED : 0;
 }
 
 int LadrunoConcrete3D::setTrialStrain(const Vector& v, const Vector&) { return this->setTrialStrain(v); }
@@ -659,6 +693,27 @@ const Matrix& LadrunoConcrete3D::getInitialTangent(void)
 // ===========================================================================
 int LadrunoConcrete3D::commitState(void)
 {
+  // WP concrete3d-hang-diagnosis review, defect 1 (CRITICAL) + the WP-99 commit-time refusal seam
+  // (ADR-86b, LadrunoMaterialStatus.h): a trial the return map could not integrate (lastStatus != 0 --
+  // already reported to the element as LADRUNO_MATERIAL_REFUSED by setTrialStrain above) must NEVER
+  // be committed. Baking the elastic-trial fallback in here unconditionally is exactly the "absorbing
+  // garbage state" the review's probe_absorb.cpp demonstrated: one wild failing increment committed
+  // into an already-cracked point produced a nominal stress of hundreds of MPa (fc=30) and an
+  // effective stress over a GPa, which then poisoned every ordinary small step at that Gauss point
+  // afterward. Restore the trial buffers to the last GOOD committed state (so a caller that ignores
+  // the return code -- e.g. LadrunoBrick's own C3a hourglass-shadow probes, or a stock element --
+  // still sees a self-consistent material) and declare the refusal via ladrunoNoteCommitRefusal() so
+  // Domain::commit() fails the WHOLE step even on an element that drops setTrialStrain's return code
+  // (the WP-99 measurement on LadrunoSANISAND: without the declaration, two stacked stdBrick under
+  // `algorithm Linear` ran 20 more accepted steps with the starved element frozen as a rigid
+  // inclusion, analyze() == 0 throughout).
+  if (lastStatus != 0) {
+    ladrunoNoteCommitRefusal();
+    this->revertToLastCommit();
+    lastStatus = 0;
+    return LADRUNO_MATERIAL_REFUSED;
+  }
+
   for (int i = 0; i < 6; i++) { eps_n[i] = strain6[i]; sig_n[i] = stress6[i]; sigEff_n[i] = sigEff6[i]; }
   kp_n = kp_t; etmax_n = etmax_t;
   kdt1_n = kdt1_t; kdt2_n = kdt2_t;
