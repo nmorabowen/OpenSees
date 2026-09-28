@@ -43,7 +43,7 @@ from _testbed import ops  # noqa: E402
 # PARDISO IS MKL: linked on the Windows/oneAPI build only (Zone-A Ubuntu CI
 # uses reference LAPACK and never compiles SRC/system_of_eqn/linearSOE/pardiso,
 # same gating as FEAST). Enforced on the Windows box.
-# ci-coverage: local-only -- the whole file needs system Pardiso (MKL, Windows/oneAPI build); no CI builds it until a Windows job does (WP-143)
+# ci-coverage: local-only -- the whole file needs system Pardiso (MKL: the Windows/oneAPI build, or Linux with -DLADRUNO_MKL_PARDISO_LINUX=ON, where it passes with this skip lifted, #886); no CI builds either until a Windows job does (WP-143)
 pytestmark = [
     pytest.mark.zone_a,
     pytest.mark.skipif(sys.platform != "win32",

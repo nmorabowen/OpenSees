@@ -230,10 +230,68 @@ Note for **sequential-style decks on the queue**: this is a true
 `_PARALLEL_INTERPRETERS` build — every rank runs the full script with its own
 `getPID`. Decks must be partition-aware (apeGmsh partitioned emits are).
 
-## 8. Not yet built (but expected to work)
+## 8. `system Pardiso` — opt-in, verified 2026-09-28
 
-- **`OpenSeesPy`** — the target is configured (Python 3.10 dev found); build with
-  `cmake --build build/Release --target OpenSeesPy -j20`. Note the resulting
-  module imports under esmeralda's Python 3.10, not the Windows 3.12 test env.
+**A default build has no `system Pardiso`.** On Windows the verb comes from
+`find_package(MKL)`; on Linux it needs `-DLADRUNO_MKL_PARDISO_LINUX=ON` at
+configure time. Without it the serial binary warns (older binaries print
+`WARNING system Pardiso is unknown or not installed`) and the command fails.
+Several builds in `~/ladruno_build_test` predate the opt-in, including the
+`OpenSees/` tree the cluster benchmarks use.
+
+Threaded layer (recommended for one big model per node):
+
+```bash
+M=/mnt/nfshare/software/spack/opt/spack/linux-zen3/intel-oneapi-mkl-2024.2.2-4olf4bnrh4yzaqbhq742doqvnim6yynl/mkl/2024.2
+LAP="$M/lib/libmkl_intel_lp64.so;$M/lib/libmkl_gnu_thread.so;$M/lib/libmkl_core.so;-lgomp;-lm;-ldl"
+cmake -S . -B build/pdl_thr \
+  -DCMAKE_TOOLCHAIN_FILE=build/Release/generators/conan_toolchain.cmake \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DLADRUNO_MKL_PARDISO_LINUX=ON -DLADRUNO_MKL_PARDISO_LINUX_THREADED=ON \
+  -DMKL_RT_HINT=$M/lib "-DLAPACK_LIBRARIES=$LAP" "-DBLAS_LIBRARIES=$LAP"
+cmake --build build/pdl_thr --target OpenSees OpenSeesPy -j22
+```
+
+Sequential layer (many single-core copies per node, the contention bench):
+the same, with `libmkl_sequential.so` in place of `libmkl_gnu_thread.so`,
+no `-lgomp`, and `-DLADRUNO_MKL_PARDISO_LINUX_THREADED=OFF`. The threaded
+option refuses to configure beside `-DLADRUNO_MKL_FEAST_LINUX=ON` (one process
+carries one MKL threading layer), so a single binary cannot have both
+threaded Pardiso and FEAST.
+
+Check: `ldd build/pdl_thr/OpenSees | grep -E 'mkl|gomp'` names the spack
+2024.2 libraries. The MKL directory is in the binary's RUNPATH, so no
+`LD_LIBRARY_PATH` is needed at run time (`TCL_LIBRARY` still is, §3).
+
+Measured on the cluster-bench tower deck (`~/cluster_bench/tiny20`, one core):
+UmfPack 30.1 s wall (22.1 s of it in gravity), Pardiso 1.69 s, peak RSS
+1.11 → 0.63 GB, floor displacements equal to recorder precision. The
+Pardiso pytest battery (`test_pardiso_*`, `test_wp132_*`,
+`test_printa_unsized_soe`, the SANISAND flip test) passes under
+`conan_venv/bin/python` (3.10, has numpy + pytest) once its `win32` skip is
+lifted, except for the platform rule below and two cases that assume a
+threaded layer when run against the sequential one.
+
+Gotchas:
+
+- **Build on the head node.** The compute nodes have no `cmake` (the generated
+  Makefiles call it) and no internet (`git clone` and `conan install` fail on
+  DNS). A cold build of `OpenSees` + `OpenSeesPy` took ~3 min at `-j22` here.
+- **MKL here is oneMKL 2024.2; Windows has 2025.1.** Code that names an MKL
+  symbol newer than 2024.2 compiles on Windows and fails here, and no CI
+  compiles the Linux opt-in. It happened with `MKL_CBWR_AVX10` (WP-132):
+  guard such names with `#ifdef`.
+- **`-deterministic` must come before the first solve of the process on
+  Linux.** An earlier Pardiso or UmfPack solve makes MKL refuse the mode (rc
+  -8); on Windows only an earlier LAPACK call does. `export MKL_CBWR=AUTO`
+  before launch always works. See `75c_pardiso_solver_recipe.md`.
+
+## 9. Not yet built (but expected to work)
+
+- **`OpenSeesPy`** — built 2026-09-28 alongside the Pardiso opt-in (§8), not
+  yet in the plain `OpenSees/` tree; build with
+  `cmake --build build/Release --target OpenSeesPy -j20`. The module imports
+  under esmeralda's Python 3.10, not the Windows 3.12 test env; tests copy
+  `OpenSeesPy.so` to `tests/opensees.so`, as the Zone-A CI job does.
 - **`OpenSeesSP`** — same MPI recipe as §7 should apply
   (`--target OpenSeesSP`). Untested.
