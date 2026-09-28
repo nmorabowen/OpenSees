@@ -567,7 +567,6 @@ int LadrunoConcrete3D::setTrialStrain(const Vector& e)
   // CDPM2 tangent can soften/lose definiteness post-peak (snap-back) — guard the
   // pivot and warn rather than diverge silently.
   const int maxIt = 30;
-  bool sigma22Converged = false;
   for (int it = 0; it < maxIt; it++) {
     this->integrate(true);
     double d22 = Dtan6[2][2];
@@ -575,7 +574,7 @@ int LadrunoConcrete3D::setTrialStrain(const Vector& e)
     for (int i = 0; i < 6; i++) smag += stress6[i]*stress6[i];
     smag = sqrt(smag);
     double tol22 = 1.0e-9 * (smag > 1.0 ? smag : 1.0);
-    if (fabs(stress6[2]) <= tol22) { sigma22Converged = true; break; }
+    if (fabs(stress6[2]) <= tol22) break;
     if (fabs(d22) < 1.0e-300) break;
     strain6[2] -= stress6[2] / d22;
     if (it == maxIt - 1)
@@ -583,10 +582,14 @@ int LadrunoConcrete3D::setTrialStrain(const Vector& e)
              << this->getTag() << ", |s22|=" << fabs(stress6[2]) << ")\n";
   }
   this->condenseTangent();
-  // refuse if the KERNEL's own return map failed on the final call OR the sigma_22 condensation
-  // Newton itself never converged within maxIt -- either way the reported stress/tangent is not
-  // a valid converged answer for this trial.
-  return (lastStatus != 0 || !sigma22Converged) ? LADRUNO_MATERIAL_REFUSED : 0;
+  // Refuse ONLY when the KERNEL reports a final return-map failure on the last call. A sigma_22
+  // condensation MISS (the 30-iteration Newton above not reaching |s22| <= tol22) keeps the previous
+  // warn-and-accept behaviour: the sigma33-condensation part of B4 (damped Newton, ft-relative
+  // tolerance, and an honest refusal code for a condensation miss) is scoped to WP-141 P1a, agreed
+  // to land after #877. Refusing the miss here (as the first cut of the defect-1 fix did) turned the
+  // condensed solid-shell softening runs (test_ladrunoSolidShell_explicit.py::test_softening_band_sms_
+  // completes, test_ladrunoSolidShell_softening.py::test_g5_*) into hard failures before that work exists.
+  return (lastStatus != 0) ? LADRUNO_MATERIAL_REFUSED : 0;
 }
 
 int LadrunoConcrete3D::setTrialStrain(const Vector& v, const Vector&) { return this->setTrialStrain(v); }
