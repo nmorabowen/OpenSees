@@ -130,7 +130,7 @@ TransformationDOF_Group::TransformationDOF_Group(int tag, Node *node,
 	    opserr << "TransformationDOF_Group::TransformationDOF_Group(Node *) ";
 	    opserr << " ran out of memory";	    
 	}
-	// Ladruno WP-147: <= not <. MAX_NUM_DOF+1 slots and modNumDOF ==
+	// Ladruno WP-149: <= not <. MAX_NUM_DOF+1 slots and modNumDOF ==
 	// MAX_NUM_DOF takes the pooled branch below, so slot [MAX_NUM_DOF] was
 	// read uninitialized (same off-by-one as FE_Element.cpp).
 	for (int i=0; i<=MAX_NUM_DOF; i++) {
@@ -242,7 +242,7 @@ TransformationDOF_Group::TransformationDOF_Group(int tag,
 	    opserr << "TransformationDOF_Group::TransformationDOF_Group(Node *) ";
 	    opserr << " ran out of memory";	    
 	}
-	for (int i=0; i<=MAX_NUM_DOF; i++) {   // Ladruno WP-147: <= (slot [MAX_NUM_DOF], see above)
+	for (int i=0; i<=MAX_NUM_DOF; i++) {   // Ladruno WP-149: <= (slot [MAX_NUM_DOF], see above)
 	    modMatrices[i] = 0;
 	    modVectors[i] = 0;
 	}
@@ -278,7 +278,7 @@ TransformationDOF_Group::~TransformationDOF_Group()
     // if this is the last FE_Element, clean up the
     // storage for the matrix and vector objects
     if (numTransDOFs == 0) {
-	for (int i=0; i<=MAX_NUM_DOF; i++) {   // Ladruno WP-147: <= -- slot [MAX_NUM_DOF] leaked
+	for (int i=0; i<=MAX_NUM_DOF; i++) {   // Ladruno WP-149: <= -- slot [MAX_NUM_DOF] leaked
 	    if (modVectors[i] != 0)
 		delete modVectors[i];
 	    if (modMatrices[i] != 0)

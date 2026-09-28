@@ -127,7 +127,7 @@ TransformationFE::TransformationFE(int tag, Element *ele)
 	    opserr << "TransformationFE::TransformationFE(Element *) ";
 	    opserr << " ran out of memory";
 	}
-	// Ladruno WP-147: <= not <. MAX_NUM_DOF+1 slots, and setID() takes the
+	// Ladruno WP-149: <= not <. MAX_NUM_DOF+1 slots, and setID() takes the
 	// pooled branch for numTransformedDOF == MAX_NUM_DOF, so slot [MAX_NUM_DOF]
 	// was read uninitialized (same off-by-one as FE_Element.cpp).
 	for (int i=0; i<=MAX_NUM_DOF; i++) {
@@ -171,7 +171,7 @@ TransformationFE::~TransformationFE()
     // if this is the last FE_Element, clean up the
     // storage for the matrix and vector objects
     if (numTransFE == 0) {
-	for (int i=0; i<=MAX_NUM_DOF; i++) {   // Ladruno WP-147: <= -- slot [MAX_NUM_DOF] leaked
+	for (int i=0; i<=MAX_NUM_DOF; i++) {   // Ladruno WP-149: <= -- slot [MAX_NUM_DOF] leaked
 	    if (modVectors[i] != 0)
 		delete modVectors[i];
 	    if (modMatrices[i] != 0)

@@ -93,7 +93,7 @@ DOF_Group::DOF_Group(int tag, Node *node)
 	    opserr << "DOF_Group::DOF_Group(Node *) ";
 	    opserr << " ran out of memory";
 	}
-	// Ladruno WP-147: <= not <. MAX_NUM_DOF+1 slots and numDOF ==
+	// Ladruno WP-149: <= not <. MAX_NUM_DOF+1 slots and numDOF ==
 	// MAX_NUM_DOF takes the pooled branch below, so slot [MAX_NUM_DOF] was
 	// read uninitialized (same off-by-one as FE_Element.cpp).
 	for (int i=0; i<=MAX_NUM_DOF; i++) {
@@ -176,7 +176,7 @@ DOF_Group::DOF_Group(int tag, int ndof)
 	    opserr << "DOF_Group::DOF_Group(int, int ndof) ";
 	    opserr << " ran out of memory";
 	}
-	for (int i=0; i<=MAX_NUM_DOF; i++) {   // Ladruno WP-147: <= (slot [MAX_NUM_DOF], see above)
+	for (int i=0; i<=MAX_NUM_DOF; i++) {   // Ladruno WP-149: <= (slot [MAX_NUM_DOF], see above)
 	    theMatrices[i] = 0;
 	    theVectors[i] = 0;
 	}
@@ -242,7 +242,7 @@ DOF_Group::~DOF_Group()
     // if this is the last FE_Element, clean up the
     // storage for the matrix and vector objects
     if (numDOFs == 0) {
-	for (int i=0; i<=MAX_NUM_DOF; i++) {   // Ladruno WP-147: <= -- slot [MAX_NUM_DOF] leaked
+	for (int i=0; i<=MAX_NUM_DOF; i++) {   // Ladruno WP-149: <= -- slot [MAX_NUM_DOF] leaked
 	    if (theVectors[i] != 0)
 		delete theVectors[i];
 	    if (theMatrices[i] != 0)

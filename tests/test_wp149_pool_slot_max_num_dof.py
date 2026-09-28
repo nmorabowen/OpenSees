@@ -1,4 +1,4 @@
-"""WP-147 -- the class-wide tangent/residual pools leave slot [MAX_NUM_DOF] uninitialized.
+"""WP-149 -- the class-wide tangent/residual pools leave slot [MAX_NUM_DOF] uninitialized.
 
 `FE_Element`, `TransformationFE`, `DOF_Group` and `TransformationDOF_Group` each keep a
 class-wide array of `MAX_NUM_DOF+1` Matrix/Vector pointers indexed by the DOF count, and
@@ -80,7 +80,7 @@ except ModuleNotFoundError:
 # script runs; then the pin above is silently ignored. Refuse rather than test it.
 _got = os.path.normcase(os.path.dirname(os.path.abspath(ops.__file__)))
 if os.path.isdir(_D) and _got != os.path.normcase(_D):
-    print("WP147_WRONG_BINARY", _got, flush=True)
+    print("WP149_WRONG_BINARY", _got, flush=True)
     raise SystemExit(7)
 
 DECK = sys.argv[1]
@@ -183,7 +183,7 @@ def build():
 
 def check(xy, indep, ground):
     ndof = sum(len(ops.nodeDisp(n)) for n in ops.eleNodes(1))
-    print("WP147_NDOF", ndof, flush=True)
+    print("WP149_NDOF", ndof, flush=True)
     ops.reactions()
     worst = 0.0
     sx = sy = mz = 0.0
@@ -198,8 +198,8 @@ def check(xy, indep, ground):
         mz += x * r[1] - y * r[0]
         worst = max(worst, abs(r[0] + fx), abs(r[1] + fy))
     scale = abs(FX) / N
-    print("WP147_DIST %%.3e" %% (worst / scale), flush=True)
-    print("WP147_SUMS %%.9e %%.9e %%.9e" %% (sx, sy, mz), flush=True)
+    print("WP149_DIST %%.3e" %% (worst / scale), flush=True)
+    print("WP149_SUMS %%.9e %%.9e %%.9e" %% (sx, sy, mz), flush=True)
 
 
 for cycle in range(CYCLES):
@@ -213,14 +213,14 @@ for cycle in range(CYCLES):
     ops.integrator("LoadControl", 1.0)
     ops.analysis("Static")
     rc = ops.analyze(1)
-    print("WP147_RC", cycle, rc, flush=True)
+    print("WP149_RC", cycle, rc, flush=True)
     if rc != 0:
         raise SystemExit(3)
     check(xy, indep, ground)
     ops.wipe()                        # last FE_Element dies -> pool freed (and slot [64] with it)
-    print("WP147_CYCLE_OK", cycle, flush=True)
+    print("WP149_CYCLE_OK", cycle, flush=True)
 
-print("WP147_DONE", flush=True)
+print("WP149_DONE", flush=True)
 '''
 
 
@@ -233,23 +233,23 @@ def _run(deck):
 def test_64dof_element_survives_a_dirty_pool_array(deck):
     rc, out = _run(deck)
     tail = out[-3000:]
-    assert "WP147_WRONG_BINARY" not in out, tail
+    assert "WP149_WRONG_BINARY" not in out, tail
     # the process must SURVIVE every cycle -- a wild slot-[64] pointer kills it
     assert rc == 0, "child died (rc=%s) -- slot [MAX_NUM_DOF] garbage?\n%s" % (rc, tail)
-    assert "WP147_DONE" in out, tail
-    assert out.count("WP147_CYCLE_OK") == CYCLES, tail
+    assert "WP149_DONE" in out, tail
+    assert out.count("WP149_CYCLE_OK") == CYCLES, tail
 
     lines = out.splitlines()
     # the deck must actually exercise slot [64]: guard against deck drift making this
     # test observe some other pool slot (a green test on the wrong path proves nothing)
-    ndofs = [int(l.split()[1]) for l in lines if l.startswith("WP147_NDOF")]
+    ndofs = [int(l.split()[1]) for l in lines if l.startswith("WP149_NDOF")]
     assert ndofs == [64] * CYCLES, ndofs
 
     # the RBE3 distribution is exact by equilibrium; penalty only moves the reference
     for l in lines:
-        if l.startswith("WP147_DIST"):
+        if l.startswith("WP149_DIST"):
             assert float(l.split()[1]) < 1.0e-6, l
-        if l.startswith("WP147_SUMS"):
+        if l.startswith("WP149_SUMS"):
             sx, sy, mz = (float(v) for v in l.split()[1:])
             assert sx == pytest.approx(-120.0, rel=1e-8)
             assert sy == pytest.approx(45.0, rel=1e-8)

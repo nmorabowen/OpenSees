@@ -107,7 +107,7 @@ FE_Element::FE_Element(int tag, Element *ele)
 	    opserr << "FE_Element::FE_Element(Element *) ";
 	    opserr << " ran out of memory";
 	}
-	// Ladruno WP-147: <= not <. The pool has MAX_NUM_DOF+1 slots (indexed by
+	// Ladruno WP-149: <= not <. The pool has MAX_NUM_DOF+1 slots (indexed by
 	// numDOF, and numDOF == MAX_NUM_DOF takes the pooled branch below), so slot
 	// [MAX_NUM_DOF] was left uninitialized and a 64-DOF element read a garbage
 	// pointer as its tangent/residual.
@@ -195,7 +195,7 @@ FE_Element::FE_Element(int tag, int numDOF_Group, int ndof)
 	    opserr << "FE_Element::FE_Element(Element *) ";
 	    opserr << " ran out of memory";
 	}
-	for (int i=0; i<=MAX_NUM_DOF; i++) {   // Ladruno WP-147: <= (slot [MAX_NUM_DOF], see above)
+	for (int i=0; i<=MAX_NUM_DOF; i++) {   // Ladruno WP-149: <= (slot [MAX_NUM_DOF], see above)
 	    theMatrices[i] = 0;
 	    theVectors[i] = 0;
 	}
@@ -227,7 +227,7 @@ FE_Element::~FE_Element()
     // if this is the last FE_Element, clean up the
     // storage for the matrix and vector objects
     if (numFEs == 0) {
-	for (int i=0; i<=MAX_NUM_DOF; i++) {   // Ladruno WP-147: <= -- slot [MAX_NUM_DOF] leaked its Vector+Matrix
+	for (int i=0; i<=MAX_NUM_DOF; i++) {   // Ladruno WP-149: <= -- slot [MAX_NUM_DOF] leaked its Vector+Matrix
 	    if (theVectors[i] != 0)
 		delete theVectors[i];
 	    if (theMatrices[i] != 0)
