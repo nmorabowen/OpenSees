@@ -24,6 +24,12 @@ was run or edited; the deck is built from the intake's §1 spec
 wall is a constitutive singularity, not an integration defect. There is no peak and
 no plateau on this deck.**
 
+> **Calibration caveat** (WP-150 memo §10, on #892 at 86bb27606). The campaign SANISAND set has very-dense-sand strength: plane-strain φ′_peak 60° → 45° over p0 10 → 500 kPa. It dilates ~3–20× less than Bolton's stress–dilatancy requires in plane strain, and ~15–25× less in triaxial, because A0 = 0.05 is 14× below DM04's Toyoura value. It peaks at 4–16 % axial strain.
+>
+> So the "no peak or plateau to s/B 0.05" finding is at least partly a CALIBRATION effect. No footing curve here is to be called "physical" until TIMs confirm the calibration against their lab data. That covers SANISAND, the DP 38° control and PDMY01 33°.
+>
+> The IntScheme 129 recommendation (§12) stands as the INTEGRATOR recommendation. It says nothing about the calibration.
+
 - **E_A, ModifiedEuler** (IntScheme 1): stops on the step floor at **s/B 0.0292, q 701.8 kPa**. That is inside TIMs' own ModifiedEuler wall band (s/B 0.026–0.041), so the fork reproduces TIMs. On the way in, ModifiedEuler force-accepts at dt_min and commits ρ_α up to 13.09. The result is a spurious +6 % stiffening against SAS-ME at the same s/B (§8.4).
 - **E_B, SAS-ME** (IntScheme 129, TanType 0, TolR 1e-4): stops on the step floor at **s/B 0.0508, q 966.7 kPa**. q is still rising there: the slope over the last 0.005 s/B is 0.24 × the initial slope, and q_max = q_end. The first `loadingNonPosH` refusal comes at s/B 0.0363. From then on NonPosH refusals accumulate, and they end the run.
 - **Every SANISAND arm stops in MODE = FLOOR.**
@@ -442,7 +448,7 @@ LadrunoSANISAND $tag 264.32 0.312885 0.6944 1.3309 0.71 0.027 0.83 0.45 101 0.00
 - TanType 1: step-size collapse, 13× cost (§8.6).
 - `-maxSubsteps` above 2000: only tested inside E_C2.
 
-**What it does NOT buy: a capacity.** The wall stays. A SANISAND q–s past s/B ≈ 0.036 on this deck is carried through NonPosH refusals, and it ends at 0.0508 with no peak. Read q with the Krylov ±1.5 kPa band (§8.2).
+**What it does NOT say: anything about the calibration** (see the caveat in §0). **What it does NOT buy: a capacity.** The wall stays. A SANISAND q–s past s/B ≈ 0.036 on this deck is carried through NonPosH refusals, and it ends at 0.0508 with no peak. Read q with the Krylov ±1.5 kPa band (§8.2).
 
 ## 13. Follow-ups — owner/TIMs decisions (R1: owner-approved as opt-in; TIMs decide on its use)
 
