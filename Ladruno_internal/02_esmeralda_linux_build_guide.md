@@ -278,9 +278,10 @@ Gotchas:
   Makefiles call it) and no internet (`git clone` and `conan install` fail on
   DNS). A cold build of `OpenSees` + `OpenSeesPy` took ~3 min at `-j22` here.
 - **MKL here is oneMKL 2024.2; Windows has 2025.1.** Code that names an MKL
-  symbol newer than 2024.2 compiles on Windows and fails here, and no CI
-  compiles the Linux opt-in. It happened with `MKL_CBWR_AVX10` (WP-132):
-  guard such names with `#ifdef`.
+  symbol newer than 2024.2 compiles on Windows and fails here. It happened
+  with `MKL_CBWR_AVX10` (WP-132): guard such names with `#ifdef`. CI job
+  `mkl-compat` (WP-148) now compiles the MKL-gated sources against 2024.2.2
+  on every PR, so this fails there first.
 - **`-deterministic` must come before the first solve of the process on
   Linux.** An earlier Pardiso or UmfPack solve makes MKL refuse the mode (rc
   -8); on Windows only an earlier LAPACK call does. `export MKL_CBWR=AUTO`
