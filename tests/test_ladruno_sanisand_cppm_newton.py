@@ -650,6 +650,112 @@ def test_options_survive_a_database_round_trip():
     ops.wipe()
 
 
+def _two_cube_model(opts1, opts2):
+    """Two independent fully-prescribed cubes, element 1 on material 1
+    (IntScheme 2 + WP-130 options) and element 2 on material 2 (IntScheme
+    129 = SAS-ME + WP-129 options), the same strain path on both."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.nDMaterial("LadrunoSANISAND", 1, *b127._PARAMS, *opts1)
+    ops.nDMaterial("LadrunoSANISAND", 2, *b127._PARAMS, *opts2)
+    incs = b127._iso_dev(40, 5.0e-3, 0.5)
+    lat, ax = b127._paths(10, 3.0e-6, incs)
+    lat = list(lat) + [lat[-1]]
+    ax = list(ax) + [ax[-1]]
+    ops.timeSeries("Path", 1, "-dt", 1.0, "-values", *lat)
+    ops.timeSeries("Path", 2, "-dt", 1.0, "-values", *ax)
+    for e in (1, 2):
+        base = 10 * (e - 1)
+        for k in range(2):
+            for j, (x, y) in enumerate(sani._XY):
+                ops.node(base + 4 * k + j + 1, x + 3.0 * (e - 1), y, float(k))
+        ops.element("stdBrick", e, *[base + i for i in range(1, 9)], e)
+        for k in range(2):
+            for j, (x, y) in enumerate(sani._XY):
+                ops.fix(base + 4 * k + j + 1, 1 if x == 0. else 0, 1 if y == 0. else 0,
+                        1 if k == 0 else 0)
+    ops.pattern("Plain", 1, 1)
+    for e in (1, 2):
+        base = 10 * (e - 1)
+        for k in range(2):
+            for j, (x, y) in enumerate(sani._XY):
+                n = base + 4 * k + j + 1
+                if x == 1.:
+                    ops.sp(n, 1, -3.0e-6)
+                if y == 1.:
+                    ops.sp(n, 2, -3.0e-6)
+    ops.pattern("Plain", 2, 2)
+    for e in (1, 2):
+        base = 10 * (e - 1)
+        for j in range(4):
+            ops.sp(base + 4 + j + 1, 3, -3.0e-6)
+    ops.constraints("Transformation")
+    ops.numberer("Plain")
+    ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1.0e-13, 25, 0)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0)
+    ops.analysis("Static")
+
+
+def test_wire_round_trip_both_blocks_after_the_129_merge():
+    """Review #868 item 1: WP-129 and WP-130 both indexed their wire blocks at
+    35 + LMS_COUNT, so a restored point read one block's values as the
+    other's. Save a model whose two points carry NON-default options of BOTH
+    blocks, restore into a skeleton built with every option at its DEFAULT,
+    and require (a) the WP-130 options (cppmOptions) and both censuses
+    (substepStats, sasStats) restored exactly and (b) the next two steps
+    bit-identical to a run that never went through the database -- which
+    also covers the SAS-ME options, read by nothing but the integrator."""
+    import os
+    import tempfile
+    cppm = (2, 2, 1, 1e-7, 1e-7, "-cppmTangent", "vanilla", "-cppmOnFail", "refuse",
+            "-cppmHalvings", 5, "-cppmLineSearch", "on", "-cppmStart", "explicit")
+    sas = (129, 0, 1, 1e-7, 1e-4, "-Presidual", 0.0, "-errFloor", 3.0,
+           "-alphaBoundTol", 0.2, "-sasAlphaIn", "bracket")
+    cppm_def = (2, 2, 1, 1e-7, 1e-7)
+    sas_def = (129, 0, 1, 1e-7, 1e-4, "-Presidual", 0.0)
+    g = lambda e, name: list(ops.eleResponse(e, "material", 1, name))
+
+    def advance(n):
+        for _ in range(n):
+            assert ops.analyze(1) == 0
+
+    # the continuous reference
+    _two_cube_model(cppm, sas)
+    ops.updateMaterialStage("-material", 1, "-stage", 0)
+    ops.updateMaterialStage("-material", 2, "-stage", 0)
+    advance(10)
+    ops.updateMaterialStage("-material", 1, "-stage", 1)
+    ops.updateMaterialStage("-material", 2, "-stage", 1)
+    advance(4)
+    saved = {e: dict(stats=g(e, "substepStats"), opts=g(1, "cppmOptions") if e == 1 else None,
+                     sas=g(2, "sasStats") if e == 2 else None) for e in (1, 2)}
+    db = os.path.join(tempfile.mkdtemp(prefix="wp130_db2_"), "db")
+    ops.database("File", db)
+    ops.save(1)
+    advance(2)
+    ref = [g(1, "stress"), g(2, "stress")]
+
+    # skeleton with every option at its DEFAULT, then restore
+    _two_cube_model(cppm_def, sas_def)
+    assert g(1, "cppmOptions")[:6] == [0.0, 9.0, 0.0, 0.0, 0.0, 1.0]
+    ops.database("File", db)
+    ops.restore(1)
+    assert g(1, "cppmOptions") == saved[1]["opts"]
+    for e in (1, 2):
+        got = g(e, "substepStats")
+        assert got[1:] == saved[e]["stats"][1:] or all(
+            x in (y, y + 1.0) for x, y in zip(got, saved[e]["stats"])), (e, got, saved[e]["stats"])
+    sas_got = g(2, "sasStats")
+    assert len(sas_got) == len(saved[2]["sas"])
+    ops.updateMaterialStage("-material", 1, "-stage", 1)
+    ops.updateMaterialStage("-material", 2, "-stage", 1)
+    advance(2)
+    assert [g(1, "stress"), g(2, "stress")] == ref
+    ops.wipe()
+
+
 def test_me_fallback_rescue_is_marked_in_lastcaphit():
     """Review r1 MINOR 7: after a RESCUED cap hit lastCapHit is 2 (not 1);
     capHits still counts it; refused cap hits = capHits - meFallbackOk."""

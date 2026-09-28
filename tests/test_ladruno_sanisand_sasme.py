@@ -77,8 +77,20 @@ def _rows_equal(cur, ref):
 
 
 def test_existing_schemes_byte_identical():
-    """Every existing IntScheme vs the unmodified WP-127 binary (Windows).
-    Bit-exact on win32; the 1e-6 cross-platform floor elsewhere."""
+    """Every existing IntScheme vs the pinned baseline (Windows).
+    Bit-exact on win32; the 1e-6 cross-platform floor elsewhere.
+
+    RE-BASELINED DELIBERATELY by the WP-130 merge (#868), checked row by row
+    with tests/wp129_rebaseline_check.py before writing: (1) every LadrunoSANISAND
+    row carries 12 more trailing `substepStats` columns (17 -> 29: the WP-130
+    CPPM census), the first 17 unchanged; (2) `ls3d_s2` (IntScheme 2 + TanType
+    2) hands out the CPPM tangent with the CORRECTED sign -- `-cppmTangent
+    fixed` is the LadrunoSANISAND default (owner decision; the vanilla tangent
+    is MINUS the return map's derivative, LEDGER_quirks) -- measured: 20 rows,
+    ||T_new + T_old|| / ||T_old|| <= 3.6e-3, stress/strain/state within 7.3e-8
+    relative (the fixed mode also corrects the low-p D_factor derivative in
+    the local Jacobian; this deck is at p ~ 2 kPa). Nothing else moved; the
+    vanilla ManzariDafalias decks are bit-identical to the old baseline."""
     import wp129_sanisand_byteid as B
     with open(B.BASELINE) as fh:
         ref = json.load(fh)["decks"]
