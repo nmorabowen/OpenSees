@@ -20,3 +20,31 @@ jobs 148583 and 148586 (runs `~/ladruno_wp138/deck/runs/<leg>/`). The checkpoint
 
 The parameter set is hard-coded in `h_decomp.py`. Pass `NAME=value` after the file list to override one, for example
 `A0=0.001` for the ablation S4 set.
+
+## R2 deck support: B/4 and mesh-orientation variants
+
+`footing_ab_meshperturb.patch` applies to the WP-138 Esmeralda deck `footing_ab.py` (base sha1
+`6425ff3ca7c38b6a8808ca80979b41e925448c8a`, the orchestrator's copy). Put `mesh_perturb.py` next to it.
+- `--mesh b4`: B/4 fine band, 46 × 14 = 644 elements, 5 footprint nodes.
+  - Graded counts 7 (x) and 8 (y), with 6 fine rows.
+  - The node-count and footprint assertions are generalised; b8/b16 are unchanged.
+- `--mesh-perturb shear:DEG | jitter:A[:SEED[:KEEP]]`: moves interior fine-zone nodes only (see the `mesh_perturb.py`
+  docstring). The Gauss-point coordinates and areas logged and saved use the true distorted geometry.
+
+**Validated locally** (DP 38°, engine dd107e5aa copy, 3 push steps each):
+
+| variant | worst min/max detJ | 1-D K0 patch max rel err after gravity |
+|---|---|---|
+| none (b8) | 1 | 2.1e-12 |
+| **shear:15** (the primary orientation leg) | 0.974 | 8.8e-3 |
+| jitter:0.1 (KEEP 1; the secondary leg) | 0.546 | 4.6e-2 |
+| jitter:0.2 (KEEP 1) | 0.239 | 9.0e-2 |
+| jitter:0.2 KEEP 0 (avoid) | 0.239 | 2.6e-1 |
+| b4 | 1 | 5.3e-13 |
+| b4 shear:15 | 0.950 | 1.7e-2 |
+
+- Base reaction is exact in every case.
+- The K0 patch error is a discretization error: distorted bilinear quads do not carry the 1-D self-weight field
+  element by element. It is largest where the geostatic stress is smallest (near the top of the fine band).
+- The **default path is byte-identical** to the unpatched deck: b8, 3 steps, steps.csv field-for-field apart from wall
+  time.

@@ -352,10 +352,13 @@ Deck: `~/ladruno_wp138/deck/footing_ab.py` on Esmeralda (E_B settings: IntScheme
 MKL_CBWR COMPATIBLE).
 
 **New flags:**
-- `--hcap c_A` and `--tau τ`;
+- `--hcap c_A` and `--tau τ` (their names are the R1 session's and R3's to fix);
 - `--dsmax`, to cap ds for R3;
-- `--mesh b4`: the graded counts must be integers, so b4 needs its own counts; it cannot be r = ½ of b8;
-- a skewed-mesh variant.
+- **done, in `footing_ab_meshperturb.patch`:**
+  - `--mesh b4` (644 elements);
+  - `--mesh-perturb shear:15`, the primary orientation leg (K0 patch 0.9 %);
+  - `--mesh-perturb jitter:0.1`, the secondary leg (4.6 %).
+  - The default path is byte-identical (testbed README).
 
 | id | stage | legs | pass |
 |---|---|---|---|

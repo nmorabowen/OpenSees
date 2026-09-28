@@ -1,0 +1,117 @@
+--- footing_ab.py
++++ footing_ab.py
+@@ -83,6 +83,7 @@
+ N_YG = 15                         # graded rows below the fine band
+ N_YF = 12
+ MESH = "b8"
++MESH_PERTURB = ""               # WP-150 R2: "" | jitter:A[:SEED] | shear:DEG (mesh_perturb.py)
+ 
+ 
+ def set_mesh(name):
+@@ -94,9 +95,11 @@
+     the same numbering RULE (lower block first, column-major), so they do NOT
+     match the act's CSV tags (that mapping only exists for b8)."""
+     global H0, N_XG, N_YG, N_YF, MESH
+-    r = {"b8": 1, "b16": 2}[name]
++    r = {"b4": 0.5, "b8": 1, "b16": 2}[name]      # WP-150 R2: b4 added
+     H0 = B_FOOT / (8.0 * r)
+-    N_XG, N_YG, N_YF = 13 * r, 15 * r, 12 * r
++    # b4 (WP-150 R2): B/4 fine band, graded counts ~ half of b8's (7 x-graded, 8 y-graded,
++    # 6 fine rows): 46 x 14 = 644 elements, 5 footprint nodes.
++    N_XG, N_YG, N_YF = {"b4": (7, 8, 6), "b8": (13, 15, 12), "b16": (26, 30, 24)}[name]
+     MESH = name
+ 
+ GAMMA = 9.81                      # kN/m3 buoyant
+@@ -154,8 +157,8 @@
+     y = np.unique(np.round(np.concatenate([
+         _graded(YBOT, -Y_FINE, N_YG, H0, False),
+         np.linspace(-Y_FINE, 0.0, N_YF + 1)]), 12))
+-    rr = 2 if MESH == "b16" else 1
+-    assert len(x) == 90 * rr + 1 and len(y) == 27 * rr + 1, (len(x), len(y))
++    # WP-150 R2: the general count (= 90 rr + 1 and 27 rr + 1 for b8/b16, as before)
++    assert len(x) == 2 * N_XG + int(round(2 * X_FINE / H0)) + 1 and len(y) == N_YG + N_YF + 1, (len(x), len(y))
+     return x, y
+ 
+ 
+@@ -181,6 +184,13 @@
+           tantype=0):
+     x, y = mesh_coords()
+     nx, ny = len(x), len(y)
++    # WP-150 R2: interior fine-zone nodes may be moved (mesh-orientation variant);
++    # surface row, fine-zone outline and boundaries are untouched.
++    from mesh_perturb import node_coords, gauss_points, min_jacobian_ratio
++    XN, YN = node_coords(x, y, X_FINE, Y_FINE, H0, MESH_PERTURB)
++    if MESH_PERTURB:
++        log(f"mesh perturbation {MESH_PERTURB!r}: worst min/max detJ over elements "
++            f"{min_jacobian_ratio(XN, YN):.3f}")
+ 
+     def nt(i, j):
+         return i * ny + j + 1
+@@ -189,7 +199,7 @@
+     ops.model("basic", "-ndm", 2, "-ndf", 2)
+     for i in range(nx):
+         for j in range(ny):
+-            ops.node(nt(i, j), float(x[i]), float(y[j]))
++            ops.node(nt(i, j), float(XN[i, j]), float(YN[i, j]))
+     REF = 900001
+     ops.node(REF, 0.0, 0.0, "-ndf", 3)
+ 
+@@ -219,15 +229,22 @@
+         ops.element("LadrunoQuad", tag, nt(i, j), nt(i + 1, j), nt(i + 1, j + 1),
+                     nt(i, j + 1), MAT, "-formulation", "bbar",
+                     "-type", "PlaneStrain", "-thick", 1.0, "-body", 0.0, -GAMMA)
+-        xc = 0.25 * (x[i] + x[i + 1]) * 2
+-        yc = 0.25 * (y[j] + y[j + 1]) * 2
+-        gps = []
+-        for xi, et in GP_XI:
+-            g = 1.0 / math.sqrt(3.0)
+-            gps.append((0.5 * (x[i] + x[i + 1]) + 0.5 * xi * g * (x[i + 1] - x[i]),
+-                        0.5 * (y[j] + y[j + 1]) + 0.5 * et * g * (y[j + 1] - y[j])))
+-        info[tag] = dict(xc=float(xc), yc=float(yc), gps=gps,
+-                         area=float((x[i + 1] - x[i]) * (y[j + 1] - y[j])))
++        if not MESH_PERTURB:
++            xc = 0.25 * (x[i] + x[i + 1]) * 2
++            yc = 0.25 * (y[j] + y[j + 1]) * 2
++            gps = []
++            for xi, et in GP_XI:
++                g = 1.0 / math.sqrt(3.0)
++                gps.append((0.5 * (x[i] + x[i + 1]) + 0.5 * xi * g * (x[i + 1] - x[i]),
++                            0.5 * (y[j] + y[j + 1]) + 0.5 * et * g * (y[j + 1] - y[j])))
++            area = (x[i + 1] - x[i]) * (y[j + 1] - y[j])
++        else:   # WP-150 R2: the true (distorted) geometry
++            cx = [XN[i, j], XN[i + 1, j], XN[i + 1, j + 1], XN[i, j + 1]]
++            cy = [YN[i, j], YN[i + 1, j], YN[i + 1, j + 1], YN[i, j + 1]]
++            gps, area = gauss_points(cx, cy)
++            xc = float(np.mean([g[0] for g in gps]))
++            yc = float(np.mean([g[1] for g in gps]))
++        info[tag] = dict(xc=float(xc), yc=float(yc), gps=gps, area=float(area))
+ 
+     for i in range(nx):
+         for j in range(ny):
+@@ -239,7 +256,7 @@
+ 
+     half = 0.5 * B_FOOT
+     foot = [nt(i, ny - 1) for i in range(nx) if abs(x[i]) <= half + 1e-9]
+-    assert len(foot) == (17 if MESH == "b16" else 9), len(foot)
++    assert len(foot) == int(round(B_FOOT / H0)) + 1, len(foot)      # 5 / 9 / 17 (b4 / b8 / b16)
+     ops.element("LadrunoKinematicCoupling", 900001, REF, len(foot), *foot,
+                 "-dof", 1, 2)
+ 
+@@ -557,11 +574,15 @@
+     ap.add_argument("--krylov-tol-mult", type=float, default=10.0,
+                     help="tolerance multiplier of the KrylovNewton rung (10 = the "
+                          "original ladder; 1 = the same 1e-5 x applied as Newton)")
+-    ap.add_argument("--mesh", choices=("b8", "b16"), default="b8",
+-                    help="element size in the fine band: B/8 (default, the act's mesh) or B/16")
++    ap.add_argument("--mesh", choices=("b4", "b8", "b16"), default="b8",
++                    help="element size in the fine band: B/8 (default, the act's mesh), B/16, or B/4 (WP-150 R2)")
++    ap.add_argument("--mesh-perturb", default="",
++                    help="WP-150 R2 mesh-orientation variant: jitter:A[:SEED] or shear:DEG (interior fine-zone nodes)")
+     ap.add_argument("--out", required=True)
+     args = ap.parse_args(argv)
+     set_mesh(args.mesh)
++    global MESH_PERTURB
++    MESH_PERTURB = args.mesh_perturb
+     global LADDER
+     LADDER = tuple((a, (args.krylov_tol_mult if a == "KrylovNewton" else tf), it)
+                    for a, tf, it in LADDER)
