@@ -55,6 +55,9 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       `getResistingForceIncInertia` calls `getResistingForce()` (which subtracts it), it must not
       subtract it again. Quirks: "`ElasticBeam2d` subtracts the ground-motion load Q TWICE". Copy the
       rigid-body probe: every node's relative acceleration must be exactly `−a_g`.
+- [ ] One mass model per element: the `M·a` in `getResistingForceIncInertia` uses the SAME matrix
+      `getMass()` returns (lumped flag included) — else Newton's Jacobian is not the residual's
+      derivative. Quirks: "A `-lumped` element must use the lumped mass in the inertia RESIDUAL too".
 - [ ] Any element with mass gets a **dynamic Rayleigh regression test** (betaK ≠ 0, transient).
       Same entry: "a dynamic Rayleigh regression is mandatory".
 - [ ] Ignoring Rayleigh (a pure penalty/constraint tie)? Derive from `LadrunoUndampedElement`
