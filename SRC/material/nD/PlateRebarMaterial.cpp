@@ -402,4 +402,32 @@ int PlateRebarMaterial::setParameter(const char** argv, int argc, Parameter& par
 {
     return theMat->setParameter(argv, argc, param);
 }
+
+// Ladruno (WP-142): response forwarding to the wrapped uniaxial (theMat).
+// Without it the bar's own state (plastic strain, back stress, damage,
+// buckling state, ...) is unreachable inside a LayeredShell section.
+//  * "material <args...>" -> theMat->setResponse(<args...>), so keys that
+//    collide with the NDMaterial base ("stress", "strain", "tangent") can
+//    reach the bar: "... fiber k material stress" is the scalar bar stress.
+//  * a key the NDMaterial base answers keeps its 5-component plate response.
+//  * any other key is forwarded unchanged.
+// The Response is built by THIS copy's theMat, so it binds to this layer's
+// own uniaxial (LayeredShell and every Gauss point hold separate copies).
+Response*
+PlateRebarMaterial::setResponse(const char **argv, int argc, OPS_Stream &output)
+{
+  if (argc < 1 || argv == 0)
+    return 0;
+
+  if (strcmp(argv[0], "material") == 0) {
+    if (argc < 2 || theMat == 0)
+      return 0;
+    return theMat->setResponse(&argv[1], argc - 1, output);
+  }
+
+  Response *theResponse = NDMaterial::setResponse(argv, argc, output);
+  if (theResponse == 0 && theMat != 0)
+    theResponse = theMat->setResponse(argv, argc, output);
+  return theResponse;
+}
  
