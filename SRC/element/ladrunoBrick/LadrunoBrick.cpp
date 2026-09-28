@@ -47,6 +47,7 @@
 #include <ErrorHandler.h>
 #include <LadrunoBrick.h>
 #include <Ladruno_mutation.h>   // Ladruno: ADR-87 D2 mutation gate
+#include <LadrunoElementShell.h>   // Ladruno (WP-124): shared Element-contract helpers
 #include <SolidTransformation.h>          // Ladruno — geometry-method seam (2/3)
 #include <SolidTransformationLinear.h>    // Ladruno — v1 identity method
 #include <FiniteStrainNDMaterial.h>       // Ladruno — v3 finite: setTrialF(F) seam
@@ -132,7 +133,6 @@ LadrunoBrick::LadrunoBrick()
    hourglassType(Hourglass::PHYSICAL), hourglassCoeff(0.0),
    bulkVisc_b1(0.0), bulkVisc_b2(0.0),        // Ladruno (W2-E1): bulk viscosity off
    applyLoad(0), load(0), Ki(0),
-   Mi(0), massCache(true),                     // Ladruno (ADR-77 T2/G2)
    massType(0),
    inertiaSkip(true),                          // Ladruno (ADR-68 T7)
    theGeom(new SolidTransformationLinear()),  // Ladruno — v1 identity geometry
@@ -183,7 +183,6 @@ LadrunoBrick::LadrunoBrick(int tag,
    hourglassType(hgType), hourglassCoeff(hgCoeff),
    bulkVisc_b1(b1bv), bulkVisc_b2(b2bv),      // Ladruno (W2-E1): bulk-viscosity coeffs
    applyLoad(0), load(0), Ki(0),
-   Mi(0), massCache(true),                     // Ladruno (ADR-77 T2/G2)
    massType(matype),
    inertiaSkip(true),                          // Ladruno (ADR-68 T7)
    theGeom(0),                                // Ladruno — set below from geomMethodID
@@ -252,7 +251,6 @@ LadrunoBrick::~LadrunoBrick()
 
   if (load != 0) delete load;
   if (Ki != 0) delete Ki;
-  if (Mi != 0) delete Mi;   // Ladruno (ADR-77 T2/G2)
 
   for (int i = 0; i < 8; i++) {
     if (theDamping[i]) {
@@ -674,32 +672,19 @@ const Matrix &  LadrunoBrick::getTangentStiff(void)
 // Cost: ~4.6 KB + 256 B per element. Escape: element ... -noMassCache.
 const Matrix &  LadrunoBrick::getMass(void)
 {
-  if (massCache && Mi != 0) {
-    bool clean = true;
-    for (int i = 0; i < 8 && clean; i++)
-      if (materialPointers[i]->getRho() != MiRho[i]) clean = false;
-    for (int i = 0; i < 8 && clean; i++) {
-      const Vector &crd = nodePointers[i]->getCrds();
-      if (crd(0) != MiCrd[3*i] || crd(1) != MiCrd[3*i+1] || crd(2) != MiCrd[3*i+2])
-        clean = false;
-    }
-    if (clean)
-      return *Mi;
-    delete Mi;          // guard tripped (rho or coords changed): re-form + re-fill
-    Mi = 0;
-  }
+  // Ladruno (WP-124 stage 4): the shared LadrunoMassCache, same guards in the same
+  // order (per-GP rho, then nodal coords) as the ad hoc cache it replaces.
+  double sig[8];
+  for (int i = 0; i < 8; i++)
+    sig[i] = materialPointers[i]->getRho();
+  if (const Matrix *Mc = massCache.lookup(sig, 8, nodePointers, 8, 3))
+    return *Mc;
 
   formInertiaTerms(1);
 
-  if (massCache) {
-    Mi = new Matrix(mass);
-    for (int i = 0; i < 8; i++) {
-      MiRho[i] = materialPointers[i]->getRho();
-      const Vector &crd = nodePointers[i]->getCrds();
-      MiCrd[3*i] = crd(0); MiCrd[3*i+1] = crd(1); MiCrd[3*i+2] = crd(2);
-    }
-    return *Mi;
-  }
+  massCache.fill(mass, sig, 8, nodePointers, 8, 3);
+  if (const Matrix *Mc = massCache.cached())   // per-instance copy, not the class static
+    return *Mc;
   return mass;
 }
 
@@ -736,22 +721,22 @@ const Matrix &  LadrunoBrick::getInitialStiff(void)
       formPhysical(1, true);
     else
       formUri(1, true);
-    Ki = new Matrix(stiff);
-  LADRUNO_MUTATE_TANGENT(CONTINUUM, *Ki);   // ADR-87 D2 gate
+    LadrunoShell::cacheKi(Ki, stiff);
+    LADRUNO_MUTATE_TANGENT(CONTINUUM, *Ki);   // ADR-87 D2 gate
     return *Ki;
   }
 
   if (formulation == Formulation::SSP) {
     formSSP(1, true);
-    Ki = new Matrix(stiff);
-  LADRUNO_MUTATE_TANGENT(CONTINUUM, *Ki);   // ADR-87 D2 gate
+    LadrunoShell::cacheKi(Ki, stiff);
+    LADRUNO_MUTATE_TANGENT(CONTINUUM, *Ki);   // ADR-87 D2 gate
     return *Ki;
   }
 
   if (formulation == Formulation::EAS) {
     formEAStrue(1, true);   // condensed elastic K* at alpha=0 (no inner Newton)
-    Ki = new Matrix(stiff);
-  LADRUNO_MUTATE_TANGENT(CONTINUUM, *Ki);   // ADR-87 D2 gate
+    LadrunoShell::cacheKi(Ki, stiff);
+    LADRUNO_MUTATE_TANGENT(CONTINUUM, *Ki);   // ADR-87 D2 gate
     return *Ki;
   }
 
@@ -858,9 +843,13 @@ const Matrix &  LadrunoBrick::getInitialStiff(void)
   static Vector zeroF(24);
   theGeom->globalizeStiff(stiff, zeroF, stiff);
 
-  Ki = new Matrix(stiff);
+  LadrunoShell::cacheKi(Ki, stiff);
   LADRUNO_MUTATE_TANGENT(CONTINUUM, *Ki);   // ADR-87 D2 gate
-  return stiff;
+  // Ladruno (WP-124 C1): return the cache, never the class-static scratch. This
+  // branch returned `stiff` since #228 (the fix reached Quad/CST only): the
+  // FIRST call handed out a reference the next getTangentStiff of ANY brick
+  // overwrites, and one the ADR-87 tangent mutation never touched.
+  return *Ki;
 }
 
 //----------------------------------------------------------------------
@@ -913,16 +902,11 @@ LadrunoBrick::addInertiaLoadToUnbalance(const Vector &accel)
   // formInertiaTerms(1)'s resid side-effect on a cache hit changes nothing.
   const Matrix &M = this->getMass();
 
-  int count = 0;
-  for (int i = 0; i < numberNodes; i++) {
-    const Vector &Raccel = nodePointers[i]->getRV(accel);
-    for (int j = 0; j < ndf; j++)
-      resid(count++) = Raccel(j);
-  }
-
+  // Ladruno (WP-124): LadrunoShell::addGroundInertia; resid is the R a_g scratch as
+  // before. checkSize=false: the historical no-check behaviour (gap C13).
   if (load == 0) load = new Vector(numberNodes * ndf);
-  load->addMatrixVector(1.0, M, resid, -1.0);
-  return 0;
+  return LadrunoShell::addGroundInertia(*load, M, nodePointers, numberNodes, ndf, false,
+                                        accel, resid, "LadrunoBrick", false);
 }
 
 //residual
@@ -3871,7 +3855,10 @@ int  LadrunoBrick::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker
   // (construction-fixed in normal flows), but a restore into a live element
   // can flip it with rho and coords unchanged -- a clean-guard hit would then
   // serve the pre-recv mass. Drop the per-instance cache; next getMass re-forms.
-  if (Mi != 0) { delete Mi; Mi = 0; }
+  massCache.invalidate();
+  // Ladruno (WP-124 C6): Ki was formed from the pre-recv material, thickness and
+  // formulation; a restore into a LIVE element must not keep serving it.
+  LadrunoShell::dropKi(Ki);
 
   return res;
 }
@@ -4303,14 +4290,9 @@ LadrunoBrick::setResponse(const char **argv, int argc, OPS_Stream &output)
     theResponse = new ElementResponse(this, 9, Vector(1));
   }
 
-  output.endTag(); // ElementOutput
-
-  // Ladruno — base vocabulary (globalForce, dampingForce, dynamicForce,
-  // inertialForce); Element::setResponse opens its own ElementOutput tag, so
-  // this MUST come after endTag().
-  if (theResponse == 0)
-    return this->Element::setResponse(argv, argc, output);
-  return theResponse;
+  // Ladruno (WP-124): endTag() FIRST, then the base vocabulary (globalForce,
+  // dampingForce, dynamicForce, inertialForce) -- LadrunoShell::finishResponse.
+  return LadrunoShell::finishResponse(this, theResponse, argv, argc, output);
 }
 
 int
@@ -4424,22 +4406,13 @@ LadrunoBrick::setParameter(const char **argv, int argc, Parameter &param)
   }
 
   // specific material point
-  if (strstr(argv[0], "material") != 0) {
-    if (argc < 3) return -1;
-    int pointNum = atoi(argv[1]);
-    if (pointNum > 0 && pointNum <= 8) {
-      int slot = this->isSinglePoint() ? 0 : pointNum - 1;   // single-point: live slot 0
-      return materialPointers[slot]->setParameter(&argv[2], argc - 2, param);
-    } else
-      return -1;
-  }
+  // single-point: every k -> live slot 0; Ladruno (WP-124 C10): not materialState
+  if (LadrunoShell::isMaterialPointToken(argv[0]))
+    return LadrunoShell::forwardToMaterialPoint(materialPointers, 8, this->isSinglePoint(),
+                                                argv, argc, param);
 
   // all material points
-  for (int i = 0; i < 8; i++) {
-    int matRes = materialPointers[i]->setParameter(argv, argc, param);
-    if (matRes != -1) res = matRes;
-  }
-  return res;
+  return LadrunoShell::forwardToMaterials(materialPointers, 8, argv, argc, param);
 }
 
 int

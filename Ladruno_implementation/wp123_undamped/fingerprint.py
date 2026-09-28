@@ -8,7 +8,13 @@ CentralDifferenceLadruno with and without betaK: self-reported dtcr, integrator
 criticalTimeStep, 40 steps of disp. Uses the models of tests/test_ladruno_undamped_couplings.py.
 
     <py3.12> -S fingerprint.py OUT.json        (same -S bootstrap as run_pytest.py)
+    <py3.12> -S fingerprint.py --suite shells OUT.json [PREFIX ...]
     <py3.12> -S fingerprint.py --compare A.json B.json
+
+`--suite shells` (WP-124) fingerprints the eight continuum element shells instead; its models
+and scenarios live in ../wp124_shells/shell_models.py. PREFIX limits it to matching cases
+(e.g. `Quad/` `Brick/std`). WP_FINGERPRINT_DIST points at another dist/bin, for developing
+the models only: a baseline must come from THIS worktree's build.
 """
 import json
 import os
@@ -33,7 +39,11 @@ def compare(a, b):
 def main():
     if sys.argv[1] == "--compare":
         return compare(sys.argv[2], sys.argv[3])
-    DIST = os.path.join(ROOT, "dist", "bin")
+    suite = "couplings"
+    if sys.argv[1] == "--suite":
+        suite = sys.argv[2]
+        del sys.argv[1:3]
+    DIST = os.environ.get("WP_FINGERPRINT_DIST") or os.path.join(ROOT, "dist", "bin")
     assert sys.flags.no_site, "run with python -S"
     os.add_dll_directory(DIST)
     sys.path.insert(0, DIST)
@@ -42,6 +52,14 @@ def main():
     os.environ.setdefault("LADRUNO_OPENSEES_QUIET", "1")
     import opensees
     assert os.path.normcase(opensees.__file__) == os.path.normcase(os.path.join(DIST, "opensees.pyd"))
+    if suite == "shells":
+        sys.path.insert(0, os.path.join(ROOT, "Ladruno_implementation", "wp124_shells"))
+        import shell_models
+        import opensees as ops_mod
+        out = shell_models.fingerprint(ops_mod, only=sys.argv[2:])
+        json.dump(out, open(sys.argv[1], "w", encoding="utf-8"), indent=0)
+        print(f"wrote {len(out)} series, {sum(len(v) for v in out.values())} values -> {sys.argv[1]}")
+        return 0
     import test_ladruno_undamped_couplings as T
     ops = T.ops
     out = {}

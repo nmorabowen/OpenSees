@@ -1,0 +1,22 @@
+
+== PROF: OPS_PROFILE_SCOPE split (coarse profiler), 200 replays each
+  ring (b16 row 1): total 54.95 ms over 200 updates
+    sanisand.sasME.update                calls     200  wall    54.95 ms  (100.0 %)
+    sanisand.sasME.substeps              calls     200  wall    52.62 ms  ( 95.8 %)
+    sanisand.sasME.stages                calls   11600  wall    32.92 ms  ( 59.9 %)
+    sanisand.sasME.stageArithmetic       calls   11600  wall     9.31 ms  ( 16.9 %)
+    sanisand.sasME.stateDependent        calls   11600  wall     9.10 ms  ( 16.6 %)
+    sanisand.sasME.drift                 calls    5200  wall     5.69 ms  ( 10.3 %)
+    sanisand.sasME.alphaCheck            calls    5200  wall     3.47 ms  (  6.3 %)
+    sanisand.sasME.predictor             calls     200  wall     1.14 ms  (  2.1 %)
+    sanisand.sasME.tangent               calls     200  wall     0.59 ms  (  1.1 %)
+  deep (p ~ 200 kPa, on the cone): total 3.88 ms over 200 updates
+    sanisand.sasME.update                calls     200  wall     3.88 ms  (100.0 %)
+    sanisand.sasME.substeps              calls     200  wall     2.55 ms  ( 65.7 %)
+    sanisand.sasME.stages                calls     400  wall     1.27 ms  ( 32.8 %)
+    sanisand.sasME.tangent               calls     200  wall     0.45 ms  ( 11.6 %)
+    sanisand.sasME.drift                 calls     200  wall     0.44 ms  ( 11.4 %)
+    sanisand.sasME.stageArithmetic       calls     400  wall     0.37 ms  (  9.5 %)
+    sanisand.sasME.stateDependent        calls     400  wall     0.35 ms  (  9.0 %)
+    sanisand.sasME.predictor             calls     200  wall     0.26 ms  (  6.8 %)
+    sanisand.sasME.alphaCheck            calls     200  wall     0.15 ms  (  3.8 %)

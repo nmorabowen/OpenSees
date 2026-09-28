@@ -67,6 +67,7 @@
 #include <Node.h>
 #include <NDMaterial.h>
 #include <Damping.h>
+#include <LadrunoMassCache.h>   // Ladruno (WP-124 stage 4)
 
 class SolidTransformation;   // seam 2/3: geometry-method layer (linear/corot/finite)
 class Response;              // Ladruno — cached material "damage" query (Tier-A Kstab)
@@ -110,7 +111,7 @@ class LadrunoBrick : public Element {
   // Ladruno (ADR-68 T7): toggle the residual inertia no-op skip (default on).
   // Transient perf flag, set by the parser (-noInertiaSkip); NOT serialized.
   void setInertiaSkip(bool s) { inertiaSkip = s; }
-  void setMassCache(bool s) { massCache = s; }   // Ladruno (ADR-77 T2/G2): escape = -noMassCache
+  void setMassCache(bool s) { massCache.setEnabled(s); }   // Ladruno (ADR-77 T2/G2): escape = -noMassCache
   // Ladruno (C3a, the C1 treatment of LadrunoQuad): Tier-A floor and damage sampling of the
   // STIFFNESS-stabilized single-point forms (ssp, uri+stiffness). s = max(floor, 1 - omega),
   // omega = max(centroid trial damage, committed max over 8 shadow Gauss-point materials).
@@ -218,10 +219,7 @@ class LadrunoBrick : public Element {
   // setNodeCoord) -- compared on every getMass() call, so invariance is CHECKED,
   // never assumed (ADR-76 App. A.4). ~4.6 KB + 256 B per element. Not serialized
   // (same policy as inertiaSkip; the cache re-forms on first use after recv).
-  Matrix *Mi;
-  double MiRho[8];                    // guard: per-GP rho at cache fill
-  double MiCrd[24];                   // guard: nodal coords at cache fill
-  bool massCache;                     // default true; escape = -noMassCache
+  LadrunoMassCache massCache;         // WP-124 stage 4: the shared helper; escape = -noMassCache
   int massType;                       // 0 consistent, 1 lumped
   bool inertiaSkip;                   // Ladruno (ADR-68 T7): skip the residual (tangFlag==0) inertia pass when every nodal trial accel is exactly 0 (CDL Azero); default true, not serialized
 

@@ -1,0 +1,41 @@
+== reversal chains from K0 at p0 = 2 kPa
+path              integrator  max a/ab first>1   #>1  ME subst clamp-sig f>1e-6 commits  wall s
+vertUnload 1e-4   ME             5.223      20     6    115385         0              0    1.86
+vertUnload 1e-4   RK45/1e-4      0.877    None     0       nan        21             67    1.35
+vertUnload 1e-4   RK45/1e-7      0.877    None     0       nan        20             26    2.44
+vertUnload 1e-4   ME+aErr        0.475    None     0    798314         0              0  157.39
+extShear 1e-4     ME             7.069      20    20    141629         0              3    2.61
+extShear 1e-4     RK45/1e-4      0.751    None     0       nan        41             67    6.35
+extShear 1e-4     RK45/1e-7      0.929    None     0       nan        63             15    3.99
+extShear 1e-4     ME+aErr        0.509    None     0    863217         0              0  134.34
+shear 1e-4        ME             0.694    None     0     19410         0              0    0.44
+shear 1e-4        RK45/1e-4      0.688    None     0       nan         0             90    2.76
+shear 1e-4        RK45/1e-7      0.763    None     0       nan        89              0    4.22
+shear 1e-4        ME+aErr        0.700    None     0     19334         0              0    4.28
+vertUnload 1e-5   ME             1.193     223   232     76086         0              0    1.17
+vertUnload 1e-5   RK45/1e-4   9541.232      17   883       nan        11            888    0.80
+vertUnload 1e-5   RK45/1e-7      0.887    None     0       nan       366            300   27.04
+vertUnload 1e-5   ME+aErr        0.574    None     0    686189         0              0   94.13
+
+== one increment from sigma = p_s I, alpha = alpha_in = 0 (d_eps_yy = delta): alpha/alpha_b after
+    p_s   delta          ME   RK45/1e-4   RK45/1e-7     ME+aErr
+ 0.0101   1e-05      0.797       0.145       0.147       0.145 
+ 0.0101   3e-05      2.151       0.200       0.203       0.204 
+ 0.0101   1e-04      5.142       0.250       0.252       0.266 
+ 0.0101   3e-04     16.441       0.286       0.289       0.315 
+    0.1   1e-05      0.296       0.087       0.090       0.087 
+    0.1   3e-05      0.768       0.143       0.145       0.142 
+    0.1   1e-04      1.618       0.205       0.207       0.209 
+    0.1   3e-04      5.441       0.252       0.255       0.266 
+      1   1e-05      0.099       0.041       0.045       0.044 
+      1   3e-05      0.284       0.085       0.088       0.086 
+      1   1e-04      0.575       0.148       0.150       0.147 
+      1   3e-04      2.156       0.206       0.209       0.209 
+   (c = the returned eta equals Mc exactly: the dT_min forced accept's radial clamp fired)
+
+== ring rows x {isoComp, isoExt, shear+, shear-} x {1e-6, 1e-5}: alpha/alpha_b after one increment
+integrator   inc start in->out start out->in still out clamp-sig  f>1e-6  wall s
+ME           640             9            10        14         0       4    0.34
+RK45/1e-4    640            10             9        15         0     512    9.89
+RK45/1e-7    640             6            18         6        78      66   30.41
+ME+aErr      640             1            13        11         0       0    3.94

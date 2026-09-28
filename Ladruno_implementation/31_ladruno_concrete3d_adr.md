@@ -570,7 +570,9 @@ Triggered by the validation repo's OOFEM `con2dpm1-4` oracle and Grassl 2013 Fig
    `εfc` but not on `lch`, so `g(εfc)` (post-peak energy/volume) is tabulated once per material
    (`calibrateEpsFcTable`, 8 log points, ~0.2 s) and inverted at `Gc/lch`. `-epsFc` gives the raw CDPM2
    `εfc` (Gc ignored) — byte-identical to the old mapping when `εfc = Gc/(fc·lch)`; `-gcLegacy` keeps the old
-   `Gc/(fc·lch)` mapping itself (follows `-autoRegularization`; the element battery and the punching test pin it).
+   `Gc/(fc·lch)` mapping itself (follows `-autoRegularization`). Tests: the element battery runs the new defaults and pins
+   `-tensionLaw exp -gcLegacy` only on its two numpy-oracle cross-checks (the oracle's `make_material` is
+   legacy by construction); the G8 punching band holds on the new defaults (317.1 vs 315.6 kN legacy, +0.5 %).
    **Residual tangent stiffness:** the bilinear law reaches `ωt = 1` exactly, which made every tensile
    direction stiffness-free (singular global system; single-brick tension: NaN / runaway lateral strains).
    The damaged TANGENT keeps `(1−ω) ≥ 1e-6`; the stress is untouched (fixtures unchanged).

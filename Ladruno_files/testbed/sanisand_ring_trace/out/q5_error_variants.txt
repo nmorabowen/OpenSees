@@ -1,0 +1,28 @@
+== (a) reversal chains, p0 = 2 kPa, delta 1e-4, (20 fwd, 10 back) x 3
+path         variant       max a/ab  #out  substeps forced refused f>1e-6
+vertUnload   today            5.182     6    115351      0       0      0
+vertUnload   +a               0.475     0    798314      0       0      0
+vertUnload   +a+z             0.475     0    798314      0       0      0
+vertUnload   +a+z,refuse      0.475     0    798314      0       0      0
+extShear     today            7.014    20    140885      2       0      3
+extShear     +a               0.509     0    863217      0      18      0
+extShear     +a+z             0.509     0    863217      0      18      0
+extShear     +a+z,refuse      0.509     0    863217      0      18      0
+
+== (b) one increment from each committed state of the constant-p chains (C++), to the eta/M^b peak
+   p0 variant       sub med  sub max  max |dsig| vs today kPa forced refused
+  2.0 today              51       52                 0.00e+00      0       0
+  2.0 +a                 51       52                 2.04e-04      0       0
+  2.0 +a+z               51       52                 2.04e-04      0       0
+  2.0 +a+z,refuse        51       52                 2.04e-04      0       0
+ 20.0 today              18       20                 0.00e+00      0       0
+ 20.0 +a                 18       23                 2.67e-01      0       0
+ 20.0 +a+z               18       23                 2.67e-01      0       0
+ 20.0 +a+z,refuse        18       23                 2.67e-01      0       0
+
+== (c) ring rows x 4 probes x {1e-6, 1e-5}
+variant         sub med/p95/max in->out forced refused f>1e-6
+today             4/   81/ 1336      10      2       0      5
++a               15/  120/ 1369       1      5       0      0
++a+z             15/  120/ 1369       1      5       0      0
++a+z,refuse      15/  120/ 1369       1      5       5      0
