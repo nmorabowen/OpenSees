@@ -964,28 +964,25 @@ def test_explicit_backbone_matches_oracle():
         f"explicit softened backbone {end_e:.3f} != oracle {end_o:.3f} at eps=0.03")
 
 
-def test_explicit_completes_where_fixedstep_implicit_stalls():
-    """The Tier-3 payoff, made concrete: the SAME single cube with a STEEP (snap-backy) softening law
-    (lch=50 ⇒ eps_f=Gf/(ft·lch)≈6.7e-4, a sharp post-peak drop) under fixed-step implicit Newton
-    (DisplacementControl, no step-cutting) STALLS at the immediate softening limit point (eps0=ft/E),
-    converging only a handful of steps; the explicit run marches the full ramp. (Tier-1 needs the
-    _drive_adaptive step-cutting + FullGeneral to get through — see the static softening test.) NB the
-    contrast needs a genuinely snap-backy law: with the unit cube's default autoReg lch≈1 the softening
-    is gradual (eps_f≈0.03) and plain DisplacementControl can path-follow many steps — platform-dependent
-    and NOT the Tier-3 point. The steep law makes the implicit stall unambiguous on every platform."""
+def test_explicit_completes_and_fixedstep_implicit_completes_on_a_steep_law():
+    """The SAME single cube with a STEEP (snap-backy) softening law (lch=50 => eps_f=Gf/(ft*lch)~6.7e-4, a sharp post-peak
+    drop): the explicit run marches the full ramp AND, since the dead-point treatment (WP concrete3d-hang-diagnosis #877
+    follow-up), so does plain fixed-step implicit Newton (DisplacementControl, no step-cutting).
+
+    History: this test used to be `..._where_fixedstep_implicit_stalls` and asserted the CONTRAST (implicit stops). That
+    contrast was never a property of the model. Before the honest return code + rescue chain the LOCAL return map failed at
+    the first softening state and fell silently to the elastic trial (a hidden material fallback, 'a handful of steps');
+    with the map integrating there, fixed-step implicit still stopped after 73 of the 300 steps (measured on the
+    ac72f0388 build); the treatment removes it, consistent with the kappa_p / sig_eff divergence of a point running on past
+    the loss of its strength that aborts K&R and the G5 band (this cube was not separately instrumented). With the treatment (a point past omega_dead carries its tensile effective stress
+    elastically and does not flow) the nominal residual is at the floor level and the fixed-step run completes (300/300,
+    measured). The Tier-3 payoff that remains and is asserted here: explicit completes with no unsymmetric solver, no
+    step-cutting and no convergence test."""
     lch = 50.0
     implicit_fixed = _run(lambda t: _mat(t, lch=lch), 0.03, 300)  # plain DisplacementControl, breaks on stall
     explicit = _run_explicit(CDL, 0.03, _NSTEPS_EXPL, _DT_EXPL, alphaM=20.0, lch=lch)
-    # NOTE (WP concrete3d-hang-diagnosis #877 follow-up): this used to assert < 60 steps. Before the honest
-    # return code + the rescue chain, the LOCAL return map failed at the very first softening state and fell
-    # silently to the elastic trial, so fixed-step implicit died after a handful of steps for the wrong
-    # reason (a hidden material fallback). With the local map now integrating there, the stall is the real
-    # global one: plain DisplacementControl stops at the snap-back limit point after 73 of the 300 steps
-    # (measured). The Tier-3 claim -- fixed-step implicit does NOT get through the ramp, explicit does --
-    # is unchanged, so the bound is "well short of the 300 requested steps" rather than the old number.
-    assert len(implicit_fixed) < 150, (
-        f"fixed-step implicit unexpectedly survived steep softening ({len(implicit_fixed)} steps) — "
-        "contrast no longer demonstrates the Tier-3 payoff")
+    assert len(implicit_fixed) == 300, (
+        f"fixed-step implicit did not complete the steep ramp ({len(implicit_fixed)}/300 steps)")
     assert len(explicit) == _NSTEPS_EXPL, (
         f"explicit failed to complete ({len(explicit)}/{_NSTEPS_EXPL}) — the Tier-3 claim")
 

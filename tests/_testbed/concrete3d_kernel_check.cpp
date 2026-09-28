@@ -203,7 +203,7 @@ static void run_oracle_dump(const char* path) {
         for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
         fh >> in.kp;
         fh >> in.et_max >> in.kdt1 >> in.kdt2 >> in.kdc >> in.kdc1 >> in.kdc2;
-        fh >> in.sigtMax >> in.sigcMax;   // P2g monotone-drive history (8-field line)
+        fh >> in.sigtMax >> in.sigcMax >> in.wt >> in.wc >> mp.omegaDead;   // P2g monotone-drive history (8-field line)
         double deps[6], sigO[6];
         for (int i = 0; i < 6; ++i) fh >> deps[i];
         for (int i = 0; i < 6; ++i) fh >> sigO[i];
@@ -374,7 +374,7 @@ static void run_oracle_dump(const char* path) {
         for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
         fh >> in.kp;
         fh >> in.et_max >> in.kdt1 >> in.kdt2 >> in.kdc >> in.kdc1 >> in.kdc2;
-        fh >> in.sigtMax >> in.sigcMax;   // P2g monotone-drive history (8-field line)
+        fh >> in.sigtMax >> in.sigcMax >> in.wt >> in.wc >> mp.omegaDead;   // P2g monotone-drive history (8-field line)
         double deps[6], sigVisc[6], sigInv[6];
         for (int i = 0; i < 6; ++i) fh >> deps[i];
         for (int i = 0; i < 6; ++i) fh >> sigVisc[i];
@@ -488,7 +488,7 @@ static void run_oracle_dump(const char* path) {
             for (int i = 0; i < 6; ++i) fh >> in.eps[i];
             for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
             fh >> in.kp >> in.et_max >> in.kdt1 >> in.kdt2 >> in.kdc >> in.kdc1 >> in.kdc2
-               >> in.sigtMax >> in.sigcMax >> in.eqc >> in.etPrev;
+               >> in.sigtMax >> in.sigcMax >> in.eqc >> in.etPrev >> in.wt >> in.wc >> mp.omegaDead;
             double deps[6], sigO[6];
             for (int i = 0; i < 6; ++i) fh >> deps[i];
             for (int i = 0; i < 6; ++i) fh >> sigO[i];
@@ -534,7 +534,7 @@ static void run_oracle_dump(const char* path) {
             for (int i = 0; i < 6; ++i) fh >> in.eps[i];
             for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
             fh >> in.kp >> in.et_max >> in.kdt1 >> in.kdt2 >> in.kdc >> in.kdc1 >> in.kdc2
-               >> in.sigtMax >> in.sigcMax >> in.eqc >> in.etPrev;
+               >> in.sigtMax >> in.sigcMax >> in.eqc >> in.etPrev >> in.wt >> in.wc >> mp.omegaDead;
             double deps[6], sigO[6];
             for (int i = 0; i < 6; ++i) fh >> deps[i];
             for (int i = 0; i < 6; ++i) fh >> sigO[i];

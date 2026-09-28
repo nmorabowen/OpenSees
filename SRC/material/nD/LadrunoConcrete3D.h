@@ -82,7 +82,8 @@ class LadrunoConcrete3D : public NDMaterial {
                     double eta = 0.0, int ctTemper = 0,
                     double hoopK = 0.0, double hoopFy = 1.0e30, int dimMode = DIM_3D,
                     int tensionLaw = 1, double epsFcUser = 0.0, int flowPotential = 1,
-                    int compDrive = 1, bool verbose = false, int tcTemper = 2, int subIncrMode = 0);
+                    int compDrive = 1, bool verbose = false, int tcTemper = 2, int subIncrMode = 0,
+                    double omegaDead = 0.998);
   ~LadrunoConcrete3D();
 
   const char* getClassType(void) const { return "LadrunoConcrete3D"; }
@@ -152,6 +153,7 @@ class LadrunoConcrete3D : public NDMaterial {
   bool   verbose;                // -verbose: every final return failure + a per-commit summary of the counters
   int    tcTemper;             // PV20 tension->compression damage temper: 2=proj (default) 0=none (literal CDPM2)
   int    subIncrMode;          // return-map sub-incrementation: 0 = DETERMINISTIC (default; n from the trial overshoot, ladder n->2n->4n), 1 = ADAPTIVE (direct, then halving on failure; the pre-#877-follow-up path)
+  double omegaDead;            // dead-point threshold on the committed damage (residual strength fraction 1-omegaDead; see Kernel Params::omegaDead); >= 1 disables
   // return-map diagnostics (cumulative over ALL integrate() calls incl. Newton iterates; getResponse
   // "substeps" / "returnFailures"): nSub = returns rescued by sub-incrementation, nFail = FINAL failures
   // (elastic-trial fallback); *Step = since the last commitState (the -verbose summary).

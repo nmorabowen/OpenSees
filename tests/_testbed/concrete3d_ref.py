@@ -2516,6 +2516,27 @@ def _dl_beta(mp, dt):
     return 1.0
 
 
+OMEGA_DEAD = 0.998     # default dead-point threshold on the committed damage (mp["omega_dead"]); >= 1 disables
+
+
+def _omega_dead(mp):
+    return float(mp.get("omega_dead", OMEGA_DEAD))
+
+
+def _tension_split_trial(state, deps6, mp):
+    """Spectral split of the elastic trial sig_tr = sig_bar + C:deps of a tension-dead point (omega_t >= omega_dead):
+    returns (sig_plus, sig_minus, state_rebased) where sig_plus/sig_minus are the tensile/compressive spectral parts of
+    sig_tr and state_rebased is the committed state re-based on the TRIAL (sig_bar = sig_tr, eps = the new strain), so a
+    zero-increment update of it sees a plastic-strain increment made of the compressive return alone."""
+    sig_tr = elastic_pred_tensor(state["sig_bar"], deps6, mp)
+    w, V = np.linalg.eigh(voigt_to_mat(sig_tr))
+    plus = mat_to_voigt(V @ np.diag(np.maximum(w, 0.0)) @ V.T)
+    minus = mat_to_voigt(V @ np.diag(np.minimum(w, 0.0)) @ V.T)
+    st = dict(state)
+    st.update(sig_bar=sig_tr, eps=state["eps"] + np.asarray(deps6, float))
+    return plus, minus, st
+
+
 def damaged_step_tensor(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     """ONE constitutive update: committed `state` + strain increment `deps6` -> (nominal sigma[6],
     NEW state, diagnostics). Pure (does not mutate `state`). Identical kinematics to
@@ -2533,7 +2554,37 @@ def damaged_step_tensor(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     eps_f = Gf / (ft * lch)
     eps_fc = _eps_fc(mp, Gc, lch)
     deps6 = np.asarray(deps6, float)
-    sig_bar, kp_new, plastic, conv = return_map_tensor(state["sig_bar"], deps6, mp, state["kp"])
+    # DEAD POINTS (WP concrete3d-hang-diagnosis #877 follow-up, owner decision 2026-09-28). Without this kappa_p and sig_bar
+    # run away on a point that has already lost its strength (K&R: kappa_p 3.4e4, sig_bar 813 MPa at fc = 24; G5 band:
+    # kappa_p 3.2e4, 779 MPa at omega_t = 0.9993) until the return map cannot integrate them, and the nominal residual
+    # (1-omega)*sig_bar is a spurious fraction of ft. Decided on the COMMITTED damage, threshold mp["omega_dead"]
+    # (default OMEGA_DEAD = 0.998, i.e. a residual strength fraction of 2e-3; >= 1 disables):
+    #   * omega_c >= omega_dead (crushed): STRICT FREEZE -- kappa_p, the plastic strain and every damage history frozen, the
+    #     effective stress purely ELASTIC on the frozen plastic strain (sig_bar + C:deps, zero again when the strain returns
+    #     to eps_p, no return map can fail), nominal (1-OMEGA_MAX)*sig_bar (both damages go to the floor OMEGA_MAX and stay
+    #     there), kernel tangent (1-OMEGA_MAX)*C.
+    #   * omega_t >= omega_dead (crack fully open): TENSION CUTOFF ON THE PLASTIC FLOW -- the tensile spectral part of the
+    #     trial effective stress is carried ELASTICALLY (no flow, no kappa_p growth from tension, back to zero at eps_p on
+    #     unloading) and the ordinary return map runs on the compressive remainder only (a cracked point keeps its
+    #     compressive strut: plasticity, hardening, omega_c). Realised by re-basing the committed state on the trial
+    #     (sig_bar = sig_tr, eps = new strain) and a zero increment, so the plastic-strain increment seen by the damage
+    #     histories is the compressive return's alone. (Absorbing the tension into the plastic strain was measured and
+    #     rejected: the permanent strain locks a full-stiffness compression in on unloading.)
+    om_dead = _omega_dead(mp)
+    wt_c, wc_c = state.get("wt", 0.0), state.get("wc", 0.0)
+    if wc_c >= om_dead:
+        # the point is dead in every direction: both damages go to the floor OMEGA_MAX and stay there
+        sig_bar_d = elastic_pred_tensor(state["sig_bar"], deps6, mp)
+        new_state = dict(state)
+        new_state.update(sig_bar=sig_bar_d, eps=state["eps"] + deps6, wt=OMEGA_MAX, wc=OMEGA_MAX)
+        return (1.0 - OMEGA_MAX) * sig_bar_d, new_state, dict(wt=OMEGA_MAX, wc=OMEGA_MAX, plastic=False, conv=True, dead=True)
+    if wt_c >= om_dead:
+        sig_plus, sig_minus, state = _tension_split_trial(state, deps6, mp)
+        deps6 = np.zeros(6)
+        sig_bar_m, kp_new, plastic, conv = return_map_tensor(sig_minus, deps6, mp, state["kp"])
+        sig_bar = sig_plus + sig_bar_m
+    else:
+        sig_bar, kp_new, plastic, conv = return_map_tensor(state["sig_bar"], deps6, mp, state["kp"])
     beta = _dl_beta(mp, dt)
     if beta < 1.0:                                        # Duvaut-Lions: relax toward the inviscid return
         sig_tr = elastic_pred_tensor(state["sig_bar"], deps6, mp)
@@ -2591,7 +2642,7 @@ def damaged_step_tensor(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     sig_nom = mat_to_voigt(V @ np.diag(apply_damage_principal(w, wt, wc)) @ V.T)   # Eq.1, recompose
     new_state = dict(sig_bar=sig_bar, kp=kp_new, eps=eps_new, et_max=et_max,
                      kdt1=kdt1, kdt2=kdt2, kdc=kdc, kdc1=kdc1, kdc2=kdc2,
-                     sigt_max=sigt_max, sigc_max=sigc_max, eqc=eqc, etp=etp)
+                     sigt_max=sigt_max, sigc_max=sigc_max, eqc=eqc, etp=etp, wt=wt, wc=wc)
     return sig_nom, new_state, dict(wt=wt, wc=wc, plastic=plastic, conv=conv)
 
 
@@ -2632,10 +2683,13 @@ def run_p2d_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, ver
     # OWN (axial, lateral) strain history through damaged_step_tensor step-by-step and match sig11.
     du = drive_damaged_unified(mp, np.linspace(0, 0.008, 1500), Gf, Gc, lch, As)
     st = make_damage_state(mp)
+    # the path driver has no dead-point logic (it is the P2c reference), so the equivalence is checked with the
+    # dead-point treatment disabled (omega_dead = 2); the treatment itself is gated by the dead-point tests
+    mp_td0 = dict(mp, omega_dead=2.0)
     sig_step = []
     for i in range(len(du["eps11"])):
         eps_i = np.array([du["eps11"][i], du["eps_lat"][i], du["eps_lat"][i], 0.0, 0.0, 0.0])
-        s, st, _ = damaged_step_tensor(st, eps_i - st["eps"], mp, Gf, Gc, lch, As)
+        s, st, _ = damaged_step_tensor(st, eps_i - st["eps"], mp_td0, Gf, Gc, lch, As)
         sig_step.append(s[0])
     res["TD0_tension_maxdiff"] = float(np.max(np.abs(np.array(sig_step) - du["sig11"])))
     duc = drive_damaged_unified(mp, np.linspace(0, -0.12, 2000), Gf, Gc, lch, As)
@@ -2832,6 +2886,14 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     eps_f = Gf / (ft * lch)
     eps_fc = _eps_fc(mp, Gc, lch)
     deps6 = np.asarray(deps6, float)
+    om_dead = _omega_dead(mp)
+    wt_c, wc_c = state.get("wt", 0.0), state.get("wc", 0.0)
+    if wc_c >= om_dead:
+        # crushed (see damaged_step_tensor): tangent = the floored (1-OMEGA_MAX) * elastic operator
+        return _OMEGA_TAN_FLOOR * elastic_C(mp)
+    if wt_c >= om_dead:
+        # tension cutoff on the plastic flow: the tangent of the split step is taken by central difference of the update
+        return damaged_consistent_tangent(state, deps6, mp, Gf, Gc, lch, As, dt=dt)
     sig_bar, kp_new, plastic, conv = return_map_tensor(state["sig_bar"], deps6, mp, state["kp"])
     beta = _dl_beta(mp, dt)
     if beta < 1.0:                                        # relax the effective stress + kp (mirror the update)
@@ -4719,6 +4781,11 @@ def run_tc_temper_gate(verbose=True):
         res[("T2", tc)] = (max(r[1] for r in pp), min(r[2] for r in pp), pp[-1][3])
     res["T2_ok"] = bool(-res[("T2", "none")][1] < 0.3 * fc and -res[("T2", "proj")][1] > 0.9 * fc)
     mp = pv20_material("proj")
+    # T3 probes the analytic damaged tangent in the partially-crushed cracked-strut regime (0 < wc < 1 next to a tensile
+    # principal). With the dead-point tension cutoff active the 'proj' strut never crushes on this path (it carries
+    # 1.87 fc to the end of the PV20 strain history), so the regime is reached on the legacy dead-point path
+    # (omega_dead = 2, i.e. disabled): the analytic tangent code under test is the same one live points use.
+    mp["omega_dead"] = 2.0
     kn = np.vstack([PV20_KNOTS, [[1.4e-2, 4.49e-4, 8.65e-4]]])
     pp = pv20_path(mp, 200, kn)
     k = next(i for i, r in enumerate(pp) if 0.2 < r[3] < 0.7)
@@ -4734,6 +4801,11 @@ def run_tc_temper_gate(verbose=True):
         sg = {}
         for tc in ("none", "proj"):
             m4 = pv20_material(tc)
+            # T4 isolates the tcTemper logic (its premise: no effective principal above TC_DEAD*ft). The lateral
+            # dilatancy of the post-peak path cracks the point (omega_t past omega_dead) and the dead-point tension cutoff
+            # then carries that lateral tension elastically (unbounded), which puts 'proj' legitimately to work (~1 % fc
+            # difference in the tail), so the premise is kept by running T4 on the legacy dead-point path (omega_dead = 2).
+            m4["omega_dead"] = 2.0
             st = make_damage_state(m4); e = np.zeros(6); v = []
             for kk in range(1, 61):
                 e[0] = -6.0e-3 * kk / 60
@@ -4755,5 +4827,6 @@ def run_tc_temper_gate(verbose=True):
             print(f"  T2 {tc}: PV20 path tau_max {t[0]:.3f} MPa, strut min {t[1]:+.2f} MPa ({-t[1] / fc:.2f} fc), "
                   f"wc end {t[2]:.3f}")
         print(f"  T3 analytic vs FD tangent (wc={res['T3_wc']:.3f}): {res['T3_rel']:.2e}")
-        print(f"  T4 proj vs none, uniaxial/equibiaxial compression: max |d sigma|/fc = {res['T4_dev']:.1e}   PASS={res['PASS']}")
+        print(f"  T4 proj vs none, uniaxial/equibiaxial compression: max |d sigma|/fc = {res['T4_dev']:.1e}")
+        print(f"  PASS={res['PASS']}")
     return res

@@ -157,6 +157,20 @@ struct Params {
     double subIncrC = 0.3;
     int    subIncrMaxPieces = 64;
     int    subIncrRescue = 1;   // deterministic mode only: after the ladder fails, try the ADAPTIVE path (bounded by maxSubAttempts) before refusing
+    // DEAD POINTS (WP concrete3d-hang-diagnosis, owner decision 2026-09-28): the residual-strength fraction (1 - omega) at or
+    // below which a point's crack (omega_t) or crush (omega_c) is treated as fully open. Committed damage >= omegaDead:
+    //   * omega_t: TENSION CUTOFF ON THE PLASTIC FLOW -- the tensile spectral part of the trial effective stress is carried
+    //     ELASTICALLY (no flow, no kappa_p growth from tension; returns to zero at eps_p on unloading) and the return map
+    //     runs on the compressive remainder only (a cracked point keeps its compressive strut);
+    //   * omega_c: STRICT FREEZE -- a crushed point carries nothing: kappa_p, the plastic strain and the damage histories
+    //     are frozen, the effective stress is elastic on the fixed plastic strain, nominal = (1-omega)*sig_eff, tangent
+    //     = (1-omega)*C.
+    // Without it kappa_p and sig_eff run away on a point that has already lost its strength (K&R coarse: kappa_p 3.4e4,
+    // sig_eff 813 MPa at fc = 24; G5 band: kappa_p 3.2e4, sig_eff 779 MPa at omega_t = 0.9993) until the return map cannot
+    // integrate them; the nominal residual (1-omega)*sig_eff is then a spurious fraction of ft. omegaDead >= 1 disables.
+    // The default is the smallest threshold that clears the measured runaway states (ExplicitBathe tension softening on
+    // the legacy exp law only reaches omega_t = 0.99856 when its return map refuses). Parser flag -deadThreshold.
+    double omegaDead = 0.998;
     // Compressive damage drive (B2, WP concrete3d-damage-drive). 0 = legacy fork drive ((1-wc)(-sig_min) = fc exp(..),
     // histories from the onset only; the kernel/oracle default). 1 = CDPM2 Eq.47-49/53/55 (OOFEM computeDamage /
     // computeDamageParamCompression): eqc += alpha_c d(eps_tilde), kappa_dc = max eqc, kdc2 from the start, kdc1 with
@@ -1773,6 +1787,31 @@ inline void dscalarDsig(int which, const double sig6[6], const Params& mp, doubl
 // the [1,1,1,2,2,2] double-contraction weight W6 BEFORE Ceff^T; the per-component micro-FD scalar
 // grads (det/dxs/dac) do NOT (already per-component).
 // ---------------------------------------------------------------------------
+// Return-map evaluation at the committed state for the composite micro-FDs of the damaged tangent. For a live point this is
+// exactly returnMapTensor(mp, in.sigEff, d, in.kp, true, ...). For a TENSION-DEAD point (returnMap re-bases `in` on the
+// trial: eps = new strain, sigEff = sig_tr, so the FD increment d is a perturbation of the trial) the perturbed trial is
+// split spectrally, the tensile part is carried elastically and the return map runs on the compressive remainder -- the
+// same map returnMap applies, so the FD tracks the tangent actually being assembled.
+inline void rmForFD(const Params& mp, const State& in, const double d[6], double sb[6], double& kp)
+{
+    double dum[6][6];
+    if (!(in.wt >= mp.omegaDead)) { returnMapTensor(mp, in.sigEff, d, in.kp, true, sb, kp, dum, false); return; }
+    double sigTr[6]; elasticPredTensor(in.sigEff, d, mp, sigTr);
+    double A[3][3], w[3], V[3][3]; voigtToMat(sigTr, A); eig3sym(A, w, V);
+    double sm[3], sq[3];
+    for (int a = 0; a < 3; ++a) { sm[a] = w[a] < 0.0 ? w[a] : 0.0; sq[a] = w[a] > 0.0 ? w[a] : 0.0; }
+    double S[3][3], Q[3][3], minus[6], plus[6];
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) {
+        double v = 0.0, u = 0.0;
+        for (int a = 0; a < 3; ++a) { v += V[i][a] * sm[a] * V[j][a]; u += V[i][a] * sq[a] * V[j][a]; }
+        S[i][j] = v; Q[i][j] = u;
+    }
+    matToVoigt(S, minus); matToVoigt(Q, plus);
+    const double zero[6] = {0, 0, 0, 0, 0, 0};
+    returnMapTensor(mp, minus, zero, in.kp, true, sb, kp, dum, false);
+    for (int i = 0; i < 6; ++i) sb[i] += plus[i];
+}
+
 inline void damagedTangent(const Params& mp, const State& in, const double sig_eff[6],
                            const double eps_new[6], double kp_new, const double Ceff[6][6], double D6[6][6])
 {
@@ -1951,8 +1990,8 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
             double dp[6], dm[6]; for (int i = 0; i < 6; ++i) { dp[i] = deps[i]; dm[i] = deps[i]; }
             dp[j] += hh; dm[j] -= hh;
             double sbp[6], sbm[6], kpp, kpm, dum[6][6];
-            returnMapTensor(mp, in.sigEff, dp, in.kp, true, sbp, kpp, dum, false);
-            returnMapTensor(mp, in.sigEff, dm, in.kp, true, sbm, kpm, dum, false);
+            rmForFD(mp, in, dp, sbp, kpp);
+            rmForFD(mp, in, dm, sbm, kpm);
             double Ap[3][3], wp[3], Vp[3][3], Am[3][3], wm[3], Vm[3][3];
             voigtToMat(sbp, Ap); eig3sym(Ap, wp, Vp);
             voigtToMat(sbm, Am); eig3sym(Am, wm, Vm);
@@ -1976,8 +2015,8 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
             double dp[6], dm[6]; for (int i = 0; i < 6; ++i) { dp[i] = deps[i]; dm[i] = deps[i]; }
             dp[j] += hh; dm[j] -= hh;
             double sbp[6], sbm[6], kpp, kpm, dum[6][6];
-            returnMapTensor(mp, in.sigEff, dp, in.kp, true, sbp, kpp, dum, false);
-            returnMapTensor(mp, in.sigEff, dm, in.kp, true, sbm, kpm, dum, false);
+            rmForFD(mp, in, dp, sbp, kpp);
+            rmForFD(mp, in, dm, sbm, kpm);
             double Ap[3][3], wp[3], Vp[3][3], Am[3][3], wm[3], Vm[3][3];
             voigtToMat(sbp, Ap); eig3sym(Ap, wp, Vp);
             voigtToMat(sbm, Am); eig3sym(Am, wm, Vm);
@@ -2009,8 +2048,8 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
                 double dp[6], dm[6]; for (int i = 0; i < 6; ++i) { dp[i] = deps[i]; dm[i] = deps[i]; }
                 dp[j] += hh; dm[j] -= hh;
                 double sbp[6], sbm[6], kpp, kpm, dum[6][6];
-                returnMapTensor(mp, in.sigEff, dp, in.kp, true, sbp, kpp, dum, false);
-                returnMapTensor(mp, in.sigEff, dm, in.kp, true, sbm, kpm, dum, false);
+                rmForFD(mp, in, dp, sbp, kpp);
+                rmForFD(mp, in, dm, sbm, kpm);
                 double Ap[3][3], wp[3], Vp[3][3], Am[3][3], wm[3], Vm[3][3];
                 voigtToMat(sbp, Ap); eig3sym(Ap, wp, Vp);
                 voigtToMat(sbm, Am); eig3sym(Am, wm, Vm);
@@ -2312,17 +2351,67 @@ inline int returnMapTensor1(const Params& mp, const double sig_n[6], const doubl
 //   d(sigma)/d(strain) of the reported explicit stress. sigEffImplicit stays the IMPLICIT effective
 //   stress regardless of tier (the LogStrain b^e contract, ADR R3).
 // ===========================================================================
-inline int returnMap(const Params& mp, const double strain[6], const State& in, State& out,
+inline int returnMap(const Params& mp, const double strain[6], const State& inRaw, State& out,
                      double sigma[6], double sigEffImplicit[6], double Dtan6[6][6],
                      bool doTangent, double dt = 0.0, bool hardening = true,
                      double* wtOut = nullptr, double* wcOut = nullptr)
 {
+    // (0) DEAD POINTS (WP concrete3d-hang-diagnosis #877 follow-up, owner decision 2026-09-28; see Params::omegaDead).
+    // Mirror of the oracle damaged_step_tensor. Decided on the COMMITTED damage.
     double deps[6];
-    for (int i = 0; i < 6; ++i) deps[i] = strain[i] - in.eps[i];
+    for (int i = 0; i < 6; ++i) deps[i] = strain[i] - inRaw.eps[i];
+    if (inRaw.wc >= mp.omegaDead) {
+        // CRUSHED: strict freeze. The point is dead in every direction: both damages go to the floor (OMEGA_MAX) and stay
+        // there, nominal = (1-OMEGA_MAX)*sig_eff (scalar), tangent (1-OMEGA_MAX)*C, plastic state and histories frozen.
+        double sigEffD[6]; elasticPredTensor(inRaw.sigEff, deps, mp, sigEffD);
+        const double k = 1.0 - OMEGA_MAX;
+        out = inRaw;
+        out.wt = OMEGA_MAX; out.wc = OMEGA_MAX;
+        for (int i = 0; i < 6; ++i) {
+            out.eps[i] = strain[i]; out.sigEff[i] = sigEffD[i]; sigEffImplicit[i] = sigEffD[i];
+            out.sig[i] = k * sigEffD[i]; sigma[i] = out.sig[i]; out.depl[i] = 0.0;
+        }
+        out.subInfo = 0; out.dwt = 0.0; out.dwc = 0.0;
+        out.dt_n = (dt > 0.0) ? dt : inRaw.dt_n;
+        if (wtOut) *wtOut = OMEGA_MAX;
+        if (wcOut) *wcOut = OMEGA_MAX;
+        if (doTangent) {
+            const double kT = k > OMEGA_TAN_FLOOR ? k : OMEGA_TAN_FLOOR;
+            double C0[6][6]; elasticC(mp, C0);
+            for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Dtan6[i][j] = kT * C0[i][j];
+        }
+        return 0;
+    }
+    // CRACKED (omega_t dead): tension cutoff on the plastic flow. sig_tr = sig_n + C:deps is split spectrally; the tensile
+    // part is carried elastically, the return map runs on the compressive remainder with a zero increment. The committed
+    // state is re-based on the trial (eps = new strain, sigEff = sig_tr) so the plastic-strain increment the damage update
+    // sees is the compressive return's alone. (Absorbing the tension into the plastic strain instead was measured and
+    // rejected: the permanent strain locks a full-stiffness compression in on unloading.)
+    const bool cutT = (inRaw.wt >= mp.omegaDead);
+    State inCut;
+    double cutW[3] = {0, 0, 0}, cutV[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+    double sigPlus[6] = {0, 0, 0, 0, 0, 0}, sigMinus[6] = {0, 0, 0, 0, 0, 0};
+    if (cutT) {
+        double sigTr[6]; elasticPredTensor(inRaw.sigEff, deps, mp, sigTr);
+        double A[3][3]; voigtToMat(sigTr, A); eig3sym(A, cutW, cutV);
+        double sm[3], sq[3];
+        for (int a = 0; a < 3; ++a) { sm[a] = cutW[a] < 0.0 ? cutW[a] : 0.0; sq[a] = cutW[a] > 0.0 ? cutW[a] : 0.0; }
+        double S[3][3], Q[3][3];
+        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) {
+            double v = 0.0, u = 0.0;
+            for (int a = 0; a < 3; ++a) { v += cutV[i][a] * sm[a] * cutV[j][a]; u += cutV[i][a] * sq[a] * cutV[j][a]; }
+            S[i][j] = v; Q[i][j] = u;
+        }
+        inCut = inRaw;
+        matToVoigt(S, sigMinus); matToVoigt(Q, sigPlus);
+        for (int i = 0; i < 6; ++i) { inCut.sigEff[i] = sigTr[i]; inCut.eps[i] = strain[i]; deps[i] = 0.0; }
+    }
+    const State& in = cutT ? inCut : inRaw;
     // (1) IMPLICIT EFFECTIVE-stress return from the committed EFFECTIVE state (NOT the nominal sig).
     double sig_eff[6], kp_new;
-    int status = returnMapTensor(mp, in.sigEff, deps, in.kp, hardening, sig_eff, kp_new, Dtan6, doTangent,
+    int status = returnMapTensor(mp, cutT ? sigMinus : in.sigEff, deps, in.kp, hardening, sig_eff, kp_new, Dtan6, doTangent,
                                  &out.subInfo);
+    if (cutT) for (int i = 0; i < 6; ++i) sig_eff[i] += sigPlus[i];   // tensile part carried elastically
     // (1b) Duvaut-Lions viscoplastic relaxation at the PLASTIC level (ADR §4.4; oracle PR #316). Relax the
     //   inviscid effective return + kp toward the elastic trial by beta = dt/(eta+dt) (Simo-Hughes closed
     //   form). beta < 1 only with a positive viscosity AND a positive dt; eta==0 OR dt<=0 => beta=1 =>
@@ -2342,6 +2431,26 @@ inline int returnMap(const Params& mp, const double strain[6], const State& in, 
             double C0[6][6]; elasticC(mp, C0);
             for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j)
                 Dtan6[i][j] = (1.0 - beta) * C0[i][j] + beta * Dtan6[i][j];
+        }
+    }
+    if (cutT && doTangent && status == 0) {
+        // sig_eff = Plus(sig_tr) + RM(Minus(sig_tr)):  d sig_eff/d eps = C0 + (Dret C0^-1 - I) Ddam- C0, with Dret = A C0 the
+        // return map's own tangent at the compressive remainder and Ddam- the spectral derivative of the negative-part map.
+        double yv[3], ypv[3], Ddam[6][6], C0[6][6], C0i[6][6], T1[6][6], T2[6][6];
+        for (int a = 0; a < 3; ++a) { yv[a] = cutW[a] < 0.0 ? cutW[a] : 0.0; ypv[a] = cutW[a] < 0.0 ? 1.0 : 0.0; }
+        isotropicTangent(cutW, cutV, yv, ypv, Ddam);
+        elasticC(mp, C0); invert6(C0, C0i);
+        for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
+            double v = 0.0; for (int k = 0; k < 6; ++k) v += Dtan6[i][k] * C0i[k][j];
+            T1[i][j] = v - (i == j ? 1.0 : 0.0);                           // Dret C0^-1 - I
+        }
+        for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
+            double v = 0.0; for (int k = 0; k < 6; ++k) v += Ddam[i][k] * C0[k][j];
+            T2[i][j] = v;                                                  // Ddam- C0
+        }
+        for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
+            double v = C0[i][j]; for (int k = 0; k < 6; ++k) v += T1[i][k] * T2[k][j];
+            Dtan6[i][j] = v;
         }
     }
     for (int i = 0; i < 6; ++i) { out.eps[i] = strain[i]; out.sigEff[i] = sig_eff[i]; sigEffImplicit[i] = sig_eff[i]; }
@@ -2377,9 +2486,9 @@ inline int returnMap(const Params& mp, const double strain[6], const State& in, 
     double wt_x = in.wt + r * in.dwt; if (wt_x < 0.0) wt_x = 0.0; if (wt_x > 1.0 - 1.0e-12) wt_x = 1.0 - 1.0e-12;
     double wc_x = in.wc + r * in.dwc; if (wc_x < 0.0) wc_x = 0.0; if (wc_x > 1.0 - 1.0e-12) wc_x = 1.0 - 1.0e-12;
     double deps_eff[6];
-    for (int i = 0; i < 6; ++i) deps_eff[i] = deps[i] - r * in.depl[i];   // frozen plastic-strain increment
+    for (int i = 0; i < 6; ++i) deps_eff[i] = (strain[i] - inRaw.eps[i]) - r * inRaw.depl[i];   // frozen plastic-strain increment
     double sig_bar_x[6];
-    elasticPredTensor(in.sigEff, deps_eff, mp, sig_bar_x);               // LINEAR in deps => elastic tangent
+    elasticPredTensor(inRaw.sigEff, deps_eff, mp, sig_bar_x);               // LINEAR in deps => elastic tangent
     double A[3][3], w[3], V[3][3]; voigtToMat(sig_bar_x, A); eig3sym(A, w, V);
     double sp[3];
     for (int i = 0; i < 3; ++i) {

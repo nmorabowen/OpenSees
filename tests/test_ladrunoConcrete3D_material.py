@@ -558,6 +558,116 @@ def test_tc_temper_gate():
     assert r["PASS"]
 
 
+def _dead_point_material(**kw):
+    return ref.make_material(30000.0, 0.2, 30.0, 3.0, **kw)
+
+
+def test_dead_point_tension_cutoff_gate():
+    """WP concrete3d-hang-diagnosis #877 follow-up: a point whose committed omega_t has reached omega_dead is a fully open
+    crack. Its tensile effective stress is carried ELASTICALLY (no plastic flow, no kappa_p growth from tension) and the
+    return map runs on the compressive remainder only. Drive a material point in uniaxial-strain tension past
+    omega_t = omega_dead, continue 10x further, then unload:
+      * kappa_p is frozen from the first dead step on (before this change it ran to 3e4 on the K&R / G5 points);
+      * sig_eff is the ELASTIC response on the frozen plastic strain, so |sig_eff| <= E'|eps - eps_p,frozen| (equality);
+      * the nominal stress is at most the residual fraction (1 - omega_dead) of sig_eff while the law finishes softening
+        and the FLOOR fraction (1e-6 relative) at 10x, never a spurious residual;
+      * every step converges (zero return-map failures);
+      * unloading is elastic on the frozen plastic strain: NO tension is ever carried (nominal tensile stress zero), sig_eff
+        returns to zero at eps = eps_p (not at eps = 0: the crack-closure compression E'(0 - eps_p) at zero strain is the
+        permanent plastic strain of the pre-dead history, exactly -C:eps_p, and it does not flow)."""
+    import numpy as np
+    E, nu, Gf, Gc, lch = 30000.0, 0.2, 0.1, 5.0, 50.0
+    mp = _dead_point_material()
+    Cx = ref.elastic_C(mp)
+    st = ref.make_damage_state(mp)
+    e = np.zeros(6)
+
+    def step(st, e):
+        return ref.damaged_step_tensor(st, np.asarray(e, float) - st["eps"], mp, Gf, Gc, lch, 2.0)
+
+    dead = None
+    for k in range(1, 4000):
+        e[0] = k * 2.0e-5
+        s, st, info = step(st, e)
+        assert info["conv"]
+        if info["wt"] >= ref.OMEGA_DEAD:
+            dead = k
+            break
+    assert dead is not None, "the point never reached omega_t = omega_dead"
+    eps_dead, kp_dead = e[0], st["kp"]
+    epsp = st["eps"] - np.linalg.solve(Cx, st["sig_bar"])            # frozen plastic strain
+    assert kp_dead > 1.0                                             # a hardened, cracked point (the runaway regime)
+    fails = 0
+    while e[0] < 10.0 * eps_dead:                                    # 10x further
+        e[0] += 1.0e-4
+        s, st, info = step(st, e)
+        fails += 0 if info["conv"] else 1
+        assert st["kp"] == kp_dead, "kappa_p moved on a dead point"
+        bound = Cx[0, 0] * abs(e[0] - epsp[0])
+        assert abs(st["sig_bar"][0]) <= bound * (1.0 + 1e-9) + 1e-9, "sig_eff exceeds the elastic bound"
+        np.testing.assert_allclose(st["sig_bar"], Cx @ (e - epsp), rtol=1e-9, atol=1e-9)
+        assert np.max(np.abs(s)) <= (1.0 - ref.OMEGA_DEAD) * np.max(np.abs(st["sig_bar"])) * (1.0 + 1e-9) + 1e-12
+    assert fails == 0
+    assert np.max(np.abs(s)) <= 1.0e-6 * np.max(np.abs(st["sig_bar"])) + 1e-12, "nominal above the floor level at 10x"
+    assert abs(st["sig_bar"][0]) > 100.0 * mp["ft"]                  # the regime WAS the runaway one (sig_eff >> ft)
+    # unload to zero strain
+    tension_carried = 0.0
+    while e[0] > 0.0:
+        e[0] = max(e[0] - 2.0e-4, 0.0)
+        s, st, info = step(st, e)
+        assert info["conv"] and st["kp"] == kp_dead
+        if e[0] > epsp[0]:
+            tension_carried = max(tension_carried, float(np.max(s)))
+    assert tension_carried <= 1.0e-6 * mp["ft"], tension_carried
+    np.testing.assert_allclose(s[:3], -(Cx @ epsp)[:3], rtol=1e-6, atol=1e-9)     # elastic crack closure at eps = 0
+    assert abs(s[0]) < 0.5 * mp["ft"]                                # ... a small fraction of ft, not a locked-in stress
+
+
+def test_dead_point_crushed_freeze_gate():
+    """A CRUSHED point (committed omega_c >= omega_dead) carries nothing: strict freeze. Drive uniaxial-stress compression
+    (lateral nominal stress free, steep compressive softening) past omega_c = omega_dead, then hold the lateral strains and
+    keep compressing: kappa_p and every damage history are frozen, sig_eff is the ELASTIC response from the state at death
+    (sig_eff_dead + C:(eps - eps_dead), no return map), both damages sit at the floor OMEGA_MAX and the nominal stress is
+    exactly (1-OMEGA_MAX)*sig_eff; unloading is elastic with floor-level nominal and zero return-map failures."""
+    import numpy as np
+    Gf, Gc, lch = 0.1, 5.0, 50.0
+    mp = _dead_point_material()
+    mp["eps_fc"] = 5.0e-5                      # a steep compressive softening branch so the point crushes inside the path
+    Cx = ref.elastic_C(mp)
+    st = ref.make_damage_state(mp)
+    e = np.zeros(6)
+
+    def step(st, e):
+        return ref.damaged_step_tensor(st, np.asarray(e, float) - st["eps"], mp, Gf, Gc, lch, 2.0)
+
+    crushed = False
+    for k in range(1, 400):
+        e[0] = -k * 1.0e-4
+        s, st, info, e, _ = ref._mixed_stress_step(st, e, [1, 2], mp, Gf, Gc, lch, 2.0)
+        if info["wc"] >= ref.OMEGA_DEAD:
+            crushed = True
+            break
+    assert crushed, "the point never crushed"
+    kp_dead, hist_dead = st["kp"], (st["kdc"], st["kdc1"], st["kdc2"], st["kdt1"], st["kdt2"])
+    sig_dead, eps_dead = st["sig_bar"].copy(), st["eps"].copy()
+    fails = 0
+    for _ in range(200):                                             # lateral strains held, axial keeps compressing
+        e[0] -= 1.0e-4
+        s, st, info = step(st, e)
+        fails += 0 if info["conv"] else 1
+        assert st["kp"] == kp_dead and (st["kdc"], st["kdc1"], st["kdc2"], st["kdt1"], st["kdt2"]) == hist_dead
+        np.testing.assert_allclose(st["sig_bar"], sig_dead + Cx @ (e - eps_dead), rtol=1e-9, atol=1e-9)
+        assert info["wt"] == ref.OMEGA_MAX and info["wc"] == ref.OMEGA_MAX
+        np.testing.assert_allclose(s, (1.0 - ref.OMEGA_MAX) * st["sig_bar"], rtol=1e-12, atol=1e-15)
+    assert fails == 0
+    e_hold = e.copy()
+    while e[0] < e_hold[0] + 0.02:                                   # partially unload: elastic, floor-level nominal
+        e[0] += 1.0e-3
+        s, st, info = step(st, e)
+        assert info["conv"] and st["kp"] == kp_dead
+        assert np.max(np.abs(s)) <= 1.01e-6 * np.max(np.abs(st["sig_bar"])) + 1e-15
+
+
 def test_p2_no_spurious_healing():
     """Regression for the PR #261 adversarial-review CRITICAL: the implicit omega solve must not
     clamp-stall to 0 on a physical softening path (a raw clamped Newton did, so the cracked material

@@ -13,6 +13,11 @@ Writes: tests/_testbed/concrete3d_oracle_fixture.txt   (committed; default), OR 
 Param block order (12 numbers): E nu fc ft e Df qh0 Hp Ah Bh Ch Dh
   (the C++ side sets m0 = m0Of(fc,ft,e); both sides derive K,G from E,nu identically.)
 
+Dead-point state (WP concrete3d-hang-diagnosis #877 follow-up): every DMG / ETA / DMGC / DMGT record's history line
+ends with three extra numbers `wt wc omega_dead` -- the COMMITTED omega_t / omega_c of the state and the dead-point
+threshold in force (2.0 = the treatment disabled, used to keep the legacy-path probes) -- because the kernel decides
+the dead-point branches on the committed damage, which the histories alone do not carry.
+
 Deterministic (no Date/random) — regenerates byte-identically, so CI can assert the committed
 fixture is up to date via a fresh regen + diff.
 """
@@ -269,7 +274,8 @@ def main(out=None):
         lines.append(_fmt(st["sig_bar"]))
         lines.append(repr(float(st["kp"])))
         lines.append(_fmt([st["et_max"], st["kdt1"], st["kdt2"], st["kdc"], st["kdc1"], st["kdc2"],
-                           st["sigt_max"], st["sigc_max"]]))   # P2g monotone-drive history (8 fields)
+                           st["sigt_max"], st["sigc_max"],
+                           st.get("wt", 0.0), st.get("wc", 0.0), float(mp.get("omega_dead", ref.OMEGA_DEAD))]))   # P2g history (8 fields) + committed omega_t/omega_c + dead-point mode
         lines.append(_fmt(deps))
         lines.append(_fmt(sig_nom))
 
@@ -380,7 +386,8 @@ def main(out=None):
         lines.append(_fmt(st["sig_bar"]))
         lines.append(repr(float(st["kp"])))
         lines.append(_fmt([st["et_max"], st["kdt1"], st["kdt2"], st["kdc"], st["kdc1"], st["kdc2"],
-                           st["sigt_max"], st["sigc_max"]]))   # P2g monotone-drive history (8 fields)
+                           st["sigt_max"], st["sigc_max"],
+                           st.get("wt", 0.0), st.get("wc", 0.0), float(me.get("omega_dead", ref.OMEGA_DEAD))]))   # P2g history (8 fields) + committed omega_t/omega_c + dead-point mode
         lines.append(_fmt(deps))
         lines.append(_fmt(sig_visc))
         lines.append(_fmt(sig_inv))
@@ -491,7 +498,8 @@ def main(out=None):
         lines.append(_fmt(st["sig_bar"]))
         lines.append(repr(float(st["kp"])))
         lines.append(_fmt([st["et_max"], st["kdt1"], st["kdt2"], st["kdc"], st["kdc1"], st["kdc2"],
-                           st["sigt_max"], st["sigc_max"], st.get("eqc", 0.0), st.get("etp", 0.0)]))
+                           st["sigt_max"], st["sigc_max"], st.get("eqc", 0.0), st.get("etp", 0.0),
+                           st.get("wt", 0.0), st.get("wc", 0.0), float(mp.get("omega_dead", ref.OMEGA_DEAD))]))
         lines.append(_fmt(deps))
         lines.append(_fmt(sig_nom))
 
@@ -507,9 +515,20 @@ def main(out=None):
             ("proj", np.vstack([ref.PV20_KNOTS, [[1.4e-2, 4.49e-4, 8.65e-4]]]), 200, lambda r: 0.2 < r[3] < 0.7,
              "dmgt_pv20_proj_soft")):
         mpt = ref.pv20_material(tc)
+        if label.endswith("_soft") and tc == "proj":
+            # the 'proj' strut no longer crushes on the default path (dead-point tension cutoff: 1.87 fc to the end of the
+            # PV20 strain history), so the partially-crushed cracked-strut state this block probes is taken on the legacy
+            # dead-point path (omega_dead = 2 = disabled, carried in the record).
+            mpt["omega_dead"] = 2.0
         pp = ref.pv20_path(mpt, nst, knots)
         k = next(i for i, r in enumerate(pp) if pick(r))
         st0, dps = pp[k][4], pp[k][5]
+        if label == "dmgt_pv20_none_soft":
+            # The plane-stress solve leaves this dead-tension point with sigma_eff,33 = 0 EXACTLY (the mixed step only
+            # requires the nominal sigma_33 = 0, which any sigma_eff,33 >= 0 satisfies to the 1e-6 floor), i.e. ON the
+            # tension/compression kink of the split, where the central-difference reference of the tangent averages the two
+            # branches. A small out-of-plane strain step moves the evaluated step off the kink (sigma_eff,33 ~ +0.3 MPa).
+            dps = np.array(dps, float) + np.array([0.0, 0.0, 2.0e-5, 0.0, 0.0, 0.0])
         sig_nom, _, _ = ref.damaged_step_tensor(st0, dps, mpt, D["Gf"], D["Gc"], D["lch"], D["As"])
         dmgts.append((label, mpt, st0, dps, sig_nom))
     lines.append(f"NDMGT {len(dmgts)}")
@@ -522,7 +541,8 @@ def main(out=None):
         lines.append(_fmt(st["sig_bar"]))
         lines.append(repr(float(st["kp"])))
         lines.append(_fmt([st["et_max"], st["kdt1"], st["kdt2"], st["kdc"], st["kdc1"], st["kdc2"],
-                           st["sigt_max"], st["sigc_max"], st.get("eqc", 0.0), st.get("etp", 0.0)]))
+                           st["sigt_max"], st["sigc_max"], st.get("eqc", 0.0), st.get("etp", 0.0),
+                           st.get("wt", 0.0), st.get("wc", 0.0), float(mp.get("omega_dead", ref.OMEGA_DEAD))]))
         lines.append(_fmt(deps))
         lines.append(_fmt(sig_nom))
 
