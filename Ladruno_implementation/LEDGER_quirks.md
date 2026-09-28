@@ -7918,3 +7918,17 @@ Three things to carry forward:
 - **Bites:** the base `inertialForce` response (ID `444444`) was `getResistingForceIncInertia() - getRayleighDampingForces() - getResistingForce()`. C++ does not specify the order of those calls, and each returns a `const Vector &` into element storage: LadrunoQuad/CST/LST/CSTPair return the SAME `P` from both residual accessors (the upstream FourNodeQuad pattern — but upstream FourNodeQuad never falls back to the base vocabulary, so it does not offer the token at all); LadrunoBrick/Brick20's GRFII refills the member `resid` that `getResistingForce` returns. Evaluated in GCC's order the later call overwrites the storage the earlier reference points at and the difference cancels to EXACTLY 0.0; MSVC's order happens to copy first. So on those elements `recorder Element … inertialForce` wrote zeros on every Linux build and correct values on Windows — the Windows batteries could never see it. Found by WP-124's `test_inertia_residual_is_M_a` in its first Zone-A (Ubuntu) run: six elements `0.0` vs `rho V a0`; Bezier (GRFII returns its own `res`) passed.
 - **Rule:** never combine two accessor calls that return references into element storage in one expression — copy the first into an owned `Vector`, then apply the others in sequence. Any "passes on Windows, zero on Linux" is an evaluation-order suspect first. Reproducible on MSVC by forcing the GCC order (mutation row C15 in `wp124_shells/mutation_rows.py`).
 - **Workaround/status:** ✅ FIXED in vanilla `Element.cpp` (WP-124, owner-approved upstream fix; LEDGER_vanilla_files). *2026-09-27.*
+
+### Two WPs indexed their sendSelf/recvSelf blocks at the SAME offset (35 + LMS_COUNT) -- a textual merge conflicted only in sendSelf, recvSelf AUTO-MERGED (WP-130 x WP-129, review #868 item 1)
+- **Bites:** WP-129 (SAS-ME options + sasStats) and WP-130 (CPPM options) each appended their block
+  "after the census" at `35 + LMS_COUNT`. git conflicted in sendSelf and on the vector size, but
+  the two recvSelf READ blocks merged cleanly and read the same slots twice: a restored or
+  MP-received IntScheme-2 point got mCPPMOnFail = -1 (refuse) and mCPPMHalvings = 0 from WP-129's
+  default SAS values, unclamped. Nothing failed loudly.
+- **Fixed (WP-130 merge, #868):** the layout is derived from named constants in
+  `LadrunoSANISAND.h` (`LWIRE_CENSUS`, `LWIRE_CPPM`, `LWIRE_CPPM_N`, `LWIRE_SAS`,
+  `LWIRE_SAS_OPT_N`, `LWIRE_SIZE`), documented above `LadrunoSANISAND::sendSelf`; received CPPM
+  options are clamped (setLadrunoCPPMOptions' rule). Pinned by
+  `test_wire_round_trip_both_blocks_after_the_129_merge` (non-default options of BOTH blocks saved,
+  restored into a DEFAULT-built skeleton; options, both censuses and the next two steps exact).
+  **Rule: a new wire block gets its own named offset, never "35 + LMS_COUNT + k".**

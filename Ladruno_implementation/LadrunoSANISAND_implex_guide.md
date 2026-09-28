@@ -760,7 +760,10 @@ parser refuses the combination). A flag that could not act on the deck is refuse
   only if the CPPM fails too. One-element test: a leg that `-maxSubsteps 20` refuses at step 1 runs
   all 10 steps with the fallback, stress within 1.3 % of the uncapped integration.
 - **Recommended recipe** (IntScheme 2 under a global Newton): `2 2 ... -cppmOnFail refuse
-  -cppmHalvings 3 -cppmLineSearch on` (`-cppmTangent fixed` is the default). `refuse` without
+  -cppmHalvings 3 -cppmLineSearch on` (`-cppmTangent fixed` is the default). With SAS-ME
+  (IntScheme 129, WP-129) on the same model, the three refusal sources -- SAS-ME, the ModifiedEuler
+  cap, the CPPM -- all reach the element with the same code and are all caught at commit under a
+  discarding element; the latch warning names which one. `refuse` without
   `-cppmHalvings` now bounds the ladder at 3 by itself (<= 15 local Newtons per refused update).
 - **What it buys on a BVP** (`Ladruno_files/testbed/hypo_bearing/wp130_f18c/tables.md`): F12's bearing deck (x10z8, `h1.0_e0.6944`, 1200 s budget, TanType 2, driver unchanged): IntScheme 1 reaches s/B 0.00762 at 1200 s (0.00890 at 1374 s, 16.8 global iterations per committed step); vanilla IntScheme 2 0.00002; with `-cppmTangent fixed` alone 0.00378; `fixed + refuse + -cppmHalvings 3 + -cppmStart explicit + -cppmLineSearch on` 0.00876 in 1081 s (0.00797 at 900 s against IntScheme 1's 0.00634), 3.9 iterations per committed step, 448 of 607 steps on the plain Newton rung, load-settlement within 0.5-2.1 % of IntScheme 1 -- and it stops on the driver's pinned 80-subdivision budget, not the wall. The global Newton is NOT quadratic even with the fixed tangent: the median observed order on the last three residuals is 1.24 (21 % of committed calls >= 1.8); the tangent is one local iterate stale and the refused iterates cut the step.
   Recipe measured there: `2 2 ... -cppmTangent fixed -cppmOnFail refuse -cppmHalvings 3
