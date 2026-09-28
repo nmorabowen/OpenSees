@@ -48,7 +48,7 @@ import pytest
 
 from _testbed import ops  # noqa: E402  (the parent's pyd — its dir goes to the child)
 
-# ci-coverage: local-only -- the whole file needs system Pardiso (MKL, Windows/oneAPI build); no CI builds it until a Windows job does (WP-143)
+# ci-coverage: local-only -- the whole file needs system Pardiso (MKL: the Windows/oneAPI build, or Linux with -DLADRUNO_MKL_PARDISO_LINUX=ON, where it passes with this skip lifted, #886); no CI builds either until a Windows job does (WP-143)
 pytestmark = [
     pytest.mark.zone_a,
     pytest.mark.skipif(sys.platform != "win32",
