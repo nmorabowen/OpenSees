@@ -541,7 +541,7 @@ So each curve is consistent with its constitutive strength. **"Which curve is ph
 - Mallikarachchi, H. & Soga, K. (2020). Post-localisation analysis of drained and undrained dense sand with a nonlocal
   critical state model. *Comput. Geotech.* 124, 103572.
 - Galavi, V. & Schweiger, H. F. (2010). Nonlocal multilaminate model for strain softening analysis. *Int. J. Geomech.*
-  10(1), 30–44.
+  10(1), 30ff.
 - Liu, H. Y., Abell, J. A., Diambra, A. & Pisanò, F. (2019). Modelling the cyclic ratcheting of sands through
   memory-enhanced bounding surface plasticity. *Géotechnique* 69(9), 783–800. The memory-surface alternative to α_in.
 - de Borst, R. & Mühlhaus, H.-B. (1992). Gradient-dependent plasticity: formulation and algorithmic aspects. *IJNME*
@@ -554,7 +554,7 @@ So each curve is consistent with its constitutive strength. **"Which curve is ph
   Grenoble using stereophotogrammetry. *IJNAMG* 28, 279–321.
 - Pietruszczak, S. & Mróz, Z. (1981). Finite element analysis of deformation of strain-softening materials. *IJNME* 17,
   327–334.
-- Siddiquee, M. S. A., Tanaka, T., Tatsuoka, F., Tani, K. & Morimoto, T. (1999). FEM simulation of scale effect in
+- Siddiquee, M. S. A. et al. (1999). FEM simulation of scale effect in
   bearing capacity of strip footing on sand. *Soils Found.* 39(4), 91–109.
 - Bolton, M. D. (1986). The strength and dilatancy of sands. *Géotechnique* 36(1), 65–78.
 - Vesić, A. S. (1973). Analysis of ultimate loads of shallow foundations. *JSMFD* 99(SM1), 45–73.
@@ -564,9 +564,9 @@ So each curve is consistent with its constitutive strength. **"Which curve is ph
   on sand. *Géotechnique* 61(2), 107–119.
 - Lau, C. K. & Bolton, M. D. (2011). The bearing capacity of footings on granular soils. I: Numerical analysis; II:
   Experimental evidence. *Géotechnique* 61(8), 627–638 and 639–650.
-- Tatsuoka, F., Okahara, M., Tanaka, T., Tani, K., Morimoto, T. & Siddiquee, M. S. A. (1991). Progressive failure
+- Tatsuoka, F., Okahara, M., Tanaka, T. et al. (1991). Progressive failure
   and particle size effect in bearing capacity of a footing on sand. *ASCE GSP* 27, 788–802.
-- Martin, C. M. (2005). Exact bearing capacity calculations using the method of characteristics. *Proc. 11th IACMAG*, Turin, 4, 441–450.
+- Martin, C. M. (2005). Exact bearing capacity calculations using the method of characteristics. *Proc. 11th IACMAG*, Turin, 441–450.
 - Han, D., Xie, X., Zheng, L. & Huang, L. (2016). The bearing capacity factor N_γ of strip footings on c–φ–γ soil using the method of characteristics. *SpringerPlus* 5, 1482.
 - Wang, W. M., Sluys, L. J. & de Borst, R. (1997). Viscoplasticity for instabilities due to strain softening and
   strain-rate softening. *IJNME* 40, 3839–3864. The consistency-viscoplasticity alternative to Perzyna.
