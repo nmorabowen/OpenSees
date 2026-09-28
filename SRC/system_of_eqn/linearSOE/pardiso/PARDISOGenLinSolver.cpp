@@ -682,7 +682,8 @@ PARDISOGenLinSolver::setDeterministic(int branch, int keepEnv)
 	switch (rc) {
 	case MKL_CBWR_ERR_MODE_CHANGE_FAILURE:
 		// Measured (WP-132): a LAPACK eigen solve earlier in the process
-		// triggers this; an earlier PARDISO solve does not.
+		// triggers this; on Windows an earlier PARDISO solve does not, on
+		// Linux an earlier PARDISO or UmfPack solve does (pardiso-linux).
 		opserr << ": the CNR mode is process-wide and MKL refuses to change it "
 		          "once its BLAS/LAPACK dispatch is\n     initialized in this "
 		          "process, e.g. by an earlier eigen solve).\n     Relaunch with "
