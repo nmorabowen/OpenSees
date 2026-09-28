@@ -97,6 +97,24 @@ Total ≈ 10 sessions (P3e optional).
 below 10 % at every angle, or the error is dominated by mesh-bias *locking* (the band snaps to mesh
 lines, which h(n) cannot fix), then re-rank P3a/P3b below P3c/P3d and record why in the ADR.
 
+**D-P2 outcome (2026-09-28, from the partial G-A baseline): TRIGGERED.** The inclined-crack error is
+dominated by effects h(n) cannot fix:
+- the EAS lch factor, 2× energy (ADR G10);
+- drilling-spring bridging (ADR G11);
+- mesh locking: tanθ = ½ followed mesh lines, and 45° formed a 3-element-wide staircase.
+
+Re-ranking:
+- **New P2e (first):** establish when, if ever, an EAS `ASDShellQ4` localizes into one Gauss-point
+  row, using strain gradients, asymmetric seeds and aspect ratios, with `LadrunoRCConcrete` and
+  `ASDConcrete3D`. Quantify drilling contamination on PV20 and a diagonal-cracking wall. The outcome
+  decides the correct length factor.
+- **P3a re-scoped:** the new directional method carries the *corrected* length (EAS factor first,
+  direction second), leaving the vanilla scalar untouched.
+- **P3b deferred** until a seeded-strip gate shows a single-element-wide band along θ exists.
+- **G-A gate replaced** by a seeded straight strip or band at θ, `-noeas` or with a corrected factor,
+  with drilling energy measured. The periodic cell stays as the locking detector.
+- **P3c/P3d move ahead of P3b.** G-B and G-C already show the size of their errors (G-C: +117 % at ε_y).
+
 ## 4. Oracle catalogue
 
 **O1 — directional length seam (P3a)**
