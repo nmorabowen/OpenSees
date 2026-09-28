@@ -517,7 +517,7 @@ Validation: c_A ≥ 0, c_rev ≥ 0, 0 ≤ κ < 1; 0 = OFF, the default. The echo
 | `UWmaterials/ManzariDafalias.h` (vanilla; the WP-129 Ladruno block) | `LadrunoSasOptions`: `hFloor`, `reseatHyst`, `softCap` (default 0); three census columns appended to `LSAS_*` (earlier indices unchanged); `ladrunoSasBracketH(…, b0)`, `ladrunoSasSoftCapH`, `ladrunoSasReseatDelta` |
 | `LadrunoSANISANDSasME.cpp` (fork) | floor inside `ladrunoSasBracketH`; the cap in the stage, the drift correction and the continuum tangent (the same X = Q:C:R in all three, so consistency holds); the threshold at the four re-seat decisions: increment start, stage 1, the stage-2 reversal cut, end of substep |
 | `LadrunoSANISAND.cpp` (fork) | parser, echo, `sasOptions` response (id 33100), `sasStats` names; send/recv of the three options plus a layout-tag slot (next row) |
-| `Ladruno_scripts/sanisand_replay.py` | `SAS_NAMES` += `hFloored`, `hSoftCapped`, `reseatHeld` |
+| `Ladruno_scripts/sanisand_replay.py` | `SAS_NAMES` += `hFloored`, `hSoftCapped`, `reseatHeld`. **`sasStats` is now 36 long**, and a consumer that hard-codes 33 breaks: the WP-138 deck driver's census did on Esmeralda, and was fixed there. The in-repo consumers zip against the names. |
 
 **Byte-identity of the default.** With the flags off:
 - `ladrunoSasBracketH` takes the WP-129 branch;

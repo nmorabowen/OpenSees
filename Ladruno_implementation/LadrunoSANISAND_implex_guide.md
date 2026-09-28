@@ -1225,6 +1225,8 @@ failures one-to-one on the wall states. Full study:
   - the cap never binds in an element test.
 - **Census** (`sasStats`, appended columns): `sas_hFloored` counts stages where the floor bound,
   `sas_hSoftCapped` stages where the cap bound, and `sas_reseatHeld` sub-threshold reversals that
-  kept α_in.
+  kept α_in. **`sasStats` is now 36 long** (columns 0–32 unchanged). A consumer that hard-codes 33
+  breaks: the WP-138 deck driver's census did ("broadcast (36,) into (33,)"). Read the length from the
+  response, or zip against `sanisand_replay.SAS_NAMES`.
 - It removes the singular set and the re-seat chatter. It does **not** regularize strain
   localization (mesh dependence): that is WP-150 R2/R3.
