@@ -1,0 +1,5 @@
+as built                 max alpha/alpha_b 0.998 at k=300 (p 3.28, eta 1.5); forced 1, refused increments 0
+   (C++ vs port on this chain: max |alpha/alpha_b| difference 8.93e-01)
+   forced increment k=311: path 4, forced 1, clamp 1, alpha/alpha_b 0.938 -> 0.745, eta 1.960 -> 1.325, p 0.558
+forced accept REFUSED    max alpha/alpha_b 1.310 at k=703 (p 0.0715, eta 1.97); forced 286, refused increments 286
+alpha also error-tested  max alpha/alpha_b 0.574 at k=0 (p 1.73, eta 0.855); forced 0, refused increments 0

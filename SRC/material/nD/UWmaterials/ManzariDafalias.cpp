@@ -1114,6 +1114,7 @@ void ManzariDafalias::integrate()
     mLadrunoLastPath = -1;                                          // Ladruno WP-127
     mLadrunoLastElasticRatio = std::numeric_limits<double>::quiet_NaN(); // Ladruno WP-127
     mLadrunoCPPMRefused = false;                                    // Ladruno WP-130
+    mLadrunoSas.refused = false;                                    // Ladruno WP-129
 
     // update alpha_in in case of unloading
 	// I assume full elastic step and check if the new stress direction is "dramatically" 
@@ -1151,6 +1152,9 @@ void ManzariDafalias::integrate()
             if (mLadrunoCPPMRefused)                                         // Ladruno WP-130
                 mLadrunoMEStats[LMS_LAST_CPPM_REFUSED] = 1.0;                // Ladruno WP-130
         }                                                                    // Ladruno WP-130
+        // Ladruno WP-129: SAS-ME, only where a refusal can reach analyze
+        else if (mLadrunoSas.allowed && mScheme == LADRUNO_INT_SAS_ME)   // Ladruno WP-129
+            ladrunoSasIntegrate();                                      // Ladruno WP-129
         // explicit schemes
         else {                                                               // Ladruno WP-130: braces
             explicit_integrator(mSigma_n, mEpsilon_n, mEpsilonE_n, mAlpha_n, mFabric_n, mAlpha_in,

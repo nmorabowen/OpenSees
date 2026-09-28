@@ -412,6 +412,21 @@ class LadrunoSANISAND : public ManzariDafalias
     // Returns 0 and fills `out` (layout: OPS_LadrunoSANISANDReplay), or -1.
     int ladrunoReplayRun(const LadrunoReplayRequest &q, std::vector<double> &out);   // Ladruno WP-127
 
+    // Ladruno WP-129: the SAS-ME (IntScheme 129) option set, applied after
+    // construction by the parser (and carried by getCopy / the wire). The
+    // scheme itself lives in the base (LadrunoSANISANDSasME.cpp); this class
+    // is what makes it reachable (mLadrunoSas.allowed, set in
+    // applyLadrunoConstants) because its wrappers forward the refusal.
+    void setLadrunoSasOptions(const LadrunoSasOptions &opt, bool verbose = true);  // Ladruno WP-129
+    // Ladruno WP-129 (TIMs F20(c)): the `tangentEP` response's operator.
+    Matrix ladrunoTangentEP(void);                                                  // Ladruno WP-129
+    // Ladruno WP-129: SAS-ME with the paper alpha_in rule decides alpha_in
+    // itself; the P2-5 guard (and its hold-skip census) does not apply.
+    bool ladrunoSasPaperRule(void) const {                                          // Ladruno WP-129
+        return mLadrunoSas.allowed && (int)mScheme == LADRUNO_INT_SAS_ME
+               && mLadrunoSas.opt.alphaInMode == 0;
+    }
+
   protected:
 
     // Ladruno (ADR-86b): the status the wrappers' setTrialStrain returns.
@@ -497,7 +512,20 @@ class LadrunoSANISAND : public ManzariDafalias
     // was set -- 0 the -implex companion hit -maxSubsteps, 1 a CPPM refusal on
     // the plain commit path. Only the warning text reads it; crosses the wire
     // with the latch.
-    int    mLadrunoLatchCause;
+    int    mLadrunoLatchCause;   // 0 implex companion, 1 CPPM, 2 SAS-ME, 3 ME cap (plain commit path)
+
+    // The sendSelf/recvSelf Vector layout (WP-127/129/130), derived in ONE place
+    // so two blocks can never again be indexed at the same offset (review #868
+    // item 1: both WPs wrote 35 + LMS_COUNT + k). See the layout note above
+    // LadrunoSANISAND::sendSelf.
+    enum {
+        LWIRE_CENSUS    = 35,
+        LWIRE_CPPM      = LWIRE_CENSUS + LMS_COUNT,
+        LWIRE_CPPM_N    = 7,
+        LWIRE_SAS       = LWIRE_CPPM + LWIRE_CPPM_N,
+        LWIRE_SAS_OPT_N = 6,
+        LWIRE_SIZE      = LWIRE_SAS + LWIRE_SAS_OPT_N + LSAS_COUNT
+    };
 
     // Ladruno ADR-92 P2-5: absolute strain-increment threshold below which
     // ManzariDafalias::integrate()'s unconditional loading-reversal reset

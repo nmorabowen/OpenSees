@@ -58,6 +58,9 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 - [ ] Substep schemes need error control and yield-drift correction, and must honour the
       tolerance passed in. Quirks: "`IntScheme` 3 (RungeKutta4) and 5 (ForwardEuler) have no
       error control", "IntScheme 1 (ModifiedEuler) IGNORES the `TolR`".
+- [ ] The substep error must measure EVERY evolved internal variable (back-stress, fabric,
+      ...), not only the stress: a stress-only test accepts an O(1) back-stress jump when both
+      stages are elastic in stress. Quirks: "substep error is STRESS-ONLY" (WP-128).
 - [ ] A substep scheme must not ACCEPT a substep that failed its error test at the minimum
       step, or return early at `T < 1`, without saying so: count it (WP-127 `substepStats`).
       Quirks: "ACCEPTS a substep that FAILED its error test".
@@ -96,6 +99,9 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 - [ ] A tangent READ as "algorithmic" is not verified: compare it with a finite difference of the
       return map (the replay facility gives one at a real state). Quirks: "`TanType 2` tangent is
       MINUS the derivative of its own return map" (WP-130).
+- [ ] Pin a number only from a step a RESIDUAL test converged, and re-measure pins after merging
+      `ladruno`. A determinism gate needs no convergence: use `FixedNumIter`. Quirks: "where ONE
+      tangent stopped".
 
 Found a new trap? Add it to `LEDGER_quirks.md`, then add one line here pointing to it. If the
 trap has a greppable pattern, add a rule to `ci/check_quirk_patterns.py` instead.

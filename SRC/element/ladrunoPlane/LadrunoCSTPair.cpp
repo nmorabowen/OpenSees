@@ -34,6 +34,7 @@
 #include <Node.h>
 #include <NDMaterial.h>
 #include <Matrix.h>
+#include <LadrunoElementShell.h>   // Ladruno (WP-124): shared Element-contract helpers
 #include <Vector.h>
 #include <ID.h>
 #include <Renderer.h>
@@ -422,8 +423,7 @@ const Matrix &LadrunoCSTPair::getInitialStiff(void)
       }
     }
   }
-  Ki = new Matrix(K);
-  return *Ki;   // cached copy, not the shared static scratch
+  return LadrunoShell::cacheKi(Ki, K);   // cached copy, not the shared static scratch
 }
 
 const Matrix &LadrunoCSTPair::getMass(void)
@@ -477,25 +477,13 @@ int LadrunoCSTPair::addInertiaLoadToUnbalance(const Vector &accel)
   if (!haveRho)
     return 0;
 
-  static double ra[ndf];
-  for (int a = 0; a < numnodes; a++) {
-    const Vector &Raccel = theNodes[a]->getRV(accel);
-    if (Raccel.Size() != 2) {
-      opserr << "LadrunoCSTPair::addInertiaLoadToUnbalance - incompatible sizes\n";
-      return -1;
-    }
-    ra[2 * a]     = Raccel(0);
-    ra[2 * a + 1] = Raccel(1);
-  }
-  // Ladruno (ADR-77 review wave): bare getMass() called for its SIDE EFFECT of
-  // refilling class-static K, then K read directly. Correct ONLY while this
-  // element has no mass cache -- a LadrunoMassCache hit skips the formation and
-  // leaves K holding the last tangent. DO NOT add the G2 cache here without
-  // first rewriting this to consume getMass()'s return (the Quad/LST fix).
-  this->getMass();
-  for (int i = 0; i < ndf; i++)
-    Q(i) += -K(i, i) * ra[i];
-  return 0;
+  // Ladruno (WP-124): consume getMass()'s RETURN (retires the bare side-effect
+  // idiom the ADR-77 review wave flagged here; getMass returns K, so the bytes
+  // are the same) -- lumped (diagonal) mass, LadrunoShell::addGroundInertia.
+  static Vector ra(ndf);
+  const Matrix &Mq = this->getMass();
+  return LadrunoShell::addGroundInertia(Q, Mq, theNodes, numnodes, 2, true, accel, ra,
+                                        "LadrunoCSTPair");
 }
 
 const Vector &LadrunoCSTPair::getResistingForce(void)
@@ -528,18 +516,12 @@ const Vector &LadrunoCSTPair::getResistingForceIncInertia(void)
     return P;
   }
 
-  static double a[ndf];
-  for (int n = 0; n < numnodes; n++) {
-    const Vector &accel = theNodes[n]->getTrialAccel();
-    a[2 * n]     = accel(0);
-    a[2 * n + 1] = accel(1);
-  }
   this->getResistingForce();
-  // Ladruno (ADR-77 review wave): same bare-getMass side-effect idiom as
-  // addInertiaLoadToUnbalance above -- see the warning there before caching.
-  this->getMass();
-  for (int i = 0; i < ndf; i++)
-    P(i) += K(i, i) * a[i];
+  // Ladruno (WP-124 stage 5): consume getMass()'s RETURN (it is K, so the
+  // bytes are the same) -- retires the last bare side-effect call site.
+  const Matrix &Mq = this->getMass();
+  static Vector a(ndf);   // Ladruno (WP-124 stage 5): LadrunoShell::addNodalInertia
+  LadrunoShell::addNodalInertia(P, Mq, theNodes, numnodes, 2, true, a);
   res = P;
   if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
     res += this->getRayleighDampingForces();
@@ -632,7 +614,24 @@ int LadrunoCSTPair::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroke
     theMaterial[t]->setDbTag(idData(numtri + t));
     res += theMaterial[t]->recvSelf(commitTag, theChannel, theBroker);
   }
+  // Ladruno (WP-124 C6): Ki was formed from the pre-recv material, thickness and
+  // formulation; a restore into a LIVE element must not keep serving it.
+  LadrunoShell::dropKi(Ki);
   return res;
+}
+
+// Ladruno (WP-124 C3): parameters forward to the two triangle materials -- the
+// element had NO setParameter, so 'parameter ... E' (and every material
+// parameter, the class of defect #224 fixed for Bezier) was silently unclaimed.
+// 'material k <args>' targets triangle k (1..2); anything else is broadcast.
+// materialState is NOT a GP address (the staged-analysis switch): it broadcasts.
+int LadrunoCSTPair::setParameter(const char **argv, int argc, Parameter &param)
+{
+  if (argc < 1)
+    return -1;
+  if (strstr(argv[0], "material") != 0 && strcmp(argv[0], "materialState") != 0)
+    return LadrunoShell::forwardToMaterialPoint(theMaterial, numtri, false, argv, argc, param);
+  return LadrunoShell::forwardToMaterials(theMaterial, numtri, argv, argc, param);
 }
 
 void LadrunoCSTPair::Print(OPS_Stream &s, int flag)
@@ -694,6 +693,24 @@ Response *LadrunoCSTPair::setResponse(const char **argv, int argc, OPS_Stream &o
     }
   } else if (LadrunoResp::is(argv[0], "stress")) {
     theResponse = new ElementResponse(this, 3, Vector(3 * numtri));
+  } else if (LadrunoResp::is(argv[0], "stressPlaneStrain")) {
+    // Ladruno (WP-124 C4): plane-strain stress incl. sigma_zz (NaN when the
+    // material doesn't expose it) per triangle, as LadrunoCST/LST/Quad expose it;
+    // full GaussPoint/NdMaterialOutput tags for XML-driven recorders.
+    for (int t = 0; t < numtri; t++) {
+      output.tag("GaussPoint");
+      output.attr("number", t + 1);
+      output.tag("NdMaterialOutput");
+      output.attr("classType", theMaterial[t]->getClassTag());
+      output.attr("tag", theMaterial[t]->getTag());
+      output.tag("ResponseType", "sigma11");
+      output.tag("ResponseType", "sigma22");
+      output.tag("ResponseType", "sigma12");
+      output.tag("ResponseType", "sigma33");
+      output.endTag(); // NdMaterialOutput
+      output.endTag(); // GaussPoint
+    }
+    theResponse = new ElementResponse(this, 21, Vector(4 * numtri));
   } else if (LadrunoResp::is(argv[0], "strain")) {
     // Ladruno — the family exposes strain everywhere else; this element had
     // stress only.
@@ -710,14 +727,9 @@ Response *LadrunoCSTPair::setResponse(const char **argv, int argc, OPS_Stream &o
     theResponse = new ElementResponse(this, 8, Matrix(P.Size(), P.Size()));
   }
 
-  output.endTag();
-
-  // Ladruno — base vocabulary (globalForce, dampingForce, dynamicForce,
-  // inertialForce); Element::setResponse opens its own ElementOutput tag, so
-  // this MUST come after endTag().
-  if (theResponse == 0)
-    return this->Element::setResponse(argv, argc, output);
-  return theResponse;
+  // Ladruno (WP-124): endTag() FIRST, then the base vocabulary (globalForce,
+  // dampingForce, dynamicForce, inertialForce) -- LadrunoShell::finishResponse.
+  return LadrunoShell::finishResponse(this, theResponse, argv, argc, output);
 }
 
 int LadrunoCSTPair::getResponse(int responseID, Information &eleInfo)
@@ -732,6 +744,16 @@ int LadrunoCSTPair::getResponse(int responseID, Information &eleInfo)
       s6(3 * t) = s(0); s6(3 * t + 1) = s(1); s6(3 * t + 2) = s(2);
     }
     return eleInfo.setVector(s6);
+  }
+  if (responseID == 21) {
+    // Ladruno (WP-124 C4): [sxx, syy, sxy, szz] per triangle
+    static Vector v4(4 * numtri);
+    for (int t = 0; t < numtri; t++) {
+      const Vector &s = theMaterial[t]->getStress();
+      v4(4 * t) = s(0); v4(4 * t + 1) = s(1); v4(4 * t + 2) = s(2);
+      v4(4 * t + 3) = theMaterial[t]->getStressZZ();
+    }
+    return eleInfo.setVector(v4);
   }
   if (responseID == 5)
     return eleInfo.setDouble(this->getCharacteristicLength());
