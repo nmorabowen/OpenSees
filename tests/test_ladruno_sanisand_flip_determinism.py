@@ -91,6 +91,14 @@ Each thread count runs in its OWN subprocess because MKL reads
 MKL_NUM_THREADS once, at its first initialisation. `system Pardiso -stats`
 prints `threads=<mkl_get_max_threads()>`, which the test reads back to prove
 the setting reached MKL.
+
+WP-143: WHERE EACH LEG RUNS. Only the thread leg needs MKL. The hold-count leg
+(the one that proves F14 is fixed: a default->vanilla mutation fails it) and the
+warning leg test the material, not the solver, so they run on every platform:
+`system Pardiso` on Windows, `system FullGeneral` elsewhere (WP-128 measured
+the deck identical under both). PR CI (Zone-A) is Ubuntu, so before WP-143 this
+whole file never ran in CI. `LADRUNO_FLIP_SYSTEM=FullGeneral` forces the
+portable path on Windows, to check it locally.
 """
 import json
 import os
@@ -101,11 +109,11 @@ import pytest
 
 from _testbed import ops
 
-pytestmark = [
-    pytest.mark.zone_a,
-    pytest.mark.skipif(sys.platform != "win32",
-                       reason="system Pardiso requires MKL (Windows/oneAPI build)"),
-]
+# ci-coverage: partial -- hold + warning legs run everywhere (FullGeneral off Windows); the MKL thread leg is Windows-only and local-only until a Windows CI job builds and runs it (WP-143)
+pytestmark = [pytest.mark.zone_a]
+
+_ON_WINDOWS = sys.platform == "win32"
+_SYSTEM = os.environ.get("LADRUNO_FLIP_SYSTEM") or ("Pardiso" if _ON_WINDOWS else "FullGeneral")
 
 _TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 _THREADS = (1, 2, 4, 8)
@@ -138,6 +146,7 @@ configs = json.loads(sys.argv[2])
 n_push = int(sys.argv[3])
 stats = sys.argv[4] == '1'
 push_iters = int(sys.argv[5])
+system = sys.argv[6]
 
 
 def run(mode, holds):
@@ -174,7 +183,7 @@ def run(mode, holds):
         ops.load(nid(i, NZ), 0.0, -Q_SUR * (dx if 0 < i < NX else 0.5 * dx))
     ops.constraints('Transformation')
     ops.numberer('RCM')
-    ops.system('Pardiso', *(('-stats',) if stats else ()))
+    ops.system(system, *(('-stats',) if stats else ()))
     ops.test('NormDispIncr', 1.0e-8, 100, 0)
     ops.algorithm('KrylovNewton')
     ops.integrator('LoadControl', 1.0 / NG)
@@ -237,7 +246,7 @@ def _run_child(configs, threads=1, n_push=_N_PUSH, stats=False):
     env.setdefault('LADRUNO_OPENSEES_QUIET', '1')
     p = subprocess.run(
         [sys.executable, '-u', '-c', _CHILD, _TESTS_DIR, json.dumps(configs),
-         str(n_push), '1' if stats else '0', str(_PUSH_ITERS)],
+         str(n_push), '1' if stats else '0', str(_PUSH_ITERS), _SYSTEM],
         env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace',
         timeout=600)
@@ -263,6 +272,8 @@ def _pardiso_threads(text):
     return vals
 
 
+@pytest.mark.skipif(not _ON_WINDOWS or _SYSTEM != "Pardiso",
+                    reason="the thread leg needs system Pardiso (MKL, Windows/oneAPI build)")
 def test_first_ten_push_steps_bit_identical_across_mkl_threads():
     """F14's own test: under the DEFAULT (no -flipAlphaIn token), the first ten
     push steps after `updateMaterialStage` are bit-identical at MKL_NUM_THREADS

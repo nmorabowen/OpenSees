@@ -44,6 +44,7 @@ os.environ.setdefault("MKL_NUM_THREADS", "1")
 from _testbed import ops  # noqa: E402
 
 # PARDISO IS MKL: linked on the Windows/oneAPI build only.
+# ci-coverage: local-only -- the whole file needs system Pardiso (MKL, Windows/oneAPI build); no CI builds it until a Windows job does (WP-143)
 pytestmark = [
     pytest.mark.zone_a,
     pytest.mark.skipif(sys.platform != "win32",

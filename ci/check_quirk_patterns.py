@@ -73,6 +73,25 @@ bodies are seen whole).
   L3 pointers   Every `Quirks: "..."` pointer in .claude/skills/*/SKILL.md must
                 still match text in LEDGER_quirks.md.
 
+  L8 ci-coverage  A `zone_a` test file that BRANCHES on the platform
+                (`sys.platform`, `os.name`, `platform.system()` compared to a
+                platform name, or `sys.platform.startswith(...)`) must say where
+                its platform-specific part actually runs. PR CI (Zone-A) is
+                Ubuntu, so a win32-only skip is silently never run there; the
+                self-hosted Windows nightly was cancelled on every scheduled run
+                2026-06-20..09-27 with zero runners registered, so 9 such files
+                had NO CI for three months (WP-143, found by WP-136).
+                A ternary (`"x.exe" if os.name == "nt" else "x"`) only selects a
+                value and is ignored. Declare, anywhere in the file:
+                    # ci-coverage: <kind> <reason>
+                kind = local-only (the platform leg runs only on a developer's
+                machine), partial (runs everywhere, a stricter leg only on one
+                platform), portable (the branch changes nothing tested),
+                nightly-windows or pr-windows (a CI job that BUILDS and runs it).
+                An annotation on a file with no platform branch is stale.
+                `--list-waivers` prints every annotation: the local-only list is
+                the gap inventory.
+
 A waiver needs a reason of at least 12 characters, and a waiver that no longer
 suppresses anything is itself a finding (stale).
 
@@ -83,6 +102,7 @@ Usage:
     python ci/check_quirk_patterns.py --list-waivers
 """
 import argparse
+import ast
 import re
 import sys
 from pathlib import Path
@@ -747,18 +767,98 @@ def check_pointers(root, rel):
     return findings
 
 
+# --------------------------------------------------------------------------
+# L8
+# --------------------------------------------------------------------------
+ZONE_A = re.compile(r"\bmark\.zone_a\b")
+CI_COVERAGE = re.compile(r"#\s*ci-coverage:\s*(\S+)(.*)$")
+COVERAGE_KINDS = ("local-only", "partial", "portable", "nightly-windows", "pr-windows")
+PLATFORM_NAMES = {"win32", "windows", "nt", "win", "linux", "darwin", "posix", "cygwin"}
+
+
+def _is_platform_expr(n):
+    """sys.platform, os.name, or platform.system()."""
+    if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name):
+        return (n.value.id, n.attr) in {("sys", "platform"), ("os", "name")}
+    if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name):
+        return (n.func.value.id, n.func.attr) == ("platform", "system")
+    return False
+
+
+def platform_branches(tree):
+    """Line numbers where a test file branches on the platform. A test inside a
+    ternary's condition only selects a value (an exe name) and is not counted."""
+    in_ifexp = {id(n) for x in ast.walk(tree) if isinstance(x, ast.IfExp) for n in ast.walk(x.test)}
+    lines = []
+    for node in ast.walk(tree):
+        if id(node) in in_ifexp:
+            continue
+        if isinstance(node, ast.Compare):
+            sides = [node.left] + node.comparators
+            if any(_is_platform_expr(s) for s in sides) and any(
+                    isinstance(s, ast.Constant) and isinstance(s.value, str)
+                    and s.value.lower() in PLATFORM_NAMES for s in sides):
+                lines.append(node.lineno)
+        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+              and node.func.attr == "startswith" and _is_platform_expr(node.func.value)):
+            lines.append(node.lineno)
+    return sorted(set(lines))
+
+
+def _test_files(root):
+    tests = root / "tests"
+    return sorted(tests.rglob("*.py")) if tests.is_dir() else []
+
+
+def check_ci_coverage(root, rel):
+    findings = []
+    for path in _test_files(root):
+        src = path.read_text(encoding="utf-8", errors="replace")
+        if not ZONE_A.search(src):
+            continue
+        notes = [(li, m) for li, line in enumerate(src.splitlines())
+                 for m in [CI_COVERAGE.search(line)] if m]
+        try:
+            branches = platform_branches(ast.parse(src))
+        except SyntaxError as e:
+            findings.append(f"L8 {rel(path)}:{e.lineno}: cannot parse ({e.msg}) -- L8 cannot check it")
+            continue
+        for li, m in notes:
+            if m.group(1) not in COVERAGE_KINDS:
+                findings.append(f"L8 {rel(path)}:{li + 1}: ci-coverage kind '{m.group(1)}' is not one of "
+                                f"{', '.join(COVERAGE_KINDS)}")
+            elif len(m.group(2).strip()) < MIN_REASON:
+                findings.append(f"L8 {rel(path)}:{li + 1}: ci-coverage reason too short")
+        if branches and not notes:
+            findings.append(
+                f"L8 {rel(path)}:{branches[0]}: zone_a test branches on the platform (line(s) "
+                f"{', '.join(map(str, branches))}) but does not say where that part runs -- PR CI is "
+                "Ubuntu only. Add '# ci-coverage: <kind> <reason>' (kinds: "
+                f"{', '.join(COVERAGE_KINDS)})")
+        elif notes and not branches:
+            for li, _ in notes:
+                findings.append(f"W  {rel(path)}:{li + 1}: stale ci-coverage -- the file no longer branches "
+                                "on the platform; delete it")
+    return findings
+
+
 def list_waivers(root, rel):
     for path, raw, _ in _sources(root, stamped_only=True):
         for li, line in enumerate(raw):
             m = WAIVER.search(line)
             if m:
                 print(f"{rel(path)}:{li + 1}: {m.group(1)} {m.group(2).strip()}")
+    for path in _test_files(root):
+        for li, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines()):
+            m = CI_COVERAGE.search(line)
+            if m:
+                print(f"{rel(path)}:{li + 1}: ci-coverage {m.group(1)} {m.group(2).strip()}")
 
 
 def main():
     ap = argparse.ArgumentParser(description="Quirk-pattern gate (WP-115).")
     ap.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent)
-    ap.add_argument("--only", default="L1,L2,L3,L4,L5,L6", help="comma list of L1..L6")
+    ap.add_argument("--only", default="L1,L2,L3,L4,L5,L6,L8", help="comma list of L1..L6, L8")
     ap.add_argument("--list-waivers", action="store_true")
     args = ap.parse_args()
     root = args.root.resolve()
@@ -789,6 +889,8 @@ def main():
         findings += check_stale_waivers(root, rel, used)
     if "L3" in wanted:
         findings += check_pointers(root, rel)
+    if "L8" in wanted:
+        findings += check_ci_coverage(root, rel)
     for f in findings:
         print(f)
     print(f"check_quirk_patterns: {len(findings)} finding(s) [{','.join(sorted(wanted))}]")
