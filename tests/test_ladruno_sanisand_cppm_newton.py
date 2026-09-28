@@ -412,8 +412,11 @@ def test_vanilla_cppm_tangent_has_the_wrong_sign():
     assert e_minus < 1e-2 and e_plus > 1.9, (e_plus, e_minus)
 
 
-def test_cppm_tangent_default_is_the_algorithmic_tangent():
-    """The LadrunoSANISAND DEFAULT (owner decision) is the fixed sign."""
+def test_cppm_tangent_default_is_the_sign_fixed_tangent():
+    """The LadrunoSANISAND DEFAULT (owner decision) is the fixed sign
+    (+CSigma: sign-correct, NOT the fully consistent tangent -- see the
+    quirks row "The sign-corrected CPPM tangent is still NOT the consistent
+    tangent")."""
     e_plus, e_minus, rep = _fd_tangent(())
     assert rep < 1e-9
     assert e_plus < 1e-2 and e_minus > 1.9, (e_plus, e_minus)

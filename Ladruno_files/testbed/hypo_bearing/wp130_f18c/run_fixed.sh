@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # WP-130 / F18(c), second round: the IntScheme-2 arms with -cppmTangent fixed
-# (the sign-corrected algorithmic tangent), SEQUENTIALLY. Needs LADRUNO_DIST_BIN, PY.
+# (the sign-corrected tangent +CSigma, not the fully consistent one), SEQUENTIALLY. Needs LADRUNO_DIST_BIN, PY.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 W=${WALL:-1200}

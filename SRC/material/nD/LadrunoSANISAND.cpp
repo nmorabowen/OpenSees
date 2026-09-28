@@ -540,7 +540,8 @@ OPS_LadrunoSANISAND(void)
                     opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
                            << ": -cppmTangent wants vanilla|fixed, got '" << modeTok
                            << "'. fixed (the DEFAULT since WP-130) hands the element the"
-                              " CPPM's algorithmic tangent +d sigma/d eps under TanType 2;"
+                              " sign-corrected CPPM tangent +CSigma under TanType 2 (right"
+                              " sign, not the fully consistent tangent);"
                               " vanilla reproduces ManzariDafalias' WRONG SIGN (opt-out,"
                               " for reproduction only)." << endln;
             } else if (isStart) {                                                      // -cppmStart
