@@ -425,3 +425,116 @@ after: 25 iterations  current Norm: 0.553153 (max: 0.041521, Norm deltaX: 3.1396
 NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
 StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0261326
 OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.60698 (max: 0.041521, Norm deltaX: 1.93837e-05)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0261326
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-28 00:39:50] [  17254.5s] step    57 s/B 0.013540 q   366.355 kPa ds 2.500e-04 rung K it  24 fails 0 wall   322.19s | sub 17132944 maxpt 15639 cap 0 rejErr 1936080 dtmin 0 | p'min 3.984 eta_max 1.864 rho_max 0.983 n>1 0
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.518693 (max: 0.041521, Norm deltaX: 3.09085e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0263826
+OpenSees > analyze failed, returned: -3 error flag
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag 1: update REFUSED (maxSubsteps, code 9); the trial is left on the committed state and the step must be cut. Once per integration point; every refusal is counted in `sasStats`.
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0263826
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-28 00:44:45] [  17549.6s]   refusals step 58: 134 by code {'maxSubsteps': 134}; n points 70; top: ele 2022 gp 1 (+1.91,-0.15) x2; ele 2022 gp 2 (+2.02,-0.15) x2; ele 2022 gp 3 (+2.02,-0.04) x2; ele 2022 gp 4 (+1.91,-0.04) x2; ele 2010 gp 2 (+1.84,-0.15) x2; ele 2010 gp 3 (+1.84,-0.04) x2
+[2026-09-28 00:44:45] [  17549.6s] step    58 s/B 0.013707 q   369.496 kPa ds 2.500e-04 rung K it  23 fails 0 wall   292.85s | sub 17294453 maxpt 23905 cap 134 rejErr 1533692 dtmin 0 | p'min 3.992 eta_max 1.866 rho_max 0.984 n>1 0
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.500196 (max: 0.041521, Norm deltaX: 3.07889e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0266326
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 0.107578 (max: 0.041521, Norm deltaX: 5.90875e-06)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0266326
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-28 00:48:34] [  17778.1s] step    59 s/B 0.013873 q   373.061 kPa ds 2.500e-04 rung K it  19 fails 0 wall   227.07s | sub 13232053 maxpt 25983 cap 0 rejErr 1723309 dtmin 0 | p'min 3.990 eta_max 1.868 rho_max 0.985 n>1 0
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 25 iterations  current Norm: 0.532515 (max: 0.041521, Norm deltaX: 3.11567e-05)
+NewtonRaphson::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0268826
+OpenSees > analyze failed, returned: -3 error flag
+WARNING: CTestNormUnbalance::test() - failed to converge 
+after: 40 iterations  current Norm: 10.1773 (max: 0.041521, Norm deltaX: 0.00100812)
+NewtonLineSearch::solveCurrentStep() -the ConvergenceTest object failed in test()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0268826
+OpenSees > analyze failed, returned: -3 error flag
+[2026-09-28 00:52:26] [  18010.2s] step    60 s/B 0.014040 q   376.543 kPa ds 2.500e-04 rung K it  23 fails 0 wall   231.64s | sub 15487413 maxpt 14697 cap 0 rejErr 1899372 dtmin 0 | p'min 3.998 eta_max 1.870 rho_max 0.986 n>1 0
