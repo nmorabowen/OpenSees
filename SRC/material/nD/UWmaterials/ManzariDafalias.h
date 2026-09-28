@@ -194,6 +194,10 @@ class ManzariDafalias : public NDMaterial
 	//       every instance, and NewtonSol*/NewtonIter* call Matrix::Invert and
 	//       Matrix::Solve, which run on the process-wide Matrix::matrixWork
 	//       scratch that they FREE AND REALLOCATE (a use-after-free, not a race).
+	//       Ladruno WP-130: both REMOVED on the live path -- NewtonIter()'s
+	//       statics are locals (it has no caller anyway) and NewtonSol()'s three
+	//       inverses run on a stack-local LU (ladrunoInvertLocal). Still refused
+	//       here: the re-entrancy MEASUREMENT is WP-131's (F19), not this one's.
 	//   IntScheme 4 (RungeKutta45) -> ~20 function-scope static Vector/Matrix
 	//       work arrays plus a `static bool do_once`.
 	//   IntScheme 3/5 and the MaxStrain/MaxEnergy family -> not audited.
@@ -322,6 +326,45 @@ class ManzariDafalias : public NDMaterial
 	int     mMaxSubstepsInME;
 	int     mSubstepsTakenInME;
 	bool    mSubstepCapHitInME;
+	// Ladruno WP-130 (TIMs F18(c)/(d)): seams for BackwardEuler_CPPM under a
+	// global Newton. Set in EVERY ManzariDafalias constructor to the values that
+	// select vanilla's control flow verbatim; only LadrunoSANISAND writes others.
+	//   mLadrunoCPPMOnFail   0 = vanilla: a local Newton that cannot return the
+	//                        increment falls to the halving ladder and then to a
+	//                        silent explicit integration (F12 5.2). 1 = REFUSE:
+	//                        where vanilla would integrate explicitly, set
+	//                        mLadrunoCPPMRefused and return, so the element gets
+	//                        LADRUNO_MATERIAL_REFUSED and the global step is cut.
+	//   mLadrunoCPPMMaxLevel the halving cap. Vanilla hard-codes a local
+	//                        `mMaxSubStep = 10` with implicitLevel starting at 1,
+	//                        i.e. up to 9 halvings (2^9 leaves); 10 is the vanilla
+	//                        value. 1 = no halving at all.
+	//   mLadrunoCPPMLineSearch 0 = vanilla full Newton step in NewtonIter2; 1 = a
+	//                        backtracking line search on ||R|| (halving, <= 8 cuts).
+	//   mLadrunoCPPMStart    0 = vanilla; 1 = when the local Newton from the elastic
+	//                        trial fails, retry it ONCE (per level) from an explicit
+	//                        50-substep ForwardEuler guess before halving. Vanilla's
+	//                        own `SchemeControl == 1` rung does this but is dead
+	//                        code (the ladder starts at 2) and passes uninitialised
+	//                        K, G to ForwardEuler; this rung passes the CPPM's own.
+	//   mLadrunoMEFallback   0 = vanilla; 1 = when ModifiedEuler hits
+	//                        -maxSubsteps (IntScheme 1), hand THAT increment to
+	//                        BackwardEuler_CPPM (with refusal instead of any
+	//                        explicit fallback) and refuse only if it fails too.
+	//   mLadrunoCPPMRefused  per update: reset at the top of integrate().
+	//   mLadrunoInMEFallback true only while integrate() runs that fallback.
+	int     mLadrunoCPPMOnFail;                                              // Ladruno WP-130
+	int     mLadrunoCPPMMaxLevel;                                            // Ladruno WP-130
+	int     mLadrunoCPPMLineSearch;                                          // Ladruno WP-130
+	int     mLadrunoMEFallback;                                              // Ladruno WP-130
+	int     mLadrunoCPPMStart;                                               // Ladruno WP-130
+	// Ladruno WP-130: 0 = vanilla `Cep = -1.0 * CSigma` in NewtonSol, i.e. the
+	// CPPM's algorithmic tangent with the WRONG SIGN (measured: -T matches a
+	// finite-difference d sigma/d eps of the return map to 1.2e-3, T itself is
+	// negative definite); 1 = `Cep = CSigma`.
+	int     mLadrunoCPPMTangentFix;                                          // Ladruno WP-130
+	bool    mLadrunoCPPMRefused;                                             // Ladruno WP-130
+	bool    mLadrunoInMEFallback;                                            // Ladruno WP-130
 	// Ladruno WP-127 (TIMs F20(a)): a per-INSTANCE census of what ModifiedEuler
 	// did, i.e. one per Gauss point. Unlike mSubstepsTakenInME above (reset at
 	// every integrate(), and by LadrunoSANISAND::revertToLastCommit under
@@ -358,12 +401,45 @@ class ManzariDafalias : public NDMaterial
 	//   ModifiedEuler call, so an elastic or zero-increment settle pass -- e.g.
 	//   the one Domain::revertToLastCommit pushes through -- does not erase it):
 	//     LAST_SUBSTEPS, LAST_FORCED, LAST_ABANDON, LAST_CAP
+	// Ladruno WP-130 (TIMs F18(c)/(d)) appends twelve BackwardEuler_CPPM columns
+	// (17..28). Same rules: per instance, diagnostics only, read by nothing in
+	// the integrator. Cumulative since revertToStart:
+	//     CPPM_CALLS       top-level BackwardEuler_CPPM calls from integrate()
+	//                      (IntScheme 2 plastic updates + ME->CPPM fallbacks)
+	//     CPPM_NEWTON_FAIL local Newton (NewtonIter2 + Check) did not return a
+	//                      valid state, at ANY halving level
+	//     CPPM_HALVINGS    recursive half-increment calls (implicitLevel > 1)
+	//     CPPM_EXPL_FAIL   vanilla's silent explicit fallback after a failed
+	//                      local Newton or an exhausted halving ladder (F12 5.2)
+	//     CPPM_EXPL_LOWP   the trial-p < p_min branch's explicit integration
+	//                      (by design, not a failure)
+	//     CPPM_REFUSALS    the CPPM REFUSED the update (-cppmOnFail refuse, or
+	//                      inside an ME->CPPM fallback)
+	//     ME_FALLBACKS     ModifiedEuler hit -maxSubsteps and the increment was
+	//                      handed to the CPPM (-meFallback cppm)
+	//     ME_FALLBACK_OK   ... and the CPPM returned it (the update stands)
+	//     CPPM_GUESS_TRIES -cppmStart explicit: local Newton restarts from the
+	//                      explicit guess
+	//     CPPM_GUESS_OK    ... that returned a root the gate ACCEPTED (admissible
+	//                      and within LADRUNO_GUESS_AGREE of the explicit walk)
+	//     CPPM_LS_CUTS     -cppmLineSearch on: step halvings taken by the search
+	//   and LAST_CAP (col 16) is 2, not 1, when the cap hit was RESCUED by the
+	//   ME->CPPM fallback (capHits still counts every cap event; refused cap
+	//   hits = capHits - meFallbackOk).
+	//   the last update whose top-level BackwardEuler_CPPM call left the elastic
+	//   branch (so a zero-increment settle pass does not erase it):
+	//     LAST_CPPM_REFUSED 1 if it refused
 	enum {                                                                   // Ladruno WP-127
 	    LMS_UPDATES = 0, LMS_ME_CALLS, LMS_SUBSTEPS, LMS_ACCEPTED,           // Ladruno WP-127
 	    LMS_REJECTED_ERR, LMS_FORCED_DTMIN, LMS_FORCED_CLAMP,                // Ladruno WP-127
 	    LMS_REJECTED_LOWP, LMS_ABANDON_LOWP, LMS_CAP_HITS, LMS_ENTRY_PMIN,   // Ladruno WP-127
 	    LMS_PN_RESETS, LMS_MAX_ONE_UPDATE, LMS_LAST_SUBSTEPS, LMS_LAST_FORCED, // Ladruno WP-127
-	    LMS_LAST_ABANDON, LMS_LAST_CAP, LMS_COUNT                            // Ladruno WP-127
+	    LMS_LAST_ABANDON, LMS_LAST_CAP,                                      // Ladruno WP-127
+	    LMS_CPPM_CALLS, LMS_CPPM_NEWTON_FAIL, LMS_CPPM_HALVINGS,             // Ladruno WP-130
+	    LMS_CPPM_EXPL_FAIL, LMS_CPPM_EXPL_LOWP, LMS_CPPM_REFUSALS,           // Ladruno WP-130
+	    LMS_ME_FALLBACKS, LMS_ME_FALLBACK_OK, LMS_LAST_CPPM_REFUSED,         // Ladruno WP-130
+	    LMS_CPPM_GUESS_TRIES, LMS_CPPM_GUESS_OK, LMS_CPPM_LS_CUTS,           // Ladruno WP-130
+	    LMS_COUNT                                                            // Ladruno WP-127
 	};                                                                       // Ladruno WP-127
 	double  mLadrunoMEStats[LMS_COUNT];                                      // Ladruno WP-127
 	bool    mLadrunoMEEnteredThisUpdate;                                     // Ladruno WP-127

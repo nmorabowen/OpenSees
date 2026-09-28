@@ -7500,6 +7500,14 @@ Three things to carry forward:
   `commitState` on an increment nothing proposes off-path — exactly the regime where scheme 2 wins)
   is measured nowhere and remains open. Full tables and scripts:
   `Ladruno_files/testbed/hypo_bearing/adr92_f12/F12_intscheme2_verdict.md`.
+- **Status (WP-130, #868):** the ladder is bounded on request: `-cppmHalvings n` (0..9, vanilla 9 =
+  up to 2^9 half-increments) with `-cppmOnFail refuse`. On a one-quad free-DOF deck (100 kPa, one
+  2 kPa push step the CPPM cannot return) the default grinds 31 global iterations, 224 local-Newton
+  failures, 440 half-increments and 4 silent explicit fallbacks in 5.6 s before analyze returns
+  -3; `-cppmOnFail refuse -cppmHalvings 0` returns -3 in 8-22 ms (pinned,
+  `tests/test_ladruno_sanisand_cppm_newton.py`). Refusing fast ALONE does not carry the bearing
+  leg (vanilla tangent: s/B 0.00000-0.00017); with the sign-corrected tangent it does -- see
+  "IntScheme 2's TanType-2 tangent is MINUS" below.
 
 ### `ManzariDafalias::integrate()` discards `BackwardEuler_CPPM`'s return value, and the CPPM's own ladder can never fail anyway — a scheme-2 non-convergence is invisible in every channel
 - **Bites:** a CPPM step whose Newton diverged, whose Jacobian was singular, or which recursed
@@ -7535,6 +7543,13 @@ Three things to carry forward:
   `ModifiedEuler`. Until then, treat any scheme-2 run through a global Newton as unauditable for
   silent quality loss — measure cost and stall rate (this entry's numbers), not correctness,
   because correctness has no channel to fail loudly through.
+- **Status (WP-130, #868):** now VISIBLE and, on request, a REFUSAL. `substepStats` columns
+  17-27 count every CPPM call, local-Newton failure, half-increment, **silent explicit fallback**
+  (`cppmExplicitFail`, vanilla's path, still taken at the defaults) and low-p explicit branch, per
+  integration point. `-cppmOnFail refuse` turns the terminal explicit branch into
+  `LADRUNO_MATERIAL_REFUSED` (`BackwardEuler_CPPM` returns -5, `ladrunoUpdateStatus()` ORs
+  `mLadrunoCPPMRefused`), so a forwarding element cuts the step. `integrate()` still discards the
+  return value; the refusal travels in the flag. Default byte-identical.
 
 ### `LadrunoSANISAND::schemeReachesModifiedEuler()` returns false for `IntScheme 2`, so the class prints "`-maxSubsteps` has NO EFFECT" — MEASURED FALSE — fixed (WP-108, #845)
 - **Bites:** trust the constructor's own warning and you would conclude `-maxSubsteps`/`-honorTolR`
@@ -7583,6 +7598,9 @@ Three things to carry forward:
   continuum tangents over the substep chain on scheme 1, and scheme 2 silently degrades into the
   latter on fallback. **Under `-implex` both are inert regardless:** the material hands out
   `Ce(p_n)` and says so (`LadrunoSANISAND.cpp:2097-2099`, "TanType ... is INERT under -implex").
+- **CORRECTION (WP-130, #868): the "genuine algorithmic tangent" has the WRONG SIGN.** See the
+  WP-130 entry "IntScheme 2's TanType-2 tangent is MINUS". The reading above (a return-map
+  Jacobian, one iterate stale) is right about the object and wrong about its sign.
 - **Workaround/status (2026-09-16, WP-105 / F12, no code changed):** not fixed; recorded as a
   read-only finding. If you need to know which tangent a step actually used, cross-reference the
   `substeps` response's `mSubstepsTakenInME` (non-zero iff `ModifiedEuler` ran) alongside
@@ -7720,6 +7738,59 @@ Three things to carry forward:
 - **Bites:** `_tims_2d_model_requests_2026-09-25/ring_points_b{8,16}.csv`: on all 80 rows `p_kPa == +tr(sigma)/3` and every normal stress is >= 0. `ManzariDafalias` stores `mSigma` compression-positive; only the wrappers' `getStress()` flips it (`eleResponse ... stress` is tension-positive). A dump taken from internal members (or a post-processor that negated twice) looks exactly like the README's claim until you check `p` against the trace. `alpha`, `alpha_in` and `z` are ratios and are NOT flipped by the wrappers in either direction. b8 row 1859/2 also carries `tr(alpha) = 2.3e-3` (the rest ~1e-10).
 - **Workaround/status:** `ladrunoSANISANDReplay` has **no default convention** — `-convention compressionPositive|tensionPositive` is required — and projects alpha/alpha_in/z to deviatoric with a warning above round-off (the pre-projection traces are returned). `sanisand_replay.check_sign_convention()` verifies a dump row. Tell the act (WP-127 plan, reply doc).
 
+### `ManzariDafalias::NewtonSol` inverted its three 6x6 blocks on `Matrix::matrixWork`, the process-wide scratch; `NewtonIter` kept function-scope STATIC work arrays (WP-130)
+- **Bites:** a threaded state-determination (WP-107 / F19) on IntScheme 2 shares one DGETRF/DGETRI
+  work and pivot array across every Gauss point (a silently WRONG inverse), and anything inverting
+  a matrix larger than 400 doubles REALLOCATES it under the others (use-after-free). The
+  `static Vector sol/R/R2/dX/norms/aux` and `static Matrix jaco/jInv` in `NewtonIter` are also
+  shared and sized by whichever call ran first -- but `NewtonIter` has NO caller (IntScheme 2 runs
+  `NewtonIter2 -> NewtonSol`), so the statics were never the live hazard; WP-131's inventory (D6/D9)
+  says so. The trap is fixing the dead statics and calling IntScheme 2 re-entrant.
+- **Fixed (WP-130, #868):** `NewtonSol` calls a file-static `ladrunoInvertLocal` (same LAPACK pair,
+  pivot/work on the stack, lwork 400) -- bit-identical to `Matrix::Invert` for n = 6 (unblocked
+  DGETRI), pinned on seven IntScheme-2 decks including a free-DOF Newton deck whose iteration counts
+  are compared too. `NewtonIter`'s statics are locals. `ladrunoThreadSafeUpdate()` still answers
+  false: re-entrancy is MEASURED in WP-131, not argued here. Other `Matrix::Invert/Solve` callers
+  in the file (the dead `NewtonSol2`/`NewtonSol_negP`, `NewtonIter`) still use the shared scratch.
+
+### `BackwardEuler_CPPM`'s elastic-trial start fails exactly where SANISAND is stiffest -- the first plastic increment after a reversal or the stage flip (WP-130)
+- **Bites:** with `alpha_in = alpha` (the stage flip under `-flipAlphaIn init`, or any loading
+  reversal) `(alpha - alpha_in):n = 0`, `GetStateDependent` returns its `h = 1e10` sentinel and
+  `NewtonSol` zeroes `dGamma` in the Jacobian; the condensed system is near singular from the
+  elastic trial, the local Newton returns -1 and vanilla goes straight to the explicit fallback, or
+  returns 0 and halves up to 2^9 times. On the one-quad free-DOF decks of WP-130 the failing step
+  is the first plastic push step after the flip.
+- **Status (WP-130, #868):** `-cppmStart explicit` retries the local Newton ONCE per level from a
+  50-substep ForwardEuler guess (vanilla carries this rung as `SchemeControl == 1`, dead code that
+  would also pass uninitialised K, G). On the 100 kPa quad it returns 3 of 4 failing increments
+  (census `cppmGuessOk/cppmGuessTries`) but the global step still fails; it is opt-in and
+  unqualified beyond the WP-130 decks. `-cppmLineSearch on` (halving on ||R||) cut the local-Newton
+  failures on the 10 kPa quad from 36 to 2 but did not make that global step converge either.
+
+### A CPPM refusal under a DISCARDING element was committed -- the plain `commitState` path never read the refusal flag (WP-130, from WP-129's adversarial review)
+- **Bites:** SSPquad, stdBrick (= Brick), BbarBrick, SSPbrick, BrickUP and LadrunoSolidShell drop
+  `setTrialStrain`'s return code (F7 roster), so a `-cppmOnFail refuse` (or failed ME->CPPM
+  fallback) refusal never cuts their step; Newton can converge on the refused, UNINTEGRATED trial
+  state and `LadrunoSANISAND::commitState`'s plain (non-IMPL-EX) path committed it -- the refusal
+  was honoured by forwarding elements only. WP-129's review found the same hole for the ME cap.
+- **Fixed (WP-130, #868):** the plain path checks `mLadrunoCPPMRefused` first: declare to
+  `Domain::commit()` (`ladrunoNoteCommitRefusal`, element-independent abort), latch
+  (`mImplexCommitRefusedLatch`, reported in `implexRefusals[4]`), restore the trial, return
+  `LADRUNO_MATERIAL_REFUSED`. Pinned on SSPquad (`test_cppm_refusal_under_a_discarding_element_does_not_commit`:
+  analyze < 0, strain = last committed, further steps refused). WP-129 adds `mSubstepCapHitInME`
+  to the same check: whichever merges second ORs the flags. The trial-time latch warning still
+  says "-implex companion"; its text predates this second writer.
+
+### Inside the ME -> CPPM fallback the CPPM ladder is guarded by `mScheme == INT_BackwardEuler` and its explicit exits re-enter ModifiedEuler (WP-130)
+- **Bites:** calling `BackwardEuler_CPPM` from an IntScheme-1 material skips the whole retry ladder
+  (vanilla returns an UNCONVERGED state with errFlag 0), and any explicit exit (low-p branch, ladder
+  exhaustion) calls `explicit_integrator` -> the ModifiedEuler that just hit its `-maxSubsteps`
+  cap, which then hits it again at once (the cap counts per `integrate()`).
+- **Fixed (WP-130, #868):** `-meFallback cppm` sets `mLadrunoInMEFallback` for the call: the ladder
+  runs (`|| mLadrunoInMEFallback`) up to `-cppmHalvings`, and every explicit exit REFUSES. On
+  success the cap flag is cleared; on failure it stays set, so the update is refused exactly as
+  without the fallback, and every existing reader of `mSubstepCapHitInME` (the IMPL-EX companion
+  included) stays consistent. Not qualified with `-implex` (the parser refuses the combination).
 ### `ManzariDafalias::ModifiedEuler` treats a LOADING stage with a negative denominator as elastic and re-derives α from the stress ratio (finding F, WP-129)
 - **Bites:** each Heun stage computes `dγ = (2G n:de_dev − K dε_v n:r) / (Kp + 2G(B − C tr n³) − K D n:r)` and takes the `dγ < 0` branch as "elastic": elastic stress plus `Δα = 3(dev σ/tr σ − dev σ₀/tr σ₀)`, i.e. α dragged along with the stress ratio, no bounding check. The sign of `dγ` is the sign of numerator × denominator, so a stage whose numerator is POSITIVE (the elastic trial loads the surface) but whose denominator is NEGATIVE — `Kp` very negative, which happens once α is outside the bounding surface (`b:n < 0`) or `h < 0` (stale α_in, below) — is misread as unloading. WP-128 measured it on 17 of 35 extShear crossings and on TIMs b8 1950/3 `isoExt 1e-6` (err 0, `f = 0.118`) and ranked it a compounder; WP-134's exact oracle OVERTURNS that: with the uncapped `q` (row below) this path drives the error to exactly 0, so no tolerance catches it, it accounts for ALL 25 campaign-ME ring escapes from admissible starts, and it gives 20-65 % stress errors on benign 20-100 kPa states even at TolE 1e-8 (row "the err = 0 path").
 - **Workaround/status:** `IntScheme 129` (SAS-ME, WP-129) classifies each stage from the elastic-trial numerator alone: `N ≤ 0` is elastic with α and z UNCHANGED; `N > 0` with `H ≤ 0` is a refusal (stage 1, a property of the accepted start state) or a cut (stage 2). ModifiedEuler is unchanged (byte-identity).
@@ -7809,6 +7880,95 @@ Three things to carry forward:
 - **Bites:** WP-133's two-element PDMY03 deck ran >15 min in `analyze(1)` on the step where the dilation brake fired. Diagnosed WP-135 (#874), measured on the unmodified build: it is not an infinite loop but a *huge finite* one. On the crossing step `KrylovNewton` wanders for 55 iterations, then iteration 56 returns `|Δu| = 6.9e4`; the material then sees a strain increment of that order and `setSubStrainRate()` (`int numOfSub1 = strainRate.octahedralShear(1)/1.0e-5`, same for `volume()/1.e-5`; PDMY01 shear `1e-4`) sizes `getStress()`'s loop at ~1e9–1e10 substeps per Gauss point per call. There is no cap, and past `INT_MAX` the `double→int` conversion is undefined (MSVC yields `INT_MIN`, which the `>` comparisons ignore, so some wild iterates are cheap and the next one grinds). **Not specific to PDMY03, two elements, or the brake:** PDMY01 on the plain ONE-element dense WP-133 deck grinds at compression step 16 (`|Δu| = 12` → ~1e6 substeps × stressCorrection); a denser PDMY01 variant grinds too. WP-133's "one element alone is fine" was placement luck: the SAME moved-`cs1` single element converges at `x0 = 0` and fails fast (`rc = -3`) at `x0 = 5`; the crossing step is a knife-edge in roundoff.
 - **Workaround/status:** FIXED WP-135 (#874), all three classes. `setTrialStrain`/`setTrialStrainIncr` return `LADRUNO_MATERIAL_REFUSED` (case (b): not integrated, committed state untouched) when the increment needs more than 1e5 substeps in stage 1 (`|Δγ_oct|` or `Δε_v` ≈ 1, or `|Δγ_oct|` ≈ 10 in PDMY01; a normal 5e-4 step needs ~50), and `setSubStrainRate` caps the loop at 1e5 for hosts that swallow the code (`SSPquad`/`SSPbrick`/`Brick`: see the "swallow the material's refusal" entry — PDMY is usually hosted in SSPquad/SSPquadUP, where the step is then NOT failed, only bounded). The refusal makes `analyze` fail the step fast instead of grinding: cut the step (gate H4) or use a less aggressive algorithm. **General rule:** any material substepping scheme sized as `|Δε|/h` must cap the count and refuse past it — a Newton trial iterate is not a physical increment and can be arbitrarily large. Gates: `tests/test_wp135_pdmy_substep_cap.py` (every pre-fix grind runs in a subprocess under a wall-clock timeout).
 
+### `IntScheme 2`'s `TanType 2` tangent is MINUS the derivative of its own return map -- the element gets a negative-definite stiffness (WP-130)
+- **Bites:** `ManzariDafalias::NewtonSol` ends `Cep = -1.0 * CSigma;`. The condensed CPPM system
+  is `DSigma d_sigma = d_eps` (R1 = eStrain - TrialElasticStrain + ..., so d R1/d eps = -I), and
+  `CSigma = (aC DSigma)^-1 aC = DSigma^-1`: the algorithmic tangent is `+CSigma`. The local Newton
+  never uses `Cep` (its update is `delSig = -CSigma SConstant`), so the RETURN is right and only the
+  tangent handed to the element is flipped -- a negative-definite 6x6 under `TanType 2`. Measured
+  (`Ladruno_files/testbed/hypo_bearing/wp130_f18c/q_tangent_fd.py`, 3D cube, a plastic step whose
+  replay reproduces the analysis to 4e-15): `||-T - D_fd|| / ||D_fd|| = 1.24e-3` (the one-iterate
+  staleness), `||T - D_fd|| / ||D_fd|| = 2.0`; the diagonal of T is -1.66e4 where D_fd has +1.66e4.
+- **Why it hid:** WP-105 (F12 §5.1) READ the code and called it "a genuine algorithmic tangent";
+  nobody compared it with a finite difference. Every zero-free-DOF material-point deck converges in
+  one global iteration whatever the tangent (no free equations), and every free-DOF scheme-2 failure
+  was blamed on the recursive-halving ladder, which it also has. On F12's bearing deck the global
+  Newton with the vanilla tangent DIVERGES from its first iteration (unbalance x3-5 per iteration),
+  and only KrylovNewton's relaxed rung commits steps -- that, not the ladder alone, is why F12 found
+  scheme 2 "475x shallower". Checklist rule, again: verify a tangent against a finite difference
+  with free equations (`ladruno-new-material`, "Verifying a tangent").
+- **Workaround/status (WP-130, #868):** `-cppmTangent fixed` hands out `+CSigma`
+  (`tests/test_ladruno_sanisand_cppm_newton.py` pins both: vanilla -T within 1e-2 of D_fd, fixed
+  +T within 1e-2, 3D and -- by a whole-run FD, sigma_33 not being exposed -- the plane-strain
+  wrapper). **Owner decision (WP-130): `fixed` is the LadrunoSANISAND DEFAULT**; `-cppmTangent
+  vanilla` reproduces the old binary; vanilla `ManzariDafalias` keeps the wrong sign (upstream
+  report deferred). F12's bearing deck (x10z8, `h1.0_e0.6944`, 1200 s budget, TanType 2, driver unchanged), the RECOMMENDED recipe (`fixed` default + `-cppmOnFail refuse -cppmHalvings 3 -cppmLineSearch on`, no `-cppmStart`; build 6726f5e24, `wp130_f18c/tables_recipe.md`), measured back to back with an IntScheme-1 control on the same box, which was at 100 % CPU (so compare these two with each other only): the recipe reaches s/B 0.00293 / 0.00421 / 0.00523 / 0.00626 at 300 / 600 / 900 / 1200 s against IntScheme 1's 0.00138 / 0.00250 / 0.00442 / 0.00698 -- ahead at 300, 600 and 900 s, BEHIND at 1200 s -- with 3.2 global iterations per committed step against 16.8 (481 of 527 steps on the plain Newton rung), load-settlement within 0.2-1.4 % of IntScheme 1, and its refusals had spent 76 of the driver's 80 pinned subdivisions when the wall stopped it. Vanilla IntScheme 2 reaches 0.00002 and `-cppmTangent fixed` alone 0.00378 (earlier, unloaded runs). The global Newton is NOT quadratic even with the fixed tangent: median observed order 1.14 on the last three residuals (9 % of committed calls >= 1.8); see the four tangent error sources. (Pre-round-1 note, superseded: an arm WITH `-cppmStart explicit` -- whose accuracy review round 1 measured and rejected -- reached 0.00876 in 1081 s on an unloaded box.).
+
+### The sign-corrected CPPM tangent is still NOT the consistent tangent -- four separate error sources (WP-130 review r1)
+- **Bites:** "`-cppmTangent fixed` = the algorithmic tangent, one iterate stale" (the WP-130 first
+  claim) is wrong in degree. A reviewer's FD campaign (`review130/p1_tangent.py`) separates:
+  (a) **staleness**, and the local convergence test `||R|| < TolR (1 + ||R0||)` mixes strain,
+  back-stress and stress units, so R1 converges only to ~TolR*|F|: at the default TolR 1e-7 the
+  g12 column is off by 0.27-0.53 relative (the first "1.2e-3" was one lucky state);
+  (b) the **void-ratio dependence** eps -> e (inVar(37)) -> psi -> M^b, M^d, b0 is absent from
+  dR/deps: 1.3-2.3e-4 on the volumetric column at p ~ 170, 1.24e-3 at p ~ 1.9, TolR-independent;
+  (c) the **low-p D_factor derivative** in `NewtonSol` had the wrong sign and dropped the D < 0
+  branch (`- one3*Macauley(D)*be*t/(1+t)^2` vs the correct `+ one3*(D/D_factor)*be*t/(1+t)^2`);
+  it enters the local Jacobian too, i.e. Newton's rate;
+  (d) after a SUCCESSFUL halving the tangent handed out is the SECOND half-increment's (O(1)).
+- **Status (WP-130, #868):** (c) FIXED under `-cppmTangent fixed` (the LadrunoSANISAND default;
+  vanilla ManzariDafalias and `-cppmTangent vanilla` keep the vanilla expression, byte-identical);
+  it moves the local iterates, not the root, where p < 0.05 P_atm -- the fixed-default baseline
+  was re-pinned. (a), (b), (d) documented, not fixed: (a) needs a unit-consistent local norm (a
+  change to the return map's convergence semantics), (b) a d/de block in NewtonSol, (d) a
+  chain-rule product across the halving tree. So the order-1.24 global convergence on the bearing
+  deck has several causes, not one.
+
+### CPPM at low p and at strain reversals branches on ROUND-OFF -- a one-ulp input change flips the path; never pin such decks' numbers cross-platform (WP-130)
+- **Bites:** the WP-130 byte-id decks passed on Windows and failed on the first Linux Zone-A run
+  (every earlier branch run was a draft, where Zone-A is skipped). `ls_ps_s2_cyc` (p ~ 1-3 kPa,
+  `-Pmin 0.0101`) takes the full 2^9 halving ladder plus explicit at almost every step. WHICH
+  sub-increments converge is decided by round-off: the Windows/Linux census matches through row 23
+  (fixed tangent: row 14) and diverges at the next reversal. On ONE Linux binary a 1e-15 relative
+  change of the confinement strain moves row 15's tangent from 41874.9 to 61786.6, the Windows value;
+  1e-11 moves state entries by up to 1.4x. The opt-out free decks' global Newton wanders too (iteration
+  counts 9 vs 8, 31 vs 18). And a homogeneous quad's 4 GPs differ only by round-off, so which of them
+  refuses is platform-dependent (MSVC all 4; GCC GP 2-4, 3-4 or only 3). No code defect: the
+  pre-WP-130 source built on Linux is bit-identical to the WP-130 opt-out there; `-Wall -Wextra
+  -Wuninitialized -Wmaybe-uninitialized -Wsequence-point` is clean.
+- **Rule:** in these regimes pin INVARIANTS (opt-out == pre-change on the same platform) or STRUCTURE
+  (rows, rc, "the ladder ran", GP-summed or any-GP census), not trajectories. Compare stable decks
+  per entry (1e-6 relative + 1e-10 of the row's quantity group), not against a deck-wide floor: a
+  `1e-6 * max|entry of the deck|` floor is dominated by the tangent (~0.3 absolute on ~1 kPa
+  stresses) and makes the stress comparison vacuous.
+- **Status (WP-130, #868):** `test_ladruno_sanisand_cppm_newton.py` compares md3d_s2, ls3d_s2,
+  ls3d_s2_big, ls_ps_s2 (and the fixed-tangent free decks) per entry on every platform (smallest
+  measured margin 78x); the round-off decks keep their numeric pins on win32 only, with a structural
+  check elsewhere; the halvings test reads all 4 GPs. Related: the c < 7/9 Lode non-convexity makes
+  extension paths round-off-selected too (WP-151 memo §6.3).
+
+### `-cppmStart explicit` clobbered the ladder's errFlag, and a successful guess accepted a coarse one-step BE root (WP-130 review r1)
+- **Bites:** the guess's `NewtonIter2` wrote `errFlag` before `if (errFlag == -1) SchemeControl = 3`,
+  so trial non-convergence (0: halve) followed by a singular guess (-1) skipped halving and went
+  straight to explicit/refuse (17 of 228 guess tries in the review's set). And an accepted guess
+  root is one backward-Euler step over an increment the ladder would have halved: errors up to 0.77
+  relative vs an oracle (`Check()` cannot see it: its p < 0 test is commented out).
+- **Fixed / status (WP-130, #868):** the trial's errFlag and state are restored when the guess is
+  not accepted; `gZ` joins the NaN check; the root is accepted only if dGamma >= 0, p > 0 and it
+  agrees with the 50-substep explicit walk to 2 % (`LADRUNO_GUESS_AGREE`). Measured on the same
+  300-increment oracle set: the error is more than 2x the default ladder's on 105 of 171 guess
+  increments (74 with an extra 0.01 absolute margin; recount by confirmation review round 2);
+  worst oracle-converged increment 0.54 vs 0.51; largest single degradation 0.09 -> 0.40 --
+  (median 0.021 vs 0.007) -- so `-cppmStart explicit` is REMOVED from the recommended recipe and
+  documented as a speed-for-accuracy trade.
+
+### A WP-130 flag given with its DEFAULT value on a deck where it cannot act was accepted; `refuse` still ground the full ladder (WP-130 review r1)
+- **Fixed (WP-130, #868):** every flag is validated on having been GIVEN (`-cppmOnFail explicit`
+  on IntScheme 1, `-cppmTangent` under TanType 0/1, `-meFallback off` without a cap: refused).
+  `-cppmOnFail refuse` without `-cppmHalvings` bounds the ladder at 3 (echoed): vanilla's 9 cost up
+  to 1.1 s per refused update. After a RESCUED ME cap hit `lastCapHit` is 2 (capHits still counts
+  it). The WP-99 latch warning names its cause (companion vs CPPM refusal) and says it is sticky
+  until `reset()`.
 ### A material refusal under a DISCARDING element was COMMITTED: `mEpsilon_n` advanced while `mSigma_n`/`mEpsilonE_n` did not (WP-129 review of #871)
 - **Bites:** the SAS-ME refusal (and, before it, the ModifiedEuler `-maxSubsteps` cap) restores the trial stress/back-stress/fabric/elastic strain to the committed values but leaves `mEpsilon` at the trial strain, relying on the element to fail the step. SSPquad, stdBrick and the other discarders (LEDGER "element refusal roster") drop the code, the Newton converges on the frozen stress, and `LadrunoSANISAND::commitState()`'s plain (non-IMPL-EX) path called `ManzariDafalias::commitState()` anyway: the committed strain advanced, the committed stress and elastic strain did not, and the increment was lost for good. Measured on SSPquad: 9 steps with `analyze() == 0` after the first refusal, strain to +4e-3 at frozen stress (the same deck on `quad` returns -3 at once).
 - **Workaround/status:** fixed in WP-129: the plain commit path checks `mLadrunoSas.refused || mSubstepCapHitInME` and uses the WP-99 channel (`ladrunoNoteCommitRefusal()` → `Domain::commit()` fails, latch, trial restored), exactly as the IMPL-EX companion path. This also changes the ModifiedEuler cap on discarding elements from silent corruption to a failed analysis. Pinned by `tests/test_ladruno_sanisand_sasme.py::test_refusal_under_discarding_element_is_not_committed` (SSPquad and stdBrick).
@@ -7842,6 +8002,19 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
 - **Rule:** to fall back after a base `setResponse`, probe the base on a `DummyStream` first; on success delete the probe Response and re-ask the base with the real stream; otherwise forward INSIDE one material tag of your own. Do not drop the tag altogether: MPCO needs a material node per fiber, and an inner material that writes no tags for a key (LadrunoUniaxialJ2 `plasticStrain`) then leaves none — `recorder mpco … section.fiber.plasticStrain` failed with `invalid response data size` and 0 columns on the probe-only build. (Or decide from the key BEFORE writing anything, as `LadrunoRebarBuckling` does, and still emit its own tag.)
 - **Workaround/status:** ✅ `PlateRebarMaterial::setResponse` probes and wraps (WP-142); gated by `test_recorder_metadata_is_one_material_block_per_fiber` (`-xml` metadata) and `test_mpco_section_fiber_forwarded_key` (MPCO). *2026-09-28.*
 
+### Two WPs indexed their sendSelf/recvSelf blocks at the SAME offset (35 + LMS_COUNT) -- a textual merge conflicted only in sendSelf, recvSelf AUTO-MERGED (WP-130 x WP-129, review #868 item 1)
+- **Bites:** WP-129 (SAS-ME options + sasStats) and WP-130 (CPPM options) each appended their block
+  "after the census" at `35 + LMS_COUNT`. git conflicted in sendSelf and on the vector size, but
+  the two recvSelf READ blocks merged cleanly and read the same slots twice: a restored or
+  MP-received IntScheme-2 point got mCPPMOnFail = -1 (refuse) and mCPPMHalvings = 0 from WP-129's
+  default SAS values, unclamped. Nothing failed loudly.
+- **Fixed (WP-130 merge, #868):** the layout is derived from named constants in
+  `LadrunoSANISAND.h` (`LWIRE_CENSUS`, `LWIRE_CPPM`, `LWIRE_CPPM_N`, `LWIRE_SAS`,
+  `LWIRE_SAS_OPT_N`, `LWIRE_SIZE`), documented above `LadrunoSANISAND::sendSelf`; received CPPM
+  options are clamped (setLadrunoCPPMOptions' rule). Pinned by
+  `test_wire_round_trip_both_blocks_after_the_129_merge` (non-default options of BOTH blocks saved,
+  restored into a DEFAULT-built skeleton; options, both censuses and the next two steps exact).
+  **Rule: a new wire block gets its own named offset, never "35 + LMS_COUNT + k".**
 ### A `-lumped` element must use the lumped mass in the inertia RESIDUAL too — upstream `Brick` lumps only the tangent
 - **Bites:** upstream `Brick` (and LadrunoBrick until WP-139) builds the inertia residual from the CONSISTENT mass `ρ Σ N_j N_k dV` for every `massType`, while `-lumped` changes only the tangent branch (`getMass`: Newton tangent, αM Rayleigh, ground load) to the row-sum diagonal. Implicit dynamics then integrates a hybrid that no textbook describes, and Newton's Jacobian is not the derivative of the residual: an ELASTIC `-lumped` Newmark step converges only linearly (no 1e-10 in 40 iterations). Vanilla `CentralDifference` reads the residual at a nonzero trial acceleration and integrated the same hybrid. It hid because every total-based check (rigid-body translation, Σ forces, the ground-motion probe) sees only row sums — equal for lumped and consistent mass — and `CentralDifferenceLadruno`'s Azero residual skips the inertia pass entirely.
 - **Rule:** one mass model per element: whatever `getMass()` returns, the residual's `M·a` must use the same matrix (LadrunoBrick20 F-1; LadrunoBrick WP-139). Test it node by node with a NON-uniform acceleration field, and with Newton iteration counts.

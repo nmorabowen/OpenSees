@@ -1,0 +1,51 @@
+@@F130 INT_SCHEME forced to 2; extra flags ['-cppmOnFail', 'refuse', '-cppmHalvings', 3, '-cppmLineSearch', 'on']
+    *** LADRUNO_A2_EXPECT_BUILD=any: build hash NOT pinned (running 6726f5e24d385bfe26b743fd90490c3b280a0eed); these numbers are not comparable to the reported campaign's ***
+=== ADR 90 WP-A2 -- tau = 0 q_u band on softening SANISAND ===
+    engine build (ladrunoBuild) : 6726f5e24d385bfe26b743fd90490c3b280a0eed
+    openseespy module           : C:\Users\nmora\Github\OpenSees_Compile\OpenSees\.claude\worktrees\agent-ad41c24dbcb30e892\dist\bin\opensees.pyd
+    driver                      : C:\Users\nmora\Github\OpenSees_Compile\OpenSees\.claude\worktrees\agent-ad41c24dbcb30e892\Ladruno_files\testbed\hypo_bearing\sanisand_tau0_band.py
+    output                      : C:\Users\nmora\Github\OpenSees_Compile\OpenSees\.claude\worktrees\agent-ad41c24dbcb30e892\Ladruno_files\testbed\hypo_bearing\wp130_f18c\bvp\rec_s2
+    date                        : 2026-09-28T00:18:49
+    gamma = 19.62 kN/m3, K0 = 0.4554, M_c = 1.3309, -Presidual 0.0, -Pmin 0.101
+    SUBDIV_BUDGET (pinned, R3)  : 80
+    DS_MAX (pinned here)        : 0.005 m
+    convergence test (pinned)   : NormUnbalance @ 1e-05 x gamma*V
+    TanType (0=elastic default) : 2
+    -flipAlphaIn (WP-110 F15d)  : vanilla
+    surcharge (kPa, outside foot): 0.0
+    domain (xlim, zbot)         : 10.0, 8.0
+    IMPL-EX                     : off
+    push integrator             : LoadControl (stock)
+    wall budget per leg         : 1200 s
+
+--- leg h1.0_e0.6944 (e_init = 0.6944) ---
+@@F130 nDMaterial LadrunoSANISAND 1 264.32 0.3129 0.6944 1.3309 0.71 0.027 0.83 0.45 101.0 0.005 1.3 0.968 3.5 0.05 5.75 12.5 1100.0 2.0 2 2 1 1e-07 1e-07 -Presidual 0.0 -Pmin 0.101 -honorTolR 0 -maxSubsteps 20000 -cppmOnFail refuse -cppmHalvings 3 -cppmLineSearch on
+    [h1.0_e0.6944]    25 s/B=0.00041 q=   24.908 ds=0.0100mm t=   26.0s
+    [h1.0_e0.6944]    50 s/B=0.00071 q=   41.166 ds=0.0400mm t=   50.4s
+    [h1.0_e0.6944]    75 s/B=0.00106 q=   58.849 ds=0.0200mm t=   84.6s
+    [h1.0_e0.6944]   100 s/B=0.00153 q=   81.656 ds=0.0400mm t=  122.4s
+    [h1.0_e0.6944]   125 s/B=0.00199 q=  103.426 ds=0.0200mm t=  170.2s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.002: q=103.896 kPa, w2(z=-0.625)=5.0373 m, yield 82 ele / 75.679 m3, t=171s
+    [h1.0_e0.6944]   150 s/B=0.00226 q=  116.046 ds=0.0200mm t=  208.0s
+    [h1.0_e0.6944]   175 s/B=0.00253 q=  128.624 ds=0.0200mm t=  247.8s
+    [h1.0_e0.6944]   200 s/B=0.00283 q=  142.613 ds=0.0200mm t=  286.6s
+    [h1.0_e0.6944]   225 s/B=0.00310 q=  155.092 ds=0.0200mm t=  317.2s
+    [h1.0_e0.6944]   250 s/B=0.00335 q=  166.590 ds=0.0200mm t=  357.8s
+    [h1.0_e0.6944]   275 s/B=0.00367 q=  181.361 ds=0.0200mm t=  452.7s
+    [h1.0_e0.6944]   300 s/B=0.00399 q=  196.099 ds=0.0200mm t=  542.9s
+    [h1.0_e0.6944]   325 s/B=0.00425 q=  207.997 ds=0.0200mm t=  609.0s
+    [h1.0_e0.6944]   350 s/B=0.00450 q=  219.451 ds=0.0100mm t=  695.8s
+    [h1.0_e0.6944]   375 s/B=0.00476 q=  231.427 ds=0.0200mm t=  776.2s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.005: q=243.028 kPa, w2(z=-0.625)=5.9564 m, yield 84 ele / 80.000 m3, t=834s
+    [h1.0_e0.6944]   400 s/B=0.00502 q=  243.492 ds=0.0200mm t=  835.1s
+    [h1.0_e0.6944]   425 s/B=0.00520 q=  252.143 ds=0.0100mm t=  894.7s
+    [h1.0_e0.6944]   450 s/B=0.00548 q=  265.007 ds=0.0400mm t=  964.9s
+    [h1.0_e0.6944]   475 s/B=0.00578 q=  279.035 ds=0.0200mm t= 1058.2s
+    [h1.0_e0.6944]   500 s/B=0.00605 q=  291.705 ds=0.0200mm t= 1142.3s
+    [h1.0_e0.6944]   525 s/B=0.00625 q=  301.266 ds=0.0100mm t= 1198.1s
+    *** INADMISSIBLE: terminated in SEIZURE mode WALL -- q_max = 301.732 kPa is where the RUN stopped, not where the soil failed, and must not be quoted as a capacity ***
+    at s/B = 0.00626; [h1.0_e0.6944] mode=WALL (WALL-CLOCK budget spent at s/B = 0.00626); ended s/B=0.00626 of target 0.250; plateau=NO / peaked=NO (tail 78.697 % of initial); free-advance=NO (50.0x floor); subdivisions 76/80; 527 steps, 298 failed, 24 relaxed, 1201 s
+    controls: resultant 4.44e-16, patch 2.33e-14, eta/M_c 0.6425, OutsideBounding 0, CLAMPING 0, base-foot 4.35e-04
+    width: w2(z=-0.625) = 6.1962 m, w2(z=-1.375) = 6.1945 m, yielding 84 ele / 80.000 m3
+
+done; run sanisand_tau0_summary.py on the output directory
