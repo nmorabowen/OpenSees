@@ -1,0 +1,98 @@
+{
+ "vertUnload": {
+  "first_cross": 20,
+  "cpp_vs_port": 0.002905401125509688,
+  "kinds_in_first_escape": {
+   "('plastic', 'elasticDrag')": 1
+  },
+  "crossing_substeps": 1,
+  "counterfactuals": {
+   "as built (C++-faithful)": {
+    "max": 5.1822537273956195,
+    "first": 20,
+    "refused": 0
+   },
+   "dgamma<0 stage leaves alpha alone (drag frozen)": {
+    "max": 5.733279685178186,
+    "first": 20,
+    "refused": 27
+   },
+   "forced accept at dT_min REFUSES": {
+    "max": 5.1822537273956195,
+    "first": 20,
+    "refused": 0
+   },
+   "Stress_Correction off": {
+    "max": 23556394.07283729,
+    "first": 4,
+    "refused": 0
+   },
+   "error test also on alpha (RK45-style)": {
+    "max": 0.47492967095745925,
+    "first": null,
+    "refused": 0
+   },
+   "TolE 1e-8": {
+    "max": 0.6171117886519425,
+    "first": null,
+    "refused": 44
+   }
+  },
+  "cpp_delta_1e-05": {
+   "max": 1.1931192070974332,
+   "first": 237
+  },
+  "cpp_delta_1e-06": {
+   "max": 0.5740568702861586,
+   "first": null
+  }
+ },
+ "extShear": {
+  "first_cross": 20,
+  "cpp_vs_port": 0.012194377483692448,
+  "kinds_in_first_escape": {
+   "('plastic', 'elasticDrag')": 1
+  },
+  "crossing_substeps": 1,
+  "counterfactuals": {
+   "as built (C++-faithful)": {
+    "max": 7.0135305255137235,
+    "first": 20,
+    "refused": 0
+   },
+   "dgamma<0 stage leaves alpha alone (drag frozen)": {
+    "max": 7.521941043929318,
+    "first": 20,
+    "refused": 0
+   },
+   "forced accept at dT_min REFUSES": {
+    "max": 6.972756783424475,
+    "first": 20,
+    "refused": 14
+   },
+   "Stress_Correction off": {
+    "max": 45279868.49570327,
+    "first": 2,
+    "refused": 0
+   },
+   "error test also on alpha (RK45-style)": {
+    "max": 0.5093657628167858,
+    "first": null,
+    "refused": 18
+   },
+   "TolE 1e-8": {
+    "max": 0.704139356973879,
+    "first": null,
+    "refused": 57
+   }
+  },
+  "cpp_delta_1e-05": {
+   "max": 0.9698251356677962,
+   "first": null
+  },
+  "cpp_delta_1e-06": {
+   "max": 0.6296926995609363,
+   "first": null
+  }
+ }
+}

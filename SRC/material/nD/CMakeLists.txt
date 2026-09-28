@@ -68,6 +68,7 @@ target_sources(OPS_Material
     LadrunoSANISAND.cpp
     LadrunoSANISAND3D.cpp
     LadrunoSANISANDPlaneStrain.cpp
+    LadrunoSANISANDSasME.cpp
     LadrunoRCConcrete.cpp
     LadrunoRCFiniteStrain.cpp
     LadrunoConcrete3D.cpp

@@ -1,0 +1,44 @@
+== 1. stage signs
+-- reproducer: floor, deps_yy 1e-4: path 2, substeps 1, alpha_in reset False, f_after 2.07e-08, alpha/alpha_b 5.139, corrGiveUp 0
+   sub 0 T=0 dT=1 code 0 err 1.9e-06: plastic: temp4 +1.2e+08 num + Kp + aain 00 | drag: temp4 +1.3e+03 num - Kp - aain -13
+   1950/3 COMMITTED state: Kp = -368, h 192, b:n -8.19, (alpha-alpha_in):n 9.87
+-- 1950/3 shear+ 1e-5: path 4, substeps 1, alpha_in reset True, f_after 0.0139, alpha/alpha_b 7.380, corrGiveUp 1
+   sub 0 T=0 dT=1 code 0 err 4.1e-09: plastic: temp4 +1.7e+10 num + Kp + aain 00 | drag: temp4 +2.7e+04 num - Kp + aain -0.16
+-- 1950/3 isoExt 1e-6: path 4, substeps 1, alpha_in reset True, f_after 0.118, alpha/alpha_b 7.642, corrGiveUp 1
+   sub 0 T=0 dT=1 code 0 err 0: plastic: temp4 -1.9e+10 num + Kp - aain 00 | drag: temp4 -2e+10 num + Kp - aain 00
+-- 1950/3 isoComp 1e-6 (loading): path 3, substeps 1, alpha_in reset False, f_after 7.98e-10, alpha/alpha_b 5.884, corrGiveUp 0
+   sub 0 T=0 dT=1 code 0 err 0: drag: temp4 +9.6e+03 num - Kp - aain +9.9 | drag: temp4 +9.6e+03 num - Kp - aain +9.3
+
+== 2. accepted substeps that carry alpha/alpha_b across 1 (reversal chains, delta 1e-4, p0 2)
+   vertUnload:
+        3 x  plastic(temp4+,num+,aain=0) + drag(temp4+,num-,aain-); alpha_in reset this incr: True; dT 1
+   extShear:
+        3 x  plastic(temp4+,num+,aain=0) + drag(temp4+,num-,aain-); alpha_in reset this incr: True; dT 1
+        2 x  plastic(temp4+,num+,aain=0) + drag(temp4-,num+,aain-); alpha_in reset this incr: True; dT 1
+        7 x  plastic(temp4+,num+,aain=0) + drag(temp4-,num+,aain-); alpha_in reset this incr: True; dT 0.1
+        2 x  plastic(temp4+,num+,aain=0) + drag(temp4+,num-,aain-); alpha_in reset this incr: True; dT 0.1
+        1 x  plastic(temp4+,num+,aain+) + plastic(temp4+,num+,aain+); alpha_in reset this incr: True; dT 0.0017
+        1 x  plastic(temp4+,num+,aain-) + plastic(temp4+,num+,aain+); alpha_in reset this incr: True; dT 0.00014
+        4 x  drag(temp4-,num+,aain-) + plastic(temp4+,num+,aain+); alpha_in reset this incr: True; dT 0.0023
+        1 x  plastic(temp4+,num+,aain-) + plastic(temp4+,num+,aain-); alpha_in reset this incr: True; dT 0.00047
+        1 x  plastic(temp4+,num+,aain-) + plastic(temp4+,num+,aain+); alpha_in reset this incr: True; dT 5.7e-05
+        1 x  plastic(temp4+,num+,aain-) + plastic(temp4+,num+,aain+); alpha_in reset this incr: True; dT 7.1e-05
+        3 x  drag(temp4-,num+,aain-) + plastic(temp4+,num+,aain+); alpha_in reset this incr: True; dT 0.0022
+        1 x  plastic(temp4+,num+,aain-) + plastic(temp4+,num+,aain+); alpha_in reset this incr: True; dT 4.1e-05
+        1 x  plastic(temp4+,num+,aain-) + plastic(temp4+,num+,aain-); alpha_in reset this incr: True; dT 0.00096
+        1 x  drag(temp4+,num-,aain-) + drag(temp4+,num-,aain-); alpha_in reset this incr: True; dT 0.044
+        1 x  plastic(temp4+,num+,aain-) + plastic(temp4+,num+,aain-); alpha_in reset this incr: True; dT 0.0005
+        1 x  plastic(temp4+,num+,aain-) + plastic(temp4+,num+,aain+); alpha_in reset this incr: True; dT 0.00026
+        1 x  plastic(temp4+,num+,aain-) + plastic(temp4+,num+,aain+); alpha_in reset this incr: True; dT 0.00012
+        1 x  plastic(temp4+,num+,aain-) + plastic(temp4+,num+,aain+); alpha_in reset this incr: True; dT 0.00022
+        1 x  drag(temp4-,num+,aain-) + plastic(temp4+,num+,aain+); alpha_in reset this incr: True; dT 0.0024
+        1 x  drag(temp4+,num-,aain-) + drag(temp4+,num-,aain-); alpha_in reset this incr: True; dT 0.047
+
+== 3. counterfactuals: max alpha/alpha_b on the chains, and the reproducer
+   variant                 vertUnload  extShear  reproducer repro substeps
+   as built                     5.182     7.014       5.139              1
+   G-fix h Macaulay             0.592     0.930       0.549              1
+   F-q q<=2                     5.182     7.014       5.139              1
+   F-drag frozen                5.733     7.522       4.897              1
+   E-fix alpha in error         0.475     0.509       0.266            200
+   G-fix + F-drag               0.592     0.930       0.549              1

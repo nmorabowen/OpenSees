@@ -289,6 +289,7 @@ int OPS_LadrunoBeginAugment();         // Ladruno: ADR-41 D1 (open held-load aug
 int OPS_LadrunoEndAugment();           // Ladruno: ADR-41 D1 (close held-load augmentation sweep)
 int OPS_LadrunoBuild();                // Ladruno: build-stamp query (git hash the binary was compiled from)
 int OPS_LadrunoThreads();              // Ladruno WP-107: element-loop thread count (get/set)
+int OPS_LadrunoSANISANDReplay();      // Ladruno WP-127: LadrunoSANISAND material-point state replay (defined in LadrunoSANISAND.cpp)
 int OPS_LadrunoMutation();             // Ladruno: ADR-87 D2 mutation-gate query ("none" or e.g. "CONTINUUM=ZERO")
 int OPS_nodeEigenvector();
 int OPS_getTime();

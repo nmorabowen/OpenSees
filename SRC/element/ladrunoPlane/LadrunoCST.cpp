@@ -35,6 +35,7 @@
 #include <Node.h>
 #include <NDMaterial.h>
 #include <Matrix.h>
+#include <LadrunoElementShell.h>   // Ladruno (WP-124): shared Element-contract helpers
 #include <Vector.h>
 #include <ID.h>
 #include <Renderer.h>
@@ -437,8 +438,7 @@ const Matrix &LadrunoCST::getInitialStiff(void)
       }
     }
   }
-  Ki = new Matrix(K);
-  return *Ki;   // return the cached copy, not the shared static scratch K
+  return LadrunoShell::cacheKi(Ki, K);   // the cached copy, not the shared static scratch K
 }
 
 const Matrix &LadrunoCST::getMass(void)
@@ -488,25 +488,13 @@ int LadrunoCST::addInertiaLoadToUnbalance(const Vector &accel)
   if (r == 0.0)
     return 0;
 
-  static double ra[6];
-  for (int a = 0; a < numnodes; a++) {
-    const Vector &Raccel = theNodes[a]->getRV(accel);
-    if (Raccel.Size() != 2) {
-      opserr << "LadrunoCST::addInertiaLoadToUnbalance - incompatible sizes\n";
-      return -1;
-    }
-    ra[2 * a]     = Raccel(0);
-    ra[2 * a + 1] = Raccel(1);
-  }
-  // Ladruno (ADR-77 review wave): bare getMass() called for its SIDE EFFECT of
-  // refilling class-static K, then K read directly. Correct ONLY while this
-  // element has no mass cache -- a LadrunoMassCache hit skips the formation and
-  // leaves K holding the last tangent. DO NOT add the G2 cache here without
-  // first rewriting this to consume getMass()'s return (the Quad/LST fix).
-  this->getMass();
-  for (int i = 0; i < 6; i++)
-    Q(i) += -K(i, i) * ra[i];
-  return 0;
+  // Ladruno (WP-124): consume getMass()'s RETURN (retires the bare side-effect
+  // idiom the ADR-77 review wave flagged here; getMass returns K, so the bytes
+  // are the same) -- lumped (diagonal) mass, LadrunoShell::addGroundInertia.
+  static Vector ra(6);
+  const Matrix &Mq = this->getMass();
+  return LadrunoShell::addGroundInertia(Q, Mq, theNodes, numnodes, 2, true, accel, ra,
+                                        "LadrunoCST");
 }
 
 const Vector &LadrunoCST::getResistingForce(void)
@@ -594,18 +582,12 @@ const Vector &LadrunoCST::getResistingForceIncInertia(void)
     return P;
   }
 
-  static double a[6];
-  for (int n = 0; n < numnodes; n++) {
-    const Vector &accel = theNodes[n]->getTrialAccel();
-    a[2 * n]     = accel(0);
-    a[2 * n + 1] = accel(1);
-  }
   this->getResistingForce();
-  // Ladruno (ADR-77 review wave): same bare-getMass side-effect idiom as
-  // addInertiaLoadToUnbalance above -- see the warning there before caching.
-  this->getMass();
-  for (int i = 0; i < 6; i++)
-    P(i) += K(i, i) * a[i];
+  // Ladruno (WP-124 stage 5): consume getMass()'s RETURN (it is K, so the
+  // bytes are the same) -- retires the last bare side-effect call site.
+  const Matrix &Mq = this->getMass();
+  static Vector a(6);   // Ladruno (WP-124 stage 5): LadrunoShell::addNodalInertia
+  LadrunoShell::addNodalInertia(P, Mq, theNodes, numnodes, 2, true, a);
   res = P;
   if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
     res += this->getRayleighDampingForces();
@@ -703,6 +685,9 @@ int LadrunoCST::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &t
   }
   theMaterial[0]->setDbTag(idData(1));
   res += theMaterial[0]->recvSelf(commitTag, theChannel, theBroker);
+  // Ladruno (WP-124 C6): Ki was formed from the pre-recv material, thickness and
+  // formulation; a restore into a LIVE element must not keep serving it.
+  LadrunoShell::dropKi(Ki);
   return res;
 }
 
@@ -800,14 +785,9 @@ Response *LadrunoCST::setResponse(const char **argv, int argc, OPS_Stream &outpu
     theResponse = new ElementResponse(this, 7, Matrix(P.Size(), P.Size()));
   }
 
-  output.endTag();
-
-  // Ladruno — base vocabulary (globalForce, dampingForce, dynamicForce,
-  // inertialForce); Element::setResponse opens its own ElementOutput tag, so
-  // this MUST come after endTag().
-  if (theResponse == 0)
-    return this->Element::setResponse(argv, argc, output);
-  return theResponse;
+  // Ladruno (WP-124): endTag() FIRST, then the base vocabulary (globalForce,
+  // dampingForce, dynamicForce, inertialForce) -- LadrunoShell::finishResponse.
+  return LadrunoShell::finishResponse(this, theResponse, argv, argc, output);
 }
 
 int LadrunoCST::getResponse(int responseID, Information &eleInfo)
@@ -837,23 +817,13 @@ int LadrunoCST::getResponse(int responseID, Information &eleInfo)
 
 int LadrunoCST::setParameter(const char **argv, int argc, Parameter &param)
 {
-  int res = -1;
   if (argc < 1)
     return -1;
   if (strcmp(argv[0], "pressure") == 0)
     return param.addObject(2, this);
-  if (strstr(argv[0], "material") != 0) {
-    if (argc < 3) return -1;
-    int pointNum = atoi(argv[1]);
-    if (pointNum == 1)
-      return theMaterial[0]->setParameter(&argv[2], argc - 2, param);
-    return -1;
-  }
-  for (int i = 0; i < numgp; i++) {
-    int matRes = theMaterial[i]->setParameter(argv, argc, param);
-    if (matRes != -1) res = matRes;
-  }
-  return res;
+  if (LadrunoShell::isMaterialPointToken(argv[0]))   // Ladruno (WP-124 C10)
+    return LadrunoShell::forwardToMaterialPoint(theMaterial, 1, false, argv, argc, param);
+  return LadrunoShell::forwardToMaterials(theMaterial, numgp, argv, argc, param);
 }
 
 int LadrunoCST::updateParameter(int parameterID, Information &info)

@@ -492,6 +492,7 @@ def test_lagrange_negative_ref_fails_loudly(tmp_path):
     except subprocess.TimeoutExpired:
         out = ""
     finally:
+        # ci-coverage: portable -- the branch only picks taskkill vs kill to clean up the subprocess; nothing tested changes
         if os.name == "nt":
             subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
                            stdin=subprocess.DEVNULL, capture_output=True)

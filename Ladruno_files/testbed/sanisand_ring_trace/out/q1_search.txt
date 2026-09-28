@@ -1,0 +1,45 @@
+p0= 2.0 passive    d=1e-06 n= 9000 max a/ab=0.755 (k=7999, p=3.57, eta=1.51) first>1.05 k=None minp=1.73 sub=55783 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 2.0 passive    d=1e-05 n=  900 max a/ab=0.747 (k=799, p=3.57, eta=1.51) first>1.05 k=None minp=1.72 sub=40665 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 2.0 passive    d=1e-04 n=   90 max a/ab=0.934 (k=60, p=1.93, eta=1.72) first>1.05 k=None minp=1.59 sub=35557 forced=1 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 2.0 active     d=1e-06 n= 9000 max a/ab=0.922 (k=1999, p=5.75, eta=1.84) first>1.05 k=None minp=1.31 sub=50450 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 2.0 active     d=1e-05 n=  900 max a/ab=0.923 (k=199, p=5.74, eta=1.84) first>1.05 k=None minp=1.3 sub=36597 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 2.0 active     d=1e-04 n=   90 max a/ab=0.999 (k=60, p=1.74, eta=1.97) first>1.05 k=None minp=0.997 sub=32262 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 2.0 shear      d=1e-06 n= 9000 max a/ab=0.699 (k=1999, p=2.65, eta=1.41) first>1.05 k=None minp=1.8 sub=30012 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 2.0 shear      d=1e-05 n=  900 max a/ab=0.696 (k=199, p=2.67, eta=1.41) first>1.05 k=None minp=1.8 sub=21522 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 2.0 shear      d=1e-04 n=   90 max a/ab=0.694 (k=19, p=2.65, eta=1.41) first>1.05 k=None minp=1.78 sub=19410 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 2.0 extShear   d=1e-06 n= 9000 max a/ab=0.630 (k=3003, p=45.4, eta=0.914) first>1.05 k=None minp=0.0101 sub=121911 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 2.0 extShear   d=1e-05 n=  900 max a/ab=0.970 (k=299, p=43.7, eta=1.53) first>1.05 k=None minp=0.0101 sub=103096 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 2.0 extShear   d=1e-04 n=   90 max a/ab=7.069 (k=80, p=0.144, eta=1.43) first>1.05 k=20 minp=0.0101 sub=141629 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=3
+p0= 2.0 vertUnload d=1e-06 n= 9000 max a/ab=0.574 (k=0, p=1.97, eta=0.855) first>1.05 k=None minp=0.000661 sub=8827 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 2.0 vertUnload d=1e-05 n=  900 max a/ab=1.193 (k=299, p=79.9, eta=1.64) first>1.05 k=237 minp=0.0101 sub=76086 forced=2 clamp=2 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 2.0 vertUnload d=1e-04 n=   90 max a/ab=5.223 (k=80, p=0.199, eta=10.7) first>1.05 k=20 minp=0.0101 sub=115385 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 5.0 passive    d=1e-06 n= 9000 max a/ab=0.708 (k=7999, p=5.62, eta=1.42) first>1.05 k=None minp=3.34 sub=41323 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 5.0 passive    d=1e-05 n=  900 max a/ab=0.704 (k=799, p=5.61, eta=1.42) first>1.05 k=None minp=3.33 sub=29555 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 5.0 passive    d=1e-04 n=   90 max a/ab=0.704 (k=79, p=5.57, eta=1.42) first>1.05 k=None minp=3.28 sub=27353 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 5.0 active     d=1e-06 n= 9000 max a/ab=0.882 (k=1999, p=9.7, eta=1.75) first>1.05 k=None minp=2.55 sub=39747 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 5.0 active     d=1e-05 n=  900 max a/ab=0.874 (k=199, p=9.72, eta=1.75) first>1.05 k=None minp=2.53 sub=26740 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 5.0 active     d=1e-04 n=   90 max a/ab=0.882 (k=19, p=9.65, eta=1.75) first>1.05 k=None minp=2.38 sub=24849 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 5.0 shear      d=1e-06 n= 9000 max a/ab=0.686 (k=5000, p=5.52, eta=1.27) first>1.05 k=None minp=4.19 sub=17536 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 5.0 shear      d=1e-05 n=  900 max a/ab=0.647 (k=798, p=5.36, eta=1.31) first>1.05 k=None minp=4.21 sub=14613 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 5.0 shear      d=1e-04 n=   90 max a/ab=0.647 (k=79, p=5.31, eta=1.31) first>1.05 k=None minp=4.17 sub=12856 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 5.0 extShear   d=1e-06 n= 9000 max a/ab=0.630 (k=3003, p=45.4, eta=0.914) first>1.05 k=None minp=0.0101 sub=119261 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 5.0 extShear   d=1e-05 n=  900 max a/ab=0.970 (k=299, p=43.7, eta=1.53) first>1.05 k=None minp=0.0101 sub=100569 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 5.0 extShear   d=1e-04 n=   90 max a/ab=7.069 (k=80, p=0.144, eta=1.43) first>1.05 k=20 minp=0.0101 sub=139003 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=3
+p0= 5.0 vertUnload d=1e-06 n= 9000 max a/ab=0.579 (k=0, p=4.96, eta=0.855) first>1.05 k=None minp=0.00129 sub=8734 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 5.0 vertUnload d=1e-05 n=  900 max a/ab=1.193 (k=299, p=79.9, eta=1.64) first>1.05 k=237 minp=0.00916 sub=74420 forced=2 clamp=2 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0= 5.0 vertUnload d=1e-04 n=   90 max a/ab=5.223 (k=80, p=0.199, eta=10.7) first>1.05 k=20 minp=0.0101 sub=115714 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0=20.0 passive    d=1e-06 n= 9000 max a/ab=0.606 (k=7999, p=16.1, eta=1.2) first>1.05 k=None minp=12.9 sub=21879 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0=20.0 passive    d=1e-05 n=  900 max a/ab=0.605 (k=799, p=16.1, eta=1.2) first>1.05 k=None minp=12.9 sub=16176 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0=20.0 passive    d=1e-04 n=   90 max a/ab=0.606 (k=79, p=16.1, eta=1.2) first>1.05 k=None minp=12.9 sub=14377 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0=20.0 active     d=1e-06 n= 9000 max a/ab=0.986 (k=2000, p=26.8, eta=1.58) first>1.05 k=None minp=11.6 sub=18507 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0=20.0 active     d=1e-05 n=  900 max a/ab=0.805 (k=199, p=26.8, eta=1.58) first>1.05 k=None minp=11.5 sub=14938 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0=20.0 active     d=1e-04 n=   90 max a/ab=0.806 (k=19, p=26.8, eta=1.58) first>1.05 k=None minp=11.3 sub=13100 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0=20.0 shear      d=1e-06 n= 9000 max a/ab=0.591 (k=8000, p=19, eta=1.13) first>1.05 k=None minp=17.1 sub=8988 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0=20.0 shear      d=1e-05 n=  900 max a/ab=0.573 (k=799, p=19, eta=1.14) first>1.05 k=None minp=17.1 sub=7964 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0=20.0 shear      d=1e-04 n=   90 max a/ab=0.581 (k=79, p=19.2, eta=1.15) first>1.05 k=None minp=17.2 sub=6489 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0=20.0 extShear   d=1e-06 n= 9000 max a/ab=0.630 (k=3003, p=45.4, eta=0.915) first>1.05 k=None minp=0.0101 sub=111259 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0=20.0 extShear   d=1e-05 n=  900 max a/ab=0.970 (k=299, p=43.7, eta=1.53) first>1.05 k=None minp=0.0101 sub=93014 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0=20.0 extShear   d=1e-04 n=   90 max a/ab=7.069 (k=80, p=0.144, eta=1.43) first>1.05 k=20 minp=0.0101 sub=129407 forced=1 clamp=1 aband=0 pnR=0 cap=0 refused=0 f>0 commits=3
+p0=20.0 vertUnload d=1e-06 n= 9000 max a/ab=0.591 (k=1, p=19.8, eta=0.855) first>1.05 k=None minp=0.00165 sub=8495 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0=20.0 vertUnload d=1e-05 n=  900 max a/ab=1.193 (k=299, p=79.9, eta=1.64) first>1.05 k=237 minp=0.0101 sub=70298 forced=2 clamp=2 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0
+p0=20.0 vertUnload d=1e-04 n=   90 max a/ab=5.223 (k=80, p=0.199, eta=10.7) first>1.05 k=20 minp=0.0101 sub=111891 forced=0 clamp=0 aband=0 pnR=0 cap=0 refused=0 f>0 commits=0

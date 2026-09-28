@@ -143,6 +143,7 @@ def _assert_identical(deck, ref, got):
             if x != y:
                 nbit += 1
                 worst = max(worst, abs(x - y))
+    # ci-coverage: partial -- runs everywhere at the 1e-6 cross-platform floor; bit equality to the MSVC baseline is Windows-only (local-only until a Windows CI job exists, WP-143)
     if sys.platform != "win32":
         # Not the baseline's platform: MSVC vs GCC/libm differ at 1e-9 absolute
         # (measured, see the module docstring).  Enforce the fork's

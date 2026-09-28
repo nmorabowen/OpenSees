@@ -43,11 +43,27 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 - [ ] A non-converged return map must FAIL (return < 0), never commit `f > 0` as success, and
       the refusal must reach `analyze`: several vanilla elements swallow it. Quirks:
       "`Backward_Euler` ACCEPTS a non-converged return map", "swallow the material's refusal".
+- [ ] The work of one `setTrialStrain` must be BOUNDED, and hitting the bound must REFUSE
+      (return < 0), never grind on and never force-accept. Newton, line-search and Krylov trial
+      iterates can be far off the solution path (|Δu| ~ 1e4 has been observed), so any cost that
+      scales with |Δε| (substep counts, recursive halvings, local-Newton restarts) needs a cap,
+      and exceeding it refuses so the global step is cut. Three incidents, one rule: PDMY
+      `setSubStrainRate` asked for ~1e9 substeps per point, a silent hang (WP-135, #874);
+      SANISAND `BackwardEuler_CPPM` recursed up to 2^9 halvings, 12–134 s per failing step
+      (WP-130, #868); SANISAND `ModifiedEuler` force-accepted failed substeps at `dT_min`
+      (WP-127 finding C, SAS-ME fix WP-129, #871). Test it: feed one wild trial increment
+      and assert the call returns < 0 within a wall-clock bound.
 - [ ] Implement `getInitialTangent()` honestly: the base default returns `getTangent()`, so
       `-initial` silently becomes full Newton. Quirks: "`NDMaterial::getInitialTangent()` DEFAULTS".
 - [ ] Substep schemes need error control and yield-drift correction, and must honour the
       tolerance passed in. Quirks: "`IntScheme` 3 (RungeKutta4) and 5 (ForwardEuler) have no
       error control", "IntScheme 1 (ModifiedEuler) IGNORES the `TolR`".
+- [ ] The substep error must measure EVERY evolved internal variable (back-stress, fabric,
+      ...), not only the stress: a stress-only test accepts an O(1) back-stress jump when both
+      stages are elastic in stress. Quirks: "substep error is STRESS-ONLY" (WP-128).
+- [ ] A substep scheme must not ACCEPT a substep that failed its error test at the minimum
+      step, or return early at `T < 1`, without saying so: count it (WP-127 `substepStats`).
+      Quirks: "ACCEPTS a substep that FAILED its error test".
 - [ ] A substep count sized from the increment (`|Δε|/h`) must be capped, and past the cap the
       trial refused: a Newton iterate can be ~1e4 and ask for ~1e9 substeps (an apparent hang).
       Quirks: "one wild Newton iterate makes `setSubStrainRate()` ask for".
@@ -83,6 +99,12 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 - [ ] Tune test paths against plastic response, not elastic estimates. Quirks:
       "must be tuned against PLASTIC response".
 - [ ] Break each new gate on purpose once. Quirks: "A test can be GREEN because of the very bug".
+- [ ] Pin a number only from a step a RESIDUAL test converged, and re-measure pins after merging
+      `ladruno`. A determinism gate needs no convergence: use `FixedNumIter`. Quirks: "where ONE
+      tangent stopped".
+- [ ] **[lint]** A `zone_a` test that branches on the platform declares `# ci-coverage:` (L8): PR CI
+      is Ubuntu, so a win32-only leg never runs there. Gate only the MKL-specific leg. Quirks:
+      "A win32-only `zone_a` test is NEVER run by PR CI".
 
 Found a new trap? Add it to `LEDGER_quirks.md`, then add one line here pointing to it. If the
 trap has a greppable pattern, add a rule to `ci/check_quirk_patterns.py` instead.
