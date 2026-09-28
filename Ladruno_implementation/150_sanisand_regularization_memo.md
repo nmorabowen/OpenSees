@@ -147,9 +147,13 @@ asks for an infinitely *negative* modulus.
 > - §5–6: the fix and its calibrated-behaviour cost;
 > - §9: the C++ opt-in flags `-sasHFloor`, `-sasReseatHyst`, `-sasSoftCap`.
 >
-> **Closest published precedent:** Chen, Ghorbani, Zhang & Kodikara (2022), *Comput. Geotech.* 152, 105008. Their
-> SANISAND04 plane-strain footing aborts when (α−α_in):n suddenly drops to 0, and it gets worse with finer steps and
-> a tighter tolerance.
+> **Related literature: reversal-memory stress overshooting.**
+> - Chen, Ghorbani, Zhang & Kodikara (2022, *Comput. Geotech.* 152, 105008).
+> - Ghorbani, Chen, Kodikara, Carter & McCartney (2023, *Comput. Mech.* 71, 385–408).
+> - Both treat how the plastic-modulus / memory (α_in-type) definitions of bounding-surface sand models, SANISAND04
+>   included, make the stress overshoot on reversals. The 2023 paper does this in contact problems.
+> - A footing aborting on (α−α_in):n → 0 is **not** verified in either paper (corrected 2026-09-28). No direct
+>   published precedent of this wall is claimed.
 >
 > **The earlier dilatancy reading of the ablation is WITHDRAWN.** It rested on a provisional snapshot. In the final
 > ladders, S4 (A0 = 0.001) also walls on loadingNonPosH (see below). The set needs the concave extension meridian
@@ -512,6 +516,16 @@ D_r ≈ 0.83 with e_max 0.977 and e_min 0.597. That matches the D_r the campaign
 - **The PDMY control is unusable as a physical reference.** The fork's WP-133 PDMY03 stand-in (φ 40°, PT 26°; not TIMs' PDMY01 33°, which the fork does not hold) has no peak in drained plane strain. At p0 = 100 kPa, σ₁ reaches 5 677 kPa against σ₃ = 100 kPa by 5 % strain, and it fails to converge at p0 = 150 (`t5_pdmy_control.py`, `out_t5_pdmy03_standin.md`). This is WP-133's never-saturating dilatancy: σ_zz climbs under the plane-strain constraint.
 - DP 38° with ψ = 0 is analytic: φ′_ps ≡ 38°, zero dilation, no peak.
 
+**Where the set comes from** (the orchestrator's calibration research, 2026-09-28):
+- The campaign set is **not traceable to one sand**:
+  - zmax 12.5 and cz 1100 match Gorini's (2019 PhD) Messina cyclic set;
+  - c 0.71 and ch 0.968 are DM04 Toyoura values;
+  - Mc and ν come from φ = 33° and Jaky;
+  - λc, e0, ξ, h0, nb, A0, nd and m match no published set.
+- Gorini's Messina **monotonic** set (A0 1.0, nb 1.0, nd 2.0, c 0.875) dilates normally, and its c is above 7/9.
+- Toyoura's own c = 0.712 is also below 7/9. The Toyoura contrast above is a dilatancy contrast only; it does not
+  check convexity.
+
 **Reading.**
 - The campaign set's strength is that of a very dense sand. Its peak comes 3–4× too late in strain against Toyoura at the same D_r.
 - It dilates far less than such a sand must, by stress–dilatancy (Rowe; Bolton):
@@ -599,6 +613,8 @@ So each curve is consistent with its constitutive strength. **"Which curve is ph
   critical state model. *Comput. Geotech.* 124, 103572.
 - Chen, L., Ghorbani, J., Zhang, C. & Kodikara, J. (2022). Stress overshooting solution for soil plasticity models.
   *Comput. Geotech.* 152, 105008. doi:10.1016/j.compgeo.2022.105008.
+- Ghorbani, J., Chen, L., Kodikara, J., Carter, J. P. & McCartney, J. S. (2023). Memory repositioning in soil plasticity
+  models used in contact problems. *Comput. Mech.* 71, 385–408. doi:10.1007/s00466-022-02245-z.
 - Galavi, V. & Schweiger, H. F. (2010). Nonlocal multilaminate model for strain softening analysis. *Int. J. Geomech.*
   10(1), 30ff.
 - Liu, H. Y., Abell, J. A., Diambra, A. & Pisanò, F. (2019). Modelling the cyclic ratcheting of sands through
