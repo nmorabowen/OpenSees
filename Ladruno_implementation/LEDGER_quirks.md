@@ -7857,7 +7857,9 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
   - They chatter: 600–1 237 re-seats and 7–11 k reversal-rejected substeps per refuser. Domain-wide E_B has 10 M re-seats and 88 M rejected reversals.
   - Once b:n ≤ 0 at a re-seat, Kp = ⅔·p·h·(b:n) = −∞. The singular set is {a = 0, b:n ≤ 0}.
   - WP-134's exact Radau oracle stops on the same 0/0 (`134_sanisand_reference_integrator.md` §6.6).
-  - The WP-138 ablation keeps it with fabric off, with no peak (nb = 0), and at every `-Presidual` and e_init tried. It drops it only with A0 = 0.001: dilation contracts the bounding surface onto α, which is how b:n reaches 0⁻.
+  - The final WP-138 ladders keep it in EVERY leg, including fabric off, no peak (nb = 0), nd = 0, no dilatancy (A0 = 0.001, which only delays the onset from s/B 0.036 to 0.043), every `-Presidual` and every e_init.
+  - What it needs is the CONCAVE extension meridian of c = 0.71 < 7/9: at c = 0.80 the same wall states fail 0/320 at the material point (WP-151 §2.5).
+  - An earlier "dilation drives b:n to 0⁻" reading rested on a provisional snapshot and is withdrawn.
 - **Rule:** before prescribing a BVP regularizer for a SANISAND refusal, decompose H at the refusing point's committed state (`Ladruno_files/testbed/hypo_bearing/wp150_regularization/h_decomp.py`, `refuser_stats.py`).
   - If a ≈ 0 and b:n is small, it is this singularity. Duvaut–Lions (which needs the refusing inviscid solution), Perzyna (which needs η/Δt > |Kp| = ∞), nonlocal and gradient models cannot lift it.
   - The fix is model-level and needs BOTH parts, coupled: an h floor everywhere, h = b0/max(a, c_A·√(2/3)·m), AND a hysteretic re-seat (α_in := α only when a < −c_rev·√(2/3)·m).

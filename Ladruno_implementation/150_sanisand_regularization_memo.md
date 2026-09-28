@@ -151,30 +151,37 @@ asks for an infinitely *negative* modulus.
 > SANISAND04 plane-strain footing aborts when (α−α_in):n suddenly drops to 0, and it gets worse with finer steps and
 > a tighter tolerance.
 >
-> The dilatancy reading of the ablation below is therefore weakened:
-> - the sequence also runs with b:n > 0;
-> - S4 carries ~⅓ of E_B's load at the same s/B;
-> - ψ-contraction may feed the set, but it is not required.
+> **The earlier dilatancy reading of the ablation is WITHDRAWN.** It rested on a provisional snapshot. In the final
+> ladders, S4 (A0 = 0.001) also walls on loadingNonPosH (see below). The set needs the concave extension meridian
+> (§2.3), not dilation.
 
 **Corroboration.**
 - WP-134's Radau oracle **stopped** at ring point 1950/3 under shear, where "(α−α_in):n → 1e-10 and b:n → 4e-7
   together" (134 §6.6, row at `:462`). So the singularity is in the DM04 continuum, not in SAS-ME's discretization.
-- The WP-138 ablation (provisional, B/8, SAS-ME):
+- The WP-138 ladders, FINAL (B/8, SAS-ME, `esmeralda_ladders/ladder_table.txt`, 2026-09-28). **Every leg of every
+  ladder ends in FLOOR with loadingNonPosH.**
 
-  | leg | NonPosH events | first at s/B |
-  |---|---|---|
-  | S1 (no fabric) | 8 | 0.0355 |
-  | S2 (no peak, nb = 0) | 22 | 0.0269 |
-  | S3 (nd = 0) | 1 | 0.0347 |
-  | S4 (A0 = 0.001) | **0** | — (run to 0.0374) |
+  | leg | first NonPosH at s/B | NonPosH count | wall s/B | q at the wall kPa |
+  |---|---|---|---|---|
+  | E_B (base) | 0.0363 | 232 | 0.0508 | 967 |
+  | S1 zmax 0 (no fabric) | 0.0355 | 108 | 0.0374 | 790 |
+  | S2 + nb 0 (no peak) | 0.0269 | 353 | 0.0623 | 419 |
+  | S3 + nd 0 | 0.0347 | 204 | 0.0601 | 385 |
+  | S4 + A0 0.001 (no dilatancy) | **0.0426** | 149 | 0.0499 | 353 |
+  | A0 0.02 / 0.10 | 0.0237 / 0.0310 | 86 / 55 | 0.0315 / 0.0361 | 678 / 835 |
+  | h0 × 3 | 0.0091 | 222 | 0.0188 | 770 |
+  | Presidual 0.5 / 1 / 2 / 5 / 10 / 20 kPa | 0.018 / 0.033 / 0.035 / 0.042 / 0.037 / 0.054 | 38–354 | 0.030 / 0.042 / 0.043 / 0.068 / 0.086 / 0.096 | 683 / 870 / 901 / 1 286 / 1 602 / 1 979 |
+  | e_init 0.65 / 0.75 / 0.80 / 0.85 | 0.040 / 0.035 / 0.053 / 0.041 | 67–182 | 0.046 / 0.043 / 0.057 / 0.044 | 1 456 / 500 / 341 / 181 |
 
-  - Every S1–S3 leg sits at ~⅓ of E_B's load at the same s/B.
-  - **Reading:** dilation raises ψ in the band, which contracts the bounding surface onto α. That is how b:n reaches
-    0⁻. Without dilatancy, the bounding surface stays an attractor (dα ∝ b) and b:n > 0.
+  - **No material switch removes the wall.**
+    - Turning dilatancy off (S4) only DELAYS the onset (0.0363 → 0.0426). So dilation is not what drives b:n to 0.
+    - This agrees with WP-151 §2.5: the set needs the concave extension meridian (c = 0.71 < 7/9), which every leg
+      keeps. c = 0.80 takes the same wall states to 0/320.
+    - The boundary-value test is the running C080_EB_off leg.
   - h0 × 3 walls much earlier (0.0091): α reaches the bounding surface sooner.
-  - `-Presidual` 0.5–20 kPa and e_init 0.65–0.85 all still hit it.
   - The onset is **non-monotonic** in A0 and in Presidual. That is the fingerprint of a singular event, not of a
     smooth limit.
+  - Presidual 20 kPa carries q to 1 979 kPa at s/B 0.096 — apparent cohesion, not a cure.
 
 **Owed (R0).** A replay of the *refusing* substep, to show a ≈ 0 and b:n' ≤ 0 at the refusing stage. Use the WP-138
 FixedNumIter-1 recipe plus `ladrunoSANISANDReplay -trace` on the SAS-ME snapshot binary.
