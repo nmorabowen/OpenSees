@@ -2,7 +2,7 @@
 title: "WP-151 — The SANISAND α_in re-seat singularity: a model-intrinsic fix (R1), oracle-first"
 project: Ladruno
 type: research memo + opt-in implementation
-status: "R1 oracle study COMPLETE; C++ opt-in (three flags, default OFF, byte-identical) on this branch; Esmeralda acceptance (orchestrator): q-s gate met below s/B 0.03, 0 NonPosH past E_B's onset with floor+hysteresis, the post-wall shape pending; the c = 0.80 control walls too (route 2 falsified, §2.5.1). Owner D-a YES (opt-in DM04 variant), relayed 2026-09-28."
+status: "R1 oracle study COMPLETE; C++ opt-in (three flags, default OFF, byte-identical) on this branch; review #893: approve with minors (fixed). Footing: the FULL set runs past E_B's wall with 0 NonPosH, without the cap it walls at 0.0525. #893 ON HOLD for the owner's cap decision (2026-09-28). Owner D-a YES (opt-in DM04 variant), relayed."
 owner: nmora
 related:
   - "[[134_sanisand_reference_integrator]]"
@@ -40,16 +40,34 @@ updated: 2026-09-28
 >    102/320 (the blow-up is on the b:n → 0⁺ side). The hysteretic re-seat alone leaves h = ∞ (or < 0) in its
 >    band. **Floor everywhere + hysteretic re-seat: 0/320**; with the softening cap also 0/320 and H ≥ ½X
 >    guaranteed (§5).
+>    - **At footing scale the cap is needed too.** Past the old wall the footing meets genuine b:n < 0
+>      (post-peak) states near a reversal, where even the floored h drives H ≤ 0.
+>    - Floor + hysteresis without the cap walls at s/B 0.0525. The floor alone and the hysteresis alone
+>      wall EARLIER than DM04 (0.0453, 0.0461 vs 0.0508). The full set runs on (§9).
 > 4. **The fix (R1), three opt-in flags** (ρ_c = √(2/3)·m, the yield-cone radius):
 >    - `-sasHFloor c_A`: h = b0 / max((α−α_in):n, c_A·ρ_c);
 >    - `-sasReseatHyst c_rev`: α_in re-seats only when (α−α_in):n < −c_rev·ρ_c (a *finite* reversal);
 >    - `-sasSoftCap κ`: where b:n < 0, h ≤ (1−κ)X / (⅔ p |b:n|), so H ≥ κX.
 >
->    Recommended **c_A = 1, c_rev = 1, κ = 0.5**, no fitted parameter (c_A, c_rev in units of the calibrated m).
-> 5. **What it changes vs DM04 (§6):** monotonic TC/TE/plane-strain/simple shear, drained and undrained,
->    p 25–400 kPa: |Δq| ≤ 2.7e-4·q_max, peak ≤ 1e-5 relative; drained cyclic (stiffness, damping, ε_v)
->    identical to 4 digits; undrained cyclic cycles-to-liquefaction identical. The WP-128 reproducer is
->    unchanged (η 0.534, ρ_α 0.251). The cap never binds in any element test.
+>    Recommended: **all three, c_A = 1, c_rev = 1, κ = 0.5**, no fitted parameter (c_A, c_rev in units of the
+>    calibrated m).
+>    - Use c_rev ≤ 1 for cyclic work (§6.4).
+>    - The cap is a constitutive choice where it binds, and the owner/TIMs decide it (§8). #893 is on HOLD
+>      for that decision.
+> 5. **What it changes vs DM04 (§6):**
+>    - Monotonic TC/TE/plane-strain/simple shear, drained and undrained, p 25–400 kPa: |Δq| ≤ 2.7e-4·q_max,
+>      peak ≤ 1e-5 relative.
+>    - Drained cyclic at γ ±0.1 %: stiffness, damping and ε_v identical to 4 digits. Undrained cyclic:
+>      cycles to liquefaction identical.
+>    - The WP-128 reproducer is unchanged (η 0.534, ρ_α 0.251). The cap never binds in any element test.
+>    - **Small strain (§6.4, review #893 M1):** R1 is slightly SOFTER just past the elastic range. It starts
+>      plastic flow at a re-seat, where DM04 is still elastic. At the same strain:
+>      - CVSS τ is −1.1 % at γ 1e-5 and −0.09 % at 1e-4;
+>      - undrained TC q is −1.3 % at ε_a 3e-6;
+>      - γ ≤ 3e-6 is identical;
+>      - cyclic CVSS at γa 1e-5 stays within 1.2 % of τ_max.
+>
+>      So take G0 from the elastic range.
 > 6. **The CTXu "outlier" is DM04's own bifurcation, not R1 (§6.3, a separate TIMs finding).** With c = 0.71
 >    < 7/9 the Lode interpolation is non-convex on the extension meridian; the axisymmetric extension path is
 >    unstable and a 1e-9 perturbation decides whether a dense-sand CTXu test liquefies at N = 8 or not by N = 20,
@@ -58,11 +76,13 @@ updated: 2026-09-28
 >    increment is continuous in its direction (DM04 has no answer in 126/181 directions around the last converged
 >    one at E_B 1880/1 — including that direction itself); the end state is Lipschitz in the jitter amplitude
 >    (slope 1.00).
-> 8. **No recalibration** is needed for anything measured here, and recalibrating c would not remove the wall
->    (2b). The C++ opt-in (§9) is on this branch. Footing acceptance so far (§9):
+> 8. **No recalibration** is needed, provided G0 is taken from the elastic range (§6.4). Recalibrating c would
+>    not remove the wall (2b). The C++ opt-in (§9) is on this branch. Footing so far (§9):
 >    - q–s within ±0.22 % of E_B below s/B 0.03;
->    - floor + hysteresis has 0 `loadingNonPosH` past E_B's onset, on B/8, B/16 and B/4 (to s/B 0.127);
->    - the shape past E_B's wall (0.0508) is still pending.
+>    - the full set: 0 `loadingNonPosH`, at s/B 0.054 and still hardening, past E_B's wall (0.0508);
+>    - without the cap: walls at 0.0525;
+>    - floor alone and hysteresis alone: wall earlier than DM04;
+>    - the post-wall gate (the full set to its end, and κ 0.25 / 0.75) is pending.
 
 Tags: **[E]** read in the source, **[E-sec]** via a secondary source, **[R]** recollection, not re-verified,
 **[I]** inference/derivation here. Every number without a tag is **measured** by a script in
@@ -349,7 +369,11 @@ separate provisions (C_γ1, and K_p ≥ 0).
   hardening to b0/(c_A ρ_c), and it can only happen after a finite reversal.
 - For scale: PM4Sand's C_γ1 keeps K_p/G ≈ 200√(b:n) at a restart. R1 with c_A = 1 gives K_p/G ≈ 23·(b:n) for
   the campaign set, and DM04 itself reaches that value after one cone radius of α travel. So the floor acts
-  only over the first ~ρ_c of travel (about 2e-6 of strain at p = 100 kPa), which is why §6 cannot see it.
+  only over the first ~ρ_c of travel.
+  - First estimated here as about 2e-6 of strain, and said to be invisible in §6. That was **wrong** (review
+    #893 M1).
+  - The travel spans γ ≈ 1e-5 to 1e-4 at p = 100 kPa. At the same strain, R1 is up to 1.3 % softer just past
+    the elastic range (§6.4).
 
 ## 4. The candidates
 
@@ -390,7 +414,8 @@ the last converged increment at E_B is ~3e-6):
 
 ![fig. 2](../Ladruno_files/testbed/sanisand_reseat_r1/out/fig/fig2_fan.png)
 
-**Sensitivity.** c_rev ∈ {0.5, 1, 2} all pass (with c_A = 1). Without the cap c_A must be ≥ 1 (0.5 fails
+**Sensitivity.** c_rev ∈ {0.5, 1, 2} all pass the wall fan (with c_A = 1). For cyclic response, however,
+c_rev ≤ 1 (§6.4). Without the cap c_A must be ≥ 1 (0.5 fails
 41/320, 0.25 fails 90/320). With the cap c_A ∈ {0.5, 1, 2} all pass. min H/X grows with c_A (0.04 / 0.17 / 0.61)
 and the cap floors it at κ. At most one re-seat per trial with the hysteresis (42 in 320 trials at c_rev = 1,
 0 at c_rev = 2).
@@ -509,6 +534,34 @@ The fork holds no CSR–N target for the campaign set. That is flagged among the
 so a few of its per-run labels were wrong. Its conclusion did not change. It is kept as
 `cyc_gate_v1_compounded.json`; the table above is the clean rerun.
 
+### 6.4 Small strain: R1 starts plastic flow where DM04 is still elastic (review #893 M1)
+
+**Why.** At a re-seat DM04 has h = ∞: the first response of a new loading process is elastic, with the yield
+cone dragged along. R1's floor makes h finite there, so plastic flow starts at once. That lasts for about one
+cone radius of back-stress travel.
+
+**How it was measured.** Oracle, campaign set, from the isotropic state p0 = 100 kPa, e0 = 0.6944
+(`m1_small_strain.py`, `out/m1_small_strain.json`). Each value is one exact integration to that strain.
+
+| test | strain | DM04 | R1 (c_A 1, c_rev 1, κ 0.5) at the same strain |
+|---|---|---|---|
+| constant-volume simple shear | γ 1e-6 / 3e-6 | τ 0.081 / 0.244 kPa | identical (elastic range) |
+| | γ 1e-5 | τ 0.783 kPa | **−1.10 %** |
+| | γ 3e-5 / 1e-4 / 3e-4 | τ 2.07 / 5.22 / 10.7 kPa | −0.33 % / −0.09 % / −0.03 % |
+| undrained TC | ε_a 1e-6 | q 0.244 kPa | identical |
+| | ε_a 3e-6 / 1e-5 / 3e-5 / 1e-4 | q 0.73 / 2.26 / 5.75 / 13.9 kPa | **−1.27 %** / −0.51 % / −0.15 % / −0.04 % |
+| cyclic CVSS, γa 1e-5, 10 cycles | — | 20 re-seats | c_rev 1: 20 re-seats, \|Δτ\| ≤ 1.2e-2·τ_max |
+| | — | | c_rev 2: **0 re-seats**, \|Δτ\| ≤ 6.5e-2·τ_max |
+
+What it means:
+- The reviewer's numbers, reproduced to the stated digits.
+- **Take G0 from the elastic range** (γ ≲ 3e-6), where R1 = DM04 exactly. A G/Gmax fit at 1e-5 would absorb
+  R1's ~1 %.
+- **c_rev ≤ 1 for cyclic work.** With c_rev = 2, a cycle whose back stress travels less than two cone radii
+  never starts a new loading process. The small cycles then stay on one h branch, which DM04 does not do.
+  c_rev = 1 re-seats exactly as often as DM04.
+- §6.2's drained cycles at γ ±0.1 % remain identical to 4 digits: by then the floor has long stopped acting.
+
 ## 7. (c) Near-neutral jittering loading
 
 From the five wall states, with d0 = the GP's last converged strain increment (`c_jitter.py`):
@@ -546,7 +599,9 @@ answer by O(λ), with no amplification (fig. 6).
 
 ## 8. Recommendation
 
-**Adopt R1 as three opt-in SAS-ME options, recommended together: c_A = 1, c_rev = 1, κ = 0.5.**
+**Adopt R1 as three opt-in SAS-ME options, recommended together: c_A = 1, c_rev = 1, κ = 0.5.** All three
+are needed at footing scale. The cap is a constitutive choice (point 3), so the owner/TIMs decide it; #893 is on
+HOLD for that decision.
 
 The modified equations (DM04 in brackets):
 
@@ -558,20 +613,43 @@ The modified equations (DM04 in brackets):
 What changes, physically:
 1. The start of a new loading process is **stiff but not rigid**. K_p ≤ ⅔ p b0 (b:n)/(c_A ρ_c): for the campaign
    set K_p/2G ≤ 11·(b:n)/c_A, where DM04 has ∞. From one cone radius of α travel on, h is DM04's.
+   - The price: up to ~1 % less stiffness just past the elastic range (γ ~ 1e-5, §6.4).
 2. **A reversal must be finite.** α must come back by more than c_rev ρ_c along the new loading direction.
    Noise below that scale (Newton iterates, principal-axis jitter) does not restart the loading process. This
    is the classical remedy for bounding-surface over-stiffening after small reversals (§3).
-3. **Softening is capped** at H ≥ κX: the strain-driven response at the material point stays unique. In regular
-   DM04 softening |K_p| ≪ X and the cap never binds (not once in §6). It binds only near re-seats and in
-   deep softening.
+3. **Softening is capped** at H ≥ κX, i.e. K_p ≥ −(1−κ)X.
+   - **The physics.** Post-peak softening per unit plastic strain may reach at most (1−κ) of the elastic
+     projection X, so the strain-driven response at the material point stays unique (no snap-back, H > 0).
+   - **Where it binds.**
+     - In regular DM04 softening |K_p| ≪ X, and the cap never binds (not once in §6, dense drained TC
+       post-peak included).
+     - It binds only where b:n < 0 AND h is near DM04's singular value, i.e. within about a cone radius of a
+       reversal.
+     - That is the softening side of the same singularity. DM04's h → ∞ at a reversal gives K_p → +∞ on the
+       hardening side (stiff, benign) and K_p → −∞ on the softening side (ill-posed). The floor bounds h, but
+       b0/(c_A ρ_c) × b:n can still exceed X.
+   - **It is needed at footing scale.**
+     - Floor + hysteresis without the cap walls at s/B 0.0525.
+     - Its final wall point (ele 1891 gp 3) has b:n = −0.035, with α inside the hysteresis band (the floor's
+       largest h). There H/X starts at 0.61 and falls to 0 under loading: 32 of 64 oracle trials fail
+       without the cap, 0 with it (`fan_fh_wall.py`, §9).
+   - **It is a constitutive choice.** Where it binds, DM04 has no answer, and κ sets how steep post-reversal
+     softening may be. On single increments from those states the end stress moves ≤ 1e-4 between
+     κ 0.25 / 0.5 / 0.75.
+   - **Its footing-scale effect** past the wall is being measured (orchestrator: κ 0.25 and 0.75 legs beside
+     κ 0.5). The owner/TIMs decide.
 
 **Parameters from TIMs' data.** c_A and c_rev are lengths in units of the yield-cone radius √(2/3)m, which TIMs
 calibrated (m = 0.005). Nothing is fitted:
 - c_A = 1 is the smallest value that clears the wall fan without the cap. With the cap, 0.5–2 all clear it.
-- c_rev ∈ [0.5, 2] all clear it; 1 = one cone radius.
-- κ = 0.5 is a well-posedness guard. No element test can see it, because it never binds there.
-- If TIMs have small-strain cyclic data (G/Gmax, damping at γ 1e-4–1e-3), §6.2 shows R1 identical to DM04 at
-  γ = 0.1 %, below lab resolution. **No recalibration is needed** for anything measured here.
+- c_rev ∈ [0.5, 2] all clear the wall fan, but **c_rev ≤ 1 for cyclic work** (§6.4). Recommended: 1, one cone
+  radius.
+- κ = 0.5 bounds post-reversal softening at half of X (point 3). No element test can see it, because it never
+  binds there. The footing past the old wall can.
+- Small-strain data:
+  - At γ = 0.1 % R1 is identical to DM04 (§6.2).
+  - At γ ~ 1e-5 it is about 1 % softer (§6.4).
+  - **Take G0 from the elastic range** (γ ≲ 3e-6). No other recalibration is needed.
 
 **What R1 does not do.** It removes the singular set, the refusals that come from it, and the re-seat chatter.
 It does not remove mesh-dependent localization (WP-150: the bands are non-associated localization from
@@ -619,10 +697,14 @@ existing-scheme decks are unchanged.
 one file per `<size>.<commitTag>`), then by dbTag. The vanilla base sends its state as a `Vector(97)` under
 this object's dbTag and commitTag. WP-151's six new entries made the Ladruno block exactly 97 long, so it
 **overwrote the base state**: four existing datastore round-trip tests failed (the restored material came back
-elsewhere). Fixed with a trailing layout-tag slot (98), a `static_assert` that the block is never 97, and a
-warning when the tag does not match on receive.
+elsewhere). The fix:
+- a trailing layout tag, `LWIRE_TAG`;
+- a `static_assert(LWIRE_SIZE != 97)` beside the `LWIRE_*` enum in `LadrunoSANISAND.h`;
+- and, since review #893 M3, `recvSelf` REFUSES (returns −1) on a tag mismatch, before assigning anything.
 
-**Tests** (`tests/test_ladruno_sanisand_reseat_r1.py`, 15 cases, ~3 s):
+After the #868 merge the block is 117 long. `ladruno` before WP-151 had 110, and WP-151's first layout had 97.
+
+**Tests** (`tests/test_ladruno_sanisand_reseat_r1.py`, 23 cases, ~7 s):
 
 | gate | measured |
 |---|---|
@@ -661,7 +743,7 @@ build (sources identical to e96f8d77d in `SRC/material/nD`) reproduces it exactl
 re-pinned.
 
 **A pre-existing WP-129 behaviour met on the way.** On the two-cube path of #868's round-trip test, `-sasErrorVars
-stress` commits an inadmissible state at step 13, and the next update refuses at its start. That switch is
+stress` leaves a committed state (from a step ≤ 12) that step 13's update refuses at its start. That switch is
 WP-129's attribution switch, echoed "NOT for production". It happens with or without WP-151, and reproduces on
 the `ladruno`-HEAD build. Test (i) therefore continues with errorVars `full`, and (j) checks `stress` by value.
 
@@ -723,10 +805,40 @@ its first `loadingNonPosH` at s/B 0.0363 and walls at 0.0508; E_B16 walls at 0.0
   p_r = 0 floor: a p′-floor question for the deck (TIMs D1), not the re-seat set.
 - **The c = 0.80 control walls too**, on compression-side states where exact DM04 runs the same Zeno sequence
   and R1 clears all 576 oracle trials. Changing c is not a fix for the wall (§2.5.1).
-- Still to come:
-  - the R1 legs past 0.0508: peak, plateau or continued hardening (WP-150 §9.1);
-  - the cost per unit s/B vs E_B;
-  - B/16 past its wall.
+**Past E_B's wall** (orchestrator 2026-09-28 ~23:30). I re-read the numbers from the runs' own files. E_B walls at
+s/B 0.0508, q 966.7 kPa.
+
+| leg (B/8) | status | s/B | q (kPa) | `loadingNonPosH` | `maxSubsteps` |
+|---|---|---|---|---|---|
+| **full set (fhc, κ 0.5)** | **running, still hardening, no peak** | 0.0540 | 1024 | **0** | — |
+| floor + hysteresis, no cap (fh) | walled | **0.0525** | 1016 | 93 | 461 |
+| floor alone (f) | walled, EARLIER than DM04 | 0.0453 | 910 | 6 | 1508 |
+| hysteresis alone (h) | walled, EARLIER than DM04 | 0.0461 | 917 | 87 | 497 |
+
+- q of the full set at E_B's onset and wall: 767.7 kPa at s/B 0.036, 987.2 at 0.0508 (fh: 988.1).
+- **Cost** per 0.01 s/B up to 0.036:
+  - total substeps: fh / fhc 9.24e8, f 9.36e8, h 9.13e8, against E_B 9.11e8. R1 does ~1.4 % more work,
+    so it is cost-neutral.
+  - wall time: fhc 3128 s, fh 3019, f 3108, h 2931, against E_B 2763, i.e. 6–13 % more. But E_B ran in
+    another batch (WP-138), so wall time is not a like-for-like comparison. The substep count is.
+- **B/16:** fh 0.0175 and fhc 0.0169, both past E_B16's wall (0.0135), 0 NonPosH, running.
+- **c = 0.80 + full set** (`C080_EB_R1`): 0.0237, 0 NonPosH, running.
+- **Why fh walls** (`fan_fh_wall.py`: the oracle on fh's 11 NonPosH points at its last converged step, 32
+  directions × 2 magnitudes):
+  - DM04 fails 39/704, fh 32/704, and the full set 0/704 at κ 0.25, 0.5 and 0.75 alike.
+  - Every fh failure is at ONE point, fh's final wall point ele 1891 gp 3 (+0.15, −2.10), p 359 kPa. There
+    b:n = −0.035 (post-peak), cos3θ = −0.84, and a = −0.38 ρ_c, i.e. inside the hysteresis band: a
+    sub-threshold reversal held α_in, so the floor gives its largest h.
+  - H/X is 0.61 at the committed state, and loading drives it to 0. The exact solver fails in 32/64 trials,
+    with no re-seat chatter. So this is a genuine b:n < 0 state, not a leftover Zeno sequence.
+  - With the cap, min H/X = 0.5 exactly there.
+  - The other ten points are b:n > 0 states that had moved on by step 317.
+- Still to come (the owner's decision waits on them):
+  - the full set to its end: peak, plateau or continued hardening (WP-150 §9.1);
+  - κ 0.25 / 0.75 beside κ 0.5;
+  - B/16 and c = 0.80 with the full set;
+  - Toyoura R1 on/off;
+  - the PB2 family.
 
 ## 10. Open items and not verified
 

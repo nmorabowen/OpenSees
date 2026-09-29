@@ -1291,20 +1291,31 @@ the u-p family) to get a recoverable, cuttable refusal.
 
 ### 13.4 Re-seat regularization — WP-151 R1, an OPT-IN DM04 variant
 
-> [!important] RECOMMENDED for the TIMs campaign under SAS-ME (`IntScheme 129`)
-> Owner decision (relayed by the TIMs orchestrator, 2026-09-28): "if R1 makes sense, let's use it".
-> - **Run TIMs' SANISAND decks under IntScheme 129 with
->   `-sasHFloor 1 -sasReseatHyst 1 -sasSoftCap 0.5`.**
-> - The flags stay opt-in in the code (default OFF, byte-identical to DM04). The recommendation is for
->   decks, not a change of default.
-> - **Footing evidence** (Esmeralda, WP-138 E_B settings; [[151_sanisand_reseat_singularity]] §9):
+> [!important] The TIMs setting under SAS-ME (`IntScheme 129`): the FULL set, pending the owner's cap decision
+> The owner said "if R1 makes sense, let's use it" (relayed 2026-09-28). The owner then put #893 on HOLD, to
+> see whether the full set holds up past the old wall before deciding on the cap.
+> - **The configuration is the full set: `-sasHFloor 1 -sasReseatHyst 1 -sasSoftCap 0.5`.** A partial set is
+>   an ablation, not a lighter fix. On the footing (B/8, E_B settings; E_B walls at s/B 0.0508):
+>   - the floor alone walls at 0.0453 and the hysteresis alone at 0.0461, both EARLIER than DM04;
+>   - floor + hysteresis without the cap walls at 0.0525, on a b:n < 0 post-peak point near a reversal;
+>   - the full set had 0 `loadingNonPosH` at s/B 0.054 and was still hardening.
+>   - **The post-wall gate is pending:** the full set to its end, and κ 0.25 / 0.75 beside 0.5.
+> - The flags stay opt-in in the code (default OFF, byte-identical to DM04).
+> - **The cap is a constitutive choice**, for the owner/TIMs to decide.
+>   - It enforces H ≥ κX: post-peak softening per unit plastic strain is bounded at (1−κ) of the elastic
+>     projection X.
+>   - It binds only within about a cone radius of a reversal, where DM04 gives K_p → −∞. It never binds in
+>     DM04's regular softening.
+> - **More footing evidence** ([[151_sanisand_reseat_singularity]] §9):
 >   - q–s within ±0.22 % of E_B below s/B 0.03;
->   - 0 `loadingNonPosH` past E_B's onset (s/B 0.0363) on the B/8, B/16 and B/4 meshes;
->   - the B/4 leg reaches s/B 0.127, where E_B walls at 0.0508.
-> - **Do not substitute a recalibration of the Lode parameter c.** A c = 0.80 footing walls too
->   (s/B 0.048), on compression-side states where DM04 runs the same re-seat sequence (memo §2.5.1).
-> - It is not a cure for mesh-dependent localization (WP-150). It also does not help low-confinement
->   surface points: the B/4 leg's eventual limiter is `errorAtDTmin` at p′ → 0, a p′-floor question.
+>   - 0 NonPosH past E_B16's wall on B/16;
+>   - cost within 1.4 % of E_B.
+>   - A B/4 leg reached s/B 0.127. That is a coarser mesh than E_B's B/8, so it does not compare with E_B's
+>     wall like for like.
+> - **Do not substitute a recalibration of the Lode parameter c.** A c = 0.80 footing walls too (s/B 0.048),
+>   on compression-side states where DM04 runs the same re-seat sequence (memo §2.5.1).
+> - It is not a cure for mesh-dependent localization (WP-150). It also does not help low-confinement surface
+>   points: the B/4 leg's eventual limiter is `errorAtDTmin` at p′ → 0, a p′-floor question.
 
 **What it is for.** Near the peak, with the campaign set's thin yield cone (m = 0.005) and
 near-neutral or rotating loading, the exact DM04 rate equations re-seat α_in again and again in
@@ -1323,22 +1334,35 @@ failures one-to-one on the wall states. Full study:
 | `-sasReseatHyst c_rev` | α_in := α only when (α−α_in):n < −c_rev·ρ_c (a FINITE reversal) | … when < 0 |
 | `-sasSoftCap κ` | where b:n < 0: h ≤ (1−κ)X/(⅔p\|b:n\|), so H = K_p + X ≥ κX | no cap |
 
-- **Use the floor and the hysteresis together.** On the wall fan (5 states × 64 trials), each alone
-  leaves 97–102 of 320 trials singular, and together 0. The cap closes deep softening at low p and
-  makes the result insensitive to c_A (0.5–2 all pass with it).
-  - The footing confirms it. Floor alone turns the refusals into `maxSubsteps` (572 log mentions vs
-    91 with both).
-  - Hysteresis alone keeps `loadingNonPosH`, first at s/B 0.0362, where E_B has its first at 0.0363.
-- **Recommended: c_A = 1, c_rev = 1, κ = 0.5.** No parameter is fitted: c_A and c_rev are in units
-  of the calibrated m.
-- **Calibrated behaviour is unchanged** (oracle, campaign set):
-  - monotonic element tests |Δq| ≤ 2.7e-4·q_max;
-  - drained cycles identical to 4 digits;
-  - undrained cycles to liquefaction identical;
-  - the cap never binds in an element test.
+- **Use all three together.**
+  - On the wall fan (5 states × 64 trials), floor alone and hysteresis alone each leave 97–102 of 320
+    trials singular; together they leave 0.
+  - Past the old wall, though, the footing meets genuine b:n < 0 states near a reversal, where the floored
+    h still drives H ≤ 0. At fh's final wall point, the oracle fails 32 of 64 trials without the cap and 0
+    with it (κ 0.25–0.75).
+  - On the footing, the floor alone turns the refusals into `maxSubsteps` (572 log mentions vs 91) and
+    walls at 0.0453.
+  - The hysteresis alone keeps `loadingNonPosH`: its first comes at s/B 0.0362, where E_B has its first at
+    0.0363, and it walls at 0.0461.
+- **Recommended: c_A = 1, c_rev = 1, κ = 0.5.** No parameter is fitted: c_A and c_rev are in units of the
+  calibrated m.
+  - **c_rev ≤ 1 for cyclic work.** At c_rev = 2, ten CVSS cycles at γa 1e-5 never re-seat (0, against DM04's
+    20), and τ differs by 6.5 % of τ_max.
+- **What changes in calibrated behaviour** (oracle, campaign set, p0 100 kPa; memo §6):
+  - The elastic range (γ ≲ 3e-6) is identical.
+  - Just past it R1 is slightly SOFTER, because it starts plastic flow at a re-seat where DM04 is still
+    elastic (h = ∞ there). At the same strain:
+    - CVSS τ is −1.1 % at γ 1e-5, −0.33 % at 3e-5 and −0.09 % at 1e-4;
+    - undrained TC q is −1.3 % at ε_a 3e-6 and −0.5 % at 1e-5.
+  - Cyclic CVSS at γa 1e-5 (c_rev 1) stays within 1.2 % of τ_max. At γ ±0.1 %, drained cycles are identical
+    to 4 digits.
+  - Monotonic tests to large strain: |Δq| ≤ 2.7e-4·q_max. Undrained cycles to liquefaction are identical.
+  - The cap never binds in an element test.
+  - **Take G0 from the elastic range** (γ ≲ 3e-6), where R1 = DM04.
 - **Census** (`sasStats`, appended columns): `sas_hFloored` counts stages where the floor bound,
-  `sas_hSoftCapped` stages where the cap bound, and `sas_reseatHeld` sub-threshold reversals that
-  kept α_in. **`sasStats` is now 36 long** (columns 0–32 unchanged). A consumer that hard-codes 33
+  `sas_hSoftCapped` stages where the cap bound, and `sas_reseatHeld` the re-seat DECISIONS a sub-threshold
+  reversal held (one reversal can be counted at several stage and substep tests, so this is not a count of
+  distinct reversals). **`sasStats` is now 36 long** (columns 0–32 unchanged). A consumer that hard-codes 33
   breaks: the WP-138 deck driver's census did ("broadcast (36,) into (33,)"). Read the length from the
   response, or zip against `sanisand_replay.SAS_NAMES`.
 - It removes the singular set and the re-seat chatter. It does **not** regularize strain

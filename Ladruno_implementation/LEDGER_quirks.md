@@ -8040,8 +8040,16 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
   - a floor gated on b:n ≤ 0: it misses the b:n → 0⁺ side (102/320);
   - a re-seat threshold alone: h stays 1e10 in its band (102/320).
 
-  Use the everywhere floor AND the hysteresis together. Two re-seats then need a finite α travel, so they cannot accumulate.
-- **Workaround/status:** WP-151's opt-in flags `-sasHFloor 1 -sasReseatHyst 1 -sasSoftCap 0.5` (SAS-ME only; default OFF and byte-identical) give 0/320 with calibrated behaviour unchanged.
+  Use the everywhere floor AND the hysteresis together: two re-seats then need a finite α travel, so they
+  cannot accumulate.
+  - At footing scale add the softening CAP too. Past the old wall, b:n < 0 post-peak points near a reversal
+    make even the floored h drive H ≤ 0.
+  - Floor + hysteresis without the cap walls at s/B 0.0525. The floor alone and the hysteresis alone wall
+    EARLIER than DM04.
+- **Workaround/status:** WP-151's opt-in flags `-sasHFloor 1 -sasReseatHyst 1 -sasSoftCap 0.5` (SAS-ME only; default OFF and byte-identical) give 0/320.
+  - Small-strain cost: about 1 % softer at γ ~ 1e-5; take G0 from the elastic range (memo §6.4).
+  - Full set on the footing: 0 NonPosH at s/B 0.054, still hardening, where E_B walls at 0.0508.
+  - #893 is on HOLD for the owner's cap decision.
   - On the footing (Esmeralda, 2026-09-28) they pass E_B's onset with 0 `loadingNonPosH` on B/8, B/16 and B/4. The B/4 leg reaches s/B 0.127, 2.5× E_B's wall.
   - q–s stays within ±0.22 % of E_B below s/B 0.03.
   - Floor alone gives `maxSubsteps` instead; hysteresis alone keeps NonPosH, as predicted.
@@ -8054,9 +8062,11 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
   - Four existing tests caught it: `test_db_roundtrip_carries_presidual`, the two `-implex` round trips, and `test_pre_floor_crosses_the_datastore_wire`.
 - **Rule:** A subclass that appends its own send block to a base `sendSelf` under the same dbTag and commitTag must give that Vector a length different from every length the base sends. Sizes are arithmetic, so no grep finds this: `static_assert` it where the size is defined.
 - **Workaround/status:** ✅ Fixed (WP-151) with three pieces:
-  - a trailing layout-tag slot (size 98);
-  - `static_assert(size != 97)` in both `sendSelf` and `recvSelf`;
-  - a receive-side warning if the tag does not match.
+  - a trailing layout tag, `LWIRE_TAG`;
+  - ONE `static_assert(LWIRE_SIZE != 97)`, beside the `LWIRE_*` enum in `LadrunoSANISAND.h`;
+  - `recvSelf` REFUSES (returns −1) on a tag mismatch, before assigning anything (review #893 M3).
+
+  After the #868 merge the block is 117 long. `ladruno` before WP-151 had 110, and WP-151's first layout had 97.
 ### DM04's Lode interpolation with c < 7/9 is NON-CONVEX on the extension meridian: the axisymmetric extension path is unstable, and a 1e-9 perturbation decides whether a CTXu test liquefies (WP-151)
 - **Bites:** g(θ) = 2c/((1+c) − (1−c)cos3θ) is a convex polar curve only for c ≥ 7/9. At θ = 60°, g = c, g′ = 0 and g″ = 4.5c(1−c), so r² − r·r″ ≥ 0 needs c ≥ 7/9 ≈ 0.78.
   - Both the TIMs campaign set (c = 0.71) and DM04's own Toyoura set (c = 0.712) are below it.

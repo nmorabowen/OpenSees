@@ -246,8 +246,9 @@ def test_every_option_family_crosses_the_wire_at_once_after_the_868_merge():
     both option responses back by value, the census widths, and the next two
     steps bit-identical to a run that never went through the database.
     errorVars stays `full` here: `-sasErrorVars stress` (WP-129's attribution
-    switch, not for production) commits an inadmissible state on this path at
-    step 13 with or without WP-151 (checked on a ladruno-HEAD build), so its
+    switch, not for production) leaves a committed state (step <= 12) that step
+    13 refuses at its start, with or without WP-151 (checked on a ladruno-HEAD
+    build), so its
     transport is value-checked in (j), without a continuation."""
     import tempfile
     import test_ladruno_sanisand_cppm_newton as t130
