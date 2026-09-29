@@ -1,0 +1,6 @@
+rows 300 guessOk rows 8 diverging >5% 0
+1 rc counts {0: 300} refusals 0.0 negp 0
+2 rc counts {0: 80, -33086: 220} refusals 220.0 negp 0
+3 rc counts {0: 300} refusals 0.0 negp 0
+4 rc counts {0: 130, -33086: 170} refusals 170.0 negp 0
+5 rc counts {0: 72, -33086: 228} refusals 228.0 negp 0

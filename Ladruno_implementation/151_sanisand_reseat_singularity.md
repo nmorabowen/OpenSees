@@ -592,7 +592,9 @@ ops.nDMaterial("LadrunoSANISAND", tag, *params, 129, 0, 1, 1e-7, 1e-4, ...,
 ```
 
 Validation: c_A ≥ 0, c_rev ≥ 0, 0 ≤ κ < 1; 0 = OFF, the default. The echo prints the active set.
-`eleResponse(…, "material", gp, "sasOptions")` returns the nine SAS-ME options the instance runs.
+`eleResponse(…, "material", gp, "sasOptions")` (response id 33101, shared with WP-130's review) returns
+the nine SAS-ME options the instance runs: WP-129's six in wire order (errFloor, alphaBoundTol, alphaProject,
+alphaInMode, errorVars, alphaEntryTol), then hFloor, reseatHyst, softCap (indices 6–8).
 
 **Where** (every line marked `// Ladruno WP-151`):
 
@@ -600,7 +602,7 @@ Validation: c_A ≥ 0, c_rev ≥ 0, 0 ≤ κ < 1; 0 = OFF, the default. The echo
 |---|---|
 | `UWmaterials/ManzariDafalias.h` (vanilla; the WP-129 Ladruno block) | `LadrunoSasOptions`: `hFloor`, `reseatHyst`, `softCap` (default 0); three census columns appended to `LSAS_*` (earlier indices unchanged); `ladrunoSasBracketH(…, b0)`, `ladrunoSasSoftCapH`, `ladrunoSasReseatDelta` |
 | `LadrunoSANISANDSasME.cpp` (fork) | floor inside `ladrunoSasBracketH`; the cap in the stage, the drift correction and the continuum tangent (the same X = Q:C:R in all three, so consistency holds); the threshold at the four re-seat decisions: increment start, stage 1, the stage-2 reversal cut, end of substep |
-| `LadrunoSANISAND.cpp` (fork) | parser, echo, `sasOptions` response (id 33100), `sasStats` names; send/recv of the three options plus a layout-tag slot (next row) |
+| `LadrunoSANISAND.cpp` (fork) | parser, echo, `sasStats` names, WP-151's three values appended to WP-130's `sasOptions` response (id 33101); send/recv of the three options inside the SAS block (`LWIRE_SAS_OPT_N` 6 → 9) plus the layout tag `LWIRE_TAG` (next row) |
 | `Ladruno_scripts/sanisand_replay.py` | `SAS_NAMES` += `hFloored`, `hSoftCapped`, `reseatHeld`. **`sasStats` is now 36 long**, and a consumer that hard-codes 33 breaks: the WP-138 deck driver's census did on Esmeralda, and was fixed there. The in-repo consumers zip against the names. |
 
 **Byte-identity of the default.** With the flags off:

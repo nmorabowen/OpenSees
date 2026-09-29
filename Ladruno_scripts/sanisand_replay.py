@@ -62,6 +62,10 @@ STAT_NAMES = [
     "capHits", "entryPminClamps", "pnResets", "maxSubstepsOneUpdate",
     # the last update that entered ModifiedEuler
     "lastSubsteps", "lastForcedAtDTmin", "lastAbandonedLowP", "lastCapHit",
+    # WP-130: BackwardEuler_CPPM + the ModifiedEuler -> CPPM fallback
+    "cppmCalls", "cppmNewtonFail", "cppmHalvings", "cppmExplicitFail",
+    "cppmExplicitLowP", "cppmRefusals", "meFallbacks", "meFallbackOk",
+    "lastCppmRefused", "cppmGuessTries", "cppmGuessOk", "cppmLineSearchCuts",
 ]
 STATE_NAMES = (["sigma"] * 6 + ["alpha"] * 6 + ["alpha_in"] * 6 + ["z"] * 6
                + ["e", "p", "q", "fBefore", "fAfter", "path", "elasticRatio",

@@ -1,0 +1,5 @@
+# ADR90 WP-A2 tau=0 band, build 5d25dd597cb1b800f53e46410d94c81220024dae (expected any), leg h1.0_e0.6944
+s_m,s_over_B,q_foot_kPa,q_base_kPa,ds_mm,relaxed,wall_s,implex_err_avg,implex_refusals,guard_floor,guard_f0,guard_hold,guard_res,guard_ctlf,substeps_tot,substeps_max,substeps_max_ele,substeps_ring_tot,substeps_ring_max,wall_step_s
+2e-05,1e-05,0.823087887,-0.749178623,0.02,1,175.90655,0,0,0,0,0,0,0,0,0,0,0,0,175.90655
+4e-05,2e-05,1.56736167,-1.52346428,0.02,1,460.167801,0,0,0,0,0,0,0,0,0,0,0,0,284.261251
+5e-05,2.5e-05,1.93385552,-1.90110863,0.01,1,1235.86268,0,0,0,0,0,0,0,0,0,0,0,0,775.694875

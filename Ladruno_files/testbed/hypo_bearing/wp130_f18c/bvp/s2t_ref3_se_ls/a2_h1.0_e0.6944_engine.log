@@ -1,0 +1,2722 @@
+LadrunoSANISAND nDMaterial - Ladruno subclass of ManzariDafalias (model: A.Ghofrani, P.Arduino, U.Washington); settable p_residual/p_min. ADR 86.
+LadrunoSANISAND tag 1: p_residual = 0 (default, cohesionless), pRe = 0 (default, OFF: G, K ~ sqrt(max(p, p_min)/P_atm), no stiffness floor), p_min = 0.101 (user), honorTolR = 0 (ModifiedEuler substep TolE = 0.0001, vanilla's hardcoded value), TanType = 2 (consistent mCep_Consistent (unsymmetric)), maxSubsteps = 20000 (ModifiedEuler FAILS the update past this many substeps, so the step can be cut), reversalTol 1e-10 (undoes integrate()'s mAlpha_in loading-reversal reset when ||eps - eps_n|| falls below this, i.e. treats it as round-off noise), reversalRel 0.05 (SECOND threshold = reversalRel * ||last committed d_eps||; a hold's noise tracks the solver tolerance, not round-off, so the absolute test alone under-catches it); reversal test skipped on dt == 0 (ops_Dt, unconditionally -- a hold has no loading to test for a reversal in); hold-skip commits counted in implexGuards[5] [D5b: D_factor sigmoid non-dimensionalised in vanilla (PR-2), an exact no-op at P_atm = 101; D5a: whether it should exist at all once the residual pressure is zero is still OPEN]
+LadrunoSANISAND tag 1: -flipAlphaIn init (flip: alpha_in := alpha (init, the DEFAULT since WP-112: deterministic at every point, independent of round-off and of the MKL thread count)), -implexFlipAbsorb OFF (the DEFAULT: the flip commits nothing beyond mElastFlag's own effect on the next real step -- required for the ADR-92 gate-5 -implex ON-vs-OFF byte-identity on a zero-free-DOF deck)
+LadrunoSANISAND tag 1 (WP-130): -cppmOnFail refuse (a CPPM increment the local Newton cannot return REFUSES the update -> LADRUNO_MATERIAL_REFUSED -> the step is cut), -cppmHalvings 3 (up to 8 half-increments before that), -cppmLineSearch on, -cppmStart explicit, -cppmTangent fixed, -meFallback off
+WARNING analysis Static - no Algorithm yet specified, 
+ NewtonRaphson default will be used
+WARNING analysis Static - no Integrator specified, 
+ StaticIntegrator default will be used
+WARNING LadrunoBrick::update - element 42: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 0). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING LadrunoBrick::update - element 42: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 0). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING LadrunoBrick::update - element 49: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 5). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING LadrunoBrick::update - element 42: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 1). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING LadrunoBrick::update - element 49: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 0). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING LadrunoBrick::update - element 49: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 0). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING LadrunoBrick::update - element 42: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 2). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING LadrunoBrick::update - element 49: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 2). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING LadrunoBrick::update - element 42: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 1). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING LadrunoBrick::update - element 49: the material REFUSED the trial strain at the std/b-bar 2x2x2 rule (Gauss point 5). Failing the step so the analysis can cut it; the committed state is unchanged.
+WARNING LadrunoBrick: further trial-strain refusal reports suppressed (budget 10 per process).
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00261544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00261544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00261544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00285544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00285544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00285544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00309544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00309544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00309544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00309544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00321544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00321544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00321544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00333544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00333544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00333544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00345544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00349544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00353544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00361544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00365544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00365544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00365544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00377544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00377544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00377544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00389544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00389544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00389544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00401544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00401544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00401544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00413544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00417544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00417544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00417544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00441544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00457544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00457544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00457544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00481544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00481544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00481544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00505544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00505544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00505544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00529544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00529544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00529544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00553544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00553544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00553544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00577544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00577544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00577544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00601544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00601544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00601544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00597544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00597544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00601544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00601544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00605544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00605544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00617544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00617544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00617544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00633544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00633544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00637544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00637544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00637544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00649544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00649544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00649544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00665544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00665544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00665544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00697544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00697544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00705544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00705544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00705544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00705544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00705544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00705544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00717544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00717544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00717544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00745544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00745544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00745544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00785544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00785544
+OpenSees > analyze failed, returned: -3 error flag
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.717056, dT = 3.25906e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.739436, dT = 1.73847e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.716407, dT = 3.21463e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.73996, dT = 1.69708e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.696868, dT = 3.13872e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.72481, dT = 1.81442e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.696376, dT = 3.12666e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.725108, dT = 1.77839e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.906381, dT = 1.30697e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING ManzariDafalias::ModifiedEuler() - material tag 1: substep cap 20000 reached at T = 0.969493, dT = 1e-06 (dT_min = 1e-06); the strain increment is NOT integrated and the trial state is left PARTIAL at T < 1. The committed state is unchanged, so a cut step loses nothing -- but only an element that FORWARDS setTrialStrain's return code cuts the step. E.g. LadrunoBrick (sentinel-filtered), LadrunoBrick20, LadrunoQuad/CST/LST, BezierTet10/Tri6 and the vanilla u-p family (FourNodeQuadUP, BBarFourNodeQuadUP, Nine_Four_Node_QuadUP, Twenty_Eight_Node_BrickUP) DO; Brick (= stdBrick), BbarBrick, BrickUP, BBarBrickUP, SSPquad/SSPquadUP, SSPbrick/SSPbrickUP and LadrunoSolidShell DISCARD it and THIS RUN IS INVALID. Examples, not the whole roster: the full audited table is in LEDGER_quirks.md, 'element refusal roster'. At COMMIT time no element acts on it at all -- Domain::commit() drops the return.
+WARNING ManzariDafalias: further ModifiedEuler() substep-cap warnings suppressed (budget 10 per process).
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00793544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00793544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00793544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00789544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00789544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00789544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00801544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00801544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00801544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00821544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00821544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00821544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00841544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00841544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00841544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00853544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00853544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00853544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00865544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00865544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00865544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00881544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00881544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00885544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00885544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00885544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00897544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00897544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00901544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00901544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00901544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00929544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00941544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00941544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00941544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00949544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00949544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00949544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00969544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00969544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00973544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00973544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00973544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00993544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00997544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.00997544
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0100154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0100154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0100154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0101354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0101354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0101754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0102154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0102154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0102554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0102954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0102954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0102954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0104154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0104154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0104554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0104554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0104954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0104954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0105354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0105354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0105754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0106154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0106154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0106154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0107354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0107754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0108154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0108554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0108954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0108954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0109354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0109354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0110154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0110154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0110154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0109754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0109754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0109754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0110954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0110954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0111354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0111754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0111754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0112154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0112154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0112554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0112554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0112954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0112954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0113754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0113754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0113754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0113354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0113354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0113754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0113754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0114154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0114154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0114554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0114954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0114954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0115354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0115354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0116154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0116154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0116154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0115754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0115754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0116154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0116154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0116154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0117354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0117354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0117754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0117754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0118154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0118154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0118554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0118554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0118554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0119754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0119754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0120154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0120154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0120554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0120954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0120954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0121354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0121354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0121754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0121754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0121754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0122954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0123354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0123754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0124154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0124554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0124954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0124954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0125754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0125754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0126554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0126554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0127354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0127354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0127354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0126954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0126954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0127354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0127354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0127754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0127754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0127754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0128954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0128954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0129354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0129754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0130154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0130554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0130554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0130954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0131754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0131754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0131754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0131354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0131754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0132154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0132154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0132554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0132554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0132954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0133354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0134154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0134154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0134954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0134954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0134954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0134554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0134554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0134554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0135754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0135754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0136154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0136154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0136554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0136554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0136954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0136954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0136954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0138154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0138554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0138554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0138954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0138954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0139354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0139354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0139754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0139754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0140154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0140954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0140954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0140954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0140554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0140554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0140554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0141754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0141754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0142154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0142154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0142554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0142954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0142954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0143354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0143354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0143754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0143754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0144554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0144554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0145354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0145354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0146154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0146154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0146154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0145754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0146154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0146154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0146554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0146554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0146954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0146954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0147354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0147354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0147754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0148554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0148554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0149354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0149354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0149354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0148954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0148954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0148954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0150154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0150154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0150554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0150554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0150554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0151754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0151754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0152154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0152154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0152554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0152554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0152954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0152954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0152954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0152754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0152754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0154154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0154154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0154554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0154554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0154954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0154954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0154954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0156154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0156154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0156554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0156554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0156954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0156954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0157354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0157354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0157754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0157754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0157754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0158954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0158954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0159354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0159354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0159754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0159754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0159754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0160954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0160954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0161354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0161354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0161754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0161754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0161754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0162954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0162954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0163354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0163354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0163754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0163754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0164154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0164154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0164554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0164554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0164554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0164754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0164754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0164754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0166754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0166754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0167154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0167154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0167554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0167554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0167954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0167954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0167954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0169154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0169154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0169554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0169554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0169954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0169954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0169954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0171154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0171154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0171554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0171554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0171954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0171954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0172354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0172354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0172754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0172754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0173154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0173154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0173154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0174354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0174354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0174754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0174754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0175154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0175154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0175554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0175554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0175554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0176754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0176754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0177154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0177154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0177554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0177554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0177954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0177954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0178354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0178354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0178754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0178754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0179554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0179554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0179554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0179154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0179154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0179154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0178954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0178954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0179354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0180354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0180354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0180754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0180754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0181154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0181154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0181554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0181554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0181954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0181954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0182354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0182354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0182354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0182554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0182954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0182954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0183554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0183554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0183954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0183954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0184354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0184354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0184754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0184754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0184754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0185954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0185954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0185954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0187154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0187154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0187554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0187554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0187954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0187954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0187954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0189554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0189954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0189954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0189954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0191554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0191554
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0191954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0191954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0192754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0192754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0192754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0192954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0192954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0192954
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0195354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0195354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0195754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0195754
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0196154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNInG InitialInterpolatedLineSearch::search() -the Integrator failed in update()
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0196154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0196154
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonRaphson::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0196354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING NewtonLineSearch::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0196354
+OpenSees > analyze failed, returned: -3 error flag
+Domain::update - domain failed in update
+LoadControl::update - model failed to update for new dU
+WARNING AcceleratedNewton::solveCurrentStep() -the Integrator failed in update()
+StaticAnalysis::analyze() - the Algorithm failed at step: 0 with domain at load factor -0.0196354
+OpenSees > analyze failed, returned: -3 error flag

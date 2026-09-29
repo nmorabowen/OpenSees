@@ -101,6 +101,9 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 - [ ] Tune test paths against plastic response, not elastic estimates. Quirks:
       "must be tuned against PLASTIC response".
 - [ ] Break each new gate on purpose once. Quirks: "A test can be GREEN because of the very bug".
+- [ ] A tangent READ as "algorithmic" is not verified: compare it with a finite difference of the
+      return map (the replay facility gives one at a real state). Quirks: "`TanType 2` tangent is
+      MINUS the derivative of its own return map" (WP-130).
 - [ ] Pin a number only from a step a RESIDUAL test converged, and re-measure pins after merging
       `ladruno`. A determinism gate needs no convergence: use `FixedNumIter`. Quirks: "where ONE
       tangent stopped".
