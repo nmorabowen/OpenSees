@@ -44,10 +44,10 @@ def paths():
     return {"iso": iso, "te": te, "cyc": cyc}
 
 
-def _series(tag0, incs):
+def _series(tag0, incs, ev0=EV0):
     """Cumulative element-convention strains per step (stage 0, then the plastic
     increments negated), one Path series per normal component."""
-    e0 = -EV0 / 3.0
+    e0 = -ev0 / 3.0
     hist = [[e0 * (k + 1) / N0] * 3 for k in range(N0)]
     cur = list(hist[-1])
     for de in incs:
@@ -60,7 +60,7 @@ def _series(tag0, incs):
     return hist
 
 
-def build(incs, opts, mat_tag=1):
+def build(incs, opts, mat_tag=1, ev0=EV0):
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     for k in range(2):
@@ -71,7 +71,7 @@ def build(incs, opts, mat_tag=1):
     for k in range(2):
         for j, (x, y) in enumerate(XY):
             ops.fix(4 * k + j + 1, 1 if x == 0. else 0, 1 if y == 0. else 0, 1 if k == 0 else 0)
-    hist = _series(1, incs)
+    hist = _series(1, incs, ev0)
     for i, ts in enumerate((1, 2, 3)):
         ops.pattern("Plain", 10 + i, ts)
         for k in range(2):
@@ -109,10 +109,10 @@ def stage0(mat_tag=1):
     ops.updateMaterialStage("-material", mat_tag, "-stage", 1)
 
 
-def run(incs, opts, per_step=None):
+def run(incs, opts, per_step=None, ev0=EV0):
     """Drive the path; returns (flip stress, records).  Each record: rc, stress
     (compression positive), sasStats."""
-    build(incs, opts)
+    build(incs, opts, ev0=ev0)
     stage0()
     flip = sig_comp()
     out = []
@@ -142,3 +142,86 @@ def record_flip_state(path=FLIP_STATE):
     ops.wipe()
     json.dump(st, open(path, "w"), indent=1)
     return st
+
+
+def with_max_substeps(opts, n):
+    """`opts` with its -maxSubsteps value replaced (a cheap, deterministic code 9)."""
+    o = list(opts)
+    o[o.index("-maxSubsteps") + 1] = n
+    return tuple(o)
+
+
+# ------------------------------------------------------------------ review item 9
+# A two-brick oedometric column solved by NEWTON (free equations, a force test):
+# bottom face on rollers, every lateral face on rollers (u_x = 0 on x = 0, 1; u_y = 0
+# on y = 0, 1), the four MIDDLE nodes (z = 1) free in z and loaded by the weight W
+# (downward), the four TOP nodes (z = 2) prescribed in z. Opening the top separates the
+# upper brick while the lower one carries W: the middle nodes are an equilibrium the
+# material state machine must let Newton find, through the entry and the re-contact.
+COL_W = 4.0            # total weight on the middle nodes (kPa x 1 m^2)
+
+
+def column_series(top_u):
+    """Top-face z displacement history (element convention: up positive)."""
+    ops.timeSeries("Path", 1, "-dt", 1.0, "-values", 0.0, *top_u, top_u[-1])
+
+
+def build_column(top_u, opts, mat_tag=1):
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    tag = 0
+    for k in range(3):
+        for j, (x, y) in enumerate(XY):
+            tag = 4 * k + j + 1
+            ops.node(tag, x, y, float(k))
+            ops.fix(tag, 1, 1, 1 if k == 0 else 0)     # lateral rollers everywhere, base fixed in z
+    ops.nDMaterial("LadrunoSANISAND", mat_tag, *PARAMS, *opts)
+    ops.element("stdBrick", 1, 1, 2, 3, 4, 5, 6, 7, 8, mat_tag)
+    ops.element("stdBrick", 2, 5, 6, 7, 8, 9, 10, 11, 12, mat_tag)
+    column_series(top_u)
+    ops.pattern("Plain", 10, 1)
+    for n in (9, 10, 11, 12):
+        ops.sp(n, 3, 1.0)
+    ops.timeSeries("Constant", 2)
+    ops.pattern("Plain", 11, 2)
+    for n in (5, 6, 7, 8):
+        ops.load(n, 0.0, 0.0, -COL_W / 4.0)
+    ops.constraints("Transformation")
+    ops.numberer("Plain")
+    ops.system("FullGeneral")
+    ops.test("NormUnbalance", 1.0e-9, 30, 0)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0)
+    ops.analysis("Static")
+
+
+def eresp(ele, name):
+    return list(ops.eleResponse(ele, "material", 1, name))
+
+
+# ------------------------------------------------------------------ plane strain
+def build_plane(hist_xy, opts, mat_tag=1):
+    """A unit `quad` (PlaneStrain) with rollers on x = 0 and y = 0 and the right / top
+    edges prescribed from two Path series of cumulative strains (tension positive)."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    for j, (x, y) in enumerate(XY):
+        ops.node(j + 1, x, y)
+        ops.fix(j + 1, 1 if x == 0. else 0, 1 if y == 0. else 0)
+    ops.nDMaterial("LadrunoSANISAND", mat_tag, *PARAMS, *opts)
+    ops.element("quad", 1, 1, 2, 3, 4, 1.0, "PlaneStrain", mat_tag)
+    for i in range(2):
+        ops.timeSeries("Path", 1 + i, "-dt", 1.0, "-values", 0.0, *[h[i] for h in hist_xy], hist_xy[-1][i])
+        ops.pattern("Plain", 10 + i, 1 + i)
+        for j, (x, y) in enumerate(XY):
+            if i == 0 and x == 1.:
+                ops.sp(j + 1, 1, 1.0)
+            if i == 1 and y == 1.:
+                ops.sp(j + 1, 2, 1.0)
+    ops.constraints("Transformation")
+    ops.numberer("Plain")
+    ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1.0e-12, 10, 0)
+    ops.algorithm("Linear")
+    ops.integrator("LoadControl", 1.0)
+    ops.analysis("Static")

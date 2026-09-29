@@ -173,11 +173,21 @@ ManzariDafalias::ladrunoResetSasStats(void)
     for (int i = 0; i < LSAS_COUNT; i++)
         mLadrunoSas.stats[i] = 0.0;
     mLadrunoSas.refused = false;
-    // Ladruno WP-152: the separation state goes with the census -- both callers
-    // (revertToStart and the replay command) start the point NORMAL.
+}
+
+// Ladruno WP-152: the separation state is STATE, not census, so it is reset
+// apart from ladrunoResetSasStats: by revertToStart only outside
+// InitialStateAnalysis (which keeps the stress, so it must keep the state that
+// produced it -- review #5), and by the replay command, which loads a NORMAL state.
+void
+ManzariDafalias::ladrunoResetSasSep(void)
+{
     mLadrunoSas.sep = mLadrunoSas.sep_n = false;
     mLadrunoSas.sepTr = mLadrunoSas.sepTr_n = 0.0;
     mLadrunoSas.sepEvent = 0;
+    mLadrunoSas.sepCode = 0;
+    mLadrunoSas.sepP0 = 0.0;
+    mLadrunoSas.stats[LSAS_SEP_ACTIVE] = 0.0;
 }
 
 // Ladruno WP-152 (tension cutoff): put the TRIAL on an isotropic state of model
@@ -870,6 +880,8 @@ ManzariDafalias::ladrunoSasIntegrate(void)
     mLadrunoSas.sepTr = mLadrunoSas.sepTr_n;
     mLadrunoSas.sepEvent = 0;   // an element may update several times per step: the census
                                 // counts the COMMITTED transition (LadrunoSANISAND::commitState)
+    mLadrunoSas.sepCode = 0;
+    mLadrunoSas.sepP0 = 0.0;
     const bool tcOn = (o.tcPcontact > 0.0);
     if (tcOn && mLadrunoSas.sep_n) {
         const double g = GetTrace(NextStrain) - mLadrunoSas.sepTr_n;
@@ -1053,17 +1065,32 @@ ManzariDafalias::ladrunoSasIntegrate(void)
 
     // ---- Ladruno WP-152: tension cutoff ENTRY, masking ONLY low-p / tension -----
     // E1: tension -- code 6 (a stage or the predictor at p <= 0 at dT_min), or
-    //     code 3 because the committed p0 <= 0 (finite, traces clean).
+    //     code 3 because the committed p0 <= 0 (finite, traces clean) -- AND the
+    //     committed p0 <= p0max (review #2: one Newton iterate can carry a 10-20 kPa
+    //     point through p = 0; that is a step to cut, not a separation).
     // E2: a low-confinement accuracy or cost failure -- code 4 or 9 while the
-    //     committed p0 < p_sep (p_sep = 0 disables E2: a pure tension cutoff).
+    //     committed p0 < p_sep (p_sep = 0 disables E2: a pure tension cutoff) --
+    //     AND a volumetric increment that does not compress (tr d_eps <= 0,
+    //     compression positive; review #1: the B/8 top row sits at p' 0.2-0.35 in
+    //     situ, below p_sep, so the committed p0 alone would let an accuracy
+    //     failure under COMPRESSION separate). A non-compressing increment also
+    //     keeps the elastic predictor's p at or below p0 < p_sep.
+    // A qualifying refusal the bound or the gate holds back is counted
+    // (sepHeldHighP, sepHeldCompressing) and still REFUSES with its own code.
     // Everything else (code 5 loadingNonPosH = the alpha_in singularity, code 2,
     // code 3 non-finite / trace, codes 7, 8, and code 4/9 at p0 >= p_sep) still
     // refuses below, at any p.
     if (tcOn && code != 0) {
-        const bool e1 = (code == RC_LOWP) || (code == RC_START_OTHER && startTension);
-        const bool e2 = (code == RC_DTMIN || code == RC_CAP) && (p0c < o.tcPsep);
+        const bool e1q = (code == RC_LOWP) || (code == RC_START_OTHER && startTension);
+        const bool e2q = (code == RC_DTMIN || code == RC_CAP) && (p0c < o.tcPsep);
+        const bool e1 = e1q && (p0c <= o.tcP0Max);
+        const bool e2 = e2q && !(GetTrace(dStrain) > 0.0);
+        if (e1q && !e1) st[LSAS_SEP_HELD_HIGHP] += 1.0;
+        if (e2q && !e2) st[LSAS_SEP_HELD_COMPRESSING] += 1.0;
         if (e1 || e2) {
             mLadrunoSas.sepEvent = e1 ? 1 : 2;
+            mLadrunoSas.sepCode = code;   // the masked refusal (review #3), recorded at commit
+            mLadrunoSas.sepP0 = p0c;
             mSubstepCapHitInME = false;   // a code 9 set it; the cap was reached by a separating point
             mLadrunoSas.sep = true;
             mLadrunoSas.sepTr = GetTrace(NextStrain);

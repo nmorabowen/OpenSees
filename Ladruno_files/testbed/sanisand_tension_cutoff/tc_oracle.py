@@ -3,12 +3,16 @@ the UNMODIFIED WP-134 oracle (the WP-151 testbed copy `sanisand_r1`, which carri
 toggles).  The oracle's `p_floor` stop -- the exact trajectory reaching p -> 0 inside an
 increment -- is the counterpart of SAS-ME's tension refusal (code 6), i.e. trigger E1.
 The oracle integrates exactly, so it has no accuracy/cost failures: trigger E2 (codes 4/9
-at p0 < p_sep) has no oracle counterpart and is exercised on the C++ side only.
+at p0 < p_sep under a non-compressing increment, tr d_eps <= 0) has no oracle counterpart
+and is exercised on the C++ side only.
 
 State machine (Ladruno_implementation/152_sanisand_tension_cutoff.md):
-  NORMAL: integrate the increment.  status p_floor -> SEPARATED at the END of the increment:
+  NORMAL: integrate the increment.  status p_floor at a committed model p0 <= p0_max
+          (review #2; default 5 p_contact) -> SEPARATED at the END of the increment:
           sigma = (p_min - p_r) I (model p = p_min), alpha = alpha_in = 0, fabric kept,
           e follows the strain, tr(eps_entry) := tr(eps) at the end of this increment.
+          p_floor at p0 > p0_max -> REFUSED (the step is to be cut: one increment carried
+          a well-confined point through p = 0).
   SEPARATED: strain absorbed; g = tr(eps) - tr(eps_entry) (compression positive).
           g >= g_c = (p_contact - p_min) / K(p_contact) -> NORMAL at the end of this
           increment with sigma = (p_re - p_r) I, p_re = p_min + K(p_contact) g, alpha =
@@ -40,10 +44,11 @@ def model_p(st, O):
     return float(np.trace(st.sigma)) / 3.0 + O.p_residual
 
 
-def drive(state0, deps_list, O, p_sep, p_contact, P=None):
+def drive(state0, deps_list, O, p_sep, p_contact, P=None, p0_max=None):
     """Returns one record per increment: mode after it ('N'/'S'), event, sigma (Voigt,
     compression positive), model p, g, the oracle status."""
     P = C.P if P is None else P
+    p0_max = 5.0 * p_contact if p0_max is None else p0_max
     st, mode, g, tr_entry = state0, "N", 0.0, None
     out = []
     for k, de in enumerate(deps_list):
@@ -55,6 +60,10 @@ def drive(state0, deps_list, O, p_sep, p_contact, P=None):
             status = r.status
             if status == "ok":
                 st = r.state
+            elif status == "p_floor" and model_p(st, O) > p0_max:      # E1 held: refuse
+                out.append(dict(k=k, mode=mode, event="refused_highp", status=status,
+                                p0=model_p(st, O)))
+                break
             elif status == "p_floor":                                   # E1 (tension)
                 e_end = _e_after(st.e, dv, P, O)
                 st = State((O.p_min - O.p_residual) * I3, Z3.copy(), st.z.copy(), e_end, Z3.copy())
