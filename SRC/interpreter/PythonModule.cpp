@@ -657,6 +657,7 @@ initopensees(void)
 "        • LadrunoSANISAND — -flipAlphaIn init default (thread-count-proof flip)\n"
 "        • LadrunoSANISAND — -cppmOnFail refuse / -cppmTangent fixed / -meFallback cppm (WP-130)\n"
 "        • LadrunoSANISAND — IntScheme 129 SAS-ME (alpha-aware error, refuses, no force-accept)\n"
+"        • LadrunoSANISAND — SAS-ME -sasHFloor / -sasReseatHyst / -sasSoftCap (WP-151 R1)\n"
 "        • system Pardiso — -deterministic / -cbwr (MKL CNR, reproducible)\n"
 "\n";
         // FEATURES-END
