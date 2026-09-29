@@ -1,8 +1,8 @@
 ---
 title: "Why the Ring Walls — the fork's reply to the TIMs 2D-model requests F18–F23"
 project: Ladruno
-status: living draft (second issue, 2026-09-28; updated as the pending results land; see the revision log at the end)
-date: 2026-09-28
+status: living draft (fifth issue, 2026-09-29; updated as the pending results land; see the revision log at the end)
+date: 2026-09-29
 audience: TIMs project team (2D-model act)
 answers: _tims_2d_model_requests_2026-09-25.md (F18–F23)
 tags:
@@ -27,8 +27,8 @@ pending; anything preliminary (a result from work still in progress) is labelled
 | | |
 |---|---|
 | Fork | Ladruno / OpenSees, branch `ladruno` |
-| Merged so far | #863 (WP-127), #864 (WP-132), #865 (WP-131 step 1), #866 (WP-133), #869 (WP-128), #870 (WP-136), #871 (WP-129), #872 (WP-134), #874 (WP-135, PDMY hang), #876 (WP-132 guide follow-up), #885 (WP-144/145 plans), #888 (WP-131 re-verify), #846 (WP-109, OpenMP on gcc) |
-| Still open | #868 (WP-130, CPPM under Newton), #878 (WP-138, footing A/B), #892 (WP-150, the wall's mechanism and the regularization memo), #893 (WP-151, R1: the opt-in fix of the re-seat singularity) |
+| Merged so far | #863 (WP-127), #864 (WP-132), #865 (WP-131 step 1), #866 (WP-133), #869 (WP-128), #870 (WP-136), #871 (WP-129), #872 (WP-134), #874 (WP-135, PDMY hang), #876 (WP-132 guide follow-up), #885 (WP-144/145 plans), #888 (WP-131 re-verify), #846 (WP-109, OpenMP on gcc), #868 (WP-130, CPPM under Newton; `e96f8d77d`), #893 (WP-151, R1; `fd87e396d`) |
+| Still open | #878 (WP-138, footing A/B), #892 (WP-150, the wall's mechanism and the regularization memo), #894 (WP-152, the tension cutoff for zero-confinement points; under review) |
 | Plan and findings A–D | `Ladruno_implementation/127_tims_2d_requests_plan.md` |
 
 Every line of §2 of your intake was checked against the source before any work started
@@ -71,13 +71,89 @@ the "abrupt switch at 0.5 kPa" in the error norm is a continuous 1 kPa floor (§
    integration error of **6–15 % of the stress increment on 1e-4 strain increments**, measured on
    benign 20–100 kPa states (WP-129). On the footing curve that shows up as 5.5 % on the first step,
    at most 0.64 % from s/B 0.001 to 0.0174, and a spurious upturn near the `ModifiedEuler` wall (§4.4).
-8. **Still pending:** CPPM under a global Newton, with a sign fix to its tangent (WP-130, #868); threading
-   SANISAND (F19 step 2); **R1**, an opt-in model-level fix of the wall that the owner approved
-   (WP-151, draft #893); the footing runs with R1 on and with c = 0.80, and the mesh study with R1 on (R2),
-   all running. The sensitivity ladders are final (§4.7): no material switch removes the wall.
+8. **Still pending** (updated 2026-09-29; the new results are in §0a): threading SANISAND (F19 step 2);
+   the tension cutoff (WP-152, draft #894, under review); the mesh study at the peak (R2/R3); why the
+   footing starts too soft (a stiffness ladder and an element check against Tatsuoka et al. 1986 are
+   running). CPPM under Newton (#868) and R1 (#893) are **merged**.
 9. **Yours to decide** (§5): the p′-floor rule, `D_factor`, the mesh set, what "limit load" means for a
    dense dilatant sand, the calibration (D7), the Lode parameter c ≥ 7/9 (D8) and whether to use R1
    (D9); and the data we need from you (§5.1).
+
+
+---
+
+## 0a. What changed on 29 September (fifth issue)
+
+Sources for every number here: Esmeralda runs of our copy of your plane-strain strip deck, SAS-ME
+(`IntScheme 129`, TolR 1e-4). The R1 legs ran on build `bd93c558d`, in
+`~/ladruno_r1/deck{,_toyoura}/runs/<leg>/steps.csv`. The tension-cutoff legs ran on build `8ebde5cbd`, in
+`~/ladruno_wp152/deck{,_toyoura}/runs/W_*/steps.csv`. All read on 2026-09-29.
+
+1. **R1 is merged** (#893, `fd87e396d`; opt-in `-sasHFloor 1 -sasReseatHyst 1 -sasSoftCap 0.5`).
+   - On the campaign set (B/8) it carries the footing past the old wall to s/B 0.093, at q 1459 kPa and
+     still rising.
+   - Each part alone walls earlier: the floor only at 0.045, the hysteresis only at 0.046, both without the
+     cap at 0.0525.
+   - **The cap strength κ acts as a guard.** κ 0.25 / 0.5 / 0.75 give identical curves to s/B 0.045
+     (902 / 902 / 901 kPa). After that they differ by at most 5 %, and not in κ order.
+   - CPPM under a global Newton is merged too (#868, `e96f8d77d`).
+2. **The c ≥ 0.78 route is withdrawn.** At footing scale, c = 0.80 without R1 still walls, at s/B 0.048, on
+   the compression side (leg `C080_EB_off`). Raising c only delays the wall; R1 is the route out (D8
+   revised).
+3. **The campaign SANISAND set is a cyclic fit applied to a monotonic problem** (see D7).
+   - Its constants are assembled from Gorini's cyclic Messina set, DM04 Toyoura's c and ch, and φ 33° with
+     Jaky. No footing curve from it is physical.
+   - For drained monotonic use only, we built a **physically bounded monotonic set (PB2)**: nb 1.652,
+     A0 0.692, nd 3.5, h0 3.5, D_r 0.47 assumed. It liquefies at N ≈ 1 in cyclic tests, so do not use it for
+     cyclic work.
+   - With the tension cutoff (item 5), PB2 on B/8 reaches 1866 kPa at s/B 0.15 without a clear peak. That is
+     above the classical band of 381–1595 kPa for φ′ 33–42°.
+4. **After R1, the limiter is the free surface.**
+   - Every realistically dilating sand stopped at s/B 0.01–0.03. The failing Gauss points sit at p′ → 0,
+     about 0.27B outside the footing edge, and refuse with `errorAtDTmin`, `tensionAtDTmin(lowP)` or
+     `maxSubsteps`. There are zero `loadingNonPosH` refusals.
+   - A residual-pressure bracket shows that p_r changes how far a leg gets, not the curve. On the Kimura
+     case at s/B 0.045, p_r 2 / 5 / 10 kPa give 820 / 839 / 861 kPa.
+5. **A tension cutoff (WP-152, draft #894): pending, not for reported numbers yet.**
+   - The opt-in `-sasTensionCutoff p_sep p_contact` lets a point at zero confinement separate: no tension, no
+     shear, weight kept. It re-contacts when the volumetric gap closes. With it, the legs reach their targets.
+   - Checks so far:
+     - campaign R1 + cutoff is identical to R1 alone up to s/B 0.093;
+     - halving p_sep moves the Toyoura peak by 0.2 % (2509 vs 2513 kPa);
+     - it agrees with the p_r → 0 extrapolation within 2.3 %.
+   - An independent review returned **merge with changes**. The low-pressure trigger is broader than
+     intended, and the fixes and extra checks are in progress.
+6. **The reference sand against a real footing test** (Gate 1).
+   - **Setup.** DM04's own Toyoura calibration (Table 1), against Kimura et al. (1985) Fig. 9: centrifuge at
+     30g, B 0.9 m prototype, D_r 85.6 %, load perpendicular to the bedding. Fig. 9 was digitized in full.
+   - **The model** (R1 + cutoff, B/8):
+     - peak 2015 kPa against 1953 kPa in the test, but at **s/B 0.167 against 0.091**;
+     - initial secant stiffness 56 % low; at s/B 0.092, q is 1546 against 1946 kPa.
+   - **An adversarial review confirmed units, digitization and parameters.** Its reading:
+     - The **peak load is consistent within about ±15 %**. The contributions are mesh orientation (9 %),
+       e_max/e_min (±5–8 %) and test scatter (±8 %).
+     - The test footing's roughness for that series is unverified. A smooth footing would make the model
+       25–35 % high.
+     - **The peak is late, and the start is too soft and concave-up**, where the test is concave-down.
+   - Kimura's H-bedded test at the same density peaks at s/B 0.163 and 1734 kPa. Bedding alone moves the test
+     by about as much as our misfit, and DM04 carries no inherent fabric.
+7. **Mesh (R2): the gap opens before the peak.**
+   - On Toyoura with the cutoff (B 1.2 m), B/16 is −9 % against B/8 at s/B 0.05, and B/8 sheared 15° is +9 %
+     at the peak.
+   - This is WP-150 memo §4 case C. If it holds at the peak, it points to Perzyna viscoplasticity inside the
+     model (R3b). The B/16 legs are still running.
+8. **Running now:**
+   - the Kimura leg with e and γ made consistent (e 0.635, γ 15.9 kN/m³);
+   - a Kimura-case mesh bracket (B/16, and B/8 sheared);
+   - a **stiffness ladder** (footing seating 16 / 40 kPa, K0 0.4, surcharge 5 kPa, G0 × 2, h0 × 2), to decide
+     whether the soft start comes from the initial state or from the constitutive law;
+   - an element check of DM04 against Tatsuoka et al.'s (1986) low-pressure plane-strain Toyoura tests.
+
+**What this means for you.**
+- The **peak load q_u** is the number we can currently stand behind, within about ±15 % on the reference
+  sand.
+- The **settlement at peak** and the **pre-peak stiffness** are not yet reliable.
+- Your inputs in §5.1 remain the gate to a physical curve for your sand.
 
 ---
 
@@ -799,7 +875,7 @@ driven at c = 0.80: a sensitivity test, not a c = 0.80 footing run. That run is 
 
 **Two routes out of the wall; the choice is yours (D8, D9).**
 1. **R1** (WP-151, #893): an opt-in model-level fix at any c, no recalibration (§5, D9).
-2. **A calibration with c ≥ 0.78**: at c = 0.80 the extension strength M_e = c·M_c rises 13 %; it also
+2. *(Withdrawn 2026-09-29: at footing scale this only delays the wall; see §0a.)* **A calibration with c ≥ 0.78**: at c = 0.80 the extension strength M_e = c·M_c rises 13 %; it also
    removes the extension ill-conditioning of §4.9.
 
 **Related literature.** Stress overshooting of bounding-surface models at load reversals, where the
@@ -951,10 +1027,10 @@ These are recommendations. Nobody outside the calibration and the project can ma
 | D5 | **Re-running campaign curves** | re-run under SAS-ME the ones that feed a reported number, starting with anything read from ring points or near the `ModifiedEuler` wall | §3.1; §4.2 (+6.4 % spurious stiffening near the ME wall) |
 | D6 | **The reference load for `NormUnbalance`** | name the vector | it decides whether the integrator's per-point error sits under your Newton tolerance (F18(a)) |
 | D7 | **The calibration (T5)** | confirm the campaign SANISAND set against your lab data before any footing curve is used: φ′_peak, strain at peak, dilatancy | it has the strength of a very dense sand but dilates ~20–23× (triaxial) / ~8–14× (plane strain) less than stress–dilatancy requires and peaks at 4–16 % strain (§4 caveat; #892 §10). If your data agree with the set, the physics check moves to your data; if not, recalibration comes first |
-| D8 | **Lode parameter c** | keep c ≥ 7/9 (≈ 0.78), or treat extension paths as ill-conditioned | at c = 0.71 the Lode interpolation is non-convex at the extension meridian, and a round-off perturbation decides a CTXu result (§4.9); it is also what makes the footing's wall states singular, so c ≥ 0.78 is one of the two routes out of the wall (§4.6; c = 0.80 raises M_e by 13 %) |
+| D8 | **Lode parameter c** | keep c ≥ 7/9 (≈ 0.78), or treat extension paths as ill-conditioned | at c = 0.71 the Lode interpolation is non-convex at the extension meridian, and a round-off perturbation decides a CTXu result (§4.9); it is also what makes the footing's wall states singular. **Revised 2026-09-29:** at footing scale, raising c only delays the wall (c = 0.80 walls at s/B 0.048, on the compression side; §0a), so R1 is the route out. Keep c ≥ 7/9 for the Lode convexity, not as a cure for the wall |
 | D9 | **R1, a model-level opt-in fix of the wall** | yours to use or not; built as an opt-in `LadrunoSANISAND` variant, **default OFF**, vanilla `ManzariDafalias` behaviour unchanged (owner approved) | see below |
 
-**D9 in detail: R1** (WP-151 memo on draft #893; flags `-sasHFloor c_A -sasReseatHyst c_rev [-sasSoftCap κ]`,
+**D9 in detail: R1** (WP-151 memo on #893, **merged 2026-09-29** at `fd87e396d`; flags `-sasHFloor c_A -sasReseatHyst c_rev [-sasSoftCap κ]`,
 IntScheme 129 only, all default OFF and byte-identical). Two **coupled** flags:
 
 - **a floor on h everywhere**: h = b0 / max(a, c_A·√(2/3)·m), with c_A ≈ 1 (the yield cone's α-space
@@ -967,7 +1043,7 @@ a weaker floor, c_A = ¼, with the hysteresis 90). In element tests at c_A = 1, 
 most **2.7e-4·q_max** and drained cycles are unchanged to 4 digits. The CTXu difference that was open is
 DM04's own extension bifurcation (§4.9), identical with and without R1. R1 is a constitutive change: it
 changes the model you calibrated, which is why the decision is yours. It is implemented as an opt-in
-(draft #893; not merged without the owner); its footing runs on our copy of your deck are under way.
+(#893, merged at `fd87e396d`; recommended for the campaign). Its footing results are in §0a.
 
 **Regularization, if it is needed after R1.** Whether it is needed is decided by measurement: the
 spread of B/4, B/8 and B/16 (R2) against the scatter of comparable physical footing tests, following
@@ -984,7 +1060,8 @@ any width a regularized mesh returns would be a numerical length, not the sand's
 2. **Lab data**: drained triaxial and plane-strain tests (φ′_peak, the strain at peak, the dilatancy),
    and any undrained cyclic CSR–N target.
 3. **The footing test you treat as the reference.**
-4. **The exact PDMY01 33° parameter set** behind your 417.6 kPa control. The fork holds only its own
+4. **For your reference footing test:** footing roughness; how the sand was placed relative to the load direction (pluviation or bedding); and the measured unit weight and e_max/e_min of that batch. On Kimura (1985), bedding alone moves the peak by 11 % and its settlement by 1.8×, and roughness can move the peak by 25–35 % (§0a).
+5. **The exact PDMY01 33° parameter set** behind your 417.6 kPa control. The fork holds only its own
    WP-133 PDMY03 stand-in (φ 40°), which has no peak in drained plane strain and is not a physical
    reference (#892 §10).
 
@@ -996,9 +1073,12 @@ any width a regularized mesh returns would be a numerical length, not the sand's
 
 | item | what | where |
 |---|---|---|
-| CPPM under Newton + tangent sign | merge, then qualify on the strip | #868 (WP-130): draft; up to date with `ladruno`; its first Linux CI run exposed platform-fragile tests (round-off-selected CPPM paths at low p), redesigned; full CI pending |
+| CPPM under Newton + tangent sign | qualify on the strip | **MERGED**, #868 (WP-130), `e96f8d77d` |
 | Footing A/B | the Esmeralda arms and the sensitivity ladders are final | #878 (WP-138), draft |
-| R1 and c = 0.80 on the footing | E_B and E_B16 × {floor + hysteresis, floor, hysteresis, + cap}; c = 0.80 with R1 off; R2 (B/4, B/8 sheared 15°, B/8 jittered) with R1 on | Esmeralda, running; R1 = #893 (WP-151), draft |
+| R1 and c = 0.80 on the footing | done; results in §0a | **MERGED**, #893 (WP-151), `fd87e396d` |
+| Tension cutoff (free surface) | fixes from the independent review; p_sep 0 and p_contact sensitivity; a per-point separation census; an energy balance | #894 (WP-152), draft |
+| Why the start is too soft | a footing stiffness ladder (seating, K0, surcharge, G0 × 2, h0 × 2) and an element check against Tatsuoka et al. (1986) | Esmeralda and local, running |
+| R2/R3 at the peak | B/16 and sheared legs, on Toyoura and on the Kimura case | Esmeralda, running |
 | The decision procedure | **R1 → T5 → R2 → T6 → decisions** (below) | #892 (WP-150 memo §9.1), draft |
 | F19 step 2 | the deferred message buffer, the counters, stack scratch; allowlist `IntScheme 1`, then 2 and 129; identity and speed-up at 1/2/4/8 threads on a deck that prints | after #868 |
 | PDMY hang | refuse a wild trial instead of ~1e9 substeps | **MERGED**, #874 (WP-135) |
@@ -1124,7 +1204,7 @@ discarding element was committed. `LEDGER_implementations.md` rows WP-127, WP-12
 WP-134.
 
 **PRs.** Merged: #846, #863, #864, #865, #866, #869, #870, #871, #872, #874, #876, #884 (Windows-only
-CI gap), #885, #888. Open (drafts): #868 (WP-130), #878 (WP-138), #892 (WP-150), and this report, #887.
+CI gap), #885, #888. Open (drafts): #878 (WP-138), #892 (WP-150), #894 (WP-152), and this report, #887. Merged since the fourth issue: #868 (WP-130), #893 (WP-151).
 
 **Literature cited in §4–§6.** Dafalias & Manzari (2004), *J. Eng. Mech.* 130(6); Bolton (1986),
 *Géotechnique* 36(1); Rudnicki & Rice (1975), *JMPS* 23; Vesić (1973), *JSMFD* 99(SM1); Perkins &
@@ -1145,3 +1225,4 @@ al. (2016), *SpringerPlus* 5, 1482. Full list in the WP-150 memo.
 | 2026-09-28 | Second issue. §4 final from the WP-138 Esmeralda arms (#878 at `762be8332`): the wall table, the verdict (SAS-ME moves the wall from s/B 0.0292 to 0.0508 and does not remove it; no peak; constitutive), accuracy and cost, the replay figures reconciled, the mechanism (#892), the interim sensitivity ladders (16:20) with caution 6 re-measured, B/16 and non-associated localization, the calibration caveat (#892 §10), Lode convexity c ≥ 7/9, the classical capacity bands (#892 §11 at `00198f278`), the integrator recommendation; placeholders removed. §5: D1 and D3 revised, D7–D9 added (calibration, c, R1), the regularization route and §5.1 "What we need from you". §6: the WP-150 decision procedure, T6 targets, the SAS-ME + IMPL-EX status, #874 and #876 merged, TolR 1e-3 and TanType 1 off the performance list. §0, §2 scope note, §3 cautions 1, 4, 6 and the E_B configuration line (TolR 1e-4, not 1e-7) updated to match. |
 | 2026-09-28 | Third issue. §4.7 ladders FINAL (#878 at `1f22e2bad`): every leg walls on `loadingNonPosH`; dilatancy off only delays the onset (0.0363 → 0.0426), so the interim "only killing the dilatancy clears it" is withdrawn. §4.6: the wall states need the non-convex extension side (c = 0.71 < 7/9; c = 0.80 takes the wall fan 102/320 → 0/320, WP-151 §2.5), the wall and the bands are separate phenomena, two routes out (R1 or c ≥ 0.78), and related literature on reversal-memory stress overshooting. R1 and the CTXu finding now cite the WP-151 memo (#893) instead of "preliminary". D8 and the roadmap updated; the R1, c = 0.80 and R2 footing runs are running. |
 | 2026-09-28 | Fourth issue. §4.6: the Chen et al. (2022) citation corrected. It is a stress-overshooting study, not a documented SANISAND footing that stops on this singular set; Ghorbani et al. (2023, memory repositioning) added as related literature. |
+| 2026-09-29 | Fifth issue. New §0a: R1 merged (#893) with its footing results and κ as a guard; CPPM merged (#868); the c ≥ 0.78 route withdrawn (c = 0.80 walls at s/B 0.048); the campaign set identified as a cyclic fit, and a physically bounded monotonic set (PB2) offered; the free surface as the limiter after R1; the WP-152 tension cutoff (#894, pending review); Gate 1: DM04 Toyoura against Kimura (1985) Fig. 9, digitized, with the peak consistent within ±15 %, a late peak and a soft, concave-up start; mesh case C. §0 item 8, D8, D9, §4.6 route 2, §5.1 and §6 updated. |
