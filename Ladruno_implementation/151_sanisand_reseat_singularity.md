@@ -2,7 +2,7 @@
 title: "WP-151 — The SANISAND α_in re-seat singularity: a model-intrinsic fix (R1), oracle-first"
 project: Ladruno
 type: research memo + opt-in implementation
-status: "R1 oracle study COMPLETE; C++ opt-in (three flags, default OFF, byte-identical) on this branch; acceptance on Esmeralda pending (orchestrator). Owner D-a YES (opt-in DM04 variant), relayed 2026-09-28."
+status: "R1 oracle study COMPLETE; C++ opt-in (three flags, default OFF, byte-identical) on this branch; Esmeralda acceptance (orchestrator): q-s gate met below s/B 0.03, 0 NonPosH past E_B's onset with floor+hysteresis, the post-wall shape pending; the c = 0.80 control walls too (route 2 falsified, §2.5.1). Owner D-a YES (opt-in DM04 variant), relayed 2026-09-28."
 owner: nmora
 related:
   - "[[134_sanisand_reference_integrator]]"
@@ -28,10 +28,14 @@ updated: 2026-09-28
 >    1879/1; E_D 1962/1, 2058/1; E_B16 7820/4) × 32 directions × 2 Newton-scale magnitudes, today's C++ refuses
 >    **exactly** the 102/320 trials where the exact oracle fails, and accepts exactly the 218 where it
 >    integrates (§2.3). The integrator is faithful; the model has no answer there.
-> 2b. **It lives on the non-convex extension side.** The campaign Lode parameter c = 0.71 < 7/9 makes the
->    bounding surface concave on the extension meridian, and every wall refuser has n there. On the same states
->    and trials, c = 0.80 gives 0/320 failures, against 102/320 at c = 0.71 (§2.5). The footing's bands are a
->    separate, compression-side matter (WP-150).
+> 2b. **The Lode parameter c moves the singular set; it does not remove it.**
+>    - At the campaign's c = 0.71 (< 7/9), every wall refuser has n on the extension side, where the bounding
+>      surface is concave. Those states are regular at c = 0.80 (0/320 failures vs 102/320).
+>    - But a c = 0.80 footing walls anyway (`C080_EB_off`: first NonPosH at s/B 0.0416, stopped at 0.0480).
+>      Its refusers are on the compression side (cos3θ ≈ +0.65), and exact DM04 runs the same Zeno sequence
+>      there: 119/576 trials fail, R1 0/576 (§2.5.1).
+>    - **Recalibrating c is not a way out; R1 is.** The footing's bands are a separate, compression-side matter
+>      (WP-150).
 > 3. **Neither piece works alone.** Bounded h alone: 97/320 still fail (Zeno). WP-150's floor gated on b:n ≤ 0:
 >    102/320 (the blow-up is on the b:n → 0⁺ side). The hysteretic re-seat alone leaves h = ∞ (or < 0) in its
 >    band. **Floor everywhere + hysteretic re-seat: 0/320**; with the softening cap also 0/320 and H ≥ ½X
@@ -54,8 +58,11 @@ updated: 2026-09-28
 >    increment is continuous in its direction (DM04 has no answer in 126/181 directions around the last converged
 >    one at E_B 1880/1 — including that direction itself); the end state is Lipschitz in the jitter amplitude
 >    (slope 1.00).
-> 8. **No recalibration** is needed for anything measured here. The C++ opt-in (§9) is on this branch;
->    acceptance (E_B/E_B16 past their walls, q–s unchanged before s/B 0.036) is the orchestrator's Esmeralda matrix.
+> 8. **No recalibration** is needed for anything measured here, and recalibrating c would not remove the wall
+>    (2b). The C++ opt-in (§9) is on this branch. Footing acceptance so far (§9):
+>    - q–s within ±0.22 % of E_B below s/B 0.03;
+>    - floor + hysteresis has 0 `loadingNonPosH` past E_B's onset, on B/8, B/16 and B/4 (to s/B 0.127);
+>    - the shape past E_B's wall (0.0508) is still pending.
 
 Tags: **[E]** read in the source, **[E-sec]** via a secondary source, **[R]** recollection, not re-verified,
 **[I]** inference/derivation here. Every number without a tag is **measured** by a script in
@@ -170,13 +177,19 @@ update. Put plainly: the WP-129 integrator is doing its job, and the wall is in 
 - **The cap** closes what a fixed floor cannot: deep softening at low p, where b0 ∝ p^−½ makes b0/ε large and
   ⅔ p (b0/ε)|b:n| can exceed X (b8 1950/3: b:n = −0.09 at p = 0.35 kPa gives H → 0⁺ with the floor alone).
 
-### 2.5 The non-convex extension side (c < 7/9) is what makes the wall states singular
+### 2.5 The Lode side: c < 7/9 selects WHERE the footing meets the singular set, not WHETHER
+
+> [!warning] Corrected 2026-09-28 (after the c = 0.80 footing leg)
+> This section first concluded that the non-convex extension side makes the wall states singular, and offered
+> a recalibration to c ≥ 0.78 as a second route out. The c = 0.80 footing walls anyway, on compression-side
+> states that are singular for DM04 in the same way (§2.5.1). The measurements below stand. The generalization
+> does not.
 
 WP-150's acoustic-tensor split (#892 §2.3, `lode_split.py`) found a clean separation on the footing:
 - **The localization bands are compression-side.** Among the non-elliptic (det ≤ 0) points, cos3θ(n) spans
   +0.68 … +0.80 at E_B's wall and +0.51 … +0.79 at E_B16's (5–95 %). Only 0.09 % and 0.14 % of them are on the
   extension side (cos3θ < −0.5).
-- **The wall refusers have n on the extension side** (cos3θ = −1.00, −0.36, −0.88).
+- **At c = 0.71, the wall refusers have n on the extension side** (cos3θ = −1.00, −0.36, −0.88).
 
 The same wall fan was therefore rerun with the Lode parameter changed alone (`fan_c080.py`, DM04, exact
 oracle, the SAME committed states and trials):
@@ -190,27 +203,69 @@ oracle, the SAME committed states and trials):
 | E_B16 7820/4 | 0.926 / 1.238 | 34/64 | 0.913 / 1.104 | **0/64** |
 | all | | **102/320** | | **0/320** |
 
-- With a convex Lode interpolation (c = 0.80 > 7/9), not one trial chatters, hits the 0/0, or reaches H ≤ 0.
-  This holds although ρ_b(θ_n) is still above 1 at four of the five states.
-- So at these states the Zeno sequence of §2.2 needs the **concave extension meridian**. The scaling there
-  kept only the relative motion of α and n. Once the image point α^b(θ_n) itself moves as n rotates, its
-  curvature decides the sign of dβ/dt, and on a concave meridian it drives β = b:n down instead of back
-  up [I; the measurement is the evidence].
-- **Caveat.** These are c = 0.71 states, driven at c = 0.80. A c = 0.80 footing would follow a different
-  history and could meet other states. This measures sensitivity, not the outcome of a c = 0.80 BVP.
+- With a convex Lode interpolation (c = 0.80 > 7/9), not one trial **at these states** chatters, hits the 0/0,
+  or reaches H ≤ 0. This holds although ρ_b(θ_n) is still above 1 at four of the five states.
+- So at these states the Zeno sequence of §2.2 needs the concave extension meridian. A first explanation
+  [I] was that once the image point α^b(θ_n) moves as n rotates, the meridian's curvature decides the sign of
+  dβ/dt. **It does not generalize.** The same sequence runs on compression-side states at c = 0.80 (§2.5.1).
+  The concave meridian is one way into the singular set, not a condition for it.
+- **Caveat, now answered.** These are c = 0.71 states driven at c = 0.80, so they measure sensitivity. The
+  c = 0.80 footing followed its own history and met other singular states (§2.5.1).
 - **Footing-scale corroboration (WP-138 ladders, final, orchestrator 2026-09-28).** Every ablation and ladder
-  leg still ends on the `loadingNonPosH` floor. None of them changes c.
+  leg still ends on the `loadingNonPosH` floor.
   - The ablations: S1 no fabric, S2 no peak, S3 critical-state dilatancy, S4 dilatancy off (A0 = 0.001).
   - The ladders: A0 0.02/0.10, h0 ×3, P_residual 0.5–20 kPa, e_init 0.65–0.85.
   - First onsets fall between s/B 0.009 (h0 ×3) and 0.054. Dilatancy off only delays the onset, from 0.036 to
     0.043; the leg still walls at 0.050.
-  - So the wall is not a dilatancy effect. It follows the ingredient §2.5 isolates, which only the R1 legs and
-    the c = 0.80 leg (`C080_EB_off`, running) change.
-- **Two routes out.**
-  1. R1 (§8) removes the singular set at any c, with no recalibration.
-  2. A calibration with c ≥ 0.78 (convex; c = 0.80 raises the extension strength M_e = c·M_c by 13 %) removes it at these states.
-     That is TIMs' call. A c = 0.80 footing leg would test it, and WP-150 flags it in #892 §2.3.
-- Either way, the bands are a separate, compression-side matter (WP-150 R2/R3).
+  - So the wall is not a dilatancy effect. The c = 0.80 leg walls too (§2.5.1), so it is not the Lode
+    calibration either. Only the R1 legs pass.
+- **One route out: R1** (§8). It removes the singular set at any c, with no recalibration. It is verified at the
+  material point at c = 0.71 (§5) and c = 0.80 (§2.5.1), and on the c = 0.71 footing (§9).
+- c ≥ 0.78 remains a separate calibration question: it fixes DM04's CTXu ill-conditioning (§6.3), not the wall.
+- The bands are a separate, compression-side matter (WP-150 R2/R3).
+
+#### 2.5.1 The c = 0.80 footing walls too (the recalibration route fails at footing scale)
+
+`C080_EB_off` is the orchestrator's Esmeralda leg: E_B settings with c = 0.80 and R1 OFF, build bd93c558d. I
+re-read its numbers from its own `summary.json` and `log.log` on Esmeralda:
+- The first `loadingNonPosH` comes at s/B 0.0416, at q 975 kPa (E_B: 0.0363).
+- The run stops (FLOOR) at s/B 0.0480, at q 1084 kPa (E_B walls at 0.0508).
+- Refusals: 82 `loadingNonPosH`, 287 `maxSubsteps` and 1 `errorAtDTmin`. sasStats counts 9.9 M α_in re-seats
+  (E_B: 10 M).
+- Where the refusers are:
+  - the final wall (steps 307–308): 1.5–2.0 m deep, just outside the footing's left edge (x −0.79 … −0.90 m;
+    the edge is at −0.75 m);
+  - earlier (steps 248–306): 0.2–0.35 m deep, 0.2–0.5 m outside both edges.
+
+The exact oracle, run at c = 0.80 on the committed states at the last converged step (308)
+(`fan_c080_bvp.py`, the §5.1 fan, 32 directions × {3e-6, 3e-5}):
+
+| state (ele/gp) | p (kPa) | η | cos3θ(n) | (α−α_in):n / ρ_c | b:n | ρ_α | DM04 fails | floor alone fails | R1 fails |
+|---|---|---|---|---|---|---|---|---|---|
+| 1833/4 | 112.5 | 1.83 | +0.665 | 0.09 | 0.27 | 1.002 | 30/64 | 26/64 | 0/64 |
+| 1834/4 | 112.6 | 1.83 | +0.651 | 0.94 | 0.85 | 1.001 | 30/64 | 22/64 | 0/64 |
+| 1832/4 | 103.6 | 1.84 | +0.671 | 0.16 | 0.28 | 1.001 | 30/64 | 24/64 | 0/64 |
+| 1832/2 | 89.7 | 1.85 | +0.660 | 0.02 | 1.29 | 1.004 | 29/64 | 25/64 | 0/64 |
+| 1817/1,2; 1973/1,2; 1829/3 (the earlier refusers) | 27–170 | 1.82–1.91 | +0.63 … +0.79 | 2.5–21 | 1.7–2.9 | 0.97–1.00 | 0/64 each | 0/64 each | 0/64 each |
+| all | | | | | | | **119/576** | **97/576** (chatter) | **0/576** |
+
+- **They are on the compression side** (cos3θ = +0.63 … +0.79). The convex/concave question does not arise
+  there, and the range is WP-150's band range (+0.68 … +0.80).
+- **It is the same singularity.** The final-wall states have just re-seated (a ≤ one cone radius), with α on
+  the bounding surface (ρ_α ≈ 1.00). One failing trial from 1833/4 (norm 3e-6) shows the sequence
+  (`out/fan_c080_bvp_trace.json`):
+  - re-seats at t = 0.037, 0.282, 0.3112, 0.31255 and 0.3125583;
+  - b:n falls 0.235 → 0.027 → 2.8e-3 → 1.7e-4 → 3.8e-6;
+  - |dα/dt| grows 6.7e-3 → 20.8;
+  - the exact solver fails at the accumulation point t* ≈ 0.31256. This is §2.2's sequence.
+- The earlier refusers have moved on by step 308 (a = 2.5–21 cone radii) and are regular there, as expected.
+- **R1 clears all of them.** Floor + hysteresis, with or without the cap, gives 0/576 with at most one re-seat
+  per trial. Floor alone chatters (97/576, 54–56 re-seats), as it does at c = 0.71.
+
+**So c ≥ 7/9 removes the c = 0.71 wall states, not the singular set.** The c = 0.80 footing meets
+compression-side singular states a little later (onset at 0.0416 vs 0.0363) and still walls (0.0480 vs
+0.0508). Recalibrating c is not a way out. R1 is, at any c. It is verified at the material point for
+c = 0.80; no c = 0.80 + R1 footing leg was run.
 
 ## 3. Literature: how bounding-surface models handle the reversal singularity
 
@@ -613,8 +668,36 @@ The gate at s/B < 0.03 is MET. q_R1 − q_E_B, relative, at matched s/B (linear 
   +2.05 % / +4.03 % (jittered nodes) at s/B 0.020 / 0.030. Mesh dependence, not R1, dominates.
 - Refusals so far: no `loadingNonPosH` on any leg. The floor-only leg shows the discretized Zeno cascade
   (553 `maxSubsteps` census lines vs 79–87), as predicted.
-- Still to come: the legs past E_B's onset (0.0363) and wall (0.0508), and the c = 0.80 control
-  (`C080_EB_off`) past its own.
+**Onset-stage result** (orchestrator ~22:00). I re-read every number from the runs' own `steps.csv`,
+`logs/log.log` and `summary.json` on Esmeralda (read-only, 22:05–22:15). References: E_B (DM04, c = 0.71) has
+its first `loadingNonPosH` at s/B 0.0363 and walls at 0.0508; E_B16 walls at 0.0135.
+
+| leg (E_B settings; B/8 unless noted) | first `loadingNonPosH` (s/B) | reached (s/B) | q there (kPa) | status |
+|---|---|---|---|---|
+| floor + hysteresis (fh) | none | 0.0429 | 872 | running |
+| floor + hysteresis + cap (fhc) | none | 0.0419 | 857 | running |
+| floor alone (f) | none | 0.0417 | 855 | running; 572 `maxSubsteps` mentions in the log vs 91 for fh and fhc |
+| hysteresis alone (h) | **0.0362** | 0.0441 | 886 | running; 11 NonPosH lines |
+| B/16: fh / fhc / f | none | 0.0137 / 0.0134 / 0.0132 | 353 / 346 / 343 | running (fh is past E_B16's wall) |
+| B/16: h | **0.0095** | 0.0133 | 346 | running |
+| B/4 (WP-150 R2), fhc | none | **0.1273** | 2160 | stopped (FLOOR) by low confinement, not the re-seat set |
+| c = 0.80, R1 off (`C080_EB_off`) | **0.0416** | **0.0480** | 1084 | stopped (FLOOR): 82 NonPosH + 287 `maxSubsteps` + 1 `errorAtDTmin` refusals |
+
+- **All three predictions hold so far:**
+  - fh and fhc remove `loadingNonPosH` on B/8 (past E_B's onset), on B/16 (fh past E_B16's wall) and on B/4
+    (to s/B 0.1273, 2.5× E_B's wall).
+  - Floor alone turns it into `maxSubsteps` (0 NonPosH).
+  - Hysteresis alone leaves it: its first NonPosH comes at 0.0362, the same as E_B.
+- **The B/4 leg stops for a different reason.** One shallow point just outside the footing (ele 488 gp 4 at
+  x −1.42 m, y −0.08 m) refuses on `errorAtDTmin` and `maxSubsteps` (plus 2 `tensionAtDTmin`), with no
+  `loadingNonPosH`. That is the low-confinement surface failure (p′ → 0), the same class as the Toyoura
+  p_r = 0 floor: a p′-floor question for the deck (TIMs D1), not the re-seat set.
+- **The c = 0.80 control walls too**, on compression-side states where exact DM04 runs the same Zeno sequence
+  and R1 clears all 576 oracle trials. Changing c is not a fix for the wall (§2.5.1).
+- Still to come:
+  - the R1 legs past 0.0508: peak, plateau or continued hardening (WP-150 §9.1);
+  - the cost per unit s/B vs E_B;
+  - B/16 past its wall.
 
 ## 10. Open items and not verified
 
@@ -627,8 +710,11 @@ The gate at s/B < 0.03 is MET. q_R1 − q_E_B, relative, at matched s/B (linear 
   decision, SAS-ME only; vanilla untouched.
 - **Consistent tangent.** SAS-ME returns the continuum tangent at the end state. The floor and the cap enter it
   (bounded h), and nothing else changes.
-- **The c < 7/9 finding** is measured on triaxial extension only. Whether the non-convex extension meridian
-  also seeds localization in the footing's extension zones is not studied (WP-150 R2/R3 territory).
+- **The c < 7/9 finding** (§6.3) is measured on triaxial extension only. Whether the non-convex extension
+  meridian also seeds localization in the footing's extension zones is not studied (WP-150 R2/R3 territory).
+  It is not the cause of the wall (§2.5.1).
+- **R1 at c = 0.80** is verified at the material point only (§2.5.1: 0/576 on the c = 0.80 footing's own wall
+  states). No c = 0.80 + R1 footing leg was run.
 - **Literature.** DM04's own text was paywalled; its statements here are [E-sec]. The Zeno analysis of §2.2 is
   a derivation here [I], confirmed by the exact integration; no source found describes it.
 - **A lint rule** for the size-keyed datastore trap is not added: it is not greppable in general (sizes are

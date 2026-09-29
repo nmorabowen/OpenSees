@@ -7855,7 +7855,8 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
   - With b nearly normal to n, that slide rotates n on the thin cone (√(2/3)m = 0.004 for m = 0.005). (α−α_in):n turns negative again, and the next re-seat fires.
   - The intervals shrink geometrically (∝ (b:n)², ×0.04 per re-seat) while b:n → 0 from ABOVE and |dα/dt| ∝ 1/b:n → ∞. H ≤ 0 is only the b:n < 0 exit.
   - On the five real wall states × 64 trials, today's SAS-ME refuses exactly the 102/320 trials the exact oracle cannot integrate, one-to-one.
-  - Every refuser has |α−α_in| of about one cone radius (a re-seat a moment ago) and ρ_b > 1 > ρ_α (n at an extension-side Lode angle).
+  - At c = 0.71 every refuser has |α−α_in| of about one cone radius (a re-seat a moment ago) and ρ_b > 1 > ρ_α (n at an extension-side Lode angle).
+  - A c = 0.80 footing walls too, with compression-side refusers (cos3θ ≈ +0.65) and the same sequence. The singular set belongs to DM04, not to the calibration.
   - Chen, Ghorbani, Zhang & Kodikara (2022, §3.9.1; verified in Chen's published-works thesis, doi:10.26180/23639730.v1, Ch. 3) report a SANISAND04 plane-strain footing on loose sand that aborts when (α − α_in):n drops suddenly to 0, and worse with finer steps or a tighter tolerance. It is the same singular factor; b:n is not analysed there.
 - **Rule:** Neither piece alone cures it:
   - a floor on h alone: 97/320 still chatter, and the C++ discretizes that into `-maxSubsteps`;
@@ -7863,7 +7864,12 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
   - a re-seat threshold alone: h stays 1e10 in its band (102/320).
 
   Use the everywhere floor AND the hysteresis together. Two re-seats then need a finite α travel, so they cannot accumulate.
-- **Workaround/status:** WP-151's opt-in flags `-sasHFloor 1 -sasReseatHyst 1 -sasSoftCap 0.5` (SAS-ME only; default OFF and byte-identical) give 0/320 with calibrated behaviour unchanged. BVP acceptance on Esmeralda is pending. [[151_sanisand_reseat_singularity]].
+- **Workaround/status:** WP-151's opt-in flags `-sasHFloor 1 -sasReseatHyst 1 -sasSoftCap 0.5` (SAS-ME only; default OFF and byte-identical) give 0/320 with calibrated behaviour unchanged.
+  - On the footing (Esmeralda, 2026-09-28) they pass E_B's onset with 0 `loadingNonPosH` on B/8, B/16 and B/4. The B/4 leg reaches s/B 0.127, 2.5× E_B's wall.
+  - q–s stays within ±0.22 % of E_B below s/B 0.03.
+  - Floor alone gives `maxSubsteps` instead; hysteresis alone keeps NonPosH, as predicted.
+  - **Do not "fix" it by changing the Lode parameter c:** a c = 0.80 footing walls too (s/B 0.048).
+  - [[151_sanisand_reseat_singularity]] §2.5, §9.
 ### FE_Datastore keys a sent Vector by its SIZE: a fork `sendSelf` block of the SAME length as the base's vector, under the same dbTag and commitTag, OVERWRITES the base state (WP-151)
 - **Bites:** `LadrunoSANISAND::sendSelf` sends two vectors, both with `this->getDbTag()` and `commitTag`: the base `ManzariDafalias` state as a `Vector(97)`, then its own Ladruno block. FileDatastore files vectors per `<size>.<commitTag>`, then by dbTag.
   - WP-151 added six entries, and the Ladruno block became exactly 97 long (35 + 17 + 6 + 36 + 3). It landed in the base's slot.
@@ -7879,7 +7885,10 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
   - Both the TIMs campaign set (c = 0.71) and DM04's own Toyoura set (c = 0.712) are below it.
   - In undrained cyclic triaxial (campaign e0 0.6944, CSR 0.2), every model, DM04 included, breaks axisymmetry in the first extension half-cycle. |σ_yy − σ_zz| grows from round-off to 27–40 kPa.
   - A σ_zz perturbation of ±1e-9 decides between 5 % DA at N = 8 and no liquefaction by N = 20. Without a perturbation, round-off decides (rtol, build, any model change).
-  - At c = 0.80 the path stays axisymmetric (|σ_yy − σ_zz| ≤ 1e-7 kPa) and the test is well conditioned. **The same non-convexity makes the footing's WALL states singular:** every `loadingNonPosH` refuser has n on the extension side, and on the same five wall states × 64 trials DM04 fails 102/320 at c = 0.71 and 0/320 at c = 0.80 (`sanisand_reseat_r1/fan_c080.py`). The compression-side bands are a separate matter (WP-150).
+  - At c = 0.80 the path stays axisymmetric (|σ_yy − σ_zz| ≤ 1e-7 kPa) and the test is well conditioned.
+  - **It is NOT the cause of the footing wall.** At c = 0.71 every `loadingNonPosH` refuser has n on the extension side, and those five states are regular at c = 0.80 (102/320 → 0/320, `sanisand_reseat_r1/fan_c080.py`).
+  - But a c = 0.80 footing (`C080_EB_off`) walls anyway at s/B 0.048, on compression-side states (cos3θ ≈ +0.65). Exact DM04 runs the same Zeno re-seat sequence there: 119/576 trials fail, R1 0/576 (`fan_c080_bvp.py`).
+  - The non-convexity only selects where the singular set is met first. Do not recalibrate c to fix the wall.
 - **Rule:** With c < 7/9:
   - Do not read a single axisymmetric-extension element test (CTXu, TE) as the model's answer. Report both branches, or perturb explicitly.
   - A comparison of two model variants on such a test is decided by round-off unless the SAME perturbation is imposed on both.
