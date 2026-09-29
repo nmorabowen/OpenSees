@@ -11,7 +11,10 @@ Martin also shows the NON-associated N_gamma (psi < phi) is lower: an upper band
 import math
 
 MARTIN = {30: 14.8, 35: 34.5, 40: 85.6, 45: 234.0}
-GAMMA, B, Q = 9.81, 1.5, 7.65
+import sys
+kw = dict(a.split("=") for a in sys.argv[1:])
+GAMMA, B, Q = float(kw.get("gamma", 9.81)), float(kw.get("B", 1.5)), float(kw.get("q", 7.65))
+PR = float(kw.get("pr", 0.0))      # -Presidual: a shift of the MC envelope by p_r -> extra capacity p_r (N_q - 1)
 
 
 def n_gamma(phi):
@@ -30,10 +33,12 @@ def n_q(phi):
     return math.exp(math.pi * t) * math.tan(math.radians(45 + phi / 2)) ** 2
 
 
-print("| φ′ ° | N_γ (rough, exact) | N_q | q_u = ½γ′BN_γ + qN_q kPa | note |")
-print("|---|---|---|---|---|")
-for phi in (30, 33, 35, 38, 40, 42, 45):
+print(f"deck: gamma {GAMMA} kN/m3, B {B} m, surcharge {Q} kPa, p_r {PR} kPa")
+print()
+print("| φ′ ° | N_γ (rough, exact) | N_q | q_u = ½γ′BN_γ + qN_q kPa | + p_r (N_q − 1) kPa | note |")
+print("|---|---|---|---|---|---|")
+for phi in (30, 33, 35, 38, 40, 42, 43, 44, 45):
     ng, src = n_gamma(phi)
     nq = n_q(phi)
     qu = 0.5 * GAMMA * B * ng + Q * nq
-    print(f"| {phi} | {ng:.1f} | {nq:.1f} | {qu:.0f} | {src} |")
+    print(f"| {phi} | {ng:.1f} | {nq:.1f} | {qu:.0f} | {PR * (nq - 1):.0f} | {src} |")

@@ -728,6 +728,40 @@ This is consistent with §2.3: the bands are compression-side non-associated loc
 
 ---
 
+## 14. Gate 1 benchmark band (Toyoura at Kimura et al. 1985's prototype scale), prepared before the first pull
+
+Gate 1 has been running since 2026-09-28 20:56 on build bd93c558d (orchestrator deck `deck_toyoura`):
+- B 1.2 m; γ 15.9 kN/m³; K0 0.5;
+- e_init 0.6426 (D_r 0.88, §12); DM04 Table 1 verbatim;
+- `-Presidual` 1 kPa (see below).
+
+Legs: B/4, B/8, B/16 and B/8 shear:15 with R1 ON, and B/8 R1 OFF and c = 0.80; a DP 49° control; and Kimura's Fig. 9
+case (B 0.9 m, D_r 0.856, measured q ≈ 1 950 kPa at s/B ≈ 0.092), with R1 on and off.
+
+`t6_capacity_bands.py gamma=15.9 B=… q=0 pr=1` gives the classical band, with Martin's exact N_γ. The p_r shift of the
+Mohr–Coulomb envelope adds exactly p_r·(N_q − 1):
+
+| φ′ ° | 40 | 42 | 43 | 44 | 45 |
+|---|---|---|---|---|---|
+| ½γBN_γ, B 0.9 m (kPa) | 612 | 916 | 1 120 | 1 369 | 1 674 |
+| ½γBN_γ, B 1.2 m (kPa) | 817 | 1 221 | 1 493 | 1 826 | 2 232 |
+| + p_r (N_q − 1), p_r = 1 kPa | 63 | 84 | 98 | 114 | 134 |
+
+**Readings, before any FE number:**
+- Kimura's measured ≈ 1 950 kPa (B 0.9 m) implies an operative **φ′_op ≈ 45–46°**. That is at the top of Martin's
+  sourced range and just above it, so it is extrapolated.
+- It is consistent with the §12 element response at D_r 0.88: plane-strain φ′_peak 48–52° at p′ 10–150 kPa, less a
+  progressive-failure / stress-level reduction.
+- **The p_r = 1 kPa deviation is worth ≈ 100–135 kPa, i.e. ~7 %, at the benchmark.** It is required: with p_r = 0 the
+  free surface beside the footing refuses at s/B 0.0044 (maxSubsteps / errorAtDTmin, not the α_in wall).
+- Report the Gate 1 q with and without p_r·(N_q − 1) at the operative φ′, or bracket it with a p_r = 0.5 kPa leg (the
+  survey's F / F/2 rule). Otherwise a ~7 % bias sits inside the D-b comparison.
+- **Analyser note:** with p_r ≠ 0 the driver's derived stress diagnostics (p′, ρ_α, η) in the npz are biased near the
+  surface. `r2_analysis.py` uses only strains and q, so it is unaffected. For Toyoura B/8 the footing edge is at
+  x = 0.6 m and h = 0.15 m.
+
+---
+
 ## References
 
 - Dafalias, Y. F. & Manzari, M. T. (2004). Simple plasticity sand model accounting for fabric change effects. *J. Eng.
