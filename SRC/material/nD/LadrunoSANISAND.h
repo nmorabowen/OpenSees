@@ -353,6 +353,16 @@ class LadrunoSANISAND : public ManzariDafalias
                                  bool verbose = true);               // Ladruno (ADR-92 P1)
     const LadrunoImplexOptions &getLadrunoImplexOptions(void) const { return mImplexOpt; }
 
+    // Ladruno WP-130 (TIMs F18(c)/(d)): the BackwardEuler_CPPM options, set
+    // after construction on the IMPL-EX rule (not constructor arguments, so the
+    // wrappers' signatures do not move). The PARSER validates them against
+    // IntScheme / -maxSubsteps / -implex; this setter clamps and stores, then
+    // re-asserts the base seams through applyLadrunoConstants(). `verbose`
+    // echoes one line (the deck-level command only).
+    void setLadrunoCPPMOptions(int onFail, int halvings, int lineSearch,
+                               int meFallback, int start, int tangentFix,
+                               bool verbose);                          // Ladruno WP-130
+
     // `implexError` / `avgImplexError`, on the ASDConcrete3DMaterial.cpp
     // :2073-2077 template, plus this material's own per-point detail response.
     int setParameter(const char **argv, int argc, Parameter &param);  // Ladruno (ADR-92 P1)
@@ -487,6 +497,35 @@ class LadrunoSANISAND : public ManzariDafalias
                               //          two-name convention as mHonorTolR above: this
                               //          is the request, mMaxSubstepsInME is the
                               //          base-side seam it acts on.
+    // Ladruno WP-130 (TIMs F18(c)/(d)): the DECK-LEVEL requests for the CPPM
+    // seams (two-name convention again: these are the requests, the base's
+    // mLadrunoCPPM* / mLadrunoMEFallback are the seams, applyLadrunoConstants()
+    // is the one writer). Defaults reproduce vanilla: explicit / 9 / off / off / trial, and TANGENT FIXED (1): the one
+    // WP-130 default that is NOT vanilla (owner decision; the vanilla sign is wrong).
+    int    mCPPMOnFail;       // 0 explicit (vanilla), 1 refuse
+    int    mCPPMHalvings;     // 0..9; base mLadrunoCPPMMaxLevel = this + 1
+    int    mCPPMLineSearch;   // 0 off, 1 on
+    int    mMEFallback;       // 0 off, 1 cppm
+    int    mCPPMStart;        // 0 trial (vanilla), 1 explicit guess before halving
+    int    mCPPMTangentFix;   // 1 fixed (DEFAULT, owner decision WP-130), 0 vanilla (sign-flipped)
+    // WP-130 review r1: WHY the WP-99 commit latch (mImplexCommitRefusedLatch)
+    // was set -- 0 the -implex companion hit -maxSubsteps, 1 a CPPM refusal on
+    // the plain commit path. Only the warning text reads it; crosses the wire
+    // with the latch.
+    int    mLadrunoLatchCause;   // 0 implex companion, 1 CPPM, 2 SAS-ME, 3 ME cap (plain commit path)
+
+    // The sendSelf/recvSelf Vector layout (WP-127/129/130), derived in ONE place
+    // so two blocks can never again be indexed at the same offset (review #868
+    // item 1: both WPs wrote 35 + LMS_COUNT + k). See the layout note above
+    // LadrunoSANISAND::sendSelf.
+    enum {
+        LWIRE_CENSUS    = 35,
+        LWIRE_CPPM      = LWIRE_CENSUS + LMS_COUNT,
+        LWIRE_CPPM_N    = 7,
+        LWIRE_SAS       = LWIRE_CPPM + LWIRE_CPPM_N,
+        LWIRE_SAS_OPT_N = 6,
+        LWIRE_SIZE      = LWIRE_SAS + LWIRE_SAS_OPT_N + LSAS_COUNT
+    };
 
     // Ladruno ADR-92 P2-5: absolute strain-increment threshold below which
     // ManzariDafalias::integrate()'s unconditional loading-reversal reset

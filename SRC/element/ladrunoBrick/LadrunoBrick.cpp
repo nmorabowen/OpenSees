@@ -826,6 +826,7 @@ void   LadrunoBrick::formInertiaTerms(int tangFlag)
   static double Shape[nShape][numberNodes][numberGauss];
   static double gaussPoint[ndm];
   static Vector momentum(ndf);
+  double mL[8] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};   // Ladruno (WP-139): lumped nodal mass
 
   double temp, rho, massJK;
 
@@ -895,8 +896,11 @@ void   LadrunoBrick::formInertiaTerms(int tangFlag)
     for (int j = 0; j < numberNodes; j++) {
       temp = shp[massIndex][j] * dvol[i];
 
-      for (int p = 0; p < ndf; p++)
-        resid(jj + p) += (temp * momentum(p));
+      if (massType == 1)                  // Ladruno (WP-139): lumped -- see after the GP loop
+        mL[j] += temp * rho;
+      else
+        for (int p = 0; p < ndf; p++)
+          resid(jj + p) += (temp * momentum(p));
 
       if (tangFlag == 1) {
         temp *= rho;
@@ -916,6 +920,22 @@ void   LadrunoBrick::formInertiaTerms(int tangFlag)
           kk += ndf;
         }
       }
+      jj += ndf;
+    }
+  }
+
+  // Ladruno (WP-139): under -lumped the inertia RESIDUAL uses the same row-sum
+  // lumped mass as getMass() (the Newton tangent, alphaM Rayleigh, the ground
+  // load). It used the CONSISTENT mass (inherited from upstream Brick), so
+  // implicit dynamics integrated a hybrid and Newton converged only linearly.
+  // mL[j] accumulates (N_j dV) rho in the same Gauss-point order as the mass
+  // diagonal above, so resid gets exactly M_L(c,c) a(c) -- LadrunoBrick20's F-1.
+  if (massType == 1) {
+    int jj = 0;
+    for (int j = 0; j < numberNodes; j++) {
+      const Vector &aj = nodePointers[j]->getTrialAccel();
+      for (int p = 0; p < ndf; p++)
+        resid(jj + p) += mL[j] * aj(p);
       jj += ndf;
     }
   }

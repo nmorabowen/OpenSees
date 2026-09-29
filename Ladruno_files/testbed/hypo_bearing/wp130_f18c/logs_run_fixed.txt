@@ -1,0 +1,21 @@
+=== s2t_T2: IntScheme 2, -cppmTangent fixed, vanilla ladder ===
+    controls: resultant 4.44e-16, patch 2.33e-14, eta/M_c 0.6425, OutsideBounding 0, CLAMPING 0, base-foot 9.99e-05
+    width: w2(z=-0.625) = 7.7790 m, w2(z=-1.375) = 6.9611 m, yielding 84 ele / 80.000 m3
+
+done; run sanisand_tau0_summary.py on the output directory
+=== s2t_ref0: + -cppmOnFail refuse -cppmHalvings 0 ===
+    controls: resultant 4.44e-16, patch 2.33e-14, eta/M_c 0.6425, OutsideBounding 0, CLAMPING 0, base-foot 1.25e-03
+    width: w2(z=-0.625) = 5.0462 m, w2(z=-1.375) = 5.2549 m, yielding 75 ele / 66.308 m3
+
+done; run sanisand_tau0_summary.py on the output directory
+=== s2t_ref0_se_ls: + -cppmStart explicit -cppmLineSearch on ===
+    controls: resultant 4.44e-16, patch 2.33e-14, eta/M_c 0.6425, OutsideBounding 0, CLAMPING 0, base-foot 8.05e-04
+    width: w2(z=-0.625) = 6.4468 m, w2(z=-1.375) = 6.3233 m, yielding 82 ele / 75.679 m3
+
+done; run sanisand_tau0_summary.py on the output directory
+=== s2t_ref3_se_ls: -cppmHalvings 3 + start + LS ===
+    controls: resultant 4.44e-16, patch 2.33e-14, eta/M_c 0.6425, OutsideBounding 0, CLAMPING 0, base-foot 2.98e-04
+    width: w2(z=-0.625) = 6.4549 m, w2(z=-1.375) = 6.5854 m, yielding 84 ele / 80.000 m3
+
+done; run sanisand_tau0_summary.py on the output directory
+=== DONE ===
