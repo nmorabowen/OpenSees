@@ -54,7 +54,9 @@ def _series(tag0, incs):
         cur = [cur[i] - de[i] for i in range(3)]
         hist.append(list(cur))
     for i in range(3):
-        ops.timeSeries("Path", tag0 + i, "-dt", 1.0, "-values", 0.0, *[h[i] for h in hist])
+        # padded with the last value once more: PathSeries returns 0.0 AT its last point
+        # (getFactor needs index + 1 < size), so the final step would see zero strain
+        ops.timeSeries("Path", tag0 + i, "-dt", 1.0, "-values", 0.0, *[h[i] for h in hist], hist[-1][i])
     return hist
 
 

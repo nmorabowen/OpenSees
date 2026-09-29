@@ -128,8 +128,9 @@ struct LadrunoSasState {                                                    // L
     bool   commitRefusalWarned; // Ladruno WP-129: per-instance warn-once for a refused commit
     bool   sep, sep_n;          // Ladruno WP-152: separated (tension cutoff), trial / committed
     double sepTr, sepTr_n;      // Ladruno WP-152: tr(eps) at entry (internal, compression positive), trial / committed
+    int    sepEvent;            // Ladruno WP-152: this TRIAL's transition (0 none, 1 entry E1, 2 entry E2, 3 exit), counted at commit
     LadrunoSasState() : allowed(false), refused(false), warned(false), commitRefusalWarned(false),   // Ladruno WP-129
-                        sep(false), sep_n(false), sepTr(0.0), sepTr_n(0.0) {   // Ladruno WP-152
+                        sep(false), sep_n(false), sepTr(0.0), sepTr_n(0.0), sepEvent(0) {   // Ladruno WP-152
         for (int i = 0; i < LSAS_COUNT; i++) stats[i] = 0.0;   // Ladruno WP-129
     }   // Ladruno WP-129
 };   // Ladruno WP-129

@@ -177,6 +177,7 @@ ManzariDafalias::ladrunoResetSasStats(void)
     // (revertToStart and the replay command) start the point NORMAL.
     mLadrunoSas.sep = mLadrunoSas.sep_n = false;
     mLadrunoSas.sepTr = mLadrunoSas.sepTr_n = 0.0;
+    mLadrunoSas.sepEvent = 0;
 }
 
 // Ladruno WP-152 (tension cutoff): put the TRIAL on an isotropic state of model
@@ -867,6 +868,8 @@ ManzariDafalias::ladrunoSasIntegrate(void)
     // resumes at the next update. Ladruno_implementation/152_sanisand_tension_cutoff.md.
     mLadrunoSas.sep = mLadrunoSas.sep_n;
     mLadrunoSas.sepTr = mLadrunoSas.sepTr_n;
+    mLadrunoSas.sepEvent = 0;   // an element may update several times per step: the census
+                                // counts the COMMITTED transition (LadrunoSANISAND::commitState)
     const bool tcOn = (o.tcPcontact > 0.0);
     if (tcOn && mLadrunoSas.sep_n) {
         const double g = GetTrace(NextStrain) - mLadrunoSas.sepTr_n;
@@ -878,7 +881,7 @@ ManzariDafalias::ladrunoSasIntegrate(void)
         if (g >= gc) {
             ladrunoSasSetIsotropic(m_Pmin + Kc * g);
             mLadrunoSas.sep = false;
-            st[LSAS_SEP_EXITS] += 1.0;
+            mLadrunoSas.sepEvent = 3;
             mLadrunoLastPath = 9;
         } else {
             ladrunoSasSetIsotropic(m_Pmin);
@@ -1060,7 +1063,7 @@ ManzariDafalias::ladrunoSasIntegrate(void)
         const bool e1 = (code == RC_LOWP) || (code == RC_START_OTHER && startTension);
         const bool e2 = (code == RC_DTMIN || code == RC_CAP) && (p0c < o.tcPsep);
         if (e1 || e2) {
-            st[e1 ? LSAS_SEP_ENTRIES_TENSION : LSAS_SEP_ENTRIES_LOWP] += 1.0;
+            mLadrunoSas.sepEvent = e1 ? 1 : 2;
             mSubstepCapHitInME = false;   // a code 9 set it; the cap was reached by a separating point
             mLadrunoSas.sep = true;
             mLadrunoSas.sepTr = GetTrace(NextStrain);

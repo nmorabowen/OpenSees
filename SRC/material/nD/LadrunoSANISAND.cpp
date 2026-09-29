@@ -4859,6 +4859,13 @@ LadrunoSANISAND::commitState(void)
 
         // Ladruno WP-152: the separation state commits with the stress it produced
         // (the cutoff is refused with -implex, so only this path carries it).
+        switch (mLadrunoSas.sepEvent) {   // counted ONCE, when the transition commits
+        case 1: mLadrunoSas.stats[LSAS_SEP_ENTRIES_TENSION] += 1.0; break;
+        case 2: mLadrunoSas.stats[LSAS_SEP_ENTRIES_LOWP] += 1.0; break;
+        case 3: mLadrunoSas.stats[LSAS_SEP_EXITS] += 1.0; break;
+        default: break;
+        }
+        mLadrunoSas.sepEvent = 0;
         mLadrunoSas.sep_n = mLadrunoSas.sep;
         mLadrunoSas.sepTr_n = mLadrunoSas.sepTr;
         mLadrunoSas.stats[LSAS_SEP_ACTIVE] = mLadrunoSas.sep ? 1.0 : 0.0;
@@ -4876,6 +4883,7 @@ LadrunoSANISAND::revertToLastCommit(void)
 
     mLadrunoSas.sep = mLadrunoSas.sep_n;               // Ladruno WP-152
     mLadrunoSas.sepTr = mLadrunoSas.sepTr_n;           // Ladruno WP-152
+    mLadrunoSas.sepEvent = 0;                          // Ladruno WP-152
 
     if (!mImplexOpt.enabled)
         return res;
