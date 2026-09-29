@@ -48,6 +48,40 @@ def main():
                 s = r[6 + nst:6 + nst + 34]
                 return dict(rc=rc, sigma=s[0:6], alpha=s[6:12], alpha_in=s[12:18], z=s[18:24], e=s[24], p=s[25], q=s[26])
 
+            if kind == "CTXu":
+                # cyclic undrained triaxial: here `emax` is the CSR; q_signed = s_xx - s_yy cycles between
+                # +-2 CSR p0 under isochoric strain steps; stop at 5 % double-amplitude axial strain, p' < 1 kPa,
+                # or `ncyc` cycles. Reports the cycle count N at 5 % DA.
+                csr, qamp = float(emax), 2.0 * float(emax) * p0
+                da, sgn, half, ncyc = 2e-5, 1.0, 0, int(spec.get("ncyc", 40))
+                ea, emn, emx = 0.0, 0.0, 0.0
+                rec = dict(N=None, status="ok", p_min=p0, cycles=0, trace=[])
+                for k in range(2000000):
+                    d = [sgn * da, -0.5 * sgn * da, -0.5 * sgn * da, 0, 0, 0]
+                    res = step(d)
+                    if res is None or res["rc"] != 0:
+                        rec["status"] = f"refused at half-cycle {half} rc {None if res is None else res['rc']}"
+                        break
+                    st.update(sigma=res["sigma"], alpha=res["alpha"], alpha_in=res["alpha_in"], z=res["z"], e=res["e"])
+                    ea += d[0]
+                    emn, emx = min(emn, ea), max(emx, ea)
+                    qs = res["sigma"][0] - res["sigma"][1]
+                    rec["p_min"] = min(rec["p_min"], res["p"])
+                    if k % 200 == 0:
+                        rec["trace"].append((half, ea, res["p"], qs))
+                    if (sgn > 0 and qs >= qamp) or (sgn < 0 and qs <= -qamp):
+                        sgn, half = -sgn, half + 1
+                    if emx - emn >= 0.05:
+                        rec["N"] = half / 2.0; break
+                    if res["p"] < 1.0:
+                        rec["N"] = half / 2.0; rec["status"] = "p' < 1 kPa"; break
+                    if half >= 2 * ncyc:
+                        break
+                rec["cycles"] = half / 2.0
+                out[vname][label] = rec
+                print(f"{vname:4s} {label:22s} CSR {csr}: N(5% DA) {rec['N']}  cycles run {rec['cycles']}  "
+                      f"p'_min {rec['p_min']:.2f}  {rec['status']}", flush=True)
+                continue
             da = emax / NSTEP
             rec = dict(eps_a=[0.0], p=[p0], q=[0.0], e=[e0], ev=[0.0], rc=[])
             ea = ev = 0.0
@@ -58,21 +92,48 @@ def main():
                     res = step(d)
                 else:
                     lat = -0.3 * da if not rec["rc"] else lat_prev
+                    tol = 1e-9 * p0 + 1e-9
+                    conv = False
+
+                    def lat_res(x):
+                        dd = [da, x, x if kind == "TXd" else 0.0, 0, 0, 0]
+                        rr = step(dd)
+                        return dd, rr, (None if rr is None or rr["rc"] != 0 else rr["sigma"][1] - p0)
                     for it in range(30):
-                        d = [da, lat, lat if kind == "TXd" else 0.0, 0, 0, 0]
-                        res = step(d)
-                        if res is None or res["rc"] != 0:
+                        d, res, f = lat_res(lat)
+                        if f is None:
                             break
-                        f = res["sigma"][1] - p0
-                        if abs(f) < 1e-9 * p0 + 1e-9:
-                            break
+                        if abs(f) < tol:
+                            conv = True; break
                         h = 1e-6 * max(abs(da), 1e-9)
-                        d2 = [da, lat + h, (lat + h) if kind == "TXd" else 0.0, 0, 0, 0]
-                        r2 = step(d2)
-                        if r2 is None or r2["rc"] != 0:
+                        _, r2, f2 = lat_res(lat + h)
+                        if f2 is None:
                             res = r2; break
-                        slope = (r2["sigma"][1] - res["sigma"][1]) / h
+                        slope = (f2 - f) / h
                         lat -= f / slope
+                    if not conv and res is not None and res["rc"] == 0:
+                        # WP-150 fix: Newton can stall where the response is non-smooth (e.g. an alpha_in re-seat at
+                        # phase transformation); fall back to a bracketed bisection on the lateral strain
+                        lo, hi = lat - abs(da), lat + abs(da)
+                        _, _, flo = lat_res(lo); _, _, fhi = lat_res(hi)
+                        for _ in range(40):
+                            if flo is None or fhi is None or flo * fhi <= 0:
+                                break
+                            lo, hi = lo - 2 * abs(da), hi + 2 * abs(da)
+                            _, _, flo = lat_res(lo); _, _, fhi = lat_res(hi)
+                        if flo is not None and fhi is not None and flo * fhi <= 0:
+                            for _ in range(80):
+                                mid = 0.5 * (lo + hi)
+                                d, res, fm = lat_res(mid)
+                                if fm is None:
+                                    break
+                                if abs(fm) < tol:
+                                    break
+                                if fm * flo < 0:
+                                    hi = mid
+                                else:
+                                    lo, flo = mid, fm
+                            lat = 0.5 * (lo + hi)
                     lat_prev = lat
                 if res is None or res["rc"] != 0:
                     status = f"refused at step {k} rc {None if res is None else res['rc']}"

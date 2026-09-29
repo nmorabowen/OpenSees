@@ -794,6 +794,96 @@ Mohr–Coulomb envelope adds exactly p_r·(N_q − 1):
 
 ---
 
+## 15. A physically bounded MONOTONIC parameter set for the campaign sand (owner GO 2026-09-28)
+
+**Brief:** TIMs' principle is "the physical properties should bound the analysis". The owner confirmed that the
+campaign set is a CYCLIC fit (§10).
+- **Held fixed** (TIMs' anchors / unsourced): G0 264.32, ν 0.312885, e_init 0.6944, Mc 1.3309 (φ′_cs 33° TX),
+  c 0.71, λc 0.027, e0 0.83, ξ 0.45, P_atm 101, m 0.005, ch 0.968, zmax 12.5, cz 1100.
+- **Free:** nb, A0, nd, h0 (the deck's `--nb --A0 --nd --h0`).
+- c = 0.71 is kept. The Mohr–Coulomb-consistent value at 33° would be (3 − sin φ)/(3 + sin φ) = 0.693, reported only
+  as context.
+
+**Density (a stated assumption; TIMs owe the real one, #887 §5.1).**
+- With the campaign CSL, e_init 0.6944 gives ψ0 = −0.126 / −0.116 / −0.103 / −0.080 at p′ 10 / 50 / 150 / 500 kPa.
+- I placed e_max/e_min relative to the CSL intercept as Toyoura's are (e_max − e0 = 0.043, span 0.380): e_max 0.873,
+  e_min 0.493, which gives **D_r ≈ 0.47, a medium-dense sand**.
+- Cross-check: Toyoura at D_r 0.47 has ψ(100 kPa) = −0.117, against the campaign's −0.109.
+- The brackets are D_r 0.37 and 0.57, with the same e_init. Only the Bolton targets move.
+
+**Targets and method.**
+- Bolton (1986), I_R = D_r (10 − ln p′_peak) − 1, clipped to [0, 4]:
+  - TX: Δφ = 3 I_R and (−dε_v/dε₁)max = 0.3 I_R;
+  - PS: Δφ = 5 I_R;
+  - peak strain in [1 %, 5 %].
+- φ′_cs: TX 33.0° from Mc; PS 39.5°, ESTIMATED (+6.5°, §10 footnote 1).
+- Exact WP-134 oracle (the `uw_model` options = the C++'s equations), drained PS and TX at p0 10–500 kPa.
+- Nelder–Mead in log-parameters: `mono_fit.py`, outputs `out_mono_*.md`.
+
+| set | nb | A0 | nd | h0 | objective |
+|---|---|---|---|---|---|
+| campaign (cyclic fit), scored at D_r 0.47 | 3.5 | 0.05 | 5.75 | 1.3 | 1 983 |
+| **D_r 0.47, nd pinned at 3.5 (DM04 Toyoura value)** | **1.652** | **0.692** | **3.5** | **3.500** | **17.15** |
+| D_r 0.47, all four free | 1.615 | 0.940 | 1.771 | 3.751 | 18.33 (a local minimum) |
+| D_r 0.37 bracket | 1.134 | 0.892 | 1.178 | 4.628 | 23.29 |
+| D_r 0.57 bracket | 2.070 | 0.960 | 2.388 | 3.237 | 11.82 |
+
+**The D_r 0.47 fit** (the two variants are within 0.2° of each other):
+
+| p0 (kPa) | 10 | 50 | 150 | 500 |
+|---|---|---|---|---|
+| TX Δφ model / Bolton ° | 6.4 / 6.8 | 5.3 / 4.5 | 4.2 / 3.0 | 2.6 / 1.4 |
+| TX (−dε_v/dε₁)max model / Bolton | 0.60 / 0.68 | 0.50 / 0.46 | 0.40 / 0.31 | 0.25 / 0.14 |
+| PS Δφ model / Bolton ° | 8.8 / 10.1 | 6.7 / 6.6 | 4.7 / 4.2 | 2.1 / 1.6 |
+| peak strain TX / PS | 1.0 / 1.0 % | 2.0 / 1.9 % | 3.1 / 3.0 % | 5.2 / 5.1 % |
+
+- The residual is structural. With λc, ξ and e0 fixed, the model's pressure dependence is flatter than Bolton's
+  log(p′): a little weak at 10 kPa, strong at 500 kPa.
+- Strength and dilatancy are now mutually consistent: TX Δφ ≈ 10 × (−dε_v/dε₁)max. The campaign set misses this by
+  ~20×.
+- **The fabric stays inactive under monotonic loading:** max ⟨z:n⟩ = 0.000 on every path (z grows opposite to n).
+
+**C++ verification** (`mono_verify.py`: WP-151 build, SAS-ME TolR 1e-4, mixed-control replay driver). The
+comparison is against the full-resolution exact oracle, evaluated at the C++ output points.
+
+| set | C++ R1 off vs oracle, max \|Δq\|/q_max | R1 on vs off |
+|---|---|---|
+| D_r 0.47, nd 3.5 | 1.90e-3 | 5.6e-4 |
+| D_r 0.47, free | 1.88e-3 | 5.6e-4 |
+| D_r 0.37 (nd free) | 1.82e-3 | 3.4e-4 |
+| D_r 0.57 (nd free) | 1.89e-3 | 2.4e-4 |
+
+- The C++-vs-oracle numbers are SAS-ME's TolR 1e-4 accuracy; at TolR 1e-6 the C++ is exact.
+- *Driver fix:* the first D_r 0.37 run read 3.4e-2. That was one increment where my lateral-stress Newton stalled at
+  phase transformation (p − (p0 + q/3) = −0.41). A bracketed-bisection fallback was added and the run repeated.
+
+**Undrained sanity (NOT a target; cyclic behaviour is out of scope).** Monotonic undrained triaxial from p′ 100, and
+CTXu (e 0.6944, p0 100, R1 on = off in every case):
+
+| set | undrained p′_min, compression / extension (kPa) | CTXu N at 5 % DA, CSR 0.20 / 0.15 |
+|---|---|---|
+| campaign (cyclic fit) | 97 / 98 | 11.5 / 15.5 |
+| **D_r 0.47, nd 3.5** | **63 / 79** | **1.0 / 1.5** |
+| D_r 0.47, free | 32 / 56 | 0.5 / 1.0 |
+| D_r 0.37, nd free | 29 / 53 | 0.5 / 1.0 |
+| D_r 0.57, nd free | 38 / 61 | 0.5 / 1.0 |
+
+- **Every monotonic set liquefies within 1–2 cycles. They are DRAINED-MONOTONIC ONLY.**
+- It is not the fabric: zmax = 0 gives the same N for the free set.
+- The cause is the drained-only fit. It pins dilatancy at the peak and leaves the pre-peak contraction (A0 with nd)
+  unconstrained.
+- Pinning nd at 3.5 halves that contraction at no drained cost, which is why it is the recommended primary.
+- A set valid for both drained and cyclic loading needs TIMs' undrained data (owed).
+
+**RECOMMENDED PRIMARY: `--nb 1.652 --A0 0.692 --nd 3.5 --h0 3.5`.** The brackets at D_r 0.37 / 0.57 are being refit
+with nd pinned at 3.5, for a consistent family.
+
+**Launched** (orchestrator, 22:41): the free D_r 0.47 set on the campaign deck, as PB_b8_R1, PB_b8_off, PB_b16_R1
+and PB_b8shear15_R1. They are a sensitivity pair for the nd-3.5 set, since the two differ mainly in pre-peak
+contraction.
+
+---
+
 ## References
 
 - Dafalias, Y. F. & Manzari, M. T. (2004). Simple plasticity sand model accounting for fabric change effects. *J. Eng.
