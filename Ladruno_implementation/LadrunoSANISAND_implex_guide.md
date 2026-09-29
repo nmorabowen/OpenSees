@@ -1291,9 +1291,10 @@ the u-p family) to get a recoverable, cuttable refusal.
 
 ### 13.4 Re-seat regularization — WP-151 R1, an OPT-IN DM04 variant
 
-> [!important] The TIMs setting under SAS-ME (`IntScheme 129`): the FULL set, pending the owner's cap decision
-> The owner said "if R1 makes sense, let's use it" (relayed 2026-09-28). The owner then put #893 on HOLD, to
-> see whether the full set holds up past the old wall before deciding on the cap.
+> [!important] The TIMs setting under SAS-ME (`IntScheme 129`): the FULL set
+> The owner said "if R1 makes sense, let's use it", held the merge to see the full set past the old wall, and
+> then authorized it ("ok, when ready merge"). All three were relayed by the TIMs orchestrator on 2026-09-28.
+> κ stays an owner/TIMs choice.
 > - **The configuration is the full set: `-sasHFloor 1 -sasReseatHyst 1 -sasSoftCap 0.5`.** A partial set is
 >   an ablation, not a lighter fix. On the footing (B/8, E_B settings; E_B walls at s/B 0.0508):
 >   - the floor alone walls at 0.0453 and the hysteresis alone at 0.0461, both EARLIER than DM04;

@@ -8049,7 +8049,8 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
 - **Workaround/status:** WP-151's opt-in flags `-sasHFloor 1 -sasReseatHyst 1 -sasSoftCap 0.5` (SAS-ME only; default OFF and byte-identical) give 0/320.
   - Small-strain cost: about 1 % softer at γ ~ 1e-5; take G0 from the elastic range (memo §6.4).
   - Full set on the footing: 0 NonPosH at s/B 0.054, still hardening, where E_B walls at 0.0508.
-  - #893 is on HOLD for the owner's cap decision.
+  - Owner (relayed 2026-09-28): merge with the full set recommended. κ stays an owner/TIMs choice, and the
+    κ 0.25 / 0.75 legs are pending.
   - On the footing (Esmeralda, 2026-09-28) they pass E_B's onset with 0 `loadingNonPosH` on B/8, B/16 and B/4. The B/4 leg reaches s/B 0.127, 2.5× E_B's wall.
   - q–s stays within ±0.22 % of E_B below s/B 0.03.
   - Floor alone gives `maxSubsteps` instead; hysteresis alone keeps NonPosH, as predicted.

@@ -2,7 +2,7 @@
 title: "WP-151 — The SANISAND α_in re-seat singularity: a model-intrinsic fix (R1), oracle-first"
 project: Ladruno
 type: research memo + opt-in implementation
-status: "R1 oracle study COMPLETE; C++ opt-in (three flags, default OFF, byte-identical) on this branch; review #893: approve with minors (fixed). Footing: the FULL set runs past E_B's wall with 0 NonPosH, without the cap it walls at 0.0525. #893 ON HOLD for the owner's cap decision (2026-09-28). Owner D-a YES (opt-in DM04 variant), relayed."
+status: "R1 oracle study COMPLETE; C++ opt-in (three flags, default OFF, byte-identical); review #893 approve-with-minors, fixed. Footing: the FULL set runs past E_B's wall with 0 NonPosH; without the cap it walls at 0.0525. Owner (relayed 2026-09-28): merge when ready, with the full set as the recommended configuration; kappa an owner/TIMs choice, kappa 0.25/0.75 legs pending."
 owner: nmora
 related:
   - "[[134_sanisand_reference_integrator]]"
@@ -52,8 +52,10 @@ updated: 2026-09-28
 >    Recommended: **all three, c_A = 1, c_rev = 1, κ = 0.5**, no fitted parameter (c_A, c_rev in units of the
 >    calibrated m).
 >    - Use c_rev ≤ 1 for cyclic work (§6.4).
->    - The cap is a constitutive choice where it binds, and the owner/TIMs decide it (§8). #893 is on HOLD
->      for that decision.
+>    - The cap is a constitutive choice where it binds, and the owner/TIMs decide it (§8).
+>    - The owner authorized the merge with the full set as the recommended configuration ("ok, when ready
+>      merge", relayed 2026-09-28). κ stays an owner/TIMs choice, and the κ 0.25 / 0.75 footing legs are
+>      pending.
 > 5. **What it changes vs DM04 (§6):**
 >    - Monotonic TC/TE/plane-strain/simple shear, drained and undrained, p 25–400 kPa: |Δq| ≤ 2.7e-4·q_max,
 >      peak ≤ 1e-5 relative.
@@ -600,8 +602,10 @@ answer by O(λ), with no amplification (fig. 6).
 ## 8. Recommendation
 
 **Adopt R1 as three opt-in SAS-ME options, recommended together: c_A = 1, c_rev = 1, κ = 0.5.** All three
-are needed at footing scale. The cap is a constitutive choice (point 3), so the owner/TIMs decide it; #893 is on
-HOLD for that decision.
+are needed at footing scale.
+- The cap is a constitutive choice (point 3), so the owner/TIMs decide it.
+- The owner authorized the merge with the full set recommended (relayed 2026-09-28).
+- κ stays an owner/TIMs choice. The κ 0.25 / 0.75 footing legs are pending.
 
 The modified equations (DM04 in brackets):
 
