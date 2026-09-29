@@ -9,7 +9,8 @@ aborted. The oracle-level statement of the same contract is test_dead_point_tens
 test_ladrunoConcrete3D_material.py; this one drives a unit cube in UNIFORM uniaxial-strain tension so every Gauss point is
 the same material point, well past the point of death, and then unloads.
 
-Also pins the ``-deadThreshold`` flag (0.998 default; >= 1 disables the treatment and restores the runaway).
+Also pins the flags: ``-deadThreshold`` takes a committed-damage value in [0.99, 1) (0.998 default) and ``-noDead`` disables the
+treatment (the A/B knob that restores the runaway).
 """
 import pytest
 
@@ -110,9 +111,9 @@ def test_dead_point_default_freezes_tension_channel_and_unloads_elastically():
 
 
 def test_dead_threshold_flag_disables_the_treatment():
-    """-deadThreshold 2 (>= 1) restores the pre-fix behaviour on the SAME path: kappa_p keeps running on the dead point.
+    """-noDead restores the pre-fix behaviour on the SAME path: kappa_p keeps running on the dead point.
     Pins that the flag is parsed, carried by the copy the element runs, and honoured by the kernel."""
-    _build(("-deadThreshold", 2.0))
+    _build(("-noDead",))
     up = _ramp(1.0e3, 0.02, stop=lambda p: p["dmg"][0] >= 0.998)
     lam_dead, p_dead = up[-1]
     more = _ramp(10.0 * lam_dead, 0.1)
@@ -192,7 +193,7 @@ def test_beamfiber_view_tension_death_then_parallel_compression():
             break
     # Measured (this material, hoop 1200, lch 50; strain to -3e-3): virgin fibre P_min = -39.8 (confined, still rising); cracked
     # fibre WITH the treatment -16.98 at eps = -9.2e-4, then softening (omega_c 0.94); cracked fibre with the treatment disabled
-    # (-deadThreshold 2) only -5.63 (kappa_p runs to 1.5e4 and the tensile flow poisons the strut). The strut is a genuine, much
+    # (-noDead) only -5.63 (kappa_p runs to 1.5e4 and the tensile flow poisons the strut). The strut is a genuine, much
     # weaker-than-virgin cracked-concrete strut, 3x the legacy one; bound 0.5 fc.
     assert Pmin < -0.5 * _FC, f"the cracked fibre's compressive strut collapsed (P_min = {Pmin:.2f})"
     assert st["dmg"][1] > 0.0                      # omega_c evolves normally on the live compressive channel
@@ -218,3 +219,70 @@ def test_beamfiber_view_crushing_freezes_the_fibre():
         st = _fiber_step(1.0e-3)
         assert st["kp"] == pytest.approx(kp_dead, rel=1e-12, abs=1e-12) and st["fails"] == 0.0
         assert abs(st["P"]) < 1.0e-3 * _FC
+
+
+# --------------------------------------------------------------------------- #
+# Crushed branch through the nDMaterial wrapper, 3-D view (review #877 minor 3): a unit cube in uniaxial-STRESS compression
+# (symmetry planes, x = 1 face displaced), steep compressive law. omega_c >= 0.998, then the point is frozen: kappa_p and the
+# damages as at the floor, no refusal, elastic unloading.
+# --------------------------------------------------------------------------- #
+def _cube_build(threshold_args=()):
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for n, c in _NODES.items():
+        ops.node(n, *c)
+    ops.nDMaterial("LadrunoConcrete3D", 1, _E, _NU, _FC, _FT, 0.1, 0.075, "-lch", 50.0, *threshold_args)
+    for n, (x, y, z) in _NODES.items():
+        ops.fix(n, 1 if x == 0.0 else 0, 1 if y == 0.0 else 0, 1 if z == 0.0 else 0)   # 1/8 symmetry planes
+    ops.element("stdBrick", 1, 1, 2, 3, 4, 5, 6, 7, 8, 1)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for n in (2, 3, 6, 7):
+        ops.sp(n, 1, -_EPS_UNIT)
+    ops.system("UmfPack")
+    ops.numberer("Plain")
+    ops.constraints("Transformation")
+    ops.test("NormDispIncr", 1.0e-10, 30)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+
+
+def test_crushed_point_through_the_3d_view_freezes():
+    _cube_build()
+    lam, dlam, st = 0.0, 0.05, None
+    for _ in range(4000):                                    # load-control the face displacement, halving on failure
+        ops.integrator("LoadControl", dlam)
+        if ops.analyze(1) != 0:
+            dlam *= 0.5
+            assert dlam > 1e-6, f"could not reach the crush (lambda {ops.getTime():.3f})"
+            continue
+        st = _point()
+        if st["dmg"][1] >= 0.998:
+            break
+    assert st is not None and st["dmg"][1] >= 0.998, "the point never crushed"
+    kp_dead, lam_dead = st["kp"], ops.getTime()
+    for _ in range(30):
+        ops.integrator("LoadControl", 0.1)
+        assert ops.analyze(1) == 0
+        st = _point()
+        assert st["kp"] == pytest.approx(kp_dead, rel=1e-12, abs=1e-12)
+        assert st["fails"] == 0.0
+    assert st["dmg"][0] >= 1.0 - 1.0e-5 and st["dmg"][1] >= 1.0 - 1.0e-5
+    assert max(abs(c) for c in st["sig"][:3]) < 1.0e-3 * _FC        # nominal at the floor level
+    ops.integrator("LoadControl", -0.2)                             # unload: elastic, still frozen
+    for _ in range(5):
+        assert ops.analyze(1) == 0
+        st = _point()
+        assert st["kp"] == pytest.approx(kp_dead, rel=1e-12, abs=1e-12) and st["fails"] == 0.0
+
+
+def test_dead_threshold_flag_is_restricted_to_0p99_1():
+    """-deadThreshold takes a committed-damage value in [0.99, 1) (review #877 minor 2: a 0.6 threshold froze a crushed point
+    at 40 % of its strength); anything else is a parse error, and -noDead is the way to disable the treatment."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for bad in (0.5, 0.98, 1.0, 2.0):
+        with pytest.raises(Exception):
+            ops.nDMaterial("LadrunoConcrete3D", 7, _E, _NU, _FC, _FT, 0.1, 5.0, "-deadThreshold", bad)
+    ops.nDMaterial("LadrunoConcrete3D", 8, _E, _NU, _FC, _FT, 0.1, 5.0, "-deadThreshold", 0.99)
+    ops.nDMaterial("LadrunoConcrete3D", 9, _E, _NU, _FC, _FT, 0.1, 5.0, "-noDead")

@@ -164,11 +164,14 @@ struct Params {
     //     ELASTICALLY (no flow, no kappa_p growth from tension; returns to zero at eps_p on unloading) and the return map
     //     runs on the compressive remainder only (a cracked point keeps its compressive strut);
     //   * omega_c: STRICT FREEZE -- a crushed point carries nothing: kappa_p, the plastic strain and the damage histories
-    //     are frozen, the effective stress is elastic on the fixed plastic strain, nominal = (1-omega)*sig_eff, tangent
-    //     = (1-omega)*C.
+    //     are frozen, the effective stress is elastic on the fixed plastic strain, both damages go to the floor OMEGA_MAX,
+    //     nominal = (1-OMEGA_MAX)*sig_eff, tangent = (1-OMEGA_MAX)*C (the jump to the floor costs at most
+    //     (1-omegaDead)*|sig_eff| of nominal stress; freezing at the committed omega instead was measured to break the
+    //     Gc-calibration gate, 62 % off, because the residual then grows with the elastic sig_eff).
     // Without it kappa_p and sig_eff run away on a point that has already lost its strength (K&R coarse: kappa_p 3.4e4,
     // sig_eff 813 MPa at fc = 24; G5 band: kappa_p 3.2e4, sig_eff 779 MPa at omega_t = 0.9993) until the return map cannot
-    // integrate them; the nominal residual (1-omega)*sig_eff is then a spurious fraction of ft. omegaDead >= 1 disables.
+    // integrate them; the nominal residual (1-omega)*sig_eff is then a spurious fraction of ft. omegaDead >= 1 disables
+    // (parser: -deadThreshold takes [0.99, 1); -noDead sets 2.0, the A/B knob that reproduces the pre-treatment behaviour).
     // The default is the smallest threshold that clears the measured runaway states (ExplicitBathe tension softening on
     // the legacy exp law only reaches omega_t = 0.99856 when its return map refuses). Parser flag -deadThreshold.
     double omegaDead = 0.998;
@@ -1038,7 +1041,14 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
         };
         for (int it = 0; it < 100; ++it) {
             if (std::fabs(Rr[0]) < tol * fc && std::fabs(Rr[1]) < tol * fc
-                && std::fabs(Rr[2]) < tol && std::fabs(Rr[3]) < tol) { project(); converged = true; return; }
+                && std::fabs(Rr[2]) < tol && std::fabs(Rr[3]) < tol) {
+                // ADMISSIBILITY on the UNPROJECTED root (review #877 minor 1; mirror of the oracle _newton_glob): the caller's
+                // gate sees the projected dlam / kp (admissible by construction), so a root with dlam < 0 or kp < kp_n used to
+                // be accepted as its clamp. Outside the cone it is a non-convergence and falls through to the plain scheme /
+                // vertex return.
+                const bool admissibleRoot = (dlam >= -1.0e-12) && (kp >= kp_n - 1.0e-12);
+                project(); converged = admissibleRoot; return;
+            }
             double Rj[4], J[4][4];
             cdpm2HardeningResidual(xi, rho, dlam, kp, xi_tr, rho_tr, kp_n, r, cos2, mp, Rj, J, !cdpm2Flow);
             double M[4][5];
@@ -2585,6 +2595,12 @@ inline int returnMap(const Params& mp, const double strain[6], const State& inRa
     if (inRaw.wc >= mp.omegaDead) {
         // CRUSHED: strict freeze. The point is dead in every direction: both damages go to the floor (OMEGA_MAX) and stay
         // there, nominal = (1-OMEGA_MAX)*sig_eff (scalar), tangent (1-OMEGA_MAX)*C, plastic state and histories frozen.
+        // Review #877 minor 2 asked to freeze at the COMMITTED omega instead (no jump). MEASURED and rejected: with the
+        // committed omega (>= omegaDead) the residual (1-omega)*sig_eff GROWS with the elastic sig_eff of the frozen point and
+        // the Gc-calibration gate (uniaxial compression dissipates Gc within 5 %) goes 62 % off, because the post-peak tail
+        // never decays below 1 % of the peak. The jump to the floor is small in ABSOLUTE terms -- the nominal stress drops
+        // by at most (1-omegaDead)*|sig_eff,dead| = 2e-3 |sig_eff| at the freeze (~0.06 MPa at fc = 30), 1e-2 at the loosest
+        // admissible threshold -- which is what a dead point should do (the law's tail is exhausted to that fraction).
         double sigEffD[6]; elasticPredTensor(inRaw.sigEff, deps, mp, sigEffD);
         const double k = 1.0 - OMEGA_MAX;
         out = inRaw;
@@ -2798,7 +2814,8 @@ inline int driveConfinedFiber(const Params& mp, double strain[6], const State& i
     const State& in = *inP;
     double Cdam[6][6];
     if (crushed) {
-        // frozen point: histories and kappa_p as committed, both damages at the floor, nominal = (1-OMEGA_MAX) sig_eff
+        // frozen point (same rule as returnMap, see the note there): histories and kappa_p as committed, both damages at the
+        // floor, nominal = (1-OMEGA_MAX) sig_eff
         out = inRaw;
         const double k = 1.0 - OMEGA_MAX;
         for (int i = 0; i < 6; ++i) { out.eps[i] = strain[i]; out.sigEff[i] = sig_eff[i]; sigEffImpl[i] = sig_eff[i];

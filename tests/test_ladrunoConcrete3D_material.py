@@ -628,7 +628,8 @@ def test_dead_point_crushed_freeze_gate():
     (lateral nominal stress free, steep compressive softening) past omega_c = omega_dead, then hold the lateral strains and
     keep compressing: kappa_p and every damage history are frozen, sig_eff is the ELASTIC response from the state at death
     (sig_eff_dead + C:(eps - eps_dead), no return map), both damages sit at the floor OMEGA_MAX and the nominal stress is
-    exactly (1-OMEGA_MAX)*sig_eff; unloading is elastic with floor-level nominal and zero return-map failures."""
+    exactly (1-OMEGA_MAX)*sig_eff; unloading is elastic with floor-level nominal and zero return-map failures. (Freezing at
+    the committed omega instead, review #877 minor 2, was measured and rejected: see the note in the kernel.)"""
     import numpy as np
     Gf, Gc, lch = 0.1, 5.0, 50.0
     mp = _dead_point_material()

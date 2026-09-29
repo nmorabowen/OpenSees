@@ -398,6 +398,40 @@ gives `beta = 1`, i.e. byte-identical to inviscid — NOT the elastic `beta -> 0
 **Tier-1 only**: inert (with a parser warning) under `-implex`, and inert (with a parser warning)
 in the `BeamFiber` (confined-fiber) view; it has no `Parameter` hook.
 
+### 17b. Sub-incrementation, dead points and the honest refusal (WP concrete3d-hang-diagnosis, [#877](https://github.com/nmorabowen/OpenSees/pull/877))
+
+```tcl
+nDMaterial LadrunoConcrete3D $tag ... <-subIncr deterministic|adaptive>  <-deadThreshold $omega | -noDead>  <-verbose>
+```
+* **`-subIncr deterministic` (DEFAULT since this WP; `adaptive` reproduces the earlier numbers).** The local return of a trial whose
+  yield overshoot is `f_tr` is ALWAYS integrated in `n = clamp(ceil(f_tr/0.3), 1, 64)` equal pieces chained from the committed state
+  (`n = 1` is the direct return); a piece failure redoes the chain with `2n` then `4n` pieces, then a bounded adaptive rescue, then the
+  honest refusal. The map is a function of the (state, increment) only, but it is **discontinuous** where `n` changes and wherever the
+  ladder switches level: measured jumps 0.4-1.5 % of `|sigma_eff|` (kappa_p up to ~2 %) at `n` boundaries and 1-2 % of `|sigma_eff|`
+  with kappa_p jumps of 1-2.5 near first cracking, where the first plastic tensile piece fails its direct return in ~30 % of 1e-12
+  perturbations (Newton at its convergence edge in the locally indefinite tension regime). Nominally identical Gauss points therefore
+  need not return bit-identical states (EAS alpha ~1e-11, hosting parity ~1e-3). The **reported tangent is the chain's own algorithmic
+  tangent** (accumulated forward through the pieces incl. the kappa history; 1e-8 vs finite differences with `n` pinned), not the last
+  piece's (which was 6/41/121 % off at n = 2/4/64). The `substeps` response counts the forced chains too (every call with `n >= 2`),
+  not only failure rescues.
+* **Dead points (`omega_dead`, default 0.998; parser `-deadThreshold` takes a committed-damage value in `[0.99, 1)`; `-noDead` disables
+  the treatment).** Decided on the COMMITTED damage. `omega_t >= omega_dead` (the crack is fully open): the tensile spectral part of the
+  trial effective stress is carried ELASTICALLY (no plastic flow from tension, kappa_p frozen from tension, back to zero at `eps_p` on
+  unloading, bounded by `E'|eps - eps_p|`) and the return map runs on the compressive remainder only, so a cracked point keeps its
+  compressive strut. `omega_c >= omega_dead` (crushed): strict freeze (kappa_p, plastic strain and histories frozen, both damages at the
+  floor `1-1e-6`, nominal `(1-1e-6)*sigma_eff`). The same rules hold in the `BeamFiber` (confined-fibre) view. **It CAPS the runaway, it
+  does not cure its cause:** kappa_p keeps the value it had at death (the review's uniaxial-strain tension probe, `lch = 50`, measured kappa_p = 1386, i.e.
+  15 x ft of hardened strength; it depends strongly on `Hp`) and the hardening variable q2 still grows under tensile flow BEFORE the point dies; the treatment only stops the
+  divergence (kappa_p 3e4, sig_eff 800 MPa) that used to end in a refused return map. Unloading a dead-tension point returns to zero
+  tension at `eps_p` and then carries the elastic crack-closure compression `-C:eps_p` (small: `eps_p` is the pre-death plastic strain).
+* **The honest refusal.** A local return that cannot integrate the increment REFUSES: `setTrialStrain` returns `LADRUNO_MATERIAL_REFUSED`
+  (elements that forward it - `LadrunoBrick`, `LadrunoQuad`, `LadrunoSolidShell`, `LogStrain` - cut the step at the trial) and
+  `commitState` declares the refusal to `Domain::commit()` through the WP-99 counter (element-independent). This holds under **`-implex`
+  and under explicit integrators too**: a failed implicit return used to fall back silently to the elastic trial and commit it; it now
+  refuses, and the recoverable alternative under `-implex` is `-implexControl`. Throwaway hourglass-shadow copies are committed inside a
+  `LadrunoProbeCommitScope` so their refusals cannot fail the real commit (`LadrunoBrick`, `LadrunoQuad`; guarded by
+  `tests/test_ladruno_probe_commit_guard.py`).
+
 ## 18. Parameters, defaults & calibration
 
 | Param | Meaning | Default |
@@ -416,6 +450,9 @@ in the `BeamFiber` (confined-fiber) view; it has no `Parameter` hook.
 | `-autoRegularization` | pull `lch` from the parent element each step (mesh-objective) | off |
 | `-implex` | engage **Tier-2 IMPL-EX** (degraded-elastic secant; SPD on single-sign states) | off (Tier-1) — P3 #309 |
 | `-eta` | Duvaut–Lions viscosity, `beta = dt/(eta+dt)` off `ops_Dt`; Tier-1 only (inert under `-implex` / in `BeamFiber`) | 0.0 (inviscid) — shipped #316/#318 |
+| `-subIncr deterministic\|adaptive` | return-map sub-incrementation: `n = ceil(f_tr/0.3)` pieces always applied + failure ladder / the failure-driven halving path (§17b) | `deterministic` — [#877](https://github.com/nmorabowen/OpenSees/pull/877) (DEFAULT CHANGE) |
+| `-deadThreshold` | committed damage at/above which a point is dead (tension cutoff on the plastic flow / crushed freeze); `[0.99, 1)` | 0.998 — [#877](https://github.com/nmorabowen/OpenSees/pull/877) |
+| `-noDead` | disable the dead-point treatment (A/B knob; reproduces the pre-treatment runaway) | off — [#877](https://github.com/nmorabowen/OpenSees/pull/877) |
 
 - **`e` is a validation target, not a fit knob** — leave it derived from `-kupfer` unless you have biaxial
   data; it lands at the canonical `e ≈ 0.52`.
@@ -585,6 +622,20 @@ mm-scale. Compression-negative internally; enter `fc`, `ft` positive.
     leave deep softening + `G_f`-objectivity to the numpy oracle (the ADR "Tier-3 explicit" note). §20.
 
 ---
+
+14. **The deterministic sub-incrementation is discontinuous, on purpose.** See §17b: the jump between two consistent
+    integrations (n vs n + 1 pieces, or two ladder levels) is 0.4-2 % of `sigma_eff`; tests that pin equality of nominally identical
+    Gauss points (EAS alpha, hosting parity, F vs Q@F objectivity) derive their tolerance from it. The chain's tangent is exact for a
+    fixed `n`; a finite-difference reference must pin `n` (`Params::subIncrForceN`, oracle `subincr_force_n`).
+
+15. **A dead point caps the runaway, it does not cure q2 growth** (§17b): the fix is a cutoff at `omega_dead`, not a repair of the
+    hardening law under tensile flow.
+
+16. **A refused return is a refusal under EVERY tier** (§17b), including `-implex` and explicit integrators, and a host that ignores
+    the trial return code (a vanilla `stdBrick`) only ever sees it through the commit latch, which leaves the model inconsistent.
+
+17. **`LadrunoProbeCommitScope` is opt-in per owning element** and is a plain non-atomic per-process counter pair; it is not thread-safe
+    (commit is serial today).
 
 # Appendices
 

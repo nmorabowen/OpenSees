@@ -909,11 +909,14 @@ def return_map_hardening(sig_tr, mp, kp_n, tol=1.0e-11):
                 return u, False, True
         else:
             return u, False, False
-        # Converged (residual small at the raw iterate): project onto the admissible cone once, here, at
-        # acceptance -- downstream sign conventions (rho used as a norm, kp used in qh1Of/qh2Of ranges)
-        # assume the physical ranges; the caller's admissibility gate is still the real honesty check.
+        # Converged (residual small at the raw iterate). ADMISSIBILITY is decided on the UNPROJECTED root (review #877 minor 1:
+        # the caller's gate used to see the already-projected dlam / kappa_p, which are admissible by construction, so a root
+        # with dlam < 0 or kappa_p < kappa_n was silently accepted as its clamp): a root outside the cone is a non-convergence
+        # and falls through to the plain scheme / vertex return. Only an admissible root is then projected once, here --
+        # downstream sign conventions (rho used as a norm, kp used in qh1Of/qh2Of ranges) assume the physical ranges.
+        admissible_root = (u[2] >= -1.0e-12) and (u[3] >= kp_n - 1.0e-12)
         u[1] = max(u[1], 0.0); u[2] = max(u[2], 0.0); u[3] = max(u[3], kp_n)
-        return u, True, False
+        return u, bool(admissible_root), False
 
     if cdpm2_flow and xi_tr > 0.0:
         # TENSION-dominated trial (sigma_V_trial > 0): plain Newton FIRST (#877 follow-up, defect 2 cost). Measured
@@ -2623,7 +2626,10 @@ def damaged_step_tensor(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     om_dead = _omega_dead(mp)
     wt_c, wc_c = state.get("wt", 0.0), state.get("wc", 0.0)
     if wc_c >= om_dead:
-        # the point is dead in every direction: both damages go to the floor OMEGA_MAX and stay there
+        # the point is dead in every direction: both damages go to the floor OMEGA_MAX and stay there. (Freezing at the
+        # COMMITTED damage instead -- review #877 minor 2 -- was measured and rejected: the residual (1-omega) sig_bar then
+        # grows with the elastic sig_bar and the Gc-calibration gate goes 62 % off. The nominal drop at the freeze is at most
+        # (1-omega_dead)*|sig_bar| = 2e-3 |sig_bar|.)
         sig_bar_d = elastic_pred_tensor(state["sig_bar"], deps6, mp)
         new_state = dict(state)
         new_state.update(sig_bar=sig_bar_d, eps=state["eps"] + deps6, wt=OMEGA_MAX, wc=OMEGA_MAX)

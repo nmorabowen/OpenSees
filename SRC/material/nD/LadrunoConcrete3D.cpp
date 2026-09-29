@@ -65,7 +65,7 @@ void ladrunoConcrete3dResetWarningBudget(void) { s_returnMapWarnPrinted = 0; }
 //       <-hardening qh0? Hp?> <-ductility Ah? Bh? Ch? Dh?>
 //       <-lch lch?> <-autoRegularization>
 //       <-tensionLaw bilinear|exp> <-epsFc epsFc? | -gcLegacy> <-flowPotential cdpm2|legacy>
-//       <-compressionDrive cdpm2|legacy> <-tcTemper proj|none> <-subIncr deterministic|adaptive> <-deadThreshold omega?> <-verbose>
+//       <-compressionDrive cdpm2|legacy> <-tcTemper proj|none> <-subIncr deterministic|adaptive> <-deadThreshold omega?|-noDead> <-verbose>
 //  (fc, ft are POSITIVE magnitudes; compression is negative in the model.)
 //  Gf = tensile fracture energy (CDPM2 bilinear law, wf = 4.444 Gf/ft, regularized as wf/lch);
 //  Gc = PHYSICAL compressive fracture energy per unit area (eps_fc calibrated so that uniaxial compression
@@ -213,13 +213,19 @@ void* OPS_LadrunoConcrete3D(void)
       else { opserr << "WARNING LadrunoConcrete3D: -subIncr wants {deterministic|adaptive}\n"; return 0; }
     }
     else if (strcmp(flag, "-deadThreshold") == 0) {
-      // residual strength fraction (1 - omega) at or below which the point is treated as dead: the tensile part of the
-      // effective stress is carried elastically (no plastic flow from tension), a crushed point is frozen. >= 1 disables.
-      if (OPS_GetNumRemainingInputArgs() < 1) { opserr << "WARNING LadrunoConcrete3D: -deadThreshold wants omega\n"; return 0; }
+      // committed damage at or above which the point is treated as dead: the tensile part of the effective stress is
+      // carried elastically (no plastic flow from tension), a crushed point is frozen. Restricted to [0.99, 1): below 0.99 a
+      // point that still carries >= 1 % of its strength would be frozen (a 0.6 threshold froze a crushed point at 40 % of
+      // its strength in the review probe). -noDead disables the treatment (A/B knob, reproduces the pre-treatment runaway).
+      if (OPS_GetNumRemainingInputArgs() < 1) { opserr << "WARNING LadrunoConcrete3D: -deadThreshold wants omega in [0.99, 1)\n"; return 0; }
       int one = 1; double v = 0.0;
-      if (OPS_GetDoubleInput(&one, &v) != 0 || !(v > 0.5)) {
-        opserr << "WARNING LadrunoConcrete3D: -deadThreshold wants a damage value in (0.5, inf) (e.g. 0.998; >= 1 disables)\n"; return 0; }
+      if (OPS_GetDoubleInput(&one, &v) != 0 || !(v >= 0.99 && v < 1.0)) {
+        opserr << "WARNING LadrunoConcrete3D: -deadThreshold wants a committed-damage value in [0.99, 1) (default 0.998); "
+               << "use -noDead to disable the dead-point treatment\n"; return 0; }
       omegaDead = v;
+    }
+    else if (strcmp(flag, "-noDead") == 0) {
+      omegaDead = 2.0;      // > 1: no committed damage ever reaches it (the dead-point treatment is off)
     }
     else if (strcmp(flag, "-flowPotential") == 0) {
       const char* fp = OPS_GetString();
@@ -765,6 +771,7 @@ int LadrunoConcrete3D::revertToLastCommit(void)
   wt_t = wt_n; wc_t = wc_n; dwt_t = dwt_n; dwc_t = dwc_n; dtn_t = dtn_n;
   for (int i = 0; i < 6; i++) depl_t[i] = depl_n[i];
   omegaT = 0.0; omegaC = 0.0;
+  lastStatus = 0;    // review #877 minor 4: a reverted trial's refusal must not survive into the next commitState()
   Params p; p.E = E; p.nu = nu;
   Ladruno::Concrete3D::elasticC(p, Dtan6);
   if (condense) this->condenseTangent();

@@ -117,7 +117,8 @@ inline bool ladrunoMaterialMustCut(int rc) { return rc == LADRUNO_MATERIAL_REFUS
 //
 //  NOT thread-safe, deliberately: it is written from the commit phase, which is
 //  serial in every analysis class today. If ADR-75b Lane 3 ever threads
-//  commitState(), this becomes an atomic.
+//  commitState(), this becomes an atomic. The same holds for ladrunoProbeScopeDepth()
+//  below (a plain `static int`, non-atomic); both are per-process, not per-domain.
 // ==========================================================================
 inline int &ladrunoCommitRefusalCounter(void)
 {
