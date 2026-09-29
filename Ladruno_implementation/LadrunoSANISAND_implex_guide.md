@@ -1407,7 +1407,8 @@ evidence: [[152_sanisand_tension_cutoff]].
   - The parser requires 0 ≤ p_sep < p_contact, p_contact > p_min, and SAS-ME. The cutoff is refused with `-implex`.
   - Starting values: p_sep 0.5 kPa (TIMs D1's p-floor bound) and p_contact 1.0 kPa.
   - Report the limit load at p_sep and at p_sep/2 (the D1 rule, < 2 %).
-- **Census** (`sasStats`, appended):
+- **Census** (`sasStats`, appended). Each transition is counted ONCE, when it commits; an element may call the
+  update several times per step, and a cut step counts nothing:
   - `sas_sepEntriesTension` (E1) and `sas_sepEntriesLowP` (E2);
   - `sas_sepExits`;
   - `sas_sepActive`, the committed 0/1. Its sum over points is the number of points separated now.

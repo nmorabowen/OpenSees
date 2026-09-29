@@ -113,6 +113,10 @@ Each entry is counted by cause.
   - `sasOptions` gains p_sep and p_contact at indices 9–10.
 - **Census:** `sasStats` gains `sepEntriesTension`, `sepEntriesLowP`, `sepExits` and `sepActive` (the committed
   0/1). **The length goes 36 → 40**, so consumers must read it from the response.
+  - Transitions are counted ONCE, at commit: the update records the trial's transition (`sepEvent`), and
+    `LadrunoSANISAND::commitState` counts it.
+  - This matters because an element may call the update several times per step, each call starting from the
+    committed state. The first build counted a re-contact twice.
 - **Echo:** states the setting.
 
 ## Evidence gates
