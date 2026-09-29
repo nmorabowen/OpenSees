@@ -32,8 +32,9 @@ updated: 2026-09-28
 >      - At c = 0.71 the refusers are extension-side. The c = 0.71 wall states fail 0/320 when driven at c = 0.80
 >        (WP-151 §2.5).
 >      - A c = 0.80 footing still walls: first NonPosH at s/B 0.0416 instead of 0.0363, wall at 0.048.
->      - Its refusers are **compression-side, inside the band region** (cos3θ(n) +0.63 … +0.79), and they show the
->        same Zeno sequence: DM04 fails 119/576 there; floor + hysteresis passes 0/576 (WP-151 §2.5.1).
+>      - Its refusers are **compression-side, in the bands' Lode range** (cos3θ(n) +0.63 … +0.79), but elliptic at
+>        commit, so they are not the band points. They show the same Zeno sequence: DM04 fails 119/576 there;
+>        floor + hysteresis passes 0/576 (WP-151 §2.5.1).
 >    - **R1 is the route out; raising c is not** (§2.3, §13).
 >    - No regularization of the boundary-value problem can lift an unbounded negative modulus at a point.
 >      The cure is a model-level fix (**R1: the h floor everywhere plus a hysteretic re-seat, coupled**).
@@ -281,8 +282,14 @@ The campaign c = 0.71 is below 7/9, so DM04's g(θ, c) is non-convex near the ex
     re-seat sequence (b:n 0.235 → 3.8e-6 over 5 re-seats). Floor alone gives 97/576 (chatter); floor + hysteresis
     (± cap) gives **0/576**.
   - **The non-convex extension meridian only selects WHERE the singular set is met first.** At c = 0.80 it is met
-    inside the band region, so the wall and the non-associated bands can share their Gauss points. That matters for
-    R3: any band regularizer must still run with R1 ON.
+    in the bands' Lode RANGE (compression side). It is **not** met at the bands' non-elliptic Gauss points.
+  - Checked with `acoustic_vec.py` (c = 0.80) on the nine refuser states (WP-151 `data/refuser_states_c080.csv`,
+    step 308): **all nine are ELLIPTIC** at their committed state.
+    - det ratio +0.49 … +1.00, H/2G 2 … 733. They sit at a re-seat, where h ≫ 1 makes them elastic-like and stiff.
+    - The associated control gives the same.
+  - So the wall points and the band points are distinct states in the same region and Lode range.
+  - This does not change R3: any band regularizer must still run with R1 ON, since R3 cannot lift the singular set
+    (§3).
 - **So there is ONE route out: R1**, which works at any c with no recalibration. c ≥ 7/9 only delays the onset.
   (An earlier "two routes" wording in this memo is withdrawn.)
 

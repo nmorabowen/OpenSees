@@ -7860,7 +7860,7 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
   - The final WP-138 ladders keep it in EVERY leg, including fabric off, no peak (nb = 0), nd = 0, no dilatancy (A0 = 0.001, which only delays the onset from s/B 0.036 to 0.043), every `-Presidual` and every e_init.
   - The CONCAVE extension meridian of c = 0.71 < 7/9 only selects WHERE the set is met first.
     - The c = 0.71 wall states (extension-side) fail 0/320 when driven at c = 0.80 (WP-151 §2.5).
-    - But a c = 0.80 footing meets the same Zeno set on the compression side, inside the band region (cos3θ +0.63…+0.79). There DM04 fails 119/576 and floor + hysteresis passes 0/576 (WP-151 §2.5.1).
+    - But a c = 0.80 footing meets the same Zeno set on the compression side, in the bands' Lode range (cos3θ +0.63…+0.79). Those points are ELLIPTIC at commit (re-seat, h ≫ 1), so they are not the band points. There DM04 fails 119/576 and floor + hysteresis passes 0/576 (WP-151 §2.5.1).
   - At footing scale, c = 0.80 only DELAYS the wall (first NonPosH at s/B 0.0416 vs 0.0363; wall at 0.048). Raising c is not a fix; R1 is.
   - An earlier "dilation drives b:n to 0⁻" reading rested on a provisional snapshot and is withdrawn.
 - **Rule:** before prescribing a BVP regularizer for a SANISAND refusal, decompose H at the refusing point's committed state (`Ladruno_files/testbed/hypo_bearing/wp150_regularization/h_decomp.py`, `refuser_stats.py`).
