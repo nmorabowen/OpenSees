@@ -1541,13 +1541,28 @@ LadrunoSANISAND::setLadrunoSasOptions(const LadrunoSasOptions &opt, bool verbose
                << "; TanType 1 and 2 both return the continuum tangent at the end state."
                << " Refusals reach the element as " << LADRUNO_MATERIAL_REFUSED
                << "; census: the `sasStats` response." << endln;
-        if (opt.hFloor > 0.0 || opt.reseatHyst > 0.0 || opt.softCap > 0.0)   // Ladruno WP-151
+        if (opt.hFloor > 0.0 || opt.reseatHyst > 0.0 || opt.softCap > 0.0) {   // Ladruno WP-151
             opserr << "LadrunoSANISAND tag " << this->getTag()
                    << ": WP-151 R1, an OPT-IN DM04 variant (the alpha_in re-seat singularity):"
                    << " h floor c_A = " << opt.hFloor << (opt.hFloor > 0.0 ? "" : " (OFF)")
                    << ", re-seat hysteresis c_rev = " << opt.reseatHyst << (opt.reseatHyst > 0.0 ? "" : " (OFF)")
                    << ", softening cap kappa = " << opt.softCap << (opt.softCap > 0.0 ? "" : " (OFF)")
                    << " (lengths in yield-cone radii sqrt(2/3) m = " << root23 * m_m << ")." << endln;
+            // Ladruno WP-151 (review #893 NIT; footing evidence): a partial set is
+            // an ablation, not a lighter fix -- not refused (none of it is inert).
+            if (!(opt.hFloor > 0.0 && opt.reseatHyst > 0.0 && opt.softCap > 0.0))
+                opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
+                       << ": WP-151 R1 is validated only as the FULL set (-sasHFloor 1 -sasReseatHyst 1"
+                          " -sasSoftCap 0.5). On the TIMs footing the floor alone and the hysteresis"
+                          " alone wall EARLIER than DM04, and floor + hysteresis without the cap walls"
+                          " past the old wall (b:n < 0 states near a reversal)." << endln;
+            if (opt.reseatHyst > 1.0)
+                opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
+                       << ": -sasReseatHyst " << opt.reseatHyst << " > 1: a cycle whose back stress"
+                          " travels less than c_rev cone radii never starts a new loading process"
+                          " (small-strain cycles stay on one h branch). Validated for cyclic work"
+                          " only at c_rev <= 1." << endln;
+        }
         if (mHonorTolR != 0)
             opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
                    << ": -honorTolR has NO EFFECT under SAS-ME, which always uses TolR." << endln;
@@ -2371,6 +2386,17 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
                << " from channel" << endln;
         return -1;
     }
+    // Ladruno WP-151 (review #893 M3): a block whose layout tag is not this
+    // build's is REFUSED before anything is assigned from it -- a stream from
+    // another build, or a datastore slot another vector overwrote, would
+    // otherwise be read into the wrong members silently.
+    if (ladrunoData(LWIRE_TAG) != kLadrunoSanWireTag) {
+        opserr << "WARNING: LadrunoSANISAND::recvSelf - the Ladruno block's layout tag is "
+               << ladrunoData(LWIRE_TAG) << ", expected " << kLadrunoSanWireTag
+               << " (a stream from another build, or an overwritten datastore slot). Refused."
+               << endln;
+        return -1;
+    }
 
     mPresidualInput = ladrunoData(0);
     mPreElasticInput = ladrunoData(34);   // Ladruno (ADR-93 II.1)
@@ -2389,15 +2415,14 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
         mLadrunoSas.opt.hFloor     = ladrunoData(b + 6);   // Ladruno WP-151
         mLadrunoSas.opt.reseatHyst = ladrunoData(b + 7);   // Ladruno WP-151
         mLadrunoSas.opt.softCap    = ladrunoData(b + 8);   // Ladruno WP-151
-        if (!(mLadrunoSas.opt.hFloor >= 0.0))     mLadrunoSas.opt.hFloor = 0.0;       // Ladruno WP-151:
-        if (!(mLadrunoSas.opt.reseatHyst >= 0.0)) mLadrunoSas.opt.reseatHyst = 0.0;   // the parser's
-        if (!(mLadrunoSas.opt.softCap >= 0.0 && mLadrunoSas.opt.softCap < 1.0))       // ranges; else OFF
+        // Ladruno WP-151: the parser's ranges (finite, >= 0; kappa < 1), else OFF
+        if (!(std::isfinite(mLadrunoSas.opt.hFloor) && mLadrunoSas.opt.hFloor >= 0.0))
+            mLadrunoSas.opt.hFloor = 0.0;
+        if (!(std::isfinite(mLadrunoSas.opt.reseatHyst) && mLadrunoSas.opt.reseatHyst >= 0.0))
+            mLadrunoSas.opt.reseatHyst = 0.0;
+        if (!(mLadrunoSas.opt.softCap >= 0.0 && mLadrunoSas.opt.softCap < 1.0))   // excludes NaN and inf
             mLadrunoSas.opt.softCap = 0.0;
     }
-    if (ladrunoData(LWIRE_TAG) != kLadrunoSanWireTag)                     // Ladruno WP-151
-        opserr << "WARNING: LadrunoSANISAND::recvSelf - the Ladruno block's layout tag is "
-               << ladrunoData(LWIRE_TAG) << ", expected " << kLadrunoSanWireTag
-               << " (a stream from another build, or an overwritten datastore slot)" << endln;
     mPminInput      = ladrunoData(1);
     m_Presidual     = ladrunoData(2);   // overwritten by applyLadrunoConstants below;
                                         // restored first so a future divergence is visible
@@ -5346,10 +5371,12 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
     // wire order: errFloor, alphaBoundTol, alphaProject, alphaInMode, errorVars,
     // alphaEntryTol; Ladruno WP-151: then hFloor, reseatHyst, softCap.
     if (argc > 0 && (strcmp(argv[0], "sasOptions") == 0 || strcmp(argv[0], "SasOptions") == 0)) {
-        static const char *names[LWIRE_SAS_OPT_N] = {
+        static const char *names[] = {
             "sas_errFloor", "sas_alphaBoundTol", "sas_alphaProject", "sas_alphaInMode",
             "sas_errorVars", "sas_alphaEntryTol",
             "sas_hFloor", "sas_reseatHyst", "sas_softCap"};                    // Ladruno WP-151
+        static_assert(sizeof(names) / sizeof(names[0]) == LWIRE_SAS_OPT_N,   // Ladruno WP-151 (review NIT)
+                      "sasOptions names must match LWIRE_SAS_OPT_N (the response and the wire block)");
         output.tag("NdMaterialOutput");
         output.attr("matType", getClassType());
         output.attr("matTag", getTag());
