@@ -73,6 +73,12 @@
 // registered in classTags.h, and nothing may derive one from it.
 constexpr int LADRUNO_MATERIAL_REFUSED = -33086;
 
+// The codes an ELEMENT (or a wrapping material) must treat as "cut the step": the ADR-86b sentinel AND a bare -1 (the plain
+// OpenSees "state determination failed" code). Still NOT a blanket < 0: ASDConcrete3D's advisory codes (-10 IMPL-EX error
+// control, -1000 eigen) keep being accepted, per ADR-33/34 and the ADR-86b measurement (a blanket < 0 killed
+// test_ladrunoBrick_asdconcrete_bend.py). Shared by LadrunoBrick, LadrunoSolidShell and LogStrainNDMaterial (review M3).
+inline bool ladrunoMaterialMustCut(int rc) { return rc == LADRUNO_MATERIAL_REFUSED || rc == -1; }
+
 // ==========================================================================
 //  Ladruno WP-99 (F7): the COMMIT-TIME refusal seam.
 //

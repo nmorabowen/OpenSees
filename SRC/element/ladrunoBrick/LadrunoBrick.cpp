@@ -1096,7 +1096,7 @@ static thread_local int lastTrialRc = 0;   // for the report only
 static inline bool
 ladrunoBrickMustCut(int rc)
 {
-  return rc == LADRUNO_MATERIAL_REFUSED || rc == -1;
+  return ladrunoMaterialMustCut(rc);
 }
 
 static void

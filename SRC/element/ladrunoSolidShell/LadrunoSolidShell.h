@@ -204,6 +204,8 @@ class LadrunoSolidShell : public Element {
   double t0col3[6];
   double j0det;
   bool   easBuilt;
+  bool   trialRefused;             // the LAST formANS pass had a Gauss point whose material refused the trial strain
+  int    trialRc;                  // ... and the code it returned (LADRUNO_MATERIAL_REFUSED or -1), reported by update()
 
   double X[8][3];                   // reference nodal coordinates (setDomain)
 

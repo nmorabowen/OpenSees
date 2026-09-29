@@ -39,6 +39,7 @@
 #include "LadrunoSolidShell.h"
 
 #include <classTags.h>
+#include <LadrunoMaterialStatus.h>   // Ladruno (ADR-86b) — LADRUNO_MATERIAL_REFUSED
 #include <Domain.h>
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
@@ -83,7 +84,7 @@ LadrunoSolidShell::LadrunoSolidShell()
     formulation(Formulation::ANS), quadz(QuadZ::GAUSS),
     nz(0), numGP(0), massType(0),
     alpha(NEAS), alphaCommit(NEAS),
-    j0det(0.0), easBuilt(false),
+    j0det(0.0), easBuilt(false), trialRefused(false), trialRc(0),
     load(0), Ki(0)
 {
   alpha.Zero();
@@ -107,7 +108,7 @@ LadrunoSolidShell::LadrunoSolidShell(int tag,
     formulation(form), quadz(zQuad),
     nz(nzPts), numGP(4 * nzPts), massType(matype),
     alpha(NEAS), alphaCommit(NEAS),
-    j0det(0.0), easBuilt(false),
+    j0det(0.0), easBuilt(false), trialRefused(false), trialRc(0),
     load(0), Ki(0)
 {
   alpha.Zero();
@@ -274,6 +275,18 @@ int LadrunoSolidShell::revertToStart(void)
 int LadrunoSolidShell::update(void)
 {
   formANS(0, false);
+  if (trialRefused) {
+    static int budget = 0;                                            // Ladruno: process-wide throttle (approximate under threads)
+    if (budget < 10) {
+      opserr << "WARNING LadrunoSolidShell::update - element " << this->getTag()
+             << (trialRc == LADRUNO_MATERIAL_REFUSED ? ": a material REFUSED the trial strain"
+                                                      : ": a material FAILED the trial strain (rc = -1)")
+             << ". Failing the step so the analysis can cut it; the committed state is unchanged." << endln;
+      if (++budget == 10)
+        opserr << "WARNING LadrunoSolidShell: further trial-strain refusal reports suppressed (budget 10 per process)." << endln;
+    }
+    return trialRc;
+  }
   return 0;
 }
 
@@ -649,6 +662,7 @@ void LadrunoSolidShell::formANS(int tang_flag, bool useInitialTangent)
   int count = 0;
   double r0 = -1.0;
   while (true) {
+    trialRefused = false;  // per pass: only the LAST pass (the states that will be committed) decides
     double h = 0.0;      // int G^T sigma dV
     Kaa = 0.0;
     int gp = 0;
@@ -667,7 +681,14 @@ void LadrunoSolidShell::formANS(int tang_flag, bool useInitialTangent)
             strain(r) += Gv(r) * alpha(0);                     //     + G*alpha
           }
         }
-        materialPointers[gp]->setTrialStrain(strain);
+        {
+          // Ladruno (ADR-86b, review M3): FORWARD a refused trial. The return code used to be dropped here, so only the
+          // WP-99 commit latch fired and Domain::commit() aborted with the model INCONSISTENT (nodes and sibling Gauss
+          // points already committed); a refusal seen at the trial cuts the step cleanly (update() returns it and the
+          // analysis reverts). The flag reflects the LAST pass of the enhanced-strain Newton -- the states that commit.
+          const int rcm = materialPointers[gp]->setTrialStrain(strain);
+          if (ladrunoMaterialMustCut(rcm)) { trialRefused = true; trialRc = rcm; }
+        }
         if (!useEAS)
           continue;
         stressV = materialPointers[gp]->getStress();
