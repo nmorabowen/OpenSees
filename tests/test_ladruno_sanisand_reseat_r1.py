@@ -16,7 +16,12 @@ What is pinned (Ladruno_implementation/151_sanisand_reseat_singularity.md):
        ablation the memo reports, and why the flags are recommended together;
   (e)  the three census columns count (and stay 0 when OFF);
   (f)  the parser: bad values and non-129 schemes are refused;
-  (g)  a monotonic undrained triaxial chain moves by < 1e-3 q_max with R1 ON.
+  (g)  a monotonic undrained triaxial chain moves by < 1e-3 q_max with R1 ON;
+  (h)  the three options cross the datastore wire (a skeleton WITHOUT them is
+       restored WITH them), which also guards the size-keyed datastore trap;
+  (i)  after the #868 merge, every option family at once (CPPM on one point,
+       WP-129 SAS + R1 on another) survives a database round trip by value, and
+       the continuation is bit-identical.
 
 Runtime: ~1 min (C++ replays).
 """
@@ -146,6 +151,27 @@ def test_parser_refuses_the_flags_on_other_schemes():
     ops.wipe()
 
 
+@pytest.mark.parametrize("mode,flags,ok", [
+    ("bracket", ("-sasReseatHyst", 1.0), False),   # no re-seat happens in bracket: inert
+    ("stale", ("-sasReseatHyst", 1.0), False),     # nor in stale (ModifiedEuler's alpha_in)
+    ("stale", ("-sasHFloor", 1.0), False),         # stale keeps ModifiedEuler's h: inert
+    ("bracket", ("-sasHFloor", 1.0), True),        # the floor replaces the 1e10 bracket
+    ("stale", ("-sasSoftCap", 0.5), True),         # the cap acts in every mode
+    ("bracket", ("-sasReseatHyst", 0.0), True),    # given as 0 = OFF, not inert
+])
+def test_parser_refuses_R1_flags_the_alpha_in_mode_makes_inert(mode, flags, ok):
+    """#868's rule (a flag nothing reads is refused, not ignored) inside SAS-ME:
+    the re-seat threshold needs -sasAlphaIn reseat, the floor anything but stale."""
+    ops.wipe()
+    args = ("LadrunoSANISAND", 1, *T.P, *T.EB_OPTS, "-sasAlphaIn", mode, *flags)
+    if ok:
+        ops.nDMaterial(*args)
+    else:
+        with pytest.raises(Exception):
+            ops.nDMaterial(*args)
+    ops.wipe()
+
+
 # ----------------------------------------------------------------------- (g)
 def _undrained_tc(tag, n=150, de=2.0e-4):
     st = dict(sigma=[100.0, 100.0, 100.0, 0.0, 0.0, 0.0], alpha=[0.0] * 6, alpha_in=[0.0] * 6,
@@ -204,3 +230,68 @@ def test_R1_options_cross_the_datastore_wire():
         ops.wipe()
     assert opt_after == opt_saved, (opt_saved, opt_after)
     assert S._reldiff(mid, after) <= 1.0e-12, ("restore did not reproduce the saved state", mid, after)
+
+
+# ----------------------------------------------------------------------- (i)
+def test_every_option_family_crosses_the_wire_at_once_after_the_868_merge():
+    """#893 review scope (2), after the #868 merge: the SAS options block is 9
+    wide (LWIRE_SAS_OPT_N 6 -> 9: WP-129's six, then WP-151's three) and the
+    WP-151 layout tag is LWIRE_TAG, the last entry. #868's own two-block test,
+    with WP-151 added: point 1 carries NON-default CPPM options (IntScheme 2),
+    point 2 NON-default WP-129 SAS options AND R1 (IntScheme 129; alphaInMode
+    stays `reseat`, else the R1 options would be inert in the continuation).
+    Save, restore into a skeleton with every option at its DEFAULT, and require
+    both option responses back by value, the census widths, and the next two
+    steps bit-identical to a run that never went through the database."""
+    import tempfile
+    import test_ladruno_sanisand_cppm_newton as t130
+    cppm = (2, 2, 1, 1e-7, 1e-7, "-cppmTangent", "vanilla", "-cppmOnFail", "refuse",
+            "-cppmHalvings", 5, "-cppmLineSearch", "on", "-cppmStart", "explicit")
+    sas = (129, 0, 1, 1e-7, 1e-4, "-Presidual", 0.0, "-errFloor", 3.0, "-alphaBoundTol", 0.2,
+           "-alphaProject", 1, "-sasErrorVars", "stress", "-alphaEntryTol", 3.0,
+           "-sasHFloor", 0.5, "-sasReseatHyst", 2.0, "-sasSoftCap", 0.25)
+    cppm_def = (2, 2, 1, 1e-7, 1e-7)
+    sas_def = (129, 0, 1, 1e-7, 1e-4, "-Presidual", 0.0)
+    g = lambda e, name: list(ops.eleResponse(e, "material", 1, name))
+
+    def advance(n):
+        for _ in range(n):
+            assert ops.analyze(1) == 0
+
+    def stage(s):
+        ops.updateMaterialStage("-material", 1, "-stage", s)
+        ops.updateMaterialStage("-material", 2, "-stage", s)
+
+    t130._two_cube_model(cppm, sas)
+    stage(0)
+    advance(10)
+    stage(1)
+    advance(4)
+    cppm_saved, sas_opts_saved = g(1, "cppmOptions"), g(2, "sasOptions")
+    widths = (len(g(1, "substepStats")), len(g(2, "sasStats")))
+    # #868's wire order, then WP-151's three
+    assert sas_opts_saved == [3.0, 0.2, 1.0, 0.0, 1.0, 3.0, 0.5, 2.0, 0.25], sas_opts_saved
+    assert cppm_saved[:6] == [1.0, 5.0, 1.0, 0.0, 1.0, 0.0], cppm_saved
+    with tempfile.TemporaryDirectory(prefix="ladruno_wp151_all_", ignore_cleanup_errors=True) as td:
+        db = os.path.join(td, "db")
+        try:
+            ops.database("File", db)
+        except Exception as exc:                       # noqa: BLE001
+            pytest.skip(f"database() unsupported in this build: {exc}")
+        ops.save(1)
+        advance(2)
+        ref = [g(1, "stress"), g(2, "stress")]
+
+        t130._two_cube_model(cppm_def, sas_def)        # every option at its DEFAULT
+        assert g(2, "sasOptions") == [-1.0, 0.1, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0]
+        assert g(1, "cppmOptions") != cppm_saved
+        ops.database("File", db)
+        ops.restore(1)
+        assert g(1, "cppmOptions") == cppm_saved
+        assert g(2, "sasOptions") == sas_opts_saved    # all nine, by value
+        assert (len(g(1, "substepStats")), len(g(2, "sasStats"))) == widths
+        stage(1)
+        advance(2)
+        got = [g(1, "stress"), g(2, "stress")]
+        ops.wipe()
+    assert got == ref, (ref, got)

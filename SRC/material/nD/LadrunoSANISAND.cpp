@@ -1118,6 +1118,25 @@ OPS_LadrunoSANISAND(void)
                   " accepted and ignored." << endln;
         return 0;
     }
+    // Ladruno WP-151: the same rule inside SAS-ME. The re-seat threshold acts
+    // only where alpha_in re-seats (-sasAlphaIn reseat, the paper rule), and the
+    // h floor does nothing under -sasAlphaIn stale (ladrunoSasBracketH hands
+    // ModifiedEuler's h back untouched). -sasSoftCap acts in every mode, and
+    // -sasHFloor under bracket replaces the 1e10 bracket.
+    if (sasOpt.reseatHyst > 0.0 && sasOpt.alphaInMode != 0) {
+        opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+               << ": -sasReseatHyst acts only where alpha_in re-seats, i.e. under -sasAlphaIn"
+                  " reseat (the DEFAULT); this deck asks for -sasAlphaIn "
+               << (sasOpt.alphaInMode == 1 ? "bracket" : "stale")
+               << ". Refused rather than accepted and ignored." << endln;
+        return 0;
+    }
+    if (sasOpt.hFloor > 0.0 && sasOpt.alphaInMode == 2) {
+        opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+               << ": -sasHFloor does nothing under -sasAlphaIn stale (ModifiedEuler's h is"
+                  " kept as it is). Refused rather than accepted and ignored." << endln;
+        return 0;
+    }
     // Ladruno WP-130 (TIMs F18(c)/(d)): a flag that would do nothing is REFUSED
     // (ADR 86's rule), and the -implex combinations are refused as unqualified:
     // the IMPL-EX companion reads mSubstepCapHitInME, not the CPPM refusal.
