@@ -1368,3 +1368,50 @@ failures one-to-one on the wall states. Full study:
   response, or zip against `sanisand_replay.SAS_NAMES`.
 - It removes the singular set and the re-seat chatter. It does **not** regularize strain
   localization (mesh dependence): that is WP-150 R2/R3.
+
+### 13.5 Tension cutoff (separation) — WP-152, an OPT-IN constitutive choice for near-surface sand
+
+**What it is for.** After R1 (§13.4), the binding limiter of a dilating sand under the TIMs footing is the free
+surface. A few surface Gauss points outside the footing edge go to p′ → 0, and SAS-ME refuses them:
+- code 6 `tensionAtDTmin`;
+- code 3 when the committed p ≤ 0;
+- codes 4 and 9, when the α and fabric error, or the substep count, blows up as p → 0.
+
+Vanilla hides this: `Stress_Correction` silently resets such a point to σ = (p_min + p_r)·I with α = 0. The cutoff
+does the same thing openly, reversibly and counted. It is FLAC's tension cutoff done at the material level. Plan and
+evidence: [[152_sanisand_tension_cutoff]].
+
+```tcl
+... 129 $TanType $JacoType $TolF $TolR -sasHFloor 1 -sasReseatHyst 1 -sasSoftCap 0.5 -sasTensionCutoff $pSep $pContact ...
+```
+
+- **SAS-ME's only low-p test is p + p_r > 0.** `-Pmin` is not an admissibility threshold under IntScheme 129: it only
+  floors the elastic moduli.
+- **Entry masks ONLY low-p/tension refusals.**
+  - E1: code 6, or code 3 whose cause is p0 ≤ 0.
+  - E2: code 4 or 9 while the committed p0 < p_sep. `p_sep = 0` disables E2, which leaves a pure tension cutoff.
+  - Code 5 (`loadingNonPosH`, the α_in singularity), code 2, a non-finite start, codes 7 and 8, and codes 4/9 at
+    p0 ≥ p_sep still refuse, at any p.
+- **While separated:**
+  - σ = (p_min − p_r)·I, i.e. model p = p_min: no tension and no shear. The point keeps its weight (body forces act on
+    the nodes) and its place in the mesh.
+  - α = α_in = 0 and the fabric is kept.
+  - The strain is absorbed.
+  - The tangent is C_e at p_min. That is the model's own moduli floor, declared as a Newton regularisation; a
+    separated point's stress does not depend on the strain. `tangentEP` returns the same.
+- **Re-contact** happens once the volumetric opening since entry has closed with overlap:
+  g = tr ε − tr ε_entry ≥ (p_contact − p_min)/K(p_contact).
+  - The point then restarts at σ = p_re·I, with p_re = p_min + K(p_contact)·g ≥ p_contact, and α = α_in = 0.
+  - p_contact > p_sep, and entry needs a qualifying refusal, so a point cannot chatter.
+- **Parameters:**
+  - The parser requires 0 ≤ p_sep < p_contact, p_contact > p_min, and SAS-ME. The cutoff is refused with `-implex`.
+  - Starting values: p_sep 0.5 kPa (TIMs D1's p-floor bound) and p_contact 1.0 kPa.
+  - Report the limit load at p_sep and at p_sep/2 (the D1 rule, < 2 %).
+- **Census** (`sasStats`, appended):
+  - `sas_sepEntriesTension` (E1) and `sas_sepEntriesLowP` (E2);
+  - `sas_sepExits`;
+  - `sas_sepActive`, the committed 0/1. Its sum over points is the number of points separated now.
+  - **`sasStats` is now 40 long.**
+- **`sasOptions`** is 11 values long: indices 9 and 10 are p_sep and p_contact.
+- **It is a constitutive choice about near-surface sand.** The owner and TIMs decide p_sep and p_contact, and how
+  separated points are reported in the capacity. The p_r bracket (§13.4's cross-check) stays available.
