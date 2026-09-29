@@ -1291,6 +1291,21 @@ the u-p family) to get a recoverable, cuttable refusal.
 
 ### 13.4 Re-seat regularization — WP-151 R1, an OPT-IN DM04 variant
 
+> [!important] RECOMMENDED for the TIMs campaign under SAS-ME (`IntScheme 129`)
+> Owner decision (relayed by the TIMs orchestrator, 2026-09-28): "if R1 makes sense, let's use it".
+> - **Run TIMs' SANISAND decks under IntScheme 129 with
+>   `-sasHFloor 1 -sasReseatHyst 1 -sasSoftCap 0.5`.**
+> - The flags stay opt-in in the code (default OFF, byte-identical to DM04). The recommendation is for
+>   decks, not a change of default.
+> - **Footing evidence** (Esmeralda, WP-138 E_B settings; [[151_sanisand_reseat_singularity]] §9):
+>   - q–s within ±0.22 % of E_B below s/B 0.03;
+>   - 0 `loadingNonPosH` past E_B's onset (s/B 0.0363) on the B/8, B/16 and B/4 meshes;
+>   - the B/4 leg reaches s/B 0.127, where E_B walls at 0.0508.
+> - **Do not substitute a recalibration of the Lode parameter c.** A c = 0.80 footing walls too
+>   (s/B 0.048), on compression-side states where DM04 runs the same re-seat sequence (memo §2.5.1).
+> - It is not a cure for mesh-dependent localization (WP-150). It also does not help low-confinement
+>   surface points: the B/4 leg's eventual limiter is `errorAtDTmin` at p′ → 0, a p′-floor question.
+
 **What it is for.** Near the peak, with the campaign set's thin yield cone (m = 0.005) and
 near-neutral or rotating loading, the exact DM04 rate equations re-seat α_in again and again in
 finite pseudo-time (a Zeno accumulation). Meanwhile b:n → 0⁺ and |dα/dt| → ∞. The discrete image of
@@ -1311,6 +1326,9 @@ failures one-to-one on the wall states. Full study:
 - **Use the floor and the hysteresis together.** On the wall fan (5 states × 64 trials), each alone
   leaves 97–102 of 320 trials singular, and together 0. The cap closes deep softening at low p and
   makes the result insensitive to c_A (0.5–2 all pass with it).
+  - The footing confirms it. Floor alone turns the refusals into `maxSubsteps` (572 log mentions vs
+    91 with both).
+  - Hysteresis alone keeps `loadingNonPosH`, first at s/B 0.0362, where E_B has its first at 0.0363.
 - **Recommended: c_A = 1, c_rev = 1, κ = 0.5.** No parameter is fitted: c_A and c_rev are in units
   of the calibrated m.
 - **Calibrated behaviour is unchanged** (oracle, campaign set):
