@@ -212,6 +212,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • LadrunoSANISAND — -cppmOnFail refuse / -cppmTangent fixed / -meFallback cppm (WP-130)\n"
 "        • LadrunoSANISAND — IntScheme 129 SAS-ME (alpha-aware error, refuses, no force-accept)\n"
 "        • LadrunoSANISAND — SAS-ME -sasHFloor / -sasReseatHyst / -sasSoftCap (WP-151 R1)\n"
+"        • LadrunoSANISAND — SAS-ME -sasTensionCutoff (separation at p' ~ 0, WP-152)\n"
 "        • system Pardiso — -deterministic / -cbwr (MKL CNR, reproducible)\n"
 "\n";
     // FEATURES-END
