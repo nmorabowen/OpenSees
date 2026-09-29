@@ -870,12 +870,17 @@ ManzariDafalias::ladrunoSasIntegrate(void)
 
     // ---- Ladruno WP-152: the tension cutoff (separation) ----------------------
     // The trial starts as the committed state. A SEPARATED point carries no
-    // tension and no shear (model p = p_min) and absorbs the strain; it
-    // re-contacts once the volumetric opening since entry has closed with an
-    // overlap that gives p_contact: g = tr(eps) - tr(eps_entry) (compression
-    // positive) >= g_c = (p_contact - p_min) / K(p_contact). Then
-    // p_re = p_min + K(p_contact) g >= p_contact, alpha = alpha_in = 0, and SAS-ME
-    // resumes at the next update. Ladruno_implementation/152_sanisand_tension_cutoff.md.
+    // tension and no shear. With g = tr(eps) - tr(eps_entry) (compression
+    // positive) its model p is p_c(g) = p_min + K(p_contact) max(g, 0): OPEN
+    // (g <= 0) it sits at p_min and absorbs the strain; CLOSING (g > 0) it
+    // reloads isotropically and elastically -- continuous in g (review #9: the
+    // first build jumped p_min -> p_contact at g_c, which leaves a band of no
+    // equilibrium wherever the point has compliance around it; a free-node Newton
+    // column failed there). It re-contacts at g >= g_c = (p_contact - p_min) /
+    // K(p_contact), with p_re = p_c(g) >= p_contact, alpha = alpha_in = 0, and
+    // SAS-ME resumes at the next update. Re-contact is VOLUMETRIC only: isochoric
+    // shear never closes the gap (review #6, documented).
+    // Ladruno_implementation/152_sanisand_tension_cutoff.md.
     mLadrunoSas.sep = mLadrunoSas.sep_n;
     mLadrunoSas.sepTr = mLadrunoSas.sepTr_n;
     mLadrunoSas.sepEvent = 0;   // an element may update several times per step: the census
@@ -890,13 +895,17 @@ ManzariDafalias::ladrunoSasIntegrate(void)
         double Kc, Gc;
         GetElasticModuli(Sc, mVoidRatio, Kc, Gc);
         const double gc = (o.tcPcontact - m_Pmin) / Kc;
+        ladrunoSasSetIsotropic(m_Pmin + Kc * fmax(g, 0.0));
         if (g >= gc) {
-            ladrunoSasSetIsotropic(m_Pmin + Kc * g);
-            mLadrunoSas.sep = false;
+            mLadrunoSas.sep = false;       // the exit tangent: C_e at p_re (SAS-ME's next start)
             mLadrunoSas.sepEvent = 3;
             mLadrunoLastPath = 9;
         } else {
-            ladrunoSasSetIsotropic(m_Pmin);
+            if (g > 0.0) {                 // closing: the consistent bulk modulus is K(p_contact)
+                double Kp, Gp;
+                GetElasticModuli(mSigma, mVoidRatio, Kp, Gp);
+                mCe = GetStiffness(Kc, Gp); mCep = mCe; mCep_Consistent = mCe;
+            }
             mLadrunoLastPath = 8;
         }
         return;

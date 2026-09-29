@@ -13,10 +13,14 @@ State machine (Ladruno_implementation/152_sanisand_tension_cutoff.md):
           e follows the strain, tr(eps_entry) := tr(eps) at the end of this increment.
           p_floor at p0 > p0_max -> REFUSED (the step is to be cut: one increment carried
           a well-confined point through p = 0).
-  SEPARATED: strain absorbed; g = tr(eps) - tr(eps_entry) (compression positive).
-          g >= g_c = (p_contact - p_min) / K(p_contact) -> NORMAL at the end of this
-          increment with sigma = (p_re - p_r) I, p_re = p_min + K(p_contact) g, alpha =
-          alpha_in = 0.  Else sigma stays (p_min - p_r) I.
+  SEPARATED: no shear; g = tr(eps) - tr(eps_entry) (compression positive).
+          sigma = (p_c(g) - p_r) I with p_c(g) = p_min + K(p_contact) max(g, 0): open
+          (g <= 0) it sits at p_min, CLOSING (g > 0) it reloads isotropically and
+          elastically -- CONTINUOUS in g (review #9: a jump p_min -> p_contact at g_c
+          leaves a band of no equilibrium wherever the point has compliance around it;
+          a free-node Newton column showed it).  g >= g_c = (p_contact - p_min) /
+          K(p_contact) -> NORMAL at the end of this increment with sigma = (p_re - p_r) I,
+          p_re = p_c(g) >= p_contact, alpha = alpha_in = 0 (the exit state as before).
 Strain increments are compression positive, Voigt engineering shear (the oracle's)."""
 from __future__ import annotations
 
@@ -76,12 +80,10 @@ def drive(state0, deps_list, O, p_sep, p_contact, P=None, p0_max=None):
             g += dv
             _, K = elastic_moduli(p_contact, e_end, P, O)
             gc = (p_contact - O.p_min) / K
+            p_c = O.p_min + K * max(g, 0.0)                              # continuous closing
+            st = State((p_c - O.p_residual) * I3, Z3.copy(), st.z.copy(), e_end, Z3.copy())
             if g >= gc:
-                p_re = O.p_min + K * g
-                st = State((p_re - O.p_residual) * I3, Z3.copy(), st.z.copy(), e_end, Z3.copy())
                 mode, ev = "N", "recontact"
-            else:
-                st = State((O.p_min - O.p_residual) * I3, Z3.copy(), st.z.copy(), e_end, Z3.copy())
         out.append(dict(k=k, mode=mode, event=ev, status=status, sigma=t2v(st.sigma).tolist(),
                         p=model_p(st, O), g=g, e=st.e))
     return out

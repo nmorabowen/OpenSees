@@ -138,8 +138,13 @@ def test_element_path_follows_the_oracle_state_machine(element_runs, name):
     worst = 0.0
     for r, o in zip(rec, fx["records"]):
         if o["mode"] == "S" and o["event"] != "recontact":
-            assert all(abs(x - PMIN) < 1e-12 for x in r["sigma"][0:3]), (r["k"], r["sigma"])
+            # separated: isotropic, no shear; exactly p_min while OPEN (g <= 0), the
+            # oracle's continuous closing branch p_min + K(p_contact) g while g > 0
             assert all(abs(x) < 1e-12 for x in r["sigma"][3:6]), (r["k"], r["sigma"])
+            if o["g"] <= 0.0:
+                assert all(abs(x - PMIN) < 1e-12 for x in r["sigma"][0:3]), (r["k"], r["sigma"])
+            else:
+                assert all(abs(x - y) < 1e-9 * max(y, 1.0) for x, y in zip(r["sigma"][0:3], o["sigma"][0:3])),                     (r["k"], r["sigma"], o["sigma"])
             assert r["sas"][39] in (0.0, 1.0)
         else:
             # SAS-ME controls the stress error against sigma_ref = 1 kPa (-errFloor), so below
@@ -345,7 +350,9 @@ def test_newton_column_under_gravity_separates_and_recontacts():
     """review #8/#9: a free-node column solved by Newton with a FORCE test. Opening the top
     separates the upper brick while the lower one carries the weight; closing re-contacts.
     Every step converges; the lower brick never separates; while the upper one is separated
-    the lower one's sigma_zz is the weight plus p_min (equilibrium of the free nodes)."""
+    the lower one's sigma_zz is the weight plus the upper one's (equilibrium of the free
+    nodes). This test found the first build's p_min -> p_contact JUMP at re-contact: no
+    equilibrium exists for a band of top displacement, and Newton failed at step 68."""
     top = [-2.9e-5 * (k + 1) / T.N0 for k in range(T.N0)]
     u = top[-1]
     for _ in range(40):
@@ -366,8 +373,8 @@ def test_newton_column_under_gravity_separates_and_recontacts():
         assert lo[SEP_ACTIVE] == 0.0 and lo[SEP_TENSION] + lo[SEP_LOWP] == 0.0, (k, lo[36:44])
         if up[SEP_ACTIVE] == 1.0:
             seen_sep = True
-            szz_lo = -T.eresp(1, "stress")[2]
-            assert abs(szz_lo - (T.COL_W + PMIN)) < 1e-6, (k, szz_lo)
+            szz_lo, szz_up = -T.eresp(1, "stress")[2], -T.eresp(2, "stress")[2]
+            assert abs(szz_lo - (T.COL_W + szz_up)) < 1e-6, (k, szz_lo, szz_up)
     up = T.eresp(2, "sasStats")
     ops.wipe()
     assert seen_sep and up[SEP_TENSION] + up[SEP_LOWP] >= 1.0 and up[SEP_EXITS] >= 1.0, up[36:44]
@@ -395,7 +402,7 @@ def test_plane_strain_smoke():
         if s[SEP_ACTIVE] == 1.0:
             was_sep = True
             sig = list(ops.eleResponse(1, "material", 1, "stress"))
-            assert all(abs(-x - PMIN) < 1e-12 for x in sig[0:2]) and abs(sig[2]) < 1e-12, (k, sig)
+            assert abs(sig[0] - sig[1]) < 1e-12 and abs(sig[2]) < 1e-12 and -sig[0] >= PMIN - 1e-12, (k, sig)
     ops.wipe()
     assert was_sep and s[SEP_TENSION] == 1.0 and s[SEP_EXITS] == 1.0 and s[SEP_ACTIVE] == 0.0, s[36:44]
 
@@ -417,8 +424,14 @@ def test_isochoric_shear_while_separated_never_recontacts():
 
 def test_initial_state_analysis_revert_keeps_the_separation():
     """review #5: InitialStateAnalysis off calls revertToStart with the flag still set,
-    which keeps the stress -- so it keeps the separation that produced it. A plain
-    reset (revertToStart outside ISA) re-initialises the point NORMAL."""
+    which keeps the COMMITTED stress -- so it keeps the separation that produced it
+    (sepActive reports the committed state). A plain reset (revertToStart outside ISA)
+    re-initialises the point NORMAL.
+    Not asserted, and pre-existing (not WP-152): Domain::revertToStart ends with a
+    domain update that feeds the ZEROED displacement field against the kept committed
+    strain, so the TRIAL after ISA off is an update over -eps_n for every point (a NORMAL
+    point's trial p moves 1.769 -> 1.731 kPa on this path; a separated one reads it as a
+    closing). LEDGER_quirks, WP-152."""
     incs = T.paths()["iso"]
     T.build(incs, T.BASE + T.R1 + T.CUTOFF)
     T.stage0()
@@ -428,7 +441,6 @@ def test_initial_state_analysis_revert_keeps_the_separation():
     assert T.mresp("sasStats")[SEP_ACTIVE] == 1.0
     ops.InitialStateAnalysis("off")
     assert T.mresp("sasStats")[SEP_ACTIVE] == 1.0
-    assert _is_pmin(T.sig_comp())
     ops.reset()
     assert T.mresp("sasStats")[SEP_ACTIVE] == 0.0
     ops.wipe()

@@ -131,7 +131,7 @@ def test_census_columns(runs):
     assert tot(13, "hFloored") > 0 and tot(13, "reseatHeld") > 0
     assert tot(13, "hSoftCapped") > 0      # the cap binds on the wall states (oracle: min H/X 0.17 without it)
     assert tot(16, "hSoftCapped") == 0     # no cap asked for
-    assert len(sr.SAS_NAMES) == 40         # WP-151's three, then WP-152's four
+    assert len(sr.SAS_NAMES) == 44         # WP-151's three, then WP-152's four + the review's four
 
 
 # ----------------------------------------------------------------------- (f)
@@ -278,7 +278,7 @@ def test_every_option_family_crosses_the_wire_at_once_after_the_868_merge():
     cppm_saved, sas_opts_saved = g(1, "cppmOptions"), g(2, "sasOptions")
     widths = (len(g(1, "substepStats")), len(g(2, "sasStats")))
     # #868's wire order, then WP-151's three
-    assert sas_opts_saved == [3.0, 0.2, 1.0, 0.0, 0.0, 3.0, 0.5, 2.0, 0.25, 0.3, 0.9], sas_opts_saved
+    assert sas_opts_saved == [3.0, 0.2, 1.0, 0.0, 0.0, 3.0, 0.5, 2.0, 0.25, 0.3, 0.9, 4.5], sas_opts_saved   # p0max = 5 p_contact
     assert cppm_saved[:6] == [1.0, 5.0, 1.0, 0.0, 1.0, 0.0], cppm_saved
     with tempfile.TemporaryDirectory(prefix="ladruno_wp151_all_", ignore_cleanup_errors=True) as td:
         db = os.path.join(td, "db")
@@ -291,7 +291,7 @@ def test_every_option_family_crosses_the_wire_at_once_after_the_868_merge():
         ref = [g(1, "stress"), g(2, "stress")]
 
         t130._two_cube_model(cppm_def, sas_def)        # every option at its DEFAULT
-        assert g(2, "sasOptions") == [-1.0, 0.1, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        assert g(2, "sasOptions") == [-1.0, 0.1, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         assert g(1, "cppmOptions") != cppm_saved
         ops.database("File", db)
         ops.restore(1)
@@ -324,7 +324,7 @@ def test_the_remaining_sas_options_cross_the_wire_by_value():
     for _ in range(5):
         assert ops.analyze(1) == 0
     saved = g("sasOptions")
-    assert saved == [-1.0, 0.1, 0.0, 1.0, 1.0, 2.0, 1.5, 0.0, 0.3, 0.0, 0.0], saved
+    assert saved == [-1.0, 0.1, 0.0, 1.0, 1.0, 2.0, 1.5, 0.0, 0.3, 0.0, 0.0, 0.0], saved
     with tempfile.TemporaryDirectory(prefix="ladruno_wp151_j_", ignore_cleanup_errors=True) as td:
         db = os.path.join(td, "db")
         try:
@@ -333,7 +333,7 @@ def test_the_remaining_sas_options_cross_the_wire_by_value():
             pytest.skip(f"database() unsupported in this build: {exc}")
         ops.save(1)
         t130._two_cube_model(cppm_def, sas_def)
-        assert g("sasOptions") == [-1.0, 0.1, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        assert g("sasOptions") == [-1.0, 0.1, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         ops.database("File", db)
         ops.restore(1)
         got = g("sasOptions")
