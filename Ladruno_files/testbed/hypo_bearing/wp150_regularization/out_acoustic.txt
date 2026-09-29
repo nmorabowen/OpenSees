@@ -1,0 +1,50 @@
+
+== E_B/field_step00045.npz  s/B 0.0110  GPs 9720
+   LOSS OF ELLIPTICITY (det<=0): real 1636  [edge zone 306]   associated control 0   blend beta=0.5/0.9/0.99: 0 / 91 / 1487
+   min det ratio: real -1.558e-01  assoc +1.971e-01;  real quantiles 0.1/1/5 %: -0.1360 -0.1105 -0.0870
+   det<=0 GPs: x in [-3.41,+3.41] y in [-5.75,-0.04]  H/2G median +1.074 (min +1.052)  Kp/2G median +0.0321  band angle median 90.2 deg  D median -0.029
+     (+0.790,-0.040) p   81.1 psi -0.111 H/2G +1.085 Kp/2G +0.0024 D -0.047 det -1.558e-01 @  16.0 assoc +1.974e-01
+     (-0.790,-0.040) p   81.1 psi -0.111 H/2G +1.085 Kp/2G +0.0024 D -0.047 det -1.552e-01 @ 164.0 assoc +1.976e-01
+     (+0.790,-0.148) p   60.3 psi -0.115 H/2G +1.082 Kp/2G +0.0056 D -0.045 det -1.498e-01 @   8.5 assoc +1.971e-01
+     (-0.790,-0.148) p   60.3 psi -0.115 H/2G +1.082 Kp/2G +0.0057 D -0.045 det -1.484e-01 @ 108.5 assoc +1.975e-01
+     (+0.790,-0.335) p   41.7 psi -0.117 H/2G +1.085 Kp/2G +0.0052 D -0.047 det -1.463e-01 @   5.8 assoc +1.986e-01
+
+== E_B/field_step00120.npz  s/B 0.0294  GPs 9720
+   LOSS OF ELLIPTICITY (det<=0): real 1924  [edge zone 290]   associated control 0   blend beta=0.5/0.9/0.99: 0 / 199 / 1691
+   min det ratio: real -1.722e-01  assoc +1.736e-01;  real quantiles 0.1/1/5 %: -0.1649 -0.1285 -0.0768
+   det<=0 GPs: x in [-3.98,+3.90] y in [-8.64,-0.04]  H/2G median +1.067 (min +1.047)  Kp/2G median +0.0218  band angle median 90.8 deg  D median -0.031
+     (+0.790,-0.335) p   53.6 psi -0.111 H/2G +1.090 Kp/2G -0.0006 D -0.050 det -1.722e-01 @  72.5 assoc +1.949e-01
+     (-0.898,-0.710) p   47.7 psi -0.113 H/2G +1.091 Kp/2G -0.0004 D -0.051 det -1.720e-01 @ 107.3 assoc +1.951e-01
+     (-0.898,-0.898) p   55.9 psi -0.112 H/2G +1.090 Kp/2G -0.0003 D -0.050 det -1.709e-01 @ 168.0 assoc +1.951e-01
+     (-0.790,-0.523) p   54.7 psi -0.112 H/2G +1.090 Kp/2G -0.0005 D -0.050 det -1.687e-01 @ 108.0 assoc +1.958e-01
+     (+0.790,-0.977) p   77.2 psi -0.109 H/2G +1.087 Kp/2G -0.0002 D -0.049 det -1.683e-01 @  11.2 assoc +1.954e-01
+
+== E_B/field_last_converged.npz  s/B 0.0508  GPs 9720
+   LOSS OF ELLIPTICITY (det<=0): real 2187  [edge zone 249]   associated control 1   blend beta=0.5/0.9/0.99: 0 / 588 / 1949
+   min det ratio: real -4.776e-01  assoc -9.005e-03;  real quantiles 0.1/1/5 %: -0.2576 -0.1743 -0.1240
+   det<=0 GPs: x in [-3.71,+4.09] y in [-10.23,-0.04]  H/2G median +1.060 (min +0.917)  Kp/2G median +0.0305  band angle median 88.5 deg  D median -0.024
+     (+0.977,-0.040) p    9.2 psi -0.126 H/2G +0.917 Kp/2G -0.1609 D -0.048 det -4.776e-01 @  97.8 assoc -9.005e-03
+     (-1.273,-0.335) p   34.0 psi -0.119 H/2G +1.051 Kp/2G -0.0422 D -0.052 det -3.585e-01 @ 142.8 assoc +1.374e-01
+     (-0.977,-0.148) p   13.8 psi -0.124 H/2G +1.073 Kp/2G -0.0126 D -0.050 det -3.437e-01 @ 131.8 assoc +1.130e-01
+     (-1.352,-0.523) p   34.4 psi -0.119 H/2G +1.087 Kp/2G -0.0039 D -0.051 det -2.975e-01 @  92.2 assoc +1.509e-01
+     (-0.040,-1.540) p  410.6 psi -0.087 H/2G +1.056 Kp/2G -0.0017 D -0.037 det -2.901e-01 @ 153.2 assoc +1.261e-01
+
+== E_B16/field_step00055.npz  s/B 0.0096  GPs 38880
+   LOSS OF ELLIPTICITY (det<=0): real 3534  [edge zone 768]   associated control 0   blend beta=0.5/0.9/0.99: 0 / 82 / 3285
+   min det ratio: real -2.475e-01  assoc +5.088e-02;  real quantiles 0.1/1/5 %: -0.1318 -0.0924 -0.0489
+   det<=0 GPs: x in [-1.67,+1.67] y in [-5.34,-0.02]  H/2G median +1.076 (min +1.050)  Kp/2G median +0.0346  band angle median 90.2 deg  D median -0.029
+     (+1.011,-0.676) p   45.4 psi -0.117 H/2G +1.068 Kp/2G +0.0105 D -0.038 det -2.475e-01 @  69.0 assoc +1.381e-01
+     (+1.011,-0.730) p   44.2 psi -0.117 H/2G +1.069 Kp/2G +0.0121 D -0.038 det -2.269e-01 @   1.2 assoc +1.525e-01
+     (-1.011,-0.730) p   44.2 psi -0.117 H/2G +1.064 Kp/2G +0.0151 D -0.035 det -1.906e-01 @ 171.0 assoc +1.640e-01
+     (+0.168,-1.574) p  110.3 psi -0.109 H/2G +1.073 Kp/2G +0.0343 D -0.029 det -1.733e-01 @  23.5 assoc +1.560e-01
+     (+0.824,-0.114) p   43.0 psi -0.117 H/2G +1.091 Kp/2G +0.0020 D -0.050 det -1.658e-01 @   8.5 assoc +1.955e-01
+
+== E_B16/field_last_converged.npz  s/B 0.0135  GPs 38880
+   LOSS OF ELLIPTICITY (det<=0): real 6576  [edge zone 889]   associated control 0   blend beta=0.5/0.9/0.99: 0 / 1728 / 6016
+   min det ratio: real -3.183e-01  assoc +6.634e-03;  real quantiles 0.1/1/5 %: -0.2584 -0.1917 -0.1060
+   det<=0 GPs: x in [-2.42,+2.42] y in [-6.47,-0.02]  H/2G median +1.072 (min +1.041)  Kp/2G median +0.0333  band angle median 85.9 deg  D median -0.029
+     (+0.824,-0.114) p   45.5 psi -0.115 H/2G +1.089 Kp/2G -0.0038 D -0.052 det -3.183e-01 @  69.2 assoc +1.429e-01
+     (+0.770,-0.074) p  101.6 psi -0.108 H/2G +1.081 Kp/2G -0.0038 D -0.049 det -3.128e-01 @  11.0 assoc +1.403e-01
+     (-0.957,-0.207) p   50.6 psi -0.116 H/2G +1.069 Kp/2G -0.0004 D -0.044 det -2.973e-01 @ 157.5 assoc +7.505e-02
+     (+0.957,-0.207) p   50.3 psi -0.116 H/2G +1.070 Kp/2G +0.0029 D -0.043 det -2.952e-01 @  89.8 assoc +1.136e-01
+     (-0.770,-0.074) p  101.8 psi -0.108 H/2G +1.082 Kp/2G -0.0030 D -0.048 det -2.946e-01 @ 168.2 assoc +1.503e-01

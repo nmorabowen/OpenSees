@@ -8026,3 +8026,49 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
 ### A win32-only `zone_a` test is NEVER run by PR CI — Zone-A is Ubuntu, and the self-hosted Windows nightly was cancelled on every run for three months (WP-143, found by WP-136)
 - **Bites:** `pytest.mark.skipif(sys.platform != "win32", ...)` on a `zone_a` test reads as "Windows covers it". It doesn't: PR CI is `zone-a-ubuntu`, where the test is a silent skip. The Windows jobs (`zone-b-nightly`, `cross-tier-nightly`, `[self-hosted, windows, ladruno-perf]`) were `cancelled` on all 100 scheduled runs from 2026-06-20 to 2026-09-27, and `gh api repos/nmorabowen/OpenSees/actions/runners` lists ZERO runners. So 9 files (Pardiso ×4, FEAST, SANISAND flip-determinism + replay counters, ADR-97 P4) had no CI at all, and their PRs merged on the author's local Windows run only. Even with a runner online, `cross-tier-nightly` has no build step: it tests whatever `opensees.pyd` the box has installed, not the commit it checked out. WP-136's two failures sat red on `ladruno` for 8 days this way.
 - **Workaround/status:** quirk lint **L8** (`ci/check_quirk_patterns.py`, WP-143): a `zone_a` test file that branches on the platform (an `ast` scan: `sys.platform` / `os.name` / `platform.system()` compared to a platform name, or `.startswith`; a ternary value selection such as an exe suffix is ignored) must carry `# ci-coverage: <local-only|partial|portable|nightly-windows|pr-windows> <reason>`. `python ci/check_quirk_patterns.py --list-waivers` prints the inventory; the `local-only` lines ARE the gap. Portable legs moved out of it (flip-determinism's hold + warning legs now run on Ubuntu under `system FullGeneral`). Rule: keep only the MKL-specific leg platform-gated. Until a Windows CI job builds and runs the tree, a PR touching Pardiso, FEAST or SANISAND determinism merges on a stated local Windows pytest log for its head SHA, never on a green Zone-A. Owner items (open): register the runner, add a build step to the nightly jobs, optionally a path-filtered PR Windows job.
+
+### SANISAND's `loadingNonPosH` wall is the DM04 ∞·0 at an α_in re-seat on the bounding surface, not band softening (WP-150)
+- **Bites:** every WP-138 footing leg (SAS-ME, IntScheme 129) walls by RC_NONPOS_H at 1–6 Gauss points in the edge bands. The first reading was "loss of uniqueness from dense-sand softening, so regularize". It is not.
+  - No committed Gauss point is anywhere near H = Kp + 2G − K·D·qv ≤ 0: min H/2G = 0.92 at E_B's wall, and only 17 of 9 720 points are post-peak.
+  - The refusers sit at an α_in re-seat (a = (α−α_in):n ≈ 0, so h = b0/a → ∞ or the 1e10 sentinel), inside but near the bounding surface (b:n = +0.03…+0.19).
+  - They chatter: 600–1 237 re-seats and 7–11 k reversal-rejected substeps per refuser. Domain-wide E_B has 10 M re-seats and 88 M rejected reversals.
+  - Once b:n ≤ 0 at a re-seat, Kp = ⅔·p·h·(b:n) = −∞. The singular set is {a = 0, b:n ≤ 0}.
+  - WP-134's exact Radau oracle stops on the same 0/0 (`134_sanisand_reference_integrator.md` §6.6).
+  - The final WP-138 ladders keep it in EVERY leg, including fabric off, no peak (nb = 0), nd = 0, no dilatancy (A0 = 0.001, which only delays the onset from s/B 0.036 to 0.043), every `-Presidual` and every e_init.
+  - The CONCAVE extension meridian of c = 0.71 < 7/9 only selects WHERE the set is met first.
+    - The c = 0.71 wall states (extension-side) fail 0/320 when driven at c = 0.80 (WP-151 §2.5).
+    - But a c = 0.80 footing meets the same Zeno set on the compression side, in the bands' Lode range (cos3θ +0.63…+0.79). Those points are ELLIPTIC at commit (re-seat, h ≫ 1), so they are not the band points. There DM04 fails 119/576 and floor + hysteresis passes 0/576 (WP-151 §2.5.1).
+  - At footing scale, c = 0.80 only DELAYS the wall (first NonPosH at s/B 0.0416 vs 0.0363; wall at 0.048). Raising c is not a fix; R1 is.
+  - An earlier "dilation drives b:n to 0⁻" reading rested on a provisional snapshot and is withdrawn.
+- **Rule:** before prescribing a BVP regularizer for a SANISAND refusal, decompose H at the refusing point's committed state (`Ladruno_files/testbed/hypo_bearing/wp150_regularization/h_decomp.py`, `refuser_stats.py`).
+  - If a ≈ 0 and b:n is small, it is this singularity. Duvaut–Lions (which needs the refusing inviscid solution), Perzyna (which needs η/Δt > |Kp| = ∞), nonlocal and gradient models cannot lift it.
+  - The fix is model-level and needs BOTH parts, coupled: an h floor everywhere, h = b0/max(a, c_A·√(2/3)·m), AND a hysteretic re-seat (α_in := α only when a < −c_rev·√(2/3)·m).
+  - The exact rate equations reach the set through a Zeno accumulation of re-seats with b:n → 0⁺. A floor gated on b:n ≤ 0 fails as often as DM04 (102/320 on the R1 session's oracle set); each part alone fails; both pass 0/320.
+- **Workaround/status:** ⚠️ diagnosed and documented (WP-150 memo §1); the fix is PROPOSED, not built. *2026-09-28.*
+
+### The campaign SANISAND loses ellipticity while still HARDENING: the footing bands are non-associated (Rudnicki–Rice), not ψ-softening (WP-150)
+- **Bites:** a plane-strain acoustic-tensor scan of the continuum tangent D = Cₑ − (Cₑ:R)⊗(Q:Cₑ)/H on the WP-138 checkpoints finds det ≤ 0 at 17 % of the Gauss points already at s/B 0.011, and at 22 % by 0.0508.
+  - At those points H/2G ≈ 1.05 and Kp/2G ≈ 0.03.
+  - The same states with associated flow (R → Q, same Kp) are elliptic everywhere.
+  - The cause is the flow rule: R's volumetric part is D/3 ≈ −0.01, against Q's −qv/3 ≈ −0.5, while h0 = 1.3 keeps Kp/2G ≈ 0.03 once α has travelled ~1 from α_in.
+  - B/16 separates from B/8 by −4 to −5 % in q from s/B 0.010. The bands run along mesh lines.
+  - A regularizer that acts on ψ-softening (nonlocal void ratio) or on fracture energy (crack band) does not touch this onset.
+- **Rule:**
+  - Treat a SANISAND BVP as ill-posed from the first plastic loading near the footing edge, not from the peak.
+  - Only viscosity (ellipticity back once H_v/2G ≥ 0.17…0.44 on this deck, i.e. β ≲ 0.7), Cosserat or gradient-in-λ restore ellipticity here.
+  - Check any regularizer with `acoustic_vec.py` (ADR-90 C8) before trusting its curves.
+  - Include a mesh-orientation variant in any convergence study.
+- **Workaround/status:** ⚠️ measured and documented (WP-150 memo §2); R2/R3 are PROPOSED. *2026-09-28.*
+
+### The TIMs campaign SANISAND set is strong but barely dilates: plane-strain φ′_peak 45–60°, ψ_max ≤ 2°, peak at 4–16 % strain — stress–dilatancy missed ~20–23× (triaxial), ~8–14× (plane strain, estimated φ′_cs) (WP-150 T5)
+- **Bites:** the campaign set (G0 264.32, e_init 0.6944, Mc 1.3309, c 0.71, λc 0.027, e0 0.83, ξ 0.45, h0 1.3, ch 0.968, nb 3.5, A0 0.05, nd 5.75, zmax 12.5, cz 1100) was integrated exactly on the WP-134 oracle, in drained plane-strain and triaxial compression at p0 10–500 kPa.
+  - Its peak strength is that of a very dense sand: triaxial 39–49°, and Bolton's 3·I_R implies D_r 0.80–0.88.
+  - But the peak dilation angle is only 0.8–1.9° (plane strain), and (−dε_v/dε₁)max is 0.03–0.07 (triaxial). Bolton needs ~20–23× more in triaxial, and ~8–14× more in plane strain with an estimated φ′_cs,ps ≈ 39.5°.
+  - The peak comes at 4–16 % axial strain, and critical state is not reached by 25 %.
+  - DM04's lab-calibrated Toyoura set at the same D_r (e0 0.66) peaks at 1–5 % with ψ_max 14–23° and meets stress–dilatancy within ~17 % (triaxial).
+  - Causes: A0 = 0.05 (14× below Toyoura's 0.704) decouples strength (nb = 3.5) from volume change, and h0 = 1.3 delays the peak.
+  - Consequences: extremely non-associated flow (the early loss of ellipticity at positive hardening, entry above), and footing curves that need very large settlement to mobilize (no plateau to s/B 0.05).
+- **Rule:**
+  - Never call a SANISAND footing curve "physical" before checking the parameter set's element response: φ′_peak, ε at peak and peak dilatancy against Bolton (1986) and the sand's lab data (`Ladruno_files/testbed/hypo_bearing/wp150_regularization/t5_element_physics.py`).
+  - Regularizers and integrators cannot fix a calibration that violates stress–dilatancy.
+- **Workaround/status:** ⚠️ reported to TIMs via the orchestrator (#887, inputs owed: grading, e_max/e_min, D_r, lab data). No parameter changed. *2026-09-28.*

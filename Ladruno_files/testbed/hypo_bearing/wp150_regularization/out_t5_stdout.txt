@@ -1,0 +1,21 @@
+PS p0=   10 status=            ok phi_peak=60.05 @ eps_a=0.0436 phi_end=55.08 psi0=-0.126 psi_end=-0.091 dil_max=1.889 ev_end=-0.0151 (5s)
+PS p0=   50 status=            ok phi_peak=55.04 @ eps_a=0.0724 phi_end=52.20 psi0=-0.116 psi_end=-0.078 dil_max=1.582 ev_end=-0.0122 (2s)
+PS p0=  150 status=            ok phi_peak=50.67 @ eps_a=0.1020 phi_end=49.17 psi0=-0.103 psi_end=-0.063 dil_max=1.263 ev_end=-0.0091 (2s)
+PS p0=  500 status=            ok phi_peak=44.94 @ eps_a=0.1554 phi_end=44.57 psi0=-0.080 psi_end=-0.039 dil_max=0.760 ev_end=-0.0041 (1s)
+TX p0=   10 status=            ok phi_peak=48.58 @ eps_a=0.0407 phi_end=45.31 psi0=-0.126 psi_end=-0.095 dil_max=0.067 ev_end=-0.0151 (1s)
+TX p0=   50 status=            ok phi_peak=45.85 @ eps_a=0.0728 phi_end=43.76 psi0=-0.116 psi_end=-0.084 dil_max=0.058 ev_end=-0.0127 (1s)
+TX p0=  150 status=            ok phi_peak=43.11 @ eps_a=0.1074 phi_end=41.94 psi0=-0.103 psi_end=-0.071 dil_max=0.048 ev_end=-0.0100 (1s)
+TX p0=  500 status=            ok phi_peak=39.15 @ eps_a=0.1657 phi_end=38.86 psi0=-0.080 psi_end=-0.048 dil_max=0.031 ev_end=-0.0056 (1s)
+T5 campaign set, e0 = 0.6944, ε_a to 0.25; φ′_cs (triaxial, from Mc) = 33.00°
+
+| test | p0 kPa | ψ0 | φ′_peak ° | ε_a at peak | φ′ at ε_a end ° | ψ end | max dilatancy | Bolton check |
+|---|---|---|---|---|---|---|---|---|
+| PS | 10 | -0.126 | 60.1 | 0.0436 | 55.1 | -0.091 | ψ_max = 1.9° | Δφ = 5.0° vs 0.8·ψ_max = 1.5° |
+| PS | 50 | -0.116 | 55.0 | 0.0724 | 52.2 | -0.078 | ψ_max = 1.6° | Δφ = 2.8° vs 0.8·ψ_max = 1.3° |
+| PS | 150 | -0.103 | 50.7 | 0.1020 | 49.2 | -0.063 | ψ_max = 1.3° | Δφ = 1.5° vs 0.8·ψ_max = 1.0° |
+| PS | 500 | -0.080 | 44.9 | 0.1554 | 44.6 | -0.039 | ψ_max = 0.8° | Δφ = 0.4° vs 0.8·ψ_max = 0.6° |
+| TX | 10 | -0.126 | 48.6 | 0.0407 | 45.3 | -0.095 | (−dε_v/dε_1)max = 0.067 | Δφ = 15.6° vs 10·(−dε_v/dε_1)max = 0.7°; implied D_r (Δφ = 3 I_R) = 0.80 |
+| TX | 50 | -0.116 | 45.8 | 0.0728 | 43.8 | -0.084 | (−dε_v/dε_1)max = 0.058 | Δφ = 12.8° vs 10·(−dε_v/dε_1)max = 0.6°; implied D_r (Δφ = 3 I_R) = 0.87 |
+| TX | 150 | -0.103 | 43.1 | 0.1074 | 41.9 | -0.071 | (−dε_v/dε_1)max = 0.048 | Δφ = 10.1° vs 10·(−dε_v/dε_1)max = 0.5°; implied D_r (Δφ = 3 I_R) = 0.88 |
+| TX | 500 | -0.080 | 39.1 | 0.1657 | 38.9 | -0.048 | (−dε_v/dε_1)max = 0.031 | Δφ = 6.1° vs 10·(−dε_v/dε_1)max = 0.3°; implied D_r (Δφ = 3 I_R) = 0.81 |
+

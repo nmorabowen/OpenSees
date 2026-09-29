@@ -60,6 +60,21 @@ updated: 2026-09-05
 > code** as `PATTERN_TAG_LadrunoPorousOverlay` — used at `SRC/domain/domain/Domain.cpp:2274` — and
 > as `EigenSOE_TAGS_FeastEigenSOE` (`:57`). Per-registry namespaces; deliberately not collisions.
 
+> [!note] 2026-09-28 — WP-150 (`150_sanisand_regularization_memo.md`) re-opens this ADR's question on the post-SAS-ME footing. Nothing below is changed yet.
+> Measured on the WP-138 checkpoints:
+> - **The footing wall is not a softening loss of uniqueness.** It is the DM04 ∞·0 at an α_in re-seat on the bounding
+>   surface, {a = 0, b:n ≤ 0}. It is reached through a Zeno accumulation of re-seats; the fix is model-level
+>   (an h floor everywhere plus a hysteretic re-seat, coupled; the R1 session).
+>   - Duvaut–Lions, in either form, inherits it, because it needs the refusing inviscid solution.
+> - **The bands are non-associated loss of ellipticity while still hardening:** 17 % of the Gauss points at
+>   s/B 0.011, with H/2G ≈ 1.05; the associated control is elliptic.
+>   - This is the case §4.5 V4 anticipated, now on the consumer's own material and deck.
+> - **The memo's proposal for this ADR (owner decides):**
+>   - retire the wrapper;
+>   - re-cast WP-F as **Perzyna-type viscoplasticity inside `LadrunoSANISAND`**, conditional on the unregularized
+>     re-measure (memo R2) failing TIMs' tolerance;
+>   - keep 33022 reserved and unused.
+
 ---
 
 ## 1. Driver and problem — and the gate that decides whether there is a problem at all
