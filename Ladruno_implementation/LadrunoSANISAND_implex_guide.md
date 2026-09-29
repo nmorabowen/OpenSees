@@ -1387,32 +1387,49 @@ evidence: [[152_sanisand_tension_cutoff]].
 
 - **SAS-ME's only low-p test is p + p_r > 0.** `-Pmin` is not an admissibility threshold under IntScheme 129: it only
   floors the elastic moduli.
-- **Entry masks ONLY low-p/tension refusals.**
-  - E1: code 6, or code 3 whose cause is p0 ≤ 0.
-  - E2: code 4 or 9 while the committed p0 < p_sep. `p_sep = 0` disables E2, which leaves a pure tension cutoff.
+- **Entry masks ONLY low-p/tension refusals** (gated after the 2026-09-29 review):
+  - E1: code 6, or code 3 whose cause is p0 ≤ 0, **at committed p0 ≤ p0max** (`-sasSepMaxP0`, default 5·p_contact).
+    Above it one increment carried a well-confined point through p = 0: a step to cut, so it REFUSES.
+  - E2: code 4 or 9 while the committed p0 < p_sep **and the increment does not compress** (tr Δε ≤ 0, compression
+    positive). An accuracy or cost failure of a low-p point being compressed (the B/8 top row sits at p′ 0.2–0.35 in
+    situ, below p_sep 0.5) REFUSES. `p_sep = 0` disables E2, which leaves a pure tension cutoff.
+  - A qualifying refusal that a gate holds back is counted (`sepHeldHighP`, `sepHeldCompressing`, per update call).
   - Code 5 (`loadingNonPosH`, the α_in singularity), code 2, a non-finite start, codes 7 and 8, and codes 4/9 at
     p0 ≥ p_sep still refuse, at any p.
-- **While separated:**
-  - σ = (p_min − p_r)·I, i.e. model p = p_min: no tension and no shear. The point keeps its weight (body forces act on
-    the nodes) and its place in the mesh.
+- **While separated** (g = tr ε − tr ε_entry, compression positive):
+  - no shear; model p = p_c(g) = p_min + K(p_contact)·max(g, 0). OPEN (g ≤ 0) the point sits at p_min and absorbs the
+    strain; CLOSING (g > 0) it reloads isotropically and elastically. The point keeps its weight (body forces act on the
+    nodes) and its place in the mesh.
+  - The closing branch is CONTINUOUS on purpose. The first build jumped p_min → p_contact at re-contact, and wherever
+    the point has compliance around it that leaves a band of load with NO equilibrium (for σ = p_contact the
+    neighbours must yield, which reopens the gap). A free-node Newton column failed there.
   - α = α_in = 0 and the fabric is kept.
-  - The strain is absorbed.
-  - The tangent is C_e at p_min. That is the model's own moduli floor, declared as a Newton regularisation; a
-    separated point's stress does not depend on the strain. `tangentEP` returns the same.
-- **Re-contact** happens once the volumetric opening since entry has closed with overlap:
-  g = tr ε − tr ε_entry ≥ (p_contact − p_min)/K(p_contact).
-  - The point then restarts at σ = p_re·I, with p_re = p_min + K(p_contact)·g ≥ p_contact, and α = α_in = 0.
+  - The tangent is C_e at p_min while open (the model's own moduli floor, a declared Newton regularisation) and
+    K(p_contact) in bulk while closing. `tangentEP` returns C_e at the committed state.
+- **Re-contact** happens at g ≥ g_c = (p_contact − p_min)/K(p_contact): SAS-ME restarts from σ = p_re·I,
+  p_re = p_c(g) ≥ p_contact, α = α_in = 0.
   - p_contact > p_sep, and entry needs a qualifying refusal, so a point cannot chatter.
+  - Re-contact is VOLUMETRIC only: isochoric shear of a separated point never closes the gap (tested).
 - **Parameters:**
-  - The parser requires 0 ≤ p_sep < p_contact, p_contact > p_min, and SAS-ME. The cutoff is refused with `-implex`.
+  - The parser requires 0 ≤ p_sep < p_contact, p_contact > p_min, p0max ≥ p_sep, and SAS-ME. The cutoff is refused
+    with `-implex`, with `-Presidual ≠ 0` (the separated state would carry tension, and the moduli read
+    tr σ/3 + p_Re, not p + p_r), and without `-sasHFloor > 0` (re-contact lands on α = α_in = 0, where h is otherwise
+    the 1e10 sentinel).
   - Starting values: p_sep 0.5 kPa (TIMs D1's p-floor bound) and p_contact 1.0 kPa.
   - Report the limit load at p_sep and at p_sep/2 (the D1 rule, < 2 %).
 - **Census** (`sasStats`, appended). Each transition is counted ONCE, when it commits; an element may call the
   update several times per step, and a cut step counts nothing:
   - `sas_sepEntriesTension` (E1) and `sas_sepEntriesLowP` (E2);
   - `sas_sepExits`;
-  - `sas_sepActive`, the committed 0/1. Its sum over points is the number of points separated now.
-  - **`sasStats` is now 40 long.**
-- **`sasOptions`** is 11 values long: indices 9 and 10 are p_sep and p_contact.
+  - `sas_sepActive`, the committed 0/1. Its sum over points is the number of points separated now;
+  - `sas_sepLastCode` (the refusal code the last committed entry masked: 3, 4, 6 or 9) and `sas_sepMaxP0` (the
+    largest committed p0 at an entry);
+  - `sas_sepHeldHighP`, `sas_sepHeldCompressing` (per update call: qualifying refusals the gates refused).
+  - **`sasStats` is now 44 long.**
+- **`sasOptions`** is 12 values long: indices 9–11 are p_sep, p_contact and p0max.
+- **InitialStateAnalysis:** `revertToStart` under ISA keeps the separation state with the stress it produced; a plain
+  `reset` starts the point NORMAL.
+- **Solution control:** use a force test (`NormUnbalance`, as the footing driver does). A separated cluster carries
+  only p_min, so a displacement test cannot tell a converged separated region from a stalled one.
 - **It is a constitutive choice about near-surface sand.** The owner and TIMs decide p_sep and p_contact, and how
   separated points are reported in the capacity. The p_r bracket (§13.4's cross-check) stays available.

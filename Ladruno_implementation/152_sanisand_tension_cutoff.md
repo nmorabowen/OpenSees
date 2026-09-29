@@ -2,7 +2,7 @@
 title: "WP-152 — SAS-ME tension cutoff (separation) for zero-confinement points"
 project: Ladruno
 type: plan + opt-in implementation
-status: "PLAN (owner GO, relayed by the TIMs orchestrator 2026-09-29: 'let's do both' — the tension cutoff is the priority fix for the free surface, the p_r bracket stays the cross-check). Building on this branch; the owner reviews the evidence before any merge."
+status: "IMPLEMENTED, draft #894; advisor review 2026-09-29 answered (a0171df75, 7f1562c81: gated entry, masked-code census, parser refusals, continuous re-contact); footing re-checks on the review build running on Esmeralda. The owner merges after the adversarial re-review and Zone-A."
 owner: nmora
 related:
   - "[[151_sanisand_reseat_singularity]] (R1, #893: this builds on its SAS-ME code)"
@@ -205,3 +205,30 @@ isotropic), with R1 (the full set) and the cutoff at p_sep 0.5, p_contact 1.0:
 - The parser refuses: p_sep < 0, p_contact ≤ p_sep, p_contact ≤ p_min, a non-129 scheme, and `-implex`.
 
 **Next: the footing gates** (the orchestrator, on Esmeralda), then the adversarial review and Zone-A.
+
+## Review response (advisor review 2026-09-29: MERGE WITH CHANGES)
+
+Each finding was checked against the code at 8cdc0bdba before it was acted on. Fixes: a0171df75 (gates, census,
+parser, ISA) and 7f1562c81 (continuous re-contact, found by the new Newton test). Session: claude-code, 2026-09-29.
+
+| # | finding | verdict | response |
+|---|---|---|---|
+| 1 | E2 checks only the committed p0; the B/8 top row sits below p_sep in situ, so an accuracy failure under COMPRESSION separates | **confirmed**, with one sub-claim wrong: `TR_REJ_REVERSAL` is set only above dT_min (`:709-710`) and re-seats at it, so it never returns RC_DTMIN | E2 also needs a non-compressing increment (tr Δε ≤ 0, compression positive; this also keeps the elastic predictor's p ≤ p0 < p_sep). Held refusals refuse, counted `sepHeldCompressing`. Tested both ways (code 9 via `-maxSubsteps 1` at p0 ≈ 0.4 kPa). Whether E2 is needed at all: the p_sep = 0 footing legs below. |
+| 2 | E1 separates on code 6 at ANY committed p0 | **confirmed** | E1 only at committed p0 ≤ p0max (`-sasSepMaxP0`, default 5·p_contact); above it the code 6 refuses (`sepHeldHighP`). `sepMaxP0` records the largest p0 at a committed entry. Oracle carries the bound (`refused_highp`). |
+| 3 | the masked refusal code is lost | **confirmed** | `sepLastCode` (the masked code, set at commit), `sepMaxP0`; tests assert code 6 on an isotropic entry. |
+| 4 | with p_r ≠ 0 the separated σ is tensile and K is taken at tr σ/3 + p_Re | **confirmed** (`GetElasticModuli` reads `tr(σ)/3 + m_PreElastic`, ManzariDafalias.cpp:5480) | refused: the cutoff requires `-Presidual 0` (parser and `recvSelf`). The campaign (TIMs D1) uses p_r = 0. |
+| 5 | revertToStart under ISA clears the separation but keeps σ | **confirmed**; no footing deck uses ISA (`footing_ab.py` has none) | `ladrunoResetSasSep` split from the census reset, called outside ISA and by the replay command. Found alongside: after "ISA off" the domain update integrates −ε_n for EVERY SANISAND point (pre-existing; a NORMAL point's trial p 1.769 → 1.731 kPa), LEDGER_quirks. |
+| 6 | re-contact is volumetric only | **confirmed, by design** | documented (guide §13.5, echo); tested: 50 isochoric steps keep a separated point at p_min, the volumetric closing re-contacts it. |
+| 7 | re-contact lands on α = α_in = 0, the 1e10 sentinel without the h floor | **confirmed** (`ladrunoSasBracketH` :228-229) — note it is DM04's own post-reversal state | the cutoff requires `-sasHFloor > 0` (parser and `recvSelf`). |
+| 8 | a separated cluster cannot equilibrate; use a force/energy test | **agreed** | the footing driver already uses `NormUnbalance` (a force test); the census now reports separated points in/out of the footprint per step. The `EnergyBalance` recorder is velocity-based and reads all zeros under a static integrator (measured), so it is not an energy test for the push (LEDGER_quirks). |
+| 9 | tests never run Newton, plane strain, shear-while-separated, E2 under compression, p_r ≠ 0 | **confirmed** | added all five (+ E1 bound, ISA). The Newton test FOUND A DESIGN FLAW: the first build's jump p_min → p_contact at re-contact leaves a band of top displacement with no equilibrium (a two-brick column failed at step 68). Fixed (7f1562c81): while separated, p = p_min + K(p_contact)·max(g, 0), continuous; the exit state and the oracle events are unchanged. |
+
+**Regression.**
+- Windows (this desk, which is also where the build of record at 8ebde5cbd was made): WP-152 file 30/30 at 7f1562c81
+  (OpenSeesPy target); the all-target build of record and the SANISAND/ManzariDafalias suite: see below.
+- Linux (Esmeralda node4, `~/ladruno_wp152/OpenSees_review`, build dir `build/wp152r_seq`, installed to
+  `~/ladruno_wp152/bin_review/opensees.so`, logs `~/ladruno_wp152/logs/build_review2_srun.out`): 28 test files,
+  **253 passed, 8 skipped, 2 xfailed, 1 failed** — the failure is the byte-identity child process losing `pytest`
+  under `python -S` in the conan venv (an environment artifact, LEDGER_quirks), not a row mismatch.
+- The 643 WP-151 replays, R1 vs R1 + cutoff (the cutoff now needs the h floor, so the stored R1-OFF baseline no
+  longer applies to it): 635 accepted updates bit-identical, 8 refusals keep their code, 0 separate.

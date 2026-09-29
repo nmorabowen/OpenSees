@@ -8105,3 +8105,31 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
   - A step that is cut and retried also counts transitions that never happened.
 - **Rule:** Count a STATE TRANSITION when it commits. The update records the trial's transition in a trial-only field; `commitState()` counts it and clears the field; `revertToLastCommit()` clears it too. Per-call counters (substeps, rejections) are fine, but document them as per-call (cf. WP-151's `reseatHeld`: decisions, not reversals).
 - **Workaround/status:** ✅ WP-152 (`sepEvent`, counted in `LadrunoSANISAND::commitState`). Test: `tests/test_ladruno_sanisand_tension_cutoff.py` asserts +1 per committed transition. [[152_sanisand_tension_cutoff]].
+
+### A constitutive law that JUMPS in strain passes every material-point test and has NO equilibrium in a structure (WP-152)
+- **Bites:** a state switch that sets the stress discontinuously at a strain threshold (WP-152's first re-contact: p_min → p_contact at g = g_c).
+  - A strain-driven material-point test never sees it: it prescribes the strain, so the stress just jumps.
+  - With compliance around the point (a free node, a neighbouring element) there is a band of load with no equilibrium: for the post-jump stress the neighbours must yield, which moves the strain back below the threshold. Newton oscillates between the branches; a step cut cannot help, because the band has a finite width (≈ Δσ / neighbour modulus).
+  - Measured: a two-brick oedometric column under gravity, top displacement-controlled, Newton + `NormUnbalance`: step 68 (the re-contact) failed at 30 iterations; band ≈ 1 kPa / 8e4 kPa ≈ 1.25e-5 > the 1e-5 step.
+- **Rule:** Make every branch of a state machine continuous in the strain (a stress reached at the switch, not set there), and test a new material state machine under NEWTON with at least one free node, not only strain-driven.
+- **Workaround/status:** ✅ WP-152 (continuous closing branch p_min + K(p_contact)·max(g, 0)); `tests/test_ladruno_sanisand_tension_cutoff.py::test_newton_column_under_gravity_separates_and_recontacts`. [[152_sanisand_tension_cutoff]].
+
+### The `EnergyBalance` recorder is velocity-based: under a STATIC integrator every column is zero (WP-152)
+- **Bites:** asking for an energy audit of a quasi-static push (`LoadControl`, `DisplacementControl`) with `recorder EnergyBalance`.
+  - IE = ∫ F_resᵀ v dt and ULW = ∫ vᵀ P_ext dt integrate NODAL VELOCITIES (`EnergyBalanceKernel.h`); a static integrator never sets them.
+  - Measured: the WP-152 two-brick column, 100 static steps through separation and re-contact: 100 rows, every KE/IE/DW/ULW/RES/ERR = 0.
+- **Rule:** Use `EnergyBalance` for transient runs only. For a static push, audit work in the driver (the external work ∫ q·B ds against the material work), or at the material point (net work over closed cycles).
+- **Workaround/status:** documented; no change to the recorder.
+
+### `InitialStateAnalysis off` ends with a domain update on the ZEROED displacements: a SANISAND point's trial jumps by −ε_n (pre-existing, found in WP-152)
+- **Bites:** reading a material's trial state right after `InitialStateAnalysis off` (or taking a step from it) with a strain-driven material that keeps its committed strain under ISA (ManzariDafalias / LadrunoSANISAND).
+  - `OPS_InitialStateAnalysis` "off" calls `Domain::revertToStart`, which zeroes the displacements and ENDS with `this->update()`; the material's `revertToStart` keeps σ and ε_n under ISA, so the update integrates an increment of −ε_n.
+  - Measured: a NORMAL point at p ≈ 1.77 kPa: trial p 1.769 → 1.731 kPa after ISA off; a separated point reads the same jump as closing (trial re-contact at 2.66 kPa).
+- **Rule:** Under ISA, trust the COMMITTED state (and `sepActive`), not the trial read right after "off"; a deck that continues from ISA with SANISAND inherits the strain-frame jump.
+- **Workaround/status:** open, not WP-152's (it predates it). WP-152 only makes the separation state survive the ISA revert (review #5).
+
+### The Esmeralda conan venv loses `pytest` under `python -S`: the byte-identity child process fails before running any deck (harness)
+- **Bites:** `tests/test_ladruno_sanisand_sasme.py::test_existing_schemes_byte_identical` on Esmeralda with `~/ladruno_build_test/conan_venv/bin/python`.
+  - The test spawns `sys.executable -S` (the Windows `-S` trap); `-S` drops site-packages, where that venv keeps pytest; `wp129_sanisand_byteid` imports `test_ladruno_sanisand`, which imports pytest → `ModuleNotFoundError`.
+- **Rule:** Read that test's Linux failure as an environment artifact unless its message is a row mismatch; the byte-identity baseline is win32 (bit-exact) anyway.
+- **Workaround/status:** documented (WP-152 review, 2026-09-29, a0171df75/7f1562c81 Linux runs); the fix belongs to the harness, not to the material.
