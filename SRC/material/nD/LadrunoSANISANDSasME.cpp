@@ -173,6 +173,35 @@ ManzariDafalias::ladrunoResetSasStats(void)
     for (int i = 0; i < LSAS_COUNT; i++)
         mLadrunoSas.stats[i] = 0.0;
     mLadrunoSas.refused = false;
+    // Ladruno WP-152: the separation state goes with the census -- both callers
+    // (revertToStart and the replay command) start the point NORMAL.
+    mLadrunoSas.sep = mLadrunoSas.sep_n = false;
+    mLadrunoSas.sepTr = mLadrunoSas.sepTr_n = 0.0;
+}
+
+// Ladruno WP-152 (tension cutoff): put the TRIAL on an isotropic state of model
+// pressure pModel (sigma = (pModel - p_r) I) with alpha = alpha_in = 0 -- the only
+// alpha consistent with an isotropic stress on DM04's thin cone -- the committed
+// fabric kept (vanilla's low-p reset keeps it too), the elastic strain unchanged
+// (the separation strain is not elastic), and the elastic stiffness AT that state
+// as the tangent (at p_min this is the model's own moduli floor: a declared Newton
+// regularisation, since a separated point's stress does not depend on the strain).
+// mVoidRatio must already hold the end-of-increment value.
+void
+ManzariDafalias::ladrunoSasSetIsotropic(double pModel)
+{
+    mSigma = mI1;
+    mSigma *= (pModel - m_Presidual);
+    mAlpha.Zero();
+    mAlpha_in.Zero();
+    mFabric = mFabric_n;
+    mEpsilonE = mEpsilonE_n;
+    mDGamma = 0.0;
+    double K, G;
+    GetElasticModuli(mSigma, mVoidRatio, K, G);
+    mCe = GetStiffness(K, G); mCep = mCe; mCep_Consistent = mCe;
+    mLadrunoSas.stats[LSAS_LAST_RATIO_B] = 0.0;
+    mLadrunoSas.stats[LSAS_LAST_F] = GetF(mSigma, mAlpha);
 }
 
 // h with the alpha_in rule applied: a stage whose (alpha - alpha_in):n is not
@@ -828,6 +857,36 @@ ManzariDafalias::ladrunoSasIntegrate(void)
     const double eN = m_e_init - (1 + m_e_init) * GetTrace(CurStrain);
     mVoidRatio = m_e_init - (1 + m_e_init) * GetTrace(NextStrain);
 
+    // ---- Ladruno WP-152: the tension cutoff (separation) ----------------------
+    // The trial starts as the committed state. A SEPARATED point carries no
+    // tension and no shear (model p = p_min) and absorbs the strain; it
+    // re-contacts once the volumetric opening since entry has closed with an
+    // overlap that gives p_contact: g = tr(eps) - tr(eps_entry) (compression
+    // positive) >= g_c = (p_contact - p_min) / K(p_contact). Then
+    // p_re = p_min + K(p_contact) g >= p_contact, alpha = alpha_in = 0, and SAS-ME
+    // resumes at the next update. Ladruno_implementation/152_sanisand_tension_cutoff.md.
+    mLadrunoSas.sep = mLadrunoSas.sep_n;
+    mLadrunoSas.sepTr = mLadrunoSas.sepTr_n;
+    const bool tcOn = (o.tcPcontact > 0.0);
+    if (tcOn && mLadrunoSas.sep_n) {
+        const double g = GetTrace(NextStrain) - mLadrunoSas.sepTr_n;
+        Vector Sc(mI1);
+        Sc *= (o.tcPcontact - m_Presidual);
+        double Kc, Gc;
+        GetElasticModuli(Sc, mVoidRatio, Kc, Gc);
+        const double gc = (o.tcPcontact - m_Pmin) / Kc;
+        if (g >= gc) {
+            ladrunoSasSetIsotropic(m_Pmin + Kc * g);
+            mLadrunoSas.sep = false;
+            st[LSAS_SEP_EXITS] += 1.0;
+            mLadrunoLastPath = 9;
+        } else {
+            ladrunoSasSetIsotropic(m_Pmin);
+            mLadrunoLastPath = 8;
+        }
+        return;
+    }
+
     // Paper alpha_in rule (the default): alpha_in changes ONLY at a plastic
     // onset or where (alpha - alpha_in):n reaches 0 -- both decided inside this
     // update. integrate()'s once-per-increment test on the elastic trial
@@ -839,6 +898,8 @@ ManzariDafalias::ladrunoSasIntegrate(void)
     Vector S(mSigma_n), A(mAlpha_n), Z(mFabric_n), Ee(mEpsilonE_n),
            ain(paperRule ? mAlpha_in_n : mAlpha_in);
     int code = 0;
+    const double p0c = one3 * GetTrace(S) + m_Presidual;   // Ladruno WP-152: committed p (the E2 test)
+    bool startTension = false;                             // Ladruno WP-152: code 3 BECAUSE p0 <= 0 (E1)
 
     // ---- 0. entry: the committed state must be admissible ------------------
     {
@@ -846,8 +907,14 @@ ManzariDafalias::ladrunoSasIntegrate(void)
         const double ta = GetTrace(A), tz = GetTrace(Z);
         if (!finite6(S) || !finite6(A) || !finite6(Z) || !finite6(ain) || !(p0 > 0.0)
             || fabs(ta) > 1.0e-6 * fmax(GetNorm_Contr(A), m_m)
-            || fabs(tz) > 1.0e-6 * fmax(GetNorm_Contr(Z), m_m))
+            || fabs(tz) > 1.0e-6 * fmax(GetNorm_Contr(Z), m_m)) {
             code = RC_START_OTHER;
+            // Ladruno WP-152: only "finite, traces clean, p0 <= 0" is a tension
+            // start; a non-finite value or a trace violation stays a loud refusal.
+            startTension = finite6(S) && finite6(A) && finite6(Z) && finite6(ain) && !(p0 > 0.0)
+                && !(fabs(ta) > 1.0e-6 * fmax(GetNorm_Contr(A), m_m))
+                && !(fabs(tz) > 1.0e-6 * fmax(GetNorm_Contr(Z), m_m));
+        }
         else if (GetF(S, A) > mTolF)
             code = RC_START_F;
         else {
@@ -979,6 +1046,28 @@ ManzariDafalias::ladrunoSasIntegrate(void)
     } else {
         mLadrunoLastPath = 7;
         ladrunoTraceSubstep(0.0, 1.0, std::numeric_limits<double>::quiet_NaN(), TR_REFUSED, false);
+    }
+
+    // ---- Ladruno WP-152: tension cutoff ENTRY, masking ONLY low-p / tension -----
+    // E1: tension -- code 6 (a stage or the predictor at p <= 0 at dT_min), or
+    //     code 3 because the committed p0 <= 0 (finite, traces clean).
+    // E2: a low-confinement accuracy or cost failure -- code 4 or 9 while the
+    //     committed p0 < p_sep (p_sep = 0 disables E2: a pure tension cutoff).
+    // Everything else (code 5 loadingNonPosH = the alpha_in singularity, code 2,
+    // code 3 non-finite / trace, codes 7, 8, and code 4/9 at p0 >= p_sep) still
+    // refuses below, at any p.
+    if (tcOn && code != 0) {
+        const bool e1 = (code == RC_LOWP) || (code == RC_START_OTHER && startTension);
+        const bool e2 = (code == RC_DTMIN || code == RC_CAP) && (p0c < o.tcPsep);
+        if (e1 || e2) {
+            st[e1 ? LSAS_SEP_ENTRIES_TENSION : LSAS_SEP_ENTRIES_LOWP] += 1.0;
+            mSubstepCapHitInME = false;   // a code 9 set it; the cap was reached by a separating point
+            mLadrunoSas.sep = true;
+            mLadrunoSas.sepTr = GetTrace(NextStrain);
+            ladrunoSasSetIsotropic(m_Pmin);
+            mLadrunoLastPath = 8;
+            return;
+        }
     }
 
     if (code != 0) {

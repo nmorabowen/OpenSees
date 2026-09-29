@@ -98,6 +98,7 @@ SAS_NAMES = [
     "maxSubstepsOneUpdate", "lastSubsteps", "lastRefuseCode", "maxAlphaRatio",
     "lastAlphaRatio", "lastF", "entryOverKappa", "rejectedReversal",
     "hFloored", "hSoftCapped", "reseatHeld",   # WP-151 (appended; absent on older builds)
+    "sepEntriesTension", "sepEntriesLowP", "sepExits", "sepActive",   # WP-152 (appended)
 ]
 SAS_REFUSE_CODES = {0: "none", 1: "startOutsideYield", 2: "startAlphaOutsideBounding",
                     3: "startInadmissible", 4: "errorAtDTmin", 5: "loadingNonPosH",
@@ -107,6 +108,7 @@ PATH_CODES = {
     -1: "notExplicit", 0: "elastic", 1: "startOutsideYield",
     2: "elasticToPlastic", 3: "plastic", 4: "unloadThenPlastic",
     5: "pnBelowPresidualReset",
+    8: "separated", 9: "recontact",   # WP-152 (tension cutoff)
 }
 
 
