@@ -167,3 +167,41 @@ About 2.5–3 agent-days to the first SHA for the footing gates:
 
 Ownership: the WP-151 (R1) session. The merge gate is as for #893: an adversarial review, Zone-A, and a local
 Windows log.
+
+## Implementation status and results (2026-09-29)
+
+The C++ is complete at 8cdc0bdba (draft #894). A Windows build of all 5 targets passes:
+- 20 SANISAND/ManzariDafalias test files: 242 passed, 5 skipped, 2 xfailed, 0 failed;
+- the static gates.
+
+**Oracle first** (`Ladruno_files/testbed/sanisand_tension_cutoff/tc_oracle.py`, fixture
+`tests/data/wp152_oracle_paths.json`). The three element paths start from the C++ post-flip state (σ = 2.0036 kPa
+isotropic), with R1 (the full set) and the cutoff at p_sep 0.5, p_contact 1.0:
+
+| path | oracle events (step) | C++ | net work |
+|---|---|---|---|
+| isotropic out and back | entry 4 (E1), re-contact 96 | the same steps, E1 | ≥ 0 |
+| triaxial extension and back | entry 14 (E1), re-contact 110 | the same steps; the entry is **E2** | ≥ 0 |
+| 4 isotropic open/close cycles | 4 entries, 4 re-contacts, alternating | the same steps, all E1, no chatter | 0.00147 (oracle 0.00148) |
+
+- Separated steps: σ = p_min·I exactly. After re-contact the C++ agrees with the oracle to ≤ 4e-6.
+- On the extension path the entry is E2: SAS-ME's accuracy/cost limit at p0 < p_sep comes first, in the same step
+  where the exact trajectory reaches p = 0.
+- Before separation on that path, below p ≈ 1 kPa, the deviator differs by ≤ 0.0125 kPa. That is SAS-ME's absolute
+  error floor (σ_ref = 1 kPa, `-errFloor`), pre-existing and not the cutoff.
+
+**It touches nothing else.** On the 643 WP-151 replays with the cutoff given:
+- the 533 accepted updates are bit-identical;
+- all 110 refusals keep their code (101 α_in singularity, 8 α outside the bounding surface, 1 accuracy failure at
+  high p);
+- none of them is low-p, so none separates.
+
+**Other C++ checks:**
+- The separation state survives a database save and restore: a restored point is still separated, and the
+  continuation is bit-identical.
+- A separated point's `tangentEP` is C_e at p_min.
+- The census counts once per committed transition. The first build counted per update call (a re-contact counted as
+  2); this is recorded as a quirk.
+- The parser refuses: p_sep < 0, p_contact ≤ p_sep, p_contact ≤ p_min, a non-129 scheme, and `-implex`.
+
+**Next: the footing gates** (the orchestrator, on Esmeralda), then the adversarial review and Zone-A.
