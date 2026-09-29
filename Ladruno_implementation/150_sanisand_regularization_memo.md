@@ -53,10 +53,13 @@ updated: 2026-09-28
 >    - A regularizer that acts on ψ-softening (nonlocal void ratio) or on fracture energy (crack band) does not touch it.
 >
 > **Recommendation.** R0 (confirm, no code) → **R1** (opt-in h floor everywhere + hysteretic re-seat, coupled) →
-> **R2** (unregularized B/4–B/8–B/16 re-measure past 0.05) → **R3 only if R2 fails TIMs' tolerance**.
-> R3 is Perzyna-type viscoplasticity *inside* `LadrunoSANISAND`. Rejected: the Duvaut–Lions wrapper (it inherits the
-> refusal), and nonlocal ψ̄ for this stage (it acts on the wrong mechanism). Cosserat or gradient-in-λ only if a band
-> **width** deliverable is ever named.
+> **R2** (unregularized B/4–B/8–B/16 re-measure past 0.05) → **R3 only if the PEAK q_u (the limit load) is
+> mesh-dependent beyond TIMs' tolerance** (revised 2026-09-29, §4 R3).
+> - If the mesh gap opens only after the peak: none (disclose).
+> - Post-peak ψ-softening: a nonlocal void ratio (Gao et al. 2022).
+> - A pre-peak non-associated onset: Perzyna inside `LadrunoSANISAND`.
+> Rejected: the Duvaut–Lions wrapper (it inherits the refusal). Cosserat or gradient-in-λ only if a band **width**
+> deliverable is ever named.
 
 Reproducers: `Ladruno_files/testbed/hypo_bearing/wp150_regularization/`. The scripts read the WP-138 Esmeralda
 checkpoints read-only (`field_*.npz`: committed stress, state, ψ and SAS counters per GP) and mirror the kernel
@@ -355,27 +358,58 @@ DM04.
   Otherwise go to R3.
 - On present evidence (−4 to −5 % B/16 vs B/8 at 0.010–0.013), R3 is likely if the tolerance is below about 5 %.
 
-**R3 — Perzyna-type viscoplastic SANISAND (conditional; C++ behind a default-off flag).**
-- Rate form λ̇ = ⟨f⟩ / (2G·τ), with f = SANISAND's own yield function (the stress's distance outside the α-cone).
-  The backward-Euler denominator is **H + 2G·τ/Δt**.
-- Why Perzyna and not Duvaut–Lions: Perzyna **never needs an inviscid solution**, so it cannot inherit the refusal.
-  It uses the real Cₑ(p). It is an ODE in pseudo-time, so SAS-ME's error control integrates it unchanged.
-- η = 2G·τ (∝ √p) keeps the Deborah number uniform over the domain.
-- **The trade-off, stated up front.**
-  - The incremental problem stays elliptic only while τ ≳ 0.2–0.45·Δt_step (§2.1: H_v/2G = τ/Δt).
-  - So either the deck caps ds at about 2τ (cost up to ~10×: E_B's mean ds was 2e-4 m against a 2e-5 base), or τ
-    grows and so does the rate bias.
-  - The bias estimate is f ≈ 2G·τ·λ̇: about 7 kPa in the band at τ = 1e-5 m, and it must be measured.
-  - There is **no intrinsic width** (quasi-statics, ADR-90 A0/V3). R3 claims a q–s that converges in h at a declared
-    (τ, Δt), never a width.
-- **Gate:** C8 (the algorithmic acoustic tensor is elliptic at every committed state); q(s/B) at fixed τ contracts in
-  h; Δt-convergence at fixed τ; q(τ)/q(τ → 0) reported per leg at {τ/2, τ, 2τ}; zero steps committed with τ > 0 but
-  Δt = 0 (the revert path, ADR-90 §4.2).
+**R3 — revised 2026-09-29: the regularizer is chosen by WHERE the mesh gap opens, relative to the PEAK.**
 
-**R4 — nonlocal ψ̄ (only if a post-peak branch appears in R2/R3).**
-- Gao-type: a nonlocal volumetric-strain increment drives e, averaged with a lag by a domain component, with a
-  declared ℓ ≥ 3·h_coarse.
-- It is the right tool once ψ-softening dominates, not before.
+TIMs' literature report (their workbench `Tries/2d-model/references/literature_handling.md`, via the orchestrator)
+changes the question in two ways:
+- **Every source defines the limit load as the PEAK.** So the deliverable is q_u and the s/B at the peak, not the
+  whole post-peak curve.
+- It names a **nonlocal void ratio** (Gao, Li & Lu 2022, open access) as the least invasive regularization for a DM04
+  kernel. It reports that Roy et al. (2020) reached a DM04 footing peak **with no regularization**, with a p′ floor of
+  0.001 kPa and tiny increments. That is not verified here.
+
+So the R3 question becomes: **is the PEAK mesh-dependent beyond ½ of the test scatter (D-b)?** Three cases, read from
+the PB2 and Gate 1 legs (B/8, B/16, shear:15):
+
+| case | where the B/8–B/16–shear:15 gap opens | reading | R3 |
+|---|---|---|---|
+| A | not before the peak; the peak q_u and its s/B converge within ½ scatter | the post-peak is ill-posed but the deliverable is not | **none: disclose the post-peak spread** (the Roy et al. route) |
+| B | after the peak (ψ-softening in a properly dilating sand) | localization is driven by the void-ratio feedback | **R3a: nonlocal void ratio (Gao et al. 2022)** |
+| C | before the peak (the hardening-regime, non-associated onset of §2) | a nonlocal void ratio cannot reach it (§2.1: the onset is at fixed ψ) | **R3b: in-model Perzyna** |
+
+**R3a — nonlocal void ratio (Gao-type).**
+- e evolves from a weighted average of the neighbours' volumetric strain increments, over a declared ℓ ≥ 3·h_coarse.
+- *Pros:* it acts on exactly the variable that drives dense-sand softening. It is literature-backed on strip footings
+  (mesh-independent curves when h < ℓ), and gives an objective, if numerical, band width.
+- *Cons:* it does not restore ellipticity at a pre-peak onset. It needs neighbour plumbing the fork does not have: a
+  domain-level lagged averaging pass over GP coordinates, a halo for MP runs, and the nonlocal e carried through
+  getCopy / wire. It is least invasive in the constitutive equations, not in the code.
+
+**R3b — Perzyna-type viscoplasticity inside LadrunoSANISAND.**
+- Rate form λ̇ = ⟨f⟩ / (2G·τ), with f = SANISAND's own yield function (the stress's distance outside the α-cone). The
+  backward-Euler denominator is **H + 2G·τ/Δt**.
+- It never needs an inviscid solution, so it cannot inherit the refusal (unlike Duvaut–Lions). It uses the real Cₑ(p),
+  and is an ODE in pseudo-time that SAS-ME's error control integrates unchanged.
+- η = 2G·τ (∝ √p) keeps the Deborah number uniform over the domain.
+- *Pros:* it acts on any mechanism, pre- or post-peak; it is purely local; it has no plumbing cost.
+- *Cons:*
+  - there is **no intrinsic width** (quasi-statics, ADR-90 A0/V3);
+  - the incremental problem stays elliptic only while τ ≳ 0.2–0.45·Δt (§2.1), so either ds is capped at ~2τ (cost up
+    to ~10×) or the rate bias grows;
+  - the bias is f ≈ 2G·τ·λ̇, ~7 kPa in the band at τ = 1e-5 m, and must be measured.
+- **Gate:**
+  - C8 (the algorithmic acoustic tensor is elliptic at every committed state);
+  - q(s/B) at fixed τ contracts in h;
+  - Δt-convergence at fixed τ;
+  - q(τ)/q(τ → 0) reported per leg at {τ/2, τ, 2τ};
+  - zero steps committed with τ > 0 but Δt = 0 (the revert path, ADR-90 §4.2).
+
+**Why the physically dilating sets may land in A or B rather than C.** The campaign set's hardening-regime
+ellipticity loss (§2.1) is driven by its extreme non-associativity: D/3 ≈ −0.01 against qv/3 ≈ −0.5. The PB2 and
+Toyoura sets dilate 10–20× more, so their flow rule is much closer to associated.
+- **The discriminator:** the §2.1 acoustic census at their peak (the fraction of non-elliptic GPs, and H/2G there),
+  next to where the q gap opens.
+- R1 stays ON under any R3 (§2.3).
 
 **Not recommended now:** Cosserat and gradient-in-λ. They are the only routes to an objective *width* for this
 mechanism, and at this scale that width is numerical anyway. Open them only on a named width deliverable (ADR-59's gate).
@@ -501,7 +535,8 @@ Each step ends in a number, and each open decision is settled by the numbers of 
      deliverable** and Cosserat or gradient stays closed. For typical sands (d50 ≈ 0.2–0.5 mm), the band is 4–10 mm
      against h = 94–188 mm.
    - TIMs supply d50. The rule does not depend on the answer unless the sand is gravel.
-6. **D-b, the tolerance, decided by test scatter.**
+6. **D-b, the tolerance, decided by test scatter. It is applied to the PEAK q_u** (the limit-load definition of every
+   TIMs source), not to the whole curve.
    - The tolerance is the scatter of comparable footing tests at matched s/B (repeat tests, or N_γ scatter at the same
      D_r), taken from the step-4 sources.
    - If the step-3 spread (B/4, B/8, B/16, extrapolated) is **below half that scatter**, the answer is disclose; R2 is
@@ -788,6 +823,14 @@ Mohr–Coulomb envelope adds exactly p_r·(N_q − 1):
   free surface beside the footing refuses at s/B 0.0044 (maxSubsteps / errorAtDTmin, not the α_in wall).
 - Report the Gate 1 q with and without p_r·(N_q − 1) at the operative φ′, or bracket it with a p_r = 0.5 kPa leg (the
   survey's F / F/2 rule). Otherwise a ~7 % bias sits inside the D-b comparison.
+- **Refined 2026-09-29: p_r·(N_q − 1) is the LIMIT-STATE value, an upper bound before a mechanism forms.**
+  - `pr_extrapolate.py` on the campaign-set Presidual ladder (p_r 0 / 0.5 / 1 / 2 / 5 / 10 / 20 kPa, no peak reached;
+    `out_pr_extrapolate_campaign_ladder.md`): q is ~linear in p_r at every s/B, but dq/dp_r = 0.9 / 1.4 / 4.2 / 8.2 /
+    10.9 / 13.8 at s/B 0.005 / 0.01 / 0.02 / 0.03 / 0.04 / 0.05. That is far below N_q − 1 (≈ 60–1 000 at these φ′).
+  - At s/B 0.03, p_r = 1 kPa adds ~8 kPa (1.2 %), not ~65–100.
+  - **De-bias by extrapolating linearly in p_r to 0** from ≥ 2 legs (the orchestrator's p_r 2 / 5 / 10 brackets).
+  - The slope approaches N_q(φ′_op) − 1 only as the peak forms. It then gives an independent φ′_op (φ_b in the tool)
+    to check against the classical band.
 - **Analyser note:** with p_r ≠ 0 the driver's derived stress diagnostics (p′, ρ_α, η) in the npz are biased near the
   surface. `r2_analysis.py` uses only strains and q, so it is unaffected. For Toyoura B/8 the footing edge is at
   x = 0.6 m and h = 0.15 m.
