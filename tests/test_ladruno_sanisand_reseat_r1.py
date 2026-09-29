@@ -21,7 +21,9 @@ What is pinned (Ladruno_implementation/151_sanisand_reseat_singularity.md):
        restored WITH them), which also guards the size-keyed datastore trap;
   (i)  after the #868 merge, every option family at once (CPPM on one point,
        WP-129 SAS + R1 on another) survives a database round trip by value, and
-       the continuation is bit-identical.
+       the continuation is bit-identical;
+  (j)  the two SAS values (i) cannot continue on (errorVars stress, alphaInMode
+       bracket) cross the wire by value.
 
 Runtime: ~1 min (C++ replays).
 """
@@ -242,13 +244,17 @@ def test_every_option_family_crosses_the_wire_at_once_after_the_868_merge():
     stays `reseat`, else the R1 options would be inert in the continuation).
     Save, restore into a skeleton with every option at its DEFAULT, and require
     both option responses back by value, the census widths, and the next two
-    steps bit-identical to a run that never went through the database."""
+    steps bit-identical to a run that never went through the database.
+    errorVars stays `full` here: `-sasErrorVars stress` (WP-129's attribution
+    switch, not for production) commits an inadmissible state on this path at
+    step 13 with or without WP-151 (checked on a ladruno-HEAD build), so its
+    transport is value-checked in (j), without a continuation."""
     import tempfile
     import test_ladruno_sanisand_cppm_newton as t130
     cppm = (2, 2, 1, 1e-7, 1e-7, "-cppmTangent", "vanilla", "-cppmOnFail", "refuse",
             "-cppmHalvings", 5, "-cppmLineSearch", "on", "-cppmStart", "explicit")
     sas = (129, 0, 1, 1e-7, 1e-4, "-Presidual", 0.0, "-errFloor", 3.0, "-alphaBoundTol", 0.2,
-           "-alphaProject", 1, "-sasErrorVars", "stress", "-alphaEntryTol", 3.0,
+           "-alphaProject", 1, "-alphaEntryTol", 3.0,
            "-sasHFloor", 0.5, "-sasReseatHyst", 2.0, "-sasSoftCap", 0.25)
     cppm_def = (2, 2, 1, 1e-7, 1e-7)
     sas_def = (129, 0, 1, 1e-7, 1e-4, "-Presidual", 0.0)
@@ -270,7 +276,7 @@ def test_every_option_family_crosses_the_wire_at_once_after_the_868_merge():
     cppm_saved, sas_opts_saved = g(1, "cppmOptions"), g(2, "sasOptions")
     widths = (len(g(1, "substepStats")), len(g(2, "sasStats")))
     # #868's wire order, then WP-151's three
-    assert sas_opts_saved == [3.0, 0.2, 1.0, 0.0, 1.0, 3.0, 0.5, 2.0, 0.25], sas_opts_saved
+    assert sas_opts_saved == [3.0, 0.2, 1.0, 0.0, 0.0, 3.0, 0.5, 2.0, 0.25], sas_opts_saved
     assert cppm_saved[:6] == [1.0, 5.0, 1.0, 0.0, 1.0, 0.0], cppm_saved
     with tempfile.TemporaryDirectory(prefix="ladruno_wp151_all_", ignore_cleanup_errors=True) as td:
         db = os.path.join(td, "db")
@@ -295,3 +301,39 @@ def test_every_option_family_crosses_the_wire_at_once_after_the_868_merge():
         got = [g(1, "stress"), g(2, "stress")]
         ops.wipe()
     assert got == ref, (ref, got)
+
+
+# ----------------------------------------------------------------------- (j)
+def test_the_remaining_sas_options_cross_the_wire_by_value():
+    """(i)'s complement: the two SAS option values (i) cannot set on a path it
+    continues -- errorVars `stress` (see (i)) and alphaInMode `bracket` (which
+    refuses -sasReseatHyst) -- with the floor and the cap, saved after the
+    elastic stage and restored into a default skeleton: all nine by value."""
+    import tempfile
+    import test_ladruno_sanisand_cppm_newton as t130
+    cppm_def = (2, 2, 1, 1e-7, 1e-7)
+    sas_def = (129, 0, 1, 1e-7, 1e-4, "-Presidual", 0.0)
+    sas = sas_def + ("-sasErrorVars", "stress", "-sasAlphaIn", "bracket",
+                     "-sasHFloor", 1.5, "-sasSoftCap", 0.3)
+    g = lambda name: list(ops.eleResponse(2, "material", 1, name))
+    t130._two_cube_model(cppm_def, sas)
+    ops.updateMaterialStage("-material", 1, "-stage", 0)
+    ops.updateMaterialStage("-material", 2, "-stage", 0)
+    for _ in range(5):
+        assert ops.analyze(1) == 0
+    saved = g("sasOptions")
+    assert saved == [-1.0, 0.1, 0.0, 1.0, 1.0, 2.0, 1.5, 0.0, 0.3], saved
+    with tempfile.TemporaryDirectory(prefix="ladruno_wp151_j_", ignore_cleanup_errors=True) as td:
+        db = os.path.join(td, "db")
+        try:
+            ops.database("File", db)
+        except Exception as exc:                       # noqa: BLE001
+            pytest.skip(f"database() unsupported in this build: {exc}")
+        ops.save(1)
+        t130._two_cube_model(cppm_def, sas_def)
+        assert g("sasOptions") == [-1.0, 0.1, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0]
+        ops.database("File", db)
+        ops.restore(1)
+        got = g("sasOptions")
+        ops.wipe()
+    assert got == saved, (saved, got)
