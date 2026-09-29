@@ -237,14 +237,15 @@ static void run_oracle_dump(const char* path) {
         // increment, committed `in` held fixed (mirrors oracle damaged_consistent_tangent, rel_step 1e-6).
         double Cn[6][6];
         const double base = mp.fc / mp.E;
+        Params mpf = mp; mpf.subIncrForceN = returnMapPieces(mp, in, strain);   // both FD legs use the CENTRAL n (the map is discontinuous at n boundaries)
         for (int j = 0; j < 6; ++j) {
             const double dd = 1.0e-6 * (std::fabs(deps[j]) + base);
             double sp[6], sm[6], se[6], junk[6][6]; State o2;
             double strp[6], strm[6];
             for (int i = 0; i < 6; ++i) { strp[i] = strain[i]; strm[i] = strain[i]; }
             strp[j] += dd; strm[j] -= dd;
-            returnMap(mp, strp, in, o2, sp, se, junk, false, -1.0, true);
-            returnMap(mp, strm, in, o2, sm, se, junk, false, -1.0, true);
+            returnMap(mpf, strp, in, o2, sp, se, junk, false, -1.0, true);
+            returnMap(mpf, strm, in, o2, sm, se, junk, false, -1.0, true);
             for (int i = 0; i < 6; ++i) Cn[i][j] = (sp[i] - sm[i]) / (2.0 * dd);
         }
         double nd = 0, nn = 0, cmax = 0;
@@ -497,24 +498,25 @@ static void run_oracle_dump(const char* path) {
             returnMap(mp, strain, in, out, sigC, sigEff, Da, true, -1.0, true);
             double maxs = 0; for (int i = 0; i < 6; ++i) maxs = std::fmax(maxs, std::fabs(sigC[i] - sigO[i]));
             double Cn[6][6]; const double base = mp.fc / mp.E;
+    Params mpf = mp; mpf.subIncrForceN = returnMapPieces(mp, in, strain);   // both FD legs use the CENTRAL n (the map is discontinuous at n boundaries)
             for (int j = 0; j < 6; ++j) {
                 const double dd = 1.0e-6 * (std::fabs(deps[j]) + base);
                 double sp[6], sm[6], se[6], junk[6][6]; State o2; double strp[6], strm[6];
                 for (int i = 0; i < 6; ++i) { strp[i] = strain[i]; strm[i] = strain[i]; }
                 strp[j] += dd; strm[j] -= dd;
-                returnMap(mp, strp, in, o2, sp, se, junk, false, -1.0, true);
-                returnMap(mp, strm, in, o2, sm, se, junk, false, -1.0, true);
+                returnMap(mpf, strp, in, o2, sp, se, junk, false, -1.0, true);
+                returnMap(mpf, strm, in, o2, sm, se, junk, false, -1.0, true);
                 for (int i = 0; i < 6; ++i) Cn[i][j] = (sp[i] - sm[i]) / (2.0 * dd);
             }
             double nd = 0, nn = 0;
             for (int A = 0; A < 6; ++A) for (int B = 0; B < 6; ++B) { const double df = Da[A][B] - Cn[A][B]; nd += df * df; nn += Cn[A][B] * Cn[A][B]; }
             const double rel = std::sqrt(nd / nn);
             worst_dmg = std::fmax(worst_dmg, maxs); worst_dtan = std::fmax(worst_dtan, rel);
-            // tangent tolerance: 5e-5 for the direct map. With sub-incrementation (maxSubIncr > 0; the default is now the
-        // DETERMINISTIC chain of n = ceil(f_tr/0.3) pieces) the reported tangent is the LAST piece's consistent tangent,
-        // an APPROXIMATION of the chain's algorithmic tangent (~1-1.5 % here; the review measured ~3 % for the adaptive
-        // path) -- the chain's exact tangent would also need the sensitivity to the piece-start state.
-        const double tanTol = (mp.maxSubIncr > 0) ? 5.0e-2 : 5.0e-5;
+            // tangent tolerance 5e-5 for EVERY record (direct returns and sub-incremented chains alike): the reported tangent of an
+            // n-piece chain is the chain's own algorithmic tangent (accumulated forward incl. the kappa history, C8), and the FD
+            // reference pins n on both legs (mpf), so a chain is as consistent as a direct return. (It was loosened to 5e-2 for
+            // maxSubIncr > 0 while the last piece's tangent was reported: 6/41/121 % off at n = 2/4/64 in compression.)
+        const double tanTol = 5.0e-5;
             const bool ok = maxs < 1.0e-6 && rel < tanTol;
             if (!ok) ++fails;
             std::printf("  %-24s nom_sig_err=%.2e  tan_rel=%.2e  wc=%.3f  %s\n", label.c_str(), maxs, rel, out.wc, ok ? "ok" : "FAIL");
@@ -543,24 +545,25 @@ static void run_oracle_dump(const char* path) {
             returnMap(mp, strain, in, out, sigC, sigEff, Da, true, -1.0, true);
             double maxs = 0; for (int i = 0; i < 6; ++i) maxs = std::fmax(maxs, std::fabs(sigC[i] - sigO[i]));
             double Cn[6][6]; const double base = mp.fc / mp.E;
+    Params mpf = mp; mpf.subIncrForceN = returnMapPieces(mp, in, strain);   // both FD legs use the CENTRAL n (the map is discontinuous at n boundaries)
             for (int j = 0; j < 6; ++j) {
                 const double dd = 1.0e-6 * (std::fabs(deps[j]) + base);
                 double sp[6], sm[6], se[6], junk[6][6]; State o2; double strp[6], strm[6];
                 for (int i = 0; i < 6; ++i) { strp[i] = strain[i]; strm[i] = strain[i]; }
                 strp[j] += dd; strm[j] -= dd;
-                returnMap(mp, strp, in, o2, sp, se, junk, false, -1.0, true);
-                returnMap(mp, strm, in, o2, sm, se, junk, false, -1.0, true);
+                returnMap(mpf, strp, in, o2, sp, se, junk, false, -1.0, true);
+                returnMap(mpf, strm, in, o2, sm, se, junk, false, -1.0, true);
                 for (int i = 0; i < 6; ++i) Cn[i][j] = (sp[i] - sm[i]) / (2.0 * dd);
             }
             double nd = 0, nn = 0;
             for (int A = 0; A < 6; ++A) for (int B = 0; B < 6; ++B) { const double df = Da[A][B] - Cn[A][B]; nd += df * df; nn += Cn[A][B] * Cn[A][B]; }
             const double rel = std::sqrt(nd / nn);
             worst_dmg = std::fmax(worst_dmg, maxs); worst_dtan = std::fmax(worst_dtan, rel);
-            // tangent tolerance: 5e-5 for the direct map. With sub-incrementation (maxSubIncr > 0; the default is now the
-        // DETERMINISTIC chain of n = ceil(f_tr/0.3) pieces) the reported tangent is the LAST piece's consistent tangent,
-        // an APPROXIMATION of the chain's algorithmic tangent (~1-1.5 % here; the review measured ~3 % for the adaptive
-        // path) -- the chain's exact tangent would also need the sensitivity to the piece-start state.
-        const double tanTol = (mp.maxSubIncr > 0) ? 5.0e-2 : 5.0e-5;
+            // tangent tolerance 5e-5 for EVERY record (direct returns and sub-incremented chains alike): the reported tangent of an
+            // n-piece chain is the chain's own algorithmic tangent (accumulated forward incl. the kappa history, C8), and the FD
+            // reference pins n on both legs (mpf), so a chain is as consistent as a direct return. (It was loosened to 5e-2 for
+            // maxSubIncr > 0 while the last piece's tangent was reported: 6/41/121 % off at n = 2/4/64 in compression.)
+        const double tanTol = 5.0e-5;
             const bool ok = maxs < 1.0e-6 && rel < tanTol;
             if (!ok) ++fails;
             std::printf("  %-24s nom_sig_err=%.2e  tan_rel=%.2e  wc=%.3f  %s\n", label.c_str(), maxs, rel, out.wc, ok ? "ok" : "FAIL");
@@ -721,6 +724,58 @@ static void run_robustness() {
         check(finite && unconv == 0 && std::fabs(sp) < 1.0e-4 * t.ft && G > 120.0 && G < 125.0,   // B2: 1e-6 residual (OMEGA_MAX)
               "bilinear full crack opening: finite, converged, dissipates Gf (residual tangent stiffness)");
         std::printf("       (W*lch = %.2f N/m vs Gf = 120, unconverged steps %d, sigma_end = %.2e Pa)\n", G, unconv, sp);
+    }
+
+    // C8 — CHAIN TANGENT of the deterministic sub-incrementation (WP concrete3d-hang-diagnosis, review M1). The reported
+    // tangent of an n-piece chain is the chain's own algorithmic tangent, accumulated forward through the pieces
+    // (G_p = (Dt C^-1) G_(p-1) + Sk (x) g_(p-1) + Dt/n, g_p = R G_(p-1) + Kk g_(p-1) + R C/n; kappa history included),
+    // NOT the last piece's (which the review measured 6 % / 41 % / 121 % off at n = 2 / 4 / 64 in compression). Reference:
+    // central differences of the SAME chain with n PINNED on both legs (Params::subIncrForceN; the map is discontinuous
+    // where n changes). Virgin state, the reviewer's compression direction, and the tensile direction; every state whose
+    // ladder did not escalate (subInfo == n). Bound 1e-6 (measured 1e-8..1e-10, the floor is the FD truncation and the
+    // scalar Lode-angle central differences inside the principal Jacobian).
+    {
+        Params q = mp; q.Gf = 0.1; q.Gc = 5.0; q.Df = 0.85; q.As = 2.0; q.qh0 = 0.3; q.Hp = 0.01; q.lch = 50; q.lch_ref = 50;
+        q.tensionLaw = 1; q.flowPotential = 1; q.compDrive = 1; q.tcTemper = 2; q.maxSubIncr = 10; q.epsFc = 5.0 / (30 * 50);
+        const double dirs[2][6] = {{-1.0, 0.25, 0.25, 0.2, 0, 0}, {1.0, -0.2, -0.2, 0, 0, 0}};
+        const int targets[6] = {1, 2, 4, 9, 26, 64};
+        double worst = 0.0; int nchecked = 0; bool all = true;
+        for (int dc = 0; dc < 2; ++dc) {
+            for (int ti = 0; ti < 6; ++ti) {
+                const int target = targets[ti];
+                double z[6] = {0, 0, 0, 0, 0, 0}, e[6] = {0, 0, 0, 0, 0, 0}; bool found = false;
+                for (double sc = 2e-4; sc < 5e-2 && !found; sc *= 1.004) {
+                    double d[6]; for (int a = 0; a < 6; ++a) d[a] = sc * dirs[dc][a];
+                    if (detPieces(q, z, d, 0.0) != target) continue;
+                    double sg[6], kk, DD[6][6]; int inf = -9;
+                    returnMapTensor(q, z, d, 0.0, true, sg, kk, DD, false, &inf);
+                    if (inf == (target == 1 ? 0 : target)) { for (int a = 0; a < 6; ++a) e[a] = d[a]; found = true; }
+                }
+                if (!found) continue;                       // (tension: n = 1..4 always escalate the ladder near first cracking)
+                double sg[6], kk, D[6][6]; int inf;
+                returnMapTensor(q, z, e, 0.0, true, sg, kk, D, true, &inf);
+                Params qf = q; qf.subIncrForceN = target;
+                double nd = 0, nn = 0; bool straddle = false;
+                for (int j = 0; j < 6; ++j) {
+                    const double h = 1e-10; double ep[6], em[6];
+                    for (int a = 0; a < 6; ++a) { ep[a] = e[a]; em[a] = e[a]; }
+                    ep[j] += h; em[j] -= h;
+                    double s1[6], s2[6], k1, k2, Dd[6][6]; int i1 = -9, i2 = -9;
+                    returnMapTensor(qf, z, ep, 0.0, true, s1, k1, Dd, false, &i1); returnMapTensor(qf, z, em, 0.0, true, s2, k2, Dd, false, &i2);
+                    if (i1 != inf || i2 != inf) straddle = true;   // a leg escalated the ladder: the map jumps within 1e-10 here
+                    for (int a = 0; a < 6; ++a) { const double f = (s1[a] - s2[a]) / (2 * h); nd += (D[a][j] - f) * (D[a][j] - f); nn += f * f; }
+                }
+                if (straddle) {
+                    std::printf("       %s n=%2d (subInfo %2d): FD legs switch the ladder level within 1e-10 (map discontinuous here), skipped\n", dc == 0 ? "compression" : "tension    ", target, inf);
+                    continue;
+                }
+                const double rel = std::sqrt(nd / nn);
+                worst = std::fmax(worst, rel); ++nchecked; if (!(rel < 1.0e-6)) all = false;
+                std::printf("       %s n=%2d (subInfo %2d): ||T - D_fd||/||D_fd|| = %.2e\n", dc == 0 ? "compression" : "tension    ", target, inf, rel);
+            }
+        }
+        check(nchecked >= 8 && all, "chain tangent == FD of the same n-piece chain, n = 1..64, compression + tension (rel < 1e-6)");
+        std::printf("       (checked %d states, worst ||T - D_fd||/||D_fd|| = %.2e)\n", nchecked, worst);
     }
 
     // C7 — FULL CDPM2 POTENTIAL robustness (B1): 120k random tensor increments from the stress-free state with

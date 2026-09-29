@@ -1327,6 +1327,19 @@ def _trial_overshoot(sig_n, deps, mp, kp_n):
     return _yf_inv_hard(xi, rho, lode_r(th, mp["e"]), kp_n, mp)
 
 
+def det_pieces(sig_n, deps, mp, kp_n):
+    """The deterministic piece count n = clamp(ceil(f_tr / c), 1, nmax_pieces), c = mp["subincr_c"] (0.3), nmax_pieces =
+    mp["subincr_max_pieces"] (64). mp["subincr_force_n"] > 0 pins n (the finite-difference reference of the algorithmic
+    tangent must use the CENTRAL evaluation's n on both legs, or a leg can straddle an n boundary)."""
+    force = int(mp.get("subincr_force_n", 0))
+    if force > 0:
+        return force
+    c = float(mp.get("subincr_c", 0.3))
+    nmax_pieces = int(mp.get("subincr_max_pieces", 64))
+    f_tr = _trial_overshoot(sig_n, np.asarray(deps, float), mp, kp_n)
+    return 1 if f_tr <= 0.0 else int(min(nmax_pieces, max(1, np.ceil(f_tr / c))))
+
+
 def _return_map_tensor_det(sig_n, deps, mp, kp_n):
     """DETERMINISTIC sub-incrementation (hardening map): n = clamp(ceil(f_tr / c), 1, nmax_pieces) equal pieces,
     each a direct return, chained from the committed state; ALWAYS applied (no 'try direct first'), so a given
@@ -1335,12 +1348,16 @@ def _return_map_tensor_det(sig_n, deps, mp, kp_n):
     the level, which changes only where a level fails). Refuse (honest failure = the direct-return fallback)
     only after the ladder. The total work is structurally bounded by n + 2n + 4n <= 7 * nmax_pieces direct
     returns. c = mp["subincr_c"] (0.3), nmax_pieces = mp["subincr_max_pieces"] (64). n = 1 (f_tr <= c, incl.
-    elastic trials) is one direct return, byte-identical to the direct map."""
-    c = float(mp.get("subincr_c", 0.3))
-    nmax_pieces = int(mp.get("subincr_max_pieces", 64))
+    elastic trials) is one direct return, byte-identical to the direct map.
+
+    DISCONTINUITIES (measured on the reviewer's probes, honest): the map is a function of the increment, but it is NOT
+    continuous where n changes (a chain of n and of n + 1 pieces are two different integrations of the same increment) nor
+    where the ladder switches level; the jump is the difference between two consistent integrations, ~0.4-1.5 % of
+    sigma_eff and up to ~2.5 in kappa_p near first cracking for the compressive/tensile probes (see the kernel comment).
+    It is smaller than the failure-driven adaptive path's (1.8 % vs 13.3 % measured), which is discontinuous at every
+    attempt boundary and depends on the Newton iterate's noise."""
     deps = np.asarray(deps, float)
-    f_tr = _trial_overshoot(sig_n, deps, mp, kp_n)
-    n = 1 if f_tr <= 0.0 else int(min(nmax_pieces, max(1, np.ceil(f_tr / c))))
+    n = det_pieces(sig_n, deps, mp, kp_n)
     if n == 1:
         r = _return_map_tensor_1(sig_n, deps, mp, kp_n, True)
         if r[3]:
@@ -2652,12 +2669,17 @@ def damaged_consistent_tangent(state, deps6, mp, Gf, Gc, lch, As=2.0, rel_step=1
     Duvaut-Lions relaxation (beta is constant in deps, so the FD picks up the blended effective tangent)."""
     base = mp["fc"] / mp["E"]
     C = np.zeros((6, 6))
+    mp_leg = mp
+    if mp.get("subincr_mode", "det") != "adaptive" and int(mp.get("max_subincr", 0)) > 0             and state.get("wt", 0.0) < _omega_dead(mp) and state.get("wc", 0.0) < _omega_dead(mp):
+        # the deterministic map is discontinuous where n = ceil(f_tr/c) changes: pin the CENTRAL evaluation's n on both
+        # FD legs (dead points take their own path; their n follows the remainder, left unpinned here)
+        mp_leg = dict(mp, subincr_force_n=det_pieces(state["sig_bar"], np.asarray(deps6, float), mp, state["kp"]))
     for j in range(6):
         d = rel_step * (abs(deps6[j]) + base)
         dp = np.array(deps6, float); dp[j] += d
         dm = np.array(deps6, float); dm[j] -= d
-        sp, _, _ = damaged_step_tensor(state, dp, mp, Gf, Gc, lch, As, dt=dt)
-        sm, _, _ = damaged_step_tensor(state, dm, mp, Gf, Gc, lch, As, dt=dt)
+        sp, _, _ = damaged_step_tensor(state, dp, mp_leg, Gf, Gc, lch, As, dt=dt)
+        sm, _, _ = damaged_step_tensor(state, dm, mp_leg, Gf, Gc, lch, As, dt=dt)
         C[:, j] = (sp - sm) / (2.0 * d)
     return C
 

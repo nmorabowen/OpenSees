@@ -156,6 +156,7 @@ struct Params {
     int    subIncrMode = 0;
     double subIncrC = 0.3;
     int    subIncrMaxPieces = 64;
+    int    subIncrForceN = 0;   // > 0 pins the deterministic piece count n (finite-difference legs of the algorithmic tangent use the CENTRAL n)
     int    subIncrRescue = 1;   // deterministic mode only: after the ladder fails, try the ADAPTIVE path (bounded by maxSubAttempts) before refusing
     // DEAD POINTS (WP concrete3d-hang-diagnosis, owner decision 2026-09-28): the residual-strength fraction (1 - omega) at or
     // below which a point's crack (omega_t) or crush (omega_c) is treated as fully open. Committed damage >= omegaDead:
@@ -1234,6 +1235,21 @@ inline void elasticPredTensor(const double sig_n[6], const double deps[6], const
 }
 
 // ---------------------------------------------------------------------------
+// Hardening-history sensitivities of ONE direct return (needed to chain sub-incremented pieces exactly): with
+// sigma_new = R(sigma_tr, kappa_n) and kappa_new = K(sigma_tr, kappa_n),
+//   Sk = d sigma_new / d kappa_n   (tensor-Voigt vector),
+//   R  = d kappa_new / d sigma_tr  (row over the tensor-Voigt sigma_tr; shear entries carry the factor 2),
+//   Kk = d kappa_new / d kappa_n.
+// Defaults are the ELASTIC piece (Sk = 0, R = 0, Kk = 1). Fed by the same implicit-function solve as the principal
+// Jacobian (one extra right-hand side, dR4/dkappa_n = -1), so it costs one more back-substitution.
+// ---------------------------------------------------------------------------
+struct PieceSens {
+    double Sk[6] = {0, 0, 0, 0, 0, 0};
+    double R[6]  = {0, 0, 0, 0, 0, 0};
+    double Kk = 1.0;
+};
+
+// ---------------------------------------------------------------------------
 // Principal Jacobian D[a][b] = d(sp_a)/d(w_b) by the implicit-function theorem on
 // the SAME residual the inner Newton solved (perfect-plastic OR hardening). This is
 // the analytic backbone of the consistent tangent. The single Lode directional
@@ -1250,8 +1266,9 @@ inline double lodeOfPrincipal(const double w[3], double e)
 }
 
 inline void principalJacobian(const double w[3], const PrincipalResult& pr, const Params& mp,
-                              bool hardening, double D[3][3])
+                              bool hardening, double D[3][3], double* hs = nullptr)
 {
+    // hs (optional, 7 doubles, hardening branch): [0..2] d sp_a/d kappa_n, [3..5] d kappa_new/d w_b, [6] d kappa_new/d kappa_n
     const double fc = mp.fc, m0 = mp.m0, K = bulkK(mp), G = shearG(mp);
     const double rho_tr = pr.rho_tr, rho = pr.rho, dlam = pr.dlam, r = pr.r, xi = pr.xi, kp = pr.kp;
     const double m_v = mp.Df * m0 / (SQRT3 * fc);
@@ -1382,12 +1399,26 @@ inline void principalJacobian(const double w[3], const PrincipalResult& pr, cons
             }
             const double dxi  = M[0][4] / M[0][0];
             const double drho = M[1][4] / M[1][1];
+            if (hs) hs[3 + b] = M[3][4] / M[3][3];                     // d kappa_new / d w_b
             const double dscale = (rhotr > 0.0) ? (drho * rhotr - rho * (s_tr_b / rhotr)) / (rhotr * rhotr) : 0.0;
             const double scale = (rhotr > 0.0) ? rho / rhotr : 0.0;
             for (int a = 0; a < 3; ++a) {
                 const double ds_tr_a = (a == b ? 1.0 : 0.0) - 1.0 / 3.0;
                 D[a][b] = ds_tr_a * scale + pr.s_tr[a] * dscale + (1.0 / SQRT3) * dxi;
             }
+        }
+        if (hs) {
+            // kappa_n column: R4 = kappa - kappa_n - ..., so J u = +e4 (u = d(xi,rho,dlam,kappa)/d kappa_n)
+            double M[4][5];
+            for (int i = 0; i < 4; ++i) { for (int j = 0; j < 4; ++j) M[i][j] = Ju[i][j]; M[i][4] = (i == 3) ? 1.0 : 0.0; }
+            for (int c = 0; c < 4; ++c) {
+                int piv = c; for (int rr = c + 1; rr < 4; ++rr) if (std::fabs(M[rr][c]) > std::fabs(M[piv][c])) piv = rr;
+                for (int j = 0; j < 5; ++j) { double tt = M[c][j]; M[c][j] = M[piv][j]; M[piv][j] = tt; }
+                for (int rr = 0; rr < 4; ++rr) if (rr != c) { double f = M[rr][c] / M[c][c]; for (int j = c; j < 5; ++j) M[rr][j] -= f * M[c][j]; }
+            }
+            const double dxi_k = M[0][4] / M[0][0], drho_k = M[1][4] / M[1][1];
+            for (int a = 0; a < 3; ++a) hs[a] = pr.s_tr[a] * ((rhotr > 0.0) ? drho_k / rhotr : 0.0) + dxi_k / SQRT3;
+            hs[6] = M[3][4] / M[3][3];
         }
     }
 }
@@ -1401,7 +1432,8 @@ inline void principalJacobian(const double w[3], const PrincipalResult& pr, cons
 // hydrostatic trial is regular. Every row equal => zero deviatoric stiffness (the stress is pinned to the
 // axis) — the rank-deficient apex tangent handoff §6 listed as owed. Returns false on a degenerate state.
 // ---------------------------------------------------------------------------
-inline bool vertexPrincipalJacobian(const double w[3], const PrincipalResult& pr, const Params& mp, double D[3][3])
+inline bool vertexPrincipalJacobian(const double w[3], const PrincipalResult& pr, const Params& mp, double D[3][3],
+                                    double* hs = nullptr)
 {
     const double fc = mp.fc, m0 = mp.m0, K = bulkK(mp), G = shearG(mp);
     const double sigV = pr.xi / SQRT3, kp = pr.kp;
@@ -1426,6 +1458,13 @@ inline bool vertexPrincipalJacobian(const double w[3], const PrincipalResult& pr
         const double dev_b = f_k * pr.s_tr[b] / (4.0 * G * G * eq * xh);         // F_rhotr * s_b/rho_tr
         const double dsdw = -(f_k * kp_st / 3.0 + dev_b) / F_s;
         for (int a = 0; a < 3; ++a) D[a][b] = dsdw;
+        // d kappa_new / d w_b = kp_s dsigV/dw_b + kp_st/3 + s_b/(4 G^2 eq xh)
+        if (hs) hs[3 + b] = kp_s * dsdw + kp_st / 3.0 + pr.s_tr[b] / (4.0 * G * G * eq * xh);
+    }
+    if (hs) {                                   // kappa_n enters kp = kp_n + eq/xh with unit weight: F_kn = f_k
+        const double dsdk = -f_k / F_s;
+        for (int a = 0; a < 3; ++a) hs[a] = dsdk;
+        hs[6] = 1.0 + kp_s * dsdk;
     }
     return true;
 }
@@ -1439,8 +1478,9 @@ inline bool vertexPrincipalJacobian(const double w[3], const PrincipalResult& pr
 // ---------------------------------------------------------------------------
 inline void consistentTangent(const double sig_tr[6], const double w[3], const double V[3][3],
                               const PrincipalResult& pr, const Params& mp, bool hardening,
-                              double Dtan6[6][6])
+                              double Dtan6[6][6], PieceSens* ps = nullptr)
 {
+    if (ps) *ps = PieceSens();   // elastic / fallback default
     // Elastic step, the non-converged safe fallback (returnMapHardening reset to the elastic
     // predictor), or a converged apex => the elastic operator. NOTE (PR #249 review): at a true
     // apex the physical tangent collapses toward zero (the stress is pinned at the vertex — an
@@ -1456,10 +1496,24 @@ inline void consistentTangent(const double sig_tr[6], const double w[3], const d
     double E[3][3][3];
     for (int a = 0; a < 3; ++a) for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) E[a][i][j] = V[i][a] * V[j][a];
     double D[3][3];
+    double hs[7] = {0, 0, 0, 0, 0, 0, 1.0};
+    double* hsp = (ps && hardening) ? hs : nullptr;
     if (pr.apex) {
-        if (!vertexPrincipalJacobian(w, pr, mp, D)) { elasticC(mp, Dtan6); return; }
+        if (!vertexPrincipalJacobian(w, pr, mp, D, hsp)) { elasticC(mp, Dtan6); return; }
     } else {
-        principalJacobian(w, pr, mp, hardening, D);
+        principalJacobian(w, pr, mp, hardening, D, hsp);
+    }
+    if (hsp) {
+        double Sm[3][3], Gm[3][3];
+        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) {
+            double s1 = 0.0, s2 = 0.0;
+            for (int a = 0; a < 3; ++a) { s1 += hs[a] * E[a][i][j]; s2 += hs[3 + a] * E[a][i][j]; }
+            Sm[i][j] = s1; Gm[i][j] = s2;
+        }
+        matToVoigt(Sm, ps->Sk);
+        ps->R[0] = Gm[0][0]; ps->R[1] = Gm[1][1]; ps->R[2] = Gm[2][2];
+        ps->R[3] = 2.0 * Gm[0][1]; ps->R[4] = 2.0 * Gm[1][2]; ps->R[5] = 2.0 * Gm[0][2];
+        ps->Kk = hs[6];
     }
 
     // dsigma/dsig_tr as a 4th-order tensor 𝔻_ijkl
@@ -1792,10 +1846,34 @@ inline void dscalarDsig(int which, const double sig6[6], const Params& mp, doubl
 // trial: eps = new strain, sigEff = sig_tr, so the FD increment d is a perturbation of the trial) the perturbed trial is
 // split spectrally, the tensile part is carried elastically and the return map runs on the compressive remainder -- the
 // same map returnMap applies, so the FD tracks the tangent actually being assembled.
-inline void rmForFD(const Params& mp, const State& in, const double d[6], double sb[6], double& kp)
+//
+// PIECE COUNT PINNED: the deterministic map is discontinuous where n = ceil(f_tr/c) changes, so a +/- leg that lands on
+// the other side of an n boundary would differentiate the jump. Both legs therefore use the CENTRAL evaluation's n
+// (rmPiecesFD at the central increment, passed as nForce); if the central point itself sits exactly on a boundary the
+// legs simply follow the central side, which is the branch returnMap took for the reported stress.
+inline int detPieces(const Params& mp, const double sig_n[6], const double deps[6], double kp_n);
+
+inline int rmPiecesFD(const Params& mp, const State& in, const double d[6])
+{
+    if (!(in.wt >= mp.omegaDead)) return detPieces(mp, in.sigEff, d, in.kp);
+    double sigTr[6]; elasticPredTensor(in.sigEff, d, mp, sigTr);
+    double A[3][3], w[3], V[3][3]; voigtToMat(sigTr, A); eig3sym(A, w, V);
+    double sm[3]; for (int a = 0; a < 3; ++a) sm[a] = w[a] < 0.0 ? w[a] : 0.0;
+    double S[3][3], minus[6];
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) {
+        double v = 0.0; for (int a = 0; a < 3; ++a) v += V[i][a] * sm[a] * V[j][a];
+        S[i][j] = v;
+    }
+    matToVoigt(S, minus);
+    const double zero[6] = {0, 0, 0, 0, 0, 0};
+    return detPieces(mp, minus, zero, in.kp);
+}
+
+inline void rmForFD(const Params& mp, const State& in, const double d[6], int nForce, double sb[6], double& kp)
 {
     double dum[6][6];
-    if (!(in.wt >= mp.omegaDead)) { returnMapTensor(mp, in.sigEff, d, in.kp, true, sb, kp, dum, false); return; }
+    Params q = mp; q.subIncrForceN = nForce;
+    if (!(in.wt >= mp.omegaDead)) { returnMapTensor(q, in.sigEff, d, in.kp, true, sb, kp, dum, false); return; }
     double sigTr[6]; elasticPredTensor(in.sigEff, d, mp, sigTr);
     double A[3][3], w[3], V[3][3]; voigtToMat(sigTr, A); eig3sym(A, w, V);
     double sm[3], sq[3];
@@ -1808,7 +1886,7 @@ inline void rmForFD(const Params& mp, const State& in, const double d[6], double
     }
     matToVoigt(S, minus); matToVoigt(Q, plus);
     const double zero[6] = {0, 0, 0, 0, 0, 0};
-    returnMapTensor(mp, minus, zero, in.kp, true, sb, kp, dum, false);
+    returnMapTensor(q, minus, zero, in.kp, true, sb, kp, dum, false);
     for (int i = 0; i < 6; ++i) sb[i] += plus[i];
 }
 
@@ -1819,6 +1897,9 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
     const double eps0   = mp.ft / mp.E;
     const double eps_f  = mp.Gf / (mp.ft * mp.lch);
     const double eps_fc = epsFcOf(mp);
+    // piece count of the CENTRAL evaluation, pinned on every micro-FD leg below (see rmForFD)
+    int nFD = 1;
+    { double dC[6]; for (int i = 0; i < 6; ++i) dC[i] = eps_new[i] - in.eps[i]; nFD = rmPiecesFD(mp, in, dC); }
     const bool bilin = (mp.tensionLaw == 1);
 
     double A[3][3], w[3], V[3][3];
@@ -1990,8 +2071,8 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
             double dp[6], dm[6]; for (int i = 0; i < 6; ++i) { dp[i] = deps[i]; dm[i] = deps[i]; }
             dp[j] += hh; dm[j] -= hh;
             double sbp[6], sbm[6], kpp, kpm, dum[6][6];
-            rmForFD(mp, in, dp, sbp, kpp);
-            rmForFD(mp, in, dm, sbm, kpm);
+            rmForFD(mp, in, dp, nFD, sbp, kpp);
+            rmForFD(mp, in, dm, nFD, sbm, kpm);
             double Ap[3][3], wp[3], Vp[3][3], Am[3][3], wm[3], Vm[3][3];
             voigtToMat(sbp, Ap); eig3sym(Ap, wp, Vp);
             voigtToMat(sbm, Am); eig3sym(Am, wm, Vm);
@@ -2015,8 +2096,8 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
             double dp[6], dm[6]; for (int i = 0; i < 6; ++i) { dp[i] = deps[i]; dm[i] = deps[i]; }
             dp[j] += hh; dm[j] -= hh;
             double sbp[6], sbm[6], kpp, kpm, dum[6][6];
-            rmForFD(mp, in, dp, sbp, kpp);
-            rmForFD(mp, in, dm, sbm, kpm);
+            rmForFD(mp, in, dp, nFD, sbp, kpp);
+            rmForFD(mp, in, dm, nFD, sbm, kpm);
             double Ap[3][3], wp[3], Vp[3][3], Am[3][3], wm[3], Vm[3][3];
             voigtToMat(sbp, Ap); eig3sym(Ap, wp, Vp);
             voigtToMat(sbm, Am); eig3sym(Am, wm, Vm);
@@ -2048,8 +2129,8 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
                 double dp[6], dm[6]; for (int i = 0; i < 6; ++i) { dp[i] = deps[i]; dm[i] = deps[i]; }
                 dp[j] += hh; dm[j] -= hh;
                 double sbp[6], sbm[6], kpp, kpm, dum[6][6];
-                rmForFD(mp, in, dp, sbp, kpp);
-                rmForFD(mp, in, dm, sbm, kpm);
+                rmForFD(mp, in, dp, nFD, sbp, kpp);
+                rmForFD(mp, in, dm, nFD, sbm, kpm);
                 double Ap[3][3], wp[3], Vp[3][3], Am[3][3], wm[3], Vm[3][3];
                 voigtToMat(sbp, Ap); eig3sym(Ap, wp, Vp);
                 voigtToMat(sbm, Am); eig3sym(Am, wm, Vm);
@@ -2165,7 +2246,7 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
 // ---------------------------------------------------------------------------
 inline int returnMapTensor1(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
                             bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
-                            bool doTangent);
+                            bool doTangent, PieceSens* ps = nullptr);
 
 inline int returnMapTensorAdaptive(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
                                    bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
@@ -2181,20 +2262,39 @@ inline double trialOvershoot(const Params& mp, const double sig_n[6], const doub
     return yfInvHard(xi, rho, lodeR(th, mp.e), kp_n, mp);
 }
 
+// The deterministic piece count n = clamp(ceil(f_tr/c), 1, nmax) of a (state, increment); Params::subIncrForceN > 0 pins it.
+inline int detPieces(const Params& mp, const double sig_n[6], const double deps[6], double kp_n)
+{
+    if (mp.subIncrForceN > 0) return mp.subIncrForceN;
+    const double c = (mp.subIncrC > 0.0) ? mp.subIncrC : 0.3;
+    const int nmaxP = (mp.subIncrMaxPieces > 0) ? mp.subIncrMaxPieces : 64;
+    const double fTr = trialOvershoot(mp, sig_n, deps, kp_n);
+    int n = 1;
+    if (fTr > 0.0) { const double q = std::ceil(fTr / c); n = (q >= (double)nmaxP) ? nmaxP : (q < 1.0 ? 1 : (int)q); }
+    return n;
+}
+
 // DETERMINISTIC sub-incrementation (mirror of the oracle _return_map_tensor_det): n = clamp(ceil(f_tr/c), 1, nmax)
 // equal pieces, each a direct return, chained from the committed state, ALWAYS applied -- one (state, increment)
 // always takes the same path. A piece failure redoes the whole chain with 2n and then 4n pieces; the honest failure
 // (the direct-return fallback, status != 0) only after that. Structurally bounded: n + 2n + 4n <= 7 nmax direct
 // returns. n = 1 (f_tr <= c, incl. elastic trials) is one direct return, byte-identical to the direct map.
 // subInfo: 0 = direct, L >= 2 = the ladder level (piece count) that succeeded, -1 = final failure.
+//
+// DISCONTINUITY (honest statement; the earlier text here said the map was discontinuous only at ladder failures, which is
+// false): a chain of n pieces and a chain of n + 1 pieces are two different, each consistent, integrations of the same
+// increment, so sigma_eff and kappa_p JUMP where ceil(f_tr/c) changes, and again wherever the ladder switches level. The
+// jump is the discretization difference between the two integrations -- measured at 1e-19-apart strains on the
+// reviewer's probes: |dsigma_eff| 0.06-0.40 MPa (0.4-1.5 % of |sigma_eff|), kappa_p up to ~2.5 near first cracking.
+// Chosen over the failure-driven adaptive path because that one is discontinuous at every attempt boundary and depends on
+// the Newton iterate's noise (1.8 % vs 13.3 % measured), and because the deterministic map is a function of (state,
+// increment) only. Consumers that pin equality of nominally identical Gauss points (EAS alpha, hosting parity) must
+// allow the jump. The reported TANGENT is the CHAIN's (accumulated forward through the pieces, see the loop), not the
+// last piece's; Params::subIncrForceN pins n for finite-difference references of it.
 inline int returnMapTensorDet(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
                               double sig_new[6], double& kp_new, double Dtan6[6][6], bool doTangent, int* subInfo)
 {
-    const double c = (mp.subIncrC > 0.0) ? mp.subIncrC : 0.3;
-    const int nmaxP = (mp.subIncrMaxPieces > 0) ? mp.subIncrMaxPieces : 64;
-    const double fTr = trialOvershoot(mp, sig_n, deps, kp_n);
-    int n = 1;
-    if (fTr > 0.0) { const double q = std::ceil(fTr / c); n = (q >= (double)nmaxP) ? nmaxP : (q < 1.0 ? 1 : (int)q); }
+    const int n = detPieces(mp, sig_n, deps, kp_n);
     if (n == 1) {
         const int st = returnMapTensor1(mp, sig_n, deps, kp_n, true, sig_new, kp_new, Dtan6, doTangent);
         if (st == 0) { if (subInfo) *subInfo = 0; return 0; }
@@ -2202,25 +2302,59 @@ inline int returnMapTensorDet(const Params& mp, const double sig_n[6], const dou
     const int levels[3] = { n, 2 * n, 4 * n };
     for (int li = (n == 1 ? 1 : 0); li < 3; ++li) {
         const int L = levels[li];
-        double s[6], k = kp_n, sn[6], kn, Dt[6][6];
+        double s[6], k = kp_n, sn[6], kn, Dt[6][6], G[6][6], Gn[6][6], Cinv[6][6], C0m[6][6], g[6], gn[6];
+        PieceSens ps;
         for (int i = 0; i < 6; ++i) s[i] = sig_n[i];
+        if (doTangent) {
+            for (int i = 0; i < 6; ++i) { g[i] = 0.0; for (int j = 0; j < 6; ++j) G[i][j] = 0.0; }
+            elasticC(mp, C0m); invert6(C0m, Cinv);
+        }
         bool ok = true;
         for (int p = 0; p < L && ok; ++p) {
             double d[6]; for (int i = 0; i < 6; ++i) d[i] = deps[i] / L;
-            if (returnMapTensor1(mp, s, d, k, true, sn, kn, Dt, doTangent && (p == L - 1)) != 0) ok = false;
-            else { for (int i = 0; i < 6; ++i) s[i] = sn[i]; k = kn; }
+            if (returnMapTensor1(mp, s, d, k, true, sn, kn, Dt, doTangent, doTangent ? &ps : nullptr) != 0) ok = false;
+            else {
+                for (int i = 0; i < 6; ++i) s[i] = sn[i];
+                k = kn;
+                if (doTangent) {
+                    // CHAIN tangent, accumulated forward through the pieces. Piece p is sig_p = R(sig_(p-1) + C d/L, kappa_(p-1)),
+                    // kappa_p = K(same arguments), with the direct-return sensitivities Dt (= d sig_p/d(d/L)), Sk, R, Kk:
+                    //   d sig_p/d sig_(p-1) = Dt C^-1,   d sig_p/d kappa_(p-1) = Sk,
+                    //   d kappa_p/d sig_(p-1) = R,       d kappa_p/d kappa_(p-1) = Kk,     d kappa_p/d(d/L) = R C
+                    // and, with G = d sig/d(deps) (6x6) and g = d kappa/d(deps) (1x6), G_0 = 0, g_0 = 0:
+                    //   G_p = (Dt C^-1) G_(p-1) + Sk (x) g_(p-1) + Dt/L ,   g_p = R G_(p-1) + Kk g_(p-1) + (R C)/L .
+                    // This is the EXACT derivative of the fixed-n chain (the kappa history coupling included); the only
+                    // approximations left are the Lode-angle scalar central differences inside the principal Jacobian
+                    // and, in a ladder/rescue state, the chain that was actually integrated.
+                    double A[6][6], RC[6];
+                    for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
+                        double v = 0.0; for (int q = 0; q < 6; ++q) v += Dt[i][q] * Cinv[q][j];
+                        A[i][j] = v;
+                    }
+                    for (int j = 0; j < 6; ++j) { double v = 0.0; for (int q = 0; q < 6; ++q) v += ps.R[q] * C0m[q][j]; RC[j] = v; }
+                    for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
+                        double v = Dt[i][j] / L + ps.Sk[i] * g[j]; for (int q = 0; q < 6; ++q) v += A[i][q] * G[q][j];
+                        Gn[i][j] = v;
+                    }
+                    for (int j = 0; j < 6; ++j) {
+                        double v = ps.Kk * g[j] + RC[j] / L; for (int q = 0; q < 6; ++q) v += ps.R[q] * G[q][j];
+                        gn[j] = v;
+                    }
+                    for (int i = 0; i < 6; ++i) { g[i] = gn[i]; for (int j = 0; j < 6; ++j) G[i][j] = Gn[i][j]; }
+                }
+            }
         }
         if (ok) {
             for (int i = 0; i < 6; ++i) sig_new[i] = s[i];
             kp_new = k;
-            if (doTangent) for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Dtan6[i][j] = Dt[i][j];
+            if (doTangent) for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Dtan6[i][j] = G[i][j];
             if (subInfo) *subInfo = L;
             return 0;
         }
     }
     // ladder exhausted: last resort = the ADAPTIVE path (direct, then halving; bounded by maxSubAttempts), then the
     // honest failure. Reached only in the small share of states the fixed-n chains cannot integrate at all, where the
-    // alternative is a step cut; the map can only be discontinuous THERE, not everywhere as with adaptive-only.
+    // alternative is a step cut. (The deterministic map is NOT continuous overall: see the DISCONTINUITY note above.)
     if (mp.subIncrRescue)
         return returnMapTensorAdaptive(mp, sig_n, deps, kp_n, true, sig_new, kp_new, Dtan6, doTangent, subInfo);
     const int st0 = returnMapTensor1(mp, sig_n, deps, kp_n, true, sig_new, kp_new, Dtan6, doTangent);
@@ -2293,8 +2427,9 @@ inline int returnMapTensorAdaptive(const Params& mp, const double sig_n[6], cons
 
 inline int returnMapTensor1(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
                             bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
-                            bool doTangent)
+                            bool doTangent, PieceSens* ps)
 {
+    if (ps) *ps = PieceSens();
     double sig_tr[6];
     elasticPredTensor(sig_n, deps, mp, sig_tr);
     double A[3][3], w[3], V[3][3];
@@ -2326,7 +2461,7 @@ inline int returnMapTensor1(const Params& mp, const double sig_n[6], const doubl
         return 2;
     }
 
-    if (doTangent) consistentTangent(sig_tr, w, V, pr, mp, hardening, Dtan6);
+    if (doTangent) consistentTangent(sig_tr, w, V, pr, mp, hardening, Dtan6, ps);
     return pr.converged ? 0 : 2;   // 0 OK, 2 = no-converge (honest flag)
 }
 
@@ -2514,6 +2649,23 @@ inline int returnMap(const Params& mp, const double strain[6], const State& inRa
         }
     }
     return status;
+}
+
+// The deterministic piece count that returnMap(mp, strain, inRaw, ...) uses for its (first) return map -- for tests and
+// finite-difference references that must pin n on both legs (Params::subIncrForceN). 1 for a crushed (frozen) point.
+inline int returnMapPieces(const Params& mp, const State& inRaw, const double strain[6])
+{
+    double deps[6];
+    for (int i = 0; i < 6; ++i) deps[i] = strain[i] - inRaw.eps[i];
+    if (inRaw.wc >= mp.omegaDead) return 1;
+    if (inRaw.wt >= mp.omegaDead) {
+        State rebased = inRaw;                       // rmPiecesFD reads the re-based trial state like damagedTangent does
+        double sigTr[6]; elasticPredTensor(inRaw.sigEff, deps, mp, sigTr);
+        for (int i = 0; i < 6; ++i) { rebased.sigEff[i] = sigTr[i]; rebased.eps[i] = strain[i]; }
+        const double zero[6] = {0, 0, 0, 0, 0, 0};
+        return rmPiecesFD(mp, rebased, zero);
+    }
+    return detPieces(mp, inRaw.sigEff, deps, inRaw.kp);
 }
 
 // ===========================================================================
