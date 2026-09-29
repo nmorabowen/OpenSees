@@ -631,12 +631,39 @@ warning when the tag does not match on receive.
 | (c) R1 ON: 0 refusals; end stress vs the exact oracle of the modified model | 0/320 (with and without the cap); median 2.8e-4, max 3.3e-3 relative (TolR 1e-4) |
 | (d) each piece alone does not clear the fan | floor alone 87/320 (`maxSubsteps`: 113 k re-seats, 61 k rejected reversals, the Zeno cascade discretized); hysteresis alone 102/320 |
 | (e) census columns | 0 when OFF; ON: 14 k floored stages, 533 capped, 7 k held reversals |
-| (f) parser | bad values and non-129 schemes refused |
+| (f) parser | bad values and non-129 schemes refused; so are flags the α_in mode makes inert (`-sasReseatHyst` unless `-sasAlphaIn reseat`, `-sasHFloor` under `stale`), while the floor under `bracket` and the cap in every mode are accepted (6 cases) |
 | (g) monotonic undrained TC chain, ON vs OFF | < 1e-3 q_max |
 | (h) the options cross the datastore wire | skeleton rebuilt WITHOUT the flags, restored → the flags come back; restored stress = saved to 1e-12 |
+| (i) after the #868 merge, every option family at once | CPPM (one point) + WP-129 SAS + R1 (another), all non-default, through a FileDatastore into a default skeleton: both option responses by value, census widths, next two steps bit-identical |
+| (j) the SAS values (i) cannot continue on | errorVars `stress` + alphaInMode `bracket` + floor + cap, by value |
 
-Regression: all 18 SANISAND/ManzariDafalias test files, 176 passed, 5 skipped, 2 xfailed (win32, the final build).
-Static gates green: classtags, manifest, header stamp, quirk lint L1–L8.
+- **Regression, before the #868 merge:** all 18 SANISAND/ManzariDafalias test files, 176 passed, 5 skipped,
+  2 xfailed (win32).
+- **After the merge:** the 19 files (with #868's `test_ladruno_sanisand_cppm_newton.py`) on the merged build
+  (8a7884fa2), see the PR record.
+- **Static gates green:** classtags, manifest, header stamp, quirk lint L1–L8.
+
+**Tangent consistency (pre-review check, `testbed/sanisand_reseat_r1/cxx_fd_tangent.py`).** A Richardson
+finite difference over tiny increments from the loaded state was compared with the continuum tangent SAS-ME
+returns there:
+
+| where | cases | FD error, relative |
+|---|---|---|
+| the floor binds (wall states) | 16 | median 2e-6 (DM04 on the same states: 1.6e-7) |
+| ring rows, floor + hysteresis | 1215 plastic replays | median 8e-7 |
+| the cap binds at the start (states along the capped fan trials) | 18 | median 9e-6 |
+
+- The one cap outlier (9e-4) sits exactly where the cap switches on. As the step shrinks, the cap stops
+  binding and the error falls to 1e-8: the kink in min(), with the tangent consistent on both sides.
+
+**Byte-identity across the #868 merge.** The 643-row baseline was recorded before #868. A `ladruno`-HEAD
+build (sources identical to e96f8d77d in `SRC/material/nD`) reproduces it exactly, 643/643. So it was not
+re-pinned.
+
+**A pre-existing WP-129 behaviour met on the way.** On the two-cube path of #868's round-trip test, `-sasErrorVars
+stress` commits an inadmissible state at step 13, and the next update refuses at its start. That switch is
+WP-129's attribution switch, echoed "NOT for production". It happens with or without WP-151, and reproduces on
+the `ladruno`-HEAD build. Test (i) therefore continues with errorVars `full`, and (j) checks `stress` by value.
 
 **Cost.** On the fan with R1, the median is 29 substeps per update (DM04: 23 on the updates it accepts), and
 rejected reversals fall 2946 → 1117 while re-seats fall 410 → 42. Not measured at BVP scale; that is the

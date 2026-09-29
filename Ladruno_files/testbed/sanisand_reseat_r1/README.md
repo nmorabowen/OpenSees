@@ -36,6 +36,7 @@ Variant names in `r1common.variants()`: `B<c_A>` = floor, `T<c_rev>` = hysteresi
 | `cxx_fan.py <bin> <out> [flags…]` (CPython 3.12 `-S`) | the same fan on a C++ build | `out/cxx_fan_before.json` (pre-WP-151 binary) |
 | `cxx_check_wp151.py <worktree>` (3.12 `-S`) | the WP-151 build: byte-identity, refusals per prototype, vs the oracle | `out/cxx_check_wp151.txt` |
 | `make_byteid_baseline.py <bin>` (3.12 `-S`) | records `tests/data/wp151_sasme_byteid_baseline.json` on a build WITHOUT WP-151 | — |
+| `cxx_fd_tangent.py <worktree> [bin] [wall ring cap kink]` (3.12 `-S`) | tangent consistency where R1 acts: Richardson FD of tiny replays vs the returned continuum tangent (floor, ring rows, cap-binding states, the cap's switch-on kink) | stdout |
 
 `out/cyc_gate_v1_compounded.json` and `out/cyc_toyoura_v1_compounded.json` are the first gate runs. Their
 perturbation wrapper compounded across tasks in one worker, so their per-run labels are approximate. They are
