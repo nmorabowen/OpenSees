@@ -98,6 +98,26 @@
 //      1 AND 2 (SAS practice). ModifiedEuler's TanType-2 chain is not
 //      reproduced: it accumulates `T` where the recurrence needs `dT` (quirks).
 //
+// Ladruno WP-151 (R1, an OPT-IN DM04 variant; every flag OFF by default and the
+// code path then byte-identical). The exact DM04 rate equations have a Zeno
+// accumulation of alpha_in re-seats near the peak: after a re-seat h = inf and
+// alpha slides along b; with b nearly normal to n that slide rotates n on the
+// thin yield cone (radius sqrt(2/3) m), (alpha - alpha_in):n turns negative
+// again, and the re-seats accumulate in finite pseudo-time while b:n -> 0+ and
+// |d alpha| -> inf (Ladruno_implementation/151_sanisand_reseat_singularity.md).
+// Its discrete image is `loadingWithNonPositiveDenominator` (one-to-one on the
+// WP-138 wall states). Three independent options, each counted in sasStats:
+//   -sasHFloor c_A     h = b0 / max((alpha - alpha_in):n, c_A sqrt(2/3) m):
+//                      bounded everywhere (the 1e10 sentinel is not used);
+//   -sasReseatHyst c_rev  alpha_in re-seats only when (alpha - alpha_in):n <
+//                      -c_rev sqrt(2/3) m (a FINITE reversal): two re-seats then
+//                      need a finite alpha travel, so they cannot accumulate;
+//   -sasSoftCap kappa  where b:n < 0, h <= (1 - kappa) X / ((2/3) p |b:n|), X the
+//                      elastic part of the loading denominator, so H >= kappa X.
+// The floor and the hysteresis are needed TOGETHER (oracle: each alone leaves
+// 97-102 of 320 wall trials singular); the cap closes deep softening (b:n << 0
+// at low p), e.g. the inadmissible ring point b8 1950/3.
+//
 // Written: N. Mora-Bowen (Ladruno), 2026.
 
 #include "UWmaterials/ManzariDafalias.h"
@@ -158,17 +178,52 @@ ManzariDafalias::ladrunoResetSasStats(void)
 // h with the alpha_in rule applied: a stage whose (alpha - alpha_in):n is not
 // positive takes the model's own sentinel for (alpha - alpha_in):n = 0
 // (alpha_in re-seated at that stage).
+// Ladruno WP-151: with -sasHFloor c_A > 0, h = b0 / max(x, c_A sqrt(2/3) m) for
+// every x (inside a -sasReseatHyst band x < 0 too): bounded, never negative,
+// and never the 1e10 sentinel. With the floor OFF the lines below it are the
+// WP-129 ones, unchanged.
 double
-ManzariDafalias::ladrunoSasBracketH(const Vector& a, const Vector& ain, const Vector& n, double h)
+ManzariDafalias::ladrunoSasBracketH(const Vector& a, const Vector& ain, const Vector& n, double h,
+    double b0)
 {
     if (mLadrunoSas.opt.alphaInMode == 2)   // stale: ModifiedEuler's behaviour
         return h;
     Vector t(a);
     t -= ain;
     const double x = DoubleDot2_2_Contr(t, n);
+    if (mLadrunoSas.opt.hFloor > 0.0) {                               // Ladruno WP-151
+        const double eps = mLadrunoSas.opt.hFloor * root23 * m_m;
+        return b0 / (x > eps ? x : eps);
+    }
     if (x < small)
         return 1.0e10;
     return h;
+}
+
+// Ladruno WP-151 (-sasSoftCap kappa): where b:n < 0 (softening), cap h so that
+// Kp = (2/3) p h b:n >= -(1 - kappa) X, i.e. H = Kp + X >= kappa X > 0. X is the
+// elastic part of the loading denominator at the same state. h itself is capped
+// (not Kp alone) so the consistency condition keeps holding: d alpha =
+// (2/3) lambda h b uses the same h. OFF (kappa <= 0): h unchanged.
+double
+ManzariDafalias::ladrunoSasSoftCapH(double h, double bn, double p, double X)
+{
+    const double kappa = mLadrunoSas.opt.softCap;
+    if (!(kappa > 0.0) || !(bn < 0.0) || !(X > 0.0) || !(p > 0.0))
+        return h;
+    const double hCap = (1.0 - kappa) * X / (two3 * p * (-bn));
+    return (h > hCap) ? hCap : h;
+}
+
+// Ladruno WP-151 (-sasReseatHyst c_rev): the re-seat threshold delta = c_rev
+// sqrt(2/3) m; alpha_in re-seats only where (alpha - alpha_in):n < -delta. OFF:
+// 0.0, and `x < -0.0` is `x < 0.0` in IEEE arithmetic, so the WP-129 tests are
+// unchanged bit for bit.
+double
+ManzariDafalias::ladrunoSasReseatDelta(void) const
+{
+    const double c = mLadrunoSas.opt.reseatHyst;
+    return (c > 0.0) ? c * root23 * m_m : 0.0;
 }
 
 // rho_alpha: alpha / alpha^b with the Lode angle of alpha itself and psi at (e, p(S)).
@@ -350,14 +405,26 @@ ManzariDafalias::ladrunoSasStage(const Vector& s, const Vector& a, const Vector&
     OPS_PROFILE_SCOPE("sanisand.sasME.stageArithmetic");
     {
         const double hIn = h;
-        h = ladrunoSasBracketH(a, ain, n, h);
-        if (h != hIn)   // (alpha - alpha_in):n <= -small: a reversal the stale alpha_in hides
+        h = ladrunoSasBracketH(a, ain, n, h, b0);
+        if (mLadrunoSas.opt.hFloor > 0.0) {                               // Ladruno WP-151
+            Vector t(a);
+            t -= ain;
+            if (DoubleDot2_2_Contr(t, n) < mLadrunoSas.opt.hFloor * root23 * m_m)
+                mLadrunoSas.stats[LSAS_H_FLOORED] += 1.0;
+        } else if (h != hIn)   // (alpha - alpha_in):n <= -small: a reversal the stale alpha_in hides
             mLadrunoSas.stats[LSAS_H_BRACKETS] += 1.0;
     }
 
     // U10: the TRUE yield gradient Q = n - (1/3)(n:alpha + sqrt(2/3) m) I, so
     // Q : C : d_eps = 2G n:de_dev - K dv (n:alpha + sqrt(2/3) m)
     const double qv = DoubleDot2_2_Contr(n, a) + root23 * m_m;
+    if (mLadrunoSas.opt.softCap > 0.0) {                                  // Ladruno WP-151
+        const double X = 2.0 * G * (B - C * GetTrace(SingleDot(n, SingleDot(n, n)))) - K * D * qv;
+        const double hIn = h;
+        h = ladrunoSasSoftCapH(h, DoubleDot2_2_Contr(b, n), p, X);
+        if (h != hIn)
+            mLadrunoSas.stats[LSAS_H_SOFTCAPPED] += 1.0;
+    }
     const double Kp = two3 * p * h * DoubleDot2_2_Contr(b, n);
     const double H  = Kp + 2.0 * G * (B - C * GetTrace(SingleDot(n, SingleDot(n, n)))) - K * D * qv;
     const double N  = 2.0 * G * DoubleDot2_2_Mixed(n, ddev) - K * dv * qv;
@@ -439,7 +506,7 @@ ManzariDafalias::ladrunoSasDrift(Vector& S, Vector& A, Vector& Z, Vector& Ee, do
         double cos3Theta, h, psi, aB, aD2, b0, Af, D, B, C, K, G;
         GetStateDependent(S, A, Z, e, ain, n, d, b, cos3Theta, h, psi, aB, aD2, b0, Af, D, B, C, R);
         GetElasticModuli(S, e, K, G);
-        h = ladrunoSasBracketH(A, ain, n, h);
+        h = ladrunoSasBracketH(A, ain, n, h, b0);
         const Matrix aC = GetStiffness(K, G);
 
         // exact df/dsigma = n - (1/3)(n:alpha + sqrt(2/3) m) I ; df/dalpha = -p n
@@ -448,6 +515,8 @@ ManzariDafalias::ladrunoSasDrift(Vector& S, Vector& A, Vector& Z, Vector& Ee, do
         Q += n;
         Vector Rc = ToCovariant(R);
         Vector dSp = DoubleDot4_2(aC, Rc);
+        if (mLadrunoSas.opt.softCap > 0.0)                                // Ladruno WP-151: X = Q:C:R here
+            h = ladrunoSasSoftCapH(h, DoubleDot2_2_Contr(b, n), p, DoubleDot2_2_Contr(Q, dSp));
         Vector aBar(b);
         aBar *= (two3 * h);
         Vector zBar(n);
@@ -499,7 +568,13 @@ ManzariDafalias::ladrunoSasContinuumTangent(const Vector& S, const Vector& A, co
     double cos3Theta, h, psi, aB, aD, b0, Af, D, B, C, K, G;
     GetStateDependent(S, A, Z, e, ain, n, d, b, cos3Theta, h, psi, aB, aD, b0, Af, D, B, C, R);
     GetElasticModuli(S, e, K, G);
-    h = ladrunoSasBracketH(A, ain, n, h);
+    h = ladrunoSasBracketH(A, ain, n, h, b0);
+    if (mLadrunoSas.opt.softCap > 0.0) {                                  // Ladruno WP-151: the stage's X
+        const double p = one3 * GetTrace(S) + m_Presidual;
+        const double qv = DoubleDot2_2_Contr(n, A) + root23 * m_m;
+        const double X = 2.0 * G * (B - C * GetTrace(SingleDot(n, SingleDot(n, n)))) - K * D * qv;
+        h = ladrunoSasSoftCapH(h, DoubleDot2_2_Contr(b, n), p, X);
+    }
     Vector dummy(6);
     Cep = GetElastoPlasticTangent(S, 1.0, dummy, dummy, G, K, B, C, D, h, n, d, b);
 }
@@ -519,6 +594,7 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
     const double TolE   = mTolR;
     const double sigRef = (o.errFloor < 0.0) ? m_P_atm / 101.0 : o.errFloor;
     const double kappa  = o.alphaBoundTol;
+    const double dRev   = ladrunoSasReseatDelta();   // Ladruno WP-151: 0.0 = the paper rule
 
     Vector dStrain(nextStrain);
     dStrain -= curStrain;
@@ -569,7 +645,9 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
         if (paperRule && onSurface) {
             tmpN = GetNormalToYield(S, A);
             tmp = A; tmp -= ain;
-            if (DoubleDot2_2_Contr(tmp, tmpN) < 0.0) { ain1 = A; reseat1 = true; }
+            const double x1 = DoubleDot2_2_Contr(tmp, tmpN);
+            if (x1 < -dRev) { ain1 = A; reseat1 = true; }
+            else if (x1 < 0.0) st[LSAS_RESEAT_HELD] += 1.0;   // Ladruno WP-151: a sub-threshold reversal
         }
         {
             OPS_PROFILE_SCOPE("sanisand.sasME.stages");
@@ -597,7 +675,7 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
                     // at dT_min re-seat at the stage state.
                     tmpN = GetNormalToYield(S1, A1);
                     tmp = A1; tmp -= ain1;
-                    if (DoubleDot2_2_Contr(tmp, tmpN) < 0.0) {
+                    if (DoubleDot2_2_Contr(tmp, tmpN) < -dRev) {   // Ladruno WP-151: -dRev (0 = paper)
                         if (atMin) { ain2 = A1; reseat2 = true; }
                         else rej = TR_REJ_REVERSAL;
                     }
@@ -712,10 +790,12 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
         if (paperRule && fabs(GetF(S, A)) <= mTolF) {
             Vector nEnd = GetNormalToYield(S, A);
             tmp = A; tmp -= ain;
-            if (DoubleDot2_2_Contr(tmp, nEnd) < 0.0) {
+            const double xEnd = DoubleDot2_2_Contr(tmp, nEnd);
+            if (xEnd < -dRev) {                                          // Ladruno WP-151: -dRev (0 = paper)
                 ain = A;
                 st[LSAS_ALPHA_IN_RESEATS] += 1.0;
-            }
+            } else if (xEnd < 0.0)
+                st[LSAS_RESEAT_HELD] += 1.0;                             // Ladruno WP-151
         }
         T += dT;
         double q = fmin(fmax(0.9 * sqrt(TolE / err), 0.1), 1.1);
@@ -823,10 +903,12 @@ ManzariDafalias::ladrunoSasIntegrate(void)
                     const double pS = one3 * GetTrace(S) + m_Presidual;
                     if (f0 >= -1.0e-8 * root23 * m_m * pS) {
                         Vector t0(A); t0 -= ain;
-                        if (DoubleDot2_2_Contr(t0, nY) < 0.0) {
+                        const double x0 = DoubleDot2_2_Contr(t0, nY);
+                        if (x0 < -ladrunoSasReseatDelta()) {                // Ladruno WP-151: 0 = paper
                             ain = A;
                             st[LSAS_ALPHA_IN_RESEATS] += 1.0;
-                        }
+                        } else if (x0 < 0.0)
+                            st[LSAS_RESEAT_HELD] += 1.0;                     // Ladruno WP-151
                     }
                 }
                 // U10: the loading test on the TRUE gradient

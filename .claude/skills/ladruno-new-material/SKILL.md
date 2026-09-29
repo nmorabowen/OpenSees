@@ -74,6 +74,8 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 - [ ] Constants that multiply a stress are dimensional: make them unit-consistent or document
       the units. Quirks: "`D_factor` dilatancy sigmoid is DIMENSIONAL".
 
+- [ ] A fork block appended to a base `sendSelf` under the same dbTag and commitTag must NOT have the length of any vector the base sends: FE_Datastore keys vectors by size, and a same-size block overwrites the base state. `static_assert` the size. Quirks: "FE_Datastore keys a sent Vector by its SIZE".
+
 ## NaN and silent success
 
 - [ ] Never check divergence with `pNorm(0)` (NaN-blind); use `std::isfinite`. Quirks:

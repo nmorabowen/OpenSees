@@ -1196,8 +1196,12 @@ nDMaterial LadrunoSANISAND $tag $G0 $nu $e_init $Mc $c $lambda_c $e0 $ksi $P_atm
     $A0 $nd $z_max $cz $Rho  129 $TanType $JacoType $TolF $TolR \
     <-errFloor $sigRef> <-alphaBoundTol $kappa> <-alphaProject 0|1> \
     <-sasAlphaIn reseat|bracket|stale> <-sasErrorVars full|stress> \
+    <-sasHFloor $cA> <-sasReseatHyst $cRev> <-sasSoftCap $kappa> \
     <-maxSubsteps $n> <-Pmin ...> <-Presidual ...> ...
 ```
+
+The three `-sas{HFloor,ReseatHyst,SoftCap}` flags are WP-151's opt-in DM04 variant (§13.4). All are
+OFF by default, and with them off SAS-ME is byte-identical to WP-129.
 
 - `TolR` IS the substep tolerance of the PLASTIC part (`-honorTolR` is inert and warned); the
   elastic part is exact (closed form, below), so it has no tolerance to honour. Recommended range
@@ -1284,3 +1288,83 @@ the u-p family) to get a recoverable, cuttable refusal.
   profile split at a ring state is ~60 % stages (half state-dependent quantities), 10 % drift,
   6 % α check; at a deep state the tangent and drift are ~11 % each.
 
+
+### 13.4 Re-seat regularization — WP-151 R1, an OPT-IN DM04 variant
+
+> [!important] The TIMs setting under SAS-ME (`IntScheme 129`): the FULL set
+> The owner said "if R1 makes sense, let's use it", held the merge to see the full set past the old wall, and
+> then authorized it ("ok, when ready merge"). All three were relayed by the TIMs orchestrator on 2026-09-28.
+> κ stays an owner/TIMs choice.
+> - **The configuration is the full set: `-sasHFloor 1 -sasReseatHyst 1 -sasSoftCap 0.5`.** A partial set is
+>   an ablation, not a lighter fix. On the footing (B/8, E_B settings; E_B walls at s/B 0.0508):
+>   - the floor alone walls at 0.0453 and the hysteresis alone at 0.0461, both EARLIER than DM04;
+>   - floor + hysteresis without the cap walls at 0.0525, on a b:n < 0 post-peak point near a reversal;
+>   - the full set had 0 `loadingNonPosH` at s/B 0.054 and was still hardening.
+>   - **The post-wall gate is pending:** the full set to its end, and κ 0.25 / 0.75 beside 0.5.
+> - The flags stay opt-in in the code (default OFF, byte-identical to DM04).
+> - **The cap is a constitutive choice**, for the owner/TIMs to decide.
+>   - It enforces H ≥ κX: post-peak softening per unit plastic strain is bounded at (1−κ) of the elastic
+>     projection X.
+>   - It binds only within about a cone radius of a reversal, where DM04 gives K_p → −∞. It never binds in
+>     DM04's regular softening.
+> - **More footing evidence** ([[151_sanisand_reseat_singularity]] §9):
+>   - q–s within ±0.22 % of E_B below s/B 0.03;
+>   - 0 NonPosH past E_B16's wall on B/16;
+>   - cost within 1.4 % of E_B.
+>   - A B/4 leg reached s/B 0.127. That is a coarser mesh than E_B's B/8, so it does not compare with E_B's
+>     wall like for like.
+> - **Do not substitute a recalibration of the Lode parameter c.** A c = 0.80 footing walls too (s/B 0.048),
+>   on compression-side states where DM04 runs the same re-seat sequence (memo §2.5.1).
+> - It is not a cure for mesh-dependent localization (WP-150). It also does not help low-confinement surface
+>   points: the B/4 leg's eventual limiter is `errorAtDTmin` at p′ → 0, a p′-floor question.
+
+**What it is for.** Near the peak, with the campaign set's thin yield cone (m = 0.005) and
+near-neutral or rotating loading, the exact DM04 rate equations re-seat α_in again and again in
+finite pseudo-time (a Zeno accumulation). Meanwhile b:n → 0⁺ and |dα/dt| → ∞. The discrete image of
+this is the `loadingNonPosH` refusal wall of the WP-138 footing: the refusals match the oracle's
+failures one-to-one on the wall states. Full study:
+[[151_sanisand_reseat_singularity]].
+
+```tcl
+... 129 $TanType $JacoType $TolF $TolR -sasHFloor 1 -sasReseatHyst 1 -sasSoftCap 0.5 ...
+```
+
+| flag | equation (ρ_c = √(2/3)·m, the yield-cone radius) | DM04 |
+|---|---|---|
+| `-sasHFloor c_A` | h = b0 / max((α−α_in):n, c_A·ρ_c), bounded everywhere | h = b0/((α−α_in):n), ∞ at a re-seat |
+| `-sasReseatHyst c_rev` | α_in := α only when (α−α_in):n < −c_rev·ρ_c (a FINITE reversal) | … when < 0 |
+| `-sasSoftCap κ` | where b:n < 0: h ≤ (1−κ)X/(⅔p\|b:n\|), so H = K_p + X ≥ κX | no cap |
+
+- **Use all three together.**
+  - On the wall fan (5 states × 64 trials), floor alone and hysteresis alone each leave 97–102 of 320
+    trials singular; together they leave 0.
+  - Past the old wall, though, the footing meets genuine b:n < 0 states near a reversal, where the floored
+    h still drives H ≤ 0. At fh's final wall point, the oracle fails 32 of 64 trials without the cap and 0
+    with it (κ 0.25–0.75).
+  - On the footing, the floor alone turns the refusals into `maxSubsteps` (572 log mentions vs 91) and
+    walls at 0.0453.
+  - The hysteresis alone keeps `loadingNonPosH`: its first comes at s/B 0.0362, where E_B has its first at
+    0.0363, and it walls at 0.0461.
+- **Recommended: c_A = 1, c_rev = 1, κ = 0.5.** No parameter is fitted: c_A and c_rev are in units of the
+  calibrated m.
+  - **c_rev ≤ 1 for cyclic work.** At c_rev = 2, ten CVSS cycles at γa 1e-5 never re-seat (0, against DM04's
+    20), and τ differs by 6.5 % of τ_max.
+- **What changes in calibrated behaviour** (oracle, campaign set, p0 100 kPa; memo §6):
+  - The elastic range (γ ≲ 3e-6) is identical.
+  - Just past it R1 is slightly SOFTER, because it starts plastic flow at a re-seat where DM04 is still
+    elastic (h = ∞ there). At the same strain:
+    - CVSS τ is −1.1 % at γ 1e-5, −0.33 % at 3e-5 and −0.09 % at 1e-4;
+    - undrained TC q is −1.3 % at ε_a 3e-6 and −0.5 % at 1e-5.
+  - Cyclic CVSS at γa 1e-5 (c_rev 1) stays within 1.2 % of τ_max. At γ ±0.1 %, drained cycles are identical
+    to 4 digits.
+  - Monotonic tests to large strain: |Δq| ≤ 2.7e-4·q_max. Undrained cycles to liquefaction are identical.
+  - The cap never binds in an element test.
+  - **Take G0 from the elastic range** (γ ≲ 3e-6), where R1 = DM04.
+- **Census** (`sasStats`, appended columns): `sas_hFloored` counts stages where the floor bound,
+  `sas_hSoftCapped` stages where the cap bound, and `sas_reseatHeld` the re-seat DECISIONS a sub-threshold
+  reversal held (one reversal can be counted at several stage and substep tests, so this is not a count of
+  distinct reversals). **`sasStats` is now 36 long** (columns 0–32 unchanged). A consumer that hard-codes 33
+  breaks: the WP-138 deck driver's census did ("broadcast (36,) into (33,)"). Read the length from the
+  response, or zip against `sanisand_replay.SAS_NAMES`.
+- It removes the singular set and the re-seat chatter. It does **not** regularize strain
+  localization (mesh dependence): that is WP-150 R2/R3.

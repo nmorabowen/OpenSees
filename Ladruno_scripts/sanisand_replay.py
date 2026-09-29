@@ -97,6 +97,7 @@ SAS_NAMES = [
     "refDTmin", "refNonPosH", "refLowP", "refDrift", "refAlpha", "refCap",
     "maxSubstepsOneUpdate", "lastSubsteps", "lastRefuseCode", "maxAlphaRatio",
     "lastAlphaRatio", "lastF", "entryOverKappa", "rejectedReversal",
+    "hFloored", "hSoftCapped", "reseatHeld",   # WP-151 (appended; absent on older builds)
 ]
 SAS_REFUSE_CODES = {0: "none", 1: "startOutsideYield", 2: "startAlphaOutsideBounding",
                     3: "startInadmissible", 4: "errorAtDTmin", 5: "loadingNonPosH",

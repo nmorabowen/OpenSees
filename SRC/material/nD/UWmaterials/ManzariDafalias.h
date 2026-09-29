@@ -95,8 +95,12 @@ struct LadrunoSasOptions {                                                  // L
     int    alphaProject;   // Ladruno WP-129: 0 = reject/refuse (DEFAULT); 1 = radial projection, counted
     int    alphaInMode;    // Ladruno WP-129: 0 = reseat (DEFAULT), 1 = bracket h only, 2 = stale (attribution only)
     int    errorVars;      // Ladruno WP-129: 0 = stress+alpha+fabric (DEFAULT), 1 = stress only (attribution only)
+    double hFloor;         // Ladruno WP-151: c_A; h = b0/max((alpha-alpha_in):n, c_A sqrt(2/3) m); <= 0 = OFF (DEFAULT, DM04)
+    double reseatHyst;     // Ladruno WP-151: c_rev; re-seat alpha_in only when (alpha-alpha_in):n < -c_rev sqrt(2/3) m; <= 0 = OFF
+    double softCap;        // Ladruno WP-151: kappa in (0,1); b:n < 0: h <= (1-kappa) X/((2/3) p |b:n|), so H >= kappa X; <= 0 = OFF
     LadrunoSasOptions() : errFloor(-1.0), alphaBoundTol(0.1), alphaEntryTol(2.0), alphaProject(0),
-                          alphaInMode(0), errorVars(0) {}   // Ladruno WP-129
+                          alphaInMode(0), errorVars(0),   // Ladruno WP-129
+                          hFloor(0.0), reseatHyst(0.0), softCap(0.0) {}   // Ladruno WP-151
 };   // Ladruno WP-129
 enum {                                                                      // Ladruno WP-129
     LSAS_UPDATES = 0, LSAS_ELASTIC, LSAS_SUBSTEPS, LSAS_ACCEPTED, LSAS_REJ_ERR,   // Ladruno WP-129
@@ -107,7 +111,9 @@ enum {                                                                      // L
     LSAS_REF_NONPOS_H, LSAS_REF_LOWP, LSAS_REF_DRIFT, LSAS_REF_ALPHA, LSAS_REF_CAP,   // Ladruno WP-129
     LSAS_MAX_ONE_UPDATE, LSAS_LAST_SUBSTEPS, LSAS_LAST_REFUSE_CODE,   // Ladruno WP-129
     LSAS_MAX_RATIO_B, LSAS_LAST_RATIO_B, LSAS_LAST_F, LSAS_ENTRY_OVER_KAPPA,   // Ladruno WP-129
-    LSAS_REJ_REVERSAL, LSAS_COUNT   // Ladruno WP-129
+    LSAS_REJ_REVERSAL,   // Ladruno WP-129
+    LSAS_H_FLOORED, LSAS_H_SOFTCAPPED, LSAS_RESEAT_HELD,   // Ladruno WP-151 (appended: earlier columns keep their index)
+    LSAS_COUNT   // Ladruno WP-129
 };   // Ladruno WP-129
 struct LadrunoSasState {                                                    // Ladruno WP-129
     bool   allowed;             // set only by LadrunoSANISAND (the refusal can reach analyze)
@@ -468,7 +474,9 @@ class ManzariDafalias : public NDMaterial
 	                const Vector& ain, bool bothSides);   // Ladruno WP-129
 	double  ladrunoSasAlphaRatio(const Vector& a, const Vector& s, double e);           // Ladruno WP-129
 	void    ladrunoSasProject(Vector& S, Vector& A, Vector& Ee, double e);             // Ladruno WP-129
-	double  ladrunoSasBracketH(const Vector& a, const Vector& ain, const Vector& n, double h); // Ladruno WP-129
+	double  ladrunoSasBracketH(const Vector& a, const Vector& ain, const Vector& n, double h, double b0); // Ladruno WP-129/151
+	double  ladrunoSasSoftCapH(double h, double bn, double p, double X);   // Ladruno WP-151
+	double  ladrunoSasReseatDelta(void) const;                             // Ladruno WP-151
 	Vector  ladrunoSasElastic(const Vector& S, const Vector& dEps, double e0, double e1);  // Ladruno WP-129
 	double  ladrunoSasIntersect(const Vector& S, const Vector& A, const Vector& dEps,   // Ladruno WP-129
 	                double e0, double lo, double hi);   // Ladruno WP-129
