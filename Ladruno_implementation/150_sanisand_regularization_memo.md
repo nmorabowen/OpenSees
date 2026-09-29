@@ -825,8 +825,10 @@ campaign set is a CYCLIC fit (§10).
 | campaign (cyclic fit), scored at D_r 0.47 | 3.5 | 0.05 | 5.75 | 1.3 | 1 983 |
 | **D_r 0.47, nd pinned at 3.5 (DM04 Toyoura value)** | **1.652** | **0.692** | **3.5** | **3.500** | **17.15** |
 | D_r 0.47, all four free | 1.615 | 0.940 | 1.771 | 3.751 | 18.33 (a local minimum) |
-| D_r 0.37 bracket | 1.134 | 0.892 | 1.178 | 4.628 | 23.29 |
-| D_r 0.57 bracket | 2.070 | 0.960 | 2.388 | 3.237 | 11.82 |
+| **D_r 0.37 bracket, nd 3.5** | **1.174** | **0.509** | **3.5** | **4.267** | **22.22** |
+| **D_r 0.57 bracket, nd 3.5** | **2.176** | **0.779** | **3.5** | **3.098** | **10.42** |
+| D_r 0.37 bracket, nd free | 1.134 | 0.892 | 1.178 | 4.628 | 23.29 |
+| D_r 0.57 bracket, nd free | 2.070 | 0.960 | 2.388 | 3.237 | 11.82 |
 
 **The D_r 0.47 fit** (the two variants are within 0.2° of each other):
 
@@ -849,6 +851,8 @@ comparison is against the full-resolution exact oracle, evaluated at the C++ out
 | set | C++ R1 off vs oracle, max \|Δq\|/q_max | R1 on vs off |
 |---|---|---|
 | D_r 0.47, nd 3.5 | 1.90e-3 | 5.6e-4 |
+| D_r 0.37, nd 3.5 | 1.87e-3 | 9.4e-4 |
+| D_r 0.57, nd 3.5 | 1.88e-3 | 6.7e-4 |
 | D_r 0.47, free | 1.88e-3 | 5.6e-4 |
 | D_r 0.37 (nd free) | 1.82e-3 | 3.4e-4 |
 | D_r 0.57 (nd free) | 1.89e-3 | 2.4e-4 |
@@ -864,6 +868,8 @@ CTXu (e 0.6944, p0 100, R1 on = off in every case):
 |---|---|---|
 | campaign (cyclic fit) | 97 / 98 | 11.5 / 15.5 |
 | **D_r 0.47, nd 3.5** | **63 / 79** | **1.0 / 1.5** |
+| D_r 0.37, nd 3.5 | 74 / 86 | 1.5 / 2.0 |
+| D_r 0.57, nd 3.5 | 59 / 76 | 1.0 / 1.5 |
 | D_r 0.47, free | 32 / 56 | 0.5 / 1.0 |
 | D_r 0.37, nd free | 29 / 53 | 0.5 / 1.0 |
 | D_r 0.57, nd free | 38 / 61 | 0.5 / 1.0 |
@@ -875,12 +881,20 @@ CTXu (e 0.6944, p0 100, R1 on = off in every case):
 - Pinning nd at 3.5 halves that contraction at no drained cost, which is why it is the recommended primary.
 - A set valid for both drained and cyclic loading needs TIMs' undrained data (owed).
 
-**RECOMMENDED PRIMARY: `--nb 1.652 --A0 0.692 --nd 3.5 --h0 3.5`.** The brackets at D_r 0.37 / 0.57 are being refit
-with nd pinned at 3.5, for a consistent family.
+**RECOMMENDED FAMILY (nd pinned at 3.5):**
+- **primary, D_r 0.47:** `--nb 1.652 --A0 0.692 --nd 3.5 --h0 3.5`;
+- D_r 0.37: `--nb 1.174 --A0 0.509 --nd 3.5 --h0 4.267`;
+- D_r 0.57: `--nb 2.176 --A0 0.779 --nd 3.5 --h0 3.098`.
 
-**Launched** (orchestrator, 22:41): the free D_r 0.47 set on the campaign deck, as PB_b8_R1, PB_b8_off, PB_b16_R1
-and PB_b8shear15_R1. They are a sensitivity pair for the nd-3.5 set, since the two differ mainly in pre-peak
-contraction.
+In every case pinning nd fits the drained targets better than the free fit and halves the pre-peak contraction. The
+free Nelder–Mead fits stopped in local minima (A0 and nd trade off in the drained data).
+
+**Launched on the campaign deck** (orchestrator, build bd93c558d):
+- **PB2 family (nd 3.5):**
+  - PB2_b8_R1, PB2_b16_R1 and PB2_b8shear15_R1 at D_r 0.47 (23:13);
+  - PB2_Dr037_b8_R1 and PB2_Dr057_b8_R1 (23:22).
+- **PB (the free D_r 0.47 set, 22:41):** PB_b8_R1, PB_b8_off, PB_b16_R1 and PB_b8shear15_R1. They are a sensitivity
+  pair: the two sets differ mainly in pre-peak contraction.
 
 ---
 
