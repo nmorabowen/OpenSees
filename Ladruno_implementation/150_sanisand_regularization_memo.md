@@ -28,10 +28,13 @@ updated: 2026-09-28
 >    - The same 0/0 stopped WP-134's exact Radau oracle at ring point 1950/3.
 >    - *Corrected 2026-09-28 by the R1 session's oracle:* the exact rate equations reach this point through a
 >      **Zeno accumulation of re-seats**, with b:n → 0 **from above**. H ≤ 0 is only the b:n < 0 exit.
->      At the material point, the saved wall states are singular only on the **concave extension meridian** of the
->      campaign's c = 0.71 < 7/9. At c = 0.80 the same states fail 0/320 (WP-151 §2.5; memo §2.3).
->    - **At footing scale, c = 0.80 only DELAYS the wall:** first loadingNonPosH at s/B 0.0416 instead of 0.0363,
->      and it still walls at 0.048. **R1 is the route out; raising c is not** (§2.3, §13).
+>    - The concave extension meridian (c = 0.71 < 7/9) only selects **where** the set is met first.
+>      - At c = 0.71 the refusers are extension-side. The c = 0.71 wall states fail 0/320 when driven at c = 0.80
+>        (WP-151 §2.5).
+>      - A c = 0.80 footing still walls: first NonPosH at s/B 0.0416 instead of 0.0363, wall at 0.048.
+>      - Its refusers are **compression-side, inside the band region** (cos3θ(n) +0.63 … +0.79), and they show the
+>        same Zeno sequence: DM04 fails 119/576 there; floor + hysteresis passes 0/576 (WP-151 §2.5.1).
+>    - **R1 is the route out; raising c is not** (§2.3, §13).
 >    - No regularization of the boundary-value problem can lift an unbounded negative modulus at a point.
 >      The cure is a model-level fix (**R1: the h floor everywhere plus a hysteretic re-seat, coupled**).
 > 3. **The campaign parameter set violates stress–dilatancy** (T5, §10).
@@ -255,21 +258,31 @@ The campaign c = 0.71 is below 7/9, so DM04's g(θ, c) is non-convex near the ex
 
 - **The bands are a compression-side phenomenon.** The extension-side non-convexity does not drive the §2 loss of
   ellipticity.
-- **The wall is extension-side.** All three §1.3 refusers have n on the extension side at their committed state:
-  cos3θ = −1.00 (E_B 1880/1), −0.36 (1879/1) and −0.88 (E_B16 7820/4). That matches WP-151's ρ_b(θ_n) 1.17–1.31: the
-  bounding image along n is closest there.
+- **At c = 0.71 the wall is extension-side.** All three §1.3 refusers have n on the extension side at their
+  committed state: cos3θ = −1.00 (E_B 1880/1), −0.36 (1879/1) and −0.88 (E_B16 7820/4). That matches WP-151's
+  ρ_b(θ_n) 1.17–1.31: the bounding image along n is closest there.
 - **Material-point test** (WP-151 §2.5, `fan_c080.py`): the same five committed wall states, driven by the same 320
   trials.
   - DM04 fails **102/320 at c = 0.71 and 0/320 at c = 0.80**.
   - Per state (failures of 64): 34 → 0, 18 → 0, 16 → 0, 0 → 0 and 34 → 0.
   - At c = 0.80 no trial chatters, hits the 0/0 or reaches H ≤ 0, even where ρ_b(θ_n) stays > 1.
-  - The Zeno sequence needs the **concave** extension meridian. Once the image point's own rotation is included,
-    d(b:n)/dt follows the meridian's curvature, and on a concave meridian it drives b:n down.
-- So c < 7/9 is what made those particular wall states singular; the bands (compression side) are unaffected.
+  - On those states the concave meridian is what drives b:n down: once the image point's own rotation is included,
+    d(b:n)/dt follows the meridian's curvature.
+- So c < 7/9 made those particular states singular. It is **not** necessary for the singular set in general (next
+  bullet).
 - **Caveat, now measured:** these were c = 0.71 histories driven at c = 0.80, a material-point sensitivity.
   - **The boundary-value answer:** C080_EB_off (c = 0.80, R1 OFF, B/8) still reaches the singular set, first at s/B
     0.0416 against 0.0363, and walls at 0.048 (q 1 084 kPa).
   - Other points, with c = 0.80 histories of their own, get there later.
+  - **Those refusers are compression-side, inside the band range** (step 308: cos3θ(n) +0.63 … +0.79, against the
+    bands' +0.68 … +0.80). They are 1.5–2.0 m deep just outside the left edge, and earlier 0.2–0.35 m deep outside
+    both edges.
+  - The exact oracle on those states (WP-151 §2.5.1, `fan_c080_bvp.py`): DM04 fails 119/576 with the same Zeno
+    re-seat sequence (b:n 0.235 → 3.8e-6 over 5 re-seats). Floor alone gives 97/576 (chatter); floor + hysteresis
+    (± cap) gives **0/576**.
+  - **The non-convex extension meridian only selects WHERE the singular set is met first.** At c = 0.80 it is met
+    inside the band region, so the wall and the non-associated bands can share their Gauss points. That matters for
+    R3: any band regularizer must still run with R1 ON.
 - **So there is ONE route out: R1**, which works at any c with no recalibration. c ≥ 7/9 only delays the onset.
   (An earlier "two routes" wording in this memo is withdrawn.)
 
