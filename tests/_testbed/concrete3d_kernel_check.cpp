@@ -286,7 +286,7 @@ static void run_oracle_dump(const char* path) {
         for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
         fh >> in.kp;
         fh >> in.et_max >> in.kdt1 >> in.kdt2 >> in.kdc >> in.kdc1 >> in.kdc2;
-        fh >> in.sigtMax >> in.sigcMax;
+        fh >> in.sigtMax >> in.sigcMax >> in.wt >> in.wc >> mp.omegaDead;   // + committed omega_t/omega_c + dead threshold
         double e11_next, hoopK, hoopFy;
         fh >> e11_next >> hoopK >> hoopFy;
         double sigO[6]; for (int i = 0; i < 6; ++i) fh >> sigO[i];

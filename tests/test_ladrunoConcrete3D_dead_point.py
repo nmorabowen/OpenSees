@@ -117,3 +117,104 @@ def test_dead_threshold_flag_disables_the_treatment():
     lam_dead, p_dead = up[-1]
     more = _ramp(10.0 * lam_dead, 0.1)
     assert more[-1][1]["kp"] > 1.5 * p_dead["kp"], "kappa_p should keep growing with the treatment disabled"
+
+
+# --------------------------------------------------------------------------- #
+# BeamFiber view (review M2): the confined-fibre view (driveConfinedFiber) had no dead-point treatment.
+# A single unit-area NDFiber in a zeroLengthSection, axial strain imposed by DisplacementControl (lateral block condensed
+# against the passive hoop). Fibre-material state is read through the section:
+#     eleResponse(1, "section", "fiber", 0, 0, matTag, "damage" | "kappaP" | "returnFailures").
+# --------------------------------------------------------------------------- #
+def _fiber_build(Gc=5.0, lch=50.0, hoop=1200.0):
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    ops.node(1, 0.0, 0.0, 0.0)
+    ops.node(2, 0.0, 0.0, 0.0)
+    ops.fix(1, 1, 1, 1, 1, 1, 1)
+    ops.fix(2, 0, 1, 1, 1, 1, 1)                 # free axial dof only => pure axial fibre strain
+    ops.nDMaterial("LadrunoConcrete3D", 1, _E, _NU, _FC, _FT, 0.1, Gc, "-lch", lch, "-hoop", hoop)
+    ops.section("NDFiber", 1)
+    ops.fiber(0.0, 0.0, 1.0, 1)                  # unit area => P == axial nominal stress
+    ops.element("zeroLengthSection", 1, 1, 2, 1)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, 1.0, 0, 0, 0, 0, 0)
+    ops.system("FullGeneral")                    # the confined tangent is non-symmetric
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.test("NormDispIncr", 1.0e-8, 200, 0)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+
+
+def _fiber_state():
+    r = lambda k: list(ops.eleResponse(1, "section", "fiber", 0.0, 0.0, 1, k))
+    ops.eleResponse(1, "forces")
+    return dict(eps=ops.nodeDisp(2, 1), P=float(ops.eleResponse(1, "section", "force")[0]),
+                dmg=r("damage"), kp=r("kappaP")[0], fails=r("returnFailures")[0])
+
+
+def _fiber_step(deps):
+    ops.integrator("DisplacementControl", 2, 1, deps)
+    assert ops.analyze(1) == 0, f"fibre step refused/failed at eps={ops.nodeDisp(2, 1):.5f} (deps {deps})"
+    return _fiber_state()
+
+
+def test_beamfiber_view_tension_death_then_parallel_compression():
+    """Tension past omega_t = 0.998 (no kappa_p runaway, no refusal, nominal at the floor), unloading, then compression
+    PARALLEL to the crack under the hoop: the strut keeps its plasticity, hardening and omega_c."""
+    _fiber_build()
+    st = _fiber_step(0.0)
+    for _ in range(400):                          # to the death of the tensile channel
+        st = _fiber_step(5.0e-5)
+        if st["dmg"][0] >= 0.998:
+            break
+    assert st["dmg"][0] >= 0.998, "the fibre never reached omega_t >= 0.998"
+    kp_dead, eps_dead = st["kp"], st["eps"]
+    assert kp_dead > 1.0                           # a hardened cracked point: the regime that used to run away
+    while st["eps"] < 10.0 * eps_dead:             # 10x further in tension
+        st = _fiber_step(2.5e-4)
+        assert st["kp"] == pytest.approx(kp_dead, rel=1e-12, abs=1e-12), "kappa_p moved on a tension-dead fibre"
+        assert st["fails"] == 0.0
+    assert abs(st["P"]) < 1.0e-3 * _FT             # nominal at the floor level, not a spurious fraction of ft
+    assert st["dmg"][0] >= 1.0 - 1.0e-5
+    while st["eps"] > 0.0:                         # unload to zero strain: no tension is carried
+        st = _fiber_step(-1.0e-3)
+        assert st["kp"] == pytest.approx(kp_dead, rel=1e-12, abs=1e-12) and st["fails"] == 0.0
+        if st["eps"] > 0.0:
+            assert st["P"] <= 1.0e-3 * _FT
+    Pmin = 0.0
+    for _ in range(200):                           # compression parallel to the crack
+        st = _fiber_step(-2.0e-5)
+        Pmin = min(Pmin, st["P"])
+        assert st["fails"] == 0.0
+        if st["eps"] < -3.0e-3:
+            break
+    # Measured (this material, hoop 1200, lch 50; strain to -3e-3): virgin fibre P_min = -39.8 (confined, still rising); cracked
+    # fibre WITH the treatment -16.98 at eps = -9.2e-4, then softening (omega_c 0.94); cracked fibre with the treatment disabled
+    # (-deadThreshold 2) only -5.63 (kappa_p runs to 1.5e4 and the tensile flow poisons the strut). The strut is a genuine, much
+    # weaker-than-virgin cracked-concrete strut, 3x the legacy one; bound 0.5 fc.
+    assert Pmin < -0.5 * _FC, f"the cracked fibre's compressive strut collapsed (P_min = {Pmin:.2f})"
+    assert st["dmg"][1] > 0.0                      # omega_c evolves normally on the live compressive channel
+
+
+def test_beamfiber_view_crushing_freezes_the_fibre():
+    """Compression past omega_c = 0.998 (steep compressive law): kappa_p frozen, both damages at the floor, nominal at the
+    floor level, no refusal; unloading elastic."""
+    _fiber_build(Gc=0.075, lch=50.0, hoop=0.0)
+    st = _fiber_step(0.0)
+    for _ in range(600):
+        st = _fiber_step(-5.0e-5)
+        if st["dmg"][1] >= 0.998:
+            break
+    assert st["dmg"][1] >= 0.998, "the fibre never reached omega_c >= 0.998"
+    kp_dead, eps_dead = st["kp"], st["eps"]
+    for _ in range(40):
+        st = _fiber_step(-5.0e-4)
+        assert st["kp"] == pytest.approx(kp_dead, rel=1e-12, abs=1e-12) and st["fails"] == 0.0
+    assert abs(st["P"]) < 1.0e-3 * _FC
+    assert st["dmg"][0] >= 1.0 - 1.0e-5 and st["dmg"][1] >= 1.0 - 1.0e-5
+    while st["eps"] < eps_dead:                    # unload (elastic, still the floor-level nominal)
+        st = _fiber_step(1.0e-3)
+        assert st["kp"] == pytest.approx(kp_dead, rel=1e-12, abs=1e-12) and st["fails"] == 0.0
+        assert abs(st["P"]) < 1.0e-3 * _FC

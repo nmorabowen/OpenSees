@@ -2180,23 +2180,56 @@ def confined_step(st, e11, mp, Gf, Gc, lch, As=2.0, hoop_K=0.0, hoop_fy=1.0e30):
     et_max = st["et_max"]; sigt_max = st["sigt_max"]; sigc_max = st["sigc_max"]
     kdt1 = st["kdt1"]; kdt2 = st["kdt2"]; kdc = st["kdc"]; kdc1 = st["kdc1"]; kdc2 = st["kdc2"]
     epl_prev = st["epl_prev"].copy()
+    # DEAD POINTS (review M2: the BeamFiber view had no dead-point treatment; same rule as damaged_step_tensor): decided on
+    # the COMMITTED damage. omega_c >= omega_dead (crushed): frozen -- elastic effective stress on the fixed plastic strain,
+    # both damages at OMEGA_MAX, nominal (1-OMEGA_MAX) sig_eff, histories and kappa_p as committed. omega_t >= omega_dead
+    # (cracked): the tensile PART of the trial effective stress (this fibre is diagonal, so its positive principals) is
+    # carried elastically and the return map runs on the compressive remainder; the plastic-strain increment the damage
+    # histories see is the compressive return's alone (epl_prev is re-based on the trial).
+    om_dead = _omega_dead(mp)
+    wt_c, wc_c = st.get("wt", 0.0), st.get("wc", 0.0)
+    crushed = wc_c >= om_dead
+    cut = (not crushed) and wt_c >= om_dead
+    sig_eff_n, kp_n = sig_eff.copy(), kp
+
+    def _eff(deps):
+        """Effective-stress return of the trial from the committed (sig_eff_n, kp_n): -> (sig_eff, kp)."""
+        sig_tr = _elastic_pred(sig_eff_n, deps, mp)
+        if crushed:
+            return sig_tr, kp_n
+        if cut:
+            sm, kpn, _, _, _ = return_map_hardening(np.minimum(sig_tr, 0.0), mp, kp_n)
+            return sm + np.maximum(sig_tr, 0.0), kpn
+        s_, kpn, _, _, _ = return_map_hardening(sig_tr, mp, kp_n)
+        return s_, kpn
 
     for _ in range(80):                              # lateral Newton: sig_lat_eff + sig_hoop(el) -> 0
         deps = np.array([e11 - eps[0], el - eps[1], el - eps[2]])
-        snew, _, _, _, _ = return_map_hardening(_elastic_pred(sig_eff, deps, mp), mp, kp)
+        snew = _eff(deps)[0]
         res = 0.5 * (snew[1] + snew[2]) + hoop_stress(el, hoop_K, hoop_fy)
         if abs(res) < 1.0e-10 * (fc + 1.0):
             break
         d = 1.0e-8 * (abs(el) + 1.0e-6)
         deps2 = np.array([e11 - eps[0], (el + d) - eps[1], (el + d) - eps[2]])
-        snew2, _, _, _, _ = return_map_hardening(_elastic_pred(sig_eff, deps2, mp), mp, kp)
+        snew2 = _eff(deps2)[0]
         Jd = (0.5 * (snew2[1] + snew2[2]) + hoop_stress(el + d, hoop_K, hoop_fy) - res) / d
         if abs(Jd) < 1.0e-12:
             Jd = 1.0e-12 if Jd >= 0 else -1.0e-12
         el -= res / Jd
     deps = np.array([e11 - eps[0], el - eps[1], el - eps[2]])
-    sig_eff, kp, _, _, _ = return_map_hardening(_elastic_pred(sig_eff, deps, mp), mp, kp)
+    sig_eff, kp = _eff(deps)
+    eps_prev_n = eps
     eps = np.array([e11, el, el])
+    if crushed:
+        new = dict(st)
+        new.update(eps=eps, sig_eff=sig_eff, el=el, wt=OMEGA_MAX, wc=OMEGA_MAX)
+        return ((1.0 - OMEGA_MAX) * sig_eff, hoop_stress(el, hoop_K, hoop_fy), new,
+                dict(wt=OMEGA_MAX, wc=OMEGA_MAX, sig_eff=sig_eff.copy(), kp=kp))
+    if cut:                                          # re-base the plastic-strain reference on the elastic trial
+        sig_tr_f = _elastic_pred(sig_eff_n, deps, mp)
+        epl_prev = eps - np.array([(sig_tr_f[0] - nu * (sig_tr_f[1] + sig_tr_f[2])) / E,
+                                   (sig_tr_f[1] - nu * (sig_tr_f[0] + sig_tr_f[2])) / E,
+                                   (sig_tr_f[2] - nu * (sig_tr_f[0] + sig_tr_f[1])) / E])
 
     et, ac, xs = _damage_drivers(sig_eff, mp, As)
     above = max(et - max(et_max, eps0), 0.0)
@@ -2227,7 +2260,7 @@ def confined_step(st, e11, mp, Gf, Gc, lch, As=2.0, hoop_K=0.0, hoop_fy=1.0e30):
     sig_nom = apply_damage_principal(sig_eff, wt, wc)
     new = dict(eps=eps, sig_eff=sig_eff, kp=kp, el=el, et_max=et_max, sigt_max=sigt_max,
                sigc_max=sigc_max, kdt1=kdt1, kdt2=kdt2, kdc=kdc, kdc1=kdc1, kdc2=kdc2, epl_prev=epl,
-               eqc=eqc, etp=etp)
+               eqc=eqc, etp=etp, wt=wt, wc=wc)
     return sig_nom, hoop_stress(el, hoop_K, hoop_fy), new, dict(wt=wt, wc=wc, sig_eff=sig_eff.copy(), kp=kp)
 
 

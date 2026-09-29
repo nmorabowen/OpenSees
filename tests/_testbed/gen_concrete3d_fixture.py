@@ -286,17 +286,19 @@ def main(out=None):
     #      it via plasticStrain6(in.sigEff,in.eps) == the oracle's tracked epl_prev). ----
     cfibs = []   # (label, mp, lch, eps6, sig6, kp, hist8, e11_next, hoopK, hoopFy, sig_nom6, el_new, p_conf)
 
-    def add_cfib(label, mp, lch, eps_build, ndiv, deps11, hoopK, hoopFy):
+    def add_cfib(label, mp, lch, eps_build, ndiv, deps11, hoopK, hoopFy, Gc=Gc, path=None, hoopK_build=None):
         st = ref._confined_state0()
-        for e in np.linspace(0.0, eps_build, ndiv):
-            _s, _p, st, _d = ref.confined_step(st, e, mp, Gf, Gc, lch, As, hoopK, hoopFy)
+        for e in (np.linspace(0.0, eps_build, ndiv) if path is None else path):
+            _s, _p, st, _d = ref.confined_step(st, e, mp, Gf, Gc, lch, As,
+                                               hoopK if hoopK_build is None else hoopK_build, hoopFy)
         eps6 = [float(st["eps"][0]), float(st["eps"][1]), float(st["eps"][2]), 0.0, 0.0, 0.0]
         sig6 = [float(st["sig_eff"][0]), float(st["sig_eff"][1]), float(st["sig_eff"][2]), 0.0, 0.0, 0.0]
-        hist8 = [st["et_max"], st["kdt1"], st["kdt2"], st["kdc"], st["kdc1"], st["kdc2"], st["sigt_max"], st["sigc_max"]]
+        hist8 = [st["et_max"], st["kdt1"], st["kdt2"], st["kdc"], st["kdc1"], st["kdc2"], st["sigt_max"], st["sigc_max"],
+                 st.get("wt", 0.0), st.get("wc", 0.0), float(mp.get("omega_dead", ref.OMEGA_DEAD))]   # + committed omega_t / omega_c + dead threshold
         e11_next = float(st["eps"][0]) + deps11
         sig_nom, p_conf, stn, _d = ref.confined_step(st, e11_next, mp, Gf, Gc, lch, As, hoopK, hoopFy)
         sig_nom6 = [float(sig_nom[0]), float(sig_nom[1]), float(sig_nom[2]), 0.0, 0.0, 0.0]
-        cfibs.append((label, mp, lch, eps6, sig6, float(st["kp"]), hist8, e11_next,
+        cfibs.append((label, mp, lch, eps6, sig6, float(st["kp"]), hist8, e11_next, Gc,
                       float(hoopK), float(hoopFy), sig_nom6, float(stn["el"]), float(p_conf)))
 
     # reduce-to-free (hoopK=0): driveConfinedFiber must match the free uniaxial-stress damaged step.
@@ -305,10 +307,35 @@ def main(out=None):
     add_cfib("cfib_confined", mp_h, lch, -3.0e-3, 250, -1.0e-5, 1200.0, 1.0e30)
     # hoop YIELD (hoopK=2000, low fy): p_conf capped at fy => hoopStiffness=0 in the condensation.
     add_cfib("cfib_yield", mp_h, lch, -4.0e-3, 300, -1.0e-5, 2000.0, 3.0)
+    # DEAD POINTS in the fibre view (review M2): a free fibre driven past omega_t = omega_dead in tension then one more tension
+    # step (the tensile part is carried elastically, kappa_p frozen, nominal at the floor); the same cracked fibre then loaded in
+    # compression PARALLEL to the crack under a hoop (the strut keeps its plasticity and omega_c); and a crushed fibre
+    # (omega_c >= omega_dead: frozen, nominal (1-OMEGA_MAX) sigma_eff).
+    _t = np.linspace(0.0, 1.0e-2, 500)
+    _stt = ref._confined_state0(); _hit = None
+    for _i, _e in enumerate(_t):
+        _s, _p, _stt, _dd = ref.confined_step(_stt, _e, mp_h, Gf, Gc, lch, As, 0.0, 1.0e30)
+        if _dd["wt"] >= ref.OMEGA_DEAD:
+            _hit = _i
+            break
+    assert _hit is not None, "the cracked fibre probe never reached omega_t >= omega_dead"
+    add_cfib("cfib_cracked_tension", mp_h, lch, 0.0, 0, 1.0e-4, 0.0, 1.0e30, path=list(_t[:_hit + 1]))
+    add_cfib("cfib_cracked_compress", mp_h, lch, 0.0, 0, -1.0e-5, 1200.0, 1.0e30,
+             path=list(_t[:_hit + 1]) + list(np.linspace(_t[_hit], 3.0e-3, 100)) + list(np.linspace(3.0e-3, -1.5e-3, 300)),
+             hoopK_build=1200.0)
+    _c = np.linspace(0.0, -3.0e-2, 1500)
+    _stc = ref._confined_state0(); _hitc = None
+    for _i, _e in enumerate(_c):
+        _s, _p, _stc, _dd = ref.confined_step(_stc, _e, mp_h, Gf, 0.3, lch, As, 0.0, 1.0e30)
+        if _dd["wc"] >= ref.OMEGA_DEAD:
+            _hitc = _i
+            break
+    assert _hitc is not None, "the crushed fibre probe never reached omega_c >= omega_dead"
+    add_cfib("cfib_crushed", mp_h, lch, 0.0, 0, -1.0e-4, 0.0, 1.0e30, Gc=0.3, path=list(_c[:_hitc + 1]))
 
     lines.append(f"NCFIB {len(cfibs)}")
-    for label, mp, lch, eps6, sig6, kp, hist8, e11_next, hoopK, hoopFy, sig_nom6, el_new, p_conf in cfibs:
-        lines.append(f"CFIB {label} {_fmt(_pblock(mp))} {repr(float(Gf))} {repr(float(Gc))} "
+    for label, mp, lch, eps6, sig6, kp, hist8, e11_next, Gc_r, hoopK, hoopFy, sig_nom6, el_new, p_conf in cfibs:
+        lines.append(f"CFIB {label} {_fmt(_pblock(mp))} {repr(float(Gf))} {repr(float(Gc_r))} "
                      f"{repr(float(lch))} {repr(float(As))} {_CT[mp.get('ct_temper', 'none')]}")
         lines.append(_fmt(eps6))
         lines.append(_fmt(sig6))

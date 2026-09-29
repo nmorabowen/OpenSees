@@ -2466,6 +2466,93 @@ inline int returnMapTensor1(const Params& mp, const double sig_n[6], const doubl
 }
 
 // ===========================================================================
+// DEAD-AWARE EFFECTIVE-stress return, shared by returnMap and driveConfinedFiber (review M2: the BeamFiber view called
+// returnMapTensor/damagedUpdate directly and so never saw the dead-point treatment). Precondition: the point is not
+// CRUSHED (inRaw.wc < mp.omegaDead; a crushed point is frozen by the caller). Decided on the COMMITTED omega_t:
+// CRACKED (omega_t dead): tension cutoff on the plastic flow. sig_tr = sig_n + C:deps is split spectrally; the tensile part
+// is carried elastically, the return map runs on the compressive remainder with a zero increment. The committed state is
+// re-based on the trial (eps = new strain, sigEff = sig_tr) so the plastic-strain increment the damage update sees is the
+// compressive return's alone. (Absorbing the tension into the plastic strain instead was measured and rejected: the
+// permanent strain locks a full-stiffness compression in on unloading.)
+// Outputs: inEff -> the committed state to hand to damagedUpdate/damagedTangent (inRaw itself, or the re-based copy in
+// cutBuf); cutT; sig_eff/kp_new/Dtan6 = the EFFECTIVE stress, kappa_p and effective tangent; return = the return-map status.
+// Includes the Duvaut-Lions relaxation (only when !implex && eta > 0 && dt > 0).
+// ===========================================================================
+inline int effectiveReturn(const Params& mp, const double strain[6], const State& inRaw, bool hardening, double dt,
+                           bool doTangent, State& cutBuf, const State*& inEff, bool& cutT,
+                           double sig_eff[6], double& kp_new, double Dtan6[6][6], int* subInfo)
+{
+    double deps[6];
+    for (int i = 0; i < 6; ++i) deps[i] = strain[i] - inRaw.eps[i];
+    cutT = (inRaw.wt >= mp.omegaDead);
+    double cutW[3] = {0, 0, 0}, cutV[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+    double sigPlus[6] = {0, 0, 0, 0, 0, 0}, sigMinus[6] = {0, 0, 0, 0, 0, 0};
+    if (cutT) {
+        double sigTr[6]; elasticPredTensor(inRaw.sigEff, deps, mp, sigTr);
+        double A[3][3]; voigtToMat(sigTr, A); eig3sym(A, cutW, cutV);
+        double sm[3], sq[3];
+        for (int a = 0; a < 3; ++a) { sm[a] = cutW[a] < 0.0 ? cutW[a] : 0.0; sq[a] = cutW[a] > 0.0 ? cutW[a] : 0.0; }
+        double S[3][3], Q[3][3];
+        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) {
+            double v = 0.0, u = 0.0;
+            for (int a = 0; a < 3; ++a) { v += cutV[i][a] * sm[a] * cutV[j][a]; u += cutV[i][a] * sq[a] * cutV[j][a]; }
+            S[i][j] = v; Q[i][j] = u;
+        }
+        cutBuf = inRaw;
+        matToVoigt(S, sigMinus); matToVoigt(Q, sigPlus);
+        for (int i = 0; i < 6; ++i) { cutBuf.sigEff[i] = sigTr[i]; cutBuf.eps[i] = strain[i]; deps[i] = 0.0; }
+    }
+    inEff = cutT ? &cutBuf : &inRaw;
+    const State& in = *inEff;
+    // (1) IMPLICIT EFFECTIVE-stress return from the committed EFFECTIVE state (NOT the nominal sig).
+    int status = returnMapTensor(mp, cutT ? sigMinus : in.sigEff, deps, in.kp, hardening, sig_eff, kp_new, Dtan6, doTangent,
+                                 subInfo);
+    if (cutT) for (int i = 0; i < 6; ++i) sig_eff[i] += sigPlus[i];   // tensile part carried elastically
+    // (1b) Duvaut-Lions viscoplastic relaxation at the PLASTIC level (ADR §4.4; oracle PR #316). Relax the
+    //   inviscid effective return + kp toward the elastic trial by beta = dt/(eta+dt) (Simo-Hughes closed
+    //   form). beta < 1 only with a positive viscosity AND a positive dt; eta==0 OR dt<=0 => beta=1 =>
+    //   BYTE-identical to the inviscid Tier-1 path (a missing time increment falls back to inviscid, NOT
+    //   to the elastic beta->0 limit). Damage then follows from the RELAXED effective stress (downstream
+    //   uses sig_eff/kp_new), and the EFFECTIVE consistent tangent blends C_eff <- (1-beta)C0 + beta C_eff
+    //   (damagedTangent chains its damage linearization through this blended C_eff). v1: Tier-1 only —
+    //   gated on !implex so the IMPL-EX implicit solve stays inviscid (matches the oracle scope; the
+    //   -eta + -implex composition is deferred).
+    if (!mp.implex && mp.eta > 0.0 && dt > 0.0) {
+        const double beta = dt / (mp.eta + dt);
+        double sig_tr[6];
+        elasticPredTensor(in.sigEff, deps, mp, sig_tr);
+        for (int i = 0; i < 6; ++i) sig_eff[i] = (1.0 - beta) * sig_tr[i] + beta * sig_eff[i];
+        kp_new = (1.0 - beta) * in.kp + beta * kp_new;
+        if (doTangent && status == 0) {
+            double C0[6][6]; elasticC(mp, C0);
+            for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j)
+                Dtan6[i][j] = (1.0 - beta) * C0[i][j] + beta * Dtan6[i][j];
+        }
+    }
+    if (cutT && doTangent && status == 0) {
+        // sig_eff = Plus(sig_tr) + RM(Minus(sig_tr)):  d sig_eff/d eps = C0 + (Dret C0^-1 - I) Ddam- C0, with Dret = A C0 the
+        // return map's own tangent at the compressive remainder and Ddam- the spectral derivative of the negative-part map.
+        double yv[3], ypv[3], Ddam[6][6], C0[6][6], C0i[6][6], T1[6][6], T2[6][6];
+        for (int a = 0; a < 3; ++a) { yv[a] = cutW[a] < 0.0 ? cutW[a] : 0.0; ypv[a] = cutW[a] < 0.0 ? 1.0 : 0.0; }
+        isotropicTangent(cutW, cutV, yv, ypv, Ddam);
+        elasticC(mp, C0); invert6(C0, C0i);
+        for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
+            double v = 0.0; for (int k = 0; k < 6; ++k) v += Dtan6[i][k] * C0i[k][j];
+            T1[i][j] = v - (i == j ? 1.0 : 0.0);                           // Dret C0^-1 - I
+        }
+        for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
+            double v = 0.0; for (int k = 0; k < 6; ++k) v += Ddam[i][k] * C0[k][j];
+            T2[i][j] = v;                                                  // Ddam- C0
+        }
+        for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
+            double v = C0[i][j]; for (int k = 0; k < 6; ++k) v += T1[i][k] * T2[k][j];
+            Dtan6[i][j] = v;
+        }
+    }
+    return status;
+}
+
+// ===========================================================================
 // Public small-strain entry point. Computes the TRIAL response (stress, tangent)
 // from the COMMITTED history `in`; writes the new (uncommitted) state to `out`.
 // The caller commits by copying out->in on commitState.
@@ -2517,77 +2604,12 @@ inline int returnMap(const Params& mp, const double strain[6], const State& inRa
         }
         return 0;
     }
-    // CRACKED (omega_t dead): tension cutoff on the plastic flow. sig_tr = sig_n + C:deps is split spectrally; the tensile
-    // part is carried elastically, the return map runs on the compressive remainder with a zero increment. The committed
-    // state is re-based on the trial (eps = new strain, sigEff = sig_tr) so the plastic-strain increment the damage update
-    // sees is the compressive return's alone. (Absorbing the tension into the plastic strain instead was measured and
-    // rejected: the permanent strain locks a full-stiffness compression in on unloading.)
-    const bool cutT = (inRaw.wt >= mp.omegaDead);
-    State inCut;
-    double cutW[3] = {0, 0, 0}, cutV[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
-    double sigPlus[6] = {0, 0, 0, 0, 0, 0}, sigMinus[6] = {0, 0, 0, 0, 0, 0};
-    if (cutT) {
-        double sigTr[6]; elasticPredTensor(inRaw.sigEff, deps, mp, sigTr);
-        double A[3][3]; voigtToMat(sigTr, A); eig3sym(A, cutW, cutV);
-        double sm[3], sq[3];
-        for (int a = 0; a < 3; ++a) { sm[a] = cutW[a] < 0.0 ? cutW[a] : 0.0; sq[a] = cutW[a] > 0.0 ? cutW[a] : 0.0; }
-        double S[3][3], Q[3][3];
-        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) {
-            double v = 0.0, u = 0.0;
-            for (int a = 0; a < 3; ++a) { v += cutV[i][a] * sm[a] * cutV[j][a]; u += cutV[i][a] * sq[a] * cutV[j][a]; }
-            S[i][j] = v; Q[i][j] = u;
-        }
-        inCut = inRaw;
-        matToVoigt(S, sigMinus); matToVoigt(Q, sigPlus);
-        for (int i = 0; i < 6; ++i) { inCut.sigEff[i] = sigTr[i]; inCut.eps[i] = strain[i]; deps[i] = 0.0; }
-    }
-    const State& in = cutT ? inCut : inRaw;
-    // (1) IMPLICIT EFFECTIVE-stress return from the committed EFFECTIVE state (NOT the nominal sig).
+    // (1)+(1b) dead-aware EFFECTIVE-stress return (CRACKED points: tension cutoff on the plastic flow; see effectiveReturn)
+    State cutBuf; const State* inP = nullptr; bool cutT = false;
     double sig_eff[6], kp_new;
-    int status = returnMapTensor(mp, cutT ? sigMinus : in.sigEff, deps, in.kp, hardening, sig_eff, kp_new, Dtan6, doTangent,
+    int status = effectiveReturn(mp, strain, inRaw, hardening, dt, doTangent, cutBuf, inP, cutT, sig_eff, kp_new, Dtan6,
                                  &out.subInfo);
-    if (cutT) for (int i = 0; i < 6; ++i) sig_eff[i] += sigPlus[i];   // tensile part carried elastically
-    // (1b) Duvaut-Lions viscoplastic relaxation at the PLASTIC level (ADR §4.4; oracle PR #316). Relax the
-    //   inviscid effective return + kp toward the elastic trial by beta = dt/(eta+dt) (Simo-Hughes closed
-    //   form). beta < 1 only with a positive viscosity AND a positive dt; eta==0 OR dt<=0 => beta=1 =>
-    //   BYTE-identical to the inviscid Tier-1 path (a missing time increment falls back to inviscid, NOT
-    //   to the elastic beta->0 limit). Damage then follows from the RELAXED effective stress (downstream
-    //   uses sig_eff/kp_new), and the EFFECTIVE consistent tangent blends C_eff <- (1-beta)C0 + beta C_eff
-    //   (damagedTangent chains its damage linearization through this blended C_eff). v1: Tier-1 only —
-    //   gated on !implex so the IMPL-EX implicit solve stays inviscid (matches the oracle scope; the
-    //   -eta + -implex composition is deferred).
-    if (!mp.implex && mp.eta > 0.0 && dt > 0.0) {
-        const double beta = dt / (mp.eta + dt);
-        double sig_tr[6];
-        elasticPredTensor(in.sigEff, deps, mp, sig_tr);
-        for (int i = 0; i < 6; ++i) sig_eff[i] = (1.0 - beta) * sig_tr[i] + beta * sig_eff[i];
-        kp_new = (1.0 - beta) * in.kp + beta * kp_new;
-        if (doTangent && status == 0) {
-            double C0[6][6]; elasticC(mp, C0);
-            for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j)
-                Dtan6[i][j] = (1.0 - beta) * C0[i][j] + beta * Dtan6[i][j];
-        }
-    }
-    if (cutT && doTangent && status == 0) {
-        // sig_eff = Plus(sig_tr) + RM(Minus(sig_tr)):  d sig_eff/d eps = C0 + (Dret C0^-1 - I) Ddam- C0, with Dret = A C0 the
-        // return map's own tangent at the compressive remainder and Ddam- the spectral derivative of the negative-part map.
-        double yv[3], ypv[3], Ddam[6][6], C0[6][6], C0i[6][6], T1[6][6], T2[6][6];
-        for (int a = 0; a < 3; ++a) { yv[a] = cutW[a] < 0.0 ? cutW[a] : 0.0; ypv[a] = cutW[a] < 0.0 ? 1.0 : 0.0; }
-        isotropicTangent(cutW, cutV, yv, ypv, Ddam);
-        elasticC(mp, C0); invert6(C0, C0i);
-        for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
-            double v = 0.0; for (int k = 0; k < 6; ++k) v += Dtan6[i][k] * C0i[k][j];
-            T1[i][j] = v - (i == j ? 1.0 : 0.0);                           // Dret C0^-1 - I
-        }
-        for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
-            double v = 0.0; for (int k = 0; k < 6; ++k) v += Ddam[i][k] * C0[k][j];
-            T2[i][j] = v;                                                  // Ddam- C0
-        }
-        for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
-            double v = C0[i][j]; for (int k = 0; k < 6; ++k) v += T1[i][k] * T2[k][j];
-            Dtan6[i][j] = v;
-        }
-    }
+    const State& in = *inP;
     for (int i = 0; i < 6; ++i) { out.eps[i] = strain[i]; out.sigEff[i] = sig_eff[i]; sigEffImplicit[i] = sig_eff[i]; }
     out.kp = kp_new;
     // (2) IMPLICIT P2 dual-damage NOMINAL stress (writes out.sig + the damage history). Unilateral by re-split.
@@ -2726,17 +2748,30 @@ inline bool solve3(const double A[3][3], const double b[3], double x[3])
 // (Cdam = the P2 damaged tangent for the output rows; the constraint block uses the EFFECTIVE tangent
 // Ceff_LL + the hoop stiffness on the lateral-normal diagonal). Reduces to a plain static condensation
 // where omega->0 (Cdam->Ceff). Returns 0 converged / 2 the inviscid effective return did not converge.
-inline int driveConfinedFiber(const Params& mp, double strain[6], const State& in, State& out,
+inline int driveConfinedFiber(const Params& mp, double strain[6], const State& inRaw, State& out,
                               double sigma[6], double sigEffImpl[6], double Dtan6[6][6],
                               bool doTangent, double hoopK, double hoopFy, double dt = 0.0)
 {
     const int L[3] = {1, 2, 4};                       // condensed lateral block (eps_11, eps_22, gamma_12)
     const double tol = 1.0e-10 * (mp.fc + 1.0);
-    double sig_eff[6] = {0,0,0,0,0,0}, kp_new = in.kp, Ceff[6][6];
+    double sig_eff[6] = {0,0,0,0,0,0}, kp_new = inRaw.kp, Ceff[6][6];
     int status = 0;
+    // DEAD POINTS (review M2; the same treatment as returnMap, via the shared effectiveReturn): a CRUSHED fibre point
+    // (omega_c >= omegaDead) is frozen -- elastic on the fixed plastic strain, both damages at the floor; a CRACKED one
+    // (omega_t >= omegaDead) carries its tensile effective stress elastically and returns on the compressive remainder.
+    const bool crushed = (inRaw.wc >= mp.omegaDead);
+    State cutBuf; const State* inP = &inRaw; bool cutT = false;
+    auto effective = [&](const double eps[6], int* subInfo) {
+        if (crushed) {
+            double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = eps[i] - inRaw.eps[i];
+            elasticPredTensor(inRaw.sigEff, deps, mp, sig_eff); kp_new = inRaw.kp; elasticC(mp, Ceff);
+            if (subInfo) *subInfo = 0;
+            return 0;
+        }
+        return effectiveReturn(mp, eps, inRaw, true, 0.0, true, cutBuf, inP, cutT, sig_eff, kp_new, Ceff, subInfo);
+    };
     for (int it = 0; it < 80; ++it) {                 // nested lateral Newton vs the hoop residual
-        double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = strain[i] - in.eps[i];
-        status = returnMapTensor(mp, in.sigEff, deps, in.kp, true, sig_eff, kp_new, Ceff, true);
+        status = effective(strain, nullptr);
         double r[3] = { sig_eff[1] + hoopStress(strain[1], hoopK, hoopFy),
                         sig_eff[2] + hoopStress(strain[2], hoopK, hoopFy),
                         sig_eff[4] };
@@ -2751,33 +2786,45 @@ inline int driveConfinedFiber(const Params& mp, double strain[6], const State& i
     }
     // final sync (mirror the oracle's post-loop re-evaluation): recompute the effective return at the
     // converged lateral strain so sig_eff/Ceff/kp_new always correspond to the committed strain (guards
-    // the rare 80-iter-exhausted case where the last lateral update post-dates the last returnMapTensor),
+    // the rare 80-iter-exhausted case where the last lateral update post-dates the last effective return),
     // and flag a genuinely unmet lateral balance as non-converged (status 2 => the caller cuts the step).
     {
-        double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = strain[i] - in.eps[i];
-        status = returnMapTensor(mp, in.sigEff, deps, in.kp, true, sig_eff, kp_new, Ceff, true, &out.subInfo);
+        status = effective(strain, &out.subInfo);
         const double rf[3] = { sig_eff[1] + hoopStress(strain[1], hoopK, hoopFy),
                                sig_eff[2] + hoopStress(strain[2], hoopK, hoopFy),
                                sig_eff[4] };
         if (std::sqrt(rf[0]*rf[0] + rf[1]*rf[1] + rf[2]*rf[2]) >= 1.0e-6 * (mp.fc + 1.0)) status = 2;
     }
-    // commit the converged effective state + the IMPLICIT P2 dual-damage nominal stress (mirror returnMap)
-    for (int i = 0; i < 6; ++i) { out.eps[i] = strain[i]; out.sigEff[i] = sig_eff[i]; sigEffImpl[i] = sig_eff[i]; }
-    out.kp = kp_new;
-    double wt_impl = 0.0, wc_impl = 0.0;
-    damagedUpdate(mp, in, sig_eff, kp_new, strain, out, &wt_impl, &wc_impl);
-    for (int i = 0; i < 6; ++i) sigma[i] = out.sig[i];
-    out.wt = wt_impl; out.wc = wc_impl; out.dwt = wt_impl - in.wt; out.dwc = wc_impl - in.wc;
-    { double epl[6], epl_n[6];
-      plasticStrain6(out.sigEff, out.eps, mp, epl);
-      plasticStrain6(in.sigEff,  in.eps,  mp, epl_n);
-      for (int i = 0; i < 6; ++i) out.depl[i] = epl[i] - epl_n[i]; }
-    out.dt_n = (dt > 0.0) ? dt : in.dt_n;
+    const State& in = *inP;
+    double Cdam[6][6];
+    if (crushed) {
+        // frozen point: histories and kappa_p as committed, both damages at the floor, nominal = (1-OMEGA_MAX) sig_eff
+        out = inRaw;
+        const double k = 1.0 - OMEGA_MAX;
+        for (int i = 0; i < 6; ++i) { out.eps[i] = strain[i]; out.sigEff[i] = sig_eff[i]; sigEffImpl[i] = sig_eff[i];
+                                       out.sig[i] = k * sig_eff[i]; sigma[i] = out.sig[i]; out.depl[i] = 0.0; }
+        out.wt = OMEGA_MAX; out.wc = OMEGA_MAX; out.dwt = 0.0; out.dwc = 0.0;
+        out.dt_n = (dt > 0.0) ? dt : inRaw.dt_n;
+        if (doTangent) { double C0[6][6]; elasticC(mp, C0); const double kT = k > OMEGA_TAN_FLOOR ? k : OMEGA_TAN_FLOOR;
+                          for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Cdam[i][j] = kT * C0[i][j]; }
+    } else {
+        // commit the converged effective state + the IMPLICIT P2 dual-damage nominal stress (mirror returnMap)
+        for (int i = 0; i < 6; ++i) { out.eps[i] = strain[i]; out.sigEff[i] = sig_eff[i]; sigEffImpl[i] = sig_eff[i]; }
+        out.kp = kp_new;
+        double wt_impl = 0.0, wc_impl = 0.0;
+        damagedUpdate(mp, in, sig_eff, kp_new, strain, out, &wt_impl, &wc_impl);
+        for (int i = 0; i < 6; ++i) sigma[i] = out.sig[i];
+        out.wt = wt_impl; out.wc = wc_impl; out.dwt = wt_impl - in.wt; out.dwc = wc_impl - in.wc;
+        { double epl[6], epl_n[6];
+          plasticStrain6(out.sigEff, out.eps, mp, epl);
+          plasticStrain6(in.sigEff,  in.eps,  mp, epl_n);
+          for (int i = 0; i < 6; ++i) out.depl[i] = epl[i] - epl_n[i]; }
+        out.dt_n = (dt > 0.0) ? dt : in.dt_n;
+        if (doTangent && status == 0) damagedTangent(mp, in, sig_eff, strain, kp_new, Ceff, Cdam);
+    }
 
     if (doTangent) {
         if (status != 0) { elasticC(mp, Dtan6); return status; }   // safe fallback; caller cuts the step
-        double Cdam[6][6];
-        damagedTangent(mp, in, sig_eff, strain, kp_new, Ceff, Cdam);
         double Kll[3][3];
         for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) Kll[i][j] = Ceff[L[i]][L[j]];
         Kll[0][0] += hoopStiffness(strain[1], hoopK, hoopFy);
