@@ -28,8 +28,10 @@ updated: 2026-09-28
 >    - The same 0/0 stopped WP-134's exact Radau oracle at ring point 1950/3.
 >    - *Corrected 2026-09-28 by the R1 session's oracle:* the exact rate equations reach this point through a
 >      **Zeno accumulation of re-seats**, with b:n → 0 **from above**. H ≤ 0 is only the b:n < 0 exit.
->      The sequence needs the **concave extension meridian** of the campaign's c = 0.71 < 7/9: at c = 0.80 the
->      same wall states fail 0/320 (WP-151 §2.5; memo §2.3).
+>      At the material point, the saved wall states are singular only on the **concave extension meridian** of the
+>      campaign's c = 0.71 < 7/9. At c = 0.80 the same states fail 0/320 (WP-151 §2.5; memo §2.3).
+>    - **At footing scale, c = 0.80 only DELAYS the wall:** first loadingNonPosH at s/B 0.0416 instead of 0.0363,
+>      and it still walls at 0.048. **R1 is the route out; raising c is not** (§2.3, §13).
 >    - No regularization of the boundary-value problem can lift an unbounded negative modulus at a point.
 >      The cure is a model-level fix (**R1: the h floor everywhere plus a hysteretic re-seat, coupled**).
 > 3. **The campaign parameter set violates stress–dilatancy** (T5, §10).
@@ -187,7 +189,8 @@ asks for an infinitely *negative* modulus.
   - **No material switch removes the wall.**
     - Turning dilatancy off (S4) only DELAYS the onset (0.0363 → 0.0426). So dilation is not what drives b:n to 0.
     - This agrees with WP-151 §2.5: the set needs the concave extension meridian (c = 0.71 < 7/9), which every leg
-      keeps. c = 0.80 takes the same wall states to 0/320.
+      keeps. c = 0.80 takes those same wall states to 0/320 at the material point.
+    - At footing scale, c = 0.80 still walls: first NonPosH at 0.0416, wall at 0.048 (§13).
     - The boundary-value test is the running C080_EB_off leg.
   - h0 × 3 walls much earlier (0.0091): α reaches the bounding surface sooner.
   - The onset is **non-monotonic** in A0 and in Presidual. That is the fingerprint of a singular event, not of a
@@ -262,12 +265,13 @@ The campaign c = 0.71 is below 7/9, so DM04's g(θ, c) is non-convex near the ex
   - At c = 0.80 no trial chatters, hits the 0/0 or reaches H ≤ 0, even where ρ_b(θ_n) stays > 1.
   - The Zeno sequence needs the **concave** extension meridian. Once the image point's own rotation is included,
     d(b:n)/dt follows the meridian's curvature, and on a concave meridian it drives b:n down.
-- So c < 7/9 is what makes the wall states singular; the bands (compression side) are unaffected.
-- **Caveat:** these are c = 0.71 histories driven at c = 0.80. It is a sensitivity, not the boundary-value answer.
-- **Two routes out:**
-  - R1, which works at any c with no recalibration;
-  - or c ≥ 7/9 ≈ 0.78. c = 0.80 raises the extension strength M_e = c·M_c by 13 %, so it is TIMs' calibration call.
-- **A c = 0.80 footing leg (R1 OFF) settles the boundary-value question.** It is proposed to the orchestrator.
+- So c < 7/9 is what made those particular wall states singular; the bands (compression side) are unaffected.
+- **Caveat, now measured:** these were c = 0.71 histories driven at c = 0.80, a material-point sensitivity.
+  - **The boundary-value answer:** C080_EB_off (c = 0.80, R1 OFF, B/8) still reaches the singular set, first at s/B
+    0.0416 against 0.0363, and walls at 0.048 (q 1 084 kPa).
+  - Other points, with c = 0.80 histories of their own, get there later.
+- **So there is ONE route out: R1**, which works at any c with no recalibration. c ≥ 7/9 only delays the onset.
+  (An earlier "two routes" wording in this memo is withdrawn.)
 
 ---
 
@@ -685,7 +689,15 @@ checkpoint intervals. Outputs: `out_r2_pull1_at009.md` and `out_r2_pull1_bands.m
 
 **1. R1 acceptance holds on the footing.**
 - R1 B/8 vs E_B: ±0.01 % to s/B 0.01, and +0.17 / −0.22 % at 0.02 / 0.03 (the orchestrator's matched-s/B deltas).
-- There has been **no loadingNonPosH on any leg**, including C080 past E_B's onset (0.0363).
+- There has been **no loadingNonPosH on any R1 floor leg** (floor + hysteresis, floor + hysteresis + cap, floor
+  only), up to s/B 0.040–0.043 (E_B's onset: 0.0363).
+- **Updates after this pull:**
+  - hysteresis-only hits NonPosH at 0.0362, as the oracle predicted;
+  - C080_EB_off hits it at 0.0416 and walls at 0.048;
+  - R2_b4_fhc walls at s/B 0.1273 (q 2 160) with ZERO NonPosH.
+- The B/4 limiter is a shallow point outside the footing, at (−1.42, −0.08): errorAtDTmin, maxSubsteps and
+  tensionAtDTmin(lowP). That is the low-confinement free-surface failure, the same one Toyoura shows at p_r = 0.
+  **After R1, the next limiter is the p′ floor at the free surface (the survey's D1 rule), not the re-seat set.**
 
 **2. q–s is not converging in h once the bands form.**
 
