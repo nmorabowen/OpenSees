@@ -259,3 +259,44 @@ Evidence (build 7f1562c81, `~/ladruno_wp152/bin_review`, driver `deck_review/foo
   p_contact spread cannot be read at p_sep = 0.
 - p_sep = 0 is not viable. The smallest workable p_sep is the defensible default; it is being measured (0.1 / 0.25 /
   0.5, below).
+
+## Footing re-checks on the review build (2026-09-29/30)
+
+Build 7f1562c81 (`~/ladruno_wp152/bin_review/opensees.so`), driver `~/ladruno_wp152/deck_review/footing_ab.py` (the
+Toyoura deck with the 44-column census and a per-step `sep_census.csv`), Toyoura, R1 + cutoff, target s/B 0.20, one leg
+per node. Output `~/ladruno_wp152/deck_review/runs/R_*`, report `~/ladruno_wp152/review_report.py`, read 2026-09-30
+10:27. The pre-fix counterparts are the 8ebde5cbd gates in `deck_toyoura/runs/W_*`.
+
+**Peak and post-peak against the pre-fix build:**
+
+| leg | p_sep / p_contact | peak q (kPa) @ s/B | q @ 0.19 | q @ 0.20 | mode | pre-fix (8ebde5cbd) peak @ s/B, q @ 0.20 |
+|---|---|---|---|---|---|---|
+| R_TYR_b8_ps05 | 0.5 / 1.0 | 2508.4 @ 0.1795 | 2483.9 | 2446.0 | TARGET | W_TYR_b8: 2508.8 @ 0.1798, 2452.3 |
+| R_TYR_b8_ps025_pc05 | 0.25 / 0.5 | 2510.2 @ 0.1800 | — | 2456.0 | TARGET | W_TYR_b8_half: 2513.1 @ 0.184, 2456.8 |
+| R_TYR_fig9_ps05 | 0.5 / 1.0 | 2016.6 @ 0.1673 | 1896.1 | 1747.1 | TARGET | W_TYR_fig9_856: 2015.4 @ 0.1672, 1747.8 |
+| R_TYR_b8_ps05_pc2 | 0.5 / 2.0 | 2517.2 @ 0.1834 | — | 2458.9 | TARGET | — |
+| R_TYR_b8_ps01 | 0.1 / 1.0 | 2507.9 @ 0.1789 | — | 2443.1 | TARGET | — |
+| R_TYR_b8_ps0(_pc05, _pc2), R_TYR_fig9_ps0 | 0 / 1.0, 0.5, 2.0 | FLOOR at s/B 0.0044 (71.6; fig9 61.8) | | | FLOOR | — |
+
+- **The review fixes did not move the peak or the post-peak.** The E2 compression gate and the continuous re-contact
+  change the peak by −0.02 % (B/8), −0.12 % (the ½ setting) and +0.06 % (fig9); the s/B at the peak by ≤ 0.004; q at
+  s/B 0.20 by ≤ 0.26 %. Kimura test V (fig9 conditions): 1953 kPa @ 0.091.
+- **p_sep 0.1 / 0.25 / 0.5: 2507.9 / 2510.2 / 2508.4 — spread 0.09 %.** p_sep = 0.1 kPa reaches the target, so the
+  smallest workable p_sep tested is 0.1 (the largest committed p0 at an entry in that leg: 0.094 kPa).
+- **p_contact spread at the peak:** 0.5 (at p_sep 0.25) 2510.2, 1.0 2508.4, 2.0 2517.2 (+0.35 %).
+- **Every leg runs its whole push on E2:** 55–56 E2 entries (masked codes: 9 about 45, 4 about 10) and 0–2 E1 (code 6)
+  per leg. The largest committed p0 at an entry stays below p_sep (0.09–0.48 kPa). The compression gate holds back 25–64
+  qualifying refusals on B/8 and 224 on fig9, all refused and cut by the driver. The substep cap still refuses
+  1450–2170 times per leg (step cuts, none stopping a leg).
+
+**Where the separated points are at the peak** (`sep_census.csv`, `field_step*.npz` positions):
+- B/8 (B = 1.2 m, edge at |x| = 0.6): 52–56 GPs separated, **none in the footprint**, |x| 0.63–1.32 m (0.03B–0.6B
+  beyond the edge), down to y = −0.42 m (0.35B). **Not the top row only:** 38–40 of them lie below the second GP row —
+  the heaving passive wedge, not a surface skin. 0–4 re-contacts by the peak, 4–8 by s/B 0.20.
+- fig9 (B = 0.9 m, edge at 0.45): 58 GPs at the peak, none in the footprint, |x| 0.47–0.99 m, down to y = −0.31 m
+  (0.35B). Post-peak, at s/B 0.20: 90, of which **2 in the footprint**.
+
+**Reading.** The capacity does not depend on the cutoff's parameters (0.09 % over p_sep, 0.35 % over p_contact) nor on
+the review fixes (≤ 0.12 %). But the separated zone is a region of the wedge about 0.35B deep, not a few surface points.
+Whether a separated wedge of that size is an acceptable constitutive idealisation is the owner's call. The p_r → 0
+cross-check (≤ 2.3 %, pre-fix) bounds its effect on the peak.
