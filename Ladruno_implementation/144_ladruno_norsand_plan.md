@@ -2,7 +2,7 @@
 title: "WP-144 — LadrunoNORSAND: NorSand in the Andrade & Borja (2006) form, with a curved CSL and a hyperelastic energy"
 project: Ladruno
 type: implementation plan
-status: "PLANNED, rev 2. Owner go 2026-09-30 (consistency by construction + full ownership of the model). Plan re-checked against the source papers; P0 (Python oracle) is next. No code yet."
+status: "PLANNED, rev 2.1. Owner go 2026-09-30 (consistency by construction + full ownership). Rev 2.1 adds the oracle / known-result gates (§5) and the orchestration roster (§6). P0a (equation sheet) is next. No code yet."
 owner: nmora
 related:
   - "[[_sand_model_survey_2026-09-27]] (evidence, ranking)"
@@ -197,6 +197,146 @@ P4 is run only if TIMs needs the post-peak branch.
 
 **Total: about 5–6 engineer-weeks without P4.** P0 is shorter than rev 1 estimated, because the 3-invariant
 proof exists (AB06 §2.2.1). P1 is longer, because the return is the 4-unknown spectral one.
+
+## 5. Oracles and known results (what "correct" means, fixed before any code)
+
+**Principle.** Every test compares against something that was **not produced by the code under test**: a closed
+form, a published number, a lab curve, or an oracle written independently of it. The expected value and its
+tolerance are written in the test file before the implementation exists.
+
+### 5.1 Two independent oracles (P0)
+
+| Oracle | What it is | Written from | Its job |
+|---|---|---|---|
+| **O1, rate oracle** | The continuum rate equations (AB06 Box 1 + the curved CSL + the chosen energy), integrated as an ODE by SciPy Radau at rtol 1e-10. It uses the closed-form plastic multiplier; no return map. This is the WP-134 pattern. | The equation sheet (§6, P0a) | The **truth** for any strain path. It is independent of all the return-map algebra. |
+| **O2, algorithmic oracle** | AB06 Box 2 in Python: backward Euler, the 4×4 spectral return, nested π_i, and the closed-form tangent. Derivatives are generated with sympy, not typed by hand. | The equation sheet, **by a different agent than O1** | The **reference for the C++**, which must match it to ~1e-10 relative, because it is the same algorithm in the same arithmetic. |
+
+Gates between them:
+- O2 → O1 with first-order convergence as Δε → 0, on every K-path below.
+- O2's tangent matches finite differences to ~1e-7 (central differences, several step sizes).
+- A mismatch between O1 and O2 is a finding against the equation sheet or one of the two codes. It is never
+  resolved by editing one oracle to agree with the other.
+
+### 5.2 Known results (determinate expectations)
+
+**K1, closed-form identities** (exact up to tolerance; T0m in the manifest):
+1. Hyperelastic isotropic compression: p(ε_v) matches the energy's closed form.
+2. A closed elastic strain loop does **zero net work** (≤ 1e-12) and returns the state exactly (conservative
+   energy, BA06 §2.1).
+3. ζ(θ): ζ = 1 at the compression corner and 1/ρ at the extension corner. The Willam–Warnke section is convex
+   for ρ ∈ [½, 1], and the parser refuses outside that range.
+4. The yield function gives η = M·ζ-scaled at p = π_i (the image-stress definition, AB06 eq. 10).
+5. Flow rule: at every plastic step the measured ε̇_vᵖ/ε̇_sᵖ equals AB06 eq. 39 evaluated at the state.
+6. **Peak identity:** at a drained peak, π_i = π_i* and D = χ ψ_i.
+7. **Undrained critical state endpoint:** an isochoric triaxial ends on the CSL at
+   p_cs = −pa·((e0 − e)/λc)^(1/ξ) with q = M_tc·|p_cs| (closed form from the power-law CSL).
+8. **Drained critical state:** at large shear strain, ψ → 0, η → M(θ) and D → 0.
+9. **Dissipation:** D ≥ 0 at every plastic step, and D = 0 at every elastic step. A parameter set with N̄ > N or
+   ρ > ρ̄ is refused.
+
+**K2, published benchmark (T1): AB06 §6.1, the single-point localization test.**
+- Parameters, all given in the paper **[E]**: κ̂ 0.01, ε_v0 0 at p0 −100 kPa, μ0 5400 kPa, α0 0; λ̃ 0.0135,
+  M 1.2, N 0.4, N̄ 0.2, h 280; v 1.59, v_c0 1.81; Willam–Warnke.
+- Loading: f₁ for n₁ = 10 steps, then f₂ until localization.
+- **Known result:** ρ = 0.7 / ρ̄ = 0.8 localizes at **n = 22**; ρ = ρ̄ = 1 at **n = 26**.
+- It needs finite strain (LogStrain) and a min det(n·A·n) sweep over directions (done in the oracle).
+- The ε₁ and ε₂ magnitudes of eq. 98 are unreadable in the text extraction; P0a reads them from the PDF page.
+- This case also exercises the log CSL and BA06's energy: it is the "paper mode" regression before the fork's
+  extensions are switched on.
+
+**K3, laboratory data (T1, fit quality reported, sanity-gated):**
+- Ottawa F65 monotonic drained triaxials (Vasko 2014 / LEAP-2017, in the owner's library).
+- TIMs' own drained triaxials (P3).
+- Gate: the calibrated curves stay inside the specimen scatter to the peak. The residual is reported, not hidden.
+
+**K4, cross-model (soft gate):** single-point drained/undrained triaxial and plane-strain compression against
+the DM04 oracle (`uw_model`, WP-134) and PM4Sand, with the same CSL. Peak q and ε_v must agree within the
+triaxial scatter; differences are explained, not tuned away.
+
+**K5, boundary-value problem (P3):**
+- The strip deck at B/8 and B/16.
+- Floor sensitivity: F vs F/2, accepted if the load changes by less than 2 %.
+- **Loukidis & Salgado (2011), Géotechnique 61(2):107**, in the owner's library: Nγ as a function of relative
+  density and stress level, at the deck's density and stress. Also cross-check against the Lau (2011) and
+  Lyamin (2007) bearing-capacity results.
+- These are the design-level known results. A miss here is reported, with the mechanism, not calibrated away.
+
+### 5.3 How the gates map to the manifest
+
+- **T0m** = K1 plus the kernel-vs-O2 parity.
+- **T1** = K2, K3 and FD-tangent.
+- The mutation gate targets semantic mutants: drop a tangent term, flip N̄/N, freeze π_i, remove the Q-cap,
+  bypass the floor count, swap WW for Gudehus–Argyris. Every mutant must be killed by a named K-test. A
+  survivor is a coverage gap to be recorded, as in the ADR-92 gate.
+
+## 6. Execution and orchestration
+
+The orchestrator (the lead session) does not write the maths or the kernel. It owns:
+- the equation sheet's sign-off;
+- the task specs;
+- the independence rule between oracles;
+- builds and CI;
+- the ledgers;
+- the decision at every gate.
+
+Agents get narrow specs and return short reports: at most ~300 words plus file paths. The orchestrator reads
+diffs of the load-bearing parts, not whole files.
+
+### 6.1 Roster: model and effort per role
+
+| Role | Model | Effort | Why this tier |
+|---|---|---|---|
+| **Deriver**: equation sheet, symbolic derivatives, the curved-CSL proof check | Fable | high | Dense maths where a sign error survives everything downstream. No downgrade. |
+| **Oracle author A** (O1) | Opus | high | Numerics, written from the sheet only |
+| **Oracle author B** (O2) | Fable | high | Deliberately a different model from O1, to decorrelate errors |
+| **Kernel author**: header-only C++ kernel + tangent | Opus | high | Must match O2 to 1e-10 |
+| **Shell/wiring**: NDMaterial shell, wrappers, parser, dispatch, sendSelf/recvSelf, responses | Sonnet | medium | Pattern work against the `ladruno-new-material` checklist and the SANISAND wrappers |
+| **Test author**: K1/K2 pytest, mutation mutants | Sonnet | medium | The expected values come from the spec, not from running the code |
+| **Adversary**: derivation and C++ review at the P0 and final gates | Fable + a Codex second pass | max / high | Two independent reviewers on new maths (the plan's adversarial-gate requirement) |
+| **Calibrator**: K3/K4/K5, P3 | Opus | high | Judgment on data fit and mechanisms |
+| **Clerk**: ledgers, banner, manifest row, grep sweeps | Haiku | low | Mechanical, verified by CI gates |
+
+Model and effort are set per role by agent definitions in `.claude/agents/` (session-local, created at kickoff).
+
+### 6.2 Sequence and gates
+
+1. **P0a, equation sheet** (Deriver).
+   - Writes `Ladruno_implementation/144a_norsand_equation_sheet.md`: AB06/BA06 equations re-derived in our
+     notation, with the curved CSL, the WW ζ and its derivatives, the Q-cap, the energy module, and the AB06 §6.1
+     eq. 98 values read from the PDF page.
+   - The sheet is the **only** document later agents read. Nobody re-reads the PDFs; that saves tokens.
+   - **Gate G0:** Adversary sign-off plus orchestrator review.
+2. **P0b ∥ P0c**: O1 (author A) and O2 (author B) are written in parallel, from the sheet only. **P0d** (Test
+   author) writes the K1/K2 tests against **expected values from the sheet and the paper**. It runs them against O1
+   and O2.
+   - **Gate G1:** O2→O1 convergence, FD tangent, K1 all green, K2 n = 22 / 26 reproduced, D ≥ 0 census,
+     convexity table (§2.5).
+3. **P1**: the kernel (Kernel author), then the shell and wiring (Shell/wiring). Builds use `build.bat` in this
+   worktree, run in the background.
+   - **Gate G2:** kernel-vs-O2 parity at ≤ 1e-10, K1/K2 through OpenSees, LogStrain large-strain parity.
+4. **P2**: the mutation gate, refusal and bounded-work tests, byte-identity of everything else.
+   - **Gate G3:** Zone-A green and a mutation score at or above the floor.
+5. **P3**: K3/K4/K5 (Calibrator). The strip runs need Esmeralda (owner or remote orchestrator).
+6. **Final gate**: Adversary pass on the whole diff; Clerk does the ledgers, banner and manifest. Flip to ready.
+   The owner merges.
+
+### 6.3 Token discipline (without trading quality)
+
+- **One read of the sources.** The PDFs are read once, into the equation sheet (P0a). Every later agent reads
+  the sheet (a few kB), not the papers.
+- **Templates are reused, not rediscovered.** The agents' specs point at WP-134's oracle, `LadrunoJ2`'s kernel
+  shape, the SANISAND wrappers and the `ladruno-new-material` skill by path.
+- **Bounded loops.** At most two fix-and-review rounds per gate before the orchestrator escalates to the owner.
+- **Cheap tiers only where CI verifies the output** (the Clerk). Never on maths, oracles or the kernel.
+- **Builds and long runs go to the background**, with no polling.
+- **Findings, not transcripts.** Agent reports list findings and paths. Evidence stays in the files.
+
+### 6.4 Blockers
+
+- **Houlsby, Amorosi & Rojas (2005)** is not in the library.
+  - Mitigation: the energy is a swappable module. P0 starts with BA06's energy (which the K2 benchmark needs
+    anyway). HAR is added when the paper arrives, behind its convexity gate.
+- **Esmeralda access** for K5 strip runs: owner or remote orchestrator, as in WP-151.
 
 ## 4. Sources
 
