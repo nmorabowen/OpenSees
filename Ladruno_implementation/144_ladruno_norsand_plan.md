@@ -70,19 +70,31 @@ BA06 is 2-invariant; the third invariant is explicitly left for later **[E, BA06
 
 ### 2.2 Dissipation bounds: now parameter checks
 
-AB06 §2.2.1 proves D = σ:ε̇ᵖ ≥ 0 at yield if
-- **N̄ ≤ N** (from BA06), and
-- **ρ ≤ ρ̄**, which is equivalent to ψ_c ≤ φ_c: the dilation angle at critical is at most the friction angle at
-  critical (eqs. 32–34) **[E]**.
+AB06 §2.2.1 states D = σ:ε̇ᵖ ≥ 0 at yield if N̄ ≤ N and ρ ≤ ρ̄ (eqs. 32–34) **[E]**.
+
+**That condition is wrong for the flow rule AB06 actually integrate** (G0, 2026-09-30) **[I]**.
+- The paper's flow rule, Box 2 and tangent use ∂Q/∂p = β ∂F/∂p with β = (1−N)/(1−N̄) (eq. 22, "reading A").
+- The proof (eqs. 30–31) uses a different potential with η̄ = (ζ̄/ζ)η ("reading B").
+- With reading A, D/λ̇ on the yield surface is linear in r = (p/π_i)^{N/(1−N)} and binds at r = 0. That
+  gives β ≤ ζ̄/ζ for all θ.
+- For Willam–Warnke, ζ̄/ζ is monotone in θ, so the bound is set at the corners. The extension corner gives
+  ζ̄/ζ = ρ/ρ̄.
+
+**Adopted condition** (owner decision 2026-09-30):
+- **N̄ ≤ N and ρ/ρ̄ ≥ (1−N)/(1−N̄).**
+- **Hard refusal** in the parser if it fails.
+- **Warning only** for ρ > ρ̄ (the paper's ψ_c ≤ φ_c reading).
+- Counterexample to the paper's test: N̄ = N, ρ = 0.7, ρ̄ = 0.8 passes ρ ≤ ρ̄ yet dissipates negatively at the
+  extension corner at small |p|.
+- Evidence: the equation sheet [[144a_norsand_equation_sheet]] §5.2/§11. It was confirmed by the Adversary's
+  independent re-derivation (26×26 (ρ, ρ̄) grid × 2001 θ, no interior excess) and by the orchestrator's own
+  check.
 
 BA06 §2.2 adds the hardening part: with π_i conjugate to ε_sᵖ, σ:ε̇ᵖ − π_i ε̇_sᵖ ≥ 0, since ε̇_sᵖ = λ̇ ≥ 0 and
 π_i < 0 **[E]**.
 
-The parser **refuses** parameter sets outside these bounds (a hard error, not a warning).
-
-What is still open (P0): **do the bounds survive the curved CSL (§2.3)?** The CSL enters only through π_i*
-(the limit image pressure) and ψ_i, not through F or Q at fixed π_i. So I expect the proof to carry over
-unchanged **[I]**. The oracle's D ≥ 0 census at every step is the evidence, not this expectation.
+**Curved CSL: settled at G0.** The dissipation argument does not involve the CSL. Only Λ(π_i) = π_i ∂ψ_i/∂π_i
+changes, in the tangent (sheet §11.4) **[I]**. The oracle's D ≥ 0 census at every step remains the evidence.
 
 ### 2.3 Critical state line: power law, DM04's form
 
@@ -232,15 +244,22 @@ Gates between them:
    p_cs = −pa·((e0 − e)/λc)^(1/ξ) with q = M_tc·|p_cs| (closed form from the power-law CSL).
 8. **Drained critical state:** at large shear strain, ψ → 0, η → M(θ) and D → 0.
 9. **Dissipation:** D ≥ 0 at every plastic step, and D = 0 at every elastic step. A parameter set with N̄ > N or
-   ρ > ρ̄ is refused.
+   ρ/ρ̄ < (1−N)/(1−N̄) is refused (§2.2). The counterexample set N̄ = N, ρ = 0.7, ρ̄ = 0.8 is a test: refused
+   by the parser, and negative D in the oracle when forced.
 
 **K2, published benchmark (T1): AB06 §6.1, the single-point localization test.**
 - Parameters, all given in the paper **[E]**: κ̂ 0.01, ε_v0 0 at p0 −100 kPa, μ0 5400 kPa, α0 0; λ̃ 0.0135,
   M 1.2, N 0.4, N̄ 0.2, h 280; v 1.59, v_c0 1.81; Willam–Warnke.
 - Loading: f₁ for n₁ = 10 steps, then f₂ until localization.
-- **Known result:** ρ = 0.7 / ρ̄ = 0.8 localizes at **n = 22**; ρ = ρ̄ = 1 at **n = 26**.
+- **Published result:** ρ = 0.7 / ρ̄ = 0.8 localizes at **n = 22**; ρ = ρ̄ = 1 at **n = 26**.
+- Loading read from the PDF (P0a): λ₁ = 1e-3, λ₂ = 4e-4, f₁ = diag(1+λ₂, 1−λ₁, 1), f₂ = diag(1, 1−λ₂, 1+λ₁).
+- **Gate form (set at G0):** the paper leaves the initial π_i, χ, the exact v_c0 and the crossing criterion
+  unspecified, and each can move n by more than 1.
+  - **The gate is the ordering:** ρ = 0.7 localizes before ρ = 1, with a gap of about 4 steps, inside a stated
+    band.
+  - A sensitivity table over π_i0 and χ is reported.
+  - Exact n = 22 / 26 is a sanity check, not a pass/fail.
 - It needs finite strain (LogStrain) and a min det(n·A·n) sweep over directions (done in the oracle).
-- The ε₁ and ε₂ magnitudes of eq. 98 are unreadable in the text extraction; P0a reads them from the PDF page.
 - This case also exercises the log CSL and BA06's energy: it is the "paper mode" regression before the fork's
   extensions are switched on.
 
@@ -310,7 +329,7 @@ Model and effort are set per role by agent definitions in `.claude/agents/` (ses
 2. **P0b ∥ P0c**: O1 (author A) and O2 (author B) are written in parallel, from the sheet only. **P0d** (Test
    author) writes the K1/K2 tests against **expected values from the sheet and the paper**. It runs them against O1
    and O2.
-   - **Gate G1:** O2→O1 convergence, FD tangent, K1 all green, K2 n = 22 / 26 reproduced, D ≥ 0 census,
+   - **Gate G1:** O2→O1 convergence, FD tangent, K1 all green, K2 ordering and gap reproduced (with the π_i0/χ sensitivity table), D ≥ 0 census,
      convexity table (§2.5).
 3. **P1**: the kernel (Kernel author), then the shell and wiring (Shell/wiring). Builds use `build.bat` in this
    worktree, run in the background.
