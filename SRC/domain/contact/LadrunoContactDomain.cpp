@@ -931,6 +931,25 @@ LadrunoContactDomain::getOrCreateMortarNormalState(int contactTag, int slaveNode
     return theMortarNormalStates[k];
 }
 
+// ===================================================== ADR-157 per-facet-pair mortar friction state
+LadrunoContactDomain::MortarFrictionState &
+LadrunoContactDomain::getOrCreateMortarFrictionState(int contactTag, int slaveNodeTag,
+                                                     int slaveFacet, int masterFacet)
+{
+    MortarPairKey k; k.c = contactTag; k.n = slaveNodeTag; k.sf = slaveFacet; k.mf = masterFacet;
+    // operator[] default-constructs a zeroed slot (engaged=false) when absent — the lazy
+    // create-at-first-activation contract of FrictionState / MortarNormalState.
+    return theMortarFrictionStates[k];
+}
+
+void
+LadrunoContactDomain::mortarFrictionGCMark(int contactTag, int slaveNodeTag, int slaveFacet,
+                                           int masterFacet)
+{
+    MortarPairKey k; k.c = contactTag; k.n = slaveNodeTag; k.sf = slaveFacet; k.mf = masterFacet;
+    liveMortarPairKeys.insert(k);
+}
+
 void
 LadrunoContactDomain::accumulateMortarGap(int contactTag, int slaveNodeTag, int feTag,
                                           double gtFacet, double aFacet, double epsN)
@@ -1023,6 +1042,7 @@ void
 LadrunoContactDomain::mortarNormalGCBegin(void)
 {
     liveNodeKeys.clear();
+    liveMortarPairKeys.clear();   // ADR-157
 }
 
 void
@@ -1044,6 +1064,15 @@ LadrunoContactDomain::mortarNormalGCEnd(void)
             ++it;
     }
     liveNodeKeys.clear();
+    // ADR-157 — prune friction slots no live frictional facet pair referenced this handle().
+    for (std::map<MortarPairKey, MortarFrictionState>::iterator it = theMortarFrictionStates.begin();
+         it != theMortarFrictionStates.end(); ) {
+        if (liveMortarPairKeys.find(it->first) == liveMortarPairKeys.end())
+            theMortarFrictionStates.erase(it++);
+        else
+            ++it;
+    }
+    liveMortarPairKeys.clear();
     // FE tags are reassigned each handle(), so the facet-contribution keys are NOT stable —
     // drop them all and zero the (transient) running gap sums on the survivors. The adapters
     // re-fill gtGlobal/aGlobal on the next getResidual sweep (delta from 0); only λ_N persists.
@@ -1281,6 +1310,18 @@ LadrunoContactDomain::commit(bool augmenting)
                     st.lambdaTie[d] += st.epsN * (st.rtGlobal[d] / st.aGlobal);
             continue;
         }
+        // (the C3.1-C3.3 friction promotion moved to the per-facet-pair loop below — ADR-157)
+        if (!aug || st.aGlobal <= 1e-300) continue;  // ADR-155 suppressed / unreferenced this step
+        double gbar = st.gtGlobal / st.aGlobal;
+        st.lambdaN = std::min(0.0, st.lambdaN + st.epsN * gbar);
+    }
+
+    // ADR-157 — mortar friction, per (slave node, facet pair). Capstone contract #1: every
+    // path-state store is iterated here AND in revertToLastCommit (and cleared in revertToStart).
+    for (std::map<MortarPairKey, MortarFrictionState>::iterator it = theMortarFrictionStates.begin();
+         it != theMortarFrictionStates.end(); ++it) {
+        MortarFrictionState &st = it->second;
+        const bool aug = noAug.empty() || noAug.find(it->first.c) == noAug.end();   // ADR-155 gate
         // C3.1 — promote the trial tangential slip (penalty friction; the EmbeddedRebar/NTS
         // FrictionState precedent). Done for every slot regardless of normal activity.
         for (int d = 0; d < 3; d++) st.gpT[d] = st.gpTtrial[d];
@@ -1292,9 +1333,6 @@ LadrunoContactDomain::commit(bool augmenting)
         // C3.2 (MAJOR-2) — commit the engagement origin so a later rejected step can revert it.
         for (int d = 0; d < 3; d++) st.gT0committed[d] = st.gT0[d];
         st.engagedCommitted = st.engaged;
-        if (!aug || st.aGlobal <= 1e-300) continue;  // ADR-155 suppressed / unreferenced this step
-        double gbar = st.gtGlobal / st.aGlobal;
-        st.lambdaN = std::min(0.0, st.lambdaN + st.epsN * gbar);
     }
 
     // ADR-57 E2/E3/E6 — edge-edge slots. The shipped commit loop iterates only friction + mortar slots,
@@ -1346,9 +1384,10 @@ LadrunoContactDomain::revertToLastCommit(void)
     // untouched on revert, the C2.2 invariant; only the friction trial needs reverting).
     // C3.2 (MAJOR-2) — also restore the engagement origin gT0/engaged from the committed copy, so
     // a rejected implicit step does not latch a stale origin captured at the rejected config.
-    for (std::map<NodeKey, MortarNormalState>::iterator it = theMortarNormalStates.begin();
-         it != theMortarNormalStates.end(); ++it) {
-        MortarNormalState &st = it->second;
+    // ADR-157 — the friction state is per (slave node, facet pair) now.
+    for (std::map<MortarPairKey, MortarFrictionState>::iterator it = theMortarFrictionStates.begin();
+         it != theMortarFrictionStates.end(); ++it) {
+        MortarFrictionState &st = it->second;
         for (int d = 0; d < 3; d++) {
             st.gpTtrial[d] = st.gpT[d];
             st.gT0[d] = st.gT0committed[d];
@@ -1386,6 +1425,7 @@ LadrunoContactDomain::revertToStart(void)
     // by-construction-pristine reset. The definitions (surfaces/contacts) are untouched.
     theFrictionStates.clear();
     theMortarNormalStates.clear();
+    theMortarFrictionStates.clear();    // ADR-157 per-facet-pair mortar friction state
     theEdgeEdgeStates.clear();
     theMortarFacetContribs.clear();
     theNtsForce.clear();                // B3 force snapshots (side-channel, re-written per step)
