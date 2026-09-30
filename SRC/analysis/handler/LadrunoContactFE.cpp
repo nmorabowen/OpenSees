@@ -864,9 +864,61 @@ LadrunoContactFE::mortarActive(double D[4][4], double M[4][4], double g[4], doub
         g[i] = pr.g[i];
         for (int j = 0; j < 4; j++) { D[i][j] = pr.D[i][j]; M[i][j] = pr.M[i][j]; }
     }
+    // ADR-155 (G-9) -- the normal-gap shift, applied HERE so every consumer sees one gap. Shift the
+    // area-normalised gap and re-weight: g~_I <- (g~_I/a_I + s_I)*a_I, a_I = sum_J D_IJ summed in the
+    // SAME order as the consumers. At the reference config (u = 0) the adjust term makes the inner
+    // sum an exact 0.0 (the same double minus itself), so an -adjust contact starts with exactly zero
+    // pressure -- not a round-off residue. Off (hasGapShift false) => this block is skipped.
+    if (hasGapShift) {
+        if (gapShiftAdjust && !gapShiftRefReady) {
+            // reference-config nodal gap of THIS facet pair (X only). Empty overlap at the reference
+            // => no adjust for this pair (the pair was not in contact as meshed).
+            double Xs0[4][3], Xm0[4][3];
+            for (int i = 0; i < npsS; i++) {
+                const Vector &X = mortarSlave[i]->getCrds();
+                for (int d = 0; d < 3; d++) Xs0[i][d] = X(d);
+            }
+            for (int i = 0; i < npsM; i++) {
+                const Vector &X = mortarMaster[i]->getCrds();
+                for (int d = 0; d < 3; d++) Xm0[i][d] = X(d);
+            }
+            LadrunoMortarKernel::PairResult pr0;
+            if (LadrunoMortarKernel::integratePair(npsS, Xs0, npsM, Xm0, orientDir, pr0) == 0) {
+                for (int I = 0; I < npsS; I++) {
+                    double a0 = 0.0;
+                    for (int J = 0; J < npsS; J++) a0 += pr0.D[I][J];
+                    if (a0 <= 1e-300) continue;
+                    double gbar0 = pr0.g[I] / a0;
+                    if (gapShiftAdjTol <= 0.0 || std::fabs(gbar0) <= gapShiftAdjTol)
+                        gapShiftRef[I] = -gbar0;
+                }
+            }
+            gapShiftRefReady = true;
+        }
+        for (int I = 0; I < npsS; I++) {
+            double a = 0.0;
+            for (int J = 0; J < npsS; J++) a += D[I][J];
+            if (a <= 1e-300) continue;               // unreferenced (every consumer skips it too)
+            double gbar = g[I] / a + gapShiftRef[I];  // exact 0.0 at the reference under -adjust
+            g[I] = (gbar + gapShiftOffset) * a;
+        }
+    }
     // per-facet master normal (flat facet ⇒ the per-GP projection normal), oriented
     // toward orientDir — the same n the weighted gap g̃ used inside integratePair.
     return LadrunoMortarKernel::facetNormal(npsM, Xm, orientDir, n);
+}
+
+// ADR-155 (G-9) -- arm the gap shift (see the header). The reference cache is lazily filled by
+// the first mortarActive() call; hasGapShift stays false unless an option is actually set.
+void
+LadrunoContactFE::setMortarGapShift(double gapOffset, bool adjust, double adjustTol)
+{
+    gapShiftOffset = gapOffset;
+    gapShiftAdjust = adjust;
+    gapShiftAdjTol = (adjustTol > 0.0) ? adjustTol : 0.0;
+    hasGapShift = (gapOffset != 0.0) || adjust;
+    gapShiftRefReady = false;
+    for (int i = 0; i < 4; i++) gapShiftRef[i] = 0.0;
 }
 
 // ADR-85 T3 — the A8 active-set tributary floor (proto_t3_mortar2d.py A8). A noise-sized
@@ -2666,6 +2718,11 @@ LadrunoContactFE::addMortarTang(double fact, bool initialStiff)
             : 0.0;
         double pr = lambdaI + kn * (g[I] / aFacet);   // same p_I as the residual (kn = epsN)
         if (pr < 0.0) W[I] = 1.0 / aFacet;            // active iff compression
+        // ADR-155 (G-9): a gap-shifted (-adjust/-gapOffset) node sitting EXACTLY at p = 0 -- every
+        // -adjust node at the start -- takes the CLOSED branch of the kink (the residual is 0 on
+        // both branches), so the first Newton iterate sees the interface stiffness instead of a
+        // floating body. Unshifted contacts never reach this (hasGapShift false => byte-identical).
+        else if (hasGapShift && pr == 0.0) W[I] = 1.0 / aFacet;
     }
     for (int A = 0; A < nN; A++) {
         for (int B = 0; B < nN; B++) {

@@ -14,6 +14,7 @@ two instruments:
      C  contactPlane + -visc (statics-inert, field packed)
      D  mortar friction (-epsN/-mu/-epsT/-cohesion/-tauMax) + the
         -edgeedge option block (inert on parallel facets; fields packed)
+        + the ADR-155 block (-augment/-maxGap/-gapOffset/-adjust)
    build -> analyze = reference; build -> save -> wipe -> restore ->
    analyze must reproduce every lane's tip EXACTLY.
 
@@ -122,7 +123,10 @@ def build(ops, variant=None):
                 "-cohesion", 10.0, "-tauMax", 1.0e5,
                 "-outward", 0.0, 0.0, 1.0,
                 "-edgeedge", "-edgeKn", v.get("edgeKn", 5.0e5),
-                "-edgeBand", 0.01, "-edgeMu", 0.2, "-edgeKt", 1.0e5)
+                "-edgeBand", 0.01, "-edgeMu", 0.2, "-edgeKt", 1.0e5,
+                # ADR-155 -- the R0.5 option block (5 tail slots): packed + restored too
+                "-augment", v.get("augD", "request"), "-maxGap", v.get("maxGapD", 0.5),
+                "-gapOffset", v.get("gapOffD", -1.0e-4), "-adjust", v.get("adjTolD", 0.5))
 
     ops.timeSeries("Linear", 1)
     ops.pattern("Plain", 1, 1)
@@ -253,6 +257,10 @@ def main():
             ("epsTie_tie", {"epsTie": 2.0e7}),
             ("planeKn_plane", {"planeKn": 3.0e7}),
             ("planeN_plane", {"planeNx": 0.1}),   # re-normalized on add
+            ("augment_mortar", {"augD": "never"}),        # ADR-155 tail slots
+            ("maxGap_mortar", {"maxGapD": 0.6}),
+            ("gapOffset_mortar", {"gapOffD": -2.0e-4}),
+            ("adjustTol_mortar", {"adjTolD": 0.4}),
     ):
         vd = os.path.join(root, "v_" + name); os.makedirs(vd)
         save_to(ops, vd, variant)

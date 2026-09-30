@@ -229,6 +229,9 @@ class LadrunoContactFE : public FE_Element
                      double tauMax = 0.0, bool consistentTan = false, bool isTie = false,
                      double muc = 0.0, bool ntsCoDeclared = false);
     ~LadrunoContactFE();
+    // ADR-155 (G-9) -- arm the 3D mortar gap shift on this adapter (called by the handler right
+    // after construction when the contact declared -gapOffset and/or -adjust). Never called => inert.
+    void setMortarGapShift(double gapOffset, bool adjust, double adjustTol);
 
     // Ladruno (ADR-96, passenger DOFs): fill myID from each node's FIRST ndm
     // equations (the translations, first by the fork's ndf convention) instead
@@ -537,6 +540,19 @@ class LadrunoContactFE : public FE_Element
     double mortarCohesion;  // adhesive intercept c
     double mortarTauMax;    // Tresca shear cap (≤0 ⇒ no upper cap)
     bool   isTie;           // C4: MESH-TIE pair (full 3-vec r→0, no clamp/friction); kn carries epsTie
+
+    // ADR-155 (G-9) -- 3D mortar normal-gap shift. mortarActive() returns the SHIFTED weighted gap
+    // g~_I -> (g~_I/a_I + s_I)*a_I, s_I = gapOffset + adjust_I, so EVERY consumer (residual, tangent,
+    // friction cone, viscous mask, SOFT=2, the global lambda_N accumulator and the penetration query)
+    // sees one gap. adjust_I = -gbar_I at the REFERENCE config (X, zero displacement), computed once
+    // per adapter (deterministic, so a rebuilt adapter recomputes the same value -- no Domain state).
+    // NSDMI => every existing ctor call is inert (hasGapShift false => mortarActive byte-identical).
+    bool   hasGapShift     = false;
+    double gapShiftOffset  = 0.0;
+    bool   gapShiftAdjust  = false;
+    double gapShiftAdjTol  = 0.0;     // 0 => adjust every paired node; >0 => only |gbar_ref| <= tol
+    mutable bool   gapShiftRefReady = false;
+    mutable double gapShiftRef[4]   = {0.0, 0.0, 0.0, 0.0};   // -gbar_I at the reference config
 
     // ADR-85 T3 -- 2D MORTAR bindings (mode == MORTAR, ndm == 2). NSDMI so every 3D
     // MORTAR ctor call leaves them at their default/inert value, untouched (the T1b
