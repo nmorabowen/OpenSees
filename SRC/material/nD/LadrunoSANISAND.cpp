@@ -1187,12 +1187,24 @@ OPS_LadrunoSANISAND(void)
         return 0;
     }
     if (sasOpt.tcPcontact > 0.0) {
+        // the default bound is p_contact (re-review MED-2: it bounds the entry jump to
+        // the re-contact scale; every footing entry measured was at p0 < 0.5 kPa), and a
+        // bound below p_contact would stop a just-re-contacted point from separating
+        // until it unloads below it (re-review LOW-6)
         if (!(sasOpt.tcP0Max > 0.0))
-            sasOpt.tcP0Max = 5.0 * sasOpt.tcPcontact;   // the default bound (review #2)
-        if (!(sasOpt.tcP0Max >= sasOpt.tcPsep)) {
+            sasOpt.tcP0Max = sasOpt.tcPcontact;
+        if (!(sasOpt.tcP0Max >= sasOpt.tcPcontact)) {
             opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
-                   << ": -sasSepMaxP0 = " << sasOpt.tcP0Max << " must be >= p_sep = "
-                   << sasOpt.tcPsep << ". Refused." << endln;
+                   << ": -sasSepMaxP0 = " << sasOpt.tcP0Max << " must be >= p_contact = "
+                   << sasOpt.tcPcontact << ". Refused." << endln;
+            return 0;
+        }
+        // re-review LOW-7: with -pRe the moduli read tr(sigma)/3 + p_Re, so K(p_contact)
+        // would be K(p_contact + p_Re): not the documented law. Refused, as -Presidual.
+        if (preElastic != 0.0) {
+            opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                   << ": -sasTensionCutoff is defined for -pRe 0 only (got " << preElastic
+                   << "). Refused." << endln;
             return 0;
         }
         // review #4: with p_r != 0 the separated sigma = (p_min - p_r) I is a real
@@ -1655,9 +1667,10 @@ LadrunoSANISAND::setLadrunoSasOptions(const LadrunoSasOptions &opt, bool verbose
         if (opt.tcPcontact > 0.0)   // Ladruno WP-152
             opserr << "LadrunoSANISAND tag " << this->getTag()
                    << ": WP-152 tension cutoff (separation), an OPT-IN constitutive choice: a point whose"
-                      " update refuses on tension (code 6, or a start at p <= 0) at committed p <= "
-                   << opt.tcP0Max << ", or on accuracy/cost (code 4/9) at committed p < p_sep = " << opt.tcPsep
-                   << " under a non-compressing increment, SEPARATES -- no tension, no shear (model p ="
+                      " update fails its accuracy/cost limit (code 4/9) at committed p < p_sep = " << opt.tcPsep
+                   << " -- the operative trigger at a free surface -- or refuses on tension (code 6, or a start"
+                      " at p <= 0) at committed p <= " << opt.tcP0Max
+                   << ", in both cases under a non-compressing increment, SEPARATES -- no tension, no shear (model p ="
                       " p_min = " << m_Pmin
                    << "), weight and place kept -- and re-contacts at p_contact = " << opt.tcPcontact
                    << " once its volumetric opening has closed (volumetric only: isochoric shear never"
@@ -2549,7 +2562,7 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
         if (!(std::isfinite(mLadrunoSas.opt.tcPsep) && std::isfinite(mLadrunoSas.opt.tcPcontact)
               && std::isfinite(mLadrunoSas.opt.tcP0Max)
               && mLadrunoSas.opt.tcPsep >= 0.0 && mLadrunoSas.opt.tcPcontact > mLadrunoSas.opt.tcPsep
-              && mLadrunoSas.opt.tcP0Max >= mLadrunoSas.opt.tcPsep && mLadrunoSas.opt.tcP0Max > 0.0
+              && mLadrunoSas.opt.tcP0Max >= mLadrunoSas.opt.tcPcontact
               && mLadrunoSas.opt.hFloor > 0.0))
             mLadrunoSas.opt.tcPsep = mLadrunoSas.opt.tcPcontact = mLadrunoSas.opt.tcP0Max = 0.0;
     }
@@ -2654,9 +2667,11 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
     // Ladruno WP-152: the parser's p_contact > p_min, against the p_min now in
     // force; a received setting that violates it is OFF (and so is its state).
     if (mLadrunoSas.opt.tcPcontact > 0.0
-        && (!(mLadrunoSas.opt.tcPcontact > m_Pmin) || m_Presidual != 0.0)) {   // + review #4
+        && (!(mLadrunoSas.opt.tcPcontact > m_Pmin) || m_Presidual != 0.0     // + review #4
+            || m_PreElastic != 0.0)) {                                         // + re-review LOW-7
         mLadrunoSas.opt.tcPsep = mLadrunoSas.opt.tcPcontact = mLadrunoSas.opt.tcP0Max = 0.0;
         mLadrunoSas.sep = mLadrunoSas.sep_n = false;
+        mLadrunoSas.stats[LSAS_SEP_ACTIVE] = 0.0;                             // re-review LOW-5
     }
 
     return 0;
@@ -5609,9 +5624,15 @@ LadrunoSANISAND::ladrunoTangentEP(void)
 {
     Matrix Cep(6, 6);
     const double e = m_e_init - (1 + m_e_init) * GetTrace(mEpsilon_n);
-    if (mLadrunoSas.sep_n) {   // Ladruno WP-152: a SEPARATED point hands out C_e at p_min (the regularisation)
-        double K, G;
-        GetElasticModuli(mSigma_n, e, K, G);
+    if (mLadrunoSas.sep_n) {   // Ladruno WP-152: a SEPARATED point: C_e at its (isotropic) stress --
+        double K, G;           // at p_min while open (the regularisation) -- and, while CLOSING
+        GetElasticModuli(mSigma_n, e, K, G);   // (g > 0), the consistent bulk K(p_contact) (re-review MED-3)
+        if (GetTrace(mEpsilon_n) - mLadrunoSas.sepTr_n > 0.0) {
+            Vector Sc(mI1);
+            Sc *= (mLadrunoSas.opt.tcPcontact - m_Presidual);
+            double Gc;
+            GetElasticModuli(Sc, e, K, Gc);
+        }
         return GetStiffness(K, G);
     }
     ladrunoSasContinuumTangent(mSigma_n, mAlpha_n, mFabric_n, mAlpha_in_n, e, Cep);

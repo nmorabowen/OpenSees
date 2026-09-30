@@ -278,7 +278,7 @@ def test_every_option_family_crosses_the_wire_at_once_after_the_868_merge():
     cppm_saved, sas_opts_saved = g(1, "cppmOptions"), g(2, "sasOptions")
     widths = (len(g(1, "substepStats")), len(g(2, "sasStats")))
     # #868's wire order, then WP-151's three
-    assert sas_opts_saved == [3.0, 0.2, 1.0, 0.0, 0.0, 3.0, 0.5, 2.0, 0.25, 0.3, 0.9, 4.5], sas_opts_saved   # p0max = 5 p_contact
+    assert sas_opts_saved == [3.0, 0.2, 1.0, 0.0, 0.0, 3.0, 0.5, 2.0, 0.25, 0.3, 0.9, 0.9], sas_opts_saved   # p0max = p_contact
     assert cppm_saved[:6] == [1.0, 5.0, 1.0, 0.0, 1.0, 0.0], cppm_saved
     with tempfile.TemporaryDirectory(prefix="ladruno_wp151_all_", ignore_cleanup_errors=True) as td:
         db = os.path.join(td, "db")

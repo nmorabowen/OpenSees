@@ -44,7 +44,7 @@ def _rel(a, b, floor=1.0):
 
 
 # ----------------------------------------------------------------------- (a)
-P0MAX = 5.0 * T.CUTOFF[2]                   # the default E1 bound, 5 p_contact
+P0MAX = T.CUTOFF[2]                         # the default E1 bound, p_contact (re-review MED-2)
 
 
 @pytest.fixture(scope="module")
@@ -75,8 +75,9 @@ def test_only_qualifying_refusals_change(replays):
             continue
         e1q = code0 == 6 or (code0 == 3 and p0 <= 0.0)
         e2q = code0 in (4, 9) and p0 < T.CUTOFF[1]
-        e1 = e1q and p0 <= P0MAX
-        e2 = e2q and not (sum(de[0:3]) > 0.0)
+        comp = sum(de[0:3]) > 1.0e-10 * math.sqrt(sum(x * x for x in de))
+        e1 = e1q and p0 <= P0MAX and not comp                      # re-review MED-1
+        e2 = e2q and not comp
         if e1 or e2:                                # separated: accepted, p = p_min, no shear
             assert int(o["rc"]) == 0, (key, code0)
             s = list(o["sigma"])
@@ -233,6 +234,7 @@ def test_tangentEP_of_a_separated_point_is_Ce_at_p_min():
     ((0.0, 0.005), False),                       # p_contact must exceed p_min (0.0101)
     ((0.5, 1.0, "-sasSepMaxP0", 2.0), True),
     ((0.5, 1.0, "-sasSepMaxP0", 0.2), False),    # p0max below p_sep
+    ((0.5, 1.0, "-sasSepMaxP0", 0.8), False),    # p0max below p_contact (re-review LOW-6)
     ((0.5, 1.0, "-sasSepMaxP0", 0.0), False),
 ])
 def test_parser(vals, ok):
@@ -266,6 +268,7 @@ def _with_presidual(opts, pr):
     pytest.param(T.BASE + ("-sasHFloor", 0.0) + T.CUTOFF, id="hFloor-0"),
     pytest.param(_with_presidual(T.BASE, 0.5) + T.R1 + T.CUTOFF, id="Presidual"),     # review #4
     pytest.param(T.BASE + T.R1 + ("-sasSepMaxP0", 2.0), id="p0max-without-cutoff"),
+    pytest.param(T.BASE + ("-pRe", 0.5) + T.R1 + T.CUTOFF, id="pRe"),               # re-review LOW-7
 ])
 def test_parser_review_refusals(args):
     ops.wipe()
@@ -280,7 +283,7 @@ def test_census_names_and_options_response():
     ops.wipe()
     T.build([[0, 0, 0, 0, 0, 0]], T.BASE + T.R1 + T.CUTOFF)
     assert len(T.mresp("sasStats")) == 44
-    assert T.mresp("sasOptions")[9:12] == [0.5, 1.0, 5.0]        # p0max defaults to 5 p_contact
+    assert T.mresp("sasOptions")[9:12] == [0.5, 1.0, 1.0]        # p0max defaults to p_contact
     T.build([[0, 0, 0, 0, 0, 0]], T.BASE + T.R1 + T.CUTOFF + ("-sasSepMaxP0", 2.5))
     assert T.mresp("sasOptions")[11] == 2.5
     ops.wipe()
@@ -297,9 +300,9 @@ def _is_pmin(sig, tol=1e-12):
 
 
 def test_E1_separates_below_the_bound_and_names_the_masked_code():
-    """review #2/#3: from p0 ~ 2 kPa (< 5 p_contact) one isotropic increment far past p = 0
+    """review #2/#3: from p0 ~ 2 kPa (< p0max = 5) one isotropic increment far past p = 0
     separates on E1; the masked refusal (code 6) and p0 are in the census."""
-    flip, rec = T.run(OPEN_ISO, T.BASE + T.R1 + T.CUTOFF)
+    flip, rec = T.run(OPEN_ISO, T.BASE + T.R1 + T.CUTOFF + ("-sasSepMaxP0", 5.0))
     ops.wipe()
     assert rec[0]["rc"] == 0 and _is_pmin(rec[0]["sigma"])
     s = rec[0]["sas"]
@@ -309,9 +312,9 @@ def test_E1_separates_below_the_bound_and_names_the_masked_code():
 
 
 def test_E1_refuses_above_the_bound():
-    """review #2: the same increment with -sasSepMaxP0 below p0 is a step to cut: it
-    REFUSES with its own code 6, nothing separates, and the hold is counted."""
-    flip, rec = T.run(OPEN_ISO, T.BASE + T.R1 + T.CUTOFF + ("-sasSepMaxP0", 1.0))
+    """review #2: the same increment with the DEFAULT bound (p0max = p_contact = 1 < p0) is a
+    step to cut: it REFUSES with its own code 6, nothing separates, and the hold is counted."""
+    flip, rec = T.run(OPEN_ISO, T.BASE + T.R1 + T.CUTOFF)
     s = T.mresp("sasStats")
     ops.wipe()
     assert sum(flip[0:3]) / 3.0 > 1.0
@@ -377,7 +380,8 @@ def test_newton_column_under_gravity_separates_and_recontacts():
             assert abs(szz_lo - (T.COL_W + szz_up)) < 1e-6, (k, szz_lo, szz_up)
     up = T.eresp(2, "sasStats")
     ops.wipe()
-    assert seen_sep and up[SEP_TENSION] + up[SEP_LOWP] >= 1.0 and up[SEP_EXITS] >= 1.0, up[36:44]
+    # counted ONCE per committed transition over a multi-iterate Newton run (re-review test gap 2)
+    assert seen_sep and up[SEP_TENSION] + up[SEP_LOWP] == 1.0 and up[SEP_EXITS] == 1.0, up[36:44]
     assert up[SEP_ACTIVE] == 0.0
 
 
@@ -444,3 +448,67 @@ def test_initial_state_analysis_revert_keeps_the_separation():
     ops.reset()
     assert T.mresp("sasStats")[SEP_ACTIVE] == 0.0
     ops.wipe()
+
+
+# ----------------------------------------------------------------------- (h) re-review
+def _replay_mat(tag, extra=()):
+    ops.nDMaterial("LadrunoSANISAND", tag, *T151.P, *T151.EB_OPTS, *T.R1, *T.CUTOFF, *extra)
+
+
+@pytest.mark.parametrize("de,separates", [
+    pytest.param([0.0, 1.0e-5, 0.0, 0.0, 0.0, 0.0], False, id="compressing"),
+    pytest.param([0.0, -1.0e-5, 0.0, 0.0, 0.0, 0.0], True, id="opening"),
+])
+def test_E1_start_at_zero_stress_refuses_under_compression(de, separates):
+    """re-review MED-1: a committed p0 = 0 start (a deck error, e.g. gravity onto a zero-stress
+    stage 1) under a COMPRESSING increment refuses loudly (code 3, sepHeldCompressing); only an
+    opening increment separates."""
+    ops.wipe()
+    _replay_mat(31)
+    z6 = [0.0] * 6
+    st = dict(sigma=z6, alpha=z6, alpha_in=z6, z=z6, e=T151.P[2])
+    o = T151.replay(ops, 31, st, de)
+    ops.wipe()
+    s = o["sas"]
+    if separates:
+        assert int(o["rc"]) == 0 and _is_pmin(list(o["sigma"]))
+    else:
+        assert int(o["rc"]) != 0 and float(s["lastRefuseCode"]) == 3.0
+        assert float(s["sepHeldCompressing"]) >= 1.0
+
+
+def test_E2_separates_under_isochoric_shear():
+    """re-review test gap 5: tr(d_eps) == 0 is NOT compressing -- a cost refusal at p0 < p_sep
+    under pure shear separates (the gate is '> 0', not '>= 0')."""
+    flip, rec = T.run([[3.0e-4, -3.0e-4, 0, 0, 0, 0]], CAP1 + T.R1 + T.CUTOFF, ev0=EV0_LOW)
+    S = [list(ops.eleResponse(1, "material", gp, "sasStats")) for gp in range(1, 9)]
+    ops.wipe()
+    assert 0.0 < sum(flip[0:3]) / 3.0 < T.CUTOFF[1]
+    assert rec[0]["rc"] == 0 and _is_pmin(rec[0]["sigma"])
+    # ALL eight Gauss points: the trace from B u is round-off under isochoric shear, and an
+    # exact `> 0` gate split this homogeneous brick 6 separating / 2 refusing
+    assert all(s[SEP_ACTIVE] == 1.0 and s[SEP_HELD_COMP] == 0.0 for s in S), [s[36:44] for s in S]
+
+
+def test_closing_tangent_is_the_consistent_bulk_modulus_and_recontact_resets_alpha_in():
+    """re-review MED-3 / test gaps 1, 3: while CLOSING (g > 0) a separated point's tangentEP
+    carries K(p_contact) in bulk (so its bulk ratio to the OPEN state is sqrt(p_contact/p_min):
+    the moduli scale with sqrt(p) at fixed e_init); after re-contact alpha_in = 0."""
+    fx = FIX["paths"]["iso"]
+    k_open = 21
+    k_close = next(o["k"] for o in fx["records"] if o.get("mode") == "S" and o.get("g", 0) > 0)
+    k_re = next(k for k, e in fx["events"] if e == "recontact")
+    incs = T.paths()["iso"]
+    T.build(incs, T.BASE + T.R1 + T.CUTOFF)
+    T.stage0()
+    bulk = {}
+    for k in range(k_re + 1):
+        assert ops.analyze(1) == 0
+        if k in (k_open, k_close):
+            C = T.mresp("tangentEP")
+            bulk[k] = (C[0] + 2.0 * C[1]) / 3.0
+    ain = T.mresp("alpha_in")
+    ops.wipe()
+    assert abs(bulk[k_close] / bulk[k_open] - math.sqrt(T.CUTOFF[2] / PMIN)) < 1e-9, bulk
+    assert all(abs(x) < 1e-15 for x in ain), ain
+

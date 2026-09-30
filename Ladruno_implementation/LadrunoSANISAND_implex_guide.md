@@ -1393,10 +1393,12 @@ evidence: [[152_sanisand_tension_cutoff]].
 - **SAS-ME's only low-p test is p + p_r > 0.** `-Pmin` is not an admissibility threshold under IntScheme 129: it only
   floors the elastic moduli.
 - **Entry masks ONLY low-p/tension refusals** (gated after the 2026-09-29 review):
-  - E1: code 6, or code 3 whose cause is p0 ≤ 0, **at committed p0 ≤ p0max** (`-sasSepMaxP0`, default 5·p_contact).
-    Above it one increment carried a well-confined point through p = 0: a step to cut, so it REFUSES.
-  - E2: code 4 or 9 while the committed p0 < p_sep **and the increment does not compress** (tr Δε ≤ 0, compression
-    positive). An accuracy or cost failure of a low-p point being compressed (the B/8 top row sits at p′ 0.2–0.35 in
+  - E1: code 6, or code 3 whose cause is p0 ≤ 0, **at committed p0 ≤ p0max** (`-sasSepMaxP0`, default and minimum
+    p_contact: the entry jump stays at the re-contact scale) **and under a non-compressing increment** (a zero-stress
+    start under gravity is a deck error and refuses). Above the bound one increment carried a well-confined point
+    through p = 0: a step to cut, so it REFUSES.
+  - E2: code 4 or 9 while the committed p0 < p_sep **and the increment does not compress** (tr Δε ≤ 1e-10·‖Δε‖,
+    compression positive; the tolerance keeps isochoric shear, whose trace from B·u is round-off, non-compressing). An accuracy or cost failure of a low-p point being compressed (the B/8 top row sits at p′ 0.2–0.35 in
     situ, below p_sep 0.5) REFUSES. `p_sep = 0` disables E2, which leaves a pure tension cutoff.
   - A qualifying refusal that a gate holds back is counted (`sepHeldHighP`, `sepHeldCompressing`, per update call).
   - Code 5 (`loadingNonPosH`, the α_in singularity), code 2, a non-finite start, codes 7 and 8, and codes 4/9 at
@@ -1409,17 +1411,24 @@ evidence: [[152_sanisand_tension_cutoff]].
     the point has compliance around it that leaves a band of load with NO equilibrium (for σ = p_contact the
     neighbours must yield, which reopens the gap). A free-node Newton column failed there.
   - α = α_in = 0 and the fabric is kept.
-  - The tangent is C_e at p_min while open (the model's own moduli floor, a declared Newton regularisation) and
-    K(p_contact) in bulk while closing. `tangentEP` returns C_e at the committed state.
+  - The tangent is C_e at p_min while open (the model's own moduli floor, a declared Newton regularisation) and,
+    while closing and on the exit iterate, the consistent bulk K(p_contact) with shear G(p) (a regularisation: the
+    stress carries no shear). `tangentEP` returns the same from the committed state.
+  - The entry itself is a jump (from the SAS-ME trial at p0 to p_min). With p0 ≤ p_sep (E2) or ≤ p_contact (E1) it
+    is small; on the footings the entry steps took more Newton iterations (median 17–28 vs 7–15) but no more step
+    cuts.
+  - Known limitation: a stage flip back to the elastic stage (`updateMaterialStage 0`) while separated leaves the
+    separation flag set; the elastic stage then evolves the stress from p_min I and stage 1 overwrites it. Do not flip
+    back while points are separated.
 - **Re-contact** happens at g ≥ g_c = (p_contact − p_min)/K(p_contact): SAS-ME restarts from σ = p_re·I,
   p_re = p_c(g) ≥ p_contact, α = α_in = 0.
   - p_contact > p_sep, and entry needs a qualifying refusal, so a point cannot chatter.
   - Re-contact is VOLUMETRIC only: isochoric shear of a separated point never closes the gap (tested).
 - **Parameters:**
-  - The parser requires 0 ≤ p_sep < p_contact, p_contact > p_min, p0max ≥ p_sep, and SAS-ME. The cutoff is refused
-    with `-implex`, with `-Presidual ≠ 0` (the separated state would carry tension, and the moduli read
-    tr σ/3 + p_Re, not p + p_r), and without `-sasHFloor > 0` (re-contact lands on α = α_in = 0, where h is otherwise
-    the 1e10 sentinel).
+  - The parser requires 0 ≤ p_sep < p_contact, p_contact > p_min, p0max ≥ p_contact, and SAS-ME. The cutoff is
+    refused with `-implex`, with `-Presidual ≠ 0` (the separated state would carry tension), with `-pRe ≠ 0` (the
+    moduli read tr σ/3 + p_Re, so K(p_contact) would be K(p_contact + p_Re)), and without `-sasHFloor > 0` (re-contact
+    lands on α = α_in = 0, where h is otherwise the 1e10 sentinel).
   - Starting values: p_sep 0.5 kPa (TIMs D1's p-floor bound) and p_contact 1.0 kPa.
   - Report the limit load at p_sep and at p_sep/2 (the D1 rule, < 2 %).
 - **Census** (`sasStats`, appended). Each transition is counted ONCE, when it commits; an element may call the
@@ -1429,7 +1438,8 @@ evidence: [[152_sanisand_tension_cutoff]].
   - `sas_sepActive`, the committed 0/1. Its sum over points is the number of points separated now;
   - `sas_sepLastCode` (the refusal code the last committed entry masked: 3, 4, 6 or 9) and `sas_sepMaxP0` (the
     largest committed p0 at an entry);
-  - `sas_sepHeldHighP`, `sas_sepHeldCompressing` (per update call: qualifying refusals the gates refused).
+  - `sas_sepHeldHighP`, `sas_sepHeldCompressing` (per update CALL: qualifying refusals the gates refused. A held
+    refusal fails its step, so it never commits; counting at commit would always read 0).
   - **`sasStats` is now 44 long.**
 - **`sasOptions`** is 12 values long: indices 9–11 are p_sep, p_contact and p0max.
 - **InitialStateAnalysis:** `revertToStart` under ISA keeps the separation state with the stress it produced; a plain

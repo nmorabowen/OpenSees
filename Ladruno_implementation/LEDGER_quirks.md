@@ -8133,3 +8133,10 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
   - The test spawns `sys.executable -S` (the Windows `-S` trap); `-S` drops site-packages, where that venv keeps pytest; `wp129_sanisand_byteid` imports `test_ladruno_sanisand`, which imports pytest → `ModuleNotFoundError`.
 - **Rule:** Read that failure as an environment artifact unless its message is a row mismatch. Put the interpreter's site-packages on `PYTHONPATH` (the child builds `sys.path` from it) and the test runs for real.
 - **Workaround/status:** documented (WP-152 review, 2026-09-29): with site-packages on `PYTHONPATH` it PASSES on the nmora desk at 7f1562c81 (111 s). The fix belongs to the harness, not to the material.
+
+### An exact sign test on a strain TRACE built from B·u is a coin flip under isochoric deformation (WP-152)
+- **Bites:** a material branch on `tr(dε) > 0.0` (or `>= 0`, `< 0`) to tell compression from opening.
+  - The element forms dε = B·Δu; under a deformation that is isochoric in exact arithmetic, each Gauss point's trace is round-off (~1e-20 on 1e-4 strains) with either sign.
+  - Measured: WP-152's first non-compressing gate (`tr dε > 0.0`) on a homogeneous stdBrick under +3e-4/−3e-4 pure shear: 6 of 8 GPs separated, 2 were held as "compressing" and refused. Under stdBrick (which discards the material's code) the 2 refusals aborted the commit through the WP-99 latch.
+- **Rule:** compare a derived trace against a tolerance scaled to the increment (`tr dε > 1e-10·‖dε‖`), and test the branch with a pure-shear increment on EVERY Gauss point of an element, not just GP 1.
+- **Workaround/status:** ✅ WP-152 re-review (`LadrunoSANISANDSasME.cpp`, the E1/E2 gate; `tests/test_ladruno_sanisand_tension_cutoff.py::test_E2_separates_under_isochoric_shear`).

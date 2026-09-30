@@ -896,16 +896,20 @@ ManzariDafalias::ladrunoSasIntegrate(void)
         GetElasticModuli(Sc, mVoidRatio, Kc, Gc);
         const double gc = (o.tcPcontact - m_Pmin) / Kc;
         ladrunoSasSetIsotropic(m_Pmin + Kc * fmax(g, 0.0));
+        if (g > 0.0) {
+            // closing, and the exit iterate: within THIS update sigma = (p_min + Kc g) I,
+            // so the consistent bulk modulus is K(p_contact) (re-review MED-3). The shear
+            // stiffness G(p) is a declared regularisation (the stress carries no shear);
+            // SAS-ME's next update starts from C_e at p_re on its own.
+            double Kp, Gp;
+            GetElasticModuli(mSigma, mVoidRatio, Kp, Gp);
+            mCe = GetStiffness(Kc, Gp); mCep = mCe; mCep_Consistent = mCe;
+        }
         if (g >= gc) {
-            mLadrunoSas.sep = false;       // the exit tangent: C_e at p_re (SAS-ME's next start)
+            mLadrunoSas.sep = false;
             mLadrunoSas.sepEvent = 3;
             mLadrunoLastPath = 9;
         } else {
-            if (g > 0.0) {                 // closing: the consistent bulk modulus is K(p_contact)
-                double Kp, Gp;
-                GetElasticModuli(mSigma, mVoidRatio, Kp, Gp);
-                mCe = GetStiffness(Kc, Gp); mCep = mCe; mCep_Consistent = mCe;
-            }
             mLadrunoLastPath = 8;
         }
         return;
@@ -1092,10 +1096,17 @@ ManzariDafalias::ladrunoSasIntegrate(void)
     if (tcOn && code != 0) {
         const bool e1q = (code == RC_LOWP) || (code == RC_START_OTHER && startTension);
         const bool e2q = (code == RC_DTMIN || code == RC_CAP) && (p0c < o.tcPsep);
-        const bool e1 = e1q && (p0c <= o.tcP0Max);
-        const bool e2 = e2q && !(GetTrace(dStrain) > 0.0);
-        if (e1q && !e1) st[LSAS_SEP_HELD_HIGHP] += 1.0;
-        if (e2q && !e2) st[LSAS_SEP_HELD_COMPRESSING] += 1.0;
+        // re-review MED-1: E1 takes the non-compressing gate too -- a compressing
+        // increment (e.g. gravity onto a zero-stress start, a deck error) must refuse,
+        // not be swallowed by a separation that re-contacts only after a further g_c.
+        // "compressing" with a tolerance scaled to the increment: a trace built from
+        // B u is round-off, not zero, under isochoric shear -- an exact `> 0.0` split one
+        // homogeneous stdBrick's 8 GPs into 6 separating and 2 refusing (re-review test).
+        const bool compressing = (GetTrace(dStrain) > 1.0e-10 * GetNorm_Contr(dStrain));
+        const bool e1 = e1q && (p0c <= o.tcP0Max) && !compressing;
+        const bool e2 = e2q && !compressing;
+        if (e1q && !(p0c <= o.tcP0Max)) st[LSAS_SEP_HELD_HIGHP] += 1.0;
+        else if ((e1q && !e1) || (e2q && !e2)) st[LSAS_SEP_HELD_COMPRESSING] += 1.0;
         if (e1 || e2) {
             mLadrunoSas.sepEvent = e1 ? 1 : 2;
             mLadrunoSas.sepCode = code;   // the masked refusal (review #3), recorded at commit

@@ -95,7 +95,7 @@ Each entry is counted by cause.
 
 ### Energy
 
-- Entry releases the stored elastic energy at p ≤ p_sep: small, dissipated, ≥ 0.
+- Entry releases the stored elastic energy at the committed p0 (≤ p_sep for E2, ≤ p0max = p_contact for E1 since the re-review; with the deviator up to M·p0): small, dissipated, ≥ 0. Measured on the footings: every entry at p0 < 0.5 kPa.
 - While separated, the work is p_min·Δε_v, about 0.
 - Re-contact is an elastic reload from p_min, so it is conservative.
 - Gate: the net work over closed separation cycles is ≥ 0.
@@ -332,3 +332,24 @@ nearest-GP spacing: 0.101 m on B/8, 0.076 m on fig9).
 - Caveat: at a 5-step checkpoint cadence, "before entry" means up to 5 steps before, and the neighbourhood is 3–5 GPs.
   Whether the MODEL's dilatant unloading of a 0.35B-deep wedge is physical for Toyoura at this density is the owner's
   question. Note that this is the zone where the general-shear mechanism should daylight.
+
+## Adversarial re-review (2026-09-30, independent reviewer): MERGE WITH CHANGES
+
+No defect in the OFF path or the trial/commit discipline; the E1 bound, the E2 gate and the continuous re-contact are
+as described and match the oracle. Each finding was checked against the code; the response is in the next commit
+after 506aadf1c.
+
+| # | finding | verdict | response |
+|---|---|---|---|
+| MED-1 | E1 has no direction gate: a compressing increment on a zero-stress (or code 6) point is swallowed | **confirmed** | E1 takes the non-compressing gate too; a held E1 counts in `sepHeldCompressing` and refuses. Oracle carries it (`refused_compressing`), fixture byte-identical. Tested with a p0 = 0 start through the replay command, both directions. |
+| MED-2 | the ENTRY jump is the mirror of review #9 and untested | **partly**: measured, not a band at footing scale | Entry steps in the 4 separating footing legs: Newton iterations median 17–28 vs 7–15 elsewhere, failed attempts per step 0.12–0.20 vs 0.13–0.15 — costlier, but no more cuts (every entry at p0 < 0.5 kPa). The default p0max is now p_contact (was 5·p_contact), which bounds the E1 jump to the re-contact scale; no footing entry is affected. |
+| MED-3 | exit/closing tangents are not consistent | **confirmed** | exit iterate and closing use GetStiffness(K(p_contact), G(p)); `tangentEP` while closing likewise. Tested: bulk ratio closing/open = sqrt(p_contact/p_min) to 1e-9. |
+| LOW-4 | held counters per call, entries per commit | **rejected, documented** | a held refusal fails its step and never commits; a per-commit count would always be 0. |
+| LOW-5 | recvSelf can leave sepActive = 1 with the cutoff OFF | **confirmed** | cleared there. |
+| LOW-6 | p0max < p_contact admitted | **confirmed** | parser and recvSelf require p0max ≥ p_contact. |
+| LOW-7 | `-pRe` not refused | **confirmed** | refused (parser and recvSelf). |
+| LOW-8 | a stage flip back to 0 while separated | **confirmed, edge case** | documented as a limitation (guide §13.5); no deck flips back. |
+| LOW-9 | the energy text is stale | **confirmed** | rewritten. |
+| (found by the new tests) | the non-compressing gate was an exact `tr Δε > 0.0` | **fixed** | under isochoric shear a trace built from B·u is round-off: one homogeneous stdBrick split 6 separating / 2 refusing (and the 2 refusals aborted the commit through the WP-99 latch). Now compressing ⇔ tr Δε > 1e-10·‖Δε‖ (C++ and oracle; fixture byte-identical); the test checks all 8 GPs. LEDGER_quirks. |
+| tests | 6 mutation gaps | 1, 2, 3, 5 **added** (closing tangent, ==1 count on the Newton column, α_in = 0 at re-contact, isochoric E2 separates); 4 (ISA keeps sepTr_n) left — the ISA trial frame is the pre-existing quirk; 6 (startTension restriction) covered by the p0 = 0 replay test in one direction only. |
+

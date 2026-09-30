@@ -8,11 +8,14 @@ and is exercised on the C++ side only.
 
 State machine (Ladruno_implementation/152_sanisand_tension_cutoff.md):
   NORMAL: integrate the increment.  status p_floor at a committed model p0 <= p0_max
-          (review #2; default 5 p_contact) -> SEPARATED at the END of the increment:
+          (review #2; default p_contact since the re-review, which bounds the entry jump
+          to the re-contact scale) under a NON-COMPRESSING increment (tr d_eps <= 0; the
+          re-review's MED-1: a compressing increment must not be swallowed) -> SEPARATED
+          at the END of the increment:
           sigma = (p_min - p_r) I (model p = p_min), alpha = alpha_in = 0, fabric kept,
           e follows the strain, tr(eps_entry) := tr(eps) at the end of this increment.
-          p_floor at p0 > p0_max -> REFUSED (the step is to be cut: one increment carried
-          a well-confined point through p = 0).
+          p_floor at p0 > p0_max, or under a compressing increment -> REFUSED (the step
+          is to be cut).
   SEPARATED: no shear; g = tr(eps) - tr(eps_entry) (compression positive).
           sigma = (p_c(g) - p_r) I with p_c(g) = p_min + K(p_contact) max(g, 0): open
           (g <= 0) it sits at p_min, CLOSING (g > 0) it reloads isotropically and
@@ -52,7 +55,7 @@ def drive(state0, deps_list, O, p_sep, p_contact, P=None, p0_max=None):
     """Returns one record per increment: mode after it ('N'/'S'), event, sigma (Voigt,
     compression positive), model p, g, the oracle status."""
     P = C.P if P is None else P
-    p0_max = 5.0 * p_contact if p0_max is None else p0_max
+    p0_max = p_contact if p0_max is None else p0_max
     st, mode, g, tr_entry = state0, "N", 0.0, None
     out = []
     for k, de in enumerate(deps_list):
@@ -66,6 +69,10 @@ def drive(state0, deps_list, O, p_sep, p_contact, P=None, p0_max=None):
                 st = r.state
             elif status == "p_floor" and model_p(st, O) > p0_max:      # E1 held: refuse
                 out.append(dict(k=k, mode=mode, event="refused_highp", status=status,
+                                p0=model_p(st, O)))
+                break
+            elif status == "p_floor" and dv > 1.0e-10 * float(np.linalg.norm(de)):   # E1 held: compressing
+                out.append(dict(k=k, mode=mode, event="refused_compressing", status=status,
                                 p0=model_p(st, O)))
                 break
             elif status == "p_floor":                                   # E1 (tension)
