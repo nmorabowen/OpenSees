@@ -300,3 +300,35 @@ per node. Output `~/ladruno_wp152/deck_review/runs/R_*`, report `~/ladruno_wp152
 the review fixes (≤ 0.12 %). But the separated zone is a region of the wedge about 0.35B deep, not a few surface points.
 Whether a separated wedge of that size is an acceptable constitutive idealisation is the owner's call. The p_r → 0
 cross-check (≤ 2.3 %, pre-fix) bounds its effect on the peak.
+
+### Is the separated zone a physical heave or a cascade? (2026-09-30)
+
+A read-only analysis of the checkpoint fields (every 5 steps) of `R_TYR_b8_ps05`, `R_TYR_fig9_ps05` and
+`R_TYR_b8_ps01` (build 7f1562c81). Scripts `~/ladruno_wp152/sep_mechanism.py` and `sep_lag.py`; output
+`~/ladruno_wp152/logs/sep_mechanism.out`, `sep_lag.out`. For each GP separated by the peak, it reads the state at the
+last NORMAL checkpoint before entry, the 50-step trend before that, and the neighbourhood (radius 1.6 × the median
+nearest-GP spacing: 0.101 m on B/8, 0.076 m on fig9).
+
+| | b8 0.5/1.0 | fig9 0.5/1.0 | b8 0.1/1.0 |
+|---|---|---|---|
+| GPs separated by the peak | 58 | 58 | 56 |
+| pre-entry median p0 / η/M^b / ψ / ρ_α | 0.157 / 0.923 / −0.250 / 0.996 | 0.040 / 0.930 / −0.249 / 0.992 | 0.051 / 0.927 / −0.252 / 0.994 |
+| over the 50 steps before entry: p falls / volume dilates / η/M^b rises | 97 % / 100 % / 91 % | 97 % / 100 % / 83 % | 100 % / 100 % / 88 % |
+| p0 before entry < 0.5 kPa / < 0.1 kPa | 79 % / 36 % | 81 % / 59 % | 91 % / 70 % |
+| entries with NO separated neighbour before (seeds) | 22 | 24 | 22 |
+| lag to the latest earlier neighbour entry: median; ≤ 10 steps; > 200 steps | 160; 11 %; 44 % | 188; 6 %; 47 % | 140; 6 %; 41 % |
+
+**Reading: predominantly a physical, model-driven dilatant heave, not a cascade.**
+- Every entering point was already unloading and dilating while it sheared at its bounding ratio: η/M^b ≈ 0.92–0.96,
+  ρ_α ≈ 1, ψ ≈ −0.25 (dense, strongly dilative). Its p′ had already decayed to near zero (median 0.04–0.16 kPa)
+  before E2 fired. Separation RECOGNISES points the continuum had already unloaded; it does not create them.
+- The deeper entries (y −0.27 to −0.42 m) come late, at s/B 0.145–0.18 near the peak, falling 2–4 kPa (about their
+  geostatic p′) over 50 steps. That is the passive wedge unloading as it heaves.
+- About 40 % of entries have no separated neighbour before them. Where one exists, the median lag is 140–188 steps and
+  only 6–11 % follow within 10 steps. A cascade would cluster at short lags.
+- A minority shows local load shedding: in the few entries whose windows allow a before/after rate (2–4 per leg), the
+  unloading rate grew after a neighbour separated (e.g. −0.27 → −0.90 kPa per checkpoint). It is present, but it is not
+  the driver.
+- Caveat: at a 5-step checkpoint cadence, "before entry" means up to 5 steps before, and the neighbourhood is 3–5 GPs.
+  Whether the MODEL's dilatant unloading of a 0.35B-deep wedge is physical for Toyoura at this density is the owner's
+  question. Note that this is the zone where the general-shear mechanism should daylight.
