@@ -203,7 +203,10 @@ LadrunoDynamicRelaxation::LadrunoDynamicRelaxation(int massMode_, double dtPseud
   dampMode(dampMode_), zetaTarget(zetaTarget_), cVisc(0.0), autoRefresh(autoRefresh_),
   massSafety(massSafety_), stabMargin(-1.0), marginWarned(false),
   marginEvery(marginEvery_ < 0 ? 0 : marginEvery_), marginCount(0),
-  haveBuiltOnce(false)
+  haveBuiltOnce(false),
+  UtC(0), VhalfC(0), AprevC(0), MstarC(0),                  // Ladruno WP-153
+  snapFirstStep(true), snapStepCount(0), snapPrevKE(0.0), snapKE(0.0),
+  snapRes(0.0), snapCVisc(0.0), haveSnap(false)
 {
     // guard the direct-construction path too (the parser validates separately)
     if (!(massSafety > 0.0) || massSafety > 1.0)
@@ -219,6 +222,10 @@ LadrunoDynamicRelaxation::~LadrunoDynamicRelaxation()
     if (Aprev != 0) delete Aprev;
     if (Vfull != 0) delete Vfull;
     if (Azero != 0) delete Azero;
+    if (UtC    != 0) delete UtC;                              // Ladruno WP-153
+    if (VhalfC != 0) delete VhalfC;
+    if (AprevC != 0) delete AprevC;
+    if (MstarC != 0) delete MstarC;
 }
 
 // ---- matrix-free LHS: assemble the integrator-owned fictitious M* onto the
@@ -473,6 +480,9 @@ LadrunoDynamicRelaxation::domainChanged(void)
         opserr << "LadrunoDynamicRelaxation::domainChanged - failed to build fictitious mass\n";
         return -1;
     }
+    // Ladruno WP-153: the freshly seeded state is the "last commit" a failed
+    // first step must return to.
+    this->takeSnapshot();
     if (verbose) {
         double mn = (*Mstar)(0), mx = (*Mstar)(0);
         for (int i = 1; i < size; i++) { if ((*Mstar)(i) < mn) mn = (*Mstar)(i);
@@ -656,8 +666,84 @@ LadrunoDynamicRelaxation::commit(void)
         opserr << "WARNING LadrunoDynamicRelaxation::commit() - no AnalysisModel\n";
         return -1;
     }
-    return theModel->commitDomain();
+    const int rc = theModel->commitDomain();
+    if (rc == 0)
+        this->takeSnapshot();                                 // Ladruno WP-153
+    return rc;
 }
+
+// Ladruno WP-153: see the header. The analysis calls Domain::revertToLastCommit()
+// FIRST (node/element trial state, time); here only the private march state is
+// restored, and time is not touched (that would double-revert). Mirrors
+// CentralDifferenceLadruno::revertToLastStep, but restores the SNAPSHOT rather
+// than re-seeding from the committed DOF state: a re-seed re-runs the first-step
+// starter, which is NOT the uninterrupted march after a Cundall velocity reset
+// (v = 0 at the commit, yet the starter sets v_{-1/2} = -dt/2 a).
+int
+LadrunoDynamicRelaxation::revertToLastStep(void)
+{
+    if (Ut == 0)                                  // domainChanged never ran
+        return 0;
+    if (!haveSnap || UtC == 0 || UtC->Size() != size) {
+        // no snapshot of this numbering: fall back to the committed DOF state
+        // with the starter re-armed (the domainChanged seed, minus the mass build)
+        AnalysisModel *theModel = this->getAnalysisModel();
+        if (theModel == 0)
+            return 0;
+        DOF_GrpIter &theDOFs = theModel->getDOFs();
+        DOF_Group *dofPtr;
+        while ((dofPtr = theDOFs()) != 0) {
+            const ID &id = dofPtr->getID();
+            const Vector &d = dofPtr->getCommittedDisp();
+            const Vector &v = dofPtr->getCommittedVel();
+            const Vector &a = dofPtr->getCommittedAccel();
+            for (int i = 0; i < id.Size(); i++) {
+                int loc = id(i);
+                if (loc >= 0) { (*Ut)(loc) = d(i); (*Vhalf)(loc) = v(i); (*Aprev)(loc) = a(i); }
+            }
+        }
+        firstStep = true;
+        updateCount = 0;
+        prevKE = 0.0;
+        return 0;
+    }
+    *Ut    = *UtC;
+    *Vhalf = *VhalfC;
+    *Aprev = *AprevC;
+    *Mstar = *MstarC;
+    firstStep     = snapFirstStep;
+    stepCount     = snapStepCount;
+    prevKE        = snapPrevKE;
+    kineticEnergy = snapKE;
+    residualNorm  = snapRes;
+    cVisc         = snapCVisc;
+    updateCount   = 0;
+    return 0;
+}
+
+void
+LadrunoDynamicRelaxation::takeSnapshot(void)
+{
+    if (Ut == 0 || Mstar == 0)
+        return;
+    if (UtC == 0 || UtC->Size() != size) {
+        if (UtC    != 0) delete UtC;
+        if (VhalfC != 0) delete VhalfC;
+        if (AprevC != 0) delete AprevC;
+        if (MstarC != 0) delete MstarC;
+        UtC = new Vector(size); VhalfC = new Vector(size);
+        AprevC = new Vector(size); MstarC = new Vector(size);
+    }
+    *UtC = *Ut; *VhalfC = *Vhalf; *AprevC = *Aprev; *MstarC = *Mstar;
+    snapFirstStep = firstStep;
+    snapStepCount = stepCount;
+    snapPrevKE    = prevKE;
+    snapKE        = kineticEnergy;
+    snapRes       = residualNorm;
+    snapCVisc     = cVisc;
+    haveSnap      = true;
+}
+
 
 const Vector &
 LadrunoDynamicRelaxation::getVel(void)
