@@ -486,6 +486,47 @@ LadrunoContactDomain::addMortarContact(int tag, int masterSurfTag, int slaveSurf
     return 0;
 }
 
+// ADR-155 (pile-contact R0.5) -- the three opt-in controls on an already-added mortar contact.
+// A separate setter (not more add* parameters) so the 34-parameter addMortarContact signature and
+// every shipped caller stay untouched. The choke point for Py + Tcl + unpackDefinitions.
+int
+LadrunoContactDomain::setMortarContactOptions(int tag, int augmentMode, double maxGap,
+                                              double gapOffset, bool adjust, double adjustTol)
+{
+    MortarContact *m = 0;
+    for (size_t i = 0; i < theMortarContacts.size(); i++)
+        if (theMortarContacts[i].tag == tag) { m = &theMortarContacts[i]; break; }
+    if (m == 0) {
+        opserr << "WARNING LadrunoContactDomain::setMortarContactOptions() - contact " << tag
+               << " is not a -mortar contact\n";
+        return -1;
+    }
+    if (augmentMode < AUG_COMMIT || augmentMode > AUG_NEVER) {
+        opserr << "WARNING LadrunoContactDomain::setMortarContactOptions() - contact " << tag
+               << ": bad augment mode " << augmentMode << "\n";
+        return -1;
+    }
+    if (maxGap < 0.0 || adjustTol < 0.0) {
+        opserr << "WARNING LadrunoContactDomain::setMortarContactOptions() - contact " << tag
+               << ": -maxGap and the -adjust tolerance must be >= 0\n";
+        return -1;
+    }
+    if (m->isTie && (gapOffset != 0.0 || adjust)) {
+        // a tie bonds the relative DISPLACEMENT r = D u_s - M u_m (never the gap), so an as-meshed
+        // gap is already strain-free on a tie and a gap shift has nothing to act on.
+        opserr << "WARNING LadrunoContactDomain::setMortarContactOptions() - contact " << tag
+               << ": -gapOffset/-adjust do not apply to -tie (a tie bonds the relative "
+                  "displacement, so the as-meshed gap is already strain-free)\n";
+        return -1;
+    }
+    m->augmentMode = augmentMode;
+    m->maxGap = maxGap;
+    m->gapOffset = gapOffset;
+    m->adjust = adjust;
+    m->adjustTol = adjustTol;
+    return 0;
+}
+
 int
 LadrunoContactDomain::addRigidPlane(int tag, int slaveSurfTag,
                                     const double p0[3], const double n[3], double kn, double muc,
@@ -549,7 +590,10 @@ LadrunoContactDomain::addRigidPlane(int tag, int slaveSurfTag,
 // bump FMT_VERSION if a lane grows a field, and the unpack refuses a version it does not know.
 
 namespace {
-    const int LCD_FMT_VERSION  = 3;    // ADR-85 F1 -- BUMPED with the NTS-record growth below
+    const int LCD_FMT_VERSION  = 4;    // ADR-155 -- BUMPED 3 -> 4 with the mortar-record growth
+                                       // (augmentMode, maxGap, gapOffset, adjust, adjustTol),
+                                       // per the protocol above; a v3 stream draws the NAMED
+                                       // version refusal. ADR-85 F1 -- BUMPED with the NTS-record growth below
                                        // (outwardWinding), per the protocol above. ADR-85 T3
                                        // bumped 1 -> 2 for the mortar-record growth on the
                                        // same rule (REVIEW FIX then: a v1 37-slot stream must
@@ -560,7 +604,8 @@ namespace {
                                        // by name at unpackDefinitions() below.
     const int LCD_HDR_SLOTS    = 5;    // version, nSurf, nNts, nMortar, nPlanes
     const int LCD_NTS_SLOTS    = 22;   // ADR-85 F1 -- +1 (outwardWinding), appended at the tail
-    const int LCD_MORTAR_SLOTS = 38;   // ADR-85 T3 -- +1 (hThickness), appended at the tail
+    const int LCD_MORTAR_SLOTS = 43;   // ADR-155 -- +5 (augmentMode, maxGap, gapOffset, adjust,
+                                       // adjustTol); ADR-85 T3 -- +1 (hThickness). Tail-appended
     const int LCD_PLANE_SLOTS  = 12;
 }
 
@@ -654,6 +699,11 @@ LadrunoContactDomain::packDefinitions(Vector &v) const
         v(p++) = m.edgeAlm ? 1.0 : 0.0;
         v(p++) = m.edgeAugTol;
         v(p++) = m.hThickness;   // ADR-85 T3 -- appended at the tail (field order is append-only)
+        v(p++) = (double)m.augmentMode;   // ADR-155 -- appended at the tail
+        v(p++) = m.maxGap;
+        v(p++) = m.gapOffset;
+        v(p++) = m.adjust ? 1.0 : 0.0;
+        v(p++) = m.adjustTol;
     }
     for (size_t i = 0; i < theRigidPlanes.size(); i++) {
         const RigidPlane &r = theRigidPlanes[i];
@@ -750,6 +800,10 @@ LadrunoContactDomain::unpackDefinitions(const Vector &v)
         bool eAlm = (v(p++) != 0.0);
         double eAugTol = v(p++);
         double hThk = v(p++);   // ADR-85 T3 -- appended at the tail (field order is append-only)
+        int    augMode = (int)v(p++);   // ADR-155 -- appended at the tail
+        double maxGap = v(p++), gapOff = v(p++);
+        bool   adjust = (v(p++) != 0.0);
+        double adjTol = v(p++);
         if (this->addMortarContact(tag, ms, ss, kn, knAuto, epsN, epsNAuto,
                                    augTol, maxAug, ngp, hasOut ? out : 0, cellFrac,
                                    mu, epsT, epsTAuto, cohesion, tauMax, cTan,
@@ -757,6 +811,8 @@ LadrunoContactDomain::unpackDefinitions(const Vector &v)
                                    eEdge, eKn, eKnAuto, eBand, eMu, eKt, eCoh, eTau,
                                    eCTan, eSoft, eAlm, eAugTol, hThk) < 0)
             goto unpack_fail;
+        if (this->setMortarContactOptions(tag, augMode, maxGap, gapOff, adjust, adjTol) < 0)
+            goto unpack_fail;   // ADR-155
         theMortarContacts.back().retired = retired;
     }
     for (int i = 0; i < nPl; i++) {
@@ -1173,7 +1229,7 @@ LadrunoContactDomain::frictionGCEnd(void)
 }
 
 int
-LadrunoContactDomain::commit(void)
+LadrunoContactDomain::commit(bool augmenting)
 {
     // P3: promote the trial plastic slip to committed for every friction slot. The
     // counter (kept from P1b) lets a test confirm the Domain::commit() hook fires.
@@ -1196,9 +1252,23 @@ LadrunoContactDomain::commit(void)
     // augments for free on stock Newton; a held-load `analyzeAugmented` proc re-commits at
     // zero increment to drive ‖ḡ‖→augTol within a step. λ_N is mutated ONLY here, so the
     // revertToLastCommit path leaves it untouched (the committed-only invariant).
+    //
+    // ADR-155 (N-2) -- the per-contact -augment mode gates the three MULTIPLIER updates (lambda_tie,
+    // lambda_T, lambda_N) and NOTHING else: the slip / engagement promotion below always runs (that
+    // is path state, not augmentation). AUG_NEVER suppresses them always; AUG_REQUEST suppresses them
+    // outside a ladrunoBeginAugment/EndAugment bracket (augmenting == false), so a physical step is
+    // pure penalty and the held-load analyze_augmented recipe still augments on request. No contact
+    // opts in => noAug stays EMPTY => every lookup below is skipped => byte-identical to C2.2.
+    std::set<int> noAug;
+    for (size_t i = 0; i < theMortarContacts.size(); i++) {
+        const MortarContact &mc = theMortarContacts[i];
+        if (mc.augmentMode == AUG_NEVER || (mc.augmentMode == AUG_REQUEST && !augmenting))
+            noAug.insert(mc.tag);
+    }
     for (std::map<NodeKey, MortarNormalState>::iterator it = theMortarNormalStates.begin();
          it != theMortarNormalStates.end(); ++it) {
         MortarNormalState &st = it->second;
+        const bool aug = noAug.empty() || noAug.find(it->first.c) == noAug.end();
         // C4 — mesh-tie Uzawa: λ_tie ← λ_tie + epsTie·(r_I/a_I), NO clamp (equality constraint).
         // r_I is the just-converged GLOBAL weighted relative displacement (order-independent, the
         // λ_N accumulator pattern). Drives ‖r‖ → 0 at FINITE epsTie (epsTie-INDEPENDENT bond — the
@@ -1206,7 +1276,7 @@ LadrunoContactDomain::commit(void)
         // is mutated ONLY here ⇒ revertToLastCommit leaves it untouched (the committed-only invariant).
         // A tie slot has no normal KKT / friction state, so skip the rest of the loop body.
         if (st.isTie) {
-            if (st.aGlobal > 1e-300)
+            if (aug && st.aGlobal > 1e-300)
                 for (int d = 0; d < 3; d++)
                     st.lambdaTie[d] += st.epsN * (st.rtGlobal[d] / st.aGlobal);
             continue;
@@ -1217,11 +1287,12 @@ LadrunoContactDomain::commit(void)
         // C3.3 — one tangential Uzawa step per commit: λ_T ← the returned cone-capped traction
         // (= lambdaTtrial = −tFric, written by the adapter). Drives the stick elastic creep → 0
         // at finite epsT (the EmbeddedRebar precedent, the λ_N analogue). λ_T≡0 path is inert.
-        for (int d = 0; d < 3; d++) st.lambdaT[d] = st.lambdaTtrial[d];
+        if (aug)
+            for (int d = 0; d < 3; d++) st.lambdaT[d] = st.lambdaTtrial[d];
         // C3.2 (MAJOR-2) — commit the engagement origin so a later rejected step can revert it.
         for (int d = 0; d < 3; d++) st.gT0committed[d] = st.gT0[d];
         st.engagedCommitted = st.engaged;
-        if (st.aGlobal <= 1e-300) continue;          // unreferenced this step (no normal Uzawa)
+        if (!aug || st.aGlobal <= 1e-300) continue;  // ADR-155 suppressed / unreferenced this step
         double gbar = st.gtGlobal / st.aGlobal;
         st.lambdaN = std::min(0.0, st.lambdaN + st.epsN * gbar);
     }

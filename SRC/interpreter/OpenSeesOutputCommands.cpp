@@ -643,10 +643,71 @@ static int ladrunoContactImpl()
     // handle() time (LadrunoContactHandler.cpp), not here (dimension is not known yet).
     double hThickness = 1.0;
     bool   hasThickness = false;
+    // Ladruno ADR-155 (pile-contact R0.5) -- three opt-in -mortar controls; all absent => the
+    // shipped behaviour, byte-identical (setMortarContactOptions is not even called).
+    //   -augment commit|request|never : when the commit-cycle Uzawa (lambda_N/T/tie) runs
+    //                                   (commit = every commit, the default; request = only
+    //                                   inside the analyze_augmented bracket; never = pure penalty)
+    //   -maxGap <d>                   : pairing guard -- no facet pair farther apart than d
+    //   -gapOffset <g0>               : shift the normal gap by g0 (negative = interference)
+    //   -adjust [tol]                 : zero the as-meshed (reference) gap, optionally only
+    //                                   where |gap| <= tol
+    int    augmentMode = LadrunoContactDomain::AUG_COMMIT;
+    bool   hasR05 = false;
+    double maxGap = 0.0, gapOffset = 0.0, adjustTol = 0.0;
+    bool   adjust = false;
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
         if (opt != 0 && strcmp(opt, "-mortar") == 0) {
             isMortar = true;
+        } else if (opt != 0 && strcmp(opt, "-augment") == 0) {
+            // Ladruno ADR-155 (N-2): when the mortar Uzawa augmentation runs.
+            const char *m = (OPS_GetNumRemainingInputArgs() > 0) ? OPS_GetString() : 0;
+            if (m != 0 && strcmp(m, "commit") == 0)       augmentMode = LadrunoContactDomain::AUG_COMMIT;
+            else if (m != 0 && strcmp(m, "request") == 0) augmentMode = LadrunoContactDomain::AUG_REQUEST;
+            else if (m != 0 && strcmp(m, "never") == 0)   augmentMode = LadrunoContactDomain::AUG_NEVER;
+            else {
+                opserr << "WARNING contact -augment - need commit|request|never (ADR-155)\n";
+                return -1;
+            }
+            hasR05 = true;
+        } else if (opt != 0 && strcmp(opt, "-maxGap") == 0) {
+            // Ladruno ADR-155 (N-1): the mortar pairing guard distance (> 0).
+            double v[1]; int m = 1;
+            if (OPS_GetDoubleInput(&m, v) < 0 || v[0] <= 0.0) {
+                opserr << "WARNING contact -maxGap - need a distance > 0 (ADR-155)\n";
+                return -1;
+            }
+            maxGap = v[0];
+            hasR05 = true;
+        } else if (opt != 0 && strcmp(opt, "-gapOffset") == 0) {
+            // Ladruno ADR-155 (G-9): constant normal-gap shift (negative = interference).
+            double v[1]; int m = 1;
+            if (OPS_GetDoubleInput(&m, v) < 0) {
+                opserr << "WARNING contact -gapOffset - need a value (negative = interference; ADR-155)\n";
+                return -1;
+            }
+            gapOffset = v[0];
+            hasR05 = true;
+        } else if (opt != 0 && strcmp(opt, "-adjust") == 0) {
+            // Ladruno ADR-155 (G-9): strain-free start. Optional numeric tolerance (the -soft
+            // optional-value peek idiom: a flag or end of args => no tolerance = adjust all).
+            adjust = true;
+            hasR05 = true;
+            if (OPS_GetNumRemainingInputArgs() > 0) {
+                const char *p = OPS_GetString();          // string read consumes on Tcl AND Py
+                bool isFlag = (p != 0 && p[0] == '-');
+                OPS_ResetCurrentInputArg(-1);
+                if (!isFlag) {
+                    double v[1]; int m = 1;
+                    if (OPS_GetDoubleInput(&m, v) < 0 || v[0] <= 0.0) {
+                        opserr << "WARNING contact -adjust - optional tolerance must be a value > 0 "
+                                  "(or omit it to adjust every paired node; ADR-155)\n";
+                        return -1;
+                    }
+                    adjustTol = v[0];
+                }
+            }
         } else if (opt != 0 && strcmp(opt, "-soft") == 0) {
             // optional numeric SOFSCL; default 0.10 if the next token is a flag / end of args.
             softScale = 0.10;
@@ -1048,6 +1109,18 @@ static int ladrunoContactImpl()
         opserr << "WARNING contact -tie requires -mortar (mesh-tying is a mortar formulation)\n";
         return -1;
     }
+    // Ladruno ADR-155 -- the R0.5 controls are mortar-lane options (NTS has no Uzawa, its bucket
+    // broad phase is already proximity-bounded, and its gap is refused at zero by the H2 fail-safe).
+    if (hasR05 && !isMortar) {
+        opserr << "WARNING contact -augment/-maxGap/-gapOffset/-adjust are -mortar options "
+                  "(ADR-155); add -mortar or remove them\n";
+        return -1;
+    }
+    if (isTie && (gapOffset != 0.0 || adjust)) {
+        opserr << "WARNING contact -gapOffset/-adjust do not apply to -tie: a tie bonds the "
+                  "relative displacement, so the as-meshed gap is already strain-free (ADR-155)\n";
+        return -1;
+    }
     if (isTie && (mortarMu > 0.0 || cohesion > 0.0 || tauMax > 0.0)) {
         // A tie is an EQUALITY bond — it has no friction cone. Refuse the combination explicitly.
         opserr << "WARNING contact -tie is mutually exclusive with friction "
@@ -1201,13 +1274,18 @@ static int ladrunoContactImpl()
         // ADR-57 E2/E3: edgeEdge ⇒ the perpendicular edge-edge fallback (+ E3 friction; off ⇒ byte-identical).
         // ADR-57 E5: edgeSoftScale>0 ⇒ the explicit Courant-stable SOFT penalty on the edge fallback.
         // ADR-57 E6: edgeAlm ⇒ the one-scalar commit-cycle ALM (off ⇒ the E2 penalty path).
-        return cd->addMortarContact(idata[0], idata[1], idata[2], kn, knAuto, epsN, epsNAuto,
+        int mres = cd->addMortarContact(idata[0], idata[1], idata[2], kn, knAuto, epsN, epsNAuto,
                                     augTol, maxAug, ngp, hasOutward ? outward : 0, cellFrac,
                                     mortarMu, epsT, epsTAuto, cohesion, tauMax, consistentTan, isTie,
                                     muc, softScale, edgeEdge, edgeKn, edgeKnAuto, edgeBand,
                                     edgeMu, edgeKt, edgeCohesion, edgeTauMax, edgeConsistentTan,
                                     edgeSoftScale, edgeAlm, edgeAugTol,
                                     hThickness);   // Ladruno ADR-85 T3 -- 2D mortar -thickness
+        // Ladruno ADR-155: the R0.5 controls (only when one was given => byte-identical otherwise).
+        if (mres == 0 && hasR05)
+            mres = cd->setMortarContactOptions(idata[0], augmentMode, maxGap, gapOffset,
+                                               adjust, adjustTol);
+        return mres;
     }
     // D2: -visc μ_c (NTS viscous normal stabilization; 0 ⇒ off, byte-identical).
     // B3: -geomtan ⇒ the consistent ∂n/∂u geometric normal tangent (off ⇒ byte-identical).

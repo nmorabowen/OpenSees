@@ -248,7 +248,33 @@ class LadrunoContactDomain
         // FATAL at handle() time. Meaningless (and refused at the command surface) without
         // -mortar.
         double hThickness;
+        // ADR-155 (pile-contact R0.5) -- three opt-in controls. Default-initialized so stack
+        // construction can never flip one on (the enableReemit/smoothNormal precedent); set by
+        // setMortarContactOptions() after addMortarContact. All defaults => byte-identical.
+        //  augmentMode: WHEN the commit-cycle Uzawa update (lambda_N / lambda_T / lambda_tie) runs.
+        //    AUG_COMMIT (0, default) = on every Domain::commit (the shipped C2.2 behaviour);
+        //    AUG_REQUEST (1) = only inside a ladrunoBeginAugment/EndAugment bracket (the held-load
+        //    analyze_augmented recipe) -- a physical step is PURE PENALTY;
+        //    AUG_NEVER (2) = never (pure penalty; the bracket is inert too).
+        //  maxGap (>0 => on): handle()-time pairing guard -- a (slave facet, master facet) pair
+        //    whose slave centroid lies farther than maxGap from the master facet's plane (current
+        //    config) is NOT paired (the antipodal-facet guard on a closed surface). 3D only.
+        //  gapOffset: a constant shift of the normal gap (gbar -> gbar + gapOffset); negative =
+        //    a prescribed interference (a shrink fit without editing the geometry). 3D only.
+        //  adjust (+ adjustTol, 0 => unlimited): the reference-config nodal weighted gap is
+        //    subtracted per pair, so the as-meshed interface starts exactly closed and stress-free
+        //    (only nodes with |gbar_ref| <= adjustTol are adjusted when adjustTol > 0). 3D only.
+        int    augmentMode = 0;
+        double maxGap      = 0.0;
+        double gapOffset   = 0.0;
+        bool   adjust      = false;
+        double adjustTol   = 0.0;
     };
+    enum { AUG_COMMIT = 0, AUG_REQUEST = 1, AUG_NEVER = 2 };
+    // ADR-155 -- set the R0.5 options on an already-added mortar contact (by tag). <0 if the tag
+    // is not a mortar contact or an option is invalid (gap shift on a -tie, negative maxGap...).
+    int setMortarContactOptions(int tag, int augmentMode, double maxGap, double gapOffset,
+                                bool adjust, double adjustTol);
     int addMortarContact(int tag, int masterSurfTag, int slaveSurfTag,
                          double kn, bool knAuto, double epsN, bool epsNAuto,
                          double augTol, int maxAug, int ngp,
@@ -633,7 +659,9 @@ class LadrunoContactDomain
     int recvSelf(int commitTag, Channel &theChannel, int dbTag, int packedSize);
 
     // --- lifecycle (driven by Domain::commit / revertToLastCommit / revertToStart) ---
-    int commit(void);              // P3: gpT = gpTtrial for every slot (+ counter)
+    // P3: gpT = gpTtrial for every slot (+ counter). ADR-155: `augmenting` is the Domain's
+    // held-load bracket flag (ladrunoBeginAugment); it only matters for an AUG_REQUEST contact.
+    int commit(bool augmenting = false);
     int revertToLastCommit(void);  // P3: gpTtrial = gpT for every slot (+ counter)
     // contact-review P2 (2026-07) — drop ALL path-dependent state (friction slip +
     // engagement origins, mortar λ_N/λ_T/λ_tie, edge-edge signs/friction, NTS force

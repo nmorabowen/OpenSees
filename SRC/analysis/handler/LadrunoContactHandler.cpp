@@ -2000,6 +2000,15 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                                                  /*lane2DLive=*/true, &pairDim))
                     return ladrunoContactFatal();
             }
+            if (pairDim == 2 &&
+                (mc.maxGap > 0.0 || mc.gapOffset != 0.0 || mc.adjust)) {
+                // ADR-155: -maxGap/-gapOffset/-adjust are wired to the 3D mortar lane only (the
+                // pile-contact slice). A named FATAL, never a silent no-op on a 2D pair.
+                opserr << "FATAL LadrunoContactHandler::handle() - mortar contact " << mc.tag
+                       << ": -maxGap/-gapOffset/-adjust are 3D-mortar options (ADR-155); "
+                          "this pair is 2D. ABORTING\n";
+                return ladrunoContactFatal();
+            }
             if (pairDim == 2) {
                 // ==============================================================
                 // ADR-85 T3 -- the LIVE 2D mortar lane (interval clip on the
@@ -2371,6 +2380,30 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     if (mc.edgeEdge &&
                         ladrunoEdgeEdgeOwns(npsS, Sx, npsM, Mx, ladrunoEdgeBand(npsM, Mx, mc.edgeBand)))
                         continue;
+                    // ADR-155 (N-1) -- the -maxGap pairing guard. The brute-force enumeration pairs
+                    // every master facet with every slave facet, and the kernel clip (|cos| test)
+                    // accepts an anti-parallel facet ACROSS a closed surface (the far side of a
+                    // cylinder projects onto this facet), so a tie binds antipodal facets. Refuse a
+                    // pair whose slave-facet centroid lies farther than maxGap from the master
+                    // facet's plane, measured in the CURRENT config (this handle()'s committed
+                    // state). A pairing (epoch) decision -- contract #5 -- never a per-iterate
+                    // switch. maxGap <= 0 => skipped entirely (byte-identical).
+                    if (mc.maxGap > 0.0) {
+                        double xs[4][3], xm[4][3], cs[3] = {0.0, 0.0, 0.0}, cm[3] = {0.0, 0.0, 0.0};
+                        for (int k = 0; k < npsS; k++) {
+                            const Vector &u = sNodes[k]->getTrialDisp();
+                            for (int d = 0; d < 3; d++) { xs[k][d] = Sx[k][d] + u(d); cs[d] += xs[k][d] / npsS; }
+                        }
+                        for (int k = 0; k < npsM; k++) {
+                            const Vector &u = mNodes[k]->getTrialDisp();
+                            for (int d = 0; d < 3; d++) { xm[k][d] = Mx[k][d] + u(d); cm[d] += xm[k][d] / npsM; }
+                        }
+                        double nM[3];
+                        ladrunoFacetNormalNewell(npsM, xm, nM);   // unit (zero if degenerate)
+                        double dist = std::fabs(nM[0] * (cs[0] - cm[0]) + nM[1] * (cs[1] - cm[1])
+                                                + nM[2] * (cs[2] - cm[2]));
+                        if (dist > mc.maxGap) continue;
+                    }
                     // orientation toward the slave's allowed half-space: explicit -outward,
                     // else (slave facet centroid − master facet centroid) at the ref config.
                     double orientDir[3];
@@ -2471,6 +2504,9 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                                              mc.isTie, mc.muc,    // D2.2 mortar viscous (0 ⇒ off)
                                              mc.softScale);       // B2 SOFT=2 segment-based penalty (0 ⇒ off)
                     if (fe == 0) return -5;
+                    // ADR-155 (G-9): arm the normal-gap shift (off => never called => inert).
+                    if (mc.gapOffset != 0.0 || mc.adjust)
+                        fe->setMortarGapShift(mc.gapOffset, mc.adjust, mc.adjustTol);
                     theModel->addFE_Element(fe);
                     // C2.2: this pair's slave nodes have a live λ_N slot this handle().
                     for (int k = 0; k < npsS; k++)
