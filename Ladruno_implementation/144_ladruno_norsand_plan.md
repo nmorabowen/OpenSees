@@ -292,7 +292,8 @@ diffs of the load-bearing parts, not whole files.
 | **Kernel author**: header-only C++ kernel + tangent | Opus | high | Must match O2 to 1e-10 |
 | **Shell/wiring**: NDMaterial shell, wrappers, parser, dispatch, sendSelf/recvSelf, responses | Sonnet | medium | Pattern work against the `ladruno-new-material` checklist and the SANISAND wrappers |
 | **Test author**: K1/K2 pytest, mutation mutants | Sonnet | medium | The expected values come from the spec, not from running the code |
-| **Adversary**: derivation and C++ review at the P0 and final gates | Fable + a Codex second pass | max / high | Two independent reviewers on new maths (the plan's adversarial-gate requirement) |
+| **Adversary**: derivation and C++ review at the P0 and final gates | Fable (whole artifact) + an independent **Opus** numeric check (narrow, own code) | max / high | Two independent reviewers on new maths (the plan's adversarial-gate requirement), from different models than the author. No Codex/ChatGPT (owner policy, 2026-09-30). |
+| **Third-family review** (optional, G0 and final gate) | Grok, run by the owner in Cursor | — | A model outside the Claude family. The orchestrator writes a self-contained prompt packet; the owner pastes it in Cursor and relays the report. There is no headless Cursor CLI on this machine. |
 | **Calibrator**: K3/K4/K5, P3 | Opus | high | Judgment on data fit and mechanisms |
 | **Clerk**: ledgers, banner, manifest row, grep sweeps | Haiku | low | Mechanical, verified by CI gates |
 
