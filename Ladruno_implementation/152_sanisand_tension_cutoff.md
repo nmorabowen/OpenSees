@@ -235,3 +235,27 @@ parser, ISA) and 7f1562c81 (continuous re-contact, found by the new Newton test)
   under `python -S` in the conan venv (an environment artifact, LEDGER_quirks), not a row mismatch.
 - The 643 WP-151 replays, R1 vs R1 + cutoff (the cutoff now needs the h floor, so the stored R1-OFF baseline no
   longer applies to it): 635 accepted updates bit-identical, 8 refusals keep their code, 0 separate.
+
+## What the cutoff actually is: E2 is the operative trigger (footing evidence, 2026-09-29)
+
+**At p → 0 the free-surface wall reaches SAS-ME as an accuracy/cost failure (codes 4 and 9) BEFORE any tension.** The
+α and fabric error terms do not scale with p, so the substep controller hits dT_min or the substep cap while p is
+still positive, and the trajectory never gets to cross p = 0. The design choice is therefore:
+
+> a point whose update fails its accuracy or cost limit at committed p < p_sep, under a non-compressing increment, is
+> treated as separated.
+
+E1 (the tension trigger, code 6) is a backstop. The name "tension cutoff" is historical: this is a **low-confinement
+separation**.
+
+Evidence (build 7f1562c81, `~/ladruno_wp152/bin_review`, driver `deck_review/footing_ab.py`, Toyoura, R1 + cutoff,
+2026-09-29 20:55):
+- With p_sep = 0 (E2 off), EVERY leg stops at FLOOR at s/B ≈ 0.0044:
+  - B/8 at 0/1.0, 0/0.5 and 0/2.0: q 71.6 kPa, step 38 (`runs/R_TYR_b8_ps0*`);
+  - fig9 (B 0.9, Dr 0.856) at 0/1.0: q 61.8 kPa, step 41 (`runs/R_TYR_fig9_ps0`).
+- In each case exactly two mirror-symmetric points refuse: B/8 at (±0.87, −0.03) m, fig9 at (±0.65, −0.02) m. Both
+  are in the top GP row, just outside the footing edge.
+- The codes are 4 and 9 only (B/8: `errorAtDTmin` 56, `maxSubsteps` 50), with **zero code 6**. Nothing separates, so the
+  p_contact spread cannot be read at p_sep = 0.
+- p_sep = 0 is not viable. The smallest workable p_sep is the defensible default; it is being measured (0.1 / 0.25 /
+  0.5, below).

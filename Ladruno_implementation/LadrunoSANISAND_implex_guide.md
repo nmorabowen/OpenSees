@@ -1385,6 +1385,11 @@ evidence: [[152_sanisand_tension_cutoff]].
 ... 129 $TanType $JacoType $TolF $TolR -sasHFloor 1 -sasReseatHyst 1 -sasSoftCap 0.5 -sasTensionCutoff $pSep $pContact ...
 ```
 
+- **E2 is the operative trigger, not tension.** At p → 0 a free-surface point fails SAS-ME's accuracy/cost limit
+  (codes 4/9) BEFORE its trajectory crosses p = 0; the α and fabric error terms do not scale with p. With p_sep = 0 every
+  Toyoura footing leg stopped at s/B ≈ 0.0044 on two top-row points just outside the edge, codes 4/9 only, zero code 6
+  (WP-152, 7f1562c81). So the cutoff is a LOW-CONFINEMENT SEPARATION: a point whose update fails at committed
+  p < p_sep under a non-compressing increment is treated as separated. E1 (tension) is a backstop. Do not use p_sep = 0.
 - **SAS-ME's only low-p test is p + p_r > 0.** `-Pmin` is not an admissibility threshold under IntScheme 129: it only
   floors the elastic moduli.
 - **Entry masks ONLY low-p/tension refusals** (gated after the 2026-09-29 review):
