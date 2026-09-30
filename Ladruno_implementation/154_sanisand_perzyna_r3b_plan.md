@@ -2,7 +2,7 @@
 title: "WP-154 — R3b: Perzyna-type viscoplastic regularization inside LadrunoSANISAND (plan, no code)"
 project: Ladruno
 type: work-package plan
-status: "PLANNED — plan only, no C++. Opened on the 2026-09-29 acoustic census (memo case C). Owner decides τ and adopt / not adopt (§8)."
+status: "PLANNED — plan only, no C++ (draft #895). Opened on the 2026-09-29 acoustic census (memo case C). Owner decides τ and adopt / not adopt (§8)."
 owner: nmora
 related:
   - "[[150_sanisand_regularization_memo]] (PR #892: §2 acoustic tensor, §4 R3 revised 2026-09-29, §9.1 decision procedure)"
