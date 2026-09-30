@@ -41,7 +41,9 @@ def _build():
     ops.model("basic", "-ndm", 2, "-ndf", 2)
     for n, (x, y) in enumerate([(0, 0), (1, 0), (0, 1), (1, 1), (0, 2), (1, 2)], 1):
         ops.node(n, float(x), float(y))
-    ops.nDMaterial("LadrunoSANISAND", 1, *TYR, 129, 0, 1, 1.0e-7, 1.0e-4,
+    # TanType 1 (continuum): the elastic TanType 0 makes Newton linear-rate and
+    # the cyclic march crawl (a hang, not a failure, under a tight tolerance)
+    ops.nDMaterial("LadrunoSANISAND", 1, *TYR, 129, 1, 1, 1.0e-7, 1.0e-4,
                    "-Pmin", 0.0101, "-maxSubsteps", 2000, *R1)
     for e, nn in ((1, (1, 2, 4, 3)), (2, (3, 4, 6, 5))):
         ops.element("LadrunoQuad", e, *nn, 1, "-formulation", "bbar",
@@ -83,27 +85,41 @@ def _sas_reseats():
 
 
 def _march():
-    """Compress to -0.02, unload to -0.005, reload to -0.025, unload: the
-    reversals re-seat alpha_in. A failed Newton step is cut (and reverted)."""
+    """Compress to -0.01, unload to -0.0025, reload to -0.012, unload: the
+    reversals re-seat alpha_in. A failed Newton step is cut (and reverted).
+
+    The baselines are taken AFTER one converged step: the stage flip's
+    `-flipAlphaIn init` reset (ladrunoRunStageFlipOnce) writes the committed
+    alpha_in directly at the first stage-1 trial. That is an initialisation, not a
+    committed re-seat, and commitStats rightly does not count it."""
+    ops.integrator("LoadControl", -1.0e-5)
+    ops.test("NormDispIncr", 1e-9, 60, 0)
+    assert ops.analyze(1) == 0
     base = _commit_stats()
     a_prev = _alpha_in()
     changed = [0] * len(GPS)
     dnorm = [0.0] * len(GPS)
     cuts = 0
     _converged_steps[0] = 0
-    u = ops.getTime()
-    for target in (u - 0.02, u - 0.005, u - 0.025, u - 0.01):
+    calls = 0
+    h = 2.0e-4                                   # persistent step size: halve on a
+    u = ops.getTime()                            # failure, regrow x2 on a success
+    for target in (u - 0.01, u - 0.0025, u - 0.012, u - 0.005):
         while abs(ops.getTime() - target) > 1e-12:
-            ds = max(-2.0e-4, min(2.0e-4, target - ops.getTime()))
             while True:
+                gap = target - ops.getTime()
+                ds = max(-h, min(h, gap))
                 ops.integrator("LoadControl", ds)
-                ops.test("NormDispIncr", 1e-10, 30, 0)
+                ops.test("NormDispIncr", 1e-9, 60, 0)
+                calls += 1
+                assert calls < 4000, "analyze budget spent: the march does not converge"
                 if ops.analyze(1) == 0:
                     _converged_steps[0] += 1
+                    h = min(2.0e-4, 2.0 * h)
                     break
                 cuts += 1
-                ds *= 0.5
-                assert abs(ds) > 1e-9, "step cut to nothing"
+                h *= 0.5
+                assert h > 1e-9, "step cut to nothing"
             a = _alpha_in()
             for k in range(len(GPS)):
                 d = math.sqrt(sum((x - y) ** 2 for x, y in zip(a[k], a_prev[k])))
