@@ -1732,6 +1732,12 @@ non-obvious behaviours, all relevant to anyone wiring `-stabilize` into a driver
   multi-step failure persists under `-augment never` (so not the Uzawa) and is plausibly THIS defect.
   `-augment never` removes only the λ_T half. See [[155_pile_contact_r05]] §5–§6. Recommended as the
   next contact slice.
+  **WP-157 (2026-09-30) — RESOLVED for friction.** The state is now per (slave node, slave facet, master
+  facet): `MortarFrictionState` keyed (contactTag, node, sf, mf), so each pair re-reads what its own
+  return map wrote. The second failure mode surfaced along the way: on a CURVED/creased interface a
+  pair also read a `λ_T`/`gpT` lying in a NEIGHBOUR's tangent plane (a normal leak |t·n| ≈ cap from step
+  2 on; oracle T3). Pinned by `test_adr157_mortar_pair_friction` (creased roof: analytic force and
+  multi-step force-control convergence; both fail on d63f49750). See [[157_mortar_friction_pair_state]].
 - **C4 update (#381) — RESOLVED for the TIE path; STILL FENCED for FRICTION.** C4 mesh-tying hits shared
   slave nodes immediately (non-matching meshes are the whole point), so the pre-req had to be discharged
   before relying on it. The tie state (`λ_tie`, the full 3-vec relative displacement `r_I`) does NOT inherit
