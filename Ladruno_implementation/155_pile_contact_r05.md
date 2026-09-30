@@ -2,7 +2,7 @@
 title: "WP-155 — Pile-contact R0.5: mortar augmentation control, pairing guard, initial-gap shift"
 project: Ladruno
 type: ADR (amends the mortar lane of ADR-41; status row in the ADR-48 capstone)
-status: "implemented on wp/pile-contact-r05 — three opt-in -mortar flags, defaults byte-identical; PR open, not merged"
+status: "PR #897 open (not merged) — three opt-in -mortar flags, defaults byte-identical; review #897 (Fable) findings 1-5 addressed"
 owner: nmora
 related:
   - "[[48_ladruno_contact_capstone_adr]] (status-of-record row + command surface)"
@@ -54,14 +54,20 @@ verdict is `piles-validation/ladder/R1_plumbing/VERDICT.md`:
 ### D1 — `-augment commit|request|never` (N-2)
 
 The Uzawa update is gated per contact inside `LadrunoContactDomain::commit(bool augmenting)`. The
-three multiplier updates (λ_tie, λ_T, λ_N) are skipped when:
+four multiplier updates (λ_tie, λ_T, λ_N, and the ADR-57 E6 edge-edge λ_N of a `-edgeAlm` contact)
+are skipped when:
 
 - the contact is `never`, or
 - the contact is `request` and the call is not inside the `ladrunoBeginAugment` bracket.
 
 `Domain::commit()` passes its existing `contactAugmenting` flag, set by `ladrunoBeginAugment`. The
 rest of the commit always runs: slip promotion (`gpT`), engagement-origin double-buffers, and the
-edge-edge lane. That is path state, not augmentation.
+edge-edge sign and friction promotion. That is path state, not augmentation.
+
+The edge-edge E6 Uzawa was missed at 79daec57f and gated after review #897 (finding 1). The key
+carries the contact tag, so it uses the same lookup. Regression test:
+`test_augment_never_gates_the_edge_edge_alm`, which is the adr57 E7 real-brick ALM model. A mutant
+that restores the ungated update fails it (`never`: the bracket status is 0 instead of 1).
 
 - **Why three values and not two.** The request asked for "`never` = pure penalty, with
   `analyzeAugmented` still usable on request". Those are two different contracts:
@@ -131,8 +137,19 @@ adj_I = -gbar_I(reference)   if (tol == 0 or |gbar_I(reference)| <= tol), else 0
   `IGNORE` act on: the as-meshed geometry.
   - **Limitation, documented:** for a contact declared *after* a displaced stage, `-adjust`
     corrects to the undeformed mesh. Use `-gapOffset`, or declare the contact before the stage.
+  - **Limitation, documented (review #897 finding 3):** the reference gap is captured **per facet
+    pair**, and only for a pair whose facets **overlap at the reference configuration**. A pair
+    that first overlaps later is unadjusted: `integratePair` at the reference returns empty, so
+    `adj_I = 0`. This covers a pair formed by sliding and paired at a later `handle()`, or one
+    that the reference clip misses. Its unadjusted as-meshed gap then enters the node's pressure
+    next to the adjusted contribution of its neighbouring pair, so on a faceted curve a jump of
+    order the chord sagitta can appear when such a pair engages. `-adjust` is therefore a
+    small-sliding tool. For finite sliding, prefer the true geometry plus `-gapOffset`. A
+    per-node reference that survives re-pairing is a possible follow-up.
 - **The optional `tol`.** Only nodes with `|ḡ_ref| ≤ tol` are adjusted, as with Abaqus
-  `ADJUST=value`. This keeps a genuinely open part of an interface open.
+  `ADJUST=value`. This keeps a genuinely open part of an interface open. `test_g9_adjust_tolerance_branch`
+  exercises both sides. On the faceted slice every load-bearing node has |ḡ_ref| in
+  (6e-5, 7e-5]. A tol of 5e-5 gives the raw response bit for bit, and 8e-5 gives exactly zero.
 - **Refused on `-tie`.** A tie bonds the relative *displacement* `r = D u_s − M u_m`, never the
   gap. The as-meshed gap is already strain-free on a tie, so a shift has nothing to act on.
 - **3D only.** The 2D mortar lane evaluates its own interval kernel (`mortarActive2D`). A 2D pair
@@ -185,7 +202,7 @@ ops.contact(7, 1, 2, "-mortar", "-epsN", 1e7, "-adjust", 1e-3)   # adjust only |
 
 ## 4. Gates
 
-`tests/test_adr155_pile_contact_r05.py` has 25 cases. The oracle
+`tests/test_adr155_pile_contact_r05.py` has 27 cases. The oracle
 `contact_prototypes/proto_adr155_r05.py` passes 11/11 checks. Run with the worktree's
 `dist\bin` first on `sys.path`, as the conftest's `_testbed.ops` requires.
 
@@ -233,6 +250,12 @@ What the table shows:
 - **The remaining 1-step versus 2-step difference (0.48 %) is friction path dependence, not the
   Uzawa.** The gap offset is not ramped, so in one step the full prestress and the full head load
   build up together. With a prestress step first, 1 and 5 steps agree to 0.03 %.
+- **Caveat: every μ = 1 number above runs on a FENCED friction lane (review #897 finding 2).** The
+  skin and the hole do not match (quad skin against a triangulated hole), and the per-slave-node frictional state (`gT0`/`engaged`/`gpTtrial`/`lambdaTtrial`) is written once per facet pair, last-writer-wins (`LadrunoContactFE::addMortarFriction`, LEDGER_quirks MAJOR-1, fenced to matched meshes). `-augment never` removes only the **λ_T** half of that state. `gpT`,
+  `gT0` and `engaged` are still per-node last-writer. The 0.02 % agreement with the geometric fit
+  and the step-independence therefore show that the new flags reproduce the old recipe on the same
+  lane. They do **not** validate the frictional mortar path on a non-matching mesh. No new test
+  exercises the flags with μ > 0 on a non-matching mesh; the friction fix is its own slice (§6).
 
 **The cohesion lane (μ = 0, c = 1000, ε_T = 1e7) is NOT fixed by this slice.** The evidence
 contradicts R1's attribution of it to N-2:
@@ -243,8 +266,8 @@ contradicts R1's attribution of it to N-2:
 - **Its 5-step run still fails at step 2, with `-augment never` too.** The default and `never` both
   fail after 8 and then 101 iterations, from the same step-1 state. The step-2 failure is therefore
   **not** the per-commit Uzawa.
-- **The suspected cause** is the frictional mortar state shared per slave node across facets, the
-  last-writer-wins issue fenced in LEDGER_quirks MAJOR-1. It needs its own investigation (see §6).
+- **The plausible cause** is the same fenced friction lane: the per-slave-node frictional state (`gT0`/`engaged`/`gpTtrial`/`lambdaTtrial`) is written once per facet pair, last-writer-wins (`LadrunoContactFE::addMortarFriction`, LEDGER_quirks MAJOR-1, fenced to matched meshes). A cohesive
+  stick turns the inconsistent `gTeff` into a force immediately. It needs its own slice (see §6).
 - **On the δ = 0 geometry the cohesion lane is worse.** The H = 0 prestress converges in 9
   iterations. The 1-step H = 100 run fails whether it uses `FIT`, `-gapOffset` alone, or a prestress
   step first. With `never` in 5 steps it reaches 80 kN, then fails in step 5. The default `commit`
@@ -262,10 +285,13 @@ contradicts R1's attribution of it to N-2:
 - **NTS gap shift.** NTS never converged on the pile problem in R1 (N-3), so the value there is
   unproven. The H2 zero-gap fail-safe would also need a separate decision.
 - **2D mortar gap shift and guard.** They are refused by name, not implemented.
-- **The cohesion-only lane's multi-step failure (R1 N-2, second bullet).** §5 shows it survives
-  `-augment never`, so it is not the Uzawa. Candidate: the per-node frictional state written
-  last-writer-wins by several facets (LEDGER_quirks MAJOR-1), which a cohesive stick exposes. This
-  needs a separate investigation with its own oracle.
+- **The per-node friction-state defect (LEDGER_quirks MAJOR-1), deliberately NOT fixed here.**
+  In 3D `addMortarFriction` (`LadrunoContactFE.cpp`, around lines 2170–2194), `gT0`/`engaged` are
+  captured by whichever facet evaluates first, and `gpTtrial`/`lambdaTtrial` are overwritten by
+  every later facet. It explains the cohesion-only multi-step failure plausibly (§5 shows the
+  failure survives `-augment never`), and it underlies every μ > 0 number in §5. Recommended as
+  the next fork slice: a per-(node, feTag) reconciliation or an area-weighted blend, with a
+  shared-node friction regression and its own oracle.
 
 ## 7. Risks
 

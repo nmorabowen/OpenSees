@@ -356,6 +356,61 @@ def test_g9_adjust_faceted_tube_starts_stress_free():
     assert res["adjust"] == (0.0, 0.0), res
 
 
+def test_g9_adjust_tolerance_branch():
+    """`-adjust tol` adjusts only nodes whose reference nodal gap |gbar_ref| <= tol. On this symmetric
+    faceted slice every load-bearing (penetrating) node has the same as-meshed |gbar_ref| in
+    (6e-5, 7e-5] (measured), so the branch is exercised on both sides of that value: a tol below it
+    adjusts none of them (the raw response, bit for bit), a tol above it adjusts all (exact zero)."""
+    def umax(extra):
+        master, slave, loaded, tube = _tube_in_ring()
+        _declare(master, slave, 4, ("-epsN", EPS_C, "-augment", "never") + extra, outward=True)
+        _static(tol=1e-10, system="UmfPack", test="NormUnbalance")
+        ops.integrator("LoadControl", 1.0)
+        assert ops.analyze(1) == 0
+        return max(abs(ops.nodeDisp(t, d)) for t in tube for d in (1, 2))
+    raw = umax(())
+    assert raw > 1.0e-6
+    assert umax(("-adjust", 1.0e-12)) == raw
+    assert umax(("-adjust", 5.0e-5)) == raw          # just below the as-meshed penetration
+    assert umax(("-adjust", 8.0e-5)) == 0.0          # just above it
+    assert umax(("-adjust", 1.0)) == 0.0
+
+
+def test_augment_never_gates_the_edge_edge_alm():
+    """Review #897 finding 1: `-augment never|request` also gates the ADR-57 E6 edge-edge Uzawa (an
+    augmentation, not path state). The adr57 E7 real-brick ALM model: under `commit` the held-load
+    bracket closes the edge gap (the slave node moves); under `never` the bracket is inert (status 1,
+    the displacement does not move); under `request` physical steps are pure penalty."""
+    import test_adr57_edge_edge_5 as E
+
+    def run(mode):
+        ops.wipe()
+        ops.model("basic", "-ndm", 3, "-ndf", 3)
+        E._master_facet()
+        facet, top = E._slave_brick(zc=-1.0e-4)
+        ops.contactSurface(2, "-slave-segments", 4, *facet)
+        ops.contact(1, 1, 2, "-mortar", "-epsN", 1.0e5, "-edgeedge", "-edgeBand", 0.15,
+                    "-edgeAlm", "-edgeAugTol", 1e-9, "-outward", 0.0, 0.0, 1.0, "-augment", mode)
+        ops.timeSeries("Linear", 1)
+        ops.pattern("Plain", 1, 1)
+        for t in top:
+            ops.load(t, 0.0, 0.0, -200.0 / 4.0)
+        E._static()
+        ops.integrator("LoadControl", 0.5)
+        assert ops.analyze(1) == 0 and ops.analyze(1) == 0
+        u_step = ops.nodeDisp(facet[0], 3)
+        st, _, _ = analyze_augmented(ops, maxAug=20, augTol=1e-9, query=ops.ladrunoEdgePenetration)
+        return u_step, st, ops.nodeDisp(facet[0], 3)
+    c_step, c_st, c_end = run("commit")
+    n_step, n_st, n_end = run("never")
+    r_step, r_st, r_end = run("request")
+    assert c_st == 0 and abs(c_end - c_step) > 1e-6            # commit: the bracket augments
+    assert n_st == 1 and n_end == pytest.approx(n_step, abs=1e-15)   # never: nothing moves
+    assert r_st == 0 and r_end == pytest.approx(c_end, abs=1e-9)  # request: ALM on request
+    assert r_step == n_step                                      # physical steps: pure penalty
+    assert r_step != c_step                                      # commit augmented step 1 already
+
+
 def test_g9_adjust_then_load_and_interference():
     """With -adjust the faceted interface is usable: a lateral load converges (the tube bears on the
     front and opens at the back), and -adjust + -gapOffset gives a uniform radial shrink fit whose
@@ -393,32 +448,40 @@ def _two_facets():
     ops.contactSurface(2, "-slave-segments", 4, 5, 6, 7, 8)
 
 
-@pytest.mark.parametrize("bad", [
-    ("-augment", "sometimes"),
-    ("-maxGap", 0.0),
-    ("-maxGap", -1.0),
-    ("-adjust", -1.0),
-])
-def test_refuses_bad_values(bad):
-    _two_facets()
+def _refused(capfd, why, *args):
+    """The command must be refused FOR THE NAMED REASON: a pre-ADR-155 binary also raises on these
+    inputs, but with "unexpected token", so matching the message is what makes the gate discriminate."""
+    capfd.readouterr()
     with pytest.raises(Exception):
-        ops.contact(1, 1, 2, "-mortar", "-epsN", 1.0e5, *bad)
+        ops.contact(*args)
+    err = capfd.readouterr()
+    text = err.out + err.err
+    assert "ADR-155" in text and why in text, text
+
+
+@pytest.mark.parametrize("bad,why", [
+    (("-augment", "sometimes"), "need commit|request|never"),
+    (("-maxGap", 0.0), "need a distance > 0"),
+    (("-maxGap", -1.0), "need a distance > 0"),
+    (("-adjust", -1.0), "optional tolerance must be a value > 0"),
+])
+def test_refuses_bad_values(capfd, bad, why):
+    _two_facets()
+    _refused(capfd, why, 1, 1, 2, "-mortar", "-epsN", 1.0e5, *bad)
 
 
 @pytest.mark.parametrize("flag", [("-augment", "never"), ("-maxGap", 0.1),
                                   ("-gapOffset", -1e-3), ("-adjust",)])
-def test_flags_are_mortar_only(flag):
+def test_flags_are_mortar_only(capfd, flag):
     _two_facets()
     ops.contactSurface(3, "-slave", 5, 6, 7, 8)
-    with pytest.raises(Exception):
-        ops.contact(1, 1, 3, 1.0e5, 0.0, 0.0, *flag)
+    _refused(capfd, "are -mortar options", 1, 1, 3, 1.0e5, 0.0, 0.0, *flag)
 
 
 @pytest.mark.parametrize("flag", [("-gapOffset", -1e-3), ("-adjust",), ("-adjust", 1e-3)])
-def test_gap_shift_refused_on_tie(flag):
+def test_gap_shift_refused_on_tie(capfd, flag):
     _two_facets()
-    with pytest.raises(Exception):
-        ops.contact(1, 1, 2, "-mortar", "-tie", "-epsTie", 1.0e5, *flag)
+    _refused(capfd, "do not apply to -tie", 1, 1, 2, "-mortar", "-tie", "-epsTie", 1.0e5, *flag)
 
 
 def test_accepted_forms():

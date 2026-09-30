@@ -1315,7 +1315,11 @@ LadrunoContactDomain::commit(bool augmenting)
             st.gT0committed[d] = st.gT0[d];
         }
         st.engagedCommitted = st.engaged;
-        st.lambdaN = std::min(0.0, st.lambdaN + st.epsN * st.gN_committed);   // E6 one-scalar Uzawa
+        // ADR-155: the E6 edge-edge Uzawa is an augmentation too, so the contact's -augment mode gates
+        // it exactly like the mortar multipliers above (EdgeKey carries the contact tag). noAug empty
+        // (no contact opted in) => the lookup is skipped => byte-identical.
+        if (noAug.empty() || noAug.find(it->first.c) == noAug.end())
+            st.lambdaN = std::min(0.0, st.lambdaN + st.epsN * st.gN_committed);   // E6 one-scalar Uzawa
     }
     return 0;
 }
