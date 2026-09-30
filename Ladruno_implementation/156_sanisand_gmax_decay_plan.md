@@ -572,9 +572,19 @@ The deck is `deck_toyoura_ladder`, the Kimura case: B 0.9 m, e 0.635, γ 15.9, K
    (bender elements, seismic CPT or cross-hole), and a G/G_max–γ curve (resonant column or torsional shear), with
    the confining pressures and void ratios of each test.** Without it, the fork calibrates to published Toyoura
    curves and says so.
-3. **D3 — which stiffness the macroelement needs** (handoff §13, stiffness track item 3). The choices are the initial
-   tangent, a secant at a reference s/B, or the whole G/G0 degradation. It decides whether G5 is read at s/B 0.002,
-   0.005 or over a range, and whether `gmaxState` maps are a deliverable.
+3. **D3 — which stiffness the macroelement needs. DECIDED by the owner, 2026-09-30: the INITIAL stiffness.** The
+   objective is unchanged: the limit load (plateau) with physical coherence, plus the initial stiffness for the TIM
+   macroelement.
+
+   Consequences for this plan:
+   - **G5 targets the initial tangent.** It is read three ways:
+     - (i) the model's footing tangent as s/B → 0, cross-checked against E1's analytical strip on G(z) ∝ zⁿ, which
+       governs it;
+     - (ii) the secants at s/B 0.005 and 0.01 against Kimura V85.6, as the test's measurable proxy;
+     - (iii) s/B 0.002, reported only, since the digitizing uncertainty there is ±0.002 s/B.
+   - **The `gmaxState` maps become a deliverable,** because the initial tangent is set by G_max(z) under the footing.
+   - **The degradation beyond the start is not a TIMs deliverable here.** It still enters through the peak-protection
+     gates (G3/G4).
 4. **D4 — the G5 tolerance.** ±20 % is proposed. The red team puts the combined uncertainty at the peak at ±15 %,
    and the start adds the toe, the footing weight and K0 (about 10 % on the early secant, red-team D9).
 5. **D5 — the small-strain ν.** Keep DM04's 0.05 for the push, or use a different value? It moves the strip
