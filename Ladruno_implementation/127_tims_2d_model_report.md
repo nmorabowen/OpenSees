@@ -114,7 +114,16 @@ Sources for every number here: Esmeralda runs of our copy of your plane-strain s
      `maxSubsteps`. There are zero `loadingNonPosH` refusals.
    - A residual-pressure bracket shows that p_r changes how far a leg gets, not the curve. On the Kimura
      case at s/B 0.045, p_r 2 / 5 / 10 kPa give 820 / 839 / 861 kPa.
-5. **A tension cutoff (WP-152, draft #894): pending, not for reported numbers yet.**
+5. **A low-confinement separation, historically called the "tension cutoff" (WP-152, draft #894): pending,
+   not for reported numbers yet.** *Re-labelled on the night of 2026-09-29.* Every number in items 3, 5, 6 and 7
+   below that uses the cutoff comes from the **pre-review build `8ebde5cbd`**. The review fixes (C++ `7f1562c81`,
+   PR at `8be9ca280`) gate the E2 trigger on a non-compressing increment, bound E1, refuse the cutoff with
+   `-Presidual`, and make re-contact continuous. Re-check legs are running; the numbers will be replaced when
+   they land.
+   - **What it actually is.** At p′ → 0 the free-surface wall reaches SAS-ME as an accuracy/cost failure (codes 4
+     and 9) before any tension. With p_sep = 0, every leg stops at s/B 0.0044 with zero tension refusals. The
+     operative rule: a point whose update fails at committed p < p_sep, under a non-compressing increment, is
+     treated as separated.
    - The opt-in `-sasTensionCutoff p_sep p_contact` lets a point at zero confinement separate: no tension, no
      shear, weight kept. It re-contacts when the volumetric gap closes. With it, the legs reach their targets.
    - Checks so far:
@@ -148,6 +157,28 @@ Sources for every number here: Esmeralda runs of our copy of your plane-strain s
    - a **stiffness ladder** (footing seating 16 / 40 kPa, K0 0.4, surcharge 5 kPa, G0 × 2, h0 × 2), to decide
      whether the soft start comes from the initial state or from the constitutive law;
    - an element check of DM04 against Tatsuoka et al.'s (1986) low-pressure plane-strain Toyoura tests.
+
+9. **The element check: DM04 against Tatsuoka et al. (1986)** (drained plane strain at 4.9–392 kPa, Toyoura,
+   σ1 across the bedding).
+   - **Method.** The exact DM04 integrator at each test's e and σ3′. Oracle and driver from the WP-150 testbed;
+     Tatsuoka's strains are external; e from V&I's e_max/e_min.
+   - **DM04 is not too soft before the peak.**
+     - φ′_peak within −1 to +2°.
+     - Strain to peak ×0.46–0.73 at 5–10 kPa (DM04 peaks too EARLY) and ×1.04 at 49 kPa (matches).
+     - E50 ×0.99 at 49 kPa.
+   - **After the peak it is wrong:** too little softening (stress ratio ×1.35 at the peak + 2 %) and 2.3–2.7× too
+     much dilation at 8 % strain.
+   - **Doubling G0 or h0 moves the element away from the data.**
+   - **Reading for the footing.**
+     - The soft initial footing response is most likely the missing **small-strain stiffness**: G0 = 125 is a
+       working modulus about 3× below Toyoura's G_max, and DM04 has no modulus-decay law.
+     - The late footing peak most likely comes from DM04's weak post-peak softening and excess dilation (no
+       progressive failure). Neither is a pre-peak defect.
+     - A footing ladder (G0 ×2 / ×3 with and without b0 held fixed, seating, K0, surcharge) is running to test
+       this. Its first read: the initial state moves the start by 10 % or less; the elastic modulus carries about
+       80 % of the stiffening.
+   - **If this is confirmed, the remedy is a model option** (a G_max decay law and/or post-peak
+     dilatancy/softening). **That is your decision, not a solver setting.**
 
 **What this means for you.**
 - The **peak load q_u** is the number we can currently stand behind, within about ±15 % on the reference
@@ -1226,3 +1257,4 @@ al. (2016), *SpringerPlus* 5, 1482. Full list in the WP-150 memo.
 | 2026-09-28 | Third issue. §4.7 ladders FINAL (#878 at `1f22e2bad`): every leg walls on `loadingNonPosH`; dilatancy off only delays the onset (0.0363 → 0.0426), so the interim "only killing the dilatancy clears it" is withdrawn. §4.6: the wall states need the non-convex extension side (c = 0.71 < 7/9; c = 0.80 takes the wall fan 102/320 → 0/320, WP-151 §2.5), the wall and the bands are separate phenomena, two routes out (R1 or c ≥ 0.78), and related literature on reversal-memory stress overshooting. R1 and the CTXu finding now cite the WP-151 memo (#893) instead of "preliminary". D8 and the roadmap updated; the R1, c = 0.80 and R2 footing runs are running. |
 | 2026-09-28 | Fourth issue. §4.6: the Chen et al. (2022) citation corrected. It is a stress-overshooting study, not a documented SANISAND footing that stops on this singular set; Ghorbani et al. (2023, memory repositioning) added as related literature. |
 | 2026-09-29 | Fifth issue. New §0a: R1 merged (#893) with its footing results and κ as a guard; CPPM merged (#868); the c ≥ 0.78 route withdrawn (c = 0.80 walls at s/B 0.048); the campaign set identified as a cyclic fit, and a physically bounded monotonic set (PB2) offered; the free surface as the limiter after R1; the WP-152 tension cutoff (#894, pending review); Gate 1: DM04 Toyoura against Kimura (1985) Fig. 9, digitized, with the peak consistent within ±15 %, a late peak and a soft, concave-up start; mesh case C. §0 item 8, D8, D9, §4.6 route 2, §5.1 and §6 updated. |
+| 2026-09-29 (night) | Fifth issue, addendum. §0a item 9: the element check of DM04 against Tatsuoka et al. (1986), with its reading for the footing and the ladder's first read. Item 5: the cutoff re-labelled as a low-confinement separation (E2 is the operative trigger; p_sep = 0 is not viable); every cutoff number marked pre-review (`8ebde5cbd`). |
