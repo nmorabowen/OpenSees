@@ -199,6 +199,16 @@ Sources for every number here: Esmeralda runs of our copy of your plane-strain s
     - **Your decision (D-b in §5).** The tolerance is ½ the test scatter. Kimura's own N_γ scatter gives about ±4 %,
       and the gap already exceeds that by s/B 0.05.
 
+11. **The footing's initial stiffness (you need it for the TIM macroelement).** DM04's footing start is 2–3× too soft, and its curve bends the wrong way. On the Kimura case (B 0.9 m, e 0.635), q at s/B 0.005 / 0.01 / 0.02 is 74 / 160 / 349 kPa against the test's 227 / 410 / 743.
+    - **What we ruled out.**
+      - The initial state: seating, K0 and a surcharge each move the start by 10 % or less.
+      - A constant stiffness factor: G0 ×3 matches the first s/B 0.01, then crosses above the test.
+      - A stiffer plastic modulus: h0 ×1.5 over-stiffens the element (E50 1.66× Tatsuoka's lab) for a 7 % gain at the footing.
+    - **What works for the shape.** A small-strain stiffness law (G_max plus decay; vanilla `ManzariDafaliasRO`, G_max from Iwasaki & Tatsuoka for Toyoura) is the only variant whose footing curve bends like the test (concave-down). It reaches about 0.55–0.6 of the test's level so far, and it leaves the element peak unchanged.
+    - **What is left.** Most of the remaining gap probably sits at very low confinement: Toyoura's G_max scales with p′^≈0.4, while the model hard-codes 0.5, which is +26 % at 10 kPa. Fabric/bedding and the test conditions may also contribute.
+    - **What we plan.** An opt-in small-strain stiffness option in `LadrunoSANISAND` (G_max decay with a configurable pressure exponent). It keeps SAS-ME, R1, the cutoff and R3b, so the stiffness and the limit load come from the same run. It is being drafted as a plan-only work package, and it is checked against an analytical elastic footing solution as well as Kimura.
+    - **The objective is unchanged:** the limit load with physical coherence. The stiffness work must not move the peak or the element behaviour that already matches the lab.
+
 **What this means for you.**
 - The **peak load q_u** is the number we can currently stand behind, within about ±15 % on the reference
   sand.
@@ -1111,7 +1121,8 @@ any width a regularized mesh returns would be a numerical length, not the sand's
    and any undrained cyclic CSR–N target.
 3. **The footing test you treat as the reference.**
 4. **For your reference footing test:** footing roughness; how the sand was placed relative to the load direction (pluviation or bedding); and the measured unit weight and e_max/e_min of that batch. On Kimura (1985), bedding alone moves the peak by 11 % and its settlement by 1.8×, and roughness can move the peak by 25–35 % (§0a).
-5. **The exact PDMY01 33° parameter set** behind your 417.6 kPa control. The fork holds only its own
+5. **Small-strain stiffness of your sand** (for the initial stiffness you need): G_max or a shear-wave velocity profile (bender element, resonant column, or field Vs) with the confining pressure of each measurement, the G/G_max–γ curve if you have one, and the stiffness definition the TIM calibration uses (the initial tangent from the footing curve, or G_max directly).
+6. **The exact PDMY01 33° parameter set** behind your 417.6 kPa control. The fork holds only its own
    WP-133 PDMY03 stand-in (φ 40°), which has no peak in drained plane strain and is not a physical
    reference (#892 §10).
 
@@ -1278,3 +1289,4 @@ al. (2016), *SpringerPlus* 5, 1482. Full list in the WP-150 memo.
 | 2026-09-29 | Fifth issue. New §0a: R1 merged (#893) with its footing results and κ as a guard; CPPM merged (#868); the c ≥ 0.78 route withdrawn (c = 0.80 walls at s/B 0.048); the campaign set identified as a cyclic fit, and a physically bounded monotonic set (PB2) offered; the free surface as the limiter after R1; the WP-152 tension cutoff (#894, pending review); Gate 1: DM04 Toyoura against Kimura (1985) Fig. 9, digitized, with the peak consistent within ±15 %, a late peak and a soft, concave-up start; mesh case C. §0 item 8, D8, D9, §4.6 route 2, §5.1 and §6 updated. |
 | 2026-09-29 (night) | Fifth issue, addendum. §0a item 9: the element check of DM04 against Tatsuoka et al. (1986), with its reading for the footing and the ladder's first read. Item 5: the cutoff re-labelled as a low-confinement separation (E2 is the operative trigger; p_sep = 0 is not viable); every cutoff number marked pre-review (`8ebde5cbd`). |
 | 2026-09-29 (late) | §0a item 10: the acoustic census answers R2/R3 as case C (the mesh gap and loss of ellipticity at s/B ≈ 0.033, 5× before the peak; mesh-imposed band orientation; non-associativity is the cause); R3b (Perzyna in-model) is the planned regularizer, tuned after the constitutive questions. |
+| 2026-09-30 | §0a item 11: the footing's initial stiffness as a TIM deliverable. The initial state, a constant G factor and a stiffer h0 are ruled out; G_max decay (RO) gives the right shape at about 0.55–0.6 of the test's level; a LadrunoSANISAND G_max-decay option with a pressure exponent is planned. §5.1 item 5: a request for your sand's small-strain stiffness data. |
