@@ -209,6 +209,19 @@ Sources for every number here: Esmeralda runs of our copy of your plane-strain s
     - **What we plan.** An opt-in small-strain stiffness option in `LadrunoSANISAND` (G_max decay with a configurable pressure exponent). It keeps SAS-ME, R1, the cutoff and R3b, so the stiffness and the limit load come from the same run. It is being drafted as a plan-only work package, and it is checked against an analytical elastic footing solution as well as Kimura.
     - **The objective is unchanged:** the limit load with physical coherence. The stiffness work must not move the peak or the element behaviour that already matches the lab.
 
+12. **The overnight results and a third coherence track (2026-09-30).**
+    - **The reviewed cutoff changes nothing at footing scale.** The reviewed build (C++ `7f1562c81`) reproduces the pre-review peaks to within 0.12 % and the post-peak to within 0.26 %: 2508 against 2509 kPa (B 1.2 m), 2017 against 2015 (Kimura case). **The pre-review label on the numbers in items 3 and 5–7 is lifted.** p_sep 0.1 / 0.25 / 0.5 moves the peak by 0.09 %, so p_sep 0.1 is the defensible default.
+    - **A second Kimura density shows the same signature.** At D_r 0.751 (test V75.1) the model peaks at 1469 kPa @ s/B 0.165, against 1236 @ ≈ 0.105: +19 % and 1.6× late. At D_r 0.856 it was +3 % and 1.8× late. **The peak is systematically late, and its level is not reliably within ±15 %.**
+    - **Stiffness and the peak.** Tripling the elastic stiffness (b0 fixed) moves the peak to s/B 0.103, near the test, but 39 % too high. It brings the wedge under the footing forward to s/B 0.05, but the edge bands stay in the mesh columns.
+    - **Mesh.** B/16 is now about 23 % below B/8 at s/B 0.108. The limit load is not mesh-converged.
+    - **Your footing geometry** (B 1.5 m, q₀ 7.65 kPa) with the reference sand has **no plateau by s/B 0.20**, buoyant or dry.
+    - **The separated zone is a physical, model-driven dilatant heave.** It is a region 0.35B deep in the passive wedge beside the footing, not the surface row. It is not a numerical cascade: its points dilate at their bounding stress ratio until confinement vanishes, and the cutoff only recognises that. Where p′ ≈ 0 the sand carries no shear, so the general-shear slip surface cannot reach the ground. The element check already showed DM04 dilating 2.3–2.7× too much after its peak (Tatsuoka et al. 1986).
+    - **So physical coherence has three coupled tracks:**
+      - **(1) mechanism:** R3b, Perzyna, WP-154;
+      - **(2) initial stiffness:** G_max decay, WP-156;
+      - **(3) post-peak dilatancy at low p′** (new, element-first against Tatsuoka): check the UW low-p `D_factor` (your D2), then DM04's dilatancy terms (A0, n^d, z_max/c_z), keeping the peak strength and stiffness that already match the lab. It may need a state-dependent dilatancy option.
+    - **Relevant to your D2 and D7:** the same near-surface dilation governs whether a plateau appears on your footing.
+
 **What this means for you.**
 - The **peak load q_u** is the number we can currently stand behind, within about ±15 % on the reference
   sand.
@@ -1291,3 +1304,4 @@ al. (2016), *SpringerPlus* 5, 1482. Full list in the WP-150 memo.
 | 2026-09-29 (late) | §0a item 10: the acoustic census answers R2/R3 as case C (the mesh gap and loss of ellipticity at s/B ≈ 0.033, 5× before the peak; mesh-imposed band orientation; non-associativity is the cause); R3b (Perzyna in-model) is the planned regularizer, tuned after the constitutive questions. |
 | 2026-09-30 | §0a item 11: the footing's initial stiffness as a TIM deliverable. The initial state, a constant G factor and a stiffer h0 are ruled out; G_max decay (RO) gives the right shape at about 0.55–0.6 of the test's level; a LadrunoSANISAND G_max-decay option with a pressure exponent is planned. §5.1 item 5: a request for your sand's small-strain stiffness data. |
 | 2026-09-30 (later) | §0a item 11: the h0 ×1.5 E50 ratio corrected to 1.28× plain DM04 at equal density (it was 1.66× 'the lab', a density confound). The fuller stiffness plan is fork WP-156 (#898); TIMs need the initial stiffness. |
+| 2026-09-30 (late morning) | §0a item 12: the reviewed cutoff reproduces the pre-review peaks (≤ 0.12 %), so the pre-review label is lifted; K75 against V75.1 (+19 %, 1.6× late); G0 ×3 moves the peak to the test's s/B but 39 % too high; B/16 23 % below B/8; no plateau on the campaign footing by s/B 0.20; the separated zone is a model-driven dilatant heave; a third coherence track (post-peak dilatancy). |
