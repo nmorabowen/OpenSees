@@ -43,6 +43,11 @@ For ADR-41 C4 mesh-tying pass the tie residual query::
 
     status, n_aug, res = analyze_augmented(ops, query=ops.ladrunoMortarTieResidual, augTol=1e-12)
 
+ADR-155 ``-augment`` modes (per mortar contact): ``commit`` (the default) augments on every commit,
+physical steps included; ``request`` augments ONLY inside this proc's bracket (a physical step is
+pure penalty, so a linear problem is step-count independent and ALM is applied on request);
+``never`` is pure penalty everywhere -- this proc then returns status 1 (the measure never moves).
+
 Returns ``(status, n_aug, measure)``:
     status 0  = converged (measure < augTol),
     status 1  = hit maxAug without converging,

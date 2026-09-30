@@ -185,7 +185,7 @@ ops.contact(7, 1, 2, "-mortar", "-epsN", 1e7, "-adjust", 1e-3)   # adjust only |
 
 ## 4. Gates
 
-`tests/test_adr155_pile_contact_r05.py` has 22 cases. The oracle
+`tests/test_adr155_pile_contact_r05.py` has 25 cases. The oracle
 `contact_prototypes/proto_adr155_r05.py` passes 11/11 checks. Run with the worktree's
 `dist\bin` first on `sys.path`, as the conftest's `_testbed.ops` requires.
 
@@ -205,22 +205,50 @@ ops.contact(7, 1, 2, "-mortar", "-epsN", 1e7, "-adjust", 1e-3)   # adjust only |
 
 ## 5. The R1 pile deck, rerun
 
-The deck is the R1 C deck regenerated at δ = 0: skin radius = hole radius, 4 sector contacts, μ = 1,
-ε_N = 1e7, ε_T = 1e6. It was run through **`OpenSees.exe` (the Tcl lane)** of this build, with the
-flags appended to the four `contact` lines. u_head is in mm; "net" is u_head minus the H = 0
-prestress-only run.
+The deck is the R1 C deck regenerated at δ = 0: skin radius = hole radius, 4 sector contacts,
+matched hole, μ = 1, ε_N = 1e7, ε_T = 1e6. It was run through **`OpenSees.exe` (the Tcl lane)** of
+this build, with the flags appended to the four `contact` lines and no other edit. The flags are
+`FIT = -adjust -gapOffset -0.001`. u_head is in mm; "net" is u_head minus the H = 0 prestress-only
+run (−0.000845 mm).
 
-| Variant | Steps: iterations | u_head | net |
+| Variant (H = 100 kN) | Iterations per step | u_head | net |
 |---|---|---|---|
-| as meshed, no flags (spurious gaps, no prestress) | 1: 21 | 1.1617 | — (back gaps; +67 % over B) |
-| `-adjust -gapOffset -0.001 -augment never`, H = 0 | 1: 15 | −0.000845 | — |
-| same, H = 100 | 1: 20 | 0.72030 | **0.72114** |
-| same, 2 steps | see below | | |
-| same, 5 steps | see below | | |
-| R1 geometric fit (R + 1 mm), default augment, 1 step | 1: 19 | 0.72037 | 0.7210 |
-| R1 geometric fit, 2 / 5 steps (the N-2 drift) | | 0.7292 / 0.7347 | |
+| as meshed, no flags (no prestress; spurious facet gaps) | 21 | 1.1617 | — (+67 % over the B tie) |
+| `FIT -augment never`, 1 step | 20 | 0.72030 | **0.72114** |
+| `FIT -augment never`, 2 steps | 16, 20 | 0.72377 | 0.72461 |
+| `FIT -augment never`, 5 steps | 16, 17, 15, 16, 18 | 0.72373 | 0.72457 |
+| `FIT -augment never`, prestress step, then 1 step | 15 → 20 | 0.72365 | 0.72449 |
+| `FIT -augment never`, prestress step, then 5 steps | 15 → 16, 15, 15, 16, 18 | 0.72385 | 0.72469 |
+| `FIT` with the default `commit`, 5 steps | 16, 16, 27, 21, 25 | 0.72206 | — |
+| R1, geometric fit (skin R + 1 mm), default, 1 step | 19 | 0.72037 | **0.7210** |
+| R1, geometric fit, default, 2 / 5 steps (the N-2 drift) | 17, 22 / 16–25 | 0.7292 / 0.7347 | |
 
-(The table is completed in the implementation log below.)
+What the table shows:
+
+- **The interference fit no longer needs the geometry hack.** In 1 step, `FIT` gives a net 0.72114
+  mm against the geometric fit's 0.7210 mm, a 0.02 % difference.
+- **The step-count drift is gone.** With `never`, 2 against 5 steps differ by 0.005 %, and 1 against
+  5 steps with a prestress step differ by 0.03 %. The geometric fit under the default drifted
+  +2 % (0.7204 → 0.7347 mm).
+- **The remaining 1-step versus 2-step difference (0.48 %) is friction path dependence, not the
+  Uzawa.** The gap offset is not ramped, so in one step the full prestress and the full head load
+  build up together. With a prestress step first, 1 and 5 steps agree to 0.03 %.
+
+**The cohesion lane (μ = 0, c = 1000, ε_T = 1e7) is NOT fixed by this slice.** The evidence
+contradicts R1's attribution of it to N-2:
+
+- **Byte-identity holds on the real deck.** The R1 geometric deck `C_coh_d3_force` rerun through
+  the new `OpenSees.exe` gives u_head = 0.70324876434071340 mm in 11 iterations, the R1 value to
+  every printed digit.
+- **Its 5-step run still fails at step 2, with `-augment never` too.** The default and `never` both
+  fail after 8 and then 101 iterations, from the same step-1 state. The step-2 failure is therefore
+  **not** the per-commit Uzawa.
+- **The suspected cause** is the frictional mortar state shared per slave node across facets, the
+  last-writer-wins issue fenced in LEDGER_quirks MAJOR-1. It needs its own investigation (see §6).
+- **On the δ = 0 geometry the cohesion lane is worse.** The H = 0 prestress converges in 9
+  iterations. The 1-step H = 100 run fails whether it uses `FIT`, `-gapOffset` alone, or a prestress
+  step first. With `never` in 5 steps it reaches 80 kN, then fails in step 5. The default `commit`
+  diverges in step 2.
 
 ## 6. Descoped, and why
 
@@ -234,6 +262,10 @@ prestress-only run.
 - **NTS gap shift.** NTS never converged on the pile problem in R1 (N-3), so the value there is
   unproven. The H2 zero-gap fail-safe would also need a separate decision.
 - **2D mortar gap shift and guard.** They are refused by name, not implemented.
+- **The cohesion-only lane's multi-step failure (R1 N-2, second bullet).** §5 shows it survives
+  `-augment never`, so it is not the Uzawa. Candidate: the per-node frictional state written
+  last-writer-wins by several facets (LEDGER_quirks MAJOR-1), which a cohesive stick exposes. This
+  needs a separate investigation with its own oracle.
 
 ## 7. Risks
 
@@ -255,3 +287,6 @@ prestress-only run.
     refusal.
   - `SRC/interpreter/OpenSeesOutputCommands.cpp`: parser.
   - Tests, oracle and harness as listed above.
+- 2026-09-30 — the R1 pile deck rerun through `OpenSees.exe` (§5). Scripts are outside the repo
+  (session scratch): the δ = 0 deck was regenerated with the R1 `r1_run.py`, and the flags were
+  appended to its `contact` lines.

@@ -441,3 +441,35 @@ def test_oracle_proto_passes():
     for fn in ("t1_interference", "t2_step_count", "t3_adjust_exact_zero", "t4_maxgap_window"):
         mod[fn]()
     assert mod["FAILS"] == []
+
+
+@pytest.mark.parametrize("flag", [("-maxGap", 0.1), ("-gapOffset", -1e-4), ("-adjust",)])
+def test_2d_pair_refuses_3d_only_options(flag):
+    """-maxGap/-gapOffset/-adjust are wired to the 3D mortar lane; a 2D pair draws a named FATAL at
+    handle() (analyze returns < 0) instead of silently ignoring them. -augment works in 2D."""
+    def block(extra):
+        ops.wipe()
+        ops.model("basic", "-ndm", 2, "-ndf", 2)
+        ops.node(101, 0.0, 0.0)
+        ops.node(102, 1.0, 0.0)
+        ops.fix(101, 1, 1)
+        ops.fix(102, 1, 1)
+        ops.node(1, 0.0, -1e-4)
+        ops.node(2, 1.0, -1e-4)
+        ops.fix(1, 1, 0)
+        ops.fix(2, 1, 0)
+        ops.contactSurface(10, "-master", 2, 101, 102)
+        ops.contactSurface(20, "-slave-segments", 2, 1, 2)
+        ops.contact(1, 10, 20, "-mortar", "-epsN", 1e6, "-outward", 0.0, 1.0, *extra)
+        ops.timeSeries("Linear", 1)
+        ops.pattern("Plain", 1, 1)
+        ops.load(1, 0.0, -1.0)
+        ops.load(2, 0.0, -1.0)
+        _static()
+        ops.integrator("LoadControl", 1.0)
+        try:
+            return ops.analyze(1)
+        except Exception:
+            return -1
+    assert block(("-augment", "never")) == 0
+    assert block(flag) < 0
