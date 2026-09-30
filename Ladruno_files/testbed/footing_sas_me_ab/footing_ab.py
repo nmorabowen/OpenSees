@@ -489,7 +489,13 @@ def write_replay(path, deck, F, D, Fn, Dn, eps_prev, sel, step, sB, sub_next,
 
 def save_field(path, deck, F, D, step, sB):
     xy = np.array([(t, gx, gy) for t, gx, gy in gp_xy(deck)])
+    # nodal kinematics (additive keys) for velocity / incremental-displacement arrows
+    # next to the incremental-strain mechanism plots (TIMs orchestrator, 2026-09-29)
+    nd_tag = np.array(ops.getNodeTags(), dtype=int)
+    nd_xy = np.array([ops.nodeCoord(int(n))[:2] for n in nd_tag])
+    nd_u = np.array([ops.nodeDisp(int(n))[:2] for n in nd_tag])
     np.savez_compressed(path, step=step, s_over_B=sB, tag=xy[:, 0], gx=xy[:, 1],
+                        nd_tag=nd_tag, nd_xy=nd_xy, nd_u=nd_u,
                         gy=xy[:, 2], sig=F["sig"], eps=F["eps"], st=F["st"],
                         psi=F["psi"], f=F["f"],
                         stats=F["stats"] if F["stats"] is not None else 0,
