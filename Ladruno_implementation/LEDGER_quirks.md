@@ -8128,8 +8128,8 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
 - **Rule:** Under ISA, trust the COMMITTED state (and `sepActive`), not the trial read right after "off"; a deck that continues from ISA with SANISAND inherits the strain-frame jump.
 - **Workaround/status:** open, not WP-152's (it predates it). WP-152 only makes the separation state survive the ISA revert (review #5).
 
-### The Esmeralda conan venv loses `pytest` under `python -S`: the byte-identity child process fails before running any deck (harness)
-- **Bites:** `tests/test_ladruno_sanisand_sasme.py::test_existing_schemes_byte_identical` on Esmeralda with `~/ladruno_build_test/conan_venv/bin/python`.
+### An interpreter whose `pytest` lives in site-packages loses it under `python -S`: the byte-identity child process fails before running any deck (harness)
+- **Bites:** `tests/test_ladruno_sanisand_sasme.py::test_existing_schemes_byte_identical` with an interpreter that keeps pytest only in its site-packages: Esmeralda's `~/ladruno_build_test/conan_venv/bin/python`, and the nmora desk's `pythoncore-3.12-64`.
   - The test spawns `sys.executable -S` (the Windows `-S` trap); `-S` drops site-packages, where that venv keeps pytest; `wp129_sanisand_byteid` imports `test_ladruno_sanisand`, which imports pytest → `ModuleNotFoundError`.
-- **Rule:** Read that test's Linux failure as an environment artifact unless its message is a row mismatch; the byte-identity baseline is win32 (bit-exact) anyway.
-- **Workaround/status:** documented (WP-152 review, 2026-09-29, a0171df75/7f1562c81 Linux runs); the fix belongs to the harness, not to the material.
+- **Rule:** Read that failure as an environment artifact unless its message is a row mismatch. Put the interpreter's site-packages on `PYTHONPATH` (the child builds `sys.path` from it) and the test runs for real.
+- **Workaround/status:** documented (WP-152 review, 2026-09-29): with site-packages on `PYTHONPATH` it PASSES on the nmora desk at 7f1562c81 (111 s). The fix belongs to the harness, not to the material.

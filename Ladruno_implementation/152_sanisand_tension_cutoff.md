@@ -224,8 +224,11 @@ parser, ISA) and 7f1562c81 (continuous re-contact, found by the new Newton test)
 | 9 | tests never run Newton, plane strain, shear-while-separated, E2 under compression, p_r ≠ 0 | **confirmed** | added all five (+ E1 bound, ISA). The Newton test FOUND A DESIGN FLAW: the first build's jump p_min → p_contact at re-contact leaves a band of top displacement with no equilibrium (a two-brick column failed at step 68). Fixed (7f1562c81): while separated, p = p_min + K(p_contact)·max(g, 0), continuous; the exit state and the oracle events are unchanged. |
 
 **Regression.**
-- Windows (this desk, which is also where the build of record at 8ebde5cbd was made): WP-152 file 30/30 at 7f1562c81
-  (OpenSeesPy target); the all-target build of record and the SANISAND/ManzariDafalias suite: see below.
+- Windows, the nmora desk (the 8ebde5cbd build was made on this desk as well, in this worktree, so no log is owed by
+  another desk): `Ladruno_scriptsuild.bat`, ALL 5 targets, `build 7f1562c818b3` (log
+  `build_wp152_review_all_7f1562c81.log`, 2026-09-29 21:02). 20 SANISAND/ManzariDafalias test files:
+  **257 passed, 5 skipped, 2 xfailed, 0 failed**. The byte-identity test needs the interpreter's site-packages on
+  `PYTHONPATH` under `-S` (LEDGER_quirks); with it, it passes bit-exact against the win32 baseline. WP-152 file 30/30.
 - Linux (Esmeralda node4, `~/ladruno_wp152/OpenSees_review`, build dir `build/wp152r_seq`, installed to
   `~/ladruno_wp152/bin_review/opensees.so`, logs `~/ladruno_wp152/logs/build_review2_srun.out`): 28 test files,
   **253 passed, 8 skipped, 2 xfailed, 1 failed** — the failure is the byte-identity child process losing `pytest`
