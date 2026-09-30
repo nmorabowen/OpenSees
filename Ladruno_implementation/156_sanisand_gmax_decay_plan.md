@@ -2,7 +2,7 @@
 title: "WP-156 — small-strain stiffness (G_max decay, pressure exponent n) in LadrunoSANISAND (plan, no code)"
 project: Ladruno
 type: work-package plan
-status: "PLANNED — plan only, no C++ (draft PR). Opened on the 2026-09-29/30 G_max-decay test (vanilla ManzariDafaliasRO) and the TIMs stiffness requirement. Owner and TIMs decide n, the G_max source and the stiffness tolerance (§8)."
+status: "PLANNED — plan only, no C++ (draft #898). Opened on the 2026-09-29/30 G_max-decay test (vanilla ManzariDafaliasRO) and the TIMs stiffness requirement. Owner and TIMs decide n, the G_max source and the stiffness tolerance (§8)."
 owner: nmora
 related:
   - "[[151_sanisand_reseat_singularity]] (R1, #893, merged)"
