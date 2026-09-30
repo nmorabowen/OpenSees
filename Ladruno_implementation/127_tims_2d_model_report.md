@@ -180,6 +180,25 @@ Sources for every number here: Esmeralda runs of our copy of your plane-strain s
    - **If this is confirmed, the remedy is a model option** (a G_max decay law and/or post-peak
      dilatancy/softening). **That is your decision, not a solver setting.**
 
+10. **The mesh question (R2/R3): answered, case C.** This is an acoustic-tensor census of the Toyoura legs
+    (build `8ebde5cbd`, R1 + pre-review cutoff; method validated against WP-150's own number).
+    - **Timing.** The B/16−B/8 gap passes 2 % at s/B 0.0335. That is exactly where points near the footing start to
+      lose ellipticity (1–5 % of them by s/B 0.033–0.047), about 5× before the peak (0.167–0.180). **The peak is
+      therefore mesh-dependent.**
+    - **Orientation.** Before the peak, the band runs down the element column at the footing edge and follows the
+      mesh when the mesh is sheared. The material's own band direction is 45–65° from vertical. Mesh orientation
+      alone moves the peak by 8.8 %.
+    - **Cause.** The vertical 'punching' bands in our fields are partly imposed by the mesh. The cause is the
+      non-associated flow: with associated flow, the non-elliptic count at every peak drops to zero.
+    - **What we plan.** A regularizer inside the model: Perzyna viscoplasticity (R3b), opt-in. A nonlocal void ratio
+      would miss the points that lose ellipticity while still hardening. The census says the viscosity needed is
+      small (H_v/2G ≈ 0.015), so its rate bias and cost should be modest. A plan-only work package is being
+      drafted.
+    - **The order.** The regularizer is tuned after the constitutive questions of item 9 are settled, because
+      changing the model changes when and how bands form.
+    - **Your decision (D-b in §5).** The tolerance is ½ the test scatter. Kimura's own N_γ scatter gives about ±4 %,
+      and the gap already exceeds that by s/B 0.05.
+
 **What this means for you.**
 - The **peak load q_u** is the number we can currently stand behind, within about ±15 % on the reference
   sand.
@@ -1258,3 +1277,4 @@ al. (2016), *SpringerPlus* 5, 1482. Full list in the WP-150 memo.
 | 2026-09-28 | Fourth issue. §4.6: the Chen et al. (2022) citation corrected. It is a stress-overshooting study, not a documented SANISAND footing that stops on this singular set; Ghorbani et al. (2023, memory repositioning) added as related literature. |
 | 2026-09-29 | Fifth issue. New §0a: R1 merged (#893) with its footing results and κ as a guard; CPPM merged (#868); the c ≥ 0.78 route withdrawn (c = 0.80 walls at s/B 0.048); the campaign set identified as a cyclic fit, and a physically bounded monotonic set (PB2) offered; the free surface as the limiter after R1; the WP-152 tension cutoff (#894, pending review); Gate 1: DM04 Toyoura against Kimura (1985) Fig. 9, digitized, with the peak consistent within ±15 %, a late peak and a soft, concave-up start; mesh case C. §0 item 8, D8, D9, §4.6 route 2, §5.1 and §6 updated. |
 | 2026-09-29 (night) | Fifth issue, addendum. §0a item 9: the element check of DM04 against Tatsuoka et al. (1986), with its reading for the footing and the ladder's first read. Item 5: the cutoff re-labelled as a low-confinement separation (E2 is the operative trigger; p_sep = 0 is not viable); every cutoff number marked pre-review (`8ebde5cbd`). |
+| 2026-09-29 (late) | §0a item 10: the acoustic census answers R2/R3 as case C (the mesh gap and loss of ellipticity at s/B ≈ 0.033, 5× before the peak; mesh-imposed band orientation; non-associativity is the cause); R3b (Perzyna in-model) is the planned regularizer, tuned after the constitutive questions. |
