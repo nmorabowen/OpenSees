@@ -8109,3 +8109,24 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
 - **Why it matters beyond the crash:** the pool is also the ADR-75b §5.4-H1 blocker for threading loops B/C (one Matrix per DOF count shared by every element); any future per-thread pool must size and zero all `MAX_NUM_DOF+1` slots.
 - **Reproduce deterministically:** dirty the allocator's free list for the pool array's size (65 × 8 = 520 bytes) right before the first FE_Element of a model is built — `HeapAlloc(GetProcessHeap())` on Windows (the UCRT's `operator new` allocates there, static or DLL CRT alike), libc `malloc` on Linux — fill with 0xA5 and free; see `tests/test_wp149_pool_slot_max_num_dof.py`.
 - **Workaround/status:** ✅ FIXED WP-149 (`<=` at all 10 init/cleanup loops, LEDGER_vanilla_files). Not linted: all four sites are fixed, and the pin test covers the two reachable pools (FE_Element, TransformationFE) against an upstream sync that re-imports `<`. *2026-09-28.*
+
+### Probing a tangent from Python: `setNodeDisp` without `-commit` RESETS the node's other DOFs, and `printA -ret` is the TRANSPOSE (WP-158)
+- **Bites:** an FD check `setNodeDisp n 1 ux; setNodeDisp n 2 uy; setNodeDisp n 3 uz; printB` evaluates the residual at
+  (committed_x, committed_y, uz), not at (ux, uy, uz). `OPS_setNodeDisp` copies `getDisp()` (the COMMITTED vector), sets
+  one component and calls `setTrialDisp`, so each call wipes the trial value of the DOFs set before it. R0.7 lost a day
+  to a "12 % tangent error" that was this. Separately, `printA -ret` hands back the `Matrix` buffer, which is
+  column-major, so `np.array(...).reshape(n, n)` is `Kᵀ`. A symmetric tangent hides it; a non-symmetric one
+  (`-consistanttan`, `-fdTangent`) looks wrong by exactly a transpose.
+- **Also:** `setNodeDisp` does not `update()` elements, so a zeroLength or brick keeps its last-`update()` force in
+  `printB`. Add their exact linear part analytically (or FD only contact DOFs).
+- **Workaround/status:** use `setNodeDisp ... -commit` (a node-level commit; the contact Domain path state is untouched)
+  and `reshape(n, n).T`. Probes: `contact_prototypes/probe_adr158_mortar_tangent_fd.py`, `probe_adr158_newton.py`.
+
+### Faceted mortar on a mismatched polygon: the geometric part of the pair force is non-smooth, so an "exact" FD tangent can be WORSE than the frozen-geometry one (WP-158)
+- **Bites:** at the meshed configuration a skin polygon (n) and a hole polygon (n+4) share vertices. The clipped
+  overlap of a pair changes topology inside +-h, and the one-sided slopes of the pair force differ by about 100 %
+  (|df/du| ~ 1e6 against epsN*a ~ 3e5 under a 1e4 kPa prestress). The central-FD tangent (`-fdTangent`) then stalls
+  Newton at 0.1-5 for every step size, while the analytic tangent (no geometric terms) plus `-consistanttan` converges.
+  On a smooth crease the same FD tangent is quadratic.
+- **Workaround/status:** for the pile use `-consistanttan` (Pardiso is mtype 11, non-symmetric). Keep `-fdTangent` for
+  smooth creased or curved interfaces with cross-crease pairs. See [[158_mortar_fd_pair_tangent]] §3 D3.

@@ -2513,6 +2513,9 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     // ADR-155 (G-9): arm the normal-gap shift (off => never called => inert).
                     if (mc.gapOffset != 0.0 || mc.adjust)
                         fe->setMortarGapShift(mc.gapOffset, mc.adjust, mc.adjustTol);
+                    // ADR-158: the opt-in FD pair tangent (off => never called => inert).
+                    if (mc.fdTangent > 0.0)
+                        fe->setMortarFDTangent(mc.fdTangent);
                     theModel->addFE_Element(fe);
                     // C2.2: this pair's slave nodes have a live λ_N slot this handle().
                     for (int k = 0; k < npsS; k++)

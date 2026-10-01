@@ -857,6 +857,15 @@ LadrunoContactFE::mortarActive(double D[4][4], double M[4][4], double g[4], doub
         const Vector &u = mortarMaster[i]->getTrialDisp();
         for (int d = 0; d < 3; d++) Xm[i][d] = X(d) + u(d);
     }
+    return mortarActiveX(Xs, Xm, D, M, g, n);
+}
+
+// ADR-158 -- the body of mortarActive at GIVEN current positions (the FD pair tangent evaluates
+// the pair at perturbed positions through this same code; mortarActive is unchanged arithmetic).
+bool
+LadrunoContactFE::mortarActiveX(const double Xs[4][3], const double Xm[4][3],
+                                double D[4][4], double M[4][4], double g[4], double n[3]) const
+{
     LadrunoMortarKernel::PairResult pr;
     if (LadrunoMortarKernel::integratePair(npsS, Xs, npsM, Xm, orientDir, pr) != 0)
         return false;                                // empty/degenerate overlap
@@ -2715,6 +2724,12 @@ LadrunoContactFE::addMortarTang(double fact, bool initialStiff)
         }
         return;
     }
+    // ADR-158 -- opt-in FD pair tangent (current tangent only; the initial-stiffness path keeps
+    // the analytic SPD stick tangent below). Off (mortarFDRel == 0) => byte-identical.
+    if (mortarFDRel > 0.0 && !initialStiff) {
+        addMortarTangFD(fact);
+        return;
+    }
     double W[4] = {0.0, 0.0, 0.0, 0.0};               // act_I / a_I^facet
     for (int I = 0; I < npsS; I++) {
         double aFacet = 0.0;
@@ -2813,6 +2828,154 @@ LadrunoContactFE::addMortarTang(double fact, bool initialStiff)
                             tang(3 * A + i, 3 * B + j) += w * Kss[i][j];
                 }
             }
+        }
+    }
+}
+
+// ADR-158 -- this pair's static contact force at GIVEN trial displacements, side-effect free. It
+// mirrors the getResidual MORTAR branch (normal ALM pressure + addMortarFriction) line by line but
+// writes no state: lambda_N and the friction path state (gpT, lambda_T, gT0) are READ (committed
+// values; the trial gpT/lambda_T written by the residual are not inputs of the residual itself).
+// A pair that has not engaged yet takes gT0 from gT0in (the base configuration) so the FD columns
+// all share one engagement origin, exactly as the residual would capture it at the base iterate.
+bool
+LadrunoContactFE::mortarPairForceAt(const double us[4][3], const double um[4][3],
+                                    const double (*gT0in)[3], double (*gT0out)[3], double f[24])
+{
+    for (int i = 0; i < 24; i++) f[i] = 0.0;
+    double Xs[4][3], Xm[4][3];
+    for (int i = 0; i < npsS; i++) {
+        const Vector &X = mortarSlave[i]->getCrds();
+        for (int d = 0; d < 3; d++) Xs[i][d] = X(d) + us[i][d];
+    }
+    for (int i = 0; i < npsM; i++) {
+        const Vector &X = mortarMaster[i]->getCrds();
+        for (int d = 0; d < 3; d++) Xm[i][d] = X(d) + um[i][d];
+    }
+    double D[4][4], M[4][4], g[4], n[3];
+    if (!mortarActiveX(Xs, Xm, D, M, g, n)) return false;
+    LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
+    double p[4] = {0, 0, 0, 0};
+    for (int I = 0; I < npsS; I++) {
+        double aFacet = 0.0;
+        for (int J = 0; J < npsS; J++) aFacet += D[I][J];
+        if (aFacet <= 1e-300) continue;
+        double lambdaI = (cd != 0)
+            ? cd->getOrCreateMortarNormalState(contactTag, mortarSlave[I]->getTag()).lambdaN : 0.0;
+        double pr = lambdaI + kn * (g[I] / aFacet);
+        p[I] = (pr < 0.0) ? pr : 0.0;
+    }
+    for (int K = 0; K < npsS; K++) {
+        double Dp = 0.0;
+        for (int I = 0; I < npsS; I++) Dp += D[K][I] * p[I];
+        for (int d = 0; d < 3; d++) f[3 * K + d] = -Dp * n[d];
+    }
+    for (int L = 0; L < npsM; L++) {
+        double Mp = 0.0;
+        for (int I = 0; I < npsS; I++) Mp += M[I][L] * p[I];
+        for (int d = 0; d < 3; d++) f[3 * (npsS + L) + d] = Mp * n[d];
+    }
+    if (!((mu > 0.0 || mortarCohesion > 0.0 || mortarTauMax > 0.0) && cd != 0)) return true;
+    double tFric[4][3] = {{0}};
+    for (int I = 0; I < npsS; I++) {
+        if (p[I] >= 0.0) continue;
+        double aFacet = 0.0;
+        for (int J = 0; J < npsS; J++) aFacet += D[I][J];
+        if (aFacet <= 1e-300) continue;
+        double N_I = -p[I];
+        double r[3] = {0, 0, 0};
+        for (int J = 0; J < npsS; J++)
+            for (int d = 0; d < 3; d++) r[d] += D[I][J] * us[J][d];
+        for (int K = 0; K < npsM; K++)
+            for (int d = 0; d < 3; d++) r[d] -= M[I][K] * um[K][d];
+        double rn = r[0]*n[0] + r[1]*n[1] + r[2]*n[2];
+        double gbarT[3];
+        for (int d = 0; d < 3; d++) gbarT[d] = (r[d] - rn * n[d]) / aFacet;
+        if (gT0out != 0)
+            for (int d = 0; d < 3; d++) gT0out[I][d] = gbarT[d];
+        const LadrunoContactDomain::MortarFrictionState &st = cd->getOrCreateMortarFrictionState(
+            contactTag, mortarSlave[I]->getTag(), slaveFacetIndex, masterFacetIndex);
+        double gT0[3];
+        for (int d = 0; d < 3; d++)
+            gT0[d] = st.engaged ? st.gT0[d] : ((gT0in != 0) ? gT0in[I][d] : gbarT[d]);
+        double invEpsT = (kt > 0.0) ? 1.0 / kt : 0.0;
+        double gTeff[3], tF[3], gpTtrial[3];
+        for (int d = 0; d < 3; d++) gTeff[d] = (gbarT[d] - gT0[d]) + st.lambdaT[d] * invEpsT;
+        LadrunoFrictionKernel::frictionReturnMap(gTeff, st.gpT, N_I, kt, mu, tF, gpTtrial,
+                                                 mortarCohesion, mortarTauMax);
+        for (int d = 0; d < 3; d++) tFric[I][d] = tF[d];
+    }
+    for (int K = 0; K < npsS; K++)
+        for (int d = 0; d < 3; d++) {
+            double s = 0.0;
+            for (int I = 0; I < npsS; I++) s += D[K][I] * tFric[I][d];
+            f[3 * K + d] += s;
+        }
+    for (int L = 0; L < npsM; L++)
+        for (int d = 0; d < 3; d++) {
+            double s = 0.0;
+            for (int I = 0; I < npsS; I++) s += M[I][L] * tFric[I][d];
+            f[3 * (npsS + L) + d] += -s;
+        }
+    return true;
+}
+
+// ADR-158 -- the FD pair tangent: tang(:, c) += -fact * (f(u + h e_c) - f(u - h e_c)) / 2h over the
+// pair's own 3*(npsS+npsM) DOFs (the FE residual convention: tang = -d resid/du). The step is
+// h = mortarFDRel * (longest current slave facet edge), so it is unit-free. Central differences put
+// the error at O(h^2) on smooth branches; across an active-set or stick/slip kink inside +-h the
+// column is the average of the two one-sided slopes. (Freezing the base branch instead was tried in
+// R0.7 and measured neutral-to-worse: ADR-158 section 3.)
+void
+LadrunoContactFE::addMortarTangFD(double fact)
+{
+    double us[4][3] = {{0}}, um[4][3] = {{0}};
+    for (int i = 0; i < npsS; i++) {
+        const Vector &u = mortarSlave[i]->getTrialDisp();
+        for (int d = 0; d < 3; d++) us[i][d] = u(d);
+    }
+    for (int i = 0; i < npsM; i++) {
+        const Vector &u = mortarMaster[i]->getTrialDisp();
+        for (int d = 0; d < 3; d++) um[i][d] = u(d);
+    }
+    double L = 0.0;
+    for (int i = 0; i < npsS; i++) {
+        const Vector &Xa = mortarSlave[i]->getCrds();
+        const Vector &Xb = mortarSlave[(i + 1) % npsS]->getCrds();
+        double e2 = 0.0;
+        for (int d = 0; d < 3; d++) {
+            double e = (Xb(d) + us[(i + 1) % npsS][d]) - (Xa(d) + us[i][d]);
+            e2 += e * e;
+        }
+        if (e2 > L * L) L = std::sqrt(e2);
+    }
+    if (L <= 0.0) return;
+    const double h = mortarFDRel * L;
+    double gT0base[4][3] = {{0}}, f0[24];
+    if (!mortarPairForceAt(us, um, 0, gT0base, f0)) return;
+    const int nN = npsS + npsM, nd = 3 * nN;
+    double fp[24], fm[24];
+    for (int c = 0; c < nd; c++) {
+        const int a = c / 3, d = c % 3;
+        double (*u)[3] = (a < npsS) ? us : um;
+        const int k = (a < npsS) ? a : a - npsS;
+        const double u0 = u[k][d];
+        u[k][d] = u0 + h;
+        bool okp = mortarPairForceAt(us, um, gT0base, 0, fp);
+        u[k][d] = u0 - h;
+        bool okm = mortarPairForceAt(us, um, gT0base, 0, fm);
+        u[k][d] = u0;
+        // A perturbed evaluation can be REFUSED by the kernel (the overlap clip's convexity,
+        // sliver or back-map guards flip within +-h on a thin or steep pair). The refusal is a
+        // jump of the whole pair force, so differencing across it would put f/h into the
+        // tangent. Use the one-sided difference on the side that kept the pair; drop the column
+        // when both sides refuse.
+        const double *fa = okp ? fp : f0, *fb = okm ? fm : f0;
+        double span = (okp ? h : 0.0) + (okm ? h : 0.0);
+        if (span <= 0.0) continue;
+        for (int r = 0; r < nd; r++) {
+            double k_rc = -(fa[r] - fb[r]) / span;
+            if (k_rc != 0.0) tang(r, c) += fact * k_rc;
         }
     }
 }
