@@ -164,10 +164,34 @@ A **nested scalar Newton** solves for π_i (eq. 61) inside each local iterate, b
 depends on π_i. BA06 note that folding it in as a 5th unknown costs "about the same" **[E]**. Start nested, as
 the paper does, so the oracle and the paper match term by term.
 
-The **consistent tangent** is closed-form in spectral form (AB06 §3). It is **non-symmetric** when N̄ ≠ N or
-ρ̄ ≠ ρ.
+The **consistent tangent** is closed-form in spectral form (AB06 §3). It is **non-symmetric** even for
+associative flow, through π_i*(p, Ω) and the v-term (G0). The kernel must never select a symmetric solver.
 
 This supersedes rev 1's "3 local unknowns": that is the 2-invariant BA06 algorithm.
+
+**Kernel contract learned at G1 (binding for P1; sheet §8, §10.2, §16.3, §16.6).** The O2 oracle's constants
+are the contract (`o2_algo/kernel.py`, README).
+- **The nested π_i solve has a fold** where the state enters the smooth-cap ramp (loop gain ≈ 1). There,
+  backward Euler has **more than one valid solution**: on the AMP_STOP path a monolithic Newton finds a second
+  branch.
+- **The rule that makes the kernel's answer well defined: take the root continuous with π_i,n.**
+  - Scan from π_i,n with a step of 1e-3·|π_i,n| (at most 1000 steps), then a safeguarded Newton/bisection
+    inside the first bracket.
+  - Never a factor-2 bracket.
+  - A nested failure or root jump counts as a rejected step: backtrack Δλ (≤ 10 halvings).
+  - If the step is still refused, substep the increment (≤ 8 halvings, 2⁸ sub-increments) before refusing
+    through the commit latch.
+- **For a substepped increment, the tangent is that of the last sub-increment.** Substepping is the normal
+  mode on coarse steps near the cap ramp, not an exception, so `local_iters` counts are sums over
+  sub-increments.
+- **Elastic/plastic decision:** trial threshold F_tr > 1e-10·|p0|. The neutral-loading tie-break uses
+  hysteresis (sheet §9.1, §12).
+- **v0 (the initial specific volume) is a separate committed state variable from v** (sheet §1.2). Neither
+  oracle's `initial_state` accepts v0 ≠ v today; G1 patches it by hand. The C++ state, `sendSelf`/`recvSelf`,
+  `revertToStart` and `getCopy` must carry v0 explicitly. A G2 test drives the public route with v0 ≠ v
+  (G1 critic N3).
+- **The P2 census asserts root continuity:** no converged step may land on a branch discontinuous with
+  π_i,n.
 
 **Finite strain.** AB06 are multiplicative and return in principal elastic **log** stretches; the algebra is
 identical to the small-strain return in principal elastic strains **[E, AB06 §3; BA06 §3]**. So: implement
@@ -225,7 +249,10 @@ tolerance are written in the test file before the implementation exists.
 
 Gates between them:
 - O2 → O1 with first-order convergence as Δε → 0, on every K-path below.
-- O2's tangent matches finite differences to ~1e-7 (central differences, several step sizes).
+- O2's tangent matches finite differences to ≤ 1e-6 per column at the best of several step sizes (central
+  differences). The bound comes from the truncation scale (h/κ̂)²/6 with κ̂ = 0.01, not from observation;
+  measured values are ~7e-9 off the corners. Near the Willam–Warnke compression corner the check is O(h) by
+  construction (sheet §4.3), so it runs off-corner, with a separate corner-order test.
 - A mismatch between O1 and O2 is a finding against the equation sheet or one of the two codes. It is never
   resolved by editing one oracle to agree with the other.
 
