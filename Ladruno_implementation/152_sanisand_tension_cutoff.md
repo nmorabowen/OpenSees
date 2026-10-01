@@ -353,3 +353,15 @@ after 506aadf1c.
 | (found by the new tests) | the non-compressing gate was an exact `tr Δε > 0.0` | **fixed** | under isochoric shear a trace built from B·u is round-off: one homogeneous stdBrick split 6 separating / 2 refusing (and the 2 refusals aborted the commit through the WP-99 latch). Now compressing ⇔ tr Δε > 1e-10·‖Δε‖ (C++ and oracle; fixture byte-identical); the test checks all 8 GPs. LEDGER_quirks. |
 | tests | 6 mutation gaps | 1, 2, 3, 5 **added** (closing tangent, ==1 count on the Newton column, α_in = 0 at re-contact, isochoric E2 separates); 4 (ISA keeps sepTr_n) left — the ISA trial frame is the pre-existing quirk; 6 (startTension restriction) covered by the p0 = 0 replay test in one direction only. |
 
+
+**Final evidence at 77c454660 (the C++ after the re-review), 2026-09-30:**
+- Windows, the nmora desk: `Ladruno_scripts\build.bat`, ALL 5 targets, `build 77c4546604a3`, log
+  `build_wp152_review_all_77c454660.log`. 20 SANISAND/ManzariDafalias test files (site-packages on `PYTHONPATH`, so the
+  byte-identity test runs): **263 passed, 5 skipped, 2 xfailed, 0 failed**.
+- Linux (Esmeralda node4, `~/ladruno_wp152/OpenSees_review3`, installed to `~/ladruno_wp152/bin_review3/opensees.so`;
+  `bin_review` at 7f1562c81 left as it is, the orchestrator uses it): 259 passed, 8 skipped, 2 xfailed, 1 failed (the
+  `-S` pytest environment artifact, LEDGER_quirks).
+- Zone-A (`workflow_dispatch`, run 36790720889): Zone-A (Ubuntu), classTag + manifest gates and MKL 2024.2 compat
+  **success**; the two self-hosted jobs (Zone-B + perf, the one-process full suite) still queued for a runner.
+- The footing evidence was taken on 7f1562c81. The re-review changes only affect E1 entries under compression, the
+  E1 bound (no footing entry was above 0.48 kPa) and the tangent while closing; they are not re-run on the footings.
