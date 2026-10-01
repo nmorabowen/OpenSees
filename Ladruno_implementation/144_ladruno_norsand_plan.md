@@ -111,7 +111,7 @@ differences before any C++ is written.
 
 AB06 offers two ζ(θ, ρ) **[E]**:
 - **Gudehus–Argyris** (eq. 11): convex **only for 7/9 ≤ ρ ≤ 1**.
-- **Willam–Warnke** (eq. 12): smooth and convex for **½ ≤ ρ ≤ 1**.
+- **Willam–Warnke** (eq. 12): smooth and convex for **½ < ρ ≤ 1**. At ρ = ½ exactly the compression corner becomes a vertex (ζ′(π/3) = −√3, found by O1 at G1). The parser **refuses ρ = ½ and ρ̄ = ½** (owner decision 2026-10-01). The range applies to ρ̄ as well.
 
 TIMs' DM04 calibration uses **c = 0.71 < 7/9** (WP-151 §2.5). Gudehus–Argyris would be non-convex there.
 **Default to Willam–Warnke.** Offer Gudehus–Argyris as an option, and refuse it for ρ < 7/9.
@@ -236,7 +236,7 @@ Gates between them:
 2. A closed elastic strain loop does **zero net work** (≤ 1e-12) and returns the state exactly (conservative
    energy, BA06 §2.1).
 3. ζ(θ): ζ = 1 at the compression corner and 1/ρ at the extension corner. The Willam–Warnke section is convex
-   for ρ ∈ [½, 1], and the parser refuses outside that range.
+   for ρ ∈ (½, 1] (½ refused, §2.4), and the parser refuses outside that range, for ρ and ρ̄.
 4. The yield function gives η = M·ζ-scaled at p = π_i (the image-stress definition, AB06 eq. 10).
 5. Flow rule: at every plastic step the measured ε̇_vᵖ/ε̇_sᵖ equals AB06 eq. 39 evaluated at the state.
 6. **Peak identity:** at a drained peak, π_i = π_i* and D = χ ψ_i.
