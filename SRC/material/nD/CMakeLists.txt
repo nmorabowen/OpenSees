@@ -69,6 +69,10 @@ target_sources(OPS_Material
     LadrunoSANISAND3D.cpp
     LadrunoSANISANDPlaneStrain.cpp
     LadrunoSANISANDSasME.cpp
+    # Ladruno WP-144: LadrunoNorSand family (kernel is header-only)
+    LadrunoNorSand.cpp
+    LadrunoNorSand3D.cpp
+    LadrunoNorSandPlaneStrain.cpp
     LadrunoRCConcrete.cpp
     LadrunoRCFiniteStrain.cpp
     LadrunoConcrete3D.cpp
@@ -162,6 +166,11 @@ target_sources(OPS_Material
     LadrunoSANISAND.h
     LadrunoSANISAND3D.h
     LadrunoSANISANDPlaneStrain.h
+    # Ladruno WP-144
+    LadrunoNorSand.h
+    LadrunoNorSand3D.h
+    LadrunoNorSandPlaneStrain.h
+    LadrunoNorSandKernel.h
     LadrunoRCConcrete.h
     LadrunoRCFiniteStrain.h
     LadrunoRCKernel.h

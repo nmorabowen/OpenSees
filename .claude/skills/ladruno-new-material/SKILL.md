@@ -104,6 +104,10 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 - [ ] A tangent READ as "algorithmic" is not verified: compare it with a finite difference of the
       return map (the replay facility gives one at a real state). Quirks: "`TanType 2` tangent is
       MINUS the derivative of its own return map" (WP-130).
+- [ ] Kernel-vs-oracle parity: the tangent at an exact Lode corner or near the vertex is
+      round-off-limited (~1e-8) in the oracle itself; gate those bands separately, measure
+      per-step increments against the path scale, and gate iteration counts. Quirks: "TANGENT
+      parity at an exact Lode corner".
 - [ ] Pin a number only from a step a RESIDUAL test converged, and re-measure pins after merging
       `ladruno`. A determinism gate needs no convergence: use `FixedNumIter`. Quirks: "where ONE
       tangent stopped".

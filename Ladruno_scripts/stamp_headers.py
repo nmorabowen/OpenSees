@@ -76,6 +76,10 @@ GLOBS = [
     "SRC/material/nD/LadrunoSANISAND3D.*",
     "SRC/material/nD/LadrunoSANISANDSasME.cpp",
     "SRC/material/nD/LadrunoSANISANDPlaneStrain.*",
+    "SRC/material/nD/LadrunoNorSand.*",             # WP-144
+    "SRC/material/nD/LadrunoNorSand3D.*",
+    "SRC/material/nD/LadrunoNorSandPlaneStrain.*",
+    "SRC/material/nD/LadrunoNorSandKernel.h",
     "SRC/material/nD/LadrunoConcrete3D.*", "SRC/material/nD/LadrunoConcrete3DKernel.h",
     "SRC/material/nD/LadrunoHardening.h",
     "SRC/material/uniaxial/LadrunoUniaxialJ2.*",
