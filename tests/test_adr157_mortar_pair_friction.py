@@ -20,7 +20,7 @@ Gates:
       node layout lets a pair of the OTHER flank (the ridge pairs, and the thin cross-flank overlaps
       the re-clip produces next to the ridge) be the last writer of a node's lambda_T/gpT, so from
       step 2 on a traction lying in the wrong plane is read back: a spurious Fx (0.43 against a
-      cohesion force of 7.3) and Fz off by 3e-4 (measured on fd87e396d). A split-ridge model (the
+      cohesion force of 7.3) and Fz off by 3e-4 (measured on fd87e396d; the test also fails on d63f49750, the PR base). A split-ridge model (the
       ridge nodes duplicated per flank) gives the same forces (a sanity pin; the shipped layout is
       equally wrong on both, through the cross-flank overlaps).
   (c) the same roof under FORCE control (free slave nodes on soft springs), a downward load past

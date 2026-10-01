@@ -152,3 +152,17 @@ files): see the PR body for the counts on d63f49750 and on this head.
 - The geometric tangent terms (∂D/∂u, ∂M/∂u, ∂n/∂u) stay deferred, as in C2/C3.
 - No transfer of path state between pairs in finite sliding (D4).
 - The 2D mortar lane uses the same key; no new 2D test was added (its battery still passes).
+- **Linear Newton at shared multi-pair nodes (review #900, finding 1).** On the
+  force-controlled shared-ridge roof, Newton converges only linearly in steps
+  3–4: 10 and 14 iterations, contraction ratio ≈ 0.27. The split-ridge twin
+  converges quadratically in ≤ 6 iterations, and displacement control needs
+  2–3 for both. `-consistanttan` makes no difference, since the case is
+  cohesion-only. This points to a tangent/residual mismatch at shared nodes:
+  either the per-pair `N_I` against the nodal `λ_N`, or sliver-pair active-set
+  chatter. It is the likely contributor to the μ = 1 pile-deck divergence
+  (piles-validation R0.6). **Follow-up:** an FD check of the assembled tangent
+  at a shared multi-pair node.
+- **No binary Coulomb (μ > 0) multi-pair test (review #900, finding 2).** Both
+  discriminating binary tests are cohesion-only, and the order dependence is
+  pinned only by oracle T2. The per-pair `μ·N_I` cap at shared nodes is
+  therefore untested in the binary. **Follow-up:** a μ > 0 creased-roof twin.

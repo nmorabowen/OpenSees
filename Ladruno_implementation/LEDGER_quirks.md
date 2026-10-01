@@ -1738,6 +1738,10 @@ non-obvious behaviours, all relevant to anyone wiring `-stabilize` into a driver
   pair also read a `λ_T`/`gpT` lying in a NEIGHBOUR's tangent plane (a normal leak |t·n| ≈ cap from step
   2 on; oracle T3). Pinned by `test_adr157_mortar_pair_friction` (creased roof: analytic force and
   multi-step force-control convergence; both fail on d63f49750). See [[157_mortar_friction_pair_state]].
+  **Lifecycle change (review #900, finding 3).** A pair refused by `-maxGap`
+  for an epoch loses its friction state and re-engages fresh (D4). A pair that
+  stays paired but inert keeps `λ_T`/`gpT` frozen and re-applies them when it
+  re-enters. Before WP-157, siblings sharing the node refreshed that state.
 - **C4 update (#381) — RESOLVED for the TIE path; STILL FENCED for FRICTION.** C4 mesh-tying hits shared
   slave nodes immediately (non-matching meshes are the whole point), so the pre-req had to be discharged
   before relying on it. The tie state (`λ_tie`, the full 3-vec relative displacement `r_I`) does NOT inherit
