@@ -100,29 +100,26 @@ def step(params: Params, st: State, deps: np.ndarray) -> State:
     substepping). If the finest level is still refused, the state returned is the frozen
     trial-elastic state of the WHOLE increment, flags['refused'] = True and reason =
     "<finest reason> (substeps exhausted at 2^MAX_SUBSTEP_HALVINGS)".
-    On a substepped increment the consistent tangent (cache -> tangent()) is the closed-form
-    CTO of the LAST sub-increment: a consistent linearisation of that sub-step, not of the whole
-    increment (the chain rule through the earlier sub-steps is not assembled). D is the sum of
-    the sub-increment dissipations (each >= 0), plastic = any sub-increment plastic,
-    local_iters / pi_iters are summed, vertex / cap_active are the last sub-increment's."""
+
+    CONTRACT (tangent, sheet §9.6, owner decision 2026-10-01): on a substepped increment
+    (substeps > 1) tangent() returns the CHAINED consistent tangent, the exact derivative of the
+    increment's final stress with respect to the TOTAL strain increment, propagated through every
+    accepted sub-increment by the recursion (S.46) and assembled by (S.47). It is built in the
+    small-strain mode only (finite mode keeps the last sub-increment's (S.34) tangent, see README).
+    A refused level discards its sensitivities; the finer level restarts from S_0 = 0. On a
+    non-substepped increment (substeps = 1) the tangent is the closed-form CTO (S.31)-(S.33),
+    bit-identical to the pre-§9.6 oracle (the chain reduces to it, see step_fractions).
+    D is the sum of the sub-increment dissipations (each >= 0), plastic = any sub-increment
+    plastic, local_iters / pi_iters are summed, vertex / cap_active are the last sub-increment's."""
     deps = np.asarray(deps, float)
     first = None
     for j in range(K.MAX_SUBSTEP_HALVINGS + 1):
         m = 2 ** j
-        cur = st
-        D, iters, piters, plastic, ok = 0.0, 0, 0, False, True
-        for _ in range(m):
-            cur = _step_once(params, cur, deps / m)
-            if cur.flags["refused"]:
-                ok = False
-                break
-            D += cur.D
-            iters += cur.flags["local_iters"]
-            piters += cur.flags["pi_iters"]
-            plastic = plastic or cur.flags["plastic"]
+        cur, ok, C = _run_fractions(params, st, deps, [1.0 / m] * m, chain=(m > 1 and not st.finite))
         if ok:
-            cur.D = D
-            cur.flags.update(local_iters=iters, pi_iters=piters, plastic=plastic, substeps=m)
+            cur.flags["substeps"] = m
+            if C is not None:
+                cur.cache["C_chain"] = C
             return cur
         if first is None:
             first = cur
@@ -130,6 +127,50 @@ def step(params: Params, st: State, deps: np.ndarray) -> State:
     first.flags["reason"] = f"{last_reason} (substeps exhausted at 2^{K.MAX_SUBSTEP_HALVINGS})"
     first.flags["substeps"] = 2 ** K.MAX_SUBSTEP_HALVINGS
     return first
+
+
+def step_fractions(params: Params, st: State, deps: np.ndarray, fractions, chain: bool = True) -> State:
+    """The increment deps taken as the given sub-increments alpha_k * deps (any alpha_k > 0 with
+    sum = 1, e.g. a recursive-halving shape (1/2, 1/4, 1/4)), with NO ladder: a refusal of any
+    sub-increment returns that refused state. With chain=True the §9.6 chained tangent is
+    assembled for every m, including m = 1 (so the reduction "C_chain(m = 1) = (S.33)" can be
+    measured; the ladder itself never chains m = 1). tangent() on the returned state gives the
+    chain; cache['atilde'] etc. still describe the last sub-increment."""
+    deps = np.asarray(deps, float)
+    fr = [float(a) for a in fractions]
+    if abs(sum(fr) - 1.0) > 1e-12 or any(a <= 0.0 for a in fr):
+        raise ValueError("fractions must be positive and sum to 1")
+    cur, ok, C = _run_fractions(params, st, deps, fr, chain=(chain and not st.finite))
+    cur.flags["substeps"] = len(fr)
+    if ok and C is not None:
+        cur.cache["C_chain"] = C
+    return cur
+
+
+def _run_fractions(params: Params, st: State, deps: np.ndarray, fractions, chain: bool):
+    """Sub-increments fractions[k] * deps chained on each other; returns (state, ok, C_chain).
+    ok = False: `state` is the refused sub-increment's state. The sensitivities (S.46) are
+    carried only when chain is True (every accepted sub-increment advances them; an elastic
+    sub-increment through the elastic line)."""
+    cur = st
+    D, iters, piters, plastic, pattern = 0.0, 0, 0, False, ""
+    if chain:
+        S_eps, S_pi, cum = K.chain_start()
+    for a in fractions:
+        cur = _step_once(params, cur, a * deps)
+        if cur.flags["refused"]:
+            return cur, False, None
+        D += cur.D
+        iters += cur.flags["local_iters"]
+        piters += cur.flags["pi_iters"]
+        plastic = plastic or cur.flags["plastic"]
+        pattern += "P" if cur.flags["plastic"] else "E"      # branch pattern, e.g. "EPPP" (diagnostic)
+        if chain:
+            S_eps, S_pi, cum = K.chain_propagate(S_eps, S_pi, cum, a, st.v0, cur.cache["res"], cur.cache["nvec"])
+    cur.D = D
+    cur.flags.update(local_iters=iters, pi_iters=piters, plastic=plastic, pattern=pattern)
+    C = K.chain_assemble(params, cur.cache["res"], cur.cache["nvec"], S_eps) if chain else None
+    return cur, True, C
 
 
 def _step_once(params: Params, st: State, deps: np.ndarray) -> State:
@@ -166,7 +207,7 @@ def _step_once(params: Params, st: State, deps: np.ndarray) -> State:
         new.eps_p = st.eps_p + dep
         new.eps_p_v = st.eps_p_v + res.dlam * float(res.q_a.sum())
         new.eps_p_s = st.eps_p_s + res.dlam * K.SQ23 * res.Om
-    new.cache = dict(eps_tr=w, nvec=V, sig=res.sig, atilde=res.atilde)
+    new.cache = dict(eps_tr=w, nvec=V, sig=res.sig, atilde=res.atilde, res=res)
     return new
 
 
@@ -187,8 +228,18 @@ def run_path(params: Params, state0: State, deps: np.ndarray) -> list[State]:
 
 
 def tangent(params: Params, state: State) -> np.ndarray:
-    """Small-strain consistent tangent (S.33) of the last step (elastic a^e if the last step
-    was elastic, or for a fresh initial state)."""
+    """Small-strain consistent tangent of the last increment: the chained tangent (S.47) when
+    the increment was substepped (cache['C_chain'], sheet §9.6), else the closed-form CTO (S.33)
+    (elastic a^e if the last step was elastic, or for a fresh initial state)."""
+    c = state.cache
+    if "C_chain" in c:
+        return c["C_chain"]
+    return K.tangent_small(c["atilde"], c["sig"], c["eps_tr"], c["nvec"])
+
+
+def tangent_last_substep(params: Params, state: State) -> np.ndarray:
+    """The (S.33) CTO of the LAST sub-increment alone (the pre-§9.6 behaviour on substepped
+    increments); kept for the measurement of how far it is from the chained tangent."""
     c = state.cache
     return K.tangent_small(c["atilde"], c["sig"], c["eps_tr"], c["nvec"])
 

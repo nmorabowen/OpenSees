@@ -44,6 +44,8 @@
 #include <ctype.h>
 #include <limits>
 #include <cmath>
+#include <cstdio>
+#include <string>
 
 using ladruno_norsand::Params;
 using ladruno_norsand::State;
@@ -95,27 +97,34 @@ enum {
   CAP = 25,         // cap 0 none | 1 planar | 2 smooth
   SIGMA0 = 26,      // initial stress, kernel order        [26 .. 31]
   V0 = 32,          // initial specific volume
-  PI0 = 33,         // initial image pressure (meaningful if PI0GIVEN)
-  PI0GIVEN = 34,    // 1 = -pi0 supplied, 0 = on the yield surface
-  SC = 35,          // committed State (12)                 [35 .. 46]
-  ST = 47,          // trial State (12)                     [47 .. 58]
-  EPSC = 59,        // committed total strain (tensor)     [59 .. 64]
-  EPST = 65,        // trial total strain (tensor)         [65 .. 70]
-  LATCHED = 71,
-  TRIALREF = 72,    // the trial was refused
-  LASTREF = 73,     // last refusal code (-1: non-finite)
-  NREF = 74,        // refused trials since revertToStart
-  NSUB = 75,        // accepted steps that needed substepping
-  INFO = 76,        // last StepInfo (7)                    [76 .. 82]
-  END = 83
+  PI0 = 33,         // initial image pressure
+  SC = 34,          // committed State (12)                 [34 .. 45]
+  ST = 46,          // trial State (12)                     [46 .. 57]
+  EPSC = 58,        // committed total strain (tensor)     [58 .. 63]
+  EPST = 64,        // trial total strain (tensor)         [64 .. 69]
+  SIGT = 70,        // trial stress, kernel order          [70 .. 75]
+  CT = 76,          // trial consistent tangent C[i][j] row-major (36)  [76 .. 111]
+  LATCHED = 112,
+  TRIALREF = 113,   // the trial was refused
+  LASTREF = 114,    // last refusal code (-1: non-finite)
+  LASTFIN = 115,    // finest-level cause of that refusal (StepInfo.finest; 0 none)
+  LASTFINSUB = 116, // ... and its sub-reason (StepInfo.finest_sub)
+  NREF = 117,       // refused trials since revertToStart
+  NSUB = 118,       // COMMITTED steps that needed substepping
+  INFO = 119,       // last StepInfo (9): refusal plastic vertex cap_active local_iters pi_iters substeps finest finest_sub
+  END = 128
 };
 // State packing (12): eps_e[6], pi_i, v, v0, eps_p_v, eps_p_s, D_last
 const int STATE_LEN = 12;
+const int INFO_LEN = 9;
 }  // namespace nsw
 
 static_assert(nsw::END == LadrunoNorSand::WIRE_LEN, "LadrunoNorSand wire layout out of sync with WIRE_LEN");
 static_assert(nsw::PARAMS + NPD == nsw::CSL, "parameter block size");
+static_assert(nsw::PI0 + 1 == nsw::SC, "initial-state block size");
 static_assert(nsw::SC + nsw::STATE_LEN == nsw::ST && nsw::ST + nsw::STATE_LEN == nsw::EPSC, "state block size");
+static_assert(nsw::EPST + 6 == nsw::SIGT && nsw::SIGT + 6 == nsw::CT && nsw::CT + 36 == nsw::LATCHED, "trial stress/tangent block size");
+static_assert(nsw::NSUB + 1 == nsw::INFO && nsw::INFO + nsw::INFO_LEN == nsw::END, "StepInfo block size");
 
 void packState(double* a, const State& s)
 {
@@ -157,6 +166,45 @@ const char* refusalName(int code)
   }
 }
 
+// The sub-reason of the finest-level refusal (kernel EvalErr name), "" if none.
+const char* subName(int sub)
+{
+  return ladruno_norsand::detail::evalErrName(sub);
+}
+
+// "finest level: <cause> (<sub-reason>)", empty when the kernel recorded none (shell-level refusals).
+std::string finestText(int fin, int finSub)
+{
+  if (fin == 0) return std::string();
+  std::string t = std::string("finest level: ") + refusalName(fin);
+  if (finSub != 0) { t += " ("; t += subName(finSub); t += ")"; }
+  return t;
+}
+
+// Yield function F(sigma, pi_i) of the sheet (S.11), via the kernel's own flow evaluation. NaN if it
+// cannot be evaluated (p >= 0, pi_i >= 0, eigen-decomposition failure).
+double yieldF(const Params& p, const double sig[6], double pi)
+{
+  namespace kd = ladruno_norsand::detail;
+  double S[3][3], w[3], V[3][3];
+  kd::t6_to_m(sig, S);
+  if (!kd::eig_sym3(S, w, V)) return std::numeric_limits<double>::quiet_NaN();
+  kd::Invariants inv;
+  kd::invariants(w, inv);
+  kd::Flow fl;
+  if (kd::flow(p, inv, pi, fl) != kd::EE_NONE) return std::numeric_limits<double>::quiet_NaN();
+  return fl.F;
+}
+
+// Start-state classification, in units of |p0|, ONE band: |F0| <= 1e-6 |p0| is ON the surface (accepted with a
+// WARNING); F0 > 1e-6 |p0| is OUTSIDE and REFUSED. The two constants are the same number by construction, so
+// no start state is both "ON" and refused.
+const double F0_ON_SURFACE_REL = 1.0e-6;
+const double F0_OUTSIDE_REL = F0_ON_SURFACE_REL;
+
+// shell-level initial-state refusal codes (the kernel uses 100 + the validate code, and 101..106)
+enum { INIT_PI0_MISSING = 107, INIT_F0_NAN = 108, INIT_OUTSIDE = 109 };
+
 bool allFinite(const double* a, int n)
 {
   for (int i = 0; i < n; i++) if (!std::isfinite(a[i])) return false;
@@ -177,10 +225,11 @@ static void zeroParams(Params& p)
 // null constructor (broker / recvSelf)
 LadrunoNorSand::LadrunoNorSand()
   : NDMaterial(0, ND_TAG_LadrunoNorSand),
-    density(0.0), v0init(0.0), pi0init(std::numeric_limits<double>::quiet_NaN()), pi0given(false),
+    density(0.0), v0init(0.0), pi0init(std::numeric_limits<double>::quiet_NaN()),
+    F0init(std::numeric_limits<double>::quiet_NaN()),
     initOk(false), dim(DIM_3D), ncomp(6),
     trialRefused(false), latched(false), warnedTrial(false), warnedLatch(false),
-    lastRefusal(0), nRefusals(0), nSubstepped(0)
+    lastRefusal(0), lastFinest(0), lastFinestSub(0), nRefusals(0), nSubstepped(0)
 {
   zeroParams(kp);
   s0 = State(); sC = State(); sT = State(); lastInfo = StepInfo();
@@ -192,10 +241,10 @@ LadrunoNorSand::LadrunoNorSand()
 LadrunoNorSand::LadrunoNorSand(int tag, const Params& p, const double sig0[6],
                                double v0, double pi0, double dens)
   : NDMaterial(tag, ND_TAG_LadrunoNorSand),
-    kp(p), density(dens), v0init(v0), pi0init(pi0), pi0given(std::isfinite(pi0)),
+    kp(p), density(dens), v0init(v0), pi0init(pi0), F0init(std::numeric_limits<double>::quiet_NaN()),
     initOk(false), dim(DIM_3D), ncomp(6),
     trialRefused(false), latched(false), warnedTrial(false), warnedLatch(false),
-    lastRefusal(0), nRefusals(0), nSubstepped(0)
+    lastRefusal(0), lastFinest(0), lastFinestSub(0), nRefusals(0), nSubstepped(0)
 {
   for (int i = 0; i < 6; i++) sigma0[i] = sig0[i];
   s0 = State(); sC = State(); sT = State(); lastInfo = StepInfo();
@@ -204,12 +253,13 @@ LadrunoNorSand::LadrunoNorSand(int tag, const Params& p, const double sig0[6],
 }
 
 // derived-class constructors
-LadrunoNorSand::LadrunoNorSand(int classTag, int dimMode)
-  : NDMaterial(0, classTag),
-    density(0.0), v0init(0.0), pi0init(std::numeric_limits<double>::quiet_NaN()), pi0given(false),
+LadrunoNorSand::LadrunoNorSand(int clsTag, int dimMode)
+  : NDMaterial(0, clsTag),
+    density(0.0), v0init(0.0), pi0init(std::numeric_limits<double>::quiet_NaN()),
+    F0init(std::numeric_limits<double>::quiet_NaN()),
     initOk(false), dim(dimMode), ncomp(6),
     trialRefused(false), latched(false), warnedTrial(false), warnedLatch(false),
-    lastRefusal(0), nRefusals(0), nSubstepped(0)
+    lastRefusal(0), lastFinest(0), lastFinestSub(0), nRefusals(0), nSubstepped(0)
 {
   zeroParams(kp);
   s0 = State(); sC = State(); sT = State(); lastInfo = StepInfo();
@@ -218,13 +268,13 @@ LadrunoNorSand::LadrunoNorSand(int classTag, int dimMode)
   this->setupDim();
 }
 
-LadrunoNorSand::LadrunoNorSand(int tag, int classTag, const Params& p, const double sig0[6],
+LadrunoNorSand::LadrunoNorSand(int tag, int clsTag, const Params& p, const double sig0[6],
                                double v0, double pi0, double dens, int dimMode)
-  : NDMaterial(tag, classTag),
-    kp(p), density(dens), v0init(v0), pi0init(pi0), pi0given(std::isfinite(pi0)),
+  : NDMaterial(tag, clsTag),
+    kp(p), density(dens), v0init(v0), pi0init(pi0), F0init(std::numeric_limits<double>::quiet_NaN()),
     initOk(false), dim(dimMode), ncomp(6),
     trialRefused(false), latched(false), warnedTrial(false), warnedLatch(false),
-    lastRefusal(0), nRefusals(0), nSubstepped(0)
+    lastRefusal(0), lastFinest(0), lastFinestSub(0), nRefusals(0), nSubstepped(0)
 {
   for (int i = 0; i < 6; i++) sigma0[i] = sig0[i];
   s0 = State(); sC = State(); sT = State(); lastInfo = StepInfo();
@@ -257,8 +307,39 @@ void LadrunoNorSand::setupDim(void)
 void LadrunoNorSand::buildInitialState(void)
 {
   std::string msg;
-  double pi0 = pi0given ? pi0init : std::numeric_limits<double>::quiet_NaN();
-  int rc = ladruno_norsand::initialState(kp, sigma0, v0init, pi0, s0, msg);
+  F0init = std::numeric_limits<double>::quiet_NaN();
+  int rc;
+  if (!std::isfinite(pi0init)) {
+    // -pi0 is REQUIRED: the kernel's "NaN = on the yield surface" default is not offered by the shell
+    // (a silent on-surface start makes the first loading step plastic by construction).
+    rc = INIT_PI0_MISSING;
+    msg = "-pi0 (the initial image pressure pi_i0) is required and must be finite and < 0";
+  } else {
+    rc = ladruno_norsand::initialState(kp, sigma0, v0init, pi0init, s0, msg);
+  }
+  if (rc == 0) {
+    // F(sigma0, pi_i0): an initial stress OUTSIDE the surface is inadmissible
+    F0init = yieldF(kp, sigma0, pi0init);
+    const double tol = F0_OUTSIDE_REL * std::fabs(kp.p0);
+    if (!std::isfinite(F0init)) {
+      rc = INIT_F0_NAN;
+      msg = "the yield function F(sigma0, pi_i0) could not be evaluated";
+    } else if (F0init > tol) {
+      rc = INIT_OUTSIDE;
+      char buf[512];
+      std::snprintf(buf, sizeof(buf),
+                    "the initial stress lies OUTSIDE the yield surface of -pi0 = %.17g: F(sigma0, pi_i0) = %.6g > %.3g"
+                    " (= %.1g |p0|)", pi0init, F0init, tol, F0_OUTSIDE_REL);
+      msg = buf;
+      // hint: the pi_i0 of the surface THROUGH sigma0 (a more negative -pi0 starts inside it)
+      State sOn; std::string m2;
+      if (ladruno_norsand::initialState(kp, sigma0, v0init, std::numeric_limits<double>::quiet_NaN(), sOn, m2) == 0) {
+        std::snprintf(buf, sizeof(buf), "; the surface through sigma0 is at pi_i = %.17g: give -pi0 <= that"
+                      " (more negative starts inside)", sOn.pi_i);
+        msg += buf;
+      }
+    }
+  }
   initOk = (rc == 0);
   initMsg = msg;
   if (!initOk) s0 = State();
@@ -313,9 +394,12 @@ int LadrunoNorSand::setTrialStrainIncr(const Vector& v, const Vector&) { return 
 int LadrunoNorSand::integrate(void)
 {
   int refusal = 0;                 // 0 = accepted
+  int fin = 0, finSub = 0;         // finest-level cause of a kernel refusal (StepInfo)
+  bool newCause = true;            // false: a latched point repeats the recorded cause
 
   if (latched) {
     refusal = (lastRefusal != 0) ? lastRefusal : -1;       // stays refused until revertToStart()
+    newCause = false;
   } else if (!allFinite(epsT, 6)) {
     refusal = -1;                  // a diverged Newton iterate: never hand NaN to the kernel
   } else {
@@ -331,19 +415,19 @@ int LadrunoNorSand::integrate(void)
 
     if (rc != 0 || info.refusal != 0) {
       refusal = (rc != 0) ? rc : info.refusal;
+      fin = info.finest; finSub = info.finest_sub;
     } else {
       // finite-ness of everything we are about to adopt (NaN-blind checks are a known trap)
-      bool fin = allFinite(sig, 6) && allFinite(&C[0][0], 36) &&
+      bool allOk = allFinite(sig, 6) && allFinite(&C[0][0], 36) &&
                  allFinite(np1.eps_e, 6) && std::isfinite(np1.pi_i) && std::isfinite(np1.v) &&
                  std::isfinite(np1.v0) && std::isfinite(np1.eps_p_v) && std::isfinite(np1.eps_p_s) &&
                  std::isfinite(np1.D_last);
-      if (!fin) refusal = -1;
+      if (!allOk) refusal = -1;
       else {
         sT = np1;
         for (int i = 0; i < 6; i++) sigT[i] = sig[i];
         for (int i = 0; i < 6; i++) for (int j = 0; j < 6; j++) CT[i][j] = C[i][j];
         trialRefused = false;
-        if (info.substeps > 1) nSubstepped++;
         return 0;
       }
     }
@@ -352,15 +436,18 @@ int LadrunoNorSand::integrate(void)
   // ---- refused: committed state untouched, trial frozen at the committed state ----
   trialRefused = true;
   lastRefusal = refusal;
+  if (newCause) { lastFinest = fin; lastFinestSub = finSub; }
   nRefusals++;
   sT = sC;
   ladruno_norsand::stress(kp, sC, sigT);
   ladruno_norsand::elasticTangent(kp, sC, CT);
   if (!warnedTrial) {
     warnedTrial = true;
+    const std::string fx = finestText(lastFinest, lastFinestSub);
     opserr << "WARNING LadrunoNorSand tag " << this->getTag() << ": the return map REFUSED this trial strain ("
-           << refusalName(refusal) << "; local iters " << lastInfo.local_iters << ", pi iters "
-           << lastInfo.pi_iters << ", substeps " << lastInfo.substeps << "). The committed state is untouched"
+           << refusalName(refusal) << (fx.empty() ? "" : "; ") << fx.c_str() << "; local iters "
+           << lastInfo.local_iters << ", pi iters " << lastInfo.pi_iters << ", substeps " << lastInfo.substeps
+           << "). The committed state is untouched"
            << " and the trial stress/tangent are the committed ones; the step must be cut (code "
            << LADRUNO_MATERIAL_REFUSED << "). Further refusals of this point are counted silently"
            << " (`refusal` response)." << endln;
@@ -450,7 +537,9 @@ int LadrunoNorSand::commitState(void)
       if (!warnedLatch) {
         warnedLatch = true;
         opserr << "WARNING LadrunoNorSand tag " << this->getTag()
-               << ": a REFUSED update (" << refusalName(lastRefusal) << ") reached commitState -- the host"
+               << ": a REFUSED update (" << refusalName(lastRefusal)
+               << (lastFinest != 0 ? "; " : "") << finestText(lastFinest, lastFinestSub).c_str()
+               << ") reached commitState -- the host"
                << " element discarded the material's return code. The commit is ABORTED ("
                << LADRUNO_MATERIAL_REFUSED << ") and this point LATCHES: every further trial and commit is"
                << " refused until revertToStart(). Use an element that forwards the code (so the step is"
@@ -462,6 +551,9 @@ int LadrunoNorSand::commitState(void)
     return LADRUNO_MATERIAL_REFUSED;
   }
 
+  // nSubstepped counts COMMITTED steps that needed substepping (lastInfo is the converged trial's);
+  // counting per trial would count every Newton re-integration of the same step.
+  if (lastInfo.substeps > 1) nSubstepped++;
   sC = sT;
   for (int i = 0; i < 6; i++) epsC[i] = epsT[i];
   return 0;
@@ -490,6 +582,7 @@ int LadrunoNorSand::revertToStart(void)
   warnedTrial = false;
   warnedLatch = false;
   lastRefusal = 0;
+  lastFinest = 0; lastFinestSub = 0;
   nRefusals = 0;
   nSubstepped = 0;
   lastInfo = StepInfo();
@@ -508,13 +601,14 @@ void LadrunoNorSand::copyFrom(const LadrunoNorSand& o)
     sigma0[i] = o.sigma0[i]; epsC[i] = o.epsC[i]; epsT[i] = o.epsT[i]; sigT[i] = o.sigT[i];
   }
   for (int i = 0; i < 6; i++) for (int j = 0; j < 6; j++) CT[i][j] = o.CT[i][j];
-  v0init = o.v0init; pi0init = o.pi0init; pi0given = o.pi0given;
+  v0init = o.v0init; pi0init = o.pi0init; F0init = o.F0init;
   initOk = o.initOk; initMsg = o.initMsg;
   s0 = o.s0; sC = o.sC; sT = o.sT;
   trialRefused = o.trialRefused;
   latched = o.latched;               // a latched point must hand out latched copies
   warnedTrial = o.warnedTrial; warnedLatch = o.warnedLatch;
-  lastRefusal = o.lastRefusal; nRefusals = o.nRefusals; nSubstepped = o.nSubstepped;
+  lastRefusal = o.lastRefusal; lastFinest = o.lastFinest; lastFinestSub = o.lastFinestSub;
+  nRefusals = o.nRefusals; nSubstepped = o.nSubstepped;
   lastInfo = o.lastInfo;
   // dim / ncomp / vmap / output buffers belong to the clone's own class: not copied
 }
@@ -557,17 +651,22 @@ int LadrunoNorSand::sendSelf(int commitTag, Channel& theChannel)
   data(nsw::CAP) = kp.cap;
   for (int i = 0; i < 6; i++) data(nsw::SIGMA0 + i) = sigma0[i];
   data(nsw::V0) = v0init;
-  data(nsw::PI0) = pi0given ? pi0init : 0.0;
-  data(nsw::PI0GIVEN) = pi0given ? 1.0 : 0.0;
+  data(nsw::PI0) = pi0init;
   {
     double a[nsw::STATE_LEN];
     packState(a, sC); for (int i = 0; i < nsw::STATE_LEN; i++) data(nsw::SC + i) = a[i];
     packState(a, sT); for (int i = 0; i < nsw::STATE_LEN; i++) data(nsw::ST + i) = a[i];
   }
   for (int i = 0; i < 6; i++) { data(nsw::EPSC + i) = epsC[i]; data(nsw::EPST + i) = epsT[i]; }
+  // the trial stress and tangent are sent as they are: a copy that is NOT followed by a setTrialStrain
+  // (a commit, or a getTangent in the next iteration) must see the same numbers as the source
+  for (int i = 0; i < 6; i++) data(nsw::SIGT + i) = sigT[i];
+  for (int i = 0; i < 6; i++) for (int j = 0; j < 6; j++) data(nsw::CT + 6 * i + j) = CT[i][j];
   data(nsw::LATCHED) = latched ? 1.0 : 0.0;
   data(nsw::TRIALREF) = trialRefused ? 1.0 : 0.0;
   data(nsw::LASTREF) = lastRefusal;
+  data(nsw::LASTFIN) = lastFinest;
+  data(nsw::LASTFINSUB) = lastFinestSub;
   data(nsw::NREF) = nRefusals;
   data(nsw::NSUB) = nSubstepped;
   data(nsw::INFO + 0) = lastInfo.refusal;
@@ -577,6 +676,8 @@ int LadrunoNorSand::sendSelf(int commitTag, Channel& theChannel)
   data(nsw::INFO + 4) = lastInfo.local_iters;
   data(nsw::INFO + 5) = lastInfo.pi_iters;
   data(nsw::INFO + 6) = lastInfo.substeps;
+  data(nsw::INFO + 7) = lastInfo.finest;
+  data(nsw::INFO + 8) = lastInfo.finest_sub;
 
   if (theChannel.sendVector(this->getDbTag(), commitTag, data) < 0) {
     opserr << "LadrunoNorSand::sendSelf - failed to send vector\n";
@@ -600,8 +701,7 @@ int LadrunoNorSand::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroke
   kp.cap = (int)data(nsw::CAP);
   for (int i = 0; i < 6; i++) sigma0[i] = data(nsw::SIGMA0 + i);
   v0init = data(nsw::V0);
-  pi0given = (data(nsw::PI0GIVEN) != 0.0);
-  pi0init = pi0given ? data(nsw::PI0) : std::numeric_limits<double>::quiet_NaN();
+  pi0init = data(nsw::PI0);
 
   // rebuild s0 (the initial state is a function of the inputs), then overwrite committed/trial
   this->setupDim();
@@ -613,9 +713,13 @@ int LadrunoNorSand::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroke
   for (int i = 0; i < nsw::STATE_LEN; i++) a[i] = data(nsw::ST + i);
   unpackState(a, sT);
   for (int i = 0; i < 6; i++) { epsC[i] = data(nsw::EPSC + i); epsT[i] = data(nsw::EPST + i); }
+  for (int i = 0; i < 6; i++) sigT[i] = data(nsw::SIGT + i);
+  for (int i = 0; i < 6; i++) for (int j = 0; j < 6; j++) CT[i][j] = data(nsw::CT + 6 * i + j);
   latched = (data(nsw::LATCHED) != 0.0);
   trialRefused = (data(nsw::TRIALREF) != 0.0);
   lastRefusal = (int)data(nsw::LASTREF);
+  lastFinest = (int)data(nsw::LASTFIN);
+  lastFinestSub = (int)data(nsw::LASTFINSUB);
   nRefusals = (int)data(nsw::NREF);
   nSubstepped = (int)data(nsw::NSUB);
   lastInfo.refusal = (int)data(nsw::INFO + 0);
@@ -625,13 +729,9 @@ int LadrunoNorSand::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroke
   lastInfo.local_iters = (int)data(nsw::INFO + 4);
   lastInfo.pi_iters = (int)data(nsw::INFO + 5);
   lastInfo.substeps = (int)data(nsw::INFO + 6);
-
-  // The trial STRESS is a function of the trial state; the trial TANGENT is not sent, so until the
-  // next setTrialStrain the tangent is the hyperelastic one at the trial state.
-  if (initOk) {
-    ladruno_norsand::stress(kp, sT, sigT);
-    ladruno_norsand::elasticTangent(kp, sT, CT);
-  }
+  lastInfo.finest = (int)data(nsw::INFO + 7);
+  lastInfo.finest_sub = (int)data(nsw::INFO + 8);
+  // sigT / CT came off the wire (nothing is recomputed: a copy reproduces the source's trial exactly)
   return 0;
 }
 
@@ -660,8 +760,10 @@ void LadrunoNorSand::echoParameters(OPS_Stream& s) const
   s << endln;
   s << "  initial state: sigma0 = [" << sigma0[0] << " " << sigma0[1] << " " << sigma0[2] << " "
     << sigma0[3] << " " << sigma0[4] << " " << sigma0[5] << "] (11 22 33 12 23 13), v0=" << v0init
-    << ", pi_i0=" << s0.pi_i << (pi0given ? " (given)" : " (on the yield surface)")
-    << ", psi_i0=" << cslPsi(kp, s0.v, s0.pi_i) << endln;
+    << ", pi_i0=" << s0.pi_i << ", psi_i0=" << cslPsi(kp, s0.v, s0.pi_i)
+    << ", F0=" << F0init
+    << (F0init > F0_ON_SURFACE_REL * std::fabs(kp.p0) ? " (OUTSIDE the surface)"
+        : (std::fabs(F0init) <= F0_ON_SURFACE_REL * std::fabs(kp.p0) ? " (ON the surface)" : " (inside the surface)")) << endln;
   s << "  density=" << density << endln;
   s << "  NON-symmetric consistent tangent: use an unsymmetric solver. A refused return map reaches the"
     << " element as " << LADRUNO_MATERIAL_REFUSED << " (trial) or aborts the commit and latches the point"
@@ -674,7 +776,7 @@ void LadrunoNorSand::Print(OPS_Stream& s, int /*flag*/)
   this->echoParameters(s);
   s << "  committed: pi_i=" << sC.pi_i << " v=" << sC.v << " v0=" << sC.v0 << " eps_p_v=" << sC.eps_p_v
     << " eps_p_s=" << sC.eps_p_s << endln;
-  s << "  refused trials=" << nRefusals << " substepped steps=" << nSubstepped
+  s << "  refused trials=" << nRefusals << " committed substepped steps=" << nSubstepped
     << " latched=" << (latched ? 1 : 0) << endln;
 }
 
@@ -683,9 +785,9 @@ void LadrunoNorSand::Print(OPS_Stream& s, int /*flag*/)
 //    stress, strain, tangent         element-facing (Voigt, engineering shear)
 //    state          [pi_i, psi_i, v, v0, eps_p_v, eps_p_s]
 //    D              dissipation of the last step (>= 0)
-//    refusal        [last refusal code (-1 non-finite), refused trials, latched]
-//    substeps       [substeps of the last step, steps that needed substepping]
-//    stepInfo       [refusal, plastic, vertex, cap_active, local_iters, pi_iters, substeps]
+//    refusal        [last refusal code (-1 non-finite), refused trials, latched, finest, finest_sub]
+//    substeps       [substeps of the last step, committed steps that needed substepping]
+//    stepInfo       [refusal, plastic, vertex, cap_active, local_iters, pi_iters, substeps, finest, finest_sub]
 //    psi            state parameter psi = v - v_c(p)
 //    elasticStrain  elastic strain, Voigt engineering shear
 // ===========================================================================
@@ -705,11 +807,11 @@ Response* LadrunoNorSand::setResponse(const char** argv, int argc, OPS_Stream& s
   if (strcmp(a, "D") == 0 || strcmp(a, "dissipation") == 0)
     return new MaterialResponse(this, 5, Vector(1));
   if (strcmp(a, "refusal") == 0)
-    return new MaterialResponse(this, 6, Vector(3));
+    return new MaterialResponse(this, 6, Vector(5));
   if (strcmp(a, "substeps") == 0)
     return new MaterialResponse(this, 7, Vector(2));
   if (strcmp(a, "stepInfo") == 0)
-    return new MaterialResponse(this, 8, Vector(7));
+    return new MaterialResponse(this, 8, Vector(9));
   if (strcmp(a, "psi") == 0)
     return new MaterialResponse(this, 9, Vector(1));
   if (strcmp(a, "elasticStrain") == 0 || strcmp(a, "elasticStrains") == 0)
@@ -748,6 +850,7 @@ int LadrunoNorSand::getResponse(int responseID, Information& matInfo)
       if (matInfo.theVector) {
         Vector& v = *(matInfo.theVector);
         v(0) = lastRefusal; v(1) = nRefusals; v(2) = latched ? 1.0 : 0.0;
+        v(3) = lastFinest; v(4) = lastFinestSub;
       }
       return 0;
     case 7:
@@ -761,6 +864,7 @@ int LadrunoNorSand::getResponse(int responseID, Information& matInfo)
         Vector& v = *(matInfo.theVector);
         v(0) = lastInfo.refusal; v(1) = lastInfo.plastic; v(2) = lastInfo.vertex; v(3) = lastInfo.cap_active;
         v(4) = lastInfo.local_iters; v(5) = lastInfo.pi_iters; v(6) = lastInfo.substeps;
+        v(7) = lastInfo.finest; v(8) = lastInfo.finest_sub;
       }
       return 0;
     case 9:
@@ -791,10 +895,16 @@ int LadrunoNorSand::getResponse(int responseID, Information& matInfo)
 //       -M M -N N [-N_bar Nb] -rho rho [-rho_bar rb] -chi chi -h h
 //       [-csl paper|fork]   paper: -lambda_tilde lt -v_c0 vc0     fork: -e0 e0 -lambda_c lc -xi xi [-p_a pa]
 //       [-zeta WW|GA] [-cap none|planar|smooth [-c1 c1] [-c2 c2]]
-//       -v0 v0 [-sigma0 s11 s22 s33 s12 s23 s13] [-pi0 pi_i0] [-density d]
+//       -v0 v0 -pi0 pi_i0 [-sigma0 s11 s22 s33 s12 s23 s13] [-density d]
 //
 //   defaults: N_bar = N, rho_bar = rho, eps_v0 = alpha0 = 0, -csl paper, -zeta WW, -cap none,
-//   -sigma0 = isotropic p0, -pi0 = on the yield surface, -density 0.
+//   -sigma0 = isotropic p0, -density 0.
+//   REQUIRED: -p0 -kappa_hat -mu0 -M -N -rho -chi -h, the active CSL's constants (fork: -e0 -lambda_c -xi
+//   AND -p_a: it multiplies a stress, so a unit-blind default would be silently wrong), -v0, and -pi0
+//   (no default onto the yield surface: F(sigma0, pi_i0) is computed; a start OUTSIDE the surface is
+//   refused, an on-surface start warned).
+//   Units: every stress-like input (-p0, -mu0, -p_a, -sigma0, -pi0) and the paper CSL's -v_c0 (the intercept
+//   of v_c = v_c0 - lambda_tilde ln(-p)) are in ONE consistent stress unit chosen by the model.
 //   -rho is the ELLIPTICITY of F (the model parameter); the mass density is -density.
 //   The kernel's validate() is called: a refused parameter set is a hard error, rho > rho_bar a warning.
 // ===========================================================================
@@ -802,9 +912,10 @@ static void nsUsage()
 {
   opserr << "Want: nDMaterial LadrunoNorSand tag? -p0 p0? -kappa_hat kh? -mu0 mu0? <-eps_v0 e?> <-alpha0 a?>"
          << " -M M? -N N? <-N_bar Nb?> -rho rho? <-rho_bar rb?> -chi chi? -h h?"
-         << " <-csl paper|fork> (paper: -lambda_tilde lt? -v_c0 vc0?  fork: -e0 e0? -lambda_c lc? -xi xi? <-p_a pa?>)"
+         << " <-csl paper|fork> (paper: -lambda_tilde lt? -v_c0 vc0?  fork: -e0 e0? -lambda_c lc? -xi xi? -p_a pa?)"
          << " <-zeta WW|GA> <-cap none|planar|smooth> <-c1 c1?> <-c2 c2?>"
-         << " -v0 v0? <-sigma0 s11? s22? s33? s12? s23? s13?> <-pi0 pi_i0?> <-density d?>" << endln;
+         << " -v0 v0? -pi0 pi_i0? <-sigma0 s11? s22? s33? s12? s23? s13?> <-density d?>"
+         << " (-pi0 is REQUIRED; fork CSL also requires -p_a)" << endln;
 }
 
 static bool ieq(const char* a, const char* b)
@@ -812,6 +923,17 @@ static bool ieq(const char* a, const char* b)
   for (; *a && *b; a++, b++)
     if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return false;
   return *a == 0 && *b == 0;
+}
+
+// Copy a token returned by OPS_GetString into a local buffer AT ONCE (the LadrunoSANISAND pattern): the
+// openseespy backend returns a pointer into a temporary it has already released, and returns the literal
+// "Invalid String Input!" (still consuming the token) when the argument is a number. Nothing may be
+// fetched between OPS_GetString and this copy.
+static void copyTok(char* dst, int cap, const char* src)
+{
+  int i = 0;
+  if (src != 0) while (i < cap - 1 && src[i] != '\0') { dst[i] = src[i]; i++; }
+  dst[i] = '\0';
 }
 
 // Parse everything after the command name; returns the prototype (a 3D-capable LadrunoNorSand).
@@ -837,13 +959,16 @@ static void* parseLadrunoNorSand(void)
 
   bool seen[NPD];
   for (int i = 0; i < NPD; i++) seen[i] = false;
-  double sigma0[6] = {0, 0, 0, 0, 0, 0};
+  double initSigma[6] = {0, 0, 0, 0, 0, 0};
   bool haveSigma0 = false, haveV0 = false, havePi0 = false;
-  double v0 = 0.0, pi0 = std::numeric_limits<double>::quiet_NaN(), density = 0.0;
+  double v0 = 0.0, pi0 = std::numeric_limits<double>::quiet_NaN(), massDensity = 0.0;
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
-    const char* flag = OPS_GetString();
-    if (flag == 0) break;
+    const char* rawFlag = OPS_GetString();      // consumes exactly one token in every backend
+    if (rawFlag == 0) break;                    // classic-Tcl backend returns 0 when exhausted
+    char flagTok[64];
+    copyTok(flagTok, (int)sizeof(flagTok), rawFlag);
+    const char* flag = flagTok;
 
     int idx = -1;
     for (int i = 0; i < NPD; i++)
@@ -860,8 +985,11 @@ static void* parseLadrunoNorSand(void)
       seen[idx] = true;
     }
     else if (strcmp(flag, "-csl") == 0 || strcmp(flag, "-zeta") == 0 || strcmp(flag, "-cap") == 0) {
-      const char* val = OPS_GetString();
-      if (val == 0) { opserr << "WARNING LadrunoNorSand: " << flag << " wants a mode\n"; return 0; }
+      const char* rawVal = OPS_GetString();
+      if (rawVal == 0) { opserr << "WARNING LadrunoNorSand: " << flag << " wants a mode\n"; return 0; }
+      char valTok[32];
+      copyTok(valTok, (int)sizeof(valTok), rawVal);
+      const char* val = valTok;
       if (strcmp(flag, "-csl") == 0) {
         if (ieq(val, "paper")) p.csl_mode = 0;
         else if (ieq(val, "fork")) p.csl_mode = 1;
@@ -879,7 +1007,7 @@ static void* parseLadrunoNorSand(void)
     }
     else if (strcmp(flag, "-sigma0") == 0) {
       numData = 6;
-      if (OPS_GetDoubleInput(&numData, sigma0) < 0) {
+      if (OPS_GetDoubleInput(&numData, initSigma) < 0) {
         opserr << "WARNING LadrunoNorSand: -sigma0 wants s11 s22 s33 s12 s23 s13\n";
         return 0;
       }
@@ -897,7 +1025,7 @@ static void* parseLadrunoNorSand(void)
     }
     else if (strcmp(flag, "-density") == 0) {
       numData = 1;
-      if (OPS_GetDoubleInput(&numData, &density) < 0) { opserr << "WARNING LadrunoNorSand: -density wants a number\n"; return 0; }
+      if (OPS_GetDoubleInput(&numData, &massDensity) < 0) { opserr << "WARNING LadrunoNorSand: -density wants a number\n"; return 0; }
     }
     else {
       opserr << "WARNING LadrunoNorSand: unknown flag '" << flag << "'\n";
@@ -915,7 +1043,7 @@ static void* parseLadrunoNorSand(void)
   {
     static const int reqAll[] = {I_P0, I_KAPPA, I_MU0, I_M, I_N, I_RHO, I_CHI, I_H};
     static const int reqPaper[] = {I_LTILDE, I_VC0};
-    static const int reqFork[] = {I_E0, I_LC, I_XI};
+    static const int reqFork[] = {I_E0, I_LC, I_XI, I_PA};
     bool missing = false;
     for (size_t i = 0; i < sizeof(reqAll) / sizeof(int); i++)
       if (!seen[reqAll[i]]) { opserr << "WARNING LadrunoNorSand: missing required " << kParam[reqAll[i]].flag << "\n"; missing = true; }
@@ -929,6 +1057,11 @@ static void* parseLadrunoNorSand(void)
     if (p.cap != 0 && !seen[I_C1]) { opserr << "WARNING LadrunoNorSand: -cap planar|smooth needs -c1\n"; missing = true; }
     if (p.cap == 2 && !seen[I_C2]) { opserr << "WARNING LadrunoNorSand: -cap smooth needs -c2\n"; missing = true; }
     if (!haveV0) { opserr << "WARNING LadrunoNorSand: missing required -v0 (initial specific volume)\n"; missing = true; }
+    if (!havePi0) {
+      opserr << "WARNING LadrunoNorSand: missing required -pi0 (initial image pressure pi_i0 < 0; there is no default"
+             << " onto the yield surface: F(sigma0, pi_i0) must be <= 0, a more negative -pi0 starts further inside)\n";
+      missing = true;
+    }
     if (missing) { nsUsage(); return 0; }
   }
 
@@ -949,14 +1082,18 @@ static void* parseLadrunoNorSand(void)
   }
 
   if (!haveSigma0)
-    for (int i = 0; i < 3; i++) sigma0[i] = p.p0;     // isotropic at the reference pressure
+    for (int i = 0; i < 3; i++) initSigma[i] = p.p0;     // isotropic at the reference pressure
 
-  LadrunoNorSand* mat = new LadrunoNorSand(tag, p, sigma0, v0, havePi0 ? pi0 : std::numeric_limits<double>::quiet_NaN(), density);
+  LadrunoNorSand* mat = new LadrunoNorSand(tag, p, initSigma, v0, pi0, massDensity);
   if (!mat->initOK()) {
     opserr << "WARNING LadrunoNorSand tag " << tag << ": the initial state was REFUSED: " << mat->initMessage() << endln;
     delete mat;
     return 0;
   }
+  if (std::fabs(mat->initF0()) <= F0_ON_SURFACE_REL * std::fabs(p.p0))
+    opserr << "WARNING LadrunoNorSand tag " << tag << ": the initial state is ON the yield surface (F0 = " << mat->initF0()
+           << ", |F0| <= " << F0_ON_SURFACE_REL << " |p0|): the first loading increment is plastic from the start."
+           << " A more negative -pi0 starts inside the surface." << endln;
   mat->echoParameters(opserr);
   return mat;
 }

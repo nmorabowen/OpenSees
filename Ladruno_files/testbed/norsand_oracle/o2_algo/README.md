@@ -14,8 +14,8 @@ Derivatives are the sheet's closed forms transcribed by hand (no sympy in the co
 | file | content |
 |---|---|
 | `params.py` | `Params` (sheet §1.3 names), `validate()` with the owner-approved refusals |
-| `kernel.py` | invariants (S.1, S.6, S.7), vertex rule §3.2, ζ WW/GA in y-form (S.8–S.11), BA06 energy (S.3–S.5), F and Q derivatives (S.12–S.21), cap (S.35–S.37), CSL (S.22), π_i* (S.23–S.24), nested π_i solve, residual/Jacobian (S.29–S.30), ã^ep (S.31–S.32), spectral tangents (S.33, S.34) |
-| `api.py` | `State`, `initial_state`, `step`, `run_path`, `tangent`, `tangent_finite`, drivers `triaxial`, `k2_path` |
+| `kernel.py` | invariants (S.1, S.6, S.7), vertex rule §3.2, ζ WW/GA in y-form (S.8–S.11), BA06 energy (S.3–S.5), F and Q derivatives (S.12–S.21), cap (S.35–S.37), CSL (S.22), π_i* (S.23–S.24), nested π_i solve, residual/Jacobian (S.29–S.30), ã^ep (S.31–S.32), spectral tangents (S.33, S.34), chained substep tangent §9.6 (`chain_data` (S.45), `chain_propagate` (S.46), `chain_assemble` (S.47)) |
+| `api.py` | `State`, `initial_state`, `step` (ladder + chained tangent), `step_fractions` (prescribed α_k, no ladder), `run_path`, `tangent`, `tangent_last_substep`, `tangent_finite`, drivers `triaxial`, `k2_path` |
 | `acoustic.py` | `acoustic_min_det` (coarse (θ,φ) sweep + Nelder-Mead), (S.44) transcription for self-check |
 | `selfcheck.py` | the self-checks (not the gate suite) |
 
@@ -23,7 +23,7 @@ Derivatives are the sheet's closed forms transcribed by hand (no sympy in the co
 From `Ladruno_files/testbed/norsand_oracle/`:
 ```
 python -m o2_algo.selfcheck              # all groups
-python -m o2_algo.selfcheck jac cto      # groups: jac | cto | newton | k1 | k2 | cap  (k2 --table for the §14 sensitivity table)
+python -m o2_algo.selfcheck jac cto      # groups: jac | cto | newton | k1 | k2 | cap | chain  (k2 --table for the §14 sensitivity table)
 ```
 Interface (identical in O1): `Params`, `State(sigma, eps_e, pi_i, v, D, eps_p_v, eps_p_s, flags)`,
 `initial_state(params, sigma0, v0, pi_i0)`, `run_path(params, state0, deps[n,3,3])`,
@@ -41,7 +41,7 @@ fixed-direction paths only: ε̃ = ε^e_n + ln f, v = v₀J, ∂v/∂ε̃ = v).
 | `PI_TOL_REL` | 1e-12 | nested: \|r(π_i)\| ≤ PI_TOL_REL·\|π_{i,n}\| |
 | `PI_SCAN_REL`, `PI_SCAN_MAX` | 1e-3, 1000 | nested solve selects the root **continuous with π_{i,n}**: scan from π_{i,n} in fixed steps of PI_SCAN_REL·\|π_{i,n}\| (away from 0 if r(π_{i,n}) > 0, toward 0 if r < 0) and stop at the FIRST sign change; if \|r\| grows between two scan points before a sign change the near root has annihilated in a fold (cap ramp) → `pi_fold`; PI_SCAN_MAX steps (travel \|π_{i,n}\|) without a sign change → `pi_nobracket` |
 | `MAX_PI_ITERS` | 50 | safeguarded Newton inside that first bracket (start at the end with the smaller \|r\|; Newton step if strictly inside, else bisection; bracket updated by sign); else `pi_noconv` |
-| `MAX_SUBSTEP_HALVINGS` | 8 | `api.step`: a refused increment is retried as 2, 4, …, 2^8 = 256 equal sub-increments (each a full BE step chained on the previous one); `flags['substeps']` = count used (1 = none); still refused at 2^8 → the whole-increment trial-elastic state is returned with reason `<finest reason> (substeps exhausted at 2^8)` |
+| `MAX_SUBSTEP_HALVINGS` | 8 | `api.step`: a refused increment is retried as 2, 4, …, 2^8 = 256 equal sub-increments (each a full BE step chained on the previous one); `flags['substeps']` = count used (1 = none); still refused at 2^8 → the whole-increment trial-elastic state is returned with reason `<finest reason> (substeps exhausted at 2^8)`; a substepped increment returns the CHAINED tangent of sheet §9.6 (below) |
 | `R_TOL_REL` | 1e-8 | vertex rule: R < R_TOL_REL·\|p\| ⇒ n̂ = y_a = n̂_ab = y_ab = 0, Ω = Ω_a = 0, F := pη, f_a = F_p/3 |
 | `CORNER_SIN3T` | 1e-8 | \|sin 3θ\| below ⇒ corner branch (S.9), ζ_yy := 0 |
 | `F_TRIAL_TOL_REL` | 1e-10 | trial is plastic iff F(σ^tr, π_{i,n}) > F_TRIAL_TOL_REL·\|p₀\| |
@@ -60,11 +60,32 @@ N̄ ≤ N and ρ/ρ̄ ≥ (1−N)/(1−N̄) else ValueError; warn on ρ > ρ̄; 
 corner of the Willam–Warnke section is a vertex).
 The tangent is non-symmetric (major asymmetry 1–5 % measured): never a symmetric solver.
 
-**Tangent on a substepped increment.** The consistent tangent is always the closed-form CTO
-(S.31)–(S.34) at the converged root of the last backward-Euler solve. When `api.step` had to
-substep, that is the CTO of the LAST sub-increment (its own trial strain, converged stress and
-Δλ); it is a consistent linearisation of that sub-step, not of the whole increment (the chain
-rule through the earlier sub-increments is not assembled). The C++ kernel does the same.
+**Tangent on a substepped increment: the chained consistent tangent (sheet §9.6; owner decision
+2026-10-01, supersedes "CTO of the last sub-increment").** When `api.step` had to substep
+(`flags['substeps'] > 1`), `tangent()` returns the exact derivative of the increment's FINAL
+stress with respect to the TOTAL strain increment Δε, chained through every accepted
+sub-increment: `kernel.chain_data` takes the (S.45) blocks at each converged plastic sub-step
+(b = J⁻¹, u = b t with t = (Δλ q_{a,π}, F_π), w = Π_xᵀ b[:, :3], κ = Π_x·u, c = r'(π_i), Π_v),
+`kernel.chain_propagate` runs the recursion (S.46) on the six Δε columns (state per column: the
+full 3×3 ∂ε^e/∂Δε_J, ∂π_i/∂Δε_J, and the shared cumulative fraction; ∂v/∂Δε_J = v₀ Σα tr E_J in
+closed form; an elastic sub-increment takes the elastic line), and `kernel.chain_assemble` forms
+C = a^e(ε^e_m) : S^ε_m (S.47) with a^e in the (S.33) form on the eigen-data of the final ε^e_m.
+Columns are the kernel's six tensor slots {00,11,22,01,12,02} with E_J = e_k⊗e_l + e_l⊗e_k on the
+shear slots; the 3×3×3×3 returned has C[:,:,k,l] = C[:,:,l,k] = column/2 there, so `C:E = column`
+and the parity reduction `C4_ijkl + C4_ijlk` is the kernel's 6×6 column exactly. Each operator
+keeps the (S.33) row convention and symmetrises its own input (sheet §9.4/§9.6 contract). On a
+NON-substepped increment (`substeps = 1`) the tangent is the closed-form CTO (S.31)–(S.33),
+bit-identical to the oracle before §9.6; the chain for m = 1 reduces to it (8.6e-16 at distinct
+trial eigenvalues; ≤ ~1e-8 inside the 1e-10 repeated-eigenvalue band, where the two limits
+differ by the averaged-Φ-rows effect the sheet documents). A refused ladder level discards its
+sensitivities and the finer level restarts from S₀ = 0. `api.step_fractions(P, st, deps,
+fractions, chain=True)` takes the increment with prescribed fractions (any α_k > 0, Σ = 1, e.g.
+a recursive-halving shape) and no ladder, chaining even m = 1 (that is how the reduction and the
+FD checks below are measured); `api.tangent_last_substep` is the old last-sub-increment CTO,
+kept only to quantify its error. `flags['pattern']` records the branch pattern ("PPEP"). Not
+chained: finite mode (`State.finite`, the K2 diagonal protocol only) keeps the (S.34) tangent of
+the last sub-increment — §9.6 is small strain (the LogStrain wrapper wraps the small-strain
+kernel), and the finite-mode chain is not derived in the sheet.
 
 **Why the nested solve scans (G1 defect, 2026-10-01).** With the smooth cap Ω = w(η)Ω^u depends
 on π_i, and across the ramp entry η = c₁M the nested residual r(π_i) folds: the loop gain
@@ -108,3 +129,18 @@ the local step is backtracked, and if the increment is still refused it is subst
   the n = 320/640 refinement (σ error 2.473e-4 → 1.237e-4, π_i 2.471e-4 → 1.236e-4: order 1.00).
   Planar / no-cap near-isotropic paths: refused `local_linesearch (substeps exhausted at 2^8)`,
   reported, as the gate requires.
+- Chained substep tangent (§9.6), `selfcheck chain` (2026-10-01): max over the six kernel columns
+  of ‖C_J − FD_J‖/‖C_J‖, central FD of the whole increment with the fractions held fixed.
+  (A) AMP_STOP smooth cap n = 40, all 30 substepped increments of the ladder (step 11 m = 2 "PP",
+  steps 12–40 m = 4 "PPPP"): 3.4e-6…1.1e-5 / 3.5e-8…8.6e-8 / 7.6e-10…1.2e-8 at h = 1e-6 / 1e-7 /
+  1e-8 (O(h²) to the round-off floor); the last-sub-increment CTO is 0.51 (m = 2) to 0.79–0.90
+  (m = 4) off. (B) generic non-coaxial plastic increment (fork WW, three shears, θ = 0.82), forced
+  m = 8: 2.7e-8 / 1.3e-10 / 1.4e-9; m = 2: 2.6e-8 / 4.2e-10 / 1.7e-9 (last-sub CTO 2.1e-2 / 1.2e-2
+  off). (C) m = 1: chain vs (S.33) 8.6e-16 (plastic), 0 (elastic); the ladder's m = 1 state carries
+  no chain and `tangent()` is bit-identical to (S.33). (E) non-uniform α: (½,¼,⅛,⅛) on (B)
+  2.7e-8 / 4.1e-10 / 1.0e-9; (¼,¼,¼,⅛,⅛) on AMP step 20 4.8e-6 / 5.2e-8 / 2.7e-9; (½,¼,¼) on AMP
+  step 11 8.8e-6 / 6.6e-8 / 8.9e-9. (F) vertex (hydrostatic from the apex, π_i = −46.4758 frozen,
+  exactly repeated eigenvalues): chain m = 1 vs (S.33) 4.6e-17; max|C:1|/max|C| = 3.8e-16 (m = 1),
+  3.2e-16 (α = ½,¼,¼) with the FD along 1 at 0 and 2.0e-11.
+  The full G1 suite is unchanged (see the gate record in `tests/`); the non-substepped tangent
+  path is untouched by construction.

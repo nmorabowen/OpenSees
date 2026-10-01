@@ -441,7 +441,8 @@ Given ε^e_n (tensor), π_{i,n}, total strain ε_{n+1} (so Δε), v₀:
 4. Newton: x ← x − J⁻¹ r until ‖r‖ small (AB06 report 4–5 iterations, quadratic). KKT: Δλ ≥ 0. Local work is
    bounded (iteration cap, backtracking line search on the scaled residual, nested-solve failure or root jump = step
    rejected, §8); **on a refusal the kernel substeps the increment** (halving, to a stated depth, e.g. 2⁸) before it
-   reports the refusal upward [I; G1].
+   reports the refusal upward [I; G1]. A substepped increment returns the **chained** consistent tangent of §9.6
+   (owner decision 2026-10-01), never the tangent of its last sub-increment.
 5. Update: ε^p_{n+1} = ε^p_n + Δλ Σ_a q_a m^a, σ = Σ_a σ_a m^a, state (σ, e or v, π_i).
 
 Scaling note [I]: r₄ is in stress units, r₁₋₃ in strain; normalise (e.g. r₄/|p₀|) for the convergence test.
@@ -482,6 +483,20 @@ Lie-derivative form (AB06 81) has **no ½** and different γ_ab (§9.5). The rep
 σ_a(ε̃_a, ε̃_b, ·) = σ_b(ε̃_b, ε̃_a, ·) (isotropy). Elastic step: ã^{ep} = a^e, same (S.33) (checked, 4e−9). C has minor
 symmetries, no major symmetry: use an unsymmetric solver.
 
+**Repeated-eigenvalue row convention [I; P1; documented contract].** The limit g_ab = ã^{ep}_aa − ã^{ep}_ab is not
+symmetric in a ↔ b when ã^{ep} is non-symmetric: the (b,a) row gives g_ba = ã^{ep}_bb − ã^{ep}_ba, and the two coincide
+exactly only for *exactly* repeated eigenvalues (swap symmetry of the isotropic map σ_b(ε̃) = σ_a(swap_ab ε̃);
+sympy-checked, chain_sympy.py (c)). Inside the switch tolerance |ε̃_a − ε̃_b| < 10⁻¹⁰ they differ by O(|ε̃_a − ε̃_b|),
+so the spectral sum has C4_abab ≠ C4_baab at that level (the P1 parity drills measured ~1e−8 relative on C;
+kernel_parity/scratch_indep/spin_drill.py). **Contract:** O2 and the kernel compress C4 to 6×6 reading only the rows
+with i ≤ j ({00,11,22,01,12,02}), i.e. the shear row (0,1) is C4_01kl, built from g_01 = ã_00 − ã_01, never C4_10kl;
+both implement exactly this (O2 `_spectral` + the test/parity `c6_of`, kernel `compress_c4`). The chained tangent of
+§9.6 is compressed by the same rows after the a^e assembly of (S.47); inside the band its own limit is the Φ rows
+averaged by a^e's input symmetrisation (§9.6, "m = 1"), which equals the (S.33) row only under exact swap symmetry.
+Symmetrising g_ab or averaging the two rows in (S.33) would move the kernel–oracle parity at the 1e−8 level and is
+not adopted. The limit itself stays the right one: for ε̃_a → ε̃_b the
+quotient (σ_a − σ_b)/(ε̃_a − ε̃_b) → ã_aa − ã_ab along the row that is kept.
+
 ### 9.5 Finite-strain assembly (for the LogStrain wrapper and for K2 in the oracles) (AB06 81–82) [E]
 
       c̃ = Σ_a Σ_b c̃_ab m^a⊗m^b + Σ_{a≠b} γ̃_ab (m^{ab}⊗m^{ab} + m^{ab}⊗m^{ba}),
@@ -507,6 +522,104 @@ misses by 0.137 and dropping τ⊕1 by 8.6e−3, so the check discriminates both
 n_j a_ijkl n_l: 3.9e−16 over 50 random n. a^{ep} has no minor symmetry in (k,l) (the τ⊕1 term): the acoustic tensor must
 be built from the full a^{ep}, never from a symmetrised one. **This FD check is a G1 gate test** (§16.3), not only an
 author script.
+
+### 9.6 Chained consistent tangent across substeps [I; P1; owner decision 2026-10-01; sympy- and FD-checked]
+Not in AB06/BA06 (their Box 2 has no substepping). A substepped increment (§9.1 step 4) returns the exact derivative
+of its **final** stress with respect to the **total** strain increment Δε, propagated through every sub-increment.
+The tangent of the last sub-increment alone is **not** that derivative: measured 0.51 (m = 2) to 0.81–0.90 (m = 4)
+relative error against the FD of the whole increment on the AMP_STOP cap path, 3.6e−2 on a generic m = 8 step
+(chain_fd.py (D)); plan §2.8 records why that cost is not acceptable.
+
+**State map of one sub-increment.** Fractions α_k > 0, k = 0..m−1, Σ_k α_k = 1 (uniform α_k = 1/m on the O2/kernel
+ladder; any recursive-halving sequence is covered by the same algebra). State z_k = (ε^e_k [full tensor], π_{i,k},
+v_k), v₀ carried constant; z_0 = the committed state at n. Sub-increment k: trial ε̃_k = ε^e_k + α_k Δε, with
+eigen-pairs (ε̃_a, n^a) and m^a = n^a⊗n^a, m^{ab} = n^a⊗n^b; v_{k+1} = v_k + v₀ α_k tr Δε (§1.2); then (S.29) with
+(S.27) nested at (ε̃, π_{i,k}, v_{k+1}) gives x = (ε^e_a, Δλ) and π_{i,k+1}, and ε^e_{k+1} = Σ_a ε^e_a m^a (the m^a of
+the trial, §9.1). Write z_{k+1} = Φ(z_k, α_k Δε). The ladder level m and every sub-increment's branch (elastic,
+plastic, vertex, cap-active) are *decisions*, not differentiated: Φ is differentiated inside its branch, and the
+chain is one-sided across a branch switch exactly as (S.33) is across the elastic/plastic switch.
+
+**Partial derivatives of a plastic sub-increment (implicit function theorem on the converged (S.29) + (S.27)).**
+Split (S.30) as J = A + t Π_xᵀ with A := ∂r/∂x|_{π_i} (the terms of (S.30) without Π), t := ∂r/∂π_i|_x =
+(Δλ q_{1,π}, Δλ q_{2,π}, Δλ q_{3,π}, F_π), Π_x := ∂π_i/∂x = (Π_1, Π_2, Π_3, Π_λ) of (S.28); b := J⁻¹, u := b t,
+κ := Π_x·u, c := r'(π_i) of (S.27), Π_v of (S.28). The 4-vector r has no explicit dependence on π_{i,n} or v (both
+enter only through the nested root of the scalar residual of (S.27), written ρ(π_i; x, π_{i,n}, v) here to keep it
+apart from r: ∂π_i/∂π_{i,n}|_x = −ρ_{π_{i,n}}/c = 1/c, ∂π_i/∂v|_x = Π_v, since ρ_{π_{i,n}} = −1 and ∂ψ_i/∂v = 1), and at
+fixed v ∂r_k/∂ε̃_b|_{x,π_i} = −δ_kb (k ≤ 3), ∂π_i/∂ε̃_b|_x = 0. Solving the 5×5 system row by row (chain_sympy.py (a)):
+
+      ∂x/∂ε̃_b |_{π_{i,n}, v} = b_{·b}  (column b of b),      ∂π_{i,n+1}/∂ε̃_b = w_b := Σ_{c≤3} Π_c b_cb + Π_λ b_4b,
+      ∂x/∂π_{i,n} = −u/c,                                  ∂π_{i,n+1}/∂π_{i,n} = (1 − κ)/c,
+      ∂x/∂v = −u Π_v,                                      ∂π_{i,n+1}/∂v = (1 − κ) Π_v.                     (S.45)
+
+Relation to (S.31)–(S.32): there v is tied to ε̃ by ∂v/∂ε̃_b = v₀, so the (S.32) column is the ε̃ column of (S.45)
+plus v₀ times its v column, b_{·b} − u Π_v v₀, because Σ_k b_ik s_k = Σ_k b_ik t_k Π_v v₀ = u_i Π_v v₀ (s_k = t_k Π_v v₀
+by (S.31); checked symbolically). The spin terms are those of §9.4 applied to the map ε̃ ↦ ε^e_{k+1} (an isotropic
+tensor function of ε̃ at fixed π_{i,n}, v, with eigenvalue map ∂ε^e_a/∂ε̃_b = b_ab): Φ^ε_ε̃ has the (S.33) form with
+diagonal block b_ab (a, b ≤ 3) and spin g^Φ_ab = (ε^e_a − ε^e_b)/(ε̃_a − ε̃_b), limit b_aa − b_ab for |ε̃_a − ε̃_b| < tol.
+The π_{i,n} and v columns move only eigenvalues (m^a depends on ε̃ alone): ∂ε^e_{k+1}/∂π_{i,n} = −Σ_a (u_a/c) m^a,
+∂ε^e_{k+1}/∂v = −Σ_a u_a Π_v m^a.
+
+**Recursion.** Columns are indexed by the kernel's six Δε components J with input tensors E_J (E_J = e_k⊗e_k for a
+normal slot, e_k⊗e_l + e_l⊗e_k for a shear slot: the independent tensor shear component, ε_kl and ε_lk moved
+together, so tr E_J = 1 or 0 and 𝕀:E_J = E_J). S^ε_k := ∂ε^e_k/∂Δε_J (a 3×3 per column), S^π_k := ∂π_{i,k}/∂Δε_J,
+S^v_{k+1} := ∂v_{k+1}/∂Δε_J = v₀ (Σ_{j≤k} α_j) tr E_J (closed form; only the cumulative fraction is state). With
+T_k := S^ε_k + α_k E_J = ∂ε̃_k/∂Δε_J, T̂_bb := n^b·T_k·n^b, S^ε_0 = 0, S^π_0 = 0:
+
+      plastic:  S^ε_{k+1} = Φ^ε_ε̃ : T_k − Σ_a m^a [ (u_a/c) S^π_k + u_a Π_v S^v_{k+1} ],
+                S^π_{k+1} = Σ_b w_b T̂_bb + ((1 − κ)/c) S^π_k + (1 − κ) Π_v S^v_{k+1};
+      elastic:  S^ε_{k+1} = T_k,   S^π_{k+1} = S^π_k   (Φ^ε_ε̃ = 𝕀, u = 0, w = 0; v still advances).            (S.46)
+
+Returned tangent, with a^e(ε^e_m) in the (S.33) form with ã → a^e and the eigen-data of the **final** ε^e_m (spin
+(σ_a − σ_b)/(ε^e_a − ε^e_b), limit a^e_aa − a^e_ab):
+
+      C = dσ_{n+1}/dΔε = a^e(ε^e_m) : S^ε_m,    C[I][J] = (a^e : S^ε_m[J])_ij for I = (i,j), i ≤ j.            (S.47)
+
+Minimal carried state per Δε column: S^ε (6 symmetric components; the reference keeps the full 3×3, below), S^π (1),
+the cumulative fraction (1, shared): 6 + 1 + 1 rows × 6 columns. Cost per plastic sub-increment, beyond the return
+map itself: b = J⁻¹ (already needed for the CTO), the 4-vectors u = b t and w = Π_x b, two scalars, and per column one
+rotation of T_k into the trial basis, the nine-entry spectral product and the rotation back (≈ 10³ flops for the six
+columns, far below one local Newton iterate with its nested π_i solve); at the end one a^e assembly and six
+contractions. Each sub-increment's chain uses its own (J, c, Π, V); a refused level discards its sensitivities and
+the finer level restarts from S_0 = 0.
+
+**Branches.** Elastic sub-increment: (S.46) elastic line. Vertex (§3.2, R < R_tol): Ω = 0 ⇒ Π_x = 0, Π_λ = 0, Π_v = 0,
+c = 1, κ = 0; (S.45) collapses to ∂π_{i,n+1}/∂π_{i,n} = 1 (π_i frozen), ∂x/∂π_{i,n} = −u with t = (Δλ β F_{ppi}/3 δ_a,
+F_π) and the vertex q_a, and no v column; the deviatoric columns of the FD leave the branch (Ω is discontinuous on
+the axis), so only the derivative along 1 is two-sided there (chain_fd.py (F)). Smooth cap (§10.2): nothing changes
+in form; the cap enters only through q_a, q_ab, q_{a,π}, Ω, Ω_a, Ω_π of (S.36) in A, t, and through (S.37) in c and
+Π_x; at the selected root c > 0 (§8), so (S.45) is well posed. Planar cap (§10.1): the corner is a branch, one-sided.
+
+**m = 1 reduces to (S.33).** S^ε_1 = Φ^ε_ε̃ : E_J − Σ_a m^a u_a Π_v v₀ tr E_J has diagonal block b_ab − u_a Π_v v₀ = the
+(S.32) ∂x/∂ε̃, so a^e : S^ε_1 has diagonal block ã^{ep}_ab; the spin of the composition of two (S.33)-form operators is
+g^A_ab (g^B_ab + g^B_ba)/2 (sympy, chain_sympy.py (b)), here (σ_a − σ_b)/(ε^e_a − ε^e_b) · (ε^e_a − ε^e_b)/(ε̃_a − ε̃_b)
+= g_ab of (S.33). Exact for distinct trial eigenvalues (measured 1e−15 and 8e−17 relative, chain_fd.py (C)); an
+elastic increment gives a^e exactly. Inside the repeated-eigenvalue band |ε̃_a − ε̃_b| < 10⁻¹⁰ the two limits differ:
+(S.33) keeps the row ã_aa − ã_ab, the chain gives (a^e_aa − a^e_ab)·½[(b_aa − b_ab) + (b_bb − b_ba)] (the Φ limit rows
+are averaged when a^e symmetrises its input); the two coincide under the exact swap symmetry of isotropy (sympy,
+chain_sympy.py (c)) and differ by O(|ε̃_a − ε̃_b|) otherwise, the ~1e−8 level of the §9.4 row-convention note. **Contract:**
+the O2 chained reference keeps the full 3×3 column tensors (the (S.33) row convention per operator) and lets each
+operator symmetrise its input; the kernel does the same, and compresses (S.47) by the i ≤ j rows of `compress_c4`.
+The regression check "C_chain(m = 1) = C_(S.33)" is therefore exact (round-off) at distinct trial eigenvalues and
+≤ ~1e−8 inside the band; the FD check does not see the band (h ≫ tol).
+
+**Verification (chain_sympy.py; chain_fd.py on Esmeralda with O2's `_step_once`, fractions held fixed across the FD
+points, same branch pattern at every point).** Symbolic: the 5×5 block identities behind (S.45) (t parametrised as
+A u/(1 − κ) so no inverse is formed), the composition rule of two spectral operators, the (S.32) reduction, the
+swap-symmetry limits — all pass. Numerical, kernel 6×6 convention, max over columns of ‖C_J − FD_J‖/‖C_J‖:
+(A) AMP_STOP smooth cap (§10.2 defaults, K2 set ρ = 0.7/ρ̄ = 0.8), n = 40: O2's ladder substeps all 30 plastic
+increments 11–40 (step 11 at m = 2, 12–40 at m = 4, patterns PP/PPPP, w = 0.02–0.064); chained vs FD 1.1e−5 → 8.6e−8
+→ 8.7e−9 (step 11) and 3.7e−6…7.9e−6 → 3.9e−8…7.9e−8 → 7.6e−10…1.2e−8 (steps 12–40) for h = 10⁻⁶, 10⁻⁷, 10⁻⁸ (O(h²)
+to the round-off floor); last-sub-increment CTO 0.51 (m = 2), 0.81–0.90 (m = 4). (B) generic plastic increment with
+all three shears (no cap, θ 0.57 → 0.71): forced m = 8 (pattern EEEEPPPP) 1.0e−7, 1.1e−9, 2.0e−9; m = 2 (EP) 7.5e−8,
+6.9e−10, 1.4e−9; last-sub-increment CTO 3.6e−2 at m = 8 (and equal to the chain at EP, as it must be: an elastic first
+half makes T_1 = 𝕀). (C) m = 1: 1.1e−15, 7.8e−17 (plastic), 0 (elastic). (E) non-uniform fractions (a recursive-halving
+shape, Σα_k = 1): α = (½, ¼, ⅛, ⅛) on the (B) increment (EPPP) 9.8e−8, 1.6e−9, 2.1e−9; α = (¼, ¼, ¼, ⅛, ⅛) on AMP
+step 20 (PPPPP) 4.8e−6, 5.2e−8, 2.7e−9; α = (½, ¼, ¼) on AMP step 11 (PPP) 8.8e−6, 6.6e−8, 8.9e−9. (F) vertex branch,
+hydrostatic plastic step of tr Δε = −3e−3 from the apex (no cap, π_i = −46.4758 kPa, exactly repeated trial
+eigenvalues, p stays at −100 kPa, π_i frozen): chained m = 1 vs (S.33) 8.4e−17; C:1 = 0 to 2.3e−16 of max|C| for
+α = (½, ¼, ¼) and m = 1, FD along 1 agrees to 2.3e−16 … 2.3e−11; the six-column FD switches branch on the deviatoric
+columns (one-sided, as stated above). The expected agreement is set by the FD truncation (O(h²), ~1e−6·h/10⁻⁶) down
+to the round-off floor ~1e−9; every case meets it.
 
 ---
 
@@ -927,7 +1040,8 @@ G1 revision checks (2026-10-01, run on Esmeralda with the WP-144 venv against th
 
 ### 16.6 G1 revision record (2026-10-01)
 Twelve items raised by the G1 oracle/test round (O1 rate oracle, O2 return map, the K1/K2 gate tests and the cap and
-K2-lag triages), applied in one pass. Tags: [E] read in the source, [I; G1] this revision's derivation or decision.
+K2-lag triages), applied in one pass; item 13 added at P1 (owner decision 2026-10-01). Tags: [E] read in the source,
+[I; G1] / [I; P1] this revision's derivation or decision.
 
 | # | section | change | tag | evidence |
 |---|---|---|---|---|
@@ -943,5 +1057,6 @@ K2-lag triages), applied in one pass. Tags: [E] read in the source, [I; G1] this
 | 10 | §11.2 | condition A has two independent parts; N̄ ≤ N required on its own, also when ρ ≥ ρ̄ | [I; G1] | §11 table (G0) |
 | 11 | §14 | AB06 Remark 4 "small enough load step": BE lags the continuum by ≈ 1 step; O1 22/26, O2 23/27 first-step (22/26 by rounding the interpolated crossing); agreement tested by convergence under substepping; Fig 6 φ = π/2 reread as n ⊥ the intermediate principal direction (e₁ under (S.43), n in the e₂–e₃ plane; both oracles φ = 90.0°, θ ≈ 35°, two mirror wells) | [I; G1] | K2 lag diagnosis (tests/scratch_k2lag), tests/out/k2_sensitivity.md |
 | 12 | §9.5, §16.3 | (S.34) re-derived (nominal-stress derivative, no ½) and FD-checked with (S.44); the FD check is now a G1 gate test | [I; G1] | r2_finite_tangent_fd.py |
+| 13 | §9.1, §9.4, §9.6 | **P1 owner decision: chained tangent.** A substepped increment returns the exact derivative of its final stress w.r.t. the total Δε, chained through every sub-increment (any fractions α_k, Σα_k = 1): state map z_{k+1} = Φ(z_k, α_kΔε), IFT columns (S.45) (−J⁻¹∂r/∂(π_{i,n}, v) through the nested solve: −u/c, −uΠ_v, (1−κ)/c, (1−κ)Π_v), recursion (S.46), assembly C = a^e(ε^e_m):S^ε_m (S.47); m = 1 reduces to (S.33) exactly at distinct trial eigenvalues; the repeated-eigenvalue limit of (S.33) keeps the i ≤ j row (C4_01kl from g_01 = ã_00 − ã_01; O2 and kernel; ~1e−8 effect inside the 10⁻¹⁰ band) as the documented contract; supersedes "tangent of the last sub-increment" (plan §2.8, O2 `step`, kernel `step_ex`, 0.5–0.9 off the FD) | [I; P1], owner decision 2026-10-01 | chain_sympy.py (all OK), chain_fd.py: AMP_STOP n = 40 m = 2–4 → 4e−8…9e−8 at h = 10⁻⁷, generic m = 8 → 1.1e−9, non-uniform α → 1.6e−9…6.6e−8, vertex 8e−17 |
 
 No FD-checked algebra of the G0 sheet changed. Status of (S.34): transcribed → re-derived and FD-checked (8.7e−10).

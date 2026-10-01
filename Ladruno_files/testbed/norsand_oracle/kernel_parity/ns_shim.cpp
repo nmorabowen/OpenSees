@@ -88,6 +88,27 @@ int ns_step(const double* d, const int* i, const double* st_n, const double* dep
   for (int I = 0; I < 6; ++I) for (int J = 0; J < 6; ++J) C[6 * I + J] = Cm[I][J];
   info[0] = inf.refusal; info[1] = inf.plastic; info[2] = inf.vertex; info[3] = inf.cap_active;
   info[4] = inf.local_iters; info[5] = inf.pi_iters; info[6] = inf.substeps; info[7] = finest; info[8] = sub;
+  // StepInfo.finest / finest_sub must be the same numbers as step_ex's out-parameters
+  if (inf.finest != finest || inf.finest_sub != sub) info[7] = info[8] = -1;
+  return rc;
+}
+
+// detail::step_fractions (O2 api.step_fractions): m sub-increments fr[k] * deps, no ladder;
+// chain != 0: the chained tangent (S.47) for every m (m = 1 included).
+int ns_step_fractions(const double* d, const int* i, const double* st_n, const double* deps, const double* fr,
+                      int m, int chain, double* st_np1, double* sigma, double* C, int* info)
+{
+  const Params P = mk(d, i);
+  const State n = a2s(st_n);
+  State np1;
+  double Cm[6][6];
+  StepInfo inf;
+  const int rc = detail::step_fractions(P, n, deps, fr, m, chain != 0, np1, sigma, Cm, inf);
+  s2a(np1, st_np1);
+  for (int I = 0; I < 6; ++I) for (int J = 0; J < 6; ++J) C[6 * I + J] = Cm[I][J];
+  info[0] = inf.refusal; info[1] = inf.plastic; info[2] = inf.vertex; info[3] = inf.cap_active;
+  info[4] = inf.local_iters; info[5] = inf.pi_iters; info[6] = inf.substeps; info[7] = inf.finest;
+  info[8] = inf.finest_sub;
   return rc;
 }
 

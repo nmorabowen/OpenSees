@@ -5,9 +5,26 @@ drives the SAME strain increments through O2 (o2_algo.step / o2_algo.tangent) an
 C++ kernel (ctypes shim ns_shim.cpp, built here with g++) and compares, step by step:
     sigma, eps_e, pi_i, v, eps_p_v, eps_p_s, D (the step's dissipation), the 6x6 tangent,
     and the flags: refused (and its finest reason), plastic, vertex, cap_active, substeps,
-    and the local-Newton / nested-solve iteration counts (equal on every step: the same
-    algorithm with the same constants; a constant changed without changing the answer shows
-    only there).
+    and the local-Newton / nested-solve iteration counts.
+
+ITERATION-COUNT EQUALITY is gated on the FIXED paths of this file only (CASES and FRACTION_CASES
+below: equal on every step -- the same algorithm with the same constants; a constant changed
+without changing the answer shows only there). It is NOT a gate on randomised paths: the
+independent census (scratch_indep/census.py, 2 x 200 random paths) found 10 and 19 steps whose
+counts differ where a Newton / scan stopping test sits within round-off of its threshold (a
+1e-16 difference flips one comparison; the answers still agree at 1e-10). A fixed path that
+starts doing that after a change is a signal to re-check, not noise to tolerate.
+
+TANGENT OF A SUBSTEPPED INCREMENT (sheet 9.6, owner decision 2026-10-01): the CHAINED consistent
+tangent (S.46)-(S.47), the exact derivative of the final stress with respect to the TOTAL strain
+increment. Gated against O2.tangent (which returns cache['C_chain']) at the same 1e-10 as every
+other tangent, with the band rules below applied to EVERY sub-increment of the increment (a
+sub-increment in a band puts the whole chained tangent in that band). The smooth-cap AMP_STOP
+paths substep 30 increments each, and O2's own last-sub-increment CTO is 0.5-0.9 off the chain
+there (asserted, so the comparison is not vacuous). FRACTION_CASES drive detail::step_fractions
+against O2 api.step_fractions: uniform m = 2, 4, 8, the recursive-halving shapes
+(1/2, 1/4, 1/8, 1/8), (1/4, 1/4, 1/4, 1/8, 1/8), (1/2, 1/4, 1/4), the m = 1 chain,
+chain = False (last-sub CTO) and the vertex.
 
 GATE (relative, every quantity, every step, every path): 1e-10.
 Argument: the kernel IS O2's algorithm in IEEE double precision, so the two can differ only
@@ -30,7 +47,7 @@ max_n |D_n - D_n(O2)| / max_n |D_n(O2)|: on a near-neutral plastic step (the NEU
 dlambda is fixed by F_tr ~ 1e-7 kPa, a difference of O(100 kPa) terms, so the step's own
 D is conditioned at ~1e-7 relative in O2 itself.
 
-THE EXCEPTION -- the tangent in two round-off conditioning bands (state quantities stay at
+THE EXCEPTION -- the tangent in three round-off conditioning bands (state quantities stay at
 1e-10 inside them too). O2 itself does not determine its tangent to 1e-10 there; the
 evidence is O2's own sensitivity to a 1-ulp perturbation of its committed elastic strain,
 measured at every band step and printed next to the kernel error ("O2 1-ulp").
@@ -44,7 +61,15 @@ measured at every band step and printed next to the kernel error ("O2 1-ulp").
      theta_c) there, so q_a and the converged state are insensitive).
  (2) NEAR-VERTEX band, R < 1e-3 |p|: n_hat_ab ~ 1/R and y_ab ~ 1/R^2 carry the absolute
      round-off of xi (~eps |p|) as a relative error ~eps |p| / R, amplified through J^-1.
-Inside both bands the tangent gate is 1e-7: the O(|theta - theta_c|) accuracy of (S.8)/(S.9)
+ (3) NEAR-COALESCENT trial eigenvalues, min_{a<b} |eps~_a - eps~_b| < 1e-6 max_a |eps~_a| (any
+     sub-increment, elastic or plastic; also the final converged eps^e of the chain assembly):
+     the spin terms (sigma_a - sigma_b)/(eps~_a - eps~_b) and the eigenvectors themselves are
+     conditioned as |eps~| / gap, so the ulp-level difference between numpy eigh and the kernel's
+     Jacobi is amplified to ~eps |eps~| / gap; and below REPEATED_EIG_TOL = 1e-10 the (S.33)
+     quotient switches to its limit, the two agreeing only to O(gap). Found by the independent
+     census (scratch_indep/, tangent outliers 1e-10..2e-8 relative at trial gaps 1e-18..3e-7).
+     An EXACTLY zero gap (axisymmetric / isotropic) is not in it: gated at the full 1e-10.
+Inside the three bands the tangent gate is 1e-7: the O(|theta - theta_c|) accuracy of (S.8)/(S.9)
 at the corner-band edge. A formula error in the tangent is O(dlambda) ~ 1e-3 and is still
 caught; the same tangent code is gated at 1e-10 on every off-band step (generic theta: the
 non-coaxial, GA, cap and TXE paths).
@@ -87,12 +112,18 @@ GATE = 1.0e-10
 ZERO_FLOOR = 1.0e-6          # x natural scale, for quantities that pass through zero
 CORNER_BAND = 1.0e-7         # |sin 3theta| below: round-off corner band
 VERTEX_BAND = 1.0e-3         # R/|p| below: near-vertex band
-BAND_TANGENT_GATE = 1.0e-7   # tangent gate inside the two bands
+# Near-coalescent band: 0 < min trial-eigenvalue gap / max|eps~| < COALESCENT_BAND (a NON-ZERO gap). An
+# EXACTLY zero gap (axisymmetric / isotropic trial: both sides take the same repeated-eigenvalue limit) is NOT
+# in the band and is gated at the full GATE: the ~1e-8 effect is the (a,b)/(b,a) row-convention difference
+# of the limit, which needs a non-zero gap (the rows agree only for EXACTLY repeated eigenvalues).
+COALESCENT_BAND = 1.0e-6
+BAND_TANGENT_GATE = 1.0e-7   # tangent gate inside the three bands
+LASTSUB_MIN_GAP = 0.1        # O2's last-sub-increment CTO must be at least this far from the chain somewhere
 I3 = np.eye(3)
 SIG0 = -100.0 * I3
 
 QUANTITIES = ("sigma", "eps_e", "pi_i", "v", "eps_p_v", "eps_p_s", "D", "tangent")
-REPORTED = QUANTITIES + ("tangent_band", "o2_1ulp_band")
+REPORTED = QUANTITIES + ("tangent_band", "tangent_coalescent", "o2_1ulp_band", "tangent_substepped")
 
 # ----------------------------------------------------------------------------------------------
 # kernel build (once per session)
@@ -299,11 +330,62 @@ def _o2_1ulp(P, ost, d, Co):
     return max(out)
 
 
+def _o2_subincrements(P, ost, d, fractions):
+    """Replay O2's sub-increments (api._step_once, the same calls api._run_fractions makes) and return
+    their states (each with cache eps_tr / sig / res and flags.plastic)."""
+    out, cur = [], ost
+    for a in fractions:
+        cur = O2api._step_once(P, cur, a * d)
+        out.append(cur)
+        if cur.flags["refused"]:
+            break
+    return out
+
+
+def _min_rel_gap(w):
+    w = np.asarray(w, float)
+    gap = min(abs(w[a] - w[b]) for a in range(3) for b in range(a + 1, 3))
+    return gap / max(float(np.abs(w).max()), 1e-300)
+
+
+def _coalescent(w):
+    g = _min_rel_gap(w)
+    return 0.0 < g < COALESCENT_BAND          # exactly 0: gated at the full GATE (see COALESCENT_BAND)
+
+
+def _bands(subs):
+    """(corner_or_vertex, coalescent) over every sub-increment (see the module docstring)."""
+    cv, coal = False, False
+    for s in subs:
+        coal = coal or _coalescent(s.cache["eps_tr"])
+        if s.flags["plastic"]:
+            # at the reconstructed sigma tensor (eigvalsh), as the P1a gate always measured it
+            inv = O2.kernel.invariants(np.linalg.eigvalsh(0.5 * (s.sigma + s.sigma.T)))
+            cv = cv or ((not inv.vertex) and (abs(math.sin(3.0 * inv.theta)) < CORNER_BAND
+                                              or inv.R < VERTEX_BAND * abs(inv.p)))
+    res = subs[-1].cache.get("res")
+    if res is not None:                       # the (S.47) assembly runs on the final converged eps^e
+        coal = coal or _coalescent(res.eps_e)
+    return cv, coal
+
+
+def _gate_tangent(errs, rep, et, cv, coal, one_ulp):
+    """Route one tangent error to its band (corner/vertex first, then coalescent, else the 1e-10 gate)."""
+    if cv or coal:
+        rep["band_steps"] += 1
+        key = "tangent_band" if cv else "tangent_coalescent"
+        rep["coalescent_steps"] = rep.get("coalescent_steps", 0) + (0 if cv else 1)
+        errs[key] = max(errs[key], et)
+        errs["o2_1ulp_band"] = max(errs["o2_1ulp_band"], one_ulp())
+    else:
+        errs["tangent"] = max(errs["tangent"], et)
+
+
 def compare(kern, name):
     P, v0, pi0, st0, deps, sts, tans = _o2_run(name)
     nat = _natural_scales(P)
     rep = dict(name=name, n_o2=len(sts), errs={q: 0.0 for q in REPORTED}, flag_mismatch=[], iter_mismatch=0,
-               refusal=None, substepped=0, plastic=0, band_steps=0)
+               refusal=None, substepped=0, plastic=0, band_steps=0, lastsub_gap=0.0)
     errs = rep["errs"]
     # initial state (sigma0 is recovered through the elastic inversion, whose Newton stops at 1e-13 |p|)
     rc, ks, msg = kern.initial_state(P, st0.sigma, v0, pi0)
@@ -345,15 +427,16 @@ def compare(kern, name):
         D_o.append(o.D)
         Co = NK.c4_to_c6(tans[k])
         et = np.abs(r["C"] - Co).max() / np.abs(Co).max()
-        inv = O2.kernel.invariants(np.linalg.eigvalsh(0.5 * (o.sigma + o.sigma.T)))
-        in_band = (not inv.vertex) and (abs(math.sin(3.0 * inv.theta)) < CORNER_BAND
-                                        or inv.R < VERTEX_BAND * abs(inv.p))
-        if in_band and o.flags["plastic"]:
-            rep["band_steps"] += 1
-            errs["tangent_band"] = max(errs["tangent_band"], et)
-            errs["o2_1ulp_band"] = max(errs["o2_1ulp_band"], _o2_1ulp(P, ost, d, Co))
-        else:
-            errs["tangent"] = max(errs["tangent"], et)
+        m = o.flags["substeps"]
+        subs = [o] if m == 1 else _o2_subincrements(P, ost, d, [1.0 / m] * m)
+        if m > 1:
+            assert np.array_equal(subs[-1].sigma, o.sigma), f"{name} step {k}: O2 sub-increment replay drifted"
+            Cl = NK.c4_to_c6(O2.tangent_last_substep(P, o))
+            rep["lastsub_gap"] = max(rep["lastsub_gap"], np.abs(Cl - Co).max() / np.abs(Co).max())
+        cv, coal = _bands(subs)
+        if m > 1 and not (cv or coal):
+            errs["tangent_substepped"] = max(errs["tangent_substepped"], et)
+        _gate_tangent(errs, rep, et, cv, coal, lambda: _o2_1ulp(P, ost, d, Co))
         st, ost = ns, o
     if D_o and max(abs(x) for x in D_o) > 0.0:
         errs["D"] = max(abs(x - y) for x, y in zip(D_k, D_o)) / max(abs(x) for x in D_o)
@@ -380,7 +463,8 @@ def test_kernel_matches_o2_on_path(kern, name):
     errs = rep["errs"]
     line = "  ".join(f"{q}={errs[q]:.2e}" for q in REPORTED)
     print(f"\n[{name}] steps {rep['n_o2']} plastic {rep['plastic']} substepped {rep['substepped']} "
-          f"band {rep['band_steps']} refusal {rep['refusal']} iter-count mismatches {rep['iter_mismatch']}"
+          f"band {rep['band_steps']} (coalescent only {rep.get('coalescent_steps', 0)}) refusal {rep['refusal']} "
+          f"iter-count mismatches {rep['iter_mismatch']}"
           f"\n  init={rep['init']:.2e} init_sigma={rep['init_sigma']:.2e}  {line}")
     assert not rep["flag_mismatch"], f"branch flags differ (step, flag, O2, kernel): {rep['flag_mismatch']}"
     # same algorithm, same constants => the same number of local Newton iterations and of nested
@@ -390,8 +474,9 @@ def test_kernel_matches_o2_on_path(kern, name):
     assert rep["init_sigma"] <= 1e-12, f"stress(initial state) != sigma0: {rep['init_sigma']:.3e}"
     bad = {q: errs[q] for q in QUANTITIES if not errs[q] <= GATE}
     assert not bad, f"parity gate {GATE:.0e} exceeded: {bad}"
-    assert errs["tangent_band"] <= BAND_TANGENT_GATE, \
-        f"band tangent {errs['tangent_band']:.3e} > {BAND_TANGENT_GATE:.0e} (O2 1-ulp {errs['o2_1ulp_band']:.3e})"
+    for key in ("tangent_band", "tangent_coalescent"):
+        assert errs[key] <= BAND_TANGENT_GATE, \
+            f"{key} {errs[key]:.3e} > {BAND_TANGENT_GATE:.0e} (O2 1-ulp {errs['o2_1ulp_band']:.3e})"
 
 
 EXPECTED_REFUSALS = {          # sheet 3.2 / 10.1 / 16.6: O2 refuses these after 2^8 substeps
@@ -412,9 +497,104 @@ def test_refusing_paths_refuse_in_both(kern):
 def test_smooth_cap_path_exercises_substepping(kern):
     """O2 README: the AMP_STOP smooth-cap path at n = 40 substeps 30 of its 34 plastic increments. The kernel
     matches the substep counts exactly (flags compared per step) -- check the path really substeps."""
-    rep = report(kern, "CAP_smooth_AMPSTOP_n40")
-    assert rep["refusal"] is None
-    assert rep["substepped"] >= 1 and rep["plastic"] >= 1
+    for name in ("CAP_smooth_AMPSTOP_n40", "CAP_smooth_AMPSTOP_n40_fork"):
+        rep = report(kern, name)
+        assert rep["refusal"] is None
+        assert rep["substepped"] >= 20 and rep["plastic"] >= 1, (name, rep["substepped"])
+        # the chained tangent is gated (off-band at 1e-10) and O2's last-sub-increment CTO is far from it:
+        # a kernel returning the last-sub CTO cannot pass (mutate_kernel.sh "last_substep_tangent")
+        assert rep["errs"]["tangent_substepped"] > 0.0, "no off-band substepped tangent was compared"
+        assert rep["lastsub_gap"] > LASTSUB_MIN_GAP, (name, rep["lastsub_gap"])
+        print(f"\n[{name}] substepped {rep['substepped']}: chained tangent vs O2 {rep['errs']['tangent_substepped']:.2e}"
+              f" (off-band); O2 last-sub CTO vs O2 chain, max {rep['lastsub_gap']:.2f}")
+
+
+# ----------------------------------------------------------------------------------------------
+# detail::step_fractions vs O2 api.step_fractions (sheet 9.6: arbitrary fractions, the m = 1 chain)
+# ----------------------------------------------------------------------------------------------
+SHEAR3 = np.array([[0.0, 3e-4, 1e-4], [3e-4, 0.0, 2e-4], [1e-4, 2e-4, 0.0]])
+
+
+def _fork_b():
+    """O2 selfcheck fork_params(): fork CSL, WW, rho = rho_bar = 0.71, no cap."""
+    return O2.Params(**dict(K2, csl_mode="fork", M=1.3309, N=0.3, N_bar=0.2, rho=0.71, rho_bar=0.71,
+                            e0=0.83, lam_c=0.027, xi=0.45, p_a=101.325)).validate()
+
+
+@functools.lru_cache(maxsize=None)
+def _frac_setup(which):
+    """(P, O2 state entering the increment, increment) of the O2 selfcheck chain group."""
+    if which == "generic":          # (B): fork WW, all three shears, 5 pre-steps
+        P = _fork_b()
+        s0 = O2.initial_state(P, SIG0, 1.65, -60.4)
+        st = O2.run_path(P, s0, np.array([np.diag([4e-4, -1e-3, 0.0]) + SHEAR3] * 5))[-1]
+        return P, st, np.diag([1e-4, -6e-4, 2e-4]) + 0.5 * SHEAR3
+    if which.startswith("amp"):     # (A)/(E): AMP_STOP smooth cap n = 40, the state entering step n (1-based)
+        P = O2.Params(**dict(K2, **MODES["paper"], **SMOOTH)).validate()
+        v0 = -0.05 + P.v_c0 - P.lam_tilde * math.log(80.0)
+        s0 = O2.initial_state(P, SIG0, v0, -80.0)
+        d = (-0.01 * I3 + 2e-3 * np.diag([1.0, 0.0, -1.0])) / 40
+        n = int(which[3:])
+        st = O2.run_path(P, s0, np.array([d] * (n - 1)))[-1] if n > 1 else s0
+        return P, st, d
+    if which == "vertex":           # (F): hydrostatic plastic step from the apex, no cap
+        P = O2.Params(**dict(K2, **MODES["paper"])).validate()
+        return P, O2.initial_state(P, SIG0, 1.59, None), -1e-3 * I3
+    raise KeyError(which)
+
+
+FRACTION_CASES = {
+    "generic_m8": ("generic", (0.125,) * 8, True),
+    "generic_m2": ("generic", (0.5, 0.5), True),
+    "generic_halving_2_4_8_8": ("generic", (0.5, 0.25, 0.125, 0.125), True),
+    "generic_m1_chain": ("generic", (1.0,), True),
+    "generic_m4_nochain": ("generic", (0.25,) * 4, False),
+    "amp20_halving_4_4_4_8_8": ("amp20", (0.25, 0.25, 0.25, 0.125, 0.125), True),
+    "amp11_halving_2_4_4": ("amp11", (0.5, 0.25, 0.25), True),
+    "amp11_m2": ("amp11", (0.5, 0.5), True),
+    "amp30_m4": ("amp30", (0.25,) * 4, True),
+    "vertex_m1_chain": ("vertex", (1.0,), True),
+    "vertex_halving_2_4_4": ("vertex", (0.5, 0.25, 0.25), True),
+}
+
+
+def _o2_to_kstate(st):
+    return np.array([*NK.t6(st.eps_e), st.pi_i, st.v, st.v0, st.eps_p_v, st.eps_p_s, st.D], float)
+
+
+@pytest.mark.parametrize("label", list(FRACTION_CASES))
+def test_kernel_step_fractions_matches_o2(kern, label):
+    which, fr, chain = FRACTION_CASES[label]
+    P, ost, d = _frac_setup(which)
+    o = O2.step_fractions(P, ost, d, list(fr), chain=chain)
+    assert not o.flags["refused"], o.flags["reason"]
+    r = kern.step_fractions(P, _o2_to_kstate(ost), d, fr, chain=chain)
+    inf = r["info"]
+    nat = _natural_scales(P)
+    assert inf["refusal"] == "OK", inf
+    for f in ("plastic", "vertex", "cap_active", "substeps"):
+        assert inf[f] == o.flags[f], (f, inf[f], o.flags[f])
+    assert (inf["local_iters"], inf["pi_iters"]) == (o.flags["local_iters"], o.flags["pi_iters"]), \
+        f"iteration counts differ: kernel {(inf['local_iters'], inf['pi_iters'])} O2 " \
+        f"{(o.flags['local_iters'], o.flags['pi_iters'])}"
+    assert ("C_chain" in o.cache) == chain
+    ns = r["state"]
+    errs = {q: _rel(x, y, nat[q]) for q, x, y in (
+        ("sigma", r["sigma"], NK.t6(o.sigma)), ("eps_e", ns[:6], NK.t6(o.eps_e)), ("pi_i", ns[6], o.pi_i),
+        ("v", ns[7], o.v), ("eps_p_v", ns[9], o.eps_p_v), ("eps_p_s", ns[10], o.eps_p_s))}
+    errs["D"] = abs(ns[11] - o.D) / max(abs(o.D), ZERO_FLOOR * nat["D"])
+    Co = NK.c4_to_c6(O2.tangent(P, o))
+    et = np.abs(r["C"] - Co).max() / np.abs(Co).max()
+    cv, coal = _bands(_o2_subincrements(P, ost, d, fr))
+    gate = BAND_TANGENT_GATE if (cv or coal) else GATE
+    Cl = NK.c4_to_c6(O2.tangent_last_substep(P, o))
+    lastsub = np.abs(Cl - Co).max() / np.abs(Co).max()
+    print(f"\n[{label}] pattern {o.flags.get('pattern')} tangent {et:.2e} (gate {gate:.0e}"
+          f"{', band' if gate > GATE else ''})  O2 last-sub CTO vs O2 tangent {lastsub:.2e}  "
+          + "  ".join(f"{q}={v:.1e}" for q, v in errs.items()))
+    bad = {q: v for q, v in errs.items() if not v <= GATE}
+    assert not bad, f"parity gate {GATE:.0e} exceeded: {bad}"
+    assert et <= gate, f"tangent {et:.3e} > {gate:.0e}"
 
 
 # validate(): owner decisions in force
@@ -481,10 +661,12 @@ def test_parity_summary(kern):
         print(f"  {q:>13s}: {worst[q]:.3e}   (worst path {arg})")
     print(f"  {'init':>13s}: {worst_init:.3e}")
     print(f"  {'init_sigma':>13s}: {max(r['init_sigma'] for r in rows.values()):.3e}")
+    print(f"  {'lastsub_gap':>13s}: {max(r['lastsub_gap'] for r in rows.values()):.3e}   "
+          "(O2 last-sub-increment CTO vs O2 chain on substepped steps; must be large)")
     tot = {key: sum(r[key] for r in rows.values())
            for key in ("n_o2", "plastic", "substepped", "band_steps", "iter_mismatch")}
     print("  paths %d, steps compared %d, plastic %d, substepped %d, band %d, refusal paths %d, "
           "iter-count mismatches %d" % (len(rows), tot["n_o2"], tot["plastic"], tot["substepped"], tot["band_steps"],
                                         sum(r["refusal"] is not None for r in rows.values()), tot["iter_mismatch"]))
     assert all(worst[q] <= GATE for q in QUANTITIES) and worst_init <= GATE
-    assert worst["tangent_band"] <= BAND_TANGENT_GATE
+    assert worst["tangent_band"] <= BAND_TANGENT_GATE and worst["tangent_coalescent"] <= BAND_TANGENT_GATE

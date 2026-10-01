@@ -9,6 +9,7 @@ kernel API to Python with O2-shaped inputs (o2_algo.Params, 3x3 tensors):
     K.validate(P)                            # (rc, msg, warn)
     K.initial_state(P, sigma0, v0, pi_i0)    # (rc, state[12], msg); pi_i0 None -> on the surface
     K.step(P, state, deps)                   # dict(state, sigma6, C6, info)
+    K.step_fractions(P, state, deps, fr, chain=True)   # detail::step_fractions (O2 api.step_fractions)
     K.stress(P, state), K.elastic_tangent(P, state)
 
 Conventions: tensors are 6 TENSOR components {00,11,22,01,12,02}; the kernel tangent is
@@ -113,6 +114,18 @@ def parse_o2_reason(reason: str):
     raise ValueError(f"unknown O2 reason {reason!r}")
 
 
+def _name(table, code):
+    """Code -> name; out-of-range codes (e.g. -1: invalid fractions, or the shim's StepInfo/out-parameter
+    mismatch marker) are returned as 'INVALID(<code>)' instead of wrapping around."""
+    return table[code] if 0 <= code < len(table) else f"INVALID({int(code)})"
+
+
+def _info(info):
+    return dict(refusal=_name(REFUSAL, info[0]), plastic=bool(info[1]), vertex=bool(info[2]),
+                cap_active=bool(info[3]), local_iters=int(info[4]), pi_iters=int(info[5]),
+                substeps=int(info[6]), finest=_name(REFUSAL, info[7]), finest_sub=_name(EVALERR, info[8]))
+
+
 _D = ctypes.POINTER(ctypes.c_double)
 _I = ctypes.POINTER(ctypes.c_int)
 
@@ -132,6 +145,8 @@ class Kernel:
         L.ns_initial_state.restype = ctypes.c_int
         L.ns_step.argtypes = [_D, _I, _D, _D, _D, _D, _D, _I]
         L.ns_step.restype = ctypes.c_int
+        L.ns_step_fractions.argtypes = [_D, _I, _D, _D, _D, ctypes.c_int, ctypes.c_int, _D, _D, _D, _I]
+        L.ns_step_fractions.restype = ctypes.c_int
         L.ns_stress.argtypes = [_D, _I, _D, _D]
         L.ns_stress.restype = None
         L.ns_elastic_tangent.argtypes = [_D, _I, _D, _D]
@@ -169,10 +184,20 @@ class Kernel:
         info = np.zeros(9, dtype=np.int32)
         self.lib.ns_step(_dp(d), i.ctypes.data_as(_I), _dp(stn), _dp(de), _dp(out), _dp(sig), _dp(C),
                          info.ctypes.data_as(_I))
-        inf = dict(refusal=REFUSAL[info[0]], plastic=bool(info[1]), vertex=bool(info[2]),
-                   cap_active=bool(info[3]), local_iters=int(info[4]), pi_iters=int(info[5]),
-                   substeps=int(info[6]), finest=REFUSAL[info[7]], finest_sub=EVALERR[info[8]])
-        return dict(state=out, sigma=sig, C=C.reshape(6, 6), info=inf)
+        return dict(state=out, sigma=sig, C=C.reshape(6, 6), info=_info(info))
+
+    def step_fractions(self, P, st, deps, fractions, chain=True):
+        d, i = self.params(P)
+        stn = np.ascontiguousarray(st, dtype=np.float64)
+        de = np.ascontiguousarray(t6(deps))
+        fr = np.ascontiguousarray([float(a) for a in fractions], dtype=np.float64)
+        out = np.zeros(12)
+        sig = np.zeros(6)
+        C = np.zeros(36)
+        info = np.zeros(9, dtype=np.int32)
+        self.lib.ns_step_fractions(_dp(d), i.ctypes.data_as(_I), _dp(stn), _dp(de), _dp(fr), len(fr), int(chain),
+                                   _dp(out), _dp(sig), _dp(C), info.ctypes.data_as(_I))
+        return dict(state=out, sigma=sig, C=C.reshape(6, 6), info=_info(info))
 
     def stress(self, P, st):
         d, i = self.params(P)

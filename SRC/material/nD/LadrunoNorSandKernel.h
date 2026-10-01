@@ -53,7 +53,33 @@
 //   atilde_ep                           kernel.py §9.3 (S.31)-(S.32)
 //   return_map                          kernel.py §9.1 AB06 Box 2
 //   spectral, tangent_small             kernel.py §9.4 (S.33)
-//   step_once, step_ex                  api.py _step_once / step (substepping)
+//   chain_data, chain_propagate,        kernel.py §9.6 chained consistent tangent across
+//     chain_assemble                      sub-increments (S.45)-(S.47)
+//   step_once, run_fractions, step_ex,  api.py _step_once / _run_fractions / step (substepping)
+//     step_fractions                      / step_fractions
+//
+// TANGENT CONTRACT (sheet §9.4, §9.6; plan §2.8, owner decision 2026-10-01).
+//   * Non-substepped increment (substeps = 1): the closed-form CTO (S.31)-(S.33) of the
+//     single backward-Euler step (a^e on an elastic step).
+//   * Substepped increment (substeps = 2^k, k >= 1): the CHAINED consistent tangent, the
+//     exact derivative of the increment's final stress with respect to the TOTAL strain
+//     increment, propagated through every accepted sub-increment by (S.46) and assembled
+//     by (S.47); a refused ladder level discards its sensitivities and the finer level
+//     restarts from S_0 = 0. NOT the CTO of the last sub-increment (0.5-0.9 relative off
+//     the FD of the whole increment on the smooth-cap AMP_STOP path, sheet §9.6).
+//     detail::step_fractions chains any fractions alpha_k (recursive-halving shapes
+//     included), and chains m = 1 too (O2 api.step_fractions); the ladder never chains m = 1.
+//   * Repeated-eigenvalue ROW CONVENTION (sheet §9.4 note). Inside the switch tolerance
+//     |eps~_a - eps~_b| < REPEATED_EIG_TOL the (S.33) spin uses the limit
+//     g_ab = a~_aa - a~_ab, which is NOT symmetric in a <-> b when a~ is non-symmetric, so
+//     C4_ijkl != C4_jikl at the O(|eps~_a - eps~_b|) ~ 1e-8 level there. The contract
+//     (O2 and kernel alike): the 4th-order tensor is compressed to 6x6 by reading ONLY the
+//     rows i <= j ({00,11,22,01,12,02}; shear row (0,1) = C4_01kl, never C4_10kl), see
+//     compress_c4. g_ab is NOT symmetrised and the two rows are NOT averaged. The chain
+//     keeps every intermediate operator's FULL 3x3 column tensors (each spectral operator
+//     symmetrises its own input through m^ab (x) m^ab + m^ab (x) m^ba) and is compressed
+//     by the same i <= j rows only after the final a^e assembly (S.47); inside the band
+//     its m = 1 limit therefore differs from the (S.33) row by O(1e-8) (sheet §9.6 "m = 1").
 // Deliberate differences from O2 (none algorithmic; all at the API boundary):
 //   * on a refused step() the returned state is the committed n (frozen) with
 //     sigma = stress(n) and C = elasticTangent(n); O2 returns the trial-elastic state
@@ -64,6 +90,9 @@
 //     line-search backtrack at an iterate. Never reached on O2-defined paths.
 //   * step() refuses a non-finite deps outright (no substepping), refusal
 //     LOCAL_NOCONV, substeps = 0.
+//   * detail::step_fractions returns -1 (frozen output) on invalid fractions where O2 raises
+//     ValueError, and on a refused sub-increment the frozen state n (O2: the refused
+//     sub-increment's state) with that sub-increment's reason.
 //   * initialState() also refuses pi_i0 >= 0 and a non-positive / non-finite v0
 //     (O2 would refuse at the first step instead); validate() also refuses a
 //     non-finite parameter (after O2's own checks, which run first and in O2's order).
@@ -139,7 +168,9 @@ enum Refusal { OK = 0, LOCAL_NOCONV, LOCAL_LINESEARCH, PI_NOBRACKET, PI_NOCONV, 
 
 // refusal: OK, or SUBSTEPS_EXHAUSTED for every refusal that went down the substep ladder
 // (by O2's contract every refused increment does: O2's reason suffix "(substeps
-// exhausted at 2^8)"); the finest-level cause is available from detail::step_ex.
+// exhausted at 2^8)"). finest / finest_sub: the refusal reason (Refusal code) and the
+// sub-reason (detail::EvalErr code: O2's "trial_<e>", "local_<e>", "local_linesearch:<e>",
+// "local_singular_J") at the FINEST ladder level; 0 / 0 when there is no refusal.
 // plastic: any sub-step plastic; vertex / cap_active: the last sub-step's;
 // local_iters / pi_iters: sums over the sub-steps; substeps: 1 = none, 2^k used,
 // 256 on exhaustion. On a refusal the flags are those of the whole-increment attempt.
@@ -151,6 +182,8 @@ struct StepInfo {
   int local_iters;
   int pi_iters;
   int substeps;
+  int finest;
+  int finest_sub;
 };
 
 inline int validate(const Params& P, std::string& msg, bool& warn_rho_gt_rhobar);
@@ -916,13 +949,15 @@ inline void jacobian(const PointEval& pe, double J[4][4])
 }
 
 // (S.31)-(S.32): a~^ep_ab = d sigma_a / d eps~_b. vfac = v0 (small strain).
-inline bool atilde_ep(const PointEval& pe, const double J[4][4], double vfac, double at[3][3])
+// b receives J^{-1} (reused by chain_data, sheet §9.6 (S.45)).
+inline bool atilde_ep(const PointEval& pe, const double J[4][4], double vfac, double at[3][3],
+                      double b[4][4])
 {
   const Flow& fl = pe.fl;
   double s[4];
   for (int a = 0; a < 3; ++a) s[a] = pe.dlam * fl.q_api[a] * pe.Pi_v * vfac;
   s[3] = fl.Y.F_pi * pe.Pi_v * vfac;
-  double b[4][4] = {{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, 1}};
+  for (int i = 0; i < 4; ++i) for (int j = 0; j < 4; ++j) b[i][j] = (i == j) ? 1.0 : 0.0;
   if (!lu_solve(4, J, b, 4)) return false;               // b = J^{-1}
   double bs[4];
   for (int i = 0; i < 4; ++i)
@@ -937,23 +972,57 @@ inline bool atilde_ep(const PointEval& pe, const double J[4][4], double vfac, do
   return true;
 }
 
+// O2 ChainData, sheet §9.6 (S.45): per-sub-increment sensitivities of a converged PLASTIC
+// return map, the implicit-function-theorem columns of (eps~, pi_i,n, v) -> (x, pi_i,n+1).
+// J = A + t Pi_x^T with t = dr/dpi_i|_x = (dlam q_api, F_pi), Pi_x = (Pi_b, Pi_lam) (S.28);
+// b = J^-1, u = b t, kappa = Pi_x . u, c = r'(pi_i) (S.27), w_b = sum_c Pi_x,c b_cb.
+//   dx/deps~_b = b[:, b]     dpi_i,n+1/deps~_b = w_b
+//   dx/dpi_i,n = -u/c        dpi_i,n+1/dpi_i,n  = (1 - kappa)/c
+//   dx/dv      = -u Pi_v     dpi_i,n+1/dv       = (1 - kappa) Pi_v
+struct ChainData {
+  double b[4][4], u[4], w[3], kappa, c, Pi_v;
+};
+
 // O2 StepResult (the fields the kernel needs). reason: Refusal code of the refusal at
 // THIS backward-Euler solve (OK if accepted); sub: the EvalErr behind it (O2's
 // "trial_<e>", "local_<e>", "local_linesearch:<e>", "local_singular_J").
+// ae: a^e (S.3) at the converged eps_e (= atilde on an elastic step); ch: valid on an
+// accepted PLASTIC step only.
 struct ReturnResult {
-  double eps_e[3], sig[3], pi, dlam, q_a[3], Om, D, atilde[3][3];
+  double eps_e[3], sig[3], pi, dlam, q_a[3], Om, D, atilde[3][3], ae[3][3];
   bool plastic, vertex, cap_active, refused;
   int reason, sub;
   int local_iters, pi_iters;
+  ChainData ch;
 };
+
+// O2 chain_data: the (S.45) block data from the converged iterate and b = J^-1 of (S.30).
+inline void chain_data(const PointEval& pe, const double b[4][4], ChainData& ch)
+{
+  const Flow& fl = pe.fl;
+  double t[4], Pi_x[4];
+  for (int a = 0; a < 3; ++a) { t[a] = pe.dlam * fl.q_api[a]; Pi_x[a] = pe.Pi_b[a]; }
+  t[3] = fl.Y.F_pi;
+  Pi_x[3] = pe.Pi_lam;
+  for (int i = 0; i < 4; ++i) {
+    for (int j = 0; j < 4; ++j) ch.b[i][j] = b[i][j];
+    ch.u[i] = ((b[i][0] * t[0] + b[i][1] * t[1]) + b[i][2] * t[2]) + b[i][3] * t[3];
+  }
+  ch.kappa = ((Pi_x[0] * ch.u[0] + Pi_x[1] * ch.u[1]) + Pi_x[2] * ch.u[2]) + Pi_x[3] * ch.u[3];
+  for (int j = 0; j < 3; ++j)
+    ch.w[j] = ((Pi_x[0] * b[0][j] + Pi_x[1] * b[1][j]) + Pi_x[2] * b[2][j]) + Pi_x[3] * b[3][j];
+  ch.c = pe.c;
+  ch.Pi_v = pe.Pi_v;
+}
 
 inline void rr_refuse(ReturnResult& R, const double eps_tr[3], const Elastic& el, double pi_n,
                       bool plastic, bool vertex, int reason, int sub, int it, int pit)
 {
   for (int a = 0; a < 3; ++a) {
     R.eps_e[a] = eps_tr[a]; R.sig[a] = el.sig[a]; R.q_a[a] = 0.0;
-    for (int b = 0; b < 3; ++b) R.atilde[a][b] = el.ae[a][b];
+    for (int b = 0; b < 3; ++b) { R.atilde[a][b] = el.ae[a][b]; R.ae[a][b] = el.ae[a][b]; }
   }
+  R.ch = ChainData();
   R.pi = pi_n; R.dlam = 0.0; R.Om = 0.0; R.D = 0.0;
   R.plastic = plastic; R.vertex = vertex; R.cap_active = false; R.refused = true;
   R.reason = reason; R.sub = sub; R.local_iters = it; R.pi_iters = pit;
@@ -988,8 +1057,9 @@ inline void return_map(const Params& P, const double eps_tr[3], double pi_n, dou
   if (fl0.F <= F_TRIAL_TOL_REL * std::fabs(P.p0)) {
     for (int a = 0; a < 3; ++a) {
       R.eps_e[a] = eps_tr[a]; R.sig[a] = el.sig[a]; R.q_a[a] = 0.0;
-      for (int b = 0; b < 3; ++b) R.atilde[a][b] = el.ae[a][b];
+      for (int b = 0; b < 3; ++b) { R.atilde[a][b] = el.ae[a][b]; R.ae[a][b] = el.ae[a][b]; }
     }
+    R.ch = ChainData();
     R.pi = pi_n; R.dlam = 0.0; R.Om = 0.0; R.D = 0.0;
     R.plastic = false; R.vertex = inv.vertex; R.cap_active = fl0.w < 1.0; R.refused = false;
     R.reason = OK; R.sub = EE_NONE; R.local_iters = 0; R.pi_iters = 0;
@@ -1055,15 +1125,17 @@ inline void return_map(const Params& P, const double eps_tr[3], double pi_n, dou
     return;
   }
   // 5. tangent and diagnostics
-  double J[4][4];
+  double J[4][4], Jinv[4][4];
   jacobian(pe, J);
-  if (!atilde_ep(pe, J, vfac, R.atilde)) {   // O2: LinAlgError from np.linalg.inv (uncaught)
+  if (!atilde_ep(pe, J, vfac, R.atilde, Jinv)) {   // O2: LinAlgError from np.linalg.inv (uncaught)
     rr_refuse(R, eps_tr, el, pi_n, true, inv.vertex, LOCAL_NOCONV, EE_SINGULAR_J, it, pi_total);
     return;
   }
   for (int a = 0; a < 3; ++a) {
     R.eps_e[a] = pe.eps_e[a]; R.sig[a] = pe.el.sig[a]; R.q_a[a] = pe.fl.q_a[a];
+    for (int b = 0; b < 3; ++b) R.ae[a][b] = pe.el.ae[a][b];
   }
+  chain_data(pe, Jinv, R.ch);
   R.pi = pe.pi; R.dlam = pe.dlam; R.Om = pe.fl.Om;
   R.D = pe.dlam * ((pe.el.sig[0] * pe.fl.q_a[0] + pe.el.sig[1] * pe.fl.q_a[1]) + pe.el.sig[2] * pe.fl.q_a[2]);
   R.plastic = true; R.vertex = pe.inv.vertex; R.cap_active = pe.fl.w < 1.0; R.refused = false;
@@ -1104,9 +1176,11 @@ inline void compress_c4(const double C4[3][3][3][3], double C[6][6])
     }
 }
 
-// (S.33): small-strain consistent tangent from a~^ep, converged sigma_a, trial eps~_a.
-inline void tangent_small(const double atilde[3][3], const double sig[3], const double eps_tr[3],
-                          const double V[3][3], double C[6][6])
+// (S.33) as the full 4th-order tensor: a~^ep (diagonal block), converged sigma_a, trial
+// eps~_a (spin (sigma_a - sigma_b)/(eps~_a - eps~_b), limit a~_aa - a~_ab inside the
+// REPEATED_EIG_TOL band -- the row convention of the header). O2 kernel.tangent_small.
+inline void tangent_small4(const double atilde[3][3], const double sig[3], const double eps_tr[3],
+                           const double V[3][3], double C4[3][3][3][3])
 {
   double g[3][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
   for (int a = 0; a < 3; ++a)
@@ -1116,9 +1190,122 @@ inline void tangent_small(const double atilde[3][3], const double sig[3], const 
       if (std::fabs(d) < REPEATED_EIG_TOL) g[a][b] = atilde[a][a] - atilde[a][b];
       else g[a][b] = (sig[a] - sig[b]) / d;
     }
-  double C4[3][3][3][3];
   spectral(V, atilde, g, 0.5, C4);
+}
+
+// (S.33): small-strain consistent tangent, compressed to 6x6 by the i <= j rows.
+inline void tangent_small(const double atilde[3][3], const double sig[3], const double eps_tr[3],
+                          const double V[3][3], double C[6][6])
+{
+  double C4[3][3][3][3];
+  tangent_small4(atilde, sig, eps_tr, V, C4);
   compress_c4(C4, C);
+}
+
+// --------------------------------------------------------------------------------
+// §9.6 chained consistent tangent across sub-increments (S.45)-(S.47)
+// --------------------------------------------------------------------------------
+// Column convention (O2 CHAIN_IJ / CHAIN_E): the six d_eps slots J = {00,11,22,01,12,02}
+// with input tensors E_J = e_k e_k (normal) and e_k e_l + e_l e_k (shear: the independent
+// TENSOR shear component); tr E_J = 1 (normal) or 0 (shear).
+inline double chain_E(int J, int k, int l)
+{
+  static const int I6[6] = {0, 1, 2, 0, 1, 0};
+  static const int J6[6] = {0, 1, 2, 1, 2, 2};
+  const int i = I6[J], j = J6[J];
+  return ((k == i && l == j) || (k == j && l == i)) ? 1.0 : 0.0;
+}
+
+inline double chain_trE(int J) { return J < 3 ? 1.0 : 0.0; }
+
+// Sensitivities of the state entering a sub-increment with respect to the TOTAL d_eps:
+// S_eps[J] = d eps^e / d d_eps_J (FULL 3x3, not symmetrised: header row convention),
+// S_pi[J] = d pi_i / d d_eps_J, cum = sum of the fractions taken so far.
+struct Chain {
+  double S_eps[6][3][3];
+  double S_pi[6];
+  double cum;
+};
+
+// O2 chain_start: S^eps_0 = 0, S^pi_0 = 0, cumulative fraction 0.
+inline void chain_start(Chain& c)
+{
+  for (int J = 0; J < 6; ++J) {
+    c.S_pi[J] = 0.0;
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) c.S_eps[J][i][j] = 0.0;
+  }
+  c.cum = 0.0;
+}
+
+// O2 chain_propagate, one sub-increment of (S.46):
+//   T_k        = S^eps_k + alpha_k E_J
+//   S^v_{k+1}  = v0 (sum_{j<=k} alpha_j) tr E_J
+//   plastic:   S^eps_{k+1} = Phi : T_k - sum_a m^a [ (u_a/c) S^pi_k + u_a Pi_v S^v_{k+1} ]
+//              S^pi_{k+1}  = sum_b w_b T^_bb + ((1 - kappa)/c) S^pi_k + (1 - kappa) Pi_v S^v_{k+1}
+//   elastic:   S^eps_{k+1} = T_k,  S^pi_{k+1} = S^pi_k
+// Phi = d eps^e_{k+1} / d eps~ in the (S.33) form with a~ -> b[:3][:3], sigma -> eps^e,
+// on the sub-increment's trial eigen-data (eps_tr, V).
+inline void chain_propagate(Chain& c, double alpha, double v0, const ReturnResult& res,
+                            const double eps_tr[3], const double V[3][3])
+{
+  const double cum = c.cum + alpha;
+  double T[6][3][3];
+  for (int J = 0; J < 6; ++J)
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j)
+      T[J][i][j] = c.S_eps[J][i][j] + alpha * chain_E(J, i, j);
+  c.cum = cum;
+  if (!res.plastic) {
+    for (int J = 0; J < 6; ++J)
+      for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) c.S_eps[J][i][j] = T[J][i][j];
+    return;
+  }
+  const ChainData& ch = res.ch;
+  double b3[3][3];
+  for (int a = 0; a < 3; ++a) for (int b = 0; b < 3; ++b) b3[a][b] = ch.b[a][b];
+  double Phi[3][3][3][3];
+  tangent_small4(b3, res.eps_e, eps_tr, V, Phi);
+  for (int J = 0; J < 6; ++J) {
+    const double S_v = v0 * cum * chain_trE(J);
+    double coef[3];
+    for (int a = 0; a < 3; ++a)
+      coef[a] = c.S_pi[J] * (ch.u[a] / ch.c) + S_v * (ch.u[a] * ch.Pi_v);
+    // T in the trial basis: diagonal entries T^_aa = V[:,a] . T V[:,a]
+    double Tdiag[3];
+    for (int a = 0; a < 3; ++a) {
+      double s = 0.0;
+      for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) s += V[i][a] * T[J][i][j] * V[j][a];
+      Tdiag[a] = s;
+    }
+    for (int i = 0; i < 3; ++i)
+      for (int j = 0; j < 3; ++j) {
+        double s = 0.0;
+        for (int k = 0; k < 3; ++k) for (int l = 0; l < 3; ++l) s += Phi[i][j][k][l] * T[J][k][l];
+        double mm = 0.0;
+        for (int a = 0; a < 3; ++a) mm += coef[a] * (V[i][a] * V[j][a]);
+        c.S_eps[J][i][j] = s - mm;
+      }
+    c.S_pi[J] = ((Tdiag[0] * ch.w[0] + Tdiag[1] * ch.w[1]) + Tdiag[2] * ch.w[2])
+              + ((1.0 - ch.kappa) / ch.c) * c.S_pi[J] + (1.0 - ch.kappa) * ch.Pi_v * S_v;
+  }
+}
+
+// O2 chain_assemble (S.47): C = a^e(eps^e_m) : S^eps_m, a^e in the (S.33) form on the eigen-data
+// of the FINAL converged eps^e_m (spin (sigma_a - sigma_b)/(eps^e_a - eps^e_b), limit
+// a^e_aa - a^e_ab), V the final sub-increment's trial eigenvectors. Column J of the kernel
+// 6x6 is the tensor a^e : S^eps[J], read on the i <= j rows (header row convention).
+inline void chain_assemble(const ReturnResult& res, const double V[3][3], const Chain& c, double C[6][6])
+{
+  static const int I6[6] = {0, 1, 2, 0, 1, 0};
+  static const int J6[6] = {0, 1, 2, 1, 2, 2};
+  double Ae[3][3][3][3];
+  tangent_small4(res.ae, res.sig, res.eps_e, V, Ae);
+  for (int J = 0; J < 6; ++J)
+    for (int I = 0; I < 6; ++I) {
+      const int i = I6[I], j = J6[I];
+      double s = 0.0;
+      for (int k = 0; k < 3; ++k) for (int l = 0; l < 3; ++l) s += Ae[i][j][k][l] * c.S_eps[J][k][l];
+      C[I][J] = s;
+    }
 }
 
 // --------------------------------------------------------------------------------
@@ -1163,10 +1350,79 @@ inline void step_once(const Params& P, const State& n, const double deps[6], Onc
   }
 }
 
+// O2 api._run_fractions: the sub-increments fr[k] * deps (k < m) chained on each other.
+// ok = false: cur is the refused sub-increment (its reason / sub / flags). The (S.46)
+// sensitivities are carried only when chain is true (every accepted sub-increment advances
+// them, an elastic one through the elastic line) and assembled by (S.47) into C.
+struct RunOut {
+  OnceOut cur;
+  bool ok;
+  double D;
+  int iters, piters;
+  bool plastic;
+  bool haveC;
+  double C[6][6];
+};
+
+inline void run_fractions(const Params& P, const State& n, const double deps[6], const double* fr, int m,
+                          bool chain, RunOut& ro)
+{
+  Chain cs;
+  if (chain) chain_start(cs);
+  ro.cur.st = n;
+  ro.D = 0.0; ro.iters = 0; ro.piters = 0; ro.plastic = false; ro.haveC = false; ro.ok = false;
+  OnceOut nxt;
+  for (int k = 0; k < m; ++k) {
+    double dsub[6];
+    for (int i = 0; i < 6; ++i) dsub[i] = fr[k] * deps[i];
+    step_once(P, ro.cur.st, dsub, nxt);
+    ro.cur = nxt;
+    if (ro.cur.res.refused) return;
+    ro.D += ro.cur.st.D_last;
+    ro.iters += ro.cur.res.local_iters;
+    ro.piters += ro.cur.res.pi_iters;
+    ro.plastic = ro.plastic || ro.cur.res.plastic;
+    if (chain) chain_propagate(cs, fr[k], n.v0, ro.cur.res, ro.cur.w, ro.cur.V);
+  }
+  ro.ok = true;
+  if (chain) {
+    chain_assemble(ro.cur.res, ro.cur.V, cs, ro.C);
+    ro.haveC = true;
+  }
+}
+
+// Accepted RunOut -> (np1, sigma, C, info). C: the chain when assembled, else the (S.33)
+// CTO of the last sub-increment.
+inline void run_accept(const RunOut& ro, int m, State& np1, double sigma[6], double C[6][6], StepInfo& info)
+{
+  np1 = ro.cur.st;
+  np1.D_last = ro.D;
+  for (int i = 0; i < 6; ++i) sigma[i] = ro.cur.sigma[i];
+  if (ro.haveC) {
+    for (int I = 0; I < 6; ++I) for (int J = 0; J < 6; ++J) C[I][J] = ro.C[I][J];
+  } else {
+    tangent_small(ro.cur.res.atilde, ro.cur.res.sig, ro.cur.w, ro.cur.V, C);
+  }
+  info.refusal = OK; info.plastic = ro.plastic ? 1 : 0;
+  info.vertex = ro.cur.res.vertex ? 1 : 0; info.cap_active = ro.cur.res.cap_active ? 1 : 0;
+  info.local_iters = ro.iters; info.pi_iters = ro.piters; info.substeps = m;
+  info.finest = OK; info.finest_sub = EE_NONE;
+}
+
+// Frozen-at-n refusal output (API contract).
+inline void freeze(const Params& P, const State& n, State& np1, double sigma[6], double C[6][6])
+{
+  np1 = n;
+  stress(P, n, sigma);
+  elasticTangent(P, n, C);
+}
+
 // O2 api.step: the increment is attempted whole; a refused increment is retried as
 // 2, 4, ..., 2^MAX_SUBSTEP_HALVINGS equal sub-increments, each a full BE step chained on
-// the previous one. The tangent of a substepped increment is the CTO of the LAST
-// sub-increment. finest / finest_sub: the reason of the refusal at the finest level
+// the previous one. Tangent (header TANGENT CONTRACT): m = 1 -> the (S.33) CTO of the
+// single step; m >= 2 -> the CHAINED tangent (S.46)-(S.47) of that level (a refused level
+// discards its sensitivities, the next level restarts from S_0 = 0). finest / finest_sub
+// (also in info.finest / info.finest_sub): the reason of the refusal at the finest level
 // (OK / EE_NONE on success).
 inline int step_ex(const Params& P, const State& n, const double deps[6], State& np1,
                    double sigma[6], double C[6][6], StepInfo& info, int& finest, int& finest_sub)
@@ -1174,61 +1430,80 @@ inline int step_ex(const Params& P, const State& n, const double deps[6], State&
   finest = OK;
   finest_sub = EE_NONE;
   if (!all_finite(deps, 6)) {
-    np1 = n;
-    stress(P, n, sigma);
-    elasticTangent(P, n, C);
-    info.refusal = LOCAL_NOCONV; info.plastic = 0; info.vertex = 0; info.cap_active = 0;
-    info.local_iters = 0; info.pi_iters = 0; info.substeps = 0;
+    freeze(P, n, np1, sigma, C);
+    info = StepInfo();
+    info.refusal = LOCAL_NOCONV;
     finest = LOCAL_NOCONV; finest_sub = EE_NONFINITE;
+    info.finest = finest; info.finest_sub = finest_sub;
     return info.refusal;
   }
-  StepInfo first = {0, 0, 0, 0, 0, 0, 0};
+  StepInfo first = StepInfo();
   int last_reason = OK, last_sub = EE_NONE;
-  OnceOut cur, nxt;
+  double fr[1 << MAX_SUBSTEP_HALVINGS];
+  RunOut ro;
   for (int j = 0; j <= MAX_SUBSTEP_HALVINGS; ++j) {
     const int m = 1 << j;
-    double dsub[6];
-    for (int i = 0; i < 6; ++i) dsub[i] = deps[i] / static_cast<double>(m);
-    cur.st = n;
-    double D = 0.0;
-    int iters = 0, piters = 0;
-    bool plastic = false, ok = true;
-    for (int k = 0; k < m; ++k) {
-      step_once(P, cur.st, dsub, nxt);
-      cur = nxt;
-      if (cur.res.refused) { ok = false; break; }
-      D += cur.st.D_last;
-      iters += cur.res.local_iters;
-      piters += cur.res.pi_iters;
-      plastic = plastic || cur.res.plastic;
-    }
-    if (ok) {
-      np1 = cur.st;
-      np1.D_last = D;
-      for (int i = 0; i < 6; ++i) sigma[i] = cur.sigma[i];
-      tangent_small(cur.res.atilde, cur.res.sig, cur.w, cur.V, C);
-      info.refusal = OK; info.plastic = plastic ? 1 : 0;
-      info.vertex = cur.res.vertex ? 1 : 0; info.cap_active = cur.res.cap_active ? 1 : 0;
-      info.local_iters = iters; info.pi_iters = piters; info.substeps = m;
+    for (int k = 0; k < m; ++k) fr[k] = 1.0 / static_cast<double>(m);
+    run_fractions(P, n, deps, fr, m, m > 1, ro);
+    if (ro.ok) {
+      run_accept(ro, m, np1, sigma, C, info);
       return OK;
     }
     if (j == 0) {
-      first.plastic = cur.res.plastic ? 1 : 0; first.vertex = cur.res.vertex ? 1 : 0;
-      first.cap_active = cur.res.cap_active ? 1 : 0;
-      first.local_iters = cur.res.local_iters; first.pi_iters = cur.res.pi_iters;
+      first.plastic = ro.cur.res.plastic ? 1 : 0; first.vertex = ro.cur.res.vertex ? 1 : 0;
+      first.cap_active = ro.cur.res.cap_active ? 1 : 0;
+      first.local_iters = ro.cur.res.local_iters; first.pi_iters = ro.cur.res.pi_iters;
     }
-    last_reason = cur.res.reason;
-    last_sub = cur.res.sub;
+    last_reason = ro.cur.res.reason;
+    last_sub = ro.cur.res.sub;
   }
   // exhausted: frozen at n (API contract), O2's flags of the whole-increment attempt
-  np1 = n;
-  stress(P, n, sigma);
-  elasticTangent(P, n, C);
+  freeze(P, n, np1, sigma, C);
   info = first;
   info.refusal = SUBSTEPS_EXHAUSTED;
   info.substeps = 1 << MAX_SUBSTEP_HALVINGS;
   finest = last_reason;
   finest_sub = last_sub;
+  info.finest = finest; info.finest_sub = finest_sub;
+  return info.refusal;
+}
+
+// O2 api.step_fractions: the increment deps taken as the m sub-increments fr[k] * deps (any
+// fr[k] > 0 with |sum - 1| <= 1e-12, e.g. a recursive-halving shape (1/2, 1/4, 1/4)), with NO
+// ladder. chain = true: the chained tangent (S.47) for every m, m = 1 included (O2 measures
+// the m = 1 reduction to (S.33) this way); chain = false: the last sub-increment's (S.33).
+// Returns OK, -1 on invalid fractions (O2 raises ValueError; nothing computed, frozen output),
+// or the refused sub-increment's Refusal code (info.finest / finest_sub its reason; the
+// output is frozen at n, unlike O2 which returns the refused sub-increment's state).
+// info.substeps = m. A test / measurement entry point: OpenSees uses step().
+inline int step_fractions(const Params& P, const State& n, const double deps[6], const double* fr, int m,
+                          bool chain, State& np1, double sigma[6], double C[6][6], StepInfo& info)
+{
+  info = StepInfo();
+  info.substeps = m;
+  double sum = 0.0;
+  bool valid = m >= 1 && m <= (1 << MAX_SUBSTEP_HALVINGS) && all_finite(deps, 6);
+  for (int k = 0; valid && k < m; ++k) {
+    if (!(fr[k] > 0.0) || !std::isfinite(fr[k])) valid = false;
+    sum += fr[k];
+  }
+  if (!valid || std::fabs(sum - 1.0) > 1e-12) {
+    freeze(P, n, np1, sigma, C);
+    info.refusal = -1;
+    return -1;
+  }
+  RunOut ro;
+  run_fractions(P, n, deps, fr, m, chain, ro);
+  if (ro.ok) {
+    run_accept(ro, m, np1, sigma, C, info);
+    return OK;
+  }
+  freeze(P, n, np1, sigma, C);
+  info.refusal = ro.cur.res.reason;
+  info.plastic = ro.cur.res.plastic ? 1 : 0; info.vertex = ro.cur.res.vertex ? 1 : 0;
+  info.cap_active = ro.cur.res.cap_active ? 1 : 0;
+  info.local_iters = ro.cur.res.local_iters; info.pi_iters = ro.cur.res.pi_iters;
+  info.finest = ro.cur.res.reason; info.finest_sub = ro.cur.res.sub;
   return info.refusal;
 }
 
@@ -1365,7 +1640,7 @@ inline int initialState(const Params& P, const double sigma0[6], double v0, doub
 inline int step(const Params& P, const State& n, const double deps[6], State& np1,
                 double sigma[6], double C[6][6], StepInfo& info)
 {
-  int finest = 0, finest_sub = 0;
+  int finest = 0, finest_sub = 0;   // also returned in info.finest / info.finest_sub
   return detail::step_ex(P, n, deps, np1, sigma, C, info, finest, finest_sub);
 }
 

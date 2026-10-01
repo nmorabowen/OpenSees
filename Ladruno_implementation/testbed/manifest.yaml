@@ -2081,6 +2081,9 @@ features:
       - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
       - SRC/runtime/runtime/TclPackageClassBroker.cpp
       - SRC/material/nD/CMakeLists.txt
+    zone_b:                  # the P1a kernel gates (Esmeralda: g++ + the WP-144 venv; kernel-vs-O2 oracle, not part of the Zone-A pytest selection)
+      - tests/ladrunonorsand_kernel_check.cpp                                        # g++ self-check driver of the header-only kernel
+      - Ladruno_files/testbed/norsand_oracle/kernel_parity/test_kernel_parity.py     # kernel vs the O2 oracle, step by step (+ mutate_kernel.sh: the 9-mutant gate)
     dispatch: {tcl: true, functionMap: true}
     status: planned          # IN PROGRESS (WP-144 P1): the manifest gate knows only active|remediation|planned, and any other status makes a missing pytest an ERROR; flip to active when tests/test_ladruno_norsand.py lands at G2
     notes: >

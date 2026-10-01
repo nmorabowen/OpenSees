@@ -15,7 +15,9 @@
 // It then runs self-checks (CHECK lines): FD of the tangent (pins the shear convention
 // of C), the symmetric elastic / non-symmetric plastic engineering tangent, the
 // validate() refusals, the frozen state on a refused step, bounded work on wild trial
-// increments, and an elastic closed loop. Exit status 1 if any CHECK fails.
+// increments, an elastic closed loop, and the chained tangent of substepped increments
+// (sheet §9.6) against the central FD of the whole increment (ladder, uniform and
+// recursive-halving fractions, m = 1 reduction, vertex). Exit status 1 if any CHECK fails.
 // Parity against the O2 oracle is run by
 //   Ladruno_files/testbed/norsand_oracle/kernel_parity/test_kernel_parity.py
 //
@@ -143,6 +145,43 @@ static double maxabs(const double* x, int n)
   double m = 0.0;
   for (int i = 0; i < n; ++i) m = std::fmax(m, std::fabs(x[i]));
   return m;
+}
+
+// Chained tangent (S.47) of the increment d taken with the fixed fractions fr, against the central FD
+// of the WHOLE increment (same fractions at every FD point; O2 selfcheck chain_vs_fd). e: max over the
+// six columns of ||C_J - FD_J|| / ||C_J||; el: the same for the last sub-increment's (S.33) CTO.
+// Returns false if any of the 13 evaluations refused or the branch (plastic flag) changed.
+static bool chain_fd(const Params& P, const State& s, const double d[6], const std::vector<double>& fr, double h,
+                     double& e, double& el)
+{
+  const int m = (int)fr.size();
+  State np1; double sig[6], C[6][6], Cl[6][6]; StepInfo info, il;
+  detail::step_fractions(P, s, d, fr.data(), m, true, np1, sig, C, info);
+  detail::step_fractions(P, s, d, fr.data(), m, false, np1, sig, Cl, il);
+  bool ok = info.refusal == OK && il.refusal == OK && info.plastic;
+  e = 0.0; el = 0.0;
+  for (int J = 0; J < 6; ++J) {
+    double dp[6], dm[6];
+    for (int i = 0; i < 6; ++i) { dp[i] = d[i]; dm[i] = d[i]; }
+    dp[J] += h; dm[J] -= h;
+    State a, b; double sp[6], sm[6], Ca[6][6], Cb[6][6]; StepInfo ia, ib;
+    detail::step_fractions(P, s, dp, fr.data(), m, true, a, sp, Ca, ia);
+    detail::step_fractions(P, s, dm, fr.data(), m, true, b, sm, Cb, ib);
+    ok = ok && ia.refusal == OK && ib.refusal == OK && ia.plastic == info.plastic && ib.plastic == info.plastic;
+    double n2 = 0.0, d2 = 0.0, nl2 = 0.0, dl2 = 0.0;
+    for (int I = 0; I < 6; ++I) {
+      const double fd = (sp[I] - sm[I]) / (2.0 * h);
+      // norm of the 3x3 column tensor: shear rows count twice
+      const double wgt = I < 3 ? 1.0 : 2.0;
+      n2 += wgt * (C[I][J] - fd) * (C[I][J] - fd);
+      d2 += wgt * C[I][J] * C[I][J];
+      nl2 += wgt * (Cl[I][J] - fd) * (Cl[I][J] - fd);
+      dl2 += wgt * Cl[I][J] * Cl[I][J];
+    }
+    e = std::fmax(e, std::sqrt(n2 / d2));
+    el = std::fmax(el, std::sqrt(nl2 / dl2));
+  }
+  return ok;
 }
 
 int main()
@@ -319,6 +358,91 @@ int main()
     e /= maxabs(sig0, 6);
     check("elastic_closed_loop", e, 1e-12,
           e <= 1e-12 && !i1.plastic && !i2.plastic && s2.D_last == 0.0 && s2.pi_i == s0.pi_i);
+  }
+
+  // ---- CHECK: chained consistent tangent across sub-increments (sheet §9.6) --------------
+  // (A) AMP_STOP smooth cap n = 40: every substepped ladder increment. The ladder tangent must be
+  //     bit-identical to step_fractions(1/m, chain) and match the central FD of the WHOLE increment
+  //     (fractions held fixed); the last sub-increment's CTO must be far from it (O2: 0.51-0.90).
+  {
+    Params P = paper(); P.cap = 2; P.c1 = 0.05; P.c2 = 0.15;
+    State s = init_state(P, -100.0, -80.0, -0.05);
+    const int n = 40;
+    const double d[6] = {(-0.01 + 2e-3) / n, -0.01 / n, (-0.01 - 2e-3) / n, 0, 0, 0};
+    int nsub = 0;
+    double worst = 0.0, last_min = 1e300;
+    bool ident = true, ok = true;
+    for (int k = 0; k < n; ++k) {
+      State np1; double sig[6], C[6][6]; StepInfo info;
+      step(P, s, d, np1, sig, C, info);
+      if (info.refusal != OK) { ok = false; break; }
+      if (info.substeps > 1) {
+        ++nsub;
+        const int m = info.substeps;
+        std::vector<double> fr(m, 1.0 / m);
+        double e = 0.0, el = 0.0;
+        if (!chain_fd(P, s, d, fr, 1e-7, e, el)) ok = false;
+        worst = std::fmax(worst, e);
+        last_min = std::fmin(last_min, el);
+        State b; double sb[6], Cb[6][6]; StepInfo ib;
+        detail::step_fractions(P, s, d, fr.data(), m, true, b, sb, Cb, ib);
+        for (int I = 0; I < 6; ++I) for (int J = 0; J < 6; ++J) ident = ident && Cb[I][J] == C[I][J];
+      }
+      s = np1;
+    }
+    printf("INFO chain AMP_STOP: %d substepped increments, chain vs FD (h = 1e-7) max %.3e, last-sub CTO min %.3f\n",
+           nsub, worst, last_min);
+    check("chain_ampstop_vs_fd", worst, 1e-6, ok && nsub >= 20 && worst <= 1e-6);
+    check("chain_ladder_equals_step_fractions", ident ? 0.0 : 1.0, 0.0, ok && ident);
+    check("chain_last_substep_cto_is_far", last_min, 0.1, ok && last_min > 0.1);
+  }
+  // (B, E) generic non-coaxial plastic increment (fork WW, three shears): forced uniform m = 8, 2 and
+  //     the non-uniform (recursive-halving) fractions (1/2, 1/4, 1/8, 1/8); (C) m = 1 chain = (S.33).
+  {
+    Params P = fork(); P.rho_bar = 0.71;
+    const double sh[6] = {0, 0, 0, 3e-4, 2e-4, 1e-4};
+    State s = init_state(P, -100.0, -60.4, 0.0);
+    s.v = s.v0 = 1.65;
+    const double pre[6] = {4e-4 + sh[0], -1e-3, 0.0, sh[3], sh[4], sh[5]};
+    for (int k = 0; k < 5; ++k) {
+      State np1; double sig[6], C[6][6]; StepInfo info;
+      step(P, s, pre, np1, sig, C, info);
+      s = np1;
+    }
+    const double db[6] = {1e-4, -6e-4, 2e-4, 0.5 * sh[3], 0.5 * sh[4], 0.5 * sh[5]};
+    const std::vector<std::vector<double>> frs = {std::vector<double>(8, 0.125), {0.5, 0.5},
+                                                  {0.5, 0.25, 0.125, 0.125}};
+    const char* names[3] = {"chain_generic_m8_vs_fd", "chain_generic_m2_vs_fd", "chain_generic_nonuniform_vs_fd"};
+    for (int c = 0; c < 3; ++c) {
+      double e = 0.0, el = 0.0;
+      const bool okc = chain_fd(P, s, db, frs[c], 1e-7, e, el);
+      printf("INFO %s: chain err %.3e, last-sub CTO err %.3e\n", names[c], e, el);
+      check(names[c], e, 1e-6, okc && e <= 1e-6 && el > 1e-3);
+    }
+    // (C) m = 1: chain vs (S.33) (distinct trial eigenvalues: equal to round-off)
+    State a, b; double sa[6], sb[6], Ca[6][6], Cb[6][6]; StepInfo ia, ib;
+    const double one = 1.0;
+    detail::step_fractions(P, s, db, &one, 1, true, a, sa, Ca, ia);
+    step(P, s, db, b, sb, Cb, ib);
+    double dC = 0.0;
+    for (int I = 0; I < 6; ++I) for (int J = 0; J < 6; ++J) dC = std::fmax(dC, std::fabs(Ca[I][J] - Cb[I][J]));
+    dC /= maxabs(&Cb[0][0], 36);
+    check("chain_m1_equals_S33", dC, 1e-12, ia.refusal == OK && ib.substeps == 1 && ib.plastic && dC <= 1e-12);
+  }
+  // (F) vertex: hydrostatic plastic step from the apex, fractions (1/2, 1/4, 1/4): C:1 = 0
+  {
+    const Params P = paper();
+    State s = init_state(P, -100.0, nan, 0.0);
+    s.v = s.v0 = 1.59;
+    const double dv[6] = {-1e-3, -1e-3, -1e-3, 0, 0, 0};
+    const double fr[3] = {0.5, 0.25, 0.25};
+    State np1; double sig[6], C[6][6]; StepInfo info;
+    detail::step_fractions(P, s, dv, fr, 3, true, np1, sig, C, info);
+    double c1 = 0.0;
+    for (int I = 0; I < 6; ++I) c1 = std::fmax(c1, std::fabs(C[I][0] + C[I][1] + C[I][2]));
+    c1 /= maxabs(&C[0][0], 36);
+    check("chain_vertex_C_on_1_is_zero", c1, 1e-12,
+          info.refusal == OK && info.vertex && np1.pi_i == s.pi_i && c1 <= 1e-12);
   }
 
   printf("SUMMARY %s (%d failed)\n", g_fail ? "FAIL" : "PASS", g_fail);

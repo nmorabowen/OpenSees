@@ -9,7 +9,8 @@ import numpy as np
 
 from . import kernel as K
 from .acoustic import acoustic_min_det, acoustic_principal, acoustic_tensor
-from .api import State, initial_state, k2_path, run_path, step, tangent, tangent_finite, triaxial
+from .api import (State, initial_state, k2_path, run_path, step, step_fractions, tangent, tangent_finite,
+                  tangent_last_substep, triaxial)
 from .params import Params
 
 np.set_printoptions(precision=6, linewidth=140)
@@ -349,10 +350,132 @@ def check_cap():
                   f"substeps {s.flags.get('substeps', 1)}  local iters {s.flags['local_iters']}  nested iters {s.flags['pi_iters']}")
 
 
+# ------------------------------------------------------------------ 7. §9.6 chained tangent across substeps
+def chain_vs_fd(P, st, deps, fractions, h):
+    """Chained tangent (S.47) of the increment deps taken with the given fractions, against the central FD
+    of the WHOLE increment (fractions held fixed at every FD point, same branch pattern required).
+    Returns (max over the 6 kernel columns of ||C_J - FD_J||/||C_J||, the same for the last-sub-increment
+    CTO, the state, its branch pattern)."""
+    stn = step_fractions(P, st, deps, fractions)
+    assert not stn.flags["refused"], stn.flags["reason"]
+    C, Cl = tangent(P, stn), tangent_last_substep(P, stn)
+    pat = stn.flags["pattern"]
+    e, el = 0.0, 0.0
+    for J in range(6):
+        E = K.CHAIN_E[J]
+        sp = step_fractions(P, st, deps + h * E, fractions)
+        sm = step_fractions(P, st, deps - h * E, fractions)
+        assert sp.flags["pattern"] == pat == sm.flags["pattern"], (pat, sp.flags["pattern"], sm.flags["pattern"])
+        fd = (sp.sigma - sm.sigma) / (2.0 * h)
+        col, coll = np.einsum("ijkl,kl->ij", C, E), np.einsum("ijkl,kl->ij", Cl, E)
+        e = max(e, np.linalg.norm(col - fd) / np.linalg.norm(col))
+        el = max(el, np.linalg.norm(coll - fd) / np.linalg.norm(coll))
+    return e, el, stn, pat
+
+
+def _s33(st):
+    c = st.cache
+    return K.tangent_small(c["atilde"], c["sig"], c["eps_tr"], c["nvec"])
+
+
+def check_chain():
+    print("\n=== 7. chained consistent tangent across substeps (sheet §9.6) vs central FD of the whole increment ===")
+    H = (1e-6, 1e-7, 1e-8)
+    # (A) AMP_STOP smooth cap, n = 40: every substepped increment of the ladder, FD with the ladder's 1/m
+    P = k2_params(cap="smooth", c1=0.05, c2=0.15)
+    v0 = -0.05 + P.v_c0 - P.lam_tilde * math.log(80.0)
+    s0 = initial_state(P, -100 * I3, v0, -80.0)
+    deps = (-0.01 * I3 + 2e-3 * np.diag([1.0, 0.0, -1.0])) / 40
+    sts = run_path(P, s0, np.array([deps] * 40))
+    print("  (A) AMP_STOP smooth cap n = 40 (ladder substeps; FD with the same fractions): step m pattern | "
+          "chain err h=1e-6 1e-7 1e-8 | last-sub CTO err")
+    amp_states, rows = {}, []
+    for i, s in enumerate(sts):
+        m = s.flags.get("substeps", 1)
+        if m == 1 or s.flags["refused"]:
+            continue
+        prev = sts[i - 1] if i else s0
+        amp_states[i + 1] = prev
+        errs, last = [], None
+        for h in H:
+            e, el, stn, pat = chain_vs_fd(P, prev, deps, [1.0 / m] * m, h)
+            errs.append(e)
+            last = el
+        assert np.array_equal(stn.sigma, s.sigma) and stn.pi_i == s.pi_i, "ladder state != fixed-fraction state"
+        assert np.array_equal(tangent(P, stn), tangent(P, s)), "ladder chain != fixed-fraction chain"
+        rows.append((i + 1, m, pat, errs, last))
+        print(f"    {i + 1:3d} {m} {pat:5s} | {errs[0]:.2e} {errs[1]:.2e} {errs[2]:.2e} | {last:.2e}")
+    if rows:
+        for hi, h in enumerate(H):
+            v = [r[3][hi] for r in rows]
+            print(f"      h = {h:.0e}: chain err min {min(v):.2e} max {max(v):.2e} over {len(rows)} substepped increments")
+        v = [r[4] for r in rows]
+        print(f"      last-sub-increment CTO err: min {min(v):.2f} max {max(v):.2f}")
+    # (B) generic plastic increment with all three shears (no cap), forced m = 8 and m = 2
+    shear = np.array([[0, 3e-4, 1e-4], [3e-4, 0, 2e-4], [1e-4, 2e-4, 0]])
+    Pb = fork_params()
+    sb0 = initial_state(Pb, -100 * I3, 1.65, -60.4)
+    stb = run_path(Pb, sb0, np.array([np.diag([4e-4, -1e-3, 0.0]) + shear] * 5))[-1]
+    db = np.diag([1e-4, -6e-4, 2e-4]) + 0.5 * shear
+    print("  (B) generic non-coaxial plastic increment (fork WW, no cap), forced uniform fractions:")
+    for m in (8, 2):
+        errs, last = [], None
+        for h in H:
+            e, el, stn, pat = chain_vs_fd(Pb, stb, db, [1.0 / m] * m, h)
+            errs.append(e)
+            last = el
+        th = K.invariants(np.linalg.eigvalsh(stn.sigma)).theta
+        print(f"    m = {m} pattern {pat}: chain err {errs[0]:.2e} {errs[1]:.2e} {errs[2]:.2e} | last-sub CTO err {last:.2e} "
+              f"(theta {th:.3f})")
+    # (C) m = 1: the chain must reduce to (S.33); the ladder's m = 1 path returns (S.33) itself
+    s1 = step_fractions(Pb, stb, db, [1.0])
+    dC = np.linalg.norm(tangent(Pb, s1) - _s33(s1)) / np.linalg.norm(_s33(s1))
+    e1, _, _, pat1 = chain_vs_fd(Pb, stb, db, [1.0], 1e-7)
+    s1e = step_fractions(Pb, sb0, np.diag([1e-4, -2e-4, 0.5e-4]) + shear, [1.0])
+    dCe = np.linalg.norm(tangent(Pb, s1e) - _s33(s1e)) / np.linalg.norm(_s33(s1e))
+    s1l = step(Pb, stb, db)
+    ident = ("C_chain" not in s1l.cache) and np.array_equal(tangent(Pb, s1l), _s33(s1))
+    print(f"  (C) m = 1: chain vs (S.33) {dC:.1e} (plastic, pattern {pat1}, FD err {e1:.2e}); elastic step {dCe:.1e} "
+          f"(plastic {s1e.flags['plastic']}); ladder m = 1 returns (S.33) bit-identically: {ident}")
+    # (E) non-uniform fractions (recursive-halving shapes, sum = 1)
+    print("  (E) non-uniform fractions:")
+    cases = [("(B) increment", Pb, stb, db, (0.5, 0.25, 0.125, 0.125))]
+    if 20 in amp_states:
+        cases.append(("AMP step 20", P, amp_states[20], deps, (0.25, 0.25, 0.25, 0.125, 0.125)))
+    if 11 in amp_states:
+        cases.append(("AMP step 11", P, amp_states[11], deps, (0.5, 0.25, 0.25)))
+    for name, Pc, sc, dc, fr in cases:
+        errs, last = [], None
+        for h in H:
+            e, el, stn, pat = chain_vs_fd(Pc, sc, dc, fr, h)
+            errs.append(e)
+            last = el
+        print(f"    {name:14s} alpha = {fr}: pattern {pat}: chain err {errs[0]:.2e} {errs[1]:.2e} {errs[2]:.2e} "
+              f"| last-sub {last:.2e}")
+    # (F) vertex branch: hydrostatic plastic step from the apex (no cap): pi_i frozen, C:1 = 0, FD along 1
+    print("  (F) vertex branch, hydrostatic plastic step from the apex (no cap):")
+    Pv = k2_params()
+    sv0 = initial_state(Pv, -100 * I3, 1.59, None)
+    dv = -1e-3 * I3
+    for fr in ((1.0,), (0.5, 0.25, 0.25)):
+        stn = step_fractions(Pv, sv0, dv, fr)
+        C = tangent(Pv, stn)
+        ones = np.einsum("ijkl,kl->ij", C, I3)
+        h = 1e-7
+        fd = (step_fractions(Pv, sv0, dv + h * I3, fr).sigma - step_fractions(Pv, sv0, dv - h * I3, fr).sigma) / (2 * h)
+        msg = (f"    alpha = {fr}: pattern {stn.flags['pattern']}, vertex {stn.flags['vertex']}, p = {stn.sigma.trace() / 3:.4f}, "
+               f"pi_i = {stn.pi_i:.4f} (frozen: {stn.pi_i == sv0.pi_i}), max|C:1|/max|C| = {np.abs(ones).max() / np.abs(C).max():.1e}, "
+               f"max|FD along 1|/max|C| = {np.abs(fd).max() / np.abs(C).max():.1e}")
+        if len(fr) == 1:
+            msg += f", chain vs (S.33) {np.linalg.norm(C - _s33(stn)) / np.linalg.norm(_s33(stn)):.1e}"
+        print(msg)
+
+
 if __name__ == "__main__":
     import sys
     groups = dict(jac=check_jacobian, cto=check_cto, newton=check_quadratic, k1=check_k1,
-                  k2=lambda: check_finite_and_k2(full_table="--table" in sys.argv), cap=check_cap)
+                  k2=lambda: check_finite_and_k2(full_table="--table" in sys.argv), cap=check_cap,
+                  chain=check_chain)
     sel = [a for a in sys.argv[1:] if a in groups] or list(groups)
     for g in sel:
         groups[g]()

@@ -61,6 +61,19 @@
 //     commit is refused out of band (ladrunoNoteCommitRefusal) and this point LATCHES: every later
 //     trial and commit is refused until revertToStart(). getCopy propagates the latch.
 //   - Bounded work: the kernel's caps (local iterations, line search, pi_i scan, 2^8 substeps).
+//   - The refusal reason is recorded at two levels: the kernel's `refusal` (SUBSTEPS_EXHAUSTED for every
+//     refusal that went down the substep ladder) and `finest` / `finest_sub`, the cause at the finest
+//     level (StepInfo, from detail::step_ex). Both reach the one-time WARNING and the `refusal` /
+//     `stepInfo` responses.
+//
+// Tangent: a substepped increment returns the CHAINED consistent tangent, d sigma_final / d (TOTAL
+// strain increment), propagated through every sub-increment (owner decision 2026-10-01; plan 2.8).
+// It is a derivative with respect to the six INDEPENDENT tensor components (eps_01 etc. independent),
+// so an engineering-shear caller halves the shear COLUMNS (done in getTangent; unlike LadrunoJ2Kernel).
+//
+// Initial state: -pi0 is REQUIRED (no default onto the yield surface). F(sigma0, pi_i0) is computed at
+// construction: a start OUTSIDE the surface (F > 1e-6 |p0|; |F| <= 1e-6 |p0| is ON the surface, warned) is refused; an on-surface start
+// is accepted with a warning (the first loading step is then plastic).
 //
 // See Ladruno_implementation/144_ladruno_norsand_plan.md and 144a_norsand_equation_sheet.md.
 // classTags 33023 / 33024 / 33025. Written: N. Mora-Bowen (Ladruno), 2026.
@@ -81,17 +94,19 @@ class LadrunoNorSand : public NDMaterial {
          DIM_PSTRAIN = 1 }; // {11,22,12}  (eps_33 = 0)  order 3
 
   // sendSelf / recvSelf wire layout: ONE Vector of WIRE_LEN doubles (offsets in LadrunoNorSand.cpp,
-  // namespace nsw). Test-friendly: tests/ci can rebuild a material from the raw vector.
-  static const int WIRE_LEN = 83;
+  // namespace nsw). Test-friendly: tests/ci can rebuild a material from the raw vector. The base
+  // NDMaterial sends nothing, so this is the only Vector under the dbTag (FE_Datastore keys vectors by
+  // size: nothing to collide with).
+  static const int WIRE_LEN = 128;
 
   // null constructor (broker / recvSelf): parameters are filled by recvSelf
   LadrunoNorSand();
 
-  // full constructor. sigma0 is the initial stress (OpenSees order 11,22,33,12,23,13; tension
+  // full constructor. sig0 is the initial stress (OpenSees order 11,22,33,12,23,13; tension
   // positive = kernel order and sign), v0 the initial specific volume (a separate committed state
-  // variable from v), pi0 the initial image pressure (NaN: placed on the yield surface).
-  LadrunoNorSand(int tag, const ladruno_norsand::Params& p, const double sigma0[6],
-                 double v0, double pi0, double density = 0.0);
+  // variable from v), pi0 the initial image pressure (REQUIRED, < 0; NaN is refused: initOK() false).
+  LadrunoNorSand(int tag, const ladruno_norsand::Params& p, const double sig0[6],
+                 double v0, double pi0, double dens = 0.0);
 
   ~LadrunoNorSand();
 
@@ -127,14 +142,15 @@ class LadrunoNorSand : public NDMaterial {
 
   // ---- construction diagnostics (the parser) ----
   bool initOK(void) const { return initOk; }
+  double initF0(void) const { return F0init; }   // F(sigma0, pi_i0) of the initial state (NaN if not built)
   const char* initMessage(void) const { return initMsg.c_str(); }
   void echoParameters(OPS_Stream& s) const;      // parameter echo at construction (like LadrunoSANISAND)
 
  protected:
   // derived-class constructors: fixed classTag and dimension
-  LadrunoNorSand(int classTag, int dimMode);
-  LadrunoNorSand(int tag, int classTag, const ladruno_norsand::Params& p, const double sigma0[6],
-                 double v0, double pi0, double density, int dimMode);
+  LadrunoNorSand(int clsTag, int dimMode);
+  LadrunoNorSand(int tag, int clsTag, const ladruno_norsand::Params& p, const double sig0[6],
+                 double v0, double pi0, double dens, int dimMode);
   // copy EVERYTHING (parameters, both states, strains, latch, counters) from another instance;
   // the clone shares no storage with the source (history isolation). The dbTag is NOT copied.
   void copyFrom(const LadrunoNorSand& o);
@@ -145,8 +161,8 @@ class LadrunoNorSand : public NDMaterial {
   double density;                  // mass density (the element mass; NOT the ellipticity rho)
   double sigma0[6];                // initial stress, kernel order
   double v0init;                   // initial specific volume
-  double pi0init;                  // initial image pressure (NaN = on the yield surface)
-  bool   pi0given;
+  double pi0init;                  // initial image pressure (required, < 0)
+  double F0init;                   // F(sigma0, pi_i0) at construction (derived; NaN until built)
   bool   initOk;
   std::string initMsg;
 
@@ -166,8 +182,9 @@ class LadrunoNorSand : public NDMaterial {
   bool latched;                    // a refused trial reached commitState: refuse everything until revertToStart
   bool warnedTrial, warnedLatch;
   int  lastRefusal;                // kernel Refusal code of the last refused trial; -1 = non-finite input/output
+  int  lastFinest, lastFinestSub;  // finest-level cause (StepInfo.finest / finest_sub) of that refusal; 0 if none
   int  nRefusals;                  // trials refused since revertToStart
-  int  nSubstepped;                // accepted steps that needed substepping
+  int  nSubstepped;                // COMMITTED steps that needed substepping (counted in commitState)
   ladruno_norsand::StepInfo lastInfo;
 
   // helpers

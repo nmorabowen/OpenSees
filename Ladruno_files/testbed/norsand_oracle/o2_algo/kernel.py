@@ -554,6 +554,24 @@ def atilde_ep(P: Params, pe: PointEval, J: np.ndarray, vfac: float) -> np.ndarra
 
 
 @dataclass
+class ChainData:
+    """Per-sub-increment sensitivities of a converged PLASTIC return map, sheet §9.6 (S.45):
+    the implicit-function-theorem columns of the map (eps~, pi_i,n, v) -> (x, pi_i,n+1).
+    J = A + t Pi_x^T with t = dr/dpi_i|_x = (dlam q_api, F_pi), Pi_x = (Pi_b, Pi_lam) (S.28);
+    b = J^-1, u = b t, kappa = Pi_x . u, c = r'(pi_i) (S.27), w_b = sum_c Pi_c b_cb + Pi_lam b_4b.
+      dx/deps~_b = b[:, b]        dpi_i,n+1/deps~_b = w_b
+      dx/dpi_i,n = -u/c           dpi_i,n+1/dpi_i,n  = (1 - kappa)/c
+      dx/dv      = -u Pi_v        dpi_i,n+1/dv       = (1 - kappa) Pi_v
+    Vertex branch (§3.2): Pi_x = 0, Pi_v = 0, c = 1, kappa = 0 come out of the same formulas."""
+    b: np.ndarray              # (4,4) = J^-1
+    u: np.ndarray              # (4,)  = b t
+    w: np.ndarray              # (3,)  = Pi_x^T b[:, :3]
+    kappa: float
+    c: float
+    Pi_v: float
+
+
+@dataclass
 class StepResult:
     eps_e: np.ndarray          # converged principal elastic strains
     sig: np.ndarray            # converged principal stresses
@@ -575,6 +593,23 @@ class StepResult:
     local_iters: int
     pi_iters: int
     res_hist: list
+    ae: np.ndarray = field(default=None)       # a^e_ab (S.3) at the CONVERGED eps_e (= atilde when elastic)
+    chain: ChainData = field(default=None)     # §9.6 sensitivities (plastic, accepted steps only)
+    eps_tr: np.ndarray = field(default=None)   # trial principal strains eps~_a of this step
+
+
+def chain_data(pe: PointEval, J: np.ndarray) -> ChainData:
+    """(S.45) block data from the converged iterate and its Jacobian (S.30)."""
+    fl = pe.fl
+    t = np.empty(4)
+    t[:3] = pe.dlam * fl.q_api
+    t[3] = fl.Y.F_pi
+    Pi_x = np.append(pe.Pi_b, pe.Pi_lam)
+    b = np.linalg.inv(J)
+    u = b @ t
+    kappa = float(Pi_x @ u)
+    w = Pi_x @ b[:, :3]
+    return ChainData(b, u, w, kappa, pe.c, pe.Pi_v)
 
 
 def return_map(P: Params, eps_tr: np.ndarray, pi_n: float, v: float, vfac: float,
@@ -592,7 +627,8 @@ def return_map(P: Params, eps_tr: np.ndarray, pi_n: float, v: float, vfac: float
                           el.ae, False, inv.vertex, False, True, "trial_" + str(e), 0, 0, [])
     if fl0.F <= F_TRIAL_TOL_REL * abs(P.p0) and not force_plastic:
         return StepResult(eps_tr.copy(), el.sig, pi_n, 0.0, np.zeros(3), 0.0, fl0.Y.F_p, fl0.Y.eta,
-                          psi0, 0.0, 0.0, el.ae, False, inv.vertex, fl0.w < 1.0, False, "", 0, 0, [fl0.F])
+                          psi0, 0.0, 0.0, el.ae, False, inv.vertex, fl0.w < 1.0, False, "", 0, 0, [fl0.F],
+                          ae=el.ae, chain=None, eps_tr=eps_tr.copy())
     # 3-4. local Newton on x = (eps_e, dlam)
     x = np.append(eps_tr, 0.0)
     hist = []
@@ -651,7 +687,8 @@ def return_map(P: Params, eps_tr: np.ndarray, pi_n: float, v: float, vfac: float
     at = atilde_ep(P, pe, J, vfac)
     D = pe.dlam * float(np.dot(pe.el.sig, pe.fl.q_a))
     return StepResult(pe.eps_e, pe.el.sig, pe.pi, pe.dlam, pe.fl.q_a, pe.fl.Om, pe.fl.Y.F_p, pe.fl.Y.eta,
-                      pe.psi, pe.ps, D, at, True, pe.inv.vertex, pe.fl.w < 1.0, False, "", it, pi_total, hist)
+                      pe.psi, pe.ps, D, at, True, pe.inv.vertex, pe.fl.w < 1.0, False, "", it, pi_total, hist,
+                      ae=pe.el.ae, chain=chain_data(pe, J), eps_tr=eps_tr.copy())
 
 
 # --------------------------------------------------------------------------------------
@@ -685,6 +722,80 @@ def tangent_small(atilde: np.ndarray, sig: np.ndarray, eps_tr: np.ndarray, nvec:
             else:
                 g[a, b] = (sig[a] - sig[b]) / d
     return _spectral(nvec, atilde, g, 0.5)
+
+
+# --------------------------------------------------------------------------------------
+# §9.6 chained consistent tangent across sub-increments (S.45)-(S.47)
+# --------------------------------------------------------------------------------------
+# Column convention (sheet §9.6 "Recursion"): the six d_eps slots J = {00, 11, 22, 01, 12, 02} with
+# input tensors E_J = e_k e_k (normal) and e_k e_l + e_l e_k (shear: the independent TENSOR shear
+# component, eps_kl and eps_lk moved together; tr E_J = 1 or 0).
+CHAIN_IJ = ((0, 0), (1, 1), (2, 2), (0, 1), (1, 2), (0, 2))
+CHAIN_E = []
+for _k, _l in CHAIN_IJ:
+    _E = np.zeros((3, 3))
+    _E[_k, _l] += 1.0
+    _E[_l, _k] += 1.0 if _k != _l else 0.0
+    CHAIN_E.append(_E)
+CHAIN_E = np.array(CHAIN_E)                          # (6,3,3)
+CHAIN_TRE = np.array([float(np.trace(E)) for E in CHAIN_E])
+
+
+def chain_start():
+    """S^eps_0 = 0 (6 columns of 3x3), S^pi_0 = 0, cumulative fraction 0 (S.46 initial state)."""
+    return np.zeros((6, 3, 3)), np.zeros(6), 0.0
+
+
+def chain_propagate(S_eps: np.ndarray, S_pi: np.ndarray, cum_before: float, alpha: float, v0: float,
+                    res: StepResult, nvec: np.ndarray):
+    """One sub-increment of (S.46). Inputs: the sensitivities of the state ENTERING the
+    sub-increment (S^eps_k, S^pi_k, sum_{j<k} alpha_j), its fraction alpha_k, v0, the accepted
+    StepResult of the sub-increment (eps~_a, eps^e_a, b, u, w, kappa, c, Pi_v) and the trial eigenvectors.
+    Returns (S^eps_{k+1}, S^pi_{k+1}, sum_{j<=k} alpha_j).
+
+      T_k        = S^eps_k + alpha_k E_J                         (d eps~_k / d d_eps_J)
+      S^v_{k+1}  = v0 (sum_{j<=k} alpha_j) tr E_J                 (closed form, v = v0 (1 + tr eps))
+      plastic:   S^eps_{k+1} = Phi : T_k - sum_a m^a [ (u_a/c) S^pi_k + u_a Pi_v S^v_{k+1} ]
+                 S^pi_{k+1}  = sum_b w_b T^_bb + ((1 - kappa)/c) S^pi_k + (1 - kappa) Pi_v S^v_{k+1}
+      elastic:   S^eps_{k+1} = T_k,  S^pi_{k+1} = S^pi_k
+    Phi = d eps^e_{k+1} / d eps~ in the (S.33) form: diagonal block b_ab (a, b <= 3), spin
+    (eps^e_a - eps^e_b)/(eps~_a - eps~_b), limit b_aa - b_ab (tangent_small with a~ -> b, sigma -> eps^e).
+    The full 3x3 column tensors are kept (the (S.33) row convention per operator; each operator
+    symmetrises its own input), sheet §9.6 "Contract"."""
+    cum = cum_before + alpha
+    T = S_eps + alpha * CHAIN_E                                   # (6,3,3)
+    if not res.plastic:
+        return T, S_pi.copy(), cum
+    ch = res.chain
+    Phi = tangent_small(ch.b[:3, :3], res.eps_e, res.eps_tr, nvec)
+    S_v = v0 * cum * CHAIN_TRE                                    # (6,)
+    m = np.array([np.outer(nvec[:, a], nvec[:, a]) for a in range(3)])   # (3,3,3)
+    # per column: Phi : T_J, then the pi_i,n and v columns (eigenvalues only)
+    PhiT = np.einsum("ijkl,Jkl->Jij", Phi, T)
+    coef = np.outer(S_pi, ch.u[:3] / ch.c) + np.outer(S_v, ch.u[:3] * ch.Pi_v)     # (6,3): per column, per a
+    S_eps_new = PhiT - np.einsum("Ja,aij->Jij", coef, m)
+    That = np.einsum("ia,Jij,jb->Jab", nvec, T, nvec)             # T in the trial basis
+    Tdiag = np.einsum("Jaa->Ja", That)                            # T^_bb
+    S_pi_new = Tdiag @ ch.w + ((1.0 - ch.kappa) / ch.c) * S_pi + (1.0 - ch.kappa) * ch.Pi_v * S_v
+    return S_eps_new, S_pi_new, cum
+
+
+def chain_assemble(P: Params, res: StepResult, nvec: np.ndarray, S_eps: np.ndarray) -> np.ndarray:
+    """(S.47): C = a^e(eps^e_m) : S^eps_m with a^e in the (S.33) form on the eigen-data of the FINAL
+    converged eps^e_m (spin (sigma_a - sigma_b)/(eps^e_a - eps^e_b), limit a^e_aa - a^e_ab).
+    Returns the 3x3x3x3 tensor with C4[:, :, k, l] = C4[:, :, l, k] = column_J / 2 on the shear
+    slots (so C4 : E = column for every symmetric E, and the parity c4_to_c6 / c6_of reduction
+    C4_ijkl + C4_ijlk recovers the kernel's 6x6 column exactly) and column_J on the normal slots."""
+    Ae = tangent_small(res.ae, res.sig, res.eps_e, nvec)
+    cols = np.einsum("ijkl,Jkl->Jij", Ae, S_eps)                  # (6,3,3)
+    C = np.zeros((3, 3, 3, 3))
+    for J, (k, l) in enumerate(CHAIN_IJ):
+        if k == l:
+            C[:, :, k, k] = cols[J]
+        else:
+            C[:, :, k, l] = 0.5 * cols[J]
+            C[:, :, l, k] = 0.5 * cols[J]
+    return C
 
 
 def tangent_finite(atilde: np.ndarray, tau: np.ndarray, eps_tr: np.ndarray, nvec: np.ndarray) -> np.ndarray:

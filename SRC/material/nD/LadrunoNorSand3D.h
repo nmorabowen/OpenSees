@@ -40,8 +40,8 @@
 class LadrunoNorSand3D : public LadrunoNorSand {
  public:
   LadrunoNorSand3D();                         // null constructor (broker / recvSelf / getCopy)
-  LadrunoNorSand3D(int tag, const ladruno_norsand::Params& p, const double sigma0[6],
-        double v0, double pi0, double density = 0.0);
+  LadrunoNorSand3D(int tag, const ladruno_norsand::Params& p, const double sig0[6],
+        double v0, double pi0, double dens = 0.0);
   ~LadrunoNorSand3D();
 
   const char* getClassType(void) const { return "LadrunoNorSand3D"; }

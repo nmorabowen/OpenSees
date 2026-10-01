@@ -107,7 +107,12 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 - [ ] Kernel-vs-oracle parity: the tangent at an exact Lode corner or near the vertex is
       round-off-limited (~1e-8) in the oracle itself; gate those bands separately, measure
       per-step increments against the path scale, and gate iteration counts. Quirks: "TANGENT
-      parity at an exact Lode corner".
+      parity at an exact Lode corner". Parity is a MODERATE-step statement (<= ~3e-3 strain; at 1e-2 both codes
+      decide on round-off), the iteration-count gate applies to the fixed paths only, and near-coalescent
+      eigenvalues are a third tangent band. Quirks: "Kernel-vs-O2 PARITY is a MODERATE-STEP statement",
+      "THIRD round-off band".
+- [ ] A kernel tangent taken w.r.t. the independent TENSOR shear component needs its shear COLUMNS halved by an
+      engineering-shear shell (unlike `LadrunoJ2Kernel`). Quirks: "C is d(sigma_tensor)/d(eps_tensor)".
 - [ ] Pin a number only from a step a RESIDUAL test converged, and re-measure pins after merging
       `ladruno`. A determinism gate needs no convergence: use `FixedNumIter`. Quirks: "where ONE
       tangent stopped".

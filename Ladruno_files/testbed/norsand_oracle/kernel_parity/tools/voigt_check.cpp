@@ -2,7 +2,7 @@
 //   strain  eps_tensor = e (normal), e/2 (shear);  stress voigt = tensor;  T[a][b] = C[a][b] * (b>=3 ? 0.5 : 1)
 // by central finite differences of the kernel stress with respect to the ENGINEERING strain vector,
 // at a plastic, non-coaxial state. Build/run on Esmeralda (login node, seconds):
-//   g++ -std=c++17 -O2 -I SRC/material/nD -o /tmp/voigt_check Ladruno_files/testbed/norsand_oracle/kernel_parity/voigt_check.cpp && /tmp/voigt_check
+//   g++ -std=c++17 -O2 -I SRC/material/nD -o /tmp/voigt_check Ladruno_files/testbed/norsand_oracle/kernel_parity/tools/voigt_check.cpp && /tmp/voigt_check
 #include "LadrunoNorSandKernel.h"
 #include <cstdio>
 #include <cmath>

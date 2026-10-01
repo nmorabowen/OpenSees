@@ -34,9 +34,9 @@ LadrunoNorSand3D::LadrunoNorSand3D()
 {
 }
 
-LadrunoNorSand3D::LadrunoNorSand3D(int tag, const ladruno_norsand::Params& p, const double sigma0[6],
-                                       double v0, double pi0, double density)
-  : LadrunoNorSand(tag, ND_TAG_LadrunoNorSand3D, p, sigma0, v0, pi0, density, LadrunoNorSand::DIM_3D)
+LadrunoNorSand3D::LadrunoNorSand3D(int tag, const ladruno_norsand::Params& p, const double sig0[6],
+                                       double v0, double pi0, double dens)
+  : LadrunoNorSand(tag, ND_TAG_LadrunoNorSand3D, p, sig0, v0, pi0, dens, LadrunoNorSand::DIM_3D)
 {
 }
 
