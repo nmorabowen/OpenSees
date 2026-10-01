@@ -2,7 +2,7 @@
 title: "WP-158 — Mortar friction tangent at shared multi-pair nodes: FD diagnosis and an opt-in FD pair tangent"
 project: Ladruno
 type: ADR (amends the ADR-41 C2/C3 mortar tangent; status row in the ADR-48 capstone)
-status: "PR open (not merged) — stacks on #900 (WP-157)"
+status: "PR open (#902, not merged) — stacks on #900 (WP-157)"
 owner: nmora
 related:
   - "[[41_ladruno_mortar_alm_contact_adr]] (C2.2 normal ALM, C3.2 friction tangent, C3.3 -consistanttan)"
