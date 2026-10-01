@@ -2,13 +2,13 @@
 title: "WP-144a — LadrunoNORSAND equation sheet (AB06/BA06 re-derived, curved CSL, WW ζ, Q-cap)"
 project: Ladruno
 type: equation sheet
-status: "G0 fix round applied 2026-09-30 (Adversary PASS-WITH-FIXES, 7 items; independent Opus numeric check PASSED; owner approved the refusal rule). Every derivative sympy/FD-checked; scripts in the session scratchpad p0a/."
+status: "G1 revision applied 2026-10-01 (12 items from the G1 oracle/test round, §16.6; owner decision: WW rho = 1/2 refused). G0 fix round 2026-09-30 (Adversary PASS-WITH-FIXES, 7 items; independent Opus numeric check PASSED; owner approved the refusal rule). Every derivative sympy/FD-checked; G0 scripts in the session scratchpad p0a/, G1 scripts in Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_r2/."
 owner: nmora (Deriver: Fable, P0a)
 related:
   - "[[144_ladruno_norsand_plan]] (design §2, oracles §5, roster §6)"
   - "[[134_sanisand_reference_integrator]] (the O1 oracle template)"
 tags: [equation-sheet, norsand, critical-state, hyperelasticity, sand, wp-144]
-updated: 2026-09-30
+updated: 2026-10-01
 ---
 
 # WP-144a — LadrunoNORSAND equation sheet
@@ -55,6 +55,13 @@ Equation numbers `(S.n)` are this sheet's. `(AB06 nn)`, `(BA06 n.nn)` are the pa
 - Specific volume v = 1 + e. Small strain: v = v₀ (1 + tr ε) with ε the **total** strain and v₀ the initial specific
   volume (BA06 Box 2 step 6b) [E]. Hence ∂v/∂ε_a = v₀ for every principal component, and inside the local return
   (total strain fixed) ∂v/∂ε^e_a = 0.
+- **v₀ is a separate state datum [I; G1].** dv/dε uses the *initial* specific volume v₀, not the current v. A state
+  built mid-path (restart, a test fixture, a Gauss point initialised from a stress state) must therefore carry v₀
+  separately from v; setting v₀ := v is an easy error that silently changes the consistent tangent through the
+  s_k = …Π_v v₀ term of (S.31) (it leaves the stress update untouched, so only a tangent FD catches it). Measured
+  (r2_neutral_v0.py, K2 paper set, drained TXC state 0.01 rad off the corner): with v = 1.45 against v₀ = 1.70 the
+  tangent built with v in place of v₀ misses the central FD by 1.1e−4 relative, the v₀ form by 7e−7 (the same
+  near-corner FD floor as §4.3); with v = 1.691 the two differ by 2.0e−5 vs 2.4e−6.
 
 ### 1.3 Parameters (one table for the whole sheet)
 
@@ -63,7 +70,7 @@ Equation numbers `(S.n)` are this sheet's. `(AB06 nn)`, `(BA06 n.nn)` are the pa
 | p₀, κ̂, ε^e_{v0}, μ₀, α₀ | BA06 energy: reference pressure (<0), elastic compressibility, reference volumetric strain, shear modulus, coupling | BA06 2.3 |
 | M | critical stress ratio in compression (θ = π/3) | AB06 10 |
 | N, N̄ | curvature of F and of Q on the meridian plane (0 ≤ N̄ ≤ N < 1) | AB06 10, 14 |
-| ρ, ρ̄ | ellipticity of F and of Q (WW: ½ ≤ ρ ≤ 1; GA: 7/9 ≤ ρ ≤ 1) | AB06 11–12 |
+| ρ, ρ̄ | ellipticity of F and of Q (WW: ½ < ρ ≤ 1, **ρ = ½ refused**, §4.2; GA: 7/9 ≤ ρ ≤ 1). The same range applies to ρ̄ [I; G1] | AB06 11–12 |
 | β := (1−N)/(1−N̄) ≤ 1 | volumetric non-associativity | AB06 p.1537, BA06 2.29 |
 | χ (< 0, ≈ −3.5) | maximum-dilatancy coefficient, D* = χ ψ_i. **This is BA06's α (AB06's α); renamed to avoid AB06's χ = ‖ξ‖.** χ̄ := χ/β (AB06's ᾱ). | BA06 2.26, 2.29 |
 | h | hardening constant (280 in both papers) | AB06 43 |
@@ -167,27 +174,45 @@ because ζ_yy enters solely through ζ_yy·q·y_a·y_b = O(|θ−θ_c|²) (measu
 independently; (ii) oracles and tests must **not** unit-test ζ_y or ζ_yy alone within |θ−θ_c| < 10⁻⁴ of a corner; test
 q_a, q_ab, Ω, Ω_a instead (which are regular), or ζ_y at |θ−θ_c| ≥ 10⁻⁴ against the corner limits (S.9).
 
-### 3.2 q = 0 (hydrostatic): the vertex rule [I; decided at G0]
-R = 0 makes n̂, y, n̂_ab, y_ab undefined. F = pη there and ζ does not enter. Q has a vertex on the axis: the
-deviatoric flow √(3/2) ζ̄ n̂_a + ζ̄_y q y_a has magnitude √(2/3)Ω → √(2/3)·√(3/2)ζ̄ ≠ 0 along **every** non-axial
-approach, but no direction on the axis itself. **Rule (all modes, cap or no cap): if R < R_tol at the trial state or
-at a local iterate, set n̂ := 0, y_a := 0, n̂_ab := 0, y_ab := 0, Ω := 0, Ω_a := 0, so q_a = (1/3)βF_p δ_a (purely
-volumetric), ε^p_s = 0 and π_i stays at π_{i,n}.** Justification: (i) it is the limit w → 0 of the cap (S.36), so the
-capped and uncapped models agree on the axis; (ii) it keeps (S.20) exact (both sides zero) instead of the
-contradictory "no deviatoric flow but Ω = √(3/2)ζ̄"; (iii) the return from an axial trial state beyond π_c is then the
-1-D axial return to π_c with frozen π_i, which is what BA06's planar cap does. Ω is therefore discontinuous at the
-axis (a vertex, not a smoothness bug); Newton iterates that cross R_tol are a corner problem and fall under the bounded
-local-work refusal. K1.5 (flow-rule identity) is tested only at plastic steps with q > 0, where (S.20) has no 0/0.
-K2 (no cap) starts isotropic at −100 kPa **inside** the surface (elastic), so the rule never fires there.
-R_tol: 10⁻⁸·|p| (relative) [I; to be confirmed by the oracle census].
+### 3.2 q = 0 (hydrostatic): the vertex rule [I; decided at G0, restated at G1]
+R = 0 makes n̂, y, n̂_ab, y_ab undefined. On the axis the yield function loses its q-term: **F := pη(p, π_i)** (q dropped,
+ζ does not enter), so its gradient is purely volumetric, **f_a = F_p/3** (every a), and F = 0 there means η = 0, i.e.
+p = π_c. Q has a vertex on the axis: the deviatoric flow √(3/2) ζ̄ n̂_a + ζ̄_y q y_a has magnitude √(2/3)Ω →
+√(2/3)·√(3/2)ζ̄ ≠ 0 along **every** non-axial approach, but no direction on the axis itself. **Rule (all modes, cap or
+no cap): if R < R_tol at the trial state or at a local iterate, set n̂ := 0, y_a := 0, n̂_ab := 0, y_ab := 0, Ω := 0,
+Ω_a := 0, so q_a = (1/3)βF_p δ_a (purely volumetric), ε^p_s = 0 and π_i stays at π_{i,n}.** Justification: (i) it is
+the limit w → 0 of the cap (S.36), so the capped and uncapped models agree on the axis; (ii) it keeps (S.20) exact
+(both sides zero) instead of the contradictory "no deviatoric flow but Ω = √(3/2)ζ̄"; (iii) the return from an axial
+trial state beyond π_c is then the 1-D axial return to π_c with frozen π_i, which is what BA06's planar cap does. Ω is
+therefore discontinuous at the axis (a vertex, not a smoothness bug).
+
+**What the two integrators do there [I; G1, measured].** Without a cap, a near-isotropic compression path (deviatoric
+to volumetric strain-increment ratio 0.2/3, the G1 "AMP_STOP" path) does not merely approach the axis: the plastic
+flow at small η is compactive and its deviatoric part exceeds the imposed deviatoric strain rate, so the stress
+reaches **q → 0 in finite time**. After that instant the continuum rate problem has no consistent solution — the
+rate form needs a flow direction and the vertex has none, and with f purely volumetric the consistency condition
+cannot hold for a non-isotropic ε̇: the deviatoric part of a^e:ε̇ is invisible to f = (F_p/3)δ yet moves the stress
+off the axis, where F regains its ζq term. The rate oracle therefore **stops** there (status `vertex_reached`; measured at increment 13 of 40
+on the AMP_STOP path, last state p = −236.7 kPa, q = 0). Backward Euler has no such problem: an axial (or
+R < R_tol) trial state is returned **along the axis to p = π_c with π_i frozen** by the rule above, i.e. hydrostatic
+compression beyond π_c is **perfectly plastic** (no volumetric hardening in this model, §10.1). Measured (O2, apex state
+π_c = p = −100 kPa, three hydrostatic steps of tr Δε = −3e−3): p = −100.000000 after every step, π_i unchanged,
+Δε^p_v = tr Δε exactly, ε^p_s = 0, D = −p·|tr Δε| = 0.300 per step. A non-axial trial state whose return crosses R_tol
+is a corner problem for the local Newton and falls under the bounded local-work refusal (the O2 oracle refuses the
+AMP_STOP step 13 with `local_linesearch` after 2⁸ substeps; the kernel does the same, §9.1). K1.5 (flow-rule identity)
+is tested only at plastic steps with q > 0, where (S.20) has no 0/0. K2 (no cap) starts isotropic at −100 kPa
+**inside** the surface (elastic), so the rule never fires there. R_tol: 10⁻⁸·|p| (relative) [I; confirmed by the
+oracle census: both oracles use it].
 
 ---
 
 ## 4. ζ(θ, ρ): shape functions
 
-Both satisfy ζ(0) = 1/ρ (tension corner), ζ(π/3) = 1 (compression corner), ζ'(0) = ζ'(π/3) = 0 (sympy-checked).
+Both satisfy ζ(0) = 1/ρ (tension corner), ζ(π/3) = 1 (compression corner) and ζ'(0) = 0 for every ρ, and
+ζ'(π/3) = 0 **on the admissible ranges** (GA: 7/9 ≤ ρ ≤ 1; WW: ½ < ρ ≤ 1 — not at ρ = ½, §4.2) (sympy-checked).
 The deviatoric section is the polar curve r(θ) = 1/ζ(θ); it is convex iff r² + 2r'² − r r'' ≥ 0 on [0, π/3]
-(checked numerically on a 4001-point grid; sign flips confirmed at the ranges quoted by AB06).
+(checked numerically on a 4001-point grid; sign flips confirmed at the ranges quoted by AB06). **Every ζ range in
+this section applies to ρ̄ (the ζ̄ of Q, §5.2) exactly as to ρ** [I; G1]: the parser checks both with the same rule.
 
 ### 4.1 Gudehus–Argyris (AB06 11 p.1535) [E] — option, refused for ρ < 7/9
 
@@ -205,7 +230,20 @@ With c := cosθ, A := 4(1−ρ²), B := 2ρ − 1:
       ζ = [A c² + B²] / [2(1−ρ²) c + B (A c² + 5ρ² − 4ρ)^{1/2}].                                           (S.11)
 
 This is 1/r_WW with r_WW the 1975 Willam–Warnke elliptic trace with r_t/r_c = ρ, θ from the tensile meridian [I].
-Convex for ½ ≤ ρ ≤ 1 (numerically: min = −8.9e−15 at ρ = 0.5, +0.011 at 0.55, −214 at 0.45). Derivatives in θ:
+Convex for ½ ≤ ρ ≤ 1 (numerically: min = −8.9e−15 at ρ = 0.5, +0.011 at 0.55, −214 at 0.45), but the **admissible
+range is the open-ended (½, 1]: ρ = ½ exactly is refused, for ρ and for ρ̄** (owner decision 2026-10-01) [I; G1;
+sympy-checked, r2_zeta_half.py]. At ρ = ½ the constant B = 2ρ − 1 vanishes and (S.11) collapses to ζ = 2cosθ: the
+elliptic trace degenerates to a straight line (r cosθ = ½, the Rankine triangle), the convexity measure is identically
+0, and **ζ'(π/3) = −√3**, not 0 — the compression corner is a **vertex** of the deviatoric section, so the
+mirror-continued ζ has a kink in θ, ζ∘σ is only C⁰ there, and the corner branch (S.9), the C² argument of §4.3 and the
+regularity of q_a all fail. For every ρ > ½ the square root in (S.11) equals 2ρ − 1 at θ = π/3 and ζ'(π/3) = 0
+identically (sympy, with ρ = ½ + s, s > 0), but the corner curvature blows up as ρ → ½⁺:
+
+      ζ''(π/3) = 3(1 − ρ²)/(2ρ − 1)²     (= 9.5625 at 0.7, 3 at 0.8; 209 at 0.55, 5.5e3 at 0.51, → ∞ at ½⁺),
+
+so the corner constants of (S.9) and the FD floor of §4.3 degrade continuously towards ½; in double precision the
+raw formula already loses ζ'(π/3) at ρ = ½ + 10⁻⁶ (evaluates to −5e−5 instead of 0). The refusal is at ½ exactly; a
+value like 0.51 is admissible but a poor choice. Derivatives in θ:
 ζ' = (dζ/dc)(−sinθ), ζ'' = (d²ζ/dc²) sin²θ − (dζ/dc) cosθ, with dζ/dc, d²ζ/dc² by the quotient rule (O2: generate
 with sympy; the closed forms are long and add nothing). Corner constants (needed for (S.9); numeric, sympy-checked):
 
@@ -362,8 +400,16 @@ Nested scalar residual and its derivative (AB06 61–62) [E, Λ generalised; FD-
       r(π_i) = π_i − π_{i,n} − √(2/3) h Δλ (π_i* − π_i) Ω,
       r'(π_i) = 1 + √(2/3) h Δλ Ω [ 1 − (Λ(π_i)/π_i) Π_ψ ],     c := r' at the converged π_i.                (S.27)
 
-Solve by Newton from π_{i,n} at every local iterate (p, Ω, v fixed). Implicit derivatives of the converged π_i
-(AB06 57–58, 69; FD-checked to 10⁻⁹ in both CSL modes):
+Solve by Newton from π_{i,n} at every local iterate (p, Ω, v fixed). **Root-selection contract [I; G1]:** without a
+cap r(π_i) is monotone: r' = 1 + √(2/3)hΔλΩ[1 − (Λ/π_i)Π_ψ] > 1 because Λ/π_i < 0 and Π_ψ > 0 under the B > 0 guard
+of §7, so the Newton root is unique; with the smooth cap Ω depends on π_i and r(π_i) can **fold** (r' changes sign, up
+to three roots, §10.2). The nested solve must return the root **continuous with π_{i,n}**: the first sign change of r
+found by a scan from π_{i,n} in the direction of −r(π_{i,n}) with a step much smaller than the dip width of §10.2
+(≤ 10⁻⁴|π_{i,n}|), refined by safeguarded Newton/bisection inside that bracket; never a factor-2 geometric bracket,
+which can enclose the far w = 1 root. A nested solve that fails, or whose root jumps by more than the scan width
+between local iterates, rejects the local step (Δλ backtracked, then the increment substepped, §9.1). At the selected
+root c = r'(π_i) > 0, so the closed-form sensitivities below (and the CTO of §9.3 built from them) remain valid.
+Implicit derivatives of the converged π_i (AB06 57–58, 69; FD-checked to 10⁻⁹ in both CSL modes):
 
       P_a := ∂π_i/∂σ_a |_{Δλ, v} = (√(2/3) h Δλ / c) [ Ω π*_a + (π_i* − π_i) Ω_a ],
       Π_b := ∂π_i/∂ε^e_b = Σ_a P_a a^e_ab,
@@ -379,13 +425,23 @@ Solve by Newton from π_{i,n} at every local iterate (p, Ω, v fixed). Implicit 
 ### 9.1 Algorithm (AB06 Box 2, BA06 Box 2) [E]
 Given ε^e_n (tensor), π_{i,n}, total strain ε_{n+1} (so Δε), v₀:
 1. Trial: ε^{e,tr} = ε^e_n + Δε. Spectral: ε^{e,tr} = Σ_a ε̃_a m^a. (The converged ε^e, σ and ε̇^p share these m^a.)
-2. σ^tr_a from §2 at ε̃; F(σ^tr, π_{i,n}) < 0 → elastic: ε^e = ε^{e,tr}, π_i = π_{i,n}, tangent = a^e (§9.4). Else:
+2. σ^tr_a from §2 at ε̃. **Trial contract [I; G1]: the step is plastic iff F(σ^tr, π_{i,n}) > F_tol := 10⁻¹⁰·|p₀|**;
+   otherwise elastic: ε^e = ε^{e,tr}, π_i = π_{i,n}, tangent = a^e (§9.4). The threshold is in stress units (F has
+   them) and relative to the reference pressure, the same scale as the r₄ normalisation below; both oracles implement
+   this value and the kernel must reproduce it (an elastic/plastic decision that differs between kernel and oracle is
+   a contract failure, not a tolerance issue). Neutral increments: a pure shear increment of size h on a coaxial
+   yielded state gives F^tr − F_n = O(h²) (measured 1.06e7·h² kPa on the K2 drained TXC state at |p| ≈ 158 kPa, r2_neutral_v0.py),
+   so the threshold is crossed at h* ≈ 3e−8; above it the increment is a plastic step with Δλ = O(h²) ≥ 0, below it
+   an elastic step with a drift bounded by F_tol. Backward Euler has no elastic/plastic chatter (contrast §12). Else:
 3. Unknowns x = (ε^e₁, ε^e₂, ε^e₃, Δλ), start x = (ε̃, 0). Residual (AB06 48):
 
       r_a(x) = ε^e_a − ε̃_a + Δλ q_a(σ(ε^e), π_i),   a = 1,2,3;      r₄(x) = F(σ(ε^e), π_i),                (S.29)
 
    where π_i = π_i(ε^e, Δλ) is the converged root of (S.27) at the current iterate (nested Newton; Ω, p from σ(ε^e)).
-4. Newton: x ← x − J⁻¹ r until ‖r‖ small (AB06 report 4–5 iterations, quadratic). KKT: Δλ ≥ 0.
+4. Newton: x ← x − J⁻¹ r until ‖r‖ small (AB06 report 4–5 iterations, quadratic). KKT: Δλ ≥ 0. Local work is
+   bounded (iteration cap, backtracking line search on the scaled residual, nested-solve failure or root jump = step
+   rejected, §8); **on a refusal the kernel substeps the increment** (halving, to a stated depth, e.g. 2⁸) before it
+   reports the refusal upward [I; G1].
 5. Update: ε^p_{n+1} = ε^p_n + Δλ Σ_a q_a m^a, σ = Σ_a σ_a m^a, state (σ, e or v, π_i).
 
 Scaling note [I]: r₄ is in stress units, r₁₋₃ in strain; normalise (e.g. r₄/|p₀|) for the convergence test.
@@ -436,7 +492,21 @@ which the LogStrain wrapper meets at every start): γ̃_ab → (ã^{ep}_bb − �
 τ_a(λ̃_a² − λ̃_b²) + (τ_b − τ_a)λ̃_a² and dε̃/d(λ̃²) = 1/(2λ̃²); checked numerically, O(Δε̃) convergence].
 The total spatial tangent is a^{ep} = c̃ + τ⊕1,
 (τ⊕1)_ijkl = τ_jl δ_ik (AB06 p.1534 definition of ⊕). BA06 3.48 warns that earlier papers carry a spurious ½ on the
-spin sum in this finite-strain form. I have not re-derived (S.34); it is transcribed.
+spin sum in this finite-strain form.
+
+**Re-derived and FD-checked at G1 [I; G1; r2_finite_tangent_fd.py].** a^{ep} is the derivative, at the current
+configuration, of the nominal stress referred to that configuration: with f → (1 + hE) f (any E, not necessarily
+symmetric), P(E) := τ (1 + hE)^{−T} and dP/dh|₀ = a^{ep}:E. Derivation: b^{e,tr} → (1+hE) b^{e,tr} (1+hE)ᵀ gives, in the
+trial eigenbasis with μ_a = λ̃_a² and E_ab := n^a·E·n^b, dμ_b = 2hμ_b E_bb (so dε̃_b = hE_bb and dτ_a = hΣ_b ã^{ep}_ab E_bb)
+and dm^a = hΣ_{b≠a} (E_ba μ_a + μ_b E_ab)/(μ_a − μ_b) (n^b⊗n^a + n^a⊗n^b); subtracting hτEᵀ from P and collecting the
+(a,b) pair gives γ̃_ab(E_ab + E_ba) + τ_b E_ab with exactly the γ̃_ab of (S.34) — **no ½** — and the diagonal
+Σ_b ã_ab E_bb − τ_a E_aa = Σ_b c̃_ab E_bb + (Eτ)_aa; the τ⊕1 term is (Eτ)_ij = E_il τ_lj. Numerically (K2 paper set,
+ρ = 0.7/ρ̄ = 0.8, a plastic state 5 steps into the (S.43) protocol with distinct stretches, off the corner): central FD of
+P over the nine unit E_kl vs (S.34): 6.2e−7, 6.2e−9, 8.7e−10 for h = 10⁻⁵, 10⁻⁶, 10⁻⁷ (O(h²)); the ½-spin variant
+misses by 0.137 and dropping τ⊕1 by 8.6e−3, so the check discriminates both. (S.44) against the direct contraction
+n_j a_ijkl n_l: 3.9e−16 over 50 random n. a^{ep} has no minor symmetry in (k,l) (the τ⊕1 term): the acoustic tensor must
+be built from the full a^{ep}, never from a symmetrised one. **This FD check is a G1 gate test** (§16.3), not only an
+author script.
 
 ---
 
@@ -449,6 +519,17 @@ For η(p, π_i) < χ_cap M (χ_cap user parameter, e.g. 0.10): Q := −p, so q_a
 The switch at η = χ_cap M is a corner of Q (discontinuous q_a and tangent). BA06 note a smooth cap is possible.
 Consequence, both caps [I]: hydrostatic compression beyond π_c is perfectly plastic (no volumetric hardening in this
 model); bounded p on the compression side. Open item §16.
+
+**Corner sliding [I; G1, measured].** The planar cap replaces the vertex of §3.2 by a corner at η = c₁M, and on a
+near-isotropic path the state can be *attracted* to it: on the uncapped side (w = 1, η ≥ c₁M) the flow drives η down,
+on the capped side (w = 0, purely volumetric flow) η goes up, so the state **slides along the corner** η = c₁M
+(Filippov sliding) with no classical rate solution — neither branch is consistent for a finite time. The rate oracle
+stops there (status `cap_sliding`; measured at increment 17 of 40 on the AMP_STOP path with c₁ = 0.10, last state
+p = −161.9 kPa, q/|p| = 0.094, i.e. η = ζ(θ)q/|p| at the corner η₁ = 0.12, π_i frozen at −80 kPa since the capped
+side has Ω = 0). **Convention at η = c₁M exactly: w = 1** (the
+uncapped branch), in both oracles and the kernel. Backward Euler returns to one side or the other per step and
+chatters across the corner; the O2 oracle refuses the AMP_STOP step 16 (`local_linesearch` after 2⁸ substeps). This is
+the reason for the smooth cap of §10.2 (plan §2.7), which has no corner to slide on.
 
 ### 10.2 Smooth cap [I] — fork extension, unified with 10.1 and with "no cap"
 Blend weight on the stress ratio of (S.12), η = η(p, π_i) (well defined at q = 0, unlike −q/p):
@@ -474,6 +555,26 @@ and, because Ω now depends on π_i, the nested loop and the sensitivities chang
 Here π_i* is (S.23) with the capped Ω; the D*-identity (K1.6) holds exactly wherever w = 1 (η ≥ η₂ < M, so at every
 drained peak). Dissipation with the cap: D^p = λ̇[−p(1−w) + w D^p_u/λ̇] ≥ 0 whenever the uncapped D^p_u ≥ 0 (§11) [I].
 Recommended defaults: quintic S, c₁ = 0.05, c₂ = 0.15 (to be set by the oracle census; BA06's 0.10 lies between).
+
+**The fold of the nested π_i solve [I; G1, measured; r2_fold.py].** With the cap on, (S.37) reads r' = 1 − G̃ with the
+Ω_π terms, and the loop gain
+
+      G := √(2/3) h Δλ |π_i* − π_i| Ω^u w_η |η_π|          (the magnitude of the (π_i* − π_i)Ω_π term of (S.37))
+
+reaches **G ≈ 1 where the state enters the ramp** (η ≈ η₁ = c₁M, w small, w_η up to S'(½)/(η₂ − η₁) = 15.6 at the
+defaults): r' changes sign and r(π_i) **folds**, with up to three roots. This is not an absurd-overshoot artefact: on
+the mild near-isotropic AMP_STOP path (K2 paper set, ρ = 0.7/ρ̄ = 0.8) at a **volumetric strain step of 7.5e−4** (n = 40)
+the converged plastic steps reach G = 0.959, and at the step-8 iterate with Δλ = 7.877e−4 the residual has roots at
+π_i = −80.017 (η = 0.065, w = 0.001), −80.483 (η = 0.077, w = 0.021) and −104.7 (η = 0.55, w = 1): the near root is
+0.02 % of |π_{i,n}| away, the dip between the first two roots is 0.6 % of |π_{i,n}| (0.07 % at Δλ = 8.0e−4), and a
+factor-2 bracket from π_{i,n} (first point −160) encloses the far w = 1 root at −104.7. G falls with the step (0.885,
+0.701, 0.351 at n = 80, 160, 320). The backward-Euler solution exists at every step: a monolithic 5-unknown Newton on
+(ε^e, Δλ, π_i) converges to a scaled residual of 1e−13 (≤ 6 iterations, n = 40) — but it may land on a different root
+(its converged steps show G up to 2.8, i.e. r' < 0 there), so **the backward-Euler problem is non-unique at this step
+size** and the root-selection contract of §8 is what makes the kernel's answer the one continuous with π_{i,n}: scan
+step ≤ 10⁻⁴|π_{i,n}| (≪ the dip width), no factor-2 bracket, Δλ bounded with backtracking when the nested solve fails or
+jumps, substep on refusal (§9.1). The closed-form CTO (§9.3) is kept: at the selected root c = r' > 0 and (S.37) is
+exact. With the shipped near-root selection the O2 oracle completes the AMP_STOP path at every n from 20 to 320.
 
 ---
 
@@ -514,6 +615,13 @@ So the paper's "ρ ≤ ρ̄" does **not** guarantee D^p ≥ 0 for the flow rule 
 (condition A), and only WARNS on ρ > ρ̄** (which violates the paper's ψ_c ≤ φ_c reading but not dissipation under
 reading A). An independent numeric check (Opus, 1116 parameter cases) found condition A sharp.
 
+**Condition A has two independent parts [I; G1].** (i) **N̄ ≤ N** is the θ = π/3 member of min_θ ζ̄/ζ ≥ β (where
+ζ̄/ζ = 1 whatever ρ, ρ̄) and is required **on its own, also when ρ ≥ ρ̄**: with ρ = ρ̄ (any value, e.g. the 2-invariant
+ρ = ρ̄ = 1) and N̄ > N the η = M/N endpoint of (S.38) is M(1 − N̄/N) < 0 at every θ, so D^p < 0 near the tension apex
+although ρ/ρ̄ = 1 ≥ β trivially holds. (ii) **ρ/ρ̄ ≥ (1−N)/(1−N̄)** is the θ = 0 member; it is implied by ρ ≥ ρ̄ (then
+ρ/ρ̄ ≥ 1 ≥ β) but adds a genuine restriction when ρ < ρ̄: the second table row (ρ = 0.7 < ρ̄ = 0.8, N̄ = N so β = 1)
+satisfies (i) and fails (ii). The parser must test both; passing one never excuses the other.
+
 ### 11.3 Hardening-conjugate term and the dropped coupling (BA06 §2.5 p.5121–5122) [E]
 With π_i := ∂Ψ/∂ε^p_s the reduced inequality is σ:ε̇^p − π_i ε̇^p_s ≥ 0 (BA06 2.41). Since ε̇^p_s = √(2/3)λ̇Ω ≥ 0 and
 π_i < 0, the second term is ≥ 0 by itself; the inequality holds whenever §11.1 does. Ψ^p is built by integrating
@@ -549,8 +657,28 @@ Consistency Ḟ = f:σ̇ + F_π π̇_i = 0 with σ̇ = a^e:(ε̇ − λ̇q) give
 
       λ̇ = ⟨ f : a^e : ε̇ ⟩ / ( f : a^e : q + H ),    H = −M (p/π_i)^{1/(1−N)} √(2/3) h (π_i* − π_i) Ω,       (S.41)
 
-with λ̇ = 0 when F < 0 or the numerator is ≤ 0. a^e is the 4th-order elastic tangent in spectral form: (S.33) with
-ã^{ep} → a^e (S.3) and ε̃ → ε^e (this includes the spin terms; O1 needs them because ε̇ is a general tensor).
+with λ̇ = 0 when F < 0, and on the surface by the tie-break below. a^e is the 4th-order elastic tangent in spectral
+form: (S.33) with ã^{ep} → a^e (S.3) and ε̃ → ε^e (this includes the spin terms; O1 needs them because ε̇ is a general
+tensor).
+
+**Neutral loading and the elastic/plastic tie-break [I; G1; r2_neutral_v0.py].** The textbook rule "λ̇ = 0 if the
+numerator N := f:a^e:ε̇ ≤ 0" makes the mode decision **chatter** on a coaxial yielded state under a shear increment:
+with f and σ diagonal in the same basis and ε̇ = ε̇₁₂(e₁⊗e₂ + e₂⊗e₁), a^e:ε̇ is off-diagonal and N = 0 **exactly**
+(measured 0.0 for both shear directions against N/scale = −0.21 for an axial increment). On the elastic branch F then
+grows at second order (F = O(ε̇₁₂²t²)), the yield-crossing event fires, the plastic branch is entered with N ≈ 0,
+the rule sends it back to elastic, and so on. Tie-break (contract for the rate oracle):
+
+      scale := ‖f‖ ‖a^e‖ ‖ε̇‖  (Frobenius norms; a^e as the 6×6 Mandel matrix),   tol := 10⁻¹²,
+      enter the plastic mode  iff  F ≥ −F_tol and N > +tol·scale, or the elastic branch crosses F = 0 (then N ≥ 0 by
+                              construction and λ̇ = ⟨N⟩/den ≥ 0 is consistent even for N = 0);
+      leave the plastic mode  iff  N < −tol·scale (genuine unloading);
+      |N| ≤ tol·scale on the surface with no mode history → elastic.
+
+The asymmetric thresholds are the **hysteresis**: a neutral increment keeps the mode it is in, so the elastic → plastic
+switch happens once (at the crossing) and the plastic branch, whose consistency condition Ḟ = 0 is enforced in rate
+form, carries the rotating-axes case with λ̇ ≈ 0 and no drift. F_tol is the surface tolerance of the oracle (10⁻⁸ M|p|).
+The denominator den = f:a^e:q + H ≤ 0 is never mapped to elastic: it is the loss-of-uniqueness stop below. Backward
+Euler needs no tie-break (the trial threshold of §9.1 decides; F^tr = O(h²) for a neutral increment).
 Continuum elastoplastic tangent:
 
       a^{ep} = a^e − (a^e:q) ⊗ (f:a^e) / ( f:a^e:q + H ).                                                   (S.42)
@@ -567,16 +695,35 @@ loss-of-uniqueness limit (snap-back), to be reported not hidden.
    ε_v = −0.01 → p = −100 e¹ = −271.828 kPa.
 2. **Closed elastic loop**: W = ∮σ:dε = 0 to ≤ 10⁻¹² (relative to ∮|σ:dε|) and state return to round-off, any loop
    (including non-coaxial), because σ = ∂Ψ/∂ε^e.
-3. **ζ corners**: ζ(0) = 1/ρ, ζ(π/3) = 1, ζ'(0) = ζ'(π/3) = 0 for WW and GA; WW convex for ρ ∈ [½, 1], GA for [7/9, 1]
-   (parser refuses outside; GA refused for ρ < 7/9).
+3. **ζ corners**: ζ(0) = 1/ρ, ζ(π/3) = 1, ζ'(0) = ζ'(π/3) = 0 for WW and GA on the admissible ranges: WW ρ ∈ (½, 1]
+   (ρ = ½ exactly is refused: ζ'(π/3) = −√3, a vertex, §4.2), GA ρ ∈ [7/9, 1] (refused for ρ < 7/9). The same ranges
+   are enforced on ρ̄ [G1].
 4. **Image point**: at p = π_i, F = 0 ⇔ q = M|π_i|/ζ(θ): q = M|π_i| in TXC (θ = π/3), q = ρM|π_i| in TXE (θ = 0).
 5. **Flow rule**: at every plastic step with q > 0 (the vertex rule of §3.2 makes both sides zero on the axis),
    Δε^p_v/Δε^p_s = √(3/2) β F_p/Ω evaluated at the converged state (exact for the backward-Euler map since
-   Δε^p = Δλ q(σ_{n+1}, π_{i,n+1})); measured in returnmap.py: −1.2274809384 both ways.
+   Δε^p = Δλ q(σ_{n+1}, π_{i,n+1})); measured in returnmap.py: −1.2274809384 both ways; O2 oracle over a full drained
+   TXC path: max deviation 2.5e−15 [G1]. **The identity holds per increment for backward Euler only; for the rate
+   form it holds POINTWISE** [I; G1; r2_k1_protocols.py]: over a finite increment the ratio Δε^p_v/Δε^p_s =
+   ∫D dε^p_s / ∫dε^p_s is the ε^p_s-weighted mean of D(t), which lies between neither endpoint in general (measured,
+   O1 drained TXC, K2 paper set: a 2e−3 increment near the start gives chord −0.4081 against D(start) = −0.4618 and
+   D(end) = −0.3583, 5e−2 from each; 1e−2 increments later 4e−4 to 1.4e−3 from each). A rate-oracle check must
+   therefore be pointwise: probe from the state with two small increments d, d/2 and Richardson-extrapolate,
+   D(start) ≈ 2r(d/2) − r(d); the chord error is O(d) (2.2e−4, 1.1e−4, 5.5e−5, 2.8e−5 at d = 8e−6 … 1e−6) and the
+   extrapolation recovers D(start) to 2.7e−9 (d = 4e−6) and 6.8e−10 (d = 2e−6), i.e. the ODE tolerance.
 6. **Peak identity** (stated exactly): whenever π_i = π_i*, D = χψ_i and H = 0 (by construction of π_i*; sympy-checked
    D(η*) = χψ_i). H = 0 is the **stationary point of the yield-surface size**. It coincides with the peak of η only on a
    constant-p path: dη/dt = (∂η/∂p)ṗ + (∂η/∂π_i)π̇_i, so on a conventional drained triaxial path (ṗ ≠ 0) the η-peak
-   precedes H = 0 by the term (∂η/∂p)ṗ [I]. Test it as: at the step where H changes sign, |D − χψ_i| ≤ tol.
+   precedes H = 0 by the term (∂η/∂p)ṗ [I]. **Location protocol [I; G1; r2_k1_protocols.py]:** H = 0 is not a step
+   end point, so it is located by the sign change of a := π_i* − π_i between consecutive plastic states k−1, k of the
+   coarse path (sgn H = −sgn a, every other factor of H being positive), and the zero is then refined by **bisection
+   on the sub-step fraction f ∈ (0, 1) with a single integrator sub-step of size f·Δ from state k−1** (one
+   backward-Euler step for O2, one Radau increment for O1 — the same constitutive call, so the located point is a
+   genuine state of the integrator, not an interpolant) until |a| ≤ 10⁻¹⁰|π_i|; at that state |D − χψ_i| ≤ tol
+   (D from (S.20)/(S.23) closed forms at the state's stress, χψ_i from (S.22)). Measured (O2, drained TXC, K2 paper
+   set): bracket at states 20/21 (a = −0.129, +0.431 kPa), 25 bisection sub-steps, |a|/|π_i| = 2.8e−11,
+   |D − χψ_i| = 4.0e−11 (D = χψ_i = +0.155730). Secondary coarse check: the linear interpolant of b = D − χψ_i to
+   a = 0 is 7.9e−6 against a bracket variation of 3.9e−3 (b(a) ∝ a + O(a²), so the interpolant is quadratically
+   small). An end-point check "at the step where H changes sign, |D − χψ_i| ≤ tol" is wrong by O(step).
 7. **Undrained critical state**: isochoric ⇒ v (hence e) constant; critical state ⇔ ψ_i = 0, π_i = π_i* = p, D = 0,
    H = 0, η = M (θ = π/3): p_cs = −p_a ((e₀ − e)/λ_c)^{1/ξ} (fork; requires e < e₀), p_cs = −exp((v_{c0} − v)/λ̃)
    (paper); q_cs = M|p_cs|/ζ(θ) = M|p_cs| in TXC. At the CS, ε̇^p_v = 0 ⇒ ε̇^e_v = 0 ⇒ p stationary: a fixed point.
@@ -602,7 +749,13 @@ Diagonal ⇒ principal directions fixed; log strains ε = diag(n₁ ln(1+λ₂),
 
 **Known result** [E, p.1551]: ρ = 0.7/ρ̄ = 0.8 localizes at **n = 22**; ρ = ρ̄ = 1 at **n = 26**. Fig 5 plots the
 normalised minimum determinant from step 10, crossing zero near those steps (normalisation not stated; presumably by
-the step-10 value [I]). Fig 6: the minimum for ρ = 0.7 is at φ = π/2 (n in the n¹–n³ plane) [E].
+the step-10 value [I]). Fig 6: the minimum for ρ = 0.7 is at φ = π/2 [E]. **Reading of φ = π/2 [I; G1]:** the
+localization normal is perpendicular to the **intermediate** principal direction; under (S.43) that direction is e₁
+at the crossing (stretched by f₁, untouched by f₂; by then e₃, stretched by n₂ f₂ steps, is the least compressive axis
+and e₂ the most), so n lies in the e₂–e₃ plane. In AB06's
+eigenvalue-ordered basis (a = 1 most compressive, 2 intermediate, 3 least) with α = (sinθ sinφ, cosφ, cosθ sinφ) this is
+φ = π/2 exactly; both oracles give φ = 90.0°, θ ≈ 35° (two mirror wells ±θ, one normal reported). The earlier wording
+"(n in the n¹–n³ plane)" referred to the paper's axis labels and is withdrawn.
 
 **Localization criterion** [E, AB06 83–86, Remark 4]: F(A) = inf_n det A(n) = 0, A_ik = n_j a^{ep}_ijkl n_l with
 a^{ep} = c̃ + τ⊕1 (finite strain, §9.5) built from the **consistent** tangent (Remark 4). In the principal basis, with
@@ -630,6 +783,17 @@ the full table; a miss outside the band is a finding against the sheet or the or
 The small-strain kernel reproduces this only through the LogStrain wrapper with (S.34); the oracles can run it directly
 in finite strain (ε^e_a = ln λ^e_a, v = v₀J, τ). Small-strain v = v₀(1 + ln J) vs v₀J differs by O(10⁻⁴) here.
 
+**Why the two oracles do not report the same n, and why that is not a disagreement [I; G1, measured by the K2 lag
+diagnosis].** AB06 Remark 4 allows the consistent tangent for the localization check only "for a small enough load
+step". At the (S.43) step size backward Euler **lags the continuum by about one step**: a first-order time error of
+the state (and of its CTO, which is the derivative of the discrete map). Richardson extrapolation of O2 at 4–32
+substeps per nominal step reproduces the O1 crossing to 0.003 step. The reported n therefore depends on the integrator
+*and* on the crossing criterion: at the nominal set, O1 gives **22/26** by the first step with min det ≤ 0
+(interpolated crossings 21.55/25.11); O2 at one step per nominal increment gives **23/27** first-step, or 22/26 by
+rounding its interpolated crossings (22.40/26.47). **Cross-oracle agreement is tested by convergence under
+substepping, not by equal n**; the gate stays ordering + gap (which both oracles pass over the whole sensitivity
+table), and the paper's 22/26 is the sanity check it was declared to be.
+
 **K2b (paper-mode regression, graphical)** [E, BA06 §4.2, Figs 11–13]: BA06 have no single-point curves; the closest
 is the *homogeneous* 3D cube (v = 1.63, 100 kPa lateral pressure, vertical compression) which deforms homogeneously
 until localization: peak nominal axial stress ≈ 375 kPa at ≈ 8 % nominal axial strain, volume change ≈ −0.040 m³
@@ -646,7 +810,7 @@ for the cube [I]); **M and α are not tabulated**: M = 1.2 from Fig 2 (CSL throu
 |---|---|---|
 | e₀ = 0.83, λ_c = 0.027, ξ = 0.45, p_a | e₀, λ_c, ξ, p_a of (S.22) | **direct** (same e_c(p) form; p_a must be the same numeric value TIMs used, e.g. 101.325 kPa) |
 | M_c = 1.3309 | M | **direct**: η = M at the image point in compression (ζ(π/3) = 1) |
-| c = M_e/M_c = 0.71 | ρ | **direct**: ζ(0) = 1/ρ ⇒ M_e = ρ M_c ⇒ ρ = c = 0.71. WW admissible (≥ ½); GA refused (< 7/9) |
+| c = M_e/M_c = 0.71 | ρ | **direct**: ζ(0) = 1/ρ ⇒ M_e = ρ M_c ⇒ ρ = c = 0.71. WW admissible (> ½, §4.2); GA refused (< 7/9) |
 | G₀ (G = G₀ p_a (2.97−e)²/(1+e) √(p/p_a)), ν | μ₀, κ̂ (BA06) or the HAR slot | **refit**: BA06 gives constant μ₀ (α₀ = 0) and K = −p/κ̂; match at a representative p: μ₀ = G(p_rep, e), κ̂ = −p_rep/K(p_rep) with K = 2(1+ν)G/(3(1−2ν)). √p shear stiffness needs the HAR energy (§2.3) |
 | ψ = e − e_c(p) | ψ_i = e − e_c(π_i) | different argument (image pressure): DM04's dilatancy A_d and ψ enter differently; **refit χ** from peak dilatancy vs ψ_i |
 | h₀, c_h, n_b, n_d, A_d | h, N, N̄, ρ̄, χ, c₁, c₂ | **refit** (P3): h from pre-peak stiffness/strain to peak; N, N̄ from volumetric curves; ρ̄ from (S.39) and the dilatancy angle (§11.2: ρ̄ = (3 − sin ψ_c)/(3 + sin ψ_c)); default ρ̄ = ρ (deviatoric associativity, Lade & Duncan per AB06 Remark 1) |
@@ -668,6 +832,8 @@ Constraint check for TIMs: with ρ = ρ̄ = 0.71, (S.39) holds for any N̄ ≤ N
 4. **K2 gate** is ordering + gap in the band of §14, with the sensitivity table; exact n is a sanity check.
 5. Still open (not blocking): cap defaults (c₁, c₂, quintic) — set by the oracle census; HAR energy is a slot (§2.3),
    BA06's energy with α₀ = 0 is P0's energy.
+6. **G1 (owner, 2026-10-01): Willam–Warnke ρ = ½ exactly is refused**, for ρ and for ρ̄; the admissible WW range is
+   (½, 1] (§4.2: at ½ the compression corner is a vertex, ζ'(π/3) = −√3). GA stays [7/9, 1].
 
 ### 16.2 Suspected paper typos / inconsistencies
 - **AB06 eq 22₁** ∂Q/∂p = β ∂F/∂p contradicts eqs 13–14 + "Q = 0 on the surface" (BA06 2.11) unless ζ̄ = ζ; eqs 30–31
@@ -693,11 +859,25 @@ Constraint check for TIMs: with ρ = ρ̄ = 0.71, (S.39) holds for any N̄ ≤ N
 - No volumetric hardening in the cap region (§10.1): isotropic compression beyond π_c is perfectly plastic. Report, do
   not fix in P1.
 - The B > 0 guard of §7 (very dense states): decide refuse vs clamp.
-- The nested π_i Newton can have multiple roots for large Δλ with the cap on (Ω depends on π_i); start from π_{i,n}
-  and keep local steps bounded (plan's bounded-work rule). Observed only at absurd trial overshoots in the checks.
+- **[G1, superseded]** The nested π_i Newton with the cap on does not merely "have multiple roots at absurd
+  overshoots": it **folds** (G ≈ 1) where the state enters the smooth-cap ramp, on a mild near-isotropic path at a
+  volumetric strain step of 7.5e−4, and the backward-Euler problem is non-unique there (§10.2). The contract is the
+  root-selection rule of §8 (root continuous with π_{i,n}, scan step ≤ 10⁻⁴|π_{i,n}|, no factor-2 bracket), bounded
+  Δλ with backtracking on a nested failure or jump, and substepping on refusal (§9.1). The closed-form CTO is kept.
 - Undamped local Newton diverged once in the cap checks at an extreme trial state; the kernel needs the usual step
   control (the checklist's bounded local work). Not a formula issue.
-- (S.34) and (S.44) are transcribed, not re-derived; O1/O2 should FD-check the finite-strain acoustic tensor before K2.
+- **[G1, closed]** (S.34) is re-derived (§9.5) and (S.34)/(S.44) are FD-checked (r2_finite_tangent_fd.py, 8.7e−10 and
+  3.9e−16). **The FD check of the finite-strain tangent (S.34) and of the acoustic tensor (S.44) against a central
+  difference of the nominal stress P = τ(1+hE)^{−T} over the nine unit E_kl is a G1 gate test** (tests/, not an author
+  script): it must discriminate the ½-spin variant (BA06 3.48) and the missing τ⊕1 term, which it does at 0.137 and
+  8.6e−3 against ≤ 1e−8 for the correct form.
+- **[G1]** The rate oracle stops at `vertex_reached` (no cap) and `cap_sliding` (planar cap) on near-isotropic paths
+  (§3.2, §10.1); these are properties of the continuum model, not oracle defects. The kernel does not see them (it
+  substeps and, on the axis, returns with π_i frozen); the smooth cap removes the corner. The O2 oracle's refusal on
+  those paths after 2⁸ substeps is the expected report.
+- **[G1]** Round-off-negative Δλ on a neutral increment (F^tr = O(h²) just above F_tol, §9.1): the KKT check Δλ ≥ 0
+  is strict in both oracles; whether the kernel tolerates Δλ ≥ −tol_λ·(scale) is for the kernel census. Not a formula
+  issue.
 
 ### 16.4 Verification record (scratchpad/p0a, all run 2026-09-30)
 - invariants.py: (S.6)–(S.7), (S.13)–(S.14), (S.16)–(S.21) exact (sympy) or ≤ 1e−15 (random points).
@@ -713,6 +893,28 @@ Constraint check for TIMs: with ρ = ρ̄ = 0.71, (S.39) holds for any N̄ ≤ N
   ρ = 0.7); γ̃ repeated-stretch limit checked numerically (5823.6 vs 5825.2 at Δε̃ = 3e−4, O(Δε̃)); returnmap.py re-run
   unchanged (Jacobian 4.6e−9, CTO 2.3e−8, major asymmetry 0.106).
 
+G1 revision checks (2026-10-01, run on Esmeralda with the WP-144 venv against the shipped oracles; scripts in
+`Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_r2/`, logs in the session scratchpad `r2/`):
+- r2_zeta_half.py (sympy): ζ(θ; ½) = 2cosθ, ζ'(π/3; ½) = −√3; ζ'(π/3; ½+s) = 0 for s > 0; ζ''(π/3) = 3(1−ρ²)/(2ρ−1)²
+  (→ ∞ at ½⁺; 9.5625 / 3 at 0.7 / 0.8 match the §4.2 table); convexity measure ≡ 0 at ½, +1.7e−4 at 0.501, −1.0e3 at 0.499.
+- r2_finite_tangent_fd.py (O2 kernel): (S.34) vs central FD of P = τ(1+hE)^{−T}: 6.2e−7 / 6.2e−9 / 8.7e−10 at
+  h = 10⁻⁵/10⁻⁶/10⁻⁷; ½-spin variant 0.137, no-τ⊕1 variant 8.6e−3; (S.44) vs direct contraction 3.9e−16.
+- r2_fold.py (O2 kernel): loop gain G at converged plastic steps 0.959 / 0.959 / 0.885 / 0.701 / 0.351 at n = 20 … 320
+  on the AMP_STOP smooth-cap path; three roots of r(π_i) at the n = 40 step-8 iterate (−80.017, −80.483, −104.7 kPa),
+  dip width 0.47 kPa (Δλ = 7.877e−4) and 0.052 kPa (8.0e−4); monolithic 5-unknown Newton completes n = 40/80/160
+  (scaled residual ≤ 1e−12, ≤ 6 iterations) with G up to 2.8 on its own branch.
+- r2_o1_stops_vertex.py (O1 + O2): O1 `vertex_reached` at 13/40 (no cap), `cap_sliding` at 17/40 (planar, c₁ = 0.10);
+  O2 axial return from the apex: p = −100.000000 held, π_i frozen, Δε^p_v = tr Δε, ε^p_s = 0, D = 0.300/step; O2 refuses
+  the same paths at steps 13 (none) / 16 (planar) with `local_linesearch` after 2⁸ substeps.
+- r2_neutral_v0.py (O2 kernel): N = f:a^e:ε̇ = 0.0 exactly for both shear directions on a coaxial TXC yielded state
+  (−0.21·scale for axial); F^tr − F_n = 1.06e7·h² kPa (h = 10⁻⁴…10⁻⁶), threshold crossed at h* = 3.2e−8; v₀-vs-v tangent
+  FD: 7.0e−7 (v₀) vs 1.1e−4 (v) at v = 1.45, 2.4e−6 vs 2.0e−5 at v = 1.691 (state 0.01 rad off the WW corner).
+- r2_k1_protocols.py (O1 + O2): flow-rule chord vs point value (O1): 5e−2 for a 2e−3 increment, O(d) probes,
+  Richardson 2.7e−9 / 6.8e−10; O2 increment ratio = point value to 2.5e−15; H = 0 bisection (O2): 25 sub-steps,
+  |a|/|π_i| = 2.8e−11, |D − χψ_i| = 4.0e−11; coarse interpolant 7.9e−6 vs bracket variation 3.9e−3.
+- No algebra of the G0 sheet failed a re-check; the only formula-level change is the status of (S.34) (transcribed →
+  re-derived + FD-checked) and the explicit ζ''(π/3) closed form in §4.2.
+
 ### 16.5 G0 review record (2026-09-30)
 - **Adversary (Fable, independent re-derivation): PASS-WITH-FIXES**, seven items, all applied in this revision:
   (1) §3.2 hydrostatic guard was self-contradictory → vertex rule Ω := 0; (2) §14 K2 "±1 step" → ordering/gap band with
@@ -722,3 +924,24 @@ Constraint check for TIMs: with ρ = ρ̄ = 0.71, (S.39) holds for any N̄ ≤ N
 - **Independent numeric check (Opus): PASSED** — dissipation reading A sharp over 1116 cases; 4×4 Jacobian 1.9e−9 vs
   FD; CTO 9.8e−11 (5e−10 on the shear columns).
 - **Owner**: approved the refusal rule (hard refuse unless N̄ ≤ N and ρ/ρ̄ ≥ (1−N)/(1−N̄); WARN on ρ > ρ̄).
+
+### 16.6 G1 revision record (2026-10-01)
+Twelve items raised by the G1 oracle/test round (O1 rate oracle, O2 return map, the K1/K2 gate tests and the cap and
+K2-lag triages), applied in one pass. Tags: [E] read in the source, [I; G1] this revision's derivation or decision.
+
+| # | section | change | tag | evidence |
+|---|---|---|---|---|
+| 1 | §1.3, §4, §4.2, §13.3, §15, §16.1 | WW admissible range (½, 1] for ρ and ρ̄; ρ = ½ refused (ζ = 2cosθ, ζ'(π/3) = −√3, vertex); "ζ'(π/3) = 0" restricted to ρ > ½; ζ''(π/3) = 3(1−ρ²)/(2ρ−1)² closed form; all ζ ranges apply to ρ̄ | [I; G1], owner decision | r2_zeta_half.py |
+| 2 | §3.2 | vertex rule restated: F := pη at q = 0, f_a = F_p/3; q → 0 in finite time on a near-isotropic path, no consistent rate solution after it (O1 `vertex_reached`); backward Euler returns along the axis to π_c with π_i frozen; hydrostatic compression beyond π_c perfectly plastic | [I; G1] | r2_o1_stops_vertex.py |
+| 3 | §10.1 | planar cap: Filippov sliding on the corner η = c₁M (O1 `cap_sliding`), convention w = 1 at η = c₁M exactly; motivates the smooth cap (plan §2.7) | [I; G1] | r2_o1_stops_vertex.py |
+| 4 | §8, §10.2, §16.3 | fold of the nested π_i solve (loop gain G ≈ 1 entering the ramp) at a volumetric strain step of 7.5e−4; BE solution exists (monolithic 5-unknown Newton) but is non-unique; root-selection contract (root continuous with π_{i,n}, scan step ≤ 10⁻⁴|π_{i,n}|, no factor-2 bracket), bounded Δλ with backtracking, substep on refusal; closed-form CTO kept | [I; G1] | r2_fold.py |
+| 5 | §12 | neutral-loading tie-break for the rate form: scale = ‖f‖‖a^e‖‖ε̇‖, tol = 10⁻¹², asymmetric enter/leave thresholds (hysteresis); N = 0 exactly for a shear increment on a coaxial yielded state | [I; G1] | r2_neutral_v0.py |
+| 6 | §9.1 | trial contract F^tr > 10⁻¹⁰|p₀| made explicit; neutral increments F^tr = O(h²), h* ≈ 3e−8; substepping on refusal | [I; G1] | r2_neutral_v0.py |
+| 7 | §1.2 | v₀ (initial specific volume) is a separate state datum from v; a mid-path state must carry it; measured tangent error when v is used instead | [I; G1] | r2_neutral_v0.py |
+| 8 | §13.5 | flow-rule identity per increment for BE only, pointwise for the rate form (ε^p_s-weighted mean over an increment); rate-oracle check must be Richardson-probed | [I; G1] | r2_k1_protocols.py |
+| 9 | §13.6 | H = 0 location protocol: sign change of π_i* − π_i, bisection with single sub-steps to |a| ≤ 10⁻¹⁰|π_i| | [I; G1] | r2_k1_protocols.py |
+| 10 | §11.2 | condition A has two independent parts; N̄ ≤ N required on its own, also when ρ ≥ ρ̄ | [I; G1] | §11 table (G0) |
+| 11 | §14 | AB06 Remark 4 "small enough load step": BE lags the continuum by ≈ 1 step; O1 22/26, O2 23/27 first-step (22/26 by rounding the interpolated crossing); agreement tested by convergence under substepping; Fig 6 φ = π/2 reread as n ⊥ the intermediate principal direction (e₁ under (S.43), n in the e₂–e₃ plane; both oracles φ = 90.0°, θ ≈ 35°, two mirror wells) | [I; G1] | K2 lag diagnosis (tests/scratch_k2lag), tests/out/k2_sensitivity.md |
+| 12 | §9.5, §16.3 | (S.34) re-derived (nominal-stress derivative, no ½) and FD-checked with (S.44); the FD check is now a G1 gate test | [I; G1] | r2_finite_tangent_fd.py |
+
+No FD-checked algebra of the G0 sheet changed. Status of (S.34): transcribed → re-derived and FD-checked (8.7e−10).
