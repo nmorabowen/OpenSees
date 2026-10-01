@@ -656,31 +656,9 @@ static int ladrunoContactImpl()
     bool   hasR05 = false;
     double maxGap = 0.0, gapOffset = 0.0, adjustTol = 0.0;
     bool   adjust = false;
-    // Ladruno ADR-158 -- `-fdTangent [hRel]`: the mortar pair tangent by a central finite difference
-    // of each pair's own residual (default hRel 1e-7 x the slave facet edge). Non-symmetric.
-    double fdTangent = 0.0;
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
-        if (opt != 0 && strcmp(opt, "-fdTangent") == 0) {
-            fdTangent = 1.0e-7;
-            if (OPS_GetNumRemainingInputArgs() > 0) {      // optional value (the -adjust peek idiom)
-                const char *pk = OPS_GetString();
-                bool isFlag = (pk != 0 && pk[0] == '-' &&
-                               ((pk[1] >= 'a' && pk[1] <= 'z') || (pk[1] >= 'A' && pk[1] <= 'Z')));
-                OPS_ResetCurrentInputArg(-1);
-                if (!isFlag) {
-                    double v[1]; int m = 1;
-                    if (OPS_GetDoubleInput(&m, v) < 0 || v[0] <= 0.0 || v[0] >= 1.0) {
-                        opserr << "WARNING contact -fdTangent - need a relative step 0 < hRel < 1 (ADR-158)\n";
-                        return -1;
-                    }
-                    fdTangent = v[0];
-                }
-            }
-            opserr << "WARNING contact -fdTangent: the finite-difference mortar pair tangent is "
-                      "non-symmetric; use a non-symmetric solver (system FullGeneral/UmfPack/"
-                      "Pardiso/Mumps).\n";
-        } else if (opt != 0 && strcmp(opt, "-mortar") == 0) {
+        if (opt != 0 && strcmp(opt, "-mortar") == 0) {
             isMortar = true;
         } else if (opt != 0 && strcmp(opt, "-augment") == 0) {
             // Ladruno ADR-155 (N-2): when the mortar Uzawa augmentation runs.
@@ -1138,11 +1116,6 @@ static int ladrunoContactImpl()
                   "(ADR-155); add -mortar or remove them\n";
         return -1;
     }
-    if (fdTangent > 0.0 && (!isMortar || isTie)) {
-        opserr << "WARNING contact -fdTangent is a -mortar contact option and does not apply to "
-                  "-tie (ADR-158)\n";
-        return -1;
-    }
     if (isTie && (gapOffset != 0.0 || adjust)) {
         opserr << "WARNING contact -gapOffset/-adjust do not apply to -tie: a tie bonds the "
                   "relative displacement, so the as-meshed gap is already strain-free (ADR-155)\n";
@@ -1312,8 +1285,6 @@ static int ladrunoContactImpl()
         if (mres == 0 && hasR05)
             mres = cd->setMortarContactOptions(idata[0], augmentMode, maxGap, gapOffset,
                                                adjust, adjustTol);
-        if (mres == 0 && fdTangent > 0.0)
-            mres = cd->setMortarFDTangent(idata[0], fdTangent);   // ADR-158
         return mres;
     }
     // D2: -visc μ_c (NTS viscous normal stabilization; 0 ⇒ off, byte-identical).

@@ -527,27 +527,6 @@ LadrunoContactDomain::setMortarContactOptions(int tag, int augmentMode, double m
     return 0;
 }
 
-// ADR-158 -- the FD pair tangent. hRel <= 0 => off. Refused on a -tie (its penalty Gram is exact).
-int
-LadrunoContactDomain::setMortarFDTangent(int tag, double hRel)
-{
-    MortarContact *m = 0;
-    for (size_t i = 0; i < theMortarContacts.size(); i++)
-        if (theMortarContacts[i].tag == tag) { m = &theMortarContacts[i]; break; }
-    if (m == 0) {
-        opserr << "WARNING LadrunoContactDomain::setMortarFDTangent() - contact " << tag
-               << " is not a -mortar contact\n";
-        return -1;
-    }
-    if (m->isTie && hRel > 0.0) {
-        opserr << "WARNING LadrunoContactDomain::setMortarFDTangent() - contact " << tag
-               << ": -fdTangent does not apply to -tie (the tie tangent is exact)\n";
-        return -1;
-    }
-    m->fdTangent = (hRel > 0.0) ? hRel : 0.0;
-    return 0;
-}
-
 int
 LadrunoContactDomain::addRigidPlane(int tag, int slaveSurfTag,
                                     const double p0[3], const double n[3], double kn, double muc,
@@ -611,8 +590,7 @@ LadrunoContactDomain::addRigidPlane(int tag, int slaveSurfTag,
 // bump FMT_VERSION if a lane grows a field, and the unpack refuses a version it does not know.
 
 namespace {
-    const int LCD_FMT_VERSION  = 5;    // ADR-158 -- BUMPED 4 -> 5 (mortar record + fdTangent).
-                                       // ADR-155 -- BUMPED 3 -> 4 with the mortar-record growth
+    const int LCD_FMT_VERSION  = 4;    // ADR-155 -- BUMPED 3 -> 4 with the mortar-record growth
                                        // (augmentMode, maxGap, gapOffset, adjust, adjustTol),
                                        // per the protocol above; a v3 stream draws the NAMED
                                        // version refusal. ADR-85 F1 -- BUMPED with the NTS-record growth below
@@ -626,7 +604,7 @@ namespace {
                                        // by name at unpackDefinitions() below.
     const int LCD_HDR_SLOTS    = 5;    // version, nSurf, nNts, nMortar, nPlanes
     const int LCD_NTS_SLOTS    = 22;   // ADR-85 F1 -- +1 (outwardWinding), appended at the tail
-    const int LCD_MORTAR_SLOTS = 44;   // ADR-158 -- +1 (fdTangent). ADR-155 -- +5 (augmentMode, maxGap, gapOffset, adjust,
+    const int LCD_MORTAR_SLOTS = 43;   // ADR-155 -- +5 (augmentMode, maxGap, gapOffset, adjust,
                                        // adjustTol); ADR-85 T3 -- +1 (hThickness). Tail-appended
     const int LCD_PLANE_SLOTS  = 12;
 }
@@ -726,7 +704,6 @@ LadrunoContactDomain::packDefinitions(Vector &v) const
         v(p++) = m.gapOffset;
         v(p++) = m.adjust ? 1.0 : 0.0;
         v(p++) = m.adjustTol;
-        v(p++) = m.fdTangent;   // ADR-158 -- appended at the tail
     }
     for (size_t i = 0; i < theRigidPlanes.size(); i++) {
         const RigidPlane &r = theRigidPlanes[i];
@@ -827,7 +804,6 @@ LadrunoContactDomain::unpackDefinitions(const Vector &v)
         double maxGap = v(p++), gapOff = v(p++);
         bool   adjust = (v(p++) != 0.0);
         double adjTol = v(p++);
-        double fdTan = v(p++);   // ADR-158 -- appended at the tail
         if (this->addMortarContact(tag, ms, ss, kn, knAuto, epsN, epsNAuto,
                                    augTol, maxAug, ngp, hasOut ? out : 0, cellFrac,
                                    mu, epsT, epsTAuto, cohesion, tauMax, cTan,
@@ -837,8 +813,6 @@ LadrunoContactDomain::unpackDefinitions(const Vector &v)
             goto unpack_fail;
         if (this->setMortarContactOptions(tag, augMode, maxGap, gapOff, adjust, adjTol) < 0)
             goto unpack_fail;   // ADR-155
-        if (fdTan > 0.0 && this->setMortarFDTangent(tag, fdTan) < 0)
-            goto unpack_fail;   // ADR-158
         theMortarContacts.back().retired = retired;
     }
     for (int i = 0; i < nPl; i++) {

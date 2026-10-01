@@ -260,13 +260,6 @@ class LadrunoContactFE : public FE_Element
     // Domain (MortarFrictionState). The handler calls it right after construction.
     void setMortarMasterFacet(int mf) { masterFacetIndex = mf; }
 
-    // ADR-158 (3D MORTAR, non-tie): replace the analytic pair tangent by a central finite
-    // difference of this pair's OWN residual (normal + friction), step h = hRel * (longest slave
-    // facet edge). It carries every term the analytic tangent drops (the Coulomb pressure coupling
-    // Csl, the geometric dD/du, dM/du, dn/du of the clipped overlap) and is NON-symmetric: it needs
-    // a non-symmetric solver. hRel <= 0 => off (never called => byte-identical).
-    void setMortarFDTangent(double hRel) { mortarFDRel = (hRel > 0.0) ? hRel : 0.0; }
-
     // getTangent routes through the integrator's formEleTangent so the INTEGRATOR
     // decides what to assemble (CDL -> addMtoTang only -> no contact stiffness in
     // the explicit mass matrix; Newmark -> addKtToTang(c1) -> c1*K_c; statics ->
@@ -413,19 +406,6 @@ class LadrunoContactFE : public FE_Element
     // (LadrunoMortarKernel::integratePair) + the per-facet master normal n. Returns true
     // if the overlap is non-empty (status 0); false ⇒ no contribution this evaluation.
     bool mortarActive(double D[4][4], double M[4][4], double g[4], double n[3]) const;
-    // ADR-158: the same evaluator at GIVEN current positions Xs (slave) / Xm (master) -- the
-    // body of mortarActive, which now gathers X+u and calls this (same arithmetic).
-    bool mortarActiveX(const double Xs[4][3], const double Xm[4][3],
-                       double D[4][4], double M[4][4], double g[4], double n[3]) const;
-    // ADR-158: this pair's static contact force (normal + friction; viscous excluded) at GIVEN
-    // trial displacements us/um, side-effect free (reads the committed lambda_N / friction path
-    // state, writes nothing). gT0 of a not-yet-engaged pair: gT0in[I] when given, else the slip at
-    // this configuration (returned in gT0out when non-null). f = [slave xyz | master xyz].
-    // Returns false when the overlap is empty.
-    bool mortarPairForceAt(const double us[4][3], const double um[4][3],
-                           const double (*gT0in)[3], double (*gT0out)[3], double f[24]);
-    // ADR-158: the FD pair tangent (see setMortarFDTangent).
-    void addMortarTangFD(double fact);
     // C2.1: assemble the mortar penalty tangent K_c = epsN·B̃ᵀ diag(act/a) B̃ ⊗ (n⊗n)
     // into `tang` (material/penalty only — geometric ∂{D,M,n}/∂u deferred). Shared by
     // addKtToTang / addKiToTang (the penalty K_initial == K_current). Same active mask
@@ -579,8 +559,6 @@ class LadrunoContactFE : public FE_Element
     double gapShiftAdjTol  = 0.0;     // 0 => adjust every paired node; >0 => only |gbar_ref| <= tol
     mutable bool   gapShiftRefReady = false;
     mutable double gapShiftRef[4]   = {0.0, 0.0, 0.0, 0.0};   // -gbar_I at the reference config
-    // ADR-158 -- FD pair tangent step (relative to the longest slave facet edge); 0 => off.
-    double mortarFDRel = 0.0;
 
     // ADR-85 T3 -- 2D MORTAR bindings (mode == MORTAR, ndm == 2). NSDMI so every 3D
     // MORTAR ctor call leaves them at their default/inert value, untouched (the T1b

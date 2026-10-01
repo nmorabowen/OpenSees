@@ -269,17 +269,12 @@ class LadrunoContactDomain
         double gapOffset   = 0.0;
         bool   adjust      = false;
         double adjustTol   = 0.0;
-        // ADR-158 -- the FD pair tangent (-fdTangent [hRel]): 0 = off (the analytic tangent,
-        // byte-identical); > 0 = central FD of each pair's residual, step hRel x facet edge. 3D only.
-        double fdTangent   = 0.0;
     };
     enum { AUG_COMMIT = 0, AUG_REQUEST = 1, AUG_NEVER = 2 };
     // ADR-155 -- set the R0.5 options on an already-added mortar contact (by tag). <0 if the tag
     // is not a mortar contact or an option is invalid (gap shift on a -tie, negative maxGap...).
     int setMortarContactOptions(int tag, int augmentMode, double maxGap, double gapOffset,
                                 bool adjust, double adjustTol);
-    // ADR-158 -- arm the FD pair tangent on an already-added (non-tie) mortar contact.
-    int setMortarFDTangent(int tag, double hRel);
     int addMortarContact(int tag, int masterSurfTag, int slaveSurfTag,
                          double kn, bool knAuto, double epsN, bool epsNAuto,
                          double augTol, int maxAug, int ngp,
