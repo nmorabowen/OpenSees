@@ -365,3 +365,26 @@ after 506aadf1c.
   **success**; the two self-hosted jobs (Zone-B + perf, the one-process full suite) still queued for a runner.
 - The footing evidence was taken on 7f1562c81. The re-review changes only affect E1 entries under compression, the
   E1 bound (no footing entry was above 0.48 kPa) and the tangent while closing; they are not re-run on the footings.
+
+**Same-leg confirmation of the re-review build on the footing (2026-10-01).** `R3_TYR_b8_ps05`: build 77c454660
+(`~/ladruno_wp152/bin_review3`), driver `deck_review/footing_ab.py`, the deck of `R_TYR_b8_ps05` (Toyoura B/8, R1 +
+cutoff 0.5/1.0, target 0.20), output `deck_review/runs/R3_TYR_b8_ps05`, finished 2026-10-01 09:59; compared with
+`~/ladruno_wp152/diff_leg.py`. (A short fig9 leg to s/B 0.05, `R3_TYR_fig9_ps05_diff`, was byte-identical up to the
+driver's target clipping.)
+
+| | 7f1562c81 (R_TYR_b8_ps05) | 77c454660 (R3_TYR_b8_ps05) |
+|---|---|---|
+| peak | 2508.4 kPa @ s/B 0.1795 | 2507.9 kPa @ s/B 0.1773 (−0.02 %) |
+| q @ 0.19 / 0.20 | 2483.9 / 2446.0 | 2483.8 / 2446.4 |
+| census at the peak: n_sep, E1/E2, exits | 54, 2/56, 4 | 52, 2/54, 4 |
+| at s/B 0.20: n_sep, exits | 58, 8 | 58, 8 |
+| refusals (step cuts) | errorAtDTmin 14, maxSubsteps 1453 | errorAtDTmin 3, maxSubsteps 1373 |
+
+- Byte-identical for steps 1–1793 (to s/B 0.1413). Step 1794 has the same step size, Newton iterations (41) and
+  census, but q differs by 0.126 kPa (5e-5). No committed exit, entry or hold differs there, so no committed
+  state-machine change fired. The most plausible source is the exit-iterate tangent (MED-3) acting on Newton iterates
+  where a closing point transiently crosses g_c; this is not proven without per-iterate instrumentation.
+- After that the step-cut sequences part ways. q at matched s/B: max 0.16–0.21 % pointwise (median 0.02–0.06 %),
+  ≤ 0.10 % averaged over 0.001 windows.
+- Reading: the capacity is unchanged (0.02 %), the post-peak curve agrees to the level of the step-to-step wiggle,
+  and the 7f1562c81 footing numbers stand.
