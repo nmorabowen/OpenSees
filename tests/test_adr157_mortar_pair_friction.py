@@ -26,7 +26,8 @@ Gates:
   (c) the same roof under FORCE control (free slave nodes on soft springs), a downward load past
       the cohesion cap in four steps: every step converges and the ridge stays on the symmetry
       plane (R1 found cohesion-only mortar converging at step 1 and failing at step 2 on the pile;
-      on fd87e396d this roof drifts off the symmetry plane at step 2 and fails at step 3).
+      on fd87e396d/d63f49750 this roof drifts off the symmetry plane at step 2 and, with plain
+      Newton, fails at step 3). Solved with NewtonLineSearch: see the test docstring.
 """
 import math
 
@@ -148,13 +149,14 @@ KD = 1.0e15           # stiff drivers: displacement control through the Plain-re
                       # (driver compliance f/KD stays ~1e-7 of the imposed motion)
 
 
-def _roof(split_ridge, steps, force_control=False, pz=0.0, eps=EPS, delta=DELTA):
+def _roof(split_ridge, steps, force_control=False, pz=0.0, eps=EPS, delta=DELTA, algo="Newton"):
     """Roof z = -tan(alpha)|x|, ridge along y at x=0. Master: 2 flanks x 1 quad, fixed. Slave:
     2 quads in x per flank x 3 in y (non-matching in x and y, symmetric about the ridge),
     lowered by DELTA. split_ridge
     duplicates the ridge slave nodes (left facets use one copy, right facets the other).
     Displacement control (default): every slave node sits on KD springs (x, y, z) to ground and is
     loaded -KD*s in z, so u_z -> -s. Force control: soft springs, a load -pz*lambda per node.
+    algo: the solution algorithm (plain Newton unless a gate needs a globalised one).
     Returns (per-step contact force totals on the slave [(Fx, Fz)], per-step max ridge |u_x|, ok)."""
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
@@ -215,7 +217,7 @@ def _roof(split_ridge, steps, force_control=False, pz=0.0, eps=EPS, delta=DELTA)
         ops.test("NormUnbalance", 1.0e-7, 60, 0)
     else:
         ops.test("NormDispIncr", 1.0e-15, 60, 0)
-    ops.algorithm("Newton")
+    ops.algorithm(algo)
     ops.analysis("Static")
     out, ux_ridge, lam_prev = [], [], 0.0
     for s in steps:
@@ -274,8 +276,17 @@ def test_adr157_crease_shared_ridge_equals_split_ridge():
 # ---------------------------------------------------------------------------------------- (c)
 def test_adr157_crease_force_control_multistep_cohesion():
     """(c) cohesion only, force control, 4 steps past the cap: every step converges and the ridge
-    stays on the symmetry plane (u_x = 0)."""
+    stays on the symmetry plane (u_x = 0).
+
+    NewtonLineSearch, not plain Newton: with the shipped symmetric tangent plain Newton on this
+    shared-ridge roof is only linear (ADR-157 section 5; the missing geometric terms of the thin
+    cross-flank pairs, ADR-158) and can lock into an active-set cycle of those pairs (Norm ~0.02 for
+    60 iterations at load factor 1 on Linux/gcc CI, 14 iterations on Windows/MSVC; finer load steps
+    cycle on Windows too). The gate pins the per-pair state, not Newton speed. On the per-node
+    layout (d63f49750) the ridge leaves the symmetry plane at step 2 (|u_x| 3e-6 -> 8e-5): plain
+    Newton then fails at step 3, the line search converges onto the drifted path, and the u_x
+    assertion fails either way."""
     got, ux, ok = _roof(False, [0.25, 0.5, 0.75, 1.0], force_control=True, pz=40.0,
-                        eps=1.0e6, delta=1.0e-3)
+                        eps=1.0e6, delta=1.0e-3, algo="NewtonLineSearch")
     assert ok, f"force-controlled cohesion roof failed after {len(got)} converged step(s)"
     assert max(ux) < 1e-9, f"ridge left the symmetry plane: max |u_x| = {max(ux):.3e}"

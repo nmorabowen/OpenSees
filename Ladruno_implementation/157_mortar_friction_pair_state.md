@@ -136,9 +136,17 @@ The kernel math does not change, so this oracle pins the storage invariants.
   `Fz = 2A(p cos α + c sin α)` with `Fx = 0`: the new binary is within 1e-7, while d63f49750 gives
   `Fx = 0.43` against a cohesion force of 7.3, with Fz off by 3e-4 from step 2 on. A split-ridge
   model agrees with the shared one.
-- (c) The roof under force control, cohesion past the cap, in 4 steps. The new binary converges in
-  every step and the ridge stays on the symmetry plane to 1e-11. d63f49750 drifts off the plane at
-  step 2 and fails to converge at step 3.
+- (c) The roof under force control, cohesion past the cap, in 4 steps, solved with
+  `NewtonLineSearch`. The new binary converges in every step (6, 4, 9, 12 iterations on Windows)
+  and the ridge stays on the symmetry plane to 1e-11. d63f49750 drifts off the plane at step 2
+  (|u_x| 3e-6, then 3e-5 and 8e-5): plain Newton fails to converge at step 3, the line search
+  converges onto the drifted path, and the `u_x` assertion fails either way.
+  *Why not plain Newton:* with the shipped tangent plain Newton is only linear here (section 5) and
+  can lock into an active-set cycle of the thin cross-flank pairs. Linux/gcc CI (runs 36800708449,
+  36820924404) stalled at Norm 0.022 for 60 iterations at load factor 1, where Windows/MSVC took 14;
+  finer load steps (6 or 9) cycle on Windows too. The gate pins the per-pair state, not Newton
+  speed, so it uses the globalised algorithm (the R0.6 fix, piles-validation
+  `ladder/R0_6_fork_slice/FIX_linux.md`).
 
 Result: 12/12 on the new binary; 10/12 on d63f49750 (the two tests above fail).
 
