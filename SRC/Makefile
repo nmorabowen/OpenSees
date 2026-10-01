@@ -673,6 +673,8 @@ ELE_LIBS   =  $(FE)/element/Element.o \
 	$(FE)/element/catenaryCable/CatenaryCable.o \
 	$(FE)/element/tetrahedron/FourNodeTetrahedron.o \
 	$(FE)/element/tetrahedron/TenNodeTetrahedron.o \
+	$(FE)/element/tetrahedron/TenNodeTetrahedronThermal.o \
+	$(FE)/element/tetrahedron/SixNodeBoundryCondition.o \
 	$(FE)/element/absorbentBoundaries/LysmerTriangle.o \
 	$(FE)/element/absorbentBoundaries/ASDAbsorbingBoundary2D.o \
 	$(FE)/element/absorbentBoundaries/ASDAbsorbingBoundary3D.o \
@@ -1361,6 +1363,8 @@ DOMAIN_LIBS =  $(FE)/domain/component/DomainComponent.o \
 	$(FE)/domain/load/SurfaceLoader.o \
 	$(FE)/domain/load/LysmerVelocityLoader.o \
 	$(FE)/domain/load/SelfWeight.o \
+	$(FE)/domain/load/ThermalHeatSource.o \
+	$(FE)/domain/load/ThermalBoundaryConditionTemperature.o \
 	$(FE)/domain/pattern/LoadPattern.o \
 	$(FE)/domain/pattern/FireLoadPattern.o \
 	$(FE)/domain/pattern/EarthquakePattern.o \
@@ -1377,6 +1381,7 @@ DOMAIN_LIBS =  $(FE)/domain/component/DomainComponent.o \
 	$(FE)/domain/pattern/PathSeries.o \
 	$(FE)/domain/pattern/PeerMotion.o \
 	$(FE)/domain/pattern/PeerNGAMotion.o \
+	$(FE)/domain/pattern/ThermalVolumetricLoadingPattern.o \
 	$(FE)/domain/pattern/PathTimeSeries.o \
 	$(FE)/domain/pattern/PathTimeSeriesThermal.o \
 	$(FE)/domain/pattern/PulseSeries.o \
