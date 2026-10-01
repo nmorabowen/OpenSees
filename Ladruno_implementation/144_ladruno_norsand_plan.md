@@ -181,9 +181,16 @@ are the contract (`o2_algo/kernel.py`, README).
   - A nested failure or root jump counts as a rejected step: backtrack Δλ (≤ 10 halvings).
   - If the step is still refused, substep the increment (≤ 8 halvings, 2⁸ sub-increments) before refusing
     through the commit latch.
-- **For a substepped increment, the tangent is that of the last sub-increment.** Substepping is the normal
-  mode on coarse steps near the cap ramp, not an exception, so `local_iters` counts are sums over
-  sub-increments.
+- **For a substepped increment, the tangent is the CHAINED consistent tangent** (owner decision 2026-10-01,
+  sheet §9.6). It is the exact derivative of the final stress with respect to the total strain increment.
+  - It propagates the state sensitivity (ε^e, π_i, v) through every sub-increment, including any recursive
+    halving.
+  - m = 1 reduces exactly to the closed-form CTO.
+  - Why: the P1 review measured the last-sub-increment tangent at 50–200 % off the finite-difference
+    tangent of the whole increment, and substepping is the normal mode on coarse steps near the cap ramp
+    (30 of 34 plastic steps on the AMP path). That would cost the global Newton its quadratic convergence
+    exactly where the footing's cap regions sit.
+  - `local_iters` counts are sums over sub-increments.
 - **Elastic/plastic decision:** trial threshold F_tr > 1e-10·|p0|. The neutral-loading tie-break uses
   hysteresis (sheet §9.1, §12).
 - **v0 (the initial specific volume) is a separate committed state variable from v** (sheet §1.2). Neither
