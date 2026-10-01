@@ -117,18 +117,32 @@ OPS_Tri31()
     return 0;
   }
   
-  if (numRemainingInputArgs == 11) {
+  if (OPS_GetNumRemainingInputArgs() >= 4) {
     numData = 4;
     if (OPS_GetDoubleInput(&numData, &dData[1]) != 0) {
       opserr << "WARNING invalid optional data: element Tri31 " << iData[0] << endln;
       return 0;
     }
   }
+
+  bool do_init_disp = false;
+  while (OPS_GetNumRemainingInputArgs() > 1) {
+    const char* opt = OPS_GetString();
+    if (strcmp(opt, "-doInitDisp") == 0) {
+      int flag = 0;
+      numData = 1;
+      if (OPS_GetIntInput(&numData, &flag) != 0) {
+        opserr << "WARNING invalid -doInitDisp value: element Tri31 " << iData[0] << endln;
+        return 0;
+      }
+      do_init_disp = (flag != 0);
+    }
+  }
   
   // parsing was successful, allocate the element
   theElement = new Tri31(iData[0], iData[1], iData[2], iData[3],
 			 *theMaterial, theType, 
-			 dData[0], dData[1], dData[2], dData[3], dData[4]);
+			 dData[0], dData[1], dData[2], dData[3], dData[4], do_init_disp);
   
   if (theElement == 0) {
     opserr << "WARNING could not create element of type Tri31\n";
@@ -357,10 +371,11 @@ int OPS_Tri31(Domain& theDomain, const ID& elenodes, ID& eletags)
 
 Tri31::Tri31(int tag, int nd1, int nd2, int nd3,
 	     NDMaterial &m, const char *type, double t,
-	     double p, double r, double b1, double b2)
+	     double p, double r, double b1, double b2,
+               bool do_init_)
 :Element (tag, ELE_TAG_Tri31), 
   theMaterial(0), connectedExternalNodes(3), 
- Q(6), pressureLoad(6), thickness(t), pressure(p), rho(r), Ki(0)
+ Q(6), pressureLoad(6), thickness(t), pressure(p), rho(r), Ki(0), do_init_disp(do_init_)
 {
 	pts[0][0] = 0.333333333333333;
 	pts[0][1] = 0.333333333333333;
@@ -403,6 +418,12 @@ Tri31::Tri31(int tag, int nd1, int nd2, int nd3,
     connectedExternalNodes(2) = nd3;
     
     for (i=0; i<numnodes; i++) theNodes[i] = 0;
+
+    for (int i = 0; i < numnodes; ++i)
+    {
+        initDisp[i] = Vector(2);
+        initDisp[i].Zero();
+    }
 }
 
 Tri31::Tri31()
@@ -415,6 +436,12 @@ Tri31::Tri31()
 	wts[0] = 0.5;
 
     for (int i=0; i<numnodes; i++) theNodes[i] = 0;
+
+    for (int i = 0; i < numnodes; ++i)
+    {
+        initDisp[i] = Vector(2);
+        initDisp[i].Zero();
+    }
 }
 
 Tri31::~Tri31()
@@ -505,6 +532,15 @@ Tri31::setDomain(Domain *theDomain)
 
     // Compute consistent nodal loads due to pressure
     this->setPressureLoadAtNodes();
+
+    //Handle initial displacements
+    if(do_init_disp)
+    {
+        for ( int i = 0; i < numnodes; i++ )
+        {
+            initDisp[i] = theNodes[i]->getDisp();
+        }
+    }
 }
 
 int
@@ -549,10 +585,10 @@ Tri31::revertToStart()
 int
 Tri31::update()
 {
-	const Vector &disp1 = theNodes[0]->getTrialDisp();
-	const Vector &disp2 = theNodes[1]->getTrialDisp();
-	const Vector &disp3 = theNodes[2]->getTrialDisp();
-	
+	const Vector &disp1 = theNodes[0]->getTrialDisp() - initDisp[0];
+	const Vector &disp2 = theNodes[1]->getTrialDisp() - initDisp[1];
+	const Vector &disp3 = theNodes[2]->getTrialDisp() - initDisp[2];
+
 	static double u[2][3];
 
 	u[0][0] = disp1(0);
