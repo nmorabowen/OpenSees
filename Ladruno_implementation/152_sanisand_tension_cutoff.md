@@ -388,3 +388,7 @@ driver's target clipping.)
   ≤ 0.10 % averaged over 0.001 windows.
 - Reading: the capacity is unchanged (0.02 %), the post-peak curve agrees to the level of the step-to-step wiggle,
   and the 7f1562c81 footing numbers stand.
+
+**Interaction with WP-153 (`commitStats`, #899).** A separation entry and a re-contact set α_in = 0, so `commitStats`
+counts them as committed α_in changes. This explains a WP-153 reading: the implicit footing showed exactly one re-seat
+per separated point (14 for 14; 26 for 24 GPs plus two) — the entries themselves.

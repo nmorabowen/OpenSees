@@ -1442,6 +1442,8 @@ evidence: [[152_sanisand_tension_cutoff]].
     refusal fails its step, so it never commits; counting at commit would always read 0).
   - **`sasStats` is now 44 long.**
 - **`sasOptions`** is 12 values long: indices 9–11 are p_sep, p_contact and p0max.
+- **α_in census:** a separation entry and a re-contact set α_in = 0, so WP-153's `commitStats` counts them as
+  committed α_in changes (one per separated point on a monotonic push).
 - **InitialStateAnalysis:** `revertToStart` under ISA keeps the separation state with the stress it produced; a plain
   `reset` starts the point NORMAL.
 - **Solution control:** use a force test (`NormUnbalance`, as the footing driver does). A separated cluster carries
