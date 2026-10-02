@@ -71,6 +71,7 @@ extern void* OPS_VTKHDF_Recorder();
 extern void* OPS_VTK_Recorder();
 extern void* OPS_ElementRecorderRMS();
 extern void* OPS_NodeRecorderRMS();
+extern void* OPS_EnergyBalanceRecorder();
 
 
  #include <NodeIter.h>
@@ -1943,6 +1944,10 @@ enum outputMode  {STANDARD_STREAM, DATA_STREAM, XML_STREAM, DATABASE_STREAM, BIN
      else if (strcmp(argv[1],"gmsh") == 0 || strcmp(argv[1],"GMSH") == 0) {
        OPS_ResetInputNoBuilder(clientData, interp, 2, argc, argv, &theDomain);
        (*theRecorder) = (Recorder*) OPS_GmshRecorder();
+     }
+     else if (strcmp(argv[1], "EnergyBalance") == 0) {
+       OPS_ResetInputNoBuilder(clientData, interp, 2, argc, argv, &theDomain);
+       (*theRecorder) = (Recorder*)OPS_EnergyBalanceRecorder();
      }
     // else if (strcmp(argv[1],"gmshparallel") == 0 || strcmp(argv[1],"GMSHPARALLEL") == 0) {
     //  OPS_ResetInputNoBuilder(clientData, interp, 2, argc, argv, &theDomain);
