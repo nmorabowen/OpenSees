@@ -623,6 +623,7 @@
 #define PATTERN_TAG_PBowlLoading          4
 #define PATTERN_TAG_DRMLoadPattern        5
 #define PATTERN_TAG_H5DRM                 6
+#define PATTERN_TAG_ThermalVolumetricLoadingPattern 8
 
 #define LOAD_TAG_Beam2dUniformLoad        3
 #define LOAD_TAG_Beam2dPointLoad          4
@@ -642,6 +643,8 @@
 #define LOAD_TAG_ThermalActionWrapper     16 //L.Jiang [ SIF ]
 #define LOAD_TAG_LysmerVelocityLoader      17  //Jose Abell (UANDES)
 #define LOAD_TAG_IGAFollowerLoad      18  //Jose Abell (UANDES)
+#define LOAD_TAG_ThermalHeatSource        19 // Jose Abell (UANDES)
+#define LOAD_TAG_ThermalBoundaryConditionTemperature 20 // Jose Abell (UANDES)
 
 
 #define MAT_TAG_IsotropicLinElastic         1001
@@ -910,6 +913,8 @@
 #define ELE_TAG_CurvedPipe                      270
 #define ELE_TAG_PML3DVISCOUS               271 // Amin Pakzad
 #define ELE_TAG_MEFI_3D        			  272 // C. N. Lopez
+#define ELE_TAG_TenNodeTetrahedronThermal  273 // Jose Abell & Jose Larenas (UANDES)
+#define ELE_TAG_SixNodeBoundryCondition    274 // Jose Abell & Jose Larenas (UANDES)
 
 #define FRN_TAG_Coulomb            1
 #define FRN_TAG_VelDependent       2
