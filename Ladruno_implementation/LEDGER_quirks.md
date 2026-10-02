@@ -29,6 +29,12 @@ them. This is observation-only — fixes we actually applied are tracked in
 
 ## Quirks
 
+### Mortar contact: one tie around a CLOSED surface silently binds the far side; a per-commit Uzawa makes a LINEAR tie step-count dependent (WP-155, 2026-09-29)
+- **Bites:** (1) the mortar broad phase is brute force and the kernel clip accepts anti-parallel facets (`|cos|`), so on a closed skin (a pile) each facet is also tied to the ANTIPODAL facets — R1 measured one cylinder tie 3.65× too stiff, with no warning. (2) the shipped default augments λ once per `Domain::commit()`, so even a linear penalty tie gives a different answer for 1 vs 2 vs 5 load steps (exactly the 1-D Uzawa recursion: 2.2e-3 / 2.1e-3 / 2.04e-3 on the split column).
+- **Also:** a `-adjust`ed node sits at p = 0 EXACTLY, which the shipped `pr < 0` mask treats as open — the first iterate then has no interface stiffness (a floating pile). WP-155 takes the closed tangent branch there. And a frictionless contact on a near-circular interface has NO torsional stiffness: a test slice must pin the rigid rotation or Newton chatters.
+- **Also:** the `-augment` gate must cover EVERY Uzawa in `commit()`: the ADR-57 E6 edge-edge λ_N was missed at first (review #897 finding 1).
+- **Status:** `-maxGap d` (pairing guard), `-augment request|never`, `-adjust`/`-gapOffset` — [[155_pile_contact_r05]]. Defaults unchanged.
+
 ### LadrunoConcrete3D: hydrostatic compression silently ELASTIC; `Gc` was not an energy; tension over-dissipated `Gf` (fixed 2026-09 — read before comparing to OOFEM)
 - **Bites (pre-WP `concrete3d-oracle-diagnosis`):** (1) a hydrostatic-compression trial never yielded: the hardening return overshot `ρ<0`, the apex branch projected onto the TENSION vertex, the PR #249 gate rejected it and the wrapper fell back to the elastic predictor with only a warning (OOFEM `con2dpm3`: −21.43 vs −2.96 MPa); 4.6 % of plastic fuzz trials with a compressive mean stress were *accepted* at the tension vertex (admissible, so the gate let them through). (2) `Gc` mapped to `εfc = Gc/(fc·lch)` while the compressive driver is scaled by `βc/xs`, so the element dissipated ~20× `Gc`. (3) The tension history `κdt2 = κdt−ε0` stretched the exponential softening (+25–40 % over `Gf`; Grassl Fig. 7 at 0.2 mm/m: 2.80 vs 0.96 MPa).
 - **Also (single-element tension benchmarks):** with only one top node displacement-controlled and the others load-controlled, the softening brick BIFURCATES into a non-uniform (rotating-face) mode — some GPs unload with frozen `ωt<1` and carry `(1−ωt)σ̄` of a strongly hardened effective stress (`Hp=0.5` ⇒ `σ̄` ~ 30× ft), so the curve never reaches zero and "dissipates" ~190 N/m for Gf = 120 regardless of `Df`. Tie the loaded face (`equalDOF` on uz) for a material-point test: it then dissipates Gf exactly. And `ωt = 1` exactly (bilinear) made the tangent singular ⇒ residual tangent stiffness `(1−ω) ≥ 1e-6` (2026-09).
@@ -1721,6 +1727,21 @@ non-obvious behaviours, all relevant to anyone wiring `-stabilize` into a driver
   augments from the order-INDEPENDENT global accumulator `gtGlobal/aGlobal`. So the per-node `λ_T`/`gpT`
   reconciliation is the same single fix for the whole friction state. Still fenced to matched/explicit; the
   C3.3 gate (MINOR-1) re-confirmed it is inherited, not introduced.
+  **WP-155 update (2026-09-30, review #897):** the fence is now crossed in practice. The apeGmsh pile
+  ladder runs μ = 1 and cohesion-only mortar on a NON-matching skin/hole, and its cohesion-only
+  multi-step failure persists under `-augment never` (so not the Uzawa) and is plausibly THIS defect.
+  `-augment never` removes only the λ_T half. See [[155_pile_contact_r05]] §5–§6. Recommended as the
+  next contact slice.
+  **WP-157 (2026-09-30) — RESOLVED for friction.** The state is now per (slave node, slave facet, master
+  facet): `MortarFrictionState` keyed (contactTag, node, sf, mf), so each pair re-reads what its own
+  return map wrote. The second failure mode surfaced along the way: on a CURVED/creased interface a
+  pair also read a `λ_T`/`gpT` lying in a NEIGHBOUR's tangent plane (a normal leak |t·n| ≈ cap from step
+  2 on; oracle T3). Pinned by `test_adr157_mortar_pair_friction` (creased roof: analytic force and
+  multi-step force-control convergence; both fail on d63f49750). See [[157_mortar_friction_pair_state]].
+  **Lifecycle change (review #900, finding 3).** A pair refused by `-maxGap`
+  for an epoch loses its friction state and re-engages fresh (D4). A pair that
+  stays paired but inert keeps `λ_T`/`gpT` frozen and re-applies them when it
+  re-enters. Before WP-157, siblings sharing the node refreshed that state.
 - **C4 update (#381) — RESOLVED for the TIE path; STILL FENCED for FRICTION.** C4 mesh-tying hits shared
   slave nodes immediately (non-matching meshes are the whole point), so the pre-req had to be discharged
   before relying on it. The tie state (`λ_tie`, the full 3-vec relative displacement `r_I`) does NOT inherit
@@ -8140,3 +8161,25 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
   - Measured: WP-152's first non-compressing gate (`tr dε > 0.0`) on a homogeneous stdBrick under +3e-4/−3e-4 pure shear: 6 of 8 GPs separated, 2 were held as "compressing" and refused. Under stdBrick (which discards the material's code) the 2 refusals aborted the commit through the WP-99 latch.
 - **Rule:** compare a derived trace against a tolerance scaled to the increment (`tr dε > 1e-10·‖dε‖`), and test the branch with a pure-shear increment on EVERY Gauss point of an element, not just GP 1.
 - **Workaround/status:** ✅ WP-152 re-review (`LadrunoSANISANDSasME.cpp`, the E1/E2 gate; `tests/test_ladruno_sanisand_tension_cutoff.py::test_E2_separates_under_isochoric_shear`).
+
+### Probing a tangent from Python: `setNodeDisp` without `-commit` RESETS the node's other DOFs, and `printA -ret` is the TRANSPOSE (WP-158)
+- **Bites:** an FD check `setNodeDisp n 1 ux; setNodeDisp n 2 uy; setNodeDisp n 3 uz; printB` evaluates the residual at
+  (committed_x, committed_y, uz), not at (ux, uy, uz). `OPS_setNodeDisp` copies `getDisp()` (the COMMITTED vector), sets
+  one component and calls `setTrialDisp`, so each call wipes the trial value of the DOFs set before it. R0.7 lost a day
+  to a "12 % tangent error" that was this. Separately, `printA -ret` hands back the `Matrix` buffer, which is
+  column-major, so `np.array(...).reshape(n, n)` is `Kᵀ`. A symmetric tangent hides it; a non-symmetric one
+  (`-consistanttan`, or the parked FD oracle patch) looks wrong by exactly a transpose.
+- **Also:** `setNodeDisp` does not `update()` elements, so a zeroLength or brick keeps its last-`update()` force in
+  `printB`. Add their exact linear part analytically (or FD only contact DOFs).
+- **Workaround/status:** use `setNodeDisp ... -commit` (a node-level commit; the contact Domain path state is untouched)
+  and `reshape(n, n).T`. Probes: `contact_prototypes/probe_adr158_mortar_tangent_fd.py`, `probe_adr158_newton.py`.
+
+### Faceted mortar on a mismatched polygon: the geometric part of the pair force is non-smooth, so an "exact" FD tangent can be WORSE than the frozen-geometry one (WP-158)
+- **Bites:** at the meshed configuration a skin polygon (n) and a hole polygon (n+4) share vertices. The clipped
+  overlap of a pair changes topology inside +-h, and the one-sided slopes of the pair force differ by about 100 %
+  (|df/du| ~ 1e6 against epsN*a ~ 3e5 under a 1e4 kPa prestress). The central-FD tangent (the WP-158 FD oracle patch) then stalls
+  Newton at 0.1-5 for every step size, while the analytic tangent (no geometric terms) plus `-consistanttan` converges.
+  On a smooth crease the same FD tangent is quadratic.
+- **Workaround/status:** for the pile use `-consistanttan` (Pardiso is mtype 11, non-symmetric). The FD pair tangent is
+  not shipped; it is parked as `contact_prototypes/adr158_fd_pair_tangent_oracle.patch` (a diagnostic oracle, useful on
+  smooth creases with cross-crease pairs). See [[158_mortar_tangent_diagnosis_consistanttan]] §3 D1, D3.

@@ -514,6 +514,13 @@ This is a quick reference; the deep specs live next door:
 
 ## Maintenance log
 
+- 2026-09-29 — **Contact (fork side only, WP-155 / [[155_pile_contact_r05]]):** the
+  `contact … -mortar` grammar gains `-augment commit|request|never`, `-maxGap d`,
+  `-gapOffset g0` and `-adjust [tol]` (the pile ladder R1 findings N-1/N-2/G-9).
+  All absent ⇒ byte-identical. **apeGmsh exposure is TO IMPLEMENT** (proposed:
+  `g.constraints.contact(augment=, max_gap=, gap_offset=, adjust=)` + the `/contacts`
+  columns); until then decks can append the tokens. `-gapOffset`/`-adjust` are
+  refused with `tie=True`; `-maxGap`/`-gapOffset`/`-adjust` are 3D-mortar only.
 - 2026-08-05 — **CORRECTION to the `LadrunoUP` `-geom` note added earlier the
   same day (#574).** That note claimed an out-of-lane `-geom` "silently degrades
   to `linear` with a warning, it does not fail", and concluded that an emitter
