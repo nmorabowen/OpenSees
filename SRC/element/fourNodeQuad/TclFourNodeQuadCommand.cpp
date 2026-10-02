@@ -1176,12 +1176,16 @@ TclModelBuilder_addSixNodeTri(ClientData clientData, Tcl_Interp *interp,
     }
   }
 
+  // <-doInitDisp $flag> may follow the matTag or the optional p rho b1 b2
   int do_init_disp_int = 0;
-  if ((argc-argStart) > 15 && strcmp(argv[14+argStart], "-doInitDisp") == 0) {
-    if (Tcl_GetInt(interp, argv[15+argStart], &do_init_disp_int) != TCL_OK) {
-      opserr << "WARNING invalid -doInitDisp value\n";
-      opserr << "SixNodeTri element: " << SixNodeTriId << endln;
-      return TCL_ERROR;
+  for (int i = 10 + argStart; i < argc; i++) {
+    if (strcmp(argv[i], "-doInitDisp") == 0) {
+      if (i + 1 >= argc || Tcl_GetInt(interp, argv[i + 1], &do_init_disp_int) != TCL_OK) {
+        opserr << "WARNING invalid -doInitDisp value\n";
+        opserr << "SixNodeTri element: " << SixNodeTriId << endln;
+        return TCL_ERROR;
+      }
+      break;
     }
   }
   bool do_init_disp = (do_init_disp_int != 0);
