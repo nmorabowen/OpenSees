@@ -2,7 +2,7 @@
 title: "WP-159 — Smoothed (C1) mortar contact law: -smoothN g0, -smoothT r"
 project: Ladruno
 type: ADR (amends the ADR-41 C2/C3 mortar normal law and return map; status row in the ADR-48 capstone)
-status: "PR open (not merged) — opt-in, default byte-identical; the R3 pile blocker R3-N1 is NOT closed by it (section 5)"
+status: "PR #903 open (not merged) — opt-in, default byte-identical; the R3 pile blocker R3-N1 is NOT closed by it (section 5)"
 owner: nmora
 related:
   - "[[41_ladruno_mortar_alm_contact_adr]] (the C2 normal law and the C3 return map this smooths)"
