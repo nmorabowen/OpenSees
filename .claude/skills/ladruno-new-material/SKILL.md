@@ -53,6 +53,10 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       (WP-130, #868); SANISAND `ModifiedEuler` force-accepted failed substeps at `dT_min`
       (WP-127 finding C, SAS-ME fix WP-129, #871). Test it: feed one wild trial increment
       and assert the call returns < 0 within a wall-clock bound.
+- [ ] A sub-stepper must hand each sub-step what the un-sub-stepped call would get -- moduli
+      INITIALISED (and not taken after a callee wrote them), and EVERY evolved vector advanced,
+      elastic strain included. Gate it with an identity the sub-steps must satisfy, not with
+      a comparison to another integrator (WP-160). Quirks: "it passes uninitialised `nG, nK`".
 - [ ] Implement `getInitialTangent()` honestly: the base default returns `getTangent()`, so
       `-initial` silently becomes full Newton. Quirks: "`NDMaterial::getInitialTangent()` DEFAULTS".
 - [ ] Substep schemes need error control and yield-drift correction, and must honour the
