@@ -33,12 +33,14 @@ throughout, so the constructor's scheme-3/5 warning latch is never touched):
      whether or not ForwardEuler's multiplier is right (WP-158), and breaks on
      either defect: garbage moduli (dsigma != Ce : de_e) or an elastic strain
      that is never advanced (de_e = one sub-step's).
-  2. ``test_energy_halves_equal_the_committed_split`` [0, 6] -- MaxEnergyInc's
-     two halves equal the same increment as two COMMITTED steps of the
-     integrator they call, up to the moduli each commit refreshes. (A split
-     comparison does NOT work for the ForwardEuler schemes on a build without
-     WP-158: there each committed FE step lands inside the yield surface and
-     the next one re-intersects it elastically; sub-steps never do.)
+  2. ``test_substeps_equal_the_committed_split`` [0, 4, 6, 7, 8, 9] -- the
+     sub-stepped increment equals the same increment taken as N COMMITTED
+     steps of the integrator the sub-steps call (N = 11 for MaxStrainInc, 2
+     for MaxEnergyInc's halves), up to the moduli each commit refreshes.
+     For the ForwardEuler schemes this needs WP-158 (#901, in the base):
+     with the old FE each committed step landed inside the yield surface and
+     the next one re-intersected it elastically, which sub-steps never do --
+     measured, the split then disagreed by 14-33 % even with WP-160.
   3. ``test_sub_stepped_schemes_are_deterministic`` [0, 4, 6, 7, 8, 9] -- a
      GUARD, not the regression gate: the same increment, re-run after a
      different deck, is bit-identical. Pre-fix it PASSES on the dev box (the
@@ -47,12 +49,17 @@ throughout, so the constructor's scheme-3/5 warning latch is never touched):
      differences for IntScheme 4 on another binary.
 
 MEASURED 2026-10-02, Windows, Ladruno_scripts\\build.bat. Pre-fix = origin/ladruno
-d63f49750 (SRC/material identical to the 117f56060 base). Fixed = WP-160:
+5300da720 (WP-158 merged; its material code built from #901's head 00bfe27da).
+Fixed = 5300da720 + WP-160. Relative gaps:
 
-  gate 1  identity gap        4, 7, 8, 9   pre 1.0 (dsigma = 0)   fixed 2.1e-14, 1.0e-14 x3
-  gate 2  vs committed split  0            pre 1.0 (dsigma = 0)   fixed 4.4e-4
-                              6  (e_e)     pre 0.45               fixed 6.8e-15
-  gate 3  re-run              all          pre True               fixed True
+  gate 1  dsigma vs Ce : de_e          4 / 7, 8, 9    pre 1.0 (dsigma = 0)   fixed 1.9e-14 / 2.2e-14
+  gate 2  vs N committed steps         0              pre 1.0 (dsigma = 0)   fixed 4.4e-4
+                                       4 / 7, 8, 9    pre 1.0 (dsigma = 0)   fixed 5.2e-4 / 1.1e-3
+                                       6  (e_e)       pre 0.45               fixed 6.8e-15
+  gate 3  re-run bit-identical         all            pre True               fixed True
+  a cEStrain-only mutant (moduli fixed, elastic strain frozen) fails gates 1 and 2.
+  On the pre-WP-158 base (d63f49750) the same pre/fixed pattern held for gates 1
+  and 2 [0, 6]; the FE split of gate 2 disagreed by 14-33 % there (see gate 2).
 """
 import numpy as np
 import pytest
@@ -71,7 +78,7 @@ COORDS = {1: (0, 0, 0), 2: (1, 0, 0), 3: (1, 1, 0), 4: (0, 1, 0),
           5: (0, 0, 1), 6: (1, 0, 1), 7: (1, 1, 1), 8: (0, 1, 1)}
 
 IDENTITY_RTOL = 1e-10    # fixed 1-2e-14; pre-fix 1.0 (dsigma == 0)
-SPLIT_RTOL = 5e-3        # fixed 4.4e-4 (0), 7e-15 (6); pre-fix 1.0 (0), 0.45 (6, e_e)
+SPLIT_RTOL = 5e-3        # fixed <= 1.1e-3 (9), 4.4e-4 (0), 7e-15 (6); pre-fix 1.0, 0.45 (6, e_e)
 
 
 def _set_scheme(scheme, ptag=1):
@@ -186,12 +193,12 @@ def test_forward_euler_substeps_keep_the_elastic_bookkeeping(scheme):
         f"(relative gap {gap:.3e})", d)
 
 
-@pytest.mark.parametrize("scheme", [0, 6])
-def test_energy_halves_equal_the_committed_split(scheme):
-    """MaxEnergyInc's two halves vs the same increment as two COMMITTED steps of
-    the integrator it calls (ModifiedEuler for 0, RungeKutta4 for 6); they
-    differ only by the moduli the commit refreshes (RK4 re-evaluates them
-    itself, so 6 agrees to round-off)."""
+@pytest.mark.parametrize("scheme", [0, 4, 6, 7, 8, 9])
+def test_substeps_equal_the_committed_split(scheme):
+    """N sub-steps vs the same increment as N COMMITTED steps of the integrator
+    they call (ForwardEuler for 4, 7-9; ModifiedEuler for 0; RungeKutta4 for
+    6); they differ only by the moduli each commit refreshes (RK4 re-evaluates
+    them itself, so 6 agrees to round-off)."""
     d, a = increments(scheme)
     dr, ar = increments(SINGLE[scheme], N_SUB[scheme])
     d1, a1 = increments(SINGLE[scheme])
@@ -200,8 +207,8 @@ def test_energy_halves_equal_the_committed_split(scheme):
     for k in ("stress", "alpha", "estrains"):
         r = rel(d[k], dr[k])
         assert r < SPLIT_RTOL, (
-            f"IntScheme {scheme}: the halved {k} increment differs from two committed "
-            f"IntScheme-{SINGLE[scheme]} steps by {r:.3e}", d[k], dr[k])
+            f"IntScheme {scheme}: the sub-stepped {k} increment differs from {N_SUB[scheme]} "
+            f"committed IntScheme-{SINGLE[scheme]} steps by {r:.3e}", d[k], dr[k])
 
 
 def _dirty_the_stack():
@@ -225,7 +232,7 @@ if __name__ == "__main__":
     for s_ in (4, 7, 8, 9, 0, 6):
         gap, d = elastic_identity_gap(s_)
         print("IntScheme %d: elastic identity gap %.3e  |dsigma| %.4e" % (s_, gap, np.linalg.norm(d["stress"])))
-    for s_ in (0, 6, 4, 9):
+    for s_ in (0, 6, 4, 7, 8, 9):
         d, a = increments(s_)
         dr, _ = increments(SINGLE[s_], N_SUB[s_])
         print("IntScheme %d vs %d committed IntScheme-%d steps: stress %.3e  alpha %.3e  estrains %.3e" % (
