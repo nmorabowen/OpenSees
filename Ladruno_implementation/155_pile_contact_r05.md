@@ -2,7 +2,7 @@
 title: "WP-155 — Pile-contact R0.5: mortar augmentation control, pairing guard, initial-gap shift"
 project: Ladruno
 type: ADR (amends the mortar lane of ADR-41; status row in the ADR-48 capstone)
-status: "PR #897 open (not merged) — three opt-in -mortar flags, defaults byte-identical; review #897 (Fable) findings 1-5 addressed"
+status: "Merged (#897, d63f49750, 2026-09-30) — three opt-in -mortar flags, defaults byte-identical; review #897 (Fable) findings 1-5 addressed"
 owner: nmora
 related:
   - "[[48_ladruno_contact_capstone_adr]] (status-of-record row + command surface)"

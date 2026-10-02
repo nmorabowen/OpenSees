@@ -2,7 +2,7 @@
 title: "WP-157 — Mortar friction path state per (slave node, facet pair)"
 project: Ladruno
 type: ADR (amends the ADR-41 C3 mortar friction lane; status row in the ADR-48 capstone)
-status: "PR open (not merged) — resolves LEDGER_quirks MAJOR-1 (the C3.1 gate, #377) for friction"
+status: "Merged (#900, e6275bfa9, 2026-10-01) — resolves LEDGER_quirks MAJOR-1 (the C3.1 gate, #377) for friction"
 owner: nmora
 related:
   - "[[41_ladruno_mortar_alm_contact_adr]] (C3.1–C3.3: the lane this amends)"

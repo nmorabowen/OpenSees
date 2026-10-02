@@ -269,12 +269,23 @@ class LadrunoContactDomain
         double gapOffset   = 0.0;
         bool   adjust      = false;
         double adjustTol   = 0.0;
+        // Ladruno ADR-159 (pile-contact R0.8) -- the smoothed contact law, set by
+        // setMortarSmoothing() (only when -smoothN/-smoothT was given => byte-identical otherwise).
+        //  smoothN (> 0 => on, a LENGTH g0): the C1 quadratic normal onset over |gbar| < g0 plus the
+        //    C1 friction-onset weight over the same band (LadrunoContactFE::mortarSmoothLaw).
+        //  smoothT (0 < r < 1 => on): the rounded stick/slip corner over |‖tT*‖ - cap| < r*cap.
+        //  Both are pure-penalty laws: they require augmentMode == AUG_NEVER (checked by the setter).
+        double smoothN     = 0.0;
+        double smoothT     = 0.0;
     };
     enum { AUG_COMMIT = 0, AUG_REQUEST = 1, AUG_NEVER = 2 };
     // ADR-155 -- set the R0.5 options on an already-added mortar contact (by tag). <0 if the tag
     // is not a mortar contact or an option is invalid (gap shift on a -tie, negative maxGap...).
     int setMortarContactOptions(int tag, int augmentMode, double maxGap, double gapOffset,
                                 bool adjust, double adjustTol);
+    // Ladruno ADR-159 -- set -smoothN/-smoothT on an already-added (and already optioned) mortar
+    // contact. <0 (named) on a -tie, an augmenting contact, or an out-of-range value.
+    int setMortarSmoothing(int tag, double smoothN, double smoothT);
     int addMortarContact(int tag, int masterSurfTag, int slaveSurfTag,
                          double kn, bool knAuto, double epsN, bool epsNAuto,
                          double augTol, int maxAug, int ngp,
