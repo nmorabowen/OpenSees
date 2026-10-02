@@ -32,18 +32,16 @@
 #include <elementAPI.h>
 #include <Parameter.h>
 #include <Domain.h>
-#include <Element.h>
 
 
 void *OPS_TimeVaryingMaterial(void)
 {
-    opserr << "Using TimeVaryingMaterial" << endln ;
+    const char *usage =
+        "nDMaterial TimeVarying $tag $projMatTag $N t1 .. tN E1 .. EN K1 .. KN A1 .. AN\n";
+
     // check arguments
-    int numArgs = OPS_GetNumRemainingInputArgs();
-    if (numArgs < 7) {
-        opserr <<
-               "nDMaterial TimeVarying Error: Few arguments (< 17).\n"
-               "nDMaterial TimeVarying $tag $theProjectedMat $Nt t1 t2 t3 .. t_Nt E1 E2 E3 ... E_Nt K1 K2 K3...K_Nt  A1 A2 A3...A_Nt\n";
+    if (OPS_GetNumRemainingInputArgs() < 3) {
+        opserr << "nDMaterial TimeVarying Error: too few arguments.\n" << usage;
         return nullptr;
     }
 
@@ -55,11 +53,15 @@ void *OPS_TimeVaryingMaterial(void)
         return nullptr;
     }
 
-
     int Ndatapoints = 0;
     numData = 1;
-    if (OPS_GetInt(&numData, &Ndatapoints) != 0)  {
-        opserr << "nDMaterial TimeVarying Error: error reading Ndatapoints\n";
+    if (OPS_GetInt(&numData, &Ndatapoints) != 0 || Ndatapoints < 1)  {
+        opserr << "nDMaterial TimeVarying Error: invalid number of data points N\n";
+        return nullptr;
+    }
+    if (OPS_GetNumRemainingInputArgs() < 4 * Ndatapoints) {
+        opserr << "nDMaterial TimeVarying Error: expected " << 4 * Ndatapoints
+               << " values (t, E, K, A histories) for tag " << iData[0] << ".\n" << usage;
         return nullptr;
     }
 
@@ -67,42 +69,29 @@ void *OPS_TimeVaryingMaterial(void)
     Vector E(Ndatapoints);
     Vector K(Ndatapoints);
     Vector A(Ndatapoints);
-
-    // get double data
-    double * dData = new double[Ndatapoints];
-
-    numData = Ndatapoints;
-
-    //Read time steps
-    if (OPS_GetDouble(&numData, dData) != 0) {
-        opserr << "nDMaterial TimeVarying Error: reading t data for nDMaterial TimeVarying with tag " << iData[0] << ".\n";
-        return nullptr;
+    Vector *histories[4] = {&t, &E, &K, &A};
+    const char *names[4] = {"t", "E", "K", "A"};
+    for (int h = 0; h < 4; ++h) {
+        numData = Ndatapoints;
+        if (OPS_GetDouble(&numData, &(*histories[h])(0)) != 0) {
+            opserr << "nDMaterial TimeVarying Error: reading " << names[h]
+                   << " data for nDMaterial TimeVarying with tag " << iData[0] << ".\n";
+            return nullptr;
+        }
     }
-    t.setData(dData, Ndatapoints);
 
-    //Read E
-    dData = new double[Ndatapoints];
-    if (OPS_GetDouble(&numData, dData) != 0) {
-        opserr << "nDMaterial TimeVarying Error: reading E data for nDMaterial TimeVarying with tag " << iData[0] << ".\n";
-        return nullptr;
+    // validate histories
+    for (int k = 0; k < Ndatapoints; ++k) {
+        if (k > 0 && t(k) <= t(k - 1)) {
+            opserr << "nDMaterial TimeVarying Error: times must be strictly increasing (tag " << iData[0] << ").\n";
+            return nullptr;
+        }
+        if (A(k) <= 0.0 || K(k) <= 0.0 || E(k) <= 0.0 || E(k) >= 9.0 * K(k)) {
+            opserr << "nDMaterial TimeVarying Error: need A > 0, K > 0 and 0 < E < 9K at every point (tag "
+                   << iData[0] << ", point " << k + 1 << ").\n";
+            return nullptr;
+        }
     }
-    E.setData(dData, Ndatapoints);
-
-    //Read K
-    dData = new double[Ndatapoints];
-    if (OPS_GetDouble(&numData, dData) != 0) {
-        opserr << "nDMaterial TimeVarying Error: reading K data for nDMaterial TimeVarying with tag " << iData[0] << ".\n";
-        return nullptr;
-    }
-    K.setData(dData, Ndatapoints);
-
-    //Read A
-    dData = new double[Ndatapoints];
-    if (OPS_GetDouble(&numData, dData) != 0) {
-        opserr << "nDMaterial TimeVarying Error: reading A data for nDMaterial TimeVarying with tag " << iData[0] << ".\n";
-        return nullptr;
-    }
-    A.setData(dData, Ndatapoints);
 
     // get the projected material to map
     NDMaterial *theProjMaterial = OPS_getNDMaterial(iData[1]);
@@ -111,6 +100,16 @@ void *OPS_TimeVaryingMaterial(void)
         opserr << "nDMaterial: " << iData[1] << "\n";
         opserr << "nDMaterial TimeVarying: " << iData[0] << "\n";
         return nullptr;
+    }
+
+    {
+        NDMaterial *test = theProjMaterial->getCopy("ThreeDimensional");
+        if (test == 0) {
+            opserr << "nDMaterial TimeVarying Error: material " << iData[1]
+                   << " has no ThreeDimensional version.\n";
+            return nullptr;
+        }
+        delete test;
     }
 
     // create the TimeVarying wrapper
@@ -127,24 +126,11 @@ void *OPS_TimeVaryingMaterial(void)
     return theTimeVaryingMaterial;
 }
 
-// int TimeVaryingMaterial::number_of_evolution_laws = 0;
-// Vector* TimeVaryingMaterial::time_history = 0;
-// Vector* TimeVaryingMaterial::E_history = 0;
-// Vector* TimeVaryingMaterial::K_history = 0;
-// Vector* TimeVaryingMaterial::A_history = 0;
 std::map<int, Vector> TimeVaryingMaterial::time_histories;
 std::map<int, Vector> TimeVaryingMaterial::E_histories;
 std::map<int, Vector> TimeVaryingMaterial::K_histories;
 std::map<int, Vector> TimeVaryingMaterial::A_histories;
 std::map<int, bool> TimeVaryingMaterial::new_time_step ;
-bool TimeVaryingMaterial::print_strain_once = true;
-bool TimeVaryingMaterial::print_stress_once = true;
-bool TimeVaryingMaterial::print_commit_once = true;
-bool TimeVaryingMaterial::print_tang_once = true;
-// double TimeVaryingMaterial::E = 0;
-// double TimeVaryingMaterial::G = 0;
-// double TimeVaryingMaterial::A = 0;
-// double TimeVaryingMaterial::nu = 0;
 std::map<int, double> TimeVaryingMaterial::E;
 std::map<int, double> TimeVaryingMaterial::G;
 std::map<int, double> TimeVaryingMaterial::A;
@@ -165,58 +151,26 @@ TimeVaryingMaterial::TimeVaryingMaterial(
     // copy the isotropic material
     theProjectedMaterial = theProjMat.getCopy("ThreeDimensional");
     if (theProjectedMaterial == 0) {
-        opserr << "nDMaterial Orthotropic Error: failed to get a (3D) copy of the isotropic material\n";
-        exit(-1);
+        opserr << "nDMaterial TimeVarying Error: failed to get a (3D) copy of the isotropic material\n";
     }
 
     int Ndatapoints = E_.Size();
-    // time_history = new Vector(Ndatapoints);
-    // E_history = new Vector(Ndatapoints);
-    // K_history = new Vector(Ndatapoints);
-    // A_history = new Vector(Ndatapoints);
     time_histories[tag] = Vector(Ndatapoints);
     E_histories[tag] = Vector(Ndatapoints);
     K_histories[tag] = Vector(Ndatapoints);
     A_histories[tag] = Vector(Ndatapoints);
-    // *time_history = t_;
-    // *E_history = E_;
-    // *K_history = K_;
-    // *A_history = A_;
     time_histories[tag] = t_;
     E_histories[tag] = E_;
     K_histories[tag] = K_;
     A_histories[tag] = A_;
 
     new_time_step[tag] = true;
-
-    //This is a new material constructor, hence we save the evolution law
-    // evolution_law_id = number_of_evolution_laws;
-    //and advance the number of evolution laws.
-    // number_of_evolution_laws++;
-
-    opserr << "Created new TimeVaryingMaterial \n";
-    // opserr << "  evolution_law_id          = " << evolution_law_id                << endln;
-    opserr << "  tag          = " << tag                << endln;
-    opserr << "  proj_tag     = " << theProjectedMaterial->getTag() << endln;
-    opserr << "  Nt           = " << E_histories[tag].Size()  << endln;
-    opserr << "  time_history = " << time_histories[tag]      << endln;
-    opserr << "  E_history    = " << E_histories[tag]         << endln;
-    opserr << "  K_history    = " << K_histories[tag]         << endln;
-    opserr << "  A_history    = " << A_histories[tag]         << endln;
 }
 
 TimeVaryingMaterial::~TimeVaryingMaterial()
 {
     if (theProjectedMaterial)
     {
-        // delete time_history;
-        // time_history = 0;
-        // delete E_history;
-        // E_history = 0;
-        // delete K_history;
-        // K_history = 0;
-        // delete A_history;
-        // A_history = 0;
         delete theProjectedMaterial;
         theProjectedMaterial = 0;
     }
@@ -229,6 +183,8 @@ double TimeVaryingMaterial::getRho(void)
 
 int TimeVaryingMaterial::setTrialStrain(const Vector & strain)
 {
+    if (theProjectedMaterial == 0)
+        return -1;
 
     //Compute the real strain increment
     static Vector depsilon_real(6);
@@ -243,8 +199,6 @@ int TimeVaryingMaterial::setTrialStrain(const Vector & strain)
     double Ex  = E[tag];  double Ey  = E[tag];  double Ez  = E[tag];
     double Gxy = G[tag];  double Gyz = G[tag];  double Gzx = G[tag];
     double vxy = nu[tag]; double vyz = nu[tag]; double vzx = nu[tag];
-    // double Asigmaxx   = A; double Asigmayy   = A; double Asigmazz   = A;
-    // double Asigmaxyxy = A; double Asigmayzyz = A; double Asigmaxzxz = A;
 
     // compute the initial orthotropic constitutive tensor
     static Matrix C0(6, 6);
@@ -270,18 +224,8 @@ int TimeVaryingMaterial::setTrialStrain(const Vector & strain)
     if (A[tag] <= 0 ) {
         opserr << "nDMaterial TimeVarying Error: A must be greater than 0 for tag = " << tag << "\n";
         opserr << "A = " << A[tag] << endln;
-        exit(-1);
+        return -1;
     }
-    // static Matrix Asigma(6, 6);
-    // Asigma.Zero();
-    // Asigma(0, 0) = Asigmaxx;
-    // Asigma(1, 1) = Asigmayy;
-    // Asigma(2, 2) = Asigmazz;
-    // Asigma(3, 3) = Asigmaxyxy;
-    // Asigma(4, 4) = Asigmayzyz;
-    // Asigma(5, 5) = Asigmaxzxz;
-    // for (int i = 0; i < 6; ++i)
-    //     Asigma_inv(i) = 1.0 / Asigma(i, i);
 
     // compute the initial projected constitutive tensor and its inverse
     static Matrix C0proj(6, 6);
@@ -289,14 +233,11 @@ int TimeVaryingMaterial::setTrialStrain(const Vector & strain)
     C0proj = theProjectedMaterial->getInitialTangent();
     int res = C0proj.Invert(C0proj_inv);
     if (res < 0) {
-        opserr << "nDMaterial Orthotropic Error: the isotropic material gave a singular initial tangent.\n";
-        exit(-1);
+        opserr << "nDMaterial TimeVarying Error: the isotropic material gave a singular initial tangent.\n";
+        return -1;
     }
 
     // compute the strain tensor map inv(C0_iso) * Asigma * C0_ortho
-    // static Matrix Asigma_C0(6, 6);
-    // Asigma_C0.addMatrixProduct(0.0, Asigma, C0, 1.0);
-    // Asigma_C0 = A*C0;
     Aepsilon.addMatrixProduct(0.0, C0proj_inv, C0, A[tag]);
 
     //Compute the projected strain increment
@@ -307,21 +248,6 @@ int TimeVaryingMaterial::setTrialStrain(const Vector & strain)
     static Vector epsilon_proj(6);
     epsilon_proj = epsilon_proj_n;
     epsilon_proj.addVector(1.0, depsilon_proj, 1.0); // epsilon_proj = epsilon_proj_old + depsilon_proj
-
-    my_element_tag = ops_TheActiveElement->getTag();
-    // opserr << "my_element_tag = " << my_element_tag << endln;
-    // if (my_element_tag == 83 )
-    // {
-    //     opserr << "@ TimeVaryingMaterial::setTrialStrain" << endln;
-    //     opserr << "strain = " << strain << endln;
-    //     opserr << "epsilon_internal = " << epsilon_internal << endln;
-    //     opserr << "epsilon_real = " << epsilon_real << endln;
-    //     opserr << "depsilon_real = " << depsilon_real << endln;
-    //     opserr << "depsilon_proj = " << depsilon_proj << endln;
-    //     opserr << "epsilon_proj = " << epsilon_proj << endln;
-    //     print_strain_once = false;
-    //     print_commit_once = true;
-    // }
 
     // call projected material with the projected total strain
     res = theProjectedMaterial->setTrialStrain(epsilon_proj);
@@ -355,24 +281,11 @@ const Vector &TimeVaryingMaterial::getStress(void)
 
     // rescale the stress increment to back to real space
     static Vector dsigma_real(6);
-    // for (int i = 0; i < 6; ++i)
-    //     dsigma_real(i) = dsigma_proj(i) / A;
     // dsigma_real = Asigma^-1 * dsigma_proj
-    // dsigma_real(i) = Asigma_inv(i) * dsigma_proj(i); // dsigma_real = Asigma^-1 * dsigma_proj
     dsigma_real = dsigma_proj / A[this->getTag()];  // dsigma_real = Asigma^-1 * dsigma_proj
 
     //add real stress increment to the previous real stress
     sigma_real = sigma_real_n + dsigma_real;
-
-    if (my_element_tag == 83)
-    {
-        opserr << " @TimeVaryingMaterial::getStress mattag = " << this->getTag() << endln;
-        opserr << "sigma_real_n = " << sigma_real_n << endln;
-        opserr << "dsigma_real = " << dsigma_real << endln;
-        opserr << "sigma_real = " << sigma_real << endln;
-        // opserr << "Aepsilon = " << Aepsilon << endln;
-        print_stress_once = false;
-    }
 
     return sigma_real;
 }
@@ -384,66 +297,20 @@ const Matrix &TimeVaryingMaterial::getTangent(void)
 
     // compute orthotripic tangent
     static Matrix C_real(6, 6);
-    // static Matrix temp(6, 6);
-    // static Matrix cdiff(6, 6);
-    // static Matrix invAsigma(6, 6);
-    // invAsigma.Zero();
-    // for (int i = 0; i < 6; ++i)
-    //     invAsigma(i, i) = Asigma_inv(i);
-    // temp.addMatrixProduct(0.0, C_proj, Aepsilon, 1.0);
-    // C_real.addMatrixProduct(0.0, invAsigma, temp, 1.0);
-    // C_real = temp / A;
     C_real.addMatrixProduct(0.0, C_proj, Aepsilon, 1 / A[this->getTag()]);
-
-
-    // cdiff = C_proj - C_real;
-    bool printnow = false;
-    // for (int i = 0; i < 6; ++i)
-    // {
-    //     for (int j = 0; j < 6; ++j)
-    //     {
-    //         if (abs(cdiff(i, j)) > 1e-4 || cdiff(i, j) != cdiff(i, j) )
-    //         {
-    //             printnow = true;
-    //         }
-    //     }
-    // }
-
-    // if (my_element_tag == 83  )
-    // {
-    //     opserr << "@ getTangent" << endln;
-    //     opserr << "C_real = " << C_real << endln;
-    //     opserr << "C_proj = " << C_proj << endln;
-    //     // opserr << "diff = " << cdiff  << endln;
-    //     opserr << "Asigma_inv = " << 1 / A[this->getTag()]  << endln;
-    //     opserr << "Aepsilon = " << Aepsilon  << endln;
-    //     // print_tang_once = false;
-    // }
-
 
     return C_real;
 }
 
 const Matrix &TimeVaryingMaterial::getInitialTangent(void)
 {
-    opserr << "@TimeVaryingMaterial::getInitialTangent" << endln;
-
     // elasticity tensor in projected space
     const Matrix& C_proj = theProjectedMaterial->getInitialTangent();
 
     // compute the real tangent from the projected one
     static Matrix C_real(6, 6);
-    static Matrix temp(6, 6);
-    // static Matrix invAsigma(6, 6);
-    // invAsigma.Zero();
-    // for (int i = 0; i < 6; ++i)
-    //     invAsigma(i, i) = Asigma_inv(i);
-    // temp.addMatrixProduct(0.0, C_proj, Aepsilon, 1.0);
-    // C.addMatrixProduct(0.0, invAsigma, temp, 1.0);
     C_real.addMatrixProduct(0.0, C_proj, Aepsilon, 1 / A[this->getTag()]);
     return C_real;
-
-
 }
 
 int TimeVaryingMaterial::commitState(void)
@@ -453,25 +320,11 @@ int TimeVaryingMaterial::commitState(void)
     const Vector& sigma_proj = theProjectedMaterial->getStress();
     const Vector& epsilon_proj = theProjectedMaterial->getStrain();
 
-    print_stress_once = true;
-    print_strain_once = true;
-    print_tang_once = true;
     sigma_real_n = sigma_real;
     sigma_proj_n = sigma_proj;
     epsilon_real_n = epsilon_real;
     epsilon_proj_n = epsilon_proj;
     epsilon_new_n = epsilon_new;
-
-    if (my_element_tag == 83)
-    {
-        opserr << "@ TimeVaryingMaterial::commitState(void) " << endln;
-        opserr << "sigma_real_n = " << sigma_real_n;
-        opserr << "sigma_proj_n = " << sigma_proj_n;
-        opserr << "epsilon_real_n = " << epsilon_real_n;
-        opserr << "epsilon_proj_n = " << epsilon_proj_n;
-        opserr << "epsilon_new_n = " << epsilon_new_n;
-        // print_commit_once = false;
-    }
 
     return theProjectedMaterial->commitState();
 }
@@ -479,9 +332,7 @@ int TimeVaryingMaterial::commitState(void)
 int TimeVaryingMaterial::revertToLastCommit(void)
 {
     sigma_real = sigma_real_n ;
-    // sigma_proj = sigma_proj_n ;
     epsilon_real = epsilon_real_n ;
-    // epsilon_proj = epsilon_proj_n ;
     epsilon_new = epsilon_new_n ;
     return theProjectedMaterial->revertToLastCommit();
 }
@@ -498,27 +349,19 @@ int TimeVaryingMaterial::revertToStart(void)
 
 NDMaterial * TimeVaryingMaterial::getCopy(void)
 {
-    // opserr << "TimeVaryingMaterial::getCopy" << endln;
     TimeVaryingMaterial *theCopy = new TimeVaryingMaterial();
     theCopy->setTag(getTag());
     theCopy->theProjectedMaterial = theProjectedMaterial->getCopy("ThreeDimensional");
-    // theCopy->evolution_law_id = evolution_lsaw_id;
     theCopy->Aepsilon = Aepsilon;
     theCopy->epsilon_internal = epsilon_internal;
     theCopy->sigma_real = sigma_real;
-    // theCopy->sigma_proj = sigma_proj;
     theCopy->epsilon_real = epsilon_real;
-    // theCopy->epsilon_proj = epsilon_proj;
     theCopy->sigma_real_n = sigma_real_n;
     theCopy->sigma_proj_n = sigma_proj_n;
     theCopy->epsilon_real_n = epsilon_real_n;
     theCopy->epsilon_proj_n = epsilon_proj_n;
     theCopy->epsilon_new = epsilon_new;
     theCopy->epsilon_new_n = epsilon_new_n;
-    // theCopy->E = E;
-    // theCopy->G = G;
-    // theCopy->nu = nu;
-    // theCopy->A = A;
     return theCopy;
 }
 
@@ -612,12 +455,11 @@ Response* TimeVaryingMaterial::setResponse(const char** argv, int argc, OPS_Stre
     return NDMaterial::setResponse(argv, argc, s);
 }
 
-void TimeVaryingMaterial::getParameters(double time)//, double& E, double& G, double& nu, double& A)
+void TimeVaryingMaterial::getParameters(double time)
 {
     int tag = this->getTag();
     if (new_time_step[tag]) {
         double K = 0;
-        // opserr << "Getting Parameters (E, G, nu, A)" << endln;
         new_time_step[tag] = false;
 
         // Find the interval in which 'time' falls within time_history
@@ -629,8 +471,6 @@ void TimeVaryingMaterial::getParameters(double time)//, double& E, double& G, do
                 break;
             }
         }
-
-        opserr << "index for time (" << time << ") = " << index << endln;
 
         if (index == 0)
         {
@@ -648,9 +488,6 @@ void TimeVaryingMaterial::getParameters(double time)//, double& E, double& G, do
             double t1    = time_histories[tag](index - 1);
             double t2    = time_histories[tag](index);
             double alpha = (time - t1) / (t2 - t1);
-            // opserr << "t1    = " << t1    << endln ;
-            // opserr << "t2    = " << t2    << endln ;
-            // opserr << "alpha = " << alpha << endln ;
 
             E[tag] = (1.0 - alpha) * E_histories[tag](index - 1) + alpha * E_histories[tag](index);
             A[tag] = (1.0 - alpha) * A_histories[tag](index - 1) + alpha * A_histories[tag](index);
@@ -668,17 +505,5 @@ void TimeVaryingMaterial::getParameters(double time)//, double& E, double& G, do
             G[tag]  = (3.0 * K * E[tag]) / (9.0 * K - E[tag]);
             nu[tag] = (3.0 * K - E[tag]) / (6.0 * K);
         }
-
-        opserr << " UPDATING PARAMETERS of mat = " << this->getTag() <<   " TO "  << endln;
-        opserr << "  E  = " << E[tag]  << endln;
-        opserr << "  G  = " << G[tag]  << endln;
-        opserr << "  nu = " << nu[tag] << endln;
-        opserr << "  A  = " << A[tag]  << endln;
     }
-//     opserr << "current_time = " << time << " "
-//            << "new_time_step = " << (int)new_time_step << " "
-//            << "E = " << E << " "
-//            << "G = " << G << " "
-//            << "nu = " << nu << " "
-//            << "A = " << A << " " << endln;
 }

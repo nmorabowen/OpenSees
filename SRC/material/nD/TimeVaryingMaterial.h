@@ -93,53 +93,35 @@ private:
 
     // the projected material pointer
     NDMaterial *theProjectedMaterial = nullptr;
-    
+
     //Strain transformation map
     Matrix Aepsilon = Matrix(6, 6);
 
     //History of evolution
-    // static Vector* time_history;
-    // static Vector* E_history;
-    // static Vector* K_history;
-    // static Vector* A_history;
     static std::map<int, Vector> time_histories;
     static std::map<int, Vector> E_histories;
     static std::map<int, Vector> K_histories;
     static std::map<int, Vector> A_histories;
 
-    //The "tag" of this material to the evolution laws (unused)
-    // int evolution_law_id;
-    // static int number_of_evolution_laws;
-
     //Strain offset due to thermal action
     Vector epsilon_internal = Vector(6);
-    
-    // State for the incremental model. 
+
+    // State for the incremental model.
     // _proj are the tensors for the projected material
-    // _real are the tensors for the final (real) material 
-    Vector sigma_real = Vector(6);    
-    // Vector sigma_proj = Vector(6);
-    Vector epsilon_real = Vector(6);  
-    // Vector epsilon_proj = Vector(6);  
-    Vector epsilon_new = Vector(6);  
+    // _real are the tensors for the final (real) material
+    Vector sigma_real = Vector(6);
+    Vector epsilon_real = Vector(6);
+    Vector epsilon_new = Vector(6);
 
     // State for the incremental model
-    Vector sigma_real_n = Vector(6);    
+    Vector sigma_real_n = Vector(6);
     Vector sigma_proj_n = Vector(6);
-    Vector epsilon_real_n = Vector(6);  
-    Vector epsilon_proj_n = Vector(6);  
-    Vector epsilon_new_n = Vector(6);  
+    Vector epsilon_real_n = Vector(6);
+    Vector epsilon_proj_n = Vector(6);
+    Vector epsilon_new_n = Vector(6);
 
     //global variables for all materials... should not be
-    // static double E, G, nu, A;
     static std::map<int, double> E, G, nu, A;
     static std::map<int, bool> new_time_step;
-
-    int my_element_tag;
-
-    static bool print_strain_once;
-    static bool print_stress_once;
-    static bool print_commit_once;
-    static bool print_tang_once;
 };
 #endif
