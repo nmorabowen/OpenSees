@@ -1176,6 +1176,16 @@ TclModelBuilder_addSixNodeTri(ClientData clientData, Tcl_Interp *interp,
     }
   }
 
+  int do_init_disp_int = 0;
+  if ((argc-argStart) > 15 && strcmp(argv[14+argStart], "-doInitDisp") == 0) {
+    if (Tcl_GetInt(interp, argv[15+argStart], &do_init_disp_int) != TCL_OK) {
+      opserr << "WARNING invalid -doInitDisp value\n";
+      opserr << "SixNodeTri element: " << SixNodeTriId << endln;
+      return TCL_ERROR;
+    }
+  }
+  bool do_init_disp = (do_init_disp_int != 0);
+
   NDMaterial *theMaterial = OPS_getNDMaterial(matID);
 
   if (theMaterial == 0) {
@@ -1189,7 +1199,7 @@ TclModelBuilder_addSixNodeTri(ClientData clientData, Tcl_Interp *interp,
   SixNodeTri *theSixNodeTri = 
 	new SixNodeTri(SixNodeTriId,iNode,jNode,kNode,lNode,
 					  nNode,mNode,
-					 *theMaterial, type, thickness, p, rho, b1, b2);
+					 *theMaterial, type, thickness, p, rho, b1, b2, do_init_disp);
   if (theSixNodeTri == 0) {
       opserr << "WARNING ran out of memory creating element\n";
       opserr << "SixNodeTri element: " << SixNodeTriId << endln;
