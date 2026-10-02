@@ -121,6 +121,19 @@ Octave convexity checks. Keep it as an option for later, not P1.
 
 ### 2.5 Elastic energy: Houlsby–Amorosi–Rojas, not BA06's
 
+> **Decided 2026-10-02 (owner):** HAR with n = ½ is the energy for the TIMs/Toyoura calibration and the
+> strip deck. BA06 remains the default and the paper-mode energy (the K2 benchmark uses it). It is exposed
+> as `-energy BA06|HAR`.
+> - The convexity gate PASSED (sheet §2.3): det D = 3kg·p_a²(ϖ/p_a)^{2n} > 0 and D₁₁ > 0, so the energy is
+>   positive definite at every stress ratio for 0 ≤ n < 1.
+>   - HAR05's limiting-ratio remark concerns the Houlsby-1985 / BA06-α0 family, not this energy.
+> - Footing gate: λ_min/K_iso ≥ 0.744 (global minimum at η ≈ 1.7). Over 80 ring states (p′ 0.19–10 kPa,
+>   η up to 12.9) the 6-D minimum is ≥ 0.91.
+> - HAR replaces α0. The DM04 G0 mapping is exact on the isotropic axis only: HAR's shear stiffness rises with
+>   η (×1.61 at η = M, ×2.10 at η = 2.1), and that coupling is what keeps it conservative.
+>
+> The text below is the original rev-2 plan, kept for the record.
+
 BA06's energy (Houlsby 1985 type, eqs. 2.2–2.4) gives a bulk modulus **∝ p** (exponent 1). A shear modulus
 μ = μ0 + (α0/κ̂)·p0·exp(ω) is also ∝ p. BA06's own runs used **α0 = 0, μ0 = 2000 kPa: a constant shear
 modulus** **[E, BA06 Table 1]**, which also sidesteps the energy's coupling term.
