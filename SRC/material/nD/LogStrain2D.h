@@ -52,6 +52,10 @@
 // (3-vector {11,22,12}, engineering shear); getSpatialTangentTensor2D(c) = the
 // full in-plane modulus (element forms a = c − σ_il δ_jk); getTangent() = the
 // lossy 3×3 projection (output only). Inner MUST be a 3D order-6 material.
+//
+// v2 (Ladruno WP-144 G2): the εᵉ recovery lives in the composed LogStrainNDMaterial. An inner
+// implementing LadrunoElasticStrainProvider (LadrunoNorSand) provides its own trial εᵉ there; any
+// other inner keeps the v1 Cᵉ = inv(D0) recovery (exact only for a linear-elastic inner).
 
 #ifndef LogStrain2D_h
 #define LogStrain2D_h

@@ -15,7 +15,7 @@
 // It then runs self-checks (CHECK lines): FD of the tangent (pins the shear convention
 // of C), the symmetric elastic / non-symmetric plastic engineering tangent, the
 // validate() refusals, the frozen state on a refused step, bounded work on wild trial
-// increments, an elastic closed loop, and the chained tangent of substepped increments
+// increments, the exponential specific-volume law v = v0 exp(tr eps), an elastic closed loop, and the chained tangent of substepped increments
 // (sheet §9.6) against the central FD of the whole increment (ladder, uniform and
 // recursive-halving fractions, m = 1 reduction, vertex). Exit status 1 if any CHECK fails.
 // Parity against the O2 oracle is run by
@@ -318,11 +318,12 @@ int main()
   {
     const Params P = paper();
     const State s = init_state(P, -100.0, -80.0, -0.05);
-    const double wild[4][6] = {{1e4, -1e4, 5e3, 2e3, -3e3, 1e3},     // |deps| ~ 1e4: elastic overflow
+    const double wild[5][6] = {{1e4, -1e4, 5e3, 2e3, -3e3, 1e3},     // |deps| ~ 1e4: elastic overflow
                                {-1.0, -1.0, -1.0, 0.3, 0.0, 0.0},      // huge finite compression
                                {1.0, 1.0, 1.0, 0.0, 0.0, 0.0},         // tension: p > 0 at the trial
-                               {0.2, -0.3, 0.1, 0.25, -0.1, 0.05}};    // large deviatoric
-    for (int w = 0; w < 4; ++w) {
+                               {0.2, -0.3, 0.1, 0.25, -0.1, 0.05},     // large deviatoric
+                               {300.0, 300.0, 300.0, 0.0, 0.0, 0.0}};  // tr = 900: exp(tr) overflows in v
+    for (int w = 0; w < 5; ++w) {
       State np1; double sig[6], C[6][6]; StepInfo info;
       auto t0 = std::chrono::steady_clock::now();
       step(P, s, wild[w], np1, sig, C, info);
@@ -335,11 +336,55 @@ int main()
       bool fin = true;
       for (int i = 0; i < 6; ++i) fin = fin && std::isfinite(sig[i]);
       check(nm, secs, 10.0, secs <= 10.0 && fin);
+      if (w == 4) check("v_overflow_increment_refused", info.refusal, 0, info.refusal != OK && np1.v == s.v);
     }
     State np1; double sig[6], C[6][6]; StepInfo info;
     const double dn[6] = {nan, 0, 0, 0, 0, 0};
     step(P, s, dn, np1, sig, C, info);
     check("nan_increment_refused", info.refusal, 0, info.refusal != OK);
+  }
+
+  // ---- CHECK: exponential specific-volume law (sheet §1.2 (S.26), G2 owner decision 2026-10-01) --
+  // v_{n+1} = v_n exp(tr deps) on every accepted increment (bit-exact on a non-substepped one, a product of
+  // m sub-increment exponentials on a substepped one), hence v = v0 exp(tr eps) along the path. A linear
+  // law v_n + v0 tr deps is off by ~v0 (tr eps)^2 / 2 ~ 1e-4 relative on these paths.
+  {
+    double worst_step = 0.0, worst_path = 0.0, lin_gap = 0.0;
+    int nsub = 0, nacc = 0;
+    bool ok = true;
+    for (int c = 0; c < 2; ++c) {
+      Params P = c == 0 ? fork() : paper();
+      if (c == 1) { P.cap = 2; P.c1 = 0.05; P.c2 = 0.15; }
+      State s = c == 0 ? init_state(P, -100.0, -105.0, 0.01) : init_state(P, -100.0, -80.0, -0.05);
+      const int n = c == 0 ? 25 : 40;
+      std::vector<std::vector<double>> path = c == 0 ? noncoax(n) : std::vector<std::vector<double>>();
+      if (c == 1) {
+        const double d[6] = {(-0.01 + 2e-3) / n, -0.01 / n, (-0.01 - 2e-3) / n, 0, 0, 0};
+        path = repeat(d, n);
+      }
+      double trsum = 0.0;
+      for (int k = 0; k < n; ++k) {
+        const double* d = path[k].data();
+        State np1; double sig[6], C[6][6]; StepInfo info;
+        step(P, s, d, np1, sig, C, info);
+        if (info.refusal != OK) { ok = false; break; }
+        ++nacc;
+        const double tr = (d[0] + d[1]) + d[2];
+        trsum += tr;
+        const double es = std::fabs(np1.v - s.v * std::exp(tr)) / s.v;
+        if (info.substeps == 1) ok = ok && np1.v == s.v * std::exp(tr);
+        else ++nsub;
+        worst_step = std::fmax(worst_step, es);
+        worst_path = std::fmax(worst_path, std::fabs(np1.v - np1.v0 * std::exp(trsum)) / np1.v0);
+        lin_gap = std::fmax(lin_gap, std::fabs(np1.v - np1.v0 * (1.0 + trsum)) / np1.v0);
+        ok = ok && np1.v0 == s.v0;
+        s = np1;
+      }
+    }
+    printf("INFO v-law: %d accepted increments (%d substepped): per-step |v - v_n exp(tr)|/v max %.3e, "
+           "path |v - v0 exp(tr eps)|/v0 max %.3e, linear-law gap %.3e\n", nacc, nsub, worst_step, worst_path, lin_gap);
+    check("v_exponential_per_step", worst_step, 1e-14, ok && nsub >= 20 && worst_step <= 1e-14);
+    check("v_equals_v0_exp_tr_eps", worst_path, 1e-13, ok && worst_path <= 1e-13 && lin_gap > 1e-6);
   }
 
   // ---- CHECK: elastic closed loop returns the stress, D = 0 -----------------------

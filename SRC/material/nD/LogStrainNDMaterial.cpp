@@ -42,6 +42,7 @@
 #include <Information.h>
 #include <Response.h>
 #include <MaterialResponse.h>
+#include <LadrunoElasticStrainProvider.h>   // Ladruno WP-144 G2: v2 elastic-strain provider mixin
 #include <OPS_Globals.h>
 #include <elementAPI.h>
 #include <string.h>
@@ -187,18 +188,28 @@ int LogStrainNDMaterial::setTrialF(const Matrix &F)
   for (int I = 0; I < 6; I++)
     for (int J = 0; J < 6; J++) aTangent(I, J) = c6[6*I+J];
 
-  // recover the updated elastic strain εᵉ_{n+1} = Cᵉ : τ (Cᵉ = inner elastic
-  // compliance = inv of its initial tangent — exact for a linear elastic inner,
-  // for both elastic and plastic steps since τ = Dᵉ:εᵉ always holds), then the
-  // committed bᵉ = exp[2 εᵉ_{n+1}]. (v1 assumes a linear-elastic inner law.)
-  static Matrix Ce(6, 6);
-  Matrix D0(theMaterial->getInitialTangent());
-  if (D0.Invert(Ce) < 0) {
-    opserr << "LogStrainNDMaterial::setTrialF - inner initial tangent not invertible\n";
-    return -1;
-  }
+  // updated elastic strain εᵉ_{n+1}, then the committed bᵉ = exp[2 εᵉ_{n+1}].
+  //  v2 (Ladruno WP-144 G2, owner decision 2026-10-01): an inner that carries its own
+  //  elastic strain (LadrunoElasticStrainProvider, e.g. LadrunoNorSand, whose
+  //  hyperelastic K, μ are pressure-dependent so τ ≠ D0:εᵉ) PROVIDES εᵉ_{n+1}
+  //  directly (engineering Voigt, its trial elastic strain).
+  //  v1 (every other inner, UNCHANGED): εᵉ_{n+1} = Cᵉ : τ with Cᵉ = inner elastic
+  //  compliance = inv of its initial tangent - exact for a LINEAR elastic inner,
+  //  for both elastic and plastic steps since τ = Dᵉ:εᵉ always holds.
   static Vector epsEnp1(6);
-  epsEnp1.addMatrixVector(0.0, Ce, tauV, 1.0);     // εᵉ_{n+1} = Cᵉ τ (eng. Voigt)
+  bool haveEpsE = false;
+  LadrunoElasticStrainProvider *prov =              // Ladruno WP-144 G2
+    dynamic_cast<LadrunoElasticStrainProvider *>(theMaterial);
+  if (prov != 0) haveEpsE = prov->ladrunoGetElasticStrain(epsEnp1);
+  if (!haveEpsE) {
+    static Matrix Ce(6, 6);
+    Matrix D0(theMaterial->getInitialTangent());
+    if (D0.Invert(Ce) < 0) {
+      opserr << "LogStrainNDMaterial::setTrialF - inner initial tangent not invertible\n";
+      return -1;
+    }
+    epsEnp1.addMatrixVector(0.0, Ce, tauV, 1.0);   // εᵉ_{n+1} = Cᵉ τ (eng. Voigt)
+  }
   double epsEnp16[6];
   for (int k = 0; k < 6; k++) epsEnp16[k] = epsEnp1(k);
   be_from_hencky_voigt(epsEnp16, Be_trialUpd);     // bᵉ to commit

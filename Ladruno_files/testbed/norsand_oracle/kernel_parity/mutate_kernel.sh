@@ -5,6 +5,10 @@
 #   bash Ladruno_files/testbed/norsand_oracle/kernel_parity/mutate_kernel.sh      (from the repo root)
 # 2026-10-01: 13 / 13 mutants fail: the 9 P1a kernel mutants + the 4 chain mutants of the chained substep
 # tangent (sheet 9.6): last_substep_tangent, chain_drop_Spi_carry, chain_drop_v_column, chain_assemble_1e-6_off.
+# 2026-10-01 (G2 owner decision, exponential specific-volume update v_{n+1} = v_n exp(tr deps), vfac = v_{n+1}):
+# vfac_v_not_v0 (now the correct code) is replaced by its reverse vfac_v0_not_v, and two v-law mutants are
+# added: linear_v_update (the superseded v += v0 tr deps) and chain_Sv_v0 (S^v_{k+1} with v0, not v_{k+1}).
+# 2026-10-01 after the v-law port: 15 / 15 mutants fail (Esmeralda).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../../.." && pwd)
 H=$ROOT/SRC/material/nD/LadrunoNorSandKernel.h
@@ -28,7 +32,7 @@ EOF
 }
 run spin_half_to_one 'spectral(V, atilde, g, 0.5, C4)' 'spectral(V, atilde, g, 1.0, C4)'
 run shear_col_no_sum 'C4[i][j][k][l] + C4[i][j][l][k]' 'C4[i][j][k][l]'
-run vfac_v_not_v0 'const double vfac = n.v0;' 'const double vfac = v;'
+run vfac_v0_not_v 'const double vfac = v;' 'const double vfac = n.v0;'
 run cap_drop_weta_qab 'fl.q_ab[a][b] = w * qu_ab[a][b] + w_eta * Y.eta_p / 3.0 * g_a[a];' 'fl.q_ab[a][b] = w * qu_ab[a][b];'
 run scan_step_2e-3 'constexpr double PI_SCAN_REL = 1.0e-3;' 'constexpr double PI_SCAN_REL = 2.0e-3;'
 run corner_branch_off 'if (std::fabs(s3) < CORNER_SIN3T) {' 'if (std::fabs(s3) < 0.0) {'
@@ -39,5 +43,8 @@ run substep_halvings_7 'constexpr int    MAX_SUBSTEP_HALVINGS = 8;' 'constexpr i
 # contract) must be killed, and so must a chain that drops a term of (S.46) or is off by 1e-6 in the (S.47) assembly
 run last_substep_tangent 'run_fractions(P, n, deps, fr, m, m > 1, ro);' 'run_fractions(P, n, deps, fr, m, false, ro);'
 run chain_drop_Spi_carry '+ ((1.0 - ch.kappa) / ch.c) * c.S_pi[J]' '+ 0.0 * c.S_pi[J]'
-run chain_drop_v_column 'const double S_v = v0 * cum * chain_trE(J);' 'const double S_v = 0.0 * v0 * cum * chain_trE(J);'
+run chain_drop_v_column 'const double S_v = v_new * cum * chain_trE(J);' 'const double S_v = 0.0 * v_new * cum * chain_trE(J);'
+# G2 exponential v-law: the superseded linear update, and the chain's S^v with v0 instead of v_{k+1}
+run linear_v_update 'const double v = n.v * std::exp(tr);' 'const double v = n.v + n.v0 * tr;'
+run chain_Sv_v0 'chain_propagate(cs, fr[k], ro.cur.st.v,' 'chain_propagate(cs, fr[k], n.v0,'
 run chain_assemble_1e-6_off 'tangent_small4(res.ae, res.sig, res.eps_e, V, Ae);' 'tangent_small4(res.ae, res.sig, res.eps_e, V, Ae); for (int i_ = 0; i_ < 3; ++i_) for (int j_ = 0; j_ < 3; ++j_) for (int k_ = 0; k_ < 3; ++k_) Ae[i_][j_][k_][k_] *= 1.0 + 1e-6;'

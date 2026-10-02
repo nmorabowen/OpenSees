@@ -2255,6 +2255,21 @@ Domain::commit(void)
       nodePtr->commitState();
     }
 
+    // Ladruno (WP-144 G2): the commit-refusal counter is PER COMMIT. It is
+    // process-wide, and a commitState() that runs OUTSIDE any Domain::commit() --
+    // an NDTest CommitState on a prototype / getCopy source (NDMaterial tests),
+    // a hand-driven material, a recorder-side probe -- increments it with nobody
+    // to read it. Before this clear the NEXT Domain::commit() found that stale
+    // count and aborted (-4) with no refusal of its own (measured: tests/
+    // test_ladruno_norsand.py::test_getcopy_of_a_latched_source_is_not_latched).
+    // The count must mean "refusals declared DURING this commit", so it is
+    // zeroed here, before the element loop, and the post-loop check below is
+    // unchanged. Nothing relies on accumulation across commits: the only reader
+    // is that check, which clears after acting, and a PartitionedDomain commits
+    // its own elements and then each subdomain through a separate
+    // Domain::commit(), each of which checks right after its own element loop.
+    ladrunoClearCommitRefusals();                                    // Ladruno WP-144 (G2)
+
     Element *elePtr;
     ElementIter &theElemIter = this->getElements();
     while ((elePtr = theElemIter()) != 0) {

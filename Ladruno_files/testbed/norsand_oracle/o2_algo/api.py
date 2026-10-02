@@ -3,13 +3,19 @@
 Tensor convention: 3x3 symmetric numpy arrays, compression negative, TENSOR strains
 (no engineering shear anywhere inside; sheet §1.2).
 
+Specific volume (sheet §1.2, G2 owner decision 2026-10-01, exponential update in BOTH modes):
+v_{n+1} = v_n exp(tr d_eps) (= v0 exp(tr eps)), with the trial-strain derivative
+d v_{n+1} / d eps~_b = v_{n+1} (S.31): the return map is called with vfac = v = v_{n+1}, the
+converged specific volume of the step (never v0, never v_n). v0 is carried as a committed datum
+only (initial_state; enters no derivative). Supersedes the G0/G1 linear rule v = v0 (1 + tr eps),
+vfac = v0.
 Small-strain mode (default): eps^e_tr = eps^e_n + d_eps (any symmetric d_eps, non-coaxial
-allowed), v = v0 (1 + tr eps), d v / d eps~_b = v0 (S.31).
+allowed).
 Finite-strain mode (State.finite = True, used only by k2_path): the increments are principal
 LOG-strain increments of a DIAGONAL, fixed-direction deformation (the (S.43) protocol), for
-which b^e,tr = f b^e_n f^T reduces to eps~_a = eps^e_n,a + ln f_a; v = v0 J = v0 exp(tr eps),
-d v / d eps~_b = v (§1.4). The return map is byte-identical (§1.4); only vfac and the
-tangent assembly (S.34) differ.
+which b^e,tr = f b^e_n f^T reduces to eps~_a = eps^e_n,a + ln f_a; v = v0 J = v0 exp(tr eps) is
+then the same law (§1.4). The return map and its v-handling are identical in the two modes; only
+the tangent assembly (S.34) differs.
 """
 from __future__ import annotations
 
@@ -166,7 +172,8 @@ def _run_fractions(params: Params, st: State, deps: np.ndarray, fractions, chain
         plastic = plastic or cur.flags["plastic"]
         pattern += "P" if cur.flags["plastic"] else "E"      # branch pattern, e.g. "EPPP" (diagnostic)
         if chain:
-            S_eps, S_pi, cum = K.chain_propagate(S_eps, S_pi, cum, a, st.v0, cur.cache["res"], cur.cache["nvec"])
+            # v_{k+1} = cur.v: the sub-increment's own converged specific volume (S^v closed form, §9.6 G2)
+            S_eps, S_pi, cum = K.chain_propagate(S_eps, S_pi, cum, a, cur.v, cur.cache["res"], cur.cache["nvec"])
     cur.D = D
     cur.flags.update(local_iters=iters, pi_iters=piters, plastic=plastic, pattern=pattern)
     C = K.chain_assemble(params, cur.cache["res"], cur.cache["nvec"], S_eps) if chain else None
@@ -176,12 +183,10 @@ def _run_fractions(params: Params, st: State, deps: np.ndarray, fractions, chain
 def _step_once(params: Params, st: State, deps: np.ndarray) -> State:
     """One backward-Euler increment without substepping."""
     tr = float(np.trace(deps))
-    if st.finite:
-        v = st.v * math.exp(tr)
-        vfac = v
-    else:
-        v = st.v + st.v0 * tr
-        vfac = st.v0
+    # (S.26) v_{n+1} = v_n exp(tr d_eps), the same law in small-strain and finite mode (§1.2, §1.4; G2
+    # owner decision 2026-10-01); d v_{n+1}/d eps~_b = v_{n+1}, so vfac = v (S.31). Was v + v0 tr, vfac = v0.
+    v = st.v * math.exp(tr)
+    vfac = v
     eps_tr = st.eps_e + 0.5 * (deps + deps.T)
     w, V = _eigh(eps_tr)
     res = K.return_map(params, w, st.pi_i, v, vfac)

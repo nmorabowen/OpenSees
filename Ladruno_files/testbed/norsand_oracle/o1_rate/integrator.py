@@ -21,6 +21,13 @@ H = 0 crossings are non-terminal events, recorded in flags['H_zero'] (K1.6 check
 
 State vector y (19): eps^e (Mandel 6), pi_i, v, W = int sigma:deps, int |sigma:deps|,
 Dp = int lambda' sigma:q, eps_p_v, eps_p_s, total strain (Mandel 6).
+
+Specific volume (sheet 1.2 / S.40, G2 owner decision 2026-10-01): v is ALGEBRAIC from the total
+strain, v = v_n exp(tr eps - tr eps_n) = v0 exp(tr eps) (the exponential update; v' = v tr eps').
+Every constitutive call uses that algebraic value (`_Increment.vof`); y[7] still carries the ODE
+v' = v tr eps' as a diagnostic only, and the committed State.v is the algebraic value, so the
+identity v = v0 exp(tr eps) holds to round-off (sheet 13.10).  It is the same rule for
+kin='small' and kin='log' (under log strain tr eps = ln J, so v = v0 J; sheet 1.4).
 """
 from __future__ import annotations
 
@@ -62,6 +69,9 @@ class _Increment:
         self.P = P
         self.kin = kin
         self.v0 = st.flags.get("v0", st.v)
+        # exponential v-update anchored at the increment start (exp of a sum: exact composition)
+        self.v_start = float(st.v)
+        self.tr_start = float(np.trace(st.flags.get("eps_total", np.zeros((3, 3)))))
         self.dm = t2m(np.asarray(deps, dtype=float))
         self.smask = np.zeros(6, dtype=bool) if smask is None else np.asarray(smask, dtype=bool)
         self.dsm = np.zeros(6) if dsig is None else t2m(np.asarray(dsig, dtype=float))
@@ -78,12 +88,17 @@ class _Increment:
         at[11:13] = 1e-2 * rtol * emax
         at[13:19] = 1e-2 * rtol * emax
         self.atol = at
-        self.typ = np.concatenate([np.full(6, 1e-3), [max(abs(st.pi_i), 1e-3), st.v]])
+        self.typ = np.concatenate([np.full(6, 1e-3), [max(abs(st.pi_i), 1e-3), st.v],
+                                   np.zeros(5), np.full(6, 1e-3)])
         self.nfev = 0
         self.w_force = None      # planar cap: the side (w = 1 or 0) chosen for this segment
         self.cap_side = 0
 
     # ------------------------------------------------------------------
+    def vof(self, y):
+        """Specific volume v = v_n exp(tr eps - tr eps_n) from the total strain in y[13:19]."""
+        return self.v_start * math.exp(float(y[13] + y[14] + y[15]) - self.tr_start)
+
     def _solve_mixed(self, Cm):
         d = self.dm.copy()
         if len(self.T):
@@ -96,7 +111,7 @@ class _Increment:
         self.nfev += 1
         P = self.P
         ee = m2t(y[0:6])
-        pi, v = float(y[6]), float(y[7])
+        pi, v = float(y[6]), self.vof(y)
         el = energy(ee, P)
         Am = c2m(el.a4)
         pq = plastic(el.sig, pi, v, P, w_override=self.w_force)
@@ -120,7 +135,7 @@ class _Increment:
         dee = d - lam * qm
         dpi = SQ23 * P.h * lam * (pq.pistar - pi) * pq.Omega
         trd = float(d[0] + d[1] + d[2])
-        dv = (self.v0 if self.kin == "small" else v) * trd
+        dv = v * trd                      # (S.40) v' = v tr eps' (diagnostic copy in y[7])
         sw = float(sm @ d)
         dD = lam * float(sm @ qm)
         info.update(lam=lam, dD=dD, d=d, dee=dee, dpi=dpi, a4=el.a4)
@@ -131,7 +146,7 @@ class _Increment:
     def jac(self, y, mode):
         f0, _ = self.rates(y, mode)
         J = np.zeros((19, 19))
-        for j in range(8):
+        for j in (0, 1, 2, 3, 4, 5, 6, 13, 14, 15):   # v depends on y only via tr eps (y[13:16])
             hj = 1e-7 * max(abs(y[j]), self.typ[j])
             yp = y.copy()
             yp[j] += hj
@@ -142,7 +157,7 @@ class _Increment:
     # ------------------------------------------------------------------
     def Frel(self, y):
         el = energy(m2t(y[0:6]), self.P, tangent=False)
-        pq = plastic(el.sig, float(y[6]), float(y[7]), self.P, w_override=self.w_force)
+        pq = plastic(el.sig, float(y[6]), self.vof(y), self.P, w_override=self.w_force)
         return pq.F / (self.P.M * abs(pq.p)), pq
 
     def _eta_rate(self, y, w):
@@ -286,7 +301,8 @@ def integrate_increment(P: Params, st: State, deps, smask=None, dsig=None, rtol=
     deps  : 3x3 strain increment (strain-controlled components; tensor strains).
     smask : optional Mandel-order bool[6] (xx,yy,zz,xy,yz,xz); True = stress-controlled
             component with stress increment dsig (default 0).
-    kin   : 'small' (v' = v0 tr eps') or 'log' (eps = log strain, v' = v tr eps', sheet 14).
+    kin   : 'small' or 'log' (eps = log strain).  Both use v = v_n exp(tr deps) (sheet 1.2/1.4;
+            the pre-G2 small-strain rule v' = v0 tr eps' is superseded); kin is recorded only.
     """
     inc = _Increment(P, st, deps, smask, dsig, rtol, kin)
     y = _pack(st)
@@ -360,7 +376,7 @@ def integrate_increment(P: Params, st: State, deps, smask=None, dsig=None, rtol=
     el = energy(ee, P, tangent=False)
     Fr = float("nan")
     try:
-        pq = plastic(el.sig, float(y[6]), float(y[7]), P)
+        pq = plastic(el.sig, float(y[6]), inc.vof(y), P)
         Fr = pq.F / (P.M * abs(pq.p))
     except FloatingPointError:
         pq = None
@@ -371,9 +387,9 @@ def integrate_increment(P: Params, st: State, deps, smask=None, dsig=None, rtol=
         F_rel=Fr, max_F_rel=max_F, min_den=min_den, min_Dp_rate_rel=min_rate,
         segments=segments, n_segments=len(segments), nfev=inc.nfev, notes=notes,
         v0=inc.v0, W=float(y[8]), W_abs=float(y[9]), Dp_total=float(y[10]),
-        eps_total=m2t(y[13:19]), H_zero=Hz, kin=kin,
+        eps_total=m2t(y[13:19]), H_zero=Hz, kin=kin, v_ode=float(y[7]),
         psi=(pq.psi if pq else float("nan")), pistar=(pq.pistar if pq else float("nan")),
         H=(pq.H if pq else float("nan")))
-    return State(sigma=el.sig, eps_e=ee, pi_i=float(y[6]), v=float(y[7]),
+    return State(sigma=el.sig, eps_e=ee, pi_i=float(y[6]), v=inc.vof(y),
                  D=float(y[10]) - st.flags.get("Dp_total", 0.0),
                  eps_p_v=float(y[11]), eps_p_s=float(y[12]), flags=flags)

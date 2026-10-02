@@ -2,7 +2,7 @@
 title: "WP-144a — LadrunoNORSAND equation sheet (AB06/BA06 re-derived, curved CSL, WW ζ, Q-cap)"
 project: Ladruno
 type: equation sheet
-status: "G1 revision applied 2026-10-01 (12 items from the G1 oracle/test round, §16.6; owner decision: WW rho = 1/2 refused). G0 fix round 2026-09-30 (Adversary PASS-WITH-FIXES, 7 items; independent Opus numeric check PASSED; owner approved the refusal rule). Every derivative sympy/FD-checked; G0 scripts in the session scratchpad p0a/, G1 scripts in Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_r2/."
+status: "G2 owner decision applied 2026-10-01 (§16.6 item 14: exponential specific-volume update v = v0 exp(tr eps), dv/deps = v; every v-term of (S.26), (S.31)-(S.32), (S.40), (S.45)-(S.46), §1.4, §13, §14 updated and re-verified; scripts in Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_vexp/). G1 revision applied 2026-10-01 (12 items from the G1 oracle/test round, §16.6; owner decision: WW rho = 1/2 refused). G0 fix round 2026-09-30 (Adversary PASS-WITH-FIXES, 7 items; independent Opus numeric check PASSED; owner approved the refusal rule). Every derivative sympy/FD-checked; G0 scripts in the session scratchpad p0a/, G1 scripts in Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_r2/."
 owner: nmora (Deriver: Fable, P0a)
 related:
   - "[[144_ladruno_norsand_plan]] (design §2, oracles §5, roster §6)"
@@ -52,16 +52,35 @@ Equation numbers `(S.n)` are this sheet's. `(AB06 nn)`, `(BA06 n.nn)` are the pa
   conversion), never inside the kernel; in principal space there is no shear component.
 - Total strain ε, plastic strain ε^p, ε = ε^e + ε^p (additive, small strain; BA06 Box 1) [E].
 - Plastic strain-rate invariants: ε̇^p_v = tr ε̇^p, ε̇^p_s = √(2/3) ‖ε̇^p − (1/3)ε̇^p_v 1‖ (AB06 35) [E].
-- Specific volume v = 1 + e. Small strain: v = v₀ (1 + tr ε) with ε the **total** strain and v₀ the initial specific
-  volume (BA06 Box 2 step 6b) [E]. Hence ∂v/∂ε_a = v₀ for every principal component, and inside the local return
-  (total strain fixed) ∂v/∂ε^e_a = 0.
-- **v₀ is a separate state datum [I; G1].** dv/dε uses the *initial* specific volume v₀, not the current v. A state
-  built mid-path (restart, a test fixture, a Gauss point initialised from a stress state) must therefore carry v₀
-  separately from v; setting v₀ := v is an easy error that silently changes the consistent tangent through the
-  s_k = …Π_v v₀ term of (S.31) (it leaves the stress update untouched, so only a tangent FD catches it). Measured
-  (r2_neutral_v0.py, K2 paper set, drained TXC state 0.01 rad off the corner): with v = 1.45 against v₀ = 1.70 the
-  tangent built with v in place of v₀ misses the central FD by 1.1e−4 relative, the v₀ form by 7e−7 (the same
-  near-corner FD floor as §4.3); with v = 1.691 the two differ by 2.0e−5 vs 2.4e−6.
+- Specific volume v = 1 + e. **Exponential update [I; G2 owner decision 2026-10-01, decision 1 = option b]:**
+
+      v = v₀ exp(tr ε)   ⇔   v_{n+1} = v_n exp(tr Δε),        ∂v/∂ε_a = v  (every principal component; shears do not enter),
+
+  with ε the **total** strain, v₀ the initial specific volume, and inside the local return (total strain fixed)
+  ∂v/∂ε^e_a = 0 (sympy-checked, vexp_sympy.py (a)–(b)). The two forms are the same map (exp of a sum); the kernel
+  uses the incremental one, so only tr Δε of the increment it receives matters. This **supersedes** BA06 Box 2
+  step 6b, v = v₀(1 + tr ε) with ∂v/∂ε_a = v₀ [E], which was the G0/G1 rule: the two agree to first order
+  (v₀eˣ − v₀(1 + x) = v₀x²/2 + O(x³), x = tr ε; d/dx of the difference is 0 at x = 0) and the exponential form is
+  **exact under the LogStrain wrapper** (x = ln J, so v = v₀J, the AB06/BA06 finite-strain v = v₀ det F; §1.4). Why
+  (G2 measurement, test_g2_logstrain.py): with the linear update the wrapper read v = v₀(1 + x) against the finite
+  oracle's v₀eˣ, a gap v₀(1 + x − eˣ) (closed form to 1e−10), amplified ~25–30× into τ and π_i once the path dilates
+  toward the critical state: 2.2e−3 / 2.3e−3 relative (τ / π_i) at 20 % drained TXC, 5.6e−3 / 6.0e−3 in TXE fork mode.
+  On the TXC_paper drained path of §13 the gap at the path end is −4.8e−4 (tr ε = 0.0236, −v₀x²/2 = −4.7e−4;
+  vexp_fd.py (3)).
+- **Which v multiplies Π_v in the tangent [I; G2; FD-checked].** The explicit trial-strain derivative of the step is
+  ∂v_{n+1}/∂ε̃_b = v_{n+1} (ε̃ = ε^e_n + Δε at fixed ε^e_n, vexp_sympy.py (b)): the **converged** specific volume of
+  the step, not v_n and not v₀. Measured (vexp_fd.py (1), K2 paper set, drained TXC state 0.01 rad off the corner,
+  central FD of the return map over ε̃ with v = v_n exp(tr Δε)): a^{ep} with v_{n+1} misses the FD by 2.4e−8 (h = 10⁻⁶;
+  the O(h²) floor), with v_n by 1.7e−6, with v₀ by 1.8e−5 (v_n = 1.691, v₀ = 1.701); on a state built mid-path with
+  v_n = 1.45 against v₀ = 1.701: 7.0e−9 / 3.8e−7 / 1.1e−4. The kernel's `return_map(…, v, vfac)` must therefore be
+  called with vfac = v = v_{n+1} (the C++ and O2 small-strain mode currently pass vfac = v₀: to change).
+- **v₀ stays a separate committed datum [I; G1, inverted at G2].** It no longer enters any derivative (the G1 note
+  "dv/dε uses v₀, not v" is withdrawn), but it is still needed for the identity v = v₀ exp(tr ε) (a Gauss point whose
+  strain history starts at ε = 0), for `revertToStart` (v := v₀) and for `initialState` (v = v₀). A state built
+  mid-path (restart, a test fixture, a Gauss point initialised from a stress state) carries v and v₀ separately; the
+  tangent is now insensitive to a wrong v₀, so the G1 FD trap is gone, but revertToStart would restart from the wrong
+  specific volume. The G1 measurement (r2_neutral_v0.py: v-form 1.1e−4 vs v₀-form 7e−7 under the linear update) is
+  kept in §16.4 as the record of the superseded rule.
 
 ### 1.3 Parameters (one table for the whole sheet)
 
@@ -77,13 +96,18 @@ Equation numbers `(S.n)` are this sheet's. `(AB06 nn)`, `(BA06 n.nn)` are the pa
 | λ̃, v_{c0} | "paper" CSL: v_c = v_{c0} − λ̃ ln(−p) | AB06 41 |
 | e₀, λ_c, ξ, p_a | "fork" CSL: e_c = e₀ − λ_c (−p/p_a)^ξ (DM04 form) | plan §2.3 |
 | c₁, c₂ | Q-cap blend bounds, η₁ = c₁M ≤ η₂ = c₂M (planar cap: c₁ = c₂; BA06's χ_cap = 0.10 → c₁ = c₂ = 0.10) | BA06 2.76, §10 |
-| v₀ | initial specific volume (state input) | BA06 Box 2 |
+| v₀ | initial specific volume (state input; committed datum for v = v₀ exp(tr ε), `initialState`, `revertToStart`; enters **no** derivative since G2, §1.2) | BA06 Box 2; §1.2 |
 
 ### 1.4 Finite-strain mapping (stated once; AB06 §3, BA06 §3.3) [E]
 Replace ε^e_a by the principal elastic logarithmic stretches ε^e_a = ln λ^e_a, σ_a by the principal Kirchhoff stresses
-τ_a, the trial elastic strain ε^{e,tr} by ε̃_a = ln λ̃_a from b^{e,tr} = f_{n+1} b^e_n f^t_{n+1}, and v = v₀ det F (so
-∂v/∂ε̃_a = v instead of v₀; BA06 p.5132). The local residual, Jacobian, nested π_i loop and ã^{ep}_ab are then
-**identical** (AB06 46–69; BA06 p.5130 "identical"). Only the assembly of the spatial tangent differs (§9.5).
+τ_a, the trial elastic strain ε^{e,tr} by ε̃_a = ln λ̃_a from b^{e,tr} = f_{n+1} b^e_n f^t_{n+1}, and v = v₀ det F with
+∂v/∂ε̃_a = v (BA06 p.5132). **Since G2 the v-mapping is identical to small strain, not a substitution [I; G2]:** the
+LogStrain wrapper feeds the inner kernel ε_feed = ε_feed,n + (ε^{e,tr} − ε^e_n), whose increment has
+tr Δε_feed = ½ ln det b^{e,tr} − ½ ln det b^e_n = ln det f_{n+1} = ln(J_{n+1}/J_n), so the kernel's own
+v_{n+1} = v_n exp(tr Δε) is v₀ J exactly (sympy-checked, vexp_sympy.py (e); measured to 1e−10 at G2) and its
+∂v/∂ε̃_a = v is the BA06 derivative. The local residual, Jacobian, nested π_i loop and ã^{ep}_ab are then
+**identical** with no v₀ → v replacement anywhere (AB06 46–69; BA06 p.5130 "identical"). Only the assembly of the
+spatial tangent differs (§9.5).
 
 ---
 
@@ -199,7 +223,7 @@ compression beyond π_c is **perfectly plastic** (no volumetric hardening in thi
 π_c = p = −100 kPa, three hydrostatic steps of tr Δε = −3e−3): p = −100.000000 after every step, π_i unchanged,
 Δε^p_v = tr Δε exactly, ε^p_s = 0, D = −p·|tr Δε| = 0.300 per step. A non-axial trial state whose return crosses R_tol
 is a corner problem for the local Newton and falls under the bounded local-work refusal (the O2 oracle refuses the
-AMP_STOP step 13 with `local_linesearch` after 2⁸ substeps; the kernel does the same, §9.1). K1.5 (flow-rule identity)
+AMP_STOP step 12 (`refused_at` index) with `local_noconv` after 2⁸ substeps, re-measured at G2 under the exponential v-update of §1.2 (before it: step 13, `local_linesearch`); the kernel refuses at the same step with the same finest reason `LOCAL_NOCONV`, §9.1). K1.5 (flow-rule identity)
 is tested only at plastic steps with q > 0, where (S.20) has no 0/0. K2 (no cap) starts isotropic at −100 kPa
 **inside** the surface (elastic), so the rule never fires there. R_tol: 10⁻⁸·|p| (relative) [I; confirmed by the
 oracle census: both oracles use it].
@@ -393,7 +417,9 @@ iff |π_i| > |π_i*|. sgn H = sgn(D* − D) = sgn(η* − η) (BA06 2.32).
 
 Backward-Euler form (AB06 52, Box 2 step 7f) [E]:
 
-      π_i = π_{i,n} + √(2/3) h Δλ (π_i* − π_i) Ω,     π_i* = Π(p, Ω, ψ_i(v, π_i)),   v = v₀(1 + tr ε_{n+1}).   (S.26)
+      π_i = π_{i,n} + √(2/3) h Δλ (π_i* − π_i) Ω,     π_i* = Π(p, Ω, ψ_i(v, π_i)),   v = v_n exp(tr Δε) = v₀ exp(tr ε_{n+1}).   (S.26)
+
+(v-update: §1.2, G2 owner decision; BA06 Box 2 step 6b has v = v₀(1 + tr ε_{n+1}), superseded.)
 
 Nested scalar residual and its derivative (AB06 61–62) [E, Λ generalised; FD-checked]:
 
@@ -423,7 +449,8 @@ Implicit derivatives of the converged π_i (AB06 57–58, 69; FD-checked to 10�
 ## 9. Return map (small strain, principal space) and consistent tangent
 
 ### 9.1 Algorithm (AB06 Box 2, BA06 Box 2) [E]
-Given ε^e_n (tensor), π_{i,n}, total strain ε_{n+1} (so Δε), v₀:
+Given ε^e_n (tensor), π_{i,n}, v_n, total strain ε_{n+1} (so Δε); v₀ is carried but not used by the step (§1.2):
+0. Specific volume: v_{n+1} = v_n exp(tr Δε) (§1.2; the step's v in (S.26)–(S.28) and vfac = v_{n+1} in (S.31)).
 1. Trial: ε^{e,tr} = ε^e_n + Δε. Spectral: ε^{e,tr} = Σ_a ε̃_a m^a. (The converged ε^e, σ and ε̇^p share these m^a.)
 2. σ^tr_a from §2 at ε̃. **Trial contract [I; G1]: the step is plastic iff F(σ^tr, π_{i,n}) > F_tol := 10⁻¹⁰·|p₀|**;
    otherwise elastic: ε^e = ε^{e,tr}, π_i = π_{i,n}, tangent = a^e (§9.4). The threshold is in stress units (F has
@@ -458,14 +485,18 @@ with a^e_cb (S.3), q_ac (S.18), q_{a,π} (S.19), f_c (S.14), F_π (S.13), Π_b, 
 of (S.29) at 5e−9 relative in fork mode and paper mode (returnmap.py). J is not symmetric.
 
 ### 9.3 Consistent tangent in principal directions (AB06 65–69) [E; FD-checked]
-b := J⁻¹. The explicit dependence of r on the trial strain ε̃_b at fixed x is through −ε̃_a and through v (§1.2):
+b := J⁻¹. The explicit dependence of r on the trial strain ε̃_b at fixed x is through −ε̃_a and through v (§1.2,
+∂v_{n+1}/∂ε̃_b = v_{n+1}):
 
-      ∂r_k/∂ε̃_b |_x = −δ_kb [k ≤ 3] + s_k δ_b,    s_k := Δλ q_{k,π} Π_v v₀ (k ≤ 3),   s₄ := F_π Π_v v₀,        (S.31)
+      ∂r_k/∂ε̃_b |_x = −δ_kb [k ≤ 3] + s_k δ_b,    s_k := Δλ q_{k,π} Π_v v (k ≤ 3),   s₄ := F_π Π_v v,   v = v_{n+1},   (S.31)
       ∂x_i/∂ε̃_b = −Σ_k b_ik ∂r_k/∂ε̃_b = b_ib − (Σ_k b_ik s_k) δ_b,
       ã^{ep}_ab := ∂σ_a/∂ε̃_b = Σ_{c≤3} a^e_ac ∂x_c/∂ε̃_b.                                                  (S.32)
 
-(AB06 67 + 69 with v → v₀ for small strain, BA06 2.71.) **ã^{ep} is non-symmetric in general, even for associative
-flow (N̄ = N, ρ̄ = ρ)**: the π_i-sensitivities Π_b, Π_λ (through π_i*(p, Ω, ψ_i)) and the v-term Π_v v₀ δ_b in (S.31)
+(AB06 67 + 69 as written, with v the converged specific volume of the step; BA06 2.71 carries v₀ for small strain,
+superseded by the G2 decision of §1.2 [I; G2]. G0/G1 had s_k with v₀; FD-checked with the exponential update in
+vexp_fd.py (1): 2.4e−8 and 7.0e−9 at h = 10⁻⁶ against 1.8e−5 / 1.1e−4 for the v₀ form and 1.7e−6 / 3.8e−7 for v_n.)
+**ã^{ep} is non-symmetric in general, even for associative
+flow (N̄ = N, ρ̄ = ρ)**: the π_i-sensitivities Π_b, Π_λ (through π_i*(p, Ω, ψ_i)) and the v-term Π_v v δ_b in (S.31)
 enter the rows and columns differently. Non-associativity only adds to this. **The kernel must never select, and the
 shell must never advertise, a symmetric solver/tangent for this material** (checked: major asymmetry 0.106 relative
 in returnmap.py for the K2 set).
@@ -502,7 +533,8 @@ quotient (σ_a − σ_b)/(ε̃_a − ε̃_b) → ã_aa − ã_ab along the row t
       c̃ = Σ_a Σ_b c̃_ab m^a⊗m^b + Σ_{a≠b} γ̃_ab (m^{ab}⊗m^{ab} + m^{ab}⊗m^{ba}),
       c̃_ab = ã^{ep}_ab − 2 τ_a δ_ab,     γ̃_ab = (τ_b λ̃_a² − τ_a λ̃_b²)/(λ̃_b² − λ̃_a²),   ε̃_a = ln λ̃_a,            (S.34)
 
-with ã^{ep}_ab = ∂τ_a/∂ε̃_b from (S.32) with v₀ → v. Repeated stretches (|λ̃_a − λ̃_b| < tol, e.g. isotropic states,
+with ã^{ep}_ab = ∂τ_a/∂ε̃_b from (S.32) **unchanged** (since G2 the small-strain (S.31) already carries v = v_{n+1};
+before G2 this line read "with v₀ → v"; §1.4). Repeated stretches (|λ̃_a − λ̃_b| < tol, e.g. isotropic states,
 which the LogStrain wrapper meets at every start): γ̃_ab → (ã^{ep}_bb − ã^{ep}_ba)/2 − τ_a [I; from τ_b λ̃_a² − τ_a λ̃_b² =
 τ_a(λ̃_a² − λ̃_b²) + (τ_b − τ_a)λ̃_a² and dε̃/d(λ̃²) = 1/(2λ̃²); checked numerically, O(Δε̃) convergence].
 The total spatial tangent is a^{ep} = c̃ + τ⊕1,
@@ -532,8 +564,9 @@ relative error against the FD of the whole increment on the AMP_STOP cap path, 3
 
 **State map of one sub-increment.** Fractions α_k > 0, k = 0..m−1, Σ_k α_k = 1 (uniform α_k = 1/m on the O2/kernel
 ladder; any recursive-halving sequence is covered by the same algebra). State z_k = (ε^e_k [full tensor], π_{i,k},
-v_k), v₀ carried constant; z_0 = the committed state at n. Sub-increment k: trial ε̃_k = ε^e_k + α_k Δε, with
-eigen-pairs (ε̃_a, n^a) and m^a = n^a⊗n^a, m^{ab} = n^a⊗n^b; v_{k+1} = v_k + v₀ α_k tr Δε (§1.2); then (S.29) with
+v_k); v₀ does not enter the chain (§1.2); z_0 = the committed state at n. Sub-increment k: trial ε̃_k = ε^e_k + α_k Δε,
+with eigen-pairs (ε̃_a, n^a) and m^a = n^a⊗n^a, m^{ab} = n^a⊗n^b; v_{k+1} = v_k exp(α_k tr Δε) (§1.2, G2; was
+v_k + v₀ α_k tr Δε); then (S.29) with
 (S.27) nested at (ε̃, π_{i,k}, v_{k+1}) gives x = (ε^e_a, Δλ) and π_{i,k+1}, and ε^e_{k+1} = Σ_a ε^e_a m^a (the m^a of
 the trial, §9.1). Write z_{k+1} = Φ(z_k, α_k Δε). The ladder level m and every sub-increment's branch (elastic,
 plastic, vertex, cap-active) are *decisions*, not differentiated: Φ is differentiated inside its branch, and the
@@ -551,9 +584,10 @@ fixed v ∂r_k/∂ε̃_b|_{x,π_i} = −δ_kb (k ≤ 3), ∂π_i/∂ε̃_b|_x = 
       ∂x/∂π_{i,n} = −u/c,                                  ∂π_{i,n+1}/∂π_{i,n} = (1 − κ)/c,
       ∂x/∂v = −u Π_v,                                      ∂π_{i,n+1}/∂v = (1 − κ) Π_v.                     (S.45)
 
-Relation to (S.31)–(S.32): there v is tied to ε̃ by ∂v/∂ε̃_b = v₀, so the (S.32) column is the ε̃ column of (S.45)
-plus v₀ times its v column, b_{·b} − u Π_v v₀, because Σ_k b_ik s_k = Σ_k b_ik t_k Π_v v₀ = u_i Π_v v₀ (s_k = t_k Π_v v₀
-by (S.31); checked symbolically). The spin terms are those of §9.4 applied to the map ε̃ ↦ ε^e_{k+1} (an isotropic
+Relation to (S.31)–(S.32): there v is tied to ε̃ by ∂v_{n+1}/∂ε̃_b = v_{n+1} (§1.2), so the (S.32) column is the ε̃
+column of (S.45) plus v_{n+1} times its v column, b_{·b} − u Π_v v_{n+1}, because Σ_k b_ik s_k = Σ_k b_ik t_k Π_v v =
+u_i Π_v v (s_k = t_k Π_v v by (S.31); checked symbolically, chain_sympy.py (a) with v₀, vexp_sympy.py (f) with a
+general v'(ε̃)). The spin terms are those of §9.4 applied to the map ε̃ ↦ ε^e_{k+1} (an isotropic
 tensor function of ε̃ at fixed π_{i,n}, v, with eigenvalue map ∂ε^e_a/∂ε̃_b = b_ab): Φ^ε_ε̃ has the (S.33) form with
 diagonal block b_ab (a, b ≤ 3) and spin g^Φ_ab = (ε^e_a − ε^e_b)/(ε̃_a − ε̃_b), limit b_aa − b_ab for |ε̃_a − ε̃_b| < tol.
 The π_{i,n} and v columns move only eigenvalues (m^a depends on ε̃ alone): ∂ε^e_{k+1}/∂π_{i,n} = −Σ_a (u_a/c) m^a,
@@ -562,7 +596,9 @@ The π_{i,n} and v columns move only eigenvalues (m^a depends on ε̃ alone): �
 **Recursion.** Columns are indexed by the kernel's six Δε components J with input tensors E_J (E_J = e_k⊗e_k for a
 normal slot, e_k⊗e_l + e_l⊗e_k for a shear slot: the independent tensor shear component, ε_kl and ε_lk moved
 together, so tr E_J = 1 or 0 and 𝕀:E_J = E_J). S^ε_k := ∂ε^e_k/∂Δε_J (a 3×3 per column), S^π_k := ∂π_{i,k}/∂Δε_J,
-S^v_{k+1} := ∂v_{k+1}/∂Δε_J = v₀ (Σ_{j≤k} α_j) tr E_J (closed form; only the cumulative fraction is state). With
+S^v_{k+1} := ∂v_{k+1}/∂Δε_J = v_{k+1} (Σ_{j≤k} α_j) tr E_J (closed form [I; G2]: v_{k+1} = v_n exp((Σ_{j≤k} α_j) tr Δε)
+differentiated; sympy-checked for m = 4 general fractions, vexp_sympy.py (c); the cumulative fraction is the only
+extra state, v_{k+1} being the sub-increment's own converged v; before G2 the factor was v₀). With
 T_k := S^ε_k + α_k E_J = ∂ε̃_k/∂Δε_J, T̂_bb := n^b·T_k·n^b, S^ε_0 = 0, S^π_0 = 0:
 
       plastic:  S^ε_{k+1} = Φ^ε_ε̃ : T_k − Σ_a m^a [ (u_a/c) S^π_k + u_a Π_v S^v_{k+1} ],
@@ -589,8 +625,8 @@ the axis), so only the derivative along 1 is two-sided there (chain_fd.py (F)). 
 in form; the cap enters only through q_a, q_ab, q_{a,π}, Ω, Ω_a, Ω_π of (S.36) in A, t, and through (S.37) in c and
 Π_x; at the selected root c > 0 (§8), so (S.45) is well posed. Planar cap (§10.1): the corner is a branch, one-sided.
 
-**m = 1 reduces to (S.33).** S^ε_1 = Φ^ε_ε̃ : E_J − Σ_a m^a u_a Π_v v₀ tr E_J has diagonal block b_ab − u_a Π_v v₀ = the
-(S.32) ∂x/∂ε̃, so a^e : S^ε_1 has diagonal block ã^{ep}_ab; the spin of the composition of two (S.33)-form operators is
+**m = 1 reduces to (S.33).** S^ε_1 = Φ^ε_ε̃ : E_J − Σ_a m^a u_a Π_v v_1 tr E_J (v_1 = v_{n+1}) has diagonal block
+b_ab − u_a Π_v v_{n+1} = the (S.32) ∂x/∂ε̃, so a^e : S^ε_1 has diagonal block ã^{ep}_ab; the spin of the composition of two (S.33)-form operators is
 g^A_ab (g^B_ab + g^B_ba)/2 (sympy, chain_sympy.py (b)), here (σ_a − σ_b)/(ε^e_a − ε^e_b) · (ε^e_a − ε^e_b)/(ε̃_a − ε̃_b)
 = g_ab of (S.33). Exact for distinct trial eigenvalues (measured 1e−15 and 8e−17 relative, chain_fd.py (C)); an
 elastic increment gives a^e exactly. Inside the repeated-eigenvalue band |ε̃_a − ε̃_b| < 10⁻¹⁰ the two limits differ:
@@ -603,7 +639,13 @@ The regression check "C_chain(m = 1) = C_(S.33)" is therefore exact (round-off) 
 ≤ ~1e−8 inside the band; the FD check does not see the band (h ≫ tol).
 
 **Verification (chain_sympy.py; chain_fd.py on Esmeralda with O2's `_step_once`, fractions held fixed across the FD
-points, same branch pattern at every point).** Symbolic: the 5×5 block identities behind (S.45) (t parametrised as
+points, same branch pattern at every point).** The chain_fd.py numbers below were measured at P1 under the linear
+v-update (S^v with v₀); the G2 re-check with the exponential update, S^v = v_{k+1} cum tr E_J and O2's finite-mode
+`_step_once` (which already implements v_{k+1} = v_k exp(α_k tr Δε), vfac = v_{k+1}) as the integrator, is
+vexp_fd.py (2) on the (B) increment: m = 8 (EEEEPPPP) 1.0e−7, 1.1e−9, 1.5e−9; m = 2 (EP) 7.5e−8, 7.4e−10, 1.4e−9;
+α = (½, ¼, ⅛, ⅛) 9.8e−8, 1.5e−9, 1.8e−9; m = 1 7.5e−8, 7.8e−10, 9.7e−10 and = (S.33) to 2.8e−15 (h = 10⁻⁶, 10⁻⁷, 10⁻⁸);
+the same with the state's v forced to 1.45 against v₀ = 1.70: 2.7e−8 … 4.2e−10 and 1.9e−15, while the v₀ variant of
+S^v sits at 2.2e−6 (real v) and 2.2e−5 … 2.6e−5 (v = 1.45) for every h. Symbolic: the 5×5 block identities behind (S.45) (t parametrised as
 A u/(1 − κ) so no inverse is formed), the composition rule of two spectral operators, the (S.32) reduction, the
 swap-symmetry limits — all pass. Numerical, kernel 6×6 convention, max over columns of ‖C_J − FD_J‖/‖C_J‖:
 (A) AMP_STOP smooth cap (§10.2 defaults, K2 set ρ = 0.7/ρ̄ = 0.8), n = 40: O2's ladder substeps all 30 plastic
@@ -620,6 +662,21 @@ eigenvalues, p stays at −100 kPa, π_i frozen): chained m = 1 vs (S.33) 8.4e�
 α = (½, ¼, ¼) and m = 1, FD along 1 agrees to 2.3e−16 … 2.3e−11; the six-column FD switches branch on the deviatoric
 columns (one-sided, as stated above). The expected agreement is set by the FD truncation (O(h²), ~1e−6·h/10⁻⁶) down
 to the round-off floor ~1e−9; every case meets it.
+
+**Re-measured under the exponential v-update (G2 owner decision 2026-10-01; v_{n+1} = v_n exp(tr Δε), vfac = v_{n+1},
+S^v = v_{k+1} Σα tr E_J).** The numbers in the paragraph above were taken at P1 under the linear update and are kept
+as that record. The O2 post-decision self-check (`o2_algo/README.md`, "Self-check re-run after the exponential
+v-update", Esmeralda, `selfcheck chain`; same ‖C_J − FD_J‖/‖C_J‖ measure, h = 10⁻⁶ / 10⁻⁷ / 10⁻⁸, fractions held fixed)
+gives, on the README's own increments (not the (B) increment of the paragraph above, so the generic-increment values
+differ from it by the increment, not by the update): (A) AMP_STOP smooth cap, n = 40, all 30 substepped increments
+3.4e−6…1.1e−5 / 3.5e−8…8.6e−8 / 2.0e−9…1.5e−8 (last-sub-increment CTO 0.51–0.90, unchanged); (B) generic non-coaxial
+plastic increment (fork WW, three shears, θ = 0.82) forced m = 8 2.74e−8 / 1.57e−10 / 9.8e−10, m = 2 2.56e−8 / 3.5e−10 /
+1.3e−9; (C) m = 1 vs (S.33) 1.0e−15, ladder m = 1 bit-identical to (S.33): True; (E) non-uniform α (½,¼,⅛,⅛) on (B)
+2.71e−8 / 3.4e−10 / 1.6e−9, (¼,¼,¼,⅛,⅛) on AMP step 20 4.76e−6 / 5.1e−8 / 3.9e−9, (½,¼,¼) on AMP step 11
+8.77e−6 / 6.5e−8 / 9.7e−9; (F) vertex: chain m = 1 vs (S.33) 4.6e−17, max|C:1|/max|C| 3.8e−16 (m = 1) and 3.2e−16
+(α = ½,¼,¼), FD along 1 at 0 and 2.0e−11. Every FD agreement stays at its O(h²)/round-off floor, which is what shows the
+v_{k+1} factors are the consistent derivatives (the v₀ form would sit at ~1e−5…1e−4). The symbolic and vexp_fd.py
+checks are quoted in the paragraph above.
 
 ---
 
@@ -764,8 +821,12 @@ power-law CSL unchanged.** The plan's expectation (§2.2) is confirmed; the orac
 State: ε^e (symmetric tensor), π_i, v (algebraic from total strain). Rate equations (AB06 Box 1; BA06 Box 1) [E]:
 
       σ = σ(ε^e)  (§2, spectral),   ε̇^e = ε̇ − λ̇ q,   q = Σ_a q_a m^a,   f = Σ_a f_a m^a,
-      π̇_i = √(2/3) h λ̇ (π_i* − π_i) Ω,   ψ_i = ψ_i(v, π_i) algebraic,   v̇ = v₀ tr ε̇.                        (S.40)
+      π̇_i = √(2/3) h λ̇ (π_i* − π_i) Ω,   ψ_i = ψ_i(v, π_i) algebraic,   v̇ = v tr ε̇  (⇔ v = v₀ exp(tr ε)).        (S.40)
 
+(v-rate: §1.2, G2 owner decision [I; G2]; AB06/BA06 Box 1 small strain have v̇ = v₀ tr ε̇, superseded. O1 keeps v
+algebraic from the total strain, v = v₀ exp(tr ε); if it integrates v̇ instead, the ODE is v̇ = v tr ε̇. The
+multiplier (S.41) and the continuum tangent (S.42) do **not** contain dv/dε: π_i* enters the consistency condition
+only through its current value in π̇_i, so they are unchanged.)
 Consistency Ḟ = f:σ̇ + F_π π̇_i = 0 with σ̇ = a^e:(ε̇ − λ̇q) gives the closed-form multiplier (AB06 44–45) [E]:
 
       λ̇ = ⟨ f : a^e : ε̇ ⟩ / ( f : a^e : q + H ),    H = −M (p/π_i)^{1/(1−N)} √(2/3) h (π_i* − π_i) Ω,       (S.41)
@@ -837,12 +898,20 @@ loss-of-uniqueness limit (snap-back), to be reported not hidden.
    |D − χψ_i| = 4.0e−11 (D = χψ_i = +0.155730). Secondary coarse check: the linear interpolant of b = D − χψ_i to
    a = 0 is 7.9e−6 against a bracket variation of 3.9e−3 (b(a) ∝ a + O(a²), so the interpolant is quadratically
    small). An end-point check "at the step where H changes sign, |D − χψ_i| ≤ tol" is wrong by O(step).
-7. **Undrained critical state**: isochoric ⇒ v (hence e) constant; critical state ⇔ ψ_i = 0, π_i = π_i* = p, D = 0,
+7. **Undrained critical state**: isochoric ⇒ v (hence e) constant (tr ε = 0 ⇒ v = v₀ exp(0) = v₀ exactly, unchanged
+   by the G2 update; the 1e−12 constancy check of the G1 suite stands); critical state ⇔ ψ_i = 0, π_i = π_i* = p, D = 0,
    H = 0, η = M (θ = π/3): p_cs = −p_a ((e₀ − e)/λ_c)^{1/ξ} (fork; requires e < e₀), p_cs = −exp((v_{c0} − v)/λ̃)
    (paper); q_cs = M|p_cs|/ζ(θ) = M|p_cs| in TXC. At the CS, ε̇^p_v = 0 ⇒ ε̇^e_v = 0 ⇒ p stationary: a fixed point.
 8. **Drained CS asymptote**: at large ε_s, ψ_i → 0, π_i → p, η → M (i.e. −ζ(θ)q/p → M, so q/|p| → M/ζ(θ)), D → 0, H → 0.
 9. **Dissipation**: D^p = Δλ Σ_a σ_a q_a ≥ 0 every plastic step (0 on elastic ones) under (S.39); a set violating
    (S.39) or N̄ > N is refused; ρ > ρ̄ warned (§11.2).
+10. **Specific volume on a drained path [I; G2]**: at every committed state v = v₀ exp(tr ε) with ε = ε^e + ε^p the
+   total strain (round-off, ≤ 1e−12 relative), in both oracles and the kernel, for any increment sequence and any
+   substepping (exp of a sum: the composed sub-increment updates equal the single-increment one exactly,
+   vexp_sympy.py (b)–(c)); under LogStrain v = v₀J with J = det F to the same tolerance (§1.4). The closed forms of
+   items 5–8 use ψ_i(v, π_i) at that v. The superseded linear update differs by v₀(1 + x − eˣ) ≈ −v₀x²/2, x = tr ε
+   (−4.8e−4 at the end of the TXC_paper path, x = 0.0236; vexp_fd.py (3)): a check at 1e−12 discriminates the two
+   updates on any path with |tr ε| ≳ 1e−6.
 
 ---
 
@@ -885,7 +954,7 @@ Newton (AB06 90–97). For a small-strain acoustic tensor drop σ_n and use (S.3
 (c) v_{c0} ("≈ 1.81"); (d) the crossing criterion: first step with min det ≤ 0, or the linear-interpolated zero
 crossing of Fig 5's normalised curve; (e) the (θ, φ) grid. Inferable: the initial stress (point O in Figs 3–4 sits on
 the hydrostatic axis at τ'' ≈ −173 = √3·(−100) ⇒ σ₀ = −100 kPa isotropic, ε^e = 0, consistent with ε_{v0} = 0 at p₀),
-and v₀ = 1.59 with v = v₀J.
+and v₀ = 1.59 with v = v₀J (which the small-strain kernel now reproduces exactly under LogStrain, §1.2/§1.4).
 
 **K2 gate (plan §5.2, decided at G0)**: the gate is the **ordering** (ρ = 0.7 localizes before ρ = 1) and the **gap**
 (n₁.₀ − n₀.₇ ≈ 4 steps) inside a stated band, with a reported sensitivity table over the swept unknowns; exact n is a
@@ -894,7 +963,9 @@ sanity check, not a gate. Band [I]: with π_{i,0} ∈ {−60, −80, −100} kPa
 combination (π_{i,0} = −60.4, χ = −3.5, v_{c0} = 1.81, first-step criterion) n₀.₇ ∈ [19, 25], n₁.₀ ∈ [23, 29]. Report
 the full table; a miss outside the band is a finding against the sheet or the oracle, not something to tune away.
 The small-strain kernel reproduces this only through the LogStrain wrapper with (S.34); the oracles can run it directly
-in finite strain (ε^e_a = ln λ^e_a, v = v₀J, τ). Small-strain v = v₀(1 + ln J) vs v₀J differs by O(10⁻⁴) here.
+in finite strain (ε^e_a = ln λ^e_a, v = v₀J, τ). Since G2 the small-strain kernel's v under LogStrain is v₀ exp(ln J) =
+v₀J exactly (§1.2); the superseded linear update gave v₀(1 + ln J), off by O(10⁻⁴) here (and the ~25–30× amplified
+state error that motivated the decision, §16.6 item 14).
 
 **Why the two oracles do not report the same n, and why that is not a disagreement [I; G1, measured by the K2 lag
 diagnosis].** AB06 Remark 4 allows the consistent tangent for the localization check only "for a small enough load
@@ -1018,7 +1089,7 @@ G1 revision checks (2026-10-01, run on Esmeralda with the WP-144 venv against th
   (scaled residual ≤ 1e−12, ≤ 6 iterations) with G up to 2.8 on its own branch.
 - r2_o1_stops_vertex.py (O1 + O2): O1 `vertex_reached` at 13/40 (no cap), `cap_sliding` at 17/40 (planar, c₁ = 0.10);
   O2 axial return from the apex: p = −100.000000 held, π_i frozen, Δε^p_v = tr Δε, ε^p_s = 0, D = 0.300/step; O2 refuses
-  the same paths at steps 13 (none) / 16 (planar) with `local_linesearch` after 2⁸ substeps.
+  the same paths at steps 13 (none) / 16 (planar) with `local_linesearch` after 2⁸ substeps (2026-09-30, linear v-update). Re-measured at G2 (2026-10-01) under the exponential v-update v = v₀ exp(tr ε) (§1.2, decision 1 = option b): planar unchanged (step 16, `local_linesearch`); no cap now refuses at step 12 with `local_noconv` after 2⁸ substeps, O2 and the kernel alike (kernel: `SUBSTEPS_EXHAUSTED`, finest `LOCAL_NOCONV`, 256 substeps, same step); the finest reason (and the step, 13 -> 12) of the no-cap stop changed with the v-update; the cause inside the near-vertex local solve was not investigated, both oracles are a refusal at the same corner either way.
 - r2_neutral_v0.py (O2 kernel): N = f:a^e:ε̇ = 0.0 exactly for both shear directions on a coaxial TXC yielded state
   (−0.21·scale for axial); F^tr − F_n = 1.06e7·h² kPa (h = 10⁻⁴…10⁻⁶), threshold crossed at h* = 3.2e−8; v₀-vs-v tangent
   FD: 7.0e−7 (v₀) vs 1.1e−4 (v) at v = 1.45, 2.4e−6 vs 2.0e−5 at v = 1.691 (state 0.01 rad off the WW corner).
@@ -1027,6 +1098,20 @@ G1 revision checks (2026-10-01, run on Esmeralda with the WP-144 venv against th
   |a|/|π_i| = 2.8e−11, |D − χψ_i| = 4.0e−11; coarse interpolant 7.9e−6 vs bracket variation 3.9e−3.
 - No algebra of the G0 sheet failed a re-check; the only formula-level change is the status of (S.34) (transcribed →
   re-derived + FD-checked) and the explicit ζ''(π/3) closed form in §4.2.
+
+G2 revision checks (2026-10-01, run locally with the py3.12 G2 venv against the shipped O2 oracle; scripts in
+`Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_vexp/`):
+- vexp_sympy.py (sympy, all exact): ∂(v₀e^{tr ε})/∂ε_a = v, no shear dependence, ∂v/∂ε^e_a = 0 at fixed total strain;
+  ∂v_{n+1}/∂ε̃_b = v_{n+1}; group property v₀e^{tr ε_n}e^{tr Δε} = v₀e^{tr ε_{n+1}}; S^v_{k+1} = v_{k+1}(Σ_{j≤k}α_j) tr E_J
+  for m = 4 general fractions and all six columns; v₀(1 + x − eˣ) = −v₀x²/2 − v₀x³/6 + O(x⁴), zero slope at 0;
+  v₀e^{ln J} = v₀J; IFT column b_{·b} − uΠ_v v' for a general v'(ε̃).
+- vexp_fd.py (O2, finite-mode `_step_once` as the integrator of the new rule): (S.31) with vfac = v_{n+1} vs central FD of
+  the return map 2.4e−6 / 2.4e−8 (h = 10⁻⁵ / 10⁻⁶) on the real state (v_n = 1.691, v₀ = 1.701) and 7.0e−7 / 7.0e−9 on a
+  mid-path state (v_n = 1.45); vfac = v₀ 1.8e−5 and 1.1e−4, vfac = v_n 1.7e−6 and 3.8e−7 (h = 10⁻⁶). Chain (S.46) with
+  S^v = v_{k+1} cum tr E_J vs FD of the whole increment, (B) increment: 1.0e−7 / 1.1e−9 / 1.5e−9 (m = 8), 7.5e−8 / 7.4e−10 /
+  1.4e−9 (m = 2), 9.8e−8 / 1.5e−9 / 1.8e−9 (α = ½,¼,⅛,⅛), 7.5e−8 / 7.8e−10 / 9.7e−10 (m = 1; = (S.33) to 2.8e−15), h = 10⁻⁶
+  / 10⁻⁷ / 10⁻⁸; mid-path v = 1.45: 2.7e−8 … 4.2e−10, (S.33) 1.9e−15; the v₀ variant of S^v 2.2e−6 (real v), 2.2e−5 …
+  2.6e−5 (v = 1.45). Gap on the TXC_paper path end: tr ε = 0.0236, v₀(1 + x − eˣ) = −4.76e−4 (−v₀x²/2 = −4.73e−4).
 
 ### 16.5 G0 review record (2026-09-30)
 - **Adversary (Fable, independent re-derivation): PASS-WITH-FIXES**, seven items, all applied in this revision:
@@ -1040,8 +1125,9 @@ G1 revision checks (2026-10-01, run on Esmeralda with the WP-144 venv against th
 
 ### 16.6 G1 revision record (2026-10-01)
 Twelve items raised by the G1 oracle/test round (O1 rate oracle, O2 return map, the K1/K2 gate tests and the cap and
-K2-lag triages), applied in one pass; item 13 added at P1 (owner decision 2026-10-01). Tags: [E] read in the source,
-[I; G1] / [I; P1] this revision's derivation or decision.
+K2-lag triages), applied in one pass; item 13 added at P1 (owner decision 2026-10-01); item 14 added at G2 (owner
+decision 2026-10-01, exponential v-update). Tags: [E] read in the source, [I; G1] / [I; P1] / [I; G2] this revision's
+derivation or decision.
 
 | # | section | change | tag | evidence |
 |---|---|---|---|---|
@@ -1057,6 +1143,9 @@ K2-lag triages), applied in one pass; item 13 added at P1 (owner decision 2026-1
 | 10 | §11.2 | condition A has two independent parts; N̄ ≤ N required on its own, also when ρ ≥ ρ̄ | [I; G1] | §11 table (G0) |
 | 11 | §14 | AB06 Remark 4 "small enough load step": BE lags the continuum by ≈ 1 step; O1 22/26, O2 23/27 first-step (22/26 by rounding the interpolated crossing); agreement tested by convergence under substepping; Fig 6 φ = π/2 reread as n ⊥ the intermediate principal direction (e₁ under (S.43), n in the e₂–e₃ plane; both oracles φ = 90.0°, θ ≈ 35°, two mirror wells) | [I; G1] | K2 lag diagnosis (tests/scratch_k2lag), tests/out/k2_sensitivity.md |
 | 12 | §9.5, §16.3 | (S.34) re-derived (nominal-stress derivative, no ½) and FD-checked with (S.44); the FD check is now a G1 gate test | [I; G1] | r2_finite_tangent_fd.py |
-| 13 | §9.1, §9.4, §9.6 | **P1 owner decision: chained tangent.** A substepped increment returns the exact derivative of its final stress w.r.t. the total Δε, chained through every sub-increment (any fractions α_k, Σα_k = 1): state map z_{k+1} = Φ(z_k, α_kΔε), IFT columns (S.45) (−J⁻¹∂r/∂(π_{i,n}, v) through the nested solve: −u/c, −uΠ_v, (1−κ)/c, (1−κ)Π_v), recursion (S.46), assembly C = a^e(ε^e_m):S^ε_m (S.47); m = 1 reduces to (S.33) exactly at distinct trial eigenvalues; the repeated-eigenvalue limit of (S.33) keeps the i ≤ j row (C4_01kl from g_01 = ã_00 − ã_01; O2 and kernel; ~1e−8 effect inside the 10⁻¹⁰ band) as the documented contract; supersedes "tangent of the last sub-increment" (plan §2.8, O2 `step`, kernel `step_ex`, 0.5–0.9 off the FD) | [I; P1], owner decision 2026-10-01 | chain_sympy.py (all OK), chain_fd.py: AMP_STOP n = 40 m = 2–4 → 4e−8…9e−8 at h = 10⁻⁷, generic m = 8 → 1.1e−9, non-uniform α → 1.6e−9…6.6e−8, vertex 8e−17 |
+| 13 | §9.1, §9.4, §9.6 | **P1 owner decision: chained tangent.** A substepped increment returns the exact derivative of its final stress w.r.t. the total Δε, chained through every sub-increment (any fractions α_k, Σα_k = 1): state map z_{k+1} = Φ(z_k, α_kΔε), IFT columns (S.45) (−J⁻¹∂r/∂(π_{i,n}, v) through the nested solve: −u/c, −uΠ_v, (1−κ)/c, (1−κ)Π_v), recursion (S.46), assembly C = a^e(ε^e_m):S^ε_m (S.47); m = 1 reduces to (S.33) exactly at distinct trial eigenvalues; the repeated-eigenvalue limit of (S.33) keeps the i ≤ j row (C4_01kl from g_01 = ã_00 − ã_01; O2 and kernel; ~1e−8 effect inside the 10⁻¹⁰ band) as the documented contract; supersedes "tangent of the last sub-increment" (plan §2.8, O2 `step`, kernel `step_ex`, 0.5–0.9 off the FD) | [I; P1], owner decision 2026-10-01 | chain_sympy.py (all OK), chain_fd.py at P1 (linear v-update): AMP_STOP n = 40 m = 2–4 → 4e−8…9e−8 at h = 10⁻⁷, generic m = 8 → 1.1e−9, non-uniform α → 1.6e−9…6.6e−8, vertex 8e−17; **re-measured under the exponential v-update** (G2, 2026-10-01; o2_algo/README "Self-check re-run after the exponential v-update", at h = 10⁻⁷): AMP_STOP n = 40 3.5e−8…8.6e−8, generic m = 8 1.6e−10, non-uniform α 3.4e−10…6.5e−8, m = 1 vs (S.33) 1.0e−15, vertex 4.6e−17 |
+| 14 | §1.2, §1.3, §1.4, §8 (S.26), §9.1, §9.3 (S.31), §9.5, §9.6 (state map, (S.45) relation, S^v, m = 1), §12 (S.40), §13.7, §13.10, §14 | **G2 owner decision (2026-10-01, decision 1 = option b): exponential v-update.** v = v₀ exp(tr ε) ⇔ v_{n+1} = v_n exp(tr Δε), dv/dε = v·1 (not v₀·1) everywhere: s_k = t_k Π_v v_{n+1} in (S.31) (the converged v of the step; FD discriminates v_{n+1} from v_n and v₀), S^v_{k+1} = v_{k+1} cum tr E_J in (S.46), v̇ = v tr ε̇ in (S.40) ((S.41)–(S.42) unchanged: no dv/dε in them), §1.4 v-mapping identical to finite strain (no v₀ → v substitution left; §9.5 "with v₀ → v" withdrawn), §13.7 isochoric endpoint unchanged (v = v₀ exactly), new §13.10 drained-path identity. v₀ stays a committed datum (v = v₀ exp(tr ε), initialState, revertToStart) but enters no derivative; the G1 item 7 warning is inverted. Motivation (G2 measurement, test_g2_logstrain.py): under LogStrain the linear update read v = v₀(1 + x) against the finite oracle's v₀eˣ, x = ln J, a gap v₀(1 + x − eˣ) (closed form to 1e−10) amplified ~25–30× into τ and π_i: 2.2e−3 / 2.3e−3 at 20 % drained TXC, 5.6e−3 / 6.0e−3 in TXE fork mode; the exponential update makes LogStrain(LadrunoNorSand) exact, v = v₀J, and leaves small strain unchanged to first order. Supersedes BA06 Box 2 step 6b / Box 1 v̇ = v₀ tr ε̇ [E] and BA06 2.71's v₀. Implementation to follow: O2 `_step_once` small-strain branch (v = v + v₀ tr, vfac = v₀) and `chain_propagate` (S_v = v₀ cum trE); kernel `LadrunoNorSandKernel.h` ≈ l.1325–1326 and 1268; O1 v̇ | [I; G2], owner decision 2026-10-01 | vexp_sympy.py (all exact), vexp_fd.py: (S.31) 2.4e−8 / 7.0e−9 (v₀ form 1.8e−5 / 1.1e−4), chain m = 8/2/non-uniform/1 → 1.1e−9 … 1.8e−9 at h = 10⁻⁷…10⁻⁸ (v₀ variant 2.2e−6 … 2.6e−5), m = 1 = (S.33) to 2.8e−15 |
 
-No FD-checked algebra of the G0 sheet changed. Status of (S.34): transcribed → re-derived and FD-checked (8.7e−10).
+Items 1–13: no FD-checked algebra of the G0 sheet changed; status of (S.34): transcribed → re-derived and FD-checked
+(8.7e−10). Item 14 is the first formula-level change to FD-checked algebra: the v-factor in (S.31) (v₀ → v_{n+1}) and
+in the S^v closed form of (S.46) (v₀ → v_{k+1}), both re-verified (§16.4, G2 checks).

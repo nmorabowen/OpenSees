@@ -86,6 +86,16 @@ enum { I_P0 = 0, I_KAPPA, I_EPSV0, I_MU0, I_ALPHA0, I_M, I_N, I_NBAR, I_RHO, I_R
        I_LTILDE, I_VC0, I_E0, I_LC, I_XI, I_PA, I_C1, I_C2 };
 
 // sendSelf / recvSelf wire layout (offsets into the one Vector of LadrunoNorSand::WIRE_LEN doubles)
+//
+// What is NOT on the wire, and why (WP-144 G2 finding, LEDGER_quirks "Domain::recvSelf calls update()"):
+// the TRIAL stress (6) and the trial consistent tangent (36) are not sent. Domain::recvSelf calls
+// element->update() on every element after its recvSelf, which re-integrates each point from its
+// restored COMMITTED state to the restored nodal strain and so recomputes both: no public route can
+// observe the 42 doubles, and carrying them would only suggest a guarantee the host does not give.
+// recvSelf rebuilds them from the restored trial State instead (the hyperelastic stress and tangent
+// of sT), so a restored point is self-consistent even before that update(). Everything the update()
+// does NOT recompute (committed State, trial State, strains, the latch and the refusal record)
+// stays on the wire.
 namespace nsw {
 enum {
   TAG = 0,          // material tag
@@ -102,17 +112,15 @@ enum {
   ST = 46,          // trial State (12)                     [46 .. 57]
   EPSC = 58,        // committed total strain (tensor)     [58 .. 63]
   EPST = 64,        // trial total strain (tensor)         [64 .. 69]
-  SIGT = 70,        // trial stress, kernel order          [70 .. 75]
-  CT = 76,          // trial consistent tangent C[i][j] row-major (36)  [76 .. 111]
-  LATCHED = 112,
-  TRIALREF = 113,   // the trial was refused
-  LASTREF = 114,    // last refusal code (-1: non-finite)
-  LASTFIN = 115,    // finest-level cause of that refusal (StepInfo.finest; 0 none)
-  LASTFINSUB = 116, // ... and its sub-reason (StepInfo.finest_sub)
-  NREF = 117,       // refused trials since revertToStart
-  NSUB = 118,       // COMMITTED steps that needed substepping
-  INFO = 119,       // last StepInfo (9): refusal plastic vertex cap_active local_iters pi_iters substeps finest finest_sub
-  END = 128
+  LATCHED = 70,
+  TRIALREF = 71,    // the trial was refused
+  LASTREF = 72,     // last refusal code (-1: non-finite)
+  LASTFIN = 73,     // finest-level cause of that refusal (StepInfo.finest; 0 none)
+  LASTFINSUB = 74,  // ... and its sub-reason (StepInfo.finest_sub)
+  NREF = 75,        // refused trials since revertToStart
+  NSUB = 76,        // COMMITTED steps that needed substepping
+  INFO = 77,        // last StepInfo (9): refusal plastic vertex cap_active local_iters pi_iters substeps finest finest_sub
+  END = 86
 };
 // State packing (12): eps_e[6], pi_i, v, v0, eps_p_v, eps_p_s, D_last
 const int STATE_LEN = 12;
@@ -123,8 +131,13 @@ static_assert(nsw::END == LadrunoNorSand::WIRE_LEN, "LadrunoNorSand wire layout 
 static_assert(nsw::PARAMS + NPD == nsw::CSL, "parameter block size");
 static_assert(nsw::PI0 + 1 == nsw::SC, "initial-state block size");
 static_assert(nsw::SC + nsw::STATE_LEN == nsw::ST && nsw::ST + nsw::STATE_LEN == nsw::EPSC, "state block size");
-static_assert(nsw::EPST + 6 == nsw::SIGT && nsw::SIGT + 6 == nsw::CT && nsw::CT + 36 == nsw::LATCHED, "trial stress/tangent block size");
+static_assert(nsw::EPSC + 6 == nsw::EPST && nsw::EPST + 6 == nsw::LATCHED, "strain block size");
 static_assert(nsw::NSUB + 1 == nsw::INFO && nsw::INFO + nsw::INFO_LEN == nsw::END, "StepInfo block size");
+// FE_Datastore keys a sent Vector by its SIZE (LEDGER_quirks "FE_Datastore keys a sent Vector by its SIZE"). This class
+// sends exactly ONE Vector under its dbTag and commitTag and the NDMaterial base sends none, so there is nothing to
+// collide with. If a base block, a subclass block or a second vector is ever added, its length must differ from
+// WIRE_LEN: extend this list with that length (SANISAND's LWIRE_SIZE != 97 is the pattern).
+static_assert(LadrunoNorSand::WIRE_LEN > 0 && nsw::END == 86, "LadrunoNorSand wire length changed: re-check the FE_Datastore size-uniqueness note above");
 
 void packState(double* a, const State& s)
 {
@@ -479,6 +492,16 @@ const Vector& LadrunoNorSand::getStrain(void)
   return strainOut;
 }
 
+// LadrunoElasticStrainProvider: the TRIAL elastic strain (the one belonging to sigT), tensor -> engineering Voigt.
+// A refused trial leaves sT = sC (frozen at the committed state), so this stays consistent with the stress
+// getStress() returns. // Ladruno WP-144 G2
+bool LadrunoNorSand::ladrunoGetElasticStrain(Vector& epsE) const
+{
+  if (!initOk || epsE.Size() != 6 || !allFinite(sT.eps_e, 6)) return false;
+  for (int i = 0; i < 6; i++) epsE(i) = (i >= 3) ? 2.0 * sT.eps_e[i] : sT.eps_e[i];
+  return true;
+}
+
 // T[a][b] = d sigma_voigt_a / d eps_voigt_b = C[a][b] * w_b ; rows unchanged, shear columns halved.
 const Matrix& LadrunoNorSand::getTangent(void)
 {
@@ -492,8 +515,11 @@ const Matrix& LadrunoNorSand::getTangent(void)
 
 const Matrix& LadrunoNorSand::getInitialTangent(void)
 {
-  // the hyperelastic tangent at the INITIAL state (not the base default getTangent(): -initial must
-  // stay a genuine initial-stiffness iteration)
+  // the hyperelastic tangent at the INITIAL state s0 (not the base default getTangent(): -initial must
+  // stay a genuine initial-stiffness iteration). s0 is fixed at construction (buildInitialState) and is
+  // touched by nothing afterwards (not by a step, a commit, a revert or a latch), so this is the elastic
+  // tangent at (sigma0, v0, pi_i0) however much plastic history the point has. A G2 test kills the
+  // "return getTangent()" mutant (tests/test_ladruno_norsand.py).
   double C[6][6];
   for (int i = 0; i < 6; i++) for (int j = 0; j < 6; j++) C[i][j] = 0.0;
   if (initOk) ladruno_norsand::elasticTangent(kp, s0, C);
@@ -604,12 +630,26 @@ void LadrunoNorSand::copyFrom(const LadrunoNorSand& o)
   v0init = o.v0init; pi0init = o.pi0init; F0init = o.F0init;
   initOk = o.initOk; initMsg = o.initMsg;
   s0 = o.s0; sC = o.sC; sT = o.sT;
-  trialRefused = o.trialRefused;
-  latched = o.latched;               // a latched point must hand out latched copies
-  warnedTrial = o.warnedTrial; warnedLatch = o.warnedLatch;
-  lastRefusal = o.lastRefusal; lastFinest = o.lastFinest; lastFinestSub = o.lastFinestSub;
-  nRefusals = o.nRefusals; nSubstepped = o.nSubstepped;
-  lastInfo = o.lastInfo;
+  nSubstepped = o.nSubstepped;       // history census of the committed path: carried by value
+  // REFUSAL STATE IS NOT INHERITED (WP-144 G2 decision, LEDGER_quirks "getCopy of a latched LadrunoNorSand").
+  // A clone starts with no latch, no refused trial and an empty refusal record, whatever the source holds.
+  //   * The latch exists to stop THIS integration point from continuing after a commit the host discarded.
+  //     A refused trial never reaches the committed state (the commit is aborted and the trial restored from
+  //     the committed state), so the source's committed state, which is all the clone copies, is a valid
+  //     state: there is nothing for the clone to be protected from.
+  //   * A clone that inherited the latch would make a FRESH element refuse every step from its first update()
+  //     and fail with no refusal of its own to explain it (the cause belongs to another point).
+  //   * It is the opposite of a "work already done" latch (ASDConcrete3D regularization): not copying that one
+  //     redoes the work, not copying this one redoes nothing.
+  // sendSelf/recvSelf is a different case: it moves THE SAME point (a restart), so it keeps the latch.
+  trialRefused = false;
+  latched = false;
+  warnedTrial = false; warnedLatch = false;
+  lastRefusal = 0; lastFinest = 0; lastFinestSub = 0;
+  nRefusals = 0;
+  lastInfo = StepInfo();             // the last attempt's info belongs to the source's (possibly refused) trial
+  // the trial of a refused source is frozen at its committed state: make that explicit for the clone
+  if (o.trialRefused || o.latched) this->restoreTrialFromCommitted();
   // dim / ncomp / vmap / output buffers belong to the clone's own class: not copied
 }
 
@@ -658,10 +698,7 @@ int LadrunoNorSand::sendSelf(int commitTag, Channel& theChannel)
     packState(a, sT); for (int i = 0; i < nsw::STATE_LEN; i++) data(nsw::ST + i) = a[i];
   }
   for (int i = 0; i < 6; i++) { data(nsw::EPSC + i) = epsC[i]; data(nsw::EPST + i) = epsT[i]; }
-  // the trial stress and tangent are sent as they are: a copy that is NOT followed by a setTrialStrain
-  // (a commit, or a getTangent in the next iteration) must see the same numbers as the source
-  for (int i = 0; i < 6; i++) data(nsw::SIGT + i) = sigT[i];
-  for (int i = 0; i < 6; i++) for (int j = 0; j < 6; j++) data(nsw::CT + 6 * i + j) = CT[i][j];
+  // the trial stress and tangent are NOT sent (see the wire-layout note at nsw): Domain::recvSelf's update() recomputes them
   data(nsw::LATCHED) = latched ? 1.0 : 0.0;
   data(nsw::TRIALREF) = trialRefused ? 1.0 : 0.0;
   data(nsw::LASTREF) = lastRefusal;
@@ -713,8 +750,6 @@ int LadrunoNorSand::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroke
   for (int i = 0; i < nsw::STATE_LEN; i++) a[i] = data(nsw::ST + i);
   unpackState(a, sT);
   for (int i = 0; i < 6; i++) { epsC[i] = data(nsw::EPSC + i); epsT[i] = data(nsw::EPST + i); }
-  for (int i = 0; i < 6; i++) sigT[i] = data(nsw::SIGT + i);
-  for (int i = 0; i < 6; i++) for (int j = 0; j < 6; j++) CT[i][j] = data(nsw::CT + 6 * i + j);
   latched = (data(nsw::LATCHED) != 0.0);
   trialRefused = (data(nsw::TRIALREF) != 0.0);
   lastRefusal = (int)data(nsw::LASTREF);
@@ -731,7 +766,13 @@ int LadrunoNorSand::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroke
   lastInfo.substeps = (int)data(nsw::INFO + 6);
   lastInfo.finest = (int)data(nsw::INFO + 7);
   lastInfo.finest_sub = (int)data(nsw::INFO + 8);
-  // sigT / CT came off the wire (nothing is recomputed: a copy reproduces the source's trial exactly)
+  // sigT / CT are not on the wire: rebuild them from the restored trial State (hyperelastic stress and tangent
+  // of sT; the consistent plastic tangent of the source's last step is NOT reproduced, and the host's own
+  // update() recomputes both anyway).
+  if (initOk) {
+    ladruno_norsand::stress(kp, sT, sigT);
+    ladruno_norsand::elasticTangent(kp, sT, CT);
+  }
   return 0;
 }
 

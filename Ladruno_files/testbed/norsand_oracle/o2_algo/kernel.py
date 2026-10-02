@@ -543,7 +543,9 @@ def jacobian(P: Params, pe: PointEval) -> np.ndarray:
 
 
 def atilde_ep(P: Params, pe: PointEval, J: np.ndarray, vfac: float) -> np.ndarray:
-    """(S.31)-(S.32): a~^ep_ab = d sigma_a / d eps~_b. vfac = v0 (small strain) or v (finite)."""
+    """(S.31)-(S.32): a~^ep_ab = d sigma_a / d eps~_b. vfac = d v_{n+1}/d eps~_b = v_{n+1}, the converged
+    specific volume of the step, in both modes (sheet §1.2, G2 owner decision 2026-10-01; was v0 in small
+    strain under the linear update). The caller must pass vfac equal to the v it passed to return_map."""
     fl = pe.fl
     s = np.empty(4)
     s[:3] = pe.dlam * fl.q_api * pe.Pi_v * vfac
@@ -746,15 +748,17 @@ def chain_start():
     return np.zeros((6, 3, 3)), np.zeros(6), 0.0
 
 
-def chain_propagate(S_eps: np.ndarray, S_pi: np.ndarray, cum_before: float, alpha: float, v0: float,
+def chain_propagate(S_eps: np.ndarray, S_pi: np.ndarray, cum_before: float, alpha: float, v_new: float,
                     res: StepResult, nvec: np.ndarray):
     """One sub-increment of (S.46). Inputs: the sensitivities of the state ENTERING the
-    sub-increment (S^eps_k, S^pi_k, sum_{j<k} alpha_j), its fraction alpha_k, v0, the accepted
-    StepResult of the sub-increment (eps~_a, eps^e_a, b, u, w, kappa, c, Pi_v) and the trial eigenvectors.
-    Returns (S^eps_{k+1}, S^pi_{k+1}, sum_{j<=k} alpha_j).
+    sub-increment (S^eps_k, S^pi_k, sum_{j<k} alpha_j), its fraction alpha_k, v_new = v_{k+1} (the
+    sub-increment's own CONVERGED specific volume, v_k exp(alpha_k tr d_eps); sheet §1.2/§9.6, G2), the
+    accepted StepResult of the sub-increment (eps~_a, eps^e_a, b, u, w, kappa, c, Pi_v) and the trial
+    eigenvectors. Returns (S^eps_{k+1}, S^pi_{k+1}, sum_{j<=k} alpha_j).
 
       T_k        = S^eps_k + alpha_k E_J                         (d eps~_k / d d_eps_J)
-      S^v_{k+1}  = v0 (sum_{j<=k} alpha_j) tr E_J                 (closed form, v = v0 (1 + tr eps))
+      S^v_{k+1}  = v_{k+1} (sum_{j<=k} alpha_j) tr E_J            (closed form: v_{k+1} = v_n exp((sum_{j<=k} alpha_j) tr d_eps)
+                                                                  differentiated; was v0 (...) under the linear update)
       plastic:   S^eps_{k+1} = Phi : T_k - sum_a m^a [ (u_a/c) S^pi_k + u_a Pi_v S^v_{k+1} ]
                  S^pi_{k+1}  = sum_b w_b T^_bb + ((1 - kappa)/c) S^pi_k + (1 - kappa) Pi_v S^v_{k+1}
       elastic:   S^eps_{k+1} = T_k,  S^pi_{k+1} = S^pi_k
@@ -768,7 +772,7 @@ def chain_propagate(S_eps: np.ndarray, S_pi: np.ndarray, cum_before: float, alph
         return T, S_pi.copy(), cum
     ch = res.chain
     Phi = tangent_small(ch.b[:3, :3], res.eps_e, res.eps_tr, nvec)
-    S_v = v0 * cum * CHAIN_TRE                                    # (6,)
+    S_v = v_new * cum * CHAIN_TRE                                 # (6,)  S^v_{k+1} = v_{k+1} cum tr E_J
     m = np.array([np.outer(nvec[:, a], nvec[:, a]) for a in range(3)])   # (3,3,3)
     # per column: Phi : T_J, then the pi_i,n and v columns (eigenvalues only)
     PhiT = np.einsum("ijkl,Jkl->Jij", Phi, T)
@@ -800,7 +804,7 @@ def chain_assemble(P: Params, res: StepResult, nvec: np.ndarray, S_eps: np.ndarr
 
 def tangent_finite(atilde: np.ndarray, tau: np.ndarray, eps_tr: np.ndarray, nvec: np.ndarray) -> np.ndarray:
     """(S.34): a^ep = c~ + tau (+) 1 with (tau (+) 1)_ijkl = tau_jl delta_ik. eps_tr are the trial
-    principal LOG stretches; atilde from (S.32) with v0 -> v."""
+    principal LOG stretches; atilde from (S.32) (vfac = v in both modes since G2, nothing to substitute)."""
     lam = np.exp(eps_tr)
     c = atilde - 2.0 * np.diag(tau)
     gam = np.zeros((3, 3))

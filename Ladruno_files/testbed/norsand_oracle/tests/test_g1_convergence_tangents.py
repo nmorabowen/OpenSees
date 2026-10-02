@@ -10,7 +10,7 @@ reason to edit an oracle or a bound.
 
 Gate ids used below
   G1.conv     O2(n) -> O1 endpoint convergence, first order (plan 5.1, first bullet of "Gates between them")
-  G1.vclosed  specific volume is a closed form of the total strain (sheet 1.2), both oracles
+  G1.vclosed  specific volume is a closed form of the total strain, v = v0 exp(tr eps) (sheet 1.2, G2 decision), both oracles
   G1.fd       O2 consistent tangent vs central FD of O2's own stress update, off the theta corners (plan 5.1)
   G1.corner   the same at the exact WW compression corner: O(h) (sheet 4.3); GA control regular
   G1.cto      O2 CTO -> O1 continuum tangent (S.42) as the step -> 0
@@ -225,13 +225,14 @@ def test_g1_o2_converges_to_o1_first_order(path, mode):
         assert errs[-1] <= bound, f"{name}: err(n=400) = {errs[-1]:.3e} > a priori bound {bound:.3e}"
 
     if not drained:
-        # G1.vclosed: v = v0 (1 + tr eps_total) exactly (sheet 1.2, small strain); strain-controlled paths.
+        # G1.vclosed: v = v0 exp(tr eps_total) exactly (sheet 1.2 / 13.10; owner decision 2026-10-01, exponential
+        # update; was v0 (1 + tr eps)); strain-controlled paths.  tr eps is the cumulative trace of the imposed strain.
         tr = float(np.trace(E1_NC + E2_NC)) if PATHS[path]["kind"] == "gen" else 0.0
         sts2 = o2run(path, mode, NS[-1])
         for oname, sts, v0, tol in (("O1", sts1, v01, 1e-9), ("O2", sts2[3], sts2[1], 1e-12)):
             v_end = sts[-1].v
-            assert abs(v_end - v0 * (1.0 + tr)) <= tol * v0, \
-                f"{oname}: v = {v_end}, closed form v0(1+tr eps) = {v0 * (1.0 + tr)}"
+            assert abs(v_end - v0 * math.exp(tr)) <= tol * v0, \
+                f"{oname}: v = {v_end}, closed form v0 exp(tr eps) = {v0 * math.exp(tr)}"
 
 
 # ----------------------------------------------------------------------------------------------
@@ -396,7 +397,7 @@ def test_g1_o2_cto_tends_to_o1_continuum_tangent(mode):
     errs = []
     for h in hs:
         s2 = O2.initial_state(P2, A.sigma, A.v, A.pi_i)
-        s2.v0 = v0                                   # dv/d(eps) = v0 (initial), not the current v (sheet 1.2)
+        # (no s2.v0 override: dv/d(eps) = v_{n+1} -> v as h -> 0 and v0 enters no derivative since G2, sheet 1.2)
         stn = O2.step(P2, s2, h * Ehat)
         assert stn.flags["plastic"] and not stn.flags["refused"]
         errs.append(np.linalg.norm(O2.tangent(P2, stn) - C1) / C1n)
@@ -565,8 +566,10 @@ def test_g1_cap_planar_and_nocap_stops_are_reported_not_hidden(oracle_name, cap)
     increment is Delta lambda q_a with q_a the closed form of (S.17) / (S.35) / the vertex rule recomputed here
     (test_g1_cap.check_o2_step), to 1e-8; where Omega = 0 (planar cap: eta < c1 M; or R < R_tol) pi_i and eps^p_s are exactly
     frozen, and for the planar cap at least one step is on the cap (q_a = -delta_a/3).  If O2 refuses, the refusal carries the
-    reason the sheet documents (local_linesearch after 2^8 substeps) and every remaining step repeats the refused state; an
-    O2 that completes the path is also accepted (the closed forms were checked at every step).  The axial return to the
+    reason the sheet documents (sheet 3.2 / 10.1 / 16.4 as revised at G2: planar `local_linesearch`, no cap `local_noconv`,
+    both after 2^8 substeps; the no-cap reason changed from local_linesearch with the exponential v-update v = v0 exp(tr eps)
+    of the G2 decision, sheet 1.2; the kernel reports the same step and finest reason, kernel_parity) and every remaining
+    step repeats the refused state; an O2 that completes the path is also accepted (the closed forms were checked at every step).  The axial return to the
     apex with pi_i frozen is tested exactly in test_g1_o2_hydrostatic_apex_returns_along_the_axis_with_pi_frozen.
     Mutants killed: O1 completing 'ok' on these paths (the stop hidden) or stopping with another status; O1 stopping away
     from the corner; O1 hardening pi_i on the capped side; O2 returning a state whose plastic flow is not q_a; O2 evolving
@@ -601,8 +604,9 @@ def test_g1_cap_planar_and_nocap_stops_are_reported_not_hidden(oracle_name, cap)
     if k is not None:
         assert all(s.flags["refused"] for s in sts[k:]), "after a refusal every remaining step must repeat the refused state"
         reason = sts[k].flags["reason"]
-        assert reason and "local_linesearch" in reason and "substeps exhausted at 2^8" in reason, \
-            f"refusal reason {reason!r} is not the documented local_linesearch after 2^8 substeps"
+        want_reason = {"planar": "local_linesearch", "none": "local_noconv"}[cap]     # sheet 3.2 / 10.1 / 16.4 (G2)
+        assert reason and reason.startswith(want_reason) and "substeps exhausted at 2^8" in reason, \
+            f"refusal reason {reason!r} is not the documented {want_reason} after 2^8 substeps"
     n_pl, n_on_cap = 0, 0
     for kk, prev, s in iter_plastic(st0, sts):
         f, _ = check_o2_step(kw, prev, s, rel=1e-8)

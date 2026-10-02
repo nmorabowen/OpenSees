@@ -479,6 +479,35 @@ def test_kernel_matches_o2_on_path(kern, name):
             f"{key} {errs[key]:.3e} > {BAND_TANGENT_GATE:.0e} (O2 1-ulp {errs['o2_1ulp_band']:.3e})"
 
 
+def test_v_law_is_exponential(kern):
+    """G2 owner decision 2026-10-01 (sheet 1.2 (S.26)): v_{n+1} = v_n exp(tr deps), so v = v0 exp(tr eps) along
+    every path, in the kernel (checked here directly) and in O2 (the per-step v parity above). Non-vacuity: on
+    the fixed paths the superseded linear law v0 (1 + tr eps) differs from O2's v by far more than the 1e-10
+    parity gate, so the v comparison discriminates the two laws (mutate_kernel.sh linear_v_update)."""
+    worst_step = worst_path = lin_gap = 0.0
+    for name in CASES:
+        P, v0, pi0, st0, deps, sts, tans = _o2_run(name)
+        rc, st, msg = kern.initial_state(P, st0.sigma, v0, pi0)
+        assert rc == 0, msg
+        trsum = 0.0
+        for d, o in zip(deps, sts):
+            if o.flags["refused"]:
+                break
+            r = kern.step(P, st, d)
+            assert r["info"]["refusal"] == "OK", name
+            tr = float(np.trace(np.asarray(d, float)))
+            trsum += tr
+            v_n, v_np1 = st[7], r["state"][7]
+            worst_step = max(worst_step, abs(v_np1 - v_n * math.exp(tr)) / v_n)
+            worst_path = max(worst_path, abs(v_np1 - v0 * math.exp(trsum)) / v0)
+            lin_gap = max(lin_gap, abs(o.v - v0 * (1.0 + trsum)) / v0)
+            st = r["state"]
+    print(f"\nv-law: kernel per-step |v - v_n exp(tr)|/v {worst_step:.3e}, path |v - v0 exp(tr eps)|/v0 "
+          f"{worst_path:.3e}; O2 v vs linear law v0 (1 + tr eps): {lin_gap:.3e}")
+    assert worst_step <= 1e-14 and worst_path <= 1e-13
+    assert lin_gap > 1e3 * GATE, "the fixed paths do not discriminate the exponential from the linear v-law"
+
+
 EXPECTED_REFUSALS = {          # sheet 3.2 / 10.1 / 16.6: O2 refuses these after 2^8 substeps
     "CAP_planar_AMPSTOP_n40": True,
     "CAP_none_AMPSTOP_n40": True,

@@ -18,7 +18,7 @@ It was written from the sheet alone, independently of O2.
 |---|---|
 | `params.py` | `Params` (sheet §1.3) and `validate()`, which applies the refusals of §4 and §11 (condition A). Pass `check=False` to bypass them. |
 | `model.py` | The energy (S.2)–(S.5), in coordinate-free tensor form, and ζ (S.8)–(S.11). Also F, Q_A, the cap (S.35)–(S.36), the vertex rule (§3.2), the CSL, π_i* and H (S.22)–(S.25), and a^ep (S.42). |
-| `integrator.py` | `State` and `integrate_increment`: one increment, strain control or mixed control. `kin="log"` switches to log strain with v = v₀J. |
+| `integrator.py` | `State` and `integrate_increment`: one increment, strain control or mixed control. Specific volume is algebraic, v = v₀ exp(tr ε) (G2 owner decision 2026-10-01, sheet §1.2/(S.40)); under `kin="log"` (log strain) that is v = v₀J. |
 | `api.py` | `initial_state`, `run_path`, `tangent` (the continuum tangent: loading branch if the last segment was plastic), and `triaxial` (axial = x, signed strain). |
 | `localization.py` | `acoustic_min_det`, built from (S.34) + (S.44) with `finite=True`, or from the raw tangent with `finite=False`. Also `k2_path` (S.43). |
 | `selfcheck.py` | The self-checks (not the gate suite). |
@@ -39,3 +39,4 @@ With no group named, every group runs. The whole set takes under 1 minute on 24 
 4. **§4.2, WW at ρ = ½ exactly.** ζ = 2cosθ, so ζ'(π/3) = −√3 ≠ 0: the section has a vertex at the compression corner. Owner decision 2026-10-01: O1 **refuses** it (`ValueError`). The admissible WW range is (½, 1] for both ρ and ρ̄; GA stays [7/9, 1]. Before this decision O1 only warned. The ρ = ½ branch of `model.zeta_fun` is kept for direct shape evaluation (the K1.3 corner print), but `Params` can no longer reach it.
 5. **§14, the interpolated criterion.** The step index is round(n*); `n_interp` is also returned.
 6. **§11.** The ρ ranges are applied to both ρ and ρ̄.
+7. **§1.2 / (S.40), G2 owner decision 2026-10-01.** The specific volume is the exponential update v = v₀ exp(tr ε), kept algebraic from the integrated total strain (anchored at the increment start, v = v_n exp(tr ε − tr ε_n)); the ODE copy v̇ = v tr ε̇ is carried in y[7] as a diagnostic (`flags['v_ode']`). The pre-G2 small-strain rule v̇ = v₀ tr ε̇ is gone; `kin` no longer changes v. Self-check K1.10 (in the `drained_cs` group) prints the identity.

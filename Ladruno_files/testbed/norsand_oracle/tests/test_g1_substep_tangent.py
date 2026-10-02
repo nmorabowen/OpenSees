@@ -357,6 +357,69 @@ def test_substep_tangent_non_uniform_fractions_recursive_halving_shapes():
 
 
 # ----------------------------------------------------------------------------------------------
+# V : the v column of the chain follows the EXPONENTIAL update (sheet 1.2, 9.6; G2 owner decision 2026-10-01)
+# ----------------------------------------------------------------------------------------------
+D2_ALL_SHEARS = np.array([[-1.5e-3, 0.6e-3, -0.4e-3],
+                          [0.6e-3, -0.2e-3, 0.5e-3],
+                          [-0.4e-3, 0.5e-3, 0.9e-3]])             # the sheet 9.6 / chain_fd (B) increment: all three shears
+V_MID_PATH = 1.45                                                  # a state "built mid-path": v far from v0 = 1.70
+
+
+def _state_B(v_forced=None):
+    P = make_params("O2", **PAPER)
+    st0 = O2.initial_state(P, SIG0, v0_for(PAPER, PI0_CAP, PSI0_CAP), PI0_CAP)
+    d1 = -2.0e-3 * I3 + 2.0e-3 * np.diag([1.0, 0.0, -1.0])
+    st1 = O2.step(P, st0, d1)
+    assert st1.flags["plastic"] and not st1.flags["refused"]
+    if v_forced is not None:
+        st1 = st1.copy()
+        st1.v = v_forced
+    return P, st1
+
+
+V_FRACTIONS = {"m=8": (0.125,) * 8, "m=2": (0.5, 0.5), "alpha=(1/2,1/4,1/8,1/8)": (0.5, 0.25, 0.125, 0.125)}
+
+
+def _v_rows(P, A):
+    return [gate_increment(P, A, D2_ALL_SHEARS, name,
+                           stepper=lambda P_, A_, d_, frs=frs: O2.step_fractions(P_, A_, d_, frs))
+            for name, frs in V_FRACTIONS.items()]
+
+
+def test_substep_chain_v_column_is_v_k_plus_1_not_v0(monkeypatch):
+    """Sheet 1.2 / 9.6 (G2 owner decision 2026-10-01): S^v_{k+1} = v_{k+1} (sum_{j<=k} alpha_j) tr E_J, the converged v of the
+    sub-increment, NOT v0 (the superseded G0/G1 closed form S^v = v0 cum tr E_J).  Expected values from the sheet 9.6
+    FD record on this increment (chain_fd (B), all three shears) at m = 8, 2 and the non-uniform (1/2, 1/4, 1/8, 1/8):
+      * chain with v_{k+1}: chained tangent vs central FD of the whole increment 2.7e-8 .. 4.2e-10 (v forced to 1.45) and
+        1e-9 .. 1.8e-9 (the real v), i.e. <= GATE = 1e-6 at the best h (the protocol of this file);
+      * the v0 variant of S^v: 2.2e-6 (real v), 2.2e-5 .. 2.6e-5 (v = 1.45), for every h: the gate must REJECT it, i.e.
+        the best-h error is > GATE on the real-v increments and >= 10 GATE on the v = 1.45 ones.
+    The mutant is injected by replacing o2_algo.kernel.chain_propagate with a wrapper that hands it the committed v0 instead
+    of the sub-increment's v_{k+1} (the exact change of the superseded rule).
+    Kills: a chain (O2 or the C++ kernel it is the contract for) whose S^v still reads v0 or v_n; the gate's blindness to it."""
+    for label, vf, lo in (("real v", None, GATE), ("v = 1.45", V_MID_PATH, 10.0 * GATE)):
+        P, A = _state_B(vf)
+        assert abs(A.v - A.v0) >= (1e-3 if vf is None else 0.2), "premise: v must differ from v0 for the discrimination"
+        good = _v_rows(P, A)
+        report(good, f"V chain with v_(k+1), {label}")
+        assert_rows(good, f"V correct chain, {label}", min_valid_frac=1.0)
+
+        orig = KER.chain_propagate
+
+        def v0_variant(S_eps, S_pi, cum, alpha, v_new, res, nvec, _v0=A.v0, _orig=orig):
+            return _orig(S_eps, S_pi, cum, alpha, _v0, res, nvec)
+
+        with monkeypatch.context() as mp:
+            mp.setattr(KER, "chain_propagate", v0_variant)
+            bad = _v_rows(P, A)
+        report(bad, f"V chain with v0 (the superseded rule), {label}")
+        for r in bad:
+            assert r["best"] is not None, f"{label} {r['label']}: no FD-valid h for the mutant"
+            assert r["best"] > lo, (f"{label} {r['label']}: the v0 variant is NOT rejected: best-h error "
+                                    f"{r['best']:.3e} <= {lo:.1e} (sheet 9.6: 2.2e-6 real v, 2.2e-5..2.6e-5 at v = 1.45)")
+
+
+# ----------------------------------------------------------------------------------------------
 # R : regression on non-substepped increments
 # ----------------------------------------------------------------------------------------------
 def s33_reference(st):

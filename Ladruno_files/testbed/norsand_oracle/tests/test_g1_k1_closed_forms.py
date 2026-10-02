@@ -1,4 +1,4 @@
-"""WP-144 gate G1 (Zone B): K1 closed-form identities, K1.1 - K1.9 (plan 5.2, sheet 13), both oracles.
+"""WP-144 gate G1 (Zone B): K1 closed-form identities, K1.1 - K1.10 (plan 5.2, sheet 13), both oracles.
 
 TEST RULE (plan 5): every expected value and tolerance in this file comes from (a) a closed form in the
 equation sheet 144a (the section is cited at each use), (b) a number printed in the sheet, or (c) a stated
@@ -16,6 +16,7 @@ Gate ids (plan 5.2 K1.n):
   K1.7  undrained critical-state endpoint (paper and fork CSL)              sheet 6, 13.7
   K1.8  drained critical-state asymptote                                    sheet 13.8
   K1.9  dissipation D >= 0; refusal rule (condition A, S.39); forced counterexample   sheet 11, 13.9
+  K1.10 specific volume v = v0 exp(tr eps) on a path (exponential update, G2 decision)    sheet 1.2, 13.10
 
 How the two oracles are read (they differ only in names / diagnostics; conftest hides the rest):
   * stress p, q, theta are always recomputed HERE from State.sigma (principal values), never taken from an oracle;
@@ -688,7 +689,8 @@ def p_cs_closed(kw, v):
 def test_k1_7_undrained_triaxial_ends_on_the_csl(oracle_name, case):
     """An isochoric triaxial compression ends at p_cs = -exp((v_c0 - v)/lambda_tilde) (paper) or
     -p_a((e0 - e)/lambda_c)^(1/xi) (fork), with q_cs = M|p_cs| (theta = pi/3, zeta = 1), pi_i = p, psi_i = 0, D = 0.
-    v is constant (sheet 1.2: v = v0 (1 + tr eps), tr eps = 0): asserted to 1e-12.
+    v is constant (sheet 1.2 / 13.7: v = v0 exp(tr eps), tr eps = 0, so v = v0 exactly, unchanged by the
+    G2 exponential-update decision): asserted to 1e-12.
     Convergence argument: the CS is a fixed point (D = 0 => plastic volumetric strain rate 0 => p stationary) and an
     attractor; the approach is exponential in plastic shear strain with rate ~ |chi| per unit eps^p_s (psi_i relaxes as D = chi psi_i),
     so at |eps_ax| = 5 (eps^p_s ~ 5) the residual is ~ e^(-|chi| 5) ~ 1e-8; require p within 1e-6, the derived quantities
@@ -748,6 +750,49 @@ def test_k1_8_drained_critical_state_asymptote(oracle_name, case):
     assert abs(end.pi_i / p - 1.0) <= 5e-3
     assert abs(dilatancy_closed(kw, end.sigma, end.pi_i, corner)) <= 5e-3
     assert abs(pistar_of(oracle_name, end) / p - 1.0) <= 5e-3    # pi_i* -> p as psi_i -> 0 (S.23)
+
+
+# ==============================================================================================
+# K1.10  specific volume on a path: v = v0 exp(tr eps)  (sheet 1.2, 13.10; G2 owner decision 2026-10-01)
+# ==============================================================================================
+V_IDENTITY_TOL = {"O2": 1.0e-12, "O1": 1.0e-8}
+V_IDENTITY_POWER = 1.0e-6
+
+
+@pytest.mark.parametrize("case", ["TXC_paper", "TXC_fork", "TXE_paper", "TXC_2inv", "UND_paper", "UND_fork"])
+def test_k1_10_specific_volume_is_v0_exp_of_the_total_strain_trace(oracle_name, case):
+    """Sheet 13.10: at every committed state v = v0 exp(tr eps), eps = eps^e + eps^p the TOTAL strain (additivity,
+    sheet 1.2), for any increment sequence and any substepping (exp of a sum).  Here tr eps = tr(State.eps_e) +
+    State.eps_p_v is read from the state's own strain fields, v0 is the initial specific volume the case was built
+    with (sheet 6 / 13.7 inversion), and the right-hand side uses no oracle v: the check ties the v-update to the
+    independently integrated strains.  Drained paths (|tr eps| up to O(0.1 .. 1)) and undrained paths (tr eps = 0,
+    v = v0: the control) are all covered.
+    Tolerances.  O2: 1e-12 relative to v0 (sheet 13.10: round-off; exp of a sum, <= 148 steps of 1e-16).  O1: 1e-8,
+    because tr eps^e + eps^p_v come from an ODE integrated at rtol = 1e-10 per increment (<= 148 increments, |eps^p_v|
+    = O(0.1): accumulated <= 148 x 1e-10 x 0.5 ~ 7e-9); O1's v itself is algebraic in the total strain.
+    The superseded linear update v0 (1 + x) would miss by v0 (1 + x - e^x) ~ -v0 x^2 / 2: asserted >= 1e-6 relative on
+    every drained path, so the gate has power (sheet 13.10: any path with |tr eps| >~ 1e-3 .. 1e-6).
+    Kills: v += v0 tr d_eps (linear), v_n (1 + tr d_eps), v += v tr d_eps; a v that is not carried across a substep or
+    a plastic step; v reset to v0 at a branch switch."""
+    P, kw, st0, sts, cum = run_case(oracle_name, case)
+    assert_path_ok(oracle_name, sts, cum, case)
+    spec = CASES[case]
+    v0 = case_v0(spec)
+    assert abs(np.trace(st0.eps_e) + st0.eps_p_v) <= 1e-12, "premise: the start is the energy reference, tr eps = 0"
+    worst, signal, xmax = 0.0, 0.0, 0.0
+    for s in sts:
+        x = float(np.trace(s.eps_e)) + float(s.eps_p_v)
+        want = v0 * math.exp(x)
+        worst = max(worst, abs(s.v - want) / v0)
+        signal = max(signal, abs(v0 * (1.0 + x) - want) / v0)
+        xmax = max(xmax, abs(x))
+    print(f"\n[{oracle_name}/{case}] max |v - v0 exp(tr eps)| / v0 = {worst:.2e} over {len(sts)} states; max |tr eps| = {xmax:.3e}; "
+          f"the linear rule would miss by {signal:.2e}")
+    assert worst <= V_IDENTITY_TOL[oracle_name], f"v != v0 exp(tr eps): {worst:.3e}"
+    if spec["kind"] == "undrained":
+        assert xmax <= 1e-8 and signal <= 1e-12        # isochoric: x = 0 and v = v0 (O1: ODE-level trace)
+    else:
+        assert signal >= V_IDENTITY_POWER, f"gate has no power on {case}: max |tr eps| = {xmax:.2e}"
 
 
 # ==============================================================================================

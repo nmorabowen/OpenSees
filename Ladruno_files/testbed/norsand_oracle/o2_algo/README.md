@@ -30,7 +30,18 @@ Interface (identical in O1): `Params`, `State(sigma, eps_e, pi_i, v, D, eps_p_v,
 `tangent(params, state)`, `acoustic_min_det(params, state, tangent4)`,
 `triaxial(params, state0, kind, axial_strain_total, n_incr)`, `k2_path(params, state0, n_max)`.
 Extra: `tangent_finite` (S.34) and `State.finite` for the K2 finite-strain protocol (diagonal,
-fixed-direction paths only: ε̃ = ε^e_n + ln f, v = v₀J, ∂v/∂ε̃ = v).
+fixed-direction paths only: ε̃ = ε^e_n + ln f; v = v₀J is then the same v-law as small strain, see below).
+
+**Specific volume (sheet §1.2, G2 owner decision 2026-10-01, decision 1 = option b): exponential
+update in both modes.** `api._step_once` sets v_{n+1} = v_n exp(tr Δε) (⇔ v = v₀ exp(tr ε)) and calls
+`kernel.return_map(…, v, vfac)` with vfac = v = v_{n+1}: the trial-strain derivative in (S.31) is
+∂v_{n+1}/∂ε̃_b = v_{n+1}, the converged specific volume of the step (not v_n, not v₀). The chain
+(S.46) uses S^v_{k+1} = v_{k+1} (Σ_{j≤k} α_j) tr E_J with v_{k+1} the sub-increment's own converged v
+(`chain_propagate(…, v_new=cur.v, …)`). v₀ is carried only as the committed datum (`initial_state`,
+`State.v0`) and enters no derivative. This supersedes the G0/G1 linear rule v = v₀(1 + tr ε),
+vfac = v₀, S^v = v₀ Σα tr E_J (BA06 Box 2 step 6b / 2.71): the two agree to first order in tr ε, and the
+exponential form makes the LogStrain wrapper exact (v = v₀J). The small-strain and finite modes now
+differ only in the tangent assembly ((S.33) vs (S.34)).
 
 ## Numerical contract (module constants in `kernel.py`)
 | constant | value | meaning |
@@ -67,8 +78,9 @@ stress with respect to the TOTAL strain increment Δε, chained through every ac
 sub-increment: `kernel.chain_data` takes the (S.45) blocks at each converged plastic sub-step
 (b = J⁻¹, u = b t with t = (Δλ q_{a,π}, F_π), w = Π_xᵀ b[:, :3], κ = Π_x·u, c = r'(π_i), Π_v),
 `kernel.chain_propagate` runs the recursion (S.46) on the six Δε columns (state per column: the
-full 3×3 ∂ε^e/∂Δε_J, ∂π_i/∂Δε_J, and the shared cumulative fraction; ∂v/∂Δε_J = v₀ Σα tr E_J in
-closed form; an elastic sub-increment takes the elastic line), and `kernel.chain_assemble` forms
+full 3×3 ∂ε^e/∂Δε_J, ∂π_i/∂Δε_J, and the shared cumulative fraction; ∂v_{k+1}/∂Δε_J = v_{k+1} Σα tr E_J
+in closed form (v_{k+1} the sub-increment's converged v; was v₀ Σα tr E_J before G2); an elastic
+sub-increment takes the elastic line), and `kernel.chain_assemble` forms
 C = a^e(ε^e_m) : S^ε_m (S.47) with a^e in the (S.33) form on the eigen-data of the final ε^e_m.
 Columns are the kernel's six tensor slots {00,11,22,01,12,02} with E_J = e_k⊗e_l + e_l⊗e_k on the
 shear slots; the 3×3×3×3 returned has C[:,:,k,l] = C[:,:,l,k] = column/2 there, so `C:E = column`
@@ -127,8 +139,8 @@ the local step is backtracked, and if the increment is still refused it is subst
   π_i = −80.1671; first substepped increment is step 11 (2), steps 12–40 need 4.
   Gate file `tests/test_g1_convergence_tangents.py`: 41/41 pass, including `[O2-dev2e-3]` and
   the n = 320/640 refinement (σ error 2.473e-4 → 1.237e-4, π_i 2.471e-4 → 1.236e-4: order 1.00).
-  Planar / no-cap near-isotropic paths: refused `local_linesearch (substeps exhausted at 2^8)`,
-  reported, as the gate requires.
+  Planar / no-cap near-isotropic paths: refused (planar `local_linesearch`, no cap `local_noconv` since the G2
+  exponential v-update, both `(substeps exhausted at 2^8)`), reported, as the gate requires.
 - Chained substep tangent (§9.6), `selfcheck chain` (2026-10-01): max over the six kernel columns
   of ‖C_J − FD_J‖/‖C_J‖, central FD of the whole increment with the fractions held fixed.
   (A) AMP_STOP smooth cap n = 40, all 30 substepped increments of the ladder (step 11 m = 2 "PP",
@@ -144,3 +156,29 @@ the local step is backtracked, and if the increment is still refused it is subst
   3.2e-16 (α = ½,¼,¼) with the FD along 1 at 0 and 2.0e-11.
   The full G1 suite is unchanged (see the gate record in `tests/`); the non-substepped tangent
   path is untouched by construction.
+
+## Self-check re-run after the exponential v-update (Esmeralda, 2026-10-01, G2 owner decision; before → after)
+All seven groups (jac, cto, newton, k1, k2, cap, chain) re-run with v_{n+1} = v_n exp(tr Δε), vfac = v_{n+1},
+S^v = v_{k+1} Σα tr E_J. Every FD agreement stays at its O(h²)/round-off floor, which is the check that the
+new v-factors are the consistent derivatives (the sheet's vfac = v₀ form would sit at ~1e-5…1e-4 here).
+- Jacobian vs FD, max at h = 1e-8: 3.9e-8 → 4.5e-8 (paper state 4; the other eight states 5e-11…8e-9).
+- CTO (S.33) vs FD at h = 1e-6: paper WW 4.44e-9 → 4.44e-9, fork WW 4.19e-9 → 4.19e-9, GA 3.31e-9 → 3.31e-9,
+  cap active 4.49e-8 → 4.41e-8, elastic 1.30e-9 → 1.30e-9, TXC corner GA 2.30e-9 → 2.31e-9; WW corner O(h)
+  unchanged (6.0e-4 / 6.3e-5 / 6.4e-6).
+- Local Newton, hard step: same 7-iterate history to 1.14e-15 → 8.53e-16; Δλ 1.2792e-3 → 1.2794e-3,
+  nested 4690 → 4690.
+- K1: closed forms and refusals identical; flow-rule identity 1.3e-14 → 1.1e-14; min D unchanged
+  (1.376e-2 / 1.589e-2); drained TXC path physics moves at the expected second order in tr ε:
+  K1.8 η at 25 % strain 1.40836 → 1.40617 (fork), 1.22732 → 1.22727 (paper); K1.6 D − χψ_i at the H sign
+  change 5.84e-4 → 5.14e-4 (fork), 1.84e-4 → 1.50e-4 (paper), same step (104 / 99). Undrained K1.7
+  unchanged to all printed digits (isochoric: exp(0) = 1, v const 0.0 exactly).
+- Finite mode: ã^ep vs FD 2.70e-9 → 2.70e-9 (unchanged by construction: finite mode already used this law);
+  (S.44) 2.06e-16; K2 n_first 23 / 27, n_interp 22.396 / 26.470 unchanged.
+- Smooth cap: substep counts, iteration counts and min D identical; endpoint π_i −117.5922 → −117.5881 (n = 40),
+  −117.5495 → −117.5455 (n = 640): a 3.5e-5 relative shift, the v₀x²/2 effect at tr ε ≈ 8e-3.
+- Chain (A) AMP_STOP 30 substepped increments: 3.4e-6…1.1e-5 / 3.5e-8…8.6e-8 / 2.0e-9…1.5e-8 at h = 1e-6 / 1e-7
+  / 1e-8 (was …/ 7.6e-10…1.2e-8); last-sub CTO 0.51–0.90 unchanged. (B) m = 8: 2.74e-8 / 1.57e-10 / 9.8e-10
+  (was 1.33e-10 / 1.44e-9); m = 2: 2.56e-8 / 3.5e-10 / 1.3e-9. (C) m = 1 vs (S.33) 1.0e-15 (was 8.6e-16),
+  ladder m = 1 bit-identical: True. (E) (½,¼,⅛,⅛) 2.71e-8 / 3.4e-10 / 1.6e-9; AMP step 20 4.76e-6 / 5.1e-8 /
+  3.9e-9; AMP step 11 8.77e-6 / 6.5e-8 / 9.7e-9. (F) vertex identical (4.6e-17, 3.8e-16, 3.2e-16, 2.0e-11).
+  Logs: session scratchpad `o2_before.log` / `o2_after.log`.

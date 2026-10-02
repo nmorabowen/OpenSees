@@ -1,0 +1,135 @@
+# WP-144 G2 shell mutation gate
+
+Rounds: 2026-10-01 (M1 to M7, branch `wp/144-ladruno-norsand` at ab6503a0c) and 2026-10-02 (MX1 to MX3, section "Round 3" below). Nothing committed.
+Kernel mutants are covered separately (`kernel_parity/mutate_kernel.sh`, 15/15, re-run 2026-10-02 on Esmeralda). This gate mutates the SHELL
+(`SRC/material/nD/LadrunoNorSand.cpp`) one mutant at a time.
+
+Procedure per mutant: apply the edit, full `build.bat` from a fresh cmd.exe
+(`call Ladruno_scripts\setup_env.bat && Ladruno_scripts\build.bat`, all 5 targets, 60-120 s incremental),
+confirm `dist\bin\OpenSees.exe` and `opensees.pyd` mtimes moved, run the G2 files, record failures,
+`git checkout` the file, confirm `git diff -- SRC` is empty.
+
+Test sets (all with `--runslow`):
+- Zone A: `tests/test_ladruno_norsand.py` + `tests/test_ladruno_norsand_element.py` (40 tests, ~95 s).
+- Zone B: `Ladruno_files/testbed/norsand_oracle/g2/test_g2_shell_parity.py` + `test_g2_logstrain.py`
+  (91 passed + 6 strict xfail, ~50-70 s). RUN IT FROM THE g2 DIRECTORY. Run from the repo root with
+  `tests/conftest.py` in play it skips every case ("gmsh not installed"), which would make Zone B look green
+  while testing nothing.
+
+Baseline (unmutated): A 40 passed, B 91 passed + 6 xfailed.
+
+## Result: 7 of 7 killed, no survivors
+
+| # | Mutant (edit) | Zone A failures | Zone B failures | Named killer(s) |
+|---|---|---|---|---|
+| M1 | `getTangent`: shear-column factor 0.5 -> 1.0 | 15 | 66 | `test_elastic_response_and_initial_tangent_match_the_closed_form`; `test_brick_assembled_tangent_vs_fd[*]` (4) + `_perturbed_nonuniform`; `test_planestrain_quad_assembled_tangent_vs_fd[*]` (4); `test_newton_is_quadratic_*`; Zone B `test_shell_matches_o2_on_path` (54 of 54 plastic/tangent paths), `test_gate_discriminates_mapping_mutants`, `test_wrapper_spatial_tangent_equals_o2_s34_assembly` |
+| M2 | `unpackState`: `v0 := v` on recv | 2 | 0 | `test_database_roundtrip_carries_the_committed_state_with_v0_distinct`, `test_database_roundtrip_with_committed_differing_from_trial` (Zone A only) |
+| M3 | `revertToStart`: v0 not restored (takes the pre-revert committed v) | 1 | 1 | `test_revert_to_start_restores_the_initial_state_including_v0`; Zone B `test_reset_replay_is_bitwise` |
+| M4 | getCopy clones share the committed state with the source (static map keyed by tag; written on commit, read before integrate) | 3 | 2 | `test_getcopy_clones_are_history_isolated`; also `test_discarding_element_aborts_the_commit_and_latches_until_revert`, `test_revert_to_start_restores_the_initial_state_including_v0`; Zone B `test_reset_replay_is_bitwise`, `test_specific_volume_is_v0_times_detF_in_the_wrapper_and_both_oracles` (incidental) |
+| M5 | refusal latch never set (`latched = true` removed in `commitState`) | 3 | 2 | `test_discarding_element_aborts_the_commit_and_latches_until_revert`, `test_latch_and_warnings_carry_the_finest_refusal_reason`, `test_latch_survives_a_database_round_trip`; Zone B `test_refusing_paths_refuse_through_the_shell` (2) |
+| M6 | `getTangent` returns the hyperelastic tangent at the trial state | 13 | 66 | same set as M1: FD brick/quad gates, Newton order tests, `test_database_roundtrip_carries_...`, Zone B shell parity (54 paths), LogStrain (S.34 assembly, min-det curve, K2 localization) |
+| M7 | `getTangent` symmetrised, 0.5(T+T^T) | 13 | 59 | FD brick (4) + perturbed, FD quad (4), Newton order tests (3), `test_database_roundtrip_carries_...`; Zone B shell parity (48 paths + summary + smooth-cap AMP chained tangent), LogStrain (S.34 assembly, min-det curve, K2 localization step) |
+
+## Final state
+
+Source reverted after each mutant (`git diff -- SRC` empty, checked after every one and at the end).
+Full `build.bat` (5 targets, no errors) rebuilt from the clean source; all five binaries have fresh mtimes and the
+OpenSees.exe / opensees.pyd sizes equal the baseline. Re-run: Zone A 40 passed, Zone B 91 passed + 6 xfailed.
+"Clean-state" here means clean SOURCE state with a full 5-target build; I did not run `build.bat clean`
+(it wipes build/ and dist/ and re-resolves Conan; the incremental route above is the fork's documented route
+for source edits).
+
+## Coverage notes (not survivors, but thin spots)
+
+1. M2 is killed by Zone A only. No Zone B test goes through a database round trip.
+2. M4 is killed by exactly one test that targets it directly (`test_getcopy_clones_are_history_isolated`).
+   The Zone B shell-parity paths drive a single brick with uniform strain, so all 8 Gauss points hold the same
+   history and a shared committed state is invisible to them; the Zone B hits are incidental. The brick/quad FD
+   and Newton-order tests also pass under M4, because a shared state keeps residual and tangent mutually
+   consistent. A non-uniform-strain element path compared to O2 would add an independent kill.
+3. M3 as literally worded ("leave v0 alone") is an EQUIVALENT mutant: v0 is set only in `initialState` and the
+   kernel never changes it, so the committed v0 always equals the initial v0. The mutant used makes v0 follow the
+   pre-revert committed v, which is what a v0-not-restored bug looks like through the observable state.
+4. M1 mutates `getTangent` only. `getInitialTangent` carries the same 0.5 factor and was not mutated; the
+   closed-form test `test_elastic_response_and_initial_tangent_match_the_closed_form` checks it directly, but that
+   specific edit was not run.
+5. M7 makes the slow Newton tests expensive (Zone A 530 s instead of 95 s: the lost quadratic convergence runs
+   long refusal ladders). Cost, not a correctness issue.
+
+## Round 3 (2026-10-02): the provider route, the fallback and the commit counter
+
+Branch `wp/144-ladruno-norsand` at 7089b394c plus the uncommitted round-3 changes (the `LadrunoElasticStrainProvider`
+mixin and its use in `LogStrainNDMaterial::setTrialF`; `Domain::commit` zeroing the commit-refusal counter before the
+element loop). Nothing committed. Three new mutants, MX1 to MX3, each with a full `build.bat` (all 5 targets), plus a
+control, MX0.
+
+THE GATES UNDER TEST (all in `g2/test_g2_logstrain.py`; expected values from closed forms written into the docstrings
+before the code was run, tolerances from the task):
+- `test_rigid_rotation_is_objective_with_pressure_dependent_shear_modulus[2.0, 50.0]`: the two former
+  `xfail(strict)` "owner decision 2 pending" tests, now REAL. A 0.2 rad rotation after 10 plastic steps: stress
+  `R sigma R^T` to 1e-10 relative to max|sigma|, `pi_i` to 1e-10 |pi_i|, `v` to 1e-12; a second oblique rotation
+  (0.35 rad) and a held step again at 1e-10. Measured on the final build: the stress at most 5e-14 at every stage, `pi_i` unchanged exactly, `v` 4e-16.
+- `test_rigid_rotation_is_objective_for_constant_shear_modulus` (alpha0 = 0 control, same extra stages).
+- `test_provider_identity_committed_be_is_exp_two_eps_e[0, 2, 50]`: the committed b^e of `LogStrain(LadrunoNorSand)`
+  equals `exp(2 eps^e)` of the material's own `elasticStrain`, read through a held step after an oblique rotation (all
+  three shear components non-zero), `expm` on 3x3 tensors, 1e-12 relative. Measured 4e-16 to 1e-15.
+- `test_non_provider_inner_keeps_the_d0_inversion_fallback[ElasticIsotropic, LadrunoJ2]`: Hencky closed form
+  (1e-12), objectivity (1e-10), committed b^e = `exp(2 C tau)` with C the isotropic compliance (1e-12). Measured
+  1e-14 to 1e-13. The J2 path is asserted plastic.
+- Zone A `tests/test_ladruno_norsand.py::test_getcopy_of_a_latched_source_is_not_latched` (MX3).
+
+Run recipe: py312g2 venv, `PYTHONPATH` = a one-line `sitecustomize.py` adding `dist\bin` to the DLL search path, and the
+stale `tests\opensees.pyd` copy removed (BUILD_GOTCHAS 4b: it was a copy of the baseline build and would have shadowed
+every mutant build). Sets: A = `tests/test_ladruno_norsand.py` + `_element.py` + `_k1.py` (59 tests, about 4 min);
+B = `g2/test_g2_shell_parity.py` + `test_g2_logstrain.py`, run FROM `g2/` (113 tests, about 100 s); L = the LogStrain /
+finite-strain regression (`test_logstrain_plastic_protocol`, `_reference`, `_tangent_and_j2`, `test_logstrain2d`,
+`_2d_reference`, `test_finite_strain_L1_analytical`, `test_ladrunoJ2_finite_element`, `test_ladrunoJ2Finite_element`;
+59 tests). Revert: the tree holds uncommitted changes, so `git checkout` is NOT usable; the three mutated files
+(`LogStrainNDMaterial.cpp`, `LadrunoNorSand.cpp`, `Domain.cpp`) were copied aside before the first mutant and copied back
+after each one, and the SHA-256 of all ten changed SRC files was compared with the pre-mutation list after each mutant.
+
+Baseline (unmutated, the build before any mutant): A 59 passed, B 113 passed (0 xfail, 0 xpass), L 59 passed.
+
+### Result: 3 of 3 killed, no survivors (and the control behaves as predicted)
+
+| # | Mutant (edit) | Zone A | Zone B | L | Named killer(s) and measured violation |
+|---|---|---|---|---|---|
+| MX1 | `LogStrainNDMaterial.cpp`: `if (prov != 0)` -> `if (false && prov != 0)` (route disabled, always the `inv(D0)` fallback) | 0 | 5 | 0 | `test_rigid_rotation_is_objective_with_pressure_dependent_shear_modulus[2.0]` stress 2.3e-3 (gate 1e-10) and `[50.0]` 3.6e-2; `test_provider_identity_committed_be_is_exp_two_eps_e[0.0, 2.0, 50.0]` b^e error 7.6e-3, 7.9e-3, 1.2e-2 (gate 1e-12) |
+| MX2 | `LadrunoNorSand.cpp` `ladrunoGetElasticStrain`: shear returned as tensor, not doubled (`epsE(i) = sT.eps_e[i]`) | 0 | 6 | 0 | `test_rigid_rotation_is_objective_for_constant_shear_modulus` (second rotation, 1.6e-2), `..._with_pressure_dependent_shear_modulus[2.0]` 1.6e-2 and `[50.0]` 2.0e-2 (second rotation); `test_provider_identity_...[0.0, 2.0, 50.0]` b^e error 1.8e-3, 1.7e-3, 1.2e-3 |
+| MX3 | `Domain.cpp`: the `ladrunoClearCommitRefusals()` before the element loop removed | 1 | 0 | 0 | `tests/test_ladruno_norsand.py::test_getcopy_of_a_latched_source_is_not_latched` ("step 1: the clone of a latched material started refused"); the only failure of 59 |
+| MX0 (control) | `LogStrainNDMaterial.cpp` := the pre-G2 file from `git HEAD` (no provider route at all) | n/a | 5 | 0 | the same five as MX1, to the digit (it is the same behaviour); the fallback outputs are BIT-IDENTICAL to the current source, below |
+
+Why Zone A does not see MX1 and MX2: the Zone A files drive the material through bricks and quads without the
+LogStrain wrapper; the provider contract is a LogStrain-level fact and is gated in Zone B. Why Zone B does not see MX3:
+the stale counter needs a `commitState()` outside any `Domain::commit()` (a getCopy source), which is what the Zone A
+test does.
+
+### The fallback is byte-identical to the pre-G2 LogStrain (MX0)
+
+A script (`bitdump.py`, session scratch, not committed) drives `LogStrain` over `ElasticIsotropic` and over `LadrunoJ2`
+(plastic: Mises(tau) 10.2 against the elastic line 17.5) through 25 coaxial steps, a z rotation or an oblique rotation, two
+held steps and one general non-coaxial step, 30 steps per path, and records every step's Cauchy stress, Hencky strain and
+the 24 x 24 element stiffness: 4 paths x 30 steps x 588 doubles = 70,560 doubles per build. Compared as raw 64-bit
+patterns, the build with the pre-G2 `LogStrainNDMaterial.cpp` (MX0), the build with the route disabled (MX1), the one with
+MX2 and the baseline / final builds are bit-identical on all four paths. (A recorded reference file is not committed: libm
+`exp`/`log` have CPU-dispatched variants, so a bit pattern is not portable across machines; the committed gate is the
+closed-form one above, and this measurement is the byte-identity evidence for this machine and toolchain.)
+
+### Test-design finding from the first MX2 run
+
+The first version of the rotation gates held F for one step after the rotation and compared the stress. Under MX2 only the
+provider-identity test failed. Reason (a property of the plastic-inner protocol, not a bug): a held step feeds the inner
+`eps_tr - eps_n`, which is zero whatever the committed b^e is, so it cannot see an error in b^e. A second, non-zero
+rotation starts from the committed b^e and does; it was added (oblique axis (0.3, -1, 0.5), 0.35 rad) and MX2 is now also
+killed by all three rotation tests. The v1 logs are kept in the session scratch (`g2mx/logs_v1`).
+
+### Final state
+
+After MX0 the source was restored and the pre-mutation SHA-256 list matched (all ten files, checked after each of the four
+mutants and again at the end). A full `build.bat` (5 targets, no errors, all binaries re-stamped) was run from the
+restored source. Re-run on it: B 113 passed; L 59 passed; A 59 passed; the sibling regressions (SaniSand
+`test_ladruno_sanisand.py`, commit-refusal `test_ladrunoQuad_sanisand_implex_commit_refusal.py` 6,
+`test_wp104_implex_refusals_wipe_reset.py` 3, `test_cdl_commit_solve_state.py` 7) pass; the Esmeralda oracle set
+(`norsand_oracle/tests` + `kernel_parity`) 460 passed in 14:41; `mutate_kernel.sh` 15 of 15 mutants fail the parity gate.
+`ci/check_quirk_patterns.py` 0 findings, `stamp_headers.py --check` current, `ci/check_classtags.py` OK,
+`ci/check_manifest.py` OK. `build.bat clean` was not run (it wipes `build/` and `dist/`).

@@ -125,7 +125,7 @@ def check_undrained_cs():
 
 
 def check_drained_cs():
-    hdr("K1.8 drained critical-state asymptote (TXC, rho 0.7 / 0.8), axial strain -6 in 60 increments")
+    hdr("K1.8 drained critical-state asymptote (TXC, rho 0.7 / 0.8), axial strain -6 in 60 increments; K1.10 v identity")
     for csl, v0 in (("paper", 1.59), ("fork", 1.70)):
         P = Params(rho=0.7, rho_bar=0.8, csl_mode=csl)
         s0 = initial_state(P, SIG0, v0, -60.4)
@@ -135,6 +135,13 @@ def check_drained_cs():
             print(f"  {csl} v0={v0} eps_a={s.flags['eps_total'][0, 0]:+.1f}: psi_i = {pq.psi:+.2e}, "
                   f"-zeta q/p - M = {-pq.zeta * pq.q / pq.p - P.M:+.2e}, pi_i/p - 1 = {s.pi_i / pq.p - 1:+.2e}, "
                   f"D = {pq.dilatancy:+.2e}, H = {pq.H:+.2e}, status {s.flags['status']}")
+        # K1.10 (sheet 13.10, G2): v = v0 exp(tr eps) at every committed state, to round-off
+        idr = max(abs(o.v / (v0 * math.exp(np.trace(o.flags["eps_total"]))) - 1.0) for o in out)
+        ode = max(abs(o.flags["v_ode"] / o.v - 1.0) for o in out)
+        x = float(np.trace(out[-1].flags["eps_total"]))
+        print(f"  {csl} K1.10: max |v / (v0 exp(tr eps)) - 1| = {idr:.1e} over {len(out)} states; "
+              f"ODE copy v' = v tr eps' vs algebraic {ode:.1e}; tr eps_end = {x:+.4f}, "
+              f"linear-rule gap v0(1+x-e^x) = {v0 * (1 + x - math.exp(x)):+.3e}")
 
 
 def check_rtol():

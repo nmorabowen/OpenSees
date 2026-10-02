@@ -171,6 +171,7 @@ target_sources(OPS_Material
     LadrunoNorSand3D.h
     LadrunoNorSandPlaneStrain.h
     LadrunoNorSandKernel.h
+    LadrunoElasticStrainProvider.h
     LadrunoRCConcrete.h
     LadrunoRCFiniteStrain.h
     LadrunoRCKernel.h

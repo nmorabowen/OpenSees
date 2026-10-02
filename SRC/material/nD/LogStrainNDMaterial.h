@@ -64,6 +64,10 @@
 // (J2, Drucker–Prager, …) and reproduces de Souza Neto Box 14.3/14.4 exactly;
 // hardening persists naturally inside the inner. v1 assumes a LINEAR-elastic inner
 // law (so Cᵉ = inv(initial tangent) is constant and the εᵉ recovery is exact).
+// v2 (Ladruno WP-144 G2, owner decision 2026-10-01): an inner implementing the mixin
+// LadrunoElasticStrainProvider (LadrunoElasticStrainProvider.h; LadrunoNorSand, whose
+// hyperelastic moduli are pressure-dependent) PROVIDES its trial εᵉ and the wrapper
+// uses it in place of Cᵉ:τ; every other inner takes the unchanged v1 path.
 //
 // Reference algorithm + protocol verified against the numpy oracle in
 // tests/logstrain_reference.py and tests/test_logstrain_plastic_protocol.py.

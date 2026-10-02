@@ -80,12 +80,19 @@
 //     symmetrises its own input through m^ab (x) m^ab + m^ab (x) m^ba) and is compressed
 //     by the same i <= j rows only after the final a^e assembly (S.47); inside the band
 //     its m = 1 limit therefore differs from the (S.33) row by O(1e-8) (sheet §9.6 "m = 1").
+// SPECIFIC VOLUME (sheet §1.2 (S.26), plan §2.8, owner decision 2026-10-01 at G2): the
+// EXPONENTIAL update v_{n+1} = v_n exp(tr deps), i.e. v = v0 exp(tr eps) (= v0 J under
+// LogStrain, exact), so d v_{n+1} / d eps = v_{n+1} 1. Every v-term of the tangent uses the
+// step's converged v_{n+1}: vfac = v in (S.31)-(S.32), and S^v_{k+1} = v_{k+1} cum tr E_J in the
+// chain (S.46). Supersedes the G0/G1 linear law v = v_n + v0 tr deps (vfac = v0); the two agree
+// to first order in tr deps.
+//
 // Deliberate differences from O2 (none algorithmic; all at the API boundary):
 //   * on a refused step() the returned state is the committed n (frozen) with
 //     sigma = stress(n) and C = elasticTangent(n); O2 returns the trial-elastic state
 //     of the whole increment. The refusal decision and its reason are O2's.
 //   * where O2 would raise an uncaught Python exception (math.exp OverflowError on a
-//     wild trial strain, a non-finite iterate) the kernel turns it into an
+//     wild trial strain or a wild tr deps in the v-update, a non-finite iterate) the kernel turns it into an
 //     evaluation failure (detail::EE_NONFINITE): a refusal at the trial state, a
 //     line-search backtrack at an iterate. Never reached on O2-defined paths.
 //   * step() refuses a non-finite deps outright (no substepping), refusal
@@ -150,7 +157,8 @@ struct Params {
 };
 
 // eps_e: tensor components {00,11,22,01,12,02}. pi_i < 0 image pressure; v specific
-// volume; v0 the INITIAL specific volume (a separate committed datum, plan §2.8);
+// volume, v = v0 exp(tr eps) (header SPECIFIC VOLUME); v0 the INITIAL specific volume (a
+// separate committed datum, plan §2.8; it enters no update and no derivative);
 // eps_p_v / eps_p_s accumulated plastic volumetric / deviatoric (sum dlam sqrt(2/3) Omega)
 // strains; D_last the plastic dissipation of the last step (sum over its sub-steps).
 struct State {
@@ -948,7 +956,9 @@ inline void jacobian(const PointEval& pe, double J[4][4])
   J[3][3] = fl.Y.F_pi * pe.Pi_lam;
 }
 
-// (S.31)-(S.32): a~^ep_ab = d sigma_a / d eps~_b. vfac = v0 (small strain).
+// (S.31)-(S.32): a~^ep_ab = d sigma_a / d eps~_b. vfac = d v_{n+1} / d eps~_b = v_{n+1}, the
+// step's converged specific volume (exponential v-law, header SPECIFIC VOLUME; was v0 under the
+// linear law). The caller passes vfac equal to the v it passed to return_map.
 // b receives J^{-1} (reused by chain_data, sheet §9.6 (S.45)).
 inline bool atilde_ep(const PointEval& pe, const double J[4][4], double vfac, double at[3][3],
                       double b[4][4])
@@ -1239,13 +1249,15 @@ inline void chain_start(Chain& c)
 
 // O2 chain_propagate, one sub-increment of (S.46):
 //   T_k        = S^eps_k + alpha_k E_J
-//   S^v_{k+1}  = v0 (sum_{j<=k} alpha_j) tr E_J
+//   S^v_{k+1}  = v_{k+1} (sum_{j<=k} alpha_j) tr E_J   (v_{k+1} = v_n exp((sum_{j<=k} alpha_j) tr deps)
+//                                                      differentiated; v_new = the sub-increment's
+//                                                      CONVERGED v_{k+1}; was v0 under the linear law)
 //   plastic:   S^eps_{k+1} = Phi : T_k - sum_a m^a [ (u_a/c) S^pi_k + u_a Pi_v S^v_{k+1} ]
 //              S^pi_{k+1}  = sum_b w_b T^_bb + ((1 - kappa)/c) S^pi_k + (1 - kappa) Pi_v S^v_{k+1}
 //   elastic:   S^eps_{k+1} = T_k,  S^pi_{k+1} = S^pi_k
 // Phi = d eps^e_{k+1} / d eps~ in the (S.33) form with a~ -> b[:3][:3], sigma -> eps^e,
 // on the sub-increment's trial eigen-data (eps_tr, V).
-inline void chain_propagate(Chain& c, double alpha, double v0, const ReturnResult& res,
+inline void chain_propagate(Chain& c, double alpha, double v_new, const ReturnResult& res,
                             const double eps_tr[3], const double V[3][3])
 {
   const double cum = c.cum + alpha;
@@ -1265,7 +1277,7 @@ inline void chain_propagate(Chain& c, double alpha, double v0, const ReturnResul
   double Phi[3][3][3][3];
   tangent_small4(b3, res.eps_e, eps_tr, V, Phi);
   for (int J = 0; J < 6; ++J) {
-    const double S_v = v0 * cum * chain_trE(J);
+    const double S_v = v_new * cum * chain_trE(J);
     double coef[3];
     for (int a = 0; a < 3; ++a)
       coef[a] = c.S_pi[J] * (ch.u[a] / ch.c) + S_v * (ch.u[a] * ch.Pi_v);
@@ -1319,11 +1331,13 @@ struct OnceOut {
 };
 
 // One backward-Euler increment without substepping (O2 api._step_once, small strain).
+// (S.26) v_{n+1} = v_n exp(tr deps) (header SPECIFIC VOLUME), d v_{n+1} / d eps~_b = v_{n+1}:
+// vfac = v (S.31).
 inline void step_once(const Params& P, const State& n, const double deps[6], OnceOut& o)
 {
   const double tr = (deps[0] + deps[1]) + deps[2];
-  const double v = n.v + n.v0 * tr;
-  const double vfac = n.v0;
+  const double v = n.v * std::exp(tr);
+  const double vfac = v;
   double et6[6], et[3][3];
   for (int i = 0; i < 6; ++i) et6[i] = n.eps_e[i] + deps[i];
   t6_to_m(et6, et);
@@ -1331,6 +1345,15 @@ inline void step_once(const Params& P, const State& n, const double deps[6], Onc
   o.st.v = v;
   if (!eig_sym3(et, o.w, o.V)) {
     for (int a = 0; a < 3; ++a) { o.w[a] = 0.0; for (int b = 0; b < 3; ++b) o.V[a][b] = (a == b); }
+    Elastic el;
+    for (int a = 0; a < 3; ++a) { el.sig[a] = 0.0; for (int b = 0; b < 3; ++b) el.ae[a][b] = 0.0; }
+    rr_refuse(o.res, o.w, el, n.pi_i, false, false, LOCAL_NOCONV, EE_NONFINITE, 0, 0);
+    for (int i = 0; i < 6; ++i) o.sigma[i] = 0.0;
+    return;
+  }
+  if (!(v > 0.0) || !std::isfinite(v)) {
+    // O2: math.exp OverflowError on a wild tr deps (uncaught). Kernel: refuse at the trial state
+    // (an exp underflow to v = 0 is reached only where the trial elastic stress already overflows).
     Elastic el;
     for (int a = 0; a < 3; ++a) { el.sig[a] = 0.0; for (int b = 0; b < 3; ++b) el.ae[a][b] = 0.0; }
     rr_refuse(o.res, o.w, el, n.pi_i, false, false, LOCAL_NOCONV, EE_NONFINITE, 0, 0);
@@ -1382,7 +1405,7 @@ inline void run_fractions(const Params& P, const State& n, const double deps[6],
     ro.iters += ro.cur.res.local_iters;
     ro.piters += ro.cur.res.pi_iters;
     ro.plastic = ro.plastic || ro.cur.res.plastic;
-    if (chain) chain_propagate(cs, fr[k], n.v0, ro.cur.res, ro.cur.w, ro.cur.V);
+    if (chain) chain_propagate(cs, fr[k], ro.cur.st.v, ro.cur.res, ro.cur.w, ro.cur.V);   // v_{k+1}
   }
   ro.ok = true;
   if (chain) {

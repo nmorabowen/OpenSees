@@ -123,6 +123,9 @@ inline int &ladrunoCommitRefusalCounter(void)
 inline void ladrunoNoteCommitRefusal(void) { ++ladrunoCommitRefusalCounter(); }
 
 // How many integration points refused the commit now being assembled.
+// Ladruno WP-144 (G2): the counter is process-wide, so Domain::commit() clears
+// it BEFORE its element loop; a refusal noted outside any Domain::commit() (an
+// NDTest CommitState on a prototype) must not abort the next real commit.
 inline int ladrunoPendingCommitRefusals(void) { return ladrunoCommitRefusalCounter(); }
 
 // Called by Domain::commit() once it has acted on them.

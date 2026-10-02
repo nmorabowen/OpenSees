@@ -41,10 +41,10 @@ def sym(a):
 def jacobian_fd(P, st, deps, h=1e-6):
     """returns (rel err, local iters) at the converged plastic state of the step st -> st+deps."""
     tr = float(np.trace(deps))
-    v = st.v + st.v0 * tr
+    v = st.v * math.exp(tr)                     # (S.26) exponential update, vfac = v (G2)
     eps_tr = st.eps_e + sym(deps)
     w, V = np.linalg.eigh(eps_tr)
-    res = K.return_map(P, w, st.pi_i, v, st.v0)
+    res = K.return_map(P, w, st.pi_i, v, v)
     assert res.plastic and not res.refused, res.reason
     x = np.append(res.eps_e, res.dlam)
     pe = K.evaluate(P, x[:3], x[3], w, v, st.pi_i)
@@ -139,7 +139,8 @@ def check_quadratic():
     big = np.diag([2e-3, -8e-3, 1e-3]) + np.array([[0, 2e-3, 0], [2e-3, 0, 1e-3], [0, 1e-3, 0]])
     tr = float(np.trace(big))
     w, V = np.linalg.eigh(st.eps_e + big)
-    res = K.return_map(P, w, st.pi_i, st.v + st.v0 * tr, st.v0)
+    v = st.v * math.exp(tr)                     # (S.26) exponential update, vfac = v (G2)
+    res = K.return_map(P, w, st.pi_i, v, v)
     print("  scaled residual history:", " ".join(f"{r:.2e}" for r in res.res_hist), "| refused:", res.refused, res.reason)
     print(f"  dlam {res.dlam:.4e}, iters {res.local_iters}, nested pi iters total {res.pi_iters}")
 
@@ -260,7 +261,7 @@ def check_finite_and_k2(full_table=False):
         sp = np.diag(step(P, sts[-2], np.diag(f1 + e)).sigma)[perm]
         sm = np.diag(step(P, sts[-2], np.diag(f1 - e)).sigma)[perm]
         at_fd[:, b] = (sp - sm) / (2 * h)
-    print(f"  a~^ep (S.32 with v0->v) vs FD, finite mode, plastic: rel err {np.linalg.norm(at - at_fd) / np.linalg.norm(at):.2e}")
+    print(f"  a~^ep (S.32, vfac = v) vs FD, finite mode, plastic: rel err {np.linalg.norm(at - at_fd) / np.linalg.norm(at):.2e}")
     # (S.44) transcription vs generic contraction of (S.34)
     a4 = tangent_finite(P, st)
     tau = st.cache["sig"]

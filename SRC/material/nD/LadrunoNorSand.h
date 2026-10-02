@@ -59,7 +59,8 @@
 //     element cuts the step. NO latch is set at the trial (a refused trial may be retried smaller).
 //   - If a refused trial then reaches commitState() (a host element that DISCARDS the code), the
 //     commit is refused out of band (ladrunoNoteCommitRefusal) and this point LATCHES: every later
-//     trial and commit is refused until revertToStart(). getCopy propagates the latch.
+//     trial and commit is refused until revertToStart(). sendSelf/recvSelf keeps the latch (the same point,
+//     restarted); getCopy does NOT: a clone starts with no latch and an empty refusal record (see copyFrom).
 //   - Bounded work: the kernel's caps (local iterations, line search, pi_i scan, 2^8 substeps).
 //   - The refusal reason is recorded at two levels: the kernel's `refusal` (SUBSTEPS_EXHAUSTED for every
 //     refusal that went down the substep ladder) and `finest` / `finest_sub`, the cause at the finest
@@ -85,9 +86,10 @@
 #include <Matrix.h>
 #include <Vector.h>
 #include <classTags.h>
+#include "LadrunoElasticStrainProvider.h"   // LogStrain v2 elastic-strain mixin (WP-144 G2)
 #include "LadrunoNorSandKernel.h"
 
-class LadrunoNorSand : public NDMaterial {
+class LadrunoNorSand : public NDMaterial, public LadrunoElasticStrainProvider {
  public:
   // dimensional views (element-facing ordering, engineering shear)
   enum { DIM_3D = 0,        // {11,22,33,12,23,13}  order 6
@@ -96,15 +98,17 @@ class LadrunoNorSand : public NDMaterial {
   // sendSelf / recvSelf wire layout: ONE Vector of WIRE_LEN doubles (offsets in LadrunoNorSand.cpp,
   // namespace nsw). Test-friendly: tests/ci can rebuild a material from the raw vector. The base
   // NDMaterial sends nothing, so this is the only Vector under the dbTag (FE_Datastore keys vectors by
-  // size: nothing to collide with).
-  static const int WIRE_LEN = 128;
+  // size: nothing to collide with). The trial stress and tangent are NOT on the wire (Domain::recvSelf's
+  // update() recomputes them); recvSelf rebuilds them from the restored trial State.
+  static const int WIRE_LEN = 86;
 
   // null constructor (broker / recvSelf): parameters are filled by recvSelf
   LadrunoNorSand();
 
   // full constructor. sig0 is the initial stress (OpenSees order 11,22,33,12,23,13; tension
   // positive = kernel order and sign), v0 the initial specific volume (a separate committed state
-  // variable from v), pi0 the initial image pressure (REQUIRED, < 0; NaN is refused: initOK() false).
+  // variable from v; the kernel evolves v = v0 exp(tr eps), plan 2.8: the shell never computes v itself),
+  // pi0 the initial image pressure (REQUIRED, < 0; NaN is refused: initOK() false).
   LadrunoNorSand(int tag, const ladruno_norsand::Params& p, const double sig0[6],
                  double v0, double pi0, double dens = 0.0);
 
@@ -122,6 +126,12 @@ class LadrunoNorSand : public NDMaterial {
   const Vector& getStress(void);
   const Vector& getStrain(void);
   double getStressZZ(void);              // plane-strain sigma_zz (NaN in other dims)
+
+  // LadrunoElasticStrainProvider (WP-144 G2, owner decision 2026-10-01): the kernel TRIAL elastic strain
+  // sT.eps_e (tensor, {00,11,22,01,12,02}) as engineering Voigt {11,22,33,12,23,13} (shear doubled), in
+  // the material's own frame. Always the full 6 components, whatever the dimensional view. Returns false
+  // if the point was never built (initOK() false) or the state is non-finite; epsE is then untouched.
+  bool ladrunoGetElasticStrain(Vector& epsE) const;
 
   int commitState(void);
   int revertToLastCommit(void);
@@ -151,8 +161,9 @@ class LadrunoNorSand : public NDMaterial {
   LadrunoNorSand(int clsTag, int dimMode);
   LadrunoNorSand(int tag, int clsTag, const ladruno_norsand::Params& p, const double sig0[6],
                  double v0, double pi0, double dens, int dimMode);
-  // copy EVERYTHING (parameters, both states, strains, latch, counters) from another instance;
-  // the clone shares no storage with the source (history isolation). The dbTag is NOT copied.
+  // copy the parameters, the initial/committed/trial states, the strains and the substep census from another
+  // instance; the clone shares no storage with the source (history isolation). The dbTag is NOT copied.
+  // The latch, the refused-trial flag and the refusal record are NOT copied: a clone starts un-refused.
   void copyFrom(const LadrunoNorSand& o);
 
  private:
