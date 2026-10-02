@@ -883,6 +883,7 @@ int  TenNodeTetrahedronThermal::sendSelf (int commitTag, Channel &theChannel)
 
     // Now quad sends the ids of its materials
     static ID idData(30);
+    idData(0) = this->getTag();
 
     idData(20) = connectedExternalNodes(0);
     idData(21) = connectedExternalNodes(1);
@@ -936,7 +937,7 @@ int  TenNodeTetrahedronThermal::recvSelf (int commitTag,
         return res;
     }
 
-    this->setTag(idData(30));
+    this->setTag(idData(0));
 
     static Vector dData(10);
     if (theChannel.recvVector(dataTag, commitTag, dData) < 0) {

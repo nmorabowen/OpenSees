@@ -72,7 +72,7 @@ ThermalHeatSource::sendSelf(int commitTag, Channel &theChannel)
         return res;
     }
 
-    return -1;
+    return res;
 }
 
 int

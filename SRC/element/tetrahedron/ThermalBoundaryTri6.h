@@ -29,8 +29,8 @@
 // ============================================================================
 
 
-#ifndef SixNodeBoundryCondition_H
-#define SixNodeBoundryCondition_H
+#ifndef ThermalBoundaryTri6_H
+#define ThermalBoundaryTri6_H
 
 
 #include <stdio.h>
@@ -44,15 +44,15 @@
 #include <Node.h>
 #include <NDMaterial.h>
 
-class SixNodeBoundryCondition : public Element {
+class ThermalBoundaryTri6 : public Element {
 
 public :
 
     //null constructor
-    SixNodeBoundryCondition();
+    ThermalBoundaryTri6();
 
     //full constructor
-    SixNodeBoundryCondition(int tag,
+    ThermalBoundaryTri6(int tag,
                        int node1,
                        int node2,
                        int node3,
@@ -65,9 +65,9 @@ public :
                        double th    = 1.0);
 
     //destructor
-    virtual ~SixNodeBoundryCondition( ) ;
+    virtual ~ThermalBoundaryTri6( ) ;
 
-    const char *getClassType(void) const {return "SixNodeBoundryCondition";};
+    const char *getClassType(void) const {return "ThermalBoundaryTri6";};
 
     //set domain
     void setDomain( Domain *theDomain ) ;

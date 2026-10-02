@@ -260,7 +260,8 @@ ThermalVolumetricLoadingPattern::applyLoad(double time)
                 deltaEpsilon += delta_epsilon_add;
 
                 // Update the initial normal strain
-                const char* argv[3] = {"material", std::to_string(gp).c_str(), "initNormalStrain"};
+                const std::string gpString = std::to_string(gp);
+                const char* argv[3] = {"material", gpString.c_str(), "initNormalStrain"};
                 int argc = 3;
                 Parameter param(0, theElement, argv, argc);
                 param.update(deltaEpsilon);

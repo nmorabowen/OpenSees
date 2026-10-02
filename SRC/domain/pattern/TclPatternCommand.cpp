@@ -67,6 +67,7 @@
 #include <PlaneDRMInputHandler.h>
 #include <DRMLoadPatternWrapper.h>
 
+#include <ThermalVolumetricLoadingPattern.h>
 #ifdef _H5DRM
 #include <H5DRMLoadPattern.h>
 #endif
@@ -587,6 +588,28 @@ TclPatternCommand(ClientData clientData, Tcl_Interp *interp,
       return TCL_OK;
     }
 #endif
+
+  // Added: Jose A. Abell and Jose L. Larenas (UANDES)
+  else if (strcmp(argv[1],"ThermalVolumetric") == 0) {
+      if (argc < 7) {
+          opserr << "WARNING want: pattern ThermalVolumetric $tag $alpha $elementsFile $gaussTempsFile $addEpsilonFile\n";
+          return TCL_ERROR;
+      }
+      int tag = 0;
+      double alpha = 0.0;
+      if (Tcl_GetInt(interp, argv[2], &tag) != TCL_OK ||
+          Tcl_GetDouble(interp, argv[3], &alpha) != TCL_OK) {
+          opserr << "WARNING pattern ThermalVolumetric - invalid tag or alpha\n";
+          return TCL_ERROR;
+      }
+      thePattern = new ThermalVolumetricLoadingPattern(tag, alpha, argv[4], argv[5], argv[6]);
+      if (theDomain->addLoadPattern(thePattern) == false) {
+          opserr << "WARNING pattern ThermalVolumetric - could not add pattern " << tag << " to domain\n";
+          delete thePattern;
+          return TCL_ERROR;
+      }
+      return TCL_OK;
+  }
 
   //////// //////// ///////// ////////// /////  // DRMLoadPattern add BEGIN
   else if (strcmp(argv[1],"DRMLoadPattern") == 0) {
