@@ -2271,6 +2271,12 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                             mucH, ntsCoDeclared);
                         if (fe == 0) return -5;
                         theModel->addFE_Element(fe);
+                        // ADR-157: key this pair's friction state by (slave node, sf, seg).
+                        fe->setMortarMasterFacet(seg);
+                        if (wantFric) {
+                            cd->mortarFrictionGCMark(mc.tag, sNodes[0]->getTag(), sf, seg);
+                            cd->mortarFrictionGCMark(mc.tag, sNodes[1]->getTag(), sf, seg);
+                        }
                         // C2.2 twin: this pair's slave nodes have a live lambda_N slot this
                         // handle() (mortarNormalGCMark also covers the friction slot -- they
                         // share the SAME per-(contactTag,slaveNodeTag) MortarNormalState
@@ -2511,6 +2517,12 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     // C2.2: this pair's slave nodes have a live λ_N slot this handle().
                     for (int k = 0; k < npsS; k++)
                         cd->mortarNormalGCMark(mc.tag, sTags(sf * npsS + k));
+                    // ADR-157: key this pair's friction state by (slave node, sf, seg) — one slot
+                    // per (node, facet PAIR), so pairs sharing a slave node never overwrite each other.
+                    fe->setMortarMasterFacet(seg);
+                    if (wantFric)
+                        for (int k = 0; k < npsS; k++)
+                            cd->mortarFrictionGCMark(mc.tag, sTags(sf * npsS + k), sf, seg);
                 }
             }
         }

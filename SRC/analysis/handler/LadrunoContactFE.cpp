@@ -1003,8 +1003,9 @@ LadrunoContactFE::addMortarFriction2D(const double D[2][2], const double M[2][2]
         for (int J = 0; J < 2; J++) { r[0] += D[I][J]*us[J][0]; r[1] += D[I][J]*us[J][1]; }
         for (int K = 0; K < 2; K++) { r[0] -= M[I][K]*um[K][0]; r[1] -= M[I][K]*um[K][1]; }
         double gT = (r[0]*th[0] + r[1]*th[1]) / aFacet;
-        LadrunoContactDomain::MortarNormalState &st =
-            cd->getOrCreateMortarNormalState(contactTag, mortarSlave[I]->getTag());
+        // ADR-157: friction path state per (slave node, facet PAIR) — never shared across pairs.
+        LadrunoContactDomain::MortarFrictionState &st = cd->getOrCreateMortarFrictionState(
+            contactTag, mortarSlave[I]->getTag(), slaveFacetIndex, masterFacetIndex);
         // engagement origin captured ONCE at first contact (the ADR-39 P3 MAJOR-1, reused).
         if (!st.engaged) { st.gT0[0] = gT; st.engaged = true; }
         // C3.3 ALM offset trick: gTeff = (gT - gT0) + lambdaT/epsT (epsT rides `kt`); lambdaT
@@ -1163,11 +1164,14 @@ LadrunoContactFE::addMortarTang2D(double fact, bool initialStiff)
         for (int I = 0; I < 2; I++) {
             double aFacet = D[I][0] + D[I][1];
             if (aFacet <= MORT2D_TAU_TRIB * mortar2dLref) continue;
-            LadrunoContactDomain::MortarNormalState &st =
+            const LadrunoContactDomain::MortarNormalState &nst =
                 cd->getOrCreateMortarNormalState(contactTag, mortarSlave[I]->getTag());
-            double pr = st.lambdaN + kn * (g[I] / aFacet);
+            double pr = nst.lambdaN + kn * (g[I] / aFacet);
             if (pr >= 0.0) continue;                   // friction only on in-contact nodes
             double N_I = -pr;
+            // ADR-157: friction path state per (slave node, facet PAIR) — never shared across pairs.
+            LadrunoContactDomain::MortarFrictionState &st = cd->getOrCreateMortarFrictionState(
+                contactTag, mortarSlave[I]->getTag(), slaveFacetIndex, masterFacetIndex);
             double r[2] = { 0.0, 0.0 };
             for (int J = 0; J < 2; J++) { r[0] += D[I][J]*us[J][0]; r[1] += D[I][J]*us[J][1]; }
             for (int K = 0; K < 2; K++) { r[0] -= M[I][K]*um[K][0]; r[1] -= M[I][K]*um[K][1]; }
@@ -2131,8 +2135,9 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
 // SHIPPED LadrunoFrictionKernel return map with the nodal normal pressure N_I = −p_normal[I], and
 // scatter the (already-negated, motion-opposing) tangential traction tFric_I via the D/M operators
 // exactly like the normal force: f^s_K += Σ_I D_KI tFric_I, f^m_L += −Σ_I M_IL tFric_I (self-
-// equilibrating via Σφ=1 — oracle T2). The slip is per-GLOBAL-slave-node committed state on the
-// Domain (gpT/gT0), the C3 analogue of λ_N (mirrors the NTS FrictionState; design [[_adr41_c3_design]]).
+// equilibrating via Σφ=1 — oracle T2). The slip is committed state on the Domain (gpT/gT0/λ_T),
+// keyed per (slave node, facet PAIR) since ADR-157 — the mortar analogue of the NTS FrictionState's
+// (slave, segment) key; per GLOBAL node (C3.1-C3.3) the pairs sharing a node overwrote each other.
 void
 LadrunoContactFE::addMortarFriction(const double D[4][4], const double M[4][4], const double n[3],
                                     const double p_normal[4], LadrunoContactDomain *cd)
@@ -2169,8 +2174,9 @@ LadrunoContactFE::addMortarFriction(const double D[4][4], const double M[4][4], 
         double gbarT[3];
         for (int d = 0; d < 3; d++) gbarT[d] = (r[d] - rn * n[d]) / aFacet;   // tangential, normalised
 
-        LadrunoContactDomain::MortarNormalState &st =
-            cd->getOrCreateMortarNormalState(contactTag, mortarSlave[I]->getTag());
+        // ADR-157: friction path state per (slave node, facet PAIR) — never shared across pairs.
+        LadrunoContactDomain::MortarFrictionState &st = cd->getOrCreateMortarFrictionState(
+            contactTag, mortarSlave[I]->getTag(), slaveFacetIndex, masterFacetIndex);
         // engagement origin captured ONCE at first contact (else pre-contact tangential drift
         // becomes a spurious stick traction — the ADR-39 P3 MAJOR-1, reused).
         if (!st.engaged) {
@@ -2460,8 +2466,9 @@ LadrunoContactFE::addSoft2Penalty(Integrator *theIntegrator)
             double rn = r[0]*n[0] + r[1]*n[1] + r[2]*n[2];
             double gbarT[3];
             for (int d = 0; d < 3; d++) gbarT[d] = (r[d] - rn * n[d]) / aFacet;
-            LadrunoContactDomain::MortarNormalState &st =
-                cd->getOrCreateMortarNormalState(contactTag, mortarSlave[I]->getTag());
+            // ADR-157: friction path state per (slave node, facet PAIR) — never shared across pairs.
+            LadrunoContactDomain::MortarFrictionState &st = cd->getOrCreateMortarFrictionState(
+                contactTag, mortarSlave[I]->getTag(), slaveFacetIndex, masterFacetIndex);
             if (!st.engaged) {                    // engagement origin captured ONCE (the P3 MAJOR-1)
                 for (int d = 0; d < 3; d++) st.gT0[d] = gbarT[d];
                 st.engaged = true;
@@ -2761,11 +2768,14 @@ LadrunoContactFE::addMortarTang(double fact, bool initialStiff)
             double aFacet = 0.0;
             for (int J = 0; J < npsS; J++) aFacet += D[I][J];
             if (aFacet <= 1e-300) continue;
-            LadrunoContactDomain::MortarNormalState &st =
+            const LadrunoContactDomain::MortarNormalState &nst =
                 cd->getOrCreateMortarNormalState(contactTag, mortarSlave[I]->getTag());
-            double pr = st.lambdaN + kn * (g[I] / aFacet);
+            double pr = nst.lambdaN + kn * (g[I] / aFacet);
             if (pr >= 0.0) continue;                  // friction only on in-contact nodes
             double N_I = -pr;
+            // ADR-157: friction path state per (slave node, facet PAIR) — never shared across pairs.
+            LadrunoContactDomain::MortarFrictionState &st = cd->getOrCreateMortarFrictionState(
+                contactTag, mortarSlave[I]->getTag(), slaveFacetIndex, masterFacetIndex);
             // displacement-based tangential slip (same as the residual), engagement-referenced.
             double r[3] = {0, 0, 0};
             for (int J = 0; J < npsS; J++)

@@ -255,6 +255,11 @@ class LadrunoContactFE : public FE_Element
     // se = this segment's nps shared-edge flags (ADR-63 P2.1 facet-ownership guard); 0 ⇒ no guard.
     void setSmoothNormals(const double *nn, const int *se = 0);
 
+    // ADR-157 (MORTAR mode): the GLOBAL master-facet ordinal of this (slave facet, master facet)
+    // pair. With slaveFacetIndex it keys the per-(slave node, facet pair) friction state on the
+    // Domain (MortarFrictionState). The handler calls it right after construction.
+    void setMortarMasterFacet(int mf) { masterFacetIndex = mf; }
+
     // getTangent routes through the integrator's formEleTangent so the INTEGRATOR
     // decides what to assemble (CDL -> addMtoTang only -> no contact stiffness in
     // the explicit mass matrix; Newmark -> addKtToTang(c1) -> c1*K_c; statics ->
@@ -501,6 +506,7 @@ class LadrunoContactFE : public FE_Element
     Node *mortarMaster[4];  // master facet nodes
     int npsS, npsM;         // slave / master nodes-per-facet
     int slaveFacetIndex;    // GLOBAL slave-facet ordinal (rebuild-stable; C2.2 λ_N key)
+    int masterFacetIndex = -1;  // ADR-157: GLOBAL master-facet ordinal (rebuild-stable; friction key)
 
     // ADR-57 E2 EDGE_EDGE binding (mode == EDGE_EDGE). The 4-node edge pair [sa, sb | ma, mb];
     // epsN rides `kn`, contactTag keys the Domain-owned EdgeEdgeState (with the ordered node tags).
