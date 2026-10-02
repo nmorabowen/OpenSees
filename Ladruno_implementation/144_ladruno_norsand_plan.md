@@ -324,6 +324,21 @@ Gates between them:
 - This case also exercises the log CSL and BA06's energy: it is the "paper mode" regression before the fork's
   extensions are switched on.
 
+**P3 rulings (owner, 2026-10-02, after the P3a review):**
+1. **One π_i0 rule** for the fit and the strip deck: the yield surface passes through (p_init, max(η_init, c₂·M)).
+   - Isotropic lab tests: `ramp_end`, which avoids the apex start where substepping makes the fit residual jump.
+   - K0 deck states (η ≈ 0.75): on the surface through the actual initial stress.
+2. **The strip deck matches the DM04 campaign exactly**: K0 = 0.4554 via the elastic ν* stage, and the campaign
+   geometry. The TIMs-04 spec differences are documented (fine block 4B vs 4.5B, B/16 9,720 vs 7,224 elements,
+   no skin/slot, penalty 1e12 vs 5e9). NorSand vs DM04 is then like-for-like.
+3. **ρ is fitted from data**, not pinned at c = 0.712: Lam & Tatsuoka 1988 and Fukushima & Tatsuoka 1984 PS-vs-TC,
+   with Tatsuoka 1986, all to be digitised.
+4. **Objective weights accepted**: σ_sr 0.10, σ_εv 0.10 %, σ_φ 0.5°, σ_εpeak 0.25 %, post-peak window +2 % at
+   weight 0.5.
+- Gap found at P3a, closed in the next round: **the p′ floor of §2.7 was never implemented**. The Kimura deck reaches
+  p′ = 0.57 kPa at s/B 0.002, and HAR stiffness → 0 as p → 0. Added as `-pmin` (projected and counted), with the
+  F vs F/2 report.
+
 **K3, laboratory data (T1, fit quality reported, sanity-gated)** (re-aimed 2026-10-02):
 - **Calibration:** Tatsuoka et al. (1986) drained plane strain on Toyoura (digitised in TIMs'
   `Tries/2d-model/references/tatsuoka1986_element/`, read-only): σ1′/σ3′ and ε_v vs ε_a, and φ_peak / ε_peak vs e.
