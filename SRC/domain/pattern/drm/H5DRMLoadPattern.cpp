@@ -1005,7 +1005,8 @@ bool H5DRMLoadPattern::drm_direct_read(double t)
 
         const int i_final = N_timesteps - 1;
 
-        ih5_dis_ds = H5Dget_space(ih5_dis);
+        // local dataspace: keep the persistent ih5_dis_ds handle intact
+        hid_t final_ds = H5Dget_space(ih5_dis);
 
         for (int n = 0; n < DRM_Nodes.Size(); ++n)
         {
@@ -1035,11 +1036,11 @@ bool H5DRMLoadPattern::drm_direct_read(double t)
             H5Sselect_hyperslab(memspace, H5S_SELECT_SET,
                                 mem_start, mem_stride, mem_count, mem_block);
 
-            H5Sselect_hyperslab(ih5_dis_ds, H5S_SELECT_SET,
+            H5Sselect_hyperslab(final_ds, H5S_SELECT_SET,
                                 start, stride, count, block);
 
             H5Dread(ih5_dis, H5T_NATIVE_DOUBLE,
-                    memspace, ih5_dis_ds, ih5_xfer_plist, d_final);
+                    memspace, final_ds, ih5_xfer_plist, d_final);
             H5Sclose(memspace);
 
             DRM_D(3 * local_pos + 0) = d_final[0];
@@ -1048,8 +1049,7 @@ bool H5DRMLoadPattern::drm_direct_read(double t)
             // DRM_A components remain zero (already zeroed above)
         }
 
-        H5Sclose(ih5_dis_ds);
-        ih5_dis_ds = -1;
+        H5Sclose(final_ds);
 
         return true;
     }
@@ -1185,12 +1185,6 @@ bool H5DRMLoadPattern::drm_direct_read(double t)
 
             exit(-1);
         }
-
-        // d1[2] = -d1[2];
-        // d2[2] = -d2[2];
-        // a1[2] = -a1[2];
-        // a2[2] = -a2[2];
-
 
         DRM_D(3 * local_pos + 0) = d1[0] * (1 - dtau) + d2[0] * (dtau);
         DRM_D(3 * local_pos + 1) = d1[1] * (1 - dtau) + d2[1] * (dtau);
@@ -1743,6 +1737,17 @@ void H5DRMLoadPattern::node_matching_BruteForce(double d_tol, const ID & interna
     while ((node_ptr = node_iter()) != 0)
     {
         int tag = node_ptr->getTag();
+        
+        // Skip nodes with more than 6 DOF
+        int numDOF = node_ptr->getNumberDOF();
+        if (numDOF > 6) {
+            if (DEBUG_NODE_MATCHING)
+            {
+                fprintf(fptrdrm, "Node # %05d skipped - has %d DOF (>6)\n", tag, numDOF);
+            }
+            continue;
+        }
+        
         const Vector& node_xyz  =  node_ptr->getCrds();
         double dmin = std::numeric_limits<double>::infinity();
         int ii_station_min = 0;
