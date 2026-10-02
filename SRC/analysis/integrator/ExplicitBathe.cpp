@@ -84,23 +84,38 @@ void *OPS_ExplicitBathe(void) {
     double alpha_lnvd = 0.0;
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char* opt = OPS_GetString();
-        if (strcmp(opt, "-lnvd") == 0) {
+        if (opt == 0) {
+            // numeric argument from Python: the critical-timestep flag
+            OPS_ResetCurrentInputArg(-1);
+            int flag = 0;
             numArgs = 1;
-            if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetDoubleInput(&numArgs, &alpha_lnvd) < 0) {
-                opserr << "WARNING: ExplicitBathe -lnvd needs a value for alpha\n";
+            if (OPS_GetIntInput(&numArgs, &flag) < 0) {
+                opserr << "WARNING: Invalid compute_critical_timestep parameter\n";
                 return nullptr;
             }
-            if (alpha_lnvd < 0.0 || alpha_lnvd >= 1.0) {
-                opserr << "WARNING: ExplicitBathe -lnvd alpha must be in range [0, 1).\n";
-                return nullptr;
-            }
+            compute_critical_timestep = (flag > 0) ? 1 : 0;
+            continue;
         }
-        else if (strcmp(opt, "0") == 0 || strcmp(opt, "1") == 0) {
-            compute_critical_timestep = atoi(opt);
+        char *endp = 0;
+        long flagValue = strtol(opt, &endp, 10);
+        if (endp != opt && *endp == '\0') {
+            // any integer is accepted for the critical-timestep flag (> 0 enables it)
+            compute_critical_timestep = (flagValue > 0) ? 1 : 0;
+        }
+        else if (strcmp(opt, "-lnvd") == 0) {
+            // invalid values are reported and ignored (damping stays off) rather than
+            // returning a null integrator
+            double value = 0.0;
+            numArgs = 1;
+            if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetDoubleInput(&numArgs, &value) < 0)
+                opserr << "WARNING: ExplicitBathe -lnvd needs a value for alpha; local damping off\n";
+            else if (value < 0.0 || value >= 1.0)
+                opserr << "WARNING: ExplicitBathe -lnvd alpha must be in range [0, 1); local damping off\n";
+            else
+                alpha_lnvd = value;
         }
         else {
-            opserr << "WARNING: ExplicitBathe - unknown option " << opt << "\n";
-            return nullptr;
+            opserr << "WARNING: ExplicitBathe - unknown option " << opt << " ignored\n";
         }
     }
 
@@ -536,6 +551,7 @@ int ExplicitBathe::update(const Vector &U) {
     
     // Store acceleration at t + p*dt
     *A_tpdt = U;
+    this->applyLocalDamping(*A_tpdt, *V_fake);   // V_fake: predicted velocity of sub-step 1
 
     // Update velocity at t + p*dt (corrected)
     // v_{t+p*dt} = v_t + (a_t + a_{t+p*dt}) * p*dt/2
@@ -571,6 +587,7 @@ int ExplicitBathe::update(const Vector &U) {
     this->formUnbalance();
     theLinSOE->solve();
     *A_tdt = theLinSOE->getX();
+    this->applyLocalDamping(*A_tdt, *V_fake);    // V_fake: predicted velocity of sub-step 2
 
     // Report maximum acceleration for monitoring
     double A_max = A_tdt->pNorm(0);
@@ -629,32 +646,29 @@ int ExplicitBathe::commit() {
     return theModel->commitDomain();
 }
 
-// Get current velocity (for modal damping interface)
-// Local non-viscous damping (Cundall 1987; FLAC):
-//   F_d = -alpha * |F_unbal| * sign(v)
-// applied equation by equation to the fully assembled unbalance F_unbal = P - R(u)
-// (nodal and element contributions) at both Bathe sub-steps, with v the predicted
-// velocity used to form that unbalance. Intended for pseudo-static (dynamic
-// relaxation) analyses; it does not represent physical damping.
-int ExplicitBathe::formUnbalance(void) {
-    int res = this->TransientIntegrator::formUnbalance();
-    if (res < 0 || alpha_lnvd <= 0.0 || V_fake == 0)
-        return res;
-
-    LinearSOE *theLinSOE = this->getLinearSOE();
-    static Vector B;
-    B = theLinSOE->getB();
-    const int n = B.Size();
-    if (V_fake->Size() != n)
-        return res;
-    for (int i = 0; i < n; ++i) {
-        const double v = (*V_fake)(i);
+// Local non-viscous damping (Cundall, P.A. (1987). "Distinct element models of rock and
+// soil structure". In: Analytical and Computational Methods in Engineering Rock
+// Mechanics, ch. 4; see also the Itasca FLAC manual, local damping):
+//   a_d = a - alpha * |a| * sign(v)
+// applied per equation to the solved acceleration of each Bathe sub-step, with v the
+// predicted velocity used to form that sub-step's unbalance. With the lumped (diagonal)
+// mass an explicit scheme uses, this equals F_d = -alpha |F_unbal| sign(v) on the
+// unbalanced force, but the solved acceleration is fully assembled (also across
+// processes for the parallel diagonal SOEs) and re-forming the unbalance (e.g. printB)
+// does not change it. Intended for pseudo-static (dynamic relaxation) analyses; it
+// does not represent physical damping.
+void ExplicitBathe::applyLocalDamping(Vector &accel, const Vector &vel) {
+    if (alpha_lnvd <= 0.0 || vel.Size() != accel.Size())
+        return;
+    for (int i = 0; i < accel.Size(); ++i) {
+        const double v = vel(i);
         const double sign_v = (v > 0.0) ? 1.0 : ((v < 0.0) ? -1.0 : 0.0);
-        B(i) -= alpha_lnvd * std::fabs(B(i)) * sign_v;
+        accel(i) -= alpha_lnvd * std::fabs(accel(i)) * sign_v;
     }
-    return theLinSOE->setB(B);
 }
 
+
+// Get current velocity (for modal damping interface)
 const Vector &ExplicitBathe::getVel() {
     return *V_t;
 }
