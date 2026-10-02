@@ -21,8 +21,9 @@
 // Written: fmk
 //
 // Description: This file contains the class definition for EnergyBalanceRecorder.
-// A EnergyBalanceRecorder is used to record the specified dof responses
-// at a collection of nodes over an analysis. (between commitTag of 0 and
+// A EnergyBalanceRecorder is used to record the energy balance of a model
+// over an analysis, outputting [time] kinetic energy, internal work,
+// damping work, and unbalanced-load work. (between commitTag of 0 and
 // last commitTag).
 //
 // What: "@(#) EnergyBalanceRecorder.C, revA"
@@ -68,7 +69,6 @@ OPS_EnergyBalanceRecorder()
         return 0;
     }
 
-    const char* responseID = 0;
     OPS_Stream *theOutputStream = 0;
     const char* filename = 0;
 
@@ -84,8 +84,6 @@ OPS_EnergyBalanceRecorder()
     int eMode = STANDARD_STREAM;
 
     bool echoTimeFlag = false;
-    double dT = 0.0;
-    double rTolDt = 0.00001;
     bool doScientific = false;
 
     int precision = 6;
@@ -95,16 +93,9 @@ OPS_EnergyBalanceRecorder()
     const char *inetAddr = 0;
     int inetPort;
 
-    int gradIndex = -1;
-
-    ID nodes(0, 6);
-    ID dofs(0, 6);
-    ID timeseries(0, 6);
-
     while (OPS_GetNumRemainingInputArgs() > 0) {
 
         const char* option = OPS_GetString();
-        responseID = option;
 
         if (strcmp(option, "-time") == 0) {
             echoTimeFlag = true;
@@ -284,22 +275,6 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
         }
     }
 
-    // where relDeltaTTol is the maximum reliable ratio between analysis time step and deltaT
-    // to provide adequate tolerance for floating point precision (default=1.0e-5)
-
-    //
-    // if need nodal reactions get the domain to calculate them
-    // before we iterate over the nodes
-    //
-
-    // NEED TO GET REACTIONS?
-    // if (dataFlag == 7)
-    //     theDomain->calculateNodalReactions(0);
-    // else if (dataFlag == 8)
-    //     theDomain->calculateNodalReactions(1);
-    // if (dataFlag == 9)
-    //     theDomain->calculateNodalReactions(2);
-
     //
     // add time information if requested
     //
@@ -342,6 +317,22 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
                     kinetic_energy += M(i, j) * vel(i) * vel(j) / 2;
                 }
             }
+        }
+    }
+    // Add nodal (lumped) masses assigned with the mass command
+    {
+        Node *node;
+        NodeIter &nodes = theDomain->getNodes();
+        while ((node = nodes()) != 0)
+        {
+            const Matrix &Mn = node->getMass();
+            const Vector &vn = node->getVel();
+            const int n = vn.Size();
+            if (Mn.noRows() != n)
+                continue;
+            for (int i = 0; i < n; ++i)
+                for (int j = 0; j < n; ++j)
+                    kinetic_energy += Mn(i, j) * vn(i) * vn(j) / 2;
         }
     }
     response(timeOffset + 0) = kinetic_energy;
@@ -477,138 +468,8 @@ EnergyBalanceRecorder::initialize(void)
         response.resize(EBR_NUM_ENERGY_COMPONENTS + 1);
     }
 
+    initializationDone = true;
 
-    // ID orderResponse(numValidResponse);
-
-    // //
-    // // need to create the data description, i.e. what each column of data is
-    // //
-
-    // char outputData[32];
-    // char dataType[10];
-
-    // if (dataFlag == 0) {
-    //     strcpy(dataType, "D");
-    // } else if (dataFlag == 1) {
-    //     strcpy(dataType, "V");
-    // } else if (dataFlag == 2) {
-    //     strcpy(dataType, "A");
-    // } else if (dataFlag == 3) {
-    //     strcpy(dataType, "dD");
-    // } else if (dataFlag == 4) {
-    //     strcpy(dataType, "ddD");
-    // } else if (dataFlag == 5) {
-    //     strcpy(dataType, "U");
-    // } else if (dataFlag == 6) {
-    //     strcpy(dataType, "U");
-    // } else if (dataFlag == 7) {
-    //     strcpy(dataType, "R");
-    // } else if (dataFlag == 8) {
-    //     strcpy(dataType, "R");
-    // } else if (dataFlag == 10000) {
-    //     strcpy(dataType, "|D|");
-    // } else if (dataFlag > 10) {
-    //     sprintf(dataType, "E%d", dataFlag - 10);
-    // } else
-    //     strcpy(dataType, "Unknown");
-
-    // /************************************************************
-    // } else if ((strncmp(dataToStore, "sensitivity",11) == 0)) {
-    //   int grad = atoi(&(dataToStore[11]));
-    //   if (grad > 0)
-    //     dataFlag = 1000 + grad;
-    //   else
-    //     dataFlag = 6;
-    // } else if ((strncmp(dataToStore, "velSensitivity",14) == 0)) {
-    //   int grad = atoi(&(dataToStore[14]));
-    //   if (grad > 0)
-    //     dataFlag = 2000 + grad;
-    //   else
-    //     dataFlag = 6;
-    // } else if ((strncmp(dataToStore, "accSensitivity",14) == 0)) {
-    //   int grad = atoi(&(dataToStore[14]));
-    //   if (grad > 0)
-    //     dataFlag = 3000 + grad;
-    //   else
-    //     dataFlag = 6;
-
-    // ***********************************************************/
-    // int numDOF = theDofs->Size();
-
-    // // write out info to handler if parallel execution
-    // //
-
-    // ID xmlOrder(numValidNodes);
-
-    // if (echoTimeFlag == true)
-    //     xmlOrder.resize(numValidNodes + 1);
-
-    // if (theNodalTags != 0 && addColumnInfo == 1) {
-
-    //     int numNode = theNodalTags->Size();
-    //     int count = 0;
-    //     int nodeCount = 0;
-
-    //     if (echoTimeFlag == true)  {
-    //         orderResponse(count++) = 0;
-    //         xmlOrder(nodeCount++) = 0;
-    //     }
-
-    //     for (int i = 0; i < numNode; i++) {
-    //         int nodeTag = (*theNodalTags)(i);
-    //         Node *theNode = theDomain->getNode(nodeTag);
-    //         if (theNode != 0) {
-    //             xmlOrder(nodeCount++) = i + 1;
-    //             for (int j = 0; j < numDOF; j++)
-    //                 orderResponse(count++) = i + 1;
-    //         }
-    //     }
-
-    //     theOutputHandler->setOrder(xmlOrder);
-    // }
-
-    // char nodeCrdData[20];
-    // sprintf(nodeCrdData, "coord");
-
-    // if (echoTimeFlag == true) {
-    //     if (theNodalTags != 0 && addColumnInfo == 1) {
-    //         theOutputHandler->tag("TimeOutput");
-    //         theOutputHandler->tag("ResponseType", "time");
-    //         theOutputHandler->endTag();
-    //     }
-    // }
-
-    // for (int i = 0; i < numValidNodes; i++) {
-    //     int nodeTag = theNodes[i]->getTag();
-    //     const Vector &nodeCrd = theNodes[i]->getCrds();
-    //     int numCoord = nodeCrd.Size();
-
-
-    //     theOutputHandler->tag("NodeOutput");
-    //     theOutputHandler->attr("nodeTag", nodeTag);
-
-    //     for (int j = 0; j < 3; j++) {
-    //         sprintf(nodeCrdData, "coord%d", j + 1);
-    //         if (j < numCoord)
-    //             theOutputHandler->attr(nodeCrdData, nodeCrd(j));
-    //         else
-    //             theOutputHandler->attr(nodeCrdData, 0.0);
-    //     }
-
-    //     for (int k = 0; k < theDofs->Size(); k++) {
-    //         sprintf(outputData, "%s%d", dataType, k + 1);
-    //         theOutputHandler->tag("ResponseType", outputData);
-    //     }
-
-    //     theOutputHandler->endTag();
-    // }
-
-    // if (theNodalTags != 0 && addColumnInfo == 1) {
-    //     theOutputHandler->setOrder(orderResponse);
-    // }
-
-    // theOutputHandler->tag("Data");
-    // initializationDone = true;
 
     return 0;
 }
