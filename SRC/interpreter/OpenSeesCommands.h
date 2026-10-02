@@ -497,6 +497,9 @@ void* OPS_SuperLUSolver();
 void* OPS_ProfileSPDLinDirectSolver();
 void* OPS_UmfpackGenLinSolver();
 void* OPS_DiagonalDirectSolver();
+#ifdef _PARALLEL_INTERPRETERS
+void* OPS_MPIDiagonalSolver();
+#endif
 void* OPS_SProfileSPDLinSolver();
 void* OPS_PFEMSolver();
 void* OPS_PFEMCompressibleSolver();
