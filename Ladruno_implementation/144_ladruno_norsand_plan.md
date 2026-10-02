@@ -248,7 +248,7 @@ P4 is run only if TIMs needs the post-peak branch.
 | **P0** | Python oracle of AB06 Box 2 with the power-law CSL, Willam–Warnke ζ, the HAR energy and the smooth Q-cap. Symbolic derivatives; FD check of every derivative and of the tangent. D ≥ 0 census at every step. The HAR convexity table over the footing's (p, η) cloud (§2.5 gate). Regression: ζ ≡ 1 + log CSL + BA06 energy reproduces BA06's single-point curves. | ~1 week |
 | **P1** | Header-only kernel + `LadrunoNorSand` NDMaterial + 3D/PlaneStrain wrappers; 4×4 spectral return + nested π_i; closed-form tangent; parser with the §2.2 bound refusals; `sendSelf`/`recvSelf`; responses (ψ, ψ_i, π_i, D, dissipation increment, floor and refusal counts); commit-latch refusal | ~2 weeks |
 | **P2** | Tests: kernel parity vs the oracle; FD tangent; D ≥ 0 census; LogStrain-wrapped finite-strain parity vs the oracle at large strain; byte-identity of everything else; refusal on discarding elements; bounded work; mutation gate | ~1 week |
-| **P3** | Calibration from TIMs' data: transfer the CSL (e0, λc, ξ), Mc = M_tc 1.3309, ρ from c = 0.71, the HAR energy from G0/√p and ν, and the initial e. Refit χ from peak dilatancy vs ψ, h from pre-peak stiffness and strain to peak, and N, N̄, ρ̄ from the volumetric curves. Single-point gates vs DM04 (oracle `uw_model`) and PM4Sand. Strip deck at B/8 and B/16 with the floor-sensitivity report. | ~1 week |
+| **P3** | **Re-aimed 2026-10-02 (owner-approved, after a read-only TIMs scoping).** **Toyoura**, which is TIMs' reference sand; TIMs has no lab data for its own sand. The CSL comes from DM04's published Toyoura Table 1, NOT the TIMs DM04 set: that one is Gorini's cyclic Messina fit, which the owner already ruled invalid for monotonic loading (it dilates 8–23× too little). χ, h, N, N̄ and ρ̄ come from **Tatsuoka et al. 1986 drained plane strain** at σ3′ 4.9 / 49 kPa and e 0.700–0.755 (the low-p′ regime of the ring), plus φ_peak(e). ρ is pinned from the PS-vs-TC friction difference. Energy: HAR or BA06, per the §2.5 convexity gate. Single-point gates vs DM04 (the Toyoura set) and PM4Sand. The strip deck (TIMs geometry; driver copied read-only into esmeralda:~/wp144) runs under Slurm. | ~1 week |
 | **P4** (optional) | Nonlocal ψ (§2.10) | ~1–1.5 weeks |
 | **Gate** | Adversarial review (new maths); banner line; ledgers; the material guide | — |
 
@@ -311,22 +311,31 @@ Gates between them:
 - This case also exercises the log CSL and BA06's energy: it is the "paper mode" regression before the fork's
   extensions are switched on.
 
-**K3, laboratory data (T1, fit quality reported, sanity-gated):**
-- Ottawa F65 monotonic drained triaxials (Vasko 2014 / LEAP-2017, in the owner's library).
-- TIMs' own drained triaxials (P3).
+**K3, laboratory data (T1, fit quality reported, sanity-gated)** (re-aimed 2026-10-02):
+- **Calibration:** Tatsuoka et al. (1986) drained plane strain on Toyoura (digitised in TIMs'
+  `Tries/2d-model/references/tatsuoka1986_element/`, read-only): σ1′/σ3′ and ε_v vs ε_a, and φ_peak / ε_peak vs e.
+- **Independent methodology check, different sand:** Ottawa F65 monotonic drained TC + TE (Vasko 2014 / LEAP-2017).
+  The paired TC/TE at one density checks the ρ-from-data route. Not calibration data for TIMs.
+- There is **no undrained or extension lab data for Toyoura** in the project. Undrained behaviour is checked only by the
+  K1 closed forms and TIMs' rung C6 (a constant-volume element test). That limit is stated, not hidden.
 - Gate: the calibrated curves stay inside the specimen scatter to the peak. The residual is reported, not hidden.
 
 **K4, cross-model (soft gate):** single-point drained/undrained triaxial and plane-strain compression against
 the DM04 oracle (`uw_model`, WP-134) and PM4Sand, with the same CSL. Peak q and ε_v must agree within the
 triaxial scatter; differences are explained, not tuned away.
 
-**K5, boundary-value problem (P3):**
-- The strip deck at B/8 and B/16.
-- Floor sensitivity: F vs F/2, accepted if the load changes by less than 2 %.
-- **Loukidis & Salgado (2011), Géotechnique 61(2):107**, in the owner's library: Nγ as a function of relative
-  density and stress level, at the deck's density and stress. Also cross-check against the Lau (2011) and
-  Lyamin (2007) bearing-capacity results.
-- These are the design-level known results. A miss here is reported, with the mechanism, not calibrated away.
+**K5, boundary-value problem (P3)** (re-aimed 2026-10-02):
+- **Primary, measured:** **Kimura et al. (1985) centrifuge strip footings on Toyoura** (digitised in TIMs'
+  `Tries/2d-model/references/kimura1985_fig9/`, read-only; prototype B = 0.9 m; tests V85.6, V75.1, V64.6).
+  For reference, DM04 currently gives 2015 kPa at s/B 0.167 against a measured 1953 kPa at 0.091.
+- **TIMs' own acceptance conventions** (ADR 65, still 'proposed', so no tolerance is binding):
+  - `LadrunoBrick -formulation bbar`;
+  - a band from 3 meshes × 2 orientations;
+  - the plateau rule from 04 §11: the tail tangent over the first-step tangent must be < 0.02, otherwise the run
+    is a 'wall', not a limit.
+- The strip deck at B/8 and B/16 with floor sensitivity F vs F/2, accepted if the load changes by less than 2 %.
+- **Secondary:** Loukidis & Salgado (2011) Nγ, plus Lau (2011) and Lyamin (2007).
+- A miss is reported with its mechanism, not calibrated away.
 
 ### 5.3 How the gates map to the manifest
 
