@@ -162,8 +162,8 @@ private :
     // private attributes
     //
 
-    ID connectedExternalNodes ;  //four node numbers
-    Node *nodePointers[NumNodes] ;      //pointers to eight nodes
+    ID connectedExternalNodes ;  //ten node numbers
+    Node *nodePointers[NumNodes] ;      //pointers to ten nodes
 
     double inp_info[5] ;
     double b[1] ;        // Body forces
@@ -192,7 +192,7 @@ private :
     static const double sg[4] ;
     static const double wg[1] ;
 
-    //local nodal coordinates, three coordinates for each of four nodes
+    //local nodal coordinates, three coordinates for each of ten nodes
     static double xl[3][NumNodes] ;
 
     //

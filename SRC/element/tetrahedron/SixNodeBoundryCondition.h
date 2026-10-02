@@ -138,24 +138,23 @@ private :
     enum {NumStressComponents=3} ;
     enum {NumDOFsTotal=NumNodes*NumDOFsPerNode} ;
 
-    // Routine to compute shape functions and their derivatives. These get stored as follows. 
+    // Routine to compute shape functions and their derivatives. These get stored as follows.
     // for node n:
-    //   shp[0][n] --> dN_n / d x, 
+    //   shp[0][n] --> dN_n / d x,
     //   shp[1][n] --> dN_n / d y
-    //   shp[2][n] --> dN_n / d z
-    //   shp[3][n] --> N_n, shape function n value at the z values 
-    void shp3d( 
-        const double zeta[3],  // Tetrahedral coordinates  (input)
+    //   shp[2][n] --> N_n, shape function n value
+    void shp3d(
+        const double zeta[3],  // Triangular (area) coordinates  (input)
         double &xsj,         // Jacobian determinant (output)
-        double shp[3][NumNodes], // Shape function and derivatives values at the tetrahedral coordinates (output) 
+        double shp[3][NumNodes], // Shape function and derivatives values at the triangular coordinates (output)
         const double xl[3][NumNodes]   ); // Node coordinates (input)
 
     //
     // private attributes
     //
 
-    ID connectedExternalNodes ;  //four node numbers
-    Node *nodePointers[NumNodes] ;      //pointers to eight nodes
+    ID connectedExternalNodes ;  //six node numbers
+    Node *nodePointers[NumNodes] ;      //pointers to six nodes
 
     double inp_info[4];
     double appliedQ = 0.0;
@@ -180,7 +179,7 @@ private :
     static const double sg[3] ;
     static const double wg[1] ;
 
-    //local nodal coordinates, three coordinates for each of four nodes
+    //local nodal coordinates, three coordinates for each of six nodes
     static double xl[3][NumNodes] ;
 
     //

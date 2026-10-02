@@ -95,7 +95,6 @@ const double  SixNodeBoundryCondition::beta  = 1.0 / 6.0 ;
 const double  SixNodeBoundryCondition::sg[]  = { alpha, beta, beta } ;
 const double  SixNodeBoundryCondition::wg[]  = { 1.0 / 6.0 } ;
 
-// static Matrix B(NumStressComponents, NumDOFsPerNode) ;
 Matrix SixNodeBoundryCondition::B(NumStressComponents, NumDOFsPerNode) ;
 
 //null constructor
@@ -420,10 +419,8 @@ SixNodeBoundryCondition::addLoad(ElementalLoad *theLoad, double loadFactor)
 
     if (type == LOAD_TAG_ThermalBoundaryConditionTemperature) {
         double T_inf = data(0);
-        // opserr << "Setting temp @ ele # " << this->getTag() << " from " << inp_info[2] << " to " << T_inf << endln;
         inp_info[2] = T_inf;
         applyLoad = 1;
-        // appliedQ += loadFactor * (inp_info[0] * inp_info[2] + inp_info[1]) ;
         return 0;
     } else {
         opserr << "SixNodeBoundryCondition::addLoad() - ele with tag: " << this->getTag() << " does not deal with load type: " << type << "\n";
@@ -566,8 +563,6 @@ void   SixNodeBoundryCondition::formResidAndTangent( int tangFlag )
         jj = 0 ;
         for ( j = 0; j < numberNodes; j++ )
         {
-            // resid( jj  ) -= dvol[i] * ( (inp_info[0] * inp_info[2] + inp_info[1]) ) * shp[2][j] ;
-            // temp = shp[stiffIndex][j] * dvol[i] * inp_info[0] * inp_info[3] ;
             temp = shp[stiffIndex][j] * dvol[i]  ;
             // inp_info[0] = Beta S
             // inp_info[1] = R
@@ -720,7 +715,7 @@ int  SixNodeBoundryCondition::recvSelf (int commitTag,
 
     static Vector dData(8);
     if (theChannel.recvVector(dataTag, commitTag, dData) < 0) {
-        opserr << "DispBeamColumn2d::sendSelf() - failed to recv double data\n";
+        opserr << "SixNodeBoundryCondition::recvSelf() - failed to recv double data\n";
         return -1;
     }
 

@@ -89,9 +89,6 @@ std::pair<std::vector<double>, std::vector<double>> readTwoColumnFile(const std:
         return {{0.0}, {0.0}};
     }
 
-    std::cout << "Read! " << filename << std::endl;
-
-
     return {column1, column2};
 }
 
@@ -133,12 +130,6 @@ ThermalVolumetricLoadingPattern::ThermalVolumetricLoadingPattern(int tag, double
   currentTime(0.0), parameterID(0)
 {
 
-  opserr << "Creating ThermalVolumetricLoadingPattern" << endln;
-  opserr << " alpha               = " << alpha << endln;
-  opserr << " elements_filename   = " << elements_filename.c_str() << endln;
-  opserr << " gausstemps_filename = " << gausstemps_filename.c_str() << endln;
-  opserr << " add_epsilon_filename = " << add_epsilon_filename_.c_str() << endln;
-
   std::ifstream file(elements_filename);
   if (!file) {
       std::cerr << "Could not open: " << elements_filename.c_str() << endln;
@@ -154,12 +145,6 @@ ThermalVolumetricLoadingPattern::ThermalVolumetricLoadingPattern(int tag, double
 
   t_epsilon_add = t_epsilon_add_ ;
   epsilon_add = epsilon_add_ ;
-
-  opserr << "t_epsilon_add.size() = " << (int) t_epsilon_add.size() << endln;
-  for (int i = 0; i < t_epsilon_add.size(); ++i)
-  {
-      std::cout << t_epsilon_add[i] << " " << epsilon_add[i] << std::endl;
-  }
 }
 
 
@@ -182,13 +167,6 @@ ThermalVolumetricLoadingPattern::setDomain(Domain *theDomain)
 void
 ThermalVolumetricLoadingPattern::applyLoad(double time)
 {
-    // Calculate Young's modulus and Poisson's ratio at the given time
-    // double E = c2;
-
-    // if (time >= 1)
-    //     E = c1 * log(time) + c2;
-
-    // double nu = (3 * K - E) / (6 * K);
     std::vector<double> initTemp;
 
     // Open the file containing Gauss temperature data
@@ -259,13 +237,6 @@ ThermalVolumetricLoadingPattern::applyLoad(double time)
         epsilon_add_at_t = interpolate(t_epsilon_add, epsilon_add, time);
         epsilon_add_at_earlier_t = interpolate(t_epsilon_add, epsilon_add, earlierTime);
         delta_epsilon_add = epsilon_add_at_t - epsilon_add_at_earlier_t;
-        opserr << "at time = " << time << "  epsilon_add_at_t =  " <<  epsilon_add_at_t << endln;
-        opserr << "at earlierTime = " << time << "  epsilon_add_at_earlier_t =  " <<  epsilon_add_at_earlier_t << endln;
-        opserr << "        delta_epsilon_add =  " <<  delta_epsilon_add << endln;
-    } else
-    {
-        opserr << "skipping at time = " << time << endln;
-        opserr << "skipping at t_epsilon_add.size() = " << (int) t_epsilon_add.size() << endln;
     }
 
     // Loop through the element tags
@@ -294,22 +265,6 @@ ThermalVolumetricLoadingPattern::applyLoad(double time)
                 Parameter param(0, theElement, argv, argc);
                 param.update(deltaEpsilon);
             }
-
-            // {
-            //     // Update Young's modulus
-            //     const char* argv[3] = {"material", std::to_string(gp).c_str(), "E"};
-            //     int argc = 3;
-            //     Parameter param(0, theElement, argv, argc);
-            //     param.update(E);
-            // }
-
-            // {
-            //     // Update Poisson's ratio
-            //     const char* argv[3] = {"material", std::to_string(gp).c_str(), "v"};
-            //     int argc = 3;
-            //     Parameter param(0, theElement, argv, argc);
-            //     param.update(nu);
-            // }
         }
         elementIndex++;
     }
