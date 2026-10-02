@@ -921,6 +921,30 @@ LadrunoContactFE::setMortarGapShift(double gapOffset, bool adjust, double adjust
     for (int i = 0; i < 4; i++) gapShiftRef[i] = 0.0;
 }
 
+// Ladruno ADR-159 -- arm the smoothed contact law (see the header). <=0 => that part stays off.
+void
+LadrunoContactFE::setMortarSmoothing(double smoothN, double smoothT)
+{
+    smoothBand = (smoothN > 0.0) ? smoothN : 0.0;
+    smoothSlip = (smoothT > 0.0) ? smoothT : 0.0;
+}
+
+// Ladruno ADR-159 -- the C1 normal law at the augmented argument pr = lambda + epsN*gbar (x = -pr,
+// S = epsN*g0): P = 0 (x <= -S), (x+S)^2/(4S) (|x| < S), x (x >= S); chi = the C1 smoothstep onset
+// of the friction traction over the same band. Oracle: proto_adr159_smooth_normal.py (G1, G2).
+void
+LadrunoContactFE::mortarSmoothLaw(double pr, double &P, double &dP, double &chi, double &dchi) const
+{
+    double x = -pr, S = kn * smoothBand;
+    if (x <= -S) { P = 0.0; dP = 0.0; chi = 0.0; dchi = 0.0; return; }
+    if (x >= S)  { P = x;   dP = 1.0; chi = 1.0; dchi = 0.0; return; }
+    double t = (x + S) / (2.0 * S);
+    P = (x + S) * (x + S) / (4.0 * S);
+    dP = t;
+    chi = t * t * (3.0 - 2.0 * t);
+    dchi = 6.0 * t * (1.0 - t) / (2.0 * S);
+}
+
 // ADR-85 T3 — the A8 active-set tributary floor (proto_t3_mortar2d.py A8). A noise-sized
 // ACCEPTED interval is benign INSIDE the kernel (D/M/g̃ all scale with the clipped overlap
 // b-a, so the contribution is noise-sized too), but the enforcement layer below divides
@@ -1003,8 +1027,9 @@ LadrunoContactFE::addMortarFriction2D(const double D[2][2], const double M[2][2]
         for (int J = 0; J < 2; J++) { r[0] += D[I][J]*us[J][0]; r[1] += D[I][J]*us[J][1]; }
         for (int K = 0; K < 2; K++) { r[0] -= M[I][K]*um[K][0]; r[1] -= M[I][K]*um[K][1]; }
         double gT = (r[0]*th[0] + r[1]*th[1]) / aFacet;
-        LadrunoContactDomain::MortarNormalState &st =
-            cd->getOrCreateMortarNormalState(contactTag, mortarSlave[I]->getTag());
+        // ADR-157: friction path state per (slave node, facet PAIR) — never shared across pairs.
+        LadrunoContactDomain::MortarFrictionState &st = cd->getOrCreateMortarFrictionState(
+            contactTag, mortarSlave[I]->getTag(), slaveFacetIndex, masterFacetIndex);
         // engagement origin captured ONCE at first contact (the ADR-39 P3 MAJOR-1, reused).
         if (!st.engaged) { st.gT0[0] = gT; st.engaged = true; }
         // C3.3 ALM offset trick: gTeff = (gT - gT0) + lambdaT/epsT (epsT rides `kt`); lambdaT
@@ -1163,11 +1188,14 @@ LadrunoContactFE::addMortarTang2D(double fact, bool initialStiff)
         for (int I = 0; I < 2; I++) {
             double aFacet = D[I][0] + D[I][1];
             if (aFacet <= MORT2D_TAU_TRIB * mortar2dLref) continue;
-            LadrunoContactDomain::MortarNormalState &st =
+            const LadrunoContactDomain::MortarNormalState &nst =
                 cd->getOrCreateMortarNormalState(contactTag, mortarSlave[I]->getTag());
-            double pr = st.lambdaN + kn * (g[I] / aFacet);
+            double pr = nst.lambdaN + kn * (g[I] / aFacet);
             if (pr >= 0.0) continue;                   // friction only on in-contact nodes
             double N_I = -pr;
+            // ADR-157: friction path state per (slave node, facet PAIR) — never shared across pairs.
+            LadrunoContactDomain::MortarFrictionState &st = cd->getOrCreateMortarFrictionState(
+                contactTag, mortarSlave[I]->getTag(), slaveFacetIndex, masterFacetIndex);
             double r[2] = { 0.0, 0.0 };
             for (int J = 0; J < 2; J++) { r[0] += D[I][J]*us[J][0]; r[1] += D[I][J]*us[J][1]; }
             for (int K = 0; K < 2; K++) { r[0] -= M[I][K]*um[K][0]; r[1] -= M[I][K]*um[K][1]; }
@@ -1959,6 +1987,7 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
         }
         if (mortarActive(D, M, g, n)) {
             double p[4] = {0, 0, 0, 0};
+            double chi[4] = {0, 0, 0, 0};                 // ADR-159 friction onset (smoothBand > 0)
             for (int I = 0; I < npsS; I++) {
                 double aFacet = 0.0;                      // a_I^facet = Σ_J D_IJ = ∫N_I dΓ (this facet)
                 for (int J = 0; J < npsS; J++) aFacet += D[I][J];
@@ -1971,6 +2000,11 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
                     lambdaI = cd->getOrCreateMortarNormalState(contactTag, nodeTag).lambdaN;
                 }
                 double pr = lambdaI + kn * (g[I] / aFacet);   // λ_I + epsN·ḡ_I^facet (kn = epsN)
+                if (smoothBand > 0.0) {                   // ADR-159: the C1 quadratic onset
+                    double P, dP, dchi;
+                    mortarSmoothLaw(pr, P, dP, chi[I], dchi);
+                    p[I] = -P;
+                } else
                 p[I] = (pr < 0.0) ? pr : 0.0;             // active iff compression (KKT clamp)
             }
             for (int K = 0; K < npsS; K++) {              // slave block: −(D·p)_K n
@@ -1987,7 +2021,7 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
             // mu≤0 ∧ c≤0 ∧ τmax≤0 SHORT-CIRCUITS before any slot touch ⇒ byte-identical to the
             // frictionless C2 path (the NTS P3 `mu>0` guard, generalized to the unified cone).
             if ((mu > 0.0 || mortarCohesion > 0.0 || mortarTauMax > 0.0) && cd != 0)
-                addMortarFriction(D, M, n, p, cd);
+                addMortarFriction(D, M, n, p, cd, (smoothBand > 0.0) ? chi : 0);
 
             // --- D2.2 viscous normal stabilization (force; tangent in addCtoTang) ---
             // Per IN-CONTACT slave node (p[I]<0, the same KKT mask): the weighted normal gap RATE
@@ -2131,11 +2165,13 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
 // SHIPPED LadrunoFrictionKernel return map with the nodal normal pressure N_I = −p_normal[I], and
 // scatter the (already-negated, motion-opposing) tangential traction tFric_I via the D/M operators
 // exactly like the normal force: f^s_K += Σ_I D_KI tFric_I, f^m_L += −Σ_I M_IL tFric_I (self-
-// equilibrating via Σφ=1 — oracle T2). The slip is per-GLOBAL-slave-node committed state on the
-// Domain (gpT/gT0), the C3 analogue of λ_N (mirrors the NTS FrictionState; design [[_adr41_c3_design]]).
+// equilibrating via Σφ=1 — oracle T2). The slip is committed state on the Domain (gpT/gT0/λ_T),
+// keyed per (slave node, facet PAIR) since ADR-157 — the mortar analogue of the NTS FrictionState's
+// (slave, segment) key; per GLOBAL node (C3.1-C3.3) the pairs sharing a node overwrote each other.
 void
 LadrunoContactFE::addMortarFriction(const double D[4][4], const double M[4][4], const double n[3],
-                                    const double p_normal[4], LadrunoContactDomain *cd)
+                                    const double p_normal[4], LadrunoContactDomain *cd,
+                                    const double *chi)
 {
     // facet node DISPLACEMENTS (NOT positions). The closest-point projection makes the weighted
     // relative POSITION ∫N_I(x_s − x_m(ξ̄)) purely NORMAL (n·r = g̃), so positions carry NO
@@ -2169,8 +2205,9 @@ LadrunoContactFE::addMortarFriction(const double D[4][4], const double M[4][4], 
         double gbarT[3];
         for (int d = 0; d < 3; d++) gbarT[d] = (r[d] - rn * n[d]) / aFacet;   // tangential, normalised
 
-        LadrunoContactDomain::MortarNormalState &st =
-            cd->getOrCreateMortarNormalState(contactTag, mortarSlave[I]->getTag());
+        // ADR-157: friction path state per (slave node, facet PAIR) — never shared across pairs.
+        LadrunoContactDomain::MortarFrictionState &st = cd->getOrCreateMortarFrictionState(
+            contactTag, mortarSlave[I]->getTag(), slaveFacetIndex, masterFacetIndex);
         // engagement origin captured ONCE at first contact (else pre-contact tangential drift
         // becomes a spurious stick traction — the ADR-39 P3 MAJOR-1, reused).
         if (!st.engaged) {
@@ -2186,8 +2223,14 @@ LadrunoContactFE::addMortarFriction(const double D[4][4], const double M[4][4], 
         double tF[3], gpTtrial[3];
         // N for the cone = the nodal normal pressure; epsT rides kt; trial = pure fn of committed
         // gpT/λ_T ⇒ idempotent across re-evals. Returns the APPLIED (negated) traction opposing motion.
+        if (smoothSlip > 0.0)                         // ADR-159: the rounded stick/slip corner
+            LadrunoFrictionKernel::frictionReturnMapSmooth(gTeff, st.gpT, N_I, kt, mu, tF, gpTtrial,
+                                                           mortarCohesion, mortarTauMax, smoothSlip);
+        else
         LadrunoFrictionKernel::frictionReturnMap(gTeff, st.gpT, N_I, kt, mu, tF, gpTtrial,
                                                  mortarCohesion, mortarTauMax);
+        if (chi != 0)                                 // ADR-159: the C1 friction onset over the band
+            for (int d = 0; d < 3; d++) tF[d] *= chi[I];
         // C3.3 Uzawa trial: λ_T ← −tFric (the returned cone-capped traction); committed in commit().
         for (int d = 0; d < 3; d++) {
             st.gpTtrial[d] = gpTtrial[d]; tFric[I][d] = tF[d]; st.lambdaTtrial[d] = -tF[d];
@@ -2460,8 +2503,9 @@ LadrunoContactFE::addSoft2Penalty(Integrator *theIntegrator)
             double rn = r[0]*n[0] + r[1]*n[1] + r[2]*n[2];
             double gbarT[3];
             for (int d = 0; d < 3; d++) gbarT[d] = (r[d] - rn * n[d]) / aFacet;
-            LadrunoContactDomain::MortarNormalState &st =
-                cd->getOrCreateMortarNormalState(contactTag, mortarSlave[I]->getTag());
+            // ADR-157: friction path state per (slave node, facet PAIR) — never shared across pairs.
+            LadrunoContactDomain::MortarFrictionState &st = cd->getOrCreateMortarFrictionState(
+                contactTag, mortarSlave[I]->getTag(), slaveFacetIndex, masterFacetIndex);
             if (!st.engaged) {                    // engagement origin captured ONCE (the P3 MAJOR-1)
                 for (int d = 0; d < 3; d++) st.gT0[d] = gbarT[d];
                 st.engaged = true;
@@ -2717,6 +2761,12 @@ LadrunoContactFE::addMortarTang(double fact, bool initialStiff)
             ? cd->getOrCreateMortarNormalState(contactTag, mortarSlave[I]->getTag()).lambdaN
             : 0.0;
         double pr = lambdaI + kn * (g[I] / aFacet);   // same p_I as the residual (kn = epsN)
+        if (smoothBand > 0.0) {                       // ADR-159: W_I = P'(x)/a_I (0..1 over the band)
+            double P, dP, ch, dch;
+            mortarSmoothLaw(pr, P, dP, ch, dch);
+            W[I] = dP / aFacet;
+            continue;
+        }
         if (pr < 0.0) W[I] = 1.0 / aFacet;            // active iff compression
         // ADR-155 (G-9): a gap-shifted (-adjust/-gapOffset) node sitting EXACTLY at p = 0 -- every
         // -adjust node at the start -- takes the CLOSED branch of the kink (the residual is 0 on
@@ -2761,11 +2811,20 @@ LadrunoContactFE::addMortarTang(double fact, bool initialStiff)
             double aFacet = 0.0;
             for (int J = 0; J < npsS; J++) aFacet += D[I][J];
             if (aFacet <= 1e-300) continue;
-            LadrunoContactDomain::MortarNormalState &st =
+            const LadrunoContactDomain::MortarNormalState &nst =
                 cd->getOrCreateMortarNormalState(contactTag, mortarSlave[I]->getTag());
-            double pr = st.lambdaN + kn * (g[I] / aFacet);
+            double pr = nst.lambdaN + kn * (g[I] / aFacet);
+            double N_I = -pr, knN = kn, chiI = 1.0, dchiI = 0.0;   // ADR-159: smoothed below
+            if (smoothBand > 0.0) {
+                double dP;
+                mortarSmoothLaw(pr, N_I, dP, chiI, dchiI);
+                if (N_I <= 0.0) continue;             // open beyond the band
+                knN = kn * dP;                        // dN/dz of the smoothed law (the Csl slope)
+            } else
             if (pr >= 0.0) continue;                  // friction only on in-contact nodes
-            double N_I = -pr;
+            // ADR-157: friction path state per (slave node, facet PAIR) — never shared across pairs.
+            LadrunoContactDomain::MortarFrictionState &st = cd->getOrCreateMortarFrictionState(
+                contactTag, mortarSlave[I]->getTag(), slaveFacetIndex, masterFacetIndex);
             // displacement-based tangential slip (same as the residual), engagement-referenced.
             double r[3] = {0, 0, 0};
             for (int J = 0; J < npsS; J++)
@@ -2787,9 +2846,34 @@ LadrunoContactFE::addMortarTang(double fact, bool initialStiff)
             // Needs FullGeneral/UmfPack; default false ⇒ the symmetric tangent (solver-safe). Forced
             // symmetric on the initial-stiffness path (stick, no slip ⇒ no Csl).
             bool useConsistent = consistentTan && !initialStiff;
-            LadrunoFrictionKernel::frictionTangentBlock(gtForKss, st.gpT, n, N_I, kn, kt, mu,
+            if (smoothSlip > 0.0)                     // ADR-159: the rounded corner's tangent
+                LadrunoFrictionKernel::frictionTangentBlockSmooth(gtForKss, st.gpT, n, N_I, knN, kt,
+                                                                  mu, useConsistent, Kss,
+                                                                  mortarCohesion, mortarTauMax,
+                                                                  smoothSlip);
+            else
+            LadrunoFrictionKernel::frictionTangentBlock(gtForKss, st.gpT, n, N_I, knN, kt, mu,
                                                         useConsistent, Kss,
                                                         mortarCohesion, mortarTauMax);
+            if (smoothBand > 0.0) {
+                // ADR-159: d(chi*tF)/du = chi*dtF/du + tF (x) dchi/du. Scale the block by chi and, on
+                // the consistent path, add the onset coupling kn*chi'(x)*tF (x) n (NON-symmetric; the
+                // b_IA b_IB / a_I scatter below supplies dz/du = -b n / a). tF = the UNSCALED traction.
+                for (int i = 0; i < 3; i++)
+                    for (int j = 0; j < 3; j++) Kss[i][j] *= chiI;
+                if (useConsistent && dchiI > 0.0) {
+                    double tF[3], gpTr[3];
+                    if (smoothSlip > 0.0)
+                        LadrunoFrictionKernel::frictionReturnMapSmooth(gTeff, st.gpT, N_I, kt, mu, tF,
+                                                                       gpTr, mortarCohesion,
+                                                                       mortarTauMax, smoothSlip);
+                    else
+                        LadrunoFrictionKernel::frictionReturnMap(gTeff, st.gpT, N_I, kt, mu, tF, gpTr,
+                                                                 mortarCohesion, mortarTauMax);
+                    for (int i = 0; i < 3; i++)
+                        for (int j = 0; j < 3; j++) Kss[i][j] += kn * dchiI * tF[i] * n[j];
+                }
+            }
             // scatter: tang(3A+i,3B+j) += fact·(b_IA b_IB / a_I)·K_ss[i][j]
             for (int A = 0; A < nN; A++) {
                 double bIA = (A < npsS) ? D[I][A] : -M[I][A - npsS];

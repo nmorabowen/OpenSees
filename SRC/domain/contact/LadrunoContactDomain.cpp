@@ -527,6 +527,54 @@ LadrunoContactDomain::setMortarContactOptions(int tag, int augmentMode, double m
     return 0;
 }
 
+// ADR-159 (pile-contact R0.8) -- the smoothed contact law on an already-added mortar contact. The
+// choke point for Py + Tcl + unpackDefinitions; every refusal is named (never a silent no-op).
+int
+LadrunoContactDomain::setMortarSmoothing(int tag, double smoothN, double smoothT)
+{
+    MortarContact *m = 0;
+    for (size_t i = 0; i < theMortarContacts.size(); i++)
+        if (theMortarContacts[i].tag == tag) { m = &theMortarContacts[i]; break; }
+    if (m == 0) {
+        opserr << "WARNING LadrunoContactDomain::setMortarSmoothing() - contact " << tag
+               << " is not a -mortar contact\n";
+        return -1;
+    }
+    if (smoothN < 0.0 || smoothT < 0.0 || smoothT >= 1.0) {
+        opserr << "WARNING LadrunoContactDomain::setMortarSmoothing() - contact " << tag
+               << ": -smoothN needs a band g0 > 0 and -smoothT a ratio 0 < r < 1 (ADR-159)\n";
+        return -1;
+    }
+    if (smoothN == 0.0 && smoothT == 0.0) {        // nothing requested (the unpack of a plain record)
+        m->smoothN = 0.0; m->smoothT = 0.0;
+        return 0;
+    }
+    if (m->isTie) {
+        opserr << "WARNING LadrunoContactDomain::setMortarSmoothing() - contact " << tag
+               << ": -smoothN/-smoothT do not apply to -tie (a bond has no active set and no "
+                  "stick/slip switch to smooth; ADR-159)\n";
+        return -1;
+    }
+    if (m->augmentMode != AUG_NEVER) {
+        // The smoothed law is a PENALTY law: with the Uzawa update lambda <- -P(x) the fixed point of a
+        // node whose pressure is below epsN*g0 is an OPEN gap held by a positive pressure, i.e. the
+        // smoothing would no longer vanish as the multiplier converges. Refused rather than defined.
+        opserr << "WARNING LadrunoContactDomain::setMortarSmoothing() - contact " << tag
+               << ": -smoothN/-smoothT are pure-penalty laws; add -augment never (the commit-cycle "
+                  "Uzawa/ALM is not defined for the smoothed law; ADR-159)\n";
+        return -1;
+    }
+    if (smoothT > 0.0 && m->mu <= 0.0 && m->cohesion <= 0.0 && m->tauMax <= 0.0) {
+        opserr << "WARNING LadrunoContactDomain::setMortarSmoothing() - contact " << tag
+               << ": -smoothT smooths the stick/slip corner, but this contact has no friction "
+                  "(-mu/-cohesion); remove -smoothT (ADR-159)\n";
+        return -1;
+    }
+    m->smoothN = smoothN;
+    m->smoothT = smoothT;
+    return 0;
+}
+
 int
 LadrunoContactDomain::addRigidPlane(int tag, int slaveSurfTag,
                                     const double p0[3], const double n[3], double kn, double muc,
@@ -590,7 +638,11 @@ LadrunoContactDomain::addRigidPlane(int tag, int slaveSurfTag,
 // bump FMT_VERSION if a lane grows a field, and the unpack refuses a version it does not know.
 
 namespace {
-    const int LCD_FMT_VERSION  = 4;    // ADR-155 -- BUMPED 3 -> 4 with the mortar-record growth
+    const int LCD_FMT_VERSION  = 5;    // ADR-159 -- BUMPED 4 -> 5 with the mortar-record growth
+                                       // (smoothN, smoothT). A v4 stream (ADR-155..158 builds) is
+                                       // still READ: its mortar records are 2 slots shorter and
+                                       // unpack as smoothN = smoothT = 0 (the shipped law).
+                                       // ADR-155 -- BUMPED 3 -> 4 with the mortar-record growth
                                        // (augmentMode, maxGap, gapOffset, adjust, adjustTol),
                                        // per the protocol above; a v3 stream draws the NAMED
                                        // version refusal. ADR-85 F1 -- BUMPED with the NTS-record growth below
@@ -604,7 +656,9 @@ namespace {
                                        // by name at unpackDefinitions() below.
     const int LCD_HDR_SLOTS    = 5;    // version, nSurf, nNts, nMortar, nPlanes
     const int LCD_NTS_SLOTS    = 22;   // ADR-85 F1 -- +1 (outwardWinding), appended at the tail
-    const int LCD_MORTAR_SLOTS = 43;   // ADR-155 -- +5 (augmentMode, maxGap, gapOffset, adjust,
+    const int LCD_MORTAR_SLOTS = 45;   // ADR-159 -- +2 (smoothN, smoothT), tail-appended.
+    const int LCD_MORTAR_SLOTS_V4 = 43;   // the v4 record, still accepted by unpackDefinitions
+                                       // ADR-155 -- +5 (augmentMode, maxGap, gapOffset, adjust,
                                        // adjustTol); ADR-85 T3 -- +1 (hThickness). Tail-appended
     const int LCD_PLANE_SLOTS  = 12;
 }
@@ -704,6 +758,8 @@ LadrunoContactDomain::packDefinitions(Vector &v) const
         v(p++) = m.gapOffset;
         v(p++) = m.adjust ? 1.0 : 0.0;
         v(p++) = m.adjustTol;
+        v(p++) = m.smoothN;   // ADR-159 -- appended at the tail
+        v(p++) = m.smoothT;
     }
     for (size_t i = 0; i < theRigidPlanes.size(); i++) {
         const RigidPlane &r = theRigidPlanes[i];
@@ -730,7 +786,9 @@ LadrunoContactDomain::unpackDefinitions(const Vector &v)
         return -1;
     }
     int p = 0, sz = v.Size();
-    if (sz < LCD_HDR_SLOTS || (int)v(0) != LCD_FMT_VERSION) {
+    // ADR-159: v5 is current; a v4 stream (no smoothN/smoothT) is still read.
+    int ver = (sz > 0) ? (int)v(0) : -1;
+    if (sz < LCD_HDR_SLOTS || (ver != LCD_FMT_VERSION && ver != 4)) {
         opserr << "WARNING LadrunoContactDomain::unpackDefinitions() - bad stream "
                   "(size " << sz << ", version " << (sz > 0 ? (int)v(0) : -1)
                << ", expected version " << LCD_FMT_VERSION << ")\n";
@@ -776,7 +834,7 @@ LadrunoContactDomain::unpackDefinitions(const Vector &v)
         theContacts.back().retired = retired;   // runtime datum; no add* parameter
     }
     for (int i = 0; i < nMor; i++) {
-        if (p + LCD_MORTAR_SLOTS > sz) goto short_stream;
+        if (p + ((ver == 4) ? LCD_MORTAR_SLOTS_V4 : LCD_MORTAR_SLOTS) > sz) goto short_stream;
         int tag = (int)v(p++), ms = (int)v(p++), ss = (int)v(p++);
         bool retired = (v(p++) != 0.0);
         double kn = v(p++);       bool knAuto = (v(p++) != 0.0);
@@ -811,8 +869,12 @@ LadrunoContactDomain::unpackDefinitions(const Vector &v)
                                    eEdge, eKn, eKnAuto, eBand, eMu, eKt, eCoh, eTau,
                                    eCTan, eSoft, eAlm, eAugTol, hThk) < 0)
             goto unpack_fail;
+        double smN = 0.0, smT = 0.0;   // ADR-159 -- absent from a v4 record
+        if (ver != 4) { smN = v(p++); smT = v(p++); }
         if (this->setMortarContactOptions(tag, augMode, maxGap, gapOff, adjust, adjTol) < 0)
             goto unpack_fail;   // ADR-155
+        if (this->setMortarSmoothing(tag, smN, smT) < 0)
+            goto unpack_fail;   // ADR-159
         theMortarContacts.back().retired = retired;
     }
     for (int i = 0; i < nPl; i++) {
@@ -931,6 +993,25 @@ LadrunoContactDomain::getOrCreateMortarNormalState(int contactTag, int slaveNode
     return theMortarNormalStates[k];
 }
 
+// ===================================================== ADR-157 per-facet-pair mortar friction state
+LadrunoContactDomain::MortarFrictionState &
+LadrunoContactDomain::getOrCreateMortarFrictionState(int contactTag, int slaveNodeTag,
+                                                     int slaveFacet, int masterFacet)
+{
+    MortarPairKey k; k.c = contactTag; k.n = slaveNodeTag; k.sf = slaveFacet; k.mf = masterFacet;
+    // operator[] default-constructs a zeroed slot (engaged=false) when absent — the lazy
+    // create-at-first-activation contract of FrictionState / MortarNormalState.
+    return theMortarFrictionStates[k];
+}
+
+void
+LadrunoContactDomain::mortarFrictionGCMark(int contactTag, int slaveNodeTag, int slaveFacet,
+                                           int masterFacet)
+{
+    MortarPairKey k; k.c = contactTag; k.n = slaveNodeTag; k.sf = slaveFacet; k.mf = masterFacet;
+    liveMortarPairKeys.insert(k);
+}
+
 void
 LadrunoContactDomain::accumulateMortarGap(int contactTag, int slaveNodeTag, int feTag,
                                           double gtFacet, double aFacet, double epsN)
@@ -1023,6 +1104,7 @@ void
 LadrunoContactDomain::mortarNormalGCBegin(void)
 {
     liveNodeKeys.clear();
+    liveMortarPairKeys.clear();   // ADR-157
 }
 
 void
@@ -1044,6 +1126,15 @@ LadrunoContactDomain::mortarNormalGCEnd(void)
             ++it;
     }
     liveNodeKeys.clear();
+    // ADR-157 — prune friction slots no live frictional facet pair referenced this handle().
+    for (std::map<MortarPairKey, MortarFrictionState>::iterator it = theMortarFrictionStates.begin();
+         it != theMortarFrictionStates.end(); ) {
+        if (liveMortarPairKeys.find(it->first) == liveMortarPairKeys.end())
+            theMortarFrictionStates.erase(it++);
+        else
+            ++it;
+    }
+    liveMortarPairKeys.clear();
     // FE tags are reassigned each handle(), so the facet-contribution keys are NOT stable —
     // drop them all and zero the (transient) running gap sums on the survivors. The adapters
     // re-fill gtGlobal/aGlobal on the next getResidual sweep (delta from 0); only λ_N persists.
@@ -1281,6 +1372,18 @@ LadrunoContactDomain::commit(bool augmenting)
                     st.lambdaTie[d] += st.epsN * (st.rtGlobal[d] / st.aGlobal);
             continue;
         }
+        // (the C3.1-C3.3 friction promotion moved to the per-facet-pair loop below — ADR-157)
+        if (!aug || st.aGlobal <= 1e-300) continue;  // ADR-155 suppressed / unreferenced this step
+        double gbar = st.gtGlobal / st.aGlobal;
+        st.lambdaN = std::min(0.0, st.lambdaN + st.epsN * gbar);
+    }
+
+    // ADR-157 — mortar friction, per (slave node, facet pair). Capstone contract #1: every
+    // path-state store is iterated here AND in revertToLastCommit (and cleared in revertToStart).
+    for (std::map<MortarPairKey, MortarFrictionState>::iterator it = theMortarFrictionStates.begin();
+         it != theMortarFrictionStates.end(); ++it) {
+        MortarFrictionState &st = it->second;
+        const bool aug = noAug.empty() || noAug.find(it->first.c) == noAug.end();   // ADR-155 gate
         // C3.1 — promote the trial tangential slip (penalty friction; the EmbeddedRebar/NTS
         // FrictionState precedent). Done for every slot regardless of normal activity.
         for (int d = 0; d < 3; d++) st.gpT[d] = st.gpTtrial[d];
@@ -1292,9 +1395,6 @@ LadrunoContactDomain::commit(bool augmenting)
         // C3.2 (MAJOR-2) — commit the engagement origin so a later rejected step can revert it.
         for (int d = 0; d < 3; d++) st.gT0committed[d] = st.gT0[d];
         st.engagedCommitted = st.engaged;
-        if (!aug || st.aGlobal <= 1e-300) continue;  // ADR-155 suppressed / unreferenced this step
-        double gbar = st.gtGlobal / st.aGlobal;
-        st.lambdaN = std::min(0.0, st.lambdaN + st.epsN * gbar);
     }
 
     // ADR-57 E2/E3/E6 — edge-edge slots. The shipped commit loop iterates only friction + mortar slots,
@@ -1346,9 +1446,10 @@ LadrunoContactDomain::revertToLastCommit(void)
     // untouched on revert, the C2.2 invariant; only the friction trial needs reverting).
     // C3.2 (MAJOR-2) — also restore the engagement origin gT0/engaged from the committed copy, so
     // a rejected implicit step does not latch a stale origin captured at the rejected config.
-    for (std::map<NodeKey, MortarNormalState>::iterator it = theMortarNormalStates.begin();
-         it != theMortarNormalStates.end(); ++it) {
-        MortarNormalState &st = it->second;
+    // ADR-157 — the friction state is per (slave node, facet pair) now.
+    for (std::map<MortarPairKey, MortarFrictionState>::iterator it = theMortarFrictionStates.begin();
+         it != theMortarFrictionStates.end(); ++it) {
+        MortarFrictionState &st = it->second;
         for (int d = 0; d < 3; d++) {
             st.gpTtrial[d] = st.gpT[d];
             st.gT0[d] = st.gT0committed[d];
@@ -1386,6 +1487,7 @@ LadrunoContactDomain::revertToStart(void)
     // by-construction-pristine reset. The definitions (surfaces/contacts) are untouched.
     theFrictionStates.clear();
     theMortarNormalStates.clear();
+    theMortarFrictionStates.clear();    // ADR-157 per-facet-pair mortar friction state
     theEdgeEdgeStates.clear();
     theMortarFacetContribs.clear();
     theNtsForce.clear();                // B3 force snapshots (side-channel, re-written per step)

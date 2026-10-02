@@ -87,6 +87,18 @@ bodies are seen whole).
                 above):
                     // ladruno-lint: sequence-ok <reason>
 
+  L9 dead-decl  A declaration that is the WHOLE unbraced body of an if / else / for /
+                while and SHADOWS a parameter or local declared earlier in the same
+                function (`Vector r(6); if (p > small) Vector r = dev / p;`). The new
+                variable dies at the `;`, so the outer one keeps its old value. (An
+                unshadowed one is left alone: vanilla Domain::initialize declares
+                `Matrix initM(ele->getInitialStiff())` as a loop body on purpose.) Vanilla ManzariDafalias::ForwardEuler
+                (IntScheme 5) had exactly this: its `r` stayed zero and every (n:r)
+                term of the plastic multiplier vanished (WP-158; upstream has it
+                too). Scans every SRC file, vanilla included. Waive the statement
+                (its lines or the line above):
+                    // ladruno-lint: decl-ok <reason>
+
   L3 pointers   Every `Quirks: "..."` pointer in .claude/skills/*/SKILL.md must
                 still match text in LEDGER_quirks.md.
 
@@ -117,7 +129,7 @@ Usage:
     python ci/check_quirk_patterns.py --only L1,L2
     python ci/check_quirk_patterns.py --root DIR   # scan another tree (e.g. a git archive)
     python ci/check_quirk_patterns.py --list-waivers
-  L9 revert     A fork-stamped integrator that defines newStep() or update(),
+  L10 revert    A fork-stamped integrator that defines newStep() or update(),
                 owns Vector* members, and inherits IncrementalIntegrator's
                 NO-OP revertToLastStep() (no class on its chain up to the
                 integrator base declares one). On a failed step the analysis
@@ -139,7 +151,7 @@ STAMP = "LADRUNO-HEADER-START"
 MIN_REASON = 12
 SUFFIXES = (".cpp", ".h", ".hpp", ".cc", ".cxx")
 
-WAIVER = re.compile(r"//\s*ladruno-lint:\s*(rayleigh-ok|wipe-ok|commit-ok|double-ok|sign-ok|sequence-ok|revert-ok)\b(.*)$")
+WAIVER = re.compile(r"//\s*ladruno-lint:\s*(rayleigh-ok|wipe-ok|commit-ok|double-ok|sign-ok|sequence-ok|decl-ok|revert-ok)\b(.*)$")
 RAYLEIGH = re.compile(r"(?:\bthis\s*->\s*)?\bgetRayleighDampingForces\s*\(\s*\)")
 SINGLETON = re.compile(r"\bstatic\s+([A-Za-z_]\w*)\s*&\s*instance\s*\(")
 RESET_CALL = re.compile(r"\b([A-Za-z_]\w*)::instance\s*\(\s*\)\s*(?:\.|->)\s*reset\w*\s*\(")
@@ -828,6 +840,53 @@ def check_sequence(root, rel, used_waivers=None):
     return findings
 
 
+# --------------------------------------------------------------------------
+# L9
+# --------------------------------------------------------------------------
+DEAD_DECL = re.compile(
+    r"(?:(?:const|static|unsigned|signed|long|short|volatile)\s+)*"
+    r"(?P<type>[A-Za-z_][\w:]*)(?:\s*<[^;]*>)?(?:\s+|\s*[*&]+\s*)(?P<name>[A-Za-z_]\w*)\s*(?:=|\(|\{|\[|$)", re.S)
+NOT_A_TYPE = {"return", "delete", "throw", "goto", "case", "new", "else", "do", "typedef", "using",
+              "break", "continue", "sizeof", "co_return", "co_yield", "if", "for", "while", "switch"}
+
+
+def _declared_before(cl, f, line, name):
+    """True if `name` is declared (a parameter or a local) in function f before `line`."""
+    text = " ".join(cl[f.start:line])      # up to, not including, the statement's first line
+    pat = re.compile(r"(?P<t>[A-Za-z_][\w:]*(?:\s*<[^;{}]*>)?)\s*[*&]*\s+[*&]*\b" + re.escape(name)
+                     + r"\s*[=({\[;,)]")
+    return any(mm.group("t") not in NOT_A_TYPE for mm in pat.finditer(text))
+
+
+def check_dead_decl(root, rel, used_waivers=None):
+    findings = []
+    used = set() if used_waivers is None else used_waivers
+    for path, raw, cl in _sources(root, stamped_only=False):
+        for f in functions(cl):
+            for stmt, a, b in statements(cl, f):
+                body = strip_prefix(stmt)
+                if body == stmt or body.endswith("{"):    # not under a control prefix, or a braced block
+                    continue
+                m = DEAD_DECL.match(body)
+                if not m or m.group("type") in NOT_A_TYPE:
+                    continue
+                if not _declared_before(cl, f, a, m.group("name")):
+                    continue            # nothing shadowed (vanilla Domain::initialize forms Ki this way)
+                wl, reason = waiver_at(raw, b, "decl-ok", above=b - a + 1)
+                if wl is not None:
+                    used.add((str(path), wl))
+                    if len(reason) >= MIN_REASON:
+                        continue
+                    findings.append(f"L9 {rel(path)}:{a + 1}: decl-ok waiver reason too short")
+                    continue
+                findings.append(
+                    f"L9 {rel(path)}:{a + 1}: {f.name} re-declares '{m.group('name')}' as the whole unbraced "
+                    "body of an if/else/for/while -- the new variable dies at the ';' and the outer "
+                    f"'{m.group('name')}' is never assigned (ManzariDafalias::ForwardEuler's 'Vector r', WP-158). "
+                    "Assign instead of declaring, or waive with '// ladruno-lint: decl-ok <reason>'")
+    return findings
+
+
 def check_stale_waivers(root, rel, used):
     findings = []
     for path, raw, _ in _sources(root, stamped_only=True, needles=("ladruno-lint",)):
@@ -867,7 +926,7 @@ def check_pointers(root, rel):
 
 
 # --------------------------------------------------------------------------
-# L9
+# L10
 # --------------------------------------------------------------------------
 INTEGRATOR_BASES = ("IncrementalIntegrator", "TransientIntegrator", "StaticIntegrator")
 OWN_VECTOR = re.compile(r"\bVector\s*\*\s*\w+\s*[;,=]")
@@ -921,10 +980,10 @@ def check_revert(root, rel, used_waivers=None):
                 used.add((str(hpath), wl))
                 if len(reason) >= MIN_REASON:
                     continue
-                findings.append(f"L9 {rel(hpath)}:{decl + 1}: revert-ok waiver reason too short for {cls}")
+                findings.append(f"L10 {rel(hpath)}:{decl + 1}: revert-ok waiver reason too short for {cls}")
                 continue
             findings.append(
-                f"L9 {rel(hpath)}:{decl + 1}: {cls} advances its own state in newStep()/update() but "
+                f"L10 {rel(hpath)}:{decl + 1}: {cls} advances its own state in newStep()/update() but "
                 "inherits IncrementalIntegrator's no-op revertToLastStep() -- a step retried after a "
                 "failure marches from state that was never committed; override it, or waive with "
                 "'// ladruno-lint: revert-ok <reason>'")
@@ -1022,7 +1081,7 @@ def list_waivers(root, rel):
 def main():
     ap = argparse.ArgumentParser(description="Quirk-pattern gate (WP-115).")
     ap.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent)
-    ap.add_argument("--only", default="L1,L2,L3,L4,L5,L6,L7,L8,L9", help="comma list of L1..L9")
+    ap.add_argument("--only", default="L1,L2,L3,L4,L5,L6,L7,L8,L9,L10", help="comma list of L1..L10")
     ap.add_argument("--list-waivers", action="store_true")
     args = ap.parse_args()
     root = args.root.resolve()
@@ -1052,8 +1111,10 @@ def main():
     if "L7" in wanted:
         findings += check_sequence(root, rel, used)
     if "L9" in wanted:
+        findings += check_dead_decl(root, rel, used)
+    if "L10" in wanted:
         findings += check_revert(root, rel, used)
-    if {"L1", "L2", "L4", "L5", "L6", "L7", "L9"} <= wanted:    # stale detection needs every waiver consumer
+    if {"L1", "L2", "L4", "L5", "L6", "L7", "L9", "L10"} <= wanted:    # stale detection needs every waiver consumer
         findings += check_stale_waivers(root, rel, used)
     if "L3" in wanted:
         findings += check_pointers(root, rel)

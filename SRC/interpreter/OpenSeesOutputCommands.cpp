@@ -656,6 +656,12 @@ static int ladrunoContactImpl()
     bool   hasR05 = false;
     double maxGap = 0.0, gapOffset = 0.0, adjustTol = 0.0;
     bool   adjust = false;
+    // Ladruno ADR-159 (pile-contact R0.8) -- the smoothed contact law, two opt-in -mortar options;
+    // both absent => setMortarSmoothing is never called => byte-identical.
+    //   -smoothN <g0> : C1 quadratic normal onset over |gap| < g0 (a LENGTH) + a C1 friction onset
+    //   -smoothT <r>  : the stick/slip corner rounded over |‖tT*‖ - cap| < r*cap (0 < r < 1)
+    // Pure-penalty laws: they need -augment never (refused otherwise, at the setter).
+    double smoothN = 0.0, smoothT = 0.0;
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
         if (opt != 0 && strcmp(opt, "-mortar") == 0) {
@@ -671,6 +677,16 @@ static int ladrunoContactImpl()
                 return -1;
             }
             hasR05 = true;
+        } else if (opt != 0 && (strcmp(opt, "-smoothN") == 0 || strcmp(opt, "-smoothT") == 0)) {
+            // Ladruno ADR-159: the smoothed normal onset band g0 (> 0) / the slip-corner ratio r.
+            bool isN = (strcmp(opt, "-smoothN") == 0);
+            double v[1]; int m = 1;
+            if (OPS_GetDoubleInput(&m, v) < 0 || v[0] <= 0.0 || (!isN && v[0] >= 1.0)) {
+                opserr << (isN ? "WARNING contact -smoothN - need a band g0 > 0 (a length; ADR-159)\n"
+                               : "WARNING contact -smoothT - need a ratio 0 < r < 1 (ADR-159)\n");
+                return -1;
+            }
+            (isN ? smoothN : smoothT) = v[0];
         } else if (opt != 0 && strcmp(opt, "-maxGap") == 0) {
             // Ladruno ADR-155 (N-1): the mortar pairing guard distance (> 0).
             double v[1]; int m = 1;
@@ -1116,6 +1132,19 @@ static int ladrunoContactImpl()
                   "(ADR-155); add -mortar or remove them\n";
         return -1;
     }
+    // Ladruno ADR-159 -- the smoothed law is a 3D-mortar penalty option. NTS has its own kernel (not
+    // smoothed in this slice), and the explicit SOFT=2 / viscous D2.2 paths keep the shipped clamp.
+    if ((smoothN > 0.0 || smoothT > 0.0) && !isMortar) {
+        opserr << "WARNING contact -smoothN/-smoothT are -mortar options (ADR-159); add -mortar or "
+                  "remove them\n";
+        return -1;
+    }
+    if ((smoothN > 0.0 || smoothT > 0.0) && (softScale > 0.0 || muc > 0.0)) {
+        opserr << "WARNING contact -smoothN/-smoothT are not defined with -soft or -visc (the SOFT=2 "
+                  "explicit penalty and the viscous normal damper keep the unsmoothed active set; "
+                  "ADR-159)\n";
+        return -1;
+    }
     if (isTie && (gapOffset != 0.0 || adjust)) {
         opserr << "WARNING contact -gapOffset/-adjust do not apply to -tie: a tie bonds the "
                   "relative displacement, so the as-meshed gap is already strain-free (ADR-155)\n";
@@ -1285,6 +1314,10 @@ static int ladrunoContactImpl()
         if (mres == 0 && hasR05)
             mres = cd->setMortarContactOptions(idata[0], augmentMode, maxGap, gapOffset,
                                                adjust, adjustTol);
+        // Ladruno ADR-159: the smoothed law (only when given => byte-identical otherwise). The setter
+        // names every refusal (-tie, an augmenting contact, -smoothT without friction).
+        if (mres == 0 && (smoothN > 0.0 || smoothT > 0.0))
+            mres = cd->setMortarSmoothing(idata[0], smoothN, smoothT);
         return mres;
     }
     // D2: -visc μ_c (NTS viscous normal stabilization; 0 ⇒ off, byte-identical).

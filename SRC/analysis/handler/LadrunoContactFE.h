@@ -232,6 +232,10 @@ class LadrunoContactFE : public FE_Element
     // ADR-155 (G-9) -- arm the 3D mortar gap shift on this adapter (called by the handler right
     // after construction when the contact declared -gapOffset and/or -adjust). Never called => inert.
     void setMortarGapShift(double gapOffset, bool adjust, double adjustTol);
+    // Ladruno ADR-159 -- arm the smoothed (C1) normal law and/or the smoothed stick/slip corner on
+    // this 3D mortar adapter (called by the handler when the contact declared -smoothN/-smoothT).
+    // Never called => inert (smoothBand == smoothSlip == 0 => the shipped code path, byte-identical).
+    void setMortarSmoothing(double smoothN, double smoothT);
 
     // Ladruno (ADR-96, passenger DOFs): fill myID from each node's FIRST ndm
     // equations (the translations, first by the fork's ndf convention) instead
@@ -254,6 +258,11 @@ class LadrunoContactFE : public FE_Element
     // gated P3). NOT called ⇒ useSmoothNormal stays false ⇒ the faceted path ⇒ byte-identical.
     // se = this segment's nps shared-edge flags (ADR-63 P2.1 facet-ownership guard); 0 ⇒ no guard.
     void setSmoothNormals(const double *nn, const int *se = 0);
+
+    // ADR-157 (MORTAR mode): the GLOBAL master-facet ordinal of this (slave facet, master facet)
+    // pair. With slaveFacetIndex it keys the per-(slave node, facet pair) friction state on the
+    // Domain (MortarFrictionState). The handler calls it right after construction.
+    void setMortarMasterFacet(int mf) { masterFacetIndex = mf; }
 
     // getTangent routes through the integrator's formEleTangent so the INTEGRATOR
     // decides what to assemble (CDL -> addMtoTang only -> no contact stiffness in
@@ -501,6 +510,7 @@ class LadrunoContactFE : public FE_Element
     Node *mortarMaster[4];  // master facet nodes
     int npsS, npsM;         // slave / master nodes-per-facet
     int slaveFacetIndex;    // GLOBAL slave-facet ordinal (rebuild-stable; C2.2 λ_N key)
+    int masterFacetIndex = -1;  // ADR-157: GLOBAL master-facet ordinal (rebuild-stable; friction key)
 
     // ADR-57 E2 EDGE_EDGE binding (mode == EDGE_EDGE). The 4-node edge pair [sa, sb | ma, mb];
     // epsN rides `kn`, contactTag keys the Domain-owned EdgeEdgeState (with the ordered node tags).
@@ -554,6 +564,18 @@ class LadrunoContactFE : public FE_Element
     mutable bool   gapShiftRefReady = false;
     mutable double gapShiftRef[4]   = {0.0, 0.0, 0.0, 0.0};   // -gbar_I at the reference config
 
+    // Ladruno ADR-159 -- the smoothed contact law (3D mortar, opt-in; NSDMI => inert).
+    //  smoothBand (= -smoothN g0 > 0, a LENGTH): the normal pressure P(x), x = -(lambda + epsN*gbar),
+    //    is the C1 quadratic onset P = (x+S)^2/(4S) over |x| < S = epsN*g0 (0 below, the ramp x
+    //    above), and the friction traction is scaled by the C1 onset chi(x) = t^2(3-2t),
+    //    t = (x+S)/(2S) clamped to [0,1]. Outside the band both are the shipped law exactly.
+    //  smoothSlip (= -smoothT r > 0, dimensionless): the stick/slip corner of the return map is
+    //    rounded over |‖tT*‖ - cap| < r*cap (LadrunoFrictionKernel::frictionReturnMapSmooth).
+    double smoothBand = 0.0;
+    double smoothSlip = 0.0;
+    // P, dP/dx, chi, dchi/dx of the smoothed law at the augmented pressure argument pr (= -x).
+    void mortarSmoothLaw(double pr, double &P, double &dP, double &chi, double &dchi) const;
+
     // ADR-85 T3 -- 2D MORTAR bindings (mode == MORTAR, ndm == 2). NSDMI so every 3D
     // MORTAR ctor call leaves them at their default/inert value, untouched (the T1b
     // nts2dSigma/nts2dLref NSDMI pattern generalized to MORTAR mode).
@@ -575,7 +597,8 @@ class LadrunoContactFE : public FE_Element
     // shipped return map (engagement origin + committed slip on the Domain), and scatters the
     // tangential traction via D/M exactly like the normal force. cd = the (non-null) engine.
     void addMortarFriction(const double D[4][4], const double M[4][4], const double n[3],
-                           const double p_normal[4], class LadrunoContactDomain *cd);
+                           const double p_normal[4], class LadrunoContactDomain *cd,
+                           const double *chi = 0);   // Ladruno ADR-159: onset weights (0 => 1)
 
     // C4: assemble the MESH-TIE force into `resid`. For each slave node I build the FULL 3-vec
     // weighted relative DISPLACEMENT r_I = Σ_J D_IJ u_s,J − Σ_K M_IK u_m,K (from getTrialDisp — the

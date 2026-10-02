@@ -2000,6 +2000,13 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                                                  /*lane2DLive=*/true, &pairDim))
                     return ladrunoContactFatal();
             }
+            if (pairDim == 2 && (mc.smoothN > 0.0 || mc.smoothT > 0.0)) {
+                // ADR-159: the smoothed law is wired to the 3D mortar lane only. Named FATAL.
+                opserr << "FATAL LadrunoContactHandler::handle() - mortar contact " << mc.tag
+                       << ": -smoothN/-smoothT are 3D-mortar options (ADR-159); this pair is 2D. "
+                          "ABORTING\n";
+                return ladrunoContactFatal();
+            }
             if (pairDim == 2 &&
                 (mc.maxGap > 0.0 || mc.gapOffset != 0.0 || mc.adjust)) {
                 // ADR-155: -maxGap/-gapOffset/-adjust are wired to the 3D mortar lane only (the
@@ -2271,6 +2278,12 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                             mucH, ntsCoDeclared);
                         if (fe == 0) return -5;
                         theModel->addFE_Element(fe);
+                        // ADR-157: key this pair's friction state by (slave node, sf, seg).
+                        fe->setMortarMasterFacet(seg);
+                        if (wantFric) {
+                            cd->mortarFrictionGCMark(mc.tag, sNodes[0]->getTag(), sf, seg);
+                            cd->mortarFrictionGCMark(mc.tag, sNodes[1]->getTag(), sf, seg);
+                        }
                         // C2.2 twin: this pair's slave nodes have a live lambda_N slot this
                         // handle() (mortarNormalGCMark also covers the friction slot -- they
                         // share the SAME per-(contactTag,slaveNodeTag) MortarNormalState
@@ -2507,10 +2520,19 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     // ADR-155 (G-9): arm the normal-gap shift (off => never called => inert).
                     if (mc.gapOffset != 0.0 || mc.adjust)
                         fe->setMortarGapShift(mc.gapOffset, mc.adjust, mc.adjustTol);
+                    // ADR-159: arm the smoothed law (off => never called => inert).
+                    if (mc.smoothN > 0.0 || mc.smoothT > 0.0)
+                        fe->setMortarSmoothing(mc.smoothN, mc.smoothT);
                     theModel->addFE_Element(fe);
                     // C2.2: this pair's slave nodes have a live λ_N slot this handle().
                     for (int k = 0; k < npsS; k++)
                         cd->mortarNormalGCMark(mc.tag, sTags(sf * npsS + k));
+                    // ADR-157: key this pair's friction state by (slave node, sf, seg) — one slot
+                    // per (node, facet PAIR), so pairs sharing a slave node never overwrite each other.
+                    fe->setMortarMasterFacet(seg);
+                    if (wantFric)
+                        for (int k = 0; k < npsS; k++)
+                            cd->mortarFrictionGCMark(mc.tag, sTags(sf * npsS + k), sf, seg);
                 }
             }
         }
