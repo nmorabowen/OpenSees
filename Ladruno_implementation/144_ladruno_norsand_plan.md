@@ -193,6 +193,11 @@ are the contract (`o2_algo/kernel.py`, README).
   - `local_iters` counts are sums over sub-increments.
 - **Elastic/plastic decision:** trial threshold F_tr > 1e-10·|p0|. The neutral-loading tie-break uses
   hysteresis (sheet §9.1, §12).
+- **Specific volume: exponential update, v = v0·exp(tr ε), with dv/dε = v** (owner decision 2026-10-01, at
+  G2).
+  - It makes LogStrain(LadrunoNorSand) exact (v = v0·J) and leaves small strain unchanged to first order.
+  - G2 measured the old linear update v += v0·tr Δε under LogStrain at a gap of v0(1 + x − eˣ), x = ln J,
+    amplified about 25–30× into τ and π_i: 2.2e-3 at 20 % drained TXC, 5.6e-3 in TXE fork mode.
 - **v0 (the initial specific volume) is a separate committed state variable from v** (sheet §1.2). Neither
   oracle's `initial_state` accepts v0 ≠ v today; G1 patches it by hand. The C++ state, `sendSelf`/`recvSelf`,
   `revertToStart` and `getCopy` must carry v0 explicitly. A G2 test drives the public route with v0 ≠ v
