@@ -22,7 +22,7 @@
 // 2023 By Jose Abell and José Larenas @ Universidad de los Andes, Chile
 // www.joseabell.com | https://github.com/jaabell | jaabell@miuandes.cl
 // ============================================================================
-// Please read detailed description in SixNodeBoundryCondition.h.
+// Please read detailed description in ThermalBoundaryTri6.h.
 // ============================================================================
 
 #include <stdio.h>
@@ -36,7 +36,7 @@
 #include <Node.h>
 #include <Domain.h>
 #include <ErrorHandler.h>
-#include <SixNodeBoundryCondition.h>
+#include <ThermalBoundaryTri6.h>
 #include <Renderer.h>
 #include <ElementResponse.h>
 #include <Parameter.h>
@@ -47,12 +47,12 @@
 #include <elementAPI.h>
 #include <map>
 
-void* OPS_SixNodeBoundryCondition()
+void* OPS_ThermalBoundaryTri6()
 {
     if (OPS_GetNumRemainingInputArgs() < 7)
     {
         opserr << "WARNING insufficient arguments\n";
-        opserr << "Want: element SixNodeBoundryCondition eleTag? Node1? Node2? Node3? Node4? Node5? Node6? beta, k, tamb, th\n";
+        opserr << "Want: element ThermalBoundaryTri6 eleTag? Node1? Node2? Node3? Node4? Node5? Node6? beta, k, tamb, th\n";
         return 0;
     }
 
@@ -80,27 +80,26 @@ void* OPS_SixNodeBoundryCondition()
         }
     }
 
-    return new SixNodeBoundryCondition(idata[0], idata[1], idata[2], idata[3], idata[4], idata[5], idata[6], data[0], data[1], data[2], data[3]);
+    return new ThermalBoundaryTri6(idata[0], idata[1], idata[2], idata[3], idata[4], idata[5], idata[6], data[0], data[1], data[2], data[3]);
 }
 
 //static data
-double  SixNodeBoundryCondition::xl[3][NumNodes]                     ;
-Matrix  SixNodeBoundryCondition::stiff(NumDOFsTotal, NumDOFsTotal)   ;
-Vector  SixNodeBoundryCondition::resid(NumDOFsTotal)                 ;
-Matrix  SixNodeBoundryCondition::mass(NumDOFsTotal, NumDOFsTotal)    ;
+double  ThermalBoundaryTri6::xl[3][NumNodes]                     ;
+Matrix  ThermalBoundaryTri6::stiff(NumDOFsTotal, NumDOFsTotal)   ;
+Vector  ThermalBoundaryTri6::resid(NumDOFsTotal)                 ;
+Matrix  ThermalBoundaryTri6::mass(NumDOFsTotal, NumDOFsTotal)    ;
 
 //quadrature data
-const double  SixNodeBoundryCondition::alpha = 2.0 / 3.0 ;
-const double  SixNodeBoundryCondition::beta  = 1.0 / 6.0 ;
-const double  SixNodeBoundryCondition::sg[]  = { alpha, beta, beta } ;
-const double  SixNodeBoundryCondition::wg[]  = { 1.0 / 6.0 } ;
+const double  ThermalBoundaryTri6::alpha = 2.0 / 3.0 ;
+const double  ThermalBoundaryTri6::beta  = 1.0 / 6.0 ;
+const double  ThermalBoundaryTri6::sg[]  = { alpha, beta, beta } ;
+const double  ThermalBoundaryTri6::wg[]  = { 1.0 / 6.0 } ;
 
-// static Matrix B(NumStressComponents, NumDOFsPerNode) ;
-Matrix SixNodeBoundryCondition::B(NumStressComponents, NumDOFsPerNode) ;
+Matrix ThermalBoundaryTri6::B(NumStressComponents, NumDOFsPerNode) ;
 
 //null constructor
-SixNodeBoundryCondition::SixNodeBoundryCondition( )
-    : Element( 0, ELE_TAG_SixNodeBoundryCondition ),
+ThermalBoundaryTri6::ThermalBoundaryTri6( )
+    : Element( 0, ELE_TAG_ThermalBoundaryTri6 ),
       connectedExternalNodes(NumNodes),
       applyLoad(0), load(0), Ki(0)
 {
@@ -119,7 +118,7 @@ SixNodeBoundryCondition::SixNodeBoundryCondition( )
 //*********************************************************************
 
 //full constructor
-SixNodeBoundryCondition::SixNodeBoundryCondition(int tag,
+ThermalBoundaryTri6::ThermalBoundaryTri6(int tag,
         int node1,
         int node2,
         int node3,
@@ -130,7 +129,7 @@ SixNodeBoundryCondition::SixNodeBoundryCondition(int tag,
         double R,
         double tamb,
         double th)
-    : Element(tag, ELE_TAG_SixNodeBoundryCondition),
+    : Element(tag, ELE_TAG_ThermalBoundaryTri6),
       connectedExternalNodes(NumNodes), applyLoad(0), load(0), Ki(0)
 {
     B.Zero();
@@ -154,7 +153,7 @@ SixNodeBoundryCondition::SixNodeBoundryCondition(int tag,
 //******************************************************************
 
 //destructor
-SixNodeBoundryCondition::~SixNodeBoundryCondition( )
+ThermalBoundaryTri6::~ThermalBoundaryTri6( )
 {
     if (load != 0)
         delete load;
@@ -164,7 +163,7 @@ SixNodeBoundryCondition::~SixNodeBoundryCondition( )
 }
 
 //set domain
-void  SixNodeBoundryCondition::setDomain( Domain *theDomain )
+void  ThermalBoundaryTri6::setDomain( Domain *theDomain )
 {
     int i ;
 
@@ -178,44 +177,44 @@ void  SixNodeBoundryCondition::setDomain( Domain *theDomain )
 }
 
 //get the number of external nodes
-int  SixNodeBoundryCondition::getNumExternalNodes( ) const
+int  ThermalBoundaryTri6::getNumExternalNodes( ) const
 {
     return NumNodes ;
 }
 
 //return connected external nodes
-const ID&  SixNodeBoundryCondition::getExternalNodes( )
+const ID&  ThermalBoundaryTri6::getExternalNodes( )
 {
     return connectedExternalNodes ;
 }
 
 Node **
-SixNodeBoundryCondition::getNodePtrs(void)
+ThermalBoundaryTri6::getNodePtrs(void)
 {
     return nodePointers ;
 }
 
 //return number of dofs
-int  SixNodeBoundryCondition::getNumDOF( )
+int  ThermalBoundaryTri6::getNumDOF( )
 {
     return NumDOFsTotal ;
 }
 
 //commit state
-int  SixNodeBoundryCondition::commitState( )
+int  ThermalBoundaryTri6::commitState( )
 {
     int success = 0 ;
 
     // call element commitState to do any base class stuff
     if ((success = this->Element::commitState()) != 0) {
-        opserr << "SixNodeBoundryCondition::commitState () - failed in base class";
+        opserr << "ThermalBoundaryTri6::commitState () - failed in base class";
     }
 
     return success ;
 }
 
 //revert to last commit
-int  SixNodeBoundryCondition::revertToLastCommit( )
+int  ThermalBoundaryTri6::revertToLastCommit( )
 {
     int success = 0 ;
 
@@ -223,7 +222,7 @@ int  SixNodeBoundryCondition::revertToLastCommit( )
 }
 
 //revert to start
-int  SixNodeBoundryCondition::revertToStart( )
+int  ThermalBoundaryTri6::revertToStart( )
 {
     int success = 0 ;
 
@@ -231,10 +230,10 @@ int  SixNodeBoundryCondition::revertToStart( )
 }
 
 //print out element data
-void  SixNodeBoundryCondition::Print(OPS_Stream &s, int flag)
+void  ThermalBoundaryTri6::Print(OPS_Stream &s, int flag)
 {
     if (flag == 2) {
-        s << "#SixNodeBoundryCondition\n";
+        s << "#ThermalBoundaryTri6\n";
 
         int i;
         const int numNodes = NumNodes;
@@ -249,7 +248,7 @@ void  SixNodeBoundryCondition::Print(OPS_Stream &s, int flag)
     }
 
     if (flag == OPS_PRINT_CURRENTSTATE) {
-        s << "Standard SixNodeBoundryCondition \n";
+        s << "Standard ThermalBoundaryTri6 \n";
         s << "Element Number: " << this->getTag() << endln;
         s << "Nodes: " << connectedExternalNodes;
         s << endln;
@@ -259,7 +258,7 @@ void  SixNodeBoundryCondition::Print(OPS_Stream &s, int flag)
     if (flag == OPS_PRINT_PRINTMODEL_JSON) {
         s << "\t\t\t{";
         s << "\"name\": " << this->getTag() << ", ";
-        s << "\"type\": \"SixNodeBoundryCondition\", ";
+        s << "\"type\": \"ThermalBoundaryTri6\", ";
         s << "\"nodes\": [" << connectedExternalNodes(0) << ", ";
         for (int i = 1; i < 2; i++)
             s << connectedExternalNodes(i) << ", ";
@@ -268,7 +267,7 @@ void  SixNodeBoundryCondition::Print(OPS_Stream &s, int flag)
 }
 
 //return stiffness matrix
-const Matrix&  SixNodeBoundryCondition::getTangentStiff( )
+const Matrix&  ThermalBoundaryTri6::getTangentStiff( )
 {
     int tang_flag = 1 ; //get the tangent
 
@@ -279,7 +278,7 @@ const Matrix&  SixNodeBoundryCondition::getTangentStiff( )
 }
 
 //return initial matrix
-const Matrix&  SixNodeBoundryCondition::getInitialStiff( )
+const Matrix&  ThermalBoundaryTri6::getInitialStiff( )
 {
     if (Ki != 0)
         return *Ki;
@@ -391,7 +390,7 @@ const Matrix&  SixNodeBoundryCondition::getInitialStiff( )
 }
 
 //return mass matrix
-const Matrix&  SixNodeBoundryCondition::getMass( )
+const Matrix&  ThermalBoundaryTri6::getMass( )
 {
     int tangFlag = 1 ;
 
@@ -400,7 +399,7 @@ const Matrix&  SixNodeBoundryCondition::getMass( )
     return mass ;
 }
 
-void  SixNodeBoundryCondition::zeroLoad( )
+void  ThermalBoundaryTri6::zeroLoad( )
 {
     if (load != 0)
         load->Zero();
@@ -412,7 +411,7 @@ void  SixNodeBoundryCondition::zeroLoad( )
 }
 
 int
-SixNodeBoundryCondition::addLoad(ElementalLoad *theLoad, double loadFactor)
+ThermalBoundaryTri6::addLoad(ElementalLoad *theLoad, double loadFactor)
 {
     int type;
     const Vector &data = theLoad->getData(type, loadFactor);
@@ -420,13 +419,11 @@ SixNodeBoundryCondition::addLoad(ElementalLoad *theLoad, double loadFactor)
 
     if (type == LOAD_TAG_ThermalBoundaryConditionTemperature) {
         double T_inf = data(0);
-        // opserr << "Setting temp @ ele # " << this->getTag() << " from " << inp_info[2] << " to " << T_inf << endln;
         inp_info[2] = T_inf;
         applyLoad = 1;
-        // appliedQ += loadFactor * (inp_info[0] * inp_info[2] + inp_info[1]) ;
         return 0;
     } else {
-        opserr << "SixNodeBoundryCondition::addLoad() - ele with tag: " << this->getTag() << " does not deal with load type: " << type << "\n";
+        opserr << "ThermalBoundaryTri6::addLoad() - ele with tag: " << this->getTag() << " does not deal with load type: " << type << "\n";
         return -1;
     }
 
@@ -434,13 +431,13 @@ SixNodeBoundryCondition::addLoad(ElementalLoad *theLoad, double loadFactor)
 }
 
 int
-SixNodeBoundryCondition::addInertiaLoadToUnbalance(const Vector &accel)
+ThermalBoundaryTri6::addInertiaLoadToUnbalance(const Vector &accel)
 {
     return 0;
 }
 
 //get residual
-const Vector&  SixNodeBoundryCondition::getResistingForce( )
+const Vector&  ThermalBoundaryTri6::getResistingForce( )
 {
     int tang_flag = 1 ; // get the tangent
 
@@ -454,7 +451,7 @@ const Vector&  SixNodeBoundryCondition::getResistingForce( )
 }
 
 //get residual with inertia terms
-const Vector&  SixNodeBoundryCondition::getResistingForceIncInertia( )
+const Vector&  ThermalBoundaryTri6::getResistingForceIncInertia( )
 {
     static Vector res(6); res.Zero();
 
@@ -477,13 +474,13 @@ const Vector&  SixNodeBoundryCondition::getResistingForceIncInertia( )
 //*********************************************************************
 
 //form inertia terms
-void   SixNodeBoundryCondition::formInertiaTerms( int tangFlag )
+void   ThermalBoundaryTri6::formInertiaTerms( int tangFlag )
 {
     mass.Zero( ) ;
 }
 
 //form residual and tangent
-void   SixNodeBoundryCondition::formResidAndTangent( int tangFlag )
+void   ThermalBoundaryTri6::formResidAndTangent( int tangFlag )
 {
     static const int ndm = 3 ;
 
@@ -566,8 +563,6 @@ void   SixNodeBoundryCondition::formResidAndTangent( int tangFlag )
         jj = 0 ;
         for ( j = 0; j < numberNodes; j++ )
         {
-            // resid( jj  ) -= dvol[i] * ( (inp_info[0] * inp_info[2] + inp_info[1]) ) * shp[2][j] ;
-            // temp = shp[stiffIndex][j] * dvol[i] * inp_info[0] * inp_info[3] ;
             temp = shp[stiffIndex][j] * dvol[i]  ;
             // inp_info[0] = Beta S
             // inp_info[1] = R
@@ -611,7 +606,7 @@ void   SixNodeBoundryCondition::formResidAndTangent( int tangFlag )
 
 //form residual and tangent
 int
-SixNodeBoundryCondition::update(void)
+ThermalBoundaryTri6::update(void)
 {
     return 0;
 }
@@ -620,7 +615,7 @@ SixNodeBoundryCondition::update(void)
 //************************************************************************
 
 //compute local coordinates and basis
-void   SixNodeBoundryCondition::computeBasis( )
+void   ThermalBoundaryTri6::computeBasis( )
 {
     //nodal coordinates
     int i ;
@@ -636,7 +631,7 @@ void   SixNodeBoundryCondition::computeBasis( )
 
 //compute B
 const Matrix&
-SixNodeBoundryCondition::computeB( int node, const double shp[3][NumNodes] )
+ThermalBoundaryTri6::computeB( int node, const double shp[3][NumNodes] )
 {
     //--------------------------------------------------------------------
     //
@@ -655,7 +650,7 @@ SixNodeBoundryCondition::computeB( int node, const double shp[3][NumNodes] )
 
 //**********************************************************************
 
-int  SixNodeBoundryCondition::sendSelf (int commitTag, Channel &theChannel)
+int  ThermalBoundaryTri6::sendSelf (int commitTag, Channel &theChannel)
 {
     int res = 0;
 
@@ -669,6 +664,7 @@ int  SixNodeBoundryCondition::sendSelf (int commitTag, Channel &theChannel)
 
     // Now quad sends the ids of its materials
     static ID idData(26);
+    idData(0) = this->getTag();
 
     idData(20) = connectedExternalNodes(0);
     idData(21) = connectedExternalNodes(1);
@@ -679,7 +675,7 @@ int  SixNodeBoundryCondition::sendSelf (int commitTag, Channel &theChannel)
 
     res += theChannel.sendID(dataTag, commitTag, idData);
     if (res < 0) {
-        opserr << "WARNING SixNodeBoundryCondition::sendSelf() - " << this->getTag() << " failed to send ID\n";
+        opserr << "WARNING ThermalBoundaryTri6::sendSelf() - " << this->getTag() << " failed to send ID\n";
         return res;
     }
 
@@ -694,14 +690,14 @@ int  SixNodeBoundryCondition::sendSelf (int commitTag, Channel &theChannel)
     dData(7) = inp_info[3];
 
     if (theChannel.sendVector(dataTag, commitTag, dData) < 0) {
-        opserr << "SixNodeBoundryCondition::sendSelf() - failed to send double data\n";
+        opserr << "ThermalBoundaryTri6::sendSelf() - failed to send double data\n";
         return -1;
     }
 
     return res;
 }
 
-int  SixNodeBoundryCondition::recvSelf (int commitTag,
+int  ThermalBoundaryTri6::recvSelf (int commitTag,
                                    Channel &theChannel,
                                    FEM_ObjectBroker &theBroker)
 {
@@ -712,15 +708,15 @@ int  SixNodeBoundryCondition::recvSelf (int commitTag,
     static ID idData(26);
     res += theChannel.recvID(dataTag, commitTag, idData);
     if (res < 0) {
-        opserr << "WARNING SixNodeBoundryCondition::recvSelf() - " << this->getTag() << " failed to receive ID\n";
+        opserr << "WARNING ThermalBoundaryTri6::recvSelf() - " << this->getTag() << " failed to receive ID\n";
         return res;
     }
 
-    this->setTag(idData(26));
+    this->setTag(idData(0));
 
     static Vector dData(8);
     if (theChannel.recvVector(dataTag, commitTag, dData) < 0) {
-        opserr << "DispBeamColumn2d::sendSelf() - failed to recv double data\n";
+        opserr << "ThermalBoundaryTri6::recvSelf() - failed to recv double data\n";
         return -1;
     }
 
@@ -746,7 +742,7 @@ int  SixNodeBoundryCondition::recvSelf (int commitTag,
 //**************************************************************************
 
 int
-SixNodeBoundryCondition::displaySelf(Renderer &theViewer, int displayMode, float fact, const char **modes, int numMode)
+ThermalBoundaryTri6::displaySelf(Renderer &theViewer, int displayMode, float fact, const char **modes, int numMode)
 {
     // get the end point display coords
     static Vector v1(3);
@@ -791,14 +787,14 @@ SixNodeBoundryCondition::displaySelf(Renderer &theViewer, int displayMode, float
 }
 
 Response*
-SixNodeBoundryCondition::setResponse(const char **argv, int argc, OPS_Stream &output)
+ThermalBoundaryTri6::setResponse(const char **argv, int argc, OPS_Stream &output)
 {
     Response *theResponse = 0;
 
     char outputData[NumDOFsTotal];
 
     output.tag("ElementOutput");
-    output.attr("eleType", "SixNodeBoundryCondition");
+    output.attr("eleType", "ThermalBoundaryTri6");
     output.attr("eleTag", this->getTag());
     for (int i = 1; i <= 6; i++)
     {
@@ -830,63 +826,13 @@ SixNodeBoundryCondition::setResponse(const char **argv, int argc, OPS_Stream &ou
         theResponse = new ElementResponse(this, 3, mass);
     }
 
-    else if (strcmp(argv[0], "material") == 0 || strcmp(argv[0], "integrPoint") == 0)
-    {
-        int pointNum = atoi(argv[1]);
-
-        if (pointNum > 0 && pointNum <= 10)
-        {
-            output.tag("GaussPoint");
-            output.attr("number", pointNum);
-            output.endTag(); // GaussPoint
-        }
-    }
-
-    else if (strcmp(argv[0], "stresses") == 0)
-    {
-        for (int i = 0; i < 4; i++)
-        {
-            output.tag("GaussPoint");
-            output.attr("number", i + 1);
-
-            output.tag("ResponseType", "sigma11");
-            output.tag("ResponseType", "sigma22");
-            output.tag("ResponseType", "sigma33");
-            output.tag("ResponseType", "sigma12");
-            output.tag("ResponseType", "sigma23");
-            output.tag("ResponseType", "sigma13");
-
-            output.endTag(); // GaussPoint
-        }
-        theResponse =  new ElementResponse(this, 4, Vector(6*10));
-    }
-
-    else if (strcmp(argv[0], "strains") == 0)
-    {
-        for (int i = 0; i < 4; i++)
-        {
-            output.tag("GaussPoint");
-            output.attr("number", i + 1);
-
-            output.tag("ResponseType", "eps11");
-            output.tag("ResponseType", "eps22");
-            output.tag("ResponseType", "eps33");
-            output.tag("ResponseType", "eps12");
-            output.tag("ResponseType", "eps23");
-            output.tag("ResponseType", "eps13");
-
-            output.endTag(); // GaussPoint
-        }
-        theResponse =  new ElementResponse(this, 5, Vector(6*10));
-    }
-    
     output.endTag(); // ElementOutput
 
     return theResponse;
 }
 
 int
-SixNodeBoundryCondition::getResponse(int responseID, Information &eleInfo)
+ThermalBoundaryTri6::getResponse(int responseID, Information &eleInfo)
 {
     static Vector stresses(3*6);
 
@@ -904,7 +850,7 @@ SixNodeBoundryCondition::getResponse(int responseID, Information &eleInfo)
 }
 
 int
-SixNodeBoundryCondition::setParameter(const char **argv, int argc, Parameter &param)
+ThermalBoundaryTri6::setParameter(const char **argv, int argc, Parameter &param)
 {
     if (argc < 1)
         return -1;
@@ -915,7 +861,7 @@ SixNodeBoundryCondition::setParameter(const char **argv, int argc, Parameter &pa
 }
 
 int
-SixNodeBoundryCondition::updateParameter(int parameterID, Information &info)
+ThermalBoundaryTri6::updateParameter(int parameterID, Information &info)
 {
     int res = -1;
     int matRes = res;
@@ -956,7 +902,7 @@ SixNodeBoundryCondition::updateParameter(int parameterID, Information &info)
 }
 
 void
-SixNodeBoundryCondition::shp3d( const double zeta[3], double &xsj, double shp[3][NumNodes], const double xl[3][NumNodes]   )
+ThermalBoundaryTri6::shp3d( const double zeta[3], double &xsj, double shp[3][NumNodes], const double xl[3][NumNodes]   )
 {
     // Mathematica formulation by Carlos Felippa.
     double zeta1 = zeta[0] ; double zeta2 = zeta[1] ; double zeta3 = 1.0 - zeta1 - zeta2 ;
@@ -1040,7 +986,7 @@ SixNodeBoundryCondition::shp3d( const double zeta[3], double &xsj, double shp[3]
 }
 
 void
-SixNodeBoundryCondition::onActivate()
+ThermalBoundaryTri6::onActivate()
 {
     Domain* theDomain = this->getDomain();
     this->setDomain(theDomain);
@@ -1048,7 +994,7 @@ SixNodeBoundryCondition::onActivate()
 }
 
 void
-SixNodeBoundryCondition::onDeactivate()
+ThermalBoundaryTri6::onDeactivate()
 {
 
 }

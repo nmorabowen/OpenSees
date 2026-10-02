@@ -33,7 +33,6 @@ ThermalHeatSource::ThermalHeatSource(int tag, int theElementTag, double q_)
     : ElementalLoad(tag, LOAD_TAG_ThermalHeatSource, theElementTag),
       q(q_)
 {
-    // opserr << "Creating ThermalHeatSource for element " << theElementTag << " and rate q = " << q << endln;
 }
 
 ThermalHeatSource::ThermalHeatSource()
@@ -73,7 +72,7 @@ ThermalHeatSource::sendSelf(int commitTag, Channel &theChannel)
         return res;
     }
 
-    return -1;
+    return res;
 }
 
 int

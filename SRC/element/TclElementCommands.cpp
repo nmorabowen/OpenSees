@@ -180,7 +180,7 @@ extern void *OPS_ASDEmbeddedNodeElement(void); // Massimo Petracca (ASDEA)
 extern void *OPS_FourNodeTetrahedron(void);
 extern void *OPS_TenNodeTetrahedron(void);
 extern void *OPS_TenNodeTetrahedronThermal(void);
-extern void *OPS_SixNodeBoundryCondition(void);
+extern void *OPS_ThermalBoundaryTri6(void);
 extern void *OPS_LysmerTriangle(void);
 extern void *OPS_ASDAbsorbingBoundary2D(void); // Massimo Petracca (ASDEA)
 extern void *OPS_ASDAbsorbingBoundary3D(void); // Massimo Petracca (ASDEA)
@@ -1539,8 +1539,8 @@ TclModelBuilderElementCommand(ClientData clientData, Tcl_Interp *interp,
       }
 
   }
-  else if (strcmp(argv[1], "SixNodeBoundryCondition") == 0) {
-      void *theEle = OPS_SixNodeBoundryCondition();
+  else if (strcmp(argv[1], "ThermalBoundaryTri6") == 0) {
+      void *theEle = OPS_ThermalBoundaryTri6();
       if (theEle != 0) 
       {
         theElement = (Element*)theEle;
