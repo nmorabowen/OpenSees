@@ -90,34 +90,37 @@ void* OPS_SixNodeTri()
 	return 0;
     }
 
-    // p, rho, b1, b2
+    // p, rho, b1, b2 (any leading subset), then <-doInitDisp $flag>
     double data[4] = {0,0,0,0};
-    num = OPS_GetNumRemainingInputArgs();
-    if (num > 4) {
-	num = 4;
-    }
-    if (num > 0) {
-	if (OPS_GetDoubleInput(&num,data) < 0) {
-	    opserr<<"WARNING: invalid integer data\n";
-	    return 0;
-	}
+    int numOpt = 0;
+    while (numOpt < 4 && OPS_GetNumRemainingInputArgs() > 0) {
+        const char* tok = OPS_GetString();
+        OPS_ResetCurrentInputArg(-1);
+        if (strcmp(tok, "-doInitDisp") == 0)
+            break;
+        num = 1;
+        if (OPS_GetDoubleInput(&num, &data[numOpt]) < 0) {
+            opserr << "WARNING: invalid optional data: element SixNodeTri " << idata[0] << endln;
+            return 0;
+        }
+        numOpt++;
     }
 
     int do_init_disp_int = 0;
-    bool do_init_disp = false;
-
-
-    while (OPS_GetNumRemainingInputArgs() > 0) 
-    {
-        const char* type = OPS_GetString(); // Fetch the next string from input
-        if (strcmp(type, "-doInitDisp") == 0) 
-        {
+    while (OPS_GetNumRemainingInputArgs() > 0) {
+        const char* opt = OPS_GetString();
+        if (strcmp(opt, "-doInitDisp") == 0) {
             num = 1;
-            OPS_GetIntInput(&num, &do_init_disp_int); 
+            if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetIntInput(&num, &do_init_disp_int) < 0) {
+                opserr << "WARNING: invalid -doInitDisp value: element SixNodeTri " << idata[0] << endln;
+                return 0;
+            }
+        } else {
+            opserr << "WARNING: unknown option " << opt << ": element SixNodeTri " << idata[0] << endln;
+            return 0;
         }
     }
-
-    do_init_disp = (bool) do_init_disp_int; 
+    bool do_init_disp = (do_init_disp_int != 0);
  
     return new SixNodeTri(idata[0],idata[1],idata[2],idata[3],idata[4],
 							idata[5],idata[6],
