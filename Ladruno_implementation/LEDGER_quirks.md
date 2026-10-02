@@ -5500,6 +5500,54 @@ against 0.946** for scheme 1 on the same path — a silent 26 % on mobilised str
 - **Fix owed (vanilla, two lines, separate PR):** `r = GetDevPart(CurStress); r /= p;` inside
   the `if`. Until then the entry above on schemes 3/5 having no error control has a second
   reason not to use 5.
+- **✅ FIXED — WP-158, [#901](https://github.com/nmorabowen/OpenSees/pull/901) (2026-10-01).**
+  `r = GetDevPart(CurStress) / p;` (`:1586` at d63f49750 + the fix). Upstream master
+  (316cb2dbc, 2024-05-01) still has the shadow at `:1233`. Three things the earlier note did
+  not know, all measured on the d63f49750 build vs the WP-158 build
+  (`tests/test_manzari_forward_euler_r.py`, its `__main__`):
+  - **Two more defects in the same function, tangent only.** `temp2 = 2G n - (n:r) I` was
+    missing `K` (the multiplier's numerator is `2G n:de - K de_v (n:r)`), hidden while
+    `r == 0`; fixing `r` alone would have left the scheme-5 tangent inconsistent with its own
+    stress update. `temp1 = 2G mIIdevMix + K mIIvol` put **2G, not G, on the shear diagonal**
+    (the mixed-variant identity; the stress update answers an engineering shear strain with
+    G) — the WP-110 F15 family, never probed for scheme 5. Both fixed (`temp1 = aC`). FD
+    gate: max |Ct − Cfd| / max |Cfd| = 0.56 before, 0.64 with only `r` + `K`, 1.2e-11 after.
+  - **It is NOT a model error that survives refinement.** On a drained triaxial (p_cell
+    100 kPa, 2 % axial, one SSPbrick) the OLD scheme 5 converges onto scheme 1 too: gap in
+    (q/p, eps_v) at 3200 steps is (6.5e-4, 5.3e-4). The wrong multiplier drifts the stress
+    off the yield surface; when it lands inside, `explicit_integrator` re-intersects it on
+    the next step, which enforces consistency geometrically. What the bug broke is the
+    ORDER of the step: Delta f/p of ONE step from an on-surface state shrinks 3.75x per 4x
+    shorter step (first order) before, 15.9x (second order) after. At practical steps the
+    error is large and erratic: 800 steps (1.7e-2, 5.3e-2) before vs (3.3e-3, 1.8e-3) after;
+    50 steps, Newton diverges at eps_a 0.32 % before. The P0 oracle's 26 % was one coarse
+    path. **Test lesson:** a comparison against a reference at a fine step can be green
+    WITH this bug; test the order of one step (the consistency drift) instead.
+  - **Reach, corrected:** scheme 5; scheme 4 only on increments where `MaxEnergyInc`'s
+    energy test does not fire; schemes 7, 8, 9 only on increments ≤ `maxStrainInc` (1e-5) —
+    above it `MaxStrainInc` hands FE uninitialised moduli (next entry); and the opt-in
+    WP-130 `-cppmStart` guess walk. Of the WP-129 byte-identity decks only `ls3d_s5` moved
+    (re-pinned in #901); `ls3d_s7/8/9` are byte-identical across the fix.
+
+## `ManzariDafalias::MaxStrainInc` (`IntScheme 7, 8, 9`) sub-steps with UNINITIALISED `nG, nK` — the sub-steps can do nothing at all
+
+**Found 2026-10-01, WP-158, measured.** Same defect as `MaxEnergyInc`'s (IntScheme 4, entry
+"IntScheme 4 (`MaxEnergyInc` -> ForwardEuler) is NON-DETERMINISTIC"), in the sibling function:
+when the largest strain component of the increment exceeds `maxStrainInc = 1e-5`,
+`MaxStrainInc` declares `double nDGamma, nVoidRatio, nG, nK;` and passes `nG, nK` by reference
+as the moduli of every `ForwardEuler` sub-step, which builds `aC = GetStiffness(K, G)` from
+them without writing them first. Its loop also never advances `cEStrain` (as in
+`MaxEnergyInc`). And its `switch` sends every case — 7 (`MAXSTR_MFE`), 8 (`MAXSTR_RK`), 9 — to
+`ForwardEuler`, so the "ModifiedEuler"/"Runge-Kutta" variants are not.
+
+- **Measured:** one step of 1e-4 or 2.5e-5 strain from a plastic, on-surface state under
+  IntScheme 7, 8 or 9 leaves the yield function EXACTLY unchanged (Delta f = 0.0) on both
+  the d63f49750 and the WP-158 build — consistent with zero garbage moduli (Ce = 0, no
+  stress change). The WP-129 decks `ls3d_s7/8/9` pin whatever that garbage gives on the
+  capture build; they did not move with WP-158.
+- **Workaround/status:** do not use IntScheme 4, 7, 8 or 9. Not fixed (vanilla; it would move
+  every scheme-4/7/8/9 deck that sub-steps). Fix shape: initialise `nG = G, nK = K` (or
+  re-evaluate the moduli per sub-step) and advance `cEStrain`.
 
 ## `BackwardEuler_CPPM` (`IntScheme 2`) is NOT an implicit return at low `p`, and its non-convergence NEVER propagates
 
@@ -8183,3 +8231,17 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
 - **Workaround/status:** for the pile use `-consistanttan` (Pardiso is mtype 11, non-symmetric). The FD pair tangent is
   not shipped; it is parked as `contact_prototypes/adr158_fd_pair_tangent_oracle.patch` (a diagnostic oracle, useful on
   smooth creases with cross-crease pairs). See [[158_mortar_tangent_diagnosis_consistanttan]] §3 D1, D3.
+
+### The mortar friction origin `gT0` latches at the FIRST Newton iterate that touches, so a shipped S1 "passes" by forgiving the first iterate's slip (WP-159)
+- **Bites:** `addMortarFriction` captures `gT0` (the stick origin) the first time a node evaluates with p < 0,
+  inside the Newton loop, and only `revertToLastStep` undoes it. Under `-adjust` every node starts at p = 0
+  (open), so on the R3 pile the whole gravity settlement of the first iterate becomes the stick origin. Engage
+  the same nodes from the reference instead (`-gapOffset -1e-6`, or the ADR-159 smoothed law, whose
+  first iterate has P(0) = S/4 > 0) and the shipped law FAILS the alpha S1 with growing norms (340 kN). The R3 "S1 passes, axial
+  stalls at the slip front" picture is partly this artifact: the stick origin depends on which iterate first
+  touched, not on the physics.
+- **Also:** a probe that FD-checks friction with `printA`/`printB` at a fresh state must engage the nodes first
+  (one `printB` at a zero-slip state), or the first `printB` latches `gT0` at the probe state and every slip
+  state reads as stick (a 100 % "tangent error" that is the probe).
+- **Workaround/status:** recorded; not changed (ADR-159 §5-§6). Compare runs only at the same engagement
+  history.

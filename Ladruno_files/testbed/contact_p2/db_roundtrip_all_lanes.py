@@ -15,6 +15,7 @@ two instruments:
      D  mortar friction (-epsN/-mu/-epsT/-cohesion/-tauMax) + the
         -edgeedge option block (inert on parallel facets; fields packed)
         + the ADR-155 block (-augment/-maxGap/-gapOffset/-adjust)
+        + (sensitivity only) the ADR-159 slots -smoothN/-smoothT
    build -> analyze = reference; build -> save -> wipe -> restore ->
    analyze must reproduce every lane's tip EXACTLY.
 
@@ -26,6 +27,8 @@ two instruments:
    kt (NTS), mu (mortar friction), edgeKn (edge block), epsTie (tie),
    kn + normal (plane). A field the pack silently dropped would fail its
    sensitivity case here without needing the physics to depend on it.
+   The ADR-159 slots (smoothN, smoothT) need -augment never, so their
+   variants are compared against the `-augment never` twin of the base.
 
 Plus: the live-restore VERIFY path stays silent on a matching model and
 WARNS when the live engine's definitions no longer match the stream
@@ -126,7 +129,10 @@ def build(ops, variant=None):
                 "-edgeBand", 0.01, "-edgeMu", 0.2, "-edgeKt", 1.0e5,
                 # ADR-155 -- the R0.5 option block (5 tail slots): packed + restored too
                 "-augment", v.get("augD", "request"), "-maxGap", v.get("maxGapD", 0.5),
-                "-gapOffset", v.get("gapOffD", -1.0e-4), "-adjust", v.get("adjTolD", 0.5))
+                "-gapOffset", v.get("gapOffD", -1.0e-4), "-adjust", v.get("adjTolD", 0.5),
+                # ADR-159 -- the smoothed law (2 tail slots); only in its sensitivity variants
+                *(("-smoothN", v["smoothND"]) if "smoothND" in v else ()),
+                *(("-smoothT", v["smoothTD"]) if "smoothTD" in v else ()))
 
     ops.timeSeries("Linear", 1)
     ops.pattern("Plain", 1, 1)
@@ -265,6 +271,18 @@ def main():
         vd = os.path.join(root, "v_" + name); os.makedirs(vd)
         save_to(ops, vd, variant)
         sens[name] = (defs_bytes(vd) != base)
+    # ADR-159 tail slots: the smoothed law is refused unless -augment never,
+    # so each variant differs from the `-augment never` twin by ONE field.
+    nv_dir = os.path.join(root, "never"); os.makedirs(nv_dir)
+    save_to(ops, nv_dir, {"augD": "never"})
+    never = defs_bytes(nv_dir)
+    for name, variant in (
+            ("smoothN_mortar", {"augD": "never", "smoothND": 1.0e-5}),
+            ("smoothT_mortar", {"augD": "never", "smoothTD": 0.1}),
+    ):
+        vd = os.path.join(root, "v_" + name); os.makedirs(vd)
+        save_to(ops, vd, variant)
+        sens[name] = (defs_bytes(vd) != never)
     out["sensitivity"] = sens
 
     # 5. F3 rollback probe: corrupt the stream's nSurf count (slot 1) so the
