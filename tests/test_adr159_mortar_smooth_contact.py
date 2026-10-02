@@ -21,12 +21,16 @@ Gates:
           analytic descent with a small band, in <= 6 iterations per step.
   (c)     band -> 0 on a closed case: the state converges to the shipped answer (monotone, and
           identical once the band no longer reaches the penetration).
-  (db)    database save -> wipe -> restore reproduces a smoothed contact exactly (wire v5).
-  (ref)   every refusal is named: no -mortar, -tie, an augmenting contact, -smoothT without friction,
-          out-of-range values, -soft/-visc.
+  (db)    database save -> wipe -> restore reproduces a smoothed contact exactly (wire v5), and a
+          committed v4 stream written by the pre-ADR-159 binary restores on this one (data/adr159_v4_db).
+  (ref)   every refusal is named and the test matches the NAME: no -mortar, -tie, an augmenting
+          contact, -smoothT without friction, out-of-range values, -soft/-visc, and a 2D pair (a
+          handle-time FATAL). A pre-ADR-159 binary also raises on these inputs ("unexpected token"),
+          so matching the message is what makes the gate discriminate (the ADR-155 pattern).
 """
 import math
 import os
+import shutil
 import tempfile
 
 import pytest
@@ -247,8 +251,49 @@ def test_adr159_database_roundtrip():
     assert ok and [ops.nodeDisp(t) for t in top] != ref
 
 
+# ----------------------------------------------------------------------------------- (db v4)
+V4_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "adr159_v4_db")
+
+
+def _v4_model():
+    """The model inside the committed v4 fixture: the cohesive block, -augment never -consistanttan,
+    no smoothing (the pre-ADR-159 binary cannot write it)."""
+    return _block(("-consistanttan",), coh=2.0)
+
+
+def write_v4_fixture(dirpath):
+    """Regenerate data/adr159_v4_db on the PRE-ADR-159 binary (ladruno 3144e19ba), never on this one
+    (which writes v5). From tests/:  python -c "import test_adr159_mortar_smooth_contact as t;
+    t.write_v4_fixture('data/adr159_v4_db')"   (the README in that folder says the same)."""
+    _v4_model()
+    ops.database("File", os.path.join(dirpath, "db"))
+    ops.save(1)
+    ops.wipe()
+
+
+def test_adr159_restores_a_v4_stream(tmp_path):
+    """A database written by the pre-ADR-159 binary (definitions stream v4: 64 slots, no smoothN /
+    smoothT) restores on this binary as an unsmoothed contact: the restored analysis equals a freshly
+    built twin bit for bit. A v4 read that left the two new slots undefined, or refused v4, fails."""
+    files = sorted(f for f in os.listdir(V4_DB) if f.startswith("db."))
+    assert any(f.startswith("db.VECs.64.") for f in files), files   # v4 defs record (v5 is 66)
+    for f in files:
+        shutil.copy(os.path.join(V4_DB, f), str(tmp_path / f))
+    top, _, _ = _v4_model()
+    _, ok = _apply(top, 2.0, fx=0.5)
+    assert ok
+    ref = [ops.nodeDisp(t) for t in top]
+    ops.wipe()
+    ops.database("File", str(tmp_path / "db"))
+    ops.restore(1)
+    _solver()                                      # analysis objects are not part of the database
+    _, ok = _apply(top, 2.0, fx=0.5)
+    assert ok
+    assert [ops.nodeDisp(t) for t in top] == ref
+
+
 # ------------------------------------------------------------------------------------- (ref)
-def _contact_fails(opts):
+def _facets():
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     for t, (x, y) in enumerate([(0, 0), (1, 0), (1, 1), (0, 1)], start=1):
@@ -256,6 +301,10 @@ def _contact_fails(opts):
         ops.node(t + 10, float(x), float(y), 0.0)
     ops.contactSurface(1, "-master", 4, 1, 2, 3, 4)
     ops.contactSurface(2, "-slave-segments", 4, 11, 12, 13, 14)
+
+
+def _contact_fails(opts):
+    _facets()
     try:
         ops.contact(1, 1, 2, *opts)
     except Exception:
@@ -263,19 +312,80 @@ def _contact_fails(opts):
     return False
 
 
-@pytest.mark.parametrize("opts", [
-    ("auto", "-smoothN", 1e-4),                                                 # NTS
-    ("-mortar", "-epsN", 1e6, "-tie", "-augment", "never", "-smoothN", 1e-4),   # tie
-    ("-mortar", "-epsN", 1e6, "-smoothN", 1e-4),                                # augment commit
-    ("-mortar", "-epsN", 1e6, "-augment", "request", "-smoothN", 1e-4),         # augment request
-    ("-mortar", "-epsN", 1e6, "-augment", "never", "-smoothT", 0.1),            # no friction
-    ("-mortar", "-epsN", 1e6, "-augment", "never", "-smoothN", 0.0),            # g0 <= 0
-    ("-mortar", "-epsN", 1e6, "-mu", 0.3, "-augment", "never", "-smoothT", 1.0),  # r >= 1
-    ("-mortar", "-epsN", 1e6, "-augment", "never", "-visc", 1.0, "-smoothN", 1e-4),
-    ("-mortar", "-epsN", 1e6, "-augment", "never", "-soft", 0.1, "-smoothN", 1e-4),
+def _refused(capfd, why, opts):
+    """Refused FOR THE NAMED REASON (the ADR-155 pattern): the base binary raises on these inputs too,
+    but with "unexpected token '-smoothN'", which carries neither "ADR-159" nor `why`."""
+    _facets()
+    capfd.readouterr()
+    with pytest.raises(Exception):
+        ops.contact(1, 1, 2, *opts)
+    err = capfd.readouterr()
+    text = err.out + err.err
+    assert "ADR-159" in text and why in text, text
+
+
+@pytest.mark.parametrize("opts,why", [
+    (("auto", "-smoothN", 1e-4), "-smoothN/-smoothT are -mortar options"),                  # NTS
+    (("-mortar", "-epsN", 1e6, "-tie", "-augment", "never", "-smoothN", 1e-4),
+     "-smoothN/-smoothT do not apply to -tie"),
+    (("-mortar", "-epsN", 1e6, "-smoothN", 1e-4),                                           # commit
+     "pure-penalty laws; add -augment never"),
+    (("-mortar", "-epsN", 1e6, "-augment", "request", "-smoothN", 1e-4),
+     "pure-penalty laws; add -augment never"),
+    (("-mortar", "-epsN", 1e6, "-augment", "never", "-smoothT", 0.1),
+     "this contact has no friction"),
+    (("-mortar", "-epsN", 1e6, "-augment", "never", "-smoothN", 0.0), "-smoothN - need a band g0 > 0"),
+    (("-mortar", "-epsN", 1e6, "-augment", "never", "-smoothN", -1e-4), "-smoothN - need a band g0 > 0"),
+    (("-mortar", "-epsN", 1e6, "-mu", 0.3, "-augment", "never", "-smoothT", 1.0),
+     "-smoothT - need a ratio 0 < r < 1"),
+    (("-mortar", "-epsN", 1e6, "-mu", 0.3, "-augment", "never", "-smoothT", 0.0),
+     "-smoothT - need a ratio 0 < r < 1"),
+    (("-mortar", "-epsN", 1e6, "-augment", "never", "-visc", 1.0, "-smoothN", 1e-4),
+     "not defined with -soft or -visc"),
+    (("-mortar", "-epsN", 1e6, "-augment", "never", "-soft", 0.1, "-smoothN", 1e-4),
+     "not defined with -soft or -visc"),
 ])
-def test_adr159_refusals(opts):
-    assert _contact_fails(opts), f"accepted {opts}"
+def test_adr159_refusals(capfd, opts, why):
+    _refused(capfd, why, opts)
+
+
+@pytest.mark.parametrize("flag", [("-smoothN", 1e-4), ("-mu", 0.3, "-smoothT", 0.1)])
+def test_adr159_2d_pair_refused_at_handle(capfd, flag):
+    """The smoothed law is wired to the 3D mortar lane only: a 2D pair draws the named handle-time
+    FATAL (analyze < 0) instead of silently running the shipped law. The same 2D block with
+    -augment never alone converges (the control)."""
+    def block(extra):
+        ops.wipe()
+        ops.model("basic", "-ndm", 2, "-ndf", 2)
+        ops.node(101, 0.0, 0.0)
+        ops.node(102, 1.0, 0.0)
+        ops.fix(101, 1, 1)
+        ops.fix(102, 1, 1)
+        ops.node(1, 0.0, -1e-4)
+        ops.node(2, 1.0, -1e-4)
+        ops.fix(1, 1, 0)
+        ops.fix(2, 1, 0)
+        ops.contactSurface(10, "-master", 2, 101, 102)
+        ops.contactSurface(20, "-slave-segments", 2, 1, 2)
+        ops.contact(1, 10, 20, "-mortar", "-epsN", 1e6, "-outward", 0.0, 1.0, "-augment", "never",
+                    *extra)
+        ops.timeSeries("Linear", 1)
+        ops.pattern("Plain", 1, 1)
+        ops.load(1, 0.0, -1.0)
+        ops.load(2, 0.0, -1.0)
+        _solver()
+        ops.integrator("LoadControl", 1.0)
+        ops.analysis("Static")
+        try:
+            return ops.analyze(1)
+        except Exception:
+            return -1
+    assert block(()) == 0
+    capfd.readouterr()
+    assert block(flag) < 0
+    err = capfd.readouterr()
+    text = err.out + err.err
+    assert "-smoothN/-smoothT are 3D-mortar options (ADR-159); this pair is 2D" in text, text
 
 
 def test_adr159_accepts_the_recipe():

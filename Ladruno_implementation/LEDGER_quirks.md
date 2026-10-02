@@ -8137,7 +8137,7 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
   inside the Newton loop, and only `revertToLastStep` undoes it. Under `-adjust` every node starts at p = 0
   (open), so on the R3 pile the whole gravity settlement of the first iterate becomes the stick origin. Engage
   the same nodes from the reference instead (`-gapOffset -1e-6`, or the ADR-159 smoothed law, whose
-  P(0) = S/4 > 0) and the shipped law FAILS the alpha S1 with growing norms (340 kN). The R3 "S1 passes, axial
+  first iterate has P(0) = S/4 > 0) and the shipped law FAILS the alpha S1 with growing norms (340 kN). The R3 "S1 passes, axial
   stalls at the slip front" picture is partly this artifact: the stick origin depends on which iterate first
   touched, not on the physics.
 - **Also:** a probe that FD-checks friction with `printA`/`printB` at a fresh state must engage the nodes first

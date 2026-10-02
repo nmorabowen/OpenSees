@@ -2,7 +2,7 @@
 title: "WP-159 — Smoothed (C1) mortar contact law: -smoothN g0, -smoothT r"
 project: Ladruno
 type: ADR (amends the ADR-41 C2/C3 mortar normal law and return map; status row in the ADR-48 capstone)
-status: "PR #903 open (not merged) — opt-in, default byte-identical; the R3 pile blocker R3-N1 is NOT closed by it (section 5)"
+status: "PR #903 approved with nits (review 2026-10-02; nits addressed) — opt-in, default byte-identical; lands as a fallback law: the R3 pile blocker R3-N1 is NOT closed by it (section 5)"
 owner: nmora
 related:
   - "[[41_ladruno_mortar_alm_contact_adr]] (the C2 normal law and the C3 return map this smooths)"
@@ -26,7 +26,8 @@ updated: 2026-10-02
 > | `-smoothT <r>` | the stick/slip corner of the return map | `min(ρ, cap)` becomes `ρ − (ρ−cap+δ)²/(4δ)` over abs(ρ−cap) < δ = r·cap |
 >
 > The consistent tangent is FD-checked by a numpy oracle (4000 states, 7.6e-9) and on the binary
-> (`printA` against a central FD of `printB`: every state to the FD noise, ≤ 4.5e-6). Off, the build is
+> (`printA` against a central FD of `printB`: the material tangent to the FD noise, ≤ 4.5e-6, on a
+> one-quad probe; the deferred geometric ∂D/∂u block of ADR-41 sits at ~1e-4 under both laws, §3). Off, the build is
 > byte-identical: the 61-file contact battery gives 382/382 on both binaries and all 145,862 post-`analyze` hashes match.
 > **On the R3 pile deck the law helps but does not unblock R3**: the bonded lateral push gets from
 > 0.83 mm to 6.3 mm, but α-cohesion lateral and axial fail in S1 or the first step. The measured
@@ -60,9 +61,21 @@ paired node would be "in contact" for friction (engaged, with a tangential bond)
 The quadratic onset has compact support. **Rejected: a one-sided band** (onset on the closed side,
 zero pressure at ḡ = 0). Under `-adjust` every node starts at ḡ = 0, where the one-sided law has
 zero stiffness: the pile floats in the first iterate (the ADR-155 G-9 problem, which its closed-branch
-trick cannot fix for a C1 law, whose slope at the onset is exactly 0). The centred band starts with
-half the penalty stiffness. **The price**: under `-adjust` the reference state carries `P = S/4`.
-Pick `g0` so that `εN·g0/4` is small against the working pressures.
+trick cannot fix for a C1 law, whose slope at the onset is exactly 0). The centred band starts the
+first iterate with half the penalty stiffness.
+
+**What `-adjust` leaves at equilibrium (review #903, finding 2).** `P = S/4` at ḡ = 0 is the *first
+iterate*, not the reference equilibrium. Against a support of stiffness k per unit area with
+k ≪ εN, the unbalanced S/4 pushes the slave off until `P(x) = k·w`: the gap opens to
+`w ≈ g0·(1 − 2·√(k/εN))` and the node carries `P ≈ k·g0` at a slope `P′ ≈ √(k/εN)`, a few per cent
+of εN, not one half. Measured (a unit quad on springs, k = 4e3, εN = 1e6, zero load, g0 = 1e-6…1e-4):
+`w = 0.881·g0` in 6–7 iterations, `P = 3.5e-3·S`, `P′ = 0.06`. Any support softer than εN/2 does
+this; the R3 soil (~4e4 kPa/m against εN = 1e7) gives `P′ ≈ 0.06` and `P ≈ 0.4 kPa` at g0 = 1e-5.
+So the G-9 closed-branch trick that `addMortarTang` skips under smoothing is replaced by a stiffness
+of order `√(k/εN)·εN`, which Newton handles, and the reference prestress that matters is `k·g0`, not
+`εN·g0/4`. **The price**, then: under `-adjust` each node starts about `0.9·g0` open and carries
+about `k·g0`. Pick `g0` so that `k·g0` is small against the working pressures; it also reconciles
+this rule with D2's `g0 ≥ c/εN`, which a literal `S/4 ≥ c/4` would make collide at shallow depth.
 
 ### D2 — the friction onset: a C1 weight over the same band (part of `-smoothN`)
 
@@ -75,7 +88,8 @@ and is assembled only under `-consistanttan`, the ADR-158 D2 rule).
 band is a local softening of about `0.75·c/g0` (shear-normal). When that exceeds εN the
 force-controlled path has a limit point and no Newton variant follows it (oracle G3, pure cohesion at
 g0 = 1e-5 with c/εN = 2e-5: a snap). For the R3 α bands (c = 7–32 kPa, εN = 1e7) that is g0 ≥ 3e-6;
-for the artificial "bond" (c = 1e4) it is g0 ≥ 1e-3, where the S/4 prestress is 2.5 MPa.
+for the artificial "bond" (c = 1e4) it is g0 ≥ 1e-3, where the first iterate under `-adjust`
+carries S/4 = 2.5 MPa (relaxing to about k·g0 at equilibrium, D1).
 
 **Rejected (measured, then reverted): spread the onset over the pressure range [0, max(S, c)].** It
 bounds the softening for any c, but it is not the shipped law in the limit g0 → 0 for a cohesive
@@ -99,7 +113,9 @@ caught it (3.6e-2 → 7.6e-9). It needs friction (refused without `-mu`/`-cohesi
   already `-augment never`. The setter refuses `commit` and `request` by name.
 - `-adjust`, `-gapOffset`: compose (the gap shift is applied in `mortarActive`, before the law).
   `-gapOffset +g0` moves the reference to the band edge (zero pressure, but also zero stiffness; D1).
-- `-maxGap`: unaffected (handle-time pairing).
+- `-maxGap`: unaffected in the code (handle-time pairing), but it bounds the band: a node paired
+  only at `handle()` cannot enter the band after it, so keep `g0 ≪ maxGap` or the pairing guard cuts
+  the smoothed onset (R3: g0 = 1e-5 against maxGap = 0.1).
 - ADR-157 per-pair state: χ and the rounded corner act per (slave node, facet pair). The
   engagement origin `gT0` is still captured at the first evaluation with P > 0, now at the outer
   band edge.
@@ -128,8 +144,19 @@ stick, uniform and differential slip, one node open, in band, slip plus band: ev
 with and without `-smoothN`/`-smoothT`. Near the cap the shipped tangent is off by 32 % (the kink);
 with `-smoothT 0.2` it is 4.1e-6.
 
-**Tests** (`tests/test_adr159_mortar_smooth_contact.py`, 18 cases; every behavioural case fails on
-the base binary, which refuses the flags):
+**Caveat: that is the FD noise of the *material* tangent.** The mortar tangent of both laws still
+omits the geometric ∂{D, M, n}/∂u block (the ADR-41 C1 linearization stub, deferred;
+`LadrunoContactFE.cpp`, "the C1 linearization stub, deferred"). The one-quad probe above has little
+in-plane slave motion, so that block is negligible there. The reviewer's 3×3 slave patch (#903
+review, finding 3) with in-plane motion sees it at 1.0–2.6e-4 relative error for **every**
+`-consistanttan` configuration, the shipped law included (2.6e-4), from normal-force rows against
+in-plane slave-node columns where `printA` has 0. With that block masked the error is 2–7e-5 for the
+smoothed cases and 4e-5 for the shipped law. An FD check on a real deck (§6, first bullet) will see
+that floor; it is ADR-41's, not the smoothing's.
+
+**Tests** (`tests/test_adr159_mortar_smooth_contact.py`, 23 cases; on the base binary 22 fail, the
+behavioural cases because it refuses the flags and the refusal cases because they match the ADR-159
+message, not just any error; the one that passes there is the v4 restore, which the base reads natively):
 
 - (law) a stiff block on springs: in the band and beyond it the equilibrium matches the smoothed law
   to 1e-6, beyond the band it equals the shipped law, pulled off past the band the master reaction
@@ -141,8 +168,15 @@ the base binary, which refuses the flags):
   the analytic descent to 2e-4 in ≤ 6 iterations per step;
 - (c) g0 → 0 on a closed case converges monotonically to the shipped state, and equals it once the
   band no longer reaches the penetration;
-- (db) save → wipe → restore reproduces a smoothed contact exactly;
-- (ref) the nine refusals of D4, and the recipe is accepted.
+- (db) save → wipe → restore reproduces a smoothed contact exactly; and a committed v4 database
+  written by the base binary (`tests/data/adr159_v4_db`, 64 slots) restores on this one and its
+  analysis equals a freshly built twin bit for bit;
+- (ref) the eleven parser/setter refusals of D4, each matched to its named message (the ADR-155
+  pattern), the handle-time 2D FATAL for `-smoothN` and for `-smoothT`, and the recipe is accepted.
+
+**Definitions stream** (`Ladruno_files/testbed/contact_p2/db_roundtrip_all_lanes.py`): two more
+field-sensitivity rows, `smoothN_mortar` and `smoothT_mortar`, each compared against the
+`-augment never` twin of the base model (the smoothed law needs it); both slots are packed.
 
 **Battery.** The 61-file contact battery (the ADR-157 list plus the ADR-158 test), MKL_NUM_THREADS=1,
 with the byte-dump plugin (`contact_prototypes/bytedump_plugin.py`): **382/382 on `fc75db7f3` and
@@ -174,8 +208,9 @@ Lateral did **not** reach 0.1 D in any configuration.
 2. **The α lanes are blocked by mortar Tresca slip, under either law.** The shipped α S1 passes only
    because `gT0` latches at the first Newton iterate, which forgives the gravity settlement slip.
    Engage the nodes from the reference (a 1 µm interference) and the shipped law fails α S1 with
-   the same signature as the smoothed one. The smoothed law engages every node at the reference
-   (P = S/4 > 0), so it inherits that harder problem.
+   the same signature as the smoothed one. The smoothed law engages every node from the first
+   iterate (P = S/4 > 0 at ḡ = 0, relaxing to about k·g0 at a gap of about 0.9·g0, D1), so `gT0`
+   latches at the reference and it inherits that harder problem.
 3. **The bond release is a softening, whatever the smoothing.** A bond c released over a band of
    width w costs about c/w of shear-normal stiffness. D2's rule `g0 ≥ c/εN` keeps it below εN.
 
