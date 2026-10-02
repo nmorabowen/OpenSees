@@ -198,6 +198,15 @@ are the contract (`o2_algo/kernel.py`, README).
   - It makes LogStrain(LadrunoNorSand) exact (v = v0·J) and leaves small strain unchanged to first order.
   - G2 measured the old linear update v += v0·tr Δε under LogStrain at a gap of v0(1 + x − eˣ), x = ln J,
     amplified about 25–30× into τ and π_i: 2.2e-3 at 20 % drained TXC, 5.6e-3 in TXE fork mode.
+- **LogStrain gets ε^e from the inner material** (owner decision 2026-10-01 at G2, option c).
+  - `LogStrainNDMaterial` recovered ε^e = D0⁻¹:τ, which assumes a linear-elastic inner material (its v1
+    comment says so).
+  - With pressure-dependent shear (α0 ≠ 0) that is not objective: a 0.2 rad rigid rotation changes the
+    stress by 2.3e-3 (α0 = 2) to 3.6e-2 (α0 = 50).
+  - Fix: a fork mixin `LadrunoElasticStrainProvider::getElasticStrain(Vector&)`. LogStrain uses it through
+    `dynamic_cast` when the inner material provides it (LadrunoNorSand does), and otherwise falls back to the
+    old path, so every other wrapped material stays byte-identical.
+  - Gate: rigid-rotation objectivity at α0 = 2 and α0 = 50; the existing LogStrain tests byte-identical.
 - **v0 (the initial specific volume) is a separate committed state variable from v** (sheet §1.2). Neither
   oracle's `initial_state` accepts v0 ≠ v today; G1 patches it by hand. The C++ state, `sendSelf`/`recvSelf`,
   `revertToStart` and `getCopy` must carry v0 explicitly. A G2 test drives the public route with v0 ≠ v
