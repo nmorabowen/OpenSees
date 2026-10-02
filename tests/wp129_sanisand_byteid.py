@@ -21,14 +21,20 @@ and `test_ladruno_sanisand_sasme.py::test_existing_schemes_byte_identical`
 compares the current build against it.  Regenerate it ONLY for a deliberate
 numerical change to an existing scheme, and say so in that PR.
 
-Re-pinned since (only the named decks; every other deck left byte-for-byte):
+Re-pinned since (one deck at a time, every other deck left byte-for-byte):
+  ls3d_s5  WP-158 -- ForwardEuler's shadowed `r` and its two tangent defects
+           fixed; plastic rows 10-29 move, elastic rows 0-9 do not. Captured
+           with the WP-158 build (origin/ladruno d63f49750 + the WP-158
+           ManzariDafalias.cpp edit), 2026-10-01; the 17 other decks matched
+           the pinned values exactly on that build.
   ls3d_s4, ls3d_s6, ls3d_s7, ls3d_s8, ls3d_s9  WP-160 -- MaxStrainInc /
            MaxEnergyInc now hand their sub-steps the committed moduli (were
            uninitialised) and advance the elastic strain; plastic rows 10-29
            move, elastic rows 0-9 do not, and ls3d_s4 is now pinned in full
-           (NONDETERMINISTIC emptied). Captured with the WP-160 build
-           (origin/ladruno 117f56060 + the WP-160 ManzariDafalias.cpp edit),
-           2026-10-02; the 13 other decks matched the pinned values exactly.
+           (NONDETERMINISTIC emptied). Captured with the WP-160 build on top
+           of WP-158 (origin/ladruno 5300da720 + the WP-160 ManzariDafalias.cpp
+           edit), 2026-10-02; the 13 other decks matched the pinned values
+           exactly on that build.
 
 Not collected by pytest (no `test_` prefix); imported by the test.
 """
