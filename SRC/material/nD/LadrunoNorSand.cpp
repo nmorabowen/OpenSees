@@ -333,7 +333,7 @@ void LadrunoNorSand::buildInitialState(void)
   if (rc == 0) {
     // F(sigma0, pi_i0): an initial stress OUTSIDE the surface is inadmissible
     F0init = yieldF(kp, sigma0, pi0init);
-    const double tol = F0_OUTSIDE_REL * std::fabs(kp.p0);
+    const double tol = F0_OUTSIDE_REL * std::fabs(kp.p0);   // F0 within +-tol: ON the surface
     if (!std::isfinite(F0init)) {
       rc = INIT_F0_NAN;
       msg = "the yield function F(sigma0, pi_i0) could not be evaluated";

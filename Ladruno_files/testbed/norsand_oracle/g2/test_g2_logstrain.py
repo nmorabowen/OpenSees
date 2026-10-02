@@ -66,6 +66,12 @@ GATES (the sheet / closed forms / O2; written before the wrapper was run).
   fallback  ElasticIsotropic and LadrunoJ2 (plastic) under LogStrain keep the inv(D0) recovery: closed-form Hencky
             stress (1e-12), objectivity (1e-10), committed b^e = exp(2 C tau) with C the isotropic compliance (1e-12).
 
+  refusal   (G2 close, owner decision 2026-10-02; section "G2 CLOSE" at the end of the file) a refusing inner under
+            LogStrain reaches the element as a TRIAL refusal: analyze -3 (not the -4 commit abort), no latch, committed
+            state unchanged, the 4-sub-step retry converges and equals a never-wild run (1e-12); GR0 oracle / harness
+            check, GR1 finite, GR2 linear control, GR3 non-refusing inners, GR4 / GR5 static gates for the two clauses
+            the test bed cannot drive (a commit-time refusal under LogStrain; the in-process Subdomain nesting guard).
+
 Runtime (measured at G2 round 1, before the decision, whole file, venv py312g2): 50-75 s, of which the two K2
 localization runs are 4 s + 7 s and the drained-path generation (brentq on O2f) ~25 s; nothing exceeds 2 minutes,
 so nothing is @slow.  Re-measured at G2 close with the provider / fallback gates added: both G2 files together
@@ -820,3 +826,421 @@ def test_non_provider_inner_keeps_the_d0_inversion_fallback(inner):
     assert float(np.abs(exp - b["sig"]).max()) > 1.0, "the rotation must move the stress"
     assert e_rot <= ROT_TOL and e_hold <= ROT_TOL, (e_rot, e_hold)
     assert e_c <= FB_TOL, e_c
+
+
+# ==============================================================================================
+# G2 CLOSE (owner decision 2026-10-02): a REFUSING inner under LogStrain must reach the element as a refusal.
+#
+# THE SPEC (ADR-86b step cut, written before the fix was built; nothing below was read from the fix).
+#   LogStrain(LadrunoNorSand) in LadrunoBrick -geom finite, on a step the return map cannot integrate (O2 refuses it
+#   after 2^8 substeps; asserted below from the oracle, not assumed):
+#     * analyze returns the REFUSED-TRIAL code of the -geom linear route (-3: the element's update() failed in the
+#       integrator, the same family as plain LadrunoNorSand in a LadrunoBrick -geom linear), NOT -4 (a commit
+#       aborted by the WP-99 commit-refusal seam);
+#     * NO point is latched (the `refusal` response, slot 2, is 0);
+#     * the committed state is unchanged;
+#     * a smaller retry (the SAME total increment in 4 sub-steps: setTime back to the committed time, LoadControl
+#       reduced to 1/4) converges (analyze 0 four times) and its final state equals a never-wild reference run of
+#       those sub-steps to 1e-12.
+#   The defect it guards (adversary G2 close): LogStrainNDMaterial::setTrialF dropped the inner's setTrialStrain
+#   return, the wrapper then committed even though the inner refused, so the finite route answered -4 with the
+#   points LATCHED and a genuinely smaller retry answered -4 again (the step cut was unreachable); the linear route
+#   answered -3, no latch, retry 0.
+#
+# WILD STEP.  A uniform axial-compression / lateral-extension increment (da, db, db) from the K2 state after a mild
+# first step (eps = -1e-4 I): O2 REFUSES it in one step (2^8 substeps exhausted), and the SAME total in 4 equal
+# sub-steps is accepted.  Such a window is narrow and has to be found, because the refusal is a property of the PATH
+# (the endpoint region), not of the step size alone: a larger |da| refuses the later sub-steps too, and a smaller one
+# is accepted in one step.  Scans (O2 first, then the OpenSees -geom linear route, which is correct on the unfixed
+# binary and therefore a trustworthy detector):
+#   db = 0.08 : O2 has a window at da = -0.235 but OpenSees does not (the last sub-step is refused there): the edge
+#               is chaotic in the last digits (1e-10 O2 / OpenSees differences flip it), so it was REJECTED.
+#   db = 0.2  : one shot accepted at da <= 0.44 in magnitude and refused from -0.45 on; the 4 sub-steps are accepted up
+#               to -0.46 and refused (4th sub-step) from -0.47.  da = -0.455 is the middle of [-0.45, -0.46] with
+#               one verified neighbour on each side that behaves differently (-0.44 / -0.47).
+# Both routes use (da, db) = (-0.455, 0.2) as the increment in STRAIN (linear: eps) / LOG STRETCH (finite: F_k =
+# diag(exp(k/4 (da, db, db))) F1, so the 4 sub-steps are log-uniform and O2 is fed exactly (da, db, db)/4).  The
+# finite route needs its own Path series with a knot every 1/4 (g2_common.prescribe puts one per unit time), see
+# _prescribe_knots.  The test asserts the oracle's own verdict (one-shot refused, 4 sub-steps accepted) and the
+# never-wild OpenSees run (test_GR0) before it looks at a refusal, so an edge shift shows up as GR0, not as GR1.
+# ==============================================================================================
+import os                                              # noqa: E402
+import re                                              # noqa: E402
+import ns_kernel as NK                                 # noqa: E402
+
+P_R = O2.Params(**dict(KP.K2, rho=0.7, rho_bar=0.8)).validate()
+EPS_MILD = 1.0e-4
+WILD = {"linear": (-0.455, 0.2), "finite": (-0.455, 0.2)}
+N_SUB = 4
+RC_TRIAL_REFUSED = -3                                  # the -geom linear refused-trial code (the task spec)
+RC_COMMIT_ABORT = -4                                   # a commit aborted by Domain::commit (what the defect gave)
+RETRY_TOL = 1.0e-12
+SUBSTEPS_EXHAUSTED = NK.REFUSAL.index("SUBSTEPS_EXHAUSTED")
+
+
+def _refusal_args():
+    return G.norsand_args(P_R, V0_K2, PI0_K2, SIG0)
+
+
+def _wild_F(kind):
+    """finite: (F1, F2) with F2 = diag(exp(da, db, db)) F1 (log-stretch increment); the committed F1 = (1 - 1e-4) I."""
+    da, db = WILD[kind]
+    F1 = np.diag([1.0 - EPS_MILD] * 3)
+    return F1, np.diag(np.exp([da, db, db])) @ F1
+
+
+def _prescribe_knots(F_knots, dt):
+    """u_i(t_k) = (F_k - I) X_i on every node, one Path knot every dt (g2_common.prescribe uses dt = 1)."""
+    pid = 0
+    for i, x in enumerate(G.XYZ):
+        X = np.array(x, float)
+        for d in range(3):
+            vals = [float(((F - I3) @ X)[d]) for F in F_knots]
+            vals.append(vals[-1])                       # a Path series is 0 at its last time
+            if all(v == 0.0 for v in vals):
+                ops.fix(i + 1, *[1 if k == d else 0 for k in range(3)])
+                continue
+            pid += 1
+            ops.timeSeries("Path", pid, "-dt", dt, "-values", *vals)
+            ops.pattern("Plain", pid, pid)
+            ops.sp(i + 1, d + 1, 1.0)
+
+
+def _build_wild(kind):
+    """Step 1: the mild increment (t = 1); step 2 (t = 2): the wild target.  Knots every 1/4: the ramp to F1 on
+    t in [0, 1], then F_k = diag(exp(k/4 (da, db, db))) F1 for t = 1 + k/4, k = 1..4 (+ 4 beyond, never reached)."""
+    if kind == "linear":
+        da, db = WILD[kind]
+        G.build_small(_refusal_args(), [np.diag([-EPS_MILD] * 3), np.diag([da, db, db])], ele="LadrunoBrick")
+        return
+    da, db = WILD[kind]
+    F1, _ = _wild_F(kind)
+    knots = [I3 + (k / N_SUB) * (F1 - I3) for k in range(N_SUB + 1)]
+    knots += [np.diag(np.exp((k / N_SUB) * np.array([da, db, db]))) @ F1 for k in range(1, 2 * N_SUB + 1)]
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for i, x in enumerate(G.XYZ):
+        ops.node(i + 1, *[float(c) for c in x])
+    ops.nDMaterial("LadrunoNorSand", 1, *_refusal_args())
+    ops.nDMaterial("LogStrain", 2, 1)
+    ops.element("LadrunoBrick", 1, 1, 2, 3, 4, 5, 6, 7, 8, 2, "-formulation", "std", "-geom", "finite")
+    _prescribe_knots(knots, 1.0 / N_SUB)
+    G._analysis_small()
+
+
+def _snap():
+    """Every Gauss point: the inner-owned readouts (state vector, elastic strain, D) and the wrapper / element
+    readouts (stress; Hencky or small strain)."""
+    return {gp: dict(stress=G.mat_response("stress", gp), state=G.mat_response("state", gp),
+                     eps_e=G.mat_response("elasticStrain", gp), D=G.mat_response("D", gp),
+                     strain=G.mat_response("strain", gp)) for gp in range(1, 9)}
+
+
+def _drive_retry(kind, wild_first):
+    """mild step, [the wild step], then 4 equal sub-steps over the SAME total increment from the committed time."""
+    _build_wild(kind)
+    rec = dict(rc_mild=ops.analyze(1))
+    assert rec["rc_mild"] == 0, f"{kind}: the mild first step must converge ({rec['rc_mild']})"
+    rec["pre"] = _snap()
+    rec["refusal_pre"] = G.mat_response("refusal")
+    if wild_first:
+        rec["rc_wild"] = ops.analyze(1)
+        rec["refusal_wild"] = G.mat_response("refusal")
+        rec["post_wild"] = _snap()
+    ops.setTime(1.0)                                    # back to the committed time: the smaller retry
+    ops.integrator("LoadControl", 1.0 / N_SUB)
+    rec["rcs"] = [ops.analyze(1) for _ in range(N_SUB)]
+    rec["time"] = ops.getTime()
+    rec["final"] = _snap()
+    rec["refusal_final"] = G.mat_response("refusal")
+    return rec
+
+
+@functools.lru_cache(maxsize=None)
+def refusal_runs(kind):
+    return _drive_retry(kind, True), _drive_retry(kind, False)
+
+
+@functools.lru_cache(maxsize=None)
+def refusal_oracle(kind):
+    """O2 (small mode) on the same strain history: the mild step, then the wild increment in ONE step (must refuse:
+    the non-vacuity of the whole section) and in N_SUB steps (must not).  finite: the increments are the log
+    stretches ln diag(F_k / F_(k-1)) (the wrapper's feed on a coaxial path, plumbing gate above); linear: dE/N_SUB."""
+    st0 = O2.initial_state(P_R, SIG0, V0_K2, PI0_K2, finite=False)
+    if kind == "linear":
+        da, db = WILD[kind]
+        first = np.diag([-EPS_MILD] * 3)
+        wild_one = np.diag([da, db, db])
+        subs = [wild_one / N_SUB] * N_SUB
+    else:
+        F1, F2 = _wild_F(kind)
+        da, db = WILD[kind]
+        first = np.diag(np.log(np.diag(F1)))
+        wild_one = np.diag([da, db, db])
+        subs = [wild_one / N_SUB] * N_SUB                # log-uniform sub-steps: the wrapper's feed on a coaxial path
+    s1 = O2.step(P_R, st0, first)
+    assert not s1.flags["refused"]
+    one_shot = O2.step(P_R, s1, wild_one)
+    s, refused_at = s1, None
+    for k, d in enumerate(subs):
+        s = O2.step(P_R, s, d)
+        if s.flags["refused"]:
+            refused_at = k + 1
+            break
+    return dict(one_shot_refused=bool(one_shot.flags["refused"]), refused_at=refused_at, final=s)
+
+
+def _cmp(a, b, floor):
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    return float(np.abs(a - b).max() / max(float(np.abs(b).max()), floor))
+
+
+def _snap_diff(a, b, keys):
+    """worst relative difference over the Gauss points and the named readouts (zero floors: stress / state / D 1,
+    strain-like 1e-3: both sides are the same algorithm, so this is round-off against 1e-12)."""
+    floors = dict(stress=1.0, state=1.0, eps_e=1.0e-3, D=1.0, strain=1.0e-3)
+    return max(_cmp(a[gp][k], b[gp][k], floors[k]) for gp in a for k in keys)
+
+
+def _oracle_clauses(kind):
+    """The never-wild OpenSees reference run vs O2 and the closed-form v (valid on the UNFIXED binary too: no
+    refusal is involved).  Returns the failed clauses."""
+    _, ref = refusal_runs(kind)
+    orc = refusal_oracle(kind)
+    fails = []
+    if not orc["one_shot_refused"]:
+        fails.append("ORACLE: O2 does not refuse the wild step in one shot (the step is no longer wild)")
+    if orc["refused_at"] is not None:
+        fails.append(f"ORACLE: O2 refuses the {N_SUB}-sub-step retry at sub-step {orc['refused_at']}")
+    if ref["rcs"] != [0] * N_SUB:
+        fails.append(f"the never-wild reference run returned {ref['rcs']}, expected all 0")
+        return fails
+    o = orc["final"]
+    nat = nat_scales(P_R)
+    st = ref["final"][1]
+    if kind == "finite":
+        J = float(np.linalg.det(_wild_F(kind)[1]))
+        tau = st["stress"] * J                         # Kirchhoff = J sigma_cauchy
+        v_closed = V0_K2 * J                           # sheet 1.4: v = v0 J
+    else:
+        da, db = WILD[kind]
+        tau = st["stress"]
+        v_closed = V0_K2 * math.exp(-3.0 * EPS_MILD + da + 2.0 * db)      # v = v0 exp(tr eps)
+    e = dict(tau=rel(tau, G.t6(o.sigma), nat["sigma"]), pi_i=rel(st["state"][0], o.pi_i, nat["pi_i"]),
+             eps_p_v=rel(st["state"][4], o.eps_p_v, nat["eps_p_v"]),
+             eps_p_s=rel(st["state"][5], o.eps_p_s, nat["eps_p_s"]), v=rel(st["state"][2], o.v, 1.0))
+    bad = {q: x for q, x in e.items() if not x <= GATE}
+    if bad:
+        fails.append(f"final state of the {N_SUB} sub-steps vs O2 beyond {GATE:.0e}: {bad}")
+    dv = abs(st["state"][2] - v_closed) / V0_K2
+    if dv > V_EXACT_TOL:
+        fails.append(f"v differs from its closed form by {dv:.2e}")
+    return fails
+
+
+def _refusal_clauses(kind):
+    """Every clause of the G-R1 / G-R2 contract about the WILD step and the retry after it."""
+    wild, ref = refusal_runs(kind)
+    fails = []
+
+    def check(ok, msg):
+        if not ok:
+            fails.append(msg)
+
+    # (1) the refused-trial code, not the commit abort
+    check(wild["rc_wild"] == RC_TRIAL_REFUSED,
+          f"analyze on the wild step returned {wild['rc_wild']}, expected the refused-trial code {RC_TRIAL_REFUSED} "
+          f"(-4 = a commit aborted by the WP-99 seam after the refusal was swallowed)")
+    # (2) the refusal is on record, NO point is latched
+    code, nref, latched = (int(x) for x in wild["refusal_wild"][:3])
+    check(code == SUBSTEPS_EXHAUSTED and nref >= 1,
+          f"refusal response after the wild step {wild['refusal_wild'].tolist()}: expected SUBSTEPS_EXHAUSTED "
+          f"({SUBSTEPS_EXHAUSTED}) and >= 1 refused trial")
+    check(latched == 0, f"a point is LATCHED after a refused TRIAL (refusal response {wild['refusal_wild'].tolist()})")
+    # (3) the committed state is unchanged (the inner-owned readouts are the committed values after a refusal)
+    d_state = _snap_diff(wild["post_wild"], wild["pre"], ("state", "eps_e", "D"))
+    check(d_state <= RETRY_TOL, f"committed state (state / eps_e / D) changed by the refused step: {d_state:.2e}")
+    if kind == "linear":                    # the plain shell contract: the stress read back is the frozen committed one
+        d_s = _snap_diff(wild["post_wild"], wild["pre"], ("stress",))
+        check(d_s <= RETRY_TOL, f"stress after the refused step differs from the committed one: {d_s:.2e}")
+    # (4) the smaller retry converges and equals the never-wild reference
+    check(wild["rcs"] == [0] * N_SUB, f"the {N_SUB}-sub-step retry returned {wild['rcs']}, expected all 0")
+    check(abs(wild["time"] - 2.0) <= 1.0e-12, f"the retry ended at t = {wild['time']}, expected 2.0")
+    if ref["rcs"] == [0] * N_SUB:
+        d_ref = _snap_diff(wild["final"], ref["final"], ("stress", "state", "eps_e", "D", "strain"))
+        check(d_ref <= RETRY_TOL, f"retry final state vs the never-wild reference: {d_ref:.2e} > {RETRY_TOL:.0e}")
+    check(int(wild["refusal_final"][2]) == 0 and int(wild["refusal_final"][1]) == nref,
+          f"refusal response after the retry {wild['refusal_final'].tolist()}: expected latch 0 and no NEW refused trial "
+          f"(count {nref})")
+    return fails
+
+
+def test_GR0_never_wild_reference_runs_agree_with_the_oracle():
+    """Non-vacuity and harness check for G-R1 / G-R2 that does not involve a refusal (so it must PASS on the unfixed
+    binary): O2 refuses the wild increment in one step and accepts the same total in 4 sub-steps, and the never-wild
+    OpenSees run of those 4 sub-steps (mild step, setTime(1), LoadControl(1/4), 4 x analyze) converges, ends at O2's
+    state (1e-10, kernel_parity scales) and at the closed-form v (1e-12: v0 det F finite, v0 exp(tr eps) linear), on
+    both routes.  Kills: a wild step that is not wild, a retry harness that does not reach the oracle's state."""
+    fails = []
+    for kind in ("finite", "linear"):
+        fails += [f"[{kind}] {f}" for f in _oracle_clauses(kind)]
+    assert not fails, "\n  - " + "\n  - ".join(fails)
+
+
+def test_GR1_finite_refused_trial_cuts_the_step_and_the_smaller_retry_converges():
+    """G-R1.  LogStrain(LadrunoNorSand) in LadrunoBrick -geom finite, wild step: analyze returns the refused-trial
+    code -3 (NOT the -4 commit abort), no point is latched (refusal response slot 2 = 0), the committed state is
+    unchanged, and the same total increment in 4 sub-steps (setTime(1), LoadControl(1/4)) converges four times and
+    ends equal to a never-wild reference run of those sub-steps (1e-12).
+    EXPECTED TO FAIL on a binary without the fix (the wrapper drops the inner's refusal: -4, latched, retry -4).
+    Kills: setTrialF ignoring the inner return; a wrapper that commits (F_n, b^e_n, eps_feed_n) after a refused
+    trial; a latch on the finite route; a retry that sees a stale F_n."""
+    fails = _refusal_clauses("finite")
+    wild, _ = refusal_runs("finite")
+    print(f"\n[finite] wild rc {wild['rc_wild']}  refusal {wild['refusal_wild'].tolist()}  retry rcs {wild['rcs']}")
+    assert not fails, "\n  - " + "\n  - ".join(fails)
+
+
+def test_GR2_linear_control_refused_trial_cuts_the_step_and_the_smaller_retry_converges():
+    """G-R2.  The same contract under -geom linear (plain LadrunoNorSand in a LadrunoBrick, which forwards the
+    refusal at the trial since WP-99 F7): the CONTROL, it passes on the unfixed binary.  Same wild-step window logic
+    as G-R1 (O2: refuses in one shot, accepts in 4 sub-steps).
+    Kills: the control drifting (an element or shell change that breaks the forwarded refusal), a harness error
+    that would also hide G-R1."""
+    fails = _refusal_clauses("linear")
+    wild, _ = refusal_runs("linear")
+    print(f"\n[linear] wild rc {wild['rc_wild']}  refusal {wild['refusal_wild'].tolist()}  retry rcs {wild['rcs']}")
+    assert not fails, "\n  - " + "\n  - ".join(fails)
+
+
+@pytest.mark.parametrize("inner", ("ElasticIsotropic", "LadrunoJ2"))
+def test_GR3_non_refusing_inner_is_unchanged_on_the_wild_step(inner):
+    """G-R3.  An inner that never returns the refusal sentinel (ElasticIsotropic, plastic LadrunoJ2) under LogStrain
+    on the SAME wild stretch as G-R1, then a held step: every analyze returns 0 and the outputs equal the closed
+    forms already used in this file:
+      ElasticIsotropic: Kirchhoff tau = J sigma_cauchy = K tr(ln F) I + 2G dev(ln F)   (Hencky law, 1e-12);
+      LadrunoJ2: Kirchhoff mean stress = K tr(ln F) (plasticity is deviatoric, b^e keeps J^e = J; 1e-12) and the
+        Mises stress is below the elastic line (the step IS plastic); the held step leaves the stress unchanged (1e-10).
+    The bit-identity of these inners with the pre-fix wrapper is the Verify step's job (MX0), not this test's.
+    Kills: a refusal check that fires on a non-refusing inner (a non-zero / negative advisory code), an inner commit
+    that is skipped, a wrapper that stays 'refused' across steps."""
+    define = _elastic_inner if inner == "ElasticIsotropic" else _j2_inner
+    F1, F2 = _wild_F("finite")
+    G.build_finite_inner(define, [F1, F2, F2])
+    rcs, sig = [], []
+    for _ in range(3):
+        rcs.append(ops.analyze(1))
+        sig.append(G.m3(G.mat_response("stress")))
+    assert rcs == [0, 0, 0], rcs
+    lnF = np.log(np.diag(F2))
+    J = float(np.prod(np.diag(F2)))
+    tau_el = _hencky_tau(lnF)
+    tau = J * sig[1]
+    if inner == "ElasticIsotropic":
+        e = float(np.abs(tau - tau_el).max() / np.abs(tau_el).max())
+        assert e <= FB_TOL, e
+    else:
+        e_mean = abs(np.trace(tau) / 3.0 - K_FB * float(lnF.sum())) / abs(K_FB * float(lnF.sum()))
+        assert e_mean <= FB_TOL, e_mean
+
+        def mises(t):
+            return math.sqrt(1.5) * np.linalg.norm(t - np.trace(t) / 3.0 * I3)
+        assert mises(tau) < 0.9 * mises(tau_el), "the J2 step must be plastic"
+    held = float(np.abs(sig[2] - sig[1]).max() / np.abs(sig[1]).max())
+    assert held <= ROT_TOL, held
+
+
+# ----------------------------------------------------------------------------------------------
+# G-R4 / G-R5: the two clauses this test bed cannot drive dynamically.  Both are STATIC gates on the C++ text plus a
+# probe of what is reachable, so that the day the premise changes a test says so.
+# ----------------------------------------------------------------------------------------------
+SRC_DIR = os.path.join(G.REPO, "SRC")
+
+
+def _code_only(text):
+    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
+    return re.sub(r"//[^\n]*", " ", text)
+
+
+def _call_sites(text, name):
+    """(start, end_of_arguments) of every call `x->name(...)` / `x.name(...)` in comment-free C++ text."""
+    out = []
+    for m in re.finditer(r"(?:->|\.)\s*" + name + r"\s*\(", text):
+        depth, i = 1, m.end()
+        while i < len(text) and depth:
+            depth += {"(": 1, ")": -1}.get(text[i], 0)
+            i += 1
+        out.append((m.start(), i))
+    return out
+
+
+def test_GR4_commit_time_refusal_under_logstrain_is_unreachable_so_the_premise_is_gated():
+    """G-R4.  A commit-time refusal under LogStrain needs a host that DISCARDS setTrialF's return (a discarding
+    element: the situation of stdBrick over a setTrialStrain material).  None exists: FiniteStrainNDMaterial's own
+    setTrialStrain is a hard error (so stdBrick / Brick cannot even host LogStrain), and every in-tree caller of
+    setTrialF (LadrunoBrick, LadrunoQuad, LadrunoCST, LadrunoCSTPair, LadrunoLST, BezierTet10, and the InitDefGrad
+    wrapper, which returns it) tests the return `< 0` and aborts its update(); an aborted update never reaches
+    commitState().  So after the fix a LogStrain refusal can only be a TRIAL refusal (G-R1) and the wrapper's
+    defensive commit branch (trial refused + commit anyway: declare the refusal to Domain::commit, do not advance
+    F_n / b^e_n / eps_feed_n) is NOT drivable from the Python test bed.  It is left to the adversary's code review.
+    What IS gated here is the premise: this test fails the day a caller of setTrialF appears that does not test the
+    return, because that caller reopens the commit-time path and needs a dynamic gate (-4, latch = 1, and the
+    wrapper's b^e not advanced, observable as the next trial's Hencky strain staying 1/2 ln b^e_committed).
+    (The behaviour BEFORE the fix is the live evidence that the path exists: the finite route latched at -4.)
+    Kills: a new finite-strain element with an unguarded setTrialF."""
+    if not os.path.isdir(SRC_DIR):
+        pytest.skip("SRC/ not available")
+    guarded, bad = [], []
+    for sub in ("element", "material"):
+        for root, _, files in os.walk(os.path.join(SRC_DIR, sub)):
+            for fn in files:
+                if not fn.endswith(".cpp"):
+                    continue
+                path = os.path.join(root, fn)
+                with open(path, encoding="utf-8", errors="replace") as fh:
+                    text = _code_only(fh.read())
+                for s, e in _call_sites(text, "setTrialF"):
+                    stmt = re.split(r"[;{}]", text[max(0, s - 160):s])[-1]
+                    ok = bool(re.match(r"\s*(<\s*0|!=\s*0|==\s*LADRUNO_MATERIAL_REFUSED)", text[e:e + 24])) \
+                        or bool(re.search(r"\breturn\b", stmt))
+                    m = re.search(r"(\w+)\s*=\s*\w*\s*$", stmt)
+                    if not ok and m:                    # int rc = x->setTrialF(F); ... if (rc < 0)
+                        ok = bool(re.search(r"\b" + m.group(1) + r"\s*(<\s*0|!=\s*0)", text[e:e + 300]))
+                    (guarded if ok else bad).append(os.path.relpath(path, SRC_DIR))
+    print("\nsetTrialF call sites (all guarded):", sorted(set(guarded)))
+    assert not bad, f"setTrialF call sites that do not test the return (reopen the commit-time refusal path): {bad}"
+    callers = {os.path.basename(p) for p in guarded}
+    assert {"LadrunoBrick.cpp", "LadrunoQuad.cpp", "LadrunoCST.cpp", "LadrunoLST.cpp", "LadrunoCSTPair.cpp",
+            "BezierTet10.cpp"} <= callers, f"scan found too few callers (non-vacuity): {sorted(callers)}"
+
+
+def test_GR5_nested_commit_guard_is_in_place_and_subdomain_is_unreachable_from_python():
+    """G-R5.  The nesting guard of Domain::commit(): an in-process Subdomain commits from inside its parent's element
+    loop, so the commit-refusal counter is shared; only the OUTERMOST commit may clear it (before its element loop
+    and after acting on it), else refusals the parent collected from elements committed earlier are wiped and an
+    invalid commit passes.  A dynamic test needs an in-process Subdomain: it is NOT reachable from this test bed (the
+    Python module exposes no subdomain / partition command), so the behaviour is left to the adversary's code review
+    and this is the C++-free substitute: (a) every ladrunoClearCommitRefusals() call in Domain::commit is the body of
+    `if (ladrunoDepth.outermost())`, (b) the depth guard is constructed before the element loop and the post-loop
+    check.  (c) The probe: the day Python gains a Subdomain this fails and says to write the dynamic gate (refusals
+    noted by elements committed BEFORE the nested commit must survive it).
+    Kills: an unguarded clear (the original bug), a guard that is never constructed."""
+    # `partition` exists in the module but is a no-op in this sequential build (getNP() == 1, PartitionedDomain /
+    # Subdomain are _PARALLEL-only): no in-process Subdomain can be built
+    reachable = [n for n in dir(ops) if "subdomain" in n.lower()]
+    assert not reachable, f"an in-process Subdomain is now reachable from Python ({reachable}): write the dynamic G-R5 gate"
+    assert ops.getNP() == 1, f"the module is no longer a sequential build (getNP = {ops.getNP()}): write the dynamic G-R5 gate"
+    path = os.path.join(SRC_DIR, "domain", "domain", "Domain.cpp")
+    if not os.path.isfile(path):
+        pytest.skip("SRC/domain/domain/Domain.cpp not available")
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        text = _code_only(fh.read())
+    start = text.index("Domain::commit(void)")
+    nxt = re.search(r"\n(?:int|void|double)\s*\n\s*Domain::", text[start + 10:])
+    body = text[start:start + 10 + nxt.start()] if nxt else text[start:]
+    n_all = len(re.findall(r"ladrunoClearCommitRefusals\s*\(\s*\)\s*;", body))
+    n_guarded = len(re.findall(
+        r"if\s*\(\s*ladrunoDepth\.outermost\s*\(\s*\)\s*\)\s*ladrunoClearCommitRefusals\s*\(\s*\)\s*;", body))
+    assert n_all >= 2 and n_all == n_guarded, (n_all, n_guarded)
+    guard_pos = body.index("LadrunoCommitDepthGuard")
+    assert guard_pos < body.index("getElements") and guard_pos < body.index("ladrunoPendingCommitRefusals")

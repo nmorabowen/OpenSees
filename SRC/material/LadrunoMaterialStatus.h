@@ -126,6 +126,9 @@ inline void ladrunoNoteCommitRefusal(void) { ++ladrunoCommitRefusalCounter(); }
 // Ladruno WP-144 (G2): the counter is process-wide, so Domain::commit() clears
 // it BEFORE its element loop; a refusal noted outside any Domain::commit() (an
 // NDTest CommitState on a prototype) must not abort the next real commit.
+// Only the OUTERMOST Domain::commit() clears: an in-process Subdomain commits
+// from inside its parent's element loop and must not wipe what the parent has
+// already collected (WP-144 G2 close, Domain.cpp LadrunoCommitDepthGuard).
 inline int ladrunoPendingCommitRefusals(void) { return ladrunoCommitRefusalCounter(); }
 
 // Called by Domain::commit() once it has acted on them.

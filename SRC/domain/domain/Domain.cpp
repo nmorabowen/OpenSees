@@ -2243,9 +2243,29 @@ Domain::record(bool fromAnalysis)
   return res;
 }
 
+// Ladruno (WP-144, G2 close): nesting depth of Domain::commit() in this process.
+// An in-process Subdomain (an Element) runs its own Domain::commit() from inside
+// its parent's element loop (Subdomain::commitState -> Subdomain::commit ->
+// Domain::commit), so the commit-refusal counter (LadrunoMaterialStatus.h) is
+// shared by the parent and every nested commit. Only the OUTERMOST commit owns
+// the counter: it clears it before its element loop and after acting on it; a
+// nested commit must neither clear it (that wiped refusals the parent had already
+// collected earlier in the same loop) nor consume it at its post-loop check.
+// RAII so every early return restores the depth. Serial like the counter itself.
+namespace {
+struct LadrunoCommitDepthGuard {                   // Ladruno WP-144 (G2 close)
+  static int &depth(void) { static int d = 0; return d; }  // ladruno-lint: wipe-ok always back to 0 when no commit is running
+  LadrunoCommitDepthGuard()  { ++depth(); }
+  ~LadrunoCommitDepthGuard() { --depth(); }
+  bool outermost(void) const { return depth() == 1; }
+};
+}
+
 int
 Domain::commit(void)
 {
+    LadrunoCommitDepthGuard ladrunoDepth;                            // Ladruno WP-144 (G2 close)
+
     // 
     // first invoke commit on all nodes and elements in the domain
     //
@@ -2268,7 +2288,14 @@ Domain::commit(void)
     // is that check, which clears after acting, and a PartitionedDomain commits
     // its own elements and then each subdomain through a separate
     // Domain::commit(), each of which checks right after its own element loop.
-    ladrunoClearCommitRefusals();                                    // Ladruno WP-144 (G2)
+    //
+    // NESTING (G2 close): only the OUTERMOST Domain::commit() clears. An in-process
+    // Subdomain::commit() nested inside a parent's element loop would otherwise wipe
+    // the refusals the parent had already collected from the elements committed
+    // before it, and the parent's post-loop check would then read 0 and let an
+    // invalid commit through. See LadrunoCommitDepthGuard above.
+    if (ladrunoDepth.outermost())
+      ladrunoClearCommitRefusals();                                  // Ladruno WP-144 (G2)
 
     Element *elePtr;
     ElementIter &theElemIter = this->getElements();
@@ -2301,7 +2328,10 @@ Domain::commit(void)
     // integer compare per commit), so stock decks are byte-identical.
     if (ladrunoPendingCommitRefusals() > 0) {                        // Ladruno WP-99 (F7)
       const int nRefused = ladrunoPendingCommitRefusals();
-      ladrunoClearCommitRefusals();
+      // A nested commit leaves the count for the parent's own check (G2 close):
+      // Subdomain::commit() drops this return, the parent aborts on the count.
+      if (ladrunoDepth.outermost())
+        ladrunoClearCommitRefusals();                                // Ladruno WP-144 (G2 close)
       opserr << "Domain::commit() - " << nRefused
              << " integration point(s) REFUSED this commit (the material could not"
                 " integrate the step it was asked to commit). Nodes and the"

@@ -90,6 +90,7 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 
 - [ ] Don't lift a damage/softening material with the generic `LogStrainNDMaterial` wrapper.
       Quirks: "The generic LogStrainNDMaterial wrapper is UNSOUND".
+- [ ] A wrapper around a refusing material (LogStrain, Staged*, InitDefGrad) must forward `LADRUNO_MATERIAL_REFUSED` from the trial WITHOUT touching its staged state, and commit the inner first without advancing its own state on a refusing commit. Quirks: "`LogStrainNDMaterial::setTrialF` DROPPED the inner's refusal".
 - [ ] Crack-band `lch` comes from the element through a global. Quirks: "Crack-band materials
       read element size".
 

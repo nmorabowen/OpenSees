@@ -133,3 +133,72 @@ restored source. Re-run on it: B 113 passed; L 59 passed; A 59 passed; the sibli
 (`norsand_oracle/tests` + `kernel_parity`) 460 passed in 14:41; `mutate_kernel.sh` 15 of 15 mutants fail the parity gate.
 `ci/check_quirk_patterns.py` 0 findings, `stamp_headers.py --check` current, `ci/check_classtags.py` OK,
 `ci/check_manifest.py` OK. `build.bat clean` was not run (it wipes `build/` and `dist/`).
+
+## Round 4 (2026-10-02): the G2-close refusal propagation and the commit-depth guard
+
+Branch `wp/144-ladruno-norsand` at 2ce4e6d74 plus the uncommitted G2-close fix (`LogStrainNDMaterial.cpp/.h` and `LogStrain2D.cpp`
+propagate `LADRUNO_MATERIAL_REFUSED`, inner commits first; `Domain.cpp` `LadrunoCommitDepthGuard`; StagedStrain warning) and the
+G2 CLOSE section of `test_g2_logstrain.py` (GR0 to GR5). Nothing committed. Full `build.bat` (all 5 targets, 0 `error C`) per
+build, from a fresh cmd.exe; mtimes of all five artifacts checked fresh each time. The stale `tests/opensees.pyd` (2026-10-02 02:14,
+a copy of the pre-fix build; BUILD_GOTCHAS 4b) was moved aside for the whole campaign, runs used `PYTHONPATH` = a boot dir adding
+`dist\bin` to the DLL search path, and after the final build a fresh copy was put back (byte-identical to `dist\bin\opensees.pyd`).
+`ops.ladrunoBuild()` read inside pytest returns the HEAD hash, as it must; it cannot show the uncommitted fix, so freshness is by mtime.
+
+Sets (all `--runslow`): A = `tests/test_ladruno_norsand.py` + `_element.py` + `_k1.py`; B = the whole `g2/` directory (run FROM
+`g2/`); L = every LogStrain / finite-strain file (`test_logstrain*`, `test_finite_strain_*`, `test_finitestrain2d*`,
+`test_ladrunoJ2_finite*`, `test_ladrunoJ2Finite_element`, `test_ladruno{Brick,Concrete3D,cst,lst,quad}_finite`,
+`test_bezierTet10_finite`, `test_ladrunoRCFiniteStrain`); W = the commit-refusal files (`test_ladrunoQuad_sanisand_implex_commit_refusal`,
+`test_wp104_implex_refusals_wipe_reset` and `_tcl`, `test_cdl_commit_solve_state`, `test_adr85_contact2d_t0_refusals`); S =
+`tests/test_ladruno_sanisand.py`. Revert: the tree holds uncommitted changes, so each mutated file was saved aside first and copied
+back; after EVERY mutant the SHA-256 list of all changed SRC files and `git diff -- SRC` equalled the pre-mutation copies.
+
+Baseline (clean fixed source, full build): A 59 passed; B 120 passed; L 211 passed + 1 xfailed (the pre-existing strict v1-wrapper
+kinematic-objectivity xfail in `test_ladrunoJ2_finite.py`); W 26 passed; S 17 passed + 1 skipped (the documented 2-rank placeholder).
+GR0 to GR5: 7 passed (GR1 and the adversary script `refusal_under_logstrain.py` flipped: finite route now -3 at the trial, refusal
+latched = 0, retry 0, the same as the -geom linear control).
+
+### Result: 2 of 3 required mutants killed; MR2 SURVIVES (unreachable); two extra variants survive for the same reason class
+
+| # | Mutant (edit) | A | B | L | W | Killer / verdict |
+|---|---|---|---|---|---|---|
+| MR0 (control) | `LogStrainNDMaterial.cpp`, `LogStrain2D.cpp`, `Domain.cpp` := git HEAD (the pre-fix source) | n/r | 2 fail | 0 | 0 | `test_GR1_finite_refused_trial_cuts_the_step_and_the_smaller_retry_converges` and `test_GR5_nested_commit_guard_is_in_place_...`: the gates detect the original defect |
+| MR1 | `setTrialF` ignores the inner return code (`setTrialStrain(...)` result dropped, `if (false)`) | 0 | 1 fail | 0 | 0 | KILLED by `test_GR1_finite_...` only (behavioural: -4 + latch instead of -3) |
+| MR2 | wrapper commits despite an inner refusal (both guards in `commitState`: the early `return rc` and the `trialRefused` branch, removed) | 0 | 0 | 0 | 0 | SURVIVOR: unreachable, see below |
+| MR3 | depth guard removed (`Domain.cpp` := HEAD: unguarded clears, no `LadrunoCommitDepthGuard`) | 0 | 1 fail | 0 | 0 | KILLED by `test_GR5_...`, a STATIC source-text gate (not behavioural) |
+| MR2A (extra) | only the early `if (rc == LADRUNO_MATERIAL_REFUSED) return rc;` removed (the `trialRefused` branch stays) | n/r | 0 | 0 | 0 | SURVIVOR; equivalent in practice: the second branch is reached under the same condition and returns the sentinel without advancing (only the refusal is declared twice) |
+| MR3B (extra) | the guard exists but `outermost()` always returns true (the original bug, behaviourally) | n/r | 0 | 0 | 0 | SURVIVOR: GR5 greps for the `if (ladrunoDepth.outermost())` text, it does not execute the predicate |
+
+(n/r = not run: the sets A and the mutated file are independent; MR0, MR2A and MR3B were run on B, L and W.)
+
+WHY MR2, MR2A, MR3B CANNOT BE KILLED FROM THE TEST BED (the premise is gated by GR4 and GR5, which are static):
+- MR2/MR2A: the wrapper's `commitState` refusal branches run only when a host COMMITS after a refused trial. Every in-tree caller of
+  `setTrialF` (LadrunoBrick, LadrunoQuad, LadrunoCST, LadrunoCSTPair, LadrunoLST, BezierTet10, InitDefGrad) tests `< 0` and aborts
+  `update()`, an aborted update never reaches `commitState()` (static, explicit and the CentralDifference family all test
+  `updateDomain() < 0`), `FiniteStrainNDMaterial::setTrialStrain` is a hard error so `NDTest SetStrain` cannot drive a LogStrain, and
+  `NDTest` has no `setTrialF` verb. GR4 therefore gates only the premise (every call site tests the return). The branch is defensive
+  code with no test that executes it. To make it testable the product needs an `NDTest SetF` (or equivalent) verb; then the dynamic gate
+  is: refuse a trial, commit anyway, assert -4 + latch, then a held step must still see `b^e_n` unchanged.
+- MR3B: nesting needs an in-process `Subdomain` (a `_PARALLEL`-only class); the module has no subdomain command and `getNP() == 1`.
+  GR5 checks the clears sit under `if (ladrunoDepth.outermost())` and that the guard is constructed first; it does not evaluate the
+  predicate. A semantic regression of `outermost()` itself is not caught.
+
+### Bit-identity of the non-refusing inners (MX0 repeated for this fix)
+
+`bitdump.py` (the Round-3 script, copied; session scratch, not committed) drives `LogStrain` over `ElasticIsotropic` and over plastic
+`LadrunoJ2` (25 coaxial steps, z or oblique rotation, two held steps, one general non-coaxial step): 4 paths x 30 steps x 588 doubles =
+70,560 doubles (Cauchy stress, Hencky strain, 24 x 24 element stiffness). Compared as raw 64-bit patterns:
+- MR0 (pre-fix wrapper + `Domain.cpp` from git HEAD) versus the fixed build: BIT-IDENTICAL on all four paths (70,560 of 70,560).
+- the Round-3 final dump versus the fixed build: BIT-IDENTICAL on all four paths.
+- the final clean rebuild versus MR0: BIT-IDENTICAL on all four paths.
+A non-refusing inner is unchanged by the fix to the last bit on this machine and toolchain (not a portable claim: libm `exp`/`log`).
+
+### Esmeralda (independent of the Windows build; the fix touches no kernel)
+
+`norsand_oracle/tests` (G1) + `kernel_parity`, synced from the worktree with `SRC/material/nD/LadrunoNorSand{Kernel.h,.h,.cpp}`,
+`nohup` + poll: 460 passed in 14:20 (the same count as Round 3). `mutate_kernel.sh` was not re-run (no kernel source changed).
+
+### Final state
+
+Source restored after each mutant (SHA-256 of the changed SRC files and `git diff -- SRC` identical to the pre-mutation copies, checked after
+every one). Final full `build.bat` from the clean fixed source: 5 targets, exit 0, 0 `error C`, all five mtimes fresh; A 59, B 120,
+L 211 + 1 xfail, W 26, S 17 + 1 skip, all green. `build.bat clean` was not run.
