@@ -36,12 +36,12 @@
 
 void *OPS_TimeVaryingMaterial(void)
 {
+    const char *usage =
+        "nDMaterial TimeVarying $tag $projMatTag $N t1 .. tN E1 .. EN K1 .. KN A1 .. AN\n";
+
     // check arguments
-    int numArgs = OPS_GetNumRemainingInputArgs();
-    if (numArgs < 7) {
-        opserr <<
-               "nDMaterial TimeVarying Error: Few arguments (< 17).\n"
-               "nDMaterial TimeVarying $tag $theProjectedMat $Nt t1 t2 t3 .. t_Nt E1 E2 E3 ... E_Nt K1 K2 K3...K_Nt  A1 A2 A3...A_Nt\n";
+    if (OPS_GetNumRemainingInputArgs() < 3) {
+        opserr << "nDMaterial TimeVarying Error: too few arguments.\n" << usage;
         return nullptr;
     }
 
@@ -53,11 +53,15 @@ void *OPS_TimeVaryingMaterial(void)
         return nullptr;
     }
 
-
     int Ndatapoints = 0;
     numData = 1;
-    if (OPS_GetInt(&numData, &Ndatapoints) != 0)  {
-        opserr << "nDMaterial TimeVarying Error: error reading Ndatapoints\n";
+    if (OPS_GetInt(&numData, &Ndatapoints) != 0 || Ndatapoints < 1)  {
+        opserr << "nDMaterial TimeVarying Error: invalid number of data points N\n";
+        return nullptr;
+    }
+    if (OPS_GetNumRemainingInputArgs() < 4 * Ndatapoints) {
+        opserr << "nDMaterial TimeVarying Error: expected " << 4 * Ndatapoints
+               << " values (t, E, K, A histories) for tag " << iData[0] << ".\n" << usage;
         return nullptr;
     }
 
@@ -65,42 +69,29 @@ void *OPS_TimeVaryingMaterial(void)
     Vector E(Ndatapoints);
     Vector K(Ndatapoints);
     Vector A(Ndatapoints);
-
-    // get double data
-    double * dData = new double[Ndatapoints];
-
-    numData = Ndatapoints;
-
-    //Read time steps
-    if (OPS_GetDouble(&numData, dData) != 0) {
-        opserr << "nDMaterial TimeVarying Error: reading t data for nDMaterial TimeVarying with tag " << iData[0] << ".\n";
-        return nullptr;
+    Vector *histories[4] = {&t, &E, &K, &A};
+    const char *names[4] = {"t", "E", "K", "A"};
+    for (int h = 0; h < 4; ++h) {
+        numData = Ndatapoints;
+        if (OPS_GetDouble(&numData, &(*histories[h])(0)) != 0) {
+            opserr << "nDMaterial TimeVarying Error: reading " << names[h]
+                   << " data for nDMaterial TimeVarying with tag " << iData[0] << ".\n";
+            return nullptr;
+        }
     }
-    t.setData(dData, Ndatapoints);
 
-    //Read E
-    dData = new double[Ndatapoints];
-    if (OPS_GetDouble(&numData, dData) != 0) {
-        opserr << "nDMaterial TimeVarying Error: reading E data for nDMaterial TimeVarying with tag " << iData[0] << ".\n";
-        return nullptr;
+    // validate histories
+    for (int k = 0; k < Ndatapoints; ++k) {
+        if (k > 0 && t(k) <= t(k - 1)) {
+            opserr << "nDMaterial TimeVarying Error: times must be strictly increasing (tag " << iData[0] << ").\n";
+            return nullptr;
+        }
+        if (A(k) <= 0.0 || K(k) <= 0.0 || E(k) <= 0.0 || E(k) >= 9.0 * K(k)) {
+            opserr << "nDMaterial TimeVarying Error: need A > 0, K > 0 and 0 < E < 9K at every point (tag "
+                   << iData[0] << ", point " << k + 1 << ").\n";
+            return nullptr;
+        }
     }
-    E.setData(dData, Ndatapoints);
-
-    //Read K
-    dData = new double[Ndatapoints];
-    if (OPS_GetDouble(&numData, dData) != 0) {
-        opserr << "nDMaterial TimeVarying Error: reading K data for nDMaterial TimeVarying with tag " << iData[0] << ".\n";
-        return nullptr;
-    }
-    K.setData(dData, Ndatapoints);
-
-    //Read A
-    dData = new double[Ndatapoints];
-    if (OPS_GetDouble(&numData, dData) != 0) {
-        opserr << "nDMaterial TimeVarying Error: reading A data for nDMaterial TimeVarying with tag " << iData[0] << ".\n";
-        return nullptr;
-    }
-    A.setData(dData, Ndatapoints);
 
     // get the projected material to map
     NDMaterial *theProjMaterial = OPS_getNDMaterial(iData[1]);
@@ -109,6 +100,16 @@ void *OPS_TimeVaryingMaterial(void)
         opserr << "nDMaterial: " << iData[1] << "\n";
         opserr << "nDMaterial TimeVarying: " << iData[0] << "\n";
         return nullptr;
+    }
+
+    {
+        NDMaterial *test = theProjMaterial->getCopy("ThreeDimensional");
+        if (test == 0) {
+            opserr << "nDMaterial TimeVarying Error: material " << iData[1]
+                   << " has no ThreeDimensional version.\n";
+            return nullptr;
+        }
+        delete test;
     }
 
     // create the TimeVarying wrapper
@@ -151,7 +152,6 @@ TimeVaryingMaterial::TimeVaryingMaterial(
     theProjectedMaterial = theProjMat.getCopy("ThreeDimensional");
     if (theProjectedMaterial == 0) {
         opserr << "nDMaterial TimeVarying Error: failed to get a (3D) copy of the isotropic material\n";
-        exit(-1);
     }
 
     int Ndatapoints = E_.Size();
@@ -183,6 +183,8 @@ double TimeVaryingMaterial::getRho(void)
 
 int TimeVaryingMaterial::setTrialStrain(const Vector & strain)
 {
+    if (theProjectedMaterial == 0)
+        return -1;
 
     //Compute the real strain increment
     static Vector depsilon_real(6);
@@ -222,7 +224,7 @@ int TimeVaryingMaterial::setTrialStrain(const Vector & strain)
     if (A[tag] <= 0 ) {
         opserr << "nDMaterial TimeVarying Error: A must be greater than 0 for tag = " << tag << "\n";
         opserr << "A = " << A[tag] << endln;
-        exit(-1);
+        return -1;
     }
 
     // compute the initial projected constitutive tensor and its inverse
@@ -232,7 +234,7 @@ int TimeVaryingMaterial::setTrialStrain(const Vector & strain)
     int res = C0proj.Invert(C0proj_inv);
     if (res < 0) {
         opserr << "nDMaterial TimeVarying Error: the isotropic material gave a singular initial tangent.\n";
-        exit(-1);
+        return -1;
     }
 
     // compute the strain tensor map inv(C0_iso) * Asigma * C0_ortho
