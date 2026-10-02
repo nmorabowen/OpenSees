@@ -1,0 +1,405 @@
+diff --git a/SRC/analysis/handler/LadrunoContactFE.cpp b/SRC/analysis/handler/LadrunoContactFE.cpp
+index 1cde1610a..69f78c36d 100644
+--- a/SRC/analysis/handler/LadrunoContactFE.cpp
++++ b/SRC/analysis/handler/LadrunoContactFE.cpp
+@@ -857,6 +857,15 @@ LadrunoContactFE::mortarActive(double D[4][4], double M[4][4], double g[4], doub
+         const Vector &u = mortarMaster[i]->getTrialDisp();
+         for (int d = 0; d < 3; d++) Xm[i][d] = X(d) + u(d);
+     }
++    return mortarActiveX(Xs, Xm, D, M, g, n);
++}
++
++// ADR-158 -- the body of mortarActive at GIVEN current positions (the FD pair tangent evaluates
++// the pair at perturbed positions through this same code; mortarActive is unchanged arithmetic).
++bool
++LadrunoContactFE::mortarActiveX(const double Xs[4][3], const double Xm[4][3],
++                                double D[4][4], double M[4][4], double g[4], double n[3]) const
++{
+     LadrunoMortarKernel::PairResult pr;
+     if (LadrunoMortarKernel::integratePair(npsS, Xs, npsM, Xm, orientDir, pr) != 0)
+         return false;                                // empty/degenerate overlap
+@@ -2715,6 +2724,12 @@ LadrunoContactFE::addMortarTang(double fact, bool initialStiff)
+         }
+         return;
+     }
++    // ADR-158 -- opt-in FD pair tangent (current tangent only; the initial-stiffness path keeps
++    // the analytic SPD stick tangent below). Off (mortarFDRel == 0) => byte-identical.
++    if (mortarFDRel > 0.0 && !initialStiff) {
++        addMortarTangFD(fact);
++        return;
++    }
+     double W[4] = {0.0, 0.0, 0.0, 0.0};               // act_I / a_I^facet
+     for (int I = 0; I < npsS; I++) {
+         double aFacet = 0.0;
+@@ -2817,6 +2832,154 @@ LadrunoContactFE::addMortarTang(double fact, bool initialStiff)
+     }
+ }
+ 
++// ADR-158 -- this pair's static contact force at GIVEN trial displacements, side-effect free. It
++// mirrors the getResidual MORTAR branch (normal ALM pressure + addMortarFriction) line by line but
++// writes no state: lambda_N and the friction path state (gpT, lambda_T, gT0) are READ (committed
++// values; the trial gpT/lambda_T written by the residual are not inputs of the residual itself).
++// A pair that has not engaged yet takes gT0 from gT0in (the base configuration) so the FD columns
++// all share one engagement origin, exactly as the residual would capture it at the base iterate.
++bool
++LadrunoContactFE::mortarPairForceAt(const double us[4][3], const double um[4][3],
++                                    const double (*gT0in)[3], double (*gT0out)[3], double f[24])
++{
++    for (int i = 0; i < 24; i++) f[i] = 0.0;
++    double Xs[4][3], Xm[4][3];
++    for (int i = 0; i < npsS; i++) {
++        const Vector &X = mortarSlave[i]->getCrds();
++        for (int d = 0; d < 3; d++) Xs[i][d] = X(d) + us[i][d];
++    }
++    for (int i = 0; i < npsM; i++) {
++        const Vector &X = mortarMaster[i]->getCrds();
++        for (int d = 0; d < 3; d++) Xm[i][d] = X(d) + um[i][d];
++    }
++    double D[4][4], M[4][4], g[4], n[3];
++    if (!mortarActiveX(Xs, Xm, D, M, g, n)) return false;
++    LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
++    double p[4] = {0, 0, 0, 0};
++    for (int I = 0; I < npsS; I++) {
++        double aFacet = 0.0;
++        for (int J = 0; J < npsS; J++) aFacet += D[I][J];
++        if (aFacet <= 1e-300) continue;
++        double lambdaI = (cd != 0)
++            ? cd->getOrCreateMortarNormalState(contactTag, mortarSlave[I]->getTag()).lambdaN : 0.0;
++        double pr = lambdaI + kn * (g[I] / aFacet);
++        p[I] = (pr < 0.0) ? pr : 0.0;
++    }
++    for (int K = 0; K < npsS; K++) {
++        double Dp = 0.0;
++        for (int I = 0; I < npsS; I++) Dp += D[K][I] * p[I];
++        for (int d = 0; d < 3; d++) f[3 * K + d] = -Dp * n[d];
++    }
++    for (int L = 0; L < npsM; L++) {
++        double Mp = 0.0;
++        for (int I = 0; I < npsS; I++) Mp += M[I][L] * p[I];
++        for (int d = 0; d < 3; d++) f[3 * (npsS + L) + d] = Mp * n[d];
++    }
++    if (!((mu > 0.0 || mortarCohesion > 0.0 || mortarTauMax > 0.0) && cd != 0)) return true;
++    double tFric[4][3] = {{0}};
++    for (int I = 0; I < npsS; I++) {
++        if (p[I] >= 0.0) continue;
++        double aFacet = 0.0;
++        for (int J = 0; J < npsS; J++) aFacet += D[I][J];
++        if (aFacet <= 1e-300) continue;
++        double N_I = -p[I];
++        double r[3] = {0, 0, 0};
++        for (int J = 0; J < npsS; J++)
++            for (int d = 0; d < 3; d++) r[d] += D[I][J] * us[J][d];
++        for (int K = 0; K < npsM; K++)
++            for (int d = 0; d < 3; d++) r[d] -= M[I][K] * um[K][d];
++        double rn = r[0]*n[0] + r[1]*n[1] + r[2]*n[2];
++        double gbarT[3];
++        for (int d = 0; d < 3; d++) gbarT[d] = (r[d] - rn * n[d]) / aFacet;
++        if (gT0out != 0)
++            for (int d = 0; d < 3; d++) gT0out[I][d] = gbarT[d];
++        const LadrunoContactDomain::MortarFrictionState &st = cd->getOrCreateMortarFrictionState(
++            contactTag, mortarSlave[I]->getTag(), slaveFacetIndex, masterFacetIndex);
++        double gT0[3];
++        for (int d = 0; d < 3; d++)
++            gT0[d] = st.engaged ? st.gT0[d] : ((gT0in != 0) ? gT0in[I][d] : gbarT[d]);
++        double invEpsT = (kt > 0.0) ? 1.0 / kt : 0.0;
++        double gTeff[3], tF[3], gpTtrial[3];
++        for (int d = 0; d < 3; d++) gTeff[d] = (gbarT[d] - gT0[d]) + st.lambdaT[d] * invEpsT;
++        LadrunoFrictionKernel::frictionReturnMap(gTeff, st.gpT, N_I, kt, mu, tF, gpTtrial,
++                                                 mortarCohesion, mortarTauMax);
++        for (int d = 0; d < 3; d++) tFric[I][d] = tF[d];
++    }
++    for (int K = 0; K < npsS; K++)
++        for (int d = 0; d < 3; d++) {
++            double s = 0.0;
++            for (int I = 0; I < npsS; I++) s += D[K][I] * tFric[I][d];
++            f[3 * K + d] += s;
++        }
++    for (int L = 0; L < npsM; L++)
++        for (int d = 0; d < 3; d++) {
++            double s = 0.0;
++            for (int I = 0; I < npsS; I++) s += M[I][L] * tFric[I][d];
++            f[3 * (npsS + L) + d] += -s;
++        }
++    return true;
++}
++
++// ADR-158 -- the FD pair tangent: tang(:, c) += -fact * (f(u + h e_c) - f(u - h e_c)) / 2h over the
++// pair's own 3*(npsS+npsM) DOFs (the FE residual convention: tang = -d resid/du). The step is
++// h = mortarFDRel * (longest current slave facet edge), so it is unit-free. Central differences put
++// the error at O(h^2) on smooth branches; across an active-set or stick/slip kink inside +-h the
++// column is the average of the two one-sided slopes. (Freezing the base branch instead was tried in
++// R0.7 and measured neutral-to-worse: ADR-158 section 3.)
++void
++LadrunoContactFE::addMortarTangFD(double fact)
++{
++    double us[4][3] = {{0}}, um[4][3] = {{0}};
++    for (int i = 0; i < npsS; i++) {
++        const Vector &u = mortarSlave[i]->getTrialDisp();
++        for (int d = 0; d < 3; d++) us[i][d] = u(d);
++    }
++    for (int i = 0; i < npsM; i++) {
++        const Vector &u = mortarMaster[i]->getTrialDisp();
++        for (int d = 0; d < 3; d++) um[i][d] = u(d);
++    }
++    double L = 0.0;
++    for (int i = 0; i < npsS; i++) {
++        const Vector &Xa = mortarSlave[i]->getCrds();
++        const Vector &Xb = mortarSlave[(i + 1) % npsS]->getCrds();
++        double e2 = 0.0;
++        for (int d = 0; d < 3; d++) {
++            double e = (Xb(d) + us[(i + 1) % npsS][d]) - (Xa(d) + us[i][d]);
++            e2 += e * e;
++        }
++        if (e2 > L * L) L = std::sqrt(e2);
++    }
++    if (L <= 0.0) return;
++    const double h = mortarFDRel * L;
++    double gT0base[4][3] = {{0}}, f0[24];
++    if (!mortarPairForceAt(us, um, 0, gT0base, f0)) return;
++    const int nN = npsS + npsM, nd = 3 * nN;
++    double fp[24], fm[24];
++    for (int c = 0; c < nd; c++) {
++        const int a = c / 3, d = c % 3;
++        double (*u)[3] = (a < npsS) ? us : um;
++        const int k = (a < npsS) ? a : a - npsS;
++        const double u0 = u[k][d];
++        u[k][d] = u0 + h;
++        bool okp = mortarPairForceAt(us, um, gT0base, 0, fp);
++        u[k][d] = u0 - h;
++        bool okm = mortarPairForceAt(us, um, gT0base, 0, fm);
++        u[k][d] = u0;
++        // A perturbed evaluation can be REFUSED by the kernel (the overlap clip's convexity,
++        // sliver or back-map guards flip within +-h on a thin or steep pair). The refusal is a
++        // jump of the whole pair force, so differencing across it would put f/h into the
++        // tangent. Use the one-sided difference on the side that kept the pair; drop the column
++        // when both sides refuse.
++        const double *fa = okp ? fp : f0, *fb = okm ? fm : f0;
++        double span = (okp ? h : 0.0) + (okm ? h : 0.0);
++        if (span <= 0.0) continue;
++        for (int r = 0; r < nd; r++) {
++            double k_rc = -(fa[r] - fb[r]) / span;
++            if (k_rc != 0.0) tang(r, c) += fact * k_rc;
++        }
++    }
++}
++
+ void
+ LadrunoContactFE::addKiToTang(double fact)
+ {
+diff --git a/SRC/analysis/handler/LadrunoContactFE.h b/SRC/analysis/handler/LadrunoContactFE.h
+index 044ba34c1..3e9da72f8 100644
+--- a/SRC/analysis/handler/LadrunoContactFE.h
++++ b/SRC/analysis/handler/LadrunoContactFE.h
+@@ -260,6 +260,13 @@ class LadrunoContactFE : public FE_Element
+     // Domain (MortarFrictionState). The handler calls it right after construction.
+     void setMortarMasterFacet(int mf) { masterFacetIndex = mf; }
+ 
++    // ADR-158 (3D MORTAR, non-tie): replace the analytic pair tangent by a central finite
++    // difference of this pair's OWN residual (normal + friction), step h = hRel * (longest slave
++    // facet edge). It carries every term the analytic tangent drops (the Coulomb pressure coupling
++    // Csl, the geometric dD/du, dM/du, dn/du of the clipped overlap) and is NON-symmetric: it needs
++    // a non-symmetric solver. hRel <= 0 => off (never called => byte-identical).
++    void setMortarFDTangent(double hRel) { mortarFDRel = (hRel > 0.0) ? hRel : 0.0; }
++
+     // getTangent routes through the integrator's formEleTangent so the INTEGRATOR
+     // decides what to assemble (CDL -> addMtoTang only -> no contact stiffness in
+     // the explicit mass matrix; Newmark -> addKtToTang(c1) -> c1*K_c; statics ->
+@@ -406,6 +413,19 @@ class LadrunoContactFE : public FE_Element
+     // (LadrunoMortarKernel::integratePair) + the per-facet master normal n. Returns true
+     // if the overlap is non-empty (status 0); false ⇒ no contribution this evaluation.
+     bool mortarActive(double D[4][4], double M[4][4], double g[4], double n[3]) const;
++    // ADR-158: the same evaluator at GIVEN current positions Xs (slave) / Xm (master) -- the
++    // body of mortarActive, which now gathers X+u and calls this (same arithmetic).
++    bool mortarActiveX(const double Xs[4][3], const double Xm[4][3],
++                       double D[4][4], double M[4][4], double g[4], double n[3]) const;
++    // ADR-158: this pair's static contact force (normal + friction; viscous excluded) at GIVEN
++    // trial displacements us/um, side-effect free (reads the committed lambda_N / friction path
++    // state, writes nothing). gT0 of a not-yet-engaged pair: gT0in[I] when given, else the slip at
++    // this configuration (returned in gT0out when non-null). f = [slave xyz | master xyz].
++    // Returns false when the overlap is empty.
++    bool mortarPairForceAt(const double us[4][3], const double um[4][3],
++                           const double (*gT0in)[3], double (*gT0out)[3], double f[24]);
++    // ADR-158: the FD pair tangent (see setMortarFDTangent).
++    void addMortarTangFD(double fact);
+     // C2.1: assemble the mortar penalty tangent K_c = epsN·B̃ᵀ diag(act/a) B̃ ⊗ (n⊗n)
+     // into `tang` (material/penalty only — geometric ∂{D,M,n}/∂u deferred). Shared by
+     // addKtToTang / addKiToTang (the penalty K_initial == K_current). Same active mask
+@@ -559,6 +579,8 @@ class LadrunoContactFE : public FE_Element
+     double gapShiftAdjTol  = 0.0;     // 0 => adjust every paired node; >0 => only |gbar_ref| <= tol
+     mutable bool   gapShiftRefReady = false;
+     mutable double gapShiftRef[4]   = {0.0, 0.0, 0.0, 0.0};   // -gbar_I at the reference config
++    // ADR-158 -- FD pair tangent step (relative to the longest slave facet edge); 0 => off.
++    double mortarFDRel = 0.0;
+ 
+     // ADR-85 T3 -- 2D MORTAR bindings (mode == MORTAR, ndm == 2). NSDMI so every 3D
+     // MORTAR ctor call leaves them at their default/inert value, untouched (the T1b
+diff --git a/SRC/analysis/handler/LadrunoContactHandler.cpp b/SRC/analysis/handler/LadrunoContactHandler.cpp
+index 94e88745a..f55f9aff6 100644
+--- a/SRC/analysis/handler/LadrunoContactHandler.cpp
++++ b/SRC/analysis/handler/LadrunoContactHandler.cpp
+@@ -2513,6 +2513,9 @@ LadrunoContactHandler::handle(const ID *nodesLast)
+                     // ADR-155 (G-9): arm the normal-gap shift (off => never called => inert).
+                     if (mc.gapOffset != 0.0 || mc.adjust)
+                         fe->setMortarGapShift(mc.gapOffset, mc.adjust, mc.adjustTol);
++                    // ADR-158: the opt-in FD pair tangent (off => never called => inert).
++                    if (mc.fdTangent > 0.0)
++                        fe->setMortarFDTangent(mc.fdTangent);
+                     theModel->addFE_Element(fe);
+                     // C2.2: this pair's slave nodes have a live λ_N slot this handle().
+                     for (int k = 0; k < npsS; k++)
+diff --git a/SRC/domain/contact/LadrunoContactDomain.cpp b/SRC/domain/contact/LadrunoContactDomain.cpp
+index 94b89147c..7c6294ddf 100644
+--- a/SRC/domain/contact/LadrunoContactDomain.cpp
++++ b/SRC/domain/contact/LadrunoContactDomain.cpp
+@@ -527,6 +527,27 @@ LadrunoContactDomain::setMortarContactOptions(int tag, int augmentMode, double m
+     return 0;
+ }
+ 
++// ADR-158 -- the FD pair tangent. hRel <= 0 => off. Refused on a -tie (its penalty Gram is exact).
++int
++LadrunoContactDomain::setMortarFDTangent(int tag, double hRel)
++{
++    MortarContact *m = 0;
++    for (size_t i = 0; i < theMortarContacts.size(); i++)
++        if (theMortarContacts[i].tag == tag) { m = &theMortarContacts[i]; break; }
++    if (m == 0) {
++        opserr << "WARNING LadrunoContactDomain::setMortarFDTangent() - contact " << tag
++               << " is not a -mortar contact\n";
++        return -1;
++    }
++    if (m->isTie && hRel > 0.0) {
++        opserr << "WARNING LadrunoContactDomain::setMortarFDTangent() - contact " << tag
++               << ": -fdTangent does not apply to -tie (the tie tangent is exact)\n";
++        return -1;
++    }
++    m->fdTangent = (hRel > 0.0) ? hRel : 0.0;
++    return 0;
++}
++
+ int
+ LadrunoContactDomain::addRigidPlane(int tag, int slaveSurfTag,
+                                     const double p0[3], const double n[3], double kn, double muc,
+@@ -590,7 +611,8 @@ LadrunoContactDomain::addRigidPlane(int tag, int slaveSurfTag,
+ // bump FMT_VERSION if a lane grows a field, and the unpack refuses a version it does not know.
+ 
+ namespace {
+-    const int LCD_FMT_VERSION  = 4;    // ADR-155 -- BUMPED 3 -> 4 with the mortar-record growth
++    const int LCD_FMT_VERSION  = 5;    // ADR-158 -- BUMPED 4 -> 5 (mortar record + fdTangent).
++                                       // ADR-155 -- BUMPED 3 -> 4 with the mortar-record growth
+                                        // (augmentMode, maxGap, gapOffset, adjust, adjustTol),
+                                        // per the protocol above; a v3 stream draws the NAMED
+                                        // version refusal. ADR-85 F1 -- BUMPED with the NTS-record growth below
+@@ -604,7 +626,7 @@ namespace {
+                                        // by name at unpackDefinitions() below.
+     const int LCD_HDR_SLOTS    = 5;    // version, nSurf, nNts, nMortar, nPlanes
+     const int LCD_NTS_SLOTS    = 22;   // ADR-85 F1 -- +1 (outwardWinding), appended at the tail
+-    const int LCD_MORTAR_SLOTS = 43;   // ADR-155 -- +5 (augmentMode, maxGap, gapOffset, adjust,
++    const int LCD_MORTAR_SLOTS = 44;   // ADR-158 -- +1 (fdTangent). ADR-155 -- +5 (augmentMode, maxGap, gapOffset, adjust,
+                                        // adjustTol); ADR-85 T3 -- +1 (hThickness). Tail-appended
+     const int LCD_PLANE_SLOTS  = 12;
+ }
+@@ -704,6 +726,7 @@ LadrunoContactDomain::packDefinitions(Vector &v) const
+         v(p++) = m.gapOffset;
+         v(p++) = m.adjust ? 1.0 : 0.0;
+         v(p++) = m.adjustTol;
++        v(p++) = m.fdTangent;   // ADR-158 -- appended at the tail
+     }
+     for (size_t i = 0; i < theRigidPlanes.size(); i++) {
+         const RigidPlane &r = theRigidPlanes[i];
+@@ -804,6 +827,7 @@ LadrunoContactDomain::unpackDefinitions(const Vector &v)
+         double maxGap = v(p++), gapOff = v(p++);
+         bool   adjust = (v(p++) != 0.0);
+         double adjTol = v(p++);
++        double fdTan = v(p++);   // ADR-158 -- appended at the tail
+         if (this->addMortarContact(tag, ms, ss, kn, knAuto, epsN, epsNAuto,
+                                    augTol, maxAug, ngp, hasOut ? out : 0, cellFrac,
+                                    mu, epsT, epsTAuto, cohesion, tauMax, cTan,
+@@ -813,6 +837,8 @@ LadrunoContactDomain::unpackDefinitions(const Vector &v)
+             goto unpack_fail;
+         if (this->setMortarContactOptions(tag, augMode, maxGap, gapOff, adjust, adjTol) < 0)
+             goto unpack_fail;   // ADR-155
++        if (fdTan > 0.0 && this->setMortarFDTangent(tag, fdTan) < 0)
++            goto unpack_fail;   // ADR-158
+         theMortarContacts.back().retired = retired;
+     }
+     for (int i = 0; i < nPl; i++) {
+diff --git a/SRC/domain/contact/LadrunoContactDomain.h b/SRC/domain/contact/LadrunoContactDomain.h
+index 01217827f..499a5f558 100644
+--- a/SRC/domain/contact/LadrunoContactDomain.h
++++ b/SRC/domain/contact/LadrunoContactDomain.h
+@@ -269,12 +269,17 @@ class LadrunoContactDomain
+         double gapOffset   = 0.0;
+         bool   adjust      = false;
+         double adjustTol   = 0.0;
++        // ADR-158 -- the FD pair tangent (-fdTangent [hRel]): 0 = off (the analytic tangent,
++        // byte-identical); > 0 = central FD of each pair's residual, step hRel x facet edge. 3D only.
++        double fdTangent   = 0.0;
+     };
+     enum { AUG_COMMIT = 0, AUG_REQUEST = 1, AUG_NEVER = 2 };
+     // ADR-155 -- set the R0.5 options on an already-added mortar contact (by tag). <0 if the tag
+     // is not a mortar contact or an option is invalid (gap shift on a -tie, negative maxGap...).
+     int setMortarContactOptions(int tag, int augmentMode, double maxGap, double gapOffset,
+                                 bool adjust, double adjustTol);
++    // ADR-158 -- arm the FD pair tangent on an already-added (non-tie) mortar contact.
++    int setMortarFDTangent(int tag, double hRel);
+     int addMortarContact(int tag, int masterSurfTag, int slaveSurfTag,
+                          double kn, bool knAuto, double epsN, bool epsNAuto,
+                          double augTol, int maxAug, int ngp,
+diff --git a/SRC/interpreter/OpenSeesOutputCommands.cpp b/SRC/interpreter/OpenSeesOutputCommands.cpp
+index 1620dac22..5434c5f30 100644
+--- a/SRC/interpreter/OpenSeesOutputCommands.cpp
++++ b/SRC/interpreter/OpenSeesOutputCommands.cpp
+@@ -656,9 +656,31 @@ static int ladrunoContactImpl()
+     bool   hasR05 = false;
+     double maxGap = 0.0, gapOffset = 0.0, adjustTol = 0.0;
+     bool   adjust = false;
++    // Ladruno ADR-158 -- `-fdTangent [hRel]`: the mortar pair tangent by a central finite difference
++    // of each pair's own residual (default hRel 1e-7 x the slave facet edge). Non-symmetric.
++    double fdTangent = 0.0;
+     while (OPS_GetNumRemainingInputArgs() > 0) {
+         const char *opt = OPS_GetString();
+-        if (opt != 0 && strcmp(opt, "-mortar") == 0) {
++        if (opt != 0 && strcmp(opt, "-fdTangent") == 0) {
++            fdTangent = 1.0e-7;
++            if (OPS_GetNumRemainingInputArgs() > 0) {      // optional value (the -adjust peek idiom)
++                const char *pk = OPS_GetString();
++                bool isFlag = (pk != 0 && pk[0] == '-' &&
++                               ((pk[1] >= 'a' && pk[1] <= 'z') || (pk[1] >= 'A' && pk[1] <= 'Z')));
++                OPS_ResetCurrentInputArg(-1);
++                if (!isFlag) {
++                    double v[1]; int m = 1;
++                    if (OPS_GetDoubleInput(&m, v) < 0 || v[0] <= 0.0 || v[0] >= 1.0) {
++                        opserr << "WARNING contact -fdTangent - need a relative step 0 < hRel < 1 (ADR-158)\n";
++                        return -1;
++                    }
++                    fdTangent = v[0];
++                }
++            }
++            opserr << "WARNING contact -fdTangent: the finite-difference mortar pair tangent is "
++                      "non-symmetric; use a non-symmetric solver (system FullGeneral/UmfPack/"
++                      "Pardiso/Mumps).\n";
++        } else if (opt != 0 && strcmp(opt, "-mortar") == 0) {
+             isMortar = true;
+         } else if (opt != 0 && strcmp(opt, "-augment") == 0) {
+             // Ladruno ADR-155 (N-2): when the mortar Uzawa augmentation runs.
+@@ -1116,6 +1138,11 @@ static int ladrunoContactImpl()
+                   "(ADR-155); add -mortar or remove them\n";
+         return -1;
+     }
++    if (fdTangent > 0.0 && (!isMortar || isTie)) {
++        opserr << "WARNING contact -fdTangent is a -mortar contact option and does not apply to "
++                  "-tie (ADR-158)\n";
++        return -1;
++    }
+     if (isTie && (gapOffset != 0.0 || adjust)) {
+         opserr << "WARNING contact -gapOffset/-adjust do not apply to -tie: a tie bonds the "
+                   "relative displacement, so the as-meshed gap is already strain-free (ADR-155)\n";
+@@ -1285,6 +1312,8 @@ static int ladrunoContactImpl()
+         if (mres == 0 && hasR05)
+             mres = cd->setMortarContactOptions(idata[0], augmentMode, maxGap, gapOffset,
+                                                adjust, adjustTol);
++        if (mres == 0 && fdTangent > 0.0)
++            mres = cd->setMortarFDTangent(idata[0], fdTangent);   // ADR-158
+         return mres;
+     }
+     // D2: -visc μ_c (NTS viscous normal stabilization; 0 ⇒ off, byte-identical).
