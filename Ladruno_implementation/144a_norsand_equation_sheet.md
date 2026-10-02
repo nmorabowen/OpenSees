@@ -2,13 +2,13 @@
 title: "WP-144a — LadrunoNORSAND equation sheet (AB06/BA06 re-derived, curved CSL, WW ζ, Q-cap)"
 project: Ladruno
 type: equation sheet
-status: "G2 owner decision applied 2026-10-01 (§16.6 item 14: exponential specific-volume update v = v0 exp(tr eps), dv/deps = v; every v-term of (S.26), (S.31)-(S.32), (S.40), (S.45)-(S.46), §1.4, §13, §14 updated and re-verified; scripts in Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_vexp/). G1 revision applied 2026-10-01 (12 items from the G1 oracle/test round, §16.6; owner decision: WW rho = 1/2 refused). G0 fix round 2026-09-30 (Adversary PASS-WITH-FIXES, 7 items; independent Opus numeric check PASSED; owner approved the refusal rule). Every derivative sympy/FD-checked; G0 scripts in the session scratchpad p0a/, G1 scripts in Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_r2/."
+status: "HAR energy option derived and gated 2026-10-02 (§2.3, §16.6 item 15: HAR05 eq 40 energy, Hessian, inverse map, exact convexity — positive definite at every stress ratio, gate table over the TIMs ring dumps passes with min 0.744 K_iso; BA06 stays the default; scripts in Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_har/). G2 owner decision applied 2026-10-01 (§16.6 item 14: exponential specific-volume update v = v0 exp(tr eps), dv/deps = v; every v-term of (S.26), (S.31)-(S.32), (S.40), (S.45)-(S.46), §1.4, §13, §14 updated and re-verified; scripts in Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_vexp/). G1 revision applied 2026-10-01 (12 items from the G1 oracle/test round, §16.6; owner decision: WW rho = 1/2 refused). G0 fix round 2026-09-30 (Adversary PASS-WITH-FIXES, 7 items; independent Opus numeric check PASSED; owner approved the refusal rule). Every derivative sympy/FD-checked; G0 scripts in the session scratchpad p0a/, G1 scripts in Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_r2/."
 owner: nmora (Deriver: Fable, P0a)
 related:
   - "[[144_ladruno_norsand_plan]] (design §2, oracles §5, roster §6)"
   - "[[134_sanisand_reference_integrator]] (the O1 oracle template)"
 tags: [equation-sheet, norsand, critical-state, hyperelasticity, sand, wp-144]
-updated: 2026-10-01
+updated: 2026-10-02
 ---
 
 # WP-144a — LadrunoNORSAND equation sheet
@@ -87,7 +87,8 @@ Equation numbers `(S.n)` are this sheet's. `(AB06 nn)`, `(BA06 n.nn)` are the pa
 
 | symbol | meaning | source |
 |---|---|---|
-| p₀, κ̂, ε^e_{v0}, μ₀, α₀ | BA06 energy: reference pressure (<0), elastic compressibility, reference volumetric strain, shear modulus, coupling | BA06 2.3 |
+| p₀, κ̂, ε^e_{v0}, μ₀, α₀ | BA06 energy (default): reference pressure (<0), elastic compressibility, reference volumetric strain, shear modulus, coupling | BA06 2.3 |
+| k, g, n, p_a | HAR energy option (§2.3): bulk and shear stiffness factors (dimensionless, > 0), pressure exponent 0 ≤ n < 1, reference pressure (> 0; p = −p_a at ε^e = 0; also the p₀ of the §9.1 scalings). Replaces the five BA06 entries above (α₀ included) | HAR05 40–41 |
 | M | critical stress ratio in compression (θ = π/3) | AB06 10 |
 | N, N̄ | curvature of F and of Q on the meridian plane (0 ≤ N̄ ≤ N < 1) | AB06 10, 14 |
 | ρ, ρ̄ | ellipticity of F and of Q (WW: ½ < ρ ≤ 1, **ρ = ½ refused**, §4.2; GA: 7/9 ≤ ρ ≤ 1). The same range applies to ρ̄ [I; G1] | AB06 11–12 |
@@ -128,8 +129,8 @@ General a^e_ab for **any** Ψ(ε_v, ε_s) (BA06 3.42 written in principal direct
 
 AB06 eq 64 writes a^e_ab = K δ_aδ_b + 2μ(δ_ab − δ_aδ_b/3) + √(2/3) d (δ_a n̂_b + n̂_a δ_b) with K = D₁₁, 3μ = D₂₂,
 d = D₁₂. **That form drops the (2/3)(D₂₂ − q/ε_s) n̂_a n̂_b term and is exact only when q is linear in ε_s at fixed
-ε_v** (true for BA06's energy, not for a general one) [I; sympy-checked: both forms agree for BA06's energy].
-Limit ε_s → 0: replace q/ε_s by D₂₂ (valid for the BA06 energy; a general energy must supply its own limit) [I].
+ε_v** (true for BA06's energy, not for a general one, and **not for HAR**, §2.3) [I; sympy-checked: both forms agree for BA06's energy].
+Limit ε_s → 0: replace q/ε_s by D₂₂ (valid for the BA06 energy and for HAR, (S.5h'); a general energy must supply its own limit) [I].
 
 ### 2.2 BA06 energy (BA06 2.2–2.3 p.5117; AB06 4–5 p.1534) [E]
 
@@ -143,15 +144,144 @@ Stresses and Hessian (BA06 2.51–2.52 p.5124; sympy-checked):
 - Bulk modulus K = D₁₁ = −p/κ̂ ∝ p (exact, also for α₀ ≠ 0). Shear modulus μ^e = μ₀ − α₀p₀e^ω; for α₀ = 0 it is the
   constant μ₀ and the response decouples (D₁₂ = 0). Both papers' runs use α₀ = 0 [E, BA06 Table 1, AB06 §6.1].
 - Convexity: det D = D₁₁D₂₂ − D₁₂². For α₀ = 0, det D = −3μ₀p₀e^ω/κ̂ > 0 always (sympy-checked); with α₀ ≠ 0 it
-  must be tabulated (the plan's §2.5 gate).
+  must be tabulated (this is the Houlsby-1985 family with the limiting stress ratio, §2.3). The plan's §2.5 gate is
+  answered for the HAR option in §2.3 (positive definite at every η).
 - Isotropic compression (ε_s = 0): p(ε_v) = p₀ exp(−(ε_v − ε_{v0})/κ̂), i.e. ε_v = ε_{v0} − κ̂ ln(p/p₀) (K1.1).
 - Conservative: W = ∮ σ:dε = ∮ dΨ = 0 on any closed elastic loop (K1.2).
 
-### 2.3 Houlsby–Amorosi–Rojas slot (paper not yet in the library) [I]
-An alternative Ψ_HAR(ε_v, ε_s) plugs in through §2.1 only. It must supply: p, q, the symmetric Hessian D, the
-ε_s → 0 limit of q/ε_s, its region of positive-definiteness of D (and of the full 6×6 Hessian, which additionally needs
-q/ε_s > 0), and a reference state where p = p₀. Nothing in §3–§12 depends on the energy except through (S.3) and D.
-The dissipation argument (§11) does not use the energy at all.
+### 2.3 Houlsby–Amorosi–Rojas energy (option `energy HAR`; paper received 2026-10-02; BA06 stays the default) [E/I]
+
+Source **[HAR05]**: Houlsby, Amorosi & Rojas 2005, Géotechnique 55(5):383–392 (page numbers are the journal's). Every
+item below is sympy-checked in `Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_har/` (har_sympy3.py: 20
+random (n, k, g, ε_v, ε_s) states at 30 digits plus exact checks at rational data; har_gate.py: the gate table;
+har_k1.py: the K1 values; logs beside the scripts). An alternative energy plugs in through §2.1 **only**: p, q, the
+symmetric Hessian D, the ε_s → 0 limit of q/ε_s, the inverse map for `initialState`, its region of positive
+definiteness, and the reference pressure that plays p₀'s role in the F_tol / r₄ scalings of §9.1. Nothing in §3–§12
+depends on the energy except through (S.3) and D; the dissipation argument (§11) does not use the energy at all.
+
+**Conventions.** HAR05 is compression-positive with p, q, v (volumetric strain), ε (shear strain = √(2/3 e:e)); the
+sheet's variables are p_sheet = −p_HAR, q = q, ε_v = −v, ε_s = ε (the shear strains are the same invariant). HAR05's
+symbols v₀ (eq 40), p₀ (eq 41) and D (p.387) collide with this sheet's v₀, p₀, D; they are written u, ϖ and det D
+below. HAR05's v* is written ε*. η := q/|p| ≥ 0 as everywhere in this sheet.
+
+**Energy (HAR05 eq 40 p.386, general n form, with the paper's origin shift) [E]:**
+
+      Ψ_HAR(ε_v, ε_s) = (p_a/(k(2−n))) [k(1−n) u]^{(2−n)/(1−n)},
+      u := [ ε*² + 3g ε_s²/(k(1−n)) ]^{1/2},      ε* := 1/(k(1−n)) − ε_v.                                  (S.4h)
+
+Parameters: k, g > 0 dimensionless (bulk and shear stiffness factors), 0 ≤ n < 1 (pressure exponent), p_a > 0
+(reference pressure, the shift pressure). HAR05 shifts the strain origin so that **p = −p_a, q = 0 at ε^e = 0**
+(eq 28–30 p.386: "v* = v + 1/(k(1−n))"); the sheet keeps exactly that: no ε_{v0} parameter. Domain: ε* > 0 ⇔
+ε_v < 1/(k(1−n)) ⇔ p < 0; p → 0⁻ as ε* → 0⁺ (the moduli vanish like |p|^n there); Ψ_HAR is even in ε*, so ε* ≤ 0 is
+a tensile mirror image that the kernel must refuse (the p-floor rule of plan §2.7 handles the approach). Same
+exponent for K and G (HAR05 p.384, after eq 3: a different one "leads to considerable additional complexity").
+n = 1 is a separate closed form (HAR05 eq 47–48; (S.4h) → eq 48 as n → 1, relative gap 1.82·(1−n) at 1−n = 1e−4 … 1e−8) and is **not**
+part of the option (parser: 0 ≤ n < 1). n = 0 reduces to HAR05 eq 22 with the shift, p = −p_a(1 − kε_v), q = 3g p_a ε_s
+(exact). **HAR depends on the elastic strain only through (ε_v^e, ε_s^e)** [E, HAR05 eq 55–56 p.388: u² is built from
+ε_ii and e_ij e_ij, ϖ² from σ_mm and s_mn s_mn; no third invariant], so it is isotropic and enters the 3-invariant model
+through (S.2)–(S.3) verbatim, with stress-induced anisotropy only through D₁₂ (HAR05 p.385 eq 13–14 and p.387 (a)).
+
+**Stresses and Hessian [I; rearranged from HAR05 eq 40–46; sympy, 30 digits, every entry ≤ 3e−30 relative].**
+Strain form, with w := [k(1−n) u]^{n/(1−n)}:
+
+      p = −p_a k(1−n) ε* w,          q = 3 g p_a ε_s w.                                                     (S.5h)
+
+Stress form, with ϖ := [p² + k(1−n) q²/(3g)]^{1/2} (HAR05 eq 41's p₀; identity ϖ = p_a [k(1−n)u]^{1/(1−n)}, so
+w = (ϖ/p_a)^n), Z := ϖ²/p² = 1 + k(1−n) η²/(3g) ≥ 1:
+
+      D₁₁ = ∂p/∂ε_v = k p_a (ϖ/p_a)^n [1 − n + n p²/ϖ²]           = k p_a (ϖ/p_a)^n (1 − n + n/Z),
+      D₂₂ = ∂q/∂ε_s = (3g/(1−n)) p_a (ϖ/p_a)^n [1 − n p²/ϖ²]      = (3g/(1−n)) p_a (ϖ/p_a)^n (1 − n/Z),
+      D₁₂ = ∂p/∂ε_s = ∂q/∂ε_v = n k p q p_a (ϖ/p_a)^n / ϖ²       (< 0 with the sheet's p < 0; = −J of HAR05),
+      q/ε_s = 3 g p_a (ϖ/p_a)^n,     lim_{ε_s→0} q/ε_s = 3 g p_a (|p|/p_a)^n = D₂₂|_{q=0}  (exact).           (S.5h')
+
+HAR05 eq 42–46 p.387 are the compliances c₁, c₂, c₃ of E(p, q); the paper's "K = c₂D, 3G = c₁D, J = −c₃D with
+D = 3kg p_a²(p₀/p_a)^{2n}" (p.387, before (a)) [E] inverts them; (S.5h') is that inverse written out and sign-mapped
+(sympy: c₂D − D₁₁, c₁D − D₂₂, −c₃D − (−D₁₂) all ≤ 3e−30 relative; **no typo found** in eq 2–3, 22, 30–31, 40–48, 55–56,
+which are mutually consistent). Axis (q = 0): p = −p_a[1 − k(1−n)ε_v]^{1/(1−n)}, K = k p_a(|p|/p_a)^n,
+G = g p_a(|p|/p_a)^n, D₁₂ = 0 [E, HAR05 eq 30–31, 2–3]; the Poisson ratio ν = (3k − 2g)/(6k + 2g) is a property of the
+axis only [E, p.387 (a)]. **(S.3) must be used in full**: q is not linear in ε_s at fixed ε_v, D₂₂/(q/ε_s) =
+(1 − n/Z)/(1−n) ∈ [1, 1/(1−n)), so AB06 eq 64 (which drops the (2/3)(D₂₂ − q/ε_s) n̂n̂ term, §2.1) is wrong for HAR;
+the kernel's `elastic()` already carries the term (LadrunoNorSandKernel.h:521–528, the `ratio` t4 term) and the §2.1
+ε_s → 0 replacement q/ε_s := D₂₂ stays valid (S.5h'). Checked: (S.3)/(S.2) against the direct 3×3 Hessian/gradient of
+Ψ_HAR(ε₁, ε₂, ε₃) at 30 digits; the full 6-D Mandel Hessian has eigenvalues {those of [[3D₁₁, √2D₁₂],[√2D₁₂, ⅔D₂₂]]} ∪
+{2q/(3ε_s) ×4} (har_sympy3.py (d)–(e)).
+
+**Inverse map (for `initialState`) [E, HAR05 eq 42–43 sign-mapped; sympy round trip exact]:**
+
+      ε_v^e = (1/(k(1−n))) [ 1 − (|p|/p_a)^{1−n} (|p|/ϖ)^n ],     ε_s^e = q / (3 g p_a (ϖ/p_a)^n),
+      ε^e_a = ε_v^e/3 + √(3/2) ε_s^e n̂_a    (n̂ from the stress, (S.1)).                                      (S.5h'')
+
+Closed form for every p < 0, q ≥ 0 (no Newton, unlike BA06 with α₀ ≠ 0); `invert_elastic()` gets a second branch.
+
+**Convexity — exact condition [I; sympy exact at rational data and symbolic in (η, n, s)]:**
+
+      det D = D₁₁D₂₂ − D₁₂² = 3 k g p_a² (ϖ/p_a)^{2n} > 0,      D₁₁ ≥ k p_a (ϖ/p_a)^n (1 − n) > 0,
+      ⇒ D is positive definite for **every** η ∈ [0, ∞), every 0 ≤ n < 1, every k, g > 0, at every (p, q) ≠ (0, 0),  (S.5c)
+
+and the 6-D Hessian is positive definite too (its extra eigenvalue 2q/(3ε_s) = 2g p_a(ϖ/p_a)^n > 0). The determinant
+is HAR05's own D (p.387), positive by inspection; the paper does not state the PD result explicitly. **There is no
+limiting stress ratio for this energy.** The limiting stress ratio HAR05 discusses (p.386, approach (c), citing
+Einav & Puzrin 2004 and Houlsby 1985) belongs to the E = p^m(Ap² + Bq²) family — the Houlsby-1985 / BA06-α₀ type of
+coupling, §2.2 — and HAR05 adopt form (b) precisely to avoid it; the plan's §2.5 worry ("HAR-type energies lose
+convexity above a stress ratio") was the survey's conflation of the two families. Normalised Hessian, with
+s := k(1−n)/(3g) (Z = 1 + sη²) and M̂ := D/(k p_a (ϖ/p_a)^n):
+
+      det M̂ = (1−n)/s = 3g/k (constant),   tr M̂ = T(η) = 1 − n + n/Z + (1 − n/Z)/s,
+      λ_min/(k p_a (ϖ/p_a)^n) = ½[T − (T² − 12g/k)^{1/2}]  →  min(1, (1−n)/s) at η = 0,   → min(1−n, 1/s) as η → ∞,  (S.5c')
+
+so the normalised minimum eigenvalue is bounded below by a positive constant at every η; relative to the isotropic
+bulk modulus at the same p, K_iso(p) := k p_a (|p|/p_a)^n, multiply by Z^{n/2}: **a function of η alone** (the gate's
+p-dependence is only the absolute scale K_iso ∝ |p|^n, which → 0 at the tensile apex — the p-floor matter, not a
+convexity one). The only degeneracy is (p, q) = (0, 0).
+
+**Gate table (plan §2.5) — TIMs constants n = ½, G₀ = 264.32, ν = 0.3129, p_a = 101 kPa, e_ref = 0.6944 ⇒
+g = 807.80, k = 1889.48, k/g = 2.3390, s = 0.38984, 1/(k(1−n)) = 1.0585e−3 (har_gate.py).** Normalised by K_iso(p):
+
+| η | 0 | 0.5 | 1.0 | 1.331 (= M) | 1.71 | 2.1 | 3.0 | 6.0 | 12.87 |
+|---|---|---|---|---|---|---|---|---|---|
+| λ_min(D)/K_iso | 1.0000 | 0.8792 | 0.7812 | 0.7532 | **0.7444** (global min) | 0.7513 | 0.7971 | 1.0102 | 1.4311 |
+| λ_min(6-D)/K_iso | 0.8551 | 0.8752 | 0.9284 | 0.9750 | 1.034 | 1.0980 | 1.2460 | 1.6837 | 2.4332 |
+| λ_min/λ_max | 0.780 | 0.575 | 0.404 | 0.340 | — | 0.267 | 0.233 | 0.205 | 0.197 |
+| \|D₁₂\|/√(D₁₁D₂₂) | 0 | 0.197 | 0.303 | 0.328 | — | 0.323 | 0.282 | 0.174 | 0.086 |
+
+(K_iso = 11.23, 35.5, 60.0, 189.9e3 kPa at p = 0.35, 3.5, 10, 100 kPa.) **Footing states actually visited** (the ring
+dumps `Ladruno_implementation/_tims_2d_model_requests_2026-09-25/ring_points_b{8,16}.csv`, 40 + 40 Gauss points with
+p' < 10 kPa; the dumps store σ compression-positive, contrary to their README — tr σ/3 = +p_kPa on every row; only p
+and q enter here): b8, p ∈ [0.349, 9.967] kPa, η ∈ [0.848, 12.874]: min λ_min(D)/K_iso = 0.7448 (el 1950 gp 4, p 7.71,
+η 1.80), median 0.7915, 6-D min 0.9096; b16, p ∈ [0.188, 7.998], η ∈ [1.254, 1.935]: min 0.7444 (el 4968 gp 3, p 4.10,
+η 1.71), 6-D min 0.9636. Independent finite-difference 6-D Hessians at those two states (worst λ_min, and the
+η = 12.87 point at p = 0.352 kPa) are positive definite with eigenvalues (×K_iso) {1.0339 ×4, 1.2529, 2.9935} and
+{2.4336 ×4, 4.1159, 5.0484}, equal to the closed forms. **VERDICT: HAR with n = ½ is convex over the whole footing
+envelope and beyond it; the worst ring state sits at the global minimum of the normalised curve (η ≈ 1.7) with
+λ_min = 0.744 K_iso(p), i.e. the margin is the full eigenvalue — there is no η at which it fails, for any p.** The
+plan's §2.5 fallback to BA06 with α₀ = 0 is not needed. What the high-η states do show is anisotropy, λ_min/λ_max
+down to 0.20 at η = 12.9, not loss of convexity.
+
+**Mapping from a DM04-style calibration (G = G₀ p_a f(e) (|p|/p_a)^{1/2}, f(e) = (2.97 − e)²/(1 + e), constant ν)
+[I]:** n = ½; g = G₀ f(e_ref); k = g · 2(1+ν)/(3(1−2ν)) (⇔ HAR05's ν formula above); p_a = DM04's p_atm (TIMs: 101).
+Exact on the isotropic axis. Approximate elsewhere: (i) HAR has no void-ratio dependence, so f(e) is frozen at e_ref
+(TIMs e_init 0.6944; the ring's e ∈ [0.694, 0.698] moves g by < 0.3 %) — a Ψ(ε^e, e) would be an elastic–plastic
+coupling, outside this sheet; (ii) off the axis the HAR tangent moduli are not DM04's: G_HAR/G_DM04 =
+Z^{n/2}(1 − n/Z)/(1−n) = 1.39, 1.61, 2.10 and K_HAR/K_DM04 = Z^{n/2}(1 − n + n/Z) = 0.934, 0.907, 0.878, with
+|D₁₂|/K_DM04 = 0.39, 0.45, 0.50, at η = 1.0, 1.331, 2.1 (TIMs set); a constant-ν hypoelastic law and a hyperelastic
+one agree only at η = 0, which is the price of a conservative law (HAR05 p.383–384); (iii) ν is the axis value only.
+
+**What the option changes elsewhere in this sheet.** (1) §1.3: parameters k, g, n, p_a replace p₀, κ̂, ε_{v0}, μ₀, α₀
+(all five unused under HAR; **HAR replaces the α₀ coupling entirely** — its own D₁₂ is the stress-induced anisotropy
+of HAR05 and, unlike α₀'s, never breaks convexity; the two couplings are not combinable). (2) (S.4)–(S.5) →
+(S.4h)–(S.5h'); the §2.2 convexity line → (S.5c). (3) (S.3), (S.28) Π_b = Σ P_a a^e_ab, (S.30)–(S.32), (S.33)–(S.34),
+(S.41)–(S.42), (S.45)–(S.47): **no formula changes** — they consume a^e_ab and D through (S.3) only; but D₁₂ ≠ 0 now
+exercises the t2 term and D₂₂ ≠ q/ε_s the t3/t4 split of (S.3) (under BA06 with α₀ = 0 both were inert: D₁₂ = 0 and
+D₂₂ = q/ε_s), so the FD checks of (S.30), (S.33), (S.34) and of the §9.6 chain must be **re-run under HAR** before the
+option ships. (4) §9.1: F_tol = 10⁻¹⁰·|p₀| and the r₄/|p₀| scaling (kernel.h:936, 1067) use **p₀ := −p_a** under HAR.
+(5) §13: item 1 → the HAR closed form (13.1h), item 2 unchanged (Ψ exists), new item 11 (13.11h), items 3–10 unchanged.
+(6) §15: the G₀, ν row becomes the exact mapping above. (7) §1.2/§1.4 v-update (exponential) and the LogStrain
+provider (ε^e is the state; the inverse map is closed form): unchanged. (8) §11 dissipation: unchanged — the proof
+uses F, Q, the flow rule, p ≤ 0, λ̇ ≥ 0 and never Ψ (§11.4); the hardening Ψ^p of §11.3 is BA06's separate plastic
+part, untouched. (9) §12: unchanged formulas; O1 builds its spectral a^e from (S.3) with the HAR D. (10) §14 K2 and
+K2b stay BA06 paper-mode. Code sites: kernel `Params` (+k, g, n_e, energy flag), `elastic()`, `invert_elastic()`,
+parser validation (k, g > 0, 0 ≤ n < 1, p_a > 0; refuse ε* ≤ 0 as a p-floor hit), O2 `elastic`/`energy_psi`/`invert`,
+O1 `model.py` energy.
 
 ---
 
@@ -868,6 +998,9 @@ loss-of-uniqueness limit (snap-back), to be reported not hidden.
 
 1. **Isotropic hyperelastic compression** (BA06 energy, ε_s = 0): p(ε_v) = p₀ exp(−(ε_v − ε_{v0})/κ̂). K2 parameters:
    ε_v = −0.01 → p = −100 e¹ = −271.828 kPa.
+   **1h (HAR option, §2.3) [I; har_k1.py]:** p(ε_v) = −p_a [1 − k(1−n) ε_v]^{1/(1−n)}, K = k p_a (|p|/p_a)^n. TIMs set
+   (n = ½, g = 807.80387674, k = 1889.48104361, p_a = 101): ε_v = −1e−3 → p = −381.983585 kPa, K = 371129.585 kPa;
+   ε_v = +5e−4 → p = −28.117707 kPa; p = 0 at ε_v = 1/(k(1−n)) = 1.058491699e−3 (the domain edge, refused).
 2. **Closed elastic loop**: W = ∮σ:dε = 0 to ≤ 10⁻¹² (relative to ∮|σ:dε|) and state return to round-off, any loop
    (including non-coaxial), because σ = ∂Ψ/∂ε^e.
 3. **ζ corners**: ζ(0) = 1/ρ, ζ(π/3) = 1, ζ'(0) = ζ'(π/3) = 0 for WW and GA on the admissible ranges: WW ρ ∈ (½, 1]
@@ -913,6 +1046,13 @@ loss-of-uniqueness limit (snap-back), to be reported not hidden.
    items 5–8 use ψ_i(v, π_i) at that v. The superseded linear update differs by v₀(1 + x − eˣ) ≈ −v₀x²/2, x = tr ε
    (−4.8e−4 at the end of the TXC_paper path, x = 0.0236; vexp_fd.py (3)): a check at 1e−12 discriminates the two
    updates on any path with |tr ε| ≳ 1e−6.
+11. **HAR constant-volume elastic shear from ε^e = 0 (HAR option only) [I; sympy exact; har_k1.py]:** at ε_v = 0,
+   p(ε_s) = −p_a [1 + 3gk(1−n) ε_s²]^{n/(2(1−n))}, q(ε_s) = 3g p_a ε_s [·]^{same}, and **η = 3g ε_s exactly** (the
+   stress-induced anisotropy: |p| grows under shear at constant volume, HAR05 Fig 1(c) at n = 0.5). TIMs set:
+   ε_s = 8.66546968e−4 → η = 2.1, p = −166.548671 kPa, q = 349.752210 kPa; ε_s = 1e−3 → p = −183.183351,
+   q = 443.928664, η = 2.42341163. Inverse-map spot value for the ring envelope, p = −3.5 kPa, η = 2.1: ϖ = 5.7714886,
+   ε_v^e = 9.0504735e−4, ε_s^e = 1.2561906e−4 (S.5h''). Under BA06 the same path has p = p₀ e^ω = const (α₀ = 0),
+   which is the discriminating check between the two energies.
 
 ---
 
@@ -996,7 +1136,7 @@ for the cube [I]); **M and α are not tabulated**: M = 1.2 from Fig 2 (CSL throu
 | e₀ = 0.83, λ_c = 0.027, ξ = 0.45, p_a | e₀, λ_c, ξ, p_a of (S.22) | **direct** (same e_c(p) form; p_a must be the same numeric value TIMs used, e.g. 101.325 kPa) |
 | M_c = 1.3309 | M | **direct**: η = M at the image point in compression (ζ(π/3) = 1) |
 | c = M_e/M_c = 0.71 | ρ | **direct**: ζ(0) = 1/ρ ⇒ M_e = ρ M_c ⇒ ρ = c = 0.71. WW admissible (> ½, §4.2); GA refused (< 7/9) |
-| G₀ (G = G₀ p_a (2.97−e)²/(1+e) √(p/p_a)), ν | μ₀, κ̂ (BA06) or the HAR slot | **refit**: BA06 gives constant μ₀ (α₀ = 0) and K = −p/κ̂; match at a representative p: μ₀ = G(p_rep, e), κ̂ = −p_rep/K(p_rep) with K = 2(1+ν)G/(3(1−2ν)). √p shear stiffness needs the HAR energy (§2.3) |
+| G₀ (G = G₀ p_a (2.97−e)²/(1+e) √(p/p_a)), ν | HAR option (§2.3): n = ½, g = G₀(2.97−e_ref)²/(1+e_ref), k = g·2(1+ν)/(3(1−2ν)), p_a = p_atm; or μ₀, κ̂ (BA06) | **HAR: direct on the isotropic axis** (TIMs: g = 807.80, k = 1889.48 at e_ref = 0.6944, p_a = 101; e-dependence frozen, off-axis moduli differ: G_HAR/G_DM04 = 1.61 at η = M, 2.10 at η = 2.1, §2.3). BA06: **refit** at a representative p (constant μ₀, K = −p/κ̂; no √p shear stiffness) |
 | ψ = e − e_c(p) | ψ_i = e − e_c(π_i) | different argument (image pressure): DM04's dilatancy A_d and ψ enter differently; **refit χ** from peak dilatancy vs ψ_i |
 | h₀, c_h, n_b, n_d, A_d | h, N, N̄, ρ̄, χ, c₁, c₂ | **refit** (P3): h from pre-peak stiffness/strain to peak; N, N̄ from volumetric curves; ρ̄ from (S.39) and the dilatancy angle (§11.2: ρ̄ = (3 − sin ψ_c)/(3 + sin ψ_c)); default ρ̄ = ρ (deviatoric associativity, Lade & Duncan per AB06 Remark 1) |
 | fabric, α_in, z | — | none (monotonic model) |
@@ -1015,8 +1155,8 @@ Constraint check for TIMs: with ρ = ρ̄ = 0.71, (S.39) holds for any N̄ ≤ N
    plan §2.2, §5.2 K1.9 and K2 already say so.
 3. **Hydrostatic vertex rule** (§3.2): Ω := 0 at q = 0 in every mode; π_i frozen there.
 4. **K2 gate** is ordering + gap in the band of §14, with the sensitivity table; exact n is a sanity check.
-5. Still open (not blocking): cap defaults (c₁, c₂, quintic) — set by the oracle census; HAR energy is a slot (§2.3),
-   BA06's energy with α₀ = 0 is P0's energy.
+5. Still open (not blocking): cap defaults (c₁, c₂, quintic) — set by the oracle census. HAR energy: derived and
+   gated 2026-10-02 (§2.3, §16.6 item 15); BA06's energy with α₀ = 0 stays the default and the paper-mode energy.
 6. **G1 (owner, 2026-10-01): Willam–Warnke ρ = ½ exactly is refused**, for ρ and for ρ̄; the admissible WW range is
    (½, 1] (§4.2: at ½ the compression corner is a vertex, ζ'(π/3) = −√3). GA stays [7/9, 1].
 
@@ -1063,6 +1203,11 @@ Constraint check for TIMs: with ρ = ρ̄ = 0.71, (S.39) holds for any N̄ ≤ N
 - **[G1]** Round-off-negative Δλ on a neutral increment (F^tr = O(h²) just above F_tol, §9.1): the KKT check Δλ ≥ 0
   is strict in both oracles; whether the kernel tolerates Δλ ≥ −tol_λ·(scale) is for the kernel census. Not a formula
   issue.
+- **[HAR, 2026-10-02]** Before the HAR option ships: re-run the FD checks of (S.30), (S.33), (S.34) and of the §9.6
+  chain with the HAR D (D₁₂ ≠ 0 and D₂₂ ≠ q/ε_s make the t2 and t3/t4 terms of (S.3) live for the first time); add
+  the parser refusals (k, g > 0, 0 ≤ n < 1, p_a > 0) and the ε* ≤ 0 domain refusal (p-floor); confirm that the §3.2
+  vertex rule and the §10 cap need nothing new (they use a^e through (S.3) only). The ring dumps' README says
+  "compression negative" but the CSVs are compression-positive (§2.3) — a note for the TIMs side, not for this sheet.
 
 ### 16.4 Verification record (scratchpad/p0a, all run 2026-09-30)
 - invariants.py: (S.6)–(S.7), (S.13)–(S.14), (S.16)–(S.21) exact (sympy) or ≤ 1e−15 (random points).
@@ -1114,6 +1259,21 @@ G2 revision checks (2026-10-01, run locally with the py3.12 G2 venv against the 
   / 10⁻⁷ / 10⁻⁸; mid-path v = 1.45: 2.7e−8 … 4.2e−10, (S.33) 1.9e−15; the v₀ variant of S^v 2.2e−6 (real v), 2.2e−5 …
   2.6e−5 (v = 1.45). Gap on the TXC_paper path end: tr ε = 0.0236, v₀(1 + x − eˣ) = −4.76e−4 (−v₀x²/2 = −4.73e−4).
 
+HAR energy checks (2026-10-02, Esmeralda, WP-144 venv; scripts and logs in
+`Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_har/`):
+- har_sympy3.py (sympy + mpmath at 30 digits; two earlier drafts that used symbolic `simplify`/`limit` on the full trees were too slow and were removed):
+  (a) (S.5h)/(S.5h') strain and stress forms vs direct differentiation of (S.4h), 20 random states: ≤ 3e−30 relative;
+  D₁₂ = D₂₁ exact; HAR05 eq 42–46 (compliances) inverted = (S.5h') to 3e−30 with the sign map D₁₂ = −J; det D =
+  3kg p_a²(ϖ/p_a)^{2n} to 1e−30 and exact (0) at rational data n = ½, ⅓, ⅔; inverse map (S.5h'') round trip 1e−32;
+  axis forms (HAR05 eq 30–31, 2–3) ≤ 2e−30; lim q/ε_s = D₂₂|_{q=0} exact. (d) (S.3)/(S.2) vs the direct 3×3 Hessian/
+  gradient of Ψ_HAR(ε₁, ε₂, ε₃): 1.2e−30 relative. (e) 6-D Mandel Hessian eigenvalues = {2×2 block} ∪ {2q/(3ε_s) ×4}
+  to 14 digits. (f) det M̂ = (1−n)/s symbolic; λ_min limits min(1, (1−n)/s) and min(1−n, 1/s). (g) n → 1 vs HAR05
+  eq 48: relative gap 1.82·(1−n) (O(1−n), as a limit should); n = 0 vs eq 22 with the shift: exact. (h) K1 closed
+  forms 13.1h, 13.11h: 2.5e−30 and exact (0) at rational data.
+- har_gate.py (numpy): the §2.3 gate table, the ring dumps (80 states), FD 6-D Hessians at the worst-λ_min and
+  highest-η states (all eigenvalues positive, equal to the closed forms to the FD floor), the DM04 mapping and the
+  off-axis modulus ratios. har_k1.py: the §13 items 1h and 11h values at 20 digits.
+
 ### 16.5 G0 review record (2026-09-30)
 - **Adversary (Fable, independent re-derivation): PASS-WITH-FIXES**, seven items, all applied in this revision:
   (1) §3.2 hydrostatic guard was self-contradictory → vertex rule Ω := 0; (2) §14 K2 "±1 step" → ordering/gap band with
@@ -1146,6 +1306,8 @@ derivation or decision.
 | 12 | §9.5, §16.3 | (S.34) re-derived (nominal-stress derivative, no ½) and FD-checked with (S.44); the FD check is now a G1 gate test | [I; G1] | r2_finite_tangent_fd.py |
 | 13 | §9.1, §9.4, §9.6 | **P1 owner decision: chained tangent.** A substepped increment returns the exact derivative of its final stress w.r.t. the total Δε, chained through every sub-increment (any fractions α_k, Σα_k = 1): state map z_{k+1} = Φ(z_k, α_kΔε), IFT columns (S.45) (−J⁻¹∂r/∂(π_{i,n}, v) through the nested solve: −u/c, −uΠ_v, (1−κ)/c, (1−κ)Π_v), recursion (S.46), assembly C = a^e(ε^e_m):S^ε_m (S.47); m = 1 reduces to (S.33) exactly at distinct trial eigenvalues; the repeated-eigenvalue limit of (S.33) keeps the i ≤ j row (C4_01kl from g_01 = ã_00 − ã_01; O2 and kernel; ~1e−8 effect inside the 10⁻¹⁰ band) as the documented contract; supersedes "tangent of the last sub-increment" (plan §2.8, O2 `step`, kernel `step_ex`, 0.5–0.9 off the FD) | [I; P1], owner decision 2026-10-01 | chain_sympy.py (all OK), chain_fd.py at P1 (linear v-update): AMP_STOP n = 40 m = 2–4 → 4e−8…9e−8 at h = 10⁻⁷, generic m = 8 → 1.1e−9, non-uniform α → 1.6e−9…6.6e−8, vertex 8e−17; **re-measured under the exponential v-update** (G2, 2026-10-01; o2_algo/README "Self-check re-run after the exponential v-update", at h = 10⁻⁷): AMP_STOP n = 40 3.5e−8…8.6e−8, generic m = 8 1.6e−10, non-uniform α 3.4e−10…6.5e−8, m = 1 vs (S.33) 1.0e−15, vertex 4.6e−17 |
 | 14 | §1.2, §1.3, §1.4, §8 (S.26), §9.1, §9.3 (S.31), §9.5, §9.6 (state map, (S.45) relation, S^v, m = 1), §12 (S.40), §13.7, §13.10, §14 | **G2 owner decision (2026-10-01, decision 1 = option b): exponential v-update.** v = v₀ exp(tr ε) ⇔ v_{n+1} = v_n exp(tr Δε), dv/dε = v·1 (not v₀·1) everywhere: s_k = t_k Π_v v_{n+1} in (S.31) (the converged v of the step; FD discriminates v_{n+1} from v_n and v₀), S^v_{k+1} = v_{k+1} cum tr E_J in (S.46), v̇ = v tr ε̇ in (S.40) ((S.41)–(S.42) unchanged: no dv/dε in them), §1.4 v-mapping identical to finite strain (no v₀ → v substitution left; §9.5 "with v₀ → v" withdrawn), §13.7 isochoric endpoint unchanged (v = v₀ exactly), new §13.10 drained-path identity. v₀ stays a committed datum (v = v₀ exp(tr ε), initialState, revertToStart) but enters no derivative; the G1 item 7 warning is inverted. Motivation (G2 measurement, test_g2_logstrain.py): under LogStrain the linear update read v = v₀(1 + x) against the finite oracle's v₀eˣ, x = ln J, a gap v₀(1 + x − eˣ) (closed form to 1e−10) amplified ~25–30× into τ and π_i: 2.2e−3 / 2.3e−3 at 20 % drained TXC, 5.6e−3 / 6.0e−3 in TXE fork mode; the exponential update makes LogStrain(LadrunoNorSand) exact, v = v₀J, and leaves small strain unchanged to first order. Supersedes BA06 Box 2 step 6b / Box 1 v̇ = v₀ tr ε̇ [E] and BA06 2.71's v₀. Implementation DONE (G2, 2026-10-01; kernel `LadrunoNorSandKernel.h`, O2 `_step_once` small-strain branch and `chain_propagate`, O1 v̇ all moved to the exponential update with vfac = v_{n+1}; parity re-run) | [I; G2], owner decision 2026-10-01 | vexp_sympy.py (all exact), vexp_fd.py: (S.31) 2.4e−8 / 7.0e−9 (v₀ form 1.8e−5 / 1.1e−4), chain m = 8/2/non-uniform/1 → 1.1e−9 … 1.8e−9 at h = 10⁻⁷…10⁻⁸ (v₀ variant 2.2e−6 … 2.6e−5), m = 1 = (S.33) to 2.8e−15 |
+
+| 15 | §1.3, §2.1, §2.2, §2.3, §13.1h, §13.11, §15, §16.1, §16.3, §16.4 | **HAR energy option (paper received 2026-10-02).** HAR05 eq 40 in sheet signs (S.4h) with the paper's origin shift (p = −p_a at ε^e = 0), parameters (k, g, n, p_a) replacing (p₀, κ̂, ε_{v0}, μ₀, α₀) — HAR replaces the α₀ coupling entirely; stresses and Hessian (S.5h)–(S.5h') in strain and stress form, D₁₂ = −J_HAR05 < 0, q/ε_s and its ε_s → 0 limit; closed-form inverse map (S.5h''); exact convexity result (S.5c): det D = 3kg p_a²(ϖ/p_a)^{2n} > 0 and D₁₁ > 0 ⇒ PD at **every** η for 0 ≤ n < 1 — no limiting stress ratio (that belongs to the Houlsby-1985/α₀ family, HAR05 p.386); normalised λ_min closed form (S.5c'); gate table at the TIMs constants (g = 807.80, k = 1889.48): min over all η 0.744 K_iso(p) at η ≈ 1.7, ring dumps 0.7444 … 1.43, 6-D ≥ 0.91 — **VERDICT convex, no fallback to BA06 needed**; DM04 mapping (exact on the axis; off-axis G ratio 1.61 at η = M, 2.10 at η = 2.1); list of downstream changes (none to (S.3), (S.28), (S.30)–(S.34), (S.41)–(S.47); p₀ := −p_a in the §9.1 scalings; §13.1h and §13.11; §15 row); dissipation, v-update, LogStrain unchanged | [E] HAR05 40–46, 55–56, 30–31, 2–3, p.386–387; [I] rearrangements, convexity, mapping, gate | har_sympy3.py (all ≤ 3e−30 / exact), har_gate.py, har_k1.py |
 
 Items 1–13: no FD-checked algebra of the G0 sheet changed; status of (S.34): transcribed → re-derived and FD-checked
 (8.7e−10). Item 14 is the first formula-level change to FD-checked algebra: the v-factor in (S.31) (v₀ → v_{n+1}) and
