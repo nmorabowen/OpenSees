@@ -155,6 +155,7 @@ OPS_Tri31()
 void *
 OPS_Tri31(const ID &info)
 {
+    bool do_init_disp = false;
     if (num_Tri31 == 0) {
 	num_Tri31++;
 	opserr<<"Tri31 - Written by Roozbeh G. Mikola and N.Sitar, UC Berkeley\n";
@@ -214,11 +215,23 @@ OPS_Tri31(const ID &info)
 	    return 0;
 	}
 
-	if (OPS_GetNumRemainingInputArgs() == 4) {
+	if (OPS_GetNumRemainingInputArgs() >= 4) {
 	    numData = 4;
 	    if (OPS_GetDoubleInput(&numData, &dData[1]) != 0) {
 		opserr << "WARNING invalid optional data: element Tri31 " << endln;
 		return 0;
+	    }
+	}
+	while (OPS_GetNumRemainingInputArgs() > 1) {
+	    const char* opt = OPS_GetString();
+	    if (strcmp(opt, "-doInitDisp") == 0) {
+		int flag = 0;
+		numData = 1;
+		if (OPS_GetIntInput(&numData, &flag) != 0) {
+		    opserr << "WARNING invalid -doInitDisp value: element Tri31 " << iData[0] << endln;
+		    return 0;
+		}
+		do_init_disp = (flag != 0);
 	    }
 	}
     }
@@ -283,7 +296,7 @@ OPS_Tri31(const ID &info)
     // parsing was successful, allocate the element
     theElement = new Tri31(iData[0], iData[1], iData[2], iData[3],
 			   *theMaterial, theType,
-			   dData[0], dData[1], dData[2], dData[3], dData[4]);
+			   dData[0], dData[1], dData[2], dData[3], dData[4], do_init_disp);
 
     if (theElement == 0) {
 	opserr << "WARNING could not create element of type Tri31\n";
