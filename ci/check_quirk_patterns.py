@@ -901,6 +901,16 @@ def check_stale_waivers(root, rel, used):
 # --------------------------------------------------------------------------
 # L3
 # --------------------------------------------------------------------------
+def _quirks_text(root, ledger):
+    """The quirks ledger's text. Since WP-161 the entries are per-WP fragments
+    (Ladruno_implementation/ledger/quirks/*.md) and LEDGER_quirks.md is a stub, so
+    a pointer must match a fragment; before the split, the single file."""
+    frags = sorted((root / "Ladruno_implementation" / "ledger" / "quirks").glob("*.md"))
+    if frags:
+        return "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in frags)
+    return ledger.read_text(encoding="utf-8", errors="replace")
+
+
 def check_pointers(root, rel):
     findings = []
     ledger = root / "Ladruno_implementation" / "LEDGER_quirks.md"
@@ -909,7 +919,7 @@ def check_pointers(root, rel):
         return findings
     if not ledger.exists():
         return [f"L3 {rel(ledger)}: ledger not found"]
-    flat = re.sub(r"\s+", " ", ledger.read_text(encoding="utf-8", errors="replace"))
+    flat = re.sub(r"\s+", " ", _quirks_text(root, ledger))
     quote = re.compile(r'\s*(?:,|and)?\s*"([^"]+)"')
     for guide in guides:
         text = re.sub(r"\s+", " ", guide.read_text(encoding="utf-8", errors="replace"))
