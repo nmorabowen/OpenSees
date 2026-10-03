@@ -43,6 +43,7 @@
 #include "Ladruno_DomainResults.h"
 #include "Ladruno_OverlayResults.h"   // Ladruno (ADR-73 P4): -overlay channels
 #include "Ladruno_Sinks.h"
+#include "Ladruno_LaunchEnv.h"   // WP-163 M4/MP-3: shared launcher rank probe
 
 // OpenSees
 #include <Domain.h>
@@ -81,6 +82,7 @@
 #include <LadrunoPorousOverlay.h>
 #include "section/SectionForceDeformation.h"
 
+#include <algorithm>
 #include <string>
 #include <vector>
 #include <map>
@@ -269,9 +271,16 @@ LadrunoRecorder::~LadrunoRecorder()
 	if (m_data) {
 		// In envelope mode, write the final ENVELOPES datasets while the sinks +
 		// file are still alive (EnvelopeSink defers all output to finalize()).
+		// WP-163 (ARCH-10): inside H5E_BEGIN_TRY like the closes below — at
+		// process exit HDF5's atexit handler may already have closed every ID,
+		// and this write then spammed HDF5-DIAG stacks (no data is lost: the
+		// envelope was rewritten on the last recorded step).
 		if (m_data->envelope_mode && m_data->initialized &&
-		    m_data->info.h_file_id != ladrunons::HID_INVALID)
-			finalizeAllSinks();
+		    m_data->info.h_file_id != ladrunons::HID_INVALID) {
+			H5E_BEGIN_TRY {
+				finalizeAllSinks();
+			} H5E_END_TRY;
+		}
 		clearSources();
 		if (m_data->initialized && m_data->info.h_file_id != ladrunons::HID_INVALID) {
 			// When the recorder dies at process exit (deck never wiped), HDF5's
@@ -394,13 +403,33 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 				do_record = true;
 		}
 		else if (m_data->output_freq.type == ladrunons::detail::OutputFrequency::DeltaTime) {
-			if (std::abs(info.current_time_step - m_data->output_freq.last_time) >= m_data->output_freq.dt)
+			// WP-163 (ROB-13): relative tolerance (as vanilla NodeRecorder's
+			// relDeltaTTol), so a time accumulated by summing steps
+			// (0.19999999999999996 vs 0.2) is not skipped; a time that moved
+			// BACKWARD (setTime between stages) records and restarts the grid.
+			const double dt = m_data->output_freq.dt;
+			const double elapsed = info.current_time_step - m_data->output_freq.last_time;
+			if (elapsed >= dt - 1.0e-5 * dt || elapsed < -1.0e-5 * dt)
 				do_record = true;
 		}
 	}
 	if (do_record) {
 		m_data->output_freq.last_step = info.current_time_step_id;
-		m_data->output_freq.last_time = info.current_time_step;
+		// WP-163 (ROB-13): snap `last_time` to the -T dt grid (last + k*dt)
+		// instead of the actual recorded time, so the record times do not drift
+		// by one analysis step per sample (dt_analysis 0.03, -T dt 0.1 recorded
+		// at 0.12, 0.24, ... instead of on the nearest steps after 0.1, 0.2, ...).
+		const double dt = m_data->output_freq.dt;
+		const double elapsed = info.current_time_step - m_data->output_freq.last_time;
+		if (m_data->initialized &&
+		    m_data->output_freq.type == ladrunons::detail::OutputFrequency::DeltaTime &&
+		    dt > 0.0 && elapsed >= 0.0) {
+			const double k = std::floor((elapsed + 1.0e-5 * dt) / dt);
+			m_data->output_freq.last_time += (k >= 1.0 ? k : 1.0) * dt;
+		}
+		else {
+			m_data->output_freq.last_time = info.current_time_step;
+		}
 	}
 	else {
 		return 0;
@@ -535,23 +564,27 @@ int LadrunoRecorder::initialize()
 	bool is_partitioned = (m_data->send_self_count != 0);
 	int num_parts = 1;
 	{
-		static const char* const size_rank_env[][2] = {
-			{ "PMI_SIZE",            "PMI_RANK" },              // Intel MPI / MS-MPI
-			{ "OMPI_COMM_WORLD_SIZE", "OMPI_COMM_WORLD_RANK" }, // OpenMPI
-			{ "SLURM_NTASKS",        "SLURM_PROCID" },          // srun (incl. pmix)
-		};
-		const size_t n_pairs = sizeof(size_rank_env) / sizeof(size_rank_env[0]);
-		for (size_t i = 0; i < n_pairs; ++i) {
-			const char* size_env = std::getenv(size_rank_env[i][0]);
-			int np_env = (size_env != 0) ? std::atoi(size_env) : 1;
-			if (np_env > 1) {
-				num_parts = np_env;
-				if (!is_partitioned) {   // interpreter-per-rank: index by the launcher rank
-					const char* rank_env = std::getenv(size_rank_env[i][1]);
-					part_id = (rank_env != 0) ? std::atoi(rank_env) : 0;
-					is_partitioned = true;
-				}
-				break;
+		// WP-163 M4/MP-3: one shared probe (Ladruno_LaunchEnv.h) — SLURM only
+		// inside an srun step, and a SIZE > 1 without a valid RANK is refused
+		// instead of every rank silently writing (truncating) part-0.
+		int env_rank = 0, env_size = 1;
+		std::string env_source, env_error;
+		const ladrunons::launch::Status st =
+			ladrunons::launch::detectRank(env_rank, env_size, env_source, env_error);
+		if (st == ladrunons::launch::Inconsistent) {
+			opserr << "LadrunoRecorder error: " << env_error.c_str()
+			       << " — cannot tell which partition file this rank owns\n";
+			ladrunons::h5::plist::close(info.h_group_proplist);
+			ladrunons::h5::plist::close(info.h_file_proplist);
+			info.h_group_proplist = ladrunons::HID_INVALID;
+			info.h_file_proplist = ladrunons::HID_INVALID;
+			return -1;
+		}
+		if (st == ladrunons::launch::Launched) {
+			num_parts = env_size;
+			if (!is_partitioned) {   // interpreter-per-rank: index by the launcher rank
+				part_id = env_rank;
+				is_partitioned = true;
 			}
 		}
 	}
@@ -2653,6 +2686,17 @@ void* OPS_LadrunoRecorder()
 			if (numdata > 0) {
 				const char* gkind = OPS_GetString();
 				numdata--;
+				// WP-163 (ROB-12): `-G -T nsteps 10` used to eat "-T" with a
+				// warning, read "nsteps"/"10" as region tags and silently drop
+				// the output frequency. An option token is handed back.
+				if (gkind[0] == '-' && gkind[1] != '\0' &&
+				    !(gkind[1] >= '0' && gkind[1] <= '9')) {
+					OPS_ResetCurrentInputArg(-1);
+					numdata++;
+					opserr << "LadrunoRecorder warning: -G expects 'energy' "
+					          "[regionTag...]; got option " << gkind << "\n";
+					continue;
+				}
 				if (strcmp(gkind, "energy") == 0) {
 					energy_requested = true;
 				}
@@ -2941,6 +2985,52 @@ void* OPS_LadrunoRecorder()
 			}
 			}
 		}
+	}
+
+	// WP-163 R4: drop repeated requests at parse time (with a notice). Two
+	// channels for one result share one HDF5 group name; the sink now refuses
+	// the second (R5), but the request was the user's typo or an alias pair
+	// (`tieForce` / `constraintTieForce` map to one type) — say so here, once.
+	{
+		std::vector<ladrunons::detail::NodalResultType::Enum> n_keep;
+		std::vector<int> g_keep;
+		for (size_t i = 0; i < nodal_results_requests.size(); ++i) {
+			const int g = (i < sens_grad_indices.size()) ? sens_grad_indices[i] : 0;
+			bool dup = false;
+			for (size_t j = 0; j < n_keep.size(); ++j)
+				if (n_keep[j] == nodal_results_requests[i] && g_keep[j] == g) { dup = true; break; }
+			if (dup) {
+				opserr << "LadrunoRecorder warning: nodal result requested twice (an alias "
+				          "or a repeated -N token); recording it once\n";
+				continue;
+			}
+			n_keep.push_back(nodal_results_requests[i]);
+			g_keep.push_back(g);
+		}
+		nodal_results_requests.swap(n_keep);
+		sens_grad_indices.swap(g_keep);
+
+		std::vector<std::vector<std::string> > e_keep;
+		for (size_t i = 0; i < elemental_results_requests.size(); ++i) {
+			bool dup = false;
+			for (size_t j = 0; j < e_keep.size(); ++j)
+				if (e_keep[j] == elemental_results_requests[i]) { dup = true; break; }
+			if (dup) {
+				opserr << "LadrunoRecorder warning: element result requested twice (-E";
+				for (size_t k = 0; k < elemental_results_requests[i].size(); ++k)
+					opserr << (k ? "." : " ") << elemental_results_requests[i][k].c_str();
+				opserr << "); recording it once\n";
+				continue;
+			}
+			e_keep.push_back(elemental_results_requests[i]);
+		}
+		elemental_results_requests.swap(e_keep);
+
+		std::vector<int> r_keep;
+		for (size_t i = 0; i < energy_region_tags.size(); ++i)
+			if (std::find(r_keep.begin(), r_keep.end(), energy_region_tags[i]) == r_keep.end())
+				r_keep.push_back(energy_region_tags[i]);
+		energy_region_tags.swap(r_keep);
 	}
 
 	LadrunoRecorder* recorder = new LadrunoRecorder();

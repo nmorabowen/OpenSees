@@ -93,6 +93,15 @@ topology edits bump the stamp); envelope delete/recreate "crash window" (order i
 
 ## 2. WP-163 scope and acceptance
 
+> [!info] Status (2026-10-03)
+> **Landed:** R1, R2, R4, R5, M1, M4/MP-3, MP-6 (Monitor `.part-<rank>`), ROB-7, ROB-8, ROB-9,
+> ROB-10, ROB-11, ROB-12, ROB-13, ARCH-4, ARCH-10. Evidence: `tests/test_ladruno_recorder_hardening.py`
+> (10 cases, all failing on `fd4ff5983`, passing on the WP-163 build); `run_regression.bat` all gates
+> (rank-env gate +3 cases); a 2-rank `OpenSeesSP.exe` + `-G energy` smoke (both parts written; the
+> pre-fix P0 null deref is not reproducible here — the baseline checkout has no `OpenSeesSP.exe`).
+> **Not covered by an automated test:** M1 (no MPI in CI), ROB-7 (no NaN-producing deck), ARCH-4/10
+> (the leak / shutdown spam are not observable from Python). Moved to WP-165: R3, R6, MP-8, MP-9.
+
 Each item lands with a regression deck under `Ladruno_scripts/ladruno_recorder_tests/` (or a
 zone_a pytest under `tests/`), written to fail on `fd4ff5983` and pass after.
 

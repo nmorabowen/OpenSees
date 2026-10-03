@@ -144,18 +144,128 @@ ops.wipe()
         assert first["RESULTS/ON_NODES/DISPLACEMENT/DATA"].shape[0] == 2
 
 
-def test_r5_duplicate_request_is_refused_not_doubled(tmp_path, capfd):
-    out = str(tmp_path / "r5.ladruno")
+def _stage(f):
+    return f[[k for k in f if k.startswith("MODEL_STAGE")][0]]
+
+
+@pytest.mark.parametrize("request_args", [
+    ("-N", "displacement", "displacement"),
+    ("-N", "displacement", "-E", "force", "force"),
+])
+def test_r4_r5_duplicate_request_is_recorded_once(tmp_path, capfd, request_args):
+    """R4: repeated -N/-E tokens are dropped at parse time with a notice. (R5's
+    sink-side refusal of a pre-existing group is the backstop behind it.)"""
+    out = str(tmp_path / "r4.ladruno")
     exec(TRUSS_MODEL, {"ops": ops})
-    ops.recorder("ladruno", out, "-N", "displacement", "displacement")
+    ops.recorder("ladruno", out, *request_args)
     exec(STATIC, {"ops": ops})
     ops.analyze(3)
     ops.wipe()
     log = "".join(capfd.readouterr())
-    assert "already exists in this MODEL_STAGE" in log, log
-    assert log.count("already exists in this MODEL_STAGE") == 1, log   # once, not per step
+    assert log.count("requested twice") == 1, log
     with h5py.File(out, "r") as f:
-        stage = [k for k in f if k.startswith("MODEL_STAGE")][0]
-        g = f[f"{stage}/RESULTS/ON_NODES/DISPLACEMENT"]
+        g = _stage(f)["RESULTS/ON_NODES/DISPLACEMENT"]
         assert g["DATA"].shape[0] == 3, g["DATA"].shape          # was 6 (2 sinks)
         assert g["TIME"].shape[0] == 3 and g["STEP"].shape[0] == 3
+        if "force" in request_args:
+            buckets = list(_stage(f)["RESULTS/ON_ELEMENTS/force"].values())
+            assert buckets and all(b["DATA"].shape[0] == 3 for b in buckets)
+
+
+def test_rob12_G_does_not_swallow_the_next_option(tmp_path, capfd):
+    """`-G -T nsteps 2`: -T is honoured (was eaten; every step recorded)."""
+    out = str(tmp_path / "rob12.ladruno")
+    exec(TRUSS_MODEL, {"ops": ops})
+    ops.recorder("ladruno", out, "-N", "displacement", "-G", "-T", "nsteps", 2)
+    exec(STATIC, {"ops": ops})
+    ops.analyze(4)                  # commits 1..4: records at 1 (first) and 3
+    ops.wipe()
+    with h5py.File(out, "r") as f:
+        n = _stage(f)["RESULTS/ON_NODES/DISPLACEMENT/DATA"].shape[0]
+    assert n == 2, f"-T nsteps 2 lost: {n} rows for 4 steps"
+
+
+def test_rob13_T_dt_tolerates_accumulated_time(tmp_path):
+    """LoadControl 0.1 x 10 with -T dt 0.1: time sums to 0.30000000000000004,
+    0.4 - that = 0.0999...98 < 0.1, so the old gate skipped samples."""
+    out = str(tmp_path / "rob13.ladruno")
+    exec(TRUSS_MODEL, {"ops": ops})
+    ops.recorder("ladruno", out, "-N", "displacement", "-T", "dt", 0.1)
+    exec(STATIC.replace('ops.integrator("LoadControl", 1.0)',
+                        'ops.integrator("LoadControl", 0.1)'), {"ops": ops})
+    ops.analyze(10)
+    ops.wipe()
+    with h5py.File(out, "r") as f:
+        t = _stage(f)["RESULTS/ON_NODES/DISPLACEMENT/TIME"][...]
+    assert len(t) == 10, t
+
+
+# --- launcher environment (M4 / MP-3) and the Monitor per-rank sink (MP-6) ---
+
+def _run_env_child(body, tmp_path, env_extra):
+    moddir = os.path.dirname(os.path.abspath(ops.__file__))
+    script = "\n".join([
+        "import os, sys",
+        f"sys.path.insert(0, {moddir!r})",
+        f"os.add_dll_directory({moddir!r})" if hasattr(os, "add_dll_directory") else "",
+        "import opensees as ops",
+        textwrap.dedent(body),
+        f"print({DONE!r}, flush=True)",
+    ])
+    launcher = ("PMI_SIZE", "PMI_RANK", "OMPI_COMM_WORLD_SIZE", "OMPI_COMM_WORLD_RANK",
+                "SLURM_NTASKS", "SLURM_PROCID", "SLURM_STEP_ID")
+    env = {k: v for k, v in os.environ.items() if k not in launcher}
+    env.update(env_extra, LADRUNO_OPENSEES_QUIET="1", HDF5_USE_FILE_LOCKING="FALSE")
+    return subprocess.run([sys.executable, "-S", "-c", script], env=env,
+                          capture_output=True, text=True, timeout=180,
+                          cwd=str(tmp_path))
+
+
+def test_m4_sequential_run_inside_sbatch_is_not_partitioned(tmp_path):
+    """`sbatch --ntasks=4` exports SLURM_NTASKS/SLURM_PROCID into the batch shell;
+    without an srun step the run is sequential and keeps its filename."""
+    out = str(tmp_path / "m4.ladruno")
+    body = TRUSS_MODEL + f"""
+ops.recorder("ladruno", {out!r}, "-N", "displacement")
+""" + STATIC + "\nops.analyze(1)\nops.wipe()\n"
+    r = _run_env_child(body, tmp_path, {"SLURM_NTASKS": "4", "SLURM_PROCID": "0"})
+    assert DONE in r.stdout, r.stdout + r.stderr
+    assert os.path.exists(out), os.listdir(tmp_path)
+    with h5py.File(out, "r") as f:
+        assert int(f["INFO"].attrs["PARTITIONED"].flat[0]) == 0
+
+
+def test_mp3_size_without_rank_is_refused(tmp_path):
+    """PMI_SIZE=4 with no PMI_RANK: refused loudly, no file (was: part-0 on every rank)."""
+    out = str(tmp_path / "mp3.ladruno")
+    body = TRUSS_MODEL + f"""
+ops.recorder("ladruno", {out!r}, "-N", "displacement")
+""" + STATIC + "\nops.analyze(1)\nops.wipe()\n"
+    r = _run_env_child(body, tmp_path, {"PMI_SIZE": "4"})
+    log = r.stdout + r.stderr
+    assert DONE in r.stdout, log
+    assert "missing or not in" in log, log
+    assert not [p for p in os.listdir(tmp_path) if p.endswith(".ladruno")], os.listdir(tmp_path)
+
+
+def test_mp6_monitor_writes_a_per_rank_sink(tmp_path):
+    """openseesmp rank 1 of 2: the Monitor sink is mon.part-1.h5, not a shared mon.h5."""
+    sink = str(tmp_path / "mon.h5")
+    body = TRUSS_MODEL + f"""
+ops.recorder("Monitor", "-node", 3, "-dof", 1, "-sink", {sink!r})
+""" + STATIC + "\nops.analyze(2)\nops.wipe()\n"
+    r = _run_env_child(body, tmp_path, {"PMI_SIZE": "2", "PMI_RANK": "1"})
+    assert DONE in r.stdout, r.stdout + r.stderr
+    assert os.path.exists(str(tmp_path / "mon.part-1.h5")), os.listdir(tmp_path)
+    assert not os.path.exists(sink), os.listdir(tmp_path)
+
+
+def test_rob9_monitor_rejects_dof_zero(tmp_path, capfd):
+    exec(TRUSS_MODEL, {"ops": ops})
+    try:
+        ops.recorder("Monitor", "-node", 3, "-dof", 0, "-sink", str(tmp_path / "m.h5"))
+    except Exception:
+        pass                         # openseespy raises on a refused command
+    log = "".join(capfd.readouterr())
+    ops.wipe()
+    assert "1-based" in log, log

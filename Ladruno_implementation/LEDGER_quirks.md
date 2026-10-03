@@ -8319,3 +8319,33 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
   a pre-existing result group is refused; a short buffer skips the whole step (DATA/TIME/STEP stay aligned);
   the id axis is tiled above a 1 GiB slab. HDF5 chunks must stay < 4 GiB and every chunk dim ≤ its max dim
   (a `[T×0×C]` dataset with chunk 1 cannot be created — an empty channel now writes nothing).
+
+### On P0 of a PartitionedDomain the ELEMENT iterator also yields the ShadowSubdomains — any per-element sweep must skip `isSubdomain()` (WP-163)
+- **Bites:** `PartitionedDomain::getElements()` returns the domain's own elements and then each `ShadowSubdomain`
+  (`PartitionedDomainEleIter`). A Subdomain reports DOFs and external nodes but `getNodePtrs()` returns 0
+  (`Subdomain.cpp`), `getMass`/`getDamp` print "DOES NOT DO ANYTHING", and `getResistingForce` round-trips to the
+  remote actor. The energy kernel gathered nodal velocities through `getNodePtrs()` → null deref on P0 at the first
+  record (OpenSeesSP + `recorder ladruno ... -G energy`, and the standalone EnergyBalance recorder).
+  `PartitionedDomain::getElement(tag)` does NOT search subdomains, so tag-based region sweeps silently see only P0's
+  own elements instead.
+- **Workaround/status:** fixed in `ebkernel::addElementEnergy` (skip `isSubdomain()` / null node pointers) and the
+  sizing loops (WP-163 M1). `mapElements` (`Ladruno_ElementResults.h`) and `Domain::calculateNodalReactions`
+  already skip `ELE_TAG_Subdomain`; copy that guard into any new per-element loop.
+
+### `sbatch --ntasks=N` exports `SLURM_NTASKS=N` / `SLURM_PROCID=0` into the batch shell itself — trust the SLURM pair only inside an srun step (WP-163)
+- **Bites:** the recorders pick their partition file from the launcher env. A plain SEQUENTIAL run inside a batch
+  script (no `srun`) saw `SLURM_NTASKS=4` and wrote `<stem>.part-0.ladruno` with `NUM_PARTITIONS=4`; `-envelope`
+  of reactions was then refused as "partitioned". A launcher outside the probe table inheriting the batch vars gave
+  EVERY rank `SLURM_PROCID=0` → all ranks truncated the same `part-0`.
+- **Workaround/status:** `SRC/recorder/Ladruno_LaunchEnv.h` (WP-163 M4/MP-3): the SLURM pair counts only when
+  `SLURM_STEP_ID` is a real step number (srun sets it; the batch/extern pseudo-steps use 0xFFFFFFFE/0xFFFFFFFD);
+  SIZE > 1 with a missing/out-of-range RANK is an error. One probe for the ladruno, EnergyBalance and Monitor
+  recorders — keep it the only copy.
+
+### Ordered comparisons with NaN are always false: a min/max accumulator silently keeps its pre-NaN extremes (WP-163)
+- **Bites:** the `-envelope` sink updated MIN/MAX/ABSMAX with `<`/`>`; a run that went NaN at step k (explicit
+  runs commit NaN — CDL does not trap it) kept the finite pre-divergence extremes, so the envelope looked healthy;
+  a NaN FIRST sample stuck forever.
+- **Workaround/status:** NaN is now deliberately sticky (first NaN poisons MIN/MAX/ABSMAX, ARG_STEP = that step).
+  Do not build with `/fp:fast` / `-ffast-math`: the `v != v` test (and `std::isnan`) is not reliable under it.
+  The size-mismatch rows of an element bucket are NaN-filled for the same reason (a zero row looked like data).

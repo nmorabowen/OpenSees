@@ -84,6 +84,7 @@ namespace h5 {
 			status = H5Awrite(attr, atype, attr_data);
 			status = H5Aclose(attr);
 			status = H5Sclose(space);
+			H5Tclose(atype);  // Ladruno WP-163 (ARCH-4): was leaked per call
 			return status;
 		}
 
@@ -231,6 +232,7 @@ namespace h5 {
 			status = H5Dwrite(dset, atype, H5S_ALL, H5S_ALL, H5P_DEFAULT, data);
 			// close and release resources
 			status = H5Sclose(space);
+			H5Tclose(atype);  // Ladruno WP-163 (ARCH-4): was leaked per call
 			return dset;
 		}
 

@@ -370,6 +370,18 @@ namespace ladruno {
 		// absolute extreme for THAT component was last attained).
 		for (size_t i = 0; i < n; ++i) {
 			const double v = buffer[i];
+			// WP-163 (ROB-7): NaN is STICKY. Ordered comparisons with NaN are
+			// false, so a run that went NaN at step k used to keep its finite
+			// pre-divergence extremes and the envelope looked healthy. Now the
+			// first NaN poisons MIN/MAX/ABSMAX of that component and ARG_STEP
+			// records the step it appeared (a NaN first sample already stuck).
+			if (v != v) {
+				if (m_absmax[i] == m_absmax[i]) {
+					m_min[i] = v; m_max[i] = v; m_absmax[i] = v;
+					m_arg_step[i] = step;
+				}
+				continue;
+			}
 			if (v < m_min[i]) m_min[i] = v;
 			if (v > m_max[i]) m_max[i] = v;
 			const double a = std::abs(v);
