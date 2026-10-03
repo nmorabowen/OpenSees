@@ -98,9 +98,13 @@ struct LadrunoSasOptions {                                                  // L
     double hFloor;         // Ladruno WP-151: c_A; h = b0/max((alpha-alpha_in):n, c_A sqrt(2/3) m); <= 0 = OFF (DEFAULT, DM04)
     double reseatHyst;     // Ladruno WP-151: c_rev; re-seat alpha_in only when (alpha-alpha_in):n < -c_rev sqrt(2/3) m; <= 0 = OFF
     double softCap;        // Ladruno WP-151: kappa in (0,1); b:n < 0: h <= (1-kappa) X/((2/3) p |b:n|), so H >= kappa X; <= 0 = OFF
+    double tcPsep;         // Ladruno WP-152: tension cutoff: a code 4/9 refusal at committed p0 < tcPsep separates (0 = tension only)
+    double tcPcontact;     // Ladruno WP-152: tension cutoff: re-contact pressure (> tcPsep, > p_min); <= 0 = cutoff OFF (DEFAULT)
+    double tcP0Max;        // Ladruno WP-152 (review #2): a tension refusal separates only at committed p0 <= tcP0Max (else it refuses)
     LadrunoSasOptions() : errFloor(-1.0), alphaBoundTol(0.1), alphaEntryTol(2.0), alphaProject(0),
                           alphaInMode(0), errorVars(0),   // Ladruno WP-129
-                          hFloor(0.0), reseatHyst(0.0), softCap(0.0) {}   // Ladruno WP-151
+                          hFloor(0.0), reseatHyst(0.0), softCap(0.0),   // Ladruno WP-151
+                          tcPsep(0.0), tcPcontact(0.0), tcP0Max(0.0) {}   // Ladruno WP-152
 };   // Ladruno WP-129
 enum {                                                                      // Ladruno WP-129
     LSAS_UPDATES = 0, LSAS_ELASTIC, LSAS_SUBSTEPS, LSAS_ACCEPTED, LSAS_REJ_ERR,   // Ladruno WP-129
@@ -113,6 +117,8 @@ enum {                                                                      // L
     LSAS_MAX_RATIO_B, LSAS_LAST_RATIO_B, LSAS_LAST_F, LSAS_ENTRY_OVER_KAPPA,   // Ladruno WP-129
     LSAS_REJ_REVERSAL,   // Ladruno WP-129
     LSAS_H_FLOORED, LSAS_H_SOFTCAPPED, LSAS_RESEAT_HELD,   // Ladruno WP-151 (appended: earlier columns keep their index)
+    LSAS_SEP_ENTRIES_TENSION, LSAS_SEP_ENTRIES_LOWP, LSAS_SEP_EXITS, LSAS_SEP_ACTIVE,   // Ladruno WP-152 (appended)
+    LSAS_SEP_LAST_CODE, LSAS_SEP_MAX_P0, LSAS_SEP_HELD_HIGHP, LSAS_SEP_HELD_COMPRESSING,   // Ladruno WP-152 review #1-#3 (appended)
     LSAS_COUNT   // Ladruno WP-129
 };   // Ladruno WP-129
 struct LadrunoSasState {                                                    // Ladruno WP-129
@@ -122,7 +128,13 @@ struct LadrunoSasState {                                                    // L
     bool   refused;             // Ladruno WP-129: the LAST update was refused (reset at every integrate())
     bool   warned;              // Ladruno WP-129: per-instance warn-once for a refused update
     bool   commitRefusalWarned; // Ladruno WP-129: per-instance warn-once for a refused commit
-    LadrunoSasState() : allowed(false), refused(false), warned(false), commitRefusalWarned(false) {   // Ladruno WP-129
+    bool   sep, sep_n;          // Ladruno WP-152: separated (tension cutoff), trial / committed
+    double sepTr, sepTr_n;      // Ladruno WP-152: tr(eps) at entry (internal, compression positive), trial / committed
+    int    sepEvent;            // Ladruno WP-152: this TRIAL's transition (0 none, 1 entry E1, 2 entry E2, 3 exit), counted at commit
+    int    sepCode;             // Ladruno WP-152: the refusal code this TRIAL's entry masked (3, 4, 6 or 9), recorded at commit
+    double sepP0;               // Ladruno WP-152: the committed p0 at this TRIAL's entry, recorded at commit
+    LadrunoSasState() : allowed(false), refused(false), warned(false), commitRefusalWarned(false),   // Ladruno WP-129
+                        sep(false), sep_n(false), sepTr(0.0), sepTr_n(0.0), sepEvent(0), sepCode(0), sepP0(0.0) {   // Ladruno WP-152
         for (int i = 0; i < LSAS_COUNT; i++) stats[i] = 0.0;   // Ladruno WP-129
     }   // Ladruno WP-129
 };   // Ladruno WP-129
@@ -464,6 +476,7 @@ class ManzariDafalias : public NDMaterial
 	LadrunoSasState mLadrunoSas;                                             // Ladruno WP-129
 	void    ladrunoSasIntegrate(void);                                       // Ladruno WP-129
 	void    ladrunoResetSasStats(void);                                      // Ladruno WP-129
+	void    ladrunoResetSasSep(void);                                        // Ladruno WP-152
 	int     ladrunoSasStage(const Vector& s, const Vector& a, const Vector& z, double e,  // Ladruno WP-129
 	                const Vector& ain, double dv, const Vector& ddev,   // Ladruno WP-129
 	                Vector& ds, Vector& da, Vector& dz, Vector& dep, double& lam);   // Ladruno WP-129
@@ -477,6 +490,7 @@ class ManzariDafalias : public NDMaterial
 	double  ladrunoSasBracketH(const Vector& a, const Vector& ain, const Vector& n, double h, double b0); // Ladruno WP-129/151
 	double  ladrunoSasSoftCapH(double h, double bn, double p, double X);   // Ladruno WP-151
 	double  ladrunoSasReseatDelta(void) const;                             // Ladruno WP-151
+	void    ladrunoSasSetIsotropic(double pModel);                           // Ladruno WP-152
 	Vector  ladrunoSasElastic(const Vector& S, const Vector& dEps, double e0, double e1);  // Ladruno WP-129
 	double  ladrunoSasIntersect(const Vector& S, const Vector& A, const Vector& dEps,   // Ladruno WP-129
 	                double e0, double lo, double hi);   // Ladruno WP-129

@@ -8168,6 +8168,58 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
 - **Why it matters beyond the crash:** the pool is also the ADR-75b §5.4-H1 blocker for threading loops B/C (one Matrix per DOF count shared by every element); any future per-thread pool must size and zero all `MAX_NUM_DOF+1` slots.
 - **Reproduce deterministically:** dirty the allocator's free list for the pool array's size (65 × 8 = 520 bytes) right before the first FE_Element of a model is built — `HeapAlloc(GetProcessHeap())` on Windows (the UCRT's `operator new` allocates there, static or DLL CRT alike), libc `malloc` on Linux — fill with 0xA5 and free; see `tests/test_wp149_pool_slot_max_num_dof.py`.
 - **Workaround/status:** ✅ FIXED WP-149 (`<=` at all 10 init/cleanup loops, LEDGER_vanilla_files). Not linted: all four sites are fixed, and the pin test covers the two reachable pools (FE_Element, TransformationFE) against an upstream sync that re-imports `<`. *2026-09-28.*
+### Under SAS-ME (`IntScheme 129`) the ONLY low-p test is p + p_r > 0: `-Pmin` is NOT an admissibility threshold there (WP-152)
+- **Bites:** reasoning about a footing's surface points from `-Pmin`, as for ModifiedEuler.
+  - Under ModifiedEuler, `-Pmin` is the threshold of every vanilla clamp and reset: the entry clamp, `Stress_Correction`'s silent deviator wipe to (p_min + p_r)·I, `Elastic2Plastic`, and CPPM's reset.
+  - Under SAS-ME it only floors the elastic moduli (`GetElasticModuli`: `sqrt(max(p + p_Re, p_min)/P_atm)`).
+  - The refusal tests are `!(p > 0.0)` on p = tr(σ)/3 + p_r: the start (code 3), stage and predictor tension (code 6), and the drift correction (code 7).
+  - With the fork default p_r = 0, a SAS-ME point refuses at tr(σ)/3 ≤ 0, whatever `-Pmin` says. And near p = 0, codes 4 and 9 (the α and fabric error, and the substep count) usually fire first.
+- **Rule:** Under IntScheme 129 read low-p behaviour from p_r and from the refusal census (`sasStats` `refLowP`, `refDTmin`, `refCap`), not from `-Pmin`. A floor that SAS-ME should honour must be a declared mechanism.
+- **Workaround/status:** WP-152's `-sasTensionCutoff p_sep p_contact` is that mechanism, opt-in: it separates only the low-p/tension refusals, and counts them. [[152_sanisand_tension_cutoff]], [[LadrunoSANISAND_implex_guide]] §13.5.
+
+### A census counter incremented INSIDE a material's update counts update CALLS, not steps — an element may update a point several times per step, each call starting from the committed state (WP-152)
+- **Bites:** a "transition" counter (an entry, an exit, a re-seat) bumped in `setTrialStrain`/`integrate()`.
+  - An element can call the material update more than once in one step: in the trial phase, again before the residual, and on every Newton iterate.
+  - Each call recomputes the trial from the committed state and meets the same transition again.
+  - Measured: WP-152's first build counted one re-contact as 2 on a single stdBrick path (`sepExits`).
+  - A step that is cut and retried also counts transitions that never happened.
+- **Rule:** Count a STATE TRANSITION when it commits. The update records the trial's transition in a trial-only field; `commitState()` counts it and clears the field; `revertToLastCommit()` clears it too. Per-call counters (substeps, rejections) are fine, but document them as per-call (cf. WP-151's `reseatHeld`: decisions, not reversals).
+- **Workaround/status:** ✅ WP-152 (`sepEvent`, counted in `LadrunoSANISAND::commitState`). Test: `tests/test_ladruno_sanisand_tension_cutoff.py` asserts +1 per committed transition. [[152_sanisand_tension_cutoff]].
+
+### A constitutive law that JUMPS in strain passes every material-point test and has NO equilibrium in a structure (WP-152)
+- **Bites:** a state switch that sets the stress discontinuously at a strain threshold (WP-152's first re-contact: p_min → p_contact at g = g_c).
+  - A strain-driven material-point test never sees it: it prescribes the strain, so the stress just jumps.
+  - With compliance around the point (a free node, a neighbouring element) there is a band of load with no equilibrium: for the post-jump stress the neighbours must yield, which moves the strain back below the threshold. Newton oscillates between the branches; a step cut cannot help, because the band has a finite width (≈ Δσ / neighbour modulus).
+  - Measured: a two-brick oedometric column under gravity, top displacement-controlled, Newton + `NormUnbalance`: step 68 (the re-contact) failed at 30 iterations; band ≈ 1 kPa / 8e4 kPa ≈ 1.25e-5 > the 1e-5 step.
+- **Rule:** Make every branch of a state machine continuous in the strain (a stress reached at the switch, not set there), and test a new material state machine under NEWTON with at least one free node, not only strain-driven.
+- **Workaround/status:** ✅ WP-152 (continuous closing branch p_min + K(p_contact)·max(g, 0)); `tests/test_ladruno_sanisand_tension_cutoff.py::test_newton_column_under_gravity_separates_and_recontacts`. [[152_sanisand_tension_cutoff]].
+
+### The `EnergyBalance` recorder is velocity-based: under a STATIC integrator every column is zero (WP-152)
+- **Bites:** asking for an energy audit of a quasi-static push (`LoadControl`, `DisplacementControl`) with `recorder EnergyBalance`.
+  - IE = ∫ F_resᵀ v dt and ULW = ∫ vᵀ P_ext dt integrate NODAL VELOCITIES (`EnergyBalanceKernel.h`); a static integrator never sets them.
+  - Measured: the WP-152 two-brick column, 100 static steps through separation and re-contact: 100 rows, every KE/IE/DW/ULW/RES/ERR = 0.
+- **Rule:** Use `EnergyBalance` for transient runs only. For a static push, audit work in the driver (the external work ∫ q·B ds against the material work), or at the material point (net work over closed cycles).
+- **Workaround/status:** documented; no change to the recorder.
+
+### `InitialStateAnalysis off` ends with a domain update on the ZEROED displacements: a SANISAND point's trial jumps by −ε_n (pre-existing, found in WP-152)
+- **Bites:** reading a material's trial state right after `InitialStateAnalysis off` (or taking a step from it) with a strain-driven material that keeps its committed strain under ISA (ManzariDafalias / LadrunoSANISAND).
+  - `OPS_InitialStateAnalysis` "off" calls `Domain::revertToStart`, which zeroes the displacements and ENDS with `this->update()`; the material's `revertToStart` keeps σ and ε_n under ISA, so the update integrates an increment of −ε_n.
+  - Measured: a NORMAL point at p ≈ 1.77 kPa: trial p 1.769 → 1.731 kPa after ISA off; a separated point reads the same jump as closing (trial re-contact at 2.66 kPa).
+- **Rule:** Under ISA, trust the COMMITTED state (and `sepActive`), not the trial read right after "off"; a deck that continues from ISA with SANISAND inherits the strain-frame jump.
+- **Workaround/status:** open, not WP-152's (it predates it). WP-152 only makes the separation state survive the ISA revert (review #5).
+
+### An interpreter whose `pytest` lives in site-packages loses it under `python -S`: the byte-identity child process fails before running any deck (harness)
+- **Bites:** `tests/test_ladruno_sanisand_sasme.py::test_existing_schemes_byte_identical` with an interpreter that keeps pytest only in its site-packages: Esmeralda's `~/ladruno_build_test/conan_venv/bin/python`, and the nmora desk's `pythoncore-3.12-64`.
+  - The test spawns `sys.executable -S` (the Windows `-S` trap); `-S` drops site-packages, where that venv keeps pytest; `wp129_sanisand_byteid` imports `test_ladruno_sanisand`, which imports pytest → `ModuleNotFoundError`.
+- **Rule:** Read that failure as an environment artifact unless its message is a row mismatch. Put the interpreter's site-packages on `PYTHONPATH` (the child builds `sys.path` from it) and the test runs for real.
+- **Workaround/status:** documented (WP-152 review, 2026-09-29): with site-packages on `PYTHONPATH` it PASSES on the nmora desk at 7f1562c81 (111 s). The fix belongs to the harness, not to the material.
+
+### An exact sign test on a strain TRACE built from B·u is a coin flip under isochoric deformation (WP-152)
+- **Bites:** a material branch on `tr(dε) > 0.0` (or `>= 0`, `< 0`) to tell compression from opening.
+  - The element forms dε = B·Δu; under a deformation that is isochoric in exact arithmetic, each Gauss point's trace is round-off (~1e-20 on 1e-4 strains) with either sign.
+  - Measured: WP-152's first non-compressing gate (`tr dε > 0.0`) on a homogeneous stdBrick under +3e-4/−3e-4 pure shear: 6 of 8 GPs separated, 2 were held as "compressing" and refused. Under stdBrick (which discards the material's code) the 2 refusals aborted the commit through the WP-99 latch.
+- **Rule:** compare a derived trace against a tolerance scaled to the increment (`tr dε > 1e-10·‖dε‖`), and test the branch with a pure-shear increment on EVERY Gauss point of an element, not just GP 1.
+- **Workaround/status:** ✅ WP-152 re-review (`LadrunoSANISANDSasME.cpp`, the E1/E2 gate; `tests/test_ladruno_sanisand_tension_cutoff.py::test_E2_separates_under_isochoric_shear`).
 
 ### Probing a tangent from Python: `setNodeDisp` without `-commit` RESETS the node's other DOFs, and `printA -ret` is the TRANSPOSE (WP-158)
 - **Bites:** an FD check `setNodeDisp n 1 ux; setNodeDisp n 2 uy; setNodeDisp n 3 uz; printB` evaluates the residual at

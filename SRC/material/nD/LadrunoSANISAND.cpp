@@ -1015,6 +1015,44 @@ OPS_LadrunoSANISAND(void)
             else if (k == 'r') sasOpt.reseatHyst = v;
             else sasOpt.softCap = v;
         }
+        // Ladruno WP-152: the tension cutoff (separation), SAS-ME only, OFF by
+        // default: -sasTensionCutoff p_sep p_contact (model stress units).
+        else if (strcmp(argTok, "-sasTensionCutoff") == 0 || strcmp(argTok, "-sastensioncutoff") == 0) {
+            seenFlag = true;
+            sawSasToken = true;
+            double v2[2] = {0.0, 0.0};
+            numData = 2;
+            if (OPS_GetDoubleInput(&numData, v2) != 0) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -sasTensionCutoff wants two values: p_sep p_contact" << endln;
+                return 0;
+            }
+            if (!(std::isfinite(v2[0]) && std::isfinite(v2[1]) && v2[0] >= 0.0 && v2[1] > v2[0])) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -sasTensionCutoff wants 0 <= p_sep < p_contact (got " << v2[0] << " "
+                       << v2[1] << "): p_sep is the committed p below which a low-confinement"
+                          " accuracy/cost refusal separates (0 = tension only), p_contact the"
+                          " re-contact pressure" << endln;
+                return 0;
+            }
+            sasOpt.tcPsep = v2[0];
+            sasOpt.tcPcontact = v2[1];
+        }
+        // Ladruno WP-152 (review #2): the committed p above which a TENSION refusal
+        // (code 6 / a p <= 0 start) refuses instead of separating. Default 5 p_contact.
+        else if (strcmp(argTok, "-sasSepMaxP0") == 0 || strcmp(argTok, "-sassepmaxp0") == 0) {
+            seenFlag = true;
+            sawSasToken = true;
+            numData = 1;
+            double v = 0.0;
+            if (OPS_GetDoubleInput(&numData, &v) != 0 || !(std::isfinite(v) && v > 0.0)) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -sasSepMaxP0 wants one value > 0: the committed p above which a"
+                          " tension refusal refuses instead of separating" << endln;
+                return 0;
+            }
+            sasOpt.tcP0Max = v;
+        }
         else {
             // Not one of our flags, so it must be a positional optional.
             if (seenFlag) {
@@ -1043,6 +1081,7 @@ OPS_LadrunoSANISAND(void)
                        << " -flipAlphaIn / -errFloor / -alphaBoundTol / -alphaProject /"   // Ladruno WP-129
                        << " -sasAlphaIn / -sasErrorVars /"                                 // Ladruno WP-129
                        << " -sasHFloor / -sasReseatHyst / -sasSoftCap /"                   // Ladruno WP-151
+                       << " -sasTensionCutoff / -sasSepMaxP0 /"                            // Ladruno WP-152
                        << " -cppmOnFail / -cppmHalvings / -cppmLineSearch / -cppmStart /" // Ladruno WP-130
                        << " -cppmTangent / -meFallback" << endln;                  // Ladruno WP-130
                 return 0;
@@ -1113,6 +1152,7 @@ OPS_LadrunoSANISAND(void)
         opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
                << ": -errFloor / -alphaBoundTol / -alphaProject / -sasAlphaIn / -sasErrorVars"
                   " / -sasHFloor / -sasReseatHyst / -sasSoftCap"   // Ladruno WP-151
+                  " / -sasTensionCutoff / -sasSepMaxP0"             // Ladruno WP-152
                   " are SAS-ME options and are read ONLY by IntScheme " << LADRUNO_INT_SAS_ME
                << " (this deck asks for IntScheme " << (int)oData[0] << "). Refused rather than"
                   " accepted and ignored." << endln;
@@ -1136,6 +1176,67 @@ OPS_LadrunoSANISAND(void)
                << ": -sasHFloor does nothing under -sasAlphaIn stale (ModifiedEuler's h is"
                   " kept as it is). Refused rather than accepted and ignored." << endln;
         return 0;
+    }
+    // Ladruno WP-152: the separated state sits at p_min, so re-contact must be
+    // above it; and the cutoff is not qualified with -implex (the IMPL-EX
+    // companion has its own refusal ledger and never reaches this state).
+    if (sasOpt.tcP0Max > 0.0 && !(sasOpt.tcPcontact > 0.0)) {
+        opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+               << ": -sasSepMaxP0 does nothing without -sasTensionCutoff. Refused rather than"
+                  " accepted and ignored." << endln;
+        return 0;
+    }
+    if (sasOpt.tcPcontact > 0.0) {
+        // the default bound is p_contact (re-review MED-2: it bounds the entry jump to
+        // the re-contact scale; every footing entry measured was at p0 < 0.5 kPa), and a
+        // bound below p_contact would stop a just-re-contacted point from separating
+        // until it unloads below it (re-review LOW-6)
+        if (!(sasOpt.tcP0Max > 0.0))
+            sasOpt.tcP0Max = sasOpt.tcPcontact;
+        if (!(sasOpt.tcP0Max >= sasOpt.tcPcontact)) {
+            opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                   << ": -sasSepMaxP0 = " << sasOpt.tcP0Max << " must be >= p_contact = "
+                   << sasOpt.tcPcontact << ". Refused." << endln;
+            return 0;
+        }
+        // re-review LOW-7: with -pRe the moduli read tr(sigma)/3 + p_Re, so K(p_contact)
+        // would be K(p_contact + p_Re): not the documented law. Refused, as -Presidual.
+        if (preElastic != 0.0) {
+            opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                   << ": -sasTensionCutoff is defined for -pRe 0 only (got " << preElastic
+                   << "). Refused." << endln;
+            return 0;
+        }
+        // review #4: with p_r != 0 the separated sigma = (p_min - p_r) I is a real
+        // TENSION, and the elastic moduli read tr(sigma)/3 + p_Re, not p + p_r, so
+        // g_c and p_re would be taken at the wrong pressure. Not defined: refused.
+        if (presidual != 0.0) {
+            opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                   << ": -sasTensionCutoff is defined for -Presidual 0 only (got " << presidual
+                   << "): with p_r != 0 the separated state would carry tension. Refused." << endln;
+            return 0;
+        }
+        // review #7: re-contact lands on alpha = alpha_in = 0, where DM04's h is
+        // the 1e10 sentinel (the WP-151 Zeno singularity) unless the h floor is on.
+        if (!(sasOpt.hFloor > 0.0)) {
+            opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                   << ": -sasTensionCutoff needs -sasHFloor c_A > 0: re-contact lands on"
+                      " alpha = alpha_in = 0, where h is otherwise the 1e10 sentinel. Refused." << endln;
+            return 0;
+        }
+        const double pminEff = (pmin < 0.0) ? 1.0e-3 * dData[8] : pmin;
+        if (!(sasOpt.tcPcontact > pminEff)) {
+            opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                   << ": -sasTensionCutoff p_contact = " << sasOpt.tcPcontact
+                   << " must be above p_min = " << pminEff
+                   << " (a separated point sits at p_min). Refused." << endln;
+            return 0;
+        }
+        if (implexOpt.enabled) {
+            opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                   << ": -sasTensionCutoff is NOT qualified with -implex. Refused." << endln;
+            return 0;
+        }
     }
     // Ladruno WP-130 (TIMs F18(c)/(d)): a flag that would do nothing is REFUSED
     // (ADR 86's rule), and the -implex combinations are refused as unqualified:
@@ -1567,6 +1668,19 @@ LadrunoSANISAND::setLadrunoSasOptions(const LadrunoSasOptions &opt, bool verbose
                           " (small-strain cycles stay on one h branch). Validated for cyclic work"
                           " only at c_rev <= 1." << endln;
         }
+        if (opt.tcPcontact > 0.0)   // Ladruno WP-152
+            opserr << "LadrunoSANISAND tag " << this->getTag()
+                   << ": WP-152 tension cutoff (separation), an OPT-IN constitutive choice: a point whose"
+                      " update fails its accuracy/cost limit (code 4/9) at committed p < p_sep = " << opt.tcPsep
+                   << " -- the operative trigger at a free surface -- or refuses on tension (code 6, or a start"
+                      " at p <= 0) at committed p <= " << opt.tcP0Max
+                   << ", in both cases under a non-compressing increment, SEPARATES -- no tension, no shear (model p ="
+                      " p_min = " << m_Pmin
+                   << "), weight and place kept -- and re-contacts at p_contact = " << opt.tcPcontact
+                   << " once its volumetric opening has closed (volumetric only: isochoric shear never"
+                      " re-contacts). Every other refusal (loadingNonPosH included) still refuses."
+                      " Counted: sasStats sepEntriesTension, sepEntriesLowP, sepExits, sepActive,"
+                      " sepLastCode, sepMaxP0, sepHeldHighP, sepHeldCompressing." << endln;
         if (mHonorTolR != 0)
             opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
                    << ": -honorTolR has NO EFFECT under SAS-ME, which always uses TolR." << endln;
@@ -1957,6 +2071,13 @@ LadrunoSANISAND::revertToStart(void)
     // revertToLastCommit (a failed step's cost must survive for the post-mortem).
     this->ladrunoResetMEStats();          // Ladruno WP-127
     this->ladrunoResetSasStats();         // Ladruno WP-129: sasStats, same rule
+    // Ladruno WP-152 (review #5): the separation state is state, not census --
+    // an InitialStateAnalysis revert keeps the stress, so it keeps the separation
+    // that produced it (and the census column that reports it).
+    if (ops_InitialStateAnalysis)
+        mLadrunoSas.stats[LSAS_SEP_ACTIVE] = mLadrunoSas.sep_n ? 1.0 : 0.0;
+    else
+        this->ladrunoResetSasSep();
     mLadrunoCommits = mLadrunoCommitReseats = mLadrunoCommitDAlphaIn = 0.0;   // Ladruno WP-153
 
     return 0;
@@ -2204,8 +2325,11 @@ LadrunoSANISAND::getCopy(const char *type)
 //                                      mCPPMTangentFix, mLadrunoLatchCause
 //      [LWIRE_SAS, +LWIRE_SAS_OPT_N)   WP-129: errFloor, alphaBoundTol, alphaProject,
 //                                      alphaInMode, errorVars, alphaEntryTol;
-//                                      WP-151: hFloor, reseatHyst, softCap
-//      [.., +LSAS_COUNT)               WP-129: the sasStats census (WP-151 appends 3)
+//                                      WP-151: hFloor, reseatHyst, softCap;
+//                                      WP-152: tcPsep, tcPcontact, tcP0Max
+//      [.., +LSAS_COUNT)               WP-129: the sasStats census (WP-151 appends 3,
+//                                      WP-152 appends 8)
+//      [LWIRE_SEP, +2)                 WP-152: the committed sep_n, sepTr_n
 //      LWIRE_TAG                       WP-151: the layout tag (kLadrunoSanWireTag)
 //      LWIRE_SIZE                      the total (never 97: static_assert in the header)
 //  (Before the merge both WPs indexed their blocks at 35+LMS_COUNT: a restored
@@ -2262,8 +2386,9 @@ LadrunoSANISAND::getCopy(const char *type)
 // test_db_roundtrip_carries_presidual). The static_assert beside the LWIRE_* enum
 // keeps any future column count off 97, and recvSelf warns when the tag it reads
 // is not this one (a stream from another build, or an overwritten slot).
-// LEDGER_quirks, WP-151.
-static const double kLadrunoSanWireTag = 151.0;
+// LEDGER_quirks, WP-151. WP-152 changed the layout (the tension-cutoff options
+// and the committed separation state), so the tag is now 152.
+static const double kLadrunoSanWireTag = 152.1;   // 152.1: + tcP0Max and 4 census columns (review)
 
 int
 LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
@@ -2367,7 +2492,14 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
         ladrunoData(b + 6) = mLadrunoSas.opt.hFloor;       // Ladruno WP-151 (LWIRE_SAS_OPT_N 6 -> 9)
         ladrunoData(b + 7) = mLadrunoSas.opt.reseatHyst;   // Ladruno WP-151
         ladrunoData(b + 8) = mLadrunoSas.opt.softCap;      // Ladruno WP-151
+        ladrunoData(b + 9) = mLadrunoSas.opt.tcPsep;       // Ladruno WP-152 (LWIRE_SAS_OPT_N 9 -> 11)
+        ladrunoData(b + 10) = mLadrunoSas.opt.tcPcontact;  // Ladruno WP-152
+        ladrunoData(b + 11) = mLadrunoSas.opt.tcP0Max;     // Ladruno WP-152 review #2 (11 -> 12)
     }
+    // Ladruno WP-152: the COMMITTED separation state crosses for the reason the
+    // committed stress does -- a restored point must stay separated.
+    ladrunoData(LWIRE_SEP + 0) = mLadrunoSas.sep_n ? 1.0 : 0.0;
+    ladrunoData(LWIRE_SEP + 1) = mLadrunoSas.sepTr_n;
     ladrunoData(LWIRE_TAG) = kLadrunoSanWireTag;                           // Ladruno WP-151
 
     res = theChannel.sendVector(this->getDbTag(), commitTag, ladrunoData);
@@ -2433,7 +2565,22 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
             mLadrunoSas.opt.reseatHyst = 0.0;
         if (!(mLadrunoSas.opt.softCap >= 0.0 && mLadrunoSas.opt.softCap < 1.0))   // excludes NaN and inf
             mLadrunoSas.opt.softCap = 0.0;
+        // Ladruno WP-152: the tension cutoff, in the parser's ranges or OFF
+        // (p_contact > p_min is re-checked against the received p_min below)
+        mLadrunoSas.opt.tcPsep     = ladrunoData(b + 9);
+        mLadrunoSas.opt.tcPcontact = ladrunoData(b + 10);
+        mLadrunoSas.opt.tcP0Max    = ladrunoData(b + 11);
+        if (!(std::isfinite(mLadrunoSas.opt.tcPsep) && std::isfinite(mLadrunoSas.opt.tcPcontact)
+              && std::isfinite(mLadrunoSas.opt.tcP0Max)
+              && mLadrunoSas.opt.tcPsep >= 0.0 && mLadrunoSas.opt.tcPcontact > mLadrunoSas.opt.tcPsep
+              && mLadrunoSas.opt.tcP0Max >= mLadrunoSas.opt.tcPcontact
+              && mLadrunoSas.opt.hFloor > 0.0))
+            mLadrunoSas.opt.tcPsep = mLadrunoSas.opt.tcPcontact = mLadrunoSas.opt.tcP0Max = 0.0;
     }
+    mLadrunoSas.sep_n   = (ladrunoData(LWIRE_SEP + 0) > 0.5) && (mLadrunoSas.opt.tcPcontact > 0.0);   // Ladruno WP-152
+    mLadrunoSas.sepTr_n = std::isfinite(ladrunoData(LWIRE_SEP + 1)) ? ladrunoData(LWIRE_SEP + 1) : 0.0;
+    mLadrunoSas.sep     = mLadrunoSas.sep_n;
+    mLadrunoSas.sepTr   = mLadrunoSas.sepTr_n;
     mPminInput      = ladrunoData(1);
     m_Presidual     = ladrunoData(2);   // overwritten by applyLadrunoConstants below;
                                         // restored first so a future divergence is visible
@@ -2527,6 +2674,16 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
     // The base recvSelf restored m_Pmin from its own data(96) and never re-runs
     // initialize(); we take the last write here.
     this->applyLadrunoConstants();                                                    // Ladruno
+
+    // Ladruno WP-152: the parser's p_contact > p_min, against the p_min now in
+    // force; a received setting that violates it is OFF (and so is its state).
+    if (mLadrunoSas.opt.tcPcontact > 0.0
+        && (!(mLadrunoSas.opt.tcPcontact > m_Pmin) || m_Presidual != 0.0     // + review #4
+            || m_PreElastic != 0.0)) {                                         // + re-review LOW-7
+        mLadrunoSas.opt.tcPsep = mLadrunoSas.opt.tcPcontact = mLadrunoSas.opt.tcP0Max = 0.0;
+        mLadrunoSas.sep = mLadrunoSas.sep_n = false;
+        mLadrunoSas.stats[LSAS_SEP_ACTIVE] = 0.0;                             // re-review LOW-5
+    }
 
     return 0;
 }
@@ -4806,6 +4963,27 @@ LadrunoSANISAND::commitState(void)
         if (mElastFlag != 0)
             mPrimed = true;
 
+        // Ladruno WP-152: the separation state commits with the stress it produced
+        // (the cutoff is refused with -implex, so only this path carries it).
+        switch (mLadrunoSas.sepEvent) {   // counted ONCE, when the transition commits
+        case 1: mLadrunoSas.stats[LSAS_SEP_ENTRIES_TENSION] += 1.0; break;
+        case 2: mLadrunoSas.stats[LSAS_SEP_ENTRIES_LOWP] += 1.0; break;
+        default: break;
+        }
+        if (mLadrunoSas.sepEvent == 1 || mLadrunoSas.sepEvent == 2) {   // review #3: the masked code
+            mLadrunoSas.stats[LSAS_SEP_LAST_CODE] = (double)mLadrunoSas.sepCode;
+            if (mLadrunoSas.sepP0 > mLadrunoSas.stats[LSAS_SEP_MAX_P0])
+                mLadrunoSas.stats[LSAS_SEP_MAX_P0] = mLadrunoSas.sepP0;
+        }
+        switch (mLadrunoSas.sepEvent) {
+        case 3: mLadrunoSas.stats[LSAS_SEP_EXITS] += 1.0; break;
+        default: break;
+        }
+        mLadrunoSas.sepEvent = 0;
+        mLadrunoSas.sep_n = mLadrunoSas.sep;
+        mLadrunoSas.sepTr_n = mLadrunoSas.sepTr;
+        mLadrunoSas.stats[LSAS_SEP_ACTIVE] = mLadrunoSas.sep ? 1.0 : 0.0;
+
         this->ladrunoNoteCommitAlphaIn();                  // Ladruno WP-153
         return ManzariDafalias::commitState();
     }
@@ -4817,6 +4995,10 @@ int
 LadrunoSANISAND::revertToLastCommit(void)
 {
     int res = ManzariDafalias::revertToLastCommit();   // an empty `return 0` today
+
+    mLadrunoSas.sep = mLadrunoSas.sep_n;               // Ladruno WP-152
+    mLadrunoSas.sepTr = mLadrunoSas.sepTr_n;           // Ladruno WP-152
+    mLadrunoSas.sepEvent = 0;                          // Ladruno WP-152
 
     if (!mImplexOpt.enabled)
         return res;
@@ -5403,7 +5585,8 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
         static const char *names[] = {
             "sas_errFloor", "sas_alphaBoundTol", "sas_alphaProject", "sas_alphaInMode",
             "sas_errorVars", "sas_alphaEntryTol",
-            "sas_hFloor", "sas_reseatHyst", "sas_softCap"};                    // Ladruno WP-151
+            "sas_hFloor", "sas_reseatHyst", "sas_softCap",                     // Ladruno WP-151
+            "sas_tcPsep", "sas_tcPcontact", "sas_tcP0Max"};                     // Ladruno WP-152
         static_assert(sizeof(names) / sizeof(names[0]) == LWIRE_SAS_OPT_N,   // Ladruno WP-151 (review NIT)
                       "sasOptions names must match LWIRE_SAS_OPT_N (the response and the wire block)");
         output.tag("NdMaterialOutput");
@@ -5441,7 +5624,9 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
             "sas_maxSubstepsOneUpdate", "sas_lastSubsteps", "sas_lastRefuseCode",
             "sas_maxAlphaRatio", "sas_lastAlphaRatio", "sas_lastF", "sas_entryOverKappa",
             "sas_rejectedReversal",
-            "sas_hFloored", "sas_hSoftCapped", "sas_reseatHeld"};   // Ladruno WP-151
+            "sas_hFloored", "sas_hSoftCapped", "sas_reseatHeld",    // Ladruno WP-151
+            "sas_sepEntriesTension", "sas_sepEntriesLowP", "sas_sepExits", "sas_sepActive",   // Ladruno WP-152
+            "sas_sepLastCode", "sas_sepMaxP0", "sas_sepHeldHighP", "sas_sepHeldCompressing"};   // WP-152 review
         output.tag("NdMaterialOutput");
         output.attr("matType", getClassType());
         output.attr("matTag", getTag());
@@ -5480,6 +5665,17 @@ LadrunoSANISAND::ladrunoTangentEP(void)
 {
     Matrix Cep(6, 6);
     const double e = m_e_init - (1 + m_e_init) * GetTrace(mEpsilon_n);
+    if (mLadrunoSas.sep_n) {   // Ladruno WP-152: a SEPARATED point: C_e at its (isotropic) stress --
+        double K, G;           // at p_min while open (the regularisation) -- and, while CLOSING
+        GetElasticModuli(mSigma_n, e, K, G);   // (g > 0), the consistent bulk K(p_contact) (re-review MED-3)
+        if (GetTrace(mEpsilon_n) - mLadrunoSas.sepTr_n > 0.0) {
+            Vector Sc(mI1);
+            Sc *= (mLadrunoSas.opt.tcPcontact - m_Presidual);
+            double Gc;
+            GetElasticModuli(Sc, e, K, Gc);
+        }
+        return GetStiffness(K, G);
+    }
     ladrunoSasContinuumTangent(mSigma_n, mAlpha_n, mFabric_n, mAlpha_in_n, e, Cep);
     return Cep;
 }
@@ -5591,6 +5787,9 @@ LadrunoSANISAND::getResponse(int responseID, Information &matInformation)
         out(6) = mLadrunoSas.opt.hFloor;        // Ladruno WP-151
         out(7) = mLadrunoSas.opt.reseatHyst;    // Ladruno WP-151
         out(8) = mLadrunoSas.opt.softCap;       // Ladruno WP-151
+        out(9) = mLadrunoSas.opt.tcPsep;        // Ladruno WP-152
+        out(10) = mLadrunoSas.opt.tcPcontact;   // Ladruno WP-152
+        out(11) = mLadrunoSas.opt.tcP0Max;      // Ladruno WP-152 review #2
         return matInformation.setVector(out);
     }
     if (responseID == LadrunoSanisandCppmOptionsResponseID) {
@@ -5958,6 +6157,7 @@ LadrunoSANISAND::ladrunoReplayRun(const LadrunoReplayRequest &q,
     mImplexCommitRefusedLatch = false;
     this->ladrunoResetMEStats();
     this->ladrunoResetSasStats();                              // Ladruno WP-129
+    this->ladrunoResetSasSep();                                // Ladruno WP-152: a replay starts NORMAL
 
     const double fBefore = this->GetF(mSigma_n, mAlpha_n);
     // Ladruno WP-129: the loaded state's alpha/alpha^b and continuum tangent,
