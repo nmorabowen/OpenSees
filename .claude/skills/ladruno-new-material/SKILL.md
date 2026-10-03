@@ -57,6 +57,10 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       Vector r = ...;` makes a new `r` that dies at the `;` (L9). And give every substep
       integrator's tangent an FD gate of its own: ForwardEuler's was wrong twice over and no gate
       saw it (WP-158). Quirks: "has a shadowed `Vector r`".
+- [ ] A sub-stepper must hand each sub-step what the un-sub-stepped call would get -- moduli
+      INITIALISED (and not taken after a callee wrote them), and EVERY evolved vector advanced,
+      elastic strain included. Gate it with an identity the sub-steps must satisfy, not with
+      a comparison to another integrator (WP-160). Quirks: "it passes uninitialised `nG, nK`".
 - [ ] Implement `getInitialTangent()` honestly: the base default returns `getTangent()`, so
       `-initial` silently becomes full Newton. Quirks: "`NDMaterial::getInitialTangent()` DEFAULTS".
 - [ ] Substep schemes need error control and yield-drift correction, and must honour the
