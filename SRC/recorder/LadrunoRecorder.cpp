@@ -2692,7 +2692,7 @@ void* OPS_LadrunoRecorder()
 	std::vector<int> overlay_tags_opt;   // explicit -overlay tags
 	std::string stage_kind_opt = "static"; // -kind <transient|static|eigen>
 	bool envelope_opt = false;             // -envelope flag
-	int compress_opt = 4;                  // WP-164: -compress <0..9>
+	int compress_opt = 1;                  // WP-164: -compress <0..9> (default 1)
 	double flush_opt = 10.0;               // WP-164: -flush <seconds>
 	bool store_data_f32 = false;           // -precision f32 (lossy) | f64 (default)
 	int one_item = 1;
@@ -2900,9 +2900,10 @@ void* OPS_LadrunoRecorder()
 		}
 		else if (strcmp(data, "-compress") == 0) {
 			// WP-164 (P4): -compress <0..9> : deflate level of the time-series DATA
-			// (0 = no shuffle/deflate filter). Default 4 (unchanged).
+			// (0 = no shuffle/deflate filter). Default 1: on the WP-164 bench it cut
+			// the large-slab recorder CPU 19 % vs the old hard-coded 4 for +0.6 % file.
 			if (numdata > 0) {
-				int lvl = 4;
+				int lvl = 1;
 				if (OPS_GetInt(&one_item, &lvl) != 0) {
 					opserr << "LadrunoRecorder error: -compress requires an int level 0..9\n";
 					return 0;

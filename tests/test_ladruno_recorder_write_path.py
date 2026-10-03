@@ -132,6 +132,18 @@ def test_compress_option_sets_the_filter(tmp_path, level, expect):
             assert d.shuffle
 
 
+def test_default_compress_level_is_1(tmp_path):
+    """Default deflate level is 1 (owner decision 2026-10-03; was a hard-coded 4)."""
+    path = str(tmp_path / "cdef.ladruno")
+    top = _brick_block(2, 2, 2)
+    ops.recorder("ladruno", path, "-N", "displacement")
+    _run_static(top, 2)
+    with h5py.File(path, "r") as f:
+        d = _stage(f)["RESULTS/ON_NODES/DISPLACEMENT/DATA"]
+        assert d.compression == "gzip" and d.compression_opts == 1, (
+            d.compression, d.compression_opts)
+
+
 def test_envelope_file_does_not_grow_with_steps(tmp_path):
     sizes = {}
     for steps in (3, 30):
