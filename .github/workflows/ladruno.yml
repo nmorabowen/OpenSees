@@ -36,6 +36,26 @@ jobs:
       - run: pip install pyyaml
       - name: classTag collision + drift (Axis 1, G2)
         run: python ci/check_classtags.py
+      # Ledger fragments (WP-161): the build-control ledgers are one file per entry
+      # under Ladruno_implementation/ledger/<kind>/, so no two PRs write the same
+      # file and the ledgers stop forcing merge-ups. The gate checks the fragments
+      # (schema, name <-> wp, duplicates, class tags vs classTags.h, the stubs);
+      # the self-test carries the round-trip proof build(split(ledgers)) ==
+      # ledgers. The rendered LEDGER_*.md are gitignored, so they are built here
+      # and uploaded as the `ledgers` artifact.
+      - name: ledger fragments gate + round-trip self-test (WP-161)
+        run: |
+          pip install pytest
+          python ci/check_ledger_fragments.py
+          pytest -q ci/test_ledger.py
+      - name: build the ledgers (WP-161)
+        run: python ci/ledger.py build
+      - name: upload the built ledgers (WP-161)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ledgers
+          path: Ladruno_implementation/ledger/_build/
+          if-no-files-found: error
       - name: manifest ledger (G9)
         run: python ci/check_manifest.py
       # MPCO_Ladruno schema-v1 gate (D5): the validator is the executable spec and
