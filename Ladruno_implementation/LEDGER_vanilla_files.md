@@ -1,20 +1,19 @@
 ---
-title: Ledger — vanilla files we touched
+title: Ledger — vanilla files we touched (stub)
 project: Ladruno
 tags:
   - ledger
-  - provenance
-  - upstream
 ---
 
-# Ledger — vanilla OpenSees files we touched
+# Ledger — vanilla files we touched
 
-Every upstream ("vanilla") OpenSees file the Ladruno fork modifies, **why** we
-touched it, and the **PR** it landed in. This is the provenance record: if we
-ever rebase onto a newer upstream, this table is the list of edits to re-apply
-and re-verify.
+This file is a stub. Since WP-161 the ledger is one fragment per entry in
+[`ledger/vanilla/`](ledger/vanilla/), named `WP-<nnn>-<slug>.md`.
+**Never edit this file**; write a fragment (format: [`ledger/README.md`](ledger/README.md)).
 
-## Conventions
+- Read: `rg <pattern> Ladruno_implementation/ledger/vanilla/`
+- Full ledger: `python ci/ledger.py build` writes `Ladruno_implementation/ledger/_build/LEDGER_vanilla_files.md`
+  (gitignored; CI uploads it as the `ledgers` artifact of the static-gates job).
 
 - **Vanilla = pre-existing upstream file.** Brand-new files we author live in
   [[LEDGER_implementations]] instead — do not list them here.
@@ -752,3 +751,4 @@ Studio solution file by accident.
 | `SRC/material/nD/UWmaterials/ManzariDafalias.cpp` | `// Ladruno WP-160` — **`MaxStrainInc` (IntScheme 7, 8, 9) and `MaxEnergyInc` (0, 4, 6): the sub-steps' moduli and elastic strain.** Both declared `double nDGamma, nVoidRatio, nG, nK;` and passed the uninitialised `nG, nK` as every sub-step's moduli; both loops never advanced `cEStrain`. Now `nG = G, nK = K` (MaxStrainInc) / the entry `G, K` saved before the full-increment call and restored for each half (MaxEnergyInc: RungeKutta4 writes them), and `cEStrain = nEStrain` in both loops. Dispatch unchanged. Gated by `tests/test_manzari_substep_moduli.py` (6 regression gates fail on d63f49750). WP-129 byte-identity: `ls3d_s4, s6, s7, s8, s9` re-pinned, `NONDETERMINISTIC` emptied. | [#914](https://github.com/nmorabowen/OpenSees/pull/914) |
 | `SRC/material/nD/UWmaterials/ManzariDafalias.cpp` | `// Ladruno WP-158` — **`ForwardEuler` (IntScheme 5; also 4, 7–9 on small increments and the WP-130 `-cppmStart` walk): three defects, numerics of every other scheme untouched.** (1) `Vector r = GetDevPart(CurStress) / p;` inside `if (p > small)` declared a NEW `r` that shadowed the outer one, so `r` stayed zero and both `(n:r)` terms of the plastic multiplier vanished (upstream master has the same line) → `r = ...`. (2) tangent `temp2 = 2G n - (n:r) I` → `2G n - K (n:r) I` (the multiplier's numerator is `2G n:de - K de_v (n:r)`). (3) tangent `temp1 = 2G mIIdevMix + K mIIvol` (2G on the shear diagonal) → `aC` = `GetStiffness(K, G)`. Gated by `tests/test_manzari_forward_euler_r.py` (one-step consistency order, drained triaxial vs IntScheme 1, tangent vs FD; all three fail on d63f49750). WP-129 byte-identity: only `ls3d_s5` moved, re-pinned. LEDGER_quirks: "has a shadowed `Vector r`". | [#901](https://github.com/nmorabowen/OpenSees/pull/901) |
 | `SRC/recorder/EnergyBalanceRecorder.cpp` | `// Ladruno WP-163`: (M1) skip SP ShadowSubdomains in the max-DOF / hourglass-probe sizing loop (the shared kernel skips them in the energy sweep — a Subdomain has `getNodePtrs()==0`); (M4/MP-3) the per-rank `.part-<rank>` filename now comes from the shared `Ladruno_LaunchEnv.h` probe — SLURM only inside an srun step, SIZE > 1 without a valid RANK refused (was: an inline copy that wrote `part-0` for a sequential run inside `sbatch`). | [#917](https://github.com/nmorabowen/OpenSees/pull/917) |
+<!-- ledger-stub kind=vanilla split-source=dd38dde987c64271ab23276454fd7d98c3d79f7a -->

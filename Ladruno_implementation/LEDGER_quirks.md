@@ -1,20 +1,19 @@
 ---
-title: Ledger — OpenSees quirks & gotchas
+title: Ledger — OpenSees quirks & gotchas (stub)
 project: Ladruno
 tags:
   - ledger
-  - quirks
-  - gotchas
 ---
 
-# Ledger — OpenSees quirks & gotchas we learned
+# Ledger — OpenSees quirks & gotchas
 
-Surprising, undocumented, or bug-prone behaviours of upstream OpenSees that
-cost us time. Recording them here so we (and future us) stop re-discovering
-them. This is observation-only — fixes we actually applied are tracked in
-[[LEDGER_vanilla_files]] / [[LEDGER_implementations]].
+This file is a stub. Since WP-161 the ledger is one fragment per entry in
+[`ledger/quirks/`](ledger/quirks/), named `WP-<nnn>-<slug>.md`.
+**Never edit this file**; write a fragment (format: [`ledger/README.md`](ledger/README.md)).
 
-## Conventions
+- Read: `rg <pattern> Ladruno_implementation/ledger/quirks/`
+- Full ledger: `python ci/ledger.py build` writes `Ladruno_implementation/ledger/_build/LEDGER_quirks.md`
+  (gitignored; CI uploads it as the `ledgers` artifact of the static-gates job).
 
 - **One section per quirk.** Title = the symptom you'd search for.
 - State: *what bites*, *why*, *workaround/status*, and the *date* learned.
@@ -8349,3 +8348,4 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
 - **Workaround/status:** NaN is now deliberately sticky (first NaN poisons MIN/MAX/ABSMAX, ARG_STEP = that step).
   Do not build with `/fp:fast` / `-ffast-math`: the `v != v` test (and `std::isnan`) is not reliable under it.
   The size-mismatch rows of an element bucket are NaN-filled for the same reason (a zero row looked like data).
+<!-- ledger-stub kind=quirks split-source=dd38dde987c64271ab23276454fd7d98c3d79f7a -->

@@ -1,0 +1,9 @@
+---
+wp: LEGACY
+title: "Domain::addElement() calls update() at DECLARATION time — so any lazy resolve that LATCHES on its first attempt silently locks in whatever the half-built domai…"
+legacy_seq: 440
+---
+### `Domain::addElement()` calls `update()` at DECLARATION time — so any lazy resolve that LATCHES on its first attempt silently locks in whatever the half-built domain could see
+- **Bites:** an element that resolves something lazily (a `-host` element's stiffness scale, a material pointer, a neighbour's geometry) behind a `if (resolved) return; ... resolved = true;` guard gets its FIRST call from `Domain::addElement`, i.e. while the deck is still being read. Anything declared after it is invisible. Real instance (WP-101): `LadrunoKinematicCoupling -k auto -host <ele>` in a deck that declares the coupling before the host element — the lookup failed, `ktResolved` latched anyway, so `K_t` silently stayed at the 1e12 default instead of the intended 7.93e6, AND the conditioning warning that reads the same host could never fire. Host-first decks were fine; coupling-first decks were silently wrong. Nothing in the run said so.
+- **Why:** `Domain::addElement()` ends by calling the element's `setDomain()` and then `update()` so the element is consistent the moment it joins — a reasonable invariant that happens to make "first call" and "deck fully read" completely different moments.
+- **Workaround/status (2026-09-14):** **do not latch on a failed resolve.** Return without setting the flag and retry on the next call; the retry is free (a pointer lookup) next to a solve. If you need to warn that the target is genuinely missing rather than merely not-declared-yet, gate the warning on an analysis existing (`OPS_GetAlgorithm()` non-null) — that is the cheapest available "we are past deck construction" signal. See [[LEDGER_implementations]] WP-101 row / [PR #839](https://github.com/nmorabowen/OpenSees/pull/839).
