@@ -409,7 +409,7 @@ rules — **no `exit()`**, real `revert*`, real serialization (see
 nDMaterial InitDefGrad  $tag  $innerTag  <-noInitF>  <-F0 $f11 $f12 $f13 $f21 $f22 $f23 $f31 $f32 $f33>
 
 # Small-strain staged birth
-nDMaterial StagedStrain $tag  $innerTag  <-noInit>   <-eps0 $e0 $e1 ...>
+nDMaterial StagedStrain $tag  $innerTag  <-noInit>  <-maxStrain $e>  <-eps0 $e0 $e1 ...>
 ```
 
 | Option | Member | Meaning |
@@ -417,7 +417,8 @@ nDMaterial StagedStrain $tag  $innerTag  <-noInit>   <-eps0 $e0 $e1 ...>
 | `-noInitF` | `InitDefGrad` | opt out — transparent pass-through ($\equiv$ bare inner) |
 | `-F0 f11..f33` | `InitDefGrad` | supply a known birth gradient (9 row-major components); kept across `revertToStart` |
 | `-noInit` | `StagedStrain` | opt out — transparent pass-through ($\equiv$ bare inner) |
-| `-eps0 …` | `StagedStrain` | supply an explicit birth strain (sized to the inner's order) |
+| `-eps0 …` | `StagedStrain` | supply an explicit birth strain (sized to the inner's order); reads ALL remaining args, so it goes last |
+| `-maxStrain $e` | `StagedStrain` | (Ladruno C3b) trial-strain guard: `‖ε − ε0‖∞ > e` ⇒ `setTrialStrain` returns a bare `-1` and does NOT forward the trial (the inner keeps its state), so a host that honours `-1` (LadrunoBrick since C3b, LadrunoQuad, TenNodeTetrahedron) cuts the step. A divergence guard for inners with a validity range, and the fork's reproducible bare-`-1` source for host-contract tests. Serialized; off by default |
 
 With no option the wrapper **auto-captures at birth** (the staged-construction default).
 

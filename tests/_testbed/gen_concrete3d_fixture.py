@@ -13,6 +13,11 @@ Writes: tests/_testbed/concrete3d_oracle_fixture.txt   (committed; default), OR 
 Param block order (12 numbers): E nu fc ft e Df qh0 Hp Ah Bh Ch Dh
   (the C++ side sets m0 = m0Of(fc,ft,e); both sides derive K,G from E,nu identically.)
 
+Dead-point state (WP concrete3d-hang-diagnosis #877 follow-up): every DMG / ETA / DMGC / DMGT record's history line
+ends with three extra numbers `wt wc omega_dead` -- the COMMITTED omega_t / omega_c of the state and the dead-point
+threshold in force (2.0 = the treatment disabled, used to keep the legacy-path probes) -- because the kernel decides
+the dead-point branches on the committed damage, which the histories alone do not carry.
+
 Deterministic (no Date/random) — regenerates byte-identically, so CI can assert the committed
 fixture is up to date via a fresh regen + diff.
 """
@@ -269,7 +274,8 @@ def main(out=None):
         lines.append(_fmt(st["sig_bar"]))
         lines.append(repr(float(st["kp"])))
         lines.append(_fmt([st["et_max"], st["kdt1"], st["kdt2"], st["kdc"], st["kdc1"], st["kdc2"],
-                           st["sigt_max"], st["sigc_max"]]))   # P2g monotone-drive history (8 fields)
+                           st["sigt_max"], st["sigc_max"],
+                           st.get("wt", 0.0), st.get("wc", 0.0), float(mp.get("omega_dead", ref.OMEGA_DEAD))]))   # P2g history (8 fields) + committed omega_t/omega_c + dead-point mode
         lines.append(_fmt(deps))
         lines.append(_fmt(sig_nom))
 
@@ -280,17 +286,19 @@ def main(out=None):
     #      it via plasticStrain6(in.sigEff,in.eps) == the oracle's tracked epl_prev). ----
     cfibs = []   # (label, mp, lch, eps6, sig6, kp, hist8, e11_next, hoopK, hoopFy, sig_nom6, el_new, p_conf)
 
-    def add_cfib(label, mp, lch, eps_build, ndiv, deps11, hoopK, hoopFy):
+    def add_cfib(label, mp, lch, eps_build, ndiv, deps11, hoopK, hoopFy, Gc=Gc, path=None, hoopK_build=None):
         st = ref._confined_state0()
-        for e in np.linspace(0.0, eps_build, ndiv):
-            _s, _p, st, _d = ref.confined_step(st, e, mp, Gf, Gc, lch, As, hoopK, hoopFy)
+        for e in (np.linspace(0.0, eps_build, ndiv) if path is None else path):
+            _s, _p, st, _d = ref.confined_step(st, e, mp, Gf, Gc, lch, As,
+                                               hoopK if hoopK_build is None else hoopK_build, hoopFy)
         eps6 = [float(st["eps"][0]), float(st["eps"][1]), float(st["eps"][2]), 0.0, 0.0, 0.0]
         sig6 = [float(st["sig_eff"][0]), float(st["sig_eff"][1]), float(st["sig_eff"][2]), 0.0, 0.0, 0.0]
-        hist8 = [st["et_max"], st["kdt1"], st["kdt2"], st["kdc"], st["kdc1"], st["kdc2"], st["sigt_max"], st["sigc_max"]]
+        hist8 = [st["et_max"], st["kdt1"], st["kdt2"], st["kdc"], st["kdc1"], st["kdc2"], st["sigt_max"], st["sigc_max"],
+                 st.get("wt", 0.0), st.get("wc", 0.0), float(mp.get("omega_dead", ref.OMEGA_DEAD))]   # + committed omega_t / omega_c + dead threshold
         e11_next = float(st["eps"][0]) + deps11
         sig_nom, p_conf, stn, _d = ref.confined_step(st, e11_next, mp, Gf, Gc, lch, As, hoopK, hoopFy)
         sig_nom6 = [float(sig_nom[0]), float(sig_nom[1]), float(sig_nom[2]), 0.0, 0.0, 0.0]
-        cfibs.append((label, mp, lch, eps6, sig6, float(st["kp"]), hist8, e11_next,
+        cfibs.append((label, mp, lch, eps6, sig6, float(st["kp"]), hist8, e11_next, Gc,
                       float(hoopK), float(hoopFy), sig_nom6, float(stn["el"]), float(p_conf)))
 
     # reduce-to-free (hoopK=0): driveConfinedFiber must match the free uniaxial-stress damaged step.
@@ -299,10 +307,35 @@ def main(out=None):
     add_cfib("cfib_confined", mp_h, lch, -3.0e-3, 250, -1.0e-5, 1200.0, 1.0e30)
     # hoop YIELD (hoopK=2000, low fy): p_conf capped at fy => hoopStiffness=0 in the condensation.
     add_cfib("cfib_yield", mp_h, lch, -4.0e-3, 300, -1.0e-5, 2000.0, 3.0)
+    # DEAD POINTS in the fibre view (review M2): a free fibre driven past omega_t = omega_dead in tension then one more tension
+    # step (the tensile part is carried elastically, kappa_p frozen, nominal at the floor); the same cracked fibre then loaded in
+    # compression PARALLEL to the crack under a hoop (the strut keeps its plasticity and omega_c); and a crushed fibre
+    # (omega_c >= omega_dead: frozen, nominal (1-OMEGA_MAX) sigma_eff).
+    _t = np.linspace(0.0, 1.0e-2, 500)
+    _stt = ref._confined_state0(); _hit = None
+    for _i, _e in enumerate(_t):
+        _s, _p, _stt, _dd = ref.confined_step(_stt, _e, mp_h, Gf, Gc, lch, As, 0.0, 1.0e30)
+        if _dd["wt"] >= ref.OMEGA_DEAD:
+            _hit = _i
+            break
+    assert _hit is not None, "the cracked fibre probe never reached omega_t >= omega_dead"
+    add_cfib("cfib_cracked_tension", mp_h, lch, 0.0, 0, 1.0e-4, 0.0, 1.0e30, path=list(_t[:_hit + 1]))
+    add_cfib("cfib_cracked_compress", mp_h, lch, 0.0, 0, -1.0e-5, 1200.0, 1.0e30,
+             path=list(_t[:_hit + 1]) + list(np.linspace(_t[_hit], 3.0e-3, 100)) + list(np.linspace(3.0e-3, -1.5e-3, 300)),
+             hoopK_build=1200.0)
+    _c = np.linspace(0.0, -3.0e-2, 1500)
+    _stc = ref._confined_state0(); _hitc = None
+    for _i, _e in enumerate(_c):
+        _s, _p, _stc, _dd = ref.confined_step(_stc, _e, mp_h, Gf, 0.3, lch, As, 0.0, 1.0e30)
+        if _dd["wc"] >= ref.OMEGA_DEAD:
+            _hitc = _i
+            break
+    assert _hitc is not None, "the crushed fibre probe never reached omega_c >= omega_dead"
+    add_cfib("cfib_crushed", mp_h, lch, 0.0, 0, -1.0e-4, 0.0, 1.0e30, Gc=0.3, path=list(_c[:_hitc + 1]))
 
     lines.append(f"NCFIB {len(cfibs)}")
-    for label, mp, lch, eps6, sig6, kp, hist8, e11_next, hoopK, hoopFy, sig_nom6, el_new, p_conf in cfibs:
-        lines.append(f"CFIB {label} {_fmt(_pblock(mp))} {repr(float(Gf))} {repr(float(Gc))} "
+    for label, mp, lch, eps6, sig6, kp, hist8, e11_next, Gc_r, hoopK, hoopFy, sig_nom6, el_new, p_conf in cfibs:
+        lines.append(f"CFIB {label} {_fmt(_pblock(mp))} {repr(float(Gf))} {repr(float(Gc_r))} "
                      f"{repr(float(lch))} {repr(float(As))} {_CT[mp.get('ct_temper', 'none')]}")
         lines.append(_fmt(eps6))
         lines.append(_fmt(sig6))
@@ -380,7 +413,8 @@ def main(out=None):
         lines.append(_fmt(st["sig_bar"]))
         lines.append(repr(float(st["kp"])))
         lines.append(_fmt([st["et_max"], st["kdt1"], st["kdt2"], st["kdc"], st["kdc1"], st["kdc2"],
-                           st["sigt_max"], st["sigc_max"]]))   # P2g monotone-drive history (8 fields)
+                           st["sigt_max"], st["sigc_max"],
+                           st.get("wt", 0.0), st.get("wc", 0.0), float(me.get("omega_dead", ref.OMEGA_DEAD))]))   # P2g history (8 fields) + committed omega_t/omega_c + dead-point mode
         lines.append(_fmt(deps))
         lines.append(_fmt(sig_visc))
         lines.append(_fmt(sig_inv))
@@ -398,6 +432,146 @@ def main(out=None):
     for label, mp, efc, g, pk in gcts:
         lines.append(f"GCT {label} {_fmt(_pblock(mp))} {repr(float(Gf))} {repr(float(As))} {repr(float(efc))} "
                      f"{repr(float(g))} {repr(float(pk))}")
+
+    # ---- (B10) FULL CDPM2 PLASTIC POTENTIAL (B1, WP concrete3d-flow-potential): hardening paths and tangents
+    #      with flow_potential='cdpm2' (+ one sub-incremented large-step path). Pins cdpm2FlowGradJac, the
+    #      Hessian-based analytic 4x4 Jacobian, the consistent tangent and returnMapTensor sub-incrementation
+    #      to the oracle (numerical-Jacobian return + FD tangent). Legacy blocks above are untouched. ----
+    mp_c = dict(mp_h); mp_c["flow_potential"] = "cdpm2"; mp_c["Df"] = 0.85; mp_c["Hp"] = 0.01
+    mp_cs = dict(mp_c); mp_cs["max_subincr"] = 10
+    pathfs = []
+
+    def add_pathf(mp, dl, label):
+        pathfs.append((label, mp, dl, run_path(mp, dl, True)))
+
+    dlc, _ = driven_strain_path(mp_c, np.linspace(0, -0.006, 120), True, "free")
+    add_pathf(mp_c, dlc, "cdpm2_uniax_comp")
+    dlk, _ = driven_strain_path(mp_c, np.linspace(0, -0.012, 120), True, "active", sigma3=0.10 * 30.0)
+    add_pathf(mp_c, dlk, "cdpm2_confined_comp")
+    add_pathf(mp_c, [[-5.0e-5, -5.0e-5, -5.0e-5, 0, 0, 0]] * 60, "cdpm2_hydro_comp")
+    add_pathf(mp_c, [[1.0e-5, 1.0e-5, 1.0e-5, 0, 0, 0]] * 40, "cdpm2_hydro_tens")
+    add_pathf(mp_c, [[-4.0e-4, 1.5e-4, 0.5e-4, 1.0e-4, 0, 0]] * 12, "cdpm2_offaxis_shear")
+    add_pathf(mp_cs, [[-3.0e-3, 0.8e-3, 0.8e-3, 0, 0, 0]] * 4, "cdpm2_subincr_bigstep")
+    # #877 follow-up: the default sub-incrementation is DETERMINISTIC (every plastic-trial path above with
+    # max_subincr > 0 is regenerated under it); this block keeps the ADAPTIVE path (-subIncr adaptive) pinned on the
+    # big step (direct fails -> halving). (A first-crack ramp is NOT pinned: the adaptive path is discontinuous
+    # there by construction -- that is why it is no longer the default -- so C++ and oracle may take different
+    # branches within round-off of the same increment.)
+    mp_ca = dict(mp_cs); mp_ca["subincr_mode"] = "adaptive"
+    add_pathf(mp_ca, [[-3.0e-3, 0.8e-3, 0.8e-3, 0, 0, 0]] * 4, "cdpm2_subincr_bigstep_adaptive")
+    # OOFEM con2dpm2 at ONE sub-step per 5e-4 step (SI units, the coordinator's C++ -3.22 MPa regression): the
+    # far-outside uniaxial trial that the plain Newton failed sporadically on (=> sub-increment fallback =>
+    # discontinuous map). Pins the globalized Newton + sub-incrementation on exactly this path.
+    mp_oo = ref.make_material(30e9, 0.15, 3e6, 1e6, Df=0.85, e=0.525, qh0=0.3, Hp=0.01, flow_potential="cdpm2",
+                              max_subincr=10)
+    dlo, _ = driven_strain_path(mp_oo, np.array([-5.0e-4 * k for k in range(1, 6)]), True, "free")
+    add_pathf(mp_oo, dlo, "cdpm2_con2dpm2_1substep")
+    lines.append(f"NPATHF {len(pathfs)}")
+    for label, mp, dl, rows in pathfs:
+        lines.append(f"PATHF {label} {_fmt(_pblock(mp))} 1 {int(mp.get('max_subincr', 0))} "
+                     f"{1 if mp.get('subincr_mode', 'det') == 'adaptive' else 0} {len(dl)}")
+        for deps, (sig, kp) in zip(dl, rows):
+            lines.append(f"{_fmt(deps)}  {_fmt(sig)}  {repr(float(kp))}")
+    tanfs = []
+    dlt, rt = driven_strain_path(mp_c, np.linspace(0, -0.0018, 60), True, "free")
+    tanfs.append((mp_c, rt[-1][0].copy(), rt[-1][1], np.array([-5.0e-5, 1.0e-5, 1.0e-5, 0, 0, 0]), "tanf_cdpm2_uniax"))
+    tanfs.append((mp_c, rt[-1][0].copy(), rt[-1][1], np.array([-5.0e-5, 1.0e-5, 1.0e-5, 8.0e-6, 0, 0]), "tanf_cdpm2_shear"))
+    sgc = np.zeros(6); kpc = 0.0                    # a CAP state: low kp, compression-dominated triaxial trial
+    tanfs.append((mp_c, sgc, 0.05, np.array([-2.0e-3, -1.2e-3, -1.0e-3, 1.0e-4, 0, 0]), "tanf_cdpm2_cap"))
+    lines.append(f"NTANF {len(tanfs)}")
+    for mp, sig_n, kp_n, deps, label in tanfs:
+        C = ref.consistent_tangent(sig_n, deps, mp, kp_n, hardening=True)
+        lines.append(f"TANF {label} {_fmt(_pblock(mp))} 1")
+        lines.append(_fmt(sig_n))
+        lines.append(repr(float(kp_n)))
+        lines.append(_fmt(deps))
+        lines.append(_fmt(C.flatten()))
+
+    # ---- (B11) CDPM2 COMPRESSIVE DAMAGE DRIVE (B2): committed damage states driven with
+    #      compression_drive='cdpm2' (+ the CDPM2 flow), one more increment -> the oracle NOMINAL stress. Carries
+    #      the two extra history fields (eqc, etp). The C++ also checks its analytic damaged tangent against the
+    #      numerical tangent of its own stress (the DMG B4 contract). ----
+    mp_cd = dict(mp_c); mp_cd["compression_drive"] = "cdpm2"; mp_cd["tension_law"] = "bilinear"
+    mp_cd["max_subincr"] = 10
+    dmgcs = []
+
+    def add_dmgc(label, mp, lch_, build_path, deps):
+        st = ref.make_damage_state(mp)
+        st, _, _, _ = ref._advance_damaged(st, build_path, mp, Gf, Gc, lch_, As)
+        sig_nom, _, info = ref.damaged_step_tensor(st, np.asarray(deps, float), mp, Gf, Gc, lch_, As)
+        dmgcs.append((label, mp, lch_, st, np.asarray(deps, float), sig_nom))
+
+    mp_cd["eps_fc"] = 2.0e-4                      # a softening compressive branch inside the path range
+    def _dpath(d, i):
+        return [np.array([d["eps11"][k], d["eps_lat"][k], d["eps_lat"][k], 0, 0, 0]) for k in range(i)],             [d["eps11"][i] - d["eps11"][i - 1], d["eps_lat"][i] - d["eps_lat"][i - 1], d["eps_lat"][i] - d["eps_lat"][i - 1], 0, 0, 0]
+    # a LIGHT confinement (0.02 fc) keeps the lateral effective principals off the sigma_lat = 0 Macaulay kink
+    # (a pure uniaxial-stress state sits ON it: the numerical tangent straddles the tension/compression split)
+    du = ref.drive_damaged_unified(mp_cd, np.linspace(0, -6.0e-3, 150), Gf, Gc, lch, As, sigma3=0.02 * 30.0)
+    pu, du1 = _dpath(du, int(np.argmax(du["wc"] > 0.3)))
+    add_dmgc("dmgc_uniax_softening", mp_cd, lch, pu, du1)
+    pu0, du0 = _dpath(du, int(np.argmax(du["wc"] > 0.0)))         # the ONSET step (post-onset fraction)
+    add_dmgc("dmgc_uniax_onset", mp_cd, lch, pu0, du0)
+    dcf = ref.drive_damaged_unified(mp_cd, np.linspace(0, -8.0e-3, 150), Gf, Gc, lch, As, sigma3=0.05 * 30.0)
+    pc, dc1 = _dpath(dcf, int(np.argmax(dcf["wc"] > 0.2)))
+    add_dmgc("dmgc_confined", mp_cd, lch, pc, dc1)
+    spc = [np.array([-e, 0.3 * e, 0.2 * e, 0.4 * e, 0, 0]) for e in np.linspace(0, 2.5e-3, 200)]
+    add_dmgc("dmgc_shear_comp", mp_cd, lch, spc, [-1.0e-5, 3.0e-6, 2.0e-6, 4.0e-6, 0, 0])
+    lines.append(f"NDMGC {len(dmgcs)}")
+    for label, mp, lch_, st, deps, sig_nom in dmgcs:
+        lines.append(f"DMGC {label} {_fmt(_pblock(mp))} {repr(float(Gf))} {repr(float(Gc))} {repr(float(lch_))} "
+                     f"{repr(float(As))} {_CT[mp.get('ct_temper', 'none')]} {_TL[mp.get('tension_law', 'exp')]} "
+                     f"{repr(float(mp.get('eps_fc', 0.0)))} 1 {int(mp.get('max_subincr', 0))} 1")
+        lines.append(_fmt(st["eps"]))
+        lines.append(_fmt(st["sig_bar"]))
+        lines.append(repr(float(st["kp"])))
+        lines.append(_fmt([st["et_max"], st["kdt1"], st["kdt2"], st["kdc"], st["kdc1"], st["kdc2"],
+                           st["sigt_max"], st["sigc_max"], st.get("eqc", 0.0), st.get("etp", 0.0),
+                           st.get("wt", 0.0), st.get("wc", 0.0), float(mp.get("omega_dead", ref.OMEGA_DEAD))]))
+        lines.append(_fmt(deps))
+        lines.append(_fmt(sig_nom))
+
+    # ---- (B12) PV20 TENSION->COMPRESSION TEMPER (-tcTemper): committed damage states on the PV20 element strain
+    #      path (plane stress, the PlateFiber-view kinematics), one more increment -> the oracle NOMINAL stress; the
+    #      C++ also checks its analytic damaged tangent against the FD of its own stress. Same record as DMGC + the
+    #      trailing tcTemper mode (0 none / 2 proj). ----
+    dmgts = []
+    D = ref.PV20_DMG
+    for tc, knots, nst, pick, label in (
+            ("none", ref.PV20_KNOTS, 128, lambda r: 0.2 < r[3] < 0.7, "dmgt_pv20_none_soft"),
+            ("proj", ref.PV20_KNOTS, 128, lambda r: r[0] > 4.0e-3, "dmgt_pv20_proj_strut"),
+            ("proj", np.vstack([ref.PV20_KNOTS, [[1.4e-2, 4.49e-4, 8.65e-4]]]), 200, lambda r: 0.2 < r[3] < 0.7,
+             "dmgt_pv20_proj_soft")):
+        mpt = ref.pv20_material(tc)
+        if label.endswith("_soft") and tc == "proj":
+            # the 'proj' strut no longer crushes on the default path (dead-point tension cutoff: 1.87 fc to the end of the
+            # PV20 strain history), so the partially-crushed cracked-strut state this block probes is taken on the legacy
+            # dead-point path (omega_dead = 2 = disabled, carried in the record).
+            mpt["omega_dead"] = 2.0
+        pp = ref.pv20_path(mpt, nst, knots)
+        k = next(i for i, r in enumerate(pp) if pick(r))
+        st0, dps = pp[k][4], pp[k][5]
+        if label == "dmgt_pv20_none_soft":
+            # The plane-stress solve leaves this dead-tension point with sigma_eff,33 = 0 EXACTLY (the mixed step only
+            # requires the nominal sigma_33 = 0, which any sigma_eff,33 >= 0 satisfies to the 1e-6 floor), i.e. ON the
+            # tension/compression kink of the split, where the central-difference reference of the tangent averages the two
+            # branches. A small out-of-plane strain step moves the evaluated step off the kink (sigma_eff,33 ~ +0.3 MPa).
+            dps = np.array(dps, float) + np.array([0.0, 0.0, 2.0e-5, 0.0, 0.0, 0.0])
+        sig_nom, _, _ = ref.damaged_step_tensor(st0, dps, mpt, D["Gf"], D["Gc"], D["lch"], D["As"])
+        dmgts.append((label, mpt, st0, dps, sig_nom))
+    lines.append(f"NDMGT {len(dmgts)}")
+    for label, mp, st, deps, sig_nom in dmgts:
+        lines.append(f"DMGT {label} {_fmt(_pblock(mp))} {repr(float(D['Gf']))} {repr(float(D['Gc']))} "
+                     f"{repr(float(D['lch']))} {repr(float(D['As']))} {_CT[mp.get('ct_temper', 'none')]} "
+                     f"{_TL[mp.get('tension_law', 'exp')]} {repr(float(mp.get('eps_fc', 0.0)))} 1 "
+                     f"{int(mp.get('max_subincr', 0))} 1 {_CT[mp.get('tc_temper', 'none')]}")
+        lines.append(_fmt(st["eps"]))
+        lines.append(_fmt(st["sig_bar"]))
+        lines.append(repr(float(st["kp"])))
+        lines.append(_fmt([st["et_max"], st["kdt1"], st["kdt2"], st["kdc"], st["kdc1"], st["kdc2"],
+                           st["sigt_max"], st["sigc_max"], st.get("eqc", 0.0), st.get("etp", 0.0),
+                           st.get("wt", 0.0), st.get("wc", 0.0), float(mp.get("omega_dead", ref.OMEGA_DEAD))]))
+        lines.append(_fmt(deps))
+        lines.append(_fmt(sig_nom))
 
     with open(out, "w") as fh:
         fh.write("\n".join(lines) + "\n")

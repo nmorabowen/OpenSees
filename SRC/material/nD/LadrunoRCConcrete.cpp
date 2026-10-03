@@ -44,7 +44,8 @@ using namespace ladruno_rc_kernel;
 //             -Ce {..} -Cs {..} <-Cd {..}>  (compression backbone: strain/nom-stress/damage)
 //             -Te {..} -Ts {..} <-Td {..}>  (tension backbone)
 //             <-Kc $Kc> <-beta> <-betaFloor $f> <-lublinerReduced>
-//             <-tensStiff {vc|cm}> <-tensStiffC $c> <-tensStiffAlpha $a>  (Phase 3)
+//             <-tensStiff {vc|cm}> <-tensStiffC $c> <-tensStiffAlpha $a>  (Phase 3; vc c default 200, C2)
+//             <-betaC $C> <-crackedNu $nu>                                 (Ladruno C2)
 //             <-rho $rho> <-secant | -numericalTangent>
 // ===========================================================================
 void* OPS_LadrunoRCConcrete(void)
@@ -83,7 +84,13 @@ void* OPS_LadrunoRCConcrete(void)
   double implexAlpha = 1.0, implexErrTol = 0.05, implexTimeRedLim = 0.01;
   // Phase 3: tension stiffening (default off => baseline-identical)
   int    tensStiffMode = 0;       // 0 off | 1 vc (Bentz) | 2 cm (Collins-Mitchell)
-  double tensStiffC = 500.0, tensStiffAlpha = 1.0;
+  // Ladruno (C2): the vc default is the Vecchio-Collins 1986 MCFT constant 200
+  // (f1 = ft/(1+sqrt(200 e1))); it was 500 (Collins-Mitchell 1991, = the cm law) before C2.
+  // Pass -tensStiffC 500 for the pre-C2 vc curve.
+  double tensStiffC = 200.0, tensStiffAlpha = 1.0;
+  bool   tensStiffCGiven = false;
+  // Ladruno (C2): MCFT softening coefficient + cracked-state Poisson ratio (defaults = pre-C2)
+  double betaC = 170.0, crackedNu = -1.0;
   // Phase 3b: crack-band (Bazant-Oh) regularization (default off => baseline-identical)
   bool   autoReg = false;
   double lchRef = 1.0;
@@ -153,7 +160,11 @@ void* OPS_LadrunoRCConcrete(void)
       else if (m && strcmp(m, "cm") == 0) tensStiffMode = 2;
       else { opserr << "LadrunoRCConcrete: -tensStiff needs {vc|cm}.\n"; return 0; }
     }
-    else if (strcmp(opt, "-tensStiffC") == 0)     { int nd = 1; if (OPS_GetDoubleInput(&nd, &tensStiffC) < 0)     { opserr << "LadrunoRCConcrete: -tensStiffC needs a value.\n";     return 0; } }
+    else if (strcmp(opt, "-tensStiffC") == 0)     { int nd = 1; tensStiffCGiven = true; if (OPS_GetDoubleInput(&nd, &tensStiffC) < 0)     { opserr << "LadrunoRCConcrete: -tensStiffC needs a value.\n";     return 0; } }
+    // Ladruno (C2): -betaC C  (beta = 1/(0.8 + C eps1); default 170; V&C 1986: 0.34/|eps'c|)
+    else if (strcmp(opt, "-betaC") == 0)          { int nd = 1; if (OPS_GetDoubleInput(&nd, &betaC) < 0)          { opserr << "LadrunoRCConcrete: -betaC needs a value.\n";          return 0; } }
+    // Ladruno (C2): -crackedNu nu  (Poisson ratio once eps1 >= eps_cr; default off = elastic nu kept)
+    else if (strcmp(opt, "-crackedNu") == 0)      { int nd = 1; if (OPS_GetDoubleInput(&nd, &crackedNu) < 0)      { opserr << "LadrunoRCConcrete: -crackedNu needs a value.\n";      return 0; } }
     else if (strcmp(opt, "-tensStiffAlpha") == 0) { int nd = 1; if (OPS_GetDoubleInput(&nd, &tensStiffAlpha) < 0) { opserr << "LadrunoRCConcrete: -tensStiffAlpha needs a value.\n"; return 0; } }
     // Phase 3b: -autoRegularization $lch_ref  (crack-band Bazant-Oh regularization).
     else if (strcmp(opt, "-autoRegularization") == 0) {
@@ -181,9 +192,17 @@ void* OPS_LadrunoRCConcrete(void)
   }
   // cm mode hard-codes the Collins-Mitchell 500 coefficient, so -tensStiffC is inert there;
   // warn rather than silently ignore a user-supplied value (footgun: they likely wanted vc).
-  if (tensStiffMode == 2 && tensStiffC != 500.0)
+  if (tensStiffMode == 2 && tensStiffCGiven && tensStiffC != 500.0)   // Ladruno (C2): only a USER value
     opserr << "WARNING nDMaterial LadrunoRCConcrete: -tensStiffC is ignored in cm mode "
               "(cm uses the fixed Collins-Mitchell 500); use -tensStiff vc for a tunable c.\n";
+  if (betaC <= 0.0) {   // Ladruno (C2)
+    opserr << "nDMaterial LadrunoRCConcrete error: -betaC must be > 0.\n";
+    return 0;
+  }
+  if (crackedNu >= 0.5) {   // Ladruno (C2); a negative value means off
+    opserr << "nDMaterial LadrunoRCConcrete error: -crackedNu must be in [0, 0.5).\n";
+    return 0;
+  }
   if (autoReg && lchRef <= 0.0) {
     opserr << "nDMaterial LadrunoRCConcrete error: -autoRegularization $lch_ref must be > 0.\n";
     return 0;
@@ -212,6 +231,7 @@ void* OPS_LadrunoRCConcrete(void)
   P.tensStiffMode = tensStiffMode; P.tensStiffC = tensStiffC;
   P.tensStiffAlpha = tensStiffAlpha; P.ftPeak = 0.0;   // ftPeak set by setupParams
   P.autoReg = autoReg; P.lchRef = lchRef;
+  P.betaC = betaC; P.crackedNu = crackedNu;   // Ladruno (C2)
 
   // build backbones via the faithful ASDConcrete3D HardeningLaw c-tor + adjust()
   // (elastic-consistent q). -Cd/-Td are optional -> pad with zeros to match length.
@@ -516,7 +536,7 @@ NDMaterial* LadrunoRCConcrete::getCopy(const char* type)
 // ===========================================================================
 //  parallel  (serialize params + backbones + committed history)
 // ===========================================================================
-static const int RC_SCHEMA_VERSION = 5;    // bump when the wire layout changes (hard-checked in recvSelf); v2 = +IMPL-EX; v3 = +shearRetFactor; v4 = +tension stiffening; v5 = +crack-band regularization
+static const int RC_SCHEMA_VERSION = 6;    // bump when the wire layout changes (hard-checked in recvSelf); v2 = +IMPL-EX; v3 = +shearRetFactor; v4 = +tension stiffening; v5 = +crack-band regularization; v6 = +betaC,crackedNu,nuCracked (C2)
 static const int RC_NSCALAR = 1 /*schemaVersion*/ + 3 /*tag,dim,rho*/
                             + 10 /*E,nu,Kc,fcft,betaFloor,cdf,eta,betaOn,lubRed,tanMode*/
                             + 9 /*interlockOn,shearRetMode,shearRetFactor,aggSize,crackStrain,crackSpacing,lch,betaSrMin,sqrtFc*/
@@ -525,13 +545,15 @@ static const int RC_NSCALAR = 1 /*schemaVersion*/ + 3 /*tag,dim,rho*/
                             + 5 /*implex,implexAlpha,implexControl,implexErrTol,implexTimeRedLim*/
                             + 4 /*tensStiffMode,tensStiffC,tensStiffAlpha,ftPeak*/
                             + 4 /*autoReg,lchRef,regularizationDone,regLch*/
-                            + 5 /*dtime_n,dtime_n_commit,dtime_0,commitDone,implexError*/;
+                            + 5 /*dtime_n,dtime_n_commit,dtime_0,commitDone,implexError*/
+                            + 2 /*betaC,crackedNu (C2)*/;
 static const int RC_BACK = 1 + 3*MAXPTS;   // n + x[]+y[]+q[]
 static const int RC_HIST = 6 + 6 + 6        // stress_eff, strain, (xt,xc,dt_bar,dc_bar,beta,eps1)
                          + 5                // + (cracked,crackC,crackS,wmax,betaSr)
                          + 2                // + Phase-2b (tauCr,gammaCr)
                          + 2                // + Phase-2b.2b (cracked2,slipCum)
-                         + 3;               // + Phase-4 IMPL-EX (xt_old,xc_old,eps1_old)
+                         + 3                // + Phase-4 IMPL-EX (xt_old,xc_old,eps1_old)
+                         + 1;               // + C2 cracked-nu latch (nuCracked)
 static const int RC_DATA = RC_NSCALAR + 2*RC_BACK + RC_HIST + 1 /*cEps33*/;
 
 int LadrunoRCConcrete::sendSelf(int commitTag, Channel& theChannel)
@@ -564,6 +586,7 @@ int LadrunoRCConcrete::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = regularizationDone ? 1.0 : 0.0; data(c++) = regLch;
   data(c++) = dtime_n; data(c++) = dtime_n_commit; data(c++) = dtime_0;
   data(c++) = commitDone ? 1.0 : 0.0; data(c++) = implexError;
+  data(c++) = P.betaC; data(c++) = P.crackedNu;   // v6 (C2)
   data(c++) = P.ht.n;
   for (int i = 0; i < MAXPTS; i++) data(c++) = P.ht.x[i];
   for (int i = 0; i < MAXPTS; i++) data(c++) = P.ht.y[i];
@@ -582,6 +605,7 @@ int LadrunoRCConcrete::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = histN.tauCr; data(c++) = histN.gammaCr;
   data(c++) = histN.cracked2; data(c++) = histN.slipCum;
   data(c++) = histN.xt_old; data(c++) = histN.xc_old; data(c++) = histN.eps1_old;
+  data(c++) = histN.nuCracked;   // v6 (C2)
   data(c++) = cEps33;
 
   if (theChannel.sendVector(this->getDbTag(), commitTag, data) < 0) {
@@ -630,6 +654,7 @@ int LadrunoRCConcrete::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBr
   regularizationDone = (data(c++) != 0.0); regLch = data(c++);
   dtime_n = data(c++); dtime_n_commit = data(c++); dtime_0 = data(c++);
   commitDone = (data(c++) != 0.0); implexError = data(c++);
+  P.betaC = data(c++); P.crackedNu = data(c++);   // v6 (C2)
   P.ht.n = (int)data(c++);
   for (int i = 0; i < MAXPTS; i++) P.ht.x[i] = data(c++);
   for (int i = 0; i < MAXPTS; i++) P.ht.y[i] = data(c++);
@@ -648,6 +673,7 @@ int LadrunoRCConcrete::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBr
   histN.tauCr = data(c++); histN.gammaCr = data(c++);
   histN.cracked2 = data(c++); histN.slipCum = data(c++);
   histN.xt_old = data(c++); histN.xc_old = data(c++); histN.eps1_old = data(c++);
+  histN.nuCracked = data(c++);   // v6 (C2)
   cEps33 = data(c++);
 
   this->setupDim();
@@ -664,9 +690,11 @@ void LadrunoRCConcrete::Print(OPS_Stream& s, int)
   s << endln;
   s << "LadrunoRCConcrete (RC plastic-damage + MCFT compression softening)" << endln;
   s << "  tag   : " << this->getTag() << endln;
-  s << "  E, nu : " << P.E << ", " << P.nu << endln;
+  s << "  E, nu : " << P.E << ", " << P.nu;
+  if (P.crackedNu >= 0.0) s << "   crackedNu=" << P.crackedNu << (histN.nuCracked >= 0.5 ? " (cracked)" : "");
+  s << endln;
   s << "  Kc    : " << P.Kc << "   fc/ft ratio: " << P.fcft_ratio << endln;
-  s << "  beta  : " << (P.betaOn ? "ON" : "off") << "  floor=" << P.betaFloor
+  s << "  beta  : " << (P.betaOn ? "ON" : "off") << "  floor=" << P.betaFloor << "  C=" << P.betaC
     << "  lublinerReduced=" << (P.lublinerTCReduced ? 1 : 0) << endln;
   s << "  interlock: " << (P.interlockOn ? "ON" : "off")
     << (P.interlockCyclic ? " (cyclic)" : "") << (P.xcrackOn ? " (xcrack)" : "")
@@ -726,6 +754,8 @@ Response* LadrunoRCConcrete::setResponse(const char** argv, int argc, OPS_Stream
     return new MaterialResponse(this, 10, Vector(2));  // (cracked2, slipCum) Phase-2b.2b
   if (strcmp(a, "implexError") == 0 || strcmp(a, "ImplexError") == 0)
     return new MaterialResponse(this, 11, Vector(1));  // IMPL-EX |dt_ex - dt_im| Phase-4
+  if (strcmp(a, "nuCracked") == 0 || strcmp(a, "crackedNu") == 0)
+    return new MaterialResponse(this, 12, Vector(1));  // C2 cracked-nu latch (0/1)
   return NDMaterial::setResponse(argv, argc, s);
 }
 
@@ -746,6 +776,7 @@ int LadrunoRCConcrete::getResponse(int responseID, Information& matInfo)
     case 10: if (matInfo.theVector) { Vector& v = *(matInfo.theVector);
               v(0) = histTr.cracked2; v(1) = histTr.slipCum; } return 0;
     case 11: if (matInfo.theVector) (*(matInfo.theVector))(0) = implexError; return 0;
+    case 12: if (matInfo.theVector) (*(matInfo.theVector))(0) = histTr.nuCracked; return 0;
     default: return -1;
   }
 }

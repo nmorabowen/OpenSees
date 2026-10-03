@@ -35,6 +35,7 @@
 // What: "@(#) NDMaterial.C, revA"
 
 #include <NDMaterial.h>
+#include <LadrunoMaterialStatus.h>   // Ladruno WP-99: ladrunoClearCommitRefusals()
 #include <Information.h>
 #include <OPS_Globals.h>
 #include <Matrix.h>
@@ -95,11 +96,15 @@ NDMaterial *OPS_getNDMaterial(int tag)
 // vanilla's own idiom for these hooks (commands.cpp:55-63), and it keeps the
 // SANISAND header out of the base-class file. Defined in LadrunoSANISAND.cpp.
 extern void ladrunoSanisandResetImplexGlobals(void);   // Ladruno WP-104
+extern void ladrunoConcrete3dResetWarningBudget(void); // Ladruno WP concrete3d-hang-diagnosis review
 
 void OPS_clearAllNDMaterial(void)
 {
     theNDMaterialObjects.clearAll();
-    ladrunoSanisandResetImplexGlobals();   // Ladruno WP-104
+    ladrunoSanisandResetImplexGlobals();      // Ladruno WP-104
+    ladrunoConcrete3dResetWarningBudget();    // Ladruno WP concrete3d-hang-diagnosis review
+    ladrunoClearCommitRefusals();             // Ladruno WP-99 hygiene (review #877 minor 4): a refusal declared by an NDTest/probe
+                                              // commit (or a model that died mid-commit) must not fail the NEXT model's first commit
 }
 
 void OPS_printNDMaterial(OPS_Stream &s, int flag) {

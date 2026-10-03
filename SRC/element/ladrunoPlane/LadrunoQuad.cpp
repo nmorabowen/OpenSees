@@ -33,6 +33,7 @@
 // 1/3) — PlaneStrain only.
 
 #include <LadrunoQuad.h>
+#include <LadrunoMaterialStatus.h>   // Ladruno WP-99: commit-refusal counter
 #include <LadrunoFiniteStrain2DKernel.h>   // Ladruno (ADR 70): shared 2D finite-strain kernel
 #include <FiniteStrainND2DMaterial.h>      // Ladruno (ADR 70): setTrialF(F) seam
 #include <Node.h>
@@ -53,12 +54,18 @@
 #include <ElementalLoad.h>
 #include <Response.h>
 #include <DummyStream.h>
+#include <OPS_Globals.h>          // Ladruno (C1): ops_TheActiveElement for the shadow lch latch
 #include <elementAPI.h>
 #include <math.h>
 
-// Tier-A damage-scaled hourglass: floor on the stabilization multiplier so a
-// fully-damaged element keeps a little hourglass control (mirrors LadrunoBrick).
-static const double HG_DAMAGE_FLOOR = 0.01;
+// Tier-A damage-scaled hourglass (Ladruno C1): s = max(hgFloor, 1 - omega), hgFloor default
+// kHgFloorDefault = 1e-4 (pre-C1: 0.01, kept as kHgFloorLegacy, -hgLegacy), omega = max of the
+// centroid damage (trial) and of 4 shadow Gauss-point materials (committed, commitHgShadows).
+// Why: the K&R notched-beam ssp tail (0.28-0.36 kN vs std ~0.1) was stabilization work in the
+// UNDAMAGED elements under the load -- the last ligament bends in the element's hourglass mode
+// with the centroid on its neutral axis, so a centroid-only omega never degraded Kstab there
+// (the cracked band itself carried < 0.01 kN; the 0.01 floor alone was worth ~0.05 kN).
+// See Ladruno_implementation/LadrunoPlaneElements_guide.md section 1.5.
 
 // 2x2 dyadic product helper (SSP base-vector second-moment tensor).
 static inline void dyad2(const Vector &a, const Vector &b, Matrix &out)
@@ -83,7 +90,7 @@ LadrunoQuad::LadrunoQuad(int tag, int nd1, int nd2, int nd3, int nd4,
   theMaterial(0), connectedExternalNodes(4),
   Q(8), pressureLoad(8), thickness(t), pressure(p), rho(r),
   formulation(form), geom(g), bulkVisc_b1(b1bv), bulkVisc_b2(b2bv), planeType(1),
-  Mmem(3, 8), Kstab(8, 8), J0(0.0), J1(0.0), J2(0.0), damageResponse(0),
+  Mmem(3, 8), Kstab(8, 8), J0(0.0), J1(0.0), J2(0.0), damageResponse(0), hgFloor(kHgFloorDefault), hgDamageMode(1), hgOmegaShadow(0.0),
   alpha(4), alphaCommit(4), easJ0inv(2, 2), easJ0det(0.0), easDegenerate(false), Ki(0)
 {
   pts[0][0] = -0.5773502691896258; pts[0][1] = -0.5773502691896258;
@@ -122,6 +129,7 @@ LadrunoQuad::LadrunoQuad(int tag, int nd1, int nd2, int nd3, int nd4,
 
   for (int i = 0; i < 4; i++)
     theNodes[i] = 0;
+  for (int i = 0; i < 4; i++) { hgShadow[i] = 0; hgShadowDmg[i] = 0; }   // Ladruno (C1)
 }
 
 LadrunoQuad::LadrunoQuad()
@@ -129,7 +137,7 @@ LadrunoQuad::LadrunoQuad()
   theMaterial(0), connectedExternalNodes(4),
   Q(8), pressureLoad(8), thickness(0.0), pressure(0.0), rho(0.0),
   formulation(Formulation::STD), geom(Geom::LINEAR), bulkVisc_b1(0.0), bulkVisc_b2(0.0), planeType(1),
-  Mmem(3, 8), Kstab(8, 8), J0(0.0), J1(0.0), J2(0.0), damageResponse(0),
+  Mmem(3, 8), Kstab(8, 8), J0(0.0), J1(0.0), J2(0.0), damageResponse(0), hgFloor(kHgFloorDefault), hgDamageMode(1), hgOmegaShadow(0.0),
   alpha(4), alphaCommit(4), easJ0inv(2, 2), easJ0det(0.0), easDegenerate(false), Ki(0)
 {
   pts[0][0] = -0.5773502691896258; pts[0][1] = -0.5773502691896258;
@@ -142,6 +150,7 @@ LadrunoQuad::LadrunoQuad()
   b[0] = b[1] = 0.0;
   for (int i = 0; i < 4; i++)
     theNodes[i] = 0;
+  for (int i = 0; i < 4; i++) { hgShadow[i] = 0; hgShadowDmg[i] = 0; }   // Ladruno (C1)
 }
 
 LadrunoQuad::~LadrunoQuad()
@@ -152,7 +161,78 @@ LadrunoQuad::~LadrunoQuad()
     delete[] theMaterial;
   }
   if (damageResponse) delete damageResponse;
+  this->clearHgShadows();   // Ladruno (C1)
   if (Ki) delete Ki;
+}
+
+// Ladruno (C1): shadow Gauss-point materials for the Tier-A damage sampling.
+void LadrunoQuad::clearHgShadows(void)
+{
+  for (int i = 0; i < 4; i++) {
+    if (hgShadowDmg[i]) { delete hgShadowDmg[i]; hgShadowDmg[i] = 0; }
+    if (hgShadow[i])    { delete hgShadow[i];    hgShadow[i] = 0; }
+  }
+}
+
+// Ladruno (C1): drive the 4 shadow materials with the full bilinear (2x2 Gauss) strain of
+// the CONVERGED displacement and commit them; hgOmegaShadow = max(previous, max_gp omega).
+// Called from commitState only, so the damage scale is constant within a step apart from
+// the centroid's own trial omega (one-step lag; negligible at crack-band step sizes). The
+// shadows never feed the residual -- they only tell damageScale() that an element whose
+// centroid is near its neutral axis (the last uncracked ligament row of a bending crack,
+// or any hourglass/bending-mode crack) has cracked at its Gauss points.
+int LadrunoQuad::commitHgShadows(void)
+{
+  if (hgShadow[0] == 0) return 0;
+  Element *prev = ops_TheActiveElement;
+  ops_TheActiveElement = this;          // crack-band lch latch of the shadow copies
+  double uData[8];
+  Vector u(uData, 8);
+  for (int a = 0; a < 4; a++) {
+    const Vector &d = theNodes[a]->getTrialDisp();
+    u(2 * a) = d(0); u(2 * a + 1) = d(1);
+  }
+  double BData[24];
+  Matrix B(BData, 3, 8);
+  double epsData[3];
+  Vector eps(epsData, 3);
+  int ret = 0;
+  double om = hgOmegaShadow;
+  for (int i = 0; i < 4; i++) {
+    this->shapeFunction(pts[i][0], pts[i][1]);
+    this->formB(B);
+    eps.addMatrixVector(0.0, B, u, 1.0);
+    ret += hgShadow[i]->setTrialStrain(eps);
+    ret += hgShadow[i]->commitState();
+    double dgp = 0.0;   // reported damage of this shadow point
+    if (hgShadowDmg[i] != 0 && hgShadowDmg[i]->getResponse() >= 0) {
+      const Vector *dv = hgShadowDmg[i]->getInformation().theVector;
+      if (dv) for (int k = 0; k < dv->Size(); k++) if ((*dv)(k) > dgp) dgp = (*dv)(k);
+    }
+    if (dgp > om) om = dgp;
+    // Secant (energy) degradation 1 - (sig.eps)/(eps.C0.eps): a material's "damage" channel
+    // need not be the secant loss -- ASDConcrete3D reports d = 1 - y/q, which leaves out its
+    // plastic part (K&R coarse: d = 0.76 where the secant loss is 0.98). Elastic => exactly 0.
+    const Vector &sg = hgShadow[i]->getStress();
+    const Matrix &C0 = hgShadow[i]->getInitialTangent();
+    double e0 = 0.0, w = 0.0;
+    for (int r = 0; r < 3; r++) {
+      w += sg(r) * eps(r);
+      for (int c = 0; c < 3; c++) e0 += eps(r) * C0(r, c) * eps(c);
+    }
+    // Gated on the point having softened (reported damage > 1 %): an undamaged elastic-plastic
+    // point after unloading has a meaningless energy ratio (residual stress).
+    if (dgp > 0.01 && e0 > 0.0) {
+      double wsec = 1.0 - w / e0;
+      if (wsec > 1.0) wsec = 1.0;
+      if (wsec > om) om = wsec;
+    }
+  }
+  if (om > 1.0) om = 1.0;
+  hgOmegaShadow = om;
+  ops_TheActiveElement = prev;
+  // a shadow is a probe: its return code never fails the step
+  return 0;
 }
 
 const char *LadrunoQuad::typeString(void) const
@@ -219,6 +299,20 @@ void LadrunoQuad::setDomain(Domain *theDomain)
     const char *dmgArgv[1] = {"damage"};
     damageResponse = theMaterial[0]->setResponse(dmgArgv, 1, dmgStream);
   }
+  // Ladruno (C1): shadow GP damage sampling, only for a material that HAS a damage channel
+  // (elastic/J2 keep the one-evaluation ssp cost). Fresh virgin copies; on the receive side
+  // their history restarts but hgOmegaShadow (serialized, monotone) keeps the committed max.
+  this->clearHgShadows();
+  if (formulation == Formulation::SSP && damageResponse != 0 && hgDamageMode == 1) {
+    for (int i = 0; i < 4; i++) {
+      hgShadow[i] = theMaterial[0]->getCopy();
+      if (hgShadow[i] == 0) { this->clearHgShadows(); break; }
+      hgShadow[i]->revertToStart();
+      DummyStream ds;
+      const char *dmgArgv[1] = {"damage"};
+      hgShadowDmg[i] = hgShadow[i]->setResponse(dmgArgv, 1, ds);
+    }
+  }
 
   this->DomainComponent::setDomain(theDomain);
   this->setPressureLoadAtNodes();
@@ -253,8 +347,9 @@ double LadrunoQuad::damageScale(void)
   double dmax = 0.0;
   for (int i = 0; i < d->Size(); i++)
     if ((*d)(i) > dmax) dmax = (*d)(i);   // max(d_tension, d_compression)
+  if (hgOmegaShadow > dmax) dmax = hgOmegaShadow;   // Ladruno (C1): committed shadow-GP omega
   double s = 1.0 - dmax;
-  if (s < HG_DAMAGE_FLOOR) s = HG_DAMAGE_FLOOR;
+  if (s < hgFloor) s = hgFloor;   // Ladruno (C1): per-element floor (was HG_DAMAGE_FLOOR = 0.01)
   if (s > 1.0) s = 1.0;
   return s;
 }
@@ -639,6 +734,14 @@ int LadrunoQuad::commitState(void)
     alphaCommit = alpha;
   for (int i = 0; i < 4; i++)
     retVal += theMaterial[i]->commitState();
+  if (formulation == Formulation::SSP) {
+    // Ladruno (C1): probe only, never fails the commit. The shadow Gauss-point material COPIES run their own
+    // decoupled setTrialStrain/commitState cycle; a refusal in a throwaway probe must not fail the element's REAL
+    // commit (measured: K&R coarse aborted at 0.6 mm on a probe refusal with every real point healthy). See
+    // LadrunoProbeCommitScope in LadrunoMaterialStatus.h -- same guard as LadrunoBrick::commitState().
+    LadrunoProbeCommitScope probeScope;
+    this->commitHgShadows();
+  }
   return retVal;
 }
 
@@ -661,6 +764,9 @@ int LadrunoQuad::revertToStart(void)
   }
   for (int i = 0; i < 4; i++)
     retVal += theMaterial[i]->revertToStart();
+  for (int i = 0; i < 4; i++)                     // Ladruno (C1)
+    if (hgShadow[i]) hgShadow[i]->revertToStart();
+  hgOmegaShadow = 0.0;
   return retVal;
 }
 
@@ -1310,7 +1416,7 @@ int LadrunoQuad::sendSelf(int commitTag, Channel &theChannel)
   int res = 0;
   int dataTag = this->getDbTag();
 
-  static Vector data(15);
+  static Vector data(18);
   data(0)  = this->getTag();
   data(1)  = thickness;
   data(2)  = b[0];
@@ -1326,6 +1432,9 @@ int LadrunoQuad::sendSelf(int commitTag, Channel &theChannel)
   data(12) = bulkVisc_b1;   // Ladruno (W2-E1)
   data(13) = bulkVisc_b2;
   data(14) = static_cast<int>(geom);   // Ladruno (ADR 70)
+  data(15) = hgFloor;                  // Ladruno (C1): ssp Tier-A floor
+  data(16) = hgDamageMode;             // Ladruno (C1)
+  data(17) = hgOmegaShadow;            // Ladruno (C1): committed shadow omega
 
   res += theChannel.sendVector(dataTag, commitTag, data);
   if (res < 0) {
@@ -1381,7 +1490,7 @@ int LadrunoQuad::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
   int res = 0;
   int dataTag = this->getDbTag();
 
-  static Vector data(15);
+  static Vector data(18);
   res += theChannel.recvVector(dataTag, commitTag, data);
   if (res < 0) {
     opserr << "WARNING LadrunoQuad::recvSelf() - failed to receive Vector\n";
@@ -1403,6 +1512,9 @@ int LadrunoQuad::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
   bulkVisc_b1 = data(12);   // Ladruno (W2-E1)
   bulkVisc_b2 = data(13);
   geom        = static_cast<Geom>((int)data(14));   // Ladruno (ADR 70)
+  hgFloor     = data(15);                           // Ladruno (C1)
+  hgDamageMode = (int)data(16);
+  hgOmegaShadow = data(17);
 
   static ID idData(12);
   res += theChannel.recvID(dataTag, commitTag, idData);
@@ -1476,6 +1588,9 @@ void LadrunoQuad::Print(OPS_Stream &s, int flag)
     s << "\tformulation:  " << static_cast<int>(formulation) << "  type: " << typeString()
       << "  geom: " << (this->isFinite() ? "finite" : "linear") << "\n";
     s << "\tthickness:  " << thickness << "  rho: " << rho << "\n";
+    if (formulation == Formulation::SSP)   // Ladruno (C1)
+      s << "\thourglass floor (Tier-A):  " << hgFloor << "  damage sampling: "
+        << (hgDamageMode == 1 ? "gauss" : "centroid") << "  shadow omega: " << hgOmegaShadow << "\n";
     if (bulkVisc_b1 > 0.0 || bulkVisc_b2 > 0.0)   // Ladruno (W2-E1)
       s << "\tbulk viscosity: b1=" << bulkVisc_b1 << " b2=" << bulkVisc_b2 << "\n";
     theMaterial[0]->Print(s, flag);
@@ -1572,6 +1687,12 @@ Response *LadrunoQuad::setResponse(const char **argv, int argc, OPS_Stream &outp
     theResponse = new ElementResponse(this, 6, Matrix(P.Size(), P.Size()));
   } else if (LadrunoResp::is(argv[0], "stiffInitial")) {
     theResponse = new ElementResponse(this, 7, Matrix(P.Size(), P.Size()));
+  } else if (formulation == Formulation::SSP &&
+             (strcmp(argv[0], "hourglass") == 0 || strcmp(argv[0], "hgWork") == 0)) {
+    // Ladruno (C1) diagnostic: [s, omega_max, d.f_stab, d.f_phys] at the trial state.
+    // Summed over elements, sum(d.f) = u.F_int = P*u_load exactly at equilibrium (the
+    // supports do no work), so sum(d.f_stab)/u_load is the stabilization share of the load.
+    theResponse = new ElementResponse(this, 22, Vector(4));
   }
 
   // Ladruno (WP-124): endTag() FIRST, then the base vocabulary (globalForce,
@@ -1621,6 +1742,29 @@ int LadrunoQuad::getResponse(int responseID, Information &eleInfo)
 
   if (responseID == 7)
     return eleInfo.setMatrix(this->getInitialStiff());
+
+  if (responseID == 22) {            // Ladruno (C1): hourglass work split (ssp)
+    static Vector hv(4);
+    static Vector d(8), fs(8), fp(8);
+    for (int a = 0; a < 4; a++) {
+      const Vector &di = theNodes[a]->getTrialDisp();
+      d(2 * a) = di(0); d(2 * a + 1) = di(1);
+    }
+    const double sc = this->damageScale();
+    fs.addMatrixVector(0.0, Kstab, d, sc);
+    fp.addMatrixTransposeVector(0.0, Mmem, theMaterial[0]->getStress(), 4.0 * thickness * J0);
+    hv(0) = sc;
+    hv(1) = 1.0 - sc;                 // omega_max as seen by the floor (clipped)
+    if (damageResponse != 0 && damageResponse->getResponse() >= 0) {
+      const Vector *dv = damageResponse->getInformation().theVector;
+      double dm = 0.0;
+      if (dv) for (int i = 0; i < dv->Size(); i++) if ((*dv)(i) > dm) dm = (*dv)(i);
+      hv(1) = dm > hgOmegaShadow ? dm : hgOmegaShadow;   // raw omega_max (centroid, shadow)
+    }
+    hv(2) = d ^ fs;
+    hv(3) = d ^ fp;
+    return eleInfo.setVector(hv);
+  }
 
   return this->Element::getResponse(responseID, eleInfo);
 }

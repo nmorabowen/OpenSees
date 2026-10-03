@@ -112,6 +112,15 @@ class LadrunoBrick : public Element {
   // Transient perf flag, set by the parser (-noInertiaSkip); NOT serialized.
   void setInertiaSkip(bool s) { inertiaSkip = s; }
   void setMassCache(bool s) { massCache.setEnabled(s); }   // Ladruno (ADR-77 T2/G2): escape = -noMassCache
+  // Ladruno (C3a, the C1 treatment of LadrunoQuad): Tier-A floor and damage sampling of the
+  // STIFFNESS-stabilized single-point forms (ssp, uri+stiffness). s = max(floor, 1 - omega),
+  // omega = max(centroid trial damage, committed max over 8 shadow Gauss-point materials).
+  // Defaults: floor 1e-4, gauss sampling. -hgLegacy = centroid + 0.01 (pre-C3a bit-for-bit);
+  // -hourglassFloor 1 = no degradation (stock SSP / FB stiffness hourglass).
+  void setHourglassFloor(double f) { hgFloor = f; }
+  void setHourglassDamageMode(int m) { hgDamageMode = m; }
+  static constexpr double kHgFloorDefault = 1.0e-4;
+  static constexpr double kHgFloorLegacy  = 1.0e-2;
 
   // domain
   void setDomain(Domain *theDomain);
@@ -227,6 +236,18 @@ class LadrunoBrick : public Element {
   // original constant elastic Kstab). Not serialized — rebuilt in setDomain on the
   // receive side.  // Ladruno
   Response *damageResponse;
+  double hgFloor;                     // Ladruno (C3a): Tier-A floor (serialized)
+  int    hgDamageMode;                // Ladruno (C3a): 1 gauss shadows (default) | 0 centroid
+  NDMaterial *hgShadow[8];            // Ladruno (C3a): shadow GP materials (probe only)
+  Response   *hgShadowDmg[8];         // Ladruno (C3a): their cached "damage" probes
+  double hgOmegaShadow;               // Ladruno (C3a): committed max shadow omega (serialized)
+  double hgOmegaTrial;                // Ladruno (C3a): trial shadow omega (>= committed; = committed
+                                      //   until the element's shadows first damage, then evaluated
+                                      //   at every update(): no lagged force jump)
+  void clearHgShadows(void);
+  void commitHgShadows(void);
+  double evalHgShadows(bool commit);  // drive the shadows at the current trial disp; max omega
+  bool stiffnessStabilized(void) const;
 
   // -geom hypo per-GP state (ADR 79 §3/§6): the accumulated feed strain handed
   // to setTrialStrain (Voigt, engineering shear, unrotated material frame).

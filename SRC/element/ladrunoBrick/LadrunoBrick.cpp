@@ -55,6 +55,7 @@
 #include <Renderer.h>
 #include <ElementResponse.h>
 #include <LadrunoResponseTokens.h>   // Ladruno — shared recorder-token aliases
+#include <OPS_Globals.h>             // Ladruno (C3a): ops_TheActiveElement
 #include <LadrunoMaterialStatus.h>   // Ladruno (ADR-86b) — LADRUNO_MATERIAL_REFUSED
 #include <Parameter.h>
 #include <ElementalLoad.h>
@@ -73,7 +74,8 @@
 // unstabilized (avoids spurious hourglassing in the cracked band). 1% per the
 // 1-5% range in Ladruno_implementation/11_brick_asdconcrete_integration.md §3;
 // tune against the "hourglassEnergy" report (§5).
-static const double HG_DAMAGE_FLOOR = 0.01;
+// Ladruno (C3a): the floor is now the per-element member hgFloor (default
+// kHgFloorDefault = 1e-4; the pre-C3a 0.01 is kHgFloorLegacy, reachable with -hgLegacy).
 
 //static data
 double  LadrunoBrick::xl[3][8];
@@ -135,9 +137,11 @@ LadrunoBrick::LadrunoBrick()
    inertiaSkip(true),                          // Ladruno (ADR-68 T7)
    theGeom(new SolidTransformationLinear()),  // Ladruno — v1 identity geometry
    damageResponse(0),                          // Ladruno — Tier-A Kstab (built in setDomain)
+   hgFloor(kHgFloorDefault), hgDamageMode(1), hgOmegaShadow(0.0), hgOmegaTrial(0.0),   // Ladruno (C3a)
    sspBnot(0), sspKstab(0), sspVol(0.0),      // Ladruno — ssp (built in setDomain)
    alpha(9), alphaCommit(9), easJ0inv(3, 3), easJ0det(0.0), easDegenerate(false)   // Ladruno — eas state
 {
+  for (int i = 0; i < 8; i++) { hgShadow[i] = 0; hgShadowDmg[i] = 0; }   // Ladruno (C3a)
   B.Zero();
   alpha.Zero();
   alphaCommit.Zero();
@@ -183,9 +187,11 @@ LadrunoBrick::LadrunoBrick(int tag,
    inertiaSkip(true),                          // Ladruno (ADR-68 T7)
    theGeom(0),                                // Ladruno — set below from geomMethodID
    damageResponse(0),                          // Ladruno — Tier-A Kstab (built in setDomain)
+   hgFloor(kHgFloorDefault), hgDamageMode(1), hgOmegaShadow(0.0), hgOmegaTrial(0.0),   // Ladruno (C3a)
    sspBnot(0), sspKstab(0), sspVol(0.0),      // Ladruno — ssp (built in setDomain)
    alpha(9), alphaCommit(9), easJ0inv(3, 3), easJ0det(0.0), easDegenerate(false)   // Ladruno — eas state
 {
+  for (int i = 0; i < 8; i++) { hgShadow[i] = 0; hgShadowDmg[i] = 0; }   // Ladruno (C3a)
   alpha.Zero();
   alphaCommit.Zero();
 
@@ -259,6 +265,7 @@ LadrunoBrick::~LadrunoBrick()
   if (sspKstab) delete sspKstab;
 
   if (damageResponse) delete damageResponse;   // Ladruno — Tier-A Kstab
+  this->clearHgShadows();                      // Ladruno (C3a)
 }
 
 //set domain
@@ -311,6 +318,22 @@ void  LadrunoBrick::setDomain(Domain *theDomain)
     const char *dmgArgv[1] = {"damage"};
     damageResponse = materialPointers[0]->setResponse(dmgArgv, 1, dmgStream);
   }
+  // Ladruno (C3a): shadow Gauss-point damage sampling (the C1 LadrunoQuad treatment),
+  // only for a material WITH a damage channel (elastic/J2: no cost, bit-identical) and
+  // small-strain kinematics (linear/corot core frame). Fresh virgin 3D copies; the
+  // serialized monotone hgOmegaShadow carries the committed max across a recv.
+  this->clearHgShadows();
+  if (stiffnessStabilized && damageResponse != 0 && hgDamageMode == 1 &&
+      !this->isFinite() && !this->isHypo()) {
+    for (int i = 0; i < 8; i++) {
+      hgShadow[i] = materialPointers[0]->getCopy();
+      if (hgShadow[i] == 0) { this->clearHgShadows(); break; }
+      hgShadow[i]->revertToStart();
+      DummyStream ds;
+      const char *dmgArgv[1] = {"damage"};
+      hgShadowDmg[i] = hgShadow[i]->setResponse(dmgArgv, 1, ds);
+    }
+  }
 
   this->DomainComponent::setDomain(theDomain);
 }
@@ -355,10 +378,105 @@ LadrunoBrick::damageScale(void)
     // (ASDConcrete3D / LadrunoConcrete3D report 2 = tension, compression;
     // LadrunoJ2 with -damage lemaitre reports 1). Not ASDConcrete3D-specific.
     if ((*d)(i) > dmax) dmax = (*d)(i);
+  if (hgOmegaTrial > dmax) dmax = hgOmegaTrial;     // Ladruno (C3a): shadow-GP omega (>= committed)
   double s = 1.0 - dmax;
-  if (s < HG_DAMAGE_FLOOR) s = HG_DAMAGE_FLOOR;
+  if (s < hgFloor) s = hgFloor;   // Ladruno (C3a): was HG_DAMAGE_FLOOR = 0.01
   if (s > 1.0) s = 1.0;
   return s;
+}
+
+//----------------------------------------------------------------------
+// Ladruno (C3a): shadow Gauss-point materials for the Tier-A damage sampling, the
+// LadrunoQuad C1 treatment. Why: with ω read at the centroid only, an element whose
+// crack runs in its hourglass/bending mode (centroid near the neutral axis of the local
+// bending) never degrades Kstab / κ and acts as an uncrackable elastic hinge (the K&R
+// ssp-quad tail: 0.20 of 0.32 kN was stabilization work in such elements).
+//----------------------------------------------------------------------
+bool
+LadrunoBrick::stiffnessStabilized(void) const
+{
+  return (formulation == Formulation::SSP) ||
+         (formulation == Formulation::URI && hourglassType == Hourglass::STIFFNESS);
+}
+
+void
+LadrunoBrick::clearHgShadows(void)
+{
+  for (int i = 0; i < 8; i++) {
+    if (hgShadowDmg[i]) { delete hgShadowDmg[i]; hgShadowDmg[i] = 0; }
+    if (hgShadow[i])    { delete hgShadow[i];    hgShadow[i] = 0; }
+  }
+}
+
+// Drive the 8 shadows with the full trilinear strain at the 2x2x2 Gauss points of the
+// current (core-frame) displacement; returns max(committed, reported damage, secant loss
+// 1 - s.e/(e.C0.e) where damage > 1 %). The secant term is there because a "damage" channel
+// need not be the secant loss (ASDConcrete3D reports 1 - y/q, without its plastic part).
+// commit=true at commitState. TRIAL evaluation (commit=false, from update()) runs only once
+// the element's shadows have damaged: a purely committed (lagged) omega released the stored
+// stabilization force as a JUMP at the start of the next step, which no step halving can
+// shrink (LadrunoConcrete3D L&W coarse: stuck at 0.6 mm through dlam0/64). Never feeds the
+// residual directly; never fails the step.
+double
+LadrunoBrick::evalHgShadows(bool commit)
+{
+  if (hgShadow[0] == 0) return hgOmegaShadow;
+  Element *prev = ops_TheActiveElement;
+  ops_TheActiveElement = this;                 // crack-band lch latch of the shadow copies
+  computeBasis();
+  const Vector &uCore = this->computeLocalDisp();
+  static Vector strain(6);
+  static Vector ulj(3);
+  static double shp[4][8];
+  double om = hgOmegaShadow;
+  int g = 0;
+  for (int i = 0; i < 2; i++)
+    for (int j = 0; j < 2; j++)
+      for (int k = 0; k < 2; k++) {
+        double gp[3] = {sg[i], sg[j], sg[k]};
+        double xsj;
+        shp3d(gp, xsj, shp, xl);
+        strain.Zero();
+        for (int J = 0; J < 8; J++) {
+          const Matrix &BJ = computeB(J, shp);
+          ulj(0) = uCore(3 * J); ulj(1) = uCore(3 * J + 1); ulj(2) = uCore(3 * J + 2);
+          strain.addMatrixVector(1.0, BJ, ulj, 1.0);
+        }
+        hgShadow[g]->setTrialStrain(strain);
+        if (commit) hgShadow[g]->commitState();
+        double dgp = 0.0;
+        if (hgShadowDmg[g] != 0 && hgShadowDmg[g]->getResponse() >= 0) {
+          const Vector *dv = hgShadowDmg[g]->getInformation().theVector;
+          if (dv) for (int c = 0; c < dv->Size(); c++) if ((*dv)(c) > dgp) dgp = (*dv)(c);
+        }
+        if (dgp > om) om = dgp;
+        if (dgp > 0.01) {
+          const Vector &sgm = hgShadow[g]->getStress();
+          const Matrix &C0 = hgShadow[g]->getInitialTangent();
+          double w = 0.0, e0 = 0.0;
+          for (int r = 0; r < 6; r++) {
+            w += sgm(r) * strain(r);
+            for (int c = 0; c < 6; c++) e0 += strain(r) * C0(r, c) * strain(c);
+          }
+          if (e0 > 0.0) {
+            double wsec = 1.0 - w / e0;
+            if (wsec > 1.0) wsec = 1.0;
+            if (wsec > om) om = wsec;
+          }
+        }
+        g++;
+      }
+  if (om > 1.0) om = 1.0;
+  ops_TheActiveElement = prev;
+  return om;
+}
+
+void
+LadrunoBrick::commitHgShadows(void)
+{
+  if (hgShadow[0] == 0) return;
+  hgOmegaShadow = this->evalHgShadows(true);
+  hgOmegaTrial  = hgOmegaShadow;
 }
 
 int
@@ -412,6 +530,17 @@ int  LadrunoBrick::commitState(void)
       for (int c = 0; c < 6; c++)
         hypoFeedCommit[g][c] = hypoFeed[g][c];
 
+  // Ladruno (C3a): advance the shadow Gauss-point damage probes (never fails the commit).
+  //
+  // WP concrete3d-hang-diagnosis review #877, defect 1: the shadow copies run their OWN decoupled
+  // setTrialStrain()/commitState() cycle purely to drive the hourglass regularization omega -- they are NOT the
+  // real Gauss points, so a refusal there must not reach the WP-99 commit latch. The probe scope makes
+  // ladrunoNoteCommitRefusal() a no-op for the duration of the shadow commit.
+  if (hgShadow[0] != 0) {
+    LadrunoProbeCommitScope probeScope;
+    this->commitHgShadows();
+  }
+
   // Ladruno — accumulate viscous-hourglass dissipation. The FB viscous force
   // stores no energy, so we integrate the work done against it over committed
   // steps. The first commit (or the first after a parallel recv) only seeds the
@@ -440,6 +569,9 @@ int  LadrunoBrick::revertToLastCommit(void)
     if (theDamping[i]) success += theDamping[i]->revertToLastCommit();
   if (formulation == Formulation::EAS)   // Ladruno — eas: restore enhanced params
     alpha = alphaCommit;
+  for (int i = 0; i < 8; i++)            // Ladruno (C3a): shadow probes back to committed
+    if (hgShadow[i]) hgShadow[i]->revertToLastCommit();
+  hgOmegaTrial = hgOmegaShadow;
   if (this->isHypo())                    // Ladruno (ADR 79) — hypo: restore feed
     for (int g = 0; g < 8; g++)
       for (int c = 0; c < 6; c++)
@@ -454,6 +586,12 @@ int  LadrunoBrick::revertToStart(void)
     success += materialPointers[i]->revertToStart();
   for (int i = 0; i < 8; i++)
     if (theDamping[i]) success += theDamping[i]->revertToStart();
+
+  // Ladruno (C3a): reset the shadow damage probes
+  for (int i = 0; i < 8; i++)
+    if (hgShadow[i]) hgShadow[i]->revertToStart();
+  hgOmegaShadow = 0.0;
+  hgOmegaTrial  = 0.0;
 
   // Ladruno — reset the viscous-hourglass dissipation accumulator
   hgDissipated = 0.0;
@@ -953,8 +1091,8 @@ LadrunoBrick::isSinglePoint(void) const
   return false;
 }
 
-// Ladruno (ADR-86b): THROTTLED reporter for a material that REFUSED the trial
-// strain -- i.e. returned LADRUNO_MATERIAL_REFUSED, and only that. A failed state determination happens at every Gauss point of every
+// Ladruno (ADR-86b, C3b): THROTTLED reporter for a material that REFUSED the trial
+// strain -- returned LADRUNO_MATERIAL_REFUSED or (C3b) a bare -1. A failed state determination happens at every Gauss point of every
 // element the analysis is currently probing, inside a Newton iteration, inside a
 // load step -- and the whole POINT of returning failure is that the analysis then
 // retries with a smaller step, so the same failure recurs by design. An
@@ -967,6 +1105,20 @@ LadrunoBrick::isSinglePoint(void) const
 // races and the budget becomes approximate -- fine for a throttle, and it must
 // never be given a job that affects the answer. Promote to std::atomic<int> if
 // Lane 3 lands. Same note on ManzariDafalias's three sibling budgets.
+// Ladruno (C3b): the codes that cut the step. The ADR-86b sentinel AND a bare -1 (the
+// plain OpenSees "state determination failed" code that LadrunoQuad, TenNodeTetrahedron
+// and the -geom finite/hypo paths already honour; e.g. LadrunoRCConcrete's loud
+// crack-band failure, a PlaneStress/PlateFiber condensation miss, StagedStrain
+// -maxStrain). Still NOT a blanket < 0: ASDConcrete3D's advisory codes (-10 IMPL-EX
+// error control, -1000 eigen) keep being accepted, per ADR-33/34 and the ADR-86b
+// measurement (a blanket < 0 killed test_ladrunoBrick_asdconcrete_bend.py).
+static thread_local int lastTrialRc = 0;   // for the report only
+static inline bool
+ladrunoBrickMustCut(int rc)
+{
+  return ladrunoMaterialMustCut(rc);
+}
+
 static void
 ladrunoBrickReportTrialStrainFailure(int eleTag, const char *where, int gp)
 {
@@ -974,7 +1126,9 @@ ladrunoBrickReportTrialStrainFailure(int eleTag, const char *where, int gp)
   if (budget >= 10)
     return;
   opserr << "WARNING LadrunoBrick::update - element " << eleTag
-         << ": the material REFUSED the trial strain at " << where;
+         << (lastTrialRc == LADRUNO_MATERIAL_REFUSED
+               ? ": the material REFUSED the trial strain at "
+               : ": the material FAILED the trial strain (rc = -1) at ") << where;
   if (gp >= 0)
     opserr << " (Gauss point " << gp << ")";
   opserr << ". Failing the step so the analysis can cut it; the committed state"
@@ -1035,10 +1189,14 @@ LadrunoBrick::update(void)
     // factor 605, on a run green for months. See SRC/material/LadrunoMaterialStatus.h.
     // (updateHypo()/updateFinite() keep their pre-existing `< 0` tests -- those
     // are not changed by ADR-86b.)
-    if (materialPointers[0]->setTrialStrain(strainE) == LADRUNO_MATERIAL_REFUSED) {
+    if (ladrunoBrickMustCut(lastTrialRc = materialPointers[0]->setTrialStrain(strainE))) {
       ladrunoBrickReportTrialStrainFailure(this->getTag(), "the SSP centroid", -1);
       return -1;
     }
+    // Ladruno (C3a): trial shadow omega -- once the shadows have damaged, and only while it can
+    // still change s (1 - omega > floor); at the floor s is floor either way (bit-identical, cheaper).
+    if (hgShadow[0] != 0 && hgOmegaShadow > 0.0 && 1.0 - hgOmegaShadow > hgFloor)
+      hgOmegaTrial = this->evalHgShadows(false);
     return 0;
   }
 
@@ -1080,8 +1238,7 @@ LadrunoBrick::update(void)
                 for (int c = 0; c < 3; c++)
                   strainG(r) += Bbar[J][r][c] * uCore(3 * J + c);
             }
-            if (materialPointers[gpIdx]->setTrialStrain(strainG)
-                  == LADRUNO_MATERIAL_REFUSED) {                          // Ladruno (ADR-86b)
+            if (ladrunoBrickMustCut(lastTrialRc = materialPointers[gpIdx]->setTrialStrain(strainG))) {                          // Ladruno (ADR-86b)
               if (!refused)
                 ladrunoBrickReportTrialStrainFailure(this->getTag(),
                                                      "the URI/physical rule", gpIdx);
@@ -1111,11 +1268,14 @@ LadrunoBrick::update(void)
       ulj(0) = uCore(3 * J); ulj(1) = uCore(3 * J + 1); ulj(2) = uCore(3 * J + 2);
       strainC.addMatrixVector(1.0, Bc, ulj, 1.0);
     }
-    if (materialPointers[0]->setTrialStrain(strainC)
-          == LADRUNO_MATERIAL_REFUSED) {                                  // Ladruno (ADR-86b)
+    if (ladrunoBrickMustCut(lastTrialRc = materialPointers[0]->setTrialStrain(strainC))) {                                  // Ladruno (ADR-86b)
       ladrunoBrickReportTrialStrainFailure(this->getTag(), "the URI centroid", -1);
       return -1;
     }
+    // Ladruno (C3a): trial shadow omega -- once the shadows have damaged, and only while it can
+    // still change s (1 - omega > floor); at the floor s is floor either way (bit-identical, cheaper).
+    if (hgShadow[0] != 0 && hgOmegaShadow > 0.0 && 1.0 - hgOmegaShadow > hgFloor)
+      hgOmegaTrial = this->evalHgShadows(false);
     return 0;
   }
 
@@ -1182,8 +1342,7 @@ LadrunoBrick::update(void)
       strain.addMatrixVector(1.0, BJ, ulj, 1.0);
     }
 
-    if (materialPointers[i]->setTrialStrain(strain)
-          == LADRUNO_MATERIAL_REFUSED) {                                  // Ladruno (ADR-86b)
+    if (ladrunoBrickMustCut(lastTrialRc = materialPointers[i]->setTrialStrain(strain))) {                                  // Ladruno (ADR-86b)
       if (!refused)
         ladrunoBrickReportTrialStrainFailure(this->getTag(),
                                              "the std/b-bar 2x2x2 rule", i);
@@ -1827,8 +1986,7 @@ LadrunoBrick::updateHypo(void)
         // mesh-objectivity gates at load factor 605. Only the explicit refusal --
         // "the increment was NOT integrated" -- fails the step here too.
         // See SRC/material/LadrunoMaterialStatus.h.
-        if (materialPointers[gp]->setTrialStrain(strain)
-              == LADRUNO_MATERIAL_REFUSED) {                        // Ladruno (ADR-86b)
+        if (ladrunoBrickMustCut(lastTrialRc = materialPointers[gp]->setTrialStrain(strain))) {                        // Ladruno (ADR-86b)
           if (!refusedHypo)
             ladrunoBrickReportTrialStrainFailure(this->getTag(),
                                                  "the -geom hypo rate-form rule", gp);
@@ -3319,8 +3477,7 @@ LadrunoBrick::formEAStrue(int tang_flag, bool useInitialTangent)
       // fail the step. Only the explicit refusal does. This loop already completes
       // (it sets `status` rather than returning), which is the shape the four
       // update() paths were changed to match.
-      if (materialPointers[g]->setTrialStrain(strain)
-            == LADRUNO_MATERIAL_REFUSED) {                    // Ladruno (ADR-86b)
+      if (ladrunoBrickMustCut(lastTrialRc = materialPointers[g]->setTrialStrain(strain))) {                    // Ladruno (ADR-86b)
         opserr << "WARNING LadrunoBrick::formEAStrue() - element " << this->getTag()
                << ": material " << g << " REFUSED the trial strain (increment not"
                   " integrated); failing the step so it can be cut\n";
@@ -3499,7 +3656,7 @@ int  LadrunoBrick::sendSelf(int commitTag, Channel &theChannel)
     return res;
   }
 
-  static Vector dData(11);
+  static Vector dData(14);
   dData(0) = alphaM;
   dData(1) = betaK;
   dData(2) = betaK0;
@@ -3511,6 +3668,9 @@ int  LadrunoBrick::sendSelf(int commitTag, Channel &theChannel)
   dData(8) = hgDissipated;   // Ladruno — viscous-hourglass dissipation accumulator
   dData(9)  = bulkVisc_b1;   // Ladruno (W2-E1): bulk-viscosity coeffs
   dData(10) = bulkVisc_b2;
+  dData(11) = hgFloor;        // Ladruno (C3a)
+  dData(12) = hgDamageMode;
+  dData(13) = hgOmegaShadow;
 
   if (theChannel.sendVector(dataTag, commitTag, dData) < 0) {
     opserr << "LadrunoBrick::sendSelf() - failed to send double data\n";
@@ -3584,7 +3744,7 @@ int  LadrunoBrick::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker
   // against the live material on the receive side.  // Ladruno
   if (damageResponse) { delete damageResponse; damageResponse = 0; }
 
-  static Vector dData(11);
+  static Vector dData(14);
   if (theChannel.recvVector(dataTag, commitTag, dData) < 0) {
     opserr << "LadrunoBrick::recvSelf() - failed to recv double data\n";
     return -1;
@@ -3607,6 +3767,10 @@ int  LadrunoBrick::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker
   // Ladruno (W2-E1): restore bulk-viscosity coeffs
   bulkVisc_b1 = dData(9);
   bulkVisc_b2 = dData(10);
+  hgFloor       = dData(11);        // Ladruno (C3a)
+  hgDamageMode  = (int)dData(12);
+  hgOmegaShadow = dData(13);
+  hgOmegaTrial  = hgOmegaShadow;
 
   for (int i = 0; i < 8; i++)
     connectedExternalNodes(i) = idData(16 + i);
@@ -4136,6 +4300,17 @@ LadrunoBrick::setResponse(const char **argv, int argc, OPS_Stream &output)
     output.tag("ResponseType", "Ehg");
     theResponse = new ElementResponse(this, 8, Vector(1));
 
+  } else if (this->stiffnessStabilized() &&
+             (strcmp(argv[0], "hourglass") == 0 || strcmp(argv[0], "hgWork") == 0)) {
+    // Ladruno (C3a) diagnostic: [s, omega, d.f_stab, d.f_phys] at the trial state.
+    // sum over elements of d.f = u.F_int = the work of the loads (supports do none),
+    // so sum(d.f_stab) / sum(d.f) is the stabilization share of the load.
+    output.tag("ResponseType", "s");
+    output.tag("ResponseType", "omega");
+    output.tag("ResponseType", "dfStab");
+    output.tag("ResponseType", "dfPhys");
+    theResponse = new ElementResponse(this, 22, Vector(4));
+
   } else if (LadrunoResp::is(argv[0], "charLength")) {
     // Ladruno — the element size handed to crack-band materials (= cbrt(V)).
     output.tag("ResponseType", "lch");
@@ -4206,6 +4381,26 @@ LadrunoBrick::getResponse(int responseID, Information &eleInfo)
     static Vector ehg(1);
     ehg(0) = this->hourglassEnergy();
     return eleInfo.setVector(ehg);
+
+  } else if (responseID == 22) {       // Ladruno (C3a): hourglass work split
+    static Vector hv(4);
+    const double sc = this->damageScale();
+    double om = 1.0 - sc;
+    if (damageResponse != 0 && damageResponse->getResponse() >= 0) {
+      const Vector *dv = damageResponse->getInformation().theVector;
+      double dm = 0.0;
+      if (dv) for (int c = 0; c < dv->Size(); c++) if ((*dv)(c) > dm) dm = (*dv)(c);
+      om = dm > hgOmegaTrial ? dm : hgOmegaTrial;
+    }
+    const double dfs = 2.0 * this->hourglassEnergy();   // stored = 0.5 d.Kstab_eff.d
+    const Vector &F = this->getResistingForce();
+    double dft = 0.0;
+    for (int J = 0; J < 8; J++) {
+      const Vector &ul = nodePointers[J]->getTrialDisp();
+      for (int c = 0; c < 3; c++) dft += ul(c) * F(3 * J + c);
+    }
+    hv(0) = sc; hv(1) = om; hv(2) = dfs; hv(3) = dft - dfs;
+    return eleInfo.setVector(hv);
 
   } else if (responseID == 9) {
     static Vector lch(1);

@@ -4,7 +4,8 @@
 Tension stiffening is a stress FLOOR on the principal tensile axis: between cracks
 bonded reinforcement holds the average concrete tension above the bare
 fracture-energy softening curve,
-    sigma_ts = ft / (1 + sqrt(c * e1))             (vc, MCFT / Bentz)
+    sigma_ts = ft / (1 + sqrt(c * e1))             (vc, MCFT; c default 200 = Vecchio-Collins 1986
+                                                    since C2 -- was 500 before)
     sigma_ts = alpha * ft / (1 + sqrt(500 * e1))   (cm, Collins-Mitchell)
 active ONLY post-crack (e1 >= eps_cr); default off => baseline-identical. The
 closed-form gate is proven first in the numpy oracle (tests/_testbed/rc_shell_ref.py
@@ -32,7 +33,7 @@ TS = [0.0, 3.0,    0.5]
 TD = [0.0, 0.0,    1.0 - 0.5 / 5.0]
 FT = max(TS)            # tension-backbone peak ft = 3
 EPS_CR = FT / E         # 1e-4
-C_DEFAULT = 500.0
+C_DEFAULT = 200.0     # Ladruno C2: vc default = Vecchio-Collins 1986 (was 500)
 
 
 def _rc(tag, tens_stiff_mode=None, c=None, alpha=None):
@@ -130,11 +131,18 @@ def test_above_bare_softening():
 
 
 def test_vc_cm_default_equivalence():
-    """vc default (c=500) and cm default (alpha=1, fixed 500) are the same curve."""
+    """C2 contract: the vc default is c = 200 (Vecchio-Collins 1986), bit-identical to an explicit
+    -tensStiffC 200; vc with -tensStiffC 500 is the pre-C2 vc default and equals the cm default
+    (alpha=1, fixed 500); and the two defaults now differ (200 keeps a higher floor)."""
     vc = _run(lambda t: _rc(t, "vc"), 3.0e-3, 120)
+    vc200 = _run(lambda t: _rc(t, "vc", c=200.0), 3.0e-3, 120)
+    vc500 = _run(lambda t: _rc(t, "vc", c=500.0), 3.0e-3, 120)
     cm = _run(lambda t: _rc(t, "cm"), 3.0e-3, 120)
-    for (_, s_vc), (_, s_cm) in zip(vc, cm):
+    for (_, a), (_, b) in zip(vc, vc200):
+        assert a == b, (a, b)
+    for (_, s_vc), (_, s_cm) in zip(vc500, cm):
         assert abs(s_vc - s_cm) <= 1.0e-6 * (abs(s_vc) + 1.0), (s_vc, s_cm)
+    assert vc[-1][1] > vc500[-1][1] + 0.05, (vc[-1], vc500[-1])
 
 
 def test_c_knob_changes_floor():

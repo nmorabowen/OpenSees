@@ -85,6 +85,8 @@ confined-fiber (`BeamFiber`) view; the parser warns in both cases.
 | `-lch` / `-autoRegularization` | crack-band length: fixed / from the element | 1.0 / off |
 | `-implex` | Tier-2 IMPL-EX robustness (degraded-elastic SPD secant; reads `ops_Dt`) | off (Tier-1) |
 | `-eta` | Duvaut–Lions viscoplastic relaxation time `η`, **Tier-1 only** (`β=dt/(η+dt)`; reads `ops_Dt`; inert — with a warning — under `-implex` and in the `BeamFiber` view) | 0 (inviscid) |
+| `-subIncr deterministic\|adaptive` | return-map sub-incrementation: always `n=ceil(f_tr/0.3)` pieces + a failure ladder, or the failure-driven halving path (**default changed** to `deterministic`; `adaptive` reproduces the earlier numbers) | `deterministic` |
+| `-deadThreshold` / `-noDead` | committed damage `[0.99, 1)` at which a point is treated as dead (tensile part of the effective stress carried elastically, crushed point frozen); `-noDead` disables | 0.998 |
 
 **Calibration notes:**
 - `e` is a *validation* target, not a fit knob — leave it derived from `-kupfer` (1.16) unless you have
@@ -140,6 +142,13 @@ no runtime *enforcement*, but the parser **prints a warning at material creation
   C++ view (`getCopy("BeamFiber")`, order-3 `{00,01,02}`), consumed by stock `NDFiberSection3d`, with
   `-hoop $K <-hoopFy $fy>`. Runs Tier-1 implicit only — `-implex`/`-eta` are inert there (see above).
 - **Deferred:** the `-eta` + `-implex` combined mode.
+
+**Refusals (read this before trusting a run).** A local return that cannot integrate a step is REFUSED, under every tier
+including `-implex` and explicit integrators (it used to fall back silently to the elastic trial and commit it). Elements that
+forward the return code cut the step; a host that discards it (vanilla `stdBrick`) is stopped at commit and the model must be
+restarted from the last checkpoint. The deterministic sub-incrementation is discontinuous at its piece-count boundaries (0.4-2 % of the
+effective stress), and a dead (fully cracked or crushed) point carries its tensile effective stress elastically instead of flowing
+(see `LadrunoConcrete3D_guide.md` §17b).
 
 ## 6. Worked example skeleton
 
