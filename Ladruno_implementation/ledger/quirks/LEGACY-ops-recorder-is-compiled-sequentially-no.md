@@ -22,5 +22,10 @@ independent interpreter per rank, manual `getPID`/`getNP` partition — see
 `example_mpi_paralleltruss_explicit.py`), NOT `_PARALLEL_PROCESSING`
 (PartitionedDomain + `sendSelf` broadcast). The `partition` command (auto domain
 decomposition, the path that *would* exercise `sendSelf`) is **METIS-4-blocked**
-(`OPS_partition` returns an error; needs METIS 5 / `OPS_HAVE_METIS5`), so the
-broadcast path is not runtime-testable in this build.
+(`OPS_partition` returns an error; needs METIS 5 / `OPS_HAVE_METIS5`) — but ONLY
+the openseespy `partition` command under `_PARALLEL_INTERPRETERS`. **Correction
+(WP-163 review, 2026-10-03):** the Tcl `OpenSeesSP.exe` partitions automatically at
+the first `analyze`/`eigen` (`SRC/tcl/commands.cpp` `partitionModel()` → `new Metis`,
+the METIS-4 legacy API in `MetisWrapper.cpp`), so the PartitionedDomain + `sendSelf`
+recorder path DOES ship in this build — untested, not unreachable (e.g. `-G energy`
+null-derefs on a ShadowSubdomain there; WP-163 M1).

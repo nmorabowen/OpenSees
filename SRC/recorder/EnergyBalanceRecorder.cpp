@@ -46,6 +46,7 @@
 #include <NodeIter.h>
 #include <Element.h>
 #include <ElementIter.h>
+#include "Ladruno_LaunchEnv.h"   // Ladruno WP-163 M4/MP-3
 #include <MeshRegion.h>
 #include <Vector.h>
 #include <ID.h>
@@ -210,28 +211,28 @@ OPS_EnergyBalanceRecorder()
     // extension; appended when there is none).
     std::string partFilename;
     if (filename != 0) {
-        static const char* const size_rank_env[][2] = {
-            { "PMI_SIZE",             "PMI_RANK" },
-            { "OMPI_COMM_WORLD_SIZE", "OMPI_COMM_WORLD_RANK" },
-            { "SLURM_NTASKS",         "SLURM_PROCID" },
-        };
-        for (size_t i = 0; i < sizeof(size_rank_env)/sizeof(size_rank_env[0]); ++i) {
-            const char* size_env = std::getenv(size_rank_env[i][0]);
-            if (size_env != 0 && std::atoi(size_env) > 1) {
-                const char* rank_env = std::getenv(size_rank_env[i][1]);
-                const int rank = (rank_env != 0) ? std::atoi(rank_env) : 0;
-                std::string stem(filename), ext;
-                const size_t dot = stem.find_last_of('.');
-                if (dot != std::string::npos && dot > 0) {
-                    ext = stem.substr(dot);
-                    stem.erase(dot);
-                }
-                std::stringstream ss;
-                ss << stem << ".part-" << rank << ext;
-                partFilename = ss.str();
-                filename = partFilename.c_str();
-                break;
+        // WP-163 M4/MP-3: the shared probe (Ladruno_LaunchEnv.h) — SLURM only
+        // inside an srun step; SIZE > 1 without a valid RANK is refused.
+        int rank = 0, size = 1;
+        std::string source, error;
+        const ladruno::launch::Status st =
+            ladruno::launch::detectRank(rank, size, source, error);
+        if (st == ladruno::launch::Inconsistent) {
+            opserr << "WARNING: EnergyBalance: " << error.c_str()
+                   << " - cannot tell which per-rank file this process owns\n";
+            return 0;
+        }
+        if (st == ladruno::launch::Launched) {
+            std::string stem(filename), ext;
+            const size_t dot = stem.find_last_of('.');
+            if (dot != std::string::npos && dot > 0) {
+                ext = stem.substr(dot);
+                stem.erase(dot);
             }
+            std::stringstream ss;
+            ss << stem << ".part-" << rank << ext;
+            partFilename = ss.str();
+            filename = partFilename.c_str();
         }
     }
 
@@ -383,6 +384,10 @@ EnergyBalanceRecorder::buildCache(void)
     Element *ele;
     ElementIter &elements = theDomain->getElements();
     while ((ele = elements()) != 0) {
+        // Ladruno WP-163 M1: skip the SP ShadowSubdomains P0's iterator yields
+        // (no node pointers; a setResponse probe would go to the remote actor).
+        if (ele->isSubdomain())
+            continue;
         const int n = ele->getNumDOF();
         if (n > maxNumDOF)
             maxNumDOF = n;

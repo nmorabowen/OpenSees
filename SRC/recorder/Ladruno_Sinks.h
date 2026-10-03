@@ -81,7 +81,8 @@ namespace ladruno {
 	class StreamingSink : public ResultSink {
 	public:
 		explicit StreamingSink(ResultFamily::Enum family)
-			: m_family(family), m_initialized(false) {}
+			: m_family(family), m_initialized(false), m_dead(false),
+			  m_warned_short(false) {}
 		~StreamingSink() override = default;
 
 		void begin(detail::ProcessInfo& info, const ResultSource& src) override;
@@ -90,11 +91,18 @@ namespace ladruno {
 		void finalize(detail::ProcessInfo& info) override;
 
 		// New MODEL_STAGE / re-begin: forget that the group was created.
-		void reset() { m_initialized = false; }
+		void reset() { m_initialized = false; m_dead = false; m_warned_short = false; }
 
 	private:
+		// WP-163 R5: report a write failure ONCE and stop this channel, instead
+		// of silently returning on every later step (the result used to vanish
+		// from the file with only HDF5-DIAG noise on stderr).
+		void fail(const ResultSchema& schema, const char* why);
+
 		ResultFamily::Enum m_family;
-		bool m_initialized; // group + ID written for the current stage
+		bool m_initialized;   // group + ID written for the current stage
+		bool m_dead;          // WP-163 R5: a create/append failed; channel stopped
+		bool m_warned_short;  // WP-163 R5: short-buffer warning printed once
 	};
 
 	/*
