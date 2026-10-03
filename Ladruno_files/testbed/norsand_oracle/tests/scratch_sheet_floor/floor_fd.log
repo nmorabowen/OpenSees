@@ -1,0 +1,48 @@
+
+================ BA06 K2 set, alpha0 = 0.0, p_min = 50.0 kPa ================
+(A) theta = 0.887, p_tr = -33.295, p_conv = -50.000, p_committed = -50.000, plastic = False, floor tr/post = True/False, deps^f_v = 4.066e-03
+  [OK] (A) elastic+trial floor: C_f vs FD, h = 1e-06: 8.087e-13 (tol 3e-07)
+  [OK] (A) elastic+trial floor: C_f vs FD, h = 1e-07: 1.642e-11 (tol 3e-08)
+  [OK] (A) delta : C_f = 0: 3.790e-16 (tol 1e-14)
+  [OK] (A) committed p = -p_min: 2.842e-16 (tol 1e-13)
+      mutant 'unprojected a^e' vs FD: 6.944e-01
+(B) theta = 0.271 -> 0.294, p_tr = -40.745, p_conv = -50.698, p_committed = -50.698, plastic = True, eta = 1.471, floor tr/post = True/False, dlam = 4.086e-04
+  [OK] (B) plastic+trial floor: C_f vs FD, h = 1e-06: 5.243e-09 (tol 3e-06)
+  [OK] (B) plastic+trial floor: C_f vs FD, h = 1e-07: 1.721e-08 (tol 3e-07)
+      mutant 'v column tied to the floored trial (a~^ep Phi_tr)' vs FD: 2.638e-03
+      mutant 'DPi_tr dropped (plain a~^ep)' vs FD: 9.260e-01
+(C) theta = 0.454 -> 1.035, p_tr = -51.153, p_conv = -48.764, p_committed = -50.000, plastic = True, eta = 0.953, floor tr/post = False/True, dlam = 1.546e-03
+  [OK] (C) plastic+post floor: C_f vs FD, h = 1e-06: 4.618e-08 (tol 3e-06)
+  [OK] (C) plastic+post floor: C_f vs FD, h = 1e-07: 5.044e-10 (tol 3e-07)
+  [OK] (C) delta : C_f = 0: 7.429e-16 (tol 1e-13)
+      mutant 'post floor absent from the tangent (plain a~^ep)' vs FD: 2.048e+00
+(D) m = 2 chain, branch pattern ['FP-', 'FP-']  (F = trial floored, P/E plastic/elastic, f = post floored)
+  [OK] (D) chained C with the floor operators vs FD of the whole increment, h = 1e-06: 2.897e-09 (tol 3e-06)
+  [OK] (D) chained C with the floor operators vs FD of the whole increment, h = 1e-07: 1.840e-09 (tol 3e-07)
+      mutant 'DPi operators omitted from the chain' vs FD: 9.891e-01
+
+================ BA06 K2 set, alpha0 = 5.0, p_min = 50.0 kPa ================
+(A) theta = 0.924, p_tr = -33.299, p_conv = -50.000, p_committed = -50.000, plastic = False, floor tr/post = True/False, deps^f_v = 4.065e-03
+  [OK] (A) elastic+trial floor: C_f vs FD, h = 1e-06: 1.572e-11 (tol 3e-07)
+  [OK] (A) elastic+trial floor: C_f vs FD, h = 1e-07: 1.079e-11 (tol 3e-08)
+  [OK] (A) delta : C_f = 0: 3.622e-16 (tol 1e-14)
+  [OK] (A) committed p = -p_min: 1.421e-16 (tol 1e-13)
+      mutant 'unprojected a^e' vs FD: 6.708e-01
+      mutant 'eps'' term dropped' vs FD: 3.530e-03; its delta:C/max|C| = 1.050e-02
+(B) theta = 0.271 -> 0.294, p_tr = -40.831, p_conv = -50.560, p_committed = -50.560, plastic = True, eta = 1.474, floor tr/post = True/False, dlam = 3.969e-04
+  [OK] (B) plastic+trial floor: C_f vs FD, h = 1e-06: 5.168e-09 (tol 3e-06)
+  [OK] (B) plastic+trial floor: C_f vs FD, h = 1e-07: 5.094e-09 (tol 3e-07)
+      mutant 'v column tied to the floored trial (a~^ep Phi_tr)' vs FD: 2.504e-03
+      mutant 'DPi_tr dropped (plain a~^ep)' vs FD: 9.330e-01
+(C) theta = 0.454 -> 1.038, p_tr = -51.847, p_conv = -48.895, p_committed = -50.000, plastic = True, eta = 0.965, floor tr/post = False/True, dlam = 1.684e-03
+  [OK] (C) plastic+post floor: C_f vs FD, h = 1e-06: 4.235e-08 (tol 3e-06)
+  [OK] (C) plastic+post floor: C_f vs FD, h = 1e-07: 4.394e-10 (tol 3e-07)
+  [OK] (C) delta : C_f = 0: 1.137e-15 (tol 1e-13)
+      mutant 'post floor absent from the tangent (plain a~^ep)' vs FD: 2.126e+00
+(D) m = 2 chain, branch pattern ['FP-', 'FP-']  (F = trial floored, P/E plastic/elastic, f = post floored)
+  [OK] (D) chained C with the floor operators vs FD of the whole increment, h = 1e-06: 2.858e-09 (tol 3e-06)
+  [OK] (D) chained C with the floor operators vs FD of the whole increment, h = 1e-07: 5.501e-10 (tol 3e-07)
+      mutant 'DPi operators omitted from the chain' vs FD: 9.801e-01
+
+ALL OK
+exit 0

@@ -196,6 +196,21 @@ did not contain the fix; the CI failure was the only true signal.
 - `ladrunoBuild()` is the same check the `ladrunoBuild` build-stamp
   probe idiom opens every harness with — this is the case it was made for.
 
+### 4c. Subprocess tests in a venv need `PYTHONPATH=<dist\bin>;<venv>\Lib\site-packages`
+
+Several batteries launch a CHILD interpreter (`test_ladruno_sanisand_flip_determinism.py`,
+`test_ladruno_sanisand_sasme.py`). The child inherits neither the parent's `os.add_dll_directory` nor, with
+`python -S`, the venv's `site-packages`.
+- Symptoms: `ImportError: DLL load failed while importing opensees` or `No module named 'pytest'` in the child,
+  while the parent battery is green.
+- `setup_env.bat` does not help: since Python 3.8, `PATH` is not searched for an extension's dependent DLLs.
+- Fix: run with `PYTHONPATH=<worktree>\dist\bin;<venv>\Lib\site-packages`. The children add a DLL directory for
+  every `sys.path` entry that holds `opensees.pyd`.
+- On CI, pytest lives in the base interpreter, so `-S` is harmless there.
+
+Seen 2026-10-03 while verifying the WP-144 sync merge `71db2bf25`: 4 "failures", all 4 green with the variable
+set. In the first run a stale `tests/opensees.pyd` (§4b) had also shadowed the fresh build.
+
 ---
 
 ## 5. Installer DLL-lock on upgrade ("DeleteFile failed; code 5")

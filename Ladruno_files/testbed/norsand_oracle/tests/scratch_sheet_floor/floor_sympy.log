@@ -1,0 +1,52 @@
+=== (a) HAR floor closed form at fixed eps_s ===
+  [OK] general n: varpi^2 - p_a^2 x^2 == p_a^2 (b + a x^(2n) - x^2): 0
+  [OK] n = 1/2: x^2 - a x - b == 0 at the closed form: 0
+  [OK] p(eps_v,f, eps_s) + p_min = 0, 6 random states x n in {1/2, 0.3, 0.7} (rel; 30-digit nsolve floor): 1.42E-28
+  [OK] f(x_s) == -(1-n) a x_s^(2n) - b (< 0) at n = 1/2, 0.3, 0.7, 0.9 (30 digits): 1.48E-31
+=== (b) eps'_v,f = -D12/D11 at the floor ===
+  [OK] HAR: closed form == -D12/D11 (stress form, p = -p_min): 0
+  [OK] HAR TIMs: FD d eps_v,f/d eps_s vs -D12/D11 (strain-form Hessian), rel: 2.39E-15
+=== (c) BA06 floor closed form with alpha0 ===
+  [OK] BA06: p(eps_v,f, eps_s) + p_min == 0 (symbolic): 0
+  [OK] BA06: eps' closed form == -D12/D11 at the floor (symbolic): 0
+  [OK] BA06 alpha0 = 0: eps' = 0: 0
+=== (d) floored tangent C_f = a^e(eps_f) : DPi_f vs 30-digit FD; delta : C_f = 0 ===
+  [OK] HAR n=1/2 TIMs: C_f closed form vs FD (rel): 5.08E-19
+  [OK] HAR n=1/2 TIMs: delta : C_f = 0 (rel): 2.50E-31
+  [OK] HAR n=1/2 TIMs: p(Pi_f(eps)) + p_min = 0: 2.27E-30
+  [OK] HAR n=1/2 TIMs: unit spin of Pi_f: 3.94E-31
+      mutant eps' dropped: delta:C_mutant/max|C| = 0.0145 (0 only when D12 = 0)
+  [OK] BA06 alpha0=5 K2: C_f closed form vs FD (rel): 9.79E-23
+  [OK] BA06 alpha0=5 K2: delta : C_f = 0 (rel): 9.68E-32
+  [OK] BA06 alpha0=5 K2: p(Pi_f(eps)) + p_min = 0: 2.17E-29
+  [OK] BA06 alpha0=5 K2: unit spin of Pi_f: 3.55E-30
+      mutant eps' dropped: delta:C_mutant/max|C| = 0.0000909 (0 only when D12 = 0)
+=== (e) floor energy injection: 0 <= Psi(eps_f) - Psi(eps) <= p_min deps^f_v ===
+  [OK] BA06 a0=0: Psi(eps_f) - Psi(eps) == kappa p_min (1 - t), t = |p|/p_min: 0
+  [OK] BA06 a0=0: deps^f_v == kappa ln(1/t): 0
+  [OK] 1 - t <= -ln t on (0,1): d/dt[-ln t - (1-t)] == 1 - 1/t (< 0), value 0 at t = 1: 0
+  HAR TIMs n=1/2 p_min=0.505: min E_f/(p_min deps^f_v) = 0.370000, min (1 - E_f/bound) = 0.000500000
+  [OK] HAR TIMs n=1/2 p_min=0.505: 0 <= E_f: True
+  [OK] HAR TIMs n=1/2 p_min=0.505: E_f <= p_min deps^f_v: True
+  BA06 alpha0=5 K2 p_min=0.5: min E_f/(p_min deps^f_v) = 0.214976, min (1 - E_f/bound) = 0.000500083
+  [OK] BA06 alpha0=5 K2 p_min=0.5: 0 <= E_f: True
+  [OK] BA06 alpha0=5 K2 p_min=0.5: E_f <= p_min deps^f_v: True
+  BA06 alpha0=0 K2 p_min=0.5: min E_f/(p_min deps^f_v) = 0.214976, min (1 - E_f/bound) = 0.000500083
+  [OK] BA06 alpha0=0 K2 p_min=0.5: 0 <= E_f: True
+  [OK] BA06 alpha0=0 K2 p_min=0.5: E_f <= p_min deps^f_v: True
+=== (f) unified pi_i0 rule (S.53) ===
+  [OK] N > 0: eta(p, pi_i0) == eta*, 10 random sets (rel): 4.12E-31
+  [OK] N = 0: eta(p, pi_i0) == eta*, 10 random sets (rel): 0
+  [OK] N -> 0: power branch at N = 1e-9 vs exp branch (log form, O(N)): 2.41E-10
+  [OK] eta* = M: pi_i0 = p: 0
+  [OK] eta* = 0: pi_i0 = p (1-N)^((1-N)/N): 0
+  [OK] d ln|pi_i0|/d eta* == (1-N)/(M - eta* N) (FD, rel): 8.80E-20
+=== (g) K1 floor numbers ===
+  HAR TIMs: eps_v,f(eps_s = 0) = 0.000983645033141868  (domain edge 1/(k(1-n)) = 0.00105849169895817)
+  HAR TIMs: G(p_min) = 5769.15635102752 kPa, K(p_min) = 13494.2550744867 kPa; floored shear stiffness 2G = 11538.312702055
+  HAR TIMs: isotropic p = -1 kPa: eps_v = 0.000953167838358974; trial eps_v = eps_v + 1e-4 = 0.00105316783835897 (in domain); floored eps_v,f = 0.000983645033141868; deps^f_v = 6.95228052171057e-5; W_f = p_min deps^f_v = 3.51090166346384e-5 kPa
+  HAR TIMs: eps_s = 2e-4 at the floor: x = varpi_f/p_a = 0.0918519837518005, eps_v,f = 0.00104102892667979, q_f = 14.8362050617392 kPa, eta_f = q_f/p_min = 29.378623884632, eps'_v,f = 0.0867979309966312
+  BA06 K2: eps_v,f = 0.0529831736654804; trial at p = -p_min/2: eps_v,tr = 0.0599146454710798; deps^f_v = kappa ln 2 = 0.00693147180559945; W_f = 0.00346573590279973 kPa; E_f = kappa (p_min - |p_tr|) = 0.0025 kPa; floored shear stiffness 2 mu0 = 10800.0 kPa
+
+ALL OK
+exit 0

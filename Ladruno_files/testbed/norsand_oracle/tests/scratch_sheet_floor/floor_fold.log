@@ -1,0 +1,37 @@
+=== (A) fold geometry along the AMP_STOP path, shipped O2 (PI_SCAN_REL = 1e-3) ===
+  n=  20: refused=none, substep levels={1: 4, 2: 1, 8: 15}, nested EvalErrors={'pi_fold': 2341}, nested solves=3867; converged-iterate root counts {2: 1}; min d2 = 3.295e-01|pi_n|, min d_x = 5.000e-01|pi_n|
+  n=  40: refused=none, substep levels={1: 10, 2: 1, 4: 29}, nested EvalErrors={'pi_fold': 3069}, nested solves=4727; converged-iterate root counts {0: 1, 2: 1, 3: 2}; min d2 = 2.188e-03|pi_n|, min d_x = 5.490e-02|pi_n|
+  n=  80: refused=none, substep levels={1: 22, 2: 58}, nested EvalErrors={'pi_fold': 3072}, nested solves=4759; converged-iterate root counts {0: 1, 2: 2, 3: 6}; min d2 = 3.938e-03|pi_n|, min d_x = 5.050e-02|pi_n|
+  n= 160: refused=none, substep levels={1: 160}, nested EvalErrors={'pi_fold': 349}, nested solves=1481; converged-iterate root counts {0: 1, 2: 5, 3: 127}; min d2 = 9.688e-03|pi_n|, min d_x = 4.220e-02|pi_n|
+
+=== (B) n = 40, step-8 iterate (sheet 10.2): roots through the fold; what each scan step selects ===
+  pi_n = -80.0000, p_tr = -180.2412
+  dlam=7.5000e-04: r(pi_n)=+0.000e+00; 2 root(s) at [1.0148 kPa (1.27e-02|pi_n|), 23.8964 kPa (2.99e-01|pi_n|)]; dip root1->root2 = 22.8816 kPa = 2.86e-01|pi_n|; |r| extremum beyond root 2 at 32.000 kPa (4.00e-01|pi_n|)
+      scan 1e-3 -> near root at 0.0000 kPa, 0 evals, c = +1.000
+      scan 1e-4 -> near root at 0.0000 kPa, 0 evals, c = +1.000
+  dlam=7.7000e-04: r(pi_n)=+2.839e-04; 3 root(s) at [0.0004 kPa (5.00e-06|pi_n|), 0.7500 kPa (9.38e-03|pi_n|), 24.3140 kPa (3.04e-01|pi_n|)]; dip root1->root2 = 0.7496 kPa = 9.37e-03|pi_n|; |r| extremum beyond root 2 at 4.654 kPa (5.82e-02|pi_n|)
+      scan 1e-3 -> near root at 0.0003 kPa, 3 evals, c = +0.984
+      scan 1e-4 -> near root at 0.0003 kPa, 3 evals, c = +0.984
+  dlam=7.8770e-04: r(pi_n)=+1.357e-02; 3 root(s) at [0.0172 kPa (2.15e-04|pi_n|), 0.4828 kPa (6.04e-03|pi_n|), 24.6764 kPa (3.08e-01|pi_n|)]; dip root1->root2 = 0.4656 kPa = 5.82e-03|pi_n|; |r| extremum beyond root 2 at 4.509 kPa (5.64e-02|pi_n|)
+      scan 1e-3 -> near root at 0.0174 kPa, 4 evals, c = +0.759
+      scan 1e-4 -> near root at 0.0174 kPa, 5 evals, c = +0.759
+  dlam=8.0000e-04: r(pi_n)=+4.539e-02; 3 root(s) at [0.1348 kPa (1.69e-03|pi_n|), 0.1868 kPa (2.34e-03|pi_n|), 24.9244 kPa (3.12e-01|pi_n|)]; dip root1->root2 = 0.0520 kPa = 6.50e-04|pi_n|; |r| extremum beyond root 2 at 4.408 kPa (5.51e-02|pi_n|)
+      scan 1e-3 -> near root at 0.1350 kPa, 7 evals, c = +0.101
+      scan 1e-4 -> near root at 0.1350 kPa, 20 evals, c = +0.101
+  dlam=8.0500e-04: r(pi_n)=+6.610e-02; 1 root(s) at [25.0244 kPa (3.13e-01|pi_n|)]; dip root1->root2 = -; |r| extremum beyond root 2 at nan kPa (nan|pi_n|)
+      scan 1e-3 -> EvalError 'pi_fold'
+      scan 1e-4 -> EvalError 'pi_fold'
+  dlam=8.1000e-04: r(pi_n)=+9.216e-02; 1 root(s) at [25.1236 kPa (3.14e-01|pi_n|)]; dip root1->root2 = -; |r| extremum beyond root 2 at nan kPa (nan|pi_n|)
+      scan 1e-3 -> EvalError 'pi_fold'
+      scan 1e-4 -> EvalError 'pi_fold'
+  dlam=8.3000e-04: r(pi_n)=+2.605e-01; 1 root(s) at [25.5156 kPa (3.19e-01|pi_n|)]; dip root1->root2 = -; |r| extremum beyond root 2 at nan kPa (nan|pi_n|)
+      scan 1e-3 -> EvalError 'pi_fold'
+      scan 1e-4 -> EvalError 'pi_fold'
+
+=== (C) ramp width in pi_i at fixed p (the scale of d_x) ===
+  p = -100.0: pi(eta1) = -47.906, pi(eta2) = -50.996, ramp width = 3.090 kPa = 6.060e-02|pi(eta2)|; estimate (c2-c1)|pi|(pi/p)^(N/(1-N)) = 3.255
+  p = -160.0: pi(eta1) = -76.649, pi(eta2) = -81.593, ramp width = 4.944 kPa = 6.060e-02|pi(eta2)|; estimate (c2-c1)|pi|(pi/p)^(N/(1-N)) = 5.208
+  p = -172.0: pi(eta1) = -82.398, pi(eta2) = -87.713, ramp width = 5.315 kPa = 6.060e-02|pi(eta2)|; estimate (c2-c1)|pi|(pi/p)^(N/(1-N)) = 5.599
+
+done
+exit 0

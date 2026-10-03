@@ -24,7 +24,7 @@
 // ==========================================================================
 // LADRUNO-HEADER-END
 
-// LadrunoNorSand: NorSand in the Andrade & Borja 2006 (IJNME 65, 3-invariant) form, as an nDMaterial.
+// LadrunoNorSand: NorSand in the Andrade & Borja 2006 (IJNME 67, 3-invariant) form, as an nDMaterial.
 //
 //   - ALL the constitutive mathematics lives in the header-only, OpenSees-free kernel
 //     LadrunoNorSandKernel.h (namespace ladruno_norsand): the 4x4 spectral return in principal

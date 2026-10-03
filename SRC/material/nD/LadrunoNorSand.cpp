@@ -194,7 +194,7 @@ std::string finestText(int fin, int finSub)
   return t;
 }
 
-// Yield function F(sigma, pi_i) of the sheet (S.11), via the kernel's own flow evaluation. NaN if it
+// Yield function F(sigma, pi_i) of the sheet (S.12), via the kernel's own flow evaluation. NaN if it
 // cannot be evaluated (p >= 0, pi_i >= 0, eigen-decomposition failure).
 double yieldF(const Params& p, const double sig[6], double pi)
 {
