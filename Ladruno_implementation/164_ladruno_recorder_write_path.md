@@ -26,7 +26,7 @@ updated: 2026-10-03
 |---|---|---|
 | P2 | DATA/TIME/STEP reopened every step (chunk cache evicted → the partial chunk re-read, inflated, re-deflated) + `H5Fflush` every step | handles held open for the stage, a counter instead of extent queries, reused memory spaces; flush on a wall-clock cadence `-flush <s>` (default 10 s; 0 = every step) and at stage change / close |
 | P3 | chunk `{ct, nIds, nComp}` — one chunk spans every id; one entity's history inflates the whole dataset | chunks ~1 MiB: small slabs keep all ids and stack up to 1024 steps; large slabs tile the id axis and stack ≤ 16 steps; chunk cache sized to a row of chunks so each chunk is deflated once |
-| P4 | deflate 4 hard-coded | `-compress <0..9>` (0 = no filter); default unchanged (4) |
+| P4 | deflate 4 hard-coded | `-compress <0..9>` (0 = no filter); **default 1** (owner decision, 2026-10-03) |
 | P1 | `-envelope` deleted and recreated every envelope group (+ attrs + COLUMN_MAP) every recorded step | datasets created once per stage, overwritten in place; COLUMN_MAP once; envelopes ≤ 8 MiB still rewritten every step (plain `H5Dwrite`, so a deck that exits without `wipe` keeps its latest extremes), larger ones on the `-flush` cadence; the ending stage is finalized before the stamp moves |
 | P5 | `Domain::getNode(tag)` (a `std::map` walk) per node per channel per step | `Node*` resolved once per source (sources are rebuilt on every stamp change) |
 | P7 | a non-reaction channel reset the reaction flag → repeated `calculateNodalReactions` | the last computed flag is remembered |
@@ -71,12 +71,12 @@ median of 2, WP-164 build:
 
 | `-compress` | Recorder CPU | File | Read one history |
 |---|---|---|---|
-| 4 (default, unchanged) | 4.16 s | 126.7 MB | 0.018 s |
-| 1 | 3.38 s (−19 %) | 127.4 MB (+0.6 %) | 0.020 s |
+| 4 (the old hard-coded level) | 4.16 s | 126.7 MB | 0.018 s |
+| **1 (new default)** | 3.38 s (−19 %) | 127.4 MB (+0.6 %) | 0.020 s |
 | 0 (no filter) | 1.81 s (−56 %) | 167.6 MB (+32 %) | 0.005 s |
 
 Smooth elastic data compresses about equally at levels 1 and 4; noisy nonlinear fields typically lose
-5–10 % more at level 1. The default stays 4 (no file-size change for anyone); changing it is the owner's call.
+5–10 % more at level 1. **The default is 1** (owner decision, 2026-10-03): files written before WP-164 used 4; `-compress 4` reproduces them, `-compress 0` trades file size for the least CPU.
 
 **The envelope file did not shrink** (8.4 MB both builds): HDF5 reused the freed blocks of the old
 delete/recreate within one session, as the review's blue team predicted. The gain there is the work
