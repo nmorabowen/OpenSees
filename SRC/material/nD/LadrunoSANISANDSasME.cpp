@@ -175,6 +175,46 @@ ManzariDafalias::ladrunoResetSasStats(void)
     mLadrunoSas.refused = false;
 }
 
+// Ladruno WP-152: the separation state is STATE, not census, so it is reset
+// apart from ladrunoResetSasStats: by revertToStart only outside
+// InitialStateAnalysis (which keeps the stress, so it must keep the state that
+// produced it -- review #5), and by the replay command, which loads a NORMAL state.
+void
+ManzariDafalias::ladrunoResetSasSep(void)
+{
+    mLadrunoSas.sep = mLadrunoSas.sep_n = false;
+    mLadrunoSas.sepTr = mLadrunoSas.sepTr_n = 0.0;
+    mLadrunoSas.sepEvent = 0;
+    mLadrunoSas.sepCode = 0;
+    mLadrunoSas.sepP0 = 0.0;
+    mLadrunoSas.stats[LSAS_SEP_ACTIVE] = 0.0;
+}
+
+// Ladruno WP-152 (tension cutoff): put the TRIAL on an isotropic state of model
+// pressure pModel (sigma = (pModel - p_r) I) with alpha = alpha_in = 0 -- the only
+// alpha consistent with an isotropic stress on DM04's thin cone -- the committed
+// fabric kept (vanilla's low-p reset keeps it too), the elastic strain unchanged
+// (the separation strain is not elastic), and the elastic stiffness AT that state
+// as the tangent (at p_min this is the model's own moduli floor: a declared Newton
+// regularisation, since a separated point's stress does not depend on the strain).
+// mVoidRatio must already hold the end-of-increment value.
+void
+ManzariDafalias::ladrunoSasSetIsotropic(double pModel)
+{
+    mSigma = mI1;
+    mSigma *= (pModel - m_Presidual);
+    mAlpha.Zero();
+    mAlpha_in.Zero();
+    mFabric = mFabric_n;
+    mEpsilonE = mEpsilonE_n;
+    mDGamma = 0.0;
+    double K, G;
+    GetElasticModuli(mSigma, mVoidRatio, K, G);
+    mCe = GetStiffness(K, G); mCep = mCe; mCep_Consistent = mCe;
+    mLadrunoSas.stats[LSAS_LAST_RATIO_B] = 0.0;
+    mLadrunoSas.stats[LSAS_LAST_F] = GetF(mSigma, mAlpha);
+}
+
 // h with the alpha_in rule applied: a stage whose (alpha - alpha_in):n is not
 // positive takes the model's own sentinel for (alpha - alpha_in):n = 0
 // (alpha_in re-seated at that stage).
@@ -828,6 +868,53 @@ ManzariDafalias::ladrunoSasIntegrate(void)
     const double eN = m_e_init - (1 + m_e_init) * GetTrace(CurStrain);
     mVoidRatio = m_e_init - (1 + m_e_init) * GetTrace(NextStrain);
 
+    // ---- Ladruno WP-152: the tension cutoff (separation) ----------------------
+    // The trial starts as the committed state. A SEPARATED point carries no
+    // tension and no shear. With g = tr(eps) - tr(eps_entry) (compression
+    // positive) its model p is p_c(g) = p_min + K(p_contact) max(g, 0): OPEN
+    // (g <= 0) it sits at p_min and absorbs the strain; CLOSING (g > 0) it
+    // reloads isotropically and elastically -- continuous in g (review #9: the
+    // first build jumped p_min -> p_contact at g_c, which leaves a band of no
+    // equilibrium wherever the point has compliance around it; a free-node Newton
+    // column failed there). It re-contacts at g >= g_c = (p_contact - p_min) /
+    // K(p_contact), with p_re = p_c(g) >= p_contact, alpha = alpha_in = 0, and
+    // SAS-ME resumes at the next update. Re-contact is VOLUMETRIC only: isochoric
+    // shear never closes the gap (review #6, documented).
+    // Ladruno_implementation/152_sanisand_tension_cutoff.md.
+    mLadrunoSas.sep = mLadrunoSas.sep_n;
+    mLadrunoSas.sepTr = mLadrunoSas.sepTr_n;
+    mLadrunoSas.sepEvent = 0;   // an element may update several times per step: the census
+                                // counts the COMMITTED transition (LadrunoSANISAND::commitState)
+    mLadrunoSas.sepCode = 0;
+    mLadrunoSas.sepP0 = 0.0;
+    const bool tcOn = (o.tcPcontact > 0.0);
+    if (tcOn && mLadrunoSas.sep_n) {
+        const double g = GetTrace(NextStrain) - mLadrunoSas.sepTr_n;
+        Vector Sc(mI1);
+        Sc *= (o.tcPcontact - m_Presidual);
+        double Kc, Gc;
+        GetElasticModuli(Sc, mVoidRatio, Kc, Gc);
+        const double gc = (o.tcPcontact - m_Pmin) / Kc;
+        ladrunoSasSetIsotropic(m_Pmin + Kc * fmax(g, 0.0));
+        if (g > 0.0) {
+            // closing, and the exit iterate: within THIS update sigma = (p_min + Kc g) I,
+            // so the consistent bulk modulus is K(p_contact) (re-review MED-3). The shear
+            // stiffness G(p) is a declared regularisation (the stress carries no shear);
+            // SAS-ME's next update starts from C_e at p_re on its own.
+            double Kp, Gp;
+            GetElasticModuli(mSigma, mVoidRatio, Kp, Gp);
+            mCe = GetStiffness(Kc, Gp); mCep = mCe; mCep_Consistent = mCe;
+        }
+        if (g >= gc) {
+            mLadrunoSas.sep = false;
+            mLadrunoSas.sepEvent = 3;
+            mLadrunoLastPath = 9;
+        } else {
+            mLadrunoLastPath = 8;
+        }
+        return;
+    }
+
     // Paper alpha_in rule (the default): alpha_in changes ONLY at a plastic
     // onset or where (alpha - alpha_in):n reaches 0 -- both decided inside this
     // update. integrate()'s once-per-increment test on the elastic trial
@@ -839,6 +926,8 @@ ManzariDafalias::ladrunoSasIntegrate(void)
     Vector S(mSigma_n), A(mAlpha_n), Z(mFabric_n), Ee(mEpsilonE_n),
            ain(paperRule ? mAlpha_in_n : mAlpha_in);
     int code = 0;
+    const double p0c = one3 * GetTrace(S) + m_Presidual;   // Ladruno WP-152: committed p (the E2 test)
+    bool startTension = false;                             // Ladruno WP-152: code 3 BECAUSE p0 <= 0 (E1)
 
     // ---- 0. entry: the committed state must be admissible ------------------
     {
@@ -846,8 +935,14 @@ ManzariDafalias::ladrunoSasIntegrate(void)
         const double ta = GetTrace(A), tz = GetTrace(Z);
         if (!finite6(S) || !finite6(A) || !finite6(Z) || !finite6(ain) || !(p0 > 0.0)
             || fabs(ta) > 1.0e-6 * fmax(GetNorm_Contr(A), m_m)
-            || fabs(tz) > 1.0e-6 * fmax(GetNorm_Contr(Z), m_m))
+            || fabs(tz) > 1.0e-6 * fmax(GetNorm_Contr(Z), m_m)) {
             code = RC_START_OTHER;
+            // Ladruno WP-152: only "finite, traces clean, p0 <= 0" is a tension
+            // start; a non-finite value or a trace violation stays a loud refusal.
+            startTension = finite6(S) && finite6(A) && finite6(Z) && finite6(ain) && !(p0 > 0.0)
+                && !(fabs(ta) > 1.0e-6 * fmax(GetNorm_Contr(A), m_m))
+                && !(fabs(tz) > 1.0e-6 * fmax(GetNorm_Contr(Z), m_m));
+        }
         else if (GetF(S, A) > mTolF)
             code = RC_START_F;
         else {
@@ -979,6 +1074,50 @@ ManzariDafalias::ladrunoSasIntegrate(void)
     } else {
         mLadrunoLastPath = 7;
         ladrunoTraceSubstep(0.0, 1.0, std::numeric_limits<double>::quiet_NaN(), TR_REFUSED, false);
+    }
+
+    // ---- Ladruno WP-152: tension cutoff ENTRY, masking ONLY low-p / tension -----
+    // E1: tension -- code 6 (a stage or the predictor at p <= 0 at dT_min), or
+    //     code 3 because the committed p0 <= 0 (finite, traces clean) -- AND the
+    //     committed p0 <= p0max (review #2: one Newton iterate can carry a 10-20 kPa
+    //     point through p = 0; that is a step to cut, not a separation).
+    // E2: a low-confinement accuracy or cost failure -- code 4 or 9 while the
+    //     committed p0 < p_sep (p_sep = 0 disables E2: a pure tension cutoff) --
+    //     AND a volumetric increment that does not compress (tr d_eps <= 0,
+    //     compression positive; review #1: the B/8 top row sits at p' 0.2-0.35 in
+    //     situ, below p_sep, so the committed p0 alone would let an accuracy
+    //     failure under COMPRESSION separate). A non-compressing increment also
+    //     keeps the elastic predictor's p at or below p0 < p_sep.
+    // A qualifying refusal the bound or the gate holds back is counted
+    // (sepHeldHighP, sepHeldCompressing) and still REFUSES with its own code.
+    // Everything else (code 5 loadingNonPosH = the alpha_in singularity, code 2,
+    // code 3 non-finite / trace, codes 7, 8, and code 4/9 at p0 >= p_sep) still
+    // refuses below, at any p.
+    if (tcOn && code != 0) {
+        const bool e1q = (code == RC_LOWP) || (code == RC_START_OTHER && startTension);
+        const bool e2q = (code == RC_DTMIN || code == RC_CAP) && (p0c < o.tcPsep);
+        // re-review MED-1: E1 takes the non-compressing gate too -- a compressing
+        // increment (e.g. gravity onto a zero-stress start, a deck error) must refuse,
+        // not be swallowed by a separation that re-contacts only after a further g_c.
+        // "compressing" with a tolerance scaled to the increment: a trace built from
+        // B u is round-off, not zero, under isochoric shear -- an exact `> 0.0` split one
+        // homogeneous stdBrick's 8 GPs into 6 separating and 2 refusing (re-review test).
+        const bool compressing = (GetTrace(dStrain) > 1.0e-10 * GetNorm_Contr(dStrain));
+        const bool e1 = e1q && (p0c <= o.tcP0Max) && !compressing;
+        const bool e2 = e2q && !compressing;
+        if (e1q && !(p0c <= o.tcP0Max)) st[LSAS_SEP_HELD_HIGHP] += 1.0;
+        else if ((e1q && !e1) || (e2q && !e2)) st[LSAS_SEP_HELD_COMPRESSING] += 1.0;
+        if (e1 || e2) {
+            mLadrunoSas.sepEvent = e1 ? 1 : 2;
+            mLadrunoSas.sepCode = code;   // the masked refusal (review #3), recorded at commit
+            mLadrunoSas.sepP0 = p0c;
+            mSubstepCapHitInME = false;   // a code 9 set it; the cap was reached by a separating point
+            mLadrunoSas.sep = true;
+            mLadrunoSas.sepTr = GetTrace(NextStrain);
+            ladrunoSasSetIsotropic(m_Pmin);
+            mLadrunoLastPath = 8;
+            return;
+        }
     }
 
     if (code != 0) {

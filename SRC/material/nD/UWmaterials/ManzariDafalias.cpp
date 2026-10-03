@@ -1432,7 +1432,12 @@ void ManzariDafalias::MaxStrainInc(const Vector& CurStress, const Vector& CurStr
         Vector cStress(6), cStrain(6), cAlpha(6), cFabric(6), cAlpha_in(6), cEStrain(6);
         Vector nStrain(6) ,nEStrain(6), nStress(6), nAlpha(6), nFabric(6), nAlpha_in(6);
         Matrix nCe(6,6), nCep(6,6), nCepC(6,6);
-        double nDGamma, nVoidRatio, nG, nK;
+        // Ladruno WP-160: nG, nK were left UNINITIALISED and handed to every
+        // sub-step as its moduli (ForwardEuler builds aC = GetStiffness(K, G)
+        // from them before writing them): measured, a sub-stepped increment
+        // did not move the stress at all. Each sub-step now gets the moduli
+        // the un-sub-stepped call below gets: the committed G, K.
+        double nDGamma, nVoidRatio, nG = G, nK = K;                    // Ladruno WP-160
                 
         // create temporary variables
         cStress = CurStress; cStrain = CurStrain; cAlpha = CurAlpha; cFabric = CurFabric;
@@ -1447,6 +1452,8 @@ void ManzariDafalias::MaxStrainInc(const Vector& CurStress, const Vector& CurStr
             nEStrain, nStress, nAlpha, nFabric, nDGamma, nVoidRatio, nG, nK, nCe, nCep, nCepC);
 
             cStress = nStress; cStrain = nStrain; cAlpha = nAlpha; cFabric = nFabric;
+            cEStrain = nEStrain;    // Ladruno WP-160: was never advanced -- every sub-step
+                                    // restarted from the INITIAL elastic strain
         }
 
         NextElasticStrain    = nEStrain;
@@ -1503,6 +1510,10 @@ void ManzariDafalias::MaxEnergyInc(const Vector& CurStress, const Vector& CurStr
     }
 
     double TolE = 1.0e-4;
+    // Ladruno WP-160: the full-increment call below receives G, K by reference
+    // and RungeKutta4 (IntScheme 6) WRITES them, so keep the moduli it was
+    // handed for the two halves.
+    const double ladrunoG0 = G, ladrunoK0 = K;                          // Ladruno WP-160
 
     (this->*exp_int)(CurStress, CurStrain, CurElasticStrain, CurAlpha, CurFabric, alpha_in, NextStrain,
             NextElasticStrain, NextStress, NextAlpha, NextFabric, NextDGamma, NextVoidRatio, 
@@ -1520,7 +1531,11 @@ void ManzariDafalias::MaxEnergyInc(const Vector& CurStress, const Vector& CurStr
         Vector cStress(6), cStrain(6), cAlpha(6), cFabric(6), cAlpha_in(6), cEStrain(6);
         Vector nStrain(6) ,nEStrain(6), nStress(6), nAlpha(6), nFabric(6), nAlpha_in(6);
         Matrix nCe(6,6), nCep(6,6), nCepC(6,6);
-        double nDGamma, nVoidRatio, nG, nK;
+        // Ladruno WP-160: nG, nK were left UNINITIALISED and handed to both
+        // halves as their moduli (ForwardEuler / ModifiedEuler read them before
+        // writing them): IntScheme 4 measured non-deterministic, 0 exposed. Each half now
+        // gets the moduli the full-increment call got.
+        double nDGamma, nVoidRatio, nG = ladrunoG0, nK = ladrunoK0;  // Ladruno WP-160
         Vector n(6), d(6), b(6), R(6), dPStrain(6); 
         //double Cos3Theta, h, psi, alphaBtheta, alphaDtheta, b0, A, B, C, D;
                 
@@ -1537,6 +1552,9 @@ void ManzariDafalias::MaxEnergyInc(const Vector& CurStress, const Vector& CurStr
             nEStrain, nStress, nAlpha, nFabric, nDGamma, nVoidRatio, nG, nK, nCe, nCep, nCepC);
 
             cStress = nStress; cStrain = nStrain; cAlpha = nAlpha; cFabric = nFabric;
+            cEStrain = nEStrain;    // Ladruno WP-160: was never advanced -- the second half
+                                    // restarted from the INITIAL elastic strain
+            nG = ladrunoG0; nK = ladrunoK0;   // Ladruno WP-160: RungeKutta4 wrote them
         }
 
         NextElasticStrain    = nEStrain;

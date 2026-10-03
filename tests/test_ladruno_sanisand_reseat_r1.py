@@ -131,7 +131,7 @@ def test_census_columns(runs):
     assert tot(13, "hFloored") > 0 and tot(13, "reseatHeld") > 0
     assert tot(13, "hSoftCapped") > 0      # the cap binds on the wall states (oracle: min H/X 0.17 without it)
     assert tot(16, "hSoftCapped") == 0     # no cap asked for
-    assert len(sr.SAS_NAMES) == 36
+    assert len(sr.SAS_NAMES) == 44         # WP-151's three, then WP-152's four + the review's four
 
 
 # ----------------------------------------------------------------------- (f)
@@ -217,14 +217,14 @@ def test_R1_options_cross_the_datastore_wire():
             assert ops.analyze(1) == 0, step
         mid = S._stress()
         opt_saved = list(ops.eleResponse(1, "material", 1, "sasOptions"))
-        assert opt_saved[6:] == [1.0, 1.0, 0.5], opt_saved
+        assert opt_saved[6:9] == [1.0, 1.0, 0.5], opt_saved
         try:
             ops.database("File", dbpath)
         except Exception as exc:                       # noqa: BLE001
             pytest.skip(f"database() unsupported in this build: {exc}")
         ops.save(1)
         S._build("LadrunoSANISAND", tag, base)          # skeleton WITHOUT the flags
-        assert list(ops.eleResponse(1, "material", 1, "sasOptions"))[6:] == [0.0, 0.0, 0.0]
+        assert list(ops.eleResponse(1, "material", 1, "sasOptions"))[6:9] == [0.0, 0.0, 0.0]
         ops.database("File", dbpath)
         ops.restore(1)
         after = S._stress()
@@ -256,7 +256,8 @@ def test_every_option_family_crosses_the_wire_at_once_after_the_868_merge():
             "-cppmHalvings", 5, "-cppmLineSearch", "on", "-cppmStart", "explicit")
     sas = (129, 0, 1, 1e-7, 1e-4, "-Presidual", 0.0, "-errFloor", 3.0, "-alphaBoundTol", 0.2,
            "-alphaProject", 1, "-alphaEntryTol", 3.0,
-           "-sasHFloor", 0.5, "-sasReseatHyst", 2.0, "-sasSoftCap", 0.25)
+           "-sasHFloor", 0.5, "-sasReseatHyst", 2.0, "-sasSoftCap", 0.25,
+           "-sasTensionCutoff", 0.3, 0.9)          # WP-152's two options too (no point separates here)
     cppm_def = (2, 2, 1, 1e-7, 1e-7)
     sas_def = (129, 0, 1, 1e-7, 1e-4, "-Presidual", 0.0)
     g = lambda e, name: list(ops.eleResponse(e, "material", 1, name))
@@ -277,7 +278,7 @@ def test_every_option_family_crosses_the_wire_at_once_after_the_868_merge():
     cppm_saved, sas_opts_saved = g(1, "cppmOptions"), g(2, "sasOptions")
     widths = (len(g(1, "substepStats")), len(g(2, "sasStats")))
     # #868's wire order, then WP-151's three
-    assert sas_opts_saved == [3.0, 0.2, 1.0, 0.0, 0.0, 3.0, 0.5, 2.0, 0.25], sas_opts_saved
+    assert sas_opts_saved == [3.0, 0.2, 1.0, 0.0, 0.0, 3.0, 0.5, 2.0, 0.25, 0.3, 0.9, 0.9], sas_opts_saved   # p0max = p_contact
     assert cppm_saved[:6] == [1.0, 5.0, 1.0, 0.0, 1.0, 0.0], cppm_saved
     with tempfile.TemporaryDirectory(prefix="ladruno_wp151_all_", ignore_cleanup_errors=True) as td:
         db = os.path.join(td, "db")
@@ -290,7 +291,7 @@ def test_every_option_family_crosses_the_wire_at_once_after_the_868_merge():
         ref = [g(1, "stress"), g(2, "stress")]
 
         t130._two_cube_model(cppm_def, sas_def)        # every option at its DEFAULT
-        assert g(2, "sasOptions") == [-1.0, 0.1, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0]
+        assert g(2, "sasOptions") == [-1.0, 0.1, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         assert g(1, "cppmOptions") != cppm_saved
         ops.database("File", db)
         ops.restore(1)
@@ -323,7 +324,7 @@ def test_the_remaining_sas_options_cross_the_wire_by_value():
     for _ in range(5):
         assert ops.analyze(1) == 0
     saved = g("sasOptions")
-    assert saved == [-1.0, 0.1, 0.0, 1.0, 1.0, 2.0, 1.5, 0.0, 0.3], saved
+    assert saved == [-1.0, 0.1, 0.0, 1.0, 1.0, 2.0, 1.5, 0.0, 0.3, 0.0, 0.0, 0.0], saved
     with tempfile.TemporaryDirectory(prefix="ladruno_wp151_j_", ignore_cleanup_errors=True) as td:
         db = os.path.join(td, "db")
         try:
@@ -332,7 +333,7 @@ def test_the_remaining_sas_options_cross_the_wire_by_value():
             pytest.skip(f"database() unsupported in this build: {exc}")
         ops.save(1)
         t130._two_cube_model(cppm_def, sas_def)
-        assert g("sasOptions") == [-1.0, 0.1, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0]
+        assert g("sasOptions") == [-1.0, 0.1, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         ops.database("File", db)
         ops.restore(1)
         got = g("sasOptions")
