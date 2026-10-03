@@ -1,0 +1,2 @@
+Stopped by the orchestrator (owner: moved to Esmeralda), last completed step 70 (s/B 0.017373, q 443.279 kPa),
+2026-09-28. Not to be restarted. Continuation = Esmeralda leg E_B (build 7936ed6e0).

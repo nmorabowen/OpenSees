@@ -1,0 +1,4 @@
+PROVISIONAL, pre-review build cdf43685f (source = WP-129 5c8dcd0e0), stopped 2026-09-27 ~19:55 at step 45
+(s/B 0.01104, q 311.9 kPa) on orchestrator instruction: that build has the confirmed alpha-bounding dead-end
+defect and a non-error-controlled elastic path. Dead-end census up to the stop: ZERO points flagged (no refusal
+of any kind, no committed rho_alpha > 1.1; max rho_alpha 0.966). Superseded by the rerun on beb6d8333.
