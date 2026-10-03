@@ -30,8 +30,10 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       "HardeningLawStorage is a process-global", "`ManzariDafalias::mElastFlag` is STATIC",
       "`getCommitTag()` is a GLOBAL monotonic counter". Open instance: PR #841 (SANISAND).
 - [ ] `getCopy` makes every Gauss point an instance: a "budget" or latch is per instance unless
-      you deliberately make it process-wide. A latch set in place must be copied by `getCopy`,
-      and a loud failure must not latch. Quirks: "getCopy must PROPAGATE the latch".
+      you deliberately make it process-wide. A WORK-DONE latch set in place must be copied by `getCopy`,
+      and a loud failure must not latch. A REFUSAL latch (bound to one integration point) is NOT
+      copied: a clone starts clear, and only sendSelf keeps it. Quirks: "getCopy must PROPAGATE the
+      latch", "getCopy of a LATCHED LadrunoNorSand".
 
 - [ ] Vanilla materials that keep per-material data in static `...x[matN]` arrays (PDMY/PIMY
       family): a new field needs the constructor store, the `matCount%20` copy loop AND the
@@ -92,6 +94,7 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 
 - [ ] Don't lift a damage/softening material with the generic `LogStrainNDMaterial` wrapper.
       Quirks: "The generic LogStrainNDMaterial wrapper is UNSOUND".
+- [ ] A wrapper around a refusing material (LogStrain, Staged*, InitDefGrad) must forward `LADRUNO_MATERIAL_REFUSED` from the trial WITHOUT touching its staged state, and commit the inner first without advancing its own state on a refusing commit. Quirks: "`LogStrainNDMaterial::setTrialF` DROPPED the inner's refusal".
 - [ ] Crack-band `lch` comes from the element through a global. Quirks: "Crack-band materials
       read element size".
 
@@ -108,12 +111,22 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 - [ ] A tangent READ as "algorithmic" is not verified: compare it with a finite difference of the
       return map (the replay facility gives one at a real state). Quirks: "`TanType 2` tangent is
       MINUS the derivative of its own return map" (WP-130).
+- [ ] Kernel-vs-oracle parity: the tangent at an exact Lode corner or near the vertex is
+      round-off-limited (~1e-8) in the oracle itself; gate those bands separately, measure
+      per-step increments against the path scale, and gate iteration counts. Quirks: "TANGENT
+      parity at an exact Lode corner". Parity is a MODERATE-step statement (<= ~3e-3 strain; at 1e-2 both codes
+      decide on round-off), the iteration-count gate applies to the fixed paths only, and near-coalescent
+      eigenvalues are a third tangent band. Quirks: "Kernel-vs-O2 PARITY is a MODERATE-STEP statement",
+      "THIRD round-off band".
+- [ ] A kernel tangent taken w.r.t. the independent TENSOR shear component needs its shear COLUMNS halved by an
+      engineering-shear shell (unlike `LadrunoJ2Kernel`). Quirks: "C is d(sigma_tensor)/d(eps_tensor)".
 - [ ] Pin a number only from a step a RESIDUAL test converged, and re-measure pins after merging
       `ladruno`. A determinism gate needs no convergence: use `FixedNumIter`. Quirks: "where ONE
       tangent stopped".
 - [ ] **[lint]** A `zone_a` test that branches on the platform declares `# ci-coverage:` (L8): PR CI
       is Ubuntu, so a win32-only leg never runs there. Gate only the MKL-specific leg. Quirks:
       "A win32-only `zone_a` test is NEVER run by PR CI".
+- [ ] An inner material wrapped by `LogStrain` should provide its own trial elastic strain (mixin `LadrunoElasticStrainProvider`, NDMaterial FIRST base, engineering Voigt) unless it is linear-elastic: otherwise the wrapper's `inv(D0):tau` recovery is wrong. Quirks: "The `LadrunoElasticStrainProvider` mixin".
 
 Found a new trap? Add it to `LEDGER_quirks.md`, then add one line here pointing to it. If the
 trap has a greppable pattern, add a rule to `ci/check_quirk_patterns.py` instead.

@@ -1,0 +1,33 @@
+constraint map: 2000 random u per configuration decode to admissible sets accepted by O2 validate()
+synthetic written: ['/mnt/deadmanschest/nmorabowen/wp144/repo/Ladruno_files/testbed/norsand_calib/out/synthetic/syn_PS_s49_e0716.csv', '/mnt/deadmanschest/nmorabowen/wp144/repo/Ladruno_files/testbed/norsand_calib/out/synthetic/syn_PS_s4.9_e0714.csv']; n_res 188; |r(truth)| 0.000e+00; one residual eval 2.43 s
+[rho_pinned] 4 starts, 2089 s wall; best cost 6.428e-22; recovered by 1/4 starts; max rel err 1.16e-12 -> PASS
+    chi      true -3  fit -3  rel 4.44e-15
+    h        true  150  fit  150  rel 1.24e-13
+    N        true  0.3  fit  0.3  rel 1.16e-12
+    N_bar    true  0.2  fit  0.2  rel 2.93e-13
+    rho_bar  true  0.75  fit  0.75  rel 7.18e-14
+    start  0: cost 6.428e-22  max rel err 1.16e-12  nfev   30  980 s  status 3
+    start  2: cost 1.065e+01  max rel err 3.86e-01  nfev   37  1122 s  status 3
+    start  1: cost 1.097e+04  max rel err 1.20e+00  nfev   24  558 s  status 3
+    start  3: cost 1.636e+04  max rel err 1.12e+00  nfev   24  2089 s  status 3
+    Jacobian (d r / d ln theta) singular values [639.17735287 241.51414176  54.71182179   7.30305181   4.63390276]; condition 1.379e+02 (25 s)
+    weakest direction {'chi': 0.02778138370431279, 'h': 0.23930743479814773, 'N': -0.9382598890166488, 'N_bar': 0.2442982681223368, 'rho_bar': 0.04412349968776823}
+    profile chi: x0.95: 7.288e+00  x1.05: 7.859e+00   (287 s)
+    profile h: x0.95: 3.671e-01  x1.05: 6.357e-01   (152 s)
+[six] 4 starts, 2205 s wall; best cost 1.831e-22; recovered by 2/4 starts; max rel err 2.63e-13 -> PASS
+    chi      true -3  fit -3  rel 4.44e-15
+    h        true  150  fit  150  rel 6.86e-14
+    N        true  0.3  fit  0.3  rel 2.63e-13
+    N_bar    true  0.2  fit  0.2  rel 1.05e-13
+    rho_bar  true  0.75  fit  0.75  rel 0.00e+00
+    rho      true  0.712  fit  0.712  rel 1.34e-14
+    start  1: cost 1.831e-22  max rel err 2.63e-13  nfev   31  826 s  status 3
+    start  2: cost 4.512e-22  max rel err 8.42e-13  nfev   48  1419 s  status 3
+    start  3: cost 7.587e+00  max rel err 3.24e-01  nfev   27  2109 s  status 3
+    start  0: cost 3.977e+01  max rel err 6.26e-01  nfev   41  2205 s  status 3
+    Jacobian (d r / d ln theta) singular values [943.15367482 318.97274248  58.65478817  18.91656618   6.42738649
+   4.62679905]; condition 2.038e+02 (32 s)
+    weakest direction {'chi': -0.025931481265532623, 'h': -0.24472442913228565, 'N': 0.9277062640123135, 'N_bar': -0.27828447585023874, 'rho_bar': -0.0358409507936103, 'rho': -0.008472102722251712}
+    profile chi: x0.95: 7.118e+00  x1.05: 5.554e+00   (327 s)
+    profile h: x0.95: 3.567e-01  x1.05: 3.261e-01   (217 s)
+SMOKE PASS  total wall 5339 s

@@ -64,6 +64,15 @@
 // (J2, Drucker–Prager, …) and reproduces de Souza Neto Box 14.3/14.4 exactly;
 // hardening persists naturally inside the inner. v1 assumes a LINEAR-elastic inner
 // law (so Cᵉ = inv(initial tangent) is constant and the εᵉ recovery is exact).
+// v2 (Ladruno WP-144 G2, owner decision 2026-10-01): an inner implementing the mixin
+// LadrunoElasticStrainProvider (LadrunoElasticStrainProvider.h; LadrunoNorSand, whose
+// hyperelastic moduli are pressure-dependent) PROVIDES its trial εᵉ and the wrapper
+// uses it in place of Cᵉ:τ; every other inner takes the unchanged v1 path.
+// REFUSAL PROPAGATION (Ladruno WP-144, G2 close): setTrialF returns LADRUNO_MATERIAL_REFUSED when the
+// inner's setTrialStrain does (LadrunoMaterialStatus.h), without touching the staged state, and
+// commitState() forwards a refusing inner commit WITHOUT advancing bᵉ / F_n. This is what lets the
+// ADR-86b step cut reach -geom finite; before it the wrapper dropped the code and committed anyway.
+// Any other inner return code is still ignored (ADR-33/34), so a non-refusing inner is bit-identical.
 //
 // Reference algorithm + protocol verified against the numpy oracle in
 // tests/logstrain_reference.py and tests/test_logstrain_plastic_protocol.py.
@@ -74,6 +83,12 @@
 #include <FiniteStrainNDMaterial.h>
 #include <Matrix.h>
 #include <Vector.h>
+
+// Ladruno WP-144 (G2 close): construction-time diagnostic shared by the nDMaterial LogStrain and
+// LogStrain2D factories. Warns when the inner is a StagedStrain wrapping a LadrunoElasticStrainProvider
+// (LadrunoNorSand): the wrapper then cannot see the provider and takes the v1 inv(D0):tau recovery.
+class NDMaterial;
+void ladrunoWarnStagedProviderInner(const char *cmd, int tag, NDMaterial &inner);
 
 class LogStrainNDMaterial : public FiniteStrainNDMaterial
 {
@@ -137,6 +152,11 @@ class LogStrainNDMaterial : public FiniteStrainNDMaterial
   Vector henckyStrain;         // εᵉᵗʳ (6, engineering shear)
   Matrix aTangent;             // spatial tangent (6×6)
   double Jdet;                 // det F
+
+  // Ladruno WP-144 (G2 close): the inner REFUSED the last trial (LADRUNO_MATERIAL_REFUSED). The staged
+  // trial bᵉ / fed strain / stress then belong to an EARLIER trial, so commitState() must not advance
+  // from them. Set by setTrialF, cleared by the next accepted setTrialF / revert. Not sent, not copied.
+  bool trialRefused;
 
   void setIdentity(double M[9]);
 };

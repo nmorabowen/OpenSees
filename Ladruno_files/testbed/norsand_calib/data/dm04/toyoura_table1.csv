@@ -1,0 +1,19 @@
+# Dafalias & Manzari (2004) J. Eng. Mech. 130(6):622-634, Table 1 'Model Constants' (PDF page 5 = journal p. 626); read visually from a 250-dpi render.
+# Calibrated by DM04 to Verdugo & Ishihara (1996) triaxial data on Toyoura sand (p'=100-3000 kPa, D_r 18.5-63.7 %, e 0.735-0.907; text p. 632).
+# p_at is NOT tabulated in DM04; G0 is dimensionless (multiplies p_at). Every dimensionless constant here matches the cluster's TOYOURA set and gate0_toyoura_oracle.py docstring.
+group,constant,symbol,value,role_equation
+Elasticity,G0,G0,125,"G = G0 p_at (2.97-e)^2/(1+e) (p/p_at)^0.5 (Table 2, p. 628)"
+Elasticity,nu,nu,0.05,K = 2(1+nu)G/(3(1-2nu)) (Table 2)
+Critical state,M,M,1.25,triaxial compression CSL slope q/p
+Critical state,c,c,0.712,"M_e/M_c, extension/compression ratio (Eq. 16)"
+Critical state,lambda_c,lambda_c,0.019,CSL e_c = e0 - lambda_c (p_c/p_at)^xi (Table 2)
+Critical state,e0,e0,0.934,"CSL intercept (e_c at p = 0), NOT the initial void ratio"
+Critical state,xi,xi,0.7,CSL exponent
+Yield surface,m,m,0.01,yield-cone opening (Eq. 13)
+Plastic modulus,h0,h0,7.05,b0 = G0 h0 (1 - c_h e)(p/p_at)^-0.5 (Table 2)
+Plastic modulus,ch,c_h,0.968,idem
+Plastic modulus,nb,n^b,1.1,M^b = M exp(-n^b psi) (Eq. 9)
+Dilatancy,A0,A0,0.704,A_d = A0 (1 + <z:n>) (Eq. 27)
+Dilatancy,nd,n^d,3.5,M^d = M exp(n^d psi) (Eq. 10)
+Fabric-dilatancy,zmax,z_max,4,Eq. 26 (cyclic only)
+Fabric-dilatancy,cz,c_z,600,Eq. 26 (cyclic only)

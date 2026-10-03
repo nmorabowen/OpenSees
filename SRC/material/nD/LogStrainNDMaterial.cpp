@@ -42,12 +42,42 @@
 #include <Information.h>
 #include <Response.h>
 #include <MaterialResponse.h>
+#include <LadrunoElasticStrainProvider.h>   // Ladruno WP-144 G2: v2 elastic-strain provider mixin
+#include <LadrunoMaterialStatus.h>          // Ladruno WP-144 G2 close: LADRUNO_MATERIAL_REFUSED, commit-refusal seam
+#include <StagedStrainNDMaterial.h>         // Ladruno WP-144 G2 close: staged-provider construction warning
 #include <OPS_Globals.h>
 #include <elementAPI.h>
 #include <string.h>
 #include <stdlib.h>
 
 using namespace logstrain_kernel;
+
+// =========================================================================== //
+//  Ladruno WP-144 (G2 close): StagedStrain-over-provider construction warning  //
+//                                                                             //
+//  The wrapper finds the elastic-strain provider by dynamic_cast on its DIRECT //
+//  inner. StagedStrain sits between LogStrain and the provider in a staged    //
+//  deck (LogStrain -> StagedStrain -> LadrunoNorSand) and does not forward    //
+//  the mixin, so the cast fails and the wrapper silently uses inv(D0):tau --   //
+//  wrong for a pressure-dependent hyperelastic inner. InitDefGrad is not the   //
+//  same case: it wraps LogStrain from OUTSIDE and never sits in between.       //
+//  Called from the Tcl/Python factories only (not the ctor, which getCopy runs //
+//  per Gauss point), so it prints once per command.                            //
+// =========================================================================== //
+void ladrunoWarnStagedProviderInner(const char *cmd, int tag, NDMaterial &inner)
+{
+  StagedStrainNDMaterial *staged = dynamic_cast<StagedStrainNDMaterial *>(&inner);
+  if (staged == 0) return;
+  if (dynamic_cast<LadrunoElasticStrainProvider *>(&inner) != 0) return;   // not the case today
+  if (dynamic_cast<const LadrunoElasticStrainProvider *>(staged->getInner()) == 0) return;
+  opserr << "WARNING nDMaterial " << cmd << " " << tag
+         << " : the inner is a StagedStrain wrapping a LadrunoElasticStrainProvider material "
+            "(e.g. LadrunoNorSand). StagedStrain does not forward the provider, so the wrapper "
+            "falls back to the elastic-strain recovery inv(D0):tau, which is WRONG for a "
+            "pressure-dependent hyperelastic inner and makes the committed elastic strain drift. "
+            "Put the finite-strain wrapper directly on the provider (LogStrain -> LadrunoNorSand) "
+            "and stage OUTSIDE it with InitDefGrad.\n";
+}
 
 // =========================================================================== //
 //  Factory:  nDMaterial LogStrain $tag $innerTag                              //
@@ -83,6 +113,7 @@ void *OPS_LogStrainNDMaterial(void)
     return 0;
   }
   delete probe;   // the constructor makes its own copy
+  ladrunoWarnStagedProviderInner("LogStrain", iData[0], *inner);   // Ladruno WP-144 (G2 close)
   return new LogStrainNDMaterial(iData[0], *inner);
 }
 
@@ -96,7 +127,7 @@ void LogStrainNDMaterial::setIdentity(double M[9]) {
 
 LogStrainNDMaterial::LogStrainNDMaterial(int tag, NDMaterial &inner)
   : FiniteStrainNDMaterial(tag, ND_TAG_LogStrainNDMaterial),
-    theMaterial(0), sigmaCauchy(6), henckyStrain(6), aTangent(6, 6), Jdet(1.0)
+    theMaterial(0), sigmaCauchy(6), henckyStrain(6), aTangent(6, 6), Jdet(1.0), trialRefused(false)
 {
   if (strncmp(inner.getType(), "ThreeDimensional", 80) == 0)
     theMaterial = inner.getCopy();
@@ -120,7 +151,7 @@ LogStrainNDMaterial::LogStrainNDMaterial(int tag, NDMaterial &inner)
 
 LogStrainNDMaterial::LogStrainNDMaterial()
   : FiniteStrainNDMaterial(0, ND_TAG_LogStrainNDMaterial),
-    theMaterial(0), sigmaCauchy(6), henckyStrain(6), aTangent(6, 6), Jdet(1.0)
+    theMaterial(0), sigmaCauchy(6), henckyStrain(6), aTangent(6, 6), Jdet(1.0), trialRefused(false)
 {
   setIdentity(Fn);
   setIdentity(Be_n);
@@ -140,6 +171,7 @@ LogStrainNDMaterial::~LogStrainNDMaterial()
 // =========================================================================== //
 int LogStrainNDMaterial::setTrialF(const Matrix &F)
 {
+  trialRefused = false;                                  // Ladruno WP-144 (G2 close)
   for (int i = 0; i < 3; i++)
     for (int j = 0; j < 3; j++) Ftrial9[3*i+j] = F(i, j);
 
@@ -171,7 +203,18 @@ int LogStrainNDMaterial::setTrialF(const Matrix &F)
   static Vector epsFeedV(6);
   for (int k = 0; k < 6; k++) epsFeedV(k) = epsFeed_n[k] + (epsTr6[k] - epsN6[k]);
 
-  theMaterial->setTrialStrain(epsFeedV);
+  // Ladruno WP-144 (G2 close, owner decision 2026-10-02): PROPAGATE the inner's REFUSAL. This return
+  // code used to be dropped, so a refusing inner (LadrunoNorSand past its substep cap) reached the
+  // element as a SUCCESSFUL setTrialF, the points latched at commit, and the ADR-86b step cut was
+  // unreachable on the finite route (-geom linear: -3 at the trial and the smaller retry returns 0;
+  // -geom finite: -4 latched, retry -4). ONLY the declared sentinel, not any negative code (ADR-33/34).
+  // The inner's trial is frozen at n on a refusal, so nothing below is meaningful: return BEFORE
+  // touching sigmaCauchy / aTangent / Be_trialUpd / epsFeedTrial. On a 0 (or any other) return this
+  // block is a no-op, so every non-refusing inner is bit-identical.
+  if (theMaterial->setTrialStrain(epsFeedV) == LADRUNO_MATERIAL_REFUSED) {
+    trialRefused = true;
+    return LADRUNO_MATERIAL_REFUSED;     // every element tests `< 0` (LadrunoBrick::updateFinite etc.)
+  }
   const Vector &tauV = theMaterial->getStress();   // Kirchhoff τ (6)
   const Matrix &D6m  = theMaterial->getTangent();  // ∂τ/∂εᵉ (6×6, elastoplastic)
   double tau6[6], D6[36];
@@ -187,18 +230,28 @@ int LogStrainNDMaterial::setTrialF(const Matrix &F)
   for (int I = 0; I < 6; I++)
     for (int J = 0; J < 6; J++) aTangent(I, J) = c6[6*I+J];
 
-  // recover the updated elastic strain εᵉ_{n+1} = Cᵉ : τ (Cᵉ = inner elastic
-  // compliance = inv of its initial tangent — exact for a linear elastic inner,
-  // for both elastic and plastic steps since τ = Dᵉ:εᵉ always holds), then the
-  // committed bᵉ = exp[2 εᵉ_{n+1}]. (v1 assumes a linear-elastic inner law.)
-  static Matrix Ce(6, 6);
-  Matrix D0(theMaterial->getInitialTangent());
-  if (D0.Invert(Ce) < 0) {
-    opserr << "LogStrainNDMaterial::setTrialF - inner initial tangent not invertible\n";
-    return -1;
-  }
+  // updated elastic strain εᵉ_{n+1}, then the committed bᵉ = exp[2 εᵉ_{n+1}].
+  //  v2 (Ladruno WP-144 G2, owner decision 2026-10-01): an inner that carries its own
+  //  elastic strain (LadrunoElasticStrainProvider, e.g. LadrunoNorSand, whose
+  //  hyperelastic K, μ are pressure-dependent so τ ≠ D0:εᵉ) PROVIDES εᵉ_{n+1}
+  //  directly (engineering Voigt, its trial elastic strain).
+  //  v1 (every other inner, UNCHANGED): εᵉ_{n+1} = Cᵉ : τ with Cᵉ = inner elastic
+  //  compliance = inv of its initial tangent - exact for a LINEAR elastic inner,
+  //  for both elastic and plastic steps since τ = Dᵉ:εᵉ always holds.
   static Vector epsEnp1(6);
-  epsEnp1.addMatrixVector(0.0, Ce, tauV, 1.0);     // εᵉ_{n+1} = Cᵉ τ (eng. Voigt)
+  bool haveEpsE = false;
+  LadrunoElasticStrainProvider *prov =              // Ladruno WP-144 G2
+    dynamic_cast<LadrunoElasticStrainProvider *>(theMaterial);
+  if (prov != 0) haveEpsE = prov->ladrunoGetElasticStrain(epsEnp1);
+  if (!haveEpsE) {
+    static Matrix Ce(6, 6);
+    Matrix D0(theMaterial->getInitialTangent());
+    if (D0.Invert(Ce) < 0) {
+      opserr << "LogStrainNDMaterial::setTrialF - inner initial tangent not invertible\n";
+      return -1;
+    }
+    epsEnp1.addMatrixVector(0.0, Ce, tauV, 1.0);   // εᵉ_{n+1} = Cᵉ τ (eng. Voigt)
+  }
   double epsEnp16[6];
   for (int k = 0; k < 6; k++) epsEnp16[k] = epsEnp1(k);
   be_from_hencky_voigt(epsEnp16, Be_trialUpd);     // bᵉ to commit
@@ -242,13 +295,27 @@ const Matrix &LogStrainNDMaterial::getInitialTangent(void)
 // =========================================================================== //
 int LogStrainNDMaterial::commitState(void)
 {
+  // Ladruno WP-144 (G2 close): the INNER commits FIRST, and the wrapper advances bᵉ_n / F_n / the fed
+  // strain only if it accepted. The two are independent updates, so on a non-refusing inner this is
+  // bit-identical to the old order. A refusing inner commit (LadrunoNorSand latching a refused trial)
+  // returns LADRUNO_MATERIAL_REFUSED and has already declared it to Domain::commit()
+  // (ladrunoNoteCommitRefusal); advancing bᵉ here would put the wrapper one step ahead of its inner.
+  int rc = theMaterial->commitState();
+  if (rc == LADRUNO_MATERIAL_REFUSED) return rc;
+  if (trialRefused) {
+    // the trial was refused and a host committed anyway: the staged state is stale. The inner did not
+    // declare it (it returned something else), so declare it here.
+    ladrunoNoteCommitRefusal();
+    return LADRUNO_MATERIAL_REFUSED;
+  }
   for (int i = 0; i < 9; i++) { Fn[i] = Ftrial9[i]; Be_n[i] = Be_trialUpd[i]; }
   for (int k = 0; k < 6; k++) epsFeed_n[k] = epsFeedTrial[k];   // protocol state
-  return theMaterial->commitState();
+  return rc;
 }
 
 int LogStrainNDMaterial::revertToLastCommit(void)
 {
+  trialRefused = false;                                          // Ladruno WP-144 (G2 close)
   return theMaterial->revertToLastCommit();
 }
 
@@ -264,6 +331,7 @@ int LogStrainNDMaterial::revertToStart(void)
   henckyStrain.Zero();
   aTangent.Zero();
   Jdet = 1.0;
+  trialRefused = false;                                          // Ladruno WP-144 (G2 close)
   return theMaterial->revertToStart();
 }
 

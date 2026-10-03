@@ -189,6 +189,9 @@ using namespace OpenSees::Hash::literals;
 #include "LadrunoSANISAND.h"             // Ladruno — ManzariDafalias subclass with settable/wired/echoed p_residual, p_min (ADR 86)
 #include "LadrunoSANISAND3D.h"           // Ladruno — 3D wrapper for LadrunoSANISAND (ADR 86)
 #include "LadrunoSANISANDPlaneStrain.h"  // Ladruno — PlaneStrain wrapper for LadrunoSANISAND (ADR 86)
+#include "LadrunoNorSand.h"              // Ladruno WP-144 — NorSand (Andrade & Borja 2006 form)
+#include "LadrunoNorSand3D.h"            // Ladruno WP-144 — 3D wrapper for LadrunoNorSand
+#include "LadrunoNorSandPlaneStrain.h"   // Ladruno WP-144 — PlaneStrain wrapper for LadrunoNorSand
 #include "UWmaterials/PM4Sand.h"
 #include "UWmaterials/PM4Silt.h"
 #include "J2CyclicBoundingSurface.h"
@@ -1332,6 +1335,15 @@ TclPackageClassBroker::getNewNDMaterial(int classTag)
 
   case ND_TAG_LadrunoSANISANDPlaneStrain:         // Ladruno — PlaneStrain wrapper for LadrunoSANISAND (ADR 86)
     return new LadrunoSANISANDPlaneStrain();
+
+  case ND_TAG_LadrunoNorSand:                     // Ladruno WP-144 — NorSand (Andrade & Borja 2006 form)
+    return new LadrunoNorSand();
+
+  case ND_TAG_LadrunoNorSand3D:                   // Ladruno WP-144 — 3D wrapper for LadrunoNorSand
+    return new LadrunoNorSand3D();
+
+  case ND_TAG_LadrunoNorSandPlaneStrain:          // Ladruno WP-144 — PlaneStrain wrapper for LadrunoNorSand
+    return new LadrunoNorSandPlaneStrain();
 
   case ND_TAG_PM4Sand:
     return new PM4Sand();

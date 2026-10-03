@@ -13,6 +13,7 @@
 #   pytest     : str       path to the Zone-A pytest file (relative to repo root)
 #   tcl        : str       path to the Zone-A tcl file, OR "WAIVED(<reason>)"
 #   zone_b     : list|[]    Zone-B artifact paths (apeGmsh/LS-DYNA/perf)
+#   pytest_extra : list     (optional) further Zone-A pytest files of the same feature; not read by ci/check_manifest.py
 #   core_files : list       upstream core files touched (must carry // LADRUNO:)
 #   dispatch   : {tcl: bool, functionMap: bool}  both registries wired?
 #   status     : active | remediation | planned
@@ -2065,3 +2066,98 @@ features:
       Zero vanilla behavior change —
       every touched upstream file is registration-only.
       See Ladruno_implementation/91_ladruno_shell_stiffness_modifiers_adr.md.
+
+  - feature: LadrunoNorSand
+    classtag: 33023          # ND_TAG family; NorSand (Andrade & Borja 2006) base class + 3D-capable prototype; after ND_TAG_LadrunoSANISANDPlaneStrain=33021 (33022 reserved ADR-90). Numerically equals EigenSOLVER_TAGS_FeastEigenSolver 33023 - different registry, NOT a collision
+    tag_symbol: ND_TAG_LadrunoNorSand
+    pr: null
+    feature_class: material
+    required_tiers: [T0m, T1]
+    pytest: tests/test_ladruno_norsand.py   # the shell contract: construction/refusals, state plumbing, database round trip, getCopy isolation + latch, getInitialTangent, bounded work, the commit latch, one classic-Tcl smoke
+    pytest_extra:
+      - tests/test_ladruno_norsand_element.py   # element level: assembled-tangent finite differences (brick, PlaneStrain quad), Newton order, mass
+      - tests/test_ladruno_norsand_k1.py        # K1 benchmark (Zone A, drives the public interface)
+    tcl: WAIVED(no separate .tcl gate file; the classic-Tcl dispatch IS wired (the strcmp ladder in TclModelBuilderNDMaterialCommand.cpp) and is exercised by test_tcl_subprocess_smoke, a short Tcl deck run through OpenSees.exe, inside tests/test_ladruno_norsand.py)
+    core_files:
+      - SRC/classTags.h
+      - SRC/material/nD/TclModelBuilderNDMaterialCommand.cpp
+      - SRC/interpreter/OpenSeesNDMaterialCommands.cpp
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/runtime/runtime/TclPackageClassBroker.cpp
+      - SRC/material/nD/CMakeLists.txt
+    zone_b:                  # Esmeralda / local py3.12 venv; not part of the Zone-A pytest selection
+      - tests/ladrunonorsand_kernel_check.cpp                                        # g++ self-check driver of the header-only kernel
+      - Ladruno_files/testbed/norsand_oracle/kernel_parity                           # kernel vs the O2 oracle, step by step (test_kernel_parity.py) + mutate_kernel.sh: the 15-mutant gate
+      - Ladruno_files/testbed/norsand_oracle/g2                                      # shell vs O2 through the public interface, LogStrain(LadrunoNorSand) (run from this directory); mutation_gate.md
+      - Ladruno_files/testbed/norsand_oracle/tests                                   # G1: the oracles O1 (rate) and O2 (algorithm) against each other and the sheet (oracle-only)
+    dispatch: {tcl: true, functionMap: true}
+    status: active           # WP-144 G2 passing, pending ship (banner line and warrant package at ship)
+    notes: >
+      WP-144 (G2 passing, pending ship; plan Ladruno_implementation/144_ladruno_norsand_plan.md, sheet
+      144a_norsand_equation_sheet.md). NorSand in the Andrade & Borja 2006 form on a header-only,
+      OpenSees-free kernel (SRC/material/nD/LadrunoNorSandKernel.h) + a thin NDMaterial shell
+      (LadrunoNorSand.{h,cpp}); 3D / PlaneStrain wrappers like the SANISAND family. The base class
+      (33023) is itself a complete 3D material and its getCopy(type) hands out the wrappers.
+      NON-symmetric consistent tangent (unsymmetric solver). Refusal: LADRUNO_MATERIAL_REFUSED at the
+      trial, the WP-99 commit-refusal seam + a per-point latch at commit (kept by sendSelf, NOT inherited
+      by getCopy). v0 is a separate committed state variable; v = v0 exp(tr eps). Implements the
+      LadrunoElasticStrainProvider mixin (LogStrain takes eps^e from the kernel; G2 owner decision 2).
+      Gates: kernel_parity/mutate_kernel.sh 15 of 15 mutants killed; the shell gate g2/mutation_gate.md
+      10 of 10 killed (M1-M7 plus MX1 provider route disabled, MX2 provider shear un-doubled, MX3
+      Domain::commit counter reset removed). Not yet in the banner (added at ship).
+
+  - feature: LadrunoNorSand3D
+    classtag: 33024          # ND_TAG family; ThreeDimensional wrapper for LadrunoNorSand; after ND_TAG_LadrunoNorSand=33023
+    tag_symbol: ND_TAG_LadrunoNorSand3D
+    pr: null
+    feature_class: material
+    required_tiers: [T0m, T1]
+    pytest: tests/test_ladruno_norsand.py   # the shell contract: construction/refusals, state plumbing, database round trip, getCopy isolation + latch, getInitialTangent, bounded work, the commit latch, one classic-Tcl smoke
+    pytest_extra:
+      - tests/test_ladruno_norsand_element.py   # element level: assembled-tangent finite differences (brick, PlaneStrain quad), Newton order, mass
+      - tests/test_ladruno_norsand_k1.py        # K1 benchmark (Zone A, drives the public interface)
+    tcl: WAIVED(no separate .tcl gate file; the classic-Tcl dispatch IS wired (the strcmp ladder in TclModelBuilderNDMaterialCommand.cpp) and is exercised by test_tcl_subprocess_smoke, a short Tcl deck run through OpenSees.exe, inside tests/test_ladruno_norsand.py)
+    core_files:
+      - SRC/classTags.h
+      - SRC/material/nD/TclModelBuilderNDMaterialCommand.cpp
+      - SRC/interpreter/OpenSeesNDMaterialCommands.cpp
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/runtime/runtime/TclPackageClassBroker.cpp
+      - SRC/material/nD/CMakeLists.txt
+    zone_b:                  # Esmeralda / local py3.12 venv; not part of the Zone-A pytest selection
+      - tests/ladrunonorsand_kernel_check.cpp                                        # g++ self-check driver of the header-only kernel
+      - Ladruno_files/testbed/norsand_oracle/kernel_parity                           # kernel vs the O2 oracle, step by step (test_kernel_parity.py) + mutate_kernel.sh: the 15-mutant gate
+      - Ladruno_files/testbed/norsand_oracle/g2                                      # shell vs O2 through the public interface, LogStrain(LadrunoNorSand) (run from this directory); mutation_gate.md
+      - Ladruno_files/testbed/norsand_oracle/tests                                   # G1: the oracles O1 (rate) and O2 (algorithm) against each other and the sheet (oracle-only)
+    dispatch: {tcl: true, functionMap: true}
+    status: active           # WP-144 G2 passing, pending ship (banner line and warrant package at ship)
+    notes: >
+      Wrapper of ND_TAG_LadrunoNorSand (see that row); fixes the classTag and the 3D view (order 6).
+
+  - feature: LadrunoNorSandPlaneStrain
+    classtag: 33025          # ND_TAG family; PlaneStrain wrapper for LadrunoNorSand; after ND_TAG_LadrunoNorSand3D=33024. Numerically equals EigenSOE_TAGS_LadrunoCMS 33025 - different registry, NOT a collision
+    tag_symbol: ND_TAG_LadrunoNorSandPlaneStrain
+    pr: null
+    feature_class: material
+    required_tiers: [T0m, T1]
+    pytest: tests/test_ladruno_norsand.py   # the shell contract: construction/refusals, state plumbing, database round trip, getCopy isolation + latch, getInitialTangent, bounded work, the commit latch, one classic-Tcl smoke
+    pytest_extra:
+      - tests/test_ladruno_norsand_element.py   # element level: assembled-tangent finite differences (brick, PlaneStrain quad), Newton order, mass
+      - tests/test_ladruno_norsand_k1.py        # K1 benchmark (Zone A, drives the public interface)
+    tcl: WAIVED(no separate .tcl gate file; the classic-Tcl dispatch IS wired (the strcmp ladder in TclModelBuilderNDMaterialCommand.cpp) and is exercised by test_tcl_subprocess_smoke, a short Tcl deck run through OpenSees.exe, inside tests/test_ladruno_norsand.py)
+    core_files:
+      - SRC/classTags.h
+      - SRC/material/nD/TclModelBuilderNDMaterialCommand.cpp
+      - SRC/interpreter/OpenSeesNDMaterialCommands.cpp
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/runtime/runtime/TclPackageClassBroker.cpp
+      - SRC/material/nD/CMakeLists.txt
+    zone_b:                  # Esmeralda / local py3.12 venv; not part of the Zone-A pytest selection
+      - tests/ladrunonorsand_kernel_check.cpp                                        # g++ self-check driver of the header-only kernel
+      - Ladruno_files/testbed/norsand_oracle/kernel_parity                           # kernel vs the O2 oracle, step by step (test_kernel_parity.py) + mutate_kernel.sh: the 15-mutant gate
+      - Ladruno_files/testbed/norsand_oracle/g2                                      # shell vs O2 through the public interface, LogStrain(LadrunoNorSand) (run from this directory); mutation_gate.md
+      - Ladruno_files/testbed/norsand_oracle/tests                                   # G1: the oracles O1 (rate) and O2 (algorithm) against each other and the sheet (oracle-only)
+    dispatch: {tcl: true, functionMap: true}
+    status: active           # WP-144 G2 passing, pending ship (banner line and warrant package at ship)
+    notes: >
+      Wrapper of ND_TAG_LadrunoNorSand (see that row); fixes the classTag and the PlaneStrain view (order 3, {11,22,12}; sigma_33 exposed through getStressZZ).
