@@ -1,8 +1,8 @@
 /* ********************************************************************** **
 **  Ladruno recorder — modular sibling of MPCORecorder (frozen).     **
-**  Phase-1 skeleton: registers `recorder ladruno`, writes a          **
-**  schema-v1-valid .ladruno (INFO + MODEL_STAGE + MODEL/NODES). Node,    **
-**  element, domain results + envelopes land in later phases.            **
+**  `recorder ladruno`: schema-v1 .ladruno files — INFO, one             **
+**  MODEL_STAGE per topology change, node/element/domain/region results  **
+**  as chunked [T x nIds x nComp] series, envelopes, per-rank part files. **
 **                                                                        **
 **  All reusable machinery lives in namespace ladruno (Ladruno_*.h) to avoid  **
 **  ODR clashes with the frozen MPCORecorder translation unit.            **
@@ -87,6 +87,10 @@ private:
 	void finalizeAllSinks();
 	// WP-164: H5Fflush + restart the -flush cadence clock.
 	void flushFile();
+	// WP-165 (R6): hash of the node/element/pressure-constraint set (tags and
+	// object addresses). A domain-change stamp move rebuilds the MODEL_STAGE only
+	// when this changed.
+	unsigned long long topologyFingerprint() const;
 
 	class private_data;
 	private_data* m_data;

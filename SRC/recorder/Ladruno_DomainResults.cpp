@@ -67,31 +67,29 @@ namespace ladruno {
 	/* EnergyBalanceSource                                                   */
 	/* ===================================================================== */
 
-	EnergyBalanceSource::EnergyBalanceSource(const detail::ProcessInfo& /*info*/)
+	EnergyBalanceSource::EnergyBalanceSource(const detail::ProcessInfo& /*info*/,
+	                                         EnergyState* state)
 		: m_per_region(false)
 		, m_ids()
 		, m_schema()
-		, m_model_acc()
-		, m_region_acc()
-		, m_prev_time(0.0)
-		, m_first(true)
-		, m_velScratch()
+		, m_own()
+		, m_state(state ? state : &m_own)
 	{
 		m_ids.push_back(0); // synthetic domain id {0}
 		buildSchema();
 	}
 
 	EnergyBalanceSource::EnergyBalanceSource(const detail::ProcessInfo& /*info*/,
-	                                         const std::vector<int>& region_tags)
+	                                         const std::vector<int>& region_tags,
+	                                         EnergyState* state)
 		: m_per_region(true)
 		, m_ids(region_tags)
 		, m_schema()
-		, m_model_acc()
-		, m_region_acc(region_tags.size())
-		, m_prev_time(0.0)
-		, m_first(true)
-		, m_velScratch()
+		, m_own()
+		, m_state(state ? state : &m_own)
 	{
+		if (m_state->regions.size() != region_tags.size())
+			m_state->regions.resize(region_tags.size());
 		buildSchema();
 	}
 
@@ -108,47 +106,64 @@ namespace ladruno {
 		m_schema.result_type = detail::ResultType::Generic;
 	}
 
-	void EnergyBalanceSource::evaluate(const detail::ProcessInfo& info,
-	                                   std::vector<double>& buffer)
+	void EnergyBalanceSource::advance(const detail::ProcessInfo& info)
 	{
+		EnergyState& st = *m_state;
+		// WP-165 (R3): once per commit — the recorder calls advance() on every
+		// commit and evaluate() calls it again on a recorded one.
+		if (st.has_last && st.last_tag == info.current_time_step_id)
+			return;
+
 		const size_t ncomp = (size_t)m_schema.num_components;
-		buffer.assign(m_ids.size() * ncomp, 0.0);
+		st.last_out.assign(m_ids.size() * ncomp, 0.0);
 
 		Domain* dom = info.domain;
 		if (dom == 0)
 			return;
 
 		// keep the element-DOF scratch sized to the current domain
-		sizeVelScratch(dom, m_velScratch);
+		sizeVelScratch(dom, st.velScratch);
 
-		// dT from the previous recorded time (guard the first step like the
-		// recorder: the first evaluate() seeds the rates and takes no spurious
-		// increment over the initial time jump).
-		const double dT = info.current_time_step - m_prev_time;
+		// dT from the previously integrated commit. The state outlives a stage
+		// rebuild, so a new MODEL_STAGE continues the integrals instead of
+		// restarting them with a rate x (t - 0) jump.
+		const double dT = info.current_time_step - st.prev_time;
 
 		if (!m_per_region) {
 			double ke = 0., ir = 0., dr = 0., ur = 0.;
-			ebkernel::sweepDomain(dom, m_velScratch, ke, ir, dr, ur);
+			ebkernel::sweepDomain(dom, st.velScratch, ke, ir, dr, ur);
 			double out[ebkernel::NUM_ENERGY_COMPONENTS];
-			m_model_acc.step(dT, m_first, ke, ir, dr, ur, out);
+			st.model.step(dT, st.first, ke, ir, dr, ur, out);
 			for (size_t c = 0; c < ncomp; ++c)
-				buffer[c] = out[c];
+				st.last_out[c] = out[c];
 		}
 		else {
 			for (size_t i = 0; i < m_ids.size(); ++i) {
 				MeshRegion* reg = dom->getRegion(m_ids[i]);
 				double ke = 0., ir = 0., dr = 0., ur = 0.;
-				ebkernel::sweepRegion(dom, reg, m_velScratch, ke, ir, dr, ur);
+				ebkernel::sweepRegion(dom, reg, st.velScratch, ke, ir, dr, ur);
 				double out[ebkernel::NUM_ENERGY_COMPONENTS];
-				m_region_acc[i].step(dT, m_first, ke, ir, dr, ur, out);
+				st.regions[i].step(dT, st.first, ke, ir, dr, ur, out);
 				const size_t base = i * ncomp;
 				for (size_t c = 0; c < ncomp; ++c)
-					buffer[base + c] = out[c];
+					st.last_out[base + c] = out[c];
 			}
 		}
 
-		m_first = false;
-		m_prev_time = info.current_time_step;
+		st.first = false;
+		st.prev_time = info.current_time_step;
+		st.last_tag = info.current_time_step_id;
+		st.has_last = true;
+	}
+
+	void EnergyBalanceSource::evaluate(const detail::ProcessInfo& info,
+	                                   std::vector<double>& buffer)
+	{
+		advance(info);
+		const size_t n = m_ids.size() * (size_t)m_schema.num_components;
+		buffer.assign(n, 0.0);
+		for (size_t k = 0; k < n && k < m_state->last_out.size(); ++k)
+			buffer[k] = m_state->last_out[k];
 	}
 
 } // namespace ladruno

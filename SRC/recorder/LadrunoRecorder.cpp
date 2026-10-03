@@ -84,6 +84,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
+#include <cstdlib>
+#include <random>
 #include <string>
 #include <vector>
 #include <map>
@@ -94,6 +97,32 @@
 #include <cstdlib>
 
 namespace ladrunons = ladruno; // local alias
+
+// WP-165 (MP-9): a run identity shared by every rank of one launch, when one
+// exists. Order: LADRUNO_RUN_ID (user/launcher-provided), SLURM_JOB_ID[.STEP],
+// OpenMPI's job id; else a process-unique id (scope "process": readers must not
+// cross-check it between part files).
+static void ladrunoResolveRunId(std::string& id, std::string& scope)
+{
+	const char* v = std::getenv("LADRUNO_RUN_ID");
+	if (v && *v) { id = v; scope = "user"; return; }
+	v = std::getenv("SLURM_JOB_ID");
+	if (v && *v) {
+		id = std::string("slurm-") + v;
+		const char* st = std::getenv("SLURM_STEP_ID");
+		if (st && *st) id += std::string(".") + st;
+		scope = "launcher";
+		return;
+	}
+	v = std::getenv("OMPI_MCA_ess_base_jobid");
+	if (v && *v) { id = std::string("ompi-") + v; scope = "launcher"; return; }
+	std::stringstream ss;
+	ss << "proc-" << std::hex
+	   << (unsigned long long)std::chrono::system_clock::now().time_since_epoch().count()
+	   << "-" << (unsigned long long)std::random_device{}();
+	id = ss.str();
+	scope = "process";
+}
 
 // max number of iterations to guess the number of fibers (frozen MPCO_MAX_TRIAL_NFIB)
 #ifndef LADRUNO_MAX_TRIAL_NFIB
@@ -118,6 +147,12 @@ public:
 		, init_failed(false)
 		, flush_seconds(10.0)
 		, last_flush()
+		, last_seen_stamp(0)
+		, topology_fp(0)
+		, energy_model_state()
+		, energy_region_state()
+		, run_id()
+		, run_id_scope()
 		, info()
 		, output_freq()
 		, has_region(false)
@@ -171,6 +206,21 @@ public:
 	// written on every step; between flushes HDF5's chunk cache keeps them.
 	double flush_seconds;
 	std::chrono::steady_clock::time_point last_flush;
+	// WP-165 (R6): the domain-change stamp moves for far more than topology —
+	// contact `-reemit` re-sorts (inside commit()), `eleLoad`, a pattern with SPs,
+	// an `sp`/`imposedMotion` — and every move used to start a new MODEL_STAGE
+	// (full model copy, envelope + energy reset). A stamp move now rebuilds only
+	// when this fingerprint of the node/element/pressure-constraint SET changed.
+	int last_seen_stamp;
+	unsigned long long topology_fp;
+	// WP-165 (R3): energy integrals owned here, not by the per-stage source.
+	ladrunons::EnergyState energy_model_state;
+	ladrunons::EnergyState energy_region_state;
+	// WP-165 (MP-9): run identity written to INFO, so a reader can tell the
+	// part files of ONE run from stale parts of an earlier one. Broadcast by P0
+	// on the PartitionedDomain path (set in sendSelf, received in recvSelf).
+	std::string run_id;
+	std::string run_id_scope;
 	ladrunons::detail::ProcessInfo info;
 
 	// -T output frequency
@@ -413,6 +463,21 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 	info.current_time_step_id = commitTag;
 	info.current_time_step = timeStamp;
 
+	// WP-165 (R3): integrate the energy balance on EVERY commit, before the -T
+	// gate, so IE/DW/ULW are trapezoids over the real steps, not over the -T
+	// samples. advance() is idempotent per commit tag (the recorded-step
+	// evaluate() calls it again) and sweeps the live domain (no cached
+	// Element*), so it is safe even on a commit where the topology changed and
+	// the stage has not been rebuilt yet.
+	if (m_data->initialized && !m_data->stage_failed) {
+		for (size_t i = 0; i < m_data->domain_channels.size(); ++i) {
+			ladrunons::EnergyBalanceSource* es =
+				dynamic_cast<ladrunons::EnergyBalanceSource*>(m_data->domain_channels[i].source);
+			if (es)
+				es->advance(info);
+		}
+	}
+
 	// -T output-frequency gate (frozen record() do_record logic).
 	bool do_record = false;
 	if (!m_data->initialized) {
@@ -482,10 +547,20 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 	int new_stamp = info.domain->hasDomainChanged();
 	if (!m_data->first_domain_changed_done) {
 		info.current_model_stage_id = new_stamp;
+		m_data->last_seen_stamp = new_stamp;
 		m_data->first_domain_changed_done = true;
 		rebuild_model = true;
 	}
-	else if (new_stamp != info.current_model_stage_id) {
+	else if (new_stamp != m_data->last_seen_stamp &&
+	         !m_data->stage_failed && topologyFingerprint() == m_data->topology_fp) {
+		// WP-165 (R6): the stamp moved but the node/element set did not (contact
+		// re-emit, eleLoad, an SP pattern, ...): keep the MODEL_STAGE, its sources,
+		// envelopes and energy integrals. Every cached Element*/Node* is still the
+		// live object (the fingerprint hashes the pointers, not just the tags).
+		m_data->last_seen_stamp = new_stamp;
+	}
+	else if (new_stamp != m_data->last_seen_stamp) {
+		m_data->last_seen_stamp = new_stamp;
 		// WP-164: close out the ending stage BEFORE the stamp moves — envelopes
 		// are now rewritten on the flush cadence, not every step, so their last
 		// extremes (and the element COLUMN_MAP, resolved from the stage stamp)
@@ -512,6 +587,7 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 			return -1;
 		}
 		m_data->stage_failed = false;
+		m_data->topology_fp = topologyFingerprint();
 	}
 	if (m_data->stage_failed)
 		return 0;
@@ -556,6 +632,52 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 		flushFile();
 
 	return 0;
+}
+
+unsigned long long LadrunoRecorder::topologyFingerprint() const
+{
+	// WP-165 (R6): FNV-1a over the node, element and pressure-constraint sets —
+	// (tag, object address) per entry, plus the counts. Address, not only tag:
+	// `remove element 5; element ... 5` re-uses the tag with a NEW object, and
+	// the cached Response* of the old one must not survive. O(N) per stamp move
+	// (not per step) — cheap next to the full rebuild it avoids.
+	const Domain* dom_c = m_data->info.domain;
+	if (dom_c == 0)
+		return 0ULL;
+	Domain* dom = const_cast<Domain*>(dom_c);
+	unsigned long long h = 1469598103934665603ULL;
+	auto mix = [&h](unsigned long long v) {
+		for (int b = 0; b < 8; ++b) {
+			h ^= (v >> (8 * b)) & 0xFFULL;
+			h *= 1099511628211ULL;
+		}
+	};
+	mix((unsigned long long)dom->getNumNodes());
+	mix((unsigned long long)dom->getNumElements());
+	mix((unsigned long long)dom->getNumPCs());
+	{
+		NodeIter& it = dom->getNodes();
+		Node* n = 0;
+		while ((n = it()) != 0) {
+			mix((unsigned long long)(long long)n->getTag());
+			mix((unsigned long long)(uintptr_t)n);
+		}
+	}
+	{
+		ElementIter& it = dom->getElements();
+		Element* e = 0;
+		while ((e = it()) != 0) {
+			mix((unsigned long long)(long long)e->getTag());
+			mix((unsigned long long)(uintptr_t)e);
+		}
+	}
+	{
+		Pressure_ConstraintIter& it = dom->getPCs();
+		Pressure_Constraint* pc = 0;
+		while ((pc = it()) != 0)
+			mix((unsigned long long)(uintptr_t)pc);
+	}
+	return h;
 }
 
 void LadrunoRecorder::flushFile()
@@ -715,6 +837,13 @@ int LadrunoRecorder::initialize()
 	ladrunons::h5::attribute::write(h_info, "PARTITION_ID", part_id);
 	ladrunons::h5::attribute::write(h_info, "PARTITIONED", (int)(is_partitioned ? 1 : 0));
 	ladrunons::h5::attribute::write(h_info, "NUM_PARTITIONS", num_parts);
+	// WP-165 (MP-9): RUN_ID + RUN_ID_SCOPE ("broadcast" | "user" | "launcher" |
+	// "process"). Part files of one run carry the same RUN_ID unless the scope
+	// is "process" (no shared identity was available on this launch path).
+	if (m_data->run_id.empty())
+		ladrunoResolveRunId(m_data->run_id, m_data->run_id_scope);
+	ladrunons::h5::attribute::write(h_info, "RUN_ID", m_data->run_id);
+	ladrunons::h5::attribute::write(h_info, "RUN_ID_SCOPE", m_data->run_id_scope);
 
 	hid_t h_prov = ladrunons::h5::group::create(
 		h_info, "PROVENANCE", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
@@ -861,8 +990,45 @@ int LadrunoRecorder::writeModelNodes()
 
 	const size_t nnodes = m_data->nodes.size();
 	if (nnodes == 0) {
-		opserr << "LadrunoRecorder Error: no nodes to write\n";
-		return -1;
+		// WP-165 (MP-8): no nodes on THIS process is a valid, empty partition —
+		// openseesmp with a `-R` region that lives entirely on other ranks, or a
+		// staged run that removed the whole region. It used to be an error after
+		// the MODEL_STAGE skeleton was written, leaving a part file with no
+		// MODEL/NODES that broke the stitch. Write zero-length NODES/ID and
+		// NODES/COORDINATES, mark the stage EMPTY_PARTITION=1, and carry on (the
+		// node/element channels have nothing to record; ON_DOMAIN still works).
+		std::stringstream ss_empty;
+		ss_empty << "MODEL_STAGE[" << info.current_model_stage_id << "]";
+		hid_t h_stage = H5Gopen2(info.h_file_id, ss_empty.str().c_str(), H5P_DEFAULT);
+		if (h_stage >= 0) {
+			ladrunons::h5::attribute::write(h_stage, "EMPTY_PARTITION", (int)1);
+			ladrunons::h5::group::close(h_stage);
+		}
+		ss_empty << "/MODEL/NODES";
+		hid_t h_nodes = ladrunons::h5::group::create(
+			info.h_file_id, ss_empty.str().c_str(), H5P_DEFAULT,
+			info.h_group_proplist, H5P_DEFAULT);
+		if (h_nodes < 0)
+			return -1;
+		hsize_t d_ids[2] = { 0, 1 };
+		hsize_t d_crd[2] = { 0, (hsize_t)ndim };
+		hid_t s_ids = H5Screate_simple(2, d_ids, NULL);
+		hid_t s_crd = H5Screate_simple(2, d_crd, NULL);
+		hid_t ds_ids = H5Dcreate(h_nodes, "ID", H5T_STD_I32LE, s_ids, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+		hid_t ds_crd = H5Dcreate(h_nodes, "COORDINATES", H5T_IEEE_F64LE, s_crd, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+		const bool ok = (ds_ids >= 0 && ds_crd >= 0);
+		if (ds_crd >= 0) H5Dclose(ds_crd);
+		if (ds_ids >= 0) H5Dclose(ds_ids);
+		H5Sclose(s_crd);
+		H5Sclose(s_ids);
+		ladrunons::h5::group::close(h_nodes);
+		if (!ok) {
+			opserr << "LadrunoRecorder Error: could not write an empty MODEL/NODES\n";
+			return -1;
+		}
+		opserr << "LadrunoRecorder: MODEL_STAGE[" << info.current_model_stage_id
+		       << "] has no nodes on this process; written as an empty partition\n";
+		return 0;
 	}
 
 	std::vector<int> node_ids(nnodes);
@@ -2306,7 +2472,9 @@ int LadrunoRecorder::initDomainSources()
 
 	// whole-model energy -> ON_DOMAIN/energyBalance
 	if (m_data->energy_requested) {
-		ladrunons::ResultSource* src = new ladrunons::EnergyBalanceSource(info);
+		// WP-165 (R3): the recorder-owned state outlives this stage's source.
+		ladrunons::ResultSource* src =
+			new ladrunons::EnergyBalanceSource(info, &m_data->energy_model_state);
 		if (refusePartitionedEnvelope(m_data->envelope_mode, m_data->is_partitioned, src)) {
 			delete src;
 		} else {
@@ -2322,7 +2490,8 @@ int LadrunoRecorder::initDomainSources()
 	// per-region energy -> ON_REGIONS/energyBalance
 	if (!m_data->energy_region_tags.empty()) {
 		ladrunons::ResultSource* src =
-			new ladrunons::EnergyBalanceSource(info, m_data->energy_region_tags);
+			new ladrunons::EnergyBalanceSource(info, m_data->energy_region_tags,
+			                                   &m_data->energy_region_state);
 		if (refusePartitionedEnvelope(m_data->envelope_mode, m_data->is_partitioned, src)) {
 			delete src;
 		} else {
@@ -2519,6 +2688,11 @@ int LadrunoRecorder::sendSelf(int commitTag, Channel& theChannel)
 		return -1;
 	}
 	m_data->send_self_count++;
+	if (m_data->run_id.empty()) {   // WP-165 (MP-9): P0 owns the run identity
+		ladrunoResolveRunId(m_data->run_id, m_data->run_id_scope);
+		if (m_data->run_id_scope == "process")
+			m_data->run_id_scope = "broadcast";
+	}
 
 	LadSer ser;
 	ser.put_i(this->getTag());
@@ -2556,6 +2730,8 @@ int LadrunoRecorder::sendSelf(int commitTag, Channel& theChannel)
 	ser.put_i(m_data->info.store_data_f32 ? 1 : 0);
 	ser.put_i(m_data->info.deflate_level);       // WP-164 (lockstep with recvSelf)
 	ser.put_d(m_data->flush_seconds);            // WP-164
+	ser.put_s(m_data->run_id);                   // WP-165 (MP-9)
+	ser.put_s(m_data->run_id_scope);
 	int msg_data_size = (int)ser.b.size();
 	ID idata(1);
 	idata(0) = msg_data_size;
@@ -2642,6 +2818,8 @@ int LadrunoRecorder::recvSelf(int commitTag, Channel& theChannel,
 	m_data->info.store_data_f32 = de.get_i() != 0;
 	m_data->info.deflate_level = de.get_i();     // WP-164 (lockstep with sendSelf)
 	m_data->flush_seconds = de.get_d();          // WP-164
+	m_data->run_id = de.get_s();                 // WP-165 (MP-9)
+	m_data->run_id_scope = de.get_s();
 	if (!de.ok) {
 		opserr << "LadrunoRecorder::recvSelf() - failed to de-serialize config\n";
 		return -1;
