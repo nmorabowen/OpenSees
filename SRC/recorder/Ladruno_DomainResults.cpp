@@ -53,6 +53,8 @@ namespace ladruno {
 		Element* ele;
 		ElementIter& elements = dom->getElements();
 		while ((ele = elements()) != 0) {
+			if (ele->isSubdomain())   // Ladruno WP-163 M1: SP ShadowSubdomain
+				continue;
 			const int n = ele->getNumDOF();
 			if (n > maxNumDOF)
 				maxNumDOF = n;

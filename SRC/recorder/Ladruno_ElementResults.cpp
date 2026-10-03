@@ -35,6 +35,7 @@
 
 #include "Ladruno_ElementResults.h"
 
+#include <limits>
 #include <sstream>
 
 namespace ladruno {
@@ -100,8 +101,9 @@ namespace ladruno {
 				// Ladruno: latched + actionable. The mismatch is a property of the
 				// (element, bucket) pairing, so it recurs on every element on every
 				// step; unlatched this printed the same anonymous line forever and
-				// buried every other message. The zero-fill recovery below is kept —
-				// the row stays the declared width so the dataset never desyncs.
+				// buried every other message. The row stays the declared width so
+				// the dataset never desyncs. WP-163 (ROB-10): it is NaN-filled, not
+				// zero-filled — a zero row was indistinguishable from a real zero.
 				if (!m_size_warned) {
 					m_size_warned = true;
 					opserr << "LadrunoRecorder warning: element "
@@ -109,9 +111,12 @@ namespace ladruno {
 					       << " in bucket " << m_bucket.dir_name.c_str()
 					       << " returned " << current_data.Size()
 					       << " values but the bucket declares " << num_columns
-					       << " columns; that row is zero-filled"
+					       << " columns; that row is NaN-filled"
 					          " (further size mismatches in this bucket are not reported)\n";
 				}
+				const size_t row = i * (size_t)num_columns;
+				for (int j = 0; j < num_columns; ++j)
+					buffer[row + (size_t)j] = std::numeric_limits<double>::quiet_NaN();
 				continue;
 			}
 			size_t offset = i * (size_t)num_columns;

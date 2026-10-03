@@ -38,7 +38,9 @@
 #include <elementAPI.h>
 #include <LoadPattern.h>              // Ladruno (ADR-73 P4): -overlay mode
 #include <LadrunoPorousOverlay.h>
+#include "Ladruno_LaunchEnv.h"            // Ladruno WP-163 (MP-6): per-rank sink
 
+#include <string>
 #include <vector>
 
 #include <string.h>
@@ -439,6 +441,14 @@ void *OPS_LadrunoMonitorRecorder()
                     if (OPS_GetNumRemainingInputArgs() < oldn) OPS_ResetCurrentInputArg(-1);
                     break;
                 }
+                // Ladruno WP-163 (ROB-9): DOFs are 1-based; 0 or a negative
+                // value became index -1 and `(*r)(-1)` read heap garbage on
+                // every frame (Size() > -1 is always true).
+                if (d < 1) {
+                    opserr << "WARNING recorder Monitor: -dof values are 1-based; got "
+                           << d << "\n";
+                    return 0;
+                }
                 dofs.push_back(d - 1);
             }
         }
@@ -487,6 +497,37 @@ void *OPS_LadrunoMonitorRecorder()
     if (filename == 0) {
         opserr << "WARNING recorder Monitor: missing -sink <file>\n";
         return 0;
+    }
+
+    // Ladruno WP-163 (MP-6): under an MPI launch (openseesmp: one interpreter
+    // per rank) every rank holding a monitored node opened the SAME sink with
+    // H5F_ACC_TRUNC -- a lock failure on all but one rank, or a corrupted SWMR
+    // file on a lock-less NFS/Lustre. Write "<stem>.part-<rank><ext>" instead,
+    // the per-rank convention of the ladruno / EnergyBalance recorders. (A
+    // reaction at a partition-interface node is still that rank's partial.)
+    std::string partFilename;
+    {
+        int rank = 0, size = 1;
+        std::string source, error;
+        const ladruno::launch::Status st =
+            ladruno::launch::detectRank(rank, size, source, error);
+        if (st == ladruno::launch::Inconsistent) {
+            opserr << "WARNING recorder Monitor: " << error.c_str()
+                   << " - cannot tell which per-rank sink this process owns\n";
+            return 0;
+        }
+        if (st == ladruno::launch::Launched) {
+            std::string stem(filename), ext;
+            const size_t dot = stem.find_last_of('.');
+            const size_t sep = stem.find_last_of("/\\");
+            if (dot != std::string::npos && dot > 0 &&
+                (sep == std::string::npos || dot > sep)) {
+                ext = stem.substr(dot);
+                stem.erase(dot);
+            }
+            partFilename = stem + ".part-" + std::to_string(rank) + ext;
+            filename = partFilename.c_str();
+        }
     }
 
     // -------- overlay pressure mode (ADR-73 P4) --------

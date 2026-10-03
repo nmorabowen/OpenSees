@@ -293,7 +293,7 @@ namespace ladruno {
 	/* Modes of vibration — SPECIAL CASE (multi-mode per step).              */
 	/*                                                                       */
 	/* In the frozen recorder ModesOfVibration overrides record() to loop    */
-	/* over OPS_GetNumEigen() modes, writing one MODE_<k> dataset per mode    */
+	/* over the captured modes, writing one MODE_<k> dataset per mode       */
 	/* under a per-step group, each carrying MODE/LAMBDA/OMEGA/FREQUENCY/     */
 	/* PERIOD attributes. The ResultSource contract yields ONE flat buffer    */
 	/* per evaluate(), so we expose:                                          */
@@ -314,7 +314,7 @@ namespace ladruno {
 		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
 
 		// Mode-aware API for the mode-loop driver (StreamingSink).
-		int numModes(const detail::ProcessInfo& info) const;  // *OPS_GetNumEigen()
+		int numModes(const detail::ProcessInfo& info) const;  // captured spectrum size (WP-163 R1)
 		void setCurrentMode(int k) { m_current_mode = k; }
 		int currentMode() const { return m_current_mode; }
 		// Per-mode scalars (frozen ModesOfVibration::record math).
