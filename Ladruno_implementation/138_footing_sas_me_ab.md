@@ -13,6 +13,8 @@ updated: 2026-09-28
 
 # WP-138 — strip-footing A/B, ModifiedEuler vs SAS-ME (TIMs F18 end to end)
 
+> **Trimmed record (2026-10-03).** This PR was reduced to the report, its figures and the scripts. Bulk run data (`steps.csv`, censuses, replay sets, logs, per-leg ladder runs) is no longer committed; §15 says where it lives. Findings here are superseded by R1 (#893), the low-confinement separation (#894) and the Toyoura runs; the report stays as the evidence that the limit is constitutive (the alpha_in re-seat singularity).
+
 Pure Python decks and runs; no C++ change, no build. Deck, driver and every run
 output: `Ladruno_files/testbed/footing_sas_me_ab/`. Nothing in the TIMs Workbench
 was run or edited; the deck is built from the intake's §1 spec
@@ -227,7 +229,7 @@ Ring definitions: **ringP** = p' < 10 kPa (830–850 points); **ringG** = top el
 - Deck: this deck, `esmeralda/footing_ab_esmeralda.py`, with `--mesh b16` for E_B16.
 - Each arm ran alone on its node, MKL/OMP = 1 thread. Wall clock is therefore comparable between arms (not with the local legs).
 - Launch record: `esmeralda/JOBS.txt`.
-- Run records: `runs/E_A`, `E_B`, `E_D`, `E_C2`, `E_B16`, each with `steps.csv`, `summary.json`, `logs/log.log` and `rung_fail.csv`. E_C2 was re-pulled after its end (exit 0 after 44 452 s).
+- Run records: `runs/E_A`, `E_B`, `E_D`, `E_C2`, `E_B16`, each with `steps.csv`, `summary.json`, `logs/log.log` and `rung_fail.csv` (only `summary.json` is committed; the rest stays on Esmeralda, see §15). E_C2 was re-pulled after its end (exit 0 after 44 452 s).
 - Tables: `python wall_table.py`.
 - Figures: `python plot_qs_final.py`.
 - The census/field analyses: `esmeralda/analysis/` (`a1_walls.py`, `a2_curves_fields.py`, `a3_refusers.py`, `tables/`, PNGs). They were run at 12:43, before E_C2 ended, so their E_C2 entries and the "(running)" labels are stale. For E_C2 use `runs/E_C2` and `qs_final*.png`.
@@ -386,7 +388,7 @@ The wall is DM04's hardening-modulus singularity at an α_in re-seat.
 
 ## 11. Sensitivity ladders — FINAL (all legs ended 2026-09-28)
 
-> **Records:** `Ladruno_files/testbed/footing_sas_me_ab/ladders_final/` holds `ladder_table.txt`, `q_s_{presidual,einit,ablation,A0_h0}.png` and `runs/<leg>/{steps.csv,summary.json}` for every leg (logs stay on Esmeralda). `collect.py` there regenerates the table and plots.
+> **Records:** `Ladruno_files/testbed/footing_sas_me_ab/ladders_final/` holds `ladder_table.txt`, `q_s_{presidual,einit,ablation,A0_h0}.png` and `runs/<leg>/{steps.csv,summary.json}` for every leg (trimmed from this PR, see §15; `ladder_table.txt` carries the per-leg numbers). `collect.py` there regenerates the table and plots.
 >
 > **Driver:** `esmeralda/footing_ab_esmeralda.py` + `patch_driver.py` (`--presidual`, `--einit`) + `patch_driver2.py` (`--zmax --nb --nd --A0 --h0`). Launch record: `esmeralda/JOBS.txt`.
 >
@@ -483,7 +485,7 @@ LadrunoSANISAND $tag 264.32 0.312885 0.6944 1.3309 0.71 0.027 0.83 0.45 101 0.00
 - The local → Esmeralda handover: E_B = local B to 1e-5 kPa through step 40 (§4).
 - The DP control reaches 0.15.
 - The act's ModifiedEuler wall is reproduced (E_A, 0.0292).
-- Every number in §0 and §8–§9 is recomputed from the committed `runs/E_*` records by `wall_table.py`, or taken from `esmeralda/analysis/tables/*`, which were computed from the same records plus the checkpoint fields on Esmeralda.
+- Every number in §0 and §8–§9 is recomputed from the `runs/E_*` records (`steps.csv`, kept on Esmeralda, §15; the committed `summary.json` carries the headline values) by `wall_table.py`, or taken from `esmeralda/analysis/tables/*`, which were computed from the same records plus the checkpoint fields on Esmeralda.
 
 **Not verified here (quoted, with source):**
 - The acoustic-tensor scan, the 10.1 M re-seats and the h-singularity mechanism: per #892.
@@ -494,3 +496,19 @@ LadrunoSANISAND $tag 264.32 0.312885 0.6944 1.3309 0.71 0.027 0.83 0.45 101 0.00
 
 **Not verified at all:**
 - The R1 and c = 0.80 footing runs: running (§13).
+
+## 15. Where the data lives
+
+Removed from this branch (trimmed 2026-10-03), not deleted from where it was produced. The full pre-trim tree is recoverable from commit `b16db841e` (previous head of `wp/138-footing-sas-me-ab`). The scripts that read these files (`wall_table.py`, `plot_qs_final.py`, `ladders_final/collect.py`, `esmeralda/analysis/a*.py`, `run_replays.py`) expect them under `runs/<leg>/`; pull them back with `esmeralda/pull.sh` or `git checkout b16db841e -- <path>`.
+
+**Esmeralda legs** (build ladruno `7936ed6e0`, Linux oneMKL 2024.2, 1 thread; launched 2026-09-28, launch record `esmeralda/JOBS.txt`). Root: `~/ladruno_wp138/deck/runs/<leg>/` (`steps.csv`, `summary.json`, `logs/log.log`, `rung_fail.csv`, `census_last_converged.csv`, `replay/`, `ckpt/*.npz` field dumps). Engine: `/mnt/deadmanschest/nmorabowen/ladruno_wp138/bin/opensees.so`.
+- E_A, E_B, E_C2, E_B16, E_D: launched 2026-09-28 01:52-02:13 (jobs 148582-148587).
+- Ladders L_pres_*, L_e_*: launched 2026-09-28 12:34 (jobs 148620-148629).
+- Ablations S1-S4, A0_*, h0_x3: relaunched 2026-09-28 13:03 with `--mem=6G` (jobs 148638-148644).
+- Their per-leg numbers are in `ladders_final/ladder_table.txt`; `summary.json` of E_*, in `runs/E_*/`, is committed.
+
+**Local legs** (Windows, `distin\opensees.pyd`, MKL 1 thread; run 2026-09-27/28 in the agents' scratch worktrees, no stable path):
+- `ctrl_dp38`, `A_me_baseline` (ModifiedEuler): build `234a75751` (WP-127 counters); `B_sasme_beb6d8333`: build `beb6d8333`; `B_sasme_provisional_cdf43685f`: build `cdf43685f`.
+- Their `steps.csv`, `census_*`, `replay/` and `replay_out/` sets existed only in this branch and are in `b16db841e`. Status notes (`NOTE.txt`, `KILLED.txt`, `STOPPED_BY_ORCHESTRATOR.txt`, `PROVISIONAL.txt`, `ABORTED.txt`) and `summary.json` of the kept legs remain committed under `runs/`.
+
+**Analyses:** `esmeralda/analysis/tables/` keeps the small tables (`last20_*`, `floor_refusers*`, `walls_summary.json`). `curves_fields_summary.json` (the B/8 vs B/16 curve and field summary cited in §9) and `ctrl_dp38_steps.csv` are regenerated by `a2_curves_fields.py` from the Esmeralda checkpoints, or recovered from `b16db841e`.
