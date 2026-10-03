@@ -1,0 +1,8 @@
+---
+wp: LEGACY
+title: "nDMaterial that regularizes in place: getCopy must PROPAGATE the latch, and a loud-fail must NOT latch"
+legacy_seq: 86
+---
+### nDMaterial that regularizes in place: getCopy must PROPAGATE the latch, and a loud-fail must NOT latch
+- **Bites:** Phase 3b regularizes the backbone IN PLACE (mutates P.ht/P.hc) on a one-time `regularizationDone` latch at first setTrialStrain. Two lifecycle traps: (1) `getCopy` that reconstructs from `P` while RESETTING `regularizationDone=false` will, for a copy made AFTER the source regularized, carry the already-stretched backbone + an un-latched flag ⇒ it regularizes AGAIN (double-scaled, silently). ASDConcrete3D dodges this by using its COPY-CTOR (copies `regularization_done`). (2) A "loud failure" (no lch available) that sets `regularizationDone=true` before returning −1 disarms itself: a `-1` from setTrialStrain is a RECOVERABLE convergence signal, so the algorithm cuts the step and RETRIES → the retry finds it "done" and silently proceeds on the UN-regularized backbone — the exact silent-fallback the guard forbids.
+- **Fix (proven):** `getCopy` must copy `regularizationDone`/`regLch` to the new instance (mirror the reference copy-ctor) so a copy-of-a-used-instance is safe. The loud-fail branch must NOT set `regularizationDone` (so it re-fails every step and can never silently continue); gate the message to once with a separate transient `regWarned` flag. In the normal host flow getCopy runs before any setTrialStrain so (1) is dodged anyway, but the safety must be explicit not incidental. Learned 2026-06-18, [[19_ladruno_rc_shell_adr|LadrunoRCConcrete]] Phase 3b.

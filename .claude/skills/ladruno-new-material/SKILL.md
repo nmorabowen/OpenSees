@@ -6,13 +6,13 @@ description: >
   ASDPlasticMaterial3D changes, ManzariDafalias-family fixes). Use before writing or modifying
   a return map / substepping scheme, getTangent/getInitialTangent, IMPL-EX, getCopy,
   commit/revert, any static or process-wide state, a Tcl/Python material parser, or material
-  tests. Every item points to the LEDGER_quirks entry that explains it.
+  tests. Every item points to the quirks-ledger entry that explains it.
 ---
 
 # New or changed material — checklist
 
 Read this before adding or changing a material under `SRC/material/`. Each item names the
-`Ladruno_implementation/LEDGER_quirks.md` heading to grep for; read that entry when the item
+quirk heading to grep for in `Ladruno_implementation/ledger/quirks/` (`rg`); read that entry when the item
 applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns.py`.
 
 ## Registration (a new material)
@@ -119,5 +119,6 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       is Ubuntu, so a win32-only leg never runs there. Gate only the MKL-specific leg. Quirks:
       "A win32-only `zone_a` test is NEVER run by PR CI".
 
-Found a new trap? Add it to `LEDGER_quirks.md`, then add one line here pointing to it. If the
+Found a new trap? Write a quirks fragment (`Ladruno_implementation/ledger/quirks/WP-<nnn>-<slug>.md`;
+never edit the generated `LEDGER_quirks.md`), then add one line here pointing to it. If the
 trap has a greppable pattern, add a rule to `ci/check_quirk_patterns.py` instead.

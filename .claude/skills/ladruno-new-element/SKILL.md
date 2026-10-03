@@ -5,19 +5,20 @@ description: >
   fork-authored classes such as LadrunoBrick/Quad/CST/LST/UP/SolidShell, Bezier*, couplings).
   Use before writing or modifying getResistingForceIncInertia, getTangentStiff, getMass,
   getDamp/Rayleigh, sendSelf/recvSelf, setResponse/getResponse, an OPS_ parser, or when
-  registering a new element classTag. Every item points to the LEDGER_quirks entry that
+  registering a new element classTag. Every item points to the quirks-ledger entry that
   explains it.
 ---
 
 # New or changed element — checklist
 
 Read this before adding or changing an element under `SRC/element/`. Each item names the
-`Ladruno_implementation/LEDGER_quirks.md` heading to grep for; read that entry when the item
+quirk heading to grep for in `Ladruno_implementation/ledger/quirks/` (`rg`); read that entry when the item
 applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns.py`.
 
 ## Registration (a new element)
 
-- [ ] classTag in `SRC/classTags.h` (fork band), recorded in `LEDGER_implementations.md`;
+- [ ] classTag in `SRC/classTags.h` (fork band), recorded in your implementations fragment's
+      `class_tags` (`Ladruno_implementation/ledger/implementations/WP-<nnn>-<slug>.md`);
       `python ci/check_classtags.py` clean.
 - [ ] Register in ALL dispatch sites: `classTags.h`, `FEM_ObjectBrokerAllClasses.cpp`, the
       `functionMap` in `OpenSeesElementCommands.cpp` (Python), AND the Tcl table in
@@ -113,5 +114,6 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 - [ ] Break each new gate on purpose once (revert the fix, confirm it fails). Quirks: "A test can
       be GREEN because of the very bug".
 
-Found a new trap? Add it to `LEDGER_quirks.md`, then add one line here pointing to it. If the
+Found a new trap? Write a quirks fragment (`Ladruno_implementation/ledger/quirks/WP-<nnn>-<slug>.md`;
+never edit the generated `LEDGER_quirks.md`), then add one line here pointing to it. If the
 trap has a greppable pattern, add a rule to `ci/check_quirk_patterns.py` instead.
