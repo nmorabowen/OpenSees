@@ -1,6 +1,6 @@
 # WP-161 — one ledger fragment per WP; the ledgers are generated
 
-Status: DRAFT PR (owner merges after #894). Sibling: WP-162 (quirk-lint rule
+Status: DRAFT PR #915 (owner merges after #894). Sibling: WP-162 (quirk-lint rule
 slugs, per-rule tests, ruff F811), which touches none of the same lines.
 
 ## The problem (measured over the last 60 PR merges into `ladruno`)
