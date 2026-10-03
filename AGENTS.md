@@ -19,6 +19,11 @@ The mechanical items are enforced by `python ci/check_quirk_patterns.py` (a
 static gate in `ladruno.yml`). When a quirk names a greppable pattern, add it
 to that script instead of adding another paragraph to a guide.
 
+Lint rules, tests and registrations are named by slug or WP, never by the next
+free number (a rule is a `RULES` slug with its own `ci/test_quirk_<slug>.py`);
+ruff F811 and `ci/check_duplicate_defs.py` fail a duplicate definition. Never add
+`merge=union` to code or tests.
+
 ## Building — there is exactly ONE way (REQUIRED)
 
 From a fresh `cmd.exe` at the fork root:
