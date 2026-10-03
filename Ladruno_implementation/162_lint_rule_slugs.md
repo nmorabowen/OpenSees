@@ -1,6 +1,6 @@
 # WP-162 — lint rules by slug, one test file per rule, a duplicate-definition gate
 
-Status: DRAFT PR (owner merges after #894). Sibling: WP-161 (per-WP ledger
+Status: DRAFT PR #916 (owner merges after #894). Sibling: WP-161 (#915, per-WP ledger
 fragments); the two touch disjoint lines and merge cleanly in either order.
 
 ## The problem

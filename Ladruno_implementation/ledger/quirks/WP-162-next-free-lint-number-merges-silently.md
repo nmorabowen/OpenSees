@@ -1,6 +1,7 @@
 ---
 wp: WP-162
 title: "Two PRs taking the next free lint number merge their self-tests silently; F811 misses it"
+pr: "#916"
 date: 2026-10-03
 ---
 ### Two PRs that take "the next free" lint number merge their self-tests SILENTLY into one file -- and ruff F811 does not see it (WP-162, 2026-10-03)
