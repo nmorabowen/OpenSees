@@ -1,0 +1,9 @@
+---
+wp: LEGACY
+title: "A PARDISO CGS *success* (iparm[3]) leaves the stored factors STALE — the next phase-33-only solve then answers the PREVIOUS matrix"
+legacy_seq: 213
+---
+### A PARDISO CGS *success* (`iparm[3]`) leaves the stored factors STALE — the next phase-33-only solve then answers the PREVIOUS matrix
+- **Bites:** anyone adding `iparm[3]` (preconditioned CGS/CG) on top of a factorization-reuse gate. The natural reading of "CGS replaces the computation of LU" is that PARDISO updated something; it did not. On a CGS **win** the handle still holds the L/U of an *older* A — CGS merely used it as a preconditioner while iterating against the current A, so the returned x is correct but the factors are one tangent behind. A later phase-33 call (a second RHS, a re-solve without re-forming the tangent) is then a solve of the **previous** matrix that returns `error = 0`. Silent wrong answer, not a crash. The inverse case is equally easy to get backwards: on CGS **failure** under phase 23 PARDISO *does* refactor, so there the factors ARE current.
+- **Why:** `theSOE->factored` answers "has A been re-assembled since the last solve", which is a different question from "do the stored factors correspond to A". With a purely direct solver the two coincide, which is why the distinction never had to exist before. `PARDISOGenLinSolver` now tracks them separately as `haveFactors` (is there a preconditioner at all) and `factorsCurrent` (does it match A); the phase-33 shortcut requires **both** `factored` and `factorsCurrent`.
+- **Also:** the automatic direct fallback is documented for **phase 23 only**. Driving CGS from phase 33 turns a failed iteration into `error = -4` with no factorization — so "call phase 22 then phase 33" is *not* a valid decomposition once `iparm[3] != 0`. And `iparm[3]` must be left at 0 for the first numeric pass of a pattern: there is no previous factorization to precondition with. *2026-07-25 (ADR-75 P1e).*

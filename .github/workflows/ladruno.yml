@@ -34,8 +34,39 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install pyyaml
+      # Duplicate definitions (WP-162): two PRs that both took quirk rule "L9" both
+      # added `def _l9` to one test file, and the merge was clean -- every WP-153
+      # test then ran WP-158's helper. D1 fails on a def/class defined twice in
+      # one scope; ruff F811 (pinned) catches the rest of its family (a duplicated
+      # test name, a re-import) but not that incident (ci/check_duplicate_defs.py).
+      # Before the classTag step on purpose: WP-161 adds its steps after it.
+      - name: duplicate definitions -- D1 + ruff F811 (WP-162)
+        run: |
+          pip install ruff==0.16.10
+          python ci/check_duplicate_defs.py
+          ruff check --no-cache --select F811 ci tests Ladruno_scripts
       - name: classTag collision + drift (Axis 1, G2)
         run: python ci/check_classtags.py
+      # Ledger fragments (WP-161): the build-control ledgers are one file per entry
+      # under Ladruno_implementation/ledger/<kind>/, so no two PRs write the same
+      # file and the ledgers stop forcing merge-ups. The gate checks the fragments
+      # (schema, name <-> wp, duplicates, class tags vs classTags.h, the stubs);
+      # the self-test carries the round-trip proof build(split(ledgers)) ==
+      # ledgers. The rendered LEDGER_*.md are gitignored, so they are built here
+      # and uploaded as the `ledgers` artifact.
+      - name: ledger fragments gate + round-trip self-test (WP-161)
+        run: |
+          pip install pytest
+          python ci/check_ledger_fragments.py
+          pytest -q ci/test_ledger.py
+      - name: build the ledgers (WP-161)
+        run: python ci/ledger.py build
+      - name: upload the built ledgers (WP-161)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ledgers
+          path: Ladruno_implementation/ledger/_build/
+          if-no-files-found: error
       - name: manifest ledger (G9)
         run: python ci/check_manifest.py
       # MPCO_Ladruno schema-v1 gate (D5): the validator is the executable spec and
@@ -58,14 +89,13 @@ jobs:
       - name: header stamp covers GLOBS (WP-122)
         run: python Ladruno_scripts/stamp_headers.py --check
       # Quirk-pattern gate (WP-115): LEDGER_quirks entries that name a greppable
-      # pattern, enforced -- L1 Rayleigh snapshot (#562), L2 singleton reset on
-      # wipe, L3 task-guide pointers, L4 element commitState chains to the base
-      # (betaKc Kc refresh, WP-118), L5 ground-motion load subtracted once and
-      # L6 ground-motion load has the right sign (both scan all element files,
-      # vanilla included; WP-119, WP-117). Last in the job so a red lint never hides
-      # the gates above. The self-test proves each rule still fires.
-      - name: quirk-pattern lint self-test (WP-115)
-        run: pytest -q ci/test_check_quirk_patterns.py
+      # pattern, enforced as rules named by slug (WP-162; the rule table in
+      # ci/README.md is generated from RULES). Last in the job so a red lint never
+      # hides the gates above. One self-test file per rule (ci/test_quirk_<slug>.py)
+      # proves each rule still fires; test_quirk_rules.py checks the registry, and
+      # test_duplicate_defs.py the duplicate-definition gate.
+      - name: quirk-pattern lint self-test (WP-115, per rule WP-162)
+        run: pytest -q ci/test_quirk_*.py ci/test_duplicate_defs.py
       - name: quirk-pattern lints (WP-115)
         run: python ci/check_quirk_patterns.py
       # Viewer-tools ledger gate (WP-121): a change that adds a source file to a
