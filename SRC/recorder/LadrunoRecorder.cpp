@@ -111,6 +111,8 @@ public:
 		, is_partitioned(false)
 		, initialized(false)
 		, first_domain_changed_done(false)
+		, stage_failed(false)
+		, init_failed(false)
 		, info()
 		, output_freq()
 		, has_region(false)
@@ -152,6 +154,13 @@ public:
 	// model-stage stamp; thereafter a stamp change triggers a model rebuild
 	// (frozen MPCORecorder::record() multi-stage block).
 	bool first_domain_changed_done;
+	// WP-163 R2: true after a MODEL_STAGE rebuild failed. writeModel() released
+	// every source first, so nothing dangles; recording stays suspended (no
+	// results, no per-step error spam) until the next stamp change rebuilds.
+	bool stage_failed;
+	// WP-163 (ROB-11): true after initialize() failed once — the recorder is
+	// then dead for the run instead of retrying (and leaking) every step.
+	bool init_failed;
 	ladrunons::detail::ProcessInfo info;
 
 	// -T output frequency
@@ -367,6 +376,10 @@ int LadrunoRecorder::domainChanged(void)
 int LadrunoRecorder::record(int commitTag, double timeStamp)
 {
 	ladrunons::detail::ProcessInfo& info = m_data->info;
+	// WP-163 (ROB-11): a recorder whose file could not be created is dead for
+	// the run (the error was printed once by initialize()).
+	if (m_data->init_failed)
+		return 0;
 	info.current_time_step_id = commitTag;
 	info.current_time_step = timeStamp;
 
@@ -394,8 +407,12 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 	}
 
 	if (!m_data->initialized) {
-		if (initialize() != 0)
+		if (initialize() != 0) {
+			m_data->init_failed = true;
+			opserr << "LadrunoRecorder: initialization failed; this recorder is "
+			          "disabled for the rest of the run\n";
 			return -1;
+		}
 		m_data->initialized = true;
 	}
 
@@ -423,9 +440,22 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 		rebuild_model = true;
 	}
 	if (rebuild_model) {
-		if (writeModel() != 0)
+		// WP-163 R2: writeModel() releases the prior stage's sources (and their
+		// cached Element*/Response*) BEFORE writing anything, so a failed rebuild
+		// leaves no dangling pointers behind. The stamp is already committed, so
+		// the next record() would not retry: latch stage_failed and record nothing
+		// until the next stamp change rebuilds (one error, not one per step).
+		if (writeModel() != 0) {
+			m_data->stage_failed = true;
+			opserr << "LadrunoRecorder: MODEL_STAGE[" << info.current_model_stage_id
+			       << "] could not be written; recording is suspended until the "
+			          "next domain change\n";
 			return -1;
+		}
+		m_data->stage_failed = false;
 	}
+	if (m_data->stage_failed)
+		return 0;
 
 	if (recordResultsOnNodes() != 0)
 		return -1;
@@ -550,6 +580,12 @@ int LadrunoRecorder::initialize()
 	if (info.h_file_id == ladrunons::HID_INVALID) {
 		opserr << "LadrunoRecorder error: cannot create file \""
 		       << the_filename.c_str() << "\"\n";
+		// WP-163 (ROB-11): release the property lists created above (they
+		// leaked on every retry when initialize() was re-run each step).
+		ladrunons::h5::plist::close(info.h_group_proplist);
+		ladrunons::h5::plist::close(info.h_file_proplist);
+		info.h_group_proplist = ladrunons::HID_INVALID;
+		info.h_file_proplist = ladrunons::HID_INVALID;
 		return -1;
 	}
 
@@ -613,6 +649,15 @@ int LadrunoRecorder::writeModel()
 	// (the multi-stage rebuild_model block), so the stamp is consistent across
 	// the MODEL_STAGE group and every result/source path resolved from it.
 
+	// WP-163 R2: release the prior stage's sources, sinks and cached element
+	// Response* FIRST. They wrap Element*/Node* of the previous domain state; if
+	// any writer below fails and returns early, they must already be gone, or
+	// the next record() (same stamp -> no rebuild) would call getResponse() on
+	// deleted elements. (Previously this ran only after all writers succeeded.)
+	if (clearSources() != 0)
+		return -1;
+	m_data->nodes.clear();
+
 	// MODEL_STAGE[<stamp>] + MODEL + RESULTS skeleton (mirror frozen writeModel)
 	std::stringstream ss_stage;
 	ss_stage << "MODEL_STAGE[" << info.current_model_stage_id << "]";
@@ -670,13 +715,11 @@ int LadrunoRecorder::writeModel()
 	if (writeSections() != 0)
 		return -1;
 
-	// (Re)build the source/sink channels for this stage. clearSources() releases
-	// the prior stage's sources, sinks, and cached element Response* (which would
-	// otherwise dangle after the domain rebuild); the fresh sinks are not yet
-	// initialized, so they re-create their result groups under the new MODEL_STAGE.
-	// Mirrors frozen writeModel()'s trailing initNodeRecorders()/initElementRecorders().
-	if (clearSources() != 0)
-		return -1;
+	// (Re)build the source/sink channels for this stage. The prior stage's
+	// sources were released at the top of writeModel() (WP-163 R2); the fresh
+	// sinks are not yet initialized, so they re-create their result groups under
+	// the new MODEL_STAGE. Mirrors frozen writeModel()'s trailing
+	// initNodeRecorders()/initElementRecorders().
 	if (initNodeSources() != 0)
 		return -1;
 	if (initElementSources() != 0)
@@ -1968,7 +2011,12 @@ int LadrunoRecorder::recordResultsOnNodes()
 
 	// EIGEN/MODES detection (frozen recordResultsOnNodes preamble).
 	info.record_eigen_on_this_step = false;
-	int num_eigen = *OPS_GetNumEigen();
+	// WP-163 R1: gate on the DOMAIN's spectrum, not the interpreter's numEigen.
+	// `wipe` clears the domain eigenvalues but never resets numEigen (Tcl global
+	// / OpenSeesCommands), so after `eigen; wipe; <new model>` the old count
+	// survived and Domain::getEigenvalues() exit(-1)'d the whole process.
+	// getNumEigenvalues() (ADR46) is the non-exiting presence probe.
+	int num_eigen = info.domain->getNumEigenvalues();
 	if (num_eigen > 0) {
 		bool eigen_requested = false;
 		for (size_t i = 0; i < m_data->node_channels.size(); ++i) {

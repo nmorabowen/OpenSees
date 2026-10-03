@@ -606,8 +606,13 @@ independent interpreter per rank, manual `getPID`/`getNP` partition — see
 `example_mpi_paralleltruss_explicit.py`), NOT `_PARALLEL_PROCESSING`
 (PartitionedDomain + `sendSelf` broadcast). The `partition` command (auto domain
 decomposition, the path that *would* exercise `sendSelf`) is **METIS-4-blocked**
-(`OPS_partition` returns an error; needs METIS 5 / `OPS_HAVE_METIS5`), so the
-broadcast path is not runtime-testable in this build.
+(`OPS_partition` returns an error; needs METIS 5 / `OPS_HAVE_METIS5`) — but ONLY
+the openseespy `partition` command under `_PARALLEL_INTERPRETERS`. **Correction
+(WP-163 review, 2026-10-03):** the Tcl `OpenSeesSP.exe` partitions automatically at
+the first `analyze`/`eigen` (`SRC/tcl/commands.cpp` `partitionModel()` → `new Metis`,
+the METIS-4 legacy API in `MetisWrapper.cpp`), so the PartitionedDomain + `sendSelf`
+recorder path DOES ship in this build — untested, not unreachable (e.g. `-G energy`
+null-derefs on a ShadowSubdomain there; WP-163 M1).
 
 ### Ladruno recorder nested result-group names need the `<display>` parent pre-created
 - **Bites:** writing an element result whose `schema.name` is nested
@@ -8280,3 +8285,37 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
   state reads as stick (a 100 % "tangent error" that is the probe).
 - **Workaround/status:** recorded; not changed (ADR-159 §5-§6). Compare runs only at the same engagement
   history.
+
+### `wipe` does not reset the interpreter's `numEigen` — gate any modal path on `Domain::getNumEigenvalues()`, never on `OPS_GetNumEigen()` (WP-163)
+- **Bites:** `eigen 3; wipe; <new model>; recorder ladruno f -N modesOfVibration; analyze 1` killed the process:
+  the recorder gated its modal write on `*OPS_GetNumEigen()` (still 3 — the Tcl global `numEigen` and
+  `OpenSeesCommands::numEigen` survive `wipe`/`wipeAnalysis`), then called `Domain::getEigenvalues()` on a domain
+  whose spectrum `clearAll()` had deleted → `exit(-1)` ("Eigenvalues were never set"). `Node::getEigenvectors()`
+  on a node with no eigenvectors is the same trap (`exit(0)` — exit code 0, so a harness sees "success").
+- **Why:** the interpreter count and the domain spectrum are separate state with separate lifetimes; only the
+  domain's is cleared by `wipe`.
+- **Workaround/status:** fixed in the Ladruno recorder (WP-163 R1): gate on `Domain::getNumEigenvalues()` and
+  probe `Node::getNumEigenvectors()` first (both ADR46, non-exiting). Any other fork code that reads
+  `OPS_GetNumEigen()` to decide whether to touch eigen data has the same bug. Resetting `numEigen` in `wipe`
+  would need a vanilla edit in both interpreters (not done).
+
+### A recorder that rebuilds on the domain-change stamp must release its cached `Response*` BEFORE writing the new stage — a failed rebuild otherwise dangles (WP-163)
+- **Bites:** `LadrunoRecorder::record()` commits the new stamp, then `writeModel()`; any writer that failed
+  (e.g. every node of the `-R` region removed → "no nodes to write") returned before `clearSources()`, so the
+  old element `Response*` (wrapping deleted elements) survived, and the next commit (same stamp → no rebuild)
+  called `getResponse()` on them: access violation 0xC0000005 (reproduced). `Domain::commit()` ignores the
+  recorder's -1, so nothing else stops it.
+- **Workaround/status:** fixed (WP-163 R2): release sources first, latch `stage_failed` until the next stamp
+  change. Note `Domain::removeLoadPattern` bumps the stamp only when the pattern owns SPs, so a recorder
+  caching a `LoadPattern*` must look it up by tag every step (the overlay source already does).
+
+### HDF5 failures in the Ladruno `StreamingSink` were silent: a result could vanish, and a duplicate request doubled the rows (WP-163)
+- **Bites:** no return code was checked in `createTimeSeries3d` / `begin()` / `appendSlab3d`. A failed `H5Dcreate`
+  (disk full, a > 4 GiB chunk, a name clash) left a DATA-less group and every later `accept()` returned quietly —
+  only HDF5-DIAG noise (or nothing). `-N displacement displacement` made two sinks on one group: the second's
+  create failed, it still marked itself initialized, then appended into the first's group → DATA 2T rows,
+  TIME/STEP every step twice.
+- **Workaround/status:** fixed (WP-163 R5): checked creates/appends, one error by result name, channel stopped;
+  a pre-existing result group is refused; a short buffer skips the whole step (DATA/TIME/STEP stay aligned);
+  the id axis is tiled above a 1 GiB slab. HDF5 chunks must stay < 4 GiB and every chunk dim ≤ its max dim
+  (a `[T×0×C]` dataset with chunk 1 cannot be created — an empty channel now writes nothing).

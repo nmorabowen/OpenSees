@@ -34,6 +34,8 @@
 #include "Ladruno_Sinks.h"
 #include "Ladruno_Hdf5.h" // pulls Ladruno_Types.h; provides ladruno::h5::*
 
+#include "OPS_Globals.h"   // opserr (WP-163 R5 failure reports)
+
 #include <sstream>
 #include <cmath>
 
@@ -112,15 +114,46 @@ namespace ladruno {
 	/* StreamingSink                                                         */
 	/* ===================================================================== */
 
+	void StreamingSink::fail(const ResultSchema& schema, const char* why)
+	{
+		opserr << "LadrunoRecorder error: result \"" << schema.name.c_str()
+		       << "\" " << why << "; it will NOT be recorded from here on\n";
+		m_dead = true;
+		m_initialized = true;   // never re-run begin() (no per-step retry/spam)
+	}
+
 	void StreamingSink::begin(detail::ProcessInfo& info, const ResultSource& src)
 	{
 		const ResultSchema& schema = src.schema();
 		if (schema.num_components < 1)
 			return;
+		// An empty channel (no ids on this process) has nothing to write. Its
+		// [T x 0 x C] DATA could never be created (chunk dim 1 > max dim 0) and
+		// used to leave a DATA-less result group behind; write nothing instead.
+		if (src.ids().empty()) {
+			m_dead = true;
+			m_initialized = true;
+			return;
+		}
 
 		hid_t h_family = openFamilyGroup(info, m_family);
-		if (h_family == HID_INVALID)
+		if (h_family == HID_INVALID || h_family < 0) {
+			fail(schema, "could not open its RESULTS family group");
 			return;
+		}
+
+		// WP-163 R5/R4: result group names are unique per channel within a
+		// MODEL_STAGE (element buckets embed classTag + rule + header index), so
+		// a pre-existing group means this result was requested twice (e.g.
+		// `-N displacement displacement`, or the alias pair tieForce /
+		// constraintTieForce) or two recorders target one file. Appending into
+		// the existing group doubled its rows silently; refuse instead.
+		if (H5Lexists(h_family, schema.name.c_str(), H5P_DEFAULT) > 0) {
+			h5::group::close(h_family);
+			fail(schema, "already exists in this MODEL_STAGE (duplicate request, "
+			             "or two recorders writing the same file)");
+			return;
+		}
 
 		// Result group with the self-describing attrs (schema §7.1).
 		hid_t h_gp_result = h5::group::createResultGroup(
@@ -129,6 +162,11 @@ namespace ladruno {
 			schema.components_csv, schema.num_components,
 			schema.dimension, schema.description,
 			(int)schema.result_type, (int)schema.data_type);
+		if (h_gp_result < 0) {
+			h5::group::close(h_family);
+			fail(schema, "could not create its result group");
+			return;
+		}
 		// WP-126: how a reader combines this result across partition files (§7.1).
 		h5::attribute::write(h_gp_result, "PARTITION_REDUCTION",
 			std::string(src.partitionReduction()));
@@ -151,14 +189,22 @@ namespace ladruno {
 			h_gp_result, "DATA", (hsize_t)n_ids, (hsize_t)n_comp, data_disk_type);
 		hid_t h_time = h5::dataset::createTimeAxis1d(h_gp_result, "TIME", H5T_IEEE_F64LE);
 		hid_t h_step = h5::dataset::createTimeAxis1d(h_gp_result, "STEP", H5T_STD_I32LE);
+		const bool ok = (h_dset_id >= 0 && h_data >= 0 && h_time >= 0 && h_step >= 0);
 
-		h5::dataset::close(h_step);
-		h5::dataset::close(h_time);
-		h5::dataset::close(h_data);
-		h5::dataset::close(h_dset_id);
+		if (h_step >= 0) h5::dataset::close(h_step);
+		if (h_time >= 0) h5::dataset::close(h_time);
+		if (h_data >= 0) h5::dataset::close(h_data);
+		if (h_dset_id >= 0) h5::dataset::close(h_dset_id);
 		h5::group::close(h_gp_result);
 		h5::group::close(h_family);
 
+		if (!ok) {
+			// WP-163 R5: previously ignored — every later accept() then failed
+			// H5Dopen2("DATA") and returned silently, dropping the whole result.
+			fail(schema, "could not create its ID/DATA/TIME/STEP datasets "
+			             "(disk full or quota, or HDF5 refused the dataset)");
+			return;
+		}
 		m_initialized = true;
 	}
 
@@ -174,31 +220,63 @@ namespace ladruno {
 		// is never silently dropped.
 		if (!m_initialized)
 			begin(info, src);
+		if (m_dead)
+			return;
 
 		const std::vector<int>& ids = src.ids();
 		const size_t n_ids = ids.size();
 		const size_t n_comp = (size_t)schema.num_components;
 
-		hid_t h_family = openFamilyGroup(info, m_family);
-		if (h_family == HID_INVALID)
+		// WP-163 R5: a short buffer skips the WHOLE step (DATA and TIME/STEP
+		// together) so the three axes stay aligned; previously DATA was skipped
+		// while TIME/STEP were still appended, shifting every later row.
+		if (buffer.size() < n_ids * n_comp) {
+			if (!m_warned_short) {
+				opserr << "LadrunoRecorder warning: result \"" << schema.name.c_str()
+				       << "\" got " << (int)buffer.size() << " values, expected "
+				       << (int)(n_ids * n_comp) << "; step(s) skipped\n";
+				m_warned_short = true;
+			}
 			return;
+		}
+
+		hid_t h_family = openFamilyGroup(info, m_family);
+		if (h_family == HID_INVALID || h_family < 0) {
+			fail(schema, "could not reopen its RESULTS family group");
+			return;
+		}
 
 		// Open the (already-created) result group, then append this step's slab
 		// to DATA[T x nIds x nComp] and the matching TIME/STEP axes (schema D3).
 		hid_t h_gp_result = H5Gopen2(h_family, schema.name.c_str(), H5P_DEFAULT);
 		if (h_gp_result < 0) {
 			h5::group::close(h_family);
+			fail(schema, "could not reopen its result group");
 			return;
 		}
 		hid_t h_data = H5Dopen2(h_gp_result, "DATA", H5P_DEFAULT);
 		if (h_data < 0) {
 			h5::group::close(h_gp_result);
 			h5::group::close(h_family);
+			fail(schema, "could not reopen its DATA dataset");
 			return;
 		}
-		if (buffer.size() >= n_ids * n_comp)
+		hsize_t t_before = h5::dataset::extent0(h_data);
+		herr_t append_status =
 			h5::dataset::appendSlab3d(h_data, &buffer[0], (hsize_t)n_ids, (hsize_t)n_comp);
+		hsize_t t_after = h5::dataset::extent0(h_data);
 		h5::dataset::close(h_data);
+		if (append_status < 0) {
+			// The slab write failed (disk full / quota). If DATA was already
+			// extended, that row exists (fill value) — append TIME/STEP for it so
+			// the axes stay aligned, then stop the channel; if not, append nothing.
+			fail(schema, "failed to append a step to DATA (disk full or quota?)");
+			if (t_after == t_before) {
+				h5::group::close(h_gp_result);
+				h5::group::close(h_family);
+				return;
+			}
+		}
 
 		hid_t h_time = H5Dopen2(h_gp_result, "TIME", H5P_DEFAULT);
 		if (h_time >= 0) {

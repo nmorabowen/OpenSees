@@ -45,6 +45,7 @@
 #include "ID.h"
 #include "classTags.h"
 
+#include <algorithm>
 #include <cmath>
 #include <sstream>
 
@@ -761,9 +762,12 @@ namespace ladruno {
 		m_schema.result_type = detail::ResultType::Modal;
 	}
 
-	int ModesOfVibrationSource::numModes(const detail::ProcessInfo& /*info*/) const
+	int ModesOfVibrationSource::numModes(const detail::ProcessInfo& info) const
 	{
-		return *OPS_GetNumEigen();
+		// WP-163 R1: the spectrum the recorder actually captured from the domain
+		// (recordResultsOnNodes sets eigen_last_values from getEigenvalues()), not
+		// the interpreter's numEigen, which `wipe` never resets.
+		return info.eigen_last_values.Size();
 	}
 
 	void ModesOfVibrationSource::modeInfo(const detail::ProcessInfo& info, int k,
@@ -784,15 +788,16 @@ namespace ladruno {
 		for (size_t i = 0; i < m_ids.size(); i++) {
 			Node* n = getNode(info, m_ids[i]);
 			if (!n) continue;
+			// WP-163 R1: Node::getEigenvectors() exit(0)s when unset (a node
+			// added after `eigen`); probe first and leave such nodes zero.
+			if (n->getNumEigenvectors() <= m_current_mode) continue;
 			size_t j = i * m_ndim;
 			const Matrix& inode_eigenvec = n->getEigenvectors();
-			buffer[j] = inode_eigenvec(0, m_current_mode);
-			if (m_ndim > 1) {
-				buffer[j + 1] = inode_eigenvec(1, m_current_mode);
-				if (m_ndim > 2) {
-					buffer[j + 2] = inode_eigenvec(2, m_current_mode);
-				}
-			}
+			// WP-163 (ROB-8): a node with fewer DOFs than ndm (scalar node in a
+			// 2D/3D model) has fewer rows; Matrix() is unchecked in release.
+			const int nr = std::min(m_ndim, inode_eigenvec.noRows());
+			for (int r = 0; r < nr; ++r)
+				buffer[j + (size_t)r] = inode_eigenvec(r, m_current_mode);
 		}
 	}
 
@@ -833,6 +838,7 @@ namespace ladruno {
 		for (size_t i = 0; i < m_ids.size(); i++) {
 			Node* n = getNode(info, m_ids[i]);
 			if (!n) continue;
+			if (n->getNumEigenvectors() <= m_current_mode) continue;  // WP-163 R1
 			const Matrix& inode_eigenvec = n->getEigenvectors();
 			if (m_ndim == 2 && inode_eigenvec.noRows() > 2) {
 				size_t j = i;

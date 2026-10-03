@@ -328,20 +328,48 @@ namespace h5 {
 		// byte budget uses the on-disk element size so chunks stay ~256 KiB either way.
 		inline hid_t createTimeSeries3d(hid_t obj, const char *name, hsize_t n_ids, hsize_t n_comp,
 		                                hid_t disk_type = H5T_IEEE_F64LE) {
+			if (n_ids < 1 || n_comp < 1) return HID_INVALID;  // WP-163 R5: unrepresentable
 			hsize_t dims[3]    = { 0, n_ids, n_comp };
 			hsize_t maxdims[3] = { H5S_UNLIMITED, n_ids, n_comp };
 			hid_t space = H5Screate_simple(3, dims, maxdims);
+			if (space < 0) return HID_INVALID;
 			hid_t dcpl = H5Pcreate(H5P_DATASET_CREATE);
+			if (dcpl < 0) { H5Sclose(space); return HID_INVALID; }
 			hsize_t elem_bytes = (H5Tequal(disk_type, H5T_IEEE_F32LE) > 0) ? 4 : 8;
 			hsize_t ct = chunkSlabsPerBlock(n_ids * n_comp, elem_bytes);
-			hsize_t chunk[3] = { ct, n_ids ? n_ids : 1, n_comp ? n_comp : 1 };
-			H5Pset_chunk(dcpl, 3, chunk);
-			H5Pset_shuffle(dcpl);
-			H5Pset_deflate(dcpl, 4);
-			hid_t dset = H5Dcreate(obj, name, disk_type, space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
+			// WP-163 R5: HDF5 refuses a chunk of >= 4 GiB, and the chunk spans every
+			// id, so a slab above 2^29 f64 values made H5Dcreate fail (silently, the
+			// result vanished). Above a 1 GiB slab, tile the id axis instead. Below
+			// it the layout is unchanged (one chunk = whole slab x ct steps).
+			hsize_t chunk_ids = n_ids;
+			const hsize_t max_chunk_bytes = (hsize_t)1 << 30;  // 1 GiB
+			const hsize_t row_bytes = n_comp * elem_bytes;
+			if (n_ids * row_bytes > max_chunk_bytes) {
+				chunk_ids = max_chunk_bytes / row_bytes;
+				if (chunk_ids < 1) chunk_ids = 1;
+			}
+			hsize_t chunk[3] = { ct, chunk_ids, n_comp };
+			herr_t st = H5Pset_chunk(dcpl, 3, chunk);
+			if (st >= 0) st = H5Pset_shuffle(dcpl);
+			if (st >= 0) st = H5Pset_deflate(dcpl, 4);
+			hid_t dset = (st >= 0)
+				? H5Dcreate(obj, name, disk_type, space, H5P_DEFAULT, dcpl, H5P_DEFAULT)
+				: HID_INVALID;
 			H5Pclose(dcpl);
 			H5Sclose(space);
-			return dset;
+			return (dset < 0) ? HID_INVALID : dset;
+		}
+
+		// WP-163 R5: current length of the unlimited (first) axis, 0 on error.
+		inline hsize_t extent0(hid_t dset) {
+			hid_t fspace = H5Dget_space(dset);
+			if (fspace < 0) return 0;
+			hsize_t cur[3] = { 0, 0, 0 };
+			int nd = H5Sget_simple_extent_ndims(fspace);
+			if (nd >= 1 && nd <= 3)
+				H5Sget_simple_extent_dims(fspace, cur, NULL);
+			H5Sclose(fspace);
+			return cur[0];
 		}
 
 		// append one [1 x nIds x nComp] slab to a [T x nIds x nComp] dataset.
