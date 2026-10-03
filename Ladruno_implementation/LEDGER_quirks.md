@@ -8372,3 +8372,23 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
   ≤ 16 steps (`[4, 682, 48]` there → 0.017 s). Readers need no change (chunking is transparent). The
   `Ladruno_scripts/zfp_benchmark/reencode_bench.py` helper mirrors the OLD 256 KiB rule — re-read the chunk
   shape from the file rather than mirroring the writer's rule.
+
+### `Domain::hasDomainChanged()` is a DOF-graph stamp, not an analysis-stage marker — key anything "per stage" on the node/element set (WP-165)
+- **Bites:** the Ladruno recorder started a new `MODEL_STAGE` (full model copy, every source rebuilt, envelopes
+  and energy reset) on every stamp move. The stamp moves for `addSP_Constraint` into a pattern (`sp`,
+  `imposedMotion`), `addElementalLoad` (`eleLoad`), `addLoadPattern` of a pattern that already holds SPs, every
+  `remove*`, and the ADR-60 contact `-reemit` path, which calls `domainChange()` INSIDE `commit()` before the
+  recorder loop — so a `-reemit` run wrote one model copy per re-sort, and stage names drifted between ranks.
+  It does NOT move for `addNodalLoad`, `loadConst`, `setTime`.
+- **Workaround/status:** WP-165: rebuild only when a fingerprint of the node/element/pressure-constraint set
+  (tag AND object address — `remove element 5; element ... 5` is a new object) changed. Anything that caches
+  `Element*`/`Response*` across a stamp move must use the same test, not the stamp alone.
+
+### Slurm: a batch shell has `SLURM_STEP_ID` UNSET; each `srun` rank has a real step id (verified on Esmeralda, WP-165)
+- **Observed (Slurm on Esmeralda, 2026-10-03):** inside `sbatch -n 2` the batch shell has `SLURM_NTASKS=2`,
+  `SLURM_PROCID=0`, `SLURM_STEP_ID` unset; under `srun --mpi=pmix_v3` each rank has `SLURM_PROCID=<rank>`,
+  `SLURM_STEP_ID=0` (first step). This is what `Ladruno_LaunchEnv.h` relies on (SLURM pair trusted only with a
+  real step id; the batch/extern pseudo-steps use 0xFFFFFFFE/0xFFFFFFFD where a Slurm version does set them).
+- **Also:** Esmeralda compute nodes have no `cmake`; OpenSees builds there run on the login host (niced), and
+  the serial `OpenSees` binary needs `LD_LIBRARY_PATH=/mnt/nfshare/lib` on compute nodes (MKL lives in `/lib`
+  only on the login host).
