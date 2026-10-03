@@ -82,8 +82,12 @@ namespace ladruno {
 	public:
 		explicit StreamingSink(ResultFamily::Enum family)
 			: m_family(family), m_initialized(false), m_dead(false),
-			  m_warned_short(false) {}
-		~StreamingSink() override = default;
+			  m_warned_short(false), m_data(HID_INVALID), m_time(HID_INVALID),
+			  m_step(HID_INVALID), m_mspace(HID_INVALID), m_mspace1(HID_INVALID),
+			  m_t(0), m_n_ids(0), m_n_comp(0) {}
+		// WP-164: closes the DATA/TIME/STEP handles held open for the stage
+		// (the recorder deletes sinks on a stage change and before H5Fclose).
+		~StreamingSink() override;
 
 		void begin(detail::ProcessInfo& info, const ResultSource& src) override;
 		void accept(detail::ProcessInfo& info, const ResultSource& src,
@@ -98,11 +102,20 @@ namespace ladruno {
 		// of silently returning on every later step (the result used to vanish
 		// from the file with only HDF5-DIAG noise on stderr).
 		void fail(const ResultSchema& schema, const char* why);
+		void closeHandles();
 
 		ResultFamily::Enum m_family;
 		bool m_initialized;   // group + ID written for the current stage
 		bool m_dead;          // WP-163 R5: a create/append failed; channel stopped
 		bool m_warned_short;  // WP-163 R5: short-buffer warning printed once
+		// WP-164 (P2): DATA/TIME/STEP stay open from begin() to destruction, so the
+		// per-dataset chunk cache keeps the partially filled chunk in memory and it
+		// is deflated once when complete (reopening evicted and re-inflated it every
+		// step). m_t counts the slabs written (no per-step extent query).
+		hid_t m_data, m_time, m_step;
+		hid_t m_mspace, m_mspace1;   // reused [1 x nIds x nComp] and [1] memory spaces
+		hsize_t m_t;
+		size_t m_n_ids, m_n_comp;
 	};
 
 	/*
@@ -129,8 +142,16 @@ namespace ladruno {
 	public:
 		explicit EnvelopeSink(ResultFamily::Enum family)
 			: m_family(family), m_seeded(false), m_n_ids(0), m_n_comp(0),
-			  m_result_type(0), m_data_type(0) {}
-		~EnvelopeSink() override = default;
+			  m_result_type(0), m_data_type(0), m_created(false),
+			  m_dmin(HID_INVALID), m_dmax(HID_INVALID), m_dabs(HID_INVALID),
+			  m_darg(HID_INVALID) {}
+		// WP-164: closes the MIN/MAX/ABSMAX/ARG_STEP handles held for the stage.
+		~EnvelopeSink() override;
+		// WP-164: true once the ENVELOPES/<name> group exists (the recorder writes
+		// the element COLUMN_MAP once, after the first write).
+		bool written() const { return m_created; }
+		// WP-164: bytes rewritten per envelope write (MIN/MAX/ABSMAX f64 + ARG_STEP i32).
+		size_t payloadBytes() const { return m_n_ids * m_n_comp * 28; }
 
 		void begin(detail::ProcessInfo& info, const ResultSource& src) override;
 		void accept(detail::ProcessInfo& info, const ResultSource& src,
@@ -166,6 +187,11 @@ namespace ladruno {
 		std::vector<double> m_max;
 		std::vector<double> m_absmax;
 		std::vector<int> m_arg_step; // per-component step index of the abs-extreme
+		// WP-164 (P1): the group + datasets are created on the first write and then
+		// OVERWRITTEN in place (H5Dwrite on held handles). The old path deleted and
+		// recreated the whole group, attrs and COLUMN_MAP on every flush.
+		bool m_created;
+		hid_t m_dmin, m_dmax, m_dabs, m_darg;
 	};
 
 } // namespace ladruno

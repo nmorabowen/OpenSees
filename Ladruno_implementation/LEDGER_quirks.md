@@ -8349,3 +8349,26 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
 - **Workaround/status:** NaN is now deliberately sticky (first NaN poisons MIN/MAX/ABSMAX, ARG_STEP = that step).
   Do not build with `/fp:fast` / `-ffast-math`: the `v != v` test (and `std::isnan`) is not reliable under it.
   The size-mismatch rows of an element bucket are NaN-filled for the same reason (a zero row looked like data).
+
+### Closing an HDF5 chunked dataset (or `H5Fflush`) every step makes a partially filled compressed chunk be deflated, written, re-read and re-inflated EVERY step (WP-164)
+- **Bites:** the Ladruno `StreamingSink` reopened DATA/TIME/STEP on each `accept()` and the recorder called
+  `H5Fflush` after every recorded step. The chunk cache belongs to the open DATASET, so `H5Dclose` writes the
+  dirty partial chunk (shuffle + deflate) and drops it, and the next `H5Dopen2` + partial write has to read and
+  inflate it again. A chunk that stacks `ct` steps (up to 1024 for a small slab) was compressed ~`ct` times, and
+  a recompressed chunk grows, so HDF5 also reallocates file space. Measured (WP-164 bench): a 20 000-step
+  explicit run with two tiny channels — analysis 0.9 s, recorder **88 s**.
+- **Why:** HDF5 caches raw chunks per open dataset (`H5Pset_chunk_cache` on the dataset ACCESS list, default
+  1 MiB); `H5Fflush` writes every dirty cached chunk through the filter pipeline even when it is incomplete.
+- **Workaround/status:** WP-164: keep the handles open for the stage, size the chunk cache to a row of chunks,
+  flush on a wall-clock cadence (`-flush <s>`, default 10 s) and at stage end / close → recorder 0.97 s on the
+  same deck. Holding handles means the sinks must close them before `H5Fclose` (the recorder deletes sinks
+  first) and silently at process exit (HDF5's atexit may have closed the IDs: `H5E_BEGIN_TRY`).
+
+### A chunk that spans every id makes ONE entity's time history read (and inflate) the whole dataset (WP-164)
+- **Bites:** `[T x nIds x nComp]` chunked `{ct, nIds, nComp}`: `data[:, k, :]` touches every chunk, i.e.
+  decompresses all of DATA (0.565 s for one element of a 19 200-element, 20-step stress dataset; ~38 TB of
+  inflate for a 10 M-element, 1e4-step run).
+- **Workaround/status:** WP-164 chunk plan: ~1 MiB chunks; a slab above 1 MiB tiles the id axis and stacks
+  ≤ 16 steps (`[4, 682, 48]` there → 0.017 s). Readers need no change (chunking is transparent). The
+  `Ladruno_scripts/zfp_benchmark/reencode_bench.py` helper mirrors the OLD 256 KiB rule — re-read the chunk
+  shape from the file rather than mirroring the writer's rule.
