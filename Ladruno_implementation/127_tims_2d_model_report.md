@@ -94,8 +94,9 @@ refuted: the "abrupt switch at 0.5 kPa" in the error norm is a continuous 1 kPa 
 | F22 | deterministic mode | shipped; not yet run on Esmeralda | §1 |
 | F23(a)–(b) | PDMY03 constants, the dilation brake | shipped; the brake cannot produce a plateau | §1 |
 
-The integrator recommendation, SAS-ME with R1 and the separation, is in §4.11. It is a decision of the
-owner and of TIMs.
+The integrator configuration, SAS-ME with R1 and the separation, is in §4.11. Its values (κ = 0.5;
+p_sep 0.1 kPa, p_contact 1.0 kPa) were decided by the owner on 2026-10-03; its use on the TIMs campaign
+is a decision of TIMs.
 
 ---
 
@@ -117,7 +118,7 @@ prototype scale.
 
 - **R1** carries the campaign set past its wall to s/B 0.093, at q 1459 kPa and still rising. Each part of
   R1 alone walls earlier, at s/B 0.045 to 0.0525. The cap strength κ 0.25 / 0.5 / 0.75 gives identical
-  curves to s/B 0.045 and differs by at most 5 % after, not in κ order; κ = 0.5 is recommended. Source
+  curves to s/B 0.045 and differs by at most 5 % after, not in κ order; κ = 0.5, decided by the owner on 2026-10-03. Source
   `bd93c558d`, 2026-09-29.
 - **The c ≥ 0.78 route is withdrawn as a cure.** At footing scale c = 0.80 without R1 walls at s/B 0.048,
   on the compression side (`bd93c558d`, 2026-09-29). The recommendation c ≥ 7/9 stays for Lode convexity
@@ -244,7 +245,8 @@ test's 227 / 410 / 743 kPa (`8ebde5cbd`, 2026-09-30). On V85.6 the secant to s/B
   stiffness and the limit load come from the same run. It is checked against an elastic strip on a
   modulus increasing with depth (Gibson; Booker et al. 1985; Gazetas 1991) and against Kimura et al.
   (1985). It must not move the peak or the element behaviour that already matches the laboratory.
-  Status: planned, not built. The acceptance band for the initial secant is a TIMs decision (D11).
+  Status: planned, not built. The acceptance tolerance on the initial secant is ±20 % against the
+  reference test, decided on 2026-10-03 (D11).
 
 ### 0a.5 Post-peak dilatancy
 
@@ -1164,7 +1166,7 @@ critical-state and the peak angle because of progressive failure and stress leve
 Perkins & Madson 2000; Loukidis & Salgado 2011). "Which curve is physical" is the same question as
 "what is the target sand's operative φ′".
 
-### 4.11 The integrator recommendation (a decision of the owner and of TIMs)
+### 4.11 The integrator configuration (values decided 2026-10-03)
 
 **SAS-ME (`IntScheme 129`), TanType 0, TolR 1e-4, `-maxSubsteps 2000`, with R1 and the low-confinement
 separation, on the step policy of the runs of §0a.** The material line for the Toyoura legs:
@@ -1176,10 +1178,12 @@ nDMaterial LadrunoSANISAND $tag <the 18 constants of the set> \
     -sasTensionCutoff 0.1 1.0
 ```
 
-- `-sasHFloor 1 -sasReseatHyst 1 -sasSoftCap 0.5` is R1 with κ = 0.5 (merged).
-- `-sasTensionCutoff p_sep p_contact` is the low-confinement separation, in model stress units (kPa
-  here). p_sep = 0.1 kPa is the smallest value tested and moves the peak by 0.09 % against 0.5 kPa;
-  p_contact = 1.0 kPa is the value of the runs of §0a. The flag is on `ladruno` from `fc2ea4fc8`
+- `-sasHFloor 1 -sasReseatHyst 1 -sasSoftCap 0.5` is R1 with κ = 0.5 (merged; κ decided by the owner on
+  2026-10-03).
+- `-sasTensionCutoff 0.1 1.0` is the low-confinement separation with p_sep = 0.1 kPa and p_contact =
+  1.0 kPa, in model stress units (kPa here), decided by the owner on 2026-10-03. p_sep = 0.1 kPa is the
+  smallest value tested and moves the peak by 0.09 % against 0.5 kPa; p_contact = 1.0 kPa is the value
+  of the runs of §0a. The flag is on `ladruno` from `fc2ea4fc8`
   (§0a.7) and requires `-Presidual 0`.
 - The campaign constants of the first issues are not recommended for monotonic footing work (§0a.6).
 
@@ -1202,7 +1206,8 @@ settlement is still accepted on the relaxed KrylovNewton rung (caution 4).
 
 ## 5. Decisions for TIMs
 
-The table gives recommendations. The decisions belong to the calibration and to the project.
+The table gives recommendations, except the rows marked **decided**, which the owner settled on
+2026-10-03. The remaining decisions belong to the calibration and to the project.
 
 | # | decision | recommendation | reason |
 |---|---|---|---|
@@ -1214,9 +1219,9 @@ The table gives recommendations. The decisions belong to the calibration and to 
 | D6 | **The reference load for `NormUnbalance`** | the vector named | it decides whether the integrator's per-point error sits under the Newton tolerance (F18(a)) |
 | D7 | **The calibration** | the campaign set replaced for monotonic footing work; PB2 or DM04 Toyoura as interim references; the final set calibrated on the target sand's laboratory data (§5.1) | the campaign set is a cyclic fit applied to a monotonic problem (§0a.6) |
 | D8 | **Lode parameter c** | c ≥ 7/9 (≈ 0.78), for Lode convexity only | at c = 0.71 the Lode interpolation is non-convex at the extension meridian, and a round-off perturbation decides a CTXu result (§4.9). At footing scale c = 0.80 without R1 walls at s/B 0.048, so c is not a cure for the wall |
-| D9 | **R1** | used for the campaign, with κ = 0.5 | it closes the SAS-ME wall at any c without recalibration (below) |
-| D10 | **The separated zone** | the low-confinement separation accepted as the idealisation of the heaving wedge, with p_sep = 0.1 kPa | the peak is insensitive to p_sep (0.09 %) and p_contact (0.35 %), and within 2.3 % of the p_r → 0 extrapolation; the zone is a dilatant heave driven by the model (§0a.1). Whether that dilation is physical is §0a.5 |
-| D11 | **Acceptance of the initial stiffness** | a tolerance on the initial secant against the reference test, stated before the stiffness work; ±20 % proposed | the stiffness is a deliverable for the TIM macroelement, and it is 0.44 of the test today (§0a.4) |
+| D9 | **R1** | used for the campaign; κ = 0.5 **decided** (2026-10-03) | it closes the SAS-ME wall at any c without recalibration (below) |
+| D10 | **The separated zone** | the low-confinement separation accepted as the idealisation of the heaving wedge; `-sasTensionCutoff 0.1 1.0` (p_sep 0.1 kPa, p_contact 1.0 kPa) **decided** (2026-10-03) | the peak is insensitive to p_sep (0.09 %) and p_contact (0.35 %), and within 2.3 % of the p_r → 0 extrapolation; the zone is a dilatant heave driven by the model (§0a.1). Whether that dilation is physical is §0a.5 |
+| D11 | **Acceptance of the initial stiffness** | ±20 % on the initial secant against the reference test, **decided** (2026-10-03) | the stiffness is a deliverable for the TIM macroelement, and it is 0.44 of the test today (§0a.4) |
 
 **D9 in detail: R1.** Opt-in flags of `LadrunoSANISAND` with `IntScheme 129`, all default off and
 byte-identical when off; vanilla `ManzariDafalias` is unchanged. Two coupled parts:
@@ -1415,3 +1420,4 @@ al. (2016), *SpringerPlus* 5, 1482. Full list in the regularisation memo.
 | 2026-09-29 to 2026-09-30 | Fifth issue and addenda, §0a items 1–12: R1 merged; CPPM merged; the c ≥ 0.78 route withdrawn; the campaign set as a cyclic fit and PB2; the free surface as the limiter after R1; the low-confinement separation; Kimura et al. (1985) as Gate 1; the Tatsuoka element check; the acoustic census (case C); the initial stiffness as a deliverable; the reviewed separation; K75; the separated zone as a dilatant heave; a third coherence track. |
 | 2026-10-03 | Sixth issue, for the owner's review before sending. §0 and §0a rewritten as the state on 3 October, replacing items 1–12: the numerical limit closed and its verification; the Kimura comparison; the grading test; the B/16 result with Perzyna as a prerequisite; the initial stiffness; post-peak dilatancy; the campaign set; one status table of the fork changes. §1 statuses, §3 caution 8, §4 scope note and c = 0.80 results, §4.11 with R1 and the separation, §5 (D1–D11), §5.1 small-strain data, §6 rewritten. |
 | 2026-10-03 (later) | Voice pass over §§1–7: impersonal throughout; PR and WP numbers only in §0a.7. The lab-localisation share stated as a bound under an assumed band volume fraction of 0.3. The Kimura B/16 value stated at its reading point (1757 kPa at s/B 0.183, leg running), not as a final −24 %. The separation and the sub-step moduli fix merged. |
+| 2026-10-03 (owner decisions) | κ = 0.5, `-sasTensionCutoff 0.1 1.0` and the ±20 % initial-stiffness tolerance stated as owner decisions of 2026-10-03 (§0, §0a.1, §0a.4, §4.11; D9, D10, D11 marked decided). |
