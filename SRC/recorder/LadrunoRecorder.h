@@ -82,9 +82,11 @@ private:
 
 	int clearSources();
 	// Write the deferred ENVELOPES datasets for every channel (EnvelopeSink::finalize;
-	// a no-op for StreamingSink). Called each recorded step in envelope mode (periodic
-	// in-place rewrite, ADR D7) and once more at teardown.
+	// a no-op for StreamingSink). Called on the -flush cadence in envelope mode (an
+	// in-place rewrite, ADR D7 / WP-164), at a stage change and once more at teardown.
 	void finalizeAllSinks();
+	// WP-164: H5Fflush + restart the -flush cadence clock.
+	void flushFile();
 
 	class private_data;
 	private_data* m_data;

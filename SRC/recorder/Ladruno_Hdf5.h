@@ -362,6 +362,123 @@ namespace h5 {
 			return (dset < 0) ? HID_INVALID : dset;
 		}
 
+		// ---- WP-164: write-path layout for datasets that stay OPEN for a stage --
+		//
+		// The old layout chunked {ct, nIds, nComp}: one chunk spanned every id, so
+		// reading ONE entity's history inflated the whole dataset (P3), and each
+		// step's chunk was the whole slab. The sink also reopened DATA every step,
+		// which evicted the per-dataset chunk cache, so a partially filled chunk
+		// was re-read, inflated and re-deflated on every step (P2).
+		//
+		// Now: chunks target ~1 MiB. A small slab (<= 1 MiB) keeps every id in one
+		// chunk and stacks up to 1024 steps in it; a large slab tiles the id axis
+		// and stacks ct (<= 16) steps, so one entity's history touches T/ct chunks
+		// of ~1 MiB. The dataset access list sizes the chunk cache to hold a whole
+		// row of chunks (ct steps x every id tile), so with the handle kept open a
+		// chunk is filled in memory and deflated ONCE, when it is complete.
+		struct TimeSeriesPlan {
+			hsize_t ct;          // steps per chunk
+			hsize_t chunk_ids;   // ids per chunk
+			size_t cache_bytes;  // chunk-cache size for the dataset access list
+			size_t cache_slots;  // hash slots for the chunk cache
+		};
+
+		inline TimeSeriesPlan planTimeSeries(hsize_t n_ids, hsize_t n_comp, hsize_t elem_bytes) {
+			const hsize_t target = (hsize_t)1 << 20;          // ~1 MiB per chunk
+			const hsize_t row_budget = (hsize_t)32 << 20;     // ct x slab held in cache
+			const hsize_t row_bytes = n_comp * elem_bytes;
+			const hsize_t slab = n_ids * row_bytes;
+			TimeSeriesPlan p;
+			if (slab <= target) {
+				p.chunk_ids = n_ids;
+				p.ct = slab ? target / slab : 1;
+				if (p.ct < 1) p.ct = 1;
+				if (p.ct > 1024) p.ct = 1024;
+			}
+			else {
+				p.ct = row_budget / slab;
+				if (p.ct < 1) p.ct = 1;
+				if (p.ct > 16) p.ct = 16;
+				p.chunk_ids = target / (p.ct * row_bytes);
+				if (p.chunk_ids < 1) p.chunk_ids = 1;
+				if (p.chunk_ids > n_ids) p.chunk_ids = n_ids;
+			}
+			const hsize_t tiles = (n_ids + p.chunk_ids - 1) / p.chunk_ids;
+			const hsize_t chunk_bytes = p.ct * p.chunk_ids * row_bytes;
+			// A row of chunks (every id tile x ct steps) plus one spare chunk. With
+			// ct == 1 every chunk is completed by a single write, so a cache that
+			// cannot hold the row costs nothing; cap it at 256 MiB.
+			hsize_t cache = tiles * chunk_bytes + chunk_bytes;
+			const hsize_t cap = (hsize_t)256 << 20;
+			if (cache > cap) cache = cap;
+			if (cache < ((hsize_t)1 << 20)) cache = (hsize_t)1 << 20;
+			p.cache_bytes = (size_t)cache;
+			p.cache_slots = (size_t)(tiles * 10 + 521) | 1;
+			return p;
+		}
+
+		// Create a [0 x nIds x nComp] extensible dataset with the WP-164 plan and a
+		// sized chunk cache; deflate 0 disables the shuffle+deflate filters.
+		inline hid_t createTimeSeries3dOpen(hid_t obj, const char *name, hsize_t n_ids,
+		                                    hsize_t n_comp, hid_t disk_type, int deflate) {
+			if (n_ids < 1 || n_comp < 1) return HID_INVALID;
+			hsize_t elem_bytes = (H5Tequal(disk_type, H5T_IEEE_F32LE) > 0) ? 4 : 8;
+			TimeSeriesPlan p = planTimeSeries(n_ids, n_comp, elem_bytes);
+			hsize_t dims[3]    = { 0, n_ids, n_comp };
+			hsize_t maxdims[3] = { H5S_UNLIMITED, n_ids, n_comp };
+			hsize_t chunk[3]   = { p.ct, p.chunk_ids, n_comp };
+			hid_t space = H5Screate_simple(3, dims, maxdims);
+			if (space < 0) return HID_INVALID;
+			hid_t dcpl = H5Pcreate(H5P_DATASET_CREATE);
+			hid_t dapl = H5Pcreate(H5P_DATASET_ACCESS);
+			herr_t st = (dcpl >= 0 && dapl >= 0) ? H5Pset_chunk(dcpl, 3, chunk) : -1;
+			if (st >= 0 && deflate > 0) {
+				st = H5Pset_shuffle(dcpl);
+				if (st >= 0) st = H5Pset_deflate(dcpl, (unsigned)(deflate > 9 ? 9 : deflate));
+			}
+			// w0 = 1.0: evict fully written chunks first.
+			if (st >= 0) st = H5Pset_chunk_cache(dapl, p.cache_slots, p.cache_bytes, 1.0);
+			hid_t dset = (st >= 0)
+				? H5Dcreate(obj, name, disk_type, space, H5P_DEFAULT, dcpl, dapl)
+				: HID_INVALID;
+			if (dapl >= 0) H5Pclose(dapl);
+			if (dcpl >= 0) H5Pclose(dcpl);
+			H5Sclose(space);
+			return (dset < 0) ? HID_INVALID : dset;
+		}
+
+		// Write slab t of an open [T x nIds x nComp] dataset (extend to t+1 first).
+		// `mspace` is a caller-owned [1 x nIds x nComp] memory space reused per step.
+		inline herr_t writeSlab3dAt(hid_t dset, hsize_t t, const double *data,
+		                            hsize_t n_ids, hsize_t n_comp, hid_t mspace) {
+			hsize_t newdims[3] = { t + 1, n_ids, n_comp };
+			if (H5Dset_extent(dset, newdims) < 0) return -1;
+			hid_t fspace = H5Dget_space(dset);
+			if (fspace < 0) return -1;
+			hsize_t start[3] = { t, 0, 0 };
+			hsize_t count[3] = { 1, n_ids, n_comp };
+			herr_t status = H5Sselect_hyperslab(fspace, H5S_SELECT_SET, start, NULL, count, NULL);
+			if (status >= 0)
+				status = H5Dwrite(dset, H5T_NATIVE_DOUBLE, mspace, fspace, H5P_DEFAULT, data);
+			H5Sclose(fspace);
+			return status;
+		}
+
+		// Write element t of an open [T] axis (extend to t+1 first).
+		inline herr_t writeScalar1dAt(hid_t dset, hsize_t t, hid_t mem_type, const void *value,
+		                              hid_t mspace1) {
+			hsize_t newdims[1] = { t + 1 };
+			if (H5Dset_extent(dset, newdims) < 0) return -1;
+			hid_t fspace = H5Dget_space(dset);
+			if (fspace < 0) return -1;
+			hsize_t start[1] = { t }, count[1] = { 1 };
+			herr_t status = H5Sselect_hyperslab(fspace, H5S_SELECT_SET, start, NULL, count, NULL);
+			if (status >= 0)
+				status = H5Dwrite(dset, mem_type, mspace1, fspace, H5P_DEFAULT, value);
+			H5Sclose(fspace);
+			return status;
+		}
+
 		// WP-163 R5: current length of the unlimited (first) axis, 0 on error.
 		inline hsize_t extent0(hid_t dset) {
 			hid_t fspace = H5Dget_space(dset);

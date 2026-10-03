@@ -83,6 +83,7 @@
 #include "section/SectionForceDeformation.h"
 
 #include <algorithm>
+#include <chrono>
 #include <string>
 #include <vector>
 #include <map>
@@ -115,6 +116,8 @@ public:
 		, first_domain_changed_done(false)
 		, stage_failed(false)
 		, init_failed(false)
+		, flush_seconds(10.0)
+		, last_flush()
 		, info()
 		, output_freq()
 		, has_region(false)
@@ -163,6 +166,11 @@ public:
 	// WP-163 (ROB-11): true after initialize() failed once — the recorder is
 	// then dead for the run instead of retrying (and leaking) every step.
 	bool init_failed;
+	// WP-164 (P2): wall-clock flush cadence (-flush <seconds>, 0 = every recorded
+	// step). The per-step H5Fflush forced every dirty chunk to be deflated and
+	// written on every step; between flushes HDF5's chunk cache keeps them.
+	double flush_seconds;
+	std::chrono::steady_clock::time_point last_flush;
 	ladrunons::detail::ProcessInfo info;
 
 	// -T output frequency
@@ -281,7 +289,12 @@ LadrunoRecorder::~LadrunoRecorder()
 				finalizeAllSinks();
 			} H5E_END_TRY;
 		}
-		clearSources();
+		// WP-164: sinks hold DATA/TIME/STEP and envelope handles now; closing
+		// them at process exit (IDs already closed by HDF5's atexit) must be
+		// silent too.
+		H5E_BEGIN_TRY {
+			clearSources();
+		} H5E_END_TRY;
 		if (m_data->initialized && m_data->info.h_file_id != ladrunons::HID_INVALID) {
 			// When the recorder dies at process exit (deck never wiped), HDF5's
 			// own atexit handler has usually run first: it flushes + closes every
@@ -351,14 +364,22 @@ void LadrunoRecorder::finalizeAllSinks()
 
 	// Element ENVELOPES carry the same structured per-column COLUMN_MAP as the
 	// time-series ON_ELEMENTS path (gauss/section/fiber column structure, beyond
-	// the result-level COMPONENTS — which is empty for element results). The
-	// EnvelopeSink delete-recreates each leaf group on every flush, so the
-	// COLUMN_MAP must be (re)written AFTER the element sinks finalize. finalizeAllSinks
-	// is only ever called in envelope mode; the envelope_mode guard keeps it correct
-	// if that ever changes.
+	// the result-level COMPONENTS — which is empty for element results). WP-164:
+	// the EnvelopeSink now creates its leaf group once and overwrites it in place,
+	// so the COLUMN_MAP is written ONCE, right after the group first exists (it was
+	// rewritten after every delete-recreate). finalizeAllSinks is only ever called
+	// in envelope mode; the envelope_mode guard keeps it correct if that changes.
 	if (m_data->envelope_mode) {
-		for (size_t i = 0; i < m_data->elem_channels.size(); ++i)
-			writeElementColumnMap((int)i);
+		for (size_t i = 0; i < m_data->elem_channels.size(); ++i) {
+			private_data::ElemChannel& ech = m_data->elem_channels[i];
+			if (ech.column_map_written)
+				continue;
+			ladrunons::EnvelopeSink* es = dynamic_cast<ladrunons::EnvelopeSink*>(ech.sink);
+			if (es != 0 && es->written()) {
+				writeElementColumnMap((int)i);
+				ech.column_map_written = true;
+			}
+		}
 	}
 }
 
@@ -465,6 +486,15 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 		rebuild_model = true;
 	}
 	else if (new_stamp != info.current_model_stage_id) {
+		// WP-164: close out the ending stage BEFORE the stamp moves — envelopes
+		// are now rewritten on the flush cadence, not every step, so their last
+		// extremes (and the element COLUMN_MAP, resolved from the stage stamp)
+		// must land under the OLD MODEL_STAGE; then flush it to disk.
+		if (!m_data->stage_failed) {
+			if (m_data->envelope_mode)
+				finalizeAllSinks();
+			flushFile();
+		}
 		info.current_model_stage_id = new_stamp;
 		rebuild_model = true;
 	}
@@ -495,16 +525,45 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 	if (recordResultsOnOverlays() != 0)
 		return -1;
 
-	// Envelope mode defers all output to finalize(); rewrite the (small) ENVELOPES
-	// datasets in place every recorded step so the latest extremes are always on
-	// disk (periodic crash safety, ADR D7) before the file flush below.
-	if (m_data->envelope_mode)
-		finalizeAllSinks();
-
-	if (info.h_file_id != ladrunons::HID_INVALID)
-		ladrunons::h5::file::flush(info.h_file_id);
+	// WP-164 (P1/P2): on the -flush cadence (default 10 s of wall clock; 0 =
+	// every recorded step, the old behaviour) rewrite the envelopes in place and
+	// flush the file. Crash safety: at most the last `-flush` seconds of output
+	// are lost; the per-step flush forced every dirty chunk to be deflated and
+	// written on every step, which dominated small/explicit runs (WP-164 bench).
+	const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+	const double since = std::chrono::duration<double>(now - m_data->last_flush).count();
+	const bool due = (m_data->flush_seconds <= 0.0 || since >= m_data->flush_seconds);
+	if (m_data->envelope_mode) {
+		// Small envelopes (<= 8 MiB of accumulators in total) are still
+		// overwritten every recorded step — a plain in-place H5Dwrite, no flush —
+		// so a deck that exits without `wipe` keeps its latest extremes (HDF5's
+		// atexit close writes them out). Larger ones follow the -flush cadence.
+		size_t env_bytes = 0;
+		for (size_t i = 0; i < m_data->node_channels.size(); ++i) {
+			ladrunons::EnvelopeSink* es =
+				dynamic_cast<ladrunons::EnvelopeSink*>(m_data->node_channels[i].sink);
+			if (es) env_bytes += es->payloadBytes();
+		}
+		for (size_t i = 0; i < m_data->elem_channels.size(); ++i) {
+			ladrunons::EnvelopeSink* es =
+				dynamic_cast<ladrunons::EnvelopeSink*>(m_data->elem_channels[i].sink);
+			if (es) env_bytes += es->payloadBytes();
+		}
+		if (due || env_bytes <= ((size_t)8 << 20))
+			finalizeAllSinks();
+	}
+	if (due)
+		flushFile();
 
 	return 0;
+}
+
+void LadrunoRecorder::flushFile()
+{
+	// WP-164: the one place the recorder flushes (cadence, stage end, close).
+	if (m_data->initialized && m_data->info.h_file_id != ladrunons::HID_INVALID)
+		ladrunons::h5::file::flush(m_data->info.h_file_id);
+	m_data->last_flush = std::chrono::steady_clock::now();
 }
 
 /* ===================================================================== */
@@ -2092,10 +2151,12 @@ int LadrunoRecorder::recordResultsOnNodes()
 	for (size_t i = 0; i < m_data->node_channels.size(); ++i) {
 		private_data::NodeChannel& ch = m_data->node_channels[i];
 
+		// WP-164 (P7): remember the last flag actually COMPUTED. A non-reaction
+		// channel (-1) used to reset it, so `reactionForce displacement
+		// reactionMoment` swept every element's resisting force twice per step.
 		int curr_reac_type = ch.reaction_flag;
-		if (curr_reac_type != previous_reac_type) {
-			if (curr_reac_type > -1 && curr_reac_type < 3)
-				info.domain->calculateNodalReactions(curr_reac_type);
+		if (curr_reac_type > -1 && curr_reac_type < 3 && curr_reac_type != previous_reac_type) {
+			info.domain->calculateNodalReactions(curr_reac_type);
 			previous_reac_type = curr_reac_type;
 		}
 
@@ -2493,6 +2554,8 @@ int LadrunoRecorder::sendSelf(int commitTag, Channel& theChannel)
 
 	ser.put_i(m_data->envelope_mode ? 1 : 0);    // Ladruno: MP/db config round-trip (lockstep with recvSelf)
 	ser.put_i(m_data->info.store_data_f32 ? 1 : 0);
+	ser.put_i(m_data->info.deflate_level);       // WP-164 (lockstep with recvSelf)
+	ser.put_d(m_data->flush_seconds);            // WP-164
 	int msg_data_size = (int)ser.b.size();
 	ID idata(1);
 	idata(0) = msg_data_size;
@@ -2577,6 +2640,8 @@ int LadrunoRecorder::recvSelf(int commitTag, Channel& theChannel,
 	}
 	m_data->envelope_mode = de.get_i() != 0;    // Ladruno: lockstep with sendSelf
 	m_data->info.store_data_f32 = de.get_i() != 0;
+	m_data->info.deflate_level = de.get_i();     // WP-164 (lockstep with sendSelf)
+	m_data->flush_seconds = de.get_d();          // WP-164
 	if (!de.ok) {
 		opserr << "LadrunoRecorder::recvSelf() - failed to de-serialize config\n";
 		return -1;
@@ -2627,6 +2692,8 @@ void* OPS_LadrunoRecorder()
 	std::vector<int> overlay_tags_opt;   // explicit -overlay tags
 	std::string stage_kind_opt = "static"; // -kind <transient|static|eigen>
 	bool envelope_opt = false;             // -envelope flag
+	int compress_opt = 1;                  // WP-164: -compress <0..9> (default 1)
+	double flush_opt = 10.0;               // WP-164: -flush <seconds>
 	bool store_data_f32 = false;           // -precision f32 (lossy) | f64 (default)
 	int one_item = 1;
 
@@ -2829,6 +2896,47 @@ void* OPS_LadrunoRecorder()
 				else
 					opserr << "LadrunoRecorder warning: -precision expects f32|f64; got ("
 					       << p << "), keeping f64 (lossless)\n";
+			}
+		}
+		else if (strcmp(data, "-compress") == 0) {
+			// WP-164 (P4): -compress <0..9> : deflate level of the time-series DATA
+			// (0 = no shuffle/deflate filter). Default 1: on the WP-164 bench it cut
+			// the large-slab recorder CPU 19 % vs the old hard-coded 4 for +0.6 % file.
+			if (numdata > 0) {
+				int lvl = 1;
+				if (OPS_GetInt(&one_item, &lvl) != 0) {
+					opserr << "LadrunoRecorder error: -compress requires an int level 0..9\n";
+					return 0;
+				}
+				numdata--;
+				if (lvl < 0 || lvl > 9) {
+					opserr << "LadrunoRecorder warning: -compress level " << lvl
+					       << " clamped to [0, 9]\n";
+					lvl = (lvl < 0) ? 0 : 9;
+				}
+				compress_opt = lvl;
+			}
+			else {
+				opserr << "LadrunoRecorder error: -compress requires a level 0..9\n";
+				return 0;
+			}
+		}
+		else if (strcmp(data, "-flush") == 0) {
+			// WP-164 (P2): -flush <seconds> : wall-clock interval between file
+			// flushes (and envelope rewrites). 0 = every recorded step (the old
+			// behaviour). The file is always flushed at a stage change and on close.
+			if (numdata > 0) {
+				double sec = 10.0;
+				if (OPS_GetDouble(&one_item, &sec) != 0) {
+					opserr << "LadrunoRecorder error: -flush requires a number of seconds\n";
+					return 0;
+				}
+				numdata--;
+				flush_opt = (sec < 0.0) ? 0.0 : sec;
+			}
+			else {
+				opserr << "LadrunoRecorder error: -flush requires a number of seconds\n";
+				return 0;
 			}
 		}
 		else {
@@ -3052,6 +3160,8 @@ void* OPS_LadrunoRecorder()
 	recorder->m_data->overlay_tags.swap(overlay_tags_opt);
 	recorder->m_data->stage_kind = stage_kind_opt;
 	recorder->m_data->envelope_mode = envelope_opt;
+	recorder->m_data->info.deflate_level = compress_opt;   // WP-164
+	recorder->m_data->flush_seconds = flush_opt;           // WP-164
 	// -precision: carried on ProcessInfo (read by StreamingSink::begin and stamped
 	// into INFO/STORED_PRECISION at initialize()). setDomain() does not overwrite it.
 	recorder->m_data->info.store_data_f32 = store_data_f32;
