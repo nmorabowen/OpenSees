@@ -1266,6 +1266,7 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, int classTag, double G0, double nu, do
     mFlipSeen(false),                                                                 // Ladruno ADR-92 P2-7c
     mPrimed(false),                                                                   // Ladruno ADR-92 P2-7
     mImplexCommitRefusedLatch(false),                                                 // Ladruno WP-99 (F7)
+    mLadrunoCommits(0.0), mLadrunoCommitReseats(0.0), mLadrunoCommitDAlphaIn(0.0),   // Ladruno WP-153
     mRoundoffAlphaInWarned(false)                                                     // Ladruno WP-112 (F14)
 {
     // Defensive input sanitising -- the parser already rejects these, but the
@@ -1299,6 +1300,7 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, double G0, double nu, double e_init, d
     mFlipSeen(false),                                                                 // Ladruno ADR-92 P2-7c
     mPrimed(false),                                                                   // Ladruno ADR-92 P2-7
     mImplexCommitRefusedLatch(false),                                                 // Ladruno WP-99 (F7)
+    mLadrunoCommits(0.0), mLadrunoCommitReseats(0.0), mLadrunoCommitDAlphaIn(0.0),   // Ladruno WP-153
     mRoundoffAlphaInWarned(false)                                                     // Ladruno WP-112 (F14)
 {
     this->sanitiseLadrunoInputs(tag);   // Ladruno (ADR-86 PR-3)
@@ -1326,6 +1328,7 @@ LadrunoSANISAND::LadrunoSANISAND(int classTag)
     mFlipSeen(false),                                                                 // Ladruno ADR-92 P2-7c
     mPrimed(false),                                                                   // Ladruno ADR-92 P2-7
     mImplexCommitRefusedLatch(false),                                                 // Ladruno WP-99 (F7)
+    mLadrunoCommits(0.0), mLadrunoCommitReseats(0.0), mLadrunoCommitDAlphaIn(0.0),   // Ladruno WP-153
     mRoundoffAlphaInWarned(false)                                                     // Ladruno WP-112 (F14)
 {
     this->ladrunoImplexInitState();     // Ladruno (ADR-92 P1)
@@ -1348,6 +1351,7 @@ LadrunoSANISAND::LadrunoSANISAND()
     mFlipSeen(false),                                                                 // Ladruno ADR-92 P2-7c
     mPrimed(false),                                                                   // Ladruno ADR-92 P2-7
     mImplexCommitRefusedLatch(false),                                                 // Ladruno WP-99 (F7)
+    mLadrunoCommits(0.0), mLadrunoCommitReseats(0.0), mLadrunoCommitDAlphaIn(0.0),   // Ladruno WP-153
     mRoundoffAlphaInWarned(false)                                                     // Ladruno WP-112 (F14)
 {
     this->ladrunoImplexInitState();     // Ladruno (ADR-92 P1)
@@ -1953,6 +1957,7 @@ LadrunoSANISAND::revertToStart(void)
     // revertToLastCommit (a failed step's cost must survive for the post-mortem).
     this->ladrunoResetMEStats();          // Ladruno WP-127
     this->ladrunoResetSasStats();         // Ladruno WP-129: sasStats, same rule
+    mLadrunoCommits = mLadrunoCommitReseats = mLadrunoCommitDAlphaIn = 0.0;   // Ladruno WP-153
 
     return 0;
 }
@@ -2030,6 +2035,9 @@ LadrunoSANISAND::getCopy(const char *type)
         clone->mLadrunoSas.opt = mLadrunoSas.opt;                                   // Ladruno WP-129
         for (int i = 0; i < LSAS_COUNT; i++)                                        // Ladruno WP-129
             clone->mLadrunoSas.stats[i] = mLadrunoSas.stats[i];                     // Ladruno WP-129
+        clone->mLadrunoCommits        = mLadrunoCommits;                            // Ladruno WP-153
+        clone->mLadrunoCommitReseats  = mLadrunoCommitReseats;                      // Ladruno WP-153
+        clone->mLadrunoCommitDAlphaIn = mLadrunoCommitDAlphaIn;                     // Ladruno WP-153
         return clone;
     } else if (strcmp(type, "ThreeDimensional") == 0 || strcmp(type, "3D") == 0) {
         LadrunoSANISAND3D *clone;
@@ -2066,6 +2074,9 @@ LadrunoSANISAND::getCopy(const char *type)
         clone->mLadrunoSas.opt = mLadrunoSas.opt;                                   // Ladruno WP-129
         for (int i = 0; i < LSAS_COUNT; i++)                                        // Ladruno WP-129
             clone->mLadrunoSas.stats[i] = mLadrunoSas.stats[i];                     // Ladruno WP-129
+        clone->mLadrunoCommits        = mLadrunoCommits;                            // Ladruno WP-153
+        clone->mLadrunoCommitReseats  = mLadrunoCommitReseats;                      // Ladruno WP-153
+        clone->mLadrunoCommitDAlphaIn = mLadrunoCommitDAlphaIn;                     // Ladruno WP-153
         return clone;
     } else {
         opserr << "LadrunoSANISAND::getCopy failed to get copy: " << type << endln;
@@ -4559,6 +4570,7 @@ LadrunoSANISAND::ladrunoImplexCommit(void)
     // The committed state is the IMPLICIT one -- standard IMPL-EX, and the same
     // choice ASDConcrete3DMaterial::commitState() makes. Only the EQUILIBRIUM was
     // found on the extrapolated stress.
+    this->ladrunoNoteCommitAlphaIn();                      // Ladruno WP-153
     int res = ManzariDafalias::commitState();
 
     // Ladruno ADR-92 P2-7 (redesign): PRIMED at the first plastic commit after
@@ -4682,6 +4694,21 @@ LadrunoSANISAND::ladrunoImplexCommit(void)
 // ---------------------------------------------------------------------------
 //  commitState / revertToLastCommit
 // ---------------------------------------------------------------------------
+// Ladruno WP-153: the committed-path alpha_in census (header note). Called with
+// the trial state about to be committed and mAlpha_in_n still the LAST commit's.
+void
+LadrunoSANISAND::ladrunoNoteCommitAlphaIn(void)
+{
+    mLadrunoCommits += 1.0;
+    Vector d(mAlpha_in);
+    d.addVector(1.0, mAlpha_in_n, -1.0);
+    const double dn = d.Norm();
+    if (dn > 0.0) {
+        mLadrunoCommitReseats += 1.0;
+        mLadrunoCommitDAlphaIn += dn;
+    }
+}
+
 int
 LadrunoSANISAND::commitState(void)
 {
@@ -4779,6 +4806,7 @@ LadrunoSANISAND::commitState(void)
         if (mElastFlag != 0)
             mPrimed = true;
 
+        this->ladrunoNoteCommitAlphaIn();                  // Ladruno WP-153
         return ManzariDafalias::commitState();
     }
 
@@ -5208,6 +5236,7 @@ constexpr int LadrunoSanisandCppmOptionsResponseID     = 33100;   // Ladruno WP-
 // Ladruno WP-151: nine values -- WP-129's six in wire order, then hFloor,
 // reseatHyst, softCap.
 constexpr int LadrunoSanisandSasOptionsResponseID      = 33101;   // Ladruno WP-130 / WP-151
+constexpr int LadrunoSanisandCommitStatsResponseID     = 33102;   // Ladruno WP-153
 constexpr int LadrunoSanisandImplexGuardsResponseID    = 33096;   // Ladruno ADR-92 P2 (33094/33095 taken by TIMs F4 psi/yieldDistance)
 
 Response *
@@ -5389,6 +5418,18 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
     // Ladruno WP-129: the SAS-ME census. EVERY column is PER INTEGRATION POINT,
     // cumulative since revertToStart except the LAST_* ones; survives
     // revertToLastCommit. Layout: ManzariDafalias.h, LSAS_*; guide "choosing an IntScheme".
+    // Ladruno WP-153: the committed-path alpha_in census (see the header).
+    if (argc > 0 && (strcmp(argv[0], "commitStats") == 0 || strcmp(argv[0], "CommitStats") == 0)) {
+        output.tag("NdMaterialOutput");
+        output.attr("matType", getClassType());
+        output.attr("matTag", getTag());
+        output.tag("ResponseType", "commits");
+        output.tag("ResponseType", "commitReseats");
+        output.tag("ResponseType", "commitDAlphaIn");
+        output.endTag();
+        Vector probe(3);
+        return new MaterialResponse(this, LadrunoSanisandCommitStatsResponseID, probe);
+    }
     if (argc > 0 && (strcmp(argv[0], "sasStats") == 0 || strcmp(argv[0], "SasStats") == 0)) {
         static const char *names[LSAS_COUNT] = {
             "sas_updates", "sas_elastic", "sas_substeps", "sas_accepted", "sas_rejectedErr",
@@ -5571,6 +5612,13 @@ LadrunoSANISAND::getResponse(int responseID, Information &matInformation)
         return matInformation.setVector(out);
     }
     // Ladruno WP-129
+    if (responseID == LadrunoSanisandCommitStatsResponseID) {           // Ladruno WP-153
+        static Vector out3(3);
+        out3(0) = mLadrunoCommits;
+        out3(1) = mLadrunoCommitReseats;
+        out3(2) = mLadrunoCommitDAlphaIn;
+        return matInformation.setVector(out3);
+    }
     if (responseID == LadrunoSanisandSasStatsResponseID) {
         Vector out(LSAS_COUNT);
         for (int i = 0; i < LSAS_COUNT; i++)

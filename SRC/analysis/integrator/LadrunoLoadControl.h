@@ -66,6 +66,7 @@ class AnalysisModel;
 class FE_Element;
 class Vector;
 
+// ladruno-lint: revert-ok retry-aware by design: commit() snapshots dUprev/dLambdaPrev and newStep detects the open step (WP-153 audit)
 class LadrunoLoadControl : public StaticIntegrator
 {
   public:
