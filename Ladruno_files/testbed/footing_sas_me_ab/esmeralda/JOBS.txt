@@ -1,0 +1,32 @@
+2026-09-28T01:52:09-03:00 E_A job/node: 148582 node1 args: --mat sanisand --scheme 1 --target 0.15 --wall 2900000 --ckpt-every 5
+2026-09-28T01:52:13-03:00 E_B job/node: 148583 node14 args: --mat sanisand --scheme 129 --tolr 1e-4 --target 0.15 --wall 2900000 --ckpt-every 5
+2026-09-28T01:52:17-03:00 E_C2 job/node: 148584 node15 args: --mat sanisand --scheme 129 --tantype 1 --maxsub 20000 --krylov-tol-mult 1 --tolr 1e-4 --target 0.15 --wall 2900000 --ckpt-every 5
+2026-09-28T01:55:12-03:00 E_B16 job/node: 148585 node2 args: --mat sanisand --scheme 129 --tantype 1 --maxsub 20000 --krylov-tol-mult 1 --tolr 1e-4 --mesh b16 --target 0.15 --wall 2900000 --ckpt-every 5
+2026-09-28T02:13:41-03:00 E_B16 job 148585 CANCELLED -> runs/E_B16_C2settings_CANCELLED (restarted with E_B settings, orchestrator)
+2026-09-28T02:13:45-03:00 E_B16 job/node: 148586 node2 args: --mat sanisand --scheme 129 --tolr 1e-4 --mesh b16 --target 0.15 --wall 2900000 --ckpt-every 5
+2026-09-28T02:13:49-03:00 E_D job/node: 148587 node16 args: --mat sanisand --scheme 129 --tolr 1e-3 --target 0.15 --wall 2900000 --ckpt-every 5
+2026-09-28T12:34:16-03:00 L_pres_0p5 job/node: 148620 node1 args: --mat sanisand --scheme 129 --tolr 1e-4 --target 0.15 --wall 2900000 --ckpt-every 5 --presidual 0.5
+2026-09-28T12:34:20-03:00 L_pres_1 job/node: 148621 node16 args: --mat sanisand --scheme 129 --tolr 1e-4 --target 0.15 --wall 2900000 --ckpt-every 5 --presidual 1
+2026-09-28T12:34:24-03:00 L_pres_2 job/node: 148622 node17 args: --mat sanisand --scheme 129 --tolr 1e-4 --target 0.15 --wall 2900000 --ckpt-every 5 --presidual 2
+2026-09-28T12:34:28-03:00 L_pres_5 job/node: 148623 node18 args: --mat sanisand --scheme 129 --tolr 1e-4 --target 0.15 --wall 2900000 --ckpt-every 5 --presidual 5
+2026-09-28T12:34:32-03:00 L_pres_10 job/node: 148624 node4 args: --mat sanisand --scheme 129 --tolr 1e-4 --target 0.15 --wall 2900000 --ckpt-every 5 --presidual 10
+2026-09-28T12:34:36-03:00 L_pres_20 job/node: 148625 node5 args: --mat sanisand --scheme 129 --tolr 1e-4 --target 0.15 --wall 2900000 --ckpt-every 5 --presidual 20
+2026-09-28T12:34:40-03:00 L_e_0p65 job/node: 148626 node6 args: --mat sanisand --scheme 129 --tolr 1e-4 --target 0.15 --wall 2900000 --ckpt-every 5 --einit 0.65
+2026-09-28T12:34:44-03:00 L_e_0p75 job/node: 148627 node7 args: --mat sanisand --scheme 129 --tolr 1e-4 --target 0.15 --wall 2900000 --ckpt-every 5 --einit 0.75
+2026-09-28T12:34:48-03:00 L_e_0p80 job/node: 148628 node8 args: --mat sanisand --scheme 129 --tolr 1e-4 --target 0.15 --wall 2900000 --ckpt-every 5 --einit 0.80
+2026-09-28T12:34:52-03:00 L_e_0p85 job/node: 148629 node9 args: --mat sanisand --scheme 129 --tolr 1e-4 --target 0.15 --wall 2900000 --ckpt-every 5 --einit 0.85
+2026-09-28T13:02:05-03:00 S1_nofabric job/node: 148631 node10 RUNNING (shared node, 4 cpus) args: --mat sanisand --scheme 129 --tolr 1e-4 --target 0.15 --wall 2900000 --ckpt-every 5 --zmax 0
+2026-09-28T13:02:09-03:00 S2_nopeak job/node: 148632  PENDING (shared node, 4 cpus) args: --mat sanisand --scheme 129 --tolr 1e-4 --target 0.15 --wall 2900000 --ckpt-every 5 --zmax 0 --nb 0
+2026-09-28T13:02:13-03:00 S3_critstate job/node: 148633  PENDING (shared node, 4 cpus) args: --mat sanisand --scheme 129 --tolr 1e-4 --target 0.15 --wall 2900000 --ckpt-every 5 --zmax 0 --nb 0 --nd 0
+2026-09-28T13:02:17-03:00 S4_nodilat job/node: 148634  PENDING (shared node, 4 cpus) args: --mat sanisand --scheme 129 --tolr 1e-4 --target 0.15 --wall 2900000 --ckpt-every 5 --zmax 0 --nb 0 --nd 0 --A0 0.001
+2026-09-28T13:02:21-03:00 A0_0p02 job/node: 148635 node11 RUNNING (shared node, 4 cpus) args: --mat sanisand --scheme 129 --tolr 1e-4 --target 0.15 --wall 2900000 --ckpt-every 5 --A0 0.02
+2026-09-28T13:02:25-03:00 A0_0p10 job/node: 148636  PENDING (shared node, 4 cpus) args: --mat sanisand --scheme 129 --tolr 1e-4 --target 0.15 --wall 2900000 --ckpt-every 5 --A0 0.10
+2026-09-28T13:02:29-03:00 h0_x3 job/node: 148637  PENDING (shared node, 4 cpus) args: --mat sanisand --scheme 129 --tolr 1e-4 --target 0.15 --wall 2900000 --ckpt-every 5 --h0 3.9
+2026-09-28T13:02:58-03:00 ablation jobs 148631-148637 CANCELLED (srun without --mem took the whole node memory under CR_CORE_MEMORY, so the 2nd..4th leg per node pended); dirs -> runs/*_CANCELLED_nomem_*; relaunched with --mem=6G
+2026-09-28T13:03:11-03:00 S1_nofabric job/node: 148638 node10 RUNNING (shared node, 4 cpus, 6G) args: --mat sanisand --scheme 129 --tolr 1e-4 --target 0.15 --wall 2900000 --ckpt-every 5 --zmax 0
+2026-09-28T13:03:15-03:00 S2_nopeak job/node: 148639 node10 RUNNING (shared node, 4 cpus, 6G) args: --mat sanisand --scheme 129 --tolr 1e-4 --target 0.15 --wall 2900000 --ckpt-every 5 --zmax 0 --nb 0
+2026-09-28T13:03:19-03:00 S3_critstate job/node: 148640 node10 RUNNING (shared node, 4 cpus, 6G) args: --mat sanisand --scheme 129 --tolr 1e-4 --target 0.15 --wall 2900000 --ckpt-every 5 --zmax 0 --nb 0 --nd 0
+2026-09-28T13:03:23-03:00 S4_nodilat job/node: 148641 node10 RUNNING (shared node, 4 cpus, 6G) args: --mat sanisand --scheme 129 --tolr 1e-4 --target 0.15 --wall 2900000 --ckpt-every 5 --zmax 0 --nb 0 --nd 0 --A0 0.001
+2026-09-28T13:03:27-03:00 A0_0p02 job/node: 148642 node11 RUNNING (shared node, 4 cpus, 6G) args: --mat sanisand --scheme 129 --tolr 1e-4 --target 0.15 --wall 2900000 --ckpt-every 5 --A0 0.02
+2026-09-28T13:03:31-03:00 A0_0p10 job/node: 148643 node11 RUNNING (shared node, 4 cpus, 6G) args: --mat sanisand --scheme 129 --tolr 1e-4 --target 0.15 --wall 2900000 --ckpt-every 5 --A0 0.10
+2026-09-28T13:03:35-03:00 h0_x3 job/node: 148644 node11 RUNNING (shared node, 4 cpus, 6G) args: --mat sanisand --scheme 129 --tolr 1e-4 --target 0.15 --wall 2900000 --ckpt-every 5 --h0 3.9
