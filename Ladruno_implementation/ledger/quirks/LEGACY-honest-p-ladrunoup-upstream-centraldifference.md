@@ -1,0 +1,9 @@
+---
+wp: LEGACY
+title: "Honest-p LadrunoUP + upstream CentralDifference = Richardson-unstable pore pressure (CD leapfrogs a pure diffusion operator)"
+legacy_seq: 191
+---
+### Honest-p `LadrunoUP` + upstream `CentralDifference` = Richardson-unstable pore pressure (CD leapfrogs a pure diffusion operator)
+- **Bites:** running a monolithic `LadrunoUP` (honest-p) model under the upstream explicit `CentralDifference` integrator produces unstable / garbage pore pressure at ANY dt -- p oscillates and grows even when the displacement field looks plausible for a while. No warning fires; the run may limp along before blowing up. INCUBATION TRAP (P3 measured): at small dt the blow-up incubates for ~1300 steps (dt=2e-4; ~200 at dt=1e-3) while tracking the reference to ~1e-4 -- a short validation march "passes" and the production run dies later. Never certify this combination from a few-hundred-step check.
+- **Why:** honest-p carries NO p-mass (the fluid row is first-order: `S p' + H p = ...`), so central difference's second-order leapfrog applied to that row is the Richardson / DuFort-Frankel-class explicit scheme for a pure diffusion operator -- unconditionally unstable in the Richardson form. This is structural (the integrator discretizes a row with no inertia), not a tuning problem: no dt, damping, or mass-scaling choice fixes it.
+- **Workaround/status (2026-07-18, ADR-73 P3):** use the overlay explicit lane instead (plain solid elements + `LadrunoPorousOverlay -fsL zero` under `CentralDifferenceLadruno` at dt <= 0.5x the undrained pencil -- the fluid solve stays implicit SPD at commit), or keep `LadrunoUP` under an implicit integrator (Newmark/HHT). Pinned by the P3 battery's expected-bad gate (e): the CD+LadrunoUP run must NOT track the reference -- if that gate ever starts passing, this row is stale.

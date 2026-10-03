@@ -5333,15 +5333,14 @@ Workshops/SimWorkshop/SmallMP/model.tcl -text
 Workshops/SimWorkshop/SmallSP/Example.tcl -text
 
 # --- Ladruno: append-only bookkeeping files ---------------------------------
-# These are concatenation-style logs (one row/line appended per feature). Use the
-# `union` merge driver so concurrent feature branches that each add a line never
-# CONFLICT — git keeps BOTH sides instead of stopping for a manual resolve. Only
-# for append-only docs; NEVER apply union to source code (it would interleave and
-# produce garbage). See Ladruno_implementation/16_finite_native_j2_adr.md
-# (the #127 rebase incident) for why.
-Ladruno_implementation/LEDGER_vanilla_files.md     merge=union
-Ladruno_implementation/LEDGER_implementations.md   merge=union
-Ladruno_implementation/LEDGER_quirks.md            merge=union
+# banner_features.txt is a concatenation-style list (one line appended per
+# feature), so it keeps the `union` merge driver: concurrent branches that each
+# add a line keep BOTH. Only for append-only data; NEVER apply union to code,
+# tests or docs that are edited in place (it interleaves and silently duplicates;
+# WORKFLOW_GOTCHAS §2a). GitHub's server-side merge ignores the driver anyway
+# (§9). The three build-control ledgers lost their union lines in WP-161: they
+# are per-WP fragment files now (Ladruno_implementation/ledger/), and the
+# LEDGER_*.md are stubs that nobody edits.
 Ladruno_scripts/banner_features.txt                merge=union
 
 # --- Ladruno: re-enable EOL normalization on the shared registration surface ---

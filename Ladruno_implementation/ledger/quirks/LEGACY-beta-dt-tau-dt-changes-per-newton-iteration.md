@@ -1,0 +1,9 @@
+---
+wp: LEGACY
+title: "beta = dt/(tau+dt) changes per NEWTON ITERATION under DisplacementControl / ArcLength — applyLoadDomain is called inside update(), not once per step"
+legacy_seq: 352
+---
+### `beta = dt/(tau+dt)` changes per NEWTON ITERATION under `DisplacementControl` / `ArcLength` — `applyLoadDomain` is called inside `update()`, not once per step
+- **Bites:** any rate-dependent material that reads `ops_Dt` sees a pseudo-time increment re-set *during* the equilibrium iteration, so its relaxation factor differs between iteration 1 and iteration 5 of the same step. The residual is then not a function of `u`, Newton's convergence argument is void, and the run either stalls or converges to something that depends on the iteration path.
+- **Why:** `DisplacementControl::update()` (`SRC/analysis/integrator/DisplacementControl.cpp:298`) calls `theModel->applyLoadDomain(currentLambda)` at **`:346`**, and `ArcLength::update()` (`:226`) calls it at **`:302`** — both after recomputing `currentLambda`. `Domain::applyLoad` advances `currentTime`, so `dT = currentTime - committedTime` moves mid-iteration. The **4-argument** `LoadControl(dLambda, numIncr, min, max)` also destroys uniformity, by adapting `dLambda`.
+- **Workaround:** **latch** `dt` and `beta` at `newStep()` / the first trial evaluation of the step and hold them for the whole iteration, rewinding on `revertToLastCommit`; or hard-refuse those integrators. The lane a rate-dependent material *should* be driven on is a patterned `sp` under the **1-argument** `LoadControl`: `SP_Constraint::applyConstraint` sets `valueC = loadFactor*valueR` (`SRC/domain/constraints/SP_Constraint.cpp:331-337`), so that IS displacement control with exactly uniform pseudo-time, and it keeps limit-point capability. Learned 2026-09-05, ADR-90 3-lens review, [[90_ladruno_viscoplastic_regularization_adr]] §3.
