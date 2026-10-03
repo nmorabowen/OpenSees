@@ -1,0 +1,10 @@
+---
+wp: LEGACY
+title: "LadrunoBrick20 (H20 serendipity): a uniform surface pressure has NEGATIVE corner weights, and the base-reaction identity CANNOT see the error"
+legacy_seq: 279
+---
+### `LadrunoBrick20` (H20 serendipity): a uniform surface pressure has NEGATIVE corner weights, and the base-reaction identity CANNOT see the error
+- **Bites:** porting an H8 deck to `LadrunoBrick20` by swapping the element name keeps the tributary-area nodal load vector. On a quadratic serendipity face that is wrong: the consistent weights are **−A/12 at each of the four corners and +A/3 at each of the four mid-edges**. The usual sanity check does not catch it — measured (note 81, 2026-08-10): a tributary-lumped surcharge reproduces the applied total in the base reactions to **+0.0000000 %**, i.e. it passes the 1e-6 sum identity *exactly*, while putting **190 %** error into σ_zz at the Gauss points. **Independently reproduced by the TIMs campaign at 343 %** on their mesh (internal — do not carry that figure upstream). Same family as the Bézier quirk above, and the same signature: everything global is right, the local field is not, and the deck dies at first yield.
+- **Why:** the sum identity only tests Σf_a = qA, which any partition of the total satisfies. It is blind to the *distribution*, and the distribution is what a quadratic basis constrains.
+- **Rule:** integrate f_a = ∫ N_a dΓ over the real face geometry (3×3 Gauss is exact for a straight-edged Q8 face) instead of assigning tributary areas. Sanity-check with a **1-D elastic patch test**, not with the reaction sum: roller sides + fixed base + a consistent uniform surcharge admits the exact 1-D state, that state lives in the H20 space, so a correct load vector reproduces σ_zz = −q₀ at every Gauss point to ~1e-13. A lumped load fails it by O(1).
+- **Workaround/status:** implemented and gated in `Ladruno_files/testbed/hypo_bearing/h20_prandtl.py` (`consistent_surcharge` / `verify_surcharge` / the `patch` leg, which carries the measured negative control). *Learned 2026-08-10 (note 81).*

@@ -1,0 +1,11 @@
+---
+wp: WP-119
+title: "854 -- upstreamable-table row(s)"
+pr: "#854"
+files: ["`SRC/element/elasticBeamColumn/ElasticBeam2d.cpp`", "`SRC/element/elasticBeamColumn/ElasticTimoshenkoBeam2d.cpp`", "`SRC/element/elasticBeamColumn/ElasticTimoshenkoBeam3d.cpp`"]
+table: "upstreamable"
+legacy_seq: [644, 645, 646]
+---
+| `SRC/element/elasticBeamColumn/ElasticBeam2d.cpp` | `// Ladruno WP-119` — **ground-motion inertia load subtracted twice.** `getResistingForce()` subtracts `Q` when `rho != 0`; `getResistingForceIncInertia()` calls it and subtracted `Q` again, so element `-mass` under `UniformExcitation` was driven at 2·a_g. Second subtraction commented out (marked). `Q` holds only the inertia load and is non-zero only when `rho != 0`, so `rho == 0` results are bit-identical. **Upstreamable** — still in OpenSees master (2026-09-24). Gate `tests/test_elastic_beam_ground_motion.py`. | [#854](https://github.com/nmorabowen/OpenSees/pull/854) |
+| `SRC/element/elasticBeamColumn/ElasticTimoshenkoBeam2d.cpp` | `// Ladruno WP-119` — **ground-motion inertia load subtracted twice.** `getResistingForce()` subtracts `theLoad` when `rho != 0`; `getResistingForceIncInertia()` calls it and subtracted `theLoad` again, so element `-mass` under `UniformExcitation` was driven at 2·a_g. Second subtraction commented out (marked). `theLoad` holds only the inertia load and is non-zero only when `rho != 0`, so `rho == 0` results are bit-identical. **Upstreamable** — still in OpenSees master (2026-09-24). Gate `tests/test_elastic_beam_ground_motion.py`. | [#854](https://github.com/nmorabowen/OpenSees/pull/854) |
+| `SRC/element/elasticBeamColumn/ElasticTimoshenkoBeam3d.cpp` | `// Ladruno WP-119` — **ground-motion inertia load subtracted twice.** `getResistingForce()` subtracts `theLoad` when `rho != 0`; `getResistingForceIncInertia()` calls it and subtracted `theLoad` again, so element `-mass` under `UniformExcitation` was driven at 2·a_g. Second subtraction commented out (marked). `theLoad` holds only the inertia load and is non-zero only when `rho != 0`, so `rho == 0` results are bit-identical. **Upstreamable** — still in OpenSees master (2026-09-24). Gate `tests/test_elastic_beam_ground_motion.py`. | [#854](https://github.com/nmorabowen/OpenSees/pull/854) |
