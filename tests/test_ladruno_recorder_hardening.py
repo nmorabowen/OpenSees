@@ -26,6 +26,7 @@ import subprocess
 import sys
 import textwrap
 
+import numpy as np
 import pytest
 
 from _testbed import ops
@@ -136,12 +137,20 @@ ops.wipe()
     r = _run_child(body, tmp_path)
     log = r.stdout + r.stderr
     assert DONE in r.stdout, f"process died (rc={r.returncode}):\n{log}"
-    assert log.count("could not be written; recording is suspended") == 1, log
-    # the first stage is intact: 2 rows of displacement and of element force
+    # WP-165 (MP-8): a region with no nodes left is a valid EMPTY stage, not a
+    # failed rebuild (the R2 release-first fix stays as the backstop for any
+    # other writer failure).
+    assert "written as an empty partition" in log, log
+    assert "could not be written" not in log, log
     with h5py.File(out, "r") as f:
-        stages = sorted(k for k in f if k.startswith("MODEL_STAGE"))
-        first = f[stages[0]]
+        stages = sorted((k for k in f if k.startswith("MODEL_STAGE")),
+                        key=lambda k: int(k[len("MODEL_STAGE["):-1]))
+        assert len(stages) == 2, stages
+        first, second = f[stages[0]], f[stages[1]]
+        # the first stage is intact: 2 rows of displacement
         assert first["RESULTS/ON_NODES/DISPLACEMENT/DATA"].shape[0] == 2
+        assert int(np.asarray(second.attrs["EMPTY_PARTITION"]).flat[0]) == 1
+        assert second["MODEL/NODES/ID"].shape[0] == 0
 
 
 def _stage(f):

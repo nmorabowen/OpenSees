@@ -269,11 +269,11 @@ Keep MPCO's genuinely good ideas; fix its worst ergonomics.
 └── MODEL_STAGE[<stamp>]
     ├── MODEL       NODES, ELEMENTS, LOCAL_AXES, SECTION_ASSIGNMENTS, SETS   (≈ as today)
     └── RESULTS
-        ├── ON_NODES/<name>/{ID, DATA/STEP_k}
-        ├── ON_ELEMENTS/<name>/{ID, META, DATA/STEP_k}
-        ├── ON_DOMAIN/<name>/{ID={0}, DATA/STEP_k}         # NEW (v2), [1 × nComp]; e.g.
+        ├── ON_NODES/<name>/{ID, DATA[T×nIds×nComp], TIME[T], STEP[T]}   # D3 (was DATA/STEP_k)
+        ├── ON_ELEMENTS/<name>/{ID, META, DATA, TIME, STEP}
+        ├── ON_DOMAIN/<name>/{ID={0}, DATA, TIME, STEP}    # NEW (v2), [1 × nComp]; e.g.
         │       energyBalance  COMPONENTS="KE,IE,DW,ULW,RES,ERR"
-        ├── ON_REGIONS/<name>/{ID=[regionTags], DATA/STEP_k}  # NEW (v2), [nRegions × nComp]
+        ├── ON_REGIONS/<name>/{ID=[regionTags], DATA, TIME, STEP}  # NEW (v2), [nRegions × nComp]
         └── ENVELOPES/ON_{NODES,ELEMENTS,DOMAIN,REGIONS}/<name>/  # NEW (v3)
                 {ID, MIN, MAX, ABSMAX, ARG_STEP}
 ```
@@ -327,10 +327,15 @@ the apeGmsh repo**, co-versioned with the recorder's `FORMAT_VERSION`.
 **Parallel (kept from MPCO, D5).** `sendSelf`/`recvSelf` broadcast only the recorder
 *spec* from p0 to all ranks (extend the `Serializer` payload for new request types;
 keep enum values stable). Each rank records its own subdomain to `part-<p_id>.mpco`.
-The **only** collective op in the record loop is the existing single-int
-`MPI_Allreduce` (line 4594) that synchronizes the `hasDomainChanged()` stamp so every
-rank names its `MODEL_STAGE[<stamp>]` group identically — result data is never
-communicated. apeGmsh stitches part files on read (it owns the contract now).
+~~The only collective op in the record loop is the existing single-int
+`MPI_Allreduce` (line 4594) that synchronizes the `hasDomainChanged()` stamp~~
+**Correction (WP-163/165 review):** that `MPI_Allreduce` is the frozen recorder's only
+`_PARALLEL_PROCESSING` code, and it is compiled out — `OPS_Recorder` is built sequentially
+for every target (LEDGER_quirks). Each rank uses its own stamp. WP-165 makes a stamp move
+start a new `MODEL_STAGE` only when the node/element set changed, which removes the common
+rank-local causes of divergent stage names (contact re-emit, `eleLoad`, SP patterns); a
+genuinely rank-local topology change can still give ranks different stage names. Result
+data is never communicated. apeGmsh stitches part files on read (it owns the contract now).
 
 **Envelopes via a sink, not a new hierarchy.** `EnvelopeSink` wraps any
 `ResultSource`; the only parallel-aware knob is a per-source
@@ -351,9 +356,10 @@ energy/`ON_DOMAIN` channel needs — so v3b co-lands with that work.
 index of each extreme; `commitTag` is global across ranks so it's a valid local id).
 Envelopes are **per `MODEL_STAGE`** — flush-and-reset on `hasDomainChanged()`.
 Because `finalize()` has no clean OpenSees callback (only destructor / stage change),
-the sink **periodically rewrites** envelope datasets in place alongside the existing
-per-step `H5Fflush`, so a kernel crash ([[project_mpco_exit_crash]]) loses at most the
-last N steps of envelope.
+the sink rewrites the envelope datasets in place — every recorded step for envelopes up
+to 8 MiB, on the `-flush` cadence (default 10 s) above that (WP-164) — so a kernel crash
+([[project_mpco_exit_crash]]) loses at most the last `-flush` seconds of envelope. (Before
+WP-164 it deleted and recreated every envelope group on every recorded step.)
 
 ### Testing — layered, frozen-MPCO-as-oracle
 

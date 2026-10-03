@@ -235,6 +235,10 @@ through it. What follows is the contract that reader implements:
   `"Ladruno"`, not the old `"MPCO_Ladruno"`. Reuse the partition-merge logic (regex
   `^(?P<stem>.+?)\.part-(?P<idx>\d+)\.ladruno$`); handle chunked **and** legacy
   time-series.
+- **Validate the part set (WP-165).** All `.part-N` files of one set must agree on
+  `NUM_PARTITIONS` (= the glob count) and, when `RUN_ID_SCOPE != "process"`, on `RUN_ID`;
+  a mismatch means stale files from an earlier run are mixed in. A stage marked
+  `EMPTY_PARTITION = 1` is a valid empty contribution (zero-length `NODES`), not an error.
 - **Stitching must honour `PARTITION_REDUCTION` (WP-126, schema §7.1).** A node on a
   partition interface appears in several `.part-N` files. For `NONE` results
   (kinematics), keep any one copy. For `SUM` results (`reaction*`, `unbalanced*`),
