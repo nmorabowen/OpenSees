@@ -1577,9 +1577,13 @@ void ManzariDafalias::ForwardEuler(const Vector& CurStress, const Vector& CurStr
     Vector dDevStrain = GetDevPart(NextStrain - CurStrain);
     double p = one3 * GetTrace(CurStress) + m_Presidual;
 
+    // Ladruno WP-158: was `Vector r = ...` -- a NEW local that died at the `;`,
+    // so this r stayed zero and every (n:r) term below (temp4, NextDGamma,
+    // temp2) was dropped: IntScheme 5 (and 4, 7, 8, 9) lost the volumetric
+    // coupling of the plastic multiplier. Upstream has the same line.
     Vector r(6);
     if (p > small)
-        Vector r = GetDevPart(CurStress) / p;
+        r = GetDevPart(CurStress) / p;                              // Ladruno WP-158
 
     double Kp = two3 * p * h * DoubleDot2_2_Contr(b, n);
     
@@ -1596,8 +1600,15 @@ void ManzariDafalias::ForwardEuler(const Vector& CurStress, const Vector& CurStr
     Vector dFabric  = -1.0 * Macauley(NextDGamma) * m_cz * Macauley(-1.0*D) * (m_z_max * n + CurFabric);
            dPStrain = NextDGamma * ToCovariant(R);
 
-    Matrix temp1 = 2.0*G*mIIdevMix + K*mIIvol;
-    Vector temp2 = 2.0*G*n - DoubleDot2_2_Contr(n,r)*mI1;
+    // Ladruno WP-158: was `2.0*G*mIIdevMix + K*mIIvol` -- the mixed-variant
+    // identity puts 2G, not G, on the shear diagonal, while the stress update
+    // above (2G ToContraviant(de) + K de_v I) answers an ENGINEERING shear
+    // strain with G. aC = GetStiffness(K, G) is that map (the WP-110 family).
+    Matrix temp1 = aC;                                               // Ladruno WP-158
+    // Ladruno WP-158: was `2.0*G*n - DoubleDot2_2_Contr(n,r)*mI1` -- missing the
+    // bulk modulus, so the tangent disagreed with NextDGamma's numerator
+    // 2G n:de - K de_v (n:r). Hidden while r was always zero (above).
+    Vector temp2 = 2.0*G*n - K*DoubleDot2_2_Contr(n,r)*mI1;         // Ladruno WP-158
     Vector temp3 = 2.0*G*(B*n-C*(SingleDot(n,n)-one3*mI1)) + K*D*mI1;
 
     aCep = temp1 - MacauleyIndex(NextDGamma) * Dyadic2_2(temp3, temp2) / temp4;

@@ -818,6 +818,21 @@ class LadrunoSANISAND : public ManzariDafalias
     // exactly the answers the latch exists to stop.
     bool   mImplexCommitRefusedLatch;   // Ladruno WP-99 (F7)
 
+    // Ladruno WP-153: the COMMITTED-path alpha_in census (response `commitStats`,
+    // id 33102). sasStats counts every re-seat of every integration CALL -- each
+    // Newton iterate under an implicit solver, each of the two update passes per
+    // step under LadrunoDynamicRelaxation -- so its re-seat count is not
+    // comparable between solvers. These count what the analysis actually
+    // COMMITTED: commits, commits whose alpha_in differs from the last committed
+    // alpha_in, and the summed ||alpha_in - alpha_in_n|| over them. Updated in
+    // ladrunoNoteCommitAlphaIn() just before ManzariDafalias::commitState(), on
+    // both commit paths. Per instance; copied by getCopy; reset by revertToStart
+    // (the sasStats rule); a diagnostic, deliberately NOT on the wire.
+    double mLadrunoCommits;          // Ladruno WP-153
+    double mLadrunoCommitReseats;    // Ladruno WP-153
+    double mLadrunoCommitDAlphaIn;   // Ladruno WP-153
+    void   ladrunoNoteCommitAlphaIn(void);   // Ladruno WP-153
+
     // Ladruno WP-112 (F14): once-per-instance latch of the sign-at-round-off
     // warning (ladrunoWarnRoundoffAlphaIn()). Diagnostic only: NOT sent on the
     // wire, starts false on getCopy(const char*) (every Gauss point is a fresh

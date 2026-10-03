@@ -2347,8 +2347,10 @@ Domain::commit(void)
     // Ladruno (ADR-39): commit contact pair state (gap0, friction) at the single
     // integrator-agnostic choke point (the design gate's BLOCKER-1 fix — the
     // ConstraintHandler is never called at commit).
+    // Ladruno (ADR-155): pass the held-load augmentation flag so a `-augment request` mortar
+    // contact augments only inside the ladrunoBeginAugment bracket (default contacts ignore it).
     if (theContactDomain != 0)
-      theContactDomain->commit();
+      theContactDomain->commit(contactAugmenting);
 
     // Ladruno (ADR-60): finite-sliding NTS re-emit. If a slave has migrated past the broad-phase
     // search band since the last sort, raise the domain-changed flag so the NEXT step re-handles

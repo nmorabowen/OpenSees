@@ -21,6 +21,13 @@ and `test_ladruno_sanisand_sasme.py::test_existing_schemes_byte_identical`
 compares the current build against it.  Regenerate it ONLY for a deliberate
 numerical change to an existing scheme, and say so in that PR.
 
+Re-pinned since (one deck at a time, every other deck left byte-for-byte):
+  ls3d_s5  WP-158 -- ForwardEuler's shadowed `r` and its two tangent defects
+           fixed; plastic rows 10-29 move, elastic rows 0-9 do not. Captured
+           with the WP-158 build (origin/ladruno d63f49750 + the WP-158
+           ManzariDafalias.cpp edit), 2026-10-01; the 17 other decks matched
+           the pinned values exactly on that build.
+
 Not collected by pytest (no `test_` prefix); imported by the test.
 """
 import json

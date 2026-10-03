@@ -248,7 +248,44 @@ class LadrunoContactDomain
         // FATAL at handle() time. Meaningless (and refused at the command surface) without
         // -mortar.
         double hThickness;
+        // ADR-155 (pile-contact R0.5) -- three opt-in controls. Default-initialized so stack
+        // construction can never flip one on (the enableReemit/smoothNormal precedent); set by
+        // setMortarContactOptions() after addMortarContact. All defaults => byte-identical.
+        //  augmentMode: WHEN the commit-cycle Uzawa update (lambda_N / lambda_T / lambda_tie) runs.
+        //    AUG_COMMIT (0, default) = on every Domain::commit (the shipped C2.2 behaviour);
+        //    AUG_REQUEST (1) = only inside a ladrunoBeginAugment/EndAugment bracket (the held-load
+        //    analyze_augmented recipe) -- a physical step is PURE PENALTY;
+        //    AUG_NEVER (2) = never (pure penalty; the bracket is inert too).
+        //  maxGap (>0 => on): handle()-time pairing guard -- a (slave facet, master facet) pair
+        //    whose slave centroid lies farther than maxGap from the master facet's plane (current
+        //    config) is NOT paired (the antipodal-facet guard on a closed surface). 3D only.
+        //  gapOffset: a constant shift of the normal gap (gbar -> gbar + gapOffset); negative =
+        //    a prescribed interference (a shrink fit without editing the geometry). 3D only.
+        //  adjust (+ adjustTol, 0 => unlimited): the reference-config nodal weighted gap is
+        //    subtracted per pair, so the as-meshed interface starts exactly closed and stress-free
+        //    (only nodes with |gbar_ref| <= adjustTol are adjusted when adjustTol > 0). 3D only.
+        int    augmentMode = 0;
+        double maxGap      = 0.0;
+        double gapOffset   = 0.0;
+        bool   adjust      = false;
+        double adjustTol   = 0.0;
+        // Ladruno ADR-159 (pile-contact R0.8) -- the smoothed contact law, set by
+        // setMortarSmoothing() (only when -smoothN/-smoothT was given => byte-identical otherwise).
+        //  smoothN (> 0 => on, a LENGTH g0): the C1 quadratic normal onset over |gbar| < g0 plus the
+        //    C1 friction-onset weight over the same band (LadrunoContactFE::mortarSmoothLaw).
+        //  smoothT (0 < r < 1 => on): the rounded stick/slip corner over |‖tT*‖ - cap| < r*cap.
+        //  Both are pure-penalty laws: they require augmentMode == AUG_NEVER (checked by the setter).
+        double smoothN     = 0.0;
+        double smoothT     = 0.0;
     };
+    enum { AUG_COMMIT = 0, AUG_REQUEST = 1, AUG_NEVER = 2 };
+    // ADR-155 -- set the R0.5 options on an already-added mortar contact (by tag). <0 if the tag
+    // is not a mortar contact or an option is invalid (gap shift on a -tie, negative maxGap...).
+    int setMortarContactOptions(int tag, int augmentMode, double maxGap, double gapOffset,
+                                bool adjust, double adjustTol);
+    // Ladruno ADR-159 -- set -smoothN/-smoothT on an already-added (and already optioned) mortar
+    // contact. <0 (named) on a -tie, an augmenting contact, or an out-of-range value.
+    int setMortarSmoothing(int tag, double smoothN, double smoothT);
     int addMortarContact(int tag, int masterSurfTag, int slaveSurfTag,
                          double kn, bool knAuto, double epsN, bool epsNAuto,
                          double augTol, int maxAug, int ngp,
@@ -331,55 +368,68 @@ class LadrunoContactDomain
         double gtGlobal;  // Σ_facets g̃_I^facet at the current trial (incremental — see below)
         double aGlobal;   // Σ_facets a_I^facet = ∫N_I dΓ (incremental)
         double epsN;      // the penalty the adapters use at this node (for the commit update)
-        // ADR-41 C3.1 — frictional mortar (folded into the SAME (contactTag,slaveNodeTag) slot
-        // since it shares the key + lifecycle): per-global-slave-node elastic tangential slip.
-        // gpT survives like lambdaN (committed plastic slip); gpTtrial is the transient trial
-        // (a pure fn of committed state, rewritten each getResidual); gT0 is the engagement-config
-        // tangential origin captured ONCE at first contact (else a late-engaging node's pre-contact
-        // drift becomes a spurious stick traction — the ADR-39 P3 MAJOR-1, reused). λ_T (tangential
-        // Uzawa) is C3.3 — C3.1/C3.2 ship penalty friction (λ_T≡0).
-        double gpT[3];      // committed elastic tangential slip (promoted in commit())
-        double gpTtrial[3]; // trial slip (written each getResidual)
-        double gT0[3];      // engagement-config tangential origin (captured at first activation)
-        bool   engaged;     // has gT0 been captured at first contact activation
-        // C3.3 — tangential augmented-Lagrange multiplier λ_T (the friction analogue of λ_N). It
-        // is the committed cone-capped traction; the residual injects it via the OFFSET TRICK
-        // gTeff_eff = gTeff + λ_T/epsT (so the existing penalty return map yields tT = λ_T +
-        // epsT·(gTeff−gpT)). One Uzawa step per commit: λ_T ← −tFric (the returned traction), which
-        // drives the STICK elastic creep → 0 at FINITE epsT (epsT-independent tangential position).
-        // Committed-only (mutated solely in commit() from lambdaTtrial); ≡0 ⇒ the C3.1/C3.2 penalty
-        // friction (the held-load analyze_augmented proc augments it across commits).
-        double lambdaT[3];      // committed tangential multiplier
-        double lambdaTtrial[3]; // trial (= −tFric, written each getResidual)
+        // ADR-41 C3.1/C3.3 friction path state (gpT/gT0/engaged/lambdaT + the committed
+        // double-buffer) USED to live here, per GLOBAL slave node. ADR-157 moved it to the
+        // per-(slave node, slave facet, master facet) MortarFrictionState below: every facet pair
+        // that integrated a shared node overwrote the others' slip (last-writer-wins, LEDGER_quirks
+        // "Mortar friction committed slip is last-writer-wins"), and on a curved interface it read
+        // a slip/multiplier expressed in ANOTHER facet's tangent plane.
         // ADR-41 C4 — MESH-TYING (a permanent bond; the zero-gap limit of contact). When isTie the
         // node's active set is frozen ON and the FULL 3-vector weighted relative DISPLACEMENT
         // r_I = Σ_J D_IJ u_s,J − Σ_K M_IK u_m,K is driven to ZERO (normal AND tangential, no KKT, no
         // clamp, no friction). The tie multiplier lambdaTie is the λ_N analogue: COMMITTED-ONLY
         // (mutated solely in commit()), Uzawa'd NO-CLAMP from the ORDER-INDEPENDENT global
         // accumulator rtGlobal/aGlobal — λ_tie ← λ_tie + epsTie·(rtGlobal/aGlobal). r_I is a LINEAR
-        // accumulation (no return map), so — unlike the friction slip (a return-map OUTPUT, last-
-        // writer-wins at shared nodes; LEDGER_quirks MAJOR-1) — the global accumulator is correct and
+        // accumulation (no return map), so — unlike the friction slip (a return-map OUTPUT; per
+        // facet PAIR since ADR-157) — the global accumulator is correct and
         // order-independent here (the C4 shared-node resolution). rtGlobal is transient (re-summed
         // each residual sweep via accumulateMortarTie; zeroed each handle() in mortarNormalGCEnd).
         double lambdaTie[3];    // committed tie multiplier (3-vec); mutated ONLY in commit(), NO clamp
         double rtGlobal[3];     // Σ_facets r_I^facet (global weighted rel. disp.; for Uzawa + ‖r‖ query)
         bool   isTie;           // true ⇒ tie slot (skip normal KKT/friction; assemble the full 3-vec bond)
-        // C3.2 (MAJOR-2): gT0/engaged are mutated in getResidual (engagement capture), so a
-        // rejected IMPLICIT Newton step must be able to revert them (else a stale origin latched
-        // from the rejected config persists). Double-buffer the committed engagement state; commit()
-        // promotes, revertToLastCommit() restores. (Unreachable under explicit CDL, live in C3.2.)
-        double gT0committed[3];
-        bool   engagedCommitted;
-        MortarNormalState() : lambdaN(0.0), gtGlobal(0.0), aGlobal(0.0), epsN(0.0),
-                              engaged(false), engagedCommitted(false), isTie(false) {
-            for (int d = 0; d < 3; d++) {
-                gpT[d] = gpTtrial[d] = gT0[d] = gT0committed[d] = lambdaT[d] = lambdaTtrial[d] = 0.0;
-                lambdaTie[d] = rtGlobal[d] = 0.0;
-            }
+        MortarNormalState() : lambdaN(0.0), gtGlobal(0.0), aGlobal(0.0), epsN(0.0), isTie(false) {
+            for (int d = 0; d < 3; d++) lambdaTie[d] = rtGlobal[d] = 0.0;
         }
     };
     // lazily create + return the per-node slot (zeroed if new).
     MortarNormalState &getOrCreateMortarNormalState(int contactTag, int slaveNodeTag);
+
+    // --- ADR-157: mortar FRICTION path state, one slot per (contactTag, slave node, slave-facet
+    //     ordinal, master-facet ordinal) -- i.e. per (slave node, facet PAIR), the mortar analogue
+    //     of the NTS FrictionState's (contactTag, slaveTag, segIndex) key. Each facet pair runs its
+    //     OWN return map on its OWN local weighted slip gbarT = tangential(r_I^pair)/a_I^pair in its
+    //     OWN tangent plane (n = the pair's master-facet normal), so it must own the state it reads
+    //     back: the committed slip gpT, the engagement origin gT0/engaged and the C3.3 tangential
+    //     multiplier lambdaT. Per GLOBAL node (the C3.1-C3.3 layout) the pairs sharing a node
+    //     overwrote each other's trial (last-writer-wins; the committed state depended on the FE
+    //     sweep order), and on a CURVED interface a pair read a slip/traction lying in a
+    //     neighbouring facet's tangent plane (a spurious normal component of size |t|·sin(angle)).
+    //     Both facet ordinals are rebuild-stable (the NTS segIndex precedent), so the slot survives
+    //     the adapter rebuild each handle(). Committed-only fields (gpT, gT0committed,
+    //     engagedCommitted, lambdaT) change ONLY in commit(); the trial ones are pure functions of
+    //     committed state (idempotent re-evaluation, BLOCKER-2). The normal multiplier lambdaN stays
+    //     per node (MortarNormalState): it is Uzawa'd from the LINEAR global gap accumulator. ---
+    struct MortarFrictionState {
+        double gpT[3];          // committed plastic tangential slip (promoted in commit())
+        double gpTtrial[3];     // trial slip (written each getResidual; a pure fn of committed state)
+        double gT0[3];          // engagement-config tangential origin (captured at first activation)
+        bool   engaged;         // has gT0 been captured
+        double lambdaT[3];      // C3.3 committed tangential multiplier (mutated ONLY in commit())
+        double lambdaTtrial[3]; // trial (= −tFric, written each getResidual)
+        double gT0committed[3]; // C3.2 MAJOR-2 double-buffer: commit() promotes, revert restores
+        bool   engagedCommitted;
+        MortarFrictionState() : engaged(false), engagedCommitted(false) {
+            for (int d = 0; d < 3; d++)
+                gpT[d] = gpTtrial[d] = gT0[d] = lambdaT[d] = lambdaTtrial[d] = gT0committed[d] = 0.0;
+        }
+    };
+    // lazily create + return the slot for (contact, slave node, slave facet, master facet) (zeroed).
+    MortarFrictionState &getOrCreateMortarFrictionState(int contactTag, int slaveNodeTag,
+                                                        int slaveFacet, int masterFacet);
+    int  getNumMortarFrictionStates(void) const { return (int)theMortarFrictionStates.size(); }
+    // GC: the handler marks every live frictional (node, facet pair) each handle() between
+    // mortarNormalGCBegin() and mortarNormalGCEnd(); End erases the unmarked slots.
+    void mortarFrictionGCMark(int contactTag, int slaveNodeTag, int slaveFacet, int masterFacet);
     // a per-facet adapter reports its contribution g̃_I^facet / a_I^facet to a slave node,
     // keyed STABLY by the adapter's FE tag so a re-eval OVERWRITES (idempotent, never
     // double-counts). Maintains the node's gtGlobal/aGlobal as the running Σ over facets via a
@@ -633,7 +683,9 @@ class LadrunoContactDomain
     int recvSelf(int commitTag, Channel &theChannel, int dbTag, int packedSize);
 
     // --- lifecycle (driven by Domain::commit / revertToLastCommit / revertToStart) ---
-    int commit(void);              // P3: gpT = gpTtrial for every slot (+ counter)
+    // P3: gpT = gpTtrial for every slot (+ counter). ADR-155: `augmenting` is the Domain's
+    // held-load bracket flag (ladrunoBeginAugment); it only matters for an AUG_REQUEST contact.
+    int commit(bool augmenting = false);
     int revertToLastCommit(void);  // P3: gpTtrial = gpT for every slot (+ counter)
     // contact-review P2 (2026-07) — drop ALL path-dependent state (friction slip +
     // engagement origins, mortar λ_N/λ_T/λ_tie, edge-edge signs/friction, NTS force
@@ -738,6 +790,19 @@ class LadrunoContactDomain
     };
     std::map<NodeKey, MortarNormalState> theMortarNormalStates;
     std::set<NodeKey> liveNodeKeys;                     // mortar GC scratch (per handle())
+    // ADR-157 mortar friction state, keyed (contactTag, slaveNodeTag, slave facet, master facet) --
+    // a 4-int COMPOSITE key (never a lossy hash; the EdgeKey rule). Facet ordinals are rebuild-stable.
+    struct MortarPairKey {
+        int c, n, sf, mf;
+        bool operator<(const MortarPairKey &o) const {
+            if (c != o.c) return c < o.c;
+            if (n != o.n) return n < o.n;
+            if (sf != o.sf) return sf < o.sf;
+            return mf < o.mf;
+        }
+    };
+    std::map<MortarPairKey, MortarFrictionState> theMortarFrictionStates;
+    std::set<MortarPairKey> liveMortarPairKeys;         // ADR-157 GC scratch (per handle())
 
     // ADR-57 E2 edge-edge state, keyed (contactTag, ordered slave edge nodes, ordered master edge
     // nodes) — a 5-int COMPOSITE key (never a lossy hash; design Lens-B). Ordering the node-tag

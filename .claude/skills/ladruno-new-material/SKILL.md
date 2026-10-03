@@ -55,6 +55,10 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       (WP-130, #868); SANISAND `ModifiedEuler` force-accepted failed substeps at `dT_min`
       (WP-127 finding C, SAS-ME fix WP-129, #871). Test it: feed one wild trial increment
       and assert the call returns < 0 within a wall-clock bound.
+- [ ] **[lint]** Never DECLARE inside an unbraced `if` to set an outer variable: `if (p > small)
+      Vector r = ...;` makes a new `r` that dies at the `;` (L9). And give every substep
+      integrator's tangent an FD gate of its own: ForwardEuler's was wrong twice over and no gate
+      saw it (WP-158). Quirks: "has a shadowed `Vector r`".
 - [ ] Implement `getInitialTangent()` honestly: the base default returns `getTangent()`, so
       `-initial` silently becomes full Newton. Quirks: "`NDMaterial::getInitialTangent()` DEFAULTS".
 - [ ] Substep schemes need error control and yield-drift correction, and must honour the

@@ -29,6 +29,12 @@ them. This is observation-only — fixes we actually applied are tracked in
 
 ## Quirks
 
+### Mortar contact: one tie around a CLOSED surface silently binds the far side; a per-commit Uzawa makes a LINEAR tie step-count dependent (WP-155, 2026-09-29)
+- **Bites:** (1) the mortar broad phase is brute force and the kernel clip accepts anti-parallel facets (`|cos|`), so on a closed skin (a pile) each facet is also tied to the ANTIPODAL facets — R1 measured one cylinder tie 3.65× too stiff, with no warning. (2) the shipped default augments λ once per `Domain::commit()`, so even a linear penalty tie gives a different answer for 1 vs 2 vs 5 load steps (exactly the 1-D Uzawa recursion: 2.2e-3 / 2.1e-3 / 2.04e-3 on the split column).
+- **Also:** a `-adjust`ed node sits at p = 0 EXACTLY, which the shipped `pr < 0` mask treats as open — the first iterate then has no interface stiffness (a floating pile). WP-155 takes the closed tangent branch there. And a frictionless contact on a near-circular interface has NO torsional stiffness: a test slice must pin the rigid rotation or Newton chatters.
+- **Also:** the `-augment` gate must cover EVERY Uzawa in `commit()`: the ADR-57 E6 edge-edge λ_N was missed at first (review #897 finding 1).
+- **Status:** `-maxGap d` (pairing guard), `-augment request|never`, `-adjust`/`-gapOffset` — [[155_pile_contact_r05]]. Defaults unchanged.
+
 ### LadrunoConcrete3D: hydrostatic compression silently ELASTIC; `Gc` was not an energy; tension over-dissipated `Gf` (fixed 2026-09 — read before comparing to OOFEM)
 - **Bites (pre-WP `concrete3d-oracle-diagnosis`):** (1) a hydrostatic-compression trial never yielded: the hardening return overshot `ρ<0`, the apex branch projected onto the TENSION vertex, the PR #249 gate rejected it and the wrapper fell back to the elastic predictor with only a warning (OOFEM `con2dpm3`: −21.43 vs −2.96 MPa); 4.6 % of plastic fuzz trials with a compressive mean stress were *accepted* at the tension vertex (admissible, so the gate let them through). (2) `Gc` mapped to `εfc = Gc/(fc·lch)` while the compressive driver is scaled by `βc/xs`, so the element dissipated ~20× `Gc`. (3) The tension history `κdt2 = κdt−ε0` stretched the exponential softening (+25–40 % over `Gf`; Grassl Fig. 7 at 0.2 mm/m: 2.80 vs 0.96 MPa).
 - **Also (single-element tension benchmarks):** with only one top node displacement-controlled and the others load-controlled, the softening brick BIFURCATES into a non-uniform (rotating-face) mode — some GPs unload with frozen `ωt<1` and carry `(1−ωt)σ̄` of a strongly hardened effective stress (`Hp=0.5` ⇒ `σ̄` ~ 30× ft), so the curve never reaches zero and "dissipates" ~190 N/m for Gf = 120 regardless of `Df`. Tie the loaded face (`equalDOF` on uz) for a material-point test: it then dissipates Gf exactly. And `ωt = 1` exactly (bilinear) made the tangent singular ⇒ residual tangent stiffness `(1−ω) ≥ 1e-6` (2026-09).
@@ -1721,6 +1727,21 @@ non-obvious behaviours, all relevant to anyone wiring `-stabilize` into a driver
   augments from the order-INDEPENDENT global accumulator `gtGlobal/aGlobal`. So the per-node `λ_T`/`gpT`
   reconciliation is the same single fix for the whole friction state. Still fenced to matched/explicit; the
   C3.3 gate (MINOR-1) re-confirmed it is inherited, not introduced.
+  **WP-155 update (2026-09-30, review #897):** the fence is now crossed in practice. The apeGmsh pile
+  ladder runs μ = 1 and cohesion-only mortar on a NON-matching skin/hole, and its cohesion-only
+  multi-step failure persists under `-augment never` (so not the Uzawa) and is plausibly THIS defect.
+  `-augment never` removes only the λ_T half. See [[155_pile_contact_r05]] §5–§6. Recommended as the
+  next contact slice.
+  **WP-157 (2026-09-30) — RESOLVED for friction.** The state is now per (slave node, slave facet, master
+  facet): `MortarFrictionState` keyed (contactTag, node, sf, mf), so each pair re-reads what its own
+  return map wrote. The second failure mode surfaced along the way: on a CURVED/creased interface a
+  pair also read a `λ_T`/`gpT` lying in a NEIGHBOUR's tangent plane (a normal leak |t·n| ≈ cap from step
+  2 on; oracle T3). Pinned by `test_adr157_mortar_pair_friction` (creased roof: analytic force and
+  multi-step force-control convergence; both fail on d63f49750). See [[157_mortar_friction_pair_state]].
+  **Lifecycle change (review #900, finding 3).** A pair refused by `-maxGap`
+  for an epoch loses its friction state and re-engages fresh (D4). A pair that
+  stays paired but inert keeps `λ_T`/`gpT` frozen and re-applies them when it
+  re-enters. Before WP-157, siblings sharing the node refreshed that state.
 - **C4 update (#381) — RESOLVED for the TIE path; STILL FENCED for FRICTION.** C4 mesh-tying hits shared
   slave nodes immediately (non-matching meshes are the whole point), so the pre-req had to be discharged
   before relying on it. The tie state (`λ_tie`, the full 3-vec relative displacement `r_I`) does NOT inherit
@@ -4259,6 +4280,17 @@ any state that only feeds future steps (mass, damping, committed internal vars).
 - **Why:** a per-chunk *change* is an increment, and increments scale with the interval they are measured over. A *residual* does not.
 - **Rule:** gate on a chunk-free quantity — the true static unbalance `‖f_ext − f_int‖_∞` (`ladrunoDR residualNorm`, which DR computes from the pre-damping solved acceleration and is exactly `‖M*·a‖_∞`) — and demote the change measure to a reported diagnostic. The same rule applies to any "it stopped moving" stall detector whose window is a tunable. *Learned 2026-08-11 (note 83 §1.1).*
 
+### An integrator without its own `revertToLastStep()` inherits a NO-OP — a retry after a failed step marches from state that was never committed
+- **Bites:** a driver cuts and retries a failed step. `DirectIntegrationAnalysis::analyze()` / `StaticAnalysis::analyze()` do the right thing on failure: `Domain::revertToLastCommit()`, then `theIntegrator->revertToLastStep()`. But `IncrementalIntegrator::revertToLastStep()` is a **no-op**, so any integrator that keeps step-to-step state in its OWN members and does not override it resumes from the failed attempt: the Domain is back at the last commit, the integrator is not. Nothing reports it. Found by the TIMs explicit/DR campaign (WP-153, 2026-09-29): `LadrunoDynamicRelaxation` kept `Ut/Vhalf/Aprev` (and `M*`, rebuilt inside a step by `-recompute` / the KE-peak auto-refresh) advanced, so the retry started one leap-frog step off the committed path.
+- **Why nobody saw it:** the static drivers mostly retry with a SMALLER step, which re-derives what they need from the committed Domain, and most explicit runs never retry at all. It bites exactly when a driver retries: a refusal cut-and-retry, a solver ladder, a `robust_drive` rung change.
+- **Audit (fork `ladruno` at c135b90b9, 2026-09-30; classes with own vectors and no override):**
+  - **Double-advance on retry (worst):** vanilla `ExplicitDifference` (newStep advances `Ut`, `Utdot` in place, `ExplicitDifference.cpp:90-91`), `ExplicitDifferenceStatic` (same, plus the FLAC local-damping memory `velSignMem`/`prevUnbal`), `CentralDifferenceNoDamping` (update accumulates `Udot`/`U` in place, `:242-245`), `CentralDifference` (update shifts `Utm1 = Ut; Ut = U`), `CentralDifferenceAlternative` (the half-step `Udot`; `Ut` is safe, moved only in commit).
+  - **Direction / factor carried from the failed attempt:** vanilla `ArcLength`, `ArcLength1`, `HSConstraint` (`signLastDeltaLambdaStep` from the failed `deltaLambdaStep`, `ArcLength.cpp:146`), `MinUnbalDispNorm` (the Δλ1 factor, the iteration count, the sign, `signLastDeterminant`), `EQPath` (`du`, `uqn`, also a per-step `new` leak of `uq0`/`du0`), `LoadPath` (`currentStep` one ahead per failure, so the path ends early).
+  - **Mild (only with adaptive `numIter dmin dmax` / `-iter`):** vanilla `DisplacementControl`, `DistributedDisplacementControl`, fork `LadrunoIndirectControl` (the Ramm factor from the failed attempt's iteration count).
+  - **Fine:** `LadrunoDynamicRelaxation` (fixed, WP-153: snapshot at commit, exact restore); `CentralDifferenceLadruno` (re-seeds from the committed nodes; its subclasses `CentralDifferenceSMS` / `SMSConsistent` add only domainChanged-time state); `LadrunoLoadControl` (snapshots at commit and detects the retry); `GeneralizedAlpha` / `HHT` (own override; `LadrunoGeneralizedAlpha` / `LadrunoHHT` add only sensitivity scratch).
+- **Rule:** a new integrator with ANY member advanced by `newStep()`/`update()` and read by the next step overrides `revertToLastStep()`, and ships a failed-then-retried == uninterrupted test (`tests/test_wp153_dr_revert.py` shows how to inject a failure AFTER the march has moved: `algorithm Newton` with an unreachable tolerance, swapped back to the working algorithm, which `setAlgorithm` allows without touching the integrator). Prefer an exact snapshot restore over a re-seed when the march has non-derivable state (a DR re-seed re-runs the starter, which is not the uninterrupted march after a Cundall reset).
+- **Status:** `LadrunoDynamicRelaxation` FIXED in [#899](https://github.com/nmorabowen/OpenSees/pull/899) (WP-153). The vanilla classes are RECORDED ONLY (fork policy: vanilla stays vanilla without the owner); `LadrunoIndirectControl` is recorded (mild, `-iter` only). *Learned 2026-09-29/30.*
+
 ### Being on a target's LINK LINE is not the same as being LINKED IN — externing one symbol from `OpenSeesCommands.cpp` breaks the classic-Tcl link with ~40 duplicate symbols
 - **Bites:** you want to share a command implementation between the two OpenSees command engines, and the CMake notes encourage you — `OPS_InterpPyCmds` (the static lib holding `OpenSeesCommands.cpp`) is explicitly linked by "Tcl OpenSees/SP/MP, G3, sequential OpenSeesPy". So you add `extern int OPS_LadrunoDRCmdOn(...)` to `SRC/tcl/commands.cpp` and call it. The build dies with **~40 `LNK2005` duplicate-symbol errors** — `ops_getstring`, `ops_setdoubleoutput_`, `ops_gettransientintegrator_`, the whole elementAPI backend — *already defined in* `OPS_InterpTcl.lib(elementAPI_TCL.cpp.obj)`, plus `LNK2019` unresolved `OPS_SparsePythonSolver` / `OPS_SparsePythonEigenSolver`, and `fatal error LNK1120`.
 - **Why:** a static library is a bag of object files, and the linker pulls an object ONLY if something references a symbol in it. Nothing in the classic Tcl engine had ever referenced `OpenSeesCommands.cpp`, so despite the lib being on the link line that object was never pulled — the two engines coexisted only because one of them was, in effect, absent. The first `extern` pulls the object, and it arrives whole: `OpenSeesCommands.cpp` carries the DL engine's elementAPI backend, which collides head-on with `elementAPI_TCL.cpp`'s, and drags in the Python-SOE externals the Tcl exes do not link.
@@ -5479,6 +5511,54 @@ against 0.946** for scheme 1 on the same path — a silent 26 % on mobilised str
 - **Fix owed (vanilla, two lines, separate PR):** `r = GetDevPart(CurStress); r /= p;` inside
   the `if`. Until then the entry above on schemes 3/5 having no error control has a second
   reason not to use 5.
+- **✅ FIXED — WP-158, [#901](https://github.com/nmorabowen/OpenSees/pull/901) (2026-10-01).**
+  `r = GetDevPart(CurStress) / p;` (`:1586` at d63f49750 + the fix). Upstream master
+  (316cb2dbc, 2024-05-01) still has the shadow at `:1233`. Three things the earlier note did
+  not know, all measured on the d63f49750 build vs the WP-158 build
+  (`tests/test_manzari_forward_euler_r.py`, its `__main__`):
+  - **Two more defects in the same function, tangent only.** `temp2 = 2G n - (n:r) I` was
+    missing `K` (the multiplier's numerator is `2G n:de - K de_v (n:r)`), hidden while
+    `r == 0`; fixing `r` alone would have left the scheme-5 tangent inconsistent with its own
+    stress update. `temp1 = 2G mIIdevMix + K mIIvol` put **2G, not G, on the shear diagonal**
+    (the mixed-variant identity; the stress update answers an engineering shear strain with
+    G) — the WP-110 F15 family, never probed for scheme 5. Both fixed (`temp1 = aC`). FD
+    gate: max |Ct − Cfd| / max |Cfd| = 0.56 before, 0.64 with only `r` + `K`, 1.2e-11 after.
+  - **It is NOT a model error that survives refinement.** On a drained triaxial (p_cell
+    100 kPa, 2 % axial, one SSPbrick) the OLD scheme 5 converges onto scheme 1 too: gap in
+    (q/p, eps_v) at 3200 steps is (6.5e-4, 5.3e-4). The wrong multiplier drifts the stress
+    off the yield surface; when it lands inside, `explicit_integrator` re-intersects it on
+    the next step, which enforces consistency geometrically. What the bug broke is the
+    ORDER of the step: Delta f/p of ONE step from an on-surface state shrinks 3.75x per 4x
+    shorter step (first order) before, 15.9x (second order) after. At practical steps the
+    error is large and erratic: 800 steps (1.7e-2, 5.3e-2) before vs (3.3e-3, 1.8e-3) after;
+    50 steps, Newton diverges at eps_a 0.32 % before. The P0 oracle's 26 % was one coarse
+    path. **Test lesson:** a comparison against a reference at a fine step can be green
+    WITH this bug; test the order of one step (the consistency drift) instead.
+  - **Reach, corrected:** scheme 5; scheme 4 only on increments where `MaxEnergyInc`'s
+    energy test does not fire; schemes 7, 8, 9 only on increments ≤ `maxStrainInc` (1e-5) —
+    above it `MaxStrainInc` hands FE uninitialised moduli (next entry); and the opt-in
+    WP-130 `-cppmStart` guess walk. Of the WP-129 byte-identity decks only `ls3d_s5` moved
+    (re-pinned in #901); `ls3d_s7/8/9` are byte-identical across the fix.
+
+## `ManzariDafalias::MaxStrainInc` (`IntScheme 7, 8, 9`) sub-steps with UNINITIALISED `nG, nK` — the sub-steps can do nothing at all
+
+**Found 2026-10-01, WP-158, measured.** Same defect as `MaxEnergyInc`'s (IntScheme 4, entry
+"IntScheme 4 (`MaxEnergyInc` -> ForwardEuler) is NON-DETERMINISTIC"), in the sibling function:
+when the largest strain component of the increment exceeds `maxStrainInc = 1e-5`,
+`MaxStrainInc` declares `double nDGamma, nVoidRatio, nG, nK;` and passes `nG, nK` by reference
+as the moduli of every `ForwardEuler` sub-step, which builds `aC = GetStiffness(K, G)` from
+them without writing them first. Its loop also never advances `cEStrain` (as in
+`MaxEnergyInc`). And its `switch` sends every case — 7 (`MAXSTR_MFE`), 8 (`MAXSTR_RK`), 9 — to
+`ForwardEuler`, so the "ModifiedEuler"/"Runge-Kutta" variants are not.
+
+- **Measured:** one step of 1e-4 or 2.5e-5 strain from a plastic, on-surface state under
+  IntScheme 7, 8 or 9 leaves the yield function EXACTLY unchanged (Delta f = 0.0) on both
+  the d63f49750 and the WP-158 build — consistent with zero garbage moduli (Ce = 0, no
+  stress change). The WP-129 decks `ls3d_s7/8/9` pin whatever that garbage gives on the
+  capture build; they did not move with WP-158.
+- **Workaround/status:** do not use IntScheme 4, 7, 8 or 9. Not fixed (vanilla; it would move
+  every scheme-4/7/8/9 deck that sub-steps). Fix shape: initialise `nG = G, nK = K` (or
+  re-evaluate the moduli per sub-step) and advance `cEStrain`.
 
 ## `BackwardEuler_CPPM` (`IntScheme 2`) is NOT an implicit return at low `p`, and its non-convergence NEVER propagates
 
@@ -8164,3 +8244,38 @@ The base opens `output.tag("NdMaterialOutput")` + attributes before testing the 
   - `StagedStrain` and `InitDefGrad` already forward the return code, so the chain `InitDefGrad -> LogStrain -> StagedStrain -> NorSand` needed no change.
 - **Rule:** a wrapper around a refusing material must (1) return `LADRUNO_MATERIAL_REFUSED` from the trial without touching its staged trial state, and (2) commit the inner FIRST and not advance its own committed state when the inner commit refuses. ONLY the sentinel, never any negative code (ADR-33/34: ASDConcrete3D returns negative "best-state" codes that must not fail a step). Every finite-strain element tests `setTrialF(...) < 0` (a blanket test, deliberately: no material on that interface returns an advisory negative), so the sentinel reaches `analyze` exactly as `-geom linear` does.
 - **Workaround/status:** FIXED (WP-144 G2 close, owner decision 2026-10-02): `LogStrainNDMaterial::setTrialF` returns the sentinel and sets a `trialRefused` flag (not sent, not copied; cleared by an accepted `setTrialF` and by both reverts); `commitState` forwards the inner commit first and, if the inner refuses (or a refused trial is committed by a host that ignored the code), returns the sentinel without advancing `bᵉ_n`, `F_n`, `ε_feed_n` (the latter case also declares `ladrunoNoteCommitRefusal()` because the inner did not). `LogStrain2D::setTrialF` returns the sentinel AS IS and `commitState` advances `lam_n` only on an accepting inner commit. A 0 return is a pure no-op: non-refusing inners are bit-identical. Needs a full rebuild; the regression is the adversary script (`-geom finite` must return -3 at the trial, not latch, and retry with 0).
+### Probing a tangent from Python: `setNodeDisp` without `-commit` RESETS the node's other DOFs, and `printA -ret` is the TRANSPOSE (WP-158)
+- **Bites:** an FD check `setNodeDisp n 1 ux; setNodeDisp n 2 uy; setNodeDisp n 3 uz; printB` evaluates the residual at
+  (committed_x, committed_y, uz), not at (ux, uy, uz). `OPS_setNodeDisp` copies `getDisp()` (the COMMITTED vector), sets
+  one component and calls `setTrialDisp`, so each call wipes the trial value of the DOFs set before it. R0.7 lost a day
+  to a "12 % tangent error" that was this. Separately, `printA -ret` hands back the `Matrix` buffer, which is
+  column-major, so `np.array(...).reshape(n, n)` is `Kᵀ`. A symmetric tangent hides it; a non-symmetric one
+  (`-consistanttan`, or the parked FD oracle patch) looks wrong by exactly a transpose.
+- **Also:** `setNodeDisp` does not `update()` elements, so a zeroLength or brick keeps its last-`update()` force in
+  `printB`. Add their exact linear part analytically (or FD only contact DOFs).
+- **Workaround/status:** use `setNodeDisp ... -commit` (a node-level commit; the contact Domain path state is untouched)
+  and `reshape(n, n).T`. Probes: `contact_prototypes/probe_adr158_mortar_tangent_fd.py`, `probe_adr158_newton.py`.
+
+### Faceted mortar on a mismatched polygon: the geometric part of the pair force is non-smooth, so an "exact" FD tangent can be WORSE than the frozen-geometry one (WP-158)
+- **Bites:** at the meshed configuration a skin polygon (n) and a hole polygon (n+4) share vertices. The clipped
+  overlap of a pair changes topology inside +-h, and the one-sided slopes of the pair force differ by about 100 %
+  (|df/du| ~ 1e6 against epsN*a ~ 3e5 under a 1e4 kPa prestress). The central-FD tangent (the WP-158 FD oracle patch) then stalls
+  Newton at 0.1-5 for every step size, while the analytic tangent (no geometric terms) plus `-consistanttan` converges.
+  On a smooth crease the same FD tangent is quadratic.
+- **Workaround/status:** for the pile use `-consistanttan` (Pardiso is mtype 11, non-symmetric). The FD pair tangent is
+  not shipped; it is parked as `contact_prototypes/adr158_fd_pair_tangent_oracle.patch` (a diagnostic oracle, useful on
+  smooth creases with cross-crease pairs). See [[158_mortar_tangent_diagnosis_consistanttan]] §3 D1, D3.
+
+### The mortar friction origin `gT0` latches at the FIRST Newton iterate that touches, so a shipped S1 "passes" by forgiving the first iterate's slip (WP-159)
+- **Bites:** `addMortarFriction` captures `gT0` (the stick origin) the first time a node evaluates with p < 0,
+  inside the Newton loop, and only `revertToLastStep` undoes it. Under `-adjust` every node starts at p = 0
+  (open), so on the R3 pile the whole gravity settlement of the first iterate becomes the stick origin. Engage
+  the same nodes from the reference instead (`-gapOffset -1e-6`, or the ADR-159 smoothed law, whose
+  first iterate has P(0) = S/4 > 0) and the shipped law FAILS the alpha S1 with growing norms (340 kN). The R3 "S1 passes, axial
+  stalls at the slip front" picture is partly this artifact: the stick origin depends on which iterate first
+  touched, not on the physics.
+- **Also:** a probe that FD-checks friction with `printA`/`printB` at a fresh state must engage the nodes first
+  (one `printB` at a zero-slip state), or the first `printB` latches `gT0` at the probe state and every slip
+  state reads as stick (a 100 % "tangent error" that is the probe).
+- **Workaround/status:** recorded; not changed (ADR-159 §5-§6). Compare runs only at the same engagement
+  history.
