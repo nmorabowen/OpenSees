@@ -1,0 +1,321 @@
+diff --git a/scratch/sheet_workingcopy_round3.md b/144a_norsand_equation_sheet_round3b.md
+index 75cd9ed..a1d64b4 100644
+--- a/scratch/sheet_workingcopy_round3.md
++++ b/144a_norsand_equation_sheet_round3b.md
+@@ -2,7 +2,7 @@
+ title: "WP-144a — LadrunoNORSAND equation sheet (AB06/BA06 re-derived, curved CSL, WW ζ, Q-cap)"
+ project: Ladruno
+ type: equation sheet
+-status: "p-floor round 2026-10-03 (§16.6 item 16: §9.7 floor operator Π_f — a strain-space projection at fixed deviatoric elastic strain onto p = −p_min, applied to the trial and to the converged state, counted, never refuses; (S.48)–(S.55) with (S.32f)/(S.46f) FD-checked to ≤ 5e−8 and every named mutant ≥ 2.5e−3 apart; §5.4 unified π_i0 rule (S.53); §2.4 energy-option bookkeeping; §8/§10.2 nested-scan step corrected from 10⁻⁴ to the shipped 10⁻³ with the ramp-width criterion (S.56), O2 and kernel unchanged; scripts in Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_floor/). HAR energy option derived and gated 2026-10-02 (§2.3, §16.6 item 15: HAR05 eq 40 energy, Hessian, inverse map, exact convexity — positive definite at every stress ratio, gate table over the TIMs ring dumps passes with min 0.744 K_iso; BA06 stays the default; scripts in Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_har/). G2 owner decision applied 2026-10-01 (§16.6 item 14: exponential specific-volume update v = v0 exp(tr eps), dv/deps = v; every v-term of (S.26), (S.31)-(S.32), (S.40), (S.45)-(S.46), §1.4, §13, §14 updated and re-verified; scripts in Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_vexp/). G1 revision applied 2026-10-01 (12 items from the G1 oracle/test round, §16.6; owner decision: WW rho = 1/2 refused). G0 fix round 2026-09-30 (Adversary PASS-WITH-FIXES, 7 items; independent Opus numeric check PASSED; owner approved the refusal rule). Every derivative sympy/FD-checked; G0 scripts in the session scratchpad p0a/, G1 scripts in Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_r2/."
++status: "round 3b 2026-10-03 (the Adversary's five round-3 defects fixed on the round-3 sheet: §9.7 items 2–3 — the post floor is a wet-side event under BA06 only; under HAR the D₁₂ coupling of the plastic shear strain makes the dry-side pattern FPf, reproduced on the TIMs set with (S.32f)/(S.54) FD-checked on the HAR law (K1.14b, 2.2e−7 / 2.2e−9 at h = 10⁻⁷/10⁻⁸, O(h²)); the wet-side F(σ_f) = O(p_min) stated with its size (+0.27 … +0.82 p_min) and the self-limiting contraction (|Δε^p_v| ≤ 2.7e−5 < ε*_f = 7.5e−5); §10.2 (S.56) the W_ramp words corrected to 1 − π_i(η₁)/π_i(η₂) and the validate() refusal gated to cap = smooth; §2.4/§15 p_a is one flag for HAR and the fork CSL, TIMs value 101 kPa, and the HAR→BA06 mutant is killed by expected-value tests and O2 parity, not by self-FD; owner approval of option (i) Π_f recorded (§9.7, §16.1, §16.3) with the orchestrator recommendation beside the two still-open §16.3 questions; scripts in gitAPE/ladrunoNORDSAD/handoff/round3b/scratch/). p-floor round 2026-10-03 (§16.6 item 16: §9.7 floor operator Π_f — a strain-space projection at fixed deviatoric elastic strain onto p = −p_min, applied to the trial and to the converged state, counted, never refuses; (S.48)–(S.55) with (S.32f)/(S.46f) FD-checked to ≤ 5e−8 and every named mutant ≥ 2.5e−3 apart; §5.4 unified π_i0 rule (S.53); §2.4 energy-option bookkeeping; §8/§10.2 nested-scan step corrected from 10⁻⁴ to the shipped 10⁻³ with the ramp-width criterion (S.56), O2 and kernel unchanged; scripts in Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_floor/). HAR energy option derived and gated 2026-10-02 (§2.3, §16.6 item 15: HAR05 eq 40 energy, Hessian, inverse map, exact convexity — positive definite at every stress ratio, gate table over the TIMs ring dumps passes with min 0.744 K_iso; BA06 stays the default; scripts in Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_har/). G2 owner decision applied 2026-10-01 (§16.6 item 14: exponential specific-volume update v = v0 exp(tr eps), dv/deps = v; every v-term of (S.26), (S.31)-(S.32), (S.40), (S.45)-(S.46), §1.4, §13, §14 updated and re-verified; scripts in Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_vexp/). G1 revision applied 2026-10-01 (12 items from the G1 oracle/test round, §16.6; owner decision: WW rho = 1/2 refused). G0 fix round 2026-09-30 (Adversary PASS-WITH-FIXES, 7 items; independent Opus numeric check PASSED; owner approved the refusal rule). Every derivative sympy/FD-checked; G0 scripts in the session scratchpad p0a/, G1 scripts in Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_r2/."
+ owner: nmora (Deriver: Fable, P0a)
+ related:
+   - "[[144_ladruno_norsand_plan]] (design §2, oracles §5, roster §6)"
+@@ -88,7 +88,7 @@ Equation numbers `(S.n)` are this sheet's. `(AB06 nn)`, `(BA06 n.nn)` are the pa
+ | symbol | meaning | source |
+ |---|---|---|
+ | p₀, κ̂, ε^e_{v0}, μ₀, α₀ | BA06 energy (default): reference pressure (<0), elastic compressibility, reference volumetric strain, shear modulus, coupling | BA06 2.3 |
+-| k, g, n, p_a | HAR energy option (§2.3): bulk and shear stiffness factors (dimensionless, > 0), pressure exponent 0 ≤ n < 1, reference pressure (> 0; p = −p_a at ε^e = 0; also the p₀ of the §9.1 scalings). Replaces the five BA06 entries above (α₀ included) | HAR05 40–41 |
++| k, g, n, p_a | HAR energy option (§2.3): bulk and shear stiffness factors (dimensionless, > 0), pressure exponent 0 ≤ n < 1, reference pressure (> 0; p = −p_a at ε^e = 0; also the p₀ of the §9.1 scalings; **the same single parameter as the fork-CSL p_a below — one `-p_a` flag, one value, §2.4**). Replaces the five BA06 entries above (α₀ included) | HAR05 40–41 |
+ | M | critical stress ratio in compression (θ = π/3) | AB06 10 |
+ | N, N̄ | curvature of F and of Q on the meridian plane (0 ≤ N̄ ≤ N < 1) | AB06 10, 14 |
+ | ρ, ρ̄ | ellipticity of F and of Q (WW: ½ < ρ ≤ 1, **ρ = ½ refused**, §4.2; GA: 7/9 ≤ ρ ≤ 1). The same range applies to ρ̄ [I; G1] | AB06 11–12 |
+@@ -96,7 +96,7 @@ Equation numbers `(S.n)` are this sheet's. `(AB06 nn)`, `(BA06 n.nn)` are the pa
+ | χ (< 0, ≈ −3.5) | maximum-dilatancy coefficient, D* = χ ψ_i. **This is BA06's α (AB06's α); renamed to avoid AB06's χ = ‖ξ‖.** χ̄ := χ/β (AB06's ᾱ). | BA06 2.26, 2.29 |
+ | h | hardening constant (280 in both papers) | AB06 43 |
+ | λ̃, v_{c0} | "paper" CSL: v_c = v_{c0} − λ̃ ln(−p) | AB06 41 |
+-| e₀, λ_c, ξ, p_a | "fork" CSL: e_c = e₀ − λ_c (−p/p_a)^ξ (DM04 form) | plan §2.3 |
++| e₀, λ_c, ξ, p_a | "fork" CSL: e_c = e₀ − λ_c (−p/p_a)^ξ (DM04 form); p_a shared with the HAR energy (one flag, §2.4; TIMs: 101 kPa) | plan §2.3 |
+ | c₁, c₂ | Q-cap blend bounds, η₁ = c₁M ≤ η₂ = c₂M (planar cap: c₁ = c₂; BA06's χ_cap = 0.10 → c₁ = c₂ = 0.10) | BA06 2.76, §10 |
+ | v₀ | initial specific volume (state input; committed datum for v = v₀ exp(tr ε), `initialState`, `revertToStart`; enters **no** derivative since G2, §1.2) | BA06 Box 2; §1.2 |
+ | p_min | p′ floor (§9.7): every trial and committed state has p ≤ −p_min, by the projection Π_f (S.48); ≥ 0, 0 = off (the pre-round-3 refusals). Default 5·10⁻³ p_ref with p_ref := |p₀| (BA06) or p_a (HAR): 0.5 / 0.505 kPa | plan §2.7; §9.7 |
+@@ -292,7 +292,7 @@ a^e of (S.3), the inverse map and the reference pressure).
+ 
+ | quantity | BA06 (default; paper mode; K2/K2b) | HAR | who branches |
+ |---|---|---|---|
+-| parameters | p₀ < 0, κ̂ > 0, ε_{v0}, μ₀ > 0, α₀ (0 in both papers) | k > 0, g > 0, 0 ≤ n < 1, p_a > 0 — and **none** of the five BA06 values | parser; kernel `Params` (+ `energy`, k, g, n_e); O1 `params.py`; O2 `params.py`; `sendSelf`/`recvSelf`; `Print` echo |
++| parameters | p₀ < 0, κ̂ > 0, ε_{v0}, μ₀ > 0, α₀ (0 in both papers) | k > 0, g > 0, 0 ≤ n < 1, p_a > 0 (p_a is the one `-p_a` flag, shared with the fork CSL (S.22)) — and **none** of the five BA06 values | parser; kernel `Params` (+ `energy`, k, g, n_e); O1 `params.py`; O2 `params.py`; `sendSelf`/`recvSelf`; `Print` echo |
+ | reference pressure p_ref | \|p₀\| | p_a (p₀ := −p_a) | F_tol = 10⁻¹⁰ p_ref (§9.1); r₄/p_ref (kernel.h:936, 1067; O2 `scaled_norm`); the p_min default 5·10⁻³ p_ref (§9.7); O1's surface tolerance |
+ | p, q, D₁₁, D₁₂, D₂₂ | (S.5); D₁₂ = 0 for α₀ = 0 | (S.5h)/(S.5h'); D₁₂ ≠ 0 always | kernel `elastic()`, O2 `elastic`, O1 `model.py` |
+ | q/ε_s in (S.3) and its ε_s → 0 limit | q/ε_s = D₂₂ identically (α₀ = 0): t3/t4 of (S.3) collapse | q/ε_s = 3g p_a (ϖ/p_a)^n ≠ D₂₂; limit D₂₂\|_{q=0} | the same three; (S.3) in full |
+@@ -305,7 +305,13 @@ a^e of (S.3), the inverse map and the reference pressure).
+ 
+ Parser refusals (hard; both oracles and the shell). HAR: k ≤ 0, g ≤ 0, n < 0, n ≥ 1 (n = 1 is HAR05 eq 47–48, another
+ closed form, not shipped), p_a ≤ 0; any of `-p0 -kappa_hat -eps_v0 -mu0 -alpha0` given together with `-energy HAR`
+-(refused, never ignored: HAR replaces α₀ and the other four are not read). BA06: any of `-k -g -n` given. Both:
++(refused, never ignored: HAR replaces α₀ and the other four are not read). BA06: any of `-k -g -n` given — `-p_a`
++is **not** in this list: it is the fork-CSL parameter as well, read under `-csl fork` in either energy, and under
++BA06 with the paper CSL it is unused and only echoed [round 3b]. **One flag, one value:** with `-energy HAR -csl
++fork` the energy's p_a and the CSL's p_a are the same number, the p_atm of the DM04 calibration the set came from —
++TIMs: **101 kPa** (the campaign set's `Patm 101`, ring-dump README); 101.325 kPa is only O2's inactive default and
++the stale example of the pre-round-3b §15 row. The p_min default 5·10⁻³ p_a = 0.505 kPa (§9.7) and K1.13/K1.14
++are at 101 kPa and move with p_a. Both:
+ p_min < 0; an initial state with p ≥ 0 after the floor (only possible with p_min = 0); ε* ≤ 0 at `initialState` under
+ HAR (the inverse map (S.5h'') needs p < 0). No new warnings.
+ 
+@@ -314,11 +320,14 @@ t3/t4 terms of (S.3) live for the first time (under BA06 with α₀ = 0 both wer
+ (returnmap.py-type, fork and paper CSL); (S.33) non-coaxial CTO off the corners; (S.34) with (S.44) against the
+ nominal-stress FD (r2_finite_tangent_fd-type); the §9.6 chain cases (A) (B) (C) (E) (F); the floor tangents
+ (S.51)/(S.54) (floor_fd-type, under HAR: the round-3 scratch ran them under BA06 with α₀ = 5 as the D₁₂ ≠ 0 stand-in
+-and the elastic floor operator under HAR symbolically, §16.4); kernel-vs-O2 parity on a HAR path; K1.2 (closed loop)
+-under HAR. The mutant "HAR silently replaced by BA06" is killed by 13.11 (η = 3gε_s exactly on a constant-volume
+-elastic shear, against p constant under BA06), by 13.1h and 13.13 (the domain edge and the floor closed form differ
+-from the BA06 values by orders of magnitude), and by any FD-tangent test with q > 0 (the t4 term of (S.3) is zero
+-under BA06 α₀ = 0 and not under HAR).
++and the elastic floor operator under HAR symbolically; round 3b ran the plastic dry-side FPf case and the chains
++FPf,FPf / -P-,-Pf under HAR with the O2 return map on the HAR law, K1.14b, §16.4); kernel-vs-O2 parity on a HAR
++path; K1.2 (closed loop) under HAR. The mutant "HAR silently replaced by BA06" is killed by 13.1h (p on the
++isotropic axis), 13.11 (η = 3gε_s exactly on a constant-volume elastic shear, against p constant under BA06), 13.13
++and 13.14 (the domain edge and the floor closed forms differ from the BA06 values by orders of magnitude), and by
++kernel-vs-O2 parity on a HAR path with O2 running the HAR law — **not by any FD-tangent test**: a consistent swap
++(BA06 stress with the BA06 tangent) passes its own FD check, because an FD test compares a kernel with itself; the
++t4 term of (S.3) being live under HAR is seen only against an expected value or an independent oracle [round 3b].
+ 
+ ---
+ 
+@@ -900,7 +909,7 @@ regularised energy with constant moduli below |p| = p_min; (iii) a clamp of p in
+ return map only. (ii) keeps a potential but fixes only the stiffness: F, π_i* and F_pp still collapse at p → 0, the
+ plastic machinery still needs a guard, and K1.1/K1.1h change below p_min. (iii) is a partial substitution with no
+ consistent derivative (clamped terms under an unclamped F) and would change the model term by term in silence.
+-**Adopted: (i), as the operator Π_f below**, applied at two points of every (sub-)increment: the trial (§9.1 step 1f)
++**Adopted: (i), as the operator Π_f below** (owner-approved 2026-10-03; §16.1 item 5, §16.3), applied at two points of every (sub-)increment: the trial (§9.1 step 1f)
+ and the converged state (step 5f). It never acts inside the local Newton (an iterate with p ≥ 0 or outside the domain
+ stays an evaluation failure → line-search backtrack, bounded work) and never inside the nested π_i solve.
+ 
+@@ -964,7 +973,10 @@ floor 8.1e−13 / 1.6e−11; (B) plastic + trial floor 5.2e−9 / 1.7e−8 (α
+ floor 4.6e−8 / 5.0e−10 (α₀ = 0), 4.2e−8 / 4.4e−10 (α₀ = 5), O(h²). Mutants: unprojected a^e 0.67–0.69; ε'_f dropped
+ (α₀ = 5) 3.5e−3 with δ:C = 1.1e−2 (HAR TIMs, symbolic: 1.45e−2); v-column tied to the floored trial (ã^{ep} Φ^tr) 2.6e−3 /
+ 2.5e−3; Φ^tr dropped 0.93; Φ^post dropped 2.0–2.1. The HAR elastic floor operator itself: (S.51a) against a 30-digit FD
+-of σ(Π_f(ε)), 5e−19 (TIMs set, non-degenerate state); BA06 α₀ = 5: 1e−22.
++of σ(Π_f(ε)), 5e−19 (TIMs set, non-degenerate state); BA06 α₀ = 5: 1e−22. **Under HAR with the plastic part live**
++(round 3b, floor_fd_har.py: the O2 return map on the HAR law, TIMs set, p_min = 0.505 kPa, off-corner): the dry-side
++case with both floors active, FPf (K1.14b), 2.2e−5 / 2.2e−7 / 2.2e−9 at h = 10⁻⁶/10⁻⁷/10⁻⁸ (ratios 100 and 101: O(h²);
++the increment is 2e−5, so h = 10⁻⁶ is 5 % of it); mutants Φ^post dropped 0.14, Φ^tr dropped 0.12, both dropped 2.2.
+ 
+ **Chained substep tangent (S.54), also written (S.46f).** Each floored sub-increment contributes its two operators to the
+ recursion (S.46): with T_k := S^ε_k + α_k E_J (raw trial sensitivity) and T^f_k := Φ^tr_k : T_k,
+@@ -977,7 +989,9 @@ recursion (S.46): with T_k := S^ε_k + α_k E_J (raw trial sensitivity) and T^f_
+ sub-increment's trial basis (Π_f is co-axial, so the basis of §9.6 is unchanged); the assembly (S.47) uses a^e at the
+ final, floored, ε^e_m. Floor events in different sub-increments compose like any other branch decision (one-sided
+ across an activation). FD (floor_fd.py (D), m = 2, pattern FP-/FP-, fractions held fixed): 2.9e−9 / 1.8e−9 (α₀ = 0),
+-2.9e−9 / 5.5e−10 (α₀ = 5); the mutant that keeps the floored states but omits the Φ operators: 0.98–0.99.
++2.9e−9 / 5.5e−10 (α₀ = 5); the mutant that keeps the floored states but omits the Φ operators: 0.98–0.99. Under HAR
++(round 3b, floor_fd_har.py (D1)–(D2), m = 2, fractions held fixed, K1.14b): pattern FPf,FPf 2.3e−7 / 2.3e−9 and
++pattern -P-,-Pf 1.2e−6 / 1.2e−8 (h = 10⁻⁷/10⁻⁸, ratio 100 both); Φ operators omitted 2.1 for both.
+ 
+ **What is given up — the stated regularisation.**
+ 1. Energy. A projection at fixed total strain does no external work and raises the stored energy by
+@@ -993,14 +1007,37 @@ across an activation). FD (floor_fd.py (D), m = 2, pattern FP-/FP-, fractions he
+    keeps D^p ≥ 0 under (S.39) unchanged; the second-law bookkeeping of a floored point reads σ:dε = dΨ + D^p − dE_f with
+    dE_f ≥ 0: **D ≥ 0 holds for the plastic flow, and the floor's violation is exactly E_f, bounded by W_f, counted and
+    reported**, vanishing with p_min — which is what the F vs F/2 report tests.
+-2. Yield consistency. After a post floor F(σ_f, π_i) ≠ 0 in general: F_p = (η − M)/(1−N) with dp = −(p_min − |p_c|) < 0
+-   gives F(σ_f) < 0 (inside) on the dry side η > M, the usual approach to the tension apex, and F(σ_f) > 0 by at most
+-   |F_p| (p_min − |p_c|) + ζ |q_f − q_c| (O(p_min); q_f = q_c under BA06 α₀ = 0) on the wet side η < M. No F ≤ F_tol
++2. Yield consistency. After a post floor F(σ_f, π_i) ≠ 0 in general. **Which side of M triggers a post floor depends
++   on the energy** [round 3b; floor_fd_har.py]: the return from a (floored) trial changes p by D₁₁Δε^e_v + D₁₂Δε^e_s with
++   Δε^e = −Δλ q_a. Under BA06 α₀ = 0 (D₁₂ = 0, q independent of ε_v) a dry-side return (η > M, Δε^p_v > 0, dilative)
++   compresses p and a wet-side one (Δε^p_v < 0) relaxes it, so there the post floor is a **wet-side** event (K1.12 (C))
++   and FP- is the only dry-side pattern (K1.12 (B)). Under HAR (D₁₂ < 0) the plastic shear strain adds
++   D₁₂·(−Δε^p_s) > 0, which can beat the volumetric term: TIMs set, p_min = 0.505 kPa, surface state p = −0.6 kPa,
++   η = 1.2M, θ = 0.271 (off-corner), ψ_i = −0.10, expansion 2e−5 + shear 2e−5 along n̂ — trial p = −0.461, floored to
++   −0.505, return D₁₁Δε^e_v = −0.084 kPa against D₁₂Δε^e_s = +0.100 kPa, p_c = −0.488 > −p_min, post floor active:
++   the pattern **FPf on the dry side** (K1.14b). At that state the floored trial returns above the floor (FPf) for shear
++   amplitudes up to 8e−5 at any expansion ≥ 2e−5 and below it (FP-) from 1.6e−4 on, where the larger Δλ lets the
++   dilative volumetric term win; a pure expansion floors elastically (FE-) — the single-step map of fpf_region_har.py.
++   The sign of F(σ_f) after a post floor follows dF ≈ F_p dp + ζ dq, F_p = (η − M)/(1−N), dp = −(p_min − |p_c|) < 0,
++   dq = q_f − q_c ≥ 0 (= 0 under BA06 α₀ = 0; > 0 under HAR, where q grows with the floored |p| through ϖ): dry side
++   (F_p > 0) F(σ_f) < 0, inside, unless the ζ dq term wins (the FPf case: F(σ_f)/p_min = −0.004); wet side (F_p < 0)
++   F(σ_f) > 0 by O(p_min) — the first-order size |F_p| (p_min − |p_c|) + ζ (q_f − q_c), measured in item 3. No F ≤ F_tol
+    invariant is claimed at a floored committed state; the next increment's trial test (§9.1 step 2) sees F^tr > F_tol and
+    returns. π_i is never projected: with |p| ≥ p_min the hardening target |π_i*| = |p| B^{(N−1)/N} stays bounded away
+    from 0 on any bounded ψ_i, which is what keeps π_i from collapsing with p.
+-3. The volumetric stiffness at the floor is zero (above), and a floored committed state can sit slightly outside F
+-   (item 2). Nothing else changes: ε^p, π_i, v, D^p, the vertex rule (Π_f at ε_s = 0 is the axis closed form), the cap.
++3. The volumetric stiffness at the floor is zero (above), and a floored committed state can sit **outside F by
++   O(p_min)** after a wet-side post floor [round 3b; wet_floor_har.py]: HAR TIMs set, a state at the floor on the surface
++   at η = 0.5M (θ = 0.454, off-corner), ψ_i ∈ {0, +0.04, +0.08, +0.12}, one backward-Euler pure-shear step along n̂ of
++   engineering shear strain Δγ := √2 ‖dev Δε‖ ∈ {10⁻⁴, 10⁻³, 10⁻²} (pattern -Pf throughout): F(σ_f)/p_min = +0.27
++   (Δγ 10⁻⁴, any ψ_i) … +0.82 (ψ_i +0.12, Δγ 10⁻²: p_c = −0.239 → −0.505, q 0.304 → 0.414, η_c = 1.327), against the
++   first-order size of item 2, 1.37 p_min, there; the Adversary's state gives +0.5 … +1.35. **The wet-side contraction
++   is self-limiting against the HAR domain edge**: the converged return moves ε^e_v up from the floor by |Δε^p_v| ≤
++   2.7e−5 over the table (1.2e−5 at Δγ 10⁻⁴, 2.0e−5 at 10⁻³, 2.7e−5 at 10⁻² and ψ_i +0.12), below the margin
++   ε*_f(ε_s) = (p_min/p_a)/(k(1−n) x^n) = 7.49e−5 at ε_s = 0 and 7.3e−5 at the state (it shrinks with shear: 1.75e−5
++   at the K1.14 ε_s = 2e−4), so the converged state never leaves dom Ψ (the Adversary: |Δε^p_v| ≤ 3.5e−5 < 7.5e−5,
++   no refusal up to Δγ = 10⁻² at ψ_i ≤ +0.12). The full Newton steps do overshoot the edge (6–37 rejected iterates per
++   step at Δγ ≥ 10⁻³, min ε* down to −1.2e−3) and the line-search backtrack of §2.4 absorbs them: no refusal in the
++   table. Nothing else changes: ε^p, π_i, v, D^p, the vertex rule (Π_f at ε_s = 0 is the axis closed form), the cap.
+ 
+ **Determinism, counting, interfaces.**
+ - Activation: p(ε^e) > −p_min (1 − 10⁻¹²) or ε^e ∉ dom Ψ. After a projection p = −p_min to round-off and the test is
+@@ -1052,8 +1089,10 @@ the BA06 inverse, or HAR replaced by BA06 at the floor: ε_{v,f} differs by orde
+ K1.12 vs K1.13). M-F5 trial floor skipped (post only): a HAR out-of-domain trial refuses instead of flooring. M-F6
+ projection direction wrong (q kept): under HAR ε_s^e must be unchanged and q_f = 3g p_a ε_s x^n (K1.14). M-F7 π_i or v
+ altered by the projection: K1.12 asserts both unchanged. M-F8 default reference wrong (|p₀| vs p_a) or units: parser
+-echo. M-F9 floor applied inside the local Newton: the K1.12 (C) values differ (the post-floored q is not the in-Newton
+-one).
++echo. M-F9 floor applied inside the local Newton: the K1.12 (C) values (BA06, wet side) and the K1.14b FPf values (HAR, dry
++side) differ — Δλ, π_i and q_c are those of the unconstrained return; a floor inside the Newton converges to a
++different iterate (p_c pinned at −p_min) and, under HAR, would also hide the domain overshoots that the line search
++is meant to backtrack (item 3).
+ 
+ ---
+ 
+@@ -1133,9 +1172,15 @@ before that extremum, sees |r| grow, and raises `pi_fold` — the designed backt
+ scales with the width of the cap ramp in π_i at fixed p, a pure parameter constant because η(p, π_i) depends on p/π_i
+ only:
+ 
+-      W_ramp := 1 − π_i(η₂)/π_i(η₁) = 1 − [ (1 − c₂N)/(1 − c₁N) ]^{(1−N)/N}   (N > 0),    = 1 − e^{−(c₂ − c₁)}   (N = 0);
+-      contract:  PI_SCAN_REL ≤ W_ramp/10,  enforced in validate() (refuse a narrower smooth cap). Defaults: W_ramp = 0.0606;
+-      c₁ = 0.05 with c₂ = 0.07 gives 0.0122 (admissible), with c₂ = 0.06 gives 0.0061 (refused).                      (S.56)
++      W_ramp := 1 − π_i(η₁)/π_i(η₂) = |π_i(η₁) − π_i(η₂)| / |π_i(η₂)|   (at fixed p; |π_i(η₁)| < |π_i(η₂)|)
++             = 1 − [ (1 − c₂N)/(1 − c₁N) ]^{(1−N)/N}   (N > 0),    = 1 − e^{−(c₂ − c₁)}   (N = 0);
++      contract (cap = smooth only, c₁ < c₂):  PI_SCAN_REL ≤ W_ramp/10,  enforced in validate() (refuse a narrower
++      smooth cap); planar (c₁ = c₂, W_ramp ≡ 0) and no cap have no ramp and are not subject to it. Defaults: W_ramp =
++      0.0606; c₁ = 0.05 with c₂ = 0.07 gives 0.0122 (admissible), with c₂ = 0.06 gives 0.0061 (refused).            (S.56)
++
++(Round 3b: the round-3 text defined W_ramp as 1 − π_i(η₂)/π_i(η₁), which is −0.0645 on the K2 set; the displayed
++formula, the 0.0606 and the measured 6.060e−2 were the ratio written above all along — round3b_sympy.py (b)–(c). An
++ungated refusal would have rejected every planar and no-cap model, since W_ramp = 0 there.)
+ 
+ Measured on the AMP_STOP path (K2 paper set, c₁ = 0.05, c₂ = 0.15, shipped O2, exponential v-update): the ramp width is
+ 6.060e−2 |π_i(η₂)| at p = −100, −160, −172 kPa (3.09, 4.94, 5.32 kPa; the estimate (c₂ − c₁)|π_i|(π_i/p)^{N/(1−N)}
+@@ -1151,7 +1196,8 @@ refusal; substep levels up to 2⁸ at n = 20, 2² at n = 40, 2¹ at n = 80, none
+ down to 10⁻⁴ at 10× the nested cost and a 10× shorter range unless PI_SCAN_MAX rose to 10⁴ (a hardening step moving
+ π_i by more than 10 % would otherwise refuse with `pi_nobracket`). **Ruling: 10⁻³ is the correct contract value; the
+ sheet is corrected (§8, §16.3, §16.6 item 4); O2 and the kernel need no change**; the P2 census's 0 violations in
+-12 476 replays is consistent with the geometry. New requirement for O2/kernel `validate()`: the (S.56) refusal.
++12 476 replays is consistent with the geometry. New requirement for O2/kernel `validate()`: the (S.56) refusal, gated
++to cap = smooth.
+ 
+ ---
+ 
+@@ -1334,8 +1380,9 @@ loss-of-uniqueness limit (snap-back), to be reported not hidden.
+    ε_{v,tr} = 0.0599146455, so Δε^f_v = κ̂ ln 2 = 6.931471806e−3, W_f = 3.465735903e−3 kPa, E_f = κ̂ (p_min − |p^tr|) =
+    2.5e−3 kPa (≤ W_f); committed p = −0.5 exactly, with q, n̂, π_i, v unchanged; tangent block ã_f = 2μ₀ (δ_ab − 1/3) =
+    10 800 (δ_ab − 1/3) kPa, δ:C = 0. The same with the floor scaled to 50 kPa is the FD record of §9.7: (A) p^tr −33.3 →
+-   −50.00 elastic, Δε^f_v = 4.066e−3; (B) plastic from a floored trial, p_c = −50.70; (C) wet side, p_c = −48.76 → −50.00
+-   by the post floor, η = 0.953.
++   −50.00 elastic, Δε^f_v = 4.066e−3; (B) plastic from a floored trial, p_c = −50.70 (dry side, FP-: under BA06 α₀ = 0
++   the return from a floored trial always compresses p, §9.7 item 2); (C) wet side, p_c = −48.76 → −50.00 by the post
++   floor, η = 0.953 (-Pf). The dry-side pattern FPf exists under HAR only: K1.14b.
+ 13. **HAR floor and the out-of-domain trial (K1.13; (S.50)) [I; floor_sympy.py (g)]:** TIMs set (§2.3), p_min = 5·10⁻³ p_a =
+    0.505 kPa: ε_{v,f}(ε_s = 0) = 9.83645033e−4 (domain edge 1/(k(1−n)) = 1.05849170e−3); G(p_min) = g p_a (p_min/p_a)^{1/2} =
+    5769.156 kPa, floored shear stiffness 2G = 11 538.31 kPa, volumetric response 0. An isotropic state at p = −1 kPa
+@@ -1347,6 +1394,24 @@ loss-of-uniqueness limit (snap-back), to be reported not hidden.
+    floor: x = ϖ_f/p_a = 0.09185198375, ε_{v,f} = 1.04102893e−3, q_f = 14.8362051 kPa (η_f = 29.38; the ring's high-η states
+    are of this kind), ε'_f = 0.08679793; ε_s^e is unchanged by Π_f (M-F6); δ:C_f = 0 with the ε'_f term and δ:C/max|C| =
+    1.45e−2 without it (M-F3b).
++   **14b. HAR dry-side FPf and the chained patterns (K1.14b; (S.32f), (S.54) on the HAR law) [I; round 3b;
++   floor_fd_har.py]:** TIMs elastic set with M = 1.3309, ρ = ρ̄ = 0.71 (WW), fork CSL (e₀ 0.83, λ_c 0.027, ξ 0.45,
++   p_a 101) and the K2 plastic constants N 0.4, N̄ 0.2, χ −3.5, h 280 (TIMs' own are a P3 refit), p_min = 0.505 kPa,
++   p₀ := −p_a in the §9.1 scalings. Surface state p = −0.6, q = 0.6999 kPa, η = 1.2M = 1.5971, θ = 0.271, π_i =
++   −0.74366 kPa, v = 1.72704 (ψ_i = −0.10), ε_v = 9.851e−4, ε_s = 3.335e−5 (D₁₁ 13 525, D₁₂ −6 235, D₂₂ 28 255 kPa).
++   Increment Δε = (2e−5/3) 1 + 2e−5 n̂ (expansion + shear): p^tr = −0.4607 → floored, Δε^f_v,tr = 3.82e−6 → return
++   Δλ = 1.157e−5, η_c = 1.8200, π_i = −0.74335, Δε^p_v = +7.07e−6 (dilative), Δε^p_s = +1.57e−5, p_c = −0.4877
++   (D₁₁Δε^e_v = −0.0843 kPa, D₁₂Δε^e_s = +0.0997 kPa) → post floor p = −0.505, q 0.6619 → 0.6705, F(σ_c)/p_min =
++   6e−13, F(σ_f)/p_min = −0.0041 (inside). Tangent (S.32f) vs central FD over the three principal strains: 2.2e−5 /
++   2.2e−7 / 2.2e−9 at h = 10⁻⁶/10⁻⁷/10⁻⁸ (O(h²); the increment is 2e−5); δ:C_f = 2e−16; committed p = −p_min to
++   2e−15. Mutants: Φ^post dropped 0.14, Φ^tr dropped 0.12, both dropped (plain ã^{ep}) 2.2; v-column tied to the
++   floored trial 1.2e−6 (tr Δε = 2e−5 makes the v-column negligible here — M-F3c stays a K2 BA06 test). Chains
++   (S.54), m = 2, fractions ½, ½: twice the increment gives FPf,FPf (the increment itself halves to -P-,FPf), 2.3e−7 /
++   2.3e−9 at h = 10⁻⁷/10⁻⁸; tr Δε = 1.4e−5 with shear 2e−5 gives -P-,-Pf (unsplit: -P- with p_c = −0.5072; the
++   halved one crosses the floor in its second return), 1.2e−6 / 1.2e−8; Φ operators omitted from the chain 2.1 for
++   both. (The Adversary's independent reproduction of the same case: p_c = −0.490, +0.10 vs −0.085 kPa, 8e−9 / 5e−8
++   and 9e−9 / 6e−8 at its own h.) A test author runs it with O2's `elastic` swapped for the HAR law until O2 ships
++   `-energy HAR`.
+ 15. **π_{i0} rule (K1.15; (S.53)) [I; floor_sympy.py (f)]:** K2 set, p_init = −100 kPa: η* = c₂M = 0.18 → π_{i0} = −50.995881;
+    η* = 0 → −46.475800 (apex; the §9.6 (F) value); η_init = 0.75 → −71.554175; η* = M → −100. First yield on a drained TXC
+    path from the isotropic state with π_{i0} = −50.9959: q = 11.3469, p = −103.7823 kPa, η = 0.1093, w = 0.337; on a
+@@ -1431,7 +1496,7 @@ for the cube [I]); **M and α are not tabulated**: M = 1.2 from Fig 2 (CSL throu
+ 
+ | DM04 (TIMs) | LadrunoNORSAND | transfer |
+ |---|---|---|
+-| e₀ = 0.83, λ_c = 0.027, ξ = 0.45, p_a | e₀, λ_c, ξ, p_a of (S.22) | **direct** (same e_c(p) form; p_a must be the same numeric value TIMs used, e.g. 101.325 kPa) |
++| e₀ = 0.83, λ_c = 0.027, ξ = 0.45, p_a | e₀, λ_c, ξ, p_a of (S.22) | **direct** (same e_c(p) form; p_a is the one `-p_a` flag shared with the HAR energy, §2.4, and takes the numeric value TIMs used: **101 kPa** (campaign set `Patm 101`), not 101.325) |
+ | M_c = 1.3309 | M | **direct**: η = M at the image point in compression (ζ(π/3) = 1) |
+ | c = M_e/M_c = 0.71 | ρ | **direct**: ζ(0) = 1/ρ ⇒ M_e = ρ M_c ⇒ ρ = c = 0.71. WW admissible (> ½, §4.2); GA refused (< 7/9) |
+ | G₀ (G = G₀ p_a (2.97−e)²/(1+e) √(p/p_a)), ν | HAR option (§2.3): n = ½, g = G₀(2.97−e_ref)²/(1+e_ref), k = g·2(1+ν)/(3(1−2ν)), p_a = p_atm; or μ₀, κ̂ (BA06) | **HAR: direct on the isotropic axis** (TIMs: g = 807.80, k = 1889.48 at e_ref = 0.6944, p_a = 101; e-dependence frozen, off-axis moduli differ: G_HAR/G_DM04 = 1.61 at η = M, 2.10 at η = 2.1, §2.3). BA06: **refit** at a representative p (constant μ₀, K = −p/κ̂; no √p shear stiffness) |
+@@ -1455,8 +1520,9 @@ Constraint check for TIMs: with ρ = ρ̄ = 0.71, (S.39) holds for any N̄ ≤ N
+ 4. **K2 gate** is ordering + gap in the band of §14, with the sensitivity table; exact n is a sanity check.
+ 5. Still open (not blocking): cap defaults (c₁, c₂, quintic) — set by the oracle census. HAR energy: derived and
+    gated 2026-10-02 (§2.3, §16.6 item 15); BA06's energy with α₀ = 0 stays the default and the paper-mode energy.
+-   p′ floor: designed 2026-10-03 (§9.7, owner decision (b)); π_{i0} rule: §5.4 (owner decision (c)); the nested-scan
+-   step is 10⁻³ (§10.2 (S.56)).
++   p′ floor: designed 2026-10-03 (§9.7, owner decision (b)); **option (i), the strain-space projection Π_f (S.48),
++   approved by the owner 2026-10-03** (the two solver/reporting questions of §16.3 stay open); π_{i0} rule: §5.4
++   (owner decision (c)); the nested-scan step is 10⁻³ (§10.2 (S.56), refusal gated to cap = smooth).
+ 6. **G1 (owner, 2026-10-01): Willam–Warnke ρ = ½ exactly is refused**, for ρ and for ρ̄; the admissible WW range is
+    (½, 1] (§4.2: at ½ the compression corner is a vertex, ζ'(π/3) = −√3). GA stays [7/9, 1].
+ 
+@@ -1514,10 +1580,18 @@ Constraint check for TIMs: with ρ = ρ̄ = 0.71, (S.39) holds for any N̄ ≤ N
+   (a substepped floored increment) under BA06 α₀ = 0 and under HAR, off the WW corners, with the mutants M-F1…M-F9
+   named in §9.7; O2 → O1 first-order convergence on a floored path ((S.55) in O1); kernel-vs-O2 parity on a floored
+   path including the counters; the HAR out-of-domain trial (13.13) through the OpenSees shell; the `floor` response
+-  and the F vs F/2 deck report (K5). Design decisions still open for the owner: whether the kernel reports E_f (needs
+-  Ψ) or only W_f; the global-solver behaviour on a floored patch (zero bulk stiffness is the consistent tangent, §9.7).
+-- **[round 3] validate() gains the (S.56) refusal** (PI_SCAN_REL ≤ W_ramp/10) in O2 and the kernel — the only code change
+-  the scan-step ruling asks for; PI_SCAN_REL = 10⁻³ and PI_SCAN_MAX = 1000 stay.
++  and the F vs F/2 deck report (K5); under HAR the K1.14b FPf case and the chains FPf,FPf / -P-,-Pf (round 3b).
++  **Owner decision 2026-10-03: option (i) of §9.7, the strain-space projection Π_f (S.48), is APPROVED.** Two design
++  questions stay **OPEN for the owner**; the orchestrator's recommendation is recorded beside each and decides nothing:
++  (a) the global-solver behaviour on a fully floored patch, where the consistent tangent has zero bulk stiffness
++  (δ:C_f = 0, §9.7) — recommendation: the kernel keeps the exact consistent tangent; any added stiffness would be
++  TANGENT-ONLY, opt-in, default off, so it changes the convergence path but never the converged answer and leaves the
++  FD and parity gates valid (they test the exact tangent with the option off); (b) whether the kernel reports E_f
++  (needs Ψ) or only W_f — recommendation: W_f is always counted in the kernel; E_f is an on-demand response evaluated
++  from the closed-form Ψ ((S.4)/(S.4h)) at the committed state, never on the step path.
++- **[round 3] validate() gains the (S.56) refusal** (PI_SCAN_REL ≤ W_ramp/10, **cap = smooth only**: with c₁ = c₂ or
++  no cap W_ramp = 0 and an ungated check would refuse every planar/none model — round 3b) in O2 and the kernel — the
++  only code change the scan-step ruling asks for; PI_SCAN_REL = 10⁻³ and PI_SCAN_MAX = 1000 stay.
+ - **[round 3] π_{i0} rule (S.53)**: O2's `initial_state` default (apex through p_init) becomes the c₂-rule; the kernel's
+   `initialState` and O1 take the same rule with c₂ = 0 for cap = none; an explicit `-pi0` overrides.
+ 
+@@ -1610,6 +1684,23 @@ p-floor round checks (2026-10-03, local py312 venv with the O2 oracle imported r
+ - floor_fold.py (shipped O2 on the AMP_STOP smooth-cap path): the §10.2 (S.56) numbers (d₂ and d_x per n, the step-8
+   roots through the fold under both scan steps, the ramp widths and the (S.56) constant).
+ 
++Round 3b checks (2026-10-03, local py312 venv with the O2 oracle imported read-only; scripts and logs in
++`gitAPE/ladrunoNORDSAD/handoff/round3b/scratch/`, to be copied into `tests/scratch_sheet_floor/` with the sheet):
++- har_patch.py: the HAR law (S.5h)–(S.5h'') as a drop-in for O2's `elastic`/`energy_psi`/`invert_elastic` (the
++  plastic part is energy-blind, §2.1), the (S.50) floor closed form and Π_f under HAR; round3b_sympy.py (a): its
++  stress forms D₁₁, D₁₂ = D₂₁, D₂₂, q/ε_s vs direct differentiation of (S.4h) at three TIMs states 2.2e−31, the
++  (S.5h'') round trip 2e−35, the K1.13/K1.14 ε_{v,f} values to 4e−18.
++- round3b_sympy.py (b)–(d): (S.56) 1 − π_i(η₁)/π_i(η₂) = [(1 − c₂N)/(1 − c₁N)]^{(1−N)/N} on 8 random sets 7e−31,
++  the round-3 words 1 − π_i(η₂)/π_i(η₁) = −0.0645 on K2 against +0.0606, the N → 0 limit exact, the floor_fold (C)
++  ratio identical, W_ramp ≡ 0 at c₁ = c₂; the HAR floor margin ε*_f(0) = (p_min/p_a)^{1−n}/(k(1−n)) = 7.485e−5.
++- floor_fd_har.py (O2 return map on the HAR law, TIMs set, p_min 0.505 kPa, off-corner): the K1.14b record — FPf
++  2.2e−5 / 2.2e−7 / 2.2e−9 at h = 10⁻⁶/10⁻⁷/10⁻⁸, δ:C_f 2e−16, mutants 0.12–2.2 and 1.2e−6 (v-column); chains FPf,FPf
++  2.3e−7 / 2.3e−9 and -P-,-Pf 1.2e−6 / 1.2e−8, Φ omitted 2.1; fpf_region_har.py: the single-step pattern map at that
++  state (FE- / FPf / FP- / -P- over expansion 1e−5 … 3.2e−4 and shear 0 … 3.2e−4).
++- wet_floor_har.py (the same O2 on HAR, a state at the floor at η = 0.5M, ψ_i 0 … +0.12, Δγ 10⁻⁴ … 10⁻², one BE
++  step with the floor at the trial and after convergence): F(σ_f)/p_min +0.27 … +0.82, converged contraction
++  |Δε^p_v| ≤ 2.7e−5 < ε*_f, 0–37 domain overshoots per step backtracked by the line search, no refusal (§9.7 item 3).
++
+ ### 16.5 G0 review record (2026-09-30)
+ - **Adversary (Fable, independent re-derivation): PASS-WITH-FIXES**, seven items, all applied in this revision:
+   (1) §3.2 hydrostatic guard was self-contradictory → vertex rule Ω := 0; (2) §14 K2 "±1 step" → ordering/gap band with
+@@ -1624,7 +1715,8 @@ p-floor round checks (2026-10-03, local py312 venv with the O2 oracle imported r
+ Twelve items raised by the G1 oracle/test round (O1 rate oracle, O2 return map, the K1/K2 gate tests and the cap and
+ K2-lag triages), applied in one pass; item 13 added at P1 (owner decision 2026-10-01); item 14 added at G2 (owner
+ decision 2026-10-01, exponential v-update); item 15 at the HAR round (2026-10-02); item 16 at the p-floor round
+-(2026-10-03). Tags: [E] read in the source, [I; G1] / [I; P1] / [I; G2] this revision's
++(2026-10-03); item 17 at round 3b (2026-10-03, the Adversary's round-3 defects and the owner's approval of option
++(i)). Tags: [E] read in the source, [I; G1] / [I; P1] / [I; G2] this revision's
+ derivation or decision.
+ 
+ | # | section | change | tag | evidence |
+@@ -1646,9 +1738,12 @@ derivation or decision.
+ 
+ | 15 | §1.3, §2.1, §2.2, §2.3, §13.1h, §13.11, §15, §16.1, §16.3, §16.4 | **HAR energy option (paper received 2026-10-02).** HAR05 eq 40 in sheet signs (S.4h) with the paper's origin shift (p = −p_a at ε^e = 0), parameters (k, g, n, p_a) replacing (p₀, κ̂, ε_{v0}, μ₀, α₀) — HAR replaces the α₀ coupling entirely; stresses and Hessian (S.5h)–(S.5h') in strain and stress form, D₁₂ = −J_HAR05 < 0, q/ε_s and its ε_s → 0 limit; closed-form inverse map (S.5h''); exact convexity result (S.5c): det D = 3kg p_a²(ϖ/p_a)^{2n} > 0 and D₁₁ > 0 ⇒ PD at **every** η for 0 ≤ n < 1 — no limiting stress ratio (that belongs to the Houlsby-1985/α₀ family, HAR05 p.386); normalised λ_min closed form (S.5c'); gate table at the TIMs constants (g = 807.80, k = 1889.48): min over all η 0.744 K_iso(p) at η ≈ 1.7, ring dumps 0.7444 … 1.43, 6-D ≥ 0.91 — **VERDICT convex, no fallback to BA06 needed**; DM04 mapping (exact on the axis; off-axis G ratio 1.61 at η = M, 2.10 at η = 2.1); list of downstream changes (none to (S.3), (S.28), (S.30)–(S.34), (S.41)–(S.47); p₀ := −p_a in the §9.1 scalings; §13.1h and §13.11; §15 row); dissipation, v-update, LogStrain unchanged | [E] HAR05 40–46, 55–56, 30–31, 2–3, p.386–387; [I] rearrangements, convexity, mapping, gate | har_sympy3.py (all ≤ 3e−30 / exact), har_gate.py, har_k1.py |
+ | 16 | §1.3, §2.3, §2.4 (new), §5.4 (new), §8, §9.1, §9.7 (new), §10.2, §13.12–15, §16.1, §16.3, §16.4 | **p-floor round (2026-10-03; owner decisions (a)–(e) of 2026-10-02).** (1) The p′ floor as the operator Π_f (S.48): a strain-space projection at fixed deviatoric elastic strain onto p = −p_min, applied to the trial (step 1f) and to the converged state (step 5f), never inside the local Newton; closed forms (S.49) BA06 (any α₀) and (S.50) HAR (n = ½ closed, general n bracketed); tangent (S.51)/(S.32f) with the v-column on the raw trial, chain (S.54)/(S.46f); δ:C_f = 0 at a floored point (the exact linearisation; the energy's deviatoric stiffness at |p| = p_min); an energy source E_f ∈ [0, p_min Δε^f_v] (S.52) counted as W_f, with D^p ≥ 0 of the flow untouched; F ≤ F_tol not claimed at a floored committed state; counters and the `floor` response; initialState projects; the LogStrain provider returns the floored ε^e; default p_min = 5·10⁻³ p_ref (0.5 / 0.505 kPa); O1 rate form (S.55) with the split converging at first order; mutants M-F1…M-F9; K1.12–14. (2) The unified π_{i0} rule (S.53) with its limits and the K2 values (K1.15). (3) §2.4 energy-option bookkeeping: the branch table, the parser refusals (BA06 flags with HAR refused, not ignored), the FD re-run list under HAR. (4) The nested-scan step: 10⁻⁴ (G1 text) → 10⁻³ (O2/kernel), with the ramp-width criterion (S.56) and a new validate() refusal; O2 and the kernel unchanged. | [I; round 3], owner decisions 2026-10-02 | floor_sympy.py (all OK), floor_fd.py (all OK), floor_rate.py, floor_fold.py |
++| 17 | §1.3, §2.4, §9.7 (items 2–3, FD record, M-F9), §10.2 (S.56), §13.12, §13.14b (new), §15, §16.1, §16.3, §16.4 | **Round 3b (2026-10-03): the Adversary's five round-3 defects; owner approval of option (i).** (1) MAJOR — the 'dry side: the return compresses p, F(σ_f) < 0; post floor = wet-side event' statement of §9.7 item 2, K1.12 (B) and M-F9 was BA06-only: under HAR the D₁₂ coupling of the plastic shear strain (+0.100 kPa) beats the volumetric compression of the dilative return (−0.084 kPa) and the dry-side pattern is FPf (TIMs set, p = −0.6 kPa, η = 1.2M, p_c = −0.488); reproduced independently, (S.32f) FD-checked on the HAR law 2.2e−7 / 2.2e−9 (O(h²)), the chains FPf,FPf 2.3e−7 / 2.3e−9 and -P-,-Pf 1.2e−6 / 1.2e−8 added (K1.14b); the dF ≈ F_p dp + ζ dq sign rule written for both energies. (2) MINOR — (S.56) words: W_ramp is 1 − π_i(η₁)/π_i(η₂) (the round-3 '1 − π_i(η₂)/π_i(η₁)' is −0.0645 on K2); formula and numbers unchanged. (3) MINOR — the (S.56) validate() refusal gated to cap = smooth (W_ramp ≡ 0 for planar/none). (4) MINOR — p_a is one `-p_a` flag for HAR and the fork CSL (not in the BA06 refusal list); the TIMs value is 101 kPa (campaign `Patm 101`; §15's 101.325 withdrawn; p_min 0.505 kPa and K1.13/K1.14 unchanged); the HAR→BA06 mutant is killed by 13.1h/13.11/13.13/13.14 and O2 parity, not by self-FD. (5) MINOR — §9.7 item 3 states the wet-side F(σ_f) magnitude, +0.27 … +0.82 p_min (first-order size 1.37 p_min; Adversary +0.5 … +1.35), and the self-limiting contraction |Δε^p_v| ≤ 2.7e−5 < ε*_f = 7.5e−5 (Adversary 3.5e−5), Newton overshoots of the HAR domain edge backtracked, no refusal. Owner: option (i) Π_f approved 2026-10-03 (§9.7, §16.1); the two §16.3 questions (E_f vs W_f; floored-patch solver behaviour) stay open with the orchestrator recommendation recorded (exact tangent kept, any added stiffness tangent-only/opt-in/default off; W_f always counted, E_f on demand from the closed-form Ψ). No formula changed. | [I; round 3b], owner approval 2026-10-03 | har_patch.py, round3b_sympy.py (all OK), floor_fd_har.py (all OK), wet_floor_har.py |
+ 
+ Items 1–13: no FD-checked algebra of the G0 sheet changed; status of (S.34): transcribed → re-derived and FD-checked
+ (8.7e−10). Item 14 is the first formula-level change to FD-checked algebra: the v-factor in (S.31) (v₀ → v_{n+1}) and
+ in the S^v closed form of (S.46) (v₀ → v_{k+1}), both re-verified (§16.4, G2 checks). Item 16 adds new FD-checked
+ algebra ((S.48)–(S.55)) and changes no existing formula; its one correction to existing text is the scan-step value of
+-§8/§10.2 (10⁻⁴ → 10⁻³), a contract constant, not a derivative.
++§8/§10.2 (10⁻⁴ → 10⁻³), a contract constant, not a derivative. Item 17 changes no formula: it corrects the words of
++(S.56), the energy-dependence of the §9.7 dry/wet statements, the p_a bookkeeping and the mutant-kill list, and adds
++the HAR FD record (K1.14b) and the wet-side magnitudes.

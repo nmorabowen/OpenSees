@@ -1,0 +1,20 @@
+HAR TIMs, p_min = 0.505, domain edge eps_v = 1.058492e-03; eps*_f(eps_s = 0) = 7.485e-05
+state at the floor: p = -0.5050, q = 0.2583, eta = 0.6654, theta = 0.454, pi_i = -0.32801, eps_v = 9.854408e-04 (margin eps* = 7.305e-05), eps_s = 1.457e-05
+ psi_i  dgamma   m pattern(s)             max F(sig_f)/p_min  max|deps^p_v| (contr.)  p_c max eps*_f end min eps* in Newton dom fails
+  0.00   1e-04   1 -Pf                                0.2699               1.226e-05  -0.3906  7.037e-05          4.368e-05         0
+  0.00   1e-03   1 -Pf                                0.3496               1.868e-05  -0.3369  6.919e-05         -1.184e-04         6
+  0.00   1e-02   1 -Pf                                0.3572               1.950e-05  -0.3300  6.908e-05         -1.234e-03        27
+  0.04   1e-04   1 -Pf                                0.2717               1.229e-05  -0.3902  7.038e-05          4.365e-05         0
+  0.04   1e-03   1 -Pf                                0.3670               1.906e-05  -0.3321  6.927e-05         -1.168e-04         6
+  0.04   1e-02   1 -Pf                                0.5322               2.301e-05  -0.2881  6.978e-05         -1.208e-03        37
+  0.08   1e-04   1 -Pf                                0.2732               1.232e-05  -0.3897  7.039e-05          4.363e-05         0
+  0.08   1e-03   1 -Pf                                0.3820               1.938e-05  -0.3281  6.934e-05         -1.153e-04         6
+  0.08   1e-02   1 -Pf                                0.6866               2.554e-05  -0.2597  7.026e-05         -1.171e-03        33
+  0.12   1e-04   1 -Pf                                0.2745               1.235e-05  -0.3894  7.039e-05          4.361e-05         0
+  0.12   1e-03   1 -Pf                                0.3950               1.966e-05  -0.3247  6.940e-05         -1.141e-04         6
+  0.12   1e-02   1 -Pf                                0.8217               2.745e-05  -0.2392  7.061e-05         -1.125e-03        33
+
+case psi_i = 0.12, dgamma = 0.01, m = 1: last sub-increment p_c = -0.2392 -> p_f = -0.5050, q_c = 0.3038 -> q_f = 0.4141, eta_c = 1.3265, F_c/p_min = +2.12e-14, F_f/p_min = +0.8217; first-order estimate of sheet 9.7 item 2: |F_p| (p_min - |p_c|) = 0.5741 kPa + zeta (q_f - q_c) = 0.1153 kPa = 1.365 p_min (F_p = -2.1600, zeta = 1.0446); the exact F differs from this first-order size at second order in dp (dp = 0.266 kPa is half of p_min here)
+
+max over the table: F(sigma_f)/p_min = 0.822, converged contraction |deps^p_v| = 2.745e-05 (vs the margin at the floor eps*_f(0) = 7.485e-05, eps*_f(eps_s of the state) = 7.305e-05): the converged return never leaves dom Psi; the full Newton steps do overshoot it (dom fails > 0) and the line search backtracks them.
+done

@@ -1,0 +1,34 @@
+HAR TIMs set, p_min = 0.505 kPa, domain edge eps_v = 1.058492e-03, p0 := -p_a = -101.0
+
+================ (B-HAR) dry side, trial floored, plastic, post floor active ('FPf') ================
+  state: p = -0.6000, q = 0.6999, eta = 1.5971 (= 1.2 M), theta = 0.271, pi_i = -0.74366, v = 1.72704 (psi_i = -0.10), F = -1.11e-16, eps_v = 9.851419e-04, eps_s = 3.335465e-05
+  D11 = 13524.867, D12 = -6234.628, D22 = 28255.456 kPa
+  increment: tr deps = 2.000e-05 (expansion), shear amp 2.000e-05 along n^; pattern FPf
+  p_tr = -0.4607 -> floored trial p = -0.5050 (deps^f_v,tr = 3.823e-06) -> return p_c = -0.4877 (ABOVE the floor) -> post floor p = -0.5050; dlam = 1.157e-05, eta_c = 1.8200, pi_i = -0.74335
+  return decomposition (mid-point D's): D11 deps^e_v = -0.0843 kPa (deps^p_v = +7.071e-06, dilative), D12 deps^e_s = +0.0997 kPa (deps^p_s = +1.569e-05); sum +0.0153 vs p_c - p_trf = +0.0173
+  yield after the post floor: F(sigma_c)/p_min = +6.026e-13 (converged, ~0), F(sigma_f)/p_min = -0.0041; q_c = 0.6619 -> q_f = 0.6705 (HAR: q moves with the floored p), dp = -0.0173
+  [OK] (B-HAR) FPf: C_f (S.32f) vs FD, h = 1e-06: 2.186e-05 (tol 3e-05)
+  [OK] (B-HAR) FPf: C_f (S.32f) vs FD, h = 1e-07: 2.186e-07 (tol 3e-07)
+  [OK] (B-HAR) FPf: C_f (S.32f) vs FD, h = 1e-08: 2.165e-09 (tol 3e-08)
+      O(h^2): err(1e-6)/err(1e-7) = 100.0, err(1e-7)/err(1e-8) = 101.0 (the increment is 2e-5: h = 1e-6 is 5 % of it)
+  [OK] (B-HAR) delta : C_f = 0 (last operator an active Pi_f): 2.290e-16 (tol 1e-13)
+  [OK] (B-HAR) committed p = -p_min: 1.539e-15 (tol 1e-12)
+      mutant 'Phi_post dropped' vs FD: 1.398e-01
+      mutant 'Phi_tr dropped' vs FD: 1.246e-01
+      mutant 'both operators dropped (plain a~^ep)' vs FD: 2.211e+00
+      mutant 'v-column tied to the floored trial (a~^ep Phi_tr, then Phi_post)' vs FD: 1.226e-06
+  -> dry side under HAR: dp_D12 = +0.0997 > |dp_D11| = 0.0843: post floor on the DRY side.
+
+================ (D-HAR) m = 2 chains ================
+(D1) 2x the (B-HAR) increment (tr deps = 4.0e-05), m = 2: pattern ['FPf', 'FPf'], final p = -0.5050 (unsplit: FPf); the (B-HAR) increment itself halves to ['-P-', 'FPf']
+  [OK] (D1) chained C (S.54) 'FPf,FPf' vs FD, h = 1e-07: 2.275e-07 (tol 3e-07)
+  [OK] (D1) chained C (S.54) 'FPf,FPf' vs FD, h = 1e-08: 2.275e-09 (tol 3e-08)
+      mutant 'Phi operators omitted from the chain' vs FD: 2.103e+00
+(D2) increment tr deps = 1.400e-05, shear amp 2.000e-05: pattern ['-P-', '-Pf'], final p = -0.5050
+  [OK] (D2) chained C (S.54) '-P-,-Pf' vs FD, h = 1e-07: 1.175e-06 (tol 3e-06)
+  [OK] (D2) chained C (S.54) '-P-,-Pf' vs FD, h = 1e-08: 1.175e-08 (tol 3e-08)
+      O(h^2): err(1e-7)/err(1e-8) = 100.0 (the increment is 1.4e-05 + shear 2e-5)
+      mutant 'Phi operators omitted from the chain' vs FD: 2.140e+00
+      the same increment in one step: pattern -P-, p_tr = -0.5311, p_c = -0.5072, p_f = -0.5072
+
+ALL OK
