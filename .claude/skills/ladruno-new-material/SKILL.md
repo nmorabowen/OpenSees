@@ -53,17 +53,32 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       (WP-130, #868); SANISAND `ModifiedEuler` force-accepted failed substeps at `dT_min`
       (WP-127 finding C, SAS-ME fix WP-129, #871). Test it: feed one wild trial increment
       and assert the call returns < 0 within a wall-clock bound.
+- [ ] **[lint]** Never DECLARE inside an unbraced `if` to set an outer variable: `if (p > small)
+      Vector r = ...;` makes a new `r` that dies at the `;` (L9). And give every substep
+      integrator's tangent an FD gate of its own: ForwardEuler's was wrong twice over and no gate
+      saw it (WP-158). Quirks: "has a shadowed `Vector r`".
 - [ ] Implement `getInitialTangent()` honestly: the base default returns `getTangent()`, so
       `-initial` silently becomes full Newton. Quirks: "`NDMaterial::getInitialTangent()` DEFAULTS".
 - [ ] Substep schemes need error control and yield-drift correction, and must honour the
       tolerance passed in. Quirks: "`IntScheme` 3 (RungeKutta4) and 5 (ForwardEuler) have no
       error control", "IntScheme 1 (ModifiedEuler) IGNORES the `TolR`".
+- [ ] The substep error must measure EVERY evolved internal variable (back-stress, fabric,
+      ...), not only the stress: a stress-only test accepts an O(1) back-stress jump when both
+      stages are elastic in stress. Quirks: "substep error is STRESS-ONLY" (WP-128).
+- [ ] A substep scheme must not ACCEPT a substep that failed its error test at the minimum
+      step, or return early at `T < 1`, without saying so: count it (WP-127 `substepStats`).
+      Quirks: "ACCEPTS a substep that FAILED its error test".
+- [ ] A substep count sized from the increment (`|Δε|/h`) must be capped, and past the cap the
+      trial refused: a Newton iterate can be ~1e4 and ask for ~1e9 substeps (an apparent hang).
+      Quirks: "one wild Newton iterate makes `setSubStrainRate()` ask for".
 - [ ] IMPL-EX in a static analysis: `ops_Dt` is pseudo-time and erratic; guard the
       extrapolation factor. Quirks: "IMPL-EX in a STATIC analysis".
 - [ ] `revertToStart()` must not reset calibrated constants mid-analysis. Quirks:
       "`ManzariDafalias::revertToStart()` silently restores".
 - [ ] Constants that multiply a stress are dimensional: make them unit-consistent or document
       the units. Quirks: "`D_factor` dilatancy sigmoid is DIMENSIONAL".
+
+- [ ] A fork block appended to a base `sendSelf` under the same dbTag and commitTag must NOT have the length of any vector the base sends: FE_Datastore keys vectors by size, and a same-size block overwrites the base state. `static_assert` the size. Quirks: "FE_Datastore keys a sent Vector by its SIZE".
 
 ## NaN and silent success
 
@@ -90,6 +105,15 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 - [ ] Tune test paths against plastic response, not elastic estimates. Quirks:
       "must be tuned against PLASTIC response".
 - [ ] Break each new gate on purpose once. Quirks: "A test can be GREEN because of the very bug".
+- [ ] A tangent READ as "algorithmic" is not verified: compare it with a finite difference of the
+      return map (the replay facility gives one at a real state). Quirks: "`TanType 2` tangent is
+      MINUS the derivative of its own return map" (WP-130).
+- [ ] Pin a number only from a step a RESIDUAL test converged, and re-measure pins after merging
+      `ladruno`. A determinism gate needs no convergence: use `FixedNumIter`. Quirks: "where ONE
+      tangent stopped".
+- [ ] **[lint]** A `zone_a` test that branches on the platform declares `# ci-coverage:` (L8): PR CI
+      is Ubuntu, so a win32-only leg never runs there. Gate only the MKL-specific leg. Quirks:
+      "A win32-only `zone_a` test is NEVER run by PR CI".
 
 Found a new trap? Add it to `LEDGER_quirks.md`, then add one line here pointing to it. If the
 trap has a greppable pattern, add a rule to `ci/check_quirk_patterns.py` instead.

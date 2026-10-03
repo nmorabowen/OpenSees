@@ -1,0 +1,38 @@
+{
+ "scheme": 2,
+ "extra": [
+  "-cppmTangent",
+  "fixed"
+ ],
+ "build": "37d0891acb80c9194f7e10b4fd5b486f6aee8951",
+ "census": {
+  "updates": 307776.0,
+  "meCalls": 35452.0,
+  "substeps": 1773041.0,
+  "accepted": 1709222.0,
+  "rejectedErr": 29212.0,
+  "forcedAtDTmin": 22745.0,
+  "forcedClampMc": 18890.0,
+  "rejectedLowP": 11847.0,
+  "abandonedLowP": 14.0,
+  "capHits": 1.0,
+  "entryPminClamps": 0.0,
+  "pnResets": 0.0,
+  "maxSubstepsOneUpdate": 370030.0,
+  "lastSubsteps": 93587.0,
+  "lastForcedAtDTmin": 1466.0,
+  "lastAbandonedLowP": 0.0,
+  "lastCapHit": 1.0,
+  "cppmCalls": 286944.0,
+  "cppmNewtonFail": 783022.0,
+  "cppmHalvings": 1495688.0,
+  "cppmExplicitFail": 35178.0,
+  "cppmExplicitLowP": 274.0,
+  "cppmRefusals": 0.0,
+  "meFallbacks": 0.0,
+  "meFallbackOk": 0.0,
+  "lastCppmRefused": 0.0,
+  "cppmGuessTries": 0.0,
+  "cppmGuessOk": 0.0
+ }
+}

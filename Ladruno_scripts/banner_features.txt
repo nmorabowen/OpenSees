@@ -77,4 +77,7 @@ IMPL-EX commit-time refusal latch — no silent partial commits
 ladrunoThreads — OpenMP element state-determination loop (opt-in)
 LadrunoSANISAND — -pRe elastic-only stiffness floor (ADR-93 II.1)
 LadrunoSANISAND — -flipAlphaIn init default (thread-count-proof flip)
+LadrunoSANISAND — -cppmOnFail refuse / -cppmTangent fixed / -meFallback cppm (WP-130)
+LadrunoSANISAND — IntScheme 129 SAS-ME (alpha-aware error, refuses, no force-accept)
+LadrunoSANISAND — SAS-ME -sasHFloor / -sasReseatHyst / -sasSoftCap (WP-151 R1)
 system Pardiso — -deterministic / -cbwr (MKL CNR, reproducible)

@@ -1,0 +1,199 @@
+{
+ "CVSS/1e-06": {
+  "DM04": {
+   "status": "ok",
+   "tau": 0.08118328487537459,
+   "reseats": 0
+  },
+  "R1": {
+   "status": "ok",
+   "tau": 0.08118328487537459,
+   "reseats": 0
+  },
+  "R1_crev2": {
+   "status": "ok",
+   "tau": 0.08118328487537459,
+   "reseats": 0
+  }
+ },
+ "CVSS/3e-06": {
+  "DM04": {
+   "status": "ok",
+   "tau": 0.24354985462612372,
+   "reseats": 0
+  },
+  "R1": {
+   "status": "ok",
+   "tau": 0.24354985462612372,
+   "reseats": 0
+  },
+  "R1_crev2": {
+   "status": "ok",
+   "tau": 0.24354985462612372,
+   "reseats": 0
+  }
+ },
+ "CVSS/1e-05": {
+  "DM04": {
+   "status": "ok",
+   "tau": 0.7834268204638367,
+   "reseats": 0
+  },
+  "R1": {
+   "status": "ok",
+   "tau": 0.774766728998694,
+   "reseats": 0
+  },
+  "R1_crev2": {
+   "status": "ok",
+   "tau": 0.774766728998694,
+   "reseats": 0
+  }
+ },
+ "CVSS/3e-05": {
+  "DM04": {
+   "status": "ok",
+   "tau": 2.065535520459,
+   "reseats": 0
+  },
+  "R1": {
+   "status": "ok",
+   "tau": 2.0586606261009894,
+   "reseats": 0
+  },
+  "R1_crev2": {
+   "status": "ok",
+   "tau": 2.0586606261009894,
+   "reseats": 0
+  }
+ },
+ "CVSS/0.0001": {
+  "DM04": {
+   "status": "ok",
+   "tau": 5.2172796800548555,
+   "reseats": 0
+  },
+  "R1": {
+   "status": "ok",
+   "tau": 5.212560092260119,
+   "reseats": 0
+  },
+  "R1_crev2": {
+   "status": "ok",
+   "tau": 5.212560092260119,
+   "reseats": 0
+  }
+ },
+ "CVSS/0.0003": {
+  "DM04": {
+   "status": "ok",
+   "tau": 10.742398030561363,
+   "reseats": 0
+  },
+  "R1": {
+   "status": "ok",
+   "tau": 10.739205559349235,
+   "reseats": 0
+  },
+  "R1_crev2": {
+   "status": "ok",
+   "tau": 10.739205559349235,
+   "reseats": 0
+  }
+ },
+ "TCu/1e-06": {
+  "DM04": {
+   "status": "ok",
+   "q": 0.24354985462613854,
+   "reseats": 0
+  },
+  "R1": {
+   "status": "ok",
+   "q": 0.24354985462613854,
+   "reseats": 0
+  },
+  "R1_crev2": {
+   "status": "ok",
+   "q": 0.24354985462613854,
+   "reseats": 0
+  }
+ },
+ "TCu/3e-06": {
+  "DM04": {
+   "status": "ok",
+   "q": 0.727773796933576,
+   "reseats": 0
+  },
+  "R1": {
+   "status": "ok",
+   "q": 0.7185384779495507,
+   "reseats": 0
+  },
+  "R1_crev2": {
+   "status": "ok",
+   "q": 0.7185384779495507,
+   "reseats": 0
+  }
+ },
+ "TCu/1e-05": {
+  "DM04": {
+   "status": "ok",
+   "q": 2.2623885885830077,
+   "reseats": 0
+  },
+  "R1": {
+   "status": "ok",
+   "q": 2.2508017538664973,
+   "reseats": 0
+  },
+  "R1_crev2": {
+   "status": "ok",
+   "q": 2.2508017538664973,
+   "reseats": 0
+  }
+ },
+ "TCu/3e-05": {
+  "DM04": {
+   "status": "ok",
+   "q": 5.750157432095179,
+   "reseats": 0
+  },
+  "R1": {
+   "status": "ok",
+   "q": 5.741474684606146,
+   "reseats": 0
+  },
+  "R1_crev2": {
+   "status": "ok",
+   "q": 5.741474684606146,
+   "reseats": 0
+  }
+ },
+ "TCu/0.0001": {
+  "DM04": {
+   "status": "ok",
+   "q": 13.889650909392728,
+   "reseats": 0
+  },
+  "R1": {
+   "status": "ok",
+   "q": 13.884303611267896,
+   "reseats": 0
+  },
+  "R1_crev2": {
+   "status": "ok",
+   "q": 13.884303611267896,
+   "reseats": 0
+  }
+ },
+ "cyc/R1": {
+  "status": "ok",
+  "reseats": 20,
+  "rel": 0.01241143196723683
+ },
+ "cyc/R1_crev2": {
+  "status": "ok",
+  "reseats": 0,
+  "rel": 0.06481183530988102
+ }
+}

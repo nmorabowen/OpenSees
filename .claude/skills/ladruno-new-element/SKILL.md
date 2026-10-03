@@ -26,6 +26,19 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       `GLOBS` in `Ladruno_scripts/stamp_headers.py`, then run it); banner line via
       `banner_features.txt` → `patch_banner.py`. See `AGENTS.md`.
 
+## Shared shell helpers — use them, don't copy another element's shell
+
+- [ ] A continuum element includes `SRC/element/LadrunoElementShell.h` (WP-124) instead of
+      copying Quad/Brick/Bezier code: `cacheKi`/`dropKi` (initial stiffness; return `*Ki`,
+      never the scratch — #228/C1), `addGroundInertia` (the `−M·R·a_g` sign), `addNodalInertia`
+      (the `M·a` term of `getResistingForceIncInertia`), `forwardToMaterials` /
+      `forwardToMaterialPoint` / `isMaterialPointToken` (parameters; SSP maps every GP to
+      slot 0; `materialState` is a broadcast, not a GP address), `finishResponse` (endTag,
+      then the `Element` base vocabulary — pair it with `Element::getResponse` as the
+      `getResponse` default). The snapshot + Rayleigh tail stays in the element (protected
+      members). Mass caching: `SRC/element/LadrunoMassCache.h`. Pin them with the patterns in
+      `tests/test_ladruno_element_shell_helpers.py`.
+
 ## Dynamics, mass and damping
 
 - [ ] **[lint]** In `getResistingForceIncInertia`, snapshot the shared static residual into a
@@ -42,6 +55,9 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       `getResistingForceIncInertia` calls `getResistingForce()` (which subtracts it), it must not
       subtract it again. Quirks: "`ElasticBeam2d` subtracts the ground-motion load Q TWICE". Copy the
       rigid-body probe: every node's relative acceleration must be exactly `−a_g`.
+- [ ] One mass model per element: the `M·a` in `getResistingForceIncInertia` uses the SAME matrix
+      `getMass()` returns (lumped flag included) — else Newton's Jacobian is not the residual's
+      derivative. Quirks: "A `-lumped` element must use the lumped mass in the inertia RESIDUAL too".
 - [ ] Any element with mass gets a **dynamic Rayleigh regression test** (betaK ≠ 0, transient).
       Same entry: "a dynamic Rayleigh regression is mandatory".
 - [ ] Ignoring Rayleigh (a pure penalty/constraint tie)? Derive from `LadrunoUndampedElement`
@@ -54,6 +70,10 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 - [ ] `rho` and every construction input are serialized in `sendSelf`/`recvSelf` and
       zero-initialized in the broker ctor. Quirks: "element `rho` is NOT serialized",
       "FileDatastore silently CLOBBERS", "`recvSelf` into a LIVE element".
+- [ ] `recvSelf` drops every cache it can invalidate (`dropKi`, mass cache) and REBUILDS any
+      geometry cache itself when the element is live (`getDomain() != 0`): a checkpoint
+      restore into the live domain calls `recvSelf` + `update()`, never `setDomain` (WP-124
+      C6/C14). Test it with a save → change → restore into the SAME domain, not wipe+restore.
 
 ## State and re-entrancy
 
@@ -64,6 +84,12 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       element size" (the base `getCharacteristicLength` is wrong for high-order elements).
 - [ ] Never iterate the Domain from inside an element callback. Quirks: "`Domain::getElements()`
       is a SHARED singleton iterator".
+- [ ] **[lint]** Never combine two element accessors (`getResistingForce*`, `getRayleighDampingForces`,
+      `getTangentStiff`, `getMass`, ...) arithmetically in ONE expression: the call order is
+      unspecified and they return references into storage the other calls overwrite (GCC
+      recorded `inertialForce` = 0.0). Copy the first into an owned `Vector`, then apply the
+      rest in separate statements. Quirks: "`Element::getResponse` `inertialForce` read three
+      accessors in ONE expression".
 - [ ] Size every `static Vector` in `getResponse` exactly: `Vector::operator()` is unchecked in
       release. Quirks: "`Vector::operator()` is UNCHECKED".
 - [ ] `setResponse`: chain to `Element::setResponse` AFTER `output.endTag()`. Quirks:

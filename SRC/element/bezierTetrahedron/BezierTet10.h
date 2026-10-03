@@ -360,8 +360,7 @@ class BezierTet10 : public Element, public DRMHigherOrderNode
     double appliedB[3];         // current body force = loadFactor·data·b
     int applyLoad;              // 1 once a SelfWeight load has been added
 
-    double Ki_data[NELD * NELD];
-    Matrix *Ki;                 // Cached initial stiffness (lazy)
+    Matrix *Ki;                 // cached initial stiffness (lazy, LadrunoShell::cacheKi)
 
     SolidTransformation *theGeom;  // Ladruno — geometry method (linear/corot)
 

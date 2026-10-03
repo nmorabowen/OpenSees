@@ -255,8 +255,7 @@ class BezierTri6 : public Element
     int applyLoad;              // 1 once a SelfWeight load has been added
 
     // Internal working storage
-    double Ki_data[NELD * NELD]; // Storage for initial stiffness
-    Matrix *Ki;                  // Pointer to initial stiffness (lazy)
+    Matrix *Ki;                  // cached initial stiffness (lazy, LadrunoShell::cacheKi)
 
     // One-time print flag (Abell pattern)
     static int numInstances;

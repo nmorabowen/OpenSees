@@ -182,6 +182,7 @@ static void run_oracle_dump(const char* path) {
         double pb[12]; for (int i = 0; i < 12; ++i) fh >> pb[i];
         Params mp = makeParams(pb);
         fh >> mp.Gf >> mp.Gc >> mp.lch >> mp.As >> mp.ctTemper;   // P2h ctTemper mode (0/1/2)
+        fh >> mp.tensionLaw >> mp.epsFc;                           // tension law (0 exp / 1 bilinear) + direct eps_fc
         State in, out;
         for (int i = 0; i < 6; ++i) fh >> in.eps[i];
         for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
@@ -389,6 +390,23 @@ static void run_oracle_dump(const char* path) {
         std::printf("  eta nontrivial (max viscous-inviscid gap >1e-3): %s (gap=%.2e)\n",
                     eta_nontrivial ? "ok" : "FAIL", max_eta_gap);
 
+    // ---- (B9) Gc-as-energy calibration: C++ compressionEnergyDensity == oracle compression_energy_density ----
+    if (fh >> tok && tok == "NGCT") {
+        int ngct; fh >> ngct;
+        for (int d = 0; d < ngct; ++d) {
+            fh >> tok; std::string label; fh >> label;   // GCT <label>
+            double pb[12]; for (int i = 0; i < 12; ++i) fh >> pb[i];
+            Params mp = makeParams(pb);
+            double efc, gO, pkO; fh >> mp.Gf >> mp.As >> efc >> gO >> pkO;
+            double pkC = 0.0;
+            const double gC = compressionEnergyDensity(mp, efc, 20000, &pkC);
+            const double rel = std::fabs(gC - gO) / std::fabs(gO), relp = std::fabs(pkC - pkO) / pkO;
+            const bool ok = rel < 1.0e-6 && relp < 1.0e-7;
+            if (!ok) ++fails;
+            std::printf("  %-24s g_rel=%.2e peak_rel=%.2e  %s\n", label.c_str(), rel, relp, ok ? "ok" : "FAIL");
+        }
+    }
+
     std::printf("  WORST  sig=%.2e (pp<1e-9/hard<1e-6)  kp=%.2e (pp<1e-10/hard<1e-7)  tan=%.3e (<1e-6)"
                 "  dmg=%.2e (<1e-6)  dmgtan=%.2e (<5e-5)  implex=%.2e (<1e-6)  eta=%.2e (<1e-6)  eta_inv=%.2e (<1e-6)\n",
                 worst_sig, worst_kp, worst_tan, worst_dmg, worst_dtan, worst_implex, worst_eta, worst_eta_inv);
@@ -434,6 +452,101 @@ static void run_robustness() {
         bool teleported = pr.converged && pr.sp[0] > 0 && pr.sp[1] > 0 && pr.sp[2] > 0;  // all-tension vertex
         check(!teleported, "deep-compression trial not falsely converged at the tension apex");
         check(!pr.converged || pr.kp >= kp_n - 1e-9, "apex/overshoot does not commit kp<kp_n");
+    }
+
+    // C4 — VERTEX return (WP concrete3d-oracle-diagnosis). (a) NO converged return may sign-flip a
+    // compressive-mean trial onto an all-tensile state (the PR #249 gate let 7617/165641 of these through:
+    // they are 'admissible'); (b) a hydrostatic-compression trial on the closed cap (kp_n<1) must YIELD at
+    // the compressive vertex (pre-fix: elastic fallback, status 2 on every increment); (c) the vertex
+    // tangent is purely volumetric (zero deviatoric stiffness).
+    {
+        unsigned s2 = 777u; auto rn = [&]() { s2 = s2*1664525u + 1013904223u; return (s2>>8)*(1.0/16777216.0); };
+        int flips = 0;
+        for (double Df : {0.3, 0.85, 1.0}) {
+            mp.Df = Df;
+            for (int t = 0; t < 30000; ++t) {
+                double w[3]; for (int i = 0; i < 3; ++i) w[i] = (rn()*2.0 - 1.0) * 80.0;
+                PrincipalResult pr = returnMapHardening(w, mp, rn() * 1.2);
+                if (pr.plastic && pr.converged && (w[0]+w[1]+w[2]) < 0.0 && pr.sp[0] > 0 && pr.sp[1] > 0 && pr.sp[2] > 0) ++flips;
+            }
+        }
+        check(flips == 0, "no converged return sign-flips a compressive-mean trial to the tension vertex");
+        mp.Df = 1.0;
+        double w[3] = {-150.0, -150.0, -150.0};
+        PrincipalResult pr = returnMapHardening(w, mp, 0.05);
+        check(pr.converged && pr.apex && pr.sp[0] < 0.0 && pr.sp[0] > -150.0 && pr.kp > 0.05
+              && std::fabs(pr.f_after) < 1e-9, "hydrostatic compression yields at the closed-cap vertex");
+        double sig_n[6] = {0,0,0,0,0,0}, deps[6] = {-3e-3, -3e-3, -3e-3, 1e-6, 0, 0};
+        double sigN[6], kpN, Dt[6][6];
+        int st = returnMapTensor(mp, sig_n, deps, 0.05, true, sigN, kpN, Dt, true);
+        const double devmax = std::fmax(std::fabs(Dt[3][3]), std::fabs(Dt[0][0] - Dt[1][0]));
+        check(st == 0 && devmax < 1e-9 * mp.E, "vertex tangent is purely volumetric (zero deviatoric stiffness)");
+    }
+
+    // C5 — Gc = PHYSICAL compressive energy (WP concrete3d-oracle-diagnosis): with eps_fc from the calibration
+    // table, single-point uniaxial compression dissipates Gc (post-peak, per unit area over lch) within 5% for
+    // three (Gc, lch) pairs; a direct epsFc equal to the legacy Gc/(fc lch) is byte-identical to the legacy path.
+    {
+        Params q = mp; q.Df = 1.0; q.As = 2.0; q.Gf = 0.1; q.Gc = 1.0; q.lch = 1.0;
+        double efc[GC_TABLE_N], g[GC_TABLE_N];
+        calibrateEpsFcTable(q, efc, g);
+        const double pairs[3][2] = {{30.0, 100.0}, {10.0, 50.0}, {40.0, 50.0}};
+        double worst = 0.0; int bad = 0;
+        for (const auto& pr : pairs) {
+            int st = 0; const double e = epsFcFromGc(efc, g, pr[0], pr[1], &st);
+            const double rel = std::fabs(compressionEnergyDensity(q, e) * pr[1] - pr[0]) / pr[0];
+            worst = std::fmax(worst, rel); if (st != 0) ++bad;
+        }
+        check(bad == 0 && worst < 0.05, "Gc calibration: uniaxial compression dissipates Gc within 5% (3 Gc/lch pairs)");
+        std::printf("       (worst |dissipated/Gc - 1| = %.2e)\n", worst);
+        Params a = q; a.Gc = 30.0; a.lch = 100.0; a.epsFc = 0.0;          // legacy Gc/(fc lch)
+        Params b = a; b.epsFc = a.Gc / (a.fc * a.lch);                    // the same value, given directly
+        State sa, sb; bool same = true;
+        for (int k = 1; k < 80; ++k) {
+            double stn[6] = {-5e-5 * k, 1.2e-5 * k, 1.2e-5 * k, 0, 0, 0};
+            State oa, ob; double s1[6], s2[6], e1[6], e2[6], D1[6][6], D2[6][6];
+            returnMap(a, stn, sa, oa, s1, e1, D1, true, -1.0, true);
+            returnMap(b, stn, sb, ob, s2, e2, D2, true, -1.0, true);
+            for (int i = 0; i < 6; ++i) if (s1[i] != s2[i]) same = false;
+            sa = oa; sb = ob;
+        }
+        check(same, "-epsFc = Gc/(fc lch) reproduces the legacy compression path byte-for-byte");
+    }
+
+    // C6 — full crack opening under the BILINEAR law (omega_t reaches 1 EXACTLY): a single GP driven in
+    // uniaxial tension (axial prescribed, lateral NOMINAL stress = 0 by a plain, UNGUARDED 2x2 Newton on the
+    // material's own damaged tangent — what the global solver does) must stay finite to 5e-3 (~3x the
+    // separation strain), converge every step, and dissipate Gf (+ the small pre-peak plastic work). Pre-fix
+    // the tensile-direction tangent was exactly singular at omega_t = 1 => NaN (the single-brick run printed
+    // thousands of return-map warnings with runaway lateral strains). SI units, fork defaults.
+    {
+        Params t; t.E = 30e9; t.nu = 0.2; t.fc = 30e6; t.ft = 3e6; t.e = eccentricityFromKupfer(30e6, 3e6, 1.16);
+        t.m0 = m0Of(t.fc, t.ft, t.e); t.Df = 1.0; t.As = 2.0; t.qh0 = 0.3; t.Hp = 0.5;
+        t.Gf = 120.0; t.Gc = 30e3; t.lch = 0.1; t.tensionLaw = 1;
+        State in; double ex = 0, ey = 0, ez = 0, W = 0, sp = 0, ep = 0; const int N = 1000; const double de = 5e-3 / N;
+        double Dc[6][6]; elasticC(t, Dc); bool finite = true; int unconv = 0;
+        for (int n = 1; n <= N && finite; ++n) {
+            ez += de;
+            { const double a = Dc[0][0], b = Dc[0][1], c = Dc[1][0], d = Dc[1][1], det = a * d - b * c;
+              ex += (d * (-Dc[0][2] * de) - b * (-Dc[1][2] * de)) / det;
+              ey += (-c * (-Dc[0][2] * de) + a * (-Dc[1][2] * de)) / det; }
+            State out; double s[6], se[6], D[6][6]; bool conv = false;
+            for (int it = 0; it < 50; ++it) {
+                double strain[6] = {ex, ey, ez, 0, 0, 0};
+                returnMap(t, strain, in, out, s, se, D, true, -1.0, true);
+                if (std::fabs(s[0]) + std::fabs(s[1]) < 1e-3) { conv = true; break; }
+                const double a = D[0][0], b = D[0][1], c = D[1][0], d = D[1][1], det = a * d - b * c;
+                ex -= (d * s[0] - b * s[1]) / det; ey -= (-c * s[0] + a * s[1]) / det;
+            }
+            if (!conv) ++unconv;
+            if (!std::isfinite(ex) || !std::isfinite(s[2])) finite = false;
+            for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Dc[i][j] = D[i][j];
+            W += 0.5 * (s[2] + sp) * (ez - ep); sp = s[2]; ep = ez; in = out;
+        }
+        const double G = W * t.lch;
+        check(finite && unconv == 0 && std::fabs(sp) < 1.0 && G > 120.0 && G < 125.0,
+              "bilinear full crack opening: finite, converged, dissipates Gf (residual tangent stiffness)");
+        std::printf("       (W*lch = %.2f N/m vs Gf = 120, unconverged steps %d, sigma_end = %.2e Pa)\n", G, unconv, sp);
     }
 
     // C3 — NaN guard: degenerate params (ft=0 => m0=Inf => apex xi blows up) must NOT leak NaN;

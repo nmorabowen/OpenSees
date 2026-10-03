@@ -228,6 +228,33 @@ struct LadrunoImplexOptions            // Ladruno (ADR-92 P1)
         factorMode(FACTOR_FIXED) {}   // Ladruno ADR-92 P2-9: fixed until the gate passes
 };
 
+// ===========================================================================
+//  Ladruno WP-127 (TIMs F21): one material-point state replay request, as the
+//  `ladrunoSANISANDReplay` command parses it. See ladrunoReplayRun().
+// ===========================================================================
+struct LadrunoReplayRequest            // Ladruno WP-127
+{
+    bool   compressionPositive;  // true: sigma/dStrain are the INTERNAL (mSigma) convention
+    bool   planeStrain;          // run on a LadrunoSANISANDPlaneStrain copy (else 3D)
+    double sigma[6];             // Voigt xx yy zz xy yz zx
+    double alpha[6];             // back-stress ratio (no sign flip in either convention)
+    double alphaIn[6];           // alpha at the last load reversal
+    double fabric[6];            // fabric z
+    double e;                    // void ratio
+    double dStrain[6];           // strain increment, ENGINEERING shear
+    int    traceCap;             // max trace records kept (0 = no trace)
+    double dt;                   // ops_Dt for the call (the P2-5c hold rule reads it)
+    bool   primed;               // the P2-7 reversal-noise guard armed (a plastic commit happened)
+    double prevIncrNorm;         // ||last committed d_eps|| for -reversalRel
+    LadrunoReplayRequest()
+      : compressionPositive(true), planeStrain(false), e(0.0), traceCap(10000),
+        dt(1.0), primed(true), prevIncrNorm(0.0)
+    {
+        for (int i = 0; i < 6; i++)
+            sigma[i] = alpha[i] = alphaIn[i] = fabric[i] = dStrain[i] = 0.0;
+    }
+};
+
 class LadrunoSANISAND : public ManzariDafalias
 {
   public:
@@ -326,6 +353,16 @@ class LadrunoSANISAND : public ManzariDafalias
                                  bool verbose = true);               // Ladruno (ADR-92 P1)
     const LadrunoImplexOptions &getLadrunoImplexOptions(void) const { return mImplexOpt; }
 
+    // Ladruno WP-130 (TIMs F18(c)/(d)): the BackwardEuler_CPPM options, set
+    // after construction on the IMPL-EX rule (not constructor arguments, so the
+    // wrappers' signatures do not move). The PARSER validates them against
+    // IntScheme / -maxSubsteps / -implex; this setter clamps and stores, then
+    // re-asserts the base seams through applyLadrunoConstants(). `verbose`
+    // echoes one line (the deck-level command only).
+    void setLadrunoCPPMOptions(int onFail, int halvings, int lineSearch,
+                               int meFallback, int start, int tangentFix,
+                               bool verbose);                          // Ladruno WP-130
+
     // `implexError` / `avgImplexError`, on the ASDConcrete3DMaterial.cpp
     // :2073-2077 template, plus this material's own per-point detail response.
     int setParameter(const char **argv, int argc, Parameter &param);  // Ladruno (ADR-92 P1)
@@ -364,6 +401,31 @@ class LadrunoSANISAND : public ManzariDafalias
     // determinism the WP exists to preserve. The honest answer for now is to
     // refuse, loudly, and keep the ledger exact.
     virtual bool ladrunoThreadSafeUpdate(void) const;   // Ladruno WP-107
+
+    // Ladruno WP-127 (TIMs F21): load a state into THIS instance and apply one
+    // strain increment through the ordinary setTrialStrain path (so the
+    // wrapper's sign flip and plane-strain packing are exercised as in an
+    // element), with a bounded per-substep trace attached for the call.
+    // DESTRUCTIVE: meant for a private getCopy() made by the
+    // `ladrunoSANISANDReplay` command, never for a Gauss point of a live model.
+    // The static stage flag (forced to 1) and ops_Dt are restored on return.
+    // Returns 0 and fills `out` (layout: OPS_LadrunoSANISANDReplay), or -1.
+    int ladrunoReplayRun(const LadrunoReplayRequest &q, std::vector<double> &out);   // Ladruno WP-127
+
+    // Ladruno WP-129: the SAS-ME (IntScheme 129) option set, applied after
+    // construction by the parser (and carried by getCopy / the wire). The
+    // scheme itself lives in the base (LadrunoSANISANDSasME.cpp); this class
+    // is what makes it reachable (mLadrunoSas.allowed, set in
+    // applyLadrunoConstants) because its wrappers forward the refusal.
+    void setLadrunoSasOptions(const LadrunoSasOptions &opt, bool verbose = true);  // Ladruno WP-129
+    // Ladruno WP-129 (TIMs F20(c)): the `tangentEP` response's operator.
+    Matrix ladrunoTangentEP(void);                                                  // Ladruno WP-129
+    // Ladruno WP-129: SAS-ME with the paper alpha_in rule decides alpha_in
+    // itself; the P2-5 guard (and its hold-skip census) does not apply.
+    bool ladrunoSasPaperRule(void) const {                                          // Ladruno WP-129
+        return mLadrunoSas.allowed && (int)mScheme == LADRUNO_INT_SAS_ME
+               && mLadrunoSas.opt.alphaInMode == 0;
+    }
 
   protected:
 
@@ -435,6 +497,41 @@ class LadrunoSANISAND : public ManzariDafalias
                               //          two-name convention as mHonorTolR above: this
                               //          is the request, mMaxSubstepsInME is the
                               //          base-side seam it acts on.
+    // Ladruno WP-130 (TIMs F18(c)/(d)): the DECK-LEVEL requests for the CPPM
+    // seams (two-name convention again: these are the requests, the base's
+    // mLadrunoCPPM* / mLadrunoMEFallback are the seams, applyLadrunoConstants()
+    // is the one writer). Defaults reproduce vanilla: explicit / 9 / off / off / trial, and TANGENT FIXED (1): the one
+    // WP-130 default that is NOT vanilla (owner decision; the vanilla sign is wrong).
+    int    mCPPMOnFail;       // 0 explicit (vanilla), 1 refuse
+    int    mCPPMHalvings;     // 0..9; base mLadrunoCPPMMaxLevel = this + 1
+    int    mCPPMLineSearch;   // 0 off, 1 on
+    int    mMEFallback;       // 0 off, 1 cppm
+    int    mCPPMStart;        // 0 trial (vanilla), 1 explicit guess before halving
+    int    mCPPMTangentFix;   // 1 fixed (DEFAULT, owner decision WP-130), 0 vanilla (sign-flipped)
+    // WP-130 review r1: WHY the WP-99 commit latch (mImplexCommitRefusedLatch)
+    // was set -- 0 the -implex companion hit -maxSubsteps, 1 a CPPM refusal on
+    // the plain commit path. Only the warning text reads it; crosses the wire
+    // with the latch.
+    int    mLadrunoLatchCause;   // 0 implex companion, 1 CPPM, 2 SAS-ME, 3 ME cap (plain commit path)
+
+    // The sendSelf/recvSelf Vector layout (WP-127/129/130), derived in ONE place
+    // so two blocks can never again be indexed at the same offset (review #868
+    // item 1: both WPs wrote 35 + LMS_COUNT + k). See the layout note above
+    // LadrunoSANISAND::sendSelf.
+    enum {
+        LWIRE_CENSUS    = 35,
+        LWIRE_CPPM      = LWIRE_CENSUS + LMS_COUNT,
+        LWIRE_CPPM_N    = 7,
+        LWIRE_SAS       = LWIRE_CPPM + LWIRE_CPPM_N,
+        LWIRE_SAS_OPT_N = 9,   // WP-129's six + WP-151's hFloor, reseatHyst, softCap (b+6..b+8)
+        LWIRE_TAG       = LWIRE_SAS + LWIRE_SAS_OPT_N + LSAS_COUNT,   // Ladruno WP-151: layout tag
+        LWIRE_SIZE      = LWIRE_TAG + 1
+    };
+    // Ladruno WP-151: FE_Datastore keys a sent Vector by its SIZE, so a block of the
+    // base's size (97) would overwrite the base state under the same dbTag and
+    // commitTag (LEDGER_quirks, WP-151).
+    static_assert(LWIRE_SIZE != 97, "LadrunoSANISAND wire block must not be the size of "
+                  "ManzariDafalias::sendSelf's Vector(97): the datastore keys vectors by size");
 
     // Ladruno ADR-92 P2-5: absolute strain-increment threshold below which
     // ManzariDafalias::integrate()'s unconditional loading-reversal reset
@@ -721,6 +818,21 @@ class LadrunoSANISAND : public ManzariDafalias
     // exactly the answers the latch exists to stop.
     bool   mImplexCommitRefusedLatch;   // Ladruno WP-99 (F7)
 
+    // Ladruno WP-153: the COMMITTED-path alpha_in census (response `commitStats`,
+    // id 33102). sasStats counts every re-seat of every integration CALL -- each
+    // Newton iterate under an implicit solver, each of the two update passes per
+    // step under LadrunoDynamicRelaxation -- so its re-seat count is not
+    // comparable between solvers. These count what the analysis actually
+    // COMMITTED: commits, commits whose alpha_in differs from the last committed
+    // alpha_in, and the summed ||alpha_in - alpha_in_n|| over them. Updated in
+    // ladrunoNoteCommitAlphaIn() just before ManzariDafalias::commitState(), on
+    // both commit paths. Per instance; copied by getCopy; reset by revertToStart
+    // (the sasStats rule); a diagnostic, deliberately NOT on the wire.
+    double mLadrunoCommits;          // Ladruno WP-153
+    double mLadrunoCommitReseats;    // Ladruno WP-153
+    double mLadrunoCommitDAlphaIn;   // Ladruno WP-153
+    void   ladrunoNoteCommitAlphaIn(void);   // Ladruno WP-153
+
     // Ladruno WP-112 (F14): once-per-instance latch of the sign-at-round-off
     // warning (ladrunoWarnRoundoffAlphaIn()). Diagnostic only: NOT sent on the
     // wire, starts false on getCopy(const char*) (every Gauss point is a fresh
@@ -884,5 +996,9 @@ class LadrunoSANISAND : public ManzariDafalias
 // singleton lives in an anonymous namespace; called from
 // OPS_clearAllNDMaterial(). Not called by ops.reset()/revertToStart().
 void ladrunoSanisandResetImplexGlobals(void);
+
+// Ladruno WP-127 (TIMs F21): the `ladrunoSANISANDReplay` command (Tcl and
+// Python). Defined in LadrunoSANISAND.cpp; syntax and output at the definition.
+int OPS_LadrunoSANISANDReplay(void);
 
 #endif

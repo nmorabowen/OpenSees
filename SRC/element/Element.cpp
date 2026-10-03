@@ -510,8 +510,19 @@ Element::getResponse(int responseID, Information &eleInfo)
     return eleInfo.setVector(this->getRayleighDampingForces());
   case 333333:
     return eleInfo.setVector(this->getResistingForceIncInertia());
-  case 444444:
-    return eleInfo.setVector(this->getResistingForceIncInertia()-this->getRayleighDampingForces()-this->getResistingForce());
+  case 444444: {
+    // Ladruno (WP-124): evaluate in a FIXED order into an owned copy. The original
+    // one-expression form `GRFII() - damping() - getResistingForce()` leaves the
+    // call order unspecified, and the accessors return references into element
+    // storage that the other calls overwrite (FourNodeQuad-style elements return
+    // the same P from both residual accessors; LadrunoBrick's GRFII refills the
+    // resid getResistingForce returns). GCC's order made inertialForce EXACTLY 0
+    // for such elements; MSVC's happened to be right.
+    Vector inertial(this->getResistingForceIncInertia());
+    inertial -= this->getRayleighDampingForces();
+    inertial -= this->getResistingForce();
+    return eleInfo.setVector(inertial);
+  }
 
   default:
     return -1;

@@ -491,6 +491,73 @@ def test_l4_waiver_and_stale_waiver(tmp_path):
     assert len(out) == 1 and "stale commit-ok" in out[0], out
 
 
+# ---------------------------------------------------------------- L10 (WP-153; WP-158 holds L9)
+BASE_H = ("class IncrementalIntegrator { public: virtual int revertToLastStep(void); };\n"
+          "class TransientIntegrator : public IncrementalIntegrator {};\n")
+DR_H = STAMP + ("class Relax : public TransientIntegrator\n{\n  public:\n"
+                "    int newStep(double dt);\n    int update(const Vector &U);\n"
+                "  private:\n    Vector *Ut, *Vhalf;\n};\n")
+DR_CPP = STAMP + ("int Relax::newStep(double dt) { Ut->addVector(1.0, *Vhalf, dt); return 0; }\n"
+                  "int Relax::update(const Vector &U) { return 0; }\n")
+
+
+def _l10(tmp_path, files):
+    files = dict(files)
+    files.setdefault("SRC/analysis/integrator/IncrementalIntegrator.h", BASE_H)
+    root = _tree(tmp_path, files)
+    used = set()
+    return cq.check_revert(root, _rel(root), used) + cq.check_stale_waivers(root, _rel(root), used)
+
+
+def test_l10_flags_an_integrator_that_inherits_the_no_op(tmp_path):
+    # the LadrunoDynamicRelaxation incident (WP-153 #899)
+    out = _l10(tmp_path, {"SRC/analysis/integrator/Relax.h": DR_H,
+                         "SRC/analysis/integrator/Relax.cpp": DR_CPP})
+    assert len(out) == 1 and out[0].startswith("L10 ") and "Relax" in out[0], out
+
+
+def test_l10_passes_the_override(tmp_path):
+    fixed = DR_H.replace("    int update(const Vector &U);\n",
+                         "    int update(const Vector &U);\n    int revertToLastStep(void);\n")
+    assert _l10(tmp_path, {"SRC/analysis/integrator/Relax.h": fixed,
+                          "SRC/analysis/integrator/Relax.cpp": DR_CPP}) == []
+
+
+def test_l10_passes_an_override_inherited_from_a_fork_parent(tmp_path):
+    parent = STAMP + ("class Leap : public TransientIntegrator\n{\n  public:\n"
+                      "    int revertToLastStep(void);\n  private:\n    Vector *Ut;\n};\n")
+    child = DR_H.replace("class Relax : public TransientIntegrator", "class Relax : public Leap")
+    assert _l10(tmp_path, {"SRC/analysis/integrator/Leap.h": parent,
+                          "SRC/analysis/integrator/Relax.h": child,
+                          "SRC/analysis/integrator/Relax.cpp": DR_CPP}) == []
+
+
+def test_l10_ignores_stateless_integrators_non_integrators_and_vanilla(tmp_path):
+    stateless = DR_H.replace("    Vector *Ut, *Vhalf;\n", "    double dt;\n")
+    assert _l10(tmp_path / "a", {"SRC/analysis/integrator/Relax.h": stateless,
+                                "SRC/analysis/integrator/Relax.cpp": DR_CPP}) == []
+    other = DR_H.replace("public TransientIntegrator", "public Element")
+    assert _l10(tmp_path / "b", {"SRC/element/Relax.h": other,
+                                "SRC/element/Relax.cpp": DR_CPP}) == []
+    assert _l10(tmp_path / "c", {"SRC/analysis/integrator/Relax.h": DR_H.replace(STAMP, ""),
+                                "SRC/analysis/integrator/Relax.cpp": DR_CPP.replace(STAMP, "")}) == []
+
+
+def test_l10_waiver_and_stale_waiver(tmp_path):
+    waived = DR_H.replace("class Relax", "// ladruno-lint: revert-ok retry-aware: commit() snapshots the march\nclass Relax")
+    assert _l10(tmp_path / "a", {"SRC/analysis/integrator/Relax.h": waived,
+                                "SRC/analysis/integrator/Relax.cpp": DR_CPP}) == []
+    short = DR_H.replace("class Relax", "// ladruno-lint: revert-ok ok\nclass Relax")
+    out = _l10(tmp_path / "b", {"SRC/analysis/integrator/Relax.h": short,
+                               "SRC/analysis/integrator/Relax.cpp": DR_CPP})
+    assert len(out) == 1 and "too short" in out[0], out
+    stale = waived.replace("    int update(const Vector &U);\n",
+                           "    int update(const Vector &U);\n    int revertToLastStep(void);\n")
+    out = _l10(tmp_path / "c", {"SRC/analysis/integrator/Relax.h": stale,
+                               "SRC/analysis/integrator/Relax.cpp": DR_CPP})
+    assert len(out) == 1 and "stale revert-ok" in out[0], out
+
+
 # ---------------------------------------------------------------- L3
 def test_l3_flags_an_orphaned_pointer(tmp_path):
     root = _tree(tmp_path, {
@@ -499,3 +566,207 @@ def test_l3_flags_an_orphaned_pointer(tmp_path):
     })
     out = cq.check_pointers(root, _rel(root))
     assert len(out) == 1 and "renamed heading" in out[0]
+
+# ---------------------------------------------------------------- L7: sequence
+def _l7(tmp_path, body, stamped=False, where="SRC/element/Element.cpp"):
+    src = (STAMP if stamped else "") + body
+    root = _tree(tmp_path, {where: src})
+    used = set()
+    out = cq.check_sequence(root, _rel(root), used)
+    return out + cq.check_stale_waivers(root, _rel(root), used)
+
+
+def _resp(body):
+    return "int Element::getResponse(int responseID, Information &eleInfo)\n{\n" + body + "\n}\n"
+
+
+def test_l7_flags_the_c15_incident_in_a_vanilla_file(tmp_path):
+    """The exact pre-a2004e0a7 line of vanilla Element.cpp (WP-124 C15)."""
+    out = _l7(tmp_path, _resp(
+        "  switch (responseID) {\n  case 444444:\n"
+        "    return eleInfo.setVector(this->getResistingForceIncInertia()-this->getRayleighDampingForces()"
+        "-this->getResistingForce());\n  default:\n    return -1;\n  }"))
+    assert len(out) == 1 and out[0].startswith("L7 SRC/element/Element.cpp:4:")
+    assert "getResistingForceIncInertia(), getRayleighDampingForces(), getResistingForce()" in out[0]
+
+
+def test_l7_passes_the_c15_fix(tmp_path):
+    assert _l7(tmp_path, _resp(
+        "  switch (responseID) {\n  case 444444: {\n"
+        "    Vector inertial(this->getResistingForceIncInertia());\n"
+        "    inertial -= this->getRayleighDampingForces();\n"
+        "    inertial -= this->getResistingForce();\n"
+        "    return eleInfo.setVector(inertial);\n  }\n  default:\n    return -1;\n  }")) == []
+
+
+def test_l7_flags_vector_plus_matrix_times_vector(tmp_path):
+    """Cross-type too: a getMass() that forms the mass can refill the residual storage as a
+    side effect (LadrunoBrick's formInertiaTerms(1) writes resid)."""
+    out = _l7(tmp_path, "const Vector &E::getResistingForceIncInertia(void)\n{\n"
+                        "  res = this->getResistingForce() + this->getMass() * accel;\n  return res;\n}\n")
+    assert len(out) == 1 and "getResistingForce(), getMass()" in out[0]
+
+
+@pytest.mark.parametrize("body", [
+    "  theMatrix->addMatrix(1.0, this->getTangentStiff(), betaK);",                 # one call, args
+    "  foo(this->getMass(), this->getTangentStiff());",                               # separate ARGUMENTS
+    "  theVector->addMatrixVector(0.0, this->getMass(), vel, alphaM);",
+    "  res = this->getMass() * accel;",                                             # one call, arithmetic
+    "  res = this->getResistingForce();\n  res += this->getRayleighDampingForces();", # separate statements
+    "  // res = this->getResistingForce() - this->getRayleighDampingForces();\n  x = 1;",
+    "  opserr << \"getResistingForce() - getMass()\" << endln;",
+    "  K = theEle->getTangentStiff();\n  M = theEle->getMass();\n  A = K - M;",      # owned copies
+])
+def test_l7_passes_non_arithmetic_or_sequenced_uses(tmp_path, body):
+    assert _l7(tmp_path, "void E::f(void)\n{\n" + body + "\n}\n") == []
+
+
+def test_l7_flags_a_pointer_receiver_and_an_other_file(tmp_path):
+    out = _l7(tmp_path, "void FE::g(void)\n{\n  r = myEle->getResistingForceIncInertia() - "
+                        "myEle->getResistingForce();\n}\n", where="SRC/analysis/fe_ele/FE.cpp")
+    assert len(out) == 1 and out[0].startswith("L7 SRC/analysis/fe_ele/FE.cpp:3:")
+
+
+def test_l7_waiver(tmp_path):
+    ok = ("void E::f(void)\n{\n  // ladruno-lint: sequence-ok getMass never writes resid in this element\n"
+          "  res = this->getResistingForce() + this->getMass() * a;\n}\n")
+    assert _l7(tmp_path, ok, stamped=True) == []
+    short = ("void E::f(void)\n{\n  res = this->getResistingForce() + this->getMass() * a;"
+             "   // ladruno-lint: sequence-ok ok\n}\n")
+    out = _l7(tmp_path, short, stamped=True)
+    assert len(out) == 1 and "reason too short" in out[0]
+
+
+def test_l7_stale_waiver(tmp_path):
+    stale = ("void E::f(void)\n{\n  // ladruno-lint: sequence-ok this used to combine two accessors\n"
+             "  res = this->getResistingForce();\n}\n")
+    out = _l7(tmp_path, stale, stamped=True)
+    assert len(out) == 1 and out[0].startswith("W ") and "stale sequence-ok" in out[0]
+
+# ---------------------------------------------------------------- L8
+def _l8(tmp_path, body, name="tests/test_x.py"):
+    root = _tree(tmp_path, {name: body})
+    return cq.check_ci_coverage(root, _rel(root))
+
+
+_ZA = "import os, sys, platform\nimport pytest\npytestmark = [pytest.mark.zone_a]\n"
+
+
+@pytest.mark.parametrize("gate", [
+    'pytestmark.append(pytest.mark.skipif(sys.platform != "win32", reason="mkl"))',   # the WP-136 incident
+    'if os.name == "nt":\n    pass',                                                   # adr74's cleanup branch
+    'if platform.system() == "Windows":\n    pass',
+    'if sys.platform.startswith("win"):\n    pass',
+    'TOL = 0.0\nif "win32" != sys.platform:\n    TOL = 1e-9',                            # reversed operands
+])
+def test_l8_flags_an_undeclared_platform_branch(tmp_path, gate):
+    out = _l8(tmp_path, _ZA + gate + "\n")
+    assert len(out) == 1 and out[0].startswith("L8 ") and "ci-coverage" in out[0], out
+
+
+@pytest.mark.parametrize("kind", ["local-only", "partial", "portable", "nightly-windows", "pr-windows"])
+def test_l8_passes_a_declared_branch(tmp_path, kind):
+    body = _ZA + f"# ci-coverage: {kind} because the MKL leg needs Pardiso\n" + \
+        'pytestmark.append(pytest.mark.skipif(sys.platform != "win32", reason="mkl"))\n'
+    assert _l8(tmp_path, body) == []
+
+
+def test_l8_ignores_a_ternary_value_selection(tmp_path):
+    body = _ZA + 'EXE = "OpenSees.exe" if os.name == "nt" else "OpenSees"\n'
+    assert _l8(tmp_path, body) == []
+
+
+def test_l8_ignores_non_zone_a_files_and_text_mentions(tmp_path):
+    # zone_b / unmarked files are out of scope; a platform test named only in a
+    # docstring or comment is not a branch (ast, not grep).
+    assert _l8(tmp_path, 'import sys\nif sys.platform != "win32":\n    pass\n') == []
+    body = _ZA + '"""we used to skip when sys.platform != "win32"."""\n# os.name == "nt"\n'
+    assert _l8(tmp_path, body) == []
+
+
+def test_l8_rejects_unknown_kind_and_short_reason(tmp_path):
+    gate = 'pytestmark.append(pytest.mark.skipif(sys.platform != "win32", reason="mkl"))\n'
+    out = _l8(tmp_path, _ZA + "# ci-coverage: sometimes whenever the moon is right\n" + gate)
+    assert len(out) == 1 and "not one of" in out[0], out
+    out = _l8(tmp_path, _ZA + "# ci-coverage: local-only mkl\n" + gate)
+    assert len(out) == 1 and "too short" in out[0], out
+
+
+def test_l8_flags_a_stale_annotation(tmp_path):
+    out = _l8(tmp_path, _ZA + "# ci-coverage: local-only the Pardiso leg used to be Windows-only\n")
+    assert len(out) == 1 and out[0].startswith("W ") and "stale ci-coverage" in out[0], out
+
+
+def test_l8_reports_an_unparseable_test_file(tmp_path):
+    out = _l8(tmp_path, _ZA + "def broken(:\n")
+    assert len(out) == 1 and "cannot parse" in out[0], out
+
+# ---------------------------------------------------------------- L9
+def _l9(tmp_path, body, stamped=False, where="SRC/material/nD/Mat.cpp"):
+    src = (STAMP if stamped else "") + body
+    root = _tree(tmp_path, {where: src})
+    used = set()
+    out = cq.check_dead_decl(root, _rel(root), used)
+    return out + cq.check_stale_waivers(root, _rel(root), used)
+
+
+def _fe(body):
+    return ("void ManzariDafalias::ForwardEuler(const Vector& CurStress, double& G)\n{\n"
+            "    double p = one3 * GetTrace(CurStress);\n" + body + "\n}\n")
+
+
+def test_l9_flags_the_wp158_incident_in_a_vanilla_file(tmp_path):
+    """The exact pre-WP-158 lines of vanilla ManzariDafalias::ForwardEuler."""
+    out = _l9(tmp_path, _fe("    Vector r(6);\n    if (p > small)\n        Vector r = GetDevPart(CurStress) / p;\n"
+                            "    double x = DoubleDot2_2_Contr(n, r);"))
+    assert len(out) == 1 and out[0].startswith("L9 SRC/material/nD/Mat.cpp:5:"), out
+    assert "re-declares 'r'" in out[0] and "outer 'r' is never assigned" in out[0]
+
+
+def test_l9_passes_the_wp158_fix(tmp_path):
+    assert _l9(tmp_path, _fe("    Vector r(6);\n    if (p > small)\n        r = GetDevPart(CurStress) / p;")) == []
+
+
+@pytest.mark.parametrize("body", [
+    "    Vector r(6);\n    if (p > small) Vector r = GetDevPart(CurStress) / p;",         # one line
+    "    Vector r(6);\n    if (a) { }\n    else\n        Vector r(GetDevPart(CurStress));",  # else, ctor form
+    "    for (int i = 0; i < 3; i++)\n        double G = 2.0 * i;",                     # shadows a PARAMETER
+    "    Matrix M(3,3);\n    while (k-- > 0)\n        const Matrix &M = foo();",              # reference form
+])
+def test_l9_flags_other_shadowing_forms(tmp_path, body):
+    out = _l9(tmp_path, _fe(body))
+    assert len(out) == 1 and out[0].startswith("L9 "), out
+
+
+@pytest.mark.parametrize("body", [
+    # vanilla Domain::initialize: a dead copy kept ON PURPOSE (it forms Ki), nothing shadowed
+    "    while ((e = it()) != 0)\n        Matrix initM(e->getInitialStiff());",
+    "    double x = 1.0;\n    if (p > small)\n        return x;",                   # a keyword, not a type
+    "    Vector r(6);\n    if (p > small)\n        delete r;",
+    "    Vector r(6);\n    if (p > small) {\n        Vector r = GetDevPart(CurStress) / p;\n        use(r);\n    }",
+    "    if (p > small)\n        q = p * 2.0;",
+    "    if (p > small)\n        delete thePtr;",
+    "    if (p > small)\n        opserr << \"Vector r = x\" << endln;",
+    "    // if (p > small) Vector r = x;\n    Vector r(6);",
+    # vanilla elementAPI_TCL.cpp / PythonWrapper.cpp: strip_prefix leaves `if constexpr (...) {`
+    "    double v;\n    if constexpr (A) {\n        v = 1;\n    } else if constexpr (B) {\n        v = 2;\n    }",
+    "    Vector r(6);\n    {\n        Vector r = x;\n        use(r);\n    }",       # nested block, no control prefix
+])
+def test_l9_passes_non_shadowing_or_braced_forms(tmp_path, body):
+    assert _l9(tmp_path, _fe(body)) == []
+
+
+def test_l9_waiver(tmp_path):
+    ok = _fe("    Vector r(6);\n    // ladruno-lint: decl-ok a scoped copy is wanted here for the destructor\n"
+             "    if (p > small) Vector r = x;")
+    assert _l9(tmp_path, ok, stamped=True) == []
+    short = _fe("    Vector r(6);\n    if (p > small) Vector r = x;   // ladruno-lint: decl-ok ok")
+    out = _l9(tmp_path, short, stamped=True)
+    assert len(out) == 1 and "reason too short" in out[0]
+
+
+def test_l9_stale_waiver(tmp_path):
+    stale = _fe("    Vector r(6);\n    // ladruno-lint: decl-ok this used to shadow the outer r\n"
+                "    if (p > small) r = x;")
+    out = _l9(tmp_path, stale, stamped=True)
+    assert len(out) == 1 and out[0].startswith("W ") and "stale decl-ok" in out[0]

@@ -67,6 +67,7 @@ class AnalysisModel;
 class Domain;
 class FE_Element;
 
+// ladruno-lint: revert-ok only the -iter Ramm factor reads the failed attempt's iteration count (mild; recorded in LEDGER_quirks, WP-153)
 class LadrunoIndirectControl : public StaticIntegrator
 {
   public:

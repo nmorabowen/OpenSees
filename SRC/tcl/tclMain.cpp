@@ -209,6 +209,9 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • ladrunoThreads — OpenMP element state-determination loop (opt-in)\n"
 "        • LadrunoSANISAND — -pRe elastic-only stiffness floor (ADR-93 II.1)\n"
 "        • LadrunoSANISAND — -flipAlphaIn init default (thread-count-proof flip)\n"
+"        • LadrunoSANISAND — -cppmOnFail refuse / -cppmTangent fixed / -meFallback cppm (WP-130)\n"
+"        • LadrunoSANISAND — IntScheme 129 SAS-ME (alpha-aware error, refuses, no force-accept)\n"
+"        • LadrunoSANISAND — SAS-ME -sasHFloor / -sasReseatHyst / -sasSoftCap (WP-151 R1)\n"
 "        • system Pardiso — -deterministic / -cbwr (MKL CNR, reproducible)\n"
 "\n";
     // FEATURES-END
