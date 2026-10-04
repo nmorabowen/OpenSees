@@ -1,0 +1,11 @@
+# Chakraborty & Salgado (2009) ICSMGE 17, pp. 652-655, Table 1, Toyoura sand (triaxial compression, Fukushima & Tatsuoka 1984 and Tatsuoka 1987 data; phi_c = 32.8 deg). I_R = I_D (Q - ln(100 sigma'_mp/p_A)) - R (eq. 3), p_A = 100 kPa, I_D = D_R/100;
+# fitted by eq. 9 to the peak-strength data of each sigma'_3p level (relative densities 30-90 %).  Transcribed by eye from the PDF page image; no tolerance expected on the digits.
+# sigma3p = minor principal effective stress at peak strength; sigma_mp = mean effective stress at peak (eq. 10: (s1+2 s3)/3).  'R=1' = trend line set with R = 1.
+sigma3p_kPa,sigma_mp_kPa,data_points,Q_best,R_best,r2_best,Q_R1,R_R1,r2_R1
+4.0,9.3,11,6.9,0.47,0.928,7.7,1,0.914
+6.2,14.3,10,6.2,-0.23,0.943,8.1,1,0.839
+11.2,25.8,12,7.4,0.13,0.99,8.7,1,0.954
+20.8,47.2,11,7.5,0.03,0.987,9.0,1,0.945
+50.3,108.4,7,8.9,0.79,0.999,9.3,1,0.997
+99.3,207.5,13,9.3,0.8,0.997,9.7,1,0.996
+197.2,412.4,8,9.6,0.73,0.999,10.0,1,0.997

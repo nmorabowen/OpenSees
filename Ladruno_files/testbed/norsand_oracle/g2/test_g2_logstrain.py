@@ -198,6 +198,15 @@ def _make_cases():
     out["TXE_drained_fork_20pct"] = dict(P=Pe, v0=v0e, pi0=KP.DENSE[0], sigma0=SIG0,
                                          logdeps=lambda P=Pe, v0=v0e: drained_logdeps_finite(
                                              P, SIG0, v0, KP.DENSE[0], math.log(1.2), 40))
+    # round 3b: the HAR energy (TIMs set, n = 1/2, fork CSL; D12 != 0 and q/eps_s != D22 live) under LogStrain: a drained TXC (15 %) and a
+    # drained TXE (5 %), volume-changing both (the v = v0 J gate has power on them: x^2/2 >= 1e-5 for |ln J| >= 4.5e-3).  The
+    # specific volume, the Kirchhoff/Cauchy plumbing, the finite-mode equality and the (S.34) tangent are the same gates as K2's.
+    for lab, ax in (("HAR_TXC_drained_15pct", math.log(0.85)), ("HAR_TXE_drained_5pct", math.log(1.05))):
+        ch = KP.case("tims", "drained", KP.DENSE, 24, ax=0.0)
+        Ph = KP.o2_params(ch)
+        v0h = KP.v0_of(Ph, ch)
+        out[lab] = dict(P=Ph, v0=v0h, pi0=KP.DENSE[0], sigma0=SIG0,
+                        logdeps=lambda P=Ph, v0=v0h, ax=ax: drained_logdeps_finite(P, SIG0, v0, KP.DENSE[0], ax, 24))
     return out
 
 
@@ -744,6 +753,80 @@ def test_provider_identity_committed_be_is_exp_two_eps_e(alpha0):
     e_eps = float(np.abs(hencky_hold - eps_rot).max() / np.abs(eps_rot).max())
     print(f"\nalpha0 = {alpha0}: |exp(2 hencky_hold) - exp(2 eps_e)| / max|b| = {e_b:.2e};  max|hencky_hold - eps_e| / "
           f"max|eps_e| = {e_eps:.2e};  shear eps_e = {eps_rot[3:]}")
+    assert e_b <= B_IDENT_TOL, e_b
+    assert e_eps <= 1.0e-11, e_eps
+
+
+# ----------------------------------------------------------------------------------------------
+# round 3b: objectivity under the HAR energy (the shear modulus G = g p_a (varpi/p_a)^n is pressure dependent and
+# D12 != 0, so the inv(D0) recovery would NOT be objective: only the provider route (eps^e of the inner) is)
+# ----------------------------------------------------------------------------------------------
+F1_STRETCH_HAR = np.array([1.0 + 1.6e-4, 1.0 - 4.0e-4, 1.0])      # 10 steps: plastic, pi_i moved 0.73 of |pi_i0| (scan on O2 finite mode)
+V0_HAR_ROT, PI0_HAR_ROT = None, KP.DENSE[0]
+
+
+def har_rotation_params():
+    return KP.o2_params(KP.case("tims", "drained", KP.DENSE, 30, ax=0.0))
+
+
+def har_rotation(R, nsteps=10, R2=None):
+    P = har_rotation_params()
+    v0 = KP.v0_of(P, KP.case("tims", "drained", KP.DENSE, 30, ax=0.0))
+    return P, v0, drive_rotation(lambda Fs: G.build_finite(G.norsand_args(P, v0, PI0_HAR_ROT, SIG0), Fs),
+                                 F1_STRETCH_HAR, R, nsteps, R2=R2)
+
+
+def har_rotation_violation(nsteps=10, theta=0.2):
+    """As rigid_rotation_violation, on the TIMs HAR set (sheet 2.3-2.4; closed form: objectivity of a rigid rotation)."""
+    R = rot_z(theta)
+    R2 = rot_axis((0.3, -1.0, 0.5), 0.35)
+    P, v0, r = har_rotation(R, nsteps, R2=R2)
+    b, a, a2, h = r["before"], r["rot"], r["rot2"], r["hold"]
+    exp = R @ b["sig"] @ R.T
+    exp2 = R2 @ a["sig"] @ R2.T
+    scale = float(np.abs(b["sig"]).max())
+    return dict(stress=float(np.abs(a["sig"] - exp).max() / scale), pi_i=abs(a["state"][0] - b["state"][0]) / abs(b["state"][0]),
+                v=abs(a["state"][2] - b["state"][2]), size=float(np.abs(exp - b["sig"]).max()),
+                stress2=float(np.abs(a2["sig"] - exp2).max() / scale), pi_i2=abs(a2["state"][0] - b["state"][0]) / abs(b["state"][0]),
+                size2=float(np.abs(exp2 - a["sig"]).max()), hold_stress=float(np.abs(h["sig"] - exp2).max() / scale),
+                hold_pi_i=abs(h["state"][0] - b["state"][0]) / abs(b["state"][0]),
+                eps_p_s=float(b["state"][5]), pi_i_moved=abs(b["state"][0] - PI0_HAR_ROT) / abs(PI0_HAR_ROT))
+
+
+def test_rigid_rotation_is_objective_under_the_har_energy():
+    """Round 3b / sheet 2.3-2.4 item (7) 'LogStrain provider: unchanged'.  The HAR shear modulus is pressure dependent (and D12 != 0), so
+    objectivity needs the PROVIDED elastic strain (owner decision 2, option c), exactly as for BA06 alpha0 != 0.  Closed form: a 0.2 rad
+    rigid rotation after 10 plastic steps leaves pi_i, v unchanged and rotates the stress, sigma' = R sigma R^T (1e-10 relative to
+    max|sigma|; pi_i 1e-10; v 1e-12), a SECOND oblique rotation (0.35 rad about (0.3, -1, 0.5)) again (1e-10) and one held step leaves
+    that state unchanged (1e-10).  The history is plastic (eps_p_s > 0) with pi_i moved by > 1e-3 |pi_i0| and the rotations move the stress
+    by > 1 kPa (non-vacuity, as in the BA06 gates).
+    Kills: the provider route disabled for HAR (the inv(D0) fallback with the HAR D0 at p_a: not objective), the provider returning the
+    BA06 elastic strain, a tensor-vs-engineering shear slip in the HAR elastic strain, committed b^e from the wrong strain."""
+    e = har_rotation_violation()
+    print(f"\nHAR: rotation 0.2 rad (|dsigma| = {e['size']:.2f} kPa): stress {e['stress']:.2e} pi_i {e['pi_i']:.2e} v {e['v']:.2e}"
+          f" | second rotation (|dsigma| = {e['size2']:.2f} kPa): stress {e['stress2']:.2e} pi_i {e['pi_i2']:.2e}"
+          f" | held: stress {e['hold_stress']:.2e} pi_i {e['hold_pi_i']:.2e}")
+    assert e["size"] > 1.0 and e["size2"] > 1.0 and e["eps_p_s"] > 0.0 and e["pi_i_moved"] > 1.0e-3
+    assert e["stress"] <= ROT_TOL and e["pi_i"] <= ROT_TOL and e["v"] <= V_ROT_TOL, e
+    assert e["stress2"] <= ROT_TOL and e["pi_i2"] <= ROT_TOL, e
+    assert e["hold_stress"] <= ROT_TOL and e["hold_pi_i"] <= ROT_TOL, e
+
+
+def test_provider_identity_under_har_committed_be_is_exp_two_eps_e():
+    """As the BA06 provider identity, on the HAR set: after 10 plastic steps and an OBLIQUE-axis rigid rotation (0.2 rad about (1, 2, 3)),
+    one held step reports the Hencky strain 1/2 ln b^e_committed; exp(2 hencky_hold) == expm(2 eps^e_rot) with eps^e_rot the inner's own
+    `elasticStrain` at the rotation step (3x3 tensors, 1e-12 relative to max|b|) and component by component to 1e-11 of max|eps|.
+    Kills: the provider route disabled (HAR's eps^e recovered as inv(D0) : tau), shear not doubled in the provided strain, the committed
+    instead of the trial eps^e."""
+    R = rot_axis((1.0, 2.0, 3.0), 0.2)
+    P, v0, r = har_rotation(R)
+    eps_rot, hencky_hold = r["rot"]["eps_e"], r["hold"]["hencky"]
+    assert np.abs(eps_rot[3:]).min() > 1.0e-8, f"all three shear components must be non-trivial: {eps_rot}"
+    b_exp = expm(2.0 * _tensor_from_eng(eps_rot))
+    b_obs = expm(2.0 * _tensor_from_eng(hencky_hold))
+    e_b = float(np.abs(b_obs - b_exp).max() / np.abs(b_exp).max())
+    e_eps = float(np.abs(hencky_hold - eps_rot).max() / np.abs(eps_rot).max())
+    print(f"\nHAR: |exp(2 hencky_hold) - exp(2 eps_e)| / max|b| = {e_b:.2e};  max|hencky_hold - eps_e| / max|eps_e| = {e_eps:.2e}")
     assert e_b <= B_IDENT_TOL, e_b
     assert e_eps <= 1.0e-11, e_eps
 

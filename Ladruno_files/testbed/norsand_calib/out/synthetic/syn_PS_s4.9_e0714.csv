@@ -2,7 +2,7 @@
 # kind: PS
 # sigma3_kPa: 4.9
 # e0: 0.714
-# source: SYNTHETIC: O2 PS driver, THETA_TRUE {'chi': -3.0, 'h': 150.0, 'N': 0.3, 'N_bar': 0.2, 'rho': 0.712, 'rho_bar': 0.75}, sand 'Toyoura (DM04 Table 1 as recalled, p_a 101: smoke placeholder; real fits use toyoura_dm04())', energy BA06 per_test, 2026-10-02
+# source: SYNTHETIC: O2 PS driver at 0.05 % steps, THETA_TRUE {'chi': -3.0, 'h': 150.0, 'N': 0.3, 'N_bar': 0.2, 'rho': 0.712, 'rho_bar': 0.75}, sand 'Toyoura (DM04 Table 1 as recalled, p_a 101: smoke placeholder; real fits use toyoura_dm04())', energy BA06 per_test, no noise, 2026-10-03
 # phi_peak_deg: 51.90407013688206
 # eps_peak_pct: 3.895766637778197
 # eps_v_convention: dilation_negative

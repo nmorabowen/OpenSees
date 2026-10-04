@@ -42,7 +42,10 @@
 // namespace detail mirrors the O2 function of the same name, expression by
 // expression, so a parity diff is line-by-line traceable:
 //   ww_theta, ga_theta, zeta_y          kernel.py §4   (S.8)-(S.11), corner branch (S.9)
-//   elastic, invert_elastic             kernel.py §2   BA06 energy (S.3)-(S.5)
+//   elastic, invert_elastic,            kernel.py §2   BA06 energy (S.3)-(S.5) (default) and the HAR option
+//     energy_psi                                         (S.4h)-(S.5h'') (sheet §2.3-§2.4)
+//   floor_ev, floor_project,            kernel.py §9.7 the p' floor Pi_f (S.48), closed forms (S.49) BA06 /
+//     floor_energy, floor_op4                            (S.50) HAR, block (S.51a), unit spin, E_f (S.52)
 //   invariants                          kernel.py §3   (S.1),(S.6),(S.7), vertex rule §3.2
 //   eta_of, pi_of_eta, yield_p          kernel.py §5   (S.12)-(S.13)
 //   csl                                 kernel.py §6   (S.22), paper / fork CSL
@@ -103,12 +106,63 @@
 //   * initialState() also refuses pi_i0 >= 0 and a non-positive / non-finite v0
 //     (O2 would refuse at the first step instead); validate() also refuses a
 //     non-finite parameter (after O2's own checks, which run first and in O2's order).
+//   * round 3b: the per-increment floor energy E_f (S.52) is returned in StepInfo::E_f (summed
+//     over the increment's floor events in O2's event order) where O2 computes it on demand from
+//     the stored events (api.floor_energy); same numbers. elasticTangent() of a fresh FLOORED
+//     initial state is the full a^e (the compressive branch); O2's tangent() of its initial state
+//     is a^e Phi_init. The §2.4 parser refusals that need "was the flag given" information are
+//     the shell's (header ENERGY OPTION); every other O2 refusal (incl. the (S.53) §7 guard,
+//     initialState 107) is the kernel's.
+//
+// ENERGY OPTION (sheet §2.3-§2.4, owner decision (a) 2026-10-02). Params::energy = 0 (BA06, the
+// default and the paper mode: p0, kappa_hat, eps_v0, mu0, alpha0) or 1 (HAR, Houlsby-Amorosi-Rojas
+// 2005: k, g, n_e, p_a; HAR REPLACES alpha0 and the four other BA06 values are not read; n_e = 1/2 for
+// TIMs/Toyoura). p_a is ONE parameter shared by the HAR energy and the fork CSL (round 3b, A4; TIMs:
+// 101 kPa). Under HAR the strain domain is eps* = 1/(k(1-n)) - eps_v > 0: elastic() returns
+// EE_ELASTIC_DOMAIN outside it (an evaluation failure: a line-search backtrack at a local iterate, a
+// floor event at the trial when p_min > 0, the refusal "trial_elastic_domain" when p_min = 0). The
+// reference pressure of the §9.1 scalings is p_ref = |p0| (BA06) or p_a (HAR): F_tol = 1e-10 p_ref,
+// r4 / p_ref, and the p_min default 5e-3 p_ref (pRef(), defaultPmin()). (S.3) is used IN FULL (q/eps_s
+// != D22 under HAR). The §2.4 PARSER refusals that need "was this flag given" (a BA06 value given with
+// -energy HAR; k/g/n given with BA06) are the shell's: the kernel struct cannot tell given from zero.
+//
+// THE p' FLOOR (sheet §9.7, owner decisions (b), (c), 2026-10-03). Params::p_min >= 0; 0 = off (the
+// pre-round-3 refusals). Pi_f (S.48), the strain-space projection at fixed deviatoric elastic strain
+// onto p = -p_min, acts at the TRIAL (step 1f: before any stress is formed, a HAR out-of-domain trial
+// included) and AFTER CONVERGENCE (step 5f) of every (sub-)increment, NEVER inside the local Newton or
+// the nested pi_i solve; it never refuses. The pattern of a sub-increment is (F|-)(P|E)(f|-): trial
+// floored / plastic / post floored; FPf (trial floored, plastic, post floored) is an ordinary outcome
+// under HAR (round 3b, A1). No F <= F_tol is asserted at a floored committed state (A5). The tangent is
+// the EXACT linearisation (owner decision (c)): (S.32f) for m = 1 (b -> b Phi_tr, the v-column on the RAW
+// trial, Phi_post and a^e at the post-floored state), the chain (S.54) for m >= 2; delta : C = 0 when the
+// last operator applied is an active Pi_f (no bulk stiffness is invented here). Counters: State
+// (cumulative, committed) eps_f_v, W_f = p_min eps_f_v (always counted), n_f_tr, n_f_post, n_f_init,
+// at_floor; StepInfo (the increment) floor_tr, floor_post (summed over sub-increments), at_floor,
+// deps_f_v, W_f, E_f. E_f (S.52) is a DIAGNOSTIC of the increment: the closed-form Psi((S.4)/(S.4h))
+// difference over its floor events, evaluated only when an event fired, never fed back into the state,
+// the tangent or a refusal decision (the bound p_min deps_f_v for an out-of-domain HAR trial).
+//
+// INITIAL IMAGE PRESSURE (sheet §5.4 (S.53), owner decision (d)). initialState() projects the inverted
+// sigma0 with Pi_f (counted, n_f_init = 1; sigma0 is then replaced by sigma(eps_f)), and pi_i0 = NaN
+// selects the UNIFIED rule: the surface through (p_init, max(eta_init, c2 M)) with c2 := 0 for cap = none
+// (identical to the pre-round-3 rule there), refused if the §7 guard B <= 0 fails at (pi_i0, psi_i0).
+// pi0_rule = PI0_LEGACY restores the pre-round-3 rule (eta* = eta_init). A finite pi_i0 overrides both.
+//
+// PARAMETER NAMES (the shell reads them from here; struct Params below). BA06: p0, kappa_hat, eps_v0, mu0,
+// alpha0. HAR: energy = 1, k, g, n_e, p_a. Floor: p_min (the shell's default is defaultPmin(P) =
+// 5e-3 p_ref; the struct default 0 is OFF, so a Params built field by field without it is the
+// pre-round-3 model). Yield / potential: M, N, N_bar, rho, rho_bar, zeta. Hardening: chi, h. CSL:
+// csl_mode, lambda_tilde, v_c0 (paper), e0, lambda_c, xi, p_a (fork). Cap: cap, c1, c2.
 //
 // NUMERICAL CONTRACT (O2 kernel.py constants, reproduced exactly): RES_TOL 1e-12,
 // MAX_LOCAL_ITERS 30, MAX_LINESEARCH 10, PI_TOL_REL 1e-12, MAX_PI_ITERS 50,
 // PI_SCAN_REL 1e-3, PI_SCAN_MAX 1000, MAX_SUBSTEP_HALVINGS 8, R_TOL_REL 1e-8,
 // CORNER_SIN3T 1e-8, F_TRIAL_TOL_REL 1e-10, EPS_S_TOL 1e-14, REPEATED_EIG_TOL 1e-10,
-// PI_MAX_NEG 0. Bounded work: one step() is at most 2^9 - 1 = 511 backward-Euler
+// PI_MAX_NEG 0; floor: FLOOR_ACT_TOL 1e-12, AT_FLOOR_TOL 1e-10, FLOOR_X_TOL 1e-14,
+// FLOOR_X_MAX_ITERS 100 (the general-n HAR floor root; its bracket is exact, so it never refuses).
+// validate() refuses a smooth cap narrower than the nested scan (S.56): PI_SCAN_REL <= W_ramp/10,
+// W_ramp = 1 - pi_i(eta_1)/pi_i(eta_2), cap = smooth ONLY (planar / none have no ramp; round 3b, A3).
+// Bounded work: one step() is at most 2^9 - 1 = 511 backward-Euler
 // solves, each at most 1 + 30 x 11 residual evaluations, each with a nested solve of
 // at most 1000 scan + 50 safeguarded-Newton evaluations of r(pi_i); hitting any bound
 // REFUSES (returns a nonzero refusal), it never force-accepts.
@@ -148,12 +202,20 @@ namespace ladruno_norsand {
 
 // Parameter names follow sheet 144a §1.3. csl_mode 0 = paper (log), 1 = fork (power);
 // zeta 0 = Willam-Warnke, 1 = Gudehus-Argyris; cap 0 = none, 1 = planar, 2 = smooth.
+// energy 0 = BA06 (p0, kappa_hat, eps_v0, mu0, alpha0), 1 = HAR (k, g, n_e, p_a; header ENERGY OPTION).
+// p_min: the p' floor (header THE p' FLOOR), 0 = off. The round-3 members carry default member
+// initialisers (BA06, no floor): a Params filled field by field without them is the pre-round-3 model.
 struct Params {
   double p0, kappa_hat, eps_v0, mu0, alpha0, M, N, N_bar, rho, rho_bar, chi, h,
          lambda_tilde, v_c0, e0, lambda_c, xi, p_a, c1, c2;
   int csl_mode; /*0 paper, 1 fork*/
   int zeta;     /*0 WW, 1 GA*/
   int cap;      /*0 none, 1 planar, 2 smooth*/
+  int energy = 0;       /*0 BA06 (default), 1 HAR*/
+  double k = 0.0;       // HAR bulk stiffness factor (dimensionless, > 0)
+  double g = 0.0;       // HAR shear stiffness factor (dimensionless, > 0)
+  double n_e = 0.0;     // HAR pressure exponent, 0 <= n_e < 1 (1/2 for TIMs)
+  double p_min = 0.0;   // p' floor (>= 0; 0 = off; the deck default is defaultPmin(P))
 };
 
 // eps_e: tensor components {00,11,22,01,12,02}. pi_i < 0 image pressure; v specific
@@ -161,6 +223,10 @@ struct Params {
 // separate committed datum, plan §2.8; it enters no update and no derivative);
 // eps_p_v / eps_p_s accumulated plastic volumetric / deviatoric (sum dlam sqrt(2/3) Omega)
 // strains; D_last the plastic dissipation of the last step (sum over its sub-steps).
+// Floor counters (sheet §9.7, cumulative over the history, committed with the state): eps_f_v =
+// sum of d eps^f_v (init, trial and post events), W_f = p_min eps_f_v (the energy-source bound,
+// always counted), n_f_tr / n_f_post the numbers of trial / post floor events, n_f_init = 1 if
+// initialState projected, at_floor = (p > -p_min (1 + AT_FLOOR_TOL)) at this state.
 struct State {
   double eps_e[6];
   double pi_i;
@@ -169,10 +235,19 @@ struct State {
   double eps_p_v;
   double eps_p_s;
   double D_last;
+  double eps_f_v;
+  double W_f;
+  int n_f_tr;
+  int n_f_post;
+  int n_f_init;
+  int at_floor;
 };
 
 enum Refusal { OK = 0, LOCAL_NOCONV, LOCAL_LINESEARCH, PI_NOBRACKET, PI_NOCONV, B_NONPOS,
                P_OR_PI_NONNEG, NEGATIVE_DLAMBDA, SUBSTEPS_EXHAUSTED };
+
+// initialState pi_i0 = NaN rule (sheet §5.4): unified (S.53) (default) or the pre-round-3 rule.
+enum Pi0Rule { PI0_UNIFIED = 0, PI0_LEGACY = 1 };
 
 // refusal: OK, or SUBSTEPS_EXHAUSTED for every refusal that went down the substep ladder
 // (by O2's contract every refused increment does: O2's reason suffix "(substeps
@@ -182,6 +257,11 @@ enum Refusal { OK = 0, LOCAL_NOCONV, LOCAL_LINESEARCH, PI_NOBRACKET, PI_NOCONV, 
 // plastic: any sub-step plastic; vertex / cap_active: the last sub-step's;
 // local_iters / pi_iters: sums over the sub-steps; substeps: 1 = none, 2^k used,
 // 256 on exhaustion. On a refusal the flags are those of the whole-increment attempt.
+// Floor (sheet §9.7; all 0 on a refusal: a refused increment counts nothing): floor_tr /
+// floor_post the numbers of trial / post floor events of the increment (each sub-increment
+// contributes 0 or 1), at_floor of the returned state, deps_f_v the increment's sum of
+// d eps^f_v, W_f the CUMULATIVE p_min eps_f_v of the returned state, E_f the increment's floor
+// energy (S.52) (header THE p' FLOOR; <= p_min deps_f_v).
 struct StepInfo {
   int refusal;
   int plastic;
@@ -192,11 +272,21 @@ struct StepInfo {
   int substeps;
   int finest;
   int finest_sub;
+  int floor_tr;
+  int floor_post;
+  int at_floor;
+  double deps_f_v;
+  double W_f;
+  double E_f;
 };
 
 inline int validate(const Params& P, std::string& msg, bool& warn_rho_gt_rhobar);
 inline int initialState(const Params& P, const double sigma0[6], double v0, double pi_i0,
-                        State& out, std::string& msg);
+                        State& out, std::string& msg, int pi0_rule = PI0_UNIFIED);
+// p_ref = |p0| (BA06) or p_a (HAR): the §9.1 scalings (sheet §2.4).
+inline double pRef(const Params& P) { return P.energy == 1 ? P.p_a : std::fabs(P.p0); }
+// The deck default of the floor, 5e-3 p_ref (sheet §1.3, §9.7): 0.5 kPa (K2), 0.505 kPa (TIMs).
+inline double defaultPmin(const Params& P) { return 5.0e-3 * pRef(P); }
 inline int step(const Params& P, const State& n, const double deps[6], State& np1,
                 double sigma[6], double C[6][6], StepInfo& info);
 inline void stress(const Params& P, const State& s, double sigma[6]);
@@ -220,6 +310,11 @@ constexpr double F_TRIAL_TOL_REL = 1.0e-10;
 constexpr double EPS_S_TOL = 1.0e-14;
 constexpr double REPEATED_EIG_TOL = 1.0e-10;
 constexpr double PI_MAX_NEG = 0.0;
+// §9.7 floor (o2_algo/kernel.py FLOOR_*)
+constexpr double FLOOR_ACT_TOL = 1.0e-12;   // active: p > -p_min (1 - FLOOR_ACT_TOL) or outside dom Psi
+constexpr double AT_FLOOR_TOL = 1.0e-10;    // at_floor := p > -p_min (1 + AT_FLOOR_TOL)
+constexpr double FLOOR_X_TOL = 1.0e-14;     // general-n HAR floor root: |f(x)| <= FLOOR_X_TOL (b + a x^2n)
+constexpr int    FLOOR_X_MAX_ITERS = 100;
 constexpr int    JACOBI_MAX_SWEEPS = 50;
 constexpr double PI_ = 3.14159265358979323846;   // == Python math.pi
 
@@ -229,8 +324,9 @@ inline double SQ6() { return std::sqrt(6.0); }
 
 // Evaluation failures (O2's EvalError strings). Raised inside the residual evaluation
 // only; turned into a line-search backtrack or a refusal by return_map.
+// EE_ELASTIC_DOMAIN: a HAR strain with eps* <= 0 (O2 EvalError('elastic_domain'), sheet §2.4).
 enum EvalErr { EE_NONE = 0, EE_P_OR_PI_NONNEG, EE_PI_NONNEG, EE_B_NONPOS, EE_PI_FOLD,
-               EE_PI_NOBRACKET, EE_PI_NOCONV, EE_NONFINITE, EE_SINGULAR_J };
+               EE_PI_NOBRACKET, EE_PI_NOCONV, EE_NONFINITE, EE_SINGULAR_J, EE_ELASTIC_DOMAIN };
 
 inline const char* evalErrName(int e)
 {
@@ -244,6 +340,7 @@ inline const char* evalErrName(int e)
     case EE_PI_NOCONV: return "pi_noconv";
     case EE_NONFINITE: return "nonfinite";
     case EE_SINGULAR_J: return "singular_J";
+    case EE_ELASTIC_DOMAIN: return "elastic_domain";
     default: return "?";
   }
 }
@@ -269,7 +366,8 @@ inline int refusalOfLocalErr(int e)
 {
   switch (e) {
     case EE_P_OR_PI_NONNEG:
-    case EE_PI_NONNEG: return P_OR_PI_NONNEG;
+    case EE_PI_NONNEG:
+    case EE_ELASTIC_DOMAIN: return P_OR_PI_NONNEG;   // no own code (unreachable at dlam = 0: the trial is in dom Psi)
     case EE_B_NONPOS: return B_NONPOS;
     case EE_PI_NOBRACKET: return PI_NOBRACKET;
     case EE_PI_NOCONV: return PI_NOCONV;
@@ -280,6 +378,15 @@ inline int refusalOfLocalErr(int e)
 
 inline double beta(const Params& P) { return (1.0 - P.N) / (1.0 - P.N_bar); }
 inline double chi_bar(const Params& P) { return P.chi / beta(P); }
+
+// (S.56) ramp width of the smooth cap in pi_i at fixed p, W_ramp = 1 - pi_i(eta_1)/pi_i(eta_2) (round 3b, A2;
+// 0.0606 on the K2 defaults); 0 for planar and no cap (O2 Params.W_ramp).
+inline double w_ramp(const Params& P)
+{
+  if (P.cap != 2) return 0.0;               // planar (c1 = c2) and no cap: no ramp
+  if (P.N == 0.0) return 1.0 - std::exp(-(P.c2 - P.c1));
+  return 1.0 - std::pow((1.0 - P.c2 * P.N) / (1.0 - P.c1 * P.N), (1.0 - P.N) / P.N);
+}
 
 // --------------------------------------------------------------------------------
 // small dense linear algebra
@@ -491,34 +598,64 @@ inline void zeta_y(double theta, double rho, int kind, double& z, double& zy, do
 }
 
 // --------------------------------------------------------------------------------
-// §2 BA06 energy in principal elastic strains
+// §2 elastic energy in principal elastic strains: BA06 (S.4)-(S.5) default, HAR (S.4h)-(S.5h') option
 // --------------------------------------------------------------------------------
 struct Elastic {
   double eps_v, eps_s, nhat_e[3], p, q, D11, D12, D22, sig[3], ae[3][3];
 };
 
-inline void elastic(const Params& P, const double eps_e[3], Elastic& el)
+// eps* = 1/(k(1-n)) - eps_v (S.4h); the HAR domain is eps* > 0 (p < 0). O2 _har_estar.
+inline double har_estar(const Params& P, double ev) { return 1.0 / (P.k * (1.0 - P.n_e)) - ev; }
+
+// O2 _split: eps_v, eps_s, n_hat^e (0 when eps_s <= EPS_S_TOL).
+inline void split(const double eps_e[3], double& ev, double& es, double nh[3])
 {
-  const double ev = (eps_e[0] + eps_e[1]) + eps_e[2];
+  ev = (eps_e[0] + eps_e[1]) + eps_e[2];
   double e[3];
   for (int a = 0; a < 3; ++a) e[a] = eps_e[a] - ev / 3.0;
   const double ne = std::sqrt(e[0] * e[0] + e[1] * e[1] + e[2] * e[2]);
-  const double es = SQ23() * ne;
-  double nh[3];
+  es = SQ23() * ne;
   for (int a = 0; a < 3; ++a) nh[a] = (es > EPS_S_TOL) ? e[a] / ne : 0.0;
-  const double om = -(ev - P.eps_v0) / P.kappa_hat;
-  const double E = std::exp(om);
-  const double p = P.p0 * E * (1.0 + 1.5 * P.alpha0 / P.kappa_hat * es * es);
-  const double q = 3.0 * (P.mu0 - P.alpha0 * P.p0 * E) * es;
-  const double D11 = -p / P.kappa_hat;
-  const double D22 = 3.0 * P.mu0 - 3.0 * P.alpha0 * P.p0 * E;
-  const double D12 = 3.0 * P.p0 * P.alpha0 * es / P.kappa_hat * E;
+}
+
+// p, q, D and a^e_ab (S.3) at the principal elastic strains. BA06: (S.5). HAR: (S.5h)/(S.5h'), (S.3) in
+// FULL (q/eps_s != D22; the eps_s -> 0 limit q/eps_s := 3 g p_a (|p|/p_a)^n = D22|q=0 is exact). Returns
+// EE_ELASTIC_DOMAIN for a HAR strain with eps* <= 0 (el untouched), EE_NONE otherwise.
+inline int elastic(const Params& P, const double eps_e[3], Elastic& el)
+{
+  double ev, es, nh[3];
+  split(eps_e, ev, es, nh);
+  double p, q, D11, D12, D22, ratio;
+  if (P.energy == 1) {
+    const double k = P.k, g = P.g, n = P.n_e, pa = P.p_a;
+    const double kn = k * (1.0 - n);
+    const double est = har_estar(P, ev);
+    if (est <= 0.0) return EE_ELASTIC_DOMAIN;
+    const double u = std::sqrt(est * est + 3.0 * g * es * es / kn);
+    const double w = std::pow(kn * u, n / (1.0 - n));                  // = (varpi/p_a)^n
+    p = -pa * kn * est * w;                                              // (S.5h)
+    q = 3.0 * g * pa * es * w;
+    const double r2 = std::pow(est / u, 2.0);                            // p^2/varpi^2 = 1/Z
+    const double varpi2 = std::pow(pa * std::pow(kn * u, 1.0 / (1.0 - n)), 2.0);
+    D11 = k * pa * w * (1.0 - n + n * r2);                               // (S.5h')
+    D22 = (3.0 * g / (1.0 - n)) * pa * w * (1.0 - n * r2);
+    D12 = n * k * p * q * pa * w / varpi2;
+    ratio = 3.0 * g * pa * w;                                            // q/eps_s, exact also at eps_s = 0
+  } else {
+    const double om = -(ev - P.eps_v0) / P.kappa_hat;
+    const double E = std::exp(om);
+    p = P.p0 * E * (1.0 + 1.5 * P.alpha0 / P.kappa_hat * es * es);
+    q = 3.0 * (P.mu0 - P.alpha0 * P.p0 * E) * es;
+    D11 = -p / P.kappa_hat;
+    D22 = 3.0 * P.mu0 - 3.0 * P.alpha0 * P.p0 * E;
+    D12 = 3.0 * P.p0 * P.alpha0 * es / P.kappa_hat * E;
+    ratio = (es > EPS_S_TOL) ? q / es : D22;                             // eps_s -> 0 limit (S.3 note)
+  }
   el.eps_v = ev; el.eps_s = es; el.p = p; el.q = q; el.D11 = D11; el.D12 = D12; el.D22 = D22;
   for (int a = 0; a < 3; ++a) {
     el.nhat_e[a] = nh[a];
     el.sig[a] = p + SQ23() * q * nh[a];
   }
-  const double ratio = (es > EPS_S_TOL) ? q / es : D22;     // eps_s -> 0 limit (S.3 note)
   for (int a = 0; a < 3; ++a)
     for (int b = 0; b < 3; ++b) {
       const double t1 = D11;
@@ -527,6 +664,7 @@ inline void elastic(const Params& P, const double eps_e[3], Elastic& el)
       const double t4 = (2.0 * ratio / 3.0) * (((a == b ? 1.0 : 0.0) - 1.0 / 3.0) - nh[a] * nh[b]);
       el.ae[a][b] = ((t1 + t2) + t3) + t4;
     }
+  return EE_NONE;
 }
 
 inline bool elastic_finite(const Elastic& el)
@@ -537,9 +675,31 @@ inline bool elastic_finite(const Elastic& el)
   return true;
 }
 
-// Principal elastic strains from principal stresses (Newton on (eps_v, eps_s) with the
-// 2x2 Hessian; closed form when alpha0 = 0). Used by initialState only.
-// Returns 0, or 1 if p >= 0, or 2 if the 2x2 Hessian is singular / non-finite.
+// Psi: (S.4) BA06 or (S.4h) HAR (O2 energy_psi), for the floor energy E_f (S.52). EE_ELASTIC_DOMAIN outside
+// eps* > 0 under HAR (the mirror branch is unphysical).
+inline int energy_psi(const Params& P, const double eps_e[3], double& psi)
+{
+  double ev, es, nh[3];
+  split(eps_e, ev, es, nh);
+  if (P.energy == 1) {
+    const double k = P.k, g = P.g, n = P.n_e, pa = P.p_a;
+    const double kn = k * (1.0 - n);
+    const double est = har_estar(P, ev);
+    if (est <= 0.0) return EE_ELASTIC_DOMAIN;
+    const double u = std::sqrt(est * est + 3.0 * g * es * es / kn);
+    psi = pa / (k * (2.0 - n)) * std::pow(kn * u, (2.0 - n) / (1.0 - n));
+    return EE_NONE;
+  }
+  const double om = -(ev - P.eps_v0) / P.kappa_hat;
+  const double Pt = -P.p0 * P.kappa_hat * std::exp(om);
+  const double mu = P.mu0 + P.alpha0 / P.kappa_hat * Pt;
+  psi = Pt + 1.5 * mu * es * es;
+  return EE_NONE;
+}
+
+// Principal elastic strains from principal stresses. BA06: Newton on (eps_v, eps_s) with the
+// 2x2 Hessian, closed form when alpha0 = 0. HAR: the closed form (S.5h'') (every p < 0, q >= 0).
+// Used by initialState only. Returns 0, or 1 if p >= 0, or 2 if the 2x2 Hessian is singular / non-finite.
 inline int invert_elastic(const Params& P, const double sig[3], double out[3])
 {
   const double p = ((sig[0] + sig[1]) + sig[2]) / 3.0;
@@ -550,6 +710,16 @@ inline int invert_elastic(const Params& P, const double sig[3], double out[3])
   double nh[3];
   for (int a = 0; a < 3; ++a) nh[a] = (R > 0.0) ? xi[a] / R : 0.0;
   if (!(p < 0.0)) return 1;
+  if (P.energy == 1) {
+    const double k = P.k, g = P.g, n = P.n_e, pa = P.p_a;
+    const double kn = k * (1.0 - n);
+    const double varpi = std::sqrt(p * p + kn * q * q / (3.0 * g));
+    const double evh = (1.0 / kn) * (1.0 - std::pow(std::fabs(p) / pa, 1.0 - n) * std::pow(std::fabs(p) / varpi, n));
+    const double esh = q / (3.0 * g * pa * std::pow(varpi / pa, n));      // (S.5h'')
+    for (int a = 0; a < 3; ++a) out[a] = evh / 3.0 + SQ32() * esh * nh[a];
+    if (!all_finite(out, 3)) return 2;
+    return 0;
+  }
   double ev = P.eps_v0 - P.kappa_hat * std::log(p / P.p0);
   double es = q / (3.0 * P.mu0);
   if (P.alpha0 != 0.0) {
@@ -570,6 +740,98 @@ inline int invert_elastic(const Params& P, const double sig[3], double out[3])
   for (int a = 0; a < 3; ++a) out[a] = ev / 3.0 + SQ32() * es * nh[a];
   if (!all_finite(out, 3)) return 2;
   return 0;
+}
+
+// --------------------------------------------------------------------------------
+// §9.7 the p' floor: Pi_f (S.48), closed forms (S.49) BA06 / (S.50) HAR, block (S.51a), E_f (S.52).
+// Applied at the trial (return_map step 1f) and after convergence (step 5f) ONLY.
+// --------------------------------------------------------------------------------
+struct FloorResult {
+  double eps_f[3];     // Pi_f(eps^e) (principal)
+  bool active;
+  double Phi[3][3];    // (S.51a) principal block d eps_f / d eps (identity when inactive); spin = 1 exactly
+  double dfv;          // d eps^f_v = eps_v - eps_v,f(eps_s) (0 when inactive)
+  bool in_domain;      // the PRE-floor strain was inside dom Psi (false only for a HAR trial with eps* <= 0)
+  double epsp;         // eps'_f = d eps_v,f / d eps_s
+};
+
+// eps_v,f(eps_s): the solution of p(eps_v, eps_s) = -p_min at fixed eps_s, and eps'_f (O2 floor_ev).
+inline void floor_ev(const Params& P, double es, double& ev_f, double& epsp)
+{
+  const double pmin = P.p_min;
+  if (P.energy == 1) {
+    const double k = P.k, g = P.g, n = P.n_e, pa = P.p_a;
+    const double kn = k * (1.0 - n);
+    const double a = 3.0 * kn * g * es * es;
+    const double b = std::pow(pmin / pa, 2.0);
+    double x;
+    if (n == 0.5) {
+      x = 0.5 * (a + std::sqrt(a * a + 4.0 * b));
+    } else {
+      const double tn = 2.0 * n;
+      const double xs = (a > 0.0) ? std::pow(n * a, 1.0 / (2.0 - tn)) : 0.0;   // the stationary point, f(x_s) < 0
+      const double xhi = std::fmax((a > 0.0) ? std::pow(2.0 * a, 1.0 / (2.0 - tn)) : 0.0, 2.0 * std::sqrt(b));
+      double lo = xs, hi = xhi;
+      x = hi;
+      for (int it = 0; it < FLOOR_X_MAX_ITERS; ++it) {
+        const double fx = x * x - a * std::pow(x, tn) - b;
+        if (std::fabs(fx) <= FLOOR_X_TOL * (b + a * std::pow(x, tn))) break;
+        if (fx > 0.0) hi = x;
+        else lo = x;
+        const double d = (x > 0.0) ? 2.0 * x - tn * a * std::pow(x, tn - 1.0) : 2.0 * x;
+        double xn = (d != 0.0) ? x - fx / d : 0.5 * (lo + hi);
+        if (!(lo < xn && xn < hi)) xn = 0.5 * (lo + hi);
+        x = xn;
+      }
+    }
+    const double xn_ = std::pow(x, n);
+    const double est_f = (pmin / pa) / (kn * xn_);
+    ev_f = 1.0 / kn - est_f;
+    const double q_f = 3.0 * g * pa * es * xn_;
+    epsp = n * pmin * q_f / ((1.0 - n) * pa * pa * x * x + n * pmin * pmin);
+    return;
+  }
+  const double fac = 1.0 + 1.5 * P.alpha0 * es * es / P.kappa_hat;
+  ev_f = P.eps_v0 - P.kappa_hat * std::log(pmin / (std::fabs(P.p0) * fac));
+  epsp = 3.0 * P.alpha0 * es / fac;
+}
+
+// Pi_f (S.48) (O2 floor_project): eps_f = eps - (eps_v - eps_v,f(eps_s))/3 1 if p(eps) > -p_min (1 - 1e-12) or
+// eps outside dom Psi, else eps. Co-axial, every eigenvalue difference preserved, idempotent; p_min = 0: off.
+inline void floor_project(const Params& P, const double eps_e[3], FloorResult& fr)
+{
+  for (int a = 0; a < 3; ++a) {
+    fr.eps_f[a] = eps_e[a];
+    for (int b = 0; b < 3; ++b) fr.Phi[a][b] = (a == b) ? 1.0 : 0.0;
+  }
+  fr.active = false; fr.dfv = 0.0; fr.in_domain = true; fr.epsp = 0.0;
+  if (P.p_min <= 0.0) return;
+  double ev, es, nh[3];
+  split(eps_e, ev, es, nh);
+  if (P.energy == 1 && har_estar(P, ev) <= 0.0) {
+    fr.in_domain = false;
+  } else {
+    Elastic el;
+    if (elastic(P, eps_e, el) == EE_NONE                     // in dom Psi here (always EE_NONE)
+        && el.p <= -P.p_min * (1.0 - FLOOR_ACT_TOL)) return;
+  }
+  double ev_f, epsp;
+  floor_ev(P, es, ev_f, epsp);
+  const double dfv = ev - ev_f;
+  for (int a = 0; a < 3; ++a) fr.eps_f[a] = eps_e[a] - dfv / 3.0;
+  for (int a = 0; a < 3; ++a)
+    for (int b = 0; b < 3; ++b)                                                  // (S.51a)
+      fr.Phi[a][b] = ((a == b ? 1.0 : 0.0) - 1.0 / 3.0) + (1.0 / 3.0) * epsp * SQ23() * nh[b];
+  fr.active = true; fr.dfv = dfv; fr.epsp = epsp;
+}
+
+// E_f (S.52) of one floor event (O2 floor_energy): Psi(eps_f) - Psi(eps_pre) for a pre-floor state in dom Psi;
+// the bound W_f = p_min dfv for an out-of-domain trial.
+inline double floor_energy(const Params& P, const double eps_pre[3], const double eps_f[3], double dfv)
+{
+  double psf, psp;
+  if (energy_psi(P, eps_f, psf) != EE_NONE || energy_psi(P, eps_pre, psp) != EE_NONE) return P.p_min * dfv;
+  return psf - psp;
 }
 
 // --------------------------------------------------------------------------------
@@ -904,10 +1166,11 @@ inline int evaluate(const Params& P, const double eps_e[3], double dlam, const d
   for (int a = 0; a < 3; ++a) pe.eps_e[a] = eps_e[a];
   pe.dlam = dlam;
   if (!all_finite(eps_e, 3) || !std::isfinite(dlam)) return EE_NONFINITE;
-  elastic(P, eps_e, pe.el);
+  int e = elastic(P, eps_e, pe.el);          // HAR eps* <= 0: an evaluation failure (sheet §2.4)
+  if (e) return e;
   if (!elastic_finite(pe.el)) return EE_NONFINITE;
   invariants(pe.el.sig, pe.inv);
-  int e = solve_pi(P, pe.inv, dlam, v, pi_n, pe.pi, pe.c, pe.pi_iters);
+  e = solve_pi(P, pe.inv, dlam, v, pi_n, pe.pi, pe.c, pe.pi_iters);
   if (e) return e;
   e = flow(P, pe.inv, pe.pi, pe.fl);
   if (e) return e;
@@ -930,10 +1193,11 @@ inline int evaluate(const Params& P, const double eps_e[3], double dlam, const d
   return EE_NONE;
 }
 
+// ||(r1, r2, r3, r4/p_ref)||_2, p_ref = |p0| (BA06) or p_a (HAR) (sheet §2.4).
 inline double scaled_norm(const Params& P, const double r[4])
 {
   return std::sqrt(std::pow(r[0], 2.0) + std::pow(r[1], 2.0) + std::pow(r[2], 2.0)
-                   + std::pow(r[3] / std::fabs(P.p0), 2.0));
+                   + std::pow(r[3] / pRef(P), 2.0));
 }
 
 // (S.30)
@@ -960,8 +1224,12 @@ inline void jacobian(const PointEval& pe, double J[4][4])
 // step's converged specific volume (exponential v-law, header SPECIFIC VOLUME; was v0 under the
 // linear law). The caller passes vfac equal to the v it passed to return_map.
 // b receives J^{-1} (reused by chain_data, sheet §9.6 (S.45)).
+// Floor (S.32f): a~^ep_f = a^e(eps^e_f) Phi_post [ b Phi_tr - u Pi_v v 1^T ]_{rows <= 3}: b_.b -> b Phi_tr (the
+// return map saw the FLOORED trial) while the v-column multiplies delta_b of the RAW trial strain; Phi_post and
+// ae_post at the post-floored state. Phi_tr / Phi_post = nullptr (inactive) take the exact (S.32) path.
 inline bool atilde_ep(const PointEval& pe, const double J[4][4], double vfac, double at[3][3],
-                      double b[4][4])
+                      double b[4][4], const double (*Phi_tr)[3] = nullptr,
+                      const double (*Phi_post)[3] = nullptr, const double (*ae_post)[3] = nullptr)
 {
   const Flow& fl = pe.fl;
   double s[4];
@@ -973,11 +1241,25 @@ inline bool atilde_ep(const PointEval& pe, const double J[4][4], double vfac, do
   for (int i = 0; i < 4; ++i)
     bs[i] = ((b[i][0] * s[0] + b[i][1] * s[1]) + b[i][2] * s[2]) + b[i][3] * s[3];
   double dxde[3][3];
-  for (int i = 0; i < 3; ++i)
-    for (int j = 0; j < 3; ++j) dxde[i][j] = b[i][j] - bs[i];
+  if (Phi_tr == nullptr) {
+    for (int i = 0; i < 3; ++i)
+      for (int j = 0; j < 3; ++j) dxde[i][j] = b[i][j] - bs[i];
+  } else {
+    for (int i = 0; i < 3; ++i)
+      for (int j = 0; j < 3; ++j)
+        dxde[i][j] = ((b[i][0] * Phi_tr[0][j] + b[i][1] * Phi_tr[1][j]) + b[i][2] * Phi_tr[2][j]) - bs[i];
+  }
+  if (Phi_post != nullptr) {
+    double A[3][3];
+    for (int i = 0; i < 3; ++i)
+      for (int j = 0; j < 3; ++j)
+        A[i][j] = (Phi_post[i][0] * dxde[0][j] + Phi_post[i][1] * dxde[1][j]) + Phi_post[i][2] * dxde[2][j];
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) dxde[i][j] = A[i][j];
+  }
+  const double (*ae)[3] = (ae_post == nullptr) ? pe.el.ae : ae_post;
   for (int a = 0; a < 3; ++a)
     for (int j = 0; j < 3; ++j)
-      at[a][j] = (pe.el.ae[a][0] * dxde[0][j] + pe.el.ae[a][1] * dxde[1][j]) + pe.el.ae[a][2] * dxde[2][j];
+      at[a][j] = (ae[a][0] * dxde[0][j] + ae[a][1] * dxde[1][j]) + ae[a][2] * dxde[2][j];
   for (int a = 0; a < 3; ++a) if (!all_finite(at[a], 3)) return false;
   return true;
 }
@@ -996,14 +1278,21 @@ struct ChainData {
 // O2 StepResult (the fields the kernel needs). reason: Refusal code of the refusal at
 // THIS backward-Euler solve (OK if accepted); sub: the EvalErr behind it (O2's
 // "trial_<e>", "local_<e>", "local_linesearch:<e>", "local_singular_J").
-// ae: a^e (S.3) at the converged eps_e (= atilde on an elastic step); ch: valid on an
-// accepted PLASTIC step only.
+// ae: a^e (S.3) at the COMMITTED (post-floored) eps_e (= atilde on an elastic step without a
+// floor); ch: valid on an accepted PLASTIC step only.
+// Floor bookkeeping (sheet §9.1 steps 1f / 5f; O2 StepResult): eps_seen the trial the return map
+// SAW (floored when floor_tr), eps_conv the converged eps^e BEFORE step 5f (= eps_e without a post
+// floor; = eps_seen on an elastic step), dfv_* the d eps^f_v of each event, Phi_* their (S.51a)
+// blocks (identity when inactive), ef_* their floor energies E_f (S.52) (0 when inactive).
 struct ReturnResult {
   double eps_e[3], sig[3], pi, dlam, q_a[3], Om, D, atilde[3][3], ae[3][3];
   bool plastic, vertex, cap_active, refused;
   int reason, sub;
   int local_iters, pi_iters;
   ChainData ch;
+  double eps_seen[3], eps_conv[3];
+  bool floor_tr, floor_post;
+  double dfv_tr, dfv_post, Phi_tr[3][3], Phi_post[3][3], ef_tr, ef_post;
 };
 
 // O2 chain_data: the (S.45) block data from the converged iterate and b = J^-1 of (S.30).
@@ -1025,6 +1314,18 @@ inline void chain_data(const PointEval& pe, const double b[4][4], ChainData& ch)
   ch.Pi_v = pe.Pi_v;
 }
 
+// The floor fields of R from the trial event (fr) with no post event (O2 return_map **fkw).
+inline void rr_floor(ReturnResult& R, const double eps_seen[3], const FloorResult& fr, double ef_tr)
+{
+  for (int a = 0; a < 3; ++a) {
+    R.eps_seen[a] = eps_seen[a]; R.eps_conv[a] = eps_seen[a];
+    for (int b = 0; b < 3; ++b) { R.Phi_tr[a][b] = fr.Phi[a][b]; R.Phi_post[a][b] = (a == b) ? 1.0 : 0.0; }
+  }
+  R.floor_tr = fr.active; R.floor_post = false;
+  R.dfv_tr = fr.dfv; R.dfv_post = 0.0; R.ef_tr = ef_tr; R.ef_post = 0.0;
+}
+
+// A refused step counts nothing (sheet §9.7): every floor field inactive.
 inline void rr_refuse(ReturnResult& R, const double eps_tr[3], const Elastic& el, double pi_n,
                       bool plastic, bool vertex, int reason, int sub, int it, int pit)
 {
@@ -1036,17 +1337,38 @@ inline void rr_refuse(ReturnResult& R, const double eps_tr[3], const Elastic& el
   R.pi = pi_n; R.dlam = 0.0; R.Om = 0.0; R.D = 0.0;
   R.plastic = plastic; R.vertex = vertex; R.cap_active = false; R.refused = true;
   R.reason = reason; R.sub = sub; R.local_iters = it; R.pi_iters = pit;
+  FloorResult none;
+  for (int a = 0; a < 3; ++a) {
+    none.eps_f[a] = eps_tr[a];
+    for (int b = 0; b < 3; ++b) none.Phi[a][b] = (a == b) ? 1.0 : 0.0;
+  }
+  none.active = false; none.dfv = 0.0; none.in_domain = true; none.epsp = 0.0;
+  rr_floor(R, eps_tr, none, 0.0);
 }
 
 // One backward-Euler step in principal space (sheet §9.1, O2 return_map). Never throws;
 // refusals come back in R.refused / R.reason / R.sub.
-inline void return_map(const Params& P, const double eps_tr[3], double pi_n, double v, double vfac,
+// Floor (§9.7, p_min > 0): step 1f projects the RAW trial eps_raw with Pi_f before any stress is formed
+// (a HAR trial outside dom Psi included); steps 2-4 see the floored trial; step 5f projects the converged
+// eps^e (pi_i, dlam, q_a, D of the step are those already formed). Both events are counted, never refused.
+// With p_min = 0 the pre-round-3 refusals stand (trial p_or_pi_nonneg, trial elastic_domain).
+inline void return_map(const Params& P, const double eps_raw[3], double pi_n, double v, double vfac,
                        ReturnResult& R)
 {
+  // 1f. floor at the trial
+  FloorResult fl_tr;
+  floor_project(P, eps_raw, fl_tr);
+  const double* eps_tr = fl_tr.eps_f;
+  const double ef_tr = fl_tr.active ? floor_energy(P, eps_raw, fl_tr.eps_f, fl_tr.dfv) : 0.0;
   // 1-2. trial
   Elastic el;
-  elastic(P, eps_tr, el);
   Invariants inv;
+  if (elastic(P, eps_tr, el) != EE_NONE) {
+    // outside dom Psi with the floor off: no trial-elastic stress exists. O2 "trial_elastic_domain".
+    for (int a = 0; a < 3; ++a) { el.sig[a] = 0.0; for (int b = 0; b < 3; ++b) el.ae[a][b] = 0.0; }
+    rr_refuse(R, eps_raw, el, pi_n, false, false, P_OR_PI_NONNEG, EE_ELASTIC_DOMAIN, 0, 0);
+    return;
+  }
   if (!elastic_finite(el)) {
     // O2: math.exp OverflowError (uncaught). Kernel: refuse at the trial state.
     for (int a = 0; a < 3; ++a) { el.sig[a] = 0.0; for (int b = 0; b < 3; ++b) el.ae[a][b] = 0.0; }
@@ -1064,15 +1386,21 @@ inline void return_map(const Params& P, const double eps_tr[3], double pi_n, dou
   double psi0, Lam0;
   csl(P, v, pi_n, psi0, Lam0);
   (void)psi0; (void)Lam0;
-  if (fl0.F <= F_TRIAL_TOL_REL * std::fabs(P.p0)) {
+  if (fl0.F <= F_TRIAL_TOL_REL * pRef(P)) {
     for (int a = 0; a < 3; ++a) {
       R.eps_e[a] = eps_tr[a]; R.sig[a] = el.sig[a]; R.q_a[a] = 0.0;
       for (int b = 0; b < 3; ++b) { R.atilde[a][b] = el.ae[a][b]; R.ae[a][b] = el.ae[a][b]; }
+    }
+    if (fl_tr.active) {                    // (S.32f) elastic: a^e(eps~_f) Phi_tr
+      for (int a = 0; a < 3; ++a)
+        for (int b = 0; b < 3; ++b)
+          R.atilde[a][b] = (el.ae[a][0] * fl_tr.Phi[0][b] + el.ae[a][1] * fl_tr.Phi[1][b]) + el.ae[a][2] * fl_tr.Phi[2][b];
     }
     R.ch = ChainData();
     R.pi = pi_n; R.dlam = 0.0; R.Om = 0.0; R.D = 0.0;
     R.plastic = false; R.vertex = inv.vertex; R.cap_active = fl0.w < 1.0; R.refused = false;
     R.reason = OK; R.sub = EE_NONE; R.local_iters = 0; R.pi_iters = 0;
+    rr_floor(R, eps_tr, fl_tr, ef_tr);
     return;
   }
   // 3-4. local Newton on x = (eps_e, dlam)
@@ -1134,23 +1462,50 @@ inline void return_map(const Params& P, const double eps_tr[3], double pi_n, dou
     rr_refuse(R, eps_tr, el, pi_n, true, inv.vertex, NEGATIVE_DLAMBDA, EE_NONE, it, pi_total);
     return;
   }
-  // 5. tangent and diagnostics
+  // 5. dissipation at the PRE-floor converged state (S.38), then 5f the post floor, then the tangent
+  const double D = pe.dlam * ((pe.el.sig[0] * pe.fl.q_a[0] + pe.el.sig[1] * pe.fl.q_a[1]) + pe.el.sig[2] * pe.fl.q_a[2]);
+  FloorResult fl_post;
+  floor_project(P, pe.eps_e, fl_post);                                       // 5f
+  Elastic el_c;
+  if (fl_post.active) {
+    // the floored strain is in dom Psi by construction; a failure here is unreachable (kernel guard)
+    if (elastic(P, fl_post.eps_f, el_c) != EE_NONE || !elastic_finite(el_c)) {
+      rr_refuse(R, eps_tr, el, pi_n, true, inv.vertex, LOCAL_NOCONV, EE_NONFINITE, it, pi_total);
+      return;
+    }
+  }
   double J[4][4], Jinv[4][4];
   jacobian(pe, J);
-  if (!atilde_ep(pe, J, vfac, R.atilde, Jinv)) {   // O2: LinAlgError from np.linalg.inv (uncaught)
+  if (!atilde_ep(pe, J, vfac, R.atilde, Jinv, fl_tr.active ? fl_tr.Phi : nullptr,
+                 fl_post.active ? fl_post.Phi : nullptr, fl_post.active ? el_c.ae : nullptr)) {
+    // O2: LinAlgError from np.linalg.inv (uncaught)
     rr_refuse(R, eps_tr, el, pi_n, true, inv.vertex, LOCAL_NOCONV, EE_SINGULAR_J, it, pi_total);
     return;
   }
+  const Elastic& elc = fl_post.active ? el_c : pe.el;
   for (int a = 0; a < 3; ++a) {
-    R.eps_e[a] = pe.eps_e[a]; R.sig[a] = pe.el.sig[a]; R.q_a[a] = pe.fl.q_a[a];
-    for (int b = 0; b < 3; ++b) R.ae[a][b] = pe.el.ae[a][b];
+    R.eps_e[a] = fl_post.active ? fl_post.eps_f[a] : pe.eps_e[a];
+    R.sig[a] = elc.sig[a]; R.q_a[a] = pe.fl.q_a[a];
+    for (int b = 0; b < 3; ++b) R.ae[a][b] = elc.ae[a][b];
   }
   chain_data(pe, Jinv, R.ch);
   R.pi = pe.pi; R.dlam = pe.dlam; R.Om = pe.fl.Om;
-  R.D = pe.dlam * ((pe.el.sig[0] * pe.fl.q_a[0] + pe.el.sig[1] * pe.fl.q_a[1]) + pe.el.sig[2] * pe.fl.q_a[2]);
+  R.D = D;
   R.plastic = true; R.vertex = pe.inv.vertex; R.cap_active = pe.fl.w < 1.0; R.refused = false;
   R.reason = OK; R.sub = EE_NONE; R.local_iters = it; R.pi_iters = pi_total;
+  rr_floor(R, eps_tr, fl_tr, ef_tr);
+  for (int a = 0; a < 3; ++a) {
+    R.eps_conv[a] = pe.eps_e[a];
+    for (int b = 0; b < 3; ++b) R.Phi_post[a][b] = fl_post.Phi[a][b];
+  }
+  R.floor_post = fl_post.active;
+  R.dfv_post = fl_post.dfv;
+  R.ef_post = fl_post.active ? floor_energy(P, pe.eps_e, fl_post.eps_f, fl_post.dfv) : 0.0;
 }
+
+// The 4th-order operator of an active Pi_f in the (S.33) form: block Phi (S.51a), unit spin (S.54)
+// (O2 floor_op4). Declared here, defined after spectral().
+inline void floor_op4(const double Phi[3][3], const double V[3][3], double C4[3][3][3][3]);
 
 // --------------------------------------------------------------------------------
 // §9.4 spectral assembly of the 4th-order tangent (S.33), compressed to 6x6
@@ -1172,6 +1527,27 @@ inline void spectral(const double V[3][3], const double diag_ab[3][3], const dou
                                                       + mab_ij * (V[k][b] * V[l][a]));
           }
         }
+}
+
+inline void floor_op4(const double Phi[3][3], const double V[3][3], double C4[3][3][3][3])
+{
+  static const double UNIT_SPIN[3][3] = {{0.0, 1.0, 1.0}, {1.0, 0.0, 1.0}, {1.0, 1.0, 0.0}};
+  spectral(V, Phi, UNIT_SPIN, 0.5, C4);
+}
+
+// S[J] := Op : S[J] for the six chain columns (O2 einsum "ijkl,Jkl->Jij").
+inline void apply_op4(const double Op[3][3][3][3], double S[6][3][3])
+{
+  for (int J = 0; J < 6; ++J) {
+    double out[3][3];
+    for (int i = 0; i < 3; ++i)
+      for (int j = 0; j < 3; ++j) {
+        double s = 0.0;
+        for (int k = 0; k < 3; ++k) for (int l = 0; l < 3; ++l) s += Op[i][j][k][l] * S[J][k][l];
+        out[i][j] = s;
+      }
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) S[J][i][j] = out[i][j];
+  }
 }
 
 // C[I][J] = d sigma_I / d eps_J with symmetric variation of the shear slots (header).
@@ -1256,9 +1632,13 @@ inline void chain_start(Chain& c)
 //              S^pi_{k+1}  = sum_b w_b T^_bb + ((1 - kappa)/c) S^pi_k + (1 - kappa) Pi_v S^v_{k+1}
 //   elastic:   S^eps_{k+1} = T_k,  S^pi_{k+1} = S^pi_k
 // Phi = d eps^e_{k+1} / d eps~ in the (S.33) form with a~ -> b[:3][:3], sigma -> eps^e,
-// on the sub-increment's trial eigen-data (eps_tr, V).
+// on the sub-increment's trial eigen-data (the trial the return map SAW, res.eps_seen; the converged
+// eps^e BEFORE the post floor, res.eps_conv; V).
+// Floor (S.54): T^f_k = Phi^tr_k : T_k (the raw trial sensitivity through the trial floor), and
+// S^eps_{k+1} := Phi^post_k : [...] after a post floor; S^v keeps the RAW trace; an elastic
+// sub-increment carries T^f_k. Phi^tr / Phi^post in the (S.33) form with unit spin (floor_op4).
 inline void chain_propagate(Chain& c, double alpha, double v_new, const ReturnResult& res,
-                            const double eps_tr[3], const double V[3][3])
+                            const double V[3][3])
 {
   const double cum = c.cum + alpha;
   double T[6][3][3];
@@ -1266,6 +1646,11 @@ inline void chain_propagate(Chain& c, double alpha, double v_new, const ReturnRe
     for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j)
       T[J][i][j] = c.S_eps[J][i][j] + alpha * chain_E(J, i, j);
   c.cum = cum;
+  if (res.floor_tr) {                                         // (S.54): T^f_k = Phi^tr_k : T_k
+    double Op[3][3][3][3];
+    floor_op4(res.Phi_tr, V, Op);
+    apply_op4(Op, T);
+  }
   if (!res.plastic) {
     for (int J = 0; J < 6; ++J)
       for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) c.S_eps[J][i][j] = T[J][i][j];
@@ -1275,7 +1660,7 @@ inline void chain_propagate(Chain& c, double alpha, double v_new, const ReturnRe
   double b3[3][3];
   for (int a = 0; a < 3; ++a) for (int b = 0; b < 3; ++b) b3[a][b] = ch.b[a][b];
   double Phi[3][3][3][3];
-  tangent_small4(b3, res.eps_e, eps_tr, V, Phi);
+  tangent_small4(b3, res.eps_conv, res.eps_seen, V, Phi);
   for (int J = 0; J < 6; ++J) {
     const double S_v = v_new * cum * chain_trE(J);
     double coef[3];
@@ -1298,6 +1683,11 @@ inline void chain_propagate(Chain& c, double alpha, double v_new, const ReturnRe
       }
     c.S_pi[J] = ((Tdiag[0] * ch.w[0] + Tdiag[1] * ch.w[1]) + Tdiag[2] * ch.w[2])
               + ((1.0 - ch.kappa) / ch.c) * c.S_pi[J] + (1.0 - ch.kappa) * ch.Pi_v * S_v;
+  }
+  if (res.floor_post) {                                       // (S.54): Phi^post_k : [...]
+    double Op[3][3][3][3];
+    floor_op4(res.Phi_post, V, Op);
+    apply_op4(Op, c.S_eps);
   }
 }
 
@@ -1371,12 +1761,21 @@ inline void step_once(const Params& P, const State& n, const double deps[6], Onc
     o.st.eps_p_v = n.eps_p_v + o.res.dlam * ((o.res.q_a[0] + o.res.q_a[1]) + o.res.q_a[2]);
     o.st.eps_p_s = n.eps_p_s + o.res.dlam * SQ23() * o.res.Om;
   }
+  // §9.7 counters: per (sub-)increment floor_tr / floor_post in {0, 1}; cumulative n_f, eps^f_v, W_f; at_floor
+  o.st.eps_f_v = n.eps_f_v + o.res.dfv_tr + o.res.dfv_post;
+  o.st.W_f = P.p_min * o.st.eps_f_v;
+  o.st.n_f_tr = n.n_f_tr + (o.res.floor_tr ? 1 : 0);
+  o.st.n_f_post = n.n_f_post + (o.res.floor_post ? 1 : 0);
+  const double p_c = ((o.res.sig[0] + o.res.sig[1]) + o.res.sig[2]) / 3.0;
+  o.st.at_floor = (P.p_min > 0.0 && p_c > -P.p_min * (1.0 + AT_FLOOR_TOL)) ? 1 : 0;
 }
 
 // O2 api._run_fractions: the sub-increments fr[k] * deps (k < m) chained on each other.
 // ok = false: cur is the refused sub-increment (its reason / sub / flags). The (S.46)
 // sensitivities are carried only when chain is true (every accepted sub-increment advances
 // them, an elastic one through the elastic line) and assembled by (S.47) into C.
+// Floor (sheet §9.7): ftr / fpost sum the sub-increments' events, dfv their d eps^f_v, E_f their floor
+// energies in event order (O2 api.floor_energy over the increment's floor_events).
 struct RunOut {
   OnceOut cur;
   bool ok;
@@ -1385,6 +1784,8 @@ struct RunOut {
   bool plastic;
   bool haveC;
   double C[6][6];
+  int ftr, fpost;
+  double dfv, E_f;
 };
 
 inline void run_fractions(const Params& P, const State& n, const double deps[6], const double* fr, int m,
@@ -1394,6 +1795,7 @@ inline void run_fractions(const Params& P, const State& n, const double deps[6],
   if (chain) chain_start(cs);
   ro.cur.st = n;
   ro.D = 0.0; ro.iters = 0; ro.piters = 0; ro.plastic = false; ro.haveC = false; ro.ok = false;
+  ro.ftr = 0; ro.fpost = 0; ro.dfv = 0.0; ro.E_f = 0.0;
   OnceOut nxt;
   for (int k = 0; k < m; ++k) {
     double dsub[6];
@@ -1405,7 +1807,9 @@ inline void run_fractions(const Params& P, const State& n, const double deps[6],
     ro.iters += ro.cur.res.local_iters;
     ro.piters += ro.cur.res.pi_iters;
     ro.plastic = ro.plastic || ro.cur.res.plastic;
-    if (chain) chain_propagate(cs, fr[k], ro.cur.st.v, ro.cur.res, ro.cur.w, ro.cur.V);   // v_{k+1}
+    if (ro.cur.res.floor_tr) { ro.ftr += 1; ro.dfv += ro.cur.res.dfv_tr; ro.E_f += ro.cur.res.ef_tr; }
+    if (ro.cur.res.floor_post) { ro.fpost += 1; ro.dfv += ro.cur.res.dfv_post; ro.E_f += ro.cur.res.ef_post; }
+    if (chain) chain_propagate(cs, fr[k], ro.cur.st.v, ro.cur.res, ro.cur.V);   // v_{k+1}
   }
   ro.ok = true;
   if (chain) {
@@ -1430,6 +1834,8 @@ inline void run_accept(const RunOut& ro, int m, State& np1, double sigma[6], dou
   info.vertex = ro.cur.res.vertex ? 1 : 0; info.cap_active = ro.cur.res.cap_active ? 1 : 0;
   info.local_iters = ro.iters; info.pi_iters = ro.piters; info.substeps = m;
   info.finest = OK; info.finest_sub = EE_NONE;
+  info.floor_tr = ro.ftr; info.floor_post = ro.fpost; info.at_floor = np1.at_floor;
+  info.deps_f_v = ro.dfv; info.W_f = np1.W_f; info.E_f = ro.E_f;
 }
 
 // Frozen-at-n refusal output (API contract).
@@ -1541,12 +1947,29 @@ inline int validate(const Params& P, std::string& msg, bool& warn_rho_gt_rhobar)
   char buf[512];
   msg.clear();
   warn_rho_gt_rhobar = false;
+  if (P.energy != 0 && P.energy != 1) { msg = "energy must be 0 (BA06) or 1 (HAR)"; return 20; }
   if (P.zeta != 0 && P.zeta != 1) { msg = "zeta must be 0 (WW) or 1 (GA)"; return 1; }
   if (P.csl_mode != 0 && P.csl_mode != 1) { msg = "csl_mode must be 0 (paper) or 1 (fork)"; return 2; }
   if (P.cap < 0 || P.cap > 2) { msg = "cap must be 0 (none), 1 (planar) or 2 (smooth)"; return 3; }
-  if (!(P.p0 < 0.0)) { msg = "p0 must be negative (compression negative)"; return 4; }
-  if (!(P.kappa_hat > 0.0)) { msg = "kappa_hat must be > 0"; return 5; }
-  if (!(P.mu0 > 0.0)) { msg = "mu0 must be > 0"; return 6; }
+  // energy option (sheet §2.4). The "given together" parser refusals are the shell's (header ENERGY OPTION).
+  if (P.energy == 1) {
+    if (!(P.k > 0.0)) { msg = "HAR k must be > 0"; return 21; }
+    if (!(P.g > 0.0)) { msg = "HAR g must be > 0"; return 22; }
+    if (!(0.0 <= P.n_e && P.n_e < 1.0)) {
+      std::snprintf(buf, sizeof(buf), "HAR n_e=%.17g must satisfy 0 <= n_e < 1 (n = 1 is HAR05 eq 47-48, not shipped)", P.n_e);
+      msg = buf; return 23;
+    }
+    if (!(P.p_a > 0.0)) { msg = "HAR p_a must be > 0"; return 24; }
+  } else {
+    if (!(P.p0 < 0.0)) { msg = "p0 must be negative (compression negative)"; return 4; }
+    if (!(P.kappa_hat > 0.0)) { msg = "kappa_hat must be > 0"; return 5; }
+    if (!(P.mu0 > 0.0)) { msg = "mu0 must be > 0"; return 6; }
+  }
+  // p' floor (sheet §9.7): 0 = off, < 0 refused
+  if (P.p_min < 0.0) {
+    std::snprintf(buf, sizeof(buf), "p_min=%.17g < 0 refused (sheet 9.7; 0 switches the floor off)", P.p_min);
+    msg = buf; return 25;
+  }
   if (!(P.M > 0.0)) { msg = "M must be > 0"; return 7; }
   if (!(0.0 <= P.N && P.N < 1.0)) { msg = "N must satisfy 0 <= N < 1"; return 8; }
   if (!(0.0 <= P.N_bar && P.N_bar < 1.0)) { msg = "N_bar must satisfy 0 <= N_bar < 1"; return 9; }
@@ -1602,30 +2025,46 @@ inline int validate(const Params& P, std::string& msg, bool& warn_rho_gt_rhobar)
     if (!(0.0 <= P.c1 && P.c1 <= P.c2 && P.c2 < 1.0)) { msg = "cap needs 0 <= c1 <= c2 < 1"; return 16; }
     if (P.cap == 1 && P.c1 != P.c2) { msg = "planar cap needs c1 == c2 (= chi_cap)"; return 17; }
     if (P.cap == 2 && !(P.c2 > P.c1)) { msg = "smooth cap needs c2 > c1"; return 18; }
+    // (S.56) scan-step contract, smooth cap ONLY (round 3b, A3: planar / none have W_ramp = 0)
+    const double W = detail::w_ramp(P);
+    if (P.cap == 2 && detail::PI_SCAN_REL > W / 10.0 + 1e-15) {
+      std::snprintf(buf, sizeof(buf), "smooth cap too narrow for the nested scan (S.56): W_ramp=%.4g needs "
+                    "PI_SCAN_REL=%g <= W_ramp/10=%.4g (widen c2 - c1)", W, detail::PI_SCAN_REL, W / 10.0);
+      msg = buf; return 26;
+    }
   }
   // kernel addition (after O2's checks): every parameter finite
-  const double all[20] = {P.p0, P.kappa_hat, P.eps_v0, P.mu0, P.alpha0, P.M, P.N, P.N_bar, P.rho, P.rho_bar,
-                          P.chi, P.h, P.lambda_tilde, P.v_c0, P.e0, P.lambda_c, P.xi, P.p_a, P.c1, P.c2};
-  if (!detail::all_finite(all, 20)) { msg = "every parameter must be finite"; return 19; }
+  const double all[24] = {P.p0, P.kappa_hat, P.eps_v0, P.mu0, P.alpha0, P.M, P.N, P.N_bar, P.rho, P.rho_bar,
+                          P.chi, P.h, P.lambda_tilde, P.v_c0, P.e0, P.lambda_c, P.xi, P.p_a, P.c1, P.c2,
+                          P.k, P.g, P.n_e, P.p_min};
+  if (!detail::all_finite(all, 24)) { msg = "every parameter must be finite"; return 19; }
   msg = warn;
   return 0;
 }
 
 // O2 api.initial_state: state at sigma0 (tensor comps) with eps^p = 0, v = v0.
-// pi_i0 NaN: pi_i placed so that F(sigma0, pi_i) = 0 (inverse of (S.12); hydrostatic
-// sigma0 => the apex through p). Returns 0, or nonzero with msg:
-// 1-19 validate refusal codes + 100; 101 p >= 0; 102 elastic inversion failed;
-// 103 eta >= M/N (no surface through sigma0); 104 pi_i0 >= 0; 105 v0 not > 0;
-// 106 eigen-decomposition failed / non-finite sigma0. On success msg holds the
-// validate() warnings, if any.
+// Floor (sheet §9.7): eps^e := Pi_f(invert(sigma0)) (counted: n_f_init = 1, eps_f_v, W_f); at a floored
+// point sigma0 is replaced by sigma(eps^e_f) (p = -p_min; under HAR q also scaled).
+// pi_i0 NaN (sheet §5.4): pi0_rule = PI0_UNIFIED (default, (S.53)): the surface through (p_init, eta*),
+// eta* = max(eta_init, c2 M), eta_init = zeta(theta) q/|p| of the FLOORED initial stress (0 on the axis),
+// c2 := 0 for cap = none; refused (107) if the §7 guard B <= 0 fails at (pi_i0, psi_i0). PI0_LEGACY:
+// eta* = eta_init (the pre-round-3 rule: the apex through p_init for a hydrostatic sigma0); identical to
+// the unified rule when cap = none, except for the B guard. A finite pi_i0 overrides both.
+// Returns 0, or nonzero with msg:
+// validate refusal codes + 100 (101..126); 101 p >= 0; 102 elastic inversion failed;
+// 103 eta* >= M/N (no yield surface through the state); 104 pi_i0 >= 0; 105 v0 not > 0;
+// 106 eigen-decomposition failed / non-finite sigma0; 107 the §7 guard B <= 0 at (pi_i0, psi_i0)
+// (unified rule only); 108 pi0_rule invalid. Note 101 is ALSO validate()'s code 1 + 100 (zeta):
+// msg tells them apart (as before round 3). On success msg holds the validate() warnings, if any.
 inline int initialState(const Params& P, const double sigma0[6], double v0, double pi_i0,
-                        State& out, std::string& msg)
+                        State& out, std::string& msg, int pi0_rule)
 {
   bool warn = false;
   const int vr = validate(P, msg, warn);
   if (vr) return 100 + vr;
   const std::string warnings = msg;   // kept in msg on success
   msg.clear();
+  if (pi0_rule != PI0_UNIFIED && pi0_rule != PI0_LEGACY) { msg = "pi0_rule must be PI0_UNIFIED or PI0_LEGACY"; return 108; }
   if (!detail::all_finite(sigma0, 6)) { msg = "sigma0 must be finite"; return 106; }
   if (!(v0 > 0.0) || !std::isfinite(v0)) { msg = "v0 must be finite and > 0"; return 105; }
   double S[3][3], w[3], V[3][3];
@@ -1635,6 +2074,20 @@ inline int initialState(const Params& P, const double sigma0[6], double v0, doub
   const int ie = detail::invert_elastic(P, w, eps_p);
   if (ie == 1) { msg = "initial stress must have p < 0"; return 101; }
   if (ie) { msg = "elastic inversion of sigma0 failed"; return 102; }
+  detail::FloorResult fl;
+  detail::floor_project(P, eps_p, fl);
+  int n_f_init = 0;
+  double eps_f_v = 0.0;
+  if (fl.active) {
+    for (int a = 0; a < 3; ++a) eps_p[a] = fl.eps_f[a];
+    detail::Elastic elf;
+    if (detail::elastic(P, eps_p, elf) != detail::EE_NONE || !detail::elastic_finite(elf)) {
+      msg = "elastic inversion of sigma0 failed"; return 102;    // unreachable: Pi_f lands in dom Psi
+    }
+    for (int a = 0; a < 3; ++a) w[a] = elf.sig[a];
+    n_f_init = 1;
+    eps_f_v = fl.dfv;
+  }
   detail::Invariants inv;
   detail::invariants(w, inv);
   if (std::isnan(pi_i0)) {
@@ -1644,8 +2097,25 @@ inline int initialState(const Params& P, const double sigma0[6], double v0, doub
       detail::zeta_y(inv.theta, P.rho, P.zeta, z, zy, zyy);
       eta = -z * inv.q / inv.p;
     }
+    if (pi0_rule == PI0_UNIFIED) {
+      const double c2 = (P.cap == 0) ? 0.0 : P.c2;
+      eta = std::fmax(eta, c2 * P.M);                                   // (S.53)
+    }
     if (!detail::pi_of_eta(P, inv.p, eta, pi_i0)) {
       msg = "eta >= M/N: no yield surface through this stress"; return 103;
+    }
+    if (pi0_rule == PI0_UNIFIED) {                                      // the §7 guard B > 0 at (pi_i0, psi_i0)
+      double psi0, Lam0, ps, Ppsi, POm;
+      detail::csl(P, v0, pi_i0, psi0, Lam0);
+      detail::Flow fl0;
+      int e = detail::flow(P, inv, pi_i0, fl0);
+      if (e == detail::EE_NONE) e = detail::pistar(P, inv.p, fl0.Om, psi0, ps, Ppsi, POm);
+      if (e != detail::EE_NONE) {
+        char buf[256];
+        std::snprintf(buf, sizeof(buf), "initial state refused: %s at (pi_i0=%.6g, psi_i0=%.4g) (sheet 5.4, 7)",
+                      detail::evalErrName(e), pi_i0, psi0);
+        msg = buf; return 107;
+      }
     }
   }
   if (!(pi_i0 < 0.0) || !std::isfinite(pi_i0)) { msg = "pi_i0 must be finite and < 0"; return 104; }
@@ -1656,6 +2126,12 @@ inline int initialState(const Params& P, const double sigma0[6], double v0, doub
   out.eps_p_v = 0.0;
   out.eps_p_s = 0.0;
   out.D_last = 0.0;
+  out.eps_f_v = eps_f_v;
+  out.W_f = P.p_min * eps_f_v;
+  out.n_f_tr = 0;
+  out.n_f_post = 0;
+  out.n_f_init = n_f_init;
+  out.at_floor = (P.p_min > 0.0 && inv.p > -P.p_min * (1.0 + detail::AT_FLOOR_TOL)) ? 1 : 0;
   msg = warnings;
   return 0;
 }
@@ -1667,33 +2143,40 @@ inline int step(const Params& P, const State& n, const double deps[6], State& np
   return detail::step_ex(P, n, deps, np1, sigma, C, info, finest, finest_sub);
 }
 
-// sigma(eps_e) by the BA06 energy, in the eigenbasis of eps_e. Non-finite on failure.
+// sigma(eps_e) by the energy (BA06 or HAR), in the eigenbasis of eps_e. Non-finite on failure
+// (a HAR eps_e outside dom Psi included: a committed state is always inside it).
 inline void stress(const Params& P, const State& s, double sigma[6])
 {
   double E[3][3], w[3], V[3][3];
   detail::t6_to_m(s.eps_e, E);
-  if (!detail::eig_sym3(E, w, V)) {
+  detail::Elastic el;
+  if (!detail::eig_sym3(E, w, V) || detail::elastic(P, w, el) != detail::EE_NONE) {
     for (int i = 0; i < 6; ++i) sigma[i] = std::nan("");
     return;
   }
-  detail::Elastic el;
-  detail::elastic(P, w, el);
   detail::from_principal(el.sig, V, sigma);
 }
 
 // Elastic tangent a^e at s (S.3) assembled by (S.33) with a~ = a^e (the tangent of an
-// elastic step, and of a fresh initial state). Same C convention as step().
+// elastic step, and of a fresh initial state). Same C convention as step(). At a floored state this
+// is the one-sided COMPRESSIVE branch (full a^e); the floored branch a^e Phi of (S.32f) belongs to a step.
 inline void elasticTangent(const Params& P, const State& s, double C[6][6])
 {
   double E[3][3], w[3], V[3][3];
   detail::t6_to_m(s.eps_e, E);
-  if (!detail::eig_sym3(E, w, V)) {
+  detail::Elastic el;
+  if (!detail::eig_sym3(E, w, V) || detail::elastic(P, w, el) != detail::EE_NONE) {
     for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) C[i][j] = std::nan("");
     return;
   }
-  detail::Elastic el;
-  detail::elastic(P, w, el);
   detail::tangent_small(el.ae, el.sig, w, V, C);
+}
+
+// The floor energy E_f (S.52) of one event between two principal elastic strains (a diagnostic for the
+// shell's on-demand `floor` response; StepInfo::E_f already carries the increment's sum).
+inline double floorEnergy(const Params& P, const double eps_pre[3], const double eps_f[3], double dfv)
+{
+  return detail::floor_energy(P, eps_pre, eps_f, dfv);
 }
 
 }  // namespace ladruno_norsand

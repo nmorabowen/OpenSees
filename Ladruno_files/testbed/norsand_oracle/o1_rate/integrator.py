@@ -37,11 +37,16 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.integrate import solve_ivp
 
-from .model import (I3, R_TOL_REL, SQ23, c2m, energy, m2t, plastic, t2m)
+from .model import (I3, PFLOOR, R_TOL_REL, SQ23, c2m, elastic_strain_scale, energy, m2t, plastic, t2m)
 from .params import Params
 
 FTOL_REL = 1.0e-8        # |F| / (M |p|) accepted as "on the surface"
 OUTSIDE_REL = 1.0e-6     # F / (M |p|) above this at a segment start -> status 'outside'
+FLOOR_TOL = 1.0e-8       # (p + p_min) / p_min >= -FLOOR_TOL: "on the floor" (sheet 9.7, S.55)
+FLOOR_OUT = 1.0e-6       # (p + p_min) / p_min above this at a segment start -> status 'floor_outside'
+PM = t2m(PFLOOR)         # Mandel form of the floor direction P = 1/3 (S.55)
+FLOOR_MODES = ("floor", "plastic_floor")
+PLASTIC_MODES = ("plastic", "plastic_floor")
 
 
 @dataclass
@@ -56,12 +61,15 @@ class State:
     flags: dict = field(default_factory=dict)
 
 
-def _pack(st: State):
+def _pack(st: State, floor=False):
     eps = st.flags.get("eps_total", np.zeros((3, 3)))
-    return np.concatenate([t2m(st.eps_e), [st.pi_i, st.v, st.flags.get("W", 0.0),
-                                           st.flags.get("W_abs", 0.0),
-                                           st.flags.get("Dp_total", 0.0),
-                                           st.eps_p_v, st.eps_p_s], t2m(eps)])
+    y = np.concatenate([t2m(st.eps_e), [st.pi_i, st.v, st.flags.get("W", 0.0),
+                                        st.flags.get("W_abs", 0.0),
+                                        st.flags.get("Dp_total", 0.0),
+                                        st.eps_p_v, st.eps_p_s], t2m(eps)])
+    if floor:                 # y[19] = eps^f_v = int lam_f' (the floor mechanism, S.55); only when p_min > 0
+        y = np.concatenate([y, [st.flags.get("eps_f_v", 0.0)]])
+    return y
 
 
 class _Increment:
@@ -77,19 +85,25 @@ class _Increment:
         self.dsm = np.zeros(6) if dsig is None else t2m(np.asarray(dsig, dtype=float))
         self.S = np.where(~self.smask)[0]
         self.T = np.where(self.smask)[0]
+        self.pmin = P.pmin
+        self.floor = self.pmin > 0.0
+        ny = 20 if self.floor else 19
         emax = max(float(np.max(np.abs(self.dm))), 1e-9)
         pabs = max(abs(float(np.trace(st.sigma))) / 3.0, 1e-3)
-        e_sc = min(P.kappa_hat, pabs / (3.0 * P.mu0))
-        at = np.empty(19)
+        e_sc = elastic_strain_scale(P, pabs)
+        at = np.empty(ny)
         at[0:6] = 1e-1 * rtol * e_sc
         at[6] = 1e-2 * rtol * max(abs(st.pi_i), 1e-3)
         at[7] = 1e-2 * rtol
         at[8:11] = 1e-2 * rtol * pabs * emax
         at[11:13] = 1e-2 * rtol * emax
         at[13:19] = 1e-2 * rtol * emax
+        if self.floor:
+            at[19] = 1e-2 * rtol * emax
         self.atol = at
+        self.ny = ny
         self.typ = np.concatenate([np.full(6, 1e-3), [max(abs(st.pi_i), 1e-3), st.v],
-                                   np.zeros(5), np.full(6, 1e-3)])
+                                   np.zeros(5), np.full(6, 1e-3)] + ([np.zeros(1)] if self.floor else []))
         self.nfev = 0
         self.w_force = None      # planar cap: the side (w = 1 or 0) chosen for this segment
         self.cap_side = 0
@@ -118,12 +132,13 @@ class _Increment:
         fm, qm = t2m(pq.f), t2m(pq.qflow)
         sm = t2m(el.sig)
         info = dict(pq=pq, sig=el.sig)
+        lam_f = 0.0
         if mode == "elastic":
             d = self._solve_mixed(Am)
             N = float(fm @ Am @ d)
             lam = 0.0
             info.update(N=N, den=float("nan"))
-        else:
+        elif mode == "plastic":
             Aq = Am @ qm
             fA = fm @ Am
             den = float(fm @ Aq) + pq.H
@@ -132,7 +147,35 @@ class _Increment:
             N = float(fA @ d)
             lam = N / den
             info.update(N=N, den=den)
+        elif mode == "floor":                   # (S.55), floor only: lam_f = P:a^e:eps' / P:a^e:P
+            AP = Am @ PM
+            PA = PM @ Am
+            PAP = float(PM @ AP)
+            Cm = Am - np.outer(AP, PA) / PAP
+            d = self._solve_mixed(Cm)
+            lam = 0.0
+            lam_f = float(PA @ d) / PAP
+            N = float(fm @ Am @ (d - lam_f * PM))        # f:sigma' (pi_i frozen): the yield-approach rate
+            info.update(N=N, den=float("nan"), PAP=PAP)
+        elif mode == "plastic_floor":           # (S.55), both mechanisms (Koiter)
+            Aq = Am @ qm
+            fA = fm @ Am
+            AP = Am @ PM
+            PA = PM @ Am
+            G = np.array([[float(fA @ qm) + pq.H, float(fA @ PM)], [float(PA @ qm), float(PA @ PM)]])
+            Gi = np.linalg.inv(G)
+            Cm = Am - (Gi[0, 0] * np.outer(Aq, fA) + Gi[0, 1] * np.outer(Aq, PA)
+                       + Gi[1, 0] * np.outer(AP, fA) + Gi[1, 1] * np.outer(AP, PA))
+            d = self._solve_mixed(Cm)
+            lam, lam_f = (float(x) for x in Gi @ np.array([fA @ d, PA @ d]))
+            den = float(G[0, 0] - G[0, 1] * G[1, 0] / G[1, 1])     # Schur complement: the plastic denominator
+            N = lam * den
+            info.update(N=N, den=den, PAP=float(G[1, 1]), G=G)
+        else:
+            raise ValueError(mode)
         dee = d - lam * qm
+        if lam_f != 0.0:
+            dee = dee - lam_f * PM
         dpi = SQ23 * P.h * lam * (pq.pistar - pi) * pq.Omega
         trd = float(d[0] + d[1] + d[2])
         dv = v * trd                      # (S.40) v' = v tr eps' (diagnostic copy in y[7])
@@ -141,11 +184,14 @@ class _Increment:
         info.update(lam=lam, dD=dD, d=d, dee=dee, dpi=dpi, a4=el.a4)
         dy = np.concatenate([dee, [dpi, dv, sw, abs(sw), dD, lam * float(np.trace(pq.qflow)),
                                    lam * SQ23 * pq.Omega], d])
+        if self.floor:
+            info.update(lam_f=lam_f, pdot=float(PM @ Am @ dee), p=el.p)
+            dy = np.concatenate([dy, [lam_f]])
         return dy, info
 
     def jac(self, y, mode):
         f0, _ = self.rates(y, mode)
-        J = np.zeros((19, 19))
+        J = np.zeros((self.ny, self.ny))
         for j in (0, 1, 2, 3, 4, 5, 6, 13, 14, 15):   # v depends on y only via tr eps (y[13:16])
             hj = 1e-7 * max(abs(y[j]), self.typ[j])
             yp = y.copy()
@@ -195,6 +241,12 @@ class _Increment:
             self.w_force = 1.0 if pq.eta >= self.P.c1 * self.P.M else 0.0
             self.cap_side = 1 if self.w_force == 1.0 else -1
             Fr, pq = self.Frel(y)
+        if self.floor:
+            pf = (pq.p + self.pmin) / self.pmin
+            if pf > FLOOR_OUT:
+                return ("stop", "floor_outside"), Fr
+            if pf >= -FLOOR_TOL:
+                return self._decide_floor(y, Fr, pq), Fr
         if Fr < -FTOL_REL:
             return "elastic", Fr
         if Fr > OUTSIDE_REL:
@@ -220,6 +272,37 @@ class _Increment:
             return ("stop", "den_nonpositive"), Fr
         return ("stop", "no_consistent_mode"), Fr
 
+    def _decide_floor(self, y, Fr, pq):
+        """Mode at a state ON the floor p = -p_min (S.55): the KKT pair lam, lam_f >= 0 with F' <= 0 / p' <= 0
+        for the inactive mechanism.  Tried in the order plastic+floor, plastic, floor, elastic; an active
+        multiplier must exceed +tol*scale, an inactive constraint rate must not exceed +tol*scale (sheet 12
+        tie-break, extended to the second mechanism)."""
+        P = self.P
+        if Fr > OUTSIDE_REL:
+            return ("stop", "outside")
+        el = energy(m2t(y[0:6]), P)
+        Am = c2m(el.a4)
+        dn = max(np.linalg.norm(self.dm), 1e-30)
+        sc_f = 1e-12 * np.linalg.norm(t2m(pq.f)) * np.linalg.norm(Am) * dn
+        sc_p = 1e-12 * np.linalg.norm(PM) * np.linalg.norm(Am) * dn
+        on_yield = Fr >= -FTOL_REL
+        if on_yield:
+            if P.N > 0 and pq.B <= 0.0:
+                return ("stop", "B_guard")
+            _, ib = self.rates(y, "plastic_floor")
+            if ib["lam"] * ib["den"] > sc_f and ib["lam_f"] * ib["PAP"] > sc_p and ib["den"] > 0.0:
+                return "plastic_floor"
+            _, ip = self.rates(y, "plastic")
+            if ip["N"] > sc_f and ip["den"] > 0.0 and ip["pdot"] <= sc_p:
+                return "plastic"
+        _, ifl = self.rates(y, "floor")
+        if ifl["lam_f"] * ifl["PAP"] > sc_p and (not on_yield or ifl["N"] <= sc_f):
+            return "floor"
+        _, ie = self.rates(y, "elastic")
+        if ie["pdot"] <= sc_p and (not on_yield or ie["N"] <= sc_f):
+            return "elastic"
+        return ("stop", "no_consistent_mode_floor")
+
     def events(self, mode, y0):
         P = self.P
         evs, names = [], []
@@ -234,12 +317,24 @@ class _Increment:
             evs.append(fun)
             names.append(name)
 
-        def e_p(t, y):
-            el = energy(m2t(y[0:6]), P, tangent=False)
-            return -el.p - 1e-6 * abs(P.p0)
-        add(e_p, "p_to_zero", -1)
+        if mode not in FLOOR_MODES:
+            def e_p(t, y):
+                el = energy(m2t(y[0:6]), P, tangent=False)
+                return -el.p - 1e-6 * P.p_ref
+            add(e_p, "p_to_zero", -1)
+            if self.floor:                      # the floor is reached: p + p_min crosses 0 upward (S.55)
+                pm = self.pmin
 
-        if mode == "elastic":
+                def e_fl(t, y):
+                    return (energy(m2t(y[0:6]), P, tangent=False).p + pm) / pm
+                add(e_fl, "floor_hit", 1)
+        else:
+            def e_rel(t, y):                    # the floor mechanism's multiplier turns negative: release
+                ii = self.rates(y, mode)[1]
+                return ii["lam_f"] * ii["PAP"]
+            add(e_rel, "floor_release", -1)
+
+        if mode in ("elastic", "floor"):
             F0, _ = self.Frel(y0)
             thr = max(F0, 0.0)
 
@@ -249,11 +344,11 @@ class _Increment:
             return evs, names
 
         def e_N(t, y):
-            return self.rates(y, "plastic")[1]["N"]
+            return self.rates(y, mode)[1]["N"]
         add(e_N, "unload", -1)
 
         def e_den(t, y):
-            return self.rates(y, "plastic")[1]["den"]
+            return self.rates(y, mode)[1]["den"]
         add(e_den, "den_nonpositive", -1)
 
         def e_H(t, y):
@@ -305,7 +400,7 @@ def integrate_increment(P: Params, st: State, deps, smask=None, dsig=None, rtol=
             the pre-G2 small-strain rule v' = v0 tr eps' is superseded); kin is recorded only.
     """
     inc = _Increment(P, st, deps, smask, dsig, rtol, kin)
-    y = _pack(st)
+    y = _pack(st, inc.floor)
     t = 0.0
     status = "ok"
     segments = []
@@ -314,6 +409,8 @@ def integrate_increment(P: Params, st: State, deps, smask=None, dsig=None, rtol=
     max_F = 0.0
     min_rate = float("inf")
     min_den = float("inf")
+    max_floor_drift = 0.0
+    min_lam_f = float("inf")
     stall = 0
     mode = None
     while t < 1.0:
@@ -325,9 +422,17 @@ def integrate_increment(P: Params, st: State, deps, smask=None, dsig=None, rtol=
             status = mode[1]
             break
         evs, names = inc.events(mode, y)
-        sol = solve_ivp(lambda tt, yy, m=mode: inc.rates(yy, m)[0], (t, 1.0), y,
-                        method="Radau", rtol=rtol, atol=inc.atol, events=evs,
-                        jac=lambda tt, yy, m=mode: inc.jac(yy, m))
+        try:
+            sol = solve_ivp(lambda tt, yy, m=mode: inc.rates(yy, m)[0], (t, 1.0), y,
+                            method="Radau", rtol=rtol, atol=inc.atol, events=evs,
+                            jac=lambda tt, yy, m=mode: inc.jac(yy, m))
+        except FloatingPointError as exc:
+            # a Radau stage evaluated a state outside the model domain (p >= 0; e.g. a HAR trial past the edge of dom Psi with
+            # p_min = 0, sheet 2.3 / 13.13): the p_to_zero stop of the event machinery, reached by a stage before its event.
+            # The state returned is the last accepted one (t, y unchanged).  Round 3b verify fix.
+            status = "p_to_zero"
+            notes.append("domain: " + str(exc))
+            break
         if sol.status == -1:
             t, y = float(sol.t[-1]), sol.y[:, -1].copy()
             status = "solver_failed"
@@ -352,11 +457,14 @@ def integrate_increment(P: Params, st: State, deps, smask=None, dsig=None, rtol=
             yk = sol.y[:, k]
             dyk, info = inc.rates(yk, mode)
             pq = info["pq"]
-            if mode == "plastic":
+            if mode in PLASTIC_MODES:
                 max_F = max(max_F, abs(pq.F) / (P.M * abs(pq.p)))
                 min_den = min(min_den, info["den"])
                 rate_scale = abs(pq.p) * max(np.linalg.norm(inc.dm), 1e-30)
                 min_rate = min(min_rate, info["dD"] / rate_scale)
+            if mode in FLOOR_MODES:
+                max_floor_drift = max(max_floor_drift, abs(pq.p + inc.pmin) / inc.pmin)
+                min_lam_f = min(min_lam_f, info["lam_f"] / max(np.linalg.norm(inc.dm), 1e-30))
         segments.append(dict(mode=mode, t0=t, t1=float(sol.t[-1]), event=fired,
                              steps=int(len(sol.t) - 1)))
         t_new, y_new = float(sol.t[-1]), sol.y[:, -1].copy()
@@ -382,8 +490,15 @@ def integrate_increment(P: Params, st: State, deps, smask=None, dsig=None, rtol=
         pq = None
     flags = dict(st.flags)
     last_mode = segments[-1]["mode"] if segments else (mode if isinstance(mode, str) else None)
+    if inc.floor:
+        efv = float(y[19])
+        nseg_f = sum(1 for sg in segments if sg["mode"] in FLOOR_MODES)
+        flags.update(eps_f_v=efv, W_f=inc.pmin * efv, floor=(last_mode in FLOOR_MODES),
+                     at_floor=bool(el.p > -inc.pmin * (1.0 + 1e-10)), floor_segments=nseg_f,
+                     n_floor_increments=st.flags.get("n_floor_increments", 0) + (1 if nseg_f else 0),
+                     max_floor_drift=max_floor_drift, min_lam_f_rel=min_lam_f, p_min=inc.pmin)
     flags.update(
-        status=status, plastic=(last_mode == "plastic"), mode=last_mode,
+        status=status, plastic=(last_mode in PLASTIC_MODES), mode=last_mode,
         F_rel=Fr, max_F_rel=max_F, min_den=min_den, min_Dp_rate_rel=min_rate,
         segments=segments, n_segments=len(segments), nfev=inc.nfev, notes=notes,
         v0=inc.v0, W=float(y[8]), W_abs=float(y[9]), Dp_total=float(y[10]),

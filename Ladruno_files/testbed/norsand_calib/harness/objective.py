@@ -132,6 +132,32 @@ class Objective:
                     eps_peak_model=xpk_m, eps_peak_data=pt.eps_peak_pct, peak_interior=interior)
         return np.array(r), info
 
+    def noise_variance(self) -> np.ndarray:
+        """Variance of each residual (same order as residuals()) when the DATA carry independent Gaussian noise of
+        standard deviation sigma_* (the Weights): r = w (model - data)/sigma, so var(r_i) = w_i^2, the curve weight
+        included; the peak terms have unit weight, the refusal-penalty entries none (0). Uses the same masks as
+        _curve_terms (windows come from the data peak, so a noisy peak target moves the window slightly: the
+        variance is evaluated for the objective's own curves)."""
+        W = self.W
+        parts = []
+        for lc in self.curves:
+            srp_d, epk_d = lc.peak()
+            x_end = epk_d + W.post_peak_pct
+            wt = float(lc.meta.get("weight", 1.0))
+            xs = np.abs(lc.eps_a_sr)
+            ms = (xs <= x_end + 1e-12) & (xs >= W.eps_min_pct)
+            ws = np.where(xs[ms] <= epk_d + 1e-12, 1.0, W.post_peak_weight)
+            xv = np.abs(lc.eps_a_ev)
+            mv = (xv <= x_end + 1e-12) & (xv >= W.eps_min_pct)
+            wv = np.where(xv[mv] <= epk_d + 1e-12, 1.0, W.post_peak_weight)
+            parts += [(wt * ws) ** 2, (wt * wv) ** 2]
+            if W.peak_terms:
+                parts.append(np.full(2, wt ** 2))
+            parts.append(np.zeros(1))
+        for pt in self.points:
+            parts.append(np.array([1.0] + ([1.0] if pt.eps_peak_pct is not None else []) + [0.0]))
+        return np.concatenate(parts) if parts else np.zeros(0)
+
     # -- public -----------------------------------------------------------------------------------
     def residuals(self, theta: dict) -> np.ndarray:
         self.n_evals += 1

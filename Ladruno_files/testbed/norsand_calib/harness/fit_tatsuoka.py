@@ -2,9 +2,11 @@
 
 Inputs (data pack, 2026-10-02): the four PS curves data/tatsuoka1986/tats86_*.csv and the point tests
 data/tatsuoka1986/point_tests.csv (Fig. 9 phi_peak(e), Fig. 22 eps_peak(e)); the sand from
-data/dm04/toyoura_table1.csv (toyoura_dm04, p_a assumed 100 kPa). e is e_0.05 for every test (data/README.md §3.1):
+data/dm04/toyoura_table1.csv (toyoura_dm04, p_a 101 kPa = the TIMs p_atm, sheet §2.4 / round 3b A4: ONE flag for the
+HAR energy and the fork CSL; was 100 kPa, the pack's assumption, before 2026-10-03). e is e_0.05 for every test (data/README.md §3.1):
 the 49 kPa and >= 98 kPa states are slightly denser than modelled; stated, not corrected.
-Defaults: energy BA06 ('per_test'), WW, smooth cap, pi_i0 rule 'ramp_end' (model.Setup), rho pinned at
+Defaults: energy BA06 ('per_test'; --energy HAR for the TIMs/Toyoura energy, owner decision (a)), WW, smooth cap,
+pi_i0 rule 'unified' (S.53, the oracle's helper; model.Setup), the oracle's default p' floor, rho pinned at
 DM04's c = 0.712 (sheet §15 'direct': M_e = rho M_c; there is no Toyoura TC/TE pair to pin it from data, data/README.md
 §6 item 9), free (chi, h, N, N_bar, rho_bar); eps_min 0.1 % (seating, data/README.md §3.3).
 
@@ -27,15 +29,16 @@ from . import energy as EN
 from . import fit as FIT
 from .model import Setup, FIT_NAMES
 from .objective import Objective, Weights
-from .sand import toyoura_dm04, DATA_DIR
+from .sand import toyoura_dm04, DATA_DIR, TIMS_P_A
 
 OUT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "out"))
 
 
 def build(args):
     sand = toyoura_dm04(p_a=args.p_a)
-    policy = EN.ElasticPolicy(mode=args.policy, p_rep=args.p_rep)
-    setup = Setup(sand, energy=args.energy, policy=policy, pi0_rule=args.pi0_rule, pi0_ratio=args.pi0_ratio)
+    policy = EN.ElasticPolicy(mode=args.policy, p_rep=args.p_rep, e_rep=args.e_rep)
+    setup = Setup(sand, energy=args.energy, policy=policy, pi0_rule=args.pi0_rule, pi0_ratio=args.pi0_ratio,
+                  p_min=args.p_min)
     curves = [DATA.load_curve(p) for p in sorted(glob.glob(os.path.join(DATA_DIR, "tatsuoka1986", "tats86_*.csv")))]
     points = [] if args.no_points else DATA.load_points(os.path.join(DATA_DIR, "tatsuoka1986", "point_tests.csv"),
                                                          source="Tatsuoka 1986 Figs. 9 / 22")
@@ -48,8 +51,10 @@ def main(argv=None):
     ap.add_argument("--energy", default="BA06")
     ap.add_argument("--policy", default="per_test")
     ap.add_argument("--p-rep", type=float, default=None)
-    ap.add_argument("--p-a", type=float, default=100.0)
-    ap.add_argument("--pi0-rule", default="ramp_end")
+    ap.add_argument("--e-rep", type=float, default=None, help="global policy: the one void ratio of the BVP body")
+    ap.add_argument("--p-a", type=float, default=TIMS_P_A, help="the shared -p_a (HAR energy and fork CSL), kPa")
+    ap.add_argument("--p-min", type=float, default=None, help="p' floor, kPa (default: the oracle's 5e-3 p_ref; 0 = off)")
+    ap.add_argument("--pi0-rule", default="unified")
     ap.add_argument("--pi0-ratio", type=float, default=None)
     ap.add_argument("--rho", type=float, default=None, help="pinned rho (default: the sand's c)")
     ap.add_argument("--free", default="chi,h,N,N_bar,rho_bar")

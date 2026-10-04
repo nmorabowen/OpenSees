@@ -19,6 +19,7 @@ the tangent assembly (S.34) differs.
 """
 from __future__ import annotations
 
+import dataclasses
 import math
 from dataclasses import dataclass, field
 
@@ -50,11 +51,22 @@ class State:
     F_p: float = 0.0
     Omega: float = 0.0
     cache: dict = field(default_factory=dict, repr=False)   # spectral data for tangent()
+    # --- §9.7 floor counters (committed, cumulative; sheet §9.7 "Determinism, counting, interfaces") ---
+    eps_f_v: float = 0.0                  # sum of d eps^f_v over the history (init, trial and post events)
+    W_f: float = 0.0                      # = p_min eps_f_v, the energy-source bound (S.52)
+    n_f_tr: int = 0                       # number of trial floor events
+    n_f_post: int = 0                     # number of post floor events
+    n_f_init: int = 0                     # 1 if initial_state projected
 
     def copy(self) -> "State":
-        return State(self.sigma.copy(), self.eps_e.copy(), self.pi_i, self.v, self.D, self.eps_p_v,
-                     self.eps_p_s, dict(self.flags), self.eps_p.copy(), self.v0, self.finite, self.dlam,
-                     self.eta, self.psi_i, self.pi_star, self.F_p, self.Omega, dict(self.cache))
+        return dataclasses.replace(self, sigma=self.sigma.copy(), eps_e=self.eps_e.copy(), flags=dict(self.flags),
+                                   eps_p=self.eps_p.copy(), cache=dict(self.cache))
+
+    @property
+    def floor(self) -> dict:
+        """The shell's `floor` response: (at_floor, n_f_tr, n_f_post, eps_f_v, W_f) (+ n_f_init)."""
+        return dict(at_floor=bool(self.flags.get("at_floor", False)), n_f_tr=self.n_f_tr, n_f_post=self.n_f_post,
+                    n_f_init=self.n_f_init, eps_f_v=self.eps_f_v, W_f=self.W_f)
 
 
 def _eigh(A: np.ndarray):
@@ -67,30 +79,62 @@ def _from_principal(vals: np.ndarray, V: np.ndarray) -> np.ndarray:
 
 
 def initial_state(params: Params, sigma0: np.ndarray, v0: float, pi_i0: float | None,
-                  finite: bool = False) -> State:
-    """State at sigma0 with eps^p = 0. pi_i0 None: pi_i placed so that F(sigma0, pi_i) = 0
-    (inverse of (S.12); hydrostatic sigma0 => pi_i = p (1-N)^((1-N)/N), the apex through p)."""
+                  finite: bool = False, pi0_rule: str = "unified") -> State:
+    """State at sigma0 with eps^p = 0.
+
+    Floor (sheet §9.7): eps^e := Pi_f(invert(sigma0)) (counted, n_f_init = 1); at a floored point sigma0 is replaced
+    by sigma(eps^e_f) (p = -p_min; under HAR q also scaled). sigma0 must have p < 0 (the inverse map needs it; under
+    HAR also eps* > 0, which the closed form (S.5h'') guarantees for p < 0).
+
+    pi_i0 None: the unified rule (S.53) (sheet §5.4, owner decision (d)): the surface through
+    (p_init, eta*) with eta* = max(eta_init, c2 M), eta_init = zeta(theta) q/|p| of the FLOORED initial stress (0 on
+    the axis) and c2 the cap's upper bound (c2 := 0 for cap = 'none', c1 = c2 for 'planar'); refused (ValueError) if
+    eta* >= M/N (no surface through the state) or if the §7 guard B <= 0 fails at (pi_i0, psi_i0).
+    pi0_rule = 'legacy': eta* = eta_init (the pre-round-3 rule, the apex through p_init for an isotropic start);
+    identical to 'unified' when cap = 'none'. An explicit pi_i0 overrides both."""
     params.validate()
     sig = np.asarray(sigma0, float)
     w, V = _eigh(sig)
     eps_e_p = K.invert_elastic(params, w)
+    eps_pre = eps_e_p
+    fl = K.floor_project(params, eps_e_p)
+    n_f_init, eps_f_v = 0, 0.0
+    if fl.active:
+        eps_e_p = fl.eps_f
+        w = K.elastic(params, eps_e_p).sig
+        n_f_init, eps_f_v = 1, fl.dfv
     inv = K.invariants(w)
     if pi_i0 is None:
+        if pi0_rule not in ("unified", "legacy"):
+            raise ValueError(f"pi0_rule must be 'unified' or 'legacy', got {pi0_rule!r}")
         if inv.vertex:
             eta = 0.0
         else:
             z, _, _ = K.zeta_y(inv.theta, params.rho, params.zeta)
             eta = -z * inv.q / inv.p
-        pi_i0 = K.pi_of_eta(params, inv.p, eta)
+        if pi0_rule == "unified":
+            c2 = 0.0 if params.cap == "none" else params.c2
+            eta = max(eta, c2 * params.M)                                     # (S.53)
+        pi_i0 = K.pi_of_eta(params, inv.p, eta)                               # raises if eta >= M/N
+        if pi0_rule == "unified":
+            psi0, _ = K.csl(params, v0, pi_i0)
+            try:
+                K.pistar(params, inv.p, K.flow(params, inv, pi_i0).Om, psi0)  # the §7 guard B > 0 at (pi_i0, psi_i0)
+            except K.EvalError as e:
+                raise ValueError(f"initial state refused: {e} at (pi_i0={pi_i0:.6g}, psi_i0={psi0:.4g}) (sheet §5.4, §7)")
     st = State(_from_principal(w, V), _from_principal(eps_e_p, V), float(pi_i0), float(v0),
-               v0=float(v0), finite=finite)
+               v0=float(v0), finite=finite, eps_f_v=eps_f_v, W_f=params.p_min * eps_f_v, n_f_init=n_f_init)
     psi, _ = K.csl(params, v0, pi_i0)
     st.psi_i = psi
     try:
         st.eta = K.eta_of(params, inv.p, pi_i0)
     except ValueError:
         pass
-    st.cache = dict(eps_tr=eps_e_p, nvec=V, sig=w, atilde=K.elastic(params, eps_e_p).ae)
+    st.flags["at_floor"] = bool(params.p_min > 0.0 and inv.p > -params.p_min * (1.0 + K.AT_FLOOR_TOL))
+    st.flags.update(floor_tr=0, floor_post=0, fpattern="")
+    ae = K.elastic(params, eps_e_p).ae
+    st.cache = dict(eps_tr=eps_e_p, nvec=V, sig=w, atilde=(ae @ fl.Phi if fl.active else ae),
+                    floor_events=([(eps_pre, eps_e_p, fl.dfv)] if fl.active else []))
     return st
 
 
@@ -160,6 +204,7 @@ def _run_fractions(params: Params, st: State, deps: np.ndarray, fractions, chain
     sub-increment through the elastic line)."""
     cur = st
     D, iters, piters, plastic, pattern = 0.0, 0, 0, False, ""
+    ftr, fpost, fpat, fevents = 0, 0, [], []
     if chain:
         S_eps, S_pi, cum = K.chain_start()
     for a in fractions:
@@ -171,17 +216,23 @@ def _run_fractions(params: Params, st: State, deps: np.ndarray, fractions, chain
         piters += cur.flags["pi_iters"]
         plastic = plastic or cur.flags["plastic"]
         pattern += "P" if cur.flags["plastic"] else "E"      # branch pattern, e.g. "EPPP" (diagnostic)
+        ftr += cur.flags["floor_tr"]                         # §9.7: a substepped increment sums its sub-increments
+        fpost += cur.flags["floor_post"]
+        fpat.append(cur.flags["fpattern"])                   # e.g. "FPf,-P-" (trial floored / plastic / post floored)
+        fevents += cur.cache.get("floor_events", [])
         if chain:
             # v_{k+1} = cur.v: the sub-increment's own converged specific volume (S^v closed form, §9.6 G2)
             S_eps, S_pi, cum = K.chain_propagate(S_eps, S_pi, cum, a, cur.v, cur.cache["res"], cur.cache["nvec"])
     cur.D = D
-    cur.flags.update(local_iters=iters, pi_iters=piters, plastic=plastic, pattern=pattern)
+    cur.flags.update(local_iters=iters, pi_iters=piters, plastic=plastic, pattern=pattern,
+                     floor_tr=ftr, floor_post=fpost, fpattern=",".join(fpat))
+    cur.cache["floor_events"] = fevents
     C = K.chain_assemble(params, cur.cache["res"], cur.cache["nvec"], S_eps) if chain else None
     return cur, True, C
 
 
 def _step_once(params: Params, st: State, deps: np.ndarray) -> State:
-    """One backward-Euler increment without substepping."""
+    """One backward-Euler increment without substepping (the floor of §9.7 inside return_map: steps 1f / 5f)."""
     tr = float(np.trace(deps))
     # (S.26) v_{n+1} = v_n exp(tr d_eps), the same law in small-strain and finite mode (§1.2, §1.4; G2
     # owner decision 2026-10-01); d v_{n+1}/d eps~_b = v_{n+1}, so vfac = v (S.31). Was v + v0 tr, vfac = v0.
@@ -192,12 +243,14 @@ def _step_once(params: Params, st: State, deps: np.ndarray) -> State:
     res = K.return_map(params, w, st.pi_i, v, vfac)
     new = State(_from_principal(res.sig, V), _from_principal(res.eps_e, V), res.pi, v,
                 v0=st.v0, finite=st.finite, eps_p=st.eps_p.copy(),
-                eps_p_v=st.eps_p_v, eps_p_s=st.eps_p_s)
+                eps_p_v=st.eps_p_v, eps_p_s=st.eps_p_s,
+                eps_f_v=st.eps_f_v, W_f=st.W_f, n_f_tr=st.n_f_tr, n_f_post=st.n_f_post, n_f_init=st.n_f_init)
     new.flags = dict(plastic=res.plastic, vertex=res.vertex, cap_active=res.cap_active,
                      refused=res.refused, local_iters=res.local_iters, pi_iters=res.pi_iters,
-                     reason=res.reason, substeps=1)
+                     reason=res.reason, substeps=1, floor_tr=0, floor_post=0, fpattern="",
+                     at_floor=bool(st.flags.get("at_floor", False)))
     if res.refused:
-        # freeze: return the trial-elastic stress with the refusal flag; the driver stops.
+        # freeze: return the trial-elastic stress with the refusal flag; the driver stops. Counts nothing (§9.7).
         new.cache = dict(eps_tr=w, nvec=V, sig=res.sig, atilde=res.atilde)
         return new
     new.D = res.D
@@ -212,8 +265,24 @@ def _step_once(params: Params, st: State, deps: np.ndarray) -> State:
         new.eps_p = st.eps_p + dep
         new.eps_p_v = st.eps_p_v + res.dlam * float(res.q_a.sum())
         new.eps_p_s = st.eps_p_s + res.dlam * K.SQ23 * res.Om
-    new.cache = dict(eps_tr=w, nvec=V, sig=res.sig, atilde=res.atilde, res=res)
+    # §9.7 counters: per (sub-)increment floor_tr / floor_post in {0, 1}; cumulative n_f, eps^f_v, W_f; at_floor
+    new.eps_f_v = st.eps_f_v + res.dfv_tr + res.dfv_post
+    new.W_f = params.p_min * new.eps_f_v
+    new.n_f_tr = st.n_f_tr + int(res.floor_tr)
+    new.n_f_post = st.n_f_post + int(res.floor_post)
+    p_c = float(res.sig.sum()) / 3.0
+    new.flags.update(floor_tr=int(res.floor_tr), floor_post=int(res.floor_post),
+                     fpattern=("F" if res.floor_tr else "-") + ("P" if res.plastic else "E") + ("f" if res.floor_post else "-"),
+                     at_floor=bool(params.p_min > 0.0 and p_c > -params.p_min * (1.0 + K.AT_FLOOR_TOL)))
+    new.cache = dict(eps_tr=w, nvec=V, sig=res.sig, atilde=res.atilde, res=res, floor_events=list(res.floor_events))
     return new
+
+
+def floor_energy(params: Params, state: State) -> float:
+    """E_f (S.52) of the last increment (sum over its floor events, sub-increments included; the init event for a
+    fresh initial_state): the on-demand response (owner decision (c), 2026-10-03), computed from the closed-form
+    Psi; the bound p_min d eps^f_v is used for an out-of-domain HAR trial. Always <= the increment's W_f share."""
+    return float(sum(K.floor_energy(params, pre, post, dfv) for pre, post, dfv in state.cache.get("floor_events", [])))
 
 
 def run_path(params: Params, state0: State, deps: np.ndarray) -> list[State]:
@@ -289,7 +358,7 @@ def triaxial(params: Params, state0: State, kind: str, axial_strain_total: float
                 if trial.flags["refused"]:
                     break
                 res = trial.sigma[0, 0] - sig_lat0
-                if abs(res) <= TRIAX_LAT_TOL_REL * abs(params.p0):
+                if abs(res) <= TRIAX_LAT_TOL_REL * params.p_ref:
                     ok = True
                     break
                 Ct = tangent(params, trial)

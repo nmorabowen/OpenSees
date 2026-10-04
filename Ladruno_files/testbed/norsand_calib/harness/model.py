@@ -2,8 +2,9 @@
 
 Fitted vector (task item 4): FIT_NAMES = (chi, h, N, N_bar, rho, rho_bar).
 Fixed: the sand's CSL (fork mode, sheet S.22) and M; the elastic part from the energy plug; the Lode shape
-(WW default, plan §2.4), the cap (smooth, plan §2.7) and pi_i0 from the initial state (pi0_for; default rule
-'ramp_end', see Setup).
+(WW default, plan §2.4), the cap (smooth, plan §2.7) and pi_i0 from the initial state (default rule 'unified' =
+sheet (S.53), computed by the ORACLE's own helper; see Setup). The p' floor p_min (sheet §9.7) is the oracle's
+default unless Setup.p_min is given.
 """
 from __future__ import annotations
 
@@ -42,7 +43,13 @@ def oracle_module(oracle: str):
 
 @dataclass(frozen=True)
 class Setup:
-    """Everything the fit does not change. pi0_rule:
+    """Everything the fit does not change. p_min: the p' floor (sheet §9.7, kPa), None = the oracle's default
+    (O2 5e-3 p_ref, O1 off); 0 = off. pi0_rule:
+      'unified'    : the sheet's unified rule (S.53, owner decision (d)): the yield surface through (p_init,
+                     max(eta_init, c2 M)) -- the oracle's own initial_state(pi_i0=None) (O2 pi0_rule='unified', O1
+                     pi_rule='S53'); c2 = the smooth cap's upper bound, c1 for a planar cap, 0 (the apex) for no cap.
+                     For the harness's isotropic starts (eta_init = 0) it is the 'ramp_end' surface below, to round-off
+                     (checked: harness.check_plugs);
       'on_surface' : pi_i0 puts the yield surface through the isotropic initial stress (hydrostatic: the apex,
                      pi_i0 = p (1-N)^((1-N)/N); N = 0: p e^-1) -- 'pi_i0 from the initial state';
       'ramp_end'   : pi_i0 puts the surface through (p_init, eta_y) with eta_y = c2 M (smooth cap; planar: c1 M; no cap:
@@ -59,8 +66,9 @@ class Setup:
     cap: str = "smooth"
     c1: float = 0.05
     c2: float = 0.15
-    pi0_rule: str = "ramp_end"
+    pi0_rule: str = "unified"
     pi0_ratio: float | None = None
+    p_min: float | None = None
 
 
 def common_kwargs(setup: Setup, theta: dict, p_init: float, e_init: float) -> dict:
@@ -71,6 +79,8 @@ def common_kwargs(setup: Setup, theta: dict, p_init: float, e_init: float) -> di
     for k in FIT_NAMES:
         kw[k] = float(theta[k])
     kw.update(EN.get(setup.energy).params(s, p_init, e_init, setup.policy))
+    if setup.p_min is not None:
+        kw["p_min"] = float(setup.p_min)
     return kw
 
 
@@ -93,7 +103,7 @@ def pi0_for(setup: Setup, theta: dict, p_init: float) -> float:
     N = float(theta["N"])
     if setup.pi0_rule == "on_surface":
         return p * math.exp(-1.0) if N == 0.0 else p * (1.0 - N) ** ((1.0 - N) / N)
-    if setup.pi0_rule == "ramp_end":
+    if setup.pi0_rule in ("ramp_end", "unified"):          # (S.53) at an isotropic start: eta_init = 0 < c2 M
         M = setup.sand.M
         eta = (setup.c2 if setup.cap == "smooth" else setup.c1 if setup.cap == "planar" else 0.0) * M
         if N == 0.0:
@@ -108,5 +118,12 @@ def initial(oracle: str, setup: Setup, theta: dict, p_init: float, e_init: float
     """(Params, State) at the isotropic stress -p_init I, v0 = 1 + e_init."""
     P = make_params(oracle, setup, theta, p_init, e_init)
     sig0 = -abs(p_init) * np.eye(3)
-    st = oracle_module(oracle).initial_state(P, sig0, 1.0 + e_init, pi0_for(setup, theta, p_init))
+    mod = oracle_module(oracle)
+    if setup.pi0_rule == "unified":            # (S.53) by the oracle's own helper, not by the harness's copy
+        if oracle == "O2":
+            st = mod.initial_state(P, sig0, 1.0 + e_init, None, pi0_rule="unified")
+        else:
+            st = mod.initial_state(P, sig0, 1.0 + e_init, None, pi_rule="S53")
+    else:
+        st = mod.initial_state(P, sig0, 1.0 + e_init, pi0_for(setup, theta, p_init))
     return P, st

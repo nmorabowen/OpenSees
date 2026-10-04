@@ -24,6 +24,12 @@ data/
   ottawa_f65/                       K3 methodology check (Ottawa F65, triaxial TC + TE, LEAP-2015)
     ottawa_f65_{TC|TE}_e{724|604|584}_s{kPa}.csv   16 files, columns as in the originals + units header
     tests_meta.csv
+    curves/                         (2026-10-03) the same 16 tests as harness lab-curve files (sr from effective stresses, eps_a_sign -1 for TE)
+  wang_toyoura/                     (2026-10-03) Wang database, Toyoura HKU (7 tests) + Tokyo (6 tests), harness lab-curve files + tests_meta.csv
+  fukushima1984/                    (2026-10-03) Fukushima & Tatsuoka 1984: Table 1 (78 TC tests), Fig. 5 curves, Figs. 17/19/20 summary tables
+  lam_tatsuoka1988/                 (2026-10-03) Lam & Tatsuoka 1988: TC / PSC curves (Figs. 5, 9), phi(b, orientation, e) tables (Figs. 4, 8, 21)
+  chakraborty2009/                  (2026-10-03) Chakraborty & Salgado 2009: Toyoura TC / PSC Q, R regression tables
+  build_lab_curves.py               Wang + Ottawa converter;  build_literature_curves.py  FT/LT converter;  _digitise/  the digitising tool-kit (section 9)
 ```
 
 ## 1. Conventions
@@ -51,6 +57,14 @@ data/
 | DM04 Toyoura constants | `dm04/toyoura_table1.csv` | Dafalias & Manzari (2004) *J. Eng. Mech.* 130(6):622-634, **Table 1 on journal p. 626 (PDF p.5)**, equations in Table 2 p. 628; PDF TIMs `References/dafalias2004.pdf` | Read visually from a 250-dpi render of the table, then compared with the cluster oracle (section 4) | None | Transcription: none found, all 15 values agree with two independent copies |
 | Ottawa F65 monotonic drained triaxial, 16 tests | `ottawa_f65/*.csv` | George Washington University LEAP-2015 database (Vasko, El Ghoraiby, Manzari, Dec 2014): `download.zip` -> `Monotonic Triaxial Experiments/{Loose - eo=0.724, Dense - eo=0.584, Test Density - eo=0.604}/...`. Zip: `C:/Users/nmora/Dropbox/SOILS_rev/download.zip`, 4,665,420 bytes, sha256 108517a3c71cbd57d052f42bb4efd964b3efbdf3d030c7b5c4709f19ac200cb3, never modified | Extracted from the zip by `build_data.py`; the cyclic tests and the PDFs were not copied | The 3-row text header replaced by a `#` header with units; numbers copied as written (8 significant digits), the index column kept | Lab data, no uncertainty given. Characterisation: Gs 2.648 (6 trials), e_max 0.7389 +- 0.0247, e_min 0.4915 +- 0.0183 (9 trials, `Ottawa-F65 Sand Characterization Tests.pdf` slide 7) |
 | TIMs red-team of the Kimura digitisation | `kimura1985/source/redteam_report_TIMs_2026-09-29.md` | TIMs Workbench, 2026-09-29 | copied unedited | none | Not re-verified here beyond the checks of section 5 |
+| Wang database, Toyoura HKU + Tokyo (13 drained TC) | `wang_toyoura/` | Wang, Sand Triaxial Test Database rev2 (4TU, doi 10.4121/086847a6-ba39-4d66-973b-6b93028c7ad8, CC-BY-4.0), `integrated_dataset/33_Toyoura_sand_HKU.csv` (Chen & Yang 2025, Eng. Geol. 345:107863) and `34_Toyoura_sand_Tokyo.csv` (Verdugo & Ishihara 1996, S&F 36(2):81-91). Zip `C:/Users/nmora/Dropbox/SOILS_rev/WP144_calibration/Wang_sand_triaxial_database_rev2.zip`, 37,381,268 bytes, sha256 4c351c9f5f03a0cf5feff868473c191830e6f42931cbbe489dce8f7c1c134b8b, read only | `build_lab_curves.py` (this round's check: one HKU row compared with the zip by hand, exact) | Reformat only (sr = sigma_v/sigma_r) | The database itself compiled these from published figures (digitised; strains to 4 decimals); tolerance not stated |
+| Ottawa F65 as lab curves | `ottawa_f65/curves/` | the 16 files above | `build_lab_curves.py`; sr = max/min of (total - pore) stresses; hand check of TE e604 s100 row 2: 2.357813 | `eps_a_sign` -1 for the 4 TE tests (the file's vertical strain is negative in extension) | none beyond the lab's |
+| Fukushima & Tatsuoka 1984 Table 1 | `fukushima1984/table1_tests.csv`, `point_tests_tc.csv` | S&F 24(4):30-48, Table 1 journal p. 32 (PDF page 3), PDF `Fukushima_Tatsuoka_1984_SF24-4_30.pdf` (journal page = PDF page + 29) | transcribed by eye from native-resolution crops of the NII scan, two passes | kgf/cm2 x 98 -> kPa; sr derived | printed numbers: none expected |
+| Fukushima & Tatsuoka 1984 Fig. 5 curves | `fukushima1984/curves/` (12 files) | Fig. 5(a), (b), (d), journal p. 36 (PDF page 7) | digitised (section 9) | none | sr +-0.05, eps_a +-0.1 %, eps_v +-0.15 %; check against Table 1 phi: max difference 0.054 in sr |
+| Fukushima & Tatsuoka 1984 Figs. 17, 19, 20 | `fukushima1984/fig17_*.csv`, `fig19_*.csv`, `fig20_*.csv` | journal pp. 45-46 (PDF pages 16-17) | Fig. 17 traced, 19/20 markers read | none | phi +-0.1 deg (Fig. 17), v +-0.1 %, eps_a +-0.05 %, sigma3' +-4 % |
+| Lam & Tatsuoka 1988 curves | `lam_tatsuoka1988/curves/` (10 files) | S&F 28(1):89-106, Fig. 5 (p. 94, PDF page 6) TC; Fig. 9 (p. 97, PDF page 8) PSC; PDF `Lam_Tatsuoka_1988_SF28-1_89.pdf` (journal page = PDF page + 88) | digitised (section 9) | strain axis converted from eps1-eps3 to eps_a | sr +-0.04-0.05, eps_a +-0.15-0.2 % |
+| Lam & Tatsuoka 1988 phi tables | `lam_tatsuoka1988/fig21a_*.csv`, `fig21b_*.csv`, `fig4a_*.csv`, `fig8a_*.csv` | Figs. 21 (p. 101), 4(a) (p. 94), 8(a) (p. 96) | markers read on a gridded overlay | none | phi +-0.25-0.3 deg, e +-0.005, b +-0.02 |
+| Chakraborty & Salgado 2009 | `chakraborty2009/` | ICSMGE 17, pp. 652-655, Tables 1-2 (p. 654), Fig. 3 (p. 655); PDF `Chakraborty_Salgado_2009_ISSMGE_STAL0652.pdf` | transcribed from a 250-dpi render (text layer scrambles Table 2) | none | none expected |
 
 ## 3. Tatsuoka et al. 1986: the four tests
 
@@ -243,3 +257,74 @@ python Ladruno_files/testbed/norsand_calib/data/build_data.py <path to download.
 ```
 (run on Esmeralda per the WP-144 rule; needs numpy). It reads `source/` and the zip, writes every CSV above except the `source/` copies, and prints the DM04 phi_c / phi_e.
 Cross-checks of section 5 were done by eye and are not scripted.
+
+## 9. P3 data additions, 2026-10-03 (WP-144 literature round)
+
+Everything below follows the conventions of section 1 (stresses kPa, strains %, compression positive, `eps_v` dilation negative, sr = sigma1'/sigma3'). No fitting, no tuning;
+"derived" columns are labelled. Curve files load with `harness/data.py:load_curve` (checked 2026-10-03: 22 new literature curves, 13 Wang and 16 Ottawa curves, 78 point tests).
+
+### 9.1 What was added
+
+| Dataset | Files | Content |
+|---|---|---|
+| Wang Toyoura (HKU, Tokyo) | `wang_toyoura/wang{33_HKU,34_Tokyo}_TMD<n>.csv`, `tests_meta.csv` | 13 drained isotropically consolidated TC tests, written by `build_lab_curves.py` |
+| Ottawa F65 lab curves | `ottawa_f65/curves/*.csv`, `curves_meta.csv` | 16 tests (12 TC, 4 TE), sr from effective stresses, TE `eps_a_sign = -1` |
+| Fukushima & Tatsuoka 1984 | `fukushima1984/table1_tests.csv`, `point_tests_tc.csv` | all 78 TC tests of Table 1: sigma_c', (sigma3')_f, e_0.3, t0, phi (uncorrected); `point_tests_tc.csv` = harness point-test schema |
+| | `fukushima1984/curves/ft84_fig5{a,b,d}_sc*.csv` (12) | stress-ratio and eps_v curves of Fig. 5(a) (dense, sigma_c' 0.1-4.0 kgf/cm2: 6), (b) (dense, 0.02-0.1: 3), (d) (loose, 0.02-0.1: 3) |
+| | `fig17_phi_corrected_vs_sigma3.csv`, `fig19_*`, `fig20_*` | corrected phi(sigma3') at e_0.3 0.70 / 0.85 (2 curves, 44 + 44 points); eps_v at eps_a 5 and 10 % vs sigma3' (31 markers); eps_a at sigma1'/sigma3' = 3, 4 vs sigma3' (24 markers) |
+| Lam & Tatsuoka 1988 | `lam_tatsuoka1988/curves/lt88_fig5{a,b}_*` (8), `lt88_fig9_psc_*` (2) | TC (H/W 1.0 and 0.25, omega 0/30/60/90) and PSC (omega 0, H/W 1.9 and 1.0) stress-ratio / eps_v curves |
+| | `fig21a_phi_vs_orientation.csv`, `fig21b_phi_vs_b.csv`, `fig4a_tc_phi_vs_e.csv`, `fig8a_psc_phi_vs_e.csv` | phi vs bedding orientation (TC, PSC, TE), phi vs b = 0 / 0.25-0.36 / 1 (TC / PSC / TE), phi(e) for TC and PSC |
+| Chakraborty & Salgado 2009 | `chakraborty2009/table1_tx_Q_R.csv` (7 rows), `table2_psc_Q_R.csv` (5), `fit_parameters.csv` | Q, R regression tables and the phi_c / A_psi / Q(sigma_c') constants |
+
+### 9.2 Ranges
+
+- **Wang HKU (7 tests, Chen & Yang 2025):** sigma3 = 100, 200 (x4), 400 (x2) kPa; e0 0.640-0.834 (D_r 38.4-90.6 %); eps_a 0-12 % (121 points, 0.1 % step); phi_peak 31.9-41.4 deg (derived); d50 0.22 mm, Gs 2.64, e_max 0.977, e_min 0.605, phi_c 31.4 (database values).
+- **Wang Tokyo (6 tests, Verdugo & Ishihara 1996):** sigma3 = 100 (x3), 500 (x3) kPa; e0 0.810-0.996 (D_r 44 to -5 %, TMD6 has e0 above the reported e_max); eps_a to 26-32 % (262-317 points); phi_peak 30.6-33.1 deg; two loose tests (TMD3, TMD6) have no interior peak. d50 0.17 mm, Gs 2.65, e_max 0.977, e_min 0.597, phi_c 31.
+  **No Wang test has sigma3 below 100 kPa**; the low-stress end of the pack is Fukushima & Tatsuoka (sigma_c' 1.96-392 kPa).
+  Both files say `drained`, `triaxial compression`, `isotropic` in their own TEST_PROGRAMME; stresses are used as given (sr = sigma_v/sigma_r). The HKU curves come from a small-strain stiffness study (sr is already 1.5 at 0.1 % strain).
+- **Fukushima & Tatsuoka Table 1:** (sigma3')_f 2.55-197 kPa measured (sigma_c' 1.96-392 kPa; the 392 kPa tests have no measured value), e_0.3 0.650-0.908, phi (uncorrected) 32.9-47.2 deg. **e_0.3 is the void ratio at 29.4 kPa, not at the shear stress** (paper p. 35, Fig. 4): for the other sigma_c' the shear void ratio differs and is not reported.
+- **Lam & Tatsuoka:** all at sigma3' = 98 kPa, e_0.3 0.637-0.675 for the curves (0.70 nominal for the phi tables); H/W 1.9 (PSC) and 1.0 (TC) are the nominal specimens.
+
+### 9.3 How the figures were digitised (tool-kit in `_digitise/`)
+
+1. The two Soils and Foundations PDFs are NII scans: one embedded 1-bit bitmap per page, 2848 px wide (about 345 dpi). `extract_native_images.py` pulls these bitmaps out unchanged (no resampling).
+2. **Axis calibration per panel:** the frame lines are fitted (robust line fit through ink runs; the scans are skewed by 0.3-0.9 deg and the skew differs between the left and right frame lines, so a pure rotation is not enough), the tick marks along the
+   frame are detected, and data coordinates are mapped by bilinear interpolation between the left and right frame lines (x: values at the two frame lines, y: linear fit through the tick rows of each line; residuals 0.2-3 px, `Panel.resL/resR`). Log axes use log10 as the abscissa.
+3. **Curve extraction:** marker blobs are found after filling small holes (open markers) and a morphological opening; curves are followed (a) by a marker chain in pixel space, (b) by a column-cluster family tracker in which every ink cluster can be claimed by one curve only, (c) by a row-wise tracker for steep starts (Fig. 5(d) lower curve), (d) by a single-curve follower for isolated lines (Fig. 17). Seeds are marker positions read on gridded zooms. Every result was inspected on an overlay of the extracted points on the scan, outliers (legend text, neighbouring curves) were removed (`curate.py` despike, x-ranges) and the surviving points are the files. Where markers of several curves overlap into one black band the curve is **not** digitised there (section 9.5); nothing is interpolated into the files except the strain-axis conversion of Lam & Tatsuoka (below).
+4. Fig. 9 (PSC): the six series with many similar markers were assigned marker by marker (blob IDs in `_digitise/run_lt9b.py`) after viewing numbered overlays.
+5. Table 1, the Chakraborty tables and the b / orientation / e tables are read directly (Fig. 21 and 4/8 markers on a gridded zoom).
+
+### 9.4 Checks and uncertainty
+
+- **Fukushima & Tatsuoka Fig. 5 against Table 1 (independent):** the digitised maximum sr of each curve was compared with (1 + sin phi)/(1 - sin phi) of the Table 1 test with the same sigma_c' and e_0.3 (legend). Differences (12 curves): +0.036, -0.015, +0.011, -0.004, +0.005, -0.018 (5a); -0.031, -0.026, -0.042 (5b); +0.031, -0.053, +0.002 (5d); all within 1.3 % of sr. This validates the sr axis calibration to about +-0.05. The same check is stored per curve in `curves_meta.csv` (`dsr`).
+- **Lam & Tatsuoka internal checks:** PSC H/W 1.9 peak sr 6.494 (phi 47.15 deg) against Fig. 8(a) phi at e 0.657: 47.16 deg; H/W 1.0: 47.68 against 47.43 deg (0.25 deg); TC omega = 0, e 0.671: peak sr 5.494 (43.79 deg) against Fig. 4(a) about 43.6 deg at e 0.669; TC / PSC phi at omega = 0 from Fig. 21(b) markers (41.9 / 45.4 deg) against Fig. 21(a) (41.7 / 45.3 deg).
+- **Fig. 17 against the paper's text:** the extrapolations to sigma3' = 0 are quoted as 42.4 and 36.1 deg; the traced curves start at 42.2 and 36.1 deg.
+- **Per-point uncertainty (1 sigma, my estimate from pixel size, marker size and the checks above):** FT Fig. 5: sr +-0.05 (+-0.1 where neighbouring markers merge), eps_a +-0.1 %, eps_v +-0.15 %; LT Fig. 5: sr +-0.04, D = eps1-eps3 +-0.1 % (eps_a +-0.15 % after conversion), eps_v +-0.1 %; LT Fig. 9: sr +-0.05, D +-0.15 % (eps_a +-0.2 %), eps_v band +-0.15 %; phi tables +-0.25-0.3 deg, b +-0.02 (PSC) / +-0.01, e +-0.005; Fig. 19/20: v +-0.1 %, eps_a +-0.05 %, sigma3' +-4 %. They are in the `uncertainty` header line of every curve file and do not include the experimenters' own error (membrane forces, bedding error, end restraint).
+- **Lam & Tatsuoka strain axis:** the paper plots against eps1 - eps3, not eps_a. `build_literature_curves.py` converts with eps_a = (2D + eps_v)/3 (TC) and (D + eps_v)/2 (PSC) using the same test's eps_v trace (documented in each file header). An error of 0.1 % in eps_v moves eps_a by 0.03-0.05 %.
+- **Fukushima & Tatsuoka membrane forces:** Fig. 5 stress ratios are the mid-height values UNCORRECTED for membrane forces (t0 = 0.3 mm in all of 5(a), (b), (d)); at sigma_c' <= 0.1 kgf/cm2 the paper shows this biases phi (Figs. 7, 12-17), and at sigma_c' 0.02-0.05 the actual sigma3' at failure was up to twice sigma_c' (`sigma3_f_kPa` in each header). Use `sigma3_f_kPa` for any p-dependent comparison of those tests.
+
+### 9.5 Not digitised / not readable (stated, not hidden)
+
+1. **FT Fig. 5(c) (loose, sigma_c' 0.1-4.0 kgf/cm2):** the stress-ratio curves of 0.5-4.0 differ by less than 0.1 and their markers merge into one black band; the eps_v curves of the bunch are not separable either. Not digitised. Peak sr and phi of those six tests are in Table 1 (tests 32, 42, 50, 62, 71, 77).
+2. **FT Fig. 5(a):** the rise of sr below eps_a about 0.7-1.4 % (the six curves overlap) and the converging tail beyond about 12 % are not given (first / last rows in `curves_meta.csv`); eps_v of sigma_c' 0.1 and 0.2 only up to 7 % (the three upper eps_v curves merge above that; the 0.5 curve continues to 13.5 %).
+   **FT Fig. 5(b), (d):** the eps_v traces of sigma_c' 0.02 and 0.05 in 5(b) are one thick pair (same content in both files, flagged in the header); in 5(d) the 0.05 and 0.1 tests coincide below about 9.5 % (the 0.1 file continues alone to 15 %, with real dips at 11.8 and 14.7 % that are in the figure).
+3. **LT Fig. 5(a), (b):** the initial rise of sr (D below about 2 %) is not resolved (curves overlap); in 5(b) the omega = 60 and 90 stress-ratio curves coincide above D about 5 % and one merged trace is written to both files.
+4. **LT Fig. 9 (PSC):** only the triangle (H/W 1.9) and circle (H/W 1.0) series; sigma1'/sigma3' from D about 1.4 % (15 markers each); sigma2'/sigma3' only 4 markers each (thick overlapped band for D = 6-11 %); eps_v is the centre line of the overlapped band for D below 8 %. The square (0.5) and cross (0.25) series are not digitised (end restraint).
+5. **LT triaxial extension (Figs. 12-20):** no TE stress-strain curve was digitised (panels share frames and legends, failure modes make them specimen-dependent); the TE phi at b = 1 is in `fig21*` (single-intersection mode and the Fig. 16 values). Figs. 13, 14, 18 (omega / xi variants of PSC, strains at failure) are not digitised.
+6. **FT:** Figs. 6-9 and 12-16 (Table 1 phi plotted against e, membrane-correction comparisons) are not repeated; the membrane-corrected phi per test is NOT tabulated in the paper (only the averaged curves of Fig. 17 and the plotted points of Figs. 14-16, which were not digitised). Fig. 18 (eps_v vs e at eps_a 5 / 10 %) not digitised.
+7. **Void ratio at the test stress** is not reported by either paper (e_0.3 only); membrane thickness (FT) and bedding error (LT) are not corrected in any file.
+8. The other PDFs in `WP144_calibration/` (Yoshimine & Ishihara 1998, Verdugo & Ishihara 1996 beyond the Wang copy, Siddiquee, Andrade & Ellison, Castonguay & Konrad) were not part of this round.
+
+### 9.6 Rebuild
+
+```
+python Ladruno_files/testbed/norsand_calib/data/build_lab_curves.py <Wang_sand_triaxial_database_rev2.zip>   # Wang + Ottawa lab curves
+python Ladruno_files/testbed/norsand_calib/data/fukushima1984/build_table1.py
+python Ladruno_files/testbed/norsand_calib/data/fukushima1984/build_summary_figs.py
+python Ladruno_files/testbed/norsand_calib/data/lam_tatsuoka1988/fig21_phi_tables.py
+python Ladruno_files/testbed/norsand_calib/data/lam_tatsuoka1988/fig4_fig8_phi_vs_e.py
+python Ladruno_files/testbed/norsand_calib/data/chakraborty2009/build_tables.py
+python Ladruno_files/testbed/norsand_calib/data/build_literature_curves.py     # FT/LT curves from the digitised-point JSON files
+```
+The digitisation itself (`_digitise/`) needs PyMuPDF, scipy and Pillow and the two PDFs (`extract_native_images.py` first); its raw outputs are in `_digitise/outputs/` and, after curation, in the two `digitised_points_*.json` files that the builder reads.
+Page images are not committed (copyright of the Japanese Geotechnical Society); only numbers.

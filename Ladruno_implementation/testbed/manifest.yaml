@@ -2077,6 +2077,7 @@ features:
     pytest_extra:
       - tests/test_ladruno_norsand_element.py   # element level: assembled-tangent finite differences (brick, PlaneStrain quad), Newton order, mass
       - tests/test_ladruno_norsand_k1.py        # K1 benchmark (Zone A, drives the public interface)
+      - tests/test_ladruno_norsand_har_floor.py   # round 3b: HAR energy, p' floor, unified pi_i0 through the shell (echo, parser codes, K1.1h/K1.11/K1.12-K1.15, responses, cube past the domain edge, HAR element FD, database round trip)
     tcl: WAIVED(no separate .tcl gate file; the classic-Tcl dispatch IS wired (the strcmp ladder in TclModelBuilderNDMaterialCommand.cpp) and is exercised by test_tcl_subprocess_smoke, a short Tcl deck run through OpenSees.exe, inside tests/test_ladruno_norsand.py)
     core_files:
       - SRC/classTags.h
@@ -2091,7 +2092,7 @@ features:
       - Ladruno_files/testbed/norsand_oracle/g2                                      # shell vs O2 through the public interface, LogStrain(LadrunoNorSand) (run from this directory); mutation_gate.md
       - Ladruno_files/testbed/norsand_oracle/tests                                   # G1: the oracles O1 (rate) and O2 (algorithm) against each other and the sheet (oracle-only)
     dispatch: {tcl: true, functionMap: true}
-    status: active           # WP-144 G2 passing, pending ship (banner line and warrant package at ship)
+    status: active           # WP-144 G2 passed; round 3 (HAR + floor) implemented, unverified until the final gate (banner line and warrant package at ship)
     notes: >
       WP-144 (G2 passing, pending ship; plan Ladruno_implementation/144_ladruno_norsand_plan.md, sheet
       144a_norsand_equation_sheet.md). NorSand in the Andrade & Borja 2006 form on a header-only,
@@ -2105,6 +2106,13 @@ features:
       Gates: kernel_parity/mutate_kernel.sh 15 of 15 mutants killed; the shell gate g2/mutation_gate.md
       10 of 10 killed (M1-M7 plus MX1 provider route disabled, MX2 provider shear un-doubled, MX3
       Domain::commit counter reset removed). Not yet in the banner (added at ship).
+      Round 3 (shell, unverified until the final gate): -energy BA06|HAR (HAR: -k -g [-n] -p_a, or the DM04
+      form -G0 -nu [-e_ref]; a constant of the other energy is refused, codes 201-207), the p' floor -pmin
+      (default 5e-3 p_ref, 0 = off; counted, never refused; exact tangent, zero bulk stiffness at a floored
+      state), -pi0_auto (unified pi_i0 rule S.53), responses floor/floored, floorEnergy, floorInit and
+      stepInfo[9..10], the post-floored eps^e through the LogStrain provider, WIRE_LEN 112 (append-only).
+      The Zone-A tests above are NOT yet extended for round 3: K1.12-K1.15, the shell refusals and the floor
+      responses are the test author's, and the 15-/10-mutant gates have not been re-run on this shell.
 
   - feature: LadrunoNorSand3D
     classtag: 33024          # ND_TAG family; ThreeDimensional wrapper for LadrunoNorSand; after ND_TAG_LadrunoNorSand=33023
@@ -2116,6 +2124,7 @@ features:
     pytest_extra:
       - tests/test_ladruno_norsand_element.py   # element level: assembled-tangent finite differences (brick, PlaneStrain quad), Newton order, mass
       - tests/test_ladruno_norsand_k1.py        # K1 benchmark (Zone A, drives the public interface)
+      - tests/test_ladruno_norsand_har_floor.py   # round 3b: HAR energy, p' floor, unified pi_i0 through the shell (echo, parser codes, K1.1h/K1.11/K1.12-K1.15, responses, cube past the domain edge, HAR element FD, database round trip)
     tcl: WAIVED(no separate .tcl gate file; the classic-Tcl dispatch IS wired (the strcmp ladder in TclModelBuilderNDMaterialCommand.cpp) and is exercised by test_tcl_subprocess_smoke, a short Tcl deck run through OpenSees.exe, inside tests/test_ladruno_norsand.py)
     core_files:
       - SRC/classTags.h
@@ -2130,7 +2139,7 @@ features:
       - Ladruno_files/testbed/norsand_oracle/g2                                      # shell vs O2 through the public interface, LogStrain(LadrunoNorSand) (run from this directory); mutation_gate.md
       - Ladruno_files/testbed/norsand_oracle/tests                                   # G1: the oracles O1 (rate) and O2 (algorithm) against each other and the sheet (oracle-only)
     dispatch: {tcl: true, functionMap: true}
-    status: active           # WP-144 G2 passing, pending ship (banner line and warrant package at ship)
+    status: active           # WP-144 G2 passed; round 3 (HAR + floor) implemented, unverified until the final gate (banner line and warrant package at ship)
     notes: >
       Wrapper of ND_TAG_LadrunoNorSand (see that row); fixes the classTag and the 3D view (order 6).
 
@@ -2144,6 +2153,7 @@ features:
     pytest_extra:
       - tests/test_ladruno_norsand_element.py   # element level: assembled-tangent finite differences (brick, PlaneStrain quad), Newton order, mass
       - tests/test_ladruno_norsand_k1.py        # K1 benchmark (Zone A, drives the public interface)
+      - tests/test_ladruno_norsand_har_floor.py   # round 3b: HAR energy, p' floor, unified pi_i0 through the shell (echo, parser codes, K1.1h/K1.11/K1.12-K1.15, responses, cube past the domain edge, HAR element FD, database round trip)
     tcl: WAIVED(no separate .tcl gate file; the classic-Tcl dispatch IS wired (the strcmp ladder in TclModelBuilderNDMaterialCommand.cpp) and is exercised by test_tcl_subprocess_smoke, a short Tcl deck run through OpenSees.exe, inside tests/test_ladruno_norsand.py)
     core_files:
       - SRC/classTags.h
@@ -2158,6 +2168,6 @@ features:
       - Ladruno_files/testbed/norsand_oracle/g2                                      # shell vs O2 through the public interface, LogStrain(LadrunoNorSand) (run from this directory); mutation_gate.md
       - Ladruno_files/testbed/norsand_oracle/tests                                   # G1: the oracles O1 (rate) and O2 (algorithm) against each other and the sheet (oracle-only)
     dispatch: {tcl: true, functionMap: true}
-    status: active           # WP-144 G2 passing, pending ship (banner line and warrant package at ship)
+    status: active           # WP-144 G2 passed; round 3 (HAR + floor) implemented, unverified until the final gate (banner line and warrant package at ship)
     notes: >
       Wrapper of ND_TAG_LadrunoNorSand (see that row); fixes the classTag and the PlaneStrain view (order 3, {11,22,12}; sigma_33 exposed through getStressZZ).

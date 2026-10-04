@@ -9,8 +9,19 @@ schema), peak targets from the model curve itself. No noise: the truth is a zero
 Gate: max_j |theta_j - theta_true_j| / |theta_true_j| <= RECOVERY_TOL for each configuration run:
   'six'   all of (chi, h, N, N_bar, rho, rho_bar) free
   'rho_pinned'  rho fixed at its true value (the plan's P3 route: rho pinned from PS-vs-TC), five free
+Two variants (--variant clean|noisy|both):
+  clean  the gate above: generated on the MODEL's own grid (0.05 % axial increments), no noise (the "inverse crime":
+         generator and fitted model are the same code at the same step, so the truth is an exact zero-residual point)
+  noisy  (round 3b, the caveat removed) generated with a DIFFERENT step (GEN_DEPS_PCT = 0.025 %: the model keeps
+         0.05 %, so the fit also absorbs the first-order backward-Euler discretisation difference) and with Gaussian
+         NOISE of the objective's own sigmas (Weights: sigma_sr on sr, sigma_ev on eps_v, sigma_phi / sigma_eps_peak
+         on the peak targets; the x = 0 row stays exact). Gate: the fit is statistically consistent with the truth:
+         the Mahalanobis distance of ln(theta_fit/theta_true) under the Gauss-Newton covariance at the truth,
+         C = (J'J)^-1 J' diag(var) J (J'J)^-1 (var = Objective.noise_variance), is <= the chi2 0.999 quantile with
+         k = #free dof, AND the fit's cost is not worse than the cost at the truth. Report also: z-scores per
+         parameter, chi2/dof, and the discretisation floor |r(truth)| of a NOISE-FREE set generated at the other step.
 Run (compute node; see run_smoke.sbatch):  python -m harness.smoke_recovery [--starts 8] [--workers 8]
-    [--configs six,rho_pinned] [--no-profiles]
+    [--configs six,rho_pinned] [--no-profiles] [--variant clean|noisy|both] [--noise-seed 1]
 """
 from __future__ import annotations
 
@@ -37,12 +48,26 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.normpath(os.path.join(HERE, "..", "out"))
 
 
-def make_synthetic(setup, W: Weights, outdir: str):
+GEN_DEPS_PCT = 0.025          # the noisy variant's generator step (the model fits at Weights.deps_pct = 0.05)
+SAMPLE_PCT = 0.1              # the data sampling in axial strain, both variants
+
+
+def make_synthetic(setup, W: Weights, outdir: str, gen_deps_pct: float | None = None, noise_seed: int | None = None,
+                   prefix: str = ""):
+    """Synthetic PS curves from O2 at THETA_TRUE. gen_deps_pct None = the model's step (the clean variant);
+    noise_seed given = Gaussian noise of the Weights' sigmas on sr, eps_v and the peak targets (x = 0 row exact)."""
+    gen = W.deps_pct if gen_deps_pct is None else gen_deps_pct
+    stride = SAMPLE_PCT / gen
+    if abs(stride - round(stride)) > 1e-9:
+        raise ValueError(f"gen_deps_pct {gen} must divide the {SAMPLE_PCT} % sampling")
+    stride = int(round(stride))
+    rng = np.random.default_rng(noise_seed) if noise_seed is not None else None
     paths = []
     os.makedirs(outdir, exist_ok=True)
     for name, s3, e in STATES:
-        n_long = int(round(10.0 / W.deps_pct))
-        c = simulate(setup, THETA_TRUE, "PS", s3, e, n_long * W.deps_pct / 100.0, n_long)
+        name = prefix + name
+        n_long = int(round(10.0 / gen))
+        c = simulate(setup, THETA_TRUE, "PS", s3, e, n_long * gen / 100.0, n_long)
         if not c.complete:
             raise RuntimeError(f"synthetic {name}: O2 driver {c.status}")
         x = np.abs(c.eps_a_pct)
@@ -50,14 +75,26 @@ def make_synthetic(setup, W: Weights, outdir: str):
         if not interior:
             raise RuntimeError(f"synthetic {name}: no interior peak within 10 %")
         x_end = xp + W.post_peak_pct
-        keep = [k for k in range(0, len(x), 2) if x[k] <= x_end]
-        ev = [c.eps_v_pct[k] if (j % 2 == 0) else float("nan") for j, k in enumerate(keep)]
+        keep = [k for k in range(0, len(x), stride) if x[k] <= x_end]
+        sr = np.array(c.sr[keep], float)
+        ev = np.array([c.eps_v_pct[k] if (j % 2 == 0) else float("nan") for j, k in enumerate(keep)], float)
+        phi_pk, eps_pk = phi_ps(srp), xp
+        if rng is not None:
+            sr[1:] += rng.normal(0.0, W.sigma_sr, sr.size - 1)
+            nz = ~np.isnan(ev)
+            nz[0] = False
+            ev[nz] += rng.normal(0.0, W.sigma_ev, int(nz.sum()))
+            phi_pk += rng.normal(0.0, W.sigma_phi_deg)
+            eps_pk += rng.normal(0.0, W.sigma_eps_peak_pct)
         meta = dict(id=name, kind="PS", sigma3_kPa=s3, e0=e,
-                    source=f"SYNTHETIC: O2 PS driver, THETA_TRUE {THETA_TRUE}, sand '{TOY.name}', "
-                           f"energy BA06 per_test, {time.strftime('%Y-%m-%d')}",
-                    phi_peak_deg=phi_ps(srp), eps_peak_pct=xp)
+                    source=f"SYNTHETIC: O2 PS driver at {gen:g} % steps, THETA_TRUE {THETA_TRUE}, sand '{TOY.name}', "
+                           f"energy BA06 per_test, "
+                           + (f"Gaussian noise seed {noise_seed} (sigma_sr {W.sigma_sr}, sigma_ev {W.sigma_ev}, "
+                              f"sigma_phi {W.sigma_phi_deg}, sigma_eps_peak {W.sigma_eps_peak_pct}), "
+                              if rng is not None else "no noise, ") + time.strftime('%Y-%m-%d'),
+                    phi_peak_deg=phi_pk, eps_peak_pct=eps_pk)
         p = os.path.join(outdir, name + ".csv")
-        DATA.write_curve(p, meta, x[keep], c.sr[keep], ev)
+        DATA.write_curve(p, meta, x[keep], sr, ev)
         paths.append(p)
     return paths
 
@@ -83,10 +120,44 @@ def recovery_error(theta, names):
     return {n: abs(theta[n] - THETA_TRUE[n]) / abs(THETA_TRUE[n]) for n in names}
 
 
+def noisy_consistency(obj, spec, best_theta, cost_fit, cost_truth, k_dof):
+    """Statistical consistency of the fit with the truth under the data noise (module docstring, 'noisy' gate)."""
+    from scipy.stats import chi2
+    names = list(spec.free)
+    J = FIT.jacobian_log(obj, THETA_TRUE, names)          # d r / d ln theta at the TRUTH
+    var = obj.noise_variance()
+    A = np.linalg.pinv(J.T @ J)
+    C = A @ (J.T * var) @ J @ A                           # sandwich covariance of ln theta_hat
+    d = np.array([math.log(best_theta[n] / THETA_TRUE[n]) for n in names])
+    sd = np.sqrt(np.clip(np.diag(C), 0.0, None))
+    z = d / sd
+    m2 = float(d @ np.linalg.pinv(C) @ d)
+    crit = float(chi2.ppf(0.999, k_dof))
+    n_eff = float(var.sum())
+    return dict(names=names, ln_ratio=dict(zip(names, d.tolist())), sd_ln=dict(zip(names, sd.tolist())),
+                z=dict(zip(names, z.tolist())), mahalanobis2=m2, chi2_crit_0p999=crit, k_dof=k_dof,
+                chi2_fit=2.0 * cost_fit, chi2_truth=2.0 * cost_truth, expected_chi2_truth=n_eff,
+                expected_chi2_fit=n_eff - k_dof, cost_not_worse_than_truth=bool(cost_fit <= cost_truth * (1 + 1e-9)),
+                ok=bool(m2 <= crit and cost_fit <= cost_truth * (1 + 1e-9)))
+
+
+def discretisation_floor(setup, W, outdir):
+    """|r(truth)| (in sigma units) of a NOISE-FREE set generated at GEN_DEPS_PCT and fitted at the model's step:
+    the systematic floor that the step difference alone puts under the noisy variant."""
+    paths = make_synthetic(setup, W, outdir, gen_deps_pct=GEN_DEPS_PCT, noise_seed=None, prefix="nf_")
+    obj = Objective(setup, [DATA.load_curve(p) for p in paths], weights=W)
+    r = obj.residuals(THETA_TRUE)
+    return dict(norm=float(np.linalg.norm(r)), max_abs=float(np.abs(r).max()), n=int(r.size),
+                rms=float(np.sqrt(np.mean(r ** 2))))
+
+
 def run(starts=8, workers=8, configs=("six", "rho_pinned"), profiles=True, seed=0, tag="", max_nfev=60,
-        profile_factors=(0.95, 1.05), profile_nfev=15):
+        profile_factors=(0.95, 1.05), profile_nfev=15, variant="clean", noise_seed=1):
+    noisy = variant == "noisy"
+    if variant not in ("clean", "noisy"):
+        raise ValueError(variant)
     t_all = time.perf_counter()
-    sfx = f"_{tag}" if tag else ""
+    sfx = ("_noisy" if noisy else "") + (f"_{tag}" if tag else "")
     progress = os.path.join(OUT, f"smoke_progress{sfx}.log")
     ls_kw = dict(max_nfev=max_nfev)
     setup = Setup(TOY)                     # BA06, per_test, WW, smooth cap, pi0 rule 'ramp_end' (model.Setup)
@@ -94,7 +165,15 @@ def run(starts=8, workers=8, configs=("six", "rho_pinned"), profiles=True, seed=
     print(f"constraint map: {n_map} random u per configuration decode to admissible sets accepted by O2 validate()")
     W = Weights()
     syn_dir = os.path.join(OUT, "synthetic")
-    paths = make_synthetic(setup, W, syn_dir)
+    if noisy:
+        paths = make_synthetic(setup, W, syn_dir, gen_deps_pct=GEN_DEPS_PCT, noise_seed=noise_seed, prefix="noisy_")
+        floor = discretisation_floor(setup, W, os.path.join(OUT, "synthetic_nf"))
+        print(f"[noisy] generator step {GEN_DEPS_PCT} % vs model step {W.deps_pct} %, noise seed {noise_seed}; "
+              f"discretisation floor |r(truth)| (noise-free set, other step) {floor['norm']:.3f} over {floor['n']} "
+              f"residuals (rms {floor['rms']:.3f}, max {floor['max_abs']:.3f}) in sigma units")
+    else:
+        paths = make_synthetic(setup, W, syn_dir)
+        floor = None
     curves = [DATA.load_curve(p) for p in paths]
     obj = Objective(setup, curves, weights=W)
     t0 = time.perf_counter()
@@ -104,7 +183,10 @@ def run(starts=8, workers=8, configs=("six", "rho_pinned"), profiles=True, seed=
                   theta_true=THETA_TRUE, sand=TOY.as_dict(), weights=W.as_dict(), energy="BA06",
                   synthetic=[os.path.relpath(p, OUT) for p in paths], n_residuals=int(r_true.size),
                   residual_norm_at_truth=float(np.linalg.norm(r_true)), seconds_per_residual_eval=t_eval,
-                  starts=starts, workers=workers, configs={})
+                  starts=starts, workers=workers, configs={}, variant=variant,
+                  noise=(dict(seed=noise_seed, gen_deps_pct=GEN_DEPS_PCT, model_deps_pct=W.deps_pct,
+                              discretisation_floor=floor) if noisy else None),
+                  setup=dict(energy=setup.energy, policy=vars(setup.policy), pi0_rule=setup.pi0_rule, p_min=setup.p_min))
     print(f"synthetic written: {paths}; n_res {r_true.size}; |r(truth)| {np.linalg.norm(r_true):.3e}; "
           f"one residual eval {t_eval:.2f} s")
     sys.stdout.flush()
@@ -128,13 +210,27 @@ def run(starts=8, workers=8, configs=("six", "rho_pinned"), profiles=True, seed=
         best = runs[0]
         assert FIT.check_admissible(best["theta"])
         err = recovery_error(best["theta"], spec.free)
-        n_rec = sum(1 for r in runs if max(recovery_error(r["theta"], spec.free).values()) <= RECOVERY_TOL)
-        ok = max(err.values()) <= RECOVERY_TOL
+        if noisy:
+            cost_truth = 0.5 * float(np.sum(obj.residuals(THETA_TRUE) ** 2))
+            cons = noisy_consistency(obj, spec, best["theta"], best["cost"], cost_truth, len(spec.free))
+            n_rec = sum(1 for r in runs if noisy_consistency(obj, spec, r["theta"], r["cost"], cost_truth,
+                                                             len(spec.free))["ok"])
+            ok = cons["ok"]
+        else:
+            cons = None
+            n_rec = sum(1 for r in runs if max(recovery_error(r["theta"], spec.free).values()) <= RECOVERY_TOL)
+            ok = max(err.values()) <= RECOVERY_TOL
         all_ok = all_ok and ok
         print(f"[{cfg}] {len(runs)} starts, {t_fit:.0f} s wall; best cost {best['cost']:.3e}; "
               f"recovered by {n_rec}/{len(runs)} starts; max rel err {max(err.values()):.2e} -> {'PASS' if ok else 'FAIL'}")
+        if cons is not None:
+            print(f"    noisy gate: Mahalanobis^2 {cons['mahalanobis2']:.2f} vs chi2(0.999, {cons['k_dof']}) "
+                  f"{cons['chi2_crit_0p999']:.2f}; chi2 fit {cons['chi2_fit']:.1f} (expected {cons['expected_chi2_fit']:.1f}), "
+                  f"at truth {cons['chi2_truth']:.1f} (expected {cons['expected_chi2_truth']:.1f}); "
+                  f"cost not worse than truth: {cons['cost_not_worse_than_truth']}")
         for n in spec.free:
-            print(f"    {n:8s} true {THETA_TRUE[n]: .6g}  fit {best['theta'][n]: .8g}  rel {err[n]:.2e}")
+            extra = f"  z {cons['z'][n]:+.2f} (sd ln {cons['sd_ln'][n]:.3f})" if cons is not None else ""
+            print(f"    {n:8s} true {THETA_TRUE[n]: .6g}  fit {best['theta'][n]: .8g}  rel {err[n]:.2e}{extra}")
         for r in runs:
             e = max(recovery_error(r["theta"], spec.free).values())
             print(f"    start {r['start']:2d}: cost {r['cost']:.3e}  max rel err {e:.2e}  nfev {r['nfev']:4d}  "
@@ -147,7 +243,7 @@ def run(starts=8, workers=8, configs=("six", "rho_pinned"), profiles=True, seed=
               f"condition {ident['condition']:.3e} ({t_id:.0f} s)")
         print(f"    weakest direction {ident['weakest_direction']}")
         rec = dict(free=list(spec.free), fixed=spec.fixed, runs=runs, best=best, rel_err=err,
-                   n_starts_recovered=n_rec, ok=ok, fit_wall_seconds=t_fit, identifiability=ident)
+                   n_starts_recovered=n_rec, ok=ok, fit_wall_seconds=t_fit, identifiability=ident, noisy_gate=cons)
         if profiles:
             prof = {}
             for nm in ("chi", "h"):
@@ -168,7 +264,7 @@ def run(starts=8, workers=8, configs=("six", "rho_pinned"), profiles=True, seed=
     report["max_nfev"] = max_nfev
     with open(os.path.join(OUT, f"smoke_recovery{sfx}.json"), "w") as f:
         json.dump(report, f, indent=1, default=str)
-    print(f"SMOKE {report['gate']}  total wall {report['wall_seconds']:.0f} s")
+    print(f"SMOKE[{variant}] {report['gate']}  total wall {report['wall_seconds']:.0f} s")
     return all_ok
 
 
@@ -183,7 +279,11 @@ if __name__ == "__main__":
     ap.add_argument("--max-nfev", type=int, default=60)
     ap.add_argument("--profile-factors", default="0.95,1.05")
     ap.add_argument("--profile-nfev", type=int, default=15)
+    ap.add_argument("--variant", default="clean", choices=("clean", "noisy", "both"))
+    ap.add_argument("--noise-seed", type=int, default=1)
     a = ap.parse_args()
-    ok = run(a.starts, a.workers, tuple(a.configs.split(",")), not a.no_profiles, a.seed, a.tag, a.max_nfev,
-             tuple(float(x) for x in a.profile_factors.split(",")), a.profile_nfev)
-    sys.exit(0 if ok else 1)
+    oks = []
+    for v in (("clean", "noisy") if a.variant == "both" else (a.variant,)):
+        oks.append(run(a.starts, a.workers, tuple(a.configs.split(",")), not a.no_profiles, a.seed, a.tag, a.max_nfev,
+                       tuple(float(x) for x in a.profile_factors.split(",")), a.profile_nfev, v, a.noise_seed))
+    sys.exit(0 if all(oks) else 1)

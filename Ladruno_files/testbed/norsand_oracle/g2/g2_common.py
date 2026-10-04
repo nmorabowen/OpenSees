@@ -77,17 +77,32 @@ def m3(t):
 
 
 def norsand_args(P, v0, pi0, sigma0):
-    """O2 Params (+ initial state) -> the `nDMaterial LadrunoNorSand` argument list (after the tag)."""
+    """O2 Params (+ initial state) -> the `nDMaterial LadrunoNorSand` argument list (after the tag).
+
+    Round 3b: the energy option (`-energy HAR -k -g -n -p_a` replaces the five BA06 constants, which are then NOT passed: the
+    shell refuses them, sheet 2.4), the p' floor (`-pmin`, always passed so the shell cannot fall back on its own default), and
+    pi0 = None -> `-pi0_auto` (the unified rule (S.53) of the shell against O2's `initial_state`).  `-p_a` is passed whenever
+    it is read (HAR, or the fork CSL)."""
     a = []
-    for f, flag in _COMMON:
+    if P.energy == "HAR":
+        a += ["-energy", "HAR", "-k", float(P.k), "-g", float(P.g), "-n", float(P.n_e), "-p_a", float(P.p_a)]
+        common = _COMMON[5:]                                    # M N N_bar rho rho_bar chi h
+    else:
+        common = _COMMON
+    for f, flag in common:
         a += [flag, float(getattr(P, f))]
     a += ["-csl", P.csl_mode]
     for f, flag in (_PAPER if P.csl_mode == "paper" else _FORK):
+        if P.energy == "HAR" and f == "p_a":
+            continue                                            # the one -p_a flag was passed with the energy
         a += [flag, float(getattr(P, f))]
     a += ["-zeta", P.zeta, "-cap", P.cap]
     if P.cap != "none":
         a += ["-c1", float(P.c1), "-c2", float(P.c2)]
-    a += ["-v0", float(v0), "-pi0", float(pi0), "-sigma0", *[float(x) for x in t6(sigma0)]]
+    a += ["-pmin", float(P.p_min)]
+    a += ["-v0", float(v0)]
+    a += ["-pi0_auto"] if pi0 is None else ["-pi0", float(pi0)]
+    a += ["-sigma0", *[float(x) for x in t6(sigma0)]]
     return a
 
 

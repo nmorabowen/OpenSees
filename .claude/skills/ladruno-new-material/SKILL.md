@@ -128,5 +128,7 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       "A win32-only `zone_a` test is NEVER run by PR CI".
 - [ ] An inner material wrapped by `LogStrain` should provide its own trial elastic strain (mixin `LadrunoElasticStrainProvider`, NDMaterial FIRST base, engineering Voigt) unless it is linear-elastic: otherwise the wrapper's `inv(D0):tau` recovery is wrong. Quirks: "The `LadrunoElasticStrainProvider` mixin".
 
+- [ ] A material option that REPLACES another model's constants (LadrunoNorSand `-energy HAR` vs the BA06 five) must REFUSE a constant it does not read, not accept and drop it; a state-moving feature (the p' floor) is COUNTED, not refused, and everything derived from the initial state is recomputed from the (possibly projected) state. Quirks: "`-energy HAR` REPLACES the BA06 constants", "The p' floor of LadrunoNorSand".
+
 Found a new trap? Add it to `LEDGER_quirks.md`, then add one line here pointing to it. If the
 trap has a greppable pattern, add a rule to `ci/check_quirk_patterns.py` instead.

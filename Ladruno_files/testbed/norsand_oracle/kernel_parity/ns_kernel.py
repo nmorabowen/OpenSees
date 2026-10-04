@@ -7,10 +7,15 @@ kernel API to Python with O2-shaped inputs (o2_algo.Params, 3x3 tensors):
     lib = build(outdir)                      # path of the .so (None if no compiler)
     K = Kernel(lib)
     K.validate(P)                            # (rc, msg, warn)
-    K.initial_state(P, sigma0, v0, pi_i0)    # (rc, state[12], msg); pi_i0 None -> on the surface
+    K.initial_state(P, sigma0, v0, pi_i0, pi0_rule="unified")   # (rc, state[18], msg); pi_i0 None -> (S.53)
     K.step(P, state, deps)                   # dict(state, sigma6, C6, info)
     K.step_fractions(P, state, deps, fr, chain=True)   # detail::step_fractions (O2 api.step_fractions)
     K.stress(P, state), K.elastic_tangent(P, state)
+    K.elastic(P, eps3), K.floor_ev(P, es), K.floor_project(P, eps3), K.energy_psi(P, eps3)   # detail:: pieces
+
+State layout (18): eps_e[6], pi_i, v, v0, eps_p_v, eps_p_s, D_last, eps_f_v, W_f, n_f_tr, n_f_post, n_f_init,
+at_floor (the round-3b floor counters, sheet 9.7). O2 Params fields that are None (the unused energy's values)
+are passed as 0.0; energy 'BA06' -> 0, 'HAR' -> 1; p_min is O2's (default 5e-3 p_ref).
 
 Conventions: tensors are 6 TENSOR components {00,11,22,01,12,02}; the kernel tangent is
 C[I][J] = d sigma_I / d eps_J with the shear slots varied symmetrically, i.e.
@@ -38,14 +43,17 @@ DRIVER = os.path.join(REPO, "tests", "ladrunonorsand_kernel_check.cpp")
 REFUSAL = ["OK", "LOCAL_NOCONV", "LOCAL_LINESEARCH", "PI_NOBRACKET", "PI_NOCONV", "B_NONPOS",
            "P_OR_PI_NONNEG", "NEGATIVE_DLAMBDA", "SUBSTEPS_EXHAUSTED"]
 EVALERR = ["", "p_or_pi_nonneg", "pi_nonneg", "B_nonpos", "pi_fold", "pi_nobracket", "pi_noconv",
-           "nonfinite", "singular_J"]
+           "nonfinite", "singular_J", "elastic_domain"]
+NSTATE = 18
 
 I6 = (0, 1, 2, 0, 1, 0)
 J6 = (0, 1, 2, 1, 2, 2)
 
 PARAM_FIELDS = ("p0", "kappa_hat", "eps_v0", "mu0", "alpha0", "M", "N", "N_bar", "rho", "rho_bar", "chi",
-                "h", "lam_tilde", "v_c0", "e0", "lam_c", "xi", "p_a", "c1", "c2")
+                "h", "lam_tilde", "v_c0", "e0", "lam_c", "xi", "p_a", "c1", "c2", "k", "g", "n_e", "p_min")
 CSL = {"paper": 0, "fork": 1}
+ENERGY = {"BA06": 0, "HAR": 1}
+PI0_RULE = {"unified": 0, "legacy": 1}
 ZETA = {"WW": 0, "GA": 1}
 CAP = {"none": 0, "planar": 1, "smooth": 2}
 
@@ -97,7 +105,7 @@ def parse_o2_reason(reason: str):
     """O2 reason '<finest> (substeps exhausted at 2^8)' -> (finest refusal name, eval-error name)."""
     r = reason.split(" (substeps")[0]
     if r.startswith("trial_"):
-        return "P_OR_PI_NONNEG", r[len("trial_"):]
+        return "P_OR_PI_NONNEG", r[len("trial_"):]          # incl. trial_elastic_domain (HAR, p_min = 0)
     if r.startswith("local_linesearch"):
         return "LOCAL_LINESEARCH", r.split(":", 1)[1] if ":" in r else ""
     if r == "local_noconv":
@@ -109,7 +117,8 @@ def parse_o2_reason(reason: str):
     if r.startswith("local_"):
         e = r[len("local_"):]
         code = {"p_or_pi_nonneg": "P_OR_PI_NONNEG", "pi_nonneg": "P_OR_PI_NONNEG", "B_nonpos": "B_NONPOS",
-                "pi_nobracket": "PI_NOBRACKET", "pi_noconv": "PI_NOCONV", "pi_fold": "LOCAL_LINESEARCH"}[e]
+                "pi_nobracket": "PI_NOBRACKET", "pi_noconv": "PI_NOCONV", "pi_fold": "LOCAL_LINESEARCH",
+                "elastic_domain": "P_OR_PI_NONNEG"}[e]
         return code, e
     raise ValueError(f"unknown O2 reason {reason!r}")
 
@@ -120,10 +129,12 @@ def _name(table, code):
     return table[code] if 0 <= code < len(table) else f"INVALID({int(code)})"
 
 
-def _info(info):
+def _info(info, infod):
     return dict(refusal=_name(REFUSAL, info[0]), plastic=bool(info[1]), vertex=bool(info[2]),
                 cap_active=bool(info[3]), local_iters=int(info[4]), pi_iters=int(info[5]),
-                substeps=int(info[6]), finest=_name(REFUSAL, info[7]), finest_sub=_name(EVALERR, info[8]))
+                substeps=int(info[6]), finest=_name(REFUSAL, info[7]), finest_sub=_name(EVALERR, info[8]),
+                floor_tr=int(info[9]), floor_post=int(info[10]), at_floor=bool(info[11]),
+                deps_f_v=float(infod[0]), W_f=float(infod[1]), E_f=float(infod[2]))
 
 
 _D = ctypes.POINTER(ctypes.c_double)
@@ -140,13 +151,23 @@ class Kernel:
         L = self.lib
         L.ns_validate.argtypes = [_D, _I, ctypes.c_char_p, ctypes.c_int, _I]
         L.ns_validate.restype = ctypes.c_int
-        L.ns_initial_state.argtypes = [_D, _I, _D, ctypes.c_double, ctypes.c_double, _D, ctypes.c_char_p,
-                                       ctypes.c_int]
+        L.ns_initial_state.argtypes = [_D, _I, _D, ctypes.c_double, ctypes.c_double, ctypes.c_int, _D,
+                                       ctypes.c_char_p, ctypes.c_int]
         L.ns_initial_state.restype = ctypes.c_int
-        L.ns_step.argtypes = [_D, _I, _D, _D, _D, _D, _D, _I]
+        L.ns_step.argtypes = [_D, _I, _D, _D, _D, _D, _D, _I, _D]
         L.ns_step.restype = ctypes.c_int
-        L.ns_step_fractions.argtypes = [_D, _I, _D, _D, _D, ctypes.c_int, ctypes.c_int, _D, _D, _D, _I]
+        L.ns_step_fractions.argtypes = [_D, _I, _D, _D, _D, ctypes.c_int, ctypes.c_int, _D, _D, _D, _I, _D]
         L.ns_step_fractions.restype = ctypes.c_int
+        L.ns_elastic.argtypes = [_D, _I, _D, _D]
+        L.ns_elastic.restype = ctypes.c_int
+        L.ns_floor_ev.argtypes = [_D, _I, ctypes.c_double, _D]
+        L.ns_floor_ev.restype = None
+        L.ns_floor_project.argtypes = [_D, _I, _D, _D]
+        L.ns_floor_project.restype = None
+        L.ns_energy_psi.argtypes = [_D, _I, _D, _D]
+        L.ns_energy_psi.restype = ctypes.c_int
+        L.ns_pref.argtypes = [_D, _I, _D]
+        L.ns_pref.restype = None
         L.ns_stress.argtypes = [_D, _I, _D, _D]
         L.ns_stress.restype = None
         L.ns_elastic_tangent.argtypes = [_D, _I, _D, _D]
@@ -154,8 +175,10 @@ class Kernel:
 
     @staticmethod
     def params(P):
-        d = np.ascontiguousarray([float(getattr(P, f)) for f in PARAM_FIELDS], dtype=np.float64)
-        i = np.ascontiguousarray([CSL[P.csl_mode], ZETA[P.zeta], CAP[P.cap]], dtype=np.int32)
+        d = np.ascontiguousarray([0.0 if getattr(P, f, None) is None else float(getattr(P, f)) for f in PARAM_FIELDS],
+                                 dtype=np.float64)
+        i = np.ascontiguousarray([CSL[P.csl_mode], ZETA[P.zeta], CAP[P.cap], ENERGY[getattr(P, "energy", "BA06")]],
+                                 dtype=np.int32)
         return d, i
 
     def validate(self, P):
@@ -165,39 +188,42 @@ class Kernel:
         rc = self.lib.ns_validate(_dp(d), i.ctypes.data_as(_I), buf, 1024, ctypes.byref(warn))
         return rc, buf.value.decode(), bool(warn.value)
 
-    def initial_state(self, P, sigma0, v0, pi_i0=None):
+    def initial_state(self, P, sigma0, v0, pi_i0=None, pi0_rule="unified"):
         d, i = self.params(P)
         s0 = np.ascontiguousarray(t6(sigma0))
-        st = np.zeros(12)
+        st = np.zeros(NSTATE)
         buf = ctypes.create_string_buffer(1024)
         pi = float("nan") if pi_i0 is None else float(pi_i0)
-        rc = self.lib.ns_initial_state(_dp(d), i.ctypes.data_as(_I), _dp(s0), float(v0), pi, _dp(st), buf, 1024)
+        rc = self.lib.ns_initial_state(_dp(d), i.ctypes.data_as(_I), _dp(s0), float(v0), pi, PI0_RULE[pi0_rule],
+                                       _dp(st), buf, 1024)
         return rc, st, buf.value.decode()
 
     def step(self, P, st, deps):
         d, i = self.params(P)
         stn = np.ascontiguousarray(st, dtype=np.float64)
         de = np.ascontiguousarray(t6(deps))
-        out = np.zeros(12)
+        out = np.zeros(NSTATE)
         sig = np.zeros(6)
         C = np.zeros(36)
-        info = np.zeros(9, dtype=np.int32)
+        info = np.zeros(12, dtype=np.int32)
+        infod = np.zeros(3)
         self.lib.ns_step(_dp(d), i.ctypes.data_as(_I), _dp(stn), _dp(de), _dp(out), _dp(sig), _dp(C),
-                         info.ctypes.data_as(_I))
-        return dict(state=out, sigma=sig, C=C.reshape(6, 6), info=_info(info))
+                         info.ctypes.data_as(_I), _dp(infod))
+        return dict(state=out, sigma=sig, C=C.reshape(6, 6), info=_info(info, infod))
 
     def step_fractions(self, P, st, deps, fractions, chain=True):
         d, i = self.params(P)
         stn = np.ascontiguousarray(st, dtype=np.float64)
         de = np.ascontiguousarray(t6(deps))
         fr = np.ascontiguousarray([float(a) for a in fractions], dtype=np.float64)
-        out = np.zeros(12)
+        out = np.zeros(NSTATE)
         sig = np.zeros(6)
         C = np.zeros(36)
-        info = np.zeros(9, dtype=np.int32)
+        info = np.zeros(12, dtype=np.int32)
+        infod = np.zeros(3)
         self.lib.ns_step_fractions(_dp(d), i.ctypes.data_as(_I), _dp(stn), _dp(de), _dp(fr), len(fr), int(chain),
-                                   _dp(out), _dp(sig), _dp(C), info.ctypes.data_as(_I))
-        return dict(state=out, sigma=sig, C=C.reshape(6, 6), info=_info(info))
+                                   _dp(out), _dp(sig), _dp(C), info.ctypes.data_as(_I), _dp(infod))
+        return dict(state=out, sigma=sig, C=C.reshape(6, 6), info=_info(info, infod))
 
     def stress(self, P, st):
         d, i = self.params(P)
@@ -211,3 +237,40 @@ class Kernel:
         self.lib.ns_elastic_tangent(_dp(d), i.ctypes.data_as(_I),
                                     _dp(np.ascontiguousarray(st, dtype=np.float64)), _dp(C))
         return C.reshape(6, 6)
+
+    def elastic(self, P, eps3):
+        """detail::elastic -> (rc, dict(p, q, D11, D12, D22, sig, ae)); rc = EvalErr code."""
+        d, i = self.params(P)
+        out = np.zeros(17)
+        rc = self.lib.ns_elastic(_dp(d), i.ctypes.data_as(_I), _dp(np.ascontiguousarray(eps3, dtype=np.float64)),
+                                 _dp(out))
+        return rc, dict(p=out[0], q=out[1], D11=out[2], D12=out[3], D22=out[4], sig=out[5:8].copy(),
+                        ae=out[8:17].reshape(3, 3).copy())
+
+    def floor_ev(self, P, es):
+        d, i = self.params(P)
+        out = np.zeros(2)
+        self.lib.ns_floor_ev(_dp(d), i.ctypes.data_as(_I), float(es), _dp(out))
+        return float(out[0]), float(out[1])
+
+    def floor_project(self, P, eps3):
+        d, i = self.params(P)
+        out = np.zeros(16)
+        self.lib.ns_floor_project(_dp(d), i.ctypes.data_as(_I), _dp(np.ascontiguousarray(eps3, dtype=np.float64)),
+                                  _dp(out))
+        return dict(eps_f=out[:3].copy(), active=bool(out[3]), dfv=float(out[4]), in_domain=bool(out[5]),
+                    epsp=float(out[6]), Phi=out[7:16].reshape(3, 3).copy())
+
+    def pref(self, P):
+        """(pRef(P), defaultPmin(P))."""
+        d, i = self.params(P)
+        out = np.zeros(2)
+        self.lib.ns_pref(_dp(d), i.ctypes.data_as(_I), _dp(out))
+        return float(out[0]), float(out[1])
+
+    def energy_psi(self, P, eps3):
+        d, i = self.params(P)
+        psi = np.zeros(1)
+        rc = self.lib.ns_energy_psi(_dp(d), i.ctypes.data_as(_I), _dp(np.ascontiguousarray(eps3, dtype=np.float64)),
+                                    _dp(psi))
+        return rc, float(psi[0])

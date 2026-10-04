@@ -82,9 +82,12 @@ class Elastic:
     D22: float
     q_over_es: float
     a4: np.ndarray | None
+    in_domain: bool = True     # HAR: eps* = 1/(k(1-n)) - eps_v > 0 (BA06: always True)
 
 
 def energy(ee, P: Params, tangent=True) -> Elastic:
+    if P.energy == "HAR":
+        return _energy_har(ee, P, tangent)
     ev = float(np.trace(ee))
     e = ee - (ev / 3.0) * I3
     ne = float(np.linalg.norm(e))
@@ -104,6 +107,162 @@ def energy(ee, P: Params, tangent=True) -> Elastic:
         a4 = (D11 * IxI + SQ23 * D12 * (outer(I3, n) + outer(n, I3))
               + (2.0 / 3.0) * (D22 - qes) * outer(n, n) + (2.0 / 3.0) * qes * IDEV)
     return Elastic(sig, p, q, ev, es, D11, D12, D22, qes, a4)
+
+
+def _a4_from_D(e, ne, D11, D12, D22, qes):
+    """(S.3) in tensor form (incl. the spin part (S.33)), for any energy Psi(eps_v, eps_s)."""
+    n = e / ne if ne > 0.0 else np.zeros((3, 3))
+    return (D11 * IxI + SQ23 * D12 * (outer(I3, n) + outer(n, I3))
+            + (2.0 / 3.0) * (D22 - qes) * outer(n, n) + (2.0 / 3.0) * qes * IDEV)
+
+
+# ---------------------------------------------------------------------------------------
+# HAR energy (sheet 2.3): (S.4h), (S.5h), (S.5h'), inverse (S.5h'')
+# ---------------------------------------------------------------------------------------
+def _energy_har(ee, P: Params, tangent=True) -> Elastic:
+    n, k, g, pa = P.n_e, P.k, P.g, P.p_a
+    kn = k * (1.0 - n)
+    ev = float(np.trace(ee))
+    e = ee - (ev / 3.0) * I3
+    ne = float(np.linalg.norm(e))
+    es = SQ23 * ne
+    estar = 1.0 / kn - ev                                   # eps* (S.4h)
+    u = math.sqrt(estar * estar + 3.0 * g * es * es / kn)
+    X = kn * u                                              # (varpi/p_a)^(1-n)
+    w = X ** (n / (1.0 - n)) if X > 0.0 else (1.0 if n == 0.0 else 0.0)   # (varpi/p_a)^n
+    p = -pa * kn * estar * w                                # (S.5h)
+    qes = 3.0 * g * pa * w                                  # q/eps_s (S.5h'), exact incl. eps_s -> 0
+    q = qes * es
+    varpi = pa * X * w
+    r = (estar / u) ** 2 if u > 0.0 else 1.0                # p^2 / varpi^2 = 1/Z
+    D11 = k * pa * w * (1.0 - n + n * r)
+    D22 = (3.0 * g / (1.0 - n)) * pa * w * (1.0 - n * r)
+    D12 = n * k * p * q * pa * w / (varpi * varpi) if varpi > 0.0 else 0.0
+    sig = p * I3 + (2.0 / 3.0) * qes * e
+    a4 = _a4_from_D(e, ne, D11, D12, D22, qes) if tangent else None
+    return Elastic(sig, p, q, ev, es, D11, D12, D22, qes, a4, in_domain=(estar > 0.0))
+
+
+def energy_psi(ee, P: Params) -> float:
+    """Stored energy Psi(eps^e): (S.4) BA06, (S.4h) HAR (the even mirror for eps* <= 0 is not used)."""
+    ev = float(np.trace(ee))
+    es = SQ23 * float(np.linalg.norm(ee - (ev / 3.0) * I3))
+    if P.energy == "HAR":
+        n, kn = P.n_e, P.k * (1.0 - P.n_e)
+        u = math.sqrt((1.0 / kn - ev) ** 2 + 3.0 * P.g * es * es / kn)
+        return P.p_a / (P.k * (2.0 - n)) * (kn * u) ** ((2.0 - n) / (1.0 - n))
+    E = math.exp(-(ev - P.eps_v0) / P.kappa_hat)
+    return -P.p0 * P.kappa_hat * E + 1.5 * (P.mu0 - P.alpha0 * P.p0 * E) * es * es
+
+
+def elastic_strain_scale(P: Params, pabs: float) -> float:
+    """Typical elastic strain per unit relative stress change at |p| = pabs (for ODE tolerances):
+    min(|p|/K, |p|/(3G)).  BA06: min(kappa_hat, |p|/(3 mu0)) (the pre-HAR expression, verbatim)."""
+    if P.energy == "HAR":
+        w = (pabs / P.p_a) ** P.n_e
+        return min(pabs / (P.k * P.p_a * w), pabs / (3.0 * P.g * P.p_a * w))
+    return min(P.kappa_hat, pabs / (3.0 * P.mu0))
+
+
+# ---------------------------------------------------------------------------------------
+# p' floor (sheet 9.7): Pi_f (S.48), closed forms (S.49) BA06 / (S.50) HAR, block (S.51a)
+# ---------------------------------------------------------------------------------------
+def _har_floor_x(a, b, n):
+    """Root of f(x) = x^2 - a x^(2n) - b on the exact bracket of (S.50)."""
+    if n == 0.5:
+        return 0.5 * (a + math.sqrt(a * a + 4.0 * b))
+    if n == 0.0:
+        return math.sqrt(a + b)
+    xs = (n * a) ** (1.0 / (2.0 - 2.0 * n)) if a > 0.0 else 0.0
+    xhi = max((2.0 * a) ** (1.0 / (2.0 - 2.0 * n)) if a > 0.0 else 0.0, 2.0 * math.sqrt(b))
+    lo, hi = xs, xhi
+    x = hi
+    for _ in range(100):
+        fx = x * x - a * x ** (2.0 * n) - b
+        if abs(fx) <= 1e-14 * (b + a * x ** (2.0 * n)):
+            return x
+        if fx > 0.0:
+            hi = x
+        else:
+            lo = x
+        dfx = 2.0 * x - 2.0 * n * a * x ** (2.0 * n - 1.0) if x > 0.0 else 0.0
+        xn = x - fx / dfx if dfx > 0.0 else 0.5 * (lo + hi)
+        x = xn if lo < xn < hi else 0.5 * (lo + hi)
+    return x
+
+
+@dataclass
+class FloorTarget:
+    ev_f: float        # eps_{v,f}(eps_s): p(ev_f, eps_s) = -p_min
+    dev_f: float       # eps'_f = d eps_{v,f} / d eps_s  (= -D12/D11 at p = -p_min)
+    x: float           # HAR: varpi_f / p_a (nan under BA06)
+    q_f: float         # q at the floored state
+
+
+def floor_target(es, P: Params, pmin=None) -> FloorTarget:
+    """(S.49) BA06 (any alpha0) and (S.50) HAR (n = 1/2 closed; general n bracketed)."""
+    pmin = P.pmin if pmin is None else pmin
+    if P.energy == "HAR":
+        n, kn, pa = P.n_e, P.k * (1.0 - P.n_e), P.p_a
+        a = 3.0 * kn * P.g * es * es
+        b = (pmin / pa) ** 2
+        x = _har_floor_x(a, b, n)
+        xn = x ** n
+        estar_f = (pmin / pa) / (kn * xn)
+        q_f = 3.0 * P.g * pa * es * xn
+        dev = n * pmin * q_f / ((1.0 - n) * pa * pa * x * x + n * pmin * pmin)
+        return FloorTarget(1.0 / kn - estar_f, dev, x, q_f)
+    fac = 1.0 + 1.5 * P.alpha0 * es * es / P.kappa_hat
+    ev_f = P.eps_v0 - P.kappa_hat * math.log(pmin / (abs(P.p0) * fac))
+    dev = 3.0 * P.alpha0 * es / fac
+    return FloorTarget(ev_f, dev, float("nan"), 3.0 * (P.mu0 - P.alpha0 * P.p0 * pmin / (abs(P.p0) * fac)) * es)
+
+
+def floor_active(ee, P: Params, pmin=None) -> bool:
+    """Activation of 9.7: p(eps^e) > -p_min (1 - 1e-12) or eps^e outside dom Psi (HAR eps* <= 0)."""
+    pmin = P.pmin if pmin is None else pmin
+    if not pmin > 0.0:
+        return False
+    el = energy(ee, P, tangent=False)
+    return (not el.in_domain) or el.p > -pmin * (1.0 - 1e-12)
+
+
+def floor_project(ee, P: Params, pmin=None):
+    """Pi_f (S.48): returns (eps^e_f, active, Delta eps^f_v, FloorTarget or None).  Co-axial, keeps the
+    deviatoric elastic strain, idempotent, defined for an out-of-domain HAR strain (needs only eps_s)."""
+    pmin = P.pmin if pmin is None else pmin
+    if not floor_active(ee, P, pmin):
+        return np.array(ee, dtype=float), False, 0.0, None
+    ev = float(np.trace(ee))
+    es = SQ23 * float(np.linalg.norm(ee - (ev / 3.0) * I3))
+    ft = floor_target(es, P, pmin)
+    dvf = ev - ft.ev_f
+    return ee - (dvf / 3.0) * I3, True, dvf, ft
+
+
+def floor_energy(ee, P: Params, pmin=None):
+    """(S.52) on demand, from the closed-form Psi: (E_f, W_f) of one projection Pi_f(ee), with
+    E_f = Psi(Pi_f(ee)) - Psi(ee) in [0, p_min Delta eps^f_v] for ee in dom Psi; E_f = None for an
+    out-of-domain HAR strain (only the bound W_f = p_min Delta eps^f_v is stated there)."""
+    pmin = P.pmin if pmin is None else pmin
+    eef, act, dvf, _ = floor_project(ee, P, pmin)
+    if not act:
+        return 0.0, 0.0
+    if not energy(ee, P, tangent=False).in_domain:
+        return None, pmin * dvf
+    return energy_psi(eef, P) - energy_psi(ee, P), pmin * dvf
+
+
+def floor_phi(ee_f, P: Params, pmin=None):
+    """(S.51a) as a 4th-order tensor at an active floor: Phi = Isym - (1/3) 1 (x) (1 - eps'_f sqrt(2/3) n^e)
+    (unit spin: Pi_f keeps every eigenvalue difference)."""
+    pmin = P.pmin if pmin is None else pmin
+    ev = float(np.trace(ee_f))
+    e = ee_f - (ev / 3.0) * I3
+    ne = float(np.linalg.norm(e))
+    n = e / ne if ne > 0.0 else np.zeros((3, 3))
+    ft = floor_target(SQ23 * ne, P, pmin)
+    return ISYM - outer(I3, I3 - ft.dev_f * SQ23 * n) / 3.0
 
 
 def elastic_tangent_spectral(ee, P: Params, tol=1e-10):
@@ -145,6 +304,12 @@ def elastic_strain_from_stress(sig, P: Params):
     n = s / R if R > 0 else np.zeros((3, 3))
     if not p < 0.0:
         raise ValueError("initial mean stress must be < 0")
+    if P.energy == "HAR":            # (S.5h''), closed form
+        nn, kn, pa = P.n_e, P.k * (1.0 - P.n_e), P.p_a
+        varpi = math.sqrt(p * p + kn * q * q / (3.0 * P.g))
+        ev = (1.0 - (-p / pa) ** (1.0 - nn) * (-p / varpi) ** nn) / kn
+        es = q / (3.0 * P.g * pa * (varpi / pa) ** nn)
+        return (ev / 3.0) * I3 + SQ32 * es * n
     ev = P.eps_v0 - P.kappa_hat * math.log(p / P.p0)
     es = q / (3.0 * P.mu0)
     for _ in range(100):
@@ -335,10 +500,33 @@ def plastic(sig, pi, v, P: Params, w_override=None) -> Plastic:
                    qflow, Om, ps, pst, B, H, dil)
 
 
-def continuum_tangent(ee, pi, v, P: Params, plastic_branch=True):
-    """a^e, or the loading-branch a^ep of (S.42).  Returns (C4, info)."""
+PFLOOR = I3 / 3.0          # the floor mechanism's direction P (S.55): eps^f' = lam_f P, tr P = 1
+
+
+def continuum_tangent(ee, pi, v, P: Params, plastic_branch=True, floor_branch=False):
+    """a^e, or the loading-branch a^ep of (S.42); with floor_branch the floor mechanism of (S.55) is
+    added (elastic + floor: a^e - (a^e:P)(P:a^e)/(P:a^e:P), which is a^e Phi of (S.51a); plastic + floor:
+    a^e - [a^e:q, a^e:P] G^-1 [f:a^e; P:a^e]).  Returns (C4, info)."""
     el = energy(ee, P)
     Ae = el.a4
+    if floor_branch:
+        AP = np.einsum("ijkl,kl->ij", Ae, PFLOOR)
+        PA = np.einsum("ij,ijkl->kl", PFLOOR, Ae)
+        PAP = ddot(PFLOOR, AP)
+        if not plastic_branch:
+            return Ae - outer(AP, PA) / PAP, dict(den=float("nan"), PAP=PAP)
+        pq = plastic(el.sig, pi, v, P)
+        Aq = np.einsum("ijkl,kl->ij", Ae, pq.qflow)
+        fA = np.einsum("ij,ijkl->kl", pq.f, Ae)
+        G = np.array([[ddot(pq.f, Aq) + pq.H, ddot(pq.f, AP)], [ddot(PFLOOR, Aq), PAP]])
+        Gi = np.linalg.inv(G)
+        cols = (Aq, AP)
+        rows = (fA, PA)
+        C = Ae.copy()
+        for i in range(2):
+            for j in range(2):
+                C -= Gi[i, j] * outer(cols[i], rows[j])
+        return C, dict(den=G[0, 0] - G[0, 1] * G[1, 0] / G[1, 1], G=G, H=pq.H)
     if not plastic_branch:
         return Ae, dict(den=float("nan"))
     pq = plastic(el.sig, pi, v, P)

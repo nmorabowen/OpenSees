@@ -309,7 +309,13 @@ def simulate(setup, theta: dict, kind: str, sigma3: float, e_init: float, eps_a_
              oracle: str = "O2") -> Curve:
     """One element test from the isotropic state sigma3 (kPa > 0), void ratio e_init (v0 = 1 + e)."""
     from .model import initial
-    P, st0 = initial(oracle, setup, theta, sigma3, e_init)
+    try:
+        P, st0 = initial(oracle, setup, theta, sigma3, e_init)
+    except ValueError as e:
+        # the oracle refuses the INITIAL state (e.g. the unified pi_i0 rule's section-7 guard B > 0, or eta* >= M/N):
+        # an incomplete curve, so the objective's refusal penalty applies instead of an exception
+        return Curve(kind, np.zeros((1, 3)), -abs(sigma3) * np.ones((1, 3)), np.array([np.nan]), np.array([1.0 + e_init]),
+                     np.zeros(1), "refused:initial:" + str(e), n, dict(seconds=0.0, final_state=None))
     if oracle == "O2":
         return run_o2(P, st0, kind, eps_a_total, n)
     return run_o1(P, st0, kind, eps_a_total, n)

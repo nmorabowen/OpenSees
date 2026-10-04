@@ -13,9 +13,9 @@ Derivatives are the sheet's closed forms transcribed by hand (no sympy in the co
 ## Files
 | file | content |
 |---|---|
-| `params.py` | `Params` (sheet §1.3 names), `validate()` with the owner-approved refusals |
-| `kernel.py` | invariants (S.1, S.6, S.7), vertex rule §3.2, ζ WW/GA in y-form (S.8–S.11), BA06 energy (S.3–S.5), F and Q derivatives (S.12–S.21), cap (S.35–S.37), CSL (S.22), π_i* (S.23–S.24), nested π_i solve, residual/Jacobian (S.29–S.30), ã^ep (S.31–S.32), spectral tangents (S.33, S.34), chained substep tangent §9.6 (`chain_data` (S.45), `chain_propagate` (S.46), `chain_assemble` (S.47)) |
-| `api.py` | `State`, `initial_state`, `step` (ladder + chained tangent), `step_fractions` (prescribed α_k, no ladder), `run_path`, `tangent`, `tangent_last_substep`, `tangent_finite`, drivers `triaxial`, `k2_path` |
+| `params.py` | `Params` (sheet §1.3 names; `energy='BA06'|'HAR'` with k, g, n_e, p_a; `p_min`), `validate()` with the owner-approved refusals (§11.2, the §2.4 energy-option refusals, p_min < 0, the (S.56) scan-step contract for cap = smooth) |
+| `kernel.py` | invariants (S.1, S.6, S.7), vertex rule §3.2, ζ WW/GA in y-form (S.8–S.11), BA06 energy (S.3–S.5) and the HAR energy (S.4h–S.5h'', `elastic`/`energy_psi`/`invert_elastic` branch on `P.energy`), the p′ floor Π_f §9.7 (`floor_ev` (S.49)/(S.50), `floor_project` (S.48)+(S.51a), `floor_op4`, `floor_energy` (S.52)), F and Q derivatives (S.12–S.21), cap (S.35–S.37), CSL (S.22), π_i* (S.23–S.24), nested π_i solve, residual/Jacobian (S.29–S.30), ã^ep (S.31–S.32, (S.32f) with the floor), spectral tangents (S.33, S.34), chained substep tangent §9.6 (`chain_data` (S.45), `chain_propagate` (S.46)/(S.54), `chain_assemble` (S.47)) |
+| `api.py` | `State` (+ floor counters, `State.floor`), `initial_state` (floor at init, the unified π_{i0} rule (S.53), `pi0_rule='unified'|'legacy'`), `floor_energy` (E_f on demand), `step` (ladder + chained tangent), `step_fractions` (prescribed α_k, no ladder), `run_path`, `tangent`, `tangent_last_substep`, `tangent_finite`, drivers `triaxial`, `k2_path` |
 | `acoustic.py` | `acoustic_min_det` (coarse (θ,φ) sweep + Nelder-Mead), (S.44) transcription for self-check |
 | `selfcheck.py` | the self-checks (not the gate suite) |
 
@@ -23,7 +23,7 @@ Derivatives are the sheet's closed forms transcribed by hand (no sympy in the co
 From `Ladruno_files/testbed/norsand_oracle/`:
 ```
 python -m o2_algo.selfcheck              # all groups
-python -m o2_algo.selfcheck jac cto      # groups: jac | cto | newton | k1 | k2 | cap | chain  (k2 --table for the §14 sensitivity table)
+python -m o2_algo.selfcheck jac cto      # groups: jac | cto | newton | k1 | k2 | cap | chain | har | floor | pi0  (k2 --table for the §14 sensitivity table)
 ```
 Interface (identical in O1): `Params`, `State(sigma, eps_e, pi_i, v, D, eps_p_v, eps_p_s, flags)`,
 `initial_state(params, sigma0, v0, pi_i0)`, `run_path(params, state0, deps[n,3,3])`,
@@ -31,6 +31,44 @@ Interface (identical in O1): `Params`, `State(sigma, eps_e, pi_i, v, D, eps_p_v,
 `triaxial(params, state0, kind, axial_strain_total, n_incr)`, `k2_path(params, state0, n_max)`.
 Extra: `tangent_finite` (S.34) and `State.finite` for the K2 finite-strain protocol (diagonal,
 fixed-direction paths only: ε̃ = ε^e_n + ln f; v = v₀J is then the same v-law as small strain, see below).
+
+**Energy option (sheet §2.3–§2.4; owner decision (a) 2026-10-02; round 3b A4).** `Params(energy='BA06')` (default,
+paper mode: p₀, κ̂, ε_{v0}, μ₀, α₀, filled with the K2 paper values when not given) or `Params(energy='HAR', k=, g=,
+n_e=, p_a=)` (Houlsby–Amorosi–Rojas 2005, (S.4h)–(S.5h''); n_e = ½ for TIMs). `p_a` is ONE flag shared by the HAR
+energy and the fork CSL; the TIMs value is **101 kPa** (`selfcheck.tims_params`; 101.325 is only the inactive
+`Params` default for the BA06 + paper-CSL case). Refusals (hard, `validate()`): under HAR any of the five BA06 values
+given, k ≤ 0, g ≤ 0, n_e ∉ [0, 1), p_a ≤ 0; under BA06 any of k, g, n_e given. The plastic part sees the energy only
+through p, q, D, a^e of (S.3) (in full: under HAR D₁₂ ≠ 0 and D₂₂ ≠ q/ε_s, so the t2 and t3/t4 terms are live), the
+inverse map and `P.p_ref` (|p₀| or p_a: F_tol, the r₄ scaling of `scaled_norm`, the p_min default). A HAR trial with
+ε* ≤ 0 is a floor event (p_min > 0) or the refusal `trial_elastic_domain` (p_min = 0); a local iterate with ε* ≤ 0 is an
+evaluation failure (`elastic_domain`, line-search backtrack).
+
+**The p′ floor Π_f (sheet §9.7; owner decisions (b)/(c) 2026-10-03).** `Params.p_min` (None → 5·10⁻³ p_ref = 0.5 kPa on
+the K2 set, 0.505 kPa on the TIMs set; 0 = off; < 0 refused). `kernel.return_map` applies the strain-space projection
+(S.48) at the trial (step 1f, before any stress is formed — an out-of-domain HAR trial included) and at the converged
+state (step 5f), NEVER inside the local Newton or the nested π_i solve; closed forms (S.49) BA06 / (S.50) HAR (n = ½
+closed, general n bracketed Newton/bisection). The tangent is the exact linearisation (S.32f): ã^ep_f = a^e(ε^e_f)
+Φ^post [b Φ^tr − u Π_v v_{n+1} 1ᵀ] (the v-column on the RAW trial), elastic a^e(ε̃_f) Φ^tr; the chain takes (S.54);
+`tangent_finite` takes ã^ep_f with the raw trial stretches. δ:C_f = 0 whenever the last operator applied is an active
+Π_f (FE-, -Pf, FPf; not FP-): zero bulk stiffness, no regularisation (owner decision (c)). Never a refusal; counted:
+`flags['floor_tr'|'floor_post']` ∈ {0, 1} per (sub-)increment (summed over a substepped increment),
+`flags['fpattern']` ('F'/'-' trial floored, 'P'/'E', 'f'/'-' post floored; comma-joined per sub-increment, e.g.
+'FPf,FPf'), `flags['at_floor']`, cumulative `State.n_f_tr / n_f_post / n_f_init / eps_f_v / W_f` (= p_min ε^f_v,
+always counted) and `State.floor`; `api.floor_energy(P, state)` gives E_f (S.52) of the last increment on demand
+from the closed-form Ψ (the bound p_min Δε^f_v for an out-of-domain trial). A refused increment counts nothing.
+`initial_state` projects `invert_elastic(σ₀)` (n_f_init = 1, σ₀ replaced by σ(ε^e_f)). The dry-side pattern FPf
+(trial floored, plastic, post floored) exists under HAR (round 3b A1, K1.14b) and is an ordinary outcome; no
+F ≤ F_tol is asserted at a floored committed state (A5).
+
+**Unified π_{i0} rule (S.53; owner decision (d)).** `initial_state(…, pi_i0=None, pi0_rule='unified')` puts the surface
+through (p_init after the floor, η* = max(η_init, c₂M)), c₂ := 0 for cap = 'none' (then identical to the pre-round-3
+apex rule), c₁ = c₂ for 'planar'; refused if η* ≥ M/N or the §7 guard B ≤ 0 fails at (π_{i0}, ψ_{i0}).
+`pi0_rule='legacy'` keeps η* = η_init; an explicit `pi_i0` overrides both. K1.15 values reproduced (−50.995881,
+−46.475800, −71.554175, −100).
+
+**(S.56) scan-step contract.** `validate()` refuses a smooth cap with PI_SCAN_REL > W_ramp/10, W_ramp =
+1 − π_i(η₁)/π_i(η₂) (`Params.W_ramp`, 0.0606 at the defaults; c₂ = 0.07 admissible, 0.06 refused); planar and no cap
+are not subject to it (round 3b A3).
 
 **Specific volume (sheet §1.2, G2 owner decision 2026-10-01, decision 1 = option b): exponential
 update in both modes.** `api._step_once` sets v_{n+1} = v_n exp(tr Δε) (⇔ v = v₀ exp(tr ε)) and calls
@@ -59,6 +97,9 @@ differ only in the tangent assembly ((S.33) vs (S.34)).
 | `EPS_S_TOL` | 1e-14 | ε_s below ⇒ n̂ᵉ := 0, q/ε_s := D₂₂ in (S.3) |
 | `REPEATED_EIG_TOL` / `REPEATED_STRETCH_TOL` | 1e-10 | repeated-eigenvalue limits of g_ab (S.33) / γ̃_ab (S.34) |
 | `PI_MAX_NEG` | 0 | any π_i iterate ≥ 0 is an evaluation failure |
+| `FLOOR_ACT_TOL` | 1e-12 | Π_f active iff p(ε^e) > −p_min (1 − FLOOR_ACT_TOL) or ε^e ∉ dom Ψ (HAR ε* ≤ 0); idempotent after a projection |
+| `AT_FLOOR_TOL` | 1e-10 | `at_floor` := p_committed > −p_min (1 + AT_FLOOR_TOL) |
+| `FLOOR_X_TOL`, `FLOOR_X_MAX_ITERS` | 1e-14, 100 | general-n HAR floor scalar solve (S.50): \|f(x)\| ≤ FLOOR_X_TOL (b + a x^{2n}) inside the exact bracket [x_s, x_hi] (never refuses; n = ½ is closed form) |
 
 Other contract points: p ≥ 0 or the §7 guard B ≤ 0 at an iterate is an evaluation failure
 (`p_or_pi_nonneg`, `B_nonpos`) → line-search backtrack, refusal if at the trial state. A
@@ -182,3 +223,40 @@ new v-factors are the consistent derivatives (the sheet's vfac = v₀ form would
   ladder m = 1 bit-identical: True. (E) (½,¼,⅛,⅛) 2.71e-8 / 3.4e-10 / 1.6e-9; AMP step 20 4.76e-6 / 5.1e-8 /
   3.9e-9; AMP step 11 8.77e-6 / 6.5e-8 / 9.7e-9. (F) vertex identical (4.6e-17, 3.8e-16, 3.2e-16, 2.0e-11).
   Logs: session scratchpad `o2_before.log` / `o2_after.log`.
+
+## Self-check record: HAR energy, p′ floor, π_{i0} rule (Esmeralda, 2026-10-03, round 3b sheet 428aa1489)
+`selfcheck har floor pi0` (new groups) and `jac cto newton k1 cap chain` re-run on the same build. Every number of
+the pre-existing groups is unchanged to the printed digits (Jacobian max 4.45e-8, CTO 4.44e-9 / 4.19e-9 / 3.31e-9 /
+4.41e-8 / 1.30e-9, K1.6 5.14e-4 / 1.50e-4, cap endpoints −117.5881 / −117.5455, chain (A)–(F) identical), and the
+default floor (p_min = 5·10⁻³ p_ref) is bit-identical to p_min = 0 on the K2 and fork drained TXC paths (100 steps,
+σ, π_i and the tangent). Logs: session scratchpad `o2_new_groups.log`, `o2_floor_rerun.log`, `o2_old_groups.log`.
+- HAR (TIMs set, p_a = 101): K1.1h p(−1e−3) = −381.983585, K = 371129.585, p(+5e−4) = −28.117707, edge 1.058491699e−3;
+  K1.11 η = 3gε_s to 0, p = −166.548671, q = 349.752210; (S.5h'') ring spot ε_v = 9.0504735e−4, ε_s = 1.2561906e−4,
+  round trip 6e−16; (S.5h') D vs FD 1.6e−9, (S.3) a^e vs FD 5.5e−9 (t2/t4 live: D₂₂/(q/ε_s) = 1.057, |D₁₂|/√(D₁₁D₂₂) =
+  0.16), σ = ∂Ψ/∂ε 9.7e−9; K1.2 loop W/Σ|W| = 2.4e−16. FD re-runs with D₁₂ ≠ 0: Jacobian (S.30) 1.7e−9 / 1.8e−10 /
+  2.0e−10 at h = 1e−8 (three plastic states, O(h²)); CTO (S.33) plastic non-coaxial 2.10e−5 / 2.10e−7 / 2.10e−9 at
+  h = 1e−5/1e−6/1e−7, elastic from the isotropic start 2.35e−9, elastic at q > 0 2.32e−9 (h = 1e−7); finite mode ã^ep
+  1.04e−9; chain (B) m = 8 3.99e−8 / 3.8e−10, m = 2 2.9e−8 / 5.0e−9 (h = 1e−7/1e−8), (C) m = 1 vs (S.33) 4.2e−16,
+  (E) (½,¼,⅛,⅛) 3.4e−8 / 5.2e−10, (F) vertex C:1 = 8.7e−16 / 2.7e−16 with π_i frozen.
+- Floor, BA06 K2 set (K1.12, p_min = 0.5): trial −0.25 → committed −0.5 (5.6e−16), Δε^f_v = κ̂ ln 2 (3e−18), E_f =
+  2.5e−3 = κ̂(p_min − |p^tr|) ≤ W_f = 3.4657e−3, ã_f = 2μ₀(δ − ⅓) (1.3e−16), δ:C_f 3.8e−16, q/n̂/π_i/v untouched,
+  idempotent. p_min = 50 kPa FD record (six kernel columns, h = 1e−6/1e−7): (A) FE- 2.5e−12 / 3.9e−11, (B) FP- 6.0e−8 /
+  6.0e−10 (α₀ = 0), 6.6e−8 / 5.0e−9 (α₀ = 5), (C) -Pf 1.1e−6 / 1.1e−8 (α₀ = 0), 1.5e−6 / 1.5e−8 (α₀ = 5) with δ:C =
+  8e−16 / 5e−16, (D) chain m = 2 FP-,FP- 6.0e−8 / 4.7e−9 (α₀ = 0), 6.5e−8 / 7.7e−9 (α₀ = 5), last-sub CTO 0.38–0.41 off.
+  Finite mode (diagonal log-stretch protocol): FE- ã_f vs FD 1.6e−11 with δ:ã_f = 5e−16, FP- 1.7e−8.
+- Floor, HAR TIMs set (p_a = 101, p_min = 0.505): K1.13 ε_{v,f}(0) = 9.83645033e−4, G(p_min) = 5769.156, the in-domain
+  (Δε_v = +1e−4, Δε^f_v = 6.9522805e−5) and out-of-domain (+1.1e−4, 7.9522805e−5) trials both floor to −0.505 with no
+  refusal (p_min = 0: `trial_elastic_domain`; BA06: an ordinary elastic step); K1.14 x = 0.09185198375, ε_{v,f} =
+  1.04102893e−3, q_f = 14.8362051, ε'_f = 0.08679793 = −D₁₂/D₁₁ (1.6e−16), ε_s unchanged, operator a^e Φ vs FD 3.2e−8,
+  δ:C 5e−16 (ε'_f dropped: 7.4e−2); (S.50) general n ∈ {0, 0.3, 0.5, 0.7} 2.4e−7. K1.14b FPf reproduced: p^tr −0.4607 →
+  −0.505 → p_c = −0.4877 → −0.505, Δλ 1.157e−5, η_c 1.8200, π_i −0.74335, Δε^p_v +7.07e−6, q 0.6619 → 0.6705,
+  F(σ_f)/p_min = −0.0041; (S.32f) vs FD 2.9e−6 / 2.9e−8 at h = 1e−7/1e−8 (O(h²); six columns incl. shears — the sheet's
+  2.2e−7 / 2.2e−9 is over the three principal strains), δ:C_f 4e−16, Jacobian at the FPf iterate 2.6e−8; mutants
+  Φ^post dropped 1.5, Φ^tr dropped 0.58, plain ã^ep 13. Chains (S.54) m = 2: FPf,FPf 1.6e−6 / 1.6e−8, -P-,-Pf 1.0e−5 /
+  1.0e−7 (h = 1e−7/1e−8; unsplit -P-). Near-floor -P- (p_c = −0.79): bit-identical to p_min = 0, CTO vs FD 3.4e−8.
+  Counters: 4 FPf increments n_f_tr = n_f_post = 1…4, E_f ≤ the increment's W_f share, at_floor True; m = 2 sums
+  floor_tr = floor_post = 2; `initial_state` at p = −0.2 kPa projects (n_f_init = 1, π_{i0} from the floored p).
+- π_{i0} (S.53), K2 set: −50.995881 / −46.475800 / −71.554175 / −100.000000 (K1.15); first yield on the drained TXC
+  path q = 11.354, p = −103.785, η = 0.1094, w = 0.338 (sheet 11.347 / −103.782 / 0.1093 / 0.337 at a finer step).
+  (S.56): W_ramp 0.0606 (defaults), c₂ = 0.07 admissible, 0.06 refused; planar / none accepted. All §2.4 parser
+  refusals fire; `Params()` defaults: energy BA06, p₀ = −100, p_min = 0.5.

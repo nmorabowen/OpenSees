@@ -256,7 +256,7 @@ _REFUSAL_TEXT = {
     8: "substeps exhausted (2^8)",
 }
 _SUB_TEXT = {1: "p_or_pi_nonneg", 2: "pi_nonneg", 3: "B_nonpos", 4: "pi_fold",
-             5: "pi_nobracket", 6: "pi_noconv", 7: "nonfinite", 8: "singular_J"}
+             5: "pi_nobracket", 6: "pi_noconv", 7: "nonfinite", 8: "singular_J", 9: "elastic_domain"}     # 9: round 3b (HAR, -pmin 0)
 
 
 # ===========================================================================

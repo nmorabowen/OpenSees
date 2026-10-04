@@ -85,6 +85,22 @@ planar / no-cap AMP_STOP paths that O2 refuses; the vertex / isotropic paths; pl
 coverage cases (N = 0, alpha0 != 0 with an on-surface non-hydrostatic start); and the
 parameter refusals (validate must refuse the counterexample).
 
+ROUND 3B (energy option, p' floor, unified pi_i0; sheet §2.3-§2.4, §5.4, §9.7, §10.2 (S.56), §13 K1.12-K1.15):
+every path above now runs with O2's DEFAULT floor p_min = 5e-3 p_ref (0.5 kPa on K2), which none of them reaches
+(the floor counters are compared and stay 0: the defaults leave every result unchanged). New paths: HAR (TIMs set,
+n = 1/2, p_a 101) drained / undrained TXC, TXE, non-coaxial, GA and the smooth-cap AMP_STOP path, all at p ~ 100
+kPa (the HAR->BA06 mutant dies here, A4); floor paths: K1.12 BA06 (FE-), the §9.7 FD-record cases (A) FE-, (B) FP-,
+(C) -Pf under BA06 at p_min = 50 kPa with alpha0 = 0 and 5, K1.13 HAR in-domain and OUT-OF-DOMAIN trials (and the
+p_min = 0 refusal 'trial_elastic_domain'), K1.14b HAR dry-side FPf x 4, the HAR wet-side -Pf, the near-floor -P-,
+an elastic HAR FE-, and an initial state above the floor (n_f_init = 1); the unified pi_i0 rule (S.53) on a
+smooth-cap drained TXC start. Per step the floor counters are compared EXACTLY (floor_tr, floor_post per increment,
+n_f_tr, n_f_post, n_f_init, at_floor) and eps_f_v, W_f, E_f (S.52) at the 1e-10 gate; at every step whose last
+operator is an active Pi_f the kernel's delta : C must vanish (<= 1e-12 max|C|). FRACTION_CASES add the HAR chains
+FPf,FPf and -P-,-Pf (S.54), the m = 1 chain at FPf, and the BA06 m = 2 FP-,FP- chain. Closed-form unit tests:
+K1.1h / K1.11 (HAR elastic), K1.12-K1.14 floor closed forms (S.49)/(S.50) incl. general n, Pi_f against O2, the
+(S.53) values of K1.15 (unified / legacy / the B guard), p_ref and the p_min default, and the new validate()
+refusals (HAR constants, p_min < 0, (S.56) gated to cap = smooth).
+
 Run (Esmeralda, WP-144 venv), from Ladruno_files/testbed/norsand_oracle/:
     python -m pytest kernel_parity -q -p no:cacheprovider -s
 """
@@ -106,6 +122,7 @@ sys.path.insert(0, HERE)
 
 import o2_algo as O2                     # noqa: E402
 from o2_algo import api as O2api         # noqa: E402
+from o2_algo import kernel as O2K        # noqa: E402
 import ns_kernel as NK                   # noqa: E402
 
 GATE = 1.0e-10
@@ -122,8 +139,9 @@ LASTSUB_MIN_GAP = 0.1        # O2's last-sub-increment CTO must be at least this
 I3 = np.eye(3)
 SIG0 = -100.0 * I3
 
-QUANTITIES = ("sigma", "eps_e", "pi_i", "v", "eps_p_v", "eps_p_s", "D", "tangent")
-REPORTED = QUANTITIES + ("tangent_band", "tangent_coalescent", "o2_1ulp_band", "tangent_substepped")
+QUANTITIES = ("sigma", "eps_e", "pi_i", "v", "eps_p_v", "eps_p_s", "D", "tangent", "eps_f_v", "W_f", "E_f")
+REPORTED = QUANTITIES + ("tangent_band", "tangent_coalescent", "o2_1ulp_band", "tangent_substepped", "dC_floor")
+DC_FLOOR_GATE = 1.0e-12      # delta : C / max|C| at a step whose last operator is an active Pi_f (sheet 9.7)
 
 # ----------------------------------------------------------------------------------------------
 # kernel build (once per session)
@@ -146,6 +164,11 @@ MODES = {
     "fork": dict(csl_mode="fork", M=1.3309, N=0.3, N_bar=0.2, rho=0.71, rho_bar=0.75,
                  e0=0.83, lam_c=0.027, xi=0.45, p_a=101.325),
 }
+# HAR TIMs set (sheet §2.3, §13.14b; O2 selfcheck tims_params): n = 1/2, p_a = 101 (round 3b, A4), fork CSL, the K2
+# plastic constants; under HAR the five BA06 values are NOT given (O2 refuses them, sheet §2.4)
+TIMS = dict(energy="HAR", k=1889.48104361, g=807.80387674, n_e=0.5, p_a=101.0, M=1.3309, N=0.4, N_bar=0.2,
+            rho=0.71, rho_bar=0.71, zeta="WW", chi=-3.5, h=280.0, csl_mode="fork", e0=0.83, lam_c=0.027, xi=0.45,
+            cap="none")
 GA = dict(zeta="GA", rho=0.8, rho_bar=0.9)
 SMOOTH = dict(cap="smooth", c1=0.05, c2=0.15)
 PLANAR = dict(cap="planar", c1=0.10, c2=0.10)
@@ -213,14 +236,176 @@ CASES = {
         + [np.array([[0.0, 1e-8, 0.0], [1e-8, 0.0, 0.0], [0.0, 0.0, 0.0]])] * 2
         + [np.array([[0.0, 1e-7, 0.0], [1e-7, 0.0, 0.0], [0.0, 0.0, 0.0]])]
         + [np.diag([0.001, 0.001, -0.002])] * 2)),
+    # ---- round 3b: HAR energy (TIMs set) at p ~ 100 kPa (floor inactive; kills the HAR->BA06 mutant, A4) ----
+    "HAR_TXC_drained": case("tims", "drained", DENSE, 25, ax=-0.03),
+    "HAR_TXC_undrained": case("tims", "undrained", LOOSE, 25, ax=-0.03),
+    "HAR_TXE_drained": case("tims", "drained", DENSE, 25, ax=+0.03),
+    "HAR_NONCOAXIAL": case("tims", "noncoax", LOOSE, 25),
+    "HAR_NONCOAXIAL_GA": case("tims", "noncoax", LOOSE, 25, over=dict(zeta="GA", rho=0.85, rho_bar=0.9)),
+    "HAR_CAP_smooth_AMPSTOP_n40": case("tims", "iso", DENSE, 40, over=SMOOTH, amp=2.0e-3),
+    # ---- round 3b: the unified pi_i0 rule (S.53) on a smooth-cap start (pi_i0 = None: ramp_end, K1.15) ----
+    "PI0_unified_smooth_TXC_drained": case("paper", "drained", (None, None), 25, over=SMOOTH, ax=-0.06, v0=1.70),
+    "PI0_unified_smooth_TXC_undrained_fork": case("fork", "undrained", (None, None), 25, over=SMOOTH, ax=-0.05,
+                                                  v0=1.75),
 }
 
 
 def o2_params(c):
-    kw = dict(K2)
-    kw.update(MODES[c["mode"]])
+    if c["mode"] == "tims":
+        kw = dict(TIMS)
+    else:
+        kw = dict(K2)
+        kw.update(MODES[c["mode"]])
     kw.update(c["over"])
     return O2.Params(**kw)
+
+
+# ---- round 3b floor paths (sheet 9.7, K1.12-K1.14b): built from O2 (the selfcheck constructions) ----------------
+def _tims(**kw):
+    d = dict(TIMS)
+    d.update(kw)
+    return O2.Params(**d).validate()
+
+
+def _k2(**kw):
+    d = dict(K2, **MODES["paper"])
+    d.update(kw)
+    return O2.Params(**d).validate()
+
+
+def _off_corner(P, p_s, eta_s, direction=(-1.0, -0.35, 1.35)):
+    from o2_algo.selfcheck import off_corner_sig
+    return off_corner_sig(P, p_s, eta_s, direction)
+
+
+def _v_for_psi(P, pi, psi):
+    from o2_algo.selfcheck import v_for_psi
+    return v_for_psi(P, pi, psi)
+
+
+def _first(P, st, cands, pattern, fractions=None):
+    """the first candidate increment whose O2 floor pattern is `pattern` (the selfcheck searches)."""
+    for d in cands:
+        o = O2.step(P, st, d) if fractions is None else O2.step_fractions(P, st, d, fractions)
+        if not o.flags["refused"] and o.flags["fpattern"] == pattern:
+            return d
+    raise AssertionError(f"no candidate gives the floor pattern {pattern!r}")
+
+
+def setup_k112():
+    """K1.12: BA06 K2 set, default p_min 0.5; a trial at p = -p_min/2 floors elastically (FE-), then a shear step at
+    the floor (stays there), then compression back off the floor."""
+    P = _k2()
+    ev_tr = O2K.floor_ev(P, 0.0)[0] + P.kappa_hat * math.log(2.0)
+    shear = 1e-6 * np.array([[0, 1, 0.5], [1, 0, 0], [0.5, 0, 0]])
+    d1 = ev_tr / 3 * I3 + shear
+    return P, -100.0 * I3, 1.59, -2.0e4, [d1, 2e-5 * np.diag([1.0, -1.0, 0.0]), -0.5 * ev_tr / 3 * I3]
+
+
+def setup_ba06_50(which, alpha0):
+    """§9.7 FD record, BA06 K2 set at p_min = 50 kPa: (A) elastic + trial floor, (B) plastic + trial floor (FP-),
+    (C) plastic + post floor (-Pf), alpha0 = 0 / 5 (D12 != 0)."""
+    P = _k2(alpha0=alpha0, p_min=50.0)
+    if which == "A":
+        dA = np.diag([2.0e-3, 1.5e-3, 2.5e-3]) + 2e-4 * np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]])
+        return P, np.diag([-57.0, -61.0, -64.0]), 1.70, -300.0, [dA, -0.5 * dA]
+    if which == "B":
+        sig, _, nh = _off_corner(P, -55.0, 1.4)
+        pi0 = O2K.pi_of_eta(P, -55.0, 1.4)
+        st = O2.initial_state(P, np.diag(sig), 1.70, pi0)
+        d = _first(P, st, [np.diag(1.0e-3 * O2K.ONES + s * nh) + 1e-4 * np.array([[0, 1, 0], [1, 0, 0], [0, 0, 0]])
+                           for s in (0.5e-3, 1.0e-3, 2.0e-3, 3.0e-3, 5.0e-3)], "FP-")
+        return P, np.diag(sig), 1.70, pi0, [d, 0.5 * d]
+    sig, _, _ = _off_corner(P, -51.0, 0.5 * P.M, direction=(-1.2, -0.1, 1.3))
+    pi0 = O2K.pi_of_eta(P, -51.0, 0.5 * P.M)
+    st = O2.initial_state(P, np.diag(sig), 1.70, pi0)
+    d = _first(P, st, [np.diag(a * np.array([0.55, 0.40, -0.95]) - 1e-5) + 1e-4 * np.array([[0, 0, 1], [0, 0, 0], [1, 0, 0]])
+                       for a in (2e-3, 3e-3, 4e-3, 6e-3, 8e-3, 1.2e-2)], "-Pf")
+    return P, np.diag(sig), 1.70, pi0, [d, 0.25 * d]
+
+
+def setup_k113(dv, p_min=None):
+    """K1.13: HAR TIMs set, isotropic p = -1 kPa, d eps_v = +1e-4 (in domain, floored) or +1.1e-4 (OUT of the domain:
+    a floor event, no refusal); p_min = 0: the pre-round-3 refusal 'trial_elastic_domain' (M-F5)."""
+    P = _tims() if p_min is None else _tims(p_min=p_min)
+    return P, -1.0 * I3, 1.70, -50.0, [dv / 3 * I3, -0.5e-4 / 3 * I3 + 1e-6 * np.diag([1.0, -1.0, 0.0])]
+
+
+def _fpf_state():
+    """K1.14b: TIMs set, p_min 0.505, surface state p = -0.6 kPa, eta = 1.2 M, theta 0.271, psi_i = -0.10."""
+    P = _tims(p_min=0.505)
+    sig, _, nh = _off_corner(P, -0.6, 1.2 * P.M)
+    pi0 = O2K.pi_of_eta(P, -0.6, 1.2 * P.M)
+    v0 = _v_for_psi(P, pi0, -0.10)
+    return P, sig, nh, pi0, v0
+
+
+def setup_fpf():
+    P, sig, nh, pi0, v0 = _fpf_state()
+    dF = np.diag((2e-5 / 3) * O2K.ONES + 2e-5 * nh)
+    return P, np.diag(sig), v0, pi0, [dF] * 4
+
+
+def setup_nearfloor():
+    P, sig, nh, pi0, v0 = _fpf_state()
+    dN = np.diag((-1.5e-5 / 3) * O2K.ONES + 1.5e-5 * nh) + 2e-6 * np.array([[0, 1, 0], [1, 0, 0], [0, 0, 0]])
+    return P, np.diag(sig), v0, pi0, [dN]
+
+
+def setup_wet():
+    """§9.7 item 3 (wet side, HAR): a state on the surface near the floor at eta = 0.5 M (theta 0.454), psi_i = +0.04,
+    a pure-shear step along n^: the return relaxes p below the floor, the post floor acts (-Pf)."""
+    P = _tims(p_min=0.505)
+    sig, _, nh = _off_corner(P, -0.6, 0.5 * P.M, direction=(-1.2, -0.1, 1.3))
+    pi0 = O2K.pi_of_eta(P, -0.6, 0.5 * P.M)
+    v0 = _v_for_psi(P, pi0, 0.04)
+    st = O2.initial_state(P, np.diag(sig), v0, pi0)
+    d = _first(P, st, [np.diag(a * nh / math.sqrt(2.0)) for a in (1e-4, 3e-4, 1e-3, 3e-3)], "-Pf")
+    return P, np.diag(sig), v0, pi0, [d, 0.5 * d]
+
+
+def setup_har_fe():
+    """an elastic trial-floored HAR step (FE-), O2 selfcheck 9 (c): low eta, pi_i far inside."""
+    P = _tims(p_min=0.505)
+    es2 = 2e-6
+    nh = np.array([1, 0, -1]) / math.sqrt(2)
+    eps0 = (O2K.floor_ev(P, es2)[0] - 2e-5) / 3 * O2K.ONES + math.sqrt(1.5) * es2 * nh
+    sig0 = np.diag(O2K.elastic(P, eps0).sig)
+    return P, sig0, 1.70, -2.0e4, [3e-5 / 3 * I3 + 1e-7 * np.array([[0, 1, 0], [1, 0, 0], [0, 0, 0]]),
+                                   -3e-5 / 3 * I3]
+
+
+def setup_har_init(rule_start):
+    """an initial state ABOVE the floor (p = -0.2 kPa): projected and counted (n_f_init = 1). rule_start: pi_i0 = None
+    -> (S.53) through the FLOORED p (the apex, cap none), then hydrostatic compression at the vertex (sheet 3.2);
+    else pi_i0 = -50 (inside), then compressive + shear elastic steps off the floor."""
+    P = _tims(p_min=0.505)
+    if rule_start:
+        return P, -0.2 * I3, 1.70, None, [-2e-5 / 3 * I3, -2e-5 / 3 * I3]
+    d = -2e-5 / 3 * I3 + 1e-6 * np.array([[0, 1, 0], [1, 0, 0], [0, 0, 0]])
+    return P, -0.2 * I3, 1.70, -50.0, [d, d]
+
+
+SETUP_CASES = {
+    "FLOOR_BA06_K112": setup_k112,
+    "FLOOR_BA06_p50_A_alpha0": lambda: setup_ba06_50("A", 0.0),
+    "FLOOR_BA06_p50_A_alpha5": lambda: setup_ba06_50("A", 5.0),
+    "FLOOR_BA06_p50_B_alpha0": lambda: setup_ba06_50("B", 0.0),
+    "FLOOR_BA06_p50_B_alpha5": lambda: setup_ba06_50("B", 5.0),
+    "FLOOR_BA06_p50_C_alpha0": lambda: setup_ba06_50("C", 0.0),
+    "FLOOR_BA06_p50_C_alpha5": lambda: setup_ba06_50("C", 5.0),
+    "FLOOR_HAR_K113_in_domain": lambda: setup_k113(1.0e-4),
+    "FLOOR_HAR_K113_out_of_domain": lambda: setup_k113(1.1e-4),
+    "FLOOR_HAR_K113_out_pmin0_refused": lambda: setup_k113(1.1e-4, p_min=0.0),
+    "FLOOR_HAR_FPf_x4": setup_fpf,
+    "FLOOR_HAR_nearfloor_mPm": setup_nearfloor,
+    "FLOOR_HAR_wet_mPf": setup_wet,
+    "FLOOR_HAR_FE": setup_har_fe,
+    "FLOOR_HAR_init_above_floor": lambda: setup_har_init(False),
+    "FLOOR_HAR_init_above_floor_S53": lambda: setup_har_init(True),
+}
+for _nm in SETUP_CASES:
+    CASES[_nm] = dict(setup=_nm)
 
 
 def v0_of(P, c):
@@ -251,7 +436,7 @@ def drained_deps(P, st0, ax, n):
             if trial.flags["refused"]:
                 break
             res = trial.sigma[0, 0] - sig_lat0
-            if abs(res) <= O2api.TRIAX_LAT_TOL_REL * abs(P.p0):
+            if abs(res) <= O2api.TRIAX_LAT_TOL_REL * P.p_ref:
                 ok = True
                 break
             Ct = O2.tangent(P, trial)
@@ -285,13 +470,22 @@ def increments(P, c, st0):
 # the comparison
 # ----------------------------------------------------------------------------------------------
 @functools.lru_cache(maxsize=None)
-def _o2_run(name):
+def _o2_setup(name):
+    """(P, deck sigma0, v0, pi0, increments) of a CASES entry."""
     c = CASES[name]
+    if "setup" in c:
+        return SETUP_CASES[c["setup"]]()
     P = o2_params(c)
     v0 = v0_of(P, c)
     pi0 = c["start"][0]
     st0 = O2.initial_state(P, c["sigma0"], v0, pi0)
-    deps = increments(P, c, st0)
+    return P, c["sigma0"], v0, pi0, increments(P, c, st0)
+
+
+@functools.lru_cache(maxsize=None)
+def _o2_run(name):
+    P, sigma0, v0, pi0, deps = _o2_setup(name)
+    st0 = O2.initial_state(P, sigma0, v0, pi0)
     sts, tans = [], []
     st = st0
     for d in deps:
@@ -303,9 +497,45 @@ def _o2_run(name):
     return P, v0, pi0, st0, deps, sts, tans
 
 
+def _strain_scale(P):
+    """natural elastic-strain scale: kappa_hat (BA06), 1/(k(1-n)) (HAR: the domain edge, 1.06e-3 on TIMs)."""
+    return P.kappa_hat if P.energy == "BA06" else 1.0 / (P.k * (1.0 - P.n_e))
+
+
 def _natural_scales(P):
-    return dict(sigma=abs(P.p0), eps_e=P.kappa_hat, pi_i=abs(P.p0), v=1.0, eps_p_v=P.kappa_hat,
-                eps_p_s=P.kappa_hat, D=abs(P.p0) * P.kappa_hat)
+    e = _strain_scale(P)
+    pr = P.p_ref
+    return dict(sigma=pr, eps_e=e, pi_i=pr, v=1.0, eps_p_v=e, eps_p_s=e, D=pr * e, eps_f_v=e,
+                W_f=max(P.p_min, 1e-300) * e)
+
+
+def _last_op_floor(o):
+    """True when the last operator of the increment is an active Pi_f (pattern of the last sub-increment ends in 'f',
+    or is 'FE-'): delta : C = 0 there (sheet 9.7)."""
+    last = o.flags.get("fpattern", "").split(",")[-1]
+    return last.endswith("f") or last == "FE-"
+
+
+def _o2_kstate(st):
+    """O2 State -> the kernel state[18]."""
+    return np.array([*NK.t6(st.eps_e), st.pi_i, st.v, st.v0, st.eps_p_v, st.eps_p_s, st.D, st.eps_f_v, st.W_f,
+                     st.n_f_tr, st.n_f_post, st.n_f_init, float(bool(st.flags.get("at_floor", False)))], float)
+
+
+def _floor_mismatch(k, ns, inf, o, prev):
+    """exact floor counters / flags of one accepted increment (sheet 9.7 'Counted'): list of (step, what, O2, kernel)."""
+    out = []
+    for what, ko, oo in (("floor_tr", inf["floor_tr"], o.flags["floor_tr"]),
+                         ("floor_post", inf["floor_post"], o.flags["floor_post"]),
+                         ("at_floor", bool(inf["at_floor"]), bool(o.flags["at_floor"])),
+                         ("state.at_floor", bool(ns[17]), bool(o.flags["at_floor"])),
+                         ("n_f_tr", int(ns[14]), o.n_f_tr), ("n_f_post", int(ns[15]), o.n_f_post),
+                         ("n_f_init", int(ns[16]), o.n_f_init)):
+        if ko != oo:
+            out.append((k, what, oo, ko))
+    if inf["W_f"] != ns[13]:
+        out.append((k, "info.W_f != state.W_f", ns[13], inf["W_f"]))
+    return out
 
 
 def _rel(a, b, natural):
@@ -385,13 +615,20 @@ def compare(kern, name):
     P, v0, pi0, st0, deps, sts, tans = _o2_run(name)
     nat = _natural_scales(P)
     rep = dict(name=name, n_o2=len(sts), errs={q: 0.0 for q in REPORTED}, flag_mismatch=[], iter_mismatch=0,
-               refusal=None, substepped=0, plastic=0, band_steps=0, lastsub_gap=0.0)
+               refusal=None, substepped=0, plastic=0, band_steps=0, lastsub_gap=0.0, floor_mismatch=[],
+               floor_events=0, patterns=[])
     errs = rep["errs"]
-    # initial state (sigma0 is recovered through the elastic inversion, whose Newton stops at 1e-13 |p|)
-    rc, ks, msg = kern.initial_state(P, st0.sigma, v0, pi0)
+    # initial state (sigma0 is recovered through the elastic inversion, whose Newton stops at 1e-13 |p|). A deck
+    # sigma0 above the floor is passed as given (O2's st0.sigma is the FLOORED one, which would not re-project).
+    sig_in = _o2_setup(name)[1] if st0.n_f_init else st0.sigma
+    rc, ks, msg = kern.initial_state(P, sig_in, v0, pi0)
     assert rc == 0, f"kernel initialState refused: {rc} {msg}"
     rep["init"] = max(_rel(ks[:6], NK.t6(st0.eps_e), nat["eps_e"]), _rel(ks[6], st0.pi_i, nat["pi_i"]),
-                      _rel(ks[7], st0.v, 1.0), _rel(ks[8], v0, 1.0))
+                      _rel(ks[7], st0.v, 1.0), _rel(ks[8], v0, 1.0), _rel(ks[12], st0.eps_f_v, nat["eps_f_v"]),
+                      _rel(ks[13], st0.W_f, nat["W_f"]))
+    if (int(ks[16]), bool(ks[17]), int(ks[14]), int(ks[15])) != (st0.n_f_init, bool(st0.flags["at_floor"]), 0, 0):
+        rep["floor_mismatch"].append(("init", "n_f_init/at_floor", (st0.n_f_init, st0.flags["at_floor"]),
+                                      (ks[16], ks[17])))
     rep["init_sigma"] = _rel(kern.stress(P, ks), NK.t6(st0.sigma), nat["sigma"])
     # step by step
     D_k, D_o = [], []
@@ -421,12 +658,25 @@ def compare(kern, name):
         assert ns[8] == v0, "v0 must be carried unchanged"
         for q, x, y in (("sigma", r["sigma"], NK.t6(o.sigma)), ("eps_e", ns[:6], NK.t6(o.eps_e)),
                         ("pi_i", ns[6], o.pi_i), ("v", ns[7], o.v), ("eps_p_v", ns[9], o.eps_p_v),
-                        ("eps_p_s", ns[10], o.eps_p_s)):
+                        ("eps_p_s", ns[10], o.eps_p_s), ("eps_f_v", ns[12], o.eps_f_v), ("W_f", ns[13], o.W_f)):
             errs[q] = max(errs[q], _rel(x, y, nat[q]))
+        # floor (sheet 9.7): exact counters; the increment's d eps^f_v and E_f (S.52) against O2's floor events
+        oprev = ost
+        rep["floor_mismatch"] += _floor_mismatch(k, ns, inf, o, oprev)
+        rep["floor_events"] += o.flags["floor_tr"] + o.flags["floor_post"]
+        rep["patterns"].append(o.flags["fpattern"])
+        dfv_o = o.eps_f_v - oprev.eps_f_v
+        errs["eps_f_v"] = max(errs["eps_f_v"], _rel(inf["deps_f_v"], dfv_o, nat["eps_f_v"]))
+        Ef_o = O2api.floor_energy(P, o)
+        errs["E_f"] = max(errs["E_f"], _rel(inf["E_f"], Ef_o, max(P.p_min * abs(dfv_o), 1e-300)))
+        if inf["E_f"] > P.p_min * inf["deps_f_v"] * (1.0 + 1e-12) + 1e-300:
+            rep["floor_mismatch"].append((k, "E_f > p_min deps_f_v (S.52)", P.p_min * inf["deps_f_v"], inf["E_f"]))
         D_k.append(ns[11])
         D_o.append(o.D)
         Co = NK.c4_to_c6(tans[k])
         et = np.abs(r["C"] - Co).max() / np.abs(Co).max()
+        if _last_op_floor(o):       # delta : C = 0 when the last operator is an active Pi_f (no bulk stiffness)
+            errs["dC_floor"] = max(errs["dC_floor"], np.abs(r["C"][:3, :].sum(axis=0)).max() / np.abs(r["C"]).max())
         m = o.flags["substeps"]
         subs = [o] if m == 1 else _o2_subincrements(P, ost, d, [1.0 / m] * m)
         if m > 1:
@@ -465,8 +715,11 @@ def test_kernel_matches_o2_on_path(kern, name):
     print(f"\n[{name}] steps {rep['n_o2']} plastic {rep['plastic']} substepped {rep['substepped']} "
           f"band {rep['band_steps']} (coalescent only {rep.get('coalescent_steps', 0)}) refusal {rep['refusal']} "
           f"iter-count mismatches {rep['iter_mismatch']}"
-          f"\n  init={rep['init']:.2e} init_sigma={rep['init_sigma']:.2e}  {line}")
+          f"\n  init={rep['init']:.2e} init_sigma={rep['init_sigma']:.2e}  {line}"
+          + (f"\n  floor events {rep['floor_events']}, patterns {rep['patterns']}" if rep["floor_events"] else ""))
     assert not rep["flag_mismatch"], f"branch flags differ (step, flag, O2, kernel): {rep['flag_mismatch']}"
+    assert not rep["floor_mismatch"], f"floor counters differ (step, what, O2, kernel): {rep['floor_mismatch']}"
+    assert errs["dC_floor"] <= DC_FLOOR_GATE, f"delta : C = {errs['dC_floor']:.3e} at a floored step (must vanish)"
     # same algorithm, same constants => the same number of local Newton iterations and of nested
     # r(pi_i) evaluations on every step (a constant changed without changing the answer shows here)
     assert rep["iter_mismatch"] == 0, f"{rep['iter_mismatch']} steps with different local/nested iteration counts"
@@ -511,7 +764,42 @@ def test_v_law_is_exponential(kern):
 EXPECTED_REFUSALS = {          # sheet 3.2 / 10.1 / 16.6: O2 refuses these after 2^8 substeps
     "CAP_planar_AMPSTOP_n40": True,
     "CAP_none_AMPSTOP_n40": True,
+    # sheet 9.7 / 2.4: with p_min = 0 a HAR trial outside dom Psi is the refusal 'trial_elastic_domain' (M-F5) ...
+    "FLOOR_HAR_K113_out_pmin0_refused": True,
+    # ... and with the floor on it is a floor event, never a refusal (M-F1)
+    "FLOOR_HAR_K113_out_of_domain": False,
+    "FLOOR_HAR_K113_in_domain": False,
+    "FLOOR_HAR_init_above_floor": False,
+    "FLOOR_HAR_init_above_floor_S53": False,
+    "PI0_unified_smooth_TXC_drained": False,
+    "PI0_unified_smooth_TXC_undrained_fork": False,
 }
+
+# the floor patterns each floor path must exercise (sheet 9.7, K1.12-K1.14b; O2's fpattern of the increment)
+EXPECTED_PATTERNS = {
+    "FLOOR_BA06_K112": "FE-",
+    "FLOOR_BA06_p50_A_alpha0": "FE-", "FLOOR_BA06_p50_A_alpha5": "FE-",
+    "FLOOR_BA06_p50_B_alpha0": "FP-", "FLOOR_BA06_p50_B_alpha5": "FP-",
+    "FLOOR_BA06_p50_C_alpha0": "-Pf", "FLOOR_BA06_p50_C_alpha5": "-Pf",
+    "FLOOR_HAR_K113_in_domain": "FE-", "FLOOR_HAR_K113_out_of_domain": "FE-",
+    "FLOOR_HAR_FPf_x4": "FPf", "FLOOR_HAR_nearfloor_mPm": "-P-", "FLOOR_HAR_wet_mPf": "-Pf", "FLOOR_HAR_FE": "FE-",
+}
+
+
+def test_refusal_reason_elastic_domain(kern):
+    """M-F5 / §2.4: the p_min = 0 HAR out-of-domain trial is refused with the finest reason trial_elastic_domain."""
+    rep = report(kern, "FLOOR_HAR_K113_out_pmin0_refused")
+    assert rep["refusal"] is not None and "trial_elastic_domain" in rep["refusal"][1], rep["refusal"]
+
+
+@pytest.mark.parametrize("name", list(EXPECTED_PATTERNS))
+def test_floor_path_exercises_its_pattern(kern, name):
+    """non-vacuity: each floor path really produces its pattern on the first increment (the parity above then
+    compares that pattern's numbers, counters and tangent), and the FPf path stays FPf for 4 increments (A1)."""
+    rep = report(kern, name)
+    assert rep["patterns"] and rep["patterns"][0] == EXPECTED_PATTERNS[name], (name, rep["patterns"])
+    if name == "FLOOR_HAR_FPf_x4":
+        assert rep["patterns"] == ["FPf"] * 4, rep["patterns"]
 
 
 def test_refusing_paths_refuse_in_both(kern):
@@ -569,6 +857,25 @@ def _frac_setup(which):
     if which == "vertex":           # (F): hydrostatic plastic step from the apex, no cap
         P = O2.Params(**dict(K2, **MODES["paper"])).validate()
         return P, O2.initial_state(P, SIG0, 1.59, None), -1e-3 * I3
+    # ---- round 3b (sheet 9.7 (S.54), K1.14b): the floored chains under HAR and BA06 ----
+    if which.startswith("har_"):
+        P, sig, nh, pi0, v0 = _fpf_state()
+        st = O2.initial_state(P, np.diag(sig), v0, pi0)
+        dF = np.diag((2e-5 / 3) * O2K.ONES + 2e-5 * nh)
+        if which == "har_fpf":          # the K1.14b increment itself (FPf; halved: -P-,FPf)
+            return P, st, dF
+        if which == "har_2fpf":         # twice the increment: FPf,FPf when halved
+            return P, st, 2.0 * dF
+        if which == "har_mP_mPf":       # -P-,-Pf (the O2 selfcheck search, sheet K1.14b)
+            cands = [np.diag((av / 3) * O2K.ONES + a_s * nh) for av in np.linspace(1.0e-5, 2.2e-5, 13)
+                     for a_s in np.linspace(1.5e-5, 9.0e-5, 16)]
+            return P, st, _first(P, st, cands, "-P-,-Pf", fractions=[0.5, 0.5])
+        if which == "har_nearfloor":    # -P- next to the floor, with a shear (generic eigen-data)
+            return P, st, np.diag((-1.5e-5 / 3) * O2K.ONES + 1.5e-5 * nh) + 2e-6 * np.array([[0, 1, 0], [1, 0, 0], [0, 0, 0]])
+    if which.startswith("ba06_p50_"):   # §9.7 (D): the (B) / (C) increments at p_min = 50 kPa, alpha0 = 0 / 5
+        kind, alpha0 = which[len("ba06_p50_")], float(which[-1])
+        P, sig0, v0, pi0, deps = setup_ba06_50(kind, alpha0)
+        return P, O2.initial_state(P, sig0, v0, pi0), deps[0]
     raise KeyError(which)
 
 
@@ -584,11 +891,22 @@ FRACTION_CASES = {
     "amp30_m4": ("amp30", (0.25,) * 4, True),
     "vertex_m1_chain": ("vertex", (1.0,), True),
     "vertex_halving_2_4_4": ("vertex", (0.5, 0.25, 0.25), True),
+    # round 3b, sheet 9.7 (S.54) / K1.14b: floored chains (HAR TIMs set, p_min 0.505; BA06 at p_min = 50 kPa)
+    "har_FPf_FPf_m2": ("har_2fpf", (0.5, 0.5), True),
+    "har_mP_mPf_m2": ("har_mP_mPf", (0.5, 0.5), True),
+    "har_FPf_m1_chain": ("har_fpf", (1.0,), True),
+    "har_FPf_halving_2_4_4": ("har_2fpf", (0.5, 0.25, 0.25), True),
+    "har_FPf_m4_nochain": ("har_2fpf", (0.25,) * 4, False),
+    "har_nearfloor_m2": ("har_nearfloor", (0.5, 0.5), True),
+    "ba06_p50_FP_FP_m2_alpha0": ("ba06_p50_B0", (0.5, 0.5), True),
+    "ba06_p50_FP_FP_m2_alpha5": ("ba06_p50_B5", (0.5, 0.5), True),
+    "ba06_p50_mPf_m4_alpha5": ("ba06_p50_C5", (0.25,) * 4, True),
 }
+FRACTION_PATTERNS = {"har_FPf_FPf_m2": "FPf,FPf", "har_mP_mPf_m2": "-P-,-Pf", "har_FPf_m1_chain": "FPf"}
 
 
 def _o2_to_kstate(st):
-    return np.array([*NK.t6(st.eps_e), st.pi_i, st.v, st.v0, st.eps_p_v, st.eps_p_s, st.D], float)
+    return _o2_kstate(st)
 
 
 @pytest.mark.parametrize("label", list(FRACTION_CASES))
@@ -610,20 +928,30 @@ def test_kernel_step_fractions_matches_o2(kern, label):
     ns = r["state"]
     errs = {q: _rel(x, y, nat[q]) for q, x, y in (
         ("sigma", r["sigma"], NK.t6(o.sigma)), ("eps_e", ns[:6], NK.t6(o.eps_e)), ("pi_i", ns[6], o.pi_i),
-        ("v", ns[7], o.v), ("eps_p_v", ns[9], o.eps_p_v), ("eps_p_s", ns[10], o.eps_p_s))}
+        ("v", ns[7], o.v), ("eps_p_v", ns[9], o.eps_p_v), ("eps_p_s", ns[10], o.eps_p_s),
+        ("eps_f_v", ns[12], o.eps_f_v), ("W_f", ns[13], o.W_f))}
     errs["D"] = abs(ns[11] - o.D) / max(abs(o.D), ZERO_FLOOR * nat["D"])
+    dfv_o = o.eps_f_v - ost.eps_f_v
+    errs["E_f"] = _rel(inf["E_f"], O2api.floor_energy(P, o), max(P.p_min * abs(dfv_o), 1e-300))
+    fm = _floor_mismatch(0, ns, inf, o, ost)
+    assert not fm, f"floor counters differ: {fm}"
+    if label in FRACTION_PATTERNS:
+        assert o.flags["fpattern"] == FRACTION_PATTERNS[label], (label, o.flags["fpattern"])
     Co = NK.c4_to_c6(O2.tangent(P, o))
     et = np.abs(r["C"] - Co).max() / np.abs(Co).max()
     cv, coal = _bands(_o2_subincrements(P, ost, d, fr))
     gate = BAND_TANGENT_GATE if (cv or coal) else GATE
     Cl = NK.c4_to_c6(O2.tangent_last_substep(P, o))
     lastsub = np.abs(Cl - Co).max() / np.abs(Co).max()
-    print(f"\n[{label}] pattern {o.flags.get('pattern')} tangent {et:.2e} (gate {gate:.0e}"
-          f"{', band' if gate > GATE else ''})  O2 last-sub CTO vs O2 tangent {lastsub:.2e}  "
+    dC = np.abs(r["C"][:3, :].sum(axis=0)).max() / np.abs(r["C"]).max()
+    print(f"\n[{label}] pattern {o.flags.get('pattern')} fpattern {o.flags.get('fpattern')} tangent {et:.2e} (gate {gate:.0e}"
+          f"{', band' if gate > GATE else ''})  O2 last-sub CTO vs O2 tangent {lastsub:.2e}  delta:C {dC:.1e}  "
           + "  ".join(f"{q}={v:.1e}" for q, v in errs.items()))
     bad = {q: v for q, v in errs.items() if not v <= GATE}
     assert not bad, f"parity gate {GATE:.0e} exceeded: {bad}"
     assert et <= gate, f"tangent {et:.3e} > {gate:.0e}"
+    if _last_op_floor(o):
+        assert dC <= DC_FLOOR_GATE, f"delta : C = {dC:.3e} at a floored increment"
 
 
 # validate(): owner decisions in force
@@ -659,6 +987,183 @@ def test_validate_warns_only_for_rho_gt_rhobar(kern):
     assert any("rho_bar" in str(x.message) for x in w)
     rc, msg, warn = kern.validate(P)
     assert rc == 0 and warn, (rc, msg, warn)
+
+
+# ----------------------------------------------------------------------------------------------
+# round 3b: closed forms of the kernel's energy / floor / pi_i0 pieces (sheet §13 K1.1h, K1.11-K1.15) and validate()
+# ----------------------------------------------------------------------------------------------
+def test_har_elastic_closed_forms(kern):
+    """K1.1h / K1.11 (sheet 13, TIMs set, p_a 101): the HAR law in the kernel against the sheet's values (kills
+    'HAR silently replaced by BA06', A4: an FD test cannot), and against O2's elastic (p, q, D, a^e of (S.3) in FULL)
+    on random states; the domain edge eps* <= 0 is EE_ELASTIC_DOMAIN."""
+    P = _tims()
+    rc, el = kern.elastic(P, np.full(3, -1e-3 / 3))
+    assert rc == 0 and abs(el["p"] + 381.983585) < 1e-6, el["p"]                 # K1.1h
+    rc, el = kern.elastic(P, np.full(3, 5e-4 / 3))
+    assert rc == 0 and abs(el["p"] + 28.117707) < 1e-6, el["p"]
+    nh = np.array([1.0, 0.0, -1.0]) / math.sqrt(2.0)
+    rc, el = kern.elastic(P, math.sqrt(1.5) * 8.66546968e-4 * nh)                  # K1.11: eta = 3 g eps_s = 2.1
+    assert rc == 0 and abs(el["p"] + 166.548671) < 1e-6 and abs(el["q"] - 349.752210) < 1e-6, el
+    rc, el = kern.elastic(P, math.sqrt(1.5) * 1e-3 * nh)
+    assert abs(el["q"] / abs(el["p"]) - 2.42341163) < 1e-8
+    edge = 1.0 / (P.k * (1.0 - P.n_e))
+    assert abs(edge - 1.058491699e-3) < 1e-12
+    assert kern.elastic(P, np.full(3, 1.0001 * edge / 3))[0] == NK.EVALERR.index("elastic_domain")
+    rng = np.random.default_rng(144)
+    worst = 0.0
+    for n_e in (0.5, 0.3, 0.0, 0.7):
+        Pn = _tims(n_e=n_e)
+        e_edge = 1.0 / (Pn.k * (1.0 - n_e))
+        for _ in range(20):
+            eps = rng.uniform(-3e-3, 0.9 * e_edge / 3, 3) + rng.normal(0, 3e-4, 3)
+            if eps.sum() >= 0.95 * e_edge:
+                continue
+            rc, el = kern.elastic(Pn, eps)
+            o = O2K.elastic(Pn, eps)
+            assert rc == 0
+            worst = max(worst, _rel(el["sig"], o.sig, Pn.p_ref), _rel(el["ae"], o.ae, 1.0),
+                        _rel([el["p"], el["q"]], [o.p, o.q], Pn.p_ref),
+                        _rel([el["D11"], el["D12"], el["D22"]], [o.D11, o.D12, o.D22], 1.0))
+            rcp, psi = kern.energy_psi(Pn, eps)
+            worst = max(worst, _rel(psi, O2K.energy_psi(Pn, eps), 1e-12))
+    print(f"\nHAR elastic / Psi kernel vs O2 (n = 0.5, 0.3, 0, 0.7; random states): {worst:.2e}")
+    assert worst <= 1e-13
+
+
+def test_floor_closed_forms(kern):
+    """K1.12-K1.14 (sheet 13; (S.49)/(S.50)): eps_v,f, eps'_f, Pi_f and its block (S.51a) against the sheet values and
+    O2 (BA06 alpha0 0 / 5; HAR n = 1/2 closed form and the general-n bracketed root); p_ref and the p_min default."""
+    Pb = _k2()
+    assert abs(kern.floor_ev(Pb, 0.0)[0] - 0.0529831737) < 1e-10                    # K1.12
+    assert kern.pref(Pb) == (Pb.p_ref, Pb.p_min) and Pb.p_min == 0.5                # defaultPmin = O2's default
+    Ph = _tims()
+    assert kern.pref(Ph) == (Ph.p_ref, Ph.p_min) and Ph.p_ref == 101.0               # p_ref = p_a under HAR (M-F8)
+    assert abs(Ph.p_min - 0.505) < 1e-15
+    assert abs(kern.floor_ev(Ph, 0.0)[0] - 9.83645033e-4) < 1e-12                  # K1.13
+    evf, epsp = kern.floor_ev(Ph, 2e-4)                                              # K1.14
+    assert abs(evf - 1.04102893e-3) < 6e-12 and abs(epsp - 0.08679793) < 6e-9, (evf, epsp)   # the sheet's digits
+    worst = 0.0
+    for P in (Pb, _k2(alpha0=5.0, p_min=50.0), Ph, _tims(n_e=0.3), _tims(n_e=0.7), _tims(n_e=0.0)):
+        for es in (0.0, 2e-5, 2e-4, 3e-3):
+            ko, oo = kern.floor_ev(P, es), O2K.floor_ev(P, es)
+            worst = max(worst, _rel(ko[0], oo[0], 1e-3), _rel(ko[1], oo[1], 1e-3))
+        rng = np.random.default_rng(7)
+        for _ in range(12):
+            ev = O2K.floor_ev(P, 0.0)[0] + rng.uniform(-2e-4, 4e-4)
+            eps = ev / 3 + rng.normal(0, 1e-4, 3)
+            eps -= (eps.sum() - ev) / 3
+            kf, of = kern.floor_project(P, eps), O2K.floor_project(P, eps)
+            assert kf["active"] == of.active and kf["in_domain"] == of.in_domain, (kf, of)
+            worst = max(worst, _rel(kf["eps_f"], of.eps_f, 1e-3), _rel(kf["Phi"], of.Phi, 1.0), _rel(kf["dfv"], of.dfv, 1e-3))
+            if kf["active"]:          # p = -p_min after the projection, eps_s and the eigenvalue differences kept (M-F6)
+                rc, el = kern.elastic(P, kf["eps_f"])
+                assert rc == 0 and abs(el["p"] + P.p_min) <= 1e-12 * P.p_min
+                d0, d1 = eps - eps.mean(), kf["eps_f"] - kf["eps_f"].mean()
+                assert np.abs(d0 - d1).max() <= 1e-15
+    print(f"\nfloor closed forms / Pi_f kernel vs O2: {worst:.2e}")
+    assert worst <= 1e-12
+
+
+def test_initial_state_pi0_rules(kern):
+    """K1.15 (S.53): unified rule (c2 of the cap; c2 := 0 for none) and the legacy rule, against the sheet values and
+    O2; the §7 guard refusal (107) at a very dense non-hydrostatic start; an explicit pi_i0 overrides."""
+    Pc = _k2(cap="smooth", c1=0.05, c2=0.15)
+    Pn = _k2()
+    v0 = 1.59
+    rc, s, _ = kern.initial_state(Pc, -100 * I3, v0, None)
+    assert rc == 0 and abs(s[6] + 50.995881) < 1e-6, s[6]                          # ramp_end
+    rc, s, _ = kern.initial_state(Pc, -100 * I3, v0, None, pi0_rule="legacy")
+    assert rc == 0 and abs(s[6] + 46.475800) < 1e-6, s[6]                          # apex
+    rc, s, _ = kern.initial_state(Pn, -100 * I3, v0, None)
+    assert rc == 0 and abs(s[6] + 46.475800) < 1e-6
+    sig75 = np.diag(-100 * np.ones(3) + np.array([1, 1, -2]) * 75.0 / 3)
+    rc, s, _ = kern.initial_state(Pn, sig75, v0, None)
+    assert rc == 0 and abs(s[6] + 71.554175) < 1e-6
+    rc, s, _ = kern.initial_state(Pc, -100 * I3, v0, -60.0)
+    assert rc == 0 and s[6] == -60.0
+    worst = 0.0
+    for P in (Pc, _k2(cap="planar", c1=0.1, c2=0.1), Pn, _tims(cap="smooth", c1=0.05, c2=0.15), _tims()):
+        for sig in (-100 * I3, sig75, np.array([[-90.0, 6.0, 0.0], [6.0, -100.0, 3.0], [0.0, 3.0, -125.0]]), -0.2 * I3):
+            for rule in ("unified", "legacy"):
+                o = O2.initial_state(P, sig, 1.70, None, pi0_rule=rule)
+                rc, s, msg = kern.initial_state(P, sig, 1.70, None, pi0_rule=rule)
+                assert rc == 0, msg
+                worst = max(worst, _rel(s[6], o.pi_i, P.p_ref), _rel(s[:6], NK.t6(o.eps_e), _strain_scale(P)),
+                            _rel(s[12], o.eps_f_v, _strain_scale(P)))
+                assert int(s[16]) == o.n_f_init and bool(s[17]) == bool(o.flags["at_floor"])
+    print(f"\ninitial_state (unified / legacy, floor at init) kernel vs O2: {worst:.2e}")
+    assert worst <= GATE
+    # the §7 guard B <= 0 at (pi_i0, psi_i0) (unified rule): very dense (psi_i0 ~ -1), non-hydrostatic start
+    sigd = np.diag([-90.0, -100.0, -110.0])
+    with pytest.raises(ValueError):
+        O2.initial_state(Pc, sigd, 0.75, None)
+    rc, _, msg = kern.initial_state(Pc, sigd, 0.75, None)
+    assert rc == 107, (rc, msg)
+
+
+HAR_REFUSE = {"k_zero": dict(k=0.0), "g_neg": dict(g=-1.0), "n_e_one": dict(n_e=1.0), "n_e_neg": dict(n_e=-0.1),
+              "p_a_zero": dict(p_a=0.0), "p_min_neg": dict(p_min=-1.0)}
+
+
+@pytest.mark.parametrize("label", list(HAR_REFUSE))
+def test_validate_refuses_har_and_floor_like_o2(kern, label):
+    P = O2.Params(**dict(TIMS, **HAR_REFUSE[label]))
+    with pytest.raises(ValueError):
+        P.validate()
+    rc, msg, _ = kern.validate(P)
+    assert rc != 0, f"kernel accepted a set O2 refuses ({label})"
+
+
+def test_validate_s56_gated_to_smooth(kern):
+    """(S.56) PI_SCAN_REL <= W_ramp/10, cap = smooth ONLY (round 3b, A3): c2 = 0.06 refused (W_ramp 0.0061), c2 = 0.07
+    accepted (0.0122), planar (W_ramp = 0) and none accepted; BA06 p_min < 0 refused."""
+    bad = O2.Params(**dict(K2, **MODES["paper"], cap="smooth", c1=0.05, c2=0.06))
+    with pytest.raises(ValueError):
+        bad.validate()
+    assert kern.validate(bad)[0] == 26
+    for over in (dict(cap="smooth", c1=0.05, c2=0.07), dict(cap="planar", c1=0.1, c2=0.1), dict(cap="none"),
+                 dict(cap="planar", c1=0.0, c2=0.0)):
+        P = O2.Params(**dict(K2, **MODES["paper"], **over)).validate()
+        rc, msg, _ = kern.validate(P)
+        assert rc == 0, (over, rc, msg)
+    P = O2.Params(**dict(K2, **MODES["paper"], p_min=-0.1))
+    assert kern.validate(P)[0] == 25
+
+
+def test_floor_init_counted(kern):
+    """sheet 9.7 'initialState': a deck sigma0 above the floor is projected and counted (n_f_init = 1, at_floor), in
+    the kernel exactly as in O2 (compared inside the path parity); non-vacuity here."""
+    for name in ("FLOOR_HAR_init_above_floor", "FLOOR_HAR_init_above_floor_S53"):
+        st0 = _o2_run(name)[3]
+        assert st0.n_f_init == 1 and st0.flags["at_floor"] and st0.eps_f_v > 0.0
+        assert report(kern, name)["init"] <= GATE
+
+
+PRE_ROUND3 = [nm for nm in CASES if not nm.startswith(("HAR_", "PI0_", "FLOOR_"))]
+
+
+def test_default_floor_leaves_existing_paths_bit_identical(kern):
+    """owner decision (e): on every pre-round-3 path the kernel with the DEFAULT floor (p_min = 5e-3 p_ref, as the
+    parity above runs it) is BIT-IDENTICAL to the kernel with the floor off (p_min = 0): state, stress, tangent,
+    flags and iteration counts, step by step (the pi_i0 = None starts there have cap = none: the (S.53) rule is the
+    pre-round-3 apex)."""
+    import dataclasses
+    for name in PRE_ROUND3:
+        P, v0, pi0, st0, deps, sts, tans = _o2_run(name)
+        P0 = dataclasses.replace(P, p_min=0.0)
+        P0._ba06_given, P0._har_given = P._ba06_given, P._har_given
+        assert P.p_min == 5e-3 * P.p_ref and P0.p_min == 0.0
+        rc, s, _ = kern.initial_state(P, st0.sigma, v0, pi0)
+        rc0, s0, _ = kern.initial_state(P0, st0.sigma, v0, pi0)
+        assert rc == rc0 == 0 and np.array_equal(s, s0), name
+        for d in deps:
+            r, r0 = kern.step(P, s, d), kern.step(P0, s0, d)
+            assert np.array_equal(r["state"], r0["state"]) and np.array_equal(r["sigma"], r0["sigma"]) \
+                and np.array_equal(r["C"], r0["C"]) and r["info"] == r0["info"], (name, r["info"], r0["info"])
+            if r["info"]["refusal"] != "OK":
+                break
+            s, s0 = r["state"], r0["state"]
+    print(f"\ndefault floor vs p_min = 0, kernel, {len(PRE_ROUND3)} pre-round-3 paths: bit-identical")
 
 
 def test_kernel_self_check_driver():

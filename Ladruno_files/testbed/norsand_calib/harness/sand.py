@@ -5,6 +5,10 @@ the elastic constants are fixed per the energy (energy.py maps the targets below
 constants); pi_i0 comes from the initial state (model.pi0_for). Units kPa, compression negative inside
 the oracles; the targets here are written as positive magnitudes.
 
+TIMS_P_A = 101.0 is the TIMs p_atm: the campaign set's `Patm 101` (sheet 144a §2.4, round 3b A4). p_a is ONE flag
+shared by the HAR energy and the fork CSL (S.22), so the fit, the oracle and the deck must carry the same number;
+101.325 is withdrawn as the TIMs value (it survives only as O2's inactive Params default).
+
 TOYOURA_PLACEHOLDER: Dafalias & Manzari (2004) J. Eng. Mech. 130(6):622-634, Table 1 (Toyoura), as recalled by
 the harness author for the smoke gate (whose result does not depend on them). The data pack's transcription
 (data/dm04/toyoura_table1.csv, read from the PDF journal p. 626, 2026-10-02) agrees on all seven values used here;
@@ -17,6 +21,9 @@ import csv
 import math
 import os
 from dataclasses import dataclass, field, asdict
+
+
+TIMS_P_A = 101.0
 
 
 @dataclass(frozen=True)
@@ -70,15 +77,16 @@ TOYOURA_PLACEHOLDER = Sand(
 DATA_DIR = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data"))
 
 
-def toyoura_dm04(p_a: float = 100.0, path: str | None = None) -> Sand:
+def toyoura_dm04(p_a: float = TIMS_P_A, path: str | None = None) -> Sand:
     """Toyoura from the data pack's DM04 Table 1 transcription (data/dm04/toyoura_table1.csv; DM04 journal p. 626).
-    p_a is NOT in DM04 Table 1: 100 kPa is the pack's stated assumption (data/README.md §4), passed explicitly."""
+    p_a is NOT in DM04 Table 1. Default TIMS_P_A = 101 kPa (round 3b A4: the TIMs/campaign p_atm, ONE value for the
+    HAR energy, the fork CSL and the deck; was the pack's 100 kPa assumption, data/README.md §4, before 2026-10-03)."""
     path = path or os.path.join(DATA_DIR, "dm04", "toyoura_table1.csv")
     vals = {}
     with open(path, newline="", encoding="utf-8") as f:
         for r in csv.DictReader(line for line in f if not line.startswith("#")):
             vals[r["constant"]] = float(r["value"])
-    return Sand(name=f"Toyoura, DM04 Table 1 (data pack transcription), p_a {p_a:g} kPa (assumed)",
+    return Sand(name=f"Toyoura, DM04 Table 1 (data pack transcription), p_a {p_a:g} kPa",
                 M=vals["M"], c_ext=vals["c"], e0=vals["e0"], lambda_c=vals["lambda_c"], xi=vals["xi"], p_a=p_a,
                 elastic=ElasticTargets(G0=vals["G0"], nu=vals["nu"], p_a=p_a),
                 source="Dafalias & Manzari 2004 JEM 130(6) Table 1 p. 626, via data/dm04/toyoura_table1.csv")

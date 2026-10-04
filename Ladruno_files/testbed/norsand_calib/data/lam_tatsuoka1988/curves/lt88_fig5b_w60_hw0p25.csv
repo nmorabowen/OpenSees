@@ -1,0 +1,114 @@
+# id: lt88_fig5b_w60_hw0p25
+# kind: TC
+# sigma3_kPa: 98.0
+# e0: 0.642
+# e0_definition: e_0.3 = void ratio at sigma3' = 0.3 kgf/cm2 (29.4 kPa), the paper's density label (legend); the specimen was then consolidated to 1.0 kgf/cm2 = 98 kPa and the void ratio at the start of shear is NOT reported (lower than e_0.3 by an unknown amount)
+# source: Lam & Tatsuoka (1988) Soils and Foundations 28(1):89-106, Fig. 5(b), journal p. 94 (PDF page 6), TC-3, H/W = 0.25, omega = 60 deg
+# eps_v_convention: dilation_negative
+# eps_a_sign: 1
+# material: Toyoura sand (D50 0.16 mm, Uc 1.46, Gs 2.64, e_max 0.977, e_min 0.605), saturated, air-pluviated, prismatic specimens, lubricated rigid planes + flexible planes (mixed boundaries, Type 4 lubrication)
+# test: drained isotropically consolidated triaxial compression (TC-3), sigma3' = 98 kPa held, axial strain rate 0.25 %/min; sr = sigma1'/sigma3'
+# omega_deg: 60
+# xi_deg: n/a (TC: sigma2 = sigma3)
+# H_over_W: 0.25
+# x_conversion: paper abscissa D = eps1 - eps3 = (3 eps1 - eps_v)/2  ->  eps_a = (2 D + eps_v)/3 with eps_v(D) interpolated from this test's eps_v trace
+# uncertainty: sr +-0.04 (62 px per unit); D +-0.1 % (31 px per %), eps_v +-0.1 %, eps_a +-0.15 % after conversion; the initial rise (D < ~2 %) of sr is NOT resolved (the four curves overlap): the first row is the assumed isotropic start
+# caveat_bedding_error: strains not corrected for bedding error at the lubrication layers (text p. 94): eps_a overestimated; the relative error is larger for H/W = 0.25
+# digitisation: column-cluster family tracker on the native scan (data/_digitise/run_lt5.py); rows fill ONE of sr / eps_v
+# units: eps_a_pct [%] compression positive | sr [-] | eps_v_pct [%] dilation negative
+# caveat_H_over_W: H/W = 0.25: strong end restraint (paper Figs. 4(b), 8(b)): phi larger than for H/W 1.0-2.0; use for the omega/anisotropy effect, not as an element test
+# sr_note: the sigma1'/sigma3' curves of omega = 60 and 90 coincide for D > ~5 % in this panel: ONE merged trace is given for both files
+# phi_peak_deg: 40.06
+# eps_peak_pct: 16.99
+eps_a_pct,sr,eps_v_pct
+0,1,0
+1.2954,3.432,
+2.9147,3.6849,
+3.2386,3.7323,
+3.2386,,-0.2842
+3.5838,3.8201,
+3.5838,,-0.2486
+3.8538,3.8675,
+3.8538,,-0.4386
+4.1507,3.915,
+4.1507,,-0.548
+4.4261,4.0109,
+4.4261,,-0.7218
+4.6584,4.0423,
+4.6584,,-1.0248
+4.9444,4.0819,
+4.9444,,-1.1668
+5.2788,4.1536,
+5.6132,4.2013,
+5.6132,,-1.1604
+5.9315,4.2005,
+5.9315,,-1.2056
+6.2443,4.27,
+6.2443,,-1.267
+6.5088,4.3362,
+6.5088,,-1.4736
+6.8163,4.3274,
+6.8163,,-1.5512
+7.0914,4.3186,
+7.0914,,-1.7258
+7.3935,4.3986,
+7.3935,,-1.8196
+7.674,4.3818,
+7.674,,-1.978
+7.9598,4.373,
+7.9598,,-2.1206
+8.2726,,-2.1822
+8.5477,4.4443,
+8.5477,,-2.357
+8.8388,4.4355,
+8.8388,,-2.4836
+9.1192,4.4752,
+9.1192,,-2.6424
+9.3672,4.4826,
+9.3672,,-2.8984
+9.6529,4.4981,
+9.6529,,-3.0412
+9.9494,4.4813,
+9.9494,,-3.1518
+10.249,,-3.2516
+10.521,4.4799,
+10.521,,-3.4378
+10.801,4.4873,
+11.361,4.4778,
+11.361,,-3.9158
+11.663,4.5014,
+11.663,,-4.0106
+11.953,4.5088,
+11.953,,-4.14
+12.234,4.5082,
+12.234,,-4.2974
+12.531,4.5318,
+12.531,,-4.4084
+12.816,4.5149,
+12.816,,-4.552
+13.101,4.5142,
+13.101,,-4.6956
+13.387,,-4.8394
+13.661,4.5237,
+13.661,,-5.0156
+13.969,4.504,
+13.969,,-5.0944
+14.254,4.4952,
+14.254,,-5.2384
+14.539,,-5.3824
+14.83,4.5345,
+14.83,,-5.51
+15.148,4.6069,
+15.148,,-5.5566
+15.449,4.6063,
+15.751,4.5812,
+16.052,4.5968,
+16.052,,-5.8428
+16.365,4.5961,
+16.677,4.5873,
+16.989,4.6111,
+16.989,,-6.0318
+17.302,4.5778,
+17.302,,-6.0948
+17.587,4.5772,
+17.587,,-6.2394

@@ -72,9 +72,21 @@
 // It is a derivative with respect to the six INDEPENDENT tensor components (eps_01 etc. independent),
 // so an engineering-shear caller halves the shear COLUMNS (done in getTangent; unlike LadrunoJ2Kernel).
 //
-// Initial state: -pi0 is REQUIRED (no default onto the yield surface). F(sigma0, pi_i0) is computed at
-// construction: a start OUTSIDE the surface (F > 1e-6 |p0|; |F| <= 1e-6 |p0| is ON the surface, warned) is refused; an on-surface start
-// is accepted with a warning (the first loading step is then plastic).
+// Initial state: -pi0 is REQUIRED unless -pi0_auto is given (no silent default onto the yield surface).
+// F(sigma0, pi_i0) is computed at construction, at the stress the state really has (the deck's sigma0, or
+// sigma(eps^e_f) when the p' floor projected the initial state): a start OUTSIDE the surface (F > 1e-6 p_ref,
+// p_ref = |p0| (BA06) or p_a (HAR); |F| <= 1e-6 p_ref is ON the surface, warned) is refused; an on-surface start
+// is accepted with a warning (the first loading step is then plastic). -pi0_auto selects the unified
+// pi_i0 rule of sheet 5.4 (S.53) (the surface through (p_init, max(eta_init, c2 M)), owner decision (d)).
+//
+// ENERGY OPTION and p' FLOOR (WP-144 round 3, sheet 2.3-2.4 and 9.7; the mathematics is the kernel's):
+//   -energy BA06 (default, paper mode: -p0 -kappa_hat -mu0 [-eps_v0] [-alpha0]) | HAR (Houlsby-Amorosi-Rojas 2005:
+//   -k -g [-n 0.5] -p_a, or the DM04 mapping -G0 -nu [-e_ref]); HAR REPLACES the BA06 constants, and giving one
+//   of them (or a HAR one with BA06) is refused, never ignored. -p_a is ONE flag, shared by the HAR energy and the
+//   fork CSL. -pmin p: the floor (default 5e-3 p_ref; 0 = off). The floor never refuses; it is COUNTED (responses
+//   `floor` / `floored`: [at_floor, n_f_tr, n_f_post, eps_f_v, W_f]; `stepInfo` [9], [10] = floor_tr, floor_post of
+//   the last step; `floorEnergy`: E_f). The consistent tangent of a floored step is the EXACT one (zero bulk
+//   stiffness at a floored state; no regularisation, owner decision (c)).
 //
 // See Ladruno_implementation/144_ladruno_norsand_plan.md and 144a_norsand_equation_sheet.md.
 // classTags 33023 / 33024 / 33025. Written: N. Mora-Bowen (Ladruno), 2026.
@@ -100,7 +112,7 @@ class LadrunoNorSand : public NDMaterial, public LadrunoElasticStrainProvider {
   // NDMaterial sends nothing, so this is the only Vector under the dbTag (FE_Datastore keys vectors by
   // size: nothing to collide with). The trial stress and tangent are NOT on the wire (Domain::recvSelf's
   // update() recomputes them); recvSelf rebuilds them from the restored trial State.
-  static const int WIRE_LEN = 86;
+  static const int WIRE_LEN = 112;
 
   // null constructor (broker / recvSelf): parameters are filled by recvSelf
   LadrunoNorSand();
@@ -108,7 +120,9 @@ class LadrunoNorSand : public NDMaterial, public LadrunoElasticStrainProvider {
   // full constructor. sig0 is the initial stress (OpenSees order 11,22,33,12,23,13; tension
   // positive = kernel order and sign), v0 the initial specific volume (a separate committed state
   // variable from v; the kernel evolves v = v0 exp(tr eps), plan 2.8: the shell never computes v itself),
-  // pi0 the initial image pressure (REQUIRED, < 0; NaN is refused: initOK() false).
+  // pi0 the initial image pressure (< 0). pi0 = NaN selects the UNIFIED rule of sheet 5.4 (S.53) (the parser's
+  // -pi0_auto; the resolved value is then stored in place of the NaN). The parser itself refuses a deck with
+  // neither -pi0 nor -pi0_auto; the kernel's "NaN = on the surface" apex rule is never reachable from a deck.
   LadrunoNorSand(int tag, const ladruno_norsand::Params& p, const double sig0[6],
                  double v0, double pi0, double dens = 0.0);
 
@@ -174,6 +188,7 @@ class LadrunoNorSand : public NDMaterial, public LadrunoElasticStrainProvider {
   double v0init;                   // initial specific volume
   double pi0init;                  // initial image pressure (required, < 0)
   double F0init;                   // F(sigma0, pi_i0) at construction (derived; NaN until built)
+  bool   pi0Auto;                  // pi_i0 came from the unified rule (S.53), not from the deck (echo only)
   bool   initOk;
   std::string initMsg;
 
@@ -196,6 +211,7 @@ class LadrunoNorSand : public NDMaterial, public LadrunoElasticStrainProvider {
   int  lastFinest, lastFinestSub;  // finest-level cause (StepInfo.finest / finest_sub) of that refusal; 0 if none
   int  nRefusals;                  // trials refused since revertToStart
   int  nSubstepped;                // COMMITTED steps that needed substepping (counted in commitState)
+  double efC, efT;                 // cumulative floor energy E_f (S.52) over the committed history / incl. the trial step
   ladruno_norsand::StepInfo lastInfo;
 
   // helpers

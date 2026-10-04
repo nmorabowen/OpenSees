@@ -11,9 +11,12 @@ p -> p_cs = -p_a ((e0_csl - e)/lambda_c)^(1/xi) and zeta(theta) q/|p| -> M.
 
 Parameters: Toyoura PLACEHOLDER CSL (sand.py), BA06 via the energy plug ('per_test'), WW, smooth cap,
 theta_V below; start sigma3' 49 kPa, e 0.716 (Tatsuoka Fig. 16a state, data/tatsuoka1986/source/compare.md),
-pi_i0 = 0.8 p (rule 'ratio': an elastic start, so O1 has no vertex start); the 'on_surface' (apex) and
-'ramp_end' starts are reported separately (census).
-Run:  python -m harness.validate_drivers [--quick]     (from norsand_calib/)
+pi_i0 = 0.8 p (rule 'ratio': an elastic start, so O1 has no vertex start); the 'on_surface' (apex), 'ramp_end' and
+'unified' (S.53, the oracle's own helper) starts are reported separately (census).
+Run:  python -m harness.validate_drivers [--quick] [--energy BA06|HAR]     (from norsand_calib/)
+--energy HAR (round 3b) runs the same gate with the HAR energy on BOTH oracles (energy plug, k, g from the DM04
+targets at p_a = the sand's 101 kPa, n = 1/2): the O2 drivers must still converge to O1 at first order; the output
+goes to validate_drivers_HAR.json. The 'unified' pi_i0 rule (S.53) is in the start census.
 """
 from __future__ import annotations
 
@@ -45,10 +48,10 @@ def order(ns, errs):
     return float(np.polyfit(np.log(1.0 / np.asarray(ns, float)), np.log(np.asarray(errs, float)), 1)[0])
 
 
-def run(quick=False):
-    setup = Setup(TOY, pi0_rule="ratio", pi0_ratio=0.8)
+def run(quick=False, energy="BA06"):
+    setup = Setup(TOY, energy=energy, pi0_rule="ratio", pi0_ratio=0.8)
     ns = NS[:3] if quick else NS
-    report = dict(date=time.strftime("%Y-%m-%d"), theta=THETA_V, sigma3=SIG3, e=E_INIT, eps_a=EPS_A, ns=ns,
+    report = dict(date=time.strftime("%Y-%m-%d"), energy=energy, theta=THETA_V, sigma3=SIG3, e=E_INIT, eps_a=EPS_A, ns=ns,
                   sand=TOY.name, kinds={})
     all_ok = True
     for kind in KINDS:
@@ -118,8 +121,8 @@ def run(quick=False):
 
     # the pi_i0 rules (model.Setup), reported: which drivers complete from each start, and where O2 substeps
     census = {}
-    for rule in ("on_surface", "ramp_end"):
-        s2 = Setup(TOY, pi0_rule=rule)
+    for rule in ("on_surface", "ramp_end", "unified"):
+        s2 = Setup(TOY, energy=energy, pi0_rule=rule)
         for kind in KINDS:
             c = simulate(s2, THETA_V, kind, SIG3, E_INIT, EPS_A[kind], 100, oracle="O2")
             census[f"{rule}:{kind}"] = dict(status=c.status, steps_done=len(c.eps) - 1,
@@ -130,12 +133,13 @@ def run(quick=False):
     report["start_census"] = census
     report["all_ok"] = all_ok
     os.makedirs(OUT, exist_ok=True)
-    with open(os.path.join(OUT, "validate_drivers.json"), "w") as f:
+    with open(os.path.join(OUT, "validate_drivers.json" if energy == "BA06" else f"validate_drivers_{energy}.json"), "w") as f:
         json.dump(report, f, indent=1, default=float)
     print("DRIVERS", "PASS" if all_ok else "FAIL")
     return all_ok
 
 
 if __name__ == "__main__":
-    ok = run(quick="--quick" in sys.argv)
+    en = sys.argv[sys.argv.index("--energy") + 1] if "--energy" in sys.argv else "BA06"
+    ok = run(quick="--quick" in sys.argv, energy=en)
     sys.exit(0 if ok else 1)

@@ -202,3 +202,33 @@ A non-refusing inner is unchanged by the fix to the last bit on this machine and
 Source restored after each mutant (SHA-256 of the changed SRC files and `git diff -- SRC` identical to the pre-mutation copies, checked after
 every one). Final full `build.bat` from the clean fixed source: 5 targets, exit 0, 0 `error C`, all five mtimes fresh; A 59, B 120,
 L 211 + 1 xfail, W 26, S 17 + 1 skip, all green. `build.bat clean` was not run.
+
+## Round 3b (2026-10-03): the shell mutants of the HAR energy, the p' floor and the unified pi_i0 (NOT RUN: written for the Mutate step)
+
+New gates (all need the round-3b build; Zone A = `tests/`, Zone B = this folder; `--runslow` for the slow one):
+- A: `tests/test_ladruno_norsand_har_floor.py` (52 tests): echo, every parser refusal with its code, the HAR closed forms (K1.1h, K1.11, DM04, the
+  gate-table eigenvalues), the floor (K1.12, K1.13, K1.14, responses, counters, tangent, initial projection, K1.15), the cube past the domain edge,
+  the element FD tangent under HAR, the database round trip of the floor block.
+- B: `test_g2_shell_parity.py` (round 3b: floor counters and responses compared per step with O2 on the kernel_parity FLOOR_* / HAR_* / PI0_* paths,
+  delta : C = 0 at floored steps, the p_min = 0 HAR refusal, the pi_i0 / initial projection test), `test_g2_logstrain.py` (HAR paths through the
+  wrapper at 1e-10, HAR rigid-rotation objectivity, HAR provider identity), `test_g2_floor_sensitivity.py` (slow: F vs F/2 on the strip BVP).
+
+| # | Mutant (edit of `SRC/material/nD/LadrunoNorSand.cpp` / `LadrunoNorSandKernel.h`) | Killers (expected) |
+|---|---|---|
+| S1 | `-energy HAR` parsed, the BA06 law built (HAR -> BA06) | shell parity HAR_* paths and `test_har_paths_run_the_har_law_not_ba06`; Zone A K1.1h / K1.11 / gate table; NOT any FD test (round 3b, A4) |
+| S2 | BA06 constants accepted under HAR (code 201 removed) | `test_har_refuses_each_ba06_constant_code_201` (5 flags) |
+| S3 | HAR constants accepted under BA06 (code 202 removed), or `-p_a` added to that list | `test_ba06_refuses_each_har_constant_code_202` (6 flags + the p_a positive controls) |
+| S4 | k / g / n / p_a range checks removed or off by one (codes 21-24), `-pmin < 0` accepted (25) | `test_har_kernel_range_refusals_codes_21_to_25`, `test_pmin_negative_refused_code_25_under_ba06_too` |
+| S5 | (S.56) refusal absent / ungated (planar, none refused) / with the inverted W_ramp / factor 10 changed | `test_smooth_cap_scan_gate_code_26_only_for_smooth` |
+| S6 | trial floor skipped (post only): the out-of-domain HAR trial refuses (M-F5) | `test_k1_13_har_floor_in_and_out_of_the_domain_is_counted_not_refused[1.1e-4]`, parity FLOOR_HAR_K113_out_of_domain |
+| S7 | floor not applied (pass-through) or applied at p_min = 0 | `test_k1_12_*`, `test_floor_off_pmin_zero_*`, parity FLOOR_BA06_* |
+| S8 | `floor` / `floorEnergy` / `floorInit` slots reordered or counters not accumulated (M-F2) | Zone A K1.12 / K1.13 / initial-state tests, parity `floor_mismatch` |
+| S9 | E_f sign / out-of-domain bound (S.52) | Zone A K1.13 `floorEnergy[0]` (Psi difference in the domain, W_f outside), parity E_f at 1e-10 |
+| S10 | floored tangent with a bulk stiffness (regularisation) or the (S.51a) eps' term dropped (M-F3b) | Zone A K1.12 / K1.13 tangents, K1.14 (delta : C, a^e Phi), parity `dC_floor` and the tangent |
+| S11 | q kept instead of eps_s under HAR (M-F6), pi_i or v altered by the projection (M-F7) | Zone A K1.14 (eps_s unchanged, q_f), K1.12 (pi_i, v) |
+| S12 | `-pi0_auto` = the pre-round-3 apex rule, or the rule applied before the floor | `test_pi0_auto_is_the_unified_rule_k1_15`, parity `test_pi0_auto_and_the_floored_initial_state_through_the_shell_equal_o2` |
+| S13 | initial state not projected / not counted | `test_initial_state_is_projected_counted_and_the_stress_replaced_ba06_and_har` |
+| S14 | sendSelf / recvSelf drops the floor block (counters reset on restore) | `test_database_roundtrip_carries_the_floor_counters_and_energy` |
+| S15 | DM04 mapping: (1+nu) <-> (1-nu), f(e) wrong, e_ref ignored | `test_dm04_mapping_gives_the_printed_g_and_k_and_the_same_response` |
+| S16 | provider route off for HAR (LogStrain falls back to inv(D0)) | `test_rigid_rotation_is_objective_under_the_har_energy`, `test_provider_identity_under_har_*` |
+| S17 | floor inside the local Newton (M-F9) or hidden stiffness: the limit load moves > 2 % | `test_g2_floor_sensitivity.py` (slow), parity FLOOR_HAR_FPf_x4 |

@@ -1,0 +1,68 @@
+# id: ft84_fig5a_sc1p0
+# kind: TC
+# sigma3_kPa: 98.0
+# e0: 0.671
+# e0_definition: e_0.3 = void ratio at sigma_c' = 0.3 kgf/cm2 (29.4 kPa), the paper's density label (figure legend); for sigma_c' != 0.3 the void ratio at the shear stress is NOT reported (p. 35, Fig. 4)
+# source: Fukushima & Tatsuoka (1984) Soils and Foundations 24(4):30-48, Fig. 5(a), journal p. 36 (PDF page 7), dense, sigma_c' 0.1-4 kgf/cm2; Table 1 test 53 (p. 32)
+# eps_v_convention: dilation_negative
+# eps_a_sign: 1
+# phi_peak_deg: 42.3
+# eps_peak_pct: 7.91
+# phi_peak_note: Table 1 phi (mid-height, UNCORRECTED for membrane forces, t0 = 0.3 mm); the digitised maximum sr 5.112 vs 5.116 from Table 1 (difference -0.004) is the calibration check of the digitisation
+# sigma3_f_kPa: 99.47
+# material: Toyoura sand (D50 0.16 mm, Uc 1.46, Gs 2.64, e_max 0.977, e_min 0.605), saturated, air-pluviated, 7 cm diameter x 15 cm, lubricated ends (p. 33)
+# test: drained isotropically consolidated triaxial compression, axial strain rate 0.25 %/min; sr = sigma1'/sigma3' at the MID-HEIGHT of the sample, UNCORRECTED for membrane forces (the figure title says so); eps_a = axial strain
+# caveat_membrane: membrane t0 = 0.3 mm, latex, E_m 15.2 kgf/cm2: at sigma_c' <= 0.1 kgf/cm2 the uncorrected stress ratios are biased (paper Figs. 7, 12-17); at the lowest stresses sigma3' drifted during the test: (sigma3')_f = 99.47 kPa vs sigma_c' = 98.00 kPa
+# uncertainty: sr +-0.05 (1 px = 0.01; calibration cross-checked against Table 1 phi, see phi_peak_note), +-0.1 where markers of neighbouring curves merge; eps_a +-0.1 %; eps_v +-0.15 % (scan skew handled by a bilinear map between the frame lines)
+# digitisation: marker-chain / column-cluster tracker on the native 1-bit scan (data/_digitise); rows fill ONE of sr / eps_v (the two traces are digitised at different eps_a); the first row (0,1,0) is the assumed isotropic start, not digitised
+# units: eps_a_pct [%] compression positive | sr [-] | eps_v_pct [%] dilation negative
+eps_a_pct,sr,eps_v_pct
+0,1,0
+1.1857,4.1067,
+1.6616,4.3557,
+1.8865,4.4873,
+2.1217,4.545,
+2.6071,4.6701,
+2.8411,4.7307,
+3.3074,4.8158,
+3.5582,4.8619,
+3.8088,4.9312,
+4,,-2.8281
+4.6872,5.0063,
+4.9719,5.0297,
+5,,-2.8903
+5.2763,5.0486,
+5.5,,-3.0246
+5.652,5.0729,
+5.9724,5.0761,
+6,,-3.2868
+6.5,,-3.6966
+6.5878,5.0906,
+6.9472,5.0948,
+7,,-3.9
+7.5,,-4.3689
+7.6081,5.1018,
+7.9142,5.1123,
+8,,-4.5822
+8.2393,5.0944,
+8.5,,-4.9923
+8.5886,5.0696,
+8.9469,5.0393,
+9,,-5.2058
+9.276,5.0107,
+9.5,,-5.5768
+9.6189,4.979,
+9.9444,4.9369,
+10,,-5.7805
+10.5,,-6.1319
+10.624,4.8548,
+10.953,4.8197,
+11,,-6.3063
+11.31,4.7632,
+11.5,,-6.5692
+11.676,4.7046,
+12,,-6.7732
+12.012,4.6831,
+12.365,4.6406,
+12.5,,-6.9575
+13,,-7.201

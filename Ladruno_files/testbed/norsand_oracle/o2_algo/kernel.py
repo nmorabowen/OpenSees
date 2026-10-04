@@ -115,7 +115,7 @@ def zeta_theta(theta: float, rho: float, kind: str):
 
 
 # --------------------------------------------------------------------------------------
-# §2 BA06 energy in principal elastic strains
+# §2 elastic energy in principal elastic strains: BA06 (S.4)-(S.5) default, HAR (S.4h)-(S.5h') option
 # --------------------------------------------------------------------------------------
 @dataclass
 class Elastic:
@@ -131,21 +131,52 @@ class Elastic:
     ae: np.ndarray       # a^e_ab (3,3)  (S.3)
 
 
-def elastic(P: Params, eps_e: np.ndarray) -> Elastic:
+def _har_estar(P: Params, ev: float) -> float:
+    """eps* = 1/(k(1-n)) - eps_v (S.4h); the HAR domain is eps* > 0 (p < 0)."""
+    return 1.0 / (P.k * (1.0 - P.n_e)) - ev
+
+
+def _split(eps_e: np.ndarray):
     ev = float(eps_e.sum())
     e = eps_e - ev / 3.0
     ne = float(np.linalg.norm(e))
     es = SQ23 * ne
     nh = e / ne if es > EPS_S_TOL else np.zeros(3)
-    om = -(ev - P.eps_v0) / P.kappa_hat
-    E = math.exp(om)
-    p = P.p0 * E * (1.0 + 1.5 * P.alpha0 / P.kappa_hat * es * es)
-    q = 3.0 * (P.mu0 - P.alpha0 * P.p0 * E) * es
-    D11 = -p / P.kappa_hat
-    D22 = 3.0 * P.mu0 - 3.0 * P.alpha0 * P.p0 * E
-    D12 = 3.0 * P.p0 * P.alpha0 * es / P.kappa_hat * E
+    return ev, es, nh
+
+
+def elastic(P: Params, eps_e: np.ndarray) -> Elastic:
+    """p, q, the Hessian D and a^e_ab (S.3) at the principal elastic strains. BA06: (S.5). HAR: (S.5h)/(S.5h'),
+    with (S.3) IN FULL (q/eps_s != D22 under HAR; the eps_s -> 0 limit q/eps_s := 3 g p_a (|p|/p_a)^n = D22|q=0 is
+    exact). HAR raises EvalError('elastic_domain') for eps* <= 0 (sheet §2.4: a trial outside the domain is a
+    floor event when p_min > 0, the refusal `trial_elastic_domain` when p_min = 0; a local iterate is a backtrack)."""
+    ev, es, nh = _split(eps_e)
+    if P.energy == "HAR":
+        k, g, n, pa = P.k, P.g, P.n_e, P.p_a
+        kn = k * (1.0 - n)
+        est = _har_estar(P, ev)
+        if est <= 0.0:
+            raise EvalError("elastic_domain")
+        u = math.sqrt(est * est + 3.0 * g * es * es / kn)
+        w = (kn * u) ** (n / (1.0 - n))                      # = (varpi/p_a)^n
+        p = -pa * kn * est * w                                 # (S.5h)
+        q = 3.0 * g * pa * es * w
+        r2 = (est / u) ** 2                                    # p^2/varpi^2 = 1/Z  (p/varpi = -eps*/u exactly)
+        varpi2 = (pa * (kn * u) ** (1.0 / (1.0 - n))) ** 2     # varpi^2 = p^2 + k(1-n) q^2/(3g)
+        D11 = k * pa * w * (1.0 - n + n * r2)                  # (S.5h')
+        D22 = (3.0 * g / (1.0 - n)) * pa * w * (1.0 - n * r2)
+        D12 = n * k * p * q * pa * w / varpi2
+        ratio = 3.0 * g * pa * w                               # q/eps_s, exact also at eps_s = 0 (limit (S.5h'))
+    else:
+        om = -(ev - P.eps_v0) / P.kappa_hat
+        E = math.exp(om)
+        p = P.p0 * E * (1.0 + 1.5 * P.alpha0 / P.kappa_hat * es * es)
+        q = 3.0 * (P.mu0 - P.alpha0 * P.p0 * E) * es
+        D11 = -p / P.kappa_hat
+        D22 = 3.0 * P.mu0 - 3.0 * P.alpha0 * P.p0 * E
+        D12 = 3.0 * P.p0 * P.alpha0 * es / P.kappa_hat * E
+        ratio = q / es if es > EPS_S_TOL else D22            # eps_s -> 0 limit (S.3 note)
     sig = p * ONES + SQ23 * q * nh
-    ratio = q / es if es > EPS_S_TOL else D22            # eps_s -> 0 limit (S.3 note)
     ae = (D11 * np.outer(ONES, ONES)
           + SQ23 * D12 * (np.outer(ONES, nh) + np.outer(nh, ONES))
           + (2.0 / 3.0) * D22 * np.outer(nh, nh)
@@ -154,10 +185,17 @@ def elastic(P: Params, eps_e: np.ndarray) -> Elastic:
 
 
 def energy_psi(P: Params, eps_e: np.ndarray) -> float:
-    """Psi (S.4), for the closed-loop check."""
-    ev = float(eps_e.sum())
-    e = eps_e - ev / 3.0
-    es = SQ23 * float(np.linalg.norm(e))
+    """Psi: (S.4) BA06 or (S.4h) HAR, for the closed-loop check and the floor energy E_f (S.52).
+    HAR: raises EvalError('elastic_domain') outside eps* > 0 (the mirror branch is unphysical)."""
+    ev, es, _ = _split(eps_e)
+    if P.energy == "HAR":
+        k, g, n, pa = P.k, P.g, P.n_e, P.p_a
+        kn = k * (1.0 - n)
+        est = _har_estar(P, ev)
+        if est <= 0.0:
+            raise EvalError("elastic_domain")
+        u = math.sqrt(est * est + 3.0 * g * es * es / kn)
+        return pa / (k * (2.0 - n)) * (kn * u) ** ((2.0 - n) / (1.0 - n))
     om = -(ev - P.eps_v0) / P.kappa_hat
     Pt = -P.p0 * P.kappa_hat * math.exp(om)
     mu = P.mu0 + P.alpha0 / P.kappa_hat * Pt
@@ -165,8 +203,8 @@ def energy_psi(P: Params, eps_e: np.ndarray) -> float:
 
 
 def invert_elastic(P: Params, sig: np.ndarray) -> np.ndarray:
-    """Principal elastic strains from principal stresses (Newton on (eps_v, eps_s) with the
-    2x2 Hessian; closed form when alpha0 = 0). Used by initial_state only."""
+    """Principal elastic strains from principal stresses. BA06: Newton on (eps_v, eps_s) with the 2x2 Hessian,
+    closed form when alpha0 = 0. HAR: the closed form (S.5h'') (every p < 0, q >= 0). Used by initial_state only."""
     p = float(sig.mean())
     xi = sig - p
     R = float(np.linalg.norm(xi))
@@ -174,6 +212,13 @@ def invert_elastic(P: Params, sig: np.ndarray) -> np.ndarray:
     nh = xi / R if R > 0.0 else np.zeros(3)
     if p >= 0.0:
         raise ValueError("initial stress must have p < 0")
+    if P.energy == "HAR":
+        k, g, n, pa = P.k, P.g, P.n_e, P.p_a
+        kn = k * (1.0 - n)
+        varpi = math.sqrt(p * p + kn * q * q / (3.0 * g))
+        ev = (1.0 / kn) * (1.0 - (abs(p) / pa) ** (1.0 - n) * (abs(p) / varpi) ** n)     # (S.5h'')
+        es = q / (3.0 * g * pa * (varpi / pa) ** n)
+        return ev * ONES / 3.0 + SQ32 * es * nh
     ev = P.eps_v0 - P.kappa_hat * math.log(p / P.p0)
     es = q / (3.0 * P.mu0)
     if P.alpha0 != 0.0:
@@ -187,6 +232,110 @@ def invert_elastic(P: Params, sig: np.ndarray) -> np.ndarray:
             ev -= d[0]
             es -= d[1]
     return ev * ONES / 3.0 + SQ32 * es * nh
+
+
+# --------------------------------------------------------------------------------------
+# §9.7 the p' floor: the strain-space projection Pi_f (S.48), closed forms (S.49) BA06 / (S.50) HAR,
+# its tangent block (S.51a). Applied at the trial (step 1f) and after convergence (step 5f) ONLY --
+# never inside the local Newton, never inside the nested pi_i solve (owner decision (b), 2026-10-03).
+# --------------------------------------------------------------------------------------
+FLOOR_ACT_TOL = 1.0e-12     # activation: p > -p_min (1 - FLOOR_ACT_TOL) or eps^e outside dom Psi (HAR eps* <= 0)
+AT_FLOOR_TOL = 1.0e-10      # at_floor := p_committed > -p_min (1 + AT_FLOOR_TOL)
+FLOOR_X_TOL = 1.0e-14       # general-n HAR scalar solve: |f(x)| <= FLOOR_X_TOL (b + a x^2n)
+FLOOR_X_MAX_ITERS = 100     # (the bracket [x_s, x_hi] is exact, so this never refuses)
+
+
+@dataclass
+class FloorResult:
+    eps_f: np.ndarray      # Pi_f(eps^e) (principal)
+    active: bool
+    Phi: np.ndarray        # (3,3) principal block (S.51a) of d eps_f/d eps (identity when inactive); spin = 1 exactly
+    dfv: float             # d eps^f_v = eps_v - eps_v,f(eps_s) >= 0 (0 when inactive)
+    in_domain: bool        # the PRE-floor strain was inside dom Psi (False only for a HAR trial with eps* <= 0)
+    epsp_f: float          # eps'_f = d eps_v,f / d eps_s (= -D12/D11 at p = -p_min)
+
+
+def floor_ev(P: Params, es: float):
+    """eps_v,f(eps_s): the unique solution of p(eps_v, eps_s) = -p_min at fixed eps_s, and eps'_f = d eps_v,f/d eps_s.
+    (S.49) BA06 (any alpha0); (S.50) HAR: x = varpi_f/p_a solves x^2 - a x^(2n) - b = 0, closed for n = 1/2,
+    safeguarded Newton/bisection in the exact bracket [x_s, x_hi] otherwise."""
+    pmin = P.p_min
+    if P.energy == "HAR":
+        k, g, n, pa = P.k, P.g, P.n_e, P.p_a
+        kn = k * (1.0 - n)
+        a = 3.0 * kn * g * es * es
+        b = (pmin / pa) ** 2
+        if n == 0.5:
+            x = 0.5 * (a + math.sqrt(a * a + 4.0 * b))
+        else:
+            tn = 2.0 * n
+            f = lambda x_: x_ * x_ - a * x_ ** tn - b                       # noqa: E731
+            fp = lambda x_: 2.0 * x_ - tn * a * x_ ** (tn - 1.0) if x_ > 0.0 else 2.0 * x_   # noqa: E731
+            xs = (n * a) ** (1.0 / (2.0 - tn)) if a > 0.0 else 0.0           # the single stationary point, f(x_s) < 0
+            xhi = max((2.0 * a) ** (1.0 / (2.0 - tn)) if a > 0.0 else 0.0, 2.0 * math.sqrt(b))
+            lo, hi = xs, xhi
+            x = hi
+            for _ in range(FLOOR_X_MAX_ITERS):
+                fx = f(x)
+                if abs(fx) <= FLOOR_X_TOL * (b + a * x ** tn):
+                    break
+                if fx > 0.0:
+                    hi = x
+                else:
+                    lo = x
+                d = fp(x)
+                xn = x - fx / d if d != 0.0 else 0.5 * (lo + hi)
+                if not (lo < xn < hi):
+                    xn = 0.5 * (lo + hi)
+                x = xn
+        xn_ = x ** n
+        est_f = (pmin / pa) / (kn * xn_)
+        ev_f = 1.0 / kn - est_f
+        q_f = 3.0 * g * pa * es * xn_
+        epsp = n * pmin * q_f / ((1.0 - n) * pa * pa * x * x + n * pmin * pmin)
+        return ev_f, epsp
+    fac = 1.0 + 1.5 * P.alpha0 * es * es / P.kappa_hat
+    ev_f = P.eps_v0 - P.kappa_hat * math.log(pmin / (abs(P.p0) * fac))
+    epsp = 3.0 * P.alpha0 * es / fac
+    return ev_f, epsp
+
+
+def floor_project(P: Params, eps_e: np.ndarray) -> FloorResult:
+    """Pi_f (S.48): eps_f = eps - (eps_v - eps_v,f(eps_s))/3 1 if p(eps) > -p_min (1 - 1e-12) or eps outside dom Psi,
+    else eps. Co-axial, every eigenvalue difference preserved (unit spin), idempotent, defined for an out-of-domain
+    HAR trial (needs only eps_s). p_min = 0: the floor is off (never active)."""
+    if P.p_min <= 0.0:
+        return FloorResult(eps_e, False, I3, 0.0, True, 0.0)
+    ev, es, nh = _split(eps_e)
+    in_dom = True
+    if P.energy == "HAR" and _har_estar(P, ev) <= 0.0:
+        in_dom = False
+    else:
+        p = elastic(P, eps_e).p
+        if p <= -P.p_min * (1.0 - FLOOR_ACT_TOL):
+            return FloorResult(eps_e, False, I3, 0.0, True, 0.0)
+    ev_f, epsp = floor_ev(P, es)
+    dfv = ev - ev_f
+    eps_f = eps_e - dfv / 3.0
+    Phi = I3 - 1.0 / 3.0 + (1.0 / 3.0) * epsp * SQ23 * np.outer(ONES, nh)        # (S.51a)
+    return FloorResult(eps_f, True, Phi, dfv, in_dom, epsp)
+
+
+def floor_energy(P: Params, eps_pre: np.ndarray, eps_f: np.ndarray, dfv: float) -> float:
+    """E_f (S.52) of one floor event: Psi(eps_f) - Psi(eps_pre) for a pre-floor state in dom Psi (in [0, p_min dfv]);
+    the bound W_f = p_min dfv for an out-of-domain trial (the mirror-branch Psi is unphysical)."""
+    try:
+        return energy_psi(P, eps_f) - energy_psi(P, eps_pre)
+    except EvalError:
+        return P.p_min * dfv
+
+
+UNIT_SPIN = np.ones((3, 3)) - I3     # spin of Pi_f in the (S.33) form: 1 exactly off the diagonal
+
+
+def floor_op4(Phi: np.ndarray, nvec: np.ndarray) -> np.ndarray:
+    """The 4th-order operator of an active Pi_f in the (S.33) form: block Phi (S.51a), unit spin (S.54)."""
+    return _spectral(nvec, Phi, UNIT_SPIN, 0.5)
 
 
 # --------------------------------------------------------------------------------------
@@ -528,7 +677,8 @@ def evaluate(P: Params, eps_e: np.ndarray, dlam: float, eps_tr: np.ndarray, v: f
 
 
 def scaled_norm(P: Params, r: np.ndarray) -> float:
-    return math.sqrt(r[0] ** 2 + r[1] ** 2 + r[2] ** 2 + (r[3] / abs(P.p0)) ** 2)
+    """||(r1, r2, r3, r4/p_ref)||_2 with p_ref = |p0| (BA06) or p_a (HAR; sheet §2.4)."""
+    return math.sqrt(r[0] ** 2 + r[1] ** 2 + r[2] ** 2 + (r[3] / P.p_ref) ** 2)
 
 
 def jacobian(P: Params, pe: PointEval) -> np.ndarray:
@@ -542,17 +692,28 @@ def jacobian(P: Params, pe: PointEval) -> np.ndarray:
     return J
 
 
-def atilde_ep(P: Params, pe: PointEval, J: np.ndarray, vfac: float) -> np.ndarray:
+def atilde_ep(P: Params, pe: PointEval, J: np.ndarray, vfac: float, Phi_tr: np.ndarray | None = None,
+              Phi_post: np.ndarray | None = None, ae_post: np.ndarray | None = None) -> np.ndarray:
     """(S.31)-(S.32): a~^ep_ab = d sigma_a / d eps~_b. vfac = d v_{n+1}/d eps~_b = v_{n+1}, the converged
     specific volume of the step, in both modes (sheet §1.2, G2 owner decision 2026-10-01; was v0 in small
-    strain under the linear update). The caller must pass vfac equal to the v it passed to return_map."""
+    strain under the linear update). The caller must pass vfac equal to the v it passed to return_map.
+
+    With the floor (S.32f): a~^ep_f = a^e(eps^e_f) Phi_post [ b Phi_tr - u Pi_v v 1^T ]_{rows <= 3}: b_.b -> b Phi_tr
+    (the return map saw the FLOORED trial) while the v-column u Pi_v v multiplies delta_b of the RAW trial strain
+    (v = v_n exp(tr d_eps) is built from the total strain, the floor does not touch it); Phi_post and a^e at the
+    post-floored state. Phi_tr / Phi_post = None (inactive) take the exact (S.32) path, bit-identically."""
     fl = pe.fl
     s = np.empty(4)
     s[:3] = pe.dlam * fl.q_api * pe.Pi_v * vfac
     s[3] = fl.Y.F_pi * pe.Pi_v * vfac
     b = np.linalg.inv(J)
-    dxde = b[:, :3] - np.outer(b @ s, ONES)
-    return pe.el.ae @ dxde[:3, :]
+    bx = b[:, :3] if Phi_tr is None else b[:, :3] @ Phi_tr
+    dxde = bx - np.outer(b @ s, ONES)
+    A = dxde[:3, :]
+    if Phi_post is not None:
+        A = Phi_post @ A
+    ae = pe.el.ae if ae_post is None else ae_post
+    return ae @ A
 
 
 @dataclass
@@ -595,9 +756,19 @@ class StepResult:
     local_iters: int
     pi_iters: int
     res_hist: list
-    ae: np.ndarray = field(default=None)       # a^e_ab (S.3) at the CONVERGED eps_e (= atilde when elastic)
+    ae: np.ndarray = field(default=None)       # a^e_ab (S.3) at the COMMITTED (post-floored) eps_e (= atilde when elastic, no floor)
     chain: ChainData = field(default=None)     # §9.6 sensitivities (plastic, accepted steps only)
-    eps_tr: np.ndarray = field(default=None)   # trial principal strains eps~_a of this step
+    eps_tr: np.ndarray = field(default=None)   # trial principal strains eps~_a the return map SAW (floored when floor_tr)
+    # --- §9.7 floor bookkeeping (sheet 9.1 steps 1f / 5f) ---
+    eps_tr_raw: np.ndarray = field(default=None)   # the raw trial eps~_a (before step 1f)
+    eps_c: np.ndarray = field(default=None)        # the converged eps^e before step 5f (= eps_e when no post floor)
+    floor_tr: bool = False                     # step 1f acted
+    floor_post: bool = False                   # step 5f acted
+    dfv_tr: float = 0.0                        # d eps^f_v of the trial event
+    dfv_post: float = 0.0                      # d eps^f_v of the post event
+    Phi_tr: np.ndarray = field(default=None)   # (S.51a) block of the trial event (None when inactive)
+    Phi_post: np.ndarray = field(default=None) # (S.51a) block of the post event (None when inactive)
+    floor_events: list = field(default_factory=list)   # [(eps_pre, eps_f, dfv), ...] for E_f (S.52) on demand
 
 
 def chain_data(pe: PointEval, J: np.ndarray) -> ChainData:
@@ -617,20 +788,40 @@ def chain_data(pe: PointEval, J: np.ndarray) -> ChainData:
 def return_map(P: Params, eps_tr: np.ndarray, pi_n: float, v: float, vfac: float,
                force_plastic: bool = False) -> StepResult:
     """One backward-Euler step in principal space (sheet §9.1). Never raises for
-    numerical trouble: refusals come back in StepResult.refused/reason."""
+    numerical trouble: refusals come back in StepResult.refused/reason.
+
+    Floor (§9.7, p_min > 0): step 1f projects the trial with Pi_f before any stress is formed (a HAR trial outside
+    dom Psi included); steps 2-4 see the floored trial; step 5f projects the converged eps^e (pi_i, dlam, q_a, D of
+    the step are those already formed). Both events are counted (floor_tr / floor_post, dfv_*), never refused; the
+    pattern 'FPf' (trial floored, plastic, post floored) is an ordinary outcome (round 3b, A1). No F <= F_tol
+    is asserted at a floored committed state (A5). With p_min = 0 the pre-round-3 refusals stand
+    (`trial_p_or_pi_nonneg`, `trial_elastic_domain`)."""
+    eps_raw = eps_tr
+    fl_tr = floor_project(P, eps_tr)                       # 1f
+    eps_tr = fl_tr.eps_f
+    events = [(eps_raw, fl_tr.eps_f, fl_tr.dfv)] if fl_tr.active else []
+    Phi_tr = fl_tr.Phi if fl_tr.active else None
+    fkw = dict(eps_tr_raw=eps_raw.copy(), floor_tr=fl_tr.active, dfv_tr=fl_tr.dfv, Phi_tr=Phi_tr, floor_events=events)
     # 1-2. trial
-    el = elastic(P, eps_tr)
+    try:
+        el = elastic(P, eps_tr)
+    except EvalError as e:
+        # outside dom Psi with the floor off: no trial-elastic stress exists (NaN), refusal
+        nan3 = np.full(3, np.nan)
+        return StepResult(eps_raw, nan3, pi_n, 0.0, np.zeros(3), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                          np.full((3, 3), np.nan), False, False, False, True, "trial_" + str(e), 0, 0, [], **fkw)
     inv = invariants(el.sig)
     try:
         fl0 = flow(P, inv, pi_n)
         psi0, _ = csl(P, v, pi_n)
     except EvalError as e:
         return StepResult(eps_tr, el.sig, pi_n, 0.0, np.zeros(3), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                          el.ae, False, inv.vertex, False, True, "trial_" + str(e), 0, 0, [])
-    if fl0.F <= F_TRIAL_TOL_REL * abs(P.p0) and not force_plastic:
+                          el.ae, False, inv.vertex, False, True, "trial_" + str(e), 0, 0, [], **fkw)
+    if fl0.F <= F_TRIAL_TOL_REL * P.p_ref and not force_plastic:
+        at = el.ae if Phi_tr is None else el.ae @ Phi_tr                      # (S.32f) elastic: a^e(eps~_f) Phi_tr
         return StepResult(eps_tr.copy(), el.sig, pi_n, 0.0, np.zeros(3), 0.0, fl0.Y.F_p, fl0.Y.eta,
-                          psi0, 0.0, 0.0, el.ae, False, inv.vertex, fl0.w < 1.0, False, "", 0, 0, [fl0.F],
-                          ae=el.ae, chain=None, eps_tr=eps_tr.copy())
+                          psi0, 0.0, 0.0, at, False, inv.vertex, fl0.w < 1.0, False, "", 0, 0, [fl0.F],
+                          ae=el.ae, chain=None, eps_tr=eps_tr.copy(), eps_c=eps_tr.copy(), **fkw)
     # 3-4. local Newton on x = (eps_e, dlam)
     x = np.append(eps_tr, 0.0)
     hist = []
@@ -639,7 +830,7 @@ def return_map(P: Params, eps_tr: np.ndarray, pi_n: float, v: float, vfac: float
         pe = evaluate(P, x[:3], x[3], eps_tr, v, pi_n)
     except EvalError as e:
         return StepResult(eps_tr, el.sig, pi_n, 0.0, np.zeros(3), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                          el.ae, True, inv.vertex, False, True, "local_" + str(e), 0, 0, [])
+                          el.ae, True, inv.vertex, False, True, "local_" + str(e), 0, 0, [], **fkw)
     rn = scaled_norm(P, pe.r)
     hist.append(rn)
     pi_total += pe.pi_iters
@@ -651,7 +842,7 @@ def return_map(P: Params, eps_tr: np.ndarray, pi_n: float, v: float, vfac: float
             dx = np.linalg.solve(J, pe.r)
         except np.linalg.LinAlgError:
             return StepResult(eps_tr, el.sig, pi_n, 0.0, np.zeros(3), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                              el.ae, True, inv.vertex, False, True, "local_singular_J", it, pi_total, hist)
+                              el.ae, True, inv.vertex, False, True, "local_singular_J", it, pi_total, hist, **fkw)
         alpha = 1.0
         accepted = False
         last_err = ""
@@ -672,7 +863,7 @@ def return_map(P: Params, eps_tr: np.ndarray, pi_n: float, v: float, vfac: float
         if not accepted:
             reason = "local_linesearch" + (":" + last_err if last_err else "")
             return StepResult(eps_tr, el.sig, pi_n, 0.0, np.zeros(3), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                              el.ae, True, inv.vertex, False, True, reason, it, pi_total, hist)
+                              el.ae, True, inv.vertex, False, True, reason, it, pi_total, hist, **fkw)
         x, pe, rn = xn, pen, rnn
         pi_total += pe.pi_iters
         hist.append(rn)
@@ -680,17 +871,26 @@ def return_map(P: Params, eps_tr: np.ndarray, pi_n: float, v: float, vfac: float
         converged = rn <= RES_TOL
     if not converged:
         return StepResult(eps_tr, el.sig, pi_n, 0.0, np.zeros(3), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                          el.ae, True, inv.vertex, False, True, "local_noconv", it, pi_total, hist)
+                          el.ae, True, inv.vertex, False, True, "local_noconv", it, pi_total, hist, **fkw)
     if pe.dlam < 0.0:
         return StepResult(eps_tr, el.sig, pi_n, pe.dlam, pe.fl.q_a, pe.fl.Om, 0.0, 0.0, 0.0, 0.0, 0.0,
-                          el.ae, True, inv.vertex, False, True, "negative_dlambda", it, pi_total, hist)
-    # 5. tangent and diagnostics
-    J = jacobian(P, pe)
-    at = atilde_ep(P, pe, J, vfac)
+                          el.ae, True, inv.vertex, False, True, "negative_dlambda", it, pi_total, hist, **fkw)
+    # 5. dissipation at the PRE-floor converged state (S.38), then 5f the post floor, then the tangent
     D = pe.dlam * float(np.dot(pe.el.sig, pe.fl.q_a))
-    return StepResult(pe.eps_e, pe.el.sig, pe.pi, pe.dlam, pe.fl.q_a, pe.fl.Om, pe.fl.Y.F_p, pe.fl.Y.eta,
+    fl_post = floor_project(P, pe.eps_e)                   # 5f
+    if fl_post.active:
+        el_c = elastic(P, fl_post.eps_f)
+        eps_c, sig_c, ae_c, Phi_post = fl_post.eps_f, el_c.sig, el_c.ae, fl_post.Phi
+        events = events + [(pe.eps_e.copy(), fl_post.eps_f, fl_post.dfv)]
+    else:
+        eps_c, sig_c, ae_c, Phi_post = pe.eps_e, pe.el.sig, pe.el.ae, None
+    J = jacobian(P, pe)
+    at = atilde_ep(P, pe, J, vfac, Phi_tr, Phi_post, ae_c if fl_post.active else None)     # (S.32) / (S.32f)
+    fkw.update(floor_events=events)
+    return StepResult(eps_c, sig_c, pe.pi, pe.dlam, pe.fl.q_a, pe.fl.Om, pe.fl.Y.F_p, pe.fl.Y.eta,
                       pe.psi, pe.ps, D, at, True, pe.inv.vertex, pe.fl.w < 1.0, False, "", it, pi_total, hist,
-                      ae=pe.el.ae, chain=chain_data(pe, J), eps_tr=eps_tr.copy())
+                      ae=ae_c, chain=chain_data(pe, J), eps_tr=eps_tr.copy(), eps_c=pe.eps_e.copy(),
+                      floor_post=fl_post.active, dfv_post=fl_post.dfv, Phi_post=Phi_post, **fkw)
 
 
 # --------------------------------------------------------------------------------------
@@ -767,12 +967,14 @@ def chain_propagate(S_eps: np.ndarray, S_pi: np.ndarray, cum_before: float, alph
     The full 3x3 column tensors are kept (the (S.33) row convention per operator; each operator
     symmetrises its own input), sheet §9.6 "Contract"."""
     cum = cum_before + alpha
-    T = S_eps + alpha * CHAIN_E                                   # (6,3,3)
+    T = S_eps + alpha * CHAIN_E                                   # (6,3,3)  raw trial sensitivity
+    if res.floor_tr:                                              # (S.54): T^f_k = Phi^tr_k : T_k
+        T = np.einsum("ijkl,Jkl->Jij", floor_op4(res.Phi_tr, nvec), T)
     if not res.plastic:
-        return T, S_pi.copy(), cum
+        return T, S_pi.copy(), cum                                # (post floor inactive on the elastic branch)
     ch = res.chain
-    Phi = tangent_small(ch.b[:3, :3], res.eps_e, res.eps_tr, nvec)
-    S_v = v_new * cum * CHAIN_TRE                                 # (6,)  S^v_{k+1} = v_{k+1} cum tr E_J
+    Phi = tangent_small(ch.b[:3, :3], res.eps_c, res.eps_tr, nvec)
+    S_v = v_new * cum * CHAIN_TRE                                 # (6,)  S^v_{k+1} = v_{k+1} cum tr E_J (raw trace)
     m = np.array([np.outer(nvec[:, a], nvec[:, a]) for a in range(3)])   # (3,3,3)
     # per column: Phi : T_J, then the pi_i,n and v columns (eigenvalues only)
     PhiT = np.einsum("ijkl,Jkl->Jij", Phi, T)
@@ -781,6 +983,8 @@ def chain_propagate(S_eps: np.ndarray, S_pi: np.ndarray, cum_before: float, alph
     That = np.einsum("ia,Jij,jb->Jab", nvec, T, nvec)             # T in the trial basis
     Tdiag = np.einsum("Jaa->Ja", That)                            # T^_bb
     S_pi_new = Tdiag @ ch.w + ((1.0 - ch.kappa) / ch.c) * S_pi + (1.0 - ch.kappa) * ch.Pi_v * S_v
+    if res.floor_post:                                            # (S.54): Phi^post_k : [...]
+        S_eps_new = np.einsum("ijkl,Jkl->Jij", floor_op4(res.Phi_post, nvec), S_eps_new)
     return S_eps_new, S_pi_new, cum
 
 

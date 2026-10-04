@@ -1,0 +1,10 @@
+# Chakraborty & Salgado (2009): strength-dilatancy correlation parameters for Toyoura sand.  Source of the data fitted: Fukushima & Tatsuoka 1984 (TX), Tatsuoka et al. 1986 and Tatsuoka 1987 (PSC).
+parameter,TX,PSC,location,note
+phi_c_deg,32.8,36.0,p. 653 sect. 3,"critical-state friction angle chosen by the authors: TX 32.8 (average of 31.2-34.4 from Fukushima & Tatsuoka 1984 and Tatsuoka 1987; others quoted 31.6 Verdugo & Ishihara, 31.1 Wang et al.), PSC 36 (quoted range 34.5-38)"
+A_psi,3.8,3.8,"Fig. 1(b), p. 653, eq. 8","phi_p = phi_c + A_psi I_R fitted to ALL TX and PSC Toyoura data (the same 3.8 for both; Bolton's 3 TX / 5 PSC), i.e. I_R = (-d eps_v/d eps_1)/0.3 = 0.26 (phi_p - phi_c)"
+dilatancy_relation,phi_p = phi_c + 0.6 psi_p,phi_p = phi_c + 0.6 psi_p,eq. 7,combining A_psi = 3.8 with eq. 2 for both TX and PSC
+I_R,I_D (Q - ln(100 sigma_mp'/p_A)) - R,same,eq. 3,"p_A = 100 kPa; Bolton: Q = 10, R = 1; I_R capped at 4 by Bolton (no low-stress data)"
+Q_trend_R1,0.60 ln(sigma_c') + 7.4,0.75 ln(sigma_c') + 7.1,"Fig. 3, p. 655",sigma_c' = INITIAL confining stress in kPa (not sigma3p of the tables); R = 1; the tables' Q(R=1) rises 7.7-10.0 (TX) and 8.4-10.7 (PSC)
+Q_range_R1,7.7-10.0,8.4-10.7,"Tables 1, 2","r2 0.839-0.997 (TX), 0.961-0.998 (PSC)"
+confining_stress_range_kPa,4-197 (sigma3p),4.9-98 (sigma3p),"Tables 1, 2",relative densities 30-90 %
+b_assumed_PSC,n/a,0.25,p. 654,only used for sigma_mp
