@@ -55,6 +55,9 @@ LadrunoContact — NTS + mortar/ALM contact, friction, 2D + 3D
 contact + zeroLength on ndf >= 3 nodes (u-p pressure DOF as passenger)
 stressesPlaneStrain — exact sigma_zz response (plane strain)
 Ladruno — modular HDF5 .ladruno recorder
+Ladruno recorder — fail-loud HDF5, eigen-after-wipe, MP rank probe (WP-163)
+Ladruno recorder — -flush / -compress, 1 MiB chunks, in-place envelopes (WP-164)
+Ladruno recorder — topology-keyed stages, persistent energy, RUN_ID (WP-165)
 LadrunoMonitor — live SWMR-HDF5 analysis monitor
 LadrunoRigidBody — 6-DOF rigid body (finite-rotation slaving)
 LadrunoSolidShell — 8-node ANS/EAS solid-shell
