@@ -441,7 +441,7 @@ Tri31::Tri31(int tag, int nd1, int nd2, int nd3,
 
 Tri31::Tri31()
 :Element (0,ELE_TAG_Tri31),
-  theMaterial(0), connectedExternalNodes(3), Q(6), pressureLoad(6), thickness(0.0), pressure(0.0), Ki(0)
+  theMaterial(0), connectedExternalNodes(3), Q(6), pressureLoad(6), thickness(0.0), pressure(0.0), Ki(0), do_init_disp(false)
 {
 	pts[0][0] = 0.333333333333333;
 	pts[0][1] = 0.333333333333333;
