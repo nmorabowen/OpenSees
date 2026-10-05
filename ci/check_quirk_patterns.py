@@ -138,6 +138,20 @@ bodies are seen whole).
                 declaration in the header (its line or the two above):
                     // ladruno-lint: revert-ok <reason>
 
+  unknown-token  (no alias; WP-167) A fork parser that lets an unknown token
+                through: a comment saying unknown tokens/options are ignored or
+                skipped, or an option ladder (two or more string compares) that
+                is the LAST statement of a token loop and has no final `else`, so
+                an unmatched token falls off the ladder without a word.
+                LadrunoRCConcrete did exactly this ("unknown tokens are ignored
+                (forward-compat)") and silently dropped apeGmsh's -crackedNu and
+                -betaC. Fork parsers fail closed: declare the accepted options
+                (SRC/material/LadrunoOptSpec.h) and refuse any other token,
+                naming it. Parsers that predate the rule are listed in
+                UNKNOWN_TOKEN_LEGACY, a ratchet that only shrinks. Waive (the
+                statement's lines or the line above):
+                    // ladruno-lint: unknown-ok <reason>
+
 A waiver needs a reason of at least 12 characters, and a waiver that no longer
 suppresses anything is itself a finding (stale).
 
@@ -159,7 +173,7 @@ STAMP = "LADRUNO-HEADER-START"
 MIN_REASON = 12
 SUFFIXES = (".cpp", ".h", ".hpp", ".cc", ".cxx")
 
-WAIVER = re.compile(r"//\s*ladruno-lint:\s*(rayleigh-ok|wipe-ok|commit-ok|double-ok|sign-ok|sequence-ok|decl-ok|revert-ok)\b(.*)$")
+WAIVER = re.compile(r"//\s*ladruno-lint:\s*(rayleigh-ok|wipe-ok|commit-ok|double-ok|sign-ok|sequence-ok|decl-ok|revert-ok|unknown-ok)\b(.*)$")
 RAYLEIGH = re.compile(r"(?:\bthis\s*->\s*)?\bgetRayleighDampingForces\s*\(\s*\)")
 SINGLETON = re.compile(r"\bstatic\s+([A-Za-z_]\w*)\s*&\s*instance\s*\(")
 RESET_CALL = re.compile(r"\b([A-Za-z_]\w*)::instance\s*\(\s*\)\s*(?:\.|->)\s*reset\w*\s*\(")
@@ -1097,6 +1111,222 @@ def list_waivers(root, rel):
 
 
 # --------------------------------------------------------------------------
+# unknown-token (WP-167)
+# --------------------------------------------------------------------------
+# A comment that says unrecognised tokens are let through on purpose.
+IGNORE_COMMENT = re.compile(
+    r"\b(?:unknown|unrecogni[sz]ed|unsupported|unexpected)\s+"
+    r"(?:tokens?|options?|flags?|args?|arguments?|keywords?|switch(?:es)?)\b"
+    r"[^.;]{0,25}?\b(?:silently\s+)?(?:ignored|skipped)\b"
+    r"|\b(?:ignor\w*|skip\w*)\s+(?:the\s+|any\s+|all\s+)?(?:unknown|unrecogni[sz]ed)\s+"
+    r"(?:tokens?|options?|flags?|args?|arguments?|keywords?)\b",
+    re.I)
+TOKEN_LOOP = re.compile(r"\bOPS_GetString\w*\s*\(|\bOPS_GetNumRemainingInputArgs\s*\(|\bargv\s*\[")
+STRING_TEST = re.compile(r"\b(?:strcmp|strcasecmp|_stricmp|stricmp|strncmp)\s*\(|==\s*\"|\.compare\s*\(")
+# Fork parsers that still let an unknown token through, recorded when the rule landed
+# (WP-167). A RATCHET: entries may only be removed, by converting the parser to the
+# fail-closed policy (SRC/material/LadrunoOptSpec.h). An entry whose file no longer
+# trips the rule is itself a finding, so the list cannot go stale.
+UNKNOWN_TOKEN_LEGACY = {
+    "SRC/element/ladrunoDispBeamColumn/LadrunoDispBeamColumn2d.cpp": "element ladder, no final else",
+    "SRC/element/ladrunoDispBeamColumn/LadrunoDispBeamColumn3d.cpp": "element ladder, no final else",
+    "SRC/recorder/EnergyBalanceRecorder.cpp": "recorder ladder, no final else",
+    "SRC/recorder/LadrunoMonitorRecorder.cpp": "recorder ladder + 'ignored (forward-compatible)' comment",
+}
+
+
+def _comments(text):
+    """(line_index, comment_text) for every // and /* */ comment, strings skipped."""
+    out, i, n, line = [], 0, len(text), 0
+    while i < n:
+        c = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        if c == "\n":
+            line += 1
+            i += 1
+        elif c == "/" and nxt == "/":
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            out.append((line, text[i + 2:j]))
+            i = j
+        elif c == "/" and nxt == "*":
+            j = text.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            for k, part in enumerate(text[i + 2:j].split("\n")):
+                out.append((line + k, part))
+            line += text.count("\n", i, j)
+            i = j
+        elif c in "\"'":
+            j = i + 1
+            while j < n and text[j] != c and text[j] != "\n":
+                j += 2 if text[j] == "\\" else 1
+            i = min(j + 1, n)
+        else:
+            i += 1
+    return out
+
+
+class _Unparsed(Exception):
+    pass
+
+
+def _ws(s, i):
+    while i < len(s) and s[i].isspace():
+        i += 1
+    return i
+
+
+def _word(s, i):
+    m = re.compile(r"[A-Za-z_]\w*").match(s, i)
+    return (m.group(0), m.end()) if m else (None, i)
+
+
+def _close(s, i, o, c):
+    """Index just past the bracket matching s[i] == o."""
+    depth = 0
+    for k in range(i, len(s)):
+        if s[k] == o:
+            depth += 1
+        elif s[k] == c:
+            depth -= 1
+            if depth == 0:
+                return k + 1
+    raise _Unparsed()
+
+
+def _stmt(s, i):
+    """(end, chain) of the statement starting at s[i]; chain = (has_else, conds) for an if-chain."""
+    i = _ws(s, i)
+    if i >= len(s):
+        raise _Unparsed()
+    if s[i] == "{":
+        return _close(s, i, "{", "}"), None
+    w, k = _word(s, i)
+    if w == "if":
+        conds = []
+        while True:
+            p = _ws(s, k)
+            if p >= len(s) or s[p] != "(":
+                raise _Unparsed()
+            q = _close(s, p, "(", ")")
+            conds.append(s[p:q])
+            end, _ = _stmt(s, q)
+            w2, k2 = _word(s, _ws(s, end))
+            if w2 != "else":
+                return end, (False, conds)
+            w3, k3 = _word(s, _ws(s, k2))
+            if w3 == "if":
+                k = k3
+                continue
+            end, _ = _stmt(s, k2)
+            return end, (True, conds)
+    if w in ("for", "while", "switch"):
+        p = _ws(s, k)
+        if p >= len(s) or s[p] != "(":
+            raise _Unparsed()
+        return _stmt(s, _close(s, p, "(", ")"))[0], None
+    if w == "do":
+        end, _ = _stmt(s, k)
+        w2, k2 = _word(s, _ws(s, end))
+        if w2 != "while":
+            raise _Unparsed()
+        p = _ws(s, k2)
+        end = _close(s, p, "(", ")")
+        p = _ws(s, end)
+        return (p + 1 if p < len(s) and s[p] == ";" else end), None
+    if w == "try":
+        end, _ = _stmt(s, k)
+        while True:
+            w2, k2 = _word(s, _ws(s, end))
+            if w2 != "catch":
+                return end, None
+            p = _ws(s, k2)
+            end = _stmt(s, _close(s, p, "(", ")"))[0]
+    depth = 0
+    for p in range(i, len(s)):
+        ch = s[p]
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+            if depth < 0:
+                raise _Unparsed()
+        elif ch == ";" and depth == 0:
+            return p + 1, None
+    raise _Unparsed()
+
+
+def _silent_ladders(cl):
+    """Line spans (first, last) of option ladders that are the LAST statement of a token
+    loop and have no final `else`: an unmatched token falls off the end of the ladder and
+    the loop moves on without a word."""
+    text = "\n".join(cl)
+    out = []
+    for m in re.finditer(r"\b(?:while|for)\s*\(", text):
+        try:
+            hdr_end = _close(text, m.end() - 1, "(", ")")
+            b = _ws(text, hdr_end)
+            if b >= len(text) or text[b] != "{":
+                continue
+            b_end = _close(text, b, "{", "}")
+            body = text[b + 1:b_end - 1]
+            if not TOKEN_LOOP.search(text[m.start():b_end]):
+                continue
+            i, last = _ws(body, 0), None
+            while i < len(body):
+                end, chain = _stmt(body, i)
+                last = (i, end, chain)
+                i = _ws(body, end)
+        except _Unparsed:
+            continue
+        if last is None or last[2] is None:
+            continue
+        has_else, conds = last[2]
+        if has_else or sum(1 for c in conds if STRING_TEST.search(c)) < 2:
+            continue
+        first = text.count("\n", 0, b + 1 + last[0])
+        out.append((first, text.count("\n", 0, b + 1 + last[1])))
+    return out
+
+
+def check_unknown_token(root, rel, used_waivers=None):
+    findings = []
+    used = set() if used_waivers is None else used_waivers
+    seen_legacy = set()
+    for path, raw, cl in _sources(root, stamped_only=True):
+        r = rel(path)
+        hits = []
+        for li, body in _comments("\n".join(raw)):
+            if IGNORE_COMMENT.search(body) and "ladruno-lint" not in body:
+                hits.append((li, li, "a comment says unknown tokens are let through"))
+        for a, b in _silent_ladders(cl):
+            hits.append((a, b, "an option ladder ends its token loop with no final `else`, so an "
+                               "unknown token is skipped without a word"))
+        if r in UNKNOWN_TOKEN_LEGACY:
+            if hits:
+                seen_legacy.add(r)
+            continue
+        for a, b, what in hits:
+            wl, reason = waiver_at(raw, b, "unknown-ok", above=b - a + 1)
+            if wl is not None:
+                used.add((str(path), wl))
+                if len(reason) >= MIN_REASON:
+                    continue
+                findings.append(f"unknown-token {r}:{a + 1}: unknown-ok waiver reason too short")
+                continue
+            findings.append(
+                f"unknown-token {r}:{a + 1}: {what}. Fork parsers fail closed (WP-167): declare the "
+                "accepted options (SRC/material/LadrunoOptSpec.h) and refuse any other token, naming "
+                "it; or waive with '// ladruno-lint: unknown-ok <reason>'")
+    for r in sorted(set(UNKNOWN_TOKEN_LEGACY) - seen_legacy):
+        if not (root / r).exists() and not (root / "SRC" / "classTags.h").exists():
+            continue                          # a partial scan root (the self-tests' tmp trees)
+        findings.append(f"unknown-token {r}: listed in UNKNOWN_TOKEN_LEGACY but no longer lets an "
+                        "unknown token through; delete the entry (the list only shrinks)")
+    return findings
+
+
+# --------------------------------------------------------------------------
 # the rule registry (WP-162). One entry per rule, named by slug. `alias` is the
 # pre-WP-162 L-number, accepted by --only for one release.
 # --------------------------------------------------------------------------
@@ -1136,12 +1366,16 @@ _RULE_LIST = [
     Rule("revert", "L10", check_revert, "revert-ok", "fork-stamped",
          "a fork integrator with its own `Vector*` march state that inherits the no-op "
          "`revertToLastStep()` (WP-153, #899)"),
+    # rules added after WP-162 have no L-number alias (alias=None)
+    Rule("unknown-token", None, check_unknown_token, "unknown-ok", "fork-stamped",
+         "a fork parser that lets an unknown token through: a \"unknown tokens are ignored\" "
+         "comment, or an option ladder ending its token loop with no final `else` (WP-167)"),
 ]
 RULES = {r.slug: r for r in _RULE_LIST}
-ALIASES = {r.alias: r.slug for r in _RULE_LIST}
+ALIASES = {r.alias: r.slug for r in _RULE_LIST if r.alias}
 # import-time uniqueness: a dict literal would silently keep the LAST of two equal keys
 assert len(RULES) == len(_RULE_LIST), "duplicate rule slug in _RULE_LIST"
-assert len(ALIASES) == len(_RULE_LIST), "duplicate rule alias in _RULE_LIST"
+assert len(ALIASES) == sum(1 for r in _RULE_LIST if r.alias), "duplicate rule alias in _RULE_LIST"
 assert len({r.check for r in _RULE_LIST}) == len(_RULE_LIST), "one check function registered twice"
 assert len({r.waiver for r in _RULE_LIST if r.waiver}) == sum(1 for r in _RULE_LIST if r.waiver), \
     "duplicate waiver token"
@@ -1173,6 +1407,8 @@ def resolve_only(spec):
 def run_rule(rule, root, rel, used):
     """A rule's findings, labelled with its slug (the check functions still emit the alias)."""
     out = rule.check(root, rel, used) if rule.waiver else rule.check(root, rel)
+    if not rule.alias:
+        return out
     pre = rule.alias + " "
     return [rule.slug + " " + f[len(pre):] if f.startswith(pre) else f for f in out]
 
@@ -1183,7 +1419,7 @@ def rules_table():
     for r in _RULE_LIST:
         waiver = f"`// ladruno-lint: {r.waiver} <reason>`" if r.waiver else \
             ("`# ci-coverage: <kind> <reason>`" if r.slug == "ci-coverage" else "—")
-        lines.append(f"| `{r.slug}` | {r.alias} | {waiver} | {r.scope} | {r.what} |")
+        lines.append(f"| `{r.slug}` | {r.alias or '—'} | {waiver} | {r.scope} | {r.what} |")
     return "\n".join(lines)
 
 
