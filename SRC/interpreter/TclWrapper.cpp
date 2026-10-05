@@ -25,6 +25,7 @@
 
 #include "TclWrapper.h"
 #include "OpenSeesCommands.h"
+#include "LadrunoCommandsTclWrapper.h"   // Ladruno WP-168: Ladruno_registerCommands hook
 #include <OPS_Globals.h>
 
 static TclWrapper* wrapper = 0;
@@ -427,98 +428,6 @@ static int Tcl_ops_nodeReaction(ClientData clientData, Tcl_Interp *interp, int a
     return TCL_OK;
 }
 
-static int Tcl_ops_LadrunoProjectionTieForce(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno ADR-30 P3
-    wrapper->resetCommandLine(argc, 1, argv);
-
-    if (OPS_LadrunoProjectionTieForce() < 0) return TCL_ERROR;
-
-    return TCL_OK;
-}
-
-static int Tcl_ops_LadrunoContactSurface(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno ADR-39
-    wrapper->resetCommandLine(argc, 1, argv);
-    if (OPS_LadrunoContactSurface() < 0) return TCL_ERROR;
-    return TCL_OK;
-}
-
-static int Tcl_ops_LadrunoContact(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno ADR-39
-    wrapper->resetCommandLine(argc, 1, argv);
-    if (OPS_LadrunoContact() < 0) return TCL_ERROR;
-    return TCL_OK;
-}
-
-static int Tcl_ops_LadrunoContactPlane(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno ADR-39 P2a
-    wrapper->resetCommandLine(argc, 1, argv);
-    if (OPS_LadrunoContactPlane() < 0) return TCL_ERROR;
-    return TCL_OK;
-}
-
-static int Tcl_ops_LadrunoContactInfo(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno ADR-39
-    wrapper->resetCommandLine(argc, 1, argv);
-    if (OPS_LadrunoContactInfo() < 0) return TCL_ERROR;
-    return TCL_OK;
-}
-
-static int Tcl_ops_LadrunoMortarPenetration(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno ADR-41 C2.2
-    wrapper->resetCommandLine(argc, 1, argv);
-    if (OPS_LadrunoMortarPenetration() < 0) return TCL_ERROR;
-    return TCL_OK;
-}
-
-static int Tcl_ops_LadrunoEdgePenetration(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno ADR-57 E6
-    wrapper->resetCommandLine(argc, 1, argv);
-    if (OPS_LadrunoEdgePenetration() < 0) return TCL_ERROR;
-    return TCL_OK;
-}
-
-static int Tcl_ops_LadrunoMortarTieResidual(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno ADR-41 C4
-    wrapper->resetCommandLine(argc, 1, argv);
-    if (OPS_LadrunoMortarTieResidual() < 0) return TCL_ERROR;
-    return TCL_OK;
-}
-
-static int Tcl_ops_LadrunoContactForce(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno ADR-39 B3
-    wrapper->resetCommandLine(argc, 1, argv);
-    if (OPS_LadrunoContactForce() < 0) return TCL_ERROR;
-    return TCL_OK;
-}
-
-static int Tcl_ops_LadrunoBeginAugment(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno ADR-41 D1
-    wrapper->resetCommandLine(argc, 1, argv);
-    if (OPS_LadrunoBeginAugment() < 0) return TCL_ERROR;
-    return TCL_OK;
-}
-
-static int Tcl_ops_LadrunoEndAugment(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno ADR-41 D1
-    wrapper->resetCommandLine(argc, 1, argv);
-    if (OPS_LadrunoEndAugment() < 0) return TCL_ERROR;
-    return TCL_OK;
-}
-
-static int Tcl_ops_LadrunoBuild(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno build-stamp query
-    wrapper->resetCommandLine(argc, 1, argv);
-    if (OPS_LadrunoBuild() < 0) return TCL_ERROR;
-    return TCL_OK;
-}
-
-static int Tcl_ops_LadrunoThreads(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno WP-107 element-loop thread count
-    wrapper->resetCommandLine(argc, 1, argv);
-    if (OPS_LadrunoThreads() < 0) return TCL_ERROR;
-    return TCL_OK;
-}
-
-static int Tcl_ops_LadrunoSANISANDReplay(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno WP-127
-    wrapper->resetCommandLine(argc, 1, argv);
-    if (OPS_LadrunoSANISANDReplay() < 0) return TCL_ERROR;
-    return TCL_OK;
-}
-
-static int Tcl_ops_LadrunoMutation(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno ADR-87 D2 mutation query
-    wrapper->resetCommandLine(argc, 1, argv);
-    if (OPS_LadrunoMutation() < 0) return TCL_ERROR;
-    return TCL_OK;
-}
-
 static int Tcl_ops_eigen(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
     wrapper->resetCommandLine(argc, 1, argv);
 
@@ -603,14 +512,6 @@ static int Tcl_ops_equationConstraint(ClientData clientData, Tcl_Interp *interp,
     wrapper->resetCommandLine(argc, 1, argv);
 
     if (OPS_EquationConstraint() < 0) return TCL_ERROR;
-
-    return TCL_OK;
-}
-
-static int Tcl_ops_LadrunoTie(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno ADR-62
-    wrapper->resetCommandLine(argc, 1, argv);
-
-    if (OPS_LadrunoTie() < 0) return TCL_ERROR;
 
     return TCL_OK;
 }
@@ -735,12 +636,6 @@ static int Tcl_ops_printB(ClientData clientData, Tcl_Interp *interp, int argc,  
     return TCL_OK;
 }
 
-static int Tcl_ops_LadrunoTrialResidualNorm(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno ADR-52 W1-I1b
-    wrapper->resetCommandLine(argc, 1, argv);
-    if (OPS_LadrunoTrialResidualNorm() < 0) return TCL_ERROR;
-    return TCL_OK;
-}
-
 static int Tcl_ops_printGID(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
     wrapper->resetCommandLine(argc, 1, argv);
 
@@ -761,33 +656,6 @@ static int Tcl_ops_getCTestIter(ClientData clientData, Tcl_Interp *interp, int a
     wrapper->resetCommandLine(argc, 1, argv);
 
     if (OPS_getCTestIter() < 0) return TCL_ERROR;
-
-    return TCL_OK;
-}
-
-// Ladruno: runtime control of the active LadrunoArcLength (Layer-B cut-retry).
-static int Tcl_ops_ladrunoArcLength(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
-    wrapper->resetCommandLine(argc, 1, argv);
-
-    if (OPS_LadrunoArcLengthCmd() < 0) return TCL_ERROR;
-
-    return TCL_OK;
-}
-
-// Ladruno (ADR-80 S1): resize LadrunoLoadControl's step WITHOUT reconstructing it.
-static int Tcl_ops_ladrunoLoadControl(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
-    wrapper->resetCommandLine(argc, 1, argv);
-
-    if (OPS_LadrunoLoadControlCmd() < 0) return TCL_ERROR;
-
-    return TCL_OK;
-}
-
-// Ladruno: runtime query of the active LadrunoDynamicRelaxation (rung-5 settling).
-static int Tcl_ops_ladrunoDR(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
-    wrapper->resetCommandLine(argc, 1, argv);
-
-    if (OPS_LadrunoDRCmd() < 0) return TCL_ERROR;
 
     return TCL_OK;
 }
@@ -896,12 +764,6 @@ static int Tcl_ops_setNodeAccel(ClientData clientData, Tcl_Interp *interp, int a
     return TCL_OK;
 }
 
-static int Tcl_ops_LadrunoSetNodeTrial(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {  // Ladruno ADR-52 W1-I1b
-    wrapper->resetCommandLine(argc, 1, argv);
-    if (OPS_LadrunoSetNodeTrial() < 0) return TCL_ERROR;
-    return TCL_OK;
-}
-
 static int Tcl_ops_nodeResponse(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
     wrapper->resetCommandLine(argc, 1, argv);
 
@@ -994,23 +856,6 @@ static int Tcl_ops_stopTimer(ClientData clientData, Tcl_Interp *interp, int argc
     wrapper->resetCommandLine(argc, 1, argv);
 
     if (OPS_stopTimer() < 0) return TCL_ERROR;
-
-    return TCL_OK;
-}
-
-static int Tcl_ops_profiler(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
-    wrapper->resetCommandLine(argc, 1, argv);
-
-    if (OPS_profiler() < 0) return TCL_ERROR;
-
-    return TCL_OK;
-}
-
-// Ladruno (ADR-73 P2): the iterated fixed-stress overlay driver command.
-static int Tcl_ops_LadrunoStaggeredAnalyze(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
-    wrapper->resetCommandLine(argc, 1, argv);
-
-    if (OPS_LadrunoStaggeredAnalyze() < 0) return TCL_ERROR;
 
     return TCL_OK;
 }
@@ -1275,58 +1120,6 @@ static int Tcl_ops_numIter(ClientData clientData, Tcl_Interp *interp, int argc, 
     wrapper->resetCommandLine(argc, 1, argv);
 
     if (OPS_numIter() < 0) return TCL_ERROR;
-
-    return TCL_OK;
-}
-
-static int Tcl_ops_criticalTimeStep(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
-    wrapper->resetCommandLine(argc, 1, argv);
-
-    if (OPS_criticalTimeStep() < 0) return TCL_ERROR;
-
-    return TCL_OK;
-}
-
-// Ladruno ADR46
-static int Tcl_ops_complexEigen(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
-    wrapper->resetCommandLine(argc, 1, argv);
-
-    if (OPS_complexEigen() < 0) return TCL_ERROR;
-
-    return TCL_OK;
-}
-
-// Ladruno ADR44
-static int Tcl_ops_modalResponseHistory(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
-    wrapper->resetCommandLine(argc, 1, argv);
-
-    if (OPS_LadrunoModalResponseHistory() < 0) return TCL_ERROR;
-
-    return TCL_OK;
-}
-
-// Ladruno ADR44 P2
-static int Tcl_ops_frequencyResponse(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
-    wrapper->resetCommandLine(argc, 1, argv);
-
-    if (OPS_LadrunoFrequencyResponse() < 0) return TCL_ERROR;
-
-    return TCL_OK;
-}
-
-static int Tcl_ops_steadyStateDynamics(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
-    wrapper->resetCommandLine(argc, 1, argv);
-
-    if (OPS_LadrunoSteadyStateDynamics() < 0) return TCL_ERROR;
-
-    return TCL_OK;
-}
-
-// Ladruno ADR44 P3
-static int Tcl_ops_randomResponse(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
-    wrapper->resetCommandLine(argc, 1, argv);
-
-    if (OPS_LadrunoRandomResponse() < 0) return TCL_ERROR;
 
     return TCL_OK;
 }
@@ -1984,21 +1777,9 @@ TclWrapper::addOpenSeesCommands(Tcl_Interp* interp)
     addCommand(interp,"eleLoad", &Tcl_ops_eleLoad);
     addCommand(interp,"reactions", &Tcl_ops_reactions);
     addCommand(interp,"nodeReaction", &Tcl_ops_nodeReaction);
-    addCommand(interp,"ladrunoProjectionTieForce", &Tcl_ops_LadrunoProjectionTieForce);  // Ladruno ADR-30 P3
-    addCommand(interp,"contactSurface", &Tcl_ops_LadrunoContactSurface);   // Ladruno ADR-39
-    addCommand(interp,"contact", &Tcl_ops_LadrunoContact);                 // Ladruno ADR-39
-    addCommand(interp,"contactPlane", &Tcl_ops_LadrunoContactPlane);       // Ladruno ADR-39 P2a
-    addCommand(interp,"ladrunoContactInfo", &Tcl_ops_LadrunoContactInfo);  // Ladruno ADR-39
-    addCommand(interp,"ladrunoMortarPenetration", &Tcl_ops_LadrunoMortarPenetration);  // Ladruno ADR-41 C2.2
-    addCommand(interp,"ladrunoEdgePenetration", &Tcl_ops_LadrunoEdgePenetration);      // Ladruno ADR-57 E6
-    addCommand(interp,"ladrunoMortarTieResidual", &Tcl_ops_LadrunoMortarTieResidual);  // Ladruno ADR-41 C4
-    addCommand(interp,"ladrunoBeginAugment", &Tcl_ops_LadrunoBeginAugment);            // Ladruno ADR-41 D1
-    addCommand(interp,"ladrunoEndAugment", &Tcl_ops_LadrunoEndAugment);                // Ladruno ADR-41 D1
-    addCommand(interp,"ladrunoBuild", &Tcl_ops_LadrunoBuild);                          // Ladruno build-stamp query
-    addCommand(interp,"ladrunoThreads", &Tcl_ops_LadrunoThreads);                      // Ladruno WP-107 element-loop thread count
-    addCommand(interp,"ladrunoSANISANDReplay", &Tcl_ops_LadrunoSANISANDReplay);        // Ladruno WP-127
-    addCommand(interp,"ladrunoMutation", &Tcl_ops_LadrunoMutation);                    // Ladruno ADR-87 D2 mutation-gate query
-    addCommand(interp,"ladrunoContactForce", &Tcl_ops_LadrunoContactForce);  // Ladruno ADR-39 B3
+    // Ladruno WP-168: every fork-only command, from the one table in
+    // LadrunoCommandTable.h; the bridges are generated by the hook.
+    Ladruno_registerCommands(this, interp);   // Ladruno WP-168
     addCommand(interp,"eigen", &Tcl_ops_eigen);
     addCommand(interp,"nDMaterial", &Tcl_ops_nDMaterial);
     addCommand(interp,"block2D", &Tcl_ops_block2d);
@@ -2010,7 +1791,6 @@ TclWrapper::addOpenSeesCommands(Tcl_Interp* interp)
     addCommand(interp,"mass", &Tcl_ops_mass);
     addCommand(interp,"equalDOF", &Tcl_ops_equalDOF);
     addCommand(interp,"equationConstraint", &Tcl_ops_equationConstraint);
-    addCommand(interp,"LadrunoTie", &Tcl_ops_LadrunoTie);                  // Ladruno ADR-62
     addCommand(interp,"nodeEigenvector", &Tcl_ops_nodeEigenvector);
     addCommand(interp,"getTime", &Tcl_ops_getTime);
     addCommand(interp,"setCreep", &Tcl_ops_setCreep);
@@ -2026,13 +1806,9 @@ TclWrapper::addOpenSeesCommands(Tcl_Interp* interp)
     addCommand(interp,"printModel", &Tcl_ops_print);
     addCommand(interp,"printA", &Tcl_ops_printA);
     addCommand(interp,"printB", &Tcl_ops_printB);
-    addCommand(interp,"ladrunoTrialResidualNorm", &Tcl_ops_LadrunoTrialResidualNorm);  // Ladruno ADR-52 W1-I1b
     addCommand(interp,"printGID", &Tcl_ops_printGID);
     addCommand(interp,"getCTestNorms", &Tcl_ops_getCTestNorms);
     addCommand(interp,"getCTestIter", &Tcl_ops_getCTestIter);
-    addCommand(interp,"ladrunoArcLength", &Tcl_ops_ladrunoArcLength);   // Ladruno: Layer-B
-    addCommand(interp,"ladrunoLoadControl", &Tcl_ops_ladrunoLoadControl);   // Ladruno (ADR-80 S1)
-    addCommand(interp,"ladrunoDR", &Tcl_ops_ladrunoDR);   // Ladruno: rung-5 DR query
     addCommand(interp,"recorder", &Tcl_ops_recorder);
     addCommand(interp,"database", &Tcl_ops_database);
     addCommand(interp,"save", &Tcl_ops_save);
@@ -2046,7 +1822,6 @@ TclWrapper::addOpenSeesCommands(Tcl_Interp* interp)
     addCommand(interp,"setNodeVel", &Tcl_ops_setNodeVel);
     addCommand(interp,"nodeAccel", &Tcl_ops_nodeAccel);
     addCommand(interp,"setNodeAccel", &Tcl_ops_setNodeAccel);
-    addCommand(interp,"ladrunoSetNodeTrial", &Tcl_ops_LadrunoSetNodeTrial);  // Ladruno ADR-52 W1-I1b
     addCommand(interp,"nodeResponse", &Tcl_ops_nodeResponse);
     addCommand(interp,"nodeCoord", &Tcl_ops_nodeCoord);
     addCommand(interp,"setNodeCoord", &Tcl_ops_setNodeCoord);
@@ -2058,8 +1833,6 @@ TclWrapper::addOpenSeesCommands(Tcl_Interp* interp)
     addCommand(interp,"nodeBounds", &Tcl_ops_nodeBounds);
     addCommand(interp,"start", &Tcl_ops_startTimer);
     addCommand(interp,"stop", &Tcl_ops_stopTimer);
-    addCommand(interp,"profiler", &Tcl_ops_profiler);
-    addCommand(interp,"LadrunoStaggeredAnalyze", &Tcl_ops_LadrunoStaggeredAnalyze); // Ladruno (ADR-73 P2)
     addCommand(interp,"modalDamping", &Tcl_ops_modalDamping);
     addCommand(interp,"modalDampingQ", &Tcl_ops_modalDampingQ);
     addCommand(interp,"setElementRayleighDampingFactors", &Tcl_ops_setElementRayleighDampingFactors);
@@ -2093,12 +1866,6 @@ TclWrapper::addOpenSeesCommands(Tcl_Interp* interp)
     addCommand(interp,"accelCPU", &Tcl_ops_accelCPU);
     addCommand(interp,"numFact", &Tcl_ops_numFact);
     addCommand(interp,"numIter", &Tcl_ops_numIter);
-    addCommand(interp,"criticalTimeStep", &Tcl_ops_criticalTimeStep);
-    addCommand(interp,"complexEigen", &Tcl_ops_complexEigen);   // Ladruno ADR46
-    addCommand(interp,"modalResponseHistory", &Tcl_ops_modalResponseHistory); // Ladruno ADR44
-    addCommand(interp,"frequencyResponse", &Tcl_ops_frequencyResponse);        // Ladruno ADR44 P2
-    addCommand(interp,"steadyStateDynamics", &Tcl_ops_steadyStateDynamics);    // Ladruno ADR44 P2
-    addCommand(interp,"randomResponse", &Tcl_ops_randomResponse);              // Ladruno ADR44 P3
     addCommand(interp,"systemSize", &Tcl_ops_systemSize);
     addCommand(interp,"version", &Tcl_ops_version);
     addCommand(interp,"setMaxOpenFiles", &Tcl_ops_setMaxOpenFiles);
