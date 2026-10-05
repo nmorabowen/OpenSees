@@ -216,6 +216,21 @@ jobs:
           cmake --build . --target OpenSees -j8
           cmake --build . --target OpenSeesPy -j8
           mv OpenSeesPy.so opensees.so
+      # WP-166: publish the built Linux python module so downstream pins (apeGmsh
+      # F2) can download it. Additive step; BUILD_INFO via the shared script.
+      - name: Collect BUILD_INFO.txt
+        run: |
+          export TCL_LIBRARY="$(dirname "$(find ~/.conan2 -name init.tcl -path '*/tcl8.6/*' | head -1)")"
+          bash Ladruno_scripts/make_linux_build_info.sh build/Release build/Release/BUILD_INFO.txt
+      - name: Upload opensees.so artifact (WP-166)
+        uses: actions/upload-artifact@v4
+        with:
+          name: opensees-linux-${{ github.sha }}
+          path: |
+            build/Release/opensees.so
+            build/Release/BUILD_INFO.txt
+          retention-days: 90
+          if-no-files-found: error
       # TCL_LIBRARY (WORKFLOW_GOTCHAS §7), same export the two Tcl steps below
       # already carry: any Zone-A test that shells out to `build/Release/OpenSees`
       # dies before a single OpenSees command is registered without the conan Tcl

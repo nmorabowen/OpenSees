@@ -1,0 +1,69 @@
+# WP-166: tag-triggered Linux release. Pushing a tag `ladruno-v*` builds the same
+# Linux target as Zone-A and creates a GitHub Release carrying
+# ladruno-opensees-linux-<tag>.tar.gz (opensees.so + BUILD_INFO.txt + LICENSE).
+# The Windows installer is attached later, locally, by
+# Ladruno_scripts/publish_installer.ps1. Tags are created by the maintainer only.
+name: Ladruno Release
+
+on:
+  push:
+    tags: ["ladruno-v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  linux-release:
+    name: Linux tarball release
+    if: github.repository == 'nmorabowen/OpenSees'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Cache Conan packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.conan2
+          key: conan2-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
+          restore-keys: |
+            conan2-${{ runner.os }}-
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: zone-a-${{ runner.os }}
+          max-size: 2G
+      - name: Install conan
+        run: |
+          pip install conan numpy
+          conan profile detect --force
+      # Identical to the zone-a-ubuntu build step in ladruno.yml.
+      - name: Build OpenSees + OpenSeesPy
+        run: |
+          conan install . --build=missing
+          cmake -S . -B build/Release -DCMAKE_TOOLCHAIN_FILE=build/Release/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cd build/Release
+          cmake --build . --target OpenSees -j8
+          cmake --build . --target OpenSeesPy -j8
+          mv OpenSeesPy.so opensees.so
+      - name: Package tarball
+        run: |
+          export TCL_LIBRARY="$(dirname "$(find ~/.conan2 -name init.tcl -path '*/tcl8.6/*' | head -1)")"
+          bash Ladruno_scripts/make_linux_build_info.sh build/Release build/Release/BUILD_INFO.txt
+          name="ladruno-opensees-linux-${GITHUB_REF_NAME}"
+          mkdir "$name"
+          cp build/Release/opensees.so build/Release/BUILD_INFO.txt "$name/"
+          cp COPYRIGHT "$name/LICENSE"
+          tar czf "$name.tar.gz" "$name"
+          ls -l "$name.tar.gz"
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "ladruno-opensees-linux-${GITHUB_REF_NAME}.tar.gz" \
+            --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" \
+            --notes "Linux opensees.so (see BUILD_INFO.txt in the tarball). The Windows installer is attached separately via Ladruno_scripts/publish_installer.ps1."
