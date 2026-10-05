@@ -441,7 +441,7 @@ Tri31::Tri31(int tag, int nd1, int nd2, int nd3,
 
 Tri31::Tri31()
 :Element (0,ELE_TAG_Tri31),
-  theMaterial(0), connectedExternalNodes(3), Q(6), pressureLoad(6), thickness(0.0), pressure(0.0), rho(0.0), Ki(0) // rho was left uninitialized in the blank (broker) constructor -> garbage element density on DB/parallel restore
+  theMaterial(0), connectedExternalNodes(3), Q(6), pressureLoad(6), thickness(0.0), pressure(0.0), rho(0.0), Ki(0), do_init_disp(false) // rho was left uninitialized in the blank (broker) constructor -> garbage element density on DB/parallel restore
 {
 	pts[0][0] = 0.333333333333333;
 	pts[0][1] = 0.333333333333333;
