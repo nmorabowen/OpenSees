@@ -1,9 +1,12 @@
-"""Small interpreter fixes.
+"""Small interpreter fixes: repeated eigen and printA -sparse option order.
 
   eigen_*        repeated openseespy eigen calls, with and without an analysis
+  sparse_flags   openseespy printA with -sparse before or after -ret
+  tcl_sparse     the same printA orderings in the classic Tcl interpreter
 
 Python cases run in a child interpreter so that one failing case cannot take
-down the run.
+down the run. The Tcl case needs the OpenSees executable named by the
+OPENSEES_EXE environment variable and is skipped when it is unset or missing.
 """
 import json
 import os
@@ -85,8 +88,86 @@ elif SCEN == "eigen_then_analysis":
     first = eig(3)
     transient()
     out["runs"] = [first, eig(3), eig(3)]
+elif SCEN == "sparse_flags":
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    for tag, x, y in ((1, 0.0, 0.0), (2, 1.0, 0.0), (3, 1.0, 1.0), (4, 0.0, 1.0)):
+        ops.node(tag, x, y)
+    ops.fix(1, 1, 1)
+    ops.fix(2, 1, 1)
+    ops.nDMaterial("ElasticIsotropic", 1, 1000.0, 0.25)
+    ops.element("quad", 1, 1, 2, 3, 4, 1.0, "PlaneStrain", 1)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(3, 0.0, -1.0)
+    ops.constraints("Plain")
+    ops.numberer("Plain")
+    ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1.0e-10, 20, 0)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0)
+    ops.analysis("Static")
+    out["rc"] = ops.analyze(1)
+    forms = {
+        "ret_sparse0": ("-ret", "-sparse", 0),
+        "sparse_ret": ("-sparse", "-ret"),
+        "ret_sparse1": ("-ret", "-sparse", 1),
+    }
+    got = {}
+    for name, args in forms.items():
+        try:
+            r = ops.printA(*args)
+            rows = list(r["rowIndices"])
+            got[name] = ["ok", len(rows), min(rows) if rows else None]
+        except Exception as ex:
+            got[name] = ["raised", repr(ex), None]
+    out["forms"] = got
 
 print("RESULT " + json.dumps(out))
+'''
+
+TCL_DECK = r'''
+set nfail 0
+proc check {name ok detail} {
+    global nfail
+    if {$ok} {
+        puts "PASS $name"
+    } else {
+        incr nfail
+        puts "FAIL $name -- $detail"
+    }
+}
+
+model basic -ndm 2 -ndf 2
+node 1 0.0 0.0
+node 2 1.0 0.0
+node 3 1.0 1.0
+node 4 0.0 1.0
+fix 1 1 1
+fix 2 1 1
+nDMaterial ElasticIsotropic 1 1000.0 0.25
+element quad 1 1 2 3 4 1.0 PlaneStrain 1
+timeSeries Linear 1
+pattern Plain 1 1 { load 3 0.0 -1.0 }
+constraints Plain
+numberer Plain
+system FullGeneral
+test NormDispIncr 1.0e-10 20 0
+algorithm Newton
+integrator LoadControl 1.0
+analysis Static
+analyze 1
+
+set rc [catch {printA -ret -sparse 0} msg]
+check ret_sparse0 [expr {$rc == 0}] $msg
+set rc [catch {printA -sparse -ret} msg]
+check sparse_ret [expr {$rc == 0}] $msg
+set rc [catch {printA -ret -sparse 1} msg]
+check ret_sparse1 [expr {$rc == 0}] $msg
+set rc [catch {printA -sparse} msg]
+check bare_sparse [expr {$rc == 0}] $msg
+
+puts "SELF-TEST: $nfail failure(s)"
 '''
 
 
@@ -125,3 +206,35 @@ def test_repeated_eigen_switched_type():
     runs = _run("eigen_switched_type")["runs"]
     _assert_same_modes(runs, tol=1.0e-6)
     _assert_same_modes([runs[0], runs[2]])
+
+
+def test_printa_sparse_option_order_python():
+    out = _run("sparse_flags")
+    assert out["rc"] == 0, out
+    f = out["forms"]
+    for name in ("ret_sparse0", "sparse_ret", "ret_sparse1"):
+        assert f[name][0] == "ok", out
+    assert f["ret_sparse0"][1] == f["sparse_ret"][1] == f["ret_sparse1"][1] > 0, out
+    assert f["ret_sparse0"][2] == 0 and f["sparse_ret"][2] == 0, out
+    assert f["ret_sparse1"][2] == 1, out
+
+
+def _tcl_exe():
+    exe = os.environ.get("OPENSEES_EXE")
+    return exe if exe and os.path.isfile(exe) else None
+
+
+@pytest.mark.skipif(_tcl_exe() is None,
+                    reason="OPENSEES_EXE is unset or does not name a file")
+def test_printa_sparse_option_order_tcl(tmp_path):
+    deck = tmp_path / "printa_sparse.tcl"
+    deck.write_text(TCL_DECK)
+    proc = subprocess.run(
+        [_tcl_exe(), str(deck)], cwd=str(tmp_path),
+        stdin=subprocess.DEVNULL, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=300,
+    )
+    out = proc.stdout + proc.stderr
+    assert "SELF-TEST:" in out, out
+    assert out.count("PASS ") + out.count("FAIL ") == 4, out
+    assert "SELF-TEST: 0 failure(s)" in out, out
