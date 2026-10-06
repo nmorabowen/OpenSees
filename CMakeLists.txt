@@ -612,6 +612,17 @@ add_library(OPS_PFEM               OBJECT EXCLUDE_FROM_ALL)
 
 add_library(OPS_InterpTcl          STATIC)
 
+# These two sources declare theDomain as Domain or PartitionedDomain depending on
+# _PARALLEL_PROCESSING. MSVC encodes the type in the symbol name, so with MSVC they
+# are compiled per executable (see SRC/modelbuilder/tcl and SRC/tcl) instead.
+set(OPS_INTERP_TCL_PER_TARGET_SOURCES "")
+if(MSVC)
+  set(OPS_INTERP_TCL_PER_TARGET_SOURCES
+    ${OPS_SRC_DIR}/modelbuilder/tcl/myCommands.cpp
+    ${OPS_SRC_DIR}/element/UWelements/Tcl_generateInterfacePoints.cpp
+  )
+endif()
+
 target_compile_definitions(OPS_InterpTcl PUBLIC _TCL85)
 if(NOT EXISTS "${CMAKE_BINARY_DIR}/conanbuildinfo.cmake")
   target_include_directories(OPS_InterpTcl PUBLIC ${TCL_INCLUDE_PATH})
@@ -710,6 +721,7 @@ add_executable(OpenSees EXCLUDE_FROM_ALL
   ${OPS_SRC_DIR}/tcl/tclMain.cpp
   ${OPS_SRC_DIR}/tcl/commands.cpp
   ${OPS_SRC_DIR}/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+  ${OPS_INTERP_TCL_PER_TARGET_SOURCES}
 )
 
 if(TARGET TCL::TCL)
@@ -783,6 +795,7 @@ if(MPI_FOUND)
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/sparseGEN/DistributedSparseGenRowLinSOE.cpp
       ${OPS_SRC_DIR}/domain/subdomain/ActorSubdomain.cpp
       ${OPS_SRC_DIR}/domain/subdomain/ShadowSubdomain.cpp
+      ${OPS_INTERP_TCL_PER_TARGET_SOURCES}
     )
 
 
@@ -850,6 +863,7 @@ if(MPI_FOUND)
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/diagonal/MPIDiagonalSolver.cpp
       ${OPS_SRC_DIR}/domain/subdomain/ActorSubdomain.cpp
       ${OPS_SRC_DIR}/domain/subdomain/ShadowSubdomain.cpp
+      ${OPS_INTERP_TCL_PER_TARGET_SOURCES}
     )
 
     if (DEFINED MUMPS_DIR)
