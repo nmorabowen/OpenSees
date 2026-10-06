@@ -43,6 +43,33 @@
 #include <OPS_Globals.h>
 
 #include <string.h>
+#include <stdlib.h>
+
+// WP-170: read the next token as text whatever its type. Under openseespy
+// OPS_GetString answers the placeholder "Invalid String Input!" for an int or
+// float; OPS_GetStringFromAll stringifies it. Never null (classic Tcl returns 0
+// past the end) and always terminated (openseespy's strncpy is not on overflow).
+static const char* cdsmscTok(char* buf, int len)
+{
+    const char* s = OPS_GetStringFromAll(buf, len);
+    if (s == 0)
+        return "";
+    if (s == buf)
+        buf[len - 1] = '\0';
+    return s;
+}
+
+// WP-170: true if `tok` is a complete number. Decides "value or next option"
+// for an optional trailing value; a leading-'-' test would read a negative
+// value as a flag.
+static bool cdsmscIsNumber(const char* tok)
+{
+    if (tok == 0 || tok[0] == '\0')
+        return false;
+    char* end = 0;
+    strtod(tok, &end);
+    return end != tok && *end == '\0';
+}
 
 void *OPS_CentralDifferenceSMSConsistent(void)
 {
@@ -75,7 +102,8 @@ void *OPS_CentralDifferenceSMSConsistent(void)
     int    pcgMaxIt = 200;
 
     while (OPS_GetNumRemainingInputArgs() > 0) {
-        const char *arg = OPS_GetString();
+        char argBuf[128];
+        const char *arg = cdsmscTok(argBuf, sizeof(argBuf));
         if (strcmp(arg, "-verbose") == 0) {
             verboseSMS = true;
         } else if (strcmp(arg, "-maxAddedMass") == 0) {
@@ -99,7 +127,8 @@ void *OPS_CentralDifferenceSMSConsistent(void)
             }
         } else if (strcmp(arg, "-lump") == 0) {
             if (OPS_GetNumRemainingInputArgs() > 0) {
-                const char *m = OPS_GetString();
+                char mBuf[64];
+                const char *m = cdsmscTok(mBuf, sizeof(mBuf));
                 if (strcmp(m, "diagonal") == 0)      lumping = CTSLumping::Diagonal;
                 else if (strcmp(m, "rowsum") == 0)   lumping = CTSLumping::RowSum;
                 else if (strcmp(m, "hrz") == 0)      lumping = CTSLumping::HRZ;
@@ -120,11 +149,12 @@ void *OPS_CentralDifferenceSMSConsistent(void)
             verboseSMS = true;
             if (strcmp(arg, "-recompute") == 0 && OPS_GetNumRemainingInputArgs() > 0) {
                 // consume the trailing N so it does not fall into the unknown-option
-                // branch (peek-as-string idiom: under openseespy a numeric arg reads
-                // as garbage text, but never as something starting with '-').
-                const char *peek = OPS_GetString();
-                if (peek != 0 && peek[0] == '-')
-                    OPS_ResetCurrentInputArg(-1);   // next flag, not our N — un-read it
+                // branch. WP-170: peek with OPS_GetStringFromAll and consume the token
+                // only if it is a number; anything else is the next option -- un-read it.
+                char peekBuf[64];
+                const char *peek = cdsmscTok(peekBuf, sizeof(peekBuf));
+                if (!cdsmscIsNumber(peek))
+                    OPS_ResetCurrentInputArg(-1);
             }
         } else {
             opserr << "WARNING CentralDifferenceSMSConsistent - unknown option " << arg
