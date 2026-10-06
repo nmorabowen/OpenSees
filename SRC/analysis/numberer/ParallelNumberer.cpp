@@ -47,6 +47,7 @@
 #include <MP_Constraint.h>
 #include <MP_ConstraintIter.h>
 #include <Node.h>
+#include <ArrayOfTaggedObjects.h>
 #include <stdlib.h>
 
 #include <cstddef>
@@ -336,11 +337,48 @@ ParallelNumberer::numberDOF(int lastDOF)
     Vertex *vertexPtr;
     int loc = 0;
     VertexIter &theVertices = theGraph.getVertices();
+    bool contiguousTags = true;
     while ((vertexPtr = theVertices()) != 0) {
       vertexTags[loc] = vertexPtr->getTag();
       vertexRefs[loc] = vertexPtr->getRef();
       refIndex.insert(vertexPtr->getRef(), loc);
+      if (vertexPtr->getTag() != loc)
+	contiguousTags = false;
       loc++;
+    }
+
+    // The merged graph is built in a copy of the P0 graph held in an
+    // ArrayOfTaggedObjects, where a vertex is found by indexing with its tag,
+    // instead of in the P0 graph itself, whose map storage costs a tree search
+    // for every vertex lookup of the merge and of the GraphNumberer. This
+    // requires the vertex tags to equal their positions: the P0 tags are
+    // 0..numVertexP0-1 and getFreeTag() then hands out the following
+    // integers. The copy has the same vertices, tags, adjacency and
+    // getFreeTag() sequence and the vertices are visited in the same
+    // ascending tag order, so the merged graph and its numbering are
+    // unchanged. If the P0 tags are not contiguous the P0 graph is used as
+    // before.
+    Graph *theMergedGraph = &theGraph;
+    Graph *theDenseGraph = 0;
+    if (contiguousTags == true) {
+      std::size_t sizeHint = static_cast<std::size_t>(numVertex) *
+	static_cast<std::size_t>(numChannels + 1);
+      if (sizeHint < 1024)
+	sizeHint = 1024;
+      if (sizeHint > 0x7fffffff)
+	sizeHint = 0x7fffffff;
+      theDenseGraph = new Graph(*(new ArrayOfTaggedObjects(static_cast<int>(sizeHint))));
+      VertexIter &theP0Vertices = theGraph.getVertices();
+      while ((vertexPtr = theP0Vertices()) != 0)
+	theDenseGraph->addVertex(new Vertex(vertexPtr->getTag(), vertexPtr->getRef(),
+					    vertexPtr->getWeight(), vertexPtr->getColor()));
+      VertexIter &theP0Edges = theGraph.getVertices();
+      while ((vertexPtr = theP0Edges()) != 0) {
+	const ID &adjacency = vertexPtr->getAdjacency();
+	for (int i=0; i<adjacency.Size(); i++)
+	  theDenseGraph->addEdge(vertexPtr->getTag(), adjacency(i));
+      }
+      theMergedGraph = theDenseGraph;
     }
     
     ID **theSubdomainIDs = new ID *[numChannels];
@@ -359,7 +397,7 @@ ParallelNumberer::numberDOF(int lastDOF)
 
       theSubdomainIDs[j] = new ID(theSubGraph->getNumVertex()*2);
 
-      mergeSubGraphIndexed(theGraph, *theSubGraph, vertexTags, vertexRefs,
+      mergeSubGraphIndexed(*theMergedGraph, *theSubGraph, vertexTags, vertexRefs,
 			   *theSubdomainIDs[j], refIndex);
 
       delete theSubGraph;
@@ -370,12 +408,12 @@ ParallelNumberer::numberDOF(int lastDOF)
     // then  those in 2 not in 1 and so on till done.
     //    GraphNumberer *theNumberer = this->getGraphNumbererPtr();
 
-    ID *theOrderedRefs = new ID(theGraph.getNumVertex());
+    ID *theOrderedRefs = new ID(theMergedGraph->getNumVertex());
 
     if (theNumberer != 0) {
 
       // use the supplied graph numberer to number the merged graph
-      *theOrderedRefs = theNumberer->number(theGraph, lastDOF);     
+      *theOrderedRefs = theNumberer->number(*theMergedGraph, lastDOF);     
 
     } else {
 
@@ -384,7 +422,7 @@ ParallelNumberer::numberDOF(int lastDOF)
       // former search of theOrderedRefs: as that ID is zero-filled, the
       // vertex with tag 0 always counted as ordered and was left in the
       // last, zero-filled position. That order is kept.
-      std::vector<char> ordered(static_cast<std::size_t>(theGraph.getFreeTag()) + 1, 0);
+      std::vector<char> ordered(static_cast<std::size_t>(theMergedGraph->getFreeTag()) + 1, 0);
       ordered[0] = 1;
 
       int loc = 0;
@@ -415,7 +453,7 @@ ParallelNumberer::numberDOF(int lastDOF)
     for (int i=0; i<theOrderedRefs->Size(); i++) {
       int vertexTag = (*theOrderedRefs)(i);
       //      int vertexTag = vertexTags[vertexRefs.getLocation(tag)];
-      Vertex *vertexPtr = theGraph.getVertexPtr(vertexTag);
+      Vertex *vertexPtr = theMergedGraph->getVertexPtr(vertexTag);
       int numDOF= vertexPtr->getColor();
       vertexPtr->setTmp(count);
       count += numDOF;
@@ -426,7 +464,7 @@ ParallelNumberer::numberDOF(int lastDOF)
     // number own dof's
     for (int i=0; i<numVertexP0; i++  ) {
       int vertexTag = vertexTags(i);
-      Vertex *vertexPtr = theGraph.getVertexPtr(vertexTag);
+      Vertex *vertexPtr = theMergedGraph->getVertexPtr(vertexTag);
 
       int startID = vertexPtr->getTmp();
       int dofTag = vertexTag;
@@ -454,7 +492,7 @@ ParallelNumberer::numberDOF(int lastDOF)
 
       for (int i=0; i<numVertexSubdomain; i++) {
 	int vertexTagMerged = theSubdomain[numVertexSubdomain+i];
-	Vertex *vertexPtr = theGraph.getVertexPtr(vertexTagMerged);
+	Vertex *vertexPtr = theMergedGraph->getVertexPtr(vertexTagMerged);
 	int startDOF = vertexPtr->getTmp();
 	theSubdomain[i+numVertexSubdomain] = startDOF;
       }
@@ -464,6 +502,9 @@ ParallelNumberer::numberDOF(int lastDOF)
       delete theSubdomainIDs[k];
     }      
     delete [] theSubdomainIDs;
+
+    if (theDenseGraph != 0)
+      delete theDenseGraph;
   }
 
 
