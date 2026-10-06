@@ -521,7 +521,9 @@ if(MKL_FOUND)
       message(FATAL_ERROR "MKL libraries not found in expected locations")
     endif()
 
-    set (SCALAPACK_LIBRARIES "${MKL_LPATH}/mkl_scalapack_ilp64.lib;${MKL_LPATH}/mkl_intel_ilp64.lib;${MKL_LPATH}/mkl_sequential.lib;${MKL_LPATH}/mkl_core.lib;${MKL_LPATH}/mkl_blacs_intelmpi_ilp64.lib")
+    # LP64 matches a default MUMPS build (32-bit INTEGER). A MUMPS built with
+    # -Dintsize64=ON needs the ilp64 variants of these three libraries instead.
+    set (SCALAPACK_LIBRARIES "${MKL_LPATH}/mkl_scalapack_lp64.lib;${MKL_LPATH}/mkl_intel_lp64.lib;${MKL_LPATH}/mkl_sequential.lib;${MKL_LPATH}/mkl_core.lib;${MKL_LPATH}/mkl_blacs_intelmpi_lp64.lib")
   endif()
 
 else()
