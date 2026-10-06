@@ -1242,6 +1242,10 @@ TclCommand_ladrunoStaggeredAnalyze(ClientData clientData, Tcl_Interp *interp, in
 }
 
 
+// Ladruno WP-168: the classic-Tcl Ladruno_registerCommands hook. Included here,
+// after every bridge the command table names is declared or defined.
+#include "LadrunoCommandsClassicTcl.h"   // Ladruno WP-168
+
 int OpenSeesAppInit(Tcl_Interp *interp) {
 
   ops_TheActiveDomain = &theDomain;
@@ -1285,14 +1289,9 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
     Tcl_CreateCommand(interp, "getNDF", &getNDF,
         (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
 
-    Tcl_CreateCommand(interp, "profiler", &TclCommand_profiler,
-		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL); // Ladruno
-
-    Tcl_CreateCommand(interp, "ladrunoNumbering", &TclCommand_ladrunoNumbering,
-		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL); // Ladruno (ADR-74 N0)
-
-    Tcl_CreateCommand(interp, "LadrunoStaggeredAnalyze", &TclCommand_ladrunoStaggeredAnalyze,
-		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL); // Ladruno (ADR-73 P2)
+    // Ladruno WP-168: every fork-only command, from the one table in
+    // SRC/interpreter/LadrunoCommandTable.h (see LadrunoCommandsClassicTcl.h).
+    Ladruno_registerCommands(interp);   // Ladruno WP-168
 
     Tcl_CreateCommand(interp, "wipe", &wipeModel,
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
@@ -1364,46 +1363,6 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
     Tcl_CreateCommand(interp, "modalProperties", &modalProperties,
         (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
     Tcl_CreateCommand(interp, "responseSpectrumAnalysis", &responseSpectrumAnalysis,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    // Ladruno (ADR 44): modal-response family into classic-Tcl dispatch (the
-    // splash banner already advertised these; wiring was missing here).
-    Tcl_CreateCommand(interp, "modalResponseHistory", &modalResponseHistory,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "frequencyResponse", &frequencyResponse,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "steadyStateDynamics", &steadyStateDynamics,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "randomResponse", &randomResponse,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    // Ladruno (ADR-78 P0.5): contact family into classic-Tcl dispatch. Without
-    // these, OpenSeesMP — which drives parallelism through this file — cannot
-    // see `contactSurface` at all, so no partitioned contact deck can run.
-    Tcl_CreateCommand(interp, "contactSurface", &ladrunoContactSurface,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "contact", &ladrunoContact,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "contactPlane", &ladrunoContactPlane,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "ladrunoContactInfo", &ladrunoContactInfo,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "ladrunoContactForce", &ladrunoContactForce,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "ladrunoMortarPenetration", &ladrunoMortarPenetration,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "ladrunoMortarTieResidual", &ladrunoMortarTieResidual,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "ladrunoEdgePenetration", &ladrunoEdgePenetration,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "ladrunoBeginAugment", &ladrunoBeginAugment,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "ladrunoEndAugment", &ladrunoEndAugment,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    // Ladruno (#729): solver-state queries into classic-Tcl dispatch. Without
-    // these, a .tcl deck can SET `integrator LadrunoDynamicRelaxation` but cannot
-    // read the settling gate that says when the relaxation is done.
-    Tcl_CreateCommand(interp, "ladrunoArcLength", &ladrunoArcLength,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "ladrunoDR", &ladrunoDR,
         (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
     Tcl_CreateCommand(interp, "video", &videoPlayer,
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);       
@@ -1591,14 +1550,6 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
     Tcl_CreateCommand(interp, "systemSize", &systemSize, 
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);  
     Tcl_CreateCommand(interp, "version", &version,
-		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
-    Tcl_CreateCommand(interp, "ladrunoBuild", &ladrunoBuild,   // Ladruno build-stamp query
-		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
-    Tcl_CreateCommand(interp, "ladrunoThreads", &ladrunoThreads,   // Ladruno WP-107 element-loop thread count
-		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
-    Tcl_CreateCommand(interp, "ladrunoMutation", &ladrunoMutation,   // Ladruno ADR-87 D2 mutation-gate query
-		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
-    Tcl_CreateCommand(interp, "ladrunoSANISANDReplay", &ladrunoSANISANDReplay,   // Ladruno WP-127
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
 
     Tcl_CreateCommand(interp, "setParameter", &setParameter, 
