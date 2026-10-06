@@ -5,7 +5,7 @@
 // Created: 02/19
 // Revision: A
 //
-// Description: This file contains the class definition for 
+// Description: This file contains the class definition for
 // PARDISOLinSolver. It solves the Sparse General SOE by calling
 // some "C" functions. The solver used here is generalized sparse
 // solver. The user can choose three different ordering schema.
@@ -19,7 +19,9 @@
 #include <LinearSOESolver.h>
 #include <PARDISOGenLinSOE.h>
 
-//https://software.intel.com/en-us/articles/pardiso-parameter-table
+// Parameter meanings: Intel oneMKL Developer Reference, "pardiso iparm
+// Parameter". Comments below use the zero-based C index iparm[i], which is
+// iparm(i+1) in Intel's one-based table.
 
 class PARDISOGenLinSolver : public LinearSOESolver
 {
@@ -31,15 +33,49 @@ class PARDISOGenLinSolver : public LinearSOESolver
     int setSize(void);
 
     int setLinearSOE(PARDISOGenLinSOE &theSOE);
-	
+
+    // Print PARDISO's memory, fill and flop counters after every numerical
+    // factorization.
+    void setStats(int on);
+
+    // Use the retained factorization as a preconditioner for a changed matrix
+    // (iparm[3] = 10*L + K, phase 23). digits is Intel's L: the CGS iteration
+    // stops at ||dx_i||/||dx_0|| < 10^-L. 0 disables it (the default).
+    void setKrylov(int digits);
+
     int sendSelf(int cTag, Channel &theChannel);
-    int recvSelf(int cTag, 
-		 Channel &theChannel, 
+    int recvSelf(int cTag,
+		 Channel &theChannel,
 		 FEM_ObjectBroker &theBroker);
   protected:
 
   private:
 	  PARDISOGenLinSOE *theSOE;
+
+	  // The PARDISO handle persists across solves so the symbolic and numeric
+	  // factorizations can be reused. pt must be zeroed before the first call
+	  // and never copied.
+	  void *pt[64];
+	  int   iparm[64];
+	  int   mtype;         // derived from the SOE matType at the symbolic phase
+	  bool  init;          // phase 11 has run, so a phase -1 release is owed
+	  bool  needsSymbolic; // the sparsity pattern changed
+	  // The destructor must not read theSOE: ~LinearSOE() deletes the solver
+	  // after the derived SOE has freed its arrays. The order is cached here.
+	  int   cachedN;
+	  int   reportStats;
+
+	  // Preconditioned CGS state. haveFactors: a factorization exists in the
+	  // handle. factorsCurrent: it is a factorization of the matrix now in the
+	  // SOE. A CGS success leaves the previous factors in place, so a later
+	  // phase-33-only solve would use an older matrix; factorsCurrent forbids it.
+	  int   krylovL;
+	  int   krylovK;       // 1 = CGS (mtype 11), 2 = CG (mtype 2), 0 = off
+	  bool  haveFactors;
+	  bool  factorsCurrent;
+	  int   cgsCalls;
+	  int   cgsWins;
+	  bool  cgsAdviceDone;
 };
 
 #endif
