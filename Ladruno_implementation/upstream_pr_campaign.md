@@ -276,7 +276,7 @@ session (human or agent) that ports, opens, merges, or re-scopes a package
 | 0.10 | GeneralizedAlpha `update()` discards `Ualphadotdot` | `up/06-generalizedalpha-alpham-inertia` | [jaabell#36](https://github.com/jaabell/OpenSees/pull/36) | **PR open** 2026-10-06. SDOF order test: 3 of 4 fail on base → 4 pass. Results change for every alphaM ≠ 1 |
 | 0.11 | Analysis-object pools skip slot `[MAX_NUM_DOF]` (11 loops, 4 files) | `up/07-analysis-pool-max-dof-slot` | [jaabell#37](https://github.com/jaabell/OpenSees/pull/37) | **PR open** 2026-10-06. No portable test (heap-state dependent); body carries the fork's crash table |
 | 0.12 | Newmark file-scope `static bool converged` | `up/08-newmark-static-state` | [jaabell#38](https://github.com/jaabell/OpenSees/pull/38) | **PR open** 2026-10-06 |
-| 0.13 | Windows MSVC + ifx + MUMPS build fixes (8 commits: `/bigobj`, version define and globbed includes C/C++-only, MPI 8.3 paths, MUMPS `.lib`, LP64 ScaLAPACK, `MUMPS_INCLUDE_DIR`, per-exe Tcl domain sources) | `up/09-windows-msvc-ifx-build-fixes` | — | **building** (OpenSees/SP/MP/Py on his base). Proven needed: his base does not compile here without the first four. Old patches 1 and 4 already upstream; OpenSeesPyMP target excluded (feature) |
+| 0.13 | Windows MSVC + ifx + MUMPS build fixes (8 commits: `/bigobj`, version define and globbed includes C/C++-only, MPI 8.3 paths, MUMPS `.lib`, LP64 ScaLAPACK, `MUMPS_INCLUDE_DIR`, per-exe Tcl domain sources) | `up/09-windows-msvc-ifx-build-fixes` | [jaabell#39](https://github.com/jaabell/OpenSees/pull/39) | **PR open** 2026-10-06. OpenSees/SP/MP/Py build on his base; `tests/` 112 passed; SP and MP on 2 ranks with Mumps match serial UmfPack to 1e-15. Proven needed: his base does not compile here without the first four. Old patches 1 and 4 already upstream; OpenSeesPyMP target excluded (feature) |
 | 1.1 | Plane-strain σ_zz | — | — | not started |
 | 1.2 | Beam localAxes responses | — | — | not started |
 | 1.3 | DDM HHT/GeneralizedAlpha | — | — | not started; rides on 0.10 |
@@ -301,7 +301,7 @@ session (human or agent) that ports, opens, merges, or re-scopes a package
   EnergyBalanceRecorder, ExplicitBathe `-lnvd`, ExplicitDifferenceStatic, Tcl
   `-lumped` for (MPI)Diagonal, optional MUMPS in CMake. A fresh inventory of
   fork vanilla fixes still live on `ladruño` found 32 candidates (§8).
-  Opened jaabell#35–#38 (0.8+0.9, 0.10, 0.11, 0.12), each verified on his base:
+  Opened jaabell#35–#38 (0.8+0.9, 0.10, 0.11, 0.12) and #39 (0.13), each verified on his base:
   unmodified base built with the local Windows fixes, new tests fail there,
   `tests/` 147 passed / 2 skipped with all four merged. His base needed `/bigobj`
   (his own ASDP registry overflows MSVC's section limit) and three ifx fixes to
