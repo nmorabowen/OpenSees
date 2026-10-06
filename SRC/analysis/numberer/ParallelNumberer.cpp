@@ -47,6 +47,7 @@
 #include <MP_Constraint.h>
 #include <MP_ConstraintIter.h>
 #include <Node.h>
+#include <stdlib.h>
 
 
 ParallelNumberer::ParallelNumberer(int dTag, int numSub, Channel **theC) 
@@ -379,6 +380,19 @@ ParallelNumberer::mergeSubGraph(Graph &theGraph, Graph &theSubGraph, ID &vertexT
     int vertexTagSub = subVertexPtr->getTag();
     int vertexTagRef = subVertexPtr->getRef();
     int loc = vertexRefs.getLocation(vertexTagRef);
+
+    // a DOF_Group without a node (e.g. the multiplier DOFs of the Lagrange
+    // constraint handler) has reference tag -1. Merging by reference tag would
+    // fuse all of them into one vertex, so that different constraints share
+    // the same equation numbers. Stop instead of numbering them wrongly.
+    if (vertexTagRef < 0 && loc >= 0) {
+      opserr << "FATAL ParallelNumberer::mergeSubGraph() - DOF_Group " << vertexTagSub
+	     << " has no node (reference tag " << vertexTagRef << "), as for the"
+	     << " Lagrange multipliers of constraints Lagrange; such DOF_Groups"
+	     << " cannot be matched across processes. Use constraints"
+	     << " Transformation, Penalty or Plain with a parallel numberer.\n";
+      exit(-1);
+    }
 
     int vertexTagMerged;
     if (loc < 0) {
