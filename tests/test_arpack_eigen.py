@@ -119,3 +119,11 @@ def test_eigen_after_model_grows(solver):
     r = _run("grow", solver, 4)
     assert isinstance(r["lapack"], list)
     assert _same(r["arpack"], r["lapack"]), r
+
+
+@pytest.mark.parametrize("nev", [3, 6])
+def test_repeated_eigenvalue_copies(nev):
+    """The third to tenth eigenvalues are equal (240). Arpack must return
+    every requested copy, not skip to the next distinct values."""
+    r = _run("cluster", "default", nev)
+    assert _same(r["arpack"], r["lapack"]), r

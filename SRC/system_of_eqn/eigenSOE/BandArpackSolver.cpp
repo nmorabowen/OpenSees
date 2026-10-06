@@ -500,11 +500,9 @@ int
 BandArpackSolver::getNCV(int n, int nev)
 {
     int result;
-    if (2*nev > nev+8) {
-        result = nev+8;
-    } else {
-        result = 2*nev;
-    }
+    // eight Lanczos vectors more than modes, so that repeated or closely
+    // spaced eigenvalues are resolved also when few modes are requested
+    result = nev+8;
 
     if (result >= n) {
         result = n;
