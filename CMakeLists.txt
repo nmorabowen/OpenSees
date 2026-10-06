@@ -94,6 +94,9 @@ elseif ("${CMAKE_CXX_COMPILER_ID}" MATCHES "MSVC")
  set(CMAKE_FIND_LIBRARY_SUFFIXES ".lib")
  set(BUILD_SHARED_LIBS OFF)
  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
+ # OPS_AllASDPlasticMaterial3Ds.cpp exceeds the default COFF section limit (C1128).
+ # /bigobj raises the limit; it is applied to C/C++ only so ifx never sees it.
+ add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/bigobj>)
 else()
   MESSAGE("COMPILER: UKNOWN COMPILER ${CMAKE_CXX_COMPILER_ID}")
 endif()
