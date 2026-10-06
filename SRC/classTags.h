@@ -910,6 +910,7 @@
 #define ELE_TAG_PML3DVISCOUS               271 // Amin Pakzad
 #define ELE_TAG_MEFI_3D        			  272 // C. N. Lopez
 #define ELE_TAG_KinematicCoupling      275 // N. Mora Bowen, P. Palacios, J.A. Abell
+#define ELE_TAG_DistributingCoupling   276 // N. Mora Bowen, P. Palacios, J.A. Abell
 
 #define FRN_TAG_Coulomb            1
 #define FRN_TAG_VelDependent       2
