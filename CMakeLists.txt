@@ -362,7 +362,15 @@ foreach(filepath ${ops_include_files})
 endforeach()
 list(REMOVE_DUPLICATES OPS_INCLUDE_DIRS)
 
-include_directories(${OPS_INCLUDE_DIRS})
+if(WIN32)
+  # The globbed list overflows the 8 KB cmd.exe line of the Fortran preprocess
+  # rule. Fortran sources need none of these C/C++ headers, so limit it to C/C++.
+  foreach(_d IN LISTS OPS_INCLUDE_DIRS)
+    include_directories($<$<COMPILE_LANGUAGE:C,CXX>:${_d}>)
+  endforeach()
+else()
+  include_directories(${OPS_INCLUDE_DIRS})
+endif()
 # end TODO
 
 # ##############################################################
