@@ -27,6 +27,7 @@
 #include <PARDISOGenLinSolver.h>
 #include <PARDISOGenLinSOE.h>
 #include <math.h>
+#include <string.h>
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <elementAPI.h>
@@ -34,12 +35,57 @@
 #include <mkl_types.h>
 #include <mkl_service.h>
 
+// MKL CBWR branches, spelled as for the MKL_CBWR environment variable
+// (Intel oneMKL Developer Guide, "Obtaining Numerically Reproducible Results").
+static const struct { const char *name; int code; } pardiso_cbwr_table[] = {
+	{"OFF",           MKL_CBWR_OFF},
+	{"BRANCH_OFF",    MKL_CBWR_BRANCH_OFF},
+	{"AUTO",          MKL_CBWR_AUTO},
+	{"COMPATIBLE",    MKL_CBWR_COMPATIBLE},
+	{"SSE2",          MKL_CBWR_SSE2},
+	{"SSE3",          MKL_CBWR_SSE3},
+	{"SSSE3",         MKL_CBWR_SSSE3},
+	{"SSE4_1",        MKL_CBWR_SSE4_1},
+	{"SSE4_2",        MKL_CBWR_SSE4_2},
+	{"AVX",           MKL_CBWR_AVX},
+	{"AVX2",          MKL_CBWR_AVX2},
+	{"AVX512_MIC",    MKL_CBWR_AVX512_MIC},
+	{"AVX512",        MKL_CBWR_AVX512},
+	{"AVX512_MIC_E1", MKL_CBWR_AVX512_MIC_E1},
+	{"AVX512_E1",     MKL_CBWR_AVX512_E1},
+#ifdef MKL_CBWR_AVX10
+	{"AVX10",         MKL_CBWR_AVX10},   // oneMKL 2025.0 and later
+#endif
+};
+
+static const char *
+pardiso_cbwr_name(int code)
+{
+	for (const auto &e : pardiso_cbwr_table)
+		if (e.code == code) return e.name;
+	return "UNKNOWN";
+}
+
+// case-insensitive compare of exactly n characters
+static bool
+pardiso_cbwr_ieq(const char *a, const char *b, size_t n)
+{
+	for (size_t i = 0; i < n; i++) {
+		char ca = a[i], cb = b[i];
+		if (ca >= 'a' && ca <= 'z') ca = ca - 'a' + 'A';
+		if (cb >= 'a' && cb <= 'z') cb = cb - 'a' + 'A';
+		if (ca != cb) return false;
+	}
+	return true;
+}
+
 PARDISOGenLinSolver::PARDISOGenLinSolver()
 :LinearSOESolver(SOLVER_TAGS_PARDISOGenLinSolver),
  theSOE(0), mtype(11), init(false), needsSymbolic(false), cachedN(0),
  reportStats(0),
  krylovL(0), krylovK(0), haveFactors(false), factorsCurrent(false),
- cgsCalls(0), cgsWins(0), cgsAdviceDone(false)
+ cgsCalls(0), cgsWins(0), cgsAdviceDone(false),
+ cnrBranch(-1), cnrInForce(false), cnrNoticeDone(false)
 {
 	for (int i = 0; i < 64; i++) {
 		pt[i] = 0;
@@ -170,6 +216,10 @@ PARDISOGenLinSolver::solve(void)
 		iparm[17] = reportStats ? -1 : 0;
 		iparm[18] = reportStats ? -1 : 0;
 		iparm[34] =  0;  /* one-based indexing */
+		/* CNR: iparm[33] > 0 is the thread count PARDISO reproduces results
+		   for (in-core mode). METIS (iparm[1] = 2) is compatible with it. */
+		if (cnrBranch >= 0)
+			iparm[33] = mkl_get_max_threads();
 
 		int phase = 11;
 		PARDISO(pt, &maxfct, &mnum, &mtype, &phase, &n, a, ia, ja,
@@ -182,6 +232,27 @@ PARDISOGenLinSolver::solve(void)
 		init = true;
 		needsSymbolic = false;
 		cachedN = n;
+
+		// report once what MKL says is in force, not what was requested
+		if (cnrBranch >= 0 && cnrNoticeDone == false) {
+			cnrNoticeDone = true;
+			const int inForce = mkl_cbwr_get(MKL_CBWR_BRANCH);
+			const int all     = mkl_cbwr_get(MKL_CBWR_ALL);
+			cnrInForce = (inForce > MKL_CBWR_BRANCH_OFF);
+			opserr << "PARDISO deterministic mode: MKL CNR branch "
+			       << pardiso_cbwr_name(inForce);
+			if (inForce == MKL_CBWR_AUTO) {
+				const int resolved = mkl_cbwr_get_auto_branch();
+				if (resolved > MKL_CBWR_AUTO)
+					opserr << " (-> " << pardiso_cbwr_name(resolved) << ")";
+			}
+			if (all & MKL_CBWR_STRICT)
+				opserr << ",STRICT";
+			opserr << ", iparm(34)=" << iparm[33] << " thread(s), CNR "
+			       << (cnrInForce ? "ACTIVE" : "NOT ACTIVE; results are not "
+			           "guaranteed reproducible, relaunch with MKL_CBWR=AUTO")
+			       << "\n";
+		}
 		theSOE->factored = false;   // a new pattern always needs phase 22
 
 		haveFactors = false;
@@ -350,6 +421,81 @@ PARDISOGenLinSolver::setKrylov(int digits)
     // K is otherwise set only at the symbolic phase; clear it when disabling
     if (krylovL == 0)
         krylovK = 0;
+}
+
+
+int
+PARDISOGenLinSolver::cbwrBranchFromName(const char *name)
+{
+	if (name == 0) return -1;
+	// optional ",STRICT" suffix, as in MKL_CBWR=AVX2,STRICT
+	const char *comma = strchr(name, ',');
+	const size_t len = comma ? (size_t)(comma - name) : strlen(name);
+	int strict = 0;
+	if (comma) {
+		if (strlen(comma + 1) != 6 || !pardiso_cbwr_ieq(comma + 1, "STRICT", 6))
+			return -1;
+		strict = MKL_CBWR_STRICT;
+	}
+	for (const auto &e : pardiso_cbwr_table) {
+		// OFF and BRANCH_OFF can be read back but not requested
+		if (e.code <= MKL_CBWR_BRANCH_OFF) continue;
+		if (strlen(e.name) == len && pardiso_cbwr_ieq(name, e.name, len))
+			return e.code | strict;
+	}
+	return -1;
+}
+
+
+int
+PARDISOGenLinSolver::setDeterministic(int branch, int keepEnv)
+{
+	cnrBranch = branch;
+	cnrNoticeDone = false;
+	if (branch < 0) {          // off: MKL's process-wide mode is left alone
+		cnrInForce = false;
+		return 0;
+	}
+
+	const int current = mkl_cbwr_get(MKL_CBWR_ALL);
+	const bool alreadyOn = (mkl_cbwr_get(MKL_CBWR_BRANCH) > MKL_CBWR_BRANCH_OFF);
+
+	// Keep a branch fixed by MKL_CBWR, and do not re-set the value already in
+	// force: a second set after MKL has computed can fail.
+	if ((keepEnv && alreadyOn) || current == branch) {
+		cnrInForce = alreadyOn;
+		return 0;
+	}
+
+	const int rc = mkl_cbwr_set(branch);
+	cnrInForce = (mkl_cbwr_get(MKL_CBWR_BRANCH) > MKL_CBWR_BRANCH_OFF);
+	if (rc == MKL_CBWR_SUCCESS && cnrInForce)
+		return 0;
+
+	const char *want = pardiso_cbwr_name(branch & ~MKL_CBWR_STRICT);
+	opserr << "WARNING system Pardiso -deterministic: mkl_cbwr_set(" << want
+	       << ") failed (rc " << rc;
+	switch (rc) {
+	case MKL_CBWR_ERR_MODE_CHANGE_FAILURE:
+		opserr << "): the CNR mode is process-wide and MKL refuses to change "
+		          "it once its BLAS/LAPACK dispatch is initialized (for "
+		          "example by an earlier eigen solve).\n     Set the "
+		          "environment variable MKL_CBWR=" << want
+		       << " before OpenSees starts.\n";
+		break;
+	case MKL_CBWR_ERR_UNSUPPORTED_BRANCH:
+		opserr << "): this CPU cannot run that code branch; the instruction-"
+		          "set branches require an Intel CPU. Use AUTO, or COMPATIBLE "
+		          "for a branch every x86 CPU can run.\n";
+		break;
+	default:
+		opserr << "): see the oneMKL CBWR error codes).\n";
+		break;
+	}
+	opserr << "     MKL CNR branch in force: "
+	       << pardiso_cbwr_name(mkl_cbwr_get(MKL_CBWR_BRANCH))
+	       << "; results are not guaranteed reproducible.\n";
+	return -1;
 }
 
 
