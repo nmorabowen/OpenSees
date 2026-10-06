@@ -3516,11 +3516,14 @@ void* OPS_MumpsSolver() {
 
 #ifdef _PARDISO
 // system Pardiso <-matrixType 0|1|2> <-symmetric> <-spd> <-krylov L> <-stats>
+//                <-deterministic> <-cbwr BRANCH>
 //
 // Intel oneMKL PARDISO on the serial interpreter. The thread count comes from
 // MKL_NUM_THREADS (or OMP_NUM_THREADS). -matrixType uses the Mumps numbering:
 // 0 unsymmetric (default), 1 symmetric positive definite, 2 symmetric
-// indefinite; -symmetric and -spd are aliases for 2 and 1.
+// indefinite; -symmetric and -spd are aliases for 2 and 1. -deterministic
+// turns on MKL conditional numerical reproducibility (AUTO branch, or the one
+// set by MKL_CBWR); -cbwr selects the branch and implies -deterministic.
 //
 // A parse error degrades to the default with a warning instead of returning
 // 0: a null SOE would leave the analysis on the default ProfileSPD solver.
@@ -3528,6 +3531,8 @@ void* OPS_PARDISOGenLinSolver() {
     int matType = 0;
     int statsFlag = 0;
     int krylovDigits = 0;
+    int cnrBranch = -1;
+    int cnrKeepEnv = 0;
 
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char* opt = OPS_GetString();
@@ -3558,6 +3563,29 @@ void* OPS_PARDISOGenLinSolver() {
                 krylovDigits = 0;
                 continue;
             }
+        } else if (strcmp(opt, "-deterministic") == 0) {
+            if (cnrBranch < 0) {
+                cnrBranch = PARDISOGenLinSolver::cbwrBranchFromName("AUTO");
+                cnrKeepEnv = 1;
+            }
+        } else if (strcmp(opt, "-cbwr") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1) {
+                opserr << "WARNING system Pardiso - -cbwr given with no branch "
+                          "name; using AUTO\n";
+                cnrBranch = PARDISOGenLinSolver::cbwrBranchFromName("AUTO");
+                cnrKeepEnv = 0;
+                continue;
+            }
+            const char *name = OPS_GetString();
+            cnrBranch = PARDISOGenLinSolver::cbwrBranchFromName(name);
+            cnrKeepEnv = 0;
+            if (cnrBranch < 0) {
+                opserr << "WARNING system Pardiso - unknown -cbwr branch " << name
+                       << " (use the MKL_CBWR names: AUTO, COMPATIBLE, SSE4_2, "
+                          "AVX, AVX2, AVX512, AVX512_E1, AVX10[,STRICT]); "
+                          "using AUTO\n";
+                cnrBranch = PARDISOGenLinSolver::cbwrBranchFromName("AUTO");
+            }
         } else {
             opserr << "WARNING system Pardiso - unknown option " << opt
                    << ", ignored\n";
@@ -3567,6 +3595,10 @@ void* OPS_PARDISOGenLinSolver() {
     PARDISOGenLinSolver *theSolver = new PARDISOGenLinSolver();
     theSolver->setStats(statsFlag);
     theSolver->setKrylov(krylovDigits);
+    // a refused mode has warned; the run continues and the first solve
+    // reports CNR NOT ACTIVE
+    if (cnrBranch >= 0)
+        theSolver->setDeterministic(cnrBranch, cnrKeepEnv);
     return new PARDISOGenLinSOE(*theSolver, matType);
 }
 #endif

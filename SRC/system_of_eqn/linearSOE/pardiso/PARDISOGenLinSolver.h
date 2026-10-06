@@ -43,6 +43,18 @@ class PARDISOGenLinSolver : public LinearSOESolver
     // stops at ||dx_i||/||dx_0|| < 10^-L. 0 disables it (the default).
     void setKrylov(int digits);
 
+    // Conditional numerical reproducibility (CNR). branch is an MKL_CBWR_*
+    // code. mkl_cbwr_set() is called here, before PARDISO runs, and
+    // iparm[33] is set to the MKL thread count at every symbolic phase.
+    // The mode is process-wide; MKL refuses to change it once its BLAS/LAPACK
+    // dispatch is initialized, and the MKL_CBWR environment variable is the
+    // fallback. keepEnv = 1 keeps a branch already set through MKL_CBWR.
+    // Returns 0 when CNR is in force afterwards, -1 otherwise.
+    int setDeterministic(int branch, int keepEnv);
+    // MKL_CBWR name ("AUTO", "COMPATIBLE", "AVX2,STRICT", ...) to its code,
+    // case-insensitive; -1 for an unknown name.
+    static int cbwrBranchFromName(const char *name);
+
     int sendSelf(int cTag, Channel &theChannel);
     int recvSelf(int cTag,
 		 Channel &theChannel,
@@ -76,6 +88,10 @@ class PARDISOGenLinSolver : public LinearSOESolver
 	  int   cgsCalls;
 	  int   cgsWins;
 	  bool  cgsAdviceDone;
+
+	  int   cnrBranch;     // -1 = off (default), else the requested branch
+	  bool  cnrInForce;
+	  bool  cnrNoticeDone;
 };
 
 #endif
