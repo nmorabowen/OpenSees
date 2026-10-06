@@ -357,7 +357,8 @@ OpenSeesCommands::eigen(int typeSolver, double shift,
     //
     // set the eigen soe in the system if reassigned/created
     //
-    if (eigenSOEUpdated && theEigenSOE != 0) {
+    // a temporary analysis is rebuilt on every call and starts without an eigen SOE
+    if ((eigenSOEUpdated || newanalysis) && theEigenSOE != 0) {
         if (theStaticAnalysis != 0) {
             theStaticAnalysis->setEigenSOE(*theEigenSOE);
         } else if (theTransientAnalysis != 0) {
