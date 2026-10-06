@@ -207,7 +207,13 @@ else()
 endif()
 
 # Pass this to your code as a preprocessor definition
-add_definitions(-DOPENSEES_VERSION="${GIT_VERSION}")
+if(WIN32)
+  # ifx crashes (error #10273) when the quoted version string reaches it through
+  # a Ninja response file. Fortran sources do not use it, so limit it to C/C++.
+  add_compile_definitions($<$<COMPILE_LANGUAGE:C,CXX>:OPENSEES_VERSION="${GIT_VERSION}">)
+else()
+  add_definitions(-DOPENSEES_VERSION="${GIT_VERSION}")
+endif()
 
 
 #
