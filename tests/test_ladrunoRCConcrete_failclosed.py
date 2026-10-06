@@ -138,13 +138,27 @@ def test_undeclared_token_fails_and_names_it(mat, case, capfd):
 
 
 @pytest.mark.parametrize("mat", FAMILY)
-@pytest.mark.parametrize("opt", ["-Kc", "-implexControl", "-shearRetention"])
+@pytest.mark.parametrize("opt", ["-Kc", "-betaFloor", "-rho", "-implexControl", "-shearRetention"])
 def test_declared_option_missing_its_values_fails(mat, opt, capfd):
     _fresh()
     vals = ACCEPTED[opt][:-1]               # one value short, at the end of the line
     capfd.readouterr()
     with pytest.raises(Exception):
         ops.nDMaterial(*_cmd(mat, 9, [opt, *vals]))
+    ops.nDMaterial(*_cmd(mat, 9, ["-beta"]))   # nothing registered under the tag
+
+
+@pytest.mark.parametrize("mat", FAMILY)
+@pytest.mark.parametrize("opt", ["-Kc", "-betaFloor", "-rho"])
+def test_non_numeric_scalar_value_fails(mat, opt, capfd):
+    # before WP-167 these three reads were unchecked: `-Kc abc` kept the default
+    # (and `-rho abc` silently meant mass 0). Now the command fails and says why.
+    _fresh()
+    capfd.readouterr()
+    with pytest.raises(Exception):
+        ops.nDMaterial(*_cmd(mat, 8, [opt, "abc", "-beta"]))
+    assert f"{opt} needs a value" in capfd.readouterr().err
+    ops.nDMaterial(*_cmd(mat, 8, ["-beta"]))
 
 
 def _find_exe():

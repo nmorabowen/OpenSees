@@ -1124,14 +1124,17 @@ IGNORE_COMMENT = re.compile(
 TOKEN_LOOP = re.compile(r"\bOPS_GetString\w*\s*\(|\bOPS_GetNumRemainingInputArgs\s*\(|\bargv\s*\[")
 STRING_TEST = re.compile(r"\b(?:strcmp|strcasecmp|_stricmp|stricmp|strncmp)\s*\(|==\s*\"|\.compare\s*\(")
 # Fork parsers that still let an unknown token through, recorded when the rule landed
-# (WP-167). A RATCHET: entries may only be removed, by converting the parser to the
-# fail-closed policy (SRC/material/LadrunoOptSpec.h). An entry whose file no longer
-# trips the rule is itself a finding, so the list cannot go stale.
+# (WP-167): {file: the number of findings it had then}. A RATCHET: an entry may only be
+# removed or its count lowered, by converting the parser to the fail-closed policy
+# (SRC/material/LadrunoOptSpec.h); ci/test_quirk_unknown_token.py pins it to these four
+# paths and counts. A file with MORE findings than its count reports them all (a new
+# silent ladder in a legacy file is not exempt); FEWER is a finding too ("lower the
+# count"), so the list cannot go stale.
 UNKNOWN_TOKEN_LEGACY = {
-    "SRC/element/ladrunoDispBeamColumn/LadrunoDispBeamColumn2d.cpp": "element ladder, no final else",
-    "SRC/element/ladrunoDispBeamColumn/LadrunoDispBeamColumn3d.cpp": "element ladder, no final else",
-    "SRC/recorder/EnergyBalanceRecorder.cpp": "recorder ladder, no final else",
-    "SRC/recorder/LadrunoMonitorRecorder.cpp": "recorder ladder + 'ignored (forward-compatible)' comment",
+    "SRC/element/ladrunoDispBeamColumn/LadrunoDispBeamColumn2d.cpp": 1,   # element ladder, no final else
+    "SRC/element/ladrunoDispBeamColumn/LadrunoDispBeamColumn3d.cpp": 1,   # element ladder, no final else
+    "SRC/recorder/EnergyBalanceRecorder.cpp": 1,                          # recorder ladder, no final else
+    "SRC/recorder/LadrunoMonitorRecorder.cpp": 2,                         # ladder + "ignored (forward-compatible)"
 }
 
 
@@ -1292,7 +1295,7 @@ def _silent_ladders(cl):
 def check_unknown_token(root, rel, used_waivers=None):
     findings = []
     used = set() if used_waivers is None else used_waivers
-    seen_legacy = set()
+    seen_legacy = {}
     for path, raw, cl in _sources(root, stamped_only=True):
         r = rel(path)
         hits = []
@@ -1303,9 +1306,9 @@ def check_unknown_token(root, rel, used_waivers=None):
             hits.append((a, b, "an option ladder ends its token loop with no final `else`, so an "
                                "unknown token is skipped without a word"))
         if r in UNKNOWN_TOKEN_LEGACY:
-            if hits:
-                seen_legacy.add(r)
-            continue
+            seen_legacy[r] = len(hits)
+            if len(hits) <= UNKNOWN_TOKEN_LEGACY[r]:
+                continue                       # at or below its pinned count (too few: below)
         for a, b, what in hits:
             wl, reason = waiver_at(raw, b, "unknown-ok", above=b - a + 1)
             if wl is not None:
@@ -1318,11 +1321,15 @@ def check_unknown_token(root, rel, used_waivers=None):
                 f"unknown-token {r}:{a + 1}: {what}. Fork parsers fail closed (WP-167): declare the "
                 "accepted options (SRC/material/LadrunoOptSpec.h) and refuse any other token, naming "
                 "it; or waive with '// ladruno-lint: unknown-ok <reason>'")
-    for r in sorted(set(UNKNOWN_TOKEN_LEGACY) - seen_legacy):
-        if not (root / r).exists() and not (root / "SRC" / "classTags.h").exists():
+    for r, pinned in sorted(UNKNOWN_TOKEN_LEGACY.items()):
+        have = seen_legacy.get(r, 0)
+        if have >= pinned:
+            continue
+        if r not in seen_legacy and not (root / "SRC" / "classTags.h").exists():
             continue                          # a partial scan root (the self-tests' tmp trees)
-        findings.append(f"unknown-token {r}: listed in UNKNOWN_TOKEN_LEGACY but no longer lets an "
-                        "unknown token through; delete the entry (the list only shrinks)")
+        what = ("delete the entry" if have == 0 else f"lower its count to {have}")
+        findings.append(f"unknown-token {r}: UNKNOWN_TOKEN_LEGACY pins {pinned} finding(s), the file "
+                        f"now has {have}; {what} (the list only shrinks)")
     return findings
 
 

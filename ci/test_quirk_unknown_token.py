@@ -90,11 +90,38 @@ def test_waiver_and_stale_waiver(tmp_path):
     assert len(out) == 1 and "stale unknown-ok" in out[0], out
 
 
-def test_legacy_ratchet_only_shrinks(tmp_path, monkeypatch):
-    monkeypatch.setattr(cq, "UNKNOWN_TOKEN_LEGACY", {PATH: "recorded"})
-    assert _run(tmp_path / "a", {PATH: SILENT}) == []           # recorded offender: tolerated
-    out = _run(tmp_path / "b", {PATH: FIXED})                   # converted: the entry must go
+# The list as WP-167 recorded it. It may only shrink: drop an entry or lower a count.
+WP167_LEGACY = {
+    "SRC/element/ladrunoDispBeamColumn/LadrunoDispBeamColumn2d.cpp": 1,
+    "SRC/element/ladrunoDispBeamColumn/LadrunoDispBeamColumn3d.cpp": 1,
+    "SRC/recorder/EnergyBalanceRecorder.cpp": 1,
+    "SRC/recorder/LadrunoMonitorRecorder.cpp": 2,
+}
+
+
+def test_legacy_list_is_a_shrink_only_ratchet():
+    legacy = cq.UNKNOWN_TOKEN_LEGACY
+    assert len(legacy) <= len(WP167_LEGACY) == 4, "UNKNOWN_TOKEN_LEGACY grew: convert the parser instead"
+    assert set(legacy) <= set(WP167_LEGACY), \
+        f"new UNKNOWN_TOKEN_LEGACY entries: {sorted(set(legacy) - set(WP167_LEGACY))} -- fail closed instead"
+    for path, n in legacy.items():
+        assert isinstance(n, int) and 1 <= n <= WP167_LEGACY[path], (path, n)
+
+
+def test_legacy_entry_tolerates_its_count_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(cq, "UNKNOWN_TOKEN_LEGACY", {PATH: 2})
+    assert _run(tmp_path / "a", {PATH: SILENT}) == []           # 2 recorded findings: tolerated
+    second = SILENT.replace("  return 0;\n}", "  while (OPS_GetNumRemainingInputArgs() > 0) {\n"
+                            "    const char* o = OPS_GetString();\n"
+                            '    if (strcmp(o, "-a") == 0) b = true;\n'
+                            '    else if (strcmp(o, "-b") == 0) b = false;\n  }\n  return 0;\n}')
+    out = _run(tmp_path / "b", {PATH: second})                  # a NEW silent ladder: all reported
+    assert len(out) == 3, out
+    out = _run(tmp_path / "c", {PATH: FIXED})                   # converted: the entry must go
     assert len(out) == 1 and "delete the entry" in out[0], out
+    no_comment = SILENT.replace("    // unknown tokens are ignored (forward-compat)\n", "")
+    out = _run(tmp_path / "d", {PATH: no_comment})              # partly converted: lower the count
+    assert len(out) == 1 and "lower its count to 1" in out[0], out
 
 
 def test_real_tree_is_clean():

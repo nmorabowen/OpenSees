@@ -72,6 +72,7 @@ GLOBS = [
     "SRC/material/nD/LadrunoRCConcrete.*", "SRC/material/nD/LadrunoRCKernel.h",
     "SRC/material/nD/LadrunoRCFiniteStrain.*",
     "SRC/material/LadrunoMaterialStatus.h",
+    "SRC/material/LadrunoOptSpec.h",                  # WP-167 fail-closed option tables
     "SRC/material/nD/LadrunoSANISAND.*",
     "SRC/material/nD/LadrunoSANISAND3D.*",
     "SRC/material/nD/LadrunoSANISANDSasME.cpp",
