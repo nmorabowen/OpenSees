@@ -623,7 +623,6 @@ const Matrix&  TenNodeTetrahedron::getInitialStiff( )
                     for ( q = 0; q < numberNodes; q++ )
                     {
                         Shape[p][q][count] = shp[p][q] ;
-                        std::cout << shp[p][q] << std::endl;
                     }
                 } // end for p
 
