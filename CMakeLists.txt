@@ -417,6 +417,33 @@ endif()
 
 
 find_package(MPI)
+if(WIN32)
+  # Ninja quotes paths with both spaces and parentheses ("Program Files (x86)")
+  # wrongly in Fortran response files. Use 8.3 short names for the MPI includes.
+  foreach(_var MPI_C_INCLUDE_DIRS MPI_CXX_INCLUDE_DIRS MPI_Fortran_INCLUDE_DIRS
+               MPI_C_INCLUDE_PATH MPI_CXX_INCLUDE_PATH MPI_Fortran_INCLUDE_PATH)
+    if(DEFINED ${_var})
+      set(_short_list "")
+      foreach(_p IN LISTS ${_var})
+        set(_short "")
+        if(EXISTS "${_p}")
+          file(TO_NATIVE_PATH "${_p}" _native)
+          execute_process(
+            COMMAND cmd /c for %I in ("${_native}") do @echo %~sI
+            OUTPUT_VARIABLE _short
+            OUTPUT_STRIP_TRAILING_WHITESPACE)
+        endif()
+        if(_short AND EXISTS "${_short}")
+          file(TO_CMAKE_PATH "${_short}" _short)
+          list(APPEND _short_list "${_short}")
+        else()
+          list(APPEND _short_list "${_p}")
+        endif()
+      endforeach()
+      set(${_var} "${_short_list}")
+    endif()
+  endforeach()
+endif()
 find_package(MKL)
 
 #set (LAPACK_FOUND FALSE)
