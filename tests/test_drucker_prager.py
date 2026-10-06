@@ -211,3 +211,74 @@ def test_consistent_tangent_central_difference(case):
       for i in range(6):
          assert abs(fd[i] - an[i]) <= 1.0e-3*scale, (
             f'{case}: C[{i}][{k}] = {an[i]}, central difference {fd[i]}')
+
+
+# ---------------------------------------------------------------------------
+# DruckerPragerPlaneStrain initial tangent: it is the elastic matrix whatever
+# the loading history. A single plane-strain quad is pushed past yield, then
+# one Newton step on the initial stiffness solves a small probe load, so the
+# probe displacement is K_initial^-1 * probe. It must equal the probe
+# displacement of a fresh, never loaded quad.
+# ---------------------------------------------------------------------------
+
+PS_K, PS_G = 27777.78, 9259.26
+PS_RHO, PS_RHO_BAR = 0.398, 0.1
+PS_SY, PS_H = 5.0, 1000.0
+
+
+def plane_strain_probe(nsteps):
+   ops.wipe()
+   ops.model('basic', '-ndm', 2, '-ndf', 2)
+   ops.nDMaterial('DruckerPrager', 1, PS_K, PS_G, PS_SY, PS_RHO, PS_RHO_BAR,
+                  0.0, 0.0, 0.0, 0.0, PS_H, 1.0, 0.0)
+   ops.node(1, 0.0, 0.0)
+   ops.node(2, 1.0, 0.0)
+   ops.node(3, 1.0, 1.0)
+   ops.node(4, 0.0, 1.0)
+   ops.element('quad', 1, 1, 2, 3, 4, 1.0, 'PlaneStrain', 1)
+   ops.fix(1, 1, 1)
+   ops.fix(2, 1, 1)
+   ops.constraints('Plain')
+   ops.numberer('Plain')
+   ops.system('FullGeneral')
+   ops.integrator('LoadControl', 1.0)
+   if nsteps > 0:
+      # shear and compression on the top edge, past first yield
+      ops.timeSeries('Linear', 1)
+      ops.pattern('Plain', 1, 1)
+      ops.load(3, 1.5, -2.0)
+      ops.load(4, 1.5, -2.0)
+      ops.test('NormDispIncr', 1.0e-9, 60, 0)
+      ops.algorithm('Newton')
+      ops.integrator('LoadControl', 1.0/nsteps)
+      ops.analysis('Static', '-noWarnings')
+      for _ in range(nsteps):
+         assert ops.analyze(1) == 0
+      ops.loadConst('-time', 0.0)
+   strain_before = list(ops.eleResponse(1, 'material', 1, 'strain'))
+
+   ops.timeSeries('Linear', 2)
+   ops.pattern('Plain', 2, 2)
+   ops.load(3, 0.02, -0.02)
+   ops.load(4, 0.02, -0.02)
+   pre = [ops.nodeDisp(n, d) for n in (3, 4) for d in (1, 2)]
+   # one solve on the initial stiffness, accepted without iterating
+   ops.algorithm('Newton', '-initial')
+   ops.test('NormDispIncr', 1.0e30, 1, 0)
+   ops.integrator('LoadControl', 1.0)
+   if nsteps == 0:
+      ops.analysis('Static', '-noWarnings')
+   assert ops.analyze(1) == 0
+   post = [ops.nodeDisp(n, d) for n in (3, 4) for d in (1, 2)]
+   return [b - a for a, b in zip(pre, post)], strain_before
+
+
+def test_plane_strain_initial_tangent_is_elastic():
+   du_fresh, _ = run_isolated('plane_strain_probe', 0)
+   du_loaded, strain = run_isolated('plane_strain_probe', 30)
+   assert max(abs(e) for e in strain) > 1.0e-4
+   scale = max(abs(v) for v in du_fresh)
+   assert scale > 1.0e-8
+   for a, b in zip(du_fresh, du_loaded):
+      assert abs(a - b) <= 1.0e-6*scale, (
+         f'initial-stiffness probe: fresh {du_fresh}, after yield {du_loaded}')
