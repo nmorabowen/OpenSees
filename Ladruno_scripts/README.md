@@ -59,6 +59,8 @@ machine, different layout — not a contradiction, and not a Windows recipe.
 | `opensees-msvc-static.profile` | Conan profile used by `build.bat` |
 | `build_inno_installer.ps1` | Wraps `dist\` into `Ladruno_files\*_setup.exe` via `iscc.exe` |
 | `installer.iss` | Inno Setup script (venv-picker wizard) driving the above |
+| `publish_installer.ps1` | Attach `Ladruno_files\*_setup.exe` to an existing `ladruno-v*` release (refuses unless `dist\` is a full 5-target build) |
+| `make_linux_build_info.sh` | Writes `BUILD_INFO.txt` (sha, Python ABI, `ladrunoBuild`) for the Linux artifact/release (CI) |
 
 ### Banner
 | Script | Purpose |
@@ -96,6 +98,17 @@ a `.bat` with any Unix-side tool, check:
 ```bash
 file Ladruno_scripts/build.bat   # must say "with CRLF line terminators"
 ```
+
+## Release recipe (WP-166)
+
+1. Every Zone-A run on `ladruno` uploads artifact `opensees-linux-<sha>`
+   (`opensees.so` + `BUILD_INFO.txt`, 90-day retention).
+2. The maintainer tags `ladruno-v<version>` and pushes the tag; `ladruno_release.yml`
+   builds Linux and creates the release with `ladruno-opensees-linux-<tag>.tar.gz`.
+3. On the Windows build machine: `Ladruno_scriptsuild.bat clean installer`, then
+   `powershell -ExecutionPolicy Bypass -File Ladruno_scripts\publish_installer.ps1 -Tag ladruno-v<version>`.
+
+Agents never create the tag or the release.
 
 ## See also
 
