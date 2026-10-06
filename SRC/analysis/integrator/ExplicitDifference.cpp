@@ -15,379 +15,523 @@
 
 void* OPS_ExplicitDifference(void)
 {
-	TransientIntegrator *theIntegrator = 0;
-	theIntegrator = new ExplicitDifference();
+    TransientIntegrator *theIntegrator = 0;
+    theIntegrator = new ExplicitDifference();
 
-	if (theIntegrator == 0)
-		opserr << "WARNING - out of memory creating ExplicitDifference integrator\n";
+    if (theIntegrator == 0)
+        opserr << "WARNING - out of memory creating ExplicitDifference integrator\n";
 
-	return theIntegrator;
+    return theIntegrator;
 }
 
 
 ExplicitDifference::ExplicitDifference()
-	: TransientIntegrator(INTEGRATOR_TAGS_ExplicitDifference),
-	deltaT(0.0),
-	alphaM(0.0), betaK(0.0), betaKi(0.0), betaKc(0.0),
-	updateCount(0), c2(0.0), c3(0.0),
+    : TransientIntegrator(INTEGRATOR_TAGS_ExplicitDifference),
+    deltaT(0.0),
+    alphaM(0.0), betaK(0.0), betaKi(0.0), betaKc(0.0),
+    updateCount(0), c2(0.0), c3(0.0),
     Ut(0), Utdot(0), Utdotdot(0),
-	Udot(0), Utdotdot1(0), U(0), Utdot1(0)
+    Udot(0), Utdotdot1(0), U(0), Utdot1(0), velSignMem(0), prevUnbal(0), vSignEps(ED_VSIGN_EPS)
 {
 
 }
 
 
 ExplicitDifference::ExplicitDifference(
-	double _alphaM, double _betaK, double _betaKi, double _betaKc)
-	: TransientIntegrator(INTEGRATOR_TAGS_ExplicitDifference),
-	deltaT(0.0),
-	alphaM(_alphaM), betaK(_betaK), betaKi(_betaKi), betaKc(_betaKc),
-	updateCount(0), c2(0.0), c3(0.0),
-	Ut(0), Utdot(0), Utdotdot(0),
-	Udot(0), Utdotdot1(0), U(0), Utdot1(0)
+    double _alphaM, double _betaK, double _betaKi, double _betaKc)
+    : TransientIntegrator(INTEGRATOR_TAGS_ExplicitDifference),
+    deltaT(0.0),
+    alphaM(_alphaM), betaK(_betaK), betaKi(_betaKi), betaKc(_betaKc),
+    updateCount(0), c2(0.0), c3(0.0),
+    Ut(0), Utdot(0), Utdotdot(0),
+    Udot(0), Utdotdot1(0), U(0), Utdot1(0), velSignMem(0), prevUnbal(0), vSignEps(ED_VSIGN_EPS)
 {
-
 }
 
 
 ExplicitDifference::~ExplicitDifference()
 {
-	// clean up the memory created
+    // clean up the memory created
 
-	if (Ut != 0)
-		delete Ut;
-	if (Utdot != 0)
-		delete Utdot;
-	if (Utdotdot != 0)
-		delete Utdotdot;
-	if (Udot != 0)
-		delete Udot;
-	if (Utdotdot1 != 0)
-		delete Utdotdot1;
-	if (U != 0)
-		delete U;
-	if (Utdot1 != 0)
-		delete Utdot1;
-	
+    if (Ut != 0)
+        delete Ut;
+    if (Utdot != 0)
+        delete Utdot;
+    if (Utdotdot != 0)
+        delete Utdotdot;
+    if (Udot != 0)
+        delete Udot;
+    if (Utdotdot1 != 0)
+        delete Utdotdot1;
+    if (U != 0)
+        delete U;
+    if (Utdot1 != 0)
+        delete Utdot1;
+    if (velSignMem != 0)
+        delete velSignMem;
+    if (prevUnbal != 0)
+        delete prevUnbal;
 }
 
 
 int ExplicitDifference::newStep(double _deltaT)
 {
-	updateCount = 0;
+    updateCount = 0;
 
-	deltaT = _deltaT;
+    deltaT = _deltaT;
 
-	if (deltaT <= 0.0)  {
-		opserr << "ExplicitDifference::newStep() - error in variable\n";
-		opserr << "dT = " << deltaT << endln;
-		return -1;
-	}
+    if (deltaT <= 0.0)  {
+        opserr << "ExplicitDifference::newStep() - error in variable\n";
+        opserr << "dT = " << deltaT << endln;
+        return -1;
+    }
 
-	// get a pointer to the AnalysisModel
-	AnalysisModel *theModel = this->getAnalysisModel();
+    // get a pointer to the AnalysisModel
+    AnalysisModel *theModel = this->getAnalysisModel();
 
-	//calculate vel at t+0.5deltaT and U at t+delatT
-	Utdot->addVector(1.0, *Utdotdot, deltaT);
-	Ut->addVector(1.0, *Utdot, deltaT);
+    //calculate vel at t+0.5deltaT and U at t+delatT
+    Utdot->addVector(1.0, *Utdotdot, deltaT);
+    Ut->addVector(1.0, *Utdot, deltaT);
 
-	int size = Utdotdot->Size();
+    int size = Utdotdot->Size();
 
-	if (Ut == 0)  {
-		opserr << "ExplicitDifference::newStep() - domainChange() failed or hasn't been called\n";
-		return -2;
-	}
+    if (Ut == 0)  {
+        opserr << "ExplicitDifference::newStep() - domainChange() failed or hasn't been called\n";
+        return -2;
+    }
 
-	// for leap-frog method Ma=f-ku-cv, on the right side there is no Ma
-	(*Utdotdot) *= 0;
+    // for leap-frog method Ma=f-ku-cv, on the right side there is no Ma
+    (*Utdotdot) *= 0;
 
-	// set the garbage response quantities for the nodes
-	theModel->setVel(*Utdot);
-	theModel->setAccel(*Utdotdot);
-	theModel->setDisp(*Ut);
+    // set the garbage response quantities for the nodes
+    theModel->setVel(*Utdot);
+    theModel->setAccel(*Utdotdot);
+    theModel->setDisp(*Ut);
 
-	// increment the time to t and apply the load
-	double time = theModel->getCurrentDomainTime();
-	time += deltaT;
-	if (theModel->updateDomain(time, deltaT) < 0)  {
-		opserr << "ExplicitDifference::newStep() - failed to update the domain\n";
-		return -3;
-	}
+    // increment the time to t and apply the load
+    double time = theModel->getCurrentDomainTime();
+    time += deltaT;
+    if (theModel->updateDomain(time, deltaT) < 0)  {
+        opserr << "ExplicitDifference::newStep() - failed to update the domain\n";
+        return -3;
+    }
 
-	// set response at t to be that at t+deltaT of previous step
-	(*Utdotdot) = (*Utdotdot1);
-	
-	return 0;
+    // set response at t to be that at t+deltaT of previous step
+    (*Utdotdot) = (*Utdotdot1);
+    
+    return 0;
 }
 
 
 int ExplicitDifference::formEleTangent(FE_Element *theEle)
 {
-	theEle->zeroTangent();
+    theEle->zeroTangent();
 
-	theEle->addMtoTang();
+    theEle->addMtoTang();
 
-	return 0;
+    return 0;
 }
 
 
 int ExplicitDifference::formNodTangent(DOF_Group *theDof)
 {
-	theDof->zeroTangent();
+    theDof->zeroTangent();
 
-	theDof->addMtoTang();
+    theDof->addMtoTang();
 
-	return(0);
+    return(0);
 }
 
 
 int ExplicitDifference::domainChanged()
 {
 
-	AnalysisModel *theModel = this->getAnalysisModel();
-	LinearSOE *theLinSOE = this->getLinearSOE();
-	const Vector &x = theLinSOE->getX();
-	int size = x.Size();
+    AnalysisModel *theModel = this->getAnalysisModel();
+    LinearSOE *theLinSOE = this->getLinearSOE();
+    const Vector &x = theLinSOE->getX();
+    int size = x.Size();
 
 
+    opserr << "ExplicitDifference::domainChanged()" << endln;
 
-	// if damping factors exist set them in the element & node of the domain
-	if (alphaM != 0.0 || betaK != 0.0 || betaKi != 0.0 || betaKc != 0.0)
-		theModel->setRayleighDampingFactors(alphaM, betaK, betaKi, betaKc);
-
-
-	// create the new Vector objects
-	if (Ut == 0 || Ut->Size() != size)  {
-
-		if (Ut != 0)
-			delete Ut;
-		if (Utdot != 0)
-			delete Utdot;
-		if (Utdotdot != 0)
-			delete Utdotdot;
-		if (Udot != 0)
-			delete Udot;
-		if (Utdotdot1 != 0)
-			delete Utdotdot1;
-		if (U != 0)
-			delete U;
-		if (Utdot1 != 0)
-			delete Utdot1;
+    // if damping factors exist set them in the element & node of the domain
+    if (alphaM != 0.0 || betaK != 0.0 || betaKi != 0.0 || betaKc != 0.0)
+        theModel->setRayleighDampingFactors(alphaM, betaK, betaKi, betaKc);
 
 
-		// create the new
+    // create the new Vector objects
+    if (Ut == 0 || Ut->Size() != size)  {
 
-		Ut = new Vector(size);
-		Utdot = new Vector(size);
-		Utdotdot = new Vector(size);
-		Udot = new Vector(size);
-		U = new Vector(size);
-		Utdotdot1 = new Vector(size);
-		Utdot1 = new Vector(size);
-	
+        if (Ut != 0)
+            delete Ut;
+        if (Utdot != 0)
+            delete Utdot;
+        if (Utdotdot != 0)
+            delete Utdotdot;
+        if (Udot != 0)
+            delete Udot;
+        if (Utdotdot1 != 0)
+            delete Utdotdot1;
+        if (U != 0)
+            delete U;
+        if (Utdot1 != 0)
+            delete Utdot1;
+        if (velSignMem != 0)
+            delete velSignMem;
+        if (prevUnbal != 0)
+            delete prevUnbal;
 
-		// check we obtained the new
-		if ( Ut == 0 || Ut->Size() != size ||
-			Utdot == 0 || Utdot->Size() != size ||
-			Utdotdot == 0 || Utdotdot->Size() != size ||
-			Udot == 0 || Udot->Size() != size ||
-			U == 0 || U->Size() != size ||
-			Utdotdot1 == 0 || Utdotdot1->Size() != size ||
-			Utdot1 == 0 || Utdot1->Size() != size 
-		)  {
+        // create the new
 
-			opserr << "ExplicitDifference::domainChanged - ran out of memory\n";
+        Ut = new Vector(size);
+        Utdot = new Vector(size);
+        Utdotdot = new Vector(size);
+        Udot = new Vector(size);
+        U = new Vector(size);
+        Utdotdot1 = new Vector(size);
+        Utdot1 = new Vector(size);
+        velSignMem = new Vector(size);
+        prevUnbal = new Vector(size);
 
-			// delete the old
-	
-			if (Ut != 0)
-				delete Ut;
-			if (Utdot != 0)
-				delete Utdot;
-			if (Utdotdot != 0)
-				delete Utdotdot;
-			if (Udot != 0)
-				delete Udot;
-			if (U != 0)
-				delete U;
-			if (Utdotdot1 != 0)
-				delete Utdotdot1;
-			if (Utdot1 != 0)
-				delete Utdot1;
-		
-	
+        // check we obtained the new
+        if ( Ut == 0 || Ut->Size() != size ||
+            Utdot == 0 || Utdot->Size() != size ||
+            Utdotdot == 0 || Utdotdot->Size() != size ||
+            Udot == 0 || Udot->Size() != size ||
+            U == 0 || U->Size() != size ||
+            Utdotdot1 == 0 || Utdotdot1->Size() != size ||
+            Utdot1 == 0 || Utdot1->Size() != size  || velSignMem->Size() != size || prevUnbal->Size() != size
+        )  {
 
-			Ut = 0; Utdot = 0; Utdotdot = 0;
-			Udot = 0; U = 0, Utdotdot1 = 0;
-			Utdot1 = 0; 
-		
-			return -1;
-		}
-	}
+            opserr << "ExplicitDifference::domainChanged - ran out of memory\n";
 
-	// now go through and populate U, Udot and Udotdot by iterating through
-	// the DOF_Groups and getting the last committed velocity and accel
-	DOF_GrpIter &theDOFs = theModel->getDOFs();
-	DOF_Group *dofPtr;
-	while ((dofPtr = theDOFs()) != 0)  {
+            // delete the old
+    
+            if (Ut != 0)
+                delete Ut;
+            if (Utdot != 0)
+                delete Utdot;
+            if (Utdotdot != 0)
+                delete Utdotdot;
+            if (Udot != 0)
+                delete Udot;
+            if (U != 0)
+                delete U;
+            if (Utdotdot1 != 0)
+                delete Utdotdot1;
+            if (Utdot1 != 0)
+                delete Utdot1;
+            if (velSignMem != 0)
+                delete velSignMem;
+          if (prevUnbal != 0)
+                delete prevUnbal;
+    
 
-		const ID &id = dofPtr->getID();
-		int idSize = id.Size();
+            Ut = 0; Utdot = 0; Utdotdot = 0;
+            Udot = 0; U = 0, Utdotdot1 = 0;
+            Utdot1 = 0; velSignMem = 0; prevUnbal = 0;
+        
+            return -1;
+        }
+    }
 
-		int i;
-		const Vector &disp = dofPtr->getCommittedDisp();
-		for (i = 0; i < idSize; i++)  {
-			int loc = id(i);
-			if (loc >= 0)  {			
-				(*Ut)(loc) = disp(i);
-			}
-		}
+    // now go through and populate U, Udot and Udotdot by iterating through
+    // the DOF_Groups and getting the last committed velocity and accel
+    DOF_GrpIter &theDOFs = theModel->getDOFs();
+    DOF_Group *dofPtr;
+    while ((dofPtr = theDOFs()) != 0)  {
 
-		const Vector &vel = dofPtr->getCommittedVel();
-		for (i = 0; i < idSize; i++)  {
-			int loc = id(i);
-			if (loc >= 0)  {
-				(*Utdot)(loc) = vel(i);
-				(*Utdot1)(loc) = vel(i);
-			}
-		}
+        const ID &id = dofPtr->getID();
+        int idSize = id.Size();
 
-		const Vector &accel = dofPtr->getCommittedAccel();
-		for (i = 0; i < idSize; i++)  {
-			int loc = id(i);
-			if (loc >= 0)  {
-				(*Utdotdot)(loc) = accel(i);
-				(*Utdotdot1)(loc) = accel(i);
-			}
-		}
-	}
+        int i;
+        const Vector &disp = dofPtr->getCommittedDisp();
+        for (i = 0; i < idSize; i++)  {
+            int loc = id(i);
+            if (loc >= 0)  {            
+                (*Ut)(loc) = disp(i);
+            }
+        }
 
-	opserr << "WARNING: ExplicitDifference::domainChanged() - assuming Ut-1 = Ut\n";
+        const Vector &vel = dofPtr->getCommittedVel();
+        for (i = 0; i < idSize; i++)  {
+            int loc = id(i);
+            if (loc >= 0)  {
+                (*Utdot)(loc) = vel(i);
+                (*Utdot1)(loc) = vel(i);
+            }
+        }
 
-	return 0;
+        const Vector &accel = dofPtr->getCommittedAccel();
+        for (i = 0; i < idSize; i++)  {
+            int loc = id(i);
+            if (loc >= 0)  {
+                (*Utdotdot)(loc) = accel(i);
+                (*Utdotdot1)(loc) = accel(i);
+            }
+        }
+    }
+
+    velSignMem->Zero();   // no previous sign yet
+
+    opserr << "WARNING: ExplicitDifference::domainChanged() - assuming Ut-1 = Ut\n";
+
+    return 0;
 }
 
 
+// int 
+// ExplicitDifference::formNodalUnbalance(void)
+// {
+//     // opserr << "my formNodalUnbalance" << endln;
+
+//     const double alpha_flac = 0.8;
+
+//     // loop through the DOF_Groups and add the unbalance
+//     DOF_GrpIter &theDOFs = (this->getAnalysisModel())->getDOFs();
+//     DOF_Group *dofPtr;
+//     int res = 0;
+
+//     static Vector Fdamping(10);
+
+//     while ((dofPtr = theDOFs()) != 0) { 
+
+//         const Vector &F_unbalanced = dofPtr->getUnbalance(this);
+//         const Vector &Vtrial = dofPtr->getTrialVel();
+//         // const Vector &Vtrial = dofPtr->getCommittedVel();
+
+//         Fdamping.resize(F_unbalanced.Size());
+//         Fdamping.Zero();
+
+//         for (int i = 0; i < F_unbalanced.Size(); ++i)
+//         {
+//             double f_unbal_i = F_unbalanced(i);
+//             double v_i = Vtrial(i);
+
+        
+//             // Compute damping force: alpha_flac * |f_unbal| * sign(v)
+//             double sign_v = (v_i > 0.0) ? 1.0 : ((v_i < 0.0) ? -1.0 : 0.0);
+//             // double sign_v = (v_i > 0.0) ? -1.0 : ((v_i < 0.0) ? 1.0 : 0.0);
+//             Fdamping(i) = -alpha_flac * std::abs(f_unbal_i) * sign_v;
+//             // F_unbalanced += Fdamping(i);
+//             Fdamping(i) += F_unbalanced(i);
+//         }
+
+//         LinearSOE *theLinSOE = this->getLinearSOE();
+//         if (theLinSOE->addB(Fdamping, dofPtr->getID()) <0) {
+//             opserr << "WARNING IncrementalIntegrator::formNodalUnbalance -";
+//             opserr << " failed in addB for ID " << dofPtr->getID();
+//             res = -2;
+//         }
+//     }
+    
+//     return res;
+// }
+
+int
+ExplicitDifference::formNodalUnbalance(void)
+{
+    const double alpha_flac = 0.59;
+    const bool useCombined = true; 
+    
+    DOF_GrpIter &theDOFs = (this->getAnalysisModel())->getDOFs();
+    DOF_Group *dofPtr;
+    int res = 0;
+
+    static Vector Fdamping(10);
+
+    while ((dofPtr = theDOFs()) != 0) {
+
+        const Vector &F_unbalanced = dofPtr->getUnbalance(this);
+        const Vector &Vtrial       = dofPtr->getTrialVel();
+        const ID     &id           = dofPtr->getID();     // global equation numbers  // NEW
+
+        Fdamping.resize(F_unbalanced.Size());
+        Fdamping.Zero();
+
+        for (int i = 0; i < F_unbalanced.Size(); ++i) {
+
+            // const double f_unbal_i = F_unbalanced(i);
+            // const double v_i       = Vtrial(i);
+
+            // // --- velocity sign memory (per global equation) ------------------ // NEW
+            // double s = 0.0;
+            // const int eq = (i < id.Size()) ? id(i) : -1;  // global equation index
+            // if (eq >= 0 && eq < velSignMem->Size()) {
+            //     s = (*velSignMem)(eq);                       // last stored sign (-1,0,+1)
+            //     if (std::abs(v_i) > vSignEps) {
+            //         s = (v_i > 0.0) ? 1.0 : -1.0;        // update sign if outside deadband
+            //         (*velSignMem)(eq) = s;                   // persist it
+            //     }
+            // } else {
+            //     // constrained or out-of-range DOF → no damping (s = 0)
+            // }
+
+            // // Local non-viscous damping:  Fd = -alpha * |Funbal| * sign(v_mem)
+            // const double Fd_i = -alpha_flac * std::abs(f_unbal_i) * s;
+
+            // // Accumulate RHS contribution for this DOF_Group entry:
+            // Fdamping(i) = f_unbal_i + Fd_i;              // i.e., Funbal - alpha*|Funbal|*sign(v)
+
+            const int eq = id(i);
+            double v = Vtrial(i);
+            double F = F_unbalanced(i);
+
+            // --- velocity sign with memory + deadband
+            double s_v = (*velSignMem)(eq);
+            if (std::abs(v) > vSignEps) {
+                s_v = (v > 0.0) ? 1.0 : -1.0;
+                (*velSignMem)(eq) = s_v;
+            }
+
+            // --- "combined" part: sign of dF/dt ~ sign(ΔF)
+            double dF = F - (*prevUnbal)(eq);
+            double s_fdot = (dF > 0.0) ? 1.0 : ((dF < 0.0) ? -1.0 : 0.0);
+
+            // --- choose damping
+            double Fd;
+            if (useCombined) {
+                Fd = 0.5 * alpha_flac * std::abs(F) * (s_fdot - s_v);
+            } else {
+                Fd = -alpha_flac * std::abs(F) * s_v;
+            }
+            (*prevUnbal)(eq) = F;
+
+            // add to RHS: Funbal + Fd
+            Fdamping(i) = F + Fd;
+        }
+
+        LinearSOE *theLinSOE = this->getLinearSOE();
+        if (theLinSOE->addB(Fdamping, id) < 0) {
+            opserr << "WARNING ExplicitDifference::formNodalUnbalance -"
+                   << " failed in addB for ID " << id;
+            res = -2;
+        }
+    }
+
+    return res;
+}
+
 int ExplicitDifference::update(const Vector &Udotdot)
 {
-	updateCount++;
-	if (updateCount > 2)  {
-		opserr << "WARNING ExplicitDifference::update() - called more than once -";
-		opserr << " ExplicitDifference integration scheme requires a LINEAR solution algorithm\n";
-		return -1;
-	}
+    updateCount++;
+    if (updateCount > 2)  {
+        opserr << "WARNING ExplicitDifference::update() - called more than once -";
+        opserr << " ExplicitDifference integration scheme requires a LINEAR solution algorithm\n";
+        return -1;
+    }
 
-	AnalysisModel *theModel = this->getAnalysisModel();
-	if (theModel == 0)  {
-		opserr << "WARNING ExplicitDifference::update() - no souAnalysisModel set\n";
-		return -2;
-	}
+    AnalysisModel *theModel = this->getAnalysisModel();
+    if (theModel == 0)  {
+        opserr << "WARNING ExplicitDifference::update() - no souAnalysisModel set\n";
+        return -2;
+    }
 
-	// check domainChanged() has been called, i.e. Ut will not be zero
-	if (Ut == 0)  {
-		opserr << "WARNING ExplicitDifference::update() - domainChange() failed or not called\n";
-		return -3;
-	}
+    // check domainChanged() has been called, i.e. Ut will not be zero
+    if (Ut == 0)  {
+        opserr << "WARNING ExplicitDifference::update() - domainChange() failed or not called\n";
+        return -3;
+    }
 
-	// check Udotdot is of correct size
-	if (Udotdot.Size() != Utdotdot->Size()) {
-		opserr << "WARNING ExplicitDifference::update() - Vectors of incompatible size ";
-		opserr << " expecting " << Utdotdot->Size() << " obtained " << Udotdot.Size() << endln;
-		return -4;
-	}
+    // check Udotdot is of correct size
+    if (Udotdot.Size() != Utdotdot->Size()) {
+        opserr << "WARNING ExplicitDifference::update() - Vectors of incompatible size ";
+        opserr << " expecting " << Utdotdot->Size() << " obtained " << Udotdot.Size() << endln;
+        return -4;
+    }
 
-	int size = Udotdot.Size();
-
-
-	// determine the response at t+deltaT
-	double halfT = deltaT *0.125;
-
-	Utdotdot1->addVector(0.0, Udotdot, 3.0);
-	Utdotdot1->addVector(1.0, *Utdotdot, 1.0);
-
-	//Velosity to output, because Utdot is velosity is defined at t+0.5deltaT
-	Utdot1->addVector(0.0, *Utdot, 1.0);
-	Utdot1->addVector(1.0, *Utdotdot1, halfT);
+    int size = Udotdot.Size();
 
 
-	theModel->setResponse(*Ut, *Utdot1, Udotdot);
+    // determine the response at t+deltaT
+    double halfT = deltaT *0.125;
 
-	if (theModel->updateDomain() < 0)  {
-		opserr << "ExplicitDifference::update() - failed to update the domain\n";
-		return -5;
-	}
+    Utdotdot1->addVector(0.0, Udotdot, 3.0);
+    Utdotdot1->addVector(1.0, *Utdotdot, 1.0);
+
+    //Velosity to output, because Utdot is velosity is defined at t+0.5deltaT
+    Utdot1->addVector(0.0, *Utdot, 1.0);
+    Utdot1->addVector(1.0, *Utdotdot1, halfT);
 
 
+    theModel->setResponse(*Ut, *Utdot1, Udotdot);
 
-	// set response at t to be that at t+deltaT of previous step
-
-	(*Utdotdot) = Udotdot;
-	(*Utdotdot1) = Udotdot;
+    if (theModel->updateDomain() < 0)  {
+        opserr << "ExplicitDifference::update() - failed to update the domain\n";
+        return -5;
+    }
 
 
 
+    // set response at t to be that at t+deltaT of previous step
 
-	return 0;
+    (*Utdotdot) = Udotdot;
+    (*Utdotdot1) = Udotdot;
+
+
+
+
+    return 0;
 }
 
 
 int ExplicitDifference::commit(void)
 {
-	AnalysisModel *theModel = this->getAnalysisModel();
-	if (theModel == 0) {
-		opserr << "WARNING ExplicitDifference::commit() - no AnalysisModel set\n";
-		return -1;
-	}
+    AnalysisModel *theModel = this->getAnalysisModel();
+    if (theModel == 0) {
+        opserr << "WARNING ExplicitDifference::commit() - no AnalysisModel set\n";
+        return -1;
+    }
 
-	return theModel->commitDomain();
+    return theModel->commitDomain();
 }
 
 
 int ExplicitDifference::sendSelf(int cTag, Channel &theChannel)
 {
-	Vector data(4);
-	data(0) = alphaM;
-	data(1) = betaK;
-	data(2) = betaKi;
-	data(3) = betaKc;
+    Vector data(4);
+    data(0) = alphaM;
+    data(1) = betaK;
+    data(2) = betaKi;
+    data(3) = betaKc;
 
-	if (theChannel.sendVector(this->getDbTag(), cTag, data) < 0)  {
-		opserr << "WARNING ExplicitDifference::sendSelf() - could not send data\n";
-		return -1;
-	}
+    if (theChannel.sendVector(this->getDbTag(), cTag, data) < 0)  {
+        opserr << "WARNING ExplicitDifference::sendSelf() - could not send data\n";
+        return -1;
+    }
 
-	return 0;
+    return 0;
 }
 
 
 int ExplicitDifference::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 {
-	Vector data(4);
-	if (theChannel.recvVector(this->getDbTag(), cTag, data) < 0)  {
-		opserr << "WARNING ExplicitDifference::recvSelf() - could not receive data\n";
-		return -1;
-	}
+    Vector data(4);
+    if (theChannel.recvVector(this->getDbTag(), cTag, data) < 0)  {
+        opserr << "WARNING ExplicitDifference::recvSelf() - could not receive data\n";
+        return -1;
+    }
 
-	alphaM = data(0);
-	betaK = data(1);
-	betaKi = data(2);
-	betaKc = data(3);
+    alphaM = data(0);
+    betaK = data(1);
+    betaKi = data(2);
+    betaKc = data(3);
 
-	return 0;
+    return 0;
 }
 
 
 void ExplicitDifference::Print(OPS_Stream &s, int flag)
 {
-	AnalysisModel *theModel = this->getAnalysisModel();
-	if (theModel != 0) {
-		double currentTime = theModel->getCurrentDomainTime();
-		s << "ExplicitDifference - currentTime: " << currentTime << endln;
-		s << "  Rayleigh Damping - alphaM: " << alphaM << "  betaK: " << betaK;
-		s << "  betaKi: " << betaKi << "  betaKc: " << betaKc << endln;
-	}
-	else
-		s << "ExplicitDifference - no associated AnalysisModel\n";
+    AnalysisModel *theModel = this->getAnalysisModel();
+    if (theModel != 0) {
+        double currentTime = theModel->getCurrentDomainTime();
+        s << "ExplicitDifference - currentTime: " << currentTime << endln;
+        s << "  Rayleigh Damping - alphaM: " << alphaM << "  betaK: " << betaK;
+        s << "  betaKi: " << betaKi << "  betaKc: " << betaKc << endln;
+    }
+    else
+        s << "ExplicitDifference - no associated AnalysisModel\n";
 }
 
 
@@ -396,6 +540,6 @@ void ExplicitDifference::Print(OPS_Stream &s, int flag)
 const Vector &
 ExplicitDifference::getVel()
 {
-	return *Utdot;
+    return *Utdot;
 }
 

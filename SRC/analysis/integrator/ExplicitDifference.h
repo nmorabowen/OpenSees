@@ -9,6 +9,8 @@ class DOF_Group;
 class FE_Element;
 class Vector;
 
+#define ED_VSIGN_EPS 1e-4
+
 class ExplicitDifference : public TransientIntegrator
 {
 public:
@@ -30,6 +32,8 @@ public:
 
 	int commit(void);
 
+	int formNodalUnbalance(void);
+
 	virtual int sendSelf(int commitTag, Channel &theChannel);
 	virtual int recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBroker);
 
@@ -50,6 +54,10 @@ private:
 	Vector *U, *Ut;
 	Vector  *Utdotdot, *Utdotdot1;
 	Vector *Udot, *Utdot, *Utdot1;
+
+    Vector *velSignMem;   // size = number of global equations; entries in {-1,0,+1}
+    Vector *prevUnbal;    // Previous step's unbalance size = number of global equations; entries in {-1,0,+1}
+    double vSignEps;     // deadband for |v| below which we keep the last sign
 
 };
 

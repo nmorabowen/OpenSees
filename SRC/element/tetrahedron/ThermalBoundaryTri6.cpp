@@ -804,13 +804,9 @@ ThermalBoundaryTri6::setResponse(const char **argv, int argc, OPS_Stream &output
 
     if (strcmp(argv[0], "force") == 0 || strcmp(argv[0], "forces") == 0)
     {
-        for (int i = 1; i <= 10; i++)
+        for (int i = 1; i <= 6; i++)
         {
-            sprintf(outputData, "P1_%d", i);
-            output.tag("ResponseType", outputData);
-            sprintf(outputData, "P2_%d", i);
-            output.tag("ResponseType", outputData);
-            sprintf(outputData, "P3_%d", i);
+            sprintf(outputData, "F%d", i);
             output.tag("ResponseType", outputData);
         }
         theResponse = new ElementResponse(this, 1, resid);
@@ -947,7 +943,7 @@ ThermalBoundaryTri6::shp3d( const double zeta[3], double &xsj, double shp[3][Num
     double J1 = Jy1 * Jz2 - Jy2 * Jz1;
     double J2 = Jx2 * Jz1 - Jx1 * Jz2;
     double J3 = Jx1 * Jy2 - Jx2 * Jy1;
-    double Jdet = sqrt( J1*J1 + J2*J2 + J3*J3 ) / 2.0 ;
+    double Jdet = sqrt( J1*J1 + J2*J2 + J3*J3 ) ;
     if (Jdet <= 0)
     {
         opserr << "Jdet = " << Jdet << endln;

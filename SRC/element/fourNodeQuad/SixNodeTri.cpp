@@ -41,16 +41,18 @@
 #include <ElementalLoad.h>
 #include <elementAPI.h>
 
+#include <cmath>
+
 void* OPS_SixNodeTri()
 {
-    int ndm = OPS_GetNDM();
-    int ndf = OPS_GetNDF();
+    // int ndm = OPS_GetNDM();
+    // int ndf = OPS_GetNDF();
 
-    if (ndm != 2 || ndf != 2) {
-	opserr << "WARNING -- model dimensions and/or nodal DOF not compatible with quad element\n";
-	return 0;
-    }
-
+	//    if (ndm != 2 || ndf != 2) {
+	// opserr << "WARNING -- model dimensions and/or nodal DOF not compatible with quad element\n";
+	// return 0;
+	//    }
+	//
     if (OPS_GetNumRemainingInputArgs() < 10) {
 	opserr << "WARNING insufficient arguments\n";
 	opserr << "Want: element SixNodeTri eleTag? iNode? jNode? kNode? lNode? nNode5 mNode6 thk? type? matTag? <pressure? rho? b1? b2?>\n";
@@ -285,6 +287,7 @@ SixNodeTri::getNumDOF()
 void
 SixNodeTri::setDomain(Domain *theDomain)
 {
+
 	// Check Domain is not null - invoked when object removed from a domain
     if (theDomain == 0) {
 	theNodes[0] = 0;
@@ -327,9 +330,6 @@ SixNodeTri::setDomain(Domain *theDomain)
 
     if (dofNd1 != 2 || dofNd2 != 2 || dofNd3 != 2 || dofNd4 != 2 ||
 		dofNd5 != 2 || dofNd6 != 2) {
-
-	//opserr << "FATAL ERROR SixNodeTri (tag: %d), has differing number of DOFs at its nodes",
-	//	this->getTag());
 
 	return;
     }
@@ -591,6 +591,46 @@ SixNodeTri::getMass()
 			K(ia,ia) += Nrho;
 		}
 	}
+
+  //   // Fix negative masses  HRZ rescaling Hinton, E., Rock, T., and Zienkiewicz, O.C. (1976). "A note on mass lumping and related processes in the finite element method." Earthquake Engineering & Structural Dynamics, 4(3), 245-249.
+  //   double total_mass = 0.0;
+  //   double abs_sum = 0.0;
+    
+  //   // Calculate total mass and absolute sum
+  //   for (int i = 0; i < 2*nnodes; i += 2) {
+  //       total_mass += K(i,i);
+  //       abs_sum += fabs(K(i,i));
+  //   }
+    
+  //   // Redistribute to ensure positive masses
+  // //   if (abs_sum > 0) {
+  // //       for (int i = 0; i < 2*nnodes; i += 2) {
+  // //           double new_mass = fabs(K(i,i)) * total_mass / abs_sum;
+  // //           K(i,i) = new_mass;
+  // //           K(i+1,i+1) = new_mass;  // same mass for y-direction
+  // //       }
+  // //   }
+
+  //   // Abell mass distro
+
+  //   // Corner nodes get 1/12
+  //   K(0, 0) = total_mass / 12;
+  //   K(1, 1) = total_mass / 12;
+  //   K(2, 2) = total_mass / 12;
+  //   K(3, 3) = total_mass / 12;
+  //   K(4, 4) = total_mass / 12;
+  //   K(5, 5) = total_mass / 12;
+
+  //   // Mid nodes get 1/4
+  //   K(6, 6) = total_mass / 4;
+  //   K(7, 7) = total_mass / 4;
+  //   K(8, 8) = total_mass / 4;
+  //   K(9, 9) = total_mass / 4;
+  //   K(10, 10) = total_mass / 4;
+  //   K(11, 11) = total_mass / 4;
+    
+
+	// // opserr << "M = " << K << endln;
 
 	return K;
 }
