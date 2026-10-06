@@ -49,6 +49,10 @@
 #include <Node.h>
 #include <stdlib.h>
 
+#include <cstddef>
+#include <unordered_map>
+#include <vector>
+
 
 ParallelNumberer::ParallelNumberer(int dTag, int numSub, Channel **theC) 
   :DOF_Numberer(NUMBERER_TAG_ParallelNumberer), 
@@ -108,6 +112,149 @@ ParallelNumberer::setChannels(int nChannels, Channel **theC)
   return 0;
 }
 
+
+
+namespace {
+
+// Maps a reference tag (the node tag of a DOF_Group) to its position in the
+// vertexRefs list in O(1), replacing the linear ID::getLocation() search of
+// mergeSubGraph(). Node tags are usually close to contiguous, so a direct
+// address table is used; if the tags turn out to be much sparser than the
+// number of vertices the table is replaced by a hash map. Negative reference
+// tags (DOF_Groups without a node) are always kept in the hash map. The first
+// position recorded for a tag is kept, as getLocation() returns the first
+// match.
+class RefTagIndex
+{
+ public:
+  explicit RefTagIndex(std::size_t expectedVertices)
+    :expected(expectedVertices > 0 ? expectedVertices : 1), count(0),
+     useHash(false)
+  {}
+
+  int find(int ref) const {
+    if (ref >= 0 && !useHash) {
+      if (static_cast<std::size_t>(ref) < dense.size())
+	return dense[ref];
+      return -1;
+    }
+    std::unordered_map<int, int>::const_iterator it = sparse.find(ref);
+    return (it == sparse.end()) ? -1 : it->second;
+  }
+
+  void insert(int ref, int loc) {
+    count++;
+    if (ref < 0 || useHash) {
+      sparse.insert(std::make_pair(ref, loc));
+      return;
+    }
+    std::size_t need = static_cast<std::size_t>(ref) + 1;
+    if (need > dense.size()) {
+      std::size_t budget = 4 * (expected > count ? expected : count);
+      if (need > budget && need > 1024) {
+	// sparse tag space: move the table into the hash map
+	useHash = true;
+	sparse.reserve(2 * expected);
+	for (std::size_t t = 0; t < dense.size(); t++)
+	  if (dense[t] >= 0)
+	    sparse.insert(std::make_pair(static_cast<int>(t), dense[t]));
+	std::vector<int>().swap(dense);
+	sparse.insert(std::make_pair(ref, loc));
+	return;
+      }
+      std::size_t newSize = dense.empty() ? 1024 : dense.size();
+      while (newSize < need)
+	newSize *= 2;
+      dense.resize(newSize, -1);
+    }
+    if (dense[ref] < 0)
+      dense[ref] = loc;
+  }
+
+ private:
+  std::vector<int> dense;
+  std::unordered_map<int, int> sparse;
+  std::size_t expected;
+  std::size_t count;
+  bool useHash;
+};
+
+// Same merge as ParallelNumberer::mergeSubGraph(): the vertices of the
+// subgraph are visited in the same order, new merged vertices get the same
+// tags in the same order and the edges are added in the same order, so the
+// merged graph is identical. Only the searches differ: the reference tag
+// lookup uses the RefTagIndex and the subgraph-to-merged tag lookup of the
+// edge pass uses a hash map filled during the vertex pass, instead of linear
+// searches of vertexRefs and theSubdomainMap, which made the merge
+// quadratic in the number of vertices.
+void
+mergeSubGraphIndexed(Graph &theGraph, Graph &theSubGraph, ID &vertexTags,
+		     ID &vertexRefs, ID &theSubdomainMap, RefTagIndex &refIndex)
+{
+  Vertex *subVertexPtr;
+  VertexIter &theSubGraphIter1 = theSubGraph.getVertices();
+  int count = 0;
+  int numVertex = theGraph.getNumVertex();
+  int numVertexSub = theSubGraph.getNumVertex();
+
+  std::unordered_map<int, int> subToMerged;
+  subToMerged.reserve(2 * static_cast<std::size_t>(numVertexSub));
+
+  while ((subVertexPtr = theSubGraphIter1()) != 0) {
+    int vertexTagSub = subVertexPtr->getTag();
+    int vertexTagRef = subVertexPtr->getRef();
+    int loc = refIndex.find(vertexTagRef);
+
+    // see ParallelNumberer::mergeSubGraph(): DOF_Groups without a node
+    // cannot be matched by reference tag
+    if (vertexTagRef < 0 && loc >= 0) {
+      opserr << "FATAL ParallelNumberer::numberDOF() - DOF_Group " << vertexTagSub
+	     << " has no node (reference tag " << vertexTagRef << "), as for the"
+	     << " Lagrange multipliers of constraints Lagrange; such DOF_Groups"
+	     << " cannot be matched across processes. Use constraints"
+	     << " Transformation, Penalty or Plain with a parallel numberer.\n";
+      exit(-1);
+    }
+
+    int vertexTagMerged;
+    if (loc < 0) {
+      vertexTagMerged = theGraph.getFreeTag();
+      vertexTags[numVertex] = vertexTagMerged;
+      vertexRefs[numVertex] = vertexTagRef;
+      Vertex *newVertex = new Vertex(vertexTagMerged, vertexTagRef,
+				     subVertexPtr->getWeight(),
+				     subVertexPtr->getColor());
+      theGraph.addVertex(newVertex);
+      refIndex.insert(vertexTagRef, numVertex);
+      numVertex++;
+    } else
+      vertexTagMerged = vertexTags[loc];
+
+    theSubdomainMap[count] = vertexTagSub;
+    theSubdomainMap[count+numVertexSub] = vertexTagMerged;
+    subToMerged[vertexTagSub] = vertexTagMerged;
+    count++;
+  }
+
+  VertexIter &theSubGraphIter2 = theSubGraph.getVertices();
+  while ((subVertexPtr = theSubGraphIter2()) != 0) {
+    int vertexTagMerged = subToMerged[subVertexPtr->getTag()];
+    const ID &adjacency = subVertexPtr->getAdjacency();
+    for (int i=0; i<adjacency.Size(); i++) {
+      std::unordered_map<int, int>::const_iterator it =
+	subToMerged.find(adjacency(i));
+      if (it == subToMerged.end()) {
+	opserr << "FATAL ParallelNumberer::numberDOF() - subdomain graph vertex "
+	       << subVertexPtr->getTag() << " is adjacent to unknown vertex "
+	       << adjacency(i) << endln;
+	exit(-1);
+      }
+      theGraph.addEdge(vertexTagMerged, it->second);
+    }
+  }
+}
+
+}  // namespace
 
 // int numberDOF(void)
 // The ParallelNumberer sitting on P0, collects each partition graph from P1 through Pn-1, 
@@ -184,12 +331,15 @@ ParallelNumberer::numberDOF(int lastDOF)
 
     ID vertexTags(numVertex);
     ID vertexRefs(numVertex);
+    RefTagIndex refIndex(static_cast<std::size_t>(numVertex) *
+			 static_cast<std::size_t>(numChannels + 1));
     Vertex *vertexPtr;
     int loc = 0;
     VertexIter &theVertices = theGraph.getVertices();
     while ((vertexPtr = theVertices()) != 0) {
       vertexTags[loc] = vertexPtr->getTag();
       vertexRefs[loc] = vertexPtr->getRef();
+      refIndex.insert(vertexPtr->getRef(), loc);
       loc++;
     }
     
@@ -209,7 +359,8 @@ ParallelNumberer::numberDOF(int lastDOF)
 
       theSubdomainIDs[j] = new ID(theSubGraph->getNumVertex()*2);
 
-      this->mergeSubGraph(theGraph, *theSubGraph, vertexTags, vertexRefs, *theSubdomainIDs[j]);
+      mergeSubGraphIndexed(theGraph, *theSubGraph, vertexTags, vertexRefs,
+			   *theSubdomainIDs[j], refIndex);
 
       delete theSubGraph;
     }
@@ -228,7 +379,13 @@ ParallelNumberer::numberDOF(int lastDOF)
 
     } else {
 
-      // assign numbers based on the subdomains
+      // assign numbers based on the subdomains. A vertex is skipped if it
+      // has already been ordered. The flags give the same result as the
+      // former search of theOrderedRefs: as that ID is zero-filled, the
+      // vertex with tag 0 always counted as ordered and was left in the
+      // last, zero-filled position. That order is kept.
+      std::vector<char> ordered(static_cast<std::size_t>(theGraph.getFreeTag()) + 1, 0);
+      ordered[0] = 1;
 
       int loc = 0;
       for (int l=0; l<numChannels; l++) {
@@ -237,18 +394,21 @@ ParallelNumberer::numberDOF(int lastDOF)
 
 	for (int i=0; i<numVertexSubdomain; i++) {
 	  int vertexTagMerged = theSubdomain(i+numVertexSubdomain);
-	  //  int refTag = vertexRefs[vertexTags.getLocation(vertexTagMerged)];
-	  if (theOrderedRefs->getLocation(vertexTagMerged) == -1)
+	  if (ordered[vertexTagMerged] == 0) {
+	    ordered[vertexTagMerged] = 1;
 	    (*theOrderedRefs)[loc++] = vertexTagMerged;
+	  }
 	}
       }
 
       // now order those not yet ordered in p0
       for (int j=0; j<numVertexP0; j++) {
 	int refTagP0 = vertexTags[j];
-	if (theOrderedRefs->getLocation(refTagP0) == -1)
+	if (ordered[refTagP0] == 0) {
+	  ordered[refTagP0] = 1;
 	  (*theOrderedRefs)[loc++] = refTagP0;
-      }	
+	}
+      }
     }
 
     int count = 0;
@@ -310,6 +470,17 @@ ParallelNumberer::numberDOF(int lastDOF)
 
   // iterate through the DOFs one last time setting any -4 values
   // iterate through  the DOFs second time setting -3 values
+  // the MP_Constraints are indexed by constrained node in one pass; each
+  // list keeps the getMPs() order, so a node constrained by several
+  // MP_Constraints receives its IDs in the same order as with a full scan
+  std::unordered_map<int, std::vector<MP_Constraint *> > mpIndex;
+  {
+    MP_ConstraintIter &theMPsAll = theDomain->getMPs();
+    MP_Constraint *mpAll;
+    while ((mpAll = theMPsAll()) != 0)
+      mpIndex[mpAll->getNodeConstrained()].push_back(mpAll);
+  }
+
   AnalysisModel *theAModel = this->getAnalysisModelPtr();
   DOF_GrpIter &tDOFs = theAModel->getDOFs();
 
@@ -322,15 +493,15 @@ ParallelNumberer::numberDOF(int lastDOF)
     
     if (have4s == 1) {
       int nodeID = dofPtr->getNodeTag();
-      // loop through the MP_Constraints to see if any of the
-      // DOFs are constrained, note constraint matrix must be diagonal
-      // with 1's on the diagonal
-      MP_ConstraintIter &theMPs = theDomain->getMPs();
-      MP_Constraint *mpPtr;
-      while ((mpPtr = theMPs()) != 0 ) {
-	// note keep looping over all in case multiple constraints
-	// are used to constrain a node -- can't assume intelli user
-	if (mpPtr->getNodeConstrained() == nodeID) {
+      // the MP_Constraints of this node; the constraint matrix must be
+      // diagonal with 1's on the diagonal
+      std::unordered_map<int, std::vector<MP_Constraint *> >::iterator mpIt =
+	mpIndex.find(nodeID);
+      if (mpIt == mpIndex.end())
+	continue;
+      for (std::size_t m = 0; m < mpIt->second.size(); m++) {
+	MP_Constraint *mpPtr = mpIt->second[m];
+	{
 	  int nodeRetained = mpPtr->getNodeRetained();
 	  Node *nodeRetainedPtr = theDomain->getNode(nodeRetained);
 	  DOF_Group *retainedDOF = nodeRetainedPtr->getDOF_GroupPtr();
