@@ -497,6 +497,11 @@ if(MPI_FOUND)
      else()
        set (MUMPS_LIBRARIES "${MUMPS_DIR}/libdmumps.a;${MUMPS_DIR}/libmumps_common.a;${MUMPS_DIR}/libpord.a")
      endif()
+     # Headers sit in the MUMPS build tree by default; an installed MUMPS keeps
+     # them under <prefix>/include, which -DMUMPS_INCLUDE_DIR=<dir> selects.
+     if (NOT DEFINED MUMPS_INCLUDE_DIR)
+       set (MUMPS_INCLUDE_DIR "${MUMPS_DIR}/_deps/mumps-src/include")
+     endif()
 
   endif()
 
@@ -788,7 +793,7 @@ if(MPI_FOUND)
         ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSOE.cpp
         ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSolver.cpp
       )
-      target_include_directories(OpenSeesSP PRIVATE ${MUMPS_DIR}/_deps/mumps-src/include)
+      target_include_directories(OpenSeesSP PRIVATE ${MUMPS_INCLUDE_DIR})
     endif()
 
     target_include_directories(OpenSeesSP PRIVATE ${MPI_CXX_INCLUDE_DIRS})
@@ -854,7 +859,7 @@ if(MPI_FOUND)
         ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSOE.cpp
         ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSolver.cpp
       )
-      target_include_directories(OpenSeesMP PRIVATE ${MUMPS_DIR}/_deps/mumps-src/include)
+      target_include_directories(OpenSeesMP PRIVATE ${MUMPS_INCLUDE_DIR})
     endif()
 
     target_include_directories(OpenSeesMP PRIVATE ${MPI_CXX_INCLUDE_DIRS})
