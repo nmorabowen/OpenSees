@@ -1,4 +1,4 @@
-"""Singular LAPACK factorizations report failure.
+"""Singular LAPACK factorizations and unknown algorithm names report failure.
 
 The singular model numbers a free, unconnected node first, so the first
 pivot of the factorization is zero (LAPACK info == 1). That is the case the
@@ -49,5 +49,16 @@ def test_nonsingular_control_still_solves(system):
         ops.analysis("Static")
         assert ops.analyze(1) == 0
         assert ops.nodeDisp(3, 1) == pytest.approx(1.0)
+    finally:
+        ops.wipe()
+
+
+def test_unknown_algorithm_is_an_error():
+    try:
+        ops.wipe()
+        ops.model("basic", "-ndm", 1, "-ndf", 1)
+        ops.algorithm("Linear")
+        with pytest.raises(Exception):
+            ops.algorithm("NoSuchAlgorithm")
     finally:
         ops.wipe()
