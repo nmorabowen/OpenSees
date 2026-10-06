@@ -1605,6 +1605,15 @@ int OPS_System()
     	return -1;
     }
 
+    // Ladruno WP-172: a null factory result must be an ERROR (the ADR-76 /
+    // WP-171 shape). This used to fall through to setX(0) + `return 0`: no
+    // Python exception, and setX(0) NULLED the global, so the next `analysis`
+    // silently built a default system.
+    if (theSOE == 0) {
+	opserr << "WARNING failed to create the system - previous system left unchanged\n";
+	return -1;
+    }
+
     // set soe
     if (cmds != 0) {
 	cmds->setSOE(theSOE);
@@ -1659,6 +1668,15 @@ int OPS_Numberer()
     	return -1;
     }
 
+    // Ladruno WP-172: a null factory result must be an ERROR (the ADR-76 /
+    // WP-171 shape). This used to fall through to setX(0) + `return 0`: no
+    // Python exception, and setX(0) NULLED the global, so the next `analysis`
+    // silently built a default numberer.
+    if (theNumberer == 0) {
+	opserr << "WARNING failed to create the numberer - previous numberer left unchanged\n";
+	return -1;
+    }
+
     // set numberer
     if (cmds != 0) {
 	cmds->setNumberer(theNumberer);
@@ -1707,6 +1725,15 @@ int OPS_ConstraintHandler()
     } else {
     	opserr<<"WARNING unknown ConstraintHandler type "<<type<<"\n";
     	return -1;
+    }
+
+    // Ladruno WP-172: a null factory result must be an ERROR (the ADR-76 /
+    // WP-171 shape). This used to fall through to setX(0) + `return 0`: no
+    // Python exception, and setX(0) NULLED the global, so the next `analysis`
+    // silently built a default constraint handler.
+    if (theHandler == 0) {
+	opserr << "WARNING failed to create the constraint handler - previous constraint handler left unchanged\n";
+	return -1;
     }
 
     // set handler
@@ -1769,6 +1796,15 @@ int OPS_CTest()
 
 	opserr<<"WARNING unknown CTest type "<<type<<"\n";
     	return -1;
+    }
+
+    // Ladruno WP-172: a null factory result must be an ERROR (the ADR-76 /
+    // WP-171 shape). This used to fall through to setX(0) + `return 0`: no
+    // Python exception, and setX(0) NULLED the global, so the next `analysis`
+    // silently built a default convergence test.
+    if (theTest == 0) {
+	opserr << "WARNING failed to create the convergence test - previous convergence test left unchanged\n";
+	return -1;
     }
 
     // set test
@@ -2123,6 +2159,8 @@ int OPS_Analysis() {
 
   } else {
     opserr << "WARNING unknown analysis type " << type << "\n";
+    return -1;   // Ladruno WP-172: was `return 0` -- openseespy raised nothing and the
+                 // previous analysis silently stayed in force
   }
 
   return 0;
