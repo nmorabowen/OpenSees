@@ -142,8 +142,9 @@ ALL_PREFIX = dict(SMS_PREFIX, **{
 def _integrator_stderr(args, capfd):
     """Issue `integrator *args` on an empty model. Returns (accepted, stderr).
 
-    `accepted` is only meaningful as True-means-no-exception: a parser that
-    returns null does NOT raise under openseespy (see the -lnvd tests).
+    `accepted` is False when `ops.integrator` raised: since WP-171 a parser
+    that returns null makes `OPS_Integrator` fail, so openseespy raises and the
+    previous integrator is left unchanged (tests/test_wp171_refused_integrator.py).
     """
     ops.wipe()
     ops.model("basic", "-ndm", 1, "-ndf", 1)
@@ -210,16 +211,18 @@ def test_lnvd_without_alpha_before_flag(capfd):
 def test_lnvd_negative_alpha_is_refused(capfd):
     """[already worked] A negative alpha is a value; the [0,1) check refuses it.
 
-    Asserted on stderr, not on an exception: `OPS_Integrator` returns 0 even
-    when the factory returns null, so openseespy does not raise here.
+    The refusal raises since WP-171 (before it, `OPS_Integrator` returned 0 on
+    a null factory result and only stderr showed the refusal).
     """
-    _, err = _integrator_stderr(("ExplicitBathe", 0.54, "-lnvd", -0.5), capfd)
+    ok, err = _integrator_stderr(("ExplicitBathe", 0.54, "-lnvd", -0.5), capfd)
+    assert not ok, err
     assert "alpha must be in [0,1)" in err, err
 
 
 def test_lnvd_non_numeric_value_still_fatal(capfd):
     """[already worked] `-lnvd abc` stays a refusal, not an 'unknown option'."""
-    _, err = _integrator_stderr(("ExplicitBathe", 0.54, "-lnvd", "abc"), capfd)
+    ok, err = _integrator_stderr(("ExplicitBathe", 0.54, "-lnvd", "abc"), capfd)
+    assert not ok, err
     assert "unknown option" not in err, err
     assert "need an alpha value" in err, err
 
