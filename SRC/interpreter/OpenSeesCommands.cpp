@@ -1994,6 +1994,16 @@ int OPS_Integrator()
 	opserr<<"WARNING unknown integrator type "<<type<<"\n";
     }
 
+    // Ladruno WP-171: a null factory result must be an ERROR -- the ADR-76 fix
+    // OPS_Algorithm got, applied to integrators. This used to fall through to
+    // `return 0`, so openseespy raised nothing for a refused integrator (e.g.
+    // `ExplicitBathe 0.54 -lnvd 1.5`) and the PREVIOUS integrator silently stayed
+    // in force. Every factory and the unknown-type branch reach this one check.
+    if (si == 0 && ti == 0) {
+	opserr << "WARNING failed to create the integrator - previous integrator left unchanged\n";
+	return -1;
+    }
+
     // set integrator
     if (si != 0) {
 	if (cmds != 0) {
