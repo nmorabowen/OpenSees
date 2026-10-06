@@ -112,6 +112,11 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #endif
 #include <BackgroundMesh.h>
 
+#ifdef _PARDISO
+#include <PARDISOGenLinSOE.h>
+#include <PARDISOGenLinSolver.h>
+#endif
+
 #ifdef _ITPACK
 #include <ItpackLinSOE.h>
 #include <ItpackLinSolver.h>
@@ -1543,6 +1548,10 @@ int OPS_System()
 #ifdef _ITPACK
     } else if (strcmp(type,"Itpack") == 0) {
         theSOE = (LinearSOE*)OPS_ItpackLinSolver();
+#endif
+#ifdef _PARDISO
+    } else if (strcmp(type,"Pardiso") == 0 || strcmp(type,"PARDISO") == 0) {
+        theSOE = (LinearSOE*)OPS_PARDISOGenLinSolver();
 #endif
     } else {
     	opserr<<"WARNING unknown system type "<<type<<"\n";
@@ -3504,6 +3513,63 @@ void* OPS_MumpsSolver() {
 #endif
     return 0;
 }
+
+#ifdef _PARDISO
+// system Pardiso <-matrixType 0|1|2> <-symmetric> <-spd> <-krylov L> <-stats>
+//
+// Intel oneMKL PARDISO on the serial interpreter. The thread count comes from
+// MKL_NUM_THREADS (or OMP_NUM_THREADS). -matrixType uses the Mumps numbering:
+// 0 unsymmetric (default), 1 symmetric positive definite, 2 symmetric
+// indefinite; -symmetric and -spd are aliases for 2 and 1.
+//
+// A parse error degrades to the default with a warning instead of returning
+// 0: a null SOE would leave the analysis on the default ProfileSPD solver.
+void* OPS_PARDISOGenLinSolver() {
+    int matType = 0;
+    int statsFlag = 0;
+    int krylovDigits = 0;
+
+    while (OPS_GetNumRemainingInputArgs() > 0) {
+        const char* opt = OPS_GetString();
+        int num = 1;
+        if (strcmp(opt, "-matrixType") == 0) {
+            if (OPS_GetIntInput(&num, &matType) < 0) {
+                opserr << "WARNING system Pardiso - failed to get -matrixType "
+                          "(pass an integer). Unsymmetric matrix assumed\n";
+                matType = 0;
+                continue;
+            }
+            if (matType < 0 || matType > 2) {
+                opserr << "WARNING system Pardiso - wrong -matrixType value ("
+                       << matType << "). Unsymmetric matrix assumed\n";
+                matType = 0;
+            }
+        } else if (strcmp(opt, "-symmetric") == 0) {
+            matType = 2;
+        } else if (strcmp(opt, "-spd") == 0) {
+            matType = 1;
+        } else if (strcmp(opt, "-stats") == 0) {
+            statsFlag = 1;
+        } else if (strcmp(opt, "-krylov") == 0) {
+            if (OPS_GetIntInput(&num, &krylovDigits) < 0) {
+                opserr << "WARNING system Pardiso - failed to get -krylov "
+                          "digits (pass an integer, e.g. -krylov 6). "
+                          "Preconditioned CGS disabled\n";
+                krylovDigits = 0;
+                continue;
+            }
+        } else {
+            opserr << "WARNING system Pardiso - unknown option " << opt
+                   << ", ignored\n";
+        }
+    }
+
+    PARDISOGenLinSolver *theSolver = new PARDISOGenLinSolver();
+    theSolver->setStats(statsFlag);
+    theSolver->setKrylov(krylovDigits);
+    return new PARDISOGenLinSOE(*theSolver, matType);
+}
+#endif
 
 // Sensitivity:BEGIN /////////////////////////////////////////////
 
