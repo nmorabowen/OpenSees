@@ -41,7 +41,8 @@ def _tree(tmp_path, override=None):
 
 
 def _run(tmp_path, override=None):
-    return cc.run(_tree(tmp_path, override))
+    rows, findings, _ = cc.run(_tree(tmp_path, override))
+    return rows, findings
 
 
 def test_clean_tree_passes_and_comment_rows_are_not_rows(tmp_path):
@@ -131,8 +132,32 @@ def test_malformed_table_rows_are_flagged(tmp_path):
     assert "does not parse" in text
 
 
+def test_name_on_a_continuation_line_is_flagged(tmp_path):
+    src = ('void f(Tcl_Interp *interp) {\n'
+           '    Tcl_CreateCommand(interp,\n'
+           '                      "ladrunoSneaky", &x, NULL, NULL);\n}\n')
+    _, f = _run(tmp_path, {"SRC/tcl/Other.cpp": src})
+    assert len(f) == 1 and f[0].startswith("H1 SRC/tcl/Other.cpp:2:") and "'ladrunoSneaky'" in f[0]
+
+
+def test_a_call_expression_as_the_first_argument_is_flagged(tmp_path):
+    src = ('void f() {\n'
+           '    Tcl_CreateCommand(theInterp(), "ladrunoSneaky2", &x, NULL, NULL);\n'
+           '    addCommand(getInterp(0), "contactSurface", &y);\n}\n')
+    _, f = _run(tmp_path, {"SRC/tcl/Other.cpp": src})
+    assert len(f) == 2, f
+    assert "'ladrunoSneaky2'" in f[0] and "'contactSurface'" in f[1]
+
+
+def test_registrations_are_counted(tmp_path):
+    _, _, scanned = cc.run(_tree(tmp_path))
+    assert scanned == 3   # the three `wipe` registrations of the fixture engines
+
+
 def test_the_real_tree_is_clean():
     root = Path(__file__).resolve().parent.parent
-    rows, findings = cc.run(root)
+    rows, findings, scanned = cc.run(root)
     assert findings == [], "\n".join(findings)
     assert len(rows) >= 30
+    # non-vacuity: a REGISTER regex that matched nothing would also report no findings
+    assert scanned >= 600, f"only {scanned} registrations scanned"

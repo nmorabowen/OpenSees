@@ -74,7 +74,9 @@ needs_exe = pytest.mark.skipif(
 
 
 def _require_fork_module():
-    if not hasattr(ops, "ladrunoBuild"):
+    # Decided by WHERE the module came from, never by a table row: a broken Python
+    # hook that dropped `ladrunoBuild` must FAIL here, not skip (WP-168 review F1).
+    if ops.__name__.startswith("openseespy"):
         pytest.skip("openseespy wheel fallback in use — fork build required")
 
 
@@ -88,9 +90,13 @@ def test_table_shape():
 
 
 def test_no_ladruno_command_is_registered_outside_the_hook():
-    rows, findings = check_ladruno_commands.run(REPO)
+    rows, findings, scanned = check_ladruno_commands.run(REPO)
     assert len(rows) == len(ROWS)
     assert findings == [], "\n".join(findings)
+    # non-vacuity (WP-168 review F2): upstream commands.cpp + TclWrapper.cpp +
+    # PythonWrapper.cpp alone carry ~800 registrations; a REGISTER regex that
+    # matched nothing would pass the assertion above silently.
+    assert scanned >= 600, f"only {scanned} registrations scanned"
 
 
 @needs_exe

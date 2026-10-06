@@ -43,9 +43,11 @@ NONE = "LADRUNO_NONE"
 
 ROW = re.compile(r'^\s*LADRUNO_COMMAND\s*\(\s*"([^"]+)"\s*,\s*(\w+)\s*,\s*(\w+)\s*\)')
 ROW_START = re.compile(r"^\s*LADRUNO_COMMAND\s*\(")
+# Matched over comment-free code joined across lines, so the name may sit on a
+# continuation line and the first argument may be any expression (`theInterp()`).
 REGISTER = re.compile(
-    r'\b(?:Tcl_CreateCommand|Tcl_CreateObjCommand)\s*\(\s*[\w>.\-]+\s*,\s*"([^"]+)"'
-    r'|\baddCommand\s*\(\s*(?:[\w>.\-]+\s*,\s*)?"([^"]+)"')
+    r'\b(?:Tcl_CreateCommand|Tcl_CreateObjCommand)\s*\(\s*[^,;"]+?,\s*"([^"]*)"'
+    r'|\baddCommand\s*\(\s*(?:[^,;"]+?,\s*)?"([^"]*)"')
 HOOK_CALL = re.compile(r"\bLadruno_registerCommands\s*\(")
 WAIVER = re.compile(r"//\s*ladruno-command-hook-ok\b\s*(.*)$")
 
@@ -104,11 +106,11 @@ def _blank_block_comments(text):
 
 
 def check_registrations(root, rel, names):
-    """H1: a fork command registered outside the hook."""
-    findings = []
+    """H1: a fork command registered outside the hook. Returns (findings, registrations scanned)."""
+    findings, scanned = [], 0
     src = root / "SRC"
     if not src.exists():
-        return findings
+        return findings, scanned
     for path in sorted(src.rglob("*")):
         if path.suffix not in (".cpp", ".cc", ".c", ".h", ".hpp") or not path.is_file():
             continue
@@ -121,20 +123,17 @@ def check_registrations(root, rel, names):
             continue
         if "Command" not in raw:
             continue
-        lines = _blank_block_comments(raw).splitlines()
-        for i, line in enumerate(lines):
-            code, comment = _code_and_comment(line)
-            m = REGISTER.search(code)
-            if not m:
-                continue
-            name = m.group(1) or m.group(2)
-            # the statement's comments: this line until the `;`, at most 3 lines
-            span = [comment]
-            j = i
-            while ";" not in _code_and_comment(lines[j])[0] and j + 1 < len(lines) and j < i + 3:
-                j += 1
-                span.append(_code_and_comment(lines[j])[1])
-            above = _code_and_comment(lines[i - 1])[1] if i > 0 else ""
+        split = [_code_and_comment(line) for line in _blank_block_comments(raw).splitlines()]
+        code = "\n".join(c for c, _ in split)
+        for m in REGISTER.finditer(code):
+            scanned += 1
+            name = m.group(1) if m.group(1) is not None else m.group(2)
+            first = code.count("\n", 0, m.start())
+            end = code.find(";", m.end())
+            last = code.count("\n", 0, end if end >= 0 else len(code))
+            last = min(last, first + 6)
+            span = [split[k][1] for k in range(first, last + 1)]
+            above = split[first - 1][1] if first > 0 else ""
             if any(WAIVER.search(c) for c in span + [above]):
                 continue
             why = None
@@ -146,9 +145,9 @@ def check_registrations(root, rel, names):
                 why = "carries a `// Ladruno` mark"
             if why:
                 findings.append(
-                    f"H1 {r}:{i + 1}: command '{name}' {why} but is registered by hand; add a row to "
+                    f"H1 {r}:{first + 1}: command '{name}' {why} but is registered by hand; add a row to "
                     f"{TABLE} instead (or waive: // ladruno-command-hook-ok <reason>)")
-    return findings
+    return findings, scanned
 
 
 def check_engines(root):
@@ -179,18 +178,19 @@ def run(root):
 
     rows, findings = load_table(root)
     findings += check_engines(root)
-    findings += check_registrations(root, rel, {n for n, _, _, _ in rows})
-    return rows, findings
+    h1, scanned = check_registrations(root, rel, {n for n, _, _, _ in rows})
+    return rows, findings + h1, scanned
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Command-hook gate (WP-168).")
     ap.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent)
     args = ap.parse_args(argv)
-    rows, findings = run(args.root)
+    rows, findings, scanned = run(args.root)
     for f in findings:
         print(f)
-    print(f"check_ladruno_commands: {len(rows)} table row(s), {len(findings)} finding(s)")
+    print(f"check_ladruno_commands: {len(rows)} table row(s), {scanned} registration(s) scanned, "
+          f"{len(findings)} finding(s)")
     return 1 if findings else 0
 
 
