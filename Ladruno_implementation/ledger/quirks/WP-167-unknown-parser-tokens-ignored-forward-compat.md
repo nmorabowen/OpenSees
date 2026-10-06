@@ -1,6 +1,7 @@
 ---
 wp: WP-167
 title: "A fork parser that ignores unknown tokens 'for forward-compat' silently drops a frontend's new flags"
+pr: "#923"
 date: 2026-10-05
 ---
 ### A fork parser that IGNORES unknown tokens "for forward-compat" silently drops a frontend's new flags -- the model runs with default physics and nothing says so (WP-167, 2026-10-05)
