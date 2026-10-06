@@ -168,7 +168,6 @@ ParallelNumberer::numberDOF(int lastDOF)
 	for (int j=0; j<idSize; j++)
 	  if (theDOFID(j) == -2 || theDOFID(j) == -3) dofPtr->setID(j, startID++);
       }
-      const ID &theDOFID = dofPtr->getID();
     }
 
     theChannel->sendID(0, 0, theID);
@@ -262,8 +261,7 @@ ParallelNumberer::numberDOF(int lastDOF)
       count += numDOF;
     }
 
-    if (theNumberer == 0)
-      delete theOrderedRefs;
+    delete theOrderedRefs;
 
     // number own dof's
     for (int i=0; i<numVertexP0; i++  ) {
