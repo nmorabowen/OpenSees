@@ -46,6 +46,19 @@
 // WP-170: true if `tok` is a complete number ("4", "-1", "0.01000000000000000021").
 // openseespy hands typed args to OPS_GetStringFromAll already stringified, Tcl
 // hands their source text, so this one test reads the same in both interpreters.
+// WP-170: the next token as text whatever its type; never null (classic Tcl
+// returns 0 past the end), always terminated (openseespy's strncpy is not on
+// overflow).
+static const char* llcTok(char* buf, int len)
+{
+    const char* s = OPS_GetStringFromAll(buf, len);
+    if (s == 0)
+        return "";
+    if (s == buf)
+        buf[len - 1] = '\0';
+    return s;
+}
+
 static bool llcIsNumber(const char* tok)
 {
     if (tok == 0 || tok[0] == '\0')
@@ -93,7 +106,7 @@ void* OPS_LadrunoLoadControl()
     bool hasTriple = false;
     if (nRemaining > 2) {
         // peek: the triple is present only if the next token parses as a number
-        const char* nxt = OPS_GetStringFromAll(tokBuf, sizeof(tokBuf));
+        const char* nxt = llcTok(tokBuf, sizeof(tokBuf));
         OPS_ResetCurrentInputArg(-1);
         hasTriple = llcIsNumber(nxt);
     }
@@ -112,9 +125,7 @@ void* OPS_LadrunoLoadControl()
     }
 
     while (OPS_GetNumRemainingInputArgs() > 0) {
-        const char* opt = OPS_GetStringFromAll(tokBuf, sizeof(tokBuf));
-        if (opt == 0)
-            opt = "";   // classic Tcl past the end; the loop guard makes this unreachable
+        const char* opt = llcTok(tokBuf, sizeof(tokBuf));
         if (strcmp(opt, "-extrapolate") == 0) {
             if (OPS_GetNumRemainingInputArgs() < 1) {
                 opserr << "WARNING LadrunoLoadControl -extrapolate needs a value; "

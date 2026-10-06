@@ -59,6 +59,32 @@
 #include <cmath>
 #include <limits>
 #include <string.h>
+
+// WP-170: read the next token as text whatever its type. Under openseespy
+// OPS_GetString answers the placeholder "Invalid String Input!" for an int or
+// float; OPS_GetStringFromAll stringifies it. Never null (classic Tcl returns 0
+// past the end) and always terminated (openseespy's strncpy is not on overflow).
+static const char* ebTok(char* buf, int len)
+{
+    const char* s = OPS_GetStringFromAll(buf, len);
+    if (s == 0)
+        return "";
+    if (s == buf)
+        buf[len - 1] = '\0';
+    return s;
+}
+
+// WP-170: true if `tok` is a complete number. Decides "value or next option"
+// for an optional trailing value; a leading-'-' test would read a negative
+// value as a flag.
+static bool ebIsNumber(const char* tok)
+{
+    if (tok == 0 || tok[0] == '\0')
+        return false;
+    char* end = 0;
+    strtod(tok, &end);
+    return end != tok && *end == '\0';
+}
 #include <stdlib.h>
 
 #include <Domain.h>
@@ -183,7 +209,8 @@ void *OPS_ExplicitBathe(void) {
         }
     }
     while (OPS_GetNumRemainingInputArgs() > 0) {
-        const char *arg = OPS_GetString();
+        char argBuf[128];
+        const char *arg = ebTok(argBuf, sizeof(argBuf));
         if (strcmp(arg, "-verbose") == 0) {
             verbose = true;
         } else if (strcmp(arg, "-cflAbort") == 0) {
@@ -212,7 +239,8 @@ void *OPS_ExplicitBathe(void) {
             compute_critical_timestep = 1;
         } else if (strcmp(arg, "-lump") == 0) {
             if (OPS_GetNumRemainingInputArgs() > 0) {
-                const char *m = OPS_GetString();
+                char mBuf[64];
+                const char *m = ebTok(mBuf, sizeof(mBuf));
                 lumpExplicit = true;
                 if (strcmp(m, "diagonal") == 0)      lumping = CTSLumping::Diagonal;
                 else if (strcmp(m, "rowsum") == 0)   lumping = CTSLumping::RowSum;
@@ -222,17 +250,17 @@ void *OPS_ExplicitBathe(void) {
             }
         } else if (strcmp(arg, "-lnvd") == 0) {
             // Ladruno (W1-E2): FLAC local non-viscous damping; optional alpha follows
-            // (default stays 0.8). Use the PROVEN contact `-soft` optional-value idiom:
-            // peek as a STRING (OPS_GetString advances on BOTH Tcl + Py), classify by the
-            // leading '-' (value vs next flag) — NOT by strtod, because under openseespy
-            // OPS_GetString returns "Invalid String Input!" for a numeric arg, so a strtod
-            // test would mis-classify it as non-numeric and silently DROP the alpha (the
-            // documented "getString mis-reads a numeric Py arg" quirk). Then un-read and, if
-            // it was a value, read it Python-safely with OPS_GetDoubleInput.
+            // (default stays 0.8). WP-170: peek with OPS_GetStringFromAll, which
+            // stringifies a typed openseespy number (OPS_GetString answers a placeholder
+            // for it). The token is the next flag only if it starts with '-' and is NOT a
+            // number: a negative alpha is read and refused by the [0,1) check below, and
+            // a non-numeric value (`-lnvd abc`) still fails OPS_GetDoubleInput loudly.
+            // Un-read, and read the value with OPS_GetDoubleInput.
             useLNVD = true;
             if (OPS_GetNumRemainingInputArgs() > 0) {
-                const char *peek = OPS_GetString();
-                bool isFlag = (peek != 0 && peek[0] == '-');
+                char peekBuf[64];
+                const char *peek = ebTok(peekBuf, sizeof(peekBuf));
+                bool isFlag = (peek[0] == '-' && !ebIsNumber(peek));
                 OPS_ResetCurrentInputArg(-1);
                 if (!isFlag) {
                     int nd = 1; double a;
@@ -348,7 +376,8 @@ void *OPS_ExplicitBatheLNVD(void) {
         }
     }
     while (OPS_GetNumRemainingInputArgs() > 0) {
-        const char *arg = OPS_GetString();
+        char argBuf[128];
+        const char *arg = ebTok(argBuf, sizeof(argBuf));
         if (strcmp(arg, "-verbose") == 0) {
             verbose = true;
         } else if (strcmp(arg, "-cflAbort") == 0) {
@@ -377,7 +406,8 @@ void *OPS_ExplicitBatheLNVD(void) {
             compute_critical_timestep = 1;
         } else if (strcmp(arg, "-lump") == 0) {
             if (OPS_GetNumRemainingInputArgs() > 0) {
-                const char *m = OPS_GetString();
+                char mBuf[64];
+                const char *m = ebTok(mBuf, sizeof(mBuf));
                 if (strcmp(m, "diagonal") == 0)      lumping = CTSLumping::Diagonal;
                 else if (strcmp(m, "rowsum") == 0)   lumping = CTSLumping::RowSum;
                 else if (strcmp(m, "hrz") == 0)      lumping = CTSLumping::HRZ;
@@ -454,7 +484,8 @@ static void *OPS_ExplicitBatheSMS_impl(const char *name, bool isLNVD, bool isCon
     int    pcgMaxIt = 200;
 
     while (OPS_GetNumRemainingInputArgs() > 0) {
-        const char *arg = OPS_GetString();
+        char argBuf[128];
+        const char *arg = ebTok(argBuf, sizeof(argBuf));
         if (strcmp(arg, "-verbose") == 0) {
             verbose = true;
         } else if (strcmp(arg, "-maxAddedMass") == 0) {
@@ -469,7 +500,8 @@ static void *OPS_ExplicitBatheSMS_impl(const char *name, bool isLNVD, bool isCon
             if (OPS_GetNumRemainingInputArgs() > 0) { int n1 = 1; OPS_GetIntInput(&n1, &pcgMaxIt); }
         } else if (strcmp(arg, "-lump") == 0) {
             if (OPS_GetNumRemainingInputArgs() > 0) {
-                const char *m = OPS_GetString();
+                char mBuf[64];
+                const char *m = ebTok(mBuf, sizeof(mBuf));
                 if (strcmp(m, "diagonal") == 0)      lumping = CTSLumping::Diagonal;
                 else if (strcmp(m, "rowsum") == 0)   lumping = CTSLumping::RowSum;
                 else if (strcmp(m, "hrz") == 0)      lumping = CTSLumping::HRZ;
@@ -488,11 +520,12 @@ static void *OPS_ExplicitBatheSMS_impl(const char *name, bool isLNVD, bool isCon
             verbose = true;
             if (strcmp(arg, "-recompute") == 0 && OPS_GetNumRemainingInputArgs() > 0) {
                 // consume the trailing N so it does not fall into the unknown-option
-                // branch (peek-as-string idiom: under openseespy a numeric arg reads
-                // as garbage text, but never as something starting with '-').
-                const char *peek = OPS_GetString();
-                if (peek != 0 && peek[0] == '-')
-                    OPS_ResetCurrentInputArg(-1);   // next flag, not our N — un-read it
+                // branch. WP-170: peek with OPS_GetStringFromAll and consume the token
+                // only if it is a number; anything else is the next option -- un-read it.
+                char peekBuf[64];
+                const char *peek = ebTok(peekBuf, sizeof(peekBuf));
+                if (!ebIsNumber(peek))
+                    OPS_ResetCurrentInputArg(-1);
             }
         } else {
             opserr << "WARNING " << name << " - unknown option " << arg << " (ignored)\n";
