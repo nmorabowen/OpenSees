@@ -83,6 +83,12 @@ machine, different layout — not a contradiction, and not a Windows recipe.
 |---|---|
 | `wire_pyenv.ps1`, `wire_venv_pth.py` | Point a venv at a built/installed `opensees.pyd` |
 
+`wire_venv_pth.py` makes `import opensees` / `import openseesmp` work and does
+**not** alias `openseespy` by default (so tests of projects that import
+`openseespy` cannot silently run against the installed fork). To restore the
+alias, wire with `wire_venv_pth.py --alias-openseespy <bin-dir> [<mp-dir>]`, or
+set `LADRUNO_OPENSEESPY_ALIAS=1` at run time. The alias is always skipped under MPI.
+
 Everything else (`ladruno_solve.py`, `robust_drive.py`, `analyze_augmented.py`,
 `*_study.py`, `*_figures.py`, `make_profiler_dump.py`, …) is analysis tooling,
 not part of the build.
