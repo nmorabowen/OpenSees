@@ -5,6 +5,8 @@ Each case runs in a child interpreter so that stdout written by the element
 
   quiet    a one-element analysis that forms the initial stiffness writes
            nothing to stdout
+  fail     a material that refuses setTrialStrain makes analyze() fail
+  healthy  the same model with a working material converges (control)
 """
 import json
 import os
@@ -30,7 +32,7 @@ SCEN = sys.argv[1]
 out = {"engine": os.path.abspath(ops.__file__)}
 
 
-def tet10(mats):
+def tet10(mats, e2=None):
     # unit corner tetrahedron, base face fixed, vertical load at the apex;
     # one TenNodeTetrahedron per material tag, all on the same ten nodes
     ops.wipe()
@@ -44,6 +46,9 @@ def tet10(mats):
     for tag in (1, 2, 3, 5, 6, 7):
         ops.fix(tag, 1, 1, 1)
     ops.nDMaterial("ElasticIsotropic", 1, 1000.0, 0.25)
+    if e2 is not None:
+        ops.nDMaterial("ElasticIsotropic", 2, e2, 0.25)
+        ops.nDMaterial("TimeVarying", 3, 2, 1, 0.0, 1000.0, 2000.0, 1.0)
     for e, m in enumerate(mats, start=1):
         ops.element("TenNodeTetrahedron", e, *range(1, 11), m)
     ops.timeSeries("Linear", 1)
@@ -63,6 +68,15 @@ if SCEN == "quiet":
     print("BEGIN", flush=True)
     out["rc"] = ops.analyze(1)
     out["u4"] = ops.nodeDisp(4)
+elif SCEN in ("fail", "healthy"):
+    # TimeVarying refuses setTrialStrain when the wrapped material has a
+    # singular initial tangent (E = 0); a second element on the same nodes
+    # keeps the system nonsingular, so only the refusal can stop analyze()
+    tet10([1, 3], e2=0.0 if SCEN == "fail" else 1000.0)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0)
+    ops.analysis("Static")
+    out["rc"] = ops.analyze(1)
 
 sys.stdout.flush()
 print("RESULT " + json.dumps(out), flush=True)
@@ -95,3 +109,9 @@ def test_tet10_writes_nothing_to_stdout():
     begin = lines.index("BEGIN")
     stray = [l for l in lines[begin + 1:] if not l.startswith("RESULT ")]
     assert stray == [], f"{len(stray)} stray stdout lines, first: {stray[:5]}"
+
+
+def test_tet10_reports_material_failure():
+    assert _run("healthy")["rc"] == 0
+    out = _run("fail")
+    assert out["rc"] < 0, f"analyze() returned {out['rc']} with a failed material"
