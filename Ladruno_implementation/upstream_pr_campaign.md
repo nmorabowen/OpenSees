@@ -374,6 +374,14 @@ session (human or agent) that ports, opens, merges, or re-scopes a package
 
 ## 8. Round 3 backlog (inventory of 2026-10-06, all live on `ladruño`)
 
+> [!warning] HOLD (owner, 2026-10-06): SANISAND and its ManzariDafalias-family
+> seams are NOT to be sent upstream while the SANISAND work (re-seat, tension
+> cutoff, regularization, footing campaign) is in progress. This covers
+> LadrunoSANISAND and, until the owner says otherwise, the ManzariDafalias
+> packages below (`up/18-manzari-fspm-platerebar` crash fixes and the
+> results-changing set), since they touch the same family.
+
+
 Pure fixes (class A), proposed grouping:
 - `up/10-lapack-singular-and-algorithm-null`: LAPACK `return -info+1` reports a singular matrix as success (BandGen/FullGen/BandSPD); `OPS_Algorithm` returns 0 on a null factory (#642).
 - `up/11-elastic-beam-ground-motion-double-inertia`: ElasticBeam2d / ElasticTimoshenkoBeam2d/3d subtract the ground-motion load twice (#854). Results change.
