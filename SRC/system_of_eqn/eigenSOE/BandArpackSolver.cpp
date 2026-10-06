@@ -360,6 +360,28 @@ BandArpackSolver::solve(int numModes, bool generalized, bool findSmallest)
 	  opserr << "Arnoldi update, try increasing NCV." << endln;
 	}
 
+	// iparam[4] is the number of converged Ritz values; the remaining
+	// eigenvalue slots would be returned without having been computed
+	if (iparam[4] < nev) {
+	    opserr << "WARNING BandArpackSolver::solve() - only " << iparam[4] << " of " << nev
+		   << " eigenvalues converged\n";
+
+	    delete [] workl;
+	    delete [] workd;
+	    delete [] resid;
+	    delete [] iparam;
+	    delete [] v;
+	    delete [] select;
+	    delete [] ipntr;
+	    delete [] d;
+	    delete [] z;
+
+	    value = 0;
+	    eigenvector = 0;
+
+	    return -1;
+	}
+
 	double sigma = theSOE->shift;
 	if (iparam[4] > 0) {
 	    rvec = true;
