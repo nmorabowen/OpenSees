@@ -28,6 +28,7 @@
 
 #include "LadrunoRCConcrete.h"
 #include <elementAPI.h>
+#include <LadrunoOptSpec.h>   // WP-167: fail-closed option table
 #include <Channel.h>
 #include <MaterialResponse.h>
 #include <Information.h>
@@ -105,15 +106,20 @@ void* OPS_LadrunoRCConcrete(void)
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const char* opt = OPS_GetString();
+    // WP-167: fail closed. A token the family table does not declare is REFUSED (the
+    // command fails and names it), never ignored; a declared option must have its values.
+    const ladruno_opt::OptSpec* spec = ladruno_opt::find(ladruno_opt::kLadrunoRCOptions, opt);
+    if (spec == 0) { ladruno_opt::reportUnknown("LadrunoRCConcrete", tag, opt, ladruno_opt::kLadrunoRCOptions); return 0; }
+    if (!ladruno_opt::haveValues("LadrunoRCConcrete", tag, *spec)) return 0;
     if      (strcmp(opt, "-Ce") == 0) readList(Ce);
     else if (strcmp(opt, "-Cs") == 0) readList(Cs);
     else if (strcmp(opt, "-Cd") == 0) readList(Cd);
     else if (strcmp(opt, "-Te") == 0) readList(Te);
     else if (strcmp(opt, "-Ts") == 0) readList(Ts);
     else if (strcmp(opt, "-Td") == 0) readList(Td);
-    else if (strcmp(opt, "-Kc") == 0)        { int nd = 1; OPS_GetDoubleInput(&nd, &Kc); }
-    else if (strcmp(opt, "-betaFloor") == 0) { int nd = 1; OPS_GetDoubleInput(&nd, &betaFloor); }
-    else if (strcmp(opt, "-rho") == 0)       { int nd = 1; OPS_GetDoubleInput(&nd, &rho); }
+    else if (strcmp(opt, "-Kc") == 0)        { int nd = 1; if (OPS_GetDoubleInput(&nd, &Kc) < 0)        { opserr << "LadrunoRCConcrete: -Kc needs a value.\n";        return 0; } }
+    else if (strcmp(opt, "-betaFloor") == 0) { int nd = 1; if (OPS_GetDoubleInput(&nd, &betaFloor) < 0) { opserr << "LadrunoRCConcrete: -betaFloor needs a value.\n"; return 0; } }
+    else if (strcmp(opt, "-rho") == 0)       { int nd = 1; if (OPS_GetDoubleInput(&nd, &rho) < 0)       { opserr << "LadrunoRCConcrete: -rho needs a value.\n";       return 0; } }
     else if (strcmp(opt, "-beta") == 0)              betaOn = true;
     else if (strcmp(opt, "-lublinerReduced") == 0)   lubRed = true;
     else if (strcmp(opt, "-secant") == 0)            tanMode = 1;
@@ -160,7 +166,8 @@ void* OPS_LadrunoRCConcrete(void)
       autoReg = true; int nd = 1;
       if (OPS_GetDoubleInput(&nd, &lchRef) < 0) { opserr << "LadrunoRCConcrete: -autoRegularization needs $lch_ref.\n"; return 0; }
     }
-    // unknown tokens are ignored (forward-compat)
+    // declared in kLadrunoRCOptions but no branch above: the table and the ladder drifted
+    else { ladruno_opt::reportUnhandled("LadrunoRCConcrete", tag, opt); return 0; }
   }
 
   // -cyclic implies -interlock; -xcrack implies -cyclic (the X-crack/wear law lives inside

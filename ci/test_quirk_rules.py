@@ -20,13 +20,15 @@ START, END = "<!-- quirk-rules:start (generated: python ci/check_quirk_patterns.
 def test_every_check_function_is_registered_once():
     checks = {n for n in dir(cq) if n.startswith("check_") and callable(getattr(cq, n))}
     assert checks - {"check_stale_waivers"} == {r.check.__name__ for r in cq._RULE_LIST}
-    assert len(cq.RULES) == len(cq._RULE_LIST) == len(cq.ALIASES)
+    assert len(cq.RULES) == len(cq._RULE_LIST)
+    assert len(cq.ALIASES) == sum(1 for r in cq._RULE_LIST if r.alias)
 
 
 def test_slugs_are_kebab_case_and_aliases_are_the_old_numbers():
+    # only the pre-WP-162 rules (L1-L10) carry an alias; a rule added later has none
     for r in cq._RULE_LIST:
         assert re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", r.slug), r.slug
-        assert re.fullmatch(r"L\d+", r.alias), r.alias
+        assert r.alias is None or re.fullmatch(r"L([1-9]|10)", r.alias), r.alias
 
 
 def test_only_takes_slugs_and_deprecated_aliases():
