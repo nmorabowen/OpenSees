@@ -69,3 +69,4 @@ legacy_seq: 250
   re-spawns under a different PID than `Start-Process` returns. Use unfiltered `tasklist /m opensees.pyd`
   as a set difference against a live baseline, and always run the eager-import CONTROL — a probe that
   reports "no holders" for both cases is measuring nothing.
+- **Update (F2-c):** the `openseespy` alias is now OPT-IN. Default wiring no longer aliases it; wire with `wire_venv_pth.py --alias-openseespy` or set `LADRUNO_OPENSEESPY_ALIAS=1` at run time. Re-wire already-wired venvs only if you want the new default (an old boot module keeps the alias).

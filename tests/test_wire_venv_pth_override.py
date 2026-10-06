@@ -18,6 +18,7 @@ import ast
 import importlib
 import importlib.util
 import os
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -94,7 +95,7 @@ def test_env_override_wins_over_baked_in_install_dir(tmp_path, monkeypatch):
     override.mkdir()
 
     rendered = wire_venv_pth.BOOT_TEMPLATE.format(
-        bin_repr=repr(str(installed)), mp_repr=repr("")
+        bin_repr=repr(str(installed)), mp_repr=repr(""), alias_repr=repr(False)
     )
     monkeypatch.setenv("LADRUNO_OPENSEES_BIN", str(override))
     ns = _run_boot_template(rendered)
@@ -112,7 +113,7 @@ def test_no_override_falls_back_to_baked_in_install_dir(tmp_path, monkeypatch):
     installed.mkdir()
 
     rendered = wire_venv_pth.BOOT_TEMPLATE.format(
-        bin_repr=repr(str(installed)), mp_repr=repr("")
+        bin_repr=repr(str(installed)), mp_repr=repr(""), alias_repr=repr(False)
     )
     monkeypatch.delenv("LADRUNO_OPENSEES_BIN", raising=False)
     ns = _run_boot_template(rendered)
@@ -133,7 +134,7 @@ def test_boot_template_has_no_module_level_engine_import():
     """The invariant, checked structurally so it cannot regress unnoticed."""
     wire_venv_pth = _load_wire_venv_pth()
     rendered = wire_venv_pth.BOOT_TEMPLATE.format(
-        bin_repr=repr(r"C:\some\bin"), mp_repr=repr("")
+        bin_repr=repr(r"C:\some\bin"), mp_repr=repr(""), alias_repr=repr(False)
     )
     offenders = _engine_imports_outside_functions(ast.parse(rendered))
     assert offenders == [], (
@@ -153,7 +154,7 @@ def test_openseespy_alias_resolves_lazily(tmp_path, monkeypatch):
     """
     wire_venv_pth = _load_wire_venv_pth()
     rendered = wire_venv_pth.BOOT_TEMPLATE.format(
-        bin_repr=repr(str(tmp_path)), mp_repr=repr("")
+        bin_repr=repr(str(tmp_path)), mp_repr=repr(""), alias_repr=repr(True)
     )
     monkeypatch.delenv("PMI_RANK", raising=False)
     monkeypatch.delenv("PMI_SIZE", raising=False)
@@ -194,7 +195,7 @@ def test_lazy_alias_is_skipped_under_mpi(tmp_path, monkeypatch):
     runtimes in one process. Intel MPI / Hydra set PMI_RANK per rank."""
     wire_venv_pth = _load_wire_venv_pth()
     rendered = wire_venv_pth.BOOT_TEMPLATE.format(
-        bin_repr=repr(str(tmp_path)), mp_repr=repr("")
+        bin_repr=repr(str(tmp_path)), mp_repr=repr(""), alias_repr=repr(True)
     )
     monkeypatch.setenv("PMI_RANK", "0")
     before = list(sys.meta_path)
@@ -202,3 +203,81 @@ def test_lazy_alias_is_skipped_under_mpi(tmp_path, monkeypatch):
     assert list(sys.meta_path) == before, (
         "an MPI rank installed the openseespy alias finder anyway"
     )
+
+
+# --------------------------------------------------------------------------
+# F2-c: the openseespy alias is OPT-IN. Default wiring must leave `openseespy`
+# alone (apeGmsh #1055: tests silently ran against the installed fork binary).
+# These run in a fresh subprocess with a stand-in `opensees` module on the
+# generated boot module's bin dir, so no built engine is needed.
+# --------------------------------------------------------------------------
+_PROBE = (
+    "import site, sys; site.addsitedir(sys.argv[1]); "
+    "import _ladruno_opensees_boot; "
+    "import importlib; "
+    "m = importlib.import_module('openseespy.opensees'); "
+    "print('FORK' if getattr(m, 'IS_FAKE_FORK', False) else 'OTHER')"
+)
+
+
+def _wire_into(tmp_path, alias):
+    site_dir = tmp_path / "site"
+    bin_dir = tmp_path / "bin"
+    site_dir.mkdir()
+    bin_dir.mkdir()
+    (bin_dir / "opensees.py").write_text("IS_FAKE_FORK = True\n")
+    # a stand-in "real" openseespy so the non-alias import has something to find
+    pkg = tmp_path / "real" / "openseespy"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "opensees.py").write_text("IS_FAKE_FORK = False\n")
+    wire = _load_wire_venv_pth()
+    (site_dir / "_ladruno_opensees_boot.py").write_text(
+        wire.BOOT_TEMPLATE.format(
+            bin_repr=repr(str(bin_dir)), mp_repr=repr(""), alias_repr=repr(alias),
+        ),
+        encoding="ascii",
+    )
+    return site_dir, tmp_path / "real"
+
+
+def _probe(tmp_path, env_extra, alias=False):
+    site_dir, real = _wire_into(tmp_path, alias)
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("PMI_RANK", "PMI_SIZE", "LADRUNO_OPENSEESPY_ALIAS",
+                        "LADRUNO_OPENSEES_BIN", "PYTHONPATH")}
+    env["PYTHONPATH"] = str(real)
+    env.update(env_extra)
+    out = subprocess.run(
+        [sys.executable, "-c", _PROBE, str(site_dir)],
+        capture_output=True, text=True, env=env, timeout=60,
+    )
+    assert out.returncode == 0, out.stderr
+    return out.stdout.strip()
+
+
+def test_alias_off_by_default(tmp_path):
+    assert _probe(tmp_path, {}) == "OTHER"
+
+
+def test_alias_on_with_baked_flag(tmp_path):
+    assert _probe(tmp_path, {}, alias=True) == "FORK"
+
+
+def test_alias_on_with_env_var(tmp_path):
+    assert _probe(tmp_path, {"LADRUNO_OPENSEESPY_ALIAS": "1"}) == "FORK"
+
+
+def test_main_flag_is_baked_into_generated_boot(tmp_path, monkeypatch):
+    import sysconfig
+    wire = _load_wire_venv_pth()
+    monkeypatch.setattr(sysconfig, "get_paths",
+                        lambda *a, **k: {"purelib": str(tmp_path)})
+    monkeypatch.setattr(sys, "argv",
+                        ["wire_venv_pth.py", "--alias-openseespy", "BINDIR"])
+    wire.main()
+    boot = (tmp_path / "_ladruno_opensees_boot.py").read_text()
+    assert "_alias = True or" in boot and "'BINDIR'" in boot
+    monkeypatch.setattr(sys, "argv", ["wire_venv_pth.py", "BINDIR"])
+    wire.main()
+    assert "_alias = False or" in (tmp_path / "_ladruno_opensees_boot.py").read_text()

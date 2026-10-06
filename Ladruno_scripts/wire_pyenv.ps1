@@ -102,7 +102,7 @@ Write-Host "  site-pkg  : $sitePackages"
 # _ladruno_opensees_boot.py + one-line .pth that put BOTH dist\bin and
 # dist\openseesmp on sys.path, register their bundled-DLL dirs via
 # os.add_dll_directory (process-local; no global PATH change), and alias
-# openseespy -> our sequential opensees (skipped under MPI).
+# openseespy -> our sequential opensees ONLY when wired with --alias-openseespy (opt-in; off here).
 if (-not (Test-Path $wirePy)) {
     Write-Error "wire_venv_pth.py not found at $wirePy"
     exit 1
@@ -116,7 +116,7 @@ if ($wireExit -eq 0) {
     Write-Host "                 -> import opensees   from $distBin"
     if ($mpArg) { Write-Host "                 -> import openseesmp from $distMp" }
     else        { Write-Host "                 (openseesmp not built; run build.bat OpenSeesPyMP to add it)" }
-    Write-Host "                 + openseespy/.opensees aliased (skipped under MPI)"
+    Write-Host "                 (no openseespy alias; opt in with LADRUNO_OPENSEESPY_ALIAS=1 or wire_venv_pth.py --alias-openseespy)"
 } elseif ($wireExit -eq 3) {
     Write-Warning "venv Python is not 3.12; the .pyd modules will fail to import."
 } else {
