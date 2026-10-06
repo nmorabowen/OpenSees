@@ -126,6 +126,10 @@ GmshRecorder hex20 output format.
 ### Wave 1 — small additive features, zero/near-zero vanilla footprint
 | # | Package | Content | Deps |
 |---|---|---|---|
+| 0.14 | LAPACK `return -info+1` reports a zero first pivot as success (BandGen/FullGen/BandSPD); `algorithm` keeps the old one on a null factory | `up/10-lapack-singular-and-algorithm-null` | [jaabell#40](https://github.com/jaabell/OpenSees/pull/40) | **PR open** 2026-10-06. Test 4 fail on base → 7 pass |
+| 0.15 | Repeated openseespy `eigen` without analysis; `printA -sparse -ret` | `up/15-interpreter-small-fixes` | [jaabell#41](https://github.com/jaabell/OpenSees/pull/41) | **PR open** 2026-10-06. `OPS_GetStringFromAll` Tcl fix DROPPED: no vanilla caller reaches the buffer path, not reproducible on his base |
+| 0.16 | TenNodeTet stray shape-function print; `update()` ignores `setTrialStrain` failure | `up/16-tet10-print-and-update` | [jaabell#42](https://github.com/jaabell/OpenSees/pull/42) | **PR open** 2026-10-06. Broker cases for Tet10/Brick20 DROPPED: their `sendSelf`/`recvSelf` are broken (Tet10 sends 4 of 10 node tags; Brick20 blank ctor leaves `materialPointers` null), so the case would turn a clean restore error into a crash. Fix send/recv first |
+| 0.17 | ArpackSolver: unconverged modes returned as 0.0 with success; work arrays not resized when n grows (segfault); `getNCV` = min(2nev, nev+8), uncapped | — | — | **found 2026-10-06, live on fork AND his base**. Repro: 10-fold eigenvalue chain, `eigen(3)` with an analysis → `[13.40, 118.84, 0.0]`; 20-eq model, `eigen(4)`, add nodes, `eigen(4)` → exit 139. Not yet fixed anywhere |
 | 1.1 | Plane-strain σ_zz | `NDMaterial::getStressZZ` + `stressesPlaneStrain` responses | — |
 | 1.2 | Beam localAxes | response id 30 on the 10 beam classes | — |
 | 1.3 | DDM integrators | LadrunoHHT + LadrunoGeneralizedAlpha (header promotions only) | — |
@@ -301,7 +305,7 @@ session (human or agent) that ports, opens, merges, or re-scopes a package
   EnergyBalanceRecorder, ExplicitBathe `-lnvd`, ExplicitDifferenceStatic, Tcl
   `-lumped` for (MPI)Diagonal, optional MUMPS in CMake. A fresh inventory of
   fork vanilla fixes still live on `ladruño` found 32 candidates (§8).
-  Opened jaabell#35–#38 (0.8+0.9, 0.10, 0.11, 0.12) and #39 (0.13), each verified on his base:
+  Opened jaabell#35–#38 (0.8+0.9, 0.10, 0.11, 0.12) and #39 (0.13); round 3 block 1 opened as #40–#42 (0.14–0.16), each failing on his base and passing with the fixes, `tests/` 128 passed, each verified on his base:
   unmodified base built with the local Windows fixes, new tests fail there,
   `tests/` 147 passed / 2 skipped with all four merged. His base needed `/bigobj`
   (his own ASDP registry overflows MSVC's section limit) and three ifx fixes to
