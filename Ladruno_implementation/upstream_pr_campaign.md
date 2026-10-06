@@ -301,6 +301,8 @@ session (human or agent) that ports, opens, merges, or re-scopes a package
 
 ## 7. Decision & session log (append-only, newest first)
 
+- **2026-10-06 — coordination email sent to José (ASDP + explicit dynamics).** Issues and discussions are disabled on jaabell/OpenSees, so it went by email. ASDP: A1–A5 fixes (special_return tangent, strict_convergence, DP dilatant apex, Numerical_Algorithmic on the committed map, StiffSoil NaN), A6 MC tension cutoff, A7 Closest_Point/Algorithmic (23/46; footing 7/10→10/10, 7/12→12/12, 6/10→9/10, 6/12→11/12); open findings HoekBrown_PF::g Tresca collapse (26 %) and static shared state. Explicit: build on his ExplicitBathe -lnvd (acceleration form is better than ours); offered E1 -sms, E2 -consistent (LinearSOE virtuals, MPI PCG not CI-gated), E3 CD + HRZ, E4 criticalTimeStep, E5 energy channels (waits on recorder). Six questions pending. Round paused for his answers.
+
 - **2026-10-06 — round 2: four bug-fix PRs open, build fixes building, recorder proposed.**
   José closed #29–#33 on 2026-10-05: all taken by cherry-pick (authorship kept)
   except #29, superseded by his own Tet10 fix. He asked that PR text and code
