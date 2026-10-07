@@ -3517,8 +3517,14 @@ static ExternalClassFunction *theExternalStaticIntegratorCommands = NULL;
 static ExternalClassFunction *theExternalTransientIntegratorCommands = NULL;
 static ExternalClassFunction *theExternalAlgorithmCommands = NULL;
 
-int 
-specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
+// Ladruno WP-172: the body below is the stock specifySOE, renamed; the `system`
+// command is the wrapper after it. Its final `if (theSOE != 0)` read the
+// GLOBAL, so once any system had been set, a call that created nothing (an
+// unknown type, `PFEM -<unknown>`) returned TCL_OK -- and with an analysis
+// present it re-installed the SAME pointer via setLinearSOE(), which deletes
+// the old SOE first: a use-after-free that killed the next `analyze`.
+static int
+ladrunoSpecifySOEImpl(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 {
   // make sure at least one other argument to contain type of system
   if (argc < 2) {
@@ -4449,6 +4455,28 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
   }
 }
 
+// Ladruno WP-172: `system` must not report success without a NEW system. The
+// global is cleared before the impl runs so that "created" is simply
+// theSOE != 0 and the impl can never re-install the previous pointer; when
+// nothing was created the previous SOE is restored (the analysis, if any,
+// never stopped holding it) and the command fails.
+int
+specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
+{
+  LinearSOE *prevSOE = theSOE;
+  theSOE = 0;
+
+  int res = ladrunoSpecifySOEImpl(clientData, interp, argc, argv);
+  if (theSOE != 0)
+    return res;
+
+  theSOE = prevSOE;
+  if (prevSOE != 0)
+    opserr << "WARNING system " << (argc > 1 ? argv[1] : "")
+           << " - failed to create the system - previous system left unchanged\n";
+  return TCL_ERROR;
+}
+
 
 
 //
@@ -4535,8 +4563,14 @@ specifyNumberer(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **
 //
 // command invoked to allow the ConstraintHandler object to be built
 //
-int 
-specifyConstraintHandler(ClientData clientData, Tcl_Interp *interp, int argc, 
+// Ladruno WP-172: the body below is the stock specifyConstraintHandler,
+// renamed; the `constraints` command is the wrapper after it. Its Auto /
+// LadrunoProjection / LadrunoContact branches assign the factory result to the
+// GLOBAL and only then check for null, so a refused handler returned
+// TCL_ERROR with the previous handler already discarded (under `catch`, the
+// next `analysis` silently used the PlainHandler default).
+static int
+ladrunoSpecifyConstraintHandlerImpl(ClientData clientData, Tcl_Interp *interp, int argc,
 			 TCL_Char **argv)
 {
   // make sure at least one other argument to contain numberer
@@ -4621,6 +4655,26 @@ specifyConstraintHandler(ClientData clientData, Tcl_Interp *interp, int argc,
     return TCL_ERROR;
   }
   return TCL_OK;
+}
+
+// Ladruno WP-172: `constraints` must not fail with the previous handler gone.
+// "Created" = a non-null handler that was not there before (the previous one
+// is still alive, so a new object cannot alias it) -- the WP-171 shape.
+int
+specifyConstraintHandler(ClientData clientData, Tcl_Interp *interp, int argc,
+			 TCL_Char **argv)
+{
+  ConstraintHandler *prevHandler = theHandler;
+
+  int res = ladrunoSpecifyConstraintHandlerImpl(clientData, interp, argc, argv);
+  if (res == TCL_OK && theHandler != 0 && theHandler != prevHandler)
+    return res;
+
+  theHandler = prevHandler;
+  if (prevHandler != 0)
+    opserr << "WARNING constraints " << (argc > 1 ? argv[1] : "")
+           << " - failed to create the constraint handler - previous constraint handler left unchanged\n";
+  return TCL_ERROR;
 }
 
 
