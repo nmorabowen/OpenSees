@@ -20,8 +20,35 @@ writeup of why each flag is load-bearing:
     non-ASCII byte otherwise raises `UnicodeDecodeError` inside the capture
     on a cp1252 console, which again looks exactly like the child crashing.
 """
+import os
 import subprocess
 import sys
+
+#: Set by `pinned_child()` for the child; `_testbed/_ops.py` refuses to import
+#: any other `opensees` than the one named here.
+EXPECT_ENV = "LADRUNO_EXPECT_OPENSEES"
+
+
+def pinned_child(args, env=None):
+    """Return `(argv, env)` that start `sys.executable -S *args` on the
+    PARENT's engine (WP-176).
+
+    A child started without `-S` runs `site`, and a `site-packages` `.pth`
+    may import `opensees` before `PYTHONPATH` is consulted -- the Ladruno
+    `wire_venv_pth` boot hook did exactly that, from whichever worktree it was
+    last wired to, so a fresh-interpreter test could compare a DIFFERENT build
+    with no error (WP-175).  `-S` skips `site`; the parent's `sys.path` is
+    passed as `PYTHONPATH` so the child still sees every directory the parent
+    does (site-packages and `.pth`-added paths included -- only `.pth` IMPORT
+    lines are skipped, which is the point).  If the parent has `opensees`
+    loaded, its file is pinned in `EXPECT_ENV` and `_testbed._ops` asserts it.
+    """
+    env = dict(os.environ if env is None else env)
+    env["PYTHONPATH"] = os.pathsep.join(p for p in sys.path if p)
+    eng = getattr(sys.modules.get("opensees"), "__file__", None)
+    if eng:
+        env[EXPECT_ENV] = os.path.abspath(eng)
+    return [sys.executable, "-S", *args], env
 
 
 def run_python_script(script, cwd=None, timeout=300, argv=(), merge_stderr=False):

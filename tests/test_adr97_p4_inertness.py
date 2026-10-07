@@ -108,6 +108,7 @@ import numpy as np
 import pytest
 
 from _testbed import ops
+from _testbed.subprocess_run import pinned_child
 
 import test_adr97_p1_smooth as S  # noqa: E402
 
@@ -176,7 +177,10 @@ def baseline():
 def _run_child(deck, tmp_path):
     """Run ONE deck in a fresh interpreter and return its recorded history."""
     out = os.path.join(str(tmp_path), "hist.json")
-    env = dict(os.environ)
+    # WP-176: `-S` + the parent's sys.path, and the child's `_testbed` import
+    # refuses any engine but this process's -- so the bits compared below are
+    # always THIS build's (WP-175 found the gate had no such guarantee).
+    argv, env = pinned_child([DUMPER, "--one", deck, out])
     env.setdefault("LADRUNO_OPENSEES_QUIET", "1")
     # `stdin=subprocess.DEVNULL` is LOAD-BEARING on Windows: with the inherited
     # stdin, Popen tries to DuplicateHandle whatever pytest's fd-level capture
@@ -185,8 +189,7 @@ def _run_child(deck, tmp_path):
     # and it looks exactly like the child crashing.  `errors="replace"` for the
     # same reason: an `opserr` line with a non-ASCII byte otherwise raises
     # UnicodeDecodeError inside the capture on a cp1252 console.
-    p = subprocess.run([sys.executable, DUMPER, "--one", deck, out],
-                       cwd=HERE, env=env, capture_output=True, text=True,
+    p = subprocess.run(argv, cwd=HERE, env=env, capture_output=True, text=True,
                        stdin=subprocess.DEVNULL, encoding="utf-8",
                        errors="replace")
     if not os.path.exists(out):

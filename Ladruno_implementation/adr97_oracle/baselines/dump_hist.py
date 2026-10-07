@@ -122,12 +122,19 @@ def child(name, out):
 def main(out):
     hist = {}
     tmp = out + ".part"
-    env = dict(os.environ)
+    # Ladruno (WP-176): load the engine HERE and pin every child to it (`-S`,
+    # this sys.path, `_testbed._ops` refuses any other `opensees`) -- a boot
+    # `.pth` can no longer swap the build a baseline is dumped from.
+    from _testbed import ops
+    from _testbed.subprocess_run import pinned_child
+    print("engine: %s  ladrunoBuild %s" % (ops.__file__, ops.ladrunoBuild()))
     for name in _decks():
         if os.path.exists(tmp):
             os.remove(tmp)
-        p = subprocess.run([sys.executable, os.path.abspath(__file__), "--one", name, tmp],
-                           env=env, capture_output=True, text=True)
+        argv, env = pinned_child([os.path.abspath(__file__), "--one", name, tmp])
+        p = subprocess.run(argv, env=env, capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, encoding="utf-8",
+                           errors="replace")
         if os.path.exists(tmp):
             hist[name] = json.load(open(tmp))
         else:
