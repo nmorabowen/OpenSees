@@ -91,6 +91,18 @@ the same PR** as the change:
 - **`quirks/`** — learned an OpenSees gotcha? One `### ` entry, so the next
   agent doesn't rediscover it.
 
+## GitHub issues are the shared memory (REQUIRED)
+
+Live state lives on GitHub, never in a session's private memory: a WP's state
+and handoffs on its **draft PR**, a multi-WP program on its **`program`
+issue**, everything open on the pinned **board** issue, each out-of-scope bug
+or gap in **its own issue**. Boot from the board and the last handoff comment;
+before the session ends, post a handoff and refresh the board row. Private
+memory keeps preferences and pointers ("program X is #n"), not open-PR lists,
+job ids or "resume here" notes. Something learned that must not be
+rediscovered graduates from an issue into a ledger quirk or a lint rule.
+Protocol, labels and templates: [Ladruno_internal/ISSUES.md](Ladruno_internal/ISSUES.md).
+
 ## Splash-banner feature list — keep it in sync
 
 The splash banner prints an active-feature list under the LADRUNO ASCII art.
@@ -112,7 +124,8 @@ Every `shipped` implementations fragment should have a matching banner line
   toolchain detail. See `BUILD_GOTCHAS.md` (env/runtime workarounds: Python 3.12
   ABI, batch traps, CMake-4.3 shadow, MUMPS, test bootstrap, installer DLL-lock)
   and `WORKFLOW_GOTCHAS.md` (PR/CI/git traps on this fast-auto-merging fork:
-  stranded commits, stale-PR "no checks", header stamp, vanilla footprint).
+  stranded commits, stale-PR "no checks", header stamp, vanilla footprint)
+  and `ISSUES.md` (issues as shared memory: board, handoffs, labels).
 - `Ladruno_scripts/` — build, installer, banner, and test tooling.
 - `.claude/skills/` — the task guides above (tracked; the rest of `.claude/` is
   session scratch and stays ignored).
