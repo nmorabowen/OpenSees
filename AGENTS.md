@@ -95,7 +95,7 @@ the same PR** as the change:
 
 Live state lives on GitHub, never in a session's private memory: a WP's state
 and handoffs on its **draft PR**, a multi-WP program on its **`program`
-issue**, everything open on the pinned **board** issue, each out-of-scope bug
+issue**, everything open on the pinned **board** issue (#937), each out-of-scope bug
 or gap in **its own issue**. Boot from the board and the last handoff comment;
 before the session ends, post a handoff and refresh the board row. Private
 memory keeps preferences and pointers ("program X is #n"), not open-PR lists,

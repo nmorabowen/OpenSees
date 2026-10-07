@@ -1,6 +1,6 @@
 # GitHub issues are the shared memory (WP-174)
 
-**Board:** pinned issue (`gh issue list --label board`).
+**Board:** #937 (pinned; `gh issue list --label board`).
 
 Agents on this fork run in parallel sessions, on different machines, and lose
 their context at every compaction. Whatever one session knows and the next one
