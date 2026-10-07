@@ -1,6 +1,7 @@
 ---
 wp: WP-179
 title: "A test of the boot .pth gets the INSTALLED _ladruno_opensees_boot, not the one it wrote — any child probing site/.pth behaviour must start with -S (WP-179)"
+pr: "#965"
 date: 2026-10-07
 ---
 ### A test of the boot `.pth` imports the INSTALLED `_ladruno_opensees_boot`, not the one it wrote (WP-179)
