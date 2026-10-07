@@ -1,6 +1,7 @@
 ---
 wp: WP-173
 title: "system Mumps in serial OpenSees.exe is an unknown type; pre-WP-172 it freed the live SOE"
+pr: "#929"
 date: 2026-10-06
 ---
 ### `system Mumps` after `analysis` kills serial OpenSees.exe at `analyze` (exit 127 / 0xC0000409, no message): Mumps is NOT compiled into the serial targets (WP-173, 2026-10-06)
