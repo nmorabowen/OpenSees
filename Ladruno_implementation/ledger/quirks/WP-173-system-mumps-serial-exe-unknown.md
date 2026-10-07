@@ -1,0 +1,12 @@
+---
+wp: WP-173
+title: "system Mumps in serial OpenSees.exe is an unknown type; pre-WP-172 it freed the live SOE"
+pr: "#929"
+date: 2026-10-06
+---
+### `system Mumps` after `analysis` kills serial OpenSees.exe at `analyze` (exit 127 / 0xC0000409, no message): Mumps is NOT compiled into the serial targets (WP-173, 2026-10-06)
+- **Mumps is parallel-only.** CMake adds `${MUMPS_FLAG}` (`-D_MUMPS`) and the `mumps/*.cpp` sources only to OpenSeesSP, OpenSeesMP and `openseesmp.pyd`. Serial `OpenSees.exe` and `opensees.pyd` have no `_MUMPS`, so there `system Mumps` is exactly a typo: openseespy raises `unknown system type Mumps`, and classic Tcl falls through the whole `specifySOE` ladder into the external-package branch (which looks for `Mumps.dll`). A deck that "works with Mumps" on the serial exe is running on some other solver.
+- **Why it crashed (classic Tcl, all Tcl targets):** `specifySOE` never cleared the global `theSOE`, and its tail tested `if (theSOE != 0)`. After any earlier `system`, a call that created nothing still saw the old pointer, returned `TCL_OK`, and, when an analysis existed, called `setLinearSOE(*theSOE)` with the SOE the analysis already owned. `StaticAnalysis::setLinearSOE` / `DirectIntegrationAnalysis::setLinearSOE` delete their current SOE first, so the analysis ended up holding a freed pointer and died at the next `analyze` (measured on f4a14761e: exit 127 on the CLI, 0xC0000409 under pytest, nothing printed). Without an analysis the same fall-through returned `TCL_OK` silently and `analysis` used the previous system. The parallel exes have Mumps, but a typo (`system Mumsp`) there hit the same path.
+- **Diagnostic tell:** the serial `MumpsSolver` constructor writes `MumpsSOlver - constructor` to stderr. If `system Mumps` printed nothing at all, no Mumps object was built.
+- **Fix:** WP-172 (`specifySOE` wrapper: clear the global, restore it when nothing was created, return `TCL_ERROR` with `previous system left unchanged`). **Gate:** `tests/test_wp173_unknown_system_keeps_soe.py`, which runs the measured `Mumps` deck plus typo decks (static and transient analysis, no analysis) through `dist/bin/OpenSees.exe`. On a pre-WP-172 build 4 cases fail; on the WP-172 build all 6 pass. It also pins openseespy parity.
+- **General shape:** a dispatcher that reports success by reading a *global* instead of a local result will re-install the old object. Combined with a setter that deletes before it assigns, that is a use-after-free. Look for `if (theX != 0)` tails in every `specifyX` (the WP-171 audit list).
