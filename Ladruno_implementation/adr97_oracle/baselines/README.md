@@ -56,7 +56,11 @@ documented change to `Backward_Euler` lands, or (WP-175) when the dev host
 changed and a rebuild of the baseline's own commit proves the move belongs to
 the host. Never regenerate just to make a red gate green.
 
-The children are started as plain `python3.12 dump_hist.py`, without `-S`. A
-`site-packages` boot `.pth` that imports `opensees` therefore wins over
-`PYTHONPATH`. Check that the `ladrunoBuild` recorded in each child dump names
-the build you meant, or run the decks from a `-S` driver with pinned paths.
+Every child is started with `-S` and pinned to the driver's own engine
+(`_testbed.subprocess_run.pinned_child`, WP-176). A child that loads any other
+`opensees` exits with `ImportError: ... parent pinned ...`, and a deck that
+fails that way is recorded as `child_error`. So the build that counts is the
+one the DRIVER loads; it prints that engine's path and `ladrunoBuild` first.
+Check that line. The driver itself still runs `site`, because the deck modules
+need numpy from `site-packages`, so a boot `.pth` could still pick the driver's
+engine. The printed path is what catches that.
