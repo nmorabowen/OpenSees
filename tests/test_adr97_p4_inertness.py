@@ -85,9 +85,20 @@ wp/97e entry and the four explicit-integrator decks, which need wp/97f's
 Windows host is therefore not evidence against D1 by itself: re-dump the
 baseline's own commit on that host first (README "Regenerating").
 
+WP-177 (#960), per-host baselines: the owner develops on several Windows
+machines, so a single baseline made `==` fail everywhere but one desk.
+`baselines/hosts.json` now files each host's own baseline under
+`hostkey.host_key()` (platform + CPU brand).  A registered host compares `==`;
+every other host -- Linux included -- compares against the reference file at a
+1e-8 RELATIVE floor (worst |d| / max(scale, 1)), 5x the measured host noise and
+100x tighter than the old 1e-6 cross-platform floor.
+`test_gate4_this_host_has_its_own_baseline` skips with instructions on an
+unregistered Windows host, so the weaker leg is visible in the summary.
+
 Zone-A, 5.9 s for the whole file: a fresh-interpreter deck costs ~0.2 s, so
 BOTH the representative slice and the full 23-deck sweep run on every push.
 """
+import importlib.util
 import json
 import os
 import subprocess
@@ -120,11 +131,45 @@ FAST_DECKS = [
 ]
 
 
+#: WP-177 (#960): byte identity is a property of the HOST as well as the commit
+#: (WP-175), and the owner works on several machines.  `hosts.json` files each
+#: host's own baseline under `hostkey.host_key()`; on a registered host the
+#: gate is `==`.  Anywhere else it compares against the reference baseline at
+#: REL_FLOOR -- 5x the measured Windows-to-Windows host noise (2.0e-09) -- and
+#: `test_gate4_this_host_has_its_own_baseline` says how to register the host.
+HOSTS = os.path.join(BASE_DIR, "hosts.json")
+REL_FLOOR = 1e-8
+
+
+def _host_key():
+    spec = importlib.util.spec_from_file_location(
+        "adr97_hostkey", os.path.join(BASE_DIR, "hostkey.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.host_key()
+
+
+def _resolve_baseline():
+    """(path, exact, host): this host's own baseline compared with `==`, or the
+    reference baseline at REL_FLOOR when this host has none."""
+    host = _host_key()
+    hosts = {}
+    if os.path.exists(HOSTS):
+        with open(HOSTS) as f:
+            hosts = json.load(f)
+    if host in hosts:
+        return os.path.join(BASE_DIR, hosts[host]["file"]), True, host
+    return BASELINE, False, host
+
+
+BASELINE_PATH, EXACT, HOST = _resolve_baseline()
+
+
 @pytest.fixture(scope="module")
 def baseline():
-    if not os.path.exists(BASELINE):
-        pytest.skip("ADR-97 gate-4 baseline not present: %s" % BASELINE)
-    with open(BASELINE) as f:
+    if not os.path.exists(BASELINE_PATH):
+        pytest.skip("ADR-97 gate-4 baseline not present: %s" % BASELINE_PATH)
+    with open(BASELINE_PATH) as f:
         return json.load(f)
 
 
@@ -167,16 +212,17 @@ def _assert_identical(deck, ref, got):
             if x != y:
                 nbit += 1
                 worst = max(worst, abs(x - y))
-    # ci-coverage: partial -- runs everywhere at the 1e-6 cross-platform floor; bit equality to the MSVC baseline is Windows-only (local-only until a Windows CI job exists, WP-143)
-    if sys.platform != "win32":
-        # Not the baseline's platform: MSVC vs GCC/libm differ at 1e-9 absolute
-        # (measured, see the module docstring).  Enforce the fork's
-        # cross-platform floor instead of bit equality.
-        assert worst <= 1e-6 * max(scale, 1.0), (
-            "deck %r: committed stress differs from the Windows baseline by "
-            "%.3e (scale %.3e) on %s -- beyond the 1e-6 cross-platform floor, "
-            "so this is a code-path change, not compiler noise."
-            % (deck, worst, scale, sys.platform))
+    # ci-coverage: partial -- runs everywhere at REL_FLOOR; bit equality needs a host registered in hosts.json (local-only until a Windows CI job exists, WP-143)
+    if not EXACT:
+        # Not a registered host (any Linux, or a Windows machine without its
+        # own baseline): MSVC vs GCC/libm and host vs host differ at ~2e-9
+        # relative (measured, see the module docstring).  Enforce REL_FLOOR
+        # instead of bit equality.
+        assert worst <= REL_FLOOR * max(scale, 1.0), (
+            "deck %r: committed stress differs from the reference baseline by "
+            "%.3e (scale %.3e, rel %.3e) on host %r -- beyond the %g floor, so "
+            "this is a code-path change, not host noise."
+            % (deck, worst, scale, worst / max(scale, 1.0), HOST, REL_FLOOR))
         return
     assert nbit == 0, (
         "deck %r: %d of %d committed stress components changed (worst |d| = "
@@ -207,6 +253,40 @@ def test_gate4_backward_euler_is_byte_identical_full(baseline, tmp_path):
         except AssertionError as exc:
             changed.append(str(exc))
     assert not changed, "\n".join(changed)
+
+
+def test_gate4_hosts_registry_is_consistent():
+    """Every registered host's baseline exists and covers exactly the
+    reference baseline's decks -- a half-dumped host file would otherwise
+    silently shrink the `==` gate on that machine."""
+    with open(HOSTS) as f:
+        hosts = json.load(f)
+    with open(BASELINE) as f:
+        ref = set(json.load(f))
+    assert hosts, "hosts.json registers no host"
+    for host, entry in hosts.items():
+        path = os.path.join(BASE_DIR, entry["file"])
+        assert os.path.exists(path), "host %r: %s missing" % (host, path)
+        with open(path) as f:
+            decks = set(json.load(f))
+        assert decks == ref, ("host %r: decks differ from the reference: "
+                              "missing %s, extra %s"
+                              % (host, sorted(ref - decks), sorted(decks - ref)))
+
+
+def test_gate4_this_host_has_its_own_baseline():
+    """Reports, as a SKIP, a Windows host that ran gate 4 at REL_FLOOR
+    because it has no baseline of its own (#960)."""
+    # ci-coverage: local-only -- Windows-host registration check; Linux always runs the REL_FLOOR leg (WP-177)
+    if sys.platform != "win32":
+        pytest.skip("byte identity is a Windows-host gate; this platform runs "
+                    "the %g floor" % REL_FLOOR)
+    if not EXACT:
+        pytest.skip(
+            "no gate-4 baseline for host %r: the byte-identity tests ran at the "
+            "%g relative floor instead of ==.  Register this host: README "
+            "'Adding a host' (Ladruno_implementation/adr97_oracle/baselines)."
+            % (HOST, REL_FLOOR))
 
 
 # ===========================================================================

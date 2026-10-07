@@ -17,6 +17,33 @@ first rebuild `3622d6214` there and compare it against this file. If that build
 misses too, the cause is the host, not `Backward_Euler`. See the quirk
 `WP-175-adr97-gate4-baseline-is-host-specific`.
 
+## Adding a host (WP-177, #960)
+
+Byte identity holds per **host**, not only per commit (WP-175). `hosts.json`
+maps `hostkey.host_key()` (platform + CPU brand; run `python hostkey.py` to see
+it) to that host's own baseline file. On a registered host the gate is `==`; on
+any other host, Linux included, it compares against
+`be_secant_baseline_3622d6214.json` at a 1e-8 relative floor, and
+`test_gate4_this_host_has_its_own_baseline` reports the host as SKIPPED with
+these instructions.
+
+To register a new Windows machine, once:
+
+1. Build `3622d6214` there (all 5 targets via `build.bat`, in its own
+   worktree) and dump the 18 pre-ADR-97 decks; build `7e93e4381` and dump the
+   wp/97e entry and the four `experimental 1` decks. This is the WP-175 recipe.
+2. Merge the two into `be_secant_baseline_3622d6214.<short-host>.json`, where
+   `<short-host>` is a slug of the CPU (e.g. `intel-i9-13900k`). Every record
+   carries `host`, so check that it names this machine.
+3. Check that a build of current `ladruno` matches the new file `==` on all 23
+   decks; ADR-97 D1 on this host is exactly that.
+4. Add the row to `hosts.json`: `file`, `dumped`, `toolchain`, `by`.
+
+`test_gate4_hosts_registry_is_consistent` fails if a registered file is
+missing or covers a different deck set. A toolchain upgrade does not change a
+host's key. If it moves the bits, re-dump that host deliberately and say so in
+the commit; never re-dump to make a red gate green.
+
 ADR-97 **D1** keeps `Backward_Euler` byte-identical. Gate 4 is that promise made
 checkable: `tests/test_adr97_p4_inertness.py` re-runs the same decks in FRESH
 SUBPROCESSES against the current binary and compares bit for bit.

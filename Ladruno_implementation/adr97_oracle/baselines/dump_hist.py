@@ -93,6 +93,11 @@ def child(name, out):
         rec['ladrunoBuild'] = str(ops.ladrunoBuild())
     except Exception:                                   # pragma: no cover
         rec['ladrunoBuild'] = 'unknown'
+    # Ladruno (WP-177): the bits belong to the dumping HOST too (WP-175), so
+    # record which one; hosts.json files a baseline under this key.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from hostkey import host_key
+    rec['host'] = host_key()
     try:
         build, nsteps = _build_one(name)
         build()
