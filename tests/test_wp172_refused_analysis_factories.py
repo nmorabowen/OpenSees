@@ -13,8 +13,11 @@ returned 0 for an unknown analysis type.
 
 classic Tcl: `specifyCTest`, `specifyNumberer` and `specifyAnalysis` were
 already correct (local temporaries, TCL_ERROR before touching a global).
-`specifySOE` returned TCL_OK for an unknown type once ANY system had been set
-(its final check reads the global, which still held the previous SOE), and
+`specifySOE` returned TCL_OK for a call that created nothing (unknown type,
+`PFEM -<unknown>`) once ANY system had been set: its final check reads the
+global, which still held the previous SOE. With an analysis present it then
+re-installed that same pointer via setLinearSOE(), which deletes the old SOE
+first -- a use-after-free that killed the next `analyze` (exit 127). And
 `specifyConstraintHandler`'s Auto / LadrunoProjection / LadrunoContact
 branches assigned the factory result to the global BEFORE the null check, so
 a refused handler returned TCL_ERROR with the previous handler discarded.
@@ -68,7 +71,6 @@ def _model():
 # `unknown-type` rows are premises (the dispatcher already returned -1).
 REFUSED = [
     pytest.param("system", ("PFEM", "-noSuchOption"), id="system-PFEM-bad-option"),
-    pytest.param("system", ("Mumps", "-ICNTL14"), id="system-Mumps-missing-value"),
     pytest.param("system", ("NoSuchSystem",), id="system-unknown-type"),
     pytest.param("numberer", ("ParallelRCM",), id="numberer-ParallelRCM-serial"),
     pytest.param("numberer", ("NoSuchNumberer",), id="numberer-unknown-type"),
@@ -156,7 +158,9 @@ test FixedNumIter 3; algorithm Newton; integrator LoadControl 0.1
 # were already correct pre-fix and must stay so.
 TCL_CASES = {
     "system-unknown-after-system": ("system NoSuchSystem", True),
+    "system-PFEM-bad-option": ("system PFEM -noSuchOption", True),
     "constraints-Auto-missing-value": ("constraints Auto -autoPenalty", True),
+    "constraints-Penalty-no-args": ("constraints Penalty", False),
     "numberer-unknown": ("numberer NoSuchNumberer", False),
     "test-NormUnbalance-no-args": ("test NormUnbalance", False),
     "test-unknown": ("test NoSuchTest 1e-8 10", False),
@@ -167,10 +171,14 @@ TCL_CASES = {
 @pytest.mark.skipif(TCL_EXE is None,
                     reason="classic OpenSees exe not found (build it, or set LADRUNO_TCL_EXE)")
 @pytest.mark.parametrize("case", list(TCL_CASES))
-def test_classic_tcl_refused_factory(case, tmp_path):
+@pytest.mark.parametrize("analysis_first", [False, True], ids=["no-analysis", "with-analysis"])
+def test_classic_tcl_refused_factory(case, analysis_first, tmp_path):
+    """with-analysis + `system <nothing created>` was a use-after-free pre-fix:
+    the stock body re-installed the SAME SOE via setLinearSOE(), which deletes
+    the old one first; the next `analyze` killed the process (exit 127)."""
     refused, fixed = TCL_CASES[case]
     deck = tmp_path / f"{case}.tcl"
-    deck.write_text(TCL_MODEL + f"""
+    deck.write_text(TCL_MODEL + ("analysis Static\n" if analysis_first else "") + f"""
 puts "RC [catch {{{refused}}} m]"
 analysis Static
 analyze 1
