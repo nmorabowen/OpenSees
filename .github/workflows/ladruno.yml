@@ -306,6 +306,19 @@ jobs:
     runs-on: [self-hosted, windows, ladruno-perf]
     steps:
       - uses: actions/checkout@v4
+        with:
+          clean: false
+      # WP-179 (#934): this job used to have NO build step, so it tested whatever
+      # pyd the runner had installed -- and a bare `pytest` there would also let a
+      # site-packages boot .pth pick the engine. Build THIS commit (reconfigure
+      # first so ladrunoBuild() is re-stamped), then run through ci_run_pytest.py,
+      # which pins dist\bin under `-S` and requires ladrunoBuild() == github.sha.
+      - name: Force a CMake reconfigure (re-stamp ladrunoBuild)
+        shell: pwsh
+        run: (Get-Item CMakeLists.txt).LastWriteTime = Get-Date
+      - name: Build all targets (build.bat, byte-verified dist)
+        shell: cmd
+        run: call Ladruno_scripts\setup_env.bat && call Ladruno_scripts\build.bat
       # ~50 min. The ONE deselect is the known, deliberately-unfixed
       # ASDConcrete3D defect (ADR-11 §KNOWN DEFECT, LEDGER_quirks,
       # Ladruno_files/testbed/asdconcrete_tag_cache/). Deselecting it here does
@@ -318,8 +331,9 @@ jobs:
         shell: pwsh
         run: |
           $env:APEGMSH_SKIP_VIEWER = "1"
-          cd tests
-          pytest -v --deselect test_ladrunoBrick_asdconcrete_bend.py::test_notched_bend_mesh_objectivity
+          py -3.12 -S Ladruno_scripts/ci_run_pytest.py --expect-sha "${{ github.sha }}" -- `
+            -v --deselect test_ladrunoBrick_asdconcrete_bend.py::test_notched_bend_mesh_objectivity
+          exit $LASTEXITCODE
       # Sentinel for the allowance above. Runs the minimal poisoning PAIR (~75 s)
       # and requires it to FAIL. If someone fixes the material, this goes green,
       # the step goes red, and whoever fixed it is told to delete the deselect
@@ -329,9 +343,15 @@ jobs:
       - name: Sentinel — the known ASDConcrete3D defect still reproduces
         shell: pwsh
         run: |
-          cd tests
-          pytest -q test_ladrunoBrick_asdconcrete.py::test_lch_handshake_mesh_objectivity test_ladrunoBrick_asdconcrete_bend.py::test_notched_bend_mesh_objectivity
+          py -3.12 -S Ladruno_scripts/ci_run_pytest.py --expect-sha "${{ github.sha }}" -- `
+            -q test_ladrunoBrick_asdconcrete.py::test_lch_handshake_mesh_objectivity test_ladrunoBrick_asdconcrete_bend.py::test_notched_bend_mesh_objectivity
           $rc = $LASTEXITCODE
+          # 90 / 91 = ci_run_pytest refused the engine (stale or unpinned): that
+          # is NOT the defect reproducing, so it must not count as "sentinel OK".
+          if ($rc -eq 90 -or $rc -eq 91) {
+            Write-Host "::error::ci_run_pytest refused the engine (exit $rc); the sentinel did not run."
+            exit 1
+          }
           if ($rc -eq 0) {
             Write-Host "::error::The ASDConcrete3D tag-cache defect no longer reproduces."
             Write-Host "::error::If it was fixed: delete the --deselect in the step above, drop this"
@@ -355,12 +375,21 @@ jobs:
     runs-on: [self-hosted, windows, ladruno-perf]
     steps:
       - uses: actions/checkout@v4
+        with:
+          clean: false
+      # WP-179 (#934): build THIS commit and pin the engine (see cross-tier-nightly).
+      - name: Force a CMake reconfigure (re-stamp ladrunoBuild)
+        shell: pwsh
+        run: (Get-Item CMakeLists.txt).LastWriteTime = Get-Date
+      - name: Build all targets (build.bat, byte-verified dist)
+        shell: cmd
+        run: call Ladruno_scripts\setup_env.bat && call Ladruno_scripts\build.bat
       - name: Zone-B (apeGmsh / LS-DYNA cross-checks)
         shell: pwsh
         run: |
           $env:APEGMSH_SKIP_VIEWER = "1"
-          cd tests
-          pytest -v -m "zone_b"
+          py -3.12 -S Ladruno_scripts/ci_run_pytest.py --expect-sha "${{ github.sha }}" -- -v -m "zone_b"
+          exit $LASTEXITCODE
       - name: Perf micro-bench (state-determination ns/call)
         shell: pwsh
         run: python Ladruno_files/testbed/perf/runner.py --check
