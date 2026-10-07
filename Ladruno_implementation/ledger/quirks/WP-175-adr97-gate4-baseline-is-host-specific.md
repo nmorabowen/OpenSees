@@ -1,6 +1,7 @@
 ---
 wp: WP-175
 title: "ADR-97 gate-4 byte-identity fails on a new Windows host with no source change — the baseline's bits belong to the dumping HOST (WP-175)"
+pr: "#938"
 date: 2026-10-06
 ---
 ### ADR-97 gate-4 `test_gate4_backward_euler_is_byte_identical_*` fails on Windows with no source change — the baseline's bits belong to the dumping HOST (WP-175)
