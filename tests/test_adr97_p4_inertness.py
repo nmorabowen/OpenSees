@@ -61,6 +61,30 @@ map is exactly linear, so old and new FD agree exactly there, with no
 path-dependence to expose. `Backward_Euler`'s own source is confirmed
 untouched by `grep -n compute_local_stress` inside its body (ADR-97 D1).
 
+WP-175 baseline regeneration, 2026-10-06: the baseline is a property of the
+HOST that dumped it, not only of the commit.  Until 2026-09-18 the fork was
+developed on another Windows workstation (every commit through then carries a
+-0500 committer offset; from 2026-09-23 on they carry -0300, the current
+desktop's).  Rebuilt on the current desktop (AMD Ryzen AI 7 PRO 350, MSVC
+14.44.35207, Windows SDK 10.0.26100.0, eigen/3.4.0 conan rev e7256a46),
+`3622d6214` -- the baseline's OWN source -- missed its own baseline in 14 decks
+by up to 2.0e-09 relative (tet/hb 8.1e-03 absolute on a 4.07e6 scale; VM
+5.772e-09 and DP 2.033e-20 absolute, i.e. exactly the GCC/Linux numbers quoted
+above), with every return code and step count unchanged.  Same source, same
+toolchain versions, different bits: a host property (CPU-dispatched or
+compiler-build codegen on the other machine), not a code path.  Excluded on
+this host by direct test: the 2026-09-21 ucrtbase.dll update (opensees.pyd has
+no UCRT imports -- the CRT is static) and MKL dispatch (invariant under
+MKL_CBWR=COMPATIBLE/AVX2/SSE4_2 and MKL_NUM_THREADS=1).  ADR-97 D1 re-proved
+on this host: a `3622d6214` build equals a `7e93e4381` build bit for bit on
+every deck it can run except the deliberate wp/97e entry, and `7e93e4381`
+equals `f4a14761e` (2026-10-06 ladruno) on all 23.  The file was re-dumped from
+those two builds with the original provenance (18 decks from `3622d6214`; the
+wp/97e entry and the four explicit-integrator decks, which need wp/97f's
+`experimental 1`, from `7e93e4381`).  A failure of the `==` leg on ANOTHER
+Windows host is therefore not evidence against D1 by itself: re-dump the
+baseline's own commit on that host first (README "Regenerating").
+
 Zone-A, 5.9 s for the whole file: a fresh-interpreter deck costs ~0.2 s, so
 BOTH the representative slice and the full 23-deck sweep run on every push.
 """

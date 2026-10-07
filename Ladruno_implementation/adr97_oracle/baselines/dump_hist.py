@@ -97,7 +97,9 @@ def child(name, out):
         build, nsteps = _build_one(name)
         build()
     except Exception as exc:
-        rec = {"build_error": repr(exc)}
+        # Ladruno (WP-175): update, not rebind -- rebinding dropped the
+        # ladrunoBuild provenance recorded above from every dump.
+        rec["build_error"] = repr(exc)
     else:
         codes, sig, eps = [], [], []
         for _ in range(nsteps):
@@ -107,7 +109,7 @@ def child(name, out):
                 break
             sig.append([float(x) for x in list(ops.eleResponse(1, "stresses"))[0:6]])
             eps.append([float(x) for x in list(ops.eleResponse(1, "strains"))[0:6]])
-        rec = {"codes": codes, "stress": sig, "strain": eps}
+        rec.update(codes=codes, stress=sig, strain=eps)
     with open(out, "w") as f:
         json.dump(rec, f)
 
@@ -127,7 +129,8 @@ def main(out):
             hist[name] = {"child_error": (p.stdout + p.stderr)[-400:]}
         v = hist[name]
         print("  %-46s %s" % (name, "steps=%d rc=%s" % (len(v["stress"]), set(v["codes"]))
-                              if "stress" in v else list(v)[0]))
+                              if "stress" in v
+                              else [k for k in v if k.endswith("_error")]))
         sys.stdout.flush()
     with open(out, "w") as f:
         json.dump(hist, f, indent=1, sort_keys=True)
