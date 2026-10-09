@@ -72,7 +72,7 @@ def test_reports_an_unparseable_test_file(tmp_path):
     assert len(out) == 1 and "cannot parse" in out[0], out
 
 
-# --- --list-platform-tests (WP-179): the on-demand Windows job's test set ----
+# --- --list-platform-tests (WP-179): the local Windows-gates test set ---------
 _GATE = 'pytestmark.append(pytest.mark.skipif(sys.platform != "win32", reason="mkl"))\n'
 
 

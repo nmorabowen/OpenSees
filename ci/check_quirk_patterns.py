@@ -1114,7 +1114,8 @@ def platform_test_files(root):
     """The test files whose platform branch changes what is TESTED: every
     collectable `test_*.py` (ANY tier, not just zone_a) that branches on the
     platform the way L8 detects it, minus those whose annotations are all
-    `portable`. This is the set the on-demand Windows job runs (WP-179), so a new
+    `portable`. This is the set the local Windows-gates command runs (WP-179,
+    BUILD_GOTCHAS section 4c), so a new
     win32-only test is picked up the moment it lands, with no list to maintain.
     Not zone_a-only on purpose: an unmarked or zone_b test with a win32 leg is
     run by NO CI job at all (Zone-A runs `-m zone_a`), which is a wider gap than
@@ -1465,7 +1466,7 @@ def main(argv=None):
     ap.add_argument("--list-waivers", action="store_true")
     ap.add_argument("--list-platform-tests", action="store_true",
                     help="print the zone_a test files with a non-portable platform branch, one per line, "
-                         "relative to tests/ (the on-demand Windows job's test set, WP-179)")
+                         "relative to tests/ (the Windows-gates test set, WP-179; BUILD_GOTCHAS section 4c)")
     ap.add_argument("--rules-table", action="store_true", help="print the markdown rule table for ci/README.md")
     args = ap.parse_args(argv)
     root = args.root.resolve()

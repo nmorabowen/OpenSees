@@ -2,7 +2,11 @@
 
     py -3.12 -S Ladruno_scripts/ci_run_pytest.py [--dist DIR] [--expect-sha SHA] -- <pytest args>
 
-Every way this session's CI evidence went wrong on Windows is closed here:
+The Windows-only gates in one command (BUILD_GOTCHAS section 4c):
+
+    py -3.12 -S Ladruno_scripts/ci_run_pytest.py -- $(py -3.12 ci/check_quirk_patterns.py --list-platform-tests)
+
+Every way local Windows test evidence went wrong in WP-175..178 is closed here:
 
 * `-S` is REQUIRED. Without it `site` runs a boot `.pth` that imports
   `opensees` from whatever worktree it was last wired to, before `sys.path` is
@@ -10,15 +14,14 @@ Every way this session's CI evidence went wrong on Windows is closed here:
   resolve, but no `.pth` IMPORT line runs.
 * `dist\\bin` is pinned for this process (`sys.path` + `add_dll_directory`)
   and for children (`PYTHONPATH`), and `opensees.__file__` is asserted.
-* `--expect-sha` (default `$GITHUB_SHA` when set) must equal
+* `--expect-sha` (default `$GITHUB_SHA` when set, else no check) must equal
   `opensees.ladrunoBuild()`, which proves the tests run on the commit just built.
   The stamp is taken at CMake CONFIGURE time (BUILD_GOTCHAS "ladrunoBuild lags"),
-  so the caller must force a reconfigure before building; the Windows workflow
-  touches CMakeLists.txt for that.
+  so touch CMakeLists.txt before the build when you pass it.
 
 Exit codes: pytest's own (0-5), or 90 = wrong/stale engine, 91 = not started with -S.
 Deliberately outside pytest's range, so a caller can tell "the tests ran and
-failed" from "the tests never ran" (the ladruno.yml sentinel depends on it).
+failed" from "the tests never ran".
 """
 import argparse
 import os

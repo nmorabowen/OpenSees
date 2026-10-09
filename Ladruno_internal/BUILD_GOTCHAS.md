@@ -196,6 +196,35 @@ did not contain the fix; the CI failure was the only true signal.
 - `ladrunoBuild()` is the same check the `ladrunoBuild` build-stamp
   probe idiom opens every harness with — this is the case it was made for.
 
+### 4c. The Windows-only gates: one command (WP-179)
+
+PR CI (Zone-A) is Ubuntu without MKL, and there is no Windows runner (#934; the
+owner chose a local recipe over a self-hosted runner). Every test that branches
+on the platform — Pardiso, FEAST, the MSVC byte-identity baselines, the
+boot-`.pth` wiring — therefore runs only when someone runs it on Windows. After
+`build.bat`, from the worktree root (Git Bash):
+
+```bash
+py -3.12 -S Ladruno_scripts/ci_run_pytest.py -- $(py -3.12 ci/check_quirk_patterns.py --list-platform-tests)
+```
+
+- **The test list maintains itself.** `--list-platform-tests` is lint L8's own
+  AST walk: every collectable `test_*.py` of ANY tier whose platform branch is
+  not annotated `portable`. A new win32-only test joins it the moment it lands.
+  Not just `zone_a`: an unmarked file with a win32 leg is run by no CI at all.
+- **The engine is pinned.** The launcher refuses to start without `-S` (exit 91;
+  a boot `.pth` would otherwise choose the engine, WP-175/176), puts `dist\bin`
+  first for itself and every child, and asserts `opensees.__file__` (exit 90).
+- **Proving the commit:** add `--expect-sha $(git rev-parse HEAD)` after a build
+  that reconfigured (touch `CMakeLists.txt` first — the stamp is set at configure
+  time, see "ladrunoBuild lags" below). A mismatch is exit 90.
+- Add `LADRUNO_RUN_SLOW=1` for the slow tier (WP-132's two PARDISO legs).
+- **Measured 2026-10-07** on this desktop: 12 files, 175 passed + 2 slow
+  skipped, ~23 min. Expect that order; it is not a hang. Do not pipe it through
+  `Select-Object -Last N`, which holds all output until the end.
+- A PR touching Pardiso, FEAST, MKL or SANISAND determinism cites this
+  command's summary line on its head SHA (the #934 rule, now one command).
+
 ---
 
 ## 5. Installer DLL-lock on upgrade ("DeleteFile failed; code 5")
