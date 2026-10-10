@@ -1110,6 +1110,34 @@ def list_waivers(root, rel):
                 print(f"{rel(path)}:{li + 1}: ci-coverage {m.group(1)} {m.group(2).strip()}")
 
 
+def platform_test_files(root):
+    """The test files whose platform branch changes what is TESTED: every
+    collectable `test_*.py` (ANY tier, not just zone_a) that branches on the
+    platform the way L8 detects it, minus those whose annotations are all
+    `portable`. This is the set the local Windows-gates command runs (WP-179,
+    BUILD_GOTCHAS section 4c), so a new
+    win32-only test is picked up the moment it lands, with no list to maintain.
+    Not zone_a-only on purpose: an unmarked or zone_b test with a win32 leg is
+    run by NO CI job at all (Zone-A runs `-m zone_a`), which is a wider gap than
+    the one L8 polices."""
+    out = []
+    for path in _test_files(root):
+        if not path.name.startswith("test_"):
+            continue                  # helpers (wp151_reseat_tools.py, conftest.py) are not collected
+        src = path.read_text(encoding="utf-8", errors="replace")
+        try:
+            if not platform_branches(ast.parse(src)):
+                continue
+        except SyntaxError:
+            out.append(path)          # unparseable: let pytest report it, never drop it
+            continue
+        kinds = {m.group(1) for m in map(CI_COVERAGE.search, src.splitlines()) if m}
+        if kinds and kinds <= {"portable"}:
+            continue
+        out.append(path)
+    return out
+
+
 # --------------------------------------------------------------------------
 # unknown-token (WP-167)
 # --------------------------------------------------------------------------
@@ -1436,6 +1464,9 @@ def main(argv=None):
     ap.add_argument("--only", default=",".join(RULES),
                     help="comma list of rule slugs (" + ", ".join(RULES) + "); L-numbers are deprecated aliases")
     ap.add_argument("--list-waivers", action="store_true")
+    ap.add_argument("--list-platform-tests", action="store_true",
+                    help="print the zone_a test files with a non-portable platform branch, one per line, "
+                         "relative to tests/ (the Windows-gates test set, WP-179; BUILD_GOTCHAS section 4c)")
     ap.add_argument("--rules-table", action="store_true", help="print the markdown rule table for ci/README.md")
     args = ap.parse_args(argv)
     root = args.root.resolve()
@@ -1451,6 +1482,10 @@ def main(argv=None):
         return 0
     if args.list_waivers:
         list_waivers(root, rel)
+        return 0
+    if args.list_platform_tests:
+        for path in platform_test_files(root):
+            print(path.resolve().relative_to(root / "tests").as_posix())
         return 0
     try:
         wanted, notes = resolve_only(args.only)

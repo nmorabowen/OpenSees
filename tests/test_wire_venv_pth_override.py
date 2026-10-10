@@ -248,8 +248,15 @@ def _probe(tmp_path, env_extra, alias=False):
                         "LADRUNO_OPENSEES_BIN", "PYTHONPATH")}
     env["PYTHONPATH"] = str(real)
     env.update(env_extra)
+    # `-S` (WP-179): without it `site` runs THIS machine's installed
+    # `_ladruno_opensees_boot` at startup, and the probe's
+    # `import _ladruno_opensees_boot` returns that cached module instead of the
+    # one written above -- so on any box with the wiring installed (every dev
+    # machine, the Windows runner) the alias tests read the real boot's flag and
+    # fail, while a clean CI interpreter passes. The probe adds its site dir
+    # itself, so it needs nothing from `site`.
     out = subprocess.run(
-        [sys.executable, "-c", _PROBE, str(site_dir)],
+        [sys.executable, "-S", "-c", _PROBE, str(site_dir)],
         capture_output=True, text=True, env=env, timeout=60,
     )
     assert out.returncode == 0, out.stderr
