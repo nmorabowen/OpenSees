@@ -65,7 +65,7 @@ void ladrunoConcrete3dResetWarningBudget(void) { s_returnMapWarnPrinted = 0; }
 //       <-hardening qh0? Hp?> <-ductility Ah? Bh? Ch? Dh?>
 //       <-lch lch?> <-autoRegularization>
 //       <-tensionLaw bilinear|exp> <-epsFc epsFc? | -gcLegacy> <-flowPotential cdpm2|legacy>
-//       <-compressionDrive cdpm2|legacy> <-tcTemper proj|none> <-subIncr deterministic|adaptive> <-deadThreshold omega?|-noDead> <-verbose>
+//       <-compressionDrive cdpm2|legacy> <-tcTemper proj|none> <-subIncr deterministic|adaptive|refuse> <-deadThreshold omega?|-noDead> <-verbose>
 //  (fc, ft are POSITIVE magnitudes; compression is negative in the model.)
 //  Gf = tensile fracture energy (CDPM2 bilinear law, wf = 4.444 Gf/ft, regularized as wf/lch);
 //  Gc = PHYSICAL compressive fracture energy per unit area (eps_fc calibrated so that uniaxial compression
@@ -210,7 +210,8 @@ void* OPS_LadrunoConcrete3D(void)
       const char* sm = OPS_GetString();
       if      (strcmp(sm, "deterministic") == 0) subIncrMode = 0;
       else if (strcmp(sm, "adaptive") == 0)      subIncrMode = 1;
-      else { opserr << "WARNING LadrunoConcrete3D: -subIncr wants {deterministic|adaptive}\n"; return 0; }
+      else if (strcmp(sm, "refuse") == 0)        subIncrMode = 2;
+      else { opserr << "WARNING LadrunoConcrete3D: -subIncr wants {deterministic|adaptive|refuse}\n"; return 0; }
     }
     else if (strcmp(flag, "-deadThreshold") == 0) {
       // committed damage at or above which the point is treated as dead: the tensile part of the effective stress is

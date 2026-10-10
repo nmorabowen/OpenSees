@@ -152,7 +152,10 @@ struct Params {
     // subIncrMaxPieces) is a function of the trial overshoot only and is ALWAYS applied, with a deterministic
     // ladder n -> 2n -> 4n on a piece failure; refuse only after the ladder. 1 = ADAPTIVE: the direct return first,
     // then halving/doubling on failure (bounded by maxSubAttempts) -- the pre-follow-up path, opt-in so old numbers
-    // stay reproducible (nDMaterial -subIncr adaptive).
+    // stay reproducible (nDMaterial -subIncr adaptive). 2 = REFUSE: the direct backward-Euler return only, no
+    // sub-incrementation at all; a failed return is a refusal and the caller's global step cut is the recovery
+    // (nDMaterial -subIncr refuse; the map is exactly maxSubIncr = 0). Committed memory is then a function of the
+    // converged local solve alone, not of an internal convergence choice.
     int    subIncrMode = 0;
     double subIncrC = 0.3;
     int    subIncrMaxPieces = 64;
@@ -2393,6 +2396,11 @@ inline int returnMapTensor(const Params& mp, const double sig_n[6], const double
                            bool doTangent, int* subInfo)
 {
     // subInfo (diagnostic, optional): 0 = direct return, n >= 2 = sub-incremented in n pieces, -1 = FINAL failure
+    if (mp.subIncrMode == 2) {          // REFUSE: direct return only (equals maxSubIncr = 0), a failure is a refusal
+        const int st0 = returnMapTensor1(mp, sig_n, deps, kp_n, hardening, sig_new, kp_new, Dtan6, doTangent);
+        if (subInfo) *subInfo = (st0 == 0) ? 0 : -1;
+        return st0;
+    }
     if (mp.maxSubIncr > 0 && hardening && mp.subIncrMode == 0)
         return returnMapTensorDet(mp, sig_n, deps, kp_n, sig_new, kp_new, Dtan6, doTangent, subInfo);
     return returnMapTensorAdaptive(mp, sig_n, deps, kp_n, hardening, sig_new, kp_new, Dtan6, doTangent, subInfo);
