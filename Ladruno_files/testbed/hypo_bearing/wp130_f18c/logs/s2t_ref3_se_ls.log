@@ -1,0 +1,54 @@
+@@F130 INT_SCHEME forced to 2; extra flags ['-cppmTangent', 'fixed', '-cppmOnFail', 'refuse', '-cppmHalvings', 3, '-cppmStart', 'explicit', '-cppmLineSearch', 'on']
+    *** LADRUNO_A2_EXPECT_BUILD=any: build hash NOT pinned (running 37d0891acb80c9194f7e10b4fd5b486f6aee8951); these numbers are not comparable to the reported campaign's ***
+=== ADR 90 WP-A2 -- tau = 0 q_u band on softening SANISAND ===
+    engine build (ladrunoBuild) : 37d0891acb80c9194f7e10b4fd5b486f6aee8951
+    openseespy module           : C:\Users\nmora\Github\OpenSees_Compile\OpenSees\.claude\worktrees\agent-ad41c24dbcb30e892\dist\bin\opensees.pyd
+    driver                      : C:\Users\nmora\Github\OpenSees_Compile\OpenSees\.claude\worktrees\agent-ad41c24dbcb30e892\Ladruno_files\testbed\hypo_bearing\sanisand_tau0_band.py
+    output                      : C:\Users\nmora\Github\OpenSees_Compile\OpenSees\.claude\worktrees\agent-ad41c24dbcb30e892\Ladruno_files\testbed\hypo_bearing\wp130_f18c\bvp\s2t_ref3_se_ls
+    date                        : 2026-09-27T14:38:02
+    gamma = 19.62 kN/m3, K0 = 0.4554, M_c = 1.3309, -Presidual 0.0, -Pmin 0.101
+    SUBDIV_BUDGET (pinned, R3)  : 80
+    DS_MAX (pinned here)        : 0.005 m
+    convergence test (pinned)   : NormUnbalance @ 1e-05 x gamma*V
+    TanType (0=elastic default) : 2
+    -flipAlphaIn (WP-110 F15d)  : vanilla
+    surcharge (kPa, outside foot): 0.0
+    domain (xlim, zbot)         : 10.0, 8.0
+    IMPL-EX                     : off
+    push integrator             : LoadControl (stock)
+    wall budget per leg         : 1200 s
+
+--- leg h1.0_e0.6944 (e_init = 0.6944) ---
+@@F130 nDMaterial LadrunoSANISAND 1 264.32 0.3129 0.6944 1.3309 0.71 0.027 0.83 0.45 101.0 0.005 1.3 0.968 3.5 0.05 5.75 12.5 1100.0 2.0 2 2 1 1e-07 1e-07 -Presidual 0.0 -Pmin 0.101 -honorTolR 0 -maxSubsteps 20000 -cppmTangent fixed -cppmOnFail refuse -cppmHalvings 3 -cppmStart explicit -cppmLineSearch on
+    [h1.0_e0.6944]    25 s/B=0.00046 q=   27.940 ds=0.0800mm t=   13.7s
+    [h1.0_e0.6944]    50 s/B=0.00080 q=   45.801 ds=0.0200mm t=   30.7s
+    [h1.0_e0.6944]    75 s/B=0.00106 q=   58.869 ds=0.0200mm t=   50.1s
+    [h1.0_e0.6944]   100 s/B=0.00154 q=   82.161 ds=0.0400mm t=   76.3s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.002: q=103.897 kPa, w2(z=-0.625)=5.0276 m, yield 82 ele / 75.679 m3, t=108s
+    [h1.0_e0.6944]   125 s/B=0.00203 q=  105.310 ds=0.0200mm t=  110.7s
+    [h1.0_e0.6944]   150 s/B=0.00231 q=  118.449 ds=0.0200mm t=  130.9s
+    [h1.0_e0.6944]   175 s/B=0.00267 q=  135.181 ds=0.0200mm t=  161.0s
+    [h1.0_e0.6944]   200 s/B=0.00302 q=  151.370 ds=0.0400mm t=  190.1s
+    [h1.0_e0.6944]   225 s/B=0.00330 q=  164.292 ds=0.0200mm t=  210.4s
+    [h1.0_e0.6944]   250 s/B=0.00366 q=  180.938 ds=0.0400mm t=  239.2s
+    [h1.0_e0.6944]   275 s/B=0.00399 q=  196.150 ds=0.0200mm t=  270.8s
+    [h1.0_e0.6944]   300 s/B=0.00436 q=  213.180 ds=0.0400mm t=  330.3s
+    [h1.0_e0.6944]   325 s/B=0.00477 q=  232.178 ds=0.0200mm t=  398.7s
+    [h1.0_e0.6944] CHECKPOINT s/B=0.005: q=243.704 kPa, w2(z=-0.625)=6.0000 m, yield 84 ele / 80.000 m3, t=438s
+    [h1.0_e0.6944]   350 s/B=0.00512 q=  248.351 ds=0.0400mm t=  454.4s
+    [h1.0_e0.6944]   375 s/B=0.00560 q=  270.542 ds=0.0400mm t=  558.1s
+    [h1.0_e0.6944]   400 s/B=0.00598 q=  288.166 ds=0.0200mm t=  631.5s
+    [h1.0_e0.6944]   425 s/B=0.00644 q=  309.545 ds=0.0400mm t=  701.2s
+    [h1.0_e0.6944]   450 s/B=0.00676 q=  324.619 ds=0.0400mm t=  741.0s
+    [h1.0_e0.6944]   475 s/B=0.00708 q=  339.933 ds=0.0400mm t=  779.3s
+    [h1.0_e0.6944]   500 s/B=0.00737 q=  353.812 ds=0.0200mm t=  819.2s
+    [h1.0_e0.6944]   525 s/B=0.00772 q=  370.850 ds=0.0200mm t=  863.3s
+    [h1.0_e0.6944]   550 s/B=0.00808 q=  388.458 ds=0.0200mm t=  924.2s
+    [h1.0_e0.6944]   575 s/B=0.00838 q=  403.175 ds=0.0200mm t=  997.5s
+    [h1.0_e0.6944]   600 s/B=0.00866 q=  416.786 ds=0.0200mm t= 1048.6s
+    not a capacity (no plateau and no passed peak) -- q_max = 421.629 kPa is a lower bound the leg reached, not a collapse load
+    at s/B = 0.00876; [h1.0_e0.6944] mode=BUDGET (pinned subdivision budget of 80 spent at s/B = 0.00876); ended s/B=0.00876 of target 0.250; plateau=NO / peaked=NO (tail 81.450 % of initial); free-advance=NO (50.0x floor); subdivisions 81/80; 607 steps, 521 failed, 119 relaxed, 1082 s
+    controls: resultant 4.44e-16, patch 2.33e-14, eta/M_c 0.6425, OutsideBounding 0, CLAMPING 0, base-foot 2.98e-04
+    width: w2(z=-0.625) = 6.4549 m, w2(z=-1.375) = 6.5854 m, yielding 84 ele / 80.000 m3
+
+done; run sanisand_tau0_summary.py on the output directory

@@ -1,0 +1,9 @@
+---
+wp: LEGACY
+title: "ManzariDafalias IntScheme 3 (RungeKutta4) and 5 (ForwardEuler) have no error control or yield-drift correction — a triaxial run came out 31-46% too strong befo…"
+legacy_seq: 273
+---
+### ManzariDafalias `IntScheme` 3 (RungeKutta4) and 5 (ForwardEuler) have no error control or yield-drift correction — a triaxial run came out 31-46% too strong before anyone noticed
+- **Bites:** `nDMaterial ManzariDafalias ... 3 ...` (or `... 5 ...`) for the optional `IntScheme` argument looks like a legitimate, if less accurate, integrator choice — same argument slot as `1` (ModifiedEuler) or `45` (RK45 Sloan), no warning, no error return. It silently takes ONE uncorrected substep per strain increment with no yield-surface drift correction, and the reporters' triaxial characterisation came out **31-46% too strong** on scheme 3 before the mismatch was caught against a known solution.
+- **Why:** scheme 3's adaptive substepping branch is dead code (`if (false)` at `ManzariDafalias.cpp:1709`) and its `Stress_Correction()` calls are commented out (`:1720`, `:1735`) — so despite being named "RungeKutta" (implying an adaptive, error-controlled family), it degrades to a single fixed 4th-order step with no drift pull-back. Scheme 5 never had error control to begin with — it is plain forward Euler.
+- **Workaround/status:** ✅ this PR adds a once-per-process `opserr` warning (a static-bool latch in both full constructors) whenever `mScheme == 3 \|\| mScheme == 5`, naming `1` (ModifiedEuler) or `45` (RK45 Sloan) as the error-controlled alternatives. Numerics deliberately unchanged — schemes 3 and 5 still run exactly as before if a user chooses them after reading the warning. Gated by `tests/test_manzari_safety_pack.py::test_scheme3_warns_no_error_control` (note: the warning latch fires once per process, so that test is written first in its file to be the one that observes it).

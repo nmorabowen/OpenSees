@@ -1,0 +1,8 @@
+IntScheme 2 step  4: ||T-Dfd||/||Dfd|| = 1.999e+00 ||-T-Dfd||/||Dfd|| = 1.242e-03, asym(Dfd) 6.06e-01, replay-vs-analysis 4.2e-15, cppmNewtonFail 0, path notExplicit
+IntScheme 2 step  9: ||T-Dfd||/||Dfd|| = 2.391e+01 ||-T-Dfd||/||Dfd|| = 2.455e+01, asym(Dfd) 5.96e-01, replay-vs-analysis 1.4e-01, cppmNewtonFail 0, path notExplicit
+IntScheme 2 step 14: ||T-Dfd||/||Dfd|| = 2.175e+01 ||-T-Dfd||/||Dfd|| = 2.255e+01, asym(Dfd) 2.49e-01, replay-vs-analysis 7.1e-02, cppmNewtonFail 0, path notExplicit
+IntScheme 2 step 19: ||T-Dfd||/||Dfd|| = 1.955e+01 ||-T-Dfd||/||Dfd|| = 2.039e+01, asym(Dfd) 1.46e-01, replay-vs-analysis 4.7e-02, cppmNewtonFail 0, path notExplicit
+IntScheme 1 step  4: ||T-Dfd||/||Dfd|| = 2.252e+00 ||-T-Dfd||/||Dfd|| = 4.147e+00, asym(Dfd) 6.74e-01, replay-vs-analysis 0.0e+00, cppmNewtonFail 0, path plastic
+IntScheme 1 step  9: ||T-Dfd||/||Dfd|| = 1.817e+01 ||-T-Dfd||/||Dfd|| = 1.812e+01, asym(Dfd) 3.96e-01, replay-vs-analysis 1.4e-01, cppmNewtonFail 0, path elasticToPlastic
+IntScheme 1 step 14: ||T-Dfd||/||Dfd|| = 2.167e+01 ||-T-Dfd||/||Dfd|| = 2.249e+01, asym(Dfd) 2.21e-01, replay-vs-analysis 7.1e-02, cppmNewtonFail 0, path elasticToPlastic
+IntScheme 1 step 19: ||T-Dfd||/||Dfd|| = 1.915e+01 ||-T-Dfd||/||Dfd|| = 2.000e+01, asym(Dfd) 1.27e-01, replay-vs-analysis 4.8e-02, cppmNewtonFail 0, path elasticToPlastic

@@ -1,0 +1,7 @@
+---
+wp: LEGACY
+title: "Static condensation (σ_22=0) COMMUTES with the tensor-tangent shear-column halving — condense first, then halve"
+legacy_seq: 97
+---
+### Static condensation (σ_22=0) COMMUTES with the tensor-tangent shear-column halving — condense first, then halve
+- **Bites:** a `dim`-mode `nDMaterial` whose kernel returns the tangent in the TENSOR convention (`dσ_ij=2G dε_ij`, e.g. LadrunoConcrete3D) needs BOTH (a) static condensation of the out-of-plane `33` dof for PlaneStress/PlateFiber (`D'[I][J]=D[I][J]−D[I][2]D[2][J]/D[2][2]`) and (b) halving the shear COLUMNS to hand the element `dσ/d(engineering strain)`. Order matters if you get it wrong. It is SAFE because the out-of-plane normal is index 2 (its column is unscaled, `s_2=1`), so scaling column `J` by `s_J` and then condensing gives `s_J·D'[I][J]` — identical to condensing then scaling. So: run `condenseTangent()` on the raw tensor `Dtan6` in `setTrialStrain` (the same convention the σ_22=0 nested Newton uses, where the `d22=Dtan6[2][2]` pivot is also a normal-component derivative, unscaled), then let `getTangent` halve the shear columns of the already-condensed matrix. The σ_22 condensation Newton and the rank-1 update both live in tensor convention; only the final element-facing map applies the ×0.5. (Verified: PlaneStress elastic tangent == the closed-form `E/(1−ν²)·[[1,ν,0],[ν,1,0],[0,0,(1−ν)/2]]`.) Learned 2026-06-19, [[31_ladruno_concrete3d_adr|LadrunoConcrete3D]] reduced views (#299).

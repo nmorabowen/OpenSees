@@ -1,0 +1,32 @@
+{
+ "mode": "TARGET",
+ "s_over_B": 0.15,
+ "q_end": 751.9503723389201,
+ "q_max": 824.1581491337987,
+ "steps": 278,
+ "failed_attempts": 7,
+ "push_wall_s": 246.20520067214966,
+ "total_wall_s": 248.94676518440247,
+ "build": "234a7575144215b0fcf4672e747ff1f148bb9a79",
+ "engine": "C:\\Users\\nmora\\Github\\OpenSees_Compile\\OpenSees\\.claude\\worktrees\\tims-implementation-review-3733c6\\dist\\bin\\opensees.pyd",
+ "args": {
+  "mat": "dp",
+  "scheme": 1,
+  "extra": "",
+  "maxsub": 2000,
+  "dp_phi": 38.0,
+  "dp_g": 30000.0,
+  "target": 0.15,
+  "wall": 7000.0,
+  "ckpt_every": 25,
+  "field_every_step": 1,
+  "deterministic": 0,
+  "out": "C:\\Users\\nmora\\Github\\OpenSees_Compile\\OpenSees\\.claude\\worktrees\\agent-a4cb25b746ecc9507\\Ladruno_files\\testbed\\footing_sas_me_ab\\runs\\ctrl_dp38"
+ },
+ "matdesc": "DruckerPrager 1 70164.60465489139 30000.0 0.0 0.29022560274539155 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0",
+ "solver": "Pardiso",
+ "k0_patch_err": 1.7859988696536504e-12,
+ "grav_resultant_err": 2.220446049250313e-16,
+ "applied": 4152.1,
+ "ptol": 0.04152100000000001
+}

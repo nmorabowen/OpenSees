@@ -57,8 +57,10 @@ namespace ladruno {
 	ResultSource — WHAT to compute. A node / element / domain result implements
 	this. The recorder pairs each source with a sink. A source yields, for the
 	current step, a flat row-major buffer of shape [ ids().size() * schema.num_components ]
-	(domain sources use a single synthetic id {0}). It is stateless across steps;
-	cross-step behavior (streaming vs envelope) is the sink's job.
+	(domain sources use a single synthetic id {0}). Node and element sources are
+	stateless across steps; cross-step behavior (streaming vs envelope) is the
+	sink's job. Exception: EnergyBalanceSource integrates work over time — its
+	state is owned by the recorder and advanced on every commit (WP-165 R3).
 	*/
 	class ResultSource {
 	public:
@@ -100,20 +102,27 @@ namespace ladruno {
 
 	/*
 	ResultSink — HOW to persist. Wraps any source.
-	  - StreamingSink writes RESULTS/.../DATA/STEP_<k> per step (parity behavior).
-	  - EnvelopeSink keeps running min/max/absmax + arg-step and writes once at
-	    finalize (or periodically), per MODEL_STAGE (schema §7.4).
-	The sink owns the HDF5 group lifetime for its result.
+	  - StreamingSink appends one slab per recorded step to the chunked
+	    RESULTS/.../DATA[T x nIds x nComp] plus TIME[T] / STEP[T] (schema D3),
+	    holding the dataset handles open for the stage (WP-164).
+	  - EnvelopeSink keeps running min/max/absmax + arg-step and rewrites them in
+	    place on the recorder's cadence and at stage end, per MODEL_STAGE (§7.4).
+	The sink owns the HDF5 group lifetime for its result. One sink lives for one
+	MODEL_STAGE: the recorder deletes it at the stage change (after finalizing
+	envelopes) and builds a fresh one.
 	*/
 	class ResultSink {
 	public:
 		virtual ~ResultSink() = default;
 
-		// Create groups + the ID dataset for this source's result. Called once when
-		// the recorder first records, and again on a new MODEL_STAGE.
+		// Create groups + the ID dataset for this source's result. The recorder
+		// does not call this directly: both sinks begin lazily on their first
+		// accept() (the sink is new for every MODEL_STAGE).
 		virtual void begin(detail::ProcessInfo& info, const ResultSource& src) = 0;
 
-		// Persist one step's buffer (already partition-reduced if required).
+		// Persist one step's buffer. NOT partition-reduced: each rank writes its
+		// own part file and the reader combines partitions per the result's
+		// PARTITION_REDUCTION attribute (WP-126).
 		virtual void accept(detail::ProcessInfo& info, const ResultSource& src,
 		                    const std::vector<double>& buffer) = 0;
 

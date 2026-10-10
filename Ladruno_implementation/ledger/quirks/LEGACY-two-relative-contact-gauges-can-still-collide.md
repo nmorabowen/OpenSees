@@ -1,0 +1,9 @@
+---
+wp: LEGACY
+title: "Two RELATIVE contact gauges can still collide with each other -- the 2D vertex coincidence floor tauSeg*Lref sat ON TOP of the fork's standard 1e-8 seeded pene…"
+legacy_seq: 310
+---
+### Two RELATIVE contact gauges can still collide with each other -- the 2D vertex coincidence floor `tauSeg*Lref` sat ON TOP of the fork's standard 1e-8 seeded penetration
+- **Bites:** any consumer of `LadrunoContact2DKernel::vertexEval2D` that follows the T1a header's original guidance "pass tolLen = tauSeg*Lref". `tauSeg` (1e-8) is the ZERO-LENGTH-SEGMENT refusal gauge; on a unit-scale deck `tauSeg*Lref ~ 1.1e-8` lands EXACTLY on the fork-wide convention of seeding contact decks 1e-8 into penetration (so the pair is active from step 1). The vertex pair then refuses its own seed as "slave sits on the vertex", the seeded slave's DOF has zero contact stiffness at iterate 1, and the solve dies `U(0,0) = 0` -- a singular matrix that looks like a missing vertex pair, not like a tolerance.
+- **Why:** being RELATIVE is necessary but not sufficient -- a gauge must also sit on the right PHYSICAL scale for its job. The coincidence floor's job is direction conditioning of r/||r||, whose honest scale is the conditioning gauge `tauPerp` (1e-12), 4 orders under the seed; reusing the segment-degeneracy gauge just because it was the nearest named relative length put an 8-orders-too-conservative floor across a documented deck convention. Probe-measured boundary: seed 1.117e-8 fails, 1.119e-8 passes with the exact vertex answer (relerr 0.0).
+- **Workaround/status (2026-08-18, ADR-85 T1b post-gate fix):** the adapter passes `tauPerp*Lref` (`LadrunoContactFE::segment2DActive`, vertex path) and the kernel header's tolLen guidance carries the amendment. Rule: when a new gauge is derived from an existing one, check it against the DECK CONVENTIONS that will hit it (the 1e-8 seed, the 1e-9 parametric slack), not only against unit-safety.

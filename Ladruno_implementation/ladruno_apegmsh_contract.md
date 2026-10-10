@@ -235,6 +235,10 @@ through it. What follows is the contract that reader implements:
   `"Ladruno"`, not the old `"MPCO_Ladruno"`. Reuse the partition-merge logic (regex
   `^(?P<stem>.+?)\.part-(?P<idx>\d+)\.ladruno$`); handle chunked **and** legacy
   time-series.
+- **Validate the part set (WP-165).** All `.part-N` files of one set must agree on
+  `NUM_PARTITIONS` (= the glob count) and, when `RUN_ID_SCOPE != "process"`, on `RUN_ID`;
+  a mismatch means stale files from an earlier run are mixed in. A stage marked
+  `EMPTY_PARTITION = 1` is a valid empty contribution (zero-length `NODES`), not an error.
 - **Stitching must honour `PARTITION_REDUCTION` (WP-126, schema §7.1).** A node on a
   partition interface appears in several `.part-N` files. For `NONE` results
   (kinematics), keep any one copy. For `SUM` results (`reaction*`, `unbalanced*`),
@@ -514,6 +518,13 @@ This is a quick reference; the deep specs live next door:
 
 ## Maintenance log
 
+- 2026-09-29 — **Contact (fork side only, WP-155 / [[155_pile_contact_r05]]):** the
+  `contact … -mortar` grammar gains `-augment commit|request|never`, `-maxGap d`,
+  `-gapOffset g0` and `-adjust [tol]` (the pile ladder R1 findings N-1/N-2/G-9).
+  All absent ⇒ byte-identical. **apeGmsh exposure is TO IMPLEMENT** (proposed:
+  `g.constraints.contact(augment=, max_gap=, gap_offset=, adjust=)` + the `/contacts`
+  columns); until then decks can append the tokens. `-gapOffset`/`-adjust` are
+  refused with `tie=True`; `-maxGap`/`-gapOffset`/`-adjust` are 3D-mortar only.
 - 2026-08-05 — **CORRECTION to the `LadrunoUP` `-geom` note added earlier the
   same day (#574).** That note claimed an out-of-lane `-geom` "silently degrades
   to `linear` with a warning, it does not fail", and concluded that an emitter

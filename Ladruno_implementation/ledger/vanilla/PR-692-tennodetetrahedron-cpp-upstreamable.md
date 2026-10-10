@@ -1,0 +1,9 @@
+---
+wp: PR-692
+title: "692 -- upstreamable-table row(s)"
+pr: "#692"
+files: ["`SRC/element/tetrahedron/TenNodeTetrahedron.cpp`"]
+table: "upstreamable"
+legacy_seq: [341]
+---
+| `SRC/element/tetrahedron/TenNodeTetrahedron.cpp` | `// Ladruno BUGFIX` ×2 — **two independent upstream defects in jaabell's own element**, both now marked. **(a) `shp3d` 6× stiffness bug** (found by the 2026-07-22 upstream-campaign audit; landed pre-campaign in `ee942546c` but left UNMARKED/UNLEDGERED until this PR): `Jdet` already carries the tetrahedral 1/6 factor (it is the element *volume*), and the Gauss weights `wg[]` also sum to 1/6, so `xsj = Jdet` applied 1/6 TWICE → every stiffness/reaction 6× too soft (uniaxial patch test: reaction = E·ε·A/6). Fix `xsj = 6.0*Jdet` (derivative shape fns use 1/(6·Jdet) and are unaffected). **(b) `getResponse` 144-byte heap overrun** — `static Vector stresses(6)` was copy-pasted from `FourNodeTetrahedron` (1 GP ⇒ 6 is correct there), but BOTH the `stresses` (responseID 3) and `strains` (responseID 4) branches loop over all `NumGaussPoints=4` points writing 6 components each = **24 doubles into a 6-double static heap block**. `Vector::operator()` is bounds-checked only under `_G3DEBUG`, so release builds silently wrote 18 doubles past the end on *every recorder step* → heap corruption / segfault when recording tet10 element fields (`Brick` gets this right with `stresses(48)`; `setResponse` here already advertises `Vector(6*4)`). Fix `stresses(6*NumGaussPoints)`. Secondary: correct sizing also stops `Information::setVector` from reallocating the response Vector down to 6 (`Vector::operator=` resizes on mismatch), which desynchronised `ElementRecorder`'s column layout even when it did not crash. Both are **upstream candidates** (identical code in `OpenSees/OpenSees` master) — see campaign row 0.0. | [#692](https://github.com/nmorabowen/OpenSees/pull/692) |

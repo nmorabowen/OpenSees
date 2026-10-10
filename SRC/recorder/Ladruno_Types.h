@@ -651,6 +651,7 @@ namespace detail {
 			, eigen_last_time_set(0.0)
 			, eigen_last_values()
 			, store_data_f32(false)
+			, deflate_level(1)
 		{}
 	public:
 		// domain and model information
@@ -677,6 +678,11 @@ namespace detail {
 		// ~half the payload at ~7 significant digits. Default false = lossless f64
 		// parity path. Coords / TIME / STEP / envelope datasets stay f64/int.
 		bool store_data_f32;
+		// WP-164 (P4): deflate level of the time-series DATA datasets, set by
+		// `-compress <0..9>` (0 = no shuffle/deflate filter; default 1, owner
+		// decision 2026-10-03 — was a hard-coded 4). Compression runs on the
+		// solver thread, once per chunk.
+		int deflate_level;
 	};
 
 }

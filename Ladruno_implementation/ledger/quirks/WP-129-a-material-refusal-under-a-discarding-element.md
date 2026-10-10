@@ -1,0 +1,8 @@
+---
+wp: WP-129
+title: "A material refusal under a DISCARDING element was COMMITTED: mEpsilon_n advanced while mSigma_n/mEpsilonE_n did not (WP-129 review of #871)"
+legacy_seq: 519
+---
+### A material refusal under a DISCARDING element was COMMITTED: `mEpsilon_n` advanced while `mSigma_n`/`mEpsilonE_n` did not (WP-129 review of #871)
+- **Bites:** the SAS-ME refusal (and, before it, the ModifiedEuler `-maxSubsteps` cap) restores the trial stress/back-stress/fabric/elastic strain to the committed values but leaves `mEpsilon` at the trial strain, relying on the element to fail the step. SSPquad, stdBrick and the other discarders (LEDGER "element refusal roster") drop the code, the Newton converges on the frozen stress, and `LadrunoSANISAND::commitState()`'s plain (non-IMPL-EX) path called `ManzariDafalias::commitState()` anyway: the committed strain advanced, the committed stress and elastic strain did not, and the increment was lost for good. Measured on SSPquad: 9 steps with `analyze() == 0` after the first refusal, strain to +4e-3 at frozen stress (the same deck on `quad` returns -3 at once).
+- **Workaround/status:** fixed in WP-129: the plain commit path checks `mLadrunoSas.refused || mSubstepCapHitInME` and uses the WP-99 channel (`ladrunoNoteCommitRefusal()` → `Domain::commit()` fails, latch, trial restored), exactly as the IMPL-EX companion path. This also changes the ModifiedEuler cap on discarding elements from silent corruption to a failed analysis. Pinned by `tests/test_ladruno_sanisand_sasme.py::test_refusal_under_discarding_element_is_not_committed` (SSPquad and stdBrick).

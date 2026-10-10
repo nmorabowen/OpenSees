@@ -1,0 +1,22 @@
+proto 11: byte-identity vs baseline: 643/643 equal; first bad: []
+proto 12: byte-identity vs baseline: 643/643 equal; first bad: []
+proto 11 ()                                                           fan  : refused 102/320 {'?': 70, 'startF': 32} substeps med 23 max 497 reseats 410 rejRev 2946 floored 0 softcapped 0 held 0
+proto 11 ()                                                           ring : refused   8/320 {'?': 8} substeps med 131 max 899 reseats 200 rejRev 1645 floored 0 softcapped 0 held 0
+proto 11 ()                                                           repro: refused   0/3 {} substeps med 258 max 376 reseats 0 rejRev 23 floored 0 softcapped 0 held 0
+proto 12 ('-sasHFloor', 0.0, '-sasReseatHyst', 0.0, '-sasSoftCap', 0.0) fan  : refused 102/320 {'?': 70, 'startF': 32} substeps med 23 max 497 reseats 410 rejRev 2946 floored 0 softcapped 0 held 0
+proto 12 ('-sasHFloor', 0.0, '-sasReseatHyst', 0.0, '-sasSoftCap', 0.0) ring : refused   8/320 {'?': 8} substeps med 131 max 899 reseats 200 rejRev 1645 floored 0 softcapped 0 held 0
+proto 12 ('-sasHFloor', 0.0, '-sasReseatHyst', 0.0, '-sasSoftCap', 0.0) repro: refused   0/3 {} substeps med 258 max 376 reseats 0 rejRev 23 floored 0 softcapped 0 held 0
+proto 13 ('-sasHFloor', 1.0, '-sasReseatHyst', 1.0, '-sasSoftCap', 0.5) fan  : refused   0/320 {} substeps med 29 max 343 reseats 42 rejRev 1117 floored 14142 softcapped 533 held 7061
+proto 13 ('-sasHFloor', 1.0, '-sasReseatHyst', 1.0, '-sasSoftCap', 0.5) ring : refused   8/320 {'?': 8} substeps med 131 max 901 reseats 200 rejRev 1614 floored 19222 softcapped 0 held 588
+proto 13 ('-sasHFloor', 1.0, '-sasReseatHyst', 1.0, '-sasSoftCap', 0.5) repro: refused   0/3 {} substeps med 256 max 376 reseats 0 rejRev 23 floored 35 softcapped 0 held 0
+proto 14 ('-sasHFloor', 1.0)                                          fan  : refused  87/320 {'?': 87} substeps med 55 max 2001 reseats 113304 rejRev 61053 floored 323947 softcapped 0 held 0
+proto 14 ('-sasHFloor', 1.0)                                          ring : refused   8/320 {'?': 8} substeps med 131 max 900 reseats 201 rejRev 1642 floored 19042 softcapped 0 held 0
+proto 14 ('-sasHFloor', 1.0)                                          repro: refused   0/3 {} substeps med 256 max 376 reseats 0 rejRev 23 floored 35 softcapped 0 held 0
+proto 15 ('-sasReseatHyst', 1.0)                                      fan  : refused 102/320 {'?': 70, 'startF': 32} substeps med 16 max 344 reseats 19 rejRev 873 floored 0 softcapped 0 held 2459
+proto 15 ('-sasReseatHyst', 1.0)                                      ring : refused   8/320 {'?': 8} substeps med 131 max 899 reseats 200 rejRev 1620 floored 0 softcapped 0 held 585
+proto 15 ('-sasReseatHyst', 1.0)                                      repro: refused   0/3 {} substeps med 258 max 376 reseats 0 rejRev 23 floored 0 softcapped 0 held 0
+proto 16 ('-sasHFloor', 1.0, '-sasReseatHyst', 1.0)                   fan  : refused   0/320 {} substeps med 30 max 343 reseats 42 rejRev 1120 floored 14627 softcapped 0 held 7491
+proto 16 ('-sasHFloor', 1.0, '-sasReseatHyst', 1.0)                   ring : refused   8/320 {'?': 8} substeps med 131 max 901 reseats 200 rejRev 1614 floored 19222 softcapped 0 held 588
+proto 16 ('-sasHFloor', 1.0, '-sasReseatHyst', 1.0)                   repro: refused   0/3 {} substeps med 256 max 376 reseats 0 rejRev 23 floored 35 softcapped 0 held 0
+proto 13 vs oracle T1B1S: n=320 rel |dsig diff| median 2.77e-04 p95 1.31e-03 max 3.34e-03
+proto 16 vs oracle T1B1: n=320 rel |dsig diff| median 2.37e-04 p95 1.22e-03 max 3.34e-03

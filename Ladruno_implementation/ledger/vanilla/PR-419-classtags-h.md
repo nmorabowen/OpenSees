@@ -1,0 +1,14 @@
+---
+wp: PR-419
+title: "419 -- 6 vanilla row(s)"
+pr: "#419"
+files: ["`SRC/classTags.h`", "`SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp`", "`SRC/runtime/runtime/TclPackageClassBroker.cpp`", "`SRC/analysis/integrator/CMakeLists.txt`", "`SRC/analysis/integrator/Makefile`", "`SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}`"]
+table: "main"
+legacy_seq: [198, 199, 200, 201, 202, 203]
+---
+| `SRC/classTags.h` | `// Ladruno` ADR-52 W1-E2 (ExplicitBathe* 6→1 collapse): annotate the FIVE retired integrator tags `INTEGRATOR_TAGS_ExplicitBatheLNVD`=33002 / `…SMS`=33009 / `…SMSConsistent`=33010 / `…LNVDSMS`=33011 / `…LNVDSMSConsistent`=33012 as **DEPRECATED-but-recognized aliases** of the collapsed `ExplicitBathe` (33000). Values UNCHANGED (do NOT free/reuse — saved-DB / parallel `recvSelf` of any retired tag routes to `ExplicitBathe::makeForBroker`). The 33000 comment documents the flag↔tag bijection (`tagForFlags`). Comment-only; no value/numbering change. | [#419](https://github.com/nmorabowen/OpenSees/pull/419) |
+| `SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp` | `// Ladruno` ADR-52 W1-E2: in `getNewTransientIntegrator`, collapse the six `INTEGRATOR_TAGS_ExplicitBathe*` cases into one fall-through → `ExplicitBathe::makeForBroker(classTag)` (decodes `{lnvd,sms,consistent}` from the tag; `recvSelf` fills the param superset), and drop the five retired `#include "ExplicitBathe{LNVD,SMS,SMSConsistent,LNVDSMS,LNVDSMSConsistent}.h"` (keep `ExplicitBathe.h`). Preserves saved-DB / MPI reconstruction of all six tags. Net-negative. | [#419](https://github.com/nmorabowen/OpenSees/pull/419) |
+| `SRC/runtime/runtime/TclPackageClassBroker.cpp` | `// Ladruno` ADR-52 W1-E2: same collapse in `getNewTransientIntegrator` — six `ExplicitBathe*` cases → one fall-through `ExplicitBathe::makeForBroker(classTag)`; drop the five retired includes. | [#419](https://github.com/nmorabowen/OpenSees/pull/419) |
+| `SRC/analysis/integrator/CMakeLists.txt` | `// Ladruno` ADR-52 W1-E2: remove the five retired sources (`ExplicitBatheLNVD/SMS/SMSConsistent/LNVDSMS/LNVDSMSConsistent.cpp`) + their five PUBLIC headers; `ExplicitBathe.{cpp,h}` now carries the whole family via flags. | [#419](https://github.com/nmorabowen/OpenSees/pull/419) |
+| `SRC/analysis/integrator/Makefile` | `// Ladruno` ADR-52 W1-E2: drop `ExplicitBatheLNVD.o` (the only retired variant the legacy Makefile listed; the SMS variants were CMake-only). | [#419](https://github.com/nmorabowen/OpenSees/pull/419) |
+| `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature regen via `patch_banner.py` — consolidate the four `ExplicitBathe*SMS*` lines + the `ExplicitBathe / LNVD` line into one `ExplicitBathe — Noh–Bathe explicit (-lnvd / -sms [-consistent])` line. | [#419](https://github.com/nmorabowen/OpenSees/pull/419) |

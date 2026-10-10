@@ -1,0 +1,9 @@
+---
+wp: LEGACY
+title: "A new element needs registering in THREE dispatch sites, not one — the standalone Tcl OpenSees.exe uses a different table than OpenSeesPy"
+legacy_seq: 14
+---
+### A new element needs registering in THREE dispatch sites, not one — the standalone Tcl `OpenSees.exe` uses a different table than OpenSeesPy
+- **Bites:** you add a new `element` (e.g. `LadrunoDispBeamColumn`), wire `classTags.h` + `FEM_ObjectBrokerAllClasses.cpp` + the `functionMap` in `SRC/interpreter/OpenSeesElementCommands.cpp`, it **builds and links clean**, works in OpenSeesPy — but the standalone `OpenSees.exe` (Tcl) reports `ERROR -- element of type X not known`.
+- **Why:** the Tcl `element` command is `TclModelBuilder_addElement` in `SRC/element/TclElementCommands.cpp`, which dispatches through its OWN `ladrunoElementTable` / built-in tables — NOT the `OpenSeesElementCommands.cpp` `functionMap` (that serves the runtime/Python `OPS_Element()` path) and NOT `getLibraryFunction` (that does `LoadLibrary("Name.dll")`, which returns -1 for a built-in, so it never finds an in-exe symbol). The two error strings are nearly identical (`"element of type X not known"` in both `TclElementCommands.cpp:2195` and `runtime/commands/modeling/element.cpp:491`), so the message doesn't tell you which path failed.
+- **Workaround/status (2026-06-16):** register a new Ladruno element in **all** of: (1) `SRC/classTags.h`, (2) `SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp` (include + `case`), (3) `SRC/interpreter/OpenSeesElementCommands.cpp` `functionMap` (OpenSeesPy), (4) `SRC/element/TclElementCommands.cpp` — both the `extern void *OPS_X(void);` block (~line 108) and the `ladrunoElementTable` (~line 582). Grep the WORKING sibling across `SRC/` to enumerate sites: `grep -rln "OPS_LadrunoIMKBeam" SRC/ | grep -v ladrunoIMKBeam/` lists exactly the registration files to mirror. See [[32_ladruno_dispbeamcolumn_regularization_adr]].

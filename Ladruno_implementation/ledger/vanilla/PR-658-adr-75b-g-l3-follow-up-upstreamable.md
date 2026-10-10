@@ -1,0 +1,9 @@
+---
+wp: PR-658
+title: "ADR-75b G-L3 follow-up #658 -- upstreamable-table row(s)"
+pr: "#658"
+files: ["`SRC/material/nD/TclModelBuilderNDMaterialCommand.cpp`"]
+table: "upstreamable"
+legacy_seq: [371]
+---
+| `SRC/material/nD/TclModelBuilderNDMaterialCommand.cpp` | `// Ladruno`: **Tcl parity for the fork's nD materials.** 10 `OPS_*` factories / **15 names** (with every alias) added to the Tcl `nDMaterial` strcmp ladder + their `extern` decls: `LogStrain`/`LogStrainNDMaterial`, `LogStrain2D`, `LadrunoCohesiveHingeBiaxial`, `LadrunoJ2`, `LadrunoJ2Finite`, `InitDefGrad`/`InitDefGradNDMaterial`/`StagedDefGrad`/`StagedDefGradNDMaterial`, `StagedStrain`/`StagedStrainNDMaterial`, `LadrunoRCConcrete`, `LadrunoRCFiniteStrain`, `LadrunoConcrete3D`. **They were registered ONLY in the openseespy map** (`SRC/interpreter/OpenSeesNDMaterialCommands.cpp`), and this Tcl command is a separate hand-written ladder with **no generic `OPS_*` fallback**, so `nDMaterial LadrunoJ2 ...` failed from every `.tcl` deck while the identical call worked from Python. The **elements** were wired long ago (dispatch table at `SRC/element/TclElementCommands.cpp:596`), which is exactly why the materials gap was easy to miss. Each branch mirrors the surrounding convention (`OPS_ResetInput()` has already primed the `OPS_Get*` stream; null return ⇒ `TCL_ERROR`); names/aliases mirror the Python map one-for-one so the surfaces cannot drift again. **Purely additive** — no existing branch touched, so every pre-existing deck parses identically. Verified: `cl /Zs` on the exact ninja `OPS_InterpTcl` flags PASSES with a **negative control** failing at the injected line; a real **link** on the cluster build; and **runtime** — `nDMaterial LadrunoJ2` + `element LadrunoBrick` converge from a `.tcl` deck under `OpenSeesMP`. Motivation: the gap had forced ADR-75b's G-L3 gate onto a proxy material. | ADR-75b G-L3 follow-up [#658](https://github.com/nmorabowen/OpenSees/pull/658) |

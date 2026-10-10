@@ -4427,6 +4427,7 @@ const Vector&  IGAKLShell::getResistingForceIncInertia( )
 
   // Calculo masa M
   //
+  // ladruno-lint: sequence-ok getMass() writes only *mass, never the *resid getResistingForce() returns (WP-140 audit)
   res = this->getResistingForce() + this->getMass() * NodalAccelerations;
   *resid=res;
   // res = this->getMass() * NodalAccelerations;

@@ -112,6 +112,12 @@ class LadrunoDynamicRelaxation : public TransientIntegrator
     int update(const Vector &deltaU);
     int commit(void);
     int domainChanged(void);
+    // Ladruno WP-153: re-sync the PRIVATE leap-frog state with a reverted Domain
+    // after a failed step. Without it the inherited IncrementalIntegrator no-op
+    // left Ut/Vhalf/Aprev advanced, so a retried step marched from a state that
+    // was never committed. Restores the snapshot taken at the last successful
+    // commit (or at domainChanged), so failed-then-retried == uninterrupted.
+    int revertToLastStep(void);
 
     // matrix-free LHS: assemble the cached fictitious M* onto the diagonal SOE
     int formTangent(int statusFlag = CURRENT_TANGENT);
@@ -167,6 +173,8 @@ class LadrunoDynamicRelaxation : public TransientIntegrator
     int measureStabilityMargin(void);
     // record + announce one margin sample (live-tangent mass vs marched mass)
     void applyMargin(const Vector &live, const Vector &march);
+    // Ladruno WP-153: copy the march state at a successful commit / domainChanged
+    void takeSnapshot(void);
 
     // --- options ---
     int    massMode;                 // 0 gershgorin | 1 lumped | 2 unity
@@ -205,6 +213,17 @@ class LadrunoDynamicRelaxation : public TransientIntegrator
     int    marginEvery;              // probe cadence in steps (0 = off)
     int    marginCount;              // steps since the last probe
     bool   haveBuiltOnce;            // M* exists (own flag: stabMargin is a VALUE)
+
+    // --- Ladruno WP-153: the march state at the last commit (revertToLastStep) ---
+    // M* is included: -recompute and the KE-peak auto-refresh rebuild it INSIDE a
+    // step, so a failed step may leave a mass the committed march never used.
+    // The stability-margin diagnostics are deliberately NOT reverted: they are
+    // evidence ("worst since domainChanged"), not march state.
+    Vector *UtC, *VhalfC, *AprevC, *MstarC;
+    bool   snapFirstStep;
+    int    snapStepCount;
+    double snapPrevKE, snapKE, snapRes, snapCVisc;
+    bool   haveSnap;
 };
 
 #endif

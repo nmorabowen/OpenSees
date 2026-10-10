@@ -1,0 +1,9 @@
+---
+wp: LEGACY
+title: "A non-zero default for the residual-branch hardening turned a \"perfectly plastic\" oracle bar into a hardening one — and the closed-form overstress gate failed…"
+legacy_seq: 348
+---
+### A non-zero default for the residual-branch hardening turned a "perfectly plastic" oracle bar into a hardening one — and the closed-form overstress gate failed with a clean 200 % error
+- **Bites:** a softening law needs a residual floor so the yield stress cannot go negative, and the floor needs a *slightly positive* slope `H_res` so a perfectly-plastic element does not make the assembled 1-D chain tangent exactly singular. Defaulting `H_res = E/2000` for every caller then silently broke an unrelated gate: PV3's closed-form check `σ* − σ_Y = E·ε̇·τ` came back with a relative error of exactly 2.0.
+- **Why:** the yield stress is the upper envelope `K(α) = max(σ_Y + Hα, σ_res + H_res·α)`. With a caller that wants **perfect plasticity** (`H = 0`) and **no floor** (`σ_res = 0`), the second line is `0 + H_res·α` — which starts below `σ_Y` but **crosses it** at `α = σ_Y/H_res = 2.0`. The PV3 driver runs to `α ≈ 7`, so past `α = 2` the "perfectly plastic" bar was hardening on the residual branch and the steady overstress was measured against a moving backbone. The failure looks like a physics bug in the relaxation; it is a default in a parameter the failing test never mentions.
+- **Workaround:** default `H_res = 0` (a genuinely flat floor) and let the one caller that needs the non-singular tangent — the FE bar — set it explicitly. Generally: **a regularizing default that is harmless for its own caller can be a silent model change for every other caller of the same constitutive routine**; put it at the call site, not in the constructor. Learned 2026-09-04, ADR-90 leg A0 (PR #783).

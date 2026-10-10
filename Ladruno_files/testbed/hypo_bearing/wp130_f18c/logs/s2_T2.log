@@ -1,0 +1,25 @@
+@@F130 INT_SCHEME forced to 2; extra flags []
+    *** LADRUNO_A2_EXPECT_BUILD=any: build hash NOT pinned (running 5d25dd597cb1b800f53e46410d94c81220024dae); these numbers are not comparable to the reported campaign's ***
+=== ADR 90 WP-A2 -- tau = 0 q_u band on softening SANISAND ===
+    engine build (ladrunoBuild) : 5d25dd597cb1b800f53e46410d94c81220024dae
+    openseespy module           : C:\Users\nmora\Github\OpenSees_Compile\OpenSees\.claude\worktrees\agent-ad41c24dbcb30e892\dist\bin\opensees.pyd
+    driver                      : C:\Users\nmora\Github\OpenSees_Compile\OpenSees\.claude\worktrees\agent-ad41c24dbcb30e892\Ladruno_files\testbed\hypo_bearing\sanisand_tau0_band.py
+    output                      : C:\Users\nmora\Github\OpenSees_Compile\OpenSees\.claude\worktrees\agent-ad41c24dbcb30e892\Ladruno_files\testbed\hypo_bearing\wp130_f18c\bvp\s2_T2
+    date                        : 2026-09-27T12:25:52
+    gamma = 19.62 kN/m3, K0 = 0.4554, M_c = 1.3309, -Presidual 0.0, -Pmin 0.101
+    SUBDIV_BUDGET (pinned, R3)  : 80
+    DS_MAX (pinned here)        : 0.005 m
+    convergence test (pinned)   : NormUnbalance @ 1e-05 x gamma*V
+    TanType (0=elastic default) : 2
+    -flipAlphaIn (WP-110 F15d)  : vanilla
+    surcharge (kPa, outside foot): 0.0
+    domain (xlim, zbot)         : 10.0, 8.0
+    IMPL-EX                     : off
+    push integrator             : LoadControl (stock)
+    wall budget per leg         : 1200 s
+
+--- leg h1.0_e0.6944 (e_init = 0.6944) ---
+@@F130 nDMaterial LadrunoSANISAND 1 264.32 0.3129 0.6944 1.3309 0.71 0.027 0.83 0.45 101.0 0.005 1.3 0.968 3.5 0.05 5.75 12.5 1100.0 2.0 2 2 1 1e-07 1e-07 -Presidual 0.0 -Pmin 0.101 -honorTolR 0 -maxSubsteps 20000
+    LEG FAILED A CONTROL: h1.0_e0.6944: only 3 converged steps -- the push never started (WALL-CLOCK budget spent at s/B = 0.00003)
+
+done; run sanisand_tau0_summary.py on the output directory

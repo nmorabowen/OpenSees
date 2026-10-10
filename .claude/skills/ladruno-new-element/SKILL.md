@@ -5,19 +5,20 @@ description: >
   fork-authored classes such as LadrunoBrick/Quad/CST/LST/UP/SolidShell, Bezier*, couplings).
   Use before writing or modifying getResistingForceIncInertia, getTangentStiff, getMass,
   getDamp/Rayleigh, sendSelf/recvSelf, setResponse/getResponse, an OPS_ parser, or when
-  registering a new element classTag. Every item points to the LEDGER_quirks entry that
+  registering a new element classTag. Every item points to the quirks-ledger entry that
   explains it.
 ---
 
 # New or changed element — checklist
 
 Read this before adding or changing an element under `SRC/element/`. Each item names the
-`Ladruno_implementation/LEDGER_quirks.md` heading to grep for; read that entry when the item
+quirk heading to grep for in `Ladruno_implementation/ledger/quirks/` (`rg`); read that entry when the item
 applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns.py`.
 
 ## Registration (a new element)
 
-- [ ] classTag in `SRC/classTags.h` (fork band), recorded in `LEDGER_implementations.md`;
+- [ ] classTag in `SRC/classTags.h` (fork band), recorded in your implementations fragment's
+      `class_tags` (`Ladruno_implementation/ledger/implementations/WP-<nnn>-<slug>.md`);
       `python ci/check_classtags.py` clean.
 - [ ] Register in ALL dispatch sites: `classTags.h`, `FEM_ObjectBrokerAllClasses.cpp`, the
       `functionMap` in `OpenSeesElementCommands.cpp` (Python), AND the Tcl table in
@@ -55,6 +56,9 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       `getResistingForceIncInertia` calls `getResistingForce()` (which subtracts it), it must not
       subtract it again. Quirks: "`ElasticBeam2d` subtracts the ground-motion load Q TWICE". Copy the
       rigid-body probe: every node's relative acceleration must be exactly `−a_g`.
+- [ ] One mass model per element: the `M·a` in `getResistingForceIncInertia` uses the SAME matrix
+      `getMass()` returns (lumped flag included) — else Newton's Jacobian is not the residual's
+      derivative. Quirks: "A `-lumped` element must use the lumped mass in the inertia RESIDUAL too".
 - [ ] Any element with mass gets a **dynamic Rayleigh regression test** (betaK ≠ 0, transient).
       Same entry: "a dynamic Rayleigh regression is mandatory".
 - [ ] Ignoring Rayleigh (a pure penalty/constraint tie)? Derive from `LadrunoUndampedElement`
@@ -81,6 +85,12 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       element size" (the base `getCharacteristicLength` is wrong for high-order elements).
 - [ ] Never iterate the Domain from inside an element callback. Quirks: "`Domain::getElements()`
       is a SHARED singleton iterator".
+- [ ] **[lint]** Never combine two element accessors (`getResistingForce*`, `getRayleighDampingForces`,
+      `getTangentStiff`, `getMass`, ...) arithmetically in ONE expression: the call order is
+      unspecified and they return references into storage the other calls overwrite (GCC
+      recorded `inertialForce` = 0.0). Copy the first into an owned `Vector`, then apply the
+      rest in separate statements. Quirks: "`Element::getResponse` `inertialForce` read three
+      accessors in ONE expression".
 - [ ] Size every `static Vector` in `getResponse` exactly: `Vector::operator()` is unchecked in
       release. Quirks: "`Vector::operator()` is UNCHECKED".
 - [ ] `setResponse`: chain to `Element::setResponse` AFTER `output.endTag()`. Quirks:
@@ -104,5 +114,6 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 - [ ] Break each new gate on purpose once (revert the fix, confirm it fails). Quirks: "A test can
       be GREEN because of the very bug".
 
-Found a new trap? Add it to `LEDGER_quirks.md`, then add one line here pointing to it. If the
+Found a new trap? Write a quirks fragment (`Ladruno_implementation/ledger/quirks/WP-<nnn>-<slug>.md`;
+never edit the generated `LEDGER_quirks.md`), then add one line here pointing to it. If the
 trap has a greppable pattern, add a rule to `ci/check_quirk_patterns.py` instead.

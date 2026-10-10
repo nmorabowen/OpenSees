@@ -1,0 +1,10 @@
+---
+wp: PR-737
+title: "737 -- upstreamable-table row(s)"
+pr: "#737"
+files: ["`SRC/interpreter/OpenSeesOutputCommands.cpp`", "`SRC/analysis/handler/LadrunoContactHandler.cpp`"]
+table: "upstreamable"
+legacy_seq: [426, 428]
+---
+| `SRC/interpreter/OpenSeesOutputCommands.cpp` | `// Ladruno` (ADR-78 removal lane): `OPS_LadrunoContactSurface()` now REJECTS a node tag that does not exist at DECLARATION time. This is the load-bearing half of making `recorder Collapse` + contact legal: before it, a deck typo and a node the ANALYSIS removed mid-run were indistinguishable (both first surfaced inside `handle()`, since `LadrunoContactSurface` never saw the `Domain` and `addSurface()` did no existence check), which is why ADR-78 P1 had to abort on both and a collapse run died mid-analysis. Pinning the tags at declaration means later absence can only be a runtime removal, which `handle()` prunes. Strictly better on its own terms too: a typo now fails at the deck line that contains it, naming the tag. Placed in the parser rather than in `LadrunoContactDomain::addSurface()` (where the other choke-point guards live) because `addSurface()` has no `Domain` handle; this is the single parser for BOTH engines since ADR-78 P0.5 registered the Tcl verbs against it, so one check still covers Py + Tcl. | [#737](https://github.com/nmorabowen/OpenSees/pull/737) |
+| `SRC/analysis/handler/LadrunoContactHandler.cpp` | `// Ladruno` (ADR-78 removal lane): `handle()` calls `LadrunoContactDomain::pruneRemovedNodes()` before anything reads a surface, and the three interaction loops skip a `retired` interaction. `handle()` re-runs on every `domainChanged()`, so this is what reconciles a contact declared once at setup with a domain the analysis keeps shrinking. The `-kn auto` / `-soft` / `kn <= 0` aborts are deliberately untouched — apeGmsh ADR 0092 INV-1's owner-rank proxy is safe only because `-kn auto` failure is fatal, and `tests/test_contact_runtime_removal.py::test_kn_auto_failure_is_still_fatal` guards that guard. | [#737](https://github.com/nmorabowen/OpenSees/pull/737) |

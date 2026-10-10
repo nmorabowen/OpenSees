@@ -187,6 +187,9 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • contact + zeroLength on ndf >= 3 nodes (u-p pressure DOF as passenger)\n"
 "        • stressesPlaneStrain — exact sigma_zz response (plane strain)\n"
 "        • Ladruno — modular HDF5 .ladruno recorder\n"
+"        • Ladruno recorder — fail-loud HDF5, eigen-after-wipe, MP rank probe (WP-163)\n"
+"        • Ladruno recorder — -flush / -compress, 1 MiB chunks, in-place envelopes (WP-164)\n"
+"        • Ladruno recorder — topology-keyed stages, persistent energy, RUN_ID (WP-165)\n"
 "        • LadrunoMonitor — live SWMR-HDF5 analysis monitor\n"
 "        • LadrunoRigidBody — 6-DOF rigid body (finite-rotation slaving)\n"
 "        • LadrunoSolidShell — 8-node ANS/EAS solid-shell\n"
@@ -209,7 +212,10 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • ladrunoThreads — OpenMP element state-determination loop (opt-in)\n"
 "        • LadrunoSANISAND — -pRe elastic-only stiffness floor (ADR-93 II.1)\n"
 "        • LadrunoSANISAND — -flipAlphaIn init default (thread-count-proof flip)\n"
+"        • LadrunoSANISAND — -cppmOnFail refuse / -cppmTangent fixed / -meFallback cppm (WP-130)\n"
 "        • LadrunoSANISAND — IntScheme 129 SAS-ME (alpha-aware error, refuses, no force-accept)\n"
+"        • LadrunoSANISAND — SAS-ME -sasHFloor / -sasReseatHyst / -sasSoftCap (WP-151 R1)\n"
+"        • LadrunoSANISAND — SAS-ME -sasTensionCutoff (separation at p' ~ 0, WP-152)\n"
 "        • system Pardiso — -deterministic / -cbwr (MKL CNR, reproducible)\n"
 "\n";
     // FEATURES-END

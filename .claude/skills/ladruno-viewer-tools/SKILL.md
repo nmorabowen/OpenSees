@@ -12,7 +12,7 @@ description: >
 # Viewer tools — checklist
 
 Read this before changing anything under `Ladruno_tools/`. Items name the
-`Ladruno_implementation/LEDGER_quirks.md` heading to grep for; read that entry when the item
+quirk heading to grep for in `Ladruno_implementation/ledger/quirks/` (`rg`); read that entry when the item
 applies. **[lint]** items are enforced by `python ci/check_viewer_ledger.py`. Out of scope: using
 the viewers (their READMEs) and the C++ engine side (the profiler and `recorder Monitor` sources).
 
@@ -79,12 +79,12 @@ cd ../../monitor_viewer && <venv-python> test_monitor_view.py
 ## Ledgers and docs (same PR)
 
 - [ ] **[lint]** A new source file in `Ladruno_tools/<tool>/` (added, copied or moved in) needs an
-      added `LEDGER_implementations.md` line that names `Ladruno_tools/<tool>`: edit that tool's
-      row. Your WP's own row does not count unless it names the tool. #35, #53, #485 and #487
+      added line under `Ladruno_implementation/ledger/implementations/` that names
+      `Ladruno_tools/<tool>`: edit that tool's fragment (WP-161: never `LEDGER_implementations.md`). Your WP's own row does not count unless it names the tool. #35, #53, #485 and #487
       skipped it; the last two after the lesson was written down (`121_viewer_agent_surface.md`).
 - [ ] The gate cannot see a modification-only change. When behaviour changes, update the row and
       the plan-doc log anyway (`06_profiler.md`, `08_analysis_monitor.md`); #55 needed a follow-up
       doc PR (#56) for this.
 
-Found a new trap? Add it to `LEDGER_quirks.md`, then one line here pointing to it. If it names a
+Found a new trap? Write a quirks fragment (`Ladruno_implementation/ledger/quirks/`), then one line here pointing to it. If it names a
 greppable pattern, make it a check instead.

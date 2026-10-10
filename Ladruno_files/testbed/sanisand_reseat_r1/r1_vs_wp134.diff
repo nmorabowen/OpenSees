@@ -1,0 +1,235 @@
+--- Ladruno_scripts/sanisand_reference/integrator.py
++++ Ladruno_files/testbed/sanisand_reseat_r1/sanisand_r1/integrator.py
+@@ -269,7 +269,7 @@
+         # trial-direction test at t = 0 (in integrate()); a plastic onset with
+         # (alpha - alpha_in):n < 0 inside the increment then runs with h < 0,
+         # exactly what the C++ does (WP-128 mechanism G) -- noted, not repaired.
+-        if q.a < 0.0:
++        if q.a < -O.reseat_delta:          # R1: threshold re-seat (0 = DM04)
+             if O.alpha_in_rule == "paper":
+                 self.alpha_in = v2t(y[6:12]).copy()
+                 reseats.append(dict(t=t, rule="paper",
+@@ -330,8 +330,14 @@
+                 return self.q_of(y, "plastic").Hs
+             add(e_H, "H_sign", 0, 1.0)
+ 
++            if O.h_reg == "max_soft":
++                # R1 (WP-150 form): the right-hand side switches at b:n = 0
++                def e_bn(t, y):
++                    return self.q_of(y, "plastic").bn
++                add(e_bn, "bn_sign", 0, 1.0)
++
+             def e_a(t, y):
+-                return self.q_of(y, "plastic").a
++                return self.q_of(y, "plastic").a + O.reseat_delta   # R1
+             add(e_a, "alpha_in_reversal", -1 if O.alpha_in_rule == "paper" else 0, 1.0)
+             if O.kink_events and kinks:
+                 def e_zn(t, y):
+@@ -345,13 +351,29 @@
+         return evs, names
+ 
+ 
++def _h_over_x(q):
++    """R1 diagnostic: H/X, the loading denominator over its elastic part
++    (+-inf at a DM04 re-seat, where H = (2/3) p b0 b:n / 0 + X)."""
++    if q.H == q.H:                       # finite branch (h_reg)
++        return q.H / q.X if q.X != 0.0 else float("nan")
++    if q.a > 0.0:
++        return (q.Hs / q.a) / q.X if q.X != 0.0 else float("nan")
++    return float("inf") if q.Hs > 0.0 else -float("inf")
++
++
+ def integrate(state, control, P, O=None, rtol=1.0e-10, atol_scale=1.0e-2,
+-              method="Radau", max_segments=5000, record=True):
+-    """Integrate one prescribed increment from `state`.  Returns a Result."""
++              method="Radau", max_segments=5000, record=True, extra_events=None):
++    """Integrate one prescribed increment from `state`.  Returns a Result.
++
++    R1: `extra_events` = list of (name, g(q, y) -> float, direction): terminal
++    user events (e.g. q reaching a cyclic target); status "event:<name>"."""
+     from scipy.integrate import solve_ivp
+ 
+     if O is None:
+         O = Options()
++    if O.reseat_delta > 0.0 and O.h_reg is None:
++        raise ValueError("R1: a threshold re-seat needs a bounded h (h_reg), "
++                         "else h = b0/a < 0 inside the threshold band")
+     if not isinstance(control, Control):
+         control = Control.strain(control)
+     inc = _Increment(state, control, P, O, rtol, atol_scale, method)
+@@ -380,6 +402,9 @@
+     min_hmargin = float("inf")
+     min_a_pl = float("inf")
+     max_f_el = -float("inf")
++    min_hx = float("inf")        # R1: min H/X over plastic samples
++    n_cap = [0, 0, 0]            # R1: plastic samples by cap state (none / floor / soft)
++    n_pl_samples = 0
+     tt, yy = [0.0], [y.copy()]
+     stall = 0
+     while t < 1.0:
+@@ -397,6 +422,13 @@
+             s["event"] in ("kink_zn", "kink_D") and s["t1"] - s["t0"] < 1e-9
+             for s in segments[-2:]))
+         evs, names = inc.events(mode, y, kinks=not kink_stall)
++        for (ename, gfun, edir) in (extra_events or []):
++            def _ev(t_, y_, g=gfun, m=mode):
++                return g(inc.q_of(y_, m), y_)
++            _ev.terminal = True
++            _ev.direction = edir
++            evs.append(_ev)
++            names.append("event:" + ename)
+         fun =(lambda tt_, yy_, m=mode: inc.rates(yy_, m)[0])
+         jac = (lambda tt_, yy_, m=mode: inc.jacobian(yy_, m))
+         sol = solve_ivp(fun, (t, 1.0), y, method=method, rtol=rtol, atol=inc.atol,
+@@ -439,6 +471,9 @@
+             if mode == "plastic":
+                 max_abs_f_pl = max(max_abs_f_pl, abs(q.f))
+                 min_a_pl = min(min_a_pl, q.a)
++                min_hx = min(min_hx, _h_over_x(q))
++                n_cap[q.capped] += 1
++                n_pl_samples += 1
+                 sc = max(abs(q.Hs), 1e-300)
+                 min_hmargin = min(min_hmargin, q.Hs / (abs(q.Hs) + abs(q.a * q.X) + 1e-300))
+         stall = stall + 1 if (t_new - t) <= 1e-13 else 0
+@@ -449,6 +484,9 @@
+         t, y = t_new, y_new
+         if fired == "p_floor":
+             status = "p_floor"
++            break
++        if fired is not None and fired.startswith("event:"):
++            status = fired
+             break
+         if fired == "alpha_in_reversal" and O.alpha_in_rule == "paper":
+             inc.alpha_in = v2t(y[6:12]).copy()
+@@ -473,6 +511,9 @@
+                  deps_total=y[20:26].tolist(), min_a_plastic=min_a_pl,
+                  max_f_elastic=max_f_el,
+                  uw_negative_h=inc.uw_negative_h or min_a_pl < -1.0e-12)
++    res.min_h_over_x = min_hx
++    res.n_cap = n_cap
++    res.n_plastic_samples = n_pl_samples
+     return res
+ 
+ 
+--- Ladruno_scripts/sanisand_reference/model.py
++++ Ladruno_files/testbed/sanisand_reseat_r1/sanisand_r1/model.py
+@@ -176,6 +176,19 @@
+     ftol_abs_start: float = 1.0e-7  # accept a given start with f <= this as on-surface
+     #                                  (the C++ TolF, absolute, kPa)
+     kink_events: bool = True        # restart at <z:n> and <-dε_v^p> kinks
++    # --- R1 prototype (WP-151): model-intrinsic fixes of the h singularity at an
++    #     alpha_in re-seat.  All OFF by default = DM04 (the WP-134 oracle, exact
++    #     continuous extension at a = (alpha - alpha_in):n = 0).
++    h_reg: str | None = None        # None: DM04 h = b0/a (exact extension)
++    #                                  "max": h = b0/max(a, h_eps)   (= DM04 for a >= h_eps)
++    #                                  "add": h = b0/(<a> + h_eps)   (PM4Sand C_gamma1, linearised)
++    #                                  "exp": h = b0/(exp(<a>) - 1 + h_eps) (PM4Sand's form)
++    h_eps: float = 0.0              # the denominator floor (alpha units)
++    h_soft_kappa: float | None = None   # softening h cap: when b:n < 0,
++    #                                  h <= (1 - kappa) X / ((2/3) p |b:n|), so that
++    #                                  Kp >= -(1 - kappa) X and H >= kappa X > 0
++    reseat_delta: float = 0.0       # threshold re-seat: alpha_in := alpha only when
++    #                                  (alpha - alpha_in):n < -reseat_delta (needs h_reg)
+ 
+     @classmethod
+     def uw(cls, p_min=0.0101, p_residual=0.0, **kw):
+@@ -273,6 +286,9 @@
+     bn: float         # b:n
+     rho_alpha: float  # ||alpha|| / (sqrt(2/3) ab(theta_alpha)): ab at alpha's OWN Lode
+     #                   angle -- the geometric test "alpha inside the bounding surface"
++    h: float = float("inf")   # R1: the hardening coefficient actually used (inf = DM04 at a = 0)
++    H: float = float("nan")   # R1: the loading denominator Kp + X (finite branch)
++    capped: int = 0           # R1: 0 none, 1 denominator floor active, 2 softening cap active
+ 
+ 
+ def quantities(sig, alpha, z, e, alpha_in, P, O, moduli=None):
+@@ -317,10 +333,66 @@
+     Hs = (2.0 / 3.0) * p * b0 * bn + a * X
+     rho_b = norm(alpha) / (SQ23 * ab) if ab > 0.0 else float("inf")
+     rho_alpha = rho_alpha_of(alpha, psi, P)
++    h_used, H, capped = (b0 / a if a > 0.0 else float("inf")), float("nan"), 0
++    if O.h_reg == "max_soft":
++        # WP-150 memo's R1 (draft #892, sec. R1): the floor only where b:n <= 0;
++        # where b:n > 0 DM04 is untouched (h = infinity restart; inside a
++        # threshold band a < 0 is read as a = 0, i.e. the SAS-ME 1e10 bracket).
++        if bn <= 0.0:
++            h_used, capped = regularised_h(a, b0, bn, p, X, O.with_(h_reg="max"))
++            H = (2.0 / 3.0) * p * h_used * bn + X
++            Hs = H
++        else:
++            ae = a if a > 0.0 else 0.0
++            h_used = b0 / ae if ae > 0.0 else float("inf")
++            Hs = (2.0 / 3.0) * p * b0 * bn + ae * X
++    elif O.h_reg is not None:
++        # R1: a bounded h -- the loading denominator is finite everywhere, so the
++        # plain H = Kp + X replaces DM04's exact extension Hs = a H.
++        h_used, capped = regularised_h(a, b0, bn, p, X, O)
++        H = (2.0 / 3.0) * p * h_used * bn + X
++        Hs = H          # the sign indicator the integrator's events and mode test use
+     return Quantities(p=p, p_true=p_true, s=s, r=r, x=x, f=f, n=n, cos3t=c3, g=g,
+                       psi=psi, ab=ab, ad=ad, b=b, d=d, b0=b0, a=a, A=A, D=D, B=B,
+                       C=C, Rdev=Rdev, R=R, nr=nr, G=G, K=K, X=X, Hs=Hs,
+-                      rho_b=rho_b, bn=bn, rho_alpha=rho_alpha)
++                      rho_b=rho_b, bn=bn, rho_alpha=rho_alpha, h=h_used, H=H,
++                      capped=capped)
++
++
++def regularised_h(a, b0, bn, p, X, O):
++    """R1 candidates.  Returns (h, capped).
++
++    Denominator (h_reg):
++      "max": h = b0 / max(a, eps)          -- DM04 exactly wherever a >= eps
++      "add": h = b0 / (<a> + eps)          -- PM4Sand's C_gamma1, to first order in a
++      "exp": h = b0 / (exp(<a>) - 1 + eps) -- PM4Sand's own denominator form
++    With a threshold re-seat, a may sit in (-reseat_delta, 0): all three forms
++    give the bounded value b0/eps there (never h < 0: no mechanism G).
++    Softening cap (h_soft_kappa = kappa): with b:n < 0, Kp = (2/3) p h b:n is
++    bounded below by -(1 - kappa) X by capping h (NOT Kp alone: capping h keeps
++    the consistency condition, since dalpha = (2/3) L h b uses the same h)."""
++    eps = O.h_eps
++    ap = a if a > 0.0 else 0.0
++    if O.h_reg == "max":
++        den = a if a > eps else eps
++    elif O.h_reg == "add":
++        den = ap + eps
++    elif O.h_reg == "exp":
++        den = math.expm1(ap) + eps
++    else:
++        raise ValueError(f"h_reg {O.h_reg!r}")
++    capped = 0
++    if not (den > 0.0):
++        raise ValueError("R1: h_reg needs h_eps > 0")
++    h = b0 / den
++    if a < eps:
++        capped = 1
++    if O.h_soft_kappa is not None and bn < 0.0 and X > 0.0 and p > 0.0:
++        hcap = (1.0 - O.h_soft_kappa) * X / ((2.0 / 3.0) * p * (-bn))
++        if h > hcap:
++            h = hcap
++            capped = 2
++    return h, capped
+ 
+ 
+ def plastic_weights(q, O):
+@@ -332,7 +404,20 @@
+         L = N/H = a N/Hs,   h L = b0 N/Hs
+     -- finite at a = 0 (h = infinity right after an alpha_in reseat): the exact
+     continuous extension, no cap needed (ambiguity A7).
+-    U7 (h_cap): UW's h = 1e10 when |a| < 1e-10, else b0/a; L = N/(Kp + X)."""
++    U7 (h_cap): UW's h = 1e10 when |a| < 1e-10, else b0/a; L = N/(Kp + X).
++    R1 (h_reg): h is bounded, H = Kp + X is finite: L = N/H, h L = h N/H."""
++    if O.h_reg == "max_soft" and not (q.H == q.H):
++        # b:n > 0 side of WP-150's R1: DM04's exact extension with a -> max(a, 0)
++        ae = q.a if q.a > 0.0 else 0.0
++        Hs = q.Hs
++        if Hs == 0.0:
++            return 0.0, float("inf"), 0
++        return ae / Hs, q.b0 / Hs, (1 if Hs > 0.0 else -1)
++    if O.h_reg is not None:
++        H = q.H
++        if not (H == H) or H == 0.0:
++            return 0.0, float("inf"), 0
++        return 1.0 / H, q.h / H, (1 if H > 0.0 else -1)
+     if O.h_cap is None:
+         Hs = q.Hs
+         if Hs == 0.0:

@@ -1,0 +1,10 @@
+---
+wp: WP-172
+title: "Refused system/numberer/constraints/test/analysis are errors (openseespy + classic Tcl)"
+pr: "#931"
+date: 2026-10-06
+files: ["`SRC/interpreter/OpenSeesCommands.cpp`", "`SRC/tcl/commands.cpp`"]
+table: "upstreamable"
+---
+| `SRC/interpreter/OpenSeesCommands.cpp` | `// Ladruno WP-172`: `OPS_System`, `OPS_Numberer`, `OPS_ConstraintHandler`, `OPS_CTest` now **`return -1` on a null factory result**, before `cmds->setX()`. One guard per dispatcher, the ADR-76 / WP-171 shape. They used to call `setX(0)`, which nulls the global and deletes the previous object when no analysis exists, and then `return 0`. openseespy raised nothing, and the next `analysis` silently built a default: `ProfileSPD`, `RCM`, `Plain`, or for `test` a warning-free `NormUnbalance 1e-6 25`. `OPS_Analysis` now returns `-1` for an unknown type (it returned `0`). Inert for every accepted object. | WP-172 (#931) |
+| `SRC/tcl/commands.cpp` | `// Ladruno WP-172`: **`system`**: the stock body is renamed `ladrunoSpecifySOEImpl` (static, unchanged). The new `specifySOE` wrapper saves the global, clears it, calls the impl, and when no SOE was created restores the previous one and returns `TCL_ERROR` (`previous system left unchanged`). Pre-fix, the stock final check read the global, so `system <unknown>` and `system PFEM -<unknown>` returned `TCL_OK` once any system existed. With an analysis present they re-installed the same pointer through `setLinearSOE`, which deletes the old SOE first: a use-after-free that killed the next `analyze` (exit 127). **`constraints`**: the stock body is renamed `ladrunoSpecifyConstraintHandlerImpl`. The wrapper restores the previous handler when no new one was created; the `Auto`, `LadrunoProjection` and `LadrunoContact` branches had nulled it before returning `TCL_ERROR`. Inert for every accepted object. | WP-172 (#931) |

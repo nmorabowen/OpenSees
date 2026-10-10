@@ -1,0 +1,9 @@
+---
+wp: WP-178
+title: "build.bat exited 0 with a STALE dist\\bin\\opensees.pyd when the copy was locked — every dist copy now fails the build, then dist is byte-compared to the build (WP-178)"
+date: 2026-10-07
+---
+### `build.bat` exited 0 with a STALE `dist\bin\opensees.pyd` when the copy was locked (WP-178)
+- **Bites:** a test run had the old `opensees.pyd` loaded while `build.bat` reached Step 5 (2026-10-06, WP-176). The log said `The process cannot access the file because it is being used by another process`, yet the build **exited 0**. `dist\bin` then held fresh `OpenSees*.exe` and `openseesmp.pyd` next to a pyd from the PREVIOUS build (`ops.ladrunoBuild()` showed the old hash). That is AGENTS.md build rule 2's mixed binary — pytest tests one build, Tcl another — produced by the script itself, with nothing in the exit code to catch it.
+- **Why:** every `copy` in Step 5 discarded its result (`copy /y ... >nul`, no check), and most sat inside parenthesized `for`/`if` bodies, where Step 4's comment already records that `if errorlevel 1` does not reliably trip.
+- **Workaround/status:** fixed. Every copy into `dist\` now goes through `:copy_or_die <src> <dst>` (callers use `call :copy_or_die ... || exit /b 1`), which names the file and the likely lock and exits 1. The Tcl `xcopy` gets `|| (... exit /b 1)`. After Step 5, the five engine binaries (`OpenSees.exe`, `OpenSeesSP.exe`, `OpenSeesMP.exe`, `opensees.pyd`, `openseesmp.pyd`) are byte-compared (`fc /b`) against their build outputs, and any mismatch fails the build. Only artifacts this build produced are checked. `:copy_or_die` uses no parenthesized block on purpose: its sources include `C:\Program Files (x86)\...`, and an expanded `%~1` inside `( ... )` would close the block at `(x86)` (BUILD_GOTCHAS section 10b). If the build now stops in Step 5, close whatever has the file loaded (a Python or pytest session, VS Code, a running `OpenSees*.exe`) and rerun.

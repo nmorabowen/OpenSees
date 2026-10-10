@@ -1,0 +1,9 @@
+---
+wp: PR-484
+title: "Profiler viewer: make_sample.py writes a TIMED top node, the engine writes an UNTIMED root anchor — a viewer change checked only on the sample is blind to real…"
+legacy_seq: 479
+---
+### Profiler viewer: `make_sample.py` writes a TIMED top node, the engine writes an UNTIMED `root` anchor — a viewer change checked only on the sample is blind to real runs (#484)
+- **Bites:** every Python test and the frontend dev server were fed by `make_sample.py`, whose rollup top is `step` with `wall_ns > 0`. The C++ writer wraps the tree under `root` with `wall_ns = 0, calls = 0`. On 100% of engine-written files the flame graph rendered only the root bar (`Icicle.tsx` stops laying out children under a parent with `wall_ms <= 0`) and every `share` was divided by the `wall_ns or 1` fallback, 1 ns (755060000%). All tests were green; it was found only by running a real profiled analysis (2026-07-04). Same family, earlier: P8 (#51, 2026-05-31) was verified panel by panel on the sample, but on real runs the Series tab stayed empty until #52 wired `recordStep` (the sample carries a series; the engine then recorded no steps). The census panel is also empty unless `-memory` is armed before the model is built (`06_profiler.md`, P4).
+- **Why:** the sample was written schema-first, before the engine existed, and nobody re-derived it from a real file.
+- **Workaround/status:** `ProfilerResults.rollup()` backfills the anchor's wall from its children (#484). Engine-shaped inputs that need no build: `test_contract.py::_untimed_root_rollup` (run "C") and `monitor_smoke.py`. A real file: any `*_smoke_model.py` run on the built pyd (Python 3.12 + `os.add_dll_directory`, `Ladruno_internal/BUILD_GOTCHAS.md` §0 and §4), read by its `*_smoke_check.py`. **Open:** `make_sample.py`, the frontend README's dev fixture, still writes the timed top node. Check any viewer change against an engine-shaped file, not only the sample. *Moved from session memory, WP-121.*

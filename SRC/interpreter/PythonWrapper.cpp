@@ -41,6 +41,7 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 
 #include "PythonWrapper.h"
 #include "OpenSeesCommands.h"
+#include "LadrunoCommandsPython.h"   // Ladruno WP-168: Ladruno_registerCommands hook
 #include <OPS_Globals.h>
 
 #define OPS_PYVERSION "3.4.0.4"
@@ -704,116 +705,6 @@ static PyObject *Py_ops_reactions(PyObject *self, PyObject *args)
     return wrapper->getResults();
 }
 
-static PyObject *Py_ops_LadrunoProjectionTieForce(PyObject *self, PyObject *args)  // Ladruno ADR-30 P3
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-
-    if (OPS_LadrunoProjectionTieForce() < 0) {
-	opserr<<(void*)0;
-	return NULL;
-    }
-
-    return wrapper->getResults();
-}
-
-static PyObject *Py_ops_LadrunoContactSurface(PyObject *self, PyObject *args)  // Ladruno ADR-39
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-    if (OPS_LadrunoContactSurface() < 0) { opserr<<(void*)0; return NULL; }
-    return wrapper->getResults();
-}
-
-static PyObject *Py_ops_LadrunoContact(PyObject *self, PyObject *args)  // Ladruno ADR-39
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-    if (OPS_LadrunoContact() < 0) { opserr<<(void*)0; return NULL; }
-    return wrapper->getResults();
-}
-
-static PyObject *Py_ops_LadrunoContactPlane(PyObject *self, PyObject *args)  // Ladruno ADR-39 P2a
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-    if (OPS_LadrunoContactPlane() < 0) { opserr<<(void*)0; return NULL; }
-    return wrapper->getResults();
-}
-
-static PyObject *Py_ops_LadrunoContactInfo(PyObject *self, PyObject *args)  // Ladruno ADR-39
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-    if (OPS_LadrunoContactInfo() < 0) { opserr<<(void*)0; return NULL; }
-    return wrapper->getResults();
-}
-
-static PyObject *Py_ops_LadrunoMortarPenetration(PyObject *self, PyObject *args)  // Ladruno ADR-41 C2.2
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-    if (OPS_LadrunoMortarPenetration() < 0) { opserr<<(void*)0; return NULL; }
-    return wrapper->getResults();
-}
-
-static PyObject *Py_ops_LadrunoEdgePenetration(PyObject *self, PyObject *args)  // Ladruno ADR-57 E6
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-    if (OPS_LadrunoEdgePenetration() < 0) { opserr<<(void*)0; return NULL; }
-    return wrapper->getResults();
-}
-
-static PyObject *Py_ops_LadrunoMortarTieResidual(PyObject *self, PyObject *args)  // Ladruno ADR-41 C4
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-    if (OPS_LadrunoMortarTieResidual() < 0) { opserr<<(void*)0; return NULL; }
-    return wrapper->getResults();
-}
-
-static PyObject *Py_ops_LadrunoContactForce(PyObject *self, PyObject *args)  // Ladruno ADR-39 B3
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-    if (OPS_LadrunoContactForce() < 0) { opserr<<(void*)0; return NULL; }
-    return wrapper->getResults();
-}
-
-static PyObject *Py_ops_LadrunoBeginAugment(PyObject *self, PyObject *args)  // Ladruno ADR-41 D1
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-    if (OPS_LadrunoBeginAugment() < 0) { opserr<<(void*)0; return NULL; }
-    return wrapper->getResults();
-}
-
-static PyObject *Py_ops_LadrunoEndAugment(PyObject *self, PyObject *args)  // Ladruno ADR-41 D1
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-    if (OPS_LadrunoEndAugment() < 0) { opserr<<(void*)0; return NULL; }
-    return wrapper->getResults();
-}
-
-static PyObject *Py_ops_LadrunoBuild(PyObject *self, PyObject *args)  // Ladruno build-stamp query
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-    if (OPS_LadrunoBuild() < 0) { opserr<<(void*)0; return NULL; }
-    return wrapper->getResults();
-}
-
-static PyObject *Py_ops_LadrunoThreads(PyObject *self, PyObject *args)  // Ladruno WP-107 element-loop thread count
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-    if (OPS_LadrunoThreads() < 0) { opserr<<(void*)0; return NULL; }
-    return wrapper->getResults();
-}
-
-static PyObject *Py_ops_LadrunoSANISANDReplay(PyObject *self, PyObject *args)  // Ladruno WP-127
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-    if (OPS_LadrunoSANISANDReplay() < 0) { opserr<<(void*)0; return NULL; }
-    return wrapper->getResults();
-}
-
-static PyObject *Py_ops_LadrunoMutation(PyObject *self, PyObject *args)  // Ladruno ADR-87 D2 mutation query
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-    if (OPS_LadrunoMutation() < 0) { opserr<<(void*)0; return NULL; }
-    return wrapper->getResults();
-}
-
 static PyObject *Py_ops_nodeReaction(PyObject *self, PyObject *args)
 {
     wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
@@ -971,18 +862,6 @@ static PyObject *Py_ops_equationConstraint(PyObject *self, PyObject *args)
     wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
 
     if (OPS_EquationConstraint() < 0) {
-	opserr<<(void*)0;
-	return NULL;
-    }
-
-    return wrapper->getResults();
-}
-
-static PyObject *Py_ops_LadrunoTie(PyObject *self, PyObject *args)  // Ladruno ADR-62
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-
-    if (OPS_LadrunoTie() < 0) {
 	opserr<<(void*)0;
 	return NULL;
     }
@@ -1170,13 +1049,6 @@ static PyObject *Py_ops_printB(PyObject *self, PyObject *args)
     return wrapper->getResults();
 }
 
-static PyObject *Py_ops_LadrunoTrialResidualNorm(PyObject *self, PyObject *args)  // Ladruno ADR-52 W1-I1b
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-    if (OPS_LadrunoTrialResidualNorm() < 0) { opserr<<(void*)0; return NULL; }
-    return wrapper->getResults();
-}
-
 static PyObject *Py_ops_printX(PyObject *self, PyObject *args)
 {
     wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
@@ -1218,45 +1090,6 @@ static PyObject *Py_ops_getCTestIter(PyObject *self, PyObject *args)
     wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
 
     if (OPS_getCTestIter() < 0) {
-	opserr<<(void*)0;
-	return NULL;
-    }
-
-    return wrapper->getResults();
-}
-
-// Ladruno: runtime control of the active LadrunoArcLength (Layer-B cut-retry).
-static PyObject *Py_ops_ladrunoArcLength(PyObject *self, PyObject *args)
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-
-    if (OPS_LadrunoArcLengthCmd() < 0) {
-	opserr<<(void*)0;
-	return NULL;
-    }
-
-    return wrapper->getResults();
-}
-
-// Ladruno (ADR-80 S1): resize LadrunoLoadControl's step WITHOUT reconstructing it.
-static PyObject *Py_ops_ladrunoLoadControl(PyObject *self, PyObject *args)
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-
-    if (OPS_LadrunoLoadControlCmd() < 0) {
-	opserr<<(void*)0;
-	return NULL;
-    }
-
-    return wrapper->getResults();
-}
-
-// Ladruno: runtime query of the active LadrunoDynamicRelaxation (rung-5 settling).
-static PyObject *Py_ops_ladrunoDR(PyObject *self, PyObject *args)
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-
-    if (OPS_LadrunoDRCmd() < 0) {
 	opserr<<(void*)0;
 	return NULL;
     }
@@ -1453,13 +1286,6 @@ static PyObject *Py_ops_setNodeAccel(PyObject *self, PyObject *args)
 	return NULL;
     }
 
-    return wrapper->getResults();
-}
-
-static PyObject *Py_ops_LadrunoSetNodeTrial(PyObject *self, PyObject *args)  // Ladruno ADR-52 W1-I1b
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-    if (OPS_LadrunoSetNodeTrial() < 0) { opserr<<(void*)0; return NULL; }
     return wrapper->getResults();
 }
 
@@ -1732,31 +1558,6 @@ static PyObject *Py_ops_stopTimer(PyObject *self, PyObject *args)
     wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
 
     if (OPS_stopTimer() < 0) {
-	opserr<<(void*)0;
-	return NULL;
-    }
-
-    return wrapper->getResults();
-}
-
-static PyObject *Py_ops_profiler(PyObject *self, PyObject *args)
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-
-    if (OPS_profiler() < 0) {
-	opserr<<(void*)0;
-	return NULL;
-    }
-
-    return wrapper->getResults();
-}
-
-// Ladruno (ADR-73 P2): the iterated fixed-stress overlay driver command.
-static PyObject *Py_ops_LadrunoStaggeredAnalyze(PyObject *self, PyObject *args)
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-
-    if (OPS_LadrunoStaggeredAnalyze() < 0) {
 	opserr<<(void*)0;
 	return NULL;
     }
@@ -2202,83 +2003,6 @@ static PyObject *Py_ops_numIter(PyObject *self, PyObject *args)
     wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
 
     if (OPS_numIter() < 0) {
-	opserr<<(void*)0;
-	return NULL;
-    }
-
-    return wrapper->getResults();
-}
-
-static PyObject *Py_ops_criticalTimeStep(PyObject *self, PyObject *args)
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-
-    if (OPS_criticalTimeStep() < 0) {
-	opserr<<(void*)0;
-	return NULL;
-    }
-
-    return wrapper->getResults();
-}
-
-// Ladruno ADR46
-static PyObject *Py_ops_complexEigen(PyObject *self, PyObject *args)
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-
-    if (OPS_complexEigen() < 0) {
-	opserr<<(void*)0;
-	return NULL;
-    }
-
-    return wrapper->getResults();
-}
-
-// Ladruno ADR44: modal-superposition transient (modalResponseHistory)
-static PyObject *Py_ops_modalResponseHistory(PyObject *self, PyObject *args)
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-
-    if (OPS_LadrunoModalResponseHistory() < 0) {
-	opserr<<(void*)0;
-	return NULL;
-    }
-
-    return wrapper->getResults();
-}
-
-// Ladruno ADR44 P2: modal FRF sweep (frequencyResponse)
-static PyObject *Py_ops_frequencyResponse(PyObject *self, PyObject *args)
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-
-    if (OPS_LadrunoFrequencyResponse() < 0) {
-	opserr<<(void*)0;
-	return NULL;
-    }
-
-    return wrapper->getResults();
-}
-
-// Ladruno ADR44 P2: steady-state dynamics amplitude sweep (steadyStateDynamics)
-static PyObject *Py_ops_steadyStateDynamics(PyObject *self, PyObject *args)
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-
-    if (OPS_LadrunoSteadyStateDynamics() < 0) {
-	opserr<<(void*)0;
-	return NULL;
-    }
-
-    return wrapper->getResults();
-}
-
-// Ladruno ADR44 P3: stationary random response, PSD->RMS (randomResponse)
-static PyObject *Py_ops_randomResponse(PyObject *self, PyObject *args)
-{
-    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
-
-    if (OPS_LadrunoRandomResponse() < 0) {
 	opserr<<(void*)0;
 	return NULL;
     }
@@ -3371,21 +3095,9 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("eleLoad", &Py_ops_eleLoad);
     addCommand("reactions", &Py_ops_reactions);
     addCommand("nodeReaction", &Py_ops_nodeReaction);
-    addCommand("ladrunoProjectionTieForce", &Py_ops_LadrunoProjectionTieForce);  // Ladruno ADR-30 P3
-    addCommand("contactSurface", &Py_ops_LadrunoContactSurface);    // Ladruno ADR-39
-    addCommand("contact", &Py_ops_LadrunoContact);                  // Ladruno ADR-39
-    addCommand("contactPlane", &Py_ops_LadrunoContactPlane);        // Ladruno ADR-39 P2a
-    addCommand("ladrunoContactInfo", &Py_ops_LadrunoContactInfo);   // Ladruno ADR-39
-    addCommand("ladrunoMortarPenetration", &Py_ops_LadrunoMortarPenetration);  // Ladruno ADR-41 C2.2
-    addCommand("ladrunoEdgePenetration", &Py_ops_LadrunoEdgePenetration);      // Ladruno ADR-57 E6
-    addCommand("ladrunoMortarTieResidual", &Py_ops_LadrunoMortarTieResidual);  // Ladruno ADR-41 C4
-    addCommand("ladrunoBeginAugment", &Py_ops_LadrunoBeginAugment);            // Ladruno ADR-41 D1
-    addCommand("ladrunoEndAugment", &Py_ops_LadrunoEndAugment);                // Ladruno ADR-41 D1
-    addCommand("ladrunoBuild", &Py_ops_LadrunoBuild);                          // Ladruno build-stamp query
-    addCommand("ladrunoThreads", &Py_ops_LadrunoThreads);                      // Ladruno WP-107 element-loop thread count
-    addCommand("ladrunoSANISANDReplay", &Py_ops_LadrunoSANISANDReplay);        // Ladruno WP-127
-    addCommand("ladrunoMutation", &Py_ops_LadrunoMutation);                    // Ladruno ADR-87 D2 mutation-gate query
-    addCommand("ladrunoContactForce", &Py_ops_LadrunoContactForce);  // Ladruno ADR-39 B3
+    // Ladruno WP-168: every fork-only command, from the one table in
+    // LadrunoCommandTable.h; the bridges are generated by the hook.
+    Ladruno_registerCommands(this);   // Ladruno WP-168
     addCommand("eigen", &Py_ops_eigen);
     addCommand("modalProperties", &Py_ops_modalProperties);
     addCommand("responseSpectrumAnalysis", &Py_ops_responseSpectrumAnalysis);
@@ -3399,7 +3111,6 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("mass", &Py_ops_mass);
     addCommand("equalDOF", &Py_ops_equalDOF);
     addCommand("equationConstraint", &Py_ops_equationConstraint);
-    addCommand("LadrunoTie", &Py_ops_LadrunoTie);                    // Ladruno ADR-62
     addCommand("nodeEigenvector", &Py_ops_nodeEigenvector);
     addCommand("getTime", &Py_ops_getTime);
     addCommand("setCreep", &Py_ops_setCreep);
@@ -3415,15 +3126,11 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("printModel", &Py_ops_print);
     addCommand("printA", &Py_ops_printA);
     addCommand("printB", &Py_ops_printB);
-    addCommand("ladrunoTrialResidualNorm", &Py_ops_LadrunoTrialResidualNorm);  // Ladruno ADR-52 W1-I1b
     addCommand("printX", &Py_ops_printX);
     addCommand("printGID", &Py_ops_printGID);
     addCommand("testNorm", &Py_ops_getCTestNorms);
     addCommand("testNorms", &Py_ops_getCTestNorms);
     addCommand("testIter", &Py_ops_getCTestIter);
-    addCommand("ladrunoArcLength", &Py_ops_ladrunoArcLength);   // Ladruno: Layer-B
-    addCommand("ladrunoLoadControl", &Py_ops_ladrunoLoadControl);   // Ladruno (ADR-80 S1)
-    addCommand("ladrunoDR", &Py_ops_ladrunoDR);   // Ladruno: rung-5 DR query
     addCommand("recorder", &Py_ops_recorder);
     addCommand("database", &Py_ops_database);
     addCommand("save", &Py_ops_save);
@@ -3439,7 +3146,6 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("setNodeVel", &Py_ops_setNodeVel);
     addCommand("nodeAccel", &Py_ops_nodeAccel);
     addCommand("setNodeAccel", &Py_ops_setNodeAccel);
-    addCommand("ladrunoSetNodeTrial", &Py_ops_LadrunoSetNodeTrial);  // Ladruno ADR-52 W1-I1b
     addCommand("nodeResponse", &Py_ops_nodeResponse);
     addCommand("nodeCoord", &Py_ops_nodeCoord);
     addCommand("setNodeCoord", &Py_ops_setNodeCoord);
@@ -3463,8 +3169,6 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("nodeBounds", &Py_ops_nodeBounds);
     addCommand("start", &Py_ops_startTimer);
     addCommand("stop", &Py_ops_stopTimer);
-    addCommand("profiler", &Py_ops_profiler);
-    addCommand("LadrunoStaggeredAnalyze", &Py_ops_LadrunoStaggeredAnalyze); // Ladruno (ADR-73 P2)
     addCommand("modalDamping", &Py_ops_modalDamping);
     addCommand("modalDampingQ", &Py_ops_modalDampingQ);
     addCommand("setElementRayleighDampingFactors", &Py_ops_setElementRayleighDampingFactors);
@@ -3502,12 +3206,6 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("accelCPU", &Py_ops_accelCPU);
     addCommand("numFact", &Py_ops_numFact);
     addCommand("numIter", &Py_ops_numIter);
-    addCommand("criticalTimeStep", &Py_ops_criticalTimeStep);
-    addCommand("complexEigen", &Py_ops_complexEigen);   // Ladruno ADR46
-    addCommand("modalResponseHistory", &Py_ops_modalResponseHistory); // Ladruno ADR44
-    addCommand("frequencyResponse", &Py_ops_frequencyResponse);       // Ladruno ADR44 P2
-    addCommand("steadyStateDynamics", &Py_ops_steadyStateDynamics);   // Ladruno ADR44 P2
-    addCommand("randomResponse", &Py_ops_randomResponse);             // Ladruno ADR44 P3
     addCommand("systemSize", &Py_ops_systemSize);
     addCommand("version", &Py_ops_version);
     addCommand("pyversion", &Py_ops_pyversion);

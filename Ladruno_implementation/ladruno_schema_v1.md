@@ -104,6 +104,15 @@ apeGmsh reads.
 | `PARTITIONED` | int | 0/1 | 1 if this is one `.part-N` of a partitioned run |
 | `PARTITION_ID` | int | `N` | this file's 0-based partition index (0 if not partitioned) |
 | `NUM_PARTITIONS` | int | total | partition count of the set (1 if not partitioned) |
+| `RUN_ID` | string | e.g. `slurm-81234.0` | WP-165 (MP-9): identity of the run that wrote this file; identical across the part files of one run unless `RUN_ID_SCOPE == "process"` |
+| `RUN_ID_SCOPE` | string | `broadcast` / `user` / `launcher` / `process` | where `RUN_ID` came from: P0 broadcast (PartitionedDomain), `LADRUNO_RUN_ID`, the launcher's job id (SLURM / OpenMPI), or process-unique (no shared identity available — readers must not cross-check it) |
+
+`MODEL_STAGE[<stamp>]` may carry `EMPTY_PARTITION = 1` (WP-165, MP-8): this process had
+no nodes of the recorded set (e.g. a `-R` region that lives on other ranks); its
+`MODEL/NODES/ID` and `COORDINATES` are zero-length and it holds no node/element results.
+A new `MODEL_STAGE` starts only when the node/element/pressure-constraint SET changes
+(WP-165, R6) — not on every domain-change stamp move (SP patterns, `eleLoad`, contact
+re-emit continue the current stage).
 
 A reader that doesn't find `GENERATOR=="Ladruno"` must treat the file as a
 legacy STKO `.mpco` (or refuse it).

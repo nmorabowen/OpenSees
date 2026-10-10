@@ -56,6 +56,7 @@
 #include <vector>                         // Ladruno WP-127: replay output
 #include <string>                         // Ladruno WP-127
 #include <limits>                         // Ladruno WP-127
+#include <cctype>                         // Ladruno WP-151: tolower
 
 // ===========================================================================
 //  OPS parser
@@ -70,7 +71,24 @@
 //        <-implexTrialGuard on|off> <-implexFlipAbsorb on|off>                  \
 //        <-implexFactor fixed|control>                                          \
 //        <-reversalTol $tol> <-reversalRel $ratio> <-flipAlphaIn init|vanilla>
+//        <-cppmOnFail explicit|refuse> <-cppmHalvings $n> <-cppmLineSearch on|off>
+//        <-cppmStart trial|explicit> <-cppmTangent vanilla|fixed> <-meFallback cppm|off>
 //        (-flipAlphaIn default: init, since WP-112)
+//
+//  Ladruno WP-130 (TIMs F18(c)/(d)): BackwardEuler_CPPM (IntScheme 2) under a
+//  global Newton. -cppmOnFail refuse makes a local Newton that cannot return
+//  the increment REFUSE the update (LADRUNO_MATERIAL_REFUSED, so the element
+//  cuts the step) instead of vanilla's silent explicit integration;
+//  -cppmHalvings n (0..9, vanilla 9) bounds the recursive half-increment ladder
+//  tried first (0 = refuse at once); -cppmLineSearch on backtracks the local
+//  Newton on ||R||; -cppmStart explicit retries a failed local Newton once
+//  from a 50-substep ForwardEuler guess before halving; -cppmTangent fixed (the
+//  DEFAULT, owner decision) hands the element +d sigma/d eps under TanType 2 --
+//  vanilla ManzariDafalias hands out its NEGATIVE; `-cppmTangent vanilla`
+//  reproduces that, for reproduction only. -meFallback cppm (IntScheme 1 + -maxSubsteps > 0): when
+//  ModifiedEuler hits the cap, the same increment goes to the CPPM, which
+//  refuses rather than integrate explicitly; the update is refused only if both
+//  fail. All default to vanilla (byte-identical); none is qualified with -implex.
 //
 //  Ladruno ADR-92 P2-9: -implexFactor picks HOW f is chosen. `fixed` (the
 //  DEFAULT) is the clock ratio alpha*dt_{n+1}/dt_n and reaches no new
@@ -192,9 +210,14 @@ OPS_LadrunoSANISAND(void)
                << " <-implexFactor fixed|control|controlIter>"                              // Ladruno ADR-92 P2-9
                << " <-reversalTol tol?> <-reversalRel ratio?>"                  // Ladruno ADR-92 P2-5/P2-5b
                << " <-flipAlphaIn init|vanilla (default init)>"                 // Ladruno WP-112 (F14)
+               << " <-cppmOnFail explicit|refuse> <-cppmHalvings 0..9>"          // Ladruno WP-130
+               << " <-cppmLineSearch on|off> <-cppmStart trial|explicit>"       // Ladruno WP-130
+               << " <-cppmTangent fixed|vanilla>"                                // Ladruno WP-130
+               << " <-meFallback cppm|off>"                                      // Ladruno WP-130
                << " <-errFloor sigRef?> <-alphaBoundTol kappa?> <-alphaEntryTol kappaEntry?> <-alphaProject 0|1>"  // Ladruno WP-129
                << " <-sasAlphaIn reseat|bracket|stale> <-sasErrorVars full|stress>"   // Ladruno WP-129
-               << " (the last five: IntScheme 129 = SAS-ME only)"                     // Ladruno WP-129
+               << " <-sasHFloor cA?> <-sasReseatHyst cRev?> <-sasSoftCap kappa?>"     // Ladruno WP-151
+               << " (-errFloor .. -sasSoftCap: IntScheme 129 = SAS-ME only)"         // Ladruno WP-129/151
                << endln;
         return 0;
     }
@@ -233,6 +256,22 @@ OPS_LadrunoSANISAND(void)
                                //          (opt-in; the P2-7c default). Matches
                                //          LadrunoSANISAND::FLIP_ALPHA_IN_*, which is
                                //          `protected` and therefore not nameable here.
+    // Ladruno WP-130 (TIMs F18(c)/(d)): every default reproduces vanilla's
+    // BackwardEuler_CPPM control flow, so an existing deck is byte-identical.
+    int    cppmOnFail    = 0;       // 0 = explicit (vanilla), 1 = refuse
+    int    cppmHalvings  = 9;       // vanilla: mMaxSubStep 10 -> up to 9 halvings
+    int    cppmLineSearch = 0;      // 0 = off (vanilla full Newton step)
+    int    meFallback    = 0;       // 0 = off, 1 = cppm
+    int    cppmStart     = 0;       // 0 = trial (vanilla), 1 = explicit guess
+    int    cppmTangent   = 1;       // 1 = fixed, the DEFAULT (owner decision, WP-130);
+                                    // 0 = vanilla (sign-flipped), explicit opt-out
+    bool   sawCppmTangent = false;  // given explicitly (only then validated)
+    // Review round 1 (#868): EVERY WP-130 flag is validated on having been
+    // GIVEN, not on its value -- an explicitly given default ("-cppmOnFail
+    // explicit" on IntScheme 1) is still a flag that cannot act, and is refused.
+    bool   sawOnFail = false, sawHalvings = false, sawLS = false, sawStart = false,
+           sawMEFallback = false;
+    bool   sawCPPMToken  = false;   // any of the four given explicitly
 
     // Ladruno (ADR-92 P1): every default here is "IMPL-EX off", which is what
     // makes an existing SANISAND deck byte-identical.
@@ -461,6 +500,99 @@ OPS_LadrunoSANISAND(void)
         // sets mAlpha_in := mAlpha_n deterministically at the elastic->plastic
         // stage flip; `vanilla` (opt-in) leaves the base's own
         // loading-reversal sign test alone.
+        // Ladruno WP-130 (TIMs F18(c)/(d)): BackwardEuler_CPPM under a global
+        // Newton, and the ModifiedEuler -> CPPM per-point fallback. Validated
+        // against IntScheme / -maxSubsteps / -implex after the loop.
+        else if (strcmp(argTok, "-cppmOnFail") == 0 || strcmp(argTok, "-cppmonfail") == 0 ||
+                 strcmp(argTok, "-cppmLineSearch") == 0 || strcmp(argTok, "-cppmlinesearch") == 0 ||
+                 strcmp(argTok, "-meFallback") == 0 || strcmp(argTok, "-mefallback") == 0 ||
+                 strcmp(argTok, "-cppmStart") == 0 || strcmp(argTok, "-cppmstart") == 0 ||
+                 strcmp(argTok, "-cppmTangent") == 0 || strcmp(argTok, "-cppmtangent") == 0) {
+            seenFlag = true;
+            sawCPPMToken = true;
+            const char *rawMode = OPS_GetString();
+            char modeTok[32];
+            int  mc = 0;
+            while (rawMode != 0 && mc < 31 && rawMode[mc] != '\0') { modeTok[mc] = rawMode[mc]; mc++; }
+            modeTok[mc] = '\0';
+            bool ok = true;
+            const bool isOnFail = (strcmp(argTok, "-cppmOnFail") == 0 || strcmp(argTok, "-cppmonfail") == 0);
+            const bool isLS     = (strcmp(argTok, "-cppmLineSearch") == 0 || strcmp(argTok, "-cppmlinesearch") == 0);
+            const bool isStart  = (strcmp(argTok, "-cppmStart") == 0 || strcmp(argTok, "-cppmstart") == 0);
+            const bool isTan    = (strcmp(argTok, "-cppmTangent") == 0 || strcmp(argTok, "-cppmtangent") == 0);
+            if (isOnFail) {                                                            // -cppmOnFail
+                sawOnFail = true;
+                if (strcmp(modeTok, "explicit") == 0)     cppmOnFail = 0;
+                else if (strcmp(modeTok, "refuse") == 0)  cppmOnFail = 1;
+                else ok = false;
+                if (!ok)
+                    opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                           << ": -cppmOnFail wants explicit|refuse, got '" << modeTok
+                           << "'. explicit (the DEFAULT, vanilla) integrates an increment"
+                              " the CPPM's local Newton cannot return EXPLICITLY, after up"
+                              " to 2^(cppmHalvings) recursive halvings, and reports success;"
+                              " refuse returns LADRUNO_MATERIAL_REFUSED instead, so the"
+                              " element forwards it and the global step is cut." << endln;
+            } else if (isTan) {                                                        // -cppmTangent
+                sawCppmTangent = true;
+                if (strcmp(modeTok, "fixed") == 0)        cppmTangent = 1;
+                else if (strcmp(modeTok, "vanilla") == 0) cppmTangent = 0;
+                else ok = false;
+                if (!ok)
+                    opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                           << ": -cppmTangent wants vanilla|fixed, got '" << modeTok
+                           << "'. fixed (the DEFAULT since WP-130) hands the element the"
+                              " sign-corrected CPPM tangent +CSigma under TanType 2 (right"
+                              " sign, not the fully consistent tangent);"
+                              " vanilla reproduces ManzariDafalias' WRONG SIGN (opt-out,"
+                              " for reproduction only)." << endln;
+            } else if (isStart) {                                                      // -cppmStart
+                sawStart = true;
+                if (strcmp(modeTok, "explicit") == 0)   cppmStart = 1;
+                else if (strcmp(modeTok, "trial") == 0) cppmStart = 0;
+                else ok = false;
+                if (!ok)
+                    opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                           << ": -cppmStart wants trial|explicit, got '" << modeTok
+                           << "'. trial (the DEFAULT, vanilla) starts the CPPM's local Newton"
+                              " from the elastic trial only; explicit retries it once from a"
+                              " 50-substep ForwardEuler guess before halving." << endln;
+            } else if (isLS) {                                                         // -cppmLineSearch
+                sawLS = true;
+                if (strcmp(modeTok, "on") == 0)       cppmLineSearch = 1;
+                else if (strcmp(modeTok, "off") == 0) cppmLineSearch = 0;
+                else ok = false;
+                if (!ok)
+                    opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                           << ": -cppmLineSearch wants on|off, got '" << modeTok << "'" << endln;
+            } else {                                                                   // -meFallback
+                sawMEFallback = true;
+                if (strcmp(modeTok, "cppm") == 0)     meFallback = 1;
+                else if (strcmp(modeTok, "off") == 0) meFallback = 0;
+                else ok = false;
+                if (!ok)
+                    opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                           << ": -meFallback wants cppm|off, got '" << modeTok
+                           << "'. cppm hands an increment on which ModifiedEuler hit"
+                              " -maxSubsteps to BackwardEuler_CPPM and refuses only if"
+                              " that fails too (TIMs F10b(b))." << endln;
+            }
+            if (!ok)
+                return 0;
+        }
+        else if (strcmp(argTok, "-cppmHalvings") == 0 || strcmp(argTok, "-cppmhalvings") == 0) {
+            seenFlag = true;
+            sawCPPMToken = true;
+            sawHalvings = true;
+            numData  = 1;
+            if (OPS_GetIntInput(&numData, &cppmHalvings) != 0 || cppmHalvings < 0 || cppmHalvings > 9) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -cppmHalvings wants an integer in 0..9 (9 = vanilla: up to"
+                          " 2^9 = 512 recursive half-increments, each a 19-unknown Newton;"
+                          " 0 = no halving, the local Newton gets ONE try)" << endln;
+                return 0;
+            }
+        }
         else if (strcmp(argTok, "-flipAlphaIn") == 0 || strcmp(argTok, "-flipalphain") == 0) {
             seenFlag = true;
             const char *rawMode = OPS_GetString();
@@ -853,6 +985,74 @@ OPS_LadrunoSANISAND(void)
             }
             if (isAin) sasOpt.alphaInMode = mode; else sasOpt.errorVars = mode;
         }
+        // Ladruno WP-151 (R1): opt-in regularization of DM04's alpha_in re-seat
+        // singularity, SAS-ME only. All OFF by default (DM04, byte-identical).
+        else if (strcmp(argTok, "-sasHFloor") == 0 || strcmp(argTok, "-sashfloor") == 0 ||
+                 strcmp(argTok, "-sasReseatHyst") == 0 || strcmp(argTok, "-sasreseathyst") == 0 ||
+                 strcmp(argTok, "-sasSoftCap") == 0 || strcmp(argTok, "-sassoftcap") == 0) {
+            seenFlag = true;
+            sawSasToken = true;
+            const char k = (char)tolower((unsigned char)argTok[4]);   // h | r | s
+            double v = 0.0;
+            numData = 1;
+            if (OPS_GetDoubleInput(&numData, &v) != 0) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag << ": " << argTok
+                       << " wants one value" << endln;
+                return 0;
+            }
+            const bool okV = std::isfinite(v) && v >= 0.0 && (k != 's' || v < 1.0);
+            if (!okV) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag << ": " << argTok
+                       << (k == 'h' ? " wants c_A >= 0 (h = b0/max((alpha-alpha_in):n, c_A sqrt(2/3) m);"
+                                      " 0 = OFF, the DM04 default; 1 = one yield-cone radius)"
+                           : k == 'r' ? " wants c_rev >= 0 (alpha_in re-seats only when"
+                                        " (alpha-alpha_in):n < -c_rev sqrt(2/3) m; 0 = OFF)"
+                                      : " wants 0 <= kappa < 1 (softening cap: H >= kappa X; 0 = OFF)")
+                       << " (got " << v << ")" << endln;
+                return 0;
+            }
+            if (k == 'h') sasOpt.hFloor = v;
+            else if (k == 'r') sasOpt.reseatHyst = v;
+            else sasOpt.softCap = v;
+        }
+        // Ladruno WP-152: the tension cutoff (separation), SAS-ME only, OFF by
+        // default: -sasTensionCutoff p_sep p_contact (model stress units).
+        else if (strcmp(argTok, "-sasTensionCutoff") == 0 || strcmp(argTok, "-sastensioncutoff") == 0) {
+            seenFlag = true;
+            sawSasToken = true;
+            double v2[2] = {0.0, 0.0};
+            numData = 2;
+            if (OPS_GetDoubleInput(&numData, v2) != 0) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -sasTensionCutoff wants two values: p_sep p_contact" << endln;
+                return 0;
+            }
+            if (!(std::isfinite(v2[0]) && std::isfinite(v2[1]) && v2[0] >= 0.0 && v2[1] > v2[0])) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -sasTensionCutoff wants 0 <= p_sep < p_contact (got " << v2[0] << " "
+                       << v2[1] << "): p_sep is the committed p below which a low-confinement"
+                          " accuracy/cost refusal separates (0 = tension only), p_contact the"
+                          " re-contact pressure" << endln;
+                return 0;
+            }
+            sasOpt.tcPsep = v2[0];
+            sasOpt.tcPcontact = v2[1];
+        }
+        // Ladruno WP-152 (review #2): the committed p above which a TENSION refusal
+        // (code 6 / a p <= 0 start) refuses instead of separating. Default 5 p_contact.
+        else if (strcmp(argTok, "-sasSepMaxP0") == 0 || strcmp(argTok, "-sassepmaxp0") == 0) {
+            seenFlag = true;
+            sawSasToken = true;
+            numData = 1;
+            double v = 0.0;
+            if (OPS_GetDoubleInput(&numData, &v) != 0 || !(std::isfinite(v) && v > 0.0)) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -sasSepMaxP0 wants one value > 0: the committed p above which a"
+                          " tension refusal refuses instead of separating" << endln;
+                return 0;
+            }
+            sasOpt.tcP0Max = v;
+        }
         else {
             // Not one of our flags, so it must be a positional optional.
             if (seenFlag) {
@@ -879,7 +1079,11 @@ OPS_LadrunoSANISAND(void)
                        << " -implexFlipAbsorb / -implexFactor /"                     // Ladruno ADR-92 P2-7c / P2-9
                        << " -reversalTol / -reversalRel /"
                        << " -flipAlphaIn / -errFloor / -alphaBoundTol / -alphaProject /"   // Ladruno WP-129
-                       << " -sasAlphaIn / -sasErrorVars" << endln;                         // Ladruno WP-129
+                       << " -sasAlphaIn / -sasErrorVars /"                                 // Ladruno WP-129
+                       << " -sasHFloor / -sasReseatHyst / -sasSoftCap /"                   // Ladruno WP-151
+                       << " -sasTensionCutoff / -sasSepMaxP0 /"                            // Ladruno WP-152
+                       << " -cppmOnFail / -cppmHalvings / -cppmLineSearch / -cppmStart /" // Ladruno WP-130
+                       << " -cppmTangent / -meFallback" << endln;                  // Ladruno WP-130
                 return 0;
             }
             nPos++;
@@ -947,10 +1151,147 @@ OPS_LadrunoSANISAND(void)
     if (sawSasToken && (int)oData[0] != LADRUNO_INT_SAS_ME) {
         opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
                << ": -errFloor / -alphaBoundTol / -alphaProject / -sasAlphaIn / -sasErrorVars"
+                  " / -sasHFloor / -sasReseatHyst / -sasSoftCap"   // Ladruno WP-151
+                  " / -sasTensionCutoff / -sasSepMaxP0"             // Ladruno WP-152
                   " are SAS-ME options and are read ONLY by IntScheme " << LADRUNO_INT_SAS_ME
                << " (this deck asks for IntScheme " << (int)oData[0] << "). Refused rather than"
                   " accepted and ignored." << endln;
         return 0;
+    }
+    // Ladruno WP-151: the same rule inside SAS-ME. The re-seat threshold acts
+    // only where alpha_in re-seats (-sasAlphaIn reseat, the paper rule), and the
+    // h floor does nothing under -sasAlphaIn stale (ladrunoSasBracketH hands
+    // ModifiedEuler's h back untouched). -sasSoftCap acts in every mode, and
+    // -sasHFloor under bracket replaces the 1e10 bracket.
+    if (sasOpt.reseatHyst > 0.0 && sasOpt.alphaInMode != 0) {
+        opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+               << ": -sasReseatHyst acts only where alpha_in re-seats, i.e. under -sasAlphaIn"
+                  " reseat (the DEFAULT); this deck asks for -sasAlphaIn "
+               << (sasOpt.alphaInMode == 1 ? "bracket" : "stale")
+               << ". Refused rather than accepted and ignored." << endln;
+        return 0;
+    }
+    if (sasOpt.hFloor > 0.0 && sasOpt.alphaInMode == 2) {
+        opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+               << ": -sasHFloor does nothing under -sasAlphaIn stale (ModifiedEuler's h is"
+                  " kept as it is). Refused rather than accepted and ignored." << endln;
+        return 0;
+    }
+    // Ladruno WP-152: the separated state sits at p_min, so re-contact must be
+    // above it; and the cutoff is not qualified with -implex (the IMPL-EX
+    // companion has its own refusal ledger and never reaches this state).
+    if (sasOpt.tcP0Max > 0.0 && !(sasOpt.tcPcontact > 0.0)) {
+        opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+               << ": -sasSepMaxP0 does nothing without -sasTensionCutoff. Refused rather than"
+                  " accepted and ignored." << endln;
+        return 0;
+    }
+    if (sasOpt.tcPcontact > 0.0) {
+        // the default bound is p_contact (re-review MED-2: it bounds the entry jump to
+        // the re-contact scale; every footing entry measured was at p0 < 0.5 kPa), and a
+        // bound below p_contact would stop a just-re-contacted point from separating
+        // until it unloads below it (re-review LOW-6)
+        if (!(sasOpt.tcP0Max > 0.0))
+            sasOpt.tcP0Max = sasOpt.tcPcontact;
+        if (!(sasOpt.tcP0Max >= sasOpt.tcPcontact)) {
+            opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                   << ": -sasSepMaxP0 = " << sasOpt.tcP0Max << " must be >= p_contact = "
+                   << sasOpt.tcPcontact << ". Refused." << endln;
+            return 0;
+        }
+        // re-review LOW-7: with -pRe the moduli read tr(sigma)/3 + p_Re, so K(p_contact)
+        // would be K(p_contact + p_Re): not the documented law. Refused, as -Presidual.
+        if (preElastic != 0.0) {
+            opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                   << ": -sasTensionCutoff is defined for -pRe 0 only (got " << preElastic
+                   << "). Refused." << endln;
+            return 0;
+        }
+        // review #4: with p_r != 0 the separated sigma = (p_min - p_r) I is a real
+        // TENSION, and the elastic moduli read tr(sigma)/3 + p_Re, not p + p_r, so
+        // g_c and p_re would be taken at the wrong pressure. Not defined: refused.
+        if (presidual != 0.0) {
+            opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                   << ": -sasTensionCutoff is defined for -Presidual 0 only (got " << presidual
+                   << "): with p_r != 0 the separated state would carry tension. Refused." << endln;
+            return 0;
+        }
+        // review #7: re-contact lands on alpha = alpha_in = 0, where DM04's h is
+        // the 1e10 sentinel (the WP-151 Zeno singularity) unless the h floor is on.
+        if (!(sasOpt.hFloor > 0.0)) {
+            opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                   << ": -sasTensionCutoff needs -sasHFloor c_A > 0: re-contact lands on"
+                      " alpha = alpha_in = 0, where h is otherwise the 1e10 sentinel. Refused." << endln;
+            return 0;
+        }
+        const double pminEff = (pmin < 0.0) ? 1.0e-3 * dData[8] : pmin;
+        if (!(sasOpt.tcPcontact > pminEff)) {
+            opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                   << ": -sasTensionCutoff p_contact = " << sasOpt.tcPcontact
+                   << " must be above p_min = " << pminEff
+                   << " (a separated point sits at p_min). Refused." << endln;
+            return 0;
+        }
+        if (implexOpt.enabled) {
+            opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                   << ": -sasTensionCutoff is NOT qualified with -implex. Refused." << endln;
+            return 0;
+        }
+    }
+    // Ladruno WP-130 (TIMs F18(c)/(d)): a flag that would do nothing is REFUSED
+    // (ADR 86's rule), and the -implex combinations are refused as unqualified:
+    // the IMPL-EX companion reads mSubstepCapHitInME, not the CPPM refusal.
+    if (sawCPPMToken) {
+        const int schemeReq = (int)oData[0];
+        const int tanReq    = (int)oData[1];
+        const bool reachesCPPM = (schemeReq == INT_LSANISAND_BackwardEuler) ||
+                                 (schemeReq == INT_LSANISAND_ModifiedEuler && meFallback != 0);
+        if (implexOpt.enabled) {
+            opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                   << ": -cppmOnFail / -cppmHalvings / -cppmLineSearch / -cppmStart / -cppmTangent /"
+                      " -meFallback are NOT qualified with -implex (WP-130): the IMPL-EX companion"
+                      " and its refusal ledger read the ModifiedEuler cap flag, not a CPPM refusal,"
+                      " and TanType is inert under -implex. Drop -implex or these flags." << endln;
+            return 0;
+        }
+        if (sawMEFallback && (schemeReq != INT_LSANISAND_ModifiedEuler || maxSubsteps <= 0)) {
+            opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                   << ": -meFallback needs IntScheme 1 (ModifiedEuler) AND -maxSubsteps > 0"
+                      " (got IntScheme " << schemeReq << ", -maxSubsteps " << maxSubsteps
+                   << "): the fallback fires exactly when ModifiedEuler hits that cap, so"
+                      " without both the flag -- whatever its value -- can never act." << endln;
+            return 0;
+        }
+        if (sawOnFail && schemeReq != INT_LSANISAND_BackwardEuler) {
+            opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                   << ": -cppmOnFail needs IntScheme 2 (BackwardEuler_CPPM); on IntScheme "
+                   << schemeReq << " it cannot act. (Inside -meFallback cppm the CPPM always"
+                      " refuses rather than integrate explicitly.)" << endln;
+            return 0;
+        }
+        if ((sawHalvings || sawLS || sawStart || sawCppmTangent) && !reachesCPPM) {
+            opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                   << ": -cppmHalvings / -cppmLineSearch / -cppmStart / -cppmTangent act on"
+                      " BackwardEuler_CPPM, which IntScheme " << schemeReq << " reaches only"
+                      " through -meFallback cppm. Use IntScheme 2, or add -meFallback cppm." << endln;
+            return 0;
+        }
+        if (sawCppmTangent && tanReq != 2) {
+            opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                   << ": -cppmTangent acts only on the TanType 2 (consistent) tangent; this deck"
+                      " asks for TanType " << tanReq << ", which never reads it." << endln;
+            return 0;
+        }
+        // Review round 1 (#868), bounded work: `refuse` exists to cut a step in
+        // milliseconds, but with the vanilla ladder (9 halvings) a refused
+        // update can still cost up to 2^10 - 1 local Newtons (measured 1.1 s
+        // worst). If the deck did not choose, bound the ladder at 3 and say so.
+        if (cppmOnFail != 0 && !sawHalvings) {
+            cppmHalvings = 3;
+            opserr << "LadrunoSANISAND tag " << tag << ": -cppmOnFail refuse without"
+                      " -cppmHalvings: the halving ladder is bounded at 3 (<= 15 local Newtons"
+                      " per refused update). Give -cppmHalvings explicitly to change it." << endln;
+        }
     }
 
     NDMaterial *theMaterial =
@@ -985,6 +1326,14 @@ OPS_LadrunoSANISAND(void)
         }
     }
 
+    // Ladruno WP-130: validated above; applied after construction on the same
+    // rule as the IMPL-EX set (not a constructor argument, so the wrappers'
+    // signatures do not move). Echoed once, here, per deck command.
+    if (sawCPPMToken)
+        ((LadrunoSANISAND *)theMaterial)->setLadrunoCPPMOptions(cppmOnFail, cppmHalvings,
+                                                                cppmLineSearch, meFallback,
+                                                                cppmStart, cppmTangent, true);
+
     return theMaterial;
 }
 
@@ -1010,6 +1359,7 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, int classTag, double G0, double nu, do
     mPminInput(Pmin),
     mHonorTolR(honorTolR),
     mMaxSubsteps(maxSubsteps),                                                        // Ladruno
+    mCPPMOnFail(0), mCPPMHalvings(9), mCPPMLineSearch(0), mMEFallback(0), mCPPMStart(0), mCPPMTangentFix(1), mLadrunoLatchCause(0), // Ladruno WP-130: fixed is the DEFAULT (owner decision)
     mReversalTol(reversalTol),                                                        // Ladruno ADR-92 P2-5
     mReversalRel(reversalRel),                                                        // Ladruno ADR-92 P2-5b
     mDEpsNormCommit(0.0),                                                             // Ladruno ADR-92 P2-5b
@@ -1017,6 +1367,7 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, int classTag, double G0, double nu, do
     mFlipSeen(false),                                                                 // Ladruno ADR-92 P2-7c
     mPrimed(false),                                                                   // Ladruno ADR-92 P2-7
     mImplexCommitRefusedLatch(false),                                                 // Ladruno WP-99 (F7)
+    mLadrunoCommits(0.0), mLadrunoCommitReseats(0.0), mLadrunoCommitDAlphaIn(0.0),   // Ladruno WP-153
     mRoundoffAlphaInWarned(false)                                                     // Ladruno WP-112 (F14)
 {
     // Defensive input sanitising -- the parser already rejects these, but the
@@ -1042,6 +1393,7 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, double G0, double nu, double e_init, d
     mPminInput(Pmin),
     mHonorTolR(honorTolR),
     mMaxSubsteps(maxSubsteps),                                                        // Ladruno
+    mCPPMOnFail(0), mCPPMHalvings(9), mCPPMLineSearch(0), mMEFallback(0), mCPPMStart(0), mCPPMTangentFix(1), mLadrunoLatchCause(0), // Ladruno WP-130: fixed is the DEFAULT (owner decision)
     mReversalTol(reversalTol),                                                        // Ladruno ADR-92 P2-5
     mReversalRel(reversalRel),                                                        // Ladruno ADR-92 P2-5b
     mDEpsNormCommit(0.0),                                                             // Ladruno ADR-92 P2-5b
@@ -1049,6 +1401,7 @@ LadrunoSANISAND::LadrunoSANISAND(int tag, double G0, double nu, double e_init, d
     mFlipSeen(false),                                                                 // Ladruno ADR-92 P2-7c
     mPrimed(false),                                                                   // Ladruno ADR-92 P2-7
     mImplexCommitRefusedLatch(false),                                                 // Ladruno WP-99 (F7)
+    mLadrunoCommits(0.0), mLadrunoCommitReseats(0.0), mLadrunoCommitDAlphaIn(0.0),   // Ladruno WP-153
     mRoundoffAlphaInWarned(false)                                                     // Ladruno WP-112 (F14)
 {
     this->sanitiseLadrunoInputs(tag);   // Ladruno (ADR-86 PR-3)
@@ -1068,6 +1421,7 @@ LadrunoSANISAND::LadrunoSANISAND(int classTag)
     mPminInput(-1.0),
     mHonorTolR(0),
     mMaxSubsteps(0),                                                                  // Ladruno
+    mCPPMOnFail(0), mCPPMHalvings(9), mCPPMLineSearch(0), mMEFallback(0), mCPPMStart(0), mCPPMTangentFix(1), mLadrunoLatchCause(0), // Ladruno WP-130: fixed is the DEFAULT (owner decision)
     mReversalTol(1.0e-10),                                                            // Ladruno ADR-92 P2-5
     mReversalRel(0.05),                                                               // Ladruno ADR-92 P2-5b
     mDEpsNormCommit(0.0),                                                             // Ladruno ADR-92 P2-5b
@@ -1075,6 +1429,7 @@ LadrunoSANISAND::LadrunoSANISAND(int classTag)
     mFlipSeen(false),                                                                 // Ladruno ADR-92 P2-7c
     mPrimed(false),                                                                   // Ladruno ADR-92 P2-7
     mImplexCommitRefusedLatch(false),                                                 // Ladruno WP-99 (F7)
+    mLadrunoCommits(0.0), mLadrunoCommitReseats(0.0), mLadrunoCommitDAlphaIn(0.0),   // Ladruno WP-153
     mRoundoffAlphaInWarned(false)                                                     // Ladruno WP-112 (F14)
 {
     this->ladrunoImplexInitState();     // Ladruno (ADR-92 P1)
@@ -1089,6 +1444,7 @@ LadrunoSANISAND::LadrunoSANISAND()
     mPminInput(-1.0),
     mHonorTolR(0),
     mMaxSubsteps(0),                                                                  // Ladruno
+    mCPPMOnFail(0), mCPPMHalvings(9), mCPPMLineSearch(0), mMEFallback(0), mCPPMStart(0), mCPPMTangentFix(1), mLadrunoLatchCause(0), // Ladruno WP-130: fixed is the DEFAULT (owner decision)
     mReversalTol(1.0e-10),                                                            // Ladruno ADR-92 P2-5
     mReversalRel(0.05),                                                               // Ladruno ADR-92 P2-5b
     mDEpsNormCommit(0.0),                                                             // Ladruno ADR-92 P2-5b
@@ -1096,6 +1452,7 @@ LadrunoSANISAND::LadrunoSANISAND()
     mFlipSeen(false),                                                                 // Ladruno ADR-92 P2-7c
     mPrimed(false),                                                                   // Ladruno ADR-92 P2-7
     mImplexCommitRefusedLatch(false),                                                 // Ladruno WP-99 (F7)
+    mLadrunoCommits(0.0), mLadrunoCommitReseats(0.0), mLadrunoCommitDAlphaIn(0.0),   // Ladruno WP-153
     mRoundoffAlphaInWarned(false)                                                     // Ladruno WP-112 (F14)
 {
     this->ladrunoImplexInitState();     // Ladruno (ADR-92 P1)
@@ -1219,9 +1576,51 @@ LadrunoSANISAND::applyLadrunoConstants(void)
     m_Pmin          = (mPminInput < 0.0) ? 1.0e-3 * m_P_atm : mPminInput;
     mHonorTolRInME  = (mHonorTolR != 0);   // Ladruno (ADR-86 PR-3): the seam, wired
     mMaxSubstepsInME = mMaxSubsteps;       // Ladruno (ADR-86b): the substep-count cap
+    // Ladruno WP-130: the CPPM seams. At the defaults (0, 9, 0, 0) these are
+    // exactly the values every ManzariDafalias constructor sets (0, 10, 0, 0).
+    mLadrunoCPPMOnFail     = mCPPMOnFail;
+    mLadrunoCPPMMaxLevel   = mCPPMHalvings + 1;
+    mLadrunoCPPMLineSearch = mCPPMLineSearch;
+    mLadrunoMEFallback     = mMEFallback;
+    mLadrunoCPPMStart      = mCPPMStart;
+    mLadrunoCPPMTangentFix = mCPPMTangentFix;
     // Ladruno WP-129: SAS-ME is reachable from THIS class only -- its wrappers
     // forward the refusal (ladrunoUpdateStatus). Inert unless IntScheme 129.
     mLadrunoSas.allowed = true;            // Ladruno WP-129
+}
+
+// Ladruno WP-130 (TIMs F18(c)/(d)). The parser has already refused every
+// combination that would be inert or unqualified; this clamps only what a
+// clone or a wire could smuggle in (same rule as sanitiseLadrunoInputs).
+void
+LadrunoSANISAND::setLadrunoCPPMOptions(int onFail, int halvings, int lineSearch,
+                                       int meFallback, int start, int tangentFix,
+                                       bool verbose)
+{
+    mCPPMOnFail     = (onFail != 0) ? 1 : 0;
+    mCPPMHalvings   = (halvings < 0) ? 0 : ((halvings > 9) ? 9 : halvings);
+    mCPPMLineSearch = (lineSearch != 0) ? 1 : 0;
+    mMEFallback     = (meFallback != 0) ? 1 : 0;
+    mCPPMStart      = (start != 0) ? 1 : 0;
+    mCPPMTangentFix = (tangentFix != 0) ? 1 : 0;
+    this->applyLadrunoConstants();
+
+    if (!verbose || this->getClassTag() != ND_TAG_LadrunoSANISAND)
+        return;
+    opserr << "LadrunoSANISAND tag " << this->getTag()
+           << " (WP-130): -cppmOnFail " << (mCPPMOnFail ? "refuse" : "explicit")
+           << (mCPPMOnFail ? " (a CPPM increment the local Newton cannot return REFUSES"
+                             " the update -> LADRUNO_MATERIAL_REFUSED -> the step is cut)"
+                           : " (vanilla: silent explicit integration after the ladder)")
+           << ", -cppmHalvings " << mCPPMHalvings
+           << " (up to " << (1 << mCPPMHalvings) << " half-increments before that)"
+           << ", -cppmLineSearch " << (mCPPMLineSearch ? "on" : "off")
+           << ", -cppmStart " << (mCPPMStart ? "explicit" : "trial")
+           << ", -cppmTangent " << (mCPPMTangentFix ? "fixed (default)" : "vanilla (opt-out: sign-flipped under TanType 2)")
+           << ", -meFallback " << (mMEFallback ? "cppm (a ModifiedEuler -maxSubsteps hit is"
+                                                 " retried by the CPPM; refused only if both fail)"
+                                               : "off")
+           << endln;
 }
 
 // Ladruno WP-129: the SAS-ME options (see the parser and LadrunoSANISANDSasME.cpp).
@@ -1247,6 +1646,41 @@ LadrunoSANISAND::setLadrunoSasOptions(const LadrunoSasOptions &opt, bool verbose
                << "; TanType 1 and 2 both return the continuum tangent at the end state."
                << " Refusals reach the element as " << LADRUNO_MATERIAL_REFUSED
                << "; census: the `sasStats` response." << endln;
+        if (opt.hFloor > 0.0 || opt.reseatHyst > 0.0 || opt.softCap > 0.0) {   // Ladruno WP-151
+            opserr << "LadrunoSANISAND tag " << this->getTag()
+                   << ": WP-151 R1, an OPT-IN DM04 variant (the alpha_in re-seat singularity):"
+                   << " h floor c_A = " << opt.hFloor << (opt.hFloor > 0.0 ? "" : " (OFF)")
+                   << ", re-seat hysteresis c_rev = " << opt.reseatHyst << (opt.reseatHyst > 0.0 ? "" : " (OFF)")
+                   << ", softening cap kappa = " << opt.softCap << (opt.softCap > 0.0 ? "" : " (OFF)")
+                   << " (lengths in yield-cone radii sqrt(2/3) m = " << root23 * m_m << ")." << endln;
+            // Ladruno WP-151 (review #893 NIT; footing evidence): a partial set is
+            // an ablation, not a lighter fix -- not refused (none of it is inert).
+            if (!(opt.hFloor > 0.0 && opt.reseatHyst > 0.0 && opt.softCap > 0.0))
+                opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
+                       << ": WP-151 R1 is validated only as the FULL set (-sasHFloor 1 -sasReseatHyst 1"
+                          " -sasSoftCap 0.5). On the TIMs footing the floor alone and the hysteresis"
+                          " alone wall EARLIER than DM04, and floor + hysteresis without the cap walls"
+                          " past the old wall (b:n < 0 states near a reversal)." << endln;
+            if (opt.reseatHyst > 1.0)
+                opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
+                       << ": -sasReseatHyst " << opt.reseatHyst << " > 1: a cycle whose back stress"
+                          " travels less than c_rev cone radii never starts a new loading process"
+                          " (small-strain cycles stay on one h branch). Validated for cyclic work"
+                          " only at c_rev <= 1." << endln;
+        }
+        if (opt.tcPcontact > 0.0)   // Ladruno WP-152
+            opserr << "LadrunoSANISAND tag " << this->getTag()
+                   << ": WP-152 tension cutoff (separation), an OPT-IN constitutive choice: a point whose"
+                      " update fails its accuracy/cost limit (code 4/9) at committed p < p_sep = " << opt.tcPsep
+                   << " -- the operative trigger at a free surface -- or refuses on tension (code 6, or a start"
+                      " at p <= 0) at committed p <= " << opt.tcP0Max
+                   << ", in both cases under a non-compressing increment, SEPARATES -- no tension, no shear (model p ="
+                      " p_min = " << m_Pmin
+                   << "), weight and place kept -- and re-contacts at p_contact = " << opt.tcPcontact
+                   << " once its volumetric opening has closed (volumetric only: isochoric shear never"
+                      " re-contacts). Every other refusal (loadingNonPosH included) still refuses."
+                      " Counted: sasStats sepEntriesTension, sepEntriesLowP, sepExits, sepActive,"
+                      " sepLastCode, sepMaxP0, sepHeldHighP, sepHeldCompressing." << endln;
         if (mHonorTolR != 0)
             opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
                    << ": -honorTolR has NO EFFECT under SAS-ME, which always uses TolR." << endln;
@@ -1465,6 +1899,13 @@ LadrunoSANISAND::echoLadrunoConstants(void)
            << ((int)mTangType == 0 ? "ELASTIC mCe -- Newton degrades to modified Newton"
               : ((int)mTangType == 1 ? "continuum mCep" : "consistent mCep_Consistent (unsymmetric)"))
            << ")";
+    // Ladruno WP-130: the one place the CPPM tangent sign reaches an element.
+    if ((int)mTangType == 2 && (int)mScheme == INT_LSANISAND_BackwardEuler)
+        opserr << (mCPPMTangentFix
+                     ? " [IntScheme 2: CPPM tangent sign FIXED (WP-130 default; ManzariDafalias"
+                       " hands out its negative -- -cppmTangent vanilla reproduces that)]"
+                     : " [IntScheme 2: -cppmTangent vanilla -- the CPPM tangent is handed out"
+                       " with ManzariDafalias' WRONG SIGN (negative definite); reproduction only]");
 
     // Ladruno (ADR-86b): the substep-count cap. Say the NUMBER and say what
     // happens when it fires -- "0" alone reads like "no substeps".
@@ -1630,6 +2071,14 @@ LadrunoSANISAND::revertToStart(void)
     // revertToLastCommit (a failed step's cost must survive for the post-mortem).
     this->ladrunoResetMEStats();          // Ladruno WP-127
     this->ladrunoResetSasStats();         // Ladruno WP-129: sasStats, same rule
+    // Ladruno WP-152 (review #5): the separation state is state, not census --
+    // an InitialStateAnalysis revert keeps the stress, so it keeps the separation
+    // that produced it (and the census column that reports it).
+    if (ops_InitialStateAnalysis)
+        mLadrunoSas.stats[LSAS_SEP_ACTIVE] = mLadrunoSas.sep_n ? 1.0 : 0.0;
+    else
+        this->ladrunoResetSasSep();
+    mLadrunoCommits = mLadrunoCommitReseats = mLadrunoCommitDAlphaIn = 0.0;   // Ladruno WP-153
 
     return 0;
 }
@@ -1694,6 +2143,12 @@ LadrunoSANISAND::getCopy(const char *type)
         // the floor OFF while the deck-level prototype echoed it ON. That is the
         // ADR-86 section 3 defect, in a new variable.
         clone->mPreElasticInput = mPreElasticInput;                                 // Ladruno (ADR-93 II.1)
+        clone->mCPPMOnFail      = mCPPMOnFail;                                      // Ladruno WP-130
+        clone->mCPPMHalvings    = mCPPMHalvings;                                    // Ladruno WP-130
+        clone->mCPPMLineSearch  = mCPPMLineSearch;                                  // Ladruno WP-130
+        clone->mMEFallback      = mMEFallback;                                      // Ladruno WP-130
+        clone->mCPPMStart       = mCPPMStart;                                       // Ladruno WP-130
+        clone->mCPPMTangentFix  = mCPPMTangentFix;                                  // Ladruno WP-130
         clone->applyLadrunoConstants();                                             // Ladruno (ADR-93 II.1)
         clone->refreshInitialElasticOperator();                                     // Ladruno (ADR-93 II.1)
         for (int i = 0; i < LMS_COUNT; i++)                                         // Ladruno WP-127
@@ -1701,6 +2156,9 @@ LadrunoSANISAND::getCopy(const char *type)
         clone->mLadrunoSas.opt = mLadrunoSas.opt;                                   // Ladruno WP-129
         for (int i = 0; i < LSAS_COUNT; i++)                                        // Ladruno WP-129
             clone->mLadrunoSas.stats[i] = mLadrunoSas.stats[i];                     // Ladruno WP-129
+        clone->mLadrunoCommits        = mLadrunoCommits;                            // Ladruno WP-153
+        clone->mLadrunoCommitReseats  = mLadrunoCommitReseats;                      // Ladruno WP-153
+        clone->mLadrunoCommitDAlphaIn = mLadrunoCommitDAlphaIn;                     // Ladruno WP-153
         return clone;
     } else if (strcmp(type, "ThreeDimensional") == 0 || strcmp(type, "3D") == 0) {
         LadrunoSANISAND3D *clone;
@@ -1724,6 +2182,12 @@ LadrunoSANISAND::getCopy(const char *type)
         // the floor OFF while the deck-level prototype echoed it ON. That is the
         // ADR-86 section 3 defect, in a new variable.
         clone->mPreElasticInput = mPreElasticInput;                                 // Ladruno (ADR-93 II.1)
+        clone->mCPPMOnFail      = mCPPMOnFail;                                      // Ladruno WP-130
+        clone->mCPPMHalvings    = mCPPMHalvings;                                    // Ladruno WP-130
+        clone->mCPPMLineSearch  = mCPPMLineSearch;                                  // Ladruno WP-130
+        clone->mMEFallback      = mMEFallback;                                      // Ladruno WP-130
+        clone->mCPPMStart       = mCPPMStart;                                       // Ladruno WP-130
+        clone->mCPPMTangentFix  = mCPPMTangentFix;                                  // Ladruno WP-130
         clone->applyLadrunoConstants();                                             // Ladruno (ADR-93 II.1)
         clone->refreshInitialElasticOperator();                                     // Ladruno (ADR-93 II.1)
         for (int i = 0; i < LMS_COUNT; i++)                                         // Ladruno WP-127
@@ -1731,6 +2195,9 @@ LadrunoSANISAND::getCopy(const char *type)
         clone->mLadrunoSas.opt = mLadrunoSas.opt;                                   // Ladruno WP-129
         for (int i = 0; i < LSAS_COUNT; i++)                                        // Ladruno WP-129
             clone->mLadrunoSas.stats[i] = mLadrunoSas.stats[i];                     // Ladruno WP-129
+        clone->mLadrunoCommits        = mLadrunoCommits;                            // Ladruno WP-153
+        clone->mLadrunoCommitReseats  = mLadrunoCommitReseats;                      // Ladruno WP-153
+        clone->mLadrunoCommitDAlphaIn = mLadrunoCommitDAlphaIn;                     // Ladruno WP-153
         return clone;
     } else {
         opserr << "LadrunoSANISAND::getCopy failed to get copy: " << type << endln;
@@ -1844,10 +2311,29 @@ LadrunoSANISAND::getCopy(const char *type)
 //
 //  Ladruno WP-127 widened it once more, 35 -> 35 + LMS_COUNT (= 52):
 //
-//      data(35..51) = mLadrunoMEStats[0..16], the per-instance ModifiedEuler
+//      data(35..35+LMS_COUNT-1) = mLadrunoMEStats[], the per-instance ModifiedEuler
 //                      census behind the `substepStats` response (cumulative,
 //                      so it crosses for the reason mImplexCommitRefusedLatch
 //                      does: a received instance must not forget its history).
+//
+//  WIRE LAYOUT since the WP-129 + WP-130 merge -- named constants in
+//  LadrunoSANISAND.h (LWIRE_*), the ONLY place offsets are derived:
+//      [0, 35)                         the constants above
+//      [LWIRE_CENSUS, +LMS_COUNT)      the substep census (WP-127, widened by WP-130)
+//      [LWIRE_CPPM, +LWIRE_CPPM_N)     WP-130: mCPPMOnFail, mCPPMHalvings,
+//                                      mCPPMLineSearch, mMEFallback, mCPPMStart,
+//                                      mCPPMTangentFix, mLadrunoLatchCause
+//      [LWIRE_SAS, +LWIRE_SAS_OPT_N)   WP-129: errFloor, alphaBoundTol, alphaProject,
+//                                      alphaInMode, errorVars, alphaEntryTol;
+//                                      WP-151: hFloor, reseatHyst, softCap;
+//                                      WP-152: tcPsep, tcPcontact, tcP0Max
+//      [.., +LSAS_COUNT)               WP-129: the sasStats census (WP-151 appends 3,
+//                                      WP-152 appends 8)
+//      [LWIRE_SEP, +2)                 WP-152: the committed sep_n, sepTr_n
+//      LWIRE_TAG                       WP-151: the layout tag (kLadrunoSanWireTag)
+//      LWIRE_SIZE                      the total (never 97: static_assert in the header)
+//  (Before the merge both WPs indexed their blocks at 35+LMS_COUNT: a restored
+//  point read WP-129's defaults as CPPM options -- review #868 item 1.)
 //
 //  mImplexCtlFPending (P2-9) is NOT sent: it is the per-step arm for the f*
 //  computation, transient and reconstructible from mImplexStepArmed, on the
@@ -1890,6 +2376,20 @@ LadrunoSANISAND::getCopy(const char *type)
 //  reads them back in the same order.
 // ===========================================================================
 
+// Ladruno WP-151: the layout tag, the block's LAST entry (LWIRE_TAG in
+// LadrunoSANISAND.h). FE_Datastore keys a sent Vector by its SIZE (FileDatastore:
+// one file per `<size>.<commitTag>`) and then by dbTag, and the vanilla base sends
+// its own Vector(97) under the SAME dbTag and commitTag -- so a Ladruno block that
+// is also 97 long silently OVERWRITES the base state in the datastore. WP-151's
+// first layout was exactly 97 (35 + 17 + 6 + 36 + 3) and every database round trip
+// came back corrupted (tests/test_ladruno_sanisand.py::
+// test_db_roundtrip_carries_presidual). The static_assert beside the LWIRE_* enum
+// keeps any future column count off 97, and recvSelf warns when the tag it reads
+// is not this one (a stream from another build, or an overwritten slot).
+// LEDGER_quirks, WP-151. WP-152 changed the layout (the tension-cutoff options
+// and the committed separation state), so the tag is now 152.
+static const double kLadrunoSanWireTag = 152.1;   // 152.1: + tcP0Max and 4 census columns (review)
+
 int
 LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
 {
@@ -1899,7 +2399,7 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
         return -1;
     }
 
-    static Vector ladrunoData(35 + LMS_COUNT + 6 + LSAS_COUNT);                     // Ladruno WP-127: 35 -> 52; WP-129: + SAS-ME
+    static Vector ladrunoData(LWIRE_SIZE);   // Ladruno WP-127/129/130/151: layout in LadrunoSANISAND.h (LWIRE_*)
 
     ladrunoData(0) = mPresidualInput;
     ladrunoData(1) = mPminInput;
@@ -1964,13 +2464,23 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
     // that restarted it from zero would report a post-mortem that silently omits
     // everything before the transfer.
     for (int i = 0; i < LMS_COUNT; i++)
-        ladrunoData(35 + i) = mLadrunoMEStats[i];
+        ladrunoData(LWIRE_CENSUS + i) = mLadrunoMEStats[i];
 
+    // Ladruno WP-130: the CPPM requests (LWIRE_CPPM .. +LWIRE_CPPM_N-1), after the census. Deck options,
+    // so they cross for the reason mMaxSubsteps does (a received instance must
+    // run the integrator the sender ran).
+    ladrunoData(LWIRE_CPPM + 0) = (double)mCPPMOnFail;                  // Ladruno WP-130
+    ladrunoData(LWIRE_CPPM + 1) = (double)mCPPMHalvings;                // Ladruno WP-130
+    ladrunoData(LWIRE_CPPM + 2) = (double)mCPPMLineSearch;              // Ladruno WP-130
+    ladrunoData(LWIRE_CPPM + 3) = (double)mMEFallback;                  // Ladruno WP-130
+    ladrunoData(LWIRE_CPPM + 4) = (double)mCPPMStart;                   // Ladruno WP-130
+    ladrunoData(LWIRE_CPPM + 5) = (double)mCPPMTangentFix;              // Ladruno WP-130
+    ladrunoData(LWIRE_CPPM + 6) = (double)mLadrunoLatchCause;           // Ladruno WP-130 (review r1)
     // Ladruno WP-129: the SAS-ME option set (the deck's request) and its
     // per-instance census, after the WP-127 block. Indexed off LMS_COUNT so a
     // wider WP-127 census shifts this block instead of colliding with it.
     {
-        const int b = 35 + LMS_COUNT;
+        const int b = LWIRE_SAS;   // Ladruno WP-130 merge: own offset (review #868 item 1)
         ladrunoData(b + 0) = mLadrunoSas.opt.errFloor;
         ladrunoData(b + 1) = mLadrunoSas.opt.alphaBoundTol;
         ladrunoData(b + 2) = (double)mLadrunoSas.opt.alphaProject;
@@ -1978,8 +2488,19 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
         ladrunoData(b + 4) = (double)mLadrunoSas.opt.errorVars;
         ladrunoData(b + 5) = mLadrunoSas.opt.alphaEntryTol;
         for (int i = 0; i < LSAS_COUNT; i++)
-            ladrunoData(b + 6 + i) = mLadrunoSas.stats[i];
+            ladrunoData(b + LWIRE_SAS_OPT_N + i) = mLadrunoSas.stats[i];
+        ladrunoData(b + 6) = mLadrunoSas.opt.hFloor;       // Ladruno WP-151 (LWIRE_SAS_OPT_N 6 -> 9)
+        ladrunoData(b + 7) = mLadrunoSas.opt.reseatHyst;   // Ladruno WP-151
+        ladrunoData(b + 8) = mLadrunoSas.opt.softCap;      // Ladruno WP-151
+        ladrunoData(b + 9) = mLadrunoSas.opt.tcPsep;       // Ladruno WP-152 (LWIRE_SAS_OPT_N 9 -> 11)
+        ladrunoData(b + 10) = mLadrunoSas.opt.tcPcontact;  // Ladruno WP-152
+        ladrunoData(b + 11) = mLadrunoSas.opt.tcP0Max;     // Ladruno WP-152 review #2 (11 -> 12)
     }
+    // Ladruno WP-152: the COMMITTED separation state crosses for the reason the
+    // committed stress does -- a restored point must stay separated.
+    ladrunoData(LWIRE_SEP + 0) = mLadrunoSas.sep_n ? 1.0 : 0.0;
+    ladrunoData(LWIRE_SEP + 1) = mLadrunoSas.sepTr_n;
+    ladrunoData(LWIRE_TAG) = kLadrunoSanWireTag;                           // Ladruno WP-151
 
     res = theChannel.sendVector(this->getDbTag(), commitTag, ladrunoData);
     if (res < 0) {
@@ -2000,7 +2521,7 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
         return -1;
     }
 
-    static Vector ladrunoData(35 + LMS_COUNT + 6 + LSAS_COUNT);                     // Ladruno WP-127: 35 -> 52; WP-129: + SAS-ME
+    static Vector ladrunoData(LWIRE_SIZE);   // Ladruno WP-127/129/130/151: layout in LadrunoSANISAND.h (LWIRE_*)
 
     res = theChannel.recvVector(this->getDbTag(), commitTag, ladrunoData);
     if (res < 0) {
@@ -2008,13 +2529,24 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
                << " from channel" << endln;
         return -1;
     }
+    // Ladruno WP-151 (review #893 M3): a block whose layout tag is not this
+    // build's is REFUSED before anything is assigned from it -- a stream from
+    // another build, or a datastore slot another vector overwrote, would
+    // otherwise be read into the wrong members silently.
+    if (ladrunoData(LWIRE_TAG) != kLadrunoSanWireTag) {
+        opserr << "WARNING: LadrunoSANISAND::recvSelf - the Ladruno block's layout tag is "
+               << ladrunoData(LWIRE_TAG) << ", expected " << kLadrunoSanWireTag
+               << " (a stream from another build, or an overwritten datastore slot). Refused."
+               << endln;
+        return -1;
+    }
 
     mPresidualInput = ladrunoData(0);
     mPreElasticInput = ladrunoData(34);   // Ladruno (ADR-93 II.1)
     for (int i = 0; i < LMS_COUNT; i++)                        // Ladruno WP-127
-        mLadrunoMEStats[i] = ladrunoData(35 + i);              // Ladruno WP-127
+        mLadrunoMEStats[i] = ladrunoData(LWIRE_CENSUS + i);    // Ladruno WP-127
     {                                                          // Ladruno WP-129
-        const int b = 35 + LMS_COUNT;
+        const int b = LWIRE_SAS;   // Ladruno WP-130 merge: own offset (review #868 item 1)
         mLadrunoSas.opt.errFloor      = ladrunoData(b + 0);
         mLadrunoSas.opt.alphaBoundTol = ladrunoData(b + 1);
         mLadrunoSas.opt.alphaProject  = (int)ladrunoData(b + 2);
@@ -2022,13 +2554,53 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
         mLadrunoSas.opt.errorVars     = (int)ladrunoData(b + 4);
         mLadrunoSas.opt.alphaEntryTol = ladrunoData(b + 5);
         for (int i = 0; i < LSAS_COUNT; i++)
-            mLadrunoSas.stats[i] = ladrunoData(b + 6 + i);
+            mLadrunoSas.stats[i] = ladrunoData(b + LWIRE_SAS_OPT_N + i);
+        mLadrunoSas.opt.hFloor     = ladrunoData(b + 6);   // Ladruno WP-151
+        mLadrunoSas.opt.reseatHyst = ladrunoData(b + 7);   // Ladruno WP-151
+        mLadrunoSas.opt.softCap    = ladrunoData(b + 8);   // Ladruno WP-151
+        // Ladruno WP-151: the parser's ranges (finite, >= 0; kappa < 1), else OFF
+        if (!(std::isfinite(mLadrunoSas.opt.hFloor) && mLadrunoSas.opt.hFloor >= 0.0))
+            mLadrunoSas.opt.hFloor = 0.0;
+        if (!(std::isfinite(mLadrunoSas.opt.reseatHyst) && mLadrunoSas.opt.reseatHyst >= 0.0))
+            mLadrunoSas.opt.reseatHyst = 0.0;
+        if (!(mLadrunoSas.opt.softCap >= 0.0 && mLadrunoSas.opt.softCap < 1.0))   // excludes NaN and inf
+            mLadrunoSas.opt.softCap = 0.0;
+        // Ladruno WP-152: the tension cutoff, in the parser's ranges or OFF
+        // (p_contact > p_min is re-checked against the received p_min below)
+        mLadrunoSas.opt.tcPsep     = ladrunoData(b + 9);
+        mLadrunoSas.opt.tcPcontact = ladrunoData(b + 10);
+        mLadrunoSas.opt.tcP0Max    = ladrunoData(b + 11);
+        if (!(std::isfinite(mLadrunoSas.opt.tcPsep) && std::isfinite(mLadrunoSas.opt.tcPcontact)
+              && std::isfinite(mLadrunoSas.opt.tcP0Max)
+              && mLadrunoSas.opt.tcPsep >= 0.0 && mLadrunoSas.opt.tcPcontact > mLadrunoSas.opt.tcPsep
+              && mLadrunoSas.opt.tcP0Max >= mLadrunoSas.opt.tcPcontact
+              && mLadrunoSas.opt.hFloor > 0.0))
+            mLadrunoSas.opt.tcPsep = mLadrunoSas.opt.tcPcontact = mLadrunoSas.opt.tcP0Max = 0.0;
     }
+    mLadrunoSas.sep_n   = (ladrunoData(LWIRE_SEP + 0) > 0.5) && (mLadrunoSas.opt.tcPcontact > 0.0);   // Ladruno WP-152
+    mLadrunoSas.sepTr_n = std::isfinite(ladrunoData(LWIRE_SEP + 1)) ? ladrunoData(LWIRE_SEP + 1) : 0.0;
+    mLadrunoSas.sep     = mLadrunoSas.sep_n;
+    mLadrunoSas.sepTr   = mLadrunoSas.sepTr_n;
     mPminInput      = ladrunoData(1);
     m_Presidual     = ladrunoData(2);   // overwritten by applyLadrunoConstants below;
                                         // restored first so a future divergence is visible
     mHonorTolR      = (int)ladrunoData(3);
     mMaxSubsteps    = (int)ladrunoData(4);   // Ladruno (ADR-86b)
+    mCPPMOnFail     = (int)ladrunoData(LWIRE_CPPM + 0);   // Ladruno WP-130 (applied by the
+    mCPPMHalvings   = (int)ladrunoData(LWIRE_CPPM + 1);   // Ladruno WP-130  applyLadrunoConstants
+    mCPPMLineSearch = (int)ladrunoData(LWIRE_CPPM + 2);   // Ladruno WP-130  call further down)
+    mMEFallback     = (int)ladrunoData(LWIRE_CPPM + 3);   // Ladruno WP-130
+    mCPPMStart      = (int)ladrunoData(LWIRE_CPPM + 4);   // Ladruno WP-130
+    mCPPMTangentFix = (int)ladrunoData(LWIRE_CPPM + 5);   // Ladruno WP-130
+    mLadrunoLatchCause = (int)ladrunoData(LWIRE_CPPM + 6); // Ladruno WP-130 (review r1)
+    // Ladruno WP-130 (review #868 item 1): clamp what a wire could smuggle in,
+    // on the setLadrunoCPPMOptions rule (the parser never sees a received point).
+    mCPPMOnFail     = (mCPPMOnFail != 0) ? 1 : 0;                        // Ladruno WP-130
+    mCPPMHalvings   = (mCPPMHalvings < 0) ? 0 : ((mCPPMHalvings > 9) ? 9 : mCPPMHalvings); // Ladruno WP-130
+    mCPPMLineSearch = (mCPPMLineSearch != 0) ? 1 : 0;                    // Ladruno WP-130
+    mMEFallback     = (mMEFallback != 0) ? 1 : 0;                        // Ladruno WP-130
+    mCPPMStart      = (mCPPMStart != 0) ? 1 : 0;                         // Ladruno WP-130
+    mCPPMTangentFix = (mCPPMTangentFix != 0) ? 1 : 0;                    // Ladruno WP-130
 
     // Ladruno (ADR-92 P1). setLadrunoImplexOptions() is used rather than a raw
     // assignment so a restored material passes the SAME D3 scheme checks the
@@ -2102,6 +2674,16 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
     // The base recvSelf restored m_Pmin from its own data(96) and never re-runs
     // initialize(); we take the last write here.
     this->applyLadrunoConstants();                                                    // Ladruno
+
+    // Ladruno WP-152: the parser's p_contact > p_min, against the p_min now in
+    // force; a received setting that violates it is OFF (and so is its state).
+    if (mLadrunoSas.opt.tcPcontact > 0.0
+        && (!(mLadrunoSas.opt.tcPcontact > m_Pmin) || m_Presidual != 0.0     // + review #4
+            || m_PreElastic != 0.0)) {                                         // + re-review LOW-7
+        mLadrunoSas.opt.tcPsep = mLadrunoSas.opt.tcPcontact = mLadrunoSas.opt.tcP0Max = 0.0;
+        mLadrunoSas.sep = mLadrunoSas.sep_n = false;
+        mLadrunoSas.stats[LSAS_SEP_ACTIVE] = 0.0;                             // re-review LOW-5
+    }
 
     return 0;
 }
@@ -2765,15 +3347,26 @@ LadrunoSANISAND::ladrunoTrialUpdate(void)
         static int ladrunoCommitLatchWarnCount = 0;   // Ladruno WP-99 (F7)
         if (ladrunoCommitLatchWarnCount < 10) {
             opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
-                   << ": REFUSING every further update (" << LADRUNO_MATERIAL_REFUSED
-                   << "). A commit at this point was REFUSED -- the -implex"
-                      " companion hit the -maxSubsteps cap, or (WP-129) a refused"
-                      " update (SAS-ME / the ModifiedEuler cap) reached commitState"
-                      " under an element that discards the material's return code;"
-                      " that commit was aborted by Domain::commit() and this"
-                      " integration point has committed nothing since. Use an"
-                      " element that forwards the code, -implexControl, or raise"
-                      " -maxSubsteps. (Post-latch refusals are counted in the"
+                   << ": REFUSING every further update (" << LADRUNO_MATERIAL_REFUSED << "). ";
+            // Ladruno WP-130 (review r1 + merge with WP-129): name the cause.
+            if (mLadrunoLatchCause == 0)
+                opserr << "The -implex companion hit the -maxSubsteps cap at a"
+                          " commitState; that commit was aborted by Domain::commit()"
+                          " and this integration point has committed nothing since."
+                          " Re-run with -implexControl, which refuses BEFORE the step"
+                          " converges and is therefore recoverable, or raise"
+                          " -maxSubsteps.";
+            else
+                opserr << "A REFUSED update ("
+                       << (mLadrunoLatchCause == 1 ? "BackwardEuler_CPPM: -cppmOnFail refuse or a failed -meFallback"
+                           : mLadrunoLatchCause == 2 ? "SAS-ME" : "the ModifiedEuler -maxSubsteps cap")
+                       << ") reached commitState under an element that DISCARDS the"
+                          " material's return code; that commit was aborted by"
+                          " Domain::commit() and this point has committed nothing since."
+                          " The latch holds until reset() (revertToStart) -- a smaller"
+                          " step does NOT clear it. Use an element that forwards the code"
+                          " (quad, LadrunoQuad/Brick, the u-p family) so the step is cut.";
+            opserr << " (Post-latch refusals are counted in the"
                       " `latched` slot of the `implexRefusals` response, NOT in"
                       " its total -- they fire once per Newton iteration.)"
                    << endln;
@@ -4089,6 +4682,7 @@ LadrunoSANISAND::ladrunoImplexCommit(void)
         // still the recoverable path.
         ladrunoNoteCommitRefusal();                       // Ladruno WP-99 (F7)
         mImplexCommitRefusedLatch = true;
+        mLadrunoLatchCause = 0;                           // Ladruno WP-130 (review r1)
         this->ladrunoRestoreTrialFromCommitted();
         mEpsilon = mEpsilon_n;
 
@@ -4133,6 +4727,7 @@ LadrunoSANISAND::ladrunoImplexCommit(void)
     // The committed state is the IMPLICIT one -- standard IMPL-EX, and the same
     // choice ASDConcrete3DMaterial::commitState() makes. Only the EQUILIBRIUM was
     // found on the extrapolated stress.
+    this->ladrunoNoteCommitAlphaIn();                      // Ladruno WP-153
     int res = ManzariDafalias::commitState();
 
     // Ladruno ADR-92 P2-7 (redesign): PRIMED at the first plastic commit after
@@ -4256,6 +4851,21 @@ LadrunoSANISAND::ladrunoImplexCommit(void)
 // ---------------------------------------------------------------------------
 //  commitState / revertToLastCommit
 // ---------------------------------------------------------------------------
+// Ladruno WP-153: the committed-path alpha_in census (header note). Called with
+// the trial state about to be committed and mAlpha_in_n still the LAST commit's.
+void
+LadrunoSANISAND::ladrunoNoteCommitAlphaIn(void)
+{
+    mLadrunoCommits += 1.0;
+    Vector d(mAlpha_in);
+    d.addVector(1.0, mAlpha_in_n, -1.0);
+    const double dn = d.Norm();
+    if (dn > 0.0) {
+        mLadrunoCommitReseats += 1.0;
+        mLadrunoCommitDAlphaIn += dn;
+    }
+}
+
 int
 LadrunoSANISAND::commitState(void)
 {
@@ -4279,31 +4889,34 @@ LadrunoSANISAND::commitState(void)
     // mImplexTrialDone is false with -implex off AND on stage 0, so gravity and
     // the LoadControl 0.0 hold take the base path verbatim.
     if (!mImplexTrialDone) {
-        // Ladruno WP-129 (review #871, item 1): a TRIAL that was refused -- the
-        // SAS-ME refusal, or the ModifiedEuler -maxSubsteps cap -- must never be
-        // committed. Under an element that FORWARDS setTrialStrain's code the
-        // step fails before commit and this is unreachable; under one that
-        // DISCARDS it (SSPquad, stdBrick, ... -- LEDGER_quirks "element refusal
-        // roster") the analysis converged on a state the material said it could
-        // not produce, and ManzariDafalias::commitState() used to advance
-        // mEpsilon_n while mSigma_n/mEpsilonE_n stayed put: the increment was
-        // lost for good (measured on SSPquad: 9 "converged" steps, strain to
-        // +4e-3, stress frozen). The WP-99 channel aborts the commit for every
-        // element type (Domain::commit() reads the counter) and latches.
-        // Closes the same pre-existing hole for the ModifiedEuler cap.
-        // Numerically inert elsewhere: neither flag is ever true on a
-        // converged commit under a forwarding element.
-        if (mLadrunoSas.refused || mSubstepCapHitInME) {           // Ladruno WP-129
+        // Ladruno WP-129 (review #871, item 1) + WP-130 (review #868, merge): a
+        // TRIAL that was refused -- the SAS-ME refusal, the ModifiedEuler
+        // -maxSubsteps cap, or a CPPM refusal (-cppmOnFail refuse, or an
+        // ME->CPPM fallback that failed too) -- must never be committed. Under an
+        // element that FORWARDS setTrialStrain's code the step fails before
+        // commit and this is unreachable; under one that DISCARDS it (SSPquad,
+        // stdBrick, BbarBrick, SSPbrick, BrickUP, LadrunoSolidShell --
+        // LEDGER_quirks "element refusal roster") the analysis converged on a
+        // state the material said it could not produce (measured on SSPquad: 9
+        // "converged" steps, strain to +4e-3, stress frozen). The WP-99 channel
+        // aborts the commit for every element type (Domain::commit() reads the
+        // counter) and latches. Numerically inert elsewhere: none of the three
+        // flags is ever true on a converged commit under a forwarding element.
+        if (mLadrunoSas.refused || mSubstepCapHitInME || mLadrunoCPPMRefused) { // Ladruno WP-129/130
+            // cause, most specific first (a failed ME->CPPM fallback sets both
+            // the cap and the CPPM flag: it is reported as the CPPM's)
+            mLadrunoLatchCause = mLadrunoCPPMRefused ? 1 : (mLadrunoSas.refused ? 2 : 3); // Ladruno WP-130
             if (!mLadrunoSas.commitRefusalWarned) {
                 mLadrunoSas.commitRefusalWarned = true;
                 opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
-                       << ": a REFUSED update (" << (mLadrunoSas.refused
-                          ? "SAS-ME" : "ModifiedEuler -maxSubsteps cap")
+                       << ": a REFUSED update ("
+                       << (mLadrunoLatchCause == 1 ? "BackwardEuler_CPPM: -cppmOnFail refuse or a failed -meFallback"
+                           : mLadrunoLatchCause == 2 ? "SAS-ME" : "ModifiedEuler -maxSubsteps cap")
                        << ") reached commitState -- the host element discarded the"
                           " material's return code. The commit is ABORTED ("
-                       << LADRUNO_MATERIAL_REFUSED << ") and this point LATCHES:"
-                          " use an element that forwards the code (quad, LadrunoQuad,"
-                          " the u-p family, ...) so the step is cut instead."
+                       << LADRUNO_MATERIAL_REFUSED << ") and this point LATCHES until"
+                          " reset(): use an element that forwards the code (quad,"
+                          " LadrunoQuad, the u-p family, ...) so the step is cut instead."
                        << endln;
             }
             ladrunoNoteCommitRefusal();
@@ -4350,6 +4963,28 @@ LadrunoSANISAND::commitState(void)
         if (mElastFlag != 0)
             mPrimed = true;
 
+        // Ladruno WP-152: the separation state commits with the stress it produced
+        // (the cutoff is refused with -implex, so only this path carries it).
+        switch (mLadrunoSas.sepEvent) {   // counted ONCE, when the transition commits
+        case 1: mLadrunoSas.stats[LSAS_SEP_ENTRIES_TENSION] += 1.0; break;
+        case 2: mLadrunoSas.stats[LSAS_SEP_ENTRIES_LOWP] += 1.0; break;
+        default: break;
+        }
+        if (mLadrunoSas.sepEvent == 1 || mLadrunoSas.sepEvent == 2) {   // review #3: the masked code
+            mLadrunoSas.stats[LSAS_SEP_LAST_CODE] = (double)mLadrunoSas.sepCode;
+            if (mLadrunoSas.sepP0 > mLadrunoSas.stats[LSAS_SEP_MAX_P0])
+                mLadrunoSas.stats[LSAS_SEP_MAX_P0] = mLadrunoSas.sepP0;
+        }
+        switch (mLadrunoSas.sepEvent) {
+        case 3: mLadrunoSas.stats[LSAS_SEP_EXITS] += 1.0; break;
+        default: break;
+        }
+        mLadrunoSas.sepEvent = 0;
+        mLadrunoSas.sep_n = mLadrunoSas.sep;
+        mLadrunoSas.sepTr_n = mLadrunoSas.sepTr;
+        mLadrunoSas.stats[LSAS_SEP_ACTIVE] = mLadrunoSas.sep ? 1.0 : 0.0;
+
+        this->ladrunoNoteCommitAlphaIn();                  // Ladruno WP-153
         return ManzariDafalias::commitState();
     }
 
@@ -4360,6 +4995,10 @@ int
 LadrunoSANISAND::revertToLastCommit(void)
 {
     int res = ManzariDafalias::revertToLastCommit();   // an empty `return 0` today
+
+    mLadrunoSas.sep = mLadrunoSas.sep_n;               // Ladruno WP-152
+    mLadrunoSas.sepTr = mLadrunoSas.sepTr_n;           // Ladruno WP-152
+    mLadrunoSas.sepEvent = 0;                          // Ladruno WP-152
 
     if (!mImplexOpt.enabled)
         return res;
@@ -4714,8 +5353,12 @@ LadrunoSANISAND::updateParameter(int parameterID, Information &info)
 int
 LadrunoSANISAND::ladrunoUpdateStatus(void) const
 {
-    // Ladruno WP-129: an SAS-ME refusal (never set on any other scheme).
-    return (mSubstepCapHitInME || mLadrunoSas.refused) ? LADRUNO_MATERIAL_REFUSED : 0;
+    // Ladruno WP-129 + WP-130: every "this increment was not integrated" flag
+    // takes the same code -- the ModifiedEuler cap, an SAS-ME refusal, a CPPM
+    // refusal (-cppmOnFail refuse, or a failed ME->CPPM fallback). All three are
+    // reset at the top of integrate().
+    return (mSubstepCapHitInME || mLadrunoSas.refused || mLadrunoCPPMRefused)
+               ? LADRUNO_MATERIAL_REFUSED : 0;                                   // Ladruno WP-129/130
 }
 
 // Ladruno (ADR-86b): "substeps" / "substepsME" -- what the last update cost.
@@ -4767,6 +5410,15 @@ constexpr int LadrunoSanisandSubstepStatsResponseID    = 33097;   // Ladruno WP-
 // TanType -- TIMs F20(c)). Same band, same rule.
 constexpr int LadrunoSanisandSasStatsResponseID        = 33098;   // Ladruno WP-129
 constexpr int LadrunoSanisandTangentEPResponseID       = 33099;   // Ladruno WP-129
+// Ladruno WP-130 (review r1): `cppmOptions`, the options this INSTANCE runs
+// (so a wire/database round trip is checkable). 33098/33099 are WP-129's.
+constexpr int LadrunoSanisandCppmOptionsResponseID     = 33100;   // Ladruno WP-130
+// Ladruno WP-130 (confirmation review L3): `sasOptions`, WP-129's SAS-ME option
+// set of THIS instance, so a wire/database round trip can be value-checked.
+// Ladruno WP-151: nine values -- WP-129's six in wire order, then hFloor,
+// reseatHyst, softCap.
+constexpr int LadrunoSanisandSasOptionsResponseID      = 33101;   // Ladruno WP-130 / WP-151
+constexpr int LadrunoSanisandCommitStatsResponseID     = 33102;   // Ladruno WP-153
 constexpr int LadrunoSanisandImplexGuardsResponseID    = 33096;   // Ladruno ADR-92 P2 (33094/33095 taken by TIMs F4 psi/yieldDistance)
 
 Response *
@@ -4892,7 +5544,15 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
             "substepStats_capHits", "substepStats_entryPminClamps",
             "substepStats_pnResets", "substepStats_maxSubstepsOneUpdate",
             "substepStats_lastSubsteps", "substepStats_lastForcedAtDTmin",
-            "substepStats_lastAbandonedLowP", "substepStats_lastCapHit"};
+            "substepStats_lastAbandonedLowP", "substepStats_lastCapHit",
+            // Ladruno WP-130 (columns 17..28): BackwardEuler_CPPM + ME fallback
+            "substepStats_cppmCalls", "substepStats_cppmNewtonFail",
+            "substepStats_cppmHalvings", "substepStats_cppmExplicitFail",
+            "substepStats_cppmExplicitLowP", "substepStats_cppmRefusals",
+            "substepStats_meFallbacks", "substepStats_meFallbackOk",
+            "substepStats_lastCppmRefused",
+            "substepStats_cppmGuessTries", "substepStats_cppmGuessOk",
+            "substepStats_cppmLineSearchCuts"};
         output.tag("NdMaterialOutput");
         output.attr("matType", getClassType());
         output.attr("matTag", getTag());
@@ -4902,9 +5562,57 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
         Vector probe(LMS_COUNT);
         return new MaterialResponse(this, LadrunoSanisandSubstepStatsResponseID, probe);
     }
+    // Ladruno WP-130 (review r1): the WP-130 options of THIS instance.
+    if (argc > 0 && strcmp(argv[0], "cppmOptions") == 0) {
+        output.tag("NdMaterialOutput");
+        output.attr("matType", getClassType());
+        output.attr("matTag", getTag());
+        output.tag("ResponseType", "cppmOptions_onFail");
+        output.tag("ResponseType", "cppmOptions_halvings");
+        output.tag("ResponseType", "cppmOptions_lineSearch");
+        output.tag("ResponseType", "cppmOptions_meFallback");
+        output.tag("ResponseType", "cppmOptions_start");
+        output.tag("ResponseType", "cppmOptions_tangentFixed");
+        output.tag("ResponseType", "cppmOptions_latchCause");
+        output.endTag();
+        Vector probe7(7);
+        return new MaterialResponse(this, LadrunoSanisandCppmOptionsResponseID, probe7);
+    }
+    // Ladruno WP-130 (review L3): WP-129's SAS-ME options of THIS instance, in
+    // wire order: errFloor, alphaBoundTol, alphaProject, alphaInMode, errorVars,
+    // alphaEntryTol; Ladruno WP-151: then hFloor, reseatHyst, softCap.
+    if (argc > 0 && (strcmp(argv[0], "sasOptions") == 0 || strcmp(argv[0], "SasOptions") == 0)) {
+        static const char *names[] = {
+            "sas_errFloor", "sas_alphaBoundTol", "sas_alphaProject", "sas_alphaInMode",
+            "sas_errorVars", "sas_alphaEntryTol",
+            "sas_hFloor", "sas_reseatHyst", "sas_softCap",                     // Ladruno WP-151
+            "sas_tcPsep", "sas_tcPcontact", "sas_tcP0Max"};                     // Ladruno WP-152
+        static_assert(sizeof(names) / sizeof(names[0]) == LWIRE_SAS_OPT_N,   // Ladruno WP-151 (review NIT)
+                      "sasOptions names must match LWIRE_SAS_OPT_N (the response and the wire block)");
+        output.tag("NdMaterialOutput");
+        output.attr("matType", getClassType());
+        output.attr("matTag", getTag());
+        for (int i = 0; i < LWIRE_SAS_OPT_N; i++)
+            output.tag("ResponseType", names[i]);
+        output.endTag();
+        Vector probe(LWIRE_SAS_OPT_N);
+        return new MaterialResponse(this, LadrunoSanisandSasOptionsResponseID, probe);
+    }
     // Ladruno WP-129: the SAS-ME census. EVERY column is PER INTEGRATION POINT,
     // cumulative since revertToStart except the LAST_* ones; survives
     // revertToLastCommit. Layout: ManzariDafalias.h, LSAS_*; guide "choosing an IntScheme".
+    // Ladruno WP-153: the committed-path alpha_in census (see the header).
+    if (argc > 0 && (strcmp(argv[0], "commitStats") == 0 || strcmp(argv[0], "CommitStats") == 0)) {
+        output.tag("NdMaterialOutput");
+        output.attr("matType", getClassType());
+        output.attr("matTag", getTag());
+        output.tag("ResponseType", "commits");
+        output.tag("ResponseType", "commitReseats");
+        output.tag("ResponseType", "commitDAlphaIn");
+        output.endTag();
+        Vector probe(3);
+        return new MaterialResponse(this, LadrunoSanisandCommitStatsResponseID, probe);
+    }
     if (argc > 0 && (strcmp(argv[0], "sasStats") == 0 || strcmp(argv[0], "SasStats") == 0)) {
         static const char *names[LSAS_COUNT] = {
             "sas_updates", "sas_elastic", "sas_substeps", "sas_accepted", "sas_rejectedErr",
@@ -4915,7 +5623,10 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
             "sas_refLowP", "sas_refDrift", "sas_refAlpha", "sas_refCap",
             "sas_maxSubstepsOneUpdate", "sas_lastSubsteps", "sas_lastRefuseCode",
             "sas_maxAlphaRatio", "sas_lastAlphaRatio", "sas_lastF", "sas_entryOverKappa",
-            "sas_rejectedReversal"};
+            "sas_rejectedReversal",
+            "sas_hFloored", "sas_hSoftCapped", "sas_reseatHeld",    // Ladruno WP-151
+            "sas_sepEntriesTension", "sas_sepEntriesLowP", "sas_sepExits", "sas_sepActive",   // Ladruno WP-152
+            "sas_sepLastCode", "sas_sepMaxP0", "sas_sepHeldHighP", "sas_sepHeldCompressing"};   // WP-152 review
         output.tag("NdMaterialOutput");
         output.attr("matType", getClassType());
         output.attr("matTag", getTag());
@@ -4954,6 +5665,17 @@ LadrunoSANISAND::ladrunoTangentEP(void)
 {
     Matrix Cep(6, 6);
     const double e = m_e_init - (1 + m_e_init) * GetTrace(mEpsilon_n);
+    if (mLadrunoSas.sep_n) {   // Ladruno WP-152: a SEPARATED point: C_e at its (isotropic) stress --
+        double K, G;           // at p_min while open (the regularisation) -- and, while CLOSING
+        GetElasticModuli(mSigma_n, e, K, G);   // (g > 0), the consistent bulk K(p_contact) (re-review MED-3)
+        if (GetTrace(mEpsilon_n) - mLadrunoSas.sepTr_n > 0.0) {
+            Vector Sc(mI1);
+            Sc *= (mLadrunoSas.opt.tcPcontact - m_Presidual);
+            double Gc;
+            GetElasticModuli(Sc, e, K, Gc);
+        }
+        return GetStiffness(K, G);
+    }
     ladrunoSasContinuumTangent(mSigma_n, mAlpha_n, mFabric_n, mAlpha_in_n, e, Cep);
     return Cep;
 }
@@ -5053,6 +5775,34 @@ LadrunoSANISAND::getResponse(int responseID, Information &matInformation)
         out1(0) = this->GetF(mSigma_n, mAlpha_n);
         return matInformation.setVector(out1);
     }
+    // Ladruno WP-130 (review r1)
+    if (responseID == LadrunoSanisandSasOptionsResponseID) {       // Ladruno WP-130 (review L3)
+        Vector out(LWIRE_SAS_OPT_N);
+        out(0) = mLadrunoSas.opt.errFloor;
+        out(1) = mLadrunoSas.opt.alphaBoundTol;
+        out(2) = (double)mLadrunoSas.opt.alphaProject;
+        out(3) = (double)mLadrunoSas.opt.alphaInMode;
+        out(4) = (double)mLadrunoSas.opt.errorVars;
+        out(5) = mLadrunoSas.opt.alphaEntryTol;
+        out(6) = mLadrunoSas.opt.hFloor;        // Ladruno WP-151
+        out(7) = mLadrunoSas.opt.reseatHyst;    // Ladruno WP-151
+        out(8) = mLadrunoSas.opt.softCap;       // Ladruno WP-151
+        out(9) = mLadrunoSas.opt.tcPsep;        // Ladruno WP-152
+        out(10) = mLadrunoSas.opt.tcPcontact;   // Ladruno WP-152
+        out(11) = mLadrunoSas.opt.tcP0Max;      // Ladruno WP-152 review #2
+        return matInformation.setVector(out);
+    }
+    if (responseID == LadrunoSanisandCppmOptionsResponseID) {
+        Vector out(7);
+        out(0) = (double)mCPPMOnFail;
+        out(1) = (double)mCPPMHalvings;
+        out(2) = (double)mCPPMLineSearch;
+        out(3) = (double)mMEFallback;
+        out(4) = (double)mCPPMStart;
+        out(5) = (double)mCPPMTangentFix;
+        out(6) = (double)mLadrunoLatchCause;
+        return matInformation.setVector(out);
+    }
     // Ladruno WP-127 (TIMs F20a)
     if (responseID == LadrunoSanisandSubstepStatsResponseID) {
         Vector out(LMS_COUNT);
@@ -5061,6 +5811,13 @@ LadrunoSANISAND::getResponse(int responseID, Information &matInformation)
         return matInformation.setVector(out);
     }
     // Ladruno WP-129
+    if (responseID == LadrunoSanisandCommitStatsResponseID) {           // Ladruno WP-153
+        static Vector out3(3);
+        out3(0) = mLadrunoCommits;
+        out3(1) = mLadrunoCommitReseats;
+        out3(2) = mLadrunoCommitDAlphaIn;
+        return matInformation.setVector(out3);
+    }
     if (responseID == LadrunoSanisandSasStatsResponseID) {
         Vector out(LSAS_COUNT);
         for (int i = 0; i < LSAS_COUNT; i++)
@@ -5139,6 +5896,17 @@ LadrunoSANISAND::Print(OPS_Stream &s, int flag)
       << mLadrunoMEStats[LMS_FORCED_DTMIN] << " force-accepted at dT_min, "
       << mLadrunoMEStats[LMS_ABANDON_LOWP] << " abandoned at low p, "
       << mLadrunoMEStats[LMS_CAP_HITS] << " cap hit(s)" << endln;
+    s << "  CPPM (WP-130): -cppmOnFail " << (mCPPMOnFail ? "refuse" : "explicit")      // Ladruno WP-130
+      << ", -cppmHalvings " << mCPPMHalvings
+      << ", -cppmLineSearch " << (mCPPMLineSearch ? "on" : "off")
+      << ", -cppmStart " << (mCPPMStart ? "explicit" : "trial")
+      << ", -cppmTangent " << (mCPPMTangentFix ? "fixed" : "vanilla")
+      << ", -meFallback " << (mMEFallback ? "cppm" : "off")
+      << "; since revertToStart: " << mLadrunoMEStats[LMS_CPPM_CALLS] << " call(s), "
+      << mLadrunoMEStats[LMS_CPPM_EXPL_FAIL] << " silent explicit fallback(s), "
+      << mLadrunoMEStats[LMS_CPPM_REFUSALS] << " refusal(s), "
+      << mLadrunoMEStats[LMS_ME_FALLBACK_OK] << "/" << mLadrunoMEStats[LMS_ME_FALLBACKS]
+      << " ME->CPPM fallback(s) returned" << endln;
     // Ladruno (ADR-86b): the same inertness note the -honorTolR block below carries.
     // Both flags drive seams read at EXACTLY ONE site, inside ModifiedEuler(), so on
     // a scheme that never routes there the cap is stored, echoed, wired -- and does
@@ -5389,6 +6157,7 @@ LadrunoSANISAND::ladrunoReplayRun(const LadrunoReplayRequest &q,
     mImplexCommitRefusedLatch = false;
     this->ladrunoResetMEStats();
     this->ladrunoResetSasStats();                              // Ladruno WP-129
+    this->ladrunoResetSasSep();                                // Ladruno WP-152: a replay starts NORMAL
 
     const double fBefore = this->GetF(mSigma_n, mAlpha_n);
     // Ladruno WP-129: the loaded state's alpha/alpha^b and continuum tangent,

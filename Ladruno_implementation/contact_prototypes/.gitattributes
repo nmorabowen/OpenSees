@@ -1,0 +1,2 @@
+# ADR-158: the oracle patch must keep the mixed LF/CRLF bytes git diff wrote (OpenSeesOutputCommands.cpp is -text, CRLF)
+adr158_fd_pair_tangent_oracle.patch -text

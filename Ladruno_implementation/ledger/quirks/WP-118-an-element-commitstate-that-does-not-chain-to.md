@@ -1,0 +1,9 @@
+---
+wp: WP-118
+title: "An element commitState() that does not chain to Element::commitState() freezes betaKc at the initial stiffness — silently (LadrunoIMKBeam, fixed WP-118)"
+legacy_seq: 475
+---
+### An element `commitState()` that does not chain to `Element::commitState()` freezes `betaKc` at the initial stiffness — silently (LadrunoIMKBeam, fixed WP-118)
+- **Bites:** `betaKc` Rayleigh damping uses `Kc`, the committed stiffness. `Element::setRayleighDampingFactors` captures `Kc = getTangentStiff()` once, when `rayleigh` runs, and `Element::commitState()` is the ONLY place that refreshes it. An override of `commitState()` that commits its materials/transformation but never calls the base leaves `Kc` at the initial tangent forever: `betaKc` behaves exactly like `betaK0`. Nothing warns; a linear elastic model is unaffected, so the usual smoke tests pass. `LadrunoIMKBeam(2d)` shipped like this: under a Corotational large-rotation step load its betaKc history departed from `elasticBeamColumn` by 45% of peak.
+- **Not a zero-capture bug:** `Domain::addElement` calls `element->update()` right after `setDomain`, so the tangent is already valid when `rayleigh` runs even before any analysis. (The WP-115 review first reported `Kc = 0`; measurement refuted it.)
+- **Workaround/status:** FIXED WP-118 (#853): chain to the base FIRST, as `ElasticBeam2d/3d` and `LadrunoDispBeamColumn` do (`if ((retVal = this->Element::commitState()) != 0) ...`). Audit of every fork element: only the IMK beams were missing it (`LadrunoRigidBody` also skips it but overrides Rayleigh as a no-op and never allocates `Kc`). Gate: `tests/test_imk_betakc.py` — a betaKc test must make the tangent CHANGE (Corotational rotation or yielding), or it cannot see a frozen `Kc`. Greppable, so a candidate rule for `ci/check_quirk_patterns.py` (#850): a fork `commitState()` that neither calls `Element::commitState` nor overrides `setRayleighDampingFactors`.

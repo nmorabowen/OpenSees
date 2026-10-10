@@ -34,6 +34,8 @@
 #include "Ladruno_Sinks.h"
 #include "Ladruno_Hdf5.h" // pulls Ladruno_Types.h; provides ladruno::h5::*
 
+#include "OPS_Globals.h"   // opserr (WP-163 R5 failure reports)
+
 #include <sstream>
 #include <cmath>
 
@@ -112,15 +114,46 @@ namespace ladruno {
 	/* StreamingSink                                                         */
 	/* ===================================================================== */
 
+	void StreamingSink::fail(const ResultSchema& schema, const char* why)
+	{
+		opserr << "LadrunoRecorder error: result \"" << schema.name.c_str()
+		       << "\" " << why << "; it will NOT be recorded from here on\n";
+		m_dead = true;
+		m_initialized = true;   // never re-run begin() (no per-step retry/spam)
+	}
+
 	void StreamingSink::begin(detail::ProcessInfo& info, const ResultSource& src)
 	{
 		const ResultSchema& schema = src.schema();
 		if (schema.num_components < 1)
 			return;
+		// An empty channel (no ids on this process) has nothing to write. Its
+		// [T x 0 x C] DATA could never be created (chunk dim 1 > max dim 0) and
+		// used to leave a DATA-less result group behind; write nothing instead.
+		if (src.ids().empty()) {
+			m_dead = true;
+			m_initialized = true;
+			return;
+		}
 
 		hid_t h_family = openFamilyGroup(info, m_family);
-		if (h_family == HID_INVALID)
+		if (h_family == HID_INVALID || h_family < 0) {
+			fail(schema, "could not open its RESULTS family group");
 			return;
+		}
+
+		// WP-163 R5/R4: result group names are unique per channel within a
+		// MODEL_STAGE (element buckets embed classTag + rule + header index), so
+		// a pre-existing group means this result was requested twice (e.g.
+		// `-N displacement displacement`, or the alias pair tieForce /
+		// constraintTieForce) or two recorders target one file. Appending into
+		// the existing group doubled its rows silently; refuse instead.
+		if (H5Lexists(h_family, schema.name.c_str(), H5P_DEFAULT) > 0) {
+			h5::group::close(h_family);
+			fail(schema, "already exists in this MODEL_STAGE (duplicate request, "
+			             "or two recorders writing the same file)");
+			return;
+		}
 
 		// Result group with the self-describing attrs (schema §7.1).
 		hid_t h_gp_result = h5::group::createResultGroup(
@@ -129,6 +162,11 @@ namespace ladruno {
 			schema.components_csv, schema.num_components,
 			schema.dimension, schema.description,
 			(int)schema.result_type, (int)schema.data_type);
+		if (h_gp_result < 0) {
+			h5::group::close(h_family);
+			fail(schema, "could not create its result group");
+			return;
+		}
 		// WP-126: how a reader combines this result across partition files (§7.1).
 		h5::attribute::write(h_gp_result, "PARTITION_REDUCTION",
 			std::string(src.partitionReduction()));
@@ -147,18 +185,35 @@ namespace ladruno {
 		// On-disk DATA type is f64 (default, lossless) or f32 (opt-in
 		// `-precision f32` lossy mode); TIME/STEP stay f64/int either way.
 		hid_t data_disk_type = info.store_data_f32 ? H5T_IEEE_F32LE : H5T_IEEE_F64LE;
-		hid_t h_data = h5::dataset::createTimeSeries3d(
-			h_gp_result, "DATA", (hsize_t)n_ids, (hsize_t)n_comp, data_disk_type);
-		hid_t h_time = h5::dataset::createTimeAxis1d(h_gp_result, "TIME", H5T_IEEE_F64LE);
-		hid_t h_step = h5::dataset::createTimeAxis1d(h_gp_result, "STEP", H5T_STD_I32LE);
+		// WP-164: the WP-164 chunk plan + sized chunk cache, deflate level from
+		// `-compress`, and the handles are KEPT OPEN until the sink is destroyed.
+		m_data = h5::dataset::createTimeSeries3dOpen(
+			h_gp_result, "DATA", (hsize_t)n_ids, (hsize_t)n_comp, data_disk_type,
+			info.deflate_level);
+		m_time = h5::dataset::createTimeAxis1d(h_gp_result, "TIME", H5T_IEEE_F64LE);
+		m_step = h5::dataset::createTimeAxis1d(h_gp_result, "STEP", H5T_STD_I32LE);
+		hsize_t mdims[3] = { 1, (hsize_t)n_ids, (hsize_t)n_comp };
+		m_mspace = H5Screate_simple(3, mdims, NULL);
+		hsize_t mdims1[1] = { 1 };
+		m_mspace1 = H5Screate_simple(1, mdims1, NULL);
+		m_n_ids = n_ids;
+		m_n_comp = n_comp;
+		m_t = 0;
+		const bool ok = (h_dset_id >= 0 && m_data >= 0 && m_time >= 0 && m_step >= 0 &&
+		                 m_mspace >= 0 && m_mspace1 >= 0);
 
-		h5::dataset::close(h_step);
-		h5::dataset::close(h_time);
-		h5::dataset::close(h_data);
-		h5::dataset::close(h_dset_id);
+		if (h_dset_id >= 0) h5::dataset::close(h_dset_id);
 		h5::group::close(h_gp_result);
 		h5::group::close(h_family);
 
+		if (!ok) {
+			closeHandles();
+			// WP-163 R5: previously ignored — every later accept() then failed
+			// H5Dopen2("DATA") and returned silently, dropping the whole result.
+			fail(schema, "could not create its ID/DATA/TIME/STEP datasets "
+			             "(disk full or quota, or HDF5 refused the dataset)");
+			return;
+		}
 		m_initialized = true;
 	}
 
@@ -174,51 +229,68 @@ namespace ladruno {
 		// is never silently dropped.
 		if (!m_initialized)
 			begin(info, src);
+		if (m_dead)
+			return;
 
 		const std::vector<int>& ids = src.ids();
 		const size_t n_ids = ids.size();
 		const size_t n_comp = (size_t)schema.num_components;
 
-		hid_t h_family = openFamilyGroup(info, m_family);
-		if (h_family == HID_INVALID)
-			return;
-
-		// Open the (already-created) result group, then append this step's slab
-		// to DATA[T x nIds x nComp] and the matching TIME/STEP axes (schema D3).
-		hid_t h_gp_result = H5Gopen2(h_family, schema.name.c_str(), H5P_DEFAULT);
-		if (h_gp_result < 0) {
-			h5::group::close(h_family);
-			return;
-		}
-		hid_t h_data = H5Dopen2(h_gp_result, "DATA", H5P_DEFAULT);
-		if (h_data < 0) {
-			h5::group::close(h_gp_result);
-			h5::group::close(h_family);
+		// WP-163 R5: a short buffer skips the WHOLE step (DATA and TIME/STEP
+		// together) so the three axes stay aligned; previously DATA was skipped
+		// while TIME/STEP were still appended, shifting every later row.
+		if (buffer.size() < n_ids * n_comp) {
+			if (!m_warned_short) {
+				opserr << "LadrunoRecorder warning: result \"" << schema.name.c_str()
+				       << "\" got " << (int)buffer.size() << " values, expected "
+				       << (int)(n_ids * n_comp) << "; step(s) skipped\n";
+				m_warned_short = true;
+			}
 			return;
 		}
-		if (buffer.size() >= n_ids * n_comp)
-			h5::dataset::appendSlab3d(h_data, &buffer[0], (hsize_t)n_ids, (hsize_t)n_comp);
-		h5::dataset::close(h_data);
 
-		hid_t h_time = H5Dopen2(h_gp_result, "TIME", H5P_DEFAULT);
-		if (h_time >= 0) {
-			h5::dataset::appendDouble1d(h_time, info.current_time_step);
-			h5::dataset::close(h_time);
+		// WP-164 (P2): write into the handles held open since begin(). The slab
+		// lands in the dataset's chunk cache; a chunk is deflated once, when it is
+		// complete or at a flush, instead of being re-read and re-deflated on every
+		// step (the old open/close-per-step path evicted the cache each time).
+		herr_t st = h5::dataset::writeSlab3dAt(m_data, m_t, &buffer[0],
+			(hsize_t)n_ids, (hsize_t)n_comp, m_mspace);
+		if (st < 0) {
+			// WP-163 R5: if DATA was extended before the write failed, that row
+			// exists (fill value) — give it its TIME/STEP so the axes stay aligned,
+			// then stop the channel.
+			const bool grew = h5::dataset::extent0(m_data) > m_t;
+			fail(schema, "failed to append a step to DATA (disk full or quota?)");
+			if (!grew)
+				return;
 		}
-		hid_t h_step = H5Dopen2(h_gp_result, "STEP", H5P_DEFAULT);
-		if (h_step >= 0) {
-			h5::dataset::appendInt1d(h_step, info.current_time_step_id);
-			h5::dataset::close(h_step);
-		}
+		const double t_val = info.current_time_step;
+		const int s_val = info.current_time_step_id;
+		h5::dataset::writeScalar1dAt(m_time, m_t, H5T_NATIVE_DOUBLE, &t_val, m_mspace1);
+		h5::dataset::writeScalar1dAt(m_step, m_t, H5T_NATIVE_INT, &s_val, m_mspace1);
+		++m_t;
+	}
 
-		h5::group::close(h_gp_result);
-		h5::group::close(h_family);
+	void StreamingSink::closeHandles()
+	{
+		if (m_mspace1 >= 0) H5Sclose(m_mspace1);
+		if (m_mspace >= 0) H5Sclose(m_mspace);
+		if (m_step >= 0) H5Dclose(m_step);
+		if (m_time >= 0) H5Dclose(m_time);
+		if (m_data >= 0) H5Dclose(m_data);
+		m_data = m_time = m_step = m_mspace = m_mspace1 = HID_INVALID;
+	}
+
+	StreamingSink::~StreamingSink()
+	{
+		closeHandles();
 	}
 
 	void StreamingSink::finalize(detail::ProcessInfo& /*info*/)
 	{
-		// Streaming has no deferred state: every step is fully written in accept().
-		// Handles are opened/closed per call, so there is nothing to flush.
+		// Every step is handed to HDF5 in accept(); partially filled chunks sit in
+		// the open dataset's chunk cache until the recorder's H5Fflush (its flush
+		// cadence) or the handles close in the destructor. Nothing to do here.
 	}
 
 	/* ===================================================================== */
@@ -292,6 +364,18 @@ namespace ladruno {
 		// absolute extreme for THAT component was last attained).
 		for (size_t i = 0; i < n; ++i) {
 			const double v = buffer[i];
+			// WP-163 (ROB-7): NaN is STICKY. Ordered comparisons with NaN are
+			// false, so a run that went NaN at step k used to keep its finite
+			// pre-divergence extremes and the envelope looked healthy. Now the
+			// first NaN poisons MIN/MAX/ABSMAX of that component and ARG_STEP
+			// records the step it appeared (a NaN first sample already stuck).
+			if (v != v) {
+				if (m_absmax[i] == m_absmax[i]) {
+					m_min[i] = v; m_max[i] = v; m_absmax[i] = v;
+					m_arg_step[i] = step;
+				}
+				continue;
+			}
 			if (v < m_min[i]) m_min[i] = v;
 			if (v > m_max[i]) m_max[i] = v;
 			const double a = std::abs(v);
@@ -306,6 +390,16 @@ namespace ladruno {
 	{
 		if (!m_seeded || m_name.empty() || m_n_ids == 0 || m_n_comp == 0)
 			return;
+
+		// WP-164 (P1): after the first write, overwrite the four accumulator
+		// datasets in place — no group walk, no delete/recreate, no attributes.
+		if (m_created) {
+			if (m_dmin >= 0) H5Dwrite(m_dmin, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, &m_min[0]);
+			if (m_dmax >= 0) H5Dwrite(m_dmax, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, &m_max[0]);
+			if (m_dabs >= 0) H5Dwrite(m_dabs, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, &m_absmax[0]);
+			if (m_darg >= 0) H5Dwrite(m_darg, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &m_arg_step[0]);
+			return;
+		}
 
 		// ENVELOPES/<family>/<name> lives under the stage's RESULTS tree.
 		hid_t h_stage = openOrCreateGroup(info.h_file_id,
@@ -343,12 +437,16 @@ namespace ladruno {
 			}
 		}
 
-		// Delete a stale <name> group from a prior flush (in-place rewrite), then
-		// recreate it fresh. Delete-and-recreate keeps the writer trivial. For a
-		// nested name H5Ldelete removes only the final ("<bucket>") link, leaving the
-		// "<display>" parent created above intact.
-		if (H5Lexists(h_family, m_name.c_str(), H5P_DEFAULT) > 0)
-			H5Ldelete(h_family, m_name.c_str(), H5P_DEFAULT);
+		// WP-164 (P1): first write of this stage — create the group once. (A
+		// pre-existing group can only be a duplicate request, which the parser
+		// now drops; it is not deleted and recreated here any more.)
+		if (H5Lexists(h_family, m_name.c_str(), H5P_DEFAULT) > 0) {
+			opserr << "LadrunoRecorder error: envelope \"" << m_name.c_str()
+			       << "\" already exists in this MODEL_STAGE; it will NOT be recorded\n";
+			m_created = true;   // never retry (handles stay invalid)
+			h5::group::close(h_family);
+			return;
+		}
 
 		// Self-describing result group (same COMPONENTS/DISPLAY_NAME/DIMENSION attrs
 		// as the time-series StreamingSink writes) so envelope output carries
@@ -363,19 +461,25 @@ namespace ladruno {
 		h5::attribute::write(h_name, "PARTITION_REDUCTION", m_partition_reduction);
 
 		// ID [nIds x 1], and the four [nIds x nComp] accumulators (schema §7.4).
-		hid_t d_id  = h5::dataset::createAndWrite(h_name, "ID", m_ids, m_n_ids, 1);
-		hid_t d_min = h5::dataset::createAndWrite(h_name, "MIN", m_min, m_n_ids, m_n_comp);
-		hid_t d_max = h5::dataset::createAndWrite(h_name, "MAX", m_max, m_n_ids, m_n_comp);
-		hid_t d_abs = h5::dataset::createAndWrite(h_name, "ABSMAX", m_absmax, m_n_ids, m_n_comp);
-		hid_t d_arg = h5::dataset::createAndWrite(h_name, "ARG_STEP", m_arg_step, m_n_ids, m_n_comp);
+		// WP-164: the four accumulator handles are kept for in-place rewrites.
+		hid_t d_id = h5::dataset::createAndWrite(h_name, "ID", m_ids, m_n_ids, 1);
+		m_dmin = h5::dataset::createAndWrite(h_name, "MIN", m_min, m_n_ids, m_n_comp);
+		m_dmax = h5::dataset::createAndWrite(h_name, "MAX", m_max, m_n_ids, m_n_comp);
+		m_dabs = h5::dataset::createAndWrite(h_name, "ABSMAX", m_absmax, m_n_ids, m_n_comp);
+		m_darg = h5::dataset::createAndWrite(h_name, "ARG_STEP", m_arg_step, m_n_ids, m_n_comp);
+		m_created = true;
 
 		h5::dataset::close(d_id);
-		h5::dataset::close(d_min);
-		h5::dataset::close(d_max);
-		h5::dataset::close(d_abs);
-		h5::dataset::close(d_arg);
 		h5::group::close(h_name);
 		h5::group::close(h_family);
+	}
+
+	EnvelopeSink::~EnvelopeSink()
+	{
+		if (m_darg >= 0) H5Dclose(m_darg);
+		if (m_dabs >= 0) H5Dclose(m_dabs);
+		if (m_dmax >= 0) H5Dclose(m_dmax);
+		if (m_dmin >= 0) H5Dclose(m_dmin);
 	}
 
 	void EnvelopeSink::flush(detail::ProcessInfo& info)
@@ -399,6 +503,12 @@ namespace ladruno {
 		m_max.clear();
 		m_absmax.clear();
 		m_arg_step.clear();
+		if (m_darg >= 0) H5Dclose(m_darg);
+		if (m_dabs >= 0) H5Dclose(m_dabs);
+		if (m_dmax >= 0) H5Dclose(m_dmax);
+		if (m_dmin >= 0) H5Dclose(m_dmin);
+		m_dmin = m_dmax = m_dabs = m_darg = HID_INVALID;
+		m_created = false;
 	}
 
 } // namespace ladruno

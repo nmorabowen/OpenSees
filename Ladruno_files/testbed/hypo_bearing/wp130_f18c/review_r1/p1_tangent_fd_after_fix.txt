@@ -1,0 +1,23 @@
+author tolR=1e-07 step 5: p=1.889 rep=7.4e-16 path=notExplicit nfail=0 halv=0 expl=0 vol:9.36e-05 dev12:6.61e-04 dev_ax:1.58e-04 g12:7.21e-04 g23:6.79e-04
+author tolR=1e-07 step 10: p=2.433 rep=4.7e-17 path=notExplicit nfail=0 halv=0 expl=0 vol:6.15e-05 dev12:7.98e-03 dev_ax:4.00e-07 g12:6.10e-02 g23:1.59e-02
+author tolR=1e-07 step 20: p=4.269 rep=4.7e-15 path=notExplicit nfail=0 halv=0 expl=0 vol:5.42e-05 dev12:2.45e-05 dev_ax:9.78e-09 g12:9.62e-05 g23:6.49e-04
+author tolR=1e-10 step 5: p=1.889 rep=6.1e-15 path=notExplicit nfail=0 halv=0 expl=0 vol:8.11e-05 dev12:3.87e-09 dev_ax:1.93e-04 g12:8.39e-06 g23:2.77e-06
+author tolR=1e-10 step 10: p=2.433 rep=1.3e-15 path=notExplicit nfail=0 halv=0 expl=0 vol:6.15e-05 dev12:1.26e-04 dev_ax:3.99e-07 g12:1.25e-04 g23:1.21e-04
+author tolR=1e-10 step 20: p=4.269 rep=1.4e-14 path=notExplicit nfail=0 halv=0 expl=0 vol:5.42e-05 dev12:2.45e-05 dev_ax:9.00e-09 g12:9.62e-05 g23:1.26e-05
+author tolR=1e-12 step 5: p=1.889 rep=1.3e-16 path=notExplicit nfail=0 halv=0 expl=0 vol:8.11e-05 dev12:3.34e-09 dev_ax:1.93e-04 g12:3.11e-09 g23:4.38e-09
+author tolR=1e-12 step 10: p=2.433 rep=6.0e-15 path=notExplicit nfail=0 halv=0 expl=0 vol:6.15e-05 dev12:1.26e-04 dev_ax:3.99e-07 g12:1.25e-04 g23:1.21e-04
+author tolR=1e-12 step 20: p=4.269 rep=8.7e-15 path=notExplicit nfail=0 halv=0 expl=0 vol:5.42e-05 dev12:1.31e-05 dev_ax:8.76e-09 g12:1.31e-05 g23:1.26e-05
+lowP_pr0 tolR=1e-12 step 5: p=1.889 rep=1.3e-16 path=notExplicit nfail=0 halv=0 expl=0 vol:8.11e-05 dev12:3.34e-09 dev_ax:1.93e-04 g12:3.11e-09 g23:4.38e-09
+lowP_pr0 tolR=1e-12 step 10: p=2.433 rep=6.0e-15 path=notExplicit nfail=0 halv=0 expl=0 vol:6.15e-05 dev12:1.26e-04 dev_ax:3.99e-07 g12:1.25e-04 g23:1.21e-04
+hiP() tolR=1e-07 step 3: p=167.636 rep=2.1e-15 path=notExplicit nfail=0 halv=0 expl=0 vol:2.93e-04 dev12:2.08e-02 dev_ax:2.43e-04 g12:2.74e-01 g23:4.25e-03
+hiP() tolR=1e-07 step 15: p=166.413 rep=5.4e-32 path=notExplicit nfail=0 halv=0 expl=0 vol:1.61e-04 dev12:6.38e-05 dev_ax:4.69e-07 g12:9.71e-04 g23:1.11e-04
+hiP() tolR=1e-07 step 35: p=185.876 rep=9.5e-15 path=notExplicit nfail=0 halv=0 expl=0 vol:1.35e-04 dev12:9.15e-05 dev_ax:1.69e-08 g12:3.16e-04 g23:1.34e-05
+hiP() tolR=1e-12 step 3: p=167.636 rep=1.3e-16 path=notExplicit nfail=0 halv=0 expl=0 vol:2.28e-04 dev12:1.82e-08 dev_ax:2.27e-08 g12:2.65e-07 g23:1.25e-07
+hiP() tolR=1e-12 step 15: p=166.413 rep=3.9e-15 path=notExplicit nfail=0 halv=0 expl=0 vol:1.61e-04 dev12:1.18e-05 dev_ax:4.71e-07 g12:1.18e-05 g23:1.11e-04
+hiP() tolR=1e-12 step 35: p=185.876 rep=4.2e-17 path=notExplicit nfail=0 halv=0 expl=0 vol:1.35e-04 dev12:1.85e-06 dev_ax:4.86e-09 g12:1.86e-06 g23:1.34e-05
+hiP('-Presidual', 0.0) tolR=1e-07 step 3: p=167.636 rep=2.1e-15 path=notExplicit nfail=0 halv=0 expl=0 vol:2.93e-04 dev12:2.08e-02 dev_ax:2.43e-04 g12:2.74e-01 g23:4.25e-03
+hiP('-Presidual', 0.0) tolR=1e-07 step 15: p=166.413 rep=5.4e-32 path=notExplicit nfail=0 halv=0 expl=0 vol:1.61e-04 dev12:6.38e-05 dev_ax:4.69e-07 g12:9.71e-04 g23:1.11e-04
+hiP('-Presidual', 0.0) tolR=1e-07 step 35: p=185.876 rep=9.5e-15 path=notExplicit nfail=0 halv=0 expl=0 vol:1.35e-04 dev12:9.15e-05 dev_ax:1.69e-08 g12:3.16e-04 g23:1.34e-05
+hiP('-Presidual', 0.0) tolR=1e-12 step 3: p=167.636 rep=1.3e-16 path=notExplicit nfail=0 halv=0 expl=0 vol:2.28e-04 dev12:1.82e-08 dev_ax:2.27e-08 g12:2.65e-07 g23:1.25e-07
+hiP('-Presidual', 0.0) tolR=1e-12 step 15: p=166.413 rep=3.9e-15 path=notExplicit nfail=0 halv=0 expl=0 vol:1.61e-04 dev12:1.18e-05 dev_ax:4.71e-07 g12:1.18e-05 g23:1.11e-04
+hiP('-Presidual', 0.0) tolR=1e-12 step 35: p=185.876 rep=4.2e-17 path=notExplicit nfail=0 halv=0 expl=0 vol:1.35e-04 dev12:1.85e-06 dev_ax:4.86e-09 g12:1.86e-06 g23:1.34e-05

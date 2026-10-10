@@ -25,7 +25,16 @@ The os.add_dll_directory handles are kept in a module-global list so they
 are not garbage-collected (which would remove the dir from the search path).
 
 The legacy `openseespy` / `openseespy.opensees` alias -> our sequential
-`opensees` is preserved, but SKIPPED under MPI: eagerly importing the
+`opensees` is OPT-IN (F2-c). By default the wiring only makes `import opensees`
+work and leaves `openseespy` alone, so a project that imports `openseespy`
+(apeGmsh's tests, #1055) gets the real pip package, not a silent substitution of
+whatever fork binary is installed. Opt in by either
+
+  * `--alias-openseespy` at wire time (baked into the boot module), or
+  * `LADRUNO_OPENSEESPY_ALIAS=1` in the environment at run time (works in a
+    venv wired without the flag; `0` / empty does not disable a baked-in flag).
+
+When enabled the alias is SKIPPED under MPI: eagerly importing the
 sequential runtime inside an `mpiexec ... import openseesmp` rank would
 load two OpenSees runtimes into one process. Intel MPI / Hydra set
 PMI_RANK / PMI_SIZE per rank, which we detect.
@@ -102,6 +111,9 @@ for _d in _dirs:
         if _d not in _parts:
             os.environ["PATH"] = _d + os.pathsep + os.environ.get("PATH", "")
 
+# OPT-IN (F2-c): only when wired with --alias-openseespy or when the env var
+# LADRUNO_OPENSEESPY_ALIAS=1 is set at run time. Default: no alias.
+#
 # `openseespy` / `openseespy.opensees` -> our sequential `opensees`, so
 # tools that hardcode `import openseespy.opensees` (apeGmsh, STKO helpers,
 # openseespy-flavored examples) get THIS build (MPCO/HDF5) rather than a
@@ -124,7 +136,8 @@ for _d in _dirs:
 #      a no-op and you needed LADRUNO_OPENSEES_BIN to escape it (LEDGER_quirks
 #      "An INSTALLED Ladruno hijacks `import opensees`"). Deferred, the insert
 #      wins again on its own -- the env var stays as an override, not a crutch.
-if not (os.environ.get("PMI_RANK") or os.environ.get("PMI_SIZE")):
+_alias = {alias_repr} or os.environ.get("LADRUNO_OPENSEESPY_ALIAS") == "1"
+if _alias and not (os.environ.get("PMI_RANK") or os.environ.get("PMI_SIZE")):
 
     class _LadrunoOpenSeesPyAlias:
         """Resolve `openseespy[.opensees]` to this build's `opensees`, on demand.
@@ -163,13 +176,16 @@ if not (os.environ.get("PMI_RANK") or os.environ.get("PMI_SIZE")):
 
 
 def main() -> int:
-    if len(sys.argv) < 2 or len(sys.argv) > 3:
-        print("usage: wire_venv_pth.py <bin-dir> [<openseesmp-dir>]",
-              file=sys.stderr)
+    args = sys.argv[1:]
+    alias = "--alias-openseespy" in args
+    args = [a for a in args if a != "--alias-openseespy"]
+    if len(args) < 1 or len(args) > 2:
+        print("usage: wire_venv_pth.py [--alias-openseespy] <bin-dir> "
+              "[<openseesmp-dir>]", file=sys.stderr)
         return 2
 
-    bin_dir = sys.argv[1]
-    mp_dir = sys.argv[2] if len(sys.argv) == 3 else ""
+    bin_dir = args[0]
+    mp_dir = args[1] if len(args) == 2 else ""
 
     site_packages = Path(sysconfig.get_paths()["purelib"])
     if not site_packages.is_dir():
@@ -178,7 +194,8 @@ def main() -> int:
 
     boot = site_packages / "_ladruno_opensees_boot.py"
     boot.write_text(
-        BOOT_TEMPLATE.format(bin_repr=repr(bin_dir), mp_repr=repr(mp_dir)),
+        BOOT_TEMPLATE.format(bin_repr=repr(bin_dir), mp_repr=repr(mp_dir),
+                             alias_repr=repr(alias)),
         encoding="ascii",
     )
 
@@ -188,6 +205,7 @@ def main() -> int:
     print(str(pth))
     print(f"  bin        : {bin_dir}")
     print(f"  openseesmp : {mp_dir or '(not installed)'}")
+    print(f"  openseespy alias : {'ON (baked in)' if alias else 'off (opt-in: --alias-openseespy or LADRUNO_OPENSEESPY_ALIAS=1)'}")
 
     if sys.version_info[:2] != (3, 12):
         v = f"{sys.version_info.major}.{sys.version_info.minor}"

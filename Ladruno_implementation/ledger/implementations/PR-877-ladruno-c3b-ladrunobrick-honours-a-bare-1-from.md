@@ -1,0 +1,9 @@
+---
+wp: PR-877
+title: "Ladruno C3b — LadrunoBrick honours a bare −1 from setTrialStrain; StagedStrain -maxStrain"
+pr: "#877"
+date: 2026-10-10
+status: "draft"
+section: "table"
+---
+| **Ladruno C3b — `LadrunoBrick` honours a bare −1 from `setTrialStrain`; `StagedStrain -maxStrain`** ([[LadrunoBrick_reference]] §9, [[LadrunoStaged_guide]] §8) — the six `setTrialStrain` call sites (SSP centroid, URI physical loop, URI centroid, std/bbar loop, updateHypo, formEAStrue) go through `ladrunoBrickMustCut(rc)` = `rc == LADRUNO_MATERIAL_REFUSED || rc == -1` (was: the sentinel only), so a plain OpenSees material failure cuts the step as it does on LadrunoQuad/TenNodeTetrahedron; ASDConcrete3D's advisory −10/−1000 stay accepted (ADR-86b). The throttled warning says REFUSED (sentinel) or FAILED (rc = −1). `nDMaterial StagedStrain ... -maxStrain e`: `‖ε − ε0‖∞ > e` ⇒ bare −1 without forwarding the trial (serialized, off by default) — a divergence guard and the reproducible bare-−1 source for host tests. Tests: `tests/test_ladrunoBrick_bare_failure_cuts_step.py` (8: every formulation std/bbar/ssp/uri/uri-stiffness/eas cuts on −1 and a smaller step from the same committed state reproduces the unguarded answer to 1e-10; pass-through unaffected; parser refusal); `test_adr94_contract.py::test_R5_ladrunobrick_checks_only_the_sentinel` updated to pin the new helper (its runtime sibling `..._silent_at_element_level_on_ladrunobrick` fails on the base branch too — it needs wp/94a's parser refusal). | element contract + nDMaterial option | — | `SRC/element/ladrunoBrick/LadrunoBrick.cpp`, `SRC/material/nD/StagedStrainNDMaterial.{h,cpp}`, `tests/test_ladrunoBrick_bare_failure_cuts_step.py`, `tests/test_adr94_contract.py`, `Ladruno_implementation/{LadrunoBrick_reference,LadrunoStaged_guide}.md` | shipped on branch, unmerged | [#877](https://github.com/nmorabowen/OpenSees/pull/877) |

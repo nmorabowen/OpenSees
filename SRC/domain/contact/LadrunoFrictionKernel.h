@@ -176,6 +176,101 @@ inline void frictionTangentBlock(const double gTeff[3], const double gpT[3],
 }
 
 // ==========================================================================
+// Ladruno ADR-159 -- the SMOOTHED stick/slip corner (`contact ... -mortar -smoothT <r>`).
+// Added BESIDE the shipped 3D functions above, which stay untouched (byte-identity gated):
+// a caller selects these only when r > 0.
+//
+// The shipped return map's traction magnitude is min(rho, cap) with rho = ||tT*||: a KINK at
+// rho = cap, which a moving slip front puts into the global residual at every node it crosses
+// (R3-N1, the axial pile stall). Here the corner is rounded over |rho - cap| < delta = r*cap
+// (0 < r < 1) by the C1 quadratic blend
+//     rho <= cap-delta: phi = rho                      (stick, unchanged)
+//     rho >= cap+delta: phi = cap                      (slip, unchanged)
+//     otherwise       : phi = rho - (rho-cap+delta)^2/(4 delta)
+// T = phi*n_hat, and the slip that keeps T = kt*(gTeff - gpTtrial) is gpTtrial = gpT +
+// (rho-phi)/kt * n_hat (so the path state stays a pure function of committed state, the
+// BLOCKER-2 idempotence). r -> 0 recovers the shipped map. Oracle:
+// contact_prototypes/proto_adr159_smooth_normal.py (G2 FD-checks the tangent below).
+// dphi_dcap is the TOTAL derivative: delta = r*cap moves with cap (the Csl term needs it).
+inline void smoothCorner(double rho, double cap, double r,
+                         double &phi, double &dphi_drho, double &dphi_dcap) {
+    double delta = r * cap;
+    if (rho <= cap - delta) { phi = rho; dphi_drho = 1.0; dphi_dcap = 0.0; return; }
+    if (rho >= cap + delta) { phi = cap; dphi_drho = 0.0; dphi_dcap = 1.0; return; }
+    double e = rho - cap + delta;                    // in (0, 2 delta)
+    phi = rho - e * e / (4.0 * delta);
+    dphi_drho = 1.0 - e / (2.0 * delta);
+    dphi_dcap = e / (2.0 * delta) + r * (e * e / (4.0 * delta * delta) - e / (2.0 * delta));
+}
+
+inline bool frictionReturnMapSmooth(const double gTeff[3], const double gpT[3],
+                                    double N, double kt, double mu,
+                                    double tFric[3], double gpTtrial[3],
+                                    double cohesion, double tauMax, double r) {
+    double tTtr[3];
+    for (int d = 0; d < 3; d++) tTtr[d] = kt * (gTeff[d] - gpT[d]);
+    double cap  = frictionCap(N, mu, cohesion, tauMax);
+    double rho  = norm3(tTtr);
+    if (cap <= 0.0) {                                // free slip (the shipped HIGH-2 branch)
+        for (int d = 0; d < 3; d++) { tFric[d] = 0.0; gpTtrial[d] = gTeff[d]; }
+        return true;
+    }
+    double phi, dr, dc;
+    smoothCorner(rho, cap, r, phi, dr, dc);
+    if (rho <= cap - r * cap) {                      // stick (also rho == 0)
+        for (int d = 0; d < 3; d++) { tFric[d] = -tTtr[d]; gpTtrial[d] = gpT[d]; }
+        return false;
+    }
+    double inv = 1.0 / rho, dlam = (rho - phi) / kt;
+    for (int d = 0; d < 3; d++) {
+        double nh   = tTtr[d] * inv;
+        tFric[d]    = -phi * nh;
+        gpTtrial[d] = gpT[d] + dlam * nh;
+    }
+    return true;
+}
+
+// K_ss = dT/dgTeff = kt*[phi'(rho) n_hat(x)n_hat + (phi/rho)(P_t - n_hat(x)n_hat)]; consistent adds
+// the Csl coupling -(dphi/dcap)(dcap/dN)*kn*n_hat (x) n (kn = dN/dz, the caller's normal slope).
+inline void frictionTangentBlockSmooth(const double gTeff[3], const double gpT[3],
+                                       const double n[3], double N, double kn, double kt,
+                                       double mu, bool consistent, double Kss[3][3],
+                                       double cohesion, double tauMax, double r) {
+    double tTtr[3];
+    for (int d = 0; d < 3; d++) tTtr[d] = kt * (gTeff[d] - gpT[d]);
+    double capC   = (N > 0.0) ? (mu * N + cohesion) : 0.0;
+    bool   capped = (tauMax > 0.0 && tauMax < capC);
+    double cap    = capped ? tauMax : capC;
+    double rho = norm3(tTtr);
+    double Pt[3][3];
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++) Pt[i][j] = (i == j ? 1.0 : 0.0) - n[i]*n[j];
+    if (cap <= 0.0) {
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++) Kss[i][j] = 0.0;
+        return;
+    }
+    double phi, dr, dc;
+    smoothCorner(rho, cap, r, phi, dr, dc);
+    if (rho <= cap - r * cap) {                      // stick
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++) Kss[i][j] = kt * Pt[i][j];
+        return;
+    }
+    double inv = 1.0 / rho, nh[3];
+    for (int d = 0; d < 3; d++) nh[d] = tTtr[d] * inv;
+    double s = phi * kt * inv;
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++)
+            Kss[i][j] = s * (Pt[i][j] - nh[i]*nh[j]) + kt * dr * nh[i]*nh[j];
+    if (consistent) {
+        double dCap_dN = (capped || N <= 0.0) ? 0.0 : mu;
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++) Kss[i][j] += (-dc * dCap_dN * kn * nh[i]) * n[j];
+    }
+}
+
+// ==========================================================================
 // Ladruno ADR-85 T2 -- the 2D NTS scalar friction kernel (SS How/4). Added BESIDE the
 // 3D functions above, SHARING frictionCap (the unified cone) -- no duplicated cone
 // logic. The existing 3D frictionReturnMap/frictionTangentBlock are UNTOUCHED above

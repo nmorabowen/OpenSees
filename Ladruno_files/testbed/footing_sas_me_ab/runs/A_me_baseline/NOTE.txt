@@ -1,0 +1,4 @@
+Ended MODE=WALL on the WALL-CLOCK cap (36 000 s), NOT on the step floor: the machine paused ~2.75 h
+(2026-09-27 15:45-18:30, all runs stalled together) inside that budget. Reached s/B 0.017373, q 441.6 kPa,
+79 steps, 6 failed attempts. Superseded for the wall location by A_me_baseline_r2 (same deck and binary,
+cap 170 000 s); the two should be bit-identical up to here (MKL 1 thread, MKL_CBWR COMPATIBLE).

@@ -1,0 +1,11 @@
+---
+wp: LEGACY
+title: "An adaptive step controller's allowance is log2(ds_base/ds_min) — NOT the base, NOT the floor; scaling both together changes nothing"
+legacy_seq: 282
+---
+### An adaptive step controller's allowance is `log2(ds_base/ds_min)` — NOT the base, NOT the floor; scaling both together changes nothing
+- **Bites:** you suspect a collapse leg's wall is a stepping artifact, so you re-run it on a step ladder "an order of magnitude apart" — `2e-4/2e-6` against `2e-5/2e-7` — the wall lands in the same place, and you conclude the wall is an element property. **It is not evidence of anything.** Both ladders are **100:1**, so the controller was allowed **6.64 halvings** in both runs: it had *identical* freedom, and a rescaling is not an allowance change. Measured (note 81 §4.2): H20 `uri` at 2 el/B read 0.7706 and 0.7715 on the two ladders — a 0.1 % agreement that carries no information about whether the wall is movable.
+- **Why:** the guard that ends such a leg is `ds < DS_MIN` after repeated halving. When that binds is set by the *ratio* of the starting step to the floor, not by either one alone. Two ladders with the same ratio are the same controller in different units.
+- **Rule:** to test whether a wall is movable, change the **floor alone** (or the budget alone) so the halving count changes, and print `log2(ds_base/ds_min)` beside every leg. Also report *which* guard fired: on the measured H20 legs the subdivision budget was nowhere near spent (46–67 of 800) and the **floor** was the sole binding constraint, so a budget sweep alone would also have shown "no movement" — for a second, unrelated reason.
+- **The general form, and the fourth instance of the TIMs question** (*what would have to be true for this check to pass while the thing it checks is wrong?*): a control that varies a parameter must vary the quantity the guard actually keys on. This one was hiding *inside* the correction that established the rule.
+- **Workaround/status:** `quad_path_diag.py` takes `--floor` and `--budget` independently, prints the halving count in its allowance banner, and `quad_path_summary.py`'s ALLOWANCE PAIRS block sorts pairs by halving count. *Learned 2026-08-11 (note 82), auditing note 81 §4.2's own control.*

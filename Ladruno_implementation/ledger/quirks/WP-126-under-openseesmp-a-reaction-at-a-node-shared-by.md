@@ -1,0 +1,9 @@
+---
+wp: WP-126
+title: "Under OpenSeesMP a reaction at a node shared by two partitions is a PARTIAL in each rank — the stitch must SUM it, not pick one copy (WP-126)"
+legacy_seq: 478
+---
+### Under OpenSeesMP a reaction at a node shared by two partitions is a PARTIAL in each rank — the stitch must SUM it, not pick one copy (WP-126)
+- **Bites:** each rank's `Domain::calculateNodalReactions` only sees its own elements, so the reaction (and the unbalanced load) at a node on a partition interface is that rank's share. Kinematics are identical in every copy; reactions are not. Measured (WP-126 reproduction: two trusses into one fixed support shared by 2 ranks): serial (20, 30); rank 0 stores (0, 10), rank 1 (20, 20). apeGmsh's multi-partition stitch (`_merge_node_slabs`, "first partition wins") returned **(0, 10)**, so base shear from stitched reactions was under-reported with no warning. `-envelope` was worse: the per-partition max of a partial cannot be recombined (max(a+b) ≠ max a + max b).
+- **Why it hid:** the recorder design deferred the reduction (ADR D6, "v3b") and marked sources with `requiresPartitionReduction()`, but nothing consumed the flag: not the recorder, the file, or the reader. WP-120's dead-code scan found the flag had no caller; that was the only lead.
+- **Fixed / rule (WP-126):** every result group carries `PARTITION_REDUCTION` = `NONE` | `SUM` | `UNSUPPORTED` (schema §7.1; from `ResultSource::partitionReduction()`); readers must sum `SUM` rows of a shared id; the recorder refuses `-envelope` of a non-`NONE` source in a partitioned run (warning). `energyBalance` is `UNSUPPORTED` (shared-node KE counted per partition; RES/ERR derived), not `SUM`. The apeGmsh stitch fix is its own PR. **When you add a result source whose value at a shared node is a per-partition partial, override `requiresPartitionReduction()`**. The attribute and the envelope guard follow from it.

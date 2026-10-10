@@ -1,0 +1,9 @@
+---
+wp: LEGACY
+title: "Two configs benchmarked in ONE process: whichever must GROW the heap pays first-touch page faults, so config order confounds the comparison at large N"
+legacy_seq: 220
+---
+### Two configs benchmarked in ONE process: whichever must GROW the heap pays first-touch page faults, so config order confounds the comparison at large N
+- **Bites:** you loop configs inside one process to save build time, and read the difference as a property of the configs. Measured on ADR-75 P1j at 136,080 DOF: `-matrixType 2` took **310 s / 289 s running first** and **190 s running second** — a **1.58× swing from position alone**, with assembly −34% and solve −40%. It made symmetric assembly look **37% SLOWER** than unsymmetric at n=35 while being *faster* at n=15, i.e. it manufactured a plausible "the advantage inverts with size" story. Measured warm, symmetric assembly is faster at n=35 too (64.7 s vs 69.2 s) — **the artifact pointed the exact opposite way from the truth.**
+- **Why the asymmetry:** unsymmetric CSR is ~2× the entries, so symmetric-after-unsymmetric is the only ordering that fits inside memory the process has already faulted in. Unsymmetric is position-indifferent (294 s first vs ~290 s second) because nothing before it ever allocated more. Rule of thumb: the penalty lands on whichever config **grows** the heap, which at fixed N is whichever runs first.
+- **Workaround:** one configuration per process (what the P1h sweep did, which is why P1h was unaffected), or rotate the order and report position. **And prefer a WITHIN-RUN ratio to an absolute wall as the headline metric** — P1j's `fac/(fac+tri)` read 93.68 / 93.81 / 93.50% across both orderings and that 1.58× wall swing. It was chosen to be robust to this box's ±30% background-load noise and turned out to be robust to a much larger effect nobody anticipated. *2026-07-28 (ADR-75 P1j).*

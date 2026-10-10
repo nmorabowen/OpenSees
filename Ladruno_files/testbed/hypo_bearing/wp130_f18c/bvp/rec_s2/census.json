@@ -1,0 +1,43 @@
+{
+ "scheme": 2,
+ "extra": [
+  "-cppmOnFail",
+  "refuse",
+  "-cppmHalvings",
+  3,
+  "-cppmLineSearch",
+  "on"
+ ],
+ "build": "6726f5e24d385bfe26b743fd90490c3b280a0eed",
+ "census": {
+  "updates": 2196768.0,
+  "meCalls": 40.0,
+  "substeps": 797005.0,
+  "accepted": 702437.0,
+  "rejectedErr": 43880.0,
+  "forcedAtDTmin": 50586.0,
+  "forcedClampMc": 0.0,
+  "rejectedLowP": 64.0,
+  "abandonedLowP": 0.0,
+  "capHits": 38.0,
+  "entryPminClamps": 0.0,
+  "pnResets": 0.0,
+  "maxSubstepsOneUpdate": 797005.0,
+  "lastSubsteps": 797005.0,
+  "lastForcedAtDTmin": 50586.0,
+  "lastAbandonedLowP": 0.0,
+  "lastCapHit": 38.0,
+  "cppmCalls": 2175936.0,
+  "cppmNewtonFail": 34211.0,
+  "cppmHalvings": 60817.0,
+  "cppmExplicitFail": 0.0,
+  "cppmExplicitLowP": 40.0,
+  "cppmRefusals": 2323.0,
+  "meFallbacks": 0.0,
+  "meFallbackOk": 0.0,
+  "lastCppmRefused": 0.0,
+  "cppmGuessTries": 0.0,
+  "cppmGuessOk": 0.0,
+  "cppmLineSearchCuts": 2651535.0
+ }
+}

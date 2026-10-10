@@ -6,13 +6,13 @@ description: >
   ASDPlasticMaterial3D changes, ManzariDafalias-family fixes). Use before writing or modifying
   a return map / substepping scheme, getTangent/getInitialTangent, IMPL-EX, getCopy,
   commit/revert, any static or process-wide state, a Tcl/Python material parser, or material
-  tests. Every item points to the LEDGER_quirks entry that explains it.
+  tests. Every item points to the quirks-ledger entry that explains it.
 ---
 
 # New or changed material — checklist
 
 Read this before adding or changing a material under `SRC/material/`. Each item names the
-`Ladruno_implementation/LEDGER_quirks.md` heading to grep for; read that entry when the item
+quirk heading to grep for in `Ladruno_implementation/ledger/quirks/` (`rg`); read that entry when the item
 applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns.py`.
 
 ## Registration (a new material)
@@ -53,6 +53,14 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       (WP-130, #868); SANISAND `ModifiedEuler` force-accepted failed substeps at `dT_min`
       (WP-127 finding C, SAS-ME fix WP-129, #871). Test it: feed one wild trial increment
       and assert the call returns < 0 within a wall-clock bound.
+- [ ] **[lint]** Never DECLARE inside an unbraced `if` to set an outer variable: `if (p > small)
+      Vector r = ...;` makes a new `r` that dies at the `;` (L9). And give every substep
+      integrator's tangent an FD gate of its own: ForwardEuler's was wrong twice over and no gate
+      saw it (WP-158). Quirks: "has a shadowed `Vector r`".
+- [ ] A sub-stepper must hand each sub-step what the un-sub-stepped call would get -- moduli
+      INITIALISED (and not taken after a callee wrote them), and EVERY evolved vector advanced,
+      elastic strain included. Gate it with an identity the sub-steps must satisfy, not with
+      a comparison to another integrator (WP-160). Quirks: "it passes uninitialised `nG, nK`".
 - [ ] Implement `getInitialTangent()` honestly: the base default returns `getTangent()`, so
       `-initial` silently becomes full Newton. Quirks: "`NDMaterial::getInitialTangent()` DEFAULTS".
 - [ ] Substep schemes need error control and yield-drift correction, and must honour the
@@ -64,12 +72,17 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 - [ ] A substep scheme must not ACCEPT a substep that failed its error test at the minimum
       step, or return early at `T < 1`, without saying so: count it (WP-127 `substepStats`).
       Quirks: "ACCEPTS a substep that FAILED its error test".
+- [ ] A substep count sized from the increment (`|Δε|/h`) must be capped, and past the cap the
+      trial refused: a Newton iterate can be ~1e4 and ask for ~1e9 substeps (an apparent hang).
+      Quirks: "one wild Newton iterate makes `setSubStrainRate()` ask for".
 - [ ] IMPL-EX in a static analysis: `ops_Dt` is pseudo-time and erratic; guard the
       extrapolation factor. Quirks: "IMPL-EX in a STATIC analysis".
 - [ ] `revertToStart()` must not reset calibrated constants mid-analysis. Quirks:
       "`ManzariDafalias::revertToStart()` silently restores".
 - [ ] Constants that multiply a stress are dimensional: make them unit-consistent or document
       the units. Quirks: "`D_factor` dilatancy sigmoid is DIMENSIONAL".
+
+- [ ] A fork block appended to a base `sendSelf` under the same dbTag and commitTag must NOT have the length of any vector the base sends: FE_Datastore keys vectors by size, and a same-size block overwrites the base state. `static_assert` the size. Quirks: "FE_Datastore keys a sent Vector by its SIZE".
 
 ## NaN and silent success
 
@@ -96,6 +109,9 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 - [ ] Tune test paths against plastic response, not elastic estimates. Quirks:
       "must be tuned against PLASTIC response".
 - [ ] Break each new gate on purpose once. Quirks: "A test can be GREEN because of the very bug".
+- [ ] A tangent READ as "algorithmic" is not verified: compare it with a finite difference of the
+      return map (the replay facility gives one at a real state). Quirks: "`TanType 2` tangent is
+      MINUS the derivative of its own return map" (WP-130).
 - [ ] Pin a number only from a step a RESIDUAL test converged, and re-measure pins after merging
       `ladruno`. A determinism gate needs no convergence: use `FixedNumIter`. Quirks: "where ONE
       tangent stopped".
@@ -103,5 +119,6 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       is Ubuntu, so a win32-only leg never runs there. Gate only the MKL-specific leg. Quirks:
       "A win32-only `zone_a` test is NEVER run by PR CI".
 
-Found a new trap? Add it to `LEDGER_quirks.md`, then add one line here pointing to it. If the
+Found a new trap? Write a quirks fragment (`Ladruno_implementation/ledger/quirks/WP-<nnn>-<slug>.md`;
+never edit the generated `LEDGER_quirks.md`), then add one line here pointing to it. If the
 trap has a greppable pattern, add a rule to `ci/check_quirk_patterns.py` instead.

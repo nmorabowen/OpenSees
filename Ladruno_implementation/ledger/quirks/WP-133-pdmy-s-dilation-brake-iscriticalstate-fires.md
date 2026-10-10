@@ -1,0 +1,8 @@
+---
+wp: WP-133
+title: "PDMY's \"dilation brake\" isCriticalState() fires only on the increment that CROSSES the critical-state line — it is not a state switch, so no choice of CSL cons…"
+legacy_seq: 507
+---
+### PDMY's "dilation brake" `isCriticalState()` fires only on the increment that CROSSES the critical-state line — it is not a state switch, so no choice of CSL constants yields a dilatancy plateau (WP-133, TIMs F23b)
+- **Bites:** a dense sand in drained shear under PDMY01/02/03 dilates without saturation (TIMs: ten candidates, volumetric rate never below 27 % of peak; strip p' 19.7 → 1 652 kPa without plateau). The natural fix, retuning `e`/`volLimit1..3` (or PDMY03's new `-ei -cs1..3`) so the sand reaches the line, does not work. `isCriticalState()` returns 1 only when `e_curr` and `e_trial` lie on OPPOSITE sides of `e_cr(p) = cs1 − cs2 (p/pa)^cs3`; past the line both are on the same side again and the full dilatancy rule resumes. Measured on PDMY03 (WP-133 G2c): the volumetric rate dips only at the crossing step and is back to the reference rate within 0.5 % ten steps later. `e` is `ei + ε_v(1 + ei)` from the TOTAL strain since material creation; with the defaults a dense sand (`ei` = 0.6) must dilate 17.5 % (100 kPa) or 9.9 % (1 652 kPa) volumetrically to reach the line at all.
+- **Workaround/status:** none inside PDMY; use a model whose dilatancy vanishes at critical state by construction (SANISAND `D ∝ M_d(ψ) − η`, PM4Sand). Reported as a TIMs F23 note, [[133_pdmy_notes]]. Also observed, not diagnosed: a two-element model stalled inside `analyze()` on the step after the brake fired (single element fine); hypothesis is PDMY03 `setSubStrainRate`'s uncapped `|Δε|/1e-5` substep count after a wild Newton iterate.

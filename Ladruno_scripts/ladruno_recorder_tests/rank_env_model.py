@@ -29,7 +29,7 @@ OUT = sys.argv[2]
 ENV_VARS = (
     "PMI_SIZE", "PMI_RANK",
     "OMPI_COMM_WORLD_SIZE", "OMPI_COMM_WORLD_RANK",
-    "SLURM_NTASKS", "SLURM_PROCID",
+    "SLURM_NTASKS", "SLURM_PROCID", "SLURM_STEP_ID",
 )
 
 # (case name, env to set, expected output filename)
@@ -39,8 +39,19 @@ CASES = [
      "rank_env_pmi.part-2.ladruno"),
     ("ompi", {"OMPI_COMM_WORLD_SIZE": "8", "OMPI_COMM_WORLD_RANK": "5"},
      "rank_env_ompi.part-5.ladruno"),
-    ("slurm", {"SLURM_NTASKS": "16", "SLURM_PROCID": "7"},
+    # srun step (SLURM_STEP_ID is a real step number)
+    ("slurm", {"SLURM_NTASKS": "16", "SLURM_PROCID": "7", "SLURM_STEP_ID": "0"},
      "rank_env_slurm.part-7.ladruno"),
+    # WP-163 M4: a SEQUENTIAL run inside `sbatch --ntasks=4` (no srun) sees the
+    # batch shell's SLURM_NTASKS/SLURM_PROCID but no real step -> not partitioned
+    ("sbatch", {"SLURM_NTASKS": "4", "SLURM_PROCID": "0"},
+     "rank_env_sbatch.ladruno"),
+    ("batchstep", {"SLURM_NTASKS": "4", "SLURM_PROCID": "0",
+                   "SLURM_STEP_ID": "4294967294"},
+     "rank_env_batchstep.ladruno"),
+    # WP-163 MP-3: SIZE > 1 without a RANK is refused loudly (no file), not
+    # guessed as rank 0 (every rank would truncate the same part-0)
+    ("norank", {"PMI_SIZE": "4"}, None),
     # a real MPI launcher's own pair outranks sbatch's ambient SLURM_NTASKS
     ("precedence",
      {"PMI_SIZE": "4", "PMI_RANK": "2",
@@ -84,7 +95,9 @@ if len(sys.argv) > 4 and sys.argv[3] == "--child":
 
 ok = True
 for case, env, expected in CASES:
-    for fname in (f"rank_env_{case}.ladruno", expected):
+    for fname in (f"rank_env_{case}.ladruno", expected or ""):
+        if not fname:
+            continue
         stale = os.path.join(OUT, fname)
         if os.path.exists(stale):
             os.remove(stale)
@@ -97,6 +110,16 @@ for case, env, expected in CASES:
     if proc.returncode != 0:
         print(f" FAIL {case}: child rc={proc.returncode}\n{proc.stderr[-2000:]}")
         ok = False
+        continue
+    if expected is None:
+        made = sorted(f for f in os.listdir(OUT) if f.startswith(f"rank_env_{case}"))
+        refused = "missing or not in" in (proc.stdout + proc.stderr)
+        if made or not refused:
+            print(f" FAIL {case}: expected a refusal and no file; made={made} "
+                  f"refused={refused}")
+            ok = False
+            continue
+        print(f"  ok  {case}: refused, no file written")
         continue
     if not os.path.exists(os.path.join(OUT, expected)):
         print(f" FAIL {case}: expected {expected}, dir has "

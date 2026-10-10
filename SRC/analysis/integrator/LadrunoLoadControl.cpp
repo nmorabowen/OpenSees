@@ -40,6 +40,33 @@
 #include <classTags.h>
 #include <elementAPI.h>
 #include <math.h>
+#include <stdlib.h>
+#include <string.h>
+
+// WP-170: true if `tok` is a complete number ("4", "-1", "0.01000000000000000021").
+// openseespy hands typed args to OPS_GetStringFromAll already stringified, Tcl
+// hands their source text, so this one test reads the same in both interpreters.
+// WP-170: the next token as text whatever its type; never null (classic Tcl
+// returns 0 past the end), always terminated (openseespy's strncpy is not on
+// overflow).
+static const char* llcTok(char* buf, int len)
+{
+    const char* s = OPS_GetStringFromAll(buf, len);
+    if (s == 0)
+        return "";
+    if (s == buf)
+        buf[len - 1] = '\0';
+    return s;
+}
+
+static bool llcIsNumber(const char* tok)
+{
+    if (tok == 0 || tok[0] == '\0')
+        return false;
+    char* end = 0;
+    strtod(tok, &end);
+    return end != tok && *end == '\0';
+}
 
 void* OPS_LadrunoLoadControl()
 {
@@ -67,14 +94,21 @@ void* OPS_LadrunoLoadControl()
     // MORE THAN TWO args remain. Keep that rule, but count only the POSITIONAL
     // args so that `-extrapolate f` appended after `lambda` cannot be mistaken
     // for the triple.
+    //
+    // Every token here is read with OPS_GetStringFromAll, never OPS_GetString
+    // (WP-170). Under openseespy OPS_GetString answers the placeholder
+    // "Invalid String Input!" for an int/float: the old `nxt[0] != '-'` peek
+    // only worked because that placeholder happens not to start with '-', and
+    // a stray number among the flags was reported by the placeholder, not by
+    // its value.
+    char tokBuf[64];
     int nRemaining = OPS_GetNumRemainingInputArgs();
     bool hasTriple = false;
     if (nRemaining > 2) {
         // peek: the triple is present only if the next token parses as a number
-        const char* nxt = OPS_GetString();
+        const char* nxt = llcTok(tokBuf, sizeof(tokBuf));
         OPS_ResetCurrentInputArg(-1);
-        if (nxt != 0 && nxt[0] != '-')
-            hasTriple = true;
+        hasTriple = llcIsNumber(nxt);
     }
 
     if (hasTriple) {
@@ -91,7 +125,7 @@ void* OPS_LadrunoLoadControl()
     }
 
     while (OPS_GetNumRemainingInputArgs() > 0) {
-        const char* opt = OPS_GetString();
+        const char* opt = llcTok(tokBuf, sizeof(tokBuf));
         if (strcmp(opt, "-extrapolate") == 0) {
             if (OPS_GetNumRemainingInputArgs() < 1) {
                 opserr << "WARNING LadrunoLoadControl -extrapolate needs a value; "

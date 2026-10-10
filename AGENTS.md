@@ -19,6 +19,11 @@ The mechanical items are enforced by `python ci/check_quirk_patterns.py` (a
 static gate in `ladruno.yml`). When a quirk names a greppable pattern, add it
 to that script instead of adding another paragraph to a guide.
 
+Lint rules, tests and registrations are named by slug or WP, never by the next
+free number (a rule is a `RULES` slug with its own `ci/test_quirk_<slug>.py`);
+ruff F811 and `ci/check_duplicate_defs.py` fail a duplicate definition. Never add
+`merge=union` to code or tests.
+
 ## Building — there is exactly ONE way (REQUIRED)
 
 From a fresh `cmd.exe` at the fork root:
@@ -66,17 +71,37 @@ what), [Ladruno_internal/BUILD_GOTCHAS.md](Ladruno_internal/BUILD_GOTCHAS.md)
 
 ## Build-control ledgers — keep them current (REQUIRED)
 
-Three ledgers live in `Ladruno_implementation/`. Updating them is part of the
-work, not an afterthought — do it **in the same PR** as the change:
+Three ledgers, kept as **per-WP fragments** (WP-161) so no two PRs write the
+same file. Updating them is part of the work, not an afterthought — do it **in
+the same PR** as the change:
 
-- **`LEDGER_vanilla_files.md`** — touched an *upstream* file? Add a row: file,
-  why, PR. Mark the edit in source with a `// Ladruno ...` comment so the table
-  is reconstructable via `grep -rn "Ladruno" SRC/`.
-- **`LEDGER_implementations.md`** — added a *new* feature/file we authored? Add a
-  row: feature, kind, class tag, files, status, PR. Record class tags here so we
-  never collide (`SRC/classTags.h`).
-- **`LEDGER_quirks.md`** — learned an OpenSees gotcha? Write it down so the next
+- **Ledgers are per-WP fragments:** write
+  `Ladruno_implementation/ledger/<kind>/WP-<nnn>-<slug>.md`, and never edit
+  `LEDGER_*.md`, which is generated (the committed files are stubs; the gate
+  fails on an edited one). Format: `Ladruno_implementation/ledger/README.md`.
+- **Read** with `rg <pattern> Ladruno_implementation/ledger/` or
+  `python ci/ledger.py build` (writes `Ladruno_implementation/ledger/_build/`).
+- **A follow-up to an older entry edits that WP's fragment**; never duplicate it.
+- **`vanilla/`** — touched an *upstream* file? One fragment per PR, one row per
+  file: file, why, PR. Mark the edit in source with a `// Ladruno ...` comment
+  so the rows are reconstructable via `grep -rn "Ladruno" SRC/`.
+- **`implementations/`** — added a *new* feature/file we authored? A row:
+  feature, kind, class tag, files, status, PR; put the tags in `class_tags` so
+  the gate checks them against `SRC/classTags.h`.
+- **`quirks/`** — learned an OpenSees gotcha? One `### ` entry, so the next
   agent doesn't rediscover it.
+
+## GitHub issues are the shared memory (REQUIRED)
+
+Live state lives on GitHub, never in a session's private memory: a WP's state
+and handoffs on its **draft PR**, a multi-WP program on its **`program`
+issue**, everything open on the pinned **board** issue (#937), each out-of-scope bug
+or gap in **its own issue**. Boot from the board and the last handoff comment;
+before the session ends, post a handoff and refresh the board row. Private
+memory keeps preferences and pointers ("program X is #n"), not open-PR lists,
+job ids or "resume here" notes. Something learned that must not be
+rediscovered graduates from an issue into a ledger quirk or a lint rule.
+Protocol, labels and templates: [Ladruno_internal/ISSUES.md](Ladruno_internal/ISSUES.md).
 
 ## Splash-banner feature list — keep it in sync
 
@@ -89,17 +114,18 @@ The splash banner prints an active-feature list under the LADRUNO ASCII art.
    blocks in `SRC/tcl/tclMain.cpp` and `SRC/interpreter/PythonModule.cpp`.
 3. Rebuild: `Ladruno_scripts\build.bat OpenSees OpenSeesSP OpenSeesMP`.
 
-Every `shipped` row in `LEDGER_implementations.md` should have a matching banner
-line. (Banner art itself comes from `banner_ASCII.txt` → `BANNER-START/END`.)
+Every `shipped` implementations fragment should have a matching banner line
+(name it in the fragment's `banner:` and the gate checks it exists). (Banner art itself comes from `banner_ASCII.txt` → `BANNER-START/END`.)
 
 ## Doc folders
 
-- `Ladruno_implementation/` — ledgers (above) + forward-looking feature plans.
+- `Ladruno_implementation/` — ledger fragments in `ledger/` (above) + forward-looking feature plans.
 - `Ladruno_internal/` — build history / compilation journal; deep build and
   toolchain detail. See `BUILD_GOTCHAS.md` (env/runtime workarounds: Python 3.12
   ABI, batch traps, CMake-4.3 shadow, MUMPS, test bootstrap, installer DLL-lock)
   and `WORKFLOW_GOTCHAS.md` (PR/CI/git traps on this fast-auto-merging fork:
-  stranded commits, stale-PR "no checks", header stamp, vanilla footprint).
+  stranded commits, stale-PR "no checks", header stamp, vanilla footprint)
+  and `ISSUES.md` (issues as shared memory: board, handoffs, labels).
 - `Ladruno_scripts/` — build, installer, banner, and test tooling.
 - `.claude/skills/` — the task guides above (tracked; the rest of `.claude/` is
   session scratch and stays ignored).

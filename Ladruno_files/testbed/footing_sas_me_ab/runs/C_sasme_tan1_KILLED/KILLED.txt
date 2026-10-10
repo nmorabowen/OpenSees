@@ -1,0 +1,1 @@
+Killed externally 2026-09-28 00:46:19 (exit -1, child only; cause unknown -- not by this agent). A at step 30 s/B 0.00248, C at step 41 s/B 0.00397. Restarted from zero.

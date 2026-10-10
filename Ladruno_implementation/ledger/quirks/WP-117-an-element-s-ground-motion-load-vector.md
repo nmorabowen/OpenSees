@@ -1,0 +1,9 @@
+---
+wp: WP-117
+title: "An element's ground-motion load vector accumulates −M·R·a_g, and the residual SUBTRACTS it — write +M·a and UniformExcitation shakes the element the wrong way,…"
+legacy_seq: 477
+---
+### An element's ground-motion load vector accumulates −M·R·a_g, and the residual SUBTRACTS it — write `+M·a` and `UniformExcitation` shakes the element the wrong way, silently (Bezier, fixed WP-117)
+- **Bites:** `addInertiaLoadToUnbalance(accel)` fills the element load vector (`Q` / `load`) that `getResistingForce()` then subtracts (`P -= Q`). The OpenSees convention is `Q += −M·R·a_g` (`FourNodeQuad` `Q(i) += -K(i,i)*ra[i]`, `LadrunoBrick` `load->addMatrixVector(1.0, M, resid, -1.0)`), so the unbalance gains `−M·R·a_g`. `BezierTri6`/`BezierTet10` wrote `Q.addMatrixVector(1.0, M, a, 1.0)` from their first commit (2026-05-30): under a constant +2.0 ground acceleration a rigid-body probe gave relative acceleration +2.000 where every other element gives −2.000. Nothing fails loudly — the run is stable, the response is just mirrored, and in a model mixing these elements with nodal masses the two parts are driven in opposite directions.
+- **Why it survived:** no test ever ran a Bezier element under `UniformExcitation`; all Bezier tests were static or step-load.
+- **Workaround/status:** FIXED WP-117 (#852), factor `+1.0 → −1.0`. Audit of all 14 fork `addInertiaLoadToUnbalance` implementations found no other instance. Gate: `tests/test_bezier_ground_motion.py` — the rigid-body probe (every node's relative acceleration must be exactly −a_g) is a one-line check any new element with mass should copy. Also check the load is subtracted ONCE: vanilla `ElasticBeam2d` subtracts it in both `getResistingForce` and `getResistingForceIncInertia` (entry "ElasticBeam2d subtracts the ground-motion load Q TWICE", added by WP-115, #850).

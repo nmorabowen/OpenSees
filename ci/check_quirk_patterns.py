@@ -3,8 +3,13 @@
 
 Turns LEDGER_quirks entries that name a greppable pattern into checks, so a
 known trap fails CI instead of relying on someone re-reading the ledger.
-L1/L2 scan only fork-authored sources (files carrying the LADRUNO-HEADER-START
-stamp); vanilla code is out of scope (vanilla-footprint rule).
+rayleigh/wipe scan only fork-authored sources (files carrying the
+LADRUNO-HEADER-START stamp); vanilla code is out of scope (vanilla-footprint rule).
+
+Rules are named by SLUG (WP-162), registered once in RULES at the bottom of this
+file; the old L-numbers are accepted by --only as deprecated aliases for one
+release. A new rule takes a new slug, never "the next free number": two PRs
+both took L9 once, and their self-tests merged silently into one file.
 
 The scanner is a small C++ tokenizer, not a line grep: comments, string
 literals and `#if 0` blocks are blanked first; functions are found by brace
@@ -12,7 +17,7 @@ matching (so inline class methods and indented headers resolve correctly);
 statements are split on `;` (so multi-line statements and one-line `if (...)`
 bodies are seen whole).
 
-  L1 rayleigh   The Rayleigh force (getRayleighDampingForces(), or a variable
+  rayleigh  L1 The Rayleigh force (getRayleighDampingForces(), or a variable
                 bound to it) is accumulated into a buffer that is not a
                 function-local vector SEEDED BEFORE the first Rayleigh call in
                 that function. betaK Rayleigh re-enters getTangentStiff(),
@@ -26,7 +31,7 @@ bodies are seen whole).
                 the line above it):
                     // ladruno-lint: rayleigh-ok <reason>
 
-  L2 wipe       A process-wide singleton (`static X &instance(...)`) whose state
+  wipe      L2 A process-wide singleton (`static X &instance(...)`) whose state
                 is not reset on `wipe`. Reset = `X::instance().reset*(...)`
                 called directly in a wipe hook -- Domain::clearAll,
                 PartitionedDomain::clearAll, or a free OPS_clearAll* function --
@@ -35,7 +40,7 @@ bodies are seen whole).
                 Waive at the declaration (same line or up to two lines above):
                     // ladruno-lint: wipe-ok <reason>
 
-  L4 commit     A fork element's `commitState()` that neither chains to
+  commit    L4 A fork element's `commitState()` that neither chains to
                 `Element::commitState()` (or to a parent's `X::commitState()`)
                 nor overrides `setRayleighDampingFactors`. The base commit is
                 the ONLY place Kc -- the committed stiffness behind betaKc
@@ -46,7 +51,7 @@ bodies are seen whole).
                 Waive at the function header (or the line above it):
                     // ladruno-lint: commit-ok <reason>
 
-  L5 double-load  An element's `getResistingForceIncInertia()` that calls
+  double-load  L5 An element's `getResistingForceIncInertia()` that calls
                 `getResistingForce()` -- which already subtracts the element
                 load vector -- and then subtracts the SAME vector again. That
                 vector holds the UniformExcitation inertia load -M*R*a_g, so
@@ -58,7 +63,7 @@ bodies are seen whole).
                 line above):
                     // ladruno-lint: double-ok <reason>
 
-  L6 ground-sign  The sign of the ground-motion inertia load. An element's
+  ground-sign  L6 The sign of the ground-motion inertia load. An element's
                 `addInertiaLoadToUnbalance()` accumulates +-M*R*a_g into its load
                 vector, and `getResistingForce()` (else IncInertia) adds or
                 subtracts that vector; the residual must GAIN +M*R*a_g, so the
@@ -70,10 +75,39 @@ bodies are seen whole).
                 skipped, never guessed. Waive the accumulation statement:
                     // ladruno-lint: sign-ok <reason>
 
-  L3 pointers   Every `Quirks: "..."` pointer in .claude/skills/*/SKILL.md must
+  sequence  L7 Arithmetic (+ - *) combining TWO or more calls to element accessors
+                that return references into element storage -- getResistingForce*,
+                getRayleighDampingForces, get*Force*, getTangentStiff,
+                getInitialStiff, getMass, getDamp -- in ONE statement. C++ leaves the
+                call order unspecified and each call may overwrite the storage an
+                earlier reference points at (the plane elements return the same P
+                from both residual accessors; LadrunoBrick's GRFII refills the resid
+                getResistingForce returns). Vanilla Element::getResponse
+                `inertialForce` was exactly `GRFII() - damping() - resisting()`:
+                EXACTLY 0.0 on GCC, right on MSVC (WP-124 C15, a2004e0a7). Scans
+                every SRC file, vanilla included. Fix: copy the first result into an
+                owned Vector, then apply the others in separate statements. Calls
+                that are separate function ARGUMENTS (a top-level comma between
+                them) are not flagged. Waive the statement (its lines or the line
+                above):
+                    // ladruno-lint: sequence-ok <reason>
+
+  dead-decl  L9 A declaration that is the WHOLE unbraced body of an if / else / for /
+                while and SHADOWS a parameter or local declared earlier in the same
+                function (`Vector r(6); if (p > small) Vector r = dev / p;`). The new
+                variable dies at the `;`, so the outer one keeps its old value. (An
+                unshadowed one is left alone: vanilla Domain::initialize declares
+                `Matrix initM(ele->getInitialStiff())` as a loop body on purpose.) Vanilla ManzariDafalias::ForwardEuler
+                (IntScheme 5) had exactly this: its `r` stayed zero and every (n:r)
+                term of the plastic multiplier vanished (WP-158; upstream has it
+                too). Scans every SRC file, vanilla included. Waive the statement
+                (its lines or the line above):
+                    // ladruno-lint: decl-ok <reason>
+
+  pointers  L3 Every `Quirks: "..."` pointer in .claude/skills/*/SKILL.md must
                 still match text in LEDGER_quirks.md.
 
-  L8 ci-coverage  A `zone_a` test file that BRANCHES on the platform
+  ci-coverage  L8 A `zone_a` test file that BRANCHES on the platform
                 (`sys.platform`, `os.name`, `platform.system()` compared to a
                 platform name, or `sys.platform.startswith(...)`) must say where
                 its platform-specific part actually runs. PR CI (Zone-A) is
@@ -92,14 +126,42 @@ bodies are seen whole).
                 `--list-waivers` prints every annotation: the local-only list is
                 the gap inventory.
 
+  revert    L10 A fork-stamped integrator that defines newStep() or update(),
+                owns Vector* members, and inherits IncrementalIntegrator's
+                NO-OP revertToLastStep() (no class on its chain up to the
+                integrator base declares one). On a failed step the analysis
+                reverts the Domain and calls revertToLastStep(); the no-op
+                leaves the integrator's own march state advanced, so the retry
+                starts from state that was never committed
+                (LadrunoDynamicRelaxation, fixed WP-153 #899).
+                LEDGER_quirks: "inherits a NO-OP". Waive at the class
+                declaration in the header (its line or the two above):
+                    // ladruno-lint: revert-ok <reason>
+
+  unknown-token  (no alias; WP-167) A fork parser that lets an unknown token
+                through: a comment saying unknown tokens/options are ignored or
+                skipped, or an option ladder (two or more string compares) that
+                is the LAST statement of a token loop and has no final `else`, so
+                an unmatched token falls off the ladder without a word.
+                LadrunoRCConcrete did exactly this ("unknown tokens are ignored
+                (forward-compat)") and silently dropped apeGmsh's -crackedNu and
+                -betaC. Fork parsers fail closed: declare the accepted options
+                (SRC/material/LadrunoOptSpec.h) and refuse any other token,
+                naming it. Parsers that predate the rule are listed in
+                UNKNOWN_TOKEN_LEGACY, a ratchet that only shrinks. Waive (the
+                statement's lines or the line above):
+                    // ladruno-lint: unknown-ok <reason>
+
 A waiver needs a reason of at least 12 characters, and a waiver that no longer
 suppresses anything is itself a finding (stale).
 
 Usage:
-    python ci/check_quirk_patterns.py              # all checks, exit 1 on any finding
-    python ci/check_quirk_patterns.py --only L1,L2
-    python ci/check_quirk_patterns.py --root DIR   # scan another tree (e.g. a git archive)
+    python ci/check_quirk_patterns.py                    # all rules, exit 1 on any finding
+    python ci/check_quirk_patterns.py --only rayleigh,wipe
+    python ci/check_quirk_patterns.py --only L1          # deprecated alias, warns (one release)
+    python ci/check_quirk_patterns.py --root DIR         # scan another tree (e.g. a git archive)
     python ci/check_quirk_patterns.py --list-waivers
+    python ci/check_quirk_patterns.py --rules-table      # the ci/README.md rule table
 """
 import argparse
 import ast
@@ -111,7 +173,7 @@ STAMP = "LADRUNO-HEADER-START"
 MIN_REASON = 12
 SUFFIXES = (".cpp", ".h", ".hpp", ".cc", ".cxx")
 
-WAIVER = re.compile(r"//\s*ladruno-lint:\s*(rayleigh-ok|wipe-ok|commit-ok|double-ok|sign-ok)\b(.*)$")
+WAIVER = re.compile(r"//\s*ladruno-lint:\s*(rayleigh-ok|wipe-ok|commit-ok|double-ok|sign-ok|sequence-ok|decl-ok|revert-ok|unknown-ok)\b(.*)$")
 RAYLEIGH = re.compile(r"(?:\bthis\s*->\s*)?\bgetRayleighDampingForces\s*\(\s*\)")
 SINGLETON = re.compile(r"\bstatic\s+([A-Za-z_]\w*)\s*&\s*instance\s*\(")
 RESET_CALL = re.compile(r"\b([A-Za-z_]\w*)::instance\s*\(\s*\)\s*(?:\.|->)\s*reset\w*\s*\(")
@@ -729,6 +791,124 @@ def check_ground_sign(root, rel, used_waivers=None, stamped_only=False):
     return findings
 
 
+# --------------------------------------------------------------------------
+# L7
+# --------------------------------------------------------------------------
+ACCESSOR = re.compile(
+    r"(?:\b\w+\s*(?:->|\.)\s*|\b\w+\s*::\s*)?"
+    r"\b(getResistingForce\w*|getRayleighDampingForces|get\w*Force\w*|getTangentStiff|getInitialStiff"
+    r"|getMass|getDamp)\s*\(")
+ACC_NEEDLES = ("getResistingForce", "getRayleighDampingForces", "Force", "getTangentStiff",
+               "getInitialStiff", "getMass", "getDamp")
+
+
+def _accessor_calls(s):
+    """[(start, end)] spans of accessor calls in statement s (end = index after the ')')."""
+    out = []
+    for m in ACCESSOR.finditer(s):
+        end = _balanced_end(s, m.end() - 1)
+        if end < 0:
+            continue
+        if out and m.start() < out[-1][1]:
+            continue                                  # nested inside a previous call's arguments
+        out.append((m.start(), end + 1))
+    return out
+
+
+def _arith_between(text):
+    """True if `text` (between two calls) joins them arithmetically: an operator + - * and no
+    comma at its own paren level (separate function arguments are not arithmetic)."""
+    t = re.sub(r"->", "", text)
+    depth, lowest, comma_at_lowest = 0, 0, False
+    for ch in t:                                      # the level both calls sit at is the lowest reached
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth < lowest:
+                lowest, comma_at_lowest = depth, False
+        elif ch == "," and depth == lowest:
+            comma_at_lowest = True
+    if comma_at_lowest:
+        return False
+    return re.search(r"[+\-*]", t) is not None
+
+
+def check_sequence(root, rel, used_waivers=None):
+    findings = []
+    used = set() if used_waivers is None else used_waivers
+    for path, raw, cl in _sources(root, stamped_only=False, needles=ACC_NEEDLES):
+        for f in functions(cl):
+            for stmt, a, b in statements(cl, f):
+                calls = _accessor_calls(stmt)
+                if len(calls) < 2:
+                    continue
+                if not any(_arith_between(stmt[calls[k][1]:calls[k + 1][0]]) for k in range(len(calls) - 1)):
+                    continue
+                wl, reason = waiver_at(raw, b, "sequence-ok", above=b - a + 1)
+                if wl is not None:
+                    used.add((str(path), wl))
+                    if len(reason) >= MIN_REASON:
+                        continue
+                    findings.append(f"L7 {rel(path)}:{a + 1}: sequence-ok waiver reason too short")
+                    continue
+                names = ", ".join(ACCESSOR.search(stmt[s:e]).group(1) + "()" for s, e in calls)
+                findings.append(
+                    f"L7 {rel(path)}:{a + 1}: {f.name} combines {names} arithmetically in ONE statement -- "
+                    "the call order is unspecified and each may overwrite the storage an earlier reference "
+                    "points at (inertialForce was exactly 0.0 on GCC, WP-124 C15). Copy the first into an "
+                    "owned Vector/Matrix and apply the rest in separate statements, or waive with "
+                    "'// ladruno-lint: sequence-ok <reason>'")
+    return findings
+
+
+# --------------------------------------------------------------------------
+# L9
+# --------------------------------------------------------------------------
+DEAD_DECL = re.compile(
+    r"(?:(?:const|static|unsigned|signed|long|short|volatile)\s+)*"
+    r"(?P<type>[A-Za-z_][\w:]*)(?:\s*<[^;]*>)?(?:\s+|\s*[*&]+\s*)(?P<name>[A-Za-z_]\w*)\s*(?:=|\(|\{|\[|$)", re.S)
+NOT_A_TYPE = {"return", "delete", "throw", "goto", "case", "new", "else", "do", "typedef", "using",
+              "break", "continue", "sizeof", "co_return", "co_yield", "if", "for", "while", "switch"}
+
+
+def _declared_before(cl, f, line, name):
+    """True if `name` is declared (a parameter or a local) in function f before `line`."""
+    text = " ".join(cl[f.start:line])      # up to, not including, the statement's first line
+    pat = re.compile(r"(?P<t>[A-Za-z_][\w:]*(?:\s*<[^;{}]*>)?)\s*[*&]*\s+[*&]*\b" + re.escape(name)
+                     + r"\s*[=({\[;,)]")
+    return any(mm.group("t") not in NOT_A_TYPE for mm in pat.finditer(text))
+
+
+def check_dead_decl(root, rel, used_waivers=None):
+    findings = []
+    used = set() if used_waivers is None else used_waivers
+    for path, raw, cl in _sources(root, stamped_only=False):
+        for f in functions(cl):
+            for stmt, a, b in statements(cl, f):
+                body = strip_prefix(stmt)
+                if body == stmt or body.endswith("{"):    # not under a control prefix, or a braced block
+                    continue
+                m = DEAD_DECL.match(body)
+                if not m or m.group("type") in NOT_A_TYPE:
+                    continue
+                if not _declared_before(cl, f, a, m.group("name")):
+                    continue            # nothing shadowed (vanilla Domain::initialize forms Ki this way)
+                wl, reason = waiver_at(raw, b, "decl-ok", above=b - a + 1)
+                if wl is not None:
+                    used.add((str(path), wl))
+                    if len(reason) >= MIN_REASON:
+                        continue
+                    findings.append(f"L9 {rel(path)}:{a + 1}: decl-ok waiver reason too short")
+                    continue
+                findings.append(
+                    f"L9 {rel(path)}:{a + 1}: {f.name} re-declares '{m.group('name')}' as the whole unbraced "
+                    "body of an if/else/for/while -- the new variable dies at the ';' and the outer "
+                    f"'{m.group('name')}' is never assigned (ManzariDafalias::ForwardEuler's 'Vector r', WP-158). "
+                    "Assign instead of declaring, or waive with '// ladruno-lint: decl-ok <reason>'")
+    return findings
+
+
 def check_stale_waivers(root, rel, used):
     findings = []
     for path, raw, _ in _sources(root, stamped_only=True, needles=("ladruno-lint",)):
@@ -743,6 +923,16 @@ def check_stale_waivers(root, rel, used):
 # --------------------------------------------------------------------------
 # L3
 # --------------------------------------------------------------------------
+def _quirks_text(root, ledger):
+    """The quirks ledger's text. Since WP-161 the entries are per-WP fragments
+    (Ladruno_implementation/ledger/quirks/*.md) and LEDGER_quirks.md is a stub, so
+    a pointer must match a fragment; before the split, the single file."""
+    frags = sorted((root / "Ladruno_implementation" / "ledger" / "quirks").glob("*.md"))
+    if frags:
+        return "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in frags)
+    return ledger.read_text(encoding="utf-8", errors="replace")
+
+
 def check_pointers(root, rel):
     findings = []
     ledger = root / "Ladruno_implementation" / "LEDGER_quirks.md"
@@ -751,7 +941,7 @@ def check_pointers(root, rel):
         return findings
     if not ledger.exists():
         return [f"L3 {rel(ledger)}: ledger not found"]
-    flat = re.sub(r"\s+", " ", ledger.read_text(encoding="utf-8", errors="replace"))
+    flat = re.sub(r"\s+", " ", _quirks_text(root, ledger))
     quote = re.compile(r'\s*(?:,|and)?\s*"([^"]+)"')
     for guide in guides:
         text = re.sub(r"\s+", " ", guide.read_text(encoding="utf-8", errors="replace"))
@@ -764,6 +954,71 @@ def check_pointers(root, rel):
                 if q.group(1) not in flat:
                     findings.append(f'L3 {rel(guide)}: pointer not found in LEDGER_quirks.md: "{q.group(1)}"')
                 pos = q.end()
+    return findings
+
+
+# --------------------------------------------------------------------------
+# L10
+# --------------------------------------------------------------------------
+INTEGRATOR_BASES = ("IncrementalIntegrator", "TransientIntegrator", "StaticIntegrator")
+OWN_VECTOR = re.compile(r"\bVector\s*\*\s*\w+\s*[;,=]")
+DECLARES_REVERT = re.compile(r"\brevertToLastStep\s*\(")
+
+
+def _class_headers(root):
+    """{class: header path} for every class declared in a header under SRC."""
+    out = {}
+    for h in (root / "SRC").rglob("*.h"):
+        try:
+            text = h.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for m in CLASS_BASE.finditer(text):
+            out.setdefault(m.group(1), h)
+    return out
+
+
+def _clean_text(path):
+    return "\n".join(clean(path.read_text(encoding="utf-8", errors="replace")))
+
+
+def check_revert(root, rel, used_waivers=None):
+    findings = []
+    used = set() if used_waivers is None else used_waivers
+    bases = headers = None
+    for path, raw, cl in _sources(root, stamped_only=True, needles=("::newStep", "::update")):
+        classes = sorted({f.name.rsplit("::", 1)[0].split("::")[-1] for f in functions(cl)
+                          if "::" in f.name and f.name.rsplit("::", 1)[1] in ("newStep", "update")})
+        for cls in classes:
+            if bases is None:
+                bases, headers = _class_bases(root), _class_headers(root)
+            chain, c, seen = [], cls, set()
+            while c in bases and c not in seen and c not in INTEGRATOR_BASES:
+                seen.add(c)
+                chain.append(c)
+                c = bases[c]
+            if c not in INTEGRATOR_BASES:
+                continue                                   # not an integrator
+            hpath = headers.get(cls)
+            if hpath is None or not OWN_VECTOR.search(_clean_text(hpath)):
+                continue                                   # no state of its own
+            if any(k in headers and DECLARES_REVERT.search(_clean_text(headers[k])) for k in chain):
+                continue                                   # it, or a parent, overrides
+            hraw = hpath.read_text(encoding="utf-8", errors="replace").splitlines()
+            decl = next((i for i, l in enumerate(hraw)
+                         if re.search(r"\bclass\s+" + re.escape(cls) + r"\b\s*(?:final\s*)?:", l)), 0)
+            wl, reason = waiver_at(hraw, decl, "revert-ok", above=2)
+            if wl is not None:
+                used.add((str(hpath), wl))
+                if len(reason) >= MIN_REASON:
+                    continue
+                findings.append(f"L10 {rel(hpath)}:{decl + 1}: revert-ok waiver reason too short for {cls}")
+                continue
+            findings.append(
+                f"L10 {rel(hpath)}:{decl + 1}: {cls} advances its own state in newStep()/update() but "
+                "inherits IncrementalIntegrator's no-op revertToLastStep() -- a step retried after a "
+                "failure marches from state that was never committed; override it, or waive with "
+                "'// ladruno-lint: revert-ok <reason>'")
     return findings
 
 
@@ -855,12 +1110,365 @@ def list_waivers(root, rel):
                 print(f"{rel(path)}:{li + 1}: ci-coverage {m.group(1)} {m.group(2).strip()}")
 
 
-def main():
-    ap = argparse.ArgumentParser(description="Quirk-pattern gate (WP-115).")
+def platform_test_files(root):
+    """The test files whose platform branch changes what is TESTED: every
+    collectable `test_*.py` (ANY tier, not just zone_a) that branches on the
+    platform the way L8 detects it, minus those whose annotations are all
+    `portable`. This is the set the local Windows-gates command runs (WP-179,
+    BUILD_GOTCHAS section 4c), so a new
+    win32-only test is picked up the moment it lands, with no list to maintain.
+    Not zone_a-only on purpose: an unmarked or zone_b test with a win32 leg is
+    run by NO CI job at all (Zone-A runs `-m zone_a`), which is a wider gap than
+    the one L8 polices."""
+    out = []
+    for path in _test_files(root):
+        if not path.name.startswith("test_"):
+            continue                  # helpers (wp151_reseat_tools.py, conftest.py) are not collected
+        src = path.read_text(encoding="utf-8", errors="replace")
+        try:
+            if not platform_branches(ast.parse(src)):
+                continue
+        except SyntaxError:
+            out.append(path)          # unparseable: let pytest report it, never drop it
+            continue
+        kinds = {m.group(1) for m in map(CI_COVERAGE.search, src.splitlines()) if m}
+        if kinds and kinds <= {"portable"}:
+            continue
+        out.append(path)
+    return out
+
+
+# --------------------------------------------------------------------------
+# unknown-token (WP-167)
+# --------------------------------------------------------------------------
+# A comment that says unrecognised tokens are let through on purpose.
+IGNORE_COMMENT = re.compile(
+    r"\b(?:unknown|unrecogni[sz]ed|unsupported|unexpected)\s+"
+    r"(?:tokens?|options?|flags?|args?|arguments?|keywords?|switch(?:es)?)\b"
+    r"[^.;]{0,25}?\b(?:silently\s+)?(?:ignored|skipped)\b"
+    r"|\b(?:ignor\w*|skip\w*)\s+(?:the\s+|any\s+|all\s+)?(?:unknown|unrecogni[sz]ed)\s+"
+    r"(?:tokens?|options?|flags?|args?|arguments?|keywords?)\b",
+    re.I)
+TOKEN_LOOP = re.compile(r"\bOPS_GetString\w*\s*\(|\bOPS_GetNumRemainingInputArgs\s*\(|\bargv\s*\[")
+STRING_TEST = re.compile(r"\b(?:strcmp|strcasecmp|_stricmp|stricmp|strncmp)\s*\(|==\s*\"|\.compare\s*\(")
+# Fork parsers that still let an unknown token through, recorded when the rule landed
+# (WP-167): {file: the number of findings it had then}. A RATCHET: an entry may only be
+# removed or its count lowered, by converting the parser to the fail-closed policy
+# (SRC/material/LadrunoOptSpec.h); ci/test_quirk_unknown_token.py pins it to these four
+# paths and counts. A file with MORE findings than its count reports them all (a new
+# silent ladder in a legacy file is not exempt); FEWER is a finding too ("lower the
+# count"), so the list cannot go stale.
+UNKNOWN_TOKEN_LEGACY = {
+    "SRC/element/ladrunoDispBeamColumn/LadrunoDispBeamColumn2d.cpp": 1,   # element ladder, no final else
+    "SRC/element/ladrunoDispBeamColumn/LadrunoDispBeamColumn3d.cpp": 1,   # element ladder, no final else
+    "SRC/recorder/EnergyBalanceRecorder.cpp": 1,                          # recorder ladder, no final else
+    "SRC/recorder/LadrunoMonitorRecorder.cpp": 2,                         # ladder + "ignored (forward-compatible)"
+}
+
+
+def _comments(text):
+    """(line_index, comment_text) for every // and /* */ comment, strings skipped."""
+    out, i, n, line = [], 0, len(text), 0
+    while i < n:
+        c = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        if c == "\n":
+            line += 1
+            i += 1
+        elif c == "/" and nxt == "/":
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            out.append((line, text[i + 2:j]))
+            i = j
+        elif c == "/" and nxt == "*":
+            j = text.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            for k, part in enumerate(text[i + 2:j].split("\n")):
+                out.append((line + k, part))
+            line += text.count("\n", i, j)
+            i = j
+        elif c in "\"'":
+            j = i + 1
+            while j < n and text[j] != c and text[j] != "\n":
+                j += 2 if text[j] == "\\" else 1
+            i = min(j + 1, n)
+        else:
+            i += 1
+    return out
+
+
+class _Unparsed(Exception):
+    pass
+
+
+def _ws(s, i):
+    while i < len(s) and s[i].isspace():
+        i += 1
+    return i
+
+
+def _word(s, i):
+    m = re.compile(r"[A-Za-z_]\w*").match(s, i)
+    return (m.group(0), m.end()) if m else (None, i)
+
+
+def _close(s, i, o, c):
+    """Index just past the bracket matching s[i] == o."""
+    depth = 0
+    for k in range(i, len(s)):
+        if s[k] == o:
+            depth += 1
+        elif s[k] == c:
+            depth -= 1
+            if depth == 0:
+                return k + 1
+    raise _Unparsed()
+
+
+def _stmt(s, i):
+    """(end, chain) of the statement starting at s[i]; chain = (has_else, conds) for an if-chain."""
+    i = _ws(s, i)
+    if i >= len(s):
+        raise _Unparsed()
+    if s[i] == "{":
+        return _close(s, i, "{", "}"), None
+    w, k = _word(s, i)
+    if w == "if":
+        conds = []
+        while True:
+            p = _ws(s, k)
+            if p >= len(s) or s[p] != "(":
+                raise _Unparsed()
+            q = _close(s, p, "(", ")")
+            conds.append(s[p:q])
+            end, _ = _stmt(s, q)
+            w2, k2 = _word(s, _ws(s, end))
+            if w2 != "else":
+                return end, (False, conds)
+            w3, k3 = _word(s, _ws(s, k2))
+            if w3 == "if":
+                k = k3
+                continue
+            end, _ = _stmt(s, k2)
+            return end, (True, conds)
+    if w in ("for", "while", "switch"):
+        p = _ws(s, k)
+        if p >= len(s) or s[p] != "(":
+            raise _Unparsed()
+        return _stmt(s, _close(s, p, "(", ")"))[0], None
+    if w == "do":
+        end, _ = _stmt(s, k)
+        w2, k2 = _word(s, _ws(s, end))
+        if w2 != "while":
+            raise _Unparsed()
+        p = _ws(s, k2)
+        end = _close(s, p, "(", ")")
+        p = _ws(s, end)
+        return (p + 1 if p < len(s) and s[p] == ";" else end), None
+    if w == "try":
+        end, _ = _stmt(s, k)
+        while True:
+            w2, k2 = _word(s, _ws(s, end))
+            if w2 != "catch":
+                return end, None
+            p = _ws(s, k2)
+            end = _stmt(s, _close(s, p, "(", ")"))[0]
+    depth = 0
+    for p in range(i, len(s)):
+        ch = s[p]
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+            if depth < 0:
+                raise _Unparsed()
+        elif ch == ";" and depth == 0:
+            return p + 1, None
+    raise _Unparsed()
+
+
+def _silent_ladders(cl):
+    """Line spans (first, last) of option ladders that are the LAST statement of a token
+    loop and have no final `else`: an unmatched token falls off the end of the ladder and
+    the loop moves on without a word."""
+    text = "\n".join(cl)
+    out = []
+    for m in re.finditer(r"\b(?:while|for)\s*\(", text):
+        try:
+            hdr_end = _close(text, m.end() - 1, "(", ")")
+            b = _ws(text, hdr_end)
+            if b >= len(text) or text[b] != "{":
+                continue
+            b_end = _close(text, b, "{", "}")
+            body = text[b + 1:b_end - 1]
+            if not TOKEN_LOOP.search(text[m.start():b_end]):
+                continue
+            i, last = _ws(body, 0), None
+            while i < len(body):
+                end, chain = _stmt(body, i)
+                last = (i, end, chain)
+                i = _ws(body, end)
+        except _Unparsed:
+            continue
+        if last is None or last[2] is None:
+            continue
+        has_else, conds = last[2]
+        if has_else or sum(1 for c in conds if STRING_TEST.search(c)) < 2:
+            continue
+        first = text.count("\n", 0, b + 1 + last[0])
+        out.append((first, text.count("\n", 0, b + 1 + last[1])))
+    return out
+
+
+def check_unknown_token(root, rel, used_waivers=None):
+    findings = []
+    used = set() if used_waivers is None else used_waivers
+    seen_legacy = {}
+    for path, raw, cl in _sources(root, stamped_only=True):
+        r = rel(path)
+        hits = []
+        for li, body in _comments("\n".join(raw)):
+            if IGNORE_COMMENT.search(body) and "ladruno-lint" not in body:
+                hits.append((li, li, "a comment says unknown tokens are let through"))
+        for a, b in _silent_ladders(cl):
+            hits.append((a, b, "an option ladder ends its token loop with no final `else`, so an "
+                               "unknown token is skipped without a word"))
+        if r in UNKNOWN_TOKEN_LEGACY:
+            seen_legacy[r] = len(hits)
+            if len(hits) <= UNKNOWN_TOKEN_LEGACY[r]:
+                continue                       # at or below its pinned count (too few: below)
+        for a, b, what in hits:
+            wl, reason = waiver_at(raw, b, "unknown-ok", above=b - a + 1)
+            if wl is not None:
+                used.add((str(path), wl))
+                if len(reason) >= MIN_REASON:
+                    continue
+                findings.append(f"unknown-token {r}:{a + 1}: unknown-ok waiver reason too short")
+                continue
+            findings.append(
+                f"unknown-token {r}:{a + 1}: {what}. Fork parsers fail closed (WP-167): declare the "
+                "accepted options (SRC/material/LadrunoOptSpec.h) and refuse any other token, naming "
+                "it; or waive with '// ladruno-lint: unknown-ok <reason>'")
+    for r, pinned in sorted(UNKNOWN_TOKEN_LEGACY.items()):
+        have = seen_legacy.get(r, 0)
+        if have >= pinned:
+            continue
+        if r not in seen_legacy and not (root / "SRC" / "classTags.h").exists():
+            continue                          # a partial scan root (the self-tests' tmp trees)
+        what = ("delete the entry" if have == 0 else f"lower its count to {have}")
+        findings.append(f"unknown-token {r}: UNKNOWN_TOKEN_LEGACY pins {pinned} finding(s), the file "
+                        f"now has {have}; {what} (the list only shrinks)")
+    return findings
+
+
+# --------------------------------------------------------------------------
+# the rule registry (WP-162). One entry per rule, named by slug. `alias` is the
+# pre-WP-162 L-number, accepted by --only for one release.
+# --------------------------------------------------------------------------
+class Rule:
+    __slots__ = ("slug", "alias", "check", "waiver", "scope", "what")
+
+    def __init__(self, slug, alias, check, waiver, scope, what):
+        self.slug, self.alias, self.check, self.waiver = slug, alias, check, waiver
+        self.scope, self.what = scope, what
+
+
+_RULE_LIST = [
+    Rule("rayleigh", "L1", check_rayleigh, "rayleigh-ok", "fork-stamped",
+         "Rayleigh forces accumulated into a buffer that is not a function-local vector seeded "
+         "before the first `getRayleighDampingForces()` call (#562)"),
+    Rule("wipe", "L2", check_wipe, "wipe-ok", "fork-stamped",
+         "a process-wide singleton whose state is not reset on `wipe`"),
+    Rule("pointers", "L3", check_pointers, None, "task guides",
+         'a `Quirks: "..."` pointer in `.claude/skills/*/SKILL.md` that no longer matches the quirks ledger (WP-115)'),
+    Rule("commit", "L4", check_commitstate, "commit-ok", "fork-stamped",
+         "an Element subclass's `commitState()` that does not chain to `Element::commitState()`, "
+         "so betaKc's Kc is never refreshed (WP-118)"),
+    Rule("double-load", "L5", check_double_load, "double-ok", "all element files",
+         "an element that subtracts its load vector in both `getResistingForce()` and the "
+         "`getResistingForceIncInertia()` that calls it (WP-119)"),
+    Rule("ground-sign", "L6", check_ground_sign, "sign-ok", "all element files",
+         "the ground-motion inertia load reaching the residual with the wrong sign; unreadable signs "
+         "are skipped (WP-117)"),
+    Rule("sequence", "L7", check_sequence, "sequence-ok", "all SRC files",
+         "arithmetic combining two element-accessor calls in one statement: unspecified call order "
+         "over shared storage (WP-124 C15, WP-140)"),
+    Rule("ci-coverage", "L8", check_ci_coverage, None, "zone_a tests",
+         "a `zone_a` test that branches on the platform without `# ci-coverage: <kind> <reason>` (WP-143)"),
+    Rule("dead-decl", "L9", check_dead_decl, "decl-ok", "all SRC files",
+         "a declaration as the whole unbraced body of an if/else/for/while that shadows an outer "
+         "variable, `ManzariDafalias::ForwardEuler`'s `Vector r` (WP-158)"),
+    Rule("revert", "L10", check_revert, "revert-ok", "fork-stamped",
+         "a fork integrator with its own `Vector*` march state that inherits the no-op "
+         "`revertToLastStep()` (WP-153, #899)"),
+    # rules added after WP-162 have no L-number alias (alias=None)
+    Rule("unknown-token", None, check_unknown_token, "unknown-ok", "fork-stamped",
+         "a fork parser that lets an unknown token through: a \"unknown tokens are ignored\" "
+         "comment, or an option ladder ending its token loop with no final `else` (WP-167)"),
+]
+RULES = {r.slug: r for r in _RULE_LIST}
+ALIASES = {r.alias: r.slug for r in _RULE_LIST if r.alias}
+# import-time uniqueness: a dict literal would silently keep the LAST of two equal keys
+assert len(RULES) == len(_RULE_LIST), "duplicate rule slug in _RULE_LIST"
+assert len(ALIASES) == sum(1 for r in _RULE_LIST if r.alias), "duplicate rule alias in _RULE_LIST"
+assert len({r.check for r in _RULE_LIST}) == len(_RULE_LIST), "one check function registered twice"
+assert len({r.waiver for r in _RULE_LIST if r.waiver}) == sum(1 for r in _RULE_LIST if r.waiver), \
+    "duplicate waiver token"
+assert {r.waiver for r in _RULE_LIST if r.waiver} == set(re.search(r"\(([^()]*)\)", WAIVER.pattern).group(1).split("|")), \
+    "WAIVER regex and RULES disagree on the waiver tokens"
+assert all(re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", r.slug) for r in _RULE_LIST), "slugs are kebab-case"
+
+
+def resolve_only(spec):
+    """--only value -> (ordered slugs, deprecation notes). Raises ValueError on an unknown name."""
+    slugs, notes = [], []
+    for tok in (t.strip() for t in spec.split(",")):
+        if not tok:
+            continue
+        if tok.lower() in RULES:
+            slug = tok.lower()
+        elif tok.upper() in ALIASES:
+            slug = ALIASES[tok.upper()]
+            notes.append(f"check_quirk_patterns: '{tok}' is a deprecated alias; use '{slug}' "
+                         "(L-numbers are accepted for one release after WP-162)")
+        else:
+            raise ValueError(f"unknown rule '{tok}' (rules: {', '.join(RULES)}; "
+                             f"deprecated aliases: {', '.join(ALIASES)})")
+        if slug not in slugs:
+            slugs.append(slug)
+    return slugs, notes
+
+
+def run_rule(rule, root, rel, used):
+    """A rule's findings, labelled with its slug (the check functions still emit the alias)."""
+    out = rule.check(root, rel, used) if rule.waiver else rule.check(root, rel)
+    if not rule.alias:
+        return out
+    pre = rule.alias + " "
+    return [rule.slug + " " + f[len(pre):] if f.startswith(pre) else f for f in out]
+
+
+def rules_table():
+    """The ci/README.md rule table, generated from RULES (test_quirk_rules.py keeps them equal)."""
+    lines = ["| Rule | Alias (deprecated) | Waiver | Scope | Catches |", "|---|---|---|---|---|"]
+    for r in _RULE_LIST:
+        waiver = f"`// ladruno-lint: {r.waiver} <reason>`" if r.waiver else \
+            ("`# ci-coverage: <kind> <reason>`" if r.slug == "ci-coverage" else "—")
+        lines.append(f"| `{r.slug}` | {r.alias or '—'} | {waiver} | {r.scope} | {r.what} |")
+    return "\n".join(lines)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="Quirk-pattern gate (WP-115; rule slugs WP-162).")
     ap.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent)
-    ap.add_argument("--only", default="L1,L2,L3,L4,L5,L6,L8", help="comma list of L1..L6, L8")
+    ap.add_argument("--only", default=",".join(RULES),
+                    help="comma list of rule slugs (" + ", ".join(RULES) + "); L-numbers are deprecated aliases")
     ap.add_argument("--list-waivers", action="store_true")
-    args = ap.parse_args()
+    ap.add_argument("--list-platform-tests", action="store_true",
+                    help="print the zone_a test files with a non-portable platform branch, one per line, "
+                         "relative to tests/ (the Windows-gates test set, WP-179; BUILD_GOTCHAS section 4c)")
+    ap.add_argument("--rules-table", action="store_true", help="print the markdown rule table for ci/README.md")
+    args = ap.parse_args(argv)
     root = args.root.resolve()
 
     def rel(p):
@@ -869,31 +1477,32 @@ def main():
         except ValueError:
             return str(p)
 
+    if args.rules_table:
+        print(rules_table())
+        return 0
     if args.list_waivers:
         list_waivers(root, rel)
         return 0
-    wanted = {s.strip().upper() for s in args.only.split(",") if s.strip()}
+    if args.list_platform_tests:
+        for path in platform_test_files(root):
+            print(path.resolve().relative_to(root / "tests").as_posix())
+        return 0
+    try:
+        wanted, notes = resolve_only(args.only)
+    except ValueError as e:
+        print(f"check_quirk_patterns: {e}", file=sys.stderr)
+        return 2
+    for n in notes:
+        print(n, file=sys.stderr)
     used = set()
     findings = []
-    if "L1" in wanted:
-        findings += check_rayleigh(root, rel, used)
-    if "L2" in wanted:
-        findings += check_wipe(root, rel, used)
-    if "L4" in wanted:
-        findings += check_commitstate(root, rel, used)
-    if "L5" in wanted:
-        findings += check_double_load(root, rel, used)
-    if "L6" in wanted:
-        findings += check_ground_sign(root, rel, used)
-    if {"L1", "L2", "L4", "L5", "L6"} <= wanted:    # stale detection needs every waiver consumer
+    for slug in wanted:
+        findings += run_rule(RULES[slug], root, rel, used)
+    if {r.slug for r in _RULE_LIST if r.waiver} <= set(wanted):   # stale detection needs every waiver consumer
         findings += check_stale_waivers(root, rel, used)
-    if "L3" in wanted:
-        findings += check_pointers(root, rel)
-    if "L8" in wanted:
-        findings += check_ci_coverage(root, rel)
     for f in findings:
         print(f)
-    print(f"check_quirk_patterns: {len(findings)} finding(s) [{','.join(sorted(wanted))}]")
+    print(f"check_quirk_patterns: {len(findings)} finding(s) [{','.join(wanted)}]")
     return 1 if findings else 0
 
 

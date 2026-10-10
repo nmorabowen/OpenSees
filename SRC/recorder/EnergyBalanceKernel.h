@@ -92,6 +92,14 @@ inline void addElementEnergy(Element *ele, Vector &vel,
     // from BOTH getMass() and getDamp() (and getDamp() internally calls getMass/
     // getTangentStiff), so a reference here would be clobbered by getDamp() below
     // and the kinetic energy would be computed from the damping matrix.
+    // Ladruno WP-163 M1: on P0 of a PartitionedDomain (OpenSeesSP) the element
+    // iterator also yields the ShadowSubdomains. A Subdomain has DOFs and
+    // external nodes but getNodePtrs() == 0 (Subdomain.cpp), so the velocity
+    // gather below null-dereferenced on the first recorded step. A subdomain's
+    // energy lives on its own process; contribute nothing here (the outputs
+    // are accumulated with += below, so leave them untouched).
+    if (ele->isSubdomain() || ele->getNodePtrs() == 0)
+        return;
     Matrix M = ele->getMass();
     const Matrix &C = ele->getDamp();
     const Vector &F = ele->getResistingForce();
