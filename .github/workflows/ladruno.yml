@@ -11,7 +11,7 @@ on:
     # include ready_for_review so marking a draft "ready" re-triggers the build
     types: [opened, synchronize, reopened, ready_for_review]
   schedule:
-    - cron: "0 6 * * *"   # nightly Zone-B / perf (self-hosted)
+    - cron: "0 6 * * *"   # nightly Zone-A; Zone-B/perf only with vars.WINDOWS_RUNNER (WP-180)
   workflow_dispatch:
 
 # Cancel an in-flight run when a newer commit lands on the same branch/PR, so
@@ -300,8 +300,11 @@ jobs:
   # "Zone-B is broken", and conflating them makes the check ambiguous.
   cross-tier-nightly:
     name: Full suite, one process (cross-tier leaks)
+    # WP-180: opt-in via the repository variable WINDOWS_RUNNER=true (see
+    # zone-b-nightly below for why).
     if: >-
       github.repository == 'nmorabowen/OpenSees' &&
+      vars.WINDOWS_RUNNER == 'true' &&
       (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: [self-hosted, windows, ladruno-perf]
     steps:
@@ -345,12 +348,24 @@ jobs:
   # Also runs on manual workflow_dispatch so the self-hosted tier (Zone-B
   # cross-checks, perf, and the ADR-1000 CMS LADRUNO_CMS=ON build+checks) can be
   # validated ON DEMAND once the ladruno-perf runner is (re)registered — instead
-  # of waiting for the 06:00 UTC cron. Needs the self-hosted runner online; when
-  # it is offline the job queues and is cancelled (harmless, but no coverage).
+  # of waiting for the 06:00 UTC cron.
+  #
+  # WP-180: BOTH self-hosted jobs are OPT-IN via the repository variable
+  # WINDOWS_RUNNER=true (Settings -> Secrets and variables -> Actions ->
+  # Variables). Without a runner they are not "harmless": with no ladruno-perf
+  # runner registered (since ~2026-06-20, #934, and by owner choice since
+  # 2026-10-08, WP-179), every nightly AND every workflow_dispatch parked both
+  # jobs QUEUED for GitHub's 24-hour limit before cancelling them. Over
+  # 2026-09-09..10-08 that was 71 runs and ~1,200 run-hours of waiting, against
+  # ~90 h of real Ubuntu work. On 2026-10-09 GitHub paused Actions on this fork
+  # "because of its GitHub Actions usage", which blocked every merge until the
+  # owner re-enabled it. Set the variable only when a runner with the
+  # ladruno-perf label is actually registered.
   zone-b-nightly:
     name: Zone-B + perf (self-hosted)
     if: >-
       github.repository == 'nmorabowen/OpenSees' &&
+      vars.WINDOWS_RUNNER == 'true' &&
       (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: [self-hosted, windows, ladruno-perf]
     steps:
