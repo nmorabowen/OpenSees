@@ -295,6 +295,20 @@ repoints `InstallLocation` / `UninstallString` / `QuietUninstallString` /
 entry and a real install with no entry at all. Same key also makes the wizard's
 default destination "sticky", so the next interactive run offers the temp path.
 
+### 5c. `build.bat` stops in Step 5: "could not copy ... open in another process" (WP-178)
+
+The same lock hits `dist\` itself. A Python or pytest session that imported
+`dist\bin\opensees.pyd`, VS Code holding the MKL DLLs, or a running
+`OpenSees*.exe` blocks Step 5's copy. Until WP-178 the build still **exited 0**
+and left a stale `opensees.pyd` beside fresh exes. That happened on 2026-10-06:
+a test run during a build produced exactly AGENTS.md rule 2's mixed `dist\`.
+
+Now every copy into `dist\` goes through `:copy_or_die`, which exits 1 and
+names the file. Afterwards Step 5 byte-compares the five engine binaries with
+the build outputs (`fc /b`) and fails on any mismatch. The fix is to close the
+holder and rerun; nothing recompiles, so the second run takes a minute. **Do not
+run tests from a worktree's `dist\` while that worktree is building.**
+
 ---
 
 ## 6. Building the all-features installer
