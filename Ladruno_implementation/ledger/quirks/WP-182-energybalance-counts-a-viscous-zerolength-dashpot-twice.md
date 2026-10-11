@@ -2,7 +2,7 @@
 wp: WP-182
 title: "EnergyBalance books a viscous zeroLength dashpot twice (IE and DW): RES = -(dashpot dissipation) (WP-182)"
 date: 2026-10-10
-pr: "#968"
+pr: "#968, #970"
 status: "fixed-by WP-184"
 ---
 ### EnergyBalance books a viscous zeroLength dashpot TWICE — once in IE (its resisting force) and once in DW (its damping tangent) — so RES = −(dashpot dissipation) (WP-182)
@@ -11,7 +11,7 @@ status: "fixed-by WP-184"
 - **Not a fix:** `-doRayleigh 1` makes `getDamp` return the (zero) Rayleigh matrix, which closes the balance but removes the dashpot from the Newton tangent (the residual is still right; `algorithm Linear` would then be wrong).
 - **Workaround/status:** OPEN. Read the dashpot dissipation from IE, subtract `DW_ele` of those elements offline, or exclude them from DW in the kernel (a proper fix books element damping power as `v · (F_incInertia − F − M a)`, not `v^T getDamp() v`).
 
-#### Follow-up (WP-184)
+#### Follow-up (WP-184, #970)
 - **Fixed** in `ebkernel::addElementEnergy` (`SRC/recorder/EnergyBalanceKernel.h`, helper `dampingOutsideResistingForce`). DW now books the power of the damping force the element adds *outside* `getResistingForce()`, `g = getResistingForceIncInertia() - getResistingForce() - M a`. When `g == C v` to round-off (`1e-12` of the element force scale: every Rayleigh-only element) the original `v^T getDamp() v` statement runs unchanged, so those totals are bitwise identical; elements with `C == 0` or `v == 0` never call `getResistingForceIncInertia`. Otherwise DW books `v . g`.
 - **Convention:** a rate-dependent *material's* viscous dissipation is internal energy (like hysteresis): it is in `getStress()`, hence in IE. DW is the work of the damping forces outside the resisting force (Rayleigh, ZeroLength `-dampMats`, ...). For SSI springs (`Parallel(Elastic, Viscous)`) the dashpot dissipation is in the springs' IE (region IE = stored spring energy + dashpot dissipation).
 - **General, not ZeroLength-only:** any element whose `getDamp()` adds `getDampTangent()` of its materials while `getResistingForce()` sums their `getStress()` — `ZeroLength` (`-doRayleigh 0`), `Truss`/`CorotTruss` (always, plus Rayleigh with `-doRayleigh 1`), `TwoNodeLink`, the elastomeric/friction bearings; materials with a non-zero damping tangent: `Viscous`, `ViscousDamper`-family, `Parallel`/`Series` wrappers of them, `PySimple1`/`QzSimple1`/`TzSimple1` radiation dashpots, `BoucWen`, `Maxwell`, ... For `c|v|^a` the old DW was `a` times the dissipation.
