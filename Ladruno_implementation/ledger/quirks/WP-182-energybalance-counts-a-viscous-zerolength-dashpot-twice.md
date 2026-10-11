@@ -1,0 +1,11 @@
+---
+wp: WP-182
+title: "EnergyBalance books a viscous zeroLength dashpot twice (IE and DW): RES = -(dashpot dissipation) (WP-182)"
+date: 2026-10-10
+pr: "#968"
+---
+### EnergyBalance books a viscous zeroLength dashpot TWICE — once in IE (its resisting force) and once in DW (its damping tangent) — so RES = −(dashpot dissipation) (WP-182)
+- **Bites:** every EnergyBalance closure of a model with `zeroLength ... -mat <Viscous or Parallel(…, Viscous)> -doRayleigh 0` (the default): Lysmer dashpots built from zeroLength, NIST soil springs with radiation dashpots (Elastic + Viscous in a `Parallel` material). The dynamics are right; only the energy file is wrong. Measured on an SDOF (m = 1, k = 100, c = 2, pulse; `Ladruno_files/testbed/relative_mass_damping/energy_viscous_zerolength.py`): `RES / D_visc = −1.000000` and `DW / D_visc = 1.000000` for Elastic+Viscous in one element, for `Parallel` with `-factors`, and for a separate dashpot element; `RES` 1e-8 with `-doRayleigh 1`.
+- **Why** (line numbers at fd87e396d): `ebkernel::addElementEnergy` takes `F = getResistingForce()` (IE) and `C = getDamp()` (DW) (`EnergyBalanceKernel.h` l.96-97, 138-148). For `-doRayleigh 0` `ZeroLength::getDamp` returns the sum of the materials' `getDampTangent()` (`ZeroLength.cpp` l.1036-1049), while `getResistingForce` already sums `getStress()` (l.1093-1113), which for `ViscousMaterial` is the viscous force `c|v|^a sgn(v)` (`ViscousMaterial.cpp` l.123-139; `getDampTangent` l.154-162 = `a c |v|^(a-1)`); `ParallelMaterial` sums both the same way (`ParallelMaterial.cpp` l.239-251, 289-302). For `a = 1` the dashpot power is counted exactly twice; for `a != 1` DW is `a` times the power.
+- **Not a fix:** `-doRayleigh 1` makes `getDamp` return the (zero) Rayleigh matrix, which closes the balance but removes the dashpot from the Newton tangent (the residual is still right; `algorithm Linear` would then be wrong).
+- **Workaround/status:** OPEN. Read the dashpot dissipation from IE, subtract `DW_ele` of those elements offline, or exclude them from DW in the kernel (a proper fix books element damping power as `v · (F_incInertia − F − M a)`, not `v^T getDamp() v`).
