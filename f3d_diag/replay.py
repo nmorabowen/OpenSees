@@ -25,3 +25,9 @@ def uz(leg):
     return sum(x[0] for x in nd[-4:]) / 4
 for n, leg in zip(names, legs):
     print(f"final uz {n}: {uz(leg)!r}")
+# Per-GP alpha_in at the first plastic step vs alpha at the flip (snapshot
+# layout from trace.py: 4 nodeDisp + GP1 alpha/alpha_in/stress + 8x(alpha, alpha_in)).
+for n, leg in zip(names, legs):
+    s0, s1 = leg["q"][0:23], leg["q"][23:46]
+    same = [g + 1 for g in range(8) if s1[8 + 2 * g] == s0[7 + 2 * g]]
+    print(f"{n}: GPs with alpha_in(step1) == alpha(flip): {same}")
