@@ -42,12 +42,21 @@
 //     message names the token, the material, its tag and this build's stamp.
 //
 // A frontend that wants to emit a NEW option must wait for the build that
-// declares it; feature detection is `ladrunoBuild` + the `since` field, never
-// "send it and hope it is ignored".
+// declares it. Feature detection (WP-185): a token is supported iff it appears
+// in `ladrunoSchema`'s options[<owner>] -- never "send it and hope it is
+// ignored". `since` is informational provenance (PR-155, ADR19-2b.2c.1, ...),
+// NOT an orderable version: consumers test for PRESENCE, never compare `since`.
+//
+// Every table lives in THIS header and has a kOptTables row (bottom of this
+// file); a .cpp-local table is invisible to `ladrunoSchema`.
+// tests/test_wp185_ladruno_schema.py parses every reportUnknown( call in SRC
+// and fails on one whose owner is not a string literal, whose table is not
+// declared here, or whose (owner, table) pair has no kOptTables row.
 //
 // Usage (one table per parser family; the ladder that consumes the values
 // stays as it was, the table only GATES it):
 //
+//   // in THIS header, plus a kOptTables row {"MyMat", kOpts, count(kOpts)}:
 //   static const ladruno_opt::OptSpec kOpts[] = { {"-rho", 1, "PR-155"}, ... };
 //   const char* opt = OPS_GetString();
 //   const ladruno_opt::OptSpec* s = ladruno_opt::find(kOpts, opt);
@@ -83,7 +92,7 @@ enum { LIST = -1 };
 struct OptSpec {
   const char* name;    // the token, with its leading '-'
   int         nargs;   // values that follow it, or LIST
-  const char* since;   // the fork PR/WP/phase that introduced it
+  const char* since;   // the fork PR/WP/phase that introduced it (informational, not orderable)
 };
 
 inline const char* buildStamp()
@@ -173,6 +182,30 @@ static const OptSpec kLadrunoRCOptions[] = {
   {"-tensStiff", 1, "PR-273"}, {"-tensStiffC", 1, "PR-273"}, {"-tensStiffAlpha", 1, "PR-273"},
   // Phase 3b (#277): crack-band regularization
   {"-autoRegularization", 1, "PR-277"},
+};
+
+// ---------------------------------------------------------------------------
+// Ladruno WP-185 (apeGmsh#1667): the registry `ladrunoSchema` reads. One row
+// per command that parses with a table above: the name it refuses under (the
+// first argument of its reportUnknown call) and the table it gates on. The
+// schema's `options` block is generated from these rows, so a token declared
+// in a table is advertised and a token removed from it disappears; there is no
+// second list. A NEW parser that adopts this policy adds its row here;
+// tests/test_wp185_ladruno_schema.py fails on a reportUnknown call whose
+// (name, table) pair has no row.
+// ---------------------------------------------------------------------------
+struct OptTable {
+  const char*    owner;   // the command/class name, as the parser reports it
+  const OptSpec* opts;
+  size_t         n;
+};
+
+template <size_t N>
+inline size_t count(const OptSpec (&)[N]) { return N; }
+
+static const OptTable kOptTables[] = {
+  {"LadrunoRCConcrete",     kLadrunoRCOptions, count(kLadrunoRCOptions)},
+  {"LadrunoRCFiniteStrain", kLadrunoRCOptions, count(kLadrunoRCOptions)},
 };
 
 }  // namespace ladruno_opt

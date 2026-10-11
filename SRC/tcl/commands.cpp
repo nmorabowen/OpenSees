@@ -690,6 +690,7 @@ static Timer *theTimer = 0;
 
 #include <FileStream.h>
 #include <SimulationInformation.h>
+#include "../interpreter/LadrunoSchema.h"   // Ladruno WP-185 ladrunoSchema
 SimulationInformation simulationInfo;
 SimulationInformation *theSimulationInfoPtr = 0;
 
@@ -735,6 +736,9 @@ version(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 
 int
 ladrunoBuild(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);   // Ladruno build-stamp query
+
+int
+ladrunoSchema(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);   // Ladruno WP-185 capability schema
 
 int
 ladrunoThreads(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);   // Ladruno WP-107 element-loop thread count
@@ -11659,6 +11663,26 @@ ladrunoBuild(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **arg
 #endif
   Tcl_SetResult(interp, buffer, TCL_VOLATILE);
 
+  return TCL_OK;
+}
+
+// Ladruno WP-185 (apeGmsh#1667): classic-Tcl twin of `ladrunoSchema`. Same
+// generator as the DL engines (SRC/interpreter/LadrunoSchema.h), with
+// "engine":"classic" and this engine's command rows. No arguments.
+int
+ladrunoSchema(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
+{
+  if (argc > 1) {
+    opserr << "WARNING ladrunoSchema: takes no arguments, got '" << argv[1]
+           << "' (schema v" << ladruno_schema::kSchemaVersion << ")\n";
+    return TCL_ERROR;
+  }
+  std::string json, err;
+  if (!ladruno_schema::render(ladruno_schema::ENGINE_CLASSIC, json, err)) {
+    opserr << "WARNING ladrunoSchema: " << err.c_str() << "\n";
+    return TCL_ERROR;
+  }
+  Tcl_SetResult(interp, (char *)json.c_str(), TCL_VOLATILE);
   return TCL_OK;
 }
 
