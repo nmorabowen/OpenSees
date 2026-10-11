@@ -175,6 +175,30 @@ static const OptSpec kLadrunoRCOptions[] = {
   {"-autoRegularization", 1, "PR-277"},
 };
 
+// ---------------------------------------------------------------------------
+// Ladruno WP-184 (apeGmsh#1667): the registry `ladrunoSchema` reads. One row
+// per command that parses with a table above: the name it refuses under (the
+// first argument of its reportUnknown call) and the table it gates on. The
+// schema's `options` block is generated from these rows, so a token declared
+// in a table is advertised and a token removed from it disappears; there is no
+// second list. A NEW parser that adopts this policy adds its row here;
+// tests/test_wp184_ladruno_schema.py fails on a reportUnknown call whose
+// (name, table) pair has no row.
+// ---------------------------------------------------------------------------
+struct OptTable {
+  const char*    owner;   // the command/class name, as the parser reports it
+  const OptSpec* opts;
+  size_t         n;
+};
+
+template <size_t N>
+inline size_t count(const OptSpec (&)[N]) { return N; }
+
+static const OptTable kOptTables[] = {
+  {"LadrunoRCConcrete",     kLadrunoRCOptions, count(kLadrunoRCOptions)},
+  {"LadrunoRCFiniteStrain", kLadrunoRCOptions, count(kLadrunoRCOptions)},
+};
+
 }  // namespace ladruno_opt
 
 #endif

@@ -22,7 +22,9 @@
 // Ladruno WP-168 (apeGmsh#1490, panel P9 R10): THE table of fork-only
 // interpreter commands. X-macro: deliberately no include guard. Every includer
 // defines LADRUNO_COMMAND(name, dl, classic), includes this file, and undefines
-// it again. Only the three Ladruno_registerCommands hooks include it:
+// it again. Only the three Ladruno_registerCommands hooks include it to
+// REGISTER (SRC/interpreter/LadrunoSchema.h also reads it, stringifying the
+// columns, to list the rows in `ladrunoSchema`; WP-184):
 //
 //   SRC/tcl/LadrunoCommandsClassicTcl.h          classic Tcl (commands.cpp:
 //                                                 OpenSees.exe, OpenSeesSP, OpenSeesMP)
@@ -78,6 +80,7 @@ LADRUNO_COMMAND("LadrunoTie",                OPS_LadrunoTie,                   L
 
 // ---- provenance, runtime knobs, diagnostics ---------------------------------
 LADRUNO_COMMAND("ladrunoBuild",              OPS_LadrunoBuild,                 ladrunoBuild)
+LADRUNO_COMMAND("ladrunoSchema",             OPS_LadrunoSchema,                ladrunoSchema)                 // WP-184
 LADRUNO_COMMAND("ladrunoThreads",            OPS_LadrunoThreads,               ladrunoThreads)                // WP-107
 LADRUNO_COMMAND("ladrunoMutation",           OPS_LadrunoMutation,              ladrunoMutation)               // ADR-87 D2
 LADRUNO_COMMAND("ladrunoSANISANDReplay",     OPS_LadrunoSANISANDReplay,        ladrunoSANISANDReplay)         // WP-127

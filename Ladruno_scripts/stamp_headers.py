@@ -146,6 +146,7 @@ GLOBS = [
     "SRC/element/LadrunoResponseTokens.h",
     "SRC/interpreter/PythonMPIModule.cpp",
     "SRC/interpreter/LadrunoCommand*.h",   # WP-168 command table + DL registration hooks
+    "SRC/interpreter/LadrunoSchema.h",     # WP-184 ladrunoSchema generator
     "SRC/tcl/LadrunoCommandsClassicTcl.h",   # WP-168 classic-Tcl registration hook
     "SRC/material/nD/LadrunoDamage.h",
     "SRC/utility/LadrunoThreads.*",

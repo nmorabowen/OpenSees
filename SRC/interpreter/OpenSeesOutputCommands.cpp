@@ -41,6 +41,7 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <elementAPI.h>
 #include <Ladruno_mutation.h>                  // Ladruno: ADR-87 D2 mutation gates
 #include <LadrunoThreads.h>                    // Ladruno: WP-107 thread-count knob
+#include "LadrunoSchema.h"                     // Ladruno: WP-184 ladrunoSchema
 #include <cstring>                             // Ladruno: ADR-87 D2 (strncat/strncpy)
 #include <ConstraintHandler.h>                 // Ladruno: ADR-30 P3 tie-force query
 #include <LadrunoProjectionHandler.h>          // Ladruno: ADR-30 P3
@@ -1716,6 +1717,33 @@ int OPS_LadrunoBuild()   // Ladruno
     return 0;
 }
 
+
+// Ladruno WP-184 (apeGmsh#1667): `ladrunoSchema` -> one JSON string describing
+// what this build offers (LadrunoSchema.h has the shape). Takes no arguments;
+// any argument is refused, so a frontend can never mistake a future v1 request
+// for an answer.
+int OPS_LadrunoSchema()   // Ladruno WP-184
+{
+    int numArgs = OPS_GetNumRemainingInputArgs();
+    if (numArgs > 0) {
+        opserr << "WARNING ladrunoSchema: takes no arguments, got " << numArgs
+               << " (schema v" << ladruno_schema::kSchemaVersion << ")
+";
+        return -1;
+    }
+    std::string json, err;
+    if (!ladruno_schema::render(ladruno_schema::ENGINE_DL, json, err)) {
+        opserr << "WARNING ladrunoSchema: " << err.c_str() << "
+";
+        return -1;
+    }
+    if (OPS_SetString(json.c_str()) < 0) {
+        opserr << "WARNING ladrunoSchema: failed to set the schema string
+";
+        return -1;
+    }
+    return 0;
+}
 
 // Ladruno WP-107 (ADR-75b L3-1): `ladrunoThreads` -- the ONE knob for the
 // element state-determination loop's thread count (ADR-75b P-5: MKL solver
