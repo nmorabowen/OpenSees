@@ -43,6 +43,9 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include "OpenSeesCommands.h"
 #include <OPS_Globals.h>
 
+int OPS_RelativeMassDamping(void);   // Ladruno (relativeMassDamping), RelativeMassDamping.cpp
+extern const char *OPS_RelativeMassDampingCmdName;
+
 #define OPS_PYVERSION "3.4.0.4"
 
 static PythonWrapper* wrapper = 0;
@@ -899,6 +902,19 @@ static PyObject *Py_ops_rayleigh(PyObject *self, PyObject *args)
     wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
 
     if (OPS_rayleighDamping() < 0) {
+	opserr<<(void*)0;
+	return NULL;
+    }
+
+    return wrapper->getResults();
+}
+
+// Ladruno (relativeMassDamping)
+static PyObject *Py_ops_relativeMassDamping(PyObject *self, PyObject *args)
+{
+    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
+
+    if (OPS_RelativeMassDamping() < 0) {
 	opserr<<(void*)0;
 	return NULL;
     }
@@ -3393,6 +3409,7 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("block2D", &Py_ops_block2d);
     addCommand("block3D", &Py_ops_block3d);
     addCommand("rayleigh", &Py_ops_rayleigh);
+    addCommand(OPS_RelativeMassDampingCmdName, &Py_ops_relativeMassDamping);   // Ladruno (relativeMassDamping)
     addCommand("wipeAnalysis", &Py_ops_wipeAnalysis);
     addCommand("setTime", &Py_ops_setTime);
     addCommand("remove", &Py_ops_remove);

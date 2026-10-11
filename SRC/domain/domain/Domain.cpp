@@ -91,6 +91,7 @@
 #include <FEM_ObjectBroker.h>
 
 #include <DomainModalProperties.h>
+#include <RelativeMassDamping.h>  // Ladruno (relativeMassDamping)
 
 //
 // global variables
@@ -1074,6 +1075,10 @@ Domain::clearAll(void) {
   // NONE) also covers the case where the next model reaches the SAME outcome --
   // it is a different model and says so.
   ladrunoEleGeneration++;
+
+  // Ladruno (relativeMassDamping): references die with the model (nodes hold
+  // non-owning pointers and are deleted below).
+  OPS_clearAllRelativeMassDampings();
 
   // clean out the containers
   theElements->clearAll();

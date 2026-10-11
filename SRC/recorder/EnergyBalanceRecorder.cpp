@@ -52,6 +52,7 @@
 #include <Matrix.h>
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
+#include <RelativeMassDamping.h>   // Ladruno (relativeMassDamping)
 
 #include <StandardStream.h>
 #include <DataFileStream.h>
@@ -102,6 +103,7 @@ OPS_EnergyBalanceRecorder()
     bool closeOnWrite = false;
     bool v2Layout = false;        // Ladruno ADR-69
     int ownedNodesRegion = -1;    // Ladruno ADR-69 P2: -ownedNodes region tag
+    bool relMassSplit = false;     // Ladruno (relativeMassDamping)
 
     const char *inetAddr = 0;
     int inetPort = 0;
@@ -118,6 +120,10 @@ OPS_EnergyBalanceRecorder()
         else if (strcmp(option, "-v2") == 0) {
             // Ladruno ADR-69: channel-aware layout with element/nodal split
             v2Layout = true;
+        }
+        else if (strcmp(option, "-relativeMassSplit") == 0) {
+            // Ladruno (relativeMassDamping): DW_rel / W_ref columns (-v2)
+            relMassSplit = true;
         }
         else if (strcmp(option, "-scientific") == 0) {
             doScientific = true;
@@ -269,6 +275,12 @@ OPS_EnergyBalanceRecorder()
     EnergyBalanceRecorder* recorder = new EnergyBalanceRecorder(
         *domain, *theOutputStream, echoTimeFlag, regions, v2Layout,
         ownedNodesRegion);
+    if (relMassSplit) {
+        if (!v2Layout)
+            opserr << "EnergyBalanceRecorder: WARNING -relativeMassSplit needs -v2; ignored" << endln;
+        else
+            recorder->setRelativeMassSplit(true);
+    }
 
     return recorder;
 }
@@ -490,6 +502,7 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
     // out-param (null on the legacy path -> zero extra work there).
     double v2_ke_ele = 0., v2_ke_nod = 0., v2_dw_ele = 0., v2_dw_nod = 0.;
     double v2_ms_ke = 0.;
+    double rr_rel_rate = 0., rr_ref_rate = 0.;   // Ladruno (relativeMassDamping)
     std::vector<double> step_region_ke((size_t)numRegions, 0.0);
     std::vector<double> step_region_internal_rate((size_t)numRegions, 0.0);
     std::vector<double> step_region_damping_rate((size_t)numRegions, 0.0);
@@ -534,7 +547,9 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
                 continue;
             double ke = 0., dw = 0., ulw = 0.;
             ebkernel::addNodeEnergy(node, ke, dw, ulw,
-                                    v2Layout ? &v2_ms_ke : 0);
+                                    v2Layout ? &v2_ms_ke : 0,
+                                    chRelMass ? &rr_rel_rate : 0,
+                                    chRelMass ? &rr_ref_rate : 0);
             g_ke += ke; g_damping_rate += dw; g_unbalanced_rate += ulw;
             if (v2Layout) { v2_ke_nod += ke; v2_dw_nod += dw; }
 
@@ -606,6 +621,20 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
             response(col++) = out[ebkernel::V2_E_HG];
         if (chMassScale)
             response(col++) = out[ebkernel::V2_KE_MS];
+        if (chRelMass) {
+            // Ladruno (relativeMassDamping): advisory split of DW_nod
+            if (firstRecord) {
+                rr_dwRel += rr_rel_rate * dT;
+                rr_wRef  += rr_ref_rate * dT;
+            } else {
+                rr_dwRel += 0.5 * (rr_prevRel + rr_rel_rate) * dT;
+                rr_wRef  += 0.5 * (rr_prevRef + rr_ref_rate) * dT;
+            }
+            rr_prevRel = rr_rel_rate;
+            rr_prevRef = rr_ref_rate;
+            response(col++) = rr_dwRel;
+            response(col++) = rr_wRef;
+        }
         response(col++) = out[ebkernel::V2_RES];
         response(col++) = out[ebkernel::V2_ERR];
     }
@@ -712,9 +741,10 @@ EnergyBalanceRecorder::initialize(void)
         // documented limitation as the registry channels).
         chMassScale =
             Ladruno::MassScalingEnergyRegistry::instance().anyActive();
+        chRelMass = forceRelMass || (OPS_numRelativeMassDampings() > 0);   // Ladruno (relativeMassDamping)
         numModelCols = 6 + (chInject ? 1 : 0) + (chLnvd ? 1 : 0)
                      + (chModal ? 1 : 0) + (chHourglass ? 1 : 0)
-                     + (chMassScale ? 1 : 0) + 2;
+                     + (chMassScale ? 1 : 0) + (chRelMass ? 2 : 0) + 2;
 
         // Coverage (ADR-69 P1.5/P1.6): ASDAbsorbingBoundary2D/3D publish
         // both their BOTTOM compliant-base injection (addBaseActions) and
@@ -734,6 +764,7 @@ EnergyBalanceRecorder::initialize(void)
 
     model_acc.reset();
     model_acc2.reset();
+    rr_dwRel = rr_wRef = rr_prevRel = rr_prevRef = 0.0;   // Ladruno (relativeMassDamping)
     region_acc.assign((size_t)numRegions, ebkernel::EnergyAccumulator());
 
     // self-describing column metadata (consumed by XML/binary streams; text
@@ -762,6 +793,7 @@ EnergyBalanceRecorder::initialize(void)
         if (chModal)  theOutputHandler->tag("ResponseType", "E_modal");
         if (chHourglass) theOutputHandler->tag("ResponseType", "E_hg");
         if (chMassScale) theOutputHandler->tag("ResponseType", "KE_ms");
+        if (chRelMass) { theOutputHandler->tag("ResponseType", "DW_rel"); theOutputHandler->tag("ResponseType", "W_ref"); }
         theOutputHandler->tag("ResponseType", "RES");
         theOutputHandler->tag("ResponseType", "ERR%");
     } else {
@@ -790,6 +822,7 @@ EnergyBalanceRecorder::initialize(void)
         if (chModal)  opserr << " E_modal";
         if (chHourglass) opserr << " E_hg";
         if (chMassScale) opserr << " KE_ms";
+        if (chRelMass)    opserr << " DW_rel W_ref";
         opserr << " RES ERR%]";
     } else {
         opserr << " [model: KE IE DW ULW RES ERR%]";

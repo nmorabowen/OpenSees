@@ -114,6 +114,7 @@ extern "C" int         OPS_ResetInputNoBuilder(ClientData clientData, Tcl_Interp
 #include <PartitionedDomain.h>
 #else
 #include <Domain.h>
+#include <RelativeMassDamping.h>  // Ladruno (relativeMassDamping)
 #endif
 
 #include <Information.h>
@@ -1464,6 +1465,8 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);       
     Tcl_CreateCommand(interp, "rayleigh", &rayleighDamping, 
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);       
+    Tcl_CreateCommand(interp, OPS_RelativeMassDampingCmdName, &relativeMassDampingCmd,   // Ladruno (relativeMassDamping)
+		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
     Tcl_CreateCommand(interp, "modalDamping", &modalDamping, 
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);       
     Tcl_CreateCommand(interp, "modalDampingQ", &modalDampingQ, 
@@ -7061,6 +7064,16 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
       return TCL_ERROR;
     }
 
+    return TCL_OK;
+}
+
+// Ladruno (relativeMassDamping): classic-Tcl bridge, as modalProperties
+int
+relativeMassDampingCmd(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_RelativeMassDamping() < 0)
+	    return TCL_ERROR;
     return TCL_OK;
 }
 

@@ -27,6 +27,9 @@
 #include "OpenSeesCommands.h"
 #include <OPS_Globals.h>
 
+int OPS_RelativeMassDamping(void);   // Ladruno (relativeMassDamping), RelativeMassDamping.cpp
+extern const char *OPS_RelativeMassDampingCmdName;
+
 static TclWrapper* wrapper = 0;
 
 TclWrapper::TclWrapper()
@@ -555,6 +558,15 @@ static int Tcl_ops_rayleigh(ClientData clientData, Tcl_Interp *interp, int argc,
     wrapper->resetCommandLine(argc, 1, argv);
 
     if (OPS_rayleighDamping() < 0) return TCL_ERROR;
+
+    return TCL_OK;
+}
+
+// Ladruno (relativeMassDamping)
+static int Tcl_ops_relativeMassDamping(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
+    wrapper->resetCommandLine(argc, 1, argv);
+
+    if (OPS_RelativeMassDamping() < 0) return TCL_ERROR;
 
     return TCL_OK;
 }
@@ -2004,6 +2016,7 @@ TclWrapper::addOpenSeesCommands(Tcl_Interp* interp)
     addCommand(interp,"block2D", &Tcl_ops_block2d);
     addCommand(interp,"block3D", &Tcl_ops_block3d);
     addCommand(interp,"rayleigh", &Tcl_ops_rayleigh);
+    addCommand(interp, OPS_RelativeMassDampingCmdName, &Tcl_ops_relativeMassDamping);   // Ladruno (relativeMassDamping)
     addCommand(interp,"wipeAnalysis", &Tcl_ops_wipeAnalysis);
     addCommand(interp,"setTime", &Tcl_ops_setTime);
     addCommand(interp,"remove", &Tcl_ops_remove);

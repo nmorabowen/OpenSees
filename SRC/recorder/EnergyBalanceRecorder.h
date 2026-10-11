@@ -214,6 +214,16 @@ private:
     bool chModal;                // Ladruno ADR-69 P2: MODAL_WORK -> E_modal
     bool chHourglass;            // Ladruno ADR-69 P2: response probe hit -> E_hg
     bool chMassScale;            // Ladruno ADR-69 P3: SMS registry active -> KE_ms
+    // Ladruno (relativeMassDamping): DW_rel / W_ref advisory split of
+    // DW_nod for nodes carrying a relative-mass-damping reference. Columns present when the
+    // recorder was given -relativeMassSplit, or when a reference exists at
+    // initialize(). Trapezoidal, same first-record rule as the accumulators.
+    bool chRelMass = false;
+    bool forceRelMass = false;
+    double rr_dwRel = 0.0, rr_wRef = 0.0, rr_prevRel = 0.0, rr_prevRef = 0.0;
+  public:
+    void setRelativeMassSplit(bool on) {forceRelMass = on;}
+  private:
     int  numModelCols;           // model-block width (6 legacy or v2 width)
     ebkernel::EnergyAccumulatorV2 model_acc2;
 

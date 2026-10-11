@@ -373,6 +373,10 @@ stopTimer(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 int 
 rayleighDamping(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 
+// Ladruno (relativeMassDamping)
+int
+relativeMassDampingCmd(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
+
 int 
 modalDamping(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 
