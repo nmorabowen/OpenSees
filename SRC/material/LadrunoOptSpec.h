@@ -173,6 +173,8 @@ static const OptSpec kLadrunoRCOptions[] = {
   {"-tensStiff", 1, "PR-273"}, {"-tensStiffC", 1, "PR-273"}, {"-tensStiffAlpha", 1, "PR-273"},
   // Phase 3b (#277): crack-band regularization
   {"-autoRegularization", 1, "PR-277"},
+  // Ladruno C2 (#877): cracked Poisson ratio and the MCFT strut coefficient
+  {"-betaC", 1, "PR-877"}, {"-crackedNu", 1, "PR-877"},
 };
 
 }  // namespace ladruno_opt
