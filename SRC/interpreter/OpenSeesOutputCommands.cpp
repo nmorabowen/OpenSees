@@ -1727,19 +1727,16 @@ int OPS_LadrunoSchema()   // Ladruno WP-184
     int numArgs = OPS_GetNumRemainingInputArgs();
     if (numArgs > 0) {
         opserr << "WARNING ladrunoSchema: takes no arguments, got " << numArgs
-               << " (schema v" << ladruno_schema::kSchemaVersion << ")
-";
+               << " (schema v" << ladruno_schema::kSchemaVersion << ")\n";
         return -1;
     }
     std::string json, err;
     if (!ladruno_schema::render(ladruno_schema::ENGINE_DL, json, err)) {
-        opserr << "WARNING ladrunoSchema: " << err.c_str() << "
-";
+        opserr << "WARNING ladrunoSchema: " << err.c_str() << "\n";
         return -1;
     }
     if (OPS_SetString(json.c_str()) < 0) {
-        opserr << "WARNING ladrunoSchema: failed to set the schema string
-";
+        opserr << "WARNING ladrunoSchema: failed to set the schema string\n";
         return -1;
     }
     return 0;

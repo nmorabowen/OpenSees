@@ -11673,14 +11673,12 @@ ladrunoSchema(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **ar
 {
   if (argc > 1) {
     opserr << "WARNING ladrunoSchema: takes no arguments, got '" << argv[1]
-           << "' (schema v" << ladruno_schema::kSchemaVersion << ")
-";
+           << "' (schema v" << ladruno_schema::kSchemaVersion << ")\n";
     return TCL_ERROR;
   }
   std::string json, err;
   if (!ladruno_schema::render(ladruno_schema::ENGINE_CLASSIC, json, err)) {
-    opserr << "WARNING ladrunoSchema: " << err.c_str() << "
-";
+    opserr << "WARNING ladrunoSchema: " << err.c_str() << "\n";
     return TCL_ERROR;
   }
   Tcl_SetResult(interp, (char *)json.c_str(), TCL_VOLATILE);
