@@ -1,0 +1,38 @@
+# DIAGNOSTIC ONLY (apeGmsh #1675, F3-d). Do not merge. Replays the exact
+# openseespy call stream apeGmsh emits for the I1 triaxial deck against the
+# pinned Linux release (ladruno-v20261005 = 011b02586) and compares
+# ManzariDafalias vs LadrunoSANISAND (init default, and -flipAlphaIn vanilla).
+name: F3-d SANISAND diagnostic
+on:
+  pull_request:
+    branches: [ladruno]
+    paths: ['f3d_diag/**', '.github/workflows/f3d_diag.yml']
+jobs:
+  replay:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Fetch the pinned Linux build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/fork"
+          gh release download ladruno-v20261005 -R nmorabowen/OpenSees \
+            -p ladruno-opensees-linux-ladruno-v20261005.tar.gz -D "$RUNNER_TEMP/fork"
+          tar xzf "$RUNNER_TEMP"/fork/*.tar.gz -C "$RUNNER_TEMP/fork" --strip-components=1
+          cat "$RUNNER_TEMP/fork/BUILD_INFO.txt"
+          purelib=$(python -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
+          cp "$RUNNER_TEMP"/fork/opensees*.so "$purelib/"
+      - name: Replay
+        env:
+          LADRUNO_OPENSEES_QUIET: '1'
+        run: python f3d_diag/replay.py f3d_diag/calls.json 2>/dev/null | tee replay.txt
+      - name: Summary
+        run: |
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat replay.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
