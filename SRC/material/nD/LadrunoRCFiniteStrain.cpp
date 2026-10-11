@@ -33,6 +33,7 @@
 #include <Channel.h>
 #include <MaterialResponse.h>
 #include <Information.h>
+#include <LadrunoMaterialStatus.h>   // Ladruno (ADR-86b/94) - LADRUNO_MATERIAL_REFUSED
 #include <OPS_Globals.h>   // ops_Dt (IMPL-EX) + ops_TheActiveElement (Phase 3b lch latch)
 #include <Element.h>       // Element::getCharacteristicLength()
 #include <string.h>
@@ -314,7 +315,9 @@ int LadrunoRCFiniteStrain::setTrialF(const Matrix& F)
 {
   using namespace logstrain_kernel;
 
-  if (this->regularizeIfNeeded() < 0) { status = STATUS_NO_CONVERGE; return -1; }
+  // ADR-94: a refused trial returns the sentinel, never a bare -1. Every failure return below happens BEFORE the
+  // committed state (histN) is touched: setTrialF writes only Ftrial9/Jdet/Btotal9/strain6/stress6/Dtan/histTr/status.
+  if (this->regularizeIfNeeded() < 0) { status = STATUS_NO_CONVERGE; return LADRUNO_MATERIAL_REFUSED; }
 
   for (int i = 0; i < 3; i++)
     for (int j = 0; j < 3; j++) Ftrial9[3*i+j] = F(i, j);
@@ -326,7 +329,7 @@ int LadrunoRCFiniteStrain::setTrialF(const Matrix& F)
   if (Jdet <= 0.0) {
     opserr << "LadrunoRCFiniteStrain::setTrialF - non-positive det F (" << Jdet
            << "); element inverted/degenerate\n";
-    return -1;
+    return LADRUNO_MATERIAL_REFUSED;
   }
   double Ft[9]; mat3_transpose(Ftrial9, Ft);
   mat3_mul(Ftrial9, Ft, Btotal9);
@@ -347,7 +350,7 @@ int LadrunoRCFiniteStrain::setTrialF(const Matrix& F)
   const double tf  = this->implexTimeFactor();
 
   this->integrate(dox, tf);              // stress6 = Kirchhoff τ, Dtan = ∂τ/∂εᵉ
-  if (status == STATUS_NO_CONVERGE) return -1;
+  if (status == STATUS_NO_CONVERGE) return LADRUNO_MATERIAL_REFUSED;
 
   // Cauchy σ = τ/J and material spatial tangent c = (1/2J)[D:L:B] at B
   double D6[36];
