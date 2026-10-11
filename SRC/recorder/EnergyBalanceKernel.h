@@ -73,6 +73,81 @@ namespace ebkernel {
 // must agree with it.
 static const int NUM_ENERGY_COMPONENTS = 6;
 
+// Ladruno WP-184: decide whether an element's damping matrix C describes the
+// damping forces it adds OUTSIDE getResistingForce(). Returns true (and the
+// power v.g of the actual extra force g = F_incInertia - F - M a in `gRate`)
+// when g differs from C v by more than round-off, i.e. when part of C is the
+// damping tangent of a material whose viscous force is already inside F (or
+// the element's damping force is otherwise not C v). Returns false -- keep the
+// original v^T C v -- when C is zero, v is zero, or g == C v to round-off.
+// MUST be called after C and F have been read: getResistingForceIncInertia()
+// overwrites the scratch storage many elements return from getDamp() and
+// getResistingForce(). Scratch is function-static (the recorders are serial).
+inline bool dampingOutsideResistingForce(Element *ele, const Matrix &C,
+                                         const Vector &F, const Matrix &M,
+                                         bool haveMass, const Vector &vel,
+                                         int numDOF, double &gRate)
+{
+    gRate = 0.0;
+    if (F.Size() != numDOF)
+        return false;
+
+    bool vZero = true, cZero = true;
+    for (int i = 0; i < numDOF && vZero; ++i)
+        if (vel(i) != 0.0) vZero = false;
+    if (vZero)
+        return false;
+    for (int i = 0; i < numDOF && cZero; ++i)
+        for (int j = 0; j < numDOF; ++j)
+            if (C(i, j) != 0.0) { cZero = false; break; }
+    if (cZero)
+        return false;
+
+    static Vector Fs, Cv, Ma, acc;
+    if (Fs.Size() != numDOF) {
+        Fs.resize(numDOF); Cv.resize(numDOF); Ma.resize(numDOF); acc.resize(numDOF);
+    }
+    // Copy F and form C v while their storage is still valid.
+    for (int i = 0; i < numDOF; ++i) {
+        Fs(i) = F(i);
+        double s = 0.0;
+        for (int j = 0; j < numDOF; ++j)
+            s += C(i, j) * vel(j);
+        Cv(i) = s;
+    }
+    Ma.Zero();
+    if (haveMass) {
+        Node **nodes = ele->getNodePtrs();
+        const int nn = ele->getNumExternalNodes();
+        int cnt = 0;
+        for (int i = 0; i < nn && cnt < numDOF; ++i) {
+            const Vector &a = nodes[i]->getAccel();
+            for (int j = 0; j < a.Size() && cnt < numDOF; ++j)
+                acc(cnt++) = a(j);
+        }
+        for (; cnt < numDOF; ++cnt)
+            acc(cnt) = 0.0;
+        Ma.addMatrixVector(0.0, M, acc, 1.0);
+    }
+
+    const Vector &Finc = ele->getResistingForceIncInertia();
+    if (Finc.Size() != numDOF)
+        return false;
+
+    double scale = 0.0, diff = 0.0, rate = 0.0;
+    for (int i = 0; i < numDOF; ++i) {
+        const double g = Finc(i) - Fs(i) - Ma(i);
+        scale = std::fmax(scale, std::fmax(std::fmax(std::fabs(Finc(i)), std::fabs(Fs(i))),
+                                           std::fmax(std::fabs(Ma(i)), std::fabs(Cv(i)))));
+        diff = std::fmax(diff, std::fabs(g - Cv(i)));
+        rate += g * vel(i);
+    }
+    if (diff <= 1.0e-12 * scale)
+        return false;
+    gRate = rate;
+    return true;
+}
+
 // Accumulate the energy contributions of a single element. vel is a caller-
 // supplied scratch vector (>= numDOF) so the hot loop performs no allocation.
 //   kinetic       += 1/2 v^T M v   (instantaneous kinetic energy)
@@ -143,16 +218,43 @@ inline void addElementEnergy(Element *ele, Vector &vel,
         }
     }
 
-    if (haveDamp)
-        for (int i = 0; i < numDOF; ++i)
-            for (int j = 0; j < numDOF; ++j)
-                damping_rate += C(i, j) * vel(i) * vel(j);
-
+    // Ladruno WP-184: IE is integrated BEFORE the damping term (it is a separate
+    // accumulator, so the order does not change its value) because the
+    // residual check below calls getResistingForceIncInertia(), which many
+    // elements write into the same scratch vector getResistingForce() returned.
     if (F.Size() == numDOF) {
         double dot = 0.0;
         for (int i = 0; i < numDOF; ++i)
             dot += F(i) * vel(i);
         internal_rate += dot;
+    }
+
+    if (haveDamp) {
+        // The original accumulation, into a copy of the running total so the
+        // fast path below is bitwise the original statement.
+        double dr = damping_rate;
+        for (int i = 0; i < numDOF; ++i)
+            for (int j = 0; j < numDOF; ++j)
+                dr += C(i, j) * vel(i) * vel(j);
+
+        // Ladruno WP-184: DW is the power of the element's damping forces that
+        // are NOT in getResistingForce() (IE already integrates F.v). For
+        // Rayleigh damping those forces are C v, and v^T C v is right. But an
+        // element whose getDamp() also returns the damping tangent of a
+        // rate-dependent material (ZeroLength/Truss/TwoNodeLink/bearings with
+        // Viscous, ViscousDamper, Parallel(...,Viscous), py/qz/tz dashpots)
+        // already has that material's viscous force inside getStress(), hence
+        // inside F: v^T C v books the dashpot a second time (RES = -dissipation
+        // for a linear dashpot; a x dissipation for c|v|^a).
+        // The force the element actually adds beyond F and inertia is
+        //     g = F_incInertia - F - M a ;
+        // when g agrees with C v to round-off (every Rayleigh-only element) the
+        // original v^T C v is kept, bitwise; otherwise DW books v.g.
+        double gRate = 0.0;
+        if (dampingOutsideResistingForce(ele, C, F, M, haveMass, vel, numDOF, gRate))
+            damping_rate += gRate;
+        else
+            damping_rate = dr;
     }
 }
 
