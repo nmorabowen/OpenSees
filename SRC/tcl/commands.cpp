@@ -114,8 +114,9 @@ extern "C" int         OPS_ResetInputNoBuilder(ClientData clientData, Tcl_Interp
 #include <PartitionedDomain.h>
 #else
 #include <Domain.h>
-#include <RelativeMassDamping.h>  // Ladruno (relativeMassDamping)
 #endif
+#include <RelativeMassDamping.h>  // Ladruno (relativeMassDamping); WP-183: outside the
+                                  // _PARALLEL_PROCESSING #else, OpenSeesSP uses it too
 
 #include <Information.h>
 #include <Element.h>
