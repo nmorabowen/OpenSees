@@ -272,14 +272,21 @@ PenaltyMP_FE::getKi_Force(const Vector &disp, double fact)
 const Vector &
 PenaltyMP_FE::getC_Force(const Vector &disp, double fact)
 {
- opserr << "WARNING PenaltyMP_FE::getC_Force() - not yet implemented\n";
+ // Ladruno WP-183: a constraint carries no damping, so its C*x product is
+ // zero (upstream returned the stale constraint residual *resid; see
+ // getM_Force below).
+ resid->Zero();
  return *resid;
 }
 
 const Vector &
 PenaltyMP_FE::getM_Force(const Vector &disp, double fact)
 {
-  // opserr << "WARNING PenaltyMP_FE::getM_Force() - not yet implemented\n";
+ // Ladruno WP-183: a constraint carries no mass, so its M*x product is
+ // zero. Upstream returned *resid (the last constraint residual) here,
+ // which ArpackSolver::myMv and IncrementalIntegrator::doMv summed into
+ // M*x: wrong eigenvalues / modalDamping after any analysis step.
+ resid->Zero();
  return *resid;
 }
 
