@@ -361,7 +361,8 @@ nDMaterial LadrunoConcrete3D $tag $E $nu $fc $ft $Gf $Gc  \
     <-hardening $qh0 $Hp>                                 \
     <-ductility $Ah $Bh $Ch $Dh>                          \
     <-lch $lch>  <-autoRegularization>  <-implex>         \
-    <-tensionLaw bilinear|exp>  <-epsFc $epsFc | -gcLegacy>  \n    <-flowPotential cdpm2|legacy>
+    <-tensionLaw bilinear|exp>  <-epsFc $epsFc | -gcLegacy>  \
+    <-flowPotential cdpm2|legacy>
 ```
 **2026-09 (ADR-31 §11):** `Gf` drives the CDPM2 **bilinear** tension law by default (`wf = 4.444 Gf/ft`,
 `w = lch·ε_i`; `-tensionLaw exp` = the legacy exponential). `Gc` is the **physical** compressive fracture
@@ -401,18 +402,20 @@ in the `BeamFiber` (confined-fiber) view; it has no `Parameter` hook.
 ### 17b. Sub-incrementation, dead points and the honest refusal (WP concrete3d-hang-diagnosis, [#877](https://github.com/nmorabowen/OpenSees/pull/877))
 
 ```tcl
-nDMaterial LadrunoConcrete3D $tag ... <-subIncr deterministic|adaptive>  <-deadThreshold $omega | -noDead>  <-verbose>
+nDMaterial LadrunoConcrete3D $tag ... <-subIncr deterministic|adaptive|refuse>  <-deadThreshold $omega | -noDead>  <-verbose>
 ```
 * **`-subIncr deterministic` (DEFAULT since this WP; `adaptive` reproduces the earlier numbers).** The local return of a trial whose
   yield overshoot is `f_tr` is ALWAYS integrated in `n = clamp(ceil(f_tr/0.3), 1, 64)` equal pieces chained from the committed state
   (`n = 1` is the direct return); a piece failure redoes the chain with `2n` then `4n` pieces, then a bounded adaptive rescue, then the
-  honest refusal. The map is a function of the (state, increment) only, but it is **discontinuous** where `n` changes and wherever the
-  ladder switches level: measured jumps 0.4-1.5 % of `|sigma_eff|` (kappa_p up to ~2 %) at `n` boundaries and 1-2 % of `|sigma_eff|`
-  with kappa_p jumps of 1-2.5 near first cracking, where the first plastic tensile piece fails its direct return in ~30 % of 1e-12
-  perturbations (Newton at its convergence edge in the locally indefinite tension regime). Nominally identical Gauss points therefore
+  honest refusal. The map is a function of the (state, increment) only, but it is **discontinuous** where `n` changes (jumps 0.4-1.5 % of
+  `|sigma_eff|`, kappa_p up to ~2 %), and in tension near first cracking it shows **dense ladder switching** (third review of #877,
+  MAJOR 1; fix pending): the direct tension return itself fails intermittently once kappa_p passes about 2, so which ladder level serves
+  an increment is a coin flip on rounding (hundreds of level flips in 4000 points at 1e-9 relative spacing; effective-stress jumps up to
+  0.3 MPa at a flip; 30-97 % of first-crack points fail the direct return in 2e-6-wide windows). Nominally identical Gauss points therefore
   need not return bit-identical states (EAS alpha ~1e-11, hosting parity ~1e-3). The **reported tangent is the chain's own algorithmic
-  tangent** (accumulated forward through the pieces incl. the kappa history; 1e-8 vs finite differences with `n` pinned), not the last
-  piece's (which was 6/41/121 % off at n = 2/4/64). The `substeps` response counts the forced chains too (every call with `n >= 2`),
+  tangent** (accumulated forward through the pieces incl. the kappa history; 1e-8 vs finite differences with `n` AND the ladder level
+  pinned, where the level is stable), not the last piece's (which was 6/41/121 % off at n = 2/4/64). Where the ladder is dense (virgin
+  tension) a finite-difference leg straddles a level and the kernel self-check cannot see it (review 3, MAJOR 2). The `substeps` response counts the forced chains too (every call with `n >= 2`),
   not only failure rescues.
 * **Dead points (`omega_dead`, default 0.998; parser `-deadThreshold` takes a committed-damage value in `[0.99, 1)`; `-noDead` disables
   the treatment).** Decided on the COMMITTED damage. `omega_t >= omega_dead` (the crack is fully open): the tensile spectral part of the
@@ -428,7 +431,9 @@ nDMaterial LadrunoConcrete3D $tag ... <-subIncr deterministic|adaptive>  <-deadT
   (elements that forward it - `LadrunoBrick`, `LadrunoQuad`, `LadrunoSolidShell`, `LogStrain` - cut the step at the trial) and
   `commitState` declares the refusal to `Domain::commit()` through the WP-99 counter (element-independent). This holds under **`-implex`
   and under explicit integrators too**: a failed implicit return used to fall back silently to the elastic trial and commit it; it now
-  refuses, and the recoverable alternative under `-implex` is `-implexControl`. Throwaway hourglass-shadow copies are committed inside a
+  refuses. `-implexControl` is NOT an option of this material (the parser rejects it, `unknown option`): under `-implex` the
+  implicit companion of the IMPL-EX pair runs at TRIAL time inside `returnMap` (not at commit), so a trial refuses whenever that implicit
+  solve fails, and the global step cut is the recovery (see the ADR-31 amendment, section 16). Throwaway hourglass-shadow copies are committed inside a
   `LadrunoProbeCommitScope` so their refusals cannot fail the real commit (`LadrunoBrick`, `LadrunoQuad`; guarded by
   `tests/test_ladruno_probe_commit_guard.py`).
 
@@ -441,16 +446,16 @@ nDMaterial LadrunoConcrete3D $tag ... <-subIncr deterministic|adaptive>  <-deadT
 | `Gf, Gc` | tensile / compressive fracture energy, crack-band (positional) | required (`>0`) |
 | `-e` | deviatoric eccentricity, **∈ (0.5, 1] (hard convexity bound)** | derived from `-kupfer` |
 | `-kupfer` | equibiaxial/uniaxial ratio `fcc/fc` (sets `e`) | 1.16 (Kupfer → `e≈0.52`) |
-| `-Df` | dilatancy (non-associated flow); `<1` realistic, `=1` associated | 1.0 (set `<1`, e.g. 0.85) |
+| `-Df` | dilatancy (non-associated flow, CDPM2 dilation constant); `<1` realistic, `=1` associated | 0.85 (B3; the pre-B3 value was 1.0) |
 | `-As` | softening ductility (`x_s` in compression = the confinement-ductility hook); `≥1` | 2.0 |
 | `-rho` | mass density | 0 |
-| `-hardening qh0 Hp` | initial yield fraction; hardening modulus | 0.3, 0.5 |
+| `-hardening qh0 Hp` | initial yield fraction; hardening modulus | 0.3, 0.01 (B3; the pre-B3 Hp was 0.5) |
 | `-ductility Ah Bh Ch Dh` | confinement-ductility (Eq.33) | 0.08, 0.003, 2.0, 1e-6 (CDPM2 table) |
 | `-lch` | fixed crack-band characteristic length (length units) | 1.0 |
 | `-autoRegularization` | pull `lch` from the parent element each step (mesh-objective) | off |
 | `-implex` | engage **Tier-2 IMPL-EX** (degraded-elastic secant; SPD on single-sign states) | off (Tier-1) — P3 #309 |
 | `-eta` | Duvaut–Lions viscosity, `beta = dt/(eta+dt)` off `ops_Dt`; Tier-1 only (inert under `-implex` / in `BeamFiber`) | 0.0 (inviscid) — shipped #316/#318 |
-| `-subIncr deterministic\|adaptive` | return-map sub-incrementation: `n = ceil(f_tr/0.3)` pieces always applied + failure ladder / the failure-driven halving path (§17b) | `deterministic` — [#877](https://github.com/nmorabowen/OpenSees/pull/877) (DEFAULT CHANGE) |
+| `-subIncr deterministic\|adaptive\|refuse` | return-map sub-incrementation: `n = ceil(f_tr/0.3)` pieces always applied + failure ladder / the failure-driven halving path / `refuse` = the direct return only, a failed return is a refusal (§17b, ADR-31 §16) | `deterministic` — [#877](https://github.com/nmorabowen/OpenSees/pull/877) (DEFAULT CHANGE) |
 | `-deadThreshold` | committed damage at/above which a point is dead (tension cutoff on the plastic flow / crushed freeze); `[0.99, 1)` | 0.998 — [#877](https://github.com/nmorabowen/OpenSees/pull/877) |
 | `-noDead` | disable the dead-point treatment (A/B knob; reproduces the pre-treatment runaway) | off — [#877](https://github.com/nmorabowen/OpenSees/pull/877) |
 
@@ -623,8 +628,8 @@ mm-scale. Compression-negative internally; enter `fc`, `ft` positive.
 
 ---
 
-14. **The deterministic sub-incrementation is discontinuous, on purpose.** See §17b: the jump between two consistent
-    integrations (n vs n + 1 pieces, or two ladder levels) is 0.4-2 % of `sigma_eff`; tests that pin equality of nominally identical
+14. **The deterministic sub-incrementation is discontinuous.** See §17b: the jump between two consistent
+    integrations (n vs n + 1 pieces) is 0.4-2 % of `sigma_eff`, and in tension near first cracking the ladder switches densely (review 3, MAJOR 1, fix pending); tests that pin equality of nominally identical
     Gauss points (EAS alpha, hosting parity, F vs Q@F objectivity) derive their tolerance from it. The chain's tangent is exact for a
     fixed `n`; a finite-difference reference must pin `n` (`Params::subIncrForceN`, oracle `subincr_force_n`).
 

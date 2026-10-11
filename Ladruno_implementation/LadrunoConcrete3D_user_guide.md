@@ -77,15 +77,15 @@ confined-fiber (`BeamFiber`) view; the parser warns in both cases.
 | `Gf, Gc` | tensile / compressive fracture energy, crack-band (positional) | required (`>0`) |
 | `-e` | deviatoric eccentricity, **∈ (0.5, 1] (hard convexity bound)** | derived from `-kupfer` |
 | `-kupfer` | equibiaxial/uniaxial strength ratio `fcc/fc` (sets `e`) | 1.16 (Kupfer → `e≈0.52`) |
-| `-Df` | dilatancy (non-associated flow); `<1` realistic, `=1` max | 1.0 (set `<1`, e.g. 0.85) |
+| `-Df` | dilatancy (non-associated flow); `<1` realistic, `=1` max | 0.85 |
 | `-As` | softening ductility (`x_s` in compression); `≥1` | 2.0 |
 | `-rho` | mass density | 0 |
-| `-hardening qh0 Hp` | initial yield fraction `qh0`; hardening modulus `Hp` | 0.3, 0.5 |
+| `-hardening qh0 Hp` | initial yield fraction `qh0`; hardening modulus `Hp` | 0.3, 0.01 |
 | `-ductility Ah Bh Ch Dh` | confinement-ductility (Eq.33) — **calibrate from peak strains** | 0.08, 0.003, 2.0, 1e-6 |
 | `-lch` / `-autoRegularization` | crack-band length: fixed / from the element | 1.0 / off |
 | `-implex` | Tier-2 IMPL-EX robustness (degraded-elastic SPD secant; reads `ops_Dt`) | off (Tier-1) |
 | `-eta` | Duvaut–Lions viscoplastic relaxation time `η`, **Tier-1 only** (`β=dt/(η+dt)`; reads `ops_Dt`; inert — with a warning — under `-implex` and in the `BeamFiber` view) | 0 (inviscid) |
-| `-subIncr deterministic\|adaptive` | return-map sub-incrementation: always `n=ceil(f_tr/0.3)` pieces + a failure ladder, or the failure-driven halving path (**default changed** to `deterministic`; `adaptive` reproduces the earlier numbers) | `deterministic` |
+| `-subIncr deterministic\|adaptive\|refuse` | return-map sub-incrementation: always `n=ceil(f_tr/0.3)` pieces + a failure ladder, the failure-driven halving path (**default changed** to `deterministic`; `adaptive` reproduces the earlier numbers), or `refuse` = the direct return only, a failure cuts the global step (opt-in; unusable on 3D crack-band models with embedded rebar) | `deterministic` |
 | `-deadThreshold` / `-noDead` | committed damage `[0.99, 1)` at which a point is treated as dead (tensile part of the effective stress carried elastically, crushed point frozen); `-noDead` disables | 0.998 |
 
 **Calibration notes:**
@@ -147,7 +147,7 @@ no runtime *enforcement*, but the parser **prints a warning at material creation
 including `-implex` and explicit integrators (it used to fall back silently to the elastic trial and commit it). Elements that
 forward the return code cut the step; a host that discards it (vanilla `stdBrick`) is stopped at commit and the model must be
 restarted from the last checkpoint. The deterministic sub-incrementation is discontinuous at its piece-count boundaries (0.4-2 % of the
-effective stress), and a dead (fully cracked or crushed) point carries its tensile effective stress elastically instead of flowing
+effective stress) and switches ladder levels densely in tension near first cracking (review 3, MAJOR 1; fix pending), and a dead (fully cracked or crushed) point carries its tensile effective stress elastically instead of flowing
 (see `LadrunoConcrete3D_guide.md` §17b).
 
 ## 6. Worked example skeleton

@@ -600,8 +600,10 @@ near-axis cap returns had no regular solution, and uniaxial compression reached 
    CDPM2's `g` is conical at ρ = 0 too (OOFEM also keeps tension + compression vertex returns).
 3. **Sub-incrementation** (OOFEM `performPlasticityReturn`): a failed direct return halves the strain increment
    (depth 10) and integrates the pieces; the tangent is the last piece's. 120k-trial fuzz: 0 failures (direct
-   return alone: 30 %).
-4. `-flowPotential legacy` restores the v1 flow **and** disables sub-incrementation (byte-identical pre-B1).
+   return alone: 30 %). *(Superseded by section 16: the default is now the deterministic chain and its tangent is
+   the chain's own, not the last piece's.)*
+4. `-flowPotential legacy` restores the v1 flow (byte-identical pre-B1 flow). *(Corrected by section 16: it no
+   longer disables sub-incrementation; `maxSubIncr = 10` applies to both flows since the #877 follow-up.)*
 5. Gate results: con2dpm2 plasticity == an independent OOFEM transcription at equal sub-steps; Kupfer peak
    −32.79 MPa at −2.20 mm/m (paper −32.81 at −2.19). The Fig.9 post-peak needs `εfc ≈ 6e-4` (−30.0 at −3 mm/m);
    with the paper's stated 1e-4 OOFEM's own CDPM2 gives −13 MPa there, so the figure's `εfc` is not 1e-4.
@@ -694,3 +696,54 @@ FD of the C++ stress ≤ 8e-7. All earlier fixture blocks are byte-identical (th
 With the tension-hardened effective surface (qh2), the strut of a cracked panel can exceed fc (1.22 fc on the fixed
 PV20 path, which is past the test's strains). The element-level PV20 rerun decides whether that matters for τ_u.
 The element battery and the punching test pin `-tcTemper none` together with the other legacy flags.
+
+## 16. Amendment 2026-10 — sub-incrementation modes, dead points, the probe scope, refusals (PR #877, WP `concrete3d-hang-diagnosis`)
+
+Records what #877 ships and where the third adversarial review of it (2026-10-10, `reports/reviews/pr877_review3`) found the
+shipped shape short. It corrects section 12 items 3 and 4 above.
+
+**`-subIncr deterministic|adaptive|refuse`** (`Params::subIncrMode` 0 / 1 / 2).
+- `deterministic` (0, DEFAULT): the return of a plastic trial with yield overshoot `f_tr` is always integrated in
+  `n = clamp(ceil(f_tr/0.3), 1, 64)` equal pieces chained from the committed state; a piece failure redoes the chain with `2n`
+  then `4n` pieces, then a bounded adaptive rescue, then the refusal. The reported tangent is the chain's own algorithmic tangent
+  (`PieceSens`), not the last piece's. Applies to both flow potentials (`-flowPotential legacy` no longer disables it).
+- `adaptive` (1): the direct return first, then failure-driven halving/doubling (the pre-#877 numbers, opt-in).
+- `refuse` (2): the direct backward-Euler return only (the map is exactly `maxSubIncr = 0`); a failed return is a refusal and the
+  caller's global step cut is the recovery. Opt-in. Measured against `deterministic` (handoff 2026-10-09): equivalent where cracking is mild
+  (K&R, PV20, confined columns), unusable on 3D crack-band models with embedded rebar (C3: 14.4 mm / 308 escalations vs 34.9 mm;
+  B1: 1.69 mm in 3600 s, 554 global failures).
+- **Known defect (review 3, MAJOR 1; fix pending):** the map is discontinuous at `n` boundaries and, in tension near first cracking,
+  shows **dense ladder switching**: the direct tension return fails intermittently once kappa_p passes about 2 (non-convergence of the
+  inner solvers; the globalized Newton's iterates leave the admissible set), so which ladder level serves an increment is a coin flip on
+  rounding. Consequences: `refuse` turns the coin flips into global step cuts; the chain tangent is exact only where the level is stable
+  and the kernel check (C8) and the B4 gate are blind where it is not (MAJOR 2); a small share of first-crack states have a nominal
+  damaged tangent 0.56-1.6 off finite differences (MAJOR 3, cause not isolated). Ship `deterministic`; do not change the default to `refuse`
+  and do not make the last piece's tangent the default until the direct tension return is fixed (a bracketed or projected scalar solve in
+  the plastic multiplier, with a deterministic vertex-versus-regular selection) and B1/C3 are re-measured with both tangents.
+
+**Dead points: `-deadThreshold omega` / `-noDead`** (`Params::omegaDead`, default 0.998, `[0.99, 1)`). Decided on the COMMITTED damage.
+`omega_t >= omega_dead`: the tensile spectral part of the trial effective stress is carried elastically (no plastic flow from tension,
+kappa_p frozen from tension) and the return runs on the compressive remainder, so a cracked point keeps its compressive strut.
+`omega_c >= omega_dead`: strict freeze (kappa_p, plastic strain, histories frozen, damages at the floor). The same rules hold in the
+`BeamFiber` view. It caps the runaway of the effective stress; it does not cure its cause (section 14).
+
+**Refusal under every tier.** A local return that cannot integrate the increment REFUSES: `setTrialStrain` returns
+`LADRUNO_MATERIAL_REFUSED` (never the elastic-trial fallback), and `commitState` declares the refusal to `Domain::commit()` through the
+WP-99 counter. This holds in Tier-1, under `-implex` and under explicit integrators. Hosts that forward the sentinel (`LadrunoBrick`,
+`LadrunoQuad`, `LadrunoSolidShell`, `LogStrainNDMaterial`, `TenNodeTetrahedron`) cut the step at the trial; a host that discards it
+(vanilla `stdBrick`, `ASDShellQ4` / `LayeredShellFiberSection` forward summed codes) is stopped only at commit, after the nodes and
+sibling Gauss points have committed, so the WP-99 latch is terminal there, not a cut. Contract notes: the host side is sentinel-only (ADR-94
+R5; `LadrunoBrick` checks `== LADRUNO_MATERIAL_REFUSED` and nothing else), and materials convert their failures (`StagedStrain
+-maxStrain`, `LadrunoRCConcrete`, `LadrunoRCFiniteStrain`). `LadrunoQuad`'s pre-existing `!= 0` test on its setTrialStrain site is outside
+ADR-94's pin and unchanged.
+
+**Real IMPL-EX behaviour (correcting register 32).** There is no commit-time implicit companion. Under `-implex` the implicit solve of
+the IMPL-EX pair (return map plus the P2 damage update) runs at TRIAL time inside `returnMap`; the explicit extrapolated stress and the
+degraded-elastic secant are what the trial reports, and the implicit result is what is stored for the next extrapolation. A trial therefore
+refuses whenever the implicit solve fails, and `refuse` gives it no chain. `-implexControl` is not an option of this material (the parser
+rejects it). A trial-versus-commit rule for sub-incrementation would require moving the implicit solve into `commitState`.
+
+**`LadrunoProbeCommitScope`** (`LadrunoMaterialStatus.h`): throwaway material copies (the hourglass-shadow probes of `LadrunoBrick` and
+`LadrunoQuad`) are committed inside a scope during which `ladrunoNoteCommitRefusal()` is a no-op, so a refusal in a probe cannot fail the
+real commit. Nest-safe, cleared on wipe (`OPS_clearAllNDMaterial`), guarded by `tests/test_ladruno_probe_commit_guard.py`. The depth
+counter is a plain `static int` (not thread-safe, like the commit counter).

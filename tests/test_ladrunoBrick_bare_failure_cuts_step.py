@@ -110,11 +110,9 @@ def test_brick_is_sentinel_only_and_asd_advisory_codes_stay_accepted():
     """No blanket failure test on a setTrialStrain return (the ASDConcrete3D advisory -10/-1000 are
     accepted), and no bare -1 test either: the brick cuts on the sentinel only."""
     src = _src("SRC", "element", "ladrunoBrick", "LadrunoBrick.cpp")
-    assert not re.findall(r"setTrialStrain\([^)]*\)\s*(?:
-\s*)?(?:<\s*0|!=\s*0|==\s*-1)(?!\w)", src)
+    assert not re.findall(r"setTrialStrain\([^)]*\)\s*(?:\n\s*)?(?:<\s*0|!=\s*0|==\s*-1)(?!\w)", src)
     assert "ladrunoBrickMustCut" not in src and "lastTrialRc" not in src
-    assert len(re.findall(r"setTrialStrain\([^)]*\)\s*(?:
-\s*)?==\s*LADRUNO_MATERIAL_REFUSED", src)) == 6
+    assert len(re.findall(r"setTrialStrain\([^)]*\)\s*(?:\n\s*)?==\s*LADRUNO_MATERIAL_REFUSED", src)) == 6
 
 
 def test_producers_return_the_sentinel_not_a_bare_minus_one():
