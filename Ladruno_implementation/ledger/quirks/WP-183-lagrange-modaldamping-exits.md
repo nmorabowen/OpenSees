@@ -2,6 +2,7 @@
 wp: WP-183
 title: "modalDamping under constraints Lagrange exits: DOF_Group::getEigenvectors: 0 Node Pointer"
 date: 2026-10-11
+pr: "#969"
 ---
 ### `modalDamping` + `constraints Lagrange` kills the process with `DOF_Group::getEigenvectors: 0 Node Pointer`
 - **Bites:** the first transient step after `modalDamping` when the handler is Lagrange (any MP or SP).

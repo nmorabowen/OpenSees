@@ -2,6 +2,7 @@
 wp: WP-183
 title: "eigen under Penalty / Auto / Lagrange constraints returns ~1e-3 or 1.0 eigenvalues (fixed by WP-183)"
 date: 2026-10-11
+pr: "#969"
 status: "fixed-by WP-183"
 ---
 ### `eigen` after gravity (or after a Linear analysis) returns eigenvalues ~ +-1e-3 under `constraints Penalty` / `Auto` / `Lagrange`; `-fullGenLapack` / `-feast` return lambda ~ 1 even at K0; `modalDamping` built on such an eigen is ~50 % off (fixed by WP-183)
