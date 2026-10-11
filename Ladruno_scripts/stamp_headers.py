@@ -57,6 +57,7 @@ GLOBS = [
     "SRC/element/bezierTetrahedron/*.cpp", "SRC/element/bezierTetrahedron/*.h",
     "SRC/element/solidTransformation/*.cpp", "SRC/element/solidTransformation/*.h",
     "SRC/utility/profiler/*.cpp", "SRC/utility/profiler/*.h",
+    "SRC/domain/node/RelativeMassDamping.*",   # relativeMassDamping
     "SRC/analysis/analysis/LadrunoComplexEigen.*",
     "SRC/analysis/analysis/LadrunoDampingAssembler.*",
     "SRC/analysis/analysis/LadrunoModalResponse.*",

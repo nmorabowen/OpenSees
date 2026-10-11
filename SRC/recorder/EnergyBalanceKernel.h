@@ -164,11 +164,19 @@ inline void addElementEnergy(Element *ele, Vector &vel,
 // published its injected ΔM, the fictitious share 1/2 v^T ΔM v is accumulated
 // into *msKE. MEASURE-only: the injected ΔM is already inside Node::getMass()
 // (counted in `kinetic` above), so nothing is ever added to the balance here.
+// Ladruno (relativeMassDamping): when `dwRelRate` / `wRefRate` are
+// non-null and the node carries a relative-mass-damping reference, the nodal damping power
+// v^T C (v - v_ref) is ALSO split into the relative dissipation
+// (v - v_ref)^T C (v - v_ref) >= 0 and the power delivered to the reference
+// v_ref^T C (v - v_ref). Advisory: the split is inside damping_rate (no
+// rebucket); nodes without a reference contribute nothing to either.
 inline void addNodeEnergy(Node *node,
                           double &kinetic,
                           double &damping_rate,
                           double &unbalanced_rate,
-                          double *msKE = 0)
+                          double *msKE = 0,
+                          double *dwRelRate = 0,
+                          double *wRefRate = 0)
 {
     const Vector &vel = node->getVel();
     const int n = vel.Size();
@@ -180,10 +188,31 @@ inline void addNodeEnergy(Node *node,
                 kinetic += 0.5 * M(i, j) * vel(i) * vel(j);
 
     const Matrix &C = node->getDamp();
-    if (C.noRows() == n && C.noCols() == n)
-        for (int i = 0; i < n; ++i)
-            for (int j = 0; j < n; ++j)
-                damping_rate += C(i, j) * vel(i) * vel(j);
+    if (C.noRows() == n && C.noCols() == n) {
+        if (node->getMassDampingReference() == 0) {
+            for (int i = 0; i < n; ++i)
+                for (int j = 0; j < n; ++j)
+                    damping_rate += C(i, j) * vel(i) * vel(j);
+        } else {
+            // Ladruno (relativeMassDamping): the nodal damping force is
+            // C (v - v_ref(t)); its power on the node is v^T C (v - v_ref). This
+            // equals the dissipation relative to the reference,
+            // (v - v_ref)^T C (v - v_ref) >= 0, plus the power delivered to the
+            // reference, v_ref^T C (v - v_ref). Booking the total keeps the
+            // closure ULW = KE + IE + DW exact.
+            const Vector &vrel = node->getMassDampingRelativeVel(vel);
+            for (int i = 0; i < n; ++i)
+                for (int j = 0; j < n; ++j)
+                    damping_rate += C(i, j) * vel(i) * vrel(j);
+            if (dwRelRate != 0 && wRefRate != 0)
+                for (int i = 0; i < n; ++i)
+                    for (int j = 0; j < n; ++j) {
+                        const double cv = C(i, j) * vrel(j);
+                        *dwRelRate += vrel(i) * cv;
+                        *wRefRate  += (vel(i) - vrel(i)) * cv;
+                    }
+        }
+    }
 
     const Vector &Pext = node->getUnbalancedLoad();
     if (Pext.Size() == n)

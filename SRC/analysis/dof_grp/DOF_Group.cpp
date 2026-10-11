@@ -37,8 +37,10 @@
 
 #include <DOF_Group.h>
 #include <stdlib.h>
+#include <stdio.h>   // Ladruno (relativeMassDamping): fflush in the guard
 
 #include <Node.h>
+#include <RelativeMassDamping.h>   // Ladruno (relativeMassDamping)
 #include <Vector.h>
 #include <Matrix.h>
 #include <TransientIntegrator.h>
@@ -967,6 +969,23 @@ DOF_Group::addD_Force(const Vector &Udot, double fact)
         opserr << "DOF_Group::addD_Force() - no Node associated";
         opserr << " subclass should not call this method \n";
         return;
+    }
+
+    // Ladruno (relativeMassDamping): this path forms the nodal damping
+    // force as getDamp()*Udot (the *_TP integrators, the sensitivity branches of
+    // Newmark / LadrunoHHT / LadrunoGeneralizedAlpha / PFEMIntegrator) and so
+    // would silently drop a relative-mass-damping reference, i.e. return the absolute-frame
+    // drag the reference exists to remove. Refuse instead of answering wrong.
+    if (myNode->getMassDampingReference() != 0 && myNode->getRayleighDampingFactor() != 0.0) {
+        opserr << "FATAL: node " << myNode->getTag() << " carries a relative-mass-damping reference (" << OPS_RelativeMassDampingCmdName << ")"
+               << " but the integrator forms its nodal damping force through DOF_Group::addD_Force,"
+               << " which ignores the reference (*_TP integrators, sensitivity analysis)."
+               << " Use Newmark, HHT or another integrator that forms the nodal unbalance through"
+               << " Node::getUnbalancedLoadIncInertia." << endln;
+        // _Exit, not exit: exit() runs the static destructors from inside the
+        // analysis loop and ends in a heap fault (0xC0000374 measured on Windows).
+        fflush(stdout); fflush(stderr);
+        _Exit(-1);
     }
 
     Vector vel(numDOF);
