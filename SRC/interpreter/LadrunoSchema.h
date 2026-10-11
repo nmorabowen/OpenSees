@@ -42,6 +42,10 @@
 // from ladruno_opt::kOptTables (SRC/material/LadrunoOptSpec.h). `nargs` is the
 // declared value count, or "list" for a variable-length list.
 //
+// Consumers: a token is supported iff it is present in options[<owner>].
+// `since` is informational provenance (PR-155, ADR19-2b.2c.1, ...), not an
+// orderable version; never compare two `since` values.
+//
 // Fail closed: a duplicate command or a duplicate (owner, token) key would make
 // the JSON ambiguous, so render() refuses instead of emitting it. Arguments to
 // the command itself are refused by the two bridges (OpenSeesOutputCommands.cpp,

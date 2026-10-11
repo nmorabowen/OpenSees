@@ -42,12 +42,21 @@
 //     message names the token, the material, its tag and this build's stamp.
 //
 // A frontend that wants to emit a NEW option must wait for the build that
-// declares it; feature detection is `ladrunoBuild` + the `since` field, never
-// "send it and hope it is ignored".
+// declares it. Feature detection (WP-185): a token is supported iff it appears
+// in `ladrunoSchema`'s options[<owner>] -- never "send it and hope it is
+// ignored". `since` is informational provenance (PR-155, ADR19-2b.2c.1, ...),
+// NOT an orderable version: consumers test for PRESENCE, never compare `since`.
+//
+// Every table lives in THIS header and has a kOptTables row (bottom of this
+// file); a .cpp-local table is invisible to `ladrunoSchema`.
+// tests/test_wp185_ladruno_schema.py parses every reportUnknown( call in SRC
+// and fails on one whose owner is not a string literal, whose table is not
+// declared here, or whose (owner, table) pair has no kOptTables row.
 //
 // Usage (one table per parser family; the ladder that consumes the values
 // stays as it was, the table only GATES it):
 //
+//   // in THIS header, plus a kOptTables row {"MyMat", kOpts, count(kOpts)}:
 //   static const ladruno_opt::OptSpec kOpts[] = { {"-rho", 1, "PR-155"}, ... };
 //   const char* opt = OPS_GetString();
 //   const ladruno_opt::OptSpec* s = ladruno_opt::find(kOpts, opt);
@@ -83,7 +92,7 @@ enum { LIST = -1 };
 struct OptSpec {
   const char* name;    // the token, with its leading '-'
   int         nargs;   // values that follow it, or LIST
-  const char* since;   // the fork PR/WP/phase that introduced it
+  const char* since;   // the fork PR/WP/phase that introduced it (informational, not orderable)
 };
 
 inline const char* buildStamp()
