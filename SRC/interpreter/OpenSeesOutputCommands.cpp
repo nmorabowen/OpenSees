@@ -41,7 +41,7 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <elementAPI.h>
 #include <Ladruno_mutation.h>                  // Ladruno: ADR-87 D2 mutation gates
 #include <LadrunoThreads.h>                    // Ladruno: WP-107 thread-count knob
-#include "LadrunoSchema.h"                     // Ladruno: WP-184 ladrunoSchema
+#include "LadrunoSchema.h"                     // Ladruno: WP-185 ladrunoSchema
 #include <cstring>                             // Ladruno: ADR-87 D2 (strncat/strncpy)
 #include <ConstraintHandler.h>                 // Ladruno: ADR-30 P3 tie-force query
 #include <LadrunoProjectionHandler.h>          // Ladruno: ADR-30 P3
@@ -1718,11 +1718,11 @@ int OPS_LadrunoBuild()   // Ladruno
 }
 
 
-// Ladruno WP-184 (apeGmsh#1667): `ladrunoSchema` -> one JSON string describing
+// Ladruno WP-185 (apeGmsh#1667): `ladrunoSchema` -> one JSON string describing
 // what this build offers (LadrunoSchema.h has the shape). Takes no arguments;
 // any argument is refused, so a frontend can never mistake a future v1 request
 // for an answer.
-int OPS_LadrunoSchema()   // Ladruno WP-184
+int OPS_LadrunoSchema()   // Ladruno WP-185
 {
     int numArgs = OPS_GetNumRemainingInputArgs();
     if (numArgs > 0) {

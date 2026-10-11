@@ -19,7 +19,7 @@
 // ==========================================================================
 // LADRUNO-HEADER-END
 
-// Ladruno WP-184 (apeGmsh#1667, program link F3): `ladrunoSchema` v0 -- a
+// Ladruno WP-185 (apeGmsh#1667, program link F3): `ladrunoSchema` v0 -- a
 // machine-readable, deterministic description of what this build offers, so a
 // frontend (apeGmsh's BackendInfo) can detect capabilities instead of keying on
 // the build sha alone.

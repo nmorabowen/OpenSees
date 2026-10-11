@@ -176,13 +176,13 @@ static const OptSpec kLadrunoRCOptions[] = {
 };
 
 // ---------------------------------------------------------------------------
-// Ladruno WP-184 (apeGmsh#1667): the registry `ladrunoSchema` reads. One row
+// Ladruno WP-185 (apeGmsh#1667): the registry `ladrunoSchema` reads. One row
 // per command that parses with a table above: the name it refuses under (the
 // first argument of its reportUnknown call) and the table it gates on. The
 // schema's `options` block is generated from these rows, so a token declared
 // in a table is advertised and a token removed from it disappears; there is no
 // second list. A NEW parser that adopts this policy adds its row here;
-// tests/test_wp184_ladruno_schema.py fails on a reportUnknown call whose
+// tests/test_wp185_ladruno_schema.py fails on a reportUnknown call whose
 // (name, table) pair has no row.
 // ---------------------------------------------------------------------------
 struct OptTable {

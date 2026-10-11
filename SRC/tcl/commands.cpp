@@ -689,7 +689,7 @@ static Timer *theTimer = 0;
 
 #include <FileStream.h>
 #include <SimulationInformation.h>
-#include "../interpreter/LadrunoSchema.h"   // Ladruno WP-184 ladrunoSchema
+#include "../interpreter/LadrunoSchema.h"   // Ladruno WP-185 ladrunoSchema
 SimulationInformation simulationInfo;
 SimulationInformation *theSimulationInfoPtr = 0;
 
@@ -737,7 +737,7 @@ int
 ladrunoBuild(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);   // Ladruno build-stamp query
 
 int
-ladrunoSchema(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);   // Ladruno WP-184 capability schema
+ladrunoSchema(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);   // Ladruno WP-185 capability schema
 
 int
 ladrunoThreads(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);   // Ladruno WP-107 element-loop thread count
@@ -11665,7 +11665,7 @@ ladrunoBuild(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **arg
   return TCL_OK;
 }
 
-// Ladruno WP-184 (apeGmsh#1667): classic-Tcl twin of `ladrunoSchema`. Same
+// Ladruno WP-185 (apeGmsh#1667): classic-Tcl twin of `ladrunoSchema`. Same
 // generator as the DL engines (SRC/interpreter/LadrunoSchema.h), with
 // "engine":"classic" and this engine's command rows. No arguments.
 int

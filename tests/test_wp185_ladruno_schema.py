@@ -1,4 +1,4 @@
-"""`ladrunoSchema` v0 (WP-184, apeGmsh#1667, program link F3).
+"""`ladrunoSchema` v0 (WP-185, apeGmsh#1667, program link F3).
 
 `ladrunoSchema` returns one JSON string describing what this build offers, so
 apeGmsh's BackendInfo can detect capabilities instead of keying on the build sha
