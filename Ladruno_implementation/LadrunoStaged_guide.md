@@ -418,7 +418,7 @@ nDMaterial StagedStrain $tag  $innerTag  <-noInit>  <-maxStrain $e>  <-eps0 $e0 
 | `-F0 f11..f33` | `InitDefGrad` | supply a known birth gradient (9 row-major components); kept across `revertToStart` |
 | `-noInit` | `StagedStrain` | opt out — transparent pass-through ($\equiv$ bare inner) |
 | `-eps0 …` | `StagedStrain` | supply an explicit birth strain (sized to the inner's order); reads ALL remaining args, so it goes last |
-| `-maxStrain $e` | `StagedStrain` | (Ladruno C3b) trial-strain guard: `‖ε − ε0‖∞ > e` ⇒ `setTrialStrain` returns a bare `-1` and does NOT forward the trial (the inner keeps its state), so a host that honours `-1` (LadrunoBrick since C3b, LadrunoQuad, TenNodeTetrahedron) cuts the step. A divergence guard for inners with a validity range, and the fork's reproducible bare-`-1` source for host-contract tests. Serialized; off by default |
+| `-maxStrain $e` | `StagedStrain` | (Ladruno C3b) trial-strain guard: `‖ε − ε0‖∞ > e` ⇒ `setTrialStrain` returns `LADRUNO_MATERIAL_REFUSED` (the ADR-86b/ADR-94 sentinel, not a bare `-1`) and does NOT forward the trial (the inner keeps its state), so the host element cuts the step. A divergence guard for inners with a validity range, and the fork's reproducible refusal source for host-contract tests. Serialized; off by default |
 
 With no option the wrapper **auto-captures at birth** (the staged-construction default).
 

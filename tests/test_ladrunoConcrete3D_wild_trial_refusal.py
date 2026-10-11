@@ -10,7 +10,7 @@ over a GPa, poisoning every ordinary small step at that Gauss point afterward).
 Two element paths, because the fix has two independent seams (ADR-86b / WP-99,
 SRC/material/LadrunoMaterialStatus.h):
   * TRIAL-time: setTrialStrain returns LADRUNO_MATERIAL_REFUSED; an element that FORWARDS this code
-    (LadrunoBrick, via ladrunoBrickMustCut) sees it immediately during the Newton iteration and the
+    (LadrunoBrick, via its `== LADRUNO_MATERIAL_REFUSED` check) sees it immediately during the Newton iteration and the
     analysis fails the step right there.
   * COMMIT-time: commitState() declares the refusal via ladrunoNoteCommitRefusal() (out of band --
     Domain::commit() drops elePtr->commitState()'s own return value for EVERY element, fork or
@@ -158,7 +158,7 @@ def _crack_then_wild_jump():
 
 
 def test_ladrunoBrick_wild_trial_refuses_and_cuts_the_step():
-    """LadrunoBrick forwards setTrialStrain's return code (ladrunoBrickMustCut) -- the step must
+    """LadrunoBrick forwards setTrialStrain's return code (`== LADRUNO_MATERIAL_REFUSED`) -- the step must
     fail at the TRIAL, not silently commit the elastic-trial fallback."""
     _build("LadrunoBrick", ["-formulation", "bbar"])
     rc, sig_before, sig_after = _crack_then_wild_jump()

@@ -279,8 +279,7 @@ int LadrunoSolidShell::update(void)
     static int budget = 0;                                            // Ladruno: process-wide throttle (approximate under threads)
     if (budget < 10) {
       opserr << "WARNING LadrunoSolidShell::update - element " << this->getTag()
-             << (trialRc == LADRUNO_MATERIAL_REFUSED ? ": a material REFUSED the trial strain"
-                                                      : ": a material FAILED the trial strain (rc = -1)")
+             << ": a material REFUSED the trial strain"
              << ". Failing the step so the analysis can cut it; the committed state is unchanged." << endln;
       if (++budget == 10)
         opserr << "WARNING LadrunoSolidShell: further trial-strain refusal reports suppressed (budget 10 per process)." << endln;
@@ -687,7 +686,7 @@ void LadrunoSolidShell::formANS(int tang_flag, bool useInitialTangent)
           // points already committed); a refusal seen at the trial cuts the step cleanly (update() returns it and the
           // analysis reverts). The flag reflects the LAST pass of the enhanced-strain Newton -- the states that commit.
           const int rcm = materialPointers[gp]->setTrialStrain(strain);
-          if (ladrunoMaterialMustCut(rcm)) { trialRefused = true; trialRc = rcm; }
+          if (rcm == LADRUNO_MATERIAL_REFUSED) { trialRefused = true; trialRc = rcm; }   // ADR-94 R5: the sentinel only
         }
         if (!useEAS)
           continue;

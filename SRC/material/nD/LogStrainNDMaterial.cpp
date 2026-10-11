@@ -34,7 +34,7 @@
 // against tests/logstrain_reference.py).
 
 #include <LogStrainNDMaterial.h>
-#include <LadrunoMaterialStatus.h>   // Ladruno (ADR-86b) - ladrunoMaterialMustCut
+#include <LadrunoMaterialStatus.h>   // Ladruno (ADR-86b) - LADRUNO_MATERIAL_REFUSED
 #include <LogStrainKernel.h>
 #include <ID.h>
 #include <Channel.h>
@@ -176,7 +176,7 @@ int LogStrainNDMaterial::setTrialF(const Matrix &F)
     // review M3: forward the inner material's refusal (the return code was dropped, so the step was only ever cut, at best,
     // by the commit latch, leaving the model inconsistent). The wrapper's own committed state is untouched at the trial.
     const int irc = theMaterial->setTrialStrain(epsFeedV);
-    if (ladrunoMaterialMustCut(irc)) return (irc == LADRUNO_MATERIAL_REFUSED) ? irc : -1;
+    if (irc == LADRUNO_MATERIAL_REFUSED) return irc;      // ADR-94 R5: the sentinel only (materials convert a bare -1 into it)
   }
   const Vector &tauV = theMaterial->getStress();   // Kirchhoff τ (6)
   const Matrix &D6m  = theMaterial->getTangent();  // ∂τ/∂εᵉ (6×6, elastoplastic)

@@ -33,6 +33,7 @@
 #include <MaterialResponse.h>
 #include <Information.h>
 #include <OPS_Globals.h>   // ops_TheActiveElement (Phase 3b lch latch)
+#include <LadrunoMaterialStatus.h>   // Ladruno (ADR-86b/94) - LADRUNO_MATERIAL_REFUSED
 #include <Element.h>       // Element::getCharacteristicLength()
 #include <string.h>
 #include <math.h>
@@ -378,7 +379,9 @@ int LadrunoRCConcrete::regularizeIfNeeded(void)
 
 int LadrunoRCConcrete::setTrialStrain(const Vector& e)
 {
-  if (this->regularizeIfNeeded() < 0) { status = STATUS_NO_CONVERGE; return -1; }
+  // ADR-94: a refused trial returns the sentinel, never a bare -1 (hosts check the sentinel only). Nothing below
+  // touches the COMMITTED state (histN, cEps33): only strain6/stress6/Dtan/histTr/status, which revertToLastCommit() resets.
+  if (this->regularizeIfNeeded() < 0) { status = STATUS_NO_CONVERGE; return LADRUNO_MATERIAL_REFUSED; }
   if (P.implex) {
     dtime_n = ops_Dt;
     if (!commitDone) { dtime_0 = dtime_n; dtime_n_commit = dtime_n; }
@@ -391,7 +394,7 @@ int LadrunoRCConcrete::setTrialStrain(const Vector& e)
   if (condense) strain6[2] = eps33;
   for (int a = 0; a < ncomp; a++) strain6[vmap[a]] = e(a);   // engineering shear, no factor
 
-  if (!condense) { this->integrate(dox, tf); return (status == STATUS_NO_CONVERGE) ? -1 : 0; }
+  if (!condense) { this->integrate(dox, tf); return (status == STATUS_NO_CONVERGE) ? LADRUNO_MATERIAL_REFUSED : 0; }
 
   // enforce sigma_33 = 0: guarded Newton on eps_33 (= strain6[2]); dSNPO sec 9.4
   const int maxIt = 25;
@@ -418,7 +421,7 @@ int LadrunoRCConcrete::setTrialStrain(const Vector& e)
            << this->getTag() << ", |s33|=" << fabs(stress6[2]) << ")\n";
   }
   this->condenseTangent();
-  return (status == STATUS_NO_CONVERGE) ? -1 : 0;
+  return (status == STATUS_NO_CONVERGE) ? LADRUNO_MATERIAL_REFUSED : 0;
 }
 
 int LadrunoRCConcrete::setTrialStrain(const Vector& v, const Vector&) { return this->setTrialStrain(v); }

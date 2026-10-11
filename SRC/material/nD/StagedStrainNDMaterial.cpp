@@ -43,6 +43,7 @@
 #include <Response.h>
 #include <MaterialResponse.h>
 #include <OPS_Globals.h>
+#include <LadrunoMaterialStatus.h>   // Ladruno (ADR-86b/94) - LADRUNO_MATERIAL_REFUSED
 #include <elementAPI.h>
 #include <string.h>
 #include <stdlib.h>
@@ -50,7 +51,7 @@
 
 // =========================================================================== //
 //  Factory:  nDMaterial StagedStrain $tag $innerTag <-noInit> <-eps0 e1 e2 …>  //
-//            <-maxStrain $e>  (Ladruno C3b: bare -1 on |eps_rel|_inf > e)        //
+//            <-maxStrain $e>  (Ladruno C3b: LADRUNO_MATERIAL_REFUSED on |eps_rel|_inf > e)        //
 // =========================================================================== //
 void *OPS_StagedStrainNDMaterial(void)
 {
@@ -82,10 +83,10 @@ void *OPS_StagedStrainNDMaterial(void)
     if (strcmp(opt, "-noInit") == 0) {
       active = false;
     } else if (strcmp(opt, "-maxStrain") == 0) {
-      // Ladruno (C3b): a trial-strain guard. |eps - eps0|_inf > $e => setTrialStrain returns the
-      // plain OpenSees failure code -1 and does NOT forward the trial (the inner keeps its last
-      // state), so a host element that honours -1 cuts the step. A divergence guard for materials
-      // with a validity range, and the fork's reproducible bare-(-1) source for host-contract tests.
+      // Ladruno (C3b): a trial-strain guard. |eps - eps0|_inf > $e => setTrialStrain returns
+      // LADRUNO_MATERIAL_REFUSED (ADR-94: the sentinel, not a bare -1) and does NOT forward the trial
+      // (the inner keeps its last state), so a host element cuts the step. A divergence guard for
+      // materials with a validity range, and the fork's reproducible refusal source for host-contract tests.
       int one = 1;
       if (OPS_GetDoubleInput(&one, &maxStrain) != 0 || maxStrain <= 0.0) {
         opserr << "WARNING nDMaterial StagedStrain " << iData[0]
@@ -197,14 +198,14 @@ int StagedStrainNDMaterial::forwardTrial(const Vector &v, const Vector *rate)
   const int n = v.Size();
   // size eps0 AND totalStrain so the ε − ε0 subtraction below can never read OOB.
   if (totalStrain.Size() != n || eps0.Size() != n) sizeBuffers(n);
-  totalStrain = v;
 
   if (!active) {                   // pass-through (-noInit)
     if (maxStrain > 0.0) {         // Ladruno (C3b): -maxStrain guard
       double m = 0.0;
       for (int i = 0; i < n; i++) if (fabs(v(i)) > m) m = fabs(v(i));
-      if (m > maxStrain) return -1;
+      if (m > maxStrain) return LADRUNO_MATERIAL_REFUSED;   // ADR-94: a refusal is the sentinel, never a bare -1
     }
+    totalStrain = v;               // after the guard: a refused trial leaves the buffer untouched
     return rate ? theMaterial->setTrialStrain(v, *rate)
                 : theMaterial->setTrialStrain(v);
   }
@@ -216,8 +217,9 @@ int StagedStrainNDMaterial::forwardTrial(const Vector &v, const Vector *rate)
   if (maxStrain > 0.0) {           // Ladruno (C3b): -maxStrain guard (inner untouched)
     double m = 0.0;
     for (int i = 0; i < n; i++) if (fabs(rel(i)) > m) m = fabs(rel(i));
-    if (m > maxStrain) return -1;
+    if (m > maxStrain) return LADRUNO_MATERIAL_REFUSED;     // ADR-94: a refusal is the sentinel, never a bare -1
   }
+  totalStrain = v;                 // after the guard: a refused trial leaves the buffer untouched
   return rate ? theMaterial->setTrialStrain(rel, *rate)
               : theMaterial->setTrialStrain(rel);
 }

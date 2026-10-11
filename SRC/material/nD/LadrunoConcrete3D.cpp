@@ -547,7 +547,7 @@ void LadrunoConcrete3D::integrate(bool doTangent)
 // ===========================================================================
 // WP concrete3d-hang-diagnosis review, defect 1 (CRITICAL): setTrialStrain used to `return 0`
 // unconditionally on every path, no matter what lastStatus said -- so a return-map failure never
-// reached the element (LadrunoBrick's own ladrunoBrickMustCut(rc) check was dead code for this
+// reached the element (LadrunoBrick's own `== LADRUNO_MATERIAL_REFUSED` check was dead code for this
 // material) and commitState() copied the elastic-trial fallback into the committed state as if it
 // were a converged answer. Measured (review probe_absorb.cpp): one wild failing increment committed
 // into an already-cracked point gives a NOMINAL stress of hundreds of MPa at fc=30 and an effective
