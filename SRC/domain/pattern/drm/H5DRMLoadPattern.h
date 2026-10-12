@@ -250,6 +250,8 @@ private:
     hsize_t ds_ntime = 0;                    // time extent of the displacement dataset
     hsize_t ds_chunk[2] = {0, 0};            // chunk dims of the displacement dataset (0 = not chunked)
     long long n_block_refills = 0;
+    double    read_seconds = 0.0;            // -verbose: in-record read + interpolation time (drm_direct_read)
+    long long read_calls = 0;
 
     int MPI_local_rank;        // MPI Process-id (rank) in the case of parallel processing
 
