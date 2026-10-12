@@ -2,7 +2,7 @@
 wp: WP-187
 title: "H5DRM serial / free-field runs dominated by re-inflating gzip chunks (fixed by WP-187)"
 date: 2026-10-11
-pr: "#TBD"
+pr: "#976"
 status: "fixed-by WP-187"
 ---
 ### A serial or few-rank H5DRM run slows 4-5x once the motion starts; logs grow by MBs of `H5DRM(0) : t = ...` lines (fixed by WP-187)
