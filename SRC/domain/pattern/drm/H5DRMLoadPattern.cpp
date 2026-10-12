@@ -52,6 +52,7 @@
 #endif
 
 #include <limits>   //For std::numeric_limits<double>::epsilon()
+#include <chrono>   // Ladruno WP-187: read timer
 
 #include <Node.h>
 #include <NodeIter.h>
@@ -1002,6 +1003,13 @@ void H5DRMLoadPattern::cleanup()
     nodetag2local_pos.clear();
 
     // Close individual HDF5 resources
+    // Ladruno WP-187: with -verbose, the time spent reading and interpolating the in-record samples.
+    if (opt_verbose_steps && read_calls > 0)
+        H5DRMout << "WP-187 read time " << read_seconds << " s over " << read_calls << " steps ("
+                 << 1000.0 * read_seconds / read_calls << " ms/step), " << n_block_refills << " block refills, prefetch "
+                 << opt_prefetch_steps << ", chunk cache " << opt_chunk_cache_mb << " MB (-1 = auto)" << endln;
+    read_seconds = 0.0;
+    read_calls = 0;
     HDF5_CLOSE_AND_REPORT(ih5_vel, H5Dclose, "motion dataset");
     HDF5_CLOSE_AND_REPORT(ih5_vel_ds, H5Sclose, "motion dataspace");
     HDF5_CLOSE_AND_REPORT(ih5_dis, H5Dclose, "displacement dataset");
@@ -1365,6 +1373,7 @@ bool H5DRMLoadPattern::drm_direct_read(double t)
     double umin =  std::numeric_limits<double>::infinity();
     double amin =  std::numeric_limits<double>::infinity();
 
+    const std::chrono::steady_clock::time_point t_read0 = std::chrono::steady_clock::now();   // Ladruno WP-187: read timer
     // Ladruno WP-187: make sure the block holds steps i1 and i2 (refills on a block
     // boundary; false = prefetch off or the block could not be read).
     const bool use_block = ensure_block(i1, i2);
@@ -1526,6 +1535,8 @@ bool H5DRMLoadPattern::drm_direct_read(double t)
     }
 
 
+    read_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - t_read0).count();   // Ladruno WP-187
+    ++read_calls;
     H5DRMstep << "t = " << t << " u = (" << umin << ", " << umax << ") a = (" << amin << ", " << amax << ")" << endln;
 
     return true;
