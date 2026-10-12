@@ -2,7 +2,7 @@
 wp: WP-186
 title: "H5DRM: T rotates station coordinates, not motions; vertical row is negated"
 date: 2026-10-11
-pr: ""
+pr: "#974"
 ---
 ### H5DRM vertical motion upside down / which sign does the .h5drm vertical row need
 
