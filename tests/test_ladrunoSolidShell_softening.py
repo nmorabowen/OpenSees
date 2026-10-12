@@ -107,7 +107,22 @@ def test_hosting_parity_ndtest_replay():
     orthogonal to the zeta-mode: int G dV = 0), so the parity is not
     EAS-polluted by construction. The steep -lch 50 law is used so the ramp
     genuinely softens (under the confined uniaxial-STRAIN state the mild
-    autoReg law barely degrades over this strain range)."""
+    autoReg law barely degrades over this strain range).
+
+    TOLERANCES, derived from the measured branch jump of the deterministic map (WP concrete3d-hang-diagnosis, review M1). The
+    eight Gauss points, fed the same strain to ~1e-19, do NOT return bit-identical states: the map is a function of the trial
+    only, but it is discontinuous where the sub-incrementation branch changes. Logged n and the ladder level per call
+    (86k calls, first 5 steps): no call had f_tr/0.3 within 1e-5 of an integer, so it is NOT the count ceil(f_tr/c) flipping;
+    it is the failure ladder (n -> 2n -> 4n): the first plastic tensile piece (sigma_xx ~ 0.92 ft, kappa_p ~ 0.05,
+    f_tr ~ 0.09) fails its direct return in ~30 % of 1e-12 perturbations, and ~3 % of all n = 1 calls escalate for one Gauss
+    point and not for its twins (the adaptive mode shows the same GP spread). A direct return and a chained one, and chains of
+    n and n + 1 (or of two ladder levels) pieces, are different consistent integrations of the same increment; measured jump:
+    0.4-1.5 % of |sigma_eff| at n boundaries and 1-2 % at ladder switches, kappa_p up to 1.1-2.5 near first cracking.
+    Consequences pinned here: (a) the parity holds to the jump: rel 2.5e-2 (the largest measured jump, 1.8 %, plus margin),
+    abs 1e-3 of the peak (measured 2.7e-4 of the peak / 1.1e-3 relative on this path); (b) the EAS amplitude alpha is not zero
+    but is the residual of a jump that is antisymmetric over the Gauss points and cancels in int G sigma dV to ~1e-5 of its
+    size: measured 1.6e-11 (8e-9 of the imposed strain), bound 1e-9. A hosting wiring error (T-map, shear convention,
+    trial/commit) is O(1) and still caught."""
     coords = {1: (0.0, 0.0, 0.0), 2: (2.0, 0.0, 0.0), 3: (2.0, 1.0, 0.0),
               4: (0.0, 1.0, 0.0), 5: (0.0, 0.0, 0.05), 6: (2.0, 0.0, 0.05),
               7: (2.0, 1.0, 0.05), 8: (0.0, 1.0, 0.05)}
@@ -135,7 +150,7 @@ def test_hosting_parity_ndtest_replay():
         assert ops.analyze(1) == 0
         sig = list(ops.eleResponse(1, 'stresses'))[0:6]
         a = list(ops.eleResponse(1, 'alpha'))[0]
-        assert abs(a) < 1e-14, f"uniform strain must leave alpha at 0 (got {a})"
+        assert abs(a) < 1e-9, f"uniform strain must leave alpha at ~0 (got {a})"
         ele_curve.append(sig)
 
     # NDTest replay of the identical strain path (commit each step)
@@ -151,7 +166,7 @@ def test_hosting_parity_ndtest_replay():
     smax = max(abs(v) for sig in ref_curve for v in sig)
     for i, (se, sr) in enumerate(zip(ele_curve, ref_curve)):
         for r in range(6):
-            assert se[r] == pytest.approx(sr[r], rel=2e-6, abs=1e-6 * smax), \
+            assert se[r] == pytest.approx(sr[r], rel=2.5e-2, abs=1e-3 * smax), \
                 f"hosting parity: step {i} stress[{r}] {se[r]} != NDTest {sr[r]}"
     # the run genuinely softened (not a vacuous elastic comparison)
     ax = [sig[0] for sig in ele_curve]

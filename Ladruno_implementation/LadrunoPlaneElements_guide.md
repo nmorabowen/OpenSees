@@ -160,14 +160,53 @@ Because the `ssp` `K_stab` is built from the **elastic** initial tangent, a full
 cracked element would keep spurious elastic hourglass control. Tier-A degrades it:
 
 ```
-K_stab,eff = s · K_stab,elastic,   s = max(0.01, 1 − max(d_t, d_c))
+K_stab,eff = s · K_stab,elastic,   s = max(floor, 1 − ω),   floor = 1e-4 (C1; was 0.01)
+ω = max( ω_centroid(trial),  ω_shadow(committed) )
+ω_shadow = max over the 4 Gauss points of [ reported damage,  secant loss 1 − σ·ε/(ε·C0·ε) ]
 ```
 
-`d_t/d_c` are read from a cached `"damage"` response probe on the centroid material
-(materials with no damage channel return nothing → `s = 1`, so elastic/J2 are
-**unchanged**). The 1% floor keeps a sliver of hourglass control in a fully-damaged
-element. This mirrors [[09_ladruno_brick|LadrunoBrick]]'s Tier-A and fires only for
-the `ssp` formulation.
+`ω_centroid` is the cached `"damage"` response of the centroid material. **`ω_shadow`**
+(Ladruno C1, 2026-09-26) comes from 4 *shadow* copies of the material, driven at commit
+with the full bilinear strain at the 2×2 Gauss points (they never enter the residual;
+monotone, serialized max). The secant term is only taken where the point reports
+damage > 1 % (ASDConcrete3D's `damage` is `1 − y/q`, which leaves out its plastic part).
+Materials with no damage channel get no shadows and `s = 1`, so elastic/J2 are
+**unchanged** and keep the one-evaluation ssp cost. Fires only for `ssp`.
+
+> [!warning] Why centroid damage was not enough (C1 diagnosis, K&R notched beam)
+> Pre-C1 (`s = max(0.01, 1 − ω_centroid)`), the `ssp` tail of the Kormeling–Reinhardt
+> beam plateaued at 0.32 kN (LadrunoConcrete3D) / 0.36 kN (ASDConcrete3D) at 0.8 mm on the
+> coarse mesh; `std` gives ~0.1 kN. The `hourglass` response (`[s, ω, d·f_stab, d·f_phys]`;
+> `Σ d·f / u_load` is exactly the load at equilibrium) split the 0.32 kN tail into
+> 0.20 kN **stabilization** + 0.12 kN physical. 95 % of the stabilization work (floor 1e-4 run) sat in the
+> **three undamaged top-row elements under the load point** (s = 1, ω = 0): the last
+> ligament bends in the element's hourglass mode, the centroid sits on the neutral axis
+> and never cracks, and the elastic hourglass spring acts as an uncrackable hinge. The
+> fully cracked band itself contributed < 0.01 kN. Lowering the floor alone (0.01 → 1e-4)
+> only moved the coarse tail to 0.27 kN. Sampling ω at the Gauss points (where std sees
+> the crack) removes the hinge.
+
+Escapes (all per element): `-hgDamage centroid` (pre-C1 sampling), `-hourglassFloor $f`
+(`f ∈ [0, 1]`; `1` = stock `SSPquad`, no degradation), `-hgLegacy` (= `-hgDamage centroid
+-hourglassFloor 0.01`, the pre-C1 element bit-for-bit).
+
+**K&R gate (validation repo `02_plane_strain/kormeling_reinhardt_3pb`, `ssp`, dλ = 0.5 µm,
+this build; LadrunoConcrete3D with `--implex`):**
+
+| material / mesh | peak [kN] | P at 0.8 mm [kN] (pre-C1) | energy to 1 mm [J] (to 0.8 mm) |
+|---|---|---|---|
+| LadrunoConcrete3D coarse | 1.368 | **0.072** (0.322) | 0.371 (0.361) |
+| LadrunoConcrete3D medium | 1.449 | **0.091** (0.283, old build) | 0.435 (0.421) |
+| LadrunoConcrete3D fine | 1.390 | 0.076 | 0.397 (0.385) |
+| ASDConcrete3D coarse | 1.523 (1.616) | **0.077** (0.355) | 0.399 (0.387) |
+| ASDConcrete3D medium | 1.590 (1.712) | **0.104** (0.330) | n/a: stalls at 0.82 mm (0.455) |
+| ASDConcrete3D fine | 1.523 (1.552) | 0.085 | 0.430 (0.416) |
+| LadrunoConcrete3D coarse `std` (reference) | 1.378 | 0.116 | 0.430 |
+
+Peak spread over the three meshes: 5.8 % (LadrunoConcrete3D), 4.3 % (ASD; 9.8 % pre-C1). Energy: coarse / medium within -7 / +10 % of the fine mesh for both materials, but the max-min spread is 16 % (CDPM2: 10 %); medium is the high one. ASD medium does not converge past 0.82 mm (ASD's secant tangent; the pre-C1 run diverged at 0.89 mm, README finding 5); it needs `--max-iter 100` to pass 0.63 mm.
+
+This mirrors [[09_ladruno_brick|LadrunoBrick]]'s Tier-A, **which still uses the centroid
+probe and the 0.01 floor** — the same hinge is expected in brick crack bands (not measured).
 
 ---
 
@@ -178,6 +217,7 @@ element LadrunoQuad $tag $n1 $n2 $n3 $n4 $matTag
         [-formulation {std | bbar | ssp | eas}]      # default std; eas reserved
         [-type {PlaneStrain | PlaneStress}]          # default PlaneStrain
         [-thick $t] [-rho $r] [-body $bx $by] [-pressure $p]
+        [-hourglassFloor $f] [-hgDamage {gauss | centroid}] [-hgLegacy]   # ssp Tier-A (§1.5)
 
 element LadrunoCST  $tag $n1 $n2 $n3 $matTag
         [-type {PlaneStrain | PlaneStress}]
@@ -194,6 +234,9 @@ element LadrunoCST  $tag $n1 $n2 $n3 $matTag
 | `-rho $r` | mass density override (else the material's `getRho()`) | `0.0` |
 | `-body $bx $by` | constant body-force per unit volume | `0, 0` |
 | `-pressure $p` | uniform edge pressure (consistent nodal load) | `0.0` |
+| `-hourglassFloor $f` | ssp: floor of the Tier-A multiplier `s` (`1` = stock SSPquad) | `1e-4` |
+| `-hgDamage` | ssp: where ω is sampled — `gauss` (centroid + 4 shadow GPs) or `centroid` (pre-C1) | `gauss` |
+| `-hgLegacy` | ssp: the pre-C1 Tier-A (`centroid`, floor 0.01) | off |
 
 The model **must** be `ndm 2, ndf 2`; nodes must carry exactly 2 DOFs or
 `setDomain` refuses. `bbar` + `PlaneStress` is refused; `eas` is refused. Unknown

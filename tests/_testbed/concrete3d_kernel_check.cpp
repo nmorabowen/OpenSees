@@ -34,6 +34,21 @@ static void check(bool ok, const char* name) {
     else      std::printf("  ok  : %s\n", name);
 }
 
+// Zone-A wall-time knob (WP concrete3d-damage-drive CI fix), shared with the LADRUNO_FUZZ_TRIALS
+// env var the Python oracle's test_flow_potential_gate reads (tests/test_ladrunoConcrete3D_material.py):
+// unset => the FULL, thorough trial count (a human running this self-check directly); Zone-A CI
+// exports a small value so C1/C4/C7 below stay a fast SMOKE of the same fuzz every push instead of
+// paying their full cost. Every fuzz here uses a fixed LCG seed, so a smaller N is a deterministic
+// subsample (reproducible either way), never a source of flakiness.
+static long fuzzTrials(long defaultN) {
+    const char* e = std::getenv("LADRUNO_FUZZ_TRIALS");
+    if (!e || !*e) return defaultN;
+    char* end = nullptr;
+    const long v = std::strtol(e, &end, 10);
+    if (end == e || v <= 0) return defaultN;
+    return v;
+}
+
 // ---- (A) algebraic identities -------------------------------------------------------------
 static void run_identities() {
     std::printf("[A] surface + hardening identities\n");
@@ -188,7 +203,7 @@ static void run_oracle_dump(const char* path) {
         for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
         fh >> in.kp;
         fh >> in.et_max >> in.kdt1 >> in.kdt2 >> in.kdc >> in.kdc1 >> in.kdc2;
-        fh >> in.sigtMax >> in.sigcMax;   // P2g monotone-drive history (8-field line)
+        fh >> in.sigtMax >> in.sigcMax >> in.wt >> in.wc >> mp.omegaDead;   // P2g monotone-drive history (8-field line)
         double deps[6], sigO[6];
         for (int i = 0; i < 6; ++i) fh >> deps[i];
         for (int i = 0; i < 6; ++i) fh >> sigO[i];
@@ -222,14 +237,15 @@ static void run_oracle_dump(const char* path) {
         // increment, committed `in` held fixed (mirrors oracle damaged_consistent_tangent, rel_step 1e-6).
         double Cn[6][6];
         const double base = mp.fc / mp.E;
+        Params mpf = mp; mpf.subIncrForceN = returnMapPieces(mp, in, strain);   // both FD legs use the CENTRAL n (the map is discontinuous at n boundaries)
         for (int j = 0; j < 6; ++j) {
             const double dd = 1.0e-6 * (std::fabs(deps[j]) + base);
             double sp[6], sm[6], se[6], junk[6][6]; State o2;
             double strp[6], strm[6];
             for (int i = 0; i < 6; ++i) { strp[i] = strain[i]; strm[i] = strain[i]; }
             strp[j] += dd; strm[j] -= dd;
-            returnMap(mp, strp, in, o2, sp, se, junk, false, -1.0, true);
-            returnMap(mp, strm, in, o2, sm, se, junk, false, -1.0, true);
+            returnMap(mpf, strp, in, o2, sp, se, junk, false, -1.0, true);
+            returnMap(mpf, strm, in, o2, sm, se, junk, false, -1.0, true);
             for (int i = 0; i < 6; ++i) Cn[i][j] = (sp[i] - sm[i]) / (2.0 * dd);
         }
         double nd = 0, nn = 0, cmax = 0;
@@ -270,7 +286,7 @@ static void run_oracle_dump(const char* path) {
         for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
         fh >> in.kp;
         fh >> in.et_max >> in.kdt1 >> in.kdt2 >> in.kdc >> in.kdc1 >> in.kdc2;
-        fh >> in.sigtMax >> in.sigcMax;
+        fh >> in.sigtMax >> in.sigcMax >> in.wt >> in.wc >> mp.omegaDead;   // + committed omega_t/omega_c + dead threshold
         double e11_next, hoopK, hoopFy;
         fh >> e11_next >> hoopK >> hoopFy;
         double sigO[6]; for (int i = 0; i < 6; ++i) fh >> sigO[i];
@@ -359,7 +375,7 @@ static void run_oracle_dump(const char* path) {
         for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
         fh >> in.kp;
         fh >> in.et_max >> in.kdt1 >> in.kdt2 >> in.kdc >> in.kdc1 >> in.kdc2;
-        fh >> in.sigtMax >> in.sigcMax;   // P2g monotone-drive history (8-field line)
+        fh >> in.sigtMax >> in.sigcMax >> in.wt >> in.wc >> mp.omegaDead;   // P2g monotone-drive history (8-field line)
         double deps[6], sigVisc[6], sigInv[6];
         for (int i = 0; i < 6; ++i) fh >> deps[i];
         for (int i = 0; i < 6; ++i) fh >> sigVisc[i];
@@ -407,6 +423,153 @@ static void run_oracle_dump(const char* path) {
         }
     }
 
+    // ---- (B10) FULL CDPM2 PLASTIC POTENTIAL (B1): cdpm2-flow paths (incl. a sub-incremented one) + tangents ----
+    if (fh >> tok && tok == "NPATHF") {
+        int n; fh >> n;
+        for (int p = 0; p < n; ++p) {
+            fh >> tok; std::string label; fh >> label;
+            double pb[12]; for (int i = 0; i < 12; ++i) fh >> pb[i];
+            Params mp = makeParams(pb);
+            int nsteps; fh >> mp.flowPotential >> mp.maxSubIncr >> mp.subIncrMode >> nsteps;   // subIncrMode: 0 deterministic (default), 1 adaptive
+            double sig_n[6] = {0,0,0,0,0,0}, kp_n = 0.0, maxs = 0, maxk = 0;
+            for (int s = 0; s < nsteps; ++s) {
+                double deps[6], sigO[6], kpO;
+                for (int i = 0; i < 6; ++i) fh >> deps[i];
+                for (int i = 0; i < 6; ++i) fh >> sigO[i];
+                fh >> kpO;
+                double sigC[6], kpC, Dt[6][6];
+                returnMapTensor(mp, sig_n, deps, kp_n, true, sigC, kpC, Dt, false);
+                for (int i = 0; i < 6; ++i) maxs = std::fmax(maxs, std::fabs(sigC[i] - sigO[i]) * 30.0 / mp.fc);   // MPa-equivalent (SI cases)
+                maxk = std::fmax(maxk, std::fabs(kpC - kpO) / (1.0 + std::fabs(kpO)));
+                for (int i = 0; i < 6; ++i) sig_n[i] = sigC[i];
+                kp_n = kpC;
+            }
+            worst_sig = std::fmax(worst_sig, maxs); worst_kp = std::fmax(worst_kp, maxk);
+            const bool ok = maxs < 1.0e-6 && maxk < 1.0e-7;
+            if (!ok) ++fails;
+            std::printf("  %-24s sig_err=%.2e kp_err=%.2e  %s\n", label.c_str(), maxs, maxk, ok ? "ok" : "FAIL");
+        }
+    }
+    if (fh >> tok && tok == "NTANF") {
+        int n; fh >> n;
+        for (int t = 0; t < n; ++t) {
+            fh >> tok; std::string label; fh >> label;
+            double pb[12]; for (int i = 0; i < 12; ++i) fh >> pb[i];
+            Params mp = makeParams(pb);
+            fh >> mp.flowPotential;
+            double sig_n[6], kp_n, deps[6], CO[36];
+            for (int i = 0; i < 6; ++i) fh >> sig_n[i];
+            fh >> kp_n;
+            for (int i = 0; i < 6; ++i) fh >> deps[i];
+            for (int i = 0; i < 36; ++i) fh >> CO[i];
+            double sigC[6], kpC, Dt[6][6];
+            returnMapTensor(mp, sig_n, deps, kp_n, true, sigC, kpC, Dt, true);
+            double nd = 0, nn = 0, cmax = 0, perEntry = 0;
+            for (int A = 0; A < 36; ++A) { const double d = Dt[A/6][A%6] - CO[A]; nd += d*d; nn += CO[A]*CO[A]; cmax = std::fmax(cmax, std::fabs(CO[A])); }
+            for (int A = 0; A < 36; ++A) if (std::fabs(CO[A]) > 0.01 * cmax)
+                perEntry = std::fmax(perEntry, std::fabs(Dt[A/6][A%6] - CO[A]) / std::fabs(CO[A]));
+            const double rel = std::sqrt(nd / nn);
+            worst_tan = std::fmax(worst_tan, rel);
+            const bool ok = rel < 2.0e-6 && perEntry < 5.0e-3;
+            if (!ok) ++fails;
+            std::printf("  %-24s tan_rel=%.3e perEntry=%.2e  %s\n", label.c_str(), rel, perEntry, ok ? "ok" : "FAIL");
+        }
+    }
+
+    // ---- (B11) CDPM2 COMPRESSIVE DAMAGE DRIVE (B2): nominal stress vs oracle + analytic vs numerical tangent ----
+    if (fh >> tok && tok == "NDMGC") {
+        int n; fh >> n;
+        for (int d = 0; d < n; ++d) {
+            fh >> tok; std::string label; fh >> label;
+            double pb[12]; for (int i = 0; i < 12; ++i) fh >> pb[i];
+            Params mp = makeParams(pb);
+            fh >> mp.Gf >> mp.Gc >> mp.lch >> mp.As >> mp.ctTemper >> mp.tensionLaw >> mp.epsFc
+               >> mp.flowPotential >> mp.maxSubIncr >> mp.compDrive;
+            State in, out;
+            for (int i = 0; i < 6; ++i) fh >> in.eps[i];
+            for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
+            fh >> in.kp >> in.et_max >> in.kdt1 >> in.kdt2 >> in.kdc >> in.kdc1 >> in.kdc2
+               >> in.sigtMax >> in.sigcMax >> in.eqc >> in.etPrev >> in.wt >> in.wc >> mp.omegaDead;
+            double deps[6], sigO[6];
+            for (int i = 0; i < 6; ++i) fh >> deps[i];
+            for (int i = 0; i < 6; ++i) fh >> sigO[i];
+            double strain[6]; for (int i = 0; i < 6; ++i) strain[i] = in.eps[i] + deps[i];
+            double sigC[6], sigEff[6], Da[6][6];
+            returnMap(mp, strain, in, out, sigC, sigEff, Da, true, -1.0, true);
+            double maxs = 0; for (int i = 0; i < 6; ++i) maxs = std::fmax(maxs, std::fabs(sigC[i] - sigO[i]));
+            double Cn[6][6]; const double base = mp.fc / mp.E;
+    Params mpf = mp; mpf.subIncrForceN = returnMapPieces(mp, in, strain);   // both FD legs use the CENTRAL n (the map is discontinuous at n boundaries)
+            for (int j = 0; j < 6; ++j) {
+                const double dd = 1.0e-6 * (std::fabs(deps[j]) + base);
+                double sp[6], sm[6], se[6], junk[6][6]; State o2; double strp[6], strm[6];
+                for (int i = 0; i < 6; ++i) { strp[i] = strain[i]; strm[i] = strain[i]; }
+                strp[j] += dd; strm[j] -= dd;
+                returnMap(mpf, strp, in, o2, sp, se, junk, false, -1.0, true);
+                returnMap(mpf, strm, in, o2, sm, se, junk, false, -1.0, true);
+                for (int i = 0; i < 6; ++i) Cn[i][j] = (sp[i] - sm[i]) / (2.0 * dd);
+            }
+            double nd = 0, nn = 0;
+            for (int A = 0; A < 6; ++A) for (int B = 0; B < 6; ++B) { const double df = Da[A][B] - Cn[A][B]; nd += df * df; nn += Cn[A][B] * Cn[A][B]; }
+            const double rel = std::sqrt(nd / nn);
+            worst_dmg = std::fmax(worst_dmg, maxs); worst_dtan = std::fmax(worst_dtan, rel);
+            // tangent tolerance 5e-5 for EVERY record (direct returns and sub-incremented chains alike): the reported tangent of an
+            // n-piece chain is the chain's own algorithmic tangent (accumulated forward incl. the kappa history, C8), and the FD
+            // reference pins n on both legs (mpf), so a chain is as consistent as a direct return. (It was loosened to 5e-2 for
+            // maxSubIncr > 0 while the last piece's tangent was reported: 6/41/121 % off at n = 2/4/64 in compression.)
+        const double tanTol = 5.0e-5;
+            const bool ok = maxs < 1.0e-6 && rel < tanTol;
+            if (!ok) ++fails;
+            std::printf("  %-24s nom_sig_err=%.2e  tan_rel=%.2e  wc=%.3f  %s\n", label.c_str(), maxs, rel, out.wc, ok ? "ok" : "FAIL");
+        }
+    }
+
+    // ---- (B12) PV20 TENSION->COMPRESSION TEMPER (-tcTemper): nominal stress vs oracle + analytic vs FD tangent ----
+    if (fh >> tok && tok == "NDMGT") {
+        int n; fh >> n;
+        for (int d = 0; d < n; ++d) {
+            fh >> tok; std::string label; fh >> label;
+            double pb[12]; for (int i = 0; i < 12; ++i) fh >> pb[i];
+            Params mp = makeParams(pb);
+            fh >> mp.Gf >> mp.Gc >> mp.lch >> mp.As >> mp.ctTemper >> mp.tensionLaw >> mp.epsFc
+               >> mp.flowPotential >> mp.maxSubIncr >> mp.compDrive >> mp.tcTemper;
+            State in, out;
+            for (int i = 0; i < 6; ++i) fh >> in.eps[i];
+            for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
+            fh >> in.kp >> in.et_max >> in.kdt1 >> in.kdt2 >> in.kdc >> in.kdc1 >> in.kdc2
+               >> in.sigtMax >> in.sigcMax >> in.eqc >> in.etPrev >> in.wt >> in.wc >> mp.omegaDead;
+            double deps[6], sigO[6];
+            for (int i = 0; i < 6; ++i) fh >> deps[i];
+            for (int i = 0; i < 6; ++i) fh >> sigO[i];
+            double strain[6]; for (int i = 0; i < 6; ++i) strain[i] = in.eps[i] + deps[i];
+            double sigC[6], sigEff[6], Da[6][6];
+            returnMap(mp, strain, in, out, sigC, sigEff, Da, true, -1.0, true);
+            double maxs = 0; for (int i = 0; i < 6; ++i) maxs = std::fmax(maxs, std::fabs(sigC[i] - sigO[i]));
+            double Cn[6][6]; const double base = mp.fc / mp.E;
+    Params mpf = mp; mpf.subIncrForceN = returnMapPieces(mp, in, strain);   // both FD legs use the CENTRAL n (the map is discontinuous at n boundaries)
+            for (int j = 0; j < 6; ++j) {
+                const double dd = 1.0e-6 * (std::fabs(deps[j]) + base);
+                double sp[6], sm[6], se[6], junk[6][6]; State o2; double strp[6], strm[6];
+                for (int i = 0; i < 6; ++i) { strp[i] = strain[i]; strm[i] = strain[i]; }
+                strp[j] += dd; strm[j] -= dd;
+                returnMap(mpf, strp, in, o2, sp, se, junk, false, -1.0, true);
+                returnMap(mpf, strm, in, o2, sm, se, junk, false, -1.0, true);
+                for (int i = 0; i < 6; ++i) Cn[i][j] = (sp[i] - sm[i]) / (2.0 * dd);
+            }
+            double nd = 0, nn = 0;
+            for (int A = 0; A < 6; ++A) for (int B = 0; B < 6; ++B) { const double df = Da[A][B] - Cn[A][B]; nd += df * df; nn += Cn[A][B] * Cn[A][B]; }
+            const double rel = std::sqrt(nd / nn);
+            worst_dmg = std::fmax(worst_dmg, maxs); worst_dtan = std::fmax(worst_dtan, rel);
+            // tangent tolerance 5e-5 for EVERY record (direct returns and sub-incremented chains alike): the reported tangent of an
+            // n-piece chain is the chain's own algorithmic tangent (accumulated forward incl. the kappa history, C8), and the FD
+            // reference pins n on both legs (mpf), so a chain is as consistent as a direct return. (It was loosened to 5e-2 for
+            // maxSubIncr > 0 while the last piece's tangent was reported: 6/41/121 % off at n = 2/4/64 in compression.)
+        const double tanTol = 5.0e-5;
+            const bool ok = maxs < 1.0e-6 && rel < tanTol;
+            if (!ok) ++fails;
+            std::printf("  %-24s nom_sig_err=%.2e  tan_rel=%.2e  wc=%.3f  %s\n", label.c_str(), maxs, rel, out.wc, ok ? "ok" : "FAIL");
+        }
+    }
+
     std::printf("  WORST  sig=%.2e (pp<1e-9/hard<1e-6)  kp=%.2e (pp<1e-10/hard<1e-7)  tan=%.3e (<1e-6)"
                 "  dmg=%.2e (<1e-6)  dmgtan=%.2e (<5e-5)  implex=%.2e (<1e-6)  eta=%.2e (<1e-6)  eta_inv=%.2e (<1e-6)\n",
                 worst_sig, worst_kp, worst_tan, worst_dmg, worst_dtan, worst_implex, worst_eta, worst_eta_inv);
@@ -424,9 +587,10 @@ static void run_robustness() {
     // sign-flipped tension apex for deep-compression trials.)
     unsigned s = 12345u; auto rnd = [&]() { s = s*1664525u + 1013904223u; return (s>>8)*(1.0/16777216.0); };
     int bad = 0, conv = 0, total = 0;
+    const long N1 = fuzzTrials(60000);   // LADRUNO_FUZZ_TRIALS knob; full run = 180000 trials (3 Df values)
     for (double Df : {0.3, 0.85, 1.0}) {
         mp.Df = Df;
-        for (int t = 0; t < 60000; ++t) {
+        for (long t = 0; t < N1; ++t) {
             double w[3]; for (int i = 0; i < 3; ++i) w[i] = (rnd()*2.0 - 1.0) * 80.0;
             double kp_n = rnd() * 1.2;
             PrincipalResult pr = returnMapHardening(w, mp, kp_n);
@@ -462,9 +626,10 @@ static void run_robustness() {
     {
         unsigned s2 = 777u; auto rn = [&]() { s2 = s2*1664525u + 1013904223u; return (s2>>8)*(1.0/16777216.0); };
         int flips = 0;
+        const long N4 = fuzzTrials(30000);   // LADRUNO_FUZZ_TRIALS knob; full run = 90000 trials (3 Df values)
         for (double Df : {0.3, 0.85, 1.0}) {
             mp.Df = Df;
-            for (int t = 0; t < 30000; ++t) {
+            for (long t = 0; t < N4; ++t) {
                 double w[3]; for (int i = 0; i < 3; ++i) w[i] = (rn()*2.0 - 1.0) * 80.0;
                 PrincipalResult pr = returnMapHardening(w, mp, rn() * 1.2);
                 if (pr.plastic && pr.converged && (w[0]+w[1]+w[2]) < 0.0 && pr.sp[0] > 0 && pr.sp[1] > 0 && pr.sp[2] > 0) ++flips;
@@ -499,6 +664,18 @@ static void run_robustness() {
         }
         check(bad == 0 && worst < 0.05, "Gc calibration: uniaxial compression dissipates Gc within 5% (3 Gc/lch pairs)");
         std::printf("       (worst |dissipated/Gc - 1| = %.2e)\n", worst);
+        {   // the same calibration with the B1 CDPM2 potential + sub-incrementation (the wrapper default)
+            Params qc = q; qc.flowPotential = 1; qc.maxSubIncr = 10; qc.Df = 0.85; qc.compDrive = 1;   // B1 + B2
+            double efc2[GC_TABLE_N], g2[GC_TABLE_N];
+            calibrateEpsFcTable(qc, efc2, g2);
+            double w2 = 0.0; int b2 = 0;
+            for (const auto& pr : pairs) {
+                int st = 0; const double e = epsFcFromGc(efc2, g2, pr[0], pr[1], &st);
+                w2 = std::fmax(w2, std::fabs(compressionEnergyDensity(qc, e) * pr[1] - pr[0]) / pr[0]); if (st != 0) ++b2;
+            }
+            check(b2 == 0 && w2 < 0.01, "Gc calibration with the CDPM2 potential + CDPM2 drive: dissipates Gc within 1%");
+            std::printf("       (worst |dissipated/Gc - 1| = %.2e)\n", w2);
+        }
         Params a = q; a.Gc = 30.0; a.lch = 100.0; a.epsFc = 0.0;          // legacy Gc/(fc lch)
         Params b = a; b.epsFc = a.Gc / (a.fc * a.lch);                    // the same value, given directly
         State sa, sb; bool same = true;
@@ -544,9 +721,137 @@ static void run_robustness() {
             W += 0.5 * (s[2] + sp) * (ez - ep); sp = s[2]; ep = ez; in = out;
         }
         const double G = W * t.lch;
-        check(finite && unconv == 0 && std::fabs(sp) < 1.0 && G > 120.0 && G < 125.0,
+        check(finite && unconv == 0 && std::fabs(sp) < 1.0e-4 * t.ft && G > 120.0 && G < 125.0,   // B2: 1e-6 residual (OMEGA_MAX)
               "bilinear full crack opening: finite, converged, dissipates Gf (residual tangent stiffness)");
         std::printf("       (W*lch = %.2f N/m vs Gf = 120, unconverged steps %d, sigma_end = %.2e Pa)\n", G, unconv, sp);
+    }
+
+    // C8 — CHAIN TANGENT of the deterministic sub-incrementation (WP concrete3d-hang-diagnosis, review M1). The reported
+    // tangent of an n-piece chain is the chain's own algorithmic tangent, accumulated forward through the pieces
+    // (G_p = (Dt C^-1) G_(p-1) + Sk (x) g_(p-1) + Dt/n, g_p = R G_(p-1) + Kk g_(p-1) + R C/n; kappa history included),
+    // NOT the last piece's (which the review measured 6 % / 41 % / 121 % off at n = 2 / 4 / 64 in compression). Reference:
+    // central differences of the SAME chain with n PINNED on both legs (Params::subIncrForceN; the map is discontinuous
+    // where n changes). Virgin state, the reviewer's compression direction, and the tensile direction; every state whose
+    // ladder did not escalate (subInfo == n). Bound 1e-6 (measured 1e-8..1e-10, the floor is the FD truncation and the
+    // scalar Lode-angle central differences inside the principal Jacobian).
+    {
+        Params q = mp; q.Gf = 0.1; q.Gc = 5.0; q.Df = 0.85; q.As = 2.0; q.qh0 = 0.3; q.Hp = 0.01; q.lch = 50; q.lch_ref = 50;
+        q.tensionLaw = 1; q.flowPotential = 1; q.compDrive = 1; q.tcTemper = 2; q.maxSubIncr = 10; q.epsFc = 5.0 / (30 * 50);
+        const double dirs[2][6] = {{-1.0, 0.25, 0.25, 0.2, 0, 0}, {1.0, -0.2, -0.2, 0, 0, 0}};
+        const int targets[6] = {1, 2, 4, 9, 26, 64};
+        double worst = 0.0; int nchecked = 0; bool all = true;
+        for (int dc = 0; dc < 2; ++dc) {
+            for (int ti = 0; ti < 6; ++ti) {
+                const int target = targets[ti];
+                double z[6] = {0, 0, 0, 0, 0, 0}, e[6] = {0, 0, 0, 0, 0, 0}; bool found = false;
+                for (double sc = 2e-4; sc < 5e-2 && !found; sc *= 1.004) {
+                    double d[6]; for (int a = 0; a < 6; ++a) d[a] = sc * dirs[dc][a];
+                    if (detPieces(q, z, d, 0.0) != target) continue;
+                    double sg[6], kk, DD[6][6]; int inf = -9;
+                    returnMapTensor(q, z, d, 0.0, true, sg, kk, DD, false, &inf);
+                    if (inf == (target == 1 ? 0 : target)) { for (int a = 0; a < 6; ++a) e[a] = d[a]; found = true; }
+                }
+                if (!found) continue;                       // (tension: n = 1..4 always escalate the ladder near first cracking)
+                double sg[6], kk, D[6][6]; int inf;
+                returnMapTensor(q, z, e, 0.0, true, sg, kk, D, true, &inf);
+                Params qf = q; qf.subIncrForceN = target;
+                double nd = 0, nn = 0; bool straddle = false;
+                for (int j = 0; j < 6; ++j) {
+                    const double h = 1e-10; double ep[6], em[6];
+                    for (int a = 0; a < 6; ++a) { ep[a] = e[a]; em[a] = e[a]; }
+                    ep[j] += h; em[j] -= h;
+                    double s1[6], s2[6], k1, k2, Dd[6][6]; int i1 = -9, i2 = -9;
+                    returnMapTensor(qf, z, ep, 0.0, true, s1, k1, Dd, false, &i1); returnMapTensor(qf, z, em, 0.0, true, s2, k2, Dd, false, &i2);
+                    if (i1 != inf || i2 != inf) straddle = true;   // a leg escalated the ladder: the map jumps within 1e-10 here
+                    for (int a = 0; a < 6; ++a) { const double f = (s1[a] - s2[a]) / (2 * h); nd += (D[a][j] - f) * (D[a][j] - f); nn += f * f; }
+                }
+                if (straddle) {
+                    std::printf("       %s n=%2d (subInfo %2d): FD legs switch the ladder level within 1e-10 (map discontinuous here), skipped\n", dc == 0 ? "compression" : "tension    ", target, inf);
+                    continue;
+                }
+                const double rel = std::sqrt(nd / nn);
+                worst = std::fmax(worst, rel); ++nchecked; if (!(rel < 1.0e-6)) all = false;
+                std::printf("       %s n=%2d (subInfo %2d): ||T - D_fd||/||D_fd|| = %.2e\n", dc == 0 ? "compression" : "tension    ", target, inf, rel);
+            }
+        }
+        check(nchecked >= 8 && all, "chain tangent == FD of the same n-piece chain, n = 1..64, compression + tension (rel < 1e-6)");
+        std::printf("       (checked %d states, worst ||T - D_fd||/||D_fd|| = %.2e)\n", nchecked, worst);
+    }
+
+    // C7 — FULL CDPM2 POTENTIAL robustness (B1): 120k random tensor increments from the stress-free state with
+    // random kappa_p in [0,1.5], Df in {0.85, 1.0, 0.6}, Hp in {0.01, 0.5} — generic, deep NEAR-AXIS compression
+    // (the closed-cap regime), uniaxial-ish compression with shear, near-apex tension — with sub-incrementation:
+    // 0 failed returns, 0 sign flips, 0 non-finite / kappa-decreasing states (without sub-incrementation ~30% of
+    // the plastic trials fail the direct return; the legacy flow fails ~43%).
+    {
+        Params q = mp; q.flowPotential = 1; q.maxSubIncr = 10;
+        unsigned s3 = 2024u; auto rn = [&]() { s3 = s3 * 1664525u + 1013904223u; return (s3 >> 8) * (1.0 / 16777216.0); };
+        long plastic = 0, fail = 0, flips = 0, bad = 0;
+        const long N7 = fuzzTrials(120000);   // LADRUNO_FUZZ_TRIALS knob (Zone-A CI: WP concrete3d-damage-drive)
+        for (long t = 0; t < N7; ++t) {
+            const int mode = t % 4;
+            q.Df = (t % 3 == 0) ? 0.85 : ((t % 3 == 1) ? 1.0 : 0.6);
+            q.Hp = (t % 2) ? 0.01 : 0.5;
+            double d[6];
+            if (mode == 0) { for (int i = 0; i < 6; ++i) d[i] = (rn() * 2 - 1) * 3e-3; for (int i = 3; i < 6; ++i) d[i] *= 0.5; }
+            else if (mode == 1) { const double v = -rn() * 8e-3; for (int i = 0; i < 3; ++i) d[i] = v + (rn() * 2 - 1) * 2e-4; for (int i = 3; i < 6; ++i) d[i] = (rn() * 2 - 1) * 1e-4; }
+            else if (mode == 2) { d[0] = -rn() * 5e-3; d[1] = (rn() * 2 - 1) * 1.5e-3; d[2] = (rn() * 2 - 1) * 1.5e-3; d[3] = (rn() * 2 - 1) * 5e-4; d[4] = d[5] = 0; }
+            else { const double v = rn() * 1e-3; for (int i = 0; i < 3; ++i) d[i] = v + (rn() * 2 - 1) * 3e-4; for (int i = 3; i < 6; ++i) d[i] = (rn() * 2 - 1) * 2e-4; }
+            const double kp_n = rn() * 1.5;
+            double sig0[6] = {0, 0, 0, 0, 0, 0}, sn[6], kn, Dt[6][6], tr[6];
+            const int st = returnMapTensor(q, sig0, d, kp_n, true, sn, kn, Dt, true);
+            elasticPredTensor(sig0, d, q, tr);
+            if (yieldF(tr, q, qh1Of(kp_n, q.qh0, q.Hp), qh2Of(kp_n, q.Hp)) > 1e-11 * q.fc) ++plastic;
+            if (st != 0) { ++fail; continue; }
+            bool fin = std::isfinite(kn);
+            for (int i = 0; i < 6; ++i) { fin = fin && std::isfinite(sn[i]); for (int j = 0; j < 6; ++j) fin = fin && std::isfinite(Dt[i][j]); }
+            if (!fin || kn < kp_n - 1e-12) ++bad;
+            double B[3][3], ws[3], Vs[3][3]; voigtToMat(sn, B); eig3sym(B, ws, Vs);
+            if (tr[0] + tr[1] + tr[2] < 0 && ws[0] > 0 && ws[1] > 0 && ws[2] > 0) ++flips;
+        }
+        // plastic > N7/2 is the SAME ratio as the original hardcoded 60000/120000 (measured ~72% plastic
+        // at full N); parametrized so the check keeps its selectivity at any LADRUNO_FUZZ_TRIALS value
+        // instead of becoming unsatisfiable (or vacuous) at a reduced N.
+        check(fail == 0 && flips == 0 && bad == 0 && plastic > N7 / 2,
+              "CDPM2 potential fuzz: 0 failed returns, 0 sign flips, 0 non-finite");
+        std::printf("       (N=%ld, plastic %ld, failed %ld, flips %ld, bad %ld)\n", N7, plastic, fail, flips, bad);
+    }
+
+    // C8 — B1 + B2 end-to-end vs the paper: Imran & Pantazopoulou triaxial compression (Grassl 2013 Fig.11
+    // parameters: E=30 GPa nu=0.2 fc=47.4 ft=4.74 MPa As=15 eps_fc=1e-4, CDPM2 defaults Hp=0.01 Df=0.85),
+    // hydrostatic ramp to -s3 then axial strain with the lateral NOMINAL stress held at -s3: the peak axial stress
+    // equals the paper's own CDPM2 curve (vector-extracted) to 1 % at s3 = 0 / 8.6 / 43 MPa (-47.3 / -88.7 / -194.9).
+    {
+        Params q; q.E = 30000; q.nu = 0.2; q.fc = 47.4; q.ft = 4.74; q.As = 15.0; q.epsFc = 1e-4; q.Hp = 0.01; q.Df = 0.85;
+        q.qh0 = 0.3; q.e = eccentricityFromKupfer(q.fc, q.ft, 1.16); q.m0 = m0Of(q.fc, q.ft, q.e);
+        q.flowPotential = 1; q.maxSubIncr = 10; q.compDrive = 1; q.tensionLaw = 1; q.Gf = 0.158; q.Gc = 1.0; q.lch = 100.0;
+        const double s3s[3] = {0.0, 8.6, 43.0}, ref[3] = {-47.3, -88.7, -194.9};
+        double worst = 0.0;
+        for (int c = 0; c < 3; ++c) {
+            const double s3 = s3s[c]; State in; double peak = 0.0;
+            const double K = q.E / (3.0 * (1.0 - 2.0 * q.nu)); double eh = 0.0;
+            for (int i = 1; i <= 60 && s3 > 0.0; ++i) {
+                const double tgt = -s3 * i / 60.0; double lo = eh - 20.0 * s3 / (3.0 * K) / 60.0, hi = eh;
+                State o; double sg[6], se[6], D[6][6];
+                for (int it = 0; it < 100; ++it) { const double mid = 0.5 * (lo + hi); double e[6] = {mid, mid, mid, 0, 0, 0};
+                    returnMap(q, e, in, o, sg, se, D, false, -1.0, true); if (sg[0] > tgt) hi = mid; else lo = mid; }
+                eh = 0.5 * (lo + hi); double e[6] = {eh, eh, eh, 0, 0, 0}; returnMap(q, e, in, o, sg, se, D, false, -1.0, true); in = o;
+            }
+            double lat = in.eps[1]; const double e0 = in.eps[0];
+            for (int k = 1; k <= 460; ++k) {
+                const double ex = e0 - 1e-4 * k; State o; double sg[6], se[6], D[6][6];
+                auto g = [&](double l) { double e[6] = {ex, l, l, 0, 0, 0}; returnMap(q, e, in, o, sg, se, D, false, -1.0, true); return sg[1] + s3; };
+                double h = 5e-6, a = lat - h, b = lat + h + 3e-5, fa = g(a), fb = g(b);
+                for (int n = 0; fa * fb > 0 && n < 80; ++n) { h *= 1.5; a = lat - h; b = lat + h; fa = g(a); fb = g(b); }
+                double m = 0.5 * (a + b);
+                for (int n = 0; n < 100; ++n) { m = 0.5 * (a + b); const double fm = g(m); if (std::fabs(fm) < 1e-9 * q.fc) break; if (fa * fm <= 0) { b = m; fb = fm; } else { a = m; fa = fm; } }
+                g(m); lat = m; in = o;
+                if (sg[0] < peak) peak = sg[0];
+            }
+            worst = std::fmax(worst, std::fabs(peak / ref[c] - 1.0));
+            std::printf("       (IP s3=%5.1f MPa: peak %.2f MPa vs paper CDPM2 %.1f)\n", s3, peak, ref[c]);
+        }
+        check(worst < 0.01, "Imran-Pantazopoulou triaxial peaks == the paper's CDPM2 curves to 1% (B1+B2)");
     }
 
     // C3 — NaN guard: degenerate params (ft=0 => m0=Inf => apex xi blows up) must NOT leak NaN;

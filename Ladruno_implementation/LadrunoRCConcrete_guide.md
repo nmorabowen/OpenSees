@@ -167,12 +167,20 @@ zero ⇒ pure plastic, no damage). The peak of `-Ts` is `ft`; the peak of `-Cs` 
 The Modified Compression Field Theory (Vecchio & Collins 1986) softens the compressive **strength**
 by the transverse cracking strain:
 
-$$\beta = \frac{1}{0.8 + 170\,\varepsilon_1} \le 1, \qquad \frac{\partial\beta}{\partial\varepsilon_1} = -170\,\beta^2$$
+$$\beta = \frac{1}{0.8 + C\,\varepsilon_1} \le 1, \qquad \frac{\partial\beta}{\partial\varepsilon_1} = -C\,\beta^2, \qquad C = 170\ \text{(default, }\texttt{-betaC}\text{)}$$
 
 where `ε1` is the average principal **tensile** (cracking) strain transverse to the strut, and the
 realised compressive peak becomes `|σc| = β·fc'`. The assembled stress with `β` is
-`σ = (1 − dt̄)·ST + β·(1 − dc̄)·SC` (Derivation B), and the consistent tangent carries the `−170 β²`
+`σ = (1 − dt̄)·ST + β·(1 − dc̄)·SC` (Derivation B), and the consistent tangent carries the `−C β²`
 cross-term.
+
+> [!note] The coefficient `C` (`-betaC`, Ladruno C2, 2026-09-26)
+> `C = 170` is `0.34/ε0` with a hard-wired `ε0 = 0.002`. Vecchio–Collins 1986 write the factor as
+> `1/(0.8 + 0.34 ε1/|ε'c|)`, i.e. `C = 0.34/|ε'c|` of the actual concrete: 189 for PV20
+> (`ε'c = 1.8e-3`), 155 for PV19 (2.2e-3), 179 for PV27 (1.9e-3). `-betaC $C` sets it; the default 170
+> is bit-identical to the pre-C2 kernel. PV panels (validation repo, `03_layered_shell/pv_panels`,
+> `mcft` flags + `-crackedNu 0`): `C = 170` → PV20 / PV19 / PV27 peak 4.62 / 4.08 / 6.41 MPa;
+> `C = 0.34/ε'c` → 4.53 / 4.15 / 6.30 MPa (test 4.26 / 3.95 / 6.35; MCFT hand solution for PV20 4.55).
 
 > [!important] β scales the STRENGTH axis — the blocking correctness gate (ADR D4)
 > `β` must scale the **stress/strength axis** (the effective-compressive backbone value `q` fed into
@@ -273,10 +281,41 @@ stress stays **above** the bare fracture-energy softening curve. Phase 3a adds t
 $$\sigma_{ts}(\varepsilon_1)=\begin{cases}\dfrac{f_t}{1+\sqrt{c\,\varepsilon_1}} & \texttt{vc}\ \text{(MCFT / Bentz)}\\[2ex]\dfrac{\alpha\,f_t}{1+\sqrt{500\,\varepsilon_1}} & \texttt{cm}\ \text{(Collins–Mitchell)}\end{cases}$$
 
 with `f_t` the tension-backbone peak and `ε1` the **composite** (reinforced) membrane principal
-tensile strain — the *same* `ε1` the MCFT `β` uses (perfect-bond compatibility), so it needs no
+tensile strain. **Default `c = 200` since Ladruno C2 (2026-09-26)** — the Vecchio–Collins 1986 MCFT
+constant (`f1 = ft/(1+√(200 ε1))`), which is what reproduces the MCFT Table 2 PV20 response; it was
+500 (Collins–Mitchell 1991, identical to `cm`) before. Pass `-tensStiffC 500` for the pre-C2 `vc` curve.
+`ε1` is the *same* `ε1` the MCFT `β` uses (perfect-bond compatibility), so it needs no
 separate steel layer's strain. The floor injects `Δ = σ_ts(ε1) − n^T σ n` along `p1` (rank-1, only
 when `Δ>0`); it is active **only post-crack** (`ε1 ≥ ε_cr`). Equibiaxial (degenerate `p1`) floors
 **both** in-plane normals. `vc` with `c=500` ≡ `cm` with `α=1`.
+
+### 5.1 Cracked-state Poisson ratio (`-crackedNu`, Ladruno C2)
+
+The spine is an isotropic effective-stress model: the predictor is `σ̃ = σ̃_n + C0(E,ν):Δε`. With
+`ν` kept after cracking, the strut effective stress carries the Poisson term of the transverse
+tensile strain, `σ̃2 ∝ ε2 + ν ε1` (ε1 ≈ 2–4e-3 in a shear panel), so the strut is unloaded by the
+crack opening. The MCFT/DSFM convention is `ν = 0` once cracked. `-crackedNu $ν_c` switches the
+elastic operator (predictor **and** every tangent built on it, and the `-cyclic` slip modulus
+`G = E/2(1+ν)`) to `ν_c` the first time the in-plane principal tensile strain reaches the cracking
+strain `ε_cr` (`-crackStrain`, default `ft/E`). The switch is an **irreversible latch**
+(`nuCracked`, serialized, a recorder response) and is stress-continuous (the effective stress is
+incremental); the step that cracks uses `ν_c` for its whole increment. Off by default
+(bit-identical). `getInitialTangent` keeps the elastic `ν`.
+
+PV panels, `mcft` flags (`-beta -lublinerReduced -tensStiff vc -tensStiffC 200`), elastic `ν = 0.2`:
+
+| `C` / `ν` after cracking | PV20 | PV19 | PV27 |
+|---|---|---|---|
+| 170, `ν` = 0.2 kept (pre-C2) | 4.25 (−0.2 %) | 3.71 (−6.0 %) | 5.93 (−6.6 %) |
+| 170, `-crackedNu 0` | 4.62 (+8.3 %) | 4.08 (+3.3 %) | 6.41 (+0.9 %) |
+| `0.34/ε'c`, `-crackedNu 0` | 4.53 (+6.4 %) | 4.15 (+5.0 %) | 6.30 (−0.9 %) |
+| test / MCFT hand | 4.26 / 4.55 | 3.95 / 4.16 | 6.35 / 6.61 |
+
+`-crackedNu 0` reproduces the global `ν = 0` run to 0.1 % (4.615 vs 4.616 MPa) while keeping the
+elastic `ν` before cracking. With `C = 0.34/ε'c` the PV20 internal variables at the MCFT peak
+(γ = 8.06e-3) are θ = 36.1° (Table 2: 36.3°), |fc2|/f'c = 0.46 (0.45), fsx = 310 (305), fsy = 297 (297)
+MPa. PV20's +6 % is the MCFT's own over-prediction of this panel (+7 % hand solution), not a fit
+residual; the PV20 match with `ν` kept was a cancellation.
 
 > [!warning] Monotonic-scope (v1) (Quirk §22.13)
 > `σ_ts` is a function of the **live** `ε1` (no `ε1max` memory). Because `σ_ts` *decreases* with `ε1`,
@@ -560,6 +599,7 @@ nDMaterial LadrunoRCConcrete $tag $E $nu \
     [-shearRetention {mcft|const|dsfm|rots}] [-shearRetFactor $μ] \
     [-implex [-implexAlpha $a] [-implexControl $errTol $timeRedLim]] \
     [-tensStiff {vc|cm} [-tensStiffC $c] [-tensStiffAlpha $a]] \
+    [-betaC $C] [-crackedNu $nu_c] \
     [-autoRegularization $lch_ref]
 
 # identical grammar (minus the view choice); ThreeDimensional-only, for -geom finite:
@@ -583,7 +623,9 @@ nDMaterial LadrunoRCFiniteStrain $tag $E $nu  <same backbones + flags as above>
 | `-degKappa` / `-degSlipRef` / `-degMin` | Archard wear: max knockdown / slip reference / floor | 0.5 / 0.01 / 0.1 |
 | `-shearRetention` / `-shearRetFactor` | crack-shear slip-stiffness mode (§4.4) / `const`-mode `μ` | mcft / 0.4 |
 | `-implex` / `-implexAlpha` / `-implexControl` | enable IMPL-EX (§7) / extrapolation multiplier / advisory `$errTol $timeRedLim` | OFF / 1.0 / off |
-| `-tensStiff` / `-tensStiffC` / `-tensStiffAlpha` | tension stiffening `vc`|`cm` (§5) / `vc` coeff `c>0` (ignored in `cm`) / `cm` scale | OFF / 500 / 1.0 |
+| `-tensStiff` / `-tensStiffC` / `-tensStiffAlpha` | tension stiffening `vc`|`cm` (§5) / `vc` coeff `c>0` (ignored in `cm`) / `cm` scale | OFF / **200** (500 before C2) / 1.0 |
+| `-betaC` | MCFT softening coefficient `C` in `β = 1/(0.8 + C ε1)` (§3); V&C 1986: `0.34/|ε'c|` | 170 |
+| `-crackedNu` | Poisson ratio of the elastic operator once `ε1 ≥ ε_cr` (irreversible latch, §5.1); must be in [0, 0.5) | off (elastic `ν` kept) |
 | `-autoRegularization` | enable Bažant–Oh crack-band at reference length `$lch_ref` (§6) | OFF |
 
 > [!important] Flag implication chain + defaults-off
@@ -705,6 +747,7 @@ Through the element's `material` response (`eleResponse(ele, "material", gp, "<n
 | `crackShear` | crack-plane shear `τcr` + cap (reads the **trial** history — exclude from bit-exact round-trips) |
 | `xcrackState` | crack-2 state + cumulative slip `slipCum` |
 | `implexError` | the last IMPL-EX extrapolation error |
+| `nuCracked` / `crackedNu` | the `-crackedNu` latch (0/1) |
 
 ## 21. Units
 

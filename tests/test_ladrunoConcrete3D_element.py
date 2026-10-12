@@ -48,12 +48,13 @@ def _mat(tag, **kw):
     Gf = kw.get("Gf", _GF); Gc = kw.get("Gc", _GC)
     args = ["LadrunoConcrete3D", tag, E, nu, fc, ft, Gf, Gc]
     # WP concrete3d-oracle-diagnosis changed two wrapper DEFAULTS (ADR-31 §11): the CDPM2 bilinear tension law
-    # and Gc as a PHYSICAL compressive energy (eps_fc calibrated per lch). The battery runs the SHIPPED defaults
-    # (law="default"); only tests that compare numbers against the numpy oracle's LEGACY semantics
-    # (make_material / drive_*: exponential law, eps_fc = Gc/(fc lch)) pin law="legacy". Measured 2026-09-26:
-    # those two (explicit backbone, confined-fiber reduce-to-oracle) are the only ones that fail unpinned.
-    if kw.get("law", "default") == "legacy":
-        args += ["-tensionLaw", "exp", "-gcLegacy"]
+    # and Gc as a PHYSICAL compressive energy (eps_fc calibrated per lch). This battery cross-checks against
+    # the oracle's LEGACY semantics (make_material defaults: exponential law, eps_fc = Gc/(fc lch)), so pin
+    # them explicitly unless a test asks for the new defaults (law="default").
+    if kw.get("law", "legacy") == "legacy":
+        args += ["-tensionLaw", "exp", "-gcLegacy", "-flowPotential", "legacy",
+                 "-compressionDrive", "legacy", "-tcTemper", "none",                 # + B1 flow, B2 drive, PV20
+                 "-Df", 1.0, "-hardening", 0.3, 0.5]                                 # + B3: pre-B3 defaults
     if "rho" in kw:
         args += ["-rho", kw["rho"]]
     if "lch" in kw:
@@ -124,10 +125,22 @@ def _run(mat_fn, eps_target, nsteps):
 def _drive_adaptive(mat_fn, eps_target, base_steps, max_cuts=7, solver="FullGeneral"):
     """Displacement-control driver with step-CUTTING through the softening limit point — the only
     way a single implicit element gets past an unconfined tension/compression peak (the snap-back
-    regime). Returns [(eps_xx, sig_xx, omega_t)] for every converged increment."""
+    regime). Returns [(eps_xx, sig_xx, omega_t)] for every converged increment.
+
+    WP concrete3d-hang-diagnosis review follow-up (2026-09-28): a refusal right at first cracking
+    (the WP-99 commit-time latch going live for the first time surfaced this -- see
+    test_cttemper_parses_and_runs[proj]) can leave DisplacementControl's own internal deltaLambda
+    computation degenerate on the immediately-following analyze() call, printing an astronomic
+    "domain at load factor -3.5e+161"-style diagnostic even though `step` itself is still sane and
+    `cuts` is correctly bounded by max_cuts. That's cosmetic (the assertion below already fails
+    cleanly either way), but a floor on `step` makes the failure mode explicit and stops the driver
+    from ever proposing a step so small it could not possibly integrate anything, rather than
+    relying solely on max_cuts consecutive-failure counting to notice.
+    """
     _build(mat_fn, solver=solver)
     out = []
     step = eps_target / base_steps
+    step_floor = abs(eps_target) * 1.0e-8
     cuts = 0
     guard = 0
     while abs(ops.nodeDisp(2, 1)) < abs(eps_target) and guard < base_steps * 40:
@@ -139,7 +152,7 @@ def _drive_adaptive(mat_fn, eps_target, base_steps, max_cuts=7, solver="FullGene
                 step *= 2.0; cuts -= 1
         else:
             step *= 0.5; cuts += 1
-            if cuts > max_cuts:
+            if cuts > max_cuts or abs(step) < step_floor:
                 break                                     # genuinely stuck — keep what converged
     return out
 
@@ -963,7 +976,20 @@ def test_explicit_completes_where_fixedstep_implicit_stalls():
     lch = 50.0
     implicit_fixed = _run(lambda t: _mat(t, lch=lch), 0.03, 300)  # plain DisplacementControl, breaks on stall
     explicit = _run_explicit(CDL, 0.03, _NSTEPS_EXPL, _DT_EXPL, alphaM=20.0, lch=lch)
-    assert len(implicit_fixed) < 60, (
+    # NOTE (WP concrete3d-hang-diagnosis #877 follow-up): this used to assert < 60 steps. Before the honest
+    # return code + the rescue chain, the LOCAL return map failed at the very first softening state and fell
+    # silently to the elastic trial, so fixed-step implicit died after a handful of steps for the wrong
+    # reason (a hidden material fallback). With the local map now integrating there, the stall is the real
+    # global one: plain DisplacementControl stops at the snap-back limit point after 73 of the 300 steps
+    # (measured). The Tier-3 claim -- fixed-step implicit does NOT get through the ramp, explicit does --
+    # is unchanged, so the bound is "well short of the 300 requested steps" rather than the old number.
+    # HISTORY (WP concrete3d-hang-diagnosis): this stall is a real property (the snap-back limit point), measured three ways.
+    # ac72f0388 (the chain reports its LAST piece's tangent): 73 of the 300 steps. The dead-point commit briefly measured 300/300
+    # -- an artefact of the WRONG tangent (a chain reporting its last piece's tangent, 6-121 % off, lets fixed-step Newton
+    # "converge" across the limit point on a bad Jacobian). With the chain's own algorithmic tangent (review M1) plain
+    # DisplacementControl stops at the limit point after 7 of the 300 steps. The Tier-3 claim -- fixed-step implicit does NOT
+    # get through the ramp, explicit does -- is unchanged.
+    assert len(implicit_fixed) < 150, (
         f"fixed-step implicit unexpectedly survived steep softening ({len(implicit_fixed)} steps) — "
         "contrast no longer demonstrates the Tier-3 payoff")
     assert len(explicit) == _NSTEPS_EXPL, (

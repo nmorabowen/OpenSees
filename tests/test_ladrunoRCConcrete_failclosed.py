@@ -17,9 +17,10 @@ The oracle is the declared grammar itself:
     behavioural suites test_ladrunoRCConcrete_*.py pin the meanings);
   * the table in the header equals the list below (a new option must be added
     to both, with a parse case);
-  * `-crackedNu 0.2`, `-betaC 170` (refused by maintainer decision 2026-10-05
-    until fork PR #877 declares them) and a misspelling FAIL, name the token,
-    and create no material -- under openseespy AND the classic Tcl exe.
+  * a misspelling and a bare word FAIL, name the token, and create no material --
+    under openseespy AND the classic Tcl exe. (`-crackedNu 0.2` and `-betaC 170`
+    were refused here by maintainer decision 2026-10-05 until fork PR #877 declared
+    them; #877 declares them, with `since` PR-877, and they parse.)
 
 Revert-proof: on unmodified `ladruno` the refusal tests fail (the tokens are
 accepted silently).
@@ -62,11 +63,10 @@ ACCEPTED = {
     "-shearRetention": ["const"], "-shearRetFactor": [0.4],
     "-tensStiff": ["vc"], "-tensStiffC": [500.0], "-tensStiffAlpha": [1.0],
     "-autoRegularization": [50.0],
+    "-betaC": [170.0], "-crackedNu": [0.2],       # Ladruno C2, fork PR #877
 }
 
 REFUSED = {
-    "crackedNu": ["-crackedNu", 0.2],     # apeGmsh #1184, open fork PR #877
-    "betaC": ["-betaC", 170.0],           # apeGmsh #1184, open fork PR #877
     "misspelled": ["-tensStif", "vc"],    # one letter short of -tensStiff
     "bare-word": ["bogus"],
 }
@@ -102,8 +102,8 @@ def test_header_table_is_the_accepted_list():
             assert nargs == "LIST", name
         else:
             assert int(nargs) == len(vals), f"{name}: header says {nargs} value(s), test passes {vals}"
-    assert "-crackedNu" not in names and "-betaC" not in names, \
-        "-crackedNu/-betaC are refused until fork PR #877 declares them with its own `since`"
+    assert "-crackedNu" in names and "-betaC" in names, \
+        "-crackedNu/-betaC are declared by fork PR #877 (Ladruno C2) with its own `since`"
 
 
 @pytest.mark.parametrize("mat", FAMILY)

@@ -48,12 +48,15 @@ void *OPS_LadrunoQuad()
     opserr << "WARNING insufficient arguments\n";
     opserr << "Want: element LadrunoQuad tag n1 n2 n3 n4 matTag "
               "<-formulation std|bbar|ssp|eas> <-type PlaneStrain|PlaneStress> "
-              "<-geom linear|finite> <-thick t> <-rho r> <-body b1 b2> <-pressure p>\n";
+              "<-geom linear|finite> <-thick t> <-rho r> <-body b1 b2> <-pressure p> "
+              "<-hourglassFloor f> <-hgDamage gauss|centroid> <-hgLegacy>\n";
     return 0;
   }
 
   int idata[5];
   bool massCacheOn = true;   // Ladruno (ADR-77 G2 ext): default on, guard-checked
+  double hgFloor = LadrunoQuad::kHgFloorDefault;   // Ladruno (C1): ssp Tier-A floor
+  int hgDamageMode = 1;                            // Ladruno (C1): 1 gauss | 0 centroid
   int num = 5;
   if (OPS_GetIntInput(&num, idata) < 0) {
     opserr << "WARNING LadrunoQuad -- invalid tag/node integers\n";
@@ -124,6 +127,22 @@ void *OPS_LadrunoQuad()
       num = 1;
       if (OPS_GetDoubleInput(&num, &pressure) < 0) { opserr << "WARNING LadrunoQuad -- bad -pressure\n"; return 0; }
 
+    } else if (strcmp(opt, "-hourglassFloor") == 0 || strcmp(opt, "-hgFloor") == 0) {
+      // Ladruno (C1): floor of s = max(floor, 1 - omega) on the ssp hourglass Kstab.
+      // 1e-4 default; 0.01 = pre-C1 fork (-hgLegacy); 1 = stock SSPquad (no damage scaling).
+      num = 1;
+      if (OPS_GetDoubleInput(&num, &hgFloor) < 0 || hgFloor < 0.0 || hgFloor > 1.0) {
+        opserr << "WARNING LadrunoQuad -- -hourglassFloor needs a value in [0, 1]\n";
+        return 0;
+      }
+    } else if (strcmp(opt, "-hgDamage") == 0) {
+      const char *m = OPS_GetString();
+      if (strcmp(m, "gauss") == 0)         hgDamageMode = 1;
+      else if (strcmp(m, "centroid") == 0) hgDamageMode = 0;
+      else { opserr << "WARNING LadrunoQuad -- -hgDamage wants gauss|centroid\n"; return 0; }
+    } else if (strcmp(opt, "-hgLegacy") == 0) {
+      hgFloor = LadrunoQuad::kHgFloorLegacy;   // Ladruno (C1): the pre-C1 Tier-A exactly:
+      hgDamageMode = 0;                        // 0.01 floor + centroid-only damage
     } else if (strcmp(opt, "-noMassCache") == 0) {
       massCacheOn = false;   // Ladruno (ADR-77 G2 ext): A/B escape
     } else if (strcmp(opt, "-bulkViscosity") == 0 || strcmp(opt, "-bv") == 0) {
@@ -214,5 +233,7 @@ void *OPS_LadrunoQuad()
                          *mat, typeBuf, thk, form, geom, rho, b1, b2, pressure,
                          bvB1, bvB2);   // Ladruno (ADR 70) geom; (W2-E1) bulk-viscosity
   theEle->setMassCache(massCacheOn);    // Ladruno (ADR-77 G2 ext): transient, unserialized
+  theEle->setHourglassFloor(hgFloor);   // Ladruno (C1): serialized (sendSelf data(15))
+  theEle->setHourglassDamageMode(hgDamageMode);   // before setDomain builds the shadows
   return theEle;
 }
