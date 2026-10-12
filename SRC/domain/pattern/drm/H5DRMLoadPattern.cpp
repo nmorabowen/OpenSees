@@ -1250,7 +1250,9 @@ bool H5DRMLoadPattern::drm_direct_read(double t)
 
             DRM_D(3 * local_pos + 0) = d_final[0];
             DRM_D(3 * local_pos + 1) = d_final[1];
-            DRM_D(3 * local_pos + 2) = d_final[2];
+            // Ladruno WP-186: same z-down -> model sign flip as the in-record
+            // read below; without it the held vertical jumps sign at tend.
+            DRM_D(3 * local_pos + 2) = -d_final[2];
             // DRM_A components remain zero (already zeroed above)
         }
         return true;
@@ -1395,14 +1397,20 @@ bool H5DRMLoadPattern::drm_direct_read(double t)
             exit(-1);
         }
 
-        // Ladruno (DRM study): Z-flip removed (jaabell 9be15c3d0). ShakerMaker is
-        // z=Down(+down); when the FE model is built in the same z-down frame the
-        // d[2]/a[2] negation flips the vertical field vs geometry. Testing whether
-        // this flip is the source of the free-box drift + wrong vertical sign.
-        // d1[2] = -d1[2];
-        // d2[2] = -d2[2];
-        // a1[2] = -a1[2];
-        // a2[2] = -a2[2];
+        // Ladruno WP-186: vertical sign flip restored (as upstream OpenSees master;
+        // PR #296 had commented it out). Convention: the file is in ShakerMaker's
+        // frame, rows (E, N, vertical) with the vertical positive DOWN (z = depth).
+        // T and x0 act on the station COORDINATES only; the motion rows enter the
+        // model DOFs as u_X = +d0, u_Y = +d1, u_Z = -d2. So with the usual
+        // T = (0 1 0)(1 0 0)(0 0 -1) (depth -> -Z) the model is z-up and a
+        // z-down file enters with the right vertical sign. A model built in the
+        // z-down frame itself (identity T), or a file whose row 2 is positive UP
+        // (ShakerMaker 1.1 / the Paper 1 Legacy set), needs row 2 negated in the
+        // file. Sign test: tests/test_h5drm_vertical_sign.py.
+        d1[2] = -d1[2];
+        d2[2] = -d2[2];
+        a1[2] = -a1[2];
+        a2[2] = -a2[2];
 
 
         DRM_D(3 * local_pos + 0) = d1[0] * (1 - dtau) + d2[0] * (dtau);
@@ -1585,14 +1593,20 @@ bool H5DRMLoadPattern::drm_differentiate_displacements(double t)
             exit(-1);
         }
 
-        // Ladruno (DRM study): Z-flip removed (jaabell 9be15c3d0). ShakerMaker is
-        // z=Down(+down); when the FE model is built in the same z-down frame the
-        // d[2]/a[2] negation flips the vertical field vs geometry. Testing whether
-        // this flip is the source of the free-box drift + wrong vertical sign.
-        // d1[2] = -d1[2];
-        // d2[2] = -d2[2];
-        // a1[2] = -a1[2];
-        // a2[2] = -a2[2];
+        // Ladruno WP-186: vertical sign flip restored (as upstream OpenSees master;
+        // PR #296 had commented it out). Convention: the file is in ShakerMaker's
+        // frame, rows (E, N, vertical) with the vertical positive DOWN (z = depth).
+        // T and x0 act on the station COORDINATES only; the motion rows enter the
+        // model DOFs as u_X = +d0, u_Y = +d1, u_Z = -d2. So with the usual
+        // T = (0 1 0)(1 0 0)(0 0 -1) (depth -> -Z) the model is z-up and a
+        // z-down file enters with the right vertical sign. A model built in the
+        // z-down frame itself (identity T), or a file whose row 2 is positive UP
+        // (ShakerMaker 1.1 / the Paper 1 Legacy set), needs row 2 negated in the
+        // file. Sign test: tests/test_h5drm_vertical_sign.py.
+        d1[2] = -d1[2];
+        d2[2] = -d2[2];
+        a1[2] = -a1[2];
+        a2[2] = -a2[2];
 
 
         DRM_D(3 * local_pos + 0) = d1[0] * (1 - dtau) + d2[0] * (dtau);
