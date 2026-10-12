@@ -19,4 +19,4 @@ date: 2026-10-11
 - **Related.** OpenSeesMP + MUMPS is not byte-reproducible run to run even on a 300-DOF frame
   at 2 ranks (three reruns of one binary, three md5s, 1e-16 relative): an MP output-md5 gate
   cannot work; compare at round-off or gate on the serial build (WP-188 §6.1).
-- Learned 2026-10-11 (WP-188, [#PRNUM](https://github.com/nmorabowen/OpenSees/pull/PRNUM)).
+- Learned 2026-10-11 (WP-188, [#975](https://github.com/nmorabowen/OpenSees/pull/975)).
