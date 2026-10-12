@@ -24,8 +24,8 @@
 #   z-down file (row 2 = -1 mm)  -> surface u_Z = +1 mm * r   (correct)
 #   up file     (row 2 = +1 mm)  -> surface u_Z = -1 mm * r   (inverted)
 # Horizontal u_X = +2 mm * r (East), u_Y = +3 mm * r (North) in both.
-# Past tend the pattern holds the final displacement: the hold branch must carry
-# the same flip (no sign jump at tend).
+# At t = tend the pattern holds the final displacement sample: the hold branch must
+# carry the same flip (no sign jump at tend).
 #
 # Runs through openseespy (worktree dist/bin/opensees.pyd) and, when present,
 # the classic Tcl OpenSees.exe on the same file (the parser the decks use).
@@ -167,12 +167,12 @@ def run_openseespy(h5):
     ops.system("UmfPack")
     ops.test("NormDispIncr", 1e-10, 5)
     ops.algorithm("Linear")
-    ops.integrator("LoadControl", DT)
+    ops.integrator("LoadControl", 0.5)                 # static: no inertia, exact rigid field
     ops.analysis("Static")
     out = {}
-    assert ops.analyze(50) == 0                          # t = 0.5
+    assert ops.analyze(1) == 0                           # t = 0.5, inside the record
     out["mid"] = {key: ops.nodeDisp(nodes[key][0]) for key in nodes}
-    assert ops.analyze(70) == 0                          # t = 1.2 > tend: hold branch
+    assert ops.analyze(1) == 0                           # t = 1.0 = tend exactly: the hold branch
     out["hold"] = {key: ops.nodeDisp(nodes[key][0]) for key in nodes}
     out["t"] = ops.getTime()
     ops.wipe()
@@ -189,7 +189,7 @@ def test_h5drm_vertical_sign_openseespy(tmp_path, vertical):
     h5 = str(tmp_path / f"rigid_{vertical}.h5drm")
     write_h5drm(h5, vertical)
     nodes, out = run_openseespy(h5)
-    assert out["t"] > TEND
+    assert out["t"] == TEND
     surf = (0, 0, 0)                                     # interior surface centre
     u_mid = np.array(out["mid"][surf])
     exp_mid = expected(vertical, 0.5)
@@ -206,7 +206,8 @@ def test_h5drm_vertical_sign_openseespy(tmp_path, vertical):
     for key, u in out["mid"].items():
         if not _is_internal(*key):
             assert np.max(np.abs(u)) < 1e-6 * np.max(np.abs(exp_mid)), key
-    # hold past tend: the last sample (r = (NT-2)/(NT-1)... i_final = N_timesteps-1)
+    # t = tend: drm_direct_read holds sample i_final = N_timesteps - 1 (r = 0.99) with the same
+    # flip. (Past tend, CalculateBoundaryForces returns zero DRM forces: t > tend is not reached.)
     r_hold = (round(TEND / DT) - 1) * DT / TEND
     u_hold = np.array(out["hold"][surf])
     np.testing.assert_allclose(u_hold, expected(vertical, r_hold), rtol=1e-6, atol=1e-9)
@@ -237,8 +238,8 @@ def test_h5drm_vertical_sign_tcl(tmp_path, vertical):
     out = (tmp_path / "u.txt").as_posix()
     lines += ["constraints Transformation", "numberer RCM", "system UmfPack",
               "test NormDispIncr 1e-10 5", "algorithm Linear",
-              f"integrator LoadControl {DT}", "analysis Static",
-              "if {[analyze 50] != 0} {exit 2}",
+              "integrator LoadControl 0.5", "analysis Static",
+              "if {[analyze 1] != 0} {exit 2}",
               f'set f [open "{out}" w]; puts $f [nodeDisp {s}]; close $f', "exit 0"]
     deck = tmp_path / "deck.tcl"
     deck.write_text("\n".join(lines) + "\n")
