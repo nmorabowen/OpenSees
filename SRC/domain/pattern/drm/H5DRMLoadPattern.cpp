@@ -41,6 +41,8 @@
 #include <OPS_Globals.h>
 #include <map>
 #include <set>
+#include <cstring>  // Ladruno WP-187: strcmp (flag parse)
+#include <cctype>   // Ladruno WP-187: isalpha (flag parse)
 #include <algorithm>
 #include <vector>
 #include <Message.h>
@@ -50,6 +52,7 @@
 #endif
 
 #include <limits>   //For std::numeric_limits<double>::epsilon()
+#include <chrono>   // Ladruno WP-187: read timer
 
 #include <Node.h>
 #include <NodeIter.h>
@@ -109,8 +112,79 @@ void* OPS_H5DRMLoadPattern()
 
     std::string filename = OPS_GetString();
 
+    // Ladruno WP-187: optional flags AFTER all positional arguments:
+    //   -verbose             per-step "H5DRM(r) : t = ..." lines (off by default)
+    //   -prefetch <nsteps>   time steps per in-memory block (default: the chunk length; 0 = off)
+    //   -chunkCacheMB <mb>   HDF5 chunk cache per dataset (default: sized per rank; 0 = HDF5 default)
+    // The positional parse below sees only the tokens before the first flag, so the
+    // existing counts (including the "exactly 12 left" test for T and x0) still hold.
+    // A flag is a token starting with '-' and a letter, so "-1" stays a number.
+    bool opt_verbose = false;
+    int opt_prefetch = -1;
+    double opt_cache_mb = -1.0;
+    int npos = OPS_GetNumRemainingInputArgs();
+    {
+        const int nrest = npos;
+        int consumed = 0;
+        bool inflags = false;
+        while (consumed < nrest)
+        {
+            const char *s = OPS_GetString();
+            consumed++;
+            const bool isflag = (s != 0 && s[0] == '-' && isalpha((unsigned char) s[1]));
+            if (!isflag)
+            {
+                if (inflags)
+                {
+                    opserr << "WARNING pattern H5DRM: positional argument after a flag; flags go last\n";
+                    return 0;
+                }
+                continue;
+            }
+            if (!inflags)
+            {
+                npos = consumed - 1;
+                inflags = true;
+            }
+            if (strcmp(s, "-verbose") == 0)
+            {
+                opt_verbose = true;
+            }
+            else if (strcmp(s, "-prefetch") == 0 || strcmp(s, "-chunkCacheMB") == 0)
+            {
+                const bool is_prefetch = (strcmp(s, "-prefetch") == 0);
+                if (consumed >= nrest)
+                {
+                    opserr << "WARNING pattern H5DRM: " << (is_prefetch ? "-prefetch" : "-chunkCacheMB") << " needs a value\n";
+                    return 0;
+                }
+                consumed++;
+                int ok = is_prefetch ? OPS_GetIntInput(&num, &opt_prefetch)
+                                     : OPS_GetDoubleInput(&num, &opt_cache_mb);
+                if (ok < 0)
+                {
+                    opserr << "WARNING pattern H5DRM: invalid value after " << (is_prefetch ? "-prefetch" : "-chunkCacheMB") << "\n";
+                    return 0;
+                }
+            }
+            else
+            {
+                opserr << "WARNING pattern H5DRM: unknown flag " << s << " (known: -verbose, -prefetch n, -chunkCacheMB mb)\n";
+                return 0;
+            }
+        }
+        if (consumed > 0)
+            OPS_ResetCurrentInputArg(-consumed);
+    }
+    // Positional reads below count against npos (the tokens before the first flag).
+    int npos_read = 0;
+    auto numPositionalLeft = [&]() { return npos - npos_read; };
+    auto getPosDouble = [&](double *v) { npos_read++; return OPS_GetDoubleInput(&num, v); };
+    auto getPosInt = [&](int *v) { npos_read++; return OPS_GetIntInput(&num, v); };
+
     double factor = 1.0;
-    OPS_GetDoubleInput(&num, &factor);
+    if (numPositionalLeft() > 0)
+        getPosDouble(&factor);
 
     double crd_scale = 1.0;
     double distance_tolerance = 1e-3;
@@ -120,40 +194,40 @@ void* OPS_H5DRMLoadPattern()
     double T20 = 0.0; double T21 = 0.0; double T22 = 1.0;
     double x00 = 0.0; double x01 = 0.0; double x02 = 0.0;
 
-    if (OPS_GetNumRemainingInputArgs() > 1)
+    if (numPositionalLeft() > 1)
     {
-        OPS_GetDoubleInput(&num, &crd_scale);
+        getPosDouble(&crd_scale);
         opserr << "crd_scale = " << crd_scale << endln;
     }
 
-    if (OPS_GetNumRemainingInputArgs() > 1)
+    if (numPositionalLeft() > 1)
     {
-        OPS_GetDoubleInput(&num, &distance_tolerance);
+        getPosDouble(&distance_tolerance);
         opserr << "distance_tolerance = " << distance_tolerance << endln;
     }
 
     int int_do_coordinate_transformation;
-    if (OPS_GetNumRemainingInputArgs() > 1)
+    if (numPositionalLeft() > 1)
     {
-        OPS_GetIntInput(&num, &int_do_coordinate_transformation);
+        getPosInt(&int_do_coordinate_transformation);
         do_coordinate_transformation = int_do_coordinate_transformation;
         opserr << "do_coordinate_transformation = " << do_coordinate_transformation << endln;
     }
 
-    if (OPS_GetNumRemainingInputArgs() == 12)
+    if (numPositionalLeft() == 12)
     {
-        OPS_GetDoubleInput(&num, &T00);
-        OPS_GetDoubleInput(&num, &T01);
-        OPS_GetDoubleInput(&num, &T02);
-        OPS_GetDoubleInput(&num, &T10);
-        OPS_GetDoubleInput(&num, &T11);
-        OPS_GetDoubleInput(&num, &T12);
-        OPS_GetDoubleInput(&num, &T20);
-        OPS_GetDoubleInput(&num, &T21);
-        OPS_GetDoubleInput(&num, &T22);
-        OPS_GetDoubleInput(&num, &x00);
-        OPS_GetDoubleInput(&num, &x01);
-        OPS_GetDoubleInput(&num, &x02);
+        getPosDouble(&T00);
+        getPosDouble(&T01);
+        getPosDouble(&T02);
+        getPosDouble(&T10);
+        getPosDouble(&T11);
+        getPosDouble(&T12);
+        getPosDouble(&T20);
+        getPosDouble(&T21);
+        getPosDouble(&T22);
+        getPosDouble(&x00);
+        getPosDouble(&x01);
+        getPosDouble(&x02);
         opserr << "T = " <<  endln;
         opserr << "    " << T00 << " " << T01 << " " << T02 << endln;
         opserr << "    " << T10 << " " << T11 << " " << T12 << endln;
@@ -174,7 +248,7 @@ void* OPS_H5DRMLoadPattern()
                            T20, T21, T22,
                            x00, x01, x02);
 
-
+    ((H5DRMLoadPattern *) thePattern)->setReadOptions(opt_verbose, opt_prefetch, opt_cache_mb);
 
     return thePattern;
 }
@@ -837,7 +911,7 @@ void H5DRMLoadPattern::do_intitialization()
         H5DRMout << "Opening velocity dataset.\n";
 
 
-        ih5_vel = H5Dopen(ih5_fname, "DRM_Data/velocity", H5P_DEFAULT);
+        ih5_vel = open_drm_dataset("DRM_Data/velocity");   // Ladruno WP-187: chunk cache
 
         if (ih5_vel < 0)
         {
@@ -859,7 +933,7 @@ void H5DRMLoadPattern::do_intitialization()
         H5DRMout << "Opening acceleration dataset.\n";
 
 
-        ih5_acc = H5Dopen(ih5_fname, "DRM_Data/acceleration", H5P_DEFAULT);
+        ih5_acc = open_drm_dataset("DRM_Data/acceleration");   // Ladruno WP-187: chunk cache
 
         if (ih5_acc < 0)
         {
@@ -881,7 +955,7 @@ void H5DRMLoadPattern::do_intitialization()
         H5DRMout << "Opening displacement dataset.\n";
 
 
-        ih5_dis = H5Dopen(ih5_fname, "DRM_Data/displacement", H5P_DEFAULT);
+        ih5_dis = open_drm_dataset("DRM_Data/displacement");   // Ladruno WP-187: chunk cache
 
         if (ih5_dis < 0)
         {
@@ -929,6 +1003,13 @@ void H5DRMLoadPattern::cleanup()
     nodetag2local_pos.clear();
 
     // Close individual HDF5 resources
+    // Ladruno WP-187: with -verbose, the time spent reading and interpolating the in-record samples.
+    if (opt_verbose_steps && read_calls > 0)
+        H5DRMout << "WP-187 read time " << read_seconds << " s over " << read_calls << " steps ("
+                 << 1000.0 * read_seconds / read_calls << " ms/step), " << n_block_refills << " block refills, prefetch "
+                 << opt_prefetch_steps << ", chunk cache " << opt_chunk_cache_mb << " MB (-1 = auto)" << endln;
+    read_seconds = 0.0;
+    read_calls = 0;
     HDF5_CLOSE_AND_REPORT(ih5_vel, H5Dclose, "motion dataset");
     HDF5_CLOSE_AND_REPORT(ih5_vel_ds, H5Sclose, "motion dataspace");
     HDF5_CLOSE_AND_REPORT(ih5_dis, H5Dclose, "displacement dataset");
@@ -972,6 +1053,16 @@ void H5DRMLoadPattern::cleanup()
 
     // Close the HDF5 file itself
     HDF5_CLOSE_AND_REPORT(ih5_fname, H5Fclose, "H5 file: \"" + dataset_fname + "\"");
+
+    // Ladruno WP-187: drop the block cache with the file handles.
+    rows_collected = false;
+    rank_rows.clear();
+    datapos2blkrow.clear();
+    row_runs.clear();
+    std::vector<double>().swap(blk_dis);
+    std::vector<double>().swap(blk_acc);
+    blk_t0 = -1;
+    blk_len = 0;
 
     flag_initialized = false;
 }
@@ -1178,7 +1269,7 @@ bool H5DRMLoadPattern::drm_direct_read(double t)
 
     if (DRM_Nodes.Size() == 0)
     {
-        H5DRMout << " This process has no DRM nodes. Nothing to be done by H5DRM" << endln;
+        H5DRMstep << " This process has no DRM nodes. Nothing to be done by H5DRM" << endln;
         return false;
     }
 
@@ -1187,7 +1278,7 @@ bool H5DRMLoadPattern::drm_direct_read(double t)
 
     if (t < tstart)
     {
-        H5DRMout << "t = " << t << " tstart = " << tstart << " DRM Not computing forces (t < tstart)"  << endln;
+        H5DRMstep << "t = " << t << " tstart = " << tstart << " DRM Not computing forces (t < tstart)"  << endln;
         return true;
     }
 
@@ -1203,7 +1294,7 @@ bool H5DRMLoadPattern::drm_direct_read(double t)
     {
         if (MPI_local_rank == 0)
         {
-            H5DRMout << "t = " << t << " >= tend = " << tend
+            H5DRMstep << "t = " << t << " >= tend = " << tend
                      << " -- holding final displacement, zero acceleration." << endln;
         }
 
@@ -1274,13 +1365,18 @@ bool H5DRMLoadPattern::drm_direct_read(double t)
 
     if (MPI_local_rank == 0)
     {
-        H5DRMout << "t = " << t << " dt = " << dt << " i1 = " << i1 << " i2 = " << i2 << " t1 = " << t1 << " t2 = " << t2 << " dtau = " << dtau << endln;
+        H5DRMstep << "t = " << t << " dt = " << dt << " i1 = " << i1 << " i2 = " << i2 << " t1 = " << t1 << " t2 = " << t2 << " dtau = " << dtau << endln;
     }
 
     double umax = -std::numeric_limits<double>::infinity();
     double amax = -std::numeric_limits<double>::infinity();
     double umin =  std::numeric_limits<double>::infinity();
     double amin =  std::numeric_limits<double>::infinity();
+
+    const std::chrono::steady_clock::time_point t_read0 = std::chrono::steady_clock::now();   // Ladruno WP-187: read timer
+    // Ladruno WP-187: make sure the block holds steps i1 and i2 (refills on a block
+    // boundary; false = prefetch off or the block could not be read).
+    const bool use_block = ensure_block(i1, i2);
 
     for (int n = 0; n < DRM_Nodes.Size(); ++n)
     {
@@ -1307,49 +1403,65 @@ bool H5DRMLoadPattern::drm_direct_read(double t)
         hsize_t count[2]  = {3                  , 1};
         hsize_t block[2]  = {1                  , 1};
 
-        //Selection in dataspace
-        H5Sselect_hyperslab(
-            ih5_dis_ds,
-            H5S_SELECT_SET, start, stride, count, block );
-        H5Sselect_hyperslab(
-            ih5_acc_ds,
-            H5S_SELECT_SET, start, stride, count, block );
-
-
-        //Selection in memspace
-        hsize_t rank_one_array = 1;
-        hsize_t one_node_data_dims[1] = {3};
-        hsize_t one_node_data_maxdims[1] = {3};
-        hid_t memspace  = H5Screate_simple(rank_one_array, one_node_data_dims, one_node_data_maxdims);       // create dataspace of memory
-
-
+        // Ladruno WP-187: serve the two time samples from the rank's in-memory block
+        // (same file bytes, read once per block instead of 4 hyperslab reads per node
+        // and step); the per-node read below stays as the fallback (-prefetch 0).
+        herr_t errorflag1 = 0, errorflag2 = 0, errorflag3 = 0, errorflag4 = 0;
         hsize_t mem_start[1] = {0};
-        hsize_t mem_stride[1] = {1};
-        hsize_t mem_count[1] = {3};
-        hsize_t mem_block[1] = {1};
-        H5Sselect_hyperslab(
-            memspace,
-            H5S_SELECT_SET, mem_start, mem_stride, mem_count, mem_block );
+        const bool served = use_block &&
+                            block_value(ih5_dis, data_pos, i1, d1) &&
+                            block_value(ih5_acc, data_pos, i1, a1) &&
+                            block_value(ih5_dis, data_pos, i2, d2) &&
+                            block_value(ih5_acc, data_pos, i2, a2);
+        if (served)
+        {
+            start[1] = (hsize_t) i2;
+        }
+        else
+        {
+            //Selection in dataspace
+            H5Sselect_hyperslab(
+                ih5_dis_ds,
+                H5S_SELECT_SET, start, stride, count, block );
+            H5Sselect_hyperslab(
+                ih5_acc_ds,
+                H5S_SELECT_SET, start, stride, count, block );
 
-        //Read data
-        herr_t errorflag1 = H5Dread( ih5_dis, H5T_NATIVE_DOUBLE, memspace,
-                                     ih5_dis_ds, ih5_xfer_plist,  d1 );
-        herr_t errorflag2 = H5Dread(ih5_acc, H5T_NATIVE_DOUBLE, memspace,
-                                    ih5_acc_ds, ih5_xfer_plist,  a1 );
-        start[1] = (hsize_t) i2;
-        H5Sselect_hyperslab(
-            ih5_dis_ds,
-            H5S_SELECT_SET, start, stride, count, block );
-        H5Sselect_hyperslab(
-            ih5_acc_ds,
-            H5S_SELECT_SET, start, stride, count, block );
+
+            //Selection in memspace
+            hsize_t rank_one_array = 1;
+            hsize_t one_node_data_dims[1] = {3};
+            hsize_t one_node_data_maxdims[1] = {3};
+            hid_t memspace  = H5Screate_simple(rank_one_array, one_node_data_dims, one_node_data_maxdims);       // create dataspace of memory
 
 
-        herr_t errorflag3 = H5Dread( ih5_dis, H5T_NATIVE_DOUBLE, memspace,
-                                     ih5_dis_ds, ih5_xfer_plist,  d2 );
-        herr_t errorflag4 = H5Dread(ih5_acc, H5T_NATIVE_DOUBLE, memspace,
-                                    ih5_acc_ds, ih5_xfer_plist,  a2 );
-        H5Sclose(memspace);
+            hsize_t mem_stride[1] = {1};
+            hsize_t mem_count[1] = {3};
+            hsize_t mem_block[1] = {1};
+            H5Sselect_hyperslab(
+                memspace,
+                H5S_SELECT_SET, mem_start, mem_stride, mem_count, mem_block );
+
+            //Read data
+            errorflag1 = H5Dread( ih5_dis, H5T_NATIVE_DOUBLE, memspace,
+                                         ih5_dis_ds, ih5_xfer_plist,  d1 );
+            errorflag2 = H5Dread(ih5_acc, H5T_NATIVE_DOUBLE, memspace,
+                                        ih5_acc_ds, ih5_xfer_plist,  a1 );
+            start[1] = (hsize_t) i2;
+            H5Sselect_hyperslab(
+                ih5_dis_ds,
+                H5S_SELECT_SET, start, stride, count, block );
+            H5Sselect_hyperslab(
+                ih5_acc_ds,
+                H5S_SELECT_SET, start, stride, count, block );
+
+
+            errorflag3 = H5Dread( ih5_dis, H5T_NATIVE_DOUBLE, memspace,
+                                         ih5_dis_ds, ih5_xfer_plist,  d2 );
+            errorflag4 = H5Dread(ih5_acc, H5T_NATIVE_DOUBLE, memspace,
+                                        ih5_acc_ds, ih5_xfer_plist,  a2 );
+            H5Sclose(memspace);
+        }
 
         bool nanfound = false;
         for (int i = 0; i < 3; ++i)
@@ -1423,7 +1535,9 @@ bool H5DRMLoadPattern::drm_direct_read(double t)
     }
 
 
-    H5DRMout << "t = " << t << " u = (" << umin << ", " << umax << ") a = (" << amin << ", " << amax << ")" << endln;
+    read_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - t_read0).count();   // Ladruno WP-187
+    ++read_calls;
+    H5DRMstep << "t = " << t << " u = (" << umin << ", " << umax << ") a = (" << amin << ", " << amax << ")" << endln;
 
     return true;
 }
@@ -1460,7 +1574,7 @@ bool H5DRMLoadPattern::drm_differentiate_displacements(double t)
     i_last = i_last > (hsize_t) N_timesteps - 1 ? N_timesteps - 1 : i_last;
 
     hsize_t i_len = (i_last - i_first) + 1;
-    H5DRMout << "t = " << t
+    H5DRMstep << "t = " << t
              << " dt = " << dt
              << " i1 = " << i1
              << " i2 = " << i2
@@ -1618,7 +1732,7 @@ bool H5DRMLoadPattern::drm_differentiate_displacements(double t)
         DRM_A(3 * local_pos + 2) = a1[2] * (1 - dtau) + a2[2] * (dtau);
     }
 
-    H5DRMout << "t = " << t << " u = (" << umin << ", " << umax << ") a = (" << amin << ", " << amax << ")" << endln;
+    H5DRMstep << "t = " << t << " u = (" << umin << ", " << umax << ") a = (" << amin << ", " << amax << ")" << endln;
 
     return true;
 }
@@ -1636,7 +1750,7 @@ bool H5DRMLoadPattern::CalculateBoundaryForces(double currentTime)
 {
     if (MPI_local_rank == 0)
     {
-        H5DRMout << "CalculateBoundaryForces @ t = " << currentTime << "\n";
+        H5DRMstep << "CalculateBoundaryForces @ t = " << currentTime << "\n";
     }
 
     constexpr int NDF = 3;
@@ -1836,7 +1950,7 @@ bool H5DRMLoadPattern::CalculateBoundaryForces(double currentTime)
 
     if (MPI_local_rank == 0)
     {
-        H5DRMout << "CalculateBoundaryForces. END\n";
+        H5DRMstep << "CalculateBoundaryForces. END\n";
     }
 
     if (DEBUG_DRM_FORCES)
@@ -2324,6 +2438,296 @@ bool read_int_dataset_into_array(const hid_t & h5drm_dataset, std::string datase
     return true;
 }
 
+
+
+// ============================================================================
+// Ladruno WP-187: efficient H5DRM reads
+// ----------------------------------------------------------------------------
+// The motion datasets are (3 * Nstations) x Ntimesteps, gzip-chunked (the Paper 1
+// files: 192 x 125). The per-step path reads, for every DRM node, four 3 x 1
+// hyperslabs (d and a at i1 and i2) through HDF5's default 1 MiB chunk cache: a
+// rank's stations span more chunks than fit, so nearly every read re-inflates a
+// chunk (measured 270-290 ms per step for one rank of the 4D deck, about 50x the
+// bytes it needs). Two changes, both serving the same file bytes:
+//   1. open_drm_dataset: a dataset-access chunk cache sized from the chunk dims and
+//      the rows this rank reads (two chunk columns of them), so a chunk is inflated
+//      once per column;
+//   2. ensure_block / block_value: a block of time steps (default: one chunk length,
+//      plus one step so i2 = i1 + 1 is always inside) is read once for the rank's
+//      rows, one H5Dread per contiguous run of rows, and the per-step values are
+//      copied out of it. The interpolation in drm_direct_read is unchanged, so the
+//      loads are bit-identical to the per-node path (kept as the -prefetch 0 /
+//      error fallback).
+// ============================================================================
+
+void H5DRMLoadPattern::setReadOptions(bool verbose, int prefetchSteps, double chunkCacheMB)
+{
+    opt_verbose_steps = verbose;
+    opt_prefetch_steps = prefetchSteps < 0 ? -1 : prefetchSteps;
+    opt_chunk_cache_mb = chunkCacheMB < 0 ? -1.0 : chunkCacheMB;
+}
+
+void H5DRMLoadPattern::collect_rank_rows()
+{
+    if (rows_collected)
+        return;
+
+    std::set<hsize_t> rows;
+    std::set<int> positions;
+    for (int n = 0; n < DRM_Nodes.Size(); ++n)
+    {
+        const int nodeTag = DRM_Nodes(n);
+        if (interpNodeParents.find(nodeTag) != interpNodeParents.end())
+            continue;
+        std::map<int, int>::const_iterator its = nodetag2station_id.find(nodeTag);
+        if (its == nodetag2station_id.end())
+            continue;
+        const int station_id = its->second;
+        if (station_id < 0 || station_id >= station_id2data_pos.Size())
+            continue;
+        const int data_pos = station_id2data_pos(station_id);
+        if (data_pos < 0)
+            continue;
+        positions.insert(data_pos);
+        for (int k = 0; k < 3; ++k)
+            rows.insert((hsize_t) data_pos + k);
+    }
+
+    rank_rows.assign(rows.begin(), rows.end());
+
+    row_runs.clear();
+    for (size_t r = 0; r < rank_rows.size(); ++r)
+    {
+        if (!row_runs.empty() && row_runs.back().first + row_runs.back().second == rank_rows[r])
+            row_runs.back().second++;
+        else
+            row_runs.push_back(std::make_pair(rank_rows[r], (hsize_t) 1));
+    }
+
+    datapos2blkrow.clear();
+    for (std::set<int>::const_iterator it = positions.begin(); it != positions.end(); ++it)
+    {
+        std::vector<hsize_t>::const_iterator f =
+            std::lower_bound(rank_rows.begin(), rank_rows.end(), (hsize_t) *it);
+        datapos2blkrow[*it] = (int) (f - rank_rows.begin());
+    }
+
+    rows_collected = true;
+}
+
+static hsize_t h5drm_next_prime(hsize_t n)
+{
+    if (n < 3)
+        return 3;
+    if (n % 2 == 0)
+        ++n;
+    for (;; n += 2)
+    {
+        bool prime = true;
+        for (hsize_t d = 3; d * d <= n; d += 2)
+            if (n % d == 0) { prime = false; break; }
+        if (prime)
+            return n;
+    }
+}
+
+hid_t H5DRMLoadPattern::open_drm_dataset(const char *path)
+{
+    hid_t d0 = H5Dopen(ih5_fname, path, H5P_DEFAULT);
+    if (d0 < 0)
+        return d0;
+
+    // Chunk and extent of this dataset.
+    hsize_t cdims[2] = {0, 0};
+    hsize_t dims[2] = {0, 0};
+    bool chunked = false;
+    size_t type_bytes = sizeof(double);
+    {
+        hid_t dcpl = H5Dget_create_plist(d0);
+        if (dcpl >= 0)
+        {
+            if (H5Pget_layout(dcpl) == H5D_CHUNKED && H5Pget_chunk(dcpl, 2, cdims) == 2)
+                chunked = true;
+            H5Pclose(dcpl);
+        }
+        hid_t sp = H5Dget_space(d0);
+        if (sp >= 0)
+        {
+            if (H5Sget_simple_extent_ndims(sp) == 2)
+                H5Sget_simple_extent_dims(sp, dims, NULL);
+            H5Sclose(sp);
+        }
+        hid_t ty = H5Dget_type(d0);
+        if (ty >= 0)
+        {
+            type_bytes = H5Tget_size(ty);
+            H5Tclose(ty);
+        }
+    }
+
+    const bool is_displacement = (strcmp(path, "DRM_Data/displacement") == 0);
+    if (is_displacement)
+    {
+        ds_ntime = dims[1];
+        ds_chunk[0] = chunked ? cdims[0] : 0;
+        ds_chunk[1] = chunked ? cdims[1] : 0;
+    }
+
+    if (!chunked || opt_chunk_cache_mb == 0.0)
+        return d0;   // contiguous data, or HDF5's default cache asked for
+
+    // Rows this rank reads -> distinct row-chunks; keep two chunk columns of them
+    // (a time block of chunk length + 1 straddles a column boundary).
+    collect_rank_rows();
+    std::set<hsize_t> row_chunks;
+    for (size_t r = 0; r < rank_rows.size(); ++r)
+        row_chunks.insert(rank_rows[r] / cdims[0]);
+    const double chunk_bytes = (double) cdims[0] * (double) cdims[1] * (double) type_bytes;
+    double cache_bytes = 1.25 * 2.0 * (double) row_chunks.size() * chunk_bytes;
+    if (opt_chunk_cache_mb > 0)
+        cache_bytes = opt_chunk_cache_mb * 1048576.0;
+    cache_bytes = std::max(cache_bytes, 1048576.0);          // never below HDF5's default
+    cache_bytes = std::min(cache_bytes, 1024.0 * 1048576.0); // 1 GiB ceiling per dataset
+    const hsize_t chunks_fit = (hsize_t) (cache_bytes / std::max(chunk_bytes, 1.0)) + 1;
+    const hsize_t nslots = h5drm_next_prime(std::max((hsize_t) 521, 100 * chunks_fit));
+
+    hid_t dapl = H5Pcreate(H5P_DATASET_ACCESS);
+    if (dapl < 0)
+        return d0;
+    if (H5Pset_chunk_cache(dapl, (size_t) nslots, (size_t) cache_bytes, H5D_CHUNK_CACHE_W0_DEFAULT) < 0)
+    {
+        H5Pclose(dapl);
+        return d0;
+    }
+    H5Dclose(d0);
+    hid_t d = H5Dopen(ih5_fname, path, dapl);
+    H5Pclose(dapl);
+
+    if (is_displacement && MPI_local_rank == 0)
+    {
+        std::string pf = "off";
+        if (opt_prefetch_steps > 0)
+            pf = std::to_string(opt_prefetch_steps) + " steps";
+        else if (opt_prefetch_steps < 0)
+            pf = std::to_string((long long) cdims[1]) + " steps";
+        H5DRMout << "WP-187 reads: dataset " << (long long) dims[0] << " x " << (long long) dims[1]
+                 << ", chunk " << (long long) cdims[0] << " x " << (long long) cdims[1]
+                 << ", chunk cache " << cache_bytes / 1048576.0 << " MiB per dataset (rank 0)"
+                 << ", prefetch " << pf.c_str()
+                 << (opt_verbose_steps ? ", per-step log on" : ", per-step log off (-verbose)") << endln;
+    }
+    return d;
+}
+
+bool H5DRMLoadPattern::ensure_block(int i_lo, int i_hi)
+{
+    if (opt_prefetch_steps == 0 || ih5_dis <= 0 || ih5_acc <= 0)
+        return false;
+    if (i_lo < 0 || i_hi < i_lo)
+        return false;
+
+    if (blk_t0 >= 0 && i_lo >= blk_t0 && i_hi < blk_t0 + blk_len)
+        return true;
+
+    collect_rank_rows();
+    const hsize_t nrows = (hsize_t) rank_rows.size();
+    if (nrows == 0)
+        return false;
+
+    {
+        // Both datasets must cover the steps served.
+        hsize_t ddims[2] = {0, 0};
+        hsize_t adims[2] = {0, 0};
+        if (H5Sget_simple_extent_ndims(ih5_dis_ds) != 2 || H5Sget_simple_extent_ndims(ih5_acc_ds) != 2)
+            return false;
+        H5Sget_simple_extent_dims(ih5_dis_ds, ddims, NULL);
+        H5Sget_simple_extent_dims(ih5_acc_ds, adims, NULL);
+        ds_ntime = std::min(ddims[1], adims[1]);
+        const hsize_t need_rows = rank_rows.back() + 1;
+        if (ddims[0] < need_rows || adims[0] < need_rows)
+            return false;   // the per-node path reports it as before
+    }
+    if ((hsize_t) i_hi >= ds_ntime)
+        return false;   // out of the record: the per-node path reports it as before
+
+    // Steps per block: the requested prefetch, else the chunk length (else 128),
+    // reduced so the two buffers stay under 512 MiB.
+    hsize_t step = opt_prefetch_steps > 0 ? (hsize_t) opt_prefetch_steps
+                                          : (ds_chunk[1] > 0 ? ds_chunk[1] : 128);
+    const double max_bytes = 512.0 * 1048576.0;
+    while (step > 1 && 2.0 * 8.0 * (double) nrows * (double) (step + 1) > max_bytes)
+        step /= 2;
+    blk_step = (int) step;
+
+    const hsize_t t0 = ((hsize_t) i_lo / step) * step;
+    hsize_t len = std::max(step + 1, (hsize_t) i_hi - t0 + 1);
+    len = std::min(len, ds_ntime - t0);
+    if ((hsize_t) i_hi >= t0 + len)
+        return false;
+
+    blk_dis.resize((size_t) (nrows * len));
+    blk_acc.resize((size_t) (nrows * len));
+
+    bool ok = true;
+    hsize_t row0 = 0;   // block row of the current run's first row
+    for (size_t k = 0; k < row_runs.size() && ok; ++k)
+    {
+        const hsize_t first = row_runs[k].first;
+        const hsize_t nr = row_runs[k].second;
+        hsize_t start[2] = {first, t0};
+        hsize_t count[2] = {nr, len};
+        hsize_t mdims[2] = {nr, len};
+        hid_t memspace = H5Screate_simple(2, mdims, NULL);
+        if (memspace < 0) { ok = false; break; }
+
+        if (H5Sselect_hyperslab(ih5_dis_ds, H5S_SELECT_SET, start, NULL, count, NULL) < 0 ||
+            H5Dread(ih5_dis, H5T_NATIVE_DOUBLE, memspace, ih5_dis_ds, ih5_xfer_plist,
+                    &blk_dis[(size_t) (row0 * len)]) < 0)
+            ok = false;
+        if (ok && (H5Sselect_hyperslab(ih5_acc_ds, H5S_SELECT_SET, start, NULL, count, NULL) < 0 ||
+                   H5Dread(ih5_acc, H5T_NATIVE_DOUBLE, memspace, ih5_acc_ds, ih5_xfer_plist,
+                           &blk_acc[(size_t) (row0 * len)]) < 0))
+            ok = false;
+        H5Sclose(memspace);
+        row0 += nr;
+    }
+
+    if (!ok)
+    {
+        blk_t0 = -1;
+        blk_len = 0;
+        H5DRMwarning << "WP-187 block read failed at steps [" << (long long) t0 << ", "
+                     << (long long) (t0 + len) << "); falling back to per-node reads\n";
+        return false;
+    }
+
+    blk_t0 = (int) t0;
+    blk_len = (int) len;
+    ++n_block_refills;
+    H5DRMstep << "WP-187 block " << n_block_refills << ": steps [" << blk_t0 << ", "
+              << blk_t0 + blk_len << ") for " << (long long) nrows << " rows in "
+              << (long long) row_runs.size() << " runs\n";
+    return true;
+}
+
+bool H5DRMLoadPattern::block_value(hid_t dset, int data_pos, int i, double out[3])
+{
+    const std::vector<double> *buf = 0;
+    if (dset == ih5_dis)
+        buf = &blk_dis;
+    else if (dset == ih5_acc)
+        buf = &blk_acc;
+    if (buf == 0 || blk_t0 < 0 || i < blk_t0 || i >= blk_t0 + blk_len)
+        return false;
+    std::map<int, int>::const_iterator it = datapos2blkrow.find(data_pos);
+    if (it == datapos2blkrow.end())
+        return false;
+    const size_t col = (size_t) (i - blk_t0);
+    const size_t r = (size_t) it->second;
+    for (int k = 0; k < 3; ++k)
+        out[k] = (*buf)[(r + k) * (size_t) blk_len + col];
+    return true;
+}
 
 
 #endif // _H5DRM
