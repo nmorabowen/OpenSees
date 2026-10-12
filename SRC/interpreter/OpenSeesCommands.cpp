@@ -117,6 +117,7 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <Accelerator.h>
 #include <KrylovAccelerator.h>
 #include <AcceleratedNewton.h>
+#include <LadrunoFactorReuse.h>   // Ladruno WP-188
 #include <RaphsonAccelerator.h>
 #include <SecantAccelerator1.h>
 #include <SecantAccelerator2.h>
@@ -3106,6 +3107,7 @@ void* OPS_KrylovNewton()
     int incrementTangent = CURRENT_TANGENT;
     int iterateTangent = CURRENT_TANGENT;
     int maxDim = 3;
+    LadrunoFactorReuseOptions reuseOpts;   // Ladruno WP-188
     while (OPS_GetNumRemainingInputArgs() > 0) {
 	const char* flag = OPS_GetString();
 
@@ -3141,8 +3143,12 @@ void* OPS_KrylovNewton()
 		opserr<< "WARNING KrylovNewton failed to read maxDim\n";
 		return 0;
 	    }
+	} else if (LadrunoFactorReuse::parseOPS(flag, reuseOpts) < 0) {  // Ladruno WP-188
+	    return 0;
 	}
     }
+    if (!reuseOpts.consistent())   // Ladruno WP-188
+      return 0;
 
     ConvergenceTest* theTest = cmds->getCTest();
     if (theTest == 0) {
@@ -3153,7 +3159,10 @@ void* OPS_KrylovNewton()
     Accelerator *theAccel;
     theAccel = new KrylovAccelerator(maxDim, iterateTangent);
 
-    return new AcceleratedNewton(*theTest, theAccel, incrementTangent);
+    AcceleratedNewton *theAlgo = new AcceleratedNewton(*theTest, theAccel, incrementTangent);
+    if (reuseOpts.maxSteps > 0)   // Ladruno WP-188
+      theAlgo->setFactorReuse(reuseOpts);
+    return theAlgo;
 }
 
 void* OPS_RaphsonNewton()

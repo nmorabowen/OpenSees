@@ -48,13 +48,14 @@
 
 #include <fstream>
 #include <profiler/ProfilerMacros.h>  // Ladruno ADR-77 (C0-5)
+#include <LadrunoFactorReuse.h>       // Ladruno WP-188
 
 // Constructor
 AcceleratedNewton::AcceleratedNewton(int theTangentToUse)
   :EquiSolnAlgo(EquiALGORITHM_TAGS_AcceleratedNewton),
    theTest(0), tangent(theTangentToUse),
    theAccelerator(0), vAccel(0), 
-   numFactorizations(0), numIterations(0)
+   numFactorizations(0), numIterations(0), theReuse(0)  // Ladruno WP-188: theReuse
 //   totalTimer(), totalTimeReal(0.0), totalTimeCPU(0.0),
 //   solveTimer(), solveTimeReal(0.0), solveTimeCPU(0.0),
 //   accelTimer(), accelTimeReal(0.0), accelTimeCPU(0.0)
@@ -68,7 +69,7 @@ AcceleratedNewton::AcceleratedNewton(ConvergenceTest &theT,
   :EquiSolnAlgo(EquiALGORITHM_TAGS_AcceleratedNewton),
    theTest(&theT), tangent(theTangentToUse),
    theAccelerator(theAccel), vAccel(0), 
-   numFactorizations(0), numIterations(0)
+   numFactorizations(0), numIterations(0), theReuse(0)  // Ladruno WP-188: theReuse
 //   totalTimer(), totalTimeReal(0.0), totalTimeCPU(0.0),
 //   solveTimer(), solveTimeReal(0.0), solveTimeCPU(0.0),
 //   accelTimer(), accelTimeReal(0.0), accelTimeCPU(0.0)
@@ -85,6 +86,9 @@ AcceleratedNewton::~AcceleratedNewton()
   if (vAccel != 0)
     delete vAccel;
 
+  if (theReuse != 0)   // Ladruno WP-188 (prints the final reuse statistics)
+    delete theReuse;
+
   //opserr << "AcceleratedNewton::~AcceleratedNewton " << numFactorizations << endln;
 }
 
@@ -93,6 +97,29 @@ AcceleratedNewton::setConvergenceTest(ConvergenceTest *newTest)
 {
   theTest = newTest;
   return 0;
+}
+
+// Ladruno WP-188: factorization reuse across steps -- see LadrunoFactorReuse.h.
+int
+AcceleratedNewton::setFactorReuse(const LadrunoFactorReuseOptions &opts)
+{
+  if (theReuse != 0) {
+    delete theReuse;
+    theReuse = 0;
+  }
+  if (opts.maxSteps > 0)
+    theReuse = new LadrunoFactorReuse(opts);
+  return 0;
+}
+
+// Ladruno WP-188: a domain change re-sizes / re-analyses the SOE, so a kept factor
+// is gone. Off: the inherited no-op.
+int
+AcceleratedNewton::domainChanged(void)
+{
+  if (theReuse != 0)
+    theReuse->invalidate();
+  return this->EquiSolnAlgo::domainChanged();
 }
 
 int 
@@ -104,6 +131,11 @@ int
 // copied from NewtonRaphson.cpp.
 AcceleratedNewton::solveCurrentStep(void)
 {
+  // Ladruno WP-188: with -reuseFactor the step is driven by LadrunoFactorReuse;
+  // without it nothing below changes.
+  if (theReuse != 0)
+    return theReuse->solveCurrentStep(*this);
+
   // set up some pointers and check they are valid
   // NOTE this could be taken away if we set Ptrs as protecetd in superclass
   AnalysisModel *theAnaModel = this->getAnalysisModelPtr();
@@ -341,4 +373,7 @@ AcceleratedNewton::Print(OPS_Stream &s, int flag)
     theAccelerator->Print(s,flag);
   else
     s << "\tNo accelerator --> Modified Newton" << endln;
+
+  if (theReuse != 0)   // Ladruno WP-188
+    theReuse->printSummary(s, "so far", true);
 }
