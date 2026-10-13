@@ -1078,6 +1078,7 @@ set(OPS_MPI_PER_TARGET_SOURCES
     ${OPS_SRC_DIR}/analysis/handler/LadrunoContactAbort.cpp
     ${OPS_SRC_DIR}/analysis/handler/LadrunoAutoPenaltyReduce.cpp
     ${OPS_SRC_DIR}/utility/LadrunoParallelBuild.cpp   # Ladruno WP-107 red-team B2 (MPI fence)
+    ${OPS_SRC_DIR}/analysis/algorithm/equiSolnAlgo/LadrunoFactorReuseMPI.cpp  # Ladruno WP-188 (reuse decisions agreed across ranks)
 )
 
 target_compile_definitions(OPS_InterpTcl PUBLIC _TCL85)

@@ -168,6 +168,7 @@ extern "C" int         OPS_ResetInputNoBuilder(ClientData clientData, Tcl_Interp
 #include <KrylovNewton.h>
 #include <PeriodicNewton.h>
 #include <AcceleratedNewton.h>
+#include <LadrunoFactorReuse.h>   // Ladruno WP-188
 #include <ExpressNewton.h>
 
 // accelerators
@@ -4756,6 +4757,7 @@ specifyAlgorithm(ClientData clientData, Tcl_Interp *interp, int argc,
     int incrementTangent = CURRENT_TANGENT;
     int iterateTangent = CURRENT_TANGENT;
     int maxDim = 3;
+    LadrunoFactorReuseOptions reuseOpts;   // Ladruno WP-188
     for (int i = 2; i < argc; i++) {
       if (strcmp(argv[i],"-iterate") == 0 && i+1 < argc) {
 	i++;
@@ -4779,7 +4781,11 @@ specifyAlgorithm(ClientData clientData, Tcl_Interp *interp, int argc,
 	i++;
 	maxDim = atoi(argv[i]);
       }
+      else if (LadrunoFactorReuse::parseArgv(argc, (const char **)argv, i, reuseOpts) < 0)  // Ladruno WP-188
+	return TCL_ERROR;
     }
+    if (!reuseOpts.consistent())   // Ladruno WP-188
+      return TCL_ERROR;
 
     if (theTest == 0) {
       opserr << "ERROR: No ConvergenceTest yet specified\n";
@@ -4789,7 +4795,10 @@ specifyAlgorithm(ClientData clientData, Tcl_Interp *interp, int argc,
     Accelerator *theAccel;
     theAccel = new KrylovAccelerator(maxDim, iterateTangent);
 
-    theNewAlgo = new AcceleratedNewton(*theTest, theAccel, incrementTangent);
+    AcceleratedNewton *theKrylovAlgo = new AcceleratedNewton(*theTest, theAccel, incrementTangent);
+    if (reuseOpts.maxSteps > 0)   // Ladruno WP-188
+      theKrylovAlgo->setFactorReuse(reuseOpts);
+    theNewAlgo = theKrylovAlgo;
   }
 
   else if (strcmp(argv[1],"RaphsonNewton") == 0) {
