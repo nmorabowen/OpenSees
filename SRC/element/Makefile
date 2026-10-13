@@ -56,6 +56,7 @@ all:         $(OBJS)
 	@$(CD) $(FE)/element/masonry; $(MAKE);
 	@$(CD) $(FE)/element/CEqElement; $(MAKE);
 	@$(CD) $(FE)/element/mefi; $(MAKE);
+	@$(CD) $(FE)/element/coupling; $(MAKE);
 
 # Miscellaneous
 tidy:	
@@ -110,6 +111,7 @@ spotless: clean
 	@$(CD) $(FE)/element/masonry; $(MAKE) wipe;
 	@$(CD) $(FE)/element/CEqElement; $(MAKE) wipe;
 	@$(CD) $(FE)/element/mefi; $(MAKE) wipe;
+	@$(CD) $(FE)/element/coupling; $(MAKE) wipe;
 
 wipe: spotless
 

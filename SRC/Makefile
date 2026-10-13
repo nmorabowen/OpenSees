@@ -697,6 +697,8 @@ ELE_LIBS   =  $(FE)/element/Element.o \
 	$(FE)/element/masonry/MasonPan3D.o \
 	$(FE)/element/masonry/BeamGT.o \
 	$(FE)/element/CEqElement/ASDEmbeddedNodeElement.o \
+	$(FE)/element/coupling/KinematicCoupling.o \
+	$(FE)/element/coupling/DistributingCoupling.o \
 	$(FE)/damping/Damping.o \
 	$(FE)/damping/SecStifDamping.o \
 	$(FE)/damping/URDDamping.o \
