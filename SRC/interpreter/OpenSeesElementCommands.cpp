@@ -243,6 +243,7 @@ void* OPS_FourNodeTetrahedron();
 void* OPS_TenNodeTetrahedron();
 void* OPS_TenNodeTetrahedronThermal();
 void* OPS_ThermalBoundaryTri6();
+void* OPS_TenNodeTetrahedronStd();
 void* OPS_CatenaryCableElement();
 void *OPS_ASDEmbeddedNodeElement(void);
 void* OPS_GradientInelasticBeamColumn2d();
@@ -822,6 +823,7 @@ namespace {
 	functionMap.insert(std::make_pair("TenNodeTetrahedron", &OPS_TenNodeTetrahedron));
 	functionMap.insert(std::make_pair("TenNodeTetrahedronThermal", &OPS_TenNodeTetrahedronThermal));
 	functionMap.insert(std::make_pair("ThermalBoundaryTri6", &OPS_ThermalBoundaryTri6));
+	functionMap.insert(std::make_pair("TenNodeTetrahedronStd", &OPS_TenNodeTetrahedronStd));
 	functionMap.insert(std::make_pair("CatenaryCable", &OPS_CatenaryCableElement));
 	functionMap.insert(std::make_pair("ASDEmbeddedNodeElement", &OPS_ASDEmbeddedNodeElement));
 	functionMap.insert(std::make_pair("gradientInelasticBeamColumn", &OPS_GradientInelasticBeamColumn));
