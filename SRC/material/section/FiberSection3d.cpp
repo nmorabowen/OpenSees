@@ -446,9 +446,9 @@ FiberSection3d::setTrialSectionDeformation (const Vector &deforms)
   double d2 = deforms(2);
   double d3 = deforms(3);
 
-  static double yLocs[10000];
-  static double zLocs[10000];
-  static double fiberArea[10000];
+  static thread_local double yLocs[10000];   // Ladruno WP-192
+  static thread_local double zLocs[10000];   // Ladruno WP-192
+  static thread_local double fiberArea[10000];   // Ladruno WP-192
  
   if (sectionIntegr != 0) {
     sectionIntegr->getFiberLocations(numFibers, yLocs, zLocs);
@@ -511,14 +511,14 @@ FiberSection3d::setTrialSectionDeformation (const Vector &deforms)
 const Matrix&
 FiberSection3d::getInitialTangent(void)
 {
-  static double kInitialData[16];
-  static Matrix kInitial(kInitialData, 4, 4);
+  static thread_local double kInitialData[16];   // Ladruno WP-192
+  static thread_local Matrix kInitial(kInitialData, 4, 4);   // Ladruno WP-192
   
   kInitial.Zero();
 
-  static double yLocs[10000];
-  static double zLocs[10000];
-  static double fiberArea[10000];
+  static thread_local double yLocs[10000];   // Ladruno WP-192
+  static thread_local double zLocs[10000];   // Ladruno WP-192
+  static thread_local double fiberArea[10000];   // Ladruno WP-192
 
   if (sectionIntegr != 0) {
     sectionIntegr->getFiberLocations(numFibers, yLocs, zLocs);
@@ -686,9 +686,9 @@ FiberSection3d::revertToLastCommit(void)
   kData[15] = 0.0;
   sData[0] = 0.0; sData[1] = 0.0;  sData[2] = 0.0; sData[3] = 0.0;
 
-  static double yLocs[10000];
-  static double zLocs[10000];
-  static double fiberArea[10000];
+  static thread_local double yLocs[10000];   // Ladruno WP-192
+  static thread_local double zLocs[10000];   // Ladruno WP-192
+  static thread_local double fiberArea[10000];   // Ladruno WP-192
 
   if (sectionIntegr != 0) {
     sectionIntegr->getFiberLocations(numFibers, yLocs, zLocs);
@@ -759,9 +759,9 @@ FiberSection3d::revertToStart(void)
   kData[15] = 0.0; 
   sData[0] = 0.0; sData[1] = 0.0;  sData[2] = 0.0; sData[3] = 0.0;
 
-  static double yLocs[10000];
-  static double zLocs[10000];
-  static double fiberArea[10000];
+  static thread_local double yLocs[10000];   // Ladruno WP-192
+  static thread_local double zLocs[10000];   // Ladruno WP-192
+  static thread_local double fiberArea[10000];   // Ladruno WP-192
 
   if (sectionIntegr != 0) {
     sectionIntegr->getFiberLocations(numFibers, yLocs, zLocs);
@@ -1682,4 +1682,33 @@ double FiberSection3d::getEnergy() const
         energy += A *theMaterials[i]->getEnergy();
 	}
 	return energy;
+}
+
+
+// Ladruno WP-192 -- per-type opt-in. A SectionIntegration object is not
+// audited, so only the explicit-fiber form qualifies.
+bool
+FiberSection3d::ladrunoThreadSafeUpdate(void) const
+{
+  if (sectionIntegr != 0)
+    return false;
+  for (int i = 0; i < numFibers; i++)
+    if (theMaterials[i] == 0 || !theMaterials[i]->ladrunoThreadSafeUpdate())
+      return false;
+  if (theTorsion != 0 && !theTorsion->ladrunoThreadSafeUpdate())
+    return false;
+  return true;
+}
+
+bool
+FiberSection3d::ladrunoThreadSafeForm(void) const
+{
+  if (!this->ladrunoThreadSafeUpdate())
+    return false;
+  for (int i = 0; i < numFibers; i++)
+    if (!theMaterials[i]->ladrunoThreadSafeForm())
+      return false;
+  if (theTorsion != 0 && !theTorsion->ladrunoThreadSafeForm())
+    return false;
+  return true;
 }

@@ -67,6 +67,10 @@ public:
 
     // methods to return the current linearized stiffness,
     // damping and mass matrices
+    // Ladruno WP-192: threaded element loops opt-in (penalty tie; all
+    // kernel scratch is thread_local, update/commit touch only own state).
+    bool ladrunoThreadSafeUpdate(void) const { return true; }
+    bool ladrunoThreadSafeForm(void) const { return true; }
     const Matrix& getTangentStiff();
     const Matrix& getInitialStiff();
     const Matrix& getMass();

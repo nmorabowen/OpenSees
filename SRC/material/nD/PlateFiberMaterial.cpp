@@ -35,8 +35,8 @@
 #include <elementAPI.h>
 
 //static vector and matrices
-Vector  PlateFiberMaterial::stress(5);
-Matrix  PlateFiberMaterial::tangent(5,5);
+thread_local Vector  PlateFiberMaterial::stress(5);   // Ladruno WP-192
+thread_local Matrix  PlateFiberMaterial::tangent(5,5);   // Ladruno WP-192
 
 //      0  1  2  3  4  5
 // ND: 11 22 33 12 23 31
@@ -205,7 +205,7 @@ PlateFiberMaterial::setTrialStrain(const Vector &strainFromElement)
   double norm;
   double condensedStress;
   double strainIncrement;
-  static Vector threeDstrain(6);
+  static thread_local Vector threeDstrain(6);   // Ladruno WP-192
   double dd22;
 
   int count = 0;
@@ -295,7 +295,7 @@ PlateFiberMaterial::getStressSensitivity(int gradIndex,
 
   const Matrix &threeDtangent = theMaterial->getTangent();
 
-  static Vector dd12(5);
+  static thread_local Vector dd12(5);   // Ladruno WP-192
   dd12(0) = threeDtangent(0,2);
   dd12(1) = threeDtangent(1,2);
   dd12(2) = threeDtangent(3,2);
@@ -319,7 +319,7 @@ PlateFiberMaterial::getTangent()
 {
   const Matrix &threeDtangent = theMaterial->getTangent();
 
-  static Matrix dd11(5,5);
+  static thread_local Matrix dd11(5,5);   // Ladruno WP-192
   dd11(0,0) = threeDtangent(0,0);
   dd11(1,0) = threeDtangent(1,0);
   dd11(2,0) = threeDtangent(3,0);
@@ -350,14 +350,14 @@ PlateFiberMaterial::getTangent()
   dd11(3,4) = threeDtangent(4,5);
   dd11(4,4) = threeDtangent(5,5);
 
-  static Matrix dd12(5,1);
+  static thread_local Matrix dd12(5,1);   // Ladruno WP-192
   dd12(0,0) = threeDtangent(0,2);
   dd12(1,0) = threeDtangent(1,2);
   dd12(2,0) = threeDtangent(3,2);
   dd12(3,0) = threeDtangent(4,2);
   dd12(4,0) = threeDtangent(5,2);
 
-  static Matrix dd21(1,5);
+  static thread_local Matrix dd21(1,5);   // Ladruno WP-192
   dd21(0,0) = threeDtangent(2,0);
   dd21(0,1) = threeDtangent(2,1);
   dd21(0,2) = threeDtangent(2,3);
@@ -369,7 +369,7 @@ PlateFiberMaterial::getTangent()
   //int Solve(const Vector &V, Vector &res) const;
   //int Solve(const Matrix &M, Matrix &res) const;
   //condensation 
-  static Matrix dd22invdd21(1,5);
+  static thread_local Matrix dd22invdd21(1,5);   // Ladruno WP-192
   //dd22.Solve(dd21, dd22invdd21);
   dd22invdd21.addMatrix(0.0, dd21, 1.0/dd22);
 
@@ -387,7 +387,7 @@ PlateFiberMaterial::getInitialTangent()
 {
   const Matrix &threeDtangent = theMaterial->getInitialTangent();
 
-  static Matrix dd11(5,5);
+  static thread_local Matrix dd11(5,5);   // Ladruno WP-192
   dd11(0,0) = threeDtangent(0,0);
   dd11(1,0) = threeDtangent(1,0);
   dd11(2,0) = threeDtangent(3,0);
@@ -418,14 +418,14 @@ PlateFiberMaterial::getInitialTangent()
   dd11(3,4) = threeDtangent(4,5);
   dd11(4,4) = threeDtangent(5,5);
 
-  static Matrix dd12(5,1);
+  static thread_local Matrix dd12(5,1);   // Ladruno WP-192
   dd12(0,0) = threeDtangent(0,2);
   dd12(1,0) = threeDtangent(1,2);
   dd12(2,0) = threeDtangent(3,2);
   dd12(3,0) = threeDtangent(4,2);
   dd12(4,0) = threeDtangent(5,2);
 
-  static Matrix dd21(1,5);
+  static thread_local Matrix dd21(1,5);   // Ladruno WP-192
   dd21(0,0) = threeDtangent(2,0);
   dd21(0,1) = threeDtangent(2,1);
   dd21(0,2) = threeDtangent(2,3);
@@ -437,7 +437,7 @@ PlateFiberMaterial::getInitialTangent()
   //int Solve(const Vector &V, Vector &res) const;
   //int Solve(const Matrix &M, Matrix &res) const;
   //condensation 
-  static Matrix dd22invdd21(1,5);
+  static thread_local Matrix dd22invdd21(1,5);   // Ladruno WP-192
   //dd22.Solve(dd21, dd22invdd21);
   dd22invdd21.addMatrix(0.0, dd21, 1.0/dd22);
 
@@ -476,7 +476,7 @@ PlateFiberMaterial::sendSelf(int commitTag, Channel &theChannel)
   int res = 0;
 
   // put tag and associated materials class and database tags into an id and send it
-  static ID idData(3);
+  static thread_local ID idData(3);   // Ladruno WP-192
   idData(0) = this->getTag();
   idData(1) = theMaterial->getClassTag();
   int matDbTag = theMaterial->getDbTag();
@@ -493,7 +493,7 @@ PlateFiberMaterial::sendSelf(int commitTag, Channel &theChannel)
   }
 
   // put the strains in a vector and send it
-  static Vector vecData(1);
+  static thread_local Vector vecData(1);   // Ladruno WP-192
   vecData(0) = Cstrain22;
 
   res = theChannel.sendVector(this->getDbTag(), commitTag, vecData);
@@ -516,7 +516,7 @@ PlateFiberMaterial::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroke
   int res = 0;
 
   // recv an id containing the tag and associated materials class and db tags
-  static ID idData(3);
+  static thread_local ID idData(3);   // Ladruno WP-192
   res = theChannel.recvID(this->getDbTag(), commitTag, idData);
   if (res < 0) {
     opserr << "PlateFiberMaterial::sendSelf() - failed to send id data\n";
@@ -540,7 +540,7 @@ PlateFiberMaterial::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroke
   theMaterial->setDbTag(idData(2));
 
   // recv a vector containing strains and set the strains
-  static Vector vecData(1);
+  static thread_local Vector vecData(1);   // Ladruno WP-192
   res = theChannel.recvVector(this->getDbTag(), commitTag, vecData);
   if (res < 0) {
     opserr << "PlateFiberMaterial::sendSelf() - failed to send vector data\n";

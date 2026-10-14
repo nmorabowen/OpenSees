@@ -15,6 +15,7 @@ target_sources(OPS_Analysis
        BackwardEuler.cpp
        CentralDifference.cpp
        IncrementalIntegrator.cpp
+       LadrunoThreadedAssembly.cpp
        Integrator.cpp
        LoadControl.cpp
        HarmonicSteadyState.cpp
@@ -34,6 +35,7 @@ target_sources(OPS_Analysis
        BackwardEuler.h
        CentralDifference.h
        IncrementalIntegrator.h
+       LadrunoThreadedAssembly.h
        Integrator.h
        LoadControl.h
        HarmonicSteadyState.h

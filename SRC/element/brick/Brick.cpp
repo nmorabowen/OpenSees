@@ -110,11 +110,11 @@ void* OPS_Brick()
 }
 
 //static data
-double  Brick::xl[3][8] ;
+thread_local double  Brick::xl[3][8] ;   // Ladruno WP-192
 
-Matrix  Brick::stiff(24,24) ;
-Vector  Brick::resid(24) ;
-Matrix  Brick::mass(24,24) ;
+thread_local Matrix  Brick::stiff(24,24) ;   // Ladruno WP-192
+thread_local Vector  Brick::resid(24) ;   // Ladruno WP-192
+thread_local Matrix  Brick::mass(24,24) ;   // Ladruno WP-192
 
     
 //quadrature data
@@ -128,7 +128,7 @@ const double  Brick::wg[] = { 1.0, 1.0, 1.0, 1.0,
                               1.0, 1.0, 1.0, 1.0  } ;
 
   
-static Matrix B(6,3) ;
+static thread_local Matrix B(6,3) ;   // Ladruno WP-192
 
 //null constructor
 Brick::Brick( ) 
@@ -397,8 +397,8 @@ void  Brick::Print(OPS_Stream &s, int flag)
         // spit out the section location & invoke print on the scetion
         const int numMaterials = 8;
         
-        static Vector avgStress(nstress);
-        static Vector avgStrain(nstress);
+        static thread_local Vector avgStress(nstress);   // Ladruno WP-192
+        static thread_local Vector avgStrain(nstress);   // Ladruno WP-192
         avgStress.Zero();
         avgStrain.Zero();
         for (i = 0; i < numMaterials; i++) {
@@ -498,26 +498,26 @@ const Matrix&  Brick::getInitialStiff( )
   int jj, kk ;
 
   
-  static double volume ;
-  static double xsj ;  // determinant jacaobian matrix 
-  static double dvol[numberGauss] ; //volume element
-  static double gaussPoint[ndm] ;
-  static Vector strain(nstress) ;  //strain
-  static double shp[nShape][numberNodes] ;  //shape functions at a gauss point
-  static double Shape[nShape][numberNodes][numberGauss] ; //all the shape functions
-  static Matrix stiffJK(ndf,ndf) ; //nodeJK stiffness 
-  static Matrix dd(nstress,nstress) ;  //material tangent
+  static thread_local double volume ;   // Ladruno WP-192
+  static thread_local double xsj ;  // determinant jacaobian matrix    // Ladruno WP-192
+  static thread_local double dvol[numberGauss] ; //volume element   // Ladruno WP-192
+  static thread_local double gaussPoint[ndm] ;   // Ladruno WP-192
+  static thread_local Vector strain(nstress) ;  //strain   // Ladruno WP-192
+  static thread_local double shp[nShape][numberNodes] ;  //shape functions at a gauss point   // Ladruno WP-192
+  static thread_local double Shape[nShape][numberNodes][numberGauss] ; //all the shape functions   // Ladruno WP-192
+  static thread_local Matrix stiffJK(ndf,ndf) ; //nodeJK stiffness    // Ladruno WP-192
+  static thread_local Matrix dd(nstress,nstress) ;  //material tangent   // Ladruno WP-192
 
 
   //---------B-matrices------------------------------------
 
-    static Matrix BJ(nstress,ndf) ;      // B matrix node J
+    static thread_local Matrix BJ(nstress,ndf) ;      // B matrix node J   // Ladruno WP-192
 
-    static Matrix BJtran(ndf,nstress) ;
+    static thread_local Matrix BJtran(ndf,nstress) ;   // Ladruno WP-192
 
-    static Matrix BK(nstress,ndf) ;      // B matrix node k
+    static thread_local Matrix BK(nstress,ndf) ;      // B matrix node k   // Ladruno WP-192
 
-    static Matrix BJtranD(ndf,nstress) ;
+    static thread_local Matrix BJtranD(ndf,nstress) ;   // Ladruno WP-192
 
   //-------------------------------------------------------
 
@@ -735,7 +735,7 @@ const Vector&  Brick::getResistingForce( )
 //get residual with inertia terms
 const Vector&  Brick::getResistingForceIncInertia( )
 {
-  static Vector res(24);
+  static thread_local Vector res(24);   // Ladruno WP-192
 
   int tang_flag = 0 ; //don't get the tangent
 
@@ -779,13 +779,13 @@ void   Brick::formInertiaTerms( int tangFlag )
 
   double dvol[numberGauss] ; //volume element
 
-  static double shp[nShape][numberNodes] ;  //shape functions at a gauss point
+  static thread_local double shp[nShape][numberNodes] ;  //shape functions at a gauss point   // Ladruno WP-192
 
-  static double Shape[nShape][numberNodes][numberGauss] ; //all the shape functions
+  static thread_local double Shape[nShape][numberNodes][numberGauss] ; //all the shape functions   // Ladruno WP-192
 
-  static double gaussPoint[ndm] ;
+  static thread_local double gaussPoint[ndm] ;   // Ladruno WP-192
 
-  static Vector momentum(ndf) ;
+  static thread_local Vector momentum(ndf) ;   // Ladruno WP-192
 
   int i, j, k, p, q ;
   int jj, kk ;
@@ -929,29 +929,29 @@ Brick::update(void)
   int i, j, k, p, q ;
   int success ;
   
-  static double volume ;
+  static thread_local double volume ;   // Ladruno WP-192
 
-  static double xsj ;  // determinant jacaobian matrix 
+  static thread_local double xsj ;  // determinant jacaobian matrix    // Ladruno WP-192
 
-  static double dvol[numberGauss] ; //volume element
+  static thread_local double dvol[numberGauss] ; //volume element   // Ladruno WP-192
 
-  static double gaussPoint[ndm] ;
+  static thread_local double gaussPoint[ndm] ;   // Ladruno WP-192
 
-  static Vector strain(nstress) ;  //strain
+  static thread_local Vector strain(nstress) ;  //strain   // Ladruno WP-192
 
-  static double shp[nShape][numberNodes] ;  //shape functions at a gauss point
+  static thread_local double shp[nShape][numberNodes] ;  //shape functions at a gauss point   // Ladruno WP-192
 
-  static double Shape[nShape][numberNodes][numberGauss] ; //all the shape functions
+  static thread_local double Shape[nShape][numberNodes][numberGauss] ; //all the shape functions   // Ladruno WP-192
 
   //---------B-matrices------------------------------------
 
-    static Matrix BJ(nstress,ndf) ;      // B matrix node J
+    static thread_local Matrix BJ(nstress,ndf) ;      // B matrix node J   // Ladruno WP-192
 
-    static Matrix BJtran(ndf,nstress) ;
+    static thread_local Matrix BJtran(ndf,nstress) ;   // Ladruno WP-192
 
-    static Matrix BK(nstress,ndf) ;      // B matrix node k
+    static thread_local Matrix BK(nstress,ndf) ;      // B matrix node k   // Ladruno WP-192
 
-    static Matrix BJtranD(ndf,nstress) ;
+    static thread_local Matrix BJtranD(ndf,nstress) ;   // Ladruno WP-192
 
   //-------------------------------------------------------
 
@@ -1096,38 +1096,38 @@ void  Brick::formResidAndTangent( int tang_flag )
   int i, j, k, p, q ;
 
 
-  static double volume ;
+  static thread_local double volume ;   // Ladruno WP-192
 
-  static double xsj ;  // determinant jacaobian matrix 
+  static thread_local double xsj ;  // determinant jacaobian matrix    // Ladruno WP-192
 
-  static double dvol[numberGauss] ; //volume element
+  static thread_local double dvol[numberGauss] ; //volume element   // Ladruno WP-192
 
-  static double gaussPoint[ndm] ;
+  static thread_local double gaussPoint[ndm] ;   // Ladruno WP-192
 
-  static double shp[nShape][numberNodes] ;  //shape functions at a gauss point
+  static thread_local double shp[nShape][numberNodes] ;  //shape functions at a gauss point   // Ladruno WP-192
 
-  static double Shape[nShape][numberNodes][numberGauss] ; //all the shape functions
+  static thread_local double Shape[nShape][numberNodes][numberGauss] ; //all the shape functions   // Ladruno WP-192
 
-  static Vector residJ(ndf) ; //nodeJ residual 
+  static thread_local Vector residJ(ndf) ; //nodeJ residual    // Ladruno WP-192
 
-  static Matrix stiffJK(ndf,ndf) ; //nodeJK stiffness 
+  static thread_local Matrix stiffJK(ndf,ndf) ; //nodeJK stiffness    // Ladruno WP-192
 
-  static Vector stress(nstress) ;  //stress
+  static thread_local Vector stress(nstress) ;  //stress   // Ladruno WP-192
 
-  static Vector dampingStress(nstress) ;  //damping stress
+  static thread_local Vector dampingStress(nstress) ;  //damping stress   // Ladruno WP-192
 
-  static Matrix dd(nstress,nstress) ;  //material tangent
+  static thread_local Matrix dd(nstress,nstress) ;  //material tangent   // Ladruno WP-192
 
 
   //---------B-matrices------------------------------------
 
-    static Matrix BJ(nstress,ndf) ;      // B matrix node J
+    static thread_local Matrix BJ(nstress,ndf) ;      // B matrix node J   // Ladruno WP-192
 
-    static Matrix BJtran(ndf,nstress) ;
+    static thread_local Matrix BJtran(ndf,nstress) ;   // Ladruno WP-192
 
-    static Matrix BK(nstress,ndf) ;      // B matrix node k
+    static thread_local Matrix BK(nstress,ndf) ;      // B matrix node k   // Ladruno WP-192
 
-    static Matrix BJtranD(ndf,nstress) ;
+    static thread_local Matrix BJtranD(ndf,nstress) ;   // Ladruno WP-192
 
   //-------------------------------------------------------
 
@@ -1402,7 +1402,7 @@ int  Brick::sendSelf (int commitTag, Channel &theChannel)
   // Now quad sends the ids of its materials
   int matDbTag;
   
-  static ID idData(28);
+  static thread_local ID idData(28);   // Ladruno WP-192
 
   idData(24) = this->getTag();
   if (alphaM != 0 || betaK != 0 || betaK0 != 0 || betaKc != 0) 
@@ -1453,7 +1453,7 @@ int  Brick::sendSelf (int commitTag, Channel &theChannel)
     return res;
   }
 
-  static Vector dData(7);
+  static thread_local Vector dData(7);   // Ladruno WP-192
   dData(0) = alphaM;
   dData(1) = betaK;
   dData(2) = betaK0;
@@ -1499,7 +1499,7 @@ int  Brick::recvSelf (int commitTag,
   
   int dataTag = this->getDbTag();
 
-  static ID idData(28);
+  static thread_local ID idData(28);   // Ladruno WP-192
   res += theChannel.recvID(dataTag, commitTag, idData);
   if (res < 0) {
     opserr << "WARNING Brick::recvSelf() - " << this->getTag() << " failed to receive ID\n";
@@ -1508,7 +1508,7 @@ int  Brick::recvSelf (int commitTag,
 
   this->setTag(idData(24));
 
-  static Vector dData(7);
+  static thread_local Vector dData(7);   // Ladruno WP-192
   if (theChannel.recvVector(dataTag, commitTag, dData) < 0) {
     opserr << "DispBeamColumn2d::sendSelf() - failed to recv double data\n";
     return -1;
@@ -1629,16 +1629,16 @@ int
 Brick::displaySelf(Renderer &theViewer, int displayMode, float fact, const char **modes, int numMode)
 {
     // vertex display coordinate vectors
-    static Vector v1(3);
-    static Vector v2(3);
-    static Vector v3(3);
-    static Vector v4(3);
-    static Vector v5(3);
-    static Vector v6(3);
-    static Vector v7(3);
-    static Vector v8(3);
-    static Matrix coords(8, 3); // polygon coordinate matrix
-    static Vector values(8); // color vector
+    static thread_local Vector v1(3);   // Ladruno WP-192
+    static thread_local Vector v2(3);   // Ladruno WP-192
+    static thread_local Vector v3(3);   // Ladruno WP-192
+    static thread_local Vector v4(3);   // Ladruno WP-192
+    static thread_local Vector v5(3);   // Ladruno WP-192
+    static thread_local Vector v6(3);   // Ladruno WP-192
+    static thread_local Vector v7(3);   // Ladruno WP-192
+    static thread_local Vector v8(3);   // Ladruno WP-192
+    static thread_local Matrix coords(8, 3); // polygon coordinate matrix   // Ladruno WP-192
+    static thread_local Vector values(8); // color vector   // Ladruno WP-192
     int i;
 
     // get display coords
@@ -1845,7 +1845,7 @@ Brick::setResponse(const char **argv, int argc, OPS_Stream &output)
 int 
 Brick::getResponse(int responseID, Information &eleInfo)
 {
-  static Vector stresses(48);
+  static thread_local Vector stresses(48);   // Ladruno WP-192
 
   if (responseID == 1)
     return eleInfo.setVector(this->getResistingForce());
@@ -2008,3 +2008,27 @@ Brick::updateParameter(int parameterID, Information &info)
     }
 }
 
+
+// Ladruno WP-192 -- see Brick.h.
+bool
+Brick::ladrunoThreadSafeUpdate(void) const
+{
+  for (int i = 0; i < 8; i++) {
+    if (materialPointers[i] == 0 || !materialPointers[i]->ladrunoThreadSafeUpdate())
+      return false;
+    if (theDamping[i] != 0)
+      return false;
+  }
+  return true;
+}
+
+bool
+Brick::ladrunoThreadSafeForm(void) const
+{
+  if (!this->ladrunoThreadSafeUpdate())
+    return false;
+  for (int i = 0; i < 8; i++)
+    if (!materialPointers[i]->ladrunoThreadSafeForm())
+      return false;
+  return true;
+}

@@ -34,8 +34,8 @@ void  shp3d( const double ss[3],
 
     double rxsj, ap1, am1, ap2, am2, ap3, am3, c1,c2,c3 ;
 
-    static double xs[3][3] ; 
-    static double ad[3][3] ;
+    static thread_local double xs[3][3] ;    // Ladruno WP-192
+    static thread_local double ad[3][3] ;   // Ladruno WP-192
 
 
       //Compute shape functions and their natural coord. derivatives

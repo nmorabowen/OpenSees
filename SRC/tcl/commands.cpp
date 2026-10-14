@@ -11622,6 +11622,7 @@ ladrunoBuild(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **arg
 // knob for the element state-determination loop's thread count.
 //   ladrunoThreads       -> query
 //   ladrunoThreads <n>   -> request n (clamped to >= 1); returns what was stored
+//   ladrunoThreads <n> -hybrid -> also allow threads on an MPI binary (WP-192)
 int
 ladrunoThreads(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 {
@@ -11638,6 +11639,15 @@ ladrunoThreads(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **a
     // ladruno_setNumThreads (WP-107 red-team S7), so the env path and both
     // interpreter verbs say the same thing in the same words.
     int stored = ladruno_setNumThreads(n);
+    // Ladruno WP-192: `-hybrid` acknowledges hybrid MPI+threads, the one way an
+    // MPI binary honours the count (ladruno_hybridAllowed).
+    for (int a = 2; a < argc; a++) {
+      if (strcmp(argv[a], "-hybrid") == 0)
+        ladruno_setHybridAllowed(true);
+      else
+        opserr << "WARNING ladrunoThreads: unknown option " << argv[a]
+               << " -- ignored (known: -hybrid)\n";
+    }
     if (stored > 1 && !ladruno_openmpCompiledIn())
       opserr << "WARNING ladrunoThreads: this binary was built WITHOUT "
              << "LADRUNO_OPENMP, so the element loop stays SERIAL no matter "
