@@ -33,6 +33,7 @@
 #include <Matrix.h>
 
 #include <map>
+#include <limits>
 
 class TimeVaryingMaterial : public NDMaterial 
 {
@@ -128,6 +129,10 @@ private:
     double current_nu = 0.0;
     double current_A = 0.0;
     bool new_time_step = true;
+
+    // Driver value the cached properties were evaluated at. NaN until the first
+    // evaluation, so the first comparison always refreshes (audit F14).
+    double last_parameter_driver = std::numeric_limits<double>::quiet_NaN();
 
     // Optional material-point evolution variable. Domain time remains the
     // driver until parameter 4002 (evolutionVariable) is updated.
