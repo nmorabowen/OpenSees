@@ -374,24 +374,23 @@ namespace {
         }
     }
     
-    // Ladruno WP-189: minimum signed det J of the H8 mapping over the 8 gauss points,
-    // evaluated on the nodes in the user's order (the same P matrix that
-    // addKff / addKffToSoil integrate with). <= 0 means a left-handed or
-    // degenerate node ordering: the free-field stiffness would be integrated
-    // with a negative (or zero) volume.
-    inline double H8_minDetJ(const std::vector<Node*>& nodes) {
+    // Ladruno WP-189: range of the signed det J of the H8 mapping over the 8 gauss
+    // points, on the nodes in the user's order. The sign of det J only says whether
+    // the nodes were written right- or left-handed (the integrals use |det J|); a
+    // brick is genuinely bad when det J changes sign between gauss points
+    // (inverted / folded) or when it collapses (|det J| ~ 0).
+    inline void H8_detJRange(const std::vector<Node*>& nodes, double& dmin, double& dmax) {
         Matrix P(3, 8);
         Matrix dN(8, 3);
         Matrix J(3, 3);
         H8_nodeMatrix(nodes, P);
-        double dmin = 0.0;
         for (int g = 0; g < static_cast<int>(H8_GW.size()); ++g) {
             H8_dN(H8_GX[g], H8_GY[g], H8_GZ[g], dN);
             J.addMatrixProduct(0.0, P, dN, 1.0);
             double d = H8_det3(J);
             if (g == 0 || d < dmin) dmin = d;
+            if (g == 0 || d > dmax) dmax = d;
         }
-        return dmin;
     }
 
     // handle sorted node distortion
@@ -758,19 +757,23 @@ void ASDAbsorbingBoundary3D::setDomain(Domain* theDomain)
 
     }
 
-    // Ladruno WP-189: refuse a left-handed / degenerate node ordering (det J <= 0 at any
-    // gauss point). Only vertical boundaries integrate the free-field column
-    // (addKff / addKffToSoil), so only those are checked; a pure BOTTOM element
-    // never uses det J and is left untouched.
+    // Ladruno WP-189: refuse a degenerate brick: det J changing sign between gauss
+    // points (inverted / folded) or collapsed (min |det J| < 1e-6 max |det J|, or
+    // all zero). Either handedness of a sound brick is accepted: the free-field
+    // integrals use |det J|. Only vertical boundaries integrate the free-field
+    // column, so only those are checked; a pure BOTTOM element never uses det J.
     if (!(m_boundary & BND_BOTTOM) || (m_boundary & (BND_LEFT | BND_RIGHT | BND_FRONT | BND_BACK))) {
-        double dmin = H8_minDetJ(m_nodes);
-        if (!(dmin > 0.0)) {
+        double dmin = 0.0, dmax = 0.0;
+        H8_detJRange(m_nodes, dmin, dmax);
+        double amax = std::max(std::abs(dmin), std::abs(dmax));
+        double amin = (dmin > 0.0 || dmax < 0.0) ? std::min(std::abs(dmin), std::abs(dmax)) : 0.0;
+        if (!(amax > 0.0) || !(amin >= 1.0e-6 * amax)) {
             opserr << "ASDAbsorbingBoundary3D Error in setDomain: element " << this->getTag()
-                << " has det J <= 0 (min over the 8 gauss points = " << dmin
-                << "): left-handed or degenerate node ordering. Nodes (as given):";
+                << " is a degenerate brick (det J over the 8 gauss points: min = " << dmin
+                << ", max = " << dmax << "; it must keep one sign and not collapse). Nodes (as given):";
             for (std::size_t i = 0; i < m_nodes.size(); ++i)
                 opserr << " " << m_node_ids(static_cast<int>(i));
-            opserr << "\nReorder the 8 nodes right-handed (bottom face counter-clockwise seen from +z, then the top face in the same order).\n";
+            opserr << "\n";
             exit(-1);
         }
     }
@@ -2106,7 +2109,7 @@ void ASDAbsorbingBoundary3D::addKff(Matrix& K, double scale)
         }
 
         // integrate
-        double dV = detJ * gw * scale;
+        double dV = std::abs(detJ) * gw * scale; // Ladruno WP-189: volume measure, independent of node-order handedness
         K.addMatrixTripleProduct(1.0, BB, E, dV);
     }
 }
@@ -2182,7 +2185,7 @@ void ASDAbsorbingBoundary3D::addRff(Vector& R)
         stress.addMatrixVector(0.0, E, strain, 1.0);
 
         // integrate
-        double dV = detJ * gw;
+        double dV = std::abs(detJ) * gw; // Ladruno WP-189: volume measure, independent of node-order handedness
         R.addMatrixTransposeVector(1.0, BB, stress, dV);
     }
 }
