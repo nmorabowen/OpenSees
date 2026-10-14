@@ -374,6 +374,26 @@ namespace {
         }
     }
     
+    // Ladruno WP-189: minimum signed det J of the H8 mapping over the 8 gauss points,
+    // evaluated on the nodes in the user's order (the same P matrix that
+    // addKff / addKffToSoil integrate with). <= 0 means a left-handed or
+    // degenerate node ordering: the free-field stiffness would be integrated
+    // with a negative (or zero) volume.
+    inline double H8_minDetJ(const std::vector<Node*>& nodes) {
+        Matrix P(3, 8);
+        Matrix dN(8, 3);
+        Matrix J(3, 3);
+        H8_nodeMatrix(nodes, P);
+        double dmin = 0.0;
+        for (int g = 0; g < static_cast<int>(H8_GW.size()); ++g) {
+            H8_dN(H8_GX[g], H8_GY[g], H8_GZ[g], dN);
+            J.addMatrixProduct(0.0, P, dN, 1.0);
+            double d = H8_det3(J);
+            if (g == 0 || d < dmin) dmin = d;
+        }
+        return dmin;
+    }
+
     // handle sorted node distortion
     inline void handleDistortion(std::vector<SortedNode>& nodes) {
 
@@ -736,6 +756,23 @@ void ASDAbsorbingBoundary3D::setDomain(Domain* theDomain)
             exit(-1);
         }
 
+    }
+
+    // Ladruno WP-189: refuse a left-handed / degenerate node ordering (det J <= 0 at any
+    // gauss point). Only vertical boundaries integrate the free-field column
+    // (addKff / addKffToSoil), so only those are checked; a pure BOTTOM element
+    // never uses det J and is left untouched.
+    if (!(m_boundary & BND_BOTTOM) || (m_boundary & (BND_LEFT | BND_RIGHT | BND_FRONT | BND_BACK))) {
+        double dmin = H8_minDetJ(m_nodes);
+        if (!(dmin > 0.0)) {
+            opserr << "ASDAbsorbingBoundary3D Error in setDomain: element " << this->getTag()
+                << " has det J <= 0 (min over the 8 gauss points = " << dmin
+                << "): left-handed or degenerate node ordering. Nodes (as given):";
+            for (std::size_t i = 0; i < m_nodes.size(); ++i)
+                opserr << " " << m_node_ids(static_cast<int>(i));
+            opserr << "\nReorder the 8 nodes right-handed (bottom face counter-clockwise seen from +z, then the top face in the same order).\n";
+            exit(-1);
+        }
     }
 
     // only on setDomain during creation, not after a recvSelf
