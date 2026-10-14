@@ -274,6 +274,22 @@ def test_mixed_unaudited_element_runs_serial_in_place(capfd):
     assert "run serially in place" in text, text
 
 
+def test_repeated_runs_hash_identical_race_probe():
+    """The race probe without ThreadSanitizer: the same deck, the most threads
+    this box allows, five times. A schedule-dependent race shows up as a digest
+    that differs between repetitions even when the 1/2/4 comparison happened to
+    pass. (TSan is not available on the Windows/MSVC build; see the ADR.)"""
+    counts = _threads_available()
+    if len(counts) < 2:
+        pytest.skip("single hardware thread")
+    n = counts[-1]
+    ref, _ = _run_shell(1)
+    for _ in range(5):
+        d, rcs = _run_shell(n)
+        assert all(rc == 0 for rc in rcs), rcs
+        assert d == ref
+
+
 # ---------------------------------------------------------------------------
 #  model 2: stdBrick soil block with ASDEmbeddedNode ties to a beam
 # ---------------------------------------------------------------------------
