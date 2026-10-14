@@ -492,10 +492,12 @@ Response* TimeVaryingMaterial::setResponse(const char** argv, int argc, OPS_Stre
 void TimeVaryingMaterial::getParameters(double time)
 {
     int tag = this->getTag();
-    if (new_time_step) {
+    // F14: the element's construction-time update() consumes new_time_step at the initial driver
+    // value, so without the second test the first analysis step reuses properties evaluated there.
+    if (new_time_step || !(time == last_parameter_driver)) {
         double K = 0;
         new_time_step = false;
-
+        last_parameter_driver = time;
         // Find the interval in which 'time' falls within time_history
         int index = 0;
         for (; index < time_histories[tag].Size(); ++index)
