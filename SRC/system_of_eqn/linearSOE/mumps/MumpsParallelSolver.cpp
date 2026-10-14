@@ -35,6 +35,8 @@
 #include <OPS_Globals.h>
 #include <ID.h>
 #include <iostream>
+#include <cstdio>    // v4cand tangent dump
+#include <cstdlib>   // v4cand tangent dump (getenv)
 
 #define ICNTL(I) icntl[(I)-1] /* macro s.t. indices match documentation */
 #define CNTL(I)  cntl[(I)-1]  /* Ladruno ADR-75 P2: same for the real controls */
@@ -327,6 +329,62 @@ MumpsParallelSolver::solveAfterInitialization(void)
   id.a_loc   = A; 
 
   if (theMumpsSOE->factored == false) {
+
+    // v4cand-only tangent dump (paper repo perf/PROFILE_V4.md section 5; not for ladruno).
+    // LADRUNO_MUMPS_DUMP=<prefix>: before a numerical factorization, if <prefix>.go exists
+    // (checked by rank 0, broadcast), every rank writes its distributed triplets as MUMPS gets
+    // them (1-based) to <prefix>.<tag>.rank<r>.bin = int64 n, int64 nnz_loc, int32 irn[nnz_loc],
+    // int32 jcn[nnz_loc], float64 a[nnz_loc]; rank 0 writes <prefix>.<tag>.rhs.bin = int64 n,
+    // float64 b[n]. <tag> = first word of <prefix>.go. Rank 0 then removes <prefix>.go.
+    static const char *dumpPrefix = getenv("LADRUNO_MUMPS_DUMP");
+    if (dumpPrefix != 0 && dumpPrefix[0] != '\0') {
+      char tag[64] = {0};
+      int go = 0;
+      char goName[1024];
+      snprintf(goName, sizeof(goName), "%s.go", dumpPrefix);
+      if (rank == 0) {
+        FILE *fg = fopen(goName, "r");
+        if (fg != 0) {
+          go = 1;
+          if (fscanf(fg, "%63s", tag) != 1)
+            snprintf(tag, sizeof(tag), "dump");
+          fclose(fg);
+        }
+      }
+      MPI_Bcast(&go, 1, MPI_INT, 0, theComm);
+      if (go == 1) {
+        MPI_Bcast(tag, 64, MPI_CHAR, 0, theComm);
+        long long nn = n, nz = nnz;
+        char fname[1200];
+        snprintf(fname, sizeof(fname), "%s.%s.rank%d.bin", dumpPrefix, tag, rank);
+        FILE *fd = fopen(fname, "wb");
+        if (fd != 0) {
+          fwrite(&nn, sizeof(long long), 1, fd);
+          fwrite(&nz, sizeof(long long), 1, fd);
+          fwrite(rowA, sizeof(int), nnz, fd);
+          fwrite(colA, sizeof(int), nnz, fd);
+          fwrite(A, sizeof(double), nnz, fd);
+          fclose(fd);
+        } else {
+          opserr << "WARNING MumpsParallelSolver: LADRUNO_MUMPS_DUMP cannot write " << fname << endln;
+        }
+        if (rank == 0) {
+          snprintf(fname, sizeof(fname), "%s.%s.rhs.bin", dumpPrefix, tag);
+          FILE *fr = fopen(fname, "wb");
+          if (fr != 0) {
+            fwrite(&nn, sizeof(long long), 1, fr);
+            fwrite(B, sizeof(double), n, fr);
+            fclose(fr);
+          }
+        }
+        MPI_Barrier(theComm);
+        if (rank == 0) {
+          remove(goName);
+          opserr << "MumpsParallelSolver: LADRUNO_MUMPS_DUMP wrote " << dumpPrefix << "." << tag
+                 << ".rank*.bin (n=" << n << ")" << endln;
+        }
+      }
+    }
 
     // Call the MUMPS package to factor & solve the system
     // WP-190: with stats on, JOB=5 is issued as its two halves (JOB=2 then
