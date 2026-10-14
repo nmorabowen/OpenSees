@@ -46,6 +46,20 @@
 //
 // OFF BY DEFAULT. AcceleratedNewton holds a null pointer unless the option is given,
 // and its vanilla solveCurrentStep runs unchanged (byte-identical, WP-188 gate).
+//
+// WP-193 -reuseCost on: a COST-AWARE trigger on top of the ones above (which stay
+// as hard limits). Running means of the measured wall time of a factorization
+// (t_F), of one iteration on a kept factor (t_I), and of the iterations a step
+// needs with a fresh tangent (n_F) and on a kept factor of each age (n_K(a)) drive
+// two decisions (ADR-193):
+//   step start   keep iff s * n_K(a+1) <= A(S) = (t_F/t_I + n_F + sum_{j<S} n_K(j)) / S,
+//                the modelled mean cost per step of the current factor's cycle
+//                (marginal-vs-average age-replacement rule; n_K(a) = c0 + c1 a fitted
+//                to the kept-factor steps);
+//   in a step    on a kept factor, refactor once the iterations overrun the
+//                projection n_K(a) by t_F / t_I (ski-rental rule).
+// All measured inputs are max-reduced over the ranks, so every rank holds the same
+// numbers and takes the same decision (which is max-reduced again regardless).
 
 #ifndef LadrunoFactorReuse_h
 #define LadrunoFactorReuse_h
@@ -63,6 +77,12 @@ struct LadrunoFactorReuseOptions {
   int    report   = 0;     // -reuseReport n: print the running statistics every n steps (0 = only at the end)
   bool   sawFactor = false; // -reuseFactor given
   bool   sawOther  = false; // any other -reuse* option given
+  // WP-193 cost-aware trigger
+  bool   cost      = false; // -reuseCost on|off
+  double costSafety = 1.0;  // -reuseCostSafety s (> 0): s > 1 refactors earlier
+  int    costWarmup = 4;    // -reuseCostWarmup w: steps run on the age rule while costs are learned
+  int    costProbe  = 20;   // -reuseCostProbe p: after p consecutive cost refusals keep once to re-measure (0 = never)
+  bool   sawCostTuning = false; // a -reuseCost* tuning option given
   // fail closed: a -reuse* tuning option without -reuseFactor is a deck error
   bool consistent(void) const;
 };
@@ -91,6 +111,13 @@ class LadrunoFactorReuse
   void factorFormed(LinearSOE *soe, IncrementalIntegrator *integ, int n, double dt);
   int  agree(int flag);             // MAX over the ranks (identity in serial builds)
 
+  // WP-193 cost model (all inputs rank-identical after the step-end reduction)
+  bool   costReady(void) const;
+  double projectKept(int age) const;          // n_K(age) = c0 + c1 * age (fitted)
+  double cycleMean(int S) const;              // modelled mean cost per step of an S-step cycle (units of t_I)
+  void   costStepEnd(bool startedFresh, int startAge, int iters, int forms);
+  void   printCostSummary(OPS_Stream &s, const char *when, bool allRanks);
+
   LadrunoFactorReuseOptions opts;
 
   // the factor currently held by the SOE
@@ -112,6 +139,19 @@ class LadrunoFactorReuse
   int  rank;
   bool announced;
   int  testVoteRank;   // test hook, see the constructor
+
+  // WP-193 cost model state
+  double emaTF, emaTI, emaNF;       // running means (EMA); valid when the have* flag is set
+  bool   haveTF, haveTI, haveNF;
+  double rSw, rSa, rSn, rSaa, rSan;  // forgetting least-squares sums of (age, effective iterations) of kept-factor steps
+  int    cycSteps;                  // steps the current factor has served (incl. the one that formed it)
+  int    costRefusals;              // consecutive step starts at which the cost rule refused to keep
+  // per-step local timing sums (reduced at the step end)
+  double stepTF, stepTI;
+  int    stepNTF, stepNTI;
+  double testFactorDelay;           // test hook (s): LADRUNO_WP193_TEST_FACTOR_DELAY_MS
+  double testIterDelay;             // test hook (s): LADRUNO_WP193_TEST_ITER_DELAY_MS
+  long   nCostForm, nCostKeep, nCostIter, nCostProbe;
 };
 
 #endif
