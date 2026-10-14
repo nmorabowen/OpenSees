@@ -1749,6 +1749,7 @@ int OPS_LadrunoSchema()   // Ladruno WP-185
 //
 //   ladrunoThreads          -> query; returns the current count
 //   ladrunoThreads <n>      -> request n threads; returns what was stored
+//   ladrunoThreads <n> -hybrid -> also allow threads on an MPI binary (WP-192)
 //
 // Default is 1 (ADR-40's standing "OpenMP-by-default is an anti-goal"), seeded
 // from the LADRUNO_THREADS environment variable. Asking for n > 1 in a binary
@@ -1770,6 +1771,17 @@ int OPS_LadrunoThreads()   // Ladruno WP-107
         // ladruno_setNumThreads (WP-107 red-team S7), so the env path and both
         // interpreter verbs say the same thing in the same words.
         int stored = ladruno_setNumThreads(n);
+        // Ladruno WP-192: `-hybrid` acknowledges hybrid MPI+threads, the one
+        // way an MPI binary honours the count (ladruno_hybridAllowed).
+        while (OPS_GetNumRemainingInputArgs() > 0) {
+            const char *flag = OPS_GetString();
+            if (flag != 0 && strcmp(flag, "-hybrid") == 0)
+                ladruno_setHybridAllowed(true);
+            else {
+                opserr << "WARNING ladrunoThreads: unknown option "
+                       << (flag ? flag : "?") << " -- ignored (known: -hybrid)\n";
+            }
+        }
         if (stored > 1 && !ladruno_openmpCompiledIn()) {
             opserr << "WARNING ladrunoThreads: this binary was built WITHOUT "
                    << "LADRUNO_OPENMP, so the element loop stays SERIAL no "

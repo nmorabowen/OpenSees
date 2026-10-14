@@ -75,6 +75,12 @@ class Brick : public Element {
     void setDomain( Domain *theDomain ) ;
     int setDamping(Domain *theDomain, Damping *theDamping);
 
+    // Ladruno WP-192: threaded element loops opt-in. The class / function /
+    // shp3d scratch is thread_local; the answer is the materials' (and no
+    // Damping object, which is not audited).
+    bool ladrunoThreadSafeUpdate(void) const;
+    bool ladrunoThreadSafeForm(void) const;
+
     //get the number of external nodes
     int getNumExternalNodes( ) const ;
 
@@ -153,10 +159,10 @@ class Brick : public Element {
     // static attributes
     //
 
-    static Matrix stiff ;
-    static Vector resid ;
-    static Matrix mass ;
-    static Matrix damping ;
+    static thread_local Matrix stiff ;   // Ladruno WP-192
+    static thread_local Vector resid ;   // Ladruno WP-192
+    static thread_local Matrix mass ;   // Ladruno WP-192
+    static thread_local Matrix damping ;   // Ladruno WP-192
 
     //quadrature data
     static const double root3 ;
@@ -165,7 +171,7 @@ class Brick : public Element {
     static const double wg[8] ;
   
     //local nodal coordinates, three coordinates for each of four nodes
-    static double xl[3][8] ; 
+    static thread_local double xl[3][8] ;    // Ladruno WP-192
 
     //
     // private methods

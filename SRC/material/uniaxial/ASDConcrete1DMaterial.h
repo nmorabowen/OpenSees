@@ -204,6 +204,9 @@ public:
 
 	// copy and others...
 	UniaxialMaterial* getCopy(void);
+	// Ladruno WP-192: threaded element loops opt-in (scratch thread_local; IMPL-EX error diagnostics serialised).
+	bool ladrunoThreadSafeUpdate(void) const { return true; }
+	bool ladrunoThreadSafeForm(void) const { return true; }
 	void Print(OPS_Stream& s, int flag = 0);
 
 	// send/recv self

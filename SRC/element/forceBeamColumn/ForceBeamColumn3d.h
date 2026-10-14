@@ -103,6 +103,10 @@ class ForceBeamColumn3d: public Element
   int revertToStart(void);
   int update(void);    
   
+  // Ladruno WP-192: threaded element loops opt-in (sections, a Linear/PDelta
+  // 3d transformation and a stateless integration rule; no Damping).
+  bool ladrunoThreadSafeUpdate(void) const;
+  bool ladrunoThreadSafeForm(void) const;
   const Matrix &getTangentStiff(void);
   const Matrix &getInitialStiff(void);
   const Matrix &getMass(void);    
@@ -208,9 +212,9 @@ class ForceBeamColumn3d: public Element
   // undergoing the update (FB element localizes at the integration point level)
   double current_section_lch = 0.0;
 
-  static Matrix theMatrix;
-  static Vector theVector;
-  static double workArea[];
+  static thread_local Matrix theMatrix;   // Ladruno WP-192
+  static thread_local Vector theVector;   // Ladruno WP-192
+  static thread_local double workArea[];   // Ladruno WP-192
   
   enum {maxNumSections = 10};
   
@@ -218,9 +222,9 @@ class ForceBeamColumn3d: public Element
   int    maxSubdivisions;       // maximum number of subdivisons of dv for local iterations
   double subdivideFactor;
   
-  static Vector vsSubdivide[];
-  static Vector SsrSubdivide[];
-  static Matrix fsSubdivide[];
+  static thread_local Vector vsSubdivide[];   // Ladruno WP-192
+  static thread_local Vector SsrSubdivide[];   // Ladruno WP-192
+  static thread_local Matrix fsSubdivide[];   // Ladruno WP-192
   //static int maxNumSections;
 
   // AddingSensitivity:BEGIN //////////////////////////////////////////

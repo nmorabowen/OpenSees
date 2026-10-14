@@ -65,6 +65,9 @@ class TransformationDOF_Group: public DOF_Group
     const ID &getID(void) const; 
     virtual void setID(int dof, int value);    
     Matrix *getT(void);
+    // Ladruno WP-192: true when getT() rebuilds T on every call (time-varying
+    // MP), i.e. writes this group's shared Trans -- such an FE stays serial.
+    bool ladrunoTimeVaryingT(void) const;
     virtual int getNumDOF(void) const;    
     virtual int getNumFreeDOF(void) const;
     virtual int getNumConstrainedDOF(void) const;

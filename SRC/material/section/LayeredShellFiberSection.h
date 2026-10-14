@@ -64,6 +64,9 @@ class LayeredShellFiberSection : public SectionForceDeformation{
 
     //make a clone of this material
     SectionForceDeformation *getCopy( ) ;
+    // Ladruno WP-192: threaded element loops opt-in (all layers must agree).
+    bool ladrunoThreadSafeUpdate(void) const;
+    bool ladrunoThreadSafeForm(void) const;
 
     //mass per unit area
     double getRho() ;
@@ -125,11 +128,11 @@ class LayeredShellFiberSection : public SectionForceDeformation{
 
     Vector strainResultant ;
 
-    static Vector stressResultant ;
+    static thread_local Vector stressResultant ;   // Ladruno WP-192
 
-    static Matrix tangent ;
+    static thread_local Matrix tangent ;   // Ladruno WP-192
 
-    static ID array ;  
+    static thread_local ID array ;     // Ladruno WP-192
 
 } ; //end of LayeredShellFiberSection declarations
 

@@ -104,4 +104,74 @@ bool ladruno_parallelBuild(void);
 // and 0 on a serial build to mean "no MPI in this binary at all".
 int ladruno_parallelRanks(void);
 
+// ---------------------------------------------------------------------------
+// Ladruno WP-192 -- the shared machinery of the threaded element loops.
+//
+// WP-107 threaded one loop (Domain::update) with an inline `#pragma omp`. WP-192
+// threads three more (the element tangent and residual loops of the
+// integrators, and the element commit loop of Domain::commit), and two of them
+// live in OPS_Analysis, which is NOT compiled with /openmp (and must not be:
+// see CMakeLists.txt, PFEM's dormant pragmas). So the parallel-for itself lives
+// here, in OPS_Utilities, and the callers hand it a plain function pointer.
+// ---------------------------------------------------------------------------
+
+// Nonzero on a thread while it is executing a body of ladruno_parallelFor().
+// It is how the class-wide scratch pools (FE_Element, TransformationFE,
+// Element's Rayleigh pool, Matrix's solve work area) know to hand out the
+// calling thread's private copy instead of the shared one. Zero everywhere
+// else, so every serial path keeps using the original objects.
+extern thread_local int ladruno_tlInRegion;
+inline bool ladruno_inThreadedRegion(void) { return ladruno_tlInRegion != 0; }
+
+// One iteration of a ladruno_parallelFor loop. Returns 0 on success.
+typedef int (*LadrunoIndexBody)(int i, void *ctx);
+
+// Run body(i, ctx) for every i in [0, n) on nThreads OpenMP threads
+// (schedule(dynamic, chunk)). Every executing thread has ladruno_tlInRegion set
+// for the duration. Returns the INTEGER sum of the body results (order-free,
+// so identical at every thread count); *firstFail, when given, receives the
+// lowest i whose body returned nonzero (n when none did). With OpenMP compiled
+// out, or nThreads < 2, it runs the loop serially on the calling thread (with
+// the region flag set, so the same scratch selection is exercised).
+int ladruno_parallelFor(int n, int nThreads, int chunk,
+                        LadrunoIndexBody body, void *ctx, int *firstFail);
+
+// Hybrid MPI + threads (ADR-75b section 11 q6), WP-192. WP-107 refuses every
+// MPI binary because an `mpiexec`-inherited LADRUNO_THREADS would oversubscribe
+// the job silently. WP-192 keeps that refusal as the DEFAULT and adds an
+// explicit acknowledgement: `ladrunoThreads <n> -hybrid` in the deck, or
+// LADRUNO_THREADS_HYBRID=1 in the environment. Without it an MPI binary still
+// runs serial and says so.
+bool ladruno_hybridAllowed(void);
+void ladruno_setHybridAllowed(bool on);
+
+// The serial-path guard every WP-192 loop runs before threading: the requested
+// count (> 1), OpenMP compiled in, and on an MPI binary the hybrid
+// acknowledgement. Returns the thread count to use, or 1 for "run serial".
+// *why receives a short reason when it returns 1 (0 = the plain default of
+// 1 thread, nothing to announce).
+int ladruno_loopThreads(const char **why);
+
+
+// Serialises a diagnostic written to opserr from inside a threaded loop
+// (opserr is ONE shared stream; WP-107 rule 4). A no-op outside a region, so
+// every serial path prints exactly as before. Use as a scoped guard:
+//   { LadrunoOutputGuard g; opserr << ...; }
+void ladruno_outputLock(void);
+void ladruno_outputUnlock(void);
+struct LadrunoOutputGuard {
+  bool on;
+  LadrunoOutputGuard() : on(ladruno_inThreadedRegion()) { if (on) ladruno_outputLock(); }
+  ~LadrunoOutputGuard() { if (on) ladruno_outputUnlock(); }
+};
+
+
+// Diagnostic mask of the WP-192 loops that may thread: LADRUNO_THREADS_LOOPS,
+// a bitmask read once (1 = element update, 2 = tangent, 4 = residual,
+// 8 = commit; default 15 = all). For bisecting a suspected race to one loop
+// without a rebuild; production runs leave it unset.
+enum { LADRUNO_LOOP_UPDATE = 1, LADRUNO_LOOP_TANGENT = 2,
+       LADRUNO_LOOP_RESIDUAL = 4, LADRUNO_LOOP_COMMIT = 8 };
+bool ladruno_loopEnabled(int which);
+
 #endif

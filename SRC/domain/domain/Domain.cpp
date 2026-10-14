@@ -2260,10 +2260,13 @@ Domain::commit(void)
       nodePtr->commitState();
     }
 
-    Element *elePtr;
-    ElementIter &theElemIter = this->getElements();
-    while ((elePtr = theElemIter()) != 0) {
-      elePtr->commitState();
+    // Ladruno WP-192: threaded element commit (per-type opt-in); false = serial.
+    if (this->ladrunoThreadedCommit() == false) {
+      Element *elePtr;
+      ElementIter &theElemIter = this->getElements();
+      while ((elePtr = theElemIter()) != 0) {
+        elePtr->commitState();
+      }
     }
 
     // Ladruno (WP-99 F7): a material that could NOT integrate this commit.
@@ -2565,6 +2568,8 @@ Domain::ladrunoThreadedUpdate(int &ok)
   const int nThreads = ladruno_getNumThreads();
   if (nThreads <= 1)
     return false;   // the default: serial, byte-identical, no parallel region
+  if (!ladruno_loopEnabled(LADRUNO_LOOP_UPDATE))
+    return false;   // WP-192 diagnostic mask (LADRUNO_THREADS_LOOPS)
 
   // --- refusals. Announced once per DOMAIN per audit outcome, NOT once per
   // process (red-team S3): see Domain::ladrunoAnnounceAudit.
@@ -2578,25 +2583,30 @@ Domain::ladrunoThreadedUpdate(int &ok)
   // would happily thread every rank. Since the count is seeded from an
   // environment variable and mpiexec propagates the environment, a single
   // `set LADRUNO_THREADS=8` in a job script would silently make an np-8 run
-  // 64-way oversubscribed. Hybrid MPI+threads is ADR-75b section 11 q6 and is
-  // DEFERRED, so a parallel binary refuses outright -- on the BUILD, not on
-  // the rank count, because np==1 under OpenSeesMP is still the parallel code
-  // path and is not the desktop case this WP measured.
+  // 64-way oversubscribed.
+  //
+  // Ladruno WP-192: the refusal stays the DEFAULT, but an explicit
+  // acknowledgement lifts it -- `ladrunoThreads <n> -hybrid` in the deck or
+  // LADRUNO_THREADS_HYBRID=1 -- for the layouts with few ranks per node
+  // (16x1, 2x8) where each rank carries more elements. An inherited
+  // LADRUNO_THREADS alone still cannot oversubscribe a job.
   //
   // ladruno_parallelBuild() lives in its own per-target translation unit
   // because an #ifdef _PARALLEL_* written HERE would compile to nothing in
   // every binary: OPS_Domain is one OBJECT library built once with neither
   // define. See SRC/utility/LadrunoParallelBuild.cpp (and ADR-78 P1, which
   // measured that trap the hard way).
-  if (ladruno_parallelBuild()) {
+  if (ladruno_parallelBuild() && !ladruno_hybridAllowed()) {
     if (this->ladrunoAnnounceAudit(LADRUNO_TA_PARALLEL_BUILD, 0, nThreads))
       opserr << "WARNING ladrunoThreads: this is an MPI binary (OpenSeesSP / "
              << "OpenSeesMP / OpenSeesPyMP, " << ladruno_parallelRanks()
-             << " rank(s)) -- the threaded element loop is REFUSED, running "
-             << "SERIAL. WP-107 is shared-memory/desktop-scoped; hybrid "
-             << "MPI+threads is ADR-75b section 11 q6 and is still deferred. "
-             << "LADRUNO_THREADS is inherited by every rank under mpiexec, so "
-             << "honouring it here would oversubscribe the job silently.\n";
+             << " rank(s)) -- the threaded element loops are REFUSED, running "
+             << "SERIAL. LADRUNO_THREADS is inherited by every rank under "
+             << "mpiexec, so honouring it alone would oversubscribe the job "
+             << "silently. To run hybrid MPI+threads on purpose, add "
+             << "`ladrunoThreads <n> -hybrid` to the deck or set "
+             << "LADRUNO_THREADS_HYBRID=1 (WP-192), and size ranks x threads "
+             << "to the cores.\n";
     return false;
   }
 
@@ -2604,8 +2614,8 @@ Domain::ladrunoThreadedUpdate(int &ok)
     if (this->ladrunoAnnounceAudit(LADRUNO_TA_PARTITIONED, 0, nThreads))
       opserr << "WARNING ladrunoThreads: the threaded element loop is NOT "
              << "available on a PartitionedDomain/Subdomain -- running SERIAL. "
-             << "(WP-107 is shared-memory/desktop-scoped; hybrid MPI+threads is "
-             << "ADR-75b section 11 q6 and is still deferred.)\n";
+             << "(OpenSeesMP's plain per-rank Domain is the hybrid path, "
+             << "WP-192.)\n";
     return false;
   }
 
@@ -2618,7 +2628,7 @@ Domain::ladrunoThreadedUpdate(int &ok)
     if (this->ladrunoAnnounceAudit(LADRUNO_TA_PROFILER, 0, nThreads))
       opserr << "WARNING ladrunoThreads: the DEEP profiler gate is armed, whose "
              << "per-element buckets are not thread-safe -- running the element "
-             << "loop SERIAL. Use coarse `profiler start -perStep` to time a "
+             << "loops SERIAL. Use coarse `profiler start -perStep` to time a "
              << "threaded run.\n";
     return false;
   }
@@ -2636,21 +2646,38 @@ Domain::ladrunoThreadedUpdate(int &ok)
   if (nEle < 2)
     return false;
 
-  // --- the allowlist. Default-empty by construction: Element's base
-  // implementation answers false, so a domain holding ONE un-audited element
-  // runs entirely serial. Deliberately all-or-nothing rather than a mixed
-  // parallel/serial split -- a mixed loop would still let an audited element
-  // run concurrently with an un-audited one that writes shared node state.
+  // --- the allowlist, PER ELEMENT (WP-192; WP-107 was all-or-nothing).
+  //
+  // Element's base implementation answers false, so an un-audited element is
+  // never run concurrently with anything. WP-107 made the whole loop serial
+  // when it met one; WP-192 keeps it in its SERIAL PLACE instead: the loop is
+  // cut into maximal runs of consecutive audited elements, each run is
+  // threaded, and every un-audited element runs alone, on the calling thread,
+  // after the run before it has finished and before the run after it starts.
+  // An un-audited element therefore sees exactly the state it sees serially
+  // (the ADR-75b 2.1b "it may write shared node state" hazard stays fenced),
+  // and only audited elements -- whose update() touches nothing but their own
+  // state -- are reordered among themselves.
+  std::vector<char> safe(nEle, 0);
+  int nSafe = 0;
+  int firstUnsafe = -1;
   for (int i = 0; i < nEle; i++) {
-    if (eles[i]->ladrunoThreadSafeUpdate() == false) {
-      if (this->ladrunoAnnounceAudit(LADRUNO_TA_ELEMENT, eles[i]->getTag(), nThreads))
-        opserr << "WARNING ladrunoThreads: element " << eles[i]->getTag()
-               << " (classTag " << eles[i]->getClassTag() << ") is not on the "
-               << "WP-107 thread-safe allowlist -- running the element loop "
-               << "SERIAL. See Ladruno_implementation/"
-               << "107_ladruno_openmp_element_loop.md for what qualifies.\n";
-      return false;
-    }
+    if (eles[i]->ladrunoThreadSafeUpdate()) {
+      safe[i] = 1;
+      nSafe++;
+    } else if (firstUnsafe < 0)
+      firstUnsafe = i;
+  }
+
+  if (nSafe < 2) {
+    if (firstUnsafe >= 0 &&
+        this->ladrunoAnnounceAudit(LADRUNO_TA_ELEMENT, eles[firstUnsafe]->getTag(), nThreads))
+      opserr << "WARNING ladrunoThreads: element " << eles[firstUnsafe]->getTag()
+             << " (classTag " << eles[firstUnsafe]->getClassTag() << ") is not on the "
+             << "thread-safe allowlist and fewer than 2 elements are -- running the "
+             << "element loop SERIAL. See Ladruno_implementation/"
+             << "192_ladruno_threaded_element_loops_adr.md for what qualifies.\n";
+    return false;
   }
 
   // --- H4: force the lazy Node trial-state allocation NOW, on one thread.
@@ -2668,49 +2695,61 @@ Domain::ladrunoThreadedUpdate(int &ok)
     }
   }
 
-  // --- the loop.
-  //
-  // `ok` reproduces the serial `ok += theEle->update()` exactly: an INTEGER sum,
-  // so the reduction is order-independent and the returned value is identical at
-  // every thread count (unlike an FP reduction, which is why loops B/C are out
-  // of scope).
-  //
-  // firstFailIdx makes the DIAGNOSTIC deterministic too: whichever element
-  // fails, the tag reported is the one with the lowest index in serial
-  // iteration order, not whichever thread happened to get there first.
-  // Announce the FIRST threaded loop, once. Fail-loud in BOTH directions is the
-  // point: every refusal above already prints, so without this a run that was
-  // quietly serial (because some element was not on the allowlist) and a run
-  // that was threaded but had no payoff look identical in a bench table. They
-  // are very different results.
-  //
-  // Red-team S3: once per DOMAIN per outcome, not once per process. A second
-  // model in the same interpreter -- pytest, apeGmsh, any in-process parameter
-  // study -- must say what it did too.
-  if (this->ladrunoAnnounceAudit(LADRUNO_TA_THREADED, 0, nThreads))
-    opserr << "ladrunoThreads: element update loop THREADED on " << nThreads
-           << " threads (" << nEle << " elements)\n";
+  // Announce the outcome (fail-loud in BOTH directions: a quietly serial run and
+  // a threaded one must not look alike in a bench table). Per DOMAIN per outcome
+  // (red-team S3).
+  if (nSafe == nEle) {
+    if (this->ladrunoAnnounceAudit(LADRUNO_TA_THREADED, 0, nThreads))
+      opserr << "ladrunoThreads: element update loop THREADED on " << nThreads
+             << " threads (" << nEle << " elements)\n";
+  } else {
+    if (this->ladrunoAnnounceAudit(LADRUNO_TA_MIXED, eles[firstUnsafe]->getTag(), nThreads))
+      opserr << "ladrunoThreads: element update loop PARTLY threaded on " << nThreads
+             << " threads: " << nSafe << " of " << nEle << " elements threaded, "
+             << (nEle - nSafe) << " run SERIAL in their place; the first of those, element "
+             << eles[firstUnsafe]->getTag() << " (classTag "
+             << eles[firstUnsafe]->getClassTag() << "), is not on the thread-safe "
+             << "allowlist (WP-192 per-type opt-in).\n";
+  }
 
-  // NOTE on the min: MSVC implements OpenMP 2.0 only, where `reduction(min:)`
-  // does not exist (3.1+). A critical section is used instead -- it is entered
-  // ONLY on a failing element, so it costs nothing on the hot path.
+  // --- the loop: threaded runs and serial singletons, in serial order.
+  struct Ctx { Element **e; };
+  struct Body {
+    static int run(int i, void *c) {
+      Element *e = ((Ctx *)c)->e[i];
+      ops_TheActiveElement = e;          // thread_local (WP-107, Element.cpp)
+      return e->update();
+    }
+  };
+
   int sum = 0;
   int firstFailIdx = nEle;
-
-  #pragma omp parallel for schedule(dynamic, 8) num_threads(nThreads) reduction(+:sum)
-  for (int i = 0; i < nEle; i++) {
-    Element *e = eles[i];
-    ops_TheActiveElement = e;          // thread_local (WP-107, Element.cpp)
-    int r = e->update();
-    sum += r;
-    if (r != 0) {
-      #pragma omp critical (ladruno_wp107_updateFail)
-      {
-        if (i < firstFailIdx)
-          firstFailIdx = i;
-      }
+  int i = 0;
+  while (i < nEle) {
+    if (!safe[i]) {
+      ops_TheActiveElement = eles[i];
+      const int r = eles[i]->update();
+      sum += r;
+      if (r != 0 && i < firstFailIdx)
+        firstFailIdx = i;
+      i++;
+      continue;
     }
+    int j = i;
+    while (j < nEle && safe[j])
+      j++;
+    Ctx ctx = { &eles[i] };
+    int ff = j - i;
+    sum += ladruno_parallelFor(j - i, nThreads, 8, &Body::run, &ctx, &ff);
+    if (ff < j - i && i + ff < firstFailIdx)
+      firstFailIdx = i + ff;
+    i = j;
   }
+
+  // The serial loop leaves ops_TheActiveElement on the LAST element in
+  // iteration order, and code after the loop can read it (ADR-75b H7). Restore
+  // exactly that residual, so a threaded update leaves the same global state.
+  ops_TheActiveElement = eles[nEle - 1];
 
   ok += sum;
 
@@ -2721,6 +2760,85 @@ Domain::ladrunoThreadedUpdate(int &ok)
              << eles[firstFailIdx]->getTag() << endln;
   }
 
+  return true;
+#endif
+}
+
+
+// ---------------------------------------------------------------------------
+// Ladruno WP-192 -- the threaded element COMMIT loop of Domain::commit().
+//
+// Same shape as the update loop above: no reduction (each element commits its
+// own state); maximal runs of consecutive elements whose ladrunoThreadSafeCommit()
+// is true are threaded, everything else commits alone in its serial place.
+// Return values are dropped exactly as the serial loop drops them (upstream
+// contract; WP-99 F7 reaches refusals out of band through
+// ladrunoNoteCommitRefusal, which WP-192 made atomic). The refusals and the
+// announcement belong to the update loop, which always runs first.
+// Returns true when it ran the loop.
+// ---------------------------------------------------------------------------
+bool
+Domain::ladrunoThreadedCommit(void)
+{
+#ifndef _LADRUNO_OPENMP
+  return false;
+#else
+  const int nThreads = ladruno_getNumThreads();
+  if (nThreads <= 1)
+    return false;
+  if (ladruno_parallelBuild() && !ladruno_hybridAllowed())
+    return false;
+  if (!ladruno_loopEnabled(LADRUNO_LOOP_COMMIT))
+    return false;   // WP-192 diagnostic mask
+  if (this->ladrunoThreadedUpdateAllowed() == false)
+    return false;
+  if (ops_profiler::theProfiler().deep())
+    return false;
+
+  std::vector<Element *> eles;
+  eles.reserve(theElements->getNumComponents());
+  {
+    ElementIter &theEles = this->getElements();
+    Element *e;
+    while ((e = theEles()) != 0)
+      eles.push_back(e);
+  }
+  const int nEle = (int)eles.size();
+  std::vector<char> safe(nEle, 0);
+  int nSafe = 0;
+  for (int i = 0; i < nEle; i++)
+    if (eles[i]->ladrunoThreadSafeCommit()) {
+      safe[i] = 1;
+      nSafe++;
+    }
+  if (nSafe < 2)
+    return false;
+
+  struct Ctx { Element **e; };
+  struct Body {
+    static int run(int i, void *c) {
+      ((Ctx *)c)->e[i]->commitState();
+      return 0;
+    }
+  };
+
+  Element *activeBefore = ops_TheActiveElement;
+  int i = 0;
+  while (i < nEle) {
+    if (!safe[i]) {
+      eles[i]->commitState();
+      i++;
+      continue;
+    }
+    int j = i;
+    while (j < nEle && safe[j])
+      j++;
+    Ctx ctx = { &eles[i] };
+    ladruno_parallelFor(j - i, nThreads, 16, &Body::run, &ctx, 0);
+    i = j;
+  }
+  // The serial commit loop does not touch ops_TheActiveElement; neither may this.
+  ops_TheActiveElement = activeBefore;
   return true;
 #endif
 }

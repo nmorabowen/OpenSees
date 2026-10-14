@@ -71,6 +71,12 @@ class Material : public TaggedObject, public MovableObject
     // 4 (RungeKutta45's). See Ladruno_implementation/107_ladruno_openmp_element_loop.md.
     virtual bool ladrunoThreadSafeUpdate(void) const { return false; }
 
+    // Ladruno WP-192. The rest of the contract: may getTangent / getStress /
+    // getInitialTangent / commitState (and, for a section, getSectionTangent /
+    // getStressResultant / commitState) run concurrently on DIFFERENT instances?
+    // Consulted by Element::ladrunoThreadSafeForm. Default false.
+    virtual bool ladrunoThreadSafeForm(void) const { return false; }
+
   protected:
     
   private:

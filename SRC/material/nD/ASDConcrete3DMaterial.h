@@ -321,6 +321,9 @@ public:
 
 	// copy and others...
 	NDMaterial* getCopy(void);
+	// Ladruno WP-192: threaded element loops opt-in (scratch thread_local; IMPL-EX error diagnostics serialised).
+	bool ladrunoThreadSafeUpdate(void) const { return true; }
+	bool ladrunoThreadSafeForm(void) const { return true; }
 	NDMaterial* getCopy(const char* code);
 	const char* getType(void) const;
 	int getOrder(void) const;
