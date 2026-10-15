@@ -982,6 +982,28 @@ ASDConcrete1DMaterial::HardeningLawStorage::PointerType ASDConcrete1DMaterial::H
 	return nullptr;
 }
 
+void ASDConcrete1DMaterial::HardeningLawStorage::clear()
+{
+	// Ladruno #2044: see ladrunoAsdConcrete1DResetStorage below.
+	m_tension.clear();
+	m_compression.clear();
+}
+
+// Ladruno #2044: `wipe` forgets the process-wide per-tag hardening-law registry,
+// the same defect and fix as ASDConcrete3D (ladrunoAsdConcrete3DResetStorage).
+// store() writes only into an empty slot and HardeningLaw::regularize() copies
+// the stored law back over the instance (deRegularize), so without this reset a
+// later model's same-tag ASDConcrete1D silently ran on the FIRST model's laws,
+// elastic modulus included (E=3e6 then E=30e6 under tag 1: a singular truss,
+// u = 0, stress 0). Laws are copied by value, so nothing points into the map;
+// recvSelf re-registers the original law it receives. Called from
+// OPS_clearAllUniaxialMaterial(), the uniaxial wipe hook of OpenSees.exe and
+// both Python interpreters.
+void ladrunoAsdConcrete1DResetStorage(void)
+{
+	ASDConcrete1DMaterial::HardeningLawStorage::instance().clear();
+}
+
 ASDConcrete1DMaterial::ASDConcrete1DMaterial(
 	int _tag,
 	double _E,
