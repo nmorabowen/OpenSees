@@ -52,11 +52,8 @@ public :
 
     // Ladruno (ADR-88): H5DRM free-field interpolation at the 6 mid-edge
     // nodes (local idx 4-9) -- weight 0.5/0.5 on the edge's own 2 corner
-    // nodes. Edge table read directly off this class's own shape-function
-    // definition (shp[3][4..9] in the .cpp, including the historical N8<->N9
-    // index swap already marked there with "// *") -- NOT copied from
-    // BezierTet10, though the two happen to agree (BezierTet10 was built to
-    // match this class's node order in the first place).
+    // nodes. Edge table read off this class's own shape functions (shp3d);
+    // the rows for local 8 and 9 follow std_numbering.
     bool getDRMInterpolation(int localNode,
                               std::vector<int>& primaryLocalNodes,
                               std::vector<double>& weights) const override;
@@ -77,7 +74,8 @@ public :
                        int node9,
                        int node10,
                        NDMaterial &theMaterial,
-                       double b1 = 0.0, double b2 = 0.0, double b3 = 0.0, bool do_init_disp_=false);
+                       double b1 = 0.0, double b2 = 0.0, double b3 = 0.0, bool do_init_disp_=false,
+                       bool std_numbering_=false);
 
     //destructor
     virtual ~TenNodeTetrahedron( ) ;
@@ -169,11 +167,11 @@ private :
     // private attributes
     //
 
-    ID connectedExternalNodes ;  //four node numbers
-    Node *nodePointers[NumNodes] ;      //pointers to eight nodes
+    ID connectedExternalNodes ;  //the ten node numbers
+    Node *nodePointers[NumNodes] ;      //pointers to the ten nodes
 
     //material information
-    NDMaterial *materialPointers[NumGaussPoints]; //pointers to eight materials
+    NDMaterial *materialPointers[NumGaussPoints]; //one material copy per Gauss point
 
     double b[3];        // Body forces
     double appliedB[3];     // Body forces applied with load
@@ -197,10 +195,10 @@ private :
     static const double one_over_root3 ;
     static const double alpha ;
     static const double beta ;
-    static const double sg[4] ;
     static const double wg[1] ;
+    static const double tet_coords[4][3] ;
 
-    //local nodal coordinates, three coordinates for each of four nodes
+    //nodal coordinates, three for each of the ten nodes
     static double xl[3][NumNodes] ;
 
     //
@@ -225,6 +223,7 @@ private :
 
     bool do_update;
     bool do_init_disp;
+    bool std_numbering;  // nodes 9/10 on edges 2-4/3-4 (TenNodeTetrahedronStd) instead of 3-4/2-4 (gmsh)
 } ;
 
 #endif
