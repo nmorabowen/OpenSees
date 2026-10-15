@@ -201,6 +201,8 @@ public:
 		void store(const HardeningLaw& hl);
 		// recover
 		PointerType recover(int tag, HardeningLawType type);
+		// forget every stored law (on wipe)  // Ladruno #2044
+		void clear();
 
 	private:
 		MapType m_tension;
@@ -226,6 +228,8 @@ public:
 		// It will return a pointer to an existing vector. If no normals have been generated
 		// before for the current n90, it will be generated here.
 		Vector3ListPointer get(int n90);
+		// forget every cached list (on wipe)  // Ladruno #2044
+		void clear();
 
 	private:
 		MapType m_map;
