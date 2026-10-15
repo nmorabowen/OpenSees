@@ -1212,12 +1212,19 @@ int OPS_peerNGA()
     return 0;
 }
 
+// apeGmsh #2034: a user `domainChange` (openseespy / the TclWrapper) is a
+// stage barrier for the Ladruno recorder (counter defined in
+// recorder/LadrunoRecorder.cpp). Internal Domain::domainChange() calls do not
+// bump it.
+extern void ladrunoNoteUserStageBarrier(void);
+
 int OPS_domainChange()
 {
     Domain* theDomain = OPS_GetDomain();
     if (theDomain == 0) return -1;
 
     theDomain->domainChange();
+    ladrunoNoteUserStageBarrier();
 
     return 0;
 }

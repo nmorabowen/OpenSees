@@ -11464,9 +11464,15 @@ int convertTextToBinary(ClientData clientData, Tcl_Interp *interp, int argc, TCL
   return textToBinary(inputFile, outputFile);
 }
 
+// apeGmsh #2034: a user `domainChange` is a stage barrier for the Ladruno
+// recorder (counter defined in recorder/LadrunoRecorder.cpp). Only this user
+// command bumps it; internal Domain::domainChange() calls do not.
+extern void ladrunoNoteUserStageBarrier(void);
+
 int domainChange(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 {
   theDomain.domainChange();
+  ladrunoNoteUserStageBarrier();
   return TCL_OK;
 }
 

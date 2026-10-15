@@ -80,6 +80,9 @@
 #include <LoadPattern.h>              // Ladruno (ADR-73 P4): overlay discovery
 #include <LoadPatternIter.h>
 #include <LadrunoPorousOverlay.h>
+#include <Subdomain.h>                       // apeGmsh #2034: worker-side analysis kind
+#include <StaticDomainDecompositionAnalysis.h>
+#include <TransientDomainDecompositionAnalysis.h>
 #include "section/SectionForceDeformation.h"
 
 #include <algorithm>
@@ -124,6 +127,85 @@ static void ladrunoResolveRunId(std::string& id, std::string& scope)
 	scope = "process";
 }
 
+// apeGmsh #2034 (option B): the user stage barrier. The interpreters' user
+// `domainChange` command (tcl/commands.cpp, interpreter/OpenSeesCommands.cpp
+// OPS_domainChange) calls ladrunoNoteUserStageBarrier(); the recorder compares
+// the count at each recorded step. Internal Domain::domainChange() callers (an
+// SP pattern, eleLoad, contact -reemit, ...) do not touch it, so WP-165 still
+// folds those re-stamps into the open MODEL_STAGE. The count lives in this TU
+// (the OPS_Recorder library every interpreter executable links), not in the
+// Domain, and is process-local: on openseesmp every rank runs the same command.
+static int s_ladruno_user_stage_barrier = 0;
+
+void ladrunoNoteUserStageBarrier(void)
+{
+	++s_ladruno_user_stage_barrier;
+}
+
+int ladrunoUserStageBarrier(void)
+{
+	return s_ladruno_user_stage_barrier;
+}
+
+// apeGmsh #2034: the kind of the analysis running on this process right now:
+// "static", "transient", or "" when it cannot be told (no analysis defined, or
+// both pointers set). The interpreter-side analyses are read through the
+// elementAPI accessors (classic Tcl: elementAPI_TCL.cpp; openseespy and the
+// new Tcl wrapper: OpenSeesCommands.cpp). VariableTransient and PFEM set the
+// transient pointer too. A PartitionedDomain worker runs no interpreter: its
+// Subdomain holds the Static/Transient DomainDecompositionAnalysis P0 sent.
+static std::string ladrunoRunningAnalysisKind(Domain* dom)
+{
+	StaticAnalysis** sa = OPS_GetStaticAnalysis();
+	DirectIntegrationAnalysis** ta = OPS_GetTransientAnalysis();
+	const bool is_static = (sa != 0 && *sa != 0);
+	const bool is_transient = (ta != 0 && *ta != 0);
+	if (is_static && !is_transient)
+		return "static";
+	if (is_transient && !is_static)
+		return "transient";
+	if (is_static && is_transient)
+		return "";
+	Subdomain* sub = dynamic_cast<Subdomain*>(dom);
+	if (sub != 0) {
+		DomainDecompositionAnalysis* dda = sub->getDDAnalysis();
+		if (dynamic_cast<StaticDomainDecompositionAnalysis*>(dda) != 0)
+			return "static";
+		if (dynamic_cast<TransientDomainDecompositionAnalysis*>(dda) != 0)
+			return "transient";
+	}
+	return "";
+}
+
+// true when a modal (ModesOfVibration[Rotational]) channel is requested: such a
+// recorder's stages are KIND "eigen" whatever analysis runs.
+static bool ladrunoHasModalRequest(
+	const std::vector<ladruno::detail::NodalResultType::Enum>& reqs)
+{
+	for (size_t i = 0; i < reqs.size(); ++i) {
+		if (reqs[i] == ladruno::detail::NodalResultType::ModesOfVibration ||
+		    reqs[i] == ladruno::detail::NodalResultType::ModesOfVibrationRotational)
+			return true;
+	}
+	return false;
+}
+
+// apeGmsh #2034: replace MODEL_STAGE[<id>]/@KIND (a provisional value written
+// before any analysis existed). Delete + create: the string sizes differ.
+static int ladrunoRewriteStageKind(hid_t h_file, int stage_id, const std::string& kind)
+{
+	std::stringstream ss;
+	ss << "MODEL_STAGE[" << stage_id << "]";
+	hid_t h_stage = H5Gopen2(h_file, ss.str().c_str(), H5P_DEFAULT);
+	if (h_stage < 0)
+		return -1;
+	if (H5Aexists(h_stage, "KIND") > 0)
+		H5Adelete(h_stage, "KIND");
+	herr_t st = ladruno::h5::attribute::write(h_stage, "KIND", kind);
+	H5Gclose(h_stage);
+	return st < 0 ? -1 : 0;
+}
+
 // max number of iterations to guess the number of fibers (frozen MPCO_MAX_TRIAL_NFIB)
 #ifndef LADRUNO_MAX_TRIAL_NFIB
 #define LADRUNO_MAX_TRIAL_NFIB 100000
@@ -149,6 +231,10 @@ public:
 		, last_flush()
 		, last_seen_stamp(0)
 		, topology_fp(0)
+		, last_barrier(0)
+		, stage_run_kind()
+		, kind_pending(false)
+		, worker_fold_warned(false)
 		, energy_model_state()
 		, energy_region_state()
 		, run_id()
@@ -165,7 +251,7 @@ public:
 		, overlay_all(false)
 		, overlay_tags()
 		, overlay_ptrs()
-		, stage_kind("static")
+		, stage_kind()
 		, envelope_mode(false)
 		, nodal_results_requests()
 		, sens_grad_indices()
@@ -213,6 +299,24 @@ public:
 	// when this fingerprint of the node/element/pressure-constraint SET changed.
 	int last_seen_stamp;
 	unsigned long long topology_fp;
+	// apeGmsh #2034 (option B): the user stage-barrier count (ladrunoUserStage
+	// Barrier()) when the current MODEL_STAGE opened. A user `domainChange`
+	// bumps it, and a moved count opens a new MODEL_STAGE even when the
+	// topology fingerprint is unchanged. Process-local, never serialized.
+	int last_barrier;
+	// apeGmsh #2034 (option A): the running analysis kind ("static" /
+	// "transient") the current MODEL_STAGE was opened under; "" while it is not
+	// resolved yet (no analysis defined at the stage's first record). In auto
+	// KIND mode a static<->transient flip opens a new MODEL_STAGE, so no stage
+	// mixes kinds.
+	std::string stage_run_kind;
+	// true while the open stage's KIND attr is a provisional "static" written
+	// before any analysis existed; the first record() that sees the running
+	// analysis rewrites it.
+	bool kind_pending;
+	// one-time warning on a PartitionedDomain worker, which cannot see the user
+	// barrier (no interpreter runs there).
+	bool worker_fold_warned;
 	// WP-165 (R3): energy integrals owned here, not by the per-stage source.
 	ladrunons::EnergyState energy_model_state;
 	ladrunons::EnergyState energy_region_state;
@@ -247,11 +351,12 @@ public:
 	std::vector<int> overlay_tags;
 	std::vector<LadrunoPorousOverlay*> overlay_ptrs;
 
-	// -kind <transient|static|eigen>: the MODEL_STAGE/KIND attr. apeGmsh knows the
-	// analysis type when it emits the recorder command (the domain can't be relied
-	// on to distinguish static from transient). Default "static"; auto-promoted to
-	// "eigen" at writeModel time when a modal (ModesOfVibration) channel is present.
-	std::string stage_kind;              // = "static" unless -kind overrides
+	// -kind <transient|static|eigen>: an explicit override of MODEL_STAGE/KIND for
+	// every stage. Empty (the default) = automatic (apeGmsh #2034): each stage's
+	// KIND is the analysis running at its first record() (Static -> "static";
+	// Transient / VariableTransient / PFEM -> "transient"). Either way, a modal
+	// (ModesOfVibration) channel promotes KIND to "eigen" at writeModel time.
+	std::string stage_kind;              // "" = automatic, else the -kind value
 
 	// -envelope: record componentwise running extremes (ADR D7) instead of the
 	// per-step time series. Every non-modal node/element/domain channel uses an
@@ -327,6 +432,11 @@ LadrunoRecorder::LadrunoRecorder()
 LadrunoRecorder::~LadrunoRecorder()
 {
 	if (m_data) {
+		// apeGmsh #2034: the last stage never saw a running analysis.
+		if (m_data->initialized && m_data->kind_pending)
+			opserr << "LadrunoRecorder warning: the last MODEL_STAGE closed with no "
+			          "analysis visible at any recorded step; its KIND stays the "
+			          "provisional 'static' (pass -kind to state it)\n";
 		// In envelope mode, write the final ENVELOPES datasets while the sinks +
 		// file are still alive (EnvelopeSink defers all output to finalize()).
 		// WP-163 (ARCH-10): inside H5E_BEGIN_TRY like the closes below — at
@@ -545,21 +655,53 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 	// analysis; that is a documented limitation here (single-stage is unaffected).
 	bool rebuild_model = false;
 	int new_stamp = info.domain->hasDomainChanged();
+	// apeGmsh #2034: the two stage boundaries that leave topology unchanged.
+	// (B) a user `domainChange` since the stage opened (the barrier count);
+	// (A) in automatic KIND mode, a static<->transient flip of the running
+	// analysis, so that no MODEL_STAGE mixes kinds. An unresolved kind ("": no
+	// analysis yet) is never a flip; a repeated kind is never a flip.
+	const int barrier_now = ladrunoUserStageBarrier();
+	const std::string run_kind = ladrunoRunningAnalysisKind(info.domain);
+	// automatic KIND: no -kind override and no eigen promotion (a modal
+	// recorder's stages are "eigen" whatever runs, so a flip would only repeat it)
+	const bool auto_kind = m_data->stage_kind.empty() &&
+		!ladrunoHasModalRequest(m_data->nodal_results_requests);
+	bool user_barrier = false;
+	bool kind_flip = false;
+	if (m_data->first_domain_changed_done && !m_data->stage_failed) {
+		user_barrier = (barrier_now != m_data->last_barrier);
+		kind_flip = auto_kind && !run_kind.empty() &&
+		            !m_data->stage_run_kind.empty() &&
+		            run_kind != m_data->stage_run_kind;
+	}
 	if (!m_data->first_domain_changed_done) {
 		info.current_model_stage_id = new_stamp;
 		m_data->last_seen_stamp = new_stamp;
 		m_data->first_domain_changed_done = true;
 		rebuild_model = true;
 	}
-	else if (new_stamp != m_data->last_seen_stamp &&
+	else if (!user_barrier && !kind_flip &&
+	         new_stamp != m_data->last_seen_stamp &&
 	         !m_data->stage_failed && topologyFingerprint() == m_data->topology_fp) {
 		// WP-165 (R6): the stamp moved but the node/element set did not (contact
 		// re-emit, eleLoad, an SP pattern, ...): keep the MODEL_STAGE, its sources,
 		// envelopes and energy integrals. Every cached Element*/Node* is still the
 		// live object (the fingerprint hashes the pointers, not just the tags).
 		m_data->last_seen_stamp = new_stamp;
+		// apeGmsh #2034: a PartitionedDomain worker runs no interpreter, so a
+		// user `domainChange` on P0 reaches it only as a stamp move; it cannot
+		// be told from an internal re-stamp and is folded here. Say so once.
+		if (m_data->send_self_count < 0 && !m_data->worker_fold_warned) {
+			m_data->worker_fold_warned = true;
+			opserr << "LadrunoRecorder warning: partition " << m_data->p_id
+			       << " folded a domain-change stamp into MODEL_STAGE["
+			       << info.current_model_stage_id << "]: a PartitionedDomain "
+			          "worker cannot see a user `domainChange` stage barrier, so "
+			          "this part file may hold fewer MODEL_STAGEs than part 0 "
+			          "(static<->transient flips still split it)\n";
+		}
 	}
-	else if (new_stamp != m_data->last_seen_stamp) {
+	else if (user_barrier || kind_flip || new_stamp != m_data->last_seen_stamp) {
 		m_data->last_seen_stamp = new_stamp;
 		// WP-164: close out the ending stage BEFORE the stamp moves — envelopes
 		// are now rewritten on the flush cadence, not every step, so their last
@@ -570,10 +712,22 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 				finalizeAllSinks();
 			flushFile();
 		}
-		info.current_model_stage_id = new_stamp;
+		if (m_data->kind_pending) {
+			opserr << "LadrunoRecorder warning: MODEL_STAGE["
+			       << info.current_model_stage_id << "] closed with no analysis "
+			          "visible at any recorded step; its KIND stays the "
+			          "provisional 'static' (pass -kind to state it)\n";
+		}
+		// apeGmsh #2034: a barrier or a kind flip can arrive without a stamp
+		// move, so the id is the stamp only when it is past the current id;
+		// otherwise current+1. Every later stamp move takes max(id+1, stamp)
+		// again, so the ids stay strictly increasing and never collide.
+		info.current_model_stage_id =
+			std::max(info.current_model_stage_id + 1, new_stamp);
 		rebuild_model = true;
 	}
 	if (rebuild_model) {
+		m_data->last_barrier = barrier_now;
 		// WP-163 R2: writeModel() releases the prior stage's sources (and their
 		// cached Element*/Response*) BEFORE writing anything, so a failed rebuild
 		// leaves no dangling pointers behind. The stamp is already committed, so
@@ -591,6 +745,21 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 	}
 	if (m_data->stage_failed)
 		return 0;
+
+	// apeGmsh #2034: the stage opened before any analysis existed (an explicit
+	// `record`, or a recorder stepped by something that is not an analysis):
+	// its KIND was written as a provisional "static". The first recorded step
+	// that sees the running analysis states it, and the stage adopts that kind.
+	if (m_data->kind_pending && auto_kind && !run_kind.empty()) {
+		if (ladrunoRewriteStageKind(info.h_file_id, info.current_model_stage_id,
+		                            run_kind) != 0) {
+			opserr << "LadrunoRecorder: could not rewrite MODEL_STAGE["
+			       << info.current_model_stage_id << "]/KIND\n";
+			return -1;
+		}
+		m_data->stage_run_kind = run_kind;
+		m_data->kind_pending = false;
+	}
 
 	if (recordResultsOnNodes() != 0)
 		return -1;
@@ -808,6 +977,11 @@ int LadrunoRecorder::initialize()
 		info.h_file_id, "INFO", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
 	ladrunons::h5::attribute::write(h_info, "GENERATOR", std::string("Ladruno"));
 	ladrunons::h5::attribute::write(h_info, "FORMAT_VERSION", (int)1);
+	// apeGmsh #2034: minor 1 = per-stage KIND from the running analysis, and a
+	// MODEL_STAGE also opens on a user `domainChange` or a static<->transient
+	// flip. Absent (minor 0): KIND is the recorder-wide -kind (default
+	// "static") and a stage opens only on a topology change.
+	ladrunons::h5::attribute::write(h_info, "FORMAT_MINOR_VERSION", (int)1);
 	ladrunons::h5::attribute::write(h_info, "SOLVER_NAME", std::string("OpenSees"));
 	std::vector<int> solver_version;
 	solver_version.push_back(3);
@@ -887,16 +1061,27 @@ int LadrunoRecorder::writeModel()
 		info.h_group_proplist, H5P_DEFAULT);
 	ladrunons::h5::attribute::write(h_stage, "STEP", info.current_time_step_id);
 	ladrunons::h5::attribute::write(h_stage, "TIME", info.current_time_step);
-	// KIND (schema): the -kind option (default "static"), auto-promoted to "eigen"
-	// when a modal result is requested (ModesOfVibration[Rotational]).
-	std::string stage_kind = m_data->stage_kind;
-	for (size_t i = 0; i < m_data->nodal_results_requests.size(); ++i) {
-		ladrunons::detail::NodalResultType::Enum t = m_data->nodal_results_requests[i];
-		if (t == ladrunons::detail::NodalResultType::ModesOfVibration ||
-		    t == ladrunons::detail::NodalResultType::ModesOfVibrationRotational) {
-			stage_kind = "eigen";
-			break;
-		}
+	// KIND (schema; apeGmsh #2034): a modal result (ModesOfVibration[Rotational])
+	// promotes it to "eigen"; else the -kind override; else the analysis running
+	// at this, the stage's first record(). With no analysis visible yet it is a
+	// provisional "static" that record() rewrites once one runs (kind_pending).
+	const std::string run_kind = ladrunoRunningAnalysisKind(info.domain);
+	std::string stage_kind;
+	m_data->kind_pending = false;
+	m_data->stage_run_kind.clear();
+	if (ladrunoHasModalRequest(m_data->nodal_results_requests)) {
+		stage_kind = "eigen";
+	}
+	else if (!m_data->stage_kind.empty()) {
+		stage_kind = m_data->stage_kind;
+	}
+	else if (!run_kind.empty()) {
+		stage_kind = run_kind;
+		m_data->stage_run_kind = run_kind;
+	}
+	else {
+		stage_kind = "static";
+		m_data->kind_pending = true;
 	}
 	ladrunons::h5::attribute::write(h_stage, "KIND", stage_kind);
 
@@ -2868,7 +3053,7 @@ void* OPS_LadrunoRecorder()
 	bool overlay_requested_opt = false;  // -overlay (ADR-73 P4)
 	bool overlay_all_opt = false;        // bare -overlay = all 33022 patterns
 	std::vector<int> overlay_tags_opt;   // explicit -overlay tags
-	std::string stage_kind_opt = "static"; // -kind <transient|static|eigen>
+	std::string stage_kind_opt;            // -kind <transient|static|eigen>; "" = automatic
 	bool envelope_opt = false;             // -envelope flag
 	int compress_opt = 1;                  // WP-164: -compress <0..9> (default 1)
 	double flush_opt = 10.0;               // WP-164: -flush <seconds>
@@ -3049,7 +3234,8 @@ void* OPS_LadrunoRecorder()
 				else
 					opserr << "LadrunoRecorder warning: -kind expects "
 					          "transient|static|eigen; got (" << k << "), keeping "
-					       << stage_kind_opt.c_str() << "\n";
+					       << (stage_kind_opt.empty() ? "the automatic per-stage KIND"
+					                                  : stage_kind_opt.c_str()) << "\n";
 			}
 		}
 		else if (strcmp(data, "-envelope") == 0) {
