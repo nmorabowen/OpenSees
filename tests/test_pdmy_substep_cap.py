@@ -1,7 +1,8 @@
 """PressureDependMultiYield: bounded substep count for huge trial strains.
 
 setSubStrainRate() sizes the substep loop of getStress() as the octahedral
-shear strain increment over 1e-4 or the volumetric strain increment over
+shear strain increment over 1e-4 (PressureDependMultiYield) or 1e-5
+(PressureDependMultiYield02), or the volumetric strain increment over
 1e-5, converted to int with no upper bound.
 
 Model: one 1 x 1 plane-strain quad, rollers on the bottom and left edges,
@@ -14,19 +15,20 @@ uniform strain increment eps_yy = -D, eps_xx = gamma_xy = 0, so
     octahedralShear(1) = 2/sqrt(3) * sqrt(2/3) * D = 0.9428 * D.
 
 huge   D = 2.0e4: octahedral shear 18856, i.e. 1.886e8 substeps per Gauss
-       point and getStress() call. Before the fix the formUnbalance() after
-       that update runs this loop at 4 Gauss points, about a minute even at
-       0.1 microseconds per substep, so the child is still running at the
-       20 s timeout. With the fix setTrialStrain() returns -1 (limit 1e5
-       substeps), the quad propagates it, analyze() returns a negative code
-       in well under a second and the domain is reverted: the top node is
-       back at its committed position.
-small  D = 5.0e-4: 4 substeps from the strain criteria, far below the
-       limit, on a code path the fix does not change. The step converges
-       with the top node at u_y - D (penalty error below 1e-9), the mean
-       lateral stress equal to -P0 (lateral equilibrium) and the mean
-       vertical stress equal to the value of the unmodified code (relative
-       tolerance 1e-4).
+       point and getStress() call for PressureDependMultiYield and 1.886e9
+       (below INT_MAX) for PressureDependMultiYield02. Before the fix the
+       formUnbalance() after that update runs this loop at 4 Gauss points,
+       about a minute even at 0.1 microseconds per substep, so the child is
+       still running at the 20 s timeout. With the fix setTrialStrain()
+       returns -1 (limit 1e5 substeps), the quad propagates it, analyze()
+       returns a negative code in well under a second and the domain is
+       reverted: the top node is back at its committed position.
+small  D = 5.0e-4: 4 (PressureDependMultiYield) or 47 substeps from the
+       strain criteria, far below the limit, on a code path the fix does not
+       change. The step converges with the top node at u_y - D (penalty
+       error below 1e-9), the mean lateral stress equal to -P0 (lateral
+       equilibrium) and the mean vertical stress equal to the value of the
+       unmodified code (relative tolerance 1e-4).
 
 Each case runs in a child interpreter under a wall-clock timeout so that the
 unbounded loop fails the test instead of hanging the session.
@@ -51,6 +53,7 @@ P0 = 100.0
 # mean vertical stress after the small step, unmodified code
 SYY_SMALL = {
     "PressureDependMultiYield": -239.23405793931204,
+    "PressureDependMultiYield02": -241.29693501184508,
 }
 
 CHILD = r'''
@@ -67,6 +70,12 @@ PARAMS = {
     "PressureDependMultiYield": [2, 2.0, 1.3e5, 2.6e5, 40.0, 0.1, 101.0, 0.5,
                                  26.0, 0.013, 0.3, 3.0, 5.0, 0.0, 1.0,
                                  20, 0.6, 0.9, 0.02, 0.7, 101.0, 0.1],
+    # nd rho G B phi gammaPeak refP d PTAng contrac1 contrac3 dilat1 dilat3
+    # NYS contrac2 dilat2 liquefac1 liquefac2 e cs1 cs2 cs3 pa c
+    "PressureDependMultiYield02": [2, 2.0, 1.3e5, 2.6e5, 40.0, 0.1, 101.0,
+                                   0.5, 26.0, 0.013, 0.0, 0.3, 0.0,
+                                   20, 5.0, 3.0, 1.0, 0.0, 0.6, 0.9, 0.02,
+                                   0.7, 101.0, 0.1],
 }
 
 ops.wipe()
