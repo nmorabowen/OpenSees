@@ -23,10 +23,16 @@
 #   transient_only       transient 5 -> [transient 5] (the G8 #1948 symptom)
 #   record_before_analysis  `record` with no analysis | transient 5
 #                        -> [transient 6]             (provisional KIND rewritten)
-#   override_kind        -kind transient; static 4 | wipeAnalysis | transient 5 (no dc)
-#                        -> [transient 9]             (-kind override: no flip split)
-#   override_kind_dc     -kind static; static 4 | domainChange | transient 5
-#                        -> [static 4, static 5]      (the barrier still splits)
+#   override_kind        -kind static; static 4 | wipeAnalysis | transient 5 (no dc)
+#                        -> [static 4, static 5]      (the flip still splits; -kind
+#                                                      only sets the label)
+#   override_kind_dc     -kind transient; static 4 | new pattern, domainChange | static 3
+#                        -> [transient 4, transient 3] (the barrier splits too)
+#   eigen_snapshot       eigen 1; record | gravity, analysis Static, analyze 4
+#                        -> [static 5]   (the transient analysis classic `eigen`
+#                                         builds is not a running analysis)
+#   eigen_snapshot_transient  eigen 1; record | analysis Transient, analyze 5
+#                        -> [transient 6]
 #   flip_then_topology   static 4 | wipeAnalysis | transient 5 | add a node + element | transient 2
 #                        -> [static 4, transient 5, transient 2], ids strictly increasing
 #                           (a flip that did not move the stamp must not collide with
@@ -47,8 +53,8 @@ geomTransf Linear 1
 element elasticBeamColumn 1 1 2 0.1 2.0e8 1.0e-3 1
 
 set kind_opt {}
-if {$case == "override_kind"} { set kind_opt {-kind transient} }
-if {$case == "override_kind_dc"} { set kind_opt {-kind static} }
+if {$case == "override_kind"} { set kind_opt {-kind static} }
+if {$case == "override_kind_dc"} { set kind_opt {-kind transient} }
 recorder ladruno $out -N displacement {*}$kind_opt -T dt 0.0
 
 proc static_chain {} {
@@ -134,8 +140,19 @@ switch -- $case {
     override_kind_dc {
         gravity; static_chain; analyze 4
         loadConst -time 0.0
-        wipeAnalysis
+        timeSeries Linear 3
+        pattern Plain 3 3 { load 2 50.0 0.0 0.0 }
         domainChange
+        analyze 3
+    }
+    eigen_snapshot {
+        eigen 1
+        record
+        gravity; static_chain; analyze 4
+    }
+    eigen_snapshot_transient {
+        eigen 1
+        record
         lateral; transient_chain; analyze 5 0.01
     }
     flip_then_topology {

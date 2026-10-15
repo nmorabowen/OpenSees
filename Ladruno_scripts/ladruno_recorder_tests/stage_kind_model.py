@@ -7,8 +7,10 @@ command, and the running analysis is read through OpenSeesCommands' accessors.
 
     python stage_kind_model.py <dir_with_opensees_pyd> <out.ladruno> <case>
 
-Cases (same expectations as the Tcl deck, see stage_kind_check.py):
-    dc_static_transient, flip_static_transient, dc_static_static, internal_restamp
+Cases (same expectations as the Tcl deck; stage_kind_check.py asserts the Tcl
+and the openseespy stage lists are identical):
+    dc_static_transient, flip_static_transient, dc_static_static, internal_restamp,
+    override_kind, eigen_snapshot, eigen_snapshot_transient
 Prints "STAGE_KIND_MODEL OK <case>" last on success.
 """
 
@@ -37,7 +39,8 @@ ops.fix(1, 1, 1, 1)
 ops.mass(2, 10.0, 10.0, 0.0)
 ops.geomTransf("Linear", 1)
 ops.element("elasticBeamColumn", 1, 1, 2, 0.1, 2.0e8, 1.0e-3, 1)
-ops.recorder("ladruno", OUT, "-N", "displacement", "-T", "dt", 0.0)
+KIND_OPT = ["-kind", "static"] if CASE == "override_kind" else []
+ops.recorder("ladruno", OUT, "-N", "displacement", *KIND_OPT, "-T", "dt", 0.0)
 
 
 def chain(kind):
@@ -71,7 +74,7 @@ def ok(rc):
         raise SystemExit(f"analyze failed ({rc}) in case {CASE}")
 
 
-if CASE in ("dc_static_transient", "flip_static_transient"):
+if CASE in ("dc_static_transient", "flip_static_transient", "override_kind"):
     gravity(); chain("static"); ok(ops.analyze(4))
     ops.loadConst("-time", 0.0)
     ops.wipeAnalysis()
@@ -94,6 +97,14 @@ elif CASE == "internal_restamp":
     ops.pattern("Plain", 6, 1)
     ops.eleLoad("-ele", 1, "-type", "-beamUniform", -1.0)
     ok(ops.analyze(2))
+elif CASE == "eigen_snapshot":
+    ops.eigen(1)
+    ops.record()
+    gravity(); chain("static"); ok(ops.analyze(4))
+elif CASE == "eigen_snapshot_transient":
+    ops.eigen(1)
+    ops.record()
+    lateral(); chain("transient"); ok(ops.analyze(5, 0.01))
 else:
     raise SystemExit(f"unknown case {CASE}")
 

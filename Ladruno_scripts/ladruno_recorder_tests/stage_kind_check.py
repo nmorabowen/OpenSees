@@ -5,7 +5,10 @@ Runs every case of stage_kind_model.tcl through the classic Tcl exe (and, when
 reached its trailing marker (OpenSees.exe exits 0 on a Tcl error), and checks the
 written .ladruno with h5py: the MODEL_STAGE list (KIND and recorded rows per
 stage, in stamp order), strictly increasing stage ids, the shared validator, and
-INFO/FORMAT_MINOR_VERSION == 1.
+INFO/FORMAT_MINOR_VERSION == 1. With --buildpy, every case that runs in both
+interpreters must also give IDENTICAL stage lists in Tcl and openseespy (the
+classic `eigen` keeps the transient analysis it builds, openseespy deletes it:
+the two drifted apart once, apeGmsh#2034 review).
 
     python stage_kind_check.py <dist_bin> <out_dir> [--buildpy <python.exe>]
 
@@ -37,12 +40,15 @@ EXPECT = {
     "dc_first": [("static", 4)],
     "transient_only": [("transient", 5)],
     "record_before_analysis": [("transient", 6)],
-    "override_kind": [("transient", 9)],
-    "override_kind_dc": [("static", 4), ("static", 5)],
+    "override_kind": [("static", 4), ("static", 5)],
+    "override_kind_dc": [("transient", 4), ("transient", 3)],
+    "eigen_snapshot": [("static", 5)],
+    "eigen_snapshot_transient": [("transient", 6)],
     "flip_then_topology": [("static", 4), ("transient", 5), ("transient", 2)],
 }
 PY_CASES = ("dc_static_transient", "flip_static_transient",
-            "dc_static_static", "internal_restamp")
+            "dc_static_static", "internal_restamp", "override_kind",
+            "eigen_snapshot", "eigen_snapshot_transient")
 MARKER = "STAGE_KIND_MODEL OK"
 
 
@@ -104,6 +110,7 @@ def main():
     env["TCL_LIBRARY"] = os.path.join(dist_bin, "..", "lib", "tcl8.6")
     exe = os.path.join(dist_bin, "OpenSees.exe")
     fails = 0
+    results = {}
     runs = [("tcl", c) for c in EXPECT]
     if buildpy:
         runs += [("py", c) for c in PY_CASES]
@@ -116,11 +123,21 @@ def main():
         else:
             cmd = [buildpy, os.path.join(HERE, "stage_kind_model.py"), dist_bin, out, case]
         probs = run_case(lang, cmd, env, out, case, log)
+        if not probs:
+            results[(lang, case)] = stages_of(out)[1]
         if probs:
             fails += 1
             print(f" FAIL [{lang}] {case}: " + "; ".join(probs))
         else:
             print(f"  ok  [{lang}] {case}: {EXPECT[case]}")
+    if buildpy:
+        for case in PY_CASES:
+            t, p = results.get(("tcl", case)), results.get(("py", case))
+            if t is None or p is None or t != p:
+                fails += 1
+                print(f" FAIL [tcl==py] {case}: tcl {t} vs py {p}")
+            else:
+                print(f"  ok  [tcl==py] {case}")
     if fails:
         print(f"STAGE_KIND CHECK FAILED ({fails} case(s))")
         return 1

@@ -126,7 +126,7 @@ static void ladrunoResolveRunId(std::string& id, std::string& scope)
 }
 
 // apeGmsh #2034 (option B): the user stage barrier. The interpreters' user
-// `domainChange` command (tcl/commands.cpp, interpreter/OpenSeesCommands.cpp
+// `domainChange` command (tcl/commands.cpp, interpreter/OpenSeesMiscCommands.cpp
 // OPS_domainChange) calls ladrunoNoteUserStageBarrier(); the recorder compares
 // the count at each recorded step. Internal Domain::domainChange() callers (an
 // SP pattern, eleLoad, contact -reemit, ...) do not touch it, so WP-165 still
@@ -145,6 +145,20 @@ int ladrunoUserStageBarrier(void)
 	return s_ladruno_user_stage_barrier;
 }
 
+// apeGmsh #2034: the transient analysis the classic Tcl `eigen` command builds
+// when none is defined (tcl/commands.cpp eigenAnalysis). openseespy deletes
+// that analysis after the solve; classic Tcl keeps it, so an `eigen ...;
+// record` snapshot would read "transient" in Tcl and nothing in openseespy.
+// While the transient pointer is still this object, it does not count as a
+// running analysis. `analysis` and `analyze` clear the mark (an analyze step
+// on it is a real transient run), as do `wipe` and `wipeAnalysis`.
+static const void* s_ladruno_eigen_only_analysis = 0;
+
+void ladrunoNoteEigenOnlyAnalysis(const void* analysis)
+{
+	s_ladruno_eigen_only_analysis = analysis;
+}
+
 // apeGmsh #2034: the kind of the analysis running on this process right now:
 // "static", "transient", or "" when it cannot be told (no analysis defined, or
 // both pointers set). The interpreter-side analyses are read through the
@@ -160,7 +174,8 @@ static std::string ladrunoRunningAnalysisKind()
 	StaticAnalysis** sa = OPS_GetStaticAnalysis();
 	DirectIntegrationAnalysis** ta = OPS_GetTransientAnalysis();
 	const bool is_static = (sa != 0 && *sa != 0);
-	const bool is_transient = (ta != 0 && *ta != 0);
+	const bool is_transient = (ta != 0 && *ta != 0 &&
+	                           (const void*)(*ta) != s_ladruno_eigen_only_analysis);
 	if (is_static && !is_transient)
 		return "static";
 	if (is_transient && !is_static)
@@ -297,9 +312,9 @@ public:
 	int last_barrier;
 	// apeGmsh #2034 (option A): the running analysis kind ("static" /
 	// "transient") the current MODEL_STAGE was opened under; "" while it is not
-	// resolved yet (no analysis defined at the stage's first record). In auto
-	// KIND mode a static<->transient flip opens a new MODEL_STAGE, so no stage
-	// mixes kinds.
+	// resolved yet (no analysis defined at the stage's first record). A
+	// static<->transient flip opens a new MODEL_STAGE whatever the KIND label
+	// (-kind, eigen), so no stage mixes static and transient steps.
 	std::string stage_run_kind;
 	// true while the open stage's KIND attr is a provisional "static" written
 	// before any analysis existed; the first record() that sees the running
@@ -342,11 +357,12 @@ public:
 	std::vector<int> overlay_tags;
 	std::vector<LadrunoPorousOverlay*> overlay_ptrs;
 
-	// -kind <transient|static|eigen>: an explicit override of MODEL_STAGE/KIND for
-	// every stage. Empty (the default) = automatic (apeGmsh #2034): each stage's
-	// KIND is the analysis running at its first record() (Static -> "static";
-	// Transient / VariableTransient / PFEM -> "transient"). Either way, a modal
-	// (ModesOfVibration) channel promotes KIND to "eigen" at writeModel time.
+	// -kind <transient|static|eigen>: an explicit override of the MODEL_STAGE/KIND
+	// LABEL for every stage; it does not stop a static<->transient flip from
+	// opening a stage. Empty (the default) = automatic (apeGmsh #2034): each
+	// stage's KIND is the analysis running at its first record() (Static ->
+	// "static"; Transient / VariableTransient / PFEM -> "transient"). Either way,
+	// a modal (ModesOfVibration) channel promotes KIND to "eigen" at writeModel.
 	std::string stage_kind;              // "" = automatic, else the -kind value
 
 	// -envelope: record componentwise running extremes (ADR D7) instead of the
@@ -648,20 +664,18 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 	int new_stamp = info.domain->hasDomainChanged();
 	// apeGmsh #2034: the two stage boundaries that leave topology unchanged.
 	// (B) a user `domainChange` since the stage opened (the barrier count);
-	// (A) in automatic KIND mode, a static<->transient flip of the running
-	// analysis, so that no MODEL_STAGE mixes kinds. An unresolved kind ("": no
-	// analysis yet) is never a flip; a repeated kind is never a flip.
+	// (A) a static<->transient flip of the running analysis, so that no
+	// MODEL_STAGE mixes static and transient steps. The flip splits whatever
+	// the KIND label is (-kind and eigen promotion only set the label). An
+	// unresolved kind ("": no analysis yet) is never a flip; a repeated kind is
+	// never a flip.
 	const int barrier_now = ladrunoUserStageBarrier();
 	const std::string run_kind = ladrunoRunningAnalysisKind();
-	// automatic KIND: no -kind override and no eigen promotion (a modal
-	// recorder's stages are "eigen" whatever runs, so a flip would only repeat it)
-	const bool auto_kind = m_data->stage_kind.empty() &&
-		!ladrunoHasModalRequest(m_data->nodal_results_requests);
 	bool user_barrier = false;
 	bool kind_flip = false;
 	if (m_data->first_domain_changed_done && !m_data->stage_failed) {
 		user_barrier = (barrier_now != m_data->last_barrier);
-		kind_flip = auto_kind && !run_kind.empty() &&
+		kind_flip = !run_kind.empty() &&
 		            !m_data->stage_run_kind.empty() &&
 		            run_kind != m_data->stage_run_kind;
 	}
@@ -736,19 +750,21 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 	if (m_data->stage_failed)
 		return 0;
 
-	// apeGmsh #2034: the stage opened before any analysis existed (an explicit
-	// `record`, or a recorder stepped by something that is not an analysis):
-	// its KIND was written as a provisional "static". The first recorded step
-	// that sees the running analysis states it, and the stage adopts that kind.
-	if (m_data->kind_pending && auto_kind && !run_kind.empty()) {
-		if (ladrunoRewriteStageKind(info.h_file_id, info.current_model_stage_id,
-		                            run_kind) != 0) {
-			opserr << "LadrunoRecorder: could not rewrite MODEL_STAGE["
-			       << info.current_model_stage_id << "]/KIND\n";
-			return -1;
-		}
+	// apeGmsh #2034: the stage opened before the running analysis could be told
+	// (an explicit `record` first, an eigen snapshot): adopt the first kind a
+	// recorded step sees. An automatic KIND label was written as a provisional
+	// "static"; restate it.
+	if (m_data->stage_run_kind.empty() && !run_kind.empty()) {
 		m_data->stage_run_kind = run_kind;
-		m_data->kind_pending = false;
+		if (m_data->kind_pending) {
+			if (ladrunoRewriteStageKind(info.h_file_id, info.current_model_stage_id,
+			                            run_kind) != 0) {
+				opserr << "LadrunoRecorder: could not rewrite MODEL_STAGE["
+				       << info.current_model_stage_id << "]/KIND\n";
+				return -1;
+			}
+			m_data->kind_pending = false;
+		}
 	}
 
 	{ OPS_PROFILE_SCOPE("lr.nodes");   // Ladruno WP-196
@@ -1059,10 +1075,12 @@ int LadrunoRecorder::writeModel()
 	// promotes it to "eigen"; else the -kind override; else the analysis running
 	// at this, the stage's first record(). With no analysis visible yet it is a
 	// provisional "static" that record() rewrites once one runs (kind_pending).
+	// stage_run_kind (what the flip test compares) is the running analysis
+	// whatever the label; "" until a recorded step sees one.
 	const std::string run_kind = ladrunoRunningAnalysisKind();
 	std::string stage_kind;
 	m_data->kind_pending = false;
-	m_data->stage_run_kind.clear();
+	m_data->stage_run_kind = run_kind;
 	if (ladrunoHasModalRequest(m_data->nodal_results_requests)) {
 		stage_kind = "eigen";
 	}
@@ -1071,7 +1089,6 @@ int LadrunoRecorder::writeModel()
 	}
 	else if (!run_kind.empty()) {
 		stage_kind = run_kind;
-		m_data->stage_run_kind = run_kind;
 	}
 	else {
 		stage_kind = "static";

@@ -122,7 +122,9 @@ the open stage began:
 2. the user ran `domainChange` (Tcl or openseespy): a **stage barrier**. Internal
    re-stamps of the domain-change stamp (an SP pattern, `eleLoad`, contact `-reemit`)
    are NOT barriers and stay folded into the open stage;
-3. the running analysis flipped between static and transient (automatic `KIND` only).
+3. the running analysis flipped between static and transient, whatever the `KIND`
+   label (`-kind` and eigen promotion set the label only), so no stage mixes static
+   and transient steps.
 
 The run's first recorded step opens the first stage; a barrier before it opens nothing.
 A repeated kind is never a boundary: static → `wipeAnalysis` → static is one stage
@@ -132,11 +134,16 @@ unless a `domainChange` separates them.
 
 | Precedence | Source | `KIND` |
 |---|---|---|
-| 1 | a modal request (`-N modesOfVibration[Rotational]`) | `"eigen"` (and no flip splits) |
-| 2 | `-kind <transient\|static\|eigen>` | that value for every stage (no flip splits; barriers still split) |
+| 1 | a modal request (`-N modesOfVibration[Rotational]`) | `"eigen"` |
+| 2 | `-kind <transient\|static\|eigen>` | that value for every stage (a label only: barriers and flips still split) |
 | 3 | the running analysis: `analysis Static` | `"static"` |
 |   | `analysis Transient` / `VariableTransient` / `PFEM` | `"transient"` |
-| 4 | no analysis visible yet (an explicit `record` first) | provisional `"static"`, rewritten by the first recorded step that sees an analysis; a warning if the stage closes still unresolved |
+| 4 | no analysis visible yet (an explicit `record` first, or an `eigen …; record` snapshot) | provisional `"static"`, rewritten by the first recorded step that sees an analysis; a warning if the stage closes still unresolved |
+
+The transient analysis the classic Tcl `eigen` command builds when none is defined is
+not a running analysis (openseespy deletes it after the solve; classic Tcl keeps it)
+until an `analysis` or `analyze` command, so `eigen …; record; … analysis Static` is
+one static stage in both interpreters.
 
 The `<id>` in `MODEL_STAGE[<id>]` is the domain-change stamp when the stamp moved past the
 open stage's id, else open id + 1 (a flip or barrier can arrive without a stamp move).
@@ -633,4 +640,7 @@ in STKO). Fiber section as today.
   A `MODEL_STAGE` now also opens on a user `domainChange` (an interpreter-side barrier
   counter, `ladrunoNoteUserStageBarrier()`) and on a static↔transient flip; internal
   re-stamps stay folded (WP-165). Stage ids stay strictly increasing when no stamp moved.
-  Gate: `ladruno_recorder_tests/stage_kind_check.py` (10 Tcl + 4 openseespy cases).
+  Gate: `ladruno_recorder_tests/stage_kind_check.py` (13 Tcl + 7 openseespy cases,
+  Tcl and openseespy stage lists asserted identical). Review follow-up: the flip
+  splits under `-kind` too (a label only), and the classic-Tcl `eigen` analysis does
+  not count as running until `analysis`/`analyze`.

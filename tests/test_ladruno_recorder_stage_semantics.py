@@ -263,3 +263,36 @@ def test_2034_repeated_kind_and_first_record_open_no_stage(tmp_path):
     ops.wipe()
     got, _ = _kinds(out)
     assert got == [("transient", 3)], got
+
+
+def test_2034_kind_override_is_a_label_the_flip_still_splits(tmp_path):
+    """`-kind static` sets the label; static -> transient still opens a stage."""
+    out = str(tmp_path / "ov.ladruno")
+    _truss()
+    ops.recorder("ladruno", out, "-N", "displacement", "-kind", "static")
+    ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1); ops.load(3, 1.0, 0.0)
+    _static(0.25)
+    assert ops.analyze(4) == 0
+    ops.loadConst("-time", 0.0)
+    ops.wipeAnalysis()
+    _transient()
+    assert ops.analyze(5, 0.01) == 0
+    ops.wipe()
+    got, _ = _kinds(out)
+    assert got == [("static", 4), ("static", 5)], got
+
+
+def test_2034_eigen_snapshot_opens_no_stage(tmp_path):
+    """`eigen; record` then a static analysis: ONE static stage (the classic-Tcl
+    twin is asserted identical in stage_kind_check.py)."""
+    out = str(tmp_path / "eig.ladruno")
+    _truss()
+    ops.recorder("ladruno", out, "-N", "displacement")
+    ops.eigen("-fullGenLapack", 1)
+    ops.record()
+    ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1); ops.load(3, 1.0, 0.0)
+    _static(0.25)
+    assert ops.analyze(4) == 0
+    ops.wipe()
+    got, _ = _kinds(out)
+    assert got == [("static", 5)], got
