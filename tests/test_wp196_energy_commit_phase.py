@@ -187,14 +187,14 @@ def test_threaded_sweep_writes_identical_bytes(dashpot):
 
 
 def test_dashpot_check_still_runs_under_threads():
-    """The zeroLength (not audited) runs alone in its serial place: the
-    announcement counts every element but it, and the legacy single-thread file
-    (which takes the check on every element) is the oracle."""
+    """The threaded run must equal the legacy single-thread file (which takes
+    the check on every element), the oracle. Since WP-195 the zeroLength is on
+    the thread opt-in too, so the announcement counts every element."""
     with tempfile.TemporaryDirectory() as tmp:
         ref, _, _ = _run(tmp, 1, True, legacy=True)
         d, text, _ = _run(tmp, 4, True, legacy=False)
         if d is None:
             pytest.skip("fewer than 4 hardware threads")
         assert d == ref
-        # 36 shells + 2 beams of 39 elements are formed in parallel
-        assert "38 of 39 elements formed in parallel" in text, text
+        # 36 shells + 2 beams + the zeroLength (WP-195 opt-in) = all 39 elements formed in parallel
+        assert "39 of 39 elements formed in parallel" in text, text
