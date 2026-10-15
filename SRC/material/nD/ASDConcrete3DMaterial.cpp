@@ -1327,10 +1327,44 @@ ASDConcrete3DMaterial::HardeningLawStorage::PointerType ASDConcrete3DMaterial::H
 	return nullptr;
 }
 
+void ASDConcrete3DMaterial::HardeningLawStorage::clear()
+{
+	// Ladruno #2044: see ladrunoAsdConcrete3DResetStorage below.
+	m_tension.clear();
+	m_compression.clear();
+}
+
 ASDConcrete3DMaterial::CrackPlanesStorage& ASDConcrete3DMaterial::CrackPlanesStorage::instance()
 {
 	static CrackPlanesStorage _instance;
 	return _instance;
+}
+
+void ASDConcrete3DMaterial::CrackPlanesStorage::clear()
+{
+	// Ladruno #2044: a pure cache keyed by n90 (the normals depend on n90 only),
+	// so clearing it changes no result; a live CrackPlanes keeps its list alive
+	// through its own shared_ptr.
+	m_map.clear();
+}
+
+// Ladruno #2044: `wipe` forgets the process-wide ASDConcrete3D registries.
+// HardeningLawStorage keeps the ORIGINAL (un-regularized) law per material tag,
+// stores only into an empty slot, and HardeningLaw::regularize() copies it back
+// over the instance (deRegularize). Without this reset the FIRST ASDConcrete3D
+// ever defined with tag N owned tag N for the life of the process: a later
+// model's material with the same tag silently took the earlier backbones,
+// elastic modulus included (apeGmsh #2044: E=3e6 then E=30e6 gave
+// sigma_zz = -720 for -7200, and Newton diverged in the elastic first step).
+// Nothing live points INTO either map (laws are copied by value; crack-plane
+// lists are shared_ptr), so the clear cannot dangle. recvSelf re-registers the
+// original law it receives, so database restore is unaffected. Called from
+// OPS_clearAllNDMaterial(), the nD wipe hook of OpenSees.exe and both Python
+// interpreters (same idiom as ladrunoSanisandResetImplexGlobals).
+void ladrunoAsdConcrete3DResetStorage(void)
+{
+	ASDConcrete3DMaterial::HardeningLawStorage::instance().clear();
+	ASDConcrete3DMaterial::CrackPlanesStorage::instance().clear();
 }
 
 ASDConcrete3DMaterial::CrackPlanesStorage::Vector3ListPointer ASDConcrete3DMaterial::CrackPlanesStorage::get(int n90)

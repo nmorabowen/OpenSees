@@ -95,11 +95,16 @@ NDMaterial *OPS_getNDMaterial(int tag)
 // vanilla's own idiom for these hooks (commands.cpp:55-63), and it keeps the
 // SANISAND header out of the base-class file. Defined in LadrunoSANISAND.cpp.
 extern void ladrunoSanisandResetImplexGlobals(void);   // Ladruno WP-104
+// Ladruno #2044: ASDConcrete3D's per-tag hardening-law registry must not outlive
+// the model -- a later same-tag material silently took the first model's laws.
+// Defined in ASDConcrete3DMaterial.cpp.
+extern void ladrunoAsdConcrete3DResetStorage(void);    // Ladruno #2044
 
 void OPS_clearAllNDMaterial(void)
 {
     theNDMaterialObjects.clearAll();
     ladrunoSanisandResetImplexGlobals();   // Ladruno WP-104
+    ladrunoAsdConcrete3DResetStorage();    // Ladruno #2044
 }
 
 void OPS_printNDMaterial(OPS_Stream &s, int flag) {
