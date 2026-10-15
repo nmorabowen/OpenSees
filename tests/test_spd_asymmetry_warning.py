@@ -28,7 +28,7 @@ import sys
 import pytest
 
 WARNING = "unsymmetric element matrix"
-SYSTEMS = ["ProfileSPD"]
+SYSTEMS = ["ProfileSPD", "BandSPD"]
 
 CHILD = r'''
 import json, sys
