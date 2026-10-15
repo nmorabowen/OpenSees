@@ -175,7 +175,8 @@ def _shell_frame(nx=6, nz=6, implex=False, unaudited=False):
         ops.uniaxialMaterial("Elastic", 99, 1.0e3)
         ops.node(990001, L / 2.0, 0.0, -10.0)
         ops.fix(990001, 1, 1, 1, 1, 1, 1)
-        ops.element("zeroLength", 990000, 990001, nid[(nx // 2, 0)], "-mat", 99, "-dir", 1)
+        # un-audited element: a Truss (zeroLength until WP-195 opted it in)
+        ops.element("Truss", 990000, 990001, nid[(nx // 2, 0)], 1.0, 99)
     return nid, master
 
 
@@ -262,7 +263,7 @@ def test_shell_frame_bit_identity_across_thread_counts(implex, capfd):
 
 
 def test_mixed_unaudited_element_runs_serial_in_place(capfd):
-    """A zeroLength (not on the allowlist) in the middle of the domain: the
+    """A Truss (not on the allowlist) in the middle of the domain: the
     others thread, it runs alone in its serial place, and the field is still
     bit-identical to 1 thread."""
     counts = _threads_available()

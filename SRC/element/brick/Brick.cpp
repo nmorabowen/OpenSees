@@ -48,6 +48,24 @@
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <elementAPI.h>
+#include <cstring>   // Ladruno WP-195
+#include <new>       // Ladruno WP-195
+
+// Ladruno WP-195 -- tangent cache switch, read at element construction.
+// Default ON; LADRUNO_BRICK_TANGENT_CACHE=0 (or "off"/"false") disables it.
+static bool ladrunoBrickTangentCacheWanted(void)
+{
+  const char *v = getenv("LADRUNO_BRICK_TANGENT_CACHE");
+  if (v == 0 || *v == 0)
+    return true;
+  if (strcmp(v, "0") == 0 || strcmp(v, "off") == 0 || strcmp(v, "OFF") == 0 ||
+      strcmp(v, "false") == 0 || strcmp(v, "FALSE") == 0)
+    return false;
+  return true;
+}
+static const int ladrunoKcacheStiff = 576;  // 24 x 24
+static const int ladrunoKcacheXl = 24;      // 3 x 8
+static const int ladrunoKcacheD = 36;       // 6 x 6 per Gauss point
 
 void* OPS_Brick()
 {
@@ -133,7 +151,11 @@ static thread_local Matrix B(6,3) ;   // Ladruno WP-192
 //null constructor
 Brick::Brick( ) 
 :Element( 0, ELE_TAG_Brick ),
- connectedExternalNodes(8), applyLoad(0), load(0), Ki(0)
+ connectedExternalNodes(8), applyLoad(0), load(0), Ki(0),
+ ladrunoKcache(0), ladrunoKcacheState(0), ladrunoKcacheCap(0), ladrunoKcacheMisses(0),
+   ladrunoKcacheIdle(0), ladrunoKcacheReprobes(0.0),
+ ladrunoKcacheOn(ladrunoBrickTangentCacheWanted()),
+ ladrunoKcacheHits(0.0), ladrunoKcacheBuilds(0.0)
 {
   B.Zero();
 
@@ -167,7 +189,11 @@ Brick::Brick(int tag,
        Damping *damping,
        int matype)
   :Element(tag, ELE_TAG_Brick),
-   connectedExternalNodes(8), applyLoad(0), load(0), Ki(0), massType(matype)
+   connectedExternalNodes(8), applyLoad(0), load(0), Ki(0), massType(matype),
+   ladrunoKcache(0), ladrunoKcacheState(0), ladrunoKcacheCap(0), ladrunoKcacheMisses(0),
+   ladrunoKcacheIdle(0), ladrunoKcacheReprobes(0.0),
+   ladrunoKcacheOn(ladrunoBrickTangentCacheWanted()),
+   ladrunoKcacheHits(0.0), ladrunoKcacheBuilds(0.0)
 {
   B.Zero();
 #ifdef _G3DEBUG
@@ -235,6 +261,9 @@ Brick::~Brick( )
   if (Ki != 0)
     delete Ki;
 
+  if (ladrunoKcache != 0)   // Ladruno WP-195
+    delete [] ladrunoKcache;
+
   for (int i = 0; i < 8; i++)
   {
     if (theDamping[i])
@@ -268,12 +297,15 @@ void  Brick::setDomain( Domain *theDomain )
 
   this->DomainComponent::setDomain(theDomain);
 
+  this->ladrunoInvalidateTangentCache();   // Ladruno WP-195: geometry may change
+
 }
 
 
 int
 Brick::setDamping(Domain *theDomain, Damping *damping)
 {
+  this->ladrunoInvalidateTangentCache();   // Ladruno WP-195
   if (theDomain && damping)
   {
     for (int i = 0; i < 8; i++)
@@ -339,6 +371,18 @@ int  Brick::commitState( )
   for (int i = 0; i < 8; i++ )
     if (theDamping[i]) success += theDamping[i]->commitState();
 
+  // Ladruno WP-195: a paused tangent cache (16 consecutive misses) is
+  // re-probed every 64 commits -- a plastic point that unloads elastically
+  // gets its hits back. 64: the worst case of a re-probe that misses again is
+  // one store + 16 failed compares (~2 us each) per 64 converged steps, under
+  // 1 % of the 64 x (Newton iterations) stiffness builds (~51 us each) it
+  // spends meanwhile; short enough that an unloading phase of a few dozen
+  // steps is caught. Byte identity is untouched: a hit still needs equal bits.
+  if (ladrunoKcacheMisses >= 16 && ++ladrunoKcacheIdle >= 64) {
+    ladrunoKcacheMisses = 0;
+    ladrunoKcacheIdle = 0;
+    ladrunoKcacheReprobes += 1.0;
+  }
   
   return success ;
 }
@@ -369,6 +413,11 @@ int  Brick::revertToStart( )
 
   for ( i=0; i<8; i++ ) 
     success += materialPointers[i]->revertToStart( ) ;
+
+  // Ladruno WP-195: the cache and its pause count start over
+  this->ladrunoInvalidateTangentCache();
+  ladrunoKcacheMisses = 0;
+  ladrunoKcacheIdle = 0;
 
   for (int i = 0; i < 8; i++ )
     if (theDamping[i]) success += theDamping[i]->revertToStart();
@@ -469,6 +518,16 @@ void  Brick::Print(OPS_Stream &s, int flag)
 const Matrix&  Brick::getTangentStiff( ) 
 {
   int tang_flag = 1 ; //get the tangent 
+
+  // Ladruno WP-195: the cached path (bit-identical to formResidAndTangent(1))
+  bool cacheable = ladrunoKcacheOn && ladrunoKcacheMisses < 16;
+  for (int i = 0; cacheable && i < 8; i++)
+    if (theDamping[i] != 0)
+      cacheable = false;
+  if (cacheable) {
+    formResidAndTangentCached( ) ;
+    return stiff ;
+  }
 
   //do tangent and residual here
   formResidAndTangent( tang_flag ) ;  
@@ -1308,6 +1367,205 @@ void  Brick::formResidAndTangent( int tang_flag )
 }
 
 
+// ---------------------------------------------------------------------------
+// Ladruno WP-195 -- element tangent cache. See Brick.h and
+// Ladruno_implementation/195_ladruno_brick_tangent_cache_adr.md.
+// ---------------------------------------------------------------------------
+void
+Brick::ladrunoInvalidateTangentCache(void)
+{
+  ladrunoKcacheState = 0;
+}
+
+// getTangentStiff() through the cache. The result (stiff AND resid) is
+// bit-identical to formResidAndTangent(1):
+//  * resid is formed by formResidAndTangent(0) itself -- the same code, the
+//    same per-Gauss-point getStress() calls;
+//  * stiff is a pure function of xl and the eight material tangents D_i. Each
+//    D_i is fetched once, its raw bits copied out, and compared bitwise with
+//    the bits that built the cached stiffness. Equal bits -> the cached
+//    matrix (it was computed from exactly these inputs). Otherwise the
+//    stiffness is rebuilt from the fetched D_i by the SAME loop nest,
+//    operations and order as formResidAndTangent(1) (Gauss point i, node j,
+//    node k), and re-cached.
+// The one ordering difference from formResidAndTangent(1): there, point i's
+// getTangent() follows point i's getStress() immediately; here all eight
+// getStress() calls come first. Each Gauss point is its own material instance,
+// so this only matters for a material whose getTangent() depends on another
+// instance's getStress() -- shared mutable state, which WP-192's thread-safety
+// contract already rules out for any material we would cache in a deck.
+// Called only without a Damping object (getTangentStiff checks).
+void
+Brick::formResidAndTangentCached(void)
+{
+  static const int ndf = 3 ;
+  static const int nstress = 6 ;
+  static const int numberNodes = 8 ;
+  static const int numberGauss = 8 ;
+  static const int nShape = 4 ;
+
+  static thread_local double ddRaw[numberGauss][ladrunoKcacheD];
+  static thread_local double xsj ;
+  static thread_local double dvol[numberGauss] ;
+  static thread_local double gaussPoint[3] ;
+  static thread_local double shp[nShape][numberNodes] ;
+  static thread_local double Shape[nShape][numberNodes][numberGauss] ;
+  static thread_local Matrix stiffJK(ndf,ndf) ;
+  static thread_local Matrix dd(nstress,nstress) ;
+  static thread_local Matrix BJ(nstress,ndf) ;
+  static thread_local Matrix BJtran(ndf,nstress) ;
+  static thread_local Matrix BK(nstress,ndf) ;
+  static thread_local Matrix BJtranD(ndf,nstress) ;
+
+  int i, j, k, p, q ;
+
+  // 1. residual (and xl, via computeBasis) by the uncached code itself;
+  //    this also zeroes stiff
+  formResidAndTangent( 0 ) ;
+
+  // 2. the eight material tangents, raw
+  bool uniform = true ;
+  for ( i = 0; i < numberGauss; i++ ) {
+    const Matrix &D = materialPointers[i]->getTangent( ) ;
+    if (D.noRows() != nstress || D.noCols() != nstress) {
+      // not a 6x6 tangent: leave the cache for good, take the plain path
+      ladrunoKcacheOn = false ;
+      ladrunoKcacheState = 0 ;
+      formResidAndTangent( 1 ) ;
+      return ;
+    }
+    for ( p = 0; p < nstress; p++ )
+      for ( q = 0; q < nstress; q++ )
+        ddRaw[i][p*nstress+q] = D(p,q) ;
+    if (i > 0 && memcmp(ddRaw[i], ddRaw[0], sizeof(ddRaw[0])) != 0)
+      uniform = false ;
+  }
+
+  const size_t xlBytes = ladrunoKcacheXl*sizeof(double) ;
+  const size_t dBytes = ladrunoKcacheD*sizeof(double) ;
+
+  // 3. hit?
+  if (ladrunoKcacheState != 0 && ladrunoKcache != 0) {
+    const double *cK = ladrunoKcache ;
+    const double *cX = ladrunoKcache + ladrunoKcacheStiff ;
+    const double *cD = cX + ladrunoKcacheXl ;
+    bool hit = (memcmp(cX, &xl[0][0], xlBytes) == 0) ;
+    for ( i = 0; hit && i < numberGauss; i++ ) {
+      const double *snap = (ladrunoKcacheState == 1) ? cD : cD + i*ladrunoKcacheD ;
+      if (memcmp(snap, ddRaw[i], dBytes) != 0)
+        hit = false ;
+    }
+    if (hit) {
+      for ( p = 0; p < 24; p++ )
+        for ( q = 0; q < 24; q++ )
+          stiff(p,q) = cK[p*24+q] ;
+      ladrunoKcacheHits += 1.0 ;
+      ladrunoKcacheMisses = 0 ;
+      return ;
+    }
+    ladrunoKcacheMisses++ ;   // a valid cache whose inputs changed
+  }
+
+  // 4. miss: build stiff exactly as formResidAndTangent(1) does (the shape
+  //    functions and volume elements by the same calls; formResidAndTangent(0)
+  //    left xl as computeBasis set it)
+  int count = 0 ;
+  for ( i = 0; i < 2; i++ ) {
+    for ( j = 0; j < 2; j++ ) {
+      for ( k = 0; k < 2; k++ ) {
+        gaussPoint[0] = sg[i] ;
+        gaussPoint[1] = sg[j] ;
+        gaussPoint[2] = sg[k] ;
+        shp3d( gaussPoint, xsj, shp, xl ) ;
+        for ( p = 0; p < nShape; p++ ) {
+          for ( q = 0; q < numberNodes; q++ )
+            Shape[p][q][count] = shp[p][q] ;
+        }
+        dvol[count] = wg[count] * xsj ;
+        count++ ;
+      }
+    }
+  }
+
+  stiff.Zero( ) ;
+  for ( i = 0; i < numberGauss; i++ ) {
+
+    for ( p = 0; p < nShape; p++ ) {
+      for ( q = 0; q < numberNodes; q++ )
+        shp[p][q] = Shape[p][q][i] ;
+    }
+
+    for ( p = 0; p < nstress; p++ )
+      for ( q = 0; q < nstress; q++ )
+        dd(p,q) = ddRaw[i][p*nstress+q] ;
+    dd *= dvol[i] ;
+
+    int jj = 0 ;
+    for ( j = 0; j < numberNodes; j++ ) {
+
+      BJ = computeB( j, shp ) ;
+      for (p=0; p<ndf; p++) {
+        for (q=0; q<nstress; q++)
+          BJtran(p,q) = BJ(q,p) ;
+      }
+
+      BJtranD.addMatrixProduct(0.0,  BJtran,dd,1.0) ;
+
+      int kk = 0 ;
+      for ( k = 0; k < numberNodes; k++ ) {
+        BK = computeB( k, shp ) ;
+        stiffJK.addMatrixProduct(0.0,  BJtranD,BK,1.0) ;
+        for ( p = 0; p < ndf; p++ )  {
+          for ( q = 0; q < ndf; q++ )
+            stiff( jj+p, kk+q ) += stiffJK( p, q ) ;
+        }
+        kk += ndf ;
+      }
+      jj += ndf ;
+    }
+  }
+
+  ladrunoKcacheBuilds += 1.0 ;
+
+  // 5. store -- or, after 16 consecutive misses (a material whose tangent
+  //    keeps changing), pause and free the memory; commitState re-probes
+  //    after 64 commits
+  if (ladrunoKcacheMisses >= 16) {
+    if (ladrunoKcache != 0)
+      delete [] ladrunoKcache ;
+    ladrunoKcache = 0 ;
+    ladrunoKcacheCap = 0 ;
+    ladrunoKcacheState = 0 ;
+    return ;
+  }
+  int need = ladrunoKcacheStiff + ladrunoKcacheXl +
+    (uniform ? ladrunoKcacheD : numberGauss*ladrunoKcacheD) ;
+  if (ladrunoKcacheCap < need) {
+    if (ladrunoKcache != 0)
+      delete [] ladrunoKcache ;
+    ladrunoKcache = new (std::nothrow) double[need] ;
+    ladrunoKcacheCap = (ladrunoKcache != 0) ? need : 0 ;
+    if (ladrunoKcache == 0) {
+      ladrunoKcacheState = 0 ;
+      ladrunoKcacheOn = false ;
+      return ;
+    }
+  }
+  double *cK = ladrunoKcache ;
+  double *cX = ladrunoKcache + ladrunoKcacheStiff ;
+  double *cD = cX + ladrunoKcacheXl ;
+  for ( p = 0; p < 24; p++ )
+    for ( q = 0; q < 24; q++ )
+      cK[p*24+q] = stiff(p,q) ;
+  memcpy(cX, &xl[0][0], xlBytes) ;
+  if (uniform)
+    memcpy(cD, ddRaw[0], dBytes) ;
+  else
+    memcpy(cD, &ddRaw[0][0], numberGauss*dBytes) ;
+  ladrunoKcacheState = uniform ? 1 : 2 ;
+}
+
+
 //************************************************************************
 //compute local coordinates and basis
 
@@ -1496,6 +1754,8 @@ int  Brick::recvSelf (int commitTag,
 		      FEM_ObjectBroker &theBroker)
 {
   int res = 0;
+
+  this->ladrunoInvalidateTangentCache();   // Ladruno WP-195
   
   int dataTag = this->getDbTag();
 
@@ -1837,6 +2097,15 @@ Brick::setResponse(const char **argv, int argc, OPS_Stream &output)
     output.endTag(); // GaussPoint
 
     theResponse =  new ElementResponse(this, 7, Vector(6));
+
+  } else if (strcmp(argv[0],"ladrunoTangentCache") == 0) {
+    // Ladruno WP-195: [enabled, state, hits, builds, consecutive misses]
+    output.tag("ResponseType","enabled");
+    output.tag("ResponseType","state");
+    output.tag("ResponseType","hits");
+    output.tag("ResponseType","builds");
+    output.tag("ResponseType","misses");
+    theResponse =  new ElementResponse(this, 195, Vector(5));
   }
   output.endTag(); // ElementOutput
   return theResponse;
@@ -1941,6 +2210,16 @@ Brick::getResponse(int responseID, Information &eleInfo)
 
     return eleInfo.setVector(tmpStrain);
   } 
+  else if (responseID == 195) {   // Ladruno WP-195
+    static thread_local Vector info(6);
+    info(0) = ladrunoKcacheOn ? 1.0 : 0.0;
+    info(1) = (double) ladrunoKcacheState;
+    info(2) = ladrunoKcacheHits;
+    info(3) = ladrunoKcacheBuilds;
+    info(4) = (double) ladrunoKcacheMisses;
+    info(5) = ladrunoKcacheReprobes;
+    return eleInfo.setVector(info);
+  }
   else
     return -1;
 }
@@ -1948,6 +2227,7 @@ Brick::getResponse(int responseID, Information &eleInfo)
 int
 Brick::setParameter(const char **argv, int argc, Parameter &param)
 {
+  this->ladrunoInvalidateTangentCache();   // Ladruno WP-195
   int res = -1;
 
   if (argc < 1)
@@ -1992,6 +2272,7 @@ Brick::setParameter(const char **argv, int argc, Parameter &param)
 int
 Brick::updateParameter(int parameterID, Information &info)
 {
+    this->ladrunoInvalidateTangentCache();   // Ladruno WP-195
     int res = -1;
 	int matRes = res;
 
