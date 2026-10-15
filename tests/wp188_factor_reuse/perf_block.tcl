@@ -6,7 +6,8 @@
 #
 # Env: WP188_OUT (prefix), WP188_N (elements per side, default 24), WP188_NZ
 # (layers, default 12), WP188_NPL (plastic top layers, default 3), WP188_REUSE
-# (-reuseFactor, 0 = off), WP188_TOL (1e-6), WP188_NSTEP (60), WP188_PGA (0.5).
+# (-reuseFactor, 0 = off), WP188_TOL (1e-6), WP188_NSTEP (60), WP188_PGA (0.5),
+# WP188_REUSEXTRA (extra -reuse* options, WP-193).
 # Run: mpiexec -localonly -n 4 OpenSeesMP.exe perf_block.tcl
 
 proc envOr {name def} {
@@ -84,7 +85,8 @@ numberer LadrunoParallelPlain
 system Mumps -ICNTL14 200
 test NormDispIncr $tol 100 0
 if {$reuse > 0} {
-    algorithm KrylovNewton -maxDim 20 -reuseFactor $reuse
+    # WP-193: WP188_REUSEXTRA appends -reuse* options (e.g. "-reuseCost on")
+    eval algorithm KrylovNewton -maxDim 20 -reuseFactor $reuse [envOr WP188_REUSEXTRA ""]
 } else {
     algorithm KrylovNewton -maxDim 20
 }
