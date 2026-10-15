@@ -45,6 +45,9 @@
 // already finalised, or a single rank: no-op. Returns 0.
 int ladrunoFactorReuseAgreeMax(int *flags, int n);
 
+// WP-193: the same for doubles (the measured costs of the -reuseCost model).
+int ladrunoFactorReuseAgreeMaxDouble(double *vals, int n);
+
 // This process's rank in MPI_COMM_WORLD (0 in serial builds or outside MPI).
 int ladrunoFactorReuseRank(void);
 

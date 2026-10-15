@@ -50,6 +50,20 @@ ladrunoFactorReuseAgreeMax(int *flags, int n)
 }
 
 int
+ladrunoFactorReuseAgreeMaxDouble(double *vals, int n)
+{
+  if (n <= 0 || !ladrunoMpiLive()) return 0;
+  int np = 1;
+  MPI_Comm_size(MPI_COMM_WORLD, &np);
+  if (np <= 1) return 0;
+  double local[8];
+  int m = (n > 8) ? 8 : n;
+  for (int i = 0; i < m; i++) local[i] = vals[i];
+  MPI_Allreduce(local, vals, m, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+  return 0;
+}
+
+int
 ladrunoFactorReuseRank(void)
 {
   if (!ladrunoMpiLive()) return 0;
@@ -62,6 +76,12 @@ ladrunoFactorReuseRank(void)
 
 int
 ladrunoFactorReuseAgreeMax(int *, int)
+{
+  return 0;
+}
+
+int
+ladrunoFactorReuseAgreeMaxDouble(double *, int)
 {
   return 0;
 }
