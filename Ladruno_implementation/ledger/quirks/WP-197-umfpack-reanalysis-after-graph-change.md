@@ -2,6 +2,7 @@
 wp: WP-197
 title: "UmfPack after an sp / element change mid-analysis: DISCARDED entries, then setSize has not been called"
 date: 2026-10-15
+pr: "#988"
 status: "fixed-by WP-197"
 ---
 ### `system UmfPack` after an `sp` (or element) is added or removed between `analyze` calls: "DISCARDED" from `addA`, then "setSize has not been called" on every solve

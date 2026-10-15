@@ -2,7 +2,7 @@
 title: "WP-197 — UmfpackGenLinSOE::setSize rebuilds the sparsity pattern from scratch (#981)"
 project: Ladruno
 type: bug fix (vanilla file, upstreamable)
-status: "implemented, PR #TBD — not merged"
+status: "implemented, PR #988 — not merged"
 priority: high
 owner: nmora
 related:
