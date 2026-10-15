@@ -2,6 +2,7 @@
 wp: WP-194
 title: "OpenSeesMP + system Mumps on 2 ranks is not byte-reproducible run to run"
 date: 2026-10-14
+pr: "#982"
 ---
 ### Two runs of the same OpenSeesMP deck with `system Mumps` give different last bits (same binary, same input)
 - **Bites:** any byte-identity gate or A/B that compares OpenSeesMP + MUMPS outputs from ONE run per arm. Seen on the WP-188 frame deck (`tests/wp188_factor_reuse/frame_gm.tcl`, 300 steps, 2 ranks, Windows, Intel MPI, MUMPS 5.9.0, MKL sequential, 1 thread/rank), on the pre-WP-194 binary as much as on the WP-194 one: elastic, 1 run in 10 gives a different roof-history md5; fiber, 6 to 7 runs in 10 differ from the modal one (last digits only, relative ~1e-16 to 1e-15; the iteration count never changed). `MKL_CBWR=AUTO,STRICT` does not remove it.
