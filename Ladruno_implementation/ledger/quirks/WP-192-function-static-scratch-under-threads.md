@@ -32,7 +32,8 @@ date: 2026-10-14
 - **Trap 4 — a process-wide accumulator in commit.** ASDConcrete3D/1D add every point's
   IMPL-EX error to `GlobalParameters` (max, sum, count) in `commitState`, and
   ASDAbsorbingBoundary3D adds to the `ABSORB_LEAK` energy channel. A threaded commit
-  races on them and reorders an FP sum. Serialise (a mutex inside the region) or keep that
+  races on them and reorders an FP sum. Accumulate per thread and fold before any read (a per-point mutex serialised ~500k
+  commits a step and erased the gain), or keep that
   element's commit serial (`ladrunoThreadSafeCommit() == false`).
 - **How to test.** Byte-identity at N threads is only meaningful on a deterministic solver:
   OpenSeesMP + MUMPS is not run-to-run reproducible (WP-188 quirk), so compare threaded vs
