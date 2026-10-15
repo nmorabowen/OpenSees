@@ -3,6 +3,11 @@
   auto_sp        two-bar chain, node 1 fixed, node 3 driven to u3 = 3.0 by an sp,
                  Newton with NormDispIncr. Equal bars give the closed form
                  u2 = u3 / 2 = 1.5 for every constraint handler.
+  subtract_init  same chain, a first stage with P = 40 at node 3 held constant
+                 (k = E*A/L = 100, u2 = 0.4, u3 = 0.8), then sp 3 1 1.0
+                 -subtractInit. The prescribed value is incremental, so
+                 u3 = 0.8 + 1.0 = 1.8 and u2 = u3 / 2 = 0.9. Without the
+                 flag taking effect u3 = 1.0 and u2 = 0.5.
 
 Each case builds its own model after ops.wipe().
 """
@@ -59,3 +64,23 @@ def test_auto_sp_prescribed_displacement(handler, test_type):
     assert ops.analyze(1) == 0
     assert ops.nodeDisp(3, 1) == pytest.approx(3.0, rel=1.0e-6)
     assert ops.nodeDisp(2, 1) == pytest.approx(1.5, rel=1.0e-6)
+
+
+@pytest.mark.parametrize("handler", ["Transformation", "Penalty"])
+def test_sp_subtract_init_is_incremental(handler):
+    """u3 = 0.8 + 1.0 = 1.8 and u2 = 0.9. The flag was ignored: u3 = 1.0."""
+    bar_chain()
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(3, 40.0, 0.0)
+    static_analysis(handler)
+    assert ops.analyze(1) == 0
+    assert ops.nodeDisp(3, 1) == pytest.approx(0.8, rel=1.0e-6)
+    ops.loadConst("-time", 0.0)
+
+    ops.timeSeries("Linear", 2)
+    ops.pattern("Plain", 2, 2)
+    ops.sp(3, 1, 1.0, "-subtractInit")
+    assert ops.analyze(1) == 0
+    assert ops.nodeDisp(3, 1) == pytest.approx(1.8, rel=1.0e-6)
+    assert ops.nodeDisp(2, 1) == pytest.approx(0.9, rel=1.0e-6)
