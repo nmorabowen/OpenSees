@@ -2,6 +2,7 @@
 wp: WP-198
 title: "TenNodeTetrahedron ground-motion inertia load silently wrong: addInertiaLoadToUnbalance sized for 4 nodes / 1 Gauss point"
 date: 2026-10-15
+pr: "#991"
 ---
 ### `TenNodeTetrahedron` under `UniformExcitation` gives the wrong base reaction with no warning (inertia load sized for 4 nodes)
 - **Bites:** every `TenNodeTetrahedron` model driven by a ground motion (`pattern UniformExcitation`, or any load path through `addInertiaLoadToUnbalance`), on builds before WP-198 and on vanilla OpenSees until jaabell's fix lands there. A 48-element unit cube, all nodes fixed, `rho = 2`, constant `ag = 3`, gives a total base reaction of **7.042 (static) / 4.392 (transient, `reactions -dynamic`)** instead of `rho*V*ag = 6`. Nothing fails, nothing warns; stdBrick on the same cube gives 6.
