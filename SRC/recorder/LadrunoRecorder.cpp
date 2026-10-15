@@ -80,9 +80,6 @@
 #include <LoadPattern.h>              // Ladruno (ADR-73 P4): overlay discovery
 #include <LoadPatternIter.h>
 #include <LadrunoPorousOverlay.h>
-#include <Subdomain.h>                       // apeGmsh #2034: worker-side analysis kind
-#include <StaticDomainDecompositionAnalysis.h>
-#include <TransientDomainDecompositionAnalysis.h>
 #include "section/SectionForceDeformation.h"
 
 #include <algorithm>
@@ -152,9 +149,12 @@ int ladrunoUserStageBarrier(void)
 // both pointers set). The interpreter-side analyses are read through the
 // elementAPI accessors (classic Tcl: elementAPI_TCL.cpp; openseespy and the
 // new Tcl wrapper: OpenSeesCommands.cpp). VariableTransient and PFEM set the
-// transient pointer too. A PartitionedDomain worker runs no interpreter: its
-// Subdomain holds the Static/Transient DomainDecompositionAnalysis P0 sent.
-static std::string ladrunoRunningAnalysisKind(Domain* dom)
+// transient pointer too. A PartitionedDomain (OpenSeesSP) worker runs no
+// interpreter, so it sees neither pointer: its Subdomain holds the
+// DomainDecompositionAnalysis P0 sent, but Subdomain::getDDAnalysis() is
+// protected. There the kind stays unresolved (provisional "static", warned at
+// stage close) -- see 165_ladruno_recorder_stage_semantics.md section 4.
+static std::string ladrunoRunningAnalysisKind()
 {
 	StaticAnalysis** sa = OPS_GetStaticAnalysis();
 	DirectIntegrationAnalysis** ta = OPS_GetTransientAnalysis();
@@ -164,17 +164,7 @@ static std::string ladrunoRunningAnalysisKind(Domain* dom)
 		return "static";
 	if (is_transient && !is_static)
 		return "transient";
-	if (is_static && is_transient)
-		return "";
-	Subdomain* sub = dynamic_cast<Subdomain*>(dom);
-	if (sub != 0) {
-		DomainDecompositionAnalysis* dda = sub->getDDAnalysis();
-		if (dynamic_cast<StaticDomainDecompositionAnalysis*>(dda) != 0)
-			return "static";
-		if (dynamic_cast<TransientDomainDecompositionAnalysis*>(dda) != 0)
-			return "transient";
-	}
-	return "";
+	return "";   // none, or both (ambiguous): unresolved, never a flip
 }
 
 // true when a modal (ModesOfVibration[Rotational]) channel is requested: such a
@@ -661,7 +651,7 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 	// analysis, so that no MODEL_STAGE mixes kinds. An unresolved kind ("": no
 	// analysis yet) is never a flip; a repeated kind is never a flip.
 	const int barrier_now = ladrunoUserStageBarrier();
-	const std::string run_kind = ladrunoRunningAnalysisKind(info.domain);
+	const std::string run_kind = ladrunoRunningAnalysisKind();
 	// automatic KIND: no -kind override and no eigen promotion (a modal
 	// recorder's stages are "eigen" whatever runs, so a flip would only repeat it)
 	const bool auto_kind = m_data->stage_kind.empty() &&
@@ -697,8 +687,7 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 			       << " folded a domain-change stamp into MODEL_STAGE["
 			       << info.current_model_stage_id << "]: a PartitionedDomain "
 			          "worker cannot see a user `domainChange` stage barrier, so "
-			          "this part file may hold fewer MODEL_STAGEs than part 0 "
-			          "(static<->transient flips still split it)\n";
+			          "this part file may hold fewer MODEL_STAGEs than part 0\n";
 		}
 	}
 	else if (user_barrier || kind_flip || new_stamp != m_data->last_seen_stamp) {
@@ -1065,7 +1054,7 @@ int LadrunoRecorder::writeModel()
 	// promotes it to "eigen"; else the -kind override; else the analysis running
 	// at this, the stage's first record(). With no analysis visible yet it is a
 	// provisional "static" that record() rewrites once one runs (kind_pending).
-	const std::string run_kind = ladrunoRunningAnalysisKind(info.domain);
+	const std::string run_kind = ladrunoRunningAnalysisKind();
 	std::string stage_kind;
 	m_data->kind_pending = false;
 	m_data->stage_run_kind.clear();

@@ -71,12 +71,13 @@ apeGmsh reads.
 ├── INFO
 │   ├── GENERATOR        (string)  "Ladruno"
 │   ├── FORMAT_VERSION   (int)     1
+│   ├── FORMAT_MINOR_VERSION (int) 1          ← absent = 0 (§2a)
 │   ├── SOLVER_NAME      (string)  "OpenSees"
 │   ├── SOLVER_VERSION   (int[3])
 │   └── SPATIAL_DIM      (int)     1 | 2 | 3
 │
-└── MODEL_STAGE[<stamp>]                         (one per Domain::hasDomainChanged())
-    ├── attrs STEP(int), TIME(double), KIND(string "transient"|"static"|"eigen")
+└── MODEL_STAGE[<id>]                            (one per analysis stage, §2a)
+    ├── attrs STEP(int), TIME(double), KIND(string "transient"|"static"|"eigen")  ← per stage, §2a
     ├── MODEL
     │   ├── NODES         { ID[nN], COORDINATES[nN×ndim] }
     │   ├── ELEMENTS      { <group> … }           ← see §3 (BASIS/QUADRATURE)
@@ -98,6 +99,7 @@ apeGmsh reads.
 |---|---|---|---|
 | `GENERATOR` | string | `"Ladruno"` | **reader branch key** — distinguishes from STKO `.mpco` |
 | `FORMAT_VERSION` | int | `1` | bump on any breaking layout change |
+| `FORMAT_MINOR_VERSION` | int | `1` | apeGmsh #2034: a semantic, layout-compatible revision. Absent means 0. Minor 1 = per-stage `KIND` from the running analysis, and the stage boundaries of §2a |
 | `SOLVER_NAME` | string | `"OpenSees"` | |
 | `SOLVER_VERSION` | int[3] | e.g. `[3,5,1]` | `OPS_VERSION` split on `.` |
 | `SPATIAL_DIM` | int | 1/2/3 | from first node, enforced uniform |
@@ -110,6 +112,46 @@ apeGmsh reads.
 `MODEL_STAGE[<stamp>]` may carry `EMPTY_PARTITION = 1` (WP-165, MP-8): this process had
 no nodes of the recorded set (e.g. a `-R` region that lives on other ranks); its
 `MODEL/NODES/ID` and `COORDINATES` are zero-length and it holds no node/element results.
+
+### 2a. `MODEL_STAGE` boundaries and `KIND` (`FORMAT_MINOR_VERSION = 1`, apeGmsh #2034)
+
+A recorder opens a new `MODEL_STAGE` at a recorded step when any of these holds since
+the open stage began:
+
+1. the node / element / pressure-constraint set changed (WP-165 topology fingerprint);
+2. the user ran `domainChange` (Tcl or openseespy): a **stage barrier**. Internal
+   re-stamps of the domain-change stamp (an SP pattern, `eleLoad`, contact `-reemit`)
+   are NOT barriers and stay folded into the open stage;
+3. the running analysis flipped between static and transient (automatic `KIND` only).
+
+The run's first recorded step opens the first stage; a barrier before it opens nothing.
+A repeated kind is never a boundary: static → `wipeAnalysis` → static is one stage
+unless a `domainChange` separates them.
+
+`KIND` is decided per stage, at the stage's first record:
+
+| Precedence | Source | `KIND` |
+|---|---|---|
+| 1 | a modal request (`-N modesOfVibration[Rotational]`) | `"eigen"` (and no flip splits) |
+| 2 | `-kind <transient\|static\|eigen>` | that value for every stage (no flip splits; barriers still split) |
+| 3 | the running analysis: `analysis Static` | `"static"` |
+|   | `analysis Transient` / `VariableTransient` / `PFEM` | `"transient"` |
+| 4 | no analysis visible yet (an explicit `record` first) | provisional `"static"`, rewritten by the first recorded step that sees an analysis; a warning if the stage closes still unresolved |
+
+The `<id>` in `MODEL_STAGE[<id>]` is the domain-change stamp when the stamp moved past the
+open stage's id, else open id + 1 (a flip or barrier can arrive without a stamp move).
+Ids are strictly increasing and never reused; readers sort them numerically and must
+not assume they equal `Domain::hasDomainChanged()`.
+
+Minor 0 files (no `FORMAT_MINOR_VERSION`): `KIND` was the recorder-wide `-kind`
+(default `"static"`, so a transient stage read `static`), and from WP-165 until minor 1
+a stage opened only on a topology change, so a same-topology static → transient run
+was one stage.
+
+Parallel: on openseesmp every rank runs the same commands, so barriers and flips agree
+across `part-N` files. An OpenSeesSP (PartitionedDomain) worker runs no interpreter: it
+sees neither the barrier nor the analysis type, so its part file follows topology-only
+stages with a provisional `KIND` and warns (WP-165 doc §4).
 A new `MODEL_STAGE` starts only when the node/element/pressure-constraint SET changes
 (WP-165, R6) — not on every domain-change stamp move (SP patterns, `eleLoad`, contact
 re-emit continue the current stage).
@@ -478,7 +520,8 @@ in STKO). Fiber section as today.
   synthetic fixture, and run on real recorder output in the per-element gates. A
   conformant writer/reader is whatever passes both.
 - Additive changes (new optional groups) keep the version; any change that breaks a v1
-  reader bumps it. New element families (Bézier/IGA/Belytschko) opt in via self-declaration
+  reader bumps it. A semantic change a v1 reader still parses bumps
+  `INFO/FORMAT_MINOR_VERSION` instead (absent = 0); minor 1 = §2a (apeGmsh #2034). New element families (Bézier/IGA/Belytschko) opt in via self-declaration
   (`basisInfo`) without a version bump — that is the whole point of the inverted dispatch.
 - apeGmsh and `STKO_to_python` gate on `GENERATOR`/`FORMAT_VERSION` and SHOULD import
   `ladruno_format` (validator + oracle) so both readers gate on one shared spec.
@@ -584,3 +627,10 @@ in STKO). Fiber section as today.
   role was chiefly the GP coords MPCO omits). Remaining naming follow-up: a per-column
   `COLUMN_MAP` on element ENVELOPES (gauss/section/fiber structure, not just result-
   level COMPONENTS).
+- 2026-10-15 — **apeGmsh #2034: per-stage `KIND` and stage barriers (`FORMAT_MINOR_VERSION=1`).**
+  `KIND` is resolved per stage from the running analysis (`OPS_GetStaticAnalysis` /
+  `OPS_GetTransientAnalysis`), with eigen promotion first and `-kind` as an override.
+  A `MODEL_STAGE` now also opens on a user `domainChange` (an interpreter-side barrier
+  counter, `ladrunoNoteUserStageBarrier()`) and on a static↔transient flip; internal
+  re-stamps stay folded (WP-165). Stage ids stay strictly increasing when no stamp moved.
+  Gate: `ladruno_recorder_tests/stage_kind_check.py` (10 Tcl + 4 openseespy cases).
