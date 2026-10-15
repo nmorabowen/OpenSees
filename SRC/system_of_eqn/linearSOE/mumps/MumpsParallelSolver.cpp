@@ -29,6 +29,7 @@
 
 #include <MumpsParallelSolver.h>
 #include <MumpsParallelSOE.h>
+#include <LadrunoMumpsMixed.h>   // Ladruno WP-194 (empty unless _LADRUNO_SMUMPS)
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <OPS_Globals.h>
@@ -58,6 +59,9 @@ MumpsParallelSolver::MumpsParallelSolver(int ICNTL7, int ICNTL14,
   nSolveSum = 0;
   init = false;
   needsSetSize = false;
+  precision = 0;       // Ladruno WP-194: double unless -precision single
+  refineSteps = 0;
+  theMixed = 0;
 }
 
 MumpsParallelSolver::MumpsParallelSolver(int mpi_comm, int ICNTL7, int ICNTL14,
@@ -75,6 +79,9 @@ MumpsParallelSolver::MumpsParallelSolver(int mpi_comm, int ICNTL7, int ICNTL14,
   printStats = PrintStats;   // Ladruno ADR-75 P2b
   init = false;
   needsSetSize = false;
+  precision = 0;       // Ladruno WP-194: double unless -precision single
+  refineSteps = 0;
+  theMixed = 0;
 }
 
 // Ladruno ADR43 P3a: point MUMPS at an arbitrary communicator. Any existing
@@ -93,6 +100,10 @@ MumpsParallelSolver::setCommunicator(MPI_Comm comm)
     dmumps_c(&id); /* Terminate instance on the old comm */
     init = false;
   }
+#ifdef _LADRUNO_SMUMPS
+  if (theMixed != 0)
+    theMixed->terminate();   // Ladruno WP-194: the float instance too
+#endif
 
   theComm = comm;
   needsSetSize = true;
@@ -133,6 +144,9 @@ MumpsParallelSolver::~MumpsParallelSolver()
   id.job=-2; 
   if (init == true)
     dmumps_c(&id); /* Terminate instance */
+#ifdef _LADRUNO_SMUMPS
+  delete theMixed;   // Ladruno WP-194: terminates the SMUMPS instance
+#endif
 }
 
 int
@@ -442,6 +456,11 @@ MumpsParallelSolver::solveAfterInitialization(void)
 int
 MumpsParallelSolver::solve(void)
 {
+	// Ladruno WP-194: -precision single takes its own path; the DMUMPS path
+	// below is untouched (and never initialized) when it is on.
+	if (precision != 0)
+		return solveMixed();
+
 	int initializationResult = initializeMumps();
 
 	if (initializationResult == 0)
@@ -475,6 +494,14 @@ MumpsParallelSolver::sendSelf(int cTag, Channel &theChannel)
   cntlData(0) = cntl7;
   theChannel.sendVector(0, cTag, cntlData);
 
+  // Ladruno WP-194: precision + refine ride in their own ID, after the
+  // controls, so the SP subordinate ranks factor in the same precision as P0
+  // (a DMUMPS/SMUMPS instance pair across ranks would deadlock or mis-solve).
+  ID precData(2);
+  precData(0) = precision;
+  precData(1) = refineSteps;
+  theChannel.sendID(0, cTag, precData);
+
   return 0;
 }
 
@@ -497,6 +524,12 @@ MumpsParallelSolver::recvSelf(int ctag,
   theChannel.recvVector(0, ctag, cntlData);
   cntl7 = cntlData(0);
 
+  // Ladruno WP-194: mirror of sendSelf
+  ID precData(2);
+  theChannel.recvID(0, ctag, precData);
+  if (this->setPrecision(precData(0), precData(1)) < 0)
+    return -1;
+
   return 0;
 }
 
@@ -505,6 +538,82 @@ MumpsParallelSolver::setLinearSOE(MumpsParallelSOE &theSOE)
 {
   theMumpsSOE = &theSOE;
   return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Ladruno WP-194: mixed precision (LadrunoMumpsMixed.h for the design).
+
+bool
+MumpsParallelSolver::singlePrecisionAvailable(void)
+{
+#ifdef _LADRUNO_SMUMPS
+  return true;
+#else
+  return false;
+#endif
+}
+
+int
+MumpsParallelSolver::setPrecision(int single, int refine)
+{
+  if (refine < 0)
+    refine = 0;
+  if (single == 0) {
+#ifdef _LADRUNO_SMUMPS
+    delete theMixed;
+    theMixed = 0;
+#endif
+    precision = 0;
+    refineSteps = 0;
+    return 0;
+  }
+#ifdef _LADRUNO_SMUMPS
+  delete theMixed;
+  theMixed = new LadrunoMumpsMixed(refine);
+  precision = 1;
+  refineSteps = refine;
+  needsSetSize = true;
+  if (theMumpsSOE != 0)
+    theMumpsSOE->factored = false;
+  return 0;
+#else
+  opserr << "WARNING MumpsParallelSolver: -precision single needs single-precision MUMPS "
+	 << "(libsmumps + smumps_c.h), which this build does not have\n";
+  return -1;
+#endif
+}
+
+int
+MumpsParallelSolver::solveMixed(void)
+{
+#ifdef _LADRUNO_SMUMPS
+  if (theMixed == 0 || theMumpsSOE == 0)
+    return -1;
+  if (needsSetSize) {
+    theMixed->requestAnalysis();
+    needsSetSize = false;
+  }
+  LadrunoMumpsControls c;
+  c.icntl7 = icntl7;
+  c.icntl14 = icntl14;
+  c.icntl35 = icntl35;
+  c.cntl7 = cntl7;
+  c.printStats = printStats;
+  bool factored = theMumpsSOE->factored;
+  int res = theMixed->solve(theComm, theMumpsSOE->matType, theMumpsSOE->size,
+			    theMumpsSOE->nnz, theMumpsSOE->rowA, theMumpsSOE->colA,
+			    theMumpsSOE->A, theMumpsSOE->B, theMumpsSOE->X,
+			    factored, c);
+  theMumpsSOE->factored = factored;
+  if (res < 0) {
+    // the next solve analyses and factors from scratch
+    theMixed->requestAnalysis();
+    theMumpsSOE->factored = false;
+  }
+  return res;
+#else
+  return -1;
+#endif
 }
 
 

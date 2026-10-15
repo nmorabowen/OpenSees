@@ -19,6 +19,8 @@
 #   WP188_TPRINT    test print flag of the transient test  (default 0; 2 = one line per step)
 #   WP188_MUMPSARGS extra `system Mumps` args, MP only (WP-190)  (default none)
 #   WP188_MAXDIM    KrylovNewton -maxDim                   (default 3, the vanilla default)
+#   WP188_REUSEXTRA extra -reuse* args when WP188_REUSE > 0, e.g. "-reuseCost on" (WP-193)
+#                   Rank 0 also writes <out>.wall: the transient loop's wall time in s (WP-193).
 #
 # Under OpenSeesMP each rank builds the elements e with e % np == rank; rank 0
 # holds every node (and all the mass), the others only the nodes they use.
@@ -42,6 +44,7 @@ set nStep  [envOr WP188_NSTEP 1000]
 set halve  [envOr WP188_HALVE -1]
 set maxDim [envOr WP188_MAXDIM 3]
 set tprint [envOr WP188_TPRINT 0]
+set rExtra [envOr WP188_REUSEXTRA ""]   ;# WP-193
 if {$out eq ""} { puts "WP188_OUT not set"; exit 2 }
 
 set pid 0
@@ -162,12 +165,13 @@ proc setSystem {} {
 }
 
 proc reuseArgs {} {
-    global reuse rIter rRate maxDim
+    global reuse rIter rRate maxDim rExtra
     set a [list -maxDim $maxDim]
     if {$reuse > 0} {
         lappend a -reuseFactor $reuse
         if {$rIter ne ""} { lappend a -reuseIter $rIter }
         if {$rRate ne ""} { lappend a -reuseRate $rRate }
+        if {$rExtra ne ""} { set a [concat $a $rExtra] }   ;# WP-193
     }
     return $a
 }
@@ -227,6 +231,7 @@ set maxM 0.0
 set fail 0
 set step 0
 set nSub 0
+set tWall0 [clock microseconds]   ;# WP-193
 while {$step < $nStep} {
     set h $dt
     if {$halve >= 0 && $step >= $halve && $step < $halve + 20} { set h [expr {$dt/2.0}] }
@@ -263,7 +268,11 @@ while {$step < $nStep} {
     }
 }
 
+set tWall [expr {([clock microseconds] - $tWall0)*1.0e-6}]   ;# WP-193
 if {$pid == 0} {
+    set fh [open "$out.wall" w]   ;# WP-193: kept out of .edp (md5-compared)
+    puts $fh [format %.6f $tWall]
+    close $fh
     set resid [nodeDisp $roof 1]
     set fh [open "$out.edp" w]
     puts $fh [format "fail %d steps %d substeps %d maxRoof %.17g maxIdr %.17g resid %.17g maxV %.17g maxM %.17g" \
