@@ -2,7 +2,7 @@
 title: "WP-196 — the commit phase's cost: EnergyBalance sweep threaded and de-duplicated, recorders measured"
 project: Ladruno
 type: performance work package (commit phase)
-status: "implemented, draft PR — not merged; numbers unchanged (byte-identical)"
+status: "implemented, draft PR #984 — not merged; numbers unchanged (byte-identical)"
 priority: medium
 owner: nmora
 related:
