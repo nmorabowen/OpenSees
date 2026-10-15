@@ -110,6 +110,13 @@ class MumpsParallelSolver : public LinearSOESolver
   // invisible: a user cannot tell whether compression did anything.
   int printStats;
 
+  // WP-190: wall-clock phase timings (MPI_Wtime), accumulated ONLY when
+  // printStats != 0. Zero cost otherwise.
+  double tAnalysis;      // last JOB=1 on this rank; <0 = not yet reported
+  double tSolveSum;      // JOB=3 time since the last stats print
+  int    nSolveSum;      // JOB=3 calls since the last stats print
+  void   reportSolveTail(void);
+
   MPI_Comm theComm;  // Ladruno ADR43 P3a: defaults to MPI_COMM_WORLD
 
   DMUMPS_STRUC_C id;

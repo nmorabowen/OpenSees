@@ -17,6 +17,7 @@
 #   WP188_NSTEP     number of transient steps (dt 0.01)    (default 1000)
 #   WP188_HALVE     step index at which dt is halved for 20 steps (default -1: never)
 #   WP188_TPRINT    test print flag of the transient test  (default 0; 2 = one line per step)
+#   WP188_MUMPSARGS extra `system Mumps` args, MP only (WP-190)  (default none)
 #   WP188_MAXDIM    KrylovNewton -maxDim                   (default 3, the vanilla default)
 #   WP188_REUSEXTRA extra -reuse* args when WP188_REUSE > 0, e.g. "-reuseCost on" (WP-193)
 #                   Rank 0 also writes <out>.wall: the transient loop's wall time in s (WP-193).
@@ -155,7 +156,7 @@ proc setSystem {} {
     if {$parallel} {
         constraints Transformation
         numberer LadrunoParallelPlain
-        system Mumps -ICNTL14 200
+        system Mumps -ICNTL14 200 {*}[envOr WP188_MUMPSARGS ""]   ;# WP-190: e.g. -stats
     } else {
         constraints Transformation
         numberer RCM
