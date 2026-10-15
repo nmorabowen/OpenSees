@@ -767,6 +767,21 @@ opsBarrier(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 int 
 domainChange(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 
+// apeGmsh #2034: Ladruno recorder stage hooks (defined in
+// recorder/LadrunoRecorder.cpp, which is built only with HDF5). A user
+// `domainChange` is a stage barrier; the transient analysis `eigen` builds on
+// its own is not a running analysis until `analysis`/`analyze` (see
+// ladrunoNoteEigenOnlyAnalysis). No-ops without HDF5.
+#ifdef _HDF5
+extern void ladrunoNoteUserStageBarrier(void);
+extern void ladrunoNoteEigenOnlyAnalysis(const void* analysis);
+#define LADRUNO_STAGE_BARRIER() ladrunoNoteUserStageBarrier()
+#define LADRUNO_EIGEN_ONLY_ANALYSIS(p) ladrunoNoteEigenOnlyAnalysis(p)
+#else
+#define LADRUNO_STAGE_BARRIER() ((void)0)
+#define LADRUNO_EIGEN_ONLY_ANALYSIS(p) ((void)0)
+#endif
+
 int 
 record(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 
@@ -1956,6 +1971,7 @@ wipeModel(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 int 
 wipeAnalysis(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 {
+  LADRUNO_EIGEN_ONLY_ANALYSIS(0);   // apeGmsh #2034
 
 #ifdef _PARALLEL_PROCESSING
   if (OPS_PARTITIONED == true && OPS_NUM_SUBDOMAINS > 1) {
@@ -2381,6 +2397,7 @@ int
 analyzeModel(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 {
   int result = 0;
+  LADRUNO_EIGEN_ONLY_ANALYSIS(0);   // apeGmsh #2034: an analyze step makes it real
 
 #ifdef _PARALLEL_PROCESSING
   if (OPS_PARTITIONED == false && OPS_NUM_SUBDOMAINS > 1) {
@@ -3006,6 +3023,7 @@ int
 specifyAnalysis(ClientData clientData, Tcl_Interp *interp, int argc, 
 		TCL_Char **argv)
 {
+    LADRUNO_EIGEN_ONLY_ANALYSIS(0);   // apeGmsh #2034
     // make sure at least one other argument to contain type of system
     if (argc < 2) {
 	opserr << "WARNING need to specify an analysis type (Static, Transient)\n";
@@ -6962,6 +6980,9 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
 							     *theSOE,
 							     *theTransientIntegrator,
 							     theTest);
+	// apeGmsh #2034: openseespy deletes this analysis after the solve; here
+	// it stays, so mark it: not a running analysis for the Ladruno recorder.
+	LADRUNO_EIGEN_ONLY_ANALYSIS(theTransientAnalysis);
     }
 
     //
@@ -11464,9 +11485,13 @@ int convertTextToBinary(ClientData clientData, Tcl_Interp *interp, int argc, TCL
   return textToBinary(inputFile, outputFile);
 }
 
+// apeGmsh #2034: a user `domainChange` is a stage barrier for the Ladruno
+// recorder. Only this user command bumps it; internal Domain::domainChange()
+// calls do not.
 int domainChange(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 {
   theDomain.domainChange();
+  LADRUNO_STAGE_BARRIER();
   return TCL_OK;
 }
 
