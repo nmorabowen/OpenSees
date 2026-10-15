@@ -52,6 +52,7 @@ extern "C" {
 }
 
 class MumpsParallelSOE;
+class LadrunoMumpsMixed;   // Ladruno WP-194
 
 class MumpsParallelSolver : public LinearSOESolver
 {
@@ -84,6 +85,13 @@ class MumpsParallelSolver : public LinearSOESolver
   // Must be called before the first solve; forces re-initialization.
   int setCommunicator(MPI_Comm comm);
 
+  // Ladruno WP-194: `-precision single [-refine k]` -- factor in single
+  // precision (SMUMPS), keep the residual and the update in double. Off by
+  // default. Returns -1 (and changes nothing) when this build has no
+  // single-precision MUMPS; singlePrecisionAvailable() tells the parsers.
+  int setPrecision(int single, int refineSteps);
+  static bool singlePrecisionAvailable(void);
+
  protected:
 
  private:
@@ -111,6 +119,13 @@ class MumpsParallelSolver : public LinearSOESolver
   int printStats;
 
   MPI_Comm theComm;  // Ladruno ADR43 P3a: defaults to MPI_COMM_WORLD
+
+  // Ladruno WP-194: 0 = double (stock DMUMPS path, untouched), 1 = single
+  // factor + double residual (LadrunoMumpsMixed). refineSteps = -refine k.
+  int precision;
+  int refineSteps;
+  LadrunoMumpsMixed *theMixed;
+  int solveMixed(void);
 
   DMUMPS_STRUC_C id;
 

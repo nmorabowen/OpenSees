@@ -5102,6 +5102,9 @@ void* OPS_MumpsSolver() {
     int icntl35 = 0;           // Ladruno ADR-75 P2: BLR off by default
     double cntl7 = 0.0;        // Ladruno ADR-75 P2: BLR dropping tolerance
     int mumpsStats = 0;        // Ladruno ADR-75 P2b: -stats dumps INFOG/RINFOG
+    int mumpsPrecision = 0;    // Ladruno WP-194: -precision single|double (-mixed)
+    int mumpsRefine = 0;       // Ladruno WP-194: -refine k
+    bool mumpsSawRefine = false;
     // Ladruno ADR43 P3a: loop guard was "> 2", which silently skipped parsing
     // when exactly one "-opt value" pair remained (the common openseespy
     // system('Mumps','-ICNTL14',n) spelling) — every option needed opt+value,
@@ -5154,6 +5157,31 @@ void* OPS_MumpsSolver() {
             // Ladruno ADR-75 P2b: no value token -- consume nothing further.
             mumpsStats = 1;
             continue;
+        } else if (strcmp(opt, "-precision") == 0) {
+            // Ladruno WP-194: factor precision; residual/update stay double.
+            // Fail closed on anything but single/double.
+            if (OPS_GetNumRemainingInputArgs() < 1) {
+                opserr << "WARNING: -precision needs single or double\n";
+                return 0;
+            }
+            const char* val = OPS_GetString();
+            if (strcmp(val, "single") == 0 || strcmp(val, "mixed") == 0)
+                mumpsPrecision = 1;
+            else if (strcmp(val, "double") == 0)
+                mumpsPrecision = 0;
+            else {
+                opserr << "WARNING: -precision takes single or double, got " << val << "\n";
+                return 0;
+            }
+        } else if (strcmp(opt, "-mixed") == 0) {
+            mumpsPrecision = 1;    // Ladruno WP-194: alias of -precision single
+            continue;
+        } else if (strcmp(opt, "-refine") == 0) {
+            if (OPS_GetIntInput(&num, &mumpsRefine) < 0 || mumpsRefine < 0) {
+                opserr << "WARNING: -refine needs an integer >= 0\n";
+                return 0;
+            }
+            mumpsSawRefine = true;
         } else if (strcmp(opt, "-ICNTL35") == 0) {
             if (OPS_GetIntInput(&num, &icntl35) < 0) {
                 opserr << "WARNING: failed to get icntl35\n";
@@ -5182,13 +5210,25 @@ void* OPS_MumpsSolver() {
         }
     }
 
+    // Ladruno WP-194: refuse rather than factor in a precision not asked for
+    if (mumpsSawRefine && mumpsPrecision == 0) {
+        opserr << "WARNING: -refine applies to -precision single only\n";
+        return 0;
+    }
+
 #ifdef _PARALLEL_INTERPRETERS
 #ifdef _MUMPS
     MumpsParallelSOE* soe = 0;
 
+    if (mumpsPrecision != 0 && !MumpsParallelSolver::singlePrecisionAvailable()) {
+        opserr << "WARNING: -precision single needs single-precision MUMPS (libsmumps); "
+                  "this build has none -- rebuild with MUMPS BUILD_SINGLE=ON, or drop the option\n";
+        return 0;
+    }
     MumpsParallelSolver *solver= new MumpsParallelSolver(icntl7, icntl14,
 							 icntl35, cntl7,
 							 mumpsStats);
+    solver->setPrecision(mumpsPrecision, mumpsRefine);   // Ladruno WP-194
     soe = new MumpsParallelSOE(*solver, matType);
 
     if (commColor >= 0) {
@@ -5254,6 +5294,10 @@ void* OPS_MumpsSolver() {
 #endif
 #else
 #ifdef _MUMPS
+    if (mumpsPrecision != 0) {   // Ladruno WP-194: parallel MUMPS only
+        opserr << "WARNING: -precision single is implemented for the parallel MUMPS solver (openseesmp) only\n";
+        return 0;
+    }
     MumpsSolver *theSolver = new MumpsSolver(icntl7, icntl14);
     theSOE = new MumpsSOE(*theSolver, matType);
     return theSOE;
