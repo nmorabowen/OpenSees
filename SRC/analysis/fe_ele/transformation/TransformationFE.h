@@ -56,6 +56,7 @@ class TransformationFE: public FE_Element
     // methods to form and obtain the tangent and residual
     virtual const Matrix &getTangent(Integrator *theIntegrator);
     virtual const Vector &getResidual(Integrator *theIntegrator);
+    virtual bool ladrunoThreadSafeFE(void);   // Ladruno WP-192
     
     // Ladruno (ADR-80 P3): K * du_prescribed, transformed. See FE_Element.
     virtual const Vector *getSPTangentForce(Integrator *theIntegrator);
@@ -94,6 +95,11 @@ class TransformationFE: public FE_Element
     int numTransformedDOF;
     int numOriginalDOF;
     
+    // Ladruno WP-192: hand out the calling thread's private copies of the
+    // class-wide scratch below (threaded tangent / residual loops).
+    void ladrunoScratch(int *&dofs, Matrix **&trans, double *&localK,
+                        double *&data, Matrix **modT, Vector **modR) const;
+
     // static variables - single copy for all objects of the class	
     static Matrix **modMatrices; // array of pointers to class wide matrices
     static Vector **modVectors;  // array of pointers to class widde vectors

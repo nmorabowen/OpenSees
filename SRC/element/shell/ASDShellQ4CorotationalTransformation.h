@@ -293,16 +293,16 @@ public:
         // It should be used in a LinearCoordinateTransformation.
         // Here instead we already calculate a nonlinear Projector (P = Pu - S * G)!
 
-        static MatrixType T(24, 24);
+        static thread_local MatrixType T(24, 24);   // Ladruno WP-192
         LCS.ComputeTotalRotationMatrix(T);
 
         // Form all matrices:
         // S: Spin-Fitter matrix
         // G: Spin-Lever matrix
         // P: Projector (Translational & Rotational)
-        static MatrixType P(24, 24);
-        static MatrixType S(24, 3);
-        static MatrixType G(3, 24);
+        static thread_local MatrixType P(24, 24);   // Ladruno WP-192
+        static thread_local MatrixType S(24, 3);   // Ladruno WP-192
+        static thread_local MatrixType G(3, 24);   // Ladruno WP-192
         EICR::Compute_Pt(4, P);
         EICR::Compute_S(LCS.Nodes(), S);
         RotationGradient(LCS, globalDisplacements, G);
@@ -312,7 +312,7 @@ public:
         // Note: here the RHS is already given as a residual vector -> - internalForces -> (pe = - Ke * U)
         // so projectedLocalForces = - P' * Ke * U
 
-        static VectorType projectedLocalForces(24);
+        static thread_local VectorType projectedLocalForces(24);   // Ladruno WP-192
         projectedLocalForces.addMatrixTransposeVector(0.0, P, RHS, 1.0);
 
         // Compute the Right-Hand-Side vector in global coordinate system (- T' * P' * Km * U).
@@ -326,7 +326,7 @@ public:
             return; // avoid useless calculations!
 
         // H: Axial Vector Jacobian
-        static MatrixType H(24, 24);
+        static thread_local MatrixType H(24, 24);   // Ladruno WP-192
         EICR::Compute_H(localDisplacements, H);
 
         // Step 1: ( K.M : Material Stiffness Matrix )
@@ -334,7 +334,7 @@ public:
         // At this point 'LHS' contains the 'projected' Material Stiffness matrix
         // in local corotational coordinate system
 
-        static MatrixType temp(24, 24);
+        static thread_local MatrixType temp(24, 24);   // Ladruno WP-192
         temp.addMatrixProduct(0.0, LHS, H, 1.0);
         LHS.addMatrixProduct(0.0, temp, P, 1.0);
         temp.addMatrixTransposeProduct(0.0, P, LHS, 1.0);
@@ -347,14 +347,14 @@ public:
         // At this point 'LHS' contains also this term of the Geometric stiffness
         // (Ke = (P' * Km * H * P) - (G' * Fn' * P))
 
-        static MatrixType Fnm(24, 3);
+        static thread_local MatrixType Fnm(24, 3);   // Ladruno WP-192
         Fnm.Zero();
         EICR::Spin_AtRow(projectedLocalForces, Fnm, 0);
         EICR::Spin_AtRow(projectedLocalForces, Fnm, 6);
         EICR::Spin_AtRow(projectedLocalForces, Fnm, 12);
         EICR::Spin_AtRow(projectedLocalForces, Fnm, 18);
 
-        static MatrixType FnmT(3, 24);
+        static thread_local MatrixType FnmT(3, 24);   // Ladruno WP-192
         FnmT.addMatrixTranspose(0.0, Fnm, 1.0);
 
         temp.addMatrixTransposeProduct(0.0, G, FnmT, 1.0);
@@ -385,8 +385,8 @@ public:
         VectorType& RHS,
         bool LHSrequired)
     {
-        static VectorType globalDisplacements(24);
-        static VectorType localDisplacements(24);
+        static thread_local VectorType globalDisplacements(24);   // Ladruno WP-192
+        static thread_local VectorType localDisplacements(24);   // Ladruno WP-192
         computeGlobalDisplacements(globalDisplacements);
         calculateLocalDisplacements(LCS, globalDisplacements, localDisplacements);
         transformToGlobal(LCS, globalDisplacements, localDisplacements, LHS, RHS, LHSrequired);

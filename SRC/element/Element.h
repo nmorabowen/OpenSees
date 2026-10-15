@@ -142,6 +142,31 @@ class Element : public DomainComponent
     //      re-entrant. (Red-team N2; nothing on today's allowlist throws.)
     virtual bool ladrunoThreadSafeUpdate(void) const { return false; }
 
+    // Ladruno WP-192. May the OTHER element loops run this element concurrently
+    // with other elements: getTangentStiff / getInitialStiff / getDamp / getMass
+    // (the integrators' tangent loop), getResistingForce(IncInertia) (the
+    // residual loop) and commitState (Domain::commit)? Same contract as
+    // ladrunoThreadSafeUpdate -- items 1-5 above -- over THOSE call graphs, which
+    // is a strictly larger audit: an element can be update-safe while its
+    // tangent still runs on class-static scratch (LadrunoQuad::K / ::P). The
+    // FE_Element / TransformationFE / Element-Rayleigh pools on the same paths
+    // are made per-thread by WP-192 itself, so a class answers only for its own
+    // code and its materials (Material::ladrunoThreadSafeForm). Default false.
+    virtual bool ladrunoThreadSafeForm(void) const { return false; }
+
+    // Ladruno WP-192. May commitState() run concurrently with other elements'?
+    // Defaults to the form answer; an element whose commit feeds a process-wide
+    // accumulator (an energy channel, a global counter) overrides it to false.
+    virtual bool ladrunoThreadSafeCommit(void) const { return this->ladrunoThreadSafeForm(); }
+
+    // Ladruno WP-192. Called SERIALLY before a threaded tangent/residual loop:
+    // allocates this element's slot in Element's class-wide Rayleigh pool (the
+    // lazy `index == -1` path mutates the shared pool array, so it must not
+    // first happen inside the parallel region). Returns false when the element
+    // cannot be prepared without changing what the serial loop would compute
+    // (betaKc != 0 with Kc not yet captured); the caller then runs it serially.
+    bool ladrunoPrepareThreadedForm(void);
+
     virtual bool isSubdomain(void);
     
     // methods to return the current linearized stiffness,
