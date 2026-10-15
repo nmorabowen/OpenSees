@@ -38,6 +38,7 @@ except ModuleNotFoundError:
 
 REL_TOL = 1.0e-6
 EIGEN_TIED = [375.0, 1000.0]
+EIGEN_UNTIED = [3000.0 / 5.0, 1000.0]
 
 CHILD = r'''
 import json, sys
@@ -104,10 +105,11 @@ def eig(nev):
 
 
 out = {"runs": []}
-if case == "eigen":
+if case in ("eigen", "eigen_sp"):
+    tie = case == "eigen"
     for load in loads:
-        model(True)
-        static(True, load)
+        model(tie)
+        static(tie, load)
         run = {"load": load, "k0": eig(2)}
         run["ok"] = ops.analyze(1)
         run["eig"] = eig(2)
@@ -155,12 +157,12 @@ def _close(got, ref, tol=REL_TOL):
             and all(abs(g - r) <= tol * abs(r) for g, r in zip(got, ref)))
 
 
-def _check_eigen_runs(r, tol=REL_TOL):
+def _check_eigen_runs(r, tol=REL_TOL, ref=EIGEN_TIED):
     assert r["runs"], r
     for run in r["runs"]:
-        assert _close(run["k0"], EIGEN_TIED, tol), run
+        assert _close(run["k0"], ref, tol), run
         assert run["ok"] == 0, run
-        assert _close(run["eig"], EIGEN_TIED, tol), run
+        assert _close(run["eig"], ref, tol), run
 
 
 # ARPACK reads M*x through getM_Force whenever the assembled M is not
@@ -202,3 +204,25 @@ def test_modal_damping_after_newton_step(handler):
     err = max(abs(a - b) for a, b in zip(got["hist"], ref["hist"]))
     assert err <= 1.0e-5 * peak, (handler, err, peak, got["eig"])
     assert _close(got["eig"], EIGEN_TIED), got
+
+
+# The eigen mass loops added the tangent of every FE_Element to M. A
+# constraint FE returns its constraint stiffness whatever it is asked for,
+# so M received alpha*C^T*C (Penalty, Auto), alpha at every Penalty SP dof,
+# and the [0 C^T; C 0] coupling block (Lagrange). The explicit-M solver then
+# returns spurious modes near +1 or -1 already at the initial state.
+@pytest.mark.parametrize("handler", ["Penalty", "Auto", "Lagrange"])
+def test_full_lapack_eigen_constraint_has_no_mass(handler):
+    """-fullGenLapack eigenvalues at the initial state and after a Newton
+    step (F = 1e3) equal the closed form 375, 1000."""
+    _check_eigen_runs(_run("eigen", handler, [1.0e3], "-fullGenLapack"))
+
+
+@pytest.mark.parametrize("solver", ["default", "-fullGenLapack"])
+def test_penalty_sp_only_eigen(solver):
+    """Without the tie (fix only, Penalty handler) the eigenvalues are
+    3000/5 = 600 and 1000. Before the fix PenaltySP_FE put alpha on the
+    diagonal of M at every fixed dof, which also keeps M diagonal for ARPACK:
+    each fixed dof became a spurious low mode (eigenvalue alpha/alpha = 1)."""
+    _check_eigen_runs(_run("eigen_sp", "Penalty", [1.0e3], solver),
+                      ref=EIGEN_UNTIED)
