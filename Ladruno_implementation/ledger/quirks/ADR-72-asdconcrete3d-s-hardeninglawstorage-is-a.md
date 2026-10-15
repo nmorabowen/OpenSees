@@ -26,4 +26,7 @@ The poisoning also replaced the ELASTIC modulus, not only the softening branch:
 E=3e6 then E=30e6 under the same tag gave sigma_zz = -720 for -7200 and Newton
 diverged in an elastic step. File-unique tags remain good hygiene but are no
 longer load-bearing across a `wipe`. Regression:
-`tests/test_asdconcrete3d_wipe_storage.py`.
+`tests/test_asdconcrete3d_wipe_storage.py`. `ASDConcrete1D` carried the same
+registry and is cleared from `OPS_clearAllUniaxialMaterial()`
+(`tests/test_asdconcrete1d_wipe_storage.py`). Known residual: OpenSeesSP's
+`ActorSubdomain::clearAll` does not reset the stores.

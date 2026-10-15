@@ -92,8 +92,12 @@ def _find_exe():
     exe = os.environ.get("LADRUNO_TCL_EXE")
     if exe:
         return exe if Path(exe).exists() else None
-    cand = REPO / "dist" / "bin" / ("OpenSees.exe" if os.name == "nt" else "OpenSees")
-    return str(cand) if cand.exists() else None
+    name = "OpenSees.exe" if os.name == "nt" else "OpenSees"
+    for cand in (REPO / "dist" / "bin" / name,           # build.bat output
+                 REPO / "build" / "Release" / name):     # Zone-A CI build tree
+        if cand.exists():
+            return str(cand)
+    return None
 
 
 TCL_EXE = _find_exe()
