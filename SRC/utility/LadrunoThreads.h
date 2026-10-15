@@ -168,10 +168,11 @@ struct LadrunoOutputGuard {
 
 // Diagnostic mask of the WP-192 loops that may thread: LADRUNO_THREADS_LOOPS,
 // a bitmask read once (1 = element update, 2 = tangent, 4 = residual,
-// 8 = commit; default 15 = all). For bisecting a suspected race to one loop
+// 8 = commit, 16 = the EnergyBalance element sweep (WP-196); default 31 = all). For bisecting a suspected race to one loop
 // without a rebuild; production runs leave it unset.
 enum { LADRUNO_LOOP_UPDATE = 1, LADRUNO_LOOP_TANGENT = 2,
-       LADRUNO_LOOP_RESIDUAL = 4, LADRUNO_LOOP_COMMIT = 8 };
+       LADRUNO_LOOP_RESIDUAL = 4, LADRUNO_LOOP_COMMIT = 8,
+       LADRUNO_LOOP_ENERGY = 16 };   // Ladruno WP-196
 bool ladruno_loopEnabled(int which);
 
 #endif

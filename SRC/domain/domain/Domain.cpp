@@ -81,6 +81,7 @@
 #include <Matrix.h>
 #include <Graph.h>
 #include <Recorder.h>
+#include <classTags.h>   // Ladruno WP-196: recorder scope names
 #include <MeshRegion.h>
 #include <LadrunoContactDomain.h>   // Ladruno: ADR-39
 #include <LadrunoPorousOverlay.h>   // Ladruno: ADR-73
@@ -2232,6 +2233,23 @@ Domain::getNumEigenvalues(void) const
 }
 
 
+// Ladruno WP-196: a persistent scope name per recorder (the profiler keys its
+// tree on the name pointer's string, so the names must outlive the run).
+static const char *
+ladrunoRecorderScopeName(int classTag, int i)
+{
+  static const char *lad[8] = {"rec.ladruno.0", "rec.ladruno.1", "rec.ladruno.2",
+    "rec.ladruno.3", "rec.ladruno.4", "rec.ladruno.5", "rec.ladruno.6", "rec.ladruno.7"};
+  static const char *oth[8] = {"rec.other.0", "rec.other.1", "rec.other.2",
+    "rec.other.3", "rec.other.4", "rec.other.5", "rec.other.6", "rec.other.7"};
+  if (classTag == RECORDER_TAGS_EnergyBalanceRecorder)
+    return "rec.energyBalance";
+  if (classTag == RECORDER_TAGS_NodeRecorder)
+    return "rec.node";
+  const int k = (i < 7) ? i : 7;
+  return (classTag == RECORDER_TAGS_LadrunoRecorder) ? lad[k] : oth[k];
+}
+
 int
 Domain::record(bool fromAnalysis)
 {
@@ -2254,19 +2272,25 @@ Domain::commit(void)
     // 
     // first invoke commit on all nodes and elements in the domain
     //
+    // Ladruno WP-196: the commit phase split into nodes / elements / recorders
+    // (coarse scopes, one branch each when the profiler is off).
+    { OPS_PROFILE_SCOPE("commit.nodes");
     Node *nodePtr;
     NodeIter &theNodeIter = this->getNodes();
     while ((nodePtr = theNodeIter()) != 0) {
       nodePtr->commitState();
     }
+    }
 
     // Ladruno WP-192: threaded element commit (per-type opt-in); false = serial.
+    { OPS_PROFILE_SCOPE("commit.elements");
     if (this->ladrunoThreadedCommit() == false) {
       Element *elePtr;
       ElementIter &theElemIter = this->getElements();
       while ((elePtr = theElemIter()) != 0) {
         elePtr->commitState();
       }
+    }
     }
 
     // Ladruno (WP-99 F7): a material that could NOT integrate this commit.
@@ -2362,9 +2386,13 @@ Domain::commit(void)
     // STILL runs (that is the point of the pass). Default OFF => byte-identical to stock.
     if (!contactAugmenting) {
       // invoke record on all recorders
+      // Ladruno WP-196: one coarse scope per recorder (by class and position).
+      OPS_PROFILE_SCOPE("commit.record");
       for (int i=0; i<numRecorders; i++)
-        if (theRecorders[i] != 0)
+        if (theRecorders[i] != 0) {
+	  OPS_PROFILE_SCOPE(ladrunoRecorderScopeName(theRecorders[i]->getClassTag(), i));
 	  theRecorders[i]->record(commitTag, currentTime);
+        }
 
       // update the commitTag
       commitTag++;
