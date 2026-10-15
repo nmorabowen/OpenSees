@@ -39,6 +39,7 @@ EXPECT = {
     "record_before_analysis": [("transient", 6)],
     "override_kind": [("transient", 9)],
     "override_kind_dc": [("static", 4), ("static", 5)],
+    "flip_then_topology": [("static", 4), ("transient", 5), ("transient", 2)],
 }
 PY_CASES = ("dc_static_transient", "flip_static_transient",
             "dc_static_static", "internal_restamp")

@@ -27,6 +27,10 @@
 #                        -> [transient 9]             (-kind override: no flip split)
 #   override_kind_dc     -kind static; static 4 | domainChange | transient 5
 #                        -> [static 4, static 5]      (the barrier still splits)
+#   flip_then_topology   static 4 | wipeAnalysis | transient 5 | add a node + element | transient 2
+#                        -> [static 4, transient 5, transient 2], ids strictly increasing
+#                           (a flip that did not move the stamp must not collide with
+#                            the stamp of the later topology change)
 
 if {$argc < 2} { puts "usage: stage_kind_model.tcl <out.ladruno> <case>"; exit 1 }
 set out [lindex $argv 0]
@@ -133,6 +137,16 @@ switch -- $case {
         wipeAnalysis
         domainChange
         lateral; transient_chain; analyze 5 0.01
+    }
+    flip_then_topology {
+        gravity; static_chain; analyze 4
+        loadConst -time 0.0
+        wipeAnalysis
+        lateral; transient_chain; analyze 5 0.01
+        node 3 1.0 3.0
+        fix 3 1 1 1
+        element elasticBeamColumn 2 2 3 0.1 2.0e8 1.0e-3 1
+        analyze 2 0.01
     }
     default {
         puts "unknown case $case"
