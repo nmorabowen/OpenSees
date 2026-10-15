@@ -2007,8 +2007,10 @@ void ASDAbsorbingBoundary3D::addKff(Matrix& K, double scale)
             }
         }
 
-        // integrate
-        double dV = detJ * gw * scale;
+        // integrate. The volume measure is |det J|: det J is negative when the
+        // nodes are given in a left-handed (mirrored) order, which is otherwise
+        // a valid input since the free-field mapping uses the sorted nodes.
+        double dV = std::abs(detJ) * gw * scale;
         K.addMatrixTripleProduct(1.0, BB, E, dV);
     }
 }
@@ -2083,8 +2085,8 @@ void ASDAbsorbingBoundary3D::addRff(Vector& R)
         // stress vector
         stress.addMatrixVector(0.0, E, strain, 1.0);
 
-        // integrate
-        double dV = detJ * gw;
+        // integrate (|det J|, see addKff)
+        double dV = std::abs(detJ) * gw;
         R.addMatrixTransposeVector(1.0, BB, stress, dV);
     }
 }
