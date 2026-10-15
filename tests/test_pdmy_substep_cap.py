@@ -2,7 +2,7 @@
 
 setSubStrainRate() sizes the substep loop of getStress() as the octahedral
 shear strain increment over 1e-4 (PressureDependMultiYield) or 1e-5
-(PressureDependMultiYield02), or the volumetric strain increment over
+(PressureDependMultiYield02 and 03), or the volumetric strain increment over
 1e-5, converted to int with no upper bound.
 
 Model: one 1 x 1 plane-strain quad, rollers on the bottom and left edges,
@@ -16,7 +16,7 @@ uniform strain increment eps_yy = -D, eps_xx = gamma_xy = 0, so
 
 huge   D = 2.0e4: octahedral shear 18856, i.e. 1.886e8 substeps per Gauss
        point and getStress() call for PressureDependMultiYield and 1.886e9
-       (below INT_MAX) for PressureDependMultiYield02. Before the fix the
+       (below INT_MAX) for PressureDependMultiYield02/03. Before the fix the
        formUnbalance() after that update runs this loop at 4 Gauss points,
        about a minute even at 0.1 microseconds per substep, so the child is
        still running at the 20 s timeout. With the fix setTrialStrain()
@@ -54,6 +54,7 @@ P0 = 100.0
 SYY_SMALL = {
     "PressureDependMultiYield": -239.23405793931204,
     "PressureDependMultiYield02": -241.29693501184508,
+    "PressureDependMultiYield03": -241.28999251703226,
 }
 
 CHILD = r'''
@@ -76,6 +77,11 @@ PARAMS = {
                                    0.5, 26.0, 0.013, 0.0, 0.3, 0.0,
                                    20, 5.0, 3.0, 1.0, 0.0, 0.6, 0.9, 0.02,
                                    0.7, 101.0, 0.1],
+    # nd rho G B phi gammaPeak refP d PTAng mType ca cb cc cd ce da db dc
+    # NYS liquefac1 liquefac2 pa c
+    "PressureDependMultiYield03": [2, 2.0, 1.3e5, 2.6e5, 40.0, 0.1, 101.0,
+                                   0.5, 26.0, 0, 0.013, 0.0, 0.3, 0.0, 0.0,
+                                   0.3, 3.0, 0.0, 20, 1.0, 0.0, 101.0, 0.1],
 }
 
 ops.wipe()
