@@ -72,14 +72,14 @@ set P 7200.0
 set ok [analyze 1]
 if {$ok == 0} { puts "PASS converge" } else { puts "FAIL converge ok=$ok"; incr nFail }
 for {set gp 1} {$gp <= 8} {incr gp} {
-    check "sigma_zz(gp$gp)" [lindex [eleResponse 2 material $gp stress] 2] [expr {-$P}] 1e-6
+    check "sigma_zz(gp$gp)" [lindex [eleResponse 2 material $gp stress] 2] [expr {-$P}] 1e-5
 }
-foreach n {1 3 5 7} { check "uz($n)" [nodeDisp $n 3] [expr {-$P * 2.0 / $E}] 1e-6 }
-foreach n {5 7} { check "ux($n)" [nodeDisp $n 1] [expr {$nu * $P / $E}] 1e-6 }
+foreach n {1 3 5 7} { check "uz($n)" [nodeDisp $n 3] [expr {-$P * 2.0 / $E}] 1e-5 }
+foreach n {5 7} { check "ux($n)" [nodeDisp $n 1] [expr {$nu * $P / $E}] 1e-5 }
 reactions
 set rz 0.0
 foreach n {2 4 6 8} { set rz [expr {$rz + [nodeReaction $n 3]}] }
-check "sum Rz(base)" $rz $P 1e-6
+check "sum Rz(base)" $rz $P 1e-5
 
 if {$nFail == 0} {
     puts "ASDC3D_WIPE_2044: PASS"

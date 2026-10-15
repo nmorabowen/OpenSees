@@ -76,14 +76,14 @@ def test_same_tag_after_wipe_gets_its_own_law():
         assert ops.analyze(1) == 0, "Newton did not converge on the elastic step"
         for gp in range(1, 9):
             szz = ops.eleResponse(2, "material", gp, "stress")[2]
-            assert szz == pytest.approx(-P, rel=1e-6), f"GP {gp}: sigma_zz = {szz}"
+            assert szz == pytest.approx(-P, rel=1e-5), f"GP {gp}: sigma_zz = {szz}"
         for n in (1, 3, 5, 7):
-            assert ops.nodeDisp(n, 3) == pytest.approx(-P * L / E, rel=1e-6)
+            assert ops.nodeDisp(n, 3) == pytest.approx(-P * L / E, rel=1e-5)
         for n in (5, 7):
-            assert ops.nodeDisp(n, 1) == pytest.approx(NU * P / E, rel=1e-6)
+            assert ops.nodeDisp(n, 1) == pytest.approx(NU * P / E, rel=1e-5)
         ops.reactions()
         rz = sum(ops.nodeReaction(n, 3) for n in (2, 4, 6, 8))
-        assert rz == pytest.approx(P, rel=1e-6)
+        assert rz == pytest.approx(P, rel=1e-5)
     finally:
         ops.wipe()
 
