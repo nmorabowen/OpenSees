@@ -650,3 +650,27 @@ ParallelMaterial::commitSensitivity(double dedh, int gradIndex, int numGrads)
 
   return ok;
 }
+
+
+// Ladruno WP-195 -- see ParallelMaterial.h.
+bool
+ParallelMaterial::ladrunoThreadSafeUpdate(void) const
+{
+  if (theModels == 0)
+    return false;
+  for (int i = 0; i < numMaterials; i++)
+    if (theModels[i] == 0 || !theModels[i]->ladrunoThreadSafeUpdate())
+      return false;
+  return true;
+}
+
+bool
+ParallelMaterial::ladrunoThreadSafeForm(void) const
+{
+  if (!this->ladrunoThreadSafeUpdate())
+    return false;
+  for (int i = 0; i < numMaterials; i++)
+    if (!theModels[i]->ladrunoThreadSafeForm())
+      return false;
+  return true;
+}
