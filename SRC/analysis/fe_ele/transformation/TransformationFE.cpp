@@ -29,6 +29,9 @@
 // of the TransformationFE class interface.
 
 #include "TransformationFE.h"
+#include <LadrunoThreads.h>   // Ladruno WP-192
+#include <TransformationDOF_Group.h>
+#include <vector>
 #include <stdlib.h>
 
 #include <Element.h>
@@ -291,13 +294,107 @@ TransformationFE::setID(void)
     return 0;
 }
 
+
+// ---------------------------------------------------------------------------
+// Ladruno WP-192: the per-thread twin of TransformationFE's class-wide scratch.
+// getTangent()/getResidual() build T^t K T / T^t R in buffers that ONE object
+// owns for the whole class (ADR-75b 5.4-H1, "one level up" under constraints
+// Transformation). A thread inside a WP-192 loop gets its own set, sized like
+// the originals (MAX_NUM_DOF), plus its own modTangent/modResidual for this
+// FE's transformed size when the FE uses the class-wide pool. FEs larger than
+// MAX_NUM_DOF own their modTangent/modResidual and keep them.
+// ---------------------------------------------------------------------------
+namespace {
+  struct LadrunoTFEScratch {
+    std::vector<int> dofs;
+    std::vector<Matrix *> trans;
+    std::vector<double> localK, data;
+    std::vector<Matrix *> m;
+    std::vector<Vector *> v;
+    ~LadrunoTFEScratch() {
+      for (size_t i = 0; i < m.size(); i++) delete m[i];
+      for (size_t i = 0; i < v.size(); i++) delete v[i];
+    }
+  };
+  thread_local LadrunoTFEScratch ladrunoTFE;
+}
+
+void
+TransformationFE::ladrunoScratch(int *&dofs, Matrix **&trans, double *&localK,
+                                 double *&data, Matrix **modT, Vector **modR) const
+{
+    LadrunoTFEScratch &t = ladrunoTFE;
+    if ((int)t.dofs.size() < MAX_NUM_DOF)
+      t.dofs.resize(MAX_NUM_DOF);
+    if ((int)t.trans.size() < sizeTransformations)
+      t.trans.resize(sizeTransformations, (Matrix *)0);
+    if ((int)t.localK.size() < sizeBuffer)
+      t.localK.resize(sizeBuffer);
+    if ((int)t.data.size() < sizeBuffer)
+      t.data.resize(sizeBuffer);
+    dofs = t.dofs.data();
+    trans = t.trans.data();
+    localK = t.localK.data();
+    data = t.data.data();
+
+    const int n = numTransformedDOF;
+    const bool pooled = (n <= MAX_NUM_DOF);
+    if (modT != 0 && pooled) {
+      if ((int)t.m.size() <= n)
+        t.m.resize(n + 1, (Matrix *)0);
+      if (t.m[n] == 0)
+        t.m[n] = new Matrix(n, n);
+      *modT = t.m[n];
+    }
+    if (modR != 0 && pooled) {
+      if ((int)t.v.size() <= n)
+        t.v.resize(n + 1, (Vector *)0);
+      if (t.v[n] == 0)
+        t.v[n] = new Vector(n);
+      *modR = t.v[n];
+    }
+}
+
+
+// Ladruno WP-192: a TransformationFE is threadable when its element is (base
+// check) and none of its nodes has a TIME-VARYING MP: TransformationDOF_Group::
+// getT() rebuilds such a T into the group's own Trans on every call -- a write
+// shared by every element on that node. Time-invariant T (rigidDiaphragm,
+// equalDOF, rigidLink, SP-only) is read-only and fine.
+bool
+TransformationFE::ladrunoThreadSafeFE(void)
+{
+    for (int i = 0; i < numGroups; i++) {
+      TransformationDOF_Group *g = dynamic_cast<TransformationDOF_Group *>(theDOFs[i]);
+      if (g != 0 && g->ladrunoTimeVaryingT())
+        return false;
+    }
+    return this->FE_Element::ladrunoThreadSafeFE();
+}
+
 const Matrix &
 TransformationFE::getTangent(Integrator *theNewIntegrator)
 {
     const Matrix &theTangent = this->FE_Element::getTangent(theNewIntegrator);
 
+    // Ladruno WP-192: inside a threaded loop every class-wide buffer below
+    // (dofData, theTransformations, localKbuffer, dataBuffer, the modTangent
+    // pool) is replaced by the calling thread's own copy; outside one, the
+    // originals are used and this is the vanilla code path.
+    int *dofDataX = dofData;
+    Matrix **theTransformationsX = theTransformations;
+    double *localKbufferX = localKbuffer;
+    double *dataBufferX = dataBuffer;
+    Matrix *modTangentX = modTangent;
+    if (ladruno_inThreadedRegion())
+      ladrunoScratch(dofDataX, theTransformationsX, localKbufferX, dataBufferX,
+                     &modTangentX, 0);
+
     static ID numDOFs(dofData, 1);
-    numDOFs.setData(dofData, numGroups);
+    ID ladrunoNumDOFs(dofDataX, numGroups);              // Ladruno WP-192
+    ID &numDOFsX = ladruno_inThreadedRegion() ? ladrunoNumDOFs : numDOFs;
+    if (!ladruno_inThreadedRegion())
+      numDOFs.setData(dofData, numGroups);
     
     // DO THE SP STUFF TO THE TANGENT 
     
@@ -306,11 +403,11 @@ TransformationFE::getTangent(Integrator *theNewIntegrator)
     int numNode = numGroups;
     for (int a = 0; a<numNode; a++) {
       Matrix *theT = theDOFs[a]->getT();
-      theTransformations[a] = theT;
+      theTransformationsX[a] = theT;
       if (theT != 0)
-	numDOFs[a] = theT->noRows(); // T^ 
+	numDOFsX[a] = theT->noRows(); // T^ 
       else
-	numDOFs[a] = theDOFs[a]->getNumDOF();
+	numDOFsX[a] = theDOFs[a]->getNumDOF();
     }
 
     // perform Tt K T -- as T is block diagonal do T(i)^T K(i,j) T(j)
@@ -320,21 +417,23 @@ TransformationFE::getTangent(Integrator *theNewIntegrator)
     int noRowsTransformed = 0;
     int noRowsOriginal = 0;
 
-    static Matrix localK;
+    static Matrix localKS;                            // Ladruno WP-192: serial path
+    Matrix localKT;                                   // Ladruno WP-192: threaded path
+    Matrix &localK = ladruno_inThreadedRegion() ? localKT : localKS;
 
     // foreach block row, for each block col do
     for (int i=0; i<numNode; i++) {
 
 	int startCol = 0;
-	int numDOFi = numDOFs[i];	
+	int numDOFi = numDOFsX[i];	
 	int noColsOriginal = 0;
 
 	for (int j=0; j<numNode; j++) {
 
-	    const Matrix *Ti = theTransformations[i];
-	    const Matrix *Tj = theTransformations[j];
-	    int numDOFj = numDOFs[j];	
-	    localK.setData(localKbuffer, numDOFi, numDOFj);
+	    const Matrix *Ti = theTransformationsX[i];
+	    const Matrix *Tj = theTransformationsX[j];
+	    int numDOFj = numDOFsX[j];	
+	    localK.setData(localKbufferX, numDOFi, numDOFj);
 
 	    // copy K(i,j) into localK matrix
 	    // CHECK SIZE OF BUFFER	    
@@ -345,38 +444,40 @@ TransformationFE::getTangent(Integrator *theNewIntegrator)
 	    // now perform the matrix computation T(i)^T localK T(j)
 	    // note: if T == 0 then the Identity is assumed
 	    int noColsTransformed = 0;
-	    static Matrix localTtKT;
+	    static Matrix localTtKTS;                  // Ladruno WP-192: serial path
+	    Matrix localTtKTT;                         // Ladruno WP-192: threaded path
+	    Matrix &localTtKT = ladruno_inThreadedRegion() ? localTtKTT : localTtKTS;
 	    
 	    if (Ti != 0 && Tj != 0) {
 		noRowsTransformed = Ti->noCols();
 		noColsTransformed = Tj->noCols();
 		// CHECK SIZE OF BUFFER
-		localTtKT.setData(dataBuffer, noRowsTransformed, noColsTransformed);
+		localTtKT.setData(dataBufferX, noRowsTransformed, noColsTransformed);
 		//localTtKT = (*Ti) ^ localK * (*Tj);
 		localTtKT.addMatrixTripleProduct(0.0, *Ti, localK, *Tj, 1.0);
 	    } else if (Ti == 0 && Tj != 0) {
 		noRowsTransformed = numDOFi;
 		noColsTransformed = Tj->noCols();
 		// CHECK SIZE OF BUFFER
-		localTtKT.setData(dataBuffer, noRowsTransformed, noColsTransformed);
+		localTtKT.setData(dataBufferX, noRowsTransformed, noColsTransformed);
 		// localTtKT = localK * (*Tj);	       
 		localTtKT.addMatrixProduct(0.0, localK, *Tj, 1.0);
 	    } else if (Ti != 0 && Tj == 0) {
 		noRowsTransformed = Ti->noCols();
 		noColsTransformed = numDOFj;
-		localTtKT.setData(dataBuffer, noRowsTransformed, noColsTransformed);
+		localTtKT.setData(dataBufferX, noRowsTransformed, noColsTransformed);
 		//localTtKT = (*Ti) ^ localK;
 		localTtKT.addMatrixTransposeProduct(0.0, *Ti, localK, 1.0);
 	    } else {
 		noRowsTransformed = numDOFi;
 		noColsTransformed = numDOFj;
-		localTtKT.setData(dataBuffer, noRowsTransformed, noColsTransformed);
+		localTtKT.setData(dataBufferX, noRowsTransformed, noColsTransformed);
 		localTtKT = localK;
 	    }
 	    // now copy into modTangent the T(i)^t K(i,j) T(j) product
 	    for (int c=0; c<noRowsTransformed; c++) 
 		for (int d=0; d<noColsTransformed; d++) 
-		    (*modTangent)(startRow+c, startCol+d) = localTtKT(c,d);
+		    (*modTangentX)(startRow+c, startCol+d) = localTtKT(c,d);
 	    
 	    startCol += noColsTransformed;
 	    noColsOriginal += numDOFj;
@@ -386,7 +487,7 @@ TransformationFE::getTangent(Integrator *theNewIntegrator)
 	startRow += noRowsTransformed;
     }
 
-    return *modTangent;
+    return *modTangentX;   // Ladruno WP-192
 }
 
 
@@ -395,6 +496,13 @@ TransformationFE::getResidual(Integrator *theNewIntegrator)
 
 {
     const Vector &theResidual = this->FE_Element::getResidual(theNewIntegrator);
+
+    // Ladruno WP-192: the modResidual pool is class-wide; per-thread in a loop.
+    Vector *modResidualX = modResidual;
+    if (ladruno_inThreadedRegion()) {
+      int *d0; Matrix **t0; double *k0; double *b0;
+      ladrunoScratch(d0, t0, k0, b0, 0, &modResidualX);
+    }
     // DO THE SP STUFF TO THE TANGENT
     
     // perform Tt R  -- as T is block diagonal do T(i)^T R(i)
@@ -420,7 +528,7 @@ TransformationFE::getResidual(Integrator *theNewIntegrator)
 	    orig(k-startRowOriginal)= theResidual(k);
 	  mod = (*Ti)^orig;
 	  for (int k=startRowTransformed; k<startRowTransformed+noRows; k++)
-	    (*modResidual)(k) = mod (k-startRowTransformed);
+	    (*modResidualX)(k) = mod (k-startRowTransformed);
 
 	  */
 
@@ -428,20 +536,20 @@ TransformationFE::getResidual(Integrator *theNewIntegrator)
 	    double sum = 0.0;
 	    for (int k=0; k<noCols; k++)
 	      sum += (*Ti)(k,j) * theResidual(startRowOriginal + k);
-	    (*modResidual)(startRowTransformed +j) = sum;
+	    (*modResidualX)(startRowTransformed +j) = sum;
 	  }
 
 	} else {
 	  noCols = theDOFs[i]->getNumDOF();
 	  noRows = noCols;
 	  for (int j=0; j<noRows; j++)
-	    (*modResidual)(startRowTransformed +j) = theResidual(startRowOriginal + j);
+	    (*modResidualX)(startRowTransformed +j) = theResidual(startRowOriginal + j);
 	}
 	startRowTransformed += noRows;
 	startRowOriginal += noCols;
     }
 
-    return *modResidual;
+    return *modResidualX;   // Ladruno WP-192
 }
 
 

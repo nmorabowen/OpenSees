@@ -70,6 +70,9 @@ class HystereticMaterial : public UniaxialMaterial
   int revertToStart(void);
   
   UniaxialMaterial *getCopy(void);
+  // Ladruno WP-192: threaded element loops opt-in (no shared scratch on the state path).
+  bool ladrunoThreadSafeUpdate(void) const { return true; }
+  bool ladrunoThreadSafeForm(void) const { return true; }
   
   int sendSelf(int commitTag, Channel &theChannel);  
   int recvSelf(int commitTag, Channel &theChannel, 

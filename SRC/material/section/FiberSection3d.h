@@ -68,6 +68,10 @@ class FiberSection3d : public SectionForceDeformation
     int   revertToStart(void);
  
     SectionForceDeformation *getCopy(void);
+    // Ladruno WP-192: threaded element loops opt-in (fibers, torsion; the
+    // hot-path location buffers are thread_local).
+    bool ladrunoThreadSafeUpdate(void) const;
+    bool ladrunoThreadSafeForm(void) const;
     const ID &getType (void);
     int getOrder (void) const;
     

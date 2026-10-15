@@ -80,6 +80,7 @@
 #include <LoadPattern.h>              // Ladruno (ADR-73 P4): overlay discovery
 #include <LoadPatternIter.h>
 #include <LadrunoPorousOverlay.h>
+#include <profiler/ProfilerMacros.h>   // Ladruno WP-196: commit-phase split
 #include "section/SectionForceDeformation.h"
 
 #include <algorithm>
@@ -750,10 +751,12 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 		m_data->kind_pending = false;
 	}
 
+	{ OPS_PROFILE_SCOPE("lr.nodes");   // Ladruno WP-196
 	if (recordResultsOnNodes() != 0)
-		return -1;
+		return -1; }
+	{ OPS_PROFILE_SCOPE("lr.elements");   // Ladruno WP-196
 	if (recordResultsOnElements() != 0)
-		return -1;
+		return -1; }
 	if (recordResultsOnDomain() != 0)
 		return -1;
 	if (recordResultsOnOverlays() != 0)
@@ -786,8 +789,10 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 		if (due || env_bytes <= ((size_t)8 << 20))
 			finalizeAllSinks();
 	}
-	if (due)
+	if (due) {
+		OPS_PROFILE_SCOPE("lr.flush");   // Ladruno WP-196
 		flushFile();
+	}
 
 	return 0;
 }

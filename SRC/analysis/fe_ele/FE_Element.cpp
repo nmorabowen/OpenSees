@@ -31,6 +31,8 @@
 // of the FE_Element class interface.
 
 #include <FE_Element.h>
+#include <LadrunoThreads.h>   // Ladruno WP-192
+#include <vector>
 #include <stdlib.h>
 
 #include <Element.h>
@@ -52,13 +54,74 @@ Matrix **FE_Element::theMatrices; // pointers to class wide matrices
 Vector **FE_Element::theVectors;  // pointers to class widde vectors
 int FE_Element::numFEs(0);           // number of objects
 
+// Ladruno WP-192: the per-thread twin of the class-wide tangent / residual pool.
+// theMatrices[numDOF] / theVectors[numDOF] are ONE Matrix and ONE Vector per dof
+// count, shared by every pooled FE_Element (ADR-75b 5.4-H1: a 100% collision
+// for two same-size elements on two threads). Inside a WP-192 threaded loop each
+// thread builds into its own copy; outside one, the shared objects are used, so
+// the serial path is byte-for-byte the old one.
+namespace {
+  struct LadrunoFEPool {
+    std::vector<Matrix *> m;
+    std::vector<Vector *> v;
+    ~LadrunoFEPool() {
+      for (size_t i = 0; i < m.size(); i++) delete m[i];
+      for (size_t i = 0; i < v.size(); i++) delete v[i];
+    }
+  };
+  thread_local LadrunoFEPool ladrunoFEPool;
+}
+
+Matrix *
+FE_Element::ladrunoTan(void) const
+{
+  if (!ladrunoPooled || theTangent == 0 || !ladruno_inThreadedRegion())
+    return theTangent;
+  const int n = theTangent->noRows();
+  std::vector<Matrix *> &m = ladrunoFEPool.m;
+  if ((int)m.size() <= n)
+    m.resize(n + 1, (Matrix *)0);
+  if (m[n] == 0)
+    m[n] = new Matrix(n, n);
+  return m[n];
+}
+
+Vector *
+FE_Element::ladrunoRes(void) const
+{
+  if (!ladrunoPooled || theResidual == 0 || !ladruno_inThreadedRegion())
+    return theResidual;
+  const int n = theResidual->Size();
+  std::vector<Vector *> &v = ladrunoFEPool.v;
+  if ((int)v.size() <= n)
+    v.resize(n + 1, (Vector *)0);
+  if (v[n] == 0)
+    v[n] = new Vector(n);
+  return v[n];
+}
+
+// Ladruno WP-192: may the integrators' threaded tangent / residual loops run
+// this FE concurrently with others? Only element-backed FEs whose element
+// opted in (Element::ladrunoThreadSafeForm). Constraint FEs (Penalty*, Lagrange*,
+// contact) carry no Element and answer false here, so they run serially in place.
+bool
+FE_Element::ladrunoThreadSafeFE(void)
+{
+  if (myEle == 0 || myEle->isSubdomain())
+    return false;
+  if (!myEle->ladrunoThreadSafeForm())
+    return false;
+  return myEle->ladrunoPrepareThreadedForm();
+}
+
+
 //  FE_Element(Element *, Integrator *theIntegrator);
 //	construictor that take the corresponding model element.
 FE_Element::FE_Element(int tag, Element *ele)
   :TaggedObject(tag),
    myDOF_Groups((ele->getExternalNodes()).Size()), myID(ele->getNumDOF()), 
    numDOF(ele->getNumDOF()), theModel(0), myEle(ele), 
-   theResidual(0), theTangent(0), theIntegrator(0)
+   theResidual(0), theTangent(0), theIntegrator(0), ladrunoPooled(false)
 {
   if (numDOF <= 0) {
     opserr << "FE_Element::FE_Element(Element *) ";
@@ -129,6 +192,7 @@ FE_Element::FE_Element(int tag, Element *ele)
 		theMatrices[numDOF] = new Matrix(numDOF,numDOF);
 		theResidual = theVectors[numDOF];
 		theTangent = theMatrices[numDOF];
+		ladrunoPooled = true;   // Ladruno WP-192
 		if (theResidual == 0 || theResidual->Size() != numDOF ||	
 		    theTangent == 0 || theTangent->noCols() != numDOF)	{  
 		    opserr << "FE_Element::FE_Element(Element *) ";
@@ -139,6 +203,7 @@ FE_Element::FE_Element(int tag, Element *ele)
 	    } else {
 		theResidual = theVectors[numDOF];
 		theTangent = theMatrices[numDOF];
+		ladrunoPooled = true;   // Ladruno WP-192
 	    }
 	} else {
 	    // create matrices and vectors for each object instance
@@ -171,7 +236,7 @@ FE_Element::FE_Element(int tag, Element *ele)
 FE_Element::FE_Element(int tag, int numDOF_Group, int ndof)
   :TaggedObject(tag),
    myDOF_Groups(numDOF_Group), myID(ndof), numDOF(ndof), theModel(0),
-   myEle(0), theResidual(0), theTangent(0), theIntegrator(0)
+   myEle(0), theResidual(0), theTangent(0), theIntegrator(0), ladrunoPooled(false)
 {
     // this is for a subtype, the subtype must set the myDOF_Groups ID array
 
@@ -315,7 +380,7 @@ FE_Element::getTangent(Integrator *theNewIntegrator)
       if (theNewIntegrator != 0)
 	theNewIntegrator->formEleTangent(this);	    	    
 
-      return *theTangent;
+      return *ladrunoTan();
     } else {
       Subdomain *theSub = (Subdomain *)myEle;
       theSub->computeTang();	    
@@ -329,7 +394,7 @@ FE_Element::getResidual(Integrator *theNewIntegrator)
     theIntegrator = theNewIntegrator;
 
     if (theIntegrator == 0)
-      return *theResidual;
+      return *ladrunoRes();
 
     if (myEle == 0) {
 	opserr << "FATAL FE_Element::getTangent() - no Element *given ";
@@ -340,7 +405,7 @@ FE_Element::getResidual(Integrator *theNewIntegrator)
 
     if (myEle->isSubdomain() == false) {
       theNewIntegrator->formEleResidual(this);
-      return *theResidual;
+      return *ladrunoRes();
     } else {
       Subdomain *theSub = (Subdomain *)myEle;
       theSub->computeResidual();	    
@@ -355,7 +420,7 @@ FE_Element::zeroTangent(void)
 {
     if (myEle != 0) {
 	if (myEle->isSubdomain() == false)
-	    theTangent->Zero();
+	    ladrunoTan()->Zero();
 	else {
 	    opserr << "WARNING FE_Element::zeroTangent() - ";
 	    opserr << "- this should not be called on a Subdomain!\n";
@@ -374,7 +439,7 @@ FE_Element::addKtToTang(double fact)
 	else if (myEle->isSubdomain() == false)	    
 	{
 	    const Matrix& Kt = myEle->getTangentStiff();
-	    theTangent->addMatrix(1.0, Kt,fact);
+	    ladrunoTan()->addMatrix(1.0, Kt,fact);
 	}
 	else {
 	    opserr << "WARNING FE_Element::addKToTang() - ";
@@ -392,7 +457,7 @@ FE_Element::addCtoTang(double fact)
 	if (fact == 0.0) 
 	  return;
 	else if (myEle->isSubdomain() == false)	    	    
-	  theTangent->addMatrix(1.0, myEle->getDamp(),fact);
+	  ladrunoTan()->addMatrix(1.0, myEle->getDamp(),fact);
 	else {
 	  opserr << "WARNING FE_Element::addCToTang() - ";
 	  opserr << "- this should not be called on a Subdomain!\n";
@@ -409,7 +474,7 @@ FE_Element::addMtoTang(double fact)
 	if (fact == 0.0) 
 	  return;
 	else if (myEle->isSubdomain() == false)	    	    
-	  theTangent->addMatrix(1.0, myEle->getMass(),fact);
+	  ladrunoTan()->addMatrix(1.0, myEle->getMass(),fact);
 	else {
 	  opserr << "WARNING FE_Element::addMToTang() - ";
 	  opserr << "- this should not be called on a Subdomain!\n";
@@ -426,7 +491,7 @@ FE_Element::addKiToTang(double fact)
     if (fact == 0.0) 
       return;
     else if (myEle->isSubdomain() == false)	    	    
-      theTangent->addMatrix(1.0, myEle->getInitialStiff(), fact);
+      ladrunoTan()->addMatrix(1.0, myEle->getInitialStiff(), fact);
     else {
 	opserr << "WARNING FE_Element::addKiToTang() - ";
 	opserr << "- this should not be called on a Subdomain!\n";
@@ -442,7 +507,7 @@ FE_Element::addKgToTang(double fact)
     if (fact == 0.0) 
       return;
     else if (myEle->isSubdomain() == false)	    	    
-      theTangent->addMatrix(1.0, myEle->getGeometricTangentStiff(), fact);
+      ladrunoTan()->addMatrix(1.0, myEle->getGeometricTangentStiff(), fact);
     else {
 	opserr << "WARNING FE_Element::addKgToTang() - ";
 	opserr << "- this should not be called on a Subdomain!\n";
@@ -460,7 +525,7 @@ FE_Element::addKpToTang(double fact, int numP)
     else if (myEle->isSubdomain() == false) {
       const Matrix *thePrevMat = myEle->getPreviousK(numP);
       if (thePrevMat != 0)
-	theTangent->addMatrix(1.0, *thePrevMat, fact);
+	ladrunoTan()->addMatrix(1.0, *thePrevMat, fact);
     } else {
       opserr << "WARNING FE_Element::addKpToTang() - ";
       opserr << "- this should not be called on a Subdomain!\n";
@@ -485,7 +550,7 @@ FE_Element::zeroResidual(void)
 {
     if (myEle != 0) {
 	if (myEle->isSubdomain() == false)
-	    theResidual->Zero();
+	    ladrunoRes()->Zero();
 	else {
 	    opserr << "WARNING FE_Element::zeroResidual() - ";
 	    opserr << "- this should not be called on a Subdomain!\n";
@@ -506,7 +571,7 @@ FE_Element::addRtoResidual(double fact)
       return;
     else if (myEle->isSubdomain() == false) {
       const Vector &eleResisting = myEle->getResistingForce();
-      theResidual->addVector(1.0, eleResisting, -fact);
+      ladrunoRes()->addVector(1.0, eleResisting, -fact);
     }
     else {
       opserr << "WARNING FE_Element::addRtoResidual() - ";
@@ -529,7 +594,7 @@ FE_Element::addRIncInertiaToResidual(double fact)
 	    return;
 	else if (myEle->isSubdomain() == false) {
 	  const Vector &eleResisting = myEle->getResistingForceIncInertia();
-	  theResidual->addVector(1.0, eleResisting, -fact);
+	  ladrunoRes()->addVector(1.0, eleResisting, -fact);
 	}
 	else {
 	    opserr << "WARNING FE_Element::addRtoResidual() - ";
@@ -558,11 +623,11 @@ FE_Element::getTangForce(const Vector &disp, double fact)
     if (myEle != 0) {    
 
 	// zero out the force vector
-	theResidual->Zero();
+	ladrunoRes()->Zero();
 
 	// check for a quick return
 	if (fact == 0.0 || !myEle->isActive()) 
-	    return *theResidual;
+	    return *ladrunoRes();
 
 	// get the components we need out of the vector
 	// and place in a temporary vector
@@ -578,19 +643,19 @@ FE_Element::getTangForce(const Vector &disp, double fact)
 	if (myEle->isSubdomain() == false) {
 	    // form the tangent again and then add the force
 	    theIntegrator->formEleTangent(this);
-	    if (theResidual->addMatrixVector(1.0, *theTangent,tmp,fact) < 0) {
+	    if (ladrunoRes()->addMatrixVector(1.0, *ladrunoTan(),tmp,fact) < 0) {
 		opserr << "WARNING FE_Element::getTangForce() - ";
 		opserr << "- addMatrixVector returned error\n";		 
 	    }				
 	}
 	else {
 	    Subdomain *theSub = (Subdomain *)myEle;
-	    if (theResidual->addMatrixVector(1.0, theSub->getTang(),tmp,fact) < 0) {
+	    if (ladrunoRes()->addMatrixVector(1.0, theSub->getTang(),tmp,fact) < 0) {
 		opserr << "WARNING FE_Element::getTangForce() - ";
 		opserr << "- addMatrixVector returned error\n";		 
 	    }						
 	}
-	return *theResidual;
+	return *ladrunoRes();
     }
     else {
 	opserr << "WARNING FE_Element::addTangForce() - no Element *given ";
@@ -607,11 +672,11 @@ FE_Element::getK_Force(const Vector &disp, double fact)
     if (myEle != 0) {    
 
 	// zero out the force vector
-	theResidual->Zero();
+	ladrunoRes()->Zero();
 
 	// check for a quick return
 	if (fact == 0.0 || !myEle->isActive()) 
-	    return *theResidual;
+	    return *ladrunoRes();
 
 	// get the components we need out of the vector
 	// and place in a temporary vector
@@ -624,12 +689,12 @@ FE_Element::getK_Force(const Vector &disp, double fact)
 	    tmp(i) = 0.0;
 	}
 
-	if (theResidual->addMatrixVector(1.0, myEle->getTangentStiff(), tmp, fact) < 0){
+	if (ladrunoRes()->addMatrixVector(1.0, myEle->getTangentStiff(), tmp, fact) < 0){
 	  opserr << "WARNING FE_Element::getKForce() - ";
 	  opserr << "- addMatrixVector returned error\n";		 
 	}		
 
-	return *theResidual;
+	return *ladrunoRes();
     }
     else {
 	opserr << "WARNING FE_Element::getKForce() - no Element *given ";
@@ -645,11 +710,11 @@ FE_Element::getKi_Force(const Vector &disp, double fact)
     if (myEle != 0) {    
 
 	// zero out the force vector
-	theResidual->Zero();
+	ladrunoRes()->Zero();
 
 	// check for a quick return
 	if (fact == 0.0 || !myEle->isActive()) 
-	    return *theResidual;
+	    return *ladrunoRes();
 
 	// get the components we need out of the vector
 	// and place in a temporary vector
@@ -662,12 +727,12 @@ FE_Element::getKi_Force(const Vector &disp, double fact)
 	    tmp(i) = 0.0;
 	}
 
-	if (theResidual->addMatrixVector(1.0, myEle->getInitialStiff(), tmp, fact) < 0){
+	if (ladrunoRes()->addMatrixVector(1.0, myEle->getInitialStiff(), tmp, fact) < 0){
 	  opserr << "WARNING FE_Element::getKForce() - ";
 	  opserr << "- addMatrixVector returned error\n";		 
 	}		
 
-	return *theResidual;
+	return *ladrunoRes();
     }
     else {
 	opserr << "WARNING FE_Element::getKForce() - no Element *given ";
@@ -683,11 +748,11 @@ FE_Element::getM_Force(const Vector &disp, double fact)
     if (myEle != 0) {    
 
 	// zero out the force vector
-	theResidual->Zero();
+	ladrunoRes()->Zero();
 
 	// check for a quick return
 	if (fact == 0.0 || !myEle->isActive()) 
-	    return *theResidual;
+	    return *ladrunoRes();
 
 	// get the components we need out of the vector
 	// and place in a temporary vector
@@ -700,13 +765,13 @@ FE_Element::getM_Force(const Vector &disp, double fact)
 	    tmp(i) = 0.0;
 	}
 
-	if (theResidual->addMatrixVector(1.0, myEle->getMass(), tmp, fact) < 0){
+	if (ladrunoRes()->addMatrixVector(1.0, myEle->getMass(), tmp, fact) < 0){
 	  opserr << "WARNING FE_Element::getMForce() - ";
 	  opserr << "- addMatrixVector returned error\n";		 
 	}		
 
 
-	return *theResidual;
+	return *ladrunoRes();
     }
     else {
 	opserr << "WARNING FE_Element::getMForce() - no Element *given ";
@@ -721,11 +786,11 @@ FE_Element::getC_Force(const Vector &disp, double fact)
     if (myEle != 0) {    
 
 	// zero out the force vector
-	theResidual->Zero();
+	ladrunoRes()->Zero();
 
 	// check for a quick return
 	if (fact == 0.0 || !myEle->isActive()) 
-	    return *theResidual;
+	    return *ladrunoRes();
 
 	// get the components we need out of the vector
 	// and place in a temporary vector
@@ -738,12 +803,12 @@ FE_Element::getC_Force(const Vector &disp, double fact)
 	    tmp(i) = 0.0;
 	}
 
-	if (theResidual->addMatrixVector(1.0, myEle->getDamp(), tmp, fact) < 0){
+	if (ladrunoRes()->addMatrixVector(1.0, myEle->getDamp(), tmp, fact) < 0){
 	  opserr << "WARNING FE_Element::getDForce() - ";
 	  opserr << "- addMatrixVector returned error\n";		 
 	}		
 
-	return *theResidual;
+	return *ladrunoRes();
     }
     else {
 	opserr << "WARNING FE_Element::getDForce() - no Element *given ";
@@ -765,18 +830,18 @@ FE_Element::getLastResponse(void)
 {
     if (myEle != 0) {
       if (theIntegrator != 0) {
-	if (theIntegrator->getLastResponse(*theResidual,myID) < 0) {
+	if (theIntegrator->getLastResponse(*ladrunoRes(),myID) < 0) {
 	  opserr << "WARNING FE_Element::getLastResponse(void)";
 	  opserr << " - the Integrator had problems with getLastResponse()\n";
 	}
       }
       else {
-	theResidual->Zero();
+	ladrunoRes()->Zero();
 	opserr << "WARNING  FE_Element::getLastResponse()";
 	opserr << " No Integrator yet passed\n";
       }
     
-      Vector &result = *theResidual;
+      Vector &result = *ladrunoRes();
       return result;
     }
     else {
@@ -806,7 +871,7 @@ FE_Element::addM_Force(const Vector &accel, double fact)
 		    tmp(i) = 0.0;		
 	    }	 
 		
-	    if (theResidual->addMatrixVector(1.0, myEle->getMass(), tmp, fact) < 0){
+	    if (ladrunoRes()->addMatrixVector(1.0, myEle->getMass(), tmp, fact) < 0){
 		opserr << "WARNING FE_Element::addM_Force() - ";
 		opserr << "- addMatrixVector returned error\n";		 
 	    }		
@@ -842,7 +907,7 @@ FE_Element::addD_Force(const Vector &accel, double fact)
 		    tmp(i) = 0.0;		
 	    }	  
 		
-	    if (theResidual->addMatrixVector(1.0, myEle->getDamp(), tmp, fact) < 0){
+	    if (ladrunoRes()->addMatrixVector(1.0, myEle->getDamp(), tmp, fact) < 0){
 		opserr << "WARNING FE_Element::addD_Force() - ";
 		opserr << "- addMatrixVector returned error\n";		 
 	    }		
@@ -878,7 +943,7 @@ FE_Element::addK_Force(const Vector &disp, double fact)
 		    tmp(i) = 0.0;		
 	    }	  
 		
-	    if (theResidual->addMatrixVector(1.0, myEle->getTangentStiff(), tmp, fact) < 0){
+	    if (ladrunoRes()->addMatrixVector(1.0, myEle->getTangentStiff(), tmp, fact) < 0){
 		opserr << "WARNING FE_Element::addK_Force() - ";
 		opserr << "- addMatrixVector returned error\n";		 
 	    }		
@@ -914,7 +979,7 @@ FE_Element::addKg_Force(const Vector &disp, double fact)
 		    tmp(i) = 0.0;		
 	    }	  
 		
-	    if (theResidual->addMatrixVector(1.0, myEle->getGeometricTangentStiff(), tmp, fact) < 0){
+	    if (ladrunoRes()->addMatrixVector(1.0, myEle->getGeometricTangentStiff(), tmp, fact) < 0){
 		opserr << "WARNING FE_Element::addKg_Force() - ";
 		opserr << "- addMatrixVector returned error\n";		 
 	    }		
@@ -940,7 +1005,7 @@ FE_Element::addLocalM_Force(const Vector &accel, double fact)
 	if (fact == 0.0 || !myEle->isActive()) 
 	    return;
 	if (myEle->isSubdomain() == false) {
-	    if (theResidual->addMatrixVector(1.0, myEle->getMass(),
+	    if (ladrunoRes()->addMatrixVector(1.0, myEle->getMass(),
 					     accel, fact) < 0){
 
 	      opserr << "WARNING FE_Element::addLocalM_Force() - ";
@@ -967,7 +1032,7 @@ FE_Element::addLocalD_Force(const Vector &accel, double fact)
 	if (fact == 0.0 || !myEle->isActive()) 
 	    return;
 	if (myEle->isSubdomain() == false) {
-	    if (theResidual->addMatrixVector(1.0, myEle->getDamp(),
+	    if (ladrunoRes()->addMatrixVector(1.0, myEle->getDamp(),
 					     accel, fact) < 0){
 
 	      opserr << "WARNING FE_Element::addLocalD_Force() - ";
@@ -997,7 +1062,7 @@ FE_Element::getElement(void)
 void  
 FE_Element::addResistingForceSensitivity(int gradNumber, double fact)
 {
-  theResidual->addVector(1.0, myEle->getResistingForceSensitivity(gradNumber), -fact);
+  ladrunoRes()->addVector(1.0, myEle->getResistingForceSensitivity(gradNumber), -fact);
 }
 
 void  
@@ -1015,7 +1080,7 @@ FE_Element::addM_ForceSensitivity(int gradNumber, const Vector &vect, double fac
       tmp(i) = 0.0;
     }
   }
-  if (theResidual->addMatrixVector(1.0, myEle->getMassSensitivity(gradNumber),tmp,fact) < 0) {
+  if (ladrunoRes()->addMatrixVector(1.0, myEle->getMassSensitivity(gradNumber),tmp,fact) < 0) {
     opserr << "WARNING FE_Element::addM_ForceSensitivity() - ";
     opserr << "- addMatrixVector returned error\n";		 
   }
@@ -1040,7 +1105,7 @@ FE_Element::addD_ForceSensitivity(int gradNumber, const Vector &vect, double fac
 	else
 	  tmp(i) = 0.0;		
       }	
-      if (theResidual->addMatrixVector(1.0, myEle->getDampSensitivity(gradNumber), tmp, fact) < 0){
+      if (ladrunoRes()->addMatrixVector(1.0, myEle->getDampSensitivity(gradNumber), tmp, fact) < 0){
 	opserr << "WARNING FE_Element::addD_ForceSensitivity() - ";
 	opserr << "- addMatrixVector returned error\n";		 
       }		
@@ -1065,7 +1130,7 @@ FE_Element::addLocalD_ForceSensitivity(int gradNumber, const Vector &accel, doub
 	if (fact == 0.0) 
 	    return;
 	if (myEle->isSubdomain() == false) {
-	    if (theResidual->addMatrixVector(1.0, myEle->getDampSensitivity(gradNumber),
+	    if (ladrunoRes()->addMatrixVector(1.0, myEle->getDampSensitivity(gradNumber),
 					     accel, fact) < 0){
 
 	      opserr << "WARNING FE_Element::addLocalD_ForceSensitivity() - ";
@@ -1092,7 +1157,7 @@ FE_Element::addLocalM_ForceSensitivity(int gradNumber, const Vector &accel, doub
 	if (fact == 0.0) 
 	    return;
 	if (myEle->isSubdomain() == false) {
-	    if (theResidual->addMatrixVector(1.0, myEle->getMassSensitivity(gradNumber),
+	    if (ladrunoRes()->addMatrixVector(1.0, myEle->getMassSensitivity(gradNumber),
 					     accel, fact) < 0){
 
 	      opserr << "WARNING FE_Element::addLocalD_ForceSensitivity() - ";

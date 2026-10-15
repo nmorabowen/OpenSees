@@ -1460,3 +1460,10 @@ TransformationDOF_Group::addD_ForceSensitivity(const Vector &Udot, double fact)
 }
 
 // AddingSensitivity:END //////////////////////////////////////////
+
+// Ladruno WP-192 -- see the header.
+bool
+TransformationDOF_Group::ladrunoTimeVaryingT(void) const
+{
+    return theMP != 0 && theMP->isTimeVarying();
+}

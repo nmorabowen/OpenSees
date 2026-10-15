@@ -27,6 +27,9 @@
 // A Simple and robust plastic-damage model for concrete and masonry
 //
 
+#include <LadrunoThreads.h>   // Ladruno WP-192
+#include <mutex>
+#include <vector>
 #include <ASDConcrete1DMaterial.h>
 #include <Channel.h>
 #include <OPS_Globals.h>
@@ -128,11 +131,46 @@ namespace {
 			avg_error += x;
 			++avg_counter;
 		}
+		// Ladruno WP-192: fold in a per-thread partial (see ladrunoFlushImplexError).
+		inline void ladrunoMerge(double maxe, double sum, int count) {
+			if (maxe > max_error) max_error = maxe;
+			avg_error += sum;
+			avg_counter += count;
+		}
 		inline void setAverageError(double x) {
 			avg_error = x;
 			avg_counter = 0;
 		}
 	};
+
+
+	// Ladruno WP-192: per-thread partials of the IMPL-EX error diagnostics.
+	// Inside a threaded commit loop every integration point adds to its
+	// thread's partial without a lock (a mutex here serialised ~500k commits a
+	// step and erased the commit loop's speedup); the partials are folded into
+	// GlobalParameters, under a lock, before anything READS or WRITES it. The
+	// max is order-free; the sum (the avgImplexError diagnostic only) is folded
+	// in thread-registration order and may differ in its last bits.
+	struct LadrunoImplexPartial { double maxe = 0.0; double sum = 0.0; int count = 0; };
+	std::mutex& ladrunoImplexMutex() { static std::mutex m; return m; }
+	std::vector<LadrunoImplexPartial*>& ladrunoImplexPartials() { static std::vector<LadrunoImplexPartial*> v; return v; }
+	LadrunoImplexPartial& ladrunoImplexTL() {
+		thread_local LadrunoImplexPartial* p = nullptr;
+		if (p == nullptr) {
+			p = new LadrunoImplexPartial();
+			std::lock_guard<std::mutex> g(ladrunoImplexMutex());
+			ladrunoImplexPartials().push_back(p);
+		}
+		return *p;
+	}
+	void ladrunoFlushImplexError() {
+		std::lock_guard<std::mutex> g(ladrunoImplexMutex());
+		for (LadrunoImplexPartial* q : ladrunoImplexPartials()) {
+			if (q->count > 0 || q->maxe > 0.0)
+				GlobalParameters::instance().ladrunoMerge(q->maxe, q->sum, q->count);
+			q->maxe = 0.0; q->sum = 0.0; q->count = 0;
+		}
+	}
 
 	double bezier3(double xi,
 		double x0, double x1, double x2,
@@ -1104,8 +1142,19 @@ int ASDConcrete1DMaterial::commitState(void)
 		double dt_implicit = dt_bar;
 		double dc_implicit = dc_bar;
 		implex_error = std::max(std::abs(dt - dt_implicit), std::abs(dc - dc_implicit));
-		GlobalParameters::instance().setMaxError(std::max(implex_error, GlobalParameters::instance().getMaxError()));
-		GlobalParameters::instance().accumulateAverageError(implex_error);
+		// Ladruno WP-192: the process-wide IMPL-EX error diagnostics are a
+		// reduction over every integration point; serialise them when the
+		// commit loop is threaded. (The max is order-free; the average is the
+		// `avgImplexError` diagnostic only and may differ in its last bits.)
+		if (ladruno_inThreadedRegion()) {
+			LadrunoImplexPartial& ladrunoP = ladrunoImplexTL();
+			if (implex_error > ladrunoP.maxe) ladrunoP.maxe = implex_error;
+			ladrunoP.sum += implex_error;
+			++ladrunoP.count;
+		} else {
+				GlobalParameters::instance().setMaxError(std::max(implex_error, GlobalParameters::instance().getMaxError()));
+			GlobalParameters::instance().accumulateAverageError(implex_error);
+		}
 	}
 	// compute energy
 	energy += 0.5 * (stress_commit + stress) * (strain - strain_commit);
@@ -1200,7 +1249,7 @@ int ASDConcrete1DMaterial::sendSelf(int commitTag, Channel &theChannel)
 		hc.serializationDataSize();
 
 	// send INT data
-	static ID idata(9);
+	static thread_local ID idata(9);   // Ladruno WP-192
 	counter = 0;
 	idata(counter++) = getTag();
 	idata(counter++) = static_cast<int>(implex);
@@ -1264,7 +1313,7 @@ int ASDConcrete1DMaterial::recvSelf(int commitTag, Channel& theChannel, FEM_Obje
 	int counter;
 
 	// recv INT data
-	static ID idata(9);
+	static thread_local ID idata(9);   // Ladruno WP-192
 	if (theChannel.recvID(getDbTag(), commitTag, idata) < 0) {
 		opserr << "ASDConcrete1DMaterial::recvSelf() - failed to receive INT data\n";
 		return -1;
@@ -1351,10 +1400,12 @@ int ASDConcrete1DMaterial::setParameter(const char** argv, int argc, Parameter& 
 
 	// 3000 - globals
 	if (strcmp(argv[0], "implexError") == 0 || strcmp(argv[0], "ImplexError") == 0) {
+		ladrunoFlushImplexError();   // Ladruno WP-192
 		param.setValue(GlobalParameters::instance().getMaxError());
 		return param.addObject(3000, this);
 	}
 	if (strcmp(argv[0], "avgImplexError") == 0 || strcmp(argv[0], "AvgImplexError") == 0) {
+		ladrunoFlushImplexError();   // Ladruno WP-192
 		param.setValue(GlobalParameters::instance().getAverageError());
 		return param.addObject(3001, this);
 	}
@@ -1391,9 +1442,11 @@ int ASDConcrete1DMaterial::updateParameter(int parameterID, Information& info)
 		return 0;
 
 	case 3000:
+		ladrunoFlushImplexError();   // Ladruno WP-192
 		GlobalParameters::instance().setMaxError(info.theDouble);
 		return 0;
 	case 3001:
+		ladrunoFlushImplexError();   // Ladruno WP-192
 		GlobalParameters::instance().setAverageError(info.theDouble);
 		return 0;
 
@@ -1429,7 +1482,7 @@ Response* ASDConcrete1DMaterial::setResponse(const char** argv, int argc, OPS_St
 	static std::vector<std::string> lb_time = { "dTime", "dTimeCommit", "dTimeInitial" };
 	static std::vector<std::string> lb_crack_strain = { "CS+", "LchRef" };
 	static std::vector<std::string> lb_crush_strain = { "CS-", "LchRef" };
-	static Vector Cinfo(2);
+	static thread_local Vector Cinfo(2);   // Ladruno WP-192
 
 	// check specific responses
 	if (argc > 0) {
@@ -1650,7 +1703,7 @@ Vector ASDConcrete1DMaterial::getHardeningLawVector(HardeningLawType ltype, Hard
 
 const Vector& ASDConcrete1DMaterial::getStrainMeasure() const
 {
-	static Vector d(2);
+	static thread_local Vector d(2);   // Ladruno WP-192
 	d(0) = xt;
 	d(1) = xc;
 	return d;
@@ -1658,7 +1711,7 @@ const Vector& ASDConcrete1DMaterial::getStrainMeasure() const
 
 const Vector& ASDConcrete1DMaterial::getDamage() const
 {
-	static Vector d(2);
+	static thread_local Vector d(2);   // Ladruno WP-192
 	const Vector& x = getStrainMeasure();
 	d(0) = ht.evaluateAt(x(0)).crackingDamage();
 	d(1) = hc.evaluateAt(x(1)).crackingDamage();
@@ -1667,7 +1720,7 @@ const Vector& ASDConcrete1DMaterial::getDamage() const
 
 const Vector& ASDConcrete1DMaterial::getEquivalentPlasticStrain() const
 {
-	static Vector d(2);
+	static thread_local Vector d(2);   // Ladruno WP-192
 	const Vector& x = getStrainMeasure();
 	d(0) = ht.evaluateAt(x(0)).plasticStrain(E);
 	d(1) = hc.evaluateAt(x(1)).plasticStrain(E);
@@ -1676,7 +1729,7 @@ const Vector& ASDConcrete1DMaterial::getEquivalentPlasticStrain() const
 
 const Vector& ASDConcrete1DMaterial::getCrackWidth() const
 {
-	static Vector d(1);
+	static thread_local Vector d(1);   // Ladruno WP-192
 	d.Zero();
 	if (ht.hasStrainSoftening()) {
 		double e0 = ht.strainAtOnsetOfCrack();
@@ -1688,7 +1741,7 @@ const Vector& ASDConcrete1DMaterial::getCrackWidth() const
 
 const Vector& ASDConcrete1DMaterial::getCrushWidth() const
 {
-	static Vector d(1);
+	static thread_local Vector d(1);   // Ladruno WP-192
 	d.Zero();
 	if (hc.hasStrainSoftening()) {
 		double e0 = hc.strainAtOnsetOfCrack();
@@ -1700,14 +1753,14 @@ const Vector& ASDConcrete1DMaterial::getCrushWidth() const
 
 const Vector& ASDConcrete1DMaterial::getImplexError() const
 {
-	static Vector d(1);
+	static thread_local Vector d(1);   // Ladruno WP-192
 	d(0) = implex_error;
 	return d;
 }
 
 const Vector& ASDConcrete1DMaterial::getTimeIncrements() const
 {
-	static Vector d(3);
+	static thread_local Vector d(3);   // Ladruno WP-192
 	d(0) = dtime_n;
 	d(1) = dtime_n_commit;
 	d(2) = dtime_0;

@@ -268,6 +268,20 @@ private:
     int cachedNumNodes;
     int maxNumDOF;
     Vector velScratch;
+
+    // ---- Ladruno WP-196: the element sweep ----
+    // Every record() snapshots the live element order, forms each element's
+    // terms (ebkernel::elementEnergyTerms; on the WP-192 threads when allowed)
+    // into its own slot, and reduces the slots in that order -- so the sums are
+    // the serial ones bit for bit at any thread count.
+    void sweepElements(void);
+    int  sweepThreads(int nEle);
+    std::vector<Element *> sweepEles;
+    std::vector<ebkernel::ElementEnergyTerms> sweepTerms;
+    std::vector<Element *> safeFor;   // the element list sweepSafe answers for
+    std::vector<char> sweepSafe;      // ladrunoThreadSafeForm && prepared
+    int  sweepNumSafe;
+    int  sweepAnnounced;              // last thread count announced (0 = none)
 };
 
 #endif

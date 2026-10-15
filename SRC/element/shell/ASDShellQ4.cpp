@@ -413,7 +413,7 @@ namespace
 
     public:
         static ASDShellQ4Globals& instance() {
-            static ASDShellQ4Globals _instance;
+            static thread_local ASDShellQ4Globals _instance;   // Ladruno WP-192: per-thread scratch
             return _instance;
         }
     };
@@ -607,7 +607,7 @@ namespace
         // shear ***************************************************************************************************
 
         // MITC modified shape functions
-        static Matrix MITCShapeFunctions(2, 4);
+        static thread_local Matrix MITCShapeFunctions(2, 4);   // Ladruno WP-192
         MITCShapeFunctions.Zero();
         MITCShapeFunctions(1, 0) = 1.0 - xi;
         MITCShapeFunctions(0, 1) = 1.0 - eta;
@@ -617,7 +617,7 @@ namespace
         // strain displacement matrix in natural coordinate system.
         // interpolate the shear strains given in MITC4Params
         // using the modified shape function
-        static Matrix BN(2, 24);
+        static thread_local Matrix BN(2, 24);   // Ladruno WP-192
         BN.addMatrixProduct(0.0, MITCShapeFunctions, mitc.shearStrains, 1.0);
 
         // modify the shear strain intensity in the tying points
@@ -639,7 +639,7 @@ namespace
         
         // transform the strain-displacement matrix from natural
         // to local coordinate system taking into account the element distortion
-        static Matrix TBN(2, 24);
+        static thread_local Matrix TBN(2, 24);   // Ladruno WP-192
         TBN.addMatrixProduct(0.0, mitc.transformation, BN, 1.0);
         for (int i = 0; i < 2; i++)
             for (int j = 0; j < 24; j++)
@@ -1256,7 +1256,7 @@ int  ASDShellQ4::sendSelf(int commitTag, Channel& theChannel)
     // 1 -> EAS flag
     // 1 -> non-linear drilling flag
     // 1 -> local_x flag
-    static ID idData(21);
+    static thread_local ID idData(21);   // Ladruno WP-192
     counter = 0;
     idData(counter++) = getTag();
     for(int i = 0; i < 4; ++i)
@@ -1421,7 +1421,7 @@ int  ASDShellQ4::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& 
     // 1 -> EAS flag
     // 1 -> non-linear drilling flag
     // 1 -> local_x flag
-    static ID idData(21);
+    static thread_local ID idData(21);   // Ladruno WP-192
     res = theChannel.recvID(dataTag, commitTag, idData);
     if (res < 0) {
         opserr << "WARNING ASDShellQ4::recvSelf() - " << this->getTag() << " failed to receive ID\n";
@@ -1764,8 +1764,8 @@ ASDShellQ4::setResponse(const char **argv, int argc, OPS_Stream &output)
 int
 ASDShellQ4::getResponse(int responseID, Information &eleInfo)
 {
-    static Vector stresses(32);
-    static Vector strains(32);
+    static thread_local Vector stresses(32);   // Ladruno WP-192
+    static thread_local Vector strains(32);   // Ladruno WP-192
 
     switch (responseID) {
     case 1: // global forces
@@ -1955,9 +1955,9 @@ int ASDShellQ4::calculateAll(Matrix& LHS, Vector& RHS, int options)
     shapeFunctions(0.0, 0.0, N);
     shapeFunctionsNaturalDerivatives(0.0, 0.0, dN);
     computeBdrilling(reference_cs, 0.0, 0.0, jac, agq, N, dN, Bd0, m_eas);
-    static Vector drill_dstrain(8);
-    static Vector drill_dstress(8);
-    static Vector drill_dstress_el(8);
+    static thread_local Vector drill_dstrain(8);   // Ladruno WP-192
+    static thread_local Vector drill_dstress(8);   // Ladruno WP-192
+    static thread_local Vector drill_dstress_el(8);   // Ladruno WP-192
 
     // Gauss loop
     for (int igauss = 0; igauss < 4; igauss++)
@@ -2132,8 +2132,8 @@ int ASDShellQ4::calculateAll(Matrix& LHS, Vector& RHS, int options)
     // AGQI: static condensation
     if (((options & OPT_RHS) || (options & OPT_LHS)) && m_eas)
     {
-        static Matrix KQQ = Matrix(4, 4);
-        static Matrix KUQ_KQQ_inv = Matrix(24, 4);
+        static thread_local Matrix KQQ = Matrix(4, 4);   // Ladruno WP-192
+        static thread_local Matrix KUQ_KQQ_inv = Matrix(24, 4);   // Ladruno WP-192
         KQQ = m_eas->KQQ_inv;
         int inv_res = KQQ.Invert(m_eas->KQQ_inv);
         KUQ_KQQ_inv.addMatrixProduct(0.0, m_eas->KUQ, m_eas->KQQ_inv, 1.0);
@@ -2176,7 +2176,7 @@ void ASDShellQ4::AGQIinitialize()
 void ASDShellQ4::AGQIupdate(const Vector& UL)
 {
     // Compute incremental displacements
-    static Vector dUL(24);
+    static thread_local Vector dUL(24);   // Ladruno WP-192
     dUL = UL;
     dUL.addVector(1.0, m_eas->U, -1.0);
 
@@ -2184,7 +2184,7 @@ void ASDShellQ4::AGQIupdate(const Vector& UL)
     m_eas->U = UL;
 
     // Update internal DOFs
-    static Vector temp(4);
+    static thread_local Vector temp(4);   // Ladruno WP-192
     temp.addMatrixVector(0.0, m_eas->KQU, dUL, 1.0);
     temp.addVector(1.0, m_eas->Q_residual, -1.0);
     m_eas->Q.addMatrixVector(1.0, m_eas->KQQ_inv, temp, -1.0);
@@ -2261,17 +2261,17 @@ int
 ASDShellQ4::displaySelf(Renderer& theViewer, int displayMode, float fact, const char** modes, int numMode)
 {
     // get the end point display coords
-    static Vector v1(3);
-    static Vector v2(3);
-    static Vector v3(3);
-    static Vector v4(3);
+    static thread_local Vector v1(3);   // Ladruno WP-192
+    static thread_local Vector v2(3);   // Ladruno WP-192
+    static thread_local Vector v3(3);   // Ladruno WP-192
+    static thread_local Vector v4(3);   // Ladruno WP-192
     nodePointers[0]->getDisplayCrds(v1, fact, displayMode);
     nodePointers[1]->getDisplayCrds(v2, fact, displayMode);
     nodePointers[2]->getDisplayCrds(v3, fact, displayMode);
     nodePointers[3]->getDisplayCrds(v4, fact, displayMode);
 
     // place values in coords matrix
-    static Matrix coords(4, 3);
+    static thread_local Matrix coords(4, 3);   // Ladruno WP-192
     for (int i = 0; i < 3; i++) {
         coords(0, i) = v1(i);
         coords(1, i) = v2(i);
@@ -2280,10 +2280,60 @@ ASDShellQ4::displaySelf(Renderer& theViewer, int displayMode, float fact, const 
     }
 
     // set the quantity to be displayed at the nodes;
-    static Vector values(4);
+    static thread_local Vector values(4);   // Ladruno WP-192
     for (int i = 0; i < 4; i++)
         values(i) = 0.0;
 
     // draw the polygon
     return theViewer.drawPolygon(coords, values, this->getTag());
+}
+
+// Ladruno WP-192 -- per-type opt-in for the threaded element loops.
+// Everything ASDShellQ4 itself writes while computing is either its own state
+// or per-thread scratch (ASDShellQ4Globals and every function-scope work
+// matrix of the element, its transformations and ASDEICR are thread_local),
+// so the answer is its sections' answer. A Damping object is not audited.
+bool ASDShellQ4::ladrunoThreadSafeUpdate(void) const
+{
+    for (int i = 0; i < 4; i++) {
+        if (m_sections[i] == nullptr || !m_sections[i]->ladrunoThreadSafeUpdate())
+            return false;
+        if (m_damping[i] != nullptr)
+            return false;
+    }
+    return true;
+}
+
+bool ASDShellQ4::ladrunoThreadSafeForm(void) const
+{
+    if (!ladrunoThreadSafeUpdate())
+        return false;
+    for (int i = 0; i < 4; i++)
+        if (!m_sections[i]->ladrunoThreadSafeForm())
+            return false;
+    return true;
+}
+
+// Ladruno WP-196 -- the energy kernel may skip its WP-184 damping check.
+// (a) getDamp() is the base Element::getDamp(); a Damping object would add its
+//     force inside calculateAll's RHS and scale the section tangent, so it opts
+//     out. (b) getResistingForceIncInertia() above is RHS + Element::
+//     getRayleighDampingForces() + M a, nothing else. (c) calculateAll without
+//     OPT_UPDATE only reads the sections (getStressResultant/getSectionTangent);
+//     the one write, the nonlinear-drilling damage, is a pure function of the
+//     state it reads, so a repeated evaluation is idempotent.
+// NOT with the AGQI enhanced strains (the default; `-noeas` turns them off):
+// every calculateAll() re-forms the condensation state m_eas->{KQU, KUQ,
+// KQQ_inv, Q_residual} and an LHS-only call leaves Q_residual ZERO, while the
+// next update() reads it. So the KIND of the last evaluation before the next
+// step persists into the trajectory, and evaluating fewer times (the check's
+// getResistingForceIncInertia ends on a tangent) would change the answer.
+bool ASDShellQ4::ladrunoEnergyRayleighOnly(void) const
+{
+    if (m_eas != nullptr)
+        return false;
+    for (int i = 0; i < 4; i++)
+        if (m_damping[i] != nullptr)
+            return false;
+    return true;
 }
