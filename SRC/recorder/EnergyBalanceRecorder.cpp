@@ -75,6 +75,10 @@
 #include <string>    // Ladruno ADR-69 P2: per-rank filename suffix
 #include <sstream>   // Ladruno ADR-69 P2
 #include <cstdlib>   // Ladruno ADR-69 P2: std::getenv
+#include <profiler/ProfilerMacros.h>   // Ladruno WP-196: commit-phase split
+#include <profiler/Profiler.h>         // Ladruno WP-196: deep() gate
+#include <LadrunoThreads.h>            // Ladruno WP-196: the WP-192 parallel-for
+#include <OPS_Globals.h>               // Ladruno WP-196: ops_TheActiveElement
 
 void*
 OPS_EnergyBalanceRecorder()
@@ -301,7 +305,8 @@ EnergyBalanceRecorder::EnergyBalanceRecorder()
       regionTags(), numRegions(0),
       region_acc(),
       cacheValid(false), cachedNumElements(-1), cachedNumNodes(-1),
-      maxNumDOF(0), velScratch()
+      maxNumDOF(0), velScratch(),
+      sweepNumSafe(0), sweepAnnounced(0)   // Ladruno WP-196
 {
 
 }
@@ -327,7 +332,8 @@ EnergyBalanceRecorder::EnergyBalanceRecorder(
       regionTags(regions), numRegions(regions.Size()),
       region_acc((size_t)regions.Size()),
       cacheValid(false), cachedNumElements(-1), cachedNumNodes(-1),
-      maxNumDOF(0), velScratch()
+      maxNumDOF(0), velScratch(),
+      sweepNumSafe(0), sweepAnnounced(0)   // Ladruno WP-196
 {
     response.Zero();
 }
@@ -514,16 +520,21 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
     std::vector<double> step_region_unbalanced_rate((size_t)numRegions, 0.0);
 
     {
-        Element *ele;
-        ElementIter &elements = theDomain->getElements();
-        while ((ele = elements()) != 0) {
-            // Ladruno ADR-69 P2.1: an element swapped in at unchanged counts
-            // can exceed the cached max DOF - grow the scratch, never overrun
-            if (ele->getNumDOF() > velScratch.Size())
-                velScratch.resize(ele->getNumDOF());
-            double ke = 0., ie = 0., dw = 0.;
-            ebkernel::addElementEnergy(ele, velScratch, ke, ie, dw,
-                                       v2Layout ? &v2_ms_ke : 0);
+        // Ladruno WP-196: the per-element terms are formed first (threaded when
+        // allowed, see sweepElements) and reduced here in the live element
+        // order, so every sum below sees the same operands in the same order
+        // as the former one-pass loop. ebkernel::elementEnergyTerms is bitwise
+        // addElementEnergy on zeroed locals; t.ms is what it added to *msKE.
+        OPS_PROFILE_SCOPE("eb.elements");
+        this->sweepElements();
+        const bool msActive = v2Layout &&
+            Ladruno::MassScalingEnergyRegistry::instance().active();
+        for (size_t e = 0; e < sweepEles.size(); ++e) {
+            Element *ele = sweepEles[e];
+            const ebkernel::ElementEnergyTerms &t = sweepTerms[e];
+            const double ke = t.ke, ie = t.ie, dw = t.dw;
+            if (msActive)
+                v2_ms_ke += t.ms;
             g_ke += ke; g_internal_rate += ie; g_damping_rate += dw;
             if (v2Layout) { v2_ke_ele += ke; v2_dw_ele += dw; }
 
@@ -542,6 +553,7 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
     }
 
     {
+        OPS_PROFILE_SCOPE("eb.nodes");   // Ladruno WP-196
         Node *node;
         NodeIter &nodes = theDomain->getNodes();
         while ((node = nodes()) != 0) {
@@ -668,11 +680,121 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
 
     firstRecord = false;
 
-    theOutputHandler->write(response);
+    { OPS_PROFILE_SCOPE("eb.write");   // Ladruno WP-196
+    theOutputHandler->write(response); }
 
     time_last = timeStamp;
 
     return 0;
+}
+
+
+// Ladruno WP-196: the element sweep. Snapshot the live element order, form
+// every element's terms into its own slot, and leave the reduction to record().
+// Threaded runs follow the WP-192 shape: maximal runs of thread-safe elements
+// are formed on the threads, every other element alone on this thread in its
+// place, so an element that is not audited sees exactly its serial context.
+void
+EnergyBalanceRecorder::sweepElements(void)
+{
+    sweepEles.clear();
+    {
+        Element *ele;
+        ElementIter &elements = theDomain->getElements();
+        while ((ele = elements()) != 0)
+            sweepEles.push_back(ele);
+    }
+    const int nEle = (int)sweepEles.size();
+    if ((int)sweepTerms.size() != nEle)
+        sweepTerms.resize((size_t)nEle);
+    const bool legacy = ebkernel::legacyEnergyCheck();
+
+    const int nThreads = this->sweepThreads(nEle);
+    if (nThreads <= 1) {
+        for (int i = 0; i < nEle; ++i)
+            ebkernel::elementEnergyTerms(sweepEles[i], legacy, sweepTerms[i]);
+        return;
+    }
+
+    struct Ctx {
+        Element **e;
+        ebkernel::ElementEnergyTerms *t;
+        bool legacy;
+    };
+    struct Body {
+        static int run(int i, void *c) {
+            Ctx *x = (Ctx *)c;
+            ebkernel::elementEnergyTerms(x->e[i], x->legacy, x->t[i]);
+            return 0;
+        }
+    };
+    Element *activeBefore = ops_TheActiveElement;
+    int i = 0;
+    while (i < nEle) {
+        if (!sweepSafe[(size_t)i]) {
+            ebkernel::elementEnergyTerms(sweepEles[i], legacy, sweepTerms[i]);
+            i++;
+            continue;
+        }
+        int j = i;
+        while (j < nEle && sweepSafe[(size_t)j])
+            j++;
+        Ctx ctx = { &sweepEles[(size_t)i], &sweepTerms[(size_t)i], legacy };
+        ladruno_parallelFor(j - i, nThreads, 16, &Body::run, &ctx, 0);
+        i = j;
+    }
+    // the serial sweep does not touch ops_TheActiveElement; neither may this
+    ops_TheActiveElement = activeBefore;
+}
+
+
+// Ladruno WP-196: how many threads the element sweep may use (1 = serial).
+// The WP-192 gates (requested count, OpenMP, the MPI hybrid acknowledgement,
+// the LADRUNO_THREADS_LOOPS mask bit 16, a plain Domain, no deep profiler),
+// plus: no consistent selective-mass-scaling registry (its per-element
+// lookups are not audited), and at least two thread-safe elements.
+int
+EnergyBalanceRecorder::sweepThreads(int nEle)
+{
+    const char *why = 0;
+    const int n = ladruno_loopThreads(&why);
+    if (n <= 1)
+        return 1;
+    if (!ladruno_loopEnabled(LADRUNO_LOOP_ENERGY))
+        return 1;
+    if (theDomain->ladrunoThreadedUpdateAllowed() == false)
+        return 1;
+    if (ops_profiler::theProfiler().deep())
+        return 1;
+    if (Ladruno::MassScalingEnergyRegistry::instance().active())
+        return 1;
+
+    // per-element opt-in, re-derived whenever the element list changed
+    if (safeFor != sweepEles) {
+        safeFor = sweepEles;
+        sweepSafe.assign((size_t)nEle, 0);
+        sweepNumSafe = 0;
+        for (int i = 0; i < nEle; ++i) {
+            Element *e = sweepEles[(size_t)i];
+            if (e->isSubdomain() || e->getNodePtrs() == 0)
+                continue;
+            // ladrunoPrepareThreadedForm allocates the Rayleigh pool slot here,
+            // serially, as the WP-192 form loops do
+            if (e->ladrunoThreadSafeForm() && e->ladrunoPrepareThreadedForm()) {
+                sweepSafe[(size_t)i] = 1;
+                sweepNumSafe++;
+            }
+        }
+    }
+    if (sweepNumSafe < 2)
+        return 1;
+    if (sweepAnnounced != n) {
+        opserr << "EnergyBalanceRecorder: element sweep threaded on " << n
+               << " threads: " << sweepNumSafe << " of " << nEle
+               << " elements formed in parallel, summed in serial order (WP-196)\n";
+        sweepAnnounced = n;
+    }
+    return n;
 }
 
 

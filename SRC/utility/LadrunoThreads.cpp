@@ -294,7 +294,7 @@ ladruno_loopEnabled(int which)
     static int mask = -1;
     if (mask < 0) {
         const char *env = getenv("LADRUNO_THREADS_LOOPS");
-        mask = (env != 0 && env[0] != 0) ? (int)strtol(env, 0, 10) : 15;
+        mask = (env != 0 && env[0] != 0) ? (int)strtol(env, 0, 10) : 31;   // WP-196: + energy sweep
     }
     return (mask & which) != 0;
 }

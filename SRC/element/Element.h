@@ -167,6 +167,23 @@ class Element : public DomainComponent
     // (betaKc != 0 with Kc not yet captured); the caller then runs it serially.
     bool ladrunoPrepareThreadedForm(void);
 
+    // Ladruno WP-196. True when this element's damping is EXACTLY the base
+    // Rayleigh combination, so the energy kernel's WP-184 check (is the damping
+    // force the element adds outside getResistingForce() equal to C v?) is known
+    // to pass and is skipped. The element answers for all three of:
+    //   (a) getDamp() is Element::getDamp() (alphaM M + betaK K + betaK0 K0 +
+    //       betaKc Kc): no Damping object, no rate-dependent material whose
+    //       viscous tangent would appear in C while its force sits in F;
+    //   (b) getResistingForceIncInertia() = getResistingForce()
+    //       + getRayleighDampingForces() + M a (trial vel/accel), so after a
+    //       commit g = F_inc - F - M a equals C v to round-off;
+    //   (c) getMass(), getDamp() and getResistingForce() set no trial state:
+    //       evaluating them again at the same state is idempotent, so the
+    //       kernel may evaluate them fewer times (or not at all when every
+    //       nodal velocity of the element is zero).
+    // Default false: the kernel runs the WP-184 check, as before.
+    virtual bool ladrunoEnergyRayleighOnly(void) const { return false; }
+
     virtual bool isSubdomain(void);
     
     // methods to return the current linearized stiffness,

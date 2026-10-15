@@ -2313,3 +2313,27 @@ bool ASDShellQ4::ladrunoThreadSafeForm(void) const
             return false;
     return true;
 }
+
+// Ladruno WP-196 -- the energy kernel may skip its WP-184 damping check.
+// (a) getDamp() is the base Element::getDamp(); a Damping object would add its
+//     force inside calculateAll's RHS and scale the section tangent, so it opts
+//     out. (b) getResistingForceIncInertia() above is RHS + Element::
+//     getRayleighDampingForces() + M a, nothing else. (c) calculateAll without
+//     OPT_UPDATE only reads the sections (getStressResultant/getSectionTangent);
+//     the one write, the nonlinear-drilling damage, is a pure function of the
+//     state it reads, so a repeated evaluation is idempotent.
+// NOT with the AGQI enhanced strains (the default; `-noeas` turns them off):
+// every calculateAll() re-forms the condensation state m_eas->{KQU, KUQ,
+// KQQ_inv, Q_residual} and an LHS-only call leaves Q_residual ZERO, while the
+// next update() reads it. So the KIND of the last evaluation before the next
+// step persists into the trajectory, and evaluating fewer times (the check's
+// getResistingForceIncInertia ends on a tangent) would change the answer.
+bool ASDShellQ4::ladrunoEnergyRayleighOnly(void) const
+{
+    if (m_eas != nullptr)
+        return false;
+    for (int i = 0; i < 4; i++)
+        if (m_damping[i] != nullptr)
+            return false;
+    return true;
+}
