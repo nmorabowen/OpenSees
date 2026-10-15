@@ -41,10 +41,14 @@ import pytest
 pytestmark = [pytest.mark.zone_a]
 
 REPO = Path(__file__).resolve().parents[1]
-DIST = Path(os.environ.get("LADRUNO_DIST", REPO / "dist"))
 EXE_NAME = "OpenSees.exe" if os.name == "nt" else "OpenSees"
-SER_EXE = DIST / "bin" / EXE_NAME
-needs_serial = pytest.mark.skipif(not SER_EXE.exists(), reason="dist OpenSees not built")
+# The Windows build lands in dist/bin; the Zone-A Linux job builds build/Release/OpenSees
+# (no dist/), with TCL_LIBRARY exported. Use whichever exists, dist first.
+_CANDIDATES = [Path(os.environ["LADRUNO_DIST"]) / "bin"] if os.environ.get("LADRUNO_DIST") else []
+_CANDIDATES += [REPO / "dist" / "bin", REPO / "build" / "Release"]
+BIN = next((d for d in _CANDIDATES if (d / EXE_NAME).exists()), _CANDIDATES[0])
+SER_EXE = BIN / EXE_NAME
+needs_serial = pytest.mark.skipif(not SER_EXE.exists(), reason="OpenSees binary not built")
 
 BAD = re.compile(r"DISCARDED|setSize has not been called|symbolic analysis returns|"
                  r"numeric analysis returns|solving returns")
@@ -108,7 +112,7 @@ puts "DONE"
 """
 
 
-def _run(tmp, case, system="UmfPack", wipe=0, dc=0, dist=DIST):
+def _run(tmp, case, system="UmfPack", wipe=0, dc=0, dist=None):
     tmp = Path(tmp)
     name = f"{case}_{system.split()[0]}_w{wipe}_dc{dc}"
     deck = tmp / (name + ".tcl")
@@ -116,10 +120,11 @@ def _run(tmp, case, system="UmfPack", wipe=0, dc=0, dist=DIST):
                     .replace("@WIPE@", str(wipe)).replace("@DC@", str(dc)))
     env = dict(os.environ)
     env["LADRUNO_OPENSEES_QUIET"] = "1"
-    tcl = Path(dist) / "lib" / "tcl8.6"
+    exe = SER_EXE if dist is None else Path(dist) / "bin" / EXE_NAME
+    tcl = exe.parent.parent / "lib" / "tcl8.6"
     if "TCL_LIBRARY" not in env and tcl.exists():
         env["TCL_LIBRARY"] = str(tcl)
-    p = subprocess.run([str(Path(dist) / "bin" / EXE_NAME), str(deck)],
+    p = subprocess.run([str(exe), str(deck)],
                        stdin=subprocess.DEVNULL, capture_output=True, text=True,
                        encoding="utf-8", errors="replace", timeout=120, env=env, check=False,
                        cwd=str(tmp))
