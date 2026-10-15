@@ -4250,6 +4250,13 @@ ladrunoSpecifySOEImpl(ClientData clientData, Tcl_Interp *interp, int argc, TCL_C
     int icntl35 = 0;      // BLR off by default => byte-identical to the pre-BLR solver
     double cntl7 = 0.0;   // BLR dropping tolerance
     int mumpsStats = 0;   // -stats dumps INFOG/RINFOG after the factorization
+    // Ladruno WP-194: -precision single|double (-mixed = single), -refine k.
+    // Fail closed: a bad value, -refine without single, or single on a build
+    // without SMUMPS refuses the command instead of silently factoring double.
+    int mumpsPrecision = 0;
+    int mumpsRefine = 0;
+    bool mumpsSawRefine = false;
+    bool mumpsRefuse = false;
 
     int currentArg = 2;
     while (currentArg < argc) {
@@ -4263,9 +4270,13 @@ ladrunoSpecifySOEImpl(ClientData clientData, Tcl_Interp *interp, int argc, TCL_C
 			 strcmp(opt, "-matrixType") == 0 ||
 			 strcmp(opt, "-ICNTL35") == 0 ||
 			 strcmp(opt, "-CNTL7") == 0 ||
-			 strcmp(opt, "-BLR") == 0);
+			 strcmp(opt, "-BLR") == 0 ||
+			 strcmp(opt, "-precision") == 0 ||   // Ladruno WP-194
+			 strcmp(opt, "-refine") == 0);
       if (needsValue && currentArg + 1 >= argc) {
 	opserr << "Mumps Warning: " << opt << " needs a value -- ignored\n";
+	if (strcmp(opt, "-precision") == 0 || strcmp(opt, "-refine") == 0)
+	  mumpsRefuse = true;   // Ladruno WP-194: fail closed
 	currentArg++;
 	continue;
       }
@@ -4313,6 +4324,29 @@ ladrunoSpecifySOEImpl(ClientData clientData, Tcl_Interp *interp, int argc, TCL_C
 	// had to relax its `> 1' loop guard for the same reason.
 	mumpsStats = 1;
 	currentArg++;
+      } else if (strcmp(opt, "-precision") == 0) {
+	// Ladruno WP-194: factor precision (residual/update stay double)
+	const char *val = argv[currentArg+1];
+	if (strcmp(val, "single") == 0 || strcmp(val, "mixed") == 0)
+	  mumpsPrecision = 1;
+	else if (strcmp(val, "double") == 0)
+	  mumpsPrecision = 0;
+	else {
+	  opserr << "Mumps ERROR: -precision takes single or double, got " << val << "\n";
+	  mumpsRefuse = true;
+	}
+	currentArg += 2;
+      } else if (strcmp(opt, "-mixed") == 0) {
+	mumpsPrecision = 1;   // Ladruno WP-194: alias of -precision single
+	currentArg++;
+      } else if (strcmp(opt, "-refine") == 0) {
+	// Ladruno WP-194: inner mixed-precision refinement steps (default 0)
+	if (Tcl_GetInt(interp, argv[currentArg+1], &mumpsRefine) != TCL_OK || mumpsRefine < 0) {
+	  opserr << "Mumps ERROR: -refine needs an integer >= 0\n";
+	  mumpsRefuse = true;
+	}
+	mumpsSawRefine = true;
+	currentArg += 2;
       } else {
 	// Ladruno ADR-75 P2h: this arm used to skip SILENTLY, so a mistyped or
 	// not-yet-wired option cost you the setting without a trace -- which is
@@ -4345,6 +4379,27 @@ ladrunoSpecifySOEImpl(ClientData clientData, Tcl_Interp *interp, int argc, TCL_C
       }
     }
 
+    // Ladruno WP-194: refuse rather than factor in a precision not asked for
+    if (mumpsSawRefine && mumpsPrecision == 0) {
+      opserr << "Mumps ERROR: -refine applies to -precision single only\n";
+      mumpsRefuse = true;
+    }
+#if defined(_PARALLEL_PROCESSING) || defined(_PARALLEL_INTERPRETERS)
+    if (mumpsPrecision != 0 && !MumpsParallelSolver::singlePrecisionAvailable()) {
+      opserr << "Mumps ERROR: -precision single needs single-precision MUMPS (libsmumps); "
+	     << "this build has none -- rebuild with MUMPS BUILD_SINGLE=ON, or drop the option\n";
+      mumpsRefuse = true;
+    }
+#else
+    if (mumpsPrecision != 0) {
+      opserr << "Mumps ERROR: -precision single is implemented for the parallel MUMPS solver "
+	     << "(OpenSeesSP/OpenSeesMP) only\n";
+      mumpsRefuse = true;
+    }
+#endif
+    if (mumpsRefuse)
+      return TCL_ERROR;
+
 #ifdef _PARALLEL_PROCESSING
     // Ladruno ADR-75 P2h: the SP SOE ctor takes no matType (vanilla asymmetry,
     // untouched here) -- say so rather than drop it silently.
@@ -4353,11 +4408,13 @@ ladrunoSpecifySOEImpl(ClientData clientData, Tcl_Interp *interp, int argc, TCL_C
     MumpsParallelSolver *theSolver = new MumpsParallelSolver(icntl7, icntl14,
 							     icntl35, cntl7,
 							     mumpsStats);
+    theSolver->setPrecision(mumpsPrecision, mumpsRefine);   // Ladruno WP-194
     theSOE = new MumpsParallelSOE(*theSolver);
 #elif _PARALLEL_INTERPRETERS
     MumpsParallelSolver *theSolver = new MumpsParallelSolver(icntl7, icntl14,
 							     icntl35, cntl7,
 							     mumpsStats);
+    theSolver->setPrecision(mumpsPrecision, mumpsRefine);   // Ladruno WP-194
     MumpsParallelSOE *theParallelSOE = new MumpsParallelSOE(*theSolver, matType);
     theParallelSOE->setProcessID(OPS_rank);
     theParallelSOE->setChannels(numChannels, theChannels);
