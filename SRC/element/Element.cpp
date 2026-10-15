@@ -494,8 +494,17 @@ Element::getResponse(int responseID, Information &eleInfo)
     return eleInfo.setVector(this->getRayleighDampingForces());
   case 333333:
     return eleInfo.setVector(this->getResistingForceIncInertia());
-  case 444444:
-    return eleInfo.setVector(this->getResistingForceIncInertia()-this->getRayleighDampingForces()-this->getResistingForce());
+  case 444444: {
+    // Evaluate the three terms in a fixed order into an owned vector. The
+    // accessors return references to element storage that the other calls
+    // overwrite (many elements return the same vector from getResistingForce
+    // and getResistingForceIncInertia), and a single expression leaves the
+    // call order to the compiler.
+    Vector inertial(this->getResistingForceIncInertia());
+    inertial -= this->getRayleighDampingForces();
+    inertial -= this->getResistingForce();
+    return eleInfo.setVector(inertial);
+  }
 
   default:
     return -1;
