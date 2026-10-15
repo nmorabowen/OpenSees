@@ -38,7 +38,7 @@ updated: 2026-10-14
 
 ## 1. Item 1 — the cache rule
 
-`Brick::getTangentStiff()` (no Damping object, cache on, fewer than 16 consecutive misses):
+`Brick::getTangentStiff()` (no Damping object, cache on, not paused, see *Pause and re-probe*):
 
 1. **Residual** by `formResidAndTangent(0)` — the uncached code itself (same `getStress()`
    per Gauss point, same arithmetic). It also sets `xl` (`computeBasis`).
@@ -76,7 +76,7 @@ flag would not be enough even if one did:
   changes its tangent at `updateMaterialStage`; a plastic point leaves the elastic range.
 
 The bit compare needs no cooperation from any of them. The element's own hooks still
-invalidate (belt and braces): `revertToStart` (also resets the give-up count), `setDomain`,
+invalidate (belt and braces): `revertToStart` (also resets the pause), `setDomain`,
 `setDamping`, `setParameter`, `updateParameter`, `recvSelf`.
 
 ### Scope and cost
@@ -84,11 +84,12 @@ invalidate (belt and braces): `revertToStart` (also resets the give-up count), `
 | | |
 |---|---|
 | Elements | `stdBrick` (`Brick`, classTag 56). Not BbarBrick / SSPbrick / LadrunoBrick / Brick20 |
+| Materials | **every** nD material, elastic or not, thread-safe or not: the cache is independent of the WP-192 per-type opt-in (that opt-in decides only whether the element loop is threaded). A material whose tangent changes simply misses; correctness rests on the bit compare alone |
 | Off | a Damping object on the element (its stiffness multiplier is not a material tangent); `LADRUNO_BRICK_TANGENT_CACHE=0` (read with `getenv` at element construction); a non-6×6 material tangent (disables for good, plain path) |
-| Give-up | 16 consecutive misses of a valid cache (a tangent that keeps changing): the buffer is freed and the plain path runs until `revertToStart` |
+| Pause and re-probe | 16 consecutive misses of a valid cache (a tangent that keeps changing): the comparison pauses, the buffer is freed and the plain path runs. `commitState` counts the commits of a paused element; at **64** it clears the miss count, and the next tangent call builds and stores again (a re-probe). If the tangent still changes, the element pauses again after 16 misses. Why 64: a re-probe that fails costs one store + 16 failed compares (≈ 2 µs each), once per 64 converged steps, under 1 % of the 64 × (Newton iterations) plain builds (≈ 51 µs each) the element performs meanwhile; and 64 steps is short enough to catch an elastic unloading phase. Counted in commits, not calls, so the period is in converged steps whatever the iteration count. `revertToStart` clears the pause |
 | Memory | 636 doubles (4.9 KB) per element with one tangent for all points, 888 (6.9 KB) otherwise, allocated at the first tangent call. 3C: 27 000 bricks ≈ 137 MB over the model |
 | Hit cost | 8 `getTangent()` (elastic: fills 12 entries), 312 doubles compared, 576 copied |
-| Query | element response `ladrunoTangentCache` → `[enabled, state, hits, builds, consecutive misses]` |
+| Query | element response `ladrunoTangentCache` → `[enabled, state, hits, builds, consecutive misses, re-probes]` |
 | Threads | per-element storage, written only by the element's own call; the scratch is `thread_local` as WP-192 left it, so the cache is safe in the WP-192 loops |
 
 ### Same pattern elsewhere (checked, not changed)
@@ -137,7 +138,7 @@ use a `Truss` (still un-audited).
 | Configuration | Comparison | Result |
 |---|---|---|
 | rev3 3C serial emission (`apesees_3C.tcl`, Pardiso, `MKL_NUM_THREADS=1`; 47 524 FEs incl. 27 000 stdBrick), 4 gravity stages × 3 increments + 5 transient steps, every node dof 1–3 every step at 17 digits | WP-192 base binary vs WP-195 cache off vs WP-195 cache on | **identical** (one md5 for all three, 17 records) |
-| `tests/test_wp195_brick_tangent_cache.py`: distorted 27-brick block; full-field md5 (disp + reaction of every node + element stresses) every step; each setting in a fresh child (the switch is read by `getenv`) | cache on vs off for: elastic static + Newmark/Newton; yielding J2 (rebuilds, then gives up); `updateParameter` (material route) and `setParameter -ele` (element route) mid-run; `setNodeCoord` mid-run; `reset` + replay | **identical** in all 6; counters show the cache hit (elastic: 1 build, ≥ 10 hits per element) and rebuilt where it must |
+| `tests/test_wp195_brick_tangent_cache.py`: distorted 27-brick block; full-field md5 (disp + reaction of every node + element stresses) every step; each setting in a fresh child (the switch is read by `getenv`) | cache on vs off for: elastic static + Newmark/Newton; yielding J2 (rebuilds, then pauses); yield then 120 elastic unloading steps (pauses, re-probed after 64 commits, hits again); `updateParameter` (material route) and `setParameter -ele` (element route) mid-run; `setNodeCoord` mid-run; `reset` + replay | **identical** in all 7; counters show the cache hit (elastic: 1 build, ≥ 10 hits per element) and rebuilt where it must |
 | Mutation M1: the hit test ignores the material-tangent bits | — | **3 tests red** (J2, `updateParameter`, reset); `setParameter -ele` stays green because the element hook invalidates — which is why the bit compare, not the hooks, carries correctness |
 | The fork's 73 other test files that build a stdBrick | cache on | 849 passed; the 3 failures + 1 error are environmental or pre-existing: `test_ladruno_sanisand_cppm_newton` (2) fails identically with the cache off **and** on the WP-192 base binary; `test_adr94_matrix` (relative path) and `test_ladruno_sanisand_sasme` (child without pytest) are runner-environment issues |
 
@@ -195,7 +196,13 @@ factorization reuse / METIS / fewer ranks shrink the solve (WP-188/192 rationale
   test), costs ≈ 5 KB per brick, and can be switched off per process with
   `LADRUNO_BRICK_TANGENT_CACHE=0` (read when the element is built; on Windows, Python's
   `os.environ` does not reach the C runtime's environment — set it before starting Python).
-* The give-up after 16 consecutive misses is per element and permanent until
-  `revertToStart`: a plastic brick that later unloads elastically does not re-enable it.
+* The pause after 16 consecutive misses is per element and lasts 64 commits (§1, *Pause and
+  re-probe*). An earlier version gave up permanently until `revertToStart`; the WP-195 review
+  measured that on nonlinear soil (PIMY, PDMY02) every soil brick then gave up within 100–150
+  steps and hit 0 % afterwards, whereas soil bricks without the give-up still hit ≈ 50 % and
+  ran faster. The re-probe recovers those hits at a bounded cost.
+* The cache applies to every material; it does not depend on the material having opted in to
+  the WP-192 thread-safe contract. The review confirmed byte identity on/off × 1/4 threads on
+  PIMY, PDMY02 (dense, loose) and ASDConcrete3D bricks (800 cyclic steps, Rayleigh βK/βKc).
 * Thread safety of item 2 is evidenced by byte identity at 1/2/4 threads (tests) and 1 vs 4
   (2C window) plus the M2 mutation; no ThreadSanitizer run (WP-192 §6.2 follow-up).

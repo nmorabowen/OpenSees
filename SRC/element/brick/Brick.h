@@ -205,12 +205,16 @@ class Brick : public Element {
     // Damping object (its stiffness multiplier is not a material tangent) and
     // with LADRUNO_BRICK_TANGENT_CACHE=0 in the environment at construction.
     // Explicitly invalidated by revertToStart, setDomain, setDamping,
-    // setParameter/updateParameter and recvSelf. See
+    // setParameter/updateParameter and recvSelf. After 16 consecutive
+    // misses the comparison pauses (plain path, buffer freed); every 64
+    // commits of a paused element it is re-enabled (re-probe). See
     // Ladruno_implementation/195_ladruno_brick_tangent_cache_adr.md.
     double *ladrunoKcache;    // [576 stiff | 24 xl | 36 or 288 tangent bits]
     int ladrunoKcacheState;   // 0 empty, 1 valid (uniform D), 2 valid (per-GP D)
     int ladrunoKcacheCap;     // doubles allocated in ladrunoKcache
-    int ladrunoKcacheMisses;  // consecutive misses; the cache gives up at 16
+    int ladrunoKcacheMisses;  // consecutive misses; the cache pauses at 16
+    int ladrunoKcacheIdle;    // commits since the pause; re-probe at 64
+    double ladrunoKcacheReprobes; // pauses ended by the periodic re-probe
     bool ladrunoKcacheOn;     // enabled for this element
     void ladrunoInvalidateTangentCache(void);
     double ladrunoKcacheHits;   // tangent calls served from the cache

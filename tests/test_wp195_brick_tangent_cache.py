@@ -18,6 +18,8 @@
      * geometry change (setNodeCoord)                on == off, rebuilt
      * revertToStart (reset) then the same history   on == off == first run,
                                                      cache state 0 after reset
+     * yield (16 misses: the cache pauses), then a long elastic unloading
+       (re-probe after 64 commits: hits resume)      on == off
      * LADRUNO_BRICK_TANGENT_CACHE=0                 the cache is off (the
                                                      element response says so)
 
@@ -77,7 +79,7 @@ def _child(fn, *args, on=True):
 
 
 def _cache_info(eid):
-    """[enabled, state, hits, builds, consecutive misses]"""
+    """[enabled, state, hits, builds, consecutive misses, re-probes]"""
     return list(ops.eleResponse(eid, "ladrunoTangentCache"))
 
 
@@ -304,3 +306,35 @@ def test_revert_to_start_invalidates_and_replays_identically():
     assert a1 == b1 and a2 == b2
     assert b1 == b2                 # the replay after reset is the first run
     assert after[1] == 0.0, after   # the cache was emptied by revertToStart
+
+
+def _run_pause_resume(on):
+    """Load a J2 block into yield (its plastic bricks miss on every Newton
+    tangent and pause), then unload it elastically for 120 small steps: the
+    paused bricks are re-probed after 64 commits and hit again."""
+    _set_cache(on)
+    nid, top, ne = _block(_PLASTIC)
+    h = hashlib.md5()
+    rcs = _static(nid, top, 3000.0, 12, h)
+    loaded = [_cache_info(e) for e in range(1, ne + 1)]
+    ops.integrator("LoadControl", -0.5 / 120)
+    for _ in range(120):
+        rc = ops.analyze(1)
+        rcs.append(rc)
+        _digest(h, nid)
+        if rc != 0:
+            break
+    final = [_cache_info(e) for e in range(1, ne + 1)]
+    return h.hexdigest(), rcs, loaded, final
+
+
+def test_paused_cache_reprobes_and_matches_uncached():
+    d_off, r_off, _, _ = _child("_run_pause_resume", True, on=False)
+    d_on, r_on, loaded, final = _child("_run_pause_resume", True, on=True)
+    assert all(rc == 0 for rc in r_on), r_on
+    assert r_on == r_off
+    assert d_on == d_off
+    # some brick paused while yielding, was re-probed and hit again afterwards
+    resumed = [e for e, (a, b) in enumerate(zip(loaded, final), 1)
+               if a[4] >= 16.0 and b[5] >= 1.0 and b[2] > a[2]]
+    assert resumed, list(zip(loaded, final))

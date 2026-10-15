@@ -153,6 +153,7 @@ Brick::Brick( )
 :Element( 0, ELE_TAG_Brick ),
  connectedExternalNodes(8), applyLoad(0), load(0), Ki(0),
  ladrunoKcache(0), ladrunoKcacheState(0), ladrunoKcacheCap(0), ladrunoKcacheMisses(0),
+   ladrunoKcacheIdle(0), ladrunoKcacheReprobes(0.0),
  ladrunoKcacheOn(ladrunoBrickTangentCacheWanted()),
  ladrunoKcacheHits(0.0), ladrunoKcacheBuilds(0.0)
 {
@@ -190,6 +191,7 @@ Brick::Brick(int tag,
   :Element(tag, ELE_TAG_Brick),
    connectedExternalNodes(8), applyLoad(0), load(0), Ki(0), massType(matype),
    ladrunoKcache(0), ladrunoKcacheState(0), ladrunoKcacheCap(0), ladrunoKcacheMisses(0),
+   ladrunoKcacheIdle(0), ladrunoKcacheReprobes(0.0),
    ladrunoKcacheOn(ladrunoBrickTangentCacheWanted()),
    ladrunoKcacheHits(0.0), ladrunoKcacheBuilds(0.0)
 {
@@ -369,6 +371,18 @@ int  Brick::commitState( )
   for (int i = 0; i < 8; i++ )
     if (theDamping[i]) success += theDamping[i]->commitState();
 
+  // Ladruno WP-195: a paused tangent cache (16 consecutive misses) is
+  // re-probed every 64 commits -- a plastic point that unloads elastically
+  // gets its hits back. 64: the worst case of a re-probe that misses again is
+  // one store + 16 failed compares (~2 us each) per 64 converged steps, under
+  // 1 % of the 64 x (Newton iterations) stiffness builds (~51 us each) it
+  // spends meanwhile; short enough that an unloading phase of a few dozen
+  // steps is caught. Byte identity is untouched: a hit still needs equal bits.
+  if (ladrunoKcacheMisses >= 16 && ++ladrunoKcacheIdle >= 64) {
+    ladrunoKcacheMisses = 0;
+    ladrunoKcacheIdle = 0;
+    ladrunoKcacheReprobes += 1.0;
+  }
   
   return success ;
 }
@@ -400,9 +414,10 @@ int  Brick::revertToStart( )
   for ( i=0; i<8; i++ ) 
     success += materialPointers[i]->revertToStart( ) ;
 
-  // Ladruno WP-195: the cache and its give-up count start over
+  // Ladruno WP-195: the cache and its pause count start over
   this->ladrunoInvalidateTangentCache();
   ladrunoKcacheMisses = 0;
+  ladrunoKcacheIdle = 0;
 
   for (int i = 0; i < 8; i++ )
     if (theDamping[i]) success += theDamping[i]->revertToStart();
@@ -1513,7 +1528,8 @@ Brick::formResidAndTangentCached(void)
   ladrunoKcacheBuilds += 1.0 ;
 
   // 5. store -- or, after 16 consecutive misses (a material whose tangent
-  //    keeps changing), give up until revertToStart and free the memory
+  //    keeps changing), pause and free the memory; commitState re-probes
+  //    after 64 commits
   if (ladrunoKcacheMisses >= 16) {
     if (ladrunoKcache != 0)
       delete [] ladrunoKcache ;
@@ -2195,12 +2211,13 @@ Brick::getResponse(int responseID, Information &eleInfo)
     return eleInfo.setVector(tmpStrain);
   } 
   else if (responseID == 195) {   // Ladruno WP-195
-    static thread_local Vector info(5);
+    static thread_local Vector info(6);
     info(0) = ladrunoKcacheOn ? 1.0 : 0.0;
     info(1) = (double) ladrunoKcacheState;
     info(2) = ladrunoKcacheHits;
     info(3) = ladrunoKcacheBuilds;
     info(4) = (double) ladrunoKcacheMisses;
+    info(5) = ladrunoKcacheReprobes;
     return eleInfo.setVector(info);
   }
   else
