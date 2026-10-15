@@ -194,6 +194,29 @@ class Brick : public Element {
 
     Damping *theDamping[8];
 
+    // Ladruno WP-195: element tangent cache. The 24x24 stiffness of a
+    // small-strain brick is a pure function of the nodal coordinates (xl) and
+    // the eight Gauss-point material tangents. When, at a tangent call, the
+    // RAW BITS of all eight material tangents and of xl equal those that built
+    // the cached stiffness, the cached stiffness is returned instead of the
+    // 8 x 8 x 8 B^T D B products -- bit-identical by construction (same
+    // inputs, same arithmetic). Elasticity is never assumed: it is observed,
+    // on every call, through the material's own getTangent(). Disabled with a
+    // Damping object (its stiffness multiplier is not a material tangent) and
+    // with LADRUNO_BRICK_TANGENT_CACHE=0 in the environment at construction.
+    // Explicitly invalidated by revertToStart, setDomain, setDamping,
+    // setParameter/updateParameter and recvSelf. See
+    // Ladruno_implementation/195_ladruno_brick_tangent_cache_adr.md.
+    double *ladrunoKcache;    // [576 stiff | 24 xl | 36 or 288 tangent bits]
+    int ladrunoKcacheState;   // 0 empty, 1 valid (uniform D), 2 valid (per-GP D)
+    int ladrunoKcacheCap;     // doubles allocated in ladrunoKcache
+    int ladrunoKcacheMisses;  // consecutive misses; the cache gives up at 16
+    bool ladrunoKcacheOn;     // enabled for this element
+    void ladrunoInvalidateTangentCache(void);
+    double ladrunoKcacheHits;   // tangent calls served from the cache
+    double ladrunoKcacheBuilds; // tangent calls that (re)built the cache
+    void formResidAndTangentCached(void);
+
 } ; 
 
 #endif
