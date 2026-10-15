@@ -29,6 +29,7 @@
 
 #include <LadrunoThreads.h>   // Ladruno WP-192
 #include <mutex>
+#include <vector>
 #include <ASDConcrete3DMaterial.h>
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
@@ -337,6 +338,12 @@ namespace {
 			avg_error += x; 
 			++avg_counter; 
 		}
+		// Ladruno WP-192: fold in a per-thread partial (see ladrunoFlushImplexError).
+		inline void ladrunoMerge(double maxe, double sum, int count) {
+			if (maxe > max_error) max_error = maxe;
+			avg_error += sum;
+			avg_counter += count;
+		}
 		inline void setAverageError(double x) { 
 			avg_error = x; 
 			avg_counter = 0; 
@@ -344,6 +351,35 @@ namespace {
 	};
 
   
+
+	// Ladruno WP-192: per-thread partials of the IMPL-EX error diagnostics.
+	// Inside a threaded commit loop every integration point adds to its
+	// thread's partial without a lock (a mutex here serialised ~500k commits a
+	// step and erased the commit loop's speedup); the partials are folded into
+	// GlobalParameters, under a lock, before anything READS or WRITES it. The
+	// max is order-free; the sum (the avgImplexError diagnostic only) is folded
+	// in thread-registration order and may differ in its last bits.
+	struct LadrunoImplexPartial { double maxe = 0.0; double sum = 0.0; int count = 0; };
+	std::mutex& ladrunoImplexMutex() { static std::mutex m; return m; }
+	std::vector<LadrunoImplexPartial*>& ladrunoImplexPartials() { static std::vector<LadrunoImplexPartial*> v; return v; }
+	LadrunoImplexPartial& ladrunoImplexTL() {
+		thread_local LadrunoImplexPartial* p = nullptr;
+		if (p == nullptr) {
+			p = new LadrunoImplexPartial();
+			std::lock_guard<std::mutex> g(ladrunoImplexMutex());
+			ladrunoImplexPartials().push_back(p);
+		}
+		return *p;
+	}
+	void ladrunoFlushImplexError() {
+		std::lock_guard<std::mutex> g(ladrunoImplexMutex());
+		for (LadrunoImplexPartial* q : ladrunoImplexPartials()) {
+			if (q->count > 0 || q->maxe > 0.0)
+				GlobalParameters::instance().ladrunoMerge(q->maxe, q->sum, q->count);
+			q->maxe = 0.0; q->sum = 0.0; q->count = 0;
+		}
+	}
+
   double bezier3(double xi,
 		 double x0, double x1, double x2,
 		 double y0, double y1, double y2)
@@ -1746,9 +1782,6 @@ const Matrix &ASDConcrete3DMaterial::getInitialTangent(void)
 	return D;
 }
 
-// Ladruno WP-192: guards GlobalParameters inside a threaded commit loop.
-static std::mutex &ladrunoImplexErrorMutex() { static std::mutex m; return m; }
-
 int ASDConcrete3DMaterial::commitState(void)
 {
 	// implicit stage
@@ -1767,9 +1800,10 @@ int ASDConcrete3DMaterial::commitState(void)
 		// commit loop is threaded. (The max is order-free; the average is the
 		// `avgImplexError` diagnostic only and may differ in its last bits.)
 		if (ladruno_inThreadedRegion()) {
-			std::lock_guard<std::mutex> ladrunoLock(ladrunoImplexErrorMutex());
-			GlobalParameters::instance().setMaxError(std::max(implex_error, GlobalParameters::instance().getMaxError()));
-			GlobalParameters::instance().accumulateAverageError(implex_error);
+			LadrunoImplexPartial& ladrunoP = ladrunoImplexTL();
+			if (implex_error > ladrunoP.maxe) ladrunoP.maxe = implex_error;
+			ladrunoP.sum += implex_error;
+			++ladrunoP.count;
 		} else {
 				GlobalParameters::instance().setMaxError(std::max(implex_error, GlobalParameters::instance().getMaxError()));
 			GlobalParameters::instance().accumulateAverageError(implex_error);
@@ -2086,10 +2120,12 @@ int ASDConcrete3DMaterial::setParameter(const char** argv, int argc, Parameter& 
 	
 	// 3000 - globals
 	if (strcmp(argv[0], "implexError") == 0 || strcmp(argv[0], "ImplexError") == 0) {
+		ladrunoFlushImplexError();   // Ladruno WP-192
 		param.setValue(GlobalParameters::instance().getMaxError());
 		return param.addObject(3000, this);
 	}
 	if (strcmp(argv[0], "avgImplexError") == 0 || strcmp(argv[0], "AvgImplexError") == 0) {
+		ladrunoFlushImplexError();   // Ladruno WP-192
 		param.setValue(GlobalParameters::instance().getAverageError());
 		return param.addObject(3001, this);
 	}
@@ -2127,9 +2163,11 @@ int ASDConcrete3DMaterial::updateParameter(int parameterID, Information& info)
 		return 0;
 
 	case 3000:
+		ladrunoFlushImplexError();   // Ladruno WP-192
 		GlobalParameters::instance().setMaxError(info.theDouble);
 		return 0;
 	case 3001:
+		ladrunoFlushImplexError();   // Ladruno WP-192
 		GlobalParameters::instance().setAverageError(info.theDouble);
 		return 0;
 
