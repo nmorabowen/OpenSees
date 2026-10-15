@@ -1549,6 +1549,11 @@ int OPS_System()
     	return -1;
     }
 
+    if (theSOE == 0) {
+	opserr << "WARNING failed to create system - previous system left unchanged\n";
+	return -1;
+    }
+
     // set soe
     if (cmds != 0) {
 	cmds->setSOE(theSOE);
@@ -1594,6 +1599,11 @@ int OPS_Numberer()
     	return -1;
     }
 
+    if (theNumberer == 0) {
+	opserr << "WARNING failed to create numberer - previous numberer left unchanged\n";
+	return -1;
+    }
+
     // set numberer
     if (cmds != 0) {
 	cmds->setNumberer(theNumberer);
@@ -1634,6 +1644,11 @@ int OPS_ConstraintHandler()
     } else {
     	opserr<<"WARNING unknown ConstraintHandler type "<<type<<"\n";
     	return -1;
+    }
+
+    if (theHandler == 0) {
+	opserr << "WARNING failed to create constraint handler - previous constraint handler left unchanged\n";
+	return -1;
     }
 
     // set handler
@@ -1693,6 +1708,11 @@ int OPS_CTest()
 
 	opserr<<"WARNING unknown CTest type "<<type<<"\n";
     	return -1;
+    }
+
+    if (theTest == 0) {
+	opserr << "WARNING failed to create convergence test - previous convergence test left unchanged\n";
+	return -1;
     }
 
     // set test
@@ -1873,6 +1893,11 @@ int OPS_Integrator()
 
     } else {
 	opserr<<"WARNING unknown integrator type "<<type<<"\n";
+    }
+
+    if (si == 0 && ti == 0) {
+	opserr << "WARNING failed to create integrator - previous integrator left unchanged\n";
+	return -1;
     }
 
     // set integrator
