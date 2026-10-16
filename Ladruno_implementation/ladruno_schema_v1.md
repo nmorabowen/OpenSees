@@ -74,7 +74,8 @@ apeGmsh reads.
 │   ├── FORMAT_MINOR_VERSION (int) 1          ← absent = 0 (§2a)
 │   ├── SOLVER_NAME      (string)  "OpenSees"
 │   ├── SOLVER_VERSION   (int[3])
-│   └── SPATIAL_DIM      (int)     1 | 2 | 3
+│   ├── SPATIAL_DIM      (int)     1 | 2 | 3
+│   └── PROVENANCE       (group)   empty from the recorder; consumer attributes, §7b.1
 │
 └── MODEL_STAGE[<id>]                            (one per analysis stage, §2a)
     ├── attrs STEP(int), TIME(double), KIND(string "transient"|"static"|"eigen")  ← per stage, §2a
@@ -490,13 +491,19 @@ names, `FORMAT_VERSION`/`FORMAT_MINOR_VERSION` and `ladruno_format.py`. A consum
    any other group, and never modifies an attribute the recorder wrote;
 3. writes **only on a closed file**: after the recorder has closed it (`remove
    recorder`, `wipe`, or interpreter exit) and with no OpenSees process holding it
-   open. A file still being recorded is never opened for writing. For a partitioned
-   run, the consumer stamps each `<stem>.part-<N>.ladruno` it pairs;
+   open, and with **no other process** (OpenSees, a viewer, an `h5py` session) holding
+   it open. If the file will not open for writing, the consumer skips stamping and
+   warns; it never disables HDF5 file locking to force the write. A file that was never
+   closed cleanly (a crash or a killed process) is not stamped: the consumer SHOULD
+   require `ladruno_format.validate()` to pass first. For a partitioned run, the consumer
+   stamps each `<stem>.part-<N>.ladruno` it pairs;
 4. writes **lowercase** attribute names. The case marks the owner: lowercase in
    `PROVENANCE` belongs to the consumer, and UPPERCASE stays reserved for the fork (an
    optional, later recorder-side `-provenance` flag would write UPPERCASE names here).
    The `MODEL_HASH`/`RESULTS_HASH` slots this section used to reserve were never written
    by the recorder; they are withdrawn as consumer slots and remain fork-reserved names.
+   The lowercase names are a deliberate exception to this document's UPPERCASE naming
+   convention: they are the only names a consumer writes.
 
 | Attribute | Type | Meaning |
 |---|---|---|
@@ -510,6 +517,11 @@ names, `FORMAT_VERSION`/`FORMAT_MINOR_VERSION` and `ladruno_format.py`. A consum
 Strings are variable-length UTF-8 scalar attributes. JSON values are compact, UTF-8,
 and never NaN. A reader must tolerate any subset of these attributes being absent (a
 file that was never stamped has an empty `PROVENANCE`).
+
+**Partitioned sets.** The attributes are per file. `stage_names` describes that file's
+own `MODEL_STAGE[*]` (part files may differ, WP-165). A reader treats a partitioned set as
+paired only when every part carries the same `model_hash` and `fem_hash`; a set that was
+stamped only partly (a consumer that stopped part-way) is unpaired.
 
 **Versioning.** This is additive. `FORMAT_VERSION` stays `1` and
 `FORMAT_MINOR_VERSION` does not move: the recorder writes nothing new, and a v1 reader
