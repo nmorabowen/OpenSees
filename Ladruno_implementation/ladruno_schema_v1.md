@@ -507,14 +507,14 @@ names, `FORMAT_VERSION`/`FORMAT_MINOR_VERSION` and `ladruno_format.py`. A consum
 
 | Attribute | Type | Meaning |
 |---|---|---|
-| `model_hash` | string | apeGmsh model lineage hash, copied from `<stem>.h5` `/meta/lineage` |
-| `fem_hash` | string | apeGmsh FEM-snapshot lineage hash, copied from `<stem>.h5` `/meta/lineage` |
+| `model_hash` | string | apeGmsh model lineage hash, copied byte-equal from `<stem>.h5` `/meta/lineage` |
+| `fem_hash` | string | apeGmsh FEM-snapshot lineage hash, copied byte-equal from `<stem>.h5` `/meta/lineage` |
 | `stage_names` | string (JSON array of strings) | program stage names, one per `MODEL_STAGE[*]` in stage order; written only when the stage count and kinds match the program's stages |
 | `element_index_space` | string | `"fem"` when every element ID in the file is a paired FEM element id; absent otherwise (the reader treats absence as "unverified") |
 | `unsupported` | string (JSON array of strings) | categories present in the source that the consumer did not read or convert (e.g. layered shells, energy, MPCO springs); `"[]"` when none |
-| `writer` | string | who stamped (or, for a converted file, produced) the file, e.g. `apeGmsh <version>` or `apeGmsh mpco->ladruno <version>`. A converted file keeps `INFO/GENERATOR="Ladruno"`; `writer` is what marks it as converted |
+| `writer` | string | the apeGmsh component and version that stamped (or, for a converted file, produced) the file, e.g. `apeGmsh <version>` or `apeGmsh mpco->ladruno <version>`. A converted file keeps `INFO/GENERATOR="Ladruno"`; `writer` is what marks it as converted |
 
-Strings are variable-length UTF-8 scalar attributes. JSON values are compact, UTF-8,
+All six are scalar attributes stored as variable-length UTF-8 strings (the apeGmsh viewer's stamp check expects vlen UTF-8, not fixed-length). JSON values are compact, UTF-8,
 and never NaN. A reader must tolerate any subset of these attributes being absent (a
 file that was never stamped has an empty `PROVENANCE`).
 
