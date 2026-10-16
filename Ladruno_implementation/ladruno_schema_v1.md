@@ -468,10 +468,53 @@ source (the user's stated priority: performance + robustness on OpenSees first):
   recorded step (as MPCO does), **rewrite envelope/aggregate datasets periodically**
   (§7.4), and provide an **explicit flush/close recorder control** so a user can force a
   clean close in the same cell before copying off local disk.
-- **Provenance / lineage slot.** `INFO/PROVENANCE` (group) reserves
-  `MODEL_HASH`/`RESULTS_HASH` string slots so apeGmsh can chain its blake2b lineage
-  (`fem_hash → model_hash → results_hash`). OpenSees stamps a stable results identity;
-  apeGmsh stamps the model side. Lets the reader detect model/results drift.
+- **Provenance / lineage slot.** The recorder creates `INFO/PROVENANCE` as an
+  **empty group** at open (`LadrunoRecorder.cpp`, beside the `RUN_ID` stamps) and
+  writes nothing into it. It is the one place in a `.ladruno` file that a consumer may
+  write into. The rules are in §7b.1.
+
+### 7b.1 `INFO/PROVENANCE`: consumer-written pairing attributes
+
+*Ratified in apeGmsh #2079 (2026-10-15, open points 2 and 3); the apeGmsh side is
+apeGmsh ADR 0122.* `.ladruno` is apeGmsh's canonical results format. After a run,
+apeGmsh stamps the attributes below so its viewer can pair the results file with the
+model that produced it (`<stem>.h5`), without a sidecar file.
+
+**Ownership.** The fork owns the `.ladruno` format: the layout, the buckets, the token
+names, `FORMAT_VERSION`/`FORMAT_MINOR_VERSION` and `ladruno_format.py`. A consumer
+(apeGmsh) owns only the `INFO/PROVENANCE` attributes it stamps, as listed here.
+
+**Write rules.** A consumer that stamps provenance:
+1. writes **attributes only**: no datasets, no subgroups;
+2. writes **only in `INFO/PROVENANCE`**: never in `INFO` itself, `MODEL_STAGE[*]`, or
+   any other group, and never modifies an attribute the recorder wrote;
+3. writes **only on a closed file**: after the recorder has closed it (`remove
+   recorder`, `wipe`, or interpreter exit) and with no OpenSees process holding it
+   open. A file still being recorded is never opened for writing. For a partitioned
+   run, the consumer stamps each `<stem>.part-<N>.ladruno` it pairs;
+4. writes **lowercase** attribute names. The case marks the owner: lowercase in
+   `PROVENANCE` belongs to the consumer, and UPPERCASE stays reserved for the fork (an
+   optional, later recorder-side `-provenance` flag would write UPPERCASE names here).
+   The `MODEL_HASH`/`RESULTS_HASH` slots this section used to reserve were never written
+   by the recorder; they are withdrawn as consumer slots and remain fork-reserved names.
+
+| Attribute | Type | Meaning |
+|---|---|---|
+| `model_hash` | string | apeGmsh model lineage hash, copied from `<stem>.h5` `/meta/lineage` |
+| `fem_hash` | string | apeGmsh FEM-snapshot lineage hash, copied from `<stem>.h5` `/meta/lineage` |
+| `stage_names` | string (JSON array of strings) | program stage names, one per `MODEL_STAGE[*]` in stage order; written only when the stage count and kinds match the program's stages |
+| `element_index_space` | string | `"fem"` when every element ID in the file is a paired FEM element id; absent otherwise (the reader treats absence as "unverified") |
+| `unsupported` | string (JSON array of strings) | categories present in the source that the consumer did not read or convert (e.g. layered shells, energy, MPCO springs); `"[]"` when none |
+| `writer` | string | who stamped (or, for a converted file, produced) the file, e.g. `apeGmsh <version>` or `apeGmsh mpco->ladruno <version>`. A converted file keeps `INFO/GENERATOR="Ladruno"`; `writer` is what marks it as converted |
+
+Strings are variable-length UTF-8 scalar attributes. JSON values are compact, UTF-8,
+and never NaN. A reader must tolerate any subset of these attributes being absent (a
+file that was never stamped has an empty `PROVENANCE`).
+
+**Versioning.** This is additive. `FORMAT_VERSION` stays `1` and
+`FORMAT_MINOR_VERSION` does not move: the recorder writes nothing new, and a v1 reader
+that ignores `PROVENANCE` still reads every file. `ladruno_format.validate()` does not
+inspect `PROVENANCE`, so a stamped file stays conformant.
 
 ## 7c. apeGmsh consumption contract (interop summary)
 
@@ -487,6 +530,7 @@ branch) is the canonical consumer. Hard contract points:
 | Stage kind | `MODEL_STAGE/@KIND` | "assume transient" |
 | Format/version gate | `INFO/{GENERATOR,FORMAT_VERSION}` | none → silent multi-partition corruption |
 | Contiguous partition discovery | `<stem>.part-<N>.ladruno` (0-based) | — (already matched, now pinned) |
+| Model ↔ results pairing | `INFO/PROVENANCE` consumer attributes (§7b.1) | a sidecar file or a native `results.h5` copy |
 
 Self-contained ⇒ no `model_h5=` sibling: regions (`SETS`), local axes, section index
 all live in the one file.
@@ -644,3 +688,8 @@ in STKO). Fiber section as today.
   Tcl and openseespy stage lists asserted identical). Review follow-up: the flip
   splits under `-kind` too (a label only), and the classic-Tcl `eigen` analysis does
   not count as running until `analysis`/`analyze`.
+- 2026-10-15 — **apeGmsh #2079: consumer-written `INFO/PROVENANCE` (§7b.1).** `.ladruno`
+  is apeGmsh's canonical results format. apeGmsh may stamp six lowercase pairing
+  attributes into the recorder's empty `PROVENANCE` group, on a closed file only. The fork
+  owns the format; the consumer owns only those attributes. Doc only: no recorder change,
+  no version bump.

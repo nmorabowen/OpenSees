@@ -289,8 +289,15 @@ and `STKO_to_python` can parse without the bespoke decoder.
 > 2026-05-30), **co-designed with apeGmsh's reader**. Its centerpiece is a
 > self-describing `BASIS`/`QUADRATURE` descriptor per element group (replacing the two
 > closed enums) so second-order/Bézier elements and Belytschko co-rotational beams need
-> no reader-side per-class logic. `FORMAT_VERSION` lets readers branch; apeGmsh owns
-> the spec going forward.
+> no reader-side per-class logic. `FORMAT_VERSION` lets readers branch.
+>
+> **Ownership (maintainer ruling, apeGmsh #2079 open point 3, 2026-10-15).** This
+> corrects an earlier line here that said apeGmsh owns the spec going forward. **The
+> fork owns the `.ladruno` format:** the layout, the buckets, the token names,
+> `FORMAT_VERSION`/`FORMAT_MINOR_VERSION` and `ladruno_format.py` (the executable spec).
+> apeGmsh co-designed v1 and is the canonical consumer, but it changes the format only
+> through a fork PR. **apeGmsh owns only the `INFO/PROVENANCE` attributes it stamps**
+> after the recorder closes ([[ladruno_schema_v1]] §7b.1).
 
 ### apeGmsh integration
 
@@ -335,7 +342,7 @@ for every target (LEDGER_quirks). Each rank uses its own stamp. WP-165 makes a s
 start a new `MODEL_STAGE` only when the node/element set changed, which removes the common
 rank-local causes of divergent stage names (contact re-emit, `eleLoad`, SP patterns); a
 genuinely rank-local topology change can still give ranks different stage names. Result
-data is never communicated. apeGmsh stitches part files on read (it owns the contract now).
+data is never communicated. apeGmsh stitches part files on read; the part-file naming and `INFO` partition manifest it reads are the fork's contract ([[ladruno_schema_v1]] §2, §7c).
 
 **Envelopes via a sink, not a new hierarchy.** `EnvelopeSink` wraps any
 `ResultSource`; the only parallel-aware knob is a per-source
