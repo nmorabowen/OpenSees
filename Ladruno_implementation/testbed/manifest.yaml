@@ -2066,6 +2066,45 @@ features:
       every touched upstream file is registration-only.
       See Ladruno_implementation/91_ladruno_shell_stiffness_modifiers_adr.md.
 
+  - feature: LadrunoMembrane
+    classtag: 33022          # ELE_TAG family; ladruno private band >= 33000 (ADR 98)
+    tag_symbol: ELE_TAG_LadrunoMembrane
+    pr: null
+    feature_class: element
+    required_tiers: [T0, T1, T2]
+    pytest: tests/test_ladruno_membrane.py
+    tcl: WAIVED(Python-first Zone-A battery tests/test_ladruno_membrane.py + standalone C++ kernel tests/test_ladruno_membrane_kernel_cpp.py + beam FEF battery tests/test_partial_trapezoidal_beam_loads.py; Tcl dispatch wired in TclElementCommands.cpp)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - DEVELOPER/core/classTags.h
+      - SRC/element/CMakeLists.txt
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/TclElementCommands.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      Polygonal surface-to-frame load-distribution & optional Guyan-condensed in-plane
+      CST diaphragm element (ADR 98). Supports arbitrary N-node planar polygons (convex
+      and non-convex L-shapes), interior -hole loops, partial/interior supporting
+      -frames, and isolated -supportNodes across four mechanics engines: tributary
+      (CDT-based Euclidean Voronoi / nearest-supported-feature integration), oneway
+      (bidirectional ray-cast strip partitioning along -spanAxis), fea_poisson (1-DOF
+      isotropic/orthotropic CST membrane deflection analogy with element-edge diffusive
+      flux apportionment), and fea_plate (9-DOF Batoz-Bathe-Ho DKT plate bending with
+      support-rank detection). Emits moment-conserving Beam3d/2dPartialUniformLoad
+      instances through a scoped arena (m_activeBeamLoads) cleared on zeroLoad() so
+      multiple LoadPatterns and loadConst never double-count or dangle. Resolves
+      supporting frame pointers lazily on first use (eliminating element declaration
+      order sensitivity). Optional Guyan-condensed in-plane CST stiffness and mass
+      (-thick + -mat or -stiff, plus -rho and -lumped). Companion WP-1 fixes repair
+      Beam2d/3dPartialUniformLoad across ElasticBeam2d/3d, ModElasticBeam3d,
+      DispBeamColumn2d/3d, LadrunoDispBeamColumn2d/3d, ForceBeamColumn2d/3d/Thermal/CBDI3d,
+      and ElasticTimoshenkoBeam2d/3d. See
+      Ladruno_implementation/98_ladruno_membrane_load_distribution_adr.md and
+      Ladruno_implementation/LadrunoMembrane_guide.md.
+
   - feature: LadrunoCPML
     classtag: 33023
     tag_symbol: ELE_TAG_LadrunoCPML
@@ -2098,6 +2137,7 @@ features:
     core_files:
       - CMakeLists.txt
       - SRC/classTags.h
+      - DEVELOPER/core/classTags.h
       - SRC/element/CMakeLists.txt
       - SRC/element/TclElementCommands.cpp
       - SRC/interpreter/OpenSeesElementCommands.cpp

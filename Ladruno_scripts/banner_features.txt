@@ -86,4 +86,5 @@ LadrunoSANISAND — SAS-ME -sasHFloor / -sasReseatHyst / -sasSoftCap (WP-151 R1)
 LadrunoSANISAND — SAS-ME -sasTensionCutoff (separation at p' ~ 0, WP-152)
 system Pardiso — -deterministic / -cbwr (MKL CNR, reproducible)
 relativeMassDamping: Rayleigh mass term relative to a v_ref(t)
+LadrunoMembrane — polygonal tributary & FEA load-transfer membrane
 LadrunoCPML — 2D/3D CFS-PML absorber (9 shapes, box/plane, Biot -up)

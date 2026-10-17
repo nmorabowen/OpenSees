@@ -164,3 +164,135 @@ def test_mp9_info_carries_a_run_id(tmp_path):
     with h5py.File(out, "r") as f:
         assert s(f["INFO"].attrs["RUN_ID"]) == "run-abc"
         assert s(f["INFO"].attrs["RUN_ID_SCOPE"]) == "user"
+
+
+# --- apeGmsh #2034: user stage barriers (option B) + per-stage KIND (option A) ---
+# The classic Tcl exe and its openseespy twin are gated in
+# Ladruno_scripts/ladruno_recorder_tests/stage_kind_check.py (11 + 4 cases).
+
+def _kinds(path):
+    """[(KIND, recorded rows)] per MODEL_STAGE in id order, and INFO's minor."""
+    def s(v):
+        v = np.atleast_1d(v)[0]
+        return v.decode() if isinstance(v, bytes) else str(v)
+    with h5py.File(path, "r") as f:
+        ids = sorted(int(k[len("MODEL_STAGE["):-1]) for k in f if k.startswith("MODEL_STAGE["))
+        out = [(s(f[f"MODEL_STAGE[{i}]"].attrs["KIND"]),
+                f[f"MODEL_STAGE[{i}]/RESULTS/ON_NODES/DISPLACEMENT/DATA"].shape[0])
+               for i in ids]
+        minor = int(np.atleast_1d(f["INFO"].attrs["FORMAT_MINOR_VERSION"])[0])
+    return out, minor
+
+
+def _transient():
+    ops.constraints("Transformation"); ops.numberer("Plain"); ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1.0e-12, 10); ops.algorithm("Newton")
+    ops.integrator("Newmark", 0.5, 0.25); ops.analysis("Transient")
+
+
+def _gravity_then_transient(out, barrier):
+    _truss()
+    ops.recorder("ladruno", out, "-N", "displacement")
+    ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1); ops.load(3, 1.0, 0.0)
+    _static(0.25)
+    assert ops.analyze(4) == 0
+    ops.loadConst("-time", 0.0)
+    ops.wipeAnalysis()
+    if barrier:
+        ops.domainChange()
+    ops.timeSeries("Constant", 2); ops.pattern("Plain", 2, 2); ops.load(2, 1.0, 0.0)
+    _transient()
+    assert ops.analyze(5, 0.01) == 0
+    ops.wipe()
+    return _kinds(out)
+
+
+def test_2034_user_domainchange_splits_static_then_transient(tmp_path):
+    """apeGmsh's per-stage `domainChange` barrier opens a stage on an unchanged
+    model, and each stage carries the kind of the analysis that ran in it."""
+    got, minor = _gravity_then_transient(str(tmp_path / "b.ladruno"), barrier=True)
+    assert got == [("static", 4), ("transient", 5)], got
+    assert minor == 1
+
+
+def test_2034_kind_flip_splits_without_domainchange(tmp_path):
+    """No stage mixes kinds: a static -> transient flip opens a stage by itself."""
+    got, _ = _gravity_then_transient(str(tmp_path / "a.ladruno"), barrier=False)
+    assert got == [("static", 4), ("transient", 5)], got
+
+
+def test_2034_domainchange_splits_two_static_stages(tmp_path):
+    out = str(tmp_path / "ss.ladruno")
+    _truss()
+    ops.recorder("ladruno", out, "-N", "displacement")
+    ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1); ops.load(3, 1.0, 0.0)
+    _static(0.25)
+    assert ops.analyze(4) == 0
+    ops.loadConst("-time", 0.0)
+    ops.timeSeries("Linear", 3); ops.pattern("Plain", 3, 3); ops.load(2, 0.5, 0.0)
+    ops.domainChange()
+    assert ops.analyze(3) == 0
+    ops.wipe()
+    got, _ = _kinds(out)
+    assert got == [("static", 4), ("static", 3)], got
+
+
+def test_2034_repeated_kind_and_first_record_open_no_stage(tmp_path):
+    """A barrier before the first record, and static -> wipeAnalysis -> static,
+    open nothing; a transient-only run reads transient (was static)."""
+    out = str(tmp_path / "rep.ladruno")
+    _truss()
+    ops.recorder("ladruno", out, "-N", "displacement")
+    ops.domainChange()
+    ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1); ops.load(3, 1.0, 0.0)
+    _static(0.25)
+    assert ops.analyze(2) == 0
+    ops.wipeAnalysis()
+    _static(0.25)
+    assert ops.analyze(2) == 0
+    ops.wipe()
+    got, _ = _kinds(out)
+    assert got == [("static", 4)], got
+
+    out = str(tmp_path / "tr.ladruno")
+    _truss()
+    ops.recorder("ladruno", out, "-N", "displacement")
+    ops.timeSeries("Constant", 1); ops.pattern("Plain", 1, 1); ops.load(3, 1.0, 0.0)
+    _transient()
+    assert ops.analyze(3, 0.01) == 0
+    ops.wipe()
+    got, _ = _kinds(out)
+    assert got == [("transient", 3)], got
+
+
+def test_2034_kind_override_is_a_label_the_flip_still_splits(tmp_path):
+    """`-kind static` sets the label; static -> transient still opens a stage."""
+    out = str(tmp_path / "ov.ladruno")
+    _truss()
+    ops.recorder("ladruno", out, "-N", "displacement", "-kind", "static")
+    ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1); ops.load(3, 1.0, 0.0)
+    _static(0.25)
+    assert ops.analyze(4) == 0
+    ops.loadConst("-time", 0.0)
+    ops.wipeAnalysis()
+    _transient()
+    assert ops.analyze(5, 0.01) == 0
+    ops.wipe()
+    got, _ = _kinds(out)
+    assert got == [("static", 4), ("static", 5)], got
+
+
+def test_2034_eigen_snapshot_opens_no_stage(tmp_path):
+    """`eigen; record` then a static analysis: ONE static stage (the classic-Tcl
+    twin is asserted identical in stage_kind_check.py)."""
+    out = str(tmp_path / "eig.ladruno")
+    _truss()
+    ops.recorder("ladruno", out, "-N", "displacement")
+    ops.eigen("-fullGenLapack", 1)
+    ops.record()
+    ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1); ops.load(3, 1.0, 0.0)
+    _static(0.25)
+    assert ops.analyze(4) == 0
+    ops.wipe()
+    got, _ = _kinds(out)
+    assert got == [("static", 5)], got

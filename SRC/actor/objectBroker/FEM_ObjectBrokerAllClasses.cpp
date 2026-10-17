@@ -499,6 +499,7 @@
 #include "ladrunoRigidBody/LadrunoRigidBody.h"	// N. Mora-Bowen (Ladruno) ADR 58
 #include "ladrunoDispBeamColumn/LadrunoDispBeamColumn2d.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoDispBeamColumn/LadrunoDispBeamColumn3d.h"	// N. Mora-Bowen (Ladruno)
+#include "ladrunoMembrane/LadrunoMembrane.h"	// N. Mora-Bowen (Ladruno) ADR 98
 #include "joint/Joint2D.h"		// Arash
 #include "joint/Inno3DPnPJoint.h" // Cristian Miculas
 #include "twoNodeLink/TwoNodeLink.h"
@@ -638,8 +639,10 @@
 // elemental load header files
 #include "ElementalLoad.h"
 #include "Beam2dUniformLoad.h"
+#include "Beam2dPartialUniformLoad.h" // Ladruno: register partial uniform load in broker
 #include "Beam2dPointLoad.h"
 #include "Beam3dUniformLoad.h"
+#include "Beam3dPartialUniformLoad.h" // Ladruno: register partial uniform load in broker
 #include "Beam3dPointLoad.h"
 #include "BeamUniformMoment.h"
 #include "BrickSelfWeight.h"
@@ -1143,6 +1146,9 @@ FEM_ObjectBrokerAllClasses::getNewElement(int classTag)
     case ELE_TAG_LadrunoRigidBody:	// N. Mora-Bowen (Ladruno) ADR 58
       return new LadrunoRigidBody();
 
+    case ELE_TAG_LadrunoMembrane:	// N. Mora-Bowen (Ladruno) ADR 98
+      return new LadrunoMembrane();
+
     case ELE_TAG_SSPquad:
       return new SSPquad();
       
@@ -1501,12 +1507,18 @@ FEM_ObjectBrokerAllClasses::getNewElementalLoad(int classTag)
     
     case LOAD_TAG_Beam2dUniformLoad:
       return new Beam2dUniformLoad();
+
+    case LOAD_TAG_Beam2dPartialUniformLoad: // Ladruno: register 2D partial uniform load
+      return new Beam2dPartialUniformLoad();
     
     case LOAD_TAG_Beam2dPointLoad:
       return new Beam2dPointLoad();
     
     case LOAD_TAG_Beam3dUniformLoad:
       return new Beam3dUniformLoad();
+
+    case LOAD_TAG_Beam3dPartialUniformLoad: // Ladruno: register 3D partial uniform load
+      return new Beam3dPartialUniformLoad();
     
     case LOAD_TAG_Beam3dPointLoad:
       return new Beam3dPointLoad();

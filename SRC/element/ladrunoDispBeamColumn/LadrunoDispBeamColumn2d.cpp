@@ -1082,7 +1082,46 @@ LadrunoDispBeamColumn2d::addLoad(ElementalLoad *theLoad, double loadFactor)
     // Fixed end forces in basic system
     //q0[1] -= 0.0;
     //q0[2] += 0.0;
-  }  
+  }
+  else if (type == LOAD_TAG_Beam2dPartialUniformLoad) {
+    // Ladruno: cancellation-free trapezoidal partial load support
+    double wya = data(0) * loadFactor;  // Transverse at start
+    double wyb = data(1) * loadFactor;  // Transverse at end
+    double waa = data(2) * loadFactor;  // Axial at start
+    double wab = data(3) * loadFactor;  // Axial at end
+    double a = data(4) * L;
+    double b = data(5) * L;
+    double ell = b - a;
+    if (ell <= 0.0 || a < 0.0 || b > L)
+      return 0;
+
+    double J0 = 0.5 * ell * (wya + wyb);
+    double J1 = (ell * ell / 6.0) * (wya + 2.0 * wyb);
+    double J2 = (ell * ell * ell / 12.0) * (wya + 3.0 * wyb);
+    double J3 = (ell * ell * ell * ell / 20.0) * (wya + 4.0 * wyb);
+    double I0 = J0;
+    double I1 = a * J0 + J1;
+    double I2 = a * a * J0 + 2.0 * a * J1 + J2;
+    double I3 = a * a * a * J0 + 3.0 * a * a * J1 + 3.0 * a * J2 + J3;
+
+    double V2 = I1 / L;
+    double V1 = I0 - V2;
+    double M1 = -I1 + (2.0 / L) * I2 - (1.0 / (L * L)) * I3;
+    double M2 = (1.0 / L) * I2 - (1.0 / (L * L)) * I3;
+
+    double P = 0.5 * ell * (waa + wab);
+    double PJ = (a * P + (ell * ell / 6.0) * (waa + 2.0 * wab)) / L;
+
+    // Reactions in basic system
+    p0[0] -= P;
+    p0[1] -= V1;
+    p0[2] -= V2;
+
+    // Fixed end forces in basic system
+    q0[0] -= PJ;
+    q0[1] += M1;
+    q0[2] += M2;
+  }
   else if (type == LOAD_TAG_Beam2dPointLoad) {
     double P = data(0)*loadFactor;
     double N = data(1)*loadFactor;

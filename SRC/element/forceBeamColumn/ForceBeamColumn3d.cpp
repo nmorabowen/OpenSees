@@ -59,6 +59,7 @@ Journal of Structural Engineering, Approved for publication, February 2007.
  */
 
 #include <math.h>
+#include <LadrunoThreads.h>   // Ladruno WP-192
 #include <stdlib.h>
 #include <string.h>
 #include <float.h>
@@ -84,13 +85,13 @@ using std::ifstream;
 
 #define DefaultLoverGJ 1.0e-10
 
-Matrix ForceBeamColumn3d::theMatrix(12,12);
-Vector ForceBeamColumn3d::theVector(12);
-double ForceBeamColumn3d::workArea[200];
+thread_local Matrix ForceBeamColumn3d::theMatrix(12,12);   // Ladruno WP-192
+thread_local Vector ForceBeamColumn3d::theVector(12);   // Ladruno WP-192
+thread_local double ForceBeamColumn3d::workArea[200];   // Ladruno WP-192
 
-Vector ForceBeamColumn3d::vsSubdivide[maxNumSections];
-Matrix ForceBeamColumn3d::fsSubdivide[maxNumSections];
-Vector ForceBeamColumn3d::SsrSubdivide[maxNumSections];
+thread_local Vector ForceBeamColumn3d::vsSubdivide[maxNumSections];   // Ladruno WP-192
+thread_local Matrix ForceBeamColumn3d::fsSubdivide[maxNumSections];   // Ladruno WP-192
+thread_local Vector ForceBeamColumn3d::SsrSubdivide[maxNumSections];   // Ladruno WP-192
 
 void* OPS_ForceBeamColumn3d()
 {
@@ -734,17 +735,17 @@ ForceBeamColumn3d::getInitialStiff(void)
   if (Ki != 0)
     return *Ki;
 
-  static Matrix f(NEBD,NEBD);   // element flexibility matrix  
+  static thread_local Matrix f(NEBD,NEBD);   // element flexibility matrix     // Ladruno WP-192
   this->getInitialFlexibility(f);
   
-  static Matrix I(NEBD,NEBD);   // an identity matrix for matrix inverse  
+  static thread_local Matrix I(NEBD,NEBD);   // an identity matrix for matrix inverse     // Ladruno WP-192
   I.Zero();
   for (int i=0; i<NEBD; i++)
     I(i,i) = 1.0;
   
   // calculate element stiffness matrix
   // invert3by3Matrix(f, kv);
-  static Matrix kvInit(NEBD, NEBD);
+  static thread_local Matrix kvInit(NEBD, NEBD);   // Ladruno WP-192
   if (f.Solve(I, kvInit) < 0)
     opserr << "ForceBeamColumn3d::getInitialStiff() -- could not invert flexibility for element with tag: " << this->getTag() << endln;
 
@@ -792,6 +793,8 @@ ForceBeamColumn3d::computeReactions(double *p0)
       double wa = data(2) * loadFactor;  // Axial at start
       double a = data(3) * L;
       double b = data(4) * L;
+      if (b <= a || a < 0.0 || b > L) // Ladruno: guard degenerate partial load span
+        continue;
       double wyb = data(5) * loadFactor;  // Transverse Y at end
       double wzb = data(6) * loadFactor;  // Transverse Z at end
       double wab = data(7) * loadFactor;  // Axial at end
@@ -964,13 +967,13 @@ void
     // get basic displacements and increments
     const Vector &v = crdTransf->getBasicTrialDisp();    
 
-    static Vector dv(NEBD);
+    static thread_local Vector dv(NEBD);   // Ladruno WP-192
     dv = crdTransf->getBasicIncrDeltaDisp();    
 
     if (initialFlag != 0 && dv.Norm() <= DBL_EPSILON && numEleLoads == 0)
       return 0;
 
-    static Vector vin(NEBD);
+    static thread_local Vector vin(NEBD);   // Ladruno WP-192
     vin = v;
     vin -= dv;
     double L = crdTransf->getInitialLength();
@@ -982,10 +985,10 @@ void
     double wt[maxNumSections];
     beamIntegr->getSectionWeights(numSections, L, wt);
 
-    static Vector vr(NEBD);       // element residual displacements
-    static Matrix f(NEBD,NEBD);   // element flexibility matrix
+    static thread_local Vector vr(NEBD);       // element residual displacements   // Ladruno WP-192
+    static thread_local Matrix f(NEBD,NEBD);   // element flexibility matrix   // Ladruno WP-192
 
-    static Matrix I(NEBD,NEBD);   // an identity matrix for matrix inverse
+    static thread_local Matrix I(NEBD,NEBD);   // an identity matrix for matrix inverse   // Ladruno WP-192
     double dW;                    // section strain energy (work) norm 
     int i, j;
 
@@ -995,11 +998,11 @@ void
 
     int numSubdivide = 1;
     bool converged = false;
-    static Vector dSe(NEBD);
-    static Vector dvToDo(NEBD);
-    static Vector dvTrial(NEBD);
-    static Vector SeTrial(NEBD);
-    static Matrix kvTrial(NEBD, NEBD);
+    static thread_local Vector dSe(NEBD);   // Ladruno WP-192
+    static thread_local Vector dvToDo(NEBD);   // Ladruno WP-192
+    static thread_local Vector dvTrial(NEBD);   // Ladruno WP-192
+    static thread_local Vector SeTrial(NEBD);   // Ladruno WP-192
+    static thread_local Matrix kvTrial(NEBD, NEBD);   // Ladruno WP-192
 
     dvToDo = dv;
     dvTrial = dvToDo;
@@ -1059,10 +1062,10 @@ void
 	  int order      = sections[i]->getOrder();
 	  const ID &code = sections[i]->getType();
 	  
-	  static Vector Ss;
-	  static Vector dSs;
-	  static Vector dvs;
-	  static Matrix fb;
+	  static thread_local Vector Ss;   // Ladruno WP-192
+	  static thread_local Vector dSs;   // Ladruno WP-192
+	  static thread_local Vector dvs;   // Ladruno WP-192
+	  static thread_local Matrix fb;   // Ladruno WP-192
 	  
 	  Ss.setData(workArea, order);
 	  dSs.setData(&workArea[order], order);
@@ -1151,7 +1154,7 @@ void
 	    vsSubdivide[i] += dvs;
 	  
 	  if ( sections[i]->setTrialSectionDeformation(vsSubdivide[i]) < 0) {
-	    opserr << "ForceBeamColumn3d::update() - section failed in setTrial\n";
+	    { LadrunoOutputGuard ladrunoOut; opserr << "ForceBeamColumn3d::update() - section failed in setTrial\n"; }   // Ladruno WP-192
 	    return -1;
 	  }
 	  
@@ -1319,7 +1322,7 @@ void
 	    // FRANK
 	    //	  if (f.SolveSVD(I, kvTrial, 1.0e-12) < 0)
 	    if (f.Solve(I, kvTrial) < 0)
-	      opserr << "ForceBeamColumn3d::update() -- could not invert flexibility for element with tag: " << this->getTag() << endln;;
+	      { LadrunoOutputGuard ladrunoOut; opserr << "ForceBeamColumn3d::update() -- could not invert flexibility for element with tag: " << this->getTag() << endln;; }   // Ladruno WP-192
 	    
 	    // dv = vin + dvTrial  - vr
 	    dv = vin;
@@ -1393,6 +1396,7 @@ void
     // if fail to converge we return an error flag & print an error message
 
     if (converged == false) {
+      LadrunoOutputGuard ladrunoOut;   // Ladruno WP-192: opserr from a threaded update
       opserr << "WARNING - ForceBeamColumn3d::update - failed to get compatible ";
       opserr << "element forces & deformations for element: ";
       opserr << this->getTag() << "(dW: << " << dW << ", dW0: " << dW0 << ")\n";
@@ -1586,6 +1590,8 @@ ForceBeamColumn3d::computeSectionForces(Vector &sp, int isec)
       double wa = data(2) * loadFactor;  // Axial at start
       double a = data(3)*L;
       double b = data(4)*L;
+      if (b <= a || a < 0.0 || b > L) // Ladruno: guard degenerate partial load span
+        continue;
       double wyb = data(5) * loadFactor;  // Transverse Y at end
       double wzb = data(6) * loadFactor;  // Transverse Z at end
       double wab = data(7) * loadFactor;  // Axial at end
@@ -1662,7 +1668,8 @@ ForceBeamColumn3d::computeSectionForces(Vector &sp, int isec)
         sp(ii) += -VyI + wy * (x - a) + 0.5 * (wyy - wy) * (x - a);
         break;
 	  case SECTION_RESPONSE_VZ:	   
-        sp(ii) -= -VzI + wz * (x - a) - 0.5 * (wzz - wz) * (x - a);
+        // Ladruno: fix sign of triangular z-load shear contribution (+0.5*(wzz - wz)*(x - a))
+        sp(ii) -= -VzI + wz * (x - a) + 0.5 * (wzz - wz) * (x - a);
         break;
 	  default:
 	    break;
@@ -1959,7 +1966,7 @@ ForceBeamColumn3d::computeSectionForceSensitivity(Vector &dspdh, int isec,
     int i, j , k;
     int loc = 0;
 
-    static ID idData(15);  
+    static thread_local ID idData(15);     // Ladruno WP-192
     idData(0) = this->getTag();
     idData(1) = connectedExternalNodes(0);
     idData(2) = connectedExternalNodes(1);
@@ -2118,7 +2125,7 @@ ForceBeamColumn3d::computeSectionForceSensitivity(Vector &dspdh, int isec,
     int dbTag = this->getDbTag();
     int i,j,k;
 
-    static ID idData(15); // one bigger than needed 
+    static thread_local ID idData(15); // one bigger than needed    // Ladruno WP-192
 
     if (theChannel.recvID(dbTag, commitTag, idData) < 0)  {
       opserr << "ForceBeamColumn3d::recvSelf() - failed to recv ID data\n";
@@ -2567,7 +2574,7 @@ ForceBeamColumn3d::getInitialDeformations(Vector &v0)
       double xL1 = xL - 1.0;
       double wtL = wt[i] * L;
 
-      static Vector sp;
+      static thread_local Vector sp;   // Ladruno WP-192
       sp.setData(workArea, order);
       sp.Zero();
 
@@ -2575,7 +2582,7 @@ ForceBeamColumn3d::getInitialDeformations(Vector &v0)
 
       const Matrix &fse = sections[i]->getInitialFlexibility();
 
-      static Vector e;
+      static thread_local Vector e;   // Ladruno WP-192
       e.setData(&workArea[order], order);
 
       e.addMatrixVector(0.0, fse, sp, 1.0);
@@ -2615,13 +2622,13 @@ ForceBeamColumn3d::getInitialDeformations(Vector &v0)
 					      Vector sectionDispls[]) const
   {
      // get basic displacements and increments
-     static Vector ub(NEBD);
+     static thread_local Vector ub(NEBD);   // Ladruno WP-192
      ub = crdTransf->getBasicTrialDisp();    
 
      double L = crdTransf->getInitialLength();
 
      // get integration point positions and weights
-     static double pts[maxNumSections];
+     static thread_local double pts[maxNumSections];   // Ladruno WP-192
      beamIntegr->getSectionLocations(numSections, L, pts);
 
      // setup Vandermode and CBDI influence matrices
@@ -2635,7 +2642,7 @@ ForceBeamColumn3d::getInitialDeformations(Vector &v0)
      // get section curvatures
      Vector kappa_y(numSections);  // curvature
      Vector kappa_z(numSections);  // curvature
-     static Vector vs;                // section deformations 
+     static thread_local Vector vs;                // section deformations    // Ladruno WP-192
 
      for (i=0; i<numSections; i++) {
 	 // THIS IS VERY INEFFICIENT ... CAN CHANGE IF RUNS TOO SLOW
@@ -2670,8 +2677,8 @@ ForceBeamColumn3d::getInitialDeformations(Vector &v0)
      //cout << "kappa_z: " << kappa_z;   
 
      Vector v(numSections), w(numSections);
-     static Vector xl(NDM), uxb(NDM);
-     static Vector xg(NDM), uxg(NDM); 
+     static thread_local Vector xl(NDM), uxb(NDM);   // Ladruno WP-192
+     static thread_local Vector xg(NDM), uxg(NDM);    // Ladruno WP-192
      // double theta;                             // angle of twist of the sections
 
      // v = ls * kappa_z;  
@@ -2746,9 +2753,9 @@ ForceBeamColumn3d::getInitialDeformations(Vector &v0)
 
     // flag set to 2 used to print everything .. used for viewing data for UCSD renderer  
     else if (flag == 2) {
-       static Vector xAxis(3);
-       static Vector yAxis(3);
-       static Vector zAxis(3);
+       static thread_local Vector xAxis(3);   // Ladruno WP-192
+       static thread_local Vector yAxis(3);   // Ladruno WP-192
+       static thread_local Vector zAxis(3);   // Ladruno WP-192
 
 
        crdTransf->getLocalAxes(xAxis, yAxis, zAxis);
@@ -2793,8 +2800,8 @@ ForceBeamColumn3d::getInitialDeformations(Vector &v0)
 	 << T << ' ' << MY2 << ' '  <<  MZ2 << endln;
 
        // plastic hinge rotation
-       static Vector vp(6);
-       static Matrix fe(6,6);
+       static thread_local Vector vp(6);   // Ladruno WP-192
+       static thread_local Matrix fe(6,6);   // Ladruno WP-192
        this->getInitialFlexibility(fe);
        vp = crdTransf->getBasicTrialDisp();
        vp.addMatrixVector(1.0, fe, Se, -1.0);
@@ -2905,8 +2912,8 @@ ForceBeamColumn3d::getInitialDeformations(Vector &v0)
   int
   ForceBeamColumn3d::displaySelf(Renderer &theViewer, int displayMode, float fact, const char** displayModes, int numModes)
   {
-    static Vector v1(3);
-    static Vector v2(3);
+    static thread_local Vector v1(3);   // Ladruno WP-192
+    static thread_local Vector v2(3);   // Ladruno WP-192
 
     theNodes[0]->getDisplayCrds(v1, fact, displayMode);
     theNodes[1]->getDisplayCrds(v2, fact, displayMode);
@@ -3234,16 +3241,16 @@ ForceBeamColumn3d::getInitialDeformations(Vector &v0)
 int 
 ForceBeamColumn3d::getResponse(int responseID, Information &eleInfo)
 {
-  static Vector vp(6);
-  static Matrix fe(6,6);
+  static thread_local Vector vp(6);   // Ladruno WP-192
+  static thread_local Matrix fe(6,6);   // Ladruno WP-192
 
   if (responseID == 1)
     return eleInfo.setVector(this->getResistingForce());
 
   // Ladruno: local axes (vx,vy,vz dir cosines) from the CrdTransf
   else if (responseID == 30) {
-    static Vector la(9);
-    static Vector vx(3), vy(3), vz(3);
+    static thread_local Vector la(9);   // Ladruno WP-192
+    static thread_local Vector vx(3), vy(3), vz(3);   // Ladruno WP-192
     crdTransf->getLocalAxes(vx, vy, vz);
     for (int i = 0; i < 3; i++) { la(i) = vx(i); la(i + 3) = vy(i); la(i + 6) = vz(i); }
     return eleInfo.setVector(la);
@@ -3404,8 +3411,8 @@ ForceBeamColumn3d::getResponse(int responseID, Information &eleInfo)
     dispsy.addMatrixVector(0.0, ls, kappaz,  1.0);
     dispsz.addMatrixVector(0.0, ls, kappay, -1.0);    
     beamIntegr->getSectionLocations(numSections, L, pts);
-    static Vector uxb(3);
-    static Vector uxg(3);
+    static thread_local Vector uxb(3);   // Ladruno WP-192
+    static thread_local Vector uxg(3);   // Ladruno WP-192
     Matrix disps(numSections,3);
     vp = crdTransf->getBasicTrialDisp();
     for (int i = 0; i < numSections; i++) {
@@ -3451,8 +3458,8 @@ ForceBeamColumn3d::getResponse(int responseID, Information &eleInfo)
     Vector dispsz(1); // along local z    
     dispsy.addMatrixVector(0.0, ls, kappaz,  1.0);
     dispsz.addMatrixVector(0.0, ls, kappay, -1.0);
-    static Vector uxb(3);
-    static Vector uxg(3);
+    static thread_local Vector uxb(3);   // Ladruno WP-192
+    static thread_local Vector uxg(3);   // Ladruno WP-192
     Matrix disps(1,3);
     vp = crdTransf->getBasicTrialDisp();
     uxb(0) = pts[0]*vp(0); // linear shape function
@@ -3471,7 +3478,7 @@ ForceBeamColumn3d::getResponse(int responseID, Information &eleInfo)
 
   // Point of inflection
   else if (responseID == 5) {
-    static Vector LI(2);
+    static thread_local Vector LI(2);   // Ladruno WP-192
     LI(0) = 0.0;
     LI(1) = 0.0;
 
@@ -3555,7 +3562,7 @@ ForceBeamColumn3d::getResponse(int responseID, Information &eleInfo)
       }
     }
 
-    static Vector d(4);
+    static thread_local Vector d(4);   // Ladruno WP-192
     d(0) = d2z;
     d(1) = d3z;
     d(2) = d2y;
@@ -3669,7 +3676,7 @@ ForceBeamColumn3d::getResponse(int responseID, Information &eleInfo)
 	indata.close();
       }
 
-      static Vector result8(2);
+      static thread_local Vector result8(2);   // Ladruno WP-192
       result8(0) = value;
       result8(1) = checkvalue1;      
       
@@ -3717,7 +3724,7 @@ ForceBeamColumn3d::getResponseSensitivity(int responseID, int gradNumber,
 
   // Basic force sensitivity
   else if (responseID == 7) {
-    static Vector dqdh(6);
+    static thread_local Vector dqdh(6);   // Ladruno WP-192
 
     const Vector &dvdh = crdTransf->getBasicDisplSensitivity(gradNumber);
 
@@ -3742,7 +3749,7 @@ ForceBeamColumn3d::getResponseSensitivity(int responseID, int gradNumber,
       this->computeSectionForceSensitivity(dsdh, sectionNum-1, gradNumber);
     }
     //opserr << "FBC3d::getRespSens dspdh: " << dsdh;
-    static Vector dqdh(6);
+    static thread_local Vector dqdh(6);   // Ladruno WP-192
 
     const Vector &dvdh = crdTransf->getBasicDisplSensitivity(gradNumber);
 
@@ -3835,14 +3842,14 @@ ForceBeamColumn3d::getResponseSensitivity(int responseID, int gradNumber,
 
   // Plastic deformation sensitivity
   else if (responseID == 4) {
-    static Vector dvpdh(6);
+    static thread_local Vector dvpdh(6);   // Ladruno WP-192
 
     const Vector &dvdh = crdTransf->getBasicDisplSensitivity(gradNumber);
 
     dvpdh = dvdh;
     //opserr << dvpdh;
 
-    static Matrix fe(6,6);
+    static thread_local Matrix fe(6,6);   // Ladruno WP-192
     this->getInitialFlexibility(fe);
 
     const Vector &dqdh = this->computedqdh(gradNumber);
@@ -3850,7 +3857,7 @@ ForceBeamColumn3d::getResponseSensitivity(int responseID, int gradNumber,
     dvpdh.addMatrixVector(1.0, fe, dqdh, -1.0);
     //opserr << dvpdh;
 
-    static Matrix fek(6,6);
+    static thread_local Matrix fek(6,6);   // Ladruno WP-192
     fek.addMatrixProduct(0.0, fe, kv, 1.0);
 
     dvpdh.addMatrixVector(1.0, fek, dvdh, -1.0);
@@ -4016,7 +4023,7 @@ ForceBeamColumn3d::getMassSensitivity(int gradNumber)
 const Vector&
 ForceBeamColumn3d::getResistingForceSensitivity(int gradNumber)
 {
-  static Vector dqdh(6);
+  static thread_local Vector dqdh(6);   // Ladruno WP-192
   dqdh = this->computedqdh(gradNumber);
 
   // Transform forces
@@ -4026,7 +4033,7 @@ ForceBeamColumn3d::getResistingForceSensitivity(int gradNumber)
   this->computeReactionSensitivity(dp0dh, gradNumber);
   Vector dp0dhVec(dp0dh, 6);
 
-  static Vector P(12);
+  static thread_local Vector P(12);   // Ladruno WP-192
   P.Zero();
 
   if (crdTransf->isShapeSensitivity()) {
@@ -4064,7 +4071,7 @@ ForceBeamColumn3d::commitSensitivity(int gradNumber, int numGrads)
 
   double d1oLdh = crdTransf->getd1overLdh();
 
-  static Vector dqdh(6);
+  static thread_local Vector dqdh(6);   // Ladruno WP-192
   dqdh = this->computedqdh(gradNumber);
 
   // dvdh = A dudh + dAdh u
@@ -4178,7 +4185,7 @@ ForceBeamColumn3d::computedqdh(int gradNumber)
 
   double d1oLdh = crdTransf->getd1overLdh();
 
-  static Vector dvdh(6);
+  static thread_local Vector dvdh(6);   // Ladruno WP-192
   dvdh.Zero();
 
   // Loop over the integration points
@@ -4309,12 +4316,12 @@ ForceBeamColumn3d::computedqdh(int gradNumber)
     }
   }
 
-  static Matrix dfedh(6,6);
+  static thread_local Matrix dfedh(6,6);   // Ladruno WP-192
   dfedh.Zero();
 
   //opserr << "dfedh: " << dfedh << endln;
 
-  static Vector dqdh(6);
+  static thread_local Vector dqdh(6);   // Ladruno WP-192
   dqdh.addMatrixVector(0.0, kv, dvdh, 1.0);
   
   //opserr << "dqdh: " << dqdh << endln;
@@ -4325,7 +4332,7 @@ ForceBeamColumn3d::computedqdh(int gradNumber)
 const Matrix&
 ForceBeamColumn3d::computedfedh(int gradNumber)
 {
-  static Matrix dfedh(6,6);
+  static thread_local Matrix dfedh(6,6);   // Ladruno WP-192
 
   dfedh.Zero();
 
@@ -4510,4 +4517,36 @@ ForceBeamColumn3d::setSectionPointers(int numSec, SectionForceDeformation **secP
     opserr << "ForceBeamColumn3d::setSectionPointers -- failed to allocate vscommit array";   
   }
   
+}
+
+// Ladruno WP-192 -- per-type opt-in. The element's class / function scratch
+// (theMatrix, theVector, workArea, the subdivision arrays and every work
+// matrix of update / getTangentStiff / getResistingForce) is thread_local, and
+// so is LinearCrdTransf3d's. A Damping object, another transformation class or
+// a section that has not opted in keeps the element serial.
+bool
+ForceBeamColumn3d::ladrunoThreadSafeUpdate(void) const
+{
+  if (theDamping != 0 || crdTransf == 0 || sections == 0)
+    return false;
+  if (crdTransf->getClassTag() != CRDTR_TAG_LinearCrdTransf3d)
+    return false;
+  if (beamIntegr == 0 || (beamIntegr->getClassTag() != BEAM_INTEGRATION_TAG_Lobatto &&
+                          beamIntegr->getClassTag() != BEAM_INTEGRATION_TAG_Legendre))
+    return false;
+  for (int i = 0; i < numSections; i++)
+    if (sections[i] == 0 || !sections[i]->ladrunoThreadSafeUpdate())
+      return false;
+  return true;
+}
+
+bool
+ForceBeamColumn3d::ladrunoThreadSafeForm(void) const
+{
+  if (!this->ladrunoThreadSafeUpdate())
+    return false;
+  for (int i = 0; i < numSections; i++)
+    if (!sections[i]->ladrunoThreadSafeForm())
+      return false;
+  return true;
 }

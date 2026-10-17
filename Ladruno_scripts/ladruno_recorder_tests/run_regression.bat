@@ -75,6 +75,20 @@ REM (openseespy coverage of the same ordering lives in energy_model.py; the
 REM  elementAPI_TCL cursor contract differs, so the Tcl exe needs its own gate)
 call :gateTcl "TCL FLAG ORDER"    flag_order_model.tcl     flag_order_check.py      flag_order.ladruno
 
+REM ---- apeGmsh #2034: per-stage KIND + stage boundaries ------------------------
+REM (user domainChange barrier, static<->transient flip, internal re-stamps
+REM  folded). The checker drives the classic Tcl exe and the openseespy twin
+REM  itself and asserts each deck's trailing marker.
+echo.
+echo --- STAGE KIND ---
+if not exist "%DISTBIN%\OpenSees.exe" (
+    echo [FAIL] STAGE KIND : %DISTBIN%\OpenSees.exe not built ^(Ladruno_scripts\build.bat OpenSees^)
+    set /a FAILS+=1
+) else (
+    "%VENVPY%" "%TESTS%\stage_kind_check.py" "%DISTBIN%" "%OUT%" --buildpy "%BUILDPY%"
+    if errorlevel 1 (echo [FAIL] STAGE KIND & set /a FAILS+=1) else (echo [PASS] STAGE KIND)
+)
+
 echo ==========================================================
 if %FAILS% GTR 0 (
     echo  REGRESSION: %FAILS% gate failures

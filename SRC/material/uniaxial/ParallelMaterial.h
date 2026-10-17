@@ -61,6 +61,11 @@ class ParallelMaterial : public UniaxialMaterial
     int revertToStart(void);        
 
     UniaxialMaterial *getCopy(void);
+    // Ladruno WP-195: WP-192 threaded element loops opt-in. The state path
+    // (setTrialStrain / getStress / getTangent / getDampTangent / commit) only
+    // touches this instance and its children, so the answer is the children's.
+    bool ladrunoThreadSafeUpdate(void) const;
+    bool ladrunoThreadSafeForm(void) const;
     
     int sendSelf(int commitTag, Channel &theChannel);  
     int recvSelf(int commitTag, Channel &theChannel, 

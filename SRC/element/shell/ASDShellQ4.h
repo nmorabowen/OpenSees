@@ -140,6 +140,15 @@ public:
     void setDomain(Domain* theDomain);
     int setDamping(Domain *theDomain, Damping *theDamping);
 
+    // Ladruno WP-192: per-type opt-in for the threaded element loops. The
+    // element's scratch (ASDShellQ4Globals, the transformations' work
+    // matrices) is per-thread; the answer is its sections' (and no Damping).
+    bool ladrunoThreadSafeUpdate(void) const;
+    bool ladrunoThreadSafeForm(void) const;
+    // Ladruno WP-196: Rayleigh-only damping (no Damping object); the RHS/LHS
+    // evaluations read the sections' committed answers without setting them.
+    bool ladrunoEnergyRayleighOnly(void) const;
+
     // print
     void Print(OPS_Stream& s, int flag);
 

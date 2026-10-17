@@ -363,10 +363,10 @@ public:
 
 		SetIdentity(num_dofs, H);
 
-		static MatrixType Omega(3, 3);
-		static MatrixType Omega2(3, 3);
-		static MatrixType Hi(3, 3);
-		static VectorType rv(3);
+		static thread_local MatrixType Omega(3, 3);   // Ladruno WP-192
+		static thread_local MatrixType Omega2(3, 3);   // Ladruno WP-192
+		static thread_local MatrixType Hi(3, 3);   // Ladruno WP-192
+		static thread_local VectorType rv(3);   // Ladruno WP-192
 
 		for (size_t i = 0; i < num_nodes; i++)
 		{
@@ -419,15 +419,15 @@ public:
 
 		SetZero(num_dofs, num_dofs, L);
 
-		static VectorType rotationVector(3);
-		static VectorType momentVector(3);
-		static MatrixType Omega(3, 3);
-		static MatrixType Omega2(3, 3);
-		static MatrixType Li(3, 3);
-		static MatrixType LiTemp1(3, 3);
-		static MatrixType MxR(3, 3);
-		static MatrixType RxM(3, 3);
-		static MatrixType Hi(3, 3);
+		static thread_local VectorType rotationVector(3);   // Ladruno WP-192
+		static thread_local VectorType momentVector(3);   // Ladruno WP-192
+		static thread_local MatrixType Omega(3, 3);   // Ladruno WP-192
+		static thread_local MatrixType Omega2(3, 3);   // Ladruno WP-192
+		static thread_local MatrixType Li(3, 3);   // Ladruno WP-192
+		static thread_local MatrixType LiTemp1(3, 3);   // Ladruno WP-192
+		static thread_local MatrixType MxR(3, 3);   // Ladruno WP-192
+		static thread_local MatrixType RxM(3, 3);   // Ladruno WP-192
+		static thread_local MatrixType Hi(3, 3);   // Ladruno WP-192
 
 		for (size_t i = 0; i < num_nodes; i++)
 		{

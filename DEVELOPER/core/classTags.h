@@ -729,6 +729,8 @@
 #define ELE_TAG_ASDEmbeddedNodeElement             217  // Massimo Petracca (ASDEA)
 
 #define ELE_TAG_Inno3DPnPJoint			  263
+#define ELE_TAG_LadrunoMembrane            33022 // N. Mora-Bowen (Ladruno) — polygonal surface-to-frame load distribution & Guyan-condensed CST diaphragm element (ADR 98); ladruno private band >=33000 (see Ladruno_implementation/98_ladruno_membrane_load_distribution_adr.md)
+#define ELE_TAG_LadrunoCPML                33023 // N. Mora-Bowen (Ladruno) — unified 2D/3D Convolutional Perfectly Matched Layer (CFS-PML / C-PML, Matzen 2011 / Xie et al. 2014): pure-displacement (2/3 DOFs/node) & coupled Biot u-p (-up, 3/4 DOFs/node) Gauss-point recursive-convolution absorbing layer across structured (Q4, H8, H20) and unstructured (T3, T6, BT6, TET4, TET10, BTET10) topologies, -box and -plane modes, stage 0->1 gravity/seepage latching, HRZ -lumped mass; ELE registry (numerically equals EigenSOE_TAGS_FeastEigenSOE / PATTERN_TAG_LadrunoPorousOverlay 33023 — different registries, not a collision); ladruno private band >=33000
 
 #define FRN_TAG_Coulomb            1
 #define FRN_TAG_VelDependent       2

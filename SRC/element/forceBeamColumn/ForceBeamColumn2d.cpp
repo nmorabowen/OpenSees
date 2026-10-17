@@ -1097,6 +1097,8 @@ ForceBeamColumn2d::computeReactions(double *p0)
       double wyb = data(1)*loadFactor;  // Transverse      
       double a = data(4)*L;
       double b = data(5)*L;
+      if (b <= a || a < 0.0 || b > L) // Ladruno: guard degenerate partial load span
+        continue;
 
       p0[0] -= waa*(b-a) + 0.5*(wab-waa)*(b-a);
       double Fy = wya*(b-a);
@@ -1773,6 +1775,8 @@ ForceBeamColumn2d::computeSectionForces(Vector &sp, int isec)
       double wyb = data(1)*loadFactor;  // Transverse
       double a = data(4)*L;
       double b = data(5)*L;
+      if (b <= a || a < 0.0 || b > L) // Ladruno: guard degenerate partial load span
+        continue;
 
       double Fa = waa*(b-a) + 0.5*(wab-waa)*(b-a); // resultant axial load
       double Fy = wya*(b-a); // resultant transverse load
