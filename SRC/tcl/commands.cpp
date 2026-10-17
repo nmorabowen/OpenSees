@@ -11834,6 +11834,7 @@ ladrunoMutation(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **
     {"EXPLICIT",  LADRUNO_MUTATE_EXPLICIT},
     {"SANISAND",  LADRUNO_MUTATE_SANISAND},
     {"SHELLMOD",  LADRUNO_MUTATE_SHELLMOD},   // Ladruno: ADR 91
+    {"CPML",      LADRUNO_MUTATE_CPML},       // Ladruno: C-PML wave absorbing element
   };
   const char *modeName[] = {"NONE", "ZERO", "SCALE", "IDENT"};
 

@@ -219,6 +219,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • system Pardiso — -deterministic / -cbwr (MKL CNR, reproducible)\n"
 "        • relativeMassDamping: Rayleigh mass term relative to a v_ref(t)\n"
 "        • LadrunoMembrane — polygonal tributary & FEA load-transfer membrane\n"
+"        • LadrunoCPML — 2D/3D CFS-PML absorber (9 shapes, box/plane, Biot -up)\n"
 "\n";
     // FEATURES-END
 
