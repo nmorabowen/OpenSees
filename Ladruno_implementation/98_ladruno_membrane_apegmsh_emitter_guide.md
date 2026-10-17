@@ -172,6 +172,13 @@ To make post-processing completely self-contained without requiring `apeGmsh` to
 | `"meshStats"` | $4$ | `[numVertices, numTriangles, numSubSegments, supportRank]` — internal CDT mesh telemetry. |
 | `"meshVertices"` | $3 \times N_{\text{verts}}$ | `[X_0, Y_0, Z_0, X_1, Y_1, Z_1, ...]` — 3D global coordinates of every internal Chew-Ruppert CDT vertex (for optional viewport mesh overlay). |
 | `"meshTriangles"` | $3 \times N_{\text{tris}}$ | `[v0_0, v1_0, v2_0, ...]` — 0-based triangle vertex indices into `"meshVertices"`. |
+| `"meshVertexFlags"` | $N_{\text{verts}}$ | Per-vertex role code in the internal FEM layout:<br>`0` = free interior Steiner node, `1` = outer polygon boundary, `2` = hole boundary, `3` = constrained on a `-frames` beam, `4` = constrained on a `-supportNodes` column. |
+| `"meshSubSegments"` | $6 \times N_{\text{pslgSub}}$ | `[uIdx, vIdx, frameTag, aOverL, bOverL, w_avg, ...]` — maps each constrained internal PSLG edge $(u, v)$ (0-based vertex indices in `"meshVertices"`) to its supporting `frameTag`, normalized span `[aOverL, bOverL]`, and average line-load intensity `w_avg`. |
+| `"meshNodalField"` (alias `"meshField"`) | $N_{\text{verts}}$ | Auxiliary out-of-plane scalar field at each internal mesh vertex (scaled by current normal pressure $q_n$):<br>• `fea_poisson` / `fea_plate`: solved unit deflection $w_i \cdot q_n$<br>• `tributary`: sand-heap roof height $d_i \cdot q_n$<br>• `oneway`: 1-way strip parabolic profile $\frac{1}{2} d_- d_+ \cdot q_n$. |
+| `"meshTriangleLoadFlow"` (alias `"meshLoadVectors"`) | $4 \times N_{\text{tris}}$ | `[targetTag, qx_flow, qy_flow, qz_flow, ...]` per triangle:<br>• `targetTag > 0`: dominant receiving `frameTag`<br>• `targetTag < 0`: dominant receiving `-supportNodeTag`<br>• `(qx_flow, qy_flow, qz_flow)`: 3D in-plane load-flow / diffusive-flux vector at the triangle centroid. |
+| `"yieldLines"` | $8 \times N_{\text{ridge}}$ | `[X1, Y1, Z1, X2, Y2, Z2, tagA, tagB, ...]` — exact 3D Voronoi / $45^\circ$ yield-line ridge segments separating competing supports `tagA` and `tagB`. |
+| `"frameTags"` | $N_{\text{frames}}$ | Ordered integer tags `[f_1, ..., f_K]` of `-frames`. |
+| `"supportNodeTags"` (alias `"supportTags"`) | $N_{\text{supportNodes}}$ | Ordered integer tags `[s_1, ..., s_M]` of `-supportNodes`. |
 | `"stress"` / `"strain"` | $3$ | `[sxx, syy, sxy]` or `[exx, eyy, gxy]` — in-plane membrane stress/strain when `-thick` and `-mat` are active. |
 
 ---
@@ -233,7 +240,9 @@ M_y(x) &= -M_{yI} - V_{zI}\,x - \sum_{m} \Delta M(x;\, a_m, b_m, w_{za,m}, w_{zb
 
 ### 2.4 Drop-In Python Reference Implementation for `apeGmsh`
 
-The function below can be dropped directly into `apeGmsh`'s postprocessor to collect all membrane sub-loads and evaluate exact internal force diagrams at arbitrary sampling stations `x_stations`:
+The functions below can be dropped directly into `apeGmsh`'s postprocessor to:
+1. Collect all membrane sub-loads and evaluate exact internal force diagrams on beams, and
+2. Extract the full internal FEM mesh layout, nodal contour field, per-triangle tributary region / load-flow vectors, constrained beam sub-segments, and yield-line ridges for 3D viewport rendering:
 
 ```python
 from __future__ import annotations
@@ -347,6 +356,47 @@ def reconstruct_beam_3d_diagrams(
         My -= dMz_y
 
     return {"x": x, "N": N, "Vy": Vy, "Vz": Vz, "T": T, "My": My, "Mz": Mz}
+
+
+def extract_membrane_fem_layout(ops, mem_tag: int) -> dict[str, np.ndarray]:
+    """
+    Extract the complete internal FEM layout and surface load-distribution fields
+    for a LadrunoMembrane element to render in apeGmsh's 3D viewport.
+    """
+    stats = ops.eleResponse(mem_tag, "meshStats")
+    n_verts = int(round(stats[0]))
+    n_tris = int(round(stats[1]))
+    support_rank = int(round(stats[3]))
+
+    vertices_3d = np.asarray(ops.eleResponse(mem_tag, "meshVertices"), dtype=float).reshape((n_verts, 3))
+    triangles = np.asarray(ops.eleResponse(mem_tag, "meshTriangles"), dtype=int).reshape((n_tris, 3))
+    vertex_flags = np.asarray(ops.eleResponse(mem_tag, "meshVertexFlags"), dtype=int)[:n_verts]
+    nodal_field = np.asarray(ops.eleResponse(mem_tag, "meshNodalField"), dtype=float)[:n_verts]
+
+    flow_raw = np.asarray(ops.eleResponse(mem_tag, "meshTriangleLoadFlow"), dtype=float)
+    flow_mat = flow_raw[: 4 * n_tris].reshape((n_tris, 4))
+    triangle_target_tags = np.round(flow_mat[:, 0]).astype(int)
+    triangle_flux_vectors_3d = flow_mat[:, 1:4]
+
+    sub_raw = np.asarray(ops.eleResponse(mem_tag, "meshSubSegments"), dtype=float)
+    n_pslg_sub = len(sub_raw) // 6
+    mesh_subsegments = sub_raw[: 6 * n_pslg_sub].reshape((n_pslg_sub, 6)) if n_pslg_sub > 0 else np.zeros((0, 6))
+
+    yl_raw = np.asarray(ops.eleResponse(mem_tag, "yieldLines"), dtype=float)
+    n_yl = len(yl_raw) // 8
+    yield_lines = yl_raw[: 8 * n_yl].reshape((n_yl, 8)) if n_yl > 0 else np.zeros((0, 8))
+
+    return {
+        "vertices_3d": vertices_3d,                       # (N_v, 3) float
+        "triangles": triangles,                           # (N_t, 3) int (0-based)
+        "vertex_flags": vertex_flags,                     # (N_v,) int: 0=Steiner, 1=outer, 2=hole, 3=frame, 4=pointSupport
+        "nodal_field": nodal_field,                       # (N_v,) float: auxiliary deflection / roof height
+        "triangle_target_tags": triangle_target_tags,     # (N_t,) int: +frameTag or -supportNodeTag
+        "triangle_flux_vectors_3d": triangle_flux_vectors_3d,  # (N_t, 3) float: 3D in-plane load flow vector
+        "mesh_subsegments": mesh_subsegments,             # (N_pslg, 6): [uIdx, vIdx, frameTag, a/L, b/L, w_avg]
+        "yield_lines": yield_lines,                       # (N_ridge, 8): [X1, Y1, Z1, X2, Y2, Z2, tagA, tagB]
+        "support_rank": np.array([support_rank], dtype=int),
+    }
 ```
 
 ---
@@ -360,5 +410,6 @@ def reconstruct_beam_3d_diagrams(
    - Map ETABS Membrane / Deck / unmeshed Floor panels to `LadrunoMembrane`, populating `-frames` from the bounding/interior coplanar beams and `-method` (`tributary` for two-way membrane, `oneway` + `-spanAxis` for one-way deck).
 3. **Postprocessor Diagram Engine (`apeGmsh/post/diagrams.py`):**
    - Query `ops.eleResponse(memTag, "subSegmentLoads")` after each analysis step (or persist in `results.h5` under `/Membranes/subSegmentLoads`) and pass the per-beam sub-segment list into `reconstruct_beam_3d_diagrams()` when rendering internal force diagrams ($N, V_y, V_z, T, M_y, M_z$).
-4. **Optional 3D Viewport Tributary / CDT Mesh Overlay:**
-   - Query `ops.eleResponse(memTag, "meshVertices")` and `ops.eleResponse(memTag, "meshTriangles")` to render the internal Chew-Ruppert CDT triangulation and tributary load arrows onto the supporting beams.
+4. **3D Viewport FEM Layout & Load-Transfer Visualization (`extract_membrane_fem_layout`):**
+   - Render the internal Chew-Ruppert CDT mesh (`vertices_3d`, `triangles`) colored either by tributary target (`triangle_target_tags`) or by the auxiliary FEM deflection / roof field (`nodal_field`).
+   - Draw load-flow arrows (`triangle_flux_vectors_3d`) at triangle centroids, highlight constrained beam sub-segments (`mesh_subsegments`), and overlay crisp Voronoi / $45^\circ$ yield-line ridges (`yield_lines`).

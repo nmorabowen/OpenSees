@@ -201,6 +201,11 @@ private:
   std::array<double, 3> m_appliedGlobalTraction;
   std::vector<double> m_meshVertices3d;
   std::vector<int> m_meshTriangles;
+  std::vector<int> m_meshVertexFlags;
+  std::vector<double> m_meshNodalFieldUnit;
+  std::vector<double> m_meshSubSegmentsUnit;
+  std::vector<double> m_meshTriangleLoadFlowUnit;
+  std::vector<double> m_yieldLines3d;
 
   Matrix m_Kbase;
   Matrix m_Mbase;

@@ -709,6 +709,53 @@ LadrunoMembrane::resolveAndBuildTransfer(void)
       m_meshTriangles[3 * t + 2] = distRes.mesh.triangles[t][2];
     }
 
+    m_meshVertexFlags = distRes.vertex_flags;
+    m_meshNodalFieldUnit = distRes.nodal_field;
+
+    auto mapFeatureToTag = [&](int fid) -> double {
+      if (hasExplicitSupports) {
+        int nF = static_cast<int>(m_frameTags.size());
+        int nS = static_cast<int>(m_supportNodeTags.size());
+        if (fid >= 0 && fid < nF) {
+          return static_cast<double>(m_frameTags[fid]);
+        }
+        if (fid >= nF && (fid - nF) < nS) {
+          return -static_cast<double>(m_supportNodeTags[fid - nF]);
+        }
+      } else {
+        int nP = static_cast<int>(m_polyNodeTags.size());
+        if (fid >= 0 && fid < nP) {
+          return -static_cast<double>(m_polyNodeTags[fid]);
+        }
+      }
+      return 0.0;
+    };
+
+    m_meshTriangleLoadFlowUnit.resize(4 * distRes.mesh.triangles.size(), 0.0);
+    for (std::size_t t = 0; t < distRes.mesh.triangles.size(); ++t) {
+      int fid = (t < distRes.triangle_support_id.size()) ? distRes.triangle_support_id[t] : -1;
+      double fx2 = (t < distRes.triangle_flux_2d.size()) ? distRes.triangle_flux_2d[t].x : 0.0;
+      double fy2 = (t < distRes.triangle_flux_2d.size()) ? distRes.triangle_flux_2d[t].y : 0.0;
+      m_meshTriangleLoadFlowUnit[4 * t + 0] = mapFeatureToTag(fid);
+      m_meshTriangleLoadFlowUnit[4 * t + 1] = fx2 * m_e1[0] + fy2 * m_e2[0];
+      m_meshTriangleLoadFlowUnit[4 * t + 2] = fx2 * m_e1[1] + fy2 * m_e2[1];
+      m_meshTriangleLoadFlowUnit[4 * t + 3] = fx2 * m_e1[2] + fy2 * m_e2[2];
+    }
+
+    m_yieldLines3d.resize(8 * distRes.yield_lines.size(), 0.0);
+    for (std::size_t r = 0; r < distRes.yield_lines.size(); ++r) {
+      const auto &yl = distRes.yield_lines[r];
+      m_yieldLines3d[8 * r + 0] = m_origin[0] + yl.x1 * m_e1[0] + yl.y1 * m_e2[0];
+      m_yieldLines3d[8 * r + 1] = m_origin[1] + yl.x1 * m_e1[1] + yl.y1 * m_e2[1];
+      m_yieldLines3d[8 * r + 2] = m_origin[2] + yl.x1 * m_e1[2] + yl.y1 * m_e2[2];
+      m_yieldLines3d[8 * r + 3] = m_origin[0] + yl.x2 * m_e1[0] + yl.y2 * m_e2[0];
+      m_yieldLines3d[8 * r + 4] = m_origin[1] + yl.x2 * m_e1[1] + yl.y2 * m_e2[1];
+      m_yieldLines3d[8 * r + 5] = m_origin[2] + yl.x2 * m_e1[2] + yl.y2 * m_e2[2];
+      m_yieldLines3d[8 * r + 6] = mapFeatureToTag(yl.fidA);
+      m_yieldLines3d[8 * r + 7] = mapFeatureToTag(yl.fidB);
+    }
+
+    m_meshSubSegmentsUnit.clear();
     m_unitSubLoads.clear();
     if (hasExplicitSupports) {
       for (std::size_t k = 0; k < distRes.frame_loads.size() && k < m_frameInfos.size(); ++k) {
@@ -719,6 +766,15 @@ LadrunoMembrane::resolveAndBuildTransfer(void)
         m_frameInfos[k].wbEqUnit = fl.wb_eq;
         m_frameInfos[k].areaUnit = fl.F_total;
         m_frameInfos[k].overhangTorqueUnit = fl.overhang_torque;
+
+        for (const auto &sub : fl.sub_loads) {
+          m_meshSubSegmentsUnit.push_back(static_cast<double>(sub.u));
+          m_meshSubSegmentsUnit.push_back(static_cast<double>(sub.v));
+          m_meshSubSegmentsUnit.push_back(static_cast<double>(m_frameInfos[k].frameTag));
+          m_meshSubSegmentsUnit.push_back(sub.aL);
+          m_meshSubSegmentsUnit.push_back(sub.bL);
+          m_meshSubSegmentsUnit.push_back(0.5 * (sub.wa + sub.wb));
+        }
 
         double L_k = m_frameInfos[k].length;
         if (m_segments > 0 && !fl.sub_loads.empty() && fl.bL > fl.aL + 1e-12) {
@@ -1589,6 +1645,30 @@ LadrunoMembrane::setResponse(const char **argv, int argc, OPS_Stream &output)
     } else if (strcmp(argv[0], "meshTriangles") == 0) {
       int nT3 = static_cast<int>(m_meshTriangles.size());
       theResponse = new ElementResponse(this, 12, Vector(nT3 > 0 ? nT3 : 1));
+    } else if (strcmp(argv[0], "frameTags") == 0) {
+      int nF = static_cast<int>(m_frameTags.size());
+      theResponse = new ElementResponse(this, 13, Vector(nF > 0 ? nF : 1));
+    } else if (strcmp(argv[0], "supportNodeTags") == 0 ||
+               strcmp(argv[0], "supportTags") == 0) {
+      int nS = static_cast<int>(m_supportNodeTags.size());
+      theResponse = new ElementResponse(this, 14, Vector(nS > 0 ? nS : 1));
+    } else if (strcmp(argv[0], "meshSubSegments") == 0) {
+      int nMSub = static_cast<int>(m_meshSubSegmentsUnit.size());
+      theResponse = new ElementResponse(this, 15, Vector(nMSub > 0 ? nMSub : 1));
+    } else if (strcmp(argv[0], "meshVertexFlags") == 0) {
+      int nVF = static_cast<int>(m_meshVertexFlags.size());
+      theResponse = new ElementResponse(this, 16, Vector(nVF > 0 ? nVF : 1));
+    } else if (strcmp(argv[0], "meshNodalField") == 0 ||
+               strcmp(argv[0], "meshField") == 0) {
+      int nNF = static_cast<int>(m_meshNodalFieldUnit.size());
+      theResponse = new ElementResponse(this, 17, Vector(nNF > 0 ? nNF : 1));
+    } else if (strcmp(argv[0], "meshTriangleLoadFlow") == 0 ||
+               strcmp(argv[0], "meshLoadVectors") == 0) {
+      int nTF = static_cast<int>(m_meshTriangleLoadFlowUnit.size());
+      theResponse = new ElementResponse(this, 18, Vector(nTF > 0 ? nTF : 1));
+    } else if (strcmp(argv[0], "yieldLines") == 0) {
+      int nYL = static_cast<int>(m_yieldLines3d.size());
+      theResponse = new ElementResponse(this, 19, Vector(nYL > 0 ? nYL : 1));
     } else if ((strcmp(argv[0], "material") == 0 || strcmp(argv[0], "integrPoint") == 0) &&
                m_theMaterial != nullptr && argc > 2) {
       theResponse = m_theMaterial->setResponse(&argv[2], argc - 2, output);
@@ -1774,6 +1854,96 @@ LadrunoMembrane::getResponse(int responseID, Information &eleInfo)
       vTris(i) = static_cast<double>(m_meshTriangles[i]);
     }
     return eleInfo.setVector(vTris);
+  }
+
+  case 13: {
+    int nF = static_cast<int>(m_frameTags.size());
+    static thread_local Vector vFTags;
+    vFTags.resize(nF > 0 ? nF : 1);
+    vFTags.Zero();
+    for (int i = 0; i < nF; ++i) {
+      vFTags(i) = static_cast<double>(m_frameTags[i]);
+    }
+    return eleInfo.setVector(vFTags);
+  }
+
+  case 14: {
+    int nS = static_cast<int>(m_supportNodeTags.size());
+    static thread_local Vector vSTags;
+    vSTags.resize(nS > 0 ? nS : 1);
+    vSTags.Zero();
+    for (int i = 0; i < nS; ++i) {
+      vSTags(i) = static_cast<double>(m_supportNodeTags[i]);
+    }
+    return eleInfo.setVector(vSTags);
+  }
+
+  case 15: {
+    int nMSub = static_cast<int>(m_meshSubSegmentsUnit.size());
+    static thread_local Vector vMSub;
+    vMSub.resize(nMSub > 0 ? nMSub : 1);
+    vMSub.Zero();
+    double qScale = (std::abs(m_appliedNormalPressure) > 1e-15) ? m_appliedNormalPressure : 1.0;
+    int nSegs = nMSub / 6;
+    for (int s = 0; s < nSegs; ++s) {
+      vMSub(6 * s + 0) = m_meshSubSegmentsUnit[6 * s + 0];
+      vMSub(6 * s + 1) = m_meshSubSegmentsUnit[6 * s + 1];
+      vMSub(6 * s + 2) = m_meshSubSegmentsUnit[6 * s + 2];
+      vMSub(6 * s + 3) = m_meshSubSegmentsUnit[6 * s + 3];
+      vMSub(6 * s + 4) = m_meshSubSegmentsUnit[6 * s + 4];
+      vMSub(6 * s + 5) = m_meshSubSegmentsUnit[6 * s + 5] * qScale;
+    }
+    return eleInfo.setVector(vMSub);
+  }
+
+  case 16: {
+    int nVF = static_cast<int>(m_meshVertexFlags.size());
+    static thread_local Vector vFlags;
+    vFlags.resize(nVF > 0 ? nVF : 1);
+    vFlags.Zero();
+    for (int i = 0; i < nVF; ++i) {
+      vFlags(i) = static_cast<double>(m_meshVertexFlags[i]);
+    }
+    return eleInfo.setVector(vFlags);
+  }
+
+  case 17: {
+    int nNF = static_cast<int>(m_meshNodalFieldUnit.size());
+    static thread_local Vector vField;
+    vField.resize(nNF > 0 ? nNF : 1);
+    vField.Zero();
+    double qScale = (std::abs(m_appliedNormalPressure) > 1e-15) ? m_appliedNormalPressure : 1.0;
+    for (int i = 0; i < nNF; ++i) {
+      vField(i) = m_meshNodalFieldUnit[i] * qScale;
+    }
+    return eleInfo.setVector(vField);
+  }
+
+  case 18: {
+    int nTF = static_cast<int>(m_meshTriangleLoadFlowUnit.size());
+    static thread_local Vector vFlow;
+    vFlow.resize(nTF > 0 ? nTF : 1);
+    vFlow.Zero();
+    double qScale = (std::abs(m_appliedNormalPressure) > 1e-15) ? std::abs(m_appliedNormalPressure) : 1.0;
+    int nTris = nTF / 4;
+    for (int t = 0; t < nTris; ++t) {
+      vFlow(4 * t + 0) = m_meshTriangleLoadFlowUnit[4 * t + 0];
+      vFlow(4 * t + 1) = m_meshTriangleLoadFlowUnit[4 * t + 1] * qScale;
+      vFlow(4 * t + 2) = m_meshTriangleLoadFlowUnit[4 * t + 2] * qScale;
+      vFlow(4 * t + 3) = m_meshTriangleLoadFlowUnit[4 * t + 3] * qScale;
+    }
+    return eleInfo.setVector(vFlow);
+  }
+
+  case 19: {
+    int nYL = static_cast<int>(m_yieldLines3d.size());
+    static thread_local Vector vYL;
+    vYL.resize(nYL > 0 ? nYL : 1);
+    vYL.Zero();
+    for (int i = 0; i < nYL; ++i) {
+      vYL(i) = m_yieldLines3d[i];
+    }
+    return eleInfo.setVector(vYL);
   }
 
   default:

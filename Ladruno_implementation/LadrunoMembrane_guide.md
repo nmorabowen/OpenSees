@@ -135,6 +135,13 @@ Query any `LadrunoMembrane` via `ops.eleResponse(eleTag, query)` or Tcl `eleResp
 | `"meshStats"` | `[numVertices, numTriangles, numSubSegments, supportRank]` (length 4) | Internal 2D Chew-Ruppert CDT mesh telemetry and plate support rank. |
 | `"meshVertices"` | `[X_0, Y_0, Z_0, ...]` ($3 \times N_{\text{verts}}$) | 3D global coordinates of every internal CDT mesh vertex. |
 | `"meshTriangles"` | `[v0_0, v1_0, v2_0, ...]` ($3 \times N_{\text{tris}}$) | 0-based triangle vertex indices into `"meshVertices"`. |
+| `"frameTags"` | `[f_1, ..., f_K]` (length $N_{\text{frames}}$) | Ordered `-frames` element tags so `apeGmsh` can index `"frameLoads"`, `"overhangTorques"`, and `"tributaryAreas"` without re-parsing the input deck. |
+| `"supportNodeTags"` (alias `"supportTags"`) | `[s_1, ..., s_S]` (length $N_{\text{supportNodes}}$) | Ordered `-supportNodes` tags corresponding to `"supportReactions"` and the tail of `"tributaryAreas"`. |
+| `"meshSubSegments"` | `[uIdx, vIdx, frameTag, aL, bL, w_avg, ...]` ($6 \times N_{\text{pslgSub}}$) | Constrained PSLG sub-segments connecting `"meshVertices"` indices `(uIdx, vIdx)` onto supporting `frameTag` over $[a/L, b/L]$ with average line load intensity `w_avg` (scaled by $q_n$). |
+| `"meshVertexFlags"` | `[flag_0, ..., flag_{NV-1}]` (length $N_{\text{verts}}$) | Per-vertex topological role: `0` = interior Steiner node, `1` = outer polygon boundary, `2` = hole boundary, `3` = constrained on supporting frame, `4` = isolated point support node. |
+| `"meshNodalField"` (alias `"meshField"`) | `[phi_0, ..., phi_{NV-1}]` (length $N_{\text{verts}}$) | Solved transverse scalar field at each CDT vertex scaled by $q_n$: membrane deflection $w(x,y)$ (`fea_poisson`), DKT plate deflection $w(x,y)$ (`fea_plate`), or tributary roof height / distance-to-support (`tributary`, `oneway`). |
+| `"meshTriangleLoadFlow"` (alias `"meshLoadVectors"`) | `[targetTag, qx, qy, qz, ...]` ($4 \times N_{\text{tris}}$) | Per-triangle load-transfer target (`+frameTag` for a beam, `-supportNodeTag` for an isolated column/wall node) and 3D global load-flow vector $(q_x, q_y, q_z)$ pointing toward the receiving support. |
+| `"yieldLines"` | `[X1, Y1, Z1, X2, Y2, Z2, tagA, tagB, ...]` ($8 \times N_{\text{ridge}}$) | 3D global coordinates of interior tributary watershed / yield-line ridge segments separating adjacent support regions `tagA` and `tagB`. |
 
 ---
 
