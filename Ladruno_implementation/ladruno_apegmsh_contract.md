@@ -61,6 +61,7 @@ habit as the ledgers, no tooling.
 | **LadrunoCMS partitioned emitter** (ADR-1000 P3a) | driver side: `eigen -ladrunoCMS -domainMode physical -hierarchy logical -level1 <p> -level2 <m> -modesL2 <k2> -modesL1 <k1> <numModes>` with `p*m == nranks` (`-verifyAssembly` is a **parser error** in `physical` mode, not ignored) | **apeGmsh owns the emitter** — a physically partitioned deck (one fragment per MPI rank, owned elements only, nodes on every incident rank, additive mass/loads emitted ONCE on a single primary owner, same global equation id for a shared node on all incident ranks) plus an auditable `cms_partition_manifest.json` (FEMData hash/identity, global counts, `num_partitions`, per-rank element/node counts + sorted hashes, additive owners, shared-node owner sets, `coarse_of_fine` grouping, fragment hashes). Preflight must **refuse** (not warn) on non-exact element coverage, inconsistent owner sets, ownerless/duplicated additive quantities, or any v1-unsupported construction (embedded reinforcement ties, auto structural rebar, `g.embed`, fork contact, zero-length/node-pair explicit elements). Starting point is the existing `g.mesh.partitioning.partition` / `build_element_partition_owner` / `build_node_partition_owners` / `ops.tcl(..., per_rank=True)` path. | **ON HOLD 2026-07-26 — do not schedule. Was production-bound; now likely to be CLOSED — the owner has accepted the speed cost (~7x slower, 5x the memory of sequential ARPACK at Building-1A scale) in exchange for the only modal path where no rank holds the whole problem. apeGmsh side: per-rank emission ALREADY EXISTS (verified at apeGmsh `334cc70e` — owner maps + additive mass/load already emitted once on the primary owner); MISSING is the manifest, `coarse_of_fine`, the CMS preflight refusals, and a second 4-way Building-1A partition** — CMS measured 7.9x slower than the standard solver at n=3200 and 523x at n=12800 (it SCALES WORSE), and the memory-capacity rationale is undercut twice over: `eigen` over `MumpsParallelSOE` already distributes the factor without CMS, and Craig-Bampton's dense constraint-mode block grows faster than the sparse fill it avoids. Only remaining ask: a second 4-way Building-1A partition (data, not code). Full context + stand-down notice in [[LadrunoCMS_apegmsh_emitter_guide]] §0 |
 | **Ladruno brick element(s)** | TBD — higher-order hex, sibling to BezierTri6 on the solid side; will self-declare via the element contract | not yet — heads-up for the apeGmsh element registry. | draft (no plan file yet) |
 | **Load-distributing membrane & partial trapezoidal frame loads** (`LadrunoMembrane` + `Beam2d/3dPartialUniformLoad`; ADR-98) | `element LadrunoMembrane tag -nodes n1..nk [-frames f1..fm] [-supportNodes s1..sp] [-hole h1..hq]... [-method tributary\|oneway\|fea_poisson\|fea_plate] [-spanAxis ax ay az] [-orthoRatio r] [-segments S] [-meshSize h] [-thick t] [-mat matTag] [-E E] [-nu nu] [-rho r] [-lumped] [-pressure p] [-b1 b1 -b2 b2 -b3 b3]`; plus 8-arg 3D (`eleLoad -ele f -type -beamUniform Wya Wza Wxa aL bL Wyb Wzb Wxb`) and 6-arg 2D (`Wya Wxa aL bL Wyb Wxb`) partial trapezoidal loads across all 2D/3D frame elements | **Emitter + postprocessor diagram & FEM layout reconstruction**: emit `LadrunoMembrane` for ETABS Membrane/Deck panels without meshing interior domain nodes; query `ops.eleResponse(memTag, "subSegmentLoads")` (`[frameTag, aOverL, bOverL, wya, wyb, wza, wzb, wxa, wxb]` × `N_sub` in local beam axes) + `ops.eleResponse(beamTag, "localForce")` to reconstruct exact piecewise-quadratic $V_y(x), V_z(x)$ and piecewise-cubic $M_z(x), M_y(x)$ diagrams along supporting frames; query `"frameTags"`, `"supportNodeTags"`, `"meshVertices"`, `"meshVertexFlags"`, `"meshTriangles"`, `"meshSubSegments"`, `"meshNodalField"`, `"meshTriangleLoadFlow"`, and `"yieldLines"` to render the full internal CDT mesh layout, tributary cells, yield-line ridges, load-flow vectors, and deflected/roof-height scalar contours. ELE **33022** (read live). | **shipped OpenSees-side** (WP-098) — apeGmsh emitter + diagram/layout consumer ready to implement; full guide in [[98_ladruno_membrane_apegmsh_emitter_guide]] |
+| **CFS-PML continuum & coupled Biot u-p wave absorber** (`LadrunoCPML`; WP-199) | `element LadrunoCPML tag n1..nk [-shape T6\|BT6\|TET10\|BTET10] {-mat matTag \| -E E -nu nu -rho rho} [-thick t] {-box xMin xMax yMin yMax [zMin zMax] Lx Ly [Lz] \| -plane -x0 x0 y0 [z0] -n nx ny [nz] -L Lpml} [-m m] [-R0 R0] [-kappaMax k] [-alphaMax a] [-mass consistent\|lumped] [-stage 0\|1] [-body bx by [bz]] [-up -Kf Kf -poro n -rhoF rf {-perm kx.. \| -permH khx.. -gammaW gw} [-alphaB a] [-Ks Ks] [-pOrder equal\|linear] [-formulation std\|bbar] [-stab auto [a0]\|off\|manual a] [-fluidBody fbx..]]` | **Typed primitive `ops.element.LadrunoCPML` + multi-element PML shell generator (`add_cpml_shell` / `add_plane_wave_box(..., absorber="cpml", n_pml_layers=5)`)**: spans all 9 continuum topologies (`T3, Q4, T6, BT6, TET4, H8, TET10, BTET10, H20`), Gmsh connectivity verbatim (`node_reorder=identity`), auxiliary-DOF-free (`ndf=ndm` in single-phase; `ndf=ndm+1` or Taylor–Hood vertex-linear $p$ in `-up` mode). One shared `-box` definition handles faces, 2D corners, 3D edges, and 3D corners automatically at each GP (no 17-`btype` PG split needed); outer PML boundary (`CPML_Outer`) must be fixed (`u=0`, plus `p=0` in `-up` mode). In `-up` mode, enforce the **general unsymmetric solver gate** (same as `LadrunoUP`) and pass **accelerations** to `-body`/`-fluidBody` (vs. force/volume in single-phase mode). Stage flip via `setParameter -val 1 -ele <tags> stage`. ELE **33023** (read live). | **shipped OpenSees-side** (WP-199, PRs #995/#996) — apeGmsh emitter & multi-layer PML shell generator ready to implement; full guide in [[199_ladruno_cpml_apegmsh_emitter_guide]] and [[199_ladruno_cpml_guide]] |
 | **OpenSeesPyMP** | `import openseesmp` (per-rank MPI Python module) | affects which engine `Results.run()` drives (`openseespy` vs `openseesmp`). | shipped |
 
 ## Ladruno — reader notes
@@ -492,6 +493,42 @@ changes) and pushes `+Q*p` back on the skeleton each step. Shipped complete on
   standard SWMR stream. The generic `.ladruno`/Monitor readers should need
   zero or near-zero changes — verify against a sample file, don't assume.
 
+### `LadrunoCPML` (`ELE_TAG_LadrunoCPML = 33023`, WP-199)
+
+- **What it is on the OpenSees side**: A single unified 2D/3D **Complex-Frequency-Shifted
+  Perfectly Matched Layer (CFS-PML / C-PML)** continuum and coupled Biot $u\text{–}p$
+  wave-absorbing element (`ELE_TAG_LadrunoCPML = 33023`, PRs #995/#996) across all 9
+  continuum topologies (`T3, Q4, T6, BT6, TET4, H8, TET10, BTET10, H20`). Uses
+  auxiliary-DOF-free recursive convolution at Gauss points (`ndf = ndm` in single-phase
+  mode; `ndf = ndm + 1` or Taylor–Hood vertex-linear $p$ in `-up` mode), avoiding the
+  40-DOF `PML3D` / `equalDOF` tie-constraint machinery entirely.
+- **Recommended `apeGmsh` approach**:
+  1. **Typed element primitive `ops.element.LadrunoCPML`**: fan out over any of the 9
+     cell types (`tri3, quad4, tri6, tet4, hex8, tet10, hex20`) with identity node
+     ordering; emit `-shape BT6` / `-shape BTET10` when paired with `BezierTri6`,
+     `BezierTet10`, or `LadrunoUP` Taylor–Hood elements so the $\xi = 0$ interface uses
+     identical Bernstein–Bézier shape functions.
+  2. **Multi-element PML shell generator (`add_cpml_shell` / `add_plane_wave_box(..., absorber="cpml", n_pml_layers=5)`)**:
+     extrude $N_{\text{pml}} = 4\text{–}10$ elements across thickness $L_{\text{pml}}$.
+     Unlike `ASDAbsorbingBoundary`, `LadrunoCPML -box` computes local penetration depth
+     $\xi_m(\mathbf{x}_g)$ at every Gauss point automatically, so **all faces, edges,
+     and corners share ONE physical group per soil layer** (no 17-`btype` split!).
+     For half-space problems with a free ground surface at $y_{\max}$ (2D) or $z_{\max}$
+     (3D), set the `-box` upper bound `yMax` / `zMax` above the free surface so
+     $\xi_{\text{vertical}} = 0$ at the ground surface. Tag the outer termination boundary
+     as `"CPML_Outer"` and fix all DOFs (`u = 0` in single-phase; `u = 0, p = 0` in `-up`).
+  3. **Coupled Biot `-up` mode gates**:
+     - Enforce the **general unsymmetric solver gate** (`UmfPack`, `SparseGEN`,
+       `FullGeneral`, `BandGeneral`, `Mumps` with `SYM=0`, `Pardiso` `-matrixType 11`)
+       when `up=True`, identical to `LadrunoUP`.
+     - **Body-force unit convention**: in single-phase mode (`up=False`), `-body` is
+       **force per unit volume** $[F/L^3]$ (matching `LadrunoBrick`); in `-up` mode
+       (`up=True`), `-body` and `-fluidBody` are **accelerations** $[L/T^2]$ (matching
+       `LadrunoUP`).
+  4. **Staged activation**: emit `-stage 0` for static gravity / steady-seepage analysis,
+     then flip via `setParameter -val 1 -ele <tags> stage` before transient analysis
+     (reuses the `s.activate_absorbing()` pattern).
+
 ## Related docs (the normative detail)
 
 This is a quick reference; the deep specs live next door:
@@ -512,6 +549,12 @@ This is a quick reference; the deep specs live next door:
 - [[lysmer_asd_absorbing_boundaries_guide]] — Lysmer/ASD free-field absorbing
   boundaries: full theory, OpenSees architecture/implementation, and the §9
   `g.absorbing_boundary` ghost-layer generator contract.
+- [[199_ladruno_cpml_guide]] and [[199_ladruno_cpml_apegmsh_emitter_guide]] —
+  `LadrunoCPML` (ELE 33023) unified 2D/3D CFS-PML continuum & coupled Biot `-up`
+  wave absorber: theory, command grammar, multi-layer PML shell generator, and
+  `-up` pairing rules.
+- [[98_ladruno_membrane_apegmsh_emitter_guide]] — `LadrunoMembrane` (ELE 33022) &
+  partial trapezoidal frame loads emitter and diagram-reconstruction contract.
 - [[LadrunoPorousOverlay_guide]] — the persistent-fluid staggered overlay
   (PATTERN 33022): full command reference, init recipes, driver, explicit
   lanes, recorder channels, quirks table.
@@ -519,6 +562,13 @@ This is a quick reference; the deep specs live next door:
 
 ## Maintenance log
 
+- 2026-10-17 — Added **`LadrunoCPML`** (`ELE_TAG_LadrunoCPML = 33023`, WP-199,
+  fork PRs #995/#996): unified 2D/3D CFS-PML continuum & coupled Biot $u\text{–}p$
+  (`-up`) wave-absorbing element across all 9 continuum topologies (`T3, Q4, T6, BT6,
+  TET4, H8, TET10, BTET10, H20`), `-box` and oblique `-plane` modes, auxiliary-DOF-free
+  recursive convolution, static gravity/seepage staging (`-stage 0 -> 1`), and 3–20×
+  hoisted-kernel performance speedup. Full `apeGmsh` emitter and multi-layer PML shell
+  generator spec in [[199_ladruno_cpml_apegmsh_emitter_guide]].
 - 2026-09-29 — **Contact (fork side only, WP-155 / [[155_pile_contact_r05]]):** the
   `contact … -mortar` grammar gains `-augment commit|request|never`, `-maxGap d`,
   `-gapOffset g0` and `-adjust [tol]` (the pile ladder R1 findings N-1/N-2/G-9).
