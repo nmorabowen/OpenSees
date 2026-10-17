@@ -2065,3 +2065,102 @@ features:
       Zero vanilla behavior change —
       every touched upstream file is registration-only.
       See Ladruno_implementation/91_ladruno_shell_stiffness_modifiers_adr.md.
+
+  - feature: LadrunoCPML
+    classtag: 33023
+    tag_symbol: ELE_TAG_LadrunoCPML
+    pr: null
+    feature_class: element
+    required_tiers: [T0, T1, T2a, dynamics-battery]
+    pytest: tests/test_ladruno_cpml_waveguide_mms.py
+    tests:
+      - tests/test_ladruno_cpml_kernel_cpp.py
+      - tests/test_ladruno_cpml_waveguide_mms.py
+      - tests/test_ladruno_cpml_greens_lamb.py
+      - tests/test_ladruno_cpml_ecosystem.py
+      - tests/test_ladruno_cpml_up.py::test_up_gate0_interior_equivalence_vs_ladrunoup
+      - tests/test_ladruno_cpml_up.py::test_up_gate0_oracle_14_cases_and_fd_tangent
+      - tests/test_ladruno_cpml_up.py::test_up_anchor1_saturated_soil_column_p1_and_s_wave_reflection
+      - tests/test_ladruno_cpml_up.py::test_up_anchor2_2d_3d_poroelastic_radiation_and_lamb_halfspace
+      - tests/test_ladruno_cpml_up.py::test_up_anchor3_gravity_seepage_staging_rayleigh_stability_and_checkpoint
+    verified_aspects:
+      - non_split_second_order_cfs_pml
+      - piecewise_linear_recursive_convolution
+      - all_9_continuum_topologies_2d_3d
+      - box_and_plane_geometry_modes
+      - coupled_biot_up_cfs_pml
+      - taylor_hood_and_equal_order_pressure
+      - poroelastic_p1_and_s_waveguide_absorption
+      - hydrostatic_seepage_stage_latching
+      - solid_only_rayleigh_isolation
+    tcl: WAIVED(Tcl parity covered via subprocess OpenSees.exe inside tests/test_ladruno_cpml_ecosystem.py)
+    zone_b: []
+    core_files:
+      - CMakeLists.txt
+      - SRC/classTags.h
+      - SRC/element/CMakeLists.txt
+      - SRC/element/TclElementCommands.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/interpreter/OpenSeesOutputCommands.cpp
+      - SRC/interpreter/PythonModule.cpp
+      - SRC/tcl/commands.cpp
+      - SRC/tcl/tclMain.cpp
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      Unified 2D/3D Non-Split Second-Order Convolutional Perfectly Matched Layer
+      (CFS-PML / C-PML, Matzen 2011 IJNME 88:1157-1178; Xie et al. 2014 GJI
+      198:1714-1747) continuum wave-absorbing element (WP-199), supporting both
+      single-phase elastodynamics (ndf = ndm: 2 in 2D, 3 in 3D) and coupled
+      Biot u-p poroelasticity (-up mode, pairing directly with LadrunoUP).
+      Uses Gauss-point Piecewise-Linear Recursive Convolution (RCFilter1D)
+      cascades, exact consistent tangent matrices (K_eff, C_eff, M_eff),
+      consistent and HRZ-lumped (-lumped) mass, and static-to-dynamic stage
+      transition (-stage 0 -> 1 latching u0, p0, f0). Supports all 9 structured
+      and unstructured continuum topologies: T3, Q4, T6, BT6 (2D) and TET4, H8,
+      TET10, BTET10, H20 (3D), in both -box (automatic face/edge/corner detection)
+      and -plane (arbitrary outward unit normal n and reference point x0) modes.
+      In coupled Biot -up mode, stretches the Darcy permeability operator via
+      F_jl^(p)(omega), the hydro-mechanical coupling terms via E_j(omega) =
+      J_s(omega)/s_j(omega) (exact integration by parts with dE_j/dx'_j == 0),
+      and the fluid compressibility storage term via J_s^(p)(omega), while keeping
+      McGann equal-order pressure stabilization H_tilde unstretched and grading
+      d_0 with the undrained fast P-wave speed V_{p,fast}. Supports both
+      equal-order (-pOrder equal, default with -stab auto) and Taylor-Hood
+      (-pOrder linear on T6, BT6, TET10, BTET10, H20 where vertex nodes carry
+      ndm+1 DOFs and mid-edge nodes carry ndm DOFs), plus -formulation std|bbar
+      and solid-only Rayleigh damping isolation.
+      Verified across a 5-file Zone-A suite:
+      (1) tests/test_ladruno_cpml_kernel_cpp.py (standalone C++17 kernel harness:
+      67 self-checks, 18 single-phase + 14 coupled Biot u-p multi-step cases vs
+      independent Python reference oracle <= 6.16e-14, 10/10 kernel mutants killed);
+      (2) tests/test_ladruno_cpml_waveguide_mms.py (76 tests: all 18 oracle cases
+      through opensees.pyd <= 1e-11, OpenSees FD tangent <= 1e-7, Anchor 1 1D P/S
+      waveguide reflection Rp=0.41%, Rs=0.50% <= 1% and 37-deg rotated -plane
+      invariance to 2.68e-17, Anchor 2 2D/3D MMS across all 9 topologies and O(h^2)
+      spatial convergence p >= 1.85 on unstructured T3 and Q4);
+      (3) tests/test_ladruno_cpml_greens_lamb.py (5 tests: Anchor 3a/3b 2D & 3D
+      cylindrical/spherical full-space radiation across normal, oblique, and 3D
+      corners on Q4, T3, H8, TET4 with L2 reflection 0.38%-1.40%; Anchor 4 Lamb's
+      problem Rayleigh surface wave head-to-head vs ASDAbsorbingBoundary2D showing
+      0.60% L2 error vs 38.46% — a 64.6x L2 and 80.2x peak error reduction);
+      (4) tests/test_ladruno_cpml_ecosystem.py (58 tests: EnergyBalanceRecorder
+      closure <= 1e-10, 2500-step late-time Lyapunov stability, stage 0 -> 1
+      gravity latching & non-hijacking of soil updateMaterialStage, Ki cache
+      freeze, ground-motion inertia, Rayleigh damping, FileDatastore sendSelf/
+      recvSelf across Q4/T6/H8/TET10/BTET10, Tcl parity, and 26 fail-closed
+      parser/domain refusals);
+      (5) tests/test_ladruno_cpml_up.py (coupled Biot u-p Gate 0 interior
+      equivalence vs LadrunoUP across all 5 shared topologies T3/Q4/H8/BT6/BTET10
+      <= 1e-13, 14-case oracle parity across all 9 topologies <= 1e-10 + 4-block
+      FD tangent <= 1e-7, Anchor 1 saturated soil column fast P1 + S wave
+      absorption <= 1% + 37-deg rotated -plane invariance <= 1e-11, Anchor 2 2D Q4
+      & 3D H8 poroelastic radiation + 2D Q4 saturated Lamb's half-space <= 3.5%-4.5%,
+      Anchor 3 hydrostatic gravity + steady seepage -stage 0 -> 1 latching <= 1e-10,
+      solid-only Rayleigh isolation <= 1e-14, 2500-step 2D/3D corner Lyapunov
+      stability, FileDatastore round-trip across Q4/BT6/H8/BTET10 <= 1e-14, and
+      28 fail-closed parser/setDomain refusals).
+      ADR-87 D2 MUTATION GATE (family CPML): ZERO score 0.715 (103/144 killed,
+      floor 0.600) and SCALE score 0.632 (91/144 killed, floor 0.400) — BOTH
+      GATES PASSED. See Ladruno_implementation/199_ladruno_cpml_guide.md.
