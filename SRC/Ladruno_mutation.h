@@ -134,6 +134,9 @@
 #ifndef LADRUNO_MUTATE_SHELLMOD
 #  define LADRUNO_MUTATE_SHELLMOD LADRUNO_MUT_NONE
 #endif
+#ifndef LADRUNO_MUTATE_CPML
+#  define LADRUNO_MUTATE_CPML LADRUNO_MUT_NONE
+#endif
 
 namespace LadrunoMutation {
 
@@ -151,7 +154,8 @@ inline bool anyActive(void)
          (LADRUNO_MUTATE_CONTACT   != LADRUNO_MUT_NONE) ||
          (LADRUNO_MUTATE_EXPLICIT  != LADRUNO_MUT_NONE) ||
          (LADRUNO_MUTATE_SANISAND  != LADRUNO_MUT_NONE) ||
-         (LADRUNO_MUTATE_SHELLMOD  != LADRUNO_MUT_NONE);
+         (LADRUNO_MUTATE_SHELLMOD  != LADRUNO_MUT_NONE) ||
+         (LADRUNO_MUTATE_CPML      != LADRUNO_MUT_NONE);
 }
 
 // Sabotage an internal-force vector. Placed AFTER the force is formed and

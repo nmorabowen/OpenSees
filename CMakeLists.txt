@@ -241,14 +241,14 @@ option(LADRUNO_CMS_BUILD_TESTS "Build standalone LadrunoCMS C++ numerical checks
 # Empty family (the default) adds no definition at all, so a normal build is
 # untouched -- the header then defaults every family to LADRUNO_MUT_NONE.
 set(LADRUNO_MUTATE_FAMILY "" CACHE STRING
-    "ADR-87 D2 mutation gate: physics family to sabotage (CONTINUUM, UP, CONTACT, EXPLICIT, SANISAND). Empty = normal build.")
+    "ADR-87 D2 mutation gate: physics family to sabotage (CONTINUUM, UP, CONTACT, EXPLICIT, SANISAND, SHELLMOD, CPML). Empty = normal build.")
 set(LADRUNO_MUTATE_MODE "ZERO" CACHE STRING
     "ADR-87 D2 mutation mode: ZERO (force->0), SCALE (force*1.5), IDENT (tangent->I).")
-set_property(CACHE LADRUNO_MUTATE_FAMILY PROPERTY STRINGS "" CONTINUUM UP CONTACT EXPLICIT SANISAND SHELLMOD)  # Ladruno: SHELLMOD added by ADR 91
+set_property(CACHE LADRUNO_MUTATE_FAMILY PROPERTY STRINGS "" CONTINUUM UP CONTACT EXPLICIT SANISAND SHELLMOD CPML)  # Ladruno: SHELLMOD added by ADR 91, CPML added for C-PML
 set_property(CACHE LADRUNO_MUTATE_MODE PROPERTY STRINGS ZERO SCALE IDENT)
 
 if(NOT LADRUNO_MUTATE_FAMILY STREQUAL "")
-  set(_ladruno_valid_families CONTINUUM UP CONTACT EXPLICIT SANISAND SHELLMOD)  # Ladruno: SHELLMOD added by ADR 91
+  set(_ladruno_valid_families CONTINUUM UP CONTACT EXPLICIT SANISAND SHELLMOD CPML)  # Ladruno: SHELLMOD added by ADR 91, CPML added for C-PML
   if(NOT LADRUNO_MUTATE_FAMILY IN_LIST _ladruno_valid_families)
     message(FATAL_ERROR
       "LADRUNO_MUTATE_FAMILY='${LADRUNO_MUTATE_FAMILY}' is not a known family. "

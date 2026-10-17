@@ -490,6 +490,7 @@
 #include "ladrunoPlane/LadrunoQuad.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoPlane/LadrunoCST.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoUP/LadrunoUP.h"	// N. Mora-Bowen (Ladruno) ADR 71
+#include "ladrunoCPML/LadrunoCPML.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoPlane/LadrunoLST.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoPlane/LadrunoCSTPair.h"	// N. Mora-Bowen (Ladruno) ADR 70 P4a
 #include "ladrunoBrick/LadrunoBrick20.h"	// N. Mora-Bowen (Ladruno) ADR 72
@@ -1121,6 +1122,9 @@ FEM_ObjectBrokerAllClasses::getNewElement(int classTag)
 
     case ELE_TAG_LadrunoUP:		// N. Mora-Bowen (Ladruno) ADR 71
       return new LadrunoUP();
+
+    case ELE_TAG_LadrunoCPML:		// N. Mora-Bowen (Ladruno)
+      return new LadrunoCPML();
     case ELE_TAG_LadrunoLST:		// N. Mora-Bowen (Ladruno)
       return new LadrunoLST();
 

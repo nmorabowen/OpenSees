@@ -664,6 +664,7 @@ initopensees(void)
 "        • LadrunoSANISAND — SAS-ME -sasTensionCutoff (separation at p' ~ 0, WP-152)\n"
 "        • system Pardiso — -deterministic / -cbwr (MKL CNR, reproducible)\n"
 "        • relativeMassDamping: Rayleigh mass term relative to a v_ref(t)\n"
+"        • LadrunoCPML — 2D/3D CFS-PML absorber (9 shapes, box/plane, Biot -up)\n"
 "\n";
         // FEATURES-END
         PySys_FormatStdout("%s\n", kFeatures);
