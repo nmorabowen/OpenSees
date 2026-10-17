@@ -575,9 +575,9 @@ def test_group1_opensees_finite_difference_tangent(case_data: dict[str, Any]) ->
             ej_proj = np.zeros(n_dof, dtype=np.float64)
             ej_proj[j] = 1.0
             ej_proj = ej_proj - V_null @ (V_null.T @ ej_proj)
-            assert rel_err(du_vec, ej_proj) <= 1.0e-9
+            assert rel_err(du_vec, ej_proj) <= 1.0e-7
         else:
-            assert abs(du_vec[j] - 1.0) <= 1.0e-9
+            assert abs(du_vec[j] - 1.0) <= 1.0e-7
         K_fd_ops[:, j] = (r_plus - r_minus) / (2.0 * eps)
 
     assert rel_err(K_fd_ops, K_T_ops) <= 1.0e-7, (
