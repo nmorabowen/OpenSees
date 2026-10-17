@@ -120,6 +120,7 @@ extern void *OPS_LadrunoRigidBody(void); // N. Mora-Bowen (Ladruno) ADR 58
 extern void *OPS_LadrunoDispBeamColumn(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoEmbeddedNode(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoEmbeddedRebar(void); // N. Mora-Bowen (Ladruno)
+extern void *OPS_LadrunoMembrane(void); // N. Mora-Bowen (Ladruno) ADR 98
 extern void *OPS_BezierTri6(void);  // Ladruno (fork element; also wired into the Python functionMap)
 extern void *OPS_BezierTet10(void); // Ladruno (fork element; also wired into the Python functionMap)
 extern void *OPS_ElasticTimoshenkoBeam2d(void);
@@ -609,6 +610,7 @@ TclModelBuilderElementCommand(ClientData clientData, Tcl_Interp *interp,
       {"LadrunoEmbeddedRebar",        "ladrunoEmbeddedRebar",        OPS_LadrunoEmbeddedRebar},
       {"BezierTri6",                  "bezierTri6",                  OPS_BezierTri6},   // Ladruno (fork)
       {"BezierTet10",                 "bezierTet10",                 OPS_BezierTet10},  // Ladruno (fork)
+      {"LadrunoMembrane",             "ladrunoMembrane",             OPS_LadrunoMembrane}, // N. Mora-Bowen (Ladruno) ADR 98
     };
     const int nLadruno = (int)(sizeof(ladrunoElementTable) / sizeof(ladrunoElementTable[0]));
     Element *theEle = 0;

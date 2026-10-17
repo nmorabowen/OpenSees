@@ -43,6 +43,7 @@ add_subdirectory(ladrunoKinematicCoupling) # Ladruno — RBE2 / kinematic-coupli
 add_subdirectory(ladrunoRigidBody) # Ladruno — 6-DOF rigid-body element (classTag 33015, ADR 58)
 add_subdirectory(ladrunoDispBeamColumn) # Ladruno — regularized disp-based fiber frame (classTag 33013)
 add_subdirectory(ladrunoUP) # Ladruno — Biot u-p saturated-porous continuum family: LadrunoUP 33017 (ADR 71)
+add_subdirectory(ladrunoMembrane) # Ladruno — polygonal surface-to-frame load distribution & CST diaphragm: LadrunoMembrane 33022 (ADR 98)
 add_subdirectory(twoNodeLink)
 add_subdirectory(tetrahedron)
 add_subdirectory(triangle)
