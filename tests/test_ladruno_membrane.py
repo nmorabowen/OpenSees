@@ -895,3 +895,126 @@ def test_t2_apegmsh_subsegment_loads_and_diagram_reconstruction():
         sec_f = ops.eleResponse(1, "section", ip, "force")
         assert abs(My_rec[ip - 1] - sec_f[2]) < 1e-9
 
+
+@pytest.mark.parametrize("method", ["tributary", "oneway", "fea_poisson", "fea_plate"])
+def test_t2_apegmsh_fem_layout_and_surface_load_flow(method: str):
+    """
+    Verify all 7 new apeGmsh internal FEM layout & surface load-distribution
+    eleResponse queries: frameTags, supportNodeTags, meshSubSegments,
+    meshVertexFlags, meshNodalField, meshTriangleLoadFlow, and yieldLines.
+    """
+    import numpy as np
+
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+
+    Lx, Ly, q = 6.0, 4.0, -10.0
+    ops.node(1, 0.0, 0.0, 0.0)
+    ops.node(2, Lx, 0.0, 0.0)
+    ops.node(3, Lx, Ly, 0.0)
+    ops.node(4, 0.0, Ly, 0.0)
+    for n in (1, 2, 3, 4):
+        ops.fix(n, 1, 1, 1, 1, 1, 1)
+
+    ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+    E, G, A, J, Iy, Iz = 30e6, 12.5e6, 0.18, 0.002, 0.003, 0.003
+    ops.element("elasticBeamColumn", 10, 1, 2, A, E, G, J, Iy, Iz, 1)
+    ops.element("elasticBeamColumn", 20, 2, 3, A, E, G, J, Iy, Iz, 1)
+    ops.element("elasticBeamColumn", 30, 3, 4, A, E, G, J, Iy, Iz, 1)
+    ops.element("elasticBeamColumn", 40, 4, 1, A, E, G, J, Iy, Iz, 1)
+
+    extra = ["-spanAxis", 1.0, 0.0, 0.0] if method == "oneway" else []
+    ops.element(
+        "LadrunoMembrane", 100,
+        "-nodes", 1, 2, 3, 4,
+        "-frames", 10, 20, 30, 40,
+        "-method", method,
+        "-pressure", q,
+        *extra,
+    )
+
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.eleLoad("-ele", 100, "-type", "-surfaceLoad")
+
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.integrator("LoadControl", 1.0)
+    ops.algorithm("Linear")
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0
+
+    # 1. frameTags and supportNodeTags (empty Vector returns [0.0] sentinel)
+    frame_tags = [round(v) for v in ops.eleResponse(100, "frameTags") if round(v) > 0]
+    assert frame_tags == [10, 20, 30, 40]
+    supp_tags = [round(v) for v in ops.eleResponse(100, "supportNodeTags") if round(v) > 0]
+    assert supp_tags == []
+
+    # 2. meshVertices, meshTriangles, meshVertexFlags, meshNodalField
+    verts = np.array(ops.eleResponse(100, "meshVertices"), dtype=float).reshape(-1, 3)
+    tris = np.array(ops.eleResponse(100, "meshTriangles"), dtype=float).round().astype(int).reshape(-1, 3)
+    vflags = np.array(ops.eleResponse(100, "meshVertexFlags"), dtype=float).round().astype(int)
+    field = np.array(ops.eleResponse(100, "meshNodalField"), dtype=float)
+    assert len(vflags) == len(verts)
+    assert len(field) == len(verts)
+    assert np.allclose(field, ops.eleResponse(100, "meshField"), atol=1e-12)
+    # Every vertex flag must be in {0, 1, 2, 3, 4}, with constrained frame vertices (3) and interior Steiner vertices (0)
+    assert set(vflags.tolist()).issubset({0, 1, 2, 3, 4})
+    assert np.any(vflags == 3)
+    assert np.any(vflags == 0)
+    # Constrained frame vertices have zero deflection/distance on active supports
+    if method == "oneway":
+        on_active_supports = (vflags == 3) & (np.isclose(verts[:, 0], 0.0) | np.isclose(verts[:, 0], Lx))
+        assert np.allclose(field[on_active_supports], 0.0, atol=1e-10)
+    else:
+        assert np.allclose(field[vflags == 3], 0.0, atol=1e-10)
+    assert np.max(np.abs(field[vflags == 0])) > 0.0
+
+    # 3. meshSubSegments: [uIdx, vIdx, frameTag, aOverL, bOverL, w_avg]
+    sub_segs = np.array(ops.eleResponse(100, "meshSubSegments"), dtype=float).reshape(-1, 6)
+    assert len(sub_segs) >= 4
+    total_sub_force = 0.0
+    for row in sub_segs:
+        u_idx, v_idx, f_tag = round(row[0]), round(row[1]), round(row[2])
+        a_l, b_l, w_avg = row[3], row[4], row[5]
+        assert 0 <= u_idx < len(verts)
+        assert 0 <= v_idx < len(verts)
+        assert f_tag in (10, 20, 30, 40)
+        assert 0.0 <= a_l <= b_l <= 1.0 + 1e-12
+        seg_len = float(np.linalg.norm(verts[v_idx] - verts[u_idx]))
+        total_sub_force += w_avg * seg_len
+    # Integrated w_avg * L_seg across all constrained frame sub-segments equals |q| * Lx * Ly
+    assert math.isclose(abs(total_sub_force), abs(q) * Lx * Ly, rel_tol=1e-6)
+
+    # 4. meshTriangleLoadFlow: [targetTag, qx, qy, qz] per triangle
+    tri_flow = np.array(ops.eleResponse(100, "meshTriangleLoadFlow"), dtype=float).reshape(-1, 4)
+    assert len(tri_flow) == len(tris)
+    assert np.allclose(
+        tri_flow.ravel(),
+        ops.eleResponse(100, "meshLoadVectors"),
+        atol=1e-12,
+    )
+    target_tags = np.round(tri_flow[:, 0]).astype(int)
+    assert set(target_tags.tolist()).issubset({10, 20, 30, 40})
+    if method == "oneway":
+        # One-way along X transfers load exclusively to the Y-parallel beams (20 and 40)
+        assert set(target_tags.tolist()) == {20, 40}
+    else:
+        assert set(target_tags.tolist()) == {10, 20, 30, 40}
+    # In-plane load-flow vectors have non-zero magnitude
+    flow_norms = np.linalg.norm(tri_flow[:, 1:4], axis=1)
+    assert np.max(flow_norms) > 0.0
+
+    # 5. yieldLines: [X1, Y1, Z1, X2, Y2, Z2, tagA, tagB]
+    yl = np.array(ops.eleResponse(100, "yieldLines"), dtype=float).reshape(-1, 8)
+    assert len(yl) >= 1
+    for row in yl:
+        p1, p2 = row[0:3], row[3:6]
+        tag_a, tag_b = round(row[6]), round(row[7])
+        assert tag_a != tag_b
+        assert tag_a in (10, 20, 30, 40)
+        assert tag_b in (10, 20, 30, 40)
+        assert float(np.linalg.norm(p2 - p1)) > 0.0
+
+

@@ -1229,6 +1229,8 @@ struct FrameSubLoad {
     double wb = 0.0;
     double F = 0.0;
     double M_local = 0.0;
+    int u = -1;
+    int v = -1;
 };
 
 struct FrameLoadResult {
@@ -1246,6 +1248,15 @@ struct FrameLoadResult {
     double overhang_torque = 0.0;
 };
 
+struct YieldLineSegment2D {
+    double x1 = 0.0;
+    double y1 = 0.0;
+    double x2 = 0.0;
+    double y2 = 0.0;
+    int fidA = -1;
+    int fidB = -1;
+};
+
 struct DistributionResult {
     std::string mode;
     double total_applied_load = 0.0;
@@ -1255,6 +1266,11 @@ struct DistributionResult {
     std::vector<double> support_node_reactions;
     PSLGMesh mesh;
     int plate_support_rank = 2;
+    std::vector<int> vertex_flags;
+    std::vector<double> nodal_field;
+    std::vector<int> triangle_support_id;
+    std::vector<Point2D> triangle_flux_2d;
+    std::vector<YieldLineSegment2D> yield_lines;
 };
 
 inline constexpr std::array<std::array<double, 3>, 3> TRI3_BARY = {{
@@ -1331,7 +1347,9 @@ inline std::vector<FrameLoadResult> finalize_frame_results(
             m_j = 0.0;
 #endif
             auto [wa_j, wb_j] = moment_conserving_trapezoid(f_j, m_j, L_j);
-            sub_loads.push_back({a_j, b_j, wa_j, wb_j, f_j, m_j});
+            int u_oriented = (s.t_start <= s.t_end) ? s.u : s.v;
+            int v_oriented = (s.t_start <= s.t_end) ? s.v : s.u;
+            sub_loads.push_back({a_j, b_j, wa_j, wb_j, f_j, m_j, u_oriented, v_oriented});
             F_tot += f_j;
             M_orig += f_j * (a_j * L_k) + m_j;
             auto fef = partial_trapezoid_fef_2d(L_k, wa_j, wb_j, 0.0, 0.0, a_j, b_j);
@@ -1684,51 +1702,228 @@ inline DistributionResult distribute_surface_load(
         }
     }
 
-    if (mode_clean == "tributary") {
-        struct TiedFeat {
+    // Build vertex role flags:
+    // 0 = interior free Steiner node, 1 = outer polygon boundary, 2 = hole boundary,
+    // 3 = constrained on frame segment, 4 = constrained on point support node.
+    std::vector<int> vertex_flags(verts.size(), 0);
+    double bnd_tol = 1e-6 * std::max(1.0, mesh.char_length);
+    for (std::size_t v = 0; v < verts.size(); ++v) {
+        double vx = verts[v].x, vy = verts[v].y;
+        for (std::size_t i = 0; i < outer_poly.size(); ++i) {
+            const auto& pA = outer_poly[i];
+            const auto& pB = outer_poly[(i + 1) % outer_poly.size()];
+            if (point_segment_distance(vx, vy, pA.x, pA.y, pB.x, pB.y).dist <= bnd_tol) {
+                vertex_flags[v] = std::max(vertex_flags[v], 1);
+                break;
+            }
+        }
+        for (const auto& h_loop : holes) {
+            for (std::size_t i = 0; i < h_loop.size(); ++i) {
+                const auto& pA = h_loop[i];
+                const auto& pB = h_loop[(i + 1) % h_loop.size()];
+                if (point_segment_distance(vx, vy, pA.x, pA.y, pB.x, pB.y).dist <= bnd_tol) {
+                    vertex_flags[v] = std::max(vertex_flags[v], 2);
+                    break;
+                }
+            }
+        }
+    }
+    for (const auto& sub : mesh.subsegments) {
+        if (sub.frame_id >= 0) {
+            vertex_flags[sub.u] = std::max(vertex_flags[sub.u], 3);
+            vertex_flags[sub.v] = std::max(vertex_flags[sub.v], 3);
+        }
+    }
+    for (int v_s : mesh.support_node_vertex_indices) {
+        if (v_s >= 0 && static_cast<std::size_t>(v_s) < vertex_flags.size()) {
+            vertex_flags[v_s] = 4;
+        }
+    }
+
+    struct TiedFeat {
+        int fid;
+        double tf;
+        bool in_sp;
+        double cx;
+        double cy;
+    };
+
+    auto nearest_features = [&](double px, double py) -> std::pair<std::vector<TiedFeat>, double> {
+        double best_d = 1e30;
+        struct Cand {
             int fid;
+            double d;
             double tf;
             bool in_sp;
+            double cx;
+            double cy;
         };
-        auto nearest_features = [&](double px, double py) -> std::pair<std::vector<TiedFeat>, double> {
-            double best_d = 1e30;
-            struct Cand {
-                int fid;
-                double d;
-                double tf;
-                bool in_sp;
-            };
-            std::vector<Cand> candidates;
-            for (const auto& afg : active_frame_geom) {
-                double dx = afg.bx - afg.ax;
-                double dy = afg.by - afg.ay;
-                double l2 = dx * dx + dy * dy;
-                double t_raw = (l2 > 1e-30) ? (((px - afg.ax) * dx + (py - afg.ay) * dy) / l2) : 0.0;
-                bool in_span = (t_raw >= -1e-7 && t_raw <= 1.0 + 1e-7);
-                double t_sub = std::max(0.0, std::min(1.0, t_raw));
-                double d = std::hypot(px - (afg.ax + t_sub * dx), py - (afg.ay + t_sub * dy));
-                double t_f = afg.a_min + t_sub * (afg.b_max - afg.a_min);
-                candidates.push_back({afg.k, d, t_f, in_span});
-                if (d < best_d) {
-                    best_d = d;
-                }
+        std::vector<Cand> candidates;
+        for (const auto& afg : active_frame_geom) {
+            double dx = afg.bx - afg.ax;
+            double dy = afg.by - afg.ay;
+            double l2 = dx * dx + dy * dy;
+            double t_raw = (l2 > 1e-30) ? (((px - afg.ax) * dx + (py - afg.ay) * dy) / l2) : 0.0;
+            bool in_span = (t_raw >= -1e-7 && t_raw <= 1.0 + 1e-7);
+            double t_sub = std::max(0.0, std::min(1.0, t_raw));
+            double cx = afg.ax + t_sub * dx;
+            double cy = afg.ay + t_sub * dy;
+            double d = std::hypot(px - cx, py - cy);
+            double t_f = afg.a_min + t_sub * (afg.b_max - afg.a_min);
+            candidates.push_back({afg.k, d, t_f, in_span, cx, cy});
+            if (d < best_d) {
+                best_d = d;
             }
-            for (std::size_t m = 0; m < n_supp_nodes; ++m) {
-                double d = std::hypot(px - support_nodes[m].x, py - support_nodes[m].y);
-                candidates.push_back({static_cast<int>(n_frames + m), d, 0.0, true});
-                if (d < best_d) {
-                    best_d = d;
-                }
+        }
+        for (std::size_t m = 0; m < n_supp_nodes; ++m) {
+            double cx = support_nodes[m].x;
+            double cy = support_nodes[m].y;
+            double d = std::hypot(px - cx, py - cy);
+            candidates.push_back({static_cast<int>(n_frames + m), d, 0.0, true, cx, cy});
+            if (d < best_d) {
+                best_d = d;
             }
-            std::vector<TiedFeat> tied;
-            for (const auto& c : candidates) {
-                if (c.d <= best_d + 1e-11) {
-                    tied.push_back({c.fid, c.tf, c.in_sp});
-                }
+        }
+        std::vector<TiedFeat> tied;
+        for (const auto& c : candidates) {
+            if (c.d <= best_d + 1e-11) {
+                tied.push_back({c.fid, c.tf, c.in_sp, c.cx, c.cy});
             }
-            return {tied, best_d};
-        };
+        }
+        return {tied, best_d};
+    };
 
+    auto feature_point_dist = [&](int fid, double px, double py) -> std::pair<double, bool> {
+        if (fid >= 0 && fid < static_cast<int>(n_frames)) {
+            auto it = geom_by_k.find(fid);
+            if (it != geom_by_k.end()) {
+                const auto& g = it->second;
+                double dx = g.bx - g.ax;
+                double dy = g.by - g.ay;
+                double l2 = dx * dx + dy * dy;
+                if (l2 <= 1e-30) {
+                    return {std::hypot(px - g.ax, py - g.ay), false};
+                }
+                double t_raw = ((px - g.ax) * dx + (py - g.ay) * dy) / l2;
+                bool in_span = (t_raw >= -1e-7 && t_raw <= 1.0 + 1e-7);
+                double t_c = std::max(0.0, std::min(1.0, t_raw));
+                return {std::hypot(px - (g.ax + t_c * dx), py - (g.ay + t_c * dy)), in_span};
+            }
+        } else if (fid >= static_cast<int>(n_frames)) {
+            std::size_t m = static_cast<std::size_t>(fid - static_cast<int>(n_frames));
+            if (m < n_supp_nodes) {
+                return {std::hypot(px - support_nodes[m].x, py - support_nodes[m].y), true};
+            }
+        }
+        return {1e30, false};
+    };
+
+    std::vector<YieldLineSegment2D> yield_lines;
+    auto record_yield_segment = [&](Point2D pA, Point2D pB, int fidA, int fidB) {
+        double seg_len = std::hypot(pB.x - pA.x, pB.y - pA.y);
+        if (seg_len <= 1e-7 * std::max(1.0, mesh.char_length)) {
+            return;
+        }
+        double mx = 0.5 * (pA.x + pB.x);
+        double my = 0.5 * (pA.y + pB.y);
+        auto [dA, _a] = feature_point_dist(fidA, mx, my);
+        auto [dB, _b] = feature_point_dist(fidB, mx, my);
+        auto [_, best_d] = nearest_features(mx, my);
+        double tol_d = 2e-3 * std::max(1.0, mesh.char_length);
+        if (std::abs(dA - dB) <= tol_d && dA <= best_d + tol_d) {
+            int fMin = std::min(fidA, fidB);
+            int fMax = std::max(fidA, fidB);
+            yield_lines.push_back({pA.x, pA.y, pB.x, pB.y, fMin, fMax});
+        }
+    };
+
+    auto extract_yield_lines_on_tri = [&](auto& self, Point2D p0, Point2D p1, Point2D p2, int depth) -> void {
+        double area_t = 0.5 * std::abs(orient2d(p0.x, p0.y, p1.x, p1.y, p2.x, p2.y));
+        if (area_t <= 1e-16) {
+            return;
+        }
+        std::array<Point2D, 3> corners = {p0, p1, p2};
+        std::array<Point2D, 4> samples = {{
+            {0.5 * p0.x + 0.25 * p1.x + 0.25 * p2.x, 0.5 * p0.y + 0.25 * p1.y + 0.25 * p2.y},
+            {0.25 * p0.x + 0.5 * p1.x + 0.25 * p2.x, 0.25 * p0.y + 0.5 * p1.y + 0.25 * p2.y},
+            {0.25 * p0.x + 0.25 * p1.x + 0.5 * p2.x, 0.25 * p0.y + 0.25 * p1.y + 0.5 * p2.y},
+            {(p0.x + p1.x + p2.x) / 3.0, (p0.y + p1.y + p2.y) / 3.0}
+        }};
+        std::set<int> fids;
+        for (const auto& s : samples) {
+            auto [tied, _] = nearest_features(s.x, s.y);
+            for (const auto& tf : tied) fids.insert(tf.fid);
+        }
+        for (const auto& s : corners) {
+            auto [tied, _] = nearest_features(s.x, s.y);
+            if (tied.size() == 1) fids.insert(tied[0].fid);
+        }
+        if (fids.size() <= 1) {
+            return;
+        }
+        if (fids.size() >= 2 && depth < 4) {
+            std::vector<int> sorted_fids(fids.begin(), fids.end());
+            for (std::size_t ia = 0; ia < sorted_fids.size(); ++ia) {
+                for (std::size_t ib = ia + 1; ib < sorted_fids.size(); ++ib) {
+                    int fA = sorted_fids[ia];
+                    int fB = sorted_fids[ib];
+                    std::array<double, 3> g_vals{};
+                    for (int i = 0; i < 3; ++i) {
+                        auto [d1, _1] = feature_point_dist(fA, corners[i].x, corners[i].y);
+                        auto [d2, _2] = feature_point_dist(fB, corners[i].x, corners[i].y);
+                        g_vals[i] = d1 - d2;
+                    }
+                    std::vector<int> pos, neg;
+                    for (int i = 0; i < 3; ++i) {
+                        if (g_vals[i] > 1e-12) pos.push_back(i);
+                        if (g_vals[i] < -1e-12) neg.push_back(i);
+                    }
+                    if ((pos.size() == 1 && neg.size() == 2) || (pos.size() == 2 && neg.size() == 1)) {
+                        int solo = (pos.size() == 1) ? pos[0] : neg[0];
+                        int i1 = (solo + 1) % 3;
+                        int i2 = (solo + 2) % 3;
+                        double t01 = g_vals[solo] / (g_vals[solo] - g_vals[i1]);
+                        double t02 = g_vals[solo] / (g_vals[solo] - g_vals[i2]);
+                        Point2D q01 = {
+                            corners[solo].x + t01 * (corners[i1].x - corners[solo].x),
+                            corners[solo].y + t01 * (corners[i1].y - corners[solo].y)
+                        };
+                        Point2D q02 = {
+                            corners[solo].x + t02 * (corners[i2].x - corners[solo].x),
+                            corners[solo].y + t02 * (corners[i2].y - corners[solo].y)
+                        };
+                        record_yield_segment(q01, q02, fA, fB);
+                        self(self, corners[solo], q01, q02, depth + 1);
+                        self(self, q01, corners[i1], corners[i2], depth + 1);
+                        self(self, q01, corners[i2], q02, depth + 1);
+                        return;
+                    }
+                    if (pos.size() == 1 && neg.size() == 1) {
+                        int ip = pos[0];
+                        int ineg = neg[0];
+                        int iz = 3 - ip - ineg;
+                        double tp = g_vals[ip] / (g_vals[ip] - g_vals[ineg]);
+                        Point2D q_mid = {
+                            corners[ip].x + tp * (corners[ineg].x - corners[ip].x),
+                            corners[ip].y + tp * (corners[ineg].y - corners[ip].y)
+                        };
+                        record_yield_segment(corners[iz], q_mid, fA, fB);
+                        self(self, corners[iz], corners[ip], q_mid, depth + 1);
+                        self(self, corners[iz], q_mid, corners[ineg], depth + 1);
+                        return;
+                    }
+                }
+            }
+        }
+    };
+
+    if (active_frame_geom.size() + n_supp_nodes >= 2) {
+        for (auto [a, b, c] : mesh.triangles) {
+            extract_yield_lines_on_tri(extract_yield_lines_on_tri, verts[a], verts[b], verts[c], 0);
+        }
+    }
+
+    if (mode_clean == "tributary") {
         auto deposit_tributary_point = [&](double px, double py, double df) {
             auto [tied, _] = nearest_features(px, py);
             double share = df / static_cast<double>(tied.size());
@@ -1897,6 +2092,30 @@ inline DistributionResult distribute_surface_load(
             integrate_tributary_tri(integrate_tributary_tri, verts[a], verts[b], verts[c], 0);
         }
 
+        std::vector<double> nodal_field(verts.size(), 0.0);
+        for (std::size_t v = 0; v < verts.size(); ++v) {
+            auto [_, best_d] = nearest_features(verts[v].x, verts[v].y);
+            nodal_field[v] = (best_d < 1e20) ? (q * best_d) : 0.0;
+        }
+
+        std::vector<int> tri_supp(mesh.triangles.size(), 0);
+        std::vector<Point2D> tri_flux(mesh.triangles.size(), {0.0, 0.0});
+        for (std::size_t t = 0; t < mesh.triangles.size(); ++t) {
+            auto [a, b, c] = mesh.triangles[t];
+            double cx = (verts[a].x + verts[b].x + verts[c].x) / 3.0;
+            double cy = (verts[a].y + verts[b].y + verts[c].y) / 3.0;
+            auto [tied, _] = nearest_features(cx, cy);
+            if (!tied.empty()) {
+                tri_supp[t] = tied[0].fid;
+                double vx = tied[0].cx - cx;
+                double vy = tied[0].cy - cy;
+                double vn = std::hypot(vx, vy);
+                if (vn > 1e-15) {
+                    tri_flux[t] = {std::abs(q) * (vx / vn), std::abs(q) * (vy / vn)};
+                }
+            }
+        }
+
         auto frame_results = finalize_frame_results(frames, frame_sub_groups, sub_F, sub_M);
         return DistributionResult{
             mode_clean,
@@ -1906,7 +2125,12 @@ inline DistributionResult distribute_surface_load(
             std::move(frame_results),
             std::move(node_reactions),
             std::move(mesh),
-            2
+            2,
+            std::move(vertex_flags),
+            std::move(nodal_field),
+            std::move(tri_supp),
+            std::move(tri_flux),
+            std::move(yield_lines)
         };
     }
 
@@ -1959,9 +2183,37 @@ inline DistributionResult distribute_surface_load(
             return {hit_neg, hit_pos};
         };
 
-        for (auto [a, b, c] : mesh.triangles) {
+        std::vector<int> tri_supp(mesh.triangles.size(), 0);
+        std::vector<Point2D> tri_flux(mesh.triangles.size(), {0.0, 0.0});
+
+        for (std::size_t t_idx = 0; t_idx < mesh.triangles.size(); ++t_idx) {
+            auto [a, b, c] = mesh.triangles[t_idx];
             Point2D p0 = verts[a], p1 = verts[b], p2 = verts[c];
             double area_t = 0.5 * std::abs(orient2d(p0.x, p0.y, p1.x, p1.y, p2.x, p2.y));
+            double cx = (p0.x + p1.x + p2.x) / 3.0;
+            double cy = (p0.y + p1.y + p2.y) / 3.0;
+            auto [hc_neg, hc_pos] = ray_hits(cx, cy);
+            if (hc_neg.valid && hc_pos.valid) {
+                if (hc_neg.dist <= hc_pos.dist) {
+                    tri_supp[t_idx] = hc_neg.k;
+                    tri_flux[t_idx] = {-std::abs(q) * sx, -std::abs(q) * sy};
+                } else {
+                    tri_supp[t_idx] = hc_pos.k;
+                    tri_flux[t_idx] = {std::abs(q) * sx, std::abs(q) * sy};
+                }
+            } else if (hc_neg.valid) {
+                tri_supp[t_idx] = hc_neg.k;
+                tri_flux[t_idx] = {-std::abs(q) * sx, -std::abs(q) * sy};
+            } else if (hc_pos.valid) {
+                tri_supp[t_idx] = hc_pos.k;
+                tri_flux[t_idx] = {std::abs(q) * sx, std::abs(q) * sy};
+            } else {
+                auto [tied, _] = nearest_features(cx, cy);
+                if (!tied.empty()) {
+                    tri_supp[t_idx] = tied[0].fid;
+                }
+            }
+
             for (int g = 0; g < 7; ++g) {
                 double b0 = TRI7_BARY[g][0], b1 = TRI7_BARY[g][1], b2 = TRI7_BARY[g][2];
                 double qx = b0 * p0.x + b1 * p1.x + b2 * p2.x;
@@ -2013,6 +2265,18 @@ inline DistributionResult distribute_surface_load(
             }
         }
 
+        std::vector<double> nodal_field(verts.size(), 0.0);
+        for (std::size_t v = 0; v < verts.size(); ++v) {
+            auto [h_neg, h_pos] = ray_hits(verts[v].x, verts[v].y);
+            if (h_neg.valid && h_pos.valid) {
+                nodal_field[v] = 0.5 * q * h_neg.dist * h_pos.dist;
+            } else if (h_neg.valid) {
+                nodal_field[v] = 0.5 * q * h_neg.dist * h_neg.dist;
+            } else if (h_pos.valid) {
+                nodal_field[v] = 0.5 * q * h_pos.dist * h_pos.dist;
+            }
+        }
+
         auto frame_results = finalize_frame_results(frames, frame_sub_groups, sub_F, sub_M);
         return DistributionResult{
             mode_clean,
@@ -2022,7 +2286,12 @@ inline DistributionResult distribute_surface_load(
             std::move(frame_results),
             std::move(node_reactions),
             std::move(mesh),
-            2
+            2,
+            std::move(vertex_flags),
+            std::move(nodal_field),
+            std::move(tri_supp),
+            std::move(tri_flux),
+            std::move(yield_lines)
         };
     }
 
@@ -2175,6 +2444,24 @@ inline DistributionResult distribute_surface_load(
         apportion_nodal_reactions_to_subsegments(
             mesh, frames, frame_sub_groups, sub_F, sub_M, node_reactions, nodal_R, sub_flux_weights);
 
+        std::vector<int> tri_supp(mesh.triangles.size(), 0);
+        std::vector<Point2D> tri_flux(mesh.triangles.size(), {0.0, 0.0});
+        for (std::size_t t_idx = 0; t_idx < mesh.triangles.size(); ++t_idx) {
+            auto [a, b, c] = mesh.triangles[t_idx];
+            const auto& B = tri_B[t_idx];
+            double gwx = B[0] * w[a] + B[1] * w[b] + B[2] * w[c];
+            double gwy = B[3] * w[a] + B[4] * w[b] + B[5] * w[c];
+            double qfx = -(d00 * gwx + d01 * gwy);
+            double qfy = -(d01 * gwx + d11 * gwy);
+            tri_flux[t_idx] = {qfx, qfy};
+            double cx = (verts[a].x + verts[b].x + verts[c].x) / 3.0;
+            double cy = (verts[a].y + verts[b].y + verts[c].y) / 3.0;
+            auto [tied, _] = nearest_features(cx, cy);
+            if (!tied.empty()) {
+                tri_supp[t_idx] = tied[0].fid;
+            }
+        }
+
         auto frame_results = finalize_frame_results(frames, frame_sub_groups, sub_F, sub_M);
         return DistributionResult{
             "fea_poisson",
@@ -2184,7 +2471,12 @@ inline DistributionResult distribute_surface_load(
             std::move(frame_results),
             std::move(node_reactions),
             std::move(mesh),
-            2
+            2,
+            std::move(vertex_flags),
+            std::move(w),
+            std::move(tri_supp),
+            std::move(tri_flux),
+            std::move(yield_lines)
         };
     }
 
@@ -2295,8 +2587,10 @@ inline DistributionResult distribute_surface_load(
         }
 
         std::vector<double> nodal_Rw(n_v, 0.0);
+        std::vector<double> nodal_w(n_v, 0.0);
         for (std::size_t v_i = 0; v_i < n_v; ++v_i) {
             nodal_Rw[v_i] = R_full[3 * v_i];
+            nodal_w[v_i] = u[3 * v_i];
         }
 
         std::map<std::pair<int, int>, double> sub_flux_weights;
@@ -2338,6 +2632,36 @@ inline DistributionResult distribute_surface_load(
             }
         }
 
+        std::vector<int> tri_supp(mesh.triangles.size(), 0);
+        std::vector<Point2D> tri_flux(mesh.triangles.size(), {0.0, 0.0});
+        for (std::size_t t_idx = 0; t_idx < mesh.triangles.size(); ++t_idx) {
+            auto [a, b, c] = mesh.triangles[t_idx];
+            double x0 = verts[a].x, y0 = verts[a].y;
+            double x1 = verts[b].x, y1 = verts[b].y;
+            double x2 = verts[c].x, y2 = verts[c].y;
+            double area2 = orient2d(x0, y0, x1, y1, x2, y2);
+            double gwx = ((y1 - y2) * nodal_w[a] + (y2 - y0) * nodal_w[b] + (y0 - y1) * nodal_w[c]) / area2;
+            double gwy = ((x2 - x1) * nodal_w[a] + (x0 - x2) * nodal_w[b] + (x1 - x0) * nodal_w[c]) / area2;
+            double cx = (x0 + x1 + x2) / 3.0;
+            double cy = (y0 + y1 + y2) / 3.0;
+            auto [tied, _] = nearest_features(cx, cy);
+            if (!tied.empty()) {
+                tri_supp[t_idx] = tied[0].fid;
+            }
+            double gn = std::hypot(gwx, gwy);
+            if (gn > 1e-15) {
+                double sgn = (q >= 0.0) ? -1.0 : 1.0;
+                tri_flux[t_idx] = {sgn * std::abs(q) * (gwx / gn), sgn * std::abs(q) * (gwy / gn)};
+            } else if (!tied.empty()) {
+                double vx = tied[0].cx - cx;
+                double vy = tied[0].cy - cy;
+                double vn = std::hypot(vx, vy);
+                if (vn > 1e-15) {
+                    tri_flux[t_idx] = {std::abs(q) * (vx / vn), std::abs(q) * (vy / vn)};
+                }
+            }
+        }
+
         auto frame_results = finalize_frame_results(frames, frame_sub_groups, sub_F, sub_M, overhang_torques);
         return DistributionResult{
             "fea_plate",
@@ -2347,7 +2671,12 @@ inline DistributionResult distribute_surface_load(
             std::move(frame_results),
             std::move(node_reactions),
             std::move(mesh),
-            support_rank
+            support_rank,
+            std::move(vertex_flags),
+            std::move(nodal_w),
+            std::move(tri_supp),
+            std::move(tri_flux),
+            std::move(yield_lines)
         };
     }
 
