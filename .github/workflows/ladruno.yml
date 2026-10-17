@@ -309,40 +309,17 @@ jobs:
     runs-on: [self-hosted, windows, ladruno-perf]
     steps:
       - uses: actions/checkout@v4
-      # ~50 min. The ONE deselect is the known, deliberately-unfixed
-      # ASDConcrete3D defect (ADR-11 §KNOWN DEFECT, LEDGER_quirks,
-      # Ladruno_files/testbed/asdconcrete_tag_cache/). Deselecting it here does
-      # NOT hide it: the test still fails locally in a full run, which is the
-      # documented expectation, and the sentinel step below fails this job the
-      # moment the defect stops reproducing. Without the deselect this job would
-      # be red every single night, which trains people to ignore it -- and a
-      # permanently-red gate catches nothing.
+      # ~50 min. No deselects: the ASDConcrete3D tag-cache defect this step used to
+      # deselect test_notched_bend_mesh_objectivity for (and the sentinel step that
+      # required it to keep reproducing) was fixed in #990 -- `wipe` now clears the
+      # per-tag HardeningLawStorage (apeGmsh #2044). The bend test must pass in a
+      # full single-process run again; a failure here is a regression.
       - name: Full suite, unfiltered, single process
         shell: pwsh
         run: |
           $env:APEGMSH_SKIP_VIEWER = "1"
           cd tests
-          pytest -v --deselect test_ladrunoBrick_asdconcrete_bend.py::test_notched_bend_mesh_objectivity
-      # Sentinel for the allowance above. Runs the minimal poisoning PAIR (~75 s)
-      # and requires it to FAIL. If someone fixes the material, this goes green,
-      # the step goes red, and whoever fixed it is told to delete the deselect
-      # rather than leaving a stale exemption behind forever.
-      # NB the pair is required: the bend test PASSES on its own (order-dependent),
-      # so asserting on it alone would be meaningless.
-      - name: Sentinel — the known ASDConcrete3D defect still reproduces
-        shell: pwsh
-        run: |
-          cd tests
-          pytest -q test_ladrunoBrick_asdconcrete.py::test_lch_handshake_mesh_objectivity test_ladrunoBrick_asdconcrete_bend.py::test_notched_bend_mesh_objectivity
-          $rc = $LASTEXITCODE
-          if ($rc -eq 0) {
-            Write-Host "::error::The ASDConcrete3D tag-cache defect no longer reproduces."
-            Write-Host "::error::If it was fixed: delete the --deselect in the step above, drop this"
-            Write-Host "::error::sentinel, and update ADR-11 + LEDGER_quirks + the testbed README."
-            exit 1
-          }
-          Write-Host "Sentinel OK - the known defect still reproduces (pytest exit $rc), so the deselect above is still earned."
-          exit 0
+          pytest -v
 
   # ---- Zone-B + perf: nightly, self-hosted oneAPI box -------------------
   # Also runs on manual workflow_dispatch so the self-hosted tier (Zone-B

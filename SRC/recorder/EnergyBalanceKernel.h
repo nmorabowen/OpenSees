@@ -65,6 +65,9 @@
 #include <LadrunoEnergyChannels.h>      // Ladruno ADR-69: named energy channels (v2)
 
 #include <cmath>
+#include <cstdlib>   // Ladruno WP-196: std::getenv
+
+#include <profiler/ProfilerMacros.h>   // Ladruno WP-196: per-term deep scopes
 
 namespace ebkernel {
 
@@ -82,7 +85,8 @@ static const int NUM_ENERGY_COMPONENTS = 6;
 // original v^T C v -- when C is zero, v is zero, or g == C v to round-off.
 // MUST be called after C and F have been read: getResistingForceIncInertia()
 // overwrites the scratch storage many elements return from getDamp() and
-// getResistingForce(). Scratch is function-static (the recorders are serial).
+// getResistingForce(). Scratch is per thread (WP-196: the EnergyBalance
+// element sweep may run on the WP-192 threads).
 inline bool dampingOutsideResistingForce(Element *ele, const Matrix &C,
                                          const Vector &F, const Matrix &M,
                                          bool haveMass, const Vector &vel,
@@ -103,7 +107,7 @@ inline bool dampingOutsideResistingForce(Element *ele, const Matrix &C,
     if (cZero)
         return false;
 
-    static Vector Fs, Cv, Ma, acc;
+    static thread_local Vector Fs, Cv, Ma, acc;   // Ladruno WP-196
     if (Fs.Size() != numDOF) {
         Fs.resize(numDOF); Cv.resize(numDOF); Ma.resize(numDOF); acc.resize(numDOF);
     }
@@ -175,9 +179,15 @@ inline void addElementEnergy(Element *ele, Vector &vel,
     // are accumulated with += below, so leave them untouched).
     if (ele->isSubdomain() || ele->getNodePtrs() == 0)
         return;
-    Matrix M = ele->getMass();
-    const Matrix &C = ele->getDamp();
-    const Vector &F = ele->getResistingForce();
+    // Ladruno WP-196: deep scopes per term (no-ops unless `profiler -deep`).
+    Matrix M;
+    { OPS_PROFILE_SCOPE_DEEP("eb.mass"); M = ele->getMass(); }
+    const Matrix *Cp;
+    { OPS_PROFILE_SCOPE_DEEP("eb.damp"); Cp = &ele->getDamp(); }
+    const Matrix &C = *Cp;
+    const Vector *Fp;
+    { OPS_PROFILE_SCOPE_DEEP("eb.resid"); Fp = &ele->getResistingForce(); }
+    const Vector &F = *Fp;
     const int numExternalNodes = ele->getNumExternalNodes();
     const int numDOF = ele->getNumDOF();
     Node **elenodes = ele->getNodePtrs();
@@ -251,11 +261,124 @@ inline void addElementEnergy(Element *ele, Vector &vel,
         // when g agrees with C v to round-off (every Rayleigh-only element) the
         // original v^T C v is kept, bitwise; otherwise DW books v.g.
         double gRate = 0.0;
+        OPS_PROFILE_SCOPE_DEEP("eb.check");
         if (dampingOutsideResistingForce(ele, C, F, M, haveMass, vel, numDOF, gRate))
             damping_rate += gRate;
         else
             damping_rate = dr;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Ladruno WP-196: one element's energy terms, computed so they can be formed on
+// a worker thread and reduced in serial order afterwards.
+//
+// t.ke / t.ie / t.dw are BITWISE what addElementEnergy() accumulates into
+// zero-initialised locals (the recorders' calling convention: eke = eie = edw
+// = 0, then add into the running totals), and t.ms is the value it would add
+// to *msKE (0.0 when it adds nothing). Same calls, same order, same
+// arithmetic; only two things differ, neither of which changes a number:
+//   * the mass is copied into a per-thread scratch Matrix (same values) instead
+//     of a fresh heap Matrix per element per step;
+//   * when the element declares ladrunoEnergyRayleighOnly() (Element.h, WP-196)
+//     the WP-184 check is skipped: for such an element it compares C v with
+//     F_inc - F - M a, which agree to round-off by construction, so it always
+//     returns false and DW keeps v^T C v -- which is what is booked here. The
+//     check costs a second residual, a second tangent (inside
+//     getRayleighDampingForces) and two more mass evaluations.
+// `legacyCheck` forces the check for every element (LADRUNO_EB_LEGACY=1, the
+// A/B and verification switch).
+// ---------------------------------------------------------------------------
+struct ElementEnergyTerms {
+    double ke, ie, dw, ms;
+};
+
+inline void elementEnergyTerms(Element *ele, bool legacyCheck,
+                               ElementEnergyTerms &t)
+{
+    t.ke = 0.0; t.ie = 0.0; t.dw = 0.0; t.ms = 0.0;
+    if (ele->isSubdomain() || ele->getNodePtrs() == 0)
+        return;
+
+    static thread_local Matrix M;   // the per-thread mass copy (see above)
+    static thread_local Vector vel;
+    { OPS_PROFILE_SCOPE_DEEP("eb.mass"); M = ele->getMass(); }
+    const Matrix *Cp;
+    { OPS_PROFILE_SCOPE_DEEP("eb.damp"); Cp = &ele->getDamp(); }
+    const Matrix &C = *Cp;
+    const Vector *Fp;
+    { OPS_PROFILE_SCOPE_DEEP("eb.resid"); Fp = &ele->getResistingForce(); }
+    const Vector &F = *Fp;
+    const int numExternalNodes = ele->getNumExternalNodes();
+    const int numDOF = ele->getNumDOF();
+    Node **elenodes = ele->getNodePtrs();
+    if (vel.Size() < numDOF)
+        vel.resize(numDOF);
+
+    int cnt = 0;
+    for (int i = 0; i < numExternalNodes && cnt < numDOF; ++i) {
+        const Vector &node_vel = elenodes[i]->getVel();
+        for (int j = 0; j < node_vel.Size() && cnt < numDOF; ++j)
+            vel(cnt++) = node_vel(j);
+    }
+    for (; cnt < numDOF; ++cnt)
+        vel(cnt) = 0.0;
+
+    const bool haveMass = (M.noRows() == numDOF && M.noCols() == numDOF);
+    const bool haveDamp = (C.noRows() == numDOF && C.noCols() == numDOF);
+    double kinetic = 0.0;
+    if (haveMass)
+        for (int i = 0; i < numDOF; ++i)
+            for (int j = 0; j < numDOF; ++j)
+                kinetic += 0.5 * M(i, j) * vel(i) * vel(j);
+
+    {
+        const Ladruno::MassScalingEnergyRegistry &reg =
+            Ladruno::MassScalingEnergyRegistry::instance();
+        if (reg.active()) {
+            const double mbarKE = reg.elementScalingKE(ele->getTag(), vel, numDOF);
+            kinetic += mbarKE;
+            t.ms = mbarKE;
+        }
+    }
+    t.ke = kinetic;
+
+    if (F.Size() == numDOF) {
+        double dot = 0.0;
+        for (int i = 0; i < numDOF; ++i)
+            dot += F(i) * vel(i);
+        t.ie = 0.0 + dot;   // == `internal_rate += dot` on a zeroed local
+    }
+
+    if (haveDamp) {
+        double dr = 0.0;
+        for (int i = 0; i < numDOF; ++i)
+            for (int j = 0; j < numDOF; ++j)
+                dr += C(i, j) * vel(i) * vel(j);
+        if (!legacyCheck && ele->ladrunoEnergyRayleighOnly()) {
+            t.dw = dr;
+        } else {
+            double gRate = 0.0;
+            OPS_PROFILE_SCOPE_DEEP("eb.check");
+            if (dampingOutsideResistingForce(ele, C, F, M, haveMass, vel, numDOF, gRate))
+                t.dw = 0.0 + gRate;
+            else
+                t.dw = dr;
+        }
+    }
+}
+
+// Ladruno WP-196: LADRUNO_EB_LEGACY=1 runs the WP-184 check for every element
+// (the pre-WP-196 cost, same numbers) -- the in-binary A/B and the
+// verification switch. Read once.
+inline bool legacyEnergyCheck(void)
+{
+    static int v = -1;
+    if (v < 0) {
+        const char *e = std::getenv("LADRUNO_EB_LEGACY");
+        v = (e != 0 && e[0] != 0 && e[0] != '0') ? 1 : 0;
+    }
+    return v == 1;
 }
 
 // Accumulate the nodal contributions: lumped-mass kinetic energy, nodal
@@ -576,9 +699,10 @@ inline void sweepDomain(Domain* dom, Vector& velScratch,
         Element *ele;
         ElementIter &elements = dom->getElements();
         while ((ele = elements()) != 0) {
-            double eke = 0., eie = 0., edw = 0.;
-            addElementEnergy(ele, velScratch, eke, eie, edw);
-            ke += eke; internal_rate += eie; damping_rate += edw;
+            // Ladruno WP-196: the per-element terms (bitwise addElementEnergy's)
+            ElementEnergyTerms t;
+            elementEnergyTerms(ele, legacyEnergyCheck(), t);
+            ke += t.ke; internal_rate += t.ie; damping_rate += t.dw;
         }
     }
     {
@@ -607,9 +731,10 @@ inline void sweepRegion(Domain* dom, MeshRegion* reg, Vector& velScratch,
     for (int i = 0; i < elems.Size(); ++i) {
         Element *ele = dom->getElement(elems(i));
         if (ele != 0) {
-            double eke = 0., eie = 0., edw = 0.;
-            addElementEnergy(ele, velScratch, eke, eie, edw);
-            ke += eke; internal_rate += eie; damping_rate += edw;
+            // Ladruno WP-196: the per-element terms (bitwise addElementEnergy's)
+            ElementEnergyTerms t;
+            elementEnergyTerms(ele, legacyEnergyCheck(), t);
+            ke += t.ke; internal_rate += t.ie; damping_rate += t.dw;
         }
     }
     const ID &rnodes = reg->getNodes();

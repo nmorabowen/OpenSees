@@ -71,8 +71,14 @@ UniaxialMaterial *OPS_getUniaxialMaterial(int tag) {
   return theMat;
 }
 
+// Ladruno #2044: ASDConcrete1D's per-tag hardening-law registry must not outlive
+// the model -- a later same-tag material silently took the first model's laws.
+// Defined in ASDConcrete1DMaterial.cpp (local extern: vanilla's hook idiom).
+extern void ladrunoAsdConcrete1DResetStorage(void);   // Ladruno #2044
+
 void OPS_clearAllUniaxialMaterial(void) {
   theUniaxialMaterialObjects.clearAll();
+  ladrunoAsdConcrete1DResetStorage();   // Ladruno #2044
 }
 
 void OPS_printUniaxialMaterial(OPS_Stream &s, int flag) {

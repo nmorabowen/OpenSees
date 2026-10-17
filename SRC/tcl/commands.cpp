@@ -168,6 +168,7 @@ extern "C" int         OPS_ResetInputNoBuilder(ClientData clientData, Tcl_Interp
 #include <KrylovNewton.h>
 #include <PeriodicNewton.h>
 #include <AcceleratedNewton.h>
+#include <LadrunoFactorReuse.h>   // Ladruno WP-188
 #include <ExpressNewton.h>
 
 // accelerators
@@ -765,6 +766,21 @@ opsBarrier(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 
 int 
 domainChange(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
+
+// apeGmsh #2034: Ladruno recorder stage hooks (defined in
+// recorder/LadrunoRecorder.cpp, which is built only with HDF5). A user
+// `domainChange` is a stage barrier; the transient analysis `eigen` builds on
+// its own is not a running analysis until `analysis`/`analyze` (see
+// ladrunoNoteEigenOnlyAnalysis). No-ops without HDF5.
+#ifdef _HDF5
+extern void ladrunoNoteUserStageBarrier(void);
+extern void ladrunoNoteEigenOnlyAnalysis(const void* analysis);
+#define LADRUNO_STAGE_BARRIER() ladrunoNoteUserStageBarrier()
+#define LADRUNO_EIGEN_ONLY_ANALYSIS(p) ladrunoNoteEigenOnlyAnalysis(p)
+#else
+#define LADRUNO_STAGE_BARRIER() ((void)0)
+#define LADRUNO_EIGEN_ONLY_ANALYSIS(p) ((void)0)
+#endif
 
 int 
 record(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
@@ -1955,6 +1971,7 @@ wipeModel(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 int 
 wipeAnalysis(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 {
+  LADRUNO_EIGEN_ONLY_ANALYSIS(0);   // apeGmsh #2034
 
 #ifdef _PARALLEL_PROCESSING
   if (OPS_PARTITIONED == true && OPS_NUM_SUBDOMAINS > 1) {
@@ -2380,6 +2397,7 @@ int
 analyzeModel(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 {
   int result = 0;
+  LADRUNO_EIGEN_ONLY_ANALYSIS(0);   // apeGmsh #2034: an analyze step makes it real
 
 #ifdef _PARALLEL_PROCESSING
   if (OPS_PARTITIONED == false && OPS_NUM_SUBDOMAINS > 1) {
@@ -3005,6 +3023,7 @@ int
 specifyAnalysis(ClientData clientData, Tcl_Interp *interp, int argc, 
 		TCL_Char **argv)
 {
+    LADRUNO_EIGEN_ONLY_ANALYSIS(0);   // apeGmsh #2034
     // make sure at least one other argument to contain type of system
     if (argc < 2) {
 	opserr << "WARNING need to specify an analysis type (Static, Transient)\n";
@@ -4249,6 +4268,13 @@ ladrunoSpecifySOEImpl(ClientData clientData, Tcl_Interp *interp, int argc, TCL_C
     int icntl35 = 0;      // BLR off by default => byte-identical to the pre-BLR solver
     double cntl7 = 0.0;   // BLR dropping tolerance
     int mumpsStats = 0;   // -stats dumps INFOG/RINFOG after the factorization
+    // Ladruno WP-194: -precision single|double (-mixed = single), -refine k.
+    // Fail closed: a bad value, -refine without single, or single on a build
+    // without SMUMPS refuses the command instead of silently factoring double.
+    int mumpsPrecision = 0;
+    int mumpsRefine = 0;
+    bool mumpsSawRefine = false;
+    bool mumpsRefuse = false;
 
     int currentArg = 2;
     while (currentArg < argc) {
@@ -4262,9 +4288,13 @@ ladrunoSpecifySOEImpl(ClientData clientData, Tcl_Interp *interp, int argc, TCL_C
 			 strcmp(opt, "-matrixType") == 0 ||
 			 strcmp(opt, "-ICNTL35") == 0 ||
 			 strcmp(opt, "-CNTL7") == 0 ||
-			 strcmp(opt, "-BLR") == 0);
+			 strcmp(opt, "-BLR") == 0 ||
+			 strcmp(opt, "-precision") == 0 ||   // Ladruno WP-194
+			 strcmp(opt, "-refine") == 0);
       if (needsValue && currentArg + 1 >= argc) {
 	opserr << "Mumps Warning: " << opt << " needs a value -- ignored\n";
+	if (strcmp(opt, "-precision") == 0 || strcmp(opt, "-refine") == 0)
+	  mumpsRefuse = true;   // Ladruno WP-194: fail closed
 	currentArg++;
 	continue;
       }
@@ -4312,6 +4342,29 @@ ladrunoSpecifySOEImpl(ClientData clientData, Tcl_Interp *interp, int argc, TCL_C
 	// had to relax its `> 1' loop guard for the same reason.
 	mumpsStats = 1;
 	currentArg++;
+      } else if (strcmp(opt, "-precision") == 0) {
+	// Ladruno WP-194: factor precision (residual/update stay double)
+	const char *val = argv[currentArg+1];
+	if (strcmp(val, "single") == 0 || strcmp(val, "mixed") == 0)
+	  mumpsPrecision = 1;
+	else if (strcmp(val, "double") == 0)
+	  mumpsPrecision = 0;
+	else {
+	  opserr << "Mumps ERROR: -precision takes single or double, got " << val << "\n";
+	  mumpsRefuse = true;
+	}
+	currentArg += 2;
+      } else if (strcmp(opt, "-mixed") == 0) {
+	mumpsPrecision = 1;   // Ladruno WP-194: alias of -precision single
+	currentArg++;
+      } else if (strcmp(opt, "-refine") == 0) {
+	// Ladruno WP-194: inner mixed-precision refinement steps (default 0)
+	if (Tcl_GetInt(interp, argv[currentArg+1], &mumpsRefine) != TCL_OK || mumpsRefine < 0) {
+	  opserr << "Mumps ERROR: -refine needs an integer >= 0\n";
+	  mumpsRefuse = true;
+	}
+	mumpsSawRefine = true;
+	currentArg += 2;
       } else {
 	// Ladruno ADR-75 P2h: this arm used to skip SILENTLY, so a mistyped or
 	// not-yet-wired option cost you the setting without a trace -- which is
@@ -4344,6 +4397,27 @@ ladrunoSpecifySOEImpl(ClientData clientData, Tcl_Interp *interp, int argc, TCL_C
       }
     }
 
+    // Ladruno WP-194: refuse rather than factor in a precision not asked for
+    if (mumpsSawRefine && mumpsPrecision == 0) {
+      opserr << "Mumps ERROR: -refine applies to -precision single only\n";
+      mumpsRefuse = true;
+    }
+#if defined(_PARALLEL_PROCESSING) || defined(_PARALLEL_INTERPRETERS)
+    if (mumpsPrecision != 0 && !MumpsParallelSolver::singlePrecisionAvailable()) {
+      opserr << "Mumps ERROR: -precision single needs single-precision MUMPS (libsmumps); "
+	     << "this build has none -- rebuild with MUMPS BUILD_SINGLE=ON, or drop the option\n";
+      mumpsRefuse = true;
+    }
+#else
+    if (mumpsPrecision != 0) {
+      opserr << "Mumps ERROR: -precision single is implemented for the parallel MUMPS solver "
+	     << "(OpenSeesSP/OpenSeesMP) only\n";
+      mumpsRefuse = true;
+    }
+#endif
+    if (mumpsRefuse)
+      return TCL_ERROR;
+
 #ifdef _PARALLEL_PROCESSING
     // Ladruno ADR-75 P2h: the SP SOE ctor takes no matType (vanilla asymmetry,
     // untouched here) -- say so rather than drop it silently.
@@ -4352,11 +4426,13 @@ ladrunoSpecifySOEImpl(ClientData clientData, Tcl_Interp *interp, int argc, TCL_C
     MumpsParallelSolver *theSolver = new MumpsParallelSolver(icntl7, icntl14,
 							     icntl35, cntl7,
 							     mumpsStats);
+    theSolver->setPrecision(mumpsPrecision, mumpsRefine);   // Ladruno WP-194
     theSOE = new MumpsParallelSOE(*theSolver);
 #elif _PARALLEL_INTERPRETERS
     MumpsParallelSolver *theSolver = new MumpsParallelSolver(icntl7, icntl14,
 							     icntl35, cntl7,
 							     mumpsStats);
+    theSolver->setPrecision(mumpsPrecision, mumpsRefine);   // Ladruno WP-194
     MumpsParallelSOE *theParallelSOE = new MumpsParallelSOE(*theSolver, matType);
     theParallelSOE->setProcessID(OPS_rank);
     theParallelSOE->setChannels(numChannels, theChannels);
@@ -4756,6 +4832,7 @@ specifyAlgorithm(ClientData clientData, Tcl_Interp *interp, int argc,
     int incrementTangent = CURRENT_TANGENT;
     int iterateTangent = CURRENT_TANGENT;
     int maxDim = 3;
+    LadrunoFactorReuseOptions reuseOpts;   // Ladruno WP-188
     for (int i = 2; i < argc; i++) {
       if (strcmp(argv[i],"-iterate") == 0 && i+1 < argc) {
 	i++;
@@ -4779,7 +4856,11 @@ specifyAlgorithm(ClientData clientData, Tcl_Interp *interp, int argc,
 	i++;
 	maxDim = atoi(argv[i]);
       }
+      else if (LadrunoFactorReuse::parseArgv(argc, (const char **)argv, i, reuseOpts) < 0)  // Ladruno WP-188
+	return TCL_ERROR;
     }
+    if (!reuseOpts.consistent())   // Ladruno WP-188
+      return TCL_ERROR;
 
     if (theTest == 0) {
       opserr << "ERROR: No ConvergenceTest yet specified\n";
@@ -4789,7 +4870,10 @@ specifyAlgorithm(ClientData clientData, Tcl_Interp *interp, int argc,
     Accelerator *theAccel;
     theAccel = new KrylovAccelerator(maxDim, iterateTangent);
 
-    theNewAlgo = new AcceleratedNewton(*theTest, theAccel, incrementTangent);
+    AcceleratedNewton *theKrylovAlgo = new AcceleratedNewton(*theTest, theAccel, incrementTangent);
+    if (reuseOpts.maxSteps > 0)   // Ladruno WP-188
+      theKrylovAlgo->setFactorReuse(reuseOpts);
+    theNewAlgo = theKrylovAlgo;
   }
 
   else if (strcmp(argv[1],"RaphsonNewton") == 0) {
@@ -6896,6 +6980,9 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
 							     *theSOE,
 							     *theTransientIntegrator,
 							     theTest);
+	// apeGmsh #2034: openseespy deletes this analysis after the solve; here
+	// it stays, so mark it: not a running analysis for the Ladruno recorder.
+	LADRUNO_EIGEN_ONLY_ANALYSIS(theTransientAnalysis);
     }
 
     //
@@ -11398,9 +11485,13 @@ int convertTextToBinary(ClientData clientData, Tcl_Interp *interp, int argc, TCL
   return textToBinary(inputFile, outputFile);
 }
 
+// apeGmsh #2034: a user `domainChange` is a stage barrier for the Ladruno
+// recorder. Only this user command bumps it; internal Domain::domainChange()
+// calls do not.
 int domainChange(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 {
   theDomain.domainChange();
+  LADRUNO_STAGE_BARRIER();
   return TCL_OK;
 }
 
@@ -11690,6 +11781,7 @@ ladrunoSchema(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **ar
 // knob for the element state-determination loop's thread count.
 //   ladrunoThreads       -> query
 //   ladrunoThreads <n>   -> request n (clamped to >= 1); returns what was stored
+//   ladrunoThreads <n> -hybrid -> also allow threads on an MPI binary (WP-192)
 int
 ladrunoThreads(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 {
@@ -11706,6 +11798,15 @@ ladrunoThreads(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **a
     // ladruno_setNumThreads (WP-107 red-team S7), so the env path and both
     // interpreter verbs say the same thing in the same words.
     int stored = ladruno_setNumThreads(n);
+    // Ladruno WP-192: `-hybrid` acknowledges hybrid MPI+threads, the one way an
+    // MPI binary honours the count (ladruno_hybridAllowed).
+    for (int a = 2; a < argc; a++) {
+      if (strcmp(argv[a], "-hybrid") == 0)
+        ladruno_setHybridAllowed(true);
+      else
+        opserr << "WARNING ladrunoThreads: unknown option " << argv[a]
+               << " -- ignored (known: -hybrid)\n";
+    }
     if (stored > 1 && !ladruno_openmpCompiledIn())
       opserr << "WARNING ladrunoThreads: this binary was built WITHOUT "
              << "LADRUNO_OPENMP, so the element loop stays SERIAL no matter "

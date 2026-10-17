@@ -35,6 +35,7 @@
 #include <stdio.h>
 #include <ctype.h>
 #include <thread>
+#include <mutex>
 
 #ifdef _LADRUNO_OPENMP
 #include <omp.h>
@@ -179,4 +180,121 @@ ladruno_hardwareThreads(void)
 #endif
     const unsigned hc = std::thread::hardware_concurrency();
     return (hc == 0u) ? 0 : (int)hc;
+}
+
+// ---------------------------------------------------------------------------
+// Ladruno WP-192 -- shared machinery of the threaded element loops (see the
+// header for the contract).
+// ---------------------------------------------------------------------------
+
+thread_local int ladruno_tlInRegion = 0;
+
+// -1 = not seeded yet (from LADRUNO_THREADS_HYBRID), 0 = refused, 1 = allowed.
+static int ladrunoHybrid = -1;
+
+bool
+ladruno_hybridAllowed(void)
+{
+    if (ladrunoHybrid < 0) {
+        const char *env = getenv("LADRUNO_THREADS_HYBRID");
+        ladrunoHybrid = (env != 0 && env[0] == '1' && env[1] == '\0') ? 1 : 0;
+    }
+    return ladrunoHybrid == 1;
+}
+
+void
+ladruno_setHybridAllowed(bool on)
+{
+    ladrunoHybrid = on ? 1 : 0;
+}
+
+int
+ladruno_loopThreads(const char **why)
+{
+    if (why != 0)
+        *why = 0;
+#ifndef _LADRUNO_OPENMP
+    return 1;
+#else
+    const int n = ladruno_getNumThreads();
+    if (n <= 1)
+        return 1;
+    if (ladruno_parallelBuild() && !ladruno_hybridAllowed()) {
+        if (why != 0)
+            *why = "this is an MPI binary and hybrid MPI+threads was not "
+                   "acknowledged (`ladrunoThreads <n> -hybrid` or "
+                   "LADRUNO_THREADS_HYBRID=1)";
+        return 1;
+    }
+    return n;
+#endif
+}
+
+int
+ladruno_parallelFor(int n, int nThreads, int chunk,
+                    LadrunoIndexBody body, void *ctx, int *firstFail)
+{
+    int sum = 0;
+    int first = n;
+    if (chunk < 1)
+        chunk = 1;
+
+#ifdef _LADRUNO_OPENMP
+    if (nThreads >= 2 && n >= 2) {
+        // An INTEGER reduction: order-free, identical at every thread count.
+        // The lowest failing index is found through a critical section that
+        // is entered only on a failure (MSVC is OpenMP 2.0: no reduction(min)).
+        #pragma omp parallel num_threads(nThreads) reduction(+:sum)
+        {
+            ladruno_tlInRegion = 1;
+            #pragma omp for schedule(dynamic, chunk)
+            for (int i = 0; i < n; i++) {
+                const int r = body(i, ctx);
+                sum += r;
+                if (r != 0) {
+                    #pragma omp critical (ladruno_wp192_firstFail)
+                    {
+                        if (i < first)
+                            first = i;
+                    }
+                }
+            }
+            ladruno_tlInRegion = 0;
+        }
+        if (firstFail != 0)
+            *firstFail = first;
+        return sum;
+    }
+#endif
+
+    (void)nThreads;
+    const int saved = ladruno_tlInRegion;
+    ladruno_tlInRegion = 1;
+    for (int i = 0; i < n; i++) {
+        const int r = body(i, ctx);
+        sum += r;
+        if (r != 0) {
+            if (i < first)
+                first = i;
+        }
+    }
+    ladruno_tlInRegion = saved;
+    if (firstFail != 0)
+        *firstFail = first;
+    return sum;
+}
+
+static std::mutex &ladruno_outputMutex(void) { static std::mutex m; return m; }
+void ladruno_outputLock(void) { ladruno_outputMutex().lock(); }
+void ladruno_outputUnlock(void) { ladruno_outputMutex().unlock(); }
+
+bool
+ladruno_loopEnabled(int which)
+{
+    static int mask = -1;
+    if (mask < 0) {
+        const char *env = getenv("LADRUNO_THREADS_LOOPS");
+        mask = (env != 0 && env[0] != 0) ? (int)strtol(env, 0, 10) : 31;   // WP-196: + energy sweep
+    }
+    return (mask & which) != 0;
 }

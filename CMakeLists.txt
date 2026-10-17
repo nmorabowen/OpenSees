@@ -548,6 +548,41 @@ if(MPI_FOUND)
        set (MUMPS_LIBRARIES "${MUMPS_DIR}/libdmumps.a;${MUMPS_DIR}/libmumps_common.a;${MUMPS_DIR}/libpord.a")
      endif()
 
+     # Ladruno WP-194: mixed-precision MUMPS (`system Mumps -precision single`)
+     # needs the single-precision arithmetic (libsmumps + smumps_c.h), which a
+     # MUMPS built with BUILD_SINGLE=OFF does not have. AUTO compiles the option
+     # in when both are found (else `-precision single` is refused at the
+     # command), ON makes their absence a configure error, OFF builds it out.
+     set(LADRUNO_MUMPS_SINGLE "AUTO" CACHE STRING
+         "Mixed-precision MUMPS factor (-precision single): AUTO | ON | OFF")
+     set_property(CACHE LADRUNO_MUMPS_SINGLE PROPERTY STRINGS AUTO ON OFF)
+     if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+       set(_ladruno_smumps_lib "${MUMPS_DIR}/smumps.lib")
+     else()
+       set(_ladruno_smumps_lib "${MUMPS_DIR}/libsmumps.a")
+     endif()
+     if(DEFINED MUMPS_INCLUDE_DIR)
+       set(_ladruno_smumps_inc "${MUMPS_INCLUDE_DIR}")
+     else()
+       set(_ladruno_smumps_inc "${MUMPS_DIR}/_deps/mumps-src/include")
+     endif()
+     set(_ladruno_have_smumps FALSE)
+     if(NOT LADRUNO_MUMPS_SINGLE STREQUAL "OFF" AND EXISTS "${_ladruno_smumps_lib}"
+        AND EXISTS "${_ladruno_smumps_inc}/smumps_c.h")
+       set(_ladruno_have_smumps TRUE)
+     endif()
+     if(LADRUNO_MUMPS_SINGLE STREQUAL "ON" AND NOT _ladruno_have_smumps)
+       message(FATAL_ERROR "LADRUNO_MUMPS_SINGLE=ON but ${_ladruno_smumps_lib} or "
+                           "${_ladruno_smumps_inc}/smumps_c.h is missing (build MUMPS with BUILD_SINGLE=ON)")
+     endif()
+     if(_ladruno_have_smumps)
+       list(PREPEND MUMPS_LIBRARIES "${_ladruno_smumps_lib}")
+       list(APPEND MUMPS_FLAG _LADRUNO_SMUMPS)
+       message(STATUS "Ladruno WP-194: single-precision MUMPS found -- system Mumps -precision single compiled in")
+     else()
+       message(STATUS "Ladruno WP-194: no single-precision MUMPS -- system Mumps -precision single will be refused")
+     endif()
+
   endif()
 
   add_subdirectory("${PROJECT_SOURCE_DIR}/OTHER/SuperLU_DIST_4.3/SRC")
@@ -1078,6 +1113,7 @@ set(OPS_MPI_PER_TARGET_SOURCES
     ${OPS_SRC_DIR}/analysis/handler/LadrunoContactAbort.cpp
     ${OPS_SRC_DIR}/analysis/handler/LadrunoAutoPenaltyReduce.cpp
     ${OPS_SRC_DIR}/utility/LadrunoParallelBuild.cpp   # Ladruno WP-107 red-team B2 (MPI fence)
+    ${OPS_SRC_DIR}/analysis/algorithm/equiSolnAlgo/LadrunoFactorReuseMPI.cpp  # Ladruno WP-188 (reuse decisions agreed across ranks)
 )
 
 target_compile_definitions(OPS_InterpTcl PUBLIC _TCL85)
@@ -1366,6 +1402,7 @@ if(MPI_FOUND)
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsSolver.cpp
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSOE.cpp
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSolver.cpp
+      ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/LadrunoMumpsMixed.cpp   # Ladruno WP-194
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/sparseGEN/DistributedSuperLU.cpp
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/sparseGEN/DistributedSparseGenColLinSOE.cpp
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/sparseGEN/DistributedSparseGenRowLinSOE.cpp
@@ -1438,6 +1475,7 @@ if(MPI_FOUND)
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsSolver.cpp
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSOE.cpp
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSolver.cpp
+      ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/LadrunoMumpsMixed.cpp   # Ladruno WP-194
       # Ladruno ADR43 P3c-MPI: distributed FEAST inner solve (self-registers
       # the LadrunoFeastInnerSolve factory; _PARALLEL_INTERPRETERS targets only)
       ${OPS_SRC_DIR}/system_of_eqn/eigenSOE/LadrunoDistBlockZKernel.cpp
@@ -1553,6 +1591,7 @@ add_library(OpenSeesPyMP SHARED EXCLUDE_FROM_ALL
   ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsSolver.cpp
   ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSOE.cpp
   ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSolver.cpp
+  ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/LadrunoMumpsMixed.cpp   # Ladruno WP-194
   # Ladruno ADR43 P3c-MPI: distributed FEAST inner solve (self-registers the
   # LadrunoFeastInnerSolve factory; _PARALLEL_INTERPRETERS targets only)
   ${OPS_SRC_DIR}/system_of_eqn/eigenSOE/LadrunoDistBlockZKernel.cpp

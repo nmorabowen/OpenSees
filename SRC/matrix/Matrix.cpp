@@ -53,6 +53,30 @@ int    *Matrix::intWork =0;
 
 //double *Matrix::matrixWork = (double *)malloc(400*sizeof(double));
 
+// Ladruno WP-192: per-thread work areas for Solve / Invert / the triple
+// products, used only inside a WP-192 threaded element loop
+// (ladruno_inThreadedRegion). matrixWork / intWork are ONE buffer for the
+// whole process; two elements inverting a flexibility matrix on two threads
+// would otherwise factor into the same memory.
+#include <LadrunoThreads.h>
+#include <vector>
+namespace {
+  struct LadrunoMatrixWork { std::vector<double> d; std::vector<int> i; };
+  thread_local LadrunoMatrixWork ladrunoMW;
+}
+static double *ladrunoWorkD(int n)
+{
+  if (n < 1) n = 1;
+  if ((int)ladrunoMW.d.size() < n) ladrunoMW.d.resize(n);
+  return ladrunoMW.d.data();
+}
+static int *ladrunoWorkI(int n)
+{
+  if (n < 1) n = 1;
+  if ((int)ladrunoMW.i.size() < n) ladrunoMW.i.resize(n);
+  return ladrunoMW.i.data();
+}
+
 //
 // CONSTRUCTORS
 //
@@ -393,45 +417,58 @@ Matrix::Solve(const Vector &b, Vector &x) const
     }
 #endif
     
-    // check work area can hold all the data
-    if (dataSize > sizeDoubleWork) {
+    // Ladruno WP-192: inside a threaded element loop the class-wide work
+    // areas are replaced by per-thread ones of (at least) the same logical
+    // size, and the shared size is not grown -- every thread then takes the
+    // same code path (and LAPACK the same lwork) the serial loop would.
+    double *ladrunoW = 0; int *ladrunoIW = 0; int ladrunoWsz = 0;
+    if (ladruno_inThreadedRegion()) {
+      ladrunoWsz = (dataSize > sizeDoubleWork) ? dataSize : sizeDoubleWork;
+      ladrunoW = ladrunoWorkD(ladrunoWsz);
+      ladrunoIW = ladrunoWorkI((n > sizeIntWork) ? n : sizeIntWork);
+    } else {
+      // check work area can hold all the data
+      if (dataSize > sizeDoubleWork) {
 
-      if (matrixWork != 0) {
-	delete [] matrixWork;
-        matrixWork = 0;
+        if (matrixWork != 0) {
+  	delete [] matrixWork;
+          matrixWork = 0;
+        }
+        matrixWork = new (nothrow) double[dataSize];
+        sizeDoubleWork = dataSize;
+        
+        if (matrixWork == 0) {
+  	opserr << "WARNING: Matrix::Solve() - out of memory creating work area's\n";
+  	sizeDoubleWork = 0;      
+  	return -3;
+        }
       }
-      matrixWork = new (nothrow) double[dataSize];
-      sizeDoubleWork = dataSize;
+
+      // check work area can hold all the data
+      if (n > sizeIntWork) {
+
+        if (intWork != 0) {
+  	delete [] intWork;
+          intWork = 0;
+        }
+        intWork = new (nothrow) int[n];
+        sizeIntWork = n;
+        
+        if (intWork == 0) {
+  	opserr << "WARNING: Matrix::Solve() - out of memory creating work area's\n";
+  	sizeIntWork = 0;      
+  	return -3;
+        }
+      }
+
       
-      if (matrixWork == 0) {
-	opserr << "WARNING: Matrix::Solve() - out of memory creating work area's\n";
-	sizeDoubleWork = 0;      
-	return -3;
-      }
+      ladrunoW = matrixWork; ladrunoIW = intWork; ladrunoWsz = sizeDoubleWork;
     }
 
-    // check work area can hold all the data
-    if (n > sizeIntWork) {
-
-      if (intWork != 0) {
-	delete [] intWork;
-        intWork = 0;
-      }
-      intWork = new (nothrow) int[n];
-      sizeIntWork = n;
-      
-      if (intWork == 0) {
-	opserr << "WARNING: Matrix::Solve() - out of memory creating work area's\n";
-	sizeIntWork = 0;      
-	return -3;
-      }
-    }
-
-    
     // copy the data
     int i;
     for (i=0; i<dataSize; i++)
-      matrixWork[i] = data[i];
+      ladrunoW[i] = data[i];
 
     // set x equal to b
     x = b;
@@ -440,9 +477,9 @@ Matrix::Solve(const Vector &b, Vector &x) const
     int ldA = n;
     int ldB = n;
     int info;
-    double *Aptr = matrixWork;
+    double *Aptr = ladrunoW;
     double *Xptr = x.theData;
-    int *iPIV = intWork;
+    int *iPIV = ladrunoIW;
     
 
 #ifdef _WIN32
@@ -486,55 +523,67 @@ Matrix::Solve(const Matrix &b, Matrix &x) const
     }
 #endif
 
-    // check work area can hold all the data
-    if (dataSize > sizeDoubleWork) {
+    // Ladruno WP-192: inside a threaded element loop the class-wide work
+    // areas are replaced by per-thread ones of (at least) the same logical
+    // size, and the shared size is not grown -- every thread then takes the
+    // same code path (and LAPACK the same lwork) the serial loop would.
+    double *ladrunoW = 0; int *ladrunoIW = 0; int ladrunoWsz = 0;
+    if (ladruno_inThreadedRegion()) {
+      ladrunoWsz = (dataSize > sizeDoubleWork) ? dataSize : sizeDoubleWork;
+      ladrunoW = ladrunoWorkD(ladrunoWsz);
+      ladrunoIW = ladrunoWorkI((n > sizeIntWork) ? n : sizeIntWork);
+    } else {
+      // check work area can hold all the data
+      if (dataSize > sizeDoubleWork) {
 
-      if (matrixWork != 0) {
-	delete [] matrixWork;
-        matrixWork = 0;
+        if (matrixWork != 0) {
+  	delete [] matrixWork;
+          matrixWork = 0;
+        }
+        matrixWork = new (nothrow) double[dataSize];
+        sizeDoubleWork = dataSize;
+        
+        if (matrixWork == 0) {
+  	opserr << "WARNING: Matrix::Solve() - out of memory creating work area's\n";
+  	sizeDoubleWork = 0;      
+  	return -3;
+        }
       }
-      matrixWork = new (nothrow) double[dataSize];
-      sizeDoubleWork = dataSize;
-      
-      if (matrixWork == 0) {
-	opserr << "WARNING: Matrix::Solve() - out of memory creating work area's\n";
-	sizeDoubleWork = 0;      
-	return -3;
+
+      // check work area can hold all the data
+      if (n > sizeIntWork) {
+
+        if (intWork != 0) {
+  	delete [] intWork;
+          intWork = 0;
+        }
+        intWork = new (nothrow) int[n];
+        sizeIntWork = n;
+        
+        if (intWork == 0) {
+  	opserr << "WARNING: Matrix::Solve() - out of memory creating work area's\n";
+  	sizeIntWork = 0;      
+  	return -3;
+        }
       }
+      ladrunoW = matrixWork; ladrunoIW = intWork; ladrunoWsz = sizeDoubleWork;
     }
 
-    // check work area can hold all the data
-    if (n > sizeIntWork) {
-
-      if (intWork != 0) {
-	delete [] intWork;
-        intWork = 0;
-      }
-      intWork = new (nothrow) int[n];
-      sizeIntWork = n;
-      
-      if (intWork == 0) {
-	opserr << "WARNING: Matrix::Solve() - out of memory creating work area's\n";
-	sizeIntWork = 0;      
-	return -3;
-      }
-    }
-    
     x = b;
 
     // copy the data
     int i;
     for (i=0; i<dataSize; i++)
-      matrixWork[i] = data[i];
+      ladrunoW[i] = data[i];
 
 
     int ldA = n;
     int ldB = n;
     int info;
-    double *Aptr = matrixWork;
+    double *Aptr = ladrunoW;
     double *Xptr = x.data;
     
-    int *iPIV = intWork;
+    int *iPIV = ladrunoIW;
     
 	info = -1;
 
@@ -583,53 +632,66 @@ Matrix::Invert(Matrix &theInverse) const
     }
 #endif
 
-    // check work area can hold all the data
-    if (dataSize > sizeDoubleWork) {
+    // Ladruno WP-192: inside a threaded element loop the class-wide work
+    // areas are replaced by per-thread ones of (at least) the same logical
+    // size, and the shared size is not grown -- every thread then takes the
+    // same code path (and LAPACK the same lwork) the serial loop would.
+    double *ladrunoW = 0; int *ladrunoIW = 0; int ladrunoWsz = 0;
+    if (ladruno_inThreadedRegion()) {
+      ladrunoWsz = (dataSize > sizeDoubleWork) ? dataSize : sizeDoubleWork;
+      ladrunoW = ladrunoWorkD(ladrunoWsz);
+      ladrunoIW = ladrunoWorkI((n > sizeIntWork) ? n : sizeIntWork);
+    } else {
+      // check work area can hold all the data
+      if (dataSize > sizeDoubleWork) {
 
-      if (matrixWork != 0) {
-	delete [] matrixWork;
-        matrixWork = 0;
+        if (matrixWork != 0) {
+  	delete [] matrixWork;
+          matrixWork = 0;
+        }
+        matrixWork = new (nothrow) double[dataSize];
+        sizeDoubleWork = dataSize;
+        
+        if (matrixWork == 0) {
+  	opserr << "WARNING: Matrix::Solve() - out of memory creating work area's\n";
+  	sizeDoubleWork = 0;      
+  	return -3;
+        }
       }
-      matrixWork = new (nothrow) double[dataSize];
-      sizeDoubleWork = dataSize;
+
+      // check work area can hold all the data
+      if (n > sizeIntWork) {
+
+        if (intWork != 0) {
+  	delete [] intWork;
+          intWork = 0;
+        }
+        intWork = new (nothrow) int[n];
+        sizeIntWork = n;
+        
+        if (intWork == 0) {
+  	opserr << "WARNING: Matrix::Solve() - out of memory creating work area's\n";
+  	sizeIntWork = 0;      
+  	return -3;
+        }
+      }
       
-      if (matrixWork == 0) {
-	opserr << "WARNING: Matrix::Solve() - out of memory creating work area's\n";
-	sizeDoubleWork = 0;      
-	return -3;
-      }
+      ladrunoW = matrixWork; ladrunoIW = intWork; ladrunoWsz = sizeDoubleWork;
     }
 
-    // check work area can hold all the data
-    if (n > sizeIntWork) {
-
-      if (intWork != 0) {
-	delete [] intWork;
-        intWork = 0;
-      }
-      intWork = new (nothrow) int[n];
-      sizeIntWork = n;
-      
-      if (intWork == 0) {
-	opserr << "WARNING: Matrix::Solve() - out of memory creating work area's\n";
-	sizeIntWork = 0;      
-	return -3;
-      }
-    }
-    
     // copy the data
     theInverse = *this;
     
     for (int i=0; i<dataSize; i++)
-      matrixWork[i] = data[i];
+      ladrunoW[i] = data[i];
 
     int ldA = n;
     int info;
-    double *Wptr = matrixWork;
+    double *Wptr = ladrunoW;
     double *Aptr = theInverse.data;
-    int workSize = sizeDoubleWork;
+    int workSize = ladrunoWsz;
     
-    int *iPIV = intWork;
+    int *iPIV = ladrunoIW;
     
 
 #ifdef _WIN32
@@ -966,16 +1028,19 @@ Matrix::addMatrixTripleProduct(double thisFact,
     }
 
     // zero out the work area
-    double *matrixWorkPtr = matrixWork;
+    // Ladruno WP-192: the size decision above reads the SHARED logical size
+    // (same branch as serial); the buffer is per-thread in a threaded loop.
+    double *ladrunoW = ladruno_inThreadedRegion() ? ladrunoWorkD(sizeWork) : matrixWork;
+    double *matrixWorkPtr = ladrunoW;
     for (int l=0; l<sizeWork; l++)
       *matrixWorkPtr++ = 0.0;
     
-    // now form B * T * fact store in matrixWork == A area
+    // now form B * T * fact store in ladrunoW == A area
     // NOTE: looping as per blas3 dgemm_: j,k,i
 
     double *tkjPtr  = &(T.data)[0];
     for (int j=0; j<numCols; j++) {
-      double *aijPtrA = &matrixWork[j*dimB];
+      double *aijPtrA = &ladrunoW[j*dimB];
       for (int k=0; k<dimB; k++) {
 	double tmp = *tkjPtr++ * otherFact;
 	double *aijPtr = aijPtrA;
@@ -985,12 +1050,12 @@ Matrix::addMatrixTripleProduct(double thisFact,
       }
     }
 
-    // now form T' * matrixWork
+    // now form T' * ladrunoW
     // NOTE: looping as per blas3 dgemm_: j,i,k
     if (thisFact == 1.0) {
       double *dataPtr = &data[0];
       for (int j=0; j< numCols; j++) {
-	double *workkjPtrA = &matrixWork[j*dimB];
+	double *workkjPtrA = &ladrunoW[j*dimB];
 	for (int i=0; i<numRows; i++) {
 	  double *ckiPtr = &(T.data)[i*dimB];
 	  double *workkjPtr = workkjPtrA;
@@ -1003,7 +1068,7 @@ Matrix::addMatrixTripleProduct(double thisFact,
     } else if (thisFact == 0.0) {
       double *dataPtr = &data[0];
       for (int j=0; j< numCols; j++) {
-	double *workkjPtrA = &matrixWork[j*dimB];
+	double *workkjPtrA = &ladrunoW[j*dimB];
 	for (int i=0; i<numRows; i++) {
 	  double *ckiPtr = &(T.data)[i*dimB];
 	  double *workkjPtr = workkjPtrA;
@@ -1017,7 +1082,7 @@ Matrix::addMatrixTripleProduct(double thisFact,
     } else {
       double *dataPtr = &data[0];
       for (int j=0; j< numCols; j++) {
-	double *workkjPtrA = &matrixWork[j*dimB];
+	double *workkjPtrA = &ladrunoW[j*dimB];
 	for (int i=0; i<numRows; i++) {
 	  double *ckiPtr = &(T.data)[i*dimB];
 	  double *workkjPtr = workkjPtrA;
@@ -1064,17 +1129,20 @@ Matrix::addMatrixTripleProduct(double thisFact,
     }
 
     // zero out the work area
-    double *matrixWorkPtr = matrixWork;
+    // Ladruno WP-192: the size decision above reads the SHARED logical size
+    // (same branch as serial); the buffer is per-thread in a threaded loop.
+    double *ladrunoW = ladruno_inThreadedRegion() ? ladrunoWorkD(sizeWork) : matrixWork;
+    double *matrixWorkPtr = ladrunoW;
     for (int l=0; l<sizeWork; l++)
       *matrixWorkPtr++ = 0.0;
 
-    // now form B * C * fact store in matrixWork == A area
+    // now form B * C * fact store in ladrunoW == A area
     // NOTE: looping as per blas3 dgemm_: j,k,i
     
     int rowsB = B.numRows;
     double *ckjPtr  = &(C.data)[0];
     for (int j=0; j<numCols; j++) {
-      double *aijPtrA = &matrixWork[j*rowsB];
+      double *aijPtrA = &ladrunoW[j*rowsB];
       for (int k=0; k<rowsB; k++) {
 	double tmp = *ckjPtr++ * otherFact;
 	double *aijPtr = aijPtrA;
@@ -1084,13 +1152,13 @@ Matrix::addMatrixTripleProduct(double thisFact,
       }
     }
 
-    // now form A' * matrixWork
+    // now form A' * ladrunoW
     // NOTE: looping as per blas3 dgemm_: j,i,k
     int dimB = rowsB;
     if (thisFact == 1.0) {
       double *dataPtr = &data[0];
       for (int j=0; j< numCols; j++) {
-	double *workkjPtrA = &matrixWork[j*dimB];
+	double *workkjPtrA = &ladrunoW[j*dimB];
 	for (int i=0; i<numRows; i++) {
 	  double *akiPtr = &(A.data)[i*dimB];
 	  double *workkjPtr = workkjPtrA;
@@ -1103,7 +1171,7 @@ Matrix::addMatrixTripleProduct(double thisFact,
     } else if (thisFact == 0.0) {
       double *dataPtr = &data[0];
       for (int j=0; j< numCols; j++) {
-	double *workkjPtrA = &matrixWork[j*dimB];
+	double *workkjPtrA = &ladrunoW[j*dimB];
 	for (int i=0; i<numRows; i++) {
 	  double *akiPtr = &(A.data)[i*dimB];
 	  double *workkjPtr = workkjPtrA;
@@ -1117,7 +1185,7 @@ Matrix::addMatrixTripleProduct(double thisFact,
     } else {
       double *dataPtr = &data[0];
       for (int j=0; j< numCols; j++) {
-	double *workkjPtrA = &matrixWork[j*dimB];
+	double *workkjPtrA = &ladrunoW[j*dimB];
 	for (int i=0; i<numRows; i++) {
 	  double *akiPtr = &(A.data)[i*dimB];
 	  double *workkjPtr = workkjPtrA;

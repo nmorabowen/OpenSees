@@ -223,6 +223,11 @@ class Domain
     // LADRUNO_OPENMP, or at 1 thread.
     bool ladrunoThreadedUpdate(int &ok);
 
+    // Ladruno WP-192. The element commitState() loop of commit(), threaded with
+    // the same per-type opt-in (Element::ladrunoThreadSafeForm). Returns false
+    // when the caller must run the serial loop.
+    bool ladrunoThreadedCommit(void);
+
     // Ladruno WP-107 red-team S3. The audit outcome that was last ANNOUNCED for
     // this domain. Every Domain::update() re-runs the audit itself (that part
     // was always correct), but the message used to be latched behind three
@@ -237,7 +242,8 @@ class Domain
       LADRUNO_TA_PARALLEL_BUILD,// refused: SP/MP/PyMP binary (red-team B2)
       LADRUNO_TA_PARTITIONED,   // refused: PartitionedDomain / Subdomain
       LADRUNO_TA_PROFILER,      // refused: deep profiler armed
-      LADRUNO_TA_ELEMENT        // refused: an element is not on the allowlist
+      LADRUNO_TA_ELEMENT,       // refused: an element is not on the allowlist
+      LADRUNO_TA_MIXED          // WP-192: threaded, some elements serial in place
     };
     virtual  int  updateParameter(int tag, int value);
     virtual  int  updateParameter(int tag, double value);    
