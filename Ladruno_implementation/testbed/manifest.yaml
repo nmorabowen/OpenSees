@@ -2108,7 +2108,7 @@ features:
   - feature: LadrunoCPML
     classtag: 33023
     tag_symbol: ELE_TAG_LadrunoCPML
-    pr: null
+    pr: 995
     feature_class: element
     required_tiers: [T0, T1, T2a, dynamics-battery]
     pytest: tests/test_ladruno_cpml_waveguide_mms.py
