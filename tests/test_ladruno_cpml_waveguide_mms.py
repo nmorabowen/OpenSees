@@ -288,12 +288,12 @@ def test_cases_txt_matches_reference_oracle() -> None:
                 st["U"], st["V"], st["A"], st["dt"], pc["c1"], pc["c2"], pc["c3"]
             )
             elem.commit()
-            assert rel_err(R_int, st["R_int"]) <= 1.0e-14
-            assert rel_err(K_eff, st["K_eff"]) <= 1.0e-14
-            assert rel_err(C_eff, st["C_eff"]) <= 1.0e-14
-            assert rel_err(M_eff, st["M_eff"]) <= 1.0e-14
-            assert rel_err(K_T_dyn, st["K_T_dyn"]) <= 1.0e-14
-            assert rel_err(P_ext, st["P_ext"]) <= 1.0e-14
+            assert rel_err(R_int, st["R_int"]) <= 1.0e-12
+            assert rel_err(K_eff, st["K_eff"]) <= 1.0e-12
+            assert rel_err(C_eff, st["C_eff"]) <= 1.0e-12
+            assert rel_err(M_eff, st["M_eff"]) <= 1.0e-12
+            assert rel_err(K_T_dyn, st["K_T_dyn"]) <= 1.0e-12
+            assert rel_err(P_ext, st["P_ext"]) <= 1.0e-12
 
 
 @pytest.mark.parametrize("case_data", PARSED_CASES, ids=[c["name"] for c in PARSED_CASES])

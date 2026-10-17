@@ -483,7 +483,7 @@ def _run_3d_spherical(topo: str, mode: str) -> dict[str, np.ndarray]:
         "corner": nid(2, 2, 2),  # (1.0, 1.0, 1.0) along (1,1,1) space diagonal into 3D corner
     }
 
-    ops.system("Pardiso")
+    ops.system("UmfPack")
     ops.numberer("RCM")
     ops.constraints("Plain")
     ops.integrator("Newmark", 0.5, 0.25)
