@@ -729,6 +729,7 @@
 #define ELE_TAG_ASDEmbeddedNodeElement             217  // Massimo Petracca (ASDEA)
 
 #define ELE_TAG_Inno3DPnPJoint			  263
+#define ELE_TAG_LadrunoMembrane            33022 // N. Mora-Bowen (Ladruno) — polygonal surface-to-frame load distribution & Guyan-condensed CST diaphragm element (ADR 98); ladruno private band >=33000 (see Ladruno_implementation/98_ladruno_membrane_load_distribution_adr.md)
 
 #define FRN_TAG_Coulomb            1
 #define FRN_TAG_VelDependent       2

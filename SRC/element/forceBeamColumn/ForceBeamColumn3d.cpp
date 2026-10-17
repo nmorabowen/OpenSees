@@ -792,6 +792,8 @@ ForceBeamColumn3d::computeReactions(double *p0)
       double wa = data(2) * loadFactor;  // Axial at start
       double a = data(3) * L;
       double b = data(4) * L;
+      if (b <= a || a < 0.0 || b > L) // Ladruno: guard degenerate partial load span
+        continue;
       double wyb = data(5) * loadFactor;  // Transverse Y at end
       double wzb = data(6) * loadFactor;  // Transverse Z at end
       double wab = data(7) * loadFactor;  // Axial at end
@@ -1586,6 +1588,8 @@ ForceBeamColumn3d::computeSectionForces(Vector &sp, int isec)
       double wa = data(2) * loadFactor;  // Axial at start
       double a = data(3)*L;
       double b = data(4)*L;
+      if (b <= a || a < 0.0 || b > L) // Ladruno: guard degenerate partial load span
+        continue;
       double wyb = data(5) * loadFactor;  // Transverse Y at end
       double wzb = data(6) * loadFactor;  // Transverse Z at end
       double wab = data(7) * loadFactor;  // Axial at end
@@ -1662,7 +1666,8 @@ ForceBeamColumn3d::computeSectionForces(Vector &sp, int isec)
         sp(ii) += -VyI + wy * (x - a) + 0.5 * (wyy - wy) * (x - a);
         break;
 	  case SECTION_RESPONSE_VZ:	   
-        sp(ii) -= -VzI + wz * (x - a) - 0.5 * (wzz - wz) * (x - a);
+        // Ladruno: fix sign of triangular z-load shear contribution (+0.5*(wzz - wz)*(x - a))
+        sp(ii) -= -VzI + wz * (x - a) + 0.5 * (wzz - wz) * (x - a);
         break;
 	  default:
 	    break;

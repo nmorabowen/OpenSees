@@ -218,6 +218,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • LadrunoSANISAND — SAS-ME -sasTensionCutoff (separation at p' ~ 0, WP-152)\n"
 "        • system Pardiso — -deterministic / -cbwr (MKL CNR, reproducible)\n"
 "        • relativeMassDamping: Rayleigh mass term relative to a v_ref(t)\n"
+"        • LadrunoMembrane — polygonal tributary & FEA load-transfer membrane\n"
 "\n";
     // FEATURES-END
 
