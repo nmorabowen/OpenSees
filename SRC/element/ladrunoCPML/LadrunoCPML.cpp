@@ -167,6 +167,8 @@ LadrunoCPML::ensureBuffers()
     Mmat_.resize(nDOF_, nDOF_);
   }
   Mmat_.Zero();
+  MmatValid_ = false;
+  MmatStage_ = -1;
 
   LadrunoShell::dropKi(Ki_);
 
@@ -647,6 +649,7 @@ LadrunoCPML::setDomain(Domain* domainPtr)
   charLen_ = (vol > 0.0) ? std::pow(vol, 1.0 / static_cast<double>(ndm_)) : 0.0;
 
   valid_ = true;
+  MmatValid_ = false;
   LadrunoShell::dropKi(Ki_);
 
   this->DomainComponent::setDomain(domainPtr);
@@ -708,6 +711,7 @@ LadrunoCPML::revertToStart()
   residInc_.Zero();
   basicForce_.Zero();
   rayForce_.Zero();
+  MmatValid_ = false;
   LadrunoShell::dropKi(Ki_);
   skipNextUpdate_ = true;
   return 0;
@@ -901,11 +905,16 @@ LadrunoCPML::getDamp()
 const Matrix&
 LadrunoCPML::getMass()
 {
-  Mmat_.Zero();
   if (!valid_ || !kernel_.isValid() || mat_.rho <= 0.0) {
+    Mmat_.Zero();
+    MmatValid_ = false;
+    return Mmat_;
+  }
+  if (MmatValid_ && MmatStage_ == stage_) {
     return Mmat_;
   }
 
+  Mmat_.Zero();
   const double scale = scaleFactor();
   const std::vector<double>& mVec =
       (stage_ == 0) ? kernel_.getM0() : kernel_.getM_eff();
@@ -916,6 +925,8 @@ LadrunoCPML::getMass()
       Mmat_(i, j) = scale * mVec[rowOff + j];
     }
   }
+  MmatValid_ = true;
+  MmatStage_ = stage_;
   return Mmat_;
 }
 
@@ -1104,7 +1115,7 @@ LadrunoCPML::getResistingForceIncInertia()
           raScratch_(uOff + d) = (d < accel.Size()) ? accel(d) : 0.0;
         }
       }
-      snap.addMatrixVector(1.0, this->getMass(), raScratch_, 1.0);
+      kernel_.addMassForce(stage_ == 0, scale, &raScratch_(0), &snap(0));
     }
   }
 
@@ -1592,6 +1603,7 @@ LadrunoCPML::updateParameter(int parameterID, Information& info)
         stage_ = 1;
         kernel_.setStaticMode(false);
       }
+      MmatValid_ = false;
       return 0;
     }
     case PARAM_E: {
@@ -1600,6 +1612,7 @@ LadrunoCPML::updateParameter(int parameterID, Information& info)
       }
       mat_.init(info.theDouble, mat_.nu, mat_.rho);
       kernel_.updateMaterialParams(mat_, lumped_);
+      MmatValid_ = false;
       if (stage_ == 0 || lastDt_ <= 0.0) {
         kernel_.setTrial(uTrial_.data(), vTrial_.data(), aTrial_.data(), 0.0);
       }
@@ -1611,6 +1624,7 @@ LadrunoCPML::updateParameter(int parameterID, Information& info)
       }
       mat_.init(mat_.E, info.theDouble, mat_.rho);
       kernel_.updateMaterialParams(mat_, lumped_);
+      MmatValid_ = false;
       if (stage_ == 0 || lastDt_ <= 0.0) {
         kernel_.setTrial(uTrial_.data(), vTrial_.data(), aTrial_.data(), 0.0);
       }
@@ -1622,6 +1636,7 @@ LadrunoCPML::updateParameter(int parameterID, Information& info)
       }
       mat_.init(mat_.E, mat_.nu, info.theDouble);
       kernel_.updateMaterialParams(mat_, lumped_);
+      MmatValid_ = false;
       if (stage_ == 0 || lastDt_ <= 0.0) {
         kernel_.setTrial(uTrial_.data(), vTrial_.data(), aTrial_.data(), 0.0);
       }
@@ -1651,6 +1666,7 @@ LadrunoCPML::updateParameter(int parameterID, Information& info)
       }
       biot_ = nextBiot;
       kernel_.updateBiotParams(biot_);
+      MmatValid_ = false;
       LadrunoShell::dropKi(Ki_);
       if (stage_ == 0 || lastDt_ <= 0.0) {
         kernel_.setTrial(uTrial_.data(), vTrial_.data(), aTrial_.data(), 0.0);

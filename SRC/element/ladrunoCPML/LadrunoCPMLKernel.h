@@ -92,11 +92,19 @@ struct RCFilter1D {
   double y_t = 0.0;
   double D_t = 1.0;
 
+  // Cached exact piecewise-linear coefficients for constant-dt stepping
+  double cached_dt = -1.0;
+  double cached_b = 1.0;
+  double cached_phi0 = 0.0;
+  double cached_phi1 = 0.0;
+  double cached_D = 1.0;
+
   RCFilter1D() = default;
   RCFilter1D(double c0_, double c1_, double beta_)
       : c0(c0_), c1(c1_), beta(beta_),
         zeta_c(0.0), x_c(0.0), y_c(0.0), D_c(c0_),
-        zeta_t(0.0), x_t(0.0), y_t(0.0), D_t(c0_) {}
+        zeta_t(0.0), x_t(0.0), y_t(0.0), D_t(c0_),
+        cached_dt(-1.0), cached_b(1.0), cached_phi0(0.0), cached_phi1(0.0), cached_D(c0_) {}
 
   static void computeCoeffs(double beta_val, double dt,
                             double& b, double& phi0, double& phi1) {
@@ -120,6 +128,9 @@ struct RCFilter1D {
     if (c1 == 0.0 || dt <= 0.0) {
       return c0;
     }
+    if (dt == cached_dt) {
+      return cached_D;
+    }
     double b, phi0, phi1;
     computeCoeffs(beta, dt, b, phi0, phi1);
     return c0 + c1 * phi1;
@@ -140,11 +151,14 @@ struct RCFilter1D {
       D_t = c0;
       return y_t;
     }
-    double b, phi0, phi1;
-    computeCoeffs(beta, dt, b, phi0, phi1);
-    zeta_t = b * zeta_c + phi0 * x_c + phi1 * x_new;
+    if (dt != cached_dt) {
+      computeCoeffs(beta, dt, cached_b, cached_phi0, cached_phi1);
+      cached_D = c0 + c1 * cached_phi1;
+      cached_dt = dt;
+    }
+    zeta_t = cached_b * zeta_c + cached_phi0 * x_c + cached_phi1 * x_new;
     y_t = c0 * x_new + sgn * c1 * zeta_t;
-    D_t = c0 + c1 * phi1;
+    D_t = cached_D;
     return y_t;
   }
 
@@ -171,6 +185,7 @@ struct RCFilter1D {
     x_t = 0.0;
     y_t = 0.0;
     D_t = c0;
+    cached_dt = -1.0;
   }
 
   static constexpr int numStateDoubles() { return 8; }
@@ -195,6 +210,7 @@ struct RCFilter1D {
     x_t    = *ptr++;
     y_t    = *ptr++;
     D_t    = *ptr++;
+    cached_dt = -1.0;
   }
 };
 
@@ -238,6 +254,7 @@ struct RCFilterCascade {
       stages[k].c0 = stg[k].c0;
       stages[k].c1 = stg[k].c1;
       stages[k].beta = stg[k].beta;
+      stages[k].cached_dt = -1.0;
     }
   }
 
@@ -750,6 +767,12 @@ struct CPMLGaussState {
   double d[3]     = {0.0, 0.0, 0.0};
   double kappa[3] = {1.0, 1.0, 1.0};
   double alpha[3] = {0.0, 0.0, 0.0};
+  bool has_d[3]   = {false, false, false};
+  bool has_any_d  = false;
+  bool has_d01    = false;
+  bool has_d02    = false;
+  bool has_d12    = false;
+  bool has_d012   = false;
 
   // Stiffness filter cascades F_{jl}(w) applied to local gradient vector k -> G'_{kl}
   RCVectorCascade<3, 3> F_jl[3][3]{};
@@ -768,6 +791,17 @@ struct CPMLGaussState {
   RCFilterCascade<2> E_p[3]{};     // Coupling pressure cascades E_j^{(p)} on u-rows
   RCFilterCascade<2> E_v[3]{};     // Coupling velocity cascades E_j^{(\dot{u})} on p-rows
   RCFilterCascade<3> J_s{};        // Storage cascade J_s^{(p)} on p-rows
+
+  void refreshActiveFlags() noexcept {
+    has_d[0] = (d[0] != 0.0);
+    has_d[1] = (d[1] != 0.0);
+    has_d[2] = (d[2] != 0.0);
+    has_any_d = has_d[0] || has_d[1] || has_d[2];
+    has_d01 = has_d[0] && has_d[1];
+    has_d02 = has_d[0] && has_d[2];
+    has_d12 = has_d[1] && has_d[2];
+    has_d012 = has_d01 && has_d[2];
+  }
 
   void init(int ndm, int nNodes,
             const double x_gp_[3], double detJ_, double w_vol_,
@@ -842,6 +876,7 @@ struct CPMLGaussState {
         }
       }
     }
+    refreshActiveFlags();
 
     // Elementary 1D filters for m = 0, 1, 2
     RCFilter1D s_fwd[3], s_inv[3], g_flt[3], phi_flt[3];
@@ -981,6 +1016,7 @@ struct CPMLGaussState {
         }
       }
     }
+    refreshActiveFlags();
 
     RCFilter1D s_fwd[3], s_inv[3], g_flt[3], phi_flt[3];
     for (int m = 0; m < 3; ++m) {
@@ -1068,11 +1104,15 @@ struct CPMLGaussState {
     for (int j = 0; j < ndm; ++j)
       for (int l = 0; l < ndm; ++l)
         F_jl[j][l].commit();
-    for (int m = 0; m < 3; ++m) g_vel[m].commit();
-    g1_g0.commit();
-    g2_g0.commit();
-    g2_g1.commit();
-    phi2_g1_g0.commit();
+    if (has_any_d) {
+      for (int m = 0; m < 3; ++m) {
+        if (has_d[m]) g_vel[m].commit();
+      }
+      if (has_d01)  g1_g0.commit();
+      if (has_d02)  g2_g0.commit();
+      if (has_d12)  g2_g1.commit();
+      if (has_d012) phi2_g1_g0.commit();
+    }
     if (biot_enabled) {
       for (int j = 0; j < ndm; ++j) {
         for (int l = 0; l < ndm; ++l) F_p[j][l].commit();
@@ -1087,11 +1127,15 @@ struct CPMLGaussState {
     for (int j = 0; j < ndm; ++j)
       for (int l = 0; l < ndm; ++l)
         F_jl[j][l].revertToLastCommit();
-    for (int m = 0; m < 3; ++m) g_vel[m].revertToLastCommit();
-    g1_g0.revertToLastCommit();
-    g2_g0.revertToLastCommit();
-    g2_g1.revertToLastCommit();
-    phi2_g1_g0.revertToLastCommit();
+    if (has_any_d) {
+      for (int m = 0; m < 3; ++m) {
+        if (has_d[m]) g_vel[m].revertToLastCommit();
+      }
+      if (has_d01)  g1_g0.revertToLastCommit();
+      if (has_d02)  g2_g0.revertToLastCommit();
+      if (has_d12)  g2_g1.revertToLastCommit();
+      if (has_d012) phi2_g1_g0.revertToLastCommit();
+    }
     if (biot_enabled) {
       for (int j = 0; j < ndm; ++j) {
         for (int l = 0; l < ndm; ++l) F_p[j][l].revertToLastCommit();
@@ -1409,7 +1453,12 @@ public:
     return true;
   }
 
-  void setStaticMode(bool s) noexcept { static_mode_ = s; }
+  void setStaticMode(bool s) noexcept {
+    static_mode_ = s;
+    if (s) {
+      tangent_cache_dt_ = -1.0;
+    }
+  }
   bool isStaticMode() const noexcept { return static_mode_; }
   bool isValid() const noexcept { return valid_; }
   double getLastDt() const noexcept { return last_dt_; }
@@ -1420,6 +1469,38 @@ public:
     return f;
   }
 
+  void invalidateTangentCache() noexcept {
+    tangent_cache_dt_ = -1.0;
+    tangent_cache_dt_c_ = -1.0;
+  }
+
+  void addMassForce(bool useM0, double scale, const double* a, double* out) const noexcept {
+    if (a == nullptr || out == nullptr || !(mat_.rho > 0.0)) return;
+    if (lumped_) {
+      const auto& ml = useM0 ? M0_lumped_ : M_lumped_;
+      for (int aNode = 0; aNode < nNodes_; ++aNode) {
+        const double ma = scale * ml[aNode];
+        const int uBaseA = uOff_[aNode];
+        for (int d = 0; d < ndm_; ++d) {
+          out[uBaseA + d] += ma * a[uBaseA + d];
+        }
+      }
+    } else {
+      const auto& ms = useM0 ? M0_scalar_ : M_scalar_;
+      for (int aNode = 0; aNode < nNodes_; ++aNode) {
+        const int uBaseA = uOff_[aNode];
+        const size_t rowOff = (size_t)aNode * nNodes_;
+        for (int d = 0; d < ndm_; ++d) {
+          double s = 0.0;
+          for (int bNode = 0; bNode < nNodes_; ++bNode) {
+            s += ms[rowOff + bNode] * a[uOff_[bNode] + d];
+          }
+          out[uBaseA + d] += scale * s;
+        }
+      }
+    }
+  }
+
   void setTrial(const double* u, const double* v, const double* a, double dt) {
     // Static / Initial-tangent regime (dt <= 0.0 or static_mode_ == true):
     // Reduce to unstretched static matrices without perturbing any committed
@@ -1428,6 +1509,7 @@ public:
       for (int g = 0; g < nGP_; ++g) {
         gpStates_[g].revertToLastCommit(ndm_, biot_.enabled);
       }
+      tangent_cache_dt_ = -1.0;
       K_eff_ = K_0_;
       if (!biot_.enabled) {
         std::fill(C_eff_.begin(), C_eff_.end(), 0.0);
@@ -1445,20 +1527,21 @@ public:
         P_ext_ = p_ext;
       } else {
         C_eff_ = C_0_;
-        double p_ext = 0.0;
         for (int i = 0; i < nDOF_; ++i) {
           double r_disp_i = 0.0;
           double r_vel_i  = 0.0;
-          double r_acc_i  = 0.0;
           for (int j = 0; j < nDOF_; ++j) {
             const size_t idx = (size_t)i * nDOF_ + j;
             r_disp_i += K_0_[idx] * u[j];
             r_vel_i  += C_0_[idx] * v[j];
-            r_acc_i  += M_0_[idx] * a[j];
           }
           R_disp_[i] = r_disp_i;
           R_vel_[i]  = r_vel_i;
-          R_int_[i]  = r_disp_i + r_vel_i + r_acc_i;
+          R_int_[i]  = r_disp_i + r_vel_i;
+        }
+        addMassForce(true, 1.0, a, R_int_.data());
+        double p_ext = 0.0;
+        for (int i = 0; i < nDOF_; ++i) {
           p_ext += v[i] * R_int_[i];
         }
         P_ext_ = p_ext;
@@ -1468,26 +1551,41 @@ public:
     }
 
     last_dt_ = dt;
+    const bool rebuildTangents = (dt != tangent_cache_dt_);
+    const bool isBox = (geom_.mode == CPMLGeomMode::Box);
+
     std::fill(R_int_.begin(), R_int_.end(), 0.0);
     std::fill(R_disp_.begin(), R_disp_.end(), 0.0);
     std::fill(R_vel_.begin(), R_vel_.end(), 0.0);
-    std::fill(K_eff_.begin(), K_eff_.end(), 0.0);
-    std::fill(C_eff_.begin(), C_eff_.end(), 0.0);
+    if (rebuildTangents) {
+      std::fill(K_eff_.begin(), K_eff_.end(), 0.0);
+      std::fill(C_eff_.begin(), C_eff_.end(), 0.0);
+    }
 
     // Local nodal displacements u'_a = R * u_a and velocities v'_a = R * v_a
     double u_local[shapes::MAX_NODES][3]{};
     double v_local[shapes::MAX_NODES][3]{};
-    for (int node = 0; node < nNodes_; ++node) {
-      const int uBase = uOff_[node];
-      for (int i = 0; i < ndm_; ++i) {
-        double su = 0.0;
-        double sv = 0.0;
-        for (int p = 0; p < ndm_; ++p) {
-          su += geom_.R[i][p] * u[uBase + p];
-          sv += geom_.R[i][p] * v[uBase + p];
+    if (isBox) {
+      for (int node = 0; node < nNodes_; ++node) {
+        const int uBase = uOff_[node];
+        for (int i = 0; i < ndm_; ++i) {
+          u_local[node][i] = u[uBase + i];
+          v_local[node][i] = v[uBase + i];
         }
-        u_local[node][i] = su;
-        v_local[node][i] = sv;
+      }
+    } else {
+      for (int node = 0; node < nNodes_; ++node) {
+        const int uBase = uOff_[node];
+        for (int i = 0; i < ndm_; ++i) {
+          double su = 0.0;
+          double sv = 0.0;
+          for (int p = 0; p < ndm_; ++p) {
+            su += geom_.R[i][p] * u[uBase + p];
+            sv += geom_.R[i][p] * v[uBase + p];
+          }
+          u_local[node][i] = su;
+          v_local[node][i] = sv;
+        }
       }
     }
 
@@ -1536,62 +1634,86 @@ public:
       }
 
       if (!useBbar) {
-        // Standard formulation: preserve exact floating-point evaluation order
+        // Hoist sigma_local[i][j] outside nodeA (0-ULP bit-identical to original loop)
+        double sigma_local[3][3]{};
+        for (int i = 0; i < ndm_; ++i) {
+          for (int j = 0; j < ndm_; ++j) {
+            double sigma_ij = 0.0;
+            for (int k = 0; k < ndm_; ++k) {
+              for (int l = 0; l < ndm_; ++l) {
+                sigma_ij += mat_.C[i][j][k][l] * G_tilde[j][l][k];
+              }
+            }
+            sigma_local[i][j] = sigma_ij;
+          }
+        }
+
         for (int nodeA = 0; nodeA < nNodes_; ++nodeA) {
           double fK_local[3] = {0.0, 0.0, 0.0};
           for (int i = 0; i < ndm_; ++i) {
             double s_i = 0.0;
             for (int j = 0; j < ndm_; ++j) {
-              const double phi_aj = gs.Phi_local[nodeA][j];
-              double sigma_ij = 0.0;
-              for (int k = 0; k < ndm_; ++k) {
-                for (int l = 0; l < ndm_; ++l) {
-                  sigma_ij += mat_.C[i][j][k][l] * G_tilde[j][l][k];
-                }
-              }
-              s_i += phi_aj * sigma_ij;
+              s_i += gs.Phi_local[nodeA][j] * sigma_local[i][j];
             }
             fK_local[i] = w_vol * s_i;
           }
           const int uBaseA = uOff_[nodeA];
-          for (int p = 0; p < ndm_; ++p) {
-            double s_p = 0.0;
+          if (isBox) {
             for (int i = 0; i < ndm_; ++i) {
-              s_p += geom_.R[i][p] * fK_local[i];
+              R_disp_[uBaseA + i] += fK_local[i];
             }
-            R_disp_[uBaseA + p] += s_p;
+          } else {
+            for (int p = 0; p < ndm_; ++p) {
+              double s_p = 0.0;
+              for (int i = 0; i < ndm_; ++i) {
+                s_p += geom_.R[i][p] * fK_local[i];
+              }
+              R_disp_[uBaseA + p] += s_p;
+            }
           }
         }
 
-        for (int nodeA = 0; nodeA < nNodes_; ++nodeA) {
-          const int uBaseA = uOff_[nodeA];
-          for (int nodeB = 0; nodeB < nNodes_; ++nodeB) {
-            const int uBaseB = uOff_[nodeB];
-            double K_local_ab[3][3]{};
-            for (int i = 0; i < ndm_; ++i) {
-              for (int k = 0; k < ndm_; ++k) {
-                double s_ik = 0.0;
-                for (int j = 0; j < ndm_; ++j) {
-                  const double phi_aj = gs.Phi_local[nodeA][j];
-                  for (int l = 0; l < ndm_; ++l) {
-                    s_ik += phi_aj * mat_.C[i][j][k][l] * D_F[j][l] * gs.Phi_local[nodeB][l];
+        if (rebuildTangents) {
+          for (int nodeA = 0; nodeA < nNodes_; ++nodeA) {
+            const int uBaseA = uOff_[nodeA];
+            for (int nodeB = 0; nodeB < nNodes_; ++nodeB) {
+              const int uBaseB = uOff_[nodeB];
+              double K_local_ab[3][3]{};
+              for (int i = 0; i < ndm_; ++i) {
+                for (int k = 0; k < ndm_; ++k) {
+                  double s_ik = 0.0;
+                  for (int j = 0; j < ndm_; ++j) {
+                    const double phi_aj = gs.Phi_local[nodeA][j];
+                    for (int l = 0; l < ndm_; ++l) {
+                      s_ik += phi_aj * mat_.C[i][j][k][l] * D_F[j][l] * gs.Phi_local[nodeB][l];
+                    }
                   }
+                  K_local_ab[i][k] = w_vol * s_ik;
                 }
-                K_local_ab[i][k] = w_vol * s_ik;
               }
-            }
-            for (int p = 0; p < ndm_; ++p) {
-              for (int q = 0; q < ndm_; ++q) {
-                double s_pq = 0.0;
+              if (isBox) {
                 for (int i = 0; i < ndm_; ++i) {
-                  const double Rip = geom_.R[i][p];
+                  const int row = uBaseA + i;
                   for (int k = 0; k < ndm_; ++k) {
-                    s_pq += Rip * K_local_ab[i][k] * geom_.R[k][q];
+                    const int col = uBaseB + k;
+                    K_eff_[(size_t)row * nDOF_ + col] += K_local_ab[i][k];
                   }
                 }
-                const int row = uBaseA + p;
-                const int col = uBaseB + q;
-                K_eff_[(size_t)row * nDOF_ + col] += s_pq;
+              } else {
+                for (int p = 0; p < ndm_; ++p) {
+                  for (int q = 0; q < ndm_; ++q) {
+                    double s_pq = 0.0;
+                    for (int i = 0; i < ndm_; ++i) {
+                      const double Rip = geom_.R[i][p];
+                      for (int k = 0; k < ndm_; ++k) {
+                        s_pq += Rip * K_local_ab[i][k] * geom_.R[k][q];
+                      }
+                    }
+                    const int row = uBaseA + p;
+                    const int col = uBaseB + q;
+                    K_eff_[(size_t)row * nDOF_ + col] += s_pq;
+                  }
+                }
               }
             }
           }
@@ -1623,137 +1745,161 @@ public:
             fK_local[r] = w_vol * s_r;
           }
           const int uBaseA = uOff_[nodeA];
-          for (int p = 0; p < ndm_; ++p) {
-            double s_p = 0.0;
+          if (isBox) {
             for (int r = 0; r < ndm_; ++r) {
-              s_p += geom_.R[r][p] * fK_local[r];
+              R_disp_[uBaseA + r] += fK_local[r];
             }
-            R_disp_[uBaseA + p] += s_p;
-          }
-        }
-
-        double CB_local[3][3][shapes::MAX_NODES][3]{};
-        for (int i = 0; i < ndm_; ++i) {
-          for (int j = 0; j < ndm_; ++j) {
-            for (int nodeB = 0; nodeB < nNodes_; ++nodeB) {
-              for (int m = 0; m < ndm_; ++m) {
-                double s = 0.0;
-                for (int k = 0; k < ndm_; ++k) {
-                  for (int l = 0; l < ndm_; ++l) {
-                    s += mat_.C[i][j][k][l] * D_F[j][l] * gs.B_local[k][l][nodeB][m];
-                  }
-                }
-                CB_local[i][j][nodeB][m] = s;
-              }
-            }
-          }
-        }
-
-        for (int nodeA = 0; nodeA < nNodes_; ++nodeA) {
-          const int uBaseA = uOff_[nodeA];
-          for (int nodeB = 0; nodeB < nNodes_; ++nodeB) {
-            const int uBaseB = uOff_[nodeB];
-            double K_local_ab[3][3]{};
-            for (int r = 0; r < ndm_; ++r) {
-              for (int m = 0; m < ndm_; ++m) {
-                double s_rm = 0.0;
-                for (int i = 0; i < ndm_; ++i) {
-                  for (int j = 0; j < ndm_; ++j) {
-                    s_rm += gs.B_local[i][j][nodeA][r] * CB_local[i][j][nodeB][m];
-                  }
-                }
-                K_local_ab[r][m] = w_vol * s_rm;
-              }
-            }
+          } else {
             for (int p = 0; p < ndm_; ++p) {
-              for (int q = 0; q < ndm_; ++q) {
-                double s_pq = 0.0;
+              double s_p = 0.0;
+              for (int r = 0; r < ndm_; ++r) {
+                s_p += geom_.R[r][p] * fK_local[r];
+              }
+              R_disp_[uBaseA + p] += s_p;
+            }
+          }
+        }
+
+        if (rebuildTangents) {
+          double CB_local[3][3][shapes::MAX_NODES][3]{};
+          for (int i = 0; i < ndm_; ++i) {
+            for (int j = 0; j < ndm_; ++j) {
+              for (int nodeB = 0; nodeB < nNodes_; ++nodeB) {
+                for (int m = 0; m < ndm_; ++m) {
+                  double s = 0.0;
+                  for (int k = 0; k < ndm_; ++k) {
+                    for (int l = 0; l < ndm_; ++l) {
+                      s += mat_.C[i][j][k][l] * D_F[j][l] * gs.B_local[k][l][nodeB][m];
+                    }
+                  }
+                  CB_local[i][j][nodeB][m] = s;
+                }
+              }
+            }
+          }
+
+          for (int nodeA = 0; nodeA < nNodes_; ++nodeA) {
+            const int uBaseA = uOff_[nodeA];
+            for (int nodeB = 0; nodeB < nNodes_; ++nodeB) {
+              const int uBaseB = uOff_[nodeB];
+              double K_local_ab[3][3]{};
+              for (int r = 0; r < ndm_; ++r) {
+                for (int m = 0; m < ndm_; ++m) {
+                  double s_rm = 0.0;
+                  for (int i = 0; i < ndm_; ++i) {
+                    for (int j = 0; j < ndm_; ++j) {
+                      s_rm += gs.B_local[i][j][nodeA][r] * CB_local[i][j][nodeB][m];
+                    }
+                  }
+                  K_local_ab[r][m] = w_vol * s_rm;
+                }
+              }
+              if (isBox) {
                 for (int r = 0; r < ndm_; ++r) {
-                  const double Rrp = geom_.R[r][p];
+                  const int row = uBaseA + r;
                   for (int m = 0; m < ndm_; ++m) {
-                    s_pq += Rrp * K_local_ab[r][m] * geom_.R[m][q];
+                    const int col = uBaseB + m;
+                    K_eff_[(size_t)row * nDOF_ + col] += K_local_ab[r][m];
                   }
                 }
-                const int row = uBaseA + p;
-                const int col = uBaseB + q;
-                K_eff_[(size_t)row * nDOF_ + col] += s_pq;
+              } else {
+                for (int p = 0; p < ndm_; ++p) {
+                  for (int q = 0; q < ndm_; ++q) {
+                    double s_pq = 0.0;
+                    for (int r = 0; r < ndm_; ++r) {
+                      const double Rrp = geom_.R[r][p];
+                      for (int m = 0; m < ndm_; ++m) {
+                        s_pq += Rrp * K_local_ab[r][m] * geom_.R[m][q];
+                      }
+                    }
+                    const int row = uBaseA + p;
+                    const int col = uBaseB + q;
+                    K_eff_[(size_t)row * nDOF_ + col] += s_pq;
+                  }
+                }
               }
             }
           }
         }
       }
 
-      // ---- 2. Inertial Velocity Part (C_s) ------------------------------- //
-      double v_gp[3] = {0.0, 0.0, 0.0};
-      double u_gp[3] = {0.0, 0.0, 0.0};
-      for (int nodeB = 0; nodeB < nNodes_; ++nodeB) {
-        const double Nb = gs.N[nodeB];
-        const int uBaseB = uOff_[nodeB];
-        for (int d = 0; d < ndm_; ++d) {
-          v_gp[d] += Nb * v[uBaseB + d];
-          u_gp[d] += Nb * u[uBaseB + d];
-        }
-      }
-
-      double gv_out[3][3]{};
-      for (int m = 0; m < 3; ++m) {
-        gs.g_vel[m].evalTrial(v_gp, dt, gv_out[m]);
-      }
-      const double k0 = gs.kappa[0];
-      const double k1 = gs.kappa[1];
-      const double k2 = gs.kappa[2];
-
-      double A_vel[3] = {0.0, 0.0, 0.0};
-      for (int d = 0; d < ndm_; ++d) {
-        A_vel[d] = (k1 * k2) * gv_out[0][d]
-                 + (k0 * k2) * gv_out[1][d]
-                 + (k0 * k1) * gv_out[2][d];
-      }
-      const double D_vel_g = (k1 * k2) * gs.g_vel[0].D_t
-                           + (k0 * k2) * gs.g_vel[1].D_t
-                           + (k0 * k1) * gs.g_vel[2].D_t;
-
-      // ---- 3. Inertial Displacement Part (K_{s,mass}) -------------------- //
-      double y_g1g0[3]{}, y_g2g0[3]{}, y_g2g1[3]{}, y_phi2g1g0[3]{};
-      gs.g1_g0.evalTrial(u_gp, dt, y_g1g0);
-      gs.g2_g0.evalTrial(u_gp, dt, y_g2g0);
-      gs.g2_g1.evalTrial(u_gp, dt, y_g2g1);
-      gs.phi2_g1_g0.evalTrial(u_gp, dt, y_phi2g1g0);
-
-      double A_disp[3] = {0.0, 0.0, 0.0};
-      double D_disp_g = 0.0;
-      if (!LADRUNO_CPML_MUT_ACTIVE(CPML_NO_CORNER_CROSS)) {
-        for (int d = 0; d < ndm_; ++d) {
-          A_disp[d] = k2 * y_g1g0[d]
-                    + k1 * y_g2g0[d]
-                    + k0 * y_g2g1[d]
-                    + y_phi2g1g0[d];
-        }
-        D_disp_g = k2 * gs.g1_g0.D_t
-                 + k1 * gs.g2_g0.D_t
-                 + k0 * gs.g2_g1.D_t
-                 + gs.phi2_g1_g0.D_t;
-      }
-
-      const double rho_w = mat_.rho * w_vol;
-      for (int nodeA = 0; nodeA < nNodes_; ++nodeA) {
-        const double Na = gs.N[nodeA];
-        const int uBaseA = uOff_[nodeA];
-        for (int d = 0; d < ndm_; ++d) {
-          const int dof = uBaseA + d;
-          R_vel_[dof]  += rho_w * Na * A_vel[d];
-          R_disp_[dof] += rho_w * Na * A_disp[d];
-        }
+      // ---- 2 & 3. Inertial Velocity & Corner Displacement Parts ---------- //
+      if (gs.has_any_d) {
+        double v_gp[3] = {0.0, 0.0, 0.0};
+        double u_gp[3] = {0.0, 0.0, 0.0};
         for (int nodeB = 0; nodeB < nNodes_; ++nodeB) {
+          const double Nb = gs.N[nodeB];
           const int uBaseB = uOff_[nodeB];
-          const double Nab = rho_w * Na * gs.N[nodeB];
-          const double c_ab = Nab * D_vel_g;
-          const double k_ab = Nab * D_disp_g;
           for (int d = 0; d < ndm_; ++d) {
-            const int row = uBaseA + d;
-            const int col = uBaseB + d;
-            C_eff_[(size_t)row * nDOF_ + col] += c_ab;
-            K_eff_[(size_t)row * nDOF_ + col] += k_ab;
+            v_gp[d] += Nb * v[uBaseB + d];
+            u_gp[d] += Nb * u[uBaseB + d];
+          }
+        }
+
+        double gv_out[3][3]{};
+        for (int m = 0; m < 3; ++m) {
+          if (gs.has_d[m]) {
+            gs.g_vel[m].evalTrial(v_gp, dt, gv_out[m]);
+          }
+        }
+        const double k0 = gs.kappa[0];
+        const double k1 = gs.kappa[1];
+        const double k2 = gs.kappa[2];
+
+        double A_vel[3] = {0.0, 0.0, 0.0};
+        for (int d = 0; d < ndm_; ++d) {
+          A_vel[d] = (k1 * k2) * gv_out[0][d]
+                   + (k0 * k2) * gv_out[1][d]
+                   + (k0 * k1) * gv_out[2][d];
+        }
+        const double D_vel_g = (gs.has_d[0] ? (k1 * k2) * gs.g_vel[0].D_t : 0.0)
+                             + (gs.has_d[1] ? (k0 * k2) * gs.g_vel[1].D_t : 0.0)
+                             + (gs.has_d[2] ? (k0 * k1) * gs.g_vel[2].D_t : 0.0);
+
+        double y_g1g0[3]{}, y_g2g0[3]{}, y_g2g1[3]{}, y_phi2g1g0[3]{};
+        if (gs.has_d01)  gs.g1_g0.evalTrial(u_gp, dt, y_g1g0);
+        if (gs.has_d02)  gs.g2_g0.evalTrial(u_gp, dt, y_g2g0);
+        if (gs.has_d12)  gs.g2_g1.evalTrial(u_gp, dt, y_g2g1);
+        if (gs.has_d012) gs.phi2_g1_g0.evalTrial(u_gp, dt, y_phi2g1g0);
+
+        double A_disp[3] = {0.0, 0.0, 0.0};
+        double D_disp_g = 0.0;
+        if (!LADRUNO_CPML_MUT_ACTIVE(CPML_NO_CORNER_CROSS) &&
+            (gs.has_d01 || gs.has_d02 || gs.has_d12)) {
+          for (int d = 0; d < ndm_; ++d) {
+            A_disp[d] = k2 * y_g1g0[d]
+                      + k1 * y_g2g0[d]
+                      + k0 * y_g2g1[d]
+                      + y_phi2g1g0[d];
+          }
+          D_disp_g = (gs.has_d01  ? k2 * gs.g1_g0.D_t : 0.0)
+                   + (gs.has_d02  ? k1 * gs.g2_g0.D_t : 0.0)
+                   + (gs.has_d12  ? k0 * gs.g2_g1.D_t : 0.0)
+                   + (gs.has_d012 ? gs.phi2_g1_g0.D_t : 0.0);
+        }
+
+        const double rho_w = mat_.rho * w_vol;
+        for (int nodeA = 0; nodeA < nNodes_; ++nodeA) {
+          const double Na = gs.N[nodeA];
+          const int uBaseA = uOff_[nodeA];
+          for (int d = 0; d < ndm_; ++d) {
+            const int dof = uBaseA + d;
+            R_vel_[dof]  += rho_w * Na * A_vel[d];
+            R_disp_[dof] += rho_w * Na * A_disp[d];
+          }
+          if (rebuildTangents) {
+            for (int nodeB = 0; nodeB < nNodes_; ++nodeB) {
+              const int uBaseB = uOff_[nodeB];
+              const double Nab = rho_w * Na * gs.N[nodeB];
+              const double c_ab = Nab * D_vel_g;
+              const double k_ab = Nab * D_disp_g;
+              for (int d = 0; d < ndm_; ++d) {
+                const int row = uBaseA + d;
+                const int col = uBaseB + d;
+                C_eff_[(size_t)row * nDOF_ + col] += c_ab;
+                K_eff_[(size_t)row * nDOF_ + col] += k_ab;
+              }
+            }
           }
         }
       }
@@ -1789,15 +1935,17 @@ public:
           }
           R_disp_[pRow] += w_vol * fp_H_b;
 
-          for (int c = 0; c < nP_; ++c) {
-            const int pCol = pOff_[c];
-            double h_bc = 0.0;
-            for (int j = 0; j < ndm_; ++j) {
-              for (int l = 0; l < ndm_; ++l) {
-                h_bc += gs.PhiP_local[b][j] * kbar_local_[j][l] * D_Fp[j][l] * gs.PhiP_local[c][l];
+          if (rebuildTangents) {
+            for (int c = 0; c < nP_; ++c) {
+              const int pCol = pOff_[c];
+              double h_bc = 0.0;
+              for (int j = 0; j < ndm_; ++j) {
+                for (int l = 0; l < ndm_; ++l) {
+                  h_bc += gs.PhiP_local[b][j] * kbar_local_[j][l] * D_Fp[j][l] * gs.PhiP_local[c][l];
+                }
               }
+              K_eff_[(size_t)pRow * nDOF_ + pCol] += w_vol * h_bc;
             }
-            K_eff_[(size_t)pRow * nDOF_ + pCol] += w_vol * h_bc;
           }
         }
 
@@ -1828,22 +1976,33 @@ public:
           for (int j = 0; j < ndm_; ++j) {
             const double phi_aj = gs.Phi_tilde_local[nodeA][j];
             f_up_local[j] = -alpha_w * phi_aj * p_tilde[j];
-            q_local[j]    =  alpha_w * phi_aj * D_E[j];
+            if (rebuildTangents) {
+              q_local[j]  =  alpha_w * phi_aj * D_E[j];
+            }
           }
           for (int d = 0; d < ndm_; ++d) {
             double f_up_global_d = 0.0;
             double q_global_d    = 0.0;
-            for (int j = 0; j < ndm_; ++j) {
-              f_up_global_d += geom_.R[j][d] * f_up_local[j];
-              q_global_d    += geom_.R[j][d] * q_local[j];
+            if (isBox) {
+              f_up_global_d = f_up_local[d];
+              q_global_d    = q_local[d];
+            } else {
+              for (int j = 0; j < ndm_; ++j) {
+                f_up_global_d += geom_.R[j][d] * f_up_local[j];
+                if (rebuildTangents) {
+                  q_global_d  += geom_.R[j][d] * q_local[j];
+                }
+              }
             }
             const int uRow = uBaseA + d;
             R_disp_[uRow] += f_up_global_d;
-            for (int b = 0; b < nP_; ++b) {
-              const int pCol = pOff_[b];
-              const double q_adb = q_global_d * gs.Np[b];
-              K_eff_[(size_t)uRow * nDOF_ + pCol] -= q_adb;
-              C_eff_[(size_t)pCol * nDOF_ + uRow] += q_adb;
+            if (rebuildTangents) {
+              for (int b = 0; b < nP_; ++b) {
+                const int pCol = pOff_[b];
+                const double q_adb = q_global_d * gs.Np[b];
+                K_eff_[(size_t)uRow * nDOF_ + pCol] -= q_adb;
+                C_eff_[(size_t)pCol * nDOF_ + uRow] += q_adb;
+              }
             }
           }
         }
@@ -1863,9 +2022,11 @@ public:
         for (int b = 0; b < nP_; ++b) {
           const int pRow = pOff_[b];
           R_vel_[pRow] += invQ_w * gs.Np[b] * p_dot_tilde;
-          for (int c = 0; c < nP_; ++c) {
-            const int pCol = pOff_[c];
-            C_eff_[(size_t)pRow * nDOF_ + pCol] += invQ_w * D_Js * gs.Np[b] * gs.Np[c];
+          if (rebuildTangents) {
+            for (int c = 0; c < nP_; ++c) {
+              const int pCol = pOff_[c];
+              C_eff_[(size_t)pRow * nDOF_ + pCol] += invQ_w * D_Js * gs.Np[b] * gs.Np[c];
+            }
           }
         }
       }
@@ -1880,20 +2041,23 @@ public:
           const int pCol = pOff_[c];
           const double h_bc = H_tilde_[(size_t)b * nP_ + c];
           f_stab_b += h_bc * v[pCol];
-          C_eff_[(size_t)pRow * nDOF_ + pCol] += h_bc;
+          if (rebuildTangents) {
+            C_eff_[(size_t)pRow * nDOF_ + pCol] += h_bc;
+          }
         }
         R_vel_[pRow] += f_stab_b;
       }
     }
 
+    if (rebuildTangents) {
+      tangent_cache_dt_ = dt;
+    }
+
     // ---- 4. Acceleration Part f_acc = M_eff * a -------------------------- //
     for (int i = 0; i < nDOF_; ++i) {
-      double f_acc_i = 0.0;
-      for (int j = 0; j < nDOF_; ++j) {
-        f_acc_i += M_eff_[(size_t)i * nDOF_ + j] * a[j];
-      }
-      R_int_[i] = R_disp_[i] + R_vel_[i] + f_acc_i;
+      R_int_[i] = R_disp_[i] + R_vel_[i];
     }
+    addMassForce(false, 1.0, a, R_int_.data());
 
     // ---- 5. External Power P_ext = v^T R_int ----------------------------- //
     double p_ext = 0.0;
@@ -1914,6 +2078,7 @@ public:
     C_eff_c_ = C_eff_;
     P_ext_c_ = P_ext_;
     last_dt_c_ = last_dt_;
+    tangent_cache_dt_c_ = tangent_cache_dt_;
   }
 
   void revertToLastCommit() {
@@ -1927,6 +2092,7 @@ public:
     C_eff_ = C_eff_c_;
     P_ext_ = P_ext_c_;
     last_dt_ = last_dt_c_;
+    tangent_cache_dt_ = (!static_mode_ && last_dt_c_ > 0.0) ? tangent_cache_dt_c_ : -1.0;
   }
 
   void revertToStart() {
@@ -1947,6 +2113,7 @@ public:
     P_ext_c_ = 0.0;
     last_dt_ = 0.0;
     last_dt_c_ = 0.0;
+    invalidateTangentCache();
   }
 
   // ---- Accessors --------------------------------------------------------- //
@@ -2122,6 +2289,7 @@ public:
     P_ext_c_   = *ptr++;
     last_dt_   = *ptr++;
     last_dt_c_ = *ptr++;
+    invalidateTangentCache();
   }
 
   void setPendingState(const double* buf, int n) {
@@ -2134,6 +2302,7 @@ public:
 
 private:
   void rebuildStaticAndMassMatrices() {
+    invalidateTangentCache();
     K_0_.assign((size_t)nDOF_ * nDOF_, 0.0);
     C_0_.assign((size_t)nDOF_ * nDOF_, 0.0);
     M_0_.assign((size_t)nDOF_ * nDOF_, 0.0);
@@ -2157,8 +2326,10 @@ private:
     const double invQ = biot_.oneOverQbar();
     const bool useBbar = biot_.enabled && (biot_.formulation == 1);
 
-    std::vector<double> M0_scalar((size_t)nNodes_ * nNodes_, 0.0);
-    std::vector<double> M_scalar((size_t)nNodes_ * nNodes_, 0.0);
+    M0_scalar_.assign((size_t)nNodes_ * nNodes_, 0.0);
+    M_scalar_.assign((size_t)nNodes_ * nNodes_, 0.0);
+    M0_lumped_.assign(nNodes_, 0.0);
+    M_lumped_.assign(nNodes_, 0.0);
 
     for (int g = 0; g < nGP_; ++g) {
       const auto& gs = gpStates_[g];
@@ -2169,8 +2340,8 @@ private:
 
       for (int a = 0; a < nNodes_; ++a) {
         for (int b = 0; b < nNodes_; ++b) {
-          M0_scalar[(size_t)a * nNodes_ + b] += coeff0 * gs.N[a] * gs.N[b];
-          M_scalar[(size_t)a * nNodes_ + b]  += coeff  * gs.N[a] * gs.N[b];
+          M0_scalar_[(size_t)a * nNodes_ + b] += coeff0 * gs.N[a] * gs.N[b];
+          M_scalar_[(size_t)a * nNodes_ + b]  += coeff  * gs.N[a] * gs.N[b];
         }
       }
 
@@ -2180,15 +2351,14 @@ private:
           for (int b = 0; b < nNodes_; ++b) {
             const int uBaseB = uOff_[b];
             for (int i = 0; i < ndm_; ++i) {
+              const int row = uBaseA + i;
               for (int k = 0; k < ndm_; ++k) {
                 double s_ik = 0.0;
                 for (int j = 0; j < ndm_; ++j) {
-                  const double dNa_j = gs.dNdx[a][j];
                   for (int l = 0; l < ndm_; ++l) {
-                    s_ik += dNa_j * mat_.C[i][j][k][l] * gs.dNdx[b][l];
+                    s_ik += gs.dNdx[a][j] * mat_.C[i][j][k][l] * gs.dNdx[b][l];
                   }
                 }
-                const int row = uBaseA + i;
                 const int col = uBaseB + k;
                 K_0_[(size_t)row * nDOF_ + col] += w_vol * s_ik;
               }
@@ -2301,6 +2471,7 @@ private:
     }
 
     auto fillMassFromScalar = [&](const std::vector<double>& Ms,
+                                  std::vector<double>& MlumpedOut,
                                   std::vector<double>& Mout) {
       if (!lumped_) {
         for (int a = 0; a < nNodes_; ++a) {
@@ -2328,6 +2499,7 @@ private:
         for (int a = 0; a < nNodes_; ++a) {
           const int uBaseA = uOff_[a];
           const double ma_hrz = scale * Ms[(size_t)a * nNodes_ + a];
+          MlumpedOut[a] = ma_hrz;
           for (int d = 0; d < ndm_; ++d) {
             const int row = uBaseA + d;
             Mout[(size_t)row * nDOF_ + row] = ma_hrz;
@@ -2336,8 +2508,8 @@ private:
       }
     };
 
-    fillMassFromScalar(M0_scalar, M_0_);
-    fillMassFromScalar(M_scalar,  M_eff_);
+    fillMassFromScalar(M0_scalar_, M0_lumped_, M_0_);
+    fillMassFromScalar(M_scalar_,  M_lumped_,  M_eff_);
   }
 
   CPMLTopology topo_ = CPMLTopology::Q4;
@@ -2361,6 +2533,8 @@ private:
   double Phi_bar_local_[shapes::MAX_NODES][3]{};
   double kbar_local_[3][3]{};
   std::vector<double> H_tilde_{};
+  std::vector<double> M0_scalar_{}, M_scalar_{};
+  std::vector<double> M0_lumped_{}, M_lumped_{};
 
   std::vector<double> coords_{};
   std::vector<CPMLGaussState> gpStates_{};
@@ -2376,6 +2550,7 @@ private:
   std::vector<double> C_eff_{}, C_eff_c_{};
   double P_ext_ = 0.0, P_ext_c_ = 0.0;
   double last_dt_ = 0.0, last_dt_c_ = 0.0;
+  double tangent_cache_dt_ = -1.0, tangent_cache_dt_c_ = -1.0;
   std::vector<double> pendingState_{};
   bool hadPendingStateUnpacked_ = false;
 };

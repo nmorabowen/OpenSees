@@ -193,6 +193,8 @@ private:
   Matrix Kmat_;
   Matrix Cmat_;
   Matrix Mmat_;
+  bool MmatValid_ = false;
+  int MmatStage_ = -1;
   Matrix* Ki_ = nullptr;
   Vector resid_;
   Vector residInc_;
