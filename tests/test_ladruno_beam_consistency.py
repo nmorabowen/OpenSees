@@ -661,11 +661,19 @@ def _verify_ladruno_beam_h5(h5_path: str, live_ef_1, live_ef_2, live_hs_1, live_
         ef_grp = st["RESULTS/ON_ELEMENTS/endForces"]
         hs_grp = st["RESULTS/ON_ELEMENTS/hingeState"]
         assert len(ef_grp) >= 1 and len(hs_grp) >= 1
-        ef_all = {k: np.array(ef_grp[k]["DATA"][...]) for k in ef_grp}
-        hs_all = {k: np.array(hs_grp[k]["DATA"][...]) for k in hs_grp}
+        ef_keys = sorted(
+            ef_grp.keys(),
+            key=lambda k: int(np.asarray(ef_grp[k]["ID"][...]).flat[0]),
+        )
+        hs_keys = sorted(
+            hs_grp.keys(),
+            key=lambda k: int(np.asarray(hs_grp[k]["ID"][...]).flat[0]),
+        )
+        ef_all = [np.array(ef_grp[k]["DATA"][...]) for k in ef_keys]
+        hs_all = [np.array(hs_grp[k]["DATA"][...]) for k in hs_keys]
 
-    ef_concat = np.concatenate(list(ef_all.values()), axis=1)
-    hs_concat = np.concatenate(list(hs_all.values()), axis=1)
+    ef_concat = np.concatenate(ef_all, axis=1)
+    hs_concat = np.concatenate(hs_all, axis=1)
     np.testing.assert_allclose(ef_concat[:, 0, :], np.array(live_ef_1), rtol=1e-12, atol=1e-12)
     np.testing.assert_allclose(ef_concat[:, 1, :], np.array(live_ef_2), rtol=1e-12, atol=1e-12)
     np.testing.assert_allclose(hs_concat[:, 0, :], np.array(live_hs_1), rtol=1e-12, atol=1e-12)
@@ -3958,3 +3966,302 @@ def test_apegmsh_emitter_guide_snippets_and_parameters():
             "-thickMod", 0.63,
         )
 
+
+def test_review_fixes_xml_response_tags_and_end_tags(tmp_path):
+    """O1, O2, O4: Verify XML recorder emits well-formed <ElementOutput> / <GaussPointOutput>
+    closing tags and complete <ResponseType> tags for:
+      - LadrunoDispBeamColumn3d basicForce (6 tags) and basicStiffness (6 tags)
+      - LadrunoIMKBeam (3D) localForce (12 tags)
+      - LadrunoDispBeamColumn2d sectionX and integrationPoints / integrationWeights
+    """
+    import xml.etree.ElementTree as ET
+
+    # 1. 3D XML recorder test (O1, O2, O4 sectionX)
+    xml_bf = str(tmp_path / "ldbc3d_basic_force.xml")
+    xml_bs = str(tmp_path / "ldbc3d_basic_stiff.xml")
+    xml_lf = str(tmp_path / "imk3d_local_force.xml")
+    xml_sx3 = str(tmp_path / "ldbc3d_sectionX.xml")
+
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    ops.node(1, 0.0, 0.0, 0.0)
+    ops.node(2, 4.0, 0.0, 0.0)
+    ops.node(3, 0.0, 2.0, 0.0)
+    ops.node(4, 4.0, 2.0, 0.0)
+    ops.fix(1, 1, 1, 1, 1, 1, 1)
+    ops.fix(3, 1, 1, 1, 1, 1, 1)
+    ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+    ops.section("Elastic", 1, 2.0e11, 0.04, 1.6e-4, 1.2e-4, 8.0e10, 2.0e-4)
+    ops.beamIntegration("Lobatto", 1, 1, 3)
+    ops.element("LadrunoDispBeamColumn", 1, 1, 2, 1, 1)
+    ops.uniaxialMaterial("Elastic", 10, 1.0e8)
+    ops.element("LadrunoIMKBeam", 2, 3, 4, 0.04, 2.0e11, 8.0e10, 2.0e-4, 1.2e-4, 1.6e-4, 1, "-hinge", "both", "-matZ", 10)
+
+    ops.recorder("Element", "-xml", xml_bf, "-ele", 1, "basicForce")
+    ops.recorder("Element", "-xml", xml_bs, "-ele", 1, "basicStiffness")
+    ops.recorder("Element", "-xml", xml_lf, "-ele", 2, "localForce")
+    ops.recorder("Element", "-xml", xml_sx3, "-ele", 1, "sectionX", "0.0", "force")
+
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, 10.0, 5.0, 3.0, 1.0, 2.0, 4.0)
+    ops.load(4, 10.0, 5.0, 3.0, 1.0, 2.0, 4.0)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.integrator("LoadControl", 1.0)
+    ops.algorithm("Linear")
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    ops.wipe()
+
+    root_bf = ET.parse(xml_bf).getroot()
+    bf_tags = [el.text for el in root_bf.findall(".//ElementOutput/ResponseType")]
+    assert bf_tags == ["N", "Mz_1", "Mz_2", "My_1", "My_2", "T"]
+
+    root_bs = ET.parse(xml_bs).getroot()
+    bs_tags = [el.text for el in root_bs.findall(".//ElementOutput/ResponseType")]
+    assert bs_tags == ["N", "Mz_1", "Mz_2", "My_1", "My_2", "T"]
+
+    root_lf = ET.parse(xml_lf).getroot()
+    lf_tags = [el.text for el in root_lf.findall(".//ElementOutput/ResponseType")]
+    assert lf_tags == [
+        "N_1", "Vy_1", "Vz_1", "T_1", "My_1", "Mz_1",
+        "N_2", "Vy_2", "Vz_2", "T_2", "My_2", "Mz_2",
+    ]
+
+    # sectionX XML must parse cleanly (GaussPointOutput and ElementOutput properly closed)
+    ET.parse(xml_sx3)
+
+    # 2. 2D XML recorder test (O4: integrationPoints, integrationWeights, sectionX)
+    xml_ip2 = str(tmp_path / "ldbc2d_ip.xml")
+    xml_iw2 = str(tmp_path / "ldbc2d_iw.xml")
+    xml_sx2 = str(tmp_path / "ldbc2d_sectionX.xml")
+
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    ops.node(1, 0.0, 0.0)
+    ops.node(2, 4.0, 0.0)
+    ops.fix(1, 1, 1, 1)
+    ops.geomTransf("Linear", 1)
+    ops.section("Elastic", 1, 2.0e11, 0.04, 1.6e-4)
+    ops.beamIntegration("Lobatto", 1, 1, 3)
+    ops.element("LadrunoDispBeamColumn", 1, 1, 2, 1, 1)
+
+    ops.recorder("Element", "-xml", xml_ip2, "-ele", 1, "integrationPoints")
+    ops.recorder("Element", "-xml", xml_iw2, "-ele", 1, "integrationWeights")
+    ops.recorder("Element", "-xml", xml_sx2, "-ele", 1, "sectionX", "0.0", "force")
+
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, 10.0, 5.0, 2.0)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.integrator("LoadControl", 1.0)
+    ops.algorithm("Linear")
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    ops.wipe()
+
+    ET.parse(xml_ip2)
+    ET.parse(xml_iw2)
+    ET.parse(xml_sx2)
+
+
+def test_review_fixes_hinge_end_specificity_and_aliases():
+    """O5: Verify hingeZ / hingeZI / hingeZJ work in both 2D and 3D LadrunoDispBeamColumn,
+    and explicit end tokens (hingeI/hingeZI/hinge1/hingeYI/hingeBiaxialI/hingeCI vs
+    hingeJ/hingeZJ/hinge2/hingeYJ/hingeBiaxialJ/hingeCJ) do NOT silently fall back to
+    the opposite end when only one end is configured, while end-agnostic tokens
+    (hinge/hingeZ/hingeY/hingeBiaxial/hingeC) still fall back to end J on J-only elements.
+    """
+    # 2D: Element 1 has -hingeI only; Element 2 has -hingeJ only
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    ops.node(1, 0.0, 0.0)
+    ops.node(2, 4.0, 0.0)
+    ops.node(3, 0.0, 2.0)
+    ops.node(4, 4.0, 2.0)
+    ops.fix(1, 1, 1, 1)
+    ops.fix(3, 1, 1, 1)
+    ops.geomTransf("Linear", 1)
+    ops.section("Elastic", 1, 2.0e11, 0.04, 1.6e-4)
+    ops.beamIntegration("Lobatto", 1, 1, 3)
+    ops.uniaxialMaterial("Steel01", 10, 50.0e3, 1.0e8, 0.02)
+    ops.element("LadrunoDispBeamColumn", 1, 1, 2, 1, 1, "-hingeI", 10)
+    ops.element("LadrunoDispBeamColumn", 2, 3, 4, 1, 1, "-hingeJ", 10)
+
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, 0.0, -20.0e3, 0.0)
+    ops.load(4, 0.0, -20.0e3, 80.0e3)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.integrator("LoadControl", 1.0)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0
+
+    # Ele 1 (I-only): hinge, hingeZ, hingeI, hingeZI, hinge1 all return end-I stress;
+    # hingeJ, hingeZJ, hinge2 return empty!
+    for tok in ("hinge", "hingeZ", "hingeI", "hingeZI", "hinge1"):
+        res = ops.eleResponse(1, tok, "stress")
+        assert len(res) == 1 and res[0] != 0.0, f"2D I-only {tok} failed: {res}"
+    for tok in ("hingeJ", "hingeZJ", "hinge2"):
+        assert ops.eleResponse(1, tok, "stress") == [], f"2D I-only {tok} should be empty"
+
+    # Ele 2 (J-only): hinge, hingeZ fall back to end J; hingeJ, hingeZJ, hinge2 return end J;
+    # hingeI, hingeZI, hinge1 return empty!
+    for tok in ("hinge", "hingeZ", "hingeJ", "hingeZJ", "hinge2"):
+        res = ops.eleResponse(2, tok, "stress")
+        assert len(res) == 1 and res[0] != 0.0, f"2D J-only {tok} failed: {res}"
+    for tok in ("hingeI", "hingeZI", "hinge1"):
+        assert ops.eleResponse(2, tok, "stress") == [], f"2D J-only {tok} should be empty"
+
+    # 3D: Element 1 has -hingeZI / -hingeYI; Element 2 has -hingeZJ / -hingeYJ
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    ops.node(1, 0.0, 0.0, 0.0)
+    ops.node(2, 4.0, 0.0, 0.0)
+    ops.node(3, 0.0, 2.0, 0.0)
+    ops.node(4, 4.0, 2.0, 0.0)
+    ops.fix(1, 1, 1, 1, 1, 1, 1)
+    ops.fix(3, 1, 1, 1, 1, 1, 1)
+    ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+    ops.section("Elastic", 1, 2.0e11, 0.04, 1.6e-4, 1.2e-4, 8.0e10, 2.0e-4)
+    ops.beamIntegration("Lobatto", 1, 1, 3)
+    ops.uniaxialMaterial("Steel01", 10, 50.0e3, 1.0e8, 0.02)
+    ops.element("LadrunoDispBeamColumn", 1, 1, 2, 1, 1, "-hingeZI", 10, "-hingeYI", 10)
+    ops.element("LadrunoDispBeamColumn", 2, 3, 4, 1, 1, "-hingeZJ", 10, "-hingeYJ", 10)
+
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, 0.0, -20.0e3, -15.0e3, 0.0, 0.0, 0.0)
+    ops.load(4, 0.0, -20.0e3, -15.0e3, 0.0, 60.0e3, 80.0e3)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.integrator("LoadControl", 1.0)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0
+
+    for tok in ("hinge", "hingeZ", "hingeI", "hingeZI", "hinge1", "hingeY", "hingeYI", "hingeY1"):
+        res = ops.eleResponse(1, tok, "stress")
+        assert len(res) == 1 and res[0] != 0.0, f"3D I-only {tok} failed: {res}"
+    for tok in ("hingeJ", "hingeZJ", "hinge2", "hingeYJ", "hingeY2"):
+        assert ops.eleResponse(1, tok, "stress") == [], f"3D I-only {tok} should be empty"
+
+    for tok in ("hinge", "hingeZ", "hingeJ", "hingeZJ", "hinge2", "hingeY", "hingeYJ", "hingeY2"):
+        res = ops.eleResponse(2, tok, "stress")
+        assert len(res) == 1 and res[0] != 0.0, f"3D J-only {tok} failed: {res}"
+    for tok in ("hingeI", "hingeZI", "hinge1", "hingeYI", "hingeY1"):
+        assert ops.eleResponse(2, tok, "stress") == [], f"3D J-only {tok} should be empty"
+    ops.wipe()
+
+
+def test_review_fixes_pm_axial_force_in_energy_and_hinge_summary_and_numeric_lch():
+    """O6, A1/O7: Verify:
+      1. Numeric float `-lch` (e.g., 0.25) is accepted directly from Python in
+         `LadrunoDispBeamColumn` and `forceBeamColumn` (2D and 3D), while invalid
+         trailing-garbage strings like `"0.25abc"` are rejected.
+      2. `energy` and `hingeSummary` on `LadrunoDispBeamColumn` (2D and 3D) with
+         generic uniaxial hinge + `-pmP0` use the updated trial axial force even
+         when `getResistingForce()` / `eleForce` has not been queried first.
+    """
+    # 1. Numeric float -lch in 2D and 3D
+    for ndm, ndf in ((2, 3), (3, 6)):
+        ops.wipe()
+        ops.model("basic", "-ndm", ndm, "-ndf", ndf)
+        if ndm == 2:
+            ops.node(1, 0.0, 0.0)
+            ops.node(2, 4.0, 0.0)
+            ops.geomTransf("Linear", 1)
+            ops.section("Elastic", 1, 2.0e11, 0.04, 1.6e-4)
+        else:
+            ops.node(1, 0.0, 0.0, 0.0)
+            ops.node(2, 4.0, 0.0, 0.0)
+            ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+            ops.section("Elastic", 1, 2.0e11, 0.04, 1.6e-4, 1.2e-4, 8.0e10, 2.0e-4)
+        ops.beamIntegration("Lobatto", 1, 1, 3)
+        # Pass float 0.25 (not string "0.25")
+        ops.element("LadrunoDispBeamColumn", 1, 1, 2, 1, 1, "-lch", 0.25)
+        ops.element("forceBeamColumn", 2, 1, 2, 1, 1, "-lch", 0.25)
+        # Trailing garbage must fail-closed
+        with pytest.raises(Exception):
+            ops.element("LadrunoDispBeamColumn", 3, 1, 2, 1, 1, "-lch", "0.25abc")
+        with pytest.raises(Exception):
+            ops.element("forceBeamColumn", 4, 1, 2, 1, 1, "-lch", "0.25abc")
+
+    # 2. PM-scaled energy and hingeSummary in 2D without prior eleForce call
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    ops.node(1, 0.0, 0.0)
+    ops.node(2, 4.0, 0.0)
+    ops.fix(1, 1, 1, 1)
+    ops.geomTransf("Linear", 1)
+    ops.section("Elastic", 1, 2.0e11, 0.04, 1.6e-4)
+    ops.beamIntegration("Lobatto", 1, 1, 3)
+    # Generic uniaxial hinge (Steel01) so element-level PM scaling applies
+    ops.uniaxialMaterial("Steel01", 10, 50.0e3, 1.0e8, 0.02)
+    ops.element("LadrunoDispBeamColumn", 1, 1, 2, 1, 1, "-hingeI", 10, "-pm", 200.0e3, 1.0)
+
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    # Apply compression P = -100e3 (so n = P/P0 = -0.5 -> fPM = 1 - 1.0*(-0.5) = 1.5) and transverse load
+    ops.load(2, -100.0e3, -20.0e3, 0.0)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.integrator("LoadControl", 1.0)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0
+
+    # Query hingeSummary and energy BEFORE any eleForce/basicForce call
+    hs_before = ops.eleResponse(1, "hingeSummary")
+    en_before = ops.eleResponse(1, "energy")
+    # Now trigger getResistingForce via eleForce and re-query
+    _ = ops.eleForce(1)
+    hs_after = ops.eleResponse(1, "hingeSummary")
+    en_after = ops.eleResponse(1, "energy")
+    np.testing.assert_allclose(hs_before, hs_after, rtol=1e-14, atol=1e-14)
+    np.testing.assert_allclose(en_before, en_after, rtol=1e-14, atol=1e-14)
+    # Verify fPM = 1.5 was actually applied to the hinge moment
+    raw_hinge_stress = ops.eleResponse(1, "hingeI", "stress")[0]
+    np.testing.assert_allclose(hs_before[1], 1.5 * raw_hinge_stress, rtol=1e-12, atol=1e-12)
+
+    # 3. PM-scaled energy and hingeSummary in 3D without prior eleForce call
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    ops.node(1, 0.0, 0.0, 0.0)
+    ops.node(2, 4.0, 0.0, 0.0)
+    ops.fix(1, 1, 1, 1, 1, 1, 1)
+    ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+    ops.section("Elastic", 1, 2.0e11, 0.04, 1.6e-4, 1.2e-4, 8.0e10, 2.0e-4)
+    ops.beamIntegration("Lobatto", 1, 1, 3)
+    ops.uniaxialMaterial("Steel01", 10, 50.0e3, 1.0e8, 0.02)
+    ops.element("LadrunoDispBeamColumn", 1, 1, 2, 1, 1, "-hingeZI", 10, "-hingeYI", 10, "-pm", 200.0e3, 1.0)
+
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, -100.0e3, -20.0e3, -15.0e3, 0.0, 0.0, 0.0)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.integrator("LoadControl", 1.0)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0
+
+    hs3_before = ops.eleResponse(1, "hingeSummary")
+    en3_before = ops.eleResponse(1, "energy")
+    _ = ops.eleForce(1)
+    hs3_after = ops.eleResponse(1, "hingeSummary")
+    en3_after = ops.eleResponse(1, "energy")
+    np.testing.assert_allclose(hs3_before, hs3_after, rtol=1e-14, atol=1e-14)
+    np.testing.assert_allclose(en3_before, en3_after, rtol=1e-14, atol=1e-14)
+    raw_hinge_z = ops.eleResponse(1, "hingeZI", "stress")[0]
+    np.testing.assert_allclose(hs3_before[1], 1.5 * raw_hinge_z, rtol=1e-12, atol=1e-12)
+    ops.wipe()

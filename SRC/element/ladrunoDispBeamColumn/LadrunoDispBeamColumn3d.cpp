@@ -250,20 +250,29 @@ void* OPS_LadrunoDispBeamColumn3d()
             opserr << "WARNING LadrunoDispBeamColumn3d: -lch needs an argument {ip|element|<value>}\n";
             return 0;
         }
-        const char* lchArg = OPS_GetString();
-        if (strcmp(lchArg, "ip") == 0) {
+        char lchBuf[64];
+        const char* lchArg = OPS_GetStringFromAll(lchBuf, sizeof(lchBuf));
+        if (lchArg == 0) {
+            opserr << "WARNING LadrunoDispBeamColumn3d: failed to read -lch argument\n";
+            return 0;
+        }
+        if (strcmp(lchArg, "ip") == 0 || strcmp(lchArg, "IP") == 0 || strcmp(lchArg, "wtL") == 0) {
             lchMode = 0;
-        } else if (strcmp(lchArg, "element") == 0) {
+            userLch = 0.0;
+        } else if (strcmp(lchArg, "element") == 0 || strcmp(lchArg, "L") == 0) {
             lchMode = 1;
+            userLch = 0.0;
             opserr << "WARNING LadrunoDispBeamColumn3d: -lch element regularizes softening over "
                    << "the WHOLE element length (multi-IP energy double-counting); A/B debugging only.\n";
         } else {
-            userLch = atof(lchArg);
-            if (!std::isfinite(userLch) || userLch <= 0.0) {
+            char* endptr = 0;
+            double val = strtod(lchArg, &endptr);
+            if (endptr == lchArg || *endptr != '\0' || !std::isfinite(val) || val <= 0.0) {
                 opserr << "WARNING LadrunoDispBeamColumn3d: -lch value must be ip|element|<finite positive value>, got '"
                        << lchArg << "'\n";
                 return 0;
             }
+            userLch = val;
             lchMode = 2;
         }
     }
@@ -1425,6 +1434,7 @@ LadrunoDispBeamColumn3d::solveHingeJump(const Vector &v, double L)
     }
 
     sumP += q0[0];
+    q(0) = sumP;
     sumM += -(1.0 - hingeXiI)*q0[1] + hingeXiI*q0[2];
 
     if (chZ != 0) chZ->setAxialForce(sumP);
@@ -1715,6 +1725,7 @@ LadrunoDispBeamColumn3d::solveHingeJumpBiaxial(const Vector &v, double L)
     }
 
     sumP  += q0[0];
+    q(0) = sumP;
     sumMz += -(1.0 - hingeXiI)*q0[1] + hingeXiI*q0[2];
     sumMy += -(1.0 - hingeXiI)*q0[3] + hingeXiI*q0[4];
 
@@ -1968,6 +1979,7 @@ LadrunoDispBeamColumn3d::solveDualHingeJump3d(const Vector &v, double L)
       qSec[m] += q0[m];
 
     double sumP = qSec[0];
+    q(0) = sumP;
     double Mbulk[4] = {0.0, 0.0, 0.0, 0.0};
     for (int m = 0; m < 4; m++) {
       for (int a = 0; a < 6; a++) {
@@ -3715,15 +3727,21 @@ LadrunoDispBeamColumn3d::setResponse(const char **argv, int argc, OPS_Stream &ou
     }
     else if (LadrunoResp::isBasicForce(argv[0])) {
       output.tag("ResponseType","N");
-      output.tag("ResponseType","M1");
-      output.tag("ResponseType","M2");
+      output.tag("ResponseType","Mz_1");
+      output.tag("ResponseType","Mz_2");
+      output.tag("ResponseType","My_1");
+      output.tag("ResponseType","My_2");
+      output.tag("ResponseType","T");
 
       theResponse = new ElementResponse(this, 9, Vector(6));
     }
     else if (strcmp(argv[0],"basicStiffness") == 0) {
       output.tag("ResponseType","N");
-      output.tag("ResponseType","M1");
-      output.tag("ResponseType","M2");
+      output.tag("ResponseType","Mz_1");
+      output.tag("ResponseType","Mz_2");
+      output.tag("ResponseType","My_1");
+      output.tag("ResponseType","My_2");
+      output.tag("ResponseType","T");
 
       theResponse = new ElementResponse(this, 19, Matrix(6,6));
     // global damping force - 
@@ -3838,6 +3856,7 @@ LadrunoDispBeamColumn3d::setResponse(const char **argv, int argc, OPS_Stream &ou
 	output.attr("eta",xi[sectionNum]*L);
 	
 	theResponse = theSections[sectionNum]->setResponse(&argv[2], argc-2, output);
+	output.endTag();
       }
     }
     
@@ -3896,44 +3915,49 @@ LadrunoDispBeamColumn3d::setResponse(const char **argv, int argc, OPS_Stream &ou
     else if (LadrunoResp::isLocalAxes(argv[0])) {
       theResponse = new ElementResponse(this, 30, Vector(9));
     }
-    // Ladruno (ADR 33 / WP-200): forward hinge responses for ends I and J
+    // Ladruno (ADR 33 / WP-200): forward hinge responses for ends I and J.
+    // End-agnostic tokens ("hinge", "hingeZ", "hingeY", "hingeBiaxial", "hingeC") fall back
+    // to end J if only end J is configured; explicit end-I / end-J tokens never cross-fallback.
     else if (hingeOn && argc > 1 &&
-             (strcmp(argv[0],"hinge") == 0 || strcmp(argv[0],"hingeI") == 0 ||
-              strcmp(argv[0],"hingeZI") == 0 || strcmp(argv[0],"hinge1") == 0)) {
+             (strcmp(argv[0],"hinge") == 0 || strcmp(argv[0],"hingeZ") == 0)) {
       UniaxialMaterial *hm = (theHingeZ != 0) ? theHingeZ : theHingeZJ;
       if (hm != 0)
         theResponse = hm->setResponse(&argv[1], argc-1, output);
     }
-    else if (hingeOn && argc > 1 &&
-             (strcmp(argv[0],"hingeJ") == 0 || strcmp(argv[0],"hingeZJ") == 0 || strcmp(argv[0],"hinge2") == 0)) {
-      UniaxialMaterial *hm = (theHingeZJ != 0) ? theHingeZJ : theHingeZ;
-      if (hm != 0)
-        theResponse = hm->setResponse(&argv[1], argc-1, output);
+    else if (hingeOn && theHingeZ != 0 && argc > 1 &&
+             (strcmp(argv[0],"hingeI") == 0 || strcmp(argv[0],"hingeZI") == 0 || strcmp(argv[0],"hinge1") == 0)) {
+      theResponse = theHingeZ->setResponse(&argv[1], argc-1, output);
     }
-    else if (hingeOn && argc > 1 &&
-             (strcmp(argv[0],"hingeY") == 0 || strcmp(argv[0],"hingeYI") == 0 || strcmp(argv[0],"hingeY1") == 0)) {
+    else if (hingeOn && theHingeZJ != 0 && argc > 1 &&
+             (strcmp(argv[0],"hingeJ") == 0 || strcmp(argv[0],"hingeZJ") == 0 || strcmp(argv[0],"hinge2") == 0)) {
+      theResponse = theHingeZJ->setResponse(&argv[1], argc-1, output);
+    }
+    else if (hingeOn && argc > 1 && strcmp(argv[0],"hingeY") == 0) {
       UniaxialMaterial *hm = (theHingeY != 0) ? theHingeY : theHingeYJ;
       if (hm != 0)
         theResponse = hm->setResponse(&argv[1], argc-1, output);
     }
-    else if (hingeOn && argc > 1 &&
+    else if (hingeOn && theHingeY != 0 && argc > 1 &&
+             (strcmp(argv[0],"hingeYI") == 0 || strcmp(argv[0],"hingeY1") == 0)) {
+      theResponse = theHingeY->setResponse(&argv[1], argc-1, output);
+    }
+    else if (hingeOn && theHingeYJ != 0 && argc > 1 &&
              (strcmp(argv[0],"hingeYJ") == 0 || strcmp(argv[0],"hingeY2") == 0)) {
-      UniaxialMaterial *hm = (theHingeYJ != 0) ? theHingeYJ : theHingeY;
-      if (hm != 0)
-        theResponse = hm->setResponse(&argv[1], argc-1, output);
+      theResponse = theHingeYJ->setResponse(&argv[1], argc-1, output);
     }
     else if (hingeOn && argc > 1 &&
-             (strcmp(argv[0],"hingeBiaxial") == 0 || strcmp(argv[0],"hingeBiaxialI") == 0 ||
-              strcmp(argv[0],"hingeBiaxial1") == 0 || strcmp(argv[0],"hingeC") == 0 || strcmp(argv[0],"hingeCI") == 0)) {
+             (strcmp(argv[0],"hingeBiaxial") == 0 || strcmp(argv[0],"hingeC") == 0)) {
       NDMaterial *hm = (theHingeC != 0) ? theHingeC : theHingeCJ;
       if (hm != 0)
         theResponse = hm->setResponse(&argv[1], argc-1, output);
     }
-    else if (hingeOn && argc > 1 &&
+    else if (hingeOn && theHingeC != 0 && argc > 1 &&
+             (strcmp(argv[0],"hingeBiaxialI") == 0 || strcmp(argv[0],"hingeBiaxial1") == 0 || strcmp(argv[0],"hingeCI") == 0)) {
+      theResponse = theHingeC->setResponse(&argv[1], argc-1, output);
+    }
+    else if (hingeOn && theHingeCJ != 0 && argc > 1 &&
              (strcmp(argv[0],"hingeBiaxialJ") == 0 || strcmp(argv[0],"hingeBiaxial2") == 0 || strcmp(argv[0],"hingeCJ") == 0)) {
-      NDMaterial *hm = (theHingeCJ != 0) ? theHingeCJ : theHingeC;
-      if (hm != 0)
-        theResponse = hm->setResponse(&argv[1], argc-1, output);
+      theResponse = theHingeCJ->setResponse(&argv[1], argc-1, output);
     }
     else if (hingeOn && LadrunoResp::is(argv[0], "hingeSummary")) {
       output.tag("ResponseType", "thetaZ_i");
@@ -4279,11 +4303,21 @@ LadrunoDispBeamColumn3d::getResponse(int responseID, Information &eleInfo)
 	  double L = crdTransf->getInitialLength();
 	  beamInt->getSectionWeights(numSections, L, xi);
 	  double energy = 0;
+	  double P_axial = q0[0];
 	  for (int i = 0; i < numSections; i++) {
 		  energy += theSections[i]->getEnergy()*xi[i] * L;
+		  if (hingeOn && pmP0 > 0.0) {
+		    int order = theSections[i]->getOrder();
+		    const ID &code = theSections[i]->getType();
+		    const Vector &s = theSections[i]->getStressResultant();
+		    for (int j = 0; j < order; j++) {
+		      if (code(j) == SECTION_RESPONSE_P)
+		        P_axial += xi[i] * s(j);
+		    }
+		  }
 	  }
 	  if (hingeOn) {
-	    double fPM = (pmP0 > 0.0) ? ladrunoDisp3dScalePM(q(0), pmP0, pmAlpha) : 1.0;
+	    double fPM = (pmP0 > 0.0) ? ladrunoDisp3dScalePM(P_axial, pmP0, pmAlpha) : 1.0;
 	    if (theHingeZ != 0) {
 	      double f = (dynamic_cast<LadrunoCohesiveHinge*>(theHingeZ) == 0) ? fPM : 1.0;
 	      energy += f * theHingeZ->getEnergy();

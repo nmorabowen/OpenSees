@@ -164,17 +164,26 @@ void* OPS_ForceBeamColumn2d()
 		opserr << "WARNING ForceBeamColumn2d: -lch needs {ip|element|<value>}\n";
 		return 0;
 	    }
-	    const char* lchArg = OPS_GetString();
-	    if(strcmp(lchArg, "ip") == 0) {
+	    char lchBuf[64];
+	    const char* lchArg = OPS_GetStringFromAll(lchBuf, sizeof(lchBuf));
+	    if(lchArg == 0) {
+		opserr << "WARNING ForceBeamColumn2d: failed to read -lch argument\n";
+		return 0;
+	    }
+	    if(strcmp(lchArg, "ip") == 0 || strcmp(lchArg, "IP") == 0 || strcmp(lchArg, "wtL") == 0) {
 		lchMode = 0;
-	    } else if(strcmp(lchArg, "element") == 0) {
+		userLch = 0.0;
+	    } else if(strcmp(lchArg, "element") == 0 || strcmp(lchArg, "L") == 0) {
 		lchMode = 1;
+		userLch = 0.0;
 	    } else {
-		userLch = atof(lchArg);
-		if(!std::isfinite(userLch) || userLch <= 0.0) {
-		    opserr << "WARNING ForceBeamColumn2d: -lch value must be ip|element|<positive value>\n";
+		char* endptr = 0;
+		double val = strtod(lchArg, &endptr);
+		if(endptr == lchArg || *endptr != '\0' || !std::isfinite(val) || val <= 0.0) {
+		    opserr << "WARNING ForceBeamColumn2d: -lch value must be ip|element|<positive value>, got '" << lchArg << "'\n";
 		    return 0;
 		}
+		userLch = val;
 		lchMode = 2;
 	    }
 	}
@@ -331,7 +340,12 @@ void* OPS_ForceBeamColumn2d(const ID &info)
 		    opserr << "WARNING ForceBeamColumn2d: -lch needs {ip|element|<value>}\n";
 		    return 0;
 		}
-		const char* lchArg = OPS_GetString();
+		char lchBuf[64];
+		const char* lchArg = OPS_GetStringFromAll(lchBuf, sizeof(lchBuf));
+		if (lchArg == 0) {
+		    opserr << "WARNING ForceBeamColumn2d: failed to read -lch value\n";
+		    return 0;
+		}
 		if(strcmp(lchArg, "ip") == 0 || strcmp(lchArg, "IP") == 0 || strcmp(lchArg, "wtL") == 0) {
 		    lchMode = 0;
 		    userLch = 0.0;
@@ -339,8 +353,9 @@ void* OPS_ForceBeamColumn2d(const ID &info)
 		    lchMode = 1;
 		    userLch = 0.0;
 		} else {
-		    userLch = atof(lchArg);
-		    if(!std::isfinite(userLch) || userLch <= 0.0) {
+		    char* endptr = 0;
+		    userLch = strtod(lchArg, &endptr);
+		    if(endptr == lchArg || *endptr != '\0' || !std::isfinite(userLch) || userLch <= 0.0) {
 			opserr << "WARNING ForceBeamColumn2d: -lch value must be ip|element|<positive value>\n";
 			return 0;
 		    }
@@ -495,7 +510,9 @@ int OPS_ForceBeamColumn2d(Domain& theDomain, const ID& elenodes, ID& eletags)
 	    userLch = 0.0;
 	} else if(strcmp(type,"-lch") == 0) { // Ladruno
 	    if(OPS_GetNumRemainingInputArgs() < 1) return -1;
-	    const char* lchArg = OPS_GetString();
+	    char lchBuf[64];
+	    const char* lchArg = OPS_GetStringFromAll(lchBuf, sizeof(lchBuf));
+	    if (lchArg == 0) return -1;
 	    if(strcmp(lchArg, "ip") == 0 || strcmp(lchArg, "IP") == 0 || strcmp(lchArg, "wtL") == 0) {
 		lchMode = 0;
 		userLch = 0.0;
@@ -503,8 +520,9 @@ int OPS_ForceBeamColumn2d(Domain& theDomain, const ID& elenodes, ID& eletags)
 		lchMode = 1;
 		userLch = 0.0;
 	    } else {
-		userLch = atof(lchArg);
-		if(!std::isfinite(userLch) || userLch <= 0.0) return -1;
+		char* endptr = 0;
+		userLch = strtod(lchArg, &endptr);
+		if(endptr == lchArg || *endptr != '\0' || !std::isfinite(userLch) || userLch <= 0.0) return -1;
 		lchMode = 2;
 	    }
 	}

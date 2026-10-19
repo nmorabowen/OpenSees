@@ -257,24 +257,33 @@ void* OPS_LadrunoDispBeamColumn2d()
             opserr << "WARNING LadrunoDispBeamColumn2d: -lch needs an argument {ip|element|<value>}\n";
             return 0;
         }
-        const char* lchArg = OPS_GetString();
-        if (strcmp(lchArg, "ip") == 0) {
+        char lchBuf[64];
+        const char* lchArg = OPS_GetStringFromAll(lchBuf, sizeof(lchBuf));
+        if (lchArg == 0) {
+            opserr << "WARNING LadrunoDispBeamColumn2d: failed to read -lch argument\n";
+            return 0;
+        }
+        if (strcmp(lchArg, "ip") == 0 || strcmp(lchArg, "IP") == 0 || strcmp(lchArg, "wtL") == 0) {
             lchMode = 0;
-        } else if (strcmp(lchArg, "element") == 0) {
+            userLch = 0.0;
+        } else if (strcmp(lchArg, "element") == 0 || strcmp(lchArg, "L") == 0) {
             lchMode = 1;
+            userLch = 0.0;
             opserr << "WARNING LadrunoDispBeamColumn2d: -lch element regularizes softening over "
                    << "the WHOLE element length; this re-enables multi-integration-point energy "
                    << "double-counting and is for A/B debugging only. Use -lch ip (default).\n";
         } else {
             // treat the argument as a numeric crack-band width
-            userLch = atof(lchArg);
-            // reject nan/inf/infinity (atof maps these to non-finite) as well as <= 0;
+            char* endptr = 0;
+            double val = strtod(lchArg, &endptr);
+            // reject nan/inf/infinity, trailing garbage, and <= 0;
             // a non-finite band would silently poison the material's regularization
-            if (!std::isfinite(userLch) || userLch <= 0.0) {
+            if (endptr == lchArg || *endptr != '\0' || !std::isfinite(val) || val <= 0.0) {
                 opserr << "WARNING LadrunoDispBeamColumn2d: -lch value must be ip|element|<finite positive value>, got '"
                        << lchArg << "'\n";
                 return 0;
             }
+            userLch = val;
             lchMode = 2;
         }
     }
@@ -1058,6 +1067,7 @@ LadrunoDispBeamColumn2d::solveHingeJump(const Vector &v, double L)
     }
 
     sumP += q0[0];
+    q(0) = sumP;
     sumM += -(1.0 - hingeXiI)*q0[1] + hingeXiI*q0[2];
 
     // --- cohesive law at the current jump: M_coh(alpha), dM_coh/dalpha ---
@@ -1230,6 +1240,7 @@ LadrunoDispBeamColumn2d::solveDualHingeJump(const Vector &v, double L)
     qsec[0] += q0[0];
     qsec[1] += q0[1];
     qsec[2] += q0[2];
+    q(0) = qsec[0];
 
     if (cohI != 0) cohI->setAxialForce(qsec[0]);
     if (cohJ != 0) cohJ->setAxialForce(qsec[0]);
@@ -2646,6 +2657,7 @@ LadrunoDispBeamColumn2d::setResponse(const char **argv, int argc,
       output.attr("eta",xi[sectionNum]*L);
       
       theResponse = theSections[sectionNum]->setResponse(&argv[2], argc-2, output);
+      output.endTag();
     }
   }
   else if (strcmp(argv[0],"section") == 0) {
@@ -2707,17 +2719,17 @@ LadrunoDispBeamColumn2d::setResponse(const char **argv, int argc,
   
   // curvature sensitivity along element length
   else if (strcmp(argv[0],"dcurvdh") == 0)
-    return new ElementResponse(this, 5, Vector(numSections));
+    theResponse = new ElementResponse(this, 5, Vector(numSections));
   
   // basic deformation sensitivity
   else if (strcmp(argv[0],"dvdh") == 0)
-    return new ElementResponse(this, 6, Vector(3));
+    theResponse = new ElementResponse(this, 6, Vector(3));
   
   else if (strcmp(argv[0],"integrationPoints") == 0)
-    return new ElementResponse(this, 7, Vector(numSections));
+    theResponse = new ElementResponse(this, 7, Vector(numSections));
   
   else if (strcmp(argv[0],"integrationWeights") == 0)
-    return new ElementResponse(this, 8, Vector(numSections));
+    theResponse = new ElementResponse(this, 8, Vector(numSections));
 
   else if (strcmp(argv[0],"sectionTags") == 0)
     theResponse = new ElementResponse(this, 110, ID(numSections));
@@ -2731,14 +2743,20 @@ LadrunoDispBeamColumn2d::setResponse(const char **argv, int argc,
   else if (LadrunoResp::isLocalAxes(argv[0])) {
     theResponse = new ElementResponse(this, 30, Vector(9));
   }
-  // Ladruno (ADR 32) Tier-2: forward "hinge <resp>" / "hingeI <resp>" to the end-I cohesive material,
-  // and "hingeJ <resp>" / "hinge2 <resp>" to the end-J cohesive material.
+  // Ladruno (ADR 32) Tier-2: forward "hinge <resp>" / "hingeZ <resp>" (end-agnostic fallback)
+  // and explicit "hingeI" / "hingeZI" / "hinge1" or "hingeJ" / "hingeZJ" / "hinge2" (no cross-end fallback).
+  else if (hingeOn && argc > 1 &&
+           (strcmp(argv[0],"hinge") == 0 || strcmp(argv[0],"hingeZ") == 0)) {
+    UniaxialMaterial *hm = (theHinge != 0) ? theHinge : theHingeJ;
+    if (hm != 0)
+      theResponse = hm->setResponse(&argv[1], argc-1, output);
+  }
   else if (hingeOn && theHinge != 0 && argc > 1 &&
-           (strcmp(argv[0],"hinge") == 0 || strcmp(argv[0],"hingeI") == 0 || strcmp(argv[0],"hinge1") == 0)) {
+           (strcmp(argv[0],"hingeI") == 0 || strcmp(argv[0],"hingeZI") == 0 || strcmp(argv[0],"hinge1") == 0)) {
     theResponse = theHinge->setResponse(&argv[1], argc-1, output);
   }
   else if (hingeOn && theHingeJ != 0 && argc > 1 &&
-           (strcmp(argv[0],"hingeJ") == 0 || strcmp(argv[0],"hinge2") == 0)) {
+           (strcmp(argv[0],"hingeJ") == 0 || strcmp(argv[0],"hingeZJ") == 0 || strcmp(argv[0],"hinge2") == 0)) {
     theResponse = theHingeJ->setResponse(&argv[1], argc-1, output);
   }
   else if (hingeOn && (theHinge != 0 || theHingeJ != 0) && LadrunoResp::is(argv[0], "hingeSummary")) {
@@ -2981,17 +2999,27 @@ LadrunoDispBeamColumn2d::getResponse(int responseID, Information &eleInfo)
 	  double L = crdTransf->getInitialLength();
 	  beamInt->getSectionWeights(numSections, L, xi);
 	  double energy = 0;
+	  double P_axial = q0[0];
 	  for (int i = 0; i < numSections; i++) {
 		  energy += theSections[i]->getEnergy()*xi[i] * L;
+		  if (hingeOn && pmP0 > 0.0) {
+		    int order = theSections[i]->getOrder();
+		    const ID &code = theSections[i]->getType();
+		    const Vector &s = theSections[i]->getStressResultant();
+		    for (int j = 0; j < order; j++) {
+		      if (code(j) == SECTION_RESPONSE_P)
+		        P_axial += xi[i] * s(j);
+		    }
+		  }
 	  }
 	  if (hingeOn && theHinge != 0) {
 		  double fPMI = (dynamic_cast<LadrunoCohesiveHinge*>(theHinge) == 0 && pmP0 > 0.0)
-		                  ? ladrunoDisp2dScalePM(q(0), pmP0, pmAlpha) : 1.0;
+		                  ? ladrunoDisp2dScalePM(P_axial, pmP0, pmAlpha) : 1.0;
 		  energy += fPMI * theHinge->getEnergy();
 	  }
 	  if (hingeOn && theHingeJ != 0) {
 		  double fPMJ = (dynamic_cast<LadrunoCohesiveHinge*>(theHingeJ) == 0 && pmP0 > 0.0)
-		                  ? ladrunoDisp2dScalePM(q(0), pmP0, pmAlpha) : 1.0;
+		                  ? ladrunoDisp2dScalePM(P_axial, pmP0, pmAlpha) : 1.0;
 		  energy += fPMJ * theHingeJ->getEnergy();
 	  }
 	  return eleInfo.setDouble(energy);
