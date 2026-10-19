@@ -414,6 +414,88 @@ u-p node (the `*UP` / pressure-DOF elements), `Rz` holds the **pore pressure**, 
 rotation. A reader that needs a true rotation must check the element family itself.
 `DISPLACEMENT` is not affected.
 
+#### 7.1.2 Every other `ON_NODES` group: names and `COMPONENTS` labels (apeGmsh #2214)
+
+This completes §7.1.1. The tables list every group the writer can put in
+`ON_NODES`. Unless a row says otherwise, the writer is in
+`SRC/recorder/Ladruno_NodeResults.cpp`. The `-N` / `-NS` tokens are parsed in
+`SRC/recorder/LadrunoRecorder.cpp`. §7.1.1 rules apply here too: labels depend on ndm
+(`INFO/SPATIAL_DIM`) only, are fixed at construction, and missing DOFs are written as `0.0`.
+
+Each group belongs to one of two families, by the buffer helper it uses
+(`SRC/recorder/Ladruno_Types.h`):
+
+- **Translational** (`bufferNodeResponseVec3u`): one label per ndm, from the node's
+  first `ndm` DOFs.
+- **Rotational** (`bufferNodeResponseVec3r`): ndm = 2 gives one `z` label from DOF index
+  2; ndm = 3 gives `x,y,z` from DOF indices 3, 4, 5 (when ndf > 5); ndm = 1 gives
+  `x,y,z` written as zeros. The §7.1.1 u-p caveat applies to every rotational group:
+  with ndm = 2 and ndf = 3, the `z` column holds whatever DOF 2 is.
+
+**Translational groups**
+
+| `-N` token | Group `ON_NODES/<name>` | `DISPLAY_NAME` | ndm = 1 | ndm = 2 | ndm = 3 | `DIMENSION` | Writer | Node vector read |
+|---|---|---|---|---|---|---|---|---|
+| `velocity` | `VELOCITY` | `Velocity` | `Vx` | `Vx,Vy` | `Vx,Vy,Vz` | `L/t` | `VelocitySource::build()` | `getTrialVel()` |
+| `acceleration` | `ACCELERATION` | `Acceleration` | `Ax` | `Ax,Ay` | `Ax,Ay,Az` | `L/t^2` | `AccelerationSource::build()` | `getTrialAccel()` |
+| `reactionForce` | `REACTION_FORCE` | `Reaction Force` | `RFx` | `RFx,RFy` | `RFx,RFy,RFz` | `F` | `ReactionForceSource::build()` | `getReaction()` |
+| `reactionForceIncludingInertia` | `REACTION_FORCE_INCLUDING_INERTIA` | `Reaction Force Including Inertia` | `RFx` | `RFx,RFy` | `RFx,RFy,RFz` | `F` | `ReactionForceSource::build()`, called by `ReactionForceIncInertiaSource` | `getReaction()` |
+| `rayleighForce` | `RAYLEIGH_FORCE` | `Rayleigh Force` | `RFx` | `RFx,RFy` | `RFx,RFy,RFz` | `F` | `ReactionForceSource::build()`, called by `RayleighForceSource` | `getReaction()` |
+| `unbalancedForce` | `UNBALANCED_FORCE` | `Unbalanced Force` | `Fx` | `Fx,Fy` | `Fx,Fy,Fz` | `F` | `UnbalancedForceSource::build()` | `getUnbalancedLoad()` |
+| `unbalancedForceIncludingInertia` | `UNBALANCED_FORCE_INCLUDING_INERTIA` | `Unbalanced Force Including Inertia` | `Fx` | `Fx,Fy` | `Fx,Fy,Fz` | `F` | `UnbalancedForceSource::build()`, called by `UnbalancedForceIncInertiaSource` | `getUnbalancedLoadIncInertia()` |
+| `constraintTieForce` (alias `tieForce`) | `CONSTRAINT_TIE_FORCE` | `Constraint Tie Force` | `TFx` | `TFx,TFy` | `TFx,TFy,TFz` | `F` | `ConstraintTieForceSource::build()` | `getProjectionTieForce()` |
+
+**Rotational groups**
+
+| `-N` token | Group `ON_NODES/<name>` | `DISPLAY_NAME` | ndm = 1 | ndm = 2 | ndm = 3 | `DIMENSION` | Writer | Node vector read |
+|---|---|---|---|---|---|---|---|---|
+| `angularVelocity` | `ANGULAR_VELOCITY` | `Angular Velocity` | `RVx,RVy,RVz` | `RVz` | `RVx,RVy,RVz` | `L/t*A` | `AngularVelocitySource::build()` | `getTrialVel()` |
+| `angularAcceleration` | `ANGULAR_ACCELERATION` | `Angular Acceleration` | `RAx,RAy,RAz` | `RAz` | `RAx,RAy,RAz` | `L/t^2*A` | `AngularAccelerationSource::build()` | `getTrialAccel()` |
+| `reactionMoment` | `REACTION_MOMENT` | `Reaction Moment` | `RMx,RMy,RMz` | `RMz` | `RMx,RMy,RMz` | `F*L` | `ReactionMomentSource::build()` | `getReaction()` |
+| `reactionMomentIncludingInertia` | `REACTION_MOMENT_INCLUDING_INERTIA` | `Reaction Moment Including Inertia` | `RMx,RMy,RMz` | `RMz` | `RMx,RMy,RMz` | `F*L` | `ReactionMomentSource::build()`, called by `ReactionMomentIncInertiaSource` | `getReaction()` |
+| `rayleighMoment` | `RAYLEIGH_MOMENT` | `Rayleigh Moment` | `RMx,RMy,RMz` | `RMz` | `RMx,RMy,RMz` | `F*L` | `ReactionMomentSource::build()`, called by `RayleighMomentSource` | `getReaction()` |
+| `unbalancedMoment` | `UNBALANCED_MOMENT` | `Unbalanced Moment` | `Mx,My,Mz` | `Mz` | `Mx,My,Mz` | `F*L` | `UnbalancedMomentSource::build()` | `getUnbalancedLoad()` |
+| `unbalancedMomentIncludingInertia` | `UNBALANCED_MOMENT_INCLUDING_INERTIA` | `Unbalanced Moment Including Inertia` | `Mx,My,Mz` | `Mz` | `Mx,My,Mz` | `F*L` | `UnbalancedMomentSource::build()`, called by `UnbalancedMomentIncInertiaSource` | `getUnbalancedLoadIncInertia()` |
+
+The plain, `…IncludingInertia` and Rayleigh variants share labels. Only the group name
+tells them apart. Each reaction source passes its own `reactionFlag()` to the reaction
+computation, so the three read different reactions through the same `getReaction()`.
+
+**Scalar groups (one component, label independent of ndm)**
+
+| Token | Group `ON_NODES/<name>` | `DISPLAY_NAME` | `COMPONENTS` | `DIMENSION` | Writer |
+|---|---|---|---|---|---|
+| `-N pressure` | `PRESSURE` | `Pressure` | `p` | `F/L^2` | `PressureSource::build()` |
+| none (one group per ready `LadrunoPorousOverlay`) | `overlayPressure_<patternTag>` | `Overlay pore pressure <patternTag>` | `p` | `F/L^2` | `OverlayPressureSource::buildSchema()`, `SRC/recorder/Ladruno_OverlayResults.cpp` |
+
+The `PRESSURE` **label** is fixed. The **value** depends on the element family attached
+to the node (`PressureSource::evaluate()` / `scanUPContract()`): it reads DOF `ndm` (index
+2 in 2D, 3 in 3D) only when the node has exactly `ndm + 1` DOFs. A node attached to a
+`LadrunoUP` element is read from the displacement vector. A node attached only to an
+upstream `*UP` element (FourNodeQuadUP, BrickUP, Nine_Four_Node_QuadUP,
+Twenty_Eight_Node_BrickUP, BBarFourNodeQuadUP, BBarBrickUP, SSPquadUP, SSPbrickUP) is read
+from the velocity vector, because their DOF is ∫p dt. A node attached to both reads the
+displacement vector and the recorder warns once. Every other node reads the velocity
+vector, and is `0.0` unless it has exactly `ndm + 1` DOFs. The overlay group name is
+lowercase-camel and has no `-N` token. The recorder adds it from `initOverlaySources()`
+in `LadrunoRecorder.cpp`.
+
+**Sensitivity groups (`-NS <token> <gradIndex>`).** The gradient index `<g>` is part of
+the group name and of every label. The families and ndm rules are as above:
+
+| `-NS` token | Group `ON_NODES/<name>` | ndm = 1 | ndm = 2 | ndm = 3 | Writer |
+|---|---|---|---|---|---|
+| `displacementSensitivity` | `DISPLACEMENT_SENSITIVITY_<g>` | `d_Ux/d_q<g>` | `d_Ux/d_q<g>,d_Uy/d_q<g>` | `d_Ux/d_q<g>,d_Uy/d_q<g>,d_Uz/d_q<g>` | `DisplacementSensitivitySource::build()` |
+| `rotationSensitivity` | `ROTATION_SENSITIVITY_<g>` | `d_Rx/d_q<g>,d_Ry/d_q<g>,d_Rz/d_q<g>` | `d_Rz/d_q<g>` | `d_Rx/d_q<g>,d_Ry/d_q<g>,d_Rz/d_q<g>` | `RotationSensitivitySource::build()` |
+| `velocitySensitivity` | `VELOCITY_SENSITIVITY_<g>` | `d_Vx/d_q<g>` | `d_Vx/d_q<g>,d_Vy/d_q<g>` | `d_Vx/d_q<g>,d_Vy/d_q<g>,d_Vz/d_q<g>` | `VelocitySensitivitySource::build()` |
+| `angularVelocitySensitivity` | `ANGULAR_VELOCITY_SENSITIVITY_<g>` | `d_RVx/d_q<g>,d_RVy/d_q<g>,d_RVz/d_q<g>` | `d_RVz/d_q<g>` | `d_RVx/d_q<g>,d_RVy/d_q<g>,d_RVz/d_q<g>` | `AngularVelocitySensitivitySource::build()` |
+| `accelerationSensitivity` | `ACCELERATION_SENSITIVITY_<g>` | `d_Ax/d_q<g>` | `d_Ax/d_q<g>,d_Ay/d_q<g>` | `d_Ax/d_q<g>,d_Ay/d_q<g>,d_Az/d_q<g>` | `AccelerationSensitivitySource::build()` |
+| `angularAccelerationSensitivity` | `ANGULAR_ACCELERATION_SENSITIVITY_<g>` | `d_RAx/d_q<g>,d_RAy/d_q<g>,d_RAz/d_q<g>` | `d_RAz/d_q<g>` | `d_RAx/d_q<g>,d_RAy/d_q<g>,d_RAz/d_q<g>` | `AngularAccelerationSensitivitySource::build()` |
+
+Their `DISPLAY_NAME` is `<Quantity> Sensitivity d_<sym>/d_q<g>`, and `DIMENSION` is `""`.
+`<g>` is the 1-based sensitivity parameter index. If `<g>` is out of range
+(`< 1` or `> getNumParameters()`), the group is written as all zeros and the recorder warns.
+
 ### 7.2 `ON_ELEMENTS/<result>` — structured column map (replaces the `;`-string)
 
 ```
@@ -766,3 +848,8 @@ in STKO). Fiber section as today.
   `opensees_backend` (`ladruno`/`stock`/`unknown`) and `opensees_build_sha` (the
   `ladrunoBuild` hash). Both are optional, so older files stay valid. Doc only: no
   recorder change, no version bump.
+- 2026-10-19 — **apeGmsh #2214: every `ON_NODES` group's name and labels (§7.1.2).**
+  Adds velocity, acceleration, reaction, Rayleigh, unbalanced and tie-force groups, the
+  angular groups, `PRESSURE`, `overlayPressure_<tag>` and the `-NS` sensitivity groups,
+  each with its writer from `Ladruno_NodeResults.cpp` / `Ladruno_OverlayResults.cpp`.
+  Doc only: no recorder change, no version bump.
