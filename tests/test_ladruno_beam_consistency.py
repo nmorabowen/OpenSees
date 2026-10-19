@@ -3019,7 +3019,7 @@ def test_t15_review_bug_regressions(tmp_path):
         ops.wipe()
         ndf = 3 if ndm == 2 else 6
         ops.model("basic", "-ndm", ndm, "-ndf", ndf)
-        ops.uniaxialMaterial("Steel01", 1, 250.0e6, E, 0.02)
+        ops.uniaxialMaterial("Elastic", 1, E)
         if ndm == 2:
             ops.section("Fiber", 1)
             for y in (-0.15, -0.05, 0.05, 0.15):
