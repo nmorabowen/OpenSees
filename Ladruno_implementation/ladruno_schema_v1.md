@@ -373,6 +373,47 @@ extreme of a partial cannot be recombined (max(a+b) ≠ max a + max b). Serial f
 carry a `SUM` envelope (there is only one partition). Validator:
 `ladruno_format._validate_partition_reduction`.
 
+#### 7.1.1 Kinematic node results: names and `COMPONENTS` labels (apeGmsh #2128)
+
+Translation and rotation are **two separate result groups**. There is no combined
+6-component displacement group. A reader that draws a deformed shape reads
+`DISPLACEMENT`, and adds `ROTATION` only if it needs nodal rotations. Mode shapes follow
+the same split. Values below are copied from the writer source. `COMPONENTS` is one
+comma-separated string attr (`h5::group::createResultGroup`, `SRC/recorder/Ladruno_Hdf5.h`).
+
+| Recorder token (`-N`) | Group `ON_NODES/<name>` | `DISPLAY_NAME` | ndm = 1 | ndm = 2 | ndm = 3 | `DIMENSION` | Writer |
+|---|---|---|---|---|---|---|---|
+| `displacement` | `DISPLACEMENT` | `Displacement` | `Ux` | `Ux,Uy` | `Ux,Uy,Uz` | `L` | `DisplacementSource::build()` |
+| `rotation` | `ROTATION` | `Rotation` | `Rx,Ry,Rz` | `Rz` | `Rx,Ry,Rz` | `A` | `RotationSource::build()` |
+| `modesOfVibration` | `MODES_OF_VIBRATION(U)` | `Modes of Vibration (U)` | `Ux` | `Ux,Uy` | `Ux,Uy,Uz` | `""` | `ModesOfVibrationSource::build()` |
+| `modesOfVibrationRotational` | `MODES_OF_VIBRATION(R)` | `Modes of Vibration (R)` | `Rx,Ry,Rz` | `Rz` | `Rx,Ry,Rz` | `""` | `ModesOfVibrationRotationalSource::build()` |
+
+All four writers are in `SRC/recorder/Ladruno_NodeResults.cpp`. The token-to-type mapping
+is in the `-N` option parser in `SRC/recorder/LadrunoRecorder.cpp`.
+
+**The labels depend on ndm only.** They do not depend on ndf, the element family, or
+the analysis. `ndm` is `INFO/SPATIAL_DIM`: the coordinate count of the **first node** in
+the domain (`LadrunoRecorder.cpp`, model-write setup, rejected outside 1..3). Each
+`build()` fixes the labels once, at construction. A mixed-ndf model therefore has one
+label set for every node.
+
+**ndf affects only the values** (`bufferNodeResponseVec3u` / `bufferNodeResponseVec3r`,
+`SRC/recorder/Ladruno_Types.h`):
+
+- `DISPLACEMENT` holds the node's first `ndm` DOFs of `getTrialDisp()`. Missing DOFs are
+  written as `0.0`.
+- `ROTATION` with ndm = 2 holds DOF index 2, or `0.0` if the node has ndf ≤ 2.
+  With ndm = 3 it holds DOF indices 3, 4, 5 when ndf > 5, and all zeros otherwise.
+  With ndm = 1 it writes three columns of zeros.
+- The modal groups use the same rules on the eigenvector rows. A node with no
+  eigenvector for the current mode stays `0.0`.
+
+**Reader caveat (not a label ambiguity).** `ROTATION` (and `MODES_OF_VIBRATION(R)`)
+copies a DOF index. It does not check what the DOF means. With ndm = 2 and ndf = 3 on a
+u-p node (the `*UP` / pressure-DOF elements), `Rz` holds the **pore pressure**, not a
+rotation. A reader that needs a true rotation must check the element family itself.
+`DISPLACEMENT` is not affected.
+
 ### 7.2 `ON_ELEMENTS/<result>` — structured column map (replaces the `;`-string)
 
 ```
@@ -705,3 +746,8 @@ in STKO). Fiber section as today.
   attributes into the recorder's empty `PROVENANCE` group, on a closed file only. The fork
   owns the format; the consumer owns only those attributes. Doc only: no recorder change,
   no version bump.
+- 2026-10-18 — **apeGmsh #2128: kinematic node result names and labels (§7.1.1).** The
+  schema documents the exact `DISPLACEMENT` / `ROTATION` / `MODES_OF_VIBRATION(U|R)` group
+  names and their `COMPONENTS` per ndm, from `Ladruno_NodeResults.cpp`. This replaces the
+  "e.g. `Ux,Uy,Uz`" example in the 2026-05-31 line as the reference. Doc only: no recorder
+  change, no version bump.
