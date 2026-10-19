@@ -554,10 +554,21 @@ names, `FORMAT_VERSION`/`FORMAT_MINOR_VERSION` and `ladruno_format.py`. A consum
 | `element_index_space` | string | `"fem"` when every element ID in the file is a paired FEM element id; absent otherwise (the reader treats absence as "unverified") |
 | `unsupported` | string (JSON array of strings) | categories present in the source that the consumer did not read or convert (e.g. layered shells, energy, MPCO springs); `"[]"` when none |
 | `writer` | string | the apeGmsh component and version that stamped (or, for a converted file, produced) the file, e.g. `apeGmsh <version>` or `apeGmsh mpco->ladruno <version>`. A converted file keeps `INFO/GENERATOR="Ladruno"`; `writer` is what marks it as converted |
+| `opensees_backend` | string | *optional; added 2026-10-19 (apeGmsh G10).* Which OpenSees ran the analysis: exactly `"ladruno"` (this fork), `"stock"` (upstream OpenSees), or `"unknown"`. The `.ladruno` recorder exists only in the fork, so a file the recorder wrote is always `"ladruno"`. `"stock"` can occur only on a converted file (`writer` = `apeGmsh mpco->ladruno …`) whose source `.mpco` came from upstream OpenSees |
+| `opensees_build_sha` | string | *optional; added 2026-10-19 (apeGmsh G10).* The git commit the OpenSees binary was built from: 40 lowercase hex characters, exactly as the fork's `ladrunoBuild` command returns it (Tcl `ladrunoBuild`, Python `ops.ladrunoBuild()`; CMake stamps `git log -1 --format=%H` into `OPENSEES_VERSION`). `"unknown"` when the build reported no hash (`ladrunoBuild` itself returns `"unknown"` then) or the backend could not be queried. The consumer writes it as returned and does not shorten it |
 
-All six are scalar attributes stored as variable-length UTF-8 strings (the apeGmsh viewer's stamp check expects vlen UTF-8, not fixed-length). JSON values are compact, UTF-8,
+All of these are scalar attributes stored as variable-length UTF-8 strings (the apeGmsh viewer's stamp check expects vlen UTF-8, not fixed-length). JSON values are compact, UTF-8,
 and never NaN. A reader must tolerate any subset of these attributes being absent (a
-file that was never stamped has an empty `PROVENANCE`).
+file that was never stamped has an empty `PROVENANCE`). `opensees_backend` and
+`opensees_build_sha` are newer than the other six, so files stamped before 2026-10-19
+lack them and stay valid. A reader treats their absence as unknown.
+
+**No fork-side equivalent today.** The recorder writes no build hash into a `.ladruno`
+file. `INFO/GENERATOR="Ladruno"` marks the writer, and `INFO/SOLVER_VERSION` is a fixed
+`[3,5,1]`, not a commit. The build hash is available only at run time, through
+`ladrunoBuild`. That is why the consumer stamps it here. If the recorder later writes its
+own build hash (an UPPERCASE name, e.g. via the `-provenance` flag), the fork's attribute
+takes precedence and `opensees_build_sha` becomes redundant.
 
 **Partitioned sets.** The attributes are per file. `stage_names` describes that file's
 own `MODEL_STAGE[*]` (part files may differ, WP-165). A reader treats a partitioned set as
@@ -751,3 +762,7 @@ in STKO). Fiber section as today.
   names and their `COMPONENTS` per ndm, from `Ladruno_NodeResults.cpp`. This replaces the
   "e.g. `Ux,Uy,Uz`" example in the 2026-05-31 line as the reference. Doc only: no recorder
   change, no version bump.
+- 2026-10-19 — **apeGmsh G10: two more consumer `PROVENANCE` attributes (§7b.1).**
+  `opensees_backend` (`ladruno`/`stock`/`unknown`) and `opensees_build_sha` (the
+  `ladrunoBuild` hash). Both are optional, so older files stay valid. Doc only: no
+  recorder change, no version bump.
