@@ -50,6 +50,7 @@
 #include <OPS_Stream.h>
 #include <string.h>
 #include <math.h>
+#include <float.h>
 #include <elementAPI.h>
 
 static const double LRB_INVALID = 1.0e30;   // "fStarL not yet computed" sentinel
