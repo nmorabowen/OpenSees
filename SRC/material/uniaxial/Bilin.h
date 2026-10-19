@@ -45,7 +45,8 @@ class Bilin : public UniaxialMaterial
         double LamdaS,     double LamdaD, double LamdaA,  double LamdaK,    double Cs,        
         double Cd,         double Ca,         double Ck,      double Thetap_pos,double Thetap_neg,
         double Thetapc_pos,double Thetapc_neg,double K,       double KNeg,      double Thetau_pos,
-        double Thetau_neg, double PDPlus,     double PDNeg, double nFactor);  // Updated: Filipe Ribeiro and Andre Barbosa    
+        double Thetau_neg, double PDPlus,     double PDNeg, double nFactor,
+        bool useImplex = false);  // Updated: Filipe Ribeiro and Andre Barbosa / Ladruno IMPL-EX
 
      // Updated: Filipe Ribeiro and Andre Barbosa
   Bilin(int tag,                                                                                       
@@ -77,6 +78,19 @@ class Bilin : public UniaxialMaterial
   int getResponse(int responseID, Information &matInformation);
   
   virtual double getEnergy(void) { return CEnrgtot; } //by SAJalali
+
+  void setImplex(bool flag) { useImplex_ = flag; } // Ladruno
+  bool isImplex(void) const { return useImplex_; } // Ladruno
+  double getImplexError(void) const {              // Ladruno
+    if (!useImplex_) return 0.0;
+    double d = fP - fP_imp_;
+    if (d < 0.0) d = -d;
+    double m = (fP_imp_ < 0.0) ? -fP_imp_ : fP_imp_;
+    return d / (m + 1.0e-12);
+  }
+
+  bool ladrunoThreadSafeUpdate(void) const { return true; } // Ladruno
+  bool ladrunoThreadSafeForm(void) const   { return true; } // Ladruno
 
  protected:
  
@@ -197,6 +211,11 @@ class Bilin : public UniaxialMaterial
   double prodBeta, CprodBeta;			       // Updated: Filipe Ribeiro and Andre Barbosa
 
   int commitCalledOnce;
+  bool useImplex_;       // Ladruno: Oliver et al. (2008) IMPL-EX flag
+  double fP_imp_;        // Ladruno: implicit trial stress cached for commitState
+  double Tangent_imp_;   // Ladruno: implicit trial tangent cached for commitState
+  double dU_prev_;       // Ladruno: previous committed strain increment
+  double dtime_n_commit_;// Ladruno: previous committed time step dt_n
 };
 
 

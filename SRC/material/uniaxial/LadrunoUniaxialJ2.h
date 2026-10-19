@@ -76,6 +76,10 @@ class LadrunoUniaxialJ2 : public UniaxialMaterial
   double getStress(void)          { return Tstress; }
   double getTangent(void)         { return Ttangent; }
   double getInitialTangent(void)  { return E; }    // elastic — correct for modal
+  double getEnergy(void);
+
+  bool ladrunoThreadSafeUpdate(void) const { return true; }
+  bool ladrunoThreadSafeForm(void) const   { return true; }
 
   int commitState(void);
   int revertToLastCommit(void);
@@ -123,6 +127,9 @@ class LadrunoUniaxialJ2 : public UniaxialMaterial
   double CD;                    // committed Lemaitre damage (implicit)
   double CdD;                   // committed implicit damage increment (IMPL-EX extrapolation)
   double Cwp;                   // accumulated plastic work (fracture/LCF hook)
+  double Cstrain;               // committed total strain
+  double Cstress;               // committed nominal stress
+  double Ctangent;              // committed consistent tangent
 
   // trial history
   double TplasticStrain;

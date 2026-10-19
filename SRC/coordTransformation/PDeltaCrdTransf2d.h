@@ -106,8 +106,8 @@ private:
     double L;     // undeformed element length
     double ul14;  // Transverse local displacement offset of P-Delta
     
-    static Matrix Tlg;  // matrix that transforms from global to local coordinates
-    static Matrix kg;   // global stiffness matrix
+    static thread_local Matrix Tlg;  // matrix that transforms from global to local coordinates   // Ladruno
+    static thread_local Matrix kg;   // global stiffness matrix   // Ladruno
     
     double *nodeIInitialDisp, *nodeJInitialDisp;
     bool initialDispChecked;

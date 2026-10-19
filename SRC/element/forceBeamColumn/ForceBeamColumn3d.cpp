@@ -118,52 +118,92 @@ void* OPS_ForceBeamColumn3d()
     }
 
     // options
-    double mass = 0.0, tol=1e-12, subFac=10.0;
+    double mass = 0.0, tol=1e-12, subFac=10.0, userLch = 0.0;
     int maxIter = 10, numSub = 4;
+    int cMass = 0, lchMode = 0;
     numData = 1;
     while(OPS_GetNumRemainingInputArgs() > 0) {
 	const char* type = OPS_GetString();
 	if(strcmp(type,"-iter") == 0) {
-	    if(OPS_GetNumRemainingInputArgs() > 1) {
-		if(OPS_GetIntInput(&numData,&maxIter) < 0) {
-		    opserr << "WARNING invalid maxIter\n";
-		    return 0;
-		}
-		if(OPS_GetDoubleInput(&numData,&tol) < 0) {
-		    opserr << "WARNING invalid tol\n";
-		    return 0;
-		}
+	    if(OPS_GetNumRemainingInputArgs() < 2) {
+		opserr << "WARNING insufficient args for -iter in forceBeamColumn\n";
+		return 0;
+	    }
+	    if(OPS_GetIntInput(&numData,&maxIter) < 0) {
+		opserr << "WARNING invalid maxIter\n";
+		return 0;
+	    }
+	    if(OPS_GetDoubleInput(&numData,&tol) < 0) {
+		opserr << "WARNING invalid tol\n";
+		return 0;
 	    }
 	} else if(strcmp(type,"-subdivide") == 0) {
-	    if(OPS_GetNumRemainingInputArgs() > 1) {
-		if(OPS_GetIntInput(&numData,&numSub) < 0) {
-		    opserr << "WARNING invalid numSubdivide\n";
-		    return 0;
-		}
-		if(OPS_GetDoubleInput(&numData,&subFac) < 0) {
-		    opserr << "WARNING invalid subdivideFactor\n";
-		    return 0;
-		}
+	    if(OPS_GetNumRemainingInputArgs() < 2) {
+		opserr << "WARNING insufficient args for -subdivide in forceBeamColumn\n";
+		return 0;
+	    }
+	    if(OPS_GetIntInput(&numData,&numSub) < 0) {
+		opserr << "WARNING invalid numSubdivide\n";
+		return 0;
+	    }
+	    if(OPS_GetDoubleInput(&numData,&subFac) < 0) {
+		opserr << "WARNING invalid subdivideFactor\n";
+		return 0;
 	    }
 	} else if(strcmp(type,"-mass") == 0) {
-	    if(OPS_GetNumRemainingInputArgs() > 0) {
-		if(OPS_GetDoubleInput(&numData,&mass) < 0) {
-		    opserr << "WARNING invalid mass\n";
+	    if(OPS_GetNumRemainingInputArgs() < 1) {
+		opserr << "WARNING insufficient args for -mass in forceBeamColumn\n";
+		return 0;
+	    }
+	    if(OPS_GetDoubleInput(&numData,&mass) < 0 || mass < 0.0) {
+		opserr << "WARNING invalid mass\n";
+		return 0;
+	    }
+	} else if(strcmp(type,"-cMass") == 0 || strcmp(type,"-cmass") == 0) {
+	    cMass = 1;
+	} else if(strcmp(type,"-lMass") == 0 || strcmp(type,"-lmass") == 0) {
+	    cMass = 0;
+	} else if(strcmp(type,"-lch") == 0) {
+	    if(OPS_GetNumRemainingInputArgs() < 1) {
+		opserr << "WARNING insufficient args for -lch in forceBeamColumn\n";
+		return 0;
+	    }
+	    const char* lchOpt = OPS_GetString();
+	    if(strcmp(lchOpt,"ip") == 0 || strcmp(lchOpt,"IP") == 0 || strcmp(lchOpt,"wtL") == 0) {
+		lchMode = 0;
+		userLch = 0.0;
+	    } else if(strcmp(lchOpt,"element") == 0 || strcmp(lchOpt,"L") == 0) {
+		lchMode = 1;
+		userLch = 0.0;
+	    } else {
+		char* endptr = 0;
+		double val = strtod(lchOpt, &endptr);
+		if(endptr == lchOpt || *endptr != '\0' || !(val > 0.0)) {
+		    opserr << "WARNING invalid -lch value '" << lchOpt << "' in forceBeamColumn (expected ip, element, or positive number)\n";
 		    return 0;
 		}
+		lchMode = 2;
+		userLch = val;
 	    }
+	} else if(strcmp(type,"-totalElementLch") == 0) {
+	    lchMode = 1;
+	    userLch = 0.0;
 	}
     //Tang.S
     else if (strcmp(type, "-damp") == 0) {
-
-        if (OPS_GetNumRemainingInputArgs() > 0) {
-            if (OPS_GetIntInput(&numData, &dampingTag) < 0) return 0;
-            theDamping = OPS_getDamping(dampingTag);
-            if (theDamping == 0) {
-                opserr << "damping not found\n";
-                return 0;
-            }
+        if (OPS_GetNumRemainingInputArgs() < 1) {
+            opserr << "WARNING insufficient args for -damp in forceBeamColumn\n";
+            return 0;
         }
+        if (OPS_GetIntInput(&numData, &dampingTag) < 0) return 0;
+        theDamping = OPS_getDamping(dampingTag);
+        if (theDamping == 0) {
+            opserr << "damping not found\n";
+            return 0;
+        }
+    } else {
+        opserr << "WARNING unknown option '" << type << "' in forceBeamColumn\n";
+        return 0;
     }
     }
 
@@ -193,12 +233,14 @@ void* OPS_ForceBeamColumn3d()
 	sections[i] = OPS_getSectionForceDeformation(secTags(i));
 	if(sections[i] == 0) {
 	    opserr<<"section "<<secTags(i)<<"not found\n";
+	    delete [] sections;
 	    return 0;
 	}
     }
 
     Element *theEle =  new ForceBeamColumn3d(iData[0],iData[1],iData[2],secTags.Size(),sections,
-					     *bi,*theTransf,mass,maxIter,tol,numSub,subFac,theDamping);
+					     *bi,*theTransf,mass,maxIter,tol,numSub,subFac,theDamping,
+					     cMass,lchMode,userLch);
     delete [] sections;
     return theEle;
 }
@@ -206,8 +248,9 @@ void* OPS_ForceBeamColumn3d()
 void *OPS_ForceBeamColumn3d(const ID &info) {
     // data needed
     int iData[5];
-    double mass = 0.0, tol = 1e-12, subFac=10.0;
+    double mass = 0.0, tol = 1e-12, subFac=10.0, userLch = 0.0;
     int maxIter = 10, numSub = 4;
+    int cMass = 0, lchMode = 0;
     int numData;
     int dampingTag = 0;
     Damping* theDamping = 0;
@@ -250,47 +293,85 @@ void *OPS_ForceBeamColumn3d(const ID &info) {
         while (OPS_GetNumRemainingInputArgs() > 0) {
             const char *type = OPS_GetString();
             if (strcmp(type, "-iter") == 0) {
-                if (OPS_GetNumRemainingInputArgs() > 1) {
-                    if (OPS_GetIntInput(&numData, &maxIter) < 0) {
-                        opserr << "WARNING invalid maxIter\n";
-                        return 0;
-                    }
-                    if (OPS_GetDoubleInput(&numData, &tol) < 0) {
-                        opserr << "WARNING invalid tol\n";
-                        return 0;
-                    }
+                if (OPS_GetNumRemainingInputArgs() < 2) {
+                    opserr << "WARNING insufficient args for -iter in forceBeamColumn\n";
+                    return 0;
+                }
+                if (OPS_GetIntInput(&numData, &maxIter) < 0) {
+                    opserr << "WARNING invalid maxIter\n";
+                    return 0;
+                }
+                if (OPS_GetDoubleInput(&numData, &tol) < 0) {
+                    opserr << "WARNING invalid tol\n";
+                    return 0;
                 }
             } else if(strcmp(type,"-subdivide") == 0) {
-	      if(OPS_GetNumRemainingInputArgs() > 1) {
-		if(OPS_GetIntInput(&numData,&numSub) < 0) {
-		  opserr << "WARNING invalid numSubdivide\n";
-		  return 0;
-		}
-		if(OPS_GetDoubleInput(&numData,&subFac) < 0) {
-		  opserr << "WARNING invalid subdivideFactor\n";
-		  return 0;
-		}
-	      }
-	    }
-	    else if (strcmp(type, "-mass") == 0) {
-                if (OPS_GetNumRemainingInputArgs() > 0) {
-                    if (OPS_GetDoubleInput(&numData, &mass) < 0) {
-                        opserr << "WARNING invalid mass\n";
+                if(OPS_GetNumRemainingInputArgs() < 2) {
+                    opserr << "WARNING insufficient args for -subdivide in forceBeamColumn\n";
+                    return 0;
+                }
+                if(OPS_GetIntInput(&numData,&numSub) < 0) {
+                    opserr << "WARNING invalid numSubdivide\n";
+                    return 0;
+                }
+                if(OPS_GetDoubleInput(&numData,&subFac) < 0) {
+                    opserr << "WARNING invalid subdivideFactor\n";
+                    return 0;
+                }
+            } else if (strcmp(type, "-mass") == 0) {
+                if (OPS_GetNumRemainingInputArgs() < 1) {
+                    opserr << "WARNING insufficient args for -mass in forceBeamColumn\n";
+                    return 0;
+                }
+                if (OPS_GetDoubleInput(&numData, &mass) < 0 || mass < 0.0) {
+                    opserr << "WARNING invalid mass\n";
+                    return 0;
+                }
+            } else if (strcmp(type, "-cMass") == 0 || strcmp(type, "-cmass") == 0) {
+                cMass = 1;
+            } else if (strcmp(type, "-lMass") == 0 || strcmp(type, "-lmass") == 0) {
+                cMass = 0;
+            } else if (strcmp(type, "-totalElementLch") == 0) { // Ladruno WP-200
+                lchMode = 1;
+                userLch = 0.0;
+            } else if (strcmp(type, "-lch") == 0) {
+                if (OPS_GetNumRemainingInputArgs() < 1) {
+                    opserr << "WARNING insufficient args for -lch in forceBeamColumn\n";
+                    return 0;
+                }
+                const char* lchOpt = OPS_GetString();
+                if (strcmp(lchOpt, "ip") == 0 || strcmp(lchOpt, "IP") == 0 || strcmp(lchOpt, "wtL") == 0) {
+                    lchMode = 0;
+                    userLch = 0.0;
+                } else if (strcmp(lchOpt, "element") == 0 || strcmp(lchOpt, "L") == 0) {
+                    lchMode = 1;
+                    userLch = 0.0;
+                } else {
+                    char* endptr = 0;
+                    double val = strtod(lchOpt, &endptr);
+                    if (endptr == lchOpt || *endptr != '\0' || !(val > 0.0)) {
+                        opserr << "WARNING invalid -lch value '" << lchOpt << "' in forceBeamColumn (expected ip, element, or positive number)\n";
                         return 0;
                     }
+                    lchMode = 2;
+                    userLch = val;
                 }
-        }
-        //Tang.S
-        else if (strcmp(type, "-damp") == 0) {
-
-                if (OPS_GetNumRemainingInputArgs() > 0) {
-                    if (OPS_GetIntInput(&numData, &dampingTag) < 0) return 0;
-                    theDamping = OPS_getDamping(dampingTag);
-                    if (theDamping == 0) {
-                        opserr << "damping not found\n";
-                        return 0;
-                    }
+            }
+            //Tang.S
+            else if (strcmp(type, "-damp") == 0) {
+                if (OPS_GetNumRemainingInputArgs() < 1) {
+                    opserr << "WARNING insufficient args for -damp in forceBeamColumn\n";
+                    return 0;
                 }
+                if (OPS_GetIntInput(&numData, &dampingTag) < 0) return 0;
+                theDamping = OPS_getDamping(dampingTag);
+                if (theDamping == 0) {
+                    opserr << "damping not found\n";
+                    return 0;
+                }
+            } else {
+                opserr << "WARNING unknown option '" << type << "' in forceBeamColumn\n";
+                return 0;
             }
         }
     }
@@ -305,7 +386,7 @@ void *OPS_ForceBeamColumn3d(const ID &info) {
 
         // save the data for a mesh
         Vector &mdata = meshdata[info(1)];
-        mdata.resize(7);
+        mdata.resize(10);
         mdata(0) = iData[3];
         mdata(1) = iData[4];
         mdata(2) = mass;
@@ -313,6 +394,9 @@ void *OPS_ForceBeamColumn3d(const ID &info) {
         mdata(4) = maxIter;
 	mdata(5) = numSub;
 	mdata(6) = subFac;	
+	mdata(7) = cMass;
+	mdata(8) = lchMode;
+	mdata(9) = userLch;
         return &meshdata;
     }
 
@@ -338,6 +422,11 @@ void *OPS_ForceBeamColumn3d(const ID &info) {
         maxIter = mdata(4);
 	numSub = mdata(5);
 	subFac = mdata(6);
+	if (mdata.Size() >= 10) {
+	  cMass = (int)mdata(7);
+	  lchMode = (int)mdata(8);
+	  userLch = mdata(9);
+	}
     }
 
     // 5: create element
@@ -368,13 +457,15 @@ void *OPS_ForceBeamColumn3d(const ID &info) {
         sections[i] = OPS_getSectionForceDeformation(secTags(i));
         if (sections[i] == 0) {
             opserr << "section " << secTags(i) << "not found\n";
+            delete[] sections;
             return 0;
         }
     }
 
     Element *theEle = new ForceBeamColumn3d(
         iData[0], iData[1], iData[2], secTags.Size(), sections, *bi,
-        *theTransf, mass, maxIter, tol, numSub, subFac,theDamping);
+        *theTransf, mass, maxIter, tol, numSub, subFac,theDamping,
+        cMass, lchMode, userLch);
     delete[] sections;
     return theEle;
 }
@@ -384,14 +475,14 @@ void *OPS_ForceBeamColumn3d(const ID &info) {
 ForceBeamColumn3d::ForceBeamColumn3d(): 
   Element(0,ELE_TAG_ForceBeamColumn3d), connectedExternalNodes(2), 
   beamIntegr(0), numSections(0), sections(0), crdTransf(0),
-  rho(0.0), maxIters(0), tol(0.0),
+  rho(0.0), maxIters(0), tol(0.0), cMass(0), lchMode(0), userLch(0.0),
   initialFlag(0),
   kv(NEBD,NEBD), Se(NEBD),
   kvcommit(NEBD,NEBD), Secommit(NEBD),
   fs(0), vs(0), Ssr(0), vscommit(0),
   numEleLoads(0), sizeEleLoads(0), eleLoads(0), eleLoadFactors(0), load(12),
   Ki(0), isTorsion(false), maxSubdivisions(1), subdivideFactor(1.0), parameterID(0),
-  theDamping(0)
+  theDamping(0), current_section_lch(0.0)
 {
   load.Zero();
 
@@ -408,17 +499,18 @@ ForceBeamColumn3d::ForceBeamColumn3d (int tag, int nodeI, int nodeJ,
 				      CrdTransf &coordTransf, double massDensPerUnitLength,
 				      int maxNumIters, double tolerance,
 				      int maxNumSub, double subFac,
-				      Damping *damping):
+				      Damping *damping,
+				      int cm, int lchM, double uLch):
   Element(tag,ELE_TAG_ForceBeamColumn3d), connectedExternalNodes(2),
   beamIntegr(0), numSections(0), sections(0), crdTransf(0),
-  rho(massDensPerUnitLength),maxIters(maxNumIters), tol(tolerance), 
+  rho(massDensPerUnitLength),maxIters(maxNumIters), tol(tolerance), cMass(cm), lchMode(lchM), userLch(uLch),
   initialFlag(0),
   kv(NEBD,NEBD), Se(NEBD), 
   kvcommit(NEBD,NEBD), Secommit(NEBD),
   fs(0), vs(0),Ssr(0), vscommit(0),
   numEleLoads(0), sizeEleLoads(0), eleLoads(0), eleLoadFactors(0), load(12),
   Ki(0), isTorsion(false), maxSubdivisions(maxNumSub), subdivideFactor(subFac), parameterID(0),
-  theDamping(0)
+  theDamping(0), current_section_lch(uLch > 0.0 ? uLch : 0.0)
 {
   if (maxSubdivisions < 1)
     maxSubdivisions = 1;
@@ -956,6 +1048,7 @@ void
   int
   ForceBeamColumn3d::update()
   {
+    ops_TheActiveElement = this; // Ladruno WP-200
     // if have completed a recvSelf() - do a revertToLastCommit
     // to get Ssr, etc. set correctly
     if (initialFlag == 2)
@@ -970,7 +1063,7 @@ void
     static thread_local Vector dv(NEBD);   // Ladruno WP-192
     dv = crdTransf->getBasicIncrDeltaDisp();    
 
-    if (initialFlag != 0 && dv.Norm() <= DBL_EPSILON && numEleLoads == 0)
+    if (initialFlag == 1 && dv.Norm() <= DBL_EPSILON && numEleLoads == 0)
       return 0;
 
     static thread_local Vector vin(NEBD);   // Ladruno WP-192
@@ -1076,8 +1169,13 @@ void
 	  double xL1 = xL-1.0;
 	  double wtL = wt[i]*L;
 
-      // store the length of the current integration point
-      current_section_lch = wtL;
+      // Ladruno: store the characteristic length of the current integration point
+      if (lchMode == 1)
+        current_section_lch = L;
+      else if (lchMode == 2)
+        current_section_lch = userLch;
+      else
+        current_section_lch = wtL;
 	  
 	  // calculate total section forces
 	  // Ss = b*Se + bp*currDistrLoad;
@@ -1308,9 +1406,9 @@ void
 	      }
 	    }
 
-        // reset it to the default (whole length) in case the getChatacteristiLength function
-        // is called in the wrong place
-        current_section_lch = L;
+        // reset it to the default (whole length or userLch) in case getCharacteristicLength
+        // is called outside update()
+        current_section_lch = (lchMode == 2) ? userLch : L;
 
 	    if (!isTorsion) {
 	      f(5,5) = DefaultLoverGJ;
@@ -1487,10 +1585,42 @@ void
   { 
     theMatrix.Zero();
 
+    if (rho == 0.0)
+      return theMatrix;
+
     double L = crdTransf->getInitialLength();
-    if (rho != 0.0)
+    if (cMass == 0) {
+      // lumped mass matrix
       theMatrix(0,0) = theMatrix(1,1) = theMatrix(2,2) =
 	theMatrix(6,6) = theMatrix(7,7) = theMatrix(8,8) = 0.5*L*rho;
+    } else {
+      // Ladruno: consistent mass matrix (Euler-Bernoulli local 12x12 transformed to global)
+      static thread_local Matrix ml(12,12);
+      ml.Zero();
+      double m = rho*L/420.0;
+      ml(0,0) = ml(6,6) = m*140.0;
+      ml(0,6) = ml(6,0) = m*70.0;
+
+      ml(2,2) = ml(8,8) = m*156.0;
+      ml(2,8) = ml(8,2) = m*54.0;
+      ml(4,4) = ml(10,10) = m*4.0*L*L;
+      ml(4,10) = ml(10,4) = -m*3.0*L*L;
+      ml(2,4) = ml(4,2) = -m*22.0*L;
+      ml(8,10) = ml(10,8) = -ml(2,4);
+      ml(2,10) = ml(10,2) = m*13.0*L;
+      ml(4,8) = ml(8,4) = -ml(2,10);
+
+      ml(1,1) = ml(7,7) = m*156.0;
+      ml(1,7) = ml(7,1) = m*54.0;
+      ml(5,5) = ml(11,11) = m*4.0*L*L;
+      ml(5,11) = ml(11,5) = -m*3.0*L*L;
+      ml(1,5) = ml(5,1) = m*22.0*L;
+      ml(7,11) = ml(11,7) = -ml(1,5);
+      ml(1,11) = ml(11,1) = -m*13.0*L;
+      ml(5,7) = ml(7,5) = -ml(1,11);
+
+      theMatrix = crdTransf->getGlobalMatrixFromLocal(ml);
+    }
 
     return theMatrix;
   }
@@ -1909,15 +2039,24 @@ ForceBeamColumn3d::computeSectionForceSensitivity(Vector &dspdh, int isec,
     const Vector &Raccel1 = theNodes[0]->getRV(accel);
     const Vector &Raccel2 = theNodes[1]->getRV(accel);    
 
-    double L = crdTransf->getInitialLength();
-    double m = 0.5*rho*L;
+    if (cMass == 0) {
+      double L = crdTransf->getInitialLength();
+      double m = 0.5*rho*L;
 
-    load(0) -= m*Raccel1(0);
-    load(1) -= m*Raccel1(1);
-    load(2) -= m*Raccel1(2);
-    load(6) -= m*Raccel2(0);
-    load(7) -= m*Raccel2(1);
-    load(8) -= m*Raccel2(2);
+      load(0) -= m*Raccel1(0);
+      load(1) -= m*Raccel1(1);
+      load(2) -= m*Raccel1(2);
+      load(6) -= m*Raccel2(0);
+      load(7) -= m*Raccel2(1);
+      load(8) -= m*Raccel2(2);
+    } else {
+      static thread_local Vector Raccel(12);
+      for (int i = 0; i < 6; i++) {
+        Raccel(i)   = Raccel1(i);
+        Raccel(i+6) = Raccel2(i);
+      }
+      load.addMatrixVector(1.0, this->getMass(), Raccel, -1.0);
+    }
 
     return 0;
   }
@@ -1925,36 +2064,48 @@ ForceBeamColumn3d::computeSectionForceSensitivity(Vector &dspdh, int isec,
   const Vector &
   ForceBeamColumn3d::getResistingForceIncInertia()
   {	
-    // Compute the current resisting force
-    theVector = this->getResistingForce();
+    static thread_local Vector res(12);
 
-    if (theDamping) theVector += this->getDampingForce();
+    // Compute the current resisting force
+    res = this->getResistingForce();
+
+    if (theDamping) res += this->getDampingForce();
 
     if (rho != 0.0) {
       const Vector &accel1 = theNodes[0]->getTrialAccel();
       const Vector &accel2 = theNodes[1]->getTrialAccel();
 
-      double L = crdTransf->getInitialLength();
-      double m = 0.5*rho*L;
+      if (cMass == 0) {
+        double L = crdTransf->getInitialLength();
+        double m = 0.5*rho*L;
 
-      theVector(0) += m*accel1(0);
-      theVector(1) += m*accel1(1);
-      theVector(2) += m*accel1(2);
-      theVector(6) += m*accel2(0);
-      theVector(7) += m*accel2(1);
-      theVector(8) += m*accel2(2);
+        res(0) += m*accel1(0);
+        res(1) += m*accel1(1);
+        res(2) += m*accel1(2);
+        res(6) += m*accel2(0);
+        res(7) += m*accel2(1);
+        res(8) += m*accel2(2);
+      } else {
+        static thread_local Vector accel(12);
+        for (int i = 0; i < 6; i++) {
+          accel(i)   = accel1(i);
+          accel(i+6) = accel2(i);
+        }
+        res.addMatrixVector(1.0, this->getMass(), accel, 1.0);
+      }
 
       // add the damping forces if rayleigh damping
       if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
-	theVector += this->getRayleighDampingForces();
+	res += this->getRayleighDampingForces();
 
     } else {
 
       // add the damping forces if rayleigh damping
       if (betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
-	theVector += this->getRayleighDampingForces();
+	res += this->getRayleighDampingForces();
     }
 
+    theVector = res;
     return theVector;
   }
 
@@ -1975,6 +2126,7 @@ ForceBeamColumn3d::computeSectionForceSensitivity(Vector &dspdh, int isec,
     idData(5) = initialFlag;
     idData(6) = (isTorsion) ? 1 : 0;
     idData(13) = maxSubdivisions;
+    idData(14) = cMass + 2*lchMode;
     
     idData(7) = crdTransf->getClassTag();
     int crdTransfDbTag  = crdTransf->getDbTag();
@@ -2069,7 +2221,7 @@ ForceBeamColumn3d::computeSectionForceSensitivity(Vector &dspdh, int isec,
        secDefSize   += size;
     }
 
-    Vector dData(1+1+1+NEBD+NEBD*NEBD+secDefSize + 4); 
+    Vector dData(1+1+1+NEBD+NEBD*NEBD+secDefSize + 4 + 1); 
     loc = 0;
 
     // place double variables into Vector
@@ -2100,6 +2252,7 @@ ForceBeamColumn3d::computeSectionForceSensitivity(Vector &dspdh, int isec,
     dData(loc++) = betaK;
     dData(loc++) = betaK0;
     dData(loc++) = betaKc;
+    dData(loc++) = userLch;
     
     if (theChannel.sendVector(dbTag, commitTag, dData) < 0) {
        opserr << "ForceBeamColumn3d::sendSelf() - failed to send Vector data\n";
@@ -2140,6 +2293,8 @@ ForceBeamColumn3d::computeSectionForceSensitivity(Vector &dspdh, int isec,
     initialFlag = idData(5);
     isTorsion = (idData(6) == 1) ? true : false;
     maxSubdivisions = idData(13);
+    cMass = idData(14) & 1;
+    lchMode = idData(14) >> 1;
     
     int crdTransfClassTag = idData(7);
     int crdTransfDbTag = idData(8);
@@ -2342,7 +2497,7 @@ ForceBeamColumn3d::computeSectionForceSensitivity(Vector &dspdh, int isec,
        secDefSize   += size;
     }
 
-    Vector dData(1+1+1+NEBD+NEBD*NEBD+secDefSize+4);   
+    Vector dData(1+1+1+NEBD+NEBD*NEBD+secDefSize+4+1);   
 
     if (theChannel.recvVector(dbTag, commitTag, dData) < 0)  {
       opserr << "ForceBeamColumn3d::recvSelf() - failed to send Vector data\n";
@@ -2386,6 +2541,7 @@ ForceBeamColumn3d::computeSectionForceSensitivity(Vector &dspdh, int isec,
     betaK = dData(loc++);
     betaK0 = dData(loc++);
     betaKc = dData(loc++);
+    userLch = dData(loc++);
     
     initialFlag = 2;  
 
@@ -3703,6 +3859,11 @@ ForceBeamColumn3d::getResponse(int responseID, Information &eleInfo)
 
 double ForceBeamColumn3d::getCharacteristicLength(void)
 {
+    // Ladruno WP-200: allow overriding characteristic length via -lch / -totalElementLch
+    if (lchMode == 1)
+        return crdTransf ? crdTransf->getInitialLength() : Element::getCharacteristicLength();
+    if (lchMode == 2 && userLch > 0.0)
+        return userLch;
     // The default implementation of Element::getCharacteristicLength()
     // returns the whole element length.
     // However, FB element localizes only in a 1 integration point
@@ -3891,6 +4052,10 @@ ForceBeamColumn3d::setParameter(const char **argv, int argc, Parameter &param)
     param.setValue(rho);
     return param.addObject(1, this);
   }
+  if (strcmp(argv[0],"lch") == 0) {
+    param.setValue(userLch);
+    return param.addObject(3, this);
+  }
 
   // damping
   if (strstr(argv[0], "damp") != 0) {
@@ -3921,7 +4086,10 @@ ForceBeamColumn3d::setParameter(const char **argv, int argc, Parameter &param)
 	}
       }
 
-      return sections[sectionNum]->setParameter(&argv[2], argc-2, param);
+      int res = sections[sectionNum]->setParameter(&argv[2], argc-2, param);
+      if (res != -1)
+        param.addObject(2, this);
+      return res;
     }
   }
 
@@ -3934,8 +4102,12 @@ ForceBeamColumn3d::setParameter(const char **argv, int argc, Parameter &param)
     // Get section number
     int sectionNum = atoi(argv[1]);
    
-    if (sectionNum > 0 && sectionNum <= numSections)
-      return sections[sectionNum-1]->setParameter(&argv[2], argc-2, param);
+    if (sectionNum > 0 && sectionNum <= numSections) {
+      int res = sections[sectionNum-1]->setParameter(&argv[2], argc-2, param);
+      if (res != -1)
+        param.addObject(2, this);
+      return res;
+    }
 
     else
       return -1;
@@ -3954,6 +4126,9 @@ ForceBeamColumn3d::setParameter(const char **argv, int argc, Parameter &param)
 	result = ok;
     }
 
+    if (result != -1)
+      param.addObject(2, this);
+
     return result;
   }
 
@@ -3962,7 +4137,10 @@ ForceBeamColumn3d::setParameter(const char **argv, int argc, Parameter &param)
     if (argc < 2)
       return -1;
 
-    return beamIntegr->setParameter(&argv[1], argc-1, param);
+    int res = beamIntegr->setParameter(&argv[1], argc-1, param);
+    if (res != -1)
+      param.addObject(2, this);
+    return res;
   }
 
   // Default, send to everything
@@ -3978,6 +4156,9 @@ ForceBeamColumn3d::setParameter(const char **argv, int argc, Parameter &param)
   if (ok != -1)
     result = ok;
 
+  if (result != -1)
+    param.addObject(2, this);
+
   return result;
 }
 
@@ -3986,6 +4167,42 @@ ForceBeamColumn3d::updateParameter (int parameterID, Information &info)
 {
   if (parameterID == 1) {    
     this->rho = info.theDouble;
+    return 0;
+  }
+  else if (parameterID == 2 || parameterID == 3) {
+    if (parameterID == 3 && info.theDouble > 0.0) {
+      userLch = info.theDouble;
+      lchMode = 2;
+      current_section_lch = userLch;
+    }
+    // Ladruno WP-200: child section/integration parameter updated; invalidate cached
+    // element flexibility/stiffness and re-run state determination if in domain.
+    if (Ki != 0) {
+      delete Ki;
+      Ki = 0;
+    }
+    if (theNodes[0] != 0 && theNodes[1] != 0) {
+      ops_TheActiveElement = this; // Ladruno WP-200
+      if (initialFlag != 0) {
+        double L = crdTransf->getInitialLength();
+        double wt[maxNumSections];
+        beamIntegr->getSectionWeights(numSections, L, wt);
+        for (int i = 0; i < numSections; i++) {
+          if (lchMode == 1)
+            current_section_lch = L;
+          else if (lchMode == 2)
+            current_section_lch = userLch;
+          else
+            current_section_lch = wt[i] * L;
+          sections[i]->setTrialSectionDeformation(vs[i]);
+          Ssr[i] = sections[i]->getStressResultant();
+          fs[i]  = sections[i]->getSectionFlexibility();
+        }
+        current_section_lch = (lchMode == 2) ? userLch : L;
+        initialFlag = 3;
+      }
+      return this->update();
+    }
     return 0;
   }
   else
@@ -4013,9 +4230,35 @@ ForceBeamColumn3d::getMassSensitivity(int gradNumber)
     theMatrix.Zero();
 
     double L = crdTransf->getInitialLength();
-    if (rho != 0.0 && parameterID == 1)
-      theMatrix(0,0) = theMatrix(1,1) = theMatrix(2,2) =
-	theMatrix(6,6) = theMatrix(7,7) = theMatrix(8,8) = 0.5*L;
+    if (rho != 0.0 && parameterID == 1) {
+      if (cMass == 0) {
+        theMatrix(0,0) = theMatrix(1,1) = theMatrix(2,2) =
+	  theMatrix(6,6) = theMatrix(7,7) = theMatrix(8,8) = 0.5*L;
+      } else {
+        // Ladruno WP-200: consistent mass sensitivity
+        static thread_local Matrix ml(12,12);
+        double m = L/420.0;
+        ml(0,0) = ml(6,6) = m*140.0;
+        ml(0,6) = ml(6,0) = m*70.0;
+        ml(1,1) = ml(7,7) = m*156.0;
+        ml(1,7) = ml(7,1) = m*54.0;
+        ml(5,5) = ml(11,11) = m*4.0*L*L;
+        ml(5,11) = ml(11,5) = -m*3.0*L*L;
+        ml(1,5) = ml(5,1) = m*22.0*L;
+        ml(7,11) = ml(11,7) = -ml(1,5);
+        ml(1,11) = ml(11,1) = -m*13.0*L;
+        ml(5,7) = ml(7,5) = -ml(1,11);
+        ml(2,2) = ml(8,8) = m*156.0;
+        ml(2,8) = ml(8,2) = m*54.0;
+        ml(4,4) = ml(10,10) = m*4.0*L*L;
+        ml(4,10) = ml(10,4) = -m*3.0*L*L;
+        ml(2,4) = ml(4,2) = -m*22.0*L;
+        ml(8,10) = ml(10,8) = -ml(2,4);
+        ml(2,10) = ml(10,2) = m*13.0*L;
+        ml(4,8) = ml(8,4) = -ml(2,10);
+        theMatrix = crdTransf->getGlobalMatrixFromLocal(ml);
+      }
+    }
 
     return theMatrix;
 }

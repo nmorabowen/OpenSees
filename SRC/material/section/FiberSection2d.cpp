@@ -367,8 +367,8 @@ FiberSection2d::setTrialSectionDeformation (const Vector &deforms)
   double d0 = deforms(0);
   double d1 = deforms(1);
 
-  static double fiberLocs[10000];
-  static double fiberArea[10000];
+  static thread_local double fiberLocs[10000]; // Ladruno
+  static thread_local double fiberArea[10000]; // Ladruno
 
   if (sectionIntegr != 0) {
     sectionIntegr->getFiberLocations(numFibers, fiberLocs);
@@ -416,12 +416,12 @@ FiberSection2d::getSectionDeformation(void)
 const Matrix&
 FiberSection2d::getInitialTangent(void)
 {
-  static double kInitial[4];
-  static Matrix kInitialMatrix(kInitial, 2, 2);
+  static thread_local double kInitial[4]; // Ladruno
+  static thread_local Matrix kInitialMatrix(kInitial, 2, 2); // Ladruno
   kInitial[0] = 0.0; kInitial[1] = 0.0; kInitial[2] = 0.0; kInitial[3] = 0.0;
 
-  static double fiberLocs[10000];
-  static double fiberArea[10000];
+  static thread_local double fiberLocs[10000]; // Ladruno
+  static thread_local double fiberArea[10000]; // Ladruno
   
   if (sectionIntegr != 0) {
     sectionIntegr->getFiberLocations(numFibers, fiberLocs);
@@ -555,8 +555,8 @@ FiberSection2d::revertToLastCommit(void)
   kData[0] = 0.0; kData[1] = 0.0; kData[2] = 0.0; kData[3] = 0.0;
   sData[0] = 0.0; sData[1] = 0.0;
   
-  static double fiberLocs[10000];
-  static double fiberArea[10000];
+  static thread_local double fiberLocs[10000]; // Ladruno
+  static thread_local double fiberArea[10000]; // Ladruno
 
   if (sectionIntegr != 0) {
     sectionIntegr->getFiberLocations(numFibers, fiberLocs);
@@ -605,8 +605,8 @@ FiberSection2d::revertToStart(void)
   kData[0] = 0.0; kData[1] = 0.0; kData[2] = 0.0; kData[3] = 0.0;
   sData[0] = 0.0; sData[1] = 0.0;
   
-  static double fiberLocs[10000];
-  static double fiberArea[10000];
+  static thread_local double fiberLocs[10000]; // Ladruno
+  static thread_local double fiberArea[10000]; // Ladruno
 
   if (sectionIntegr != 0) {
     sectionIntegr->getFiberLocations(numFibers, fiberLocs);
@@ -653,7 +653,7 @@ FiberSection2d::sendSelf(int commitTag, Channel &theChannel)
 
   // create an id to send objects tag and numFibers, 
   //     size 7 so no conflict with matData below if 3 fibers
-  static ID data(7);
+  static thread_local ID data(7); // Ladruno
   data(0) = this->getTag();
   data(1) = numFibers;
   data(2) = computeCentroid ? 1 : 0;
@@ -1474,7 +1474,7 @@ FiberSection2d::commitSensitivity(const Vector& defSens,
 //by SAJalali
 double FiberSection2d::getEnergy() const
 {
-	static double fiberArea[10000];
+	static thread_local double fiberArea[10000]; // Ladruno
 
 	if (sectionIntegr != 0) {
 		sectionIntegr->getFiberWeights(numFibers, fiberArea);
@@ -1491,4 +1491,27 @@ double FiberSection2d::getEnergy() const
 		energy += A * theMaterials[i]->getEnergy();
 	}
 	return energy;
+}
+
+// Ladruno: per-type opt-in (matching FiberSection3d).
+bool
+FiberSection2d::ladrunoThreadSafeUpdate(void) const
+{
+  if (sectionIntegr != 0)
+    return false;
+  for (int i = 0; i < numFibers; i++)
+    if (theMaterials[i] == 0 || !theMaterials[i]->ladrunoThreadSafeUpdate())
+      return false;
+  return true;
+}
+
+bool
+FiberSection2d::ladrunoThreadSafeForm(void) const
+{
+  if (!this->ladrunoThreadSafeUpdate())
+    return false;
+  for (int i = 0; i < numFibers; i++)
+    if (!theMaterials[i]->ladrunoThreadSafeForm())
+      return false;
+  return true;
 }

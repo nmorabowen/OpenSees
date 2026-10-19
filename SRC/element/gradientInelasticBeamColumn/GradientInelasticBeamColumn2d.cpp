@@ -261,7 +261,7 @@ GradientInelasticBeamColumn2d::GradientInelasticBeamColumn2d(int tag, int nodeI,
 	}
 
 	double *secX = new double[numSections];
-	beamIntegr->getSectionLocations(numSections, L, secX);	// relative locations of sections (x/L)
+	beamIntegr->getSectionLocations(numSections, 1.0, secX);	// relative locations of sections (x/L) // Ladruno: L is 0.0 before setDomain; pass 1.0
 
 	for (int i = 0; i < numSections; i++) {
 		if (secX[i] >= 1.0 - secLR2)

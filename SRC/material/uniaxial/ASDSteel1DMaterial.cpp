@@ -1,4 +1,4 @@
-﻿/* ****************************************************************** **
+/* ****************************************************************** **
 **    OpenSees - Open System for Earthquake Engineering Simulation    **
 **          Pacific Earthquake Engineering Research Center            **
 **                                                                    **
@@ -210,7 +210,7 @@ namespace {
 
 	public:
 		static Globals& instance() {
-			static Globals _instance;
+			static thread_local Globals _instance; // Ladruno: thread_local scratch workspace
 			return _instance;
 		}
 
@@ -2712,7 +2712,7 @@ double ASDSteel1DMaterial::getEnergy(void)
 
 const Vector& ASDSteel1DMaterial::getBucklingIndicator() const
 {
-	static Vector d(1);
+	static thread_local Vector d(1); // Ladruno
 	d.Zero();
 	d(0) = pdata->rve_m.sv.UG(6);
 	return d;
@@ -2720,7 +2720,7 @@ const Vector& ASDSteel1DMaterial::getBucklingIndicator() const
 
 const Vector& ASDSteel1DMaterial::getDamage() const
 {
-	static Vector d(1);
+	static thread_local Vector d(1); // Ladruno
 	d.Zero();
 	if (params.fracture) {
 		double eupl = params.eu - params.sy / params.E;
@@ -2743,7 +2743,7 @@ const Vector& ASDSteel1DMaterial::getDamage() const
 
 const Vector& ASDSteel1DMaterial::getEqPlStrain() const
 {
-	static Vector d(1);
+	static thread_local Vector d(1); // Ladruno
 	d.Zero();
 	d(0) = params.buckling ? pdata->rve_m.e2.section.series.steel_material.epl : pdata->steel_comp.steel_material.epl;
 	return d;
@@ -2751,7 +2751,7 @@ const Vector& ASDSteel1DMaterial::getEqPlStrain() const
 
 const Vector& ASDSteel1DMaterial::getSlipResponse() const
 {
-	static Vector d(2);
+	static thread_local Vector d(2); // Ladruno
 	d.Zero();
 	if (params.slip) {
 		if (params.buckling) {
@@ -2768,7 +2768,7 @@ const Vector& ASDSteel1DMaterial::getSlipResponse() const
 
 const Vector& ASDSteel1DMaterial::getTimeIncrements() const
 {
-	static Vector d(3);
+	static thread_local Vector d(3); // Ladruno
 	d(0) = dtime_n;
 	d(1) = dtime_n_commit;
 	d(2) = dtime_0;
@@ -2777,7 +2777,7 @@ const Vector& ASDSteel1DMaterial::getTimeIncrements() const
 
 const Vector& ASDSteel1DMaterial::getImplexError() const
 {
-	static Vector d(1);
+	static thread_local Vector d(1); // Ladruno
 	d(0) = implex_error;
 	return d;
 }
