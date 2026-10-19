@@ -56,13 +56,13 @@ Journal of Structural Engineering, 133(2):155-165.
 #include <CorotCrdTransf2d.h>
 
 // initialize static variables
-Matrix CorotCrdTransf2d::Tlg(6,6);
-Matrix CorotCrdTransf2d::Tbl(3,6);
-Vector CorotCrdTransf2d::uxg(3); 
-Vector CorotCrdTransf2d::pg(6); 
-Vector CorotCrdTransf2d::dub(3); 
-Vector CorotCrdTransf2d::Dub(3); 
-Matrix CorotCrdTransf2d::kg(6,6);
+thread_local Matrix CorotCrdTransf2d::Tlg(6,6);   // Ladruno
+thread_local Matrix CorotCrdTransf2d::Tbl(3,6);   // Ladruno
+thread_local Vector CorotCrdTransf2d::uxg(3);   // Ladruno
+thread_local Vector CorotCrdTransf2d::pg(6);   // Ladruno
+thread_local Vector CorotCrdTransf2d::dub(3);   // Ladruno
+thread_local Vector CorotCrdTransf2d::Dub(3);   // Ladruno
+thread_local Matrix CorotCrdTransf2d::kg(6,6);   // Ladruno
 
 void* OPS_CorotCrdTransf2d()
 {
@@ -233,7 +233,7 @@ CorotCrdTransf2d::update(void)
     const Vector &dispI = nodeIPtr->getTrialDisp();
     const Vector &dispJ = nodeJPtr->getTrialDisp();
     
-    static Vector ug(6);    
+    static thread_local Vector ug(6);   // Ladruno
     for (int i = 0; i < 3; i++) {
         ug(i  ) = dispI(i);
         ug(i+3) = dispJ(i);
@@ -259,7 +259,7 @@ CorotCrdTransf2d::update(void)
     }
     
     // transform global end displacements to local coordinates
-    static Vector ul(6);
+    static thread_local Vector ul(6);   // Ladruno
     
     ul(0) = cosTheta*ug(0) + sinTheta*ug(1);
     ul(1) = cosTheta*ug(1) - sinTheta*ug(0);
@@ -286,7 +286,7 @@ int
 CorotCrdTransf2d::compElemtLengthAndOrient(void)
 {
     // element projection
-    static Vector dx(2);
+    static thread_local Vector dx(2);   // Ladruno
     
     if (nodeOffsets == true) 
       dx = (nodeJPtr->getCrds() + nodeJOffset) - (nodeIPtr->getCrds() + nodeIOffset);  
@@ -449,14 +449,14 @@ CorotCrdTransf2d::getBasicTrialVel(void)
 	const Vector &vel1 = nodeIPtr->getTrialVel();
 	const Vector &vel2 = nodeJPtr->getTrialVel();
 	
-	static double vg[6];
+	static thread_local double vg[6];   // Ladruno
 	for (int i = 0; i < 3; i++) {
 		vg[i]   = vel1(i);
 		vg[i+3] = vel2(i);
 	}
 	
     // transform global end velocities to local coordinates
-    static Vector vl(6);
+    static thread_local Vector vl(6);   // Ladruno
 
     vl(0) = cosTheta*vg[0] + sinTheta*vg[1];
     vl(1) = cosTheta*vg[1] - sinTheta*vg[0];
@@ -469,7 +469,7 @@ CorotCrdTransf2d::getBasicTrialVel(void)
     Lydot = vl(4) - vl(1);
 
     // transform local velocities to basic coordinates
-    static Vector vb(3);
+    static thread_local Vector vb(3);   // Ladruno
 	
     vb(0) = (Lx*Lxdot + Ly*Lydot)/Ln;
     vb(1) = vl(2) - (Lx*Lydot - Ly*Lxdot)/pow(Ln,2);
@@ -486,7 +486,7 @@ CorotCrdTransf2d::getBasicTrialAccel(void)
 	const Vector &vel1 = nodeIPtr->getTrialVel();
 	const Vector &vel2 = nodeJPtr->getTrialVel();
 	
-	static double vg[6];
+	static thread_local double vg[6];   // Ladruno
 	int i;
 	for (i = 0; i < 3; i++) {
 		vg[i]   = vel1(i);
@@ -494,7 +494,7 @@ CorotCrdTransf2d::getBasicTrialAccel(void)
 	}
 	
     // transform global end velocities to local coordinates
-    static Vector vl(6);
+    static thread_local Vector vl(6);   // Ladruno
 
     vl(0) = cosTheta*vg[0] + sinTheta*vg[1];
     vl(1) = cosTheta*vg[1] - sinTheta*vg[0];
@@ -510,14 +510,14 @@ CorotCrdTransf2d::getBasicTrialAccel(void)
 	const Vector &accel1 = nodeIPtr->getTrialAccel();
 	const Vector &accel2 = nodeJPtr->getTrialAccel();
 	
-	static double ag[6];
+	static thread_local double ag[6];   // Ladruno
 	for (i = 0; i < 3; i++) {
 		ag[i]   = accel1(i);
 		ag[i+3] = accel2(i);
 	}
 	
     // transform global end accelerations to local coordinates
-    static Vector al(6);
+    static thread_local Vector al(6);   // Ladruno
 
     al(0) = cosTheta*ag[0] + sinTheta*ag[1];
     al(1) = cosTheta*ag[1] - sinTheta*ag[0];
@@ -530,7 +530,7 @@ CorotCrdTransf2d::getBasicTrialAccel(void)
     Lydotdot = al(4) - al(1);
 
     // transform local accelerations to basic coordinates
-    static Vector ab(3);
+    static thread_local Vector ab(3);   // Ladruno
 	
     ab(0) = (Lxdot*Lxdot + Lx*Lxdotdot + Ly*Lydotdot + Lydot*Lydot)/Ln
           - pow(Lx*Lxdot + Ly*Lydot,2)/pow(Ln,3);
@@ -548,7 +548,7 @@ CorotCrdTransf2d::getGlobalResistingForce(const Vector &pb, const Vector &p0)
     
     // transform resisting forces from the basic system to local coordinates
     this->compTransfMatrixBasicLocal(Tbl);
-    static Vector pl(6);
+    static thread_local Vector pl(6);   // Ladruno
     pl.addMatrixTransposeVector(0.0, Tbl, pb, 1.0);    // pl = Tbl ^ pb;
     
     // add end forces due to element p0 loads
@@ -591,7 +591,7 @@ const Matrix &
 CorotCrdTransf2d::getGlobalStiffMatrix(const Matrix &kb, const Vector &pb)
 {
     // transform tangent stiffness matrix from the basic system to local coordinates
-    static Matrix kl(6,6);
+    static thread_local Matrix kl(6,6);   // Ladruno
     this->compTransfMatrixBasicLocal(Tbl);
     kl.addMatrixTripleProduct(0.0, Tbl, kb, 1.0);      // kl = Tbl ^ kb * Tbl;
     
@@ -751,8 +751,8 @@ const Matrix &
 CorotCrdTransf2d::getInitialGlobalStiffMatrix(const Matrix &kb)
 {
     // transform tangent stiffness matrix from the basic system to local coordinates
-    static Matrix kl(6,6);
-    static Matrix T(3,6);
+    static thread_local Matrix kl(6,6);   // Ladruno
+    static thread_local Matrix T(3,6);   // Ladruno
     
     T(0,0) = -1.0;
     T(1,0) = 0;
@@ -942,7 +942,7 @@ CorotCrdTransf2d::getGeomStiffMatrix(const Vector &pb) const
     c2 = cosAlpha*cosAlpha;
     cs = sinAlpha*cosAlpha;
     
-    static Matrix kg0(6,6), kg12(6,6);
+    static thread_local Matrix kg0(6,6), kg12(6,6);   // Ladruno
     kg0.Zero();
     
     kg12.Zero();
@@ -971,7 +971,7 @@ CorotCrdTransf2d::getGeomStiffMatrix(const Vector &pb) const
     
     kg12 *= (pb(1)+pb(2))/(Ln*Ln);
     
-    static Matrix kg(6,6);
+    static thread_local Matrix kg(6,6);   // Ladruno
     // kg = kg0 + kg12;
     kg = kg0;
     kg.addMatrix(1.0, kg12, 1.0);
@@ -1024,7 +1024,7 @@ CorotCrdTransf2d::getCopy2d(void)
 int 
 CorotCrdTransf2d::sendSelf(int cTag, Channel &theChannel)
 {
-    static Vector data(14);
+    static thread_local Vector data(14);   // Ladruno
     data(13) = this->getTag();
     data(0) = ubcommit(0);
     data(1) = ubcommit(1);
@@ -1065,7 +1065,7 @@ CorotCrdTransf2d::sendSelf(int cTag, Channel &theChannel)
 int 
 CorotCrdTransf2d::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 {
-    static Vector data(14);
+    static thread_local Vector data(14);   // Ladruno
     if (theChannel.recvVector(this->getDbTag(), cTag, data) < 0) {
         opserr << " CorotCrdTransf2d::recvSelf() - data could not be received\n" ;
         return -1;
@@ -1122,7 +1122,7 @@ CorotCrdTransf2d::getGlobalMatrixFromLocal(const Matrix &ml)
 const Vector &
 CorotCrdTransf2d::getPointGlobalCoordFromLocal(const Vector &xl)
 {
-    static Vector xg(3);
+    static thread_local Vector xg(3);   // Ladruno
     opserr << " CorotCrdTransf2d::getPointGlobalCoordFromLocal: not implemented yet" ;
     
     return xg;  
@@ -1171,7 +1171,7 @@ CorotCrdTransf2d::getGlobalResistingForceShapeSensitivity(const Vector &q,
 							  const Vector &p0,
 							  int gradNumber)
 {
-  static Vector dpgdh(6);
+  static thread_local Vector dpgdh(6);   // Ladruno
   dpgdh.Zero();
 
   int nodeIid = nodeIPtr->getCrdsSensitivity();
@@ -1224,13 +1224,13 @@ CorotCrdTransf2d::getGlobalResistingForceShapeSensitivity(const Vector &q,
   const Vector &disp1 = nodeIPtr->getTrialDisp();
   const Vector &disp2 = nodeJPtr->getTrialDisp();
 
-  static Vector U(6);
+  static thread_local Vector U(6);   // Ladruno
   for (int i = 0; i < 3; i++) {
     U(i)   = disp1(i);
     U(i+3) = disp2(i);
   }
   
-  static Vector u(6);
+  static thread_local Vector u(6);   // Ladruno
 
   double dux =  cosTheta*(U(3)-U(0)) + sinTheta*(U(4)-U(1));
   double duy = -sinTheta*(U(3)-U(0)) + cosTheta*(U(4)-U(1));
@@ -1247,7 +1247,7 @@ CorotCrdTransf2d::getGlobalResistingForceShapeSensitivity(const Vector &q,
   double q1 = q(1);
   double q2 = q(2);
 
-  static Vector dpldh(6);
+  static thread_local Vector dpldh(6);   // Ladruno
   dpldh.Zero();
 
   dpldh(0) = (-dcosAlphadh*q0 - dsinAlphaOverLndh*(q1+q2) )*dLdh;
@@ -1260,10 +1260,10 @@ CorotCrdTransf2d::getGlobalResistingForceShapeSensitivity(const Vector &q,
   this->compTransfMatrixLocalGlobal(Tlg);     // OPTIMIZE LATER
   dpgdh.addMatrixTransposeVector(0.0, Tlg, dpldh, 1.0);   // pg = Tlg ^ pl; residual
 
-  static Vector pl(6);
+  static thread_local Vector pl(6);   // Ladruno
   pl.Zero();
 
-  static Matrix Abl(3,6);
+  static thread_local Matrix Abl(3,6);   // Ladruno
   this->compTransfMatrixBasicLocal(Abl);
 
   pl.addMatrixTransposeVector(0.0, Abl, q, 1.0); // OPTIMIZE LATER
@@ -1282,7 +1282,7 @@ CorotCrdTransf2d::getGlobalResistingForceShapeSensitivity(const Vector &q,
 const Vector&
 CorotCrdTransf2d::getBasicDisplSensitivity(int gradNumber)
 {
-  static Vector dvdh(3);
+  static thread_local Vector dvdh(3);   // Ladruno
   dvdh.Zero();
 
   int nodeIid = nodeIPtr->getCrdsSensitivity();
@@ -1324,8 +1324,8 @@ CorotCrdTransf2d::getBasicDisplSensitivity(int gradNumber)
     dsinThetadh = 1/L-sinTheta/L*dLdh;
   }
   
-  static Vector U(6);
-  static Vector dUdh(6);
+  static thread_local Vector U(6);   // Ladruno
+  static thread_local Vector dUdh(6);   // Ladruno
 
   const Vector &disp1 = nodeIPtr->getTrialDisp();
   const Vector &disp2 = nodeJPtr->getTrialDisp();
@@ -1336,7 +1336,7 @@ CorotCrdTransf2d::getBasicDisplSensitivity(int gradNumber)
     dUdh(i+3) = nodeJPtr->getDispSensitivity((i+1),gradNumber);
   }
 
-  static Vector dudh(6);
+  static thread_local Vector dudh(6);   // Ladruno
 
   dudh(0) =  cosTheta*dUdh(0) + sinTheta*dUdh(1);
   dudh(1) = -sinTheta*dUdh(0) + cosTheta*dUdh(1);
@@ -1372,7 +1372,7 @@ CorotCrdTransf2d::getBasicDisplSensitivity(int gradNumber)
 const Vector&
 CorotCrdTransf2d::getBasicTrialDispShapeSensitivity(void)
 {
-  static Vector dvdh(3);
+  static thread_local Vector dvdh(3);   // Ladruno
   dvdh.Zero();
 
   int nodeIid = nodeIPtr->getCrdsSensitivity();
@@ -1381,7 +1381,7 @@ CorotCrdTransf2d::getBasicTrialDispShapeSensitivity(void)
   if (nodeIid == 0 && nodeJid == 0)
     return dvdh;
 
-  static Matrix Abl(3,6);
+  static thread_local Matrix Abl(3,6);   // Ladruno
 
   this->update();
   this->compTransfMatrixBasicLocal(Abl);
@@ -1423,7 +1423,7 @@ CorotCrdTransf2d::getBasicTrialDispShapeSensitivity(void)
   const Vector &disp1 = nodeIPtr->getTrialDisp();
   const Vector &disp2 = nodeJPtr->getTrialDisp();
 
-  static Vector U(6);
+  static thread_local Vector U(6);   // Ladruno
   for (int i = 0; i < 3; i++) {
     U(i)   = disp1(i);
     U(i+3) = disp2(i);
@@ -1433,7 +1433,7 @@ CorotCrdTransf2d::getBasicTrialDispShapeSensitivity(void)
   dvdh(1) =  (sinAlpha/Ln)*dLdh;
   dvdh(2) =  (sinAlpha/Ln)*dLdh;
 
-  static Vector dAdh_U(6);
+  static thread_local Vector dAdh_U(6);   // Ladruno
   // dAdh * U
   dAdh_U(0) =  dcosThetadh*U(0) + dsinThetadh*U(1);
   dAdh_U(1) = -dsinThetadh*U(0) + dcosThetadh*U(1);

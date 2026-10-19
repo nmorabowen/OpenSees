@@ -218,7 +218,7 @@ void* OPS_LadrunoRebarBuckling(void)
     CmaxTenStrain = CmaxTenStress = CfStarL = 0.0; CfStarLcross = LRB_INVALID;  \
     TmaxTenStrain = TmaxTenStress = TfStarL = 0.0; TfStarLcross = LRB_INVALID;  \
     Cbranch = Tbranch = BR_PASS;                                                \
-    Cstrain = Cstress = Cg = Cg_law = 0.0;                                      \
+    Cstrain = Cstress = Cg = Cg_law = Cenergy = 0.0; Cr = 1.0;                  \
     Ce_rev = Cs_rev = Ce_cross_rs = Cf_bare_cross = CL_rs = 0.0;                \
     Ce_reentry = LRB_INVALID; Cg_law_reentry = Cg_reentry = 0.0;               \
     Ce_bow = LRB_INVALID; Cg_bow = 0.0;                                         \
@@ -249,6 +249,7 @@ LadrunoRebarBuckling::LadrunoRebarBuckling(int tag, UniaxialMaterial& bar,
     E = theBar->getInitialTangent();
   LRB_INIT_STATE();
   Ttangent = (theBar != 0) ? theBar->getInitialTangent() : E;
+  Ctangent = Ttangent;
 }
 
 LadrunoRebarBuckling::LadrunoRebarBuckling()
@@ -261,6 +262,7 @@ LadrunoRebarBuckling::LadrunoRebarBuckling()
   // theBar is built by recvSelf via the broker.
   LRB_INIT_STATE();
   Ttangent = 0.0;
+  Ctangent = 0.0;
 }
 
 LadrunoRebarBuckling::~LadrunoRebarBuckling()
@@ -565,6 +567,9 @@ int LadrunoRebarBuckling::setTrialStrain(double strain, double strainRate)
   if (theBar == 0)
     return -1;
 
+  if (fabs(Tstrain - strain) < DBL_EPSILON && strain != 0.0)
+    return 0;
+
   int res = theBar->setTrialStrain(strain, strainRate);
   double sBare = theBar->getStress();
   double kBare = theBar->getTangent();
@@ -664,6 +669,13 @@ double LadrunoRebarBuckling::getDampTangent(void)
   return (theBar != 0) ? theBar->getDampTangent() : 0.0;
 }
 
+double LadrunoRebarBuckling::getEnergy(void)
+{
+  if (lsr <= 0.0 || E <= 0.0 || (model == MODEL_DM && fy <= 0.0))
+    return (theBar != 0) ? theBar->getEnergy() : 0.0;
+  return Cenergy + 0.5 * (Cstress + Tstress) * (Tstrain - Cstrain);
+}
+
 // ===========================================================================
 //  state cycle
 // ===========================================================================
@@ -675,9 +687,12 @@ int LadrunoRebarBuckling::commitState(void)
   CfStarL       = TfStarL;
   CfStarLcross  = TfStarLcross;
   // v2 cyclic state (the authoritative branch + latch transition persists here)
+  Cenergy      += 0.5 * (Cstress + Tstress) * (Tstrain - Cstrain);
   Cbranch       = Tbranch;
   Cstrain       = Tstrain;
   Cstress       = Tstress;
+  Ctangent      = Ttangent;
+  Cr            = Tr;
   Cg            = Tg;
   Cg_law        = Tg_law;
   Ce_rev        = Te_rev;        Cs_rev         = Ts_rev;
@@ -698,6 +713,8 @@ int LadrunoRebarBuckling::revertToLastCommit(void)
   Tbranch       = Cbranch;
   Tstrain       = Cstrain;
   Tstress       = Cstress;
+  Ttangent      = Ctangent;
+  Tr            = Cr;
   Tg            = Cg;
   Tg_law        = Cg_law;
   Te_rev        = Ce_rev;        Ts_rev         = Cs_rev;
@@ -706,7 +723,6 @@ int LadrunoRebarBuckling::revertToLastCommit(void)
   Te_reentry    = Ce_reentry;    Tg_law_reentry = Cg_law_reentry;
   Tg_reentry    = Cg_reentry;
   Te_bow        = Ce_bow;        Tg_bow         = Cg_bow;
-  // Ttangent/Tr are recomputed on the next setTrialStrain.
   return (theBar != 0) ? theBar->revertToLastCommit() : 0;
 }
 
@@ -716,6 +732,7 @@ int LadrunoRebarBuckling::revertToStart(void)
   // footgun path, so forwarding to theBar->revertToStart() is correct.
   LRB_INIT_STATE();
   Ttangent = (theBar != 0) ? theBar->getInitialTangent() : E;
+  Ctangent = Ttangent;
   Tr = 1.0;
   return (theBar != 0) ? theBar->revertToStart() : 0;
 }
@@ -732,6 +749,8 @@ UniaxialMaterial* LadrunoRebarBuckling::getCopy(void)
   theCopy->CfStarL       = CfStarL;        theCopy->CfStarLcross  = CfStarLcross;
   theCopy->Cbranch       = Cbranch;
   theCopy->Cstrain       = Cstrain;        theCopy->Cstress       = Cstress;
+  theCopy->Ctangent      = Ctangent;       theCopy->Cr            = Cr;
+  theCopy->Cenergy       = Cenergy;
   theCopy->Cg            = Cg;             theCopy->Cg_law        = Cg_law;
   theCopy->Ce_rev        = Ce_rev;         theCopy->Cs_rev        = Cs_rev;
   theCopy->Ce_cross_rs   = Ce_cross_rs;    theCopy->Cf_bare_cross = Cf_bare_cross;
@@ -762,13 +781,13 @@ UniaxialMaterial* LadrunoRebarBuckling::getCopy(void)
 // Serialization schema version (v1 was implicitly 1, 11-wide Vector + 3-wide ID;
 // v2 writes 2, with the version in dataID(3) -- NOT data(0), which holds model).
 static const int LRB_SCHEMA_VERSION = 2;
-static const int LRB_DATA_LEN       = 28;   // v2 Vector width
+static const int LRB_DATA_LEN       = 31;   // v2 Vector width
 
 int LadrunoRebarBuckling::sendSelf(int cTag, Channel& theChannel)
 {
   int dbTag = this->getDbTag();
 
-  static ID dataID(4);
+  static thread_local ID dataID(4);
   dataID(0) = this->getTag();
   dataID(1) = theBar->getClassTag();
   int matDbTag = theBar->getDbTag();
@@ -783,7 +802,7 @@ int LadrunoRebarBuckling::sendSelf(int cTag, Channel& theChannel)
     return -1;
   }
 
-  static Vector data(LRB_DATA_LEN);
+  static thread_local Vector data(LRB_DATA_LEN);
   // 0..10 : v1 layout, UNCHANGED
   data(0)  = model;        data(1)  = lsr;          data(2)  = alpha;
   data(3)  = fy;           data(4)  = E;
@@ -798,6 +817,7 @@ int LadrunoRebarBuckling::sendSelf(int cTag, Channel& theChannel)
   data(21) = Cf_bare_cross; data(22) = CL_rs;
   data(23) = Ce_reentry;   data(24) = Cg_law_reentry; data(25) = Cg_reentry;
   data(26) = Ce_bow;       data(27) = Cg_bow;
+  data(28) = Ctangent;     data(29) = Cr;           data(30) = Cenergy;
   if (theChannel.sendVector(dbTag, cTag, data) < 0) {
     opserr << "LadrunoRebarBuckling::sendSelf - failed to send Vector\n";
     return -2;
@@ -815,7 +835,7 @@ int LadrunoRebarBuckling::recvSelf(int cTag, Channel& theChannel,
 {
   int dbTag = this->getDbTag();
 
-  static ID dataID(4);
+  static thread_local ID dataID(4);
   if (theChannel.recvID(dbTag, cTag, dataID) < 0) {
     opserr << "LadrunoRebarBuckling::recvSelf - failed to recv ID "
            << "(a v1 3-wide stream is not readable by this v2 build)\n";
@@ -830,8 +850,10 @@ int LadrunoRebarBuckling::recvSelf(int cTag, Channel& theChannel,
     return -3;
   }
 
-  if (theBar == 0) {
-    int matClassTag = int(dataID(1));
+  int matClassTag = int(dataID(1));
+  if (theBar == 0 || theBar->getClassTag() != matClassTag) {
+    if (theBar != 0)
+      delete theBar;
     theBar = theBroker.getNewUniaxialMaterial(matClassTag);
     if (theBar == 0) {
       opserr << "LadrunoRebarBuckling::recvSelf - failed to create bar with "
@@ -841,7 +863,7 @@ int LadrunoRebarBuckling::recvSelf(int cTag, Channel& theChannel,
   }
   theBar->setDbTag(dataID(2));
 
-  static Vector data(LRB_DATA_LEN);
+  static thread_local Vector data(LRB_DATA_LEN);
   if (theChannel.recvVector(dbTag, cTag, data) < 0) {
     opserr << "LadrunoRebarBuckling::recvSelf - failed to recv Vector\n";
     return -4;
@@ -858,8 +880,9 @@ int LadrunoRebarBuckling::recvSelf(int cTag, Channel& theChannel,
   Cf_bare_cross = data(21); CL_rs  = data(22);
   Ce_reentry = data(23);   Cg_law_reentry = data(24); Cg_reentry = data(25);
   Ce_bow  = data(26);      Cg_bow  = data(27);
+  Ctangent = data(28);     Cr      = data(29);       Cenergy = data(30);
 
-  // trial = committed (full state recomputed on next setTrialStrain)
+  // trial = committed
   TmaxTenStrain = CmaxTenStrain; TmaxTenStress = CmaxTenStress;
   TfStarL = CfStarL;             TfStarLcross  = CfStarLcross;
   Tbranch = Cbranch;
@@ -868,7 +891,7 @@ int LadrunoRebarBuckling::recvSelf(int cTag, Channel& theChannel,
   Te_cross_rs = Ce_cross_rs;     Tf_bare_cross = Cf_bare_cross;  TL_rs = CL_rs;
   Te_reentry = Ce_reentry;       Tg_law_reentry = Cg_law_reentry; Tg_reentry = Cg_reentry;
   Te_bow = Ce_bow;               Tg_bow = Cg_bow;
-  Tstrain = Cstrain; Tstress = Cstress; Ttangent = E; Tr = 1.0;
+  Tstrain = Cstrain; Tstress = Cstress; Ttangent = Ctangent; Tr = Cr;
 
   if (theBar->recvSelf(cTag, theChannel, theBroker) < 0) {
     opserr << "LadrunoRebarBuckling::recvSelf - failed to recv the bar\n";
@@ -1019,7 +1042,7 @@ Response* LadrunoRebarBuckling::setResponse(const char** argv, int argc, OPS_Str
 
 int LadrunoRebarBuckling::getResponse(int responseID, Information& matInfo)
 {
-  static Vector stressStrain(2);
+  static thread_local Vector stressStrain(2);
   switch (responseID) {
   case 1: matInfo.setDouble(this->getStress());  return 0;
   case 2: matInfo.setDouble(this->getTangent()); return 0;

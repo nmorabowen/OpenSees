@@ -80,7 +80,13 @@ class LadrunoDispBeamColumn2d : public Element
 		     Damping *theDamping = 0,
 		     int lchMode = 0, double userLch = 0.0,  // Ladruno (ADR 32): regularization length mode
 		     int nlGeom = 0,                         // Ladruno (ADR 32): 0=linear basic strain, 1=½θ² bowing (NL)
-		     UniaxialMaterial *hingeMat = 0);        // Ladruno (ADR 32) Tier-2: embedded cohesive hinge M([[theta]])
+		     UniaxialMaterial *hingeMat = 0,         // Ladruno (ADR 32) Tier-2: embedded cohesive hinge M([[theta]])
+		     UniaxialMaterial *hingeMatJ = 0,        // Ladruno: second end-J embedded cohesive hinge
+		     int dualHingeMode = 0,                  // 0=legacy constant G=-1/L, 1=Hermite end-rotation modes G_I(xi), G_J(xi)
+		     double hingeXiI = 0.0,
+		     double hingeXiJ = 1.0,
+		     double pmP0 = 0.0,
+		     double pmAlpha = 0.5);
     LadrunoDispBeamColumn2d();
     ~LadrunoDispBeamColumn2d();
 
@@ -140,6 +146,11 @@ class LadrunoDispBeamColumn2d : public Element
     int            commitSensitivity(int gradNumber, int numGrads);
     // AddingSensitivity:END ///////////////////////////////////////////
 
+    // Ladruno (WP-192/WP-196): OpenMP element loop opt-in
+    bool ladrunoThreadSafeUpdate(void) const;
+    bool ladrunoThreadSafeForm(void) const;
+    bool ladrunoEnergyRayleighOnly(void) const { return theDamping == 0; }
+
   protected:
     
   private:
@@ -163,33 +174,36 @@ class LadrunoDispBeamColumn2d : public Element
     // for rigid-body rotation; -nl improves the in-element large-deflection response.
     int    nlGeom;
 
-    // Ladruno (ADR 32) Tier-2: embedded strong-discontinuity rotation-jump hinge.
-    // hingeOn=1 activates a single scalar rotation jump `alpha` carried by a discrete
-    // cohesive law theHinge (any UniaxialMaterial; LadrunoCohesiveHinge is the default).
-    // The bulk section at every IP sees the BOUNDED enhanced curvature
-    //   kappa_bulk = B*v + Gbar*alpha,   Gbar = -1/L   (constant, orthogonal: integral Gbar dx = -1)
-    // so as alpha grows the bulk UNLOADS (no double count); the cohesive M([[theta]])
-    // carries all post-peak fracture energy. alpha is converged by an inner Newton in
-    // update() and statically condensed to the 3-DOF basic system BEFORE crdTransf
-    // (the PINNED INVARIANT): K_basic = K_vv - K_valpha * (1/K_aa) * K_valpha^T, with a
-    // GUARDED reciprocal (K_aa is sign-discontinuous at activation and indefinite on the
-    // softening branch). All of this is GATED on hingeOn so the no-hinge path is
-    // byte-identical to Stage-1. v1: linear basic strain only (mutually exclusive with -nl),
-    // single hinge, monotonic full-Newton / DisplacementControl. See ADR 32 (2026-06-17
-    // adversarial-review CORRECTIONS) for the derivation and the deferred hardening.
+    // Ladruno (ADR 32) Tier-2: embedded strong-discontinuity rotation-jump hinge(s).
     int              hingeOn;           // 1 if an embedded cohesive hinge is active
-    UniaxialMaterial *theHinge;         // the discrete cohesive M([[theta]]) law (element owns a copy)
-    double           hingeJump;         // trial rotation jump alpha (converged in update())
-    double           hingeJumpCommit;   // committed alpha (inner-Newton warm start + serialization)
-    double           hingeKaa;          // cached guarded K_alphaalpha at the converged state
-    double           hingeKv[3];        // cached K_v-alpha 3-vector at the converged state
-    double           hingeMscale;       // running moment scale (~Mc) for a stable inner-Newton
-                                        // convergence tol that does not collapse when the
-                                        // fully-broken hinge carries M -> 0 (transient)
+    int              dualHingeMode;     // 0 = legacy constant G=-1/L, 1 = Hermite G_I(xi), G_J(xi)
+    double           hingeXiI;          // normalized hinge location for end I (default 0.0)
+    double           hingeXiJ;          // normalized hinge location for end J (default 1.0)
+    UniaxialMaterial *theHinge;         // end-I (or single) discrete cohesive M([[theta]]) law
+    UniaxialMaterial *theHingeJ;        // end-J discrete cohesive M([[theta]]) law (optional)
+    double           hingeJump;         // trial rotation jump alpha_I (converged in update())
+    double           hingeJumpCommit;   // committed alpha_I
+    double           hingeJumpJ;        // trial rotation jump alpha_J
+    double           hingeJumpJCommit;  // committed alpha_J
+    double           hingeKaa;          // cached guarded K_alphaalpha (single-hinge mode)
+    double           hingeKaaCommit;    // committed guarded K_alphaalpha
+    double           hingeKv[3];        // cached K_v-alpha 3-vector (single-hinge mode)
+    double           hingeKvCommit[3];  // committed K_v-alpha 3-vector
+    double           hingeHinv[2][2];       // cached 2x2 guarded H^-1 (dual-hinge mode)
+    double           hingeHinvCommit[2][2]; // committed 2x2 guarded H^-1
+    double           hingeKva[3][2];        // cached 3x2 K_v-alpha (dual-hinge mode)
+    double           hingeKvaCommit[3][2];  // committed 3x2 K_v-alpha
+    double           hingeMscale;       // running moment scale (~Mc) for inner-Newton tol
+    double           hingeMscaleCommit; // committed running moment scale
+    double           pmP0;              // P-M interaction squash load P0 (>0 enables scaling for general hinges)
+    double           pmAlpha;           // P-M interaction linear/parabolic weight (default 0.5)
+    bool             postRestoreSync;   // true right after recvSelf/revertToLastCommit until v or loads change
+    bool             vRestoreValid;
+    double           vRestore[3];
 
-    // Tier-2 helper: inner Newton on the scalar jump alpha; sets the section trial
-    // deformations with the -alpha/L bulk-curvature offset, caches hingeKaa/hingeKv.
+    // Tier-2 helper: inner Newton on the scalar or dual jump alpha
     int solveHingeJump(const Vector &v, double L);
+    int solveDualHingeJump(const Vector &v, double L);
 
 	int numSections;
 	SectionForceDeformation** theSections; // pointer to the ND material objects
@@ -199,9 +213,6 @@ class LadrunoDispBeamColumn2d : public Element
     ID connectedExternalNodes; // Tags of quad nodes
 
     Node *theNodes[2];
-
-    static Matrix K;		// Element stiffness, damping, and mass Matrix
-    static Vector P;		// Element resisting force vector
 
     Vector Q;      // Applied nodal loads
     Vector q;      // Basic force
@@ -214,8 +225,6 @@ class LadrunoDispBeamColumn2d : public Element
     Damping *theDamping;
 
     enum {maxNumSections = 20};
-
-    static double workArea[];
 
     // AddingSensitivity:BEGIN //////////////////////////////////////////
     int parameterID;

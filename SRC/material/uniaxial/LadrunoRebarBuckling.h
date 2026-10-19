@@ -88,6 +88,10 @@ class LadrunoRebarBuckling : public UniaxialMaterial
   double getTangent(void)         { return Ttangent; }
   double getDampTangent(void);
   double getInitialTangent(void)  { return (theBar != 0) ? theBar->getInitialTangent() : E; }
+  double getEnergy(void);
+
+  bool ladrunoThreadSafeUpdate(void) const { return theBar != 0 && theBar->ladrunoThreadSafeUpdate(); }
+  bool ladrunoThreadSafeForm(void) const   { return theBar != 0 && theBar->ladrunoThreadSafeForm(); }
 
   int commitState(void);
   int revertToLastCommit(void);
@@ -130,6 +134,9 @@ class LadrunoRebarBuckling : public UniaxialMaterial
   int    Cbranch;               // BR_PASS | BR_BUCKLING | BR_RESTRAIGHTEN
   double Cstrain;               // committed engineering strain (direction detection)
   double Cstress;               // committed wrapper output stress (s_rev source)
+  double Ctangent;              // committed wrapper tangent
+  double Cr;                    // committed effective reduction factor
+  double Cenergy;               // committed path work integral
   double Cg;                    // committed residual deficit g >= 0 below bare
   double Cg_law;                // committed v1 buckling-law gap g_law = sBare - sigma_v1
   // RESTRAIGHTEN episode latches (set at the BUCKLING->RESTRAIGHTEN reversal):

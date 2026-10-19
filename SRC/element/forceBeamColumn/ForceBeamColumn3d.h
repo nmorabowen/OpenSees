@@ -84,7 +84,8 @@ class ForceBeamColumn3d: public Element
 		    CrdTransf &coordTransf, double rho = 0.0, 
 		    int maxNumIters = 10, double tolerance = 1.0e-12,
 		    int maxNumSubdivide = 4, double subdivideFactor = 10.0,		    
-		    Damping *theDamping = 0);
+		    Damping *theDamping = 0,
+		    int cMass = 0, int lchMode = 0, double userLch = 0.0); // Ladruno
   
   ~ForceBeamColumn3d();
 
@@ -171,6 +172,7 @@ class ForceBeamColumn3d: public Element
 
   // (performs the transformation between the global and basic system)
   double rho;                    // mass density per unit length
+  int    cMass;                  // Ladruno: consistent mass flag
   int    maxIters;               // maximum number of local iterations
   double tol;	                   // tolerance for relative energy norm for local iterations
   
@@ -211,6 +213,8 @@ class ForceBeamColumn3d: public Element
   // this variable holds the length of the i-th integration point
   // undergoing the update (FB element localizes at the integration point level)
   double current_section_lch = 0.0;
+  int    lchMode = 0;            // Ladruno: 0=ip (default), 1=element, 2=user
+  double userLch = 0.0;          // Ladruno: user-specified characteristic length
 
   static thread_local Matrix theMatrix;   // Ladruno WP-192
   static thread_local Vector theVector;   // Ladruno WP-192

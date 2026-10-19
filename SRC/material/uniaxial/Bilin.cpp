@@ -67,56 +67,55 @@ OPS_Bilin()
     return 0;
   }
  
-  //Changed in order to account for the nFactor as an optional input    // Updated: Filipe Ribeiro and Andre Barbosa
-  //numData = 24;               // Updated: Filipe Ribeiro and Andre Barbosa
-  numData = OPS_GetNumRemainingInputArgs();     // Updated: Filipe Ribeiro and Andre Barbosa 
- 
-  if (numData != 23 && numData != 24 ) {        // Updated: Filipe Ribeiro and Andre Barbosa
-    opserr << "Invalid Args want: uniaxialMaterial Bilin tag? Ke? AsPos? AsNeg? My_pos? My_neg? LamdaS? ";             
-    opserr << "LamdaD?  LamdaA? LamdaK? Cs? Cd? Ca? Ck? Thetap_pos? Thetap_neg? Thetapc_pos? Thetapc_neg?KPos? ";              
-    opserr << "KNeg? Thetau_pos? Thetau_neg? PDPlus?  PDNeg?  <nFactor?> \n";           // Updated: Filipe Ribeiro and Andre Barbosa
-    return 0;           // Updated: Filipe Ribeiro and Andre Barbosa
+  // Changed to support optional <nFactor> and optional <-implex> (Ladruno WP-200)
+  if (OPS_GetNumRemainingInputArgs() < 23) {
+    opserr << "Invalid Args want: uniaxialMaterial Bilin tag? Ke? AsPos? AsNeg? My_pos? My_neg? LamdaS? ";
+    opserr << "LamdaD?  LamdaA? LamdaK? Cs? Cd? Ca? Ck? Thetap_pos? Thetap_neg? Thetapc_pos? Thetapc_neg?KPos? ";
+    opserr << "KNeg? Thetau_pos? Thetau_neg? PDPlus?  PDNeg?  <nFactor?> <-implex>\n";
+    return 0;
   }
- 
-  //  if (OPS_GetDoubleInput(&numData, dData) != 0) {                   // Updated: Filipe Ribeiro and Andre Barbosa 
-  //    opserr << "Invalid Args want: uniaxialMaterial Bilin tag? Ke? nFactor? AsPos? AsNeg? My_pos? My_neg? LamdaS? ";         
-  //    opserr << "LamdaD?  LamdaA? LamdaK? Cs? Cd? Ca? Ck? Thetap_pos? Thetap_neg? Thetapc_pos? Thetapc_neg?KPos? "; 
-  //    opserr << "KNeg? Thetau_pos? Thetau_neg? PDPlus?  PDNeg\n";     
-  //    return 0;  
-  //  }																	// Updated: Filipe Ribeiro and Andre Barbosa 
- 
-  if (numData == 23) {
-    if (OPS_GetDoubleInput(&numData, dData) != 0) {             // Updated: Filipe Ribeiro and Andre Barbosa 
-      opserr << "Invalid Args want: uniaxialMaterial Bilin tag? Ke? AsPos? AsNeg? My_pos? My_neg? LamdaS? ";            
-      opserr << "LamdaD?  LamdaA? LamdaK? Cs? Cd? Ca? Ck? Thetap_pos? Thetap_neg? Thetapc_pos? Thetapc_neg?KPos? "; 
-      opserr << "KNeg? Thetau_pos? Thetau_neg? PDPlus?  PDNeg? <nFactor?> \n";          // Updated: Filipe Ribeiro and Andre Barbosa
-      return 0;  
-    }
-    // Parsing was successful, allocate the material
-    theMaterial = new Bilin(iData[0],
-                            dData[0], dData[1], dData[2], dData[3], dData[4],
-                            dData[5], dData[6], dData[7], dData[8], dData[9],
-                            dData[10], dData[11], dData[12], dData[13], dData[14],
-                            dData[15], dData[16], dData[17], dData[18], dData[19],
-                            dData[20], dData[21], dData[22]);           // Updated: Filipe Ribeiro and Andre Barbosa
-   
-  } else if (numData == 24) { // Updated: Filipe Ribeiro and Andre Barbosa 
-    if (OPS_GetDoubleInput(&numData, dData) != 0) {             
-      opserr << "Invalid Args want: uniaxialMaterial Bilin tag? Ke? AsPos? AsNeg? My_pos? My_neg? LamdaS? ";            
-      opserr << "LamdaD?  LamdaA? LamdaK? Cs? Cd? Ca? Ck? Thetap_pos? Thetap_neg? Thetapc_pos? Thetapc_neg?KPos? "; 
-      opserr << "KNeg? Thetau_pos? Thetau_neg? PDPlus?  PDNeg? <nFactor?>\n";           // Updated: Filipe Ribeiro and Andre Barbosa 
-      return 0;  
-    }
-    // Parsing was successful, allocate the material
-    theMaterial = new Bilin(iData[0],
-                            dData[0], dData[1], dData[2], dData[3], dData[4],
-                            dData[5], dData[6], dData[7], dData[8], dData[9],
-                            dData[10], dData[11], dData[12], dData[13], dData[14],
-                            dData[15], dData[16], dData[17], dData[18], dData[19],
-                            dData[20], dData[21], dData[22], dData[23]); // Updated: Filipe Ribeiro and Andre Barbosa
-   
+
+  numData = 23;
+  if (OPS_GetDoubleInput(&numData, dData) != 0) {
+    opserr << "Invalid Args want: uniaxialMaterial Bilin tag? Ke? AsPos? AsNeg? My_pos? My_neg? LamdaS? ";
+    opserr << "LamdaD?  LamdaA? LamdaK? Cs? Cd? Ca? Ck? Thetap_pos? Thetap_neg? Thetapc_pos? Thetapc_neg?KPos? ";
+    opserr << "KNeg? Thetau_pos? Thetau_neg? PDPlus?  PDNeg? <nFactor?> <-implex>\n";
+    return 0;
   }
- 
+
+  double nFactor = 0.0;
+  bool hasNFactor = false;
+  bool useImplex = false;
+  while (OPS_GetNumRemainingInputArgs() > 0) {
+    const char *opt = OPS_GetString();
+    if (strcmp(opt, "-implex") == 0) {
+      useImplex = true;
+    } else if (opt[0] == '-' &&
+               ((opt[1] >= 'a' && opt[1] <= 'z') || (opt[1] >= 'A' && opt[1] <= 'Z'))) {
+      opserr << "WARNING Bilin -- unknown option '" << opt << "'\n";
+      return 0;
+    } else {
+      if (hasNFactor) {
+        opserr << "WARNING Bilin -- unexpected extra argument\n";
+        return 0;
+      }
+      OPS_ResetCurrentInputArg(-1);
+      int one = 1;
+      if (OPS_GetDoubleInput(&one, &nFactor) != 0) {
+        opserr << "WARNING Bilin -- invalid nFactor\n";
+        return 0;
+      }
+      hasNFactor = true;
+    }
+  }
+
+  theMaterial = new Bilin(iData[0],
+                          dData[0], dData[1], dData[2], dData[3], dData[4],
+                          dData[5], dData[6], dData[7], dData[8], dData[9],
+                          dData[10], dData[11], dData[12], dData[13], dData[14],
+                          dData[15], dData[16], dData[17], dData[18], dData[19],
+                          dData[20], dData[21], dData[22], nFactor, useImplex);
+
   if (theMaterial == 0) {
     opserr << "WARNING could not create uniaxialMaterial of type Bilin Material\n";
     return 0;
@@ -129,11 +128,13 @@ OPS_Bilin()
 Bilin::Bilin(int tag, double p_Ke0,double p_AsPos,double p_AsNeg,double p_My_pos,double p_My_neg,double p_LamdaS,              
              double p_LamdaD,double p_LamdaA,double p_LamdaK,double p_Cs,double p_Cd,double p_Ca,double p_Ck,
              double p_Thetap_pos,double p_Thetap_neg,double p_Thetapc_pos,double p_Thetapc_neg,double p_KPos,double p_KNeg,
-             double p_Thetau_pos,double p_Thetau_neg,double p_PDPlus,double p_PDNeg,double p_nFactor)  
-:UniaxialMaterial(tag, MAT_TAG_Bilin),Ke0(p_Ke0), AsPos(p_AsPos), AsNeg(p_AsNeg), My_pos(p_My_pos), My_neg(p_My_neg),          
+             double p_Thetau_pos,double p_Thetau_neg,double p_PDPlus,double p_PDNeg,double p_nFactor,
+             bool p_useImplex)  
+:UniaxialMaterial(tag, MAT_TAG_Bilin),Ke0(p_Ke0), nFactor(p_nFactor), AsPos(p_AsPos), AsNeg(p_AsNeg), My_pos(p_My_pos), My_neg(p_My_neg),          
  LamdaS(p_LamdaS), LamdaK(p_LamdaK),LamdaA(p_LamdaA),LamdaD(p_LamdaD), Cs(p_Cs), Ck(p_Ck), Ca(p_Ca),Cd(p_Cd),
  Thetap_pos(p_Thetap_pos), Thetap_neg(p_Thetap_neg), Thetapc_pos(p_Thetapc_pos),Thetapc_neg(p_Thetapc_neg),
- KPos(p_KPos), KNeg(p_KNeg),Thetau_pos(p_Thetau_pos), Thetau_neg(p_Thetau_neg), PDPlus(p_PDPlus), PDNeg(p_PDNeg), nFactor(p_nFactor)    // Updated: Filipe Ribeiro and Andre Barbosa 
+ KPos(p_KPos), KNeg(p_KNeg),Thetau_pos(p_Thetau_pos), Thetau_neg(p_Thetau_neg), PDPlus(p_PDPlus), PDNeg(p_PDNeg),
+ useImplex_(p_useImplex), fP_imp_(0.0), Tangent_imp_(0.0), dU_prev_(0.0), dtime_n_commit_(0.0)    // Updated: Filipe Ribeiro and Andre Barbosa / Ladruno
 {
   //initialize variables
   this->revertToStart();
@@ -145,25 +146,24 @@ Bilin::Bilin(int tag, double p_Ke0,double p_AsPos,double p_AsNeg,double p_My_pos
              double p_LamdaD,double p_LamdaA,double p_LamdaK,double p_Cs,double p_Cd,double p_Ca,double p_Ck,
              double p_Thetap_pos,double p_Thetap_neg,double p_Thetapc_pos,double p_Thetapc_neg,double p_KPos,double p_KNeg,
              double p_Thetau_pos,double p_Thetau_neg,double p_PDPlus,double p_PDNeg)   
-:UniaxialMaterial(tag, MAT_TAG_Bilin),Ke0(p_Ke0), AsPos(p_AsPos), AsNeg(p_AsNeg), My_pos(p_My_pos), My_neg(p_My_neg),          
+:UniaxialMaterial(tag, MAT_TAG_Bilin),Ke0(p_Ke0), nFactor(0.0), AsPos(p_AsPos), AsNeg(p_AsNeg), My_pos(p_My_pos), My_neg(p_My_neg),          
  LamdaS(p_LamdaS), LamdaK(p_LamdaK),LamdaA(p_LamdaA),LamdaD(p_LamdaD), Cs(p_Cs), Ck(p_Ck), Ca(p_Ca),Cd(p_Cd),
  Thetap_pos(p_Thetap_pos), Thetap_neg(p_Thetap_neg), Thetapc_pos(p_Thetapc_pos),Thetapc_neg(p_Thetapc_neg),
- KPos(p_KPos), KNeg(p_KNeg),Thetau_pos(p_Thetau_pos), Thetau_neg(p_Thetau_neg), PDPlus(p_PDPlus), PDNeg(p_PDNeg)        // Updated: Filipe Ribeiro and Andre Barbosa 
+ KPos(p_KPos), KNeg(p_KNeg),Thetau_pos(p_Thetau_pos), Thetau_neg(p_Thetau_neg), PDPlus(p_PDPlus), PDNeg(p_PDNeg),
+ useImplex_(false), fP_imp_(0.0), Tangent_imp_(0.0), dU_prev_(0.0), dtime_n_commit_(0.0)        // Updated: Filipe Ribeiro and Andre Barbosa / Ladruno
 {
   //initialize variables
   this->revertToStart();
-  //this->revertToLastCommit();
-  // Default value for no nFactor
-  nFactor=0.0;												// Updated: Filipe Ribeiro and Andre Barbosa 
 }
 
 
 Bilin::Bilin()
  :UniaxialMaterial(0, MAT_TAG_Bilin),
-  Ke0(0), AsPos(0), AsNeg(0), My_pos(0), My_neg(0),  
-  LamdaS(0), LamdaD(0),LamdaA(0),LamdaK(0), Cs(0), Cd(0), Ca(0),Ck(0),
+  Ke0(0), nFactor(0), AsPos(0), AsNeg(0), My_pos(0), My_neg(0),  
+  LamdaS(0), LamdaK(0),LamdaA(0),LamdaD(0), Cs(0), Ck(0), Ca(0),Cd(0),
   Thetap_pos(0), Thetap_neg(0), Thetapc_pos(0),Thetapc_neg(0),
-  KPos(0), KNeg(0),Thetau_pos(0), Thetau_neg(0), PDPlus(0), PDNeg(0), nFactor(0) // Updated: Filipe Ribeiro and Andre Barbosa
+  KPos(0), KNeg(0),Thetau_pos(0), Thetau_neg(0), PDPlus(0), PDNeg(0),
+  useImplex_(false), fP_imp_(0.0), Tangent_imp_(0.0), dU_prev_(0.0), dtime_n_commit_(0.0) // Updated: Filipe Ribeiro and Andre Barbosa / Ladruno
 {
   this->revertToStart();
 }
@@ -198,6 +198,19 @@ Bilin::setTrialStrain(double strain, double strainRate)
   dP = CU;          
 
   if (fabs(deltaD) < DBL_EPSILON && commitCalledOnce == 1) {
+    if (useImplex_) {
+      double k0 = (CKe > 0.0) ? CKe : Ke0 * (1.0 + nFactor);
+      if (k0 <= 0.0) k0 = 1.0;
+      double k_imp_c = CTangent;
+      double time_factor = 1.0;
+      if (ops_Dt > 0.0 && dtime_n_commit_ > 0.0) {
+        time_factor = ops_Dt / dtime_n_commit_;
+        if (time_factor > 2.0) time_factor = 2.0;
+      }
+      double dU_expl = time_factor * dU_prev_;
+      fP = CfP + (k_imp_c - k0) * dU_expl;
+      Tangent = k0;
+    }
     return 0;
   }
 
@@ -1123,10 +1136,26 @@ Bilin::setTrialStrain(double strain, double strainRate)
   fP = f;
   dP = d;
   Tangent=ek;
+  fP_imp_ = f;
+  Tangent_imp_ = ek;
  
   //priority of logical operators
   if ((interup==1&&(ek==Ke*alphaPos)) ||(ek==Ke*alphaNeg)||(ek==capSlope*Ke) ||(ek==capSlopeNeg*Ke)) { //fmk
     interup = 0;
+  }
+
+  if (useImplex_) {
+    double k0 = (CKe > 0.0) ? CKe : Ke0 * (1.0 + nFactor);
+    if (k0 <= 0.0) k0 = 1.0;
+    double k_imp_c = (commitCalledOnce == 1) ? CTangent : k0;
+    double time_factor = 1.0;
+    if (ops_Dt > 0.0 && dtime_n_commit_ > 0.0) {
+      time_factor = ops_Dt / dtime_n_commit_;
+      if (time_factor > 2.0) time_factor = 2.0;
+    }
+    double dU_expl = time_factor * dU_prev_;
+    fP = CfP + k0 * deltaD + (k_imp_c - k0) * dU_expl;
+    Tangent = k0;
   }
  
   return 0;
@@ -1146,7 +1175,7 @@ Bilin::getTangent(void)
 double
 Bilin::getInitialTangent(void)
 {
-  return (Ke);         
+  return (Ke > 0.0 ? Ke : Ke0 * (1.0 + nFactor));
 }
 
 
@@ -1163,11 +1192,18 @@ Bilin::getStrain(void)
 int
 Bilin::commitState(void)
 {
+  if (useImplex_) {
+    dU_prev_ = U - CU;
+    double k0 = (CKe > 0.0) ? CKe : Ke0 * (1.0 + nFactor);
+    if (k0 <= 0.0) k0 = 1.0;
+    Tangent = k0;
+  }
+  dtime_n_commit_ = ops_Dt;
   commitCalledOnce = 1;
   
   //commit trial  variables
    CU=U;
-   CTangent=Tangent;
+   CTangent = useImplex_ ? Tangent_imp_ : Tangent;
 
    CdNewLoadPos=dNewLoadPos;
    CdNewLoadNeg=dNewLoadNeg;
@@ -1192,7 +1228,7 @@ Bilin::commitState(void)
    Csp=sp;
    Csn=sn;
    CdP=dP;
-   CfP=fP;
+   CfP = useImplex_ ? fP_imp_ : fP;
    Cek=ek;
    CdLimPos=dLimPos;
    CdLimNeg=dLimNeg;  
@@ -1236,6 +1272,11 @@ Bilin::commitState(void)
    CcapSlopeMember=capSlopeMember;// Updated: Filipe Ribeiro and Andre Barbosa
    CKe=Ke;  // Updated: Filipe Ribeiro and Andre Barbosa
    CprodBeta=prodBeta;	// Updated: Filipe Ribeiro and Andre Barbosa
+   if (useImplex_) {
+     double k0 = (CKe > 0.0) ? CKe : Ke0 * (1.0 + nFactor);
+     if (k0 <= 0.0) k0 = 1.0;
+     Tangent = k0;
+   }
    return 0;
 }
 
@@ -1313,6 +1354,13 @@ Bilin::revertToLastCommit(void)
    capSlopeNegMember=CcapSlopeNegMember;        // Updated: Filipe Ribeiro and Andre Barbosa
    Ke=CKe;					 // Updated: Filipe Ribeiro and Andre Barbosa
    prodBeta=CprodBeta;			// Updated: Filipe Ribeiro and Andre Barbosa
+   fP_imp_ = CfP;
+   Tangent_imp_ = CTangent;
+   if (useImplex_) {
+     double k0 = (CKe > 0.0) ? CKe : Ke0 * (1.0 + nFactor);
+     if (k0 <= 0.0) k0 = 1.0;
+     Tangent = k0;
+   }
     return 0;
 }
 
@@ -1321,7 +1369,12 @@ Bilin::revertToStart(void)
 {
 //initially I zero everything
    U=CU=0.0;
-   Tangent=CTangent=0.0;
+   Ke=CKe=Ke0*(1.0+nFactor);
+   Tangent=CTangent=Ke;
+   fP_imp_ = 0.0;
+   Tangent_imp_ = Ke;
+   dU_prev_ = 0.0;
+   dtime_n_commit_ = 0.0;
    commitCalledOnce = 0;
 
    dNewLoadPos=CdNewLoadPos=0.0;
@@ -1389,7 +1442,6 @@ Bilin::revertToStart(void)
    capSlopeOrigNeg=CcapSlopeOrigNeg=0.0;
    capSlopeMember=CcapSlopeMember=0.0;  // Updated: Filipe Ribeiro and Andre Barbosa
    capSlopeNegMember=CcapSlopeNegMember=0.0;    // Updated: Filipe Ribeiro and Andre Barbosa
-   Ke=CKe=0.0;          // Updated: Filipe Ribeiro and Andre Barbosa
    prodBeta=CprodBeta=1.0;			// Updated: Filipe Ribeiro and Andre Barbosa
                     
     return 0;
@@ -1400,7 +1452,7 @@ Bilin::getCopy(void)
 {
     Bilin *theCopy = new Bilin(this->getTag(),Ke0,AsPos,AsNeg,My_pos,My_neg,LamdaS,LamdaD,             
                 LamdaA,LamdaK,Cs,Cd,Ca,Ck,Thetap_pos,Thetap_neg,Thetapc_pos,Thetapc_neg,KPos,KNeg,
-                Thetau_pos,Thetau_neg,PDPlus,PDNeg,nFactor);  // Updated: Filipe Ribeiro and Andre Barbosa
+                Thetau_pos,Thetau_neg,PDPlus,PDNeg,nFactor,useImplex_);  // Updated: Filipe Ribeiro and Andre Barbosa / Ladruno
 
     //Fixed Model parameters: need to change according to material properties
    theCopy->U=U;
@@ -1539,6 +1591,11 @@ Bilin::getCopy(void)
    theCopy->capSlopeOrigNeg=capSlopeOrigNeg;
    theCopy->CcapSlopeOrigNeg=CcapSlopeOrigNeg;
    theCopy->CprodBeta=CprodBeta;	// Updated: Filipe Ribeiro and Andre Barbosa
+   theCopy->commitCalledOnce=commitCalledOnce;
+   theCopy->fP_imp_=fP_imp_;
+   theCopy->Tangent_imp_=Tangent_imp_;
+   theCopy->dU_prev_=dU_prev_;
+   theCopy->dtime_n_commit_=dtime_n_commit_;
 
     return theCopy;
 }
@@ -1548,7 +1605,7 @@ Bilin::sendSelf(int cTag, Channel &theChannel)
 {
   int res = 0;
 
-  static Vector data(166);      // Updated: Filipe Ribeiro and Andre Barbosa
+  static thread_local Vector data(172);      // Updated: Filipe Ribeiro and Andre Barbosa / Ladruno
    data(0) = this->getTag();
    data(1)=Ke0;         // Updated: Filipe Ribeiro and Andre Barbosa
    data(2)=AsPos;
@@ -1719,6 +1776,12 @@ Bilin::sendSelf(int cTag, Channel &theChannel)
    data(159)=CKe;					// Updated: Filipe Ribeiro and Andre Barbosa
    data(160) = prodBeta;
    data(161)=CprodBeta;				// Updated: Filipe Ribeiro and Andre Barbosa
+   data(166) = useImplex_ ? 1.0 : 0.0; // Ladruno
+   data(167) = dU_prev_; // Ladruno
+   data(168) = dtime_n_commit_; // Ladruno
+   data(169) = (double)commitCalledOnce; // Ladruno
+   data(170) = fP_imp_; // Ladruno
+   data(171) = Tangent_imp_; // Ladruno
   
   res = theChannel.sendVector(this->getDbTag(), cTag, data);
 
@@ -1733,7 +1796,7 @@ Bilin::recvSelf(int cTag, Channel &theChannel,
                                FEM_ObjectBroker &theBroker)
 {
   int res = 0;
-  static Vector data(166);  // Updated: Filipe Ribeiro and Andre Barbosa
+  static thread_local Vector data(172);  // Ladruno: IMPL-EX + thread_local
   res = theChannel.recvVector(this->getDbTag(), cTag, data);
  
   if (res < 0) {
@@ -1910,6 +1973,17 @@ Bilin::recvSelf(int cTag, Channel &theChannel,
    CKe=data(159);			// Updated: Filipe Ribeiro and Andre Barbosa
    prodBeta=data(160);		        // Updated: Filipe Ribeiro and Andre Barbosa
    CprodBeta = data(161);
+   useImplex_ = (data(166) != 0.0); // Ladruno
+   dU_prev_ = data(167); // Ladruno
+   dtime_n_commit_ = data(168); // Ladruno
+   commitCalledOnce = (int)data(169); // Ladruno
+   fP_imp_ = data(170); // Ladruno
+   Tangent_imp_ = data(171); // Ladruno
+   if (useImplex_) {
+     double k0 = (CKe > 0.0) ? CKe : Ke0 * (1.0 + nFactor);
+     if (k0 <= 0.0) k0 = 1.0;
+     Tangent = k0;
+   }
 
   }
 
@@ -1991,6 +2065,11 @@ Response *Bilin::setResponse(const char **argv, int argc, OPS_Stream &theOutput)
     theOutput.tag("ResponseType", "RSE");
     theResponse = new MaterialResponse(this, 101, CRSE);
   }
+  else if (strcmp(argv[0], "implexError") == 0 || strcmp(argv[0], "ImplexError") == 0) // Ladruno WP-200
+  {
+    theOutput.tag("ResponseType", "implexError");
+    theResponse = new MaterialResponse(this, 102, 0.0);
+  }
 
   theOutput.endTag();
   return theResponse;
@@ -2001,6 +2080,11 @@ int Bilin::getResponse(int responseID, Information &matInformation)
   if (responseID == 101)
   {
     matInformation.setDouble(CRSE);
+  }
+  else if (responseID == 102) // Ladruno WP-200
+  {
+    double err = useImplex_ ? (fabs(fP - fP_imp_) / (fabs(fP_imp_) + 1.0e-12)) : 0.0;
+    matInformation.setDouble(err);
   }
   else
   {

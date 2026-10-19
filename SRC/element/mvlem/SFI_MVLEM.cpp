@@ -46,6 +46,7 @@
 #include <Renderer.h>
 #include <ElementResponse.h>
 #include <ElementalLoad.h>
+#include <LadrunoResponseTokens.h> // Ladruno WP-200
 
 #include <TclModelBuilder.h> // for creating/adding internal nodes (theNodesX) to the domain 
 
@@ -83,6 +84,10 @@ void *OPS_SFI_MVLEM(void)
   }
 
   int m = iData[3];
+  if (m <= 0) {
+    opserr << "WARNING invalid m = " << m << " for element SFI_MVLEM " << iData[0] << endln;
+    return 0;
+  }
   const char *str = 0;
 
   double *theThickness = new double[m];
@@ -96,27 +101,36 @@ void *OPS_SFI_MVLEM(void)
     matTags[i] = 0;
     theMaterials[i] = 0;
   }
+
+  auto cleanup = [&]() {
+    delete [] theThickness;
+    delete [] theWidth;
+    delete [] matTags;
+    delete [] theMaterials;
+  };
 	
   numArgs = OPS_GetNumRemainingInputArgs();
-  while (numArgs >= (m+1)) {
-      //OPS_GetStringCopy(&str);
+  while (numArgs > 0) {
       str = OPS_GetString();
     if (strcmp(str, "-thick") == 0) {
       numData = m;
       if (OPS_GetDoubleInput(&numData, theThickness) != 0) {
 	opserr << "Invalid thick parameter for SFI_MVLEM   " << iData[0] << endln;
+	cleanup();
 	return 0;
       }
     } else if (strcmp(str, "-width") == 0) {
       numData = m;
       if (OPS_GetDoubleInput(&numData, theWidth) != 0) {
 	opserr << "Invalid width value for SFI_MVLEM  " << iData[0] << endln;
+	cleanup();
 	return 0;
       }
     } else if (strcmp(str, "-mat") == 0) {
       numData = m;
       if (OPS_GetIntInput(&numData, matTags) != 0) {
 	opserr << "Invalid mat tags for SFI_MVLEM  " << iData[0] << endln;
+	cleanup();
 	return 0;
       }
       for (int i=0; i<m; i++) {
@@ -124,48 +138,51 @@ void *OPS_SFI_MVLEM(void)
 	theMaterials[i] = OPS_getNDMaterial(matTags[i]);
 	if (theMaterials[i] == 0) {
 	  opserr << "Invalid material tag " << matTags[i] << "  for SFI_MVLEM  " << iData[0] << endln;
+	  cleanup();
 	  return 0;
 	}
       }
-    } 
-    
-    // clean up the str
-    //    delete [] str;
+    } else if (strcmp(str, "-Coupling") == 0 || strcmp(str, "-coupling") == 0) {
+      numData = 1;
+      if (OPS_GetIntInput(&numData, &coupling) != 0) {
+        opserr << "WARNING invalid coupling data for element SFI_MVLEM" << endln;
+        cleanup();
+        return 0;
+      }
+      if (coupling < 0 || coupling > 2) {
+        opserr << "WARNING invalid int data for element SFI_MVLEM coupling (it should be 0,1,or 2)" << endln;
+        cleanup();
+        return 0;
+      }
+    } else {
+      // Ladruno WP-200: fail closed on unknown option
+      opserr << "WARNING unknown option " << str << " for element SFI_MVLEM " << iData[0] << endln;
+      cleanup();
+      return 0;
+    }
 
     numArgs = OPS_GetNumRemainingInputArgs();
-    
   }
-if (numArgs > 0) {
-	  str = OPS_GetString();
-	  numData = 1;
-	if (strcmp(str, "-Coupling") == 0) {
-	  if (OPS_GetIntInput(&numData, &coupling) != 0) {
-		  opserr << "WARNING invalid coupling data for element SFI_MVLEM" << endln;
-		  return 0;
-	  }
-	  if (coupling < 0 || coupling>2) {
-		  opserr << "WARNING invalid int data for element SFI_MVLEM coupling (it should be 0,1,or 2)" << endln;
-		  return 0;
-	  }
 
-	}
+  for (int i = 0; i < m; i++) {
+    if (theThickness[i] <= 0.0 || theWidth[i] <= 0.0) {
+      opserr << "WARNING invalid thickness or width for element SFI_MVLEM " << iData[0] << endln;
+      cleanup();
+      return 0;
+    }
+    if (theMaterials[i] == 0) {
+      opserr << "WARNING missing materials for element SFI_MVLEM " << iData[0] << endln;
+      cleanup();
+      return 0;
+    }
   }
 
   theElement = new SFI_MVLEM(iData[0], iData[1], iData[2], 
 			     theMaterials, 
 			     theThickness, theWidth , iData[3], dData[0], coupling);
 			 
-  
   // Cleanup dynamic memory
-  if (theThickness != 0) 
-    delete [] theThickness;
-  if (theWidth != 0) 
-    delete [] theWidth;
-  if (matTags != 0) 
-    delete [] matTags;
-
-  if (theMaterials != 0)
-    delete[] theMaterials;
+  cleanup();
 
   return theElement;
 }
@@ -537,6 +554,7 @@ double SFI_MVLEM::getCurvature(void)
 // Get global forces at 6 DOFs (top and bottom node)
 Vector SFI_MVLEM::getResistingForce_6DOF(void) 
 {
+  this->getResistingForce();
   for (int i=0; i < 6; i++) {
     P_6DOF(i) = SFI_MVLEMR(i);
   }
@@ -717,7 +735,8 @@ void SFI_MVLEM::setDomain(Domain *theDomain)
     opserr << "SFI_MVLEM::setDomain() - element: " << this->getTag()
 	   << " out of memory creating vector of size: " << 6+m << endln;
     return;
-  }   
+  }
+  ops_TheActiveElement = this; // Ladruno WP-200
 }
 
 // Commit state
@@ -766,7 +785,7 @@ int SFI_MVLEM::revertToStart()
 // Update state
 int SFI_MVLEM::update()
 {
-  
+  ops_TheActiveElement = this; // Ladruno WP-200
   // Get the current strain given trial displacements at nodes
   this->computeCurrentStrain();                 
   
@@ -1086,8 +1105,10 @@ void SFI_MVLEM::Print(OPS_Stream &s, int flag)
 
 // Set element responses
 Response *SFI_MVLEM::setResponse(const char **argv, int argc, OPS_Stream &s) 
-    
 {
+	if (argc < 1)
+		return 0;
+
 	Response *theResponse = 0;
 
 	s.tag("ElementOutput");
@@ -1096,9 +1117,11 @@ Response *SFI_MVLEM::setResponse(const char **argv, int argc, OPS_Stream &s)
     s.attr("node1",externalNodes[0]);
     s.attr("node2",externalNodes[1]);
 
-	// Global forces
-	if (strcmp(argv[0],"force") == 0 || strcmp(argv[0],"forces") == 0 ||
-        strcmp(argv[0],"globalForce") == 0 || strcmp(argv[0],"globalForces") == 0) {
+	// Global / local forces (Ladruno WP-200)
+	if (LadrunoResp::isGlobalForce(argv[0]) || LadrunoResp::isLocalForce(argv[0]) ||
+        strcmp(argv[0],"force") == 0 || strcmp(argv[0],"forces") == 0 ||
+        strcmp(argv[0],"globalForce") == 0 || strcmp(argv[0],"globalForces") == 0 ||
+        strcmp(argv[0],"localForce") == 0 || strcmp(argv[0],"localForces") == 0) {
 			
 			s.tag("ResponseType","Fx_i");
 			s.tag("ResponseType","Fy_i");
@@ -1128,24 +1151,37 @@ Response *SFI_MVLEM::setResponse(const char **argv, int argc, OPS_Stream &s)
 		theResponse = new ElementResponse(this, 3, 0.0);
 	}
 
-	// Material output
+	// Integration weights (fiber widths)
+	else if (strcmp(argv[0],"integrationWeights") == 0) {
+		theResponse = new ElementResponse(this, 4, Vector(m));
+	}
+
+	// Local axes
+	else if (LadrunoResp::isLocalAxes(argv[0])) {
+		theResponse = new ElementResponse(this, 5, Vector(9));
+	}
+
+	// Material output (Ladruno WP-200)
     else if (strcmp(argv[0],"RCpanel") == 0 || strcmp(argv[0],"RCPanel") == 0
-		      || strcmp(argv[0],"RC_panel") == 0 || strcmp(argv[0],"RC_Panel") == 0) 
+		      || strcmp(argv[0],"RC_panel") == 0 || strcmp(argv[0],"RC_Panel") == 0
+		      || strcmp(argv[0],"material") == 0) 
 	{
-		
 		// Check if correct # of arguments passed
-		if (argc != 3) {
+		if (argc < 3) {
 			opserr << "WARNING: Number of recorder input for RC Panel is: " << argc-1 << "; should be 2: panTag (one panel only: 1 to m) and $Response_Type.\n";
+			s.endTag();
 			return 0;
 		}
 
 		int matNum = atoi(argv[1]);
-	  
-		s.tag("Material");
-		s.attr("number",matNum);
-		
-		theResponse = theMaterial[matNum-1]->setResponse(&argv[argc-1], argc-2, s);
-
+		if (matNum > 0 && matNum <= m) {
+			s.tag("GaussPointOutput");
+			s.attr("number", matNum);
+			s.attr("eta", x[matNum - 1] / Lw * 2.0);
+			s.attr("weight", b[matNum - 1] / Lw * 2.0);
+			theResponse = theMaterial[matNum-1]->setResponse(&argv[2], argc-2, s);
+			s.endTag();
+		}
     }
 
 	s.endTag();
@@ -1167,11 +1203,33 @@ int SFI_MVLEM::getResponse(int responseID, Information &eleInfo)
 	case 3:  // Curvature
 		return eleInfo.setDouble(this->getCurvature());
 
+	case 4: { // Integration weights
+		Vector w(m);
+		for (int i = 0; i < m; i++)
+			w(i) = b[i];
+		return eleInfo.setVector(w);
+	}
+
+	case 5: { // Local axes (9-component flat vector: vx, vy, vz)
+		Vector axes(9);
+		axes.Zero();
+		axes(0) = 1.0;
+		axes(4) = 1.0;
+		axes(8) = 1.0;
+		return eleInfo.setVector(axes);
+	}
+
 	default:
 
-		return 0;
+		return -1;
 
 	}
+}
+
+double SFI_MVLEM::getCharacteristicLength(void)
+{
+	// Ladruno WP-200: macro-fiber strain is normalized over wall element height h
+	return (h > 0.0) ? h : Element::getCharacteristicLength();
 }
 
 // Get the element initial element tangent matrix

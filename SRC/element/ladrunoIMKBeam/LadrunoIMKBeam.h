@@ -62,7 +62,10 @@ class LadrunoIMKBeam : public Element
                  CrdTransf &theTransf,
                  UniaxialMaterial *mZi, UniaxialMaterial *mZj,
                  UniaxialMaterial *mYi, UniaxialMaterial *mYj,
-                 double rho = 0.0);
+                 double rho = 0.0, int cMass = 0,
+                 double GAvy = 0.0, double GAvz = 0.0,
+                 double P0 = 0.0, double pmAlpha = 0.5,
+                 double dI = 0.0, double dJ = 0.0, bool useImplex = false);
   ~LadrunoIMKBeam();
 
   const char *getClassType(void) const { return "LadrunoIMKBeam"; }
@@ -97,28 +100,48 @@ class LadrunoIMKBeam : public Element
   Response *setResponse(const char **argv, int argc, OPS_Stream &s);
   int getResponse(int responseID, Information &info);
 
+  int setParameter(const char **argv, int argc, Parameter &param);
+  int updateParameter(int parameterID, Information &info);
+
+  bool ladrunoThreadSafeUpdate(void) const;
+  bool ladrunoThreadSafeForm(void) const;
+  bool ladrunoEnergyRayleighOnly(void) const { return true; }
+
  private:
   // --- geometry / elastic properties of the member ---
   double A, E, G, Jx, Iy, Iz;
   double rho;
+  int cMass;
+  double GAvy, GAvz;
+  double P0, pmAlpha;
+  double dI, dJ;
+  bool useImplex;
+  double implexErr;
 
   // --- hinge materials: [0]=Mz@i, [1]=Mz@j, [2]=My@i, [3]=My@j ---
   //     a NULL entry means that end/axis is elastic (no hinge).
   UniaxialMaterial *theMat[4];
-  double thetaH[4];        // trial hinge rotations
-  double thetaHcommit[4];  // committed hinge rotations
+  double thetaH[4];         // trial hinge rotations
+  double thetaHcommit[4];   // committed hinge rotations
+  double dThetaHprev[4];    // previous committed increment
+  double thetaHp[4];        // trial plastic hinge rotations (th - q_c/k0)
+  double thetaHpCommit[4];  // committed plastic hinge rotations
+  double dThetaHpPrev[4];   // previous committed plastic increment for IMPL-EX
+  double dtime_n_commit;    // previous committed time step for IMPL-EX
 
   // --- cached basic-system state, set in update() ---
   Vector q;   // basic forces  [N, Mz_i, Mz_j, My_i, My_j, T]
   Matrix kb;  // basic tangent (6x6)
-  Vector Q;   // 12-dof element load (inertia unbalance only in v1)
+  Vector Q;   // 12-dof element load (inertia unbalance)
+  double q0[5];  // Fixed end forces in basic system
+  double p0[5];  // Reactions in basic system
+  double vCommit[6];  // Committed basic deformations
+  bool q0Dirty;  // True when zeroLoad/addLoad modified q0 since last update()
+  bool committedAtCurrentV;  // True immediately after recvSelf at vCommit
 
   Node *theNodes[2];
   ID connectedExternalNodes;
   CrdTransf *theCoordTransf;
-
-  static Matrix K;  // 12x12 work matrix (mass / inertia)
-  static Vector P;  // 12 work vector
 
   // per-axis state determination is delegated to the shared, dimension-agnostic
   // kernel in LadrunoIMKHinge.h (ladrunoIMKSolveAxis / ladrunoIMKInitBlock),

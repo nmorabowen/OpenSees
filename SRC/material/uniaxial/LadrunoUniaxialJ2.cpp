@@ -365,6 +365,9 @@ int LadrunoUniaxialJ2::commitState(void)
   CdD = TD - CD;                 // implicit increment (for the next IMPL-EX extrapolation)
   CD = TD;
   for (int k = 0; k < nBack; k++) CX[k] = TX[k];
+  Cstrain = Tstrain;
+  Cstress = Tstress;
+  Ctangent = Ttangent;
   return 0;
 }
 
@@ -376,6 +379,9 @@ int LadrunoUniaxialJ2::revertToLastCommit(void)
   Twp = Cwp;
   TD = CD;
   for (int k = 0; k < nBack; k++) TX[k] = CX[k];
+  Tstrain = Cstrain;
+  Tstress = Cstress;
+  Ttangent = Ctangent;
   return 0;
 }
 
@@ -384,10 +390,18 @@ int LadrunoUniaxialJ2::revertToStart(void)
   CplasticStrain = 0.0; Cebarp = 0.0; CdGamma = 0.0; Cwp = 0.0; CD = 0.0; CdD = 0.0;
   TplasticStrain = 0.0; Tebarp = 0.0; TdGamma = 0.0; Twp = 0.0; TD = 0.0;
   for (int k = 0; k < MAXBACK; k++) { CX[k] = 0.0; TX[k] = 0.0; }
+  Cstrain = 0.0;
+  Cstress = 0.0;
+  Ctangent = E;
   Tstrain = 0.0;
   Tstress = 0.0;
   Ttangent = E;
   return 0;
+}
+
+double LadrunoUniaxialJ2::getEnergy(void)
+{
+  return Twp + 0.5 * Tstress * (Tstrain - TplasticStrain);
 }
 
 // ===========================================================================
@@ -405,6 +419,9 @@ UniaxialMaterial* LadrunoUniaxialJ2::getCopy(void)
   theCopy->Cwp = Cwp;
   theCopy->CD = CD;
   theCopy->CdD = CdD;
+  theCopy->Cstrain = Cstrain;
+  theCopy->Cstress = Cstress;
+  theCopy->Ctangent = Ctangent;
   theCopy->TplasticStrain = TplasticStrain;
   theCopy->Tebarp = Tebarp;
   theCopy->TdGamma = TdGamma;
@@ -425,8 +442,8 @@ UniaxialMaterial* LadrunoUniaxialJ2::getCopy(void)
 int LadrunoUniaxialJ2::sendSelf(int cTag, Channel& theChannel)
 {
   // tag + 5 params + nBack + 6 damage params + 2*MAXBACK (C,gamma) + committed
-  //   history (CplasticStrain, Cebarp, CdGamma, Cwp, CD, CdD + MAXBACK CX) + Tstrain
-  static Vector data(1 + 5 + 1 + 6 + 2*MAXBACK + 4 + 1 + 1 + MAXBACK + 1);
+  //   history (CplasticStrain, Cebarp, CdGamma, Cwp, CD, CdD + MAXBACK CX) + Cstrain, Cstress, Ctangent
+  static thread_local Vector data(1 + 5 + 1 + 6 + 2*MAXBACK + 4 + 1 + 1 + MAXBACK + 3);
   int c = 0;
   data(c++) = this->getTag();
   data(c++) = E;
@@ -450,7 +467,9 @@ int LadrunoUniaxialJ2::sendSelf(int cTag, Channel& theChannel)
   data(c++) = CD;
   data(c++) = CdD;
   for (int k = 0; k < MAXBACK; k++) data(c++) = CX[k];
-  data(c++) = Tstrain;
+  data(c++) = Cstrain;
+  data(c++) = Cstress;
+  data(c++) = Ctangent;
 
   if (theChannel.sendVector(this->getDbTag(), cTag, data) < 0) {
     opserr << "LadrunoUniaxialJ2::sendSelf - failed to send vector\n";
@@ -461,7 +480,7 @@ int LadrunoUniaxialJ2::sendSelf(int cTag, Channel& theChannel)
 
 int LadrunoUniaxialJ2::recvSelf(int cTag, Channel& theChannel, FEM_ObjectBroker&)
 {
-  static Vector data(1 + 5 + 1 + 6 + 2*MAXBACK + 4 + 1 + 1 + MAXBACK + 1);
+  static thread_local Vector data(1 + 5 + 1 + 6 + 2*MAXBACK + 4 + 1 + 1 + MAXBACK + 3);
   if (theChannel.recvVector(this->getDbTag(), cTag, data) < 0) {
     opserr << "LadrunoUniaxialJ2::recvSelf - failed to recv vector\n";
     return -1;
@@ -489,12 +508,12 @@ int LadrunoUniaxialJ2::recvSelf(int cTag, Channel& theChannel, FEM_ObjectBroker&
   CD = data(c++);
   CdD = data(c++);
   for (int k = 0; k < MAXBACK; k++) CX[k] = data(c++);
-  Tstrain = data(c++);
+  Cstrain = data(c++);
+  Cstress = data(c++);
+  Ctangent = data(c++);
 
   // sync trial to committed
   this->revertToLastCommit();
-  Tstress = E*(Tstrain - CplasticStrain);   // recovered elastic predictor stress
-  Ttangent = E;
   return 0;
 }
 
@@ -601,8 +620,7 @@ int LadrunoUniaxialJ2::getResponse(int responseID, Information& matInfo)
     case 104: matInfo.theDouble = TD;             return 0;   // Lemaitre damage
     case 105: matInfo.theDouble = (dmgOn && TD >= dmgDc) ? 1.0 : 0.0; return 0; // failed
     case 106: {                                                // damage energy release rate Y
-      double omd = 1.0 - TD;
-      double sigEff = (omd > 1.0e-12) ? Tstress/omd : 0.0;
+      const double sigEff = E * (Tstrain - TplasticStrain);
       matInfo.theDouble = (E > 0.0) ? sigEff*sigEff/(2.0*E) : 0.0;  // R_v = 1 at uniaxial
       return 0;
     }

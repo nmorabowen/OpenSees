@@ -66,55 +66,61 @@ OPS_ModIMKPeakOriented()
     return 0;
   }
  
-  //Changed in order to account for the nFactor as an optional input    // Updated: Filipe Ribeiro and Andre Barbosa
-		//numData = 24;														  // Updated: Filipe Ribeiro and Andre Barbosa
-  
-    numData = OPS_GetNumRemainingInputArgs();			// Updated: Filipe Ribeiro and Andre Barbosa
-		
-    if (numData != 23 && numData != 24 ) {				
-			opserr << "Invalid Args want: uniaxialMaterial ModIMKPeakOriented tag? Ke?, alfaPos?, alfaNeg?, My_pos?, My_neg?"; 
-			opserr << "Ls?, Ld?, La?, Lk?, Cs?, Cd?, Ca?, Ck?, thetaPpos?, thetaPneg?, thetaPCpos?, thetaPCneg? "; 
-			opserr << "ResfacPos?, ResfacNeg?, fracDispPos?, fracDispNeg?,DPos?, DNeg?, <nFactor?>";		// Updated: Filipe Ribeiro and Andre Barbosa
-		
-	return 0;	
-	}
-	
-	if (numData == 23) {
-		if (OPS_GetDoubleInput(&numData, dData) != 0) {             // Updated: Filipe Ribeiro and Andre Barbosa
-			opserr << "Invalid Args want: uniaxialMaterial ModIMKPeakOriented tag? Ke?, alfaPos?, alfaNeg?, My_pos?, My_neg?"; 
-			opserr << "Ls?, Ld?, La?, Lk?, Cs?, Cd?, Ca?, Ck?, thetaPpos?, thetaPneg?, thetaPCpos?, thetaPCneg? "; 
-			opserr << "ResfacPos?, ResfacNeg?, fracDispPos?, fracDispNeg?,DPos?, DNeg?, <nFactor?>";		// Updated: Filipe Ribeiro and Andre Barbosa
-		
-	return 0;  
-	}
-	
-	// Parsing was successful, allocate the material with zero index
-		theMaterial = new ModIMKPeakOriented(iData[0], 
+  // Ladruno: parse 23 required doubles + optional [nFactor] + optional [-implex]
+  int remArgs = OPS_GetNumRemainingInputArgs();
+  if (remArgs < 23) {
+    opserr << "Invalid Args want: uniaxialMaterial ModIMKPeakOriented tag? Ke?, alfaPos?, alfaNeg?, My_pos?, My_neg? ";
+    opserr << "Ls?, Ld?, La?, Lk?, Cs?, Cd?, Ca?, Ck?, thetaPpos?, thetaPneg?, thetaPCpos?, thetaPCneg? ";
+    opserr << "ResfacPos?, ResfacNeg?, fracDispPos?, fracDispNeg?, DPos?, DNeg?, <nFactor?> <-implex>\n";
+    return 0;
+  }
+
+  numData = 23;
+  if (OPS_GetDoubleInput(&numData, dData) != 0) {
+    opserr << "Invalid Args want: uniaxialMaterial ModIMKPeakOriented tag? Ke?, alfaPos?, alfaNeg?, My_pos?, My_neg? ";
+    opserr << "Ls?, Ld?, La?, Lk?, Cs?, Cd?, Ca?, Ck?, thetaPpos?, thetaPneg?, thetaPCpos?, thetaPCneg? ";
+    opserr << "ResfacPos?, ResfacNeg?, fracDispPos?, fracDispNeg?, DPos?, DNeg?, <nFactor?> <-implex>\n";
+    return 0;
+  }
+
+  bool hasNFactor = false;
+  double nFactorVal = 0.0;
+  bool useImplex = false;
+
+  while (OPS_GetNumRemainingInputArgs() > 0) {
+    const char *opt = OPS_GetString();
+    if (opt != 0 && (strcmp(opt, "-implex") == 0 || strcmp(opt, "-IMPLEX") == 0)) {
+      useImplex = true;
+    } else if (!hasNFactor) {
+      OPS_ResetCurrentInputArg(-1);
+      int one = 1;
+      if (OPS_GetDoubleInput(&one, &nFactorVal) != 0) {
+        opserr << "WARNING ModIMKPeakOriented: unknown option or invalid nFactor\n";
+        return 0;
+      }
+      hasNFactor = true;
+    } else {
+      opserr << "WARNING ModIMKPeakOriented: unknown option '" << (opt ? opt : "") << "'\n";
+      return 0;
+    }
+  }
+
+  if (!hasNFactor) {
+    theMaterial = new ModIMKPeakOriented(iData[0], 
 					     dData[0], dData[1], dData[2], dData[3],
 					     dData[4], dData[5], dData[6], dData[7],
 					     dData[8], dData[9], dData[10], dData[11],
 					     dData[12], dData[13], dData[14], dData[15],
 					     dData[16], dData[17], dData[18], dData[19],
-					     dData[20], dData[21], dData[22]);					// Updated: Filipe Ribeiro and Andre Barbosa
-	
-	} else if (numData == 24) {			// Updated: Filipe Ribeiro and Andre Barbosa
-	if (OPS_GetDoubleInput(&numData, dData) != 0) {             // Updated: Filipe Ribeiro and Andre Barbosa
-		opserr << "Invalid Args want: uniaxialMaterial ModIMKPeakOriented tag? Ke?, alfaPos?, alfaNeg?, My_pos?, My_neg?"; 
-		opserr << "Ls?, Ld?, La?, Lk?, Cs?, Cd?, Ca?, Ck?, thetaPpos?, thetaPneg?, thetaPCpos?, thetaPCneg? "; 
-		opserr << "ResfacPos?, ResfacNeg?, fracDispPos?, fracDispNeg?,DPos?, DNeg?, <nFactor?>";		// Updated: Filipe Ribeiro and Andre Barbosa
-	
-	return 0;  
-	}
- 
-    // Parsing was successful, allocate the material
-		theMaterial = new ModIMKPeakOriented(iData[0],
+					     dData[20], dData[21], dData[22], useImplex);
+  } else {
+    theMaterial = new ModIMKPeakOriented(iData[0],
                             dData[0], dData[1], dData[2], dData[3], dData[4],
                             dData[5], dData[6], dData[7], dData[8], dData[9],
                             dData[10], dData[11], dData[12], dData[13], dData[14],
                             dData[15], dData[16], dData[17], dData[18], dData[19],
-                            dData[20], dData[21], dData[22], dData[23]); // Updated: Filipe Ribeiro and Andre Barbosa
-   
-	}
+                            dData[20], dData[21], dData[22], nFactorVal, useImplex);
+  }
 		
 		
   if (theMaterial == 0) {
@@ -131,15 +137,17 @@ ModIMKPeakOriented::ModIMKPeakOriented(int tag, double Ke0, double alfanPos, dou
 				       double ls, double ld, double la, double lk, double cs, double cd, double ca, double ck,
 				       double thetaPpos, double thetaPneg, double thetaPCpos, double thetaPCneg,
 				       double resfacPos, double resfacNeg, double fracDispPos, double fracDispNeg,
-				       double dPos, double dNeg, double NFactor)
+				       double dPos, double dNeg, double NFactor, bool useImplex)
  :UniaxialMaterial(tag,MAT_TAG_ModIMKPeakOriented), Ke0(Ke0), AlfanPos(alfanPos), AlfanNeg(alfanNeg), My_pos(my_pos), My_neg(my_neg), 
   Ls(ls), Ld(ld), La(la), Lk(lk), Cs(cs), Cd(cd), Ca(ca), Ck(ck),ThetaPpos(thetaPpos), ThetaPneg(thetaPneg), 
   ThetaPCpos(thetaPCpos), ThetaPCneg(thetaPCneg), ResfacPos(resfacPos), ResfacNeg(resfacNeg), 
-  FracDispPos(fracDispPos), FracDispNeg(fracDispNeg),DPos(dPos), DNeg(dNeg), nFactor(NFactor)		// Updated: Filipe Ribeiro and Andre Barbosa
+  FracDispPos(fracDispPos), FracDispNeg(fracDispNeg),DPos(dPos), DNeg(dNeg), nFactor(NFactor),
+  useImplex_(useImplex), dU_prev_(0.0), fP_imp_(0.0), Tangent_imp_(0.0), dtime_n_commit_(0.0)		// Updated: Filipe Ribeiro and Andre Barbosa // Ladruno
 {
   // Initialize Variables by Calling revertToStart function
   this->revertToStart();	
-  Tangent = Ke; 
+  Tangent = Ke;
+  Tangent_imp_ = Ke;
 }
 
 // if nFactor is NOT assigned											// Updated: Filipe Ribeiro and Andre Barbosa
@@ -147,17 +155,17 @@ ModIMKPeakOriented::ModIMKPeakOriented(int tag, double Ke0, double alfanPos, dou
 				       double ls, double ld, double la, double lk, double cs, double cd, double ca, double ck,
 				       double thetaPpos, double thetaPneg, double thetaPCpos, double thetaPCneg,
 				       double resfacPos, double resfacNeg, double fracDispPos, double fracDispNeg,
-				       double dPos, double dNeg)
+				       double dPos, double dNeg, bool useImplex)
  :UniaxialMaterial(tag,MAT_TAG_ModIMKPeakOriented), Ke0(Ke0), AlfanPos(alfanPos), AlfanNeg(alfanNeg), My_pos(my_pos), My_neg(my_neg), 
   Ls(ls), Ld(ld), La(la), Lk(lk), Cs(cs), Cd(cd), Ca(ca), Ck(ck),ThetaPpos(thetaPpos), ThetaPneg(thetaPneg), 
   ThetaPCpos(thetaPCpos), ThetaPCneg(thetaPCneg), ResfacPos(resfacPos), ResfacNeg(resfacNeg), 
-  FracDispPos(fracDispPos), FracDispNeg(fracDispNeg),DPos(dPos), DNeg(dNeg)		// Updated: Filipe Ribeiro and Andre Barbosa
+  FracDispPos(fracDispPos), FracDispNeg(fracDispNeg),DPos(dPos), DNeg(dNeg), nFactor(0.0),
+  useImplex_(useImplex), dU_prev_(0.0), fP_imp_(0.0), Tangent_imp_(0.0), dtime_n_commit_(0.0)		// Updated: Filipe Ribeiro and Andre Barbosa // Ladruno
 {
   // Initialize Variables by Calling revertToStart function
   this->revertToStart();
-  // Default value for no nFactor
-  nFactor=0.0;								// Updated: Filipe Ribeiro and Andre Barbosa
-  Tangent = Ke; 
+  Tangent = Ke;
+  Tangent_imp_ = Ke;
 }
 
 ModIMKPeakOriented::ModIMKPeakOriented()
@@ -165,11 +173,13 @@ ModIMKPeakOriented::ModIMKPeakOriented()
 Ke0(0.0), AlfanPos(0.0), AlfanNeg(0.0), My_pos(0.0), My_neg(0.0), Ls(0.0), Ld(0.0), La(0.0), Lk(0.0),		// Updated: Filipe Ribeiro and Andre Barbosa
 Cs(0.0), Cd(0.0), Ca(0.0), Ck(0.0), ThetaPpos(0.0), ThetaPneg(0.0), 
 ThetaPCpos(0.0), ThetaPCneg(0.0), ResfacPos(0.0), ResfacNeg(0.0), 
-FracDispPos(0.0), FracDispNeg(0.0), DPos(0.0), DNeg(0.0), nFactor(0.0)     // Updated: Filipe Ribeiro and Andre Barbosa
+FracDispPos(0.0), FracDispNeg(0.0), DPos(0.0), DNeg(0.0), nFactor(0.0),
+useImplex_(false), dU_prev_(0.0), fP_imp_(0.0), Tangent_imp_(0.0), dtime_n_commit_(0.0)     // Updated: Filipe Ribeiro and Andre Barbosa // Ladruno
 {
   // Initialize Variables by Calling revertToStart function
   this->revertToStart();
   Tangent = Ke;
+  Tangent_imp_ = Ke;
 }
 
 ModIMKPeakOriented::~ModIMKPeakOriented()
@@ -195,6 +205,21 @@ ModIMKPeakOriented::setTrialStrain(double strain, double strainRate)
  
   flagdeg = 0;
   if (fabs(deltaD) < 1.0e-18 && strain != 0.0 && commitCalledOnce == 1) {		// Updated: Filipe Ribeiro and Andre Barbosa
+    if (useImplex_) { // Ladruno: IMPL-EX zero-increment consistency
+      double k0 = (CKe > 0.0) ? CKe : Ke0 * (1.0 + nFactor);
+      if (k0 <= 0.0) k0 = 1.0;
+      double k_imp_c = (Ckon == 0) ? k0 : Ctangent;
+      double time_factor = 1.0;
+      if (ops_Dt > 0.0 && dtime_n_commit_ > 0.0) {
+        time_factor = ops_Dt / dtime_n_commit_;
+        if (time_factor > 2.0) time_factor = 2.0;
+      }
+      double dU_expl = time_factor * dU_prev_;
+      fP_imp_ = CfP;
+      Tangent_imp_ = k_imp_c;
+      fP = CfP + (k_imp_c - k0) * dU_expl;
+      Tangent = k0;
+    }
     return 0;
   }
  
@@ -717,10 +742,25 @@ ModIMKPeakOriented::setTrialStrain(double strain, double strainRate)
     ek = 0.0;
   }
  
-  dP = d;
+   dP = d;
   fP = f;
   ekP = ek;
   Tangent = ek;
+  fP_imp_ = fP;
+  Tangent_imp_ = Tangent;
+  if (useImplex_) { // Ladruno: IMPL-EX explicit linear extrapolation + positive tangent K0
+    double k0 = (CKe > 0.0) ? CKe : Ke0 * (1.0 + nFactor);
+    if (k0 <= 0.0) k0 = 1.0;
+    double k_imp_c = (Ckon == 0) ? k0 : Ctangent;
+    double time_factor = 1.0;
+    if (ops_Dt > 0.0 && dtime_n_commit_ > 0.0) {
+      time_factor = ops_Dt / dtime_n_commit_;
+      if (time_factor > 2.0) time_factor = 2.0;
+    }
+    double dU_expl = time_factor * dU_prev_;
+    fP = CfP + k0 * deltaD + (k_imp_c - k0) * dU_expl;
+    Tangent = k0;
+  }
  
   return 0;
 }
@@ -761,13 +801,20 @@ double ModIMKPeakOriented::getStrainRate(void)
 int ModIMKPeakOriented::commitState(void)
 {
   commitCalledOnce = 1;		// Updated: Filipe Ribeiro and Andre Barbosa
+  if (useImplex_) { // Ladruno: commit implicit stress/tangent and record increment
+    dU_prev_ = dP - CdP;
+    double k0 = (CKe > 0.0) ? CKe : Ke0 * (1.0 + nFactor);
+    if (k0 <= 0.0) k0 = 1.0;
+    Tangent = k0;
+  }
+  dtime_n_commit_ = ops_Dt;
   
   Cstrain = dP;
-  Cstress = fP;
-  Ctangent = Tangent;
+  Cstress = useImplex_ ? fP_imp_ : fP;
+  Ctangent = useImplex_ ? Tangent_imp_ : Tangent;
  
   CdP = dP;
-  CfP = fP;
+  CfP = Cstress;
   Cek = ek;
  
   CUnl = Unl;
@@ -837,6 +884,13 @@ int ModIMKPeakOriented::revertToLastCommit(void)
   dP = CdP;
   fP = CfP;
   ek = Cek;
+  fP_imp_ = CfP;
+  Tangent_imp_ = Ctangent;
+  if (useImplex_) {
+    double k0 = (CKe > 0.0) ? CKe : Ke0 * (1.0 + nFactor);
+    if (k0 <= 0.0) k0 = 1.0;
+    Tangent = k0;
+  }
  
   Unl = CUnl;
   kon = Ckon;
@@ -1013,6 +1067,10 @@ int ModIMKPeakOriented::revertToStart(void)
   AlfaNeg=CAlfaNeg=(AlfanNeg)/(1+nFactor*(1-AlfanNeg));	// Updated: Filipe Ribeiro and Andre Barbosa
   AlfaPos=CAlfaPos=(AlfanPos)/(1+nFactor*(1-AlfanPos));	// Updated: Filipe Ribeiro and Andre Barbosa
   prodBeta=CprodBeta=1.0;								// Updated: Filipe Ribeiro and Andre Barbosa
+  dU_prev_ = 0.0;
+  fP_imp_ = 0.0;
+  Tangent_imp_ = Ke;
+  dtime_n_commit_ = 0.0;
  
   return 0;
 }
@@ -1021,7 +1079,7 @@ UniaxialMaterial *
 ModIMKPeakOriented::getCopy(void)
 {
   ModIMKPeakOriented *theCopy = new ModIMKPeakOriented(this->getTag(), Ke0, AlfanPos, AlfanNeg, My_pos, My_neg, Ls, Ld, La, Lk,
-                                                                                                                 Cs, Cd, Ca, Ck, ThetaPpos, ThetaPneg,ThetaPCpos, ThetaPCneg, ResfacPos, ResfacNeg,FracDispPos, FracDispNeg,DPos, DNeg,nFactor);   // Updated: Filipe Ribeiro and Andre Barbosa
+                                                                                                                  Cs, Cd, Ca, Ck, ThetaPpos, ThetaPneg,ThetaPCpos, ThetaPCneg, ResfacPos, ResfacNeg,FracDispPos, FracDispNeg,DPos, DNeg,nFactor, useImplex_);   // Updated: Filipe Ribeiro and Andre Barbosa // Ladruno
   // Converged state variables
   theCopy->Cstrain = Cstrain;
   theCopy->Cstress = Cstress;
@@ -1146,6 +1204,12 @@ ModIMKPeakOriented::getCopy(void)
   theCopy->CAlfaPos=CAlfaPos;	// Updated: Filipe Ribeiro and Andre Barbosa
   theCopy->CprodBeta=CprodBeta;	// Updated: Filipe Ribeiro and Andre Barbosa
   theCopy->prodBeta=prodBeta;	// Updated: Filipe Ribeiro and Andre Barbosa
+  theCopy->commitCalledOnce = commitCalledOnce;
+  theCopy->useImplex_ = useImplex_;
+  theCopy->dU_prev_ = dU_prev_;
+  theCopy->fP_imp_ = fP_imp_;
+  theCopy->Tangent_imp_ = Tangent_imp_;
+  theCopy->dtime_n_commit_ = dtime_n_commit_;
 
   return theCopy;
 }
@@ -1154,7 +1218,7 @@ int
 ModIMKPeakOriented::sendSelf(int cTag, Channel &theChannel)
 {
   int res = 0;
-  static Vector data(76);			// Updated: Filipe Ribeiro and Andre Barbosa
+  static thread_local Vector data(83);			// Updated: Filipe Ribeiro and Andre Barbosa // Ladruno: IMPL-EX + thread_local
   data(0) = this->getTag();
  
   // Material properties
@@ -1253,6 +1317,13 @@ ModIMKPeakOriented::sendSelf(int cTag, Channel &theChannel)
   data(73)=CAlfaPos;		// Updated: Filipe Ribeiro and Andre Barbosa
   data(74)=prodBeta;				// Updated: Filipe Ribeiro and Andre Barbosa
   data(75)=CprodBeta;				// Updated: Filipe Ribeiro and Andre Barbosa
+  data(76) = useImplex_ ? 1.0 : 0.0; // Ladruno
+  data(77) = dU_prev_; // Ladruno
+  data(78) = dtime_n_commit_; // Ladruno
+  data(79) = (double)commitCalledOnce; // Ladruno
+  data(80) = fP; // Ladruno
+  data(81) = fP_imp_; // Ladruno
+  data(82) = Tangent_imp_; // Ladruno
 	     
   res = theChannel.sendVector(this->getDbTag(), cTag, data);
   if (res < 0)
@@ -1266,7 +1337,7 @@ ModIMKPeakOriented::recvSelf(int cTag, Channel &theChannel,
                                FEM_ObjectBroker &theBroker)
 {
   int res = 0;
-  static Vector data(76);
+  static thread_local Vector data(83); // Ladruno: IMPL-EX + thread_local
   res = theChannel.recvVector(this->getDbTag(), cTag, data);
  
   if (res < 0) {
@@ -1369,6 +1440,14 @@ ModIMKPeakOriented::recvSelf(int cTag, Channel &theChannel,
 	CAlfaPos=data(73);		// Updated: Filipe Ribeiro and Andre Barbosa
 	prodBeta=data(74);				// Updated: Filipe Ribeiro and Andre Barbosa
 	CprodBeta=data(75);				// Updated: Filipe Ribeiro and Andre Barbosa
+    useImplex_ = (data(76) != 0.0); // Ladruno
+    dU_prev_ = data(77); // Ladruno
+    dtime_n_commit_ = data(78); // Ladruno
+    commitCalledOnce = (int)data(79); // Ladruno
+    this->revertToLastCommit();
+    fP = data(80); // Ladruno
+    fP_imp_ = data(81); // Ladruno
+    Tangent_imp_ = data(82); // Ladruno
 
   }
  
@@ -1581,6 +1660,9 @@ ModIMKPeakOriented::setResponse (const char **argv, int argc,
   if ((strcmp(argv[0],"dres") == 0)) {
     theOutputStream.tag("ResponseType", "dres");
     theResponse =  new MaterialResponse(this, 101, dres);
+  } else if (strcmp(argv[0],"implexError") == 0 || strcmp(argv[0],"ImplexError") == 0) { // Ladruno WP-200
+    theOutputStream.tag("ResponseType", "implexError");
+    theResponse =  new MaterialResponse(this, 102, 0.0);
   }
  
   return theResponse;
@@ -1592,6 +1674,9 @@ ModIMKPeakOriented::getResponse (int responseID, Information &matInformation)
 {
   if (responseID == 101) {
     matInformation.setDouble(dres);
+  } else if (responseID == 102) { // Ladruno WP-200
+    double err = useImplex_ ? (fabs(fP - fP_imp_) / (fabs(fP_imp_) + 1.0e-12)) : 0.0;
+    matInformation.setDouble(err);
   } else
     return UniaxialMaterial::getResponse(responseID, matInformation);
   return 0;

@@ -122,13 +122,13 @@ private:
     Vector ubcommit;           // committed basic displacements
     Vector ubpr;               // previous basic displacements
     
-    static Matrix Tlg;         // matrix that transforms from global to local coordinates
-    static Matrix Tbl;         // matrix that transforms from local  to basic coordinates
-    static Matrix kg;          // global stiffness matrix
-    static Vector uxg;     
-    static Vector pg;     
-    static Vector dub;     
-    static Vector Dub;     
+    static thread_local Matrix Tlg;         // matrix that transforms from global to local coordinates   // Ladruno
+    static thread_local Matrix Tbl;         // matrix that transforms from local  to basic coordinates   // Ladruno
+    static thread_local Matrix kg;          // global stiffness matrix   // Ladruno
+    static thread_local Vector uxg;     // Ladruno
+    static thread_local Vector pg;      // Ladruno
+    static thread_local Vector dub;     // Ladruno
+    static thread_local Vector Dub;     // Ladruno
     
     double *nodeIInitialDisp, *nodeJInitialDisp;
     bool initialDispChecked;

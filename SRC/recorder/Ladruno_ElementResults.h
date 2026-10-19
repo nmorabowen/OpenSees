@@ -1525,6 +1525,7 @@ namespace detail {
 				auto lam_get_num_ext_nodes = [](Element* elem) {
 					switch (elem->getClassTag()) {
 					case ELE_TAG_SFI_MVLEM_3D: return 4;
+					case ELE_TAG_SFI_MVLEM: return 2;
 					default: return elem->getNumExternalNodes();
 					}
 				};
@@ -1720,6 +1721,9 @@ namespace detail {
 					elem_class_tag == ELE_TAG_ElasticTimoshenkoBeam2d ||
 					elem_class_tag == ELE_TAG_ElasticTimoshenkoBeam3d ||
 					elem_class_tag == ELE_TAG_ModElasticBeam2d ||
+					// ./ladrunoIMKBeam
+					elem_class_tag == ELE_TAG_LadrunoIMKBeam ||
+					elem_class_tag == ELE_TAG_LadrunoIMKBeam2d ||
 					// .elastomericBearing
 					elem_class_tag == ELE_TAG_ElastomericBearingBoucWen2d ||
 					elem_class_tag == ELE_TAG_ElastomericBearingBoucWen3d ||
@@ -1747,6 +1751,8 @@ namespace detail {
 					// ./dispBeamColumn
 					elem_class_tag == ELE_TAG_DispBeamColumn2d || /*warning: no integrationPoints*/
 					elem_class_tag == ELE_TAG_DispBeamColumn3d || /*warning: no integrationPoints*/
+					elem_class_tag == ELE_TAG_LadrunoDispBeamColumn2d ||
+					elem_class_tag == ELE_TAG_LadrunoDispBeamColumn3d ||
 					elem_class_tag == ELE_TAG_DispBeamColumn2dWithSensitivity || /*warning: no integrationPoints, no resp for all sections*/
 					elem_class_tag == ELE_TAG_DispBeamColumn3dWithSensitivity || /*warning: no integrationPoints, no resp for all sections*/
 																				 // ./dispBeamColumnInt
@@ -1762,7 +1768,10 @@ namespace detail {
 					elem_class_tag == ELE_TAG_ForceBeamColumnWarping2d || /* <- OK! this one defines everything ! good job*/
 					// ./mixedBeamColumn
 					elem_class_tag == ELE_TAG_MixedBeamColumn2d ||
-					elem_class_tag == ELE_TAG_MixedBeamColumn3d
+					elem_class_tag == ELE_TAG_MixedBeamColumn3d ||
+					// ./mvlem (2D)
+					elem_class_tag == ELE_TAG_MVLEM ||
+					elem_class_tag == ELE_TAG_SFI_MVLEM
 					) {
 					geom_type = ElementGeometryType::Line_2N;
 					int_type = ElementIntegrationRuleType::CustomIntegrationRule;
@@ -2146,7 +2155,9 @@ namespace detail {
 					//std::cout << "get custom gp: trying with \"section(1,2,..,N)\"...\n";
 					bool done = false;
 					std::string request1 = "section";
-					if (elem->getClassTag() == ELE_TAG_MVLEM_3D || 
+					if (elem->getClassTag() == ELE_TAG_MVLEM ||
+						elem->getClassTag() == ELE_TAG_SFI_MVLEM ||
+						elem->getClassTag() == ELE_TAG_MVLEM_3D || 
 						elem->getClassTag() == ELE_TAG_SFI_MVLEM_3D ||
 						elem->getClassTag() == ELE_TAG_E_SFI_MVLEM_3D) {
 						request1 = "material";

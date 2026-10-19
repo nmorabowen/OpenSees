@@ -70,9 +70,14 @@ static UniaxialMaterial *getMatArg2d(const char *flag)
   return m;
 }
 
-// Reached from OPS_LadrunoIMKBeam() after it has confirmed ndm==2 && ndf==3.
+// Reached from OPS_LadrunoIMKBeam() or directly via element('LadrunoIMKBeam2d', ...).
 void *OPS_LadrunoIMKBeam2d()
 {
+  if (OPS_GetNDM() != 2 || OPS_GetNDF() != 3) {
+    opserr << "WARNING LadrunoIMKBeam2d -- model must be ndm 2/ndf 3\n";
+    return 0;
+  }
+
   if (OPS_GetNumRemainingInputArgs() < 7) {
     opserr << "WARNING insufficient arguments\n";
     opserr << "Want: element LadrunoIMKBeam tag iNode jNode A E Iz transfTag "
@@ -115,21 +120,27 @@ void *OPS_LadrunoIMKBeam2d()
   UniaxialMaterial *matZi = 0, *matZj = 0;
   bool setZi = false, setZj = false;
   double rho = 0.0;
+  int cMass = 0;
+  double GAvy = 0.0;
+  double P0 = 0.0, pmAlpha = 0.5;
+  double dI = 0.0, dJ = 0.0;
+  bool useImplex = false;
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const char *opt = OPS_GetString();
 
     if (strcmp(opt, "-hinge") == 0) {
       if (OPS_GetNumRemainingInputArgs() < 1) {
-        opserr << "WARNING LadrunoIMKBeam (2D) -- -hinge needs both|i|j\n";
+        opserr << "WARNING LadrunoIMKBeam (2D) -- -hinge needs both|i|j|none\n";
         return 0;
       }
       const char *h = OPS_GetString();
-      if (strcmp(h, "both") == 0)      hingeMode = 0;
-      else if (strcmp(h, "i") == 0)    hingeMode = 1;
-      else if (strcmp(h, "j") == 0)    hingeMode = 2;
+      if (strcmp(h, "both") == 0 || strcmp(h, "BOTH") == 0)         hingeMode = 0;
+      else if (strcmp(h, "i") == 0 || strcmp(h, "I") == 0)          hingeMode = 1;
+      else if (strcmp(h, "j") == 0 || strcmp(h, "J") == 0)          hingeMode = 2;
+      else if (strcmp(h, "none") == 0 || strcmp(h, "NONE") == 0)    hingeMode = 3;
       else {
-        opserr << "WARNING LadrunoIMKBeam (2D) -- -hinge must be both|i|j\n";
+        opserr << "WARNING LadrunoIMKBeam (2D) -- -hinge must be both|i|j|none\n";
         return 0;
       }
 
@@ -151,6 +162,80 @@ void *OPS_LadrunoIMKBeam2d()
         return 0;
       }
 
+    } else if (strcmp(opt, "-cMass") == 0 || strcmp(opt, "-cmass") == 0) {
+      cMass = 1;
+
+    } else if (strcmp(opt, "-implex") == 0) {
+      useImplex = true;
+
+    } else if (strcmp(opt, "-endZones") == 0 || strcmp(opt, "-endZone") == 0) {
+      if (OPS_GetNumRemainingInputArgs() < 2) {
+        opserr << "WARNING LadrunoIMKBeam (2D) -- -endZones needs dI dJ\n";
+        return 0;
+      }
+      double dz[2] = {0.0, 0.0};
+      num = 2;
+      if (OPS_GetDoubleInput(&num, dz) < 0 || dz[0] < 0.0 || dz[1] < 0.0) {
+        opserr << "WARNING LadrunoIMKBeam (2D) -- invalid -endZones dI dJ\n";
+        return 0;
+      }
+      dI = dz[0];
+      dJ = dz[1];
+
+    } else if (strcmp(opt, "-shear") == 0) {
+      if (OPS_GetNumRemainingInputArgs() < 1) {
+        opserr << "WARNING LadrunoIMKBeam (2D) -- -shear needs <G Avy> or <GAvy>\n";
+        return 0;
+      }
+      double val1 = 0.0;
+      num = 1;
+      if (OPS_GetDoubleInput(&num, &val1) < 0 || val1 <= 0.0) {
+        opserr << "WARNING LadrunoIMKBeam (2D) -- invalid -shear parameter\n";
+        return 0;
+      }
+      GAvy = val1;
+      if (OPS_GetNumRemainingInputArgs() > 0) {
+        const char *nxt = OPS_GetString();
+        bool nextIsFlag = (nxt != 0 && nxt[0] == '-' &&
+                           ((nxt[1] >= 'a' && nxt[1] <= 'z') ||
+                            (nxt[1] >= 'A' && nxt[1] <= 'Z')));
+        OPS_ResetCurrentInputArg(-1);
+        if (!nextIsFlag) {
+          double val2 = 0.0;
+          num = 1;
+          if (OPS_GetDoubleInput(&num, &val2) < 0 || val2 <= 0.0) {
+            opserr << "WARNING LadrunoIMKBeam (2D) -- invalid -shear Avy\n";
+            return 0;
+          }
+          GAvy = val1 * val2;
+        }
+      }
+
+    } else if (strcmp(opt, "-pm") == 0) {
+      if (OPS_GetNumRemainingInputArgs() < 1) {
+        opserr << "WARNING LadrunoIMKBeam (2D) -- -pm needs P0 [alpha]\n";
+        return 0;
+      }
+      num = 1;
+      if (OPS_GetDoubleInput(&num, &P0) < 0 || P0 <= 0.0) {
+        opserr << "WARNING LadrunoIMKBeam (2D) -- invalid -pm P0 (must be > 0)\n";
+        return 0;
+      }
+      if (OPS_GetNumRemainingInputArgs() > 0) {
+        const char *nxt = OPS_GetString();
+        bool nextIsFlag = (nxt != 0 && nxt[0] == '-' &&
+                           ((nxt[1] >= 'a' && nxt[1] <= 'z') ||
+                            (nxt[1] >= 'A' && nxt[1] <= 'Z')));
+        OPS_ResetCurrentInputArg(-1);
+        if (!nextIsFlag) {
+          num = 1;
+          if (OPS_GetDoubleInput(&num, &pmAlpha) < 0) {
+            opserr << "WARNING LadrunoIMKBeam (2D) -- invalid -pm alpha\n";
+            return 0;
+          }
+        }
+      }
+
     } else {
       opserr << "WARNING LadrunoIMKBeam (2D) -- unknown option '" << opt << "'\n";
       return 0;
@@ -167,6 +252,7 @@ void *OPS_LadrunoIMKBeam2d()
 
   Element *theEle = new LadrunoIMKBeam2d(iData[0], iData[1], iData[2],
                                          dData[0], dData[1], dData[2],
-                                         *theTransf, mZi, mZj, rho);
+                                         *theTransf, mZi, mZj, rho, cMass,
+                                         GAvy, P0, pmAlpha, dI, dJ, useImplex);
   return theEle;
 }

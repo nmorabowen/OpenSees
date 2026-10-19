@@ -140,8 +140,8 @@ void* OPS_DispBeamColumnNL3d(const ID &info)
 
 	int ndm = OPS_GetNDM();
 	int ndf = OPS_GetNDF();
-	if(ndm != 2 || ndf != 3) {
-	    opserr<<"ndm must be 2 and ndf must be 3\n";
+	if(ndm != 3 || ndf != 6) { // Ladruno: fix 2D copy-paste guard (3d/6dof)
+	    opserr<<"ndm must be 3 and ndf must be 6\n";
 	    return 0;
 	}
 
@@ -687,14 +687,14 @@ DispBeamColumnNL3d::getBasicStiff(Matrix &kb, int initial)
 	  tmp = ks(k,j)*wti;
 	  ka(k,1) += (xi6-4.0)*tmp;
 	  ka(k,2) += (xi6-2.0)*tmp;
-	}
-	for (int jj = 0; jj < order; jj++) {
-	  switch(code(jj)) {
-	  case SECTION_RESPONSE_P:
-	    tmp = ks(k,jj)*wt[i]*thetaz;
-	    ka(k,1) += tmp*c1;
-	    ka(k,2) += tmp*c2;
-	    break;
+	  for (int jj = 0; jj < order; jj++) { // Ladruno: keep inside k loop (was OOB k==order)
+	    switch(code(jj)) {
+	    case SECTION_RESPONSE_P:
+	      tmp = ks(k,jj)*wt[i]*thetaz;
+	      ka(k,1) += tmp*c1;
+	      ka(k,2) += tmp*c2;
+	      break;
+	    }
 	  }
 	}
 	break;
@@ -1768,13 +1768,22 @@ DispBeamColumnNL3d::getResponse(int responseID, Information &eleInfo)
     return eleInfo.setVector(this->getRayleighDampingForces());
 
   else if (responseID == 2) {
-      P(3) =  q(0);
+      // Ladruno: fix 2D copy-paste in 3D 12-DOF localForce response
+      double oneOverL = 1.0/L;
+      P(6) =  q(0);
       P(0) = -q(0)+p0[0];
-      P(2) = q(1);
-      P(5) = q(2);
-      V = (q(1)+q(2))/L;
+      P(5)  = q(1);
+      P(11) = q(2);
+      V = (q(1)+q(2))*oneOverL;
       P(1) =  V+p0[1];
-      P(4) = -V+p0[2];
+      P(7) = -V+p0[2];
+      P(4)  = q(3);
+      P(10) = q(4);
+      V = (q(3)+q(4))*oneOverL;
+      P(2) = -V+p0[3];
+      P(8) =  V+p0[4];
+      P(9) =  q(5);
+      P(3) = -q(5);
       return eleInfo.setVector(P);
   }
 

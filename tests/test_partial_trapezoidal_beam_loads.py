@@ -173,6 +173,8 @@ def _create_2d_element(family: str, L: float, E: float = 2.0e11, G: float = 8.0e
         ops.section("Elastic", 1, E, A, Iz)
         ops.beamIntegration("Lobatto", 1, 1, 5)
         ops.element("ladrunoDispBeamColumn", 1, 1, 2, 1, 1)
+    elif family == "LadrunoIMKBeam2d":
+        ops.element("LadrunoIMKBeam", 1, 1, 2, A, E, Iz, 1)
     elif family == "ForceBeamColumn2d":
         ops.section("Elastic", 1, E, A, Iz)
         ops.beamIntegration("Lobatto", 1, 1, 10)
@@ -202,6 +204,8 @@ def _create_3d_element(family: str, L: float, E: float = 2.0e11, G: float = 8.0e
         ops.section("Elastic", 1, E, A, Iz, Iy, G, Jx)
         ops.beamIntegration("Lobatto", 1, 1, 5)
         ops.element("ladrunoDispBeamColumn", 1, 1, 2, 1, 1)
+    elif family == "LadrunoIMKBeam3d":
+        ops.element("LadrunoIMKBeam", 1, 1, 2, A, E, G, Jx, Iy, Iz, 1)
     elif family == "ForceBeamColumn3d":
         ops.section("Elastic", 1, E, A, Iz, Iy, G, Jx)
         ops.beamIntegration("Lobatto", 1, 1, 10)
@@ -225,6 +229,7 @@ FAMILIES_2D_EXACT_PARTIAL = [
     "ElasticBeam2d",
     "DispBeamColumn2d",
     "LadrunoDispBeamColumn2d",
+    "LadrunoIMKBeam2d",
     "ElasticTimoshenkoBeam2d",
 ]
 
@@ -233,6 +238,7 @@ FAMILIES_3D_EXACT_PARTIAL = [
     "ModElasticBeam3d",
     "DispBeamColumn3d",
     "LadrunoDispBeamColumn3d",
+    "LadrunoIMKBeam3d",
     "ElasticTimoshenkoBeam3d",
 ]
 

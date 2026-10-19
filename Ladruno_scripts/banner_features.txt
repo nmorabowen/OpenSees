@@ -32,6 +32,7 @@ StagedDefGrad/InitDefGrad — stress-free staged activation (finite)
 StagedStrain — stress-free staged activation (small-strain)
 Lemaitre ductile damage (-damage lemaitre, +lch, +IMPL-EX)
 LadrunoIMKBeam — concentrated-plasticity IMK beam hinges
+LadrunoDispBeamColumn — regularized disp beam + cohesive hinges
 LadrunoRebarBuckling — rebar buckling wrapper (cyclic)
 LadrunoRCConcrete — RC plastic-damage + MCFT softening (shell)
 LadrunoRCFiniteStrain — finite-strain (Hencky) RC plastic-damage

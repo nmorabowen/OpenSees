@@ -43,19 +43,19 @@
 #include <CorotCrdTransf3d.h>
 
 // initialize static variables
-Matrix CorotCrdTransf3d::RI(3,3); 
-Matrix CorotCrdTransf3d::RJ(3,3); 
-Matrix CorotCrdTransf3d::Rbar(3,3); 
-Matrix CorotCrdTransf3d::e(3,3); 
+thread_local Matrix CorotCrdTransf3d::RI(3,3);   // Ladruno
+thread_local Matrix CorotCrdTransf3d::RJ(3,3);   // Ladruno
+thread_local Matrix CorotCrdTransf3d::Rbar(3,3);   // Ladruno
+thread_local Matrix CorotCrdTransf3d::e(3,3);   // Ladruno
 Matrix CorotCrdTransf3d::Tp(6,7); 
-Matrix CorotCrdTransf3d::T(7,12);
-Matrix CorotCrdTransf3d::Tlg(12,12);
-Matrix CorotCrdTransf3d::TlgInv(12, 12);
-Matrix CorotCrdTransf3d::Tbl(6,12);
-Matrix CorotCrdTransf3d::kg(12,12);
-Matrix CorotCrdTransf3d::Lr2(12,3);
-Matrix CorotCrdTransf3d::Lr3(12,3);
-Matrix CorotCrdTransf3d::A(3,3);
+thread_local Matrix CorotCrdTransf3d::T(7,12);   // Ladruno
+thread_local Matrix CorotCrdTransf3d::Tlg(12,12);   // Ladruno
+thread_local Matrix CorotCrdTransf3d::TlgInv(12, 12);   // Ladruno
+thread_local Matrix CorotCrdTransf3d::Tbl(6,12);   // Ladruno
+thread_local Matrix CorotCrdTransf3d::kg(12,12);   // Ladruno
+thread_local Matrix CorotCrdTransf3d::Lr2(12,3);   // Ladruno
+thread_local Matrix CorotCrdTransf3d::Lr3(12,3);   // Ladruno
+thread_local Matrix CorotCrdTransf3d::A(3,3);   // Ladruno
 
 void* OPS_CorotCrdTransf3d()
 {
@@ -317,9 +317,9 @@ CorotCrdTransf3d::initialize(Node *nodeIPointer, Node *nodeJPointer)
 	initialDispChecked = true;
     }
     
-    static Vector XAxis(3);
-    static Vector YAxis(3);
-    static Vector ZAxis(3);
+    static thread_local Vector XAxis(3);   // Ladruno
+    static thread_local Vector YAxis(3);   // Ladruno
+    static thread_local Vector ZAxis(3);   // Ladruno
     
     // get 3by3 rotation matrix
     if ((error = this->getLocalAxes(XAxis, YAxis, ZAxis)))
@@ -358,8 +358,8 @@ CorotCrdTransf3d::update(void)
      // get the iterative spins dAlphaI and dAlphaJ 
      // (rotational displacement increments at both nodes)
      
-      static Vector dAlphaI(3);
-      static Vector dAlphaJ(3);
+      static thread_local Vector dAlphaI(3);   // Ladruno
+      static thread_local Vector dAlphaJ(3);   // Ladruno
       
        
         for (k = 0; k < 3; k++)
@@ -370,8 +370,8 @@ CorotCrdTransf3d::update(void)
     **************************************************************/
     
     // determine global displacement increments from last iteration
-    static Vector dispI(6);
-    static Vector dispJ(6);
+    static thread_local Vector dispI(6);   // Ladruno
+    static thread_local Vector dispJ(6);   // Ladruno
     dispI = nodeIPtr->getTrialDisp();
     dispJ = nodeJPtr->getTrialDisp();
     
@@ -388,8 +388,8 @@ CorotCrdTransf3d::update(void)
     // get the iterative spins dAlphaI and dAlphaJ 
     // (rotational displacement increments at both nodes)
     
-    static Vector dAlphaI(3);
-    static Vector dAlphaJ(3);
+    static thread_local Vector dAlphaI(3);   // Ladruno
+    static thread_local Vector dAlphaJ(3);   // Ladruno
     
     for (k = 0; k < 3; k++) {
         dAlphaI(k) = dispI(k+3) - alphaI(k);
@@ -401,8 +401,8 @@ CorotCrdTransf3d::update(void)
     /************** END OF REPLACEMENT **************************/
     
     // update the nodal triads TI and RJ using quaternions
-    static Vector dAlphaIq(4);
-    static Vector dAlphaJq(4);
+    static thread_local Vector dAlphaIq(4);   // Ladruno
+    static thread_local Vector dAlphaJq(4);   // Ladruno
 
     dAlphaIq = this->getQuaternionFromPseudoRotVector (dAlphaI);
     dAlphaJq = this->getQuaternionFromPseudoRotVector (dAlphaJ);
@@ -414,9 +414,9 @@ CorotCrdTransf3d::update(void)
     RJ = this->getRotationMatrixFromQuaternion (alphaJq);
 
     // compute the mean nodal triad
-    static Matrix dRgamma(3,3); 
-    static Vector gammaq(4);
-    static Vector gammaw(3);
+    static thread_local Matrix dRgamma(3,3);   // Ladruno
+    static thread_local Vector gammaq(4);   // Ladruno
+    static thread_local Vector gammaw(3);   // Ladruno
     
     dRgamma.Zero();
     
@@ -438,17 +438,17 @@ CorotCrdTransf3d::update(void)
             Rbar.addMatrixProduct(0.0, dRgamma, RI, 1.0);
             
             // compute the base vectors e1, e2, e3
-            static Vector e1(3);
-            static Vector e2(3);
-            static Vector e3(3);
+            static thread_local Vector e1(3);   // Ladruno
+            static thread_local Vector e2(3);   // Ladruno
+            static thread_local Vector e3(3);   // Ladruno
             
             // relative translation displacements
-            static Vector dJI(3);    
+            static thread_local Vector dJI(3);   // Ladruno
             for (int kk = 0; kk < 3; kk++)
                 dJI(kk) = dispJ(kk) - dispI(kk);
             
             // element projection
-            static Vector xJI(3);
+            static thread_local Vector xJI(3);   // Ladruno
             xJI = nodeJPtr->getCrds() - nodeIPtr->getCrds();
             
             if (nodeIInitialDisp != 0) {
@@ -463,7 +463,7 @@ CorotCrdTransf3d::update(void)
                 xJI(2) += nodeJInitialDisp[2];
             }
             
-            static Vector dx(3);
+            static thread_local Vector dx(3);   // Ladruno
             // dx = xJI + dJI;  
             dx = xJI;
             dx.addVector (1.0, dJI, 1.0);
@@ -483,9 +483,9 @@ CorotCrdTransf3d::update(void)
             
             // 'rotate' the mean rotation matrix Rbar on to e1 to 
             // obtain e2 and e3 (using the 'mid-point' procedure)
-            static Vector r1(3);
-            static Vector r2(3);
-            static Vector r3(3);
+            static thread_local Vector r1(3);   // Ladruno
+            static thread_local Vector r2(3);   // Ladruno
+            static thread_local Vector r3(3);   // Ladruno
             
             for (k = 0; k < 3; k ++)
             {
@@ -497,7 +497,7 @@ CorotCrdTransf3d::update(void)
             //    e2 = r2 - (e1 + r1)*((r2^ e1)*0.5);
             // e3 = r3 - (e1 + r1)*((r3^ e1)*0.5);
             
-            static Vector tmp(3);
+            static thread_local Vector tmp(3);   // Ladruno
             tmp = e1;
             tmp += r1;
             
@@ -513,8 +513,8 @@ CorotCrdTransf3d::update(void)
             e3.addVector(-1.0,  r3, 1.0);
             
             // compute the basic rotations
-            static Vector rI1(3), rI2(3), rI3(3);
-            static Vector rJ1(3), rJ2(3), rJ3(3);
+            static thread_local Vector rI1(3), rI2(3), rI3(3);   // Ladruno
+            static thread_local Vector rJ1(3), rJ2(3), rJ3(3);   // Ladruno
             
             for (k = 0; k < 3; k ++)
             {
@@ -559,10 +559,10 @@ CorotCrdTransf3d::compTransfMatrixBasicGlobal(void)
     int i, j, k;
     
     //opserr << "comprTransfMatrixBasicGlobal: *****************************\n";
-    static Vector r1(3), r2(3), r3(3);
-    static Vector e1(3), e2(3), e3(3);
-    static Vector rI1(3), rI2(3), rI3(3);
-    static Vector rJ1(3), rJ2(3), rJ3(3);
+    static thread_local Vector r1(3), r2(3), r3(3);   // Ladruno
+    static thread_local Vector e1(3), e2(3), e3(3);   // Ladruno
+    static thread_local Vector rI1(3), rI2(3), rI3(3);   // Ladruno
+    static thread_local Vector rJ1(3), rJ2(3), rJ3(3);   // Ladruno
     
     for (k = 0; k < 3; k ++)
     {
@@ -585,7 +585,7 @@ CorotCrdTransf3d::compTransfMatrixBasicGlobal(void)
     
     // compute the transformation matrix from the basic to the
     // global system
-    static Matrix I(3,3);
+    static thread_local Matrix I(3,3);   // Ladruno
     
     //   A = (1/Ln)*(I - e1*e1');
     for (i = 0; i < 3; i++)
@@ -598,8 +598,8 @@ CorotCrdTransf3d::compTransfMatrixBasicGlobal(void)
         Lr2 = this->getLMatrix (r2);
         Lr3 = this->getLMatrix (r3);
         
-        static Matrix Sr1(3,3), Sr2(3,3), Sr3(3,3);
-        static Vector Se(3), At(3);
+        static thread_local Matrix Sr1(3,3), Sr2(3,3), Sr3(3,3);   // Ladruno
+        static thread_local Vector Se(3), At(3);   // Ladruno
         
         //   T1 = [      O', (-S(rI3)*e2 + S(rI2)*e3)',        O', O']';
         //   T2 = [(A*rI2)', (-S(rI2)*e1 + S(rI1)*e2)', -(A*rI2)', O']';
@@ -692,7 +692,7 @@ CorotCrdTransf3d::compTransfMatrixBasicGlobal(void)
         }
         
         // setup transformation matrix
-        static Vector Lr(12);
+        static thread_local Vector Lr(12);   // Ladruno
         
         // T(:,1) += Lr3*rI2 - Lr2*rI3;
         // T(:,2) +=           Lr2*rI1;
@@ -759,10 +759,10 @@ CorotCrdTransf3d::compTransfMatrixBasicGlobalNew(void)
     int i, j, k;
     
     //opserr << "comprTransfMatrixBasicGlobal: *****************************\n";
-    static Vector r1(3), r2(3), r3(3);
-    static Vector e1(3), e2(3), e3(3);
-    static Vector rI1(3), rI2(3), rI3(3);
-    static Vector rJ1(3), rJ2(3), rJ3(3);
+    static thread_local Vector r1(3), r2(3), r3(3);   // Ladruno
+    static thread_local Vector e1(3), e2(3), e3(3);   // Ladruno
+    static thread_local Vector rI1(3), rI2(3), rI3(3);   // Ladruno
+    static thread_local Vector rJ1(3), rJ2(3), rJ3(3);   // Ladruno
     
     for (k = 0; k < 3; k ++)
     {
@@ -785,7 +785,7 @@ CorotCrdTransf3d::compTransfMatrixBasicGlobalNew(void)
     
     // compute the transformation matrix from the basic to the
     // global system
-    static Matrix I(3,3);
+    static thread_local Matrix I(3,3);   // Ladruno
     
     //   A = (1/Ln)*(I - e1*e1');
     for (i = 0; i < 3; i++)
@@ -818,8 +818,8 @@ CorotCrdTransf3d::compTransfMatrixBasicGlobalNew(void)
         // opserr << "Lr2: " << Lr2;
         // opserr << "Lr3: " << Lr3;
         
-        static Matrix Sr1(3,3), Sr2(3,3), Sr3(3,3);
-        static Vector Se(3), At(3);
+        static thread_local Matrix Sr1(3,3), Sr2(3,3), Sr3(3,3);   // Ladruno
+        static thread_local Vector Se(3), At(3);   // Ladruno
         
         
         // O = zeros(3,1);
@@ -830,12 +830,12 @@ CorotCrdTransf3d::compTransfMatrixBasicGlobalNew(void)
         // hJ2 = [(A*rJ3)', O', -(A*rJ3)', (-S(rJ3)*e1 + S(rJ1)*e3)']';
         // hJ3 = [(A*rJ2)', O', -(A*rJ2)', (-S(rJ2)*e1 + S(rJ1)*e2)']';
         
-        static Vector hI1(12);
-        static Vector hI2(12);
-        static Vector hI3(12);
-        static Vector hJ1(12);
-        static Vector hJ2(12);
-        static Vector hJ3(12);
+        static thread_local Vector hI1(12);   // Ladruno
+        static thread_local Vector hI2(12);   // Ladruno
+        static thread_local Vector hI3(12);   // Ladruno
+        static thread_local Vector hJ1(12);   // Ladruno
+        static thread_local Vector hJ2(12);   // Ladruno
+        static thread_local Vector hJ3(12);   // Ladruno
         
         Sr1 = this->getSkewSymMatrix(rI1);
         Sr2 = this->getSkewSymMatrix(rI2);
@@ -928,7 +928,7 @@ CorotCrdTransf3d::compTransfMatrixBasicGlobalNew(void)
         
         // T = F'
         T.Zero();
-        static Vector Lr(12);
+        static thread_local Vector Lr(12);   // Ladruno
         
         // f1 =  [-e1' O' e1' O'];
         for (i=0; i<3; i++) {
@@ -936,8 +936,8 @@ CorotCrdTransf3d::compTransfMatrixBasicGlobalNew(void)
             T(i+3,0) = e1(i);
         }
         
-        static Vector thetaI(3);
-        static Vector thetaJ(3);
+        static thread_local Vector thetaI(3);   // Ladruno
+        static thread_local Vector thetaJ(3);   // Ladruno
         
         
         thetaI(0) = ul(0);
@@ -1025,7 +1025,7 @@ CorotCrdTransf3d::compTransfMatrixBasicLocal(Matrix &Tbl)
     Tbl.Zero();
 
     // first get transformation matrix from basic to global 
-    static Matrix Tbg(6, 12);
+    static thread_local Matrix Tbg(6, 12);   // Ladruno
     Tbg.addMatrixProduct(0.0, Tp, T, 1.0);
 
     // get inverse of transformation matrix from local to global
@@ -1041,7 +1041,7 @@ CorotCrdTransf3d::compTransfMatrixBasicLocal(Matrix &Tbl)
 const Vector &
 CorotCrdTransf3d::getBasicTrialDisp(void)
 {
-    static Vector ub(6);
+    static thread_local Vector ub(6);   // Ladruno
     
     // use transformation matrix to renumber the degrees of freedom
     ub.addMatrixVector(0.0, Tp, ul, 1.0);
@@ -1053,8 +1053,8 @@ CorotCrdTransf3d::getBasicTrialDisp(void)
 const Vector &
 CorotCrdTransf3d::getBasicIncrDeltaDisp(void)
 {
-    static Vector dub(6);
-    static Vector dul(7);
+    static thread_local Vector dub(6);   // Ladruno
+    static thread_local Vector dul(7);   // Ladruno
     
     // dul = ul - ulpr;
     dul = ul;
@@ -1070,8 +1070,8 @@ CorotCrdTransf3d::getBasicIncrDeltaDisp(void)
 const Vector &
 CorotCrdTransf3d::getBasicIncrDisp(void)
 {
-    static Vector Dub(6);
-    static Vector Dul(7);
+    static thread_local Vector Dub(6);   // Ladruno
+    static thread_local Vector Dul(7);   // Ladruno
     
     // Dul = ul - ulcommit;
     Dul = ul;
@@ -1090,7 +1090,7 @@ CorotCrdTransf3d::getBasicTrialVel(void)
     opserr << "WARNING CorotCrdTransf3d::getBasicTrialVel()"
         << " - has not been implemented yet. Returning zeros." << endln;
     
-    static Vector dummy(6);
+    static thread_local Vector dummy(6);   // Ladruno
     return dummy;
 }
 
@@ -1101,7 +1101,7 @@ CorotCrdTransf3d::getBasicTrialAccel(void)
     opserr << "WARNING CorotCrdTransf3d::getBasicTrialAccel()"
         << " - has not been implemented yet. Returning zeros." << endln;
     
-    static Vector dummy(6);
+    static thread_local Vector dummy(6);   // Ladruno
     return dummy;
 }
 
@@ -1111,13 +1111,13 @@ CorotCrdTransf3d::getGlobalResistingForce(const Vector &pb, const Vector &p0)
 {
     this->update();
     
-    static Vector pg(12);
+    static thread_local Vector pg(12);   // Ladruno
     pg.Zero();
     
     // if there are no element loads present
     if (p0 == 0.0) {
         // transform resisting forces from the basic system to local coordinates
-        static Vector pl(7);
+        static thread_local Vector pl(7);   // Ladruno
         pl.addMatrixTransposeVector(0.0, Tp, pb, 1.0);    // pl = Tp ^ pb;
 
         // transform resisting forces from local to global coordinates
@@ -1130,7 +1130,7 @@ CorotCrdTransf3d::getGlobalResistingForce(const Vector &pb, const Vector &p0)
         // ===========================================
         /* transform resisting forces from the basic system to local coordinates
         this->compTransfMatrixBasicLocal(Tbl);
-        static Vector pl(12);
+        static thread_local Vector pl(12);   // Ladruno
         pl.addMatrixTransposeVector(0.0, Tbl, pb, 1.0);    // pl = Tbl ^ pb;
 
         // add end forces due to element p0 loads
@@ -1147,7 +1147,7 @@ CorotCrdTransf3d::getGlobalResistingForce(const Vector &pb, const Vector &p0)
         // FASTER!!!! TRANSFORM REACTIONS AND ADD AT END
         // =============================================
         // transform resisting forces from the basic system to local coordinates
-        static Vector pl(7);
+        static thread_local Vector pl(7);   // Ladruno
         pl.addMatrixTransposeVector(0.0, Tp, pb, 1.0);    // pl = Tp ^ pb;
 
         // transform resisting forces from local to global coordinates
@@ -1155,7 +1155,7 @@ CorotCrdTransf3d::getGlobalResistingForce(const Vector &pb, const Vector &p0)
 
         // add end forces due to element p0 loads
         // assuming member loads are in local system
-        static Vector pl0(12), pg0(12);
+        static thread_local Vector pl0(12), pg0(12);   // Ladruno
         pl0.Zero();
         pl0(0) = p0(0);
         pl0(1) = p0(1);
@@ -1178,14 +1178,14 @@ CorotCrdTransf3d::getGlobalStiffMatrix(const Matrix &kb, const Vector &pb)
     
     int i, j, k;   
     // transform tangent stiffness matrix from the basic system to local coordinates
-    static Matrix kl(7,7);
+    static thread_local Matrix kl(7,7);   // Ladruno
     kl.addMatrixTripleProduct(0.0, Tp, kb, 1.0);      // kl = Tp ^ kb * Tp;
 
     //    opserr << "kb: " << kb;
     //    opserr << "Tp: " << Tp;
     
     // transform resisting forces from the basic system to local coordinates
-    static Vector pl(7);
+    static thread_local Vector pl(7);   // Ladruno
     pl.addMatrixTransposeVector(0.0, Tp, pb, 1.0);    // pl = Tp ^ pb;
     
     // transform tangent  stiffness matrix from local to global coordinates
@@ -1194,16 +1194,16 @@ CorotCrdTransf3d::getGlobalStiffMatrix(const Matrix &kb, const Vector &pb)
     // compute the tangent stiffness matrix in global coordinates
     kg.addMatrixTripleProduct(0.0, T, kl, 1.0);
     
-    static Vector m(6);
+    static thread_local Vector m(6);   // Ladruno
     for (i = 0; i < 6; i++)
         m(i) = pl(i)/(2*cos(ul(i)));
     
     // compute the basic rotations
     
-    static Vector e1(3), e2(3), e3(3);
-    static Vector r1(3), r2(3), r3(3);
-    static Vector rI1(3), rI2(3), rI3(3);
-    static Vector rJ1(3), rJ2(3), rJ3(3);
+    static thread_local Vector e1(3), e2(3), e3(3);   // Ladruno
+    static thread_local Vector r1(3), r2(3), r3(3);   // Ladruno
+    static thread_local Vector rI1(3), rI2(3), rI3(3);   // Ladruno
+    static thread_local Vector rJ1(3), rJ2(3), rJ3(3);   // Ladruno
     
     for (k = 0; k < 3; k ++)
     {
@@ -1230,9 +1230,9 @@ CorotCrdTransf3d::getGlobalStiffMatrix(const Matrix &kb, const Vector &pb)
     //        m(5)*ks2r2u1 + m(6)*ks2r3u1 + ...
     //        ks3 + ks3' + ks4 + ks5;
     
-    static Matrix Se1(3,3), Se2(3,3), Se3(3,3);
-    static Matrix SrI1(3,3), SrI2(3,3), SrI3(3,3);
-    static Matrix SrJ1(3,3), SrJ2(3,3), SrJ3(3,3);
+    static thread_local Matrix Se1(3,3), Se2(3,3), Se3(3,3);   // Ladruno
+    static thread_local Matrix SrI1(3,3), SrI2(3,3), SrI3(3,3);   // Ladruno
+    static thread_local Matrix SrJ1(3,3), SrJ2(3,3), SrJ3(3,3);   // Ladruno
     
     Se1 = this->getSkewSymMatrix(e1);
     Se2 = this->getSkewSymMatrix(e2);
@@ -1272,8 +1272,8 @@ CorotCrdTransf3d::getGlobalStiffMatrix(const Matrix &kb, const Vector &pb)
     
     //     ks3 = [o kbar2 o kbar4];
     
-    static Matrix Sm(3,3);
-    static Matrix kbar(12,3);
+    static thread_local Matrix Sm(3,3);   // Ladruno
+    static thread_local Matrix kbar(12,3);   // Ladruno
     
     Sm.addMatrix(0.0, SrI3,  m(3));
     Sm.addMatrix(1.0, SrI1,  m(1));
@@ -1317,7 +1317,7 @@ CorotCrdTransf3d::getGlobalStiffMatrix(const Matrix &kb, const Vector &pb)
     //           O    O     O    O;
     //           O    O     O  Ks4_44];
     
-    static Matrix ks33(3,3);
+    static thread_local Matrix ks33(3,3);   // Ladruno
     
     ks33.addMatrixProduct(0.0, Se2, SrI3,  m(3));
     ks33.addMatrixProduct(1.0, Se3, SrI2, -m(3));
@@ -1351,7 +1351,7 @@ CorotCrdTransf3d::getGlobalStiffMatrix(const Matrix &kb, const Vector &pb)
     //          Ks5_14t     O   -Ks5_14t   O];
     
     // v = (1/Ln)*(m(2)*rI2 + m(3)*rI3 + m(5)*rJ2 + m(6)*rJ3);
-    static Vector v(3);
+    static thread_local Vector v(3);   // Ladruno
     v.addVector (0.0, rI2, m(1));
     v.addVector (1.0, rI3, m(2));
     v.addVector (1.0, rJ2, m(4));
@@ -1360,7 +1360,7 @@ CorotCrdTransf3d::getGlobalStiffMatrix(const Matrix &kb, const Vector &pb)
     v /= Ln;
     
     //Ks5_11 = A*v*e1' + e1*v'*A + (e1'*v)*A;
-    static Matrix m33(3,3);
+    static thread_local Matrix m33(3,3);   // Ladruno
     double  e1tv = 0;   // dot product e1. v
     
     for (i = 0; i < 3; i++)
@@ -1410,7 +1410,7 @@ CorotCrdTransf3d::getGlobalStiffMatrix(const Matrix &kb, const Vector &pb)
             //opserr << "kg += ksigma5: " << kg;
             
             // Ksigma -------------------------------
-            static Vector rm(3);
+            static thread_local Vector rm(3);   // Ladruno
             
             rm = rI3;
             rm.addVector (1.0, rJ3, -1.0); 
@@ -1452,7 +1452,7 @@ const Matrix &
 CorotCrdTransf3d::getInitialGlobalStiffMatrix(const Matrix &kb)
 {
     // transform tangent stiffness matrix from the basic system to local coordinates
-    static Matrix kl(7,7);
+    static thread_local Matrix kl(7,7);   // Ladruno
     kl.addMatrixTripleProduct(0.0, Tp, kb, 1.0);      // kl = Tp ^ kb * Tp;
     
     // transform tangent  stiffness matrix from local to global coordinates
@@ -1470,7 +1470,7 @@ CorotCrdTransf3d::getLocalAxes(Vector &XAxis, Vector &YAxis, Vector &ZAxis)
 {
     // element projection
     
-    static Vector dx(3);
+    static thread_local Vector dx(3);   // Ladruno
     
     dx = (nodeJPtr->getCrds() + nodeJOffset) - (nodeIPtr->getCrds() + nodeIOffset);  
     if (nodeIInitialDisp != 0) {
@@ -1503,7 +1503,7 @@ CorotCrdTransf3d::getLocalAxes(Vector &XAxis, Vector &YAxis, Vector &ZAxis)
     XAxis(0) = xAxis(0);    XAxis(1) = xAxis(1);    XAxis(2) = xAxis(2);
     
     // calculate the cross-product y = v * x   
-    static Vector yAxis(3), zAxis(3);
+    static thread_local Vector yAxis(3), zAxis(3);   // Ladruno
     
     yAxis(0) = vAxis(1)*xAxis(2) - vAxis(2)*xAxis(1);
     yAxis(1) = vAxis(2)*xAxis(0) - vAxis(0)*xAxis(2);
@@ -1571,7 +1571,7 @@ CorotCrdTransf3d::getQuaternionFromRotMatrix(const Matrix &R) const
     int i, j, k;
     double trR;              // trace of R
     double a    ;
-    static Vector q(4);      // normalized quaternion
+    static thread_local Vector q(4);      // normalized quaternion   // Ladruno
     
     trR = R(0,0) + R(1,1) + R(2,2);    
     
@@ -1616,7 +1616,7 @@ CorotCrdTransf3d::getQuaternionFromPseudoRotVector(const Vector  &theta) const
 {
     double t;                // norm of the pseudo rotation vector
     double factor;
-    static Vector q(4);      // normalized quaternion
+    static thread_local Vector q(4);      // normalized quaternion   // Ladruno
     
     t = theta.Norm();
     
@@ -1639,10 +1639,10 @@ const Vector &
 CorotCrdTransf3d::quaternionProduct(const Vector &q1, const Vector &q2) const
 {
     
-    static Vector q12(4);
+    static thread_local Vector q12(4);   // Ladruno
     int i;
     double q1Tq2= 0;  // dot product
-    static Vector q1xq2(3);     // cross product
+    static thread_local Vector q1xq2(3);     // cross product   // Ladruno
     
     // calculate the dot product q1.q2
     for (i = 0; i < 3; i++)       // NOTE i <3, not i<4
@@ -1668,10 +1668,10 @@ CorotCrdTransf3d::getRotationMatrixFromQuaternion(const Vector &q) const
 { 
     int i, j;
     double factor;
-    static Matrix I(3,3); // identity matrix
-    static Matrix qqT(3,3); 
-    static Matrix S(3,3);
-    static Matrix R(3,3);
+    static thread_local Matrix I(3,3); // identity matrix   // Ladruno
+    static thread_local Matrix qqT(3,3);   // Ladruno
+    static thread_local Matrix S(3,3);   // Ladruno
+    static thread_local Matrix R(3,3);   // Ladruno
     
     // R = (q0^2 - q' * q) * I + 2 * q * q' + 2*q0*S(q);
     
@@ -1700,7 +1700,7 @@ CorotCrdTransf3d::getRotationMatrixFromQuaternion(const Vector &q) const
 const Vector &
 CorotCrdTransf3d::getTangScaledPseudoVectorFromQuaternion(const Vector &q) const
 { 
-    static Vector w(3);
+    static thread_local Vector w(3);   // Ladruno
     
     for (int i = 0; i < 3; i++)
         w(i) = 2.0 * q(i)/q(3);
@@ -1713,9 +1713,9 @@ const Matrix &
 CorotCrdTransf3d::getRotMatrixFromTangScaledPseudoVector(const Vector &w) const
 { 
     // Rotation matrix in terms of the tangent-scaled pseudo-vector
-    static Matrix S(3,3);
-    static Matrix S2(3,3);
-    static Matrix R(3,3);
+    static thread_local Matrix S(3,3);   // Ladruno
+    static thread_local Matrix S2(3,3);   // Ladruno
+    static thread_local Matrix R(3,3);   // Ladruno
     double normw2;
     
     S = this->getSkewSymMatrix(w);
@@ -1741,7 +1741,7 @@ CorotCrdTransf3d::getRotMatrixFromTangScaledPseudoVector(const Vector &w) const
 const Matrix &
 CorotCrdTransf3d::getSkewSymMatrix(const Vector &theta) const
 {
-    static Matrix S(3,3);
+    static thread_local Matrix S(3,3);   // Ladruno
     
     //  St = [   0       -theta(2)  theta(1);
     //         theta(2)     0      -theta(0);
@@ -1769,14 +1769,14 @@ CorotCrdTransf3d::getSkewSymMatrix(const Vector &theta) const
 const Matrix &
 CorotCrdTransf3d::getLMatrix(const Vector &ri) const
 {
-    static Matrix L1(3,3), L2(3,3);
-    static Vector r1(3), e1(3);
+    static thread_local Matrix L1(3,3), L2(3,3);   // Ladruno
+    static thread_local Vector r1(3), e1(3);   // Ladruno
     double rie1, e1r1k;
-    static Matrix rie1r1(3,3);
-    static Matrix e1e1r1(3,3);
-    static Matrix Sri(3,3);
-    static Matrix Sr1(3,3);
-    static Matrix L(12,3);
+    static thread_local Matrix rie1r1(3,3);   // Ladruno
+    static thread_local Matrix e1e1r1(3,3);   // Ladruno
+    static thread_local Matrix Sri(3,3);   // Ladruno
+    static thread_local Matrix Sr1(3,3);   // Ladruno
+    static thread_local Matrix L(12,3);   // Ladruno
     
     int j, k;
     
@@ -1841,8 +1841,8 @@ CorotCrdTransf3d::getLMatrix(const Vector &ri) const
 const Matrix &
 CorotCrdTransf3d::getKs2Matrix(const Vector &ri, const Vector &z) const
 {
-    static Matrix ks2(12,12);
-    static Vector e1(3), r1(3);
+    static thread_local Matrix ks2(12,12);   // Ladruno
+    static thread_local Vector e1(3), r1(3);   // Ladruno
     
     //opserr << "\ngetKs2Matrix:\n";
     //opserr << "ri: " << ri;
@@ -1871,9 +1871,9 @@ CorotCrdTransf3d::getKs2Matrix(const Vector &ri, const Vector &z) const
         ztr1  += z(i)*r1(i);
     }
     
-    static Matrix zrit(3,3), ze1t(3,3);
-    static Matrix rizt(3,3), r1e1t(3,3), rie1t(3,3);
-    static Matrix e1zt(3,3);
+    static thread_local Matrix zrit(3,3), ze1t(3,3);   // Ladruno
+    static thread_local Matrix rizt(3,3), r1e1t(3,3), rie1t(3,3);   // Ladruno
+    static thread_local Matrix e1zt(3,3);   // Ladruno
     
     for (i = 0; i < 3; i++)
         for (j = 0; j < 3; j++)
@@ -1886,7 +1886,7 @@ CorotCrdTransf3d::getKs2Matrix(const Vector &ri, const Vector &z) const
             rie1t(i,j) = ri(i)*e1(j);
         }
         
-        static Matrix U(3,3);
+        static thread_local Matrix U(3,3);   // Ladruno
         //opserr << " rite1: "<< rite1;
         //opserr << " zte1: "<< zte1;
         //opserr << " ztr1: "<< ztr1;
@@ -1906,7 +1906,7 @@ CorotCrdTransf3d::getKs2Matrix(const Vector &ri, const Vector &z) const
         U.addMatrixProduct (1.0, A, rie1t, (zte1 + ztr1)/(2*Ln));
         
         //opserr << "U: " << U;
-        static Matrix ks(3,3);
+        static thread_local Matrix ks(3,3);   // Ladruno
         
         //K11 = U + U' + ri'*e1*(2*(e1'*z)+z'*r1)*A/(2*Ln);
         
@@ -1928,7 +1928,7 @@ CorotCrdTransf3d::getKs2Matrix(const Vector &ri, const Vector &z) const
             ks2.Assemble(ks, 6, 0, -1.0);
             ks2.Assemble(ks, 6, 6,  1.0);
             
-            static Matrix Sri(3,3), Sr1(3,3), Sz(3,3), Se1(3,3);
+            static thread_local Matrix Sri(3,3), Sr1(3,3), Sz(3,3), Se1(3,3);   // Ladruno
             
             Sri = this->getSkewSymMatrix(ri);  
             Sr1 = this->getSkewSymMatrix(r1);
@@ -1937,7 +1937,7 @@ CorotCrdTransf3d::getKs2Matrix(const Vector &ri, const Vector &z) const
             
             //K12 = (1/4)*(-A*z*e1'*Sri - A*ri*z'*Sr1 - z'*(e1+r1)*A*Sri);
             
-            static Matrix m1(3,3);
+            static thread_local Matrix m1(3,3);   // Ladruno
             
             m1.addMatrixProduct(0.0, A, ze1t, -1.0);
             ks.addMatrixProduct(0.0, m1, Sri, 0.25);
@@ -2023,7 +2023,7 @@ CorotCrdTransf3d::getCopy3d(void)
 int 
 CorotCrdTransf3d::sendSelf(int cTag, Channel &theChannel)
 {
-  static Vector data(48);
+  static thread_local Vector data(48);   // Ladruno
   for (int i=0; i<7; i++) 
     data(i) = ulcommit(i);
   for (int j=0; j<4; j++) {
@@ -2087,7 +2087,7 @@ CorotCrdTransf3d::sendSelf(int cTag, Channel &theChannel)
 int 
 CorotCrdTransf3d::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 {
-  static Vector data(48);
+  static thread_local Vector data(48);   // Ladruno
   if (theChannel.recvVector(this->getDbTag(), cTag, data) < 0) {
     opserr << " CorotCrdTransf3d::recvSelf() - data could not be received\n" ;
     return -1;
@@ -2156,7 +2156,7 @@ CorotCrdTransf3d::getGlobalMatrixFromLocal(const Matrix &local)
 const Vector &
 CorotCrdTransf3d::getPointGlobalCoordFromLocal(const Vector &xl)
 {
-    static Vector xg(3);
+    static thread_local Vector xg(3);   // Ladruno
     opserr << " CorotCrdTransf3d::getPointGlobalCoordFromLocal: not implemented yet" ;
     
     return xg;  
@@ -2166,7 +2166,7 @@ CorotCrdTransf3d::getPointGlobalCoordFromLocal(const Vector &xl)
 const Vector &
 CorotCrdTransf3d::getPointGlobalDisplFromBasic(double xi, const Vector &uxb)
 {
-    static Vector uxg(3);
+    static thread_local Vector uxg(3);   // Ladruno
     opserr << " CorotCrdTransf3d::getPointGlobalDisplFromBasic: not implemented yet" ;
     
     
@@ -2177,7 +2177,7 @@ CorotCrdTransf3d::getPointGlobalDisplFromBasic(double xi, const Vector &uxb)
 const Vector &
 CorotCrdTransf3d::getPointLocalDisplFromBasic(double xi, const Vector &uxb)
 {
-    static Vector uxg(3);
+    static thread_local Vector uxg(3);   // Ladruno
     opserr << " CorotCrdTransf3d::getPointLocalDisplFromBasic: not implemented yet" ;
     
     
