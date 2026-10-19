@@ -373,6 +373,47 @@ extreme of a partial cannot be recombined (max(a+b) ≠ max a + max b). Serial f
 carry a `SUM` envelope (there is only one partition). Validator:
 `ladruno_format._validate_partition_reduction`.
 
+#### 7.1.1 Kinematic node results: names and `COMPONENTS` labels (apeGmsh #2128)
+
+Translation and rotation are **two separate result groups**. There is no combined
+6-component displacement group. A reader that draws a deformed shape reads
+`DISPLACEMENT`, and adds `ROTATION` only if it needs nodal rotations. Mode shapes follow
+the same split. Values below are copied from the writer source. `COMPONENTS` is one
+comma-separated string attr (`h5::group::createResultGroup`, `SRC/recorder/Ladruno_Hdf5.h`).
+
+| Recorder token (`-N`) | Group `ON_NODES/<name>` | `DISPLAY_NAME` | ndm = 1 | ndm = 2 | ndm = 3 | `DIMENSION` | Writer |
+|---|---|---|---|---|---|---|---|
+| `displacement` | `DISPLACEMENT` | `Displacement` | `Ux` | `Ux,Uy` | `Ux,Uy,Uz` | `L` | `DisplacementSource::build()` |
+| `rotation` | `ROTATION` | `Rotation` | `Rx,Ry,Rz` | `Rz` | `Rx,Ry,Rz` | `A` | `RotationSource::build()` |
+| `modesOfVibration` | `MODES_OF_VIBRATION(U)` | `Modes of Vibration (U)` | `Ux` | `Ux,Uy` | `Ux,Uy,Uz` | `""` | `ModesOfVibrationSource::build()` |
+| `modesOfVibrationRotational` | `MODES_OF_VIBRATION(R)` | `Modes of Vibration (R)` | `Rx,Ry,Rz` | `Rz` | `Rx,Ry,Rz` | `""` | `ModesOfVibrationRotationalSource::build()` |
+
+All four writers are in `SRC/recorder/Ladruno_NodeResults.cpp`. The token-to-type mapping
+is in the `-N` option parser in `SRC/recorder/LadrunoRecorder.cpp`.
+
+**The labels depend on ndm only.** They do not depend on ndf, the element family, or
+the analysis. `ndm` is `INFO/SPATIAL_DIM`: the coordinate count of the **first node** in
+the domain (`LadrunoRecorder.cpp`, model-write setup, rejected outside 1..3). Each
+`build()` fixes the labels once, at construction. A mixed-ndf model therefore has one
+label set for every node.
+
+**ndf affects only the values** (`bufferNodeResponseVec3u` / `bufferNodeResponseVec3r`,
+`SRC/recorder/Ladruno_Types.h`):
+
+- `DISPLACEMENT` holds the node's first `ndm` DOFs of `getTrialDisp()`. Missing DOFs are
+  written as `0.0`.
+- `ROTATION` with ndm = 2 holds DOF index 2, or `0.0` if the node has ndf ≤ 2.
+  With ndm = 3 it holds DOF indices 3, 4, 5 when ndf > 5, and all zeros otherwise.
+  With ndm = 1 it writes three columns of zeros.
+- The modal groups use the same rules on the eigenvector rows. A node with no
+  eigenvector for the current mode stays `0.0`.
+
+**Reader caveat (not a label ambiguity).** `ROTATION` (and `MODES_OF_VIBRATION(R)`)
+copies a DOF index. It does not check what the DOF means. With ndm = 2 and ndf = 3 on a
+u-p node (the `*UP` / pressure-DOF elements), `Rz` holds the **pore pressure**, not a
+rotation. A reader that needs a true rotation must check the element family itself.
+`DISPLACEMENT` is not affected.
+
 ### 7.2 `ON_ELEMENTS/<result>` — structured column map (replaces the `;`-string)
 
 ```
@@ -513,10 +554,21 @@ names, `FORMAT_VERSION`/`FORMAT_MINOR_VERSION` and `ladruno_format.py`. A consum
 | `element_index_space` | string | `"fem"` when every element ID in the file is a paired FEM element id; absent otherwise (the reader treats absence as "unverified") |
 | `unsupported` | string (JSON array of strings) | categories present in the source that the consumer did not read or convert (e.g. layered shells, energy, MPCO springs); `"[]"` when none |
 | `writer` | string | the apeGmsh component and version that stamped (or, for a converted file, produced) the file, e.g. `apeGmsh <version>` or `apeGmsh mpco->ladruno <version>`. A converted file keeps `INFO/GENERATOR="Ladruno"`; `writer` is what marks it as converted |
+| `opensees_backend` | string | *optional; added 2026-10-19 (apeGmsh G10).* Which OpenSees ran the analysis: exactly `"ladruno"` (this fork), `"stock"` (upstream OpenSees), or `"unknown"`. The `.ladruno` recorder exists only in the fork, so a file the recorder wrote is always `"ladruno"`. `"stock"` can occur only on a converted file (`writer` = `apeGmsh mpco->ladruno …`) whose source `.mpco` came from upstream OpenSees |
+| `opensees_build_sha` | string | *optional; added 2026-10-19 (apeGmsh G10).* The git commit the OpenSees binary was built from: 40 lowercase hex characters, exactly as the fork's `ladrunoBuild` command returns it (Tcl `ladrunoBuild`, Python `ops.ladrunoBuild()`; CMake stamps `git log -1 --format=%H` into `OPENSEES_VERSION`). `"unknown"` when the build reported no hash (`ladrunoBuild` itself returns `"unknown"` then) or the backend could not be queried. The consumer writes it as returned and does not shorten it |
 
-All six are scalar attributes stored as variable-length UTF-8 strings (the apeGmsh viewer's stamp check expects vlen UTF-8, not fixed-length). JSON values are compact, UTF-8,
+All of these are scalar attributes stored as variable-length UTF-8 strings (the apeGmsh viewer's stamp check expects vlen UTF-8, not fixed-length). JSON values are compact, UTF-8,
 and never NaN. A reader must tolerate any subset of these attributes being absent (a
-file that was never stamped has an empty `PROVENANCE`).
+file that was never stamped has an empty `PROVENANCE`). `opensees_backend` and
+`opensees_build_sha` are newer than the other six, so files stamped before 2026-10-19
+lack them and stay valid. A reader treats their absence as unknown.
+
+**No fork-side equivalent today.** The recorder writes no build hash into a `.ladruno`
+file. `INFO/GENERATOR="Ladruno"` marks the writer, and `INFO/SOLVER_VERSION` is a fixed
+`[3,5,1]`, not a commit. The build hash is available only at run time, through
+`ladrunoBuild`. That is why the consumer stamps it here. If the recorder later writes its
+own build hash (an UPPERCASE name, e.g. via the `-provenance` flag), the fork's attribute
+takes precedence and `opensees_build_sha` becomes redundant.
 
 **Partitioned sets.** The attributes are per file. `stage_names` describes that file's
 own `MODEL_STAGE[*]` (part files may differ, WP-165). A reader treats a partitioned set as
@@ -705,3 +757,12 @@ in STKO). Fiber section as today.
   attributes into the recorder's empty `PROVENANCE` group, on a closed file only. The fork
   owns the format; the consumer owns only those attributes. Doc only: no recorder change,
   no version bump.
+- 2026-10-18 — **apeGmsh #2128: kinematic node result names and labels (§7.1.1).** The
+  schema documents the exact `DISPLACEMENT` / `ROTATION` / `MODES_OF_VIBRATION(U|R)` group
+  names and their `COMPONENTS` per ndm, from `Ladruno_NodeResults.cpp`. This replaces the
+  "e.g. `Ux,Uy,Uz`" example in the 2026-05-31 line as the reference. Doc only: no recorder
+  change, no version bump.
+- 2026-10-19 — **apeGmsh G10: two more consumer `PROVENANCE` attributes (§7b.1).**
+  `opensees_backend` (`ladruno`/`stock`/`unknown`) and `opensees_build_sha` (the
+  `ladrunoBuild` hash). Both are optional, so older files stay valid. Doc only: no
+  recorder change, no version bump.
