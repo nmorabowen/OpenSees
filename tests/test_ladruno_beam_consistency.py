@@ -4000,6 +4000,14 @@ def test_review_fixes_xml_response_tags_and_end_tags(tmp_path):
     ops.recorder("Element", "-xml", xml_bf, "-ele", 1, "basicForce")
     ops.recorder("Element", "-xml", xml_bs, "-ele", 1, "basicStiffness")
     ops.recorder("Element", "-xml", xml_lf, "-ele", 2, "localForce")
+    xml_imk_bf3 = str(tmp_path / "imk3d_basicForce.xml")
+    xml_imk_bd3 = str(tmp_path / "imk3d_basicDef.xml")
+    xml_imk_pd3 = str(tmp_path / "imk3d_plasticDef.xml")
+    xml_imk_hm3 = str(tmp_path / "imk3d_hingeMoment.xml")
+    ops.recorder("Element", "-xml", xml_imk_bf3, "-ele", 2, "basicForce")
+    ops.recorder("Element", "-xml", xml_imk_bd3, "-ele", 2, "basicDeformation")
+    ops.recorder("Element", "-xml", xml_imk_pd3, "-ele", 2, "plasticDeformation")
+    ops.recorder("Element", "-xml", xml_imk_hm3, "-ele", 2, "hingeMoment")
     ops.recorder("Element", "-xml", xml_sx3, "-ele", 1, "sectionX", "0.0", "force")
 
     ops.timeSeries("Linear", 1)
@@ -4029,31 +4037,56 @@ def test_review_fixes_xml_response_tags_and_end_tags(tmp_path):
         "N_1", "Vy_1", "Vz_1", "T_1", "My_1", "Mz_1",
         "N_2", "Vy_2", "Vz_2", "T_2", "My_2", "Mz_2",
     ]
+    assert [el.text for el in ET.parse(xml_imk_bf3).getroot().findall(".//ElementOutput/ResponseType")] == [
+        "N", "Mz_1", "Mz_2", "My_1", "My_2", "T"
+    ]
+    assert [el.text for el in ET.parse(xml_imk_bd3).getroot().findall(".//ElementOutput/ResponseType")] == [
+        "eps", "thetaZ_1", "thetaZ_2", "thetaY_1", "thetaY_2", "thetaX"
+    ]
+    assert [el.text for el in ET.parse(xml_imk_pd3).getroot().findall(".//ElementOutput/ResponseType")] == [
+        "thetaZP_1", "thetaZP_2", "thetaYP_1", "thetaYP_2"
+    ]
+    assert [el.text for el in ET.parse(xml_imk_hm3).getroot().findall(".//ElementOutput/ResponseType")] == [
+        "Mz_1", "Mz_2", "My_1", "My_2"
+    ]
 
     # sectionX XML must parse cleanly (GaussPointOutput and ElementOutput properly closed)
     ET.parse(xml_sx3)
 
-    # 2. 2D XML recorder test (O4: integrationPoints, integrationWeights, sectionX)
+    # 2. 2D XML recorder test (O4: integrationPoints, integrationWeights, sectionX + 2D IMK tags)
     xml_ip2 = str(tmp_path / "ldbc2d_ip.xml")
     xml_iw2 = str(tmp_path / "ldbc2d_iw.xml")
     xml_sx2 = str(tmp_path / "ldbc2d_sectionX.xml")
+    xml_imk_bf2 = str(tmp_path / "imk2d_basicForce.xml")
+    xml_imk_bd2 = str(tmp_path / "imk2d_basicDef.xml")
+    xml_imk_pd2 = str(tmp_path / "imk2d_plasticDef.xml")
+    xml_imk_hm2 = str(tmp_path / "imk2d_hingeMoment.xml")
 
     ops.model("basic", "-ndm", 2, "-ndf", 3)
     ops.node(1, 0.0, 0.0)
     ops.node(2, 4.0, 0.0)
+    ops.node(3, 0.0, 2.0)
+    ops.node(4, 4.0, 2.0)
     ops.fix(1, 1, 1, 1)
+    ops.fix(3, 1, 1, 1)
     ops.geomTransf("Linear", 1)
     ops.section("Elastic", 1, 2.0e11, 0.04, 1.6e-4)
     ops.beamIntegration("Lobatto", 1, 1, 3)
     ops.element("LadrunoDispBeamColumn", 1, 1, 2, 1, 1)
+    ops.element("LadrunoIMKBeam", 2, 3, 4, 0.04, 2.0e11, 1.6e-4, 1)
 
     ops.recorder("Element", "-xml", xml_ip2, "-ele", 1, "integrationPoints")
     ops.recorder("Element", "-xml", xml_iw2, "-ele", 1, "integrationWeights")
     ops.recorder("Element", "-xml", xml_sx2, "-ele", 1, "sectionX", "0.0", "force")
+    ops.recorder("Element", "-xml", xml_imk_bf2, "-ele", 2, "basicForce")
+    ops.recorder("Element", "-xml", xml_imk_bd2, "-ele", 2, "basicDeformation")
+    ops.recorder("Element", "-xml", xml_imk_pd2, "-ele", 2, "plasticDeformation")
+    ops.recorder("Element", "-xml", xml_imk_hm2, "-ele", 2, "hingeMoment")
 
     ops.timeSeries("Linear", 1)
     ops.pattern("Plain", 1, 1)
     ops.load(2, 10.0, 5.0, 2.0)
+    ops.load(4, 10.0, 5.0, 2.0)
     ops.system("BandGeneral")
     ops.numberer("Plain")
     ops.constraints("Plain")
@@ -4066,6 +4099,18 @@ def test_review_fixes_xml_response_tags_and_end_tags(tmp_path):
     ET.parse(xml_ip2)
     ET.parse(xml_iw2)
     ET.parse(xml_sx2)
+    assert [el.text for el in ET.parse(xml_imk_bf2).getroot().findall(".//ElementOutput/ResponseType")] == [
+        "N", "M_1", "M_2"
+    ]
+    assert [el.text for el in ET.parse(xml_imk_bd2).getroot().findall(".//ElementOutput/ResponseType")] == [
+        "eps", "theta1", "theta2"
+    ]
+    assert [el.text for el in ET.parse(xml_imk_pd2).getroot().findall(".//ElementOutput/ResponseType")] == [
+        "theta1P", "theta2P"
+    ]
+    assert [el.text for el in ET.parse(xml_imk_hm2).getroot().findall(".//ElementOutput/ResponseType")] == [
+        "M_1", "M_2"
+    ]
 
 
 def test_review_fixes_hinge_end_specificity_and_aliases():
@@ -4161,16 +4206,19 @@ def test_review_fixes_hinge_end_specificity_and_aliases():
     ops.wipe()
 
 
-def test_review_fixes_pm_axial_force_in_energy_and_hinge_summary_and_numeric_lch():
+def test_review_fixes_pm_axial_force_in_energy_and_hinge_summary_and_numeric_lch(tmp_path):
     """O6, A1/O7: Verify:
       1. Numeric float `-lch` (e.g., 0.25) is accepted directly from Python in
-         `LadrunoDispBeamColumn` and `forceBeamColumn` (2D and 3D), while invalid
-         trailing-garbage strings like `"0.25abc"` are rejected.
+         `LadrunoDispBeamColumn` and `forceBeamColumn` (2D and 3D, including
+         `ops.mesh('line', ...)`), while invalid trailing-garbage strings like
+         `"0.25abc"` are rejected.
       2. `energy` and `hingeSummary` on `LadrunoDispBeamColumn` (2D and 3D) with
          generic uniaxial hinge + `-pmP0` use the updated trial axial force even
-         when `getResistingForce()` / `eleForce` has not been queried first.
+         when `getResistingForce()` / `eleForce` has not been queried first, AND
+         immediately after a database `save`/`restore` (`recvSelf`) before any
+         `analyze(1)` or `eleForce` call.
     """
-    # 1. Numeric float -lch in 2D and 3D
+    # 1. Numeric float -lch in 2D and 3D (direct element + ops.mesh('line', ...))
     for ndm, ndf in ((2, 3), (3, 6)):
         ops.wipe()
         ops.model("basic", "-ndm", ndm, "-ndf", ndf)
@@ -4188,13 +4236,17 @@ def test_review_fixes_pm_axial_force_in_energy_and_hinge_summary_and_numeric_lch
         # Pass float 0.25 (not string "0.25")
         ops.element("LadrunoDispBeamColumn", 1, 1, 2, 1, 1, "-lch", 0.25)
         ops.element("forceBeamColumn", 2, 1, 2, 1, 1, "-lch", 0.25)
+        ops.mesh("line", 10, 2, 1, 2, 0, ndf, 2.0, "forceBeamColumn", 1, 1, "-lch", 0.25)
         # Trailing garbage must fail-closed
         with pytest.raises(Exception):
             ops.element("LadrunoDispBeamColumn", 3, 1, 2, 1, 1, "-lch", "0.25abc")
         with pytest.raises(Exception):
             ops.element("forceBeamColumn", 4, 1, 2, 1, 1, "-lch", "0.25abc")
+        with pytest.raises(Exception):
+            ops.mesh("line", 11, 2, 1, 2, 0, ndf, 2.0, "forceBeamColumn", 1, 1, "-lch", "0.25abc")
 
-    # 2. PM-scaled energy and hingeSummary in 2D without prior eleForce call
+    # 2. PM-scaled energy and hingeSummary in 2D without prior eleForce call + post-restore
+    db_2d = str(tmp_path / "pm2d_db")
     ops.wipe()
     ops.model("basic", "-ndm", 2, "-ndf", 3)
     ops.node(1, 0.0, 0.0)
@@ -4222,6 +4274,15 @@ def test_review_fixes_pm_axial_force_in_energy_and_hinge_summary_and_numeric_lch
     # Query hingeSummary and energy BEFORE any eleForce/basicForce call
     hs_before = ops.eleResponse(1, "hingeSummary")
     en_before = ops.eleResponse(1, "energy")
+    # Save and restore state, then query hingeSummary & energy BEFORE any analyze or eleForce
+    ops.database("File", db_2d)
+    ops.save(1)
+    ops.reset()
+    ops.restore(1)
+    hs_restored = ops.eleResponse(1, "hingeSummary")
+    en_restored = ops.eleResponse(1, "energy")
+    np.testing.assert_allclose(hs_restored, hs_before, rtol=1e-14, atol=1e-14)
+    np.testing.assert_allclose(en_restored, en_before, rtol=1e-14, atol=1e-14)
     # Now trigger getResistingForce via eleForce and re-query
     _ = ops.eleForce(1)
     hs_after = ops.eleResponse(1, "hingeSummary")
@@ -4232,7 +4293,8 @@ def test_review_fixes_pm_axial_force_in_energy_and_hinge_summary_and_numeric_lch
     raw_hinge_stress = ops.eleResponse(1, "hingeI", "stress")[0]
     np.testing.assert_allclose(hs_before[1], 1.5 * raw_hinge_stress, rtol=1e-12, atol=1e-12)
 
-    # 3. PM-scaled energy and hingeSummary in 3D without prior eleForce call
+    # 3. PM-scaled energy and hingeSummary in 3D without prior eleForce call + post-restore
+    db_3d = str(tmp_path / "pm3d_db")
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 6)
     ops.node(1, 0.0, 0.0, 0.0)
@@ -4257,6 +4319,14 @@ def test_review_fixes_pm_axial_force_in_energy_and_hinge_summary_and_numeric_lch
 
     hs3_before = ops.eleResponse(1, "hingeSummary")
     en3_before = ops.eleResponse(1, "energy")
+    ops.database("File", db_3d)
+    ops.save(1)
+    ops.reset()
+    ops.restore(1)
+    hs3_restored = ops.eleResponse(1, "hingeSummary")
+    en3_restored = ops.eleResponse(1, "energy")
+    np.testing.assert_allclose(hs3_restored, hs3_before, rtol=1e-14, atol=1e-14)
+    np.testing.assert_allclose(en3_restored, en3_before, rtol=1e-14, atol=1e-14)
     _ = ops.eleForce(1)
     hs3_after = ops.eleResponse(1, "hingeSummary")
     en3_after = ops.eleResponse(1, "energy")

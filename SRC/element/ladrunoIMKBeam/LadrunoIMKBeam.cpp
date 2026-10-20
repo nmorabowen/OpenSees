@@ -978,18 +978,44 @@ Response *LadrunoIMKBeam::setResponse(const char **argv, int argc, OPS_Stream &s
     theResponse = new ElementResponse(this, 6, Vector(12));
 
   } else if (LadrunoResp::isBasicForce(argv[0])) {
+    s.tag("ResponseType", "N");
+    s.tag("ResponseType", "Mz_1");
+    s.tag("ResponseType", "Mz_2");
+    s.tag("ResponseType", "My_1");
+    s.tag("ResponseType", "My_2");
+    s.tag("ResponseType", "T");
     theResponse = new ElementResponse(this, 2, Vector(6));
 
   } else if (strcmp(argv[0], "basicStiffness") == 0) {
+    s.tag("ResponseType", "N");
+    s.tag("ResponseType", "Mz_1");
+    s.tag("ResponseType", "Mz_2");
+    s.tag("ResponseType", "My_1");
+    s.tag("ResponseType", "My_2");
+    s.tag("ResponseType", "T");
     theResponse = new ElementResponse(this, 19, Matrix(6, 6));
 
   } else if (LadrunoResp::isBasicDef(argv[0])) {
+    s.tag("ResponseType", "eps");
+    s.tag("ResponseType", "thetaZ_1");
+    s.tag("ResponseType", "thetaZ_2");
+    s.tag("ResponseType", "thetaY_1");
+    s.tag("ResponseType", "thetaY_2");
+    s.tag("ResponseType", "thetaX");
     theResponse = new ElementResponse(this, 3, Vector(6));
 
   } else if (LadrunoResp::isPlasticDef(argv[0])) {
+    s.tag("ResponseType", "thetaZP_1");
+    s.tag("ResponseType", "thetaZP_2");
+    s.tag("ResponseType", "thetaYP_1");
+    s.tag("ResponseType", "thetaYP_2");
     theResponse = new ElementResponse(this, 4, Vector(4));
 
   } else if (LadrunoResp::is(argv[0], "hingeMoment")) {
+    s.tag("ResponseType", "Mz_1");
+    s.tag("ResponseType", "Mz_2");
+    s.tag("ResponseType", "My_1");
+    s.tag("ResponseType", "My_2");
     theResponse = new ElementResponse(this, 5, Vector(4));
 
   } else if (LadrunoResp::is(argv[0], "hingeSummary")) {
