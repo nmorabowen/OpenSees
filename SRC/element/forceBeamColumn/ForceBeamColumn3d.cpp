@@ -168,7 +168,12 @@ void* OPS_ForceBeamColumn3d()
 		opserr << "WARNING insufficient args for -lch in forceBeamColumn\n";
 		return 0;
 	    }
-	    const char* lchOpt = OPS_GetString();
+	    char lchBuf[64];
+	    const char* lchOpt = OPS_GetStringFromAll(lchBuf, sizeof(lchBuf));
+	    if(lchOpt == 0) {
+		opserr << "WARNING failed to read -lch argument in forceBeamColumn\n";
+		return 0;
+	    }
 	    if(strcmp(lchOpt,"ip") == 0 || strcmp(lchOpt,"IP") == 0 || strcmp(lchOpt,"wtL") == 0) {
 		lchMode = 0;
 		userLch = 0.0;
@@ -178,7 +183,7 @@ void* OPS_ForceBeamColumn3d()
 	    } else {
 		char* endptr = 0;
 		double val = strtod(lchOpt, &endptr);
-		if(endptr == lchOpt || *endptr != '\0' || !(val > 0.0)) {
+		if(endptr == lchOpt || *endptr != '\0' || !std::isfinite(val) || !(val > 0.0)) {
 		    opserr << "WARNING invalid -lch value '" << lchOpt << "' in forceBeamColumn (expected ip, element, or positive number)\n";
 		    return 0;
 		}
@@ -339,7 +344,12 @@ void *OPS_ForceBeamColumn3d(const ID &info) {
                     opserr << "WARNING insufficient args for -lch in forceBeamColumn\n";
                     return 0;
                 }
-                const char* lchOpt = OPS_GetString();
+                char lchBuf[64];
+                const char* lchOpt = OPS_GetStringFromAll(lchBuf, sizeof(lchBuf));
+                if (lchOpt == 0) {
+                    opserr << "WARNING failed to read -lch value in forceBeamColumn\n";
+                    return 0;
+                }
                 if (strcmp(lchOpt, "ip") == 0 || strcmp(lchOpt, "IP") == 0 || strcmp(lchOpt, "wtL") == 0) {
                     lchMode = 0;
                     userLch = 0.0;
@@ -349,7 +359,7 @@ void *OPS_ForceBeamColumn3d(const ID &info) {
                 } else {
                     char* endptr = 0;
                     double val = strtod(lchOpt, &endptr);
-                    if (endptr == lchOpt || *endptr != '\0' || !(val > 0.0)) {
+                    if (endptr == lchOpt || *endptr != '\0' || !std::isfinite(val) || !(val > 0.0)) {
                         opserr << "WARNING invalid -lch value '" << lchOpt << "' in forceBeamColumn (expected ip, element, or positive number)\n";
                         return 0;
                     }

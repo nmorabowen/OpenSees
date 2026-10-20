@@ -963,6 +963,18 @@ Response *LadrunoIMKBeam::setResponse(const char **argv, int argc, OPS_Stream &s
     theResponse = new ElementResponse(this, 1, P);
 
   } else if (LadrunoResp::isLocalForce(argv[0])) {
+    s.tag("ResponseType", "N_1");
+    s.tag("ResponseType", "Vy_1");
+    s.tag("ResponseType", "Vz_1");
+    s.tag("ResponseType", "T_1");
+    s.tag("ResponseType", "My_1");
+    s.tag("ResponseType", "Mz_1");
+    s.tag("ResponseType", "N_2");
+    s.tag("ResponseType", "Vy_2");
+    s.tag("ResponseType", "Vz_2");
+    s.tag("ResponseType", "T_2");
+    s.tag("ResponseType", "My_2");
+    s.tag("ResponseType", "Mz_2");
     theResponse = new ElementResponse(this, 6, Vector(12));
 
   } else if (LadrunoResp::isBasicForce(argv[0])) {
