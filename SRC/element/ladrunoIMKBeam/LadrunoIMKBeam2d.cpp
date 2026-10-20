@@ -861,18 +861,31 @@ Response *LadrunoIMKBeam2d::setResponse(const char **argv, int argc, OPS_Stream 
     theResponse = new ElementResponse(this, 6, Vector(6));
 
   } else if (LadrunoResp::isBasicForce(argv[0])) {
+    s.tag("ResponseType", "N");
+    s.tag("ResponseType", "M_1");
+    s.tag("ResponseType", "M_2");
     theResponse = new ElementResponse(this, 2, Vector(3));
 
   } else if (strcmp(argv[0], "basicStiffness") == 0) {
+    s.tag("ResponseType", "N");
+    s.tag("ResponseType", "M1");
+    s.tag("ResponseType", "M2");
     theResponse = new ElementResponse(this, 19, Matrix(3, 3));
 
   } else if (LadrunoResp::isBasicDef(argv[0])) {
+    s.tag("ResponseType", "eps");
+    s.tag("ResponseType", "theta1");
+    s.tag("ResponseType", "theta2");
     theResponse = new ElementResponse(this, 3, Vector(3));
 
   } else if (LadrunoResp::isPlasticDef(argv[0])) {
+    s.tag("ResponseType", "theta1P");
+    s.tag("ResponseType", "theta2P");
     theResponse = new ElementResponse(this, 4, Vector(2));
 
   } else if (LadrunoResp::is(argv[0], "hingeMoment")) {
+    s.tag("ResponseType", "M_1");
+    s.tag("ResponseType", "M_2");
     theResponse = new ElementResponse(this, 5, Vector(2));
 
   } else if (LadrunoResp::is(argv[0], "hingeSummary")) {
