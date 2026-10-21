@@ -122,6 +122,9 @@ extern void *OPS_LadrunoRigidBody(void); // N. Mora-Bowen (Ladruno) ADR 58
 extern void *OPS_LadrunoDispBeamColumn(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoDispBeamColumn2d(void); // Ladruno WP-200
 extern void *OPS_LadrunoDispBeamColumn3d(void); // Ladruno WP-200
+extern void *OPS_LadrunoForceBeamColumn(void); // Ladruno WP-200
+extern void *OPS_LadrunoForceBeamColumn2d(void); // Ladruno WP-200
+extern void *OPS_LadrunoForceBeamColumn3d(void); // Ladruno WP-200
 extern void *OPS_LadrunoEmbeddedNode(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoEmbeddedRebar(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoMembrane(void); // N. Mora-Bowen (Ladruno) ADR 98
@@ -614,6 +617,9 @@ TclModelBuilderElementCommand(ClientData clientData, Tcl_Interp *interp,
       {"LadrunoDispBeamColumn",       "ladrunoDispBeamColumn",       OPS_LadrunoDispBeamColumn},
       {"LadrunoDispBeamColumn2d",     "ladrunoDispBeamColumn2d",     OPS_LadrunoDispBeamColumn2d},     // Ladruno WP-200
       {"LadrunoDispBeamColumn3d",     "ladrunoDispBeamColumn3d",     OPS_LadrunoDispBeamColumn3d},     // Ladruno WP-200
+      {"LadrunoForceBeamColumn",      "ladrunoForceBeamColumn",      OPS_LadrunoForceBeamColumn},      // Ladruno WP-200
+      {"LadrunoForceBeamColumn2d",    "ladrunoForceBeamColumn2d",    OPS_LadrunoForceBeamColumn2d},    // Ladruno WP-200
+      {"LadrunoForceBeamColumn3d",    "ladrunoForceBeamColumn3d",    OPS_LadrunoForceBeamColumn3d},    // Ladruno WP-200
       {"LadrunoEmbeddedNode",         "ladrunoEmbeddedNode",         OPS_LadrunoEmbeddedNode},
       {"LadrunoEmbeddedRebar",        "ladrunoEmbeddedRebar",        OPS_LadrunoEmbeddedRebar},
       {"BezierTri6",                  "bezierTri6",                  OPS_BezierTri6},   // Ladruno (fork)

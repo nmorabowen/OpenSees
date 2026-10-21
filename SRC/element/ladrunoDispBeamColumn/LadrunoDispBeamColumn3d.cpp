@@ -217,6 +217,7 @@ void* OPS_LadrunoDispBeamColumn3d()
     bool eleImplex3d = false;
     double elePmP0_3d = 0.0;
     double elePmAlpha_3d = 0.5;
+    int spanLoadMode = 1;
     numData = 1;
     while(OPS_GetNumRemainingInputArgs() > 0) {
 	const char* type = OPS_GetString();
@@ -280,9 +281,9 @@ void* OPS_LadrunoDispBeamColumn3d()
     else if (strcmp(type, "-nl") == 0) {
         nlGeom = 1;
     }
-    // Ladruno (ADR 33) Tier-2 PR-3a: -hinge $matTag embeds the strong-axis (Mz) cohesive
-    // rotation-jump hinge carrying any UniaxialMaterial (LadrunoCohesiveHinge default).
-    else if (strcmp(type, "-hinge") == 0) {
+    // Ladruno (ADR 33) Tier-2 PR-3a: -hinge/-hingeZ $matTag [$matTagJ] embeds the strong-axis (Mz)
+    // cohesive rotation-jump hinge carrying any UniaxialMaterial (LadrunoCohesiveHinge default).
+    else if (strcmp(type, "-hinge") == 0 || strcmp(type, "-hingeZ") == 0) {
         if (OPS_GetNumRemainingInputArgs() < 1) {
             opserr << "WARNING LadrunoDispBeamColumn3d: -hinge needs a uniaxialMaterial tag\n";
             return 0;
@@ -297,6 +298,16 @@ void* OPS_LadrunoDispBeamColumn3d()
             opserr << "WARNING LadrunoDispBeamColumn3d: -hinge uniaxialMaterial " << hingeTag
                    << " not found\n";
             return 0;
+        }
+        int optJ = 0;
+        if (ladrunoPeekNextInt3d(optJ)) {
+            hingeMatZJ = OPS_getUniaxialMaterial(optJ);
+            if (hingeMatZJ == 0) {
+                opserr << "WARNING LadrunoDispBeamColumn3d: -hinge uniaxialMaterial " << optJ
+                       << " not found\n";
+                return 0;
+            }
+            dualHingeMode = 1;
         }
     }
     else if (strcmp(type, "-hingeI") == 0 || strcmp(type, "-hingeZI") == 0 || strcmp(type, "-hinge1") == 0) {
@@ -357,7 +368,7 @@ void* OPS_LadrunoDispBeamColumn3d()
         }
         dualHingeMode = 1;
     }
-    // Ladruno (ADR 33) Tier-2 PR-3b: -hingeY $matTag adds the weak-axis (My) cohesive
+    // Ladruno (ADR 33) Tier-2 PR-3b: -hingeY $matTag [$matTagJ] adds the weak-axis (My) cohesive
     // rotation-jump, making the hinge biaxial (true coupled 2x2 condensation). Requires -hinge.
     else if (strcmp(type, "-hingeY") == 0) {
         if (OPS_GetNumRemainingInputArgs() < 1) {
@@ -374,6 +385,16 @@ void* OPS_LadrunoDispBeamColumn3d()
             opserr << "WARNING LadrunoDispBeamColumn3d: -hingeY uniaxialMaterial " << hingeTagY
                    << " not found\n";
             return 0;
+        }
+        int optYJ = 0;
+        if (ladrunoPeekNextInt3d(optYJ)) {
+            hingeMatYJ = OPS_getUniaxialMaterial(optYJ);
+            if (hingeMatYJ == 0) {
+                opserr << "WARNING LadrunoDispBeamColumn3d: -hingeY uniaxialMaterial " << optYJ
+                       << " not found\n";
+                return 0;
+            }
+            dualHingeMode = 1;
         }
     }
     else if (strcmp(type, "-hingeYI") == 0 || strcmp(type, "-hingeY1") == 0) {
@@ -434,9 +455,8 @@ void* OPS_LadrunoDispBeamColumn3d()
         }
         dualHingeMode = 1;
     }
-    // Ladruno (ADR 34): -hingeBiaxial $matTag embeds the COUPLED biaxial cohesive law (an order-2
-    // NDMaterial, LadrunoCohesiveHingeBiaxial) carrying the Mz-My interaction surface. Exclusive
-    // with the block-diagonal -hinge/-hingeY (and -nl).
+    // Ladruno (ADR 34): -hingeBiaxial/-hingeC $matTag [$matTagJ] embeds the COUPLED biaxial cohesive law
+    // (an order-2 NDMaterial, LadrunoCohesiveHingeBiaxial) carrying the Mz-My interaction surface.
     else if (strcmp(type, "-hingeBiaxial") == 0 || strcmp(type, "-hingeC") == 0) {
         if (OPS_GetNumRemainingInputArgs() < 1) {
             opserr << "WARNING LadrunoDispBeamColumn3d: -hingeBiaxial needs an nDMaterial tag\n";
@@ -452,6 +472,16 @@ void* OPS_LadrunoDispBeamColumn3d()
             opserr << "WARNING LadrunoDispBeamColumn3d: -hingeBiaxial nDMaterial " << hingeTagC
                    << " not found\n";
             return 0;
+        }
+        int optCJ = 0;
+        if (ladrunoPeekNextInt3d(optCJ)) {
+            hingeMatCJ = OPS_getNDMaterial(optCJ);
+            if (hingeMatCJ == 0) {
+                opserr << "WARNING LadrunoDispBeamColumn3d: -hingeBiaxial nDMaterial " << optCJ
+                       << " not found\n";
+                return 0;
+            }
+            dualHingeMode = 1;
         }
     }
     else if (strcmp(type, "-hingeBiaxialI") == 0 || strcmp(type, "-hingeBiaxial1") == 0 || strcmp(type, "-hingeCI") == 0) {
@@ -545,6 +575,16 @@ void* OPS_LadrunoDispBeamColumn3d()
         if (ladrunoPeekNextDouble3d(optAlpha)) {
             elePmAlpha_3d = optAlpha;
         }
+    }
+    else if (strcmp(type, "-spanLoad") == 0 || strcmp(type, "-spanLoadEnhancement") == 0) {
+        int optMode = 1;
+        if (ladrunoPeekNextInt3d(optMode) && (optMode == 0 || optMode == 1))
+            spanLoadMode = optMode;
+        else
+            spanLoadMode = 1;
+    }
+    else if (strcmp(type, "-noSpanLoad") == 0) {
+        spanLoadMode = 0;
     }
     else {
         opserr << "WARNING LadrunoDispBeamColumn3d: unknown option '" << type << "'\n";
@@ -654,7 +694,7 @@ void* OPS_LadrunoDispBeamColumn3d()
     Element *theEle =  new LadrunoDispBeamColumn3d(iData[0],iData[1],iData[2],secTags.Size(),sections,
 					    *bi,*theTransf,mass,cmass, theDamping,lchMode,userLch,nlGeom,
 					    hingeMatZ,hingeMatY,hingeMatC,hingeMatZJ,hingeMatYJ,hingeMatCJ,
-					    dualHingeMode,xiI,xiJ,elePmP0_3d,elePmAlpha_3d);
+					    dualHingeMode,xiI,xiJ,elePmP0_3d,elePmAlpha_3d,spanLoadMode);
     delete hZ_tmp;
     delete hY_tmp;
     delete hZJ_tmp;
@@ -675,7 +715,7 @@ LadrunoDispBeamColumn3d::LadrunoDispBeamColumn3d(int tag, int nd1, int nd2,
 				   UniaxialMaterial *hingeMatZJ, UniaxialMaterial *hingeMatYJ,
 				   NDMaterial *hingeMatCJ,
 				   int dualMode, double xiI, double xiJ,
-				   double pmP0_, double pmAlpha_)
+				   double pmP0_, double pmAlpha_, int spanMode)
 :Element (tag, ELE_TAG_LadrunoDispBeamColumn3d),
 numSections(numSec), theSections(0), crdTransf(0), beamInt(0),
 connectedExternalNodes(2),
@@ -692,9 +732,22 @@ theHingeZJ(0), theHingeYJ(0), theHingeCJ(0),
 hingeJumpZJ(0.0), hingeJumpCommitZJ(0.0), hingeJumpYJ(0.0), hingeJumpCommitYJ(0.0),
 hingeMscaleZJ(0.0), hingeMscaleCommitZJ(0.0), hingeMscaleYJ(0.0), hingeMscaleCommitYJ(0.0),
 pmP0(pmP0_), pmAlpha(pmAlpha_),
-postRestoreSync(false), vRestoreValid(false)
+postRestoreSync(false), vRestoreValid(false),
+spanLoadMode(spanMode), hasSpanLoad(0), spanLoadDirty(false),
+spanBetaP(0.0), spanBetaPCommit(0.0),
+spanBetaZ(0.0), spanBetaZCommit(0.0), spanBetaY(0.0), spanBetaYCommit(0.0)
 {
   for (int k = 0; k < 6; k++) vRestore[k] = 0.0;
+  for (int m = 0; m < 5; m++) q0Enh[m] = 0.0;
+  for (int m = 0; m < 3; m++) {
+    for (int n = 0; n < 3; n++)
+      spanKbbInv[m][n] = spanKbbInvCommit[m][n] = 0.0;
+    for (int a = 0; a < 6; a++)
+      spanKvb[a][m] = spanKvbCommit[a][m] = 0.0;
+  }
+  for (int i = 0; i < maxNumSections; i++) {
+    s0Fixed[i][0] = s0Fixed[i][1] = s0Fixed[i][2] = 0.0;
+  }
   hingeKvZ[0] = hingeKvZ[1] = hingeKvZ[2] = hingeKvZ[3] = hingeKvZ[4] = hingeKvZ[5] = 0.0;
   hingeKvCommitZ[0] = hingeKvCommitZ[1] = hingeKvCommitZ[2] = hingeKvCommitZ[3] = hingeKvCommitZ[4] = hingeKvCommitZ[5] = 0.0;
   hingeKvY[0] = hingeKvY[1] = hingeKvY[2] = hingeKvY[3] = hingeKvY[4] = hingeKvY[5] = 0.0;
@@ -849,9 +902,22 @@ theHingeZJ(0), theHingeYJ(0), theHingeCJ(0),
 hingeJumpZJ(0.0), hingeJumpCommitZJ(0.0), hingeJumpYJ(0.0), hingeJumpCommitYJ(0.0),
 hingeMscaleZJ(0.0), hingeMscaleCommitZJ(0.0), hingeMscaleYJ(0.0), hingeMscaleCommitYJ(0.0),
 pmP0(0.0), pmAlpha(0.5),
-postRestoreSync(false), vRestoreValid(false)
+postRestoreSync(false), vRestoreValid(false),
+spanLoadMode(1), hasSpanLoad(0), spanLoadDirty(false),
+spanBetaP(0.0), spanBetaPCommit(0.0),
+spanBetaZ(0.0), spanBetaZCommit(0.0), spanBetaY(0.0), spanBetaYCommit(0.0)
 {
   for (int k = 0; k < 6; k++) vRestore[k] = 0.0;
+  for (int m = 0; m < 5; m++) q0Enh[m] = 0.0;
+  for (int m = 0; m < 3; m++) {
+    for (int n = 0; n < 3; n++)
+      spanKbbInv[m][n] = spanKbbInvCommit[m][n] = 0.0;
+    for (int a = 0; a < 6; a++)
+      spanKvb[a][m] = spanKvbCommit[a][m] = 0.0;
+  }
+  for (int i = 0; i < maxNumSections; i++) {
+    s0Fixed[i][0] = s0Fixed[i][1] = s0Fixed[i][2] = 0.0;
+  }
   hingeKvZ[0] = hingeKvZ[1] = hingeKvZ[2] = hingeKvZ[3] = hingeKvZ[4] = hingeKvZ[5] = 0.0;
   hingeKvCommitZ[0] = hingeKvCommitZ[1] = hingeKvCommitZ[2] = hingeKvCommitZ[3] = hingeKvCommitZ[4] = hingeKvCommitZ[5] = 0.0;
   hingeKvY[0] = hingeKvY[1] = hingeKvY[2] = hingeKvY[3] = hingeKvY[4] = hingeKvY[5] = 0.0;
@@ -1078,6 +1144,16 @@ LadrunoDispBeamColumn3d::commitState()
         if (theHingeYJ) retVal += theHingeYJ->commitState();
         if (theHingeCJ) retVal += theHingeCJ->commitState();
       }
+    } else if (spanLoadMode) {
+      spanBetaPCommit = spanBetaP;
+      spanBetaZCommit = spanBetaZ;
+      spanBetaYCommit = spanBetaY;
+      for (int m = 0; m < 3; m++) {
+        for (int n = 0; n < 3; n++)
+          spanKbbInvCommit[m][n] = spanKbbInv[m][n];
+        for (int a = 0; a < 6; a++)
+          spanKvbCommit[a][m] = spanKvb[a][m];
+      }
     }
 
     return retVal;
@@ -1139,6 +1215,16 @@ LadrunoDispBeamColumn3d::revertToLastCommit()
         if (theHingeYJ && !ldbc3dHingeIsImplex(theHingeYJ)) retVal += theHingeYJ->revertToLastCommit();
         if (theHingeCJ && !ldbc3dHingeBiaxialIsImplex(theHingeCJ)) retVal += theHingeCJ->revertToLastCommit();
       }
+    } else if (spanLoadMode) {
+      spanBetaP = spanBetaPCommit;
+      spanBetaZ = spanBetaZCommit;
+      spanBetaY = spanBetaYCommit;
+      for (int m = 0; m < 3; m++) {
+        for (int n = 0; n < 3; n++)
+          spanKbbInv[m][n] = spanKbbInvCommit[m][n];
+        for (int a = 0; a < 6; a++)
+          spanKvb[a][m] = spanKvbCommit[a][m];
+      }
     }
 
     if (this->getDomain() != 0 && theNodes[0] != 0 && theNodes[1] != 0) {
@@ -1154,6 +1240,7 @@ LadrunoDispBeamColumn3d::revertToStart()
 {
     int retVal = 0;
     postRestoreSync = false;
+    spanLoadDirty = false;
     vRestoreValid = false;
 
     // Loop over the integration points and revert states to start
@@ -1217,6 +1304,15 @@ LadrunoDispBeamColumn3d::revertToStart()
         if (theHingeCJ) retVal += theHingeCJ->revertToStart();
       }
     }
+    spanBetaP = spanBetaPCommit = 0.0;
+    spanBetaZ = spanBetaZCommit = 0.0;
+    spanBetaY = spanBetaYCommit = 0.0;
+    for (int m = 0; m < 3; m++) {
+      for (int n = 0; n < 3; n++)
+        spanKbbInv[m][n] = spanKbbInvCommit[m][n] = 0.0;
+      for (int a = 0; a < 6; a++)
+        spanKvb[a][m] = spanKvbCommit[a][m] = 0.0;
+    }
 
     if (this->getDomain() != 0 && theNodes[0] != 0 && theNodes[1] != 0) {
       retVal += this->update();
@@ -1230,6 +1326,7 @@ int
 LadrunoDispBeamColumn3d::update(void)
 {
   int err = 0;
+  spanLoadDirty = false;
 
   // Ladruno (ADR 32): defensively re-assert the active element (see 2D sibling).
   ops_TheActiveElement = this;
@@ -1254,73 +1351,147 @@ LadrunoDispBeamColumn3d::update(void)
     return -1;
   double oneOverL = 1.0/L;
 
-  // Ladruno (ADR 33 / WP-200): when embedded hinge(s) are active, dispatch to dual-hinge
-  // solver (when dualHingeMode is set) or the legacy single-hinge solvers.
-  if (hingeOn) {
-    if (dualHingeMode)
-      return solveDualHingeJump3d(v, L);
-    if (theHingeY != 0 || theHingeC != 0)   // PR-3b block-diagonal OR ADR-34 coupled -> biaxial solve
-      return solveHingeJumpBiaxial(v, L);
-    return solveHingeJump(v, L);
-  }
-
-  //const Matrix &pts = quadRule.getIntegrPointCoords(numSections);
   double xi[maxNumSections];
   beamInt->getSectionLocations(numSections, L, xi);
   // Ladruno (ADR 32): section weights for the per-IP tributary length wt[i]*L.
   double wt[maxNumSections];
   beamInt->getSectionWeights(numSections, L, wt);
 
-  // Loop over the integration points
-  for (int i = 0; i < numSections; i++) {
-
-    int order = theSections[i]->getOrder();
-    const ID &code = theSections[i]->getType();
-
-    Vector e(workArea, order);
-
-    double xi6 = 6.0*xi[i];
-    // Ladruno (ADR 32): biaxial transverse slopes for the ½(θz²+θy²) bowing term
-    double zeta = xi[i];
-    double thetaz = (3.0*zeta*zeta - 4.0*zeta + 1.0)*v(1) + (3.0*zeta*zeta - 2.0*zeta)*v(2);
-    double thetay = (3.0*zeta*zeta - 4.0*zeta + 1.0)*v(3) + (3.0*zeta*zeta - 2.0*zeta)*v(4);
-
-    int j;
-    for (j = 0; j < order; j++) {
-      switch(code(j)) {
-      case SECTION_RESPONSE_P:
-	// Ladruno (ADR 32): nlGeom adds the ½(θz²+θy²) membrane/bowing strain (DispBeamColumnNL3d)
-	e(j) = oneOverL*v(0) + (nlGeom ? 0.5*thetaz*thetaz + 0.5*thetay*thetay : 0.0);
-	break;
-      case SECTION_RESPONSE_MZ:
-	e(j) = oneOverL*((xi6-4.0)*v(1) + (xi6-2.0)*v(2));
-	break;
-      case SECTION_RESPONSE_MY:
-	e(j) = oneOverL*((xi6-4.0)*v(3) + (xi6-2.0)*v(4));
-	break;
-      case SECTION_RESPONSE_T:
-	e(j) = oneOverL*v(5);
-	break;
-      default:
-	e(j) = 0.0;
-	break;
-      }
+  // Ladruno (ADR 33 / WP-200): when embedded hinge(s) are active, dispatch to dual-hinge
+  // solver (when dualHingeMode is set) or the legacy single-hinge solvers.
+  if (hingeOn) {
+    if (dualHingeMode)
+      err = solveDualHingeJump3d(v, L);
+    else if (theHingeY != 0 || theHingeC != 0)   // PR-3b block-diagonal OR ADR-34 coupled -> biaxial solve
+      err = solveHingeJumpBiaxial(v, L);
+    else
+      err = solveHingeJump(v, L);
+    if (err != 0)
+      return err;
+  } else if (!nlGeom && spanLoadMode && hasSpanLoad) {
+    // Ladruno (WP-200): span-load internal strain + biaxial quartic bubble enhancement
+    err = solveSpanLoadBubble3d(v, L, xi, wt);
+    if (err != 0)
+      return err;
+  } else {
+    spanBetaZ = 0.0;
+    spanBetaY = 0.0;
+    spanBetaP = 0.0;
+    for (int m = 0; m < 3; m++)
+      for (int n = 0; n < 3; n++)
+        spanKbbInv[m][n] = 0.0;
+    for (int a = 0; a < 6; a++) {
+      spanKvb[a][0] = spanKvb[a][1] = spanKvb[a][2] = 0.0;
     }
 
-    // Ladruno (ADR 32) Tier-1: per-IP characteristic length (reference), set immediately
-    // before setTrialSectionDeformation so the crack-band material latches the right band.
-    if (lchMode == 1)        current_section_lch = L;
-    else if (lchMode == 2)   current_section_lch = userLch;
-    else                     current_section_lch = wt[i]*L;
+    // Loop over the integration points
+    for (int i = 0; i < numSections; i++) {
 
-    // Set the section deformations
-    err += theSections[i]->setTrialSectionDeformation(e);
+      int order = theSections[i]->getOrder();
+      const ID &code = theSections[i]->getType();
+
+      Vector e(workArea, order);
+
+      double xi6 = 6.0*xi[i];
+      // Ladruno (ADR 32): biaxial transverse slopes for the ½(θz²+θy²) bowing term
+      double zeta = xi[i];
+      double thetaz = (3.0*zeta*zeta - 4.0*zeta + 1.0)*v(1) + (3.0*zeta*zeta - 2.0*zeta)*v(2);
+      double thetay = (3.0*zeta*zeta - 4.0*zeta + 1.0)*v(3) + (3.0*zeta*zeta - 2.0*zeta)*v(4);
+
+      int j;
+      for (j = 0; j < order; j++) {
+        switch(code(j)) {
+        case SECTION_RESPONSE_P:
+          // Ladruno (ADR 32): nlGeom adds the ½(θz²+θy²) membrane/bowing strain (DispBeamColumnNL3d)
+          e(j) = oneOverL*v(0) + (nlGeom ? 0.5*thetaz*thetaz + 0.5*thetay*thetay : 0.0);
+          break;
+        case SECTION_RESPONSE_MZ:
+          e(j) = oneOverL*((xi6-4.0)*v(1) + (xi6-2.0)*v(2));
+          break;
+        case SECTION_RESPONSE_MY:
+          e(j) = oneOverL*((xi6-4.0)*v(3) + (xi6-2.0)*v(4));
+          break;
+        case SECTION_RESPONSE_T:
+          e(j) = oneOverL*v(5);
+          break;
+        default:
+          e(j) = 0.0;
+          break;
+        }
+      }
+
+      // Ladruno (ADR 32) Tier-1: per-IP characteristic length (reference), set immediately
+      // before setTrialSectionDeformation so the crack-band material latches the right band.
+      if (lchMode == 1)        current_section_lch = L;
+      else if (lchMode == 2)   current_section_lch = userLch;
+      else                     current_section_lch = wt[i]*L;
+
+      // Set the section deformations
+      err += theSections[i]->setTrialSectionDeformation(e);
+    }
+
+    if (err != 0) {
+      LadrunoOutputGuard og;
+      opserr << "LadrunoDispBeamColumn3d::update() - failed setTrialSectionDeformations()\n";
+      return err;
+    }
   }
 
-  if (err != 0) {
-    LadrunoOutputGuard og;
-    opserr << "LadrunoDispBeamColumn3d::update() - failed setTrialSectionDeformations()\n";
-    return err;
+  // Ladruno: keep basic force vector q synchronized at the end of update() so
+  // basicForce / localForce / plasticRotation queries after update() are never stale.
+  q.Zero();
+  for (int i = 0; i < numSections; i++) {
+    int order = theSections[i]->getOrder();
+    const ID &code = theSections[i]->getType();
+    double xi6 = 6.0 * xi[i];
+    const Vector &s = theSections[i]->getStressResultant();
+    double zeta = xi[i];
+    double c1nl = 3.0 * zeta * zeta - 4.0 * zeta + 1.0;
+    double c2nl = 3.0 * zeta * zeta - 2.0 * zeta;
+    double thetaz = c1nl * v(1) + c2nl * v(2);
+    double thetay = c1nl * v(3) + c2nl * v(4);
+    for (int j = 0; j < order; j++) {
+      double si = s(j) * wt[i];
+      switch (code(j)) {
+      case SECTION_RESPONSE_P:
+        q(0) += si;
+        break;
+      case SECTION_RESPONSE_MZ:
+        q(1) += (xi6 - 4.0) * si;
+        q(2) += (xi6 - 2.0) * si;
+        if (nlGeom) {
+          for (int jj = 0; jj < order; jj++)
+            if (code(jj) == SECTION_RESPONSE_P) {
+              q(1) += c1nl * thetaz * s(jj) * wt[i] * L;
+              q(2) += c2nl * thetaz * s(jj) * wt[i] * L;
+            }
+        }
+        break;
+      case SECTION_RESPONSE_MY:
+        q(3) += (xi6 - 4.0) * si;
+        q(4) += (xi6 - 2.0) * si;
+        if (nlGeom) {
+          for (int jj = 0; jj < order; jj++)
+            if (code(jj) == SECTION_RESPONSE_P) {
+              q(3) += c1nl * thetay * s(jj) * wt[i] * L;
+              q(4) += c2nl * thetay * s(jj) * wt[i] * L;
+            }
+        }
+        break;
+      case SECTION_RESPONSE_T:
+        q(5) += si;
+        break;
+      default:
+        break;
+      }
+    }
+  }
+  if (!hingeOn && !nlGeom && spanLoadMode && hasSpanLoad) {
+    for (int m = 0; m < 5; m++)
+      q(m) += q0[m] - q0Enh[m];
+  } else {
+    for (int m = 0; m < 5; m++)
+      q(m) += q0[m];
   }
   return 0;
 }
@@ -1733,6 +1904,7 @@ LadrunoDispBeamColumn3d::solveHingeJumpBiaxial(const Vector &v, double L)
     double Mz, My, Czz, Cyy, Czy;
     if (theHingeC != 0) {
       if (chC != 0) chC->setAxialForce(sumP);
+      double fPMC = (chC == 0 && pmP0 > 0.0) ? ladrunoDisp3dScalePM(sumP, pmP0, pmAlpha) : 1.0;
       if (!(postRestoreSync && ldbc3dHingeBiaxialIsImplex(theHingeC))) {
         static thread_local Vector jumpVec(2);
         jumpVec(0) = az; jumpVec(1) = ay;
@@ -1740,9 +1912,9 @@ LadrunoDispBeamColumn3d::solveHingeJumpBiaxial(const Vector &v, double L)
       }
       const Vector &Mvec = theHingeC->getStress();
       const Matrix &Kc   = theHingeC->getTangent();
-      Mz = Mvec(0); My = Mvec(1);
-      Czz = Kc(0,0); Cyy = Kc(1,1);
-      Czy = 0.5*(Kc(0,1) + Kc(1,0));   // symmetrize the cohesive coupling
+      Mz = fPMC * Mvec(0); My = fPMC * Mvec(1);
+      Czz = fPMC * Kc(0,0); Cyy = fPMC * Kc(1,1);
+      Czy = fPMC * 0.5*(Kc(0,1) + Kc(1,0));   // symmetrize the cohesive coupling
     } else {
       if (chZ != 0) chZ->setAxialForce(sumP);
       if (chY != 0) chY->setAxialForce(sumP);
@@ -2010,6 +2182,7 @@ LadrunoDispBeamColumn3d::solveDualHingeJump3d(const Vector &v, double L)
     // End I cohesive
     if (theHingeC != 0) {
       if (chCI != 0) chCI->setAxialForce(sumP);
+      double fPMCI = (chCI == 0 && pmP0 > 0.0) ? ladrunoDisp3dScalePM(sumP, pmP0, pmAlpha) : 1.0;
       if (!(postRestoreSync && ldbc3dHingeBiaxialIsImplex(theHingeC))) {
         static thread_local Vector jumpI(2);
         jumpI(0) = alpha[0]; jumpI(1) = alpha[1];
@@ -2017,8 +2190,8 @@ LadrunoDispBeamColumn3d::solveDualHingeJump3d(const Vector &v, double L)
       }
       const Vector &MI = theHingeC->getStress();
       const Matrix &KcI = theHingeC->getTangent();
-      Mcoh[0] = MI(0); Mcoh[1] = MI(1);
-      double c00 = KcI(0, 0), c11 = KcI(1, 1), c01 = 0.5 * (KcI(0, 1) + KcI(1, 0));
+      Mcoh[0] = fPMCI * MI(0); Mcoh[1] = fPMCI * MI(1);
+      double c00 = fPMCI * KcI(0, 0), c11 = fPMCI * KcI(1, 1), c01 = fPMCI * 0.5 * (KcI(0, 1) + KcI(1, 0));
       Kaa[0][0] += c00; Kaa[1][1] += c11;
       Kaa[0][1] += c01; Kaa[1][0] += c01;
       CdiagSum += fabs(c00) + fabs(c11);
@@ -2047,6 +2220,7 @@ LadrunoDispBeamColumn3d::solveDualHingeJump3d(const Vector &v, double L)
     // End J cohesive
     if (theHingeCJ != 0) {
       if (chCJ != 0) chCJ->setAxialForce(sumP);
+      double fPMCJ = (chCJ == 0 && pmP0 > 0.0) ? ladrunoDisp3dScalePM(sumP, pmP0, pmAlpha) : 1.0;
       if (!(postRestoreSync && ldbc3dHingeBiaxialIsImplex(theHingeCJ))) {
         static thread_local Vector jumpJ(2);
         jumpJ(0) = alpha[2]; jumpJ(1) = alpha[3];
@@ -2054,8 +2228,8 @@ LadrunoDispBeamColumn3d::solveDualHingeJump3d(const Vector &v, double L)
       }
       const Vector &MJ = theHingeCJ->getStress();
       const Matrix &KcJ = theHingeCJ->getTangent();
-      Mcoh[2] = MJ(0); Mcoh[3] = MJ(1);
-      double c22 = KcJ(0, 0), c33 = KcJ(1, 1), c23 = 0.5 * (KcJ(0, 1) + KcJ(1, 0));
+      Mcoh[2] = fPMCJ * MJ(0); Mcoh[3] = fPMCJ * MJ(1);
+      double c22 = fPMCJ * KcJ(0, 0), c33 = fPMCJ * KcJ(1, 1), c23 = fPMCJ * 0.5 * (KcJ(0, 1) + KcJ(1, 0));
       Kaa[2][2] += c22; Kaa[3][3] += c33;
       Kaa[2][3] += c23; Kaa[3][2] += c23;
       CdiagSum += fabs(c22) + fabs(c33);
@@ -2148,12 +2322,304 @@ LadrunoDispBeamColumn3d::solveDualHingeJump3d(const Vector &v, double L)
   return 0;
 }
 
+// Ladruno (WP-200): Exact Span-Load Internal Strain + Quartic Bubble Enhancement (3D).
+int
+LadrunoDispBeamColumn3d::solveSpanLoadBubble3d(const Vector &v, double L, const double *xi, const double *wt)
+{
+  double oneOverL = 1.0 / L;
+
+  double S0 = 0.0, S1 = 0.0, S2 = 0.0;
+  double B0 = 0.0, B1 = 0.0;
+  for (int i = 0; i < numSections; i++) {
+    double x = xi[i];
+    double w = wt[i];
+    double pb = 1.0 - 6.0 * x + 6.0 * x * x;
+    S0 += w;
+    S1 += w * x;
+    S2 += w * x * x;
+    B0 += w * pb;
+    B1 += w * x * pb;
+  }
+  double detS = S0 * S2 - S1 * S1;
+  double phi[maxNumSections];
+  double phiNorm2 = 0.0;
+  if (numSections >= 3 && fabs(detS) > 1.0e-12) {
+    double c0 = (S2 * B0 - S1 * B1) / detS;
+    double c1 = (-S1 * B0 + S0 * B1) / detS;
+    for (int i = 0; i < numSections; i++) {
+      double x = xi[i];
+      phi[i] = (1.0 - 6.0 * x + 6.0 * x * x) - (c0 + c1 * x);
+      phiNorm2 += wt[i] * phi[i] * phi[i];
+    }
+  } else {
+    for (int i = 0; i < numSections; i++)
+      phi[i] = 0.0;
+  }
+
+  double e0[maxNumSections][8];
+  double Kbb0_pp = 0.0, Kbb0_zz = 0.0, Kbb0_yy = 0.0;
+  bool hasAnyP = false, hasAnyMZ = false, hasAnyMY = false;
+  double pScale = 0.0, mScaleZ = 0.0, mScaleY = 0.0;
+  for (int i = 0; i < numSections; i++) {
+    pScale  += fabs(s0Fixed[i][0]);
+    mScaleZ += fabs(s0Fixed[i][1]);
+    mScaleY += fabs(s0Fixed[i][2]);
+    int order = theSections[i]->getOrder();
+    const ID &code = theSections[i]->getType();
+    const Matrix &ks0 = theSections[i]->getInitialTangent();
+    for (int j = 0; j < 8; j++) e0[i][j] = 0.0;
+    int idxP = -1, idxMZ = -1, idxMY = -1;
+    for (int j = 0; j < order && j < 8; j++) {
+      if (code(j) == SECTION_RESPONSE_P)  { idxP  = j; hasAnyP  = true; }
+      if (code(j) == SECTION_RESPONSE_MZ) { idxMZ = j; hasAnyMZ = true; }
+      if (code(j) == SECTION_RESPONSE_MY) { idxMY = j; hasAnyMY = true; }
+    }
+    if (idxP  >= 0) Kbb0_pp += oneOverL * wt[i] * phi[i] * phi[i] * fabs(ks0(idxP, idxP));
+    if (idxMZ >= 0) Kbb0_zz += oneOverL * wt[i] * phi[i] * phi[i] * fabs(ks0(idxMZ, idxMZ));
+    if (idxMY >= 0) Kbb0_yy += oneOverL * wt[i] * phi[i] * phi[i] * fabs(ks0(idxMY, idxMY));
+    if (order > 0 && order <= 8) {
+      Vector f0(order);
+      Vector e0v(order);
+      f0.Zero();
+      e0v.Zero();
+      if (idxP  >= 0) f0(idxP)  = s0Fixed[i][0];
+      if (idxMZ >= 0) f0(idxMZ) = s0Fixed[i][1];
+      if (idxMY >= 0) f0(idxMY) = s0Fixed[i][2];
+      Matrix ks0Copy(ks0);
+      if (ks0Copy.Solve(f0, e0v) == 0) {
+        for (int j = 0; j < order; j++)
+          e0[i][j] = std::isfinite(e0v(j)) ? e0v(j) : 0.0;
+      } else {
+        if (idxP  >= 0 && fabs(ks0(idxP, idxP)) > 1.0e-30)   e0[i][idxP]  = s0Fixed[i][0] / ks0(idxP, idxP);
+        if (idxMZ >= 0 && fabs(ks0(idxMZ, idxMZ)) > 1.0e-30) e0[i][idxMZ] = s0Fixed[i][1] / ks0(idxMZ, idxMZ);
+        if (idxMY >= 0 && fabs(ks0(idxMY, idxMY)) > 1.0e-30) e0[i][idxMY] = s0Fixed[i][2] / ks0(idxMY, idxMY);
+      }
+    }
+  }
+  if ((mScaleZ + mScaleY) * oneOverL > pScale)
+    pScale = (mScaleZ + mScaleY) * oneOverL;
+
+  const bool useBubble = (phiNorm2 > 1.0e-8) && (hasAnyP || hasAnyMZ || hasAnyMY);
+  double bp = (useBubble && hasAnyP)  ? spanBetaPCommit : 0.0;
+  double bz = (useBubble && hasAnyMZ) ? spanBetaZCommit : 0.0;
+  double by = (useBubble && hasAnyMY) ? spanBetaYCommit : 0.0;
+  double Kvb[6][3] = {{0.0}};
+  double invKbb[3][3] = {{0.0}};
+  double damp = 1.0;
+  double rPrev = 1.0e300;
+  const int maxIter = useBubble ? 40 : 1;
+
+  for (int iter = 0; iter < maxIter; iter++) {
+    int err = 0;
+    double rp = 0.0, rz = 0.0, ry = 0.0;
+    double Kbb[3][3] = {{0.0}};
+    for (int a = 0; a < 6; a++)
+      for (int m = 0; m < 3; m++)
+        Kvb[a][m] = 0.0;
+
+    for (int i = 0; i < numSections; i++) {
+      int order = theSections[i]->getOrder();
+      const ID &code = theSections[i]->getType();
+      double xi6 = 6.0 * xi[i];
+
+      Vector e(workArea, order);
+      for (int j = 0; j < order; j++) {
+        double e0j = (j < 8) ? e0[i][j] : 0.0;
+        switch (code(j)) {
+        case SECTION_RESPONSE_P:
+          e(j) = oneOverL * (v(0) + phi[i] * bp) + e0j;
+          break;
+        case SECTION_RESPONSE_MZ:
+          e(j) = oneOverL * ((xi6 - 4.0) * v(1) + (xi6 - 2.0) * v(2) + phi[i] * bz) + e0j;
+          break;
+        case SECTION_RESPONSE_MY:
+          e(j) = oneOverL * ((xi6 - 4.0) * v(3) + (xi6 - 2.0) * v(4) + phi[i] * by) + e0j;
+          break;
+        case SECTION_RESPONSE_T:
+          e(j) = oneOverL * v(5) + e0j;
+          break;
+        default:
+          e(j) = e0j;
+          break;
+        }
+      }
+
+      if (lchMode == 1)       current_section_lch = L;
+      else if (lchMode == 2)  current_section_lch = userLch;
+      else                    current_section_lch = wt[i] * L;
+
+      err += theSections[i]->setTrialSectionDeformation(e);
+
+      if (useBubble) {
+        const Vector &s  = theSections[i]->getStressResultant();
+        const Matrix &ks = theSections[i]->getSectionTangent();
+        int idxP = -1, idxMZ = -1, idxMY = -1, idxT = -1;
+        for (int j = 0; j < order; j++) {
+          switch (code(j)) {
+          case SECTION_RESPONSE_P:  idxP  = j; break;
+          case SECTION_RESPONSE_MZ: idxMZ = j; break;
+          case SECTION_RESPONSE_MY: idxMY = j; break;
+          case SECTION_RESPONSE_T:  idxT  = j; break;
+          default: break;
+          }
+        }
+        double wPhi = wt[i] * oneOverL * phi[i];
+        if (idxP >= 0) {
+          double Nsec = s(idxP);
+          if (fabs(Nsec) > pScale) pScale = fabs(Nsec);
+          rp += wt[i] * phi[i] * (Nsec - s0Fixed[i][0]);
+          double EA = ks(idxP, idxP);
+          Kbb[0][0] += wPhi * phi[i] * EA;
+          Kvb[0][0] += wPhi * EA;
+          if (idxMZ >= 0) {
+            double kPZ = 0.5 * (ks(idxP, idxMZ) + ks(idxMZ, idxP));
+            Kvb[1][0] += wPhi * (xi6 - 4.0) * kPZ;
+            Kvb[2][0] += wPhi * (xi6 - 2.0) * kPZ;
+            Kbb[0][1] += wPhi * phi[i] * kPZ;
+            Kbb[1][0] += wPhi * phi[i] * kPZ;
+          }
+          if (idxMY >= 0) {
+            double kPY = 0.5 * (ks(idxP, idxMY) + ks(idxMY, idxP));
+            Kvb[3][0] += wPhi * (xi6 - 4.0) * kPY;
+            Kvb[4][0] += wPhi * (xi6 - 2.0) * kPY;
+            Kbb[0][2] += wPhi * phi[i] * kPY;
+            Kbb[2][0] += wPhi * phi[i] * kPY;
+          }
+          if (idxT >= 0)
+            Kvb[5][0] += wPhi * 0.5 * (ks(idxP, idxT) + ks(idxT, idxP));
+        }
+        if (idxMZ >= 0) {
+          double MsecZ = s(idxMZ);
+          double EIz = ks(idxMZ, idxMZ);
+          if (fabs(MsecZ) > mScaleZ) mScaleZ = fabs(MsecZ);
+          if ((mScaleZ + mScaleY) * oneOverL > pScale) pScale = (mScaleZ + mScaleY) * oneOverL;
+          rz += wt[i] * phi[i] * (MsecZ - s0Fixed[i][1]);
+          Kbb[1][1] += wPhi * phi[i] * EIz;
+          Kvb[1][1] += wPhi * (xi6 - 4.0) * EIz;
+          Kvb[2][1] += wPhi * (xi6 - 2.0) * EIz;
+          if (idxP  >= 0) Kvb[0][1] += wPhi * 0.5 * (ks(idxP, idxMZ) + ks(idxMZ, idxP));
+          if (idxMY >= 0) {
+            double kZY = 0.5 * (ks(idxMY, idxMZ) + ks(idxMZ, idxMY));
+            Kvb[3][1] += wPhi * (xi6 - 4.0) * kZY;
+            Kvb[4][1] += wPhi * (xi6 - 2.0) * kZY;
+            Kbb[1][2] += wPhi * phi[i] * kZY;
+            Kbb[2][1] += wPhi * phi[i] * kZY;
+          }
+          if (idxT  >= 0) Kvb[5][1] += wPhi * 0.5 * (ks(idxT, idxMZ) + ks(idxMZ, idxT));
+        }
+        if (idxMY >= 0) {
+          double MsecY = s(idxMY);
+          double EIy = ks(idxMY, idxMY);
+          if (fabs(MsecY) > mScaleY) mScaleY = fabs(MsecY);
+          if ((mScaleZ + mScaleY) * oneOverL > pScale) pScale = (mScaleZ + mScaleY) * oneOverL;
+          ry += wt[i] * phi[i] * (MsecY - s0Fixed[i][2]);
+          Kbb[2][2] += wPhi * phi[i] * EIy;
+          Kvb[3][2] += wPhi * (xi6 - 4.0) * EIy;
+          Kvb[4][2] += wPhi * (xi6 - 2.0) * EIy;
+          if (idxP  >= 0) Kvb[0][2] += wPhi * 0.5 * (ks(idxP, idxMY) + ks(idxMY, idxP));
+          if (idxMZ >= 0) {
+            double kZY = 0.5 * (ks(idxMZ, idxMY) + ks(idxMY, idxMZ));
+            Kvb[1][2] += wPhi * (xi6 - 4.0) * kZY;
+            Kvb[2][2] += wPhi * (xi6 - 2.0) * kZY;
+          }
+          if (idxT  >= 0) Kvb[5][2] += wPhi * 0.5 * (ks(idxT, idxMY) + ks(idxMY, idxT));
+        }
+      }
+    }
+
+    if (err != 0) {
+      LadrunoOutputGuard og;
+      opserr << "LadrunoDispBeamColumn3d::solveSpanLoadBubble3d() - failed setTrialSectionDeformations()\n";
+      return err;
+    }
+
+    if (!useBubble) {
+      spanBetaP = 0.0;
+      spanBetaZ = 0.0;
+      spanBetaY = 0.0;
+      for (int m = 0; m < 3; m++) {
+        for (int n = 0; n < 3; n++) spanKbbInv[m][n] = 0.0;
+        for (int a = 0; a < 6; a++) spanKvb[a][m] = 0.0;
+      }
+      return 0;
+    }
+
+    double dScale[3];
+    dScale[0] = (hasAnyP  && Kbb0_pp > 1.0e-30) ? sqrt(Kbb0_pp) : 1.0;
+    dScale[1] = (hasAnyMZ && Kbb0_zz > 1.0e-30) ? sqrt(Kbb0_zz) : 1.0;
+    dScale[2] = (hasAnyMY && Kbb0_yy > 1.0e-30) ? sqrt(Kbb0_yy) : 1.0;
+    bool act4[4] = {hasAnyP, hasAnyMZ, hasAnyMY, false};
+    double sKbb[4][4] = {{0.0}};
+    sKbb[3][3] = 1.0;
+    for (int m = 0; m < 3; m++) {
+      for (int n = 0; n < 3; n++) {
+        if (act4[m] && act4[n])
+          sKbb[m][n] = Kbb[m][n] / (dScale[m] * dScale[n]);
+        else
+          sKbb[m][n] = (m == n) ? 1.0 : 0.0;
+      }
+    }
+    double sInv[4][4] = {{0.0}};
+    ladrunoFlooredInv4x4(sKbb, act4, 1.0e-8, sInv);
+    for (int m = 0; m < 3; m++) {
+      for (int n = 0; n < 3; n++) {
+        invKbb[m][n] = (act4[m] && act4[n]) ? (sInv[m][n] / (dScale[m] * dScale[n])) : 0.0;
+      }
+    }
+
+    bool okP = !hasAnyP  || (fabs(rp) <= 1.0e-11 * pScale  + 1.0e-12);
+    bool okZ = !hasAnyMZ || (fabs(rz) <= 1.0e-11 * mScaleZ + 1.0e-12);
+    bool okY = !hasAnyMY || (fabs(ry) <= 1.0e-11 * mScaleY + 1.0e-12);
+    if ((okP && okZ && okY) || (Kbb0_pp <= 0.0 && Kbb0_zz <= 0.0 && Kbb0_yy <= 0.0)) {
+      spanBetaP = bp;
+      spanBetaZ = bz;
+      spanBetaY = by;
+      for (int m = 0; m < 3; m++) {
+        for (int n = 0; n < 3; n++) spanKbbInv[m][n] = invKbb[m][n];
+        for (int a = 0; a < 6; a++) spanKvb[a][m] = Kvb[a][m];
+      }
+      if (postRestoreSync) {
+        for (int m = 0; m < 3; m++) {
+          for (int n = 0; n < 3; n++) spanKbbInvCommit[m][n] = invKbb[m][n];
+          for (int a = 0; a < 6; a++) spanKvbCommit[a][m] = Kvb[a][m];
+        }
+      }
+      return 0;
+    }
+
+    double rnP = hasAnyP  ? (rp / (pScale  + 1.0e-12)) : 0.0;
+    double rnZ = hasAnyMZ ? (rz / (mScaleZ + 1.0e-12)) : 0.0;
+    double rnY = hasAnyMY ? (ry / (mScaleY + 1.0e-12)) : 0.0;
+    double rnorm = sqrt(rnP * rnP + rnZ * rnZ + rnY * rnY);
+    if (rnorm > rPrev) damp *= 0.5;
+    else               damp = (damp * 1.5 < 1.0) ? damp * 1.5 : 1.0;
+    rPrev = rnorm;
+
+    if (hasAnyP)  bp -= damp * (invKbb[0][0] * rp + invKbb[0][1] * rz + invKbb[0][2] * ry);
+    if (hasAnyMZ) bz -= damp * (invKbb[1][0] * rp + invKbb[1][1] * rz + invKbb[1][2] * ry);
+    if (hasAnyMY) by -= damp * (invKbb[2][0] * rp + invKbb[2][1] * rz + invKbb[2][2] * ry);
+  }
+
+  spanBetaP = bp;
+  spanBetaZ = bz;
+  spanBetaY = by;
+  for (int m = 0; m < 3; m++) {
+    for (int n = 0; n < 3; n++) spanKbbInv[m][n] = invKbb[m][n];
+    for (int a = 0; a < 6; a++) spanKvb[a][m] = Kvb[a][m];
+  }
+  return 0;
+}
+
 double
 LadrunoDispBeamColumn3d::getCharacteristicLength(void)
 {
   // Ladruno (ADR 32) Tier-1: report the localizing IP's tributary length (set in
   // update()) so crack-band materials regularize over the correct band. Mirrors
   // ForceBeamColumn / the 2D sibling.
+  if (lchMode == 1)
+    return crdTransf ? crdTransf->getInitialLength() : Element::getCharacteristicLength();
+  if (lchMode == 2 && userLch > 0.0)
+    return userLch;
   if (current_section_lch > 0.0)
     return current_section_lch;
   return Element::getCharacteristicLength();
@@ -2162,6 +2628,13 @@ LadrunoDispBeamColumn3d::getCharacteristicLength(void)
 const Matrix&
 LadrunoDispBeamColumn3d::getTangentStiff()
 {
+  if (spanLoadDirty && theNodes[0] != 0 && theNodes[1] != 0) {
+    Element *savedActive = ops_TheActiveElement;
+    ops_TheActiveElement = this;
+    this->update();
+    ops_TheActiveElement = savedActive;
+  }
+
   static thread_local Matrix kb(6,6);
   
   // Zero for integral
@@ -2246,11 +2719,16 @@ LadrunoDispBeamColumn3d::getTangentStiff()
     }
   }
 
-  q(0) += q0[0];
-  q(1) += q0[1];
-  q(2) += q0[2];
-  q(3) += q0[3];
-  q(4) += q0[4];
+  if (!hingeOn && !nlGeom && spanLoadMode && hasSpanLoad) {
+    for (int m = 0; m < 5; m++)
+      q(m) += q0[m] - q0Enh[m];
+  } else {
+    q(0) += q0[0];
+    q(1) += q0[1];
+    q(2) += q0[2];
+    q(3) += q0[3];
+    q(4) += q0[4];
+  }
 
   // Transform to global stiffness
   K = crdTransf->getGlobalStiffMatrix(kb, q);
@@ -2449,6 +2927,17 @@ LadrunoDispBeamColumn3d::getBasicStiff(Matrix &kb, int initial)
       for (int a = 0; a < 6; a++)
         for (int b = 0; b < 6; b++)
           kb(a,b) -= hingeKvZ[a]*hingeKvZ[b]*invKaa;
+    }
+  } else if (!initial && !hingeOn && !nlGeom && spanLoadMode && hasSpanLoad) {
+    // Ladruno (WP-200): static condensation of 3-DOF quartic span-load bubble onto kb
+    for (int a = 0; a < 6; a++) {
+      for (int b = 0; b < 6; b++) {
+        double sub = 0.0;
+        for (int m = 0; m < 3; m++)
+          for (int n = 0; n < 3; n++)
+            sub += spanKvb[a][m] * spanKbbInv[m][n] * spanKvb[b][n];
+        kb(a, b) -= sub;
+      }
     }
   }
 }
@@ -2713,6 +3202,11 @@ void
 LadrunoDispBeamColumn3d::zeroLoad(void)
 {
   Q.Zero();
+  if (q0[0] != 0.0 || q0[1] != 0.0 || q0[2] != 0.0 || q0[3] != 0.0 || q0[4] != 0.0 ||
+      p0[0] != 0.0 || p0[1] != 0.0 || p0[2] != 0.0 || p0[3] != 0.0 || p0[4] != 0.0 ||
+      hasSpanLoad != 0) {
+    spanLoadDirty = true;
+  }
 
   q0[0] = 0.0;
   q0[1] = 0.0;
@@ -2726,6 +3220,13 @@ LadrunoDispBeamColumn3d::zeroLoad(void)
   p0[3] = 0.0;
   p0[4] = 0.0;
 
+  hasSpanLoad = 0;
+  for (int m = 0; m < 5; m++)
+    q0Enh[m] = 0.0;
+  for (int i = 0; i < maxNumSections; i++) {
+    s0Fixed[i][0] = s0Fixed[i][1] = s0Fixed[i][2] = 0.0;
+  }
+
   postRestoreSync = false;
 
   return;
@@ -2738,6 +3239,12 @@ LadrunoDispBeamColumn3d::addLoad(ElementalLoad *theLoad, double loadFactor)
   int type;
   const Vector &data = theLoad->getData(type, loadFactor);
   double L = crdTransf->getInitialLength();
+
+  double xi[maxNumSections];
+  double wt[maxNumSections];
+  beamInt->getSectionLocations(numSections, L, xi);
+  beamInt->getSectionWeights(numSections, L, wt);
+  bool addedSpanFixed = false;
 
   if (type == LOAD_TAG_Beam3dUniformLoad) {
     double wy = data(0)*loadFactor;  // Transverse
@@ -2763,6 +3270,15 @@ LadrunoDispBeamColumn3d::addLoad(ElementalLoad *theLoad, double loadFactor)
     q0[2] += Mz;
     q0[3] += My;
     q0[4] -= My;
+
+    for (int i = 0; i < numSections; i++) {
+      double x = xi[i];
+      double pb = 1.0 - 6.0 * x + 6.0 * x * x;
+      s0Fixed[i][0] += P * (0.5 - x);
+      s0Fixed[i][1] += Mz * pb;
+      s0Fixed[i][2] -= My * pb;
+    }
+    addedSpanFixed = true;
   }
   else if (type == LOAD_TAG_BeamUniformMoment) {
     double my = data(1)*loadFactor;  // About y
@@ -2773,6 +3289,7 @@ LadrunoDispBeamColumn3d::addLoad(ElementalLoad *theLoad, double loadFactor)
     p0[2] -= mz;
     p0[3] -= my;
     p0[4] += my;
+    spanLoadDirty = true;
   }
   else if (type == LOAD_TAG_Beam3dPartialUniformLoad) {
     // Ladruno: trapezoidal 3D partial load support
@@ -2834,6 +3351,26 @@ LadrunoDispBeamColumn3d::addLoad(ElementalLoad *theLoad, double loadFactor)
     q0[2] += M2y;
     q0[3] -= M1z;
     q0[4] -= M2z;
+
+    for (int i = 0; i < numSections; i++) {
+      double x = xi[i] * L;
+      double Ncant = 0.0, McantY = 0.0, McantZ = 0.0;
+      if (x > a && x < b) {
+        double u = x - a;
+        double s = u / ell;
+        Ncant  = u * (waa + 0.5 * s * (wab - waa));
+        McantY = u * u * (0.5 * wya + (1.0 / 6.0) * s * (wyb - wya));
+        McantZ = u * u * (0.5 * wza + (1.0 / 6.0) * s * (wzb - wza));
+      } else if (x >= b) {
+        Ncant  = P;
+        McantY = (x - a) * J0y - J1y;
+        McantZ = (x - a) * J0z - J1z;
+      }
+      s0Fixed[i][0] += (P - PJ) - Ncant;
+      s0Fixed[i][1] += (xi[i] - 1.0) * M1y + xi[i] * M2y - Vy1 * x + McantY;
+      s0Fixed[i][2] -= (xi[i] - 1.0) * M1z + xi[i] * M2z - Vz1 * x + McantZ;
+    }
+    addedSpanFixed = true;
   }
   else if (type == LOAD_TAG_Beam3dPointLoad) {
     double Py = data(0)*loadFactor;
@@ -2849,15 +3386,14 @@ LadrunoDispBeamColumn3d::addLoad(ElementalLoad *theLoad, double loadFactor)
 
     // Reactions in basic system
     p0[0] -= N;
-    double V1, V2;
-    V1 = Py*(1.0-aOverL);
-    V2 = Py*aOverL;
-    p0[1] -= V1;
-    p0[2] -= V2;
-    V1 = Pz*(1.0-aOverL);
-    V2 = Pz*aOverL;
-    p0[3] -= V1;
-    p0[4] -= V2;
+    double Vy1 = Py*(1.0-aOverL);
+    double Vy2 = Py*aOverL;
+    p0[1] -= Vy1;
+    p0[2] -= Vy2;
+    double Vz1 = Pz*(1.0-aOverL);
+    double Vz2 = Pz*aOverL;
+    p0[3] -= Vz1;
+    p0[4] -= Vz2;
 
     double L2 = 1.0/(L*L);
     double a2 = a*a;
@@ -2865,20 +3401,45 @@ LadrunoDispBeamColumn3d::addLoad(ElementalLoad *theLoad, double loadFactor)
 
     // Fixed end forces in basic system
     q0[0] -= N*aOverL;
-    double M1, M2;
-    M1 = -a * b2 * Py * L2;
-    M2 = a2 * b * Py * L2;
-    q0[1] += M1;
-    q0[2] += M2;
-    M1 = -a * b2 * Pz * L2;
-    M2 = a2 * b * Pz * L2;
-    q0[3] -= M1;
-    q0[4] -= M2;
+    double M1y = -a * b2 * Py * L2;
+    double M2y = a2 * b * Py * L2;
+    q0[1] += M1y;
+    q0[2] += M2y;
+    double M1z = -a * b2 * Pz * L2;
+    double M2z = a2 * b * Pz * L2;
+    q0[3] -= M1z;
+    q0[4] -= M2z;
+
+    for (int i = 0; i < numSections; i++) {
+      double x = xi[i] * L;
+      double Ncant  = (x > a) ? N : 0.0;
+      double McantY = (x > a) ? Py * (x - a) : 0.0;
+      double McantZ = (x > a) ? Pz * (x - a) : 0.0;
+      s0Fixed[i][0] += N * (1.0 - aOverL) - Ncant;
+      s0Fixed[i][1] += (xi[i] - 1.0) * M1y + xi[i] * M2y - Vy1 * x + McantY;
+      s0Fixed[i][2] -= (xi[i] - 1.0) * M1z + xi[i] * M2z - Vz1 * x + McantZ;
+    }
+    addedSpanFixed = true;
   }
   else {
     opserr << "LadrunoDispBeamColumn3d::addLoad() -- load type unknown for element with tag: " << 
       this->getTag() << endln;
     return -1;
+  }
+
+  if (addedSpanFixed) {
+    hasSpanLoad = 1;
+    spanLoadDirty = true;
+    for (int m = 0; m < 5; m++)
+      q0Enh[m] = 0.0;
+    for (int i = 0; i < numSections; i++) {
+      double xi6 = 6.0 * xi[i];
+      q0Enh[0] += wt[i] * s0Fixed[i][0];
+      q0Enh[1] += wt[i] * (xi6 - 4.0) * s0Fixed[i][1];
+      q0Enh[2] += wt[i] * (xi6 - 2.0) * s0Fixed[i][1];
+      q0Enh[3] += wt[i] * (xi6 - 4.0) * s0Fixed[i][2];
+      q0Enh[4] += wt[i] * (xi6 - 2.0) * s0Fixed[i][2];
+    }
   }
 
   return 0;
@@ -2929,6 +3490,12 @@ LadrunoDispBeamColumn3d::addInertiaLoadToUnbalance(const Vector &accel)
 const Vector&
 LadrunoDispBeamColumn3d::getResistingForce()
 {
+  if (spanLoadDirty && theNodes[0] != 0 && theNodes[1] != 0) {
+    Element *savedActive = ops_TheActiveElement;
+    ops_TheActiveElement = this;
+    this->update();
+    ops_TheActiveElement = savedActive;
+  }
   double L = crdTransf->getInitialLength();
 
   //const Matrix &pts = quadRule.getIntegrPointCoords(numSections);
@@ -3000,11 +3567,16 @@ LadrunoDispBeamColumn3d::getResistingForce()
 
   }
   
-  q(0) += q0[0];
-  q(1) += q0[1];
-  q(2) += q0[2];
-  q(3) += q0[3];
-  q(4) += q0[4];
+  if (!hingeOn && !nlGeom && spanLoadMode && hasSpanLoad) {
+    for (int m = 0; m < 5; m++)
+      q(m) += q0[m] - q0Enh[m];
+  } else {
+    q(0) += q0[0];
+    q(1) += q0[1];
+    q(2) += q0[2];
+    q(3) += q0[3];
+    q(4) += q0[4];
+  }
 
   if (theDamping) theDamping->update(q);
 
@@ -3089,7 +3661,7 @@ LadrunoDispBeamColumn3d::sendSelf(int commitTag, Channel &theChannel)
   int i, j;
   int loc = 0;
   
-  static thread_local Vector data(57);  // Ladruno (WP-200: +17 dual-hinge + 2 PM + 10 q0/p0)
+  static thread_local Vector data(127);  // Ladruno (WP-200: +17 dual-hinge + 2 PM + 10 q0/p0 + 70 spanLoad)
   data.Zero();
   data(0) = this->getTag();
   data(1) = connectedExternalNodes(0);
@@ -3202,6 +3774,18 @@ LadrunoDispBeamColumn3d::sendSelf(int commitTag, Channel &theChannel)
     data(47 + m) = q0[m];
     data(52 + m) = p0[m];
   }
+  data(57) = spanLoadMode;
+  data(58) = hasSpanLoad;
+  data(59) = spanBetaZCommit;
+  data(60) = spanBetaYCommit;
+  for (int m = 0; m < 5; m++)
+    data(61 + m) = q0Enh[m];
+  for (int s = 0; s < maxNumSections; s++) {
+    data(66 + 3 * s)     = s0Fixed[s][0];
+    data(66 + 3 * s + 1) = s0Fixed[s][1];
+    data(66 + 3 * s + 2) = s0Fixed[s][2];
+  }
+  data(126) = spanBetaPCommit;
 
   if (theChannel.sendVector(dbTag, commitTag, data) < 0) {
     opserr << "LadrunoDispBeamColumn3d::sendSelf() - failed to send data Vector\n";
@@ -3290,7 +3874,7 @@ LadrunoDispBeamColumn3d::recvSelf(int commitTag, Channel &theChannel,
   int dbTag = this->getDbTag();
   int i;
   
-  static thread_local Vector data(57);
+  static thread_local Vector data(127);
 
   if (theChannel.recvVector(dbTag, commitTag, data) < 0)  {
     opserr << "LadrunoDispBeamColumn3d::recvSelf() - failed to recv data Vector\n";
@@ -3378,6 +3962,31 @@ LadrunoDispBeamColumn3d::recvSelf(int commitTag, Channel &theChannel,
     q0[m] = data(47 + m);
     p0[m] = data(52 + m);
   }
+  spanLoadMode = (int)data(57);
+  hasSpanLoad = (int)data(58);
+  spanBetaZCommit = data(59);
+  spanBetaYCommit = data(60);
+  spanBetaPCommit = data(126);
+  spanBetaZ = spanBetaZCommit;
+  spanBetaY = spanBetaYCommit;
+  spanBetaP = spanBetaPCommit;
+  for (int m = 0; m < 3; m++)
+    for (int n = 0; n < 3; n++)
+      spanKbbInv[m][n] = spanKbbInvCommit[m][n] = 0.0;
+  for (int m = 0; m < 5; m++)
+    q0Enh[m] = data(61 + m);
+  for (int a = 0; a < 6; a++) {
+    spanKvb[a][0] = spanKvb[a][1] = spanKvb[a][2] = 0.0;
+    spanKvbCommit[a][0] = spanKvbCommit[a][1] = spanKvbCommit[a][2] = 0.0;
+  }
+  for (int s = 0; s < maxNumSections; s++) {
+    s0Fixed[s][0] = data(66 + 3 * s);
+    s0Fixed[s][1] = data(66 + 3 * s + 1);
+    s0Fixed[s][2] = data(66 + 3 * s + 2);
+  }
+  postRestoreSync = true;
+  vRestoreValid = false;
+  spanLoadDirty = false;
 
   // create a new crdTransf object if one needed
   if (crdTransf == 0 || crdTransf->getClassTag() != crdTransfClassTag) {
@@ -3602,6 +4211,7 @@ LadrunoDispBeamColumn3d::recvSelf(int commitTag, Channel &theChannel,
 
   postRestoreSync = true;
   vRestoreValid = false;
+  spanLoadDirty = false;
   if (this->getDomain() != 0 && theNodes[0] != 0 && theNodes[1] != 0) {
     this->update();
     this->getResistingForce();
@@ -3614,6 +4224,12 @@ void
 LadrunoDispBeamColumn3d::Print(OPS_Stream &s, int flag)
 {
 	if (flag == OPS_PRINT_CURRENTSTATE) {
+		if (spanLoadDirty && theNodes[0] != 0 && theNodes[1] != 0) {
+			Element *prevActive = ops_TheActiveElement;
+			ops_TheActiveElement = this;
+			this->update();
+			ops_TheActiveElement = prevActive;
+		}
 		s << "\nLadrunoDispBeamColumn3d, element id:  " << this->getTag() << endln;
 		s << "\tConnected external nodes:  " << connectedExternalNodes;
 		s << "\tCoordTransf: " << crdTransf->getTag() << endln;
@@ -3679,6 +4295,12 @@ LadrunoDispBeamColumn3d::displaySelf(Renderer &theViewer, int displayMode, float
 Response*
 LadrunoDispBeamColumn3d::setResponse(const char **argv, int argc, OPS_Stream &output)
 {
+    if (spanLoadDirty && theNodes[0] != 0 && theNodes[1] != 0) {
+      Element *prevActive = ops_TheActiveElement;
+      ops_TheActiveElement = this;
+      this->update();
+      ops_TheActiveElement = prevActive;
+    }
 
     Response *theResponse = 0;
 
@@ -4002,6 +4624,13 @@ LadrunoDispBeamColumn3d::setResponse(const char **argv, int argc, OPS_Stream &ou
 int 
 LadrunoDispBeamColumn3d::getResponse(int responseID, Information &eleInfo)
 {
+  if (spanLoadDirty && theNodes[0] != 0 && theNodes[1] != 0) {
+    Element *prevActive = ops_TheActiveElement;
+    ops_TheActiveElement = this;
+    this->update();
+    ops_TheActiveElement = prevActive;
+  }
+
   double N, V, M1, M2, T;
   double L = crdTransf->getInitialLength();
   double oneOverL = 1.0/L;
@@ -4028,10 +4657,11 @@ LadrunoDispBeamColumn3d::getResponse(int responseID, Information &eleInfo)
       hs(6) = hingeJumpYJ;
       double fPM = (pmP0 > 0.0) ? ladrunoDisp3dScalePM(q(0), pmP0, pmAlpha) : 1.0;
       if (theHingeC != 0) {
+        double f = (dynamic_cast<LadrunoCohesiveHingeBiaxial*>(theHingeC) == 0) ? fPM : 1.0;
         const Vector &s = theHingeC->getStress();
         if (s.Size() >= 2) {
-          hs(1) = s(0);
-          hs(5) = s(1);
+          hs(1) = f * s(0);
+          hs(5) = f * s(1);
         }
       } else {
         if (theHingeZ != 0) {
@@ -4044,10 +4674,11 @@ LadrunoDispBeamColumn3d::getResponse(int responseID, Information &eleInfo)
         }
       }
       if (theHingeCJ != 0) {
+        double f = (dynamic_cast<LadrunoCohesiveHingeBiaxial*>(theHingeCJ) == 0) ? fPM : 1.0;
         const Vector &sJ = theHingeCJ->getStress();
         if (sJ.Size() >= 2) {
-          hs(3) = sJ(0);
-          hs(7) = sJ(1);
+          hs(3) = f * sJ(0);
+          hs(7) = f * sJ(1);
         }
       } else {
         if (theHingeZJ != 0) {
@@ -4204,6 +4835,57 @@ LadrunoDispBeamColumn3d::getResponse(int responseID, Information &eleInfo)
       qSec(m) = q(m) - q0[m];
     qSec(5) = q(5);
     double L = crdTransf->getInitialLength();
+    double alpha_eZI = 0.0, alpha_eYI = 0.0, alpha_eZJ = 0.0, alpha_eYJ = 0.0;
+    if (hingeOn) {
+      if (theHingeC != 0) {
+        if (dynamic_cast<LadrunoCohesiveHingeBiaxial*>(theHingeC) == 0) {
+          const Matrix &C0 = theHingeC->getInitialTangent();
+          const Vector &sI = theHingeC->getStress();
+          if (C0.noRows() >= 2 && C0.noCols() >= 2 && sI.Size() >= 2) {
+            double det = C0(0, 0) * C0(1, 1) - C0(0, 1) * C0(1, 0);
+            if (fabs(det) > 1e-30) {
+              alpha_eZI = ( C0(1, 1) * sI(0) - C0(0, 1) * sI(1)) / det;
+              alpha_eYI = (-C0(1, 0) * sI(0) + C0(0, 0) * sI(1)) / det;
+            }
+          }
+        }
+      } else {
+        if (theHingeZ != 0 && dynamic_cast<LadrunoCohesiveHinge*>(theHingeZ) == 0) {
+          double k0 = theHingeZ->getInitialTangent();
+          if (k0 > 0.0)
+            alpha_eZI = theHingeZ->getStress() / k0;
+        }
+        if (theHingeY != 0 && dynamic_cast<LadrunoCohesiveHinge*>(theHingeY) == 0) {
+          double k0 = theHingeY->getInitialTangent();
+          if (k0 > 0.0)
+            alpha_eYI = theHingeY->getStress() / k0;
+        }
+      }
+      if (theHingeCJ != 0) {
+        if (dynamic_cast<LadrunoCohesiveHingeBiaxial*>(theHingeCJ) == 0) {
+          const Matrix &C0 = theHingeCJ->getInitialTangent();
+          const Vector &sJ = theHingeCJ->getStress();
+          if (C0.noRows() >= 2 && C0.noCols() >= 2 && sJ.Size() >= 2) {
+            double det = C0(0, 0) * C0(1, 1) - C0(0, 1) * C0(1, 0);
+            if (fabs(det) > 1e-30) {
+              alpha_eZJ = ( C0(1, 1) * sJ(0) - C0(0, 1) * sJ(1)) / det;
+              alpha_eYJ = (-C0(1, 0) * sJ(0) + C0(0, 0) * sJ(1)) / det;
+            }
+          }
+        }
+      } else {
+        if (theHingeZJ != 0 && dynamic_cast<LadrunoCohesiveHinge*>(theHingeZJ) == 0) {
+          double k0 = theHingeZJ->getInitialTangent();
+          if (k0 > 0.0)
+            alpha_eZJ = theHingeZJ->getStress() / k0;
+        }
+        if (theHingeYJ != 0 && dynamic_cast<LadrunoCohesiveHinge*>(theHingeYJ) == 0) {
+          double k0 = theHingeYJ->getInitialTangent();
+          if (k0 > 0.0)
+            alpha_eYJ = theHingeYJ->getStress() / k0;
+        }
+      }
+    }
     if (hingeOn && !dualHingeMode && L > 0.0) {
       double oneOverL = 1.0/L;
       double xi[maxNumSections];
@@ -4255,17 +4937,30 @@ LadrunoDispBeamColumn3d::getResponse(int responseID, Information &eleInfo)
       kb.Solve(qSec, ve);
       vp = crdTransf->getBasicTrialDisp();
       vp -= ve;
-      vp(1) += (1.0 - hingeXiI)*hingeJumpZ;
-      vp(2) += hingeXiI*hingeJumpZ;
-      vp(3) += (1.0 - hingeXiI)*hingeJumpY;
-      vp(4) += hingeXiI*hingeJumpY;
+      double alpha_pZ = hingeJumpZ - alpha_eZI;
+      double alpha_pY = hingeJumpY - alpha_eYI;
+      vp(1) += (1.0 - hingeXiI)*alpha_pZ;
+      vp(2) += hingeXiI*alpha_pZ;
+      vp(3) += (1.0 - hingeXiI)*alpha_pY;
+      vp(4) += hingeXiI*alpha_pY;
     } else {
       // Note: in dualHingeMode, bulk sections are evaluated at v_tilde = v - W*alpha,
       // so qSec = kb0 * (v - W*alpha - vp_bulk) and v - kb0^-1*qSec = vp_bulk + W*alpha
-      // already includes the Hermite-projected hinge jumps W*alpha.
+      // includes the Hermite-projected hinge jumps W*alpha; subtract the elastic hinge
+      // component W*alpha_e so only plastic hinge rotation W*alpha_p remains.
       kb.Solve(qSec, ve);
       vp = crdTransf->getBasicTrialDisp();
       vp -= ve;
+      if (hingeOn) {
+        double w1I = 1.0 - hingeXiI;
+        double w2I = hingeXiI;
+        double w1J = 1.0 - hingeXiJ;
+        double w2J = hingeXiJ;
+        vp(1) -= w1I * alpha_eZI + w1J * alpha_eZJ;
+        vp(2) -= w2I * alpha_eZI + w2J * alpha_eZJ;
+        vp(3) -= w1I * alpha_eYI + w1J * alpha_eYJ;
+        vp(4) -= w2I * alpha_eYI + w2J * alpha_eYJ;
+      }
     }
     return eleInfo.setVector(vp);
   }
@@ -4369,17 +5064,26 @@ LadrunoDispBeamColumn3d::setParameter(const char **argv, int argc, Parameter &pa
     param.setValue(rho);
     return param.addObject(1, this);
   }
+  if (strcmp(argv[0],"lch") == 0 || strcmp(argv[0],"Lch") == 0 ||
+      strcmp(argv[0],"characteristicLength") == 0) {
+    param.setValue(this->getCharacteristicLength());
+    return param.addObject(2, this);
+  }
 
   if (hingeOn && argc >= 2) {
     if (strcmp(argv[0], "hingeI") == 0 || strcmp(argv[0], "hingeZI") == 0 || strcmp(argv[0], "hinge1") == 0) {
-      if (theHingeZ != 0) return theHingeZ->setParameter(&argv[1], argc - 1, param);
-      if (theHingeC != 0) return theHingeC->setParameter(&argv[1], argc - 1, param);
-      return -1;
+      int ok = -1;
+      if (theHingeZ != 0) ok = theHingeZ->setParameter(&argv[1], argc - 1, param);
+      else if (theHingeC != 0) ok = theHingeC->setParameter(&argv[1], argc - 1, param);
+      if (ok != -1) param.addObject(5, this);
+      return ok;
     }
     if (strcmp(argv[0], "hingeJ") == 0 || strcmp(argv[0], "hingeZJ") == 0 || strcmp(argv[0], "hinge2") == 0) {
-      if (theHingeZJ != 0) return theHingeZJ->setParameter(&argv[1], argc - 1, param);
-      if (theHingeCJ != 0) return theHingeCJ->setParameter(&argv[1], argc - 1, param);
-      return -1;
+      int ok = -1;
+      if (theHingeZJ != 0) ok = theHingeZJ->setParameter(&argv[1], argc - 1, param);
+      else if (theHingeCJ != 0) ok = theHingeCJ->setParameter(&argv[1], argc - 1, param);
+      if (ok != -1) param.addObject(5, this);
+      return ok;
     }
     if (strcmp(argv[0], "hinge") == 0 || strcmp(argv[0], "hingeZ") == 0 ||
         strcmp(argv[0], "hingeIJ") == 0 || strcmp(argv[0], "hingeZIJ") == 0) {
@@ -4400,6 +5104,7 @@ LadrunoDispBeamColumn3d::setParameter(const char **argv, int argc, Parameter &pa
         int ok = theHingeCJ->setParameter(&argv[1], argc - 1, param);
         if (ok != -1) res = ok;
       }
+      if (res != -1) param.addObject(5, this);
       return res;
     }
     if (strcmp(argv[0], "hingeY") == 0 || strcmp(argv[0], "hingeYIJ") == 0) {
@@ -4412,14 +5117,23 @@ LadrunoDispBeamColumn3d::setParameter(const char **argv, int argc, Parameter &pa
         int ok = theHingeYJ->setParameter(&argv[1], argc - 1, param);
         if (ok != -1) res = ok;
       }
+      if (res != -1) param.addObject(5, this);
       return res;
     }
     if (strcmp(argv[0], "hingeYI") == 0 || strcmp(argv[0], "hingeY1") == 0) {
-      if (theHingeY != 0) return theHingeY->setParameter(&argv[1], argc - 1, param);
+      if (theHingeY != 0) {
+        int ok = theHingeY->setParameter(&argv[1], argc - 1, param);
+        if (ok != -1) param.addObject(5, this);
+        return ok;
+      }
       return -1;
     }
     if (strcmp(argv[0], "hingeYJ") == 0 || strcmp(argv[0], "hingeY2") == 0) {
-      if (theHingeYJ != 0) return theHingeYJ->setParameter(&argv[1], argc - 1, param);
+      if (theHingeYJ != 0) {
+        int ok = theHingeYJ->setParameter(&argv[1], argc - 1, param);
+        if (ok != -1) param.addObject(5, this);
+        return ok;
+      }
       return -1;
     }
     if (strcmp(argv[0], "hingeBiaxial") == 0 || strcmp(argv[0], "hingeC") == 0 ||
@@ -4433,16 +5147,25 @@ LadrunoDispBeamColumn3d::setParameter(const char **argv, int argc, Parameter &pa
         int ok = theHingeCJ->setParameter(&argv[1], argc - 1, param);
         if (ok != -1) res = ok;
       }
+      if (res != -1) param.addObject(5, this);
       return res;
     }
     if (strcmp(argv[0], "hingeBiaxialI") == 0 || strcmp(argv[0], "hingeBiaxial1") == 0 ||
         strcmp(argv[0], "hingeCI") == 0) {
-      if (theHingeC != 0) return theHingeC->setParameter(&argv[1], argc - 1, param);
+      if (theHingeC != 0) {
+        int ok = theHingeC->setParameter(&argv[1], argc - 1, param);
+        if (ok != -1) param.addObject(5, this);
+        return ok;
+      }
       return -1;
     }
     if (strcmp(argv[0], "hingeBiaxialJ") == 0 || strcmp(argv[0], "hingeBiaxial2") == 0 ||
         strcmp(argv[0], "hingeCJ") == 0) {
-      if (theHingeCJ != 0) return theHingeCJ->setParameter(&argv[1], argc - 1, param);
+      if (theHingeCJ != 0) {
+        int ok = theHingeCJ->setParameter(&argv[1], argc - 1, param);
+        if (ok != -1) param.addObject(5, this);
+        return ok;
+      }
       return -1;
     }
   }
@@ -4476,7 +5199,20 @@ LadrunoDispBeamColumn3d::setParameter(const char **argv, int argc, Parameter &pa
 	  sectionNum = i;
 	}
 	  }  
-	return theSections[sectionNum]->setParameter(&argv[2], argc-2, param);
+	int ok = theSections[sectionNum]->setParameter(&argv[2], argc-2, param);
+	if (ok != -1) param.addObject(5, this);
+	return ok;
+  }
+  if (strstr(argv[0],"allSections") != 0) {
+    if (argc < 2)
+      return -1;
+    int result = -1;
+    for (int i = 0; i < numSections; i++) {
+      int ok = theSections[i]->setParameter(&argv[1], argc - 1, param);
+      if (ok != -1) result = ok;
+    }
+    if (result != -1) param.addObject(5, this);
+    return result;
   }
   // If the parameter belongs to a section or lower
   if (strstr(argv[0],"section") != 0) {
@@ -4487,9 +5223,11 @@ LadrunoDispBeamColumn3d::setParameter(const char **argv, int argc, Parameter &pa
     // Get section number
     int sectionNum = atoi(argv[1]);
     
-    if (sectionNum > 0 && sectionNum <= numSections)
-      return theSections[sectionNum-1]->setParameter(&argv[2], argc-2, param);
-    else
+    if (sectionNum > 0 && sectionNum <= numSections) {
+      int ok = theSections[sectionNum-1]->setParameter(&argv[2], argc-2, param);
+      if (ok != -1) param.addObject(5, this);
+      return ok;
+    } else
       return -1;
   }
   
@@ -4498,7 +5236,9 @@ LadrunoDispBeamColumn3d::setParameter(const char **argv, int argc, Parameter &pa
     if (argc < 2)
       return -1;
 
-    return beamInt->setParameter(&argv[1], argc-1, param);
+    int ok = beamInt->setParameter(&argv[1], argc-1, param);
+    if (ok != -1) param.addObject(5, this);
+    return ok;
   }
 
   // Default, send to every object
@@ -4532,6 +5272,9 @@ LadrunoDispBeamColumn3d::setParameter(const char **argv, int argc, Parameter &pa
     }
   }
 
+  if (result != -1)
+    param.addObject(5, this);
+
   return result;
 }
 
@@ -4542,8 +5285,20 @@ LadrunoDispBeamColumn3d::updateParameter (int parameterID, Information &info)
     rho = info.theDouble;
     return 0;
   }
-  else
-    return -1;  
+  if (parameterID == 2) {
+    if (info.theDouble < 0.0) return -1;
+    userLch = info.theDouble;
+    lchMode = (userLch > 0.0) ? 2 : 0;
+    if (this->getDomain() != 0 && theNodes[0] != 0 && theNodes[1] != 0)
+      this->update();
+    return 0;
+  }
+  if (parameterID == 5) {
+    if (this->getDomain() != 0 && theNodes[0] != 0 && theNodes[1] != 0)
+      this->update();
+    return 0;
+  }
+  return -1;
 }
 
 

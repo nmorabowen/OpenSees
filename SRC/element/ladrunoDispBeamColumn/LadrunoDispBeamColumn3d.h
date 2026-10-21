@@ -91,7 +91,8 @@ class LadrunoDispBeamColumn3d : public Element
               double xiI = 0.0,                       // Ladruno (WP-200): normalized location of hinge I in [0, 1]
               double xiJ = 1.0,                       // Ladruno (WP-200): normalized location of hinge J in [0, 1]
               double pmP0 = 0.0,
-              double pmAlpha = 0.5);
+              double pmAlpha = 0.5,
+              int spanLoadMode = 1);
     LadrunoDispBeamColumn3d();
     ~LadrunoDispBeamColumn3d();
 
@@ -226,6 +227,9 @@ class LadrunoDispBeamColumn3d : public Element
     // WP-200 helper: inner Newton on the 4-DOF dual-hinge jumps [alpha_zI, alpha_yI, alpha_zJ, alpha_yJ].
     int solveDualHingeJump3d(const Vector &v, double L);
 
+    // WP-200 helper: inner Newton on the 2-DOF quartic span-load bubble amplitudes [beta_z, beta_y].
+    int solveSpanLoadBubble3d(const Vector &v, double L, const double *xi, const double *wt);
+
 	int numSections;
 	SectionForceDeformation** theSections; // pointer to the ND material objects
 	CrdTransf* crdTransf;        // pointer to coordinate transformation object 
@@ -248,6 +252,23 @@ class LadrunoDispBeamColumn3d : public Element
 	int parameterID;
 
     enum {maxNumSections = 20};
+
+    // Ladruno (WP-200): span-load internal strain + 3-DOF (P, Mz, My) quartic bubble enhancement
+    int    spanLoadMode;                    // 1 = enabled (default), 0 = legacy nodal-q0-only
+    int    hasSpanLoad;                     // 1 if active span load contributed to s0Fixed
+    bool   spanLoadDirty;                   // true if addLoad/zeroLoad modified loads since last update()
+    double s0Fixed[maxNumSections][3];      // [N_fixed(xi_i), Mz_fixed(xi_i), My_fixed(xi_i)]
+    double q0Enh[5];                        // quadrature integral of B^T * s0Fixed
+    double spanBetaP;                       // trial quartic bubble axial amplitude beta_p
+    double spanBetaPCommit;                 // committed beta_p
+    double spanBetaZ;                       // trial quartic bubble amplitude beta_z
+    double spanBetaZCommit;                 // committed beta_z
+    double spanBetaY;                       // trial quartic bubble amplitude beta_y
+    double spanBetaYCommit;                 // committed beta_y
+    double spanKbbInv[3][3];                // cached eigenvalue-floored 3x3 inverse of K_bb
+    double spanKbbInvCommit[3][3];
+    double spanKvb[6][3];                   // cached 6x3 K_{v,beta} coupling matrix
+    double spanKvbCommit[6][3];
 };
 
 #endif

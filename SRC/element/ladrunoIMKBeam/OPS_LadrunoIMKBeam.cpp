@@ -64,6 +64,7 @@
 #include <OPS_Globals.h>
 #include <CrdTransf.h>
 #include <UniaxialMaterial.h>
+#include <NDMaterial.h>
 
 #include <string.h>
 
@@ -87,6 +88,43 @@ static UniaxialMaterial *getMatArg(const char *flag)
     opserr << "WARNING LadrunoIMKBeam -- uniaxialMaterial " << mtag
            << " (" << flag << ") not found\n";
   return m;
+}
+
+static NDMaterial *getNDMatArg(const char *flag)
+{
+  if (OPS_GetNumRemainingInputArgs() < 1) {
+    opserr << "WARNING LadrunoIMKBeam -- " << flag << " needs an NDMaterial tag\n";
+    return 0;
+  }
+  int mtag, num = 1;
+  if (OPS_GetIntInput(&num, &mtag) < 0) {
+    opserr << "WARNING LadrunoIMKBeam -- invalid " << flag << " tag\n";
+    return 0;
+  }
+  NDMaterial *m = OPS_getNDMaterial(mtag);
+  if (m == 0) {
+    opserr << "WARNING LadrunoIMKBeam -- nDMaterial " << mtag
+           << " (" << flag << ") not found\n";
+    return 0;
+  }
+  if (m->getOrder() != 2) {
+    opserr << "WARNING LadrunoIMKBeam -- nDMaterial " << mtag
+           << " (" << flag << ") must have order 2 (got " << m->getOrder() << ")\n";
+    return 0;
+  }
+  return m;
+}
+
+static bool peekNextIsIntArg()
+{
+  if (OPS_GetNumRemainingInputArgs() <= 0)
+    return false;
+  const char *nxt = OPS_GetString();
+  bool isFlag = (nxt != 0 && nxt[0] == '-' &&
+                 ((nxt[1] >= 'a' && nxt[1] <= 'z') ||
+                  (nxt[1] >= 'A' && nxt[1] <= 'Z')));
+  OPS_ResetCurrentInputArg(-1);
+  return !isFlag;
 }
 
 // Planar builder (LadrunoIMKBeam2d), defined in OPS_LadrunoIMKBeam2d.cpp. The
@@ -147,13 +185,16 @@ void *OPS_LadrunoIMKBeam()
   }
 
   // options
-  int hingeMode = 0;  // 0 both, 1 i, 2 j  (gates the SYMMETRIC -matZ/-matY)
+  int hingeMode = 0;  // 0 both, 1 i, 2 j  (gates the SYMMETRIC -matZ/-matY/-hingeBiaxial)
   UniaxialMaterial *matZ = 0;   // symmetric strong-axis law (applied per -hinge)
   UniaxialMaterial *matY = 0;   // symmetric weak-axis law
   // per-end overrides (asymmetric end laws): take precedence over -matZ/-matY,
   // independent of -hinge (naming an end IS the request to hinge it there).
   UniaxialMaterial *matZi = 0, *matZj = 0, *matYi = 0, *matYj = 0;
   bool setZi = false, setZj = false, setYi = false, setYj = false;
+  UniaxialMaterial *shearMatY = 0, *shearMatZ = 0;
+  NDMaterial *biMat = 0, *biMatI = 0, *biMatJ = 0;
+  bool setBiI = false, setBiJ = false;
   double rho = 0.0;
   int cMass = 0;
   double GAvy = 0.0, GAvz = 0.0;
@@ -191,6 +232,45 @@ void *OPS_LadrunoIMKBeam()
       if ((matYi = getMatArg("-matYi")) == 0) return 0;  setYi = true;
     } else if (strcmp(opt, "-matYj") == 0) {
       if ((matYj = getMatArg("-matYj")) == 0) return 0;  setYj = true;
+
+    } else if (strcmp(opt, "-shearHinge") == 0 || strcmp(opt, "-matShear") == 0) {
+      if ((shearMatY = getMatArg(opt)) == 0) return 0;
+      if (peekNextIsIntArg()) {
+        if ((shearMatZ = getMatArg(opt)) == 0) return 0;
+      }
+    } else if (strcmp(opt, "-shearHingeY") == 0 || strcmp(opt, "-matShearY") == 0) {
+      if ((shearMatY = getMatArg(opt)) == 0) return 0;
+    } else if (strcmp(opt, "-shearHingeZ") == 0 || strcmp(opt, "-matShearZ") == 0) {
+      if ((shearMatZ = getMatArg(opt)) == 0) return 0;
+
+    } else if (strcmp(opt, "-hingeBiaxial") == 0 || strcmp(opt, "-hingeC") == 0) {
+      NDMaterial *m1 = getNDMatArg(opt);
+      if (m1 == 0) return 0;
+      if (peekNextIsIntArg()) {
+        NDMaterial *m2 = getNDMatArg(opt);
+        if (m2 == 0) return 0;
+        biMatI = m1; setBiI = true;
+        biMatJ = m2; setBiJ = true;
+      } else {
+        biMat = m1;
+      }
+    } else if (strcmp(opt, "-hingeBiaxialI") == 0 || strcmp(opt, "-hingeCI") == 0 ||
+               strcmp(opt, "-hingeBiaxial1") == 0) {
+      if ((biMatI = getNDMatArg(opt)) == 0) return 0;
+      setBiI = true;
+    } else if (strcmp(opt, "-hingeBiaxialJ") == 0 || strcmp(opt, "-hingeCJ") == 0 ||
+               strcmp(opt, "-hingeBiaxial2") == 0) {
+      if ((biMatJ = getNDMatArg(opt)) == 0) return 0;
+      setBiJ = true;
+    } else if (strcmp(opt, "-hingeBiaxialIJ") == 0 || strcmp(opt, "-hingeCIJ") == 0) {
+      NDMaterial *m1 = getNDMatArg(opt);
+      if (m1 == 0) return 0;
+      NDMaterial *m2 = m1;
+      if (peekNextIsIntArg()) {
+        if ((m2 = getNDMatArg(opt)) == 0) return 0;
+      }
+      biMatI = m1; setBiI = true;
+      biMatJ = m2; setBiJ = true;
 
     } else if (strcmp(opt, "-mass") == 0) {
       if (OPS_GetNumRemainingInputArgs() < 1) {
@@ -258,7 +338,8 @@ void *OPS_LadrunoIMKBeam()
         GAvz = sVals[1];
       }
 
-    } else if (strcmp(opt, "-pm") == 0) {
+    } else if (strcmp(opt, "-pm") == 0 || strcmp(opt, "-PM") == 0 ||
+               strcmp(opt, "-pmZ") == 0 || strcmp(opt, "-pmY") == 0) {
       if (OPS_GetNumRemainingInputArgs() < 1) {
         opserr << "WARNING LadrunoIMKBeam -- -pm needs P0 [alpha]\n";
         return 0;
@@ -299,10 +380,19 @@ void *OPS_LadrunoIMKBeam()
   UniaxialMaterial *mYi = setYi ? matYi : ((matY && hI) ? matY : 0);
   UniaxialMaterial *mYj = setYj ? matYj : ((matY && hJ) ? matY : 0);
 
+  NDMaterial *mBiI = setBiI ? biMatI : ((biMat && hI) ? biMat : 0);
+  NDMaterial *mBiJ = setBiJ ? biMatJ : ((biMat && hJ) ? biMat : 0);
+
+  if ((mBiI != 0 || mBiJ != 0) && (mZi != 0 || mZj != 0 || mYi != 0 || mYj != 0)) {
+    opserr << "WARNING LadrunoIMKBeam -- -hingeBiaxial* and uniaxial -matZ*/-matY* are mutually exclusive\n";
+    return 0;
+  }
+
   Element *theEle = new LadrunoIMKBeam(iData[0], iData[1], iData[2],
                                        dData[0], dData[1], dData[2], dData[3],
                                        dData[4], dData[5], *theTransf,
                                        mZi, mZj, mYi, mYj, rho, cMass,
-                                       GAvy, GAvz, P0, pmAlpha, dI, dJ, useImplex);
+                                       GAvy, GAvz, P0, pmAlpha, dI, dJ, useImplex,
+                                       shearMatY, shearMatZ, mBiI, mBiJ);
   return theEle;
 }

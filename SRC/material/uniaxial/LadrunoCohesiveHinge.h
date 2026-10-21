@@ -96,6 +96,13 @@ class LadrunoCohesiveHinge : public UniaxialMaterial
   void setAxialForce(double P)   { P_axial = P; }
   double getAxialForce(void) const { return P_axial; }
   double getPMMultiplier(void) const;
+  double getPMDerivative(void) const {
+    if (P0 <= 0.0) return 0.0;
+    double n = P_axial / P0;
+    double f = 1.0 - alphaPM * n - (1.0 - alphaPM) * n * n;
+    if (f <= 0.05 || f >= 2.5) return 0.0;
+    return (-alphaPM - 2.0 * (1.0 - alphaPM) * n) / P0;
+  }
   void setPM(double p0, double apm) { P0 = p0; alphaPM = apm; }
   bool isImplex(void) const      { return implex; }
   void setImplex(bool flag)      { implex = flag; }

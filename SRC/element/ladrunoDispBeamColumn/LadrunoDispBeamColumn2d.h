@@ -86,7 +86,8 @@ class LadrunoDispBeamColumn2d : public Element
 		     double hingeXiI = 0.0,
 		     double hingeXiJ = 1.0,
 		     double pmP0 = 0.0,
-		     double pmAlpha = 0.5);
+		     double pmAlpha = 0.5,
+		     int spanLoadMode = 1);
     LadrunoDispBeamColumn2d();
     ~LadrunoDispBeamColumn2d();
 
@@ -204,6 +205,7 @@ class LadrunoDispBeamColumn2d : public Element
     // Tier-2 helper: inner Newton on the scalar or dual jump alpha
     int solveHingeJump(const Vector &v, double L);
     int solveDualHingeJump(const Vector &v, double L);
+    int solveSpanLoadBubble(const Vector &v, double L);
 
 	int numSections;
 	SectionForceDeformation** theSections; // pointer to the ND material objects
@@ -225,6 +227,21 @@ class LadrunoDispBeamColumn2d : public Element
     Damping *theDamping;
 
     enum {maxNumSections = 20};
+
+    // Ladruno (WP-200): Exact span-load internal strain + quartic bubble enhancement
+    int    spanLoadMode;                    // 1 = enabled (default), 0 = disabled (-noSpanLoad)
+    bool   hasSpanLoad;                     // true when Beam2dUniform/Partial/PointLoad active
+    bool   spanLoadDirty;                   // true when zeroLoad/addLoad modified span loads since last update()
+    double s0Fixed[maxNumSections][2];      // [i][0]=N_fixed(xi_i), [i][1]=Mz_fixed(xi_i)
+    double q0Enh[3];                        // quadrature projection sum_i wt_i * b(xi_i)^T * s0Fixed(xi_i)
+    double spanBetaP;                       // trial inelastic bubble axial amplitude
+    double spanBetaPCommit;                 // committed inelastic bubble axial amplitude
+    double spanBetaZ;                       // trial inelastic bubble curvature amplitude
+    double spanBetaZCommit;                 // committed inelastic bubble curvature amplitude
+    double spanKbbInv[2][2];                // cached guarded 2x2 bubble flexibility K_bb^-1
+    double spanKbbInvCommit[2][2];          // committed guarded 2x2 bubble flexibility K_bb^-1
+    double spanKvb[3][2];                   // cached 3x2 coupling K_vb
+    double spanKvbCommit[3][2];             // committed 3x2 coupling K_vb
 
     // AddingSensitivity:BEGIN //////////////////////////////////////////
     int parameterID;

@@ -218,6 +218,9 @@ void* OPS_LadrunoRigidBody(); // N. Mora-Bowen (Ladruno) ADR 58
 void* OPS_LadrunoDispBeamColumn(); // N. Mora-Bowen (Ladruno)
 void* OPS_LadrunoDispBeamColumn2d(); // Ladruno WP-200
 void* OPS_LadrunoDispBeamColumn3d(); // Ladruno WP-200
+void* OPS_LadrunoForceBeamColumn(); // Ladruno WP-200
+void* OPS_LadrunoForceBeamColumn2d(); // Ladruno WP-200
+void* OPS_LadrunoForceBeamColumn3d(); // Ladruno WP-200
 void* OPS_LadrunoMembrane(); // N. Mora-Bowen (Ladruno) ADR 98
 void* OPS_BbarBrick();
 void* OPS_BbarBrickWithSensitivity();
@@ -716,6 +719,12 @@ namespace {
 	functionMap.insert(std::make_pair("ladrunoDispBeamColumn2d", &OPS_LadrunoDispBeamColumn2d));
 	functionMap.insert(std::make_pair("LadrunoDispBeamColumn3d", &OPS_LadrunoDispBeamColumn3d)); // Ladruno WP-200
 	functionMap.insert(std::make_pair("ladrunoDispBeamColumn3d", &OPS_LadrunoDispBeamColumn3d));
+	functionMap.insert(std::make_pair("LadrunoForceBeamColumn", &OPS_LadrunoForceBeamColumn)); // Ladruno WP-200
+	functionMap.insert(std::make_pair("ladrunoForceBeamColumn", &OPS_LadrunoForceBeamColumn));
+	functionMap.insert(std::make_pair("LadrunoForceBeamColumn2d", &OPS_LadrunoForceBeamColumn2d)); // Ladruno WP-200
+	functionMap.insert(std::make_pair("ladrunoForceBeamColumn2d", &OPS_LadrunoForceBeamColumn2d));
+	functionMap.insert(std::make_pair("LadrunoForceBeamColumn3d", &OPS_LadrunoForceBeamColumn3d)); // Ladruno WP-200
+	functionMap.insert(std::make_pair("ladrunoForceBeamColumn3d", &OPS_LadrunoForceBeamColumn3d));
 	functionMap.insert(std::make_pair("LadrunoMembrane", &OPS_LadrunoMembrane)); // N. Mora-Bowen (Ladruno) ADR 98
 	functionMap.insert(std::make_pair("ladrunoMembrane", &OPS_LadrunoMembrane));
 	functionMap.insert(std::make_pair("bbarBrickUP", &OPS_BBarBrickUP));

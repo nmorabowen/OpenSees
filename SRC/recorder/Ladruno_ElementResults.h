@@ -1764,6 +1764,8 @@ namespace detail {
 					elem_class_tag == ELE_TAG_ElasticForceBeamColumnWarping2d || /*warning: no resp for all sections*/
 					elem_class_tag == ELE_TAG_ForceBeamColumn2d || /* <- OK! this one defines everything ! good job*/
 					elem_class_tag == ELE_TAG_ForceBeamColumn3d || /* <- OK! this one defines everything ! good job*/
+					elem_class_tag == ELE_TAG_LadrunoForceBeamColumn2d ||
+					elem_class_tag == ELE_TAG_LadrunoForceBeamColumn3d ||
 					elem_class_tag == ELE_TAG_ForceBeamColumnCBDI2d || /* <- OK! this one defines everything ! good job*/
 					elem_class_tag == ELE_TAG_ForceBeamColumnWarping2d || /* <- OK! this one defines everything ! good job*/
 					// ./mixedBeamColumn

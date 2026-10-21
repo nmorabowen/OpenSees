@@ -611,6 +611,7 @@ initopensees(void)
 "        • Lemaitre ductile damage (-damage lemaitre, +lch, +IMPL-EX)\n"
 "        • LadrunoIMKBeam — concentrated-plasticity IMK beam hinges\n"
 "        • LadrunoDispBeamColumn — regularized disp beam + cohesive hinges\n"
+"        • LadrunoForceBeamColumn — regularized force beam + cohesive hinges\n"
 "        • LadrunoRebarBuckling — rebar buckling wrapper (cyclic)\n"
 "        • LadrunoRCConcrete — RC plastic-damage + MCFT softening (shell)\n"
 "        • LadrunoRCFiniteStrain — finite-strain (Hencky) RC plastic-damage\n"
