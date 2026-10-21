@@ -203,14 +203,14 @@ ops.element(
 # 2D (ndm == 2, ndf == 3):
 element LadrunoForceBeamColumn $eleTag $iNode $jNode $transfTag $beamIntTag \
     <-mass $rho> <-cMass> <-damp $dampingTag> <-iter $maxIters $tol> \
-    <-subdivide $numSub $subFac> <-lch ip|element|auto|$val> <-totalElementLch> \
+    <-subdivide $numSub <$subFac>> <-lch ip|element|auto|$val> <-totalElementLch> \
     <-hinge $matTag> <-hingeI $matTagI> <-hingeJ $matTagJ> <-hingeIJ $matTagI <$matTagJ>> \
     <-hingeLoc $xiI <$xiJ>> <-implex> <-pm $P0 <$alpha>> <-shear $GAy>
 
 # 3D (ndm == 3, ndf == 6):
 element LadrunoForceBeamColumn $eleTag $iNode $jNode $transfTag $beamIntTag \
     <-mass $rho> <-cMass> <-damp $dampingTag> <-iter $maxIters $tol> \
-    <-subdivide $numSub $subFac> <-lch ip|element|auto|$val> <-totalElementLch> \
+    <-subdivide $numSub <$subFac>> <-lch ip|element|auto|$val> <-totalElementLch> \
     <-hinge $matTagZ> <-hingeI $matTagZI> <-hingeJ $matTagZJ> <-hingeIJ $matTagZI <$matTagZJ>> \
     <-hingeY $matTagY> <-hingeYI $matTagYI> <-hingeYJ $matTagYJ> <-hingeYIJ $matTagYI <$matTagYJ>> \
     <-hingeBiaxial $ndMatTag> <-hingeBiaxialI $ndMatTagI> <-hingeBiaxialJ $ndMatTagJ> \
