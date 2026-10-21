@@ -64,6 +64,8 @@ LadrunoIMKBeam2d::LadrunoIMKBeam2d()
     A(0.0), E(0.0), Iz(0.0), rho(0.0), cMass(0),
     GAvy(0.0), P0(0.0), pmAlpha(0.5),
     dI(0.0), dJ(0.0), useImplex(false), implexErr(0.0),
+    theShearMat(0), gammaS(0.0), gammaScommit(0.0), dGammaSprev(0.0),
+    gammaSp(0.0), gammaSpCommit(0.0), dGammaSpPrev(0.0),
     dtime_n_commit(0.0),
     q(3), kb(3, 3), Q(6), q0Dirty(false), committedAtCurrentV(false),
     connectedExternalNodes(2), theCoordTransf(0)
@@ -90,11 +92,14 @@ LadrunoIMKBeam2d::LadrunoIMKBeam2d(int tag, int Nd1, int Nd2,
                                    UniaxialMaterial *mZi, UniaxialMaterial *mZj,
                                    double r, int cm,
                                    double gavy, double p0_pm, double alpha_pm,
-                                   double di, double dj, bool implex)
+                                   double di, double dj, bool implex,
+                                   UniaxialMaterial *mShear)
   : Element(tag, ELE_TAG_LadrunoIMKBeam2d),
     A(a), E(e), Iz(iz), rho(r), cMass(cm),
     GAvy(gavy), P0(p0_pm), pmAlpha(alpha_pm),
     dI(di), dJ(dj), useImplex(implex), implexErr(0.0),
+    theShearMat(0), gammaS(0.0), gammaScommit(0.0), dGammaSprev(0.0),
+    gammaSp(0.0), gammaSpCommit(0.0), dGammaSpPrev(0.0),
     dtime_n_commit(0.0),
     q(3), kb(3, 3), Q(6), q0Dirty(false), committedAtCurrentV(false),
     connectedExternalNodes(2), theCoordTransf(0)
@@ -110,6 +115,10 @@ LadrunoIMKBeam2d::LadrunoIMKBeam2d(int tag, int Nd1, int Nd2,
         opserr << "LadrunoIMKBeam2d::LadrunoIMKBeam2d -- failed to copy material " << i << endln;
         exit(-1);
       }
+      if (P0 > 0.0) {
+        if (LadrunoCohesiveHinge *ch = dynamic_cast<LadrunoCohesiveHinge *>(theMat[i]))
+          ch->setPM(P0, pmAlpha);
+      }
     } else {
       theMat[i] = 0;
     }
@@ -119,6 +128,14 @@ LadrunoIMKBeam2d::LadrunoIMKBeam2d(int tag, int Nd1, int Nd2,
     thetaHp[i] = 0.0;
     thetaHpCommit[i] = 0.0;
     dThetaHpPrev[i] = 0.0;
+  }
+
+  if (mShear != 0) {
+    theShearMat = mShear->getCopy();
+    if (theShearMat == 0) {
+      opserr << "LadrunoIMKBeam2d::LadrunoIMKBeam2d -- failed to copy shear material\n";
+      exit(-1);
+    }
   }
 
   theCoordTransf = theTransf.getCopy2d();
@@ -140,6 +157,8 @@ LadrunoIMKBeam2d::~LadrunoIMKBeam2d()
   for (int i = 0; i < 2; i++)
     if (theMat[i] != 0)
       delete theMat[i];
+  if (theShearMat != 0)
+    delete theShearMat;
   if (theCoordTransf != 0)
     delete theCoordTransf;
 }
@@ -212,6 +231,12 @@ int LadrunoIMKBeam2d::commitState(void)
     dThetaHpPrev[i] = thetaHp[i] - thetaHpCommit[i];
     thetaHpCommit[i] = thetaHp[i];
   }
+  if (theShearMat != 0)
+    ok += theShearMat->commitState();
+  dGammaSprev = gammaS - gammaScommit;
+  gammaScommit = gammaS;
+  dGammaSpPrev = gammaSp - gammaSpCommit;
+  gammaSpCommit = gammaSp;
   dtime_n_commit = ops_Dt;
   if (theCoordTransf != 0 && theNodes[0] != 0 && theNodes[1] != 0) {
     const Vector &vc = theCoordTransf->getBasicTrialDisp();
@@ -233,6 +258,10 @@ int LadrunoIMKBeam2d::revertToLastCommit(void)
     thetaH[i] = thetaHcommit[i];
     thetaHp[i] = thetaHpCommit[i];
   }
+  if (theShearMat != 0)
+    ok += theShearMat->revertToLastCommit();
+  gammaS = gammaScommit;
+  gammaSp = gammaSpCommit;
   ok += theCoordTransf->revertToLastCommit();
   if (this->getDomain() != 0 && theNodes[0] != 0 && theNodes[1] != 0)
     ok += this->update();
@@ -254,6 +283,14 @@ int LadrunoIMKBeam2d::revertToStart(void)
     thetaHpCommit[i] = 0.0;
     dThetaHpPrev[i] = 0.0;
   }
+  if (theShearMat != 0)
+    ok += theShearMat->revertToStart();
+  gammaS = 0.0;
+  gammaScommit = 0.0;
+  dGammaSprev = 0.0;
+  gammaSp = 0.0;
+  gammaSpCommit = 0.0;
+  dGammaSpPrev = 0.0;
   dtime_n_commit = 0.0;
   implexErr = 0.0;
   ok += theCoordTransf->revertToStart();
@@ -290,11 +327,12 @@ int LadrunoIMKBeam2d::update(void)
   kb(0, 0) = EAoverL;  q(0) = EAoverL * v(0) + q0[0];
 
   const double fPM = ladrunoIMKScalePM(q(0), P0, pmAlpha);
-  if (P0 <= 0.0) {
-    for (int i = 0; i < 2; i++)
-      if (LadrunoCohesiveHinge *ch = dynamic_cast<LadrunoCohesiveHinge *>(theMat[i]))
-        ch->setAxialForce(q(0));
-  }
+  const double dLogPM = (fPM > 0.0) ? (ladrunoIMKScalePMDeriv(q(0), P0, pmAlpha) / fPM) : 0.0;
+  for (int i = 0; i < 2; i++)
+    if (LadrunoCohesiveHinge *ch = dynamic_cast<LadrunoCohesiveHinge *>(theMat[i]))
+      ch->setAxialForce(q(0));
+  if (LadrunoCohesiveHinge *chs = dynamic_cast<LadrunoCohesiveHinge *>(theShearMat))
+    chs->setAxialForce(q(0));
   double k2[2][2];
 
   double dtScale = 1.0;
@@ -305,13 +343,18 @@ int LadrunoIMKBeam2d::update(void)
 
   // strong-axis bending: basic dofs 1,2 ; materials 0,1 ; EI = E*Iz
   double qi, qj;
+  double dq_dN[2] = { 0.0, 0.0 };
   ladrunoIMKSolveAxis(theMat[0], theMat[1], v(1), v(2), L, E * Iz,
                       thetaH[0], thetaH[1], qi, qj, k2, q0[1], q0[2],
                       GAvy, fPM, dI, dJ, useImplex,
                       thetaHpCommit[0], thetaHpCommit[1],
                       dThetaHpPrev[0], dThetaHpPrev[1], &implexErr,
-                      dtScale, &thetaHp[0], &thetaHp[1]);
+                      dtScale, &thetaHp[0], &thetaHp[1],
+                      theShearMat, &gammaS, gammaSpCommit, dGammaSpPrev, &gammaSp,
+                      dLogPM, dq_dN);
   q(1) = qi;  q(2) = qj;
+  kb(1, 0) = EAoverL * dq_dN[0];
+  kb(2, 0) = EAoverL * dq_dN[1];
   kb(1, 1) = k2[0][0];  kb(1, 2) = k2[0][1];
   kb(2, 1) = k2[1][0];  kb(2, 2) = k2[1][1];
   q0Dirty = false;
@@ -336,7 +379,7 @@ const Matrix &LadrunoIMKBeam2d::getInitialStiff(void)
   kbi(0, 0) = E * A * oneOverL;
 
   double k2[2][2];
-  ladrunoIMKInitBlock(theMat[0], theMat[1], L, E * Iz, k2, GAvy, 1.0, dI, dJ);
+  ladrunoIMKInitBlock(theMat[0], theMat[1], L, E * Iz, k2, GAvy, 1.0, dI, dJ, theShearMat);
   kbi(1, 1) = k2[0][0];  kbi(1, 2) = k2[0][1];
   kbi(2, 1) = k2[1][0];  kbi(2, 2) = k2[1][1];
 
@@ -392,6 +435,7 @@ int LadrunoIMKBeam2d::addLoad(ElementalLoad *theLoad, double loadFactor)
   int type;
   const Vector &data = theLoad->getData(type, loadFactor);
   double L = theCoordTransf->getInitialLength();
+  const double Lc = ((dI > 0.0 || dJ > 0.0) && (dI + dJ < L)) ? (L - dI - dJ) : L;
 
   if (type == LOAD_TAG_Beam2dUniformLoad) {
     double wt = data(0) * loadFactor;  // Transverse (+ve upward)
@@ -439,8 +483,8 @@ int LadrunoIMKBeam2d::addLoad(ElementalLoad *theLoad, double loadFactor)
     double V1 = I0 - V2;
     double M1 = -I1 + (2.0 / L) * I2 - (1.0 / (L * L)) * I3;
     double M2 = (1.0 / L) * I2 - (1.0 / (L * L)) * I3;
-    if (GAvy > 0.0 && L > 0.0) {
-      const double Phi = 12.0 * E * Iz / (GAvy * L * L);
+    if (GAvy > 0.0 && Lc > 0.0) {
+      const double Phi = 12.0 * E * Iz / (GAvy * Lc * Lc);
       const double inv = 1.0 / (1.0 + Phi);
       const double m1 = ((1.0 + 0.5 * Phi) * M1 - 0.5 * Phi * M2) * inv;
       const double m2 = (-0.5 * Phi * M1 + (1.0 + 0.5 * Phi) * M2) * inv;
@@ -481,8 +525,8 @@ int LadrunoIMKBeam2d::addLoad(ElementalLoad *theLoad, double loadFactor)
     q0[0] -= N * aOverL;
     double M1 = -a * b2 * P * L2;
     double M2 = a2 * b * P * L2;
-    if (GAvy > 0.0 && L > 0.0) {
-      const double Phi = 12.0 * E * Iz / (GAvy * L * L);
+    if (GAvy > 0.0 && Lc > 0.0) {
+      const double Phi = 12.0 * E * Iz / (GAvy * Lc * Lc);
       const double inv = 1.0 / (1.0 + Phi);
       const double m1 = ((1.0 + 0.5 * Phi) * M1 - 0.5 * Phi * M2) * inv;
       const double m2 = (-0.5 * Phi * M1 + (1.0 + 0.5 * Phi) * M2) * inv;
@@ -610,8 +654,8 @@ int LadrunoIMKBeam2d::sendSelf(int cTag, Channel &theChannel)
   int res = 0;
   int dbTag = this->getDbTag();
 
-  // integer data: tag, nodes, transf class+db, 2x (mat class+db), cMass
-  static thread_local ID idData(10);
+  // integer data: tag, nodes, transf class+db, 2x (mat class+db), cMass, shearMat class+db
+  static thread_local ID idData(12);
   idData(0) = this->getTag();
   idData(1) = connectedExternalNodes(0);
   idData(2) = connectedExternalNodes(1);
@@ -640,6 +684,19 @@ int LadrunoIMKBeam2d::sendSelf(int cTag, Channel &theChannel)
     }
   }
   idData(9) = cMass;
+  if (theShearMat != 0) {
+    idData(10) = theShearMat->getClassTag();
+    int sDb = theShearMat->getDbTag();
+    if (sDb == 0) {
+      sDb = theChannel.getDbTag();
+      if (sDb != 0)
+        theShearMat->setDbTag(sDb);
+    }
+    idData(11) = sDb;
+  } else {
+    idData(10) = 0;
+    idData(11) = 0;
+  }
 
   res += theChannel.sendID(dbTag, cTag, idData);
   if (res < 0) {
@@ -647,7 +704,7 @@ int LadrunoIMKBeam2d::sendSelf(int cTag, Channel &theChannel)
     return res;
   }
 
-  static thread_local Vector dData(45);
+  static thread_local Vector dData(49);
   dData(0) = A;  dData(1) = E;  dData(2) = Iz;  dData(3) = rho;
   dData(4) = thetaHcommit[0];  dData(5) = thetaHcommit[1];
   dData(6) = alphaM;  dData(7) = betaK;  dData(8) = betaK0;  dData(9) = betaKc;
@@ -669,6 +726,10 @@ int LadrunoIMKBeam2d::sendSelf(int cTag, Channel &theChannel)
     dData(39 + i) = q0[i];
     dData(42 + i) = p0[i];
   }
+  dData(45) = gammaScommit;
+  dData(46) = dGammaSprev;
+  dData(47) = gammaSpCommit;
+  dData(48) = dGammaSpPrev;
 
   res += theChannel.sendVector(dbTag, cTag, dData);
   if (res < 0) {
@@ -691,6 +752,13 @@ int LadrunoIMKBeam2d::sendSelf(int cTag, Channel &theChannel)
       }
     }
   }
+  if (theShearMat != 0) {
+    res += theShearMat->sendSelf(cTag, theChannel);
+    if (res < 0) {
+      opserr << "LadrunoIMKBeam2d::sendSelf -- failed to send shear material\n";
+      return res;
+    }
+  }
 
   return res;
 }
@@ -700,7 +768,7 @@ int LadrunoIMKBeam2d::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &
   int res = 0;
   int dbTag = this->getDbTag();
 
-  static thread_local ID idData(10);
+  static thread_local ID idData(12);
   res += theChannel.recvID(dbTag, cTag, idData);
   if (res < 0) {
     opserr << "LadrunoIMKBeam2d::recvSelf -- failed to recv ID\n";
@@ -712,7 +780,7 @@ int LadrunoIMKBeam2d::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &
   connectedExternalNodes(1) = idData(2);
   cMass = idData(9);
 
-  static thread_local Vector dData(45);
+  static thread_local Vector dData(49);
   res += theChannel.recvVector(dbTag, cTag, dData);
   if (res < 0) {
     opserr << "LadrunoIMKBeam2d::recvSelf -- failed to recv Vector\n";
@@ -745,6 +813,12 @@ int LadrunoIMKBeam2d::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &
     q0[i] = dData(39 + i);
     p0[i] = dData(42 + i);
   }
+  gammaScommit = dData(45);
+  gammaS = gammaScommit;
+  dGammaSprev = dData(46);
+  gammaSpCommit = dData(47);
+  gammaSp = gammaSpCommit;
+  dGammaSpPrev = dData(48);
   q0Dirty = false;
   committedAtCurrentV = true;
 
@@ -793,6 +867,35 @@ int LadrunoIMKBeam2d::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &
       opserr << "LadrunoIMKBeam2d::recvSelf -- failed to recv material " << i << endln;
       return res;
     }
+    if (P0 > 0.0) {
+      if (LadrunoCohesiveHinge *ch = dynamic_cast<LadrunoCohesiveHinge *>(theMat[i]))
+        ch->setPM(P0, pmAlpha);
+    }
+  }
+
+  int sClass = idData(10);
+  int sDb = idData(11);
+  if (sClass == 0) {
+    if (theShearMat != 0) {
+      delete theShearMat;
+      theShearMat = 0;
+    }
+  } else {
+    if (theShearMat == 0 || theShearMat->getClassTag() != sClass) {
+      if (theShearMat != 0)
+        delete theShearMat;
+      theShearMat = theBroker.getNewUniaxialMaterial(sClass);
+      if (theShearMat == 0) {
+        opserr << "LadrunoIMKBeam2d::recvSelf -- could not create shear material\n";
+        return -1;
+      }
+    }
+    theShearMat->setDbTag(sDb);
+    res += theShearMat->recvSelf(cTag, theChannel, theBroker);
+    if (res < 0) {
+      opserr << "LadrunoIMKBeam2d::recvSelf -- failed to recv shear material\n";
+      return res;
+    }
   }
 
   if (this->getDomain() != 0 && theNodes[0] != 0 && theNodes[1] != 0 && theCoordTransf != 0)
@@ -821,6 +924,8 @@ void LadrunoIMKBeam2d::Print(OPS_Stream &s, int flag)
     s << "  hinge " << lbl[i] << ": "
       << (theMat[i] != 0 ? "material " : "elastic")
       << (theMat[i] != 0 ? theMat[i]->getTag() : 0) << endln;
+  if (theShearMat != 0)
+    s << "  shearHinge Vy: material " << theShearMat->getTag() << endln;
 }
 
 // ---------------------------------------------------------------------------
@@ -895,6 +1000,16 @@ Response *LadrunoIMKBeam2d::setResponse(const char **argv, int argc, OPS_Stream 
     s.tag("ResponseType", "M_j");
     theResponse = new ElementResponse(this, 8, Vector(4));
 
+  } else if (LadrunoResp::is(argv[0], "shearDeformation") ||
+             LadrunoResp::is(argv[0], "shearStrain") ||
+             LadrunoResp::is(argv[0], "shearDistortion")) {
+    s.tag("ResponseType", "gamma_y");
+    theResponse = new ElementResponse(this, 14, Vector(1));
+
+  } else if (LadrunoResp::is(argv[0], "shearForce")) {
+    s.tag("ResponseType", "Vy");
+    theResponse = new ElementResponse(this, 15, Vector(1));
+
   } else if (LadrunoResp::isRayleighForce(argv[0])) {
     theResponse = new ElementResponse(this, 12, P);
 
@@ -915,11 +1030,24 @@ Response *LadrunoIMKBeam2d::setResponse(const char **argv, int argc, OPS_Stream 
     if ((secNum == 1 || secNum == 2) && LadrunoResp::is(argv[2], "force")) {
       theResponse = new ElementResponse(this, (secNum == 1) ? 71 : 72, Vector(2));
     }
+  } else if (strcmp(argv[0], "shearHinge") == 0 || strcmp(argv[0], "shearHingeY") == 0) {
+    if (argc > 1) {
+      if (theShearMat != 0)
+        theResponse = theShearMat->setResponse(&argv[1], argc - 1, s);
+    } else {
+      s.tag("ResponseType", "gamma_y");
+      s.tag("ResponseType", "Vy");
+      theResponse = new ElementResponse(this, 16, Vector(2));
+    }
   } else if ((LadrunoResp::is(argv[0], "material") ||
               strcmp(argv[0], "hinge") == 0) && argc > 2) {
-    int idx = atoi(argv[1]);
-    if (idx >= 0 && idx < 2 && theMat[idx] != 0)
-      theResponse = theMat[idx]->setResponse(&argv[2], argc - 2, s);
+    if ((strcmp(argv[1], "shear") == 0 || strcmp(argv[1], "shearY") == 0) && theShearMat != 0) {
+      theResponse = theShearMat->setResponse(&argv[2], argc - 2, s);
+    } else {
+      int idx = atoi(argv[1]);
+      if (idx >= 0 && idx < 2 && theMat[idx] != 0)
+        theResponse = theMat[idx]->setResponse(&argv[2], argc - 2, s);
+    }
   }
 
   if (theResponse == 0 && theCoordTransf != 0)
@@ -989,15 +1117,28 @@ int LadrunoIMKBeam2d::getResponse(int responseID, Information &info)
       const double ea = E * A / L;
       double a, b, F11, F12;
       ladrunoIMKCoreCoeffs(Lc, E * Iz, GAvy, a, b, F11, F12);
+      double gamRot = 0.0;
+      if (theShearMat != 0 && Lc > 0.0) {
+        const double Ks0 = theShearMat->getInitialTangent();
+        const double Fs0 = (Ks0 > 0.0) ? (1.0 / (Lc * Lc * Ks0)) : 0.0;
+        const double q0ic = hasEZ ? (((L - dI) * q0[1] - dI * q0[2]) / L) : q0[1];
+        const double q0jc = hasEZ ? ((-dJ * q0[1] + (L - dJ) * q0[2]) / L) : q0[2];
+        const double gamRot0 = -Fs0 * (q0ic + q0jc);
+        gamRot = (gammaS / Lc) - gamRot0;
+      }
       const double ve0 = v(0);
-      const double ve1 = vic - thetaH[0];
-      const double ve2 = vjc - thetaH[1];
+      const double ve1 = vic - thetaH[0] + gamRot;
+      const double ve2 = vjc - thetaH[1] + gamRot;
       energy += 0.5 * (ea * ve0 * ve0 + ve1 * (a * ve1 + b * ve2) + ve2 * (b * ve1 + a * ve2));
     }
     const double fPM = ladrunoIMKScalePM(q(0), P0, pmAlpha);
     for (int i = 0; i < 2; i++)
-      if (theMat[i] != 0)
-        energy += fPM * theMat[i]->getEnergy();
+      if (theMat[i] != 0) {
+        const double f = (dynamic_cast<LadrunoCohesiveHinge *>(theMat[i]) == 0) ? fPM : 1.0;
+        energy += f * theMat[i]->getEnergy();
+      }
+    if (theShearMat != 0)
+      energy += theShearMat->getEnergy();
     return info.setDouble(energy);
   }
   case 12: {
@@ -1005,6 +1146,24 @@ int LadrunoIMKBeam2d::getResponse(int responseID, Information &info)
     damp.Zero();
     damp.addVector(1.0, this->getRayleighDampingForces(), 1.0);
     return info.setVector(damp);
+  }
+  case 14: {
+    static thread_local Vector sd(1);
+    sd(0) = gammaS;
+    return info.setVector(sd);
+  }
+  case 15: {
+    static thread_local Vector sf(1);
+    const double L = theCoordTransf->getInitialLength();
+    sf(0) = (L > 0.0) ? -(q(1) + q(2)) / L : 0.0;
+    return info.setVector(sf);
+  }
+  case 16: {
+    static thread_local Vector sh(2);
+    const double L = theCoordTransf->getInitialLength();
+    sh(0) = gammaS;
+    sh(1) = (theShearMat != 0) ? theShearMat->getStress() : ((L > 0.0) ? -(q(1) + q(2)) / L : 0.0);
+    return info.setVector(sh);
   }
   case 19:
     return info.setMatrix(kb);
@@ -1022,7 +1181,7 @@ int LadrunoIMKBeam2d::getResponse(int responseID, Information &info)
   case 32:
     return info.setDouble(implexErr);
   case 33: {
-    int cnt = (theMat[0] != 0 ? 1 : 0) + (theMat[1] != 0 ? 1 : 0);
+    int cnt = (theMat[0] != 0 ? 1 : 0) + (theMat[1] != 0 ? 1 : 0) + (theShearMat != 0 ? 1 : 0);
     return info.setDouble(cnt > 0 ? implexErr / cnt : 0.0);
   }
   case 71:
@@ -1076,59 +1235,68 @@ int LadrunoIMKBeam2d::setParameter(const char **argv, int argc, Parameter &param
     return param.addObject(7, this);
   }
 
-  if (strcmp(argv[0], "hingeI") == 0 || strcmp(argv[0], "hinge1") == 0 ||
+  int res = -1;
+  if (strcmp(argv[0], "shearHinge") == 0 || strcmp(argv[0], "shearHingeY") == 0 ||
+      strcmp(argv[0], "matShear") == 0) {
+    if (argc < 2 || theShearMat == 0)
+      return -1;
+    res = theShearMat->setParameter(&argv[1], argc - 1, param);
+  } else if (strcmp(argv[0], "hingeI") == 0 || strcmp(argv[0], "hinge1") == 0 ||
       strcmp(argv[0], "hingeZi") == 0 || strcmp(argv[0], "hingeZI") == 0 ||
       strcmp(argv[0], "hingeMzI") == 0 || strcmp(argv[0], "matZi") == 0) {
     if (argc < 2 || theMat[0] == 0)
       return -1;
-    return theMat[0]->setParameter(&argv[1], argc - 1, param);
-  }
-  if (strcmp(argv[0], "hingeJ") == 0 || strcmp(argv[0], "hinge2") == 0 ||
+    res = theMat[0]->setParameter(&argv[1], argc - 1, param);
+  } else if (strcmp(argv[0], "hingeJ") == 0 || strcmp(argv[0], "hinge2") == 0 ||
       strcmp(argv[0], "hingeZj") == 0 || strcmp(argv[0], "hingeZJ") == 0 ||
       strcmp(argv[0], "hingeMzJ") == 0 || strcmp(argv[0], "matZj") == 0) {
     if (argc < 2 || theMat[1] == 0)
       return -1;
-    return theMat[1]->setParameter(&argv[1], argc - 1, param);
-  }
-  if (strcmp(argv[0], "matZ") == 0 || strcmp(argv[0], "hingeZ") == 0) {
+    res = theMat[1]->setParameter(&argv[1], argc - 1, param);
+  } else if (strcmp(argv[0], "matZ") == 0 || strcmp(argv[0], "hingeZ") == 0) {
     if (argc < 2)
       return -1;
-    int result = -1;
     for (int i = 0; i < 2; i++) {
       if (theMat[i] != 0) {
         int r = theMat[i]->setParameter(&argv[1], argc - 1, param);
         if (r != -1)
-          result = r;
+          res = r;
       }
     }
-    return result;
-  }
-  if (strcmp(argv[0], "material") == 0 || strcmp(argv[0], "hinge") == 0) {
+  } else if (strcmp(argv[0], "material") == 0 || strcmp(argv[0], "hinge") == 0) {
     if (argc == 2) {
-      int result = -1;
       for (int i = 0; i < 2; i++) {
         if (theMat[i] != 0) {
           int r = theMat[i]->setParameter(&argv[1], 1, param);
           if (r != -1)
-            result = r;
+            res = r;
         }
       }
-      return result;
+      if (theShearMat != 0) {
+        int r = theShearMat->setParameter(&argv[1], 1, param);
+        if (r != -1)
+          res = r;
+      }
     } else if (argc > 2) {
-      int idx = -1;
-      if (strcmp(argv[1], "i") == 0 || strcmp(argv[1], "0") == 0)
-        idx = 0;
-      else if (strcmp(argv[1], "j") == 0 || strcmp(argv[1], "1") == 0)
-        idx = 1;
-      else
-        idx = atoi(argv[1]);
-      if (idx >= 0 && idx < 2 && theMat[idx] != 0)
-        return theMat[idx]->setParameter(&argv[2], argc - 2, param);
+      if ((strcmp(argv[1], "shear") == 0 || strcmp(argv[1], "shearY") == 0) && theShearMat != 0) {
+        res = theShearMat->setParameter(&argv[2], argc - 2, param);
+      } else {
+        int idx = -1;
+        if (strcmp(argv[1], "i") == 0 || strcmp(argv[1], "0") == 0)
+          idx = 0;
+        else if (strcmp(argv[1], "j") == 0 || strcmp(argv[1], "1") == 0)
+          idx = 1;
+        else
+          idx = atoi(argv[1]);
+        if (idx >= 0 && idx < 2 && theMat[idx] != 0)
+          res = theMat[idx]->setParameter(&argv[2], argc - 2, param);
+      }
     }
-    return -1;
   }
 
-  return -1;
+  if (res != -1)
+    param.addObject(99, this);
+  return res;
 }
 
 int LadrunoIMKBeam2d::updateParameter(int parameterID, Information &info)
@@ -1151,9 +1319,21 @@ int LadrunoIMKBeam2d::updateParameter(int parameterID, Information &info)
     break;
   case 6:
     P0 = info.theDouble;
+    if (P0 > 0.0) {
+      for (int i = 0; i < 2; i++)
+        if (LadrunoCohesiveHinge *ch = dynamic_cast<LadrunoCohesiveHinge *>(theMat[i]))
+          ch->setPM(P0, pmAlpha);
+    }
     break;
   case 7:
     pmAlpha = info.theDouble;
+    if (P0 > 0.0) {
+      for (int i = 0; i < 2; i++)
+        if (LadrunoCohesiveHinge *ch = dynamic_cast<LadrunoCohesiveHinge *>(theMat[i]))
+          ch->setPM(P0, pmAlpha);
+    }
+    break;
+  case 99:
     break;
   default:
     return -1;
@@ -1169,6 +1349,8 @@ bool LadrunoIMKBeam2d::ladrunoThreadSafeUpdate(void) const
   for (int i = 0; i < 2; i++)
     if (theMat[i] != 0 && !theMat[i]->ladrunoThreadSafeUpdate())
       return false;
+  if (theShearMat != 0 && !theShearMat->ladrunoThreadSafeUpdate())
+    return false;
   return true;
 }
 
@@ -1177,5 +1359,7 @@ bool LadrunoIMKBeam2d::ladrunoThreadSafeForm(void) const
   for (int i = 0; i < 2; i++)
     if (theMat[i] != 0 && !theMat[i]->ladrunoThreadSafeForm())
       return false;
+  if (theShearMat != 0 && !theShearMat->ladrunoThreadSafeForm())
+    return false;
   return true;
 }

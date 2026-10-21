@@ -119,6 +119,7 @@ void *OPS_LadrunoIMKBeam2d()
   UniaxialMaterial *matZ = 0;   // symmetric strong-axis law (applied per -hinge)
   UniaxialMaterial *matZi = 0, *matZj = 0;
   bool setZi = false, setZj = false;
+  UniaxialMaterial *shearMat = 0;
   double rho = 0.0;
   int cMass = 0;
   double GAvy = 0.0;
@@ -150,6 +151,10 @@ void *OPS_LadrunoIMKBeam2d()
       if ((matZi = getMatArg2d("-matZi")) == 0) return 0;  setZi = true;
     } else if (strcmp(opt, "-matZj") == 0) {
       if ((matZj = getMatArg2d("-matZj")) == 0) return 0;  setZj = true;
+    } else if (strcmp(opt, "-shearHinge") == 0 ||
+               strcmp(opt, "-shearHingeY") == 0 ||
+               strcmp(opt, "-matShear") == 0) {
+      if ((shearMat = getMatArg2d(opt)) == 0) return 0;
 
     } else if (strcmp(opt, "-mass") == 0) {
       if (OPS_GetNumRemainingInputArgs() < 1) {
@@ -211,7 +216,7 @@ void *OPS_LadrunoIMKBeam2d()
         }
       }
 
-    } else if (strcmp(opt, "-pm") == 0) {
+    } else if (strcmp(opt, "-pm") == 0 || strcmp(opt, "-PM") == 0) {
       if (OPS_GetNumRemainingInputArgs() < 1) {
         opserr << "WARNING LadrunoIMKBeam (2D) -- -pm needs P0 [alpha]\n";
         return 0;
@@ -253,6 +258,7 @@ void *OPS_LadrunoIMKBeam2d()
   Element *theEle = new LadrunoIMKBeam2d(iData[0], iData[1], iData[2],
                                          dData[0], dData[1], dData[2],
                                          *theTransf, mZi, mZj, rho, cMass,
-                                         GAvy, P0, pmAlpha, dI, dJ, useImplex);
+                                         GAvy, P0, pmAlpha, dI, dJ, useImplex,
+                                         shearMat);
   return theEle;
 }

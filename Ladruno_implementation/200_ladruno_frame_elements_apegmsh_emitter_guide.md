@@ -11,7 +11,7 @@ tags: [apegmsh, emitter, postprocessor, frame, beam, column, wall, mvlem, imk, c
 # WP-200: Ladruno Frame & Wall Elements — `apeGmsh` Emitter & Post-Processor Guide
 
 **Target Audience:** `apeGmsh` preprocessor/emitter and `.ladruno` HDF5 post-processor developers.  
-**Scope:** Unified reference for the Ladruno frame and macro-wall element ecosystem (`LadrunoDispBeamColumn`, `LadrunoIMKBeam`, `ForceBeamColumn`, `MVLEM` / `SFI_MVLEM` / `MVLEM_3D` / `SFI_MVLEM_3D`), supporting hinge/fiber materials (`LadrunoCohesiveHinge`, `LadrunoCohesiveHingeBiaxial`, `LadrunoUniaxialJ2`, `LadrunoRebarBuckling`, `LadrunoBondSlip`, `ASDConcrete1D`, `ASDSteel1D`), elemental loads (including partial trapezoidal and 3D `LadrunoMembrane` tributary slab loads), `setParameter`/`updateParameter`, `eleResponse` queries, `.ladruno` HDF5 recorder schemas, and OpenMP/IMPLEX integration.
+**Scope:** Unified reference for the Ladruno frame and macro-wall element ecosystem (`LadrunoDispBeamColumn`, `LadrunoForceBeamColumn`, `LadrunoIMKBeam`, `ForceBeamColumn`, `MVLEM` / `SFI_MVLEM` / `MVLEM_3D` / `SFI_MVLEM_3D`), supporting hinge/fiber materials (`LadrunoCohesiveHinge`, `LadrunoCohesiveHingeBiaxial`, `LadrunoUniaxialJ2`, `LadrunoRebarBuckling`, `LadrunoBondSlip`, `ASDConcrete1D`, `ASDSteel1D`), elemental loads (including partial trapezoidal and 3D `LadrunoMembrane` tributary slab loads), `setParameter`/`updateParameter`, `eleResponse` queries, `.ladruno` HDF5 recorder schemas, and OpenMP/IMPLEX integration.
 
 ---
 
@@ -21,9 +21,10 @@ tags: [apegmsh, emitter, postprocessor, frame, beam, column, wall, mvlem, imk, c
 
 | Modeling Goal / Structural Component | Recommended Element Command | Dim / DOFs | Formulation & Key Features |
 | :--- | :--- | :--- | :--- |
-| **General nonlinear RC / steel frame** with distributed plasticity, axial-flexural ($P\text{--}M$) fiber coupling, fracture-energy ($G_f$) regularization, and **either** $P\text{--}\delta$ axial bowing (`-nl`) **or** embedded cohesive hinges | `LadrunoDispBeamColumn` *(or `LadrunoDispBeamColumn2d` / `3d`)* | 2D (3 DOF)<br>3D (6 DOF) | Displacement-based fiber beam-column (`-lch ip|element|$val` regularization for `ASDConcrete1D`/`ASDSteel1D`, `-nl` nonlinear bowing strain, or mutually exclusive `-hinge` / `-hingeI` / `-hingeJ` / `-hingeIJ` / `-hingeY*` / `-hingeBiaxial*` with `-pm` $P\text{--}M$ interaction and `-implex`). |
-| **Concentrated-plasticity frame** (Ibarra–Medina–Krawinkler peak-oriented / bilinear / pinched, or cohesive end hinges) with elastic interior + optional Timoshenko shear + rigid end zones | `LadrunoIMKBeam` *(or `LadrunoIMKBeam2d`)* | 2D (3 DOF)<br>3D (6 DOF) | Elastic Euler-Bernoulli / Timoshenko interior in series with 2 (2D) or 4 (3D) rotational hinge slots (`Zi, Zj, Yi, Yj`), optional rigid end offsets (`-endZones`), exact $2\times 2$ / $4\times 4$ static condensation, exact fixed-end forces (`q0`/`p0`), optional `-pm` $P\text{--}M$ interaction, and `-implex`. |
-| **Force-based (flexibility) fiber frame** with exact equilibrium along the span and fracture-energy ($G_f$) auto-regularization | `forceBeamColumn` *(or `ForceBeamColumn2d` / `3d`)* | 2D (3 DOF)<br>3D (6 DOF) | Flexibility-based fiber beam-column (`-iter maxIters tol`, `-mass`, `-lch ip|element|$val` or `-totalElementLch` characteristic length for `ASDConcrete1D`/`ASDSteel1D`). |
+| **General nonlinear RC / steel frame (Displacement-based)** with distributed plasticity, axial-flexural ($P\text{--}M$) fiber coupling, fracture-energy ($G_f$) regularization, exact span-load quartic bubble enhancement (`-spanLoad`), and **either** $P\text{--}\delta$ axial bowing (`-nl`) **or** embedded cohesive hinges | `LadrunoDispBeamColumn` *(or `LadrunoDispBeamColumn2d` / `3d`)* | 2D (3 DOF)<br>3D (6 DOF) | Displacement-based fiber beam-column (`-lch ip|element|$val` regularization for `ASDConcrete1D`/`ASDSteel1D`, `-spanLoad` / `-noSpanLoad` quartic bubble + initial fixed-end strain, `-nl` nonlinear bowing strain, or mutually exclusive `-hinge` / `-hingeI` / `-hingeJ` / `-hingeIJ` / `-hingeY*` / `-hingeBiaxial*` with `-pm` $P\text{--}M$ interaction and `-implex`). |
+| **Force-based (flexibility) fiber frame with Ladruno hinges, $P\text{--}M$ scaling, & shear** | `LadrunoForceBeamColumn` *(or `LadrunoForceBeamColumn2d` / `3d`)* | 2D (3 DOF)<br>3D (6 DOF) | Standalone Ladruno flexibility-based fiber beam-column (`ELE_TAG_LadrunoForceBeamColumn2d = 33024`, `ELE_TAG_LadrunoForceBeamColumn3d = 33025`) with exact intra-span equilibrium, `-lch ip|element|$val` / `-totalElementLch`, Tier-2 embedded cohesive hinges (`-hinge*`, `-hingeY*`, `-hingeBiaxial*`) in series with the flexibility core, `-pm $P0 $alpha`, `-shear $GAy <$GAz>`, `-implex`, and `-cMass`. |
+| **Concentrated-plasticity frame** (Ibarra–Medina–Krawinkler peak-oriented / bilinear / pinched, or cohesive end hinges) with elastic interior + optional Timoshenko shear / inelastic series shear hinges + rigid end zones | `LadrunoIMKBeam` *(or `LadrunoIMKBeam2d`)* | 2D (3 DOF)<br>3D (6 DOF) | Elastic Euler-Bernoulli / Timoshenko interior in series with 2 (2D) or 4 (3D) rotational hinge slots (`Zi, Zj, Yi, Yj` or coupled 3D `-hingeBiaxial*`), optional series inelastic shear hinges (`-shearHinge`, `-shearHingeY`, `-shearHingeZ`), optional rigid end offsets (`-endZones`), exact $2\times 2$ / $4\times 4$ static condensation, exact fixed-end forces (`q0`/`p0`), optional `-pm` $P\text{--}M$ interaction, and `-implex`. |
+| **Upstream force-based (flexibility) fiber frame** with fracture-energy ($G_f$) auto-regularization | `forceBeamColumn` *(or `ForceBeamColumn2d` / `3d`)* | 2D (3 DOF)<br>3D (6 DOF) | Upstream flexibility-based fiber beam-column (`-iter maxIters tol`, `-mass`, `-cMass`, `-lch ip|element|$val` or `-totalElementLch` characteristic length for `ASDConcrete1D`/`ASDSteel1D`). |
 | **2D planar RC shear wall** with uniaxial vertical macro-fibers + decoupled horizontal shear spring | `MVLEM` | 2D (3 DOF, 2 nodes) | $m$ vertical macro-fibers (concrete + steel uniaxial materials) + 1 shear spring at height $c \cdot h$. |
 | **2D planar RC shear wall with shear–flexure interaction (SFI)** | `SFI_MVLEM` | 2D (3 DOF at 2 ext. nodes + $m$ internal 1-DOF nodes) | $m$ 2D RC panel `NDMaterial` (`FSAM`) macro-fibers capturing biaxial $\sigma_x\text{--}\sigma_y\text{--}\tau_{xy}$ interaction. |
 | **3D RC shear wall / core wall** with uniaxial vertical fibers + elastic out-of-plane plate bending | `MVLEM_3D` | 3D (6 DOF, 4 quad nodes) | 4-node 24-DOF quad wall element; in-plane `MVLEM` kinematics + out-of-plane Kirchhoff plate bending (`-ThickMod`, `-Poisson`). |
@@ -33,7 +34,7 @@ tags: [apegmsh, emitter, postprocessor, frame, beam, column, wall, mvlem, imk, c
 
 ## 2. Element Command Signatures (Tcl & Python `opensees.pyd`)
 
-> **Parser Contract (WP-200):** All four Ladruno beam parsers (`OPS_LadrunoDispBeamColumn2d`, `OPS_LadrunoDispBeamColumn3d`, `OPS_LadrunoIMKBeam2d`, `OPS_LadrunoIMKBeam`) and `OPS_ForceBeamColumn2d/3d` use fail-closed option parsing. Unknown `-flag` tokens or truncated/invalid option arguments raise an immediate error and return `nullptr`.
+> **Parser Contract (WP-200):** All Ladruno beam parsers (`OPS_LadrunoDispBeamColumn2d`, `OPS_LadrunoDispBeamColumn3d`, `OPS_LadrunoForceBeamColumn`, `OPS_LadrunoIMKBeam2d`, `OPS_LadrunoIMKBeam`) and `OPS_ForceBeamColumn2d/3d` use fail-closed option parsing. Unknown `-flag` tokens or truncated/invalid option arguments raise an immediate error and return `nullptr`.
 
 ### 2.1 `LadrunoDispBeamColumn` (`LadrunoDispBeamColumn2d` / `LadrunoDispBeamColumn3d`)
 
@@ -47,6 +48,7 @@ tags: [apegmsh, emitter, postprocessor, frame, beam, column, wall, mvlem, imk, c
 ```tcl
 element LadrunoDispBeamColumn $eleTag $iNode $jNode $transfTag $beamIntTag \
     <-mass $rho> <-cMass> <-damp $dampingTag> <-lch ip|element|$val> <-nl> \
+    <-spanLoad | -noSpanLoad> \
     <-hinge $matTag> \
     <-hingeI $matTagI> <-hingeJ $matTagJ> <-hingeIJ $matTagI <$matTagJ>> \
     <-hingeLoc $xiI <$xiJ>> <-implex> <-pm $P0 <$alpha>>
@@ -76,6 +78,7 @@ Accepts all 2D flags above plus minor-axis (`-hingeY`, `-hingeYI`, `-hingeYJ`, `
 ```tcl
 element LadrunoDispBeamColumn $eleTag $iNode $jNode $transfTag $beamIntTag \
     <-mass $rho> <-cMass> <-damp $dampingTag> <-lch ip|element|$val> <-nl> \
+    <-spanLoad | -noSpanLoad> \
     <-hinge $matTagZ> <-hingeI $matTagZI> <-hingeJ $matTagZJ> <-hingeIJ $matTagZI <$matTagZJ>> \
     <-hingeY $matTagY> <-hingeYI $matTagYI> <-hingeYJ $matTagYJ> <-hingeYIJ $matTagYI <$matTagYJ>> \
     <-hingeBiaxial $ndMatTag> <-hingeBiaxialI $ndMatTagI> <-hingeBiaxialJ $ndMatTagJ> \
@@ -95,7 +98,8 @@ element LadrunoDispBeamColumn $eleTag $iNode $jNode $transfTag $beamIntTag \
 | `-mass` | `$rho` (float) | `0.0` | Mass per unit length. |
 | `-cMass` *(or `-cmass`)* | *(none)* | `0` (lumped) | Consistent mass matrix flag. |
 | `-damp` | `$dampingTag` (int) | `0` (none) | Elemental `Damping` object tag. |
-| `-lch` | `'ip'`, `'element'`, or `$val` ($>0$) | `'ip'` (`lchMode = 0`) | Characteristic length $L_{ch}$ for `ASDConcrete1D` / `ASDSteel1D` fracture-energy regularization (`ip`: $L_{ch,i} = w_i \cdot L$; `element`: $L_{ch,i} = L$; `$val`: user-specified positive length — pass as `str(val)` in Python `opensees.pyd` since `-lch` reads via `OPS_GetString()`). **Note:** `'auto'` is not a valid argument and will be rejected. |
+| `-lch` | `'ip'`, `'element'`, or `$val` ($>0$) | `'ip'` (`lchMode = 0`) | Characteristic length $L_{ch}$ for `ASDConcrete1D` / `ASDSteel1D` fracture-energy regularization (`ip`: $L_{ch,i} = w_i \cdot L$; `element`: $L_{ch,i} = L$; `$val`: user-specified positive length — accepts either numeric float or string in Python/Tcl). |
+| `-spanLoad` / `-noSpanLoad` | *(none)* | `-spanLoad` (`true`) | Enables (`-spanLoad`, default) or disables (`-noSpanLoad`) exact span-load internal strain $\mathbf{e}_{0,i} = \mathbf{k}_{s0,i}^{-1}\mathbf{s}^{\text{fixed}}(\xi_i)$ and discrete-orthogonalized coupled axial + quartic flexural bubble enhancement $\phi_b(\xi) = 1 - 6\xi + 6\xi^2 - (c_0 + c_1\xi)$ on $(\beta_P, \beta_Z)$ in 2D and $(\beta_P, \beta_Z, \beta_Y)$ in 3D, eliminating both 1-element midspan moment blindness and neutral-axis axial locking on cracked/yielding RC/T-beam fiber sections under distributed/point span loads. |
 | `-nl` | *(none)* | `false` | Enables nonlinear geometric axial bowing strain ($\frac{1}{2}\theta_z^2$ in 2D; $\frac{1}{2}(\theta_z^2 + \theta_y^2)$ in 3D). Mutually exclusive with all `-hinge*` flags. |
 | `-hinge` | `$matTag` (int) | disabled | Single-hinge mode about local $z$: clones `UniaxialMaterial` `$matTag` for strong-axis bending. |
 | `-hingeI` *(aliases: `-hinge1`, and `-hingeZI` in 3D)* | `$matTagI` (int) | disabled | Dual-end hinge mode about local $z$ at end $I$ ($2\times 2$ Hermite static condensation). |
@@ -125,6 +129,7 @@ element LadrunoDispBeamColumn $eleTag $iNode $jNode $transfTag $beamIntTag \
 element LadrunoIMKBeam $eleTag $iNode $jNode $A $E $Iz $transfTag \
     <-matZ $tag> <-matZi $tag> <-matZj $tag> \
     <-hinge $loc> <-shear $GAvy | -shear $G $Avy> \
+    <-shearHinge $matTagVy> \
     <-endZones $dI $dJ> <-mass $m> <-cMass> \
     <-pm $P0 <$alpha>> <-implex>
 ```
@@ -134,7 +139,7 @@ element LadrunoIMKBeam $eleTag $iNode $jNode $A $E $Iz $transfTag \
 ops.element(
     "LadrunoIMKBeam", eleTag, iNode, jNode, A, E, Iz, transfTag,
     "-hinge", "both", "-matZi", matZiTag, "-matZj", matZjTag,
-    "-shear", GAvy, "-endZones", dI, dJ,
+    "-shear", GAvy, "-shearHinge", matVyTag, "-endZones", dI, dJ,
     "-mass", m, "-cMass", "-pm", P0, alpha, "-implex",
 )
 ```
@@ -144,7 +149,10 @@ ops.element(
 element LadrunoIMKBeam $eleTag $iNode $jNode $A $E $G $Jx $Iy $Iz $transfTag \
     <-matZ $tag> <-matZi $tag> <-matZj $tag> \
     <-matY $tag> <-matYi $tag> <-matYj $tag> \
+    <-hingeBiaxial $ndTag> <-hingeBiaxialI $ndTagI> <-hingeBiaxialJ $ndTagJ> \
+    <-hingeBiaxialIJ $ndTagI <$ndTagJ>> \
     <-hinge $loc> <-shear $GAvy $GAvz | -shear $G $Avy $Avz> \
+    <-shearHingeY $matTagVy> <-shearHingeZ $matTagVz> <-shearHinge $matTagVy <$matTagVz>> \
     <-endZones $dI $dJ> <-mass $m> <-cMass> \
     <-pm $P0 <$alpha>> <-implex>
 ```
@@ -155,7 +163,8 @@ ops.element(
     "LadrunoIMKBeam", eleTag, iNode, jNode, A, E, G, Jx, Iy, Iz, transfTag,
     "-hinge", "both", "-matZi", matZiTag, "-matZj", matZjTag,
     "-matYi", matYiTag, "-matYj", matYjTag,
-    "-shear", GAvy, GAvz, "-endZones", dI, dJ,
+    "-shear", GAvy, GAvz, "-shearHingeY", matVyTag, "-shearHingeZ", matVzTag,
+    "-endZones", dI, dJ,
     "-mass", m, "-cMass", "-pm", P0, alpha, "-implex",
 )
 ```
@@ -168,8 +177,11 @@ ops.element(
 | `-matZi` / `-matZj` | `$matTag` (int) | overrides `-matZ` | Individual end-$I$ or end-$J$ hinge material tag about local $z$. |
 | `-matY` | `$matTag` (int, **3D only**) | `0` (elastic) | Uniaxial rotational hinge material tag for both ends (`Yi` and `Yj`) about local $y$. |
 | `-matYi` / `-matYj` | `$matTag` (int, **3D only**) | overrides `-matY` | Individual end-$I$ or end-$J$ hinge material tag about local $y$. |
-| `-hinge` | `'both'`, `'i'`, `'j'`, `'none'` (case-insensitive) | `'both'` | Active hinge location mask for symmetric `-matZ`/`-matY` (`'i'` disables end-$J$ hinges; `'j'` disables end-$I$ hinges; `'none'` makes symmetric slots purely elastic). |
+| `-hingeBiaxial` *(alias `-hingeC`)* | `$ndMatTag` (int, **3D only**) | disabled | Coupled 2-DOF biaxial `NDMaterial` hinge (`LadrunoCohesiveHingeBiaxial`) at both ends (or masked by `-hinge i\|j`). Mutually exclusive with `-matZ*`/`-matY*`. |
+| `-hingeBiaxialI` / `-hingeBiaxialJ` / `-hingeBiaxialIJ` | `$ndMatTagI <$ndMatTagJ>` (**3D only**) | disabled | Coupled 2-DOF biaxial `NDMaterial` hinge at end $I$, end $J$, or both ends. |
+| `-hinge` | `'both'`, `'i'`, `'j'`, `'none'` (case-insensitive) | `'both'` | Active hinge location mask for symmetric `-matZ`/`-matY`/`-hingeBiaxial` (`'i'` disables end-$J$ hinges; `'j'` disables end-$I$ hinges; `'none'` makes symmetric slots purely elastic). |
 | `-shear` | 2D: `$GAvy` *(1 arg)* or `$G $Avy` *(2 args)*<br>3D: `$GAvy $GAvz` *(2 args)* or `$G $Avy $Avz` *(3 args)* | `0.0` (Euler-Bernoulli) | Effective shear rigidity $GA_{vy}$ (and $GA_{vz}$ in 3D). When $>0$, activates Timoshenko shear flexibility $\Phi_z = \frac{12 E I_z}{G A_{vy} L_c^2}$ (and $\Phi_y = \frac{12 E I_y}{G A_{vz} L_c^2}$). |
+| `-shearHinge` / `-shearHingeY` / `-shearHingeZ` | 2D: `-shearHinge $matTagVy`<br>3D: `-shearHingeY $matTagVy`, `-shearHingeZ $matTagVz`, or `-shearHinge $matTagVy <$matTagVz>` | disabled | Inelastic series shear hinge (`UniaxialMaterial` relating shear displacement jump $\Delta_v$ to clear-span shear force $V = -(M_i + M_j)/L_c$), adding compliance $L_c^2 / K_{s,\text{hinge}}$ in series with the flexural + Timoshenko element core. |
 | `-endZones` *(alias `-endZone`)* | `$dI $dJ` (floats $\ge 0$) | `0.0 0.0` | Rigid end-zone offsets $d_I, d_J$ at ends $I$ and $J$ ($d_I + d_J < L$); clear flexible span is $L_c = L - d_I - d_J$ with kinematic transformation $\mathbf{T}$ mapping chord rotations to clear-span hinge rotations. |
 | `-mass` | `$m` (float) | `0.0` | Mass per unit length. |
 | `-cMass` *(or `-cmass`)* | *(none)* | `0` (lumped) | Consistent 2-node Hermite beam mass matrix flag. |
@@ -178,25 +190,34 @@ ops.element(
 
 ---
 
-### 2.3 `forceBeamColumn` (`ForceBeamColumn2d` / `ForceBeamColumn3d`)
+### 2.3 `LadrunoForceBeamColumn` (`LadrunoForceBeamColumn2d` / `LadrunoForceBeamColumn3d`) & `forceBeamColumn`
 
 * **Class Tags (`SRC/classTags.h`):**
+  * `ELE_TAG_LadrunoForceBeamColumn2d = 33024`
+  * `ELE_TAG_LadrunoForceBeamColumn3d = 33025`
   * `ELE_TAG_ForceBeamColumn2d = 73`
   * `ELE_TAG_ForceBeamColumn3d = 74`
-* **Command Signatures:**
+* **Command Signatures (`LadrunoForceBeamColumn`):**
 
 ```tcl
-# Modern form (with beamIntegration tag):
-element forceBeamColumn $eleTag $iNode $jNode $transfTag $beamIntTag \
+# 2D (ndm == 2, ndf == 3):
+element LadrunoForceBeamColumn $eleTag $iNode $jNode $transfTag $beamIntTag \
     <-mass $rho> <-cMass> <-damp $dampingTag> <-iter $maxIters $tol> \
-    <-subdivide $numSub $subFac> <-lch ip|element|$val> <-totalElementLch>
+    <-subdivide $numSub $subFac> <-lch ip|element|auto|$val> <-totalElementLch> \
+    <-hinge $matTag> <-hingeI $matTagI> <-hingeJ $matTagJ> <-hingeIJ $matTagI <$matTagJ>> \
+    <-hingeLoc $xiI <$xiJ>> <-implex> <-pm $P0 <$alpha>> <-shear $GAy>
 
-# Legacy Tcl form (with inline numSecs):
-element forceBeamColumn $eleTag $iNode $jNode $numSecs $secTag1 ... $secTagN $transfTag \
-    <-Integration $intType> <-mass $rho> <-cMass> <-iter $maxIters $tol> \
-    <-lch ip|element|$val> <-totalElementLch>
+# 3D (ndm == 3, ndf == 6):
+element LadrunoForceBeamColumn $eleTag $iNode $jNode $transfTag $beamIntTag \
+    <-mass $rho> <-cMass> <-damp $dampingTag> <-iter $maxIters $tol> \
+    <-subdivide $numSub $subFac> <-lch ip|element|auto|$val> <-totalElementLch> \
+    <-hinge $matTagZ> <-hingeI $matTagZI> <-hingeJ $matTagZJ> <-hingeIJ $matTagZI <$matTagZJ>> \
+    <-hingeY $matTagY> <-hingeYI $matTagYI> <-hingeYJ $matTagYJ> <-hingeYIJ $matTagYI <$matTagYJ>> \
+    <-hingeBiaxial $ndMatTag> <-hingeBiaxialI $ndMatTagI> <-hingeBiaxialJ $ndMatTagJ> \
+    <-hingeBiaxialIJ $ndMatTagI <$ndMatTagJ>> \
+    <-hingeLoc $xiI <$xiJ>> <-implex> <-pm $P0 <$alpha>> <-shear $GAy <$GAz>>
 ```
-*(Aliases `nonlinearBeamColumn` and `forceBeamColumn2d` / `forceBeamColumn3d` are also registered. Note: `-lch` accepts `ip` (default, $L_{ch,i} = w_i L$), `element` (or `-totalElementLch`, $L_{ch,i} = L$), or a positive numeric value `$val`; `'auto'` is not accepted.)*
+*(Explicit `LadrunoForceBeamColumn2d` and `LadrunoForceBeamColumn3d` commands, as well as the legacy inline `$numSecs $secTag1 ... $secTagN $transfTag` form, are also supported.)*
 
 ---
 
@@ -323,16 +344,16 @@ uniaxialMaterial ModIMKPeakOriented $matTag $Ke $alfaPos $alfaNeg $My_pos $My_ne
 
 ## 4. Elemental Loads & Tributary Slab Transfer (`eleLoad`)
 
-All three frame families (`LadrunoDispBeamColumn2d/3d`, `LadrunoIMKBeam2d/3d`, and `ForceBeamColumn2d/3d`) support full elemental span loads with exact fixed-end forces (`q0`) and basic reactions (`p0`), plus 3D `LadrunoMembrane` tributary slab load transfer via `"localAxes"`:
+All frame families (`LadrunoDispBeamColumn2d/3d`, `LadrunoForceBeamColumn2d/3d`, `LadrunoIMKBeam2d/3d`, and `ForceBeamColumn2d/3d`) support full elemental span loads with exact fixed-end forces (`q0`) and basic reactions (`p0`), plus 3D `LadrunoMembrane` tributary slab load transfer via `"localAxes"`:
 
 | Load Type | OpenSees `eleLoad` Syntax | Supported Elements | Notes |
 | :--- | :--- | :--- | :--- |
-| **2D Uniform Load** (`LOAD_TAG_Beam2dUniformLoad`) | `eleLoad -ele $eleTag -type -beamUniform $Wy <$Wx>` | `LadrunoDispBeamColumn2d`, `LadrunoIMKBeam2d`, `ForceBeamColumn2d` | `$Wy` transverse (+ve along local $+y$), `$Wx` axial (+ve $I \to J$). |
-| **2D Partial / Trapezoidal Load** (`LOAD_TAG_Beam2dPartialUniformLoad`) | `eleLoad -ele $eleTag -type -beamUniform $Wya $Wxa $aOverL $bOverL <$Wyb $Wxb>` | `LadrunoDispBeamColumn2d`, `LadrunoIMKBeam2d`, `ForceBeamColumn2d` | Cancellation-free shifted-origin moment integrals over $[a, b] \subset [0, L]$. |
-| **2D Point Load** (`LOAD_TAG_Beam2dPointLoad`) | `eleLoad -ele $eleTag -type -beamPoint $Py $aOverL <$Px>` | `LadrunoDispBeamColumn2d`, `LadrunoIMKBeam2d`, `ForceBeamColumn2d` | Point load at $x = a/L \in [0, 1]$. |
-| **3D Uniform Load** (`LOAD_TAG_Beam3dUniformLoad`) | `eleLoad -ele $eleTag -type -beamUniform $Wy $Wz <$Wx>` | `LadrunoDispBeamColumn3d`, `LadrunoIMKBeam`, `ForceBeamColumn3d` | `$Wy, $Wz` transverse along local $y, z$; `$Wx` axial. |
-| **3D Partial / Trapezoidal Load** (`LOAD_TAG_Beam3dPartialUniformLoad`) | `eleLoad -ele $eleTag -type -beamUniform $Wya $Wza $Wxa $aOverL $bOverL <$Wyb $Wzb $Wxb>` | `LadrunoDispBeamColumn3d`, `LadrunoIMKBeam`, `ForceBeamColumn3d` | Trapezoidal 3D distributed load over $[a/L, b/L]$; used directly by `LadrunoMembrane` two-way slab tributary load distribution! |
-| **3D Point Load** (`LOAD_TAG_Beam3dPointLoad`) | `eleLoad -ele $eleTag -type -beamPoint $Py $Pz $aOverL <$Px>` | `LadrunoDispBeamColumn3d`, `LadrunoIMKBeam`, `ForceBeamColumn3d` | 3D concentrated load at $x = a/L \in [0, 1]$. |
+| **2D Uniform Load** (`LOAD_TAG_Beam2dUniformLoad`) | `eleLoad -ele $eleTag -type -beamUniform $Wy <$Wx>` | `LadrunoDispBeamColumn2d`, `LadrunoForceBeamColumn2d`, `LadrunoIMKBeam2d`, `ForceBeamColumn2d` | `$Wy` transverse (+ve along local $+y$), `$Wx` axial (+ve $I \to J$). |
+| **2D Partial / Trapezoidal Load** (`LOAD_TAG_Beam2dPartialUniformLoad`) | `eleLoad -ele $eleTag -type -beamUniform $Wya $Wxa $aOverL $bOverL <$Wyb $Wxb>` | `LadrunoDispBeamColumn2d`, `LadrunoForceBeamColumn2d`, `LadrunoIMKBeam2d`, `ForceBeamColumn2d` | Cancellation-free shifted-origin moment integrals over $[a, b] \subset [0, L]$. |
+| **2D Point Load** (`LOAD_TAG_Beam2dPointLoad`) | `eleLoad -ele $eleTag -type -beamPoint $Py $aOverL <$Px>` | `LadrunoDispBeamColumn2d`, `LadrunoForceBeamColumn2d`, `LadrunoIMKBeam2d`, `ForceBeamColumn2d` | Point load at $x = a/L \in [0, 1]$. |
+| **3D Uniform Load** (`LOAD_TAG_Beam3dUniformLoad`) | `eleLoad -ele $eleTag -type -beamUniform $Wy $Wz <$Wx>` | `LadrunoDispBeamColumn3d`, `LadrunoForceBeamColumn3d`, `LadrunoIMKBeam`, `ForceBeamColumn3d` | `$Wy, $Wz` transverse along local $y, z$; `$Wx` axial. |
+| **3D Partial / Trapezoidal Load** (`LOAD_TAG_Beam3dPartialUniformLoad`) | `eleLoad -ele $eleTag -type -beamUniform $Wya $Wza $Wxa $aOverL $bOverL <$Wyb $Wzb $Wxb>` | `LadrunoDispBeamColumn3d`, `LadrunoForceBeamColumn3d`, `LadrunoIMKBeam`, `ForceBeamColumn3d` | Trapezoidal 3D distributed load over $[a/L, b/L]$; used directly by `LadrunoMembrane` two-way slab tributary load distribution! |
+| **3D Point Load** (`LOAD_TAG_Beam3dPointLoad`) | `eleLoad -ele $eleTag -type -beamPoint $Py $Pz $aOverL <$Px>` | `LadrunoDispBeamColumn3d`, `LadrunoForceBeamColumn3d`, `LadrunoIMKBeam`, `ForceBeamColumn3d` | 3D concentrated load at $x = a/L \in [0, 1]$. |
 | **Uniform Distributed Moment** (`LOAD_TAG_BeamUniformMoment`) | *(Internal `BeamUniformMoment` elemental load)* | `LadrunoDispBeamColumn2d/3d`, `LadrunoIMKBeam2d/3d` | Adds distributed couple reactions `mz` (and `my` in 3D) to `p0`. |
 
 > **Important Inelastic Behavior (`LadrunoIMKBeam2d` / `LadrunoIMKBeam`):** Fixed-end moments `q0` enter inside the $2\times 2$ (2D) or $4\times 4$ (3D) hinge static-condensation loop:
@@ -345,9 +366,9 @@ All three frame families (`LadrunoDispBeamColumn2d/3d`, `LadrunoIMKBeam2d/3d`, a
 
 | Element / Material | Direct Parameter Names | Forwarded Sub-Component Syntax |
 | :--- | :--- | :--- |
-| `LadrunoDispBeamColumn2d`<br>`LadrunoDispBeamColumn3d` | `'rho'` | • `'section' $secNum $arg...` (1-based section index)<br>• `'sectionX' $x $arg...` (physical coordinate $x \in [0,L]$)<br>• `'hinge'` / `'hingeZ'` / `'hingeIJ'` / `'hingeZIJ' $arg...` (single hinge or both dual-$z$ hinges)<br>• `'hingeI'` / `'hingeZI'` / `'hinge1' $arg...` (end $I$)<br>• `'hingeJ'` / `'hingeZJ'` / `'hinge2' $arg...` (end $J$)<br>• `'hingeY'` / `'hingeYIJ'` / `'hingeYI'` / `'hingeY1'` / `'hingeYJ'` / `'hingeY2' $arg...` (**3D only**)<br>• `'hingeBiaxial'` / `'hingeC'` / `'hingeBiaxialIJ'` / `'hingeCIJ'` / `'hingeBiaxialI'` / `'hingeCI'` / `'hingeBiaxial1'` / `'hingeBiaxialJ'` / `'hingeCJ'` / `'hingeBiaxial2' $arg...` (**3D only**)<br>• *(no prefix)*: broadcasts `$argv` to all sections and active hinges |
-| `LadrunoIMKBeam2d` | `'E'`, `'A'`, `'Iz'` (or `'I'`), `'rho'`, `'GAvy'` (or `'GAy'`, `'GAv'`), `'P0'`, `'pmAlpha'` | • `'hingeI'` / `'hinge1'` / `'hingeZi'` / `'hingeZI'` / `'hingeMzI'` / `'matZi' $arg...`<br>• `'hingeJ'` / `'hinge2'` / `'hingeZj'` / `'hingeZJ'` / `'hingeMzJ'` / `'matZj' $arg...`<br>• `'matZ'` / `'hingeZ'` / `'material'` / `'hinge' $arg...` (both ends, or `'hinge' i|j|0|1 $arg...`) |
-| `LadrunoIMKBeam` (3D) | `'E'`, `'A'`, `'Iz'`, `'Iy'`, `'G'`, `'Jx'` (or `'J'`), `'rho'`, `'GAvy'` (or `'GAy'`), `'GAvz'` (or `'GAz'`), `'P0'`, `'pmAlpha'` | • `'hingeI'` / `'hinge1'` / `'hingeZi'` / `'hingeZI'` / `'hingeMzI'` / `'matZi' $arg...`<br>• `'hingeJ'` / `'hinge2'` / `'hingeZj'` / `'hingeZJ'` / `'hingeMzJ'` / `'matZj' $arg...`<br>• `'hingeYi'` / `'hingeYI'` / `'hingeMyI'` / `'matYi' $arg...`<br>• `'hingeYj'` / `'hingeYJ'` / `'hingeMyJ'` / `'matYj' $arg...`<br>• `'matZ'` / `'hingeZ' $arg...` (both $z$ hinges)<br>• `'matY'` / `'hingeY' $arg...` (both $y$ hinges)<br>• `'material'` / `'hinge' $arg...` (all 4 hinges, or `'hinge' Zi|Zj|Yi|Yj|0|1|2|3 $arg...`) |
+| `LadrunoDispBeamColumn2d`<br>`LadrunoDispBeamColumn3d`<br>`LadrunoForceBeamColumn2d`<br>`LadrunoForceBeamColumn3d` | `'rho'`, `'lch'`, `'GAy'` / `'GAvy'` (`LadrunoForceBeamColumn`), `'GAz'` / `'GAvz'` (3D `LadrunoForceBeamColumn`) | • `'section' $secNum $arg...` (1-based section index)<br>• `'sectionX' $x $arg...` (physical coordinate $x \in [0,L]$)<br>• `'hinge'` / `'hingeZ'` / `'hingeIJ'` / `'hingeZIJ' $arg...` (single hinge or both dual-$z$ hinges)<br>• `'hingeI'` / `'hingeZI'` / `'hinge1' $arg...` (end $I$)<br>• `'hingeJ'` / `'hingeZJ'` / `'hinge2' $arg...` (end $J$)<br>• `'hingeY'` / `'hingeYIJ'` / `'hingeYI'` / `'hingeY1'` / `'hingeYJ'` / `'hingeY2' $arg...` (**3D only**)<br>• `'hingeBiaxial'` / `'hingeC'` / `'hingeBiaxialIJ'` / `'hingeCIJ'` / `'hingeBiaxialI'` / `'hingeCI'` / `'hingeBiaxial1'` / `'hingeBiaxialJ'` / `'hingeCJ'` / `'hingeBiaxial2' $arg...` (**3D only**)<br>• *(no prefix)*: broadcasts `$argv` to all sections and active hinges |
+| `LadrunoIMKBeam2d` | `'E'`, `'A'`, `'Iz'` (or `'I'`), `'rho'`, `'GAvy'` (or `'GAy'`, `'GAv'`), `'P0'`, `'pmAlpha'` | • `'hingeI'` / `'hinge1'` / `'hingeZi'` / `'hingeZI'` / `'hingeMzI'` / `'matZi' $arg...`<br>• `'hingeJ'` / `'hinge2'` / `'hingeZj'` / `'hingeZJ'` / `'hingeMzJ'` / `'matZj' $arg...`<br>• `'matZ'` / `'hingeZ'` / `'material'` / `'hinge' $arg...` (both ends, or `'hinge' i|j|0|1 $arg...`)<br>• `'shearHinge'` / `'shearHingeY'` / `'matShear' $arg...` |
+| `LadrunoIMKBeam` (3D) | `'E'`, `'A'`, `'Iz'`, `'Iy'`, `'G'`, `'Jx'` (or `'J'`), `'rho'`, `'GAvy'` (or `'GAy'`), `'GAvz'` (or `'GAz'`), `'P0'`, `'pmAlpha'` | • `'hingeI'` / `'hinge1'` / `'hingeZi'` / `'hingeZI'` / `'hingeMzI'` / `'matZi' $arg...`<br>• `'hingeJ'` / `'hinge2'` / `'hingeZj'` / `'hingeZJ'` / `'hingeMzJ'` / `'matZj' $arg...`<br>• `'hingeYi'` / `'hingeYI'` / `'hingeMyI'` / `'matYi' $arg...`<br>• `'hingeYj'` / `'hingeYJ'` / `'hingeMyJ'` / `'matYj' $arg...`<br>• `'matZ'` / `'hingeZ' $arg...` (both $z$ hinges)<br>• `'matY'` / `'hingeY' $arg...` (both $y$ hinges)<br>• `'hingeBiaxial'` / `'hingeBiaxialI'` / `'hingeBiaxialJ' $arg...`<br>• `'shearHingeY'` / `'shearHingeZ'` / `'shearHinge' $arg...`<br>• `'material'` / `'hinge' $arg...` (all 4 hinges, or `'hinge' Zi|Zj|Yi|Yj|0|1|2|3 $arg...`) |
 | `ForceBeamColumn2d`<br>`ForceBeamColumn3d` | `'rho'`, `'lch'` | • `'section' $secNum $arg...`<br>• `'sectionX' $x $arg...`<br>• `'allSections' $arg...` (or default fallback without prefix) |
 | `LadrunoCohesiveHinge` | `'Mc'`, `'Gf'`, `'Kpen'`, `'P0'`, `'alphaPM'` | — |
 | `LadrunoCohesiveHingeBiaxial` | `'Mcz'` (or `'Mc'`), `'Gfz'` (or `'Gf'`), `'Mcy'`, `'Gfy'`, `'P0'`, `'alphaPM'`, `'bkEta'` (or `'eta'`), `'penaltyRatio'` | — |
@@ -358,13 +379,14 @@ All three frame families (`LadrunoDispBeamColumn2d/3d`, `LadrunoIMKBeam2d/3d`, a
 
 All frame and wall elements share the canonical token matcher in [`SRC/element/LadrunoResponseTokens.h`](file:///C:/Users/nmora/.gemini/antigravity/worktrees/OpenSees/review_ladrunobeam_implementation/SRC/element/LadrunoResponseTokens.h).
 
-### 6.1 `LadrunoDispBeamColumn2d` & `LadrunoDispBeamColumn3d`
+### 6.1 `LadrunoDispBeamColumn2d/3d` & `LadrunoForceBeamColumn2d/3d`
 
 | Query Token(s) | 2D Size & Layout | 3D Size & Layout |
 | :--- | :--- | :--- |
 | `'forces'` / `'force'` / `'globalForce'` / `'globalForces'` | `6`: `[Px_i, Py_i, Mz_i, Px_j, Py_j, Mz_j]` | `12`: `[Px_i, Py_i, Pz_i, Mx_i, My_i, Mz_i, Px_j, Py_j, Pz_j, Mx_j, My_j, Mz_j]` |
 | `'localForce'` / `'localForces'` | `6`: `[N_i, V_i, M_i, N_j, V_j, M_j]` | `12`: `[N_i, Vy_i, Vz_i, T_i, My_i, Mz_i, N_j, Vy_j, Vz_j, T_j, My_j, Mz_j]` |
 | `'basicForce'` / `'basicForces'` / `'chordForce'` | `3`: `[N, Mz_i, Mz_j]` | `6`: `[N, Mz_i, Mz_j, My_i, My_j, T]` |
+| `'basicStiffness'` | `9`: flat $3\times 3$ condensed basic stiffness | `36`: flat $6\times 6$ condensed basic stiffness |
 | `'chordRotation'` / `'chordDeformation'` / `'basicDeformation'` | `3`: `[eps, thetaZ_i, thetaZ_j]` | `6`: `[eps, thetaZ_i, thetaZ_j, thetaY_i, thetaY_j, thetaX]` |
 | `'plasticRotation'` / `'plasticDeformation'` / `'hingeRotation'` / `'hingeRotations'` | `3`: `[epsP, thetaZ_iP, thetaZ_jP]` | `6`: `[epsP, thetaZ_iP, thetaZ_jP, thetaY_iP, thetaY_jP, thetaXP]` |
 | `'hingeSummary'` / `'hingeState'` | `4`: `[theta_i, M_i, theta_j, M_j]` | `8`: `[thetaZ_i, Mz_i, thetaZ_j, Mz_j, thetaY_i, My_i, thetaY_j, My_j]` |
@@ -392,12 +414,17 @@ All frame and wall elements share the canonical token matcher in [`SRC/element/L
 | `'forces'` / `'force'` / `'globalForce'` / `'globalForces'` | `6`: `[Px_i, Py_i, Mz_i, Px_j, Py_j, Mz_j]` | `12`: `[Px_i, Py_i, Pz_i, Mx_i, My_i, Mz_i, Px_j, Py_j, Pz_j, Mx_j, My_j, Mz_j]` |
 | `'localForce'` / `'localForces'` | `6`: `[N_i, V_i, M_i, N_j, V_j, M_j]` | `12`: `[N_i, Vy_i, Vz_i, T_i, My_i, Mz_i, N_j, Vy_j, Vz_j, T_j, My_j, Mz_j]` |
 | `'basicForce'` / `'basicForces'` / `'chordForce'` | `3`: `[N, Mz_i, Mz_j]` | `6`: `[N, Mz_i, Mz_j, My_i, My_j, T]` |
+| `'basicStiffness'` | `9`: flat $3\times 3$ condensed basic stiffness | `36`: flat $6\times 6$ condensed basic stiffness |
 | `'chordRotation'` / `'chordDeformation'` / `'basicDeformation'` | `3`: `[eps, thetaZ_i, thetaZ_j]` | `6`: `[eps, thetaZ_i, thetaZ_j, thetaY_i, thetaY_j, thetaX]` |
 | `'hingeRotation'` / `'hingeRotations'` / `'plasticRotation'` / `'plasticDeformation'` | `2`: `[thetaH_Zi, thetaH_Zj]` | `4`: `[thetaH_Zi, thetaH_Zj, thetaH_Yi, thetaH_Yj]` |
 | `'hingeMoment'` / `'hingeMoments'` | `2`: `[M_Zi, M_Zj]` | `4`: `[M_Zi, M_Zj, M_Yi, M_Yj]` |
 | `'hingeSummary'` / `'hingeState'` | `4`: `[thetaH_Zi, M_Zi, thetaH_Zj, M_Zj]` | `8`: `[thetaH_Zi, M_Zi, thetaH_Zj, M_Zj, thetaH_Yi, M_Yi, thetaH_Yj, M_Yj]` |
+| `'shearHinge'` *(1 arg)* | `2`: `[gamma_y, Vy]` | `4`: `[gamma_y, Vy, gamma_z, Vz]` |
+| `'shearHingeY'` / `'shearHingeZ'` *(1 arg)* | `2`: `[gamma_y, Vy]` (`'shearHingeY'`) | `2`: `[gamma_y, Vy]` or `[gamma_z, Vz]` |
+| `'shearHinge'` / `'shearHingeY'` / `'shearHingeZ'` `$matResp...` | Forwards `$matResp` to shear hinge `UniaxialMaterial` | Forwards `$matResp` to shear hinge `UniaxialMaterial` |
+| `'hingeBiaxial'` / `'hingeBiaxialI'` / `'hingeBiaxialJ'` `$matResp...` | — | Forwards `$matResp` to biaxial hinge `NDMaterial` (or returns `[thetaZ, Mz, thetaY, My]` summary when 1 arg) |
 | `'section'` `1\|2` `'force'` | `2`: `[N_end, Mz_end]` at end `1` ($I$) or `2` ($J$) | `4`: `[N_end, Mz_end, My_end, T_end]` at end `1` ($I$) or `2` ($J$) |
-| `'material'` / `'hinge'` `$idx` `$matResp...` | Forwards `$matResp` to 0-based slot `$idx` (`0`=Zi, `1`=Zj) | Forwards `$matResp` to 0-based slot `$idx` (`0`=Zi, `1`=Zj, `2`=Yi, `3`=Yj) |
+| `'material'` / `'hinge'` `$idx` `$matResp...` | Forwards `$matResp` to 0-based slot `$idx` (`0`=Zi, `1`=Zj, `'shear'`=shearHinge) | Forwards `$matResp` to 0-based slot `$idx` (`0`=Zi, `1`=Zj, `2`=Yi, `3`=Yj, `'biaxialI'`, `'biaxialJ'`, `'shearY'`, `'shearZ'`) |
 | `'implexError'` / `'ImplexError'` | `1`: `[maxImplexErr]` across active hinges | `1`: `[maxImplexErr]` across active hinges |
 | `'avgImplexError'` / `'AvgImplexError'` | `1`: `[avgImplexErr]` across active hinges | `1`: `[avgImplexErr]` across active hinges |
 | `'localAxes'` / `'localaxes'` | `9`: `[vx_x, vx_y, vx_z, vy_x, vy_y, vy_z, vz_x, vz_y, vz_z]` | `9`: `[vx_x, vx_y, vx_z, vy_x, vy_y, vy_z, vz_x, vz_y, vz_z]` |
@@ -465,7 +492,7 @@ Defined in [`SRC/recorder/Ladruno_ElementResults.h`](file:///C:/Users/nmora/.gem
 
 | Element Class | `ElementGeometryType` | `ElementIntegrationRuleType` | Quadrature Metadata Written to `/MODEL_STAGE[i]/QUADRATURE/` |
 | :--- | :--- | :--- | :--- |
-| `LadrunoDispBeamColumn2d` (`33013`)<br>`LadrunoDispBeamColumn3d` (`33014`)<br>`ForceBeamColumn2d` (`73`)<br>`ForceBeamColumn3d` (`74`) | `Line_2N` (`1`) | `CustomIntegrationRule` (`100`, `custom_rule_dimension = 1`) | Queries `'integrationPoints'`, normalizes $\xi_k = 2(x_k - x_{\min}) / \Delta x - 1 \in [-1, 1]$, and writes `GP_X` (and `GP_WEIGHTS`). |
+| `LadrunoDispBeamColumn2d` (`33013`)<br>`LadrunoDispBeamColumn3d` (`33014`)<br>`LadrunoForceBeamColumn2d` (`33024`)<br>`LadrunoForceBeamColumn3d` (`33025`)<br>`ForceBeamColumn2d` (`73`)<br>`ForceBeamColumn3d` (`74`) | `Line_2N` (`1`) | `CustomIntegrationRule` (`100`, `custom_rule_dimension = 1`) | Queries `'integrationPoints'`, normalizes $\xi_k = 2(x_k - x_{\min}) / \Delta x - 1 \in [-1, 1]$, and writes `GP_X` (and `GP_WEIGHTS`). |
 | `LadrunoIMKBeam` (`33003`)<br>`LadrunoIMKBeam2d` (`33004`) | `Line_2N` (`1`) | `Line_GaussLegendre_1` (`1`, 1 GP at midpoint) | Standard 1-point line rule. |
 | `MVLEM` (`162`)<br>`SFI_MVLEM` (`163`) | `Line_2N` (`1`, 2 external nodes) | `CustomIntegrationRule` (`100`, `custom_rule_dimension = 1`) | Probes `'material'` `1..m` `setResponse()` XML metadata (`<GaussPointOutput eta="..." weight="...">`) to extract normalized panel locations and weights (`GP_X`, `GP_WEIGHTS`). |
 | `MVLEM_3D` (`212`)<br>`SFI_MVLEM_3D` (`213`) | `Quadrilateral_CohesiveBand_4N` (`10`, 4 external quad nodes) | `CustomIntegrationRule` (`100`, `custom_rule_dimension = 2`) | Probes `'material'` `1..m` `setResponse()` XML metadata (`<GaussPointOutput eta="..." weight="...">`) and writes 2D custom rule (`GP_X`, `GP_Y = 0`, `GP_WEIGHTS`). |
@@ -479,9 +506,9 @@ All element results are stored under `/MODEL_STAGE[i]/RESULTS/ON_ELEMENTS/<Resul
 | `force` | `'forces'` | 2D beam/wall: `6`<br>3D beam: `12`<br>3D wall (`MVLEM_3D`/`SFI_MVLEM_3D`): `24` | Global nodal resisting forces. |
 | `localForce` | `'localForce'` | 2D beam/wall: `6`<br>3D beam: `12`<br>3D wall: `24` | Element-local nodal resisting forces. |
 | `endForces` | `'forces'` | 2D beam: `6`<br>3D beam: `12` | Whole-element end forces (`isWholeElementItem() == true`, 1 vector per element, never multiplied by `num_gauss_points`). |
-| `hingeState` | `'hingeSummary'` | 2D beam (`LadrunoDispBeamColumn2d`, `LadrunoIMKBeam2d`): `4` (`[th_i, M_i, th_j, M_j]`)<br>3D beam (`LadrunoDispBeamColumn3d`, `LadrunoIMKBeam`): `8` (`[thZ_i, Mz_i, thZ_j, Mz_j, thY_i, My_i, thY_j, My_j]`) | Whole-element hinge summary (`isWholeElementItem() == true`). Works uniformly across both `LadrunoDispBeamColumn` and `LadrunoIMKBeam`! |
-| `sectionForce` | `'section' $gp 'force'` | `N_gp * nSecForce` | Per-integration-point section stress resultants (`LadrunoDispBeamColumn`, `ForceBeamColumn`; for `LadrunoIMKBeam`, queries `'section' 1 'force'`). |
-| `sectionDeformation` | `'section' $gp 'deformation'` | `N_gp * nSecDef` | Per-integration-point section deformations (`LadrunoDispBeamColumn`, `ForceBeamColumn`). |
+| `hingeState` | `'hingeSummary'` | 2D beam (`LadrunoDispBeamColumn2d`, `LadrunoForceBeamColumn2d`, `LadrunoIMKBeam2d`): `4` (`[th_i, M_i, th_j, M_j]`)<br>3D beam (`LadrunoDispBeamColumn3d`, `LadrunoForceBeamColumn3d`, `LadrunoIMKBeam`): `8` (`[thZ_i, Mz_i, thZ_j, Mz_j, thY_i, My_i, thY_j, My_j]`) | Whole-element hinge summary (`isWholeElementItem() == true`). Works uniformly across `LadrunoDispBeamColumn`, `LadrunoForceBeamColumn`, and `LadrunoIMKBeam`! |
+| `sectionForce` | `'section' $gp 'force'` | `N_gp * nSecForce` | Per-integration-point section stress resultants (`LadrunoDispBeamColumn`, `LadrunoForceBeamColumn`, `ForceBeamColumn`; for `LadrunoIMKBeam`, queries `'section' 1 'force'`). |
+| `sectionDeformation` | `'section' $gp 'deformation'` | `N_gp * nSecDef` | Per-integration-point section deformations (`LadrunoDispBeamColumn`, `LadrunoForceBeamColumn`, `ForceBeamColumn`). |
 | `localAxes` | `'localAxes'` | `9`: `[vx_x, vx_y, vx_z, vy_x, vy_y, vy_z, vz_x, vz_y, vz_z]` | Written once as static element orientation metadata and/or per step. |
 
 ---
@@ -489,9 +516,9 @@ All element results are stored under `/MODEL_STAGE[i]/RESULTS/ON_ELEMENTS/<Resul
 ## 8. OpenMP Multi-Threading (`ladrunoThreads`) & IMPLEX Guidelines
 
 1. **Thread-Safe Element State Update & Tangent Assembly (`WP-192` / `WP-196` / `WP-200`):**
-   * `LadrunoDispBeamColumn2d`, `LadrunoDispBeamColumn3d`, `LadrunoIMKBeam2d`, `LadrunoIMKBeam`, `ForceBeamColumn2d`, and `ForceBeamColumn3d` override `ladrunoThreadSafeUpdate()` and `ladrunoThreadSafeForm()` (returning `true` when sections, coordinate transformations, and hinges are thread-safe).
+   * `LadrunoDispBeamColumn2d`, `LadrunoDispBeamColumn3d`, `LadrunoForceBeamColumn2d`, `LadrunoForceBeamColumn3d`, `LadrunoIMKBeam2d`, `LadrunoIMKBeam`, `ForceBeamColumn2d`, and `ForceBeamColumn3d` override `ladrunoThreadSafeUpdate()` and `ladrunoThreadSafeForm()` (returning `true` when sections, coordinate transformations, and hinges are thread-safe).
    * Static scratch matrices/vectors inside these elements and their transformations (`LinearCrdTransf2d/3d`, `PDeltaCrdTransf2d/3d`, `CorotCrdTransf2d/3d`) and sections (`ElasticSection2d/3d`, `FiberSection2d/3d`) are `static thread_local`, guaranteeing bit-identical results under `ops.ladrunoThreads(1)`, `2`, `4`, `8+`.
    * **Note on `MVLEM` / `SFI_MVLEM`:** The macro-wall elements use class-level or non-thread-marked `NDMaterial` (`FSAM`) instances and retain the base `Element::ladrunoThreadSafeUpdate() == false` serial fallback in hybrid models.
 2. **IMPLEX (`algorithm Implex` / `-implex`):**
-   * `LadrunoCohesiveHinge`, `LadrunoCohesiveHingeBiaxial`, `Bilin`, `ModIMKPeakOriented`, `LadrunoUniaxialJ2`, `ASDConcrete1D`, and `ASDSteel1D` all support `-implex` (as do `LadrunoDispBeamColumn` and `LadrunoIMKBeam` at the element level; note that `LadrunoRebarBuckling` and `LadrunoBondSlip` do not take `-implex`).
+   * `LadrunoCohesiveHinge`, `LadrunoCohesiveHingeBiaxial`, `Bilin`, `ModIMKPeakOriented`, `LadrunoUniaxialJ2`, `ASDConcrete1D`, and `ASDSteel1D` all support `-implex` (as do `LadrunoDispBeamColumn`, `LadrunoForceBeamColumn`, and `LadrunoIMKBeam` at the element level; note that `LadrunoRebarBuckling` and `LadrunoBondSlip` do not take `-implex`).
    * When emitting an IMPLEX model from `apeGmsh`, pass `-implex` on the softening/plastic materials (and/or beam elements) and monitor element-level `'implexError'` / `'avgImplexError'` responses to drive adaptive time-stepping.

@@ -51,6 +51,7 @@ class Information;
 class Response;
 class CrdTransf;
 class UniaxialMaterial;
+class NDMaterial;
 class FEM_ObjectBroker;
 
 class LadrunoIMKBeam : public Element
@@ -65,7 +66,9 @@ class LadrunoIMKBeam : public Element
                  double rho = 0.0, int cMass = 0,
                  double GAvy = 0.0, double GAvz = 0.0,
                  double P0 = 0.0, double pmAlpha = 0.5,
-                 double dI = 0.0, double dJ = 0.0, bool useImplex = false);
+                 double dI = 0.0, double dJ = 0.0, bool useImplex = false,
+                 UniaxialMaterial *mShearY = 0, UniaxialMaterial *mShearZ = 0,
+                 NDMaterial *mBiI = 0, NDMaterial *mBiJ = 0);
   ~LadrunoIMKBeam();
 
   const char *getClassType(void) const { return "LadrunoIMKBeam"; }
@@ -121,12 +124,20 @@ class LadrunoIMKBeam : public Element
   // --- hinge materials: [0]=Mz@i, [1]=Mz@j, [2]=My@i, [3]=My@j ---
   //     a NULL entry means that end/axis is elastic (no hinge).
   UniaxialMaterial *theMat[4];
+  NDMaterial *theBiaxialMat[2];  // optional coupled 2-DOF (Mz, My) hinges at [0]=i, [1]=j
   double thetaH[4];         // trial hinge rotations
   double thetaHcommit[4];   // committed hinge rotations
   double dThetaHprev[4];    // previous committed increment
   double thetaHp[4];        // trial plastic hinge rotations (th - q_c/k0)
   double thetaHpCommit[4];  // committed plastic hinge rotations
   double dThetaHpPrev[4];   // previous committed plastic increment for IMPL-EX
+  UniaxialMaterial *theShearMat[2];  // optional series shear hinges: [0]=Vy, [1]=Vz
+  double gammaS[2];         // trial shear hinge deformations [gamma_y, gamma_z]
+  double gammaScommit[2];   // committed shear hinge deformations
+  double dGammaSprev[2];    // previous committed shear increments
+  double gammaSp[2];        // trial plastic shear deformations
+  double gammaSpCommit[2];  // committed plastic shear deformations
+  double dGammaSpPrev[2];   // previous committed plastic shear increments for IMPL-EX
   double dtime_n_commit;    // previous committed time step for IMPL-EX
 
   // --- cached basic-system state, set in update() ---

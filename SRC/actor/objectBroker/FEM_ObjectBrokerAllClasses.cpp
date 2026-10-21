@@ -499,6 +499,8 @@
 #include "ladrunoRigidBody/LadrunoRigidBody.h"	// N. Mora-Bowen (Ladruno) ADR 58
 #include "ladrunoDispBeamColumn/LadrunoDispBeamColumn2d.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoDispBeamColumn/LadrunoDispBeamColumn3d.h"	// N. Mora-Bowen (Ladruno)
+#include "ladrunoForceBeamColumn/LadrunoForceBeamColumn2d.h"	// N. Mora-Bowen (Ladruno)
+#include "ladrunoForceBeamColumn/LadrunoForceBeamColumn3d.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoMembrane/LadrunoMembrane.h"	// N. Mora-Bowen (Ladruno) ADR 98
 #include "joint/Joint2D.h"		// Arash
 #include "joint/Inno3DPnPJoint.h" // Cristian Miculas
@@ -1104,6 +1106,12 @@ FEM_ObjectBrokerAllClasses::getNewElement(int classTag)
 
     case ELE_TAG_LadrunoDispBeamColumn3d:	// N. Mora-Bowen (Ladruno)
       return new LadrunoDispBeamColumn3d();
+
+    case ELE_TAG_LadrunoForceBeamColumn2d:	// N. Mora-Bowen (Ladruno)
+      return new LadrunoForceBeamColumn2d();
+
+    case ELE_TAG_LadrunoForceBeamColumn3d:	// N. Mora-Bowen (Ladruno)
+      return new LadrunoForceBeamColumn3d();
 
     case ELE_TAG_LadrunoIMKBeam:	// N. Mora-Bowen (Ladruno)
       return new LadrunoIMKBeam();

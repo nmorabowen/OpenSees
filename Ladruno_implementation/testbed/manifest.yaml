@@ -2204,3 +2204,80 @@ features:
       ADR-87 D2 MUTATION GATE (family CPML): ZERO score 0.715 (103/144 killed,
       floor 0.600) and SCALE score 0.632 (91/144 killed, floor 0.400) — BOTH
       GATES PASSED. See Ladruno_implementation/199_ladruno_cpml_guide.md.
+
+  - feature: LadrunoForceBeamColumn2d
+    classtag: 33024
+    tag_symbol: ELE_TAG_LadrunoForceBeamColumn2d
+    pr: 1001
+    feature_class: element
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladruno_force_beam_column.py
+    tcl: WAIVED(Tcl parity covered via subprocess OpenSees.exe inside tests/test_ladruno_force_beam_column.py; Tcl dispatch wired in TclElementCommands.cpp)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - DEVELOPER/core/classTags.h
+      - SRC/element/CMakeLists.txt
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/TclElementCommands.cpp
+      - SRC/recorder/Ladruno_ElementResults.h
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      Standalone 2D force-based regularized frame element (WP-200) combining
+      the iterative section-flexibility state determination and exact intra-span
+      elemental load kinematics of ForceBeamColumn2d with the full Ladruno
+      frame ecosystem: (1) per-IP fracture-energy regularization l_ch = w_i * L
+      (default) or -lch <val> / -lch auto / -totalElementLch forwarded via
+      section.setParameter("characteristicLength") and section.updateParameter(l_ch)
+      in setDomain; (2) Tier-2 embedded strong-discontinuity cohesive hinges
+      (-hinge, -hingeI, -hingeJ, -hingeIJ, -hingeLoc) evaluated in series with
+      the flexibility-based continuum core (with single-pass explicit evaluation
+      when the hinge runs in -implex mode); (3) parabolic axial-flexural P-M
+      yield-moment scaling (-pm N0 alphaPM); (4) optional linear shear
+      flexibility (-shear GAy); (5) consistent (-cMass / -cmass) and lumped
+      mass matrices; (6) thread-local workspace and ladrunoThreadSafeUpdate /
+      ladrunoThreadSafeForm OpenMP support; and (7) full MPCO/HDF5
+      Ladruno_ElementResults binary output, "localAxes", "energy", "hinge",
+      "hingeJump", "hingeMoment", and "integrationWeights" responses.
+
+  - feature: LadrunoForceBeamColumn3d
+    classtag: 33025
+    tag_symbol: ELE_TAG_LadrunoForceBeamColumn3d
+    pr: 1001
+    feature_class: element
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladruno_force_beam_column.py
+    tcl: WAIVED(Tcl parity covered via subprocess OpenSees.exe inside tests/test_ladruno_force_beam_column.py; Tcl dispatch wired in TclElementCommands.cpp)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - DEVELOPER/core/classTags.h
+      - SRC/element/CMakeLists.txt
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/interpreter/OpenSeesElementCommands.cpp
+      - SRC/element/TclElementCommands.cpp
+      - SRC/recorder/Ladruno_ElementResults.h
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      Standalone 3D force-based regularized frame element (WP-200) combining
+      the 3D iterative section-flexibility state determination, torsion
+      uniaxial/section support, and exact 3D elemental load kinematics of
+      ForceBeamColumn3d with the full Ladruno 3D frame ecosystem: (1) per-IP
+      fracture-energy regularization l_ch = w_i * L (default) or -lch <val> /
+      -lch auto / -totalElementLch; (2) Tier-2 uncoupled (-hinge, -hingeI,
+      -hingeJ, -hingeIJ, -hingeY, -hingeYI, -hingeYJ, -hingeYIJ) and coupled
+      biaxial NDMaterial (-hingeBiaxial, -hingeBiaxialI, -hingeBiaxialJ,
+      -hingeBiaxialIJ) embedded cohesive hinges in series with the 3D
+      flexibility core (including single-pass explicit evaluation under
+      -implex); (3) parabolic axial-flexural P-M yield-moment scaling
+      (-pm N0 alphaPM); (4) optional linear 3D shear flexibility
+      (-shear GAy [GAz]); (5) 12x12 3D consistent (-cMass / -cmass) and
+      lumped mass matrices; (6) thread-local workspace and
+      ladrunoThreadSafeUpdate / ladrunoThreadSafeForm OpenMP support; and
+      (7) full MPCO/HDF5 Ladruno_ElementResults binary output, "localAxes",
+      "energy", "hinge", "hingeY", "hingeBiaxial", "hingeJump", "hingeMoment",
+      and "integrationWeights" responses.
+

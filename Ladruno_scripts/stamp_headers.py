@@ -54,6 +54,7 @@ GLOBS = [
     "SRC/element/ladrunoKinematicCoupling/*.cpp", "SRC/element/ladrunoKinematicCoupling/*.h",
     "SRC/element/ladrunoRigidBody/*.cpp", "SRC/element/ladrunoRigidBody/*.h",
     "SRC/element/ladrunoDispBeamColumn/*.cpp", "SRC/element/ladrunoDispBeamColumn/*.h",   # WP-116: was unstamped, so the quirk lint skipped it
+    "SRC/element/ladrunoForceBeamColumn/*.cpp", "SRC/element/ladrunoForceBeamColumn/*.h", # WP-200: regularized force beam + cohesive hinges
     "SRC/element/ladrunoMembrane/*.cpp", "SRC/element/ladrunoMembrane/*.h",
     "SRC/element/bezierTriangle/*.cpp", "SRC/element/bezierTriangle/*.h",
     "SRC/element/bezierTetrahedron/*.cpp", "SRC/element/bezierTetrahedron/*.h",

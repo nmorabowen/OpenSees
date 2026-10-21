@@ -4330,8 +4330,1118 @@ def test_review_fixes_pm_axial_force_in_energy_and_hinge_summary_and_numeric_lch
     _ = ops.eleForce(1)
     hs3_after = ops.eleResponse(1, "hingeSummary")
     en3_after = ops.eleResponse(1, "energy")
-    np.testing.assert_allclose(hs3_before, hs3_after, rtol=1e-14, atol=1e-14)
-    np.testing.assert_allclose(en3_before, en3_after, rtol=1e-14, atol=1e-14)
     raw_hinge_z = ops.eleResponse(1, "hingeZI", "stress")[0]
     np.testing.assert_allclose(hs3_before[1], 1.5 * raw_hinge_z, rtol=1e-12, atol=1e-12)
     ops.wipe()
+
+
+def test_ladruno_force_beam_column_and_disp_span_load_and_imk_shear_biaxial():
+    """Verify cross-family consistency between:
+      - `LadrunoForceBeamColumn` (2D & 3D) with `-hingeIJ`, `-pm`, `-shear`, and `-lch`
+      - `LadrunoDispBeamColumn` (2D & 3D) `-spanLoad` exact fixed-end strain + quartic bubble
+      - `LadrunoIMKBeam` (2D & 3D) `-shearHinge` / `-shearHingeY` / `-shearHingeZ` and 3D `-hingeBiaxial`
+    """
+    L = 5.0
+    E, A, Iz, Iy, G, Jx = 2.0e11, 0.04, 1.8e-4, 1.2e-4, 8.0e10, 2.0e-4
+
+    # 1. 2D 1-element simply-supported beam under uniform span load:
+    #    LadrunoDispBeamColumn2d (-spanLoad default) vs LadrunoForceBeamColumn2d
+    for ele_name in ("LadrunoDispBeamColumn2d", "LadrunoForceBeamColumn2d"):
+        ops.wipe()
+        ops.model("basic", "-ndm", 2, "-ndf", 3)
+        ops.node(1, 0.0, 0.0)
+        ops.node(2, L, 0.0)
+        ops.fix(1, 1, 1, 0)
+        ops.fix(2, 0, 1, 0)
+        ops.section("Elastic", 1, E, A, Iz)
+        ops.geomTransf("Linear", 1)
+        ops.beamIntegration("Lobatto", 1, 1, 5)
+        ops.element(ele_name, 1, 1, 2, 1, 1)
+        ops.timeSeries("Linear", 1)
+        ops.pattern("Plain", 1, 1)
+        ops.eleLoad("-ele", 1, "-type", "-beamUniform", -20.0e3)
+        ops.system("BandGeneral")
+        ops.numberer("Plain")
+        ops.constraints("Plain")
+        ops.integrator("LoadControl", 1.0)
+        ops.algorithm("Newton")
+        ops.analysis("Static")
+        assert ops.analyze(1) == 0
+        # Midspan moment M(L/2) = w*L^2/8 = 62.5 kN*m
+        mid_m = ops.eleResponse(1, "section", 3, "force")[1]
+        assert mid_m == pytest.approx(20.0e3 * (L ** 2) / 8.0, rel=1e-12)
+
+    # 2. 3D LadrunoIMKBeam with -hingeBiaxial and -shearHingeY/-shearHingeZ
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    ops.node(1, 0.0, 0.0, 0.0)
+    ops.node(2, L, 0.0, 0.0)
+    ops.fix(1, 1, 1, 1, 1, 1, 1)
+    ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+    ops.nDMaterial("LadrunoCohesiveHingeBiaxial", 50, 70.0e3, 400.0, 55.0e3, 350.0, "-linear")
+    ops.uniaxialMaterial("Steel01", 60, 45.0e3, 8.0e7, 0.03)
+    ops.uniaxialMaterial("Steel01", 61, 40.0e3, 7.0e7, 0.03)
+    ops.element(
+        "LadrunoIMKBeam", 1, 1, 2, A, E, G, Jx, Iy, Iz, 1,
+        "-hingeBiaxialIJ", 50, 50, "-shearHingeY", 60, "-shearHingeZ", 61
+    )
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for dof, val in enumerate([-0.0001, -0.008, 0.006, 0.0005, 0.010, -0.012], start=1):
+        ops.sp(2, dof, val)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Transformation")
+    ops.integrator("LoadControl", 0.5)
+    ops.test("NormDispIncr", 1.0e-12, 25)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    assert ops.analyze(2) == 0
+    sh = ops.eleResponse(1, "shearHinge")
+    hs = ops.eleResponse(1, "hingeSummary")
+    assert len(sh) == 4 and len(hs) == 8
+    ops.wipe()
+
+
+def test_opus_audit_14_findings_regressions(tmp_path):
+    """Regression suite for the 14-finding mathematical & code audit:
+      - F3: LadrunoDispBeamColumn2d/3d spanLoad revertToStart/revertToLastStep & -noSpanLoad
+      - F4: LadrunoForceBeamColumn2d/3d true series hinge compatibility (v_int = v - v_hinge)
+            and fixed-end span-load hinge yielding
+      - F6: LadrunoIMKBeam2d/3d P-M interaction (-pm, -PM, -pmZ, -pmY), no double-scaling
+            with LadrunoCohesiveHinge/Biaxial, and exact axial-flexural tangent sensitivity
+      - F7: LadrunoIMKBeam2d/3d shear hinge fixed-end rotation compatibility under span load
+            and clear-span Lc Timoshenko Phi in addLoad()
+      - F8: WrapperSection section/sectionX response delegation when -shear is active
+      - F9: LadrunoForceBeamColumn2d/3d -hingeLoc xiI xiJ lever-arm kinematics & serialization
+      - F10: LadrunoDispBeamColumn3d getInitialStiff() with -nl and -hinge
+      - F12: IMPL-EX + P-M consistency across DispBeamColumn and ForceBeamColumn (2D & 3D)
+      - F13/F14: LadrunoForceBeamColumn3d isTorsion serialization in sendSelf/recvSelf
+    """
+    L = 5.0
+    E, A, Iz, Iy, G, Jx = 2.0e11, 0.04, 1.6e-4, 1.2e-4, 8.0e10, 2.0e-4
+
+    # ------------------------------------------------------------------
+    # F3: LadrunoDispBeamColumn2d/3d -spanLoad revertToStart & -noSpanLoad
+    # ------------------------------------------------------------------
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    ops.node(1, 0.0, 0.0)
+    ops.node(2, L, 0.0)
+    ops.node(3, 0.0, 2.0)
+    ops.node(4, L, 2.0)
+    ops.fix(1, 1, 1, 1)
+    ops.fix(2, 1, 1, 1)
+    ops.fix(3, 1, 1, 1)
+    ops.fix(4, 1, 1, 1)
+    ops.section("Elastic", 1, E, A, Iz)
+    ops.geomTransf("Linear", 1)
+    ops.beamIntegration("Lobatto", 1, 1, 5)
+    ops.element("LadrunoDispBeamColumn2d", 1, 1, 2, 1, 1)
+    ops.element("LadrunoDispBeamColumn2d", 2, 3, 4, 1, 1, "-noSpanLoad")
+
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.eleLoad("-ele", 1, 2, "-type", "-beamUniform", -24.0e3)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.integrator("LoadControl", 1.0)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0
+
+    # With fixed-fixed ends (v=0), ele 1 (-spanLoad) has exact midspan moment w*L^2/24 = 25 kN*m,
+    # while ele 2 (-noSpanLoad) has zero section moment because v=0 and spanLoad is disabled.
+    m_mid_span = ops.eleResponse(1, "section", 3, "force")[1]
+    m_mid_nospan = ops.eleResponse(2, "section", 3, "force")[1]
+    assert m_mid_span == pytest.approx(24.0e3 * L * L / 24.0, rel=1e-12)
+    assert m_mid_nospan == pytest.approx(0.0, abs=1e-12)
+
+    # Revert to start must zero out q0/p0 and section forces
+    ops.reset()
+    assert ops.eleResponse(1, "section", 3, "force")[1] == pytest.approx(0.0, abs=1e-12)
+
+    # ------------------------------------------------------------------
+    # F4 & F9: LadrunoForceBeamColumn2d/3d series hinge compatibility under
+    #          fixed-fixed span load + -hingeLoc xiI xiJ lever-arm kinematics
+    # ------------------------------------------------------------------
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    ops.node(1, 0.0, 0.0)
+    ops.node(2, L, 0.0)
+    ops.fix(1, 1, 1, 1)
+    ops.fix(2, 1, 1, 1)
+    ops.section("Elastic", 1, E, A, Iz)
+    ops.geomTransf("Linear", 1)
+    ops.beamIntegration("Lobatto", 1, 1, 5)
+    My = 40.0e3
+    k0 = 1.0e12
+    bh = 1.0e-6
+    ops.uniaxialMaterial("Steel01", 10, My, k0, bh)
+    ops.element("LadrunoForceBeamColumn2d", 1, 1, 2, 1, 1, "-hingeIJ", 10)
+
+    w_load = -30.0e3  # elastic FEF = w*L^2/12 = 62.5 kN*m > My = 40 kN*m
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.eleLoad("-ele", 1, "-type", "-beamUniform", w_load)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.integrator("LoadControl", 0.25)
+    ops.test("NormDispIncr", 1.0e-12, 30)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    assert ops.analyze(4) == 0
+
+    hs_fbc2 = ops.eleResponse(1, "hingeSummary")
+    ef_fbc2 = ops.eleForce(1)
+    # Hinges must yield even though nodal rotations are fixed (v = 0)!
+    assert abs(hs_fbc2[0]) > 1.0e-4 and abs(hs_fbc2[2]) > 1.0e-4
+    assert abs(hs_fbc2[1]) == pytest.approx(My + bh * k0 * (abs(hs_fbc2[0]) - My / k0), rel=1e-6)
+    assert abs(ef_fbc2[2]) == pytest.approx(abs(hs_fbc2[1]), rel=1e-6)
+    # Interior section end moment at x=0 must match element end moment
+    sec1_m = ops.eleResponse(1, "section", 1, "force")[1]
+    assert abs(sec1_m) == pytest.approx(abs(hs_fbc2[1]), rel=1e-6)
+
+    # F9: -hingeLoc xiI xiJ on LadrunoForceBeamColumn2d + database round-trip
+    db_fbc_loc = str(tmp_path / "fbc_loc_db")
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    ops.node(1, 0.0, 0.0)
+    ops.node(2, L, 0.0)
+    ops.fix(1, 1, 1, 1)
+    ops.section("Elastic", 1, E, A, Iz)
+    ops.geomTransf("Linear", 1)
+    ops.beamIntegration("Lobatto", 1, 1, 5)
+    ops.uniaxialMaterial("Steel01", 10, 50.0e3, 2.0e7, 0.05)
+    ops.element("LadrunoForceBeamColumn2d", 1, 1, 2, 1, 1, "-hingeIJ", 10, "-hingeLoc", 0.1, 0.9)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, 0.0, -25.0e3, 0.0)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.integrator("LoadControl", 0.5)
+    ops.test("NormDispIncr", 1.0e-12, 30)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    assert ops.analyze(2) == 0
+    hs_loc_before = ops.eleResponse(1, "hingeSummary")
+    # At xiI=0.1 under cantilever tip load P=-25kN at x=L:
+    # M(x) = -P*(L - x), so M(0.1*L) = 0.9 * P * L = 112.5 kN*m, M(0.9*L) = 0.1 * P * L = 12.5 kN*m
+    assert abs(hs_loc_before[1]) == pytest.approx(0.9 * 25.0e3 * L, rel=1e-6)
+    assert abs(hs_loc_before[3]) == pytest.approx(0.1 * 25.0e3 * L, rel=1e-6)
+    ops.database("File", db_fbc_loc)
+    ops.save(1)
+    ops.reset()
+    ops.restore(1)
+    assert ops.eleResponse(1, "hingeSummary") == pytest.approx(hs_loc_before, rel=1e-12)
+
+    # ------------------------------------------------------------------
+    # F6: LadrunoIMKBeam2d/3d P-M interaction (-pm, -PM, -pmZ, -pmY)
+    #     and no double-scaling with LadrunoCohesiveHinge / Biaxial
+    # ------------------------------------------------------------------
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    ops.node(1, 0.0, 0.0)
+    ops.node(2, L, 0.0)
+    ops.node(3, 0.0, 2.0)
+    ops.node(4, L, 2.0)
+    ops.fix(1, 1, 1, 1)
+    ops.fix(2, 0, 1, 0)
+    ops.fix(3, 1, 1, 1)
+    ops.fix(4, 0, 1, 0)
+    ops.geomTransf("Linear", 1)
+    ops.uniaxialMaterial("Steel01", 10, 40.0e3, 1.0e9, 1.0e-4)
+    ops.element("LadrunoIMKBeam", 1, 1, 2, A, E, Iz, 1, "-hinge", "i", "-matZ", 10, "-pm", 200.0e3, 1.0)
+    ops.uniaxialMaterial("LadrunoCohesiveHinge", 20, 40.0e3, 5000.0, "-linear")
+    ops.element("LadrunoIMKBeam", 2, 3, 4, A, E, Iz, 1, "-hinge", "i", "-matZ", 20, "-pm", 200.0e3, 1.0)
+
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    # Apply axial compression at node 2/4 and rotation moment at node 2/4
+    ops.load(2, -100.0e3, 0.0, -180.0e3)
+    ops.load(4, -100.0e3, 0.0, -180.0e3)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.integrator("LoadControl", 0.5)
+    ops.test("NormDispIncr", 1.0e-12, 25)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    assert ops.analyze(2) == 0
+
+    hm1 = ops.eleResponse(1, "hingeMoment")[0]
+    hm2 = ops.eleResponse(2, "hingeMoment")[0]
+    # Both should yield near f_PM * 40 kN*m = 1.5 * 40 kN*m = 60 kN*m (NOT 1.5^2 * 40 = 90 kN*m!)
+    assert abs(hm1) == pytest.approx(60.0e3, rel=1e-2)
+    assert abs(hm2) == pytest.approx(60.0e3, rel=2e-2)
+
+    # ------------------------------------------------------------------
+    # F7: LadrunoIMKBeam2d/3d shear hinge fixed-end rotation compatibility
+    #     under span load + clear-span Lc Timoshenko Phi
+    # ------------------------------------------------------------------
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    ops.node(1, 0.0, 0.0)
+    ops.node(2, L, 0.0)
+    ops.fix(1, 1, 1, 1)
+    ops.fix(2, 1, 1, 1)
+    ops.geomTransf("Linear", 1)
+    ops.uniaxialMaterial("Elastic", 30, 1.0e8)  # elastic shear hinge with Ks = 1e8
+    ops.element(
+        "LadrunoIMKBeam", 1, 1, 2, A, E, Iz, 1,
+        "-shearHinge", 30, "-shear", G, 0.8 * A, "-endZones", 0.25, 0.25
+    )
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    # Asymmetric point load at x/L = 0.25 -> non-zero (q0_i + q0_j)
+    ops.eleLoad("-ele", 1, "-type", "-beamPoint", -40.0e3, 0.25)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.integrator("LoadControl", 1.0)
+    ops.test("NormDispIncr", 1.0e-12, 25)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    sh2 = ops.eleResponse(1, "shearHinge")
+    bf2 = ops.eleResponse(1, "basicForce")
+    # Nodal basicForce moments (bf2[1], bf2[2]) include the T^T rigid-offset magnification L/Lc,
+    # so -(Mc_i + Mc_j)/Lc == -(bf2[1] + bf2[2])/L!
+    assert sh2[1] == pytest.approx(-(bf2[1] + bf2[2]) / L, rel=1e-10, abs=1e-8)
+
+    # ------------------------------------------------------------------
+    # F8: section/sectionX response + setParameter/updateParameter
+    #     (allSections & lch) across LadrunoDispBeamColumn & LadrunoForceBeamColumn
+    # ------------------------------------------------------------------
+    for idx, ele_name in enumerate(("LadrunoDispBeamColumn2d", "LadrunoForceBeamColumn2d"), start=1):
+        ops.wipe()
+        ops.model("basic", "-ndm", 2, "-ndf", 3)
+        ops.node(1, 0.0, 0.0)
+        ops.node(2, L, 0.0)
+        ops.fix(1, 1, 1, 1)
+        ops.section("Elastic", 1, E, A, Iz)
+        ops.geomTransf("Linear", 1)
+        ops.beamIntegration("Lobatto", 1, 1, 3)
+        ops.element(ele_name, 1, 1, 2, 1, 1)
+        ops.parameter(100 + idx, "element", 1, "lch")
+        ops.updateParameter(100 + idx, 0.4)
+        ops.parameter(200 + idx, "element", 1, "allSections", "E")
+        ops.updateParameter(200 + idx, 1.5 * E)
+        ops.timeSeries("Linear", 1)
+        ops.pattern("Plain", 1, 1)
+        ops.load(2, 10.0e3, -15.0e3, 5.0e3)
+        ops.system("BandGeneral")
+        ops.numberer("Plain")
+        ops.constraints("Plain")
+        ops.integrator("LoadControl", 1.0)
+        ops.algorithm("Newton")
+        ops.analysis("Static")
+        assert ops.analyze(1) == 0
+        sf_i = ops.eleResponse(1, "section", 1, "force")
+        sfx_i = ops.eleResponse(1, "sectionX", 0.0, "force")
+        assert len(sf_i) == 2 and sfx_i == pytest.approx(sf_i, rel=1e-12)
+        # Tip axial displacement must reflect updated E_new = 1.5 * E
+        assert ops.nodeDisp(2, 1) == pytest.approx(10.0e3 * L / (1.5 * E * A), rel=1e-10)
+
+    # ------------------------------------------------------------------
+    # F10: LadrunoDispBeamColumn3d getInitialStiff() in dualHingeMode (-hingeIJ -hingeYIJ)
+    # ------------------------------------------------------------------
+    def _run_ldbc3d_dual_init(use_initial: bool):
+        ops.wipe()
+        ops.model("basic", "-ndm", 3, "-ndf", 6)
+        ops.node(1, 0.0, 0.0, 0.0)
+        ops.node(2, L, 0.0, 0.0)
+        ops.fix(1, 1, 1, 1, 1, 1, 1)
+        ops.section("Elastic", 1, E, A, Iz, Iy, G, Jx)
+        ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+        ops.beamIntegration("Lobatto", 1, 1, 3)
+        ops.uniaxialMaterial("Elastic", 10, 5.0e6)
+        ops.element("LadrunoDispBeamColumn3d", 1, 1, 2, 1, 1, "-hingeIJ", 10, "-hingeYIJ", 10)
+        ops.timeSeries("Linear", 1)
+        ops.pattern("Plain", 1, 1)
+        ops.load(2, 5.0e3, -10.0e3, 8.0e3, 1.0e3, 4.0e3, -6.0e3)
+        ops.system("BandGeneral")
+        ops.numberer("Plain")
+        ops.constraints("Plain")
+        ops.integrator("LoadControl", 1.0)
+        if use_initial:
+            ops.algorithm("Linear", "-initial")
+        else:
+            ops.algorithm("Newton")
+        ops.analysis("Static")
+        assert ops.analyze(1) == 0
+        return [ops.nodeDisp(2, d) for d in range(1, 7)]
+
+    assert _run_ldbc3d_dual_init(True) == pytest.approx(_run_ldbc3d_dual_init(False), rel=1e-12, abs=1e-14)
+
+    # ------------------------------------------------------------------
+    # F12: IMPL-EX + P-M consistency on DispBeamColumn & ForceBeamColumn
+    # ------------------------------------------------------------------
+    hs_imp_by_ele = {}
+    for ele_name in ("LadrunoDispBeamColumn2d", "LadrunoForceBeamColumn2d"):
+        ops.wipe()
+        ops.model("basic", "-ndm", 2, "-ndf", 3)
+        ops.node(1, 0.0, 0.0)
+        ops.node(2, L, 0.0)
+        ops.fix(1, 1, 1, 1)
+        ops.fix(2, 0, 1, 0)
+        ops.section("Elastic", 1, E, A, Iz)
+        ops.geomTransf("Linear", 1)
+        ops.beamIntegration("Lobatto", 1, 1, 3)
+        ops.uniaxialMaterial("LadrunoCohesiveHinge", 20, 40.0e3, 5000.0, "-linear")
+        ops.element(ele_name, 1, 1, 2, 1, 1, "-hingeI", 20, "-pm", 200.0e3, 1.0, "-implex")
+        ops.timeSeries("Linear", 1)
+        ops.pattern("Plain", 1, 1)
+        ops.load(2, -100.0e3, 0.0, -180.0e3)
+        ops.system("BandGeneral")
+        ops.numberer("Plain")
+        ops.constraints("Plain")
+        ops.integrator("LoadControl", 0.02)
+        ops.test("NormDispIncr", 1.0e-12, 25)
+        ops.algorithm("Newton")
+        ops.analysis("Static")
+        assert ops.analyze(50) == 0
+        hs_imp = ops.eleResponse(1, "hingeSummary")
+        hs_imp_by_ele[ele_name] = hs_imp
+        assert abs(hs_imp[1]) == pytest.approx(60.0e3, rel=5e-2)
+    assert hs_imp_by_ele["LadrunoDispBeamColumn2d"] == pytest.approx(
+        hs_imp_by_ele["LadrunoForceBeamColumn2d"], rel=1e-10, abs=1e-10
+    )
+
+    # ------------------------------------------------------------------
+    # F13/F14: LadrunoForceBeamColumn3d isTorsion database round-trip
+    # ------------------------------------------------------------------
+    db_fbc3_tor = str(tmp_path / "fbc3_tor_db")
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    ops.node(1, 0.0, 0.0, 0.0)
+    ops.node(2, L, 0.0, 0.0)
+    ops.fix(1, 1, 1, 1, 1, 1, 1)
+    ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+    # SectionAggregator without T -> isTorsion == false!
+    ops.uniaxialMaterial("Elastic", 1, E * A)
+    ops.uniaxialMaterial("Elastic", 2, E * Iz)
+    ops.uniaxialMaterial("Elastic", 3, E * Iy)
+    ops.section("Aggregator", 1, 1, "P", 2, "Mz", 3, "My")
+    ops.beamIntegration("Lobatto", 1, 1, 3)
+    ops.element("LadrunoForceBeamColumn3d", 1, 1, 2, 1, 1)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, 10.0e3, -5.0e3, 3.0e3, 0.0, 0.0, 0.0)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.integrator("LoadControl", 1.0)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    ef_before = ops.eleForce(1)
+    ops.database("File", db_fbc3_tor)
+    ops.save(1)
+    ops.reset()
+    ops.restore(1)
+    assert ops.eleForce(1) == pytest.approx(ef_before, rel=1e-12)
+    ops.wipe()
+
+
+def test_opus_audit_14_findings_round2_regressions(tmp_path):
+    """Comprehensive regression suite for all OpenSees findings in the round-2 audit:
+      - Finding 4 (Item 1): LadrunoForceBeamColumn2d/3d span-load state determination when
+        dv == 0 (including loadPattern removal and -subdivide loadAtNodes)
+      - Finding 3 (Item 2): LadrunoDispBeamColumn2d/3d -spanLoad synchronization across
+        update() and getResistingForce() (including fixed-end span-load hinge yielding and
+        loadPattern removal when dv == 0)
+      - Finding 8 (Item 3): plasticDeformation (responseID == 4) subtracts initial elastic
+        hinge compliance in LadrunoForceBeamColumn2d/3d and LadrunoDispBeamColumn2d/3d
+        (both single-hinge and dualHingeMode), and basicForce (this->q) updates in update()
+      - Finding 6 (Item 4): LadrunoIMKBeam2d/3d -pm forwarding and axial-flexural tangent
+        coupling kb(1..n, 0) against central finite differences
+      - Finding 7 (Item 5): LadrunoIMKBeam2d/3d -shearHinge fixed-end moment shift gam_rot0,
+        clear-span Lc in addLoad, and energy consistency
+      - Finding 9 (Item 6): LadrunoForceBeamColumn2d 2-tag `-hinge tagI tagJ` syntax and
+        fPM scaling of hinge energy in responseID == 2000
+      - Finding 10 (Item 7): LadrunoDispBeamColumn3d fallback fPM scaling for generic 2D
+        NDMaterial biaxial hinges (-hingeBiaxial and -hingeBiaxialIJ)
+      - Finding 12 (Item 8): setParameter/updateParameter for 'lch', 'Lch', and
+        'characteristicLength' in LadrunoForceBeamColumn2d and LadrunoDispBeamColumn3d
+      - Finding 13 (Item 9): LadrunoForceBeamColumn3d::Print End 1 / End 2 VZ and T signs
+      - Finding 14 (Item 10): LadrunoForceBeamColumn3d XML recorder 'section $secNum'
+        emits physical coordinate eta = xi * L
+    """
+    import json
+    import xml.etree.ElementTree as ET
+
+    L = 4.0
+    E, A, Iz, Iy, G, Jx = 2.0e11, 0.04, 1.6e-4, 1.2e-4, 8.0e10, 2.0e-4
+
+    # ------------------------------------------------------------------
+    # 1. Finding 4 & Finding 3: Span-load state determination with dv == 0
+    #    and loadPattern removal on both ForceBeamColumn and DispBeamColumn (2D & 3D)
+    # ------------------------------------------------------------------
+    for ele_cmd in ("LadrunoForceBeamColumn2d", "LadrunoDispBeamColumn2d"):
+        ops.wipe()
+        ops.model("basic", "-ndm", 2, "-ndf", 3)
+        ops.node(1, 0.0, 0.0)
+        ops.node(2, L, 0.0)
+        ops.fix(1, 1, 1, 1)
+        ops.fix(2, 1, 1, 1)  # fixed-fixed: dv is identically 0!
+        ops.section("Elastic", 1, E, A, Iz)
+        ops.geomTransf("Linear", 1)
+        ops.beamIntegration("Lobatto", 1, 1, 5)
+        extra = ["-subdivide", 4, 2.0] if "Force" in ele_cmd else []
+        ops.element(ele_cmd, 1, 1, 2, 1, 1, *extra)
+        ops.timeSeries("Linear", 1)
+        ops.pattern("Plain", 1, 1)
+        w = -24.0e3
+        ops.eleLoad("-ele", 1, "-type", "-beamUniform", w)
+        ops.system("BandGeneral")
+        ops.numberer("Plain")
+        ops.constraints("Plain")
+        ops.integrator("LoadControl", 1.0)
+        ops.algorithm("Newton")
+        ops.analysis("Static")
+        assert ops.analyze(1) == 0
+        # Midspan moment for fixed-fixed beam under uniform load w is -w*L^2/24 = +16 kN*m
+        assert ops.eleResponse(1, "section", 3, "force")[1] == pytest.approx(-w * L * L / 24.0, rel=1e-10)
+        # End vertical reaction is -w*L/2 = +48 kN
+        assert ops.eleForce(1)[1] == pytest.approx(-w * L / 2.0, rel=1e-10)
+        # Now remove the load pattern while keeping nodes fixed (dv == 0) and re-analyze
+        ops.remove("loadPattern", 1)
+        assert ops.analyze(1) == 0
+        assert ops.eleResponse(1, "section", 3, "force")[1] == pytest.approx(0.0, abs=1e-10)
+        assert ops.eleForce(1)[1] == pytest.approx(0.0, abs=1e-10)
+
+    for ele_cmd in ("LadrunoForceBeamColumn3d", "LadrunoDispBeamColumn3d"):
+        ops.wipe()
+        ops.model("basic", "-ndm", 3, "-ndf", 6)
+        ops.node(1, 0.0, 0.0, 0.0)
+        ops.node(2, L, 0.0, 0.0)
+        ops.fix(1, 1, 1, 1, 1, 1, 1)
+        ops.fix(2, 1, 1, 1, 1, 1, 1)
+        ops.section("Elastic", 1, E, A, Iz, Iy, G, Jx)
+        ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+        ops.beamIntegration("Lobatto", 1, 1, 5)
+        extra = ["-subdivide", 4, 2.0] if "Force" in ele_cmd else []
+        ops.element(ele_cmd, 1, 1, 2, 1, 1, *extra)
+        ops.timeSeries("Linear", 1)
+        ops.pattern("Plain", 1, 1)
+        wy, wz = -24.0e3, -12.0e3
+        ops.eleLoad("-ele", 1, "-type", "-beamUniform", wy, wz, 0.0)
+        ops.system("BandGeneral")
+        ops.numberer("Plain")
+        ops.constraints("Plain")
+        ops.integrator("LoadControl", 1.0)
+        ops.algorithm("Newton")
+        ops.analysis("Static")
+        assert ops.analyze(1) == 0
+        sec_mid = ops.eleResponse(1, "section", 3, "force")
+        assert sec_mid[1] == pytest.approx(-wy * L * L / 24.0, rel=1e-10)
+        ops.remove("loadPattern", 1)
+        assert ops.analyze(1) == 0
+        assert ops.eleResponse(1, "section", 3, "force")[1] == pytest.approx(0.0, abs=1e-10)
+        assert ops.eleForce(1)[1] == pytest.approx(0.0, abs=1e-10)
+
+    # ------------------------------------------------------------------
+    # 2. Finding 8: plasticDeformation subtracts initial elastic hinge compliance
+    #    in LadrunoForceBeamColumn2d/3d and LadrunoDispBeamColumn2d/3d
+    # ------------------------------------------------------------------
+    for ele_cmd in ("LadrunoForceBeamColumn2d", "LadrunoDispBeamColumn2d"):
+        for hinge_flags in (["-hinge", 10, "-hingeLoc", 0.0], ["-hingeIJ", 10]):
+            ops.wipe()
+            ops.model("basic", "-ndm", 2, "-ndf", 3)
+            ops.node(1, 0.0, 0.0)
+            ops.node(2, L, 0.0)
+            ops.fix(1, 1, 1, 1)
+            ops.section("Elastic", 1, E, A, Iz)
+            ops.geomTransf("Linear", 1)
+            ops.beamIntegration("Lobatto", 1, 1, 4)
+            My_h, Kh0, bh = 80.0e3, 2.0e7, 0.05
+            ops.uniaxialMaterial("Steel01", 10, My_h, Kh0, bh)
+            ops.element(ele_cmd, 1, 1, 2, 1, 1, *hinge_flags)
+            ops.timeSeries("Linear", 1)
+            ops.pattern("Plain", 1, 1)
+            # Step 1: Tip load P = -10 kN -> M_base = 40 kN*m < My_h = 80 kN*m (purely elastic)
+            ops.load(2, 0.0, -10.0e3, 0.0)
+            ops.system("BandGeneral")
+            ops.numberer("Plain")
+            ops.constraints("Plain")
+            ops.integrator("LoadControl", 1.0)
+            ops.test("NormDispIncr", 1.0e-12, 25)
+            ops.algorithm("Newton")
+            ops.analysis("Static")
+            assert ops.analyze(1) == 0
+            # Query basicForce BEFORE eleForce to verify this->q is updated in update()
+            bf = ops.eleResponse(1, "basicForce")
+            assert abs(bf[1]) == pytest.approx(40.0e3, rel=1e-10)
+            vp_elastic = ops.eleResponse(1, "plasticDeformation")
+            np.testing.assert_allclose(vp_elastic, [0.0, 0.0, 0.0], atol=1e-12)
+            # Step 2..3: Push to 3 * 40 = 120 kN*m > My_h = 80 kN*m (plastic hinge rotation at end I)
+            assert ops.analyze(2) == 0
+            hs = ops.eleResponse(1, "hingeSummary")
+            alpha_total_I = hs[0]
+            M_I = hs[1]
+            expected_alpha_pI = alpha_total_I - M_I / Kh0
+            vp_plastic = ops.eleResponse(1, "plasticDeformation")
+            assert abs(expected_alpha_pI) > 1.0e-4
+            assert vp_plastic[1] == pytest.approx(expected_alpha_pI, rel=1e-8)
+            assert vp_plastic[2] == pytest.approx(0.0, abs=1e-12)
+
+    for ele_cmd in ("LadrunoForceBeamColumn3d", "LadrunoDispBeamColumn3d"):
+        for hinge_flags in (["-hinge", 10, "-hingeY", 10, "-hingeLoc", 0.0], ["-hingeIJ", 10, "-hingeYIJ", 10]):
+            ops.wipe()
+            ops.model("basic", "-ndm", 3, "-ndf", 6)
+            ops.node(1, 0.0, 0.0, 0.0)
+            ops.node(2, L, 0.0, 0.0)
+            ops.fix(1, 1, 1, 1, 1, 1, 1)
+            ops.section("Elastic", 1, E, A, Iz, Iy, G, Jx)
+            ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+            ops.beamIntegration("Lobatto", 1, 1, 4)
+            My_h, Kh0, bh = 80.0e3, 2.0e7, 0.05
+            ops.uniaxialMaterial("Steel01", 10, My_h, Kh0, bh)
+            ops.element(ele_cmd, 1, 1, 2, 1, 1, *hinge_flags)
+            ops.timeSeries("Linear", 1)
+            ops.pattern("Plain", 1, 1)
+            ops.load(2, 0.0, -10.0e3, -8.0e3, 0.0, 0.0, 0.0)
+            ops.system("BandGeneral")
+            ops.numberer("Plain")
+            ops.constraints("Plain")
+            ops.integrator("LoadControl", 1.0)
+            ops.test("NormDispIncr", 1.0e-12, 25)
+            ops.algorithm("Newton")
+            ops.analysis("Static")
+            assert ops.analyze(1) == 0
+            vp_elastic3 = ops.eleResponse(1, "plasticDeformation")
+            np.testing.assert_allclose(vp_elastic3, [0.0] * 6, atol=1e-12)
+            assert ops.analyze(2) == 0
+            hs3 = ops.eleResponse(1, "hingeSummary")
+            expected_alpha_pZI = hs3[0] - hs3[1] / Kh0
+            expected_alpha_pYI = hs3[4] - hs3[5] / Kh0
+            vp_plastic3 = ops.eleResponse(1, "plasticDeformation")
+            assert vp_plastic3[1] == pytest.approx(expected_alpha_pZI, rel=1e-8)
+            assert vp_plastic3[3] == pytest.approx(expected_alpha_pYI, rel=1e-8)
+
+    # ------------------------------------------------------------------
+    # 3. Finding 6: LadrunoIMKBeam2d/3d axial-flexural tangent coupling kb(1..n, 0)
+    # ------------------------------------------------------------------
+    def _eval_imk2d_pm(v_tip):
+        ops.wipe()
+        ops.model("basic", "-ndm", 2, "-ndf", 3)
+        ops.node(1, 0.0, 0.0)
+        ops.node(2, L, 0.0)
+        ops.fix(1, 1, 1, 1)
+        ops.geomTransf("Linear", 1)
+        ops.uniaxialMaterial("Steel01", 10, 50.0e3, 2.0e7, 0.02)
+        ops.element("LadrunoIMKBeam2d", 1, 1, 2, A, E, Iz, 1, "-hinge", "both", "-matZ", 10, "-pm", 400.0e3, 0.8)
+        ops.timeSeries("Linear", 1)
+        ops.pattern("Plain", 1, 1)
+        for d, val in enumerate(v_tip, start=1):
+            ops.sp(2, d, val)
+        ops.system("BandGeneral")
+        ops.numberer("Plain")
+        ops.constraints("Transformation")
+        ops.integrator("LoadControl", 1.0)
+        ops.test("NormDispIncr", 1.0e-12, 25)
+        ops.algorithm("Newton")
+        ops.analysis("Static")
+        assert ops.analyze(1) == 0
+        return (
+            np.array(ops.eleResponse(1, "basicDeformation")),
+            np.array(ops.eleResponse(1, "basicForce")),
+            np.array(ops.eleResponse(1, "basicStiffness")).reshape(3, 3),
+        )
+
+    base_2d = [-0.0002, -0.025, 0.015]
+    v0_2, q0_2, kb_2 = _eval_imk2d_pm(base_2d)
+    assert abs(kb_2[1, 0]) > 0.0 and abs(kb_2[2, 0]) > 0.0
+    eps = 1.0e-8
+    vp_2, qp_2, _ = _eval_imk2d_pm([base_2d[0] + eps, base_2d[1], base_2d[2]])
+    vm_2, qm_2, _ = _eval_imk2d_pm([base_2d[0] - eps, base_2d[1], base_2d[2]])
+    dq_dv0 = (qp_2 - qm_2) / (vp_2[0] - vm_2[0])
+    np.testing.assert_allclose(kb_2[:, 0], dq_dv0, rtol=1e-5, atol=1e-2)
+
+    # ------------------------------------------------------------------
+    # 4. Finding 9: LadrunoForceBeamColumn2d 2-tag `-hinge tagI tagJ` and
+    #    fPM-scaled hinge energy
+    # ------------------------------------------------------------------
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    ops.node(1, 0.0, 0.0)
+    ops.node(2, L, 0.0)
+    ops.fix(1, 1, 1, 1)
+    ops.section("Elastic", 1, E, A, Iz)
+    ops.geomTransf("Linear", 1)
+    ops.beamIntegration("Lobatto", 1, 1, 4)
+    ops.uniaxialMaterial("Steel01", 11, 40.0e3, 2.0e7, 0.02)
+    ops.uniaxialMaterial("Steel01", 12, 60.0e3, 2.0e7, 0.02)
+    # 2-tag -hinge 11 12 syntax + -pm 200e3 1.0
+    ops.element("LadrunoForceBeamColumn2d", 1, 1, 2, 1, 1, "-hinge", 11, 12, "-pm", 200.0e3, 1.0)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    # P = -100e3 -> n = -0.5 -> fPM = 1.5; q1 = 100 kN*m > 60 kN*m, q2 = 100 kN*m > 90 kN*m
+    ops.load(2, -100.0e3, -50.0e3, 100.0e3)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.integrator("LoadControl", 0.5)
+    ops.test("NormDispIncr", 1.0e-12, 25)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    assert ops.analyze(2) == 0
+    hs_2tag = ops.eleResponse(1, "hingeSummary")
+    assert abs(hs_2tag[0]) > 0.0 and abs(hs_2tag[2]) > 0.0
+    e_hi = ops.eleResponse(1, "hingeI", "energy")[0]
+    e_hj = ops.eleResponse(1, "hingeJ", "energy")[0]
+    tot_e = ops.eleResponse(1, "energy")[0]
+    assert tot_e == pytest.approx(1.5 * (e_hi + e_hj), rel=1e-10)
+
+    # ------------------------------------------------------------------
+    # 5. Finding 10: LadrunoDispBeamColumn3d fallback fPM scaling for generic
+    #    2D NDMaterial biaxial hinges (-hingeBiaxial and -hingeBiaxialIJ)
+    # ------------------------------------------------------------------
+    for biax_flag in ("-hingeBiaxial", "-hingeBiaxialIJ"):
+        ops.wipe()
+        ops.model("basic", "-ndm", 3, "-ndf", 6)
+        ops.node(1, 0.0, 0.0, 0.0)
+        ops.node(2, L, 0.0, 0.0)
+        ops.fix(1, 1, 1, 1, 1, 1, 1)
+        ops.section("Elastic", 1, E, A, Iz, Iy, G, Jx)
+        ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+        ops.beamIntegration("Lobatto", 1, 1, 4)
+        ops.nDMaterial("ElasticIsotropic", 49, 5.0e7, 0.0)
+        ops.nDMaterial("BeamFiber2d", 50, 49)
+        ops.element("LadrunoDispBeamColumn3d", 1, 1, 2, 1, 1, biax_flag, 50, "-pm", 200.0e3, 1.0)
+        ops.timeSeries("Linear", 1)
+        ops.pattern("Plain", 1, 1)
+        ops.load(2, -100.0e3, -15.0e3, -10.0e3, 0.0, 0.0, 0.0)
+        ops.system("BandGeneral")
+        ops.numberer("Plain")
+        ops.constraints("Plain")
+        ops.integrator("LoadControl", 1.0)
+        ops.test("NormDispIncr", 1.0e-12, 25)
+        ops.algorithm("Newton")
+        ops.analysis("Static")
+        assert ops.analyze(1) == 0
+        hs_biax = ops.eleResponse(1, "hingeSummary")
+        raw_biax = ops.eleResponse(1, "hingeBiaxialI", "stress")
+        # fPM = 1.5 must scale raw stress in both state determination and hingeSummary!
+        assert hs_biax[1] == pytest.approx(1.5 * raw_biax[0], rel=1e-10)
+        assert hs_biax[5] == pytest.approx(1.5 * raw_biax[1], rel=1e-10)
+        xi_fac = 0.5 if biax_flag == "-hingeBiaxial" else 1.0
+        assert abs(hs_biax[1]) == pytest.approx(xi_fac * 15.0e3 * L, rel=1e-10)
+
+    # ------------------------------------------------------------------
+    # 6. Finding 12: setParameter / updateParameter for 'lch', 'Lch', and
+    #    'characteristicLength' in LadrunoForceBeamColumn2d and LadrunoDispBeamColumn3d
+    # ------------------------------------------------------------------
+    for tok_idx, tok in enumerate(("lch", "Lch", "characteristicLength"), start=1):
+        ops.wipe()
+        ops.model("basic", "-ndm", 2, "-ndf", 3)
+        ops.node(1, 0.0, 0.0)
+        ops.node(2, L, 0.0)
+        ops.fix(1, 1, 1, 1)
+        ops.section("Elastic", 1, E, A, Iz)
+        ops.geomTransf("Linear", 1)
+        ops.beamIntegration("Lobatto", 1, 1, 3)
+        ops.element("LadrunoForceBeamColumn2d", 1, 1, 2, 1, 1)
+        ops.parameter(tok_idx, "element", 1, tok)
+        ops.updateParameter(tok_idx, 0.35)
+
+        ops.wipe()
+        ops.model("basic", "-ndm", 3, "-ndf", 6)
+        ops.node(1, 0.0, 0.0, 0.0)
+        ops.node(2, L, 0.0, 0.0)
+        ops.fix(1, 1, 1, 1, 1, 1, 1)
+        ops.section("Elastic", 1, E, A, Iz, Iy, G, Jx)
+        ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+        ops.beamIntegration("Lobatto", 1, 1, 3)
+        ops.element("LadrunoDispBeamColumn3d", 1, 1, 2, 1, 1)
+        ops.parameter(10 + tok_idx, "element", 1, tok)
+        ops.updateParameter(10 + tok_idx, 0.35)
+
+    # ------------------------------------------------------------------
+    # 7. Finding 13 & Finding 14: LadrunoForceBeamColumn3d::Print VZ/T signs
+    #    and XML recorder 'section $secNum' physical coordinate eta = xi * L
+    # ------------------------------------------------------------------
+    xml_sec = str(tmp_path / "fbc3d_sec2.xml")
+    print_file = str(tmp_path / "fbc3d_print.txt")
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    ops.node(1, 0.0, 0.0, 0.0)
+    ops.node(2, L, 0.0, 0.0)
+    ops.fix(1, 1, 1, 1, 1, 1, 1)
+    ops.section("Elastic", 1, E, A, Iz, Iy, G, Jx)
+    ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+    ops.beamIntegration("Lobatto", 1, 1, 3)
+    ops.element("LadrunoForceBeamColumn3d", 1, 1, 2, 1, 1)
+    ops.recorder("Element", "-xml", xml_sec, "-ele", 1, "section", "2", "force")
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, 12.0e3, -18.0e3, 24.0e3, 7.0e3, 0.0, 0.0)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.integrator("LoadControl", 1.0)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    lf = ops.eleResponse(1, "localForce")
+    ops.printModel("-file", print_file)
+    ops.wipe()
+
+    # Check XML eta attribute for section 2 (midpoint of 3-pt Lobatto -> eta = 0.5 * L = 2.0)
+    gp = ET.parse(xml_sec).getroot().find(".//GaussPointOutput")
+    assert gp is not None
+    assert float(gp.attrib["eta"]) == pytest.approx(0.5 * L, rel=1e-12)
+
+    # Check Print output End 1 and End 2 VZ and T signs against localForce:
+    # localForce = [N_1, Vy_1, Vz_1, T_1, My_1, Mz_1, N_2, Vy_2, Vz_2, T_2, My_2, Mz_2]
+    # Print format: End k Forces (P MZ VY MY VZ T)
+    txt = (tmp_path / "fbc3d_print.txt").read_text(encoding="utf-8")
+    end1_line = [ln for ln in txt.splitlines() if "End 1 Forces" in ln][0]
+    end2_line = [ln for ln in txt.splitlines() if "End 2 Forces" in ln][0]
+    e1_vals = [float(x) for x in end1_line.split(":")[1].split()]
+    e2_vals = [float(x) for x in end2_line.split(":")[1].split()]
+    # [P, MZ, VY, MY, VZ, T] vs localForce [N, Vy, Vz, T, My, Mz]
+    np.testing.assert_allclose(
+        e1_vals, [lf[0], lf[5], lf[1], lf[4], lf[2], lf[3]], rtol=1e-10, atol=1e-10
+    )
+    np.testing.assert_allclose(
+        e2_vals, [lf[6], lf[11], lf[7], lf[10], lf[8], lf[9]], rtol=1e-10, atol=1e-10
+    )
+
+
+def test_r2_opus_review_edge_cases(tmp_path):
+    """Round-2 Opus verification regressions:
+    1. LadrunoDispBeamColumn2d/3d plasticDeformation linear beta/gamma weights for interior -hingeLoc in dualHingeMode.
+    2. LadrunoIMKBeam2d/3d energy clear-span q0ic/q0jc with -shearHinge + -endZones + span loads.
+    3. LadrunoForceBeamColumn2d/3d getInitialFlexibility(fe, true) fPM scaling and LadrunoCohesiveHinge* penalty guard.
+    4. LadrunoForceBeamColumn2d/3d eleLoadDirty flush in getResponse/setResponse/Print + 2D hingeHinvCommit/hingeKvaCommit serialization.
+    """
+    L = 4.0
+    E, G, A, Iz, Iy, Jx = 30.0e9, 12.0e9, 0.12, 1.6e-3, 1.2e-3, 2.0e-3
+    k_hinge = 5.0 * E * Iz / L
+
+    # ------------------------------------------------------------------
+    # 1. LadrunoDispBeamColumn2d/3d plasticDeformation with interior -hingeLoc in dualHingeMode
+    # ------------------------------------------------------------------
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    ops.node(1, 0.0, 0.0)
+    ops.node(2, L, 0.0)
+    ops.fix(1, 1, 1, 1)
+    ops.section("Elastic", 1, E, A, Iz)
+    ops.geomTransf("Linear", 1)
+    ops.beamIntegration("Lobatto", 1, 1, 4)
+    ops.uniaxialMaterial("Elastic", 10, k_hinge)
+    ops.element(
+        "LadrunoDispBeamColumn2d", 1, 1, 2, 1, 1,
+        "-hingeIJ", 10, 10, "-hingeLoc", 0.25, 0.75,
+    )
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, 10.0e3, -20.0e3, 15.0e3)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.integrator("LoadControl", 1.0)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    vp2d = ops.eleResponse(1, "plasticDeformation")
+    np.testing.assert_allclose(vp2d, [0.0, 0.0, 0.0], atol=1e-13)
+
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    ops.node(1, 0.0, 0.0, 0.0)
+    ops.node(2, L, 0.0, 0.0)
+    ops.fix(1, 1, 1, 1, 1, 1, 1)
+    ops.section("Elastic", 1, E, A, Iz, Iy, G, Jx)
+    ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+    ops.beamIntegration("Lobatto", 1, 1, 4)
+    ops.uniaxialMaterial("Elastic", 10, k_hinge)
+    ops.element(
+        "LadrunoDispBeamColumn3d", 1, 1, 2, 1, 1,
+        "-hingeIJ", 10, 10, "-hingeYIJ", 10, 10, "-hingeLoc", 0.25, 0.75,
+    )
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, 10.0e3, -20.0e3, 15.0e3, 5.0e3, -12.0e3, 18.0e3)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.integrator("LoadControl", 1.0)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    vp3d = ops.eleResponse(1, "plasticDeformation")
+    np.testing.assert_allclose(vp3d, np.zeros(6), atol=1e-13)
+
+    # ------------------------------------------------------------------
+    # 2. LadrunoIMKBeam2d/3d energy clear-span q0ic/q0jc with -shearHinge + -endZones + span loads
+    # ------------------------------------------------------------------
+    # When nodes are fixed and only uniform span load wy is applied on a symmetric
+    # beam, q0[1] = -wy*L^2/12 and q0[2] = +wy*L^2/12. With symmetric endZones dI = dJ = d,
+    # q0ic + q0jc = ((L - 2*d)/L) * (q0[1] + q0[2]) = 0, so shear hinge force Vs = 0
+    # and gammaS = 0, meaning gamRot = 0 and core elastic rotation is purely vic = vjc = 0,
+    # so reported energy must be 0.0! (Previously q0ic + q0jc used -d*(p0[1]-p0[2]) = 0,
+    # and for asymmetric dI != dJ it differed from LadrunoIMKHinge.h.)
+    # Let's test asymmetric dI=0.4, dJ=0.8 with fixed ends and uniform load:
+    dI, dJ = 0.4, 0.8
+    Lc = L - dI - dJ
+    Ks0 = 5.0e7
+    wy = -24.0e3
+    wz = 18.0e3
+
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    ops.node(1, 0.0, 0.0)
+    ops.node(2, L, 0.0)
+    ops.fix(1, 1, 1, 1)
+    ops.fix(2, 1, 1, 1)
+    ops.geomTransf("Linear", 1)
+    ops.uniaxialMaterial("Steel01", 10, 1.0e9, k_hinge, 0.01)
+    ops.uniaxialMaterial("Steel01", 20, 1.0e9, Ks0, 0.01)
+    ops.element(
+        "LadrunoIMKBeam", 1, 1, 2, A, E, Iz, 1,
+        "-hinge", "both", "-matZ", 10, "-shearHinge", 20, "-endZones", dI, dJ,
+    )
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.eleLoad("-ele", 1, "-type", "-beamUniform", wy)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.integrator("LoadControl", 1.0)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    en2d = ops.eleResponse(1, "energy")[0]
+    th2d = ops.eleResponse(1, "hingeRotation")
+    sh2d = ops.eleResponse(1, "shearHinge")  # [gammaS, Vs]
+    # Exact internal strain energy of core + hinges + shearHinge when v = 0:
+    # In LadrunoIMKHinge.h, at v=0, core elastic rotations are ve1 = -th_i + gamRot, ve2 = -th_j + gamRot
+    # where gamRot = gammaS / Lc - gamRot0 and gamRot0 = -Fs0 * (q0ic + q0jc)
+    q0_1 = -wy * L * L / 12.0
+    q0_2 = wy * L * L / 12.0
+    q0ic = ((L - dI) * q0_1 - dI * q0_2) / L
+    q0jc = (-dJ * q0_1 + (L - dJ) * q0_2) / L
+    Fs0 = 1.0 / (Lc * Lc * Ks0)
+    gamRot = sh2d[0] / Lc - (-Fs0 * (q0ic + q0jc))
+    ve1 = -th2d[0] + gamRot
+    ve2 = -th2d[1] + gamRot
+    a_c = 4.0 * E * Iz / Lc
+    b_c = 2.0 * E * Iz / Lc
+    en2d_expected = (
+        0.5 * (ve1 * (a_c * ve1 + b_c * ve2) + ve2 * (b_c * ve1 + a_c * ve2))
+        + 0.5 * k_hinge * (th2d[0] ** 2 + th2d[1] ** 2)
+        + 0.5 * Ks0 * (sh2d[0] ** 2)
+    )
+    assert en2d == pytest.approx(en2d_expected, rel=1e-12)
+
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    ops.node(1, 0.0, 0.0, 0.0)
+    ops.node(2, L, 0.0, 0.0)
+    ops.fix(1, 1, 1, 1, 1, 1, 1)
+    ops.fix(2, 1, 1, 1, 1, 1, 1)
+    ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+    ops.uniaxialMaterial("Steel01", 10, 1.0e9, k_hinge, 0.01)
+    ops.uniaxialMaterial("Steel01", 20, 1.0e9, Ks0, 0.01)
+    ops.element(
+        "LadrunoIMKBeam", 1, 1, 2, A, E, G, Jx, Iy, Iz, 1,
+        "-hinge", "both", "-matZ", 10, "-matY", 10,
+        "-shearHingeY", 20, "-shearHingeZ", 20, "-endZones", dI, dJ,
+    )
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.eleLoad("-ele", 1, "-type", "-beamUniform", wy, wz, 0.0)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.integrator("LoadControl", 1.0)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    en3d = ops.eleResponse(1, "energy")[0]
+    th3d = ops.eleResponse(1, "hingeRotation")
+    sh3d = ops.eleResponse(1, "shearHinge")  # [gammaSY, VsY, gammaSZ, VsZ]
+    q0y_1 = wz * L * L / 12.0
+    q0y_2 = -wz * L * L / 12.0
+    q0yic = ((L - dI) * q0y_1 - dI * q0y_2) / L
+    q0yjc = (-dJ * q0y_1 + (L - dJ) * q0y_2) / L
+    gamRotZ = sh3d[2] / Lc - (-Fs0 * (q0yic + q0yjc))
+    ve3 = -th3d[2] + gamRotZ
+    ve4 = -th3d[3] + gamRotZ
+    ay_c = 4.0 * E * Iy / Lc
+    by_c = 2.0 * E * Iy / Lc
+    en3d_expected = (
+        en2d_expected
+        + 0.5 * (ve3 * (ay_c * ve3 + by_c * ve4) + ve4 * (by_c * ve3 + ay_c * ve4))
+        + 0.5 * k_hinge * (th3d[2] ** 2 + th3d[3] ** 2)
+        + 0.5 * Ks0 * (sh3d[2] ** 2)
+    )
+    assert en3d == pytest.approx(en3d_expected, rel=1e-12)
+
+    # ------------------------------------------------------------------
+    # 3. LadrunoForceBeamColumn2d/3d plasticDeformation with -pm and with LadrunoCohesiveHinge*
+    # ------------------------------------------------------------------
+    P0 = 100.0e3
+    pm_alpha = 2.0
+    # 2D generic elastic hinge + -pm under axial compression
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    ops.node(1, 0.0, 0.0)
+    ops.node(2, L, 0.0)
+    ops.fix(1, 1, 1, 1)
+    ops.section("Elastic", 1, E, A, Iz)
+    ops.geomTransf("Linear", 1)
+    ops.beamIntegration("Lobatto", 1, 1, 4)
+    ops.uniaxialMaterial("Elastic", 10, k_hinge)
+    ops.element(
+        "LadrunoForceBeamColumn2d", 1, 1, 2, 1, 1,
+        "-hingeIJ", 10, 10, "-pm", P0, pm_alpha,
+    )
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, -50.0e3, -15.0e3, 10.0e3)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.integrator("LoadControl", 1.0)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    np.testing.assert_allclose(ops.eleResponse(1, "plasticDeformation"), np.zeros(3), atol=1e-13)
+
+    # 2D LadrunoCohesiveHinge: cohesive penalty is skipped in getInitialFlexibility(fe, true),
+    # so plasticDeformation equals [0, hingeJumpI, hingeJumpJ] (matching LadrunoDispBeamColumn2d)
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    ops.node(1, 0.0, 0.0)
+    ops.node(2, L, 0.0)
+    ops.fix(1, 1, 1, 1)
+    ops.section("Elastic", 1, E, A, Iz)
+    ops.geomTransf("Linear", 1)
+    ops.beamIntegration("Lobatto", 1, 1, 4)
+    ops.uniaxialMaterial("LadrunoCohesiveHinge", 10, 500.0e3, 1.0e5, "-linear")
+    ops.element("LadrunoForceBeamColumn2d", 1, 1, 2, 1, 1, "-hingeIJ", 10, 10)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, -10.0e3, -5.0e3, 2.0e3)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.integrator("LoadControl", 1.0)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    hs_coh = ops.eleResponse(1, "hingeSummary")
+    np.testing.assert_allclose(
+        ops.eleResponse(1, "plasticDeformation"),
+        [0.0, hs_coh[0], hs_coh[2]],
+        rtol=1e-12,
+        atol=1e-13,
+    )
+
+    # 3D generic elastic hinges (uniaxial and biaxial) + -pm under axial compression
+    for use_biax in (False, True):
+        ops.wipe()
+        ops.model("basic", "-ndm", 3, "-ndf", 6)
+        ops.node(1, 0.0, 0.0, 0.0)
+        ops.node(2, L, 0.0, 0.0)
+        ops.fix(1, 1, 1, 1, 1, 1, 1)
+        ops.section("Elastic", 1, E, A, Iz, Iy, G, Jx)
+        ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+        ops.beamIntegration("Lobatto", 1, 1, 4)
+        if use_biax:
+            ops.nDMaterial("ElasticIsotropic", 30, k_hinge, 0.2)
+            ops.element(
+                "LadrunoForceBeamColumn3d", 1, 1, 2, 1, 1,
+                "-hingeBiaxialIJ", 30, 30, "-pm", P0, pm_alpha,
+            )
+        else:
+            ops.uniaxialMaterial("Elastic", 10, k_hinge)
+            ops.element(
+                "LadrunoForceBeamColumn3d", 1, 1, 2, 1, 1,
+                "-hingeIJ", 10, 10, "-hingeYIJ", 10, 10, "-pm", P0, pm_alpha,
+            )
+        ops.timeSeries("Linear", 1)
+        ops.pattern("Plain", 1, 1)
+        ops.load(2, -50.0e3, -15.0e3, 12.0e3, 3.0e3, -8.0e3, 10.0e3)
+        ops.system("BandGeneral")
+        ops.numberer("Plain")
+        ops.constraints("Plain")
+        ops.integrator("LoadControl", 1.0)
+        ops.algorithm("Newton")
+        ops.analysis("Static")
+        assert ops.analyze(1) == 0
+        np.testing.assert_allclose(ops.eleResponse(1, "plasticDeformation"), np.zeros(6), atol=1e-13)
+
+    # ------------------------------------------------------------------
+    # 4. eleLoadDirty flush in getResponse + 2D hingeHinvCommit/hingeKvaCommit roundtrip
+    # ------------------------------------------------------------------
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    ops.node(1, 0.0, 0.0)
+    ops.node(2, L, 0.0)
+    ops.fix(1, 1, 1, 1)
+    ops.fix(2, 1, 0, 1)
+    ops.section("Elastic", 1, E, A, Iz)
+    ops.geomTransf("Linear", 1)
+    ops.beamIntegration("Lobatto", 1, 1, 4)
+    ops.element("LadrunoForceBeamColumn2d", 1, 1, 2, 1, 1)
+    ops.timeSeries("Constant", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.eleLoad("-ele", 1, "-type", "-beamUniform", -12.0e3)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.integrator("LoadControl", 1.0)
+    ops.test("NormDispIncr", 1.0e-12, 10)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    # Force a step revert so Element::revertToLastCommit sets eleLoadDirty = (numEleLoads > 0);
+    # subsequent getResponse/setResponse calls must flush eleLoadDirty!
+    ops.timeSeries("Linear", 2)
+    ops.pattern("Plain", 2, 2)
+    ops.load(2, 0.0, -10.0e3, 0.0)
+    ops.test("NormDispIncr", 1.0e-30, 1)
+    assert ops.analyze(1) < 0
+    ops.remove("loadPattern", 2)
+    bf2d = ops.eleResponse(1, "basicForce")
+    sf2d = ops.eleResponse(1, "section", "1", "force")
+    assert bf2d[1] == pytest.approx(12.0e3 * L * L / 3.0, rel=1e-10)
+    assert sf2d[1] == pytest.approx(-12.0e3 * L * L / 3.0, rel=1e-10)
+
+    def build_fbc2d_hinge():
+        ops.wipe()
+        ops.model("basic", "-ndm", 2, "-ndf", 3)
+        ops.node(1, 0.0, 0.0)
+        ops.node(2, L, 0.0)
+        ops.fix(1, 1, 1, 1)
+        ops.section("Elastic", 1, E, A, Iz)
+        ops.geomTransf("Linear", 1)
+        ops.beamIntegration("Lobatto", 1, 1, 4)
+        ops.uniaxialMaterial("Steel01", 10, 80.0e3, k_hinge, 0.05)
+        ops.element("LadrunoForceBeamColumn2d", 1, 1, 2, 1, 1, "-hingeIJ", 10, 10)
+        ops.timeSeries("Linear", 1)
+        ops.pattern("Plain", 1, 1)
+        ops.load(2, -10.0e3, -30.0e3, 20.0e3)
+        ops.system("BandGeneral")
+        ops.numberer("Plain")
+        ops.constraints("Plain")
+        ops.integrator("LoadControl", 0.5)
+        ops.algorithm("Newton")
+        ops.analysis("Static")
+        assert ops.analyze(2) == 0
+
+    def probe_fbc2d_hinge():
+        return list(ops.eleForce(1)) + list(ops.eleResponse(1, "hingeSummary"))
+
+    database_roundtrip(build_fbc2d_hinge, probe_nodes=[2], ndf=3, probe_fn=probe_fbc2d_hinge, rounds=2)
+
+

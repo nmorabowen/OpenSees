@@ -65,7 +65,8 @@ class LadrunoIMKBeam2d : public Element
                    UniaxialMaterial *mZi, UniaxialMaterial *mZj,
                    double rho = 0.0, int cMass = 0,
                    double GAvy = 0.0, double P0 = 0.0, double pmAlpha = 0.5,
-                   double dI = 0.0, double dJ = 0.0, bool useImplex = false);
+                   double dI = 0.0, double dJ = 0.0, bool useImplex = false,
+                   UniaxialMaterial *mShear = 0);
   ~LadrunoIMKBeam2d();
 
   const char *getClassType(void) const { return "LadrunoIMKBeam2d"; }
@@ -127,6 +128,13 @@ class LadrunoIMKBeam2d : public Element
   double thetaHp[2];        // trial plastic hinge rotations (th - q_c/k0)
   double thetaHpCommit[2];  // committed plastic hinge rotations
   double dThetaHpPrev[2];   // previous committed plastic increment for IMPL-EX
+  UniaxialMaterial *theShearMat;  // optional series shear hinge (Vy - gamma_y)
+  double gammaS;            // trial shear hinge deformation
+  double gammaScommit;      // committed shear hinge deformation
+  double dGammaSprev;       // previous committed shear increment
+  double gammaSp;           // trial plastic shear deformation
+  double gammaSpCommit;     // committed plastic shear deformation
+  double dGammaSpPrev;      // previous committed plastic shear increment for IMPL-EX
   double dtime_n_commit;    // previous committed time step for IMPL-EX
 
   // --- cached basic-system state, set in update() ---
