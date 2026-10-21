@@ -1045,3 +1045,67 @@ def test_ladruno_imk_beam_3d_simultaneous_biaxial_and_shear_hinge_softening():
     kb3_fd = DQ @ np.linalg.inv(DV)
     np.testing.assert_allclose(kb3, kb3_fd, rtol=1e-4, atol=1e0)
 
+
+def test_ladruno_force_beam_column_subdivide_optional_factor_and_isfinite_validation():
+    """Verify:
+      1. `LadrunoForceBeamColumn2d` and `LadrunoForceBeamColumn3d` accept 1-argument
+         `-subdivide <maxSubdivisions>` (defaulting `subdivideFactor` to `10.0`) both
+         at the end of the argument list and immediately before another flag
+         (`-subdivide 4 -mass 10.0`), as well as 2-argument `-subdivide 4 4.0`.
+      2. Both 2D and 3D parsers reject non-finite (`nan`, `inf`, `-inf`) and
+         out-of-range values for `-iter` (`tol <= 0` or non-finite) and
+         `-subdivide` (`subdivideFactor <= 1.0` or non-finite).
+    """
+    L = 4.0
+    E, A, Iz, Iy, G, Jx = 2.0e11, 0.04, 1.6e-4, 1.2e-4, 8.0e10, 2.0e-4
+
+    for ndm, ndf in ((2, 3), (3, 6)):
+        ops.wipe()
+        ops.model("basic", "-ndm", ndm, "-ndf", ndf)
+        if ndm == 2:
+            ops.node(1, 0.0, 0.0)
+            ops.node(2, L, 0.0)
+            ops.fix(1, 1, 1, 1)
+            ops.geomTransf("Linear", 1)
+            ops.section("Elastic", 1, E, A, Iz)
+        else:
+            ops.node(1, 0.0, 0.0, 0.0)
+            ops.node(2, L, 0.0, 0.0)
+            ops.fix(1, 1, 1, 1, 1, 1, 1)
+            ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+            ops.section("Elastic", 1, E, A, Iz, Iy, G, Jx)
+        ops.beamIntegration("Lobatto", 1, 1, 4)
+
+        # Valid: 1-arg -subdivide followed by -mass flag (must not consume or misparse -mass)
+        ops.element("LadrunoForceBeamColumn", 2, 1, 2, 1, 1, "-subdivide", 4, "-mass", 10.0)
+        eig = ops.eigen("-fullGenLapack", 1)
+        assert len(eig) == 1 and eig[0] > 0.0
+        # Compare against explicit 2-arg -subdivide with the same -mass 10.0
+        ops.remove("element", 2)
+        ops.element("LadrunoForceBeamColumn", 3, 1, 2, 1, 1, "-subdivide", 4, 4.0, "-mass", 10.0)
+        eig3 = ops.eigen("-fullGenLapack", 1)
+        assert eig[0] == pytest.approx(eig3[0], rel=1e-12)
+        # Valid: 1-arg -subdivide at end of command
+        ops.element("LadrunoForceBeamColumn", 1, 1, 2, 1, 1, "-subdivide", 4)
+        assert set(ops.getEleTags()) == {1, 3}
+
+        # Invalid -iter tol and -subdivide subdivideFactor (non-finite and out-of-range)
+        bad_arg_tuples = [
+            ("-iter", 10, float("nan")),
+            ("-iter", 10, float("inf")),
+            ("-iter", 10, -float("inf")),
+            ("-iter", 10, 0.0),
+            ("-iter", 10, -1.0e-12),
+            ("-subdivide", 4, float("nan")),
+            ("-subdivide", 4, float("inf")),
+            ("-subdivide", 4, -float("inf")),
+            ("-subdivide", 4, 1.0),
+            ("-subdivide", 4, 0.5),
+            ("-subdivide", 0),
+        ]
+        for idx, bad_args in enumerate(bad_arg_tuples, start=100):
+            try:
+                ops.element("LadrunoForceBeamColumn", idx, 1, 2, 1, 1, *bad_args)
+            except Exception:
+                pass
+            assert idx not in ops.getEleTags(), f"ndm={ndm} accepted invalid {bad_args}"

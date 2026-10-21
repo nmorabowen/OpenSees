@@ -348,8 +348,8 @@ void* OPS_LadrunoForceBeamColumn2d()
       }
     }
     else if (strcmp(type, "-subdivide") == 0) {
-      if (OPS_GetNumRemainingInputArgs() < 2) {
-        opserr << "WARNING LadrunoForceBeamColumn2d: -subdivide needs maxSubdivisions and subdivideFactor\n";
+      if (OPS_GetNumRemainingInputArgs() < 1) {
+        opserr << "WARNING LadrunoForceBeamColumn2d: -subdivide needs maxSubdivisions [subdivideFactor]\n";
         delete legacyBi;
         return 0;
       }
@@ -359,10 +359,15 @@ void* OPS_LadrunoForceBeamColumn2d()
         delete legacyBi;
         return 0;
       }
-      if (OPS_GetDoubleInput(&numData, &subdivideFactor) < 0 || !std::isfinite(subdivideFactor) || subdivideFactor <= 1.0) {
-        opserr << "WARNING LadrunoForceBeamColumn2d: invalid subdivideFactor (must be > 1.0)\n";
-        delete legacyBi;
-        return 0;
+      subdivideFactor = 10.0;
+      double optSubFac = subdivideFactor;
+      if (lfbc2dTryOptionalDouble(optSubFac)) {
+        if (!std::isfinite(optSubFac) || optSubFac <= 1.0) {
+          opserr << "WARNING LadrunoForceBeamColumn2d: invalid subdivideFactor (must be > 1.0)\n";
+          delete legacyBi;
+          return 0;
+        }
+        subdivideFactor = optSubFac;
       }
     }
     else if (strcmp(type, "-totalElementLch") == 0) {

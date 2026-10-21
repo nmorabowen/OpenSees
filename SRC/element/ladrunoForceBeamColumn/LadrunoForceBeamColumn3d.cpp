@@ -247,18 +247,15 @@ lfbc3dTryOptionalDouble(double &valOut)
     return false;
   char buf[64];
   const char *peek = OPS_GetStringFromAll(buf, sizeof(buf));
-  if (peek == 0 || peek[0] == '\0' || (peek[0] == '-' && (peek[1] < '0' || peek[1] > '9') && peek[1] != '.')) {
-    OPS_ResetCurrentInputArg(-1);
+  OPS_ResetCurrentInputArg(-1);
+  if (peek == 0 || peek[0] == '\0')
     return false;
-  }
   char *endptr = 0;
-  double v = strtod(peek, &endptr);
-  if (endptr == peek || *endptr != '\0' || !std::isfinite(v)) {
-    OPS_ResetCurrentInputArg(-1);
+  (void)strtod(peek, &endptr);
+  if (endptr == peek || *endptr != '\0')
     return false;
-  }
-  valOut = v;
-  return true;
+  int one = 1;
+  return (OPS_GetDoubleInput(&one, &valOut) == 0);
 }
 
 void *
@@ -382,14 +379,14 @@ OPS_LadrunoForceBeamColumn3d()
         delete legacyBi;
         return 0;
       }
-      if (OPS_GetDoubleInput(&numData, &tol) < 0 || tol <= 0.0) {
+      if (OPS_GetDoubleInput(&numData, &tol) < 0 || !std::isfinite(tol) || tol <= 0.0) {
         opserr << "WARNING invalid tol in LadrunoForceBeamColumn3d\n";
         delete legacyBi;
         return 0;
       }
     }
     else if (strcmp(type, "-subdivide") == 0) {
-      if (OPS_GetNumRemainingInputArgs() < 2) {
+      if (OPS_GetNumRemainingInputArgs() < 1) {
         opserr << "WARNING insufficient args for -subdivide in LadrunoForceBeamColumn3d\n";
         delete legacyBi;
         return 0;
@@ -400,10 +397,15 @@ OPS_LadrunoForceBeamColumn3d()
         delete legacyBi;
         return 0;
       }
-      if (OPS_GetDoubleInput(&numData, &subFac) < 0 || subFac <= 1.0) {
-        opserr << "WARNING invalid subdivideFactor in LadrunoForceBeamColumn3d\n";
-        delete legacyBi;
-        return 0;
+      subFac = 10.0;
+      double optSubFac = subFac;
+      if (lfbc3dTryOptionalDouble(optSubFac)) {
+        if (!std::isfinite(optSubFac) || optSubFac <= 1.0) {
+          opserr << "WARNING invalid subdivideFactor in LadrunoForceBeamColumn3d\n";
+          delete legacyBi;
+          return 0;
+        }
+        subFac = optSubFac;
       }
     }
     else if (strcmp(type, "-mass") == 0) {
