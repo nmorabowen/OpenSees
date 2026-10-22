@@ -100,6 +100,10 @@ protected:
 private:
     // private methods
     void setUp();
+    // Ladruno WP-206: basic-system path through the CrdTransf
+    void formBasic(void);           // ub -> qb (+ q0, + N*kgb*ub if geomNonlinear)
+    void basicToLocal(Vector &qlOut) const;
+    void loadsToBasic(void);        // ql0 (local FEF) -> q0b, p0b
     
     // private attributes - a copy for each object of the class
     ID connectedExternalNodes;  // contains the tags of the end nodes
@@ -137,6 +141,20 @@ private:
     static Matrix theMatrix;  // a class wide Matrix
     static Vector theVector;  // a class wide Vector
     Vector theLoad;
+
+    // Ladruno WP-206: the stock element built its own rotation-only Tgl from
+    // the transformation's axes, so a PDelta transf (P-Delta), a Corotational
+    // transf and -jntOffset rigid arms were silently ignored. Unless the legacy
+    // combination (-geomNonlinear with a Linear transf) is requested, the
+    // element now works in the 6-dof basic system and lets the CrdTransf map
+    // it to global (offsets, P-Delta, corotational), like ElasticBeam3d.
+    bool useBasic;      // true: basic-system path; false: legacy local path
+    int geomFlag;       // the user's -geomNonlinear flag (element P-delta)
+    Matrix kb;          // 6x6 basic stiffness [N, Mz1, Mz2, My1, My2, T]
+    Matrix kgb;         // 6x6 basic P-delta geometric stiffness (per unit N)
+    Vector qb;          // basic forces
+    Vector q0b;         // basic fixed-end forces from element loads
+    Vector p0b;         // 5 reactions (CrdTransf convention) from element loads
 };
 
 #endif
