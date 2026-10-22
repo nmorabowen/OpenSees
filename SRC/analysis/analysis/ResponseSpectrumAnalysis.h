@@ -67,6 +67,7 @@ private:
 	int endMode();
 	int solveMode();
 	double getSa(double T) const;
+	double getSaUnscaled(double T) const; // Ladruno WP-202
 
 private:
 	// the model
