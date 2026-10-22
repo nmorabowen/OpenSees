@@ -1,5 +1,6 @@
 ---
 wp: WP-207
+pr: "#1015"
 title: "responseSpectrumAnalysis -mode k wipes the gravity state (replace + commit)"
 date: 2026-10-22
 ---
