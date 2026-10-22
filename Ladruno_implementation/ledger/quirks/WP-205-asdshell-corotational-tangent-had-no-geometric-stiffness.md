@@ -1,6 +1,7 @@
 ---
 wp: WP-205
 title: "ASDShellQ4/T3 -corotational: the tangent had no geometric stiffness (G = 0 under the polar frame) and the EICR sign was the Kratos one"
+pr: "#1011"
 date: 2026-10-22
 ---
 ### `ASDShellQ4 -corotational` gets static P-Delta right but eigen after gravity shows NO softening and Newton needs ~34 iterations
