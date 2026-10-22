@@ -67,7 +67,7 @@ if {![string is double -strict $plasticAdd] || ![string is double -strict $plast
     puts "FAIL a leg did not converge"
     incr nFail
 } else {
-    if {abs($plasticAdd - $plasticNoAdd) <= 1e-6 * abs($plasticNoAdd)} {
+    if {abs($plasticAdd - $plasticNoAdd) <= 1e-4 * abs($plasticNoAdd)} {
         puts "PASS activation keeps the plastic stage"
     } else {
         puts "FAIL activation after the flip changed uz5 (stage reset, #2444)"

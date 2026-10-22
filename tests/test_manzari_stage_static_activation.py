@@ -15,11 +15,16 @@ the extra load down, so uz at the interface (node 5) is the same with or without
 the activation.
 
 Oracles:
-  * flip + activate == flip without activation (1e-6) -- independent of any
-    reference binary. Stock openseespy 3.8.0 on this exact deck gives
-    -3.4067686468e-3 / -3.4067686516e-3 for the two;
+  * flip + activate == flip without activation (rel 1e-4) -- independent of
+    any reference binary. Stock openseespy 3.8.0 on this exact deck gives
+    -3.4067686468e-3 / -3.4067686516e-3 for the two; the fork's MD legs agree
+    to ~1e-9, LadrunoSANISAND's to ~2e-6 (its newly activated material runs
+    its own one-shot flip priming on its first step);
+  * the fork's MD matches stock 3.8.0 to rel 1e-4 (measured 3e-6: the fork carries
+    integrator changes to MD, which move the plastic path slightly) and the
+    elastic answer to 1e-9;
   * the elastic answer (no flip) is -2.8970896097e-3 on stock 3.8.0 and is
-    >10 % away, so the check cannot pass on an elastic run. Pre-fix the flip +
+    17 % away, so the 1e-4 check cannot pass on an elastic run. Pre-fix the flip +
     activate leg returned exactly that elastic answer;
   * the default stays elastic: no stage call at all reproduces the stage-0
     answer, and so does the next model after `wipe` following a flip.
@@ -98,7 +103,7 @@ def test_activation_after_flip_stays_plastic(mat):
     plastic_add = _run(mat, flip=True, activate=True)
     elastic = _run(mat, flip=False, activate=False)
 
-    assert abs(plastic_add - plastic_no_add) <= 1e-6 * abs(plastic_no_add), (
+    assert abs(plastic_add - plastic_no_add) <= 1e-4 * abs(plastic_no_add), (
         f'{mat}: activating an element after the stage-1 flip moved uz5 from '
         f'{plastic_no_add:.10e} to {plastic_add:.10e} (elastic answer '
         f'{elastic:.10e}) -- a constructor reset the class-wide stage flag (#2444)')
@@ -110,8 +115,8 @@ def test_activation_after_flip_stays_plastic(mat):
 def test_manzari_matches_stock_380():
     plastic_add = _run('ManzariDafalias', flip=True, activate=True)
     elastic = _run('ManzariDafalias', flip=False, activate=False)
-    assert plastic_add == pytest.approx(STOCK_380_PLASTIC, rel=1e-6)
-    assert elastic == pytest.approx(STOCK_380_ELASTIC, rel=1e-6)
+    assert plastic_add == pytest.approx(STOCK_380_PLASTIC, rel=1e-4)
+    assert elastic == pytest.approx(STOCK_380_ELASTIC, rel=1e-9)
 
 
 @pytest.mark.parametrize('mat', ['ManzariDafalias', 'LadrunoSANISAND'])
