@@ -1,6 +1,7 @@
 ---
 wp: WP-204
 title: "A diaphragm connected at points: the displacement at a point load or point support never converges with mesh refinement"
+pr: "#1013"
 date: 2026-10-22
 ---
 ### Diaphragm (membrane) displacement at a column or a point load changes with the mesh and never converges — in ETABS too
