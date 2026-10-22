@@ -99,12 +99,18 @@ extern void ladrunoSanisandResetImplexGlobals(void);   // Ladruno WP-104
 // the model -- a later same-tag material silently took the first model's laws.
 // Defined in ASDConcrete3DMaterial.cpp.
 extern void ladrunoAsdConcrete3DResetStorage(void);    // Ladruno #2044
+// Ladruno #2444: ManzariDafalias' class-wide stage flag (mElastFlag) is set
+// only by its initialiser and updateMaterialStage, never by a constructor, so
+// `wipe` is what returns the NEXT model to the elastic-stage default.
+// Defined in ManzariDafalias.cpp.
+extern void ladrunoManzariDafaliasResetStage(void);    // Ladruno #2444
 
 void OPS_clearAllNDMaterial(void)
 {
     theNDMaterialObjects.clearAll();
     ladrunoSanisandResetImplexGlobals();   // Ladruno WP-104
     ladrunoAsdConcrete3DResetStorage();    // Ladruno #2044
+    ladrunoManzariDafaliasResetStage();    // Ladruno #2444
 }
 
 void OPS_printNDMaterial(OPS_Stream &s, int flag) {
