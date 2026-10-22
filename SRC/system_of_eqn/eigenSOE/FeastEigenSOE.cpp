@@ -37,6 +37,9 @@
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <AnalysisModel.h>
+#include <Domain.h>
+#include <Node.h>
+#include <NodeIter.h>
 
 #include <vector>
 #include <algorithm>
@@ -46,7 +49,8 @@ FeastEigenSOE::FeastEigenSOE(FeastEigenSolver &theSolvr)
  size(0), nnz(0), csrCapacity(0),
  rowPtr(0), colInd(0), Kvals(0), Mvals(0),
  emin(0.0), emax(0.0), m0(0), nq(8), maxRefine(20), tolExp(12), verbose(false),
- certifyFlag(false), blockZGateFlag(false), rciFlag(false)
+ certifyFlag(false), blockZGateFlag(false), rciFlag(false),
+ traceStop(false)
 {
   theSolvr.setEigenSOE(*this);
 }
@@ -252,6 +256,7 @@ void FeastEigenSOE::setMaxRefine(int maxRefine_)    { maxRefine = maxRefine_; }
 void FeastEigenSOE::setTol(double eps)             { tolExp = (int)eps; }
 void FeastEigenSOE::setVerbose(bool v)             { verbose = v; }
 void FeastEigenSOE::setCertify(bool c)             { certifyFlag = c; }
+void FeastEigenSOE::setTraceStop(bool r)        { traceStop = r; } // WP-203
 void FeastEigenSOE::setBlockZGate(bool g)          { blockZGateFlag = g; }
 void FeastEigenSOE::setRci(bool r)                 { rciFlag = r; }
 
@@ -261,6 +266,39 @@ FeastEigenSOE::getNumFoundModes(void) const
   const FeastEigenSolver *slv =
       static_cast<const FeastEigenSolver *>(theSolver);
   return (slv == 0) ? 0 : slv->getNumFoundModes();
+}
+
+// WP-203: see the header. Node eigenvectors are copied column by column into
+// a matrix of mFound columns; a node that never received eigenvectors (none
+// is ever assigned when the node has no DOF_Group) is left untouched.
+void
+FeastEigenSOE::trimDomainModes(Domain &theDomain, int mFound)
+{
+  const Vector &lam = theDomain.getEigenvalues();
+  if (mFound < 0 || mFound >= lam.Size())
+    return;
+  Vector trimmed(mFound);
+  for (int i = 0; i < mFound; i++)
+    trimmed(i) = lam(i);
+  theDomain.setEigenvalues(trimmed);
+  if (mFound == 0)
+    return;   // Node::setNumEigenvectors refuses 0; no mode is readable anyway
+
+  Node *nd;
+  NodeIter &theNodes = theDomain.getNodes();
+  while ((nd = theNodes()) != 0) {
+    if (nd->getNumEigenvectors() <= mFound)
+      continue;
+    const Matrix old = nd->getEigenvectors();   // copy: resized below
+    const int ndf = old.noRows();
+    nd->setNumEigenvectors(mFound);
+    Vector col(ndf);
+    for (int m = 0; m < mFound; m++) {
+      for (int i = 0; i < ndf; i++)
+        col(i) = old(i, m);
+      nd->setEigenvector(m + 1, col);
+    }
+  }
 }
 
 double FeastEigenSOE::getEmin(void) const          { return emin; }
