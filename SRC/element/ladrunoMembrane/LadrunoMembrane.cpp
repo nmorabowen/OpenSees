@@ -26,6 +26,7 @@
 
 #include "LadrunoMembrane.h"
 #include "LadrunoMembraneKernel.h"
+#include "LadrunoMembraneDiaphragm.h"
 
 #include <Beam2dPartialUniformLoad.h>
 #include <Beam2dUniformLoad.h>
@@ -71,7 +72,9 @@ LadrunoMembrane::LadrunoMembrane(int tag,
                                  double pressure,
                                  double b1,
                                  double b2,
-                                 double b3)
+                                 double b3,
+                                 const std::vector<int> &diaphragmNodes,
+                                 const std::array<double, 3> &inPlaneMods)
   : Element(tag, ELE_TAG_LadrunoMembrane),
     m_polyNodeTags(polyNodes),
     m_frameTags(frameTags),
@@ -111,6 +114,9 @@ LadrunoMembrane::LadrunoMembrane(int tag,
     m_appliedTotalLoad(3),
     m_appliedNormalPressure(0.0),
     m_appliedGlobalTraction{0.0, 0.0, 0.0},
+    m_diaphragmNodeTags(diaphragmNodes),
+    m_inPlaneMods(inPlaneMods),
+    m_Dmod{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
     Ki(0)
 {
   if (theMat != nullptr) {
@@ -161,6 +167,8 @@ LadrunoMembrane::LadrunoMembrane()
     m_appliedTotalLoad(3),
     m_appliedNormalPressure(0.0),
     m_appliedGlobalTraction{0.0, 0.0, 0.0},
+    m_inPlaneMods{1.0, 1.0, 1.0},
+    m_Dmod{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
     Ki(0)
 {
 }
@@ -206,6 +214,14 @@ LadrunoMembrane::rebuildExternalNodeIndex(void)
   m_supportExtIdx.resize(m_supportNodeTags.size());
   for (std::size_t s = 0; s < m_supportNodeTags.size(); ++s) {
     m_supportExtIdx[s] = addUnique(m_supportNodeTags[s]);
+  }
+
+  // WP-204: in-plane-only diaphragm nodes (beam nodes on an edge, wall nodes
+  // on a hole edge, ...): retained by the condensation, no gravity share
+  m_diaphragmExtIdx.clear();
+  m_diaphragmExtIdx.resize(m_diaphragmNodeTags.size());
+  for (std::size_t d = 0; d < m_diaphragmNodeTags.size(); ++d) {
+    m_diaphragmExtIdx[d] = addUnique(m_diaphragmNodeTags[d]);
   }
 
   int nExt = static_cast<int>(allTags.size());
@@ -821,7 +837,9 @@ LadrunoMembrane::resolveAndBuildTransfer(void)
       m_unitSupportAreas = distRes.support_node_reactions;
     }
 
-    // Build Guyan-condensed in-plane CST stiffness and mass if thickness > 0
+    // In-plane (diaphragm) stiffness and mass if thickness > 0. WP-204: exact
+    // Guyan condensation of an LST mesh onto EVERY external node (the ADR-98
+    // CST condensation kept the outer polygon only and slaved the rest)
     m_Kbase.Zero();
     m_Mbase.Zero();
     m_hasInPlaneStiff = false;
@@ -830,30 +848,134 @@ LadrunoMembrane::resolveAndBuildTransfer(void)
 
     bool wantStiff = (m_thick > 0.0 && E_mat > 0.0);
     bool wantMass = (m_thick > 0.0 && rhoEff > 0.0);
+    m_dStrainOp.clear();
+    m_dMeanStrainOp.clear();
+    m_dVerts3d.clear();
+    m_dTris.clear();
+    m_dTriArea.clear();
     if (wantStiff || wantMass) {
-      double E_cond = wantStiff ? E_mat : 1.0;
-      double nu_cond = wantStiff ? nu_mat : 0.2;
-      auto cond = LadrunoMembraneKernel::condense_inplane_cst(
-          distRes.mesh.vertices,
-          distRes.mesh.triangles,
-          distRes.mesh.boundary_vertex_indices,
-          E_cond,
-          nu_cond,
-          m_thick,
-          wantMass ? rhoEff : 0.0);
+      // WP-204: plane-stress modulus (the material's full initial tangent, or
+      // isotropic E/nu) times the ETABS-style f11/f22/f12 modifiers, applied as
+      // D_ij * sqrt(f_i f_j) exactly like LadrunoShellModifier's membrane block.
+      double Dm[9];
+      bool fromMat = false;
+      if (wantStiff && m_theMaterial != nullptr) {
+        const Matrix &D0 = m_theMaterial->getInitialTangent();
+        if (D0.noRows() >= 3 && D0.noCols() >= 3 && std::abs(D0(0, 0)) > 1e-15) {
+          for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+              Dm[3 * i + j] = D0(i, j);
+          fromMat = true;
+        }
+      }
+      if (!fromMat) {
+        double E_c = wantStiff ? E_mat : 1.0;
+        double nu_c = wantStiff ? nu_mat : 0.2;
+        double fac = E_c / (1.0 - nu_c * nu_c);
+        double iso[9] = {fac, fac * nu_c, 0.0, fac * nu_c, fac, 0.0, 0.0, 0.0, 0.5 * fac * (1.0 - nu_c)};
+        std::copy(iso, iso + 9, Dm);
+      }
+      if (wantStiff) {
+        double sf[3] = {std::sqrt(m_inPlaneMods[0]), std::sqrt(m_inPlaneMods[1]),
+                        std::sqrt(m_inPlaneMods[2])};
+        for (int i = 0; i < 3; ++i)
+          for (int j = 0; j < 3; ++j)
+            Dm[3 * i + j] *= sf[i] * sf[j];
+      }
+      std::copy(Dm, Dm + 9, m_Dmod);
 
-      int nb_nodes = static_cast<int>(distRes.mesh.boundary_vertex_indices.size());
-      int nb_dof = cond.nb_dof;
-      if (wantStiff && nb_nodes == nPoly) {
+      // The diaphragm mesh: outer loop + holes + every other external node as
+      // a mesh vertex (supports and -diaphragmNodes). Frames are not segments
+      // here; their end nodes are retained only when they are external nodes.
+      int nExt = m_connectedExternalNodes.Size();
+      std::vector<LadrunoMembraneKernel::Point2D> extra2d;
+      std::vector<LadrunoMembraneKernel::Point2D> ext2d(nExt);
+      for (int a = 0; a < nExt; ++a) {
+        auto p3 = getNode3(m_theNodes[a]);
+        ext2d[a] = project3to2(p3[0], p3[1], p3[2]);
+      }
+      for (int idx : m_supportExtIdx) extra2d.push_back(ext2d[idx]);
+      for (int idx : m_diaphragmExtIdx) extra2d.push_back(ext2d[idx]);
+      // (the gravity mesh keeps the kernel default of 1200 vertices; the
+      // diaphragm mesh allows 6000 so -meshSize is honoured on large slabs —
+      // the sparse LDLt condensation is cheap, the O(n^2) mesher is the cost)
+      auto dmesh = LadrunoMembraneKernel::build_pslg_cdt_mesh(outer2d, holes2d, {}, extra2d, m_meshSize, 6000);
+
+      // retained slot a (= external node a) -> mesh vertex
+      double tol = 1e-6 * std::max(dmesh.char_length, 1e-12);
+      std::vector<int> retained(nExt, -1);
+      std::vector<char> taken(dmesh.vertices.size(), 0);
+      for (int a = 0; a < nExt; ++a) {
+        int best = -1;
+        double bestD = tol;
+        for (std::size_t v = 0; v < dmesh.vertices.size(); ++v) {
+          double d = std::hypot(dmesh.vertices[v].x - ext2d[a].x, dmesh.vertices[v].y - ext2d[a].y);
+          if (d <= bestD) { bestD = d; best = static_cast<int>(v); }
+        }
+        if (best >= 0 && taken[best]) {
+          opserr << "WARNING LadrunoMembrane " << this->getTag() << ": node "
+                 << m_connectedExternalNodes(a) << " coincides with another node of the"
+                 << " panel; it receives no diaphragm stiffness\n";
+          best = -1;
+        }
+        if (best >= 0) taken[best] = 1;
+        retained[a] = best;
+      }
+      auto cond = LadrunoMembraneDiaphragm::condense_lst(
+          dmesh.vertices, dmesh.triangles, retained, Dm, m_thick,
+          wantMass ? rhoEff * m_thick : 0.0);
+      for (int slot : cond.isolated) {
+        opserr << "WARNING LadrunoMembrane " << this->getTag() << ": node "
+               << m_connectedExternalNodes(slot) << " is not on the panel (outside it or"
+               << " inside a hole); it receives no diaphragm stiffness\n";
+      }
+      // a frame node lying on the panel that is not an external node gets no
+      // in-plane stiffness: say so (the bridge adds it with -diaphragmNodes)
+      for (const auto &fi : m_frameInfos) {
+        if (fi.framePtr == nullptr) continue;
+        Node **fN = fi.framePtr->getNodePtrs();
+        for (int e = 0; e < 2; ++e) {
+          int ext = (e == 0) ? fi.extNodeI : fi.extNodeJ;
+          if (ext >= 0 || fN == nullptr || fN[e] == nullptr) continue;
+          auto p3 = getNode3(fN[e]);
+          auto p2 = project3to2(p3[0], p3[1], p3[2]);
+          double dz = (p3[0] - m_origin[0]) * m_normal[0] + (p3[1] - m_origin[1]) * m_normal[1] +
+                      (p3[2] - m_origin[2]) * m_normal[2];
+          if (std::abs(dz) <= 1e-6 * m_charLen &&
+              LadrunoMembraneKernel::point_in_polygon(p2, outer2d)) {
+            opserr << "WARNING LadrunoMembrane " << this->getTag() << ": node "
+                   << fN[e]->getTag() << " of supporting frame " << fi.frameTag
+                   << " lies on the panel but is not one of its nodes; it receives no"
+                   << " diaphragm stiffness (add it with -diaphragmNodes)\n";
+          }
+        }
+      }
+
+      // keep the recovery operators and the mesh for the force outputs
+      m_dStrainOp = cond.strainOp;
+      m_dMeanStrainOp = cond.meanStrainOp;
+      m_dTriArea = cond.triArea;
+      m_dVerts3d.resize(3 * dmesh.vertices.size());
+      for (std::size_t v = 0; v < dmesh.vertices.size(); ++v) {
+        for (int i = 0; i < 3; ++i)
+          m_dVerts3d[3 * v + i] = m_origin[i] + dmesh.vertices[v].x * m_e1[i] + dmesh.vertices[v].y * m_e2[i];
+      }
+      m_dTris.resize(3 * dmesh.triangles.size());
+      for (std::size_t t = 0; t < dmesh.triangles.size(); ++t)
+        for (int i = 0; i < 3; ++i)
+          m_dTris[3 * t + i] = dmesh.triangles[t][i];
+
+      int nb_dof = 2 * nExt;
+      if (wantStiff) {
         m_hasInPlaneStiff = true;
-        for (int a = 0; a < nPoly; ++a) {
+        for (int a = 0; a < nExt; ++a) {
           int off_a = m_nodeDofOffsets[a];
-          for (int b = 0; b < nPoly; ++b) {
+          for (int b = 0; b < nExt; ++b) {
             int off_b = m_nodeDofOffsets[b];
-            double k00 = cond.K_cond[(2 * a + 0) * nb_dof + (2 * b + 0)];
-            double k01 = cond.K_cond[(2 * a + 0) * nb_dof + (2 * b + 1)];
-            double k10 = cond.K_cond[(2 * a + 1) * nb_dof + (2 * b + 0)];
-            double k11 = cond.K_cond[(2 * a + 1) * nb_dof + (2 * b + 1)];
+            double k00 = cond.K[(2 * a + 0) * nb_dof + (2 * b + 0)];
+            double k01 = cond.K[(2 * a + 0) * nb_dof + (2 * b + 1)];
+            double k10 = cond.K[(2 * a + 1) * nb_dof + (2 * b + 0)];
+            double k11 = cond.K[(2 * a + 1) * nb_dof + (2 * b + 1)];
             for (int i = 0; i < m_ndm; ++i) {
               double e1i = m_e1[i];
               double e2i = m_e2[i];
@@ -869,21 +991,30 @@ LadrunoMembrane::resolveAndBuildTransfer(void)
         }
       }
 
-      if (wantMass && nb_nodes == nPoly) {
-        for (int a = 0; a < nPoly; ++a) {
+      if (wantMass) {
+        // the Guyan mass of an LST mesh: its row sums can go negative at a
+        // node, so -lumped uses HRZ on the condensed mass (diagonal scaled to
+        // the panel mass, always positive)
+        double diagSum = 0.0, total = 0.0;
+        for (int a = 0; a < nExt; ++a) {
+          diagSum += cond.M[(2 * a) * nb_dof + (2 * a)];
+          for (int b = 0; b < nExt; ++b)
+            total += cond.M[(2 * a) * nb_dof + (2 * b)];
+        }
+        double hrz = (diagSum > 0.0) ? total / diagSum : 0.0;
+        for (int a = 0; a < nExt; ++a) {
           int off_a = m_nodeDofOffsets[a];
-          for (int b = 0; b < nPoly; ++b) {
+          if (m_lumped) {
+            double maa = hrz * cond.M[(2 * a) * nb_dof + (2 * a)];
+            for (int d = 0; d < m_ndm; ++d)
+              m_Mbase(off_a + d, off_a + d) += maa;
+            continue;
+          }
+          for (int b = 0; b < nExt; ++b) {
             int off_b = m_nodeDofOffsets[b];
-            double mab = cond.M_cond[(2 * a) * nb_dof + (2 * b)];
-            if (m_lumped) {
-              for (int d = 0; d < m_ndm; ++d) {
-                m_Mbase(off_a + d, off_a + d) += mab;
-              }
-            } else {
-              for (int d = 0; d < m_ndm; ++d) {
-                m_Mbase(off_a + d, off_b + d) += mab;
-              }
-            }
+            double mab = cond.M[(2 * a) * nb_dof + (2 * b)];
+            for (int d = 0; d < m_ndm; ++d)
+              m_Mbase(off_a + d, off_b + d) += mab;
           }
         }
       }
@@ -905,50 +1036,60 @@ LadrunoMembrane::hasMass(void) const
   return (r > 0.0 && m_thick > 0.0);
 }
 
+// WP-204: (u.e1, u.e2) of every external node, the retained in-plane DOFs
+void
+LadrunoMembrane::gatherInPlaneDisp(std::vector<double> &ur) const
+{
+  int nExt = static_cast<int>(m_theNodes.size());
+  ur.assign(2 * nExt, 0.0);
+  for (int a = 0; a < nExt; ++a) {
+    if (m_theNodes[a] == nullptr) continue;
+    const Vector &d = m_theNodes[a]->getTrialDisp();
+    double ux = (d.Size() >= 1) ? d(0) : 0.0;
+    double uy = (d.Size() >= 2) ? d(1) : 0.0;
+    double uz = (d.Size() >= 3 && m_ndm == 3) ? d(2) : 0.0;
+    ur[2 * a] = ux * m_e1[0] + uy * m_e1[1] + uz * m_e1[2];
+    ur[2 * a + 1] = ux * m_e2[0] + uy * m_e2[1] + uz * m_e2[2];
+  }
+}
+
+// WP-204: the panel-mean in-plane strain of the condensed field (exact area
+// average of the LST strain; the stock boundary integral used the outer loop
+// only, so holes and interior nodes were ignored)
 void
 LadrunoMembrane::computeMeanInPlaneStrain(Vector &eps2d) const
 {
   eps2d.Zero();
-  int nPoly = static_cast<int>(m_polyNodeTags.size());
-  if (nPoly < 3 || m_slabArea <= 1e-15) {
+  int n2 = 2 * static_cast<int>(m_theNodes.size());
+  if (m_dMeanStrainOp.size() != static_cast<std::size_t>(3 * n2) || n2 == 0) {
     return;
   }
-  auto getLocalPosAndDisp = [this](int idx, double &x, double &y, double &u, double &v) {
-    const Vector &c = m_theNodes[idx]->getCrds();
-    const Vector &d = m_theNodes[idx]->getTrialDisp();
-    double cx = (c.Size() >= 1) ? c(0) : 0.0;
-    double cy = (c.Size() >= 2) ? c(1) : 0.0;
-    double cz = (c.Size() >= 3) ? c(2) : 0.0;
-    double dx = cx - m_origin[0];
-    double dy = cy - m_origin[1];
-    double dz = cz - m_origin[2];
-    x = dx * m_e1[0] + dy * m_e1[1] + dz * m_e1[2];
-    y = dx * m_e2[0] + dy * m_e2[1] + dz * m_e2[2];
-    double ux = (d.Size() >= 1) ? d(0) : 0.0;
-    double uy = (d.Size() >= 2) ? d(1) : 0.0;
-    double uz = (d.Size() >= 3 && m_ndm == 3) ? d(2) : 0.0;
-    u = ux * m_e1[0] + uy * m_e1[1] + uz * m_e1[2];
-    v = ux * m_e2[0] + uy * m_e2[1] + uz * m_e2[2];
-  };
-
-  double exx = 0.0, eyy = 0.0, gxy = 0.0;
-  for (int i = 0; i < nPoly; ++i) {
-    int j = (i + 1) % nPoly;
-    double xi, yi, ui, vi, xj, yj, uj, vj;
-    getLocalPosAndDisp(i, xi, yi, ui, vi);
-    getLocalPosAndDisp(j, xj, yj, uj, vj);
-    double nx_dl = yj - yi;
-    double ny_dl = -(xj - xi);
-    double um = 0.5 * (ui + uj);
-    double vm = 0.5 * (vi + vj);
-    exx += um * nx_dl;
-    eyy += vm * ny_dl;
-    gxy += um * ny_dl + vm * nx_dl;
+  std::vector<double> ur;
+  this->gatherInPlaneDisp(ur);
+  for (int r = 0; r < 3; ++r) {
+    double s = 0.0;
+    for (int j = 0; j < n2; ++j)
+      s += m_dMeanStrainOp[r * n2 + j] * ur[j];
+    eps2d(r) = s;
   }
-  double invA = 1.0 / m_slabArea;
-  eps2d(0) = exx * invA;
-  eps2d(1) = eyy * invA;
-  eps2d(2) = gxy * invA;
+}
+
+// ratio of the material's current to initial D00 (1 without a material): the
+// nonlinear scaling of the condensed in-plane stiffness (unchanged from ADR-98)
+double
+LadrunoMembrane::tangentScale(void)
+{
+  double scale = 1.0;
+  if (m_theMaterial != nullptr && std::abs(m_D00_init) > 1e-15) {
+    const Matrix &Dt = m_theMaterial->getTangent();
+    if (Dt.noRows() >= 2 && Dt.noCols() >= 2) {
+      scale = Dt(0, 0) / m_D00_init;
+    }
+  }
+#ifdef LADRUNO_MUTATE_MEMBRANE
+  scale = 0.0;
+#endif
+  return scale;
 }
 
 int
@@ -1387,7 +1528,7 @@ LadrunoMembrane::sendSelf(int commitTag, Channel &theChannel)
     totalHoleNodes += static_cast<int>(hl.size());
   }
 
-  Vector data(24);
+  Vector data(28);   // WP-204: +4 (f11, f22, f12, #diaphragm nodes)
   data(0)  = this->getTag();
   data(1)  = static_cast<int>(m_polyNodeTags.size());
   data(2)  = static_cast<int>(m_frameTags.size());
@@ -1412,6 +1553,10 @@ LadrunoMembrane::sendSelf(int commitTag, Channel &theChannel)
   data(21) = m_b2;
   data(22) = m_b3;
   data(23) = (m_theMaterial != nullptr) ? 1.0 : 0.0;
+  data(24) = m_inPlaneMods[0];
+  data(25) = m_inPlaneMods[1];
+  data(26) = m_inPlaneMods[2];
+  data(27) = static_cast<int>(m_diaphragmNodeTags.size());
 
   res += theChannel.sendVector(dataTag, commitTag, data);
   if (res < 0) {
@@ -1436,7 +1581,8 @@ LadrunoMembrane::sendSelf(int commitTag, Channel &theChannel)
   int nFrames = static_cast<int>(m_frameTags.size());
   int nSupp = static_cast<int>(m_supportNodeTags.size());
   int nHoles = static_cast<int>(m_holeLoops.size());
-  int idLen = 2 + nPoly + nFrames + nSupp + nHoles + totalHoleNodes;
+  int nDiaph = static_cast<int>(m_diaphragmNodeTags.size());
+  int idLen = 2 + nPoly + nFrames + nSupp + nHoles + totalHoleNodes + nDiaph;
 
   ID idData(idLen);
   int idx = 0;
@@ -1449,6 +1595,7 @@ LadrunoMembrane::sendSelf(int commitTag, Channel &theChannel)
   for (const auto &hl : m_holeLoops) {
     for (int t : hl) idData(idx++) = t;
   }
+  for (int t : m_diaphragmNodeTags) idData(idx++) = t;
 
   res += theChannel.sendID(dataTag, commitTag, idData);
   if (res < 0) {
@@ -1472,7 +1619,7 @@ LadrunoMembrane::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
   int res = 0;
   int dataTag = this->getDbTag();
 
-  Vector data(24);
+  Vector data(28);   // WP-204
   res += theChannel.recvVector(dataTag, commitTag, data);
   if (res < 0) {
     opserr << "WARNING LadrunoMembrane::recvSelf - failed to recv Vector\n";
@@ -1501,13 +1648,15 @@ LadrunoMembrane::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
   m_b2               = data(21);
   m_b3               = data(22);
   bool hasMat        = (data(23) != 0.0);
+  m_inPlaneMods      = {data(24), data(25), data(26)};
+  int nDiaph         = static_cast<int>(data(27));
 
   if (methodCode == 1) m_method = "oneway";
   else if (methodCode == 2) m_method = "fea_poisson";
   else if (methodCode == 3) m_method = "fea_plate";
   else m_method = "tributary";
 
-  int idLen = 2 + nPoly + nFrames + nSupp + nHoles + totalHoleNodes;
+  int idLen = 2 + nPoly + nFrames + nSupp + nHoles + totalHoleNodes + nDiaph;
   ID idData(idLen);
   res += theChannel.recvID(dataTag, commitTag, idData);
   if (res < 0) {
@@ -1539,6 +1688,9 @@ LadrunoMembrane::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
       m_holeLoops[h][j] = idData(idx++);
     }
   }
+
+  m_diaphragmNodeTags.assign(nDiaph, 0);
+  for (int i = 0; i < nDiaph; ++i) m_diaphragmNodeTags[i] = idData(idx++);
 
   if (hasMat) {
     if (m_theMaterial == nullptr || m_theMaterial->getClassTag() != matClassTag) {
@@ -1669,6 +1821,38 @@ LadrunoMembrane::setResponse(const char **argv, int argc, OPS_Stream &output)
     } else if (strcmp(argv[0], "yieldLines") == 0) {
       int nYL = static_cast<int>(m_yieldLines3d.size());
       theResponse = new ElementResponse(this, 19, Vector(nYL > 0 ? nYL : 1));
+    } else if (strcmp(argv[0], "membraneForces") == 0 || strcmp(argv[0], "membraneForce") == 0) {
+      // WP-204: [N11 N22 N12] per diaphragm triangle (centroid, e1/e2 frame)
+      int nT = static_cast<int>(m_dTriArea.size());
+      for (int t = 0; t < nT; ++t) {
+        char nm[48];
+        snprintf(nm, sizeof(nm), "N11_%d", t + 1); output.tag("ResponseType", nm);
+        snprintf(nm, sizeof(nm), "N22_%d", t + 1); output.tag("ResponseType", nm);
+        snprintf(nm, sizeof(nm), "N12_%d", t + 1); output.tag("ResponseType", nm);
+      }
+      theResponse = new ElementResponse(this, 20, Vector(nT > 0 ? 3 * nT : 1));
+    } else if (strcmp(argv[0], "diaphragmVertices") == 0) {
+      int n = static_cast<int>(m_dVerts3d.size());
+      theResponse = new ElementResponse(this, 21, Vector(n > 0 ? n : 1));
+    } else if (strcmp(argv[0], "diaphragmTriangles") == 0) {
+      int n = static_cast<int>(m_dTris.size());
+      theResponse = new ElementResponse(this, 22, Vector(n > 0 ? n : 1));
+    } else if (strcmp(argv[0], "meanMembraneForce") == 0 || strcmp(argv[0], "meanMembraneForces") == 0) {
+      output.tag("ResponseType", "N11");
+      output.tag("ResponseType", "N22");
+      output.tag("ResponseType", "N12");
+      theResponse = new ElementResponse(this, 23, Vector(3));
+    } else if (strcmp(argv[0], "diaphragmForces") == 0 || strcmp(argv[0], "diaphragmForce") == 0) {
+      // WP-204: in-plane (diaphragm) force on each node, global components
+      static const char *comp[3] = {"Px", "Py", "Pz"};
+      for (int a = 0; a < numNodes; ++a) {
+        for (int i = 0; i < m_ndm; ++i) {
+          char nm[48];
+          snprintf(nm, sizeof(nm), "%s_%d", comp[i], a + 1);
+          output.tag("ResponseType", nm);
+        }
+      }
+      theResponse = new ElementResponse(this, 24, Vector(numNodes * m_ndm > 0 ? numNodes * m_ndm : 1));
     } else if ((strcmp(argv[0], "material") == 0 || strcmp(argv[0], "integrPoint") == 0) &&
                m_theMaterial != nullptr && argc > 2) {
       theResponse = m_theMaterial->setResponse(&argv[2], argc - 2, output);
@@ -1944,6 +2128,78 @@ LadrunoMembrane::getResponse(int responseID, Information &eleInfo)
       vYL(i) = m_yieldLines3d[i];
     }
     return eleInfo.setVector(vYL);
+  }
+
+  case 20:
+  case 23: {
+    // WP-204: N = t * D_mod * eps (times the material tangent ratio)
+    int n2 = 2 * static_cast<int>(m_theNodes.size());
+    int nT = static_cast<int>(m_dTriArea.size());
+    static thread_local Vector vN;
+    vN.resize(responseID == 20 ? (nT > 0 ? 3 * nT : 1) : 3);
+    vN.Zero();
+    if (!m_hasInPlaneStiff || m_dStrainOp.size() != static_cast<std::size_t>(nT) * 3 * n2) {
+      return eleInfo.setVector(vN);
+    }
+    std::vector<double> ur;
+    this->gatherInPlaneDisp(ur);
+    double ts = m_thick * this->tangentScale();
+    auto forces = [&](const double *op, int out) {
+      double eps[3];
+      for (int r = 0; r < 3; ++r) {
+        double s = 0.0;
+        for (int j = 0; j < n2; ++j) s += op[r * n2 + j] * ur[j];
+        eps[r] = s;
+      }
+      for (int r = 0; r < 3; ++r)
+        vN(out + r) = ts * (m_Dmod[3 * r] * eps[0] + m_Dmod[3 * r + 1] * eps[1] + m_Dmod[3 * r + 2] * eps[2]);
+    };
+    if (responseID == 20) {
+      for (int t = 0; t < nT; ++t)
+        forces(&m_dStrainOp[static_cast<std::size_t>(t) * 3 * n2], 3 * t);
+    } else if (m_dMeanStrainOp.size() == static_cast<std::size_t>(3 * n2)) {
+      forces(m_dMeanStrainOp.data(), 0);
+    }
+    return eleInfo.setVector(vN);
+  }
+
+  case 21: {
+    int n = static_cast<int>(m_dVerts3d.size());
+    static thread_local Vector v;
+    v.resize(n > 0 ? n : 1);
+    v.Zero();
+    for (int i = 0; i < n; ++i) v(i) = m_dVerts3d[i];
+    return eleInfo.setVector(v);
+  }
+
+  case 22: {
+    int n = static_cast<int>(m_dTris.size());
+    static thread_local Vector v;
+    v.resize(n > 0 ? n : 1);
+    v.Zero();
+    for (int i = 0; i < n; ++i) v(i) = static_cast<double>(m_dTris[i]);
+    return eleInfo.setVector(v);
+  }
+
+  case 24: {
+    int nExt = static_cast<int>(m_theNodes.size());
+    static thread_local Vector v;
+    v.resize(nExt * m_ndm > 0 ? nExt * m_ndm : 1);
+    v.Zero();
+    if (m_hasInPlaneStiff && m_numDOF > 0) {
+      Vector u(m_numDOF);
+      for (int a = 0; a < nExt; ++a) {
+        const Vector &disp = m_theNodes[a]->getTrialDisp();
+        int off = m_nodeDofOffsets[a];
+        for (int j = 0; j < disp.Size() && off + j < m_numDOF; ++j) u(off + j) = disp(j);
+      }
+      Vector f(m_numDOF);
+      f.addMatrixVector(0.0, m_Kbase, u, this->tangentScale());
+      for (int a = 0; a < nExt; ++a)
+        for (int i = 0; i < m_ndm; ++i)
+          v(a * m_ndm + i) = f(m_nodeDofOffsets[a] + i);
+    }
+    return eleInfo.setVector(v);
   }
 
   default:
