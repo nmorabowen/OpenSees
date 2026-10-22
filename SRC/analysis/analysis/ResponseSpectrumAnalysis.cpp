@@ -726,7 +726,15 @@ int ResponseSpectrumAnalysis::analyzeCombined()
 	return endMode();
 }
 
+// Ladruno WP-202: -scale was parsed and stored in m_scale but never applied,
+// so every spectral ordinate ignored it. Apply it once, here, so the per-mode
+// (analyze) and the combined (analyzeCombined) paths both honour it.
 double ResponseSpectrumAnalysis::getSa(double T) const
+{
+	return m_scale * getSaUnscaled(T);
+}
+
+double ResponseSpectrumAnalysis::getSaUnscaled(double T) const
 {
 	// use the time series if provided
 	if (m_function)
