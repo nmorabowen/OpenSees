@@ -60,7 +60,7 @@ OPS_ASDShellT3(void)
     int numArgs = OPS_GetNumRemainingInputArgs();
     if (numArgs < 5) {
         opserr << "Want: element ASDShellT3 $tag $iNode $jNode $kNode $secTag "
-            "<-corotational> <-reducedIntegration> <-drillingNL> <-damp $dampTag>"
+            "<-corotational | -pDelta> <-reducedIntegration> <-drillingNL> <-damp $dampTag>"
             "<-local $x1 $x2 $x3>";
         return 0;
     }
@@ -73,7 +73,8 @@ OPS_ASDShellT3(void)
     }
 
     bool corotational = false;
-    bool reduced_int = false;
+    bool pdelta = false; // Ladruno WP-205
+bool reduced_int = false;
     ASDShellT3::DrillingDOFMode drill_mode = ASDShellT3::DrillingDOF_Elastic;
     int dampingTag = 0;
     Damping* m_damping = 0;
@@ -83,6 +84,9 @@ OPS_ASDShellT3(void)
         const char* type = OPS_GetString();
         if ((strcmp(type, "-corotational") == 0) || (strcmp(type, "-Corotational") == 0)) {
             corotational = true;
+        }
+        else if ((strcmp(type, "-pDelta") == 0) || (strcmp(type, "-PDelta") == 0)) {
+            pdelta = true; // Ladruno WP-205
         }
         else if (strcmp(type, "-drillingNL") == 0) {
             drill_mode = ASDShellT3::DrillingDOF_NonLinear;
@@ -129,7 +133,17 @@ OPS_ASDShellT3(void)
         drill_mode = ASDShellT3::DrillingDOF_Elastic;
     }
 
-    return new ASDShellT3(iData[0], iData[1], iData[2], iData[3], section, local_x, corotational, reduced_int, drill_mode, m_damping);
+    // Ladruno WP-205: -pDelta adds the initial-stress stiffness on LINEAR
+    // kinematics; the corotational formulation already carries the geometric
+    // terms (EICR K_GP/K_GR), so the two are exclusive
+    if (pdelta && corotational) {
+        opserr << "ERROR: element ASDShellT3 " << iData[0]
+               << ": -pDelta and -corotational are mutually exclusive\n";
+        return 0;
+    }
+    ASDShellT3* theElement = new ASDShellT3(iData[0], iData[1], iData[2], iData[3], section, local_x, corotational, reduced_int, drill_mode, m_damping);
+    theElement->setPDelta(pdelta);
+    return theElement;
 }
 
 // anonymous namespace for utilities
@@ -1034,7 +1048,7 @@ int  ASDShellT3::sendSelf(int commitTag, Channel& theChannel)
     // 1 -> reduced integration flag
     // 1 -> non-linear drilling flag
     // 1 -> local_x flag
-    static ID idData(18);
+    static ID idData(19);   // Ladruno WP-205: +1 (pDelta flag)
     counter = 0;
     idData(counter++) = getTag();
     for (int i = 0; i < 3; ++i)
@@ -1072,6 +1086,7 @@ int  ASDShellT3::sendSelf(int commitTag, Channel& theChannel)
     idData(counter++) = static_cast<int>(m_reduced_integration);
     idData(counter++) = static_cast<int>(static_cast<bool>(m_nldrill));
     idData(counter++) = static_cast<int>(static_cast<bool>(m_local_x));
+    idData(counter++) = static_cast<int>(m_pdelta); // Ladruno WP-205
 
     res = theChannel.sendID(dataTag, commitTag, idData);
     if (res < 0) {
@@ -1171,7 +1186,7 @@ int  ASDShellT3::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& 
     // 1 -> reduced integration flag
     // 1 -> non-linear drilling flag
     // 1 -> local_x flag
-    static ID idData(18);
+    static ID idData(19);   // Ladruno WP-205: +1 (pDelta flag)
     res = theChannel.recvID(dataTag, commitTag, idData);
     if (res < 0) {
         opserr << "WARNING ASDShellT3::recvSelf() - " << this->getTag() << " failed to receive ID\n";
@@ -1203,6 +1218,7 @@ int  ASDShellT3::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& 
     m_reduced_integration = static_cast<bool>(idData(counter++));
     bool use_nldrill = static_cast<bool>(idData(counter++));
     bool use_local_x = static_cast<bool>(idData(counter++));
+    m_pdelta = static_cast<bool>(idData(counter++)); // Ladruno WP-205
 
     // create transformation
     if (m_transformation)
@@ -1636,6 +1652,14 @@ int ASDShellT3::calculateAll(Matrix& LHS, Vector& RHS, int options)
     static Vector drill_dstress(8);
     static Vector drill_dstress_el(8);
 
+    // Ladruno WP-205: initial-stress (geometric) stiffness for -pDelta
+    static thread_local Matrix Ksig(18, 18);
+    static thread_local Vector Slocal(8);
+    bool do_ksig = m_pdelta && m_transformation->isLinear() &&
+        !(options & OPT_LHS_IS_INITIAL) && ((options & OPT_RHS) || (options & OPT_LHS));
+    if (do_ksig)
+        Ksig.Zero();
+
     // Stenberg shear stabilization coefficient
     // to avoid shear oscillations in the thin limit
     double thickness = evaluateSectionThickness();
@@ -1784,6 +1808,26 @@ int ASDShellT3::calculateAll(Matrix& LHS, Vector& RHS, int options)
             }
         }
 
+        // Ladruno WP-205: K_sigma = int G' [N11 N12; N12 N22] G dA for each
+        // local translation (u, v, w); see ASDShellQ4::calculateAll
+        if (do_ksig)
+        {
+            const Vector& Ssec = m_sections[igauss]->getStressResultant();
+            if (m_angle != 0.0)
+                Slocal.addMatrixVector(0.0, Rs, Ssec, 1.0);
+            else
+                Slocal = Ssec;
+            double n11 = Slocal(0), n22 = Slocal(1), n12 = Slocal(2);
+            for (int a = 0; a < 3; a++) {
+                for (int b = 0; b < 3; b++) {
+                    double g = (dNdX(a, 0) * (n11 * dNdX(b, 0) + n12 * dNdX(b, 1)) +
+                                dNdX(a, 1) * (n12 * dNdX(b, 0) + n22 * dNdX(b, 1))) * dA;
+                    for (int k = 0; k < 3; k++)
+                        Ksig(a * 6 + k, b * 6 + k) += g;
+                }
+            }
+        }
+
         // Integrate LHS
         if (options & OPT_LHS)
         {
@@ -1834,6 +1878,14 @@ int ASDShellT3::calculateAll(Matrix& LHS, Vector& RHS, int options)
                 }
             }
         }
+    }
+
+    // Ladruno WP-205: initial-stress stiffness and its forces K_sigma*UL
+    if (do_ksig) {
+        if (options & OPT_LHS)
+            LHS.addMatrix(1.0, Ksig, 1.0);
+        if (options & OPT_RHS)
+            RHS.addMatrixVector(1.0, Ksig, UL, 1.0);
     }
 
     // Transform LHS to global coordinate system

@@ -135,7 +135,12 @@ public:
     virtual ~ASDShellQ4();
 
     const char *getClassType(void) const {return "ASDShellQ4";}
-    
+
+    // Ladruno WP-205: -pDelta, linear kinematics plus the initial-stress
+    // (geometric) stiffness of the current membrane forces, the shell
+    // counterpart of a PDelta transformation (ETABS-style P-Delta about gravity)
+    void setPDelta(bool on) { m_pdelta = on; }
+
     // domain
     void setDomain(Domain* theDomain);
     int setDamping(Domain *theDomain, Damping *theDamping);
@@ -228,6 +233,9 @@ private:
     // section orientation with respect to the local coordinate system
     Vector* m_local_x = nullptr;
     double m_angle = 0.0;
+
+    // Ladruno WP-205: initial-stress stiffness with linear kinematics
+    bool m_pdelta = false;
 
     // members for non-linear treatment of AGQI internal DOFs:
     // it has 24 displacement DOFs
