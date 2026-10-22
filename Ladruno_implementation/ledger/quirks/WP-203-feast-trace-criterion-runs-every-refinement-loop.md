@@ -1,6 +1,7 @@
 ---
 wp: WP-203
 title: "eigen -feast on a building model ran every refinement loop under MKL's default trace stop criterion"
+pr: "#1010"
 date: 2026-10-22
 ---
 ### `eigen -feast` takes minutes on a building model: every solve runs all `maxRefine` refinement loops (MKL's default trace stop never fires)
