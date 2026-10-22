@@ -98,7 +98,7 @@ def test_zero_axial_load_unchanged(el, tri):
     lin = _run(el, [], 0.0, tri)
     for opt in (['-corotational'], ['-pDelta']):
         t, _, u = _run(el, opt, 0.0, tri)
-        assert t == pytest.approx(lin[0], rel=1e-9)
+        assert t == pytest.approx(lin[0], rel=1e-7)   # round-off: 1.5e-9 on Linux LAPACK
         assert u == pytest.approx(lin[2], rel=1e-4)
 
 
