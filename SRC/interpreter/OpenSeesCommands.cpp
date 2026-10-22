@@ -427,11 +427,8 @@ OpenSeesCommands::eigen(int typeSolver, double shift,
 	FeastEigenSOE *fsoe = static_cast<FeastEigenSOE *>(theEigenSOE);
 	const int mFound = fsoe->getNumFoundModes();
 	if (mFound < numEigen) {
-	    const Vector &lam = theDomain->getEigenvalues();
-	    Vector trimmed(mFound);
-	    for (int i = 0; i < mFound; i++)
-		trimmed(i) = lam(i);
-	    theDomain->setEigenvalues(trimmed);
+	    // WP-203: trims the node eigenvectors too (modalProperties abort)
+	    FeastEigenSOE::trimDomainModes(*theDomain, mFound);
 	    numEigen = mFound;
 	}
     }
@@ -2339,6 +2336,7 @@ static int OPS_eigenFeast()
     bool certify = false;
     bool blockZGate = false;   // Ladruno ADR43 P3b
     bool rci = false;          // Ladruno ADR43 P3c
+    bool traceStop = false; // Ladruno WP-203
     while (OPS_GetNumRemainingInputArgs() > 0) {
 	const char* flag = OPS_GetString();
 	if (strcmp(flag, "-m0") == 0 && OPS_GetNumRemainingInputArgs() > 0) {
@@ -2378,6 +2376,10 @@ static int OPS_eigenFeast()
 	    // (sweeps the contour flattening Im(z) -> 0 on the SOE's own CSR
 	    // and refuses if the 2n block-real solve degrades; see the ADR)
 	    blockZGate = true;
+	} else if (strcmp(flag, "-traceStop") == 0) {
+	    // Ladruno WP-203: stop on MKL's trace criterion (fpm(6)=0) instead
+	    // of the relative residual (the default; see FeastEigenSolver::solve)
+	    traceStop = true;
 	} else if (strcmp(flag, "-rci") == 0) {
 	    // Ladruno ADR43 P3c: drive FEAST through the dfeast_srci RCI with
 	    // the block-real kernel as the inner contour solve (the seam the
@@ -2404,6 +2406,7 @@ static int OPS_eigenFeast()
     theSOE->setCertify(certify);
     theSOE->setBlockZGate(blockZGate);   // Ladruno ADR43 P3b
     theSOE->setRci(rci);                 // Ladruno ADR43 P3c
+    theSOE->setTraceStop(traceStop); // Ladruno WP-203
 
     // analysis-side mode-loop cap; the reconcile trims to the found count.
     // NOT tied to m0: m0 is the FEAST subspace SEED (auto-enlarged on

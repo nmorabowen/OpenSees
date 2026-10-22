@@ -6817,6 +6817,7 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
   double feastTolExp = 0.0;
   bool   feastVerbose = false, feastCertify = false;
   bool   feastBlockZGate = false, feastRci = false;
+  bool   feastTraceStop = false;   // Ladruno WP-203
   for (int fl = 1; fl < argc; fl++) {
     if (strcmp(argv[fl], "-feast") == 0 || strcmp(argv[fl], "feast") == 0) {
       feast = true;
@@ -6871,6 +6872,8 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
         feastCertify = true;    p += 1;
       } else if (strcmp(argv[p], "-blockZGate") == 0) {
         feastBlockZGate = true; p += 1;
+      } else if (strcmp(argv[p], "-traceStop") == 0) {
+        feastTraceStop = true; p += 1;   // Ladruno WP-203
       } else if (strcmp(argv[p], "-rci") == 0) {
         feastRci = true;        p += 1;
       } else {
@@ -7019,6 +7022,7 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
 	f->setCertify(feastCertify);
 	f->setBlockZGate(feastBlockZGate);
 	f->setRci(feastRci);
+	f->setTraceStop(feastTraceStop); // Ladruno WP-203
       }
 #ifdef _PARALLEL_INTERPRETERS
       else if (typeSolver == EigenSOE_TAGS_ArpackSOE) {
@@ -7081,6 +7085,7 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
 	theFeastSOE->setCertify(feastCertify);
 	theFeastSOE->setBlockZGate(feastBlockZGate);
 	theFeastSOE->setRci(feastRci);
+	theFeastSOE->setTraceStop(feastTraceStop); // Ladruno WP-203
 	theEigenSOE = theFeastSOE;
 
       } else {
@@ -7170,11 +7175,8 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
       FeastEigenSOE *fsoe = static_cast<FeastEigenSOE *>(theEigenSOE);
       const int mFound = fsoe->getNumFoundModes();
       if (mFound < numEigen) {
-	const Vector &lam = theDomain.getEigenvalues();
-	Vector trimmed(mFound);
-	for (int i = 0; i < mFound; i++)
-	  trimmed(i) = lam(i);
-	theDomain.setEigenvalues(trimmed);
+	// WP-203: trims the node eigenvectors too (modalProperties abort)
+	FeastEigenSOE::trimDomainModes(theDomain, mFound);
 	numEigen = mFound;
       }
     }

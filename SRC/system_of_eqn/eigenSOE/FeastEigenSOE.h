@@ -45,6 +45,7 @@
 #include <EigenSOE.h>
 
 class FeastEigenSolver;
+class Domain;
 
 class FeastEigenSOE : public EigenSOE
 {
@@ -75,10 +76,18 @@ class FeastEigenSOE : public EigenSOE
     void setCertify(bool certify);  // P2: Sturm/inertia completeness check
     void setBlockZGate(bool g);     // P3b: block-real complex-shift self-test
     void setRci(bool r);            // P3c: dfeast_srci RCI orchestration
+    void setTraceStop(bool r);      // WP-203: stop on the trace (MKL default)
 
     // found-mode count from the last solve (the band defines the count;
     // the command layer reconciles the domain's list to this)
     int getNumFoundModes(void) const;
+
+    // WP-203: trim the domain's eigen results to the found count. Trims the
+    // eigenvalue list AND every node's eigenvector matrix (the old reconcile
+    // trimmed only the eigenvalues, so the nodes kept the analysis-loop cap of
+    // columns and modalProperties aborted: "inconsistent eigenvector matrix
+    // and ID"). Shared by OpenSeesCommands::eigen and classic Tcl eigen.
+    static void trimDomainModes(Domain &theDomain, int mFound);
 
     double getEmin(void) const;
     double getEmax(void) const;
@@ -125,6 +134,7 @@ class FeastEigenSOE : public EigenSOE
     bool blockZGateFlag; // P3b: block-real complex-shift solve self-test
     bool rciFlag;        // P3c: route the solve through the dfeast_srci RCI
                          // with LadrunoBlockZKernel as the inner solve
+    bool traceStop;      // WP-203: fpm(6)=0 (trace) instead of 1 (residual)
 };
 
 #endif
