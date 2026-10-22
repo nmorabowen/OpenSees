@@ -72,7 +72,9 @@ public:
                   double pressure,
                   double b1,
                   double b2,
-                  double b3);
+                  double b3,
+                  const std::vector<int> &diaphragmNodes = {},
+                  const std::array<double, 3> &inPlaneMods = {1.0, 1.0, 1.0});
 
   LadrunoMembrane();
   ~LadrunoMembrane() override;
@@ -146,6 +148,9 @@ private:
   int resolveAndBuildTransfer(void);
   bool hasMass(void) const;
   void computeMeanInPlaneStrain(Vector &eps2d) const;
+  // WP-204: in-plane displacement of every external node in the e1/e2 frame
+  void gatherInPlaneDisp(std::vector<double> &ur) const;
+  double tangentScale(void);
 
   std::vector<int> m_polyNodeTags;
   std::vector<int> m_frameTags;
@@ -206,6 +211,19 @@ private:
   std::vector<double> m_meshSubSegmentsUnit;
   std::vector<double> m_meshTriangleLoadFlowUnit;
   std::vector<double> m_yieldLines3d;
+
+  // WP-204: the diaphragm. Every external node (outer loop, hole loops,
+  // support nodes, -diaphragmNodes) is a retained node of an exact Guyan
+  // condensation of an LST mesh of the panel (LadrunoMembraneDiaphragm.h).
+  std::vector<int> m_diaphragmNodeTags;   // in-plane only, no gravity share
+  std::vector<int> m_diaphragmExtIdx;
+  std::array<double, 3> m_inPlaneMods;    // f11, f22, f12 (ETABS-style)
+  double m_Dmod[9];                       // plane-stress modulus x modifiers
+  std::vector<double> m_dStrainOp;        // nTri x 3 x 2nExt, centroid strains
+  std::vector<double> m_dMeanStrainOp;    // 3 x 2nExt, panel mean strain
+  std::vector<double> m_dVerts3d;         // diaphragm mesh vertices (global)
+  std::vector<int> m_dTris;               // diaphragm mesh triangles
+  std::vector<double> m_dTriArea;
 
   Matrix m_Kbase;
   Matrix m_Mbase;

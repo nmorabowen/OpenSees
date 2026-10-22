@@ -126,6 +126,8 @@ OPS_LadrunoMembrane(void)
   bool lumped = false;
   double pressure = 0.0;
   double b1 = 0.0, b2 = 0.0, b3 = 0.0;
+  std::vector<int> diaphragmNodes;               // WP-204
+  std::array<double, 3> inPlaneMods = {1.0, 1.0, 1.0};
 
   char tok[128];
   while (OPS_GetNumRemainingInputArgs() > 0) {
@@ -150,6 +152,27 @@ OPS_LadrunoMembrane(void)
                << ": -supportNodes requires at least 1 node tag\n";
         return 0;
       }
+    } else if (std::strcmp(tok, "-diaphragmNodes") == 0) {
+      // WP-204: nodes that get in-plane (diaphragm) stiffness but no gravity
+      // share: beam nodes along an edge, wall nodes along a hole, ...
+      if (memReadIntList(diaphragmNodes) < 1) {
+        opserr << "WARNING element LadrunoMembrane " << eleTag
+               << ": -diaphragmNodes requires at least 1 node tag\n";
+        return 0;
+      }
+    } else if (std::strcmp(tok, "-f11") == 0 || std::strcmp(tok, "-f22") == 0 ||
+               std::strcmp(tok, "-f12") == 0) {
+      // WP-204: ETABS-style in-plane stiffness modifiers (local e1/e2 frame)
+      int k = (tok[2] == '1' && tok[3] == '1') ? 0 : ((tok[2] == '2') ? 1 : 2);
+      double v = 0.0;
+      numData = 1;
+      if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetDoubleInput(&numData, &v) < 0 ||
+          !(v > 0.0)) {
+        opserr << "WARNING element LadrunoMembrane " << eleTag << ": " << tok
+               << " requires a positive modifier\n";
+        return 0;
+      }
+      inPlaneMods[k] = v;
     } else if (std::strcmp(tok, "-hole") == 0) {
       std::vector<int> hole;
       if (memReadIntList(hole) < 3) {
@@ -344,7 +367,9 @@ OPS_LadrunoMembrane(void)
       pressure,
       b1,
       b2,
-      b3);
+      b3,
+      diaphragmNodes,
+      inPlaneMods);
 
   Domain *theDomain = OPS_GetDomain();
   if (theDomain != nullptr) {
