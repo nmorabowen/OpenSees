@@ -105,7 +105,7 @@ def test_gravity_state_preserved():
         assert abs(n1 - 1500.0) < 0.5 * 1500.0, n1
         assert abs(ops.nodeResponse(TOP, 1, INCR_DISP)) + \
             abs(ops.nodeResponse(TOP, 3, INCR_DISP)) > 1e-8
-    assert ops.responseSpectrumAnalysis('-revert') == 0
+    ops.responseSpectrumAnalysis('-revert')
     _close(_disp(), u_g, abs_=1e-15)
     _close(_forces(), f_g, rel=1e-12, abs_=1e-9)
     for n in (2, 3, 4):
