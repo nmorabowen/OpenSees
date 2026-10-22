@@ -116,6 +116,20 @@ OPS_ResponseSpectrumAnalysis(void)
 		return -1;
 	}
 
+	// Ladruno WP-207: `responseSpectrumAnalysis -revert` on its own drops the
+	// trial state an -increment call left behind (back to the committed state).
+	if (OPS_GetNumRemainingInputArgs() == 1) {
+		const char* first = OPS_GetString();
+		if (strcmp(first, "-revert") == 0) {
+			if (theAnalysisModel->revertDomainToLastCommit() < 0) {
+				opserr << "ResponseSpectrumAnalysis Error: -revert failed to revert the domain.\n";
+				return -1;
+			}
+			return 0;
+		}
+		OPS_ResetCurrentInputArg(-1);
+	}
+
 	// init default arguments
 	TimeSeries* ts = nullptr;
 	int dir = 1;
@@ -127,6 +141,11 @@ OPS_ResponseSpectrumAnalysis(void)
 	// Ladruno ADR44 P1b: opt-in modal combination
 	int combine_rule = LadrunoModalCombination::RULE_NONE;
 	std::vector<double> xi_list;
+	// Ladruno WP-207: opt-in incremental mode about the committed state
+	bool increment = false;
+	bool sign_given = false;
+	bool revert_at_end = false;
+	double sign = 1.0;
 
 	// make sure eigenvalue and modal properties have been called before
 	DomainModalProperties modal_props;
@@ -142,6 +161,9 @@ OPS_ResponseSpectrumAnalysis(void)
 		opserr << "ResponseSpectrumAnalysis $tsTag $dir <-scale $scale> <-damp $damp>\n"
 			<< "or\n"
 			<< "ResponseSpectrumAnalysis $dir -Tn $TnValues -fn $fnValues -Sa $SaValues <-scale $scale> <-damp $damp>\n"
+			// Ladruno WP-207
+			<< "with <-increment <-sign $sign> <-revert>> to impose each mode about the committed state,\n"
+			<< "and ResponseSpectrumAnalysis -revert to return to it.\n"
 			"Error: at least 2 arguments should be provided.\n";
 		return -1;
 	}
@@ -247,6 +269,24 @@ OPS_ResponseSpectrumAnalysis(void)
 			}
 			xi_list.assign(1, xi_one); // single value broadcast to all modes
 		}
+		// Ladruno WP-207: -increment [-sign +1|-1] [-revert]
+		else if (strcmp(value, "-increment") == 0) {
+			increment = true;
+		}
+		else if (strcmp(value, "-sign") == 0) {
+			if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetDouble(&numData, &sign) < 0) {
+				opserr << "ResponseSpectrumAnalysis Error: -sign requires a value (+1 or -1).\n";
+				return -1;
+			}
+			if (sign != 1.0 && sign != -1.0) {
+				opserr << "ResponseSpectrumAnalysis Error: -sign must be +1 or -1 (got " << sign << ").\n";
+				return -1;
+			}
+			sign_given = true;
+		}
+		else if (strcmp(value, "-revert") == 0) {
+			revert_at_end = true;
+		}
 		else if (strcmp(value, "-modalDamp") == 0 || strcmp(value, "-modalDamping") == 0) {
 			xi_list.clear();
 			while (OPS_GetNumRemainingInputArgs() > 0) {
@@ -348,7 +388,20 @@ OPS_ResponseSpectrumAnalysis(void)
 
 	// ok, create the response spectrum analysis and run it here...
 	// no need to store it
+	// Ladruno WP-207: -sign / -revert only make sense about a committed state
+	if (!increment && (sign_given || revert_at_end)) {
+		opserr << "ResponseSpectrumAnalysis Error: -sign and -revert require -increment.\n";
+		return -1;
+	}
+	if (increment && combine_rule != LadrunoModalCombination::RULE_NONE) {
+		opserr << "ResponseSpectrumAnalysis Error: -increment and -combine are "
+		          "mutually exclusive (-increment imposes one mode at a time).\n";
+		return -1;
+	}
+
 	ResponseSpectrumAnalysis rsa(theAnalysisModel, ts, Tn, Sa, dir, scale);
+	if (increment)
+		rsa.setIncrement(sign, revert_at_end); // Ladruno WP-207
 	int result;
 	// Ladruno ADR44 P1b: if -combine given, run the combination stage (one
 	// committed field); otherwise the stock per-mode behavior is byte-identical.
@@ -530,6 +583,14 @@ int ResponseSpectrumAnalysis::check()
 
 int ResponseSpectrumAnalysis::beginMode()
 {
+	// Ladruno WP-207: -increment starts every mode from the committed state
+	// (drops the trial state a previous -increment mode left in place)
+	if (m_increment && m_model->revertDomainToLastCommit() < 0) {
+		opserr << "ResponseSpectrumAnalysis::analyze() - the AnalysisModel failed in revertDomainToLastCommit"
+			" at mode " << m_current_mode << "\n";
+		return -1;
+	}
+
 	// new step... (do nothing)
 	if (m_model->analysisStep() < 0) {
 		opserr << "ResponseSpectrumAnalysis::analyze() - the AnalysisModel failed"
@@ -547,6 +608,18 @@ int ResponseSpectrumAnalysis::endMode()
 		opserr << "ResponseSpectrumAnalysis::analyze() - the AnalysisModel failed in updateDomain"
 			" at mode " << m_current_mode << "\n";
 		return -1;
+	}
+
+	// Ladruno WP-207: -increment records the trial state but never commits it,
+	// so the committed (e.g. gravity + loadConst) state is preserved
+	if (m_increment) {
+		m_model->getDomainPtr()->record();
+		if (m_revert_at_end && m_model->revertDomainToLastCommit() < 0) {
+			opserr << "ResponseSpectrumAnalysis::analyze() - the AnalysisModel failed in revertDomainToLastCommit"
+				" at mode " << m_current_mode << "\n";
+			return -1;
+		}
+		return 0;
 	}
 
 	// commit domain
@@ -600,6 +673,8 @@ int ResponseSpectrumAnalysis::solveMode()
 		// and its scaling
 		const Matrix& node_evec = node->getEigenvectors();
 		int node_ndf = node_evec.noRows();
+		// Ladruno WP-207: -increment imposes u_k about the committed displacement
+		const Vector* u_commit = m_increment ? &node->getDisp() : nullptr;
 
 		// for each DOF...
 		for (int i = 0; i < std::min(node_ndf, ndf); ++i) {
@@ -617,6 +692,10 @@ int ResponseSpectrumAnalysis::solveMode()
 			// compute modal displacements for the i-th DOF
 			double u_modal = V * MPF * mga / lambda;
 
+			// Ladruno WP-207: -increment => trial = committed + sign * u_modal
+			if (u_commit)
+				u_modal = (*u_commit)(i) + m_sign * u_modal;
+
 			// save this displacement at the i-th dof as new trial displacement
 			node->setTrialDisp(u_modal, i);
 		}
@@ -631,6 +710,14 @@ void ResponseSpectrumAnalysis::setCombination(int rule, const std::vector<double
 {
 	m_combine = rule;
 	m_xi = xi;
+}
+
+// Ladruno WP-207: opt-in incremental mode about the committed state.
+void ResponseSpectrumAnalysis::setIncrement(double sign, bool revertAtEnd)
+{
+	m_increment = true;
+	m_sign = sign;
+	m_revert_at_end = revertAtEnd;
 }
 
 // Ladruno ADR44 P1b: combine the per-mode peak nodal DISPLACEMENTS into one

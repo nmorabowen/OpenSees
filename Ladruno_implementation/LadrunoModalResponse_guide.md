@@ -127,6 +127,39 @@ u = ops.nodeDisp(node, dof)
 - Known stock quirk: the `-scale` factor is ignored by the per-mode recovery
   (`solveMode` never applies it); the combined path matches that behavior.
 
+## Per-mode RSA about a preloaded state — `responseSpectrumAnalysis -increment` (WP-207)
+
+The stock per-mode path **replaces** the trial displacement with the absolute
+modal one and **commits** it. On a gravity + `loadConst` domain the gravity
+state is gone after the first mode: element axial forces drop to 0, a P-Delta
+element's force of mode k loses its `N_g·u_k` term, and a later `eigen` no
+longer sees the P-Delta softening. `-increment` keeps the committed state:
+
+```python
+# gravity, loadConst, eigen, modalProperties ...
+for k in range(1, nModes + 1):
+    ops.responseSpectrumAnalysis(dir, '-Tn', *Tn, '-Sa', *Sa, '-mode', k, '-increment')
+    f_k = ops.eleResponse(ele, 'globalForce')        # forces of gravity + mode k
+    u_k = ops.nodeResponse(node, dof, 4)             # IncrDisp = sign * u_k
+ops.responseSpectrumAnalysis('-revert')              # back to the gravity state
+```
+
+- Each mode sets `trial = committed + sign·u_k`, runs the domain update (element
+  forces include the gravity state) and invokes the recorders, but **never
+  commits**. Recorders therefore see `gravity + mode k`.
+- The call leaves that trial state in place so `eleResponse` can read it. Every
+  `-increment` call first reverts to the committed state; `-revert` (same call)
+  reverts before returning; `responseSpectrumAnalysis -revert` alone reverts.
+  **Revert before any `eigen`/`analyze`**: both work from the trial state.
+- `-sign -1` imposes `committed − u_k` (default `+1`). `-sign` and `-revert`
+  require `-increment`; `-increment` and `-combine` are mutually exclusive.
+- `nodeDisp` returns the **committed** displacement (the gravity state); read
+  the modal part with `nodeResponse(node, dof, 4)` (IncrDisp) or a Node recorder
+  (which records the trial displacement).
+- Without `-mode k` (full loop), every mode is imposed and recorded in turn;
+  the last mode is left as the trial state.
+- `-increment` absent ⇒ **byte-identical** to the stock per-mode behavior.
+
 ## Frequency response & steady-state dynamics — `frequencyResponse` / `steadyStateDynamics` (P2)
 
 For a **harmonic** base acceleration `ü_g(t) = amp·e^{iΩt}`, the steady response of

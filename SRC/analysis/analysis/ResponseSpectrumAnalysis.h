@@ -61,6 +61,13 @@ public:
 	void setCombination(int rule, const std::vector<double>& xi);
 	int analyzeCombined();
 
+	// Ladruno WP-207: opt-in incremental mode (-increment). Each mode imposes
+	// trial = committed + sign*u_k, updates the domain and records, but does NOT
+	// commit, so a preloaded (gravity + loadConst) state survives. The trial
+	// state of the last mode is left in place for eleResponse; revertAtEnd
+	// (-revert) returns to the committed state before the call returns.
+	void setIncrement(double sign, bool revertAtEnd);
+
 private:
 	int check();
 	int beginMode();
@@ -86,6 +93,10 @@ private:
 	// and per-mode damping ratios (for CQC).
 	int m_combine = -1;
 	std::vector<double> m_xi;
+	// Ladruno WP-207: incremental mode (false => stock replace-and-commit).
+	bool m_increment = false;
+	double m_sign = 1.0;
+	bool m_revert_at_end = false;
 };
 
 #endif
