@@ -12,6 +12,7 @@ target_sources(OPS_Element
     PUBLIC
         LadrunoMembrane.h
         LadrunoMembraneKernel.h
+        LadrunoMembraneDiaphragm.h
 )
 
 target_include_directories(OPS_Element PUBLIC ${CMAKE_CURRENT_LIST_DIR})
