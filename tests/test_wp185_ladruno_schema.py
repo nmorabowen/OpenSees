@@ -1,4 +1,4 @@
-"""`ladrunoSchema` v0 (WP-185, apeGmsh#1667, program link F3).
+"""`ladrunoSchema` v1 (WP-185, apeGmsh#1667, program link F3; v1: apeGmsh#2517).
 
 `ladrunoSchema` returns one JSON string describing what this build offers, so
 apeGmsh's BackendInfo can detect capabilities instead of keying on the build sha
@@ -7,7 +7,10 @@ alone. The contract this file pins:
 * valid JSON; compact and key-sorted at every level (byte-identical to
   ``json.dumps(..., sort_keys=True, separators=(",", ":"))``), the same bytes on
   every call, and no filesystem paths;
-* ``schema_version == 0`` and ``build == ladrunoBuild()``;
+* ``schema_version == 1`` and ``build == ladrunoBuild()``; the top-level keys
+  are exactly build, capabilities, commands, engine, options, schema_version;
+* ``capabilities`` is GENERATED from ``kCapabilities`` in
+  SRC/interpreter/LadrunoSchema.h, sorted, and keeps the pinned anchors below;
 * ``commands`` is exactly this engine's rows of SRC/interpreter/LadrunoCommandTable.h,
   sorted (``engine`` says which: ``dl`` for Python/TclWrapper, ``classic`` for
   OpenSees.exe);
@@ -34,6 +37,7 @@ pytestmark = [pytest.mark.zone_a]
 REPO = Path(__file__).resolve().parents[1]
 TABLE = REPO / "SRC" / "interpreter" / "LadrunoCommandTable.h"
 SPEC = REPO / "SRC" / "material" / "LadrunoOptSpec.h"
+SCHEMA_H = REPO / "SRC" / "interpreter" / "LadrunoSchema.h"
 NONE = "LADRUNO_NONE"
 ROW = re.compile(r'^\s*LADRUNO_COMMAND\s*\(\s*"([^"]+)"\s*,\s*(\w+)\s*,\s*(\w+)\s*\)', re.M)
 _HEX40 = re.compile(r"^[0-9a-f]{40}$")
@@ -50,6 +54,10 @@ PINNED_RC = {
     "-autoRegularization": {"nargs": 1, "since": "PR-277"},
 }
 RC_FAMILY = ("LadrunoRCConcrete", "LadrunoRCFiniteStrain")
+
+# Anchors: a capability is a promise apeGmsh gates on; dropping it must fail here
+# even after a rebuild. Each one's behaviour test is named in kCapabilities.
+PINNED_CAPABILITIES = ("mdStageFlagPreserved",)   # apeGmsh#2517 / #2444
 
 
 # ---- what the source declares ------------------------------------------------
@@ -86,6 +94,16 @@ def _spec_registry():
     return [(o, s) for o, s, _ in rows]
 
 
+def _header_capabilities():
+    """The string rows of kCapabilities, parsed from LadrunoSchema.h."""
+    text = re.sub(r"//[^\n]*", "", SCHEMA_H.read_text(encoding="utf-8"))
+    body = text.split("kCapabilities[] = {", 1)[1].split("};", 1)[0]
+    caps = re.findall(r'"([^"]+)"', body)
+    assert caps, "no kCapabilities rows parsed"
+    assert len(caps) == len(set(caps)), f"duplicate capability in kCapabilities: {caps}"
+    return caps
+
+
 def _expected_options():
     tables = _spec_tables()
     return {owner: tables[sym] for owner, sym in _spec_registry()}
@@ -96,8 +114,13 @@ def _check_shape(text, engine, commands):
     assert text == json.dumps(doc, sort_keys=True, separators=(",", ":")), \
         "schema is not compact + key-sorted (not deterministic)"
     assert not _PATHY.search(text), f"schema leaks a path: {_PATHY.search(text).group(0)!r}"
-    assert set(doc) == {"build", "commands", "engine", "options", "schema_version"}
-    assert doc["schema_version"] == 0
+    assert set(doc) == {"build", "capabilities", "commands", "engine", "options",
+                        "schema_version"}
+    assert doc["schema_version"] == 1
+    assert doc["capabilities"] == sorted(_header_capabilities()), (
+        "capabilities are not the kCapabilities declarations")
+    for cap in PINNED_CAPABILITIES:
+        assert cap in doc["capabilities"], f"pinned capability {cap!r} missing"
     assert doc["engine"] == engine
     assert _HEX40.match(doc["build"]), doc["build"]
     assert doc["commands"] == sorted(doc["commands"])
