@@ -55,7 +55,9 @@
 // apeGmsh BackendInfo) refuse any other key set. v1 adds `capabilities`, so it is
 // a new version, not a silent v0 extension. From v1 on: a new ROW in an existing
 // section (a command, an option token, a capability) does not bump the version;
-// a new top-level section or a changed value shape does.
+// a new top-level section or a changed value shape does. A row's meaning is
+// frozen: a changed meaning needs a new name (consumers gate on the name alone,
+// so re-using one would silently re-gate every build that already lists it).
 //
 // Fail closed: a duplicate command, capability or (owner, token) key would make
 // the JSON ambiguous, so render() refuses instead of emitting it. Arguments to
@@ -86,7 +88,8 @@ static const int kSchemaVersion = 1;
 // A name here is a PROMISE about the code: add it in the commit that makes it true
 // (or after), never before, and give it a test that fails when the behaviour
 // breaks while the name is still listed. Never remove a name whose behaviour still
-// holds; consumers read absence as "older build, refuse".
+// holds; consumers read absence as "older build, refuse". A name's meaning is
+// frozen: to promise something different, add a new name.
 static const char* const kCapabilities[] = {
   // ManzariDafalias' class-wide stage flag (static mElastFlag) survives the
   // construction of any further ManzariDafalias or LadrunoSANISAND instance:
