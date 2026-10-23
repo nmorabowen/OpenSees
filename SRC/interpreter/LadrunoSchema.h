@@ -19,7 +19,7 @@
 // ==========================================================================
 // LADRUNO-HEADER-END
 
-// Ladruno WP-185 (apeGmsh#1667, program link F3): `ladrunoSchema` v0 -- a
+// Ladruno WP-185 (apeGmsh#1667, program link F3): `ladrunoSchema` -- a
 // machine-readable, deterministic description of what this build offers, so a
 // frontend (apeGmsh's BackendInfo) can detect capabilities instead of keying on
 // the build sha alone.
@@ -28,25 +28,36 @@
 // no timestamps (byte-identical across runs of one binary):
 //
 //   {"build":"<ladrunoBuild>",
+//    "capabilities":["mdStageFlagPreserved",...],   sorted; kCapabilities below
 //    "commands":["LadrunoStaggeredAnalyze",...],   sorted; the rows of
 //                                                   LadrunoCommandTable.h this
 //                                                   ENGINE registers
 //    "engine":"dl"|"classic",                       dl = TclWrapper + Python,
 //                                                   classic = OpenSees.exe/SP/MP
 //    "options":{"LadrunoRCConcrete":{"-Cd":{"nargs":"list","since":"PR-155"},..},..},
-//    "schema_version":0}
+//    "schema_version":1}
 //
 // Everything is GENERATED from the declarations: `commands` from the command
 // table (X-macro, stringified columns, so no entry point is referenced and the
 // header is safe in both the classic and the DL translation units), `options`
-// from ladruno_opt::kOptTables (SRC/material/LadrunoOptSpec.h). `nargs` is the
-// declared value count, or "list" for a variable-length list.
+// from ladruno_opt::kOptTables (SRC/material/LadrunoOptSpec.h), `capabilities`
+// from kCapabilities below. `nargs` is the declared value count, or "list" for a
+// variable-length list.
 //
-// Consumers: a token is supported iff it is present in options[<owner>].
-// `since` is informational provenance (PR-155, ADR19-2b.2c.1, ...), not an
-// orderable version; never compare two `since` values.
+// Consumers: a token is supported iff it is present in options[<owner>]; a
+// command is registered by this engine iff it is in `commands`; a behaviour
+// holds iff its name is in `capabilities`. `since` is informational provenance
+// (PR-155, ADR19-2b.2c.1, ...), not an orderable version; never compare two
+// `since` values.
 //
-// Fail closed: a duplicate command or a duplicate (owner, token) key would make
+// Versions (apeGmsh#2517): v0 had exactly the keys build, commands, engine,
+// options, schema_version, and both its readers (tests/test_wp185_ladruno_schema.py,
+// apeGmsh BackendInfo) refuse any other key set. v1 adds `capabilities`, so it is
+// a new version, not a silent v0 extension. From v1 on: a new ROW in an existing
+// section (a command, an option token, a capability) does not bump the version;
+// a new top-level section or a changed value shape does.
+//
+// Fail closed: a duplicate command, capability or (owner, token) key would make
 // the JSON ambiguous, so render() refuses instead of emitting it. Arguments to
 // the command itself are refused by the two bridges (OpenSeesOutputCommands.cpp,
 // SRC/tcl/commands.cpp), which are the only includers.
@@ -59,6 +70,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -66,7 +78,24 @@ namespace ladruno_schema {
 
 enum Engine { ENGINE_DL, ENGINE_CLASSIC };
 
-static const int kSchemaVersion = 0;
+static const int kSchemaVersion = 1;
+
+// Behavioural capabilities: facts about this build that no command and no option
+// token shows, so a consumer cannot otherwise tell a build that has a fix from one
+// that does not (a bare `ladrunoBuild` sha cannot be ordered against a commit).
+// A name here is a PROMISE about the code: add it in the commit that makes it true
+// (or after), never before, and give it a test that fails when the behaviour
+// breaks while the name is still listed. Never remove a name whose behaviour still
+// holds; consumers read absence as "older build, refuse".
+static const char* const kCapabilities[] = {
+  // ManzariDafalias' class-wide stage flag (static mElastFlag) survives the
+  // construction of any further ManzariDafalias or LadrunoSANISAND instance:
+  // no constructor (full, or the classTag one getCopy() runs) resets it, so an
+  // element activation or a new nDMaterial after `updateMaterialStage ... -stage 1`
+  // keeps every MD material plastic. Fix 43b235bbb (fork PR #1005, apeGmsh#2444);
+  // marker apeGmsh#2517. Test: tests/test_md_stage_flag_capability.py.
+  "mdStageFlagPreserved",
+};
 
 inline void appendJsonString(std::string& o, const char* s)
 {
@@ -109,6 +138,14 @@ inline bool render(Engine engine, std::string& out, std::string& err)
       return false;
     }
 
+  std::vector<const char*> caps(std::begin(kCapabilities), std::end(kCapabilities));
+  std::sort(caps.begin(), caps.end(), lessStr);
+  for (size_t i = 1; i < caps.size(); ++i)
+    if (strcmp(caps[i - 1], caps[i]) == 0) {
+      err = std::string("duplicate capability '") + caps[i] + "' in ladruno_schema::kCapabilities";
+      return false;
+    }
+
   const size_t nTables = sizeof(ladruno_opt::kOptTables) / sizeof(ladruno_opt::kOptTables[0]);
   std::vector<const ladruno_opt::OptTable*> tables;
   for (size_t i = 0; i < nTables; ++i) tables.push_back(&ladruno_opt::kOptTables[i]);
@@ -128,7 +165,12 @@ inline bool render(Engine engine, std::string& out, std::string& err)
 #else
   appendJsonString(o, "unknown");
 #endif
-  o += ",\"commands\":[";
+  o += ",\"capabilities\":[";
+  for (size_t i = 0; i < caps.size(); ++i) {
+    if (i) o += ',';
+    appendJsonString(o, caps[i]);
+  }
+  o += "],\"commands\":[";
   for (size_t i = 0; i < cmds.size(); ++i) {
     if (i) o += ',';
     appendJsonString(o, cmds[i]);
