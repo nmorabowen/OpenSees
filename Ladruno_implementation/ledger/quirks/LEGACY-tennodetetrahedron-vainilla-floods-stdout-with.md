@@ -33,3 +33,6 @@ legacy_seq: 382
   each one's own raw output before applying the same fix (more nodes, more memory) to all of them;
   here 3 of 4 were genuine OOM candidates and 1 was an unrelated, much cheaper bug hiding behind
   the same exit code.
+
+#### Follow-up (WP-198)
+Jose Abell removed the same `std::cout` upstream (`jaabell/OpenSees` `a1ba66821`). The WP-198 sync took his file, so the `// Ladruno` marker in `getInitialStiff` is gone; the print is still absent.
