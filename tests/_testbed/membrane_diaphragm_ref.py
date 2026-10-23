@@ -8,6 +8,12 @@ lines pass through every retained point; out-of-plane DOFs are fixed, so only
 the membrane works. Loads and in-plane fixities act on retained points only, so
 static condensation is exact and the two models must agree to discretisation
 error.
+
+WP-208: the slab edge between two consecutive element nodes on a loop is
+straight (as in the linear-edge elements it connects to), so with
+``boundary_step`` every outer and hole edge also carries a node every
+``boundary_step`` — the membrane's loops then have exactly the boundary nodes
+of a reference grid of that spacing, as ETABS slab and wall meshes share theirs.
 """
 import numpy as np
 
@@ -15,7 +21,7 @@ from _testbed import ops
 
 
 class Panel:
-    def __init__(self, lx, ly, hole=None, extra=(), E=25.0e6, nu=0.2, t=0.2):
+    def __init__(self, lx, ly, hole=None, extra=(), E=25.0e6, nu=0.2, t=0.2, boundary_step=None):
         self.lx, self.ly, self.hole = lx, ly, hole
         self.E, self.nu, self.t = E, nu, t
         self.outer = [(0.0, 0.0), (lx, 0.0), (lx, ly), (0.0, ly)]
@@ -23,6 +29,29 @@ class Panel:
                       [(hole[0], hole[1]), (hole[2], hole[1]), (hole[2], hole[3]), (hole[0], hole[3])])
         self.extra = list(extra)
         self.points = self.outer + self.holep + self.extra   # retained, ids 1..n
+        self.outer_loop = [0, 1, 2, 3]
+        self.hole_loop = [4, 5, 6, 7] if hole is not None else []
+        if boundary_step:
+            self.outer_loop = self._densify(self.outer, [0, 1, 2, 3], boundary_step)
+            if hole is not None:
+                self.hole_loop = self._densify(self.holep, [4, 5, 6, 7], boundary_step)
+
+    def _index_of(self, x, y):
+        for k, (px, py) in enumerate(self.points):
+            if abs(px - x) < 1e-9 and abs(py - y) < 1e-9:
+                return k
+        self.points.append((x, y))
+        return len(self.points) - 1
+
+    def _densify(self, corners, corner_idx, step):
+        loop = []
+        for c in range(len(corners)):
+            (x0, y0), (x1, y1) = corners[c], corners[(c + 1) % len(corners)]
+            n = int(round(np.hypot(x1 - x0, y1 - y0) / step))
+            loop.append(corner_idx[c])
+            for k in range(1, n):
+                loop.append(self._index_of(x0 + (x1 - x0) * k / n, y0 + (y1 - y0) * k / n))
+        return loop
 
     # --------------------------------------------------------------- solve
     @staticmethod
@@ -48,12 +77,12 @@ class Panel:
             fx, fy = fix.get(k, (0, 0))
             ops.node(tags[k], x, y, 0.0)
             ops.fix(tags[k], fx, fy, 1, 1, 1, 1)
-        args = ['-nodes', 1, 2, 3, 4]
+        args = ['-nodes', *[tags[i] for i in self.outer_loop]]
         if self.hole is not None:
-            args += ['-hole', 5, 6, 7, 8]
-        n0 = 4 + len(self.holep)
-        ext = tags[n0:]
-        dia = [] if diaphragm is None else [tags[i] for i in diaphragm]
+            args += ['-hole', *[tags[i] for i in self.hole_loop]]
+        on_loops = set(self.outer_loop) | set(self.hole_loop)
+        ext = [tags[i] for i in range(len(self.points)) if i not in on_loops]
+        dia = [] if diaphragm is None else [tags[i] for i in diaphragm if i not in on_loops]
         sup = [t for t in ext if t not in dia]
         if sup:
             args += ['-supportNodes', *sup]

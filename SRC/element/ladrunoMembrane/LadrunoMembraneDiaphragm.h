@@ -56,6 +56,7 @@
 #include <Eigen/Sparse>
 #include <Eigen/SparseCholesky>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <map>
@@ -127,14 +128,30 @@ inline void lst_B(const double L[3], const double b[3], const double c[3], doubl
 
 } // namespace detail
 
+// WP-208: a connection line between two consecutive retained nodes (a loop
+// segment of the outer polygon or a hole, split at every retained node on it,
+// or a supporting frame whose ends are element nodes). Every mesh node strictly
+// inside it (vertex or LST midside) is SLAVED to the linear interpolation of
+// the two ends: the slab edge between connection nodes is straight, as in the
+// linear-edge element it is connected to (a wall or beam mesh, or the ETABS
+// slab mesh whose boundary nodes the loop vertices are). Without it the edge
+// bowed between connection nodes and the panel failed the constant-strain
+// patch test (reaction 0.74 of exact, worse with refinement).
+struct LinkLine {
+    Point2D a, b;
+    int slotA = -1, slotB = -1;
+};
+
 // vertices/triangles: the panel mesh (ccw triangles). retained[r] is the mesh
 // vertex of retained slot r (-1: none — the slot gets no stiffness). D is the
 // 3x3 plane-stress modulus (row-major, modifiers already applied), t the
-// thickness, rhoT the mass per unit area (0: no mass).
+// thickness, rhoT the mass per unit area (0: no mass), links the connection
+// lines (WP-208, see LinkLine).
 inline Condensed condense_lst(const std::vector<Point2D>& vertices,
                               const std::vector<std::array<int, 3>>& triangles,
                               const std::vector<int>& retained,
-                              const double D[9], double t, double rhoT)
+                              const double D[9], double t, double rhoT,
+                              const std::vector<LinkLine>& links = {})
 {
     typedef Eigen::Triplet<double> Trip;
     const int nv = static_cast<int>(vertices.size());
@@ -177,15 +194,57 @@ inline Condensed condense_lst(const std::vector<Point2D>& vertices,
             throw std::invalid_argument("two retained nodes share one mesh vertex");
         nodeSlot[v] = r;
     }
+    // node positions (midsides at the edge midpoints)
+    std::vector<Point2D> pos(nn);
+    for (int v = 0; v < nv; ++v) pos[v] = vertices[v];
+    for (const auto& kv : edgeNode) {
+        const Point2D& pa = vertices[kv.first.first];
+        const Point2D& pb = vertices[kv.first.second];
+        pos[kv.second] = {0.5 * (pa.x + pb.x), 0.5 * (pa.y + pb.y)};
+    }
+    // WP-208: slave non-retained nodes lying strictly inside a connection line
+    std::vector<int> slaveLink(nn, -1);
+    std::vector<double> slaveS(nn, 0.0);
+    double scale = 0.0;
+    for (const auto& p : vertices) scale = std::max({scale, std::abs(p.x), std::abs(p.y)});
+    const double tolD = 1e-9 * std::max(scale, 1.0);
+    for (int a = 0; a < nn; ++a) {
+        if (!used[a] || nodeSlot[a] >= 0) continue;
+        for (std::size_t l = 0; l < links.size(); ++l) {
+            const LinkLine& L = links[l];
+            if (L.slotA < 0 || L.slotB < 0 || L.slotA >= nr || L.slotB >= nr) continue;
+            if (retained[L.slotA] < 0 || retained[L.slotB] < 0) continue;
+            double dx = L.b.x - L.a.x, dy = L.b.y - L.a.y;
+            double len2 = dx * dx + dy * dy;
+            if (len2 <= 0.0) continue;
+            double s = ((pos[a].x - L.a.x) * dx + (pos[a].y - L.a.y) * dy) / len2;
+            if (s <= 1e-9 || s >= 1.0 - 1e-9) continue;
+            double ex = pos[a].x - (L.a.x + s * dx), ey = pos[a].y - (L.a.y + s * dy);
+            if (std::hypot(ex, ey) > tolD) continue;
+            slaveLink[a] = static_cast<int>(l);
+            slaveS[a] = s;
+            break;
+        }
+    }
     int ni = 0;
     std::vector<int> interiorOf(nn, -1);
     for (int a = 0; a < nn; ++a)
-        if (used[a] && nodeSlot[a] < 0)
+        if (used[a] && nodeSlot[a] < 0 && slaveLink[a] < 0)
             interiorOf[a] = ni++;
     const int nrd = 2 * nr, nid = 2 * ni;
-    // global reduced dof of node a, component k: retained [0, nrd), interior [nrd, ...)
-    auto dofOf = [&](int a, int k) -> int {
-        return (nodeSlot[a] >= 0) ? 2 * nodeSlot[a] + k : nrd + 2 * interiorOf[a] + k;
+    // node a, component k as a combination of reduced dofs: retained [0, nrd),
+    // interior [nrd, ...); a slaved node is (1-s) end A + s end B (retained)
+    struct Term { int dof; double w; };
+    auto termsOf = [&](int a, int k, Term out2[2]) -> int {
+        if (nodeSlot[a] >= 0) { out2[0] = {2 * nodeSlot[a] + k, 1.0}; return 1; }
+        if (slaveLink[a] >= 0) {
+            const LinkLine& L = links[slaveLink[a]];
+            out2[0] = {2 * L.slotA + k, 1.0 - slaveS[a]};
+            out2[1] = {2 * L.slotB + k, slaveS[a]};
+            return 2;
+        }
+        out2[0] = {nrd + 2 * interiorOf[a] + k, 1.0};
+        return 1;
     };
 
     // ---- assemble K and M (LST, exact quadrature)
@@ -225,15 +284,18 @@ inline Condensed condense_lst(const std::vector<Point2D>& vertices,
                 for (int j = 0; j < 12; ++j)
                     ke[i][j] += w * (B[0][i] * DB[0][j] + B[1][i] * DB[1][j] + B[2][i] * DB[2][j]);
         }
-        int gd[12];
-        for (int a = 0; a < 6; ++a) {
-            gd[2 * a] = dofOf(conn[e][a], 0);
-            gd[2 * a + 1] = dofOf(conn[e][a], 1);
-        }
+        Term gt[12][2];
+        int gn[12];
+        for (int a = 0; a < 6; ++a)
+            for (int k = 0; k < 2; ++k)
+                gn[2 * a + k] = termsOf(conn[e][a], k, gt[2 * a + k]);
         for (int i = 0; i < 12; ++i)
-            for (int j = 0; j < 12; ++j)
-                if (ke[i][j] != 0.0)
-                    kt.emplace_back(gd[i], gd[j], ke[i][j]);
+            for (int j = 0; j < 12; ++j) {
+                if (ke[i][j] == 0.0) continue;
+                for (int p = 0; p < gn[i]; ++p)
+                    for (int q = 0; q < gn[j]; ++q)
+                        kt.emplace_back(gt[i][p].dof, gt[j][q].dof, ke[i][j] * gt[i][p].w * gt[j][q].w);
+            }
 
         if (rhoT > 0.0) {
             double me[6][6] = {};
@@ -249,8 +311,13 @@ inline Condensed condense_lst(const std::vector<Point2D>& vertices,
             }
             for (int i = 0; i < 6; ++i)
                 for (int j = 0; j < 6; ++j)
-                    for (int k = 0; k < 2; ++k)
-                        mt.emplace_back(gd[2 * i + k], gd[2 * j + k], me[i][j]);
+                    for (int k = 0; k < 2; ++k) {
+                        int ii = 2 * i + k, jj = 2 * j + k;
+                        for (int p = 0; p < gn[ii]; ++p)
+                            for (int q = 0; q < gn[jj]; ++q)
+                                mt.emplace_back(gt[ii][p].dof, gt[jj][q].dof,
+                                                me[i][j] * gt[ii][p].w * gt[jj][q].w);
+                    }
         }
     }
 
@@ -306,17 +373,20 @@ inline Condensed condense_lst(const std::vector<Point2D>& vertices,
             int node = conn[e][a];
             for (int k = 0; k < 2; ++k) {
                 int col = 2 * a + k;
-                if (nodeSlot[node] >= 0) {
-                    int rd = 2 * nodeSlot[node] + k;
-                    for (int r = 0; r < 3; ++r)
-                        op[r * nrd + rd] += B[r][col];
-                } else {
-                    int id = 2 * interiorOf[node] + k;
-                    for (int r = 0; r < 3; ++r) {
-                        double brc = B[r][col];
-                        if (brc == 0.0) continue;
-                        for (int j = 0; j < nrd; ++j)
-                            op[r * nrd + j] += brc * X(id, j);
+                Term tm[2];
+                int nterm = termsOf(node, k, tm);
+                for (int p = 0; p < nterm; ++p) {
+                    if (tm[p].dof < nrd) {
+                        for (int r = 0; r < 3; ++r)
+                            op[r * nrd + tm[p].dof] += B[r][col] * tm[p].w;
+                    } else {
+                        int id = tm[p].dof - nrd;
+                        for (int r = 0; r < 3; ++r) {
+                            double brc = B[r][col] * tm[p].w;
+                            if (brc == 0.0) continue;
+                            for (int j = 0; j < nrd; ++j)
+                                op[r * nrd + j] += brc * X(id, j);
+                        }
                     }
                 }
             }
