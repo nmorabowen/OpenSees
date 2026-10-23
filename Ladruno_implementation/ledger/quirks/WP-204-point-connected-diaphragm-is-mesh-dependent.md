@@ -11,3 +11,8 @@ date: 2026-10-22
 - **What converges.** The reaction SPLIT between supports (0.4-2.6 % over `-meshSize` 1.0 .. 0.25 on the deep-beam case), resultants of line supports (walls with many nodes), and drifts dominated by panel deformation. Compare displacements only at matched resolution.
 - **How to apply.** To reproduce an ETABS diaphragm, set `-meshSize` to the ETABS slab auto-mesh size; connect walls through their mesh nodes (hole loops or `-diaphragmNodes`), not one node. Validation tests: compare reaction splits and line resultants, not point displacements (`tests/test_wp204_membrane_diaphragm.py`).
 - **Related trap.** `build_pslg_cdt_mesh` caps the vertex count (default 1200) and silently coarsens beyond it; the diaphragm mesh now passes 6000. A too-small cap showed up as an asymmetric, wrong answer on a symmetric 12 x 12 slab at `-meshSize 0.25`.
+
+#### Follow-up (WP-208)
+
+- **Edges are lines, not points.** WP-204 let the slab edge bow between two consecutive loop nodes (free LST midsides, and free mesh vertices when `-meshSize` < node spacing): that is a point connection at every loop node, and it failed the constant-strain patch test (0.740 of the exact reaction). WP-208 slaves every mesh node inside a loop segment (and a supporting frame line) linearly to its ends: the slab edge is straight between connection nodes, like the wall/beam element edge or the ETABS slab mesh edge it represents. To compare with a fine shell mesh, give the loops every boundary node of that mesh (`tests/_testbed/membrane_diaphragm_ref.py`, `boundary_step`).
+

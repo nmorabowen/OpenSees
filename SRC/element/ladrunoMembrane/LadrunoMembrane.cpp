@@ -899,7 +899,51 @@ LadrunoMembrane::resolveAndBuildTransfer(void)
       // (the gravity mesh keeps the kernel default of 1200 vertices; the
       // diaphragm mesh allows 6000 so -meshSize is honoured on large slabs —
       // the sparse LDLt condensation is cheap, the O(n^2) mesher is the cost)
-      auto dmesh = LadrunoMembraneKernel::build_pslg_cdt_mesh(outer2d, holes2d, {}, extra2d, m_meshSize, 6000);
+      // WP-208: connection lines, along which the slab edge is straight
+      // between consecutive element nodes: every outer / hole loop segment and
+      // every supporting frame whose two ends are element nodes (the frame is
+      // also a mesher segment, so mesh nodes fall on it). Each line is split
+      // at every element node lying on it.
+      std::vector<std::pair<int, int>> baseLines;
+      for (int i = 0; i < nPoly; ++i)
+        baseLines.push_back({i, (i + 1) % nPoly});
+      for (const auto &loop : m_holeExtIdx)
+        for (std::size_t j = 0; j < loop.size(); ++j)
+          baseLines.push_back({loop[j], loop[(j + 1) % loop.size()]});
+      std::vector<LadrunoMembraneKernel::Segment2D> linkFrames2d;
+      for (const auto &fi : m_frameInfos) {
+        if (fi.extNodeI >= 0 && fi.extNodeJ >= 0 && fi.extNodeI != fi.extNodeJ) {
+          baseLines.push_back({fi.extNodeI, fi.extNodeJ});
+          linkFrames2d.push_back({ext2d[fi.extNodeI], ext2d[fi.extNodeJ]});
+        }
+      }
+      std::vector<LadrunoMembraneDiaphragm::LinkLine> links;
+      for (const auto &bl : baseLines) {
+        const auto &A = ext2d[bl.first];
+        const auto &B = ext2d[bl.second];
+        double dx = B.x - A.x, dy = B.y - A.y, len2 = dx * dx + dy * dy;
+        if (len2 <= 0.0) continue;
+        std::vector<std::pair<double, int>> on = {{0.0, bl.first}, {1.0, bl.second}};
+        double tolL = 1e-7 * std::sqrt(len2);
+        for (int c = 0; c < nExt; ++c) {
+          if (c == bl.first || c == bl.second) continue;
+          double s = ((ext2d[c].x - A.x) * dx + (ext2d[c].y - A.y) * dy) / len2;
+          if (s <= 1e-9 || s >= 1.0 - 1e-9) continue;
+          if (std::hypot(ext2d[c].x - (A.x + s * dx), ext2d[c].y - (A.y + s * dy)) <= tolL)
+            on.push_back({s, c});
+        }
+        std::sort(on.begin(), on.end());
+        for (std::size_t k = 0; k + 1 < on.size(); ++k) {
+          LadrunoMembraneDiaphragm::LinkLine L;
+          L.a = ext2d[on[k].second];
+          L.b = ext2d[on[k + 1].second];
+          L.slotA = on[k].second;
+          L.slotB = on[k + 1].second;
+          links.push_back(L);
+        }
+      }
+
+      auto dmesh = LadrunoMembraneKernel::build_pslg_cdt_mesh(outer2d, holes2d, linkFrames2d, extra2d, m_meshSize, 6000);
 
       // retained slot a (= external node a) -> mesh vertex
       double tol = 1e-6 * std::max(dmesh.char_length, 1e-12);
@@ -923,7 +967,7 @@ LadrunoMembrane::resolveAndBuildTransfer(void)
       }
       auto cond = LadrunoMembraneDiaphragm::condense_lst(
           dmesh.vertices, dmesh.triangles, retained, Dm, m_thick,
-          wantMass ? rhoEff * m_thick : 0.0);
+          wantMass ? rhoEff * m_thick : 0.0, links);
       for (int slot : cond.isolated) {
         opserr << "WARNING LadrunoMembrane " << this->getTag() << ": node "
                << m_connectedExternalNodes(slot) << " is not on the panel (outside it or"
