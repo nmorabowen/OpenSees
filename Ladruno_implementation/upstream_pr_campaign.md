@@ -67,6 +67,20 @@ authored by the Ladruno team (Nicolas Mora Bowen, Patricio Palacios, José Abell
 5. **Ledger discipline continues**: when a package merges upstream, mark the
    corresponding rows in `LEDGER_implementations.md` / `LEDGER_vanilla_files.md`
    with the upstream PR number.
+6. **Upstream writing rules (José's request, 2026-10-06).** PR bodies, commit
+   messages and code comments follow the office tone: impersonal, declarative,
+   numbers first (defect, reproduction, value before / after, behaviour change,
+   test). No internal references anywhere: no `// Ladruno` markers, ADR-##,
+   WP-###, F##, fork PR numbers, LEDGER/quirk names, TIMs. No "we"/"you", no
+   em-dash pauses, no bold lead-ins. Model commit: `c6be72ca1` on `ladruño`.
+7. **How José lands our PRs.** He does not merge the PR: he cherry-picks each
+   commit (authorship kept) onto a `fix/<slug>` branch cut from current upstream,
+   merges that into `ladruño`, and closes our PR with a comment. So one commit
+   per independently droppable fix, and no fixups after review: amend instead.
+8. **Building his base on Windows needs the build fixes** (package 0.13). Until
+   he merges them, the integration worktree carries them as uncommitted local
+   edits; they never ride inside a bug-fix PR.
+
 
 ## 2. Handling the vanilla-side changes
 
@@ -112,6 +126,27 @@ GmshRecorder hex20 output format.
 ### Wave 1 — small additive features, zero/near-zero vanilla footprint
 | # | Package | Content | Deps |
 |---|---|---|---|
+| 0.14 | LAPACK `return -info+1` reports a zero first pivot as success (BandGen/FullGen/BandSPD); `algorithm` keeps the old one on a null factory | `up/10-lapack-singular-and-algorithm-null` | [jaabell#40](https://github.com/jaabell/OpenSees/pull/40) | **taken** 2026-10-13 (José applied it to `ladruño`, PR closed; opened 2026-10-06). Test 4 fail on base → 7 pass |
+| 0.15 | Repeated openseespy `eigen` without analysis; `printA -sparse -ret` | `up/15-interpreter-small-fixes` | [jaabell#41](https://github.com/jaabell/OpenSees/pull/41) | **taken** 2026-10-13 (José applied it to `ladruño`, PR closed; opened 2026-10-06). `OPS_GetStringFromAll` Tcl fix DROPPED: no vanilla caller reaches the buffer path, not reproducible on his base |
+| 0.16 | TenNodeTet stray shape-function print; `update()` ignores `setTrialStrain` failure | `up/16-tet10-print-and-update` | [jaabell#42](https://github.com/jaabell/OpenSees/pull/42) | **taken** 2026-10-13 (José applied it to `ladruño`, PR closed; opened 2026-10-06). Broker cases for Tet10/Brick20 DROPPED: their `sendSelf`/`recvSelf` are broken (Tet10 sends 4 of 10 node tags; Brick20 blank ctor leaves `materialPointers` null), so the case would turn a clean restore error into a crash. Fix send/recv first |
+| 0.17 | Arpack: unconverged modes returned as computed (0.0) with success; ArpackSolver work arrays not resized when n grows (access violation); `getNCV` min(2nev, nev+8) skips copies of repeated eigenvalues | `up/17-arpack-unconverged-and-resize` | [jaabell#43](https://github.com/jaabell/OpenSees/pull/43) | **taken** 2026-10-13 (José applied it to `ladruño`, PR closed; opened 2026-10-06), 2 commits. Tests: base 6 fail; commit 1 → 4 pass / 2 fail; both → 6 pass. `getNCV` now nev+8 (no memory growth for nev ≥ 8). **Still live on the fork** — port back to `ladruno` as its own WP. Also seen: `-symmBandLapack` returns empty on the test chain (base and fixed), not investigated |
+| 0.18 | `system Pardiso` (MKL): harden the never-compiled upstream Gen pair, build + register (Python + Tcl), `-matrixType`, `-krylov`, `-stats`, `-deterministic`/`-cbwr`; Sym pair left unbuilt | `up/18-pardiso-solver` | [jaabell#44](https://github.com/jaabell/OpenSees/pull/44) | **PR open** 2026-10-06, 4 commits. Tag `SOLVER_TAGS_PARDISOGenLinSolver` = 34. CMake: Windows on with MKL; `MKL_PARDISO_LINUX` / `_THREADED` default OFF. `tests/test_pardiso.py` 15 pass (skip on base); Tcl agrees with UmfPack to 1e-15 |
+| 0.19 | UW DruckerPrager two-surface return map (cutoff never assembled; tangent divides by returned norm) + DruckerPragerPlaneStrain `getInitialTangent` returns mCep | `up/19-drucker-prager-return-map` | [jaabell#45](https://github.com/jaabell/OpenSees/pull/45) | **taken** 2026-10-13 (José applied it to `ladruño`, PR closed; opened 2026-10-06), 2 commits. Test 6 fail on base (hydrostatic case hangs) → 6 pass; `tests/` 155 passed. Evidence: TenNodeTet Prandtl ratio 0.391 → 1.170. Follow-up: `DruckerPragerThermal.cpp` has the same unreachable `Jact(i) == 2` arm |
+| 0.20 | `LoadControl -tangentPredictor` (stock integrator option, neutral name; `-extrapolate` dropped: failed its gate) + FE_Element/DOF_Group hooks | `up/20-loadcontrol-tangent-predictor` | [jaabell#46](https://github.com/jaabell/OpenSees/pull/46) | **taken** 2026-10-13 (José applied it to `ladruño`, PR closed; opened 2026-10-06), 3 commits. Test 6 fail on base → 7 pass. Acceptance model (vanilla J2Plasticity): cutbacks 23 → 0, iterations 224 → 12 |
+| 0.21 | RBE2/RBE3 coupling elements as `KinematicCoupling` / `DistributingCoupling` (neutral names, upstream tags) | `up/21-kinematic-distributing-coupling` | [jaabell#47](https://github.com/jaabell/OpenSees/pull/47) | **taken** 2026-10-13 (José applied it to `ladruño`, PR closed; opened 2026-10-06), 3 commits. Tags 275/276; 32 tests pass (skip on base). Dropped: bipenalty/dt_cr/mass-penalty, per-iteration AL; tie force renamed `couplingForce`. Classic Tcl dispatch placed ahead of the element chain (MSVC C1061 nesting limit) |
+| 0.22 | Parallel numberer: stock `ParallelNumberer` improved in place where byte-identical (Lagrange ref<0 fusion), neutral new class only if the ordering differs; DOF_Numberer MP index (#598) | `up/22-parallel-numberer` | [jaabell#48](https://github.com/jaabell/OpenSees/pull/48) | **taken** 2026-10-13 (José applied it to `ladruño`, PR closed; opened 2026-10-06), 7 commits; stock `ParallelNumberer` improved in place (numbering byte-identical, no new class/tag). Lagrange fusion: base 2.75e-3 vs exact 9.09e-4 → fixed. Full 4-target build, `tests/` 201 passed |
+| 0.23 | ElasticBeam2d, ElasticTimoshenkoBeam2d/3d subtract the ground-motion inertia load twice | `up/23-elastic-beam-ground-motion-load` | [jaabell#49](https://github.com/jaabell/OpenSees/pull/49) | **PR open** 2026-10-15. 2 commits. Base 12 fail / 4 pass (ElasticBeam3d control) → 16 pass; `tests/` 253 |
+| 0.24 | Constraint FEs (Penalty/Lagrange/Auto) contribute mass in `eigen` / `modalDamping` | `up/24-constraint-fe-eigen-mass` | [jaabell#57](https://github.com/jaabell/OpenSees/pull/57) | **PR open** 2026-10-15. 2 commits. Base 10 fail → 10 pass; `tests/` 247. Test model enlarged to 12 oscillators so every system exceeds ARPACK ncv = nev+8 (n = 5 aborted with info -9999 once M was correct) |
+| 0.25 | AutoConstraintHandler `applyLoad` misses `updateElement`; `sp -subtractInit` no-op in Python; PathSeries drops `-useLast` | `up/25-sp-load-and-path-series` | [jaabell#50](https://github.com/jaabell/OpenSees/pull/50) | **PR open** 2026-10-15. 3 commits. Base 6 fail / 5 pass → 11 pass; `tests/` 248 |
+| 0.26 | Refused `system`/`numberer`/`constraints`/`test`/`integrator` pass silently (Python) or crash (Tcl) | `up/26-refused-analysis-objects` | [jaabell#56](https://github.com/jaabell/OpenSees/pull/56) | **PR open** 2026-10-15. 2 commits (Python; Tcl droppable). Base 17 fail (Tcl: 0xC0000409, 0xC0000005) → 17 pass; `tests/` 254 |
+| 0.27 | ZeroLengthND symmetrizes the tangent; ContactMaterial2D/3D initial tangent aliases the current one | `up/27-zerolength-nd-and-contact-tangents` | [jaabell#51](https://github.com/jaabell/OpenSees/pull/51) | **PR open** 2026-10-15. 2 commits; the ContactMaterial commit has no test (no command reaches `getInitialTangent`). Base 1 fail / 1 pass → 2 pass; `tests/` 239 |
+| 0.28 | ASDAbsorbingBoundary3D integrates with signed det J; degenerate bricks accepted | `up/28-asd-absorbing-detj` | [jaabell#52](https://github.com/jaabell/OpenSees/pull/52) | **PR open** 2026-10-15. 2 commits. Base 9 fail / 1 pass → 10 pass; `tests/` 247 |
+| 0.29 | dt = 0 accepted by TRBDF2/TRBDF3/Houbolt/BackwardEuler (NaN state); no Hall tangent in BackwardEuler/Newmark1/Collocation | `up/29-transient-integrator-guards` | [jaabell#53](https://github.com/jaabell/OpenSees/pull/53) | **PR open** 2026-10-15. 2 commits. Base 7 fail → 7 pass; `tests/` 244 |
+| 0.30 | Element response 444444 depends on evaluation order; Rayleigh self-heal calls the virtual setter | `up/30-element-damping-and-inertia-response` | [jaabell#54](https://github.com/jaabell/OpenSees/pull/54) | **PR open** 2026-10-15. 2 commits. Test passes on the MSVC base (order is compiler-dependent: minimal model gives -1.2 vs 3.0 under GCC 15, 3.0 under MSVC); GCC base run not made here. Self-heal commit defensive, no reachable path, no test |
+| 0.31 | Tcl `OPS_GetStringFromAll` never fills the buffer; Python `Py_AtExit` registered per import (crash at exit) | `up/31-interpreter-string-and-reimport` | [jaabell#55](https://github.com/jaabell/OpenSees/pull/55) | **PR open** 2026-10-15. 2 commits. Base 2 fail / 1 pass → 3 pass; `tests/` 240. Reverses 0.15's drop: KinematicCoupling (0.21) now reaches the buffer path |
+| 0.32 | LoadPath / ArcLength / ArcLength1 / HSConstraint discard `updateDomain()` failures | `up/32-loadpath-arclength-update-domain` | [jaabell#58](https://github.com/jaabell/OpenSees/pull/58) | **PR open** 2026-10-15. 2 commits. Base 3 fail / 3 pass (elastic controls) → 6 pass; `tests/` 243. LoadPath has no interpreter command (review only) |
+| 0.33 | PressureDependMultiYield / 02 / 03 uncapped substep count (huge increment hangs) | `up/33-pdmy-substep-cap` | [jaabell#60](https://github.com/jaabell/OpenSees/pull/60) | **PR open** 2026-10-15. 3 commits; cap 1e5 substeps, setTrialStrain returns -1. Base: 3 cases still running at 20 s, 3 small-increment controls pass → 6 pass; `tests/` 243 |
+| 0.34 | ProfileSPD / BandSPD / SProfileSPD silently drop the unsymmetric part of element matrices | `up/34-spd-asymmetry-warning` | [jaabell#59](https://github.com/jaabell/OpenSees/pull/59) | **PR open** 2026-10-15. 3 commits; warning only, results unchanged. Base 3 fail / 4 pass → 7 pass; `tests/` 244 |
 | 1.1 | Plane-strain σ_zz | `NDMaterial::getStressZZ` + `stressesPlaneStrain` responses | — |
 | 1.2 | Beam localAxes | response id 30 on the 10 beam classes | — |
 | 1.3 | DDM integrators | LadrunoHHT + LadrunoGeneralizedAlpha (header promotions only) | — |
@@ -246,39 +281,61 @@ session (human or agent) that ports, opens, merges, or re-scopes a package
 
 | Package | Content (short) | Branch | Upstream PR | Status |
 |---|---|---|---|---|
-| 0.0 | TenNodeTet 6× stiffness fix | `up/00-tennodetet-shp3d` | [jaabell#29](https://github.com/jaabell/OpenSees/pull/29) | **PR open** (2026-07-22) |
-| 0.0b | TenNodeTet `getResponse` 144-byte heap overrun (`stresses(6)` written 4 GP × 6) | `up/00b-tennodetet-getresponse` | — | **NOT YET PORTED** — landed on the fork as [#692](https://github.com/nmorabowen/OpenSees/pull/692) (2026-08-04); separate from 0.0 because #29 is already open and scoped to `shp3d` |
-| 0.1 | Portability & crash (FE_Element, PythonStream, SuperLU MSVC) | `up/01-portability-crash-fixes` | [jaabell#30](https://github.com/jaabell/OpenSees/pull/30) | **PR open** (2026-07-22) |
-| 0.2 | quad/tri rho serialization | `up/02-quad-tri-rho-serialization` | [jaabell#31](https://github.com/jaabell/OpenSees/pull/31) | **PR open** (2026-07-22) |
-| 0.2b | GmshRecorder hex20 (MSH type 17 + permutation) | `up/03-gmsh-hex20` | [jaabell#32](https://github.com/jaabell/OpenSees/pull/32) | **PR open** (2026-07-22) |
-| 0.3a | Domain::clearAll EQ_Constraint leak | `up/04-domain-clearall-eq-leak` | [jaabell#33](https://github.com/jaabell/OpenSees/pull/33) | **PR open** (2026-07-22) |
-| 0.3b | Error-return honoring (DirectIntegration/TransientDD) | — | — | **HELD for José** — behavioral policy change (aborts where stock ran on); discuss before porting |
-| 0.3c | Mumps `-opt` parse guard | — | — | **HELD** — risky surgical extract from heavily-forked OpenSeesCommands.cpp; low value |
-| 0.4 | Registration gaps (Lysmer, InitStrain dim-general, ASDP setResponse) | — | — | **HELD for José** — additive feature-registration, not crash fixes; some (InitStrain dim-general) are enhancements |
-| 0.5 | H5DRM (stuff[12] init + z-flip + hold-final) | — | — | **HELD for José** — `_H5DRM` build-gated (can't verify here) + the z-flip/hold-final are HIS own patches; he should drive |
-| 0.6 | Byte-identical perf fixes (ADR-74 harvest) | — | — | **HELD** — needs profiler-strip on parallel code + a build/suite pass before we trust the port |
-| 0.8 | Dense SOEs `exit(-1)` at zero free equations (6 files, `\|\| vectX == 0` + ProfileSPD `iDiagLoc[-1]`) | — | — | **NOT YET PORTED** — landed on the fork 2026-08-12 with `tests/test_soe_zero_free_equations.py` (13 cases, 6 fail pre-fix). Strong Wave-0 candidate: pure upstream defect, six one-line guards, provably inert for any nonzero-equation model, and the gate ports without fork deps |
+| 0.0 | TenNodeTet 6× stiffness fix | `up/00-tennodetet-shp3d` | [jaabell#29](https://github.com/jaabell/OpenSees/pull/29) | **superseded** 2026-10-05: José fixed it his own way on `fix/tet10-integration` (removes `/6.0` from Jdet); we are credited as co-authors upstream. Merging ours on top would have made the element 6× too stiff |
+| 0.0b | TenNodeTet `getResponse` heap overrun | — | — | **done by José** (`110bb4dcc`, with `setParameter` all-GP and `-doInitDisp` fixes) |
+| 0.1 | Portability & crash (FE_Element, PythonStream, SuperLU MSVC) | `up/01-portability-crash-fixes` | [jaabell#30](https://github.com/jaabell/OpenSees/pull/30) | **taken** 2026-10-05 (FE_Element + PythonStream cherry-picked onto `fix/fe-element-pythonstream`; SuperLU `stat` landed upstream as `73200b004`) |
+| 0.2 | quad/tri rho serialization | `up/02-quad-tri-rho-serialization` | [jaabell#31](https://github.com/jaabell/OpenSees/pull/31) | **taken** 2026-10-05 (`fix/quad-tri-rho-serialization`) |
+| 0.2b | GmshRecorder hex20 | `up/03-gmsh-hex20` | [jaabell#32](https://github.com/jaabell/OpenSees/pull/32) | **taken** 2026-10-05 (`fix/gmsh-hex20`) |
+| 0.3a | Domain::clearAll EQ_Constraint leak | `up/04-domain-clearall-eq-leak` | [jaabell#33](https://github.com/jaabell/OpenSees/pull/33) | **taken** 2026-10-05 (`fix/domain-clearall-eq`) |
+| 0.3b | Error-return honoring (DirectIntegration/TransientDD) | — | — | HELD for José (policy change) |
+| 0.3c | Mumps `-opt` parse guard | — | — | HELD (low value) |
+| 0.4 | Registration gaps (Lysmer, InitStrain dim-general, ASDP setResponse) | — | — | HELD for José |
+| 0.5 | H5DRM | — | — | **partly done by José** (cfactor, hold-final, tend dataspace, 6-DOF skip: `feat/h5drm-cfactor-hold-final`). Still live on `ladruño`: `stuff[12]` uninitialized in `TclPatternCommand.cpp:539` + runtime parser 3-arg ctor |
+| 0.6 | Byte-identical perf fixes | — | — | HELD (profiler strip + suite pass first) |
+| 0.7 | CorotCrdTransf3d static `T` | — | — | **not fixed on the fork either** (`.h:135` still `static` on both); nothing to port until fixed here |
+| 0.8 + 0.9 (+ #759) | SOE accessors: zero-equation wrappers, unsized `exit(-1)` ×17 classes, SymSparse null derefs, 5 parallel `getB`, FullGen `Bsize` sizing | `up/05-soe-unsized-and-zero-equation` | [jaabell#35](https://github.com/jaabell/OpenSees/pull/35) | **taken** 2026-10-13 (José applied it to `ladruño`, PR closed; opened 2026-10-06). New test 16 fail / 15 pass on base → 31 pass |
+| 0.10 | GeneralizedAlpha `update()` discards `Ualphadotdot` | `up/06-generalizedalpha-alpham-inertia` | [jaabell#36](https://github.com/jaabell/OpenSees/pull/36) | **taken** 2026-10-13 (José applied it to `ladruño`, PR closed; opened 2026-10-06). SDOF order test: 3 of 4 fail on base → 4 pass. Results change for every alphaM ≠ 1 |
+| 0.11 | Analysis-object pools skip slot `[MAX_NUM_DOF]` (11 loops, 4 files) | `up/07-analysis-pool-max-dof-slot` | [jaabell#37](https://github.com/jaabell/OpenSees/pull/37) | **taken** 2026-10-13 (José applied it to `ladruño`, PR closed; opened 2026-10-06). No portable test (heap-state dependent); body carries the fork's crash table |
+| 0.12 | Newmark file-scope `static bool converged` | `up/08-newmark-static-state` | [jaabell#38](https://github.com/jaabell/OpenSees/pull/38) | **taken** 2026-10-13 (José applied it to `ladruño`, PR closed; opened 2026-10-06) |
+| 0.13 | Windows MSVC + ifx + MUMPS build fixes (8 commits: `/bigobj`, version define and globbed includes C/C++-only, MPI 8.3 paths, MUMPS `.lib`, LP64 ScaLAPACK, `MUMPS_INCLUDE_DIR`, per-exe Tcl domain sources) | `up/09-windows-msvc-ifx-build-fixes` | [jaabell#39](https://github.com/jaabell/OpenSees/pull/39) | **PR open** 2026-10-06. Windows re-check of `efd1be55a` posted 2026-10-15 at José's request: base fails all four targets (every Fortran source crashes ifx 0xC0000005; SP/MP miss `dmumps`), with the PR all four build, `tests/` 219 passed / 2 skipped; `/bigobj` no longer needed on that base. OpenSees/SP/MP/Py build on his base; `tests/` 112 passed; SP and MP on 2 ranks with Mumps match serial UmfPack to 1e-15. Proven needed: his base does not compile here without the first four. Old patches 1 and 4 already upstream; OpenSeesPyMP target excluded (feature) |
 | 1.1 | Plane-strain σ_zz | — | — | not started |
 | 1.2 | Beam localAxes responses | — | — | not started |
-| 1.3 | DDM HHT/GeneralizedAlpha | — | — | not started |
+| 1.3 | DDM HHT/GeneralizedAlpha | — | — | not started; rides on 0.10 |
 | 1.4 | Robust statics (ArcLength/DR/IndirectControl) | — | — | not started |
-| 1.5 | ASDPlastic Hoek–Brown + StiffSoil | — | — | not started (coordinate w/ José) |
-| 2.1 | Explicit dynamics I (CD-Ladruno, ExplicitBathe, HRZ, dt_cr) | — | — | not started |
-| 0.9 | SOE accessors kill the process on a never-sized SOE (22 classes; `exit(-1)` + 2 SymSparse null derefs + 5 unguarded collective `getB`) | — | — | **NOT YET PORTED** — landed on the fork 2026-08-18 as [#754](https://github.com/nmorabowen/OpenSees/pull/754) with `tests/test_printa_unsized_soe.py`. Strongest Wave-0 candidate after 0.8 and should ship WITH it: pure upstream defect, no fork concepts, inert for any sized SOE, and the gate ports without fork deps. Caveat to state in the PR body: `PetscSOE`/`badPetscSOE`/`ShadowPetscSOE` are NOT COMPILED in this build (`add_subdirectory(petsc)` is commented out), so the PetscSOE edit is pattern-only and unverified and the ShadowPetscSOE one was deliberately not made; and of the parallel classes only `MumpsParallelSOE` and `MPIDiagonalSOE` have a Python door, the rest being compile-verified only |
-| 2.2 | Mass scaling (SMS lumped + consistent Olovsson + LinearSOE virtuals) | — | — | not started |
-| 2.3 | Projection handler (ADR-30) | — | — | not started |
-| 2.4 | Finite-strain material infra (LogStrain, staged wrappers) | — | — | not started |
-| 2.5 | Energy + recorders (EnergyBalance, .ladruno HDF5, Monitor) | — | — | not started |
-| 3.1 | Solids (Brick/EAS, SolidTransformation, Brick20, SolidShell, plane family) | — | — | not started |
-| 3.2 | J2/steel materials | — | — | not started |
-| 3.3 | Concrete (RCConcrete, Concrete3D) | — | — | not started |
-| 3.4 | Beams (IMK, regularized DispBeamColumn) | — | — | not started |
-| 3.5 | Coupling/embedded (RBE2/RBE3, embedded rebar/node) | — | — | not started |
-| 3.6 | Bézier elements | — | — | not started |
-| 3.7 | Modal/eigen (complexEigen, modal family) | — | — | not started |
+| 1.5 | ASDPlastic Hoek–Brown + StiffSoil | — | — | **done by José** (`feat/asdp-hoekbrown`, `feat/asdp-stiffsoil`, 2026-10-01). Our later ASDP review fixes are a separate package (see §8) |
+| 2.1 | Explicit dynamics I | — | — | not started. ⚠ José merged his own `ExplicitBathe -lnvd` and `ExplicitDifferenceStatic` rework (2026-10-02): reconcile before porting |
+| 2.2 | Mass scaling | — | — | not started |
+| 2.3 | Projection handler | — | — | not started |
+| 2.4 | Finite-strain material infra | — | — | not started |
+| 2.5 | Energy + recorders | — | proposal emailed 2026-10-06 | **proposed** (LadrunoRecorder). ⚠ José merged his own `EnergyBalanceRecorder` (tag 26, 482 lines, no shared kernel) on 2026-10-01; the email proposes reconciling both into `EnergyBalanceKernel.h`. Pending his answer on kernel, command name (`ladruno` vs neutral) and one or two PRs |
+| 3.1–3.7 | Element / material catalog | — | — | not started |
 | W4 | contact+tie / FEAST / porous / rigid body / OpenSeesPyMP / profiler / numberer | — | — | deferred (decide w/ José) |
 
 ## 7. Decision & session log (append-only, newest first)
+
+- **2026-10-15 — batch D sent: jaabell#58–#60.** The three small coordinate-list fixes that need no design decision (static-integrator update failures, PDMY substep cap, SPD asymmetry warning), verified on `8ddefbbec` like round 3. A coordination email (names, class tags, base-class hooks, recorders, contact, elements, PR size, open 2026-10-06 questions) was drafted for the owner to send.
+
+- **2026-10-15 — naming decision (owner): element technology and recorders keep the `Ladruno` name.** Wave 3 elements/materials (LadrunoBrick, LadrunoSolidShell, LadrunoQuad/CST/LST, Bezier*, LadrunoJ2, LadrunoConcrete3D, ...) and the 2.5 recorders (`recorder ladruno`, `.ladruno` HDF5 format, monitor) ship upstream under their Ladruno names. This overrides the neutral-name default used for the couplings (0.21) and the numberer (0.22) for these two areas only; contact, ties and other kinematic constraints keep the neutral-name default unless the owner says otherwise. Rule 6 still applies to comments/commit text (no ADR/WP refs); the class and command names are the exception.
+
+- **2026-10-15 — round 3 sent: jaabell#49–#57, #39 re-checked.** José took #35–#38, #40–#43 and #45–#48 on 2026-10-13 (applied by hand, PRs closed); #39 (build fixes) and #44 (Pardiso) stay open. At his request #39 was re-verified on Windows against `efd1be55a` (base fails all four targets, PR builds all four, `tests/` 219 passed). A re-audit of the §8 backlog against `8ddefbbec` found every item still live except the Matrix::Solve alias (fork-only threading regression); nine packages (0.23–0.31) were ported on fresh `up/` branches by parallel agents and each verified centrally on his base plus the #39 build fixes: new tests fail on the base, pass with the commits, full `tests/` green. TenNodeTetrahedron: nothing left to send (José took or superseded all of it); the reverse sync into the fork is nmorabowen/OpenSees#991.
+
+- **2026-10-06 — coordination email sent to José (ASDP + explicit dynamics).** Issues and discussions are disabled on jaabell/OpenSees, so it went by email. ASDP: A1–A5 fixes (special_return tangent, strict_convergence, DP dilatant apex, Numerical_Algorithmic on the committed map, StiffSoil NaN), A6 MC tension cutoff, A7 Closest_Point/Algorithmic (23/46; footing 7/10→10/10, 7/12→12/12, 6/10→9/10, 6/12→11/12); open findings HoekBrown_PF::g Tresca collapse (26 %) and static shared state. Explicit: build on his ExplicitBathe -lnvd (acceleration form is better than ours); offered E1 -sms, E2 -consistent (LinearSOE virtuals, MPI PCG not CI-gated), E3 CD + HRZ, E4 criticalTimeStep, E5 energy channels (waits on recorder). Six questions pending. Round paused for his answers.
+
+- **2026-10-06 — round 2: four bug-fix PRs open, build fixes building, recorder proposed.**
+  José closed #29–#33 on 2026-10-05: all taken by cherry-pick (authorship kept)
+  except #29, superseded by his own Tet10 fix. He asked that PR text and code
+  follow the office tone with no internal references (rule 6). Since 2026-10-01
+  he also ported on his own: Tet10 heap/setParameter/initDisp, H5DRM
+  cfactor/hold-final, ASDP Hoek–Brown + StiffSoil, a separate
+  EnergyBalanceRecorder, ExplicitBathe `-lnvd`, ExplicitDifferenceStatic, Tcl
+  `-lumped` for (MPI)Diagonal, optional MUMPS in CMake. A fresh inventory of
+  fork vanilla fixes still live on `ladruño` found 32 candidates (§8).
+  Opened jaabell#35–#38 (0.8+0.9, 0.10, 0.11, 0.12) and #39 (0.13); round 3 block 1 opened as #40–#42 (0.14–0.16), each failing on his base and passing with the fixes, `tests/` 128 passed, each verified on his base:
+  unmodified base built with the local Windows fixes, new tests fail there,
+  `tests/` 147 passed / 2 skipped with all four merged. His base needed `/bigobj`
+  (his own ASDP registry overflows MSVC's section limit) and three ifx fixes to
+  compile at all, which became package 0.13. The recorder (2.5) was proposed
+  by email to José, signed "Ladruno Guppi Team".
 
 - **2026-07-22 — Wave 0 clean bug-fixes shipped, remainder HELD for José.**
   Six upstream PRs now open: jaabell#29 (TenNodeTet 6×), #30 (portability trio),
@@ -337,3 +394,28 @@ session (human or agent) that ports, opens, merges, or re-scopes a package
   (= upstream master 2026-07-13). Fresh-branch ports, squash merges, team-only
   authorship (no AI traces, no Guppi in headers), documentation-with-references
   required, Waves 0→4.
+
+## 8. Round 3 backlog (inventory of 2026-10-06, all live on `ladruño`)
+
+> [!note] 2026-10-15: the class-A groups `up/11`–`up/14`, `up/17` (minus DruckerPrager, sent as 0.19) and the `up/15` leftovers were sent as 0.23–0.31 (jaabell#49–#57); `up/18` stays on the owner HOLD. The coordinate-with-José list below is unchanged and still live on `8ddefbbec`.
+
+> [!warning] HOLD (owner, 2026-10-06): SANISAND and its ManzariDafalias-family
+> seams are NOT to be sent upstream while the SANISAND work (re-seat, tension
+> cutoff, regularization, footing campaign) is in progress. This covers
+> LadrunoSANISAND and, until the owner says otherwise, the ManzariDafalias
+> packages below (`up/18-manzari-fspm-platerebar` crash fixes and the
+> results-changing set), since they touch the same family.
+
+
+Pure fixes (class A), proposed grouping:
+- `up/10-lapack-singular-and-algorithm-null`: LAPACK `return -info+1` reports a singular matrix as success (BandGen/FullGen/BandSPD); `OPS_Algorithm` returns 0 on a null factory (#642).
+- `up/11-elastic-beam-ground-motion-double-inertia`: ElasticBeam2d / ElasticTimoshenkoBeam2d/3d subtract the ground-motion load twice (#854). Results change.
+- `up/12-element-scratch-and-eval-order`: Element.cpp `setRayleighDampingFactors` self-heal qualifiers (#676; upstream reachability unclear) + response 444444 evaluation order (#859).
+- `up/13-transient-integrator-guards`: dt = 0 guards in TRBDF2/TRBDF3/Houbolt/BackwardEuler; `HALL_TANGENT` branch in BackwardEuler/Newmark1/Collocation (#650). New tests needed.
+- `up/14-sp-constraint-and-path-series`: AutoConstraintHandler `applyLoad` misses `updateElement` (#697, results change); `OPS_SP -subtractInit` inverted (#675); PathSeries `-useLast` dropped (both routes).
+- `up/15-interpreter-small-fixes`: repeated `eigen` (#609), `printA -sparse -ret` (#761), `OPS_GetStringFromAll` under Tcl (#840); Python re-import `Py_AtExit` (#712) separately.
+- `up/16-tet10-and-quadratic-broker`: Tet10 stray `std::cout`, `update()` discards `setTrialStrain`, broker cases for Tet10 and 20-node brick. Rebase on José's Tet10 code.
+- `up/17-nd-initial-tangent-and-zerolength-symmetrize`: ZeroLengthND lower-triangle mirror, DruckerPragerPlaneStrain `getInitialTangent` returns mCep, ContactMaterial2D/3D tangent aliasing (#720). Results change.
+- `up/18-manzari-fspm-platerebar`: ManzariDafalias parser overrun, ForwardEuler shadowed `r`, uninitialized `nG,nK` in MaxStrainInc/MaxEnergyInc (#901, #914); FluidSolidPorous `getCopy` on the UW family; PlateRebar `recvSelf` angle.
+
+Coordinate with José first (class B/C): H5DRM `stuff[12]` (0.5 remainder); PDMY substep cap (#874, uses a fork return code → -1); AutoConstraintHandler MPI `KAVG` (#733); ManzariDafalias results-changing set (void-ratio interpolant, ME clamp, `ToCovariant` 2×, `mElastFlag`); LoadPath/ArcLength `updateDomain()` return (#792); DruckerPrager two-surface return-map repair (#803); ProfileSPD lower-triangle discard; ASDPlasticMaterial3D review fixes (his framework).
