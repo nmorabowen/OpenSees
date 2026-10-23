@@ -96,8 +96,7 @@ def _spec_registry():
 
 def _header_capabilities():
     """The string rows of kCapabilities, parsed from LadrunoSchema.h."""
-    text = re.sub(r"//[^
-]*", "", SCHEMA_H.read_text(encoding="utf-8"))
+    text = re.sub(r"//[^\n]*", "", SCHEMA_H.read_text(encoding="utf-8"))
     body = text.split("kCapabilities[] = {", 1)[1].split("};", 1)[0]
     caps = re.findall(r'"([^"]+)"', body)
     assert caps, "no kCapabilities rows parsed"
