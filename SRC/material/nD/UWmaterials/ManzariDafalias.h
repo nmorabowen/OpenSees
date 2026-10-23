@@ -544,7 +544,11 @@ class ManzariDafalias : public NDMaterial
 	// from the deck's `-pRe`. `updateParameter()` never re-runs `initialize()`,
 	// so no runtime parameter change can drop the seam.
 	double  m_PreElastic;   // Ladruno (ADR-93 II.1)
-	static char unsigned mElastFlag;	// 1: enforce elastic response
+	static char unsigned mElastFlag;	// 0: elastic stage, 1: elastoplastic
+  public:
+	// Ladruno #2444: `wipe` returns the class-wide stage to its elastic default.
+	static void resetStageOnWipe(void) { mElastFlag = 0; }
+  protected:
 
 	static Vector mI1;			// 2nd Order Identity Tensor
 	static Matrix mIIco;		// 4th-order identity tensor, covariant

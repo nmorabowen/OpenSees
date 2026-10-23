@@ -109,7 +109,19 @@ const double        ManzariDafalias::small           = 1e-10;
 const double        ManzariDafalias::maxStrainInc    = 1e-5;
 const bool          ManzariDafalias::debugFlag       = false;
 const char unsigned ManzariDafalias::mMaxSubStep     = 10;
-char  unsigned      ManzariDafalias::mElastFlag      = 1;
+// Ladruno #2444: the elastic stage (0) is the default, set ONCE here and on
+// `wipe` (ladrunoManzariDafaliasResetStage(), called from
+// OPS_clearAllNDMaterial()). No constructor writes it: the flag is class-wide,
+// so a constructor that reset it (the fork's TIMs item-7 fix in the two full
+// constructors, and vanilla's classTag constructor that getCopy() runs) sent
+// EVERY live instance back to elastic whenever a later stage built a new MD
+// material after `updateMaterialStage ... -stage 1`.
+char  unsigned      ManzariDafalias::mElastFlag      = 0;
+
+void ladrunoManzariDafaliasResetStage(void)   // Ladruno #2444
+{
+    ManzariDafalias::resetStageOnWipe();
+}
 
 Vector              ManzariDafalias::mI1(6);
 Matrix              ManzariDafalias::mIIco(6,6);
@@ -270,13 +282,10 @@ ManzariDafalias::ManzariDafalias(int tag, double G0, double nu,
     mUseElasticTan         = false;
     mStressCorrectionInUse = true;
 
-    // Ladruno: default to the elastic stage, matching the parallel/classTag
-    // constructor below (mElastFlag=0). The staged-gravity idiom
-    // (elastic gravity, then updateMaterialStage ... 1) assumes the material
-    // starts elastic; without this, "elastic" gravity runs the full plastic
-    // model from zero stress (singular regime) and stalls Newton silently.
-    // TIMs report item 7.
-    mElastFlag = 0;
+    // Ladruno: the material starts in the elastic stage (TIMs report item 7:
+    // the staged-gravity idiom assumes it; plastic from zero stress stalls
+    // Newton silently). That default is the file-scope initialiser + the wipe
+    // reset, NOT an assignment here -- see mElastFlag's definition (#2444).
 
     // Ladruno (ADR-86 PR-2, D7): ModifiedEuler TolE seam -- off, so this class
     // keeps the vanilla hardcoded 1e-4. See ManzariDafalias.h and ModifiedEuler().
@@ -372,10 +381,8 @@ ManzariDafalias::ManzariDafalias(int tag, int classTag, double G0, double nu,
     mUseElasticTan         = false;
     mStressCorrectionInUse = true;
 
-    // Ladruno: default to the elastic stage, matching the parallel/classTag
-    // constructor below (mElastFlag=0). See the other full constructor above
-    // for the staged-gravity rationale. TIMs report item 7.
-    mElastFlag = 0;
+    // Ladruno: elastic-stage default lives at mElastFlag's definition, not
+    // here (#2444). See the other full constructor above.
 
     // Ladruno (ADR-86 PR-2, D7): ModifiedEuler TolE seam -- off, so this class
     // keeps the vanilla hardcoded 1e-4. See ManzariDafalias.h and ModifiedEuler().
@@ -453,7 +460,10 @@ ManzariDafalias ::ManzariDafalias(int classTag)
     mUseElasticTan= false;
     mStressCorrectionInUse = true;
     
-    mElastFlag = 0;
+    // Ladruno #2444: vanilla reset the class-wide mElastFlag = 0 here. This
+    // constructor is the one getCopy() runs (ManzariDafalias3D() etc.), so a
+    // copy taken after a stage flip reverted every live instance to elastic.
+    // recvSelf() restores the flag from data(25) in parallel runs.
 
     // Ladruno (ADR-86 PR-2, D7): ModifiedEuler TolE seam -- off (vanilla 1e-4).
     mHonorTolRInME = false;
