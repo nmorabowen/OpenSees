@@ -136,6 +136,8 @@ private:
     double wbEqUnit = 0.0;
     double areaUnit = 0.0;
     double overhangTorqueUnit = 0.0;
+    double endFaUnit = 0.0; // Ladruno WP-209
+    double endFbUnit = 0.0; // Ladruno WP-209
     std::array<double, 3> vx = {1.0, 0.0, 0.0};
     std::array<double, 3> vy = {0.0, 1.0, 0.0};
     std::array<double, 3> vz = {0.0, 0.0, 1.0};

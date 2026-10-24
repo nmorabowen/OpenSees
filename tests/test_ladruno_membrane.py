@@ -1079,5 +1079,62 @@ def test_wp209_timoshenko_local_axes_and_etabs_horizontal_membrane_projection(tr
         assert lf[8] == pytest.approx(0.0, abs=1e-10)
         assert lf[4] == pytest.approx(0.0, abs=1e-10)
         assert lf[10] == pytest.approx(0.0, abs=1e-10)
+def test_wp209_nonconvex_l_slab_reflex_corner_no_end_spike():
+    """WP-209: On a non-convex L-shaped slab under tributary distribution, the
+    off-span 270-deg reflex corner wedge (!tf.in_sp) is deposited at the reflex
+    corner joint rather than converted by moment_conserving_trapezoid into an
+    unphysical oscillating trapezoid on the end sub-segments of the two incident
+    re-entrant beams."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
 
+    # Symmetric 8m x 8m L-slab missing [4..8] x [4..8], reflex corner at node 4 (4, 4)
+    pts = {
+        1: (0.0, 0.0, 0.0),
+        2: (8.0, 0.0, 0.0),
+        3: (8.0, 4.0, 0.0),
+        4: (4.0, 4.0, 0.0),
+        5: (4.0, 8.0, 0.0),
+        6: (0.0, 8.0, 0.0),
+    }
+    for n, (x, y, z) in pts.items():
+        ops.node(n, x, y, z)
+        ops.fix(n, 1, 1, 1, 1, 1, 1)
 
+    ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+    E, G, A, J, Iy, Iz = 30.0e6, 12.5e6, 0.18, 0.002, 0.003, 0.003
+    edges = [(1, 1, 2), (2, 2, 3), (3, 3, 4), (4, 4, 5), (5, 5, 6), (6, 6, 1)]
+    for etag, ni, nj in edges:
+        ops.element("elasticBeamColumn", etag, ni, nj, A, E, G, J, Iy, Iz, 1)
+
+    q = -10.0
+    ops.element(
+        "LadrunoMembrane", 100,
+        "-nodes", 1, 2, 3, 4, 5, 6,
+        "-frames", 1, 2, 3, 4, 5, 6,
+        "-method", "tributary",
+        "-pressure", q,
+    )
+    _solve_static(1.0)
+
+    # Total area = 64 - 16 = 48 m^2; global equilibrium holds
+    area = 48.0
+    assert math.isclose(sum(ops.eleResponse(100, "tributaryAreas")), area, rel_tol=1e-5)
+    rz_sum = sum(ops.nodeReaction(n, 3) for n in pts)
+    assert math.isclose(rz_sum, -q * area, rel_tol=1e-6)
+
+    # The sub-segments adjacent to the reflex corner node 4 (bL == 1 on beam 3,
+    # aL == 0 on beam 4) must be smooth and downward (~ -20 kN/m), without the
+    # pre-WP-209 +164 / -57 kN/m oscillating end-clamping spike.
+    raw_sub = ops.eleResponse(100, "beamSubLoads")
+    n_sub = len(raw_sub) // 9
+    for s in range(n_sub):
+        ftag = round(raw_sub[9 * s + 0])
+        aL = raw_sub[9 * s + 1]
+        bL = raw_sub[9 * s + 2]
+        wza = raw_sub[9 * s + 5]
+        wzb = raw_sub[9 * s + 6]
+        if ftag in (3, 4):
+            assert max(abs(wza), abs(wzb)) < 35.0
+        if (ftag == 3 and bL > 0.99) or (ftag == 4 and aL < 0.01):
+            assert -25.0 < wza < -15.0 and -25.0 < wzb < -15.0

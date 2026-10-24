@@ -1246,6 +1246,8 @@ struct FrameLoadResult {
     std::array<double, 3> p0_2d{};
     std::array<double, 3> q0_2d{};
     double overhang_torque = 0.0;
+    double end_F_a = 0.0; // Ladruno WP-209
+    double end_F_b = 0.0; // Ladruno WP-209
 };
 
 struct YieldLineSegment2D {
@@ -1304,7 +1306,9 @@ inline std::vector<FrameLoadResult> finalize_frame_results(
     const std::vector<std::vector<SubSegment>>& frame_sub_groups,
     const std::vector<std::vector<double>>& sub_F,
     const std::vector<std::vector<double>>& sub_M,
-    const std::vector<double>& overhang_torques = {})
+    const std::vector<double>& overhang_torques = {},
+    const std::vector<double>& end_F_a = {},
+    const std::vector<double>& end_F_b = {})
 {
     std::vector<FrameLoadResult> results;
     results.reserve(frames.size());
@@ -1359,6 +1363,18 @@ inline std::vector<FrameLoadResult> finalize_frame_results(
             }
         }
 
+        double fa_end = (k < end_F_a.size()) ? end_F_a[k] : 0.0; // Ladruno WP-209
+        double fb_end = (k < end_F_b.size()) ? end_F_b[k] : 0.0; // Ladruno WP-209
+#ifdef LADRUNO_MUTATE_MEMBRANE
+        fa_end = 0.0;
+        fb_end = 0.0;
+#endif
+        F_tot += fa_end + fb_end;
+        M_orig += fa_end * (aL_min * L_k) + fb_end * (bL_max * L_k);
+        p0_sum[0] -= (fa_end + fb_end);
+        p0_sum[1] -= fa_end * (1.0 - aL_min) + fb_end * (1.0 - bL_max);
+        p0_sum[2] -= fa_end * aL_min + fb_end * bL_max;
+
         double L_active = (bL_max - aL_min) * L_k;
         double M_active = M_orig - F_tot * (aL_min * L_k);
         auto [wa_eq, wb_eq] = moment_conserving_trapezoid(F_tot, M_active, L_active);
@@ -1376,7 +1392,9 @@ inline std::vector<FrameLoadResult> finalize_frame_results(
             std::move(sub_loads),
             p0_sum,
             q0_sum,
-            torq
+            torq,
+            fa_end,
+            fb_end
         });
     }
     return results;
@@ -1924,15 +1942,34 @@ inline DistributionResult distribute_surface_load(
     }
 
     if (mode_clean == "tributary") {
+        std::vector<double> end_F_a(n_frames, 0.0); // Ladruno WP-209
+        std::vector<double> end_F_b(n_frames, 0.0); // Ladruno WP-209
         auto deposit_tributary_point = [&](double px, double py, double df) {
             auto [tied, _] = nearest_features(px, py);
             double share = df / static_cast<double>(tied.size());
             for (const auto& tf : tied) {
                 if (tf.fid < static_cast<int>(n_frames)) {
-                    double L_k = std::hypot(
-                        frames[tf.fid].p2.x - frames[tf.fid].p1.x,
-                        frames[tf.fid].p2.y - frames[tf.fid].p1.y);
-                    deposit_point_load_to_frame(tf.fid, tf.tf, L_k, share, frame_sub_groups, sub_F, sub_M);
+                    if (!tf.in_sp) { // Ladruno WP-209
+                        double a_min = 0.0;
+                        double b_max = 1.0;
+                        for (const auto& afg : active_frame_geom) {
+                            if (afg.k == tf.fid) {
+                                a_min = afg.a_min;
+                                b_max = afg.b_max;
+                                break;
+                            }
+                        }
+                        if (tf.tf <= 0.5 * (a_min + b_max)) {
+                            end_F_a[tf.fid] += share;
+                        } else {
+                            end_F_b[tf.fid] += share;
+                        }
+                    } else {
+                        double L_k = std::hypot(
+                            frames[tf.fid].p2.x - frames[tf.fid].p1.x,
+                            frames[tf.fid].p2.y - frames[tf.fid].p1.y);
+                        deposit_point_load_to_frame(tf.fid, tf.tf, L_k, share, frame_sub_groups, sub_F, sub_M);
+                    }
                 } else {
                     node_reactions[tf.fid - static_cast<int>(n_frames)] += share;
                 }
@@ -2116,7 +2153,8 @@ inline DistributionResult distribute_surface_load(
             }
         }
 
-        auto frame_results = finalize_frame_results(frames, frame_sub_groups, sub_F, sub_M);
+        auto frame_results = finalize_frame_results(
+            frames, frame_sub_groups, sub_F, sub_M, {}, end_F_a, end_F_b); // Ladruno WP-209
         return DistributionResult{
             mode_clean,
             total_load,

@@ -3592,7 +3592,7 @@ Domain::sendSelf(int cTag, Channel &theChannel)
   if (contactSize > 0 && dbContact == 0)
     dbContact = theChannel.getDbTag();
 
-  ID domainData(19);
+  ID domainData(20);
   domainData(0) = currentGeoTag;
   domainData(1) = numNod;
   domainData(2) = numEle;
@@ -3604,6 +3604,7 @@ Domain::sendSelf(int cTag, Channel &theChannel)
   domainData(11) = numParam;
   domainData(17) = contactSize;   // Ladruno: ADR-78 P2
   domainData(18) = dbContact;     // Ladruno: ADR-78 P2
+  domainData(19) = m_loadConstActive ? 1 : 0; // Ladruno WP-209
 
   // add the database tag for the ID's storing node, element, constraints
   // and loadpattern data into domainData
@@ -4018,7 +4019,8 @@ Domain::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
   // Ladruno (ADR-78 P2): 17 -> 19, matching sendSelf. Slot 17 = the packed size of
   // the contact engine's definitions Vector (0 = none), slot 18 = its dbTag; the
   // Vector itself is consumed at the very end of this method.
-  ID domainData(19);
+  // Ladruno WP-209: slot 19 = m_loadConstActive (0 or 1).
+  ID domainData(20);
   if (theChannel.recvID(theDbTag, commitTag, domainData) < 0) {
     opserr << "Domain::recv - channel failed to recv the initial ID\n";
     return -1;
@@ -4033,6 +4035,7 @@ Domain::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 
   currentTime = domainTime(0);
   committedTime = currentTime;
+  m_loadConstActive = (domainData(19) != 0); // Ladruno WP-209
 
   // 
   // now if the currentGeoTag does not agree with what's in the domain
@@ -4066,6 +4069,7 @@ Domain::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 
     currentTime = domainTime(0);
     committedTime = currentTime;
+    m_loadConstActive = (domainData(19) != 0); // Ladruno WP-209
 
     // 
     // now we rebuild the nodes
