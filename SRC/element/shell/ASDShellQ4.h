@@ -236,6 +236,10 @@ private:
 
     // Ladruno WP-205: initial-stress stiffness with linear kinematics
     bool m_pdelta = false;
+    // Ladruno WP-209: committed preload membrane forces (n11, n22, n12) per GP,
+    // frozen once Domain::setLoadConstant() is called
+    double m_pdelta_N[4][3] = { {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0} };
+    bool m_pdelta_frozen = false;
 
     // members for non-linear treatment of AGQI internal DOFs:
     // it has 24 displacement DOFs

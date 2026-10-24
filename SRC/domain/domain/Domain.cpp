@@ -117,7 +117,7 @@ Domain::Domain()
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0),
  paramIndex(0), paramSize(0), numParameters(0),
- theContactDomain(0), contactAugmenting(false)   // Ladruno: ADR-39 + D1
+ theContactDomain(0), contactAugmenting(false), m_loadConstActive(false)   // Ladruno: ADR-39 + D1 + WP-209
 {
   
     // init the arrays for storing the domain components
@@ -176,7 +176,7 @@ Domain::Domain(int numNodes, int numElements, int numSPs, int numMPs, int numEQs
  theModalProperties(0),
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0), paramIndex(0), paramSize(0), numParameters(0),
- theContactDomain(0), contactAugmenting(false)   // Ladruno: ADR-39 + D1
+ theContactDomain(0), contactAugmenting(false), m_loadConstActive(false)   // Ladruno: ADR-39 + D1 + WP-209
 {
     // init the arrays for storing the domain components
     theElements = new MapOfTaggedObjects();
@@ -243,7 +243,7 @@ Domain::Domain(TaggedObjectStorage &theNodesStorage,
  theModalProperties(0),
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0),paramIndex(0), paramSize(0), numParameters(0),
- theContactDomain(0), contactAugmenting(false)   // Ladruno: ADR-39 + D1
+ theContactDomain(0), contactAugmenting(false), m_loadConstActive(false)   // Ladruno: ADR-39 + D1 + WP-209
 {
     // init the arrays for storing the domain components
     thePCs      = new MapOfTaggedObjects();
@@ -306,7 +306,7 @@ Domain::Domain(TaggedObjectStorage &theStorage)
  theModalProperties(0),
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0),paramIndex(0), paramSize(0), numParameters(0),
- theContactDomain(0), contactAugmenting(false)   // Ladruno: ADR-39 + D1
+ theContactDomain(0), contactAugmenting(false), m_loadConstActive(false)   // Ladruno: ADR-39 + D1 + WP-209
 {
     // init the arrays for storing the domain components
     theStorage.clearAll(); // clear the storage just in case populated
@@ -1137,6 +1137,7 @@ Domain::clearAll(void) {
   // contactAugmenting is ON this Domain commits recorder-silently, so leaking it across a
   // `wipe` into the next model would silently produce empty recorder files there.
   contactAugmenting = false;
+  m_loadConstActive = false;   // Ladruno WP-209
 
   // set the time back to 0.0
   currentTime = 0.0;
@@ -2152,6 +2153,7 @@ Domain::applyLoad(double timeStep)
 void
 Domain::setLoadConstant(void)
 {
+    m_loadConstActive = true;   // Ladruno WP-209
     // loop over all the load patterns that are currently added to the domain
     // getting them to set their loads as now constant
     LoadPattern *thePattern;
@@ -2164,6 +2166,7 @@ Domain::setLoadConstant(void)
 void
 Domain::unsetLoadConstant(void)
 {
+    m_loadConstActive = false;   // Ladruno WP-209
     // loop over all the load patterns that are currently added to the domain
     // getting them to set their loads as now constant
     LoadPattern *thePattern;
@@ -2437,6 +2440,7 @@ Domain::revertToLastCommit(void)
 int
 Domain::revertToStart(void)
 {
+    m_loadConstActive = false;   // Ladruno WP-209
     // 
     // first invoke revertToLastCommit  on all nodes and 
     // elements in the domain

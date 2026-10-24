@@ -186,6 +186,10 @@ private:
 
     // Ladruno WP-205: initial-stress stiffness with linear kinematics
     bool m_pdelta = false;
+    // Ladruno WP-209: committed preload membrane forces (n11, n22, n12) per GP,
+    // frozen once Domain::setLoadConstant() is called
+    double m_pdelta_N[3][3] = { {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0} };
+    bool m_pdelta_frozen = false;
 
     // damping
     Damping* m_damping[3] = { nullptr, nullptr, nullptr };

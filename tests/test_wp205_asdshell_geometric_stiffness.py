@@ -133,3 +133,76 @@ def test_pdelta_and_corotational_are_exclusive():
     with pytest.raises(Exception):
         ops.element('ASDShellQ4', 1, 1, 2, 3, 4, 1, '-corotational', '-pDelta')
 
+
+@pytest.mark.parametrize("el,tri", [('ASDShellQ4', False), ('ASDShellT3', True)])
+def test_pdelta_wide_wall_frozen_preload_after_loadconst(el, tri):
+    """WP-209: after loadConst, -pDelta holds K_sigma at the committed preload
+    membrane forces N0 instead of re-evaluating N0 + dN_L on the lateral step.
+    Without freezing N0:
+      * Term A (K_sigma(dN_L) * u_0) injects a spurious P/(E*A) = 2.18% horizontal
+        base-shear error on a wide wall under Linear (or shifts u_L under Newton);
+      * Term B (K_sigma(dN_L) * du_L) injects a quadratic vertical reaction error
+        sum(FZ) != P_grav and requires multiple Newton iterations."""
+    bw, hw, tw = 4.0, 9.0, 0.25
+    ew, nuw = 30.0e6, 0.2
+    p_grav = 10000.0
+    f_lat = 100.0
+    nx, nz = 4, 9
+
+    def _solve_wall(algo):
+        ops.wipe()
+        ops.model('basic', '-ndm', 3, '-ndf', 6)
+        tg = lambda i, k: 1 + i + k * (nx + 1)
+        for k in range(nz + 1):
+            for i in range(nx + 1):
+                ops.node(tg(i, k), i * bw / nx, 0.0, k * hw / nz)
+                if k == 0:
+                    ops.fix(tg(i, k), 1, 1, 1, 1, 1, 1)
+        ops.section('ElasticMembranePlateSection', 1, ew, nuw, tw, 0.0)
+        e = 1
+        for k in range(nz):
+            for i in range(nx):
+                a, b, c, d = tg(i, k), tg(i + 1, k), tg(i + 1, k + 1), tg(i, k + 1)
+                if tri:
+                    ops.element(el, e, a, b, c, 1, '-pDelta'); e += 1
+                    ops.element(el, e, a, c, d, 1, '-pDelta'); e += 1
+                else:
+                    ops.element(el, e, a, b, c, d, 1, '-pDelta'); e += 1
+        top = [tg(i, nz) for i in range(nx + 1)]
+        base = [tg(i, 0) for i in range(nx + 1)]
+        ops.timeSeries('Linear', 1)
+        ops.pattern('Plain', 1, 1)
+        for i, n in enumerate(top):
+            w = 0.5 if i in (0, nx) else 1.0
+            ops.load(n, 0.0, 0.0, -p_grav * (w / nx), 0.0, 0.0, 0.0)
+        ops.system('UmfPack'); ops.numberer('RCM'); ops.constraints('Plain')
+        ops.integrator('LoadControl', 1.0)
+        ops.test('NormUnbalance', 1.0e-8, 50)
+        ops.algorithm('Newton'); ops.analysis('Static')
+        assert ops.analyze(1) == 0
+        ops.loadConst('-time', 0.0)
+
+        ops.timeSeries('Linear', 2)
+        ops.pattern('Plain', 2, 2)
+        for i, n in enumerate(top):
+            w = 0.5 if i in (0, nx) else 1.0
+            ops.load(n, f_lat * (w / nx), 0.0, 0.0, 0.0, 0.0, 0.0)
+        ops.algorithm(algo)
+        assert ops.analyze(1) == 0
+        iters = ops.testIter() if algo == 'Newton' else 1
+        ops.reactions()
+        rx = sum(ops.nodeReaction(n, 1) for n in base)
+        rz = sum(ops.nodeReaction(n, 3) for n in base)
+        ux = ops.nodeDisp(top[-1], 1)
+        return rx, rz, ux, iters
+
+    rx_lin, rz_lin, ux_lin, _ = _solve_wall('Linear')
+    rx_newt, rz_newt, ux_newt, it_newt = _solve_wall('Newton')
+
+    assert it_newt == 1
+    assert rx_lin == pytest.approx(-f_lat, rel=1e-12)
+    assert rx_newt == pytest.approx(-f_lat, rel=1e-12)
+    assert rz_lin == pytest.approx(p_grav, abs=1e-10)
+    assert rz_newt == pytest.approx(p_grav, abs=1e-10)
+    assert ux_lin == pytest.approx(ux_newt, rel=1e-12)
+
