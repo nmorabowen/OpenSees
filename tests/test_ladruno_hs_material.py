@@ -760,6 +760,28 @@ def test_stage_transition_and_implex_mode():
         assert ops.eleResponse(1, "material", 1, "gamma_p")[0] > 1.0e-3
         assert ops.eleResponse(2, "material", 1, "gamma_p")[0] > 1.0e-3
 
+        # Verify adding a new element (eid=3) in Stage 1 via prototype getCopy() adopts stage 1
+        # and does NOT clobber existing elements back to stage 0 ([M-2]):
+        ops.node(7, 3.0, 0.0)
+        ops.node(8, 3.0, 1.0)
+        ops.fix(7, 1, 1)
+        ops.fix(8, 1, 1)
+        ops.element("quad", 3, 5, 7, 8, 6, 1.0, "PlaneStrain", 1)
+        for n, (x, y) in (*node_coords, (7, (3.0, 0.0)), (8, (3.0, 1.0))):
+            ops.setNodeDisp(n, 1, 0.012 * y, "-commit")
+        assert ops.analyze(1) == 0
+        assert ops.eleResponse(3, "material", 1, "gamma_p")[0] > 1.0e-3
+
+        # Verify parameterID == 13 ("stage" / "materialState") also updates ladrunoHSTagStageMap ([M-1]):
+        ops.parameter(20, "element", 1, "material", 1, "stage")
+        ops.updateParameter(20, 0)
+        ops.updateParameter(20, 1)
+        for n, (x, y) in (*node_coords, (7, (3.0, 0.0)), (8, (3.0, 1.0))):
+            ops.setNodeDisp(n, 1, 0.015 * y, "-commit")
+        assert ops.analyze(1) == 0
+        assert ops.eleResponse(1, "material", 1, "gamma_p")[0] > 1.5e-3
+        assert ops.eleResponse(2, "material", 1, "gamma_p")[0] > 1.5e-3
+
         # Verify parameter update preserves explicit user -alphaCap / -betaCap:
         ops.parameter(10, "element", 1, "material", 1, "E50")
         ops.updateParameter(10, 40000.0)

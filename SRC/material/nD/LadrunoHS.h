@@ -129,6 +129,7 @@ class LadrunoHS : public NDMaterial {
   double Dtan_[6][6];         // 6x6 trial algorithmic tangent
   double Dtan_n_[6][6];       // 6x6 committed algorithmic tangent
   bool   refused_;            // WP-99 commit-refusal latch when setTrialStrain fails
+  bool   registered_in_tag_map_;  // tracks ref-counted registration in ladrunoHSTagStageMap()
 
   // Element-facing return buffers (sized to ncomp_):
   Vector stressOut_;

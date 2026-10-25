@@ -53,12 +53,18 @@ namespace {
 // Ladruno ADR-92 P2-7c pattern: upstream MaterialStageParameter::setDomain()
 // exits its element loop after the FIRST matching element, so only eid=1
 // receives updateParameter(1, info). Storing the stage keyed by material tag
-// (initialized in the parameterized constructor so a fresh model after wipe
-// always resets its tag entry) allows every other element's Gauss point to
-// lazily run applyStageTransition() at the top of integrate3D().
+// (with reference-counted cleanup in ~LadrunoHS() when ops.wipe() destroys all
+// instances of a tag) allows every other element's Gauss point to lazily run
+// applyStageTransition() at the top of integrate3D() without getCopy() clobbering
+// an active stage transition.
 std::unordered_map<int, int>& ladrunoHSTagStageMap() {
-  static std::unordered_map<int, int> s_map;
-  return s_map;
+  static auto* s_map = new std::unordered_map<int, int>();
+  return *s_map;
+}
+
+std::unordered_map<int, int>& ladrunoHSTagRefCountMap() {
+  static auto* s_refs = new std::unordered_map<int, int>();
+  return *s_refs;
 }
 
 static void* parseLadrunoHSCommon(bool presetSmallStrain) {
@@ -285,6 +291,7 @@ static void* parseLadrunoHSCommon(bool presetSmallStrain) {
     return nullptr;
   }
 
+  ladrunoHSTagStageMap()[tag] = stage;
   return new LadrunoHS(tag, p, rho, LadrunoHS::DIM_3D, stage, implex, hasSig0, sig0Comp);
 }
 
@@ -314,7 +321,8 @@ LadrunoHS::LadrunoHS()
     regime_n_(REGIME_ELASTIC),
     regime_trial_(REGIME_ELASTIC),
     cEps22_comp_(0.0),
-    refused_(false) {
+    refused_(false),
+    registered_in_tag_map_(false) {
   params_.finalize();
   for (int i = 0; i < 6; ++i) {
     sig0_comp_[i]      = 0.0;
@@ -346,7 +354,8 @@ LadrunoHS::LadrunoHS(int tag,
     regime_n_(REGIME_ELASTIC),
     regime_trial_(REGIME_ELASTIC),
     cEps22_comp_(0.0),
-    refused_(false) {
+    refused_(false),
+    registered_in_tag_map_(true) {
   params_.finalize();
   for (int i = 0; i < 6; ++i) {
     sig0_comp_[i]      = (hasSig0 && sig0Comp != nullptr) ? sig0Comp[i] : 0.0;
@@ -358,11 +367,28 @@ LadrunoHS::LadrunoHS(int tag,
   if (condense_) {
     sig0_comp_[2] = 0.0;
   }
-  ladrunoHSTagStageMap()[this->getTag()] = stage_;
+  auto& refs = ladrunoHSTagRefCountMap();
+  if (refs[this->getTag()] == 0) {
+    ladrunoHSTagStageMap()[this->getTag()] = stage_;
+  }
+  refs[this->getTag()] += 1;
   this->revertToStart();
 }
 
-LadrunoHS::~LadrunoHS() {}
+LadrunoHS::~LadrunoHS() {
+  if (registered_in_tag_map_) {
+    int t = this->getTag();
+    auto& refs = ladrunoHSTagRefCountMap();
+    auto it = refs.find(t);
+    if (it != refs.end()) {
+      it->second -= 1;
+      if (it->second <= 0) {
+        refs.erase(it);
+        ladrunoHSTagStageMap().erase(t);
+      }
+    }
+  }
+}
 
 void LadrunoHS::setupDim(void) {
   // Full 6-component ordering: 0:11, 1:22, 2:33, 3:12, 4:23, 5:31
@@ -775,8 +801,10 @@ int LadrunoHS::revertToStart(void) {
 //  Copies (Propagating State & Refusal Latch per Quirk Rule)
 // ===========================================================================
 NDMaterial* LadrunoHS::getCopy(void) {
+  auto itStage = ladrunoHSTagStageMap().find(this->getTag());
+  int activeStage = (itStage != ladrunoHSTagStageMap().end()) ? itStage->second : this->stage_;
   LadrunoHS* copy = new LadrunoHS(
-      this->getTag(), params_, rho_, dim_, stage_, implex_, has_sig0_, sig0_comp_);
+      this->getTag(), params_, rho_, dim_, activeStage, implex_, has_sig0_, sig0_comp_);
   copy->st_n_         = this->st_n_;
   copy->st_trial_     = this->st_trial_;
   copy->regime_n_     = this->regime_n_;
@@ -812,8 +840,10 @@ NDMaterial* LadrunoHS::getCopy(const char* type) {
     return NDMaterial::getCopy(type);
   }
 
+  auto itStage = ladrunoHSTagStageMap().find(this->getTag());
+  int activeStage = (itStage != ladrunoHSTagStageMap().end()) ? itStage->second : this->stage_;
   LadrunoHS* copy = new LadrunoHS(
-      this->getTag(), params_, rho_, d, stage_, implex_, has_sig0_, sig0_comp_);
+      this->getTag(), params_, rho_, d, activeStage, implex_, has_sig0_, sig0_comp_);
   if (copy->condense_ && !this->condense_) {
     // Condensed copy from a 3D prototype: keep the plane-stress / plate-fiber
     // initialization from revertToStart() (where sig0_comp_[2] == 0.0 and st_n_.sig[2] == 0.0)
@@ -925,6 +955,19 @@ int LadrunoHS::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker&) {
     return -1;
   }
   int c = 0;
+  if (registered_in_tag_map_) {
+    int oldTag = this->getTag();
+    auto& refs = ladrunoHSTagRefCountMap();
+    auto it = refs.find(oldTag);
+    if (it != refs.end()) {
+      it->second -= 1;
+      if (it->second <= 0) {
+        refs.erase(it);
+        ladrunoHSTagStageMap().erase(oldTag);
+      }
+    }
+    registered_in_tag_map_ = false;
+  }
   this->setTag(static_cast<int>(data(c++)));
   params_.E50_ref          = data(c++);
   params_.Eoed_ref         = data(c++);
@@ -995,6 +1038,8 @@ int LadrunoHS::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker&) {
 
   st_trial_     = st_n_;
   regime_trial_ = regime_n_;
+  ladrunoHSTagRefCountMap()[this->getTag()] += 1;
+  registered_in_tag_map_ = true;
   ladrunoHSTagStageMap()[this->getTag()] = stage_;
   this->buildInitialTangent6x6(Dtan_);
   for (int i = 0; i < 6; ++i) {
@@ -1054,9 +1099,7 @@ int LadrunoHS::updateParameter(int parameterID, Information& info) {
     case 1:
     case 13: {
       int newStage = (parameterID == 1) ? info.theInt : static_cast<int>(info.theDouble);
-      if (parameterID == 1) {
-        ladrunoHSTagStageMap()[this->getTag()] = newStage;
-      }
+      ladrunoHSTagStageMap()[this->getTag()] = newStage;
       this->applyStageTransition(newStage);
       return 0;
     }
