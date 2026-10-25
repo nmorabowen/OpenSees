@@ -2,8 +2,9 @@
 name: ladruno-new-material
 description: >
   Checklist for adding or changing a MATERIAL in the Ladruno OpenSees fork (SRC/material/,
-  nD or uniaxial: LadrunoSANISAND, LadrunoJ2, LadrunoConcrete3D, Staged*/LogStrain wrappers,
-  ASDPlasticMaterial3D changes, ManzariDafalias-family fixes). Use before writing or modifying
+  nD or uniaxial: LadrunoSANISAND, LadrunoNorSand, LadrunoHS, LadrunoHSSmall, LadrunoJ2,
+  LadrunoConcrete3D, Staged*/LogStrain wrappers, ASDPlasticMaterial3D changes,
+  ManzariDafalias-family fixes). Use before writing or modifying
   a return map / substepping scheme, getTangent/getInitialTangent, IMPL-EX, getCopy,
   commit/revert, any static or process-wide state, a Tcl/Python material parser, or material
   tests. Every item points to the quirks-ledger entry that explains it.
@@ -32,6 +33,13 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 - [ ] `getCopy` makes every Gauss point an instance: a "budget" or latch is per instance unless
       you deliberately make it process-wide. A latch set in place must be copied by `getCopy`,
       and a loud failure must not latch. Quirks: "getCopy must PROPAGATE the latch".
+- [ ] `MaterialStageParameter::setDomain` stops after the FIRST element that accepts
+      `"updateMaterialStage"`, and never touches the prototype in `Domain::theNDMaterials`:
+      a material without a class-wide static stage flag must store stage updates (for both
+      `"updateMaterialStage"` and `"stage"`/`"materialState"`) in a ref-counted tag-keyed map,
+      apply the stage transition lazily at the top of `setTrialStrain`, and adopt the active
+      stage in `getCopy()` without clobbering the map (WP-210 `LadrunoHS`). Quirks:
+      "`updateMaterialStage` reaches one element; the static `mElastFlag` hides it".
 
 - [ ] Vanilla materials that keep per-material data in static `...x[matN]` arrays (PDMY/PIMY
       family): a new field needs the constructor store, the `matCount%20` copy loop AND the

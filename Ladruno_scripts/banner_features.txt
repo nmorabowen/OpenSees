@@ -91,3 +91,5 @@ relativeMassDamping: Rayleigh mass term relative to a v_ref(t)
 LadrunoMembrane — polygonal tributary & FEA load-transfer membrane
 LadrunoMembrane — exact all-node diaphragm, -f11/-f22/-f12, membrane forces (WP-204)
 LadrunoCPML — 2D/3D CFS-PML absorber (9 shapes, box/plane, Biot -up)
+
+LadrunoHS/HSSmall — Hardening Soil + HSsmall (mc/mn Lode, WP-210)

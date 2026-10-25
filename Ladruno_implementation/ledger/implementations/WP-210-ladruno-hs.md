@@ -1,0 +1,9 @@
+---
+wp: WP-210
+title: "LadrunoHS / LadrunoHSSmall: unified Hardening Soil and Benz (2007) small-strain overlay material with dual Mohr-Coulomb (mc) and convex Matsuoka-Nakai (mn) Lode bounding"
+date: 2026-10-24
+status: "shipped"
+class_tags: ["ND_TAG_LadrunoHS=33029"]
+banner: "LadrunoHS/HSSmall — Hardening Soil + HSsmall (mc/mn Lode, WP-210)"
+---
+| **WP-210 — LadrunoHS / LadrunoHSSmall** ([[210_ladruno_hs_plan]], [[_hardening_soil_survey_2026-10-24]]) — standalone double-hardening elastoplastic soil material (`nDMaterial LadrunoHS` and alias `nDMaterial LadrunoHSSmall`, `ND_TAG_LadrunoHS = 33029`) after Schanz, Vermeer & Bonnier (1999) and Benz (2007), backed by OpenSees-free `LadrunoHSKernel.h` and serving `ThreeDimensional`, `PlaneStrain`, `AxiSymmetric`, `PlaneStress`, and `PlateFiber` from a single class via `DimMode`. Couples all four surfaces (hyperbolic shear-hardening cone $f^s$ with Rowe stress-dilatancy + ultimate failure truncation $f^f$ at $q = q_f$ + elliptical volumetric cap $f^c$ with constructor auto-calibration of $(\alpha, \beta)$ from $(E_{\text{oed}}^{\text{ref}}, K_0^{\text{nc}})$ + Rankine tension cutoff $f^t$), supports both `-lodeShape mc` (Mohr–Coulomb) and `-lodeShape mn` (Panteghini & Lagioia 2014 strictly convex Matsuoka–Nakai) for rigorous lower/upper plane-strain bounding comparisons while coinciding identically in triaxial compression/extension, and includes Benz's (2007) 6D deviatoric strain-history tensor $\mathbf{H}$ and modified Hardin–Drnevich $G_t(\gamma_{\text{hist}})$ behind `-smallStrain $G0_ref $gamma07`. | Material (nD multi-dimensional soil) | `ND_TAG_LadrunoHS = 33029` | `SRC/material/nD/{LadrunoHSKernel.h,LadrunoHS.h,LadrunoHS.cpp}`, `tests/{ladruno_hs_reference.py,test_ladruno_hs_oracle.py,ladruno_hs_kernel_check.cpp,test_ladruno_hs_kernel_cpp.py,test_ladruno_hs_material.py}`, `Ladruno_implementation/{210_ladruno_hs_plan.md,_hardening_soil_survey_2026-10-24.md}` | shipped | — |
