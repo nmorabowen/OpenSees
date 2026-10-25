@@ -3471,7 +3471,7 @@ def test_t16_deep_investigator_regressions(tmp_path):
     alpha_xi = ops.eleResponse(1, "hingeJump")[0]
     assert abs(alpha_xi) > 1.0e-5
     vp_xi = ops.eleResponse(1, "plasticRotation")
-    assert vp_xi == pytest.approx([0.0, (1.0 - xi_I) * alpha_xi, xi_I * alpha_xi], rel=1e-10, abs=1e-12)
+    assert vp_xi == pytest.approx([0.0, (1.0 - xi_I) * alpha_xi, -xi_I * alpha_xi], rel=1e-10, abs=1e-12)
 
     # --- F8: SFI_MVLEM_3D with ElasticIsotropic uses plane-stress Eeq = E (matching explicit -Eave E_wall) ---
     ops.wipe()

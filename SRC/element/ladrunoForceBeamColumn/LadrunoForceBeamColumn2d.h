@@ -80,7 +80,9 @@ class LadrunoForceBeamColumn2d : public Element
                            double pmP0 = 0.0, double pmAlpha = 0.5,
                            int maxSub = 4, double subFac = 10.0,
                            bool eleImplex = false,
-                           double GAvy = 0.0);
+                           double GAvy = 0.0,
+                           double pmP0t = 0.0, double pmPbal = 0.0, double pmMuBal = 1.0,
+                           bool axialRelease = false);
 
   LadrunoForceBeamColumn2d();
   ~LadrunoForceBeamColumn2d();
@@ -230,10 +232,16 @@ class LadrunoForceBeamColumn2d : public Element
   double hingeHinvCommit[2][2];
   double hingeKva[3][2];
   double hingeKvaCommit[3][2];
+  double hingeKav[2][3];
+  double hingeKavCommit[2][3];
   double hingeMscale;
   double hingeMscaleCommit;
   double pmP0;
   double pmAlpha;
+  double pmP0t;
+  double pmPbal;
+  double pmMuBal;
+  bool axialRelease;
   bool useImplex;
   double eleImplexErr;
   double eleImplexErrCommit;

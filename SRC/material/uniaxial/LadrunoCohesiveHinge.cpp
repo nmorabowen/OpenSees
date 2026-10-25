@@ -98,6 +98,9 @@ void* OPS_LadrunoCohesiveHinge(void)
   int    shape = LadrunoCohesiveHinge::EXP;
   double P0 = 0.0;
   double alphaPM = 0.5;
+  double P0t = 0.0;
+  double Pbal = 0.0;
+  double muBal = 1.0;
   bool   implex = false;
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
@@ -128,10 +131,26 @@ void* OPS_LadrunoCohesiveHinge(void)
         opserr << "WARNING LadrunoCohesiveHinge tag " << tag << ": -pm needs P0 > 0\n";
         return 0;
       }
+      P0t = 0.0;
+      Pbal = 0.0;
       double optAlpha = alphaPM;
       if (lchTryOptionalDouble(optAlpha)) {
         alphaPM = optAlpha;
       }
+    }
+    else if (strcmp(flag, "-pmBal") == 0 || strcmp(flag, "-PMBal") == 0) {
+      double pmb[4];
+      numData = 4;
+      if (OPS_GetNumRemainingInputArgs() < 4 || OPS_GetDoubleInput(&numData, pmb) < 0 ||
+          pmb[0] <= 0.0 || pmb[1] <= 0.0 || pmb[2] <= 0.0 || pmb[2] >= pmb[0] || pmb[3] <= 0.0) {
+        opserr << "WARNING LadrunoCohesiveHinge tag " << tag
+               << ": -pmBal needs P0c>0 P0t>0 0<Pbal<P0c muBal>0\n";
+        return 0;
+      }
+      P0    = pmb[0];
+      P0t   = pmb[1];
+      Pbal  = pmb[2];
+      muBal = pmb[3];
     }
     else if (strcmp(flag, "-implex") == 0) {
       implex = true;
@@ -143,7 +162,8 @@ void* OPS_LadrunoCohesiveHinge(void)
     }
   }
 
-  return new LadrunoCohesiveHinge(tag, Mc, Gf, Kpen, shape, penaltyRatio, P0, alphaPM, implex);
+  return new LadrunoCohesiveHinge(tag, Mc, Gf, Kpen, shape, penaltyRatio,
+                                  P0, alphaPM, implex, P0t, Pbal, muBal);
 }
 
 // ===========================================================================
@@ -151,10 +171,11 @@ void* OPS_LadrunoCohesiveHinge(void)
 // ===========================================================================
 LadrunoCohesiveHinge::LadrunoCohesiveHinge(int tag, double mc, double gf,
                                            double kpen, int shp, double pratio,
-                                           double p0, double apm, bool impl)
+                                           double p0, double apm, bool impl,
+                                           double p0t, double pbal, double mubal)
   : UniaxialMaterial(tag, MAT_TAG_LadrunoCohesiveHinge),
     Mc(mc), Gf(gf), Kpen(kpen), userKpen(kpen > 0.0), shape(shp), penaltyRatio(pratio),
-    P0(p0), alphaPM(apm), implex(impl), P_axial(0.0),
+    P0(p0), alphaPM(apm), P0t(p0t), Pbal(pbal), muBal(mubal), implex(impl), P_axial(0.0),
     kappa0(0.0), aExp(0.0), kappaf(0.0),
     CkappaMax(0.0), CkappaMax_old(0.0), Cstrain(0.0), Cstress(0.0), Cwork(0.0),
     dtime_n_commit(0.0), implexCommittedSteps(0),
@@ -167,7 +188,7 @@ LadrunoCohesiveHinge::LadrunoCohesiveHinge(int tag, double mc, double gf,
 LadrunoCohesiveHinge::LadrunoCohesiveHinge()
   : UniaxialMaterial(0, MAT_TAG_LadrunoCohesiveHinge),
     Mc(0.0), Gf(0.0), Kpen(0.0), userKpen(false), shape(EXP), penaltyRatio(1000.0),
-    P0(0.0), alphaPM(0.5), implex(false), P_axial(0.0),
+    P0(0.0), alphaPM(0.5), P0t(0.0), Pbal(0.0), muBal(1.0), implex(false), P_axial(0.0),
     kappa0(0.0), aExp(0.0), kappaf(0.0),
     CkappaMax(0.0), CkappaMax_old(0.0), Cstrain(0.0), Cstress(0.0), Cwork(0.0),
     dtime_n_commit(0.0), implexCommittedSteps(0),
@@ -183,6 +204,23 @@ LadrunoCohesiveHinge::~LadrunoCohesiveHinge()
 double LadrunoCohesiveHinge::getPMMultiplier(void) const
 {
   if (P0 <= 0.0) return 1.0;
+  // 4-parameter C^1 piecewise-parabolic RC balance-point law (-pmBal)
+  if (Pbal > 0.0 && P0 > Pbal && P0t > 0.0) {
+    double f = 0.0;
+    if (P_axial >= 0.0 && P_axial <= P0t) {
+      f = 1.0 - P_axial / P0t;
+    } else if (P_axial < 0.0 && P_axial >= -Pbal) {
+      double u = (P_axial + Pbal) / Pbal;
+      f = 1.0 + (muBal - 1.0) * (1.0 - u * u);
+    } else if (P_axial < -Pbal && P_axial >= -P0) {
+      double denom = P0 - Pbal;
+      double u = (P_axial + Pbal) / denom;
+      f = muBal * (1.0 - u * u);
+    }
+    if (f < 0.05) f = 0.05;
+    else if (f > 3.0) f = 3.0;
+    return f;
+  }
   // OpenSees beam basic axial force q(0): positive in tension, negative in compression.
   // Parabolic P-M scaling: f(n) = clamp(1 - alphaPM * n - (1 - alphaPM) * n^2, 0.05, 2.5)
   double n = P_axial / P0;
@@ -190,6 +228,33 @@ double LadrunoCohesiveHinge::getPMMultiplier(void) const
   if (f < 0.05) f = 0.05;
   else if (f > 2.5) f = 2.5;
   return f;
+}
+
+double LadrunoCohesiveHinge::getPMDerivative(void) const
+{
+  if (P0 <= 0.0) return 0.0;
+  if (Pbal > 0.0 && P0 > Pbal && P0t > 0.0) {
+    double f = 0.0, df = 0.0;
+    if (P_axial >= 0.0 && P_axial <= P0t) {
+      f  = 1.0 - P_axial / P0t;
+      df = -1.0 / P0t;
+    } else if (P_axial < 0.0 && P_axial >= -Pbal) {
+      double u = (P_axial + Pbal) / Pbal;
+      f  = 1.0 + (muBal - 1.0) * (1.0 - u * u);
+      df = -2.0 * (muBal - 1.0) * (P_axial + Pbal) / (Pbal * Pbal);
+    } else if (P_axial < -Pbal && P_axial >= -P0) {
+      double denom = P0 - Pbal;
+      double u = (P_axial + Pbal) / denom;
+      f  = muBal * (1.0 - u * u);
+      df = -2.0 * muBal * (P_axial + Pbal) / (denom * denom);
+    }
+    if (f <= 0.05 || f >= 3.0) return 0.0;
+    return df;
+  }
+  double n = P_axial / P0;
+  double f = 1.0 - alphaPM * n - (1.0 - alphaPM) * n * n;
+  if (f <= 0.05 || f >= 2.5) return 0.0;
+  return (-alphaPM - 2.0 * (1.0 - alphaPM) * n) / P0;
 }
 
 // ===========================================================================
@@ -364,7 +429,8 @@ int LadrunoCohesiveHinge::revertToStart(void)
 UniaxialMaterial* LadrunoCohesiveHinge::getCopy(void)
 {
   LadrunoCohesiveHinge* theCopy =
-    new LadrunoCohesiveHinge(this->getTag(), Mc, Gf, userKpen ? Kpen : -1.0, shape, penaltyRatio, P0, alphaPM, implex);
+    new LadrunoCohesiveHinge(this->getTag(), Mc, Gf, userKpen ? Kpen : -1.0, shape, penaltyRatio,
+                             P0, alphaPM, implex, P0t, Pbal, muBal);
 
   theCopy->userKpen             = userKpen;
   theCopy->P_axial              = P_axial;
@@ -388,8 +454,8 @@ UniaxialMaterial* LadrunoCohesiveHinge::getCopy(void)
 // ===========================================================================
 int LadrunoCohesiveHinge::sendSelf(int cTag, Channel& theChannel)
 {
-  // tag + 4 params (Mc,Gf,Kpen,shape) + penaltyRatio + 4 committed history + 10 extended
-  static thread_local Vector data(20);
+  // tag + 4 params (Mc,Gf,Kpen,shape) + penaltyRatio + 4 committed history + 13 extended
+  static thread_local Vector data(23);
   int c = 0;
   data(c++) = this->getTag();
   data(c++) = Mc;
@@ -411,6 +477,9 @@ int LadrunoCohesiveHinge::sendSelf(int cTag, Channel& theChannel)
   data(c++) = userKpen ? 1.0 : 0.0;
   data(c++) = Tstress;
   data(c++) = Ttangent;
+  data(c++) = P0t;
+  data(c++) = Pbal;
+  data(c++) = muBal;
 
   if (theChannel.sendVector(this->getDbTag(), cTag, data) < 0) {
     opserr << "LadrunoCohesiveHinge::sendSelf - failed to send vector\n";
@@ -421,7 +490,7 @@ int LadrunoCohesiveHinge::sendSelf(int cTag, Channel& theChannel)
 
 int LadrunoCohesiveHinge::recvSelf(int cTag, Channel& theChannel, FEM_ObjectBroker&)
 {
-  static thread_local Vector data(20);
+  static thread_local Vector data(23);
   if (theChannel.recvVector(this->getDbTag(), cTag, data) < 0) {
     opserr << "LadrunoCohesiveHinge::recvSelf - failed to recv vector\n";
     return -1;
@@ -447,6 +516,9 @@ int LadrunoCohesiveHinge::recvSelf(int cTag, Channel& theChannel, FEM_ObjectBrok
   userKpen             = (data(c++) != 0.0);
   double savedTstress  = data(c++);
   double savedTtangent = data(c++);
+  P0t                  = data(c++);
+  Pbal                 = data(c++);
+  muBal                = data(c++);
 
   computeDerived();           // Kpen already valid (was floor-checked on send side)
   if (implex) {
@@ -480,7 +552,9 @@ void LadrunoCohesiveHinge::Print(OPS_Stream& s, int flag)
   s << "  Gf     : " << Gf << "   (fracture energy per hinge)" << endln;
   s << "  Kpen   : " << Kpen << "   (penalty; floor Mc^2/(2Gf)=" << Mc*Mc/(2.0*Gf) << ")" << endln;
   s << "  shape  : " << (shape == LINEAR ? "linear" : "exponential") << endln;
-  if (P0 > 0.0)
+  if (P0 > 0.0 && Pbal > 0.0)
+    s << "  pmBal  : P0c=" << P0 << " P0t=" << P0t << " Pbal=" << Pbal << " muBal=" << muBal << endln;
+  else if (P0 > 0.0)
     s << "  P0     : " << P0 << "   alphaPM: " << alphaPM << endln;
   if (implex)
     s << "  implex : on" << endln;
@@ -512,6 +586,8 @@ Response* LadrunoCohesiveHinge::setResponse(const char** argv, int argc, OPS_Str
     return new MaterialResponse(this, 105, 0.0);
   if (strcmp(a, "implexError") == 0 || strcmp(a, "ImplexError") == 0)
     return new MaterialResponse(this, 106, 0.0);
+  if (strcmp(a, "pmDerivative") == 0 || strcmp(a, "dfpm") == 0)
+    return new MaterialResponse(this, 107, 0.0);
 
   return UniaxialMaterial::setResponse(argv, argc, s);
 }
@@ -553,6 +629,9 @@ int LadrunoCohesiveHinge::getResponse(int responseID, Information& matInfo)
     case 106:
       matInfo.theDouble = getImplexError();
       return 0;
+    case 107:
+      matInfo.theDouble = getPMDerivative();
+      return 0;
     default:
       return UniaxialMaterial::getResponse(responseID, matInfo);
   }
@@ -566,6 +645,9 @@ int LadrunoCohesiveHinge::setParameter(const char** argv, int argc, Parameter& p
   if (strcmp(argv[0], "Kpen") == 0)    return param.addObject(3, this);
   if (strcmp(argv[0], "P0") == 0)      return param.addObject(4, this);
   if (strcmp(argv[0], "alphaPM") == 0) return param.addObject(5, this);
+  if (strcmp(argv[0], "P0t") == 0)     return param.addObject(6, this);
+  if (strcmp(argv[0], "Pbal") == 0)    return param.addObject(7, this);
+  if (strcmp(argv[0], "muBal") == 0)   return param.addObject(8, this);
   return -1;
 }
 
@@ -577,6 +659,9 @@ int LadrunoCohesiveHinge::updateParameter(int parameterID, Information& info)
     case 3: Kpen = info.theDouble; userKpen = (Kpen > 0.0); computeDerived(); return 0;
     case 4: P0 = info.theDouble; return 0;
     case 5: alphaPM = info.theDouble; return 0;
+    case 6: P0t = info.theDouble; return 0;
+    case 7: Pbal = info.theDouble; return 0;
+    case 8: muBal = info.theDouble; return 0;
     default: return -1;
   }
 }

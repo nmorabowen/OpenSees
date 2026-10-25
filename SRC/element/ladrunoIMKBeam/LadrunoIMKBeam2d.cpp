@@ -63,10 +63,11 @@ LadrunoIMKBeam2d::LadrunoIMKBeam2d()
   : Element(0, ELE_TAG_LadrunoIMKBeam2d),
     A(0.0), E(0.0), Iz(0.0), rho(0.0), cMass(0),
     GAvy(0.0), P0(0.0), pmAlpha(0.5),
-    dI(0.0), dJ(0.0), useImplex(false), implexErr(0.0),
+    P0t(0.0), Pbal(0.0), muBal(1.0),
+    dI(0.0), dJ(0.0), useImplex(false), usePowell(false), implexErr(0.0),
     theShearMat(0), gammaS(0.0), gammaScommit(0.0), dGammaSprev(0.0),
     gammaSp(0.0), gammaSpCommit(0.0), dGammaSpPrev(0.0),
-    dtime_n_commit(0.0),
+    dtime_n_commit(0.0), stepDtLatched(false), dtStep(0.0), dtScaleStep(1.0),
     q(3), kb(3, 3), Q(6), q0Dirty(false), committedAtCurrentV(false),
     connectedExternalNodes(2), theCoordTransf(0)
 {
@@ -93,14 +94,17 @@ LadrunoIMKBeam2d::LadrunoIMKBeam2d(int tag, int Nd1, int Nd2,
                                    double r, int cm,
                                    double gavy, double p0_pm, double alpha_pm,
                                    double di, double dj, bool implex,
-                                   UniaxialMaterial *mShear)
+                                   UniaxialMaterial *mShear,
+                                   double p0t_pm, double pbal_pm, double mubal_pm,
+                                   bool powell)
   : Element(tag, ELE_TAG_LadrunoIMKBeam2d),
     A(a), E(e), Iz(iz), rho(r), cMass(cm),
     GAvy(gavy), P0(p0_pm), pmAlpha(alpha_pm),
-    dI(di), dJ(dj), useImplex(implex), implexErr(0.0),
+    P0t(p0t_pm), Pbal(pbal_pm), muBal(mubal_pm),
+    dI(di), dJ(dj), useImplex(implex), usePowell(powell), implexErr(0.0),
     theShearMat(0), gammaS(0.0), gammaScommit(0.0), dGammaSprev(0.0),
     gammaSp(0.0), gammaSpCommit(0.0), dGammaSpPrev(0.0),
-    dtime_n_commit(0.0),
+    dtime_n_commit(0.0), stepDtLatched(false), dtStep(0.0), dtScaleStep(1.0),
     q(3), kb(3, 3), Q(6), q0Dirty(false), committedAtCurrentV(false),
     connectedExternalNodes(2), theCoordTransf(0)
 {
@@ -116,8 +120,12 @@ LadrunoIMKBeam2d::LadrunoIMKBeam2d(int tag, int Nd1, int Nd2,
         exit(-1);
       }
       if (P0 > 0.0) {
-        if (LadrunoCohesiveHinge *ch = dynamic_cast<LadrunoCohesiveHinge *>(theMat[i]))
-          ch->setPM(P0, pmAlpha);
+        if (LadrunoCohesiveHinge *ch = dynamic_cast<LadrunoCohesiveHinge *>(theMat[i])) {
+          if (Pbal > 0.0 && P0 > Pbal && P0t > 0.0)
+            ch->setPMBal(P0, P0t, Pbal, muBal);
+          else
+            ch->setPM(P0, pmAlpha);
+        }
       }
     } else {
       theMat[i] = 0;
@@ -237,7 +245,8 @@ int LadrunoIMKBeam2d::commitState(void)
   gammaScommit = gammaS;
   dGammaSpPrev = gammaSp - gammaSpCommit;
   gammaSpCommit = gammaSp;
-  dtime_n_commit = ops_Dt;
+  dtime_n_commit = stepDtLatched ? dtStep : ops_Dt;
+  stepDtLatched = false;
   if (theCoordTransf != 0 && theNodes[0] != 0 && theNodes[1] != 0) {
     const Vector &vc = theCoordTransf->getBasicTrialDisp();
     vCommit[0] = vc(0);
@@ -252,6 +261,7 @@ int LadrunoIMKBeam2d::revertToLastCommit(void)
 {
   int ok = 0;
   committedAtCurrentV = false;
+  stepDtLatched = false;
   for (int i = 0; i < 2; i++) {
     if (theMat[i] != 0)
       ok += theMat[i]->revertToLastCommit();
@@ -272,6 +282,9 @@ int LadrunoIMKBeam2d::revertToStart(void)
 {
   int ok = 0;
   committedAtCurrentV = false;
+  stepDtLatched = false;
+  dtStep = 0.0;
+  dtScaleStep = 1.0;
   vCommit[0] = vCommit[1] = vCommit[2] = 0.0;
   for (int i = 0; i < 2; i++) {
     if (theMat[i] != 0)
@@ -326,8 +339,12 @@ int LadrunoIMKBeam2d::update(void)
   // axial: linear elastic, no hinge (+ fixed-end axial force q0[0])
   kb(0, 0) = EAoverL;  q(0) = EAoverL * v(0) + q0[0];
 
-  const double fPM = ladrunoIMKScalePM(q(0), P0, pmAlpha);
-  const double dLogPM = (fPM > 0.0) ? (ladrunoIMKScalePMDeriv(q(0), P0, pmAlpha) / fPM) : 0.0;
+  const bool usePMBal = (Pbal > 0.0 && P0 > Pbal && P0t > 0.0);
+  const double fPM = usePMBal ? ladrunoIMKScalePMBal(q(0), P0, P0t, Pbal, muBal)
+                              : ladrunoIMKScalePM(q(0), P0, pmAlpha);
+  const double dfPM = usePMBal ? ladrunoIMKScalePMBalDeriv(q(0), P0, P0t, Pbal, muBal)
+                               : ladrunoIMKScalePMDeriv(q(0), P0, pmAlpha);
+  const double dLogPM = (fPM > 0.0) ? (dfPM / fPM) : 0.0;
   for (int i = 0; i < 2; i++)
     if (LadrunoCohesiveHinge *ch = dynamic_cast<LadrunoCohesiveHinge *>(theMat[i]))
       ch->setAxialForce(q(0));
@@ -335,11 +352,16 @@ int LadrunoIMKBeam2d::update(void)
     chs->setAxialForce(q(0));
   double k2[2][2];
 
-  double dtScale = 1.0;
-  if (dtime_n_commit > 1.0e-16 && ops_Dt > 0.0) {
-    dtScale = ops_Dt / dtime_n_commit;
-    if (dtScale > 2.0) dtScale = 2.0;
+  if (!stepDtLatched) {
+    dtStep = ops_Dt;
+    dtScaleStep = 1.0;
+    if (dtime_n_commit > 1.0e-16 && dtStep > 0.0) {
+      dtScaleStep = dtStep / dtime_n_commit;
+      if (dtScaleStep > 2.0) dtScaleStep = 2.0;
+    }
+    stepDtLatched = true;
   }
+  const double dtScale = dtScaleStep;
 
   // strong-axis bending: basic dofs 1,2 ; materials 0,1 ; EI = E*Iz
   double qi, qj;
@@ -351,7 +373,7 @@ int LadrunoIMKBeam2d::update(void)
                       dThetaHpPrev[0], dThetaHpPrev[1], &implexErr,
                       dtScale, &thetaHp[0], &thetaHp[1],
                       theShearMat, &gammaS, gammaSpCommit, dGammaSpPrev, &gammaSp,
-                      dLogPM, dq_dN);
+                      dLogPM, dq_dN, usePowell);
   q(1) = qi;  q(2) = qj;
   kb(1, 0) = EAoverL * dq_dN[0];
   kb(2, 0) = EAoverL * dq_dN[1];
@@ -379,7 +401,7 @@ const Matrix &LadrunoIMKBeam2d::getInitialStiff(void)
   kbi(0, 0) = E * A * oneOverL;
 
   double k2[2][2];
-  ladrunoIMKInitBlock(theMat[0], theMat[1], L, E * Iz, k2, GAvy, 1.0, dI, dJ, theShearMat);
+  ladrunoIMKInitBlock(theMat[0], theMat[1], L, E * Iz, k2, GAvy, 1.0, dI, dJ, theShearMat, usePowell);
   kbi(1, 1) = k2[0][0];  kbi(1, 2) = k2[0][1];
   kbi(2, 1) = k2[1][0];  kbi(2, 2) = k2[1][1];
 
@@ -441,9 +463,9 @@ int LadrunoIMKBeam2d::addLoad(ElementalLoad *theLoad, double loadFactor)
     double wt = data(0) * loadFactor;  // Transverse (+ve upward)
     double wa = data(1) * loadFactor;  // Axial (+ve from node I to J)
 
-    double V = 0.5 * wt * L;
-    double M = V * L / 6.0;  // wt*L*L/12
-    double P = wa * L;
+    double V = 0.5 * wt * Lc;
+    double M = V * Lc / 6.0;  // wt*Lc*Lc/12
+    double P = wa * Lc;
 
     p0[0] -= P;
     p0[1] -= V;
@@ -459,15 +481,15 @@ int LadrunoIMKBeam2d::addLoad(ElementalLoad *theLoad, double loadFactor)
     double wtb = data(1) * loadFactor;  // Transverse at end
     double waa = data(2) * loadFactor;  // Axial at start
     double wab = data(3) * loadFactor;  // Axial at end
-    double a   = data(4) * L;
-    double b   = data(5) * L;
+    double a   = data(4) * Lc;
+    double b   = data(5) * Lc;
 
     double ell = b - a;
-    if (ell <= 0.0 || a < 0.0 || b > L)
+    if (ell <= 0.0 || a < 0.0 || b > Lc)
       return 0;
 
     double P  = 0.5 * ell * (waa + wab);
-    double PJ = (a * P + (ell * ell / 6.0) * (waa + 2.0 * wab)) / L;
+    double PJ = (a * P + (ell * ell / 6.0) * (waa + 2.0 * wab)) / Lc;
 
     double J0 = 0.5 * ell * (wta + wtb);
     double J1 = (ell * ell / 6.0) * (wta + 2.0 * wtb);
@@ -479,10 +501,10 @@ int LadrunoIMKBeam2d::addLoad(ElementalLoad *theLoad, double loadFactor)
     double I2 = a * a * J0 + 2.0 * a * J1 + J2;
     double I3 = a * a * a * J0 + 3.0 * a * a * J1 + 3.0 * a * J2 + J3;
 
-    double V2 = I1 / L;
+    double V2 = I1 / Lc;
     double V1 = I0 - V2;
-    double M1 = -I1 + (2.0 / L) * I2 - (1.0 / (L * L)) * I3;
-    double M2 = (1.0 / L) * I2 - (1.0 / (L * L)) * I3;
+    double M1 = -I1 + (2.0 / Lc) * I2 - (1.0 / (Lc * Lc)) * I3;
+    double M2 = (1.0 / Lc) * I2 - (1.0 / (Lc * Lc)) * I3;
     if (GAvy > 0.0 && Lc > 0.0) {
       const double Phi = 12.0 * E * Iz / (GAvy * Lc * Lc);
       const double inv = 1.0 / (1.0 + Phi);
@@ -509,8 +531,8 @@ int LadrunoIMKBeam2d::addLoad(ElementalLoad *theLoad, double loadFactor)
     if (aOverL < 0.0 || aOverL > 1.0)
       return 0;
 
-    double a = aOverL * L;
-    double b = L - a;
+    double a = aOverL * Lc;
+    double b = Lc - a;
 
     p0[0] -= N;
     double V1 = P * (1.0 - aOverL);
@@ -518,7 +540,7 @@ int LadrunoIMKBeam2d::addLoad(ElementalLoad *theLoad, double loadFactor)
     p0[1] -= V1;
     p0[2] -= V2;
 
-    double L2 = 1.0 / (L * L);
+    double L2 = 1.0 / (Lc * Lc);
     double a2 = a * a;
     double b2 = b * b;
 
@@ -704,7 +726,7 @@ int LadrunoIMKBeam2d::sendSelf(int cTag, Channel &theChannel)
     return res;
   }
 
-  static thread_local Vector dData(49);
+  static thread_local Vector dData(53);
   dData(0) = A;  dData(1) = E;  dData(2) = Iz;  dData(3) = rho;
   dData(4) = thetaHcommit[0];  dData(5) = thetaHcommit[1];
   dData(6) = alphaM;  dData(7) = betaK;  dData(8) = betaK0;  dData(9) = betaKc;
@@ -730,6 +752,10 @@ int LadrunoIMKBeam2d::sendSelf(int cTag, Channel &theChannel)
   dData(46) = dGammaSprev;
   dData(47) = gammaSpCommit;
   dData(48) = dGammaSpPrev;
+  dData(49) = P0t;
+  dData(50) = Pbal;
+  dData(51) = muBal;
+  dData(52) = usePowell ? 1.0 : 0.0;
 
   res += theChannel.sendVector(dbTag, cTag, dData);
   if (res < 0) {
@@ -780,7 +806,7 @@ int LadrunoIMKBeam2d::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &
   connectedExternalNodes(1) = idData(2);
   cMass = idData(9);
 
-  static thread_local Vector dData(49);
+  static thread_local Vector dData(53);
   res += theChannel.recvVector(dbTag, cTag, dData);
   if (res < 0) {
     opserr << "LadrunoIMKBeam2d::recvSelf -- failed to recv Vector\n";
@@ -819,6 +845,11 @@ int LadrunoIMKBeam2d::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &
   gammaSpCommit = dData(47);
   gammaSp = gammaSpCommit;
   dGammaSpPrev = dData(48);
+  P0t = dData(49);
+  Pbal = dData(50);
+  muBal = dData(51);
+  usePowell = (dData(52) != 0.0);
+  stepDtLatched = false;
   q0Dirty = false;
   committedAtCurrentV = true;
 
@@ -868,8 +899,12 @@ int LadrunoIMKBeam2d::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &
       return res;
     }
     if (P0 > 0.0) {
-      if (LadrunoCohesiveHinge *ch = dynamic_cast<LadrunoCohesiveHinge *>(theMat[i]))
-        ch->setPM(P0, pmAlpha);
+      if (LadrunoCohesiveHinge *ch = dynamic_cast<LadrunoCohesiveHinge *>(theMat[i])) {
+        if (Pbal > 0.0 && P0 > Pbal && P0t > 0.0)
+          ch->setPMBal(P0, P0t, Pbal, muBal);
+        else
+          ch->setPM(P0, pmAlpha);
+      }
     }
   }
 

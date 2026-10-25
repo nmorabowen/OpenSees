@@ -63,6 +63,17 @@ inline bool ladrunoIMKMatIsImplex(UniaxialMaterial *m)
   return false;
 }
 
+inline void ladrunoIMKMatSetImplex(UniaxialMaterial *m, bool flag)
+{
+  if (m == 0) return;
+  if (LadrunoCohesiveHinge *ch = dynamic_cast<LadrunoCohesiveHinge *>(m))
+    ch->setImplex(flag);
+  else if (Bilin *bi = dynamic_cast<Bilin *>(m))
+    bi->setImplex(flag);
+  else if (ModIMKPeakOriented *mk = dynamic_cast<ModIMKPeakOriented *>(m))
+    mk->setImplex(flag);
+}
+
 inline double ladrunoIMKMatImplexError(UniaxialMaterial *m)
 {
   if (m == 0) return 0.0;
@@ -81,6 +92,13 @@ inline bool ladrunoIMKBiaxialIsImplex(NDMaterial *m)
   if (LadrunoCohesiveHingeBiaxial *cb = dynamic_cast<LadrunoCohesiveHingeBiaxial *>(m))
     return cb->isImplex();
   return false;
+}
+
+inline void ladrunoIMKBiaxialSetImplex(NDMaterial *m, bool flag)
+{
+  if (m == 0) return;
+  if (LadrunoCohesiveHingeBiaxial *cb = dynamic_cast<LadrunoCohesiveHingeBiaxial *>(m))
+    cb->setImplex(flag);
 }
 
 inline double ladrunoIMKBiaxialImplexError(NDMaterial *m)
@@ -234,12 +252,59 @@ inline double ladrunoIMKScalePMDeriv(double P, double P0, double alpha)
   return (-alpha - 2.0 * (1.0 - alpha) * n) / P0;
 }
 
+// 4-parameter RC balance-point P-M scaling factor (DR-3):
+inline double ladrunoIMKScalePMBal(double P, double P0c, double P0t, double Pbal, double muBal)
+{
+  if (P0c <= 0.0 || P0t <= 0.0 || Pbal <= 0.0 || Pbal >= P0c)
+    return 1.0;
+  double f = 1.0;
+  if (P >= 0.0) {
+    f = 1.0 - P / P0t;
+  } else if (P >= -Pbal) {
+    const double u = (P + Pbal) / Pbal;
+    f = 1.0 + (muBal - 1.0) * (1.0 - u * u);
+  } else {
+    const double denom = P0c - Pbal;
+    const double u = (P + Pbal) / denom;
+    f = muBal * (1.0 - u * u);
+  }
+  if (f < 0.05) f = 0.05;
+  if (f > 3.0)  f = 3.0;
+  return f;
+}
+
+inline double ladrunoIMKScalePMBalDeriv(double P, double P0c, double P0t, double Pbal, double muBal)
+{
+  if (P0c <= 0.0 || P0t <= 0.0 || Pbal <= 0.0 || Pbal >= P0c)
+    return 0.0;
+  double f = 1.0;
+  double df = 0.0;
+  if (P >= 0.0) {
+    f = 1.0 - P / P0t;
+    df = -1.0 / P0t;
+  } else if (P >= -Pbal) {
+    const double u = (P + Pbal) / Pbal;
+    f = 1.0 + (muBal - 1.0) * (1.0 - u * u);
+    df = -2.0 * (muBal - 1.0) * (P + Pbal) / (Pbal * Pbal);
+  } else {
+    const double denom = P0c - Pbal;
+    const double u = (P + Pbal) / denom;
+    f = muBal * (1.0 - u * u);
+    df = -2.0 * muBal * (P + Pbal) / (denom * denom);
+  }
+  if (f <= 0.05 || f >= 3.0)
+    return 0.0;
+  return df;
+}
+
 inline double ladrunoIMKMatDLogPM(UniaxialMaterial *m, double dLogPMFallback)
 {
   if (m == 0) return 0.0;
   if (LadrunoCohesiveHinge *ch = dynamic_cast<LadrunoCohesiveHinge *>(m)) {
-    const double f = ch->getPMMultiplier();
-    return (f > 0.0) ? (ch->getPMDerivative() / f) : 0.0;
+    if (ch->hasPM()) {
+      const double f = ch->getPMMultiplier();
+      return (f > 0.0) ? (ch->getPMDerivative() / f) : 0.0;
+    }
   }
   return dLogPMFallback;
 }
@@ -248,20 +313,24 @@ inline double ladrunoIMKBiaxialDLogPM(NDMaterial *m, double dLogPMFallback)
 {
   if (m == 0) return 0.0;
   if (LadrunoCohesiveHingeBiaxial *cb = dynamic_cast<LadrunoCohesiveHingeBiaxial *>(m)) {
-    const double f = cb->getPMMultiplier();
-    return (f > 0.0) ? (cb->getPMDerivative() / f) : 0.0;
+    if (cb->hasPM()) {
+      const double f = cb->getPMMultiplier();
+      return (f > 0.0) ? (cb->getPMDerivative() / f) : 0.0;
+    }
   }
   return dLogPMFallback;
 }
 
 // Initial (small-strain) 2x2 tangent block for one bending axis, built from the
 // hinge initial tangents (NULL material => elastic end), including optional
-// Timoshenko shear GAv, rigid end offsets (dI, dJ), and series shear hinge mShear.
+// Timoshenko shear GAv, rigid end offsets (dI, dJ), series shear hinge mShear,
+// and optional Powell active-set compliance subtraction (usePowell).
 inline void ladrunoIMKInitBlock(UniaxialMaterial *mi, UniaxialMaterial *mj,
                                 double L, double EI, double k2[2][2],
                                 double GAv = 0.0, double fPM = 1.0,
                                 double dI = 0.0, double dJ = 0.0,
-                                UniaxialMaterial *mShear = 0)
+                                UniaxialMaterial *mShear = 0,
+                                bool usePowell = false)
 {
   const bool hasEZ = (dI > 0.0 || dJ > 0.0) && (dI + dJ < L);
   const double Lc = hasEZ ? (L - dI - dJ) : L;
@@ -273,12 +342,12 @@ inline void ladrunoIMKInitBlock(UniaxialMaterial *mi, UniaxialMaterial *mj,
   double F21 = F12, F22 = F11;
   const double fPMi = (dynamic_cast<LadrunoCohesiveHinge *>(mi) == 0) ? fPM : 1.0;
   const double fPMj = (dynamic_cast<LadrunoCohesiveHinge *>(mj) == 0) ? fPM : 1.0;
-  if (mi != 0) {
+  if (!usePowell && mi != 0) {
     double k0 = fPMi * mi->getInitialTangent();
     if (fabs(k0) < ktFloor) k0 = (k0 < 0 ? -ktFloor : ktFloor);
     F11 += 1.0 / k0;
   }
-  if (mj != 0) {
+  if (!usePowell && mj != 0) {
     double k0 = fPMj * mj->getInitialTangent();
     if (fabs(k0) < ktFloor) k0 = (k0 < 0 ? -ktFloor : ktFloor);
     F22 += 1.0 / k0;
@@ -340,7 +409,8 @@ inline void ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
                                 double dGammaSpPrev = 0.0,
                                 double *gammaSpOut = 0,
                                 double dLogPM = 0.0,
-                                double *dq_dN = 0)
+                                double *dq_dN = 0,
+                                bool usePowell = false)
 {
   const bool hasEZ = (dI > 0.0 || dJ > 0.0) && (dI + dJ < L);
   const double Lc = hasEZ ? (L - dI - dJ) : L;
@@ -351,8 +421,9 @@ inline void ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
 
   const double vic = T00 * vi + T01 * vj;
   const double vjc = T10 * vi + T11 * vj;
-  const double q0ic = hasEZ ? (((L - dI) * q0i - dI * q0j) / L) : q0i;
-  const double q0jc = hasEZ ? ((-dJ * q0i + (L - dJ) * q0j) / L) : q0j;
+  // Clear-span fixed-end moments (already integrated over Lc in addLoad)
+  const double q0ic = q0i;
+  const double q0jc = q0j;
 
   double a, b, F11, F12;
   ladrunoIMKCoreCoeffs(Lc, EI, GAv, a, b, F11, F12);
@@ -367,16 +438,16 @@ inline void ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
   const double fPMi = (dynamic_cast<LadrunoCohesiveHinge *>(mi) == 0) ? fPM : 1.0;
   const double fPMj = (dynamic_cast<LadrunoCohesiveHinge *>(mj) == 0) ? fPM : 1.0;
 
-  double Fh0_i = 0.0, Fh0_j = 0.0, Fs0 = 0.0, ks0_raw = 0.0;
+  double Fh0_i = 0.0, Fh0_j = 0.0, Fs0 = 0.0, k0i_raw = 0.0, k0j_raw = 0.0, ks0_raw = 0.0;
   if (hi) {
-    double k0i = fPMi * mi->getInitialTangent();
-    if (fabs(k0i) < ktFloor) k0i = (k0i < 0 ? -ktFloor : ktFloor);
-    Fh0_i = 1.0 / k0i;
+    k0i_raw = fPMi * mi->getInitialTangent();
+    if (fabs(k0i_raw) < ktFloor) k0i_raw = (k0i_raw < 0 ? -ktFloor : ktFloor);
+    Fh0_i = 1.0 / k0i_raw;
   }
   if (hj) {
-    double k0j = fPMj * mj->getInitialTangent();
-    if (fabs(k0j) < ktFloor) k0j = (k0j < 0 ? -ktFloor : ktFloor);
-    Fh0_j = 1.0 / k0j;
+    k0j_raw = fPMj * mj->getInitialTangent();
+    if (fabs(k0j_raw) < ktFloor) k0j_raw = (k0j_raw < 0 ? -ktFloor : ktFloor);
+    Fh0_j = 1.0 / k0j_raw;
   }
   if (hs) {
     ks0_raw = mShear->getInitialTangent();
@@ -387,6 +458,12 @@ inline void ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
   // Elastic shear rotation under fixed-end moments at v = 0:
   // subtracting gam_rot0 ensures q == q0 at v == 0 in the elastic range under asymmetric span loads.
   const double gam_rot0 = hs ? (-Fs0 * (q0ic + q0jc)) : 0.0;
+  const double powellScale = usePowell ? 1.0 : 0.0;
+
+  const bool matImplexI = ladrunoIMKMatIsImplex(mi);
+  const bool matImplexJ = ladrunoIMKMatIsImplex(mj);
+  const bool matImplexS = ladrunoIMKMatIsImplex(mShear);
+  const bool matImplex = matImplexI || matImplexJ || matImplexS;
 
   // warm-start from the incoming trial values; non-hinged ends stay at 0
   double th_i = hi ? thi : 0.0;
@@ -396,6 +473,17 @@ inline void ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
   double Mi = 0.0, Mj = 0.0, Vs = 0.0, kti = 0.0, ktj = 0.0, kts = 0.0;
 
   if (hi || hj || hs) {
+    // FB-10: when element-level -implex (useImplex) is active, disable any
+    // redundant material-level -implex on the element's private hinge clones so
+    // the inner series equilibrium is solved implicitly and extrapolated once
+    // at the element level (also prevents Bilin::commitState from overwriting
+    // Tangent = k0).
+    if (useImplex) {
+      if (matImplexI) ladrunoIMKMatSetImplex(mi, false);
+      if (matImplexJ) ladrunoIMKMatSetImplex(mj, false);
+      if (matImplexS) ladrunoIMKMatSetImplex(mShear, false);
+    }
+
     const int maxIter = 50;
     double damp = 1.0;
     double gnormPrev = 1.0e300;
@@ -416,9 +504,11 @@ inline void ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
         kts = mShear->getTangent();
       }
 
+      const double thCore_i = hi ? (th_i - powellScale * Fh0_i * Mi) : 0.0;
+      const double thCore_j = hj ? (th_j - powellScale * Fh0_j * Mj) : 0.0;
       const double gam_rot = hs ? (gam_s / Lc - gam_rot0) : 0.0;
-      const double vel_i = vic - th_i + gam_rot;
-      const double vel_j = vjc - th_j + gam_rot;
+      const double vel_i = vic - thCore_i + gam_rot;
+      const double vel_j = vjc - thCore_j + gam_rot;
 
       // basic forces from elastic interior + fixed-end moments: q = K_el (v - thetaH + (gam_s - gam_s0)/Lc) + q0
       const double qi_ = a * vel_i + b * vel_j + q0ic;
@@ -444,6 +534,8 @@ inline void ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
       // guarded tangents for the Jacobian (force residual stays exact)
       double ki = (fabs(kti) < ktFloor) ? (kti < 0 ? -ktFloor : ktFloor) : kti;
       double kj = (fabs(ktj) < ktFloor) ? (ktj < 0 ? -ktFloor : ktFloor) : ktj;
+      const double eta_i = hi ? (1.0 - powellScale * Fh0_i * kti) : 0.0;
+      const double eta_j = hj ? (1.0 - powellScale * Fh0_j * ktj) : 0.0;
 
       double a_eff = a;
       double b_eff = b;
@@ -465,21 +557,30 @@ inline void ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
 
       double dthi = 0.0, dthj = 0.0;
       if (hi && hj) {
-        // J = -(K_el_sub + diag(kt)) — symmetric 2x2; invert with eigenvalue floor
-        const double J11 = -a_eff - ki, J12 = -b_eff;
-        const double J22 = -a_eff - kj;
         const double jFloor = 1.0e-8 * (fabs(a_eff) + fabs(ki) + fabs(kj)) + 1.0e-300;
-        double i11, i12, i22;
-        ladrunoIMKInvert2x2SymFloored(J11, J12, J22, jFloor, i11, i12, i22);
-        dthi = -(i11 * gi_eff + i12 * gj_eff);
-        dthj = -(i12 * gi_eff + i22 * gj_eff);
+        if (!usePowell) {
+          // J = -(K_el_sub + diag(kt)) — symmetric 2x2; invert with eigenvalue floor
+          const double J11 = -a_eff - ki, J12 = -b_eff;
+          const double J22 = -a_eff - kj;
+          double i11, i12, i22;
+          ladrunoIMKInvert2x2SymFloored(J11, J12, J22, jFloor, i11, i12, i22);
+          dthi = -(i11 * gi_eff + i12 * gj_eff);
+          dthj = -(i12 * gi_eff + i22 * gj_eff);
+        } else {
+          double i00, i01, i10, i11;
+          ladrunoIMKInvert2x2Floored(a_eff * eta_i + ki, b_eff * eta_j,
+                                     b_eff * eta_i,      a_eff * eta_j + kj,
+                                     jFloor, i00, i01, i10, i11);
+          dthi = i00 * gi_eff + i01 * gj_eff;
+          dthj = i10 * gi_eff + i11 * gj_eff;
+        }
       } else if (hi) {
-        double J11 = -a_eff - ki;
+        double J11 = -a_eff * eta_i - ki;
         const double jFloor = 1.0e-8 * (fabs(a_eff) + fabs(ki)) + 1.0e-300;
         if (fabs(J11) < jFloor) J11 = (J11 < 0.0) ? -jFloor : jFloor;
         dthi = -gi_eff / J11;
       } else if (hj) { // hj only
-        double J22 = -a_eff - kj;
+        double J22 = -a_eff * eta_j - kj;
         const double jFloor = 1.0e-8 * (fabs(a_eff) + fabs(kj)) + 1.0e-300;
         if (fabs(J22) < jFloor) J22 = (J22 < 0.0) ? -jFloor : jFloor;
         dthj = -gj_eff / J22;
@@ -488,7 +589,7 @@ inline void ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
       th_i += damp * dthi;
       th_j += damp * dthj;
       if (hs) {
-        const double dgam_rot = (gs_mom + ab * (dthi + dthj)) / Ds;
+        const double dgam_rot = (gs_mom + ab * (eta_i * dthi + eta_j * dthj)) / Ds;
         gam_s += damp * (dgam_rot * Lc);
       }
     }
@@ -499,28 +600,26 @@ inline void ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
   if (gammaSInOut != 0) *gammaSInOut = gam_s;
 
   // exact basic forces at the converged hinge rotations (+ fixed-end moments)
+  const double thCore_i = hi ? (th_i - powellScale * Fh0_i * Mi) : 0.0;
+  const double thCore_j = hj ? (th_j - powellScale * Fh0_j * Mj) : 0.0;
   const double gam_rot = hs ? (gam_s / Lc - gam_rot0) : 0.0;
-  double qic = a * (vic - th_i + gam_rot) + b * (vjc - th_j + gam_rot) + q0ic;
-  double qjc = b * (vic - th_i + gam_rot) + a * (vjc - th_j + gam_rot) + q0jc;
+  double qic = a * (vic - thCore_i + gam_rot) + b * (vjc - thCore_j + gam_rot) + q0ic;
+  double qjc = b * (vic - thCore_i + gam_rot) + a * (vjc - thCore_j + gam_rot) + q0jc;
 
-  // Implicit plastic hinge rotations: thp = th - q_c / k0
-  const double thp_i = hi ? (th_i - Fh0_i * qic) : 0.0;
-  const double thp_j = hj ? (th_j - Fh0_j * qjc) : 0.0;
-  const double Veq_c = hs ? (-(qic + qjc) / Lc) : 0.0;
-  const double gam_sp = (hs && fabs(ks0_raw) > 1.0e-30) ? (gam_s - Veq_c / ks0_raw) : 0.0;
+  // Implicit plastic hinge rotations: thp = th - M / k0 (exact 0.0 in elastic regime)
+  const double thp_i = hi ? (th_i - Mi / k0i_raw) : 0.0;
+  const double thp_j = hj ? (th_j - Mj / k0j_raw) : 0.0;
+  const double gam_sp = (hs && fabs(ks0_raw) > 1.0e-30) ? (gam_s - Vs / ks0_raw) : 0.0;
   if (thpOutI != 0) *thpOutI = thp_i;
   if (thpOutJ != 0) *thpOutJ = thp_j;
   if (gammaSpOut != 0) *gammaSpOut = gam_sp;
 
-  const bool matImplex = ladrunoIMKMatIsImplex(mi) || ladrunoIMKMatIsImplex(mj)
-                       || ladrunoIMKMatIsImplex(mShear);
-
-  if (useImplex && !matImplex) {
+  if (useImplex) {
     const double thpExI = hi ? (thpCommitI + dtScale * dThpPrevI) : 0.0;
     const double thpExJ = hj ? (thpCommitJ + dtScale * dThpPrevJ) : 0.0;
     const double gamSpEx = hs ? (gammaSpCommit + dtScale * dGammaSpPrev) : 0.0;
-    const double F11_0 = F11_core + Fh0_i + Fs0;
-    const double F22_0 = F11_core + Fh0_j + Fs0;
+    const double F11_0 = F11_core + (usePowell ? 0.0 : Fh0_i) + Fs0;
+    const double F22_0 = F11_core + (usePowell ? 0.0 : Fh0_j) + Fs0;
     const double F12_0 = F12_core + Fs0;
     double det0 = F11_0 * F22_0 - F12_0 * F12_0;
     if (fabs(det0) < 1.0e-30) det0 = (det0 < 0 ? -1.0e-30 : 1.0e-30);
@@ -533,17 +632,32 @@ inline void ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
     const double rhs_j = vjc - thpExJ + (hs ? (gamSpEx / Lc - gam_rot0) : 0.0) + F12_core * q0ic + F11_core * q0jc;
     const double qic_ex = kc0_00 * rhs_i + kc0_01 * rhs_j;
     const double qjc_ex = kc0_10 * rhs_i + kc0_11 * rhs_j;
+    const double dthp_i = (thp_i - thpExI) - (hs ? (gam_sp - gamSpEx) / Lc : 0.0);
+    const double dthp_j = (thp_j - thpExJ) - (hs ? (gam_sp - gamSpEx) / Lc : 0.0);
+    const double dqic_imp = kc0_00 * dthp_i + kc0_01 * dthp_j;
+    const double dqjc_imp = kc0_10 * dthp_i + kc0_11 * dthp_j;
     if (implexErrOut != 0)
-      *implexErrOut = fabs(qic - qic_ex) + fabs(qjc - qjc_ex);
+      *implexErrOut = fabs(dqic_imp) + fabs(dqjc_imp);
     qic = qic_ex;
     qjc = qjc_ex;
     qi = T00 * qic + T10 * qjc;
     qj = T01 * qic + T11 * qjc;
     if (dq_dN != 0) {
-      dq_dN[0] = 0.0;
-      dq_dN[1] = 0.0;
+      if (!usePowell) {
+        const double dLogI = hi ? ladrunoIMKMatDLogPM(mi, dLogPM) : 0.0;
+        const double dLogJ = hj ? ladrunoIMKMatDLogPM(mj, dLogPM) : 0.0;
+        const double drhs_i = dLogI * Fh0_i * qic_ex;
+        const double drhs_j = dLogJ * Fh0_j * qjc_ex;
+        const double dqic_dN = kc0_00 * drhs_i + kc0_01 * drhs_j;
+        const double dqjc_dN = kc0_10 * drhs_i + kc0_11 * drhs_j;
+        dq_dN[0] = T00 * dqic_dN + T10 * dqjc_dN;
+        dq_dN[1] = T01 * dqic_dN + T11 * dqjc_dN;
+      } else {
+        dq_dN[0] = 0.0;
+        dq_dN[1] = 0.0;
+      }
     }
-    ladrunoIMKInitBlock(mi, mj, L, EI, k2, GAv, fPM, dI, dJ, mShear);
+    ladrunoIMKInitBlock(mi, mj, L, EI, k2, GAv, fPM, dI, dJ, mShear, usePowell);
     return;
   }
 
@@ -558,7 +672,7 @@ inline void ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
 
   // Stiffness Schur-complement condensed tangent block:
   //   First condense series shear hinge into K_eff, then condense rotational hinges
-  //   via K_c = K_eff - K_eff * (K_eff + K_H)^{-1} * K_eff (never divides by kti/ktj/kts).
+  //   via K_c = K_eff - K_eff * E * (K_eff * E + K_H)^{-1} * K_eff (never divides by kti/ktj/kts).
   double a_eff = a, b_eff = b;
   if (hs) {
     const double ab = a + b;
@@ -573,46 +687,70 @@ inline void ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
     { a_eff, b_eff },
     { b_eff, a_eff }
   };
-  const double dMi_dN = (hi && !matImplex) ? (ladrunoIMKMatDLogPM(mi, dLogPM) * Mi) : 0.0;
-  const double dMj_dN = (hj && !matImplex) ? (ladrunoIMKMatDLogPM(mj, dLogPM) * Mj) : 0.0;
+  const double dMi_dN = hi ? (ladrunoIMKMatDLogPM(mi, dLogPM) * Mi) : 0.0;
+  const double dMj_dN = hj ? (ladrunoIMKMatDLogPM(mj, dLogPM) * Mj) : 0.0;
+  const double eta_i = hi ? (1.0 - powellScale * Fh0_i * kti) : 0.0;
+  const double eta_j = hj ? (1.0 - powellScale * Fh0_j * ktj) : 0.0;
   double dqic_dN = 0.0, dqjc_dN = 0.0;
   if (hi && hj) {
-    const double A11 = a_eff + kti;
-    const double A12 = b_eff;
-    const double A22 = a_eff + ktj;
     const double jFloor = 1.0e-8 * (fabs(a_eff) + fabs(kti) + fabs(ktj)) + 1.0e-300;
-    double i11, i12, i22;
-    ladrunoIMKInvert2x2SymFloored(A11, A12, A22, jFloor, i11, i12, i22);
-    const double M00 = a_eff * i11 + b_eff * i12;
-    const double M01 = a_eff * i12 + b_eff * i22;
-    const double M10 = b_eff * i11 + a_eff * i12;
-    const double M11 = b_eff * i12 + a_eff * i22;
-    kc[0][0] -= M00 * a_eff + M01 * b_eff;
-    kc[0][1] -= M00 * b_eff + M01 * a_eff;
-    kc[1][0] -= M10 * a_eff + M11 * b_eff;
-    kc[1][1] -= M10 * b_eff + M11 * a_eff;
-    dqic_dN = M00 * dMi_dN + M01 * dMj_dN;
-    dqjc_dN = M10 * dMi_dN + M11 * dMj_dN;
+    if (!usePowell) {
+      const double A11 = a_eff + kti;
+      const double A12 = b_eff;
+      const double A22 = a_eff + ktj;
+      double i11, i12, i22;
+      ladrunoIMKInvert2x2SymFloored(A11, A12, A22, jFloor, i11, i12, i22);
+      const double M00 = a_eff * i11 + b_eff * i12;
+      const double M01 = a_eff * i12 + b_eff * i22;
+      const double M10 = b_eff * i11 + a_eff * i12;
+      const double M11 = b_eff * i12 + a_eff * i22;
+      kc[0][0] -= M00 * a_eff + M01 * b_eff;
+      kc[0][1] -= M00 * b_eff + M01 * a_eff;
+      kc[1][0] -= M10 * a_eff + M11 * b_eff;
+      kc[1][1] -= M10 * b_eff + M11 * a_eff;
+      dqic_dN = M00 * dMi_dN + M01 * dMj_dN;
+      dqjc_dN = M10 * dMi_dN + M11 * dMj_dN;
+    } else {
+      double i00, i01, i10, i11;
+      ladrunoIMKInvert2x2Floored(a_eff * eta_i + kti, b_eff * eta_j,
+                                 b_eff * eta_i,       a_eff * eta_j + ktj,
+                                 jFloor, i00, i01, i10, i11);
+      const double w00 = eta_i * i00;
+      const double w01 = 0.5 * (eta_i * i01 + eta_j * i10);
+      const double w11 = eta_j * i11;
+      const double M00 = a_eff * w00 + b_eff * w01;
+      const double M01 = a_eff * w01 + b_eff * w11;
+      const double M10 = b_eff * w00 + a_eff * w01;
+      const double M11 = b_eff * w01 + a_eff * w11;
+      kc[0][0] -= M00 * a_eff + M01 * b_eff;
+      kc[0][1] -= M00 * b_eff + M01 * a_eff;
+      kc[1][0] -= M10 * a_eff + M11 * b_eff;
+      kc[1][1] -= M10 * b_eff + M11 * a_eff;
+      dqic_dN = M00 * dMi_dN + M01 * dMj_dN;
+      dqjc_dN = M10 * dMi_dN + M11 * dMj_dN;
+    }
   } else if (hi) {
-    double A11 = a_eff + kti;
+    double A11 = a_eff * eta_i + kti;
     const double jFloor = 1.0e-8 * (fabs(a_eff) + fabs(kti)) + 1.0e-300;
     if (fabs(A11) < jFloor) A11 = (A11 < 0.0) ? -jFloor : jFloor;
-    kc[0][0] -= (a_eff * a_eff) / A11;
-    kc[0][1] -= (a_eff * b_eff) / A11;
-    kc[1][0] -= (b_eff * a_eff) / A11;
-    kc[1][1] -= (b_eff * b_eff) / A11;
-    dqic_dN = (a_eff / A11) * dMi_dN;
-    dqjc_dN = (b_eff / A11) * dMi_dN;
+    const double w00 = eta_i / A11;
+    kc[0][0] -= (a_eff * a_eff) * w00;
+    kc[0][1] -= (a_eff * b_eff) * w00;
+    kc[1][0] -= (b_eff * a_eff) * w00;
+    kc[1][1] -= (b_eff * b_eff) * w00;
+    dqic_dN = a_eff * w00 * dMi_dN;
+    dqjc_dN = b_eff * w00 * dMi_dN;
   } else if (hj) {
-    double A22 = a_eff + ktj;
+    double A22 = a_eff * eta_j + ktj;
     const double jFloor = 1.0e-8 * (fabs(a_eff) + fabs(ktj)) + 1.0e-300;
     if (fabs(A22) < jFloor) A22 = (A22 < 0.0) ? -jFloor : jFloor;
-    kc[0][0] -= (b_eff * b_eff) / A22;
-    kc[0][1] -= (b_eff * a_eff) / A22;
-    kc[1][0] -= (a_eff * b_eff) / A22;
-    kc[1][1] -= (a_eff * a_eff) / A22;
-    dqic_dN = (b_eff / A22) * dMj_dN;
-    dqjc_dN = (a_eff / A22) * dMj_dN;
+    const double w11 = eta_j / A22;
+    kc[0][0] -= (b_eff * b_eff) * w11;
+    kc[0][1] -= (b_eff * a_eff) * w11;
+    kc[1][0] -= (a_eff * b_eff) * w11;
+    kc[1][1] -= (a_eff * a_eff) * w11;
+    dqic_dN = b_eff * w11 * dMj_dN;
+    dqjc_dN = a_eff * w11 * dMj_dN;
   }
   if (dq_dN != 0) {
     dq_dN[0] = T00 * dqic_dN + T10 * dqjc_dN;
@@ -643,7 +781,8 @@ inline void ladrunoIMKInitBiaxial(NDMaterial *biI, NDMaterial *biJ,
                                   double fPM = 1.0,
                                   double dI = 0.0, double dJ = 0.0,
                                   UniaxialMaterial *mShearY = 0,
-                                  UniaxialMaterial *mShearZ = 0)
+                                  UniaxialMaterial *mShearZ = 0,
+                                  bool usePowell = false)
 {
   const bool hasEZ = (dI > 0.0 || dJ > 0.0) && (dI + dJ < L);
   const double Lc = hasEZ ? (L - dI - dJ) : L;
@@ -680,7 +819,7 @@ inline void ladrunoIMKInitBiaxial(NDMaterial *biI, NDMaterial *biJ,
   const double fPMI = (dynamic_cast<LadrunoCohesiveHingeBiaxial *>(biI) == 0) ? fPM : 1.0;
   const double fPMJ = (dynamic_cast<LadrunoCohesiveHingeBiaxial *>(biJ) == 0) ? fPM : 1.0;
 
-  if (biI != 0) {
+  if (!usePowell && biI != 0) {
     const Matrix &K0 = biI->getInitialTangent();
     double F00, F01, F10, F11;
     ladrunoIMKInvert2x2Floored(fPMI * K0(0, 0), fPMI * K0(0, 1),
@@ -689,7 +828,7 @@ inline void ladrunoIMKInitBiaxial(NDMaterial *biI, NDMaterial *biJ,
     Fc[0][0] += F00; Fc[0][2] += F01;
     Fc[2][0] += F10; Fc[2][2] += F11;
   }
-  if (biJ != 0) {
+  if (!usePowell && biJ != 0) {
     const Matrix &K0 = biJ->getInitialTangent();
     double F00, F01, F10, F11;
     ladrunoIMKInvert2x2Floored(fPMJ * K0(0, 0), fPMJ * K0(0, 1),
@@ -758,7 +897,8 @@ inline void ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
                                    double *gammaSpYOut = 0,
                                    double *gammaSpZOut = 0,
                                    double dLogPM = 0.0,
-                                   double *dq4_dN = 0)
+                                   double *dq4_dN = 0,
+                                   bool usePowell = false)
 {
   const bool hasEZ = (dI > 0.0 || dJ > 0.0) && (dI + dJ < L);
   const double Lc = hasEZ ? (L - dI - dJ) : L;
@@ -773,12 +913,8 @@ inline void ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
     T00 * v4[2] + T01 * v4[3],
     T10 * v4[2] + T11 * v4[3]
   };
-  const double q0c[4] = {
-    hasEZ ? (((L - dI) * q0_4[0] - dI * q0_4[1]) / L) : q0_4[0],
-    hasEZ ? ((-dJ * q0_4[0] + (L - dJ) * q0_4[1]) / L) : q0_4[1],
-    hasEZ ? (((L - dI) * q0_4[2] - dI * q0_4[3]) / L) : q0_4[2],
-    hasEZ ? ((-dJ * q0_4[2] + (L - dJ) * q0_4[3]) / L) : q0_4[3]
-  };
+  // Clear-span fixed-end moments (already integrated over Lc in addLoad)
+  const double q0c[4] = { q0_4[0], q0_4[1], q0_4[2], q0_4[3] };
 
   double az, bz, F11z, F12z;
   double ay, by, F11y, F12y;
@@ -793,6 +929,22 @@ inline void ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
   const bool hsZ = (mShearZ != 0 && Lc > 0.0);
   const double fPMI = (dynamic_cast<LadrunoCohesiveHingeBiaxial *>(biI) == 0) ? fPM : 1.0;
   const double fPMJ = (dynamic_cast<LadrunoCohesiveHingeBiaxial *>(biJ) == 0) ? fPM : 1.0;
+
+  // Initial flexibility for plastic hinge rotation, Powell active-set, and IMPL-EX
+  double Fh0I[2][2] = {{0.0, 0.0}, {0.0, 0.0}};
+  double Fh0J[2][2] = {{0.0, 0.0}, {0.0, 0.0}};
+  if (hI) {
+    const Matrix &K0 = biI->getInitialTangent();
+    ladrunoIMKInvert2x2Floored(fPMI * K0(0, 0), fPMI * K0(0, 1),
+                               fPMI * K0(1, 0), fPMI * K0(1, 1),
+                               ktFloor, Fh0I[0][0], Fh0I[0][1], Fh0I[1][0], Fh0I[1][1]);
+  }
+  if (hJ) {
+    const Matrix &K0 = biJ->getInitialTangent();
+    ladrunoIMKInvert2x2Floored(fPMJ * K0(0, 0), fPMJ * K0(0, 1),
+                               fPMJ * K0(1, 0), fPMJ * K0(1, 1),
+                               ktFloor, Fh0J[0][0], Fh0J[0][1], Fh0J[1][0], Fh0J[1][1]);
+  }
 
   double Fs0Y = 0.0, Fs0Z = 0.0, ks0Y_raw = 0.0, ks0Z_raw = 0.0;
   if (hsY) {
@@ -809,6 +961,13 @@ inline void ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
   }
   const double gamRot0Y = hsY ? (-Fs0Y * (q0c[0] + q0c[1])) : 0.0;
   const double gamRot0Z = hsZ ? (-Fs0Z * (q0c[2] + q0c[3])) : 0.0;
+  const double powellScale = usePowell ? 1.0 : 0.0;
+
+  const bool matImplexI = ladrunoIMKBiaxialIsImplex(biI);
+  const bool matImplexJ = ladrunoIMKBiaxialIsImplex(biJ);
+  const bool matImplexSY = ladrunoIMKMatIsImplex(mShearY);
+  const bool matImplexSZ = ladrunoIMKMatIsImplex(mShearZ);
+  const bool matImplex = matImplexI || matImplexJ || matImplexSY || matImplexSZ;
 
   double th[4] = {
     hI ? th4[0] : 0.0,
@@ -826,6 +985,13 @@ inline void ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
   Vector eps2(2);
 
   if (hI || hJ || hsY || hsZ) {
+    if (useImplex) {
+      if (matImplexI) ladrunoIMKBiaxialSetImplex(biI, false);
+      if (matImplexJ) ladrunoIMKBiaxialSetImplex(biJ, false);
+      if (matImplexSY) ladrunoIMKMatSetImplex(mShearY, false);
+      if (matImplexSZ) ladrunoIMKMatSetImplex(mShearZ, false);
+    }
+
     const int maxIter = 50;
     double damp = 1.0;
     double gnormPrev = 1.0e300;
@@ -859,12 +1025,18 @@ inline void ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
         ktsZ = mShearZ->getTangent();
       }
 
+      const double thCore[4] = {
+        hI ? (th[0] - powellScale * (Fh0I[0][0] * M[0] + Fh0I[0][1] * M[2])) : 0.0,
+        hJ ? (th[1] - powellScale * (Fh0J[0][0] * M[1] + Fh0J[0][1] * M[3])) : 0.0,
+        hI ? (th[2] - powellScale * (Fh0I[1][0] * M[0] + Fh0I[1][1] * M[2])) : 0.0,
+        hJ ? (th[3] - powellScale * (Fh0J[1][0] * M[1] + Fh0J[1][1] * M[3])) : 0.0
+      };
       const double gamRotY = hsY ? (gamSY / Lc - gamRot0Y) : 0.0;
       const double gamRotZ = hsZ ? (gamSZ / Lc - gamRot0Z) : 0.0;
-      const double vel0 = vc[0] - th[0] + gamRotY;
-      const double vel1 = vc[1] - th[1] + gamRotY;
-      const double vel2 = vc[2] - th[2] + gamRotZ;
-      const double vel3 = vc[3] - th[3] + gamRotZ;
+      const double vel0 = vc[0] - thCore[0] + gamRotY;
+      const double vel1 = vc[1] - thCore[1] + gamRotY;
+      const double vel2 = vc[2] - thCore[2] + gamRotZ;
+      const double vel3 = vc[3] - thCore[3] + gamRotZ;
 
       const double qc[4] = {
         az * vel0 + bz * vel1 + q0c[0],
@@ -924,12 +1096,25 @@ inline void ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
         if (hJ) g_eff[3] += (aby / DsZ) * gsZ_mom;
       }
 
-      // Build 4x4 system A * dth = g_eff
+      const double EI_mat[2][2] = {
+        { hI ? (1.0 - powellScale * (Fh0I[0][0] * KI[0][0] + Fh0I[0][1] * KI[1][0])) : 0.0,
+          hI ? (-powellScale * (Fh0I[0][0] * KI[0][1] + Fh0I[0][1] * KI[1][1]))      : 0.0 },
+        { hI ? (-powellScale * (Fh0I[1][0] * KI[0][0] + Fh0I[1][1] * KI[1][0]))      : 0.0,
+          hI ? (1.0 - powellScale * (Fh0I[1][0] * KI[0][1] + Fh0I[1][1] * KI[1][1])) : 0.0 }
+      };
+      const double EJ_mat[2][2] = {
+        { hJ ? (1.0 - powellScale * (Fh0J[0][0] * KJ[0][0] + Fh0J[0][1] * KJ[1][0])) : 0.0,
+          hJ ? (-powellScale * (Fh0J[0][0] * KJ[0][1] + Fh0J[0][1] * KJ[1][1]))      : 0.0 },
+        { hJ ? (-powellScale * (Fh0J[1][0] * KJ[0][0] + Fh0J[1][1] * KJ[1][0]))      : 0.0,
+          hJ ? (1.0 - powellScale * (Fh0J[1][0] * KJ[0][1] + Fh0J[1][1] * KJ[1][1])) : 0.0 }
+      };
+
+      // Build 4x4 system A * dth = g_eff, where A = Keff * E + KH
       double A[4][4] = {
-        { az_eff + KI[0][0], bz_eff,            KI[0][1],          0.0              },
-        { bz_eff,            az_eff + KJ[0][0], 0.0,               KJ[0][1]         },
-        { KI[1][0],          0.0,               ay_eff + KI[1][1], by_eff           },
-        { 0.0,               KJ[1][0],          by_eff,            ay_eff + KJ[1][1]}
+        { az_eff * EI_mat[0][0] + KI[0][0], bz_eff * EJ_mat[0][0],            az_eff * EI_mat[0][1] + KI[0][1], bz_eff * EJ_mat[0][1]            },
+        { bz_eff * EI_mat[0][0],            az_eff * EJ_mat[0][0] + KJ[0][0], bz_eff * EI_mat[0][1],            az_eff * EJ_mat[0][1] + KJ[0][1] },
+        { ay_eff * EI_mat[1][0] + KI[1][0], by_eff * EJ_mat[1][0],            ay_eff * EI_mat[1][1] + KI[1][1], by_eff * EJ_mat[1][1]            },
+        { by_eff * EI_mat[1][0],            ay_eff * EJ_mat[1][0] + KJ[1][0], by_eff * EI_mat[1][1],            ay_eff * EJ_mat[1][1] + KJ[1][1] }
       };
       if (!hI) {
         for (int m = 0; m < 4; m++) {
@@ -958,12 +1143,16 @@ inline void ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
       for (int i = 0; i < 4; i++)
         th[i] += damp * dth[i];
 
+      const double dthCore0 = EI_mat[0][0] * dth[0] + EI_mat[0][1] * dth[2];
+      const double dthCore1 = EJ_mat[0][0] * dth[1] + EJ_mat[0][1] * dth[3];
+      const double dthCore2 = EI_mat[1][0] * dth[0] + EI_mat[1][1] * dth[2];
+      const double dthCore3 = EJ_mat[1][0] * dth[1] + EJ_mat[1][1] * dth[3];
       if (hsY) {
-        const double dgamRotY = (gsY_mom + abz * (dth[0] + dth[1])) / DsY;
+        const double dgamRotY = (gsY_mom + abz * (dthCore0 + dthCore1)) / DsY;
         gamSY += damp * (dgamRotY * Lc);
       }
       if (hsZ) {
-        const double dgamRotZ = (gsZ_mom + aby * (dth[2] + dth[3])) / DsZ;
+        const double dgamRotZ = (gsZ_mom + aby * (dthCore2 + dthCore3)) / DsZ;
         gamSZ += damp * (dgamRotZ * Lc);
       }
     }
@@ -974,52 +1163,37 @@ inline void ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
   if (gammaSYInOut != 0) *gammaSYInOut = gamSY;
   if (gammaSZInOut != 0) *gammaSZInOut = gamSZ;
 
+  const double thCore[4] = {
+    hI ? (th[0] - powellScale * (Fh0I[0][0] * M[0] + Fh0I[0][1] * M[2])) : 0.0,
+    hJ ? (th[1] - powellScale * (Fh0J[0][0] * M[1] + Fh0J[0][1] * M[3])) : 0.0,
+    hI ? (th[2] - powellScale * (Fh0I[1][0] * M[0] + Fh0I[1][1] * M[2])) : 0.0,
+    hJ ? (th[3] - powellScale * (Fh0J[1][0] * M[1] + Fh0J[1][1] * M[3])) : 0.0
+  };
   const double gamRotY = hsY ? (gamSY / Lc - gamRot0Y) : 0.0;
   const double gamRotZ = hsZ ? (gamSZ / Lc - gamRot0Z) : 0.0;
   double qc[4] = {
-    az * (vc[0] - th[0] + gamRotY) + bz * (vc[1] - th[1] + gamRotY) + q0c[0],
-    bz * (vc[0] - th[0] + gamRotY) + az * (vc[1] - th[1] + gamRotY) + q0c[1],
-    ay * (vc[2] - th[2] + gamRotZ) + by * (vc[3] - th[3] + gamRotZ) + q0c[2],
-    by * (vc[2] - th[2] + gamRotZ) + ay * (vc[3] - th[3] + gamRotZ) + q0c[3]
+    az * (vc[0] - thCore[0] + gamRotY) + bz * (vc[1] - thCore[1] + gamRotY) + q0c[0],
+    bz * (vc[0] - thCore[0] + gamRotY) + az * (vc[1] - thCore[1] + gamRotY) + q0c[1],
+    ay * (vc[2] - thCore[2] + gamRotZ) + by * (vc[3] - thCore[3] + gamRotZ) + q0c[2],
+    by * (vc[2] - thCore[2] + gamRotZ) + ay * (vc[3] - thCore[3] + gamRotZ) + q0c[3]
   };
 
-  // Initial flexibility for plastic hinge rotation and IMPL-EX
-  double Fh0I[2][2] = {{0.0, 0.0}, {0.0, 0.0}};
-  double Fh0J[2][2] = {{0.0, 0.0}, {0.0, 0.0}};
-  if (hI) {
-    const Matrix &K0 = biI->getInitialTangent();
-    ladrunoIMKInvert2x2Floored(fPMI * K0(0, 0), fPMI * K0(0, 1),
-                               fPMI * K0(1, 0), fPMI * K0(1, 1),
-                               ktFloor, Fh0I[0][0], Fh0I[0][1], Fh0I[1][0], Fh0I[1][1]);
-  }
-  if (hJ) {
-    const Matrix &K0 = biJ->getInitialTangent();
-    ladrunoIMKInvert2x2Floored(fPMJ * K0(0, 0), fPMJ * K0(0, 1),
-                               fPMJ * K0(1, 0), fPMJ * K0(1, 1),
-                               ktFloor, Fh0J[0][0], Fh0J[0][1], Fh0J[1][0], Fh0J[1][1]);
-  }
-
   const double thp[4] = {
-    hI ? (th[0] - (Fh0I[0][0] * qc[0] + Fh0I[0][1] * qc[2])) : 0.0,
-    hJ ? (th[1] - (Fh0J[0][0] * qc[1] + Fh0J[0][1] * qc[3])) : 0.0,
-    hI ? (th[2] - (Fh0I[1][0] * qc[0] + Fh0I[1][1] * qc[2])) : 0.0,
-    hJ ? (th[3] - (Fh0J[1][0] * qc[1] + Fh0J[1][1] * qc[3])) : 0.0
+    hI ? (th[0] - (Fh0I[0][0] * M[0] + Fh0I[0][1] * M[2])) : 0.0,
+    hJ ? (th[1] - (Fh0J[0][0] * M[1] + Fh0J[0][1] * M[3])) : 0.0,
+    hI ? (th[2] - (Fh0I[1][0] * M[0] + Fh0I[1][1] * M[2])) : 0.0,
+    hJ ? (th[3] - (Fh0J[1][0] * M[1] + Fh0J[1][1] * M[3])) : 0.0
   };
   if (thpOut != 0) {
     for (int i = 0; i < 4; i++)
       thpOut[i] = thp[i];
   }
-  const double VeqY_c = hsY ? (-(qc[0] + qc[1]) / Lc) : 0.0;
-  const double VeqZ_c = hsZ ? (-(qc[2] + qc[3]) / Lc) : 0.0;
-  const double gamSpY = (hsY && fabs(ks0Y_raw) > 1.0e-30) ? (gamSY - VeqY_c / ks0Y_raw) : 0.0;
-  const double gamSpZ = (hsZ && fabs(ks0Z_raw) > 1.0e-30) ? (gamSZ - VeqZ_c / ks0Z_raw) : 0.0;
+  const double gamSpY = (hsY && fabs(ks0Y_raw) > 1.0e-30) ? (gamSY - VsY / ks0Y_raw) : 0.0;
+  const double gamSpZ = (hsZ && fabs(ks0Z_raw) > 1.0e-30) ? (gamSZ - VsZ / ks0Z_raw) : 0.0;
   if (gammaSpYOut != 0) *gammaSpYOut = gamSpY;
   if (gammaSpZOut != 0) *gammaSpZOut = gamSpZ;
 
-  const bool matImplex = ladrunoIMKBiaxialIsImplex(biI) || ladrunoIMKBiaxialIsImplex(biJ)
-                       || ladrunoIMKMatIsImplex(mShearY) || ladrunoIMKMatIsImplex(mShearZ);
-
-  if (useImplex && !matImplex && thpCommit != 0 && dThpPrev != 0) {
+  if (useImplex && thpCommit != 0 && dThpPrev != 0) {
     const double thpEx[4] = {
       hI ? (thpCommit[0] + dtScale * dThpPrev[0]) : 0.0,
       hJ ? (thpCommit[1] + dtScale * dThpPrev[1]) : 0.0,
@@ -1029,11 +1203,12 @@ inline void ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
     const double gamSpYEx = hsY ? (gammaSpYCommit + dtScale * dGammaSpYPrev) : 0.0;
     const double gamSpZEx = hsZ ? (gammaSpZCommit + dtScale * dGammaSpZPrev) : 0.0;
 
+    const double f0Scale = usePowell ? 0.0 : 1.0;
     double F0[4][4] = {
-      { F11z + Fh0I[0][0] + Fs0Y, F12z + Fs0Y,              Fh0I[0][1],               0.0                       },
-      { F12z + Fs0Y,              F11z + Fh0J[0][0] + Fs0Y, 0.0,                      Fh0J[0][1]                },
-      { Fh0I[1][0],               0.0,                      F11y + Fh0I[1][1] + Fs0Z, F12y + Fs0Z               },
-      { 0.0,                      Fh0J[1][0],               F12y + Fs0Z,              F11y + Fh0J[1][1] + Fs0Z  }
+      { F11z + f0Scale * Fh0I[0][0] + Fs0Y, F12z + Fs0Y,                        f0Scale * Fh0I[0][1],               0.0                                 },
+      { F12z + Fs0Y,                        F11z + f0Scale * Fh0J[0][0] + Fs0Y, 0.0,                                f0Scale * Fh0J[0][1]                },
+      { f0Scale * Fh0I[1][0],               0.0,                                F11y + f0Scale * Fh0I[1][1] + Fs0Z, F12y + Fs0Z                         },
+      { 0.0,                                f0Scale * Fh0J[1][0],               F12y + Fs0Z,                        F11y + f0Scale * Fh0J[1][1] + Fs0Z  }
     };
     double Kc0[4][4];
     ladrunoIMKInvert4x4(F0, Kc0, 1.0e-30);
@@ -1044,12 +1219,21 @@ inline void ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
       vc[2] - thpEx[2] + (hsZ ? (gamSpZEx / Lc - gamRot0Z) : 0.0) + F11y * q0c[2] + F12y * q0c[3],
       vc[3] - thpEx[3] + (hsZ ? (gamSpZEx / Lc - gamRot0Z) : 0.0) + F12y * q0c[2] + F11y * q0c[3]
     };
+    const double dthp[4] = {
+      (thp[0] - thpEx[0]) - (hsY ? (gamSpY - gamSpYEx) / Lc : 0.0),
+      (thp[1] - thpEx[1]) - (hsY ? (gamSpY - gamSpYEx) / Lc : 0.0),
+      (thp[2] - thpEx[2]) - (hsZ ? (gamSpZ - gamSpZEx) / Lc : 0.0),
+      (thp[3] - thpEx[3]) - (hsZ ? (gamSpZ - gamSpZEx) / Lc : 0.0)
+    };
     double err = 0.0;
     for (int i = 0; i < 4; i++) {
       double qex = 0.0;
-      for (int j = 0; j < 4; j++)
+      double dq_imp = 0.0;
+      for (int j = 0; j < 4; j++) {
         qex += Kc0[i][j] * rhs[j];
-      err += fabs(qc[i] - qex);
+        dq_imp += Kc0[i][j] * dthp[j];
+      }
+      err += fabs(dq_imp);
       qc[i] = qex;
     }
     if (implexErrOut != 0) *implexErrOut = err;
@@ -1058,10 +1242,29 @@ inline void ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
     q4[2] = T00 * qc[2] + T10 * qc[3];
     q4[3] = T01 * qc[2] + T11 * qc[3];
     if (dq4_dN != 0) {
-      for (int i = 0; i < 4; i++)
-        dq4_dN[i] = 0.0;
+      if (!usePowell) {
+        const double dLogI = hI ? ladrunoIMKBiaxialDLogPM(biI, dLogPM) : 0.0;
+        const double dLogJ = hJ ? ladrunoIMKBiaxialDLogPM(biJ, dLogPM) : 0.0;
+        const double drhs[4] = {
+          dLogI * (Fh0I[0][0] * qc[0] + Fh0I[0][1] * qc[2]),
+          dLogJ * (Fh0J[0][0] * qc[1] + Fh0J[0][1] * qc[3]),
+          dLogI * (Fh0I[1][0] * qc[0] + Fh0I[1][1] * qc[2]),
+          dLogJ * (Fh0J[1][0] * qc[1] + Fh0J[1][1] * qc[3])
+        };
+        double dqc_dN[4] = { 0.0, 0.0, 0.0, 0.0 };
+        for (int i = 0; i < 4; i++)
+          for (int j = 0; j < 4; j++)
+            dqc_dN[i] += Kc0[i][j] * drhs[j];
+        dq4_dN[0] = T00 * dqc_dN[0] + T10 * dqc_dN[1];
+        dq4_dN[1] = T01 * dqc_dN[0] + T11 * dqc_dN[1];
+        dq4_dN[2] = T00 * dqc_dN[2] + T10 * dqc_dN[3];
+        dq4_dN[3] = T01 * dqc_dN[2] + T11 * dqc_dN[3];
+      } else {
+        for (int i = 0; i < 4; i++)
+          dq4_dN[i] = 0.0;
+      }
     }
-    ladrunoIMKInitBiaxial(biI, biJ, L, EIz, EIy, k4, GAvy, GAvz, fPM, dI, dJ, mShearY, mShearZ);
+    ladrunoIMKInitBiaxial(biI, biJ, L, EIz, EIy, k4, GAvy, GAvz, fPM, dI, dJ, mShearY, mShearZ, usePowell);
     return;
   }
 
@@ -1078,7 +1281,7 @@ inline void ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
   q4[3] = T01 * qc[2] + T11 * qc[3];
 
   // Stiffness Schur-complement condensed tangent:
-  //   K_c = K_eff - (K_eff * P_H) * (K_eff + K_H)^{-1} * (P_H * K_eff)
+  //   K_c = K_eff - (K_eff * E) * (K_eff * E + K_H)^{-1} * (P_H * K_eff)
   // This never inverts K_I, K_J, or ktsY/ktsZ directly, so it remains exact
   // when a hinge tangent is zero (complete fracture) or negative (softening).
   double az_eff = az, bz_eff = bz;
@@ -1116,11 +1319,36 @@ inline void ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
 
   double dqc_dN[4] = { 0.0, 0.0, 0.0, 0.0 };
   if (hI || hJ) {
+    const double EI_mat[2][2] = {
+      { hI ? (1.0 - powellScale * (Fh0I[0][0] * KI[0][0] + Fh0I[0][1] * KI[1][0])) : 0.0,
+        hI ? (-powellScale * (Fh0I[0][0] * KI[0][1] + Fh0I[0][1] * KI[1][1]))      : 0.0 },
+      { hI ? (-powellScale * (Fh0I[1][0] * KI[0][0] + Fh0I[1][1] * KI[1][0]))      : 0.0,
+        hI ? (1.0 - powellScale * (Fh0I[1][0] * KI[0][1] + Fh0I[1][1] * KI[1][1])) : 0.0 }
+    };
+    const double EJ_mat[2][2] = {
+      { hJ ? (1.0 - powellScale * (Fh0J[0][0] * KJ[0][0] + Fh0J[0][1] * KJ[1][0])) : 0.0,
+        hJ ? (-powellScale * (Fh0J[0][0] * KJ[0][1] + Fh0J[0][1] * KJ[1][1]))      : 0.0 },
+      { hJ ? (-powellScale * (Fh0J[1][0] * KJ[0][0] + Fh0J[1][1] * KJ[1][0]))      : 0.0,
+        hJ ? (1.0 - powellScale * (Fh0J[1][0] * KJ[0][1] + Fh0J[1][1] * KJ[1][1])) : 0.0 }
+    };
+    const double E_mat[4][4] = {
+      { EI_mat[0][0], 0.0,          EI_mat[0][1], 0.0          },
+      { 0.0,          EJ_mat[0][0], 0.0,          EJ_mat[0][1] },
+      { EI_mat[1][0], 0.0,          EI_mat[1][1], 0.0          },
+      { 0.0,          EJ_mat[1][0], 0.0,          EJ_mat[1][1] }
+    };
+    double KeffE[4][4];
+    for (int i = 0; i < 4; i++)
+      for (int j = 0; j < 4; j++) {
+        KeffE[i][j] = 0.0;
+        for (int m = 0; m < 4; m++)
+          KeffE[i][j] += Keff[i][m] * E_mat[m][j];
+      }
     double A[4][4] = {
-      { az_eff + KI[0][0], bz_eff,            KI[0][1],          0.0              },
-      { bz_eff,            az_eff + KJ[0][0], 0.0,               KJ[0][1]         },
-      { KI[1][0],          0.0,               ay_eff + KI[1][1], by_eff           },
-      { 0.0,               KJ[1][0],          by_eff,            ay_eff + KJ[1][1]}
+      { KeffE[0][0] + KI[0][0], KeffE[0][1],            KeffE[0][2] + KI[0][1], KeffE[0][3]            },
+      { KeffE[1][0],            KeffE[1][1] + KJ[0][0], KeffE[1][2],            KeffE[1][3] + KJ[0][1] },
+      { KeffE[2][0] + KI[1][0], KeffE[2][1],            KeffE[2][2] + KI[1][1], KeffE[2][3]            },
+      { KeffE[3][0],            KeffE[3][1] + KJ[1][0], KeffE[3][2],            KeffE[3][3] + KJ[1][1] }
     };
     const double ph[4] = {
       hI ? 1.0 : 0.0,
@@ -1151,32 +1379,30 @@ inline void ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
           if (ph[m] == 0.0) continue;
           for (int n = 0; n < 4; n++) {
             if (ph[n] == 0.0) continue;
-            sub += Keff[i][m] * Ainv[m][n] * Keff[n][j];
+            sub += KeffE[i][m] * Ainv[m][n] * Keff[n][j];
           }
         }
         Kc[i][j] -= sub;
       }
     }
-    if (!matImplex) {
-      const double dLogI = ladrunoIMKBiaxialDLogPM(biI, dLogPM);
-      const double dLogJ = ladrunoIMKBiaxialDLogPM(biJ, dLogPM);
-      const double dM_dN[4] = {
-        hI ? dLogI * M[0] : 0.0,
-        hJ ? dLogJ * M[1] : 0.0,
-        hI ? dLogI * M[2] : 0.0,
-        hJ ? dLogJ * M[3] : 0.0
-      };
-      for (int i = 0; i < 4; i++) {
-        double sum = 0.0;
-        for (int m = 0; m < 4; m++) {
-          if (ph[m] == 0.0) continue;
-          for (int n = 0; n < 4; n++) {
-            if (ph[n] == 0.0) continue;
-            sum += Keff[i][m] * Ainv[m][n] * dM_dN[n];
-          }
+    const double dLogI = ladrunoIMKBiaxialDLogPM(biI, dLogPM);
+    const double dLogJ = ladrunoIMKBiaxialDLogPM(biJ, dLogPM);
+    const double dM_dN[4] = {
+      hI ? dLogI * M[0] : 0.0,
+      hJ ? dLogJ * M[1] : 0.0,
+      hI ? dLogI * M[2] : 0.0,
+      hJ ? dLogJ * M[3] : 0.0
+    };
+    for (int i = 0; i < 4; i++) {
+      double sum = 0.0;
+      for (int m = 0; m < 4; m++) {
+        if (ph[m] == 0.0) continue;
+        for (int n = 0; n < 4; n++) {
+          if (ph[n] == 0.0) continue;
+          sum += KeffE[i][m] * Ainv[m][n] * dM_dN[n];
         }
-        dqc_dN[i] = sum;
       }
+      dqc_dN[i] = sum;
     }
   }
   if (dq4_dN != 0) {
@@ -1214,4 +1440,5 @@ inline void ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
 }
 
 #endif
+
 

@@ -124,8 +124,10 @@ void *OPS_LadrunoIMKBeam2d()
   int cMass = 0;
   double GAvy = 0.0;
   double P0 = 0.0, pmAlpha = 0.5;
+  double P0t = 0.0, Pbal = 0.0, muBal = 1.0;
   double dI = 0.0, dJ = 0.0;
   bool useImplex = false;
+  bool usePowell = false;
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const char *opt = OPS_GetString();
@@ -172,6 +174,9 @@ void *OPS_LadrunoIMKBeam2d()
 
     } else if (strcmp(opt, "-implex") == 0) {
       useImplex = true;
+
+    } else if (strcmp(opt, "-powell") == 0 || strcmp(opt, "-activeSet") == 0) {
+      usePowell = true;
 
     } else if (strcmp(opt, "-endZones") == 0 || strcmp(opt, "-endZone") == 0) {
       if (OPS_GetNumRemainingInputArgs() < 2) {
@@ -226,6 +231,7 @@ void *OPS_LadrunoIMKBeam2d()
         opserr << "WARNING LadrunoIMKBeam (2D) -- invalid -pm P0 (must be > 0)\n";
         return 0;
       }
+      P0t = 0.0; Pbal = 0.0;
       if (OPS_GetNumRemainingInputArgs() > 0) {
         const char *nxt = OPS_GetString();
         bool nextIsFlag = (nxt != 0 && nxt[0] == '-' &&
@@ -240,6 +246,23 @@ void *OPS_LadrunoIMKBeam2d()
           }
         }
       }
+
+    } else if (strcmp(opt, "-pmBal") == 0 || strcmp(opt, "-PMBal") == 0) {
+      if (OPS_GetNumRemainingInputArgs() < 4) {
+        opserr << "WARNING LadrunoIMKBeam (2D) -- -pmBal needs P0c P0t Pbal muBal\n";
+        return 0;
+      }
+      double pmb[4] = {0.0, 0.0, 0.0, 1.0};
+      num = 4;
+      if (OPS_GetDoubleInput(&num, pmb) < 0 ||
+          pmb[0] <= 0.0 || pmb[1] <= 0.0 || pmb[2] <= 0.0 || pmb[0] <= pmb[2] || pmb[3] < 1.0) {
+        opserr << "WARNING LadrunoIMKBeam (2D) -- invalid -pmBal P0c P0t Pbal muBal\n";
+        return 0;
+      }
+      P0    = pmb[0];
+      P0t   = pmb[1];
+      Pbal  = pmb[2];
+      muBal = pmb[3];
 
     } else {
       opserr << "WARNING LadrunoIMKBeam (2D) -- unknown option '" << opt << "'\n";
@@ -259,6 +282,6 @@ void *OPS_LadrunoIMKBeam2d()
                                          dData[0], dData[1], dData[2],
                                          *theTransf, mZi, mZj, rho, cMass,
                                          GAvy, P0, pmAlpha, dI, dJ, useImplex,
-                                         shearMat);
+                                         shearMat, P0t, Pbal, muBal, usePowell);
   return theEle;
 }
