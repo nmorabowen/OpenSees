@@ -44,10 +44,22 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <unordered_map>
 
 using namespace LadrunoHSKernel;
 
 namespace {
+
+// Ladruno ADR-92 P2-7c pattern: upstream MaterialStageParameter::setDomain()
+// exits its element loop after the FIRST matching element, so only eid=1
+// receives updateParameter(1, info). Storing the stage keyed by material tag
+// (initialized in the parameterized constructor so a fresh model after wipe
+// always resets its tag entry) allows every other element's Gauss point to
+// lazily run applyStageTransition() at the top of integrate3D().
+std::unordered_map<int, int>& ladrunoHSTagStageMap() {
+  static std::unordered_map<int, int> s_map;
+  return s_map;
+}
 
 static void* parseLadrunoHSCommon(bool presetSmallStrain) {
   const int minArgs = presetSmallStrain ? 10 : 8;
@@ -346,6 +358,7 @@ LadrunoHS::LadrunoHS(int tag,
   if (condense_) {
     sig0_comp_[2] = 0.0;
   }
+  ladrunoHSTagStageMap()[this->getTag()] = stage_;
   this->revertToStart();
 }
 
@@ -424,7 +437,39 @@ void LadrunoHS::buildInitialTangent6x6(double Kt[6][6]) const {
 // ===========================================================================
 //  Constitutive Integration (Stage 0 Elastic / Stage 1 HS / IMPL-EX)
 // ===========================================================================
+void LadrunoHS::applyStageTransition(int newStage) {
+  if (stage_ == 0 && newStage == 1) {
+    // Transition from elastic gravity stage (0) to elastoplastic HS (1):
+    // Initialize p_p and gamma_p from the committed gravity stress st_n_.sig
+    // while preserving the committed strain st_n_.eps, deviatoric strain e_dev, and void_ratio!
+    double eps_saved[6];
+    for (int i = 0; i < 6; ++i) eps_saved[i] = st_n_.eps[i];
+    double e_saved = st_n_.void_ratio;
+    initialize_state_from_stress(params_, st_n_.sig, st_n_);
+    for (int i = 0; i < 6; ++i) {
+      st_n_.eps[i]       = eps_saved[i];
+      sig_impl_trial_[i] = st_n_.sig[i];
+      dsig_p_n_[i]       = 0.0;
+      dsig_p_trial_[i]   = 0.0;
+    }
+    double eps_v_mean = (eps_saved[0] + eps_saved[1] + eps_saved[2]) / 3.0;
+    st_n_.e_dev[0][0] = eps_saved[0] - eps_v_mean;
+    st_n_.e_dev[1][1] = eps_saved[1] - eps_v_mean;
+    st_n_.e_dev[2][2] = eps_saved[2] - eps_v_mean;
+    st_n_.e_dev[0][1] = st_n_.e_dev[1][0] = 0.5 * eps_saved[3];
+    st_n_.e_dev[1][2] = st_n_.e_dev[2][1] = 0.5 * eps_saved[4];
+    st_n_.e_dev[0][2] = st_n_.e_dev[2][0] = 0.5 * eps_saved[5];
+    st_n_.void_ratio = e_saved;
+    st_trial_ = st_n_;
+  }
+  stage_ = newStage;
+}
+
 int LadrunoHS::integrate3D(const double epsComp[6]) {
+  auto itStage = ladrunoHSTagStageMap().find(this->getTag());
+  if (itStage != ladrunoHSTagStageMap().end() && itStage->second != stage_) {
+    this->applyStageTransition(itStage->second);
+  }
   if (stage_ == 0) {
     // Stage 0: pressure-independent linear elastic gravity initialization
     for (int i = 0; i < 6; ++i) {
@@ -950,6 +995,7 @@ int LadrunoHS::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker&) {
 
   st_trial_     = st_n_;
   regime_trial_ = regime_n_;
+  ladrunoHSTagStageMap()[this->getTag()] = stage_;
   this->buildInitialTangent6x6(Dtan_);
   for (int i = 0; i < 6; ++i) {
     for (int j = 0; j < 6; ++j) {
@@ -1008,31 +1054,10 @@ int LadrunoHS::updateParameter(int parameterID, Information& info) {
     case 1:
     case 13: {
       int newStage = (parameterID == 1) ? info.theInt : static_cast<int>(info.theDouble);
-      if (stage_ == 0 && newStage == 1) {
-        // Transition from elastic gravity stage (0) to elastoplastic HS (1):
-        // Initialize p_p and gamma_p from the committed gravity stress st_n_.sig
-        // while preserving the committed strain st_n_.eps, deviatoric strain e_dev, and void_ratio!
-        double eps_saved[6];
-        for (int i = 0; i < 6; ++i) eps_saved[i] = st_n_.eps[i];
-        double e_saved = st_n_.void_ratio;
-        initialize_state_from_stress(params_, st_n_.sig, st_n_);
-        for (int i = 0; i < 6; ++i) {
-          st_n_.eps[i]       = eps_saved[i];
-          sig_impl_trial_[i] = st_n_.sig[i];
-          dsig_p_n_[i]       = 0.0;
-          dsig_p_trial_[i]   = 0.0;
-        }
-        double eps_v_mean = (eps_saved[0] + eps_saved[1] + eps_saved[2]) / 3.0;
-        st_n_.e_dev[0][0] = eps_saved[0] - eps_v_mean;
-        st_n_.e_dev[1][1] = eps_saved[1] - eps_v_mean;
-        st_n_.e_dev[2][2] = eps_saved[2] - eps_v_mean;
-        st_n_.e_dev[0][1] = st_n_.e_dev[1][0] = 0.5 * eps_saved[3];
-        st_n_.e_dev[1][2] = st_n_.e_dev[2][1] = 0.5 * eps_saved[4];
-        st_n_.e_dev[0][2] = st_n_.e_dev[2][0] = 0.5 * eps_saved[5];
-        st_n_.void_ratio = e_saved;
-        st_trial_ = st_n_;
+      if (parameterID == 1) {
+        ladrunoHSTagStageMap()[this->getTag()] = newStage;
       }
-      stage_ = newStage;
+      this->applyStageTransition(newStage);
       return 0;
     }
     case 2: params_.E50_ref  = info.theDouble; recalibrateCapAndFinalize(); return 0;

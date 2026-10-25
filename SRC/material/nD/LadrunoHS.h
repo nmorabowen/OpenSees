@@ -101,6 +101,7 @@ class LadrunoHS : public NDMaterial {
 
  private:
   void setupDim(void);
+  void applyStageTransition(int newStage);
   int  integrate3D(const double epsComp[6]);
   void condenseTangent(double D[6][6]) const;
   void buildInitialTangent6x6(double Kt[6][6]) const;

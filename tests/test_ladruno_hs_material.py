@@ -705,15 +705,13 @@ def test_plane_strain_biaxial_and_footing_mn_strictly_bounds_mc():
 
 
 def test_stage_transition_and_implex_mode():
-    """Verify -stage 0 (elastic gravity) -> updateMaterialStage -stage 1 (plastic), -implex, and user cap preservation."""
+    """Verify -stage 0 (elastic gravity) -> updateMaterialStage -stage 1 (plastic), -implex, and user cap preservation across multiple elements."""
     for use_implex in (False, True):
         ops.wipe()
         ops.model("basic", "-ndm", 2, "-ndf", 2)
-        ops.node(1, 0.0, 0.0)
-        ops.node(2, 1.0, 0.0)
-        ops.node(3, 1.0, 1.0)
-        ops.node(4, 0.0, 1.0)
-        for n in (1, 2, 3, 4):
+        node_coords = ((1, (0.0, 0.0)), (2, (1.0, 0.0)), (3, (1.0, 1.0)), (4, (0.0, 1.0)), (5, (2.0, 0.0)), (6, (2.0, 1.0)))
+        for n, (x, y) in node_coords:
+            ops.node(n, x, y)
             ops.fix(n, 1, 1)
 
         ops.nDMaterial(
@@ -729,6 +727,7 @@ def test_stage_transition_and_implex_mode():
             )
         )
         ops.element("quad", 1, 1, 2, 3, 4, 1.0, "PlaneStrain", 1)
+        ops.element("quad", 2, 2, 5, 6, 3, 1.0, "PlaneStrain", 1)
         ops.system("FullGeneral")
         ops.numberer("Plain")
         ops.constraints("Plain")
@@ -738,26 +737,28 @@ def test_stage_transition_and_implex_mode():
         ops.analysis("Static")
 
         # Step 1 in stage 0 (elastic): gamma_p must remain 0.0 under elastic shear (tau = 21.875 kPa < tau_f)
-        for n, (x, y) in ((1, (0, 0)), (2, (1, 0)), (3, (1, 1)), (4, (0, 1))):
+        for n, (x, y) in node_coords:
             ops.setNodeDisp(n, 1, 0.0005 * y, "-commit")
         assert ops.analyze(1) == 0
         assert ops.eleResponse(1, "material", 1, "gamma_p")[0] == 0.0
+        assert ops.eleResponse(2, "material", 1, "gamma_p")[0] == 0.0
         sig_stage0 = np.array(ops.eleResponse(1, "material", 1, "stress"))
 
-        # Switch to stage 1 (plastic) via updateMaterialStage
+        # Switch to stage 1 (plastic) via updateMaterialStage (must flip both element 1 and element 2!)
         ops.updateMaterialStage("-material", 1, "-stage", 1)
         # First small step in stage 1 (dgamma = 2e-5) must increment from end-of-stage-0 strain (no jump!)
-        for n, (x, y) in ((1, (0, 0)), (2, (1, 0)), (3, (1, 1)), (4, (0, 1))):
+        for n, (x, y) in node_coords:
             ops.setNodeDisp(n, 1, (0.0005 + 2.0e-5) * y, "-commit")
         assert ops.analyze(1) == 0
         sig_step1 = np.array(ops.eleResponse(1, "material", 1, "stress"))
         assert abs(sig_step1[2] - sig_stage0[2]) < 5.0
 
         for k in range(2, 6):
-            for n, (x, y) in ((1, (0, 0)), (2, (1, 0)), (3, (1, 1)), (4, (0, 1))):
+            for n, (x, y) in node_coords:
                 ops.setNodeDisp(n, 1, 0.002 * k * y, "-commit")
             assert ops.analyze(1) == 0
         assert ops.eleResponse(1, "material", 1, "gamma_p")[0] > 1.0e-3
+        assert ops.eleResponse(2, "material", 1, "gamma_p")[0] > 1.0e-3
 
         # Verify parameter update preserves explicit user -alphaCap / -betaCap:
         ops.parameter(10, "element", 1, "material", 1, "E50")
