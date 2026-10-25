@@ -223,6 +223,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • LadrunoMembrane — polygonal tributary & FEA load-transfer membrane\n"
 "        • LadrunoMembrane — exact all-node diaphragm, -f11/-f22/-f12, membrane forces (WP-204)\n"
 "        • LadrunoCPML — 2D/3D CFS-PML absorber (9 shapes, box/plane, Biot -up)\n"
+"        • LadrunoHS/HSSmall — Hardening Soil + HSsmall (mc/mn Lode, WP-210)\n"
 "\n";
     // FEATURES-END
 

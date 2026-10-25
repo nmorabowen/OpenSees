@@ -2281,3 +2281,35 @@ features:
       "energy", "hinge", "hingeY", "hingeBiaxial", "hingeJump", "hingeMoment",
       and "integrationWeights" responses.
 
+
+  - feature: LadrunoHS
+    classtag: 33029
+    tag_symbol: ND_TAG_LadrunoHS
+    pr: null
+    feature_class: material
+    required_tiers: [T0m, T1]
+    pytest: tests/test_ladruno_hs_material.py
+    tests:
+      - tests/test_ladruno_hs_oracle.py
+      - tests/test_ladruno_hs_kernel_cpp.py
+      - tests/test_ladruno_hs_material.py
+    tcl: WAIVED(Tcl parity covered via subprocess OpenSees.exe inside tests/test_ladruno_hs_material.py; classic-Tcl dispatch wired in TclModelBuilderNDMaterialCommand.cpp)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/material/nD/CMakeLists.txt
+      - SRC/interpreter/OpenSeesNDMaterialCommands.cpp
+      - SRC/material/nD/TclModelBuilderNDMaterialCommand.cpp
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      Standalone multi-dimensional Hardening Soil (Schanz, Vermeer & Bonnier 1999) +
+      HSsmall (Benz 2007) constitutive model (WP-210, classTag 33029) with dual
+      Lode-angle deviatoric cross-sections (-lodeShape mc for endpoint-exact C^infinity
+      Mohr-Coulomb and -lodeShape mn for Panteghini & Lagioia 2014 Matsuoka-Nakai)
+      and all 5 dimensional views (ThreeDimensional, PlaneStrain, AxiSymmetric,
+      PlaneStress, PlateFiber). Backed by the OpenSees-free C++17 header-only kernel
+      SRC/material/nD/LadrunoHSKernel.h (4-surface Koiter active-set return map +
+      Rowe stress-dilatancy with void-ratio cutoff + Benz 2007 6D strain-history
+      tensor + exact 6x6 consistent algorithmic tangent).
