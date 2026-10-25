@@ -246,8 +246,7 @@ def test_ladruno_force_beam_column_2d_hinges_shear_pm_and_fd_tangent():
         DQ_nopm[:, j] = (qp0 - qm0) / (2.0 * eps)
     kb_fd = DQ @ np.linalg.inv(DV)
     kb_nopm_fd = DQ_nopm @ np.linalg.inv(DV_nopm)
-    assert kb0[0, 0] == pytest.approx(kb_fd[0, 0], rel=1e-5)
-    np.testing.assert_allclose(kb0[1:, 1:], kb_fd[1:, 1:], rtol=1e-5, atol=1e-1)
+    np.testing.assert_allclose(kb0, kb_fd, rtol=1e-5, atol=1e-1)
     np.testing.assert_allclose(kb0_nopm, kb_nopm_fd, rtol=1e-5, atol=1e-1)
 
 
@@ -1109,3 +1108,179 @@ def test_ladruno_force_beam_column_subdivide_optional_factor_and_isfinite_valida
             except Exception:
                 pass
             assert idx not in ops.getEleTags(), f"ndm={ndm} accepted invalid {bad_args}"
+
+
+def test_ladruno_frame_validation_fb_dr_enhancements():
+    """Verify FB-1..FB-11 fixes, DR-1 (-spanLoad + -hingeIJ), DR-3 (-pmBal), and Enhancement C (-axialRelease)."""
+    # 1. FB-1: Interior -hingeLoc 0.5 1.0 under uniform bending (q1 = -M0, q2 = +M0)
+    L = 2.0
+    E, A, Iz = 3.0e10, 0.06, 4.5e-4
+    EI = E * Iz
+    Mc, Gf, Kpen = 60.0e3, 1.2e3, 1.0e11
+    theta_target = 1.5 * (Mc * L) / (2.0 * EI)
+    for elem_type in ("LadrunoForceBeamColumn", "LadrunoDispBeamColumn"):
+        alphas = {}
+        for mode in ("interior_xi05", "endpoint_hingeI"):
+            ops.wipe()
+            ops.model("basic", "-ndm", 2, "-ndf", 3)
+            ops.node(1, 0.0, 0.0)
+            ops.node(2, L, 0.0)
+            ops.fix(1, 1, 1, 0)
+            ops.fix(2, 0, 1, 0)
+            ops.section("Elastic", 1, E, A, Iz)
+            ops.beamIntegration("Lobatto", 1, 1, 5)
+            ops.geomTransf("Linear", 1)
+            ops.uniaxialMaterial("LadrunoCohesiveHinge", 10, Mc, Gf, "-linear", "-penalty", Kpen)
+            ops.uniaxialMaterial("LadrunoCohesiveHinge", 11, 100.0 * Mc, Gf, "-linear", "-penalty", Kpen)
+            if mode == "interior_xi05":
+                ops.element(elem_type, 1, 1, 2, 1, 1, "-hingeIJ", 10, 11, "-hingeLoc", 0.5, 1.0)
+            else:
+                ops.element(elem_type, 1, 1, 2, 1, 1, "-hingeI", 10)
+            ops.timeSeries("Linear", 1)
+            ops.pattern("Plain", 1, 1)
+            ops.sp(1, 3, -theta_target)
+            ops.sp(2, 3, +theta_target)
+            ops.system("BandGeneral")
+            ops.numberer("Plain")
+            ops.constraints("Transformation")
+            ops.test("NormDispIncr", 1.0e-12, 30)
+            ops.algorithm("Newton")
+            ops.integrator("LoadControl", 0.05)
+            ops.analysis("Static")
+            assert ops.analyze(20) == 0
+            hs = ops.eleResponse(1, "hingeState")
+            alphas[mode] = abs(float(hs[0]))
+        Hs = -(Mc * Mc) / (2.0 * Gf)
+        k_pen_eff = (Kpen * Hs) / (Kpen + Hs)
+        alpha_exact_00 = (0.5 * Mc + k_pen_eff * (Mc / Kpen)) / (4.0 * EI / L + k_pen_eff)
+        f_el = (L / (6.0 * EI)) * np.array([[2.0, -1.0], [-1.0, 2.0]])
+        f_el_j = f_el + np.array([[0.0, 0.0], [0.0, 1.0 / Kpen]])
+        k_el_j = np.linalg.inv(f_el_j)
+        b_05 = np.array([-0.5, 0.5])
+        m0_05 = float(b_05 @ k_el_j @ np.array([-theta_target, +theta_target]))
+        k_eff_05 = float(b_05 @ k_el_j @ b_05)
+        alpha_exact_05 = (m0_05 - Mc + k_pen_eff * (Mc / Kpen)) / (k_eff_05 + k_pen_eff)
+        assert alphas["endpoint_hingeI"] == pytest.approx(alpha_exact_00, rel=1.0e-9)
+        assert alphas["interior_xi05"] == pytest.approx(alpha_exact_05, rel=1.0e-9)
+
+    # 2. DR-1: LadrunoDispBeamColumn with both -spanLoad and -hingeIJ under uniform load
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    ops.node(1, 0.0, 0.0)
+    ops.node(2, L, 0.0)
+    ops.fix(1, 1, 1, 1)
+    ops.fix(2, 1, 1, 1)
+    ops.section("Elastic", 1, E, A, Iz)
+    ops.beamIntegration("Lobatto", 1, 1, 5)
+    ops.geomTransf("Linear", 1)
+    ops.uniaxialMaterial("LadrunoCohesiveHinge", 10, 100.0 * Mc, Gf, "-linear", "-penalty", 1.0e15)
+    ops.element("LadrunoDispBeamColumn", 1, 1, 2, 1, 1, "-hingeIJ", 10, 10)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    wy = -24.0e3
+    ops.eleLoad("-ele", 1, "-type", "-beamUniform", wy)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.test("NormDispIncr", 1.0e-12, 20)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0)
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    mz_mid = float(ops.eleResponse(1, "section", 3, "force")[1])
+    assert abs(mz_mid - abs(wy) * L * L / 24.0) / (abs(wy) * L * L / 24.0) < 1.0e-7
+
+    # 3. DR-3: -pmBal P0c P0t Pbal muBal on LadrunoCohesiveHinge and LadrunoIMKBeam (2D & 3D)
+    P0c, P0t, Pbal, muBal = 4000.0e3, 1200.0e3, 1500.0e3, 1.80
+    for ndm, ndf in ((2, 3), (3, 6)):
+        ops.wipe()
+        ops.model("basic", "-ndm", ndm, "-ndf", ndf)
+        if ndm == 2:
+            ops.node(1, 0.0, 0.0)
+            ops.node(2, L, 0.0)
+            ops.fix(1, 1, 1, 1)
+            ops.geomTransf("Linear", 1)
+            ops.uniaxialMaterial("Steel01", 10, Mc, 1.0e9, 0.02)
+            ops.element("LadrunoIMKBeam2d", 1, 1, 2, A, E, Iz, 1, "-matZi", 10, "-pmBal", P0c, P0t, Pbal, muBal)
+            ops.timeSeries("Linear", 1)
+            ops.pattern("Plain", 1, 1)
+            ops.load(2, -Pbal, 0.0, 0.0)
+        else:
+            ops.node(1, 0.0, 0.0, 0.0)
+            ops.node(2, L, 0.0, 0.0)
+            ops.fix(1, 1, 1, 1, 1, 1, 1)
+            ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+            ops.uniaxialMaterial("Steel01", 10, Mc, 1.0e9, 0.02)
+            ops.element("LadrunoIMKBeam", 1, 1, 2, A, E, E / 2.5, 2.0 * Iz, Iz, Iz, 1, "-matZi", 10, "-pmBal", P0c, P0t, Pbal, muBal)
+            ops.timeSeries("Linear", 1)
+            ops.pattern("Plain", 1, 1)
+            ops.load(2, -Pbal, 0.0, 0.0, 0.0, 0.0, 0.0)
+        ops.system("BandGeneral")
+        ops.numberer("Plain")
+        ops.constraints("Plain")
+        ops.test("NormDispIncr", 1.0e-12, 25)
+        ops.algorithm("Newton")
+        ops.integrator("LoadControl", 1.0)
+        ops.analysis("Static")
+        assert ops.analyze(1) == 0
+        ops.loadConst("-time", 0.0)
+        ops.pattern("Plain", 2, 1)
+        if ndm == 2:
+            ops.load(2, 0.0, 1.0, 0.0)
+        else:
+            ops.load(2, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0)
+        ops.integrator("DisplacementControl", 2, 2, 0.015)
+        assert ops.analyze(1) == 0
+        hs = ops.eleResponse(1, "hingeState")
+        th_i, m_i = abs(float(hs[0])), abs(float(hs[1]))
+        m_expected = muBal * (Mc + 0.02 * 1.0e9 * (th_i - Mc / 1.0e9))
+        assert m_i == pytest.approx(m_expected, rel=1.0e-9)
+
+    # 4. Enhancement C: -axialRelease on LadrunoForceBeamColumn & LadrunoDispBeamColumn (2D & 3D)
+    for elem_type in ("LadrunoForceBeamColumn", "LadrunoDispBeamColumn"):
+        for ndm, ndf in ((2, 3), (3, 6)):
+            ops.wipe()
+            ops.model("basic", "-ndm", ndm, "-ndf", ndf)
+            if ndm == 2:
+                ops.node(1, 0.0, 0.0)
+                ops.node(2, L, 0.0)
+                ops.fix(1, 1, 1, 1)
+                ops.fix(2, 1, 0, 0)  # axially restrained at both ends!
+                ops.geomTransf("Linear", 1)
+                ops.uniaxialMaterial("Elastic", 1, E)
+                ops.section("Fiber", 1)
+                ops.fiber(0.15, 0.0, 0.04, 1)
+                ops.fiber(-0.20, 0.0, 0.02, 1)
+            else:
+                ops.node(1, 0.0, 0.0, 0.0)
+                ops.node(2, L, 0.0, 0.0)
+                ops.fix(1, 1, 1, 1, 1, 1, 1)
+                ops.fix(2, 1, 0, 1, 1, 1, 0)  # axially restrained at both ends!
+                ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+                ops.uniaxialMaterial("Elastic", 1, E)
+                ops.section("Fiber", 1, "-GJ", 1.0e8)
+                ops.fiber(0.15, 0.0, 0.04, 1)
+                ops.fiber(-0.20, 0.0, 0.02, 1)
+                ops.fiber(0.0, 0.10, 0.01, 1)
+                ops.fiber(0.0, -0.10, 0.01, 1)
+            ops.beamIntegration("Lobatto", 1, 1, 4)
+            ops.element(elem_type, 1, 1, 2, 1, 1, "-axialRelease")
+            ops.timeSeries("Linear", 1)
+            ops.pattern("Plain", 1, 1)
+            if ndm == 2:
+                ops.load(2, 0.0, -50.0e3, 0.0)
+            else:
+                ops.load(2, 0.0, -50.0e3, 0.0, 0.0, 0.0, 0.0)
+            ops.system("BandGeneral")
+            ops.numberer("Plain")
+            ops.constraints("Plain")
+            ops.test("NormDispIncr", 1.0e-12, 20)
+            ops.algorithm("Newton")
+            ops.integrator("LoadControl", 1.0)
+            ops.analysis("Static")
+            assert ops.analyze(1) == 0
+            lf = ops.eleResponse(1, "localForce")
+            assert abs(float(lf[0])) == pytest.approx(0.0, abs=1.0e-9)
+
+
+

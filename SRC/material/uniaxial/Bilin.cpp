@@ -87,10 +87,11 @@ OPS_Bilin()
   bool hasNFactor = false;
   bool useImplex = false;
   while (OPS_GetNumRemainingInputArgs() > 0) {
-    const char *opt = OPS_GetString();
-    if (strcmp(opt, "-implex") == 0) {
+    char optBuf[64];
+    const char *opt = OPS_GetStringFromAll(optBuf, sizeof(optBuf));
+    if (opt != 0 && (strcmp(opt, "-implex") == 0 || strcmp(opt, "-IMPLEX") == 0)) {
       useImplex = true;
-    } else if (opt[0] == '-' &&
+    } else if (opt != 0 && opt[0] == '-' &&
                ((opt[1] >= 'a' && opt[1] <= 'z') || (opt[1] >= 'A' && opt[1] <= 'Z'))) {
       opserr << "WARNING Bilin -- unknown option '" << opt << "'\n";
       return 0;
@@ -210,6 +211,13 @@ Bilin::setTrialStrain(double strain, double strainRate)
       double dU_expl = time_factor * dU_prev_;
       fP = CfP + (k_imp_c - k0) * dU_expl;
       Tangent = k0;
+    } else {
+      double k0 = (CKe > 0.0) ? CKe : Ke0 * (1.0 + nFactor);
+      double k_imp_c = (Ckon == 0) ? k0 : CTangent;
+      fP = CfP + k_imp_c * deltaD;
+      fP_imp_ = fP;
+      Tangent = k_imp_c;
+      Tangent_imp_ = k_imp_c;
     }
     return 0;
   }
@@ -951,24 +959,30 @@ Bilin::setTrialStrain(double strain, double strainRate)
  
   if((flagstopdeg==0)&&(flagdeg==1)) {
    
-    if((Enrgtot>=Enrgts)&&(Enrgts!=0.0)) {
-      betas = 1.0;
-    } else if((Enrgtot>=Enrgtd)&&(Enrgtd!=0.0)) {
-      betad = 1.0;
-    } else {
-      if(LamdaS!=0.0) {
-        betas = pow((Enrgc/(Enrgts-Enrgtot)),Cs);
-      }
-      if(LamdaD!=0.0) {
-        betad = pow((Enrgc/(Enrgtd-Enrgtot)),Cd);
-      }
-     
-      if(fabs(betas)>=1.0) {
+    if (LamdaS != 0.0 && Enrgts != 0.0) {
+      if (Enrgtot >= Enrgts) {
         betas = 1.0;
+      } else {
+        betas = pow((Enrgc / (Enrgts - Enrgtot)), Cs);
+        if (fabs(betas) >= 1.0) {
+          betas = 1.0;
+        }
       }
-      if(fabs(betad)>=1.0) {
+    } else {
+      betas = 0.0;
+    }
+
+    if (LamdaD != 0.0 && Enrgtd != 0.0) {
+      if (Enrgtot >= Enrgtd) {
         betad = 1.0;
+      } else {
+        betad = pow((Enrgc / (Enrgtd - Enrgtot)), Cd);
+        if (fabs(betad) >= 1.0) {
+          betad = 1.0;
+        }
       }
+    } else {
+      betad = 0.0;
     }
     ////            Initialize energy of the cycle and Kstif for next loop -------
    

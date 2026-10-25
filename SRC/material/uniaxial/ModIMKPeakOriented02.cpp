@@ -657,42 +657,43 @@ ModIMKPeakOriented02::setTrialStrain(double strain, double strainRate)
     double betac = 0.0;
    
     if(flagdeg == 1){           //this cycle was reformulated // Filipe Ribeiro and Andre Barbosa
-         
-      if(Enrgtot >= Enrgts && Enrgts != 0.0){      
-        betas = 1.0;
-      } else if (Enrgtot >= Enrgta && Enrgta != 0.0) {  
-        betaa = 1.0;
-      } else if(Enrgtot >= Enrgtd && Enrgtd == 0.0) {  
-        betac = 1.0;
-     
-      // cyclic deterioration
-          } else {
-     
-                if(Ls != 0.0){
-                        betas = pow(Enrgc/(Enrgts-Enrgtot),Cs);        
-                } else {
-                        betas = 0.0;
-                }
-               
-                if(La != 0.0){
-                        betaa = pow(Enrgc/(Enrgta-Enrgtot),Ca);
-                } else {
-                        betaa = 0.0;
-                }
-                if(Ld != 0.0){
-                        betac = pow(Enrgc/(Enrgtd-Enrgtot),Cd);
-                } else {
-                        betac = 0.0;
-                }
-                if(fabs(betas) >= 1.0) {
-                        betas = 1.0;
-                }
-                if(fabs(betaa) >= 1.0){
-                        betaa = 1.0;
-                }
-                if(fabs(betac) >= 1.0){
-                        betac = 1.0;                                                          
-                }
+      if (Ls != 0.0 && Enrgts != 0.0) {
+        if (Enrgtot >= Enrgts) {
+          betas = 1.0;
+        } else {
+          betas = pow(Enrgc / (Enrgts - Enrgtot), Cs);
+          if (fabs(betas) >= 1.0) {
+            betas = 1.0;
+          }
+        }
+      } else {
+        betas = 0.0;
+      }
+
+      if (La != 0.0 && Enrgta != 0.0) {
+        if (Enrgtot >= Enrgta) {
+          betaa = 1.0;
+        } else {
+          betaa = pow(Enrgc / (Enrgta - Enrgtot), Ca);
+          if (fabs(betaa) >= 1.0) {
+            betaa = 1.0;
+          }
+        }
+      } else {
+        betaa = 0.0;
+      }
+
+      if (Ld != 0.0 && Enrgtd != 0.0) {
+        if (Enrgtot >= Enrgtd) {
+          betac = 1.0;
+        } else {
+          betac = pow(Enrgc / (Enrgtd - Enrgtot), Cd);
+          if (fabs(betac) >= 1.0) {
+            betac = 1.0;
+          }
+        }
+      } else {
+        betac = 0.0;
       }
    
     //  Update values for the next half cycle

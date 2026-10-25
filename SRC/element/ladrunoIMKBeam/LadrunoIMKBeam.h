@@ -68,7 +68,8 @@ class LadrunoIMKBeam : public Element
                  double P0 = 0.0, double pmAlpha = 0.5,
                  double dI = 0.0, double dJ = 0.0, bool useImplex = false,
                  UniaxialMaterial *mShearY = 0, UniaxialMaterial *mShearZ = 0,
-                 NDMaterial *mBiI = 0, NDMaterial *mBiJ = 0);
+                 NDMaterial *mBiI = 0, NDMaterial *mBiJ = 0,
+                 double P0t = 0.0, double Pbal = 0.0, double muBal = 1.0);
   ~LadrunoIMKBeam();
 
   const char *getClassType(void) const { return "LadrunoIMKBeam"; }
@@ -117,6 +118,7 @@ class LadrunoIMKBeam : public Element
   int cMass;
   double GAvy, GAvz;
   double P0, pmAlpha;
+  double P0t, Pbal, muBal;
   double dI, dJ;
   bool useImplex;
   double implexErr;
@@ -139,6 +141,9 @@ class LadrunoIMKBeam : public Element
   double gammaSpCommit[2];  // committed plastic shear deformations
   double dGammaSpPrev[2];   // previous committed plastic shear increments for IMPL-EX
   double dtime_n_commit;    // previous committed time step for IMPL-EX
+  bool stepDtLatched;       // latches step dt on first update() of each step
+  double dtStep;            // latched step dt
+  double dtScaleStep;       // latched dtScale for IMPL-EX within current step
 
   // --- cached basic-system state, set in update() ---
   Vector q;   // basic forces  [N, Mz_i, Mz_j, My_i, My_j, T]
