@@ -150,6 +150,10 @@ steadyStateDynamics(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Cha
 int
 randomResponse(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
 
+// Ladruno WP-213: residualModes (missing-mass pseudo-modes), same bridge shape.
+int
+residualModes(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
 // Ladruno (ADR-78 P0.5): contact-family classic-Tcl handlers (bridges to the
 // OPS_Ladruno* entry points, which are already linked into every target via
 // OpenSeesLIB but were registered only in TclWrapper/PythonWrapper). Declared

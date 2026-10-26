@@ -1,0 +1,585 @@
+"""WP-213: `residualModes` (missing-mass pseudo-modes) on the LadrunoRitzKernel.
+
+ADR: Ladruno_implementation/213_ladruno_modal_basis_completeness_adr.md.
+
+`residualModes -dir d ...` appends, per direction, the Rayleigh-Ritz pairs of
+span{r_d, K^-1 M r_d}, r_d = iota_d deflated against the current modes, to the
+domain's mode set. Every check here is against a pure-numpy oracle.
+
+V3 podium model (ADR §5): 10-DOF shear building, DOF 1 a podium with 40x the
+mass and 200x the stiffness of a typical storey; ASCE-shaped spectrum
+(SDS = 1.0 g, SD1 = 0.6 g, TL = 8 s), 5 % CQC. Reference: all 10 modes.
+  (a) 3 eigenmodes: the podium's 82 % of the mass is missing, base shear ~6 %;
+  (b) + residualModes -dir 1: modal mass 100 %, base shear within 2 %;
+  (c) -period 0.05 vs rayleigh: pinned to the numpy oracle of the same rule.
+Kernel: shapes and Ritz values match a numpy implementation up to sign;
+Psi^T M Psi = I and Psi^T M Phi = 0 to 1e-10; a full-size basis reproduces
+`eigen -fullGenLapack`.
+Constraints: V1's one-storey rigid diaphragm, mass on the constrained nodes,
+under Penalty and Lagrange; Transformation is a strict xfail until WP-211
+(PR #1020) makes modalProperties keep MP-retained mass.
+Preloaded: gravity + loadConst with PDelta: the kernel sees K - Kg (numpy
+kernel on the K the LinearSOE holds).
+"""
+import math
+import os
+import subprocess
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from _testbed import ops
+
+pytestmark = [pytest.mark.zone_a]
+
+ROOT = Path(__file__).resolve().parent.parent
+G_ACC = 9.81
+XI = 0.05
+SDS, SD1, TL = 1.0, 0.6, 8.0
+TS = SD1 / SDS
+T0 = 0.2 * TS
+
+
+def _sa(t):
+    if t < T0:
+        s = SDS * (0.4 + 0.6 * t / T0)
+    elif t <= TS:
+        s = SDS
+    elif t <= TL:
+        s = SD1 / t
+    else:
+        s = SD1 * TL / t**2
+    return s * G_ACC
+
+
+TN = np.concatenate([np.linspace(0.0, 2.0, 201), np.linspace(2.05, 10.0, 160)])
+SA = np.array([_sa(t) for t in TN])
+
+
+def _S(T):
+    # the fork interpolates the -Tn/-Sa table linearly and clamps at the ends
+    return float(np.interp(T, TN, SA))
+
+
+def _rho(w):
+    w = np.asarray(w, float)
+    r = np.empty((len(w), len(w)))
+    for i in range(len(w)):
+        for j in range(len(w)):
+            b = w[j] / w[i]
+            num = 8 * XI * XI * (1 + b) * b**1.5
+            den = (1 - b * b)**2 + 4 * XI * XI * b * (1 + b * b) + 8 * XI * XI * b * b
+            r[i, j] = 1.0 if den <= 0 else num / den
+    return r
+
+
+def _cqc(per_mode, w):
+    v = np.asarray(per_mode, float)
+    return math.sqrt(max(v @ _rho(w) @ v, 0.0))
+
+
+# ---------------------------------------------------------------------------
+# numpy oracle of the kernel (shape starts, two blocks, MGS twice, RR)
+# ---------------------------------------------------------------------------
+def _mgs_against(y, basis, M):
+    for _ in range(2):
+        for q in basis:
+            y = y - (q @ M @ y) * q
+    return y
+
+
+def _residual_oracle(K, M, Phi, iotas, tol=1e-4):
+    Q = []
+    for k in range(Phi.shape[1]):
+        y = _mgs_against(Phi[:, k].copy(), Q, M)
+        Q.append(y / math.sqrt(y @ M @ y))
+    X = []
+    block = [io.astype(float) for io in iotas]
+    for b in range(2):
+        accepted = []
+        for y in block:
+            n0 = math.sqrt(y @ M @ y)
+            y = _mgs_against(y, Q + X, M)
+            n = math.sqrt(max(y @ M @ y, 0.0))
+            if not n > tol * n0:
+                continue
+            X.append(y / n)
+            accepted.append(X[-1])
+        block = [np.linalg.solve(K, M @ x) for x in accepted]
+    X = np.column_stack(X)
+    lam, Z = np.linalg.eigh(X.T @ K @ X)
+    return lam, X @ Z
+
+
+# ---------------------------------------------------------------------------
+# V3 podium model
+# ---------------------------------------------------------------------------
+N3 = 10
+KBASE = 300.0
+
+
+def _v3_mk():
+    m = np.ones(N3)
+    k = np.full(N3, KBASE)
+    m[0] *= 40.0
+    k[0] *= 200.0
+    K = np.zeros((N3, N3))
+    for i in range(N3):
+        K[i, i] += k[i]
+        if i + 1 < N3:
+            K[i, i] += k[i + 1]
+            K[i, i + 1] = K[i + 1, i] = -k[i + 1]
+    return m, k, K, np.diag(m)
+
+
+def _v3_build():
+    m, k, _, _ = _v3_mk()
+    ops.wipe()
+    ops.model('basic', '-ndm', 2, '-ndf', 3)
+    ops.node(0, 0.0, 0.0)
+    ops.fix(0, 1, 1, 1)
+    for i in range(1, N3 + 1):
+        ops.node(i, 0.0, 0.0)
+        ops.fix(i, 0, 1, 1)
+        ops.mass(i, m[i - 1], 0.0, 0.0)
+        ops.uniaxialMaterial('Elastic', i, k[i - 1])
+        ops.element('zeroLength', i, i - 1, i, '-mat', i, '-dir', 1)
+    ops.constraints('Transformation')
+    ops.numberer('RCM')
+    ops.system('UmfPack')
+    ops.test('NormDispIncr', 1e-12, 10)
+    ops.algorithm('Linear')
+    ops.integrator('LoadControl', 1.0)
+    ops.analysis('Static')
+
+
+def _v3_modes_np():
+    _, _, K, M = _v3_mk()
+    w2, v = np.linalg.eigh(np.diag(np.diag(M)**-0.5) @ K @ np.diag(np.diag(M)**-0.5))
+    return w2, np.diag(np.diag(M)**-0.5) @ v
+
+
+def _v3_base_shear_np(Psi, lam):
+    m, k, _, M = _v3_mk()
+    io = np.ones(N3)
+    w = np.sqrt(lam)
+    V = [k[0] * Psi[0, j] * (Psi[:, j] @ M @ io) / (Psi[:, j] @ M @ Psi[:, j])
+         * _S(2 * math.pi / w[j]) / lam[j] for j in range(len(lam))]
+    return _cqc(V, w)
+
+
+def _v3_reference():
+    w2, phi = _v3_modes_np()
+    return _v3_base_shear_np(phi, w2)
+
+
+def _rsa_combined_base_shear():
+    m, k, _, _ = _v3_mk()
+    ops.responseSpectrumAnalysis(1, '-Tn', *TN.tolist(), '-Sa', *SA.tolist(),
+                                 '-combine', 'CQC', '-damp', XI)
+    return k[0] * abs(ops.nodeDisp(1, 1))
+
+
+def _shapes(modes, nodes, dof=1):
+    return np.array([[ops.nodeEigenvector(n, md, dof) for md in modes] for n in nodes])
+
+
+def _ratio_x():
+    mp = ops.modalProperties('-return')
+    return mp['partiMassRatiosCumuMX'][-1] / 100.0   # modalProperties reports %
+
+
+def test_v3_a_truncated_basis_misses_the_podium():
+    _v3_build()
+    ops.eigen('-fullGenLapack', 3)
+    ops.modalProperties()
+    assert _ratio_x() < 0.25
+    ref = _v3_reference()
+    v = _rsa_combined_base_shear()
+    assert v / ref < 0.1, (v, ref)
+
+
+def test_v3_b_residual_modes_complete_the_mass_and_base_shear():
+    _v3_build()
+    lam_e = ops.eigen('-fullGenLapack', 3)
+    lam_r = ops.residualModes('-dir', 1)
+    assert len(lam_r) == 2
+    assert ops.residualModes('-kinds') == [0, 0, 0, 1, 1]
+    ops.modalProperties()
+    assert _ratio_x() == pytest.approx(1.0, abs=1e-10)
+
+    # pseudo-modes = numpy oracle (values exactly, shapes up to sign)
+    _, _, K, M = _v3_mk()
+    w2, phi = _v3_modes_np()
+    lam_np, psi_np = _residual_oracle(K, M, phi[:, :3], [np.ones(N3)])
+    np.testing.assert_allclose(lam_r, lam_np, rtol=1e-9)
+    psi = _shapes([4, 5], range(1, N3 + 1))
+    for j in range(2):
+        assert abs(psi[:, j] @ M @ psi_np[:, j]) == pytest.approx(1.0, abs=1e-9)
+
+    # M-orthonormal, M-orthogonal to the eigenmodes, K-diagonal
+    Phi = _shapes([1, 2, 3], range(1, N3 + 1))
+    np.testing.assert_allclose(psi.T @ M @ psi, np.eye(2), atol=1e-10)
+    gm = np.sqrt(np.diag(Phi.T @ M @ Phi))
+    np.testing.assert_allclose((Phi / gm).T @ M @ psi, 0.0, atol=1e-10)
+    np.testing.assert_allclose(psi.T @ K @ psi, np.diag(lam_r), rtol=1e-9, atol=1e-9)
+
+    ref = _v3_reference()
+    v = _rsa_combined_base_shear()
+    assert v == pytest.approx(_v3_base_shear_np(np.column_stack([phi[:, :3], psi_np]),
+                                                np.r_[w2[:3], lam_np]), rel=1e-8)
+    assert abs(v / ref - 1.0) < 0.02, (v, ref)
+    assert len(lam_e) == 3
+
+
+def test_v3_c_fixed_period_vs_rayleigh():
+    _, _, K, M = _v3_mk()
+    w2, phi = _v3_modes_np()
+    lam_np, psi_np = _residual_oracle(K, M, phi[:, :3], [np.ones(N3)])
+    ref = _v3_reference()
+
+    _v3_build()
+    ops.eigen('-fullGenLapack', 3)
+    ops.residualModes('-dir', 1)
+    ops.modalProperties()
+    v_ray = _rsa_combined_base_shear()
+
+    _v3_build()
+    ops.eigen('-fullGenLapack', 3)
+    lam_fix = ops.residualModes('-dir', 1, '-period', 0.05)
+    lam_t = (2 * math.pi / 0.05)**2
+    np.testing.assert_allclose(lam_fix, [lam_t, lam_t], rtol=1e-12)
+    ops.modalProperties()
+    assert _ratio_x() == pytest.approx(1.0, abs=1e-10)   # the shape is unchanged
+    v_fix = _rsa_combined_base_shear()
+    # the fixed period changes Sa AND the 1/lambda of phi Gamma Sa / lambda
+    # (ADR 213 §3.3): pinned to the numpy oracle of exactly that rule
+    assert v_fix == pytest.approx(
+        _v3_base_shear_np(np.column_stack([phi[:, :3], psi_np]), np.r_[w2[:3], lam_t, lam_t]),
+        rel=1e-8)
+    assert min(v_ray, v_fix) <= ref <= max(v_ray, v_fix), (v_ray, v_fix, ref)
+
+
+def test_replace_and_eigen_clears_tags():
+    _v3_build()
+    ops.eigen('-fullGenLapack', 3)
+    lam1 = ops.residualModes('-dir', 1)
+    # a second call without -replace: everything is already spanned, no change
+    assert not ops.residualModes('-dir', 1)
+    assert ops.residualModes('-kinds') == [0, 0, 0, 1, 1]
+    lam2 = ops.residualModes('-dir', 1, '-replace')
+    np.testing.assert_allclose(lam2, lam1, rtol=1e-9)
+    assert ops.residualModes('-kinds') == [0, 0, 0, 1, 1]
+    # a new eigen replaces the eigenvalue vector, so the record goes stale
+    ops.eigen('-fullGenLapack', 4)
+    assert ops.residualModes('-kinds') == [0, 0, 0, 0]
+
+
+def test_full_size_basis_equals_full_eigen():
+    # 3 storeys: 1 eigenmode + span{r, K^-1 M r} is the whole space, so the
+    # Ritz values are the exact eigenvalues 2 and 3
+    ops.wipe()
+    ops.model('basic', '-ndm', 2, '-ndf', 3)
+    ops.node(0, 0.0, 0.0)
+    ops.fix(0, 1, 1, 1)
+    for i, (m, k) in enumerate([(3.0, 900.0), (2.0, 700.0), (1.0, 500.0)], start=1):
+        ops.node(i, 0.0, 0.0)
+        ops.fix(i, 0, 1, 1)
+        ops.mass(i, m, 0.0, 0.0)
+        ops.uniaxialMaterial('Elastic', i, k)
+        ops.element('zeroLength', i, i - 1, i, '-mat', i, '-dir', 1)
+    ops.system('UmfPack')
+    ops.analysis('Static')
+    full = ops.eigen('-fullGenLapack', 3)
+    ops.eigen('-fullGenLapack', 1)
+    lam = ops.residualModes('-dir', 1)
+    np.testing.assert_allclose(lam, full[1:], rtol=1e-10)
+
+
+def test_errors():
+    _v3_build()
+    with pytest.raises(Exception):
+        ops.residualModes('-dir', 1)          # no eigen yet
+    ops.eigen('-fullGenLapack', 3)
+    for bad in (('-dir', 4), ('-dir',), ('-dir', 1, '-period', -1.0),
+                ('-dir', 1, 1), ('-bogus',), ('-dir', 2)):  # dir 2: no free mass
+        with pytest.raises(Exception):
+            ops.residualModes(*bad)
+
+
+def test_modal_response_history_uses_the_pseudo_modes(tmp_path):
+    dt, n = 0.005, 800
+    t = np.arange(n) * dt
+    acc = (np.sin(2 * math.pi * 0.6 * t) + 0.8 * np.sin(2 * math.pi * 1.5 * t)) * G_ACC * 0.3
+    m, k, _, _ = _v3_mk()
+
+    def peak(nmodes, residual):
+        _v3_build()
+        ops.timeSeries('Path', 1, '-dt', dt, '-values', *acc.tolist())
+        ops.eigen('-fullGenLapack', nmodes)
+        if residual:
+            ops.residualModes('-dir', 1)
+        ops.modalProperties()
+        path = tmp_path / f'u_{nmodes}_{residual}.out'
+        ops.recorder('Node', '-file', str(path), '-time', '-precision', 16,
+                     '-node', 1, '-dof', 1, 'disp')
+        ops.modalResponseHistory('-dt', dt, '-nsteps', n - 1, '-damp', XI,
+                                 '-baseAccel', 1, '-dir', 1)
+        ops.remove('recorders')
+        return k[0] * np.abs(np.loadtxt(str(path))[:, 1]).max()
+
+    ref = peak(N3, False)
+    e3 = abs(peak(3, False) / ref - 1)
+    e3r = abs(peak(3, True) / ref - 1)
+    assert e3 > 0.5
+    assert e3r < 0.1 and e3r < 0.2 * e3, (e3, e3r)
+
+
+# ---------------------------------------------------------------------------
+# constraints: V1 one-storey rigid diaphragm, mass on the constrained nodes
+# ---------------------------------------------------------------------------
+A_, B_, H_ = 12.0, 8.0, 3.5
+E_ = 25.0e6
+BX, BY = 0.40, 0.55
+I_X = BY * BX**3 / 12.0
+I_Y = BX * BY**3 / 12.0
+KX = 12.0 * E_ * I_X / H_**3
+KY = 12.0 * E_ * I_Y / H_**3
+M_TOT = 400.0
+ECC = 0.05 * A_
+COLS = [(-A_ / 2, -B_ / 2), (A_ / 2, -B_ / 2), (A_ / 2, B_ / 2), (-A_ / 2, B_ / 2)]
+
+
+def _v1_build(handler):
+    # columns at COLS; the slab mass sits on four extra constrained nodes
+    # offset by ECC in x (mass eccentricity -> Y and RZ couple, X does not)
+    ops.wipe()
+    ops.model('basic', '-ndm', 3, '-ndf', 6)
+    slaves = []
+    for i, (x, y) in enumerate(COLS, start=1):
+        ops.node(i, x, y, 0.0)
+        ops.fix(i, 1, 1, 1, 1, 1, 1)
+        ops.node(10 + i, x, y, H_)
+        ops.fix(10 + i, 0, 0, 1, 1, 1, 0)
+        ops.node(20 + i, x + ECC, y, H_)
+        ops.fix(20 + i, 0, 0, 1, 1, 1, 0)
+        ops.mass(20 + i, M_TOT / 4, M_TOT / 4, 0, 0, 0, 0)
+        slaves += [10 + i, 20 + i]
+    ops.node(100, 0.0, 0.0, H_)
+    ops.fix(100, 0, 0, 1, 1, 1, 0)
+    ops.rigidDiaphragm(3, 100, *slaves)
+    ops.geomTransf('Linear', 1, 1.0, 0.0, 0.0)
+    for i in range(1, 5):
+        # J ~ 0: column torsion is left out of the 3-DOF reference
+        ops.element('elasticBeamColumn', i, i, 10 + i, BX * BY, E_, E_ / 2.4, 1.0e-10,
+                    I_X, I_Y, 1)
+    if handler == 'Penalty':
+        ops.constraints('Penalty', 1.0e14, 1.0e14)
+    else:
+        ops.constraints(handler)
+    ops.numberer('RCM')
+    ops.system('UmfPack')
+    ops.test('NormDispIncr', 1e-10, 10)
+    ops.algorithm('Linear')
+    ops.integrator('LoadControl', 1.0)
+    ops.analysis('Static')
+
+
+def _v1_reference():
+    # 3-DOF (ux, uy, rz) at the diaphragm centre
+    K = np.zeros((3, 3))
+    M = np.zeros((3, 3))
+    for x, y in COLS:
+        a = np.array([[1, 0, -y], [0, 1, x]], float)
+        K += a.T @ np.diag([KX, KY]) @ a
+        a = np.array([[1, 0, -y], [0, 1, x + ECC]], float)
+        M += (M_TOT / 4) * a.T @ a
+    return K, M
+
+
+def _v1_rsa(direction, lams):
+    rows = []
+    for k in range(1, len(lams) + 1):
+        ops.responseSpectrumAnalysis(direction, '-Tn', *TN.tolist(), '-Sa', *SA.tolist(),
+                                     '-mode', k)
+        ops.reactions()
+        rows.append(-sum(ops.nodeReaction(i, direction) for i in range(1, 5)))
+    return _cqc(rows, np.sqrt(lams))
+
+
+def _v1_run(handler):
+    _v1_build(handler)
+    lam_e = ops.eigen('-fullGenLapack', 1)
+    lam_r = ops.residualModes('-dir', 1, 2)
+    mp = ops.modalProperties('-return')
+    lams = list(lam_e) + list(lam_r)
+    return {'lam': lams, 'kinds': ops.residualModes('-kinds'),
+            'rx': mp['partiMassRatiosCumuMX'][-1] / 100.0,
+            'ry': mp['partiMassRatiosCumuMY'][-1] / 100.0,
+            'vx': _v1_rsa(1, lams), 'vy': _v1_rsa(2, lams)}
+
+
+def _v1_expected():
+    K, M = _v1_reference()
+    L = np.linalg.cholesky(M)
+    Li = np.linalg.inv(L)
+    w2, v = np.linalg.eigh(Li @ K @ Li.T)
+    phi = Li.T @ v
+    out = {'lam': w2}
+    for d, io in ((1, np.array([1.0, 0, 0])), (2, np.array([0, 1.0, 0]))):
+        V = []
+        for j in range(3):
+            g = (phi[:, j] @ M @ io) / (phi[:, j] @ M @ phi[:, j])
+            u = phi[:, j] * g * _S(2 * math.pi / math.sqrt(w2[j])) / w2[j]
+            V.append((K @ u)[d - 1])
+        out[f'v{d}'] = _cqc(V, np.sqrt(w2))
+    return out
+
+
+@pytest.mark.parametrize('handler', [
+    'Penalty',
+    'Lagrange',
+    pytest.param('Transformation', marks=pytest.mark.xfail(
+        strict=True, reason='needs WP-211 / PR #1020 (modalProperties drops MP-retained mass)')),
+])
+def test_rigid_diaphragm_mass_on_constrained_nodes(handler):
+    exp = _v1_expected()
+    r = _v1_run(handler)
+    # X is uncoupled (mode 1 carries all of it); Y-RZ is completed exactly by
+    # span{r_y, K^-1 M r_y}
+    # Penalty (alpha = 1e14) is ~4e-7 off the exact eigenvalues already in
+    # eigen's own mode 1; Lagrange is exact
+    tol = 2e-6 if handler == 'Penalty' else 1e-8
+    assert r['kinds'] == [0, 1, 1]
+    np.testing.assert_allclose(r['lam'], exp['lam'], rtol=tol)
+    assert r['rx'] == pytest.approx(1.0, abs=1e-8)
+    assert r['ry'] == pytest.approx(1.0, abs=1e-8)
+    assert r['vx'] == pytest.approx(exp['v1'], rel=tol)
+    assert r['vy'] == pytest.approx(exp['v2'], rel=tol)
+
+
+def test_penalty_and_lagrange_agree():
+    p, l = _v1_run('Penalty'), _v1_run('Lagrange')
+    for key in ('lam', 'vx', 'vy'):
+        np.testing.assert_allclose(p[key], l[key], rtol=2e-6)   # penalty-limited
+
+
+def test_transformation_recovers_constrained_nodes():
+    # passes without WP-211: the pseudo-modes go in through
+    # TransformationDOF_Group::setEigenvector, which rebuilds the slave nodes
+    _v1_build('Transformation')
+    ops.eigen('-fullGenLapack', 1)
+    lam_r = ops.residualModes('-dir', 1, 2)
+    assert len(lam_r) == 2
+    exp = _v1_expected()
+    np.testing.assert_allclose(lam_r, exp['lam'][1:], rtol=1e-8)
+    m = M_TOT / 4
+    for md in (2, 3):
+        ux, uy, rz = (ops.nodeEigenvector(100, md, d) for d in (1, 2, 6))
+        for i, (x, y) in enumerate(COLS, start=21):
+            xs, ys = x + ECC, y
+            assert ops.nodeEigenvector(i, md, 1) == pytest.approx(ux - ys * rz, abs=1e-12)
+            assert ops.nodeEigenvector(i, md, 2) == pytest.approx(uy + xs * rz, abs=1e-12)
+    # M-orthonormal on the slave masses
+    P = np.array([[ops.nodeEigenvector(i, md, d) for md in (2, 3)]
+                  for i in range(21, 25) for d in (1, 2)])
+    np.testing.assert_allclose(m * P.T @ P, np.eye(2), atol=1e-10)
+
+
+# ---------------------------------------------------------------------------
+# preloaded: gravity + loadConst + PDelta -> the kernel sees K - Kg
+# ---------------------------------------------------------------------------
+def _column(transf, gravity):
+    ops.wipe()
+    ops.model('basic', '-ndm', 2, '-ndf', 3)
+    ops.node(1, 0.0, 0.0)
+    ops.fix(1, 1, 1, 1)
+    for n in (2, 3, 4):
+        ops.node(n, 0.0, (n - 1) * 3.0)
+        ops.mass(n, 2.0, 0.0, 0.0)
+    ops.geomTransf(transf, 1)
+    for e in (1, 2, 3):
+        ops.element('elasticBeamColumn', e, e, e + 1, 0.04, 2.0e8, 1.2e-3, 1)
+    ops.timeSeries('Constant', 1)
+    ops.pattern('Plain', 1, 1)
+    for n in (2, 3, 4):
+        ops.load(n, 0.0, -gravity, 0.0)
+    ops.constraints('Plain')
+    ops.numberer('Plain')
+    ops.system('FullGeneral')
+    ops.test('NormDispIncr', 1e-12, 20)
+    ops.algorithm('Newton')
+    ops.integrator('LoadControl', 1.0)
+    ops.analysis('Static')
+    assert ops.analyze(1) == 0
+    ops.loadConst('-time', 0.0)
+
+
+def test_preloaded_pdelta_kernel_sees_geometric_stiffness():
+    # Oracle: the numpy kernel on the K the analysis' LinearSOE holds after
+    # residualModes (printA), with M and the eigenmode read back in equation
+    # numbering. The column's rotations are massless, so span{r, K^-1 M r} is
+    # not the exact eigen-subspace here (r is not statically condensed on the
+    # massless DOFs; ADR 213 §3): the check is the kernel itself, plus that the
+    # preload changes what it sees.
+    out = {}
+    for P in (1500.0, 0.0):
+        _column('PDelta', P)
+        ops.eigen('-fullGenLapack', 1)
+        lam = ops.residualModes('-dir', 1)
+        n = ops.systemSize()
+        K = np.array(ops.printA('-ret'), dtype=float).reshape(n, n)
+        M = np.zeros((n, n))
+        phi = np.zeros(n)
+        io = np.zeros(n)
+        for nd in (2, 3, 4):
+            eq = ops.nodeDOFs(nd)
+            M[eq[0], eq[0]] = 2.0
+            io[eq[0]] = 1.0
+            for d in range(3):
+                phi[eq[d]] = ops.nodeEigenvector(nd, 1, d + 1)
+        lam_np, psi_np = _residual_oracle(0.5 * (K + K.T), M, phi[:, None], [io])
+        np.testing.assert_allclose(lam, lam_np, rtol=1e-8)
+        psi = np.zeros((n, 2))
+        for nd in (2, 3, 4):
+            eq = ops.nodeDOFs(nd)
+            for d in range(3):
+                psi[eq[d]] = [ops.nodeEigenvector(nd, md, d + 1) for md in (2, 3)]
+        for j in range(2):
+            assert abs(psi[:, j] @ M @ psi_np[:, j]) == pytest.approx(1.0, abs=1e-8)
+        # modal mass of the set is complete even with massless DOFs
+        L = [(v @ M @ io)**2 / (v @ M @ v) for v in np.column_stack([phi, psi]).T]
+        assert sum(L) == pytest.approx(6.0, rel=1e-10)
+        out[P] = (lam, K)
+    assert np.abs(out[1500.0][1] - out[0.0][1]).max() > 1.0   # K - Kg vs K
+    assert abs(out[1500.0][0][0] / out[0.0][0][0] - 1) > 1e-3
+
+
+# ---------------------------------------------------------------------------
+# classic Tcl parity (OpenSees.exe goes through SRC/tcl/commands.cpp)
+# ---------------------------------------------------------------------------
+def test_classic_tcl_matches_python(tmp_path):
+    exe = ROOT / 'dist' / 'bin' / 'OpenSees.exe'
+    if not exe.exists():
+        pytest.skip('dist/bin/OpenSees.exe not built')
+    m, k, _, _ = _v3_mk()
+    lines = ['model basic -ndm 2 -ndf 3', 'node 0 0 0', 'fix 0 1 1 1']
+    for i in range(1, N3 + 1):
+        lines += [f'node {i} 0 0', f'fix {i} 0 1 1', f'mass {i} {m[i-1]} 0 0',
+                  f'uniaxialMaterial Elastic {i} {k[i-1]}',
+                  f'element zeroLength {i} {i-1} {i} -mat {i} -dir 1']
+    lines += ['system UmfPack', 'analysis Static', 'eigen -fullGenLapack 3',
+              'set out [open res.txt w]',
+              'puts $out [residualModes -dir 1]',
+              'puts $out [residualModes -kinds]', 'close $out']
+    (tmp_path / 'deck.tcl').write_text('\n'.join(lines) + '\n')
+    env = dict(os.environ, LADRUNO_OPENSEES_QUIET='1')
+    subprocess.run([str(exe), 'deck.tcl'], cwd=tmp_path, env=env, check=True,
+                   stdin=subprocess.DEVNULL, capture_output=True, timeout=120)
+    got = (tmp_path / 'res.txt').read_text().split('\n')
+    lam_tcl = [float(v) for v in got[0].split()]
+    assert got[1].split() == ['0', '0', '0', '1', '1']
+    _v3_build()
+    ops.eigen('-fullGenLapack', 3)
+    np.testing.assert_allclose(lam_tcl, ops.residualModes('-dir', 1), rtol=1e-12)

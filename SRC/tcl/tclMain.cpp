@@ -200,6 +200,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • LadrunoModalResponse — exact PWL modal-superposition transient\n"
 "        • Modal combination — SRSS/CQC/ABS/TenPercent response spectrum\n"
 "        • Modal frequency domain — FRF sweep, steady-state, random PSD\n"
+"        • residualModes — missing-mass static-correction pseudo-modes\n"
 "        • LadrunoUP — Biot u-p saturated-porous element family\n"
 "        • LadrunoPorousOverlay — staggered u-p overlay pattern\n"
 "        • system Pardiso — threaded MKL sparse-direct (reuse, -krylov, -stats)\n"
