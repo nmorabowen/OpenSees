@@ -11,19 +11,19 @@ mass and 200x the stiffness of a typical storey; ASCE-shaped spectrum
 (SDS = 1.0 g, SD1 = 0.6 g, TL = 8 s), 5 % CQC. Reference: all 10 modes.
   (a) 3 eigenmodes: the podium's 82 % of the mass is missing, base shear ~6 %;
   (b) + residualModes -dir 1: modal mass 100 %, base shear within 2 %;
-  (c) -period 0.05 vs rayleigh: pinned to the numpy oracle of the same rule.
+  (c) -period 0.05: Sa read at 0.05 s, lambda kept: pinned to the numpy oracle.
 Kernel: shapes and Ritz values match a numpy implementation up to sign;
 Psi^T M Psi = I and Psi^T M Phi = 0 to 1e-10; a full-size basis reproduces
 `eigen -fullGenLapack`.
 Constraints: V1's one-storey rigid diaphragm, mass on the constrained nodes,
-under Penalty and Lagrange; Transformation is a strict xfail until WP-211
-(PR #1020) makes modalProperties keep MP-retained mass.
+under Transformation (needs WP-211, #1020), Penalty and Lagrange.
 Preloaded: gravity + loadConst with PDelta: the kernel sees K - Kg (numpy
 kernel on the K the LinearSOE holds).
 """
 import math
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -160,13 +160,24 @@ def _v3_modes_np():
     return w2, np.diag(np.diag(M)**-0.5) @ v
 
 
-def _v3_base_shear_np(Psi, lam):
-    m, k, _, M = _v3_mk()
+def _v3_modal_u1_np(Psi, lam, sa_periods=None):
+    """Per-mode u at DOF 1: psi Gamma Sa / lambda, Sa at the override if given."""
+    _, _, _, M = _v3_mk()
     io = np.ones(N3)
     w = np.sqrt(lam)
-    V = [k[0] * Psi[0, j] * (Psi[:, j] @ M @ io) / (Psi[:, j] @ M @ Psi[:, j])
-         * _S(2 * math.pi / w[j]) / lam[j] for j in range(len(lam))]
-    return _cqc(V, w)
+    out = []
+    for j in range(len(lam)):
+        T = 2 * math.pi / w[j]
+        if sa_periods is not None and sa_periods[j] > 0:
+            T = sa_periods[j]
+        g = (Psi[:, j] @ M @ io) / (Psi[:, j] @ M @ Psi[:, j])
+        out.append(Psi[0, j] * g * _S(T) / lam[j])
+    return np.array(out)
+
+
+def _v3_base_shear_np(Psi, lam, sa_periods=None):
+    _, k, _, _ = _v3_mk()
+    return _cqc(k[0] * _v3_modal_u1_np(Psi, lam, sa_periods), np.sqrt(lam))
 
 
 def _v3_reference():
@@ -234,9 +245,16 @@ def test_v3_b_residual_modes_complete_the_mass_and_base_shear():
 
 
 def test_v3_c_fixed_period_vs_rayleigh():
+    # -period T keeps the Rayleigh lambda and reads Sa(T) (ADR 213 D3b): the
+    # pseudo-modes then add their static response times Sa(0.05). On V3 the
+    # Rayleigh periods (0.31 s, 0.16 s) sit on the plateau and Sa(0.05) = 0.65 g
+    # is on the ascending branch, so the fixed-period result lands BELOW
+    # rayleigh; it is pinned to the oracle, not forced above the reference.
     _, _, K, M = _v3_mk()
     w2, phi = _v3_modes_np()
     lam_np, psi_np = _residual_oracle(K, M, phi[:, :3], [np.ones(N3)])
+    P = np.column_stack([phi[:, :3], psi_np])
+    lam_all = np.r_[w2[:3], lam_np]
     ref = _v3_reference()
 
     _v3_build()
@@ -248,17 +266,108 @@ def test_v3_c_fixed_period_vs_rayleigh():
     _v3_build()
     ops.eigen('-fullGenLapack', 3)
     lam_fix = ops.residualModes('-dir', 1, '-period', 0.05)
-    lam_t = (2 * math.pi / 0.05)**2
-    np.testing.assert_allclose(lam_fix, [lam_t, lam_t], rtol=1e-12)
+    np.testing.assert_allclose(lam_fix, lam_np, rtol=1e-9)   # lambda unchanged
     ops.modalProperties()
-    assert _ratio_x() == pytest.approx(1.0, abs=1e-10)   # the shape is unchanged
+    assert _ratio_x() == pytest.approx(1.0, abs=1e-10)
     v_fix = _rsa_combined_base_shear()
-    # the fixed period changes Sa AND the 1/lambda of phi Gamma Sa / lambda
-    # (ADR 213 §3.3): pinned to the numpy oracle of exactly that rule
+    assert v_fix == pytest.approx(_v3_base_shear_np(P, lam_all, [0, 0, 0, 0.05, 0.05]),
+                                  rel=1e-8)
+    assert v_fix < v_ray
+    print(f"\nV3(c): rayleigh {v_ray / ref:.4f} x ref, -period 0.05 {v_fix / ref:.4f} x ref")
+
+
+def test_v3_c_rigid_residual_period_override_is_conservative(monkeypatch):
+    # 100x stiffer storeys: the pseudo-modes' Rayleigh periods (0.031 s,
+    # 0.016 s) are below 0.05 s, the case ASCE 7-22 12.9.1.1 means. On the
+    # ascending branch Sa(0.05) >= Sa(T_R), so -period 0.05 is conservative.
+    monkeypatch.setattr(sys.modules[__name__], 'KBASE', 3.0e4)
+    _, _, K, M = _v3_mk()
+    w2, phi = _v3_modes_np()
+    lam_np, psi_np = _residual_oracle(K, M, phi[:, :3], [np.ones(N3)])
+    assert (2 * math.pi / np.sqrt(lam_np) < 0.05).all()
+    ref = _v3_reference()
+    _v3_build()
+    ops.eigen('-fullGenLapack', 3)
+    ops.residualModes('-dir', 1)
+    ops.modalProperties()
+    v_ray = _rsa_combined_base_shear()
+    _v3_build()
+    ops.eigen('-fullGenLapack', 3)
+    ops.residualModes('-dir', 1, '-period', 0.05)
+    ops.modalProperties()
+    v_fix = _rsa_combined_base_shear()
     assert v_fix == pytest.approx(
-        _v3_base_shear_np(np.column_stack([phi[:, :3], psi_np]), np.r_[w2[:3], lam_t, lam_t]),
-        rel=1e-8)
-    assert min(v_ray, v_fix) <= ref <= max(v_ray, v_fix), (v_ray, v_fix, ref)
+        _v3_base_shear_np(np.column_stack([phi[:, :3], psi_np]), np.r_[w2[:3], lam_np],
+                          [0, 0, 0, 0.05, 0.05]), rel=1e-8)
+    assert abs(v_ray / ref - 1) < 0.01
+    assert v_fix >= v_ray >= ref * 0.99
+    print(f"\nV3(c) stiff: rayleigh {v_ray / ref:.4f} x ref, -period 0.05 {v_fix / ref:.4f} x ref")
+
+
+def test_period_override_on_every_rsa_path():
+    _, _, K, M = _v3_mk()
+    w2, phi = _v3_modes_np()
+    lam_np, psi_np = _residual_oracle(K, M, phi[:, :3], [np.ones(N3)])
+    P = np.column_stack([phi[:, :3], psi_np])
+    lam_all = np.r_[w2[:3], lam_np]
+    _v3_build()
+    ops.eigen('-fullGenLapack', 3)
+    ops.residualModes('-dir', 1, '-period', 0.05)
+    ops.modalProperties()
+    u_np = _v3_modal_u1_np(P, lam_all, [0, 0, 0, 0.05, 0.05])
+    for k in range(1, 6):
+        # per mode
+        ops.responseSpectrumAnalysis(1, '-Tn', *TN.tolist(), '-Sa', *SA.tolist(), '-mode', k)
+        assert abs(ops.nodeDisp(1, 1)) == pytest.approx(abs(u_np[k - 1]), rel=1e-8)
+    # -increment: trial - committed = u_k (the committed state is zero here)
+    for k in (4, 5):
+        ops.responseSpectrumAnalysis(1, '-Tn', *TN.tolist(), '-Sa', *SA.tolist(),
+                                     '-mode', k, '-increment')
+        assert abs(ops.nodeResponse(1, 1, 4)) == pytest.approx(abs(u_np[k - 1]), rel=1e-8)
+        ops.responseSpectrumAnalysis('-revert')
+    # without -period the same modes read Sa at their own periods
+    _v3_build()
+    ops.eigen('-fullGenLapack', 3)
+    ops.residualModes('-dir', 1)
+    ops.modalProperties()
+    u_ray = _v3_modal_u1_np(P, lam_all)
+    ops.responseSpectrumAnalysis(1, '-Tn', *TN.tolist(), '-Sa', *SA.tolist(), '-mode', 4)
+    assert abs(ops.nodeDisp(1, 1)) == pytest.approx(abs(u_ray[3]), rel=1e-8)
+
+
+def test_wp212_mass_guard_sees_the_residual_modes():
+    rsa = ['-Tn', *TN.tolist(), '-Sa', *SA.tolist()]
+    _v3_build()
+    ops.eigen('-fullGenLapack', 3)
+    ops.modalProperties()
+    with pytest.raises(Exception):
+        ops.responseSpectrumAnalysis(1, *rsa, '-requireMass', 1.0)
+    ops.residualModes('-dir', 1)
+    ops.modalProperties()
+    ops.responseSpectrumAnalysis(1, *rsa, '-requireMass', 1.0)
+    ops.responseSpectrumAnalysis(1, *rsa, '-requireMass', 1.0, '-mode', 4)
+    ops.responseSpectrumAnalysis(1, *rsa, '-requireMass', 1.0, '-combine', 'CQC', '-damp', XI)
+    ops.responseSpectrumAnalysis(1, *rsa, '-requireMass', 1.0, '-mode', 5, '-increment')
+
+
+def test_wp212_report_prints_100_percent(tmp_path):
+    # the report line is suppressed under LADRUNO_OPENSEES_QUIET: run a child
+    script = tmp_path / 'child.py'
+    script.write_text('\n'.join([
+        "import sys",
+        f"sys.path.insert(0, {str(Path(__file__).parent)!r})",
+        "import test_wp213_residual_modes as t",
+        "from _testbed import ops",
+        "t._v3_build(); ops.eigen('-fullGenLapack', 3); ops.residualModes('-dir', 1)",
+        "ops.modalProperties()",
+        "ops.responseSpectrumAnalysis(1, '-Tn', *t.TN.tolist(), '-Sa', *t.SA.tolist(), '-mode', 4)",
+    ]) + '\n')
+    env = {k: v for k, v in os.environ.items() if k != 'LADRUNO_OPENSEES_QUIET'}
+    r = subprocess.run([sys.executable, str(script)], env=env, stdin=subprocess.DEVNULL,
+                       capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr[-2000:]
+    out = r.stdout + r.stderr
+    assert 'cumulative effective mass in direction 1 = 100.00% of the free mass (5 modes)' in out, out[-2000:]
 
 
 def test_replace_and_eigen_clears_tags():
@@ -440,8 +549,7 @@ def _v1_expected():
 @pytest.mark.parametrize('handler', [
     'Penalty',
     'Lagrange',
-    pytest.param('Transformation', marks=pytest.mark.xfail(
-        strict=True, reason='needs WP-211 / PR #1020 (modalProperties drops MP-retained mass)')),
+    'Transformation',   # WP-211 (#1020) keeps the MP-retained mass
 ])
 def test_rigid_diaphragm_mass_on_constrained_nodes(handler):
     exp = _v1_expected()

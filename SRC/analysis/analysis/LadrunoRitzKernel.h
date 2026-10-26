@@ -81,8 +81,17 @@ namespace LadrunoModeKinds
     // kinds of the domain's current modes (size = number of eigenvalues);
     // all EIGEN when there is no valid record
     std::vector<int> get(const Domain* theDomain);
-    // record kinds for the domain's current mode set (snapshots its eigenvalues)
-    void set(const Domain* theDomain, const std::vector<int>& kinds);
+    // record kinds for the domain's current mode set (snapshots its
+    // eigenvalues); saPeriods (optional, same length) holds a spectral-ordinate
+    // period override per mode, 0 = none
+    void set(const Domain* theDomain, const std::vector<int>& kinds,
+             const std::vector<double>& saPeriods = std::vector<double>());
+    // Sa-period override of mode mode0 (0-based) of the domain's current set,
+    // or 0 when there is none or the record is stale. responseSpectrumAnalysis
+    // reads Sa at this period while lambda (u = phi Gamma Sa / lambda) and the
+    // CQC omegas stay the mode's own (ADR 213 D3b)
+    double saPeriod(const Domain* theDomain, int mode0);
+    std::vector<double> saPeriods(const Domain* theDomain);
     void clear(const Domain* theDomain);
     // single-letter label for printing: E / R / Z (Ritz)
     char label(int kind);

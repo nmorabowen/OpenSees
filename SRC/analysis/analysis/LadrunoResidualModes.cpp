@@ -44,11 +44,12 @@
 //   recorders) then uses them with no change; TransformationDOF_Group
 //   recovers the constrained nodes.
 //
-//   Period: `rayleigh` (default) keeps the Rayleigh-quotient frequency of each
-//   pseudo-mode; `-period $T` sets lambda = (2 pi / T)^2 on all of them
-//   (ASCE 7-22 §12.9.1.1 single rigid mode: -period 0.05). The shape is
-//   unchanged, but the RSA displacement phi Gamma Sa / lambda then scales by
-//   lambda_Rayleigh / lambda_T as well as by the Sa lookup (ADR 213 §3.3).
+//   Period: every pseudo-mode keeps its Rayleigh-quotient lambda. `-period $T`
+//   (ASCE 7-22 §12.9.1.1 single rigid mode: -period 0.05) records T as the
+//   mode's Sa-period override in the LadrunoModeKinds registry:
+//   responseSpectrumAnalysis then reads Sa(T) for it, while lambda in
+//   u = phi Gamma Sa / lambda and the CQC omegas stay the Rayleigh values, so
+//   the pseudo-mode contributes the static response times Sa(T) (ADR 213 D3b).
 
 #include <LadrunoRitzKernel.h>
 #include <AnalysisModel.h>
@@ -201,6 +202,7 @@ OPS_LadrunoResidualModes(void)
     LadrunoRitzKernel kernel(*theModel, *theSOE);
     std::vector<int> kinds = LadrunoModeKinds::get(theDomain);
     const Vector& ev = theDomain->getEigenvalues();
+    std::vector<double> saPer = LadrunoModeKinds::saPeriods(theDomain);
     std::vector<Vector> phiAll;
     if (kernel.domainModes(phiAll) < 0) {
         opserr << "residualModes: " << kernel.error().c_str() << "\n";
@@ -210,6 +212,7 @@ OPS_LadrunoResidualModes(void)
     std::vector<Vector> phi;
     std::vector<double> lam;
     std::vector<int> keptKinds;
+    std::vector<double> keptSaPer;
     int numReplaced = 0;
     for (int k = 0; k < (int)phiAll.size(); k++) {
         if (replace && kinds[k] == LadrunoModeKinds::RESIDUAL) {
@@ -219,6 +222,7 @@ OPS_LadrunoResidualModes(void)
         phi.push_back(phiAll[k]);
         lam.push_back(ev(k));
         keptKinds.push_back(kinds[k]);
+        keptSaPer.push_back(saPer[k]);
     }
     if (phi.empty()) {
         opserr << "residualModes: no eigen modes left to complete - run eigen first\n";
@@ -264,7 +268,7 @@ OPS_LadrunoResidualModes(void)
     const int q = (int)res.psi.size();
     std::vector<double> lamPseudo(q);
     for (int j = 0; j < q; j++)
-        lamPseudo[j] = fixedPeriod ? std::pow(kTwoPi / period, 2) : res.lambda[j];
+        lamPseudo[j] = res.lambda[j];   // the mode's own lambda, always
 
     // ---- report: free mass captured per direction ------------------------
     {
@@ -303,8 +307,15 @@ OPS_LadrunoResidualModes(void)
     for (int j = 0; j < q; j++) {
         const double T = kTwoPi / std::sqrt(lamPseudo[j]);
         opserr << "residualModes: pseudo-mode " << (int)phi.size() + j + 1 << ": T = " << T
-               << (fixedPeriod ? " s (fixed)" : " s (Rayleigh quotient)") << "\n";
-        if (!fixedPeriod && res.lambda[j] < lamMaxKept)
+               << " s (Rayleigh quotient)";
+        if (fixedPeriod)
+            opserr << ", RSA reads Sa at T = " << period << " s";
+        opserr << "\n";
+        if (fixedPeriod && T > period)
+            opserr << "residualModes: WARNING pseudo-mode " << (int)phi.size() + j + 1
+                   << " is not rigid at " << period << " s (its own period is " << T
+                   << " s): Sa(" << period << ") stands in for its real spectral ordinate\n";
+        if (res.lambda[j] < lamMaxKept)
             opserr << "residualModes: WARNING pseudo-mode " << (int)phi.size() + j + 1
                    << " has a longer period than the shortest retained mode ("
                    << kTwoPi / std::sqrt(lamMaxKept)
@@ -319,16 +330,18 @@ OPS_LadrunoResidualModes(void)
     std::vector<Vector> modes = phi;
     std::vector<double> lambdas = lam;
     std::vector<int> newKinds = keptKinds;
+    std::vector<double> newSaPer = keptSaPer;
     for (int j = 0; j < q; j++) {
         modes.push_back(res.psi[j]);
         lambdas.push_back(lamPseudo[j]);
         newKinds.push_back(LadrunoModeKinds::RESIDUAL);
+        newSaPer.push_back(fixedPeriod ? period : 0.0);
     }
     if (kernel.install(modes, lambdas) < 0) {
         opserr << "residualModes: " << kernel.error().c_str() << "\n";
         return -1;
     }
-    LadrunoModeKinds::set(theDomain, newKinds);
+    LadrunoModeKinds::set(theDomain, newKinds, newSaPer);
 
     // modal properties computed for the old set no longer match it
     theDomain->unsetModalProperties();

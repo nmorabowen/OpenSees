@@ -8,7 +8,8 @@ owner: nmora
 related:
   - "[[44_ladruno_frequency_domain_adr]] (§9 deferred the missing-mass correction)"
   - "[[188_ladruno_factor_reuse_adr]] (factor reuse on the analysis LinearSOE)"
-  - "WP-211 / PR #1020 (modalProperties keeps MP-retained mass under Transformation)"
+  - "WP-211 / PR #1020, merged (modalProperties keeps MP-retained mass under Transformation)"
+  - "WP-212 / PR #1021, merged (RSA mass-shortfall report and -requireMass)"
   - "WP-212 / PR #1021 (RSA mass-shortfall guard, -requireMass)"
   - "apeWorkbench opensees-dynamic-analysis, branch work/claude/rsa-gap-study: studies/rsa-gaps/{gap-study.md, fork-implementation-guide.md, v1/}"
 tags: [adr, modal, response-spectrum, missing-mass, ritz, asce7, wp-213]
@@ -123,20 +124,36 @@ came out at T = 0.033 s instead of 0.313 s. The kernel's own default stays
 
 ### D3b — periods: `rayleigh` (default) or `-period $T`
 
-- `rayleigh` keeps the Ritz values.
-- `-period $T` sets λ = (2π/T)² on every pseudo-mode (the guide's ASCE
-  §12.9.1.1 "rigid mode at 0.05 s"). **Limitation:** the RSA displacement of
-  a mode is φ Γ Sa(T)/λ, so a fixed λ changes the amplitude by λ_R/λ_T, not
-  only the Sa lookup. On V3 (pseudo-mode Rayleigh periods 0.31 s and
-  0.16 s), `-period 0.05` gives 0.085 × the reference base shear;
-  `rayleigh` gives 1.006 ×. The two bracket the reference, as the guide
-  asked, but `-period 0.05` is only conservative when the Rayleigh periods
-  are *shorter* than 0.05 s (the case it is meant for: genuinely rigid
-  missing mass). The modal-mass ratio is unaffected (the shape is). The
-  physically right ASCE rigid mode — the static response times Sa(0.05) —
-  needs RSA to look Sa up at an overridden period while dividing by the true
-  λ: a `ResponseSpectrumAnalysis` change, left for after WP-212 merges
-  (§6 follow-up 1).
+Every pseudo-mode keeps its Rayleigh λ in the domain's mode set.
+
+- `rayleigh` (default): RSA reads Sa at the mode's own period. Nothing is
+  recorded, so RSA output is byte-identical to a deck that never heard of the
+  override.
+- `-period $T` (the guide's ASCE §12.9.1.1 "rigid mode at 0.05 s"): T is
+  recorded as the mode's **Sa-period override** in `LadrunoModeKinds`.
+  `responseSpectrumAnalysis` reads Sa(T) for that mode, while λ in
+  u = φ Γ Sa/λ and the ω in CQC ρ (and T in the TenPercent closeness test)
+  stay the mode's own. The pseudo-modes then contribute their static response
+  times Sa(T), which is the ASCE rigid-mode rule. Wired on every RSA path:
+  `solveMode()` (per mode, the full loop, `-increment`) and
+  `analyzeCombined()` (`-combine`), marked `// Ladruno WP-213` in
+  `ResponseSpectrumAnalysis.cpp`. The override lives as long as the registry
+  record, so a new `eigen` drops it with the tags.
+
+**Superseded first version.** The first cut of this PR set λ = (2π/T)²
+instead. Because RSA divides by the same λ it looks Sa up with, that rescaled
+the displacement by λ_R/λ_T as well: V3 gave 0.085 × the reference. Replaced
+before merge by the override above.
+
+**What the override gives depends on whether the missing mass is rigid.**
+- V3 as specified (pseudo-mode Rayleigh periods 0.31 s and 0.16 s, on the
+  plateau): Sa(0.05) = 0.65 g against 1.0 g, so `-period 0.05` gives
+  **0.655 ×** the reference (rayleigh 1.0055 ×). `residualModes` warns that
+  the pseudo-modes are not rigid at 0.05 s. Using the rigid-mode rule here is
+  the deck's mistake, and the result says so.
+- V3 with 100× stiffer storeys (pseudo-mode periods 0.031 s and 0.016 s, on
+  the ascending branch): `-period 0.05` gives **1.313 ×** the reference
+  (rayleigh 1.0049 ×): conservative, as ASCE intends.
 
 ### D4 — Ritz vectors as an alternative to `eigen` (PR 3)
 
@@ -188,11 +205,14 @@ residualModes -kinds
 |---|---|
 | V3 (a) 3 eigenmodes | modal mass 18 %, base shear 0.058 × reference |
 | V3 (b) + `residualModes -dir 1` | modal mass 100 % (1e-10), base shear 1.0055 × reference; Ritz values = numpy kernel (1e-9), shapes up to sign; ΨᵀMΨ = I, ΨᵀMΦ = 0 (1e-10), ΨᵀKΨ = Λ |
-| V3 (c) `-period 0.05` | λ = (2π/0.05)²; base shear = numpy oracle of the same rule (1e-8), 0.085 × reference; brackets with (b) |
+| V3 (c) `-period 0.05` | λ unchanged (Rayleigh); Sa read at 0.05 s; base shear = numpy oracle (1e-8): 0.655 × reference (pseudo-modes not rigid, 0.31/0.16 s) |
+| V3 (c) stiff, pseudo-modes 0.031/0.016 s | `-period 0.05` 1.313 ×, rayleigh 1.0049 × reference |
+| override on every RSA path | per mode (all 5 modes), `-increment`, `-combine` match the oracle (1e-8); without `-period` the same mode reads its own Sa |
+| WP-212 guard | 3 modes: `-requireMass 1.0` refused; + residual modes: accepted on per mode, full loop, `-combine`, `-increment`; report prints 100.00 % |
 | full-size basis | 3-storey chain: 1 mode + residual = `eigen -fullGenLapack 3` (1e-10) |
 | `-replace`, re-run, `eigen` clears tags | kinds `[0,0,0,1,1]` → unchanged → `[0,0,0,0]` |
-| rigid diaphragm, mass on constrained nodes | Penalty and Lagrange: modal mass 100 % X and Y, eigenvalues and CQC base shears = 3-DOF reference (1e-6), handlers agree (1e-7); Transformation: strict xfail until WP-211; constrained-node recovery and M-orthonormality pass now |
-| preloaded PDelta column | Ritz values = preloaded eigenvalues 2, 3 (1e-8), differ from unloaded |
+| rigid diaphragm, mass on constrained nodes | Transformation (with WP-211), Penalty and Lagrange: modal mass 100 % X and Y, eigenvalues and CQC base shears = 3-DOF reference (1e-8; 2e-6 for Penalty, α-limited), Penalty and Lagrange agree; constrained-node recovery and M-orthonormality under Transformation |
+| preloaded PDelta column | numpy kernel on the K the LinearSOE holds (`printA`) matches (1e-8); K and Ritz values differ from the unloaded state; modal mass complete despite massless rotations |
 | `modalResponseHistory` | 3 modes + residual within 10 % of all modes (3 modes alone > 50 % off) |
 | classic Tcl | `OpenSees.exe` returns the same eigenvalues and kinds as Python |
 
@@ -210,10 +230,8 @@ residualModes -kinds
 
 ## 6. Follow-ups
 
-1. RSA: Sa at an overridden period for RESIDUAL modes, true λ in the
-   amplitude (makes `-period 0.05` the ASCE rigid mode). Touches
-   `ResponseSpectrumAnalysis.cpp`; after WP-212.
-2. `modalProperties -print` tags R/Z (after WP-211).
+1. ~~RSA Sa-period override~~ — done in this PR (D3b).
+2. `modalProperties -print` tags R/Z (`DomainModalProperties.cpp`).
 3. PR 3: `ritzVectors` on the same kernel.
 4. apeGmsh: `apeSees.residual_modes(dirs, period=...)`, and read 100 % from
    `modalProperties` only with residual modes present.

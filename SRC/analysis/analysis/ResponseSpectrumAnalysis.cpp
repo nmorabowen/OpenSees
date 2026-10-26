@@ -39,6 +39,7 @@
 #include <Node.h>
 #include <NodeIter.h>
 #include <LadrunoModalCombination.h> // Ladruno ADR44 P1b
+#include <LadrunoRitzKernel.h>       // Ladruno WP-213: Sa-period override
 #include <vector>
 #include <algorithm>
 #include <cmath>
@@ -686,7 +687,10 @@ int ResponseSpectrumAnalysis::solveMode()
 	double omega = std::sqrt(lambda);
 	double freq = omega / 2.0 / M_PI;
 	double period = 1.0 / freq;
-	double mga = getSa(period);
+	// Ladruno WP-213: a residualModes -period T pseudo-mode reads Sa(T); lambda
+	// (and so u = phi Gamma Sa / lambda) stays its own. No override => stock.
+	const double sa_period = LadrunoModeKinds::saPeriod(domain, m_current_mode);
+	double mga = getSa(sa_period > 0.0 ? sa_period : period);
 	double Vscale = mp.eigenVectorScaleFactors()(m_current_mode);
 	double MPF = mp.modalParticipationFactors()(m_current_mode, exdof);
 
@@ -837,13 +841,17 @@ int ResponseSpectrumAnalysis::analyzeCombined()
 	std::vector<double> w(num_eigen), T(num_eigen), MPF(num_eigen),
 	                    Vscale(num_eigen), Sa(num_eigen), lambda(num_eigen),
 	                    xi(num_eigen);
+	// Ladruno WP-213: per-mode Sa-period overrides (residualModes -period T);
+	// T[a] and w[a] (TenPercent closeness, CQC rho) stay the modes' own
+	const std::vector<double> sa_period = LadrunoModeKinds::saPeriods(domain);
 	for (int a = 0; a < num_eigen; ++a) {
 		lambda[a] = mp.eigenvalues()(a);
 		const double omega = (lambda[a] > 0.0) ? std::sqrt(lambda[a]) : 0.0;
 		w[a] = omega;
 		const double period = (omega > 0.0) ? (2.0 * M_PI / omega) : 0.0;
 		T[a] = period;
-		Sa[a] = getSa(period);
+		Sa[a] = getSa((a < (int)sa_period.size() && sa_period[a] > 0.0)
+		              ? sa_period[a] : period); // Ladruno WP-213
 		Vscale[a] = mp.eigenVectorScaleFactors()(a);
 		MPF[a] = mp.modalParticipationFactors()(a, exdof);
 		if (m_xi.size() == 1) xi[a] = m_xi[0];               // broadcast

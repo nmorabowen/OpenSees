@@ -62,8 +62,9 @@ namespace
 {
     struct ModeKindRecord
     {
-        Vector           eigenvalues;   // snapshot of the domain's set
-        std::vector<int> kinds;
+        Vector              eigenvalues;   // snapshot of the domain's set
+        std::vector<int>    kinds;
+        std::vector<double> saPeriods;     // 0 = no override
     };
 
     std::map<const Domain*, ModeKindRecord>& modeKindRegistry()
@@ -93,25 +94,59 @@ namespace
     }
 }
 
+namespace
+{
+    // the record for the domain's CURRENT mode set, or 0 when absent / stale
+    const ModeKindRecord* validRecord(const Domain* theDomain, int& numModes)
+    {
+        Vector ev = currentEigenvalues(theDomain);
+        numModes = ev.Size();
+        std::map<const Domain*, ModeKindRecord>& reg = modeKindRegistry();
+        std::map<const Domain*, ModeKindRecord>::const_iterator it = reg.find(theDomain);
+        if (it != reg.end() && bitIdentical(it->second.eigenvalues, ev) &&
+            (int)it->second.kinds.size() == numModes)
+            return &it->second;
+        return 0;
+    }
+}
+
 std::vector<int>
 LadrunoModeKinds::get(const Domain* theDomain)
 {
-    Vector ev = currentEigenvalues(theDomain);
-    std::vector<int> kinds(ev.Size(), EIGEN);
-    std::map<const Domain*, ModeKindRecord>& reg = modeKindRegistry();
-    std::map<const Domain*, ModeKindRecord>::const_iterator it = reg.find(theDomain);
-    if (it != reg.end() && bitIdentical(it->second.eigenvalues, ev) &&
-        (int)it->second.kinds.size() == ev.Size())
-        kinds = it->second.kinds;
-    return kinds;
+    int n = 0;
+    const ModeKindRecord* rec = validRecord(theDomain, n);
+    return rec ? rec->kinds : std::vector<int>(n, EIGEN);
+}
+
+std::vector<double>
+LadrunoModeKinds::saPeriods(const Domain* theDomain)
+{
+    int n = 0;
+    const ModeKindRecord* rec = validRecord(theDomain, n);
+    if (rec && (int)rec->saPeriods.size() == n)
+        return rec->saPeriods;
+    return std::vector<double>(n, 0.0);
+}
+
+double
+LadrunoModeKinds::saPeriod(const Domain* theDomain, int mode0)
+{
+    int n = 0;
+    const ModeKindRecord* rec = validRecord(theDomain, n);
+    if (rec == 0 || mode0 < 0 || mode0 >= (int)rec->saPeriods.size())
+        return 0.0;
+    return rec->saPeriods[mode0];
 }
 
 void
-LadrunoModeKinds::set(const Domain* theDomain, const std::vector<int>& kinds)
+LadrunoModeKinds::set(const Domain* theDomain, const std::vector<int>& kinds,
+                      const std::vector<double>& saPeriods)
 {
     ModeKindRecord rec;
     rec.eigenvalues = currentEigenvalues(theDomain);
     rec.kinds = kinds;
+    rec.saPeriods = saPeriods;
+    rec.saPeriods.resize(kinds.size(), 0.0);
     modeKindRegistry()[theDomain] = rec;
 }
 
