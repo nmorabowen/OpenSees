@@ -277,9 +277,10 @@ OPS_LadrunoResidualModes(void)
     // Tolerance: an eigenvalue carries round-off of order
     // eps |phi|^T |K| |phi| / phi^T K phi, which Penalty (alpha = 1e14) makes
     // 1e-4 and more on an unchanged model (kip-in, review round 2); the
-    // refusal / warning thresholds sit 100x / 10x above that floor, and never
-    // below 1e-4 / 1e-7. A change smaller than the floor cannot be told from
-    // round-off and is not refused.
+    // refusal / warning thresholds sit 10x / 1x above that floor, and never
+    // below 1e-4 / 1e-7 (WP-214; 100x / 10x let a 20 % stiffness loss after
+    // eigen 1 through on the tied-floor model, f1 = 4e-3 vs a measured gap of
+    // 2.5e-4). A change smaller than 10x the floor is not refused.
     const int neq = kernel.numEqn();
     {
         std::vector<Vector> Kphi;
@@ -303,8 +304,8 @@ OPS_LadrunoResidualModes(void)
             const double rel = std::fabs(rq - lam[k]) /
                 std::max(std::fabs(lam[k]), 1.0e-12 * lamMax);
             const double floorK = (std::fabs(kq) > 0.0) ? eps * absQuad[k] / std::fabs(kq) : 0.0;
-            const double refuseTol = std::max(1.0e-4, 100.0 * floorK);
-            const double warnTol = std::max(1.0e-7, 10.0 * floorK);
+            const double refuseTol = std::max(1.0e-4, 10.0 * floorK);
+            const double warnTol = std::max(1.0e-7, floorK);
             if (rel / refuseTol > worstRefuse) {
                 worstRefuse = rel / refuseTol;
                 refuseK = (int)k;
@@ -329,7 +330,7 @@ OPS_LadrunoResidualModes(void)
         if (worstWarn > 1.0)
             opserr << "residualModes: WARNING mode " << warnK + 1
                    << " deviates from the current tangent by " << warnRel
-                   << " (relative Rayleigh quotient, above 10x its round-off floor);"
+                   << " (relative Rayleigh quotient, above its round-off floor);"
                    << " the eigen solve is loose or the state moved\n";
     }
 

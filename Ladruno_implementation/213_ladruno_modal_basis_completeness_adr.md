@@ -2,7 +2,7 @@
 title: "ADR 213 — Modal basis completeness: shared Krylov-Ritz kernel + residualModes (WP-213)"
 project: Ladruno
 type: ADR
-status: "PR 2 implemented (draft PR) — kernel C + residualModes D; ritzVectors (E) is PR 3"
+status: "PR 2 merged (#1023) — kernel C + residualModes D; D6 mode tags in WP-214; ritzVectors (E) is PR 3"
 priority: medium
 owner: nmora
 related:
@@ -12,7 +12,7 @@ related:
   - "WP-212 / PR #1021, merged (RSA mass-shortfall report and -requireMass)"
   - "WP-212 / PR #1021 (RSA mass-shortfall guard, -requireMass)"
   - "apeWorkbench opensees-dynamic-analysis, branch work/claude/rsa-gap-study: studies/rsa-gaps/{gap-study.md, fork-implementation-guide.md, v1/}"
-tags: [adr, modal, response-spectrum, missing-mass, ritz, asce7, wp-213]
+tags: [adr, modal, response-spectrum, missing-mass, ritz, asce7, wp-213, wp-214]
 updated: 2026-10-26
 ---
 
@@ -83,8 +83,8 @@ Ladruno side, keyed by `Domain*`, no `Domain` member. A record is valid only
 while the domain's eigenvalue vector is bit-identical to the snapshot taken
 when it was written, so a new `eigen` (or `wipe`, a FEAST trim) clears the
 tags without touching the eigen path. `residualModes -kinds` returns them
-(0 eigen, 1 residual, 2 Ritz). Tagging the rows of `modalProperties -print`
-is deferred: `DomainModalProperties.cpp` is WP-211's file.
+(0 eigen, 1 residual, 2 Ritz). `modalProperties -print` tags them since
+WP-214 (D6).
 
 ### D3 — the residual space is span{r_d, K⁻¹M r_d} (deviation from the guide)
 
@@ -188,6 +188,51 @@ No Gupta split (`-combine GMC`, CARM §20.5.1, Gupta & Chen 1984); the
 pseudo-modes carry the rigid mass and combine by CQC like any mode (their
 periods are far from the dynamic ones, so ρ ≈ 0 against them).
 
+### D6 — mode-kind tags in `modalProperties` (WP-214)
+
+The report says which rows are not natural modes. When the registry holds a
+valid record for the domain **and** its snapshot equals the report's
+eigenvalue vector bit for bit, every mode row (section 2 and the per-mode
+tables 6–10, screen and `-file`) ends in a trailing comment:
+
+```
+              4       419.562       20.4832          3.26      0.306748  # R
+```
+
+- `  # R` residual pseudo-mode, `  # Z` Ritz vector (the `RITZ` kind `ritzVectors`
+  will record; nothing writes it yet), eigen rows unmarked. A trailing `#`
+  comment, not a new column or a suffixed mode number, so a row read with a
+  `#`-aware reader (`numpy.loadtxt`, the report's own comment character)
+  still parses as numbers.
+- Section 2 adds one line per kind present, with compressed index ranges:
+  `# NOTE: modes 4-5 (R) are residual pseudo-modes (static correction); their
+  periods are Rayleigh, not natural.` When `-period $T` recorded an Sa
+  override it adds `responseSpectrumAnalysis reads their Sa at T = …`; for Z,
+  `only the lowest approximate natural periods (upper bounds); the higher ones
+  are not modes.`
+- `-return` gains a `modeKind` key (0 / 1 / 2 per mode) in that case only — a
+  new key, so existing readers are unaffected.
+- **No record, no change:** plain `eigen`, or a new `eigen` after
+  `residualModes` (the record goes stale, D2), gives a report byte-identical
+  to bac089465 on screen and in `-file`, and the same `-return` keys. Pinned by
+  `tests/test_wp214_mode_tags.py` against a baseline captured from that build.
+
+**Where the code lives.** The hook `LadrunoModeKinds::report(Domain*,
+eigenvalues)` (Ladruno side, next to the registry) builds the strings; the
+vanilla `DomainModalProperties.cpp` only appends them (`// Ladruno WP-214`, one
+vanilla row). Decorating from outside was not possible: `print_internal`
+writes rows straight to `opserr` / the file stream, and `DomainModalProperties`
+holds no `Domain*`. The domain is `OPS_GetDomain()`, the same one
+`OPS_DomainModalProperties` computed from; the bit-identical eigenvalue match
+guards against pairing a record with a different mode set.
+
+**Penalty margin (same WP).** The `residualModes` state check refuses above
+max(1e-4, 10 f) and warns above max(1e-7, f), from 100 f / 10 f (Opus review
+of #1023 at 409a9b552): on the tied-floor model (kip-in, 10 storeys,
+α = 1e14) f₁ = 4.0e-3 while the measured gap is 2.5e-4 (MKL) / 2.1e-6
+(reference LAPACK), so a 20 % stiffness loss after `eigen 1` only warned and
+a 2 % loss passed silently. Both are now caught (refused / warned).
+
 ### Rejected — an `EigenSOE` subclass
 
 An `EigenSOE` sees K and M but not node directions (ι_d), load patterns
@@ -225,14 +270,14 @@ residualModes -kinds
   Projected on Φ, the check is exact under Lagrange too.
   - **Tolerance scales with the round-off floor** f = ε·|φ|ᵀ|K||φ| / φᵀKφ
     (accumulated in the same element sweep as KΦ): refuse above
-    max(1e-4, 100 f), warn above max(1e-7, 10 f). Under Penalty (α = 1e14)
+    max(1e-4, 10 f), warn above max(1e-7, f) (WP-214; was 100 f / 10 f). Under Penalty (α = 1e14)
     the eigenvalue itself carries round-off of order ε·α/(λ m), while the
     Rayleigh quotient is exact. Review round 2 measured it on the binary:
     two nodes per floor tied by `equalDOF`, kip-in units, an unchanged model
     showed a 1.6e-4–2.7e-4 gap and was refused under the old fixed 1e-4.
     Now accepted, and a test pins it.
-  - What is given up: a state change smaller than the floor cannot be told
-    from round-off and passes. A change ΔK with φᵀΔKφ ≈ 0 for every kept φ
+  - What is given up: a state change smaller than 10× the floor cannot be
+    told from round-off and passes (one between f and 10 f warns). A change ΔK with φᵀΔKφ ≈ 0 for every kept φ
     (indefinite) also passes the Rayleigh-quotient test. A residual check
     ‖KΦ − MΦΛ‖ would catch it, but under Lagrange it needs the multiplier
     rows, which Φ extracted from the nodes does not carry; left out.
@@ -282,7 +327,7 @@ residualModes -kinds
 ## 6. Follow-ups
 
 1. ~~RSA Sa-period override~~ — done in this PR (D3b).
-2. `modalProperties -print` tags R/Z (`DomainModalProperties.cpp`).
+2. ~~`modalProperties -print` tags R/Z~~ — done in WP-214 (D6).
 3. PR 3: `ritzVectors` on the same kernel.
 4. apeGmsh: `apeSees.residual_modes(dirs, period=...)`, and read 100 % from
    `modalProperties` only with residual modes present.

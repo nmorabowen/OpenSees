@@ -99,6 +99,21 @@ namespace LadrunoModeKinds
     void clear(const Domain* theDomain);
     // single-letter label for printing: E / R / Z (Ritz)
     char label(int kind);
+
+    // Ladruno WP-214 (ADR 213 D6): decoration of the modalProperties report.
+    // Active only when the domain's record is valid, its eigenvalue snapshot
+    // equals `lambdas` bit for bit and some mode is not EIGEN; otherwise every
+    // string is empty (and kinds too), so the report stays the stock one.
+    struct Report
+    {
+        std::vector<int> kinds;         // per mode; empty when inactive
+        std::vector<std::string> tags;  // per mode: "" or "  # R" / "  # Z"
+        std::string note;               // "# NOTE: ..." lines; "" when inactive
+        bool active() const { return !kinds.empty(); }
+        // tag of mode mode0 (0-based), "" when inactive / out of range
+        const char* tag(int mode0) const;
+    };
+    Report report(const Domain* theDomain, const Vector& lambdas);
 }
 
 class LadrunoRitzKernel

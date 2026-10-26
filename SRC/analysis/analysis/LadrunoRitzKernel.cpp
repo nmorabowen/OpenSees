@@ -189,6 +189,88 @@ LadrunoModeKinds::label(int kind)
     }
 }
 
+const char*
+LadrunoModeKinds::Report::tag(int mode0) const
+{
+    if (mode0 < 0 || mode0 >= (int)tags.size())
+        return "";
+    return tags[mode0].c_str();
+}
+
+namespace
+{
+    // 1-based ascending mode numbers as "4-5" / "3, 6-7"
+    std::string modeRanges(const std::vector<int>& modes)
+    {
+        std::ostringstream s;
+        for (size_t i = 0; i < modes.size(); ) {
+            size_t j = i;
+            while (j + 1 < modes.size() && modes[j + 1] == modes[j] + 1)
+                j++;
+            if (i > 0)
+                s << ", ";
+            s << modes[i];
+            if (j > i)
+                s << "-" << modes[j];
+            i = j + 1;
+        }
+        return s.str();
+    }
+}
+
+LadrunoModeKinds::Report
+LadrunoModeKinds::report(const Domain* theDomain, const Vector& lambdas)
+{
+    Report r;
+    int n = 0;
+    const ModeKindRecord* rec = validRecord(theDomain, n);
+    if (rec == 0 || !bitIdentical(rec->eigenvalues, lambdas))
+        return r;
+    std::vector<int> residual, ritz;
+    for (int k = 0; k < n; k++) {
+        if (rec->kinds[k] == RESIDUAL)
+            residual.push_back(k + 1);
+        else if (rec->kinds[k] == RITZ)
+            ritz.push_back(k + 1);
+    }
+    if (residual.empty() && ritz.empty())
+        return r;
+
+    r.kinds = rec->kinds;
+    r.tags.assign(n, std::string());
+    for (int k = 0; k < n; k++)
+        if (rec->kinds[k] != EIGEN)
+            r.tags[k] = std::string("  # ") + label(rec->kinds[k]);
+
+    std::ostringstream note;
+    if (!residual.empty()) {
+        const bool one = residual.size() == 1;
+        note << "# NOTE: " << (one ? "mode " : "modes ") << modeRanges(residual)
+             << " (R) " << (one ? "is a residual pseudo-mode" : "are residual pseudo-modes")
+             << " (static correction); " << (one ? "its period is" : "their periods are")
+             << " Rayleigh, not natural.";
+        // -period $T: one override shared by the whole residual set (D3b)
+        const double T = rec->saPeriods[residual[0] - 1];
+        bool same = T > 0.0;
+        for (size_t i = 1; i < residual.size(); i++)
+            if (rec->saPeriods[residual[i] - 1] != T)
+                same = false;
+        if (same)
+            note << " responseSpectrumAnalysis reads " << (one ? "its" : "their")
+                 << " Sa at T = " << T << ".";
+        note << "\n";
+    }
+    if (!ritz.empty()) {
+        const bool one = ritz.size() == 1;
+        note << "# NOTE: " << (one ? "mode " : "modes ") << modeRanges(ritz)
+             << " (Z) " << (one ? "is a Ritz vector" : "are Ritz vectors")
+             << "; only the lowest approximate natural periods (upper bounds),"
+             << " the higher ones are not modes.\n";
+    }
+    r.note = note.str();
+    return r;
+}
+
 // ===========================================================================
 // kernel
 // ===========================================================================
