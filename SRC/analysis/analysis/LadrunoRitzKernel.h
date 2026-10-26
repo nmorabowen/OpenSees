@@ -140,8 +140,11 @@ public:
     // ---- products in equation numbering ----------------------------------
     // y = M x (FE_Element / DOF_Group getM_Force, constraint-aware)
     void applyM(const Vector& x, Vector& y);
-    // KX[j] = K X[j] for all columns in one sweep over the FE_Elements
-    void applyK(const std::vector<Vector>& X, std::vector<Vector>& KX);
+    // KX[j] = K X[j] for all columns in one sweep over the FE_Elements.
+    // absQuad (optional): absQuad[j] = sum_e |x_e|^T |K_e| |x_e|, the scale of
+    // the round-off in x^T K x (huge next to x^T K x under Penalty)
+    void applyK(const std::vector<Vector>& X, std::vector<Vector>& KX,
+                std::vector<double>* absQuad = 0);
     // M-inner product with a precomputed M y
     static double dot(const Vector& a, const Vector& b);
 

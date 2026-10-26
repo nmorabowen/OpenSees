@@ -61,6 +61,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <cstdlib>
 #include <vector>
 
@@ -273,42 +274,63 @@ OPS_LadrunoResidualModes(void)
     // quotient of each kept mode on the current K must equal its eigenvalue
     // (exact for the residual modes too: their lambda IS their Rayleigh
     // quotient). Projected on Phi, so Lagrange multiplier rows drop out.
+    // Tolerance: an eigenvalue carries round-off of order
+    // eps |phi|^T |K| |phi| / phi^T K phi, which Penalty (alpha = 1e14) makes
+    // 1e-4 and more on an unchanged model (kip-in, review round 2); the
+    // refusal / warning thresholds sit 100x / 10x above that floor, and never
+    // below 1e-4 / 1e-7. A change smaller than the floor cannot be told from
+    // round-off and is not refused.
     const int neq = kernel.numEqn();
     {
         std::vector<Vector> Kphi;
-        kernel.applyK(phi, Kphi);
+        std::vector<double> absQuad;
+        kernel.applyK(phi, Kphi, &absQuad);
         Vector Mphi(neq);
         double lamMax = 0.0;
         for (size_t k = 0; k < lam.size(); k++)
             lamMax = std::max(lamMax, std::fabs(lam[k]));
-        double worst = 0.0;
-        int worstK = -1;
-        double worstRQ = 0.0;
+        const double eps = std::numeric_limits<double>::epsilon();
+        double worstRefuse = 0.0, worstWarn = 0.0;
+        int refuseK = -1, warnK = -1;
+        double refuseRel = 0.0, refuseRQ = 0.0, refuseFloor = 0.0, warnRel = 0.0;
         for (size_t k = 0; k < phi.size(); k++) {
             kernel.applyM(phi[k], Mphi);
             const double gm = LadrunoRitzKernel::dot(phi[k], Mphi);
             if (!(gm > 0.0))
                 continue;
-            const double rq = LadrunoRitzKernel::dot(phi[k], Kphi[k]) / gm;
+            const double kq = LadrunoRitzKernel::dot(phi[k], Kphi[k]);
+            const double rq = kq / gm;
             const double rel = std::fabs(rq - lam[k]) /
                 std::max(std::fabs(lam[k]), 1.0e-12 * lamMax);
-            if (rel > worst) {
-                worst = rel;
-                worstK = (int)k;
-                worstRQ = rq;
+            const double floorK = (std::fabs(kq) > 0.0) ? eps * absQuad[k] / std::fabs(kq) : 0.0;
+            const double refuseTol = std::max(1.0e-4, 100.0 * floorK);
+            const double warnTol = std::max(1.0e-7, 10.0 * floorK);
+            if (rel / refuseTol > worstRefuse) {
+                worstRefuse = rel / refuseTol;
+                refuseK = (int)k;
+                refuseRel = rel;
+                refuseRQ = rq;
+                refuseFloor = floorK;
+            }
+            if (rel / warnTol > worstWarn) {
+                worstWarn = rel / warnTol;
+                warnK = (int)k;
+                warnRel = rel;
             }
         }
-        if (worst > 1.0e-4) {
-            opserr << "residualModes: the model changed after eigen: mode " << worstK + 1
-                   << " has Rayleigh quotient " << worstRQ << " on the current tangent but"
-                   << " eigenvalue " << lam[worstK] << " (relative " << worst
+        if (worstRefuse > 1.0) {
+            opserr << "residualModes: the model changed after eigen: mode " << refuseK + 1
+                   << " has Rayleigh quotient " << refuseRQ << " on the current tangent but"
+                   << " eigenvalue " << lam[refuseK] << " (relative " << refuseRel
+                   << ", round-off floor " << refuseFloor
                    << "); re-run eigen on the current state first\n";
             return -1;
         }
-        if (worst > 1.0e-7)
-            opserr << "residualModes: WARNING mode " << worstK + 1
-                   << " deviates from the current tangent by " << worst
-                   << " (relative Rayleigh quotient); the eigen solve is loose or the state moved\n";
+        if (worstWarn > 1.0)
+            opserr << "residualModes: WARNING mode " << warnK + 1
+                   << " deviates from the current tangent by " << warnRel
+                   << " (relative Rayleigh quotient, above 10x its round-off floor);"
+                   << " the eigen solve is loose or the state moved\n";
     }
 
     // ---- starting vectors M iota_d ---------------------------------------
@@ -411,6 +433,11 @@ OPS_LadrunoResidualModes(void)
                    << kTwoPi / std::sqrt(lamMaxKept)
                    << " s): the missing mass is not rigid at this truncation - add modes\n";
     }
+    if (fixedPeriod && q > 1)
+        opserr << "residualModes: the " << q << " pseudo-modes are ONE rigid mode at " << period
+               << " s: responseSpectrumAnalysis -combine sums them before any rule; per-mode"
+               << " runs (-mode k, -increment) do not - add their responses algebraically"
+               << " before combining with the other modes\n";
 
     // ---- install the new set ----------------------------------------------
     if (q == 0 && numReplaced == 0) {

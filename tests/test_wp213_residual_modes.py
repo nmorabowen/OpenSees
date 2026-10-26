@@ -339,6 +339,99 @@ def test_period_override_correlates_the_pseudo_modes(monkeypatch):
     assert v / ref == pytest.approx(1.651, abs=1e-3)
 
 
+def _combine(rule, R, w, T):
+    R = np.asarray(R, float)
+    if rule == 'SRSS':
+        return math.sqrt(R @ R)
+    if rule == 'ABS':
+        return float(np.abs(R).sum())
+    if rule == 'CQC':
+        return _cqc(R, w)
+    s = R @ R
+    for i in range(len(R)):
+        for j in range(i + 1, len(R)):
+            if abs(T[i] - T[j]) <= 0.10 * min(T[i], T[j]):
+                s += 2 * abs(R[i] * R[j])
+    return math.sqrt(s)
+
+
+@pytest.mark.parametrize('rule', ['SRSS', 'ABS', 'TenPercent', 'CQC'])
+def test_rigid_group_is_one_mode_under_every_rule(monkeypatch, rule):
+    # review round 2, item 1: the overridden modes are ONE rigid mode for
+    # every rule, not only under CQC. Oracle: the eigen modes' R plus a single
+    # rigid term = the static missing-mass response K^-1 M r times Sa(0.05)
+    # (the pseudo-modes' R sum to exactly that, Galerkin)
+    monkeypatch.setattr(sys.modules[__name__], 'MODEL_MK',
+                        ([40, 40] + [1.0] * 8, [3e4 * 400, 3e4 * 100] + [3e4] * 8))
+    _, _, K, M = _v3_mk()
+    w2, phi = _v3_modes_np()
+    io = np.ones(N3)
+    Phi = phi[:, :3]
+    r = io - Phi @ (Phi.T @ M @ io)
+    x = np.linalg.solve(K, M @ r)
+    lam_np, psi_np = _residual_oracle(K, M, Phi, [io])
+    P = np.column_stack([Phi, psi_np])
+    lam_all = np.r_[w2[:3], lam_np]
+    _v3_build()
+    ops.eigen('-fullGenLapack', 3)
+    ops.residualModes('-dir', 1, '-period', 0.05)
+    ops.modalProperties()
+    ops.responseSpectrumAnalysis(1, '-Tn', *TN.tolist(), '-Sa', *SA.tolist(),
+                                 '-combine', rule, '-damp', XI)
+    T_e = 2 * math.pi / np.sqrt(w2[:3])
+    T_all = np.r_[T_e, 0.05]
+    w_all = 2 * math.pi / T_all
+    for node in (1, N3):
+        d = node - 1
+        R_e = [phi[d, j] * (phi[:, j] @ M @ io) / (phi[:, j] @ M @ phi[:, j]) * _S(T_e[j]) / w2[j]
+               for j in range(3)]
+        R_pseudo = [P[d, j] * (P[:, j] @ M @ io) * _S(0.05) / lam_all[j] for j in (3, 4)]
+        assert sum(R_pseudo) == pytest.approx(x[d] * _S(0.05), rel=1e-9)
+        expected = _combine(rule, R_e + [x[d] * _S(0.05)], w_all, T_all)
+        assert abs(ops.nodeDisp(node, 1)) == pytest.approx(expected, rel=1e-8), (rule, node)
+
+
+def _penalty_tied_floors(nf, m, k, solver):
+    # two nodes per floor tied by equalDOF under Penalty (alpha = 1e14): the
+    # eigenvalue carries round-off ~ eps alpha / (lambda m) (review round 2)
+    ops.wipe()
+    ops.model('basic', '-ndm', 2, '-ndf', 3)
+    ops.node(0, 0.0, 0.0)
+    ops.fix(0, 1, 1, 1)
+    ops.node(1000, 0.0, 0.0)
+    ops.fix(1000, 1, 1, 1)
+    ops.uniaxialMaterial('Elastic', 1, k)
+    e = 1
+    for f in range(1, nf + 1):
+        for side, base in ((0, 0), (1, 1000)):
+            n = 2 * f + side
+            ops.node(n, 0.0, 0.0)
+            ops.fix(n, 0, 1, 1)
+            ops.mass(n, m, 0.0, 0.0)
+            ops.element('zeroLength', e, (2 * (f - 1) + side) if f > 1 else base, n,
+                        '-mat', 1, '-dir', 1)
+            e += 1
+        ops.equalDOF(2 * f, 2 * f + 1, 1)
+    ops.constraints('Penalty', 1.0e14, 1.0e14)
+    ops.numberer('RCM')
+    ops.system('UmfPack')
+    ops.analysis('Static')
+    ops.eigen(*solver)
+
+
+@pytest.mark.parametrize('nf,m,k', [(10, 1.0, 500.0), (3, 0.5, 100.0), (10, 500.0, 1.0e5)])
+@pytest.mark.parametrize('solver', [('-fullGenLapack', 3), (3,)])
+def test_penalty_unchanged_model_is_accepted(nf, m, k, solver):
+    # review round 2, item 2: kip-in Penalty models were refused as "changed
+    # after eigen" (relative Rayleigh-quotient gap 1e-4 .. 3e-4 from the
+    # eigenvalue's own round-off); the check now scales with that floor
+    _penalty_tied_floors(nf, m, k, solver)
+    ops.residualModes('-dir', 1)          # raised "changed after eigen" before
+    kinds = ops.residualModes('-kinds')
+    if nf > 3:                            # 3 storeys: 3 modes already span it
+        assert kinds.count(1) >= 1, kinds
+
+
 def test_period_override_on_every_rsa_path():
     _, _, K, M = _v3_mk()
     w2, phi = _v3_modes_np()

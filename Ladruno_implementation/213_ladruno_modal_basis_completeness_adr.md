@@ -132,16 +132,23 @@ Every pseudo-mode keeps its Rayleigh λ in the domain's mode set.
   override.
 - `-period $T` (the guide's ASCE §12.9.1.1 "rigid mode at 0.05 s"): T is
   recorded as the mode's **Sa-period override** in `LadrunoModeKinds`.
-  An overridden mode is treated as **one rigid mode at T**: RSA reads Sa(T)
-  and uses ω = 2π/T in the CQC ρ (and T in the TenPercent closeness test),
-  so overridden modes correlate fully with each other. λ in u = φ Γ Sa/λ
-  stays the mode's own, so each contributes its static response times
-  Sa(T); summed with ρ = 1 they give the static missing-mass response times
-  Sa(T), which is the ASCE rigid-mode rule. Wired on every RSA path:
-  `solveMode()` (per mode, the full loop, `-increment`) and
-  `analyzeCombined()` (`-combine`), marked `// Ladruno WP-213` in
-  `ResponseSpectrumAnalysis.cpp`. The override lives as long as the registry
-  record, so a new `eigen` drops it with the tags.
+  The modes sharing an override are **one rigid mode at T**: RSA reads
+  Sa(T); λ in u = φ Γ Sa/λ stays each mode's own, so each contributes its
+  static response times Sa(T), and their sum is exactly the static
+  missing-mass response K⁻¹M r times Sa(T) (Galerkin: K⁻¹M r is in their
+  span), which is the ASCE rigid-mode rule.
+  - `-combine` (`analyzeCombined()`): the group's R values are **summed into
+    one term before the rule sees them**, with ω = 2π/T (CQC ρ) and T
+    (TenPercent) for that term. So SRSS, ABS, TenPercent and CQC all treat
+    the group as one mode. Without overrides every mode keeps its own slot
+    and the output is byte-identical.
+  - Per mode (`solveMode()`: `-mode k`, the full loop, `-increment`): each
+    pseudo-mode reads Sa(T) and is reported on its own. A deck that combines
+    per-mode results itself **must add the pseudo-modes algebraically** first;
+    `residualModes -period` prints that.
+  All edits are marked `// Ladruno WP-213` in `ResponseSpectrumAnalysis.cpp`.
+  The override lives as long as the registry record, so a new `eigen` drops
+  it with the tags.
 
 **Superseded first version.** The first cut of this PR set λ = (2π/T)²
 instead. Because RSA divides by the same λ it looks Sa up with, that rescaled
@@ -211,12 +218,24 @@ residualModes -kinds
 - Refused: no modes, no LinearSOE, a partitioned (OpenSeesSP) domain
   (`Domain::ladrunoThreadedUpdateAllowed()` is false exactly there), and a
   **model that changed after `eigen`**: the Rayleigh quotient of every kept
-  mode on the current tangent must match its eigenvalue to 1e-4 (warning
-  above 1e-7). That is the property the deflation needs (ΨᵀKΦ = 0), measured
-  directly; the eigen set time and the commit tag are only proxies (a
-  `loadConst -time 0` hides a gravity step from the first, a linear transient
-  moves the second without changing K). Projected on Φ, the check is exact
-  under Lagrange too.
+  mode on the current tangent must match its eigenvalue. That is the property
+  the deflation needs (ΨᵀKΦ = 0), measured directly; the eigen set time and
+  the commit tag are only proxies (a `loadConst -time 0` hides a gravity step
+  from the first, a linear transient moves the second without changing K).
+  Projected on Φ, the check is exact under Lagrange too.
+  - **Tolerance scales with the round-off floor** f = ε·|φ|ᵀ|K||φ| / φᵀKφ
+    (accumulated in the same element sweep as KΦ): refuse above
+    max(1e-4, 100 f), warn above max(1e-7, 10 f). Under Penalty (α = 1e14)
+    the eigenvalue itself carries round-off of order ε·α/(λ m), while the
+    Rayleigh quotient is exact. Review round 2 measured it on the binary:
+    two nodes per floor tied by `equalDOF`, kip-in units, an unchanged model
+    showed a 1.6e-4–2.7e-4 gap and was refused under the old fixed 1e-4.
+    Now accepted, and a test pins it.
+  - What is given up: a state change smaller than the floor cannot be told
+    from round-off and passes. A change ΔK with φᵀΔKφ ≈ 0 for every kept φ
+    (indefinite) also passes the Rayleigh-quotient test. A residual check
+    ‖KΦ − MΦΛ‖ would catch it, but under Lagrange it needs the multiplier
+    rows, which Φ extracted from the nodes does not carry; left out.
 - Warns when a kept residual shape carries < 1e-6 of its direction's mass:
   that is within a few decades of the noise in Φ (≈ 1e-11 on V1 under Penalty), so it may
   be noise rather than missing mass.
@@ -236,7 +255,9 @@ residualModes -kinds
 | V3 (c) `-period 0.05` | λ unchanged (Rayleigh); Sa and CQC ω at 0.05 s; base shear = numpy oracle (1e-8): 0.662 × reference (pseudo-modes not rigid, 0.31/0.16 s) |
 | V3 (c) stiff, pseudo-modes 0.031/0.016 s | `-period 0.05` 1.333 ×, rayleigh 1.0049 × reference |
 | review podium (Opus round 1) | `-period 0.05` 1.651 × reference (was 1.278 × with own-ω CQC) |
-| round-1 guards | period-rule mismatch refused until `-replace`; eigen on the unloaded column then a P-Delta gravity step: refused, accepted after re-running eigen; `-dir 2` then `-dir 1 -replace` keeps Y at 100 %; noise-level residual (V1, `-tol 1e-6`) warned |
+| round-1 guards | period-rule mismatch refused until `-replace`; eigen on the unloaded column then a P-Delta gravity step: refused, accepted after re-running eigen; `-dir 2` then `-dir 1 -replace` keeps Y at 100 %; noise-level residual (V1 under Penalty, `-tol 1e-6`) warned |
+| round 2: rigid group under every rule | review podium, `-period 0.05`, `-combine` SRSS / ABS / TenPercent / CQC at the base and roof nodes = oracle with the eigen modes' R plus ONE term K⁻¹M r · Sa(0.05) (1e-8); the pseudo-modes' R sum to that term (1e-9) |
+| round 2: Penalty round-off | tied-floor Penalty models (kip-in 10 and 3 storeys, kN-m 10 storeys) × (`-fullGenLapack`, ARPACK): unchanged model accepted |
 | override on every RSA path | per mode (all 5 modes), `-increment`, `-combine` match the oracle (1e-8); without `-period` the same mode reads its own Sa |
 | WP-212 guard | 3 modes: `-requireMass 1.0` refused; + residual modes: accepted on per mode, full loop, `-combine`, `-increment`; report prints 100.00 % |
 | full-size basis | 3-storey chain: 1 mode + residual = `eigen -fullGenLapack 3` (1e-10) |

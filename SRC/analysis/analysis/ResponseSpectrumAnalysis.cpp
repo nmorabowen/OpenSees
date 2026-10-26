@@ -896,6 +896,33 @@ int ResponseSpectrumAnalysis::analyzeCombined()
 	Node* node;
 	NodeIter& theNodes = domain->getNodes();
 	std::vector<double> R(num_eigen);
+	// Ladruno WP-213: the modes sharing one Sa-period override are ONE rigid
+	// mode (ASCE 7-22 12.9.1.1): their R are summed into a single term before
+	// the rule sees them, so SRSS / ABS / TenPercent treat them as one mode as
+	// well as CQC. Without overrides every mode keeps its own slot (identity).
+	std::vector<int> slot(num_eigen);
+	std::vector<double> wc, xic, Tc, groupT;
+	std::vector<int> groupSlot;
+	for (int a = 0; a < num_eigen; ++a) {
+		const bool over = lambda[a] > 0.0 && a < (int)sa_period.size() && sa_period[a] > 0.0;
+		int g = -1;
+		if (over)
+			for (int k = 0; k < (int)groupT.size(); ++k)
+				if (groupT[k] == sa_period[a]) { g = k; break; }
+		if (g >= 0) {
+			slot[a] = groupSlot[g];
+			continue;
+		}
+		slot[a] = (int)wc.size();
+		wc.push_back(w[a]);
+		xic.push_back(xi[a]);
+		Tc.push_back(T[a]);
+		if (over) {
+			groupT.push_back(sa_period[a]);
+			groupSlot.push_back(slot[a]);
+		}
+	}
+	std::vector<double> Rc(wc.size());
 	while ((node = theNodes()) != 0) {
 		const Matrix& node_evec = node->getEigenvectors();
 		const int node_ndf = node_evec.noRows();
@@ -910,9 +937,12 @@ int ResponseSpectrumAnalysis::analyzeCombined()
 				// avoids the div-by-~0 blow-up for a rigid/spurious mode
 				R[a] = (lambda[a] > 0.0) ? V * MPF[a] * Sa[a] / lambda[a] : 0.0;
 			}
+			std::fill(Rc.begin(), Rc.end(), 0.0); // Ladruno WP-213
+			for (int a = 0; a < num_eigen; ++a)
+				Rc[slot[a]] += R[a];
 			const double u_comb = LadrunoModalCombination::combine(
 				static_cast<LadrunoModalCombination::Rule>(m_combine),
-				R, w, xi, T);
+				Rc, wc, xic, Tc);
 			node->setTrialDisp(u_comb, i);
 		}
 	}

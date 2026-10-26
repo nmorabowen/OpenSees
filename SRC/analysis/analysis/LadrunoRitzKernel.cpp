@@ -248,10 +248,13 @@ LadrunoRitzKernel::applyM(const Vector& x, Vector& y)
 }
 
 void
-LadrunoRitzKernel::applyK(const std::vector<Vector>& X, std::vector<Vector>& KX)
+LadrunoRitzKernel::applyK(const std::vector<Vector>& X, std::vector<Vector>& KX,
+                          std::vector<double>* absQuad)
 {
     const int n = (int)X.size();
     KX.assign(n, Vector(m_neq));
+    if (absQuad != 0)
+        absQuad->assign(n, 0.0);
     if (n == 0)
         return;
 
@@ -275,6 +278,13 @@ LadrunoRitzKernel::applyK(const std::vector<Vector>& X, std::vector<Vector>& KX)
                 xl(i) = (loc >= 0 && loc < m_neq) ? X[j](loc) : 0.0;
             }
             yl.addMatrixVector(0.0, kt, xl, 1.0);
+            if (absQuad != 0) {
+                double q = 0.0;
+                for (int i = 0; i < nd; i++)
+                    for (int l = 0; l < nd; l++)
+                        q += std::fabs(kt(i, l)) * std::fabs(xl(i)) * std::fabs(xl(l));
+                (*absQuad)[j] += q;
+            }
             for (int i = 0; i < nd; i++) {
                 const int loc = id(i);
                 if (loc >= 0 && loc < m_neq)
