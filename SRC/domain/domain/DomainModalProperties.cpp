@@ -54,6 +54,7 @@
 #include <SP_Constraint.h>
 #include <SP_ConstraintIter.h>
 #include <elementAPI.h>
+#include <LadrunoRitzKernel.h> // Ladruno WP-214: mode-kind tags
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -890,6 +891,10 @@ namespace
     template<class TStream>
     void print_internal(TStream& out, const DomainModalProperties& dmp)
     {
+        // Ladruno WP-214: R / Z tags of residualModes / Ritz modes (all
+        // strings empty without a valid registry record => stock report)
+        const LadrunoModeKinds::Report tags = LadrunoModeKinds::report(OPS_GetDomain(), dmp.eigenvalues());
+
         // utils
         auto print_vec = [&out](const Vector& x, const char* fchar = DMP_OUT_BLANK) {
             double tol = getTolerance(x);
@@ -898,13 +903,13 @@ namespace
                 out << DMP_OUT_FLOAT(cleanFloat(x(i), tol));
             out << "\n";
         };
-        auto print_mat = [&out](const Matrix& x, double scale = 1.0, const char *fchar = DMP_OUT_BLANK) {
+        auto print_mat = [&out, &tags](const Matrix& x, double scale = 1.0, const char *fchar = DMP_OUT_BLANK) {
             double tol = getTolerance(x);
             for (int j = 0; j < x.noRows(); ++j) {
                 out << fchar << DMP_OUT_GEN(j + 1);
                 for (int i = 0; i < x.noCols(); ++i)
                     out << DMP_OUT_FLOAT(scale * cleanFloat(x(j, i), tol));
-                out << "\n";
+                out << tags.tag(j) << "\n"; // Ladruno WP-214
             }
         };
         auto print_svec = [&out](const std::vector<std::string>& x, const char* fchar = DMP_OUT_BLANK) {
@@ -956,8 +961,9 @@ namespace
                 << DMP_OUT_FLOAT(omega)
                 << DMP_OUT_FLOAT(freq)
                 << DMP_OUT_FLOAT(period)
-                << "\n";
+                << tags.tag(i) << "\n"; // Ladruno WP-214
         }
+        out << tags.note; // Ladruno WP-214
         out << "\n\n";
 
         // total mass
@@ -1191,6 +1197,12 @@ void DomainModalProperties::printDict() {
                 partiMassRatiosCumu(i, 5) * scale);
         }
     }
+
+    // Ladruno WP-214: mode kinds (0 eigen, 1 residual, 2 Ritz), only when
+    // residualModes / Ritz modes are recorded for this mode set
+    const LadrunoModeKinds::Report tags = LadrunoModeKinds::report(OPS_GetDomain(), dmp.eigenvalues());
+    for (size_t i = 0; i < tags.kinds.size(); ++i)
+        data["modeKind"].push_back(tags.kinds[i]);
 
     // set outputs
     if (OPS_SetDoubleDictListOutput(data) < 0) {
