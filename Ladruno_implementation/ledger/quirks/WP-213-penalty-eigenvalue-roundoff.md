@@ -28,4 +28,5 @@ storeys) f₁ = 4.0e-3 while the measured gap is only 2.5e-4, so after `eigen 1`
 a 20 % stiffness loss only warned and a 2 % loss passed silently. WP-214 sets
 refuse above max(1e-4, 10 f) and warn above max(1e-7, f); the unchanged
 models (kip-in and kN-m, `-fullGenLapack` and ARPACK; reference LAPACK's gap
-≈ 2.1e-6) stay well under f.
+≈ 2.1e-6) stay under 10 f; may warn. OpenBLAS `dsygvd` (`-fullGenLapack`) on
+the tied-floor model measured gap/f = 1.58 and 1.14: accepted, with a warning.

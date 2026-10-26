@@ -903,7 +903,7 @@ namespace
                 out << DMP_OUT_FLOAT(cleanFloat(x(i), tol));
             out << "\n";
         };
-        auto print_mat = [&out, &tags](const Matrix& x, double scale = 1.0, const char *fchar = DMP_OUT_BLANK) {
+        auto print_mat = [&out, &tags](const Matrix& x, double scale = 1.0, const char *fchar = DMP_OUT_BLANK) { // Ladruno WP-214: &tags
             double tol = getTolerance(x);
             for (int j = 0; j < x.noRows(); ++j) {
                 out << fchar << DMP_OUT_GEN(j + 1);

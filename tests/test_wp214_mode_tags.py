@@ -168,19 +168,38 @@ def _soften(factor, nf=10, k=500.0):
 
 
 @pytest.mark.parametrize('solver', [('-fullGenLapack', 1), (1,)])
-def test_penalty_changed_model_is_refused(solver):
+def test_penalty_changed_model_is_refused(solver, tmp_path):
     # 10 storeys kip-in, alpha = 1e14: f1 = 4e-3. A 20 % stiffness loss after
     # eigen moves mode 1's Rayleigh quotient by 0.2: below 100 f1 = 0.4 (old
-    # margin: warned only), above 10 f1 = 0.04 (new margin: refused)
-    t213._penalty_tied_floors(10, 1.0, 500.0, solver)
-    _soften(0.8)
-    with pytest.raises(Exception):
-        ops.residualModes('-dir', 1)
-    # re-run eigen on the current state: accepted (3 modes: with 1 mode the
-    # kernel's fixed 1e-4 K-solve residual check is marginal under Penalty,
-    # issue #1025)
-    ops.eigen(*solver[:-1], 3)
-    assert ops.residualModes('-dir', 1)
+    # margin: warned only), above 10 f1 = 0.04 (new margin: refused). In a
+    # child, so the refusal is pinned by its message, not by any exception.
+    script = tmp_path / 'child.py'
+    script.write_text('\n'.join([
+        "import sys",
+        f"sys.path.insert(0, {str(HERE)!r})",
+        "import test_wp213_residual_modes as t",
+        "import test_wp214_mode_tags as t4",
+        "from _testbed import ops",
+        f"t._penalty_tied_floors(10, 1.0, 500.0, {solver!r})",
+        "t4._soften(0.8)",
+        "try:",
+        "    ops.residualModes('-dir', 1)",
+        "    print('ACCEPTED-STALE')",
+        "except Exception:",
+        "    print('REFUSED')",
+        "sys.stdout.flush()",
+        # re-run eigen on the current state: accepted (3 modes: with 1 mode the
+        # kernel's fixed 1e-4 K-solve residual check is marginal under Penalty,
+        # issue #1025)
+        f"ops.eigen(*{solver[:-1]!r}, 3)",
+        "print('ACCEPTED' if ops.residualModes('-dir', 1) else 'EMPTY')",
+    ]) + '\n')
+    env = {k: v for k, v in os.environ.items() if k != 'LADRUNO_OPENSEES_QUIET'}
+    r = subprocess.run([sys.executable, str(script)], env=env, stdin=subprocess.DEVNULL,
+                       capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr[-2000:]
+    assert 'residualModes: the model changed after eigen: mode 1' in r.stderr, r.stderr[-2000:]
+    assert r.stdout.split()[-2:] == ['REFUSED', 'ACCEPTED'], r.stdout[-500:]
 
 
 def test_penalty_small_change_warns(tmp_path):
