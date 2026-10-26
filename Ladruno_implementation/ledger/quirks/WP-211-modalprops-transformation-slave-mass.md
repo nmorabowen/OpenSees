@@ -2,6 +2,7 @@
 wp: WP-211
 title: "modalProperties drops slave-node mass under constraints Transformation"
 date: 2026-10-25
+pr: "#1020"
 status: "fixed-by WP-211"
 ---
 ### `modalProperties` gives `totalFreeMass` = 0 and Γ = 0 (RSA returns zero) for a rigid diaphragm with mass on the slave nodes
