@@ -113,9 +113,10 @@ a direction a single mode carries completely).
 
 Default drop tolerance for `residualModes` is `1e-4` on the M-norm ratio (a
 dropped column carries < 1e-8 of the direction's mass). It has to sit above
-the eigenvector error, not at round-off: on V1 with `-dir 1 2` the X residual
-is pure eigenvector noise (3.6e-6 of ‖ι_x‖_M, 1e-11 of the mass, from
-`eigen -fullGenLapack` under Lagrange and Penalty alike). Kept at `1e-6`, that
+the error in Φ, not at round-off: on V1 with `-dir 1 2` under **Penalty**
+(α = 1e14) the X residual is pure finite-penalty coupling noise (3.6e-6 of
+‖ι_x‖_M, 1.3e-11 of the mass; under Lagrange and Transformation it is
+1e-24, exact). Kept at `1e-6`, that
 noise vector matched the genuine torsional content of the Y static correction
 on the massive DOFs, which then dropped; but the noise carries arbitrary
 values on the massless DOFs, which the M-norm cannot see, so the Ritz pair
@@ -131,10 +132,12 @@ Every pseudo-mode keeps its Rayleigh λ in the domain's mode set.
   override.
 - `-period $T` (the guide's ASCE §12.9.1.1 "rigid mode at 0.05 s"): T is
   recorded as the mode's **Sa-period override** in `LadrunoModeKinds`.
-  `responseSpectrumAnalysis` reads Sa(T) for that mode, while λ in
-  u = φ Γ Sa/λ and the ω in CQC ρ (and T in the TenPercent closeness test)
-  stay the mode's own. The pseudo-modes then contribute their static response
-  times Sa(T), which is the ASCE rigid-mode rule. Wired on every RSA path:
+  An overridden mode is treated as **one rigid mode at T**: RSA reads Sa(T)
+  and uses ω = 2π/T in the CQC ρ (and T in the TenPercent closeness test),
+  so overridden modes correlate fully with each other. λ in u = φ Γ Sa/λ
+  stays the mode's own, so each contributes its static response times
+  Sa(T); summed with ρ = 1 they give the static missing-mass response times
+  Sa(T), which is the ASCE rigid-mode rule. Wired on every RSA path:
   `solveMode()` (per mode, the full loop, `-increment`) and
   `analyzeCombined()` (`-combine`), marked `// Ladruno WP-213` in
   `ResponseSpectrumAnalysis.cpp`. The override lives as long as the registry
@@ -145,15 +148,25 @@ instead. Because RSA divides by the same λ it looks Sa up with, that rescaled
 the displacement by λ_R/λ_T as well: V3 gave 0.085 × the reference. Replaced
 before merge by the override above.
 
+**Review round 1 (Opus).** The first override kept the pseudo-modes' own ω
+in CQC, so two pseudo-modes at, say, 0.026 s and 0.010 s combined nearly as
+SRSS (ρ ≈ 0.02) instead of as one rigid mode. On the reviewer's stiff
+two-storey podium (m = [40, 40, 1×8], k = 3e4·[400, 100, 1×8], 3 modes) that
+gave 1.278 × the reference where the rigid-mode rule gives **1.651 ×**. The
+oracle used the same own-ω rule, so it could not catch it; both are fixed and
+that model is a test.
+
 **What the override gives depends on whether the missing mass is rigid.**
 - V3 as specified (pseudo-mode Rayleigh periods 0.31 s and 0.16 s, on the
   plateau): Sa(0.05) = 0.65 g against 1.0 g, so `-period 0.05` gives
-  **0.655 ×** the reference (rayleigh 1.0055 ×). `residualModes` warns that
+  **0.662 ×** the reference (rayleigh 1.0055 ×). `residualModes` warns that
   the pseudo-modes are not rigid at 0.05 s. Using the rigid-mode rule here is
   the deck's mistake, and the result says so.
 - V3 with 100× stiffer storeys (pseudo-mode periods 0.031 s and 0.016 s, on
-  the ascending branch): `-period 0.05` gives **1.313 ×** the reference
+  the ascending branch): `-period 0.05` gives **1.333 ×** the reference
   (rayleigh 1.0049 ×): conservative, as ASCE intends.
+- Review podium (pseudo-modes 0.026 s, 0.010 s): **1.651 ×** (rayleigh
+  1.034 ×).
 
 ### D4 — Ritz vectors as an alternative to `eigen` (PR 3)
 
@@ -186,12 +199,27 @@ residualModes -kinds
 - After `eigen` / `eigen -feast`; then `modalProperties` again before RSA.
 - Returns the appended eigenvalues (empty when everything was already
   spanned: the set is then left as it was).
-- `-replace` drops the earlier residual modes first; without it a second call
-  appends only what the current set (residual modes included) misses.
+- `-replace` drops every earlier residual mode and rebuilds every direction
+  they covered as well as the ones named (the registry keeps each residual
+  mode's directions); without it a second call appends only what the current
+  set (residual modes included) misses.
+- One period rule per residual set: a call whose rule (`rayleigh` or a given
+  T) differs from the kept residual modes' is refused and points to
+  `-replace` (it used to find nothing new and drop the `-period` silently).
 - Directions are global translations 1..ndm with free mass; ι_d is zero on
   SP-fixed DOFs under every handler.
 - Refused: no modes, no LinearSOE, a partitioned (OpenSeesSP) domain
-  (`Domain::ladrunoThreadedUpdateAllowed()` is false exactly there).
+  (`Domain::ladrunoThreadedUpdateAllowed()` is false exactly there), and a
+  **model that changed after `eigen`**: the Rayleigh quotient of every kept
+  mode on the current tangent must match its eigenvalue to 1e-4 (warning
+  above 1e-7). That is the property the deflation needs (ΨᵀKΦ = 0), measured
+  directly; the eigen set time and the commit tag are only proxies (a
+  `loadConst -time 0` hides a gravity step from the first, a linear transient
+  moves the second without changing K). Projected on Φ, the check is exact
+  under Lagrange too.
+- Warns when a kept residual shape carries < 1e-6 of its direction's mass:
+  that is within a few decades of the noise in Φ (≈ 1e-11 on V1 under Penalty), so it may
+  be noise rather than missing mass.
 - Prints, per direction, the free mass the modes carry and what the
   pseudo-modes add, and warns if a pseudo-mode's Rayleigh period exceeds the
   shortest retained eigen-period (the missing mass is then not rigid at this
@@ -205,8 +233,10 @@ residualModes -kinds
 |---|---|
 | V3 (a) 3 eigenmodes | modal mass 18 %, base shear 0.058 × reference |
 | V3 (b) + `residualModes -dir 1` | modal mass 100 % (1e-10), base shear 1.0055 × reference; Ritz values = numpy kernel (1e-9), shapes up to sign; ΨᵀMΨ = I, ΨᵀMΦ = 0 (1e-10), ΨᵀKΨ = Λ |
-| V3 (c) `-period 0.05` | λ unchanged (Rayleigh); Sa read at 0.05 s; base shear = numpy oracle (1e-8): 0.655 × reference (pseudo-modes not rigid, 0.31/0.16 s) |
-| V3 (c) stiff, pseudo-modes 0.031/0.016 s | `-period 0.05` 1.313 ×, rayleigh 1.0049 × reference |
+| V3 (c) `-period 0.05` | λ unchanged (Rayleigh); Sa and CQC ω at 0.05 s; base shear = numpy oracle (1e-8): 0.662 × reference (pseudo-modes not rigid, 0.31/0.16 s) |
+| V3 (c) stiff, pseudo-modes 0.031/0.016 s | `-period 0.05` 1.333 ×, rayleigh 1.0049 × reference |
+| review podium (Opus round 1) | `-period 0.05` 1.651 × reference (was 1.278 × with own-ω CQC) |
+| round-1 guards | period-rule mismatch refused until `-replace`; eigen on the unloaded column then a P-Delta gravity step: refused, accepted after re-running eigen; `-dir 2` then `-dir 1 -replace` keeps Y at 100 %; noise-level residual (V1, `-tol 1e-6`) warned |
 | override on every RSA path | per mode (all 5 modes), `-increment`, `-combine` match the oracle (1e-8); without `-period` the same mode reads its own Sa |
 | WP-212 guard | 3 modes: `-requireMass 1.0` refused; + residual modes: accepted on per mode, full loop, `-combine`, `-increment`; report prints 100.00 % |
 | full-size basis | 3-storey chain: 1 mode + residual = `eigen -fullGenLapack 3` (1e-10) |

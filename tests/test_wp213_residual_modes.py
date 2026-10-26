@@ -119,11 +119,17 @@ N3 = 10
 KBASE = 300.0
 
 
+MODEL_MK = None   # (m, k) override of the V3 storey masses / stiffnesses
+
+
 def _v3_mk():
-    m = np.ones(N3)
-    k = np.full(N3, KBASE)
-    m[0] *= 40.0
-    k[0] *= 200.0
+    if MODEL_MK is not None:
+        m, k = (np.array(a, float) for a in MODEL_MK)
+    else:
+        m = np.ones(N3)
+        k = np.full(N3, KBASE)
+        m[0] *= 40.0
+        k[0] *= 200.0
     K = np.zeros((N3, N3))
     for i in range(N3):
         K[i, i] += k[i]
@@ -176,8 +182,15 @@ def _v3_modal_u1_np(Psi, lam, sa_periods=None):
 
 
 def _v3_base_shear_np(Psi, lam, sa_periods=None):
+    # an overridden mode is one rigid mode at T: Sa and the CQC omega use T,
+    # lambda stays the mode's own (ADR 213 D3b)
     _, k, _, _ = _v3_mk()
-    return _cqc(k[0] * _v3_modal_u1_np(Psi, lam, sa_periods), np.sqrt(lam))
+    w = np.sqrt(np.asarray(lam, float))
+    if sa_periods is not None:
+        for j, T in enumerate(sa_periods):
+            if T > 0:
+                w[j] = 2 * math.pi / T
+    return _cqc(k[0] * _v3_modal_u1_np(Psi, lam, sa_periods), w)
 
 
 def _v3_reference():
@@ -304,6 +317,28 @@ def test_v3_c_rigid_residual_period_override_is_conservative(monkeypatch):
     print(f"\nV3(c) stiff: rayleigh {v_ray / ref:.4f} x ref, -period 0.05 {v_fix / ref:.4f} x ref")
 
 
+def test_period_override_correlates_the_pseudo_modes(monkeypatch):
+    # Review repro (#1023, Opus round 1): a stiff two-storey podium. With
+    # their own omegas the two pseudo-modes (0.026 s, 0.010 s) combine almost
+    # as SRSS (rho ~ 0.02): 1.278 x ref. As one rigid mode at 0.05 s they are
+    # fully correlated: 1.651 x ref.
+    monkeypatch.setattr(sys.modules[__name__], 'MODEL_MK',
+                        ([40, 40] + [1.0] * 8, [3e4 * 400, 3e4 * 100] + [3e4] * 8))
+    _, _, K, M = _v3_mk()
+    w2, phi = _v3_modes_np()
+    lam_np, psi_np = _residual_oracle(K, M, phi[:, :3], [np.ones(N3)])
+    P = np.column_stack([phi[:, :3], psi_np])
+    lam_all = np.r_[w2[:3], lam_np]
+    ref = _v3_reference()
+    _v3_build()
+    ops.eigen('-fullGenLapack', 3)
+    ops.residualModes('-dir', 1, '-period', 0.05)
+    ops.modalProperties()
+    v = _rsa_combined_base_shear()
+    assert v == pytest.approx(_v3_base_shear_np(P, lam_all, [0, 0, 0, 0.05, 0.05]), rel=1e-8)
+    assert v / ref == pytest.approx(1.651, abs=1e-3)
+
+
 def test_period_override_on_every_rsa_path():
     _, _, K, M = _v3_mk()
     w2, phi = _v3_modes_np()
@@ -383,6 +418,81 @@ def test_replace_and_eigen_clears_tags():
     # a new eigen replaces the eigenvalue vector, so the record goes stale
     ops.eigen('-fullGenLapack', 4)
     assert ops.residualModes('-kinds') == [0, 0, 0, 0]
+
+
+def test_period_rule_mismatch_needs_replace():
+    # review round 1, item 2: a second call with another period rule used to
+    # find nothing new to add and drop the -period silently
+    _v3_build()
+    ops.eigen('-fullGenLapack', 3)
+    lam = ops.residualModes('-dir', 1)
+    with pytest.raises(Exception):
+        ops.residualModes('-dir', 1, '-period', 0.05)
+    assert ops.residualModes('-kinds') == [0, 0, 0, 1, 1]
+    lam2 = ops.residualModes('-dir', 1, '-period', 0.05, '-replace')
+    np.testing.assert_allclose(lam2, lam, rtol=1e-9)
+    ops.modalProperties()
+    _, _, K, M = _v3_mk()
+    w2, phi = _v3_modes_np()
+    lam_np, psi_np = _residual_oracle(K, M, phi[:, :3], [np.ones(N3)])
+    v = _rsa_combined_base_shear()
+    assert v == pytest.approx(_v3_base_shear_np(np.column_stack([phi[:, :3], psi_np]),
+                                                np.r_[w2[:3], lam_np], [0, 0, 0, 0.05, 0.05]),
+                              rel=1e-8)
+    # and back to Rayleigh periods the same way
+    with pytest.raises(Exception):
+        ops.residualModes('-dir', 1)
+    ops.residualModes('-dir', 1, '-replace')
+
+
+def test_state_changed_after_eigen_is_refused():
+    # review round 1, item 3: eigen on the unloaded column, then gravity with
+    # P-Delta: Phi is no longer an eigenbasis of the current K
+    _column('PDelta', 0.0)
+    ops.eigen('-fullGenLapack', 1)
+    ops.timeSeries('Constant', 2)
+    ops.pattern('Plain', 2, 2)
+    for n in (2, 3, 4):
+        ops.load(n, 0.0, -1500.0, 0.0)
+    assert ops.analyze(1) == 0
+    ops.loadConst('-time', 0.0)
+    with pytest.raises(Exception):
+        ops.residualModes('-dir', 1)
+    ops.eigen('-fullGenLapack', 1)       # re-run on the current state: accepted
+    assert len(ops.residualModes('-dir', 1)) == 2
+
+
+def test_replace_rebuilds_every_replaced_direction():
+    # review round 1, item 5: -dir 2, then -dir 1 -replace used to drop the
+    # Y pseudo-modes and leave Y below 100 %
+    _v1_build('Lagrange')
+    ops.eigen('-fullGenLapack', 1)       # mode 1 = X, which it carries completely
+    ops.residualModes('-dir', 2)
+    assert ops.residualModes('-kinds') == [0, 1, 1]
+    ops.residualModes('-dir', 1, '-replace')
+    assert ops.residualModes('-kinds') == [0, 1, 1]
+    mp = ops.modalProperties('-return')
+    assert mp['partiMassRatiosCumuMY'][-1] / 100.0 == pytest.approx(1.0, abs=1e-8)
+
+
+def test_noise_level_residual_is_warned(tmp_path):
+    # review round 1, item 4: with -tol 1e-6 the X residual of V1 under
+    # Penalty (finite-penalty coupling noise, 1.3e-11 of the mass; exact under
+    # Lagrange / Transformation) is kept; it must be flagged
+    script = tmp_path / 'child.py'
+    script.write_text('\n'.join([
+        "import sys",
+        f"sys.path.insert(0, {str(Path(__file__).parent)!r})",
+        "import test_wp213_residual_modes as t",
+        "from _testbed import ops",
+        "t._v1_build('Penalty'); ops.eigen('-fullGenLapack', 1)",
+        "ops.residualModes('-dir', 1, 2, '-tol', 1e-6)",
+    ]) + '\n')
+    r = subprocess.run([sys.executable, str(script)], env=dict(os.environ),
+                       stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr[-2000:]
+    out = r.stdout + r.stderr
+    assert 'WARNING direction 1' in out and 'eigenvector noise' in out, out[-2000:]
 
 
 def test_full_size_basis_equals_full_eigen():

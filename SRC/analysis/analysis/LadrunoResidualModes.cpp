@@ -58,6 +58,7 @@
 #include <Domain.h>
 #include <Vector.h>
 #include <elementAPI.h>
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
@@ -209,28 +210,108 @@ OPS_LadrunoResidualModes(void)
         return -1;
     }
 
+    std::vector<int> masks = LadrunoModeKinds::dirMasks(theDomain);
     std::vector<Vector> phi;
     std::vector<double> lam;
     std::vector<int> keptKinds;
     std::vector<double> keptSaPer;
+    std::vector<int> keptMasks;
     int numReplaced = 0;
+    int replacedMask = 0;
     for (int k = 0; k < (int)phiAll.size(); k++) {
         if (replace && kinds[k] == LadrunoModeKinds::RESIDUAL) {
             numReplaced++;
+            replacedMask |= masks[k];
             continue;
         }
         phi.push_back(phiAll[k]);
         lam.push_back(ev(k));
         keptKinds.push_back(kinds[k]);
         keptSaPer.push_back(saPer[k]);
+        keptMasks.push_back(masks[k]);
     }
     if (phi.empty()) {
         opserr << "residualModes: no eigen modes left to complete - run eigen first\n";
         return -1;
     }
 
-    // ---- starting vectors M iota_d ---------------------------------------
+    // -replace drops every residual mode, so it rebuilds every direction they
+    // covered, not only the ones named in this call
+    if (replace) {
+        for (int d = 1; d <= 3; d++)
+            if ((replacedMask & (1 << (d - 1))) &&
+                std::find(dirs.begin(), dirs.end(), d) == dirs.end()) {
+                dirs.push_back(d);
+                opserr << "residualModes: -replace also rebuilds direction " << d
+                       << " (the replaced residual modes covered it)\n";
+            }
+        std::sort(dirs.begin(), dirs.end());
+    }
+
+    // one period rule per residual set: kept residual modes must already use
+    // the rule this call asks for, or the deck has to rebuild them (-replace)
+    const double wantSa = fixedPeriod ? period : 0.0;
+    for (size_t k = 0; k < keptKinds.size(); k++)
+        if (keptKinds[k] == LadrunoModeKinds::RESIDUAL && keptSaPer[k] != wantSa) {
+            opserr << "residualModes: the set already holds residual modes read at ";
+            if (keptSaPer[k] > 0.0)
+                opserr << "-period " << keptSaPer[k];
+            else
+                opserr << "their Rayleigh periods";
+            opserr << ", but this call asks for ";
+            if (fixedPeriod)
+                opserr << "-period " << period;
+            else
+                opserr << "Rayleigh periods";
+            opserr << "; pass -replace to rebuild them all under one rule\n";
+            return -1;
+        }
+
+    // ---- the kept modes must be eigenpairs of the CURRENT tangent --------
+    // A gravity / P-Delta step (or any change of K) after eigen leaves Phi
+    // stale, and the pseudo-modes would not be K-orthogonal to it. The Rayleigh
+    // quotient of each kept mode on the current K must equal its eigenvalue
+    // (exact for the residual modes too: their lambda IS their Rayleigh
+    // quotient). Projected on Phi, so Lagrange multiplier rows drop out.
     const int neq = kernel.numEqn();
+    {
+        std::vector<Vector> Kphi;
+        kernel.applyK(phi, Kphi);
+        Vector Mphi(neq);
+        double lamMax = 0.0;
+        for (size_t k = 0; k < lam.size(); k++)
+            lamMax = std::max(lamMax, std::fabs(lam[k]));
+        double worst = 0.0;
+        int worstK = -1;
+        double worstRQ = 0.0;
+        for (size_t k = 0; k < phi.size(); k++) {
+            kernel.applyM(phi[k], Mphi);
+            const double gm = LadrunoRitzKernel::dot(phi[k], Mphi);
+            if (!(gm > 0.0))
+                continue;
+            const double rq = LadrunoRitzKernel::dot(phi[k], Kphi[k]) / gm;
+            const double rel = std::fabs(rq - lam[k]) /
+                std::max(std::fabs(lam[k]), 1.0e-12 * lamMax);
+            if (rel > worst) {
+                worst = rel;
+                worstK = (int)k;
+                worstRQ = rq;
+            }
+        }
+        if (worst > 1.0e-4) {
+            opserr << "residualModes: the model changed after eigen: mode " << worstK + 1
+                   << " has Rayleigh quotient " << worstRQ << " on the current tangent but"
+                   << " eigenvalue " << lam[worstK] << " (relative " << worst
+                   << "); re-run eigen on the current state first\n";
+            return -1;
+        }
+        if (worst > 1.0e-7)
+            opserr << "residualModes: WARNING mode " << worstK + 1
+                   << " deviates from the current tangent by " << worst
+                   << " (relative Rayleigh quotient); the eigen solve is loose or the state moved\n";
+    }
+
+    // ---- starting vectors M iota_d ---------------------------------------
     std::vector<Vector> F, iota;
     for (size_t k = 0; k < dirs.size(); k++) {
         Vector io(neq), f(neq);
@@ -299,6 +380,15 @@ OPS_LadrunoResidualModes(void)
     if (res.numDropped > 0)
         opserr << "residualModes: " << res.numDropped
                << " residual vector(s) already spanned by the modes (dropped)\n";
+    // a kept residual shape this small is close to eigenvector noise (V1:
+    // noise sat at ~1e-11 of the mass, the drop rule at 1e-8)
+    for (size_t d = 0; d < dirs.size() && d < res.firstBlockRelNorm.size(); d++) {
+        const double share = res.firstBlockRelNorm[d] * res.firstBlockRelNorm[d];
+        if (share > 0.0 && share < 1.0e-6)
+            opserr << "residualModes: WARNING direction " << dirs[d] << ": the modes miss only "
+                   << share << " of its mass; the residual shape kept for it may be eigenvector"
+                   << " noise (tighten the eigen solve, or raise -tol)\n";
+    }
 
     double lamMaxKept = 0.0;
     for (size_t k = 0; k < lam.size(); k++)
@@ -331,17 +421,22 @@ OPS_LadrunoResidualModes(void)
     std::vector<double> lambdas = lam;
     std::vector<int> newKinds = keptKinds;
     std::vector<double> newSaPer = keptSaPer;
+    std::vector<int> newMasks = keptMasks;
+    int callMask = 0;
+    for (size_t d = 0; d < dirs.size(); d++)
+        callMask |= 1 << (dirs[d] - 1);
     for (int j = 0; j < q; j++) {
         modes.push_back(res.psi[j]);
         lambdas.push_back(lamPseudo[j]);
         newKinds.push_back(LadrunoModeKinds::RESIDUAL);
         newSaPer.push_back(fixedPeriod ? period : 0.0);
+        newMasks.push_back(callMask);   // Rayleigh-Ritz mixes the directions
     }
     if (kernel.install(modes, lambdas) < 0) {
         opserr << "residualModes: " << kernel.error().c_str() << "\n";
         return -1;
     }
-    LadrunoModeKinds::set(theDomain, newKinds, newSaPer);
+    LadrunoModeKinds::set(theDomain, newKinds, newSaPer, newMasks);
 
     // modal properties computed for the old set no longer match it
     theDomain->unsetModalProperties();

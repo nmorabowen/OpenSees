@@ -85,13 +85,17 @@ namespace LadrunoModeKinds
     // eigenvalues); saPeriods (optional, same length) holds a spectral-ordinate
     // period override per mode, 0 = none
     void set(const Domain* theDomain, const std::vector<int>& kinds,
-             const std::vector<double>& saPeriods = std::vector<double>());
+             const std::vector<double>& saPeriods = std::vector<double>(),
+             const std::vector<int>& dirMasks = std::vector<int>());
     // Sa-period override of mode mode0 (0-based) of the domain's current set,
     // or 0 when there is none or the record is stale. responseSpectrumAnalysis
     // reads Sa at this period while lambda (u = phi Gamma Sa / lambda) and the
     // CQC omegas stay the mode's own (ADR 213 D3b)
     double saPeriod(const Domain* theDomain, int mode0);
     std::vector<double> saPeriods(const Domain* theDomain);
+    // per mode: bit (d-1) set when residualModes -dir d produced it (0 for
+    // eigen modes); lets -replace rebuild every direction it drops
+    std::vector<int> dirMasks(const Domain* theDomain);
     void clear(const Domain* theDomain);
     // single-letter label for printing: E / R / Z (Ritz)
     char label(int kind);
@@ -123,6 +127,10 @@ public:
         std::vector<int> droppedPerStart;
         int numDropped = 0;
         double maxSolveResidual = 0.0; // max ||K x - b|| / ||b|| over block-0 solves
+        // per starting vector: M-norm of its block-0 column after deflation
+        // over its M-norm before (0 when dropped); squared, the share of that
+        // start's mass the existing basis misses (shape starts)
+        std::vector<double> firstBlockRelNorm;
     };
 
     LadrunoRitzKernel(AnalysisModel& theModel, LinearSOE& theSOE);

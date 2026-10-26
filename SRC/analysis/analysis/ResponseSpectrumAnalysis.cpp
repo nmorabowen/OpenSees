@@ -841,8 +841,11 @@ int ResponseSpectrumAnalysis::analyzeCombined()
 	std::vector<double> w(num_eigen), T(num_eigen), MPF(num_eigen),
 	                    Vscale(num_eigen), Sa(num_eigen), lambda(num_eigen),
 	                    xi(num_eigen);
-	// Ladruno WP-213: per-mode Sa-period overrides (residualModes -period T);
-	// T[a] and w[a] (TenPercent closeness, CQC rho) stay the modes' own
+	// Ladruno WP-213: per-mode Sa-period overrides (residualModes -period T).
+	// An overridden mode is one rigid mode at T (ASCE 7-22 12.9.1.1): Sa, the
+	// CQC omega and the TenPercent period all use T, so overridden modes
+	// correlate fully with each other; lambda in u = phi Gamma Sa / lambda
+	// stays the mode's own, so its displacement is the static response x Sa(T)
 	const std::vector<double> sa_period = LadrunoModeKinds::saPeriods(domain);
 	for (int a = 0; a < num_eigen; ++a) {
 		lambda[a] = mp.eigenvalues()(a);
@@ -850,8 +853,11 @@ int ResponseSpectrumAnalysis::analyzeCombined()
 		w[a] = omega;
 		const double period = (omega > 0.0) ? (2.0 * M_PI / omega) : 0.0;
 		T[a] = period;
-		Sa[a] = getSa((a < (int)sa_period.size() && sa_period[a] > 0.0)
-		              ? sa_period[a] : period); // Ladruno WP-213
+		if (lambda[a] > 0.0 && a < (int)sa_period.size() && sa_period[a] > 0.0) {
+			T[a] = sa_period[a];                 // Ladruno WP-213
+			w[a] = 2.0 * M_PI / sa_period[a];
+		}
+		Sa[a] = getSa(T[a]);
 		Vscale[a] = mp.eigenVectorScaleFactors()(a);
 		MPF[a] = mp.modalParticipationFactors()(a, exdof);
 		if (m_xi.size() == 1) xi[a] = m_xi[0];               // broadcast

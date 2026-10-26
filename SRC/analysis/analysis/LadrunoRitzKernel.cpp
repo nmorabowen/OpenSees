@@ -74,6 +74,7 @@ namespace
         Vector              eigenvalues;   // snapshot of the domain's set
         std::vector<int>    kinds;
         std::vector<double> saPeriods;     // 0 = no override
+        std::vector<int>    dirMasks;      // residualModes directions, bit d-1
     };
 
     std::map<const Domain*, ModeKindRecord>& modeKindRegistry()
@@ -137,6 +138,16 @@ LadrunoModeKinds::saPeriods(const Domain* theDomain)
     return std::vector<double>(n, 0.0);
 }
 
+std::vector<int>
+LadrunoModeKinds::dirMasks(const Domain* theDomain)
+{
+    int n = 0;
+    const ModeKindRecord* rec = validRecord(theDomain, n);
+    if (rec && (int)rec->dirMasks.size() == n)
+        return rec->dirMasks;
+    return std::vector<int>(n, 0);
+}
+
 double
 LadrunoModeKinds::saPeriod(const Domain* theDomain, int mode0)
 {
@@ -149,13 +160,16 @@ LadrunoModeKinds::saPeriod(const Domain* theDomain, int mode0)
 
 void
 LadrunoModeKinds::set(const Domain* theDomain, const std::vector<int>& kinds,
-                      const std::vector<double>& saPeriods)
+                      const std::vector<double>& saPeriods,
+                      const std::vector<int>& dirMasks)
 {
     ModeKindRecord rec;
     rec.eigenvalues = currentEigenvalues(theDomain);
     rec.kinds = kinds;
     rec.saPeriods = saPeriods;
     rec.saPeriods.resize(kinds.size(), 0.0);
+    rec.dirMasks = dirMasks;
+    rec.dirMasks.resize(kinds.size(), 0);
     modeKindRegistry()[theDomain] = rec;
 }
 
@@ -462,6 +476,7 @@ LadrunoRitzKernel::run(const std::vector<Vector>& F,
     const int maxBlocks = std::max(1, opt.maxBlocks);
     out.keptPerStart.assign(q, 0);
     out.droppedPerStart.assign(q, 0);
+    out.firstBlockRelNorm.assign(q, 0.0);
 
     // ---- M-orthonormal copy of the existing basis ------------------------
     std::vector<Vector> Q, MQ;
@@ -570,6 +585,8 @@ LadrunoRitzKernel::run(const std::vector<Vector>& F,
             }
             applyM(y, My);
             const double n = std::sqrt(std::max(0.0, dot(y, My)));
+            if (b == 0)
+                out.firstBlockRelNorm[start] = (n > opt.dropTol * n0) ? n / n0 : 0.0;
             if (!(n > opt.dropTol * n0)) {
                 // breakdown: already spanned by Phi and the earlier columns
                 out.droppedPerStart[start]++;
