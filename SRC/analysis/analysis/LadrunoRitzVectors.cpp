@@ -189,10 +189,17 @@ OPS_LadrunoRitzVectors(void)
         return -1;
     }
 
-    // ---- number the model on its current state (eigen does the same) ------
+    // ---- number the model when the domain changed (eigen's rule) ----------
     // ritzVectors stands in for eigen, so it may be the first command after
-    // the analysis is defined; renumbering an up-to-date model is harmless
-    int rc = theStatic ? theStatic->domainChanged() : theTransient->domainChanged();
+    // the analysis is defined. Only a moved stamp renumbers: domainChanged()
+    // is not free of side effects mid-analysis (CentralDifference resets
+    // U(t - dt) to U(t), losing its history; review of #1027)
+    int rc = 0;
+    const int stamp = theDomain->hasDomainChanged();
+    if (theStatic != 0 && theStatic->ladrunoDomainStamp() != stamp)
+        rc = theStatic->domainChanged();
+    else if (theStatic == 0 && theTransient->ladrunoDomainStamp() != stamp)
+        rc = theTransient->domainChanged();
     if (rc < 0) {
         opserr << "ritzVectors: the analysis could not number the model\n";
         return -1;

@@ -7,8 +7,14 @@ ADR: Ladruno_implementation/213_ladruno_modal_basis_completeness_adr.md (D7, D8)
 the nodal loads of each pattern (in the order given), runs the WP-213 kernel
 with load starts and no basis until $nvec columns survive, and installs the
 Rayleigh-Ritz pairs as the domain's mode set, tagged RITZ (`# Z`). Every check
-is against a pure-numpy LDR oracle written here (Wilson, Yuan & Dickens 1982,
-block form, starts cycled block by block, MGS twice, relative drop).
+is against a pure-numpy oracle that does not repeat the kernel's algorithm
+(review of #1027): it builds the per-start Krylov subspace by a Euclidean
+Arnoldi and solves the generalized (K, M) Rayleigh-Ritz problem on it; the
+P-Delta K comes from the model data. Review round 1 also added: residualModes
+after Ritz is one joint set (Psi^T K Psi diagonal), a ritzVectors call
+mid-transient leaves CentralDifference and Linear -factorOnce untouched, loads
+on SP-fixed DOFs are dropped, and the energy check that Penalty rows cannot
+dilute.
 
 V3(d): `ritzVectors 3 -dir 1` on the podium model: CQC base shear closer to
 the 10-mode reference than 3 eigenmodes, static load participation 100 %.
@@ -39,50 +45,62 @@ RSA = ['-Tn', *t213.TN.tolist(), '-Sa', *t213.SA.tolist()]
 
 
 # ---------------------------------------------------------------------------
-# numpy oracle: block load-dependent Ritz vectors
+# numpy oracles, independent of the kernel's algorithm (review of #1027):
+# a Ritz pair depends only on the subspace, so the oracle builds the block
+# Krylov subspace with a EUCLIDEAN Arnoldi (np.linalg.qr, not the kernel's
+# M-Gram-Schmidt) and solves the generalized (K, M) Rayleigh-Ritz problem on
+# it through a Cholesky of the projected M (not the kernel's dsyevx on an
+# M-orthonormal basis).
 # ---------------------------------------------------------------------------
-def _ldr_oracle(K, M, F, nvec, cycles=None, tol=1e-10):
-    """Ritz values (ascending) and M-orthonormal vectors from load starts F.
+def _span_oracle(K, M, B):
+    """Ritz values (ascending) and M-orthonormal Ritz vectors of span(B)."""
+    Q, _ = np.linalg.qr(np.asarray(B, float))
+    L = np.linalg.cholesky(Q.T @ M @ Q)
+    Li = np.linalg.inv(L)
+    lam, Z = np.linalg.eigh(Li @ (Q.T @ K @ Q) @ Li.T)
+    return lam, Q @ Li.T @ Z
 
-    Block 0 is K^-1 f for every start; block b+1 is K^-1 M x for every column
-    x kept in block b whose start has cycles left; every column is
-    M-orthogonalized twice against all earlier ones and dropped when its
-    M-norm fell below tol times its norm before; stop at nvec columns.
+
+def _krylov_oracle(K, M, F, nvec, cycles=None):
+    """Load-dependent Ritz pairs of the block Krylov subspace of the starts F.
+
+    The subspace is the per-start Krylov prefixes {(K^-1 M)^b K^-1 f_s,
+    b < cap_s}, taken block by block with the starts in order and cut at nvec
+    columns (ADR 213 D7). Each start's chain is orthonormalized against its
+    own earlier vectors only (Euclidean), so another start's directions never
+    leak into it.
     """
-    X, kept = [], [0] * len(F)
-    block = [np.linalg.solve(K, f) for f in F]
-    origin = list(range(len(F)))
-    for b in range(nvec):
-        acc = []
-        for y, o in zip(block, origin):
-            n0 = math.sqrt(max(y @ M @ y, 0.0))
-            if not n0 > 0:
+    cols, kept = [], [0] * len(F)
+    chains = [[] for _ in F]
+
+    def orth(v, basis):
+        for _ in range(2):
+            for c in basis:
+                v = v - (c @ v) * c
+        return v
+
+    block = [(s, np.linalg.solve(K, f)) for s, f in enumerate(F)]
+    b = 0
+    while block and len(cols) < nvec:
+        nxt = []
+        for s, v in block:
+            g = orth(v, cols)
+            if not np.linalg.norm(g) > 1e-12 * np.linalg.norm(v):
                 continue
-            for _ in range(2):
-                for x in X:
-                    y = y - (x @ M @ y) * x
-            n = math.sqrt(max(y @ M @ y, 0.0))
-            if not n > tol * n0:
-                continue
-            X.append(y / n)
-            kept[o] += 1
-            acc.append((X[-1], o))
-            if len(X) >= nvec:
+            cols.append(g / np.linalg.norm(g))
+            c = orth(v, chains[s])
+            chains[s].append(c / np.linalg.norm(c))
+            kept[s] += 1
+            if len(cols) >= nvec:
                 break
-        if len(X) >= nvec or not acc:
-            break
-        block, origin = [], []
-        for x, o in acc:
-            cap = cycles[o] if cycles and cycles[o] > 0 else nvec
-            if b + 1 >= cap:
-                continue
-            block.append(np.linalg.solve(K, M @ x))
-            origin.append(o)
-        if not block:
-            break
-    X = np.column_stack(X)
-    lam, Z = np.linalg.eigh(X.T @ K @ X)
-    return lam, X @ Z, kept
+            cap = cycles[s] if cycles and cycles[s] > 0 else nvec
+            if b + 1 < cap:
+                nxt.append((s, np.linalg.solve(K, M @ chains[s][-1])))
+        block, b = nxt, b + 1
+    lam, Psi = _span_oracle(K, M, np.column_stack(cols))
+    return lam, Psi, kept
+
+
 
 
 def _static_participation(Psi, lam, K, f):
@@ -135,7 +153,7 @@ def _pattern_top(tag=1, nodes=(N3,), values=(1.0,)):
 def test_v3_d_ritz_beats_eigen_at_equal_count():
     m, k, K, M = t213._v3_mk()
     io = np.ones(N3)
-    lam_np, psi_np, _ = _ldr_oracle(K, M, [M @ io], 3)
+    lam_np, psi_np, _ = _krylov_oracle(K, M, [M @ io], 3)
     ref = t213._v3_reference()
     v_np = t213._v3_base_shear_np(psi_np, lam_np)
 
@@ -165,7 +183,7 @@ def test_v3_d_report_prints_participation(tmp_path):
                                                  line)[0])
     assert stat == pytest.approx(100.0, abs=1e-6), line
     m, k, K, M = t213._v3_mk()
-    lam_np, psi_np, _ = _ldr_oracle(K, M, [M @ np.ones(N3)], 3)
+    lam_np, psi_np, _ = _krylov_oracle(K, M, [M @ np.ones(N3)], 3)
     assert dyn == pytest.approx(100 * _dynamic_participation(psi_np, M, M @ np.ones(N3)),
                                 rel=1e-6), line
     assert 'do not report the higher ones as natural periods' in err
@@ -176,7 +194,7 @@ def test_v3_d_report_prints_participation(tmp_path):
 # ---------------------------------------------------------------------------
 def test_kernel_matches_numpy_ldr_and_is_m_orthonormal():
     _, _, K, M = t213._v3_mk()
-    lam_np, psi_np, _ = _ldr_oracle(K, M, [M @ np.ones(N3)], 6)
+    lam_np, psi_np, _ = _krylov_oracle(K, M, [M @ np.ones(N3)], 6)
     t213._v3_build()
     lam = ops.ritzVectors(6, '-dir', 1)
     np.testing.assert_allclose(lam, lam_np, rtol=1e-9)
@@ -218,7 +236,7 @@ def test_pattern_start_is_load_dependent():
     _, _, K, M = t213._v3_mk()
     nodes, vals = (N3, 5), (1.0, -0.4)
     p = _p_vec(nodes, vals)
-    lam_np, psi_np, _ = _ldr_oracle(K, M, [p], 4)
+    lam_np, psi_np, _ = _krylov_oracle(K, M, [p], 4)
     t213._v3_build()
     _pattern_top(1, nodes, vals)
     lam = ops.ritzVectors(4, '-pattern', 1)
@@ -227,7 +245,7 @@ def test_pattern_start_is_load_dependent():
     _same_up_to_sign(psi, psi_np, M)
     # static participation of the pattern load 100 %; the dir-1 vectors differ
     assert _static_participation(psi, lam, K, p) == pytest.approx(1.0, abs=1e-10)
-    lam_d, _, _ = _ldr_oracle(K, M, [M @ np.ones(N3)], 4)
+    lam_d, _, _ = _krylov_oracle(K, M, [M @ np.ones(N3)], 4)
     assert np.abs(lam / lam_d - 1).max() > 1e-3
 
 
@@ -236,7 +254,7 @@ def test_pattern_report_and_order(tmp_path):
     _, _, K, M = t213._v3_mk()
     p = _p_vec((N3,), (1.0,))
     F = [p, M @ np.ones(N3)]
-    lam_np, psi_np, kept = _ldr_oracle(K, M, F, 5)
+    lam_np, psi_np, kept = _krylov_oracle(K, M, F, 5)
     out, err = _child(tmp_path, [
         "t._v3_build(); t5._pattern_top(1)",
         "print('RESULT', *ops.ritzVectors(5, '-pattern', 1, '-dir', 1))"])
@@ -255,7 +273,7 @@ def test_cycles_cap_blocks_per_start(tmp_path):
     _, _, K, M = t213._v3_mk()
     p = _p_vec((N3,), (1.0,))
     F = [M @ np.ones(N3), p]
-    lam_np, psi_np, kept = _ldr_oracle(K, M, F, 6, cycles=[2, 0])
+    lam_np, psi_np, kept = _krylov_oracle(K, M, F, 6, cycles=[2, 0])
     assert kept == [2, 4]
     t213._v3_build()
     _pattern_top(1)
@@ -263,7 +281,7 @@ def test_cycles_cap_blocks_per_start(tmp_path):
     np.testing.assert_allclose(lam, lam_np, rtol=1e-9)
     _same_up_to_sign(_v3_shapes(6), psi_np, M)
     # without -cycles the two starts alternate (3 + 3)
-    lam_free, _, kept_free = _ldr_oracle(K, M, F, 6)
+    lam_free, _, kept_free = _krylov_oracle(K, M, F, 6)
     assert kept_free == [3, 3]
     assert np.abs(lam_free / lam_np - 1).max() > 1e-6
     # every start capped below nvec: fewer vectors, warned
@@ -296,6 +314,100 @@ def test_no_analysis_is_refused():
         ops.ritzVectors(1, '-dir', 1)
     ops.analysis('Static')
     assert ops.ritzVectors(1, '-dir', 1) == pytest.approx([100.0], rel=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# mid-analysis: renumber only on a domain change; -factorOnce re-armed
+# ---------------------------------------------------------------------------
+def _v3_transient(integrator, algorithm, n1, n2, ritz_between):
+    """Base-excited V3 transient; returns the roof displacement history."""
+    t213._v3_build()
+    dt = 0.002
+    t = np.arange(400) * dt
+    acc = np.sin(2 * math.pi * 1.3 * t) * t213.G_ACC * 0.2
+    ops.timeSeries('Path', 11, '-dt', dt, '-values', *acc.tolist())
+    ops.pattern('UniformExcitation', 11, 1, '-accel', 11)
+    ops.wipeAnalysis()
+    ops.constraints('Transformation')
+    ops.numberer('RCM')
+    ops.system('UmfPack')
+    ops.algorithm(*algorithm)
+    ops.integrator(*integrator)
+    ops.analysis('Transient')
+    hist = []
+    for _ in range(n1):
+        assert ops.analyze(1, dt) == 0
+        hist.append(ops.nodeDisp(N3, 1))
+    if ritz_between:
+        ops.ritzVectors(3, '-dir', 1)
+    for _ in range(n2):
+        assert ops.analyze(1, dt) == 0
+        hist.append(ops.nodeDisp(N3, 1))
+    return np.array(hist)
+
+
+@pytest.mark.parametrize('integrator,algorithm', [
+    # CentralDifference::domainChanged sets U(t - dt) = U(t): an unconditional
+    # renumber would cut its history (review of #1027, finding 3)
+    (('CentralDifference',), ('Linear',)),
+    # Linear -factorOnce would reuse the kernel's K factor in place of Keff;
+    # Linear::domainChanged now re-arms it
+    (('Newmark', 0.5, 0.25), ('Linear', '-factorOnce')),
+])
+def test_ritz_mid_transient_leaves_the_analysis_alone(integrator, algorithm):
+    ref = _v3_transient(integrator, algorithm, 60, 60, False)
+    got = _v3_transient(integrator, algorithm, 60, 60, True)
+    assert np.abs(ref).max() > 0
+    np.testing.assert_allclose(got, ref, rtol=1e-10, atol=1e-14 * np.abs(ref).max())
+
+
+def _chain_with_massive_base(handler):
+    # 3 storeys; the fixed base node 0 carries mass, so a load on it would
+    # count in the dynamic participation's f_m' M^-1 f_m if it were kept
+    ops.wipe()
+    ops.model('basic', '-ndm', 2, '-ndf', 3)
+    ops.node(0, 0.0, 0.0)
+    ops.fix(0, 1, 1, 1)
+    ops.mass(0, 5.0, 0.0, 0.0)
+    for i, (mi, ki) in enumerate([(3.0, 900.0), (2.0, 700.0), (1.0, 500.0)], start=1):
+        ops.node(i, 0.0, 0.0)
+        ops.fix(i, 0, 1, 1)
+        ops.mass(i, mi, 0.0, 0.0)
+        ops.uniaxialMaterial('Elastic', i, ki)
+        ops.element('zeroLength', i, i - 1, i, '-mat', i, '-dir', 1)
+    if handler == 'Penalty':
+        ops.constraints('Penalty', 1.0e14, 1.0e14)
+    else:
+        ops.constraints(handler)
+    ops.system('UmfPack')
+    ops.analysis('Static')
+    ops.timeSeries('Linear', 1)
+    ops.pattern('Plain', 1, 1)
+    ops.load(3, 1.0, 0.0, 0.0)
+    ops.load(0, 7.0, 0.0, 0.0)          # on the support: dropped
+
+
+def test_pattern_load_on_fixed_dof_is_dropped(tmp_path):
+    # review of #1027, finding 5: the same participation under every handler
+    dyn, lam = {}, {}
+    for h in ('Transformation', 'Penalty', 'Lagrange'):
+        out, err = _child(tmp_path, [
+            f"t5._chain_with_massive_base({h!r})",
+            "print('RESULT', *ops.ritzVectors(2, '-pattern', 1))"])
+        lam[h] = [float(v) for v in out[0].split()]
+        line = next(l for l in err.splitlines() if l.startswith('ritzVectors: pattern 1:'))
+        dyn[h] = float(re.findall(r'dynamic ([0-9.eE+-]+)%', line)[0])
+    for h in ('Penalty', 'Lagrange'):
+        np.testing.assert_allclose(lam[h], lam['Transformation'], rtol=PEN_TOL)
+        assert dyn[h] == pytest.approx(dyn['Transformation'], rel=1e-5), dyn
+    # the oracle: the free 3-DOF chain, f = the roof load only
+    K = np.array([[1600.0, -700, 0], [-700, 1200, -500], [0, -500, 500]])
+    M = np.diag([3.0, 2.0, 1.0])
+    f = np.array([0.0, 0.0, 1.0])
+    lam_np, psi_np, _ = _krylov_oracle(K, M, [f], 2)
+    np.testing.assert_allclose(lam['Transformation'], lam_np, rtol=1e-9)
+    assert dyn['Transformation'] == pytest.approx(100 * _dynamic_participation(psi_np, M, f),
+                                                  rel=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +448,7 @@ def test_rigid_diaphragm_handlers_agree_truncated():
     # 1 vector from Y (Y couples with RZ): not an eigenvector, so this
     # compares the kernel's Krylov start itself across the handlers
     K, M = t213._v1_reference()
-    lam_np, _, _ = _ldr_oracle(K, M, [M @ np.array([0.0, 1.0, 0.0])], 1)
+    lam_np, _, _ = _krylov_oracle(K, M, [M @ np.array([0.0, 1.0, 0.0])], 1)
     assert np.abs(lam_np[0] / np.linalg.eigvals(np.linalg.solve(M, K)).real - 1).min() > 1e-4
     res = {h: _v1_ritz(h, 1, (2,)) for h in ('Transformation', 'Penalty', 'Lagrange')}
     for h, r in res.items():
@@ -374,27 +486,57 @@ def test_pattern_on_constrained_node_moves_to_retained():
 # ---------------------------------------------------------------------------
 # preloaded: gravity + loadConst with PDelta -> K - Kg
 # ---------------------------------------------------------------------------
+def _column_k_minus_kg(P):
+    """K - Kg of t213._column from the model data (review of #1027: not from
+    printA). Three elastic beams along y (E, A, I, h = 3), gravity P at nodes
+    2..4, so the axial forces are -3P, -2P, -P; PDelta adds N/h on the
+    transverse (ux) DOFs. DOFs (ux, uy, rz) of nodes 2..4; the sign of the
+    transverse axis is immaterial for the eigenvalues."""
+    E, A, I, h = 2.0e8, 0.04, 1.2e-3, 3.0
+    K = np.zeros((9, 9))
+    for e, N in ((0, -3 * P), (1, -2 * P), (2, -P)):
+        ka = E * A / h
+        c = E * I / h**3
+        kb = c * np.array([[12, 6 * h, -12, 6 * h],
+                           [6 * h, 4 * h * h, -6 * h, 2 * h * h],
+                           [-12, -6 * h, 12, -6 * h],
+                           [6 * h, 2 * h * h, -6 * h, 4 * h * h]])
+        kb += (N / h) * np.array([[1, 0, -1, 0], [0, 0, 0, 0], [-1, 0, 1, 0], [0, 0, 0, 0]])
+        dofs_b = [3 * (e - 1) + 0, 3 * (e - 1) + 2, 3 * e + 0, 3 * e + 2]   # ux, rz of i, j
+        dofs_a = [3 * (e - 1) + 1, 3 * e + 1]                               # uy of i, j
+        for a in range(4):
+            for b in range(4):
+                if dofs_b[a] >= 0 and dofs_b[b] >= 0:
+                    K[dofs_b[a], dofs_b[b]] += kb[a, b]
+        ka2 = ka * np.array([[1, -1], [-1, 1]])
+        for a in range(2):
+            for b in range(2):
+                if dofs_a[a] >= 0 and dofs_a[b] >= 0:
+                    K[dofs_a[a], dofs_a[b]] += ka2[a, b]
+    M = np.diag([2.0, 0.0, 0.0] * 3)
+    io = np.array([1.0, 0.0, 0.0] * 3)
+    return K, M, io
+
+
 def test_preloaded_pdelta_uses_k_minus_kg():
     lam = {}
     for P in (1500.0, 0.0):
+        K, M, io = _column_k_minus_kg(P)
         t213._column('PDelta', P)
         e = ops.eigen('-fullGenLapack', 3)
         t213._column('PDelta', P)
         r = ops.ritzVectors(3, '-dir', 1)      # 3 = every mass DOF (rotations massless)
         np.testing.assert_allclose(r, e, rtol=1e-10)
-        lam[P] = r
-        # numpy LDR on the K the LinearSOE holds (K - Kg after the preload)
-        n = ops.systemSize()
-        K = np.array(ops.printA('-ret'), dtype=float).reshape(n, n)
-        M = np.zeros((n, n))
-        io = np.zeros(n)
-        for nd in (2, 3, 4):
-            eq = ops.nodeDOFs(nd)
-            M[eq[0], eq[0]] = 2.0
-            io[eq[0]] = 1.0
-        lam_np, _, _ = _ldr_oracle(0.5 * (K + K.T), M, [M @ io], 2)
+        # the full mass space: the exact eigenvalues of the condensed model
+        a = [0, 3, 6]
+        b = [i for i in range(9) if i not in a]
+        Kc = K[np.ix_(a, a)] - K[np.ix_(a, b)] @ np.linalg.solve(K[np.ix_(b, b)], K[np.ix_(b, a)])
+        np.testing.assert_allclose(r, np.linalg.eigvalsh(Kc / 2.0), rtol=1e-9)
+        # a truncated set: the Krylov oracle on the model-data K - Kg
+        lam_np, _, _ = _krylov_oracle(K, M, [M @ io], 2)
         r2 = ops.ritzVectors(2, '-dir', 1)
         np.testing.assert_allclose(r2, lam_np, rtol=1e-8)
+        lam[P] = r
     assert abs(lam[1500.0][0] / lam[0.0][0] - 1) > 1e-3
 
 
@@ -422,7 +564,7 @@ def test_modal_properties_tags_z_and_eigen_clears_them(tmp_path):
 
 def test_rsa_after_ritz_and_require_mass():
     _, _, K, M = t213._v3_mk()
-    lam_np, psi_np, _ = _ldr_oracle(K, M, [M @ np.ones(N3)], 3)
+    lam_np, psi_np, _ = _krylov_oracle(K, M, [M @ np.ones(N3)], 3)
     ratio = _dynamic_participation(psi_np, M, M @ np.ones(N3))
     t213._v3_build()
     ops.ritzVectors(3, '-dir', 1)
@@ -439,22 +581,49 @@ def test_rsa_after_ritz_and_require_mass():
         assert abs(ops.nodeDisp(1, 1)) == pytest.approx(abs(u_np[k - 1]), rel=1e-8)
 
 
-def test_residual_modes_after_ritz_completes_the_mass():
-    # allowed: residualModes deflates against the Ritz vectors (M-orthonormal,
-    # K-orthogonal, lambda = their Rayleigh quotient) and appends
-    _, _, K, M = t213._v3_mk()
+def test_residual_modes_after_ritz_is_one_joint_set():
+    # review of #1027, finding 1: Ritz vectors are not eigenvectors, so the
+    # residual vectors couple to them through K (Psi^T K R reached -442 on
+    # V3 and CQC went to 1.137x). residualModes now re-solves span[Psi, R]
+    # jointly. Oracle, independent of the kernel: span[Psi, r, K^-1 M r] with
+    # r = iota - Psi Psi^T M iota is span{iota, (K^-1 M)^k iota, k = 1..4}
+    # (Psi = the first three Krylov powers); generalized Rayleigh-Ritz on it.
+    m, k, K, M = t213._v3_mk()
     io = np.ones(N3)
-    lam_z, psi_z, _ = _ldr_oracle(K, M, [M @ io], 3)
+    cols, v = [io], io
+    for _ in range(4):
+        v = np.linalg.solve(K, M @ v)
+        cols.append(v / np.linalg.norm(v))
+    lam_np, psi_np = _span_oracle(K, M, np.column_stack(cols))
+
     t213._v3_build()
     ops.ritzVectors(3, '-dir', 1)
-    lam_r = ops.residualModes('-dir', 1)
-    kinds = ops.residualModes('-kinds')
-    assert kinds[:3] == [2, 2, 2] and set(kinds[3:]) == {1} and len(kinds) == 3 + len(lam_r)
-    lam_np, _ = t213._residual_oracle(K, M, psi_z, [io])
-    np.testing.assert_allclose(lam_r, lam_np, rtol=1e-8)
+    lam = ops.residualModes('-dir', 1)
+    assert ops.residualModes('-kinds') == [2] * 5
+    np.testing.assert_allclose(lam, lam_np, rtol=1e-8)
+    psi = _v3_shapes(5)
+    _same_up_to_sign(psi, psi_np, M, atol=1e-8)
+    np.testing.assert_allclose(psi.T @ M @ psi, np.eye(5), atol=1e-10)
+    kk = psi.T @ K @ psi
+    off = kk - np.diag(np.diag(kk))
+    assert np.abs(off).max() < 1e-8 * np.abs(np.diag(kk)).max(), off
+    np.testing.assert_allclose(np.diag(kk), lam, rtol=1e-9)
+
     ops.modalProperties()
     assert t213._ratio_x() == pytest.approx(1.0, abs=1e-10)
+    ref = t213._v3_reference()
+    v = t213._rsa_combined_base_shear()
+    assert v == pytest.approx(t213._v3_base_shear_np(psi_np, lam_np), rel=1e-7)
+    assert abs(v / ref - 1) < 0.01, (v, ref)
     ops.responseSpectrumAnalysis(1, *RSA, '-requireMass', 1.0)
+
+
+def test_residual_modes_after_ritz_refuses_a_fixed_period():
+    t213._v3_build()
+    ops.ritzVectors(3, '-dir', 1)
+    with pytest.raises(Exception):
+        ops.residualModes('-dir', 1, '-period', 0.05)
+    assert ops.residualModes('-kinds') == [2, 2, 2]
 
 
 def test_frequency_domain_warns_on_ritz_basis(tmp_path):
@@ -486,7 +655,8 @@ def test_issue_1025_penalty_one_mode_is_accepted(solver):
 
 def test_soe_that_cannot_hold_k_is_still_refused(tmp_path):
     # system Diagonal keeps only diag(K): the "solve" is b / diag(K), its
-    # backward error is O(0.1); both commands must refuse it
+    # backward error is O(0.1) and its energy mismatch O(1); both commands
+    # must refuse it (the energy check runs first)
     out, err = _child(tmp_path, [
         "t._v3_build(); ops.system('Diagonal'); ops.eigen('-fullGenLapack', 3)",
         "for f in (lambda: ops.residualModes('-dir', 1), lambda: ops.ritzVectors(3, '-dir', 1)):",
@@ -496,7 +666,54 @@ def test_soe_that_cannot_hold_k_is_still_refused(tmp_path):
         "        print('RESULT REFUSED')",
     ])
     assert out == ['REFUSED', 'REFUSED'], out
-    assert err.count('did not solve K x = f (backward error') == 2, err[-2000:]
+    assert err.count('did not solve K x = f (energy mismatch') == 2, err[-2000:]
+
+
+def test_backward_error_alone_is_diluted_by_penalty_rows():
+    # review of #1027, finding 4, pinned on the tied-floor Penalty matrices:
+    # a solve with the structural stiffness doubled (forward error 50 %) has a
+    # normwise backward error ~1e-13 because || |K||x| || ~ alpha ||x||, so the
+    # kernel also checks the energy balance |x'Kx - x'b| / x'b against
+    # max(1e-4, 10 eps |x|'|K||x| / x'Kx). No stock SOE returns such a wrong x
+    # on demand, so the two measures are pinned here in numpy; the kernel's
+    # use of the energy check is pinned by the Diagonal refusal above.
+    nf, m, k, alpha = 10, 1.0, 500.0, 1.0e14
+    n = 2 * nf
+    Ks = np.zeros((n, n))
+    for f in range(nf):
+        for side in (0, 1):
+            i = 2 * f + side
+            Ks[i, i] += k
+            if f > 0:
+                j = 2 * (f - 1) + side
+                Ks[j, j] += k
+                Ks[i, j] -= k
+                Ks[j, i] -= k
+    Kp = np.zeros((n, n))
+    for f in range(nf):
+        a, b = 2 * f, 2 * f + 1
+        Kp[a, a] += alpha
+        Kp[b, b] += alpha
+        Kp[a, b] -= alpha
+        Kp[b, a] -= alpha
+    K = Ks + Kp
+    b = np.full(n, m)
+    eps = np.finfo(float).eps
+
+    def measures(x):
+        be = np.linalg.norm(K @ x - b) / (np.linalg.norm(np.abs(K) @ np.abs(x)) + np.linalg.norm(b))
+        xKx = x @ K @ x
+        floor = 10 * eps * (np.abs(x) @ np.abs(K) @ np.abs(x)) / abs(xKx)
+        return be, abs(xKx - x @ b) / abs(x @ b), max(1e-4, floor)
+
+    good = np.linalg.solve(K, b)
+    bad = np.linalg.solve(Ks * 2 + Kp, b)
+    assert np.linalg.norm(bad - good) / np.linalg.norm(good) > 0.4
+    be_g, en_g, tol_g = measures(good)
+    be_b, en_b, tol_b = measures(bad)
+    assert be_g < 1e-4 and en_g < tol_g          # accepted
+    assert be_b < 1e-4                           # backward error alone: accepted
+    assert en_b > tol_b                          # the energy check refuses it
 
 
 def test_partitioned_domain_refusal_is_in_place():

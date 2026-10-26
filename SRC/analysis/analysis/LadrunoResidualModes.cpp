@@ -26,9 +26,11 @@
 //   residualModes -dir d1 <d2 <d3>> <-period rayleigh|$T> <-replace> <-tol $t>
 //   residualModes -kinds          (query: 0 = eigen, 1 = residual, 2 = ritz per mode)
 //
-//   Run after `eigen` (or `eigen -feast`, or `ritzVectors`: WP-215, the Ritz
-//   vectors are then the kept set and the pseudo-modes complete their mass
-//   to 100 %). For each requested global
+//   Run after `eigen` (or `eigen -feast`). After `ritzVectors` (WP-215) the
+//   Ritz vectors are not eigenvectors, so the new vectors are not K-orthogonal
+//   to them: the whole set is re-solved by one joint Rayleigh-Ritz over
+//   span[Psi, R] and re-installed as Ritz vectors (mass 100 %; -period is
+//   refused there). For each requested global
 //   translation d the kernel starts from the rigid shape iota_d (shape start,
 //   two blocks), deflated against the current modes:
 //       r_d = iota_d - Phi Phi^T M iota_d      (the mass the modes miss)
@@ -251,6 +253,21 @@ OPS_LadrunoResidualModes(void)
         std::sort(dirs.begin(), dirs.end());
     }
 
+    // WP-215: a kept set of Ritz vectors (ritzVectors) is not an eigenbasis:
+    // K^-1 M Psi leaves span(Psi), so new vectors couple to Psi through K and
+    // the whole set is re-solved jointly below (review of #1027). The result
+    // is one Ritz set, so no separable pseudo-mode carries a -period override.
+    bool keptRitz = false;
+    for (size_t k = 0; k < keptKinds.size(); k++)
+        if (keptKinds[k] == LadrunoModeKinds::RITZ)
+            keptRitz = true;
+    if (keptRitz && fixedPeriod) {
+        opserr << "residualModes: -period needs separable pseudo-modes, but the set holds Ritz"
+               << " vectors (ritzVectors): the residual vectors are mixed into them by a joint"
+               << " Rayleigh-Ritz step; drop -period, or start from eigen\n";
+        return -1;
+    }
+
     // one period rule per residual set: kept residual modes must already use
     // the rule this call asks for, or the deck has to rebuild them (-replace)
     const double wantSa = fixedPeriod ? period : 0.0;
@@ -415,10 +432,42 @@ OPS_LadrunoResidualModes(void)
                    << " noise (tighten the eigen solve, or raise -tol)\n";
     }
 
-    // WP-215: kept Ritz vectors count as retained modes too
+    // ---- WP-215: kept Ritz vectors -> one joint Rayleigh-Ritz set -----------
+    // The residual vectors are M-orthogonal to Psi but not K-orthogonal
+    // (V3: Psi^T K R reached -442 against lambda_r = 355, 634; CQC 1.137x
+    // instead of 1.004x). Rayleigh-Ritz over span[Psi, R] gives K-orthogonal
+    // pairs again; they are all Ritz vectors of that subspace, tagged RITZ.
+    if (keptRitz) {
+        if (q == 0)
+            return 0;   // nothing new: the set stays as it is
+        std::vector<Vector> S = phi;
+        for (int j = 0; j < q; j++)
+            S.push_back(res.psi[j]);
+        std::vector<Vector> psiJ;
+        std::vector<double> lamJ;
+        if (kernel.orthonormalize(S, 1.0e-10) < 0 || kernel.rayleighRitz(S, psiJ, lamJ) < 0) {
+            opserr << "residualModes: " << kernel.error().c_str() << "\n";
+            return -1;
+        }
+        if (kernel.install(psiJ, lamJ) < 0) {
+            opserr << "residualModes: " << kernel.error().c_str() << "\n";
+            return -1;
+        }
+        const int nJ = (int)psiJ.size();
+        LadrunoModeKinds::set(theDomain, std::vector<int>(nJ, LadrunoModeKinds::RITZ));
+        theDomain->unsetModalProperties();
+        opserr << "residualModes: the set held " << (int)phi.size() << " Ritz vectors: joint"
+               << " Rayleigh-Ritz with the " << q << " residual vector(s) -> " << nJ
+               << " Ritz vectors (all tagged Z, returned); re-run modalProperties before RSA\n";
+        int nout = nJ;
+        if (OPS_SetDoubleOutput(&nout, lamJ.data(), false) < 0)
+            return -1;
+        return 0;
+    }
+
     double lamMaxKept = 0.0;
     for (size_t k = 0; k < lam.size(); k++)
-        if (keptKinds[k] != LadrunoModeKinds::RESIDUAL)
+        if (keptKinds[k] == LadrunoModeKinds::EIGEN)
             lamMaxKept = std::max(lamMaxKept, lam[k]);
     for (int j = 0; j < q; j++) {
         const double T = kTwoPi / std::sqrt(lamPseudo[j]);

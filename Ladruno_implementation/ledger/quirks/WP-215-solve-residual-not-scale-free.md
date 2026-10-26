@@ -22,3 +22,9 @@ pr: "#1027"
   sits at ~ε for a good solve and at O(0.1) for `system Diagonal`, which is
   still refused. Same family as the Rayleigh-quotient floor
   (WP-213 penalty-eigenvalue-roundoff). Learned 2026-10-26 (WP-215, #1025).
+- **But the backward error alone is diluted by the same Penalty rows**
+  (review of #1027): K_s doubled scores 6e-14 with a 50 % forward error, a
+  float32 solve 4.7e-12 with 100 %. The kernel also checks the energy balance
+  |xᵀKx − xᵀb| / |xᵀb| < max(1e-4, 10 ε |x|ᵀ|K||x| / xᵀKx), which is not
+  diluted (0.5, 1.8, 1.0 for the bad cases). Any solve check under Penalty
+  needs a measure that the α rows cannot swamp.

@@ -515,6 +515,15 @@ LadrunoRitzKernel::patternLoad(int patternTag, Vector& f, int& numElementalLoads
     while (theEleLoads() != 0)
         numElementalLoads++;
 
+    // SP-fixed DOFs: dropped under every handler (Transformation removes the
+    // equation; Penalty / Lagrange keep one, and a load there would only push
+    // on the support - rigidInfluence's rule)
+    std::set<std::pair<int, int> > fixed;
+    SP_ConstraintIter& theSPs = m_domain->getSPs();
+    SP_Constraint* sp;
+    while ((sp = theSPs()) != 0)
+        fixed.insert(std::make_pair(sp->getNodeTag(), sp->getDOF_Number()));
+
     // reference load per node (a node may carry several NodalLoads)
     std::map<int, Vector> pNode;
     NodalLoadIter& theLoads = pat->getNodalLoads();
@@ -529,7 +538,8 @@ LadrunoRitzKernel::patternLoad(int patternTag, Vector& f, int& numElementalLoads
         if (it == pNode.end())
             it = pNode.insert(std::make_pair(nd->getTag(), Vector(nd->getNumberDOF()))).first;
         for (int i = 0; i < data.Size() && i < it->second.Size(); i++)
-            it->second(i) += data(i);
+            if (fixed.count(std::make_pair(nd->getTag(), i)) == 0)
+                it->second(i) += data(i);
     }
 
     Vector tp;
@@ -763,6 +773,13 @@ LadrunoRitzKernel::run(const std::vector<Vector>& F,
     // 1.6e-4 under Penalty (alpha = 1e14, ||K|| ||x|| / ||b|| ~ 1e12) and
     // refused good solves. It is never above the old measure, so every solve
     // accepted before is still accepted.
+    // Review of #1027: under Penalty || |K||x| || ~ alpha ||x|| also dilutes
+    // real errors on the structural rows (K_s doubled: 6e-14; a float32 solve:
+    // 5e-12). The energy balance x^T K x = x^T b holds for any exact solve
+    // (Lagrange: the multiplier terms cancel because C u = 0) and is not
+    // diluted: |x^T K x - x^T b| / x^T b must stay below
+    // max(1e-4, 10 eps sum_e |x_e|^T |K_e| |x_e| / x^T K x) (the same
+    // round-off floor as residualModes' Rayleigh-quotient check).
     bool checked = false;
     auto solveAll = [&](const std::vector<Vector>& B, std::vector<Vector>& Xs) -> int {
         Xs.assign(B.size(), Vector(m_neq));
@@ -773,7 +790,10 @@ LadrunoRitzKernel::run(const std::vector<Vector>& F,
             return 0;
         checked = true;
         std::vector<Vector> KX0, absKX0;
-        applyK(Xs, KX0, 0, &absKX0);
+        std::vector<double> absQ0;
+        applyK(Xs, KX0, &absQ0, &absKX0);
+        const double eps = std::numeric_limits<double>::epsilon();
+        double worstEnergy = 0.0, worstEnergyTol = 1.0e-4;
         for (size_t j = 0; j < B.size(); j++) {
             const double nb = B[j].Norm();
             if (!(nb > 0.0))
@@ -782,6 +802,27 @@ LadrunoRitzKernel::run(const std::vector<Vector>& F,
             res.addVector(1.0, B[j], -1.0);
             out.maxSolveResidual = std::max(out.maxSolveResidual,
                                             res.Norm() / (absKX0[j].Norm() + nb));
+            const double xKx = dot(Xs[j], KX0[j]);
+            const double xb = dot(Xs[j], B[j]);
+            const double tol = std::max(1.0e-4, (std::fabs(xKx) > 0.0)
+                                        ? 10.0 * eps * absQ0[j] / std::fabs(xKx) : 0.0);
+            const double e = (std::fabs(xb) > 0.0) ? std::fabs(xKx - xb) / std::fabs(xb)
+                                                     : std::numeric_limits<double>::infinity();
+            if (!(e / tol <= worstEnergy / worstEnergyTol)) {
+                worstEnergy = e;
+                worstEnergyTol = tol;
+            }
+        }
+        out.maxEnergyMismatch = worstEnergy;
+        if (!(worstEnergy < worstEnergyTol)) {
+            std::ostringstream s;
+            s << "the analysis LinearSOE did not solve K x = f (energy mismatch "
+              << "|x'Kx - x'f| / x'f = " << worstEnergy << " above " << worstEnergyTol
+              << "); use a general sparse system "
+              << "(UmfPack, Pardiso, Mumps, BandGeneral, ProfileSPD for "
+              << "Transformation / Plain)";
+            m_err = s.str();
+            return -1;
         }
         if (!(out.maxSolveResidual < 1.0e-4)) {
             std::ostringstream s;
@@ -813,10 +854,24 @@ LadrunoRitzKernel::run(const std::vector<Vector>& F,
     }
 
     // ---- block loop -------------------------------------------------------
+    // WP-215 (review of #1027, -cycles): the next block of a start is made
+    // from that start's own CHAIN vector (its column deflated against Phi and
+    // the start's earlier chain only), not from the column orthogonalized
+    // against every start. Otherwise K^-1 M of the other starts' columns
+    // leaks in, and with unequal caps the subspace carried directions of a
+    // start past its cap and depended on the Gram-Schmidt coefficients. Now
+    // the span is exactly the per-start Krylov prefixes
+    //   {(K^-1 M)^b x_s0 : b < cap_s}, x_s0 = K^-1 f_s (or f_s deflated),
+    // taken block by block, starts in order, cut at maxVectors. With equal
+    // caps it is the same span as before.
     std::vector<Vector> X, MX;
+    std::vector<std::vector<Vector> > chainQ(q), chainMQ(q);
+    std::vector<Vector> nextFrom;   // M * chain vector of each accepted column
+    Vector Mc(m_neq);
     bool full = false;
     for (int b = 0; b < maxBlocks && !Y.empty() && !full; b++) {
-        std::vector<int> acceptedIdx, acceptedOrigin;
+        std::vector<int> acceptedOrigin;
+        nextFrom.clear();
         for (size_t j = 0; j < Y.size(); j++) {
             Vector& y = Y[j];
             const int start = origin[j];
@@ -827,6 +882,16 @@ LadrunoRitzKernel::run(const std::vector<Vector>& F,
                 out.numDropped++;
                 continue;
             }
+            // the chain vector: deflated against Phi and this start's chain
+            Vector c = y;
+            for (int pass = 0; pass < 2; pass++) {
+                for (size_t i = 0; i < Q.size(); i++)
+                    c.addVector(1.0, Q[i], -dot(MQ[i], c));
+                for (size_t i = 0; i < chainQ[start].size(); i++)
+                    c.addVector(1.0, chainQ[start][i], -dot(chainMQ[start][i], c));
+            }
+            applyM(c, Mc);
+            const double nc = std::sqrt(std::max(0.0, dot(c, Mc)));
             // twice is enough (classical re-orthogonalization)
             for (int pass = 0; pass < 2; pass++) {
                 for (size_t i = 0; i < Q.size(); i++)
@@ -838,7 +903,7 @@ LadrunoRitzKernel::run(const std::vector<Vector>& F,
             const double n = std::sqrt(std::max(0.0, dot(y, My)));
             if (b == 0)
                 out.firstBlockRelNorm[start] = (n > opt.dropTol * n0) ? n / n0 : 0.0;
-            if (!(n > opt.dropTol * n0)) {
+            if (!(n > opt.dropTol * n0) || !(nc > opt.dropTol * n0)) {
                 // breakdown: already spanned by Phi and the earlier columns
                 out.droppedPerStart[start]++;
                 out.numDropped++;
@@ -848,8 +913,12 @@ LadrunoRitzKernel::run(const std::vector<Vector>& F,
             My /= n;
             X.push_back(y);
             MX.push_back(My);
+            c /= nc;
+            Mc /= nc;
+            chainQ[start].push_back(c);
+            chainMQ[start].push_back(Mc);
+            nextFrom.push_back(Mc);
             out.keptPerStart[start]++;
-            acceptedIdx.push_back((int)X.size() - 1);
             acceptedOrigin.push_back(start);
             if (opt.maxVectors > 0 && (int)X.size() >= opt.maxVectors) {
                 full = true;
@@ -859,18 +928,18 @@ LadrunoRitzKernel::run(const std::vector<Vector>& F,
         if (full || b + 1 >= maxBlocks)
             break;
 
-        // next block: K^-1 M x for every surviving column whose start still
-        // has cycles left
+        // next block: K^-1 M c for every surviving column's chain vector c
+        // whose start still has cycles left
         std::vector<Vector> rhs;
         std::vector<int> originNext;
-        for (size_t a = 0; a < acceptedIdx.size(); a++) {
+        for (size_t a = 0; a < acceptedOrigin.size(); a++) {
             const int start = acceptedOrigin[a];
             const int cap = (start < (int)opt.cyclesPerStart.size() &&
                              opt.cyclesPerStart[start] > 0)
                 ? opt.cyclesPerStart[start] : maxBlocks;
             if (b + 1 >= cap)
                 continue;
-            rhs.push_back(MX[acceptedIdx[a]]);
+            rhs.push_back(nextFrom[a]);
             originNext.push_back(start);
         }
         if (solveAll(rhs, Y) < 0)
@@ -878,9 +947,52 @@ LadrunoRitzKernel::run(const std::vector<Vector>& F,
         origin.swap(originNext);
     }
 
-    const int r = (int)X.size();
-    if (r == 0)
+    if (X.empty())
         return 0;   // everything was already spanned
+
+    return rayleighRitz(X, out.psi, out.lambda);
+}
+
+int
+LadrunoRitzKernel::orthonormalize(std::vector<Vector>& X, double dropTol)
+{
+    std::vector<Vector> Q, MQ;
+    Vector My(m_neq);
+    for (size_t k = 0; k < X.size(); k++) {
+        Vector y = X[k];
+        if (y.Size() != m_neq) {
+            m_err = "orthonormalize: a vector is not in equation numbering";
+            return -1;
+        }
+        applyM(y, My);
+        const double n0 = std::sqrt(std::max(0.0, dot(y, My)));
+        if (!(n0 > 0.0))
+            continue;
+        for (int pass = 0; pass < 2; pass++)
+            for (size_t i = 0; i < Q.size(); i++)
+                y.addVector(1.0, Q[i], -dot(MQ[i], y));
+        applyM(y, My);
+        const double n = std::sqrt(std::max(0.0, dot(y, My)));
+        if (!(n > dropTol * n0))
+            continue;
+        y /= n;
+        My /= n;
+        Q.push_back(y);
+        MQ.push_back(My);
+    }
+    X.swap(Q);
+    return 0;
+}
+
+int
+LadrunoRitzKernel::rayleighRitz(const std::vector<Vector>& X,
+                                std::vector<Vector>& psi, std::vector<double>& lambda)
+{
+    const int r = (int)X.size();
+    psi.clear();
+    lambda.clear();
+    if (r == 0)
+        return 0;
 
     // ---- Rayleigh-Ritz ----------------------------------------------------
     std::vector<Vector> KX;
@@ -927,10 +1039,10 @@ LadrunoRitzKernel::run(const std::vector<Vector>& F,
             return -1;
         }
 
-    out.psi.assign(r, Vector(m_neq));
-    out.lambda.assign(w.begin(), w.end());
+    psi.assign(r, Vector(m_neq));
+    lambda.assign(w.begin(), w.end());
     for (int k = 0; k < r; k++)
         for (int i = 0; i < r; i++)
-            out.psi[k].addVector(1.0, X[i], A[(size_t)i + (size_t)k * r]);
+            psi[k].addVector(1.0, X[i], A[(size_t)i + (size_t)k * r]);
     return 0;
 }

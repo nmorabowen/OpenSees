@@ -34,7 +34,10 @@
 //        M-orthonormalize Xb             (modified Gram-Schmidt, twice; drop a
 //                                        column whose M-norm fell below
 //                                        dropTol * its norm right after the solve)
-//        X(b+1) = K^-1 (M Xb)
+//        X(b+1) = K^-1 (M Cb)            (Cb: each start's CHAIN vector, its
+//                                        column deflated against Phi and that
+//                                        start's own earlier chain only; WP-215,
+//                                        so -cycles caps cannot leak)
 //     K~ = X^T K X, eig(K~) -> (lambda, Z) (dense LAPACK dsyevx)
 //     Psi = X Z                          (M-orthonormal, K-orthogonal)
 //
@@ -152,6 +155,9 @@ public:
         // the first batch of solves (WP-215, #1025: ||K x - b|| / ||b|| is not
         // scale-free under Penalty, where || |K||x| || ~ alpha ||x||)
         double maxSolveResidual = 0.0;
+        // worst |x^T K x - x^T b| / |x^T b| over the same solves (review of
+        // #1027: not diluted by Penalty rows)
+        double maxEnergyMismatch = 0.0;
         // per starting vector: M-norm of its block-0 column after deflation
         // over its M-norm before (0 when dropped); squared, the share of that
         // start's mass the existing basis misses (shape starts)
@@ -214,6 +220,17 @@ public:
             const std::vector<Vector>* Phi,
             const Options& opt,
             Result& out);
+
+    // Ladruno WP-215: the two steps of run() on their own, for a joint
+    // Rayleigh-Ritz over an existing non-eigen basis plus new vectors
+    // (residualModes after ritzVectors: Ritz vectors are not eigenvectors, so
+    // K^-1 M Psi leaves span(Psi) and new vectors couple to Psi through K).
+    // orthonormalize: M-Gram-Schmidt (twice) in place, dropping a column whose
+    // M-norm fell below dropTol * its own; rayleighRitz: X M-orthonormal ->
+    // (psi, lambda) ascending, refuses non-positive values like run().
+    int orthonormalize(std::vector<Vector>& X, double dropTol);
+    int rayleighRitz(const std::vector<Vector>& X,
+                     std::vector<Vector>& psi, std::vector<double>& lambda);
 
     const std::string& error() const { return m_err; }
 
