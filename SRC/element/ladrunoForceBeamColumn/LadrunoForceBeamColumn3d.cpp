@@ -479,6 +479,7 @@ OPS_LadrunoForceBeamColumn3d()
   double elePmP0t = 0.0, elePmPbal = 0.0, elePmMuBal = 0.0;
   bool eleImplex = false;
   bool eleAxialRelease = false;
+  int spanLoadMode = 1;
   double gavy = 0.0, gavz = 0.0;
 
   numData = 1;
@@ -987,6 +988,16 @@ OPS_LadrunoForceBeamColumn3d()
     else if (strcmp(type, "-axialRelease") == 0 || strcmp(type, "-decoupleAxial") == 0) {
       eleAxialRelease = true;
     }
+    else if (strcmp(type, "-spanLoad") == 0 || strcmp(type, "-spanLoadEnhancement") == 0) {
+      int optFlag = 1;
+      if (lfbc3dTryOptionalInt(optFlag))
+        spanLoadMode = (optFlag != 0) ? 1 : 0;
+      else
+        spanLoadMode = 1;
+    }
+    else if (strcmp(type, "-noSpanLoad") == 0) {
+      spanLoadMode = 0;
+    }
     else if (strcmp(type, "-shear") == 0) {
       numData = 1;
       if (OPS_GetNumRemainingInputArgs() < 1 ||
@@ -1147,7 +1158,7 @@ OPS_LadrunoForceBeamColumn3d()
       dualHingeMode, hingeXiI, hingeXiJ,
       elePmP0, elePmAlpha, eleImplex,
       gavy, gavz,
-      elePmP0t, elePmPbal, elePmMuBal, eleAxialRelease);
+      elePmP0t, elePmPbal, elePmMuBal, eleAxialRelease, spanLoadMode);
 
   delete hZ_tmp;
   delete hY_tmp;
@@ -1185,7 +1196,7 @@ LadrunoForceBeamColumn3d::LadrunoForceBeamColumn3d()
     hingeMscaleZJ(0.0), hingeMscaleCommitZJ(0.0),
     hingeMscaleYJ(0.0), hingeMscaleCommitYJ(0.0),
     pmP0(0.0), pmAlpha(0.5),
-    pmP0t(0.0), pmPbal(0.0), pmMuBal(0.0), axialRelease(false),
+    pmP0t(0.0), pmPbal(0.0), pmMuBal(0.0), axialRelease(false), spanLoadMode(1),
     useImplex(false), eleImplexErr(0.0), eleImplexErrCommit(0.0),
     postRestoreSync(false), vRestoreValid(false),
     vCommitBulk(NEBD),
@@ -1233,7 +1244,7 @@ LadrunoForceBeamColumn3d::LadrunoForceBeamColumn3d(
     bool eleImplex,
     double gavy_, double gavz_,
     double inPmP0t, double inPmPbal,
-    double inPmMuBal, bool inAxialRelease)
+    double inPmMuBal, bool inAxialRelease, int inSpanLoadMode)
   : Element(tag, ELE_TAG_LadrunoForceBeamColumn3d),
     connectedExternalNodes(2),
     beamIntegr(0), numSections(0), sections(0), crdTransf(0),
@@ -1261,7 +1272,7 @@ LadrunoForceBeamColumn3d::LadrunoForceBeamColumn3d(
     hingeMscaleZJ(0.0), hingeMscaleCommitZJ(0.0),
     hingeMscaleYJ(0.0), hingeMscaleCommitYJ(0.0),
     pmP0(inPmP0), pmAlpha(inPmAlpha),
-    pmP0t(inPmP0t), pmPbal(inPmPbal), pmMuBal(inPmMuBal), axialRelease(inAxialRelease),
+    pmP0t(inPmP0t), pmPbal(inPmPbal), pmMuBal(inPmMuBal), axialRelease(inAxialRelease), spanLoadMode(inSpanLoadMode),
     useImplex(eleImplex), eleImplexErr(0.0), eleImplexErrCommit(0.0),
     postRestoreSync(false), vRestoreValid(false),
     vCommitBulk(NEBD),
@@ -3138,6 +3149,8 @@ LadrunoForceBeamColumn3d::addLoad(ElementalLoad *theLoad, double loadFactor)
 void
 LadrunoForceBeamColumn3d::computeSectionForces(Vector &sp, int isec)
 {
+  if (!spanLoadMode)
+    return;
   int type;
   double L = crdTransf->getInitialLength();
 
@@ -3581,7 +3594,7 @@ LadrunoForceBeamColumn3d::sendSelf(int commitTag, Channel &theChannel)
     idData(12) = dmpDbTag;
   }
 
-  idData(15) = hingeOn + 2 * dualHingeMode + (useImplex ? 4 : 0) + (axialRelease ? 8 : 0);
+  idData(15) = hingeOn + 2 * dualHingeMode + (useImplex ? 4 : 0) + (axialRelease ? 8 : 0) + (spanLoadMode == 0 ? 16 : 0);
   UniaxialMaterial *uniList[4] = {theHingeZ, theHingeY, theHingeZJ, theHingeYJ};
   for (int m = 0; m < 4; m++) {
     if (uniList[m] != 0) {
@@ -3775,6 +3788,7 @@ LadrunoForceBeamColumn3d::recvSelf(int commitTag, Channel &theChannel, FEM_Objec
   dualHingeMode = (idData(15) >> 1) & 1;
   useImplex = ((idData(15) >> 2) & 1) != 0;
   axialRelease = ((idData(15) >> 3) & 1) != 0;
+  spanLoadMode = (((idData(15) >> 4) & 1) != 0) ? 0 : 1;
   vRestoreValid = (idData(28) != 0);
 
   int crdTransfClassTag = idData(7);

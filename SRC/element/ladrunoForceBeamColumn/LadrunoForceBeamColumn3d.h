@@ -88,7 +88,8 @@ class LadrunoForceBeamColumn3d : public Element
                             bool eleImplex = false,
                             double GAvy = 0.0, double GAvz = 0.0,
                             double pmP0t = 0.0, double pmPbal = 0.0,
-                            double pmMuBal = 0.0, bool axialRelease = false);
+                            double pmMuBal = 0.0, bool axialRelease = false,
+                            int spanLoadMode = 1);
 
   ~LadrunoForceBeamColumn3d();
 
@@ -257,6 +258,7 @@ class LadrunoForceBeamColumn3d : public Element
   double pmPbal;
   double pmMuBal;
   bool axialRelease;
+  int spanLoadMode;
   bool useImplex;
   double eleImplexErr;
   double eleImplexErrCommit;

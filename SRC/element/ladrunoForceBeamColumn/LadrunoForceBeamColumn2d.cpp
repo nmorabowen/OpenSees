@@ -363,6 +363,7 @@ void* OPS_LadrunoForceBeamColumn2d()
   double elePmMuBal = 1.0;
   double gavy = 0.0;
   bool axialRelease = false;
+  int spanLoadMode = 1;
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const char *type = OPS_GetString();
@@ -675,6 +676,16 @@ void* OPS_LadrunoForceBeamColumn2d()
     else if (strcmp(type, "-axialRelease") == 0 || strcmp(type, "-decoupleAxial") == 0) {
       axialRelease = true;
     }
+    else if (strcmp(type, "-spanLoad") == 0 || strcmp(type, "-spanLoadEnhancement") == 0) {
+      int optFlag = 1;
+      if (lfbc2dTryOptionalInt(optFlag))
+        spanLoadMode = (optFlag != 0) ? 1 : 0;
+      else
+        spanLoadMode = 1;
+    }
+    else if (strcmp(type, "-noSpanLoad") == 0) {
+      spanLoadMode = 0;
+    }
     else {
       opserr << "WARNING LadrunoForceBeamColumn2d: unknown option '" << type << "'\n";
       delete legacyBi;
@@ -769,7 +780,7 @@ void* OPS_LadrunoForceBeamColumn2d()
       mass, maxIters, tol, cmass, theDamping, lchMode, userLch,
       hingeMat, hingeMatJ, dualHingeMode, hingeXiI, hingeXiJ,
       elePmP0, elePmAlpha, maxSubdivisions, subdivideFactor, eleImplex,
-      gavy, elePmP0t, elePmPbal, elePmMuBal, axialRelease);
+      gavy, elePmP0t, elePmPbal, elePmMuBal, axialRelease, spanLoadMode);
 
   delete hI_tmp;
   delete hJ_tmp;
@@ -795,7 +806,7 @@ LadrunoForceBeamColumn2d::LadrunoForceBeamColumn2d(
     bool eleImplex_,
     double gavy_,
     double pmP0t_, double pmPbal_, double pmMuBal_,
-    bool axialRelease_)
+    bool axialRelease_, int spanLoadMode_)
   : Element(tag, ELE_TAG_LadrunoForceBeamColumn2d),
     numSections(0), sections(0), crdTransf(0), beamIntegr(0),
     connectedExternalNodes(2), load(NEGD),
@@ -816,7 +827,7 @@ LadrunoForceBeamColumn2d::LadrunoForceBeamColumn2d(
     hingeMscale(0.0), hingeMscaleCommit(0.0),
     pmP0(pmP0_), pmAlpha(pmAlpha_),
     pmP0t(pmP0t_), pmPbal(pmPbal_), pmMuBal(pmMuBal_),
-    axialRelease(axialRelease_),
+    axialRelease(axialRelease_), spanLoadMode(spanLoadMode_),
     useImplex(eleImplex_), eleImplexErr(0.0), eleImplexErrCommit(0.0),
     postRestoreSync(false), vRestoreValid(false),
     vCommitBulk(NEBD)
@@ -908,7 +919,7 @@ LadrunoForceBeamColumn2d::LadrunoForceBeamColumn2d()
     hingeMscale(0.0), hingeMscaleCommit(0.0),
     pmP0(0.0), pmAlpha(0.5),
     pmP0t(0.0), pmPbal(0.0), pmMuBal(1.0),
-    axialRelease(false),
+    axialRelease(false), spanLoadMode(1),
     useImplex(false), eleImplexErr(0.0), eleImplexErrCommit(0.0),
     postRestoreSync(false), vRestoreValid(false),
     vCommitBulk(NEBD)
@@ -2284,6 +2295,8 @@ LadrunoForceBeamColumn2d::addLoad(ElementalLoad *theLoad, double loadFactor)
 void
 LadrunoForceBeamColumn2d::computeSectionForces(Vector &sp, int isec)
 {
+  if (!spanLoadMode)
+    return;
   int type;
   double L = crdTransf->getInitialLength();
   double xi[maxNumSections];
@@ -2638,7 +2651,7 @@ LadrunoForceBeamColumn2d::sendSelf(int commitTag, Channel &theChannel)
     idData(12) = dmpDbTag;
   }
 
-  idData(13) = cMass + 2 * lchMode + (useImplex ? 8 : 0) + (axialRelease ? 16 : 0);
+  idData(13) = cMass + 2 * lchMode + (useImplex ? 8 : 0) + (axialRelease ? 16 : 0) + (spanLoadMode == 0 ? 32 : 0);
   idData(14) = hingeOn + 2 * dualHingeMode;
   idData(15) = (theHinge != 0) ? theHinge->getClassTag() : 0;
   idData(16) = 0;
@@ -2805,6 +2818,7 @@ LadrunoForceBeamColumn2d::recvSelf(int commitTag, Channel &theChannel, FEM_Objec
   lchMode = (idData(13) >> 1) & 3;
   useImplex = ((idData(13) & 8) != 0);
   axialRelease = ((idData(13) & 16) != 0);
+  spanLoadMode = ((idData(13) & 32) != 0) ? 0 : 1;
   hingeOn = idData(14) & 1;
   dualHingeMode = (idData(14) >> 1) & 1;
 

@@ -82,7 +82,7 @@ class LadrunoForceBeamColumn2d : public Element
                            bool eleImplex = false,
                            double GAvy = 0.0,
                            double pmP0t = 0.0, double pmPbal = 0.0, double pmMuBal = 1.0,
-                           bool axialRelease = false);
+                           bool axialRelease = false, int spanLoadMode = 1);
 
   LadrunoForceBeamColumn2d();
   ~LadrunoForceBeamColumn2d();
@@ -242,6 +242,7 @@ class LadrunoForceBeamColumn2d : public Element
   double pmPbal;
   double pmMuBal;
   bool axialRelease;
+  int spanLoadMode;
   bool useImplex;
   double eleImplexErr;
   double eleImplexErrCommit;
