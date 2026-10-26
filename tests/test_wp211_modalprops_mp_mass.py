@@ -44,6 +44,9 @@ REL = 1e-6
 # a 1e14 penalty is ill-conditioned for the dense LAPACK solve (~1e-5 drift on
 # the eigenvalues, as WP-203 found); Penalty is held to penalty accuracy
 REL_PENALTY = 1e-4
+# the finite penalty also couples the modes: an off-axis Gamma of ~1e-4 max|Gamma|
+# on the Linux build (Meff = Gamma^2 hides it), so Gamma gets its own looser bound
+REL_PENALTY_GAMMA = 1e-3
 HANDLERS = ('Transformation', 'Penalty', 'Lagrange')
 KINDS = ('master', 'slaves', 'grid')
 MASTER = 100
@@ -208,8 +211,9 @@ def test_against_closed_form(kind, handler, alpha):
         _close(mp[key], ref['Meff'][d], rel, scale=M_TOT)
         assert sum(mp[key]) == pytest.approx(M_TOT, rel=rel)
         # Gamma's sign follows the eigenvector's; |Gamma| is sign-free
-        _close([abs(g) for g in mp[gkey]], [abs(g) for g in ref['Gamma'][d]], rel,
-               scale=math.sqrt(M_TOT))
+        g_ref = [abs(g) for g in ref['Gamma'][d]]
+        _close([abs(g) for g in mp[gkey]], g_ref,
+               REL_PENALTY_GAMMA if handler == 'Penalty' else REL, scale=max(g_ref))
         # per-mode RSA base shear: Gamma*phi is sign-invariant, so compare signed
         _close(r['V'][d], ref['V'][d], rel, scale=max(abs(v) for v in ref['V'][d]))
         assert max(abs(v) for v in r['V'][d]) > 0.0
