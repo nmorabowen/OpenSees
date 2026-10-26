@@ -22,7 +22,6 @@ import sys
 
 import numpy as np
 import pytest
-
 from _testbed import ops
 
 pytestmark = [pytest.mark.zone_a]
@@ -326,6 +325,7 @@ def test_rsa_combine_and_increment_use_corrected_gamma():
     assert abs(ops.nodeDisp(MASTER, 1)) == pytest.approx(u_cqc, rel=REL)
 
 
+# ci-coverage: local-only -- needs FEAST (MKL, Windows/oneAPI build) (WP-143)
 @pytest.mark.skipif(sys.platform != 'win32', reason='FEAST requires MKL (Windows/oneAPI build)')
 def test_feast_trimmed_modes_count_slave_mass():
     # WP-203 trimDomainModes path: FEAST over all 3 modes, mass on the slaves
