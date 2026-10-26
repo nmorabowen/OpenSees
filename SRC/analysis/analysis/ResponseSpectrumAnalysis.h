@@ -36,6 +36,7 @@
 #include <vector>
 class AnalysisModel;
 class TimeSeries;
+class DomainModalProperties; // Ladruno WP-212
 
 class ResponseSpectrumAnalysis
 {
@@ -68,8 +69,16 @@ public:
 	// (-revert) returns to the committed state before the call returns.
 	void setIncrement(double sign, bool revertAtEnd);
 
+	// Ladruno WP-212: -requireMass r, in (0, 1]. Below r the mass-shortfall
+	// warning of checkMass() becomes an error. 0 => warn only (default).
+	void setRequiredMassRatio(double ratio);
+
 private:
 	int check();
+	// Ladruno WP-212: report the cumulative effective-mass ratio of the excited
+	// direction once per call; warn below 90%, error with no participating mass
+	// or below -requireMass.
+	int checkMass(const DomainModalProperties& mp) const;
 	int beginMode();
 	int endMode();
 	int solveMode();
@@ -97,6 +106,8 @@ private:
 	bool m_increment = false;
 	double m_sign = 1.0;
 	bool m_revert_at_end = false;
+	// Ladruno WP-212: required cumulative mass ratio (0 => warn only).
+	double m_require_mass = 0.0;
 };
 
 #endif
