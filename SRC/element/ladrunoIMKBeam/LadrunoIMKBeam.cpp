@@ -61,8 +61,9 @@ LadrunoIMKBeam::LadrunoIMKBeam()
   : Element(0, ELE_TAG_LadrunoIMKBeam),
     A(0.0), E(0.0), G(0.0), Jx(0.0), Iy(0.0), Iz(0.0), rho(0.0), cMass(0),
     GAvy(0.0), GAvz(0.0), P0(0.0), pmAlpha(0.5),
+    P0t(0.0), Pbal(0.0), muBal(1.0),
     dI(0.0), dJ(0.0), useImplex(false), implexErr(0.0),
-    dtime_n_commit(0.0),
+    dtime_n_commit(0.0), stepDtLatched(false), dtStep(0.0), dtScaleStep(1.0),
     q(6), kb(6, 6), Q(12), q0Dirty(false), committedAtCurrentV(false),
     connectedExternalNodes(2), theCoordTransf(0)
 {
@@ -105,12 +106,14 @@ LadrunoIMKBeam::LadrunoIMKBeam(int tag, int Nd1, int Nd2,
                                double p0_pm, double alpha_pm,
                                double di, double dj, bool implex,
                                UniaxialMaterial *mShearY, UniaxialMaterial *mShearZ,
-                               NDMaterial *mBiI, NDMaterial *mBiJ)
+                               NDMaterial *mBiI, NDMaterial *mBiJ,
+                               double p0t_pm, double pbal_pm, double mubal_pm)
   : Element(tag, ELE_TAG_LadrunoIMKBeam),
     A(a), E(e), G(g), Jx(jx), Iy(iy), Iz(iz), rho(r), cMass(cm),
     GAvy(gavy), GAvz(gavz), P0(p0_pm), pmAlpha(alpha_pm),
+    P0t(p0t_pm), Pbal(pbal_pm), muBal(mubal_pm),
     dI(di), dJ(dj), useImplex(implex), implexErr(0.0),
-    dtime_n_commit(0.0),
+    dtime_n_commit(0.0), stepDtLatched(false), dtStep(0.0), dtScaleStep(1.0),
     q(6), kb(6, 6), Q(12), q0Dirty(false), committedAtCurrentV(false),
     connectedExternalNodes(2), theCoordTransf(0)
 {
@@ -126,8 +129,12 @@ LadrunoIMKBeam::LadrunoIMKBeam(int tag, int Nd1, int Nd2,
         exit(-1);
       }
       if (P0 > 0.0) {
-        if (LadrunoCohesiveHinge *ch = dynamic_cast<LadrunoCohesiveHinge *>(theMat[i]))
-          ch->setPM(P0, pmAlpha);
+        if (LadrunoCohesiveHinge *ch = dynamic_cast<LadrunoCohesiveHinge *>(theMat[i])) {
+          if (Pbal > 0.0 && P0 > Pbal && P0t > 0.0)
+            ch->setPMBal(P0, P0t, Pbal, muBal);
+          else
+            ch->setPM(P0, pmAlpha);
+        }
       }
     } else {
       theMat[i] = 0;
@@ -150,8 +157,12 @@ LadrunoIMKBeam::LadrunoIMKBeam(int tag, int Nd1, int Nd2,
         exit(-1);
       }
       if (P0 > 0.0) {
-        if (LadrunoCohesiveHingeBiaxial *cb = dynamic_cast<LadrunoCohesiveHingeBiaxial *>(theBiaxialMat[i]))
-          cb->setPM(P0, pmAlpha);
+        if (LadrunoCohesiveHingeBiaxial *cb = dynamic_cast<LadrunoCohesiveHingeBiaxial *>(theBiaxialMat[i])) {
+          if (Pbal > 0.0 && P0 > Pbal && P0t > 0.0)
+            cb->setPMBal(P0, P0t, Pbal, muBal);
+          else
+            cb->setPM(P0, pmAlpha);
+        }
       }
     } else {
       theBiaxialMat[i] = 0;
@@ -283,7 +294,8 @@ int LadrunoIMKBeam::commitState(void)
     dGammaSpPrev[i] = gammaSp[i] - gammaSpCommit[i];
     gammaSpCommit[i] = gammaSp[i];
   }
-  dtime_n_commit = ops_Dt;
+  dtime_n_commit = stepDtLatched ? dtStep : ops_Dt;
+  stepDtLatched = false;
   if (theCoordTransf != 0 && theNodes[0] != 0 && theNodes[1] != 0) {
     const Vector &vc = theCoordTransf->getBasicTrialDisp();
     for (int i = 0; i < 6; i++)
@@ -297,6 +309,7 @@ int LadrunoIMKBeam::revertToLastCommit(void)
 {
   int ok = 0;
   committedAtCurrentV = false;
+  stepDtLatched = false;
   for (int i = 0; i < 4; i++) {
     if (theMat[i] != 0)
       ok += theMat[i]->revertToLastCommit();
@@ -321,6 +334,9 @@ int LadrunoIMKBeam::revertToStart(void)
 {
   int ok = 0;
   committedAtCurrentV = false;
+  stepDtLatched = false;
+  dtStep = 0.0;
+  dtScaleStep = 1.0;
   for (int i = 0; i < 6; i++)
     vCommit[i] = 0.0;
   for (int i = 0; i < 4; i++) {
@@ -381,8 +397,12 @@ int LadrunoIMKBeam::update(void)
   kb(0, 0) = EAoverL;  q(0) = EAoverL * v(0) + q0[0];
   kb(5, 5) = GJoverL;  q(5) = GJoverL * v(5);
 
-  const double fPM = ladrunoIMKScalePM(q(0), P0, pmAlpha);
-  const double dLogPM = (fPM > 0.0) ? (ladrunoIMKScalePMDeriv(q(0), P0, pmAlpha) / fPM) : 0.0;
+  const bool usePMBal = (Pbal > 0.0 && P0 > Pbal && P0t > 0.0);
+  const double fPM = usePMBal ? ladrunoIMKScalePMBal(q(0), P0, P0t, Pbal, muBal)
+                              : ladrunoIMKScalePM(q(0), P0, pmAlpha);
+  const double dfPM = usePMBal ? ladrunoIMKScalePMBalDeriv(q(0), P0, P0t, Pbal, muBal)
+                               : ladrunoIMKScalePMDeriv(q(0), P0, pmAlpha);
+  const double dLogPM = (fPM > 0.0) ? (dfPM / fPM) : 0.0;
   for (int i = 0; i < 4; i++)
     if (LadrunoCohesiveHinge *ch = dynamic_cast<LadrunoCohesiveHinge *>(theMat[i]))
       ch->setAxialForce(q(0));
@@ -393,11 +413,16 @@ int LadrunoIMKBeam::update(void)
       chs->setAxialForce(q(0));
   }
 
-  double dtScale = 1.0;
-  if (dtime_n_commit > 1.0e-16 && ops_Dt > 0.0) {
-    dtScale = ops_Dt / dtime_n_commit;
-    if (dtScale > 2.0) dtScale = 2.0;
+  if (!stepDtLatched) {
+    dtStep = ops_Dt;
+    dtScaleStep = 1.0;
+    if (dtime_n_commit > 1.0e-16 && dtStep > 0.0) {
+      dtScaleStep = dtStep / dtime_n_commit;
+      if (dtScaleStep > 2.0) dtScaleStep = 2.0;
+    }
+    stepDtLatched = true;
   }
+  const double dtScale = dtScaleStep;
 
   if (theBiaxialMat[0] != 0 || theBiaxialMat[1] != 0) {
     const double v4[4] = { v(1), v(2), v(3), v(4) };
@@ -576,11 +601,11 @@ int LadrunoIMKBeam::addLoad(ElementalLoad *theLoad, double loadFactor)
     double wz = data(1) * loadFactor;  // Transverse Z
     double wx = data(2) * loadFactor;  // Axial (+ve from node I to J)
 
-    double Vy = 0.5 * wy * L;
-    double Mz = Vy * L / 6.0; // wy*L*L/12
-    double Vz = 0.5 * wz * L;
-    double My = Vz * L / 6.0; // wz*L*L/12
-    double P  = wx * L;
+    double Vy = 0.5 * wy * Lc;
+    double Mz = Vy * Lc / 6.0; // wy*Lc*Lc/12
+    double Vz = 0.5 * wz * Lc;
+    double My = Vz * Lc / 6.0; // wz*Lc*Lc/12
+    double P  = wx * Lc;
 
     // Reactions in basic system
     p0[0] -= P;
@@ -611,19 +636,19 @@ int LadrunoIMKBeam::addLoad(ElementalLoad *theLoad, double loadFactor)
     double wya = data(0) * loadFactor;  // Transverse Y at start
     double wza = data(1) * loadFactor;  // Transverse Z at start
     double waa = data(2) * loadFactor;  // Axial at start
-    double a   = data(3) * L;
-    double b   = data(4) * L;
+    double a   = data(3) * Lc;
+    double b   = data(4) * Lc;
     double wyb = data(5) * loadFactor;  // Transverse Y at end
     double wzb = data(6) * loadFactor;  // Transverse Z at end
     double wab = data(7) * loadFactor;  // Axial at end
 
     double ell = b - a;
-    if (ell <= 0.0 || a < 0.0 || b > L)
+    if (ell <= 0.0 || a < 0.0 || b > Lc)
       return 0;
 
     // Axial
     double P  = 0.5 * ell * (waa + wab);
-    double PJ = (a * P + (ell * ell / 6.0) * (waa + 2.0 * wab)) / L;
+    double PJ = (a * P + (ell * ell / 6.0) * (waa + 2.0 * wab)) / Lc;
 
     // Transverse Y (bending about z)
     double J0y = 0.5 * ell * (wya + wyb);
@@ -634,10 +659,10 @@ int LadrunoIMKBeam::addLoad(ElementalLoad *theLoad, double loadFactor)
     double I1y = a * J0y + J1y;
     double I2y = a * a * J0y + 2.0 * a * J1y + J2y;
     double I3y = a * a * a * J0y + 3.0 * a * a * J1y + 3.0 * a * J2y + J3y;
-    double Vy2 = I1y / L;
+    double Vy2 = I1y / Lc;
     double Vy1 = I0y - Vy2;
-    double M1y = -I1y + (2.0 / L) * I2y - (1.0 / (L * L)) * I3y;
-    double M2y = (1.0 / L) * I2y - (1.0 / (L * L)) * I3y;
+    double M1y = -I1y + (2.0 / Lc) * I2y - (1.0 / (Lc * Lc)) * I3y;
+    double M2y = (1.0 / Lc) * I2y - (1.0 / (Lc * Lc)) * I3y;
     if (GAvy > 0.0 && Lc > 0.0) {
       const double Phi = 12.0 * E * Iz / (GAvy * Lc * Lc);
       const double inv = 1.0 / (1.0 + Phi);
@@ -656,10 +681,10 @@ int LadrunoIMKBeam::addLoad(ElementalLoad *theLoad, double loadFactor)
     double I1z = a * J0z + J1z;
     double I2z = a * a * J0z + 2.0 * a * J1z + J2z;
     double I3z = a * a * a * J0z + 3.0 * a * a * J1z + 3.0 * a * J2z + J3z;
-    double Vz2 = I1z / L;
+    double Vz2 = I1z / Lc;
     double Vz1 = I0z - Vz2;
-    double M1z = -I1z + (2.0 / L) * I2z - (1.0 / (L * L)) * I3z;
-    double M2z = (1.0 / L) * I2z - (1.0 / (L * L)) * I3z;
+    double M1z = -I1z + (2.0 / Lc) * I2z - (1.0 / (Lc * Lc)) * I3z;
+    double M2z = (1.0 / Lc) * I2z - (1.0 / (Lc * Lc)) * I3z;
     if (GAvz > 0.0 && Lc > 0.0) {
       const double Phi = 12.0 * E * Iy / (GAvz * Lc * Lc);
       const double inv = 1.0 / (1.0 + Phi);
@@ -693,8 +718,8 @@ int LadrunoIMKBeam::addLoad(ElementalLoad *theLoad, double loadFactor)
     if (aOverL < 0.0 || aOverL > 1.0)
       return 0;
 
-    double a = aOverL * L;
-    double b = L - a;
+    double a = aOverL * Lc;
+    double b = Lc - a;
 
     // Reactions in basic system
     p0[0] -= N;
@@ -707,7 +732,7 @@ int LadrunoIMKBeam::addLoad(ElementalLoad *theLoad, double loadFactor)
     p0[3] -= V1;
     p0[4] -= V2;
 
-    double L2 = 1.0 / (L * L);
+    double L2 = 1.0 / (Lc * Lc);
     double a2 = a * a;
     double b2 = b * b;
 
@@ -918,7 +943,7 @@ int LadrunoIMKBeam::sendSelf(int cTag, Channel &theChannel)
     return res;
   }
 
-  static thread_local Vector dData(102);
+  static thread_local Vector dData(105);
   dData(0) = A;  dData(1) = E;  dData(2) = G;  dData(3) = Jx;
   dData(4) = Iy; dData(5) = Iz; dData(6) = rho;
   dData(7) = thetaHcommit[0];  dData(8) = thetaHcommit[1];
@@ -950,6 +975,9 @@ int LadrunoIMKBeam::sendSelf(int cTag, Channel &theChannel)
     dData(98 + i) = gammaSpCommit[i];
     dData(100 + i) = dGammaSpPrev[i];
   }
+  dData(102) = P0t;
+  dData(103) = Pbal;
+  dData(104) = muBal;
 
   res += theChannel.sendVector(dbTag, cTag, dData);
   if (res < 0) {
@@ -1009,7 +1037,7 @@ int LadrunoIMKBeam::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &th
   connectedExternalNodes(1) = idData(2);
   cMass = idData(13);
 
-  static thread_local Vector dData(102);
+  static thread_local Vector dData(105);
   res += theChannel.recvVector(dbTag, cTag, dData);
   if (res < 0) {
     opserr << "LadrunoIMKBeam::recvSelf -- failed to recv Vector\n";
@@ -1051,6 +1079,10 @@ int LadrunoIMKBeam::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &th
     gammaSp[i] = gammaSpCommit[i];
     dGammaSpPrev[i] = dData(100 + i);
   }
+  P0t = dData(102);
+  Pbal = dData(103);
+  muBal = dData(104);
+  stepDtLatched = false;
   q0Dirty = false;
   committedAtCurrentV = true;
 
@@ -1100,8 +1132,12 @@ int LadrunoIMKBeam::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &th
       return res;
     }
     if (P0 > 0.0) {
-      if (LadrunoCohesiveHinge *ch = dynamic_cast<LadrunoCohesiveHinge *>(theMat[i]))
-        ch->setPM(P0, pmAlpha);
+      if (LadrunoCohesiveHinge *ch = dynamic_cast<LadrunoCohesiveHinge *>(theMat[i])) {
+        if (Pbal > 0.0 && P0 > Pbal && P0t > 0.0)
+          ch->setPMBal(P0, P0t, Pbal, muBal);
+        else
+          ch->setPM(P0, pmAlpha);
+      }
     }
   }
 
@@ -1155,8 +1191,12 @@ int LadrunoIMKBeam::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &th
         return res;
       }
       if (P0 > 0.0) {
-        if (LadrunoCohesiveHingeBiaxial *cb = dynamic_cast<LadrunoCohesiveHingeBiaxial *>(theBiaxialMat[i]))
-          cb->setPM(P0, pmAlpha);
+        if (LadrunoCohesiveHingeBiaxial *cb = dynamic_cast<LadrunoCohesiveHingeBiaxial *>(theBiaxialMat[i])) {
+          if (Pbal > 0.0 && P0 > Pbal && P0t > 0.0)
+            cb->setPMBal(P0, P0t, Pbal, muBal);
+          else
+            cb->setPM(P0, pmAlpha);
+        }
       }
     }
   }
@@ -1492,16 +1532,16 @@ int LadrunoIMKBeam::getResponse(int responseID, Information &info)
       if (theShearMat[0] != 0 && Lc > 0.0) {
         const double Ksy0 = theShearMat[0]->getInitialTangent();
         const double Fsy0 = (Ksy0 > 0.0) ? (1.0 / (Lc * Lc * Ksy0)) : 0.0;
-        const double q0zic = hasEZ ? (((L - dI) * q0[1] - dI * q0[2]) / L) : q0[1];
-        const double q0zjc = hasEZ ? ((-dJ * q0[1] + (L - dJ) * q0[2]) / L) : q0[2];
+        const double q0zic = q0[1];
+        const double q0zjc = q0[2];
         const double gamRot0Y = -Fsy0 * (q0zic + q0zjc);
         gamRotY = (gammaS[0] / Lc) - gamRot0Y;
       }
       if (theShearMat[1] != 0 && Lc > 0.0) {
         const double Ksz0 = theShearMat[1]->getInitialTangent();
         const double Fsz0 = (Ksz0 > 0.0) ? (1.0 / (Lc * Lc * Ksz0)) : 0.0;
-        const double q0yic = hasEZ ? (((L - dI) * q0[3] - dI * q0[4]) / L) : q0[3];
-        const double q0yjc = hasEZ ? ((-dJ * q0[3] + (L - dJ) * q0[4]) / L) : q0[4];
+        const double q0yic = q0[3];
+        const double q0yjc = q0[4];
         const double gamRot0Z = -Fsz0 * (q0yic + q0yjc);
         gamRotZ = (gammaS[1] / Lc) - gamRot0Z;
       }
@@ -1515,7 +1555,9 @@ int LadrunoIMKBeam::getResponse(int responseID, Information &info)
                        ve1 * (az * ve1 + bz * ve2) + ve2 * (bz * ve1 + az * ve2) +
                        ve3 * (ay * ve3 + by * ve4) + ve4 * (by * ve3 + ay * ve4));
     }
-    const double fPM = ladrunoIMKScalePM(q(0), P0, pmAlpha);
+    const bool usePMBal = (Pbal > 0.0 && P0 > Pbal && P0t > 0.0);
+    const double fPM = usePMBal ? ladrunoIMKScalePMBal(q(0), P0, P0t, Pbal, muBal)
+                                : ladrunoIMKScalePM(q(0), P0, pmAlpha);
     for (int i = 0; i < 4; i++)
       if (theMat[i] != 0) {
         const double f = (dynamic_cast<LadrunoCohesiveHinge *>(theMat[i]) == 0) ? fPM : 1.0;
@@ -1843,12 +1885,21 @@ int LadrunoIMKBeam::updateParameter(int parameterID, Information &info)
   case 10:
     P0 = info.theDouble;
     if (P0 > 0.0) {
+      const bool usePMBal = (Pbal > 0.0 && P0 > Pbal && P0t > 0.0);
       for (int i = 0; i < 4; i++)
-        if (LadrunoCohesiveHinge *ch = dynamic_cast<LadrunoCohesiveHinge *>(theMat[i]))
-          ch->setPM(P0, pmAlpha);
+        if (LadrunoCohesiveHinge *ch = dynamic_cast<LadrunoCohesiveHinge *>(theMat[i])) {
+          if (usePMBal)
+            ch->setPMBal(P0, P0t, Pbal, muBal);
+          else
+            ch->setPM(P0, pmAlpha);
+        }
       for (int i = 0; i < 2; i++)
-        if (LadrunoCohesiveHingeBiaxial *cb = dynamic_cast<LadrunoCohesiveHingeBiaxial *>(theBiaxialMat[i]))
-          cb->setPM(P0, pmAlpha);
+        if (LadrunoCohesiveHingeBiaxial *cb = dynamic_cast<LadrunoCohesiveHingeBiaxial *>(theBiaxialMat[i])) {
+          if (usePMBal)
+            cb->setPMBal(P0, P0t, Pbal, muBal);
+          else
+            cb->setPM(P0, pmAlpha);
+        }
     }
     break;
   case 11:

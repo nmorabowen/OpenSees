@@ -86,7 +86,10 @@ class LadrunoForceBeamColumn3d : public Element
                             double xiI = 0.0, double xiJ = 1.0,
                             double pmP0 = 0.0, double pmAlpha = 0.5,
                             bool eleImplex = false,
-                            double GAvy = 0.0, double GAvz = 0.0);
+                            double GAvy = 0.0, double GAvz = 0.0,
+                            double pmP0t = 0.0, double pmPbal = 0.0,
+                            double pmMuBal = 0.0, bool axialRelease = false,
+                            int spanLoadMode = 1);
 
   ~LadrunoForceBeamColumn3d();
 
@@ -245,10 +248,17 @@ class LadrunoForceBeamColumn3d : public Element
   double hingeMscaleCommitYJ;
   double hingeDualKv[6][4];
   double hingeDualKvCommit[6][4];
+  double hingeDualKav[4][6];
+  double hingeDualKavCommit[4][6];
   double hingeDualKaaInv[4][4];
   double hingeDualKaaInvCommit[4][4];
   double pmP0;
   double pmAlpha;
+  double pmP0t;
+  double pmPbal;
+  double pmMuBal;
+  bool axialRelease;
+  int spanLoadMode;
   bool useImplex;
   double eleImplexErr;
   double eleImplexErrCommit;

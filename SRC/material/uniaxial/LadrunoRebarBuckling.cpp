@@ -466,6 +466,8 @@ void LadrunoRebarBuckling::copyCommittedToTrial(void)
   Te_reentry     = Ce_reentry;    Tg_law_reentry = Cg_law_reentry;
   Tg_reentry     = Cg_reentry;
   Te_bow         = Ce_bow;        Tg_bow         = Cg_bow;
+  TmaxTenStrain  = CmaxTenStrain; TmaxTenStress  = CmaxTenStress;
+  TfStarL        = CfStarL;       TfStarLcross   = CfStarLcross;
 }
 
 // ---------------------------------------------------------------------------
@@ -576,6 +578,9 @@ int LadrunoRebarBuckling::setTrialStrain(double strain, double strainRate)
   double kBare = theBar->getTangent();
   Tstrain = strain;
 
+  // seed the trial latches from committed (steady state); transitions override
+  this->copyCommittedToTrial();
+
   // v1 tensile-strain anchor (live, path-dependent BY MANDATE -- keeps the
   // PASS->BUCKLING onset + v1 BUCKLING bit-identical to v1). Invalidate the
   // fStarL cache if the anchor moves.
@@ -584,9 +589,6 @@ int LadrunoRebarBuckling::setTrialStrain(double strain, double strainRate)
     TmaxTenStress = sBare;
     TfStarLcross  = LRB_INVALID;
   }
-
-  // seed the trial latches from committed (steady state); transitions override
-  this->copyCommittedToTrial();
 
   // identity gate (B0): exact pass-through. DM also needs fy>0; GA does not.
   if (lsr <= 0.0 || E <= 0.0 || (model == MODEL_DM && fy <= 0.0)) {
