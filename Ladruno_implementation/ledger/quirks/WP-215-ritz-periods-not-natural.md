@@ -2,7 +2,7 @@
 wp: WP-215
 title: "Ritz periods beyond the first few are not natural periods"
 date: 2026-10-26
-pr: "#TBD"
+pr: "#1027"
 ---
 ### `ritzVectors` periods above the first few are not natural periods (and a Ritz set is not a frequency-domain basis)
 

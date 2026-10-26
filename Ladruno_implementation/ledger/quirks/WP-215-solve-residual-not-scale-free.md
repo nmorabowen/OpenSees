@@ -2,7 +2,7 @@
 wp: WP-215
 title: "A relative residual ||Kx-b||/||b|| refuses good solves under Penalty; use the backward error"
 date: 2026-10-26
-pr: "#TBD"
+pr: "#1027"
 ---
 ### Under Penalty a backward-stable K solve shows ‖Kx − b‖ / ‖b‖ ≈ 1e-4
 
