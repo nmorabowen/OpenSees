@@ -2,6 +2,7 @@
 wp: WP-213
 title: "A static-correction vector alone does not reach 100 % modal mass; -period fixes lambda, not only Sa"
 date: 2026-10-26
+pr: "#1023"
 ---
 ### Static-correction (missing-mass) mode shows < 100 % in `modalProperties`; `-period 0.05` changes the amplitude
 

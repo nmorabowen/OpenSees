@@ -2,6 +2,7 @@
 wp: WP-213
 title: "Re-running eigen drops residualModes pseudo-modes and their tags"
 date: 2026-10-26
+pr: "#1023"
 ---
 ### Re-running `eigen` drops the `residualModes` pseudo-modes (and `-kinds` reads all 0 again)
 
