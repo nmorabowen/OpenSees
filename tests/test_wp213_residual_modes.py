@@ -759,9 +759,11 @@ def test_rigid_diaphragm_mass_on_constrained_nodes(handler):
     r = _v1_run(handler)
     # X is uncoupled (mode 1 carries all of it); Y-RZ is completed exactly by
     # span{r_y, K^-1 M r_y}
-    # Penalty (alpha = 1e14) is ~4e-7 off the exact eigenvalues already in
-    # eigen's own mode 1; Lagrange is exact
-    tol = 2e-6 if handler == 'Penalty' else 1e-8
+    # Penalty (alpha = 1e14) is off the exact eigenvalues already in eigen's
+    # own mode 1, by round-off ~ eps alpha / (lambda m) that depends on the
+    # LAPACK: 4e-7 with MKL (Windows), 2.1e-6 with the bundled reference
+    # LAPACK (Linux Zone-A). Lagrange is exact.
+    tol = 1e-5 if handler == 'Penalty' else 1e-8
     assert r['kinds'] == [0, 1, 1]
     np.testing.assert_allclose(r['lam'], exp['lam'], rtol=tol)
     assert r['rx'] == pytest.approx(1.0, abs=1e-8)
@@ -773,7 +775,7 @@ def test_rigid_diaphragm_mass_on_constrained_nodes(handler):
 def test_penalty_and_lagrange_agree():
     p, l = _v1_run('Penalty'), _v1_run('Lagrange')
     for key in ('lam', 'vx', 'vy'):
-        np.testing.assert_allclose(p[key], l[key], rtol=2e-6)   # penalty-limited
+        np.testing.assert_allclose(p[key], l[key], rtol=1e-5)   # penalty round-off, LAPACK-dependent
 
 
 def test_transformation_recovers_constrained_nodes():
