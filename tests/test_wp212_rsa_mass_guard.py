@@ -24,10 +24,14 @@ Oracles (pure numpy, no reference outputs):
     per-mode column shears, using the Der Kiureghian rho of
     LadrunoModalCombination.h.
 """
+import os
+import subprocess
+
 import numpy as np
 import pytest
 
 from _testbed import ops
+from _testbed.subprocess_run import pinned_child
 
 pytestmark = [pytest.mark.zone_a]
 
@@ -38,6 +42,14 @@ SPEC = ['-Tn', *TN, '-Sa', *SA]
 REPORT = "cumulative effective mass"
 LOW_WARN = "below 90%"
 COMBINE_WARN = "-combine combines nodal displacements only"
+INCR_DISP = 4  # NodeResponseType IncrDisp = trial - committed
+
+# The report line is hidden whenever LADRUNO_OPENSEES_QUIET is set (even empty).
+# The engine reads its own copy of the environment, so a monkeypatch cannot
+# undo it: in-process cases expect the line only when the var is unset, and
+# test_report_line_in_clean_child checks the ratio with the var removed.
+QUIET = "LADRUNO_OPENSEES_QUIET" in os.environ
+N_REPORT = 0 if QUIET else 1
 
 
 # --------------------------------------------------------------------------
@@ -98,9 +110,32 @@ def test_two_of_ten_modes_warns_with_right_ratio(capfd):
     err = capfd.readouterr().err
     ref = _numpy_ratio(PODIUM_M, PODIUM_K, 2)
     assert ref < 0.5
-    assert _reported_ratio(err) == pytest.approx(ref, abs=1e-4)
+    if not QUIET:
+        assert _reported_ratio(err) == pytest.approx(ref, abs=1e-4)
     assert LOW_WARN in err
-    assert err.count(REPORT) == 1
+    assert err.count(REPORT) == N_REPORT
+
+
+_CHILD = r"""
+import sys
+sys.path.insert(0, sys.argv[1])
+import test_wp212_rsa_mass_guard as t
+t._shear_building(t.PODIUM_M, t.PODIUM_K, 2)
+t.ops.responseSpectrumAnalysis(1, *t.SPEC, '-mode', 1)
+"""
+
+
+def test_report_line_in_clean_child():
+    # the report line itself, in a fresh engine started without the quiet var
+    argv, env = pinned_child(['-u', '-c', _CHILD, os.path.dirname(__file__)])
+    env.pop("LADRUNO_OPENSEES_QUIET", None)
+    p = subprocess.run(argv, env=env, stdin=subprocess.DEVNULL, capture_output=True,
+                       encoding='utf-8', errors='replace', timeout=300)
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert p.stderr.count(REPORT) == 1, p.stderr[-600:]
+    assert _reported_ratio(p.stderr) == pytest.approx(
+        _numpy_ratio(PODIUM_M, PODIUM_K, 2), abs=1e-4)
+    assert LOW_WARN in p.stderr
 
 
 @pytest.mark.parametrize("path", ["mode", "all", "combine", "increment"])
@@ -111,7 +146,7 @@ def test_every_path_reports_once(path, capfd):
     capfd.readouterr()
     ops.responseSpectrumAnalysis(1, *SPEC, *extra)
     err = capfd.readouterr().err
-    assert err.count(REPORT) == 1, err
+    assert err.count(REPORT) == N_REPORT, err
     assert err.count(LOW_WARN) == 1, err
 
 
@@ -128,8 +163,9 @@ def test_require_mass_passes_above_threshold(capfd):
     capfd.readouterr()
     ops.responseSpectrumAnalysis(1, *SPEC, '-mode', 1, '-requireMass', 0.9)
     err = capfd.readouterr().err
-    assert _reported_ratio(err) == pytest.approx(
-        _numpy_ratio(UNIFORM_M, UNIFORM_K, 2), abs=1e-4)
+    if not QUIET:
+        assert _reported_ratio(err) == pytest.approx(
+            _numpy_ratio(UNIFORM_M, UNIFORM_K, 2), abs=1e-4)
     assert LOW_WARN not in err
     with pytest.raises(Exception):
         ops.responseSpectrumAnalysis(1, *SPEC, '-mode', 1, '-requireMass', 0.95)
@@ -254,7 +290,8 @@ def test_complete_mass_reports_100_percent_no_warning(capfd):
     capfd.readouterr()
     ops.responseSpectrumAnalysis(1, *SPEC, '-mode', 1, '-requireMass', 1.0 - 1e-9)
     err = capfd.readouterr().err
-    assert _reported_ratio(err) == pytest.approx(1.0, abs=1e-4)
+    if not QUIET:
+        assert _reported_ratio(err) == pytest.approx(1.0, abs=1e-4)
     assert LOW_WARN not in err
 
 
@@ -278,9 +315,11 @@ def test_complete_mass_results_unchanged_combine():
 
 def test_complete_mass_results_unchanged_increment():
     # about a zero committed state, -increment must reproduce the stock mode
+    # (nodeDisp is the committed state; the mode is the trial increment)
     _frame()
     ops.responseSpectrumAnalysis(1, *SPEC, '-mode', 1, '-increment')
-    _assert_same(_frame_state(), BASELINE_MODE1)
+    disp = [ops.nodeResponse(n, d, INCR_DISP) for n in FLOOR_NODES for d in (1, 2, 3)]
+    assert disp == pytest.approx(BASELINE_MODE1[0], rel=1e-12, abs=1e-15)
 
 
 def test_require_mass_flag_does_not_change_results():
