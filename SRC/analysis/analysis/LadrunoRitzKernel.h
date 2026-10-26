@@ -99,6 +99,13 @@ namespace LadrunoModeKinds
     void clear(const Domain* theDomain);
     // single-letter label for printing: E / R / Z (Ritz)
     char label(int kind);
+    // Ladruno WP-215: true when some mode of the domain's current set is of
+    // this kind (valid record only)
+    bool has(const Domain* theDomain, int kind);
+    // Ladruno WP-215: one-line WARNING on opserr when the current set holds
+    // Ritz vectors (frequency-domain commands: a Ritz basis is tuned to a
+    // load, not to a frequency band); returns has(theDomain, RITZ)
+    bool warnRitzBasis(const Domain* theDomain, const char* cmd);
 
     // Ladruno WP-214 (ADR 213 D6): decoration of the modalProperties report.
     // Active only when the domain's record is valid, its eigenvalue snapshot
@@ -141,7 +148,10 @@ public:
         std::vector<int> keptPerStart;
         std::vector<int> droppedPerStart;
         int numDropped = 0;
-        double maxSolveResidual = 0.0; // max ||K x - b|| / ||b|| over block-0 solves
+        // max normwise backward error ||K x - b|| / (|| |K||x| || + ||b||) over
+        // the first batch of solves (WP-215, #1025: ||K x - b|| / ||b|| is not
+        // scale-free under Penalty, where || |K||x| || ~ alpha ||x||)
+        double maxSolveResidual = 0.0;
         // per starting vector: M-norm of its block-0 column after deflation
         // over its M-norm before (0 when dropped); squared, the share of that
         // start's mass the existing basis misses (shape starts)
@@ -157,17 +167,31 @@ public:
     void applyM(const Vector& x, Vector& y);
     // KX[j] = K X[j] for all columns in one sweep over the FE_Elements.
     // absQuad (optional): absQuad[j] = sum_e |x_e|^T |K_e| |x_e|, the scale of
-    // the round-off in x^T K x (huge next to x^T K x under Penalty)
+    // the round-off in x^T K x (huge next to x^T K x under Penalty).
+    // absKX (optional, WP-215): absKX[j] = sum_e |K_e| |x_e| in equation
+    // numbering, the scale of the round-off in K x (normwise backward error)
     void applyK(const std::vector<Vector>& X, std::vector<Vector>& KX,
-                std::vector<double>* absQuad = 0);
+                std::vector<double>* absQuad = 0,
+                std::vector<Vector>* absKX = 0);
     // M-inner product with a precomputed M y
     static double dot(const Vector& a, const Vector& b);
+    // Ladruno WP-215: diag(M) in equation numbering (element and nodal mass
+    // matrices, the eigen assembly); offDiagonal is set when any assembled
+    // mass matrix has a nonzero off-diagonal entry (consistent mass, or T^T M T
+    // coupling under Transformation)
+    void massDiagonal(Vector& d, bool& offDiagonal);
 
     // ---- domain <-> equation numbering ----------------------------------
     // rigid translation along global direction dir (1-based, <= ndm), zero at
     // every DOF a domain SP constraint fixes (those move with the ground; under
     // Penalty / Lagrange they still carry an equation)
     int rigidInfluence(int dir, Vector& iota);
+    // Ladruno WP-215: the reference nodal loads of a load pattern assembled to
+    // equation numbering, f = sum_groups T^T p_node (TransformationDOF_Group's
+    // own T, so a load on a constrained DOF moves to the retained node; loads
+    // on SP-fixed DOFs are dropped). numElementalLoads receives the number of
+    // elemental loads the pattern holds (not assembled).
+    int patternLoad(int patternTag, Vector& f, int& numElementalLoads);
     // the domain's current modes (node eigenvectors) as equation vectors.
     // Under Transformation the retained DOFs carry them exactly (constrained
     // nodes are recovered from T on the way back in).

@@ -38,6 +38,11 @@
 #include <SP_ConstraintIter.h>
 #include <Matrix.h>
 #include <ID.h>
+#include <LoadPattern.h>
+#include <NodalLoad.h>
+#include <NodalLoadIter.h>
+#include <ElementalLoadIter.h>
+#include <OPS_Globals.h>
 #include <cmath>
 #include <map>
 #include <set>
@@ -189,6 +194,25 @@ LadrunoModeKinds::label(int kind)
     }
 }
 
+bool
+LadrunoModeKinds::has(const Domain* theDomain, int kind)
+{
+    int n = 0;
+    const ModeKindRecord* rec = validRecord(theDomain, n);
+    return rec != 0 && std::find(rec->kinds.begin(), rec->kinds.end(), kind) != rec->kinds.end();
+}
+
+bool
+LadrunoModeKinds::warnRitzBasis(const Domain* theDomain, const char* cmd)
+{
+    if (!has(theDomain, RITZ))
+        return false;
+    opserr << cmd << ": WARNING the mode set holds Ritz vectors (ritzVectors): they are"
+           << " tuned to a load, not to a frequency band, and the higher ones are not"
+           << " natural modes - use eigen for frequency-domain work\n";
+    return true;
+}
+
 const char*
 LadrunoModeKinds::Report::tag(int mode0) const
 {
@@ -265,7 +289,8 @@ LadrunoModeKinds::report(const Domain* theDomain, const Vector& lambdas)
         note << "# NOTE: " << (one ? "mode " : "modes ") << modeRanges(ritz)
              << " (Z) " << (one ? "is a Ritz vector" : "are Ritz vectors")
              << "; only the lowest approximate natural periods (upper bounds),"
-             << " the higher ones are not modes.\n";
+             << " the higher ones are not modes: do not report their periods as"
+             << " natural periods.\n";
     }
     r.note = note.str();
     return r;
@@ -331,12 +356,15 @@ LadrunoRitzKernel::applyM(const Vector& x, Vector& y)
 
 void
 LadrunoRitzKernel::applyK(const std::vector<Vector>& X, std::vector<Vector>& KX,
-                          std::vector<double>* absQuad)
+                          std::vector<double>* absQuad,
+                          std::vector<Vector>* absKX)
 {
     const int n = (int)X.size();
     KX.assign(n, Vector(m_neq));
     if (absQuad != 0)
         absQuad->assign(n, 0.0);
+    if (absKX != 0)
+        absKX->assign(n, Vector(m_neq));
     if (n == 0)
         return;
 
@@ -366,6 +394,17 @@ LadrunoRitzKernel::applyK(const std::vector<Vector>& X, std::vector<Vector>& KX,
                     for (int l = 0; l < nd; l++)
                         q += std::fabs(kt(i, l)) * std::fabs(xl(i)) * std::fabs(xl(l));
                 (*absQuad)[j] += q;
+            }
+            if (absKX != 0) {
+                for (int i = 0; i < nd; i++) {
+                    const int loc = id(i);
+                    if (loc < 0 || loc >= m_neq)
+                        continue;
+                    double s = 0.0;
+                    for (int l = 0; l < nd; l++)
+                        s += std::fabs(kt(i, l)) * std::fabs(xl(l));
+                    (*absKX)[j](loc) += s;
+                }
             }
             for (int i = 0; i < nd; i++) {
                 const int loc = id(i);
@@ -456,6 +495,118 @@ LadrunoRitzKernel::rigidInfluence(int dir, Vector& iota)
             v(dir - 1) = 1.0;
     }, iota);
     return 0;
+}
+
+int
+LadrunoRitzKernel::patternLoad(int patternTag, Vector& f, int& numElementalLoads)
+{
+    numElementalLoads = 0;
+    if (f.Size() != m_neq)
+        f.resize(m_neq);
+    f.Zero();
+    LoadPattern* pat = m_domain->getLoadPattern(patternTag);
+    if (pat == 0) {
+        std::ostringstream s;
+        s << "no load pattern with tag " << patternTag;
+        m_err = s.str();
+        return -1;
+    }
+    ElementalLoadIter& theEleLoads = pat->getElementalLoads();
+    while (theEleLoads() != 0)
+        numElementalLoads++;
+
+    // reference load per node (a node may carry several NodalLoads)
+    std::map<int, Vector> pNode;
+    NodalLoadIter& theLoads = pat->getNodalLoads();
+    NodalLoad* nl;
+    while ((nl = theLoads()) != 0) {
+        Node* nd = m_domain->getNode(nl->getNodeTag());
+        if (nd == 0)
+            continue;
+        int type = 0;
+        const Vector& data = nl->getData(type);
+        std::map<int, Vector>::iterator it = pNode.find(nd->getTag());
+        if (it == pNode.end())
+            it = pNode.insert(std::make_pair(nd->getTag(), Vector(nd->getNumberDOF()))).first;
+        for (int i = 0; i < data.Size() && i < it->second.Size(); i++)
+            it->second(i) += data(i);
+    }
+
+    Vector tp;
+    DOF_GrpIter& theDOFs = m_model->getDOFs();
+    DOF_Group* dof;
+    while ((dof = theDOFs()) != 0) {
+        std::map<int, Vector>::const_iterator it = pNode.find(dof->getNodeTag());
+        if (it == pNode.end())
+            continue;   // unloaded node, or a Lagrange multiplier group
+        const Vector& p = it->second;
+        const ID& id = dof->getID();
+        TransformationDOF_Group* tdof = dynamic_cast<TransformationDOF_Group*>(dof);
+        Matrix* T = tdof ? tdof->getT() : 0;
+        if (T != 0) {
+            // generalized load of the group: T^T p (own DOFs, then the
+            // retained node's DOFs, the ID order)
+            tp.resize(T->noCols());
+            tp.Zero();
+            for (int k = 0; k < T->noCols(); k++)
+                for (int i = 0; i < T->noRows() && i < p.Size(); i++)
+                    tp(k) += (*T)(i, k) * p(i);
+            for (int k = 0; k < tp.Size() && k < id.Size(); k++) {
+                const int loc = id(k);
+                if (loc >= 0 && loc < m_neq)
+                    f(loc) += tp(k);
+            }
+        } else {
+            for (int i = 0; i < p.Size() && i < id.Size(); i++) {
+                const int loc = id(i);
+                if (loc >= 0 && loc < m_neq)
+                    f(loc) += p(i);
+            }
+        }
+    }
+    return 0;
+}
+
+void
+LadrunoRitzKernel::massDiagonal(Vector& d, bool& offDiagonal)
+{
+    if (d.Size() != m_neq)
+        d.resize(m_neq);
+    d.Zero();
+    offDiagonal = false;
+    auto addMass = [&](const Matrix& m, const ID& id) {
+        const int nd = id.Size();
+        for (int i = 0; i < nd && i < m.noRows(); i++) {
+            const int loc = id(i);
+            for (int j = 0; j < nd && j < m.noCols(); j++) {
+                if (i == j || m(i, j) == 0.0)
+                    continue;
+                const int locj = id(j);
+                if (loc >= 0 && loc < m_neq && locj >= 0 && locj < m_neq && locj != loc)
+                    offDiagonal = true;
+            }
+            if (loc >= 0 && loc < m_neq)
+                d(loc) += m(i, i);
+        }
+    };
+    FE_EleIter& theFEs = m_model->getFEs();
+    FE_Element* fe;
+    while ((fe = theFEs()) != 0) {
+        if (fe->getElement() == 0)
+            continue;   // constraint / contact FE: no mass (applyM's rule)
+        fe->zeroTangent();
+        fe->addMtoTang(1.0);
+        addMass(fe->getTangent(0), fe->getID());
+    }
+    DOF_GrpIter& theDOFs = m_model->getDOFs();
+    DOF_Group* dof;
+    while ((dof = theDOFs()) != 0) {
+        if (m_domain->getNode(dof->getNodeTag()) == 0)
+            continue;   // Lagrange multiplier group
+        dof->zeroTangent();
+        dof->addMtoTang(1.0);
+        addMass(dof->getTangent(0), dof->getID());
+    }
 }
 
 int
@@ -604,7 +755,14 @@ LadrunoRitzKernel::run(const std::vector<Vector>& F,
 
     // x = K^-1 b for every b; the first batch is checked: the solves must
     // actually be K^-1 b (catches an SOE that cannot hold K - a diagonal /
-    // explicit system - or one sized for another model)
+    // explicit system - or one sized for another model).
+    // WP-215 (#1025): the measure is the normwise backward error
+    //   ||K x - b|| / (|| |K||x| || + ||b||),
+    // |K||x| from the same element sweep as K x. A backward-stable solve sits
+    // at ~eps whatever the scale of K; ||K x - b|| / ||b|| alone reached
+    // 1.6e-4 under Penalty (alpha = 1e14, ||K|| ||x|| / ||b|| ~ 1e12) and
+    // refused good solves. It is never above the old measure, so every solve
+    // accepted before is still accepted.
     bool checked = false;
     auto solveAll = [&](const std::vector<Vector>& B, std::vector<Vector>& Xs) -> int {
         Xs.assign(B.size(), Vector(m_neq));
@@ -614,19 +772,20 @@ LadrunoRitzKernel::run(const std::vector<Vector>& F,
         if (checked || B.empty())
             return 0;
         checked = true;
-        std::vector<Vector> KX0;
-        applyK(Xs, KX0);
+        std::vector<Vector> KX0, absKX0;
+        applyK(Xs, KX0, 0, &absKX0);
         for (size_t j = 0; j < B.size(); j++) {
             const double nb = B[j].Norm();
             if (!(nb > 0.0))
                 continue;
             Vector res = KX0[j];
             res.addVector(1.0, B[j], -1.0);
-            out.maxSolveResidual = std::max(out.maxSolveResidual, res.Norm() / nb);
+            out.maxSolveResidual = std::max(out.maxSolveResidual,
+                                            res.Norm() / (absKX0[j].Norm() + nb));
         }
         if (!(out.maxSolveResidual < 1.0e-4)) {
             std::ostringstream s;
-            s << "the analysis LinearSOE did not solve K x = f (relative residual "
+            s << "the analysis LinearSOE did not solve K x = f (backward error "
               << out.maxSolveResidual << "); use a general sparse system "
               << "(UmfPack, Pardiso, Mumps, BandGeneral, ProfileSPD for "
               << "Transformation / Plain)";

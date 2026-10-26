@@ -69,6 +69,7 @@ LadrunoModalResponse — exact PWL modal-superposition transient
 Modal combination — SRSS/CQC/ABS/TenPercent response spectrum
 Modal frequency domain — FRF sweep, steady-state, random PSD
 residualModes — missing-mass static-correction pseudo-modes
+ritzVectors — load-dependent Ritz vectors as the mode set
 modalProperties -print tags residual / Ritz modes (R / Z)
 LadrunoUP — Biot u-p saturated-porous element family
 LadrunoPorousOverlay — staggered u-p overlay pattern

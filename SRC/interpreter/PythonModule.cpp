@@ -647,6 +647,7 @@ initopensees(void)
 "        • Modal combination — SRSS/CQC/ABS/TenPercent response spectrum\n"
 "        • Modal frequency domain — FRF sweep, steady-state, random PSD\n"
 "        • residualModes — missing-mass static-correction pseudo-modes\n"
+"        • ritzVectors — load-dependent Ritz vectors as the mode set\n"
 "        • modalProperties -print tags residual / Ritz modes (R / Z)\n"
 "        • LadrunoUP — Biot u-p saturated-porous element family\n"
 "        • LadrunoPorousOverlay — staggered u-p overlay pattern\n"

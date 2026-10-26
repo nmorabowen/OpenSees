@@ -23,6 +23,7 @@ Penalty model (kip-in, 10 storeys, f1 = 4e-3, measured round-off 2.5e-4) a 20 %
 stiffness loss after `eigen 1` is now refused (it only warned at 100 f).
 """
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -188,10 +189,9 @@ def test_penalty_changed_model_is_refused(solver, tmp_path):
         "except Exception:",
         "    print('REFUSED')",
         "sys.stdout.flush()",
-        # re-run eigen on the current state: accepted (3 modes: with 1 mode the
-        # kernel's fixed 1e-4 K-solve residual check is marginal under Penalty,
-        # issue #1025)
-        f"ops.eigen(*{solver[:-1]!r}, 3)",
+        # re-run eigen on the current state: accepted, with 1 mode too (the
+        # K-solve check is a backward error since WP-215, #1025)
+        f"ops.eigen(*{solver!r})",
         "print('ACCEPTED' if ops.residualModes('-dir', 1) else 'EMPTY')",
     ]) + '\n')
     env = {k: v for k, v in os.environ.items() if k != 'LADRUNO_OPENSEES_QUIET'}
@@ -199,7 +199,9 @@ def test_penalty_changed_model_is_refused(solver, tmp_path):
                        capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stderr[-2000:]
     assert 'residualModes: the model changed after eigen: mode 1' in r.stderr, r.stderr[-2000:]
-    assert r.stdout.split()[-2:] == ['REFUSED', 'ACCEPTED'], r.stdout[-500:]
+    # by token: the C banner may flush to the pipe after Python's prints
+    marks = re.findall(r'\b(?:REFUSED|ACCEPTED-STALE|ACCEPTED|EMPTY)\b', r.stdout)
+    assert marks == ['REFUSED', 'ACCEPTED'], r.stdout[-500:]
 
 
 def test_penalty_small_change_warns(tmp_path):
@@ -215,10 +217,7 @@ def test_penalty_small_change_warns(tmp_path):
         "from _testbed import ops",
         "t._penalty_tied_floors(10, 1.0, 500.0, ('-fullGenLapack', 1))",
         "t4._soften(0.98)",
-        "try:",
-        "    ops.residualModes('-dir', 1)",
-        "except Exception:",
-        "    pass   # the eigen-1 K-solve residual check is marginal, #1025",
+        "ops.residualModes('-dir', 1)",   # eigen 1 under Penalty: accepted (#1025)
     ]) + '\n')
     r = subprocess.run([sys.executable, str(script)], env=dict(os.environ),
                        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
@@ -229,7 +228,8 @@ def test_penalty_small_change_warns(tmp_path):
 
 
 @pytest.mark.parametrize('nf,m,k', [(10, 1.0, 500.0), (3, 0.5, 100.0), (10, 500.0, 1.0e5)])
-@pytest.mark.parametrize('solver', [('-fullGenLapack', 3), (3,), ('-fullGenLapack', 2), (2,)])
+@pytest.mark.parametrize('solver', [('-fullGenLapack', 3), (3,), ('-fullGenLapack', 2), (2,),
+                                    ('-fullGenLapack', 1), (1,)])   # 1 mode: #1025
 def test_penalty_unchanged_model_still_accepted(nf, m, k, solver):
     t213._penalty_tied_floors(nf, m, k, solver)
     ops.residualModes('-dir', 1)

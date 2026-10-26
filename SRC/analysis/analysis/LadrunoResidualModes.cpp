@@ -26,7 +26,9 @@
 //   residualModes -dir d1 <d2 <d3>> <-period rayleigh|$T> <-replace> <-tol $t>
 //   residualModes -kinds          (query: 0 = eigen, 1 = residual, 2 = ritz per mode)
 //
-//   Run after `eigen` (or `eigen -feast`). For each requested global
+//   Run after `eigen` (or `eigen -feast`, or `ritzVectors`: WP-215, the Ritz
+//   vectors are then the kept set and the pseudo-modes complete their mass
+//   to 100 %). For each requested global
 //   translation d the kernel starts from the rigid shape iota_d (shape start,
 //   two blocks), deflated against the current modes:
 //       r_d = iota_d - Phi Phi^T M iota_d      (the mass the modes miss)
@@ -413,9 +415,10 @@ OPS_LadrunoResidualModes(void)
                    << " noise (tighten the eigen solve, or raise -tol)\n";
     }
 
+    // WP-215: kept Ritz vectors count as retained modes too
     double lamMaxKept = 0.0;
     for (size_t k = 0; k < lam.size(); k++)
-        if (keptKinds[k] == LadrunoModeKinds::EIGEN)
+        if (keptKinds[k] != LadrunoModeKinds::RESIDUAL)
             lamMaxKept = std::max(lamMaxKept, lam[k]);
     for (int j = 0; j < q; j++) {
         const double T = kTwoPi / std::sqrt(lamPseudo[j]);
