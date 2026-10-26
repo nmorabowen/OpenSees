@@ -68,6 +68,7 @@ FeastEigen — band-targeted eigensolver (eigen -feast)
 LadrunoModalResponse — exact PWL modal-superposition transient
 Modal combination — SRSS/CQC/ABS/TenPercent response spectrum
 Modal frequency domain — FRF sweep, steady-state, random PSD
+residualModes — missing-mass static-correction pseudo-modes
 LadrunoUP — Biot u-p saturated-porous element family
 LadrunoPorousOverlay — staggered u-p overlay pattern
 system Pardiso — threaded MKL sparse-direct (reuse, -krylov, -stats)

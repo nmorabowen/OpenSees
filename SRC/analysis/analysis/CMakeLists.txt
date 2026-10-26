@@ -14,6 +14,8 @@ target_sources(OPS_Analysis
       LadrunoComplexEigen.cpp
       LadrunoDampingAssembler.cpp
       LadrunoModalResponse.cpp
+      LadrunoRitzKernel.cpp
+      LadrunoResidualModes.cpp
       ResponseSpectrumAnalysis.cpp
       SDFAnalysis.cpp
       StaticAnalysis.cpp 
@@ -31,6 +33,7 @@ target_sources(OPS_Analysis
       LadrunoComplexEigen.h
       LadrunoDampingAssembler.h
       LadrunoModalResponse.h
+      LadrunoRitzKernel.h
       LadrunoModalCombination.h
       ResponseSpectrumAnalysis.h
       StaticAnalysis.h 
