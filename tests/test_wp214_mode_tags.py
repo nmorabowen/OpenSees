@@ -178,7 +178,7 @@ def test_penalty_changed_model_is_refused(solver):
         ops.residualModes('-dir', 1)
     # re-run eigen on the current state: accepted (3 modes: with 1 mode the
     # kernel's fixed 1e-4 K-solve residual check is marginal under Penalty,
-    # a separate WP-213 issue)
+    # issue #1025)
     ops.eigen(*solver[:-1], 3)
     assert ops.residualModes('-dir', 1)
 
@@ -199,7 +199,7 @@ def test_penalty_small_change_warns(tmp_path):
         "try:",
         "    ops.residualModes('-dir', 1)",
         "except Exception:",
-        "    pass   # the eigen-1 K-solve residual check is marginal (separate issue)",
+        "    pass   # the eigen-1 K-solve residual check is marginal, #1025",
     ]) + '\n')
     r = subprocess.run([sys.executable, str(script)], env=dict(os.environ),
                        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
