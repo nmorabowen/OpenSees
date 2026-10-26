@@ -44,15 +44,24 @@
 #include <utility>
 #include <sstream>
 #include <algorithm>
+#include <limits>
 
+// dsyevx, not dsyev: the LAPACK subset bundled in OTHER/LAPACK (what the
+// Linux build links) has dsyevx but not dsyev (WP-213 Zone-A link failure)
 #ifdef _WIN32
-extern "C" void DSYEV(
-    char *, char *, int *, double *, int *, double *, double *, int *, int *);
-#define LADRUNO_RITZ_DSYEV DSYEV
+extern "C" int DSYEVX(char *JOBZ, char *RANGE, char *UPLO, int *N, double *A,
+                      int *LDA, double *VL, double *VU, int *IL, int *IU,
+                      double *ABSTOL, int *M, double *W, double *Z, int *LDZ,
+                      double *WORK, int *LWORK, int *IWORK, int *IFAIL,
+                      int *INFO);
+#define LADRUNO_RITZ_DSYEVX DSYEVX
 #else
-extern "C" void dsyev_(
-    char *, char *, int *, double *, int *, double *, double *, int *, int *);
-#define LADRUNO_RITZ_DSYEV dsyev_
+extern "C" int dsyevx_(char *JOBZ, char *RANGE, char *UPLO, int *N, double *A,
+                       int *LDA, double *VL, double *VU, int *IL, int *IU,
+                       double *ABSTOL, int *M, double *W, double *Z, int *LDZ,
+                       double *WORK, int *LWORK, int *IWORK, int *IFAIL,
+                       int *INFO);
+#define LADRUNO_RITZ_DSYEVX dsyevx_
 #endif
 
 // ===========================================================================
@@ -616,21 +625,30 @@ LadrunoRitzKernel::run(const std::vector<Vector>& F,
             A[(size_t)j + (size_t)i * r] = kij;
         }
 
-    char jobz = 'V', uplo = 'U';
-    int n = r, lda = r, info = 0, lwork = -1;
-    double wq = 0.0;
-    LADRUNO_RITZ_DSYEV(&jobz, &uplo, &n, A.data(), &lda, w.data(), &wq, &lwork, &info);
+    // all eigenpairs (RANGE = 'A'); Z receives the eigenvectors, column-major
+    char jobz = 'V', range = 'A', uplo = 'U';
+    int n = r, lda = r, ldz = r, il = 1, iu = r, m = 0, info = 0, lwork = -1;
+    // abstol = 2 * underflow: the most accurate eigenvalues dsyevx gives
+    double vl = 0.0, vu = 0.0, abstol = 2.0 * std::numeric_limits<double>::min(), wq = 0.0;
+    std::vector<double> Z((size_t)r * r);
+    std::vector<int> iwork(5 * (size_t)r), ifail(r);
+    LADRUNO_RITZ_DSYEVX(&jobz, &range, &uplo, &n, A.data(), &lda, &vl, &vu, &il, &iu,
+                        &abstol, &m, w.data(), Z.data(), &ldz, &wq, &lwork,
+                        iwork.data(), ifail.data(), &info);
     if (info != 0) {
-        m_err = "LAPACK dsyev workspace query failed";
+        m_err = "LAPACK dsyevx workspace query failed";
         return -1;
     }
-    lwork = std::max(1, (int)wq);
+    lwork = std::max(8 * r, (int)wq);
     std::vector<double> work(lwork);
-    LADRUNO_RITZ_DSYEV(&jobz, &uplo, &n, A.data(), &lda, w.data(), work.data(), &lwork, &info);
-    if (info != 0) {
-        m_err = "LAPACK dsyev failed on the reduced stiffness";
+    LADRUNO_RITZ_DSYEVX(&jobz, &range, &uplo, &n, A.data(), &lda, &vl, &vu, &il, &iu,
+                        &abstol, &m, w.data(), Z.data(), &ldz, work.data(), &lwork,
+                        iwork.data(), ifail.data(), &info);
+    if (info != 0 || m != r) {
+        m_err = "LAPACK dsyevx failed on the reduced stiffness";
         return -1;
     }
+    A.swap(Z);   // eigenvectors, read below as A[i + k r]
     for (int k = 0; k < r; k++)
         if (!(w[k] > 0.0) || !std::isfinite(w[k])) {
             std::ostringstream s;

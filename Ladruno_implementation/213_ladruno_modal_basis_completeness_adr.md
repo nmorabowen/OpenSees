@@ -56,7 +56,7 @@ updated: 2026-10-26
   earlier Krylov columns, twice ("twice is enough"), then normalize; a column
   whose M-norm fell below `dropTol ×` its norm right after the solve is
   dropped and counted per starting vector.
-- **Rayleigh–Ritz**: K̃ = XᵀKX (element sweep), LAPACK `dsyev`; a
+- **Rayleigh–Ritz**: K̃ = XᵀKX (element sweep), LAPACK `dsyevx` (the bundled `OTHER/LAPACK` subset has no `dsyev`); a
   non-positive or non-finite Ritz value is refused.
 - **API for PR 3**: `Options{dropTol, maxBlocks, maxVectors, cyclesPerStart,
   solveStart}` and `Result{psi, lambda, keptPerStart, droppedPerStart,

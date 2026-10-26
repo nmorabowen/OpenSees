@@ -35,7 +35,7 @@
 //                                        column whose M-norm fell below
 //                                        dropTol * its norm right after the solve)
 //        X(b+1) = K^-1 (M Xb)
-//     K~ = X^T K X, eig(K~) -> (lambda, Z) (dense LAPACK dsyev)
+//     K~ = X^T K X, eig(K~) -> (lambda, Z) (dense LAPACK dsyevx)
 //     Psi = X Z                          (M-orthonormal, K-orthogonal)
 //
 //   Wilson, Yuan & Dickens (1982) in block form; Joo, Wilson & Leger (1989)
