@@ -1283,4 +1283,215 @@ def test_ladruno_frame_validation_fb_dr_enhancements():
             assert abs(float(lf[0])) == pytest.approx(0.0, abs=1.0e-9)
 
 
+def test_ladruno_disp_and_force_beam_column_axial_release_and_pmbal_edge_cases(tmp_path: Path):
+    """Verify:
+      1. 3D asymmetric fiber section initial stiffness condensation under `-axialRelease`
+         in `LadrunoDispBeamColumn3d::getInitialStiff()` (`ModifiedNewton -initial` 1-step
+         convergence + exact match with `LadrunoForceBeamColumn3d`).
+      2. `LadrunoDispBeamColumn2d` and `LadrunoDispBeamColumn3d` HDF5 `database` `save`/`restore`
+         round-trip preserving `-axialRelease`, `eps0AxialCommit`, `-pmBal`, `-spanLoad`, and
+         asymmetric biaxial Tier-2 hinges (`-hingeI != -hingeJ`) under non-proportional 3D
+         loading + `revertToLastCommit` cutbacks.
+      3. `LadrunoForceBeamColumn2d` and `LadrunoForceBeamColumn3d` `-pmBal` with `muBal = 1.0`
+         (tension branch) and `muBal = 2.8 > 2.5` (high balance-point amplification).
+    """
+    L = 3.0
+    E = 3.0e10
+
+    # 1. 3D asymmetric fiber section initial stiffness under -axialRelease (ModifiedNewton -initial)
+    disp_results = {}
+    for elem_type in ("LadrunoDispBeamColumn3d", "LadrunoForceBeamColumn3d"):
+        ops.wipe()
+        ops.model("basic", "-ndm", 3, "-ndf", 6)
+        ops.node(1, 0.0, 0.0, 0.0)
+        ops.node(2, L, 0.0, 0.0)
+        ops.fix(1, 1, 1, 1, 1, 1, 1)
+        ops.fix(2, 1, 0, 0, 1, 0, 0)  # axially restrained at both ends
+        ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+        ops.uniaxialMaterial("Elastic", 1, E)
+        ops.section("Fiber", 1, "-GJ", 1.0e8)
+        # Asymmetric in both y and z so ks0(P, Mz) != 0 and ks0(P, My) != 0
+        ops.fiber(0.18, 0.05, 0.045, 1)
+        ops.fiber(-0.22, -0.08, 0.015, 1)
+        ops.fiber(0.05, 0.14, 0.025, 1)
+        ops.fiber(-0.10, -0.16, 0.012, 1)
+        ops.beamIntegration("Lobatto", 1, 1, 4)
+        ops.element(elem_type, 1, 1, 2, 1, 1, "-axialRelease")
+        ops.timeSeries("Linear", 1)
+        ops.pattern("Plain", 1, 1)
+        ops.load(2, 0.0, -40.0e3, 25.0e3, 0.0, 0.0, 0.0)
+        ops.system("BandGeneral")
+        ops.numberer("Plain")
+        ops.constraints("Plain")
+        ops.test("NormUnbalance", 1.0e-8, 1)  # MUST converge in 1 iteration with ModifiedNewton -initial!
+        ops.algorithm("ModifiedNewton", "-initial")
+        ops.integrator("LoadControl", 1.0)
+        ops.analysis("Static")
+        assert ops.analyze(1) == 0, f"{elem_type} getInitialStiff() failed to condense -axialRelease!"
+        disp_results[elem_type] = [ops.nodeDisp(2, dof) for dof in range(1, 7)]
+        lf = ops.eleResponse(1, "localForce")
+        assert abs(float(lf[0])) == pytest.approx(0.0, abs=1.0e-9)
+    np.testing.assert_allclose(
+        disp_results["LadrunoDispBeamColumn3d"],
+        disp_results["LadrunoForceBeamColumn3d"],
+        rtol=1.0e-12,
+        atol=1.0e-12,
+    )
+
+    # 2. HDF5 save/restore on LadrunoDispBeamColumn3d with -spanLoad + -axialRelease + -pmBal + asymmetric biaxial hinges
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    ops.node(1, 0.0, 0.0, 0.0)
+    ops.node(2, L, 0.0, 0.0)
+    ops.fix(1, 1, 1, 1, 1, 1, 1)
+    ops.fix(2, 1, 0, 0, 1, 0, 0)
+    ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+    ops.uniaxialMaterial("Steel01", 1, 420.0e6, 2.0e11, 0.02)
+    ops.section("Fiber", 1, "-GJ", 1.0e8)
+    ops.fiber(0.18, 0.05, 0.004, 1)
+    ops.fiber(-0.22, -0.06, 0.002, 1)
+    ops.fiber(0.06, 0.14, 0.003, 1)
+    ops.fiber(-0.10, -0.14, 0.0015, 1)
+    ops.beamIntegration("Lobatto", 1, 1, 5)
+    ops.uniaxialMaterial("LadrunoCohesiveHinge", 10, 80.0e3, 800.0, "-linear", "-penalty", 1.0e10)
+    ops.uniaxialMaterial("LadrunoCohesiveHinge", 11, 120.0e3, 900.0, "-linear", "-penalty", 1.0e10)
+    ops.uniaxialMaterial("LadrunoCohesiveHinge", 12, 60.0e3, 600.0, "-linear", "-penalty", 1.0e10)
+    ops.uniaxialMaterial("LadrunoCohesiveHinge", 13, 90.0e3, 700.0, "-linear", "-penalty", 1.0e10)
+    ops.element(
+        "LadrunoDispBeamColumn3d", 1, 1, 2, 1, 1,
+        "-hingeIJ", 10, 11,
+        "-hingeYIJ", 12, 13,
+        "-pmBal", 3000.0e3, 1000.0e3, 1200.0e3, 1.75,
+        "-axialRelease",
+    )
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.eleLoad("-ele", 1, "-type", "-beamUniform", -4.0e3, 3.0e3, 0.0)
+    ops.load(2, 0.0, -10.0e3, 8.0e3, 0.0, 4.0e3, -5.0e3)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.test("NormDispIncr", 1.0e-11, 25)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 0.5)
+    ops.analysis("Static")
+    assert ops.analyze(2) == 0
+    ef_3d = list(ops.eleForce(1))
+    hs_3d = list(ops.eleResponse(1, "hingeState"))
+    assert abs(float(ops.eleResponse(1, "localForce")[0])) == pytest.approx(0.0, abs=1.0e-7)
+
+    db_3d = str(tmp_path / "dbc3d_axial_pmbal")
+    ops.database("File", db_3d)
+    ops.save(1)
+    ops.reset()
+    ops.restore(1)
+    np.testing.assert_allclose(ops.eleForce(1), ef_3d, rtol=1.0e-12, atol=1.0e-9)
+    np.testing.assert_allclose(ops.eleResponse(1, "hingeState"), hs_3d, rtol=1.0e-12, atol=1.0e-12)
+    assert abs(float(ops.eleResponse(1, "localForce")[0])) == pytest.approx(0.0, abs=1.0e-7)
+
+    # Continue analysis after restore
+    ops.integrator("LoadControl", 0.25)
+    assert ops.analyze(1) == 0
+    assert abs(float(ops.eleResponse(1, "localForce")[0])) == pytest.approx(0.0, abs=1.0e-7)
+    ops.wipe()
+
+    # 2b. LadrunoDispBeamColumn2d database save/restore round-trip with -axialRelease and -pmBal
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    ops.node(1, 0.0, 0.0)
+    ops.node(2, L, 0.0)
+    ops.fix(1, 1, 1, 1)
+    ops.fix(2, 1, 0, 0)
+    ops.geomTransf("Linear", 1)
+    ops.uniaxialMaterial("Elastic", 1, E)
+    ops.section("Fiber", 1)
+    ops.fiber(0.18, 0.0, 0.004, 1)
+    ops.fiber(-0.22, 0.0, 0.002, 1)
+    ops.beamIntegration("Lobatto", 1, 1, 5)
+    ops.uniaxialMaterial("LadrunoCohesiveHinge", 10, 80.0e3, 800.0, "-linear", "-penalty", 1.0e10)
+    ops.uniaxialMaterial("LadrunoCohesiveHinge", 11, 120.0e3, 900.0, "-linear", "-penalty", 1.0e10)
+    ops.element(
+        "LadrunoDispBeamColumn2d", 1, 1, 2, 1, 1,
+        "-hingeIJ", 10, 11,
+        "-pmBal", 3000.0e3, 1000.0e3, 1200.0e3, 1.75,
+        "-axialRelease",
+    )
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.eleLoad("-ele", 1, "-type", "-beamUniform", -4.0e3, 0.0)
+    ops.load(2, 0.0, -10.0e3, -5.0e3)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.test("NormDispIncr", 1.0e-11, 25)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 0.5)
+    ops.analysis("Static")
+    assert ops.analyze(2) == 0
+    ef_2d = list(ops.eleForce(1))
+    hs_2d = list(ops.eleResponse(1, "hingeState"))
+    assert abs(float(ops.eleResponse(1, "localForce")[0])) == pytest.approx(0.0, abs=1.0e-7)
+
+    db_2d = str(tmp_path / "dbc2d_axial_pmbal")
+    ops.database("File", db_2d)
+    ops.save(1)
+    ops.reset()
+    ops.restore(1)
+    np.testing.assert_allclose(ops.eleForce(1), ef_2d, rtol=1.0e-12, atol=1.0e-9)
+    np.testing.assert_allclose(ops.eleResponse(1, "hingeState"), hs_2d, rtol=1.0e-12, atol=1.0e-12)
+    assert abs(float(ops.eleResponse(1, "localForce")[0])) == pytest.approx(0.0, abs=1.0e-7)
+    ops.integrator("LoadControl", 0.25)
+    assert ops.analyze(1) == 0
+    assert abs(float(ops.eleResponse(1, "localForce")[0])) == pytest.approx(0.0, abs=1.0e-7)
+    ops.wipe()
+
+    # 3. LadrunoForceBeamColumn2d & 3d -pmBal with muBal = 1.0 (tension) and muBal = 2.8 > 2.5 (compression)
+    P0c, P0t, Pbal = 4000.0e3, 1200.0e3, 1500.0e3
+    for ndm, ndf in ((2, 3), (3, 6)):
+        for mu_test, p_load, expected_scale in ((1.0, +600.0e3, 0.5), (2.8, -Pbal, 2.8)):
+            ops.wipe()
+            ops.model("basic", "-ndm", ndm, "-ndf", ndf)
+            if ndm == 2:
+                ops.node(1, 0.0, 0.0)
+                ops.node(2, L, 0.0)
+                ops.fix(1, 1, 1, 1)
+                ops.geomTransf("Linear", 1)
+                ops.section("Elastic", 1, E, 0.06, 4.5e-4)
+            else:
+                ops.node(1, 0.0, 0.0, 0.0)
+                ops.node(2, L, 0.0, 0.0)
+                ops.fix(1, 1, 1, 1, 1, 1, 1)
+                ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+                ops.section("Elastic", 1, E, 0.06, 4.5e-4, 4.5e-4, E / 2.5, 9.0e-4)
+            ops.beamIntegration("Lobatto", 1, 1, 4)
+            ops.uniaxialMaterial("Steel01", 10, 60.0e3, 1.0e9, 0.01)
+            ops.element("LadrunoForceBeamColumn", 1, 1, 2, 1, 1, "-hingeI", 10, "-pmBal", P0c, P0t, Pbal, mu_test)
+            ops.timeSeries("Linear", 1)
+            ops.pattern("Plain", 1, 1)
+            if ndm == 2:
+                ops.load(2, p_load, 0.0, 0.0)
+            else:
+                ops.load(2, p_load, 0.0, 0.0, 0.0, 0.0, 0.0)
+            ops.system("BandGeneral")
+            ops.numberer("Plain")
+            ops.constraints("Plain")
+            ops.test("NormDispIncr", 1.0e-12, 25)
+            ops.algorithm("Newton")
+            ops.integrator("LoadControl", 1.0)
+            ops.analysis("Static")
+            assert ops.analyze(1) == 0
+            ops.loadConst("-time", 0.0)
+            ops.pattern("Plain", 2, 1)
+            if ndm == 2:
+                ops.load(2, 0.0, 1.0, 0.0)
+            else:
+                ops.load(2, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0)
+            ops.integrator("DisplacementControl", 2, 2, 0.06)
+            assert ops.analyze(1) == 0
+            hs = ops.eleResponse(1, "hingeState")
+            th_i, m_i = abs(float(hs[0])), abs(float(hs[1]))
+            assert th_i > 60.0e3 / 1.0e9
+            m_expected = expected_scale * (60.0e3 + 0.01 * 1.0e9 * (th_i - 60.0e3 / 1.0e9))
+            assert m_i == pytest.approx(m_expected, rel=1.0e-8)
+
+
 

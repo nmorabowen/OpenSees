@@ -282,7 +282,7 @@ ldbc3dGetSectionTangent(SectionForceDeformation *sec, int order, const ID &code,
 {
   const Matrix &ksRaw = initial ? sec->getInitialTangent() : sec->getSectionTangent();
   ksOut = ksRaw;
-  if (!axialRelease || initial)
+  if (!axialRelease)
     return;
   int idxP = -1;
   for (int j = 0; j < order; j++) {
@@ -1314,19 +1314,19 @@ LadrunoDispBeamColumn3d::commitState()
         hingeKaaInvCommitYY = hingeKaaInvYY;
         retVal += theHingeC->commitState();
       }
+      for (int a = 0; a < 6; a++)
+        for (int m = 0; m < 4; m++) {
+          hingeDualKvCommit[a][m] = hingeDualKv[a][m];
+          hingeDualKavCommit[m][a] = hingeDualKav[m][a];
+        }
+      for (int m = 0; m < 4; m++)
+        for (int n = 0; n < 4; n++)
+          hingeDualKaaInvCommit[m][n] = hingeDualKaaInv[m][n];
       if (dualHingeMode) {
         hingeJumpCommitZJ = hingeJumpZJ;
         hingeJumpCommitYJ = hingeJumpYJ;
         hingeMscaleCommitZJ = hingeMscaleZJ;
         hingeMscaleCommitYJ = hingeMscaleYJ;
-        for (int a = 0; a < 6; a++)
-          for (int m = 0; m < 4; m++) {
-            hingeDualKvCommit[a][m] = hingeDualKv[a][m];
-            hingeDualKavCommit[m][a] = hingeDualKav[m][a];
-          }
-        for (int m = 0; m < 4; m++)
-          for (int n = 0; n < 4; n++)
-            hingeDualKaaInvCommit[m][n] = hingeDualKaaInv[m][n];
         if (theHingeZJ) retVal += theHingeZJ->commitState();
         if (theHingeYJ) retVal += theHingeYJ->commitState();
         if (theHingeCJ) retVal += theHingeCJ->commitState();
@@ -1390,19 +1390,19 @@ LadrunoDispBeamColumn3d::revertToLastCommit()
         hingeKaaInvYY = hingeKaaInvCommitYY;
         if (!ldbc3dHingeBiaxialIsImplex(theHingeC)) retVal += theHingeC->revertToLastCommit();
       }
+      for (int a = 0; a < 6; a++)
+        for (int m = 0; m < 4; m++) {
+          hingeDualKv[a][m] = hingeDualKvCommit[a][m];
+          hingeDualKav[m][a] = hingeDualKavCommit[m][a];
+        }
+      for (int m = 0; m < 4; m++)
+        for (int n = 0; n < 4; n++)
+          hingeDualKaaInv[m][n] = hingeDualKaaInvCommit[m][n];
       if (dualHingeMode) {
         hingeJumpZJ = hingeJumpCommitZJ;
         hingeJumpYJ = hingeJumpCommitYJ;
         hingeMscaleZJ = hingeMscaleCommitZJ;
         hingeMscaleYJ = hingeMscaleCommitYJ;
-        for (int a = 0; a < 6; a++)
-          for (int m = 0; m < 4; m++) {
-            hingeDualKv[a][m] = hingeDualKvCommit[a][m];
-            hingeDualKav[m][a] = hingeDualKavCommit[m][a];
-          }
-        for (int m = 0; m < 4; m++)
-          for (int n = 0; n < 4; n++)
-            hingeDualKaaInv[m][n] = hingeDualKaaInvCommit[m][n];
         if (theHingeZJ && !ldbc3dHingeIsImplex(theHingeZJ)) retVal += theHingeZJ->revertToLastCommit();
         if (theHingeYJ && !ldbc3dHingeIsImplex(theHingeYJ)) retVal += theHingeYJ->revertToLastCommit();
         if (theHingeCJ && !ldbc3dHingeBiaxialIsImplex(theHingeCJ)) retVal += theHingeCJ->revertToLastCommit();
@@ -1479,6 +1479,14 @@ LadrunoDispBeamColumn3d::revertToStart()
         hingeKaaInvCommitZZ = hingeKaaInvCommitZY = hingeKaaInvCommitYY = 0.0;
         retVal += theHingeC->revertToStart();
       }
+      for (int a = 0; a < 6; a++)
+        for (int m = 0; m < 4; m++) {
+          hingeDualKv[a][m] = hingeDualKvCommit[a][m] = 0.0;
+          hingeDualKav[m][a] = hingeDualKavCommit[m][a] = 0.0;
+        }
+      for (int m = 0; m < 4; m++)
+        for (int n = 0; n < 4; n++)
+          hingeDualKaaInv[m][n] = hingeDualKaaInvCommit[m][n] = 0.0;
       if (dualHingeMode) {
         hingeJumpZJ = 0.0;
         hingeJumpCommitZJ = 0.0;
@@ -1488,14 +1496,6 @@ LadrunoDispBeamColumn3d::revertToStart()
         hingeMscaleCommitZJ = 0.0;
         hingeMscaleYJ = 0.0;
         hingeMscaleCommitYJ = 0.0;
-        for (int a = 0; a < 6; a++)
-          for (int m = 0; m < 4; m++) {
-            hingeDualKv[a][m] = hingeDualKvCommit[a][m] = 0.0;
-            hingeDualKav[m][a] = hingeDualKavCommit[m][a] = 0.0;
-          }
-        for (int m = 0; m < 4; m++)
-          for (int n = 0; n < 4; n++)
-            hingeDualKaaInv[m][n] = hingeDualKaaInvCommit[m][n] = 0.0;
         if (theHingeZJ) retVal += theHingeZJ->revertToStart();
         if (theHingeYJ) retVal += theHingeYJ->revertToStart();
         if (theHingeCJ) retVal += theHingeCJ->revertToStart();
@@ -4243,7 +4243,7 @@ LadrunoDispBeamColumn3d::sendSelf(int commitTag, Channel &theChannel)
   int i, j;
   int loc = 0;
   
-  static thread_local Vector data(127);  // Ladruno (WP-200: +17 dual-hinge + 2 PM + 10 q0/p0 + 70 spanLoad)
+  static thread_local Vector data(152);  // Ladruno (WP-200: +17 dual-hinge + PM/pmBal + 10 q0/p0 + 70 spanLoad + axialRelease)
   data.Zero();
   data(0) = this->getTag();
   data(1) = connectedExternalNodes(0);
@@ -4368,6 +4368,13 @@ LadrunoDispBeamColumn3d::sendSelf(int commitTag, Channel &theChannel)
     data(66 + 3 * s + 2) = s0Fixed[s][2];
   }
   data(126) = spanBetaPCommit;
+  data(127) = pmBalMode;
+  data(128) = pmP0t;
+  data(129) = pmPbal;
+  data(130) = pmMuBal;
+  data(131) = axialRelease;
+  for (int s = 0; s < maxNumSections; s++)
+    data(132 + s) = eps0AxialCommit[s];
 
   if (theChannel.sendVector(dbTag, commitTag, data) < 0) {
     opserr << "LadrunoDispBeamColumn3d::sendSelf() - failed to send data Vector\n";
@@ -4456,7 +4463,7 @@ LadrunoDispBeamColumn3d::recvSelf(int commitTag, Channel &theChannel,
   int dbTag = this->getDbTag();
   int i;
   
-  static thread_local Vector data(127);
+  static thread_local Vector data(152);
 
   if (theChannel.recvVector(dbTag, commitTag, data) < 0)  {
     opserr << "LadrunoDispBeamColumn3d::recvSelf() - failed to recv data Vector\n";
@@ -4527,8 +4534,10 @@ LadrunoDispBeamColumn3d::recvSelf(int commitTag, Channel &theChannel,
   hingeMscaleYJ = data(34);
   hingeMscaleCommitYJ = hingeMscaleYJ;
   for (int a = 0; a < 6; a++)
-    for (int m = 0; m < 4; m++)
+    for (int m = 0; m < 4; m++) {
       hingeDualKv[a][m] = hingeDualKvCommit[a][m] = 0.0;
+      hingeDualKav[m][a] = hingeDualKavCommit[m][a] = 0.0;
+    }
   for (int m = 0; m < 4; m++)
     for (int n = 0; n < 4; n++)
       hingeDualKaaInv[m][n] = hingeDualKaaInvCommit[m][n] = 0.0;
@@ -4552,6 +4561,15 @@ LadrunoDispBeamColumn3d::recvSelf(int commitTag, Channel &theChannel,
   spanBetaZ = spanBetaZCommit;
   spanBetaY = spanBetaYCommit;
   spanBetaP = spanBetaPCommit;
+  pmBalMode = (int)data(127);
+  pmP0t = data(128);
+  pmPbal = data(129);
+  pmMuBal = data(130);
+  axialRelease = (int)data(131);
+  for (int s = 0; s < maxNumSections; s++) {
+    eps0AxialCommit[s] = data(132 + s);
+    eps0Axial[s] = eps0AxialCommit[s];
+  }
   for (int m = 0; m < 3; m++)
     for (int n = 0; n < 3; n++)
       spanKbbInv[m][n] = spanKbbInvCommit[m][n] = 0.0;

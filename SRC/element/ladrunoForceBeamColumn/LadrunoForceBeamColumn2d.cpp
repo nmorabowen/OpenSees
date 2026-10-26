@@ -173,7 +173,7 @@ static double lfbc2dEvalPM(double N, double P0, double alpha,
 {
   dfdN = 0.0;
   if (P0 <= 0.0) return 1.0;
-  if (P0t > 0.0 && muBal > 1.0) {
+  if (Pbal > 0.0 && P0 > Pbal && P0t > 0.0 && muBal >= 1.0) {
     double P = -N; // compression positive
     double f = 1.0;
     double dfdP = 0.0;
@@ -201,9 +201,9 @@ static double lfbc2dEvalPM(double N, double P0, double alpha,
       dfdN = 0.0;
       return 0.05;
     }
-    if (f >= 2.5) {
+    if (f >= 3.0) {
       dfdN = 0.0;
-      return 2.5;
+      return 3.0;
     }
     dfdN = -dfdP;
     return f;
@@ -747,7 +747,7 @@ void* OPS_LadrunoForceBeamColumn2d()
         if (LadrunoCohesiveHinge *ch = dynamic_cast<LadrunoCohesiveHinge*>(tmpPtr)) {
           if (eleImplex) ch->setImplex(true);
           if (elePmP0 > 0.0) {
-            if (elePmP0t > 0.0 && elePmMuBal > 1.0)
+            if (elePmP0t > 0.0 && elePmMuBal >= 1.0)
               ch->setPMBal(elePmP0, elePmP0t, elePmPbal, elePmMuBal);
             else
               ch->setPM(elePmP0, elePmAlpha);

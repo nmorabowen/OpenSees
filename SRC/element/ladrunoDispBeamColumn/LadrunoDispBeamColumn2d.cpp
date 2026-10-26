@@ -2788,7 +2788,7 @@ LadrunoDispBeamColumn2d::sendSelf(int commitTag, Channel &theChannel)
   int i, j;
   int loc = 0;
   
-  static thread_local Vector data(87);  // Ladruno (ADR 32 + dual end hinges + PM + q0/p0 + spanLoad)
+  static thread_local Vector data(112);  // Ladruno (ADR 32 + dual end hinges + PM/pmBal + q0/p0 + spanLoad + axialRelease)
   data(0) = this->getTag();
   data(1) = connectedExternalNodes(0);
   data(2) = connectedExternalNodes(1);
@@ -2882,6 +2882,13 @@ LadrunoDispBeamColumn2d::sendSelf(int commitTag, Channel &theChannel)
     data(46 + 2 * s + 1) = s0Fixed[s][1];
   }
   data(86) = spanBetaPCommit;
+  data(87) = pmBalP0c;
+  data(88) = pmBalP0t;
+  data(89) = pmBalPbal;
+  data(90) = pmBalMu;
+  data(91) = axialRelease ? 1.0 : 0.0;
+  for (int s = 0; s < maxNumSections; s++)
+    data(92 + s) = eps0AxialCommit[s];
 
   if (theChannel.sendVector(dbTag, commitTag, data) < 0) {
     opserr << "LadrunoDispBeamColumn2d::sendSelf() - failed to send data Vector\n";
@@ -2969,7 +2976,7 @@ LadrunoDispBeamColumn2d::recvSelf(int commitTag, Channel &theChannel,
   int dbTag = this->getDbTag();
   int i;
   
-  static thread_local Vector data(87);  // Ladruno (ADR 32 + dual end hinges + PM + q0/p0 + spanLoad)
+  static thread_local Vector data(112);  // Ladruno (ADR 32 + dual end hinges + PM/pmBal + q0/p0 + spanLoad + axialRelease)
 
   if (theChannel.recvVector(dbTag, commitTag, data) < 0)  {
     opserr << "LadrunoDispBeamColumn2d::recvSelf() - failed to recv data Vector\n";
@@ -3031,6 +3038,15 @@ LadrunoDispBeamColumn2d::recvSelf(int commitTag, Channel &theChannel,
   spanBetaZ = spanBetaZCommit;
   spanBetaPCommit = data(86);
   spanBetaP = spanBetaPCommit;
+  pmBalP0c = data(87);
+  pmBalP0t = data(88);
+  pmBalPbal = data(89);
+  pmBalMu = data(90);
+  axialRelease = (data(91) != 0.0);
+  for (int s = 0; s < maxNumSections; s++) {
+    eps0AxialCommit[s] = data(92 + s);
+    eps0Axial[s] = eps0AxialCommit[s];
+  }
   for (int m = 0; m < 3; m++)
     q0Enh[m] = data(43 + m);
   for (int m = 0; m < 2; m++) {
@@ -3059,6 +3075,8 @@ LadrunoDispBeamColumn2d::recvSelf(int commitTag, Channel &theChannel,
     for (int a = 0; a < 3; a++) {
       hingeKva[a][m] = 0.0;
       hingeKvaCommit[a][m] = 0.0;
+      hingeKav[m][a] = 0.0;
+      hingeKavCommit[m][a] = 0.0;
     }
   }
 

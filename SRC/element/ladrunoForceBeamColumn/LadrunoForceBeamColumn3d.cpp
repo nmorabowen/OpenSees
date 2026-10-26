@@ -118,7 +118,7 @@ lfbc3dEvalPM(double P, double P0, double alpha,
     dfOut = 0.0;
     return;
   }
-  if (P0t > 0.0 && muBal > 1.0) {
+  if (Pbal > 0.0 && P0 > Pbal && P0t > 0.0 && muBal >= 1.0) {
     double Ncomp = -P;
     double f = 1.0, df_dNcomp = 0.0;
     if (Ncomp >= 0.0) {
@@ -143,8 +143,8 @@ lfbc3dEvalPM(double P, double P0, double alpha,
     if (f <= 0.05) {
       fOut = 0.05;
       dfOut = 0.0;
-    } else if (f >= 2.5) {
-      fOut = 2.5;
+    } else if (f >= 3.0) {
+      fOut = 3.0;
       dfOut = 0.0;
     } else {
       fOut = f;
@@ -1104,7 +1104,7 @@ OPS_LadrunoForceBeamColumn3d()
         tmpPtr = hPtr->getCopy();
         if (LadrunoCohesiveHinge *ch = dynamic_cast<LadrunoCohesiveHinge*>(tmpPtr)) {
           if (eleImplex) ch->setImplex(true);
-          if (elePmP0t > 0.0 && elePmMuBal > 1.0)
+          if (elePmP0t > 0.0 && elePmMuBal >= 1.0)
             ch->setPMBal(elePmP0, elePmP0t, elePmPbal, elePmMuBal);
           else if (elePmP0 > 0.0)
             ch->setPM(elePmP0, elePmAlpha);
@@ -1122,7 +1122,7 @@ OPS_LadrunoForceBeamColumn3d()
         if (tmpPtr == 0) tmpPtr = hPtr->getCopy();
         if (LadrunoCohesiveHingeBiaxial *ch = dynamic_cast<LadrunoCohesiveHingeBiaxial*>(tmpPtr)) {
           if (eleImplex) ch->setImplex(true);
-          if (elePmP0t > 0.0 && elePmMuBal > 1.0)
+          if (elePmP0t > 0.0 && elePmMuBal >= 1.0)
             ch->setPMBal(elePmP0, elePmP0t, elePmPbal, elePmMuBal);
           else if (elePmP0 > 0.0)
             ch->setPM(elePmP0, elePmAlpha);
