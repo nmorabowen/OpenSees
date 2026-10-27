@@ -215,17 +215,21 @@ of the element's last `calculateAll` call, which `revertToLastCommit` does
 not restore, so the stock loop read with and without its `eleForce` calls,
 or in reverse mode order, differs at round-off (ledger quirk WP-216). On a
 cancelling sum (the vertical reactions of the core under overturning) that
-is ~1e-12 of the result. Measured on the residual set, new − loop and
-loop − loop(reversed) agree quantity by quantity, e.g. 3.2e-12 against
-3.4e-12 of the term scale on the pier at storey 2 in the 0.75 ms pseudo-mode
-(which follows modes of much larger amplitude). The residual-set check
+is ~1e-12 of the result. On the residual set, new − loop and
+loop − loop(reversed) are of the same order on each mode's own term scale,
+but they do not agree quantity by quantity: on Windows the pier at storey 2
+in the 0.75 ms pseudo-mode (which follows modes of much larger amplitude)
+gave 3.2e-12 against 3.4e-12, while on Linux Zone-A pier 1 in mode 9 gave
+7.1e-12, about 7× the loop's own spread there. Round-off of this kind is
+not reproduced sample by sample. The residual-set check
 therefore measures each component against its largest term scale over the
 direction's modes: that is the round-off a mode can inherit from the larger
 modes updated before it. Measured: 6.6e-16 on that scale; 8.2e-12 on each
 mode's own scale, against 5.0e-12 for the loop compared with itself in
-reverse order. (A bound of a few times the loop's measured spread was tried
-first: one round-off sample is too noisy an estimate of its size, and Linux
-Zone-A failed it.)
+reverse order. That scale is ~1e3–1e4 above a pseudo-mode's own, so the
+check holds the error to 1e-14 of it, not 1e-12 (≈15× margin). (A bound of a
+few times the loop's measured spread was tried first: one round-off sample is
+too noisy an estimate of its size, and Linux Zone-A failed it.)
 
 | Check | Result |
 |---|---|
@@ -233,13 +237,13 @@ Zone-A failed it.)
 | (a) `-modes 5 2`, `-ts` Path series, `-scale 0.7` | ≤ 1e-12 |
 | (a) gravity preload + `loadConst` (oracle subtracts the gravity state) | ≤ 1e-9 |
 | eigenmodes: base reaction = − total inertia (force, moment about a point) | < 1e-6 |
-| (b) `residualModes -dir 1 2 -period 0.05` set (10 modes) | ≤ 1e-12 of each component's largest term scale over the direction's modes (measured 6.6e-16); `kind`, `saPeriod` = 0.05, one shared `term`, `omega` = 2π/0.05 |
+| (b) `residualModes -dir 1 2 -period 0.05` set (10 modes) | ≤ 1e-14 of each component's largest term scale over the direction's modes (measured 6.6e-16); `kind`, `saPeriod` = 0.05, one shared `term`, `omega` = 2π/0.05 |
 | (b) `ritzVectors 6 -dir 1 2` set | ≤ 1e-12; `kind` = 2 |
 | (c) 23 bad calls refused; the next good call is bit-identical; stale modal properties refused; λ ≤ 0 refused | pass |
 | the loop itself: with vs without `eleForce` reads | not bit-equal; < 1e-12 of term scale |
 | a call after an `-increment` trial: domain left committed, two calls bit-identical | pass |
 | TransformationFE, 104-node membrane (#1028) | Transformation = Plain (1e-10), 4 rounds, no crash |
-| classic Tcl bridge = Python (2D), unexpanded `-Tn $Tn -Sa $Sa`, node list `$top` | 1e-12 |
+| classic Tcl bridge = Python (2D), unexpanded `-Tn $Tn -Sa $Sa`, node list `$top` | 1e-12; the good call after the `-dir 2` mass refusal is bit-identical (Tcl and Python) |
 | a direction without mass (`-dir 2`, alone or with `-dir 1`): refused in Python and Tcl, as stock `-mode k -increment` | pass |
 
 ## 4. Profile and gain

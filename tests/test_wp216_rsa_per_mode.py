@@ -315,8 +315,10 @@ def test_b_residual_mode_set_with_period_override():
     # and Linux alike. So on this set each component is measured against its
     # largest term scale over the direction's modes. (A bound of a few times
     # the loop's measured spread was tried first; one round-off sample is too
-    # noisy an estimate of its size, and it failed on Linux.)
-    _assert_same(new, old, over_modes=True)
+    # noisy an estimate of its size, and it failed on Linux.) That scale is
+    # ~1e3-1e4 above a pseudo-mode's own, so the gate is held to 1e-14 of it
+    # (measured 6.6e-16; review of #1032).
+    _assert_same(new, old, rtol=1e-14, over_modes=True)
     kind = new['kind']
     assert np.all(kind[:NMODES] == 0) and np.all(kind[NMODES:] == 1)
     # D3b: the overridden modes read Sa(0.05) and share one combination term
@@ -423,9 +425,13 @@ def test_classic_tcl_bridge(tmp_path):
              '-eleGroup c1 -ele 1 -cut 1 -inertia top $top]',
              # no free mass in direction 2: refused, as -mode k -increment is
              'set bad [catch {responseSpectrumPerMode -Tn $Tn -Sa $Sa -dir 2 -reactions}]',
+             # ...and leaves the domain alone: the good call again, bit-identical
+             'set r2 [responseSpectrumPerMode -Tn $Tn -Sa $Sa -dir 1 -reactions '
+             '-eleGroup c1 -ele 1 -cut 1 -inertia top $top]',
              'set out [open res.txt w]',
              'puts $out [dict get $r reactions]', 'puts $out [dict get $r ele:c1]',
-             'puts $out [dict get $r inertia:top]', 'puts $out $bad', 'close $out']
+             'puts $out [dict get $r inertia:top]', 'puts $out $bad',
+             'puts $out [string equal $r $r2]', 'close $out']
     (tmp_path / 'deck.tcl').write_text('\n'.join(lines) + '\n')
     env = dict(os.environ, LADRUNO_OPENSEES_QUIET='1')
     subprocess.run([str(exe), 'deck.tcl'], cwd=tmp_path, env=env, check=True,
@@ -433,6 +439,7 @@ def test_classic_tcl_bridge(tmp_path):
     lines = (tmp_path / 'res.txt').read_text().split('\n')
     got = [np.array(l.split(), float) for l in lines[:3]]
     assert lines[3].strip() == '1'                       # -dir 2 refused
+    assert lines[4].strip() == '1'                       # good call unchanged after it
     ops.wipe()
     ops.model('basic', '-ndm', 2, '-ndf', 3)
     ops.node(1, 0, 0); ops.fix(1, 1, 1, 1)
@@ -444,9 +451,9 @@ def test_classic_tcl_bridge(tmp_path):
     ops.fix(2, 0, 1, 0); ops.fix(3, 0, 1, 0)
     ops.system('UmfPack'); ops.analysis('Static')
     ops.eigen('-fullGenLapack', 2); ops.modalProperties()
-    py = ops.responseSpectrumPerMode('-Tn', 0.0, 1.0, 10.0, '-Sa', 2.0, 3.0, 0.5, '-dir', 1,
-                                     '-reactions', '-eleGroup', 'c1', '-ele', 1, '-cut', 1,
-                                     '-inertia', 'top', 2, 3)
+    good = ['-Tn', 0.0, 1.0, 10.0, '-Sa', 2.0, 3.0, 0.5, '-dir', 1, '-reactions',
+            '-eleGroup', 'c1', '-ele', 1, '-cut', 1, '-inertia', 'top', 2, 3]
+    py = ops.responseSpectrumPerMode(*good)
     # WP-212 guard per direction (review of #1032): no mass in Y -> refused,
     # alone or next to a good direction, like stock -mode k -increment
     spec = ['-Tn', 0.0, 1.0, 10.0, '-Sa', 2.0, 3.0, 0.5]
@@ -455,6 +462,8 @@ def test_classic_tcl_bridge(tmp_path):
     for dirs in ((2,), (1, 2)):
         with pytest.raises(Exception):
             ops.responseSpectrumPerMode(*spec, '-dir', *dirs, '-reactions')
+    # the refusals leave the domain alone, as in test_c: bit-identical rerun
+    assert ops.responseSpectrumPerMode(*good) == py
     for g, key in zip(got, ('reactions', 'ele:c1', 'inertia:top')):
         np.testing.assert_allclose(g, py[key], rtol=1e-12, atol=1e-12 * np.abs(py[key]).max())
     # 2D: 3 components, base shear = -inertia for the eigenmodes
