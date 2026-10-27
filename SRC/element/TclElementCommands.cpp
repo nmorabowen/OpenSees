@@ -177,8 +177,11 @@ extern void *OPS_ShellNLDKGQThermal(void);//Added by L.Jiang [SIF]
 extern void* OPS_ShellNLDKGTThermal(void);// Giovanni Rinaldin
 extern void *OPS_CatenaryCableElement(void);
 extern void *OPS_ASDEmbeddedNodeElement(void); // Massimo Petracca (ASDEA)
+extern void *OPS_KinematicCoupling(void);
+extern void *OPS_DistributingCoupling(void);
 extern void *OPS_FourNodeTetrahedron(void);
 extern void *OPS_TenNodeTetrahedron(void);
+extern void *OPS_TenNodeTetrahedronStd(void);
 extern void *OPS_TenNodeTetrahedronThermal(void);
 extern void *OPS_ThermalBoundaryTri6(void);
 extern void *OPS_LysmerTriangle(void);
@@ -427,6 +430,19 @@ TclModelBuilderElementCommand(ClientData clientData, Tcl_Interp *interp,
   }
 
   Element *theElement = 0;
+
+  // dispatched ahead of the element-type chain below: that chain is at the
+  // MSVC limit on nested blocks (C1061), so a further else-if does not compile
+  if (strcmp(argv[1], "KinematicCoupling") == 0 ||
+      strcmp(argv[1], "DistributingCoupling") == 0) {
+    void *theEle = (strcmp(argv[1], "KinematicCoupling") == 0) ?
+      OPS_KinematicCoupling() : OPS_DistributingCoupling();
+    if (theEle == 0) {
+      opserr << "TclElementCommand -- unable to create element of type : " << argv[1] << endln;
+      return TCL_ERROR;
+    }
+    theElement = (Element *)theEle;
+  }
 
   if ((strcmp(argv[1],"truss") == 0) || (strcmp(argv[1],"Truss") == 0)) {
     
@@ -1513,6 +1529,20 @@ TclModelBuilderElementCommand(ClientData clientData, Tcl_Interp *interp,
   }
   else if (strcmp(argv[1], "TenNodeTetrahedron") == 0) {
       void *theEle = OPS_TenNodeTetrahedron();
+      if (theEle != 0) 
+      {
+        theElement = (Element*)theEle;
+      } 
+      else 
+      {
+        opserr<<"tclelementcommand -- unable to create element of type : "
+            <<argv[1]<<endln;
+        return TCL_ERROR;
+      }
+
+  }
+  else if (strcmp(argv[1], "TenNodeTetrahedronStd") == 0) {
+      void *theEle = OPS_TenNodeTetrahedronStd();
       if (theEle != 0) 
       {
         theElement = (Element*)theEle;

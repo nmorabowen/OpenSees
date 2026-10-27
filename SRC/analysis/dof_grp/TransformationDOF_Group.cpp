@@ -130,7 +130,7 @@ TransformationDOF_Group::TransformationDOF_Group(int tag, Node *node,
 	    opserr << "TransformationDOF_Group::TransformationDOF_Group(Node *) ";
 	    opserr << " ran out of memory";	    
 	}
-	for (int i=0; i<MAX_NUM_DOF; i++) {
+	for (int i=0; i<=MAX_NUM_DOF; i++) {
 	    modMatrices[i] = 0;
 	    modVectors[i] = 0;
 	}
@@ -226,7 +226,7 @@ TransformationDOF_Group::TransformationDOF_Group(int tag,
 	    opserr << "TransformationDOF_Group::TransformationDOF_Group(Node *) ";
 	    opserr << " ran out of memory";	    
 	}
-	for (int i=0; i<MAX_NUM_DOF; i++) {
+	for (int i=0; i<=MAX_NUM_DOF; i++) {
 	    modMatrices[i] = 0;
 	    modVectors[i] = 0;
 	}
@@ -262,7 +262,7 @@ TransformationDOF_Group::~TransformationDOF_Group()
     // if this is the last FE_Element, clean up the
     // storage for the matrix and vector objects
     if (numTransDOFs == 0) {
-	for (int i=0; i<MAX_NUM_DOF; i++) {
+	for (int i=0; i<=MAX_NUM_DOF; i++) {
 	    if (modVectors[i] != 0)
 		delete modVectors[i];
 	    if (modMatrices[i] != 0)
@@ -1028,6 +1028,45 @@ TransformationDOF_Group::addSP_Constraint(SP_Constraint &theSP)
 	this->setID(loc,-1);
     } 
     return 0;
+}
+
+// The increment that enforceSPs(1) is about to write into the node, measured
+// from the committed nodal value. Uses the same value convention as
+// enforceSPs(), including the initial value under TRANSF_INCREMENTAL_SP.
+int
+TransformationDOF_Group::getSPDispIncr(Vector &du, int start)
+{
+  if (myNode == 0 || theSPs == 0)
+    return 0;
+
+  int numDof = myNode->getNumberDOF();
+  if (start < 0 || start + numDof > du.Size())
+    return 0;
+
+  const Vector &uCommitted = myNode->getDisp();
+
+  int n = 0;
+  for (int i = 0; i < numDof; i++) {
+    if (theSPs[i] != 0) {
+      double value = theSPs[i]->getValue();
+#ifdef TRANSF_INCREMENTAL_SP
+      value += theSPs[i]->getInitialValue();
+#endif // TRANSF_INCREMENTAL_SP
+      du(start + i) = value - uCommitted(i);
+      n++;
+    }
+  }
+
+  // An SP on a node that is also MP-constrained is overwritten from the
+  // retained node by enforceSPs(0), so the increment above is not what the
+  // node receives.
+  if (n > 0 && theMP != 0) {
+    opserr << "WARNING TransformationDOF_Group::getSPDispIncr() - node "
+           << myNode->getTag() << " carries both an SP and an MP constraint; "
+           << "its prescribed increment is not reliable\n";
+  }
+
+  return n;
 }
 
 int 
