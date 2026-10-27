@@ -85,6 +85,15 @@ public:
      const Vector &getStressToRecord (int numOutput); // Added by Alborz Ghofrani - UW
      const Vector &getCommittedStrain (void);
 
+     // Plastic strain / equivalent plastic strain / plastic work, estimated at each
+     // commit by decomposing the committed total strain with the model's current
+     // secant moduli (see getSecantModuli). This model works directly in stress
+     // space and has no intrinsic plastic strain state, so these are a
+     // post-processing estimate, not an exact internal state variable.
+     const Vector &getPlasticStrain (void);
+     double getEquivalentPlasticStrain (void) {return equivalentPlasticStrain;}
+     double getPlasticWork (void) {return plasticWork;}
+
      // Accepts the current trial strain values as being on the solution path, and updates 
      // all model parameters related to stress/strain states. Return 0 on success.
      int commitState (void);
@@ -165,6 +174,12 @@ private:
      T2Vector currentStrain;
      T2Vector strainRate;
      static T2Vector subStrainRate;
+
+     // Plastic strain bookkeeping (see getPlasticStrain/getEquivalentPlasticStrain/getPlasticWork)
+     T2Vector currentPlasticStrain;
+     double equivalentPlasticStrain;
+     double plasticWork;
+     void getSecantModuli(double &G, double &K);
 
      double pressureD;
      T2Vector reversalStress;
