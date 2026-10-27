@@ -74,16 +74,16 @@ public:
 	void setRequiredMassRatio(double ratio);
 
 	// Ladruno WP-216: public so responseSpectrumPerMode applies the same
-	// modalProperties consistency check and the same spectral ordinate
-	// (-scale included) as the per-mode path.
+	// modalProperties consistency check, the same WP-212 mass guard and the
+	// same spectral ordinate (-scale included) as the per-mode path.
 	int check();
 	double getSa(double T) const;
-
-private:
 	// Ladruno WP-212: report the cumulative effective-mass ratio of the excited
 	// direction once per call; warn below 90%, error with no participating mass
 	// or below -requireMass.
 	int checkMass(const DomainModalProperties& mp) const;
+
+private:
 	int beginMode();
 	int endMode();
 	int solveMode();

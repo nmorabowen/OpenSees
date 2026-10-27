@@ -65,6 +65,8 @@
 #include <elementAPI.h>
 #include <algorithm>
 #include <cmath>
+#include <cctype>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <map>
@@ -85,9 +87,36 @@ const char* const CMD = "responseSpectrumPerMode";
 int readOne(int* v) { int one = 1; return OPS_GetIntInput(&one, v); }
 int readOne(double* v) { int one = 1; return OPS_GetDoubleInput(&one, v); }
 
+void parseOne(const char* s, char** end, int* v) { *v = (int)strtol(s, end, 10); }
+void parseOne(const char* s, char** end, double* v) { *v = strtod(s, end); }
+
+// a whole list as ONE argument (classic Tcl `-Tn $list` unexpanded, as
+// responseSpectrumAnalysis accepts): whitespace-separated numbers, all or none
+template <class T>
+bool parseListString(const std::string& text, std::vector<T>& out)
+{
+    std::vector<T> got;
+    const char* p = text.c_str();
+    while (true) {
+        while (std::isspace((unsigned char)*p)) ++p;
+        if (*p == 0) break;
+        char* end = 0;
+        T v;
+        parseOne(p, &end, &v);
+        if (end == p || (*end != 0 && !std::isspace((unsigned char)*end)))
+            return false;
+        got.push_back(v);
+        p = end;
+    }
+    if (got.empty()) return false;
+    out.insert(out.end(), got.begin(), got.end());
+    return true;
+}
+
 template <class T>
 void readList(std::vector<T>& out)
 {
+    const size_t start = out.size();
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const int before = OPS_GetNumRemainingInputArgs();
         T v;
@@ -97,6 +126,14 @@ void readList(std::vector<T>& out)
             break;
         }
         out.push_back(v);
+    }
+    // nothing read: try the next argument as one list string
+    if (out.size() == start && OPS_GetNumRemainingInputArgs() > 0) {
+        // OPS_GetString, not OPS_GetStringFromAll: no buffer to truncate a
+        // long node list (a number never gets here, readOne took it)
+        const char* s = OPS_GetString();
+        if (s == 0 || !parseListString(std::string(s), out))
+            OPS_ResetCurrentInputArg(-1);
     }
 }
 
@@ -353,6 +390,13 @@ OPS_LadrunoResponseSpectrumPerMode(void)
     ResponseSpectrumAnalysis rsa0(theModel, ts, Tn, Sa, dirs[0], scale);
     if (rsa0.check() < 0)
         return -1;
+    // the WP-212 mass guard of -mode k -increment, per direction: no free or
+    // no participating mass is refused (stock would answer all zeros)
+    for (int d : dirs) {
+        ResponseSpectrumAnalysis rsaD(theModel, ts, Tn, Sa, d, scale);
+        if (rsaD.checkMass(mp) < 0)
+            return -1;
+    }
     const int numEigen = domain->getEigenvalues().Size();
     if (!haveModes)
         for (int k = 1; k <= numEigen; ++k) modes.push_back(k);

@@ -17,6 +17,8 @@ pr: "#1032"
   the per-DOF pool limit. The pooled tangent and residual objects already had
   a size check; this buffer did not. Upstream has the same code.
 - **Fix/status:** fixed in WP-216 (grown to the largest node count; the thread
-  scratch too). Regression: `test_transformation_fe_element_with_more_than_64_nodes`.
+  scratch too). Regression: `test_transformation_fe_element_with_more_than_64_nodes`,
+  which is NOT deterministic: heap corruption need not crash, so it can pass on
+  an unfixed build. The gate tower crashed on every run before the fix.
   When a crash shows up only at `wipe`, suspect a static buffer sized by a
   different count than the one that indexes it. Learned 2026-10-27 (WP-216).

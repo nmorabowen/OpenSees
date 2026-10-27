@@ -109,31 +109,54 @@ def _loop(req, dirs, modes, spec_rsa, extra_calls=True):
     """today's per-mode loop through the stock commands.
 
     Returns ({key: [d][k][c]}, {key: [d][k][c]}): the values and the scale of
-    the summed terms, sum_n |term_n| per component (the round-off floor of a
-    sum that cancels, e.g. the vertical reactions of a core under overturning).
-    extra_calls=False skips the eleForce reads, only to measure how much the
-    call history alone moves the loop (ASDShellQ4, see test below)."""
+    the summed terms, sum |term| per component (the round-off floor of a sum
+    that cancels, e.g. the vertical reactions of a core under overturning).
+    For reactions the terms are the element force blocks at the support nodes
+    (what calculateNodalReactions adds up: several shells meet at a base node
+    and largely cancel), for element groups the blocks at the cut, for
+    inertia the nodal forces. extra_calls=False skips every eleForce read
+    (values only, no reaction scale), only to measure how much the call
+    history alone moves the loop (ASDShellQ4, see test below)."""
     R0, F0 = _snapshot()
     # same normalization as _tower: -return re-stores the modal properties
     lam = np.array(ops.modalProperties('-unorm', '-return')['eigenLambda'])
     fixed = ops.getFixedNodes()
     # a reaction exists on the SP-constrained DOFs only
     mask = {n: np.isin(np.arange(1, 7), ops.getFixedDOFs(n)) for n in fixed}
+    at = {n: [] for n in fixed}                       # support node -> (ele, block)
+    for e in ops.getEleTags():
+        for i, n in enumerate(ops.eleNodes(e)):
+            if n in at:
+                at[n].append((e, i))
     out, scl = {}, {}
 
-    def put(key, d, a, terms):
+    def put(key, d, a, terms, scale=None):
         terms = np.array(terms).reshape(-1, 6)
         out.setdefault(key, np.zeros((len(dirs), len(modes), 6)))[d, a] = terms.sum(axis=0)
-        scl.setdefault(key, np.zeros((len(dirs), len(modes), 6)))[d, a] = np.abs(terms).sum(axis=0)
+        scl.setdefault(key, np.zeros((len(dirs), len(modes), 6)))[d, a] = (
+            np.abs(terms).sum(axis=0) if scale is None else scale)
+
+    def block_scale(F, nodes, p):
+        """sum over the support nodes of |r x f| / |f| of every element block"""
+        sc = np.zeros(6)
+        for n in nodes:
+            for e, i in at[n]:
+                f = np.where(mask[n], F[e][6 * i:6 * i + 6], 0.0)
+                sc += np.abs(_moment(f, ops.nodeCoord(n), p))
+        return sc
 
     for di, d in enumerate(dirs):
         for a, k in enumerate(modes):
             ops.responseSpectrumAnalysis(*spec_rsa(d), '-mode', k, '-increment')
             ops.reactions()
             dR = {n: np.where(mask[n], np.array(ops.nodeReaction(n)) - R0[n], 0.0) for n in fixed}
-            put('reactions', di, a, [_moment(dR[n], ops.nodeCoord(n), ABOUT) for n in fixed])
+            F = ({e: np.array(ops.eleForce(e)) - F0[e] for e in {e for n in fixed for e, _ in at[n]}}
+                 if extra_calls else None)
+            put('reactions', di, a, [_moment(dR[n], ops.nodeCoord(n), ABOUT) for n in fixed],
+                block_scale(F, fixed, ABOUT) if extra_calls else None)
             for name, (nodes, p) in req['sets'].items():
-                put('reaction:' + name, di, a, [_moment(dR[n], ops.nodeCoord(n), p) for n in nodes])
+                put('reaction:' + name, di, a, [_moment(dR[n], ops.nodeCoord(n), p) for n in nodes],
+                    block_scale(F, nodes, p) if extra_calls else None)
             for name, (eles, cut, p) in (req['eles'].items() if extra_calls else ()):
                 terms = []
                 for e in eles:
@@ -164,21 +187,26 @@ def _new(args, dirs, modes=None, spec=SPEC):
 
 
 def _rel_err(got, ref, scale):
-    """per (dir, mode): max |got - ref| over the components, relative to the
-    largest per-component term scale of that mode"""
-    return np.abs(got - ref).max(axis=2) / np.maximum(scale.max(axis=2), 1e-300)
+    """per (dir, mode): max over the components of |got - ref| / the term
+    scale OF THAT COMPONENT (forces against forces, moments against moments,
+    review of #1032). A component whose terms are all exactly zero must match
+    exactly."""
+    diff = np.abs(got - ref)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        err = np.where(scale > 0.0, diff / scale, np.where(diff > 0.0, np.inf, 0.0))
+    return err.max(axis=2)
 
 
 def _assert_same(new, oracle, rtol=RTOL, floor=None):
     """new == loop to rtol x term scale, per (dir, mode); `floor` (same keys,
-    [dir][mode]) raises the bound to 2x the loop's own history spread where
+    [dir][mode]) raises the bound to 4x the loop's own history spread where
     that is larger"""
     old, scl = oracle
     for key, ref in old.items():
         got = new[key]
         assert got.shape == ref.shape, key
         err = _rel_err(got, ref, scl[key])
-        tol = np.full(err.shape, rtol) if floor is None else np.maximum(rtol, 2.0 * floor[key])
+        tol = np.full(err.shape, rtol) if floor is None else np.maximum(rtol, 4.0 * floor[key])
         d, a = np.unravel_index(np.argmax(err / tol), err.shape)
         assert (err <= tol).all(), f'{key} dir {d} mode {a}: rel err {err[d, a]:.2e} > {tol[d, a]:.1e}'
 
@@ -279,10 +307,15 @@ def test_b_residual_mode_set_with_period_override():
     old = _loop(req, (1, 2), modes, _rsa_lists)
     # the stiff pseudo-modes (T < 1 ms here) follow modes of much larger
     # amplitude, whose round-off ASDShellQ4 carries into them (see
-    # test_the_loop_itself_moves...): measure the loop's own spread by running
-    # it again in reverse mode order, and hold the command to that floor
+    # test_the_loop_itself_moves...): measure the loop's own spread under two
+    # history changes (reverse mode order; no eleForce reads), take the larger
+    # and hold the command to 4x it. One sample of round-off is a noisy
+    # estimate of its size: 2x a single sample failed by 15 % once.
     rev = _loop(req, (1, 2), modes[::-1], _rsa_lists)
-    floor = {k: _rel_err(rev[0][k][:, ::-1], old[0][k], old[1][k]) for k in old[0]}
+    bare = _loop(req, (1, 2), modes, _rsa_lists, extra_calls=False)
+    floor = {k: np.maximum(_rel_err(rev[0][k][:, ::-1], old[0][k], old[1][k]),
+                           _rel_err(bare[0][k], old[0][k], old[1][k]) if k in bare[0]
+                           else 0.0) for k in old[0]}
     _assert_same(new, old, floor=floor)
     assert max(f.max() for f in floor.values()) < 1e-10
     kind = new['kind']
@@ -385,16 +418,22 @@ def test_classic_tcl_bridge(tmp_path):
              'element elasticBeamColumn 2 2 3 1.0 1000.0 1.0 1',
              'fix 2 0 1 0', 'fix 3 0 1 0',
              'system UmfPack', 'analysis Static', 'eigen -fullGenLapack 2', 'modalProperties',
-             'set r [responseSpectrumPerMode -Tn 0.0 1.0 10.0 -Sa 2.0 3.0 0.5 -dir 1 -reactions '
-             '-eleGroup c1 -ele 1 -cut 1 -inertia top 2 3]',
+             # unexpanded Tcl lists, as responseSpectrumAnalysis takes them
+             'set Tn {0.0 1.0 10.0}', 'set Sa {2.0 3.0 0.5}', 'set top {2 3}',
+             'set r [responseSpectrumPerMode -Tn $Tn -Sa $Sa -dir 1 -reactions '
+             '-eleGroup c1 -ele 1 -cut 1 -inertia top $top]',
+             # no free mass in direction 2: refused, as -mode k -increment is
+             'set bad [catch {responseSpectrumPerMode -Tn $Tn -Sa $Sa -dir 2 -reactions}]',
              'set out [open res.txt w]',
              'puts $out [dict get $r reactions]', 'puts $out [dict get $r ele:c1]',
-             'puts $out [dict get $r inertia:top]', 'close $out']
+             'puts $out [dict get $r inertia:top]', 'puts $out $bad', 'close $out']
     (tmp_path / 'deck.tcl').write_text('\n'.join(lines) + '\n')
     env = dict(os.environ, LADRUNO_OPENSEES_QUIET='1')
     subprocess.run([str(exe), 'deck.tcl'], cwd=tmp_path, env=env, check=True,
                    stdin=subprocess.DEVNULL, capture_output=True, timeout=120)
-    got = [np.array(l.split(), float) for l in (tmp_path / 'res.txt').read_text().split('\n')[:3]]
+    lines = (tmp_path / 'res.txt').read_text().split('\n')
+    got = [np.array(l.split(), float) for l in lines[:3]]
+    assert lines[3].strip() == '1'                       # -dir 2 refused
     ops.wipe()
     ops.model('basic', '-ndm', 2, '-ndf', 3)
     ops.node(1, 0, 0); ops.fix(1, 1, 1, 1)
@@ -409,6 +448,14 @@ def test_classic_tcl_bridge(tmp_path):
     py = ops.responseSpectrumPerMode('-Tn', 0.0, 1.0, 10.0, '-Sa', 2.0, 3.0, 0.5, '-dir', 1,
                                      '-reactions', '-eleGroup', 'c1', '-ele', 1, '-cut', 1,
                                      '-inertia', 'top', 2, 3)
+    # WP-212 guard per direction (review of #1032): no mass in Y -> refused,
+    # alone or next to a good direction, like stock -mode k -increment
+    spec = ['-Tn', 0.0, 1.0, 10.0, '-Sa', 2.0, 3.0, 0.5]
+    with pytest.raises(Exception):
+        ops.responseSpectrumAnalysis(2, *spec, '-mode', 1, '-increment')
+    for dirs in ((2,), (1, 2)):
+        with pytest.raises(Exception):
+            ops.responseSpectrumPerMode(*spec, '-dir', *dirs, '-reactions')
     for g, key in zip(got, ('reactions', 'ele:c1', 'inertia:top')):
         np.testing.assert_allclose(g, py[key], rtol=1e-12, atol=1e-12 * np.abs(py[key]).max())
     # 2D: 3 components, base shear = -inertia for the eigenmodes
@@ -446,7 +493,10 @@ def test_transformation_fe_element_with_more_than_64_nodes():
     """WP-216 found it: TransformationFE kept one count per NODE in a static
     buffer of MAX_NUM_DOF = 64 ints, so a LadrunoMembrane floor with more nodes
     corrupted the heap on every assembly under Transformation (0xc0000374 at
-    the next wipe). 104-node membrane: Transformation = Plain, no crash."""
+    the next wipe). 104-node membrane: Transformation = Plain, no crash.
+    NOT a deterministic regression: heap corruption need not crash, so this
+    can pass on an unfixed build (review of #1032); the eigenvalue match and
+    the gate tower (which crashed every time before the fix) are the evidence."""
     from _testbed.subprocess_run import run_python_script
     rc, text = run_python_script(_MANY_NODES, cwd=str(Path(__file__).resolve().parent))
     assert rc == 0 and 'MANY-NODES-OK' in text, text[-2000:]

@@ -56,9 +56,16 @@ responseSpectrumPerMode (-ts $tag | -Tn $T.. -Sa $Sa.. | -fn $f.. -Sa $Sa..)
 - The spectrum options mean what they mean in `responseSpectrumAnalysis`
   (`-ts` is its `$tsTag`; `-Tn`/`-fn`/`-Sa` lists and `-scale` are the same).
   The command builds a `ResponseSpectrumAnalysis` and calls its `check()`
-  (modalProperties of this mode set, else refused) and `getSa()` (same
-  interpolation, `-scale` applied once, WP-202). These two members are made
-  public; that is the whole vanilla touch.
+  (modalProperties of this mode set, else refused), its WP-212 `checkMass()`
+  once per requested direction (no free or no participating mass is refused,
+  as `-mode k -increment` refuses it; the cumulative-mass report and the 90 %
+  warning print the same) and `getSa()` (same interpolation, `-scale` applied
+  once, WP-202). These three members are made public; that is the whole
+  vanilla touch.
+- Every number list (`-Tn`, `-fn`, `-Sa`, `-dir`, `-modes`, node and element
+  lists) is read either expanded (`{*}$list`, Python `*list`) or, in classic
+  Tcl, as one unexpanded list argument (`-Tn $Tn`), as
+  `responseSpectrumAnalysis` reads `-Tn`/`-Sa` (review of #1032).
 - `-modes` defaults to every mode of the current set; order is kept.
 - `-about` applies to the group defined just before it and adds r × F about
   the point (undeformed coordinates) to the moment components. Without it the
@@ -149,7 +156,8 @@ balance holds only after summation over the complete set, not per vector.
 ### D8 — refusals
 
 Refused before anything is touched: no AnalysisModel; OpenSeesSP; no
-`modalProperties` or stale modal properties (`check()`); no spectrum, both
+`modalProperties` or stale modal properties (`check()`); a direction with no
+free or no participating mass (`checkMass()`, per direction); no spectrum, both
 `-ts` and lists, unequal or non-increasing lists, negative Sa, unknown time
 series; no `-dir`, a direction out of 1..ndf or repeated; nothing requested;
 a mode out of range, repeated, or with λ ≤ 0 (the loop would divide by it);
@@ -190,10 +198,18 @@ Oracle: the stock per-mode loop on the same model (`-mode k -increment`,
 synthetic tower of `tests/_testbed/rsa_tower.py` at 3 storeys (1001 nodes,
 membrane floors of ~100 nodes), 6 modes.
 
-**Tolerance: 1e-12 of the term scale, per mode.** The error of each
-(direction, mode) is max |new − loop| over the components divided by the
-largest Σₙ|termₙ| (the summed nodal reactions, element blocks or inertias) of
-that mode. Relative to the result itself a 1e-12 gate is below the loop's own
+**Tolerance: 1e-12 of the term scale, per mode and component.** The error
+of each (direction, mode) is the largest, over the components, of
+|new − loop| divided by that component's Σ|term|: forces against forces,
+moments against moments (review of #1032; it first divided by the largest
+scale of any component, which let forces through ~10–20× looser). The terms
+are the ones each sum is formed from: for reactions, the element force blocks
+at the support nodes (what `calculateNodalReactions` adds; several shells meet
+at a base node and largely cancel, so the nodal reactions themselves
+understate the floor: a weak-direction base shear of 1.7 against nodal terms
+of 160 missed 1e-12 by 1.8×); for element groups, the blocks at the cut; for
+inertia, the nodal forces. A component whose terms are all exactly zero must
+match exactly. Relative to the result itself a 1e-12 gate is below the loop's own
 reproducibility: ASDShellQ4's AGQI update starts from the `KQU`/`Q_residual`
 of the element's last `calculateAll` call, which `revertToLastCommit` does
 not restore, so the stock loop read with and without its `eleForce` calls,
@@ -203,7 +219,10 @@ is ~1e-12 of the result. Measured on the residual set, new − loop and
 loop − loop(reversed) agree quantity by quantity, e.g. 3.2e-12 against
 3.4e-12 of the term scale on the pier at storey 2 in the 0.75 ms pseudo-mode
 (which follows modes of much larger amplitude). The residual-set check
-therefore holds the command to max(1e-12, 2 × the loop's own spread).
+therefore holds the command to max(1e-12, 4 × the loop's own spread),
+the spread being the larger of two history changes (reverse mode order;
+no `eleForce` reads). One sample of round-off is a noisy estimate of its
+size: 2 × a single sample failed once by 15 %.
 
 | Check | Result |
 |---|---|
@@ -211,13 +230,14 @@ therefore holds the command to max(1e-12, 2 × the loop's own spread).
 | (a) `-modes 5 2`, `-ts` Path series, `-scale 0.7` | ≤ 1e-12 |
 | (a) gravity preload + `loadConst` (oracle subtracts the gravity state) | ≤ 1e-9 |
 | eigenmodes: base reaction = − total inertia (force, moment about a point) | < 1e-6 |
-| (b) `residualModes -dir 1 2 -period 0.05` set (10 modes) | ≤ max(1e-12, 2 × loop spread); spread < 1e-10; `kind`, `saPeriod` = 0.05, one shared `term`, `omega` = 2π/0.05 |
+| (b) `residualModes -dir 1 2 -period 0.05` set (10 modes) | ≤ max(1e-12, 4 × loop spread); spread < 1e-10; `kind`, `saPeriod` = 0.05, one shared `term`, `omega` = 2π/0.05 |
 | (b) `ritzVectors 6 -dir 1 2` set | ≤ 1e-12; `kind` = 2 |
 | (c) 23 bad calls refused; the next good call is bit-identical; stale modal properties refused; λ ≤ 0 refused | pass |
 | the loop itself: with vs without `eleForce` reads | not bit-equal; < 1e-12 of term scale |
 | a call after an `-increment` trial: domain left committed, two calls bit-identical | pass |
 | TransformationFE, 104-node membrane (#1028) | Transformation = Plain (1e-10), 4 rounds, no crash |
-| classic Tcl bridge = Python (2D) | 1e-12 |
+| classic Tcl bridge = Python (2D), unexpanded `-Tn $Tn -Sa $Sa`, node list `$top` | 1e-12 |
+| a direction without mass (`-dir 2`, alone or with `-dir 1`): refused in Python and Tcl, as stock `-mode k -increment` | pass |
 
 ## 4. Profile and gain
 
