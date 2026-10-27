@@ -73,8 +73,11 @@ class DirectIntegrationAnalysis: public TransientAnalysis
     int eigen(int numMode, bool generlzed = true, bool findSmallest = true);
     int initialize(void);
     int domainChanged(void);
+    // Ladruno WP-215: the domain stamp this analysis last numbered at, so a
+    // command that stands in for eigen (ritzVectors) renumbers only when it moved
+    int ladrunoDomainStamp(void) const { return domainStamp; }
 
-    int setNumberer(DOF_Numberer &theNumberer);    
+    int setNumberer(DOF_Numberer &theNumberer);
     int setAlgorithm(EquiSolnAlgo &theAlgorithm);
     int setIntegrator(TransientIntegrator &theIntegrator);
     int setLinearSOE(LinearSOE &theSOE); 

@@ -2,7 +2,7 @@
 title: "ADR 213 — Modal basis completeness: shared Krylov-Ritz kernel + residualModes (WP-213)"
 project: Ladruno
 type: ADR
-status: "PR 2 merged (#1023) — kernel C + residualModes D; D6 mode tags in WP-214; ritzVectors (E) is PR 3"
+status: "PR 2 merged (#1023) — kernel C + residualModes D; D6 mode tags in WP-214 (#1026); D7 ritzVectors + D8 backward-error solve check in WP-215"
 priority: medium
 owner: nmora
 related:
@@ -12,7 +12,7 @@ related:
   - "WP-212 / PR #1021, merged (RSA mass-shortfall report and -requireMass)"
   - "WP-212 / PR #1021 (RSA mass-shortfall guard, -requireMass)"
   - "apeWorkbench opensees-dynamic-analysis, branch work/claude/rsa-gap-study: studies/rsa-gaps/{gap-study.md, fork-implementation-guide.md, v1/}"
-tags: [adr, modal, response-spectrum, missing-mass, ritz, asce7, wp-213, wp-214]
+tags: [adr, modal, response-spectrum, missing-mass, ritz, asce7, wp-213, wp-214, wp-215]
 updated: 2026-10-26
 ---
 
@@ -180,7 +180,7 @@ that model is a test.
 `ritzVectors $nvec -dir ... -pattern ... -cycles ...` will call the same
 kernel with Φ empty, `solveStart = true`, `maxVectors = nvec`,
 `cyclesPerStart`, tag the result `RITZ` and install it with `install()`.
-Nothing in this PR implements it.
+Implemented in WP-215 (D7).
 
 ### D5 — no rigid/periodic split in v1
 
@@ -232,6 +232,117 @@ of #1023 at 409a9b552): on the tied-floor model (kip-in, 10 storeys,
 α = 1e14) f₁ = 4.0e-3 while the measured gap is 2.5e-4 (MKL) / 2.1e-6
 (reference LAPACK), so a 20 % stiffness loss after `eigen 1` only warned and
 a 2 % loss passed silently. Both are now caught (refused / warned).
+
+### D7 — `ritzVectors` (WP-215)
+
+```tcl
+ritzVectors $nvec <-dir 1 <2 <3>>> <-pattern $tag ...> <-cycles $n1 $n2 ...> <-tol $t>
+```
+
+- **Starts**, one per entry, in the order written on the command line:
+  M ι_d per `-dir`, and the reference nodal loads of each `-pattern`
+  assembled to equation numbering (Tᵀp through the group's own
+  `TransformationDOF_Group::getT()`, so a load on a constrained node moves to
+  its retained node; loads on SP-fixed DOFs are dropped under every handler,
+  so Penalty / Lagrange report the same participation as Transformation;
+  elemental loads are counted and warned about, not assembled). At least one
+  start is required.
+- **Run.** The D1 kernel with Φ empty, `solveStart = true` (block 0 =
+  K⁻¹F), `maxBlocks = maxVectors = nvec`, drop tolerance `-tol` (default
+  1e-10). Blocks cycle through the starts in order (CSI, CARM §19.3.2-3);
+  `-cycles` gives one cap per start (CSI `ncyc`, 0 = no cap). Fewer than
+  `nvec` survivors (the starts span no more mass, or every start is capped):
+  warned, and what survived is installed.
+- **The subspace is the per-start Krylov prefixes**
+  {(K⁻¹M)ᵇ K⁻¹f_s : b < cap_s}, block by block, starts in order, cut at
+  `nvec`. The kernel now makes a start's next block from that start's own
+  chain vector (its column deflated against Φ and its own earlier chain), not
+  from the column orthogonalized against every start: with unequal `-cycles`
+  the old generator let K⁻¹M of the other starts' columns leak in, so a capped
+  start's directions continued past the cap and the span depended on the
+  Gram–Schmidt coefficients (found by the independent oracle of the review
+  round). With equal caps the span is unchanged, so `residualModes` (two
+  blocks for every direction) gives the same pseudo-modes.
+- **Install** exactly as `eigen`: `install()` (setNumEigenvectors /
+  setEigenvector / setEigenvalues; `TransformationDOF_Group` recovers the
+  constrained nodes), every mode recorded `RITZ`, modal properties unset.
+  `modalProperties` then tags each row `# Z` (D6) and its NOTE says the higher
+  Ritz periods must not be reported as natural periods. A new `eigen` clears
+  the record (D2).
+- **Numbering.** `ritzVectors` stands in for `eigen`, so it renumbers through
+  the existing analysis' `domainChanged()` **only when the domain stamp
+  moved**, `eigen`'s rule (a marked `ladrunoDomainStamp()` accessor on
+  `StaticAnalysis` / `DirectIntegrationAnalysis`). `domainChanged()` is not
+  free mid-analysis: `CentralDifference` sets U(t − Δt) = U(t) there (review
+  of #1027). It needs a defined analysis (`analysis Static` or `Transient`)
+  with a system that factors K; with none it refuses (eigen's throw-away
+  default analysis is not reproduced).
+- **The analysis' factor afterwards.** Both commands leave K and its factor in
+  the analysis' LinearSOE and call the algorithm's `domainChanged()`.
+  `Linear -factorOnce` kept no state for that and would have solved the next
+  step with K in place of K_eff: `Linear::domainChanged()` now re-arms it
+  (factorOnce 2 → 1, marked vanilla edit), which also fixes the stale factor
+  after a real renumbering. Tested mid-transient for CentralDifference and for
+  Newmark + `Linear -factorOnce` (history identical with and without a
+  `ritzVectors` call in between).
+- **Report** per start f (CARM §19.4.3-4): static load participation
+  Σ(ψᵀf)²/λ ÷ fᵀK⁻¹f (100 % by construction: K⁻¹f is in the span), and
+  dynamic participation Σ(ψᵀf_m)² ÷ f_mᵀM⁻¹f_m, f_m = f on the DOFs with mass
+  (CSI ignores loads on massless DOFs). For `-dir` it is the modal mass ratio
+  (exact for any M); for `-pattern` it needs a diagonal assembled M and prints
+  `n/a (consistent mass)` otherwise.
+- **`residualModes` after `ritzVectors`: one joint Rayleigh–Ritz set.** The
+  residual vectors R are M-orthogonal to the Ritz vectors Ψ but **not
+  K-orthogonal**: ΨᵀKR = 0 needs K⁻¹MΨ ⊂ span Ψ, which holds for
+  eigenvectors only (review of #1027: on V3 ΨᵀKR reached −442 against
+  λ_r = 355, 634, CQC 1.137 × instead of 1.004 ×, the rigid static response
+  42 % off). So when the kept set holds Ritz vectors, `residualModes`
+  re-solves span[Ψ, R] by one Rayleigh–Ritz step (`orthonormalize` +
+  `rayleighRitz`, the two halves of `run()` exposed) and re-installs the
+  whole set, every vector tagged RITZ (they are Ritz vectors of the larger
+  subspace; none is a separable pseudo-mode), returning all its values.
+  Modal mass reaches 100 % (ι is in the span); V3: 3 Ritz + `residualModes
+  -dir 1` gives 5 vectors and 1.004 × the reference. `-period` is refused
+  there (no separable pseudo-mode to carry the Sa override). After `eigen`
+  nothing changes: an eigenvector is K-orthogonal to anything M-orthogonal to
+  it, so appending stays exact.
+- **Frequency domain.** `frequencyResponse`, `steadyStateDynamics` and
+  `randomResponse` print one WARNING when the set holds Ritz vectors
+  (`LadrunoModeKinds::warnRitzBasis`, one line each in the Ladruno-side
+  `LadrunoModalResponse.cpp`): a Ritz basis is tuned to a load, not to a band.
+- Refused: a partitioned (OpenSeesSP) domain, as `residualModes`.
+
+### D8 — the kernel's K-solve check is a normwise backward error (WP-215, #1025)
+
+The first batch of solves is checked so that an SOE that cannot hold K (a
+diagonal or explicit system, one sized for another model) is refused. WP-213
+measured ‖Kx − b‖ / ‖b‖ < 1e-4. That is not scale-free: under Penalty
+(α = 1e14, kip-in) ‖K‖‖x‖ / ‖b‖ ≈ 1e12, the round-off residual of a
+backward-stable solve is ≈ 1e-4, and `eigen -fullGenLapack 1` +
+`residualModes -dir 1` was refused (1.1e-4–1.6e-4, depending on the solver
+and the mode count). The check is now
+
+  ‖Kx − b‖ / (‖ |K||x| ‖ + ‖b‖) < 1e-4,
+
+with |K||x| accumulated in the same element sweep as Kx (`applyK`'s new
+`absKX` output). It is never larger than the old ratio, so nothing accepted
+before is refused by it; a backward-stable solve sits at ~ε.
+
+The backward error alone is diluted by the Penalty rows themselves
+(‖ |K||x| ‖ ≈ α‖x‖; review of #1027): on the tied-floor model a solve with
+the structural stiffness doubled scores 6e-14 with a 50 % forward error, a
+float32 solve 4.7e-12 with 100 %. So the kernel also checks the energy
+balance of each solve,
+
+  |xᵀKx − xᵀb| / |xᵀb| < max(1e-4, 10 ε Σ_e |x_e|ᵀ|K_e||x_e| / xᵀKx),
+
+exact for any exact solve (under Lagrange the multiplier terms cancel because
+Cu = 0) and floored by the same round-off scale as `residualModes`' Rayleigh
+quotient check. It separates the four cases (good: ≤ 1e-4; doubled K_s 0.5,
+float32 1.8, Diagonal 1.0). `system Diagonal` is refused by both commands
+(tested; the energy check fires first); the diluted cases need a solver that
+returns a wrong x on demand, so the two measures are pinned in numpy on the
+tied-floor matrices.
 
 ### Rejected — an `EigenSOE` subclass
 
@@ -312,6 +423,24 @@ residualModes -kinds
 | `modalResponseHistory` | 3 modes + residual within 10 % of all modes (3 modes alone > 50 % off) |
 | classic Tcl | `OpenSees.exe` returns the same eigenvalues and kinds as Python |
 
+WP-215 (`tests/test_wp215_ritz_vectors.py`). The oracle is independent of the kernel (review of #1027): a Ritz pair depends only on the subspace, so the test builds the block Krylov subspace by a Euclidean Arnoldi and solves the generalized (K, M) Rayleigh–Ritz problem through a Cholesky of the projected M:
+
+| Check | Result |
+|---|---|
+| V3 (d) `ritzVectors 3 -dir 1` | base shear 1.034 × reference (3 eigenmodes: 0.058 ×) = Krylov-oracle CQC (1e-8); Ritz values = oracle; static participation 100 % (1e-10); modal mass 88 % |
+| kernel C | 6 vectors: values (1e-9) and shapes (up to sign) = numpy; ΨᵀMΨ = I (1e-10), ΨᵀKΨ = Λ; `nvec = N` = `eigen -fullGenLapack N` (1e-10); `nvec > N` installs N, warned |
+| `-pattern` | values and shapes = numpy with the pattern load as start; static participation 100 %; differs from the `-dir` set; start order, per-start counts and dynamic participation printed as the oracle |
+| `-cycles` | `-cycles 2 0` keeps 2 + 4 as the oracle (3 + 3 without); all starts capped: fewer vectors, warned |
+| V1 rigid diaphragm | full set (3): exact eigenvalues, 100 % X/Y, CQC shears under Transformation, Lagrange (1e-8) and Penalty (2e-5); truncated (1 vector from Y): = numpy, Transformation = Lagrange (1e-8), Penalty (2e-5); constrained-node recovery; a load on a slave node gives the Lagrange result |
+| PDelta preload | `ritzVectors 3` = `eigen -fullGenLapack 3` in the same state (1e-10) = the condensed model-data K − Kg (1e-9); 2 vectors = the Krylov oracle on the model-data K − Kg (1e-8); differs from the unloaded state |
+| tags | `-kinds` / `modeKind` `[2,2,2]`, `# Z` on 18 rows, NOTE text; a new `eigen` clears them |
+| RSA | per mode = numpy (1e-8); `-requireMass` below / above the Ritz set's mass ratio: accepted / refused |
+| `residualModes` after Ritz | joint set = generalized Rayleigh–Ritz on span{ι, (K⁻¹M)ᵏι, k ≤ 4} (1e-8); ΨᵀKΨ diagonal (1e-8 relative); mass 100 %; base shear = oracle (1e-7) and within 1 % of the 10-mode reference; `-period` refused |
+| mid-transient | CentralDifference + Linear, and Newmark + `Linear -factorOnce`: roof history with a `ritzVectors` call after 60 steps = without it (1e-10) |
+| SP-fixed load in a pattern | dropped: Ritz values and dynamic participation equal under Transformation, Penalty, Lagrange (massive fixed base node) and equal to the free-chain oracle |
+| frequency domain | `frequencyResponse` warns on a Ritz set, not on an eigen set |
+| #1025 | tied-floor Penalty, `eigen -fullGenLapack 1` and ARPACK `eigen 1`, twice: `residualModes -dir 1` accepted; `system Diagonal` still refused by both commands |
+
 ## 5. Consequences
 
 - The analysis' LinearSOE holds K and its factor after `residualModes`; the
@@ -328,6 +457,10 @@ residualModes -kinds
 
 1. ~~RSA Sa-period override~~ — done in this PR (D3b).
 2. ~~`modalProperties -print` tags R/Z~~ — done in WP-214 (D6).
-3. PR 3: `ritzVectors` on the same kernel.
+3. ~~PR 3: `ritzVectors` on the same kernel~~ — done in WP-215 (D7).
 4. apeGmsh: `apeSees.residual_modes(dirs, period=...)`, and read 100 % from
-   `modalProperties` only with residual modes present.
+   `modalProperties` only with residual modes present; `apeSees.ritz_vectors(n,
+   dirs, patterns)`.
+5. `ritzVectors`: stop on a target static participation (CSI `TargetPar`), and
+   a dynamic participation for `-pattern` starts on a consistent mass (needs
+   M⁻¹ on the mass DOFs).
