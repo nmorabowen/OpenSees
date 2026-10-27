@@ -2,7 +2,7 @@
 wp: WP-216
 title: "nodeDisp returns the committed displacement, so -increment trial states read zero"
 date: 2026-10-27
-pr: "#TBD"
+pr: "#1032"
 ---
 ### `nodeDisp` is the committed displacement: after `responseSpectrumAnalysis -increment` it does not show the mode
 

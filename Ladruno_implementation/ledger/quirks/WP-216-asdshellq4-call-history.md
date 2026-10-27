@@ -2,7 +2,7 @@
 wp: WP-216
 title: "ASDShellQ4 forces depend at round-off on the element's call history; modalProperties -return re-normalizes"
 date: 2026-10-27
-pr: "#TBD"
+pr: "#1032"
 ---
 ### Per-mode ASDShellQ4 results are not bit-reproducible across call histories
 

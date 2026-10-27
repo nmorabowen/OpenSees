@@ -7,8 +7,8 @@ every other floor-level node a diaphragm node), a rigidDiaphragm per floor on th
 whose master carries no mass, and the floor mass lumped in UX, UY on every
 floor-level node (under Transformation part of it sits on MP slaves, WP-211).
 
-    t = build_tower(nst=10, h=0.4)      # ~13k nodes
-    t = build_tower(nst=45, h=0.5)      # ~50k nodes
+    t = build_tower(nst=10, h=0.4)      # 18.5k nodes, 17.8k elements
+    t = build_tower(nst=45, h=0.5)      # 50.2k nodes, 48.6k elements
 
 `t` is a dict of tags: supports, pier groups (element tags + cut nodes per
 storey), storey node groups (for inertia resultants), masters.

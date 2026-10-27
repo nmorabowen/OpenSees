@@ -2,7 +2,7 @@
 wp: WP-216
 title: "TransformationFE overflowed a 64-int static buffer on elements with more than 64 nodes"
 date: 2026-10-27
-pr: "#TBD"
+pr: "#1032"
 ---
 ### An element with more than 64 nodes under `constraints Transformation` corrupted the heap
 

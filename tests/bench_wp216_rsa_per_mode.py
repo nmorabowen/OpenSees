@@ -6,7 +6,8 @@
 Synthetic tower from tests/_testbed/rsa_tower.py (no project data). Today's
 loop is the one the tower project ran: per direction and mode
 `responseSpectrumAnalysis -mode k -increment`, `reactions`, `nodeReaction` on
-the supports, `eleForce` on the pier shells, inertia sums in Python. Prints
+the supports, `eleForce` on the pier shells, inertia sums in Python (from the
+IncrDisp node response: `nodeDisp` is the committed state). Prints
 seconds per (mode, direction) for every phase, then the new command.
 Not collected by pytest (no test_ prefix).
 """
@@ -32,6 +33,8 @@ def main():
     ap.add_argument('--loop-modes', type=int, default=0,
                     help='time the old loop on only this many modes (0 = all)')
     ap.add_argument('--skip-old', action='store_true')
+    ap.add_argument('--breakdown', action='store_true',
+                    help='also time the new command on reactions / piers / inertia alone')
     a = ap.parse_args()
 
     try:
@@ -95,18 +98,24 @@ def main():
             print(f"    {key:13s} {v / n * 1e3:8.1f} ms/pair  ({100 * v / tot:5.1f} %)")
 
     if hasattr(ops, 'responseSpectrumPerMode'):
-        args = [*spec, '-dir', *dirs, '-reactions']
+        rea = ['-reactions']
+        ele, ine = [], []
         for s in pier_s:
             e, c = piers[s]
-            args += ['-eleGroup', f'pier{s}', '-ele', *e, '-cut', *c]
-            args += ['-inertia', f'storey{s}', *st[s], '-about', 15.0, 15.0, 0.0]
-        c0 = time.perf_counter()
-        out = ops.responseSpectrumPerMode(*args)
-        c1 = time.perf_counter()
+            ele += ['-eleGroup', f'pier{s}', '-ele', *e, '-cut', *c]
+            ine += ['-inertia', f'storey{s}', *st[s], '-about', 15.0, 15.0, 0.0]
         n = len(dirs) * a.modes
-        print(f"NEW responseSpectrumPerMode, {n} (mode, dir) pairs: {c1 - c0:.3f} s = "
-              f"{(c1 - c0) / n * 1e3:.2f} ms per pair; updated {int(out['numUpdated'][0])} "
-              f"of {t['n_ele']} elements")
+        runs = [('all', rea + ele + ine)]
+        if a.breakdown:
+            runs += [('reactions only', rea), ('reactions + piers', rea + ele),
+                     ('inertia only', ine)]
+        for label, extra in runs:
+            c0 = time.perf_counter()
+            out = ops.responseSpectrumPerMode(*spec, '-dir', *dirs, *extra)
+            c1 = time.perf_counter()
+            print(f"NEW responseSpectrumPerMode [{label}], {n} (mode, dir) pairs: {c1 - c0:.3f} s = "
+                  f"{(c1 - c0) / n * 1e3:.2f} ms per pair; updated {int(out['numUpdated'][0])} "
+                  f"of {t['n_ele']} elements")
 
 
 if __name__ == '__main__':

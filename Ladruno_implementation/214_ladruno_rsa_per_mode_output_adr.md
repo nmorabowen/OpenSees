@@ -2,7 +2,7 @@
 title: "ADR 214 — Native per-mode RSA output: responseSpectrumPerMode (WP-216, program link P1)"
 project: Ladruno
 type: ADR
-status: "PR open (WP-216)"
+status: "PR #1032 open (WP-216)"
 priority: medium
 owner: nmora
 related:
@@ -221,7 +221,38 @@ therefore holds the command to max(1e-12, 2 × the loop's own spread).
 
 ## 4. Profile and gain
 
-PROFILE_TABLE
+`tests/bench_wp216_rsa_per_mode.py` on the synthetic tower
+(`tests/_testbed/rsa_tower.py`; no project data). The machine is the nmb
+desktop: Windows, MSVC Release build, serial element loop, `system Pardiso`.
+Both directions are run. The old loop is the one the tower project ran:
+per (direction, mode) `-mode k -increment`, `reactions`, `nodeReaction` on
+the supports, `eleForce` on the piers of storeys 1 and nst/2, and the
+inertia of two storey groups in Python (one `nodeDisp` per node, as there;
+the right read is IncrDisp, which costs more, so the old timing is a lower
+bound). The new call requests the same quantities in one command.
+
+| tower | nodes / elements / supports | modes × dirs | old, ms per (mode, dir): total (rsa / reactions / reads / inertia) | new, ms per (mode, dir) | elements updated per mode | gain |
+|---|---|---|---|---|---|---|
+| 10 storeys, h = 0.4 m | 18 529 / 17 830 / 239 | 25 × 2 | **334.5** (135.8 / 149.5 / 1.9 / 47.3) | **10.1** | 332 | 33× |
+| 45 storeys, h = 0.5 m | 50 190 / 48 555 / 195 | 60 × 2 | **921.5** (385.0 / 409.9 / 1.6 / 124.9) | **18.3** | 268 | 50× |
+
+- **Profile → target.** In the old loop, `responseSpectrumAnalysis` and
+  `reactions` take 86 % of the time, and both grow with the element count:
+  two whole-domain updates per RSA call, one whole-domain
+  `getResistingForce` sweep per `reactions`. The readback calls themselves
+  (`nodeReaction`, `eleForce`) cost under 1 %. So the target was to take every
+  whole-domain sweep off the per-mode path, leaving a cost proportional to
+  the touched elements and the group nodes. Making the sweeps faster
+  (threads) would have kept them and attacked the wrong term.
+- **New-call breakdown (10 storeys, per (mode, dir)).** Reactions only:
+  4.6 ms. Reactions + piers: 6.2 ms. Inertia only (two groups, ~33k node
+  visits, no element work): 3.8 ms. Each call also pays one
+  `revertDomainToLastCommit` (a whole-domain update) and one connectivity
+  pass, spread over its pairs. What is left grows with the group sizes, not
+  with the model.
+- **Tower scale.** The tower that motivated P1 spent 232 s on 120 pairs at
+  ~52k nodes. At the 45-storey rate (18 ms per pair) the same readback is
+  about 2 s.
 
 ## 5. Consequences
 
