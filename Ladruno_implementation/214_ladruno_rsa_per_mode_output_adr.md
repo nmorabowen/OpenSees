@@ -219,10 +219,13 @@ is ~1e-12 of the result. Measured on the residual set, new − loop and
 loop − loop(reversed) agree quantity by quantity, e.g. 3.2e-12 against
 3.4e-12 of the term scale on the pier at storey 2 in the 0.75 ms pseudo-mode
 (which follows modes of much larger amplitude). The residual-set check
-therefore holds the command to max(1e-12, 4 × the loop's own spread),
-the spread being the larger of two history changes (reverse mode order;
-no `eleForce` reads). One sample of round-off is a noisy estimate of its
-size: 2 × a single sample failed once by 15 %.
+therefore measures each component against its largest term scale over the
+direction's modes: that is the round-off a mode can inherit from the larger
+modes updated before it. Measured: 6.6e-16 on that scale; 8.2e-12 on each
+mode's own scale, against 5.0e-12 for the loop compared with itself in
+reverse order. (A bound of a few times the loop's measured spread was tried
+first: one round-off sample is too noisy an estimate of its size, and Linux
+Zone-A failed it.)
 
 | Check | Result |
 |---|---|
@@ -230,7 +233,7 @@ size: 2 × a single sample failed once by 15 %.
 | (a) `-modes 5 2`, `-ts` Path series, `-scale 0.7` | ≤ 1e-12 |
 | (a) gravity preload + `loadConst` (oracle subtracts the gravity state) | ≤ 1e-9 |
 | eigenmodes: base reaction = − total inertia (force, moment about a point) | < 1e-6 |
-| (b) `residualModes -dir 1 2 -period 0.05` set (10 modes) | ≤ max(1e-12, 4 × loop spread); spread < 1e-10; `kind`, `saPeriod` = 0.05, one shared `term`, `omega` = 2π/0.05 |
+| (b) `residualModes -dir 1 2 -period 0.05` set (10 modes) | ≤ 1e-12 of each component's largest term scale over the direction's modes (measured 6.6e-16); `kind`, `saPeriod` = 0.05, one shared `term`, `omega` = 2π/0.05 |
 | (b) `ritzVectors 6 -dir 1 2` set | ≤ 1e-12; `kind` = 2 |
 | (c) 23 bad calls refused; the next good call is bit-identical; stale modal properties refused; λ ≤ 0 refused | pass |
 | the loop itself: with vs without `eleForce` reads | not bit-equal; < 1e-12 of term scale |

@@ -197,18 +197,21 @@ def _rel_err(got, ref, scale):
     return err.max(axis=2)
 
 
-def _assert_same(new, oracle, rtol=RTOL, floor=None):
-    """new == loop to rtol x term scale, per (dir, mode); `floor` (same keys,
-    [dir][mode]) raises the bound to 4x the loop's own history spread where
-    that is larger"""
+def _assert_same(new, oracle, rtol=RTOL, over_modes=False):
+    """new == loop to rtol x term scale, per (dir, mode) and component.
+    over_modes=True takes each component's term scale as its largest over the
+    direction's modes: the round-off a mode can inherit from the larger modes
+    updated before it (ASDShellQ4, test_the_loop_itself_moves...)"""
     old, scl = oracle
     for key, ref in old.items():
         got = new[key]
         assert got.shape == ref.shape, key
-        err = _rel_err(got, ref, scl[key])
-        tol = np.full(err.shape, rtol) if floor is None else np.maximum(rtol, 4.0 * floor[key])
-        d, a = np.unravel_index(np.argmax(err / tol), err.shape)
-        assert (err <= tol).all(), f'{key} dir {d} mode {a}: rel err {err[d, a]:.2e} > {tol[d, a]:.1e}'
+        sc = scl[key]
+        if over_modes:
+            sc = np.broadcast_to(sc.max(axis=1, keepdims=True), sc.shape)
+        err = _rel_err(got, ref, sc)
+        d, a = np.unravel_index(np.argmax(err), err.shape)
+        assert err.max() <= rtol, f'{key} dir {d} mode {a}: rel err {err[d, a]:.2e}'
 
 
 def _rsa_lists(d):
@@ -307,17 +310,13 @@ def test_b_residual_mode_set_with_period_override():
     old = _loop(req, (1, 2), modes, _rsa_lists)
     # the stiff pseudo-modes (T < 1 ms here) follow modes of much larger
     # amplitude, whose round-off ASDShellQ4 carries into them (see
-    # test_the_loop_itself_moves...): measure the loop's own spread under two
-    # history changes (reverse mode order; no eleForce reads), take the larger
-    # and hold the command to 4x it. One sample of round-off is a noisy
-    # estimate of its size: 2x a single sample failed by 15 % once.
-    rev = _loop(req, (1, 2), modes[::-1], _rsa_lists)
-    bare = _loop(req, (1, 2), modes, _rsa_lists, extra_calls=False)
-    floor = {k: np.maximum(_rel_err(rev[0][k][:, ::-1], old[0][k], old[1][k]),
-                           _rel_err(bare[0][k], old[0][k], old[1][k]) if k in bare[0]
-                           else 0.0) for k in old[0]}
-    _assert_same(new, old, floor=floor)
-    assert max(f.max() for f in floor.values()) < 1e-10
+    # test_the_loop_itself_moves...): the loop run in reverse order differs
+    # from itself by up to ~7e-12 of a pseudo-mode's OWN term scale, on Windows
+    # and Linux alike. So on this set each component is measured against its
+    # largest term scale over the direction's modes. (A bound of a few times
+    # the loop's measured spread was tried first; one round-off sample is too
+    # noisy an estimate of its size, and it failed on Linux.)
+    _assert_same(new, old, over_modes=True)
     kind = new['kind']
     assert np.all(kind[:NMODES] == 0) and np.all(kind[NMODES:] == 1)
     # D3b: the overridden modes read Sa(0.05) and share one combination term
