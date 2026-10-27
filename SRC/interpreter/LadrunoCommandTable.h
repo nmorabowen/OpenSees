@@ -106,3 +106,4 @@ LADRUNO_COMMAND("steadyStateDynamics",       OPS_LadrunoSteadyStateDynamics,   s
 LADRUNO_COMMAND("randomResponse",            OPS_LadrunoRandomResponse,        randomResponse)                // ADR-44 P3
 LADRUNO_COMMAND("residualModes",             OPS_LadrunoResidualModes,         residualModes)                 // WP-213
 LADRUNO_COMMAND("ritzVectors",               OPS_LadrunoRitzVectors,           ritzVectors)                   // WP-215
+LADRUNO_COMMAND("responseSpectrumPerMode",   OPS_LadrunoResponseSpectrumPerMode, responseSpectrumPerMode)   // WP-216

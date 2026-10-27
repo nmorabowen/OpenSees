@@ -203,6 +203,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • residualModes — missing-mass static-correction pseudo-modes\n"
 "        • ritzVectors — load-dependent Ritz vectors as the mode set\n"
 "        • modalProperties -print tags residual / Ritz modes (R / Z)\n"
+"        • responseSpectrumPerMode — per-mode RSA reactions and resultants in one call\n"
 "        • LadrunoUP — Biot u-p saturated-porous element family\n"
 "        • LadrunoPorousOverlay — staggered u-p overlay pattern\n"
 "        • system Pardiso — threaded MKL sparse-direct (reuse, -krylov, -stats)\n"

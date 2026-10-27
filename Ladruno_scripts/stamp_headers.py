@@ -68,6 +68,7 @@ GLOBS = [
     "SRC/analysis/analysis/LadrunoRitzKernel.*",       # WP-213
     "SRC/analysis/analysis/LadrunoResidualModes.*",    # WP-213
     "SRC/analysis/analysis/LadrunoRitzVectors.*",      # WP-215
+    "SRC/analysis/analysis/LadrunoRSAPerMode.*",       # WP-216
     "SRC/system_of_eqn/eigenSOE/FeastEigenSOE.*",
     "SRC/system_of_eqn/eigenSOE/FeastEigenSolver.*",
     "SRC/system_of_eqn/eigenSOE/LadrunoBlockZKernel.*",

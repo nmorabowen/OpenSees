@@ -17,6 +17,7 @@ target_sources(OPS_Analysis
       LadrunoRitzKernel.cpp
       LadrunoResidualModes.cpp
       LadrunoRitzVectors.cpp
+      LadrunoRSAPerMode.cpp
       ResponseSpectrumAnalysis.cpp
       SDFAnalysis.cpp
       StaticAnalysis.cpp 
