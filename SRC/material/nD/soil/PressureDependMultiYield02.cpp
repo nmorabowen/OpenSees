@@ -196,7 +196,8 @@ PressureDependMultiYield02::PressureDependMultiYield02 (int tag, int nd,
  : NDMaterial(tag,ND_TAG_PressureDependMultiYield02), currentStress(),
    trialStress(), updatedTrialStress(), currentStrain(), strainRate(),
    PPZPivot(), PPZCenter(), PPZPivotCommitted(), PPZCenterCommitted(),
-   PivotStrainRate(6), PivotStrainRateCommitted(6), check(0)
+   PivotStrainRate(6), PivotStrainRateCommitted(6), check(0),
+   currentPlasticStrain(), equivalentPlasticStrain(0.0), plasticWork(0.0)
 {
   if (nd !=2 && nd !=3) {
     opserr << "FATAL:PressureDependMultiYield02:: dimension error" << endln;
@@ -433,7 +434,8 @@ PressureDependMultiYield02::PressureDependMultiYield02 ()
  : NDMaterial(0,ND_TAG_PressureDependMultiYield02),
    currentStress(), trialStress(), currentStrain(),
   strainRate(), PPZPivot(), PPZCenter(), PivotStrainRate(6), PivotStrainRateCommitted(6),
-  PPZPivotCommitted(), PPZCenterCommitted(), theSurfaces(0), committedSurfaces(0)
+  PPZPivotCommitted(), PPZCenterCommitted(), theSurfaces(0), committedSurfaces(0),
+  currentPlasticStrain(), equivalentPlasticStrain(0.0), plasticWork(0.0)
 {
   //does nothing
 }
@@ -445,7 +447,10 @@ PressureDependMultiYield02::PressureDependMultiYield02 (const PressureDependMult
   currentStrain(a.currentStrain), strainRate(a.strainRate), check(0),
   PPZPivot(a.PPZPivot), PPZCenter(a.PPZCenter), updatedTrialStress(a.updatedTrialStress),
   PPZPivotCommitted(a.PPZPivotCommitted), PPZCenterCommitted(a.PPZCenterCommitted),
-  PivotStrainRate(a.PivotStrainRate), PivotStrainRateCommitted(a.PivotStrainRateCommitted)
+  PivotStrainRate(a.PivotStrainRate), PivotStrainRateCommitted(a.PivotStrainRateCommitted),
+  currentPlasticStrain(a.currentPlasticStrain),
+  equivalentPlasticStrain(a.equivalentPlasticStrain),
+  plasticWork(a.plasticWork)
 {
   matN = a.matN;
 
@@ -909,11 +914,49 @@ int PressureDependMultiYield02::commitState (void)
   int loadStage = loadStagex[matN];
   int numOfSurfaces = numOfSurfacesx[matN];
 
+  Vector sigmaOld = currentStress.t2Vector();  // pre-update stress, for plastic-work increment
+
   currentStress = trialStress;
   //currentStrain = T2Vector(currentStrain.t2Vector() + strainRate.t2Vector());
   workV6 = currentStrain.t2Vector();
   workV6 += strainRate.t2Vector();
   currentStrain.setData(workV6);
+
+  // --- plastic strain / equivalent plastic strain / plastic work bookkeeping ---
+  // See getPlasticStrain()/getSecantModuli() -- this is a post-processing estimate
+  // (eps_p = eps_total - eps_elastic, with eps_elastic from the model's own current
+  // secant G,K), not an exact internal state variable of the model.
+  {
+    double G, K;
+    getSecantModuli(G, K);
+
+    const Vector &sigmaDev = currentStress.deviator();
+    double p = currentStress.volume();
+
+    Vector elasticStrain(6);
+    for (int i = 0; i < 3; i++) {
+      elasticStrain(i)   = sigmaDev(i)/(2.0*G) + p/(3.0*K);
+      elasticStrain(i+3) = sigmaDev(i+3)/(2.0*G);
+    }
+
+    Vector newPlasticStrain(6);
+    newPlasticStrain = currentStrain.t2Vector() - elasticStrain;
+
+    Vector dPlasticStrain(6);
+    dPlasticStrain = newPlasticStrain - currentPlasticStrain.t2Vector();
+
+    T2Vector dPlasticStrainT2;
+    dPlasticStrainT2.setData(dPlasticStrain);
+
+    // cumulative equivalent (von Mises) plastic strain -- monotonically increasing
+    equivalentPlasticStrain += sqrt(2.0/3.0) * dPlasticStrainT2.deviatorLength();
+
+    // cumulative plastic work, dWp = sigma : dEpsP, using the midpoint stress
+    Vector sigmaAvg = 0.5*(sigmaOld + currentStress.t2Vector());
+    plasticWork += sigmaAvg && dPlasticStrain;
+
+    currentPlasticStrain.setData(newPlasticStrain);
+  }
 
   workV6.Zero();
   strainRate.setData(workV6);
@@ -1136,7 +1179,7 @@ int PressureDependMultiYield02::sendSelf(int commitTag, Channel &theChannel)
     return res;
   }
 
-  Vector data(69+numOfSurfaces*8);
+  Vector data(77+numOfSurfaces*8);
   data(0) = rho;
   data(1) = einit;
   data(2) = refShearModulus;
@@ -1189,8 +1232,13 @@ int PressureDependMultiYield02::sendSelf(int commitTag, Channel &theChannel)
   workV6 = PPZCenterCommitted.t2Vector();
   for(i = 0; i < 6; i++) data(i+56) = workV6[i];
 
+  workV6 = currentPlasticStrain.t2Vector();
+  for(i = 0; i < 6; i++) data(i+62) = workV6[i];
+  data(68) = equivalentPlasticStrain;
+  data(69) = plasticWork;
+
   for(i = 0; i < numOfSurfaces; i++) {
-    int k = 62 + i*8;
+    int k = 70 + i*8;
     data(k) = committedSurfaces[i+1].size();
     data(k+1) = committedSurfaces[i+1].modulus();
     workV6 = committedSurfaces[i+1].center();
@@ -1233,7 +1281,7 @@ int PressureDependMultiYield02::recvSelf(int commitTag, Channel &theChannel,
 
   int otherMatCount = idData(5);
 
-  Vector data(69+idData(1)*8);
+  Vector data(77+idData(1)*8);
   res += theChannel.recvVector(this->getDbTag(), commitTag, data);
   if (res < 0) {
     opserr << "PressureDependMultiYield02::recvSelf -- could not recv Vector\n";
@@ -1293,6 +1341,11 @@ int PressureDependMultiYield02::recvSelf(int commitTag, Channel &theChannel,
   for(i = 0; i < 6; i++) workV6[i] = data(i+56);
   PPZCenterCommitted.setData(workV6);
 
+  for(i = 0; i < 6; i++) workV6[i] = data(i+62);
+  currentPlasticStrain.setData(workV6);
+  equivalentPlasticStrain = data(68);
+  plasticWork = data(69);
+
   if (committedSurfaces != 0) {
       delete [] committedSurfaces;
       delete [] theSurfaces;
@@ -1302,7 +1355,7 @@ int PressureDependMultiYield02::recvSelf(int commitTag, Channel &theChannel,
   committedSurfaces = new MultiYieldSurface[numOfSurfaces+1];
 
   for(i = 0; i < numOfSurfaces; i++) {
-    int k = 62 + i*8;
+    int k = 70 + i*8;
     workV6(0) = data(k+2);
     workV6(1) = data(k+3);
     workV6(2) = data(k+4);
@@ -1478,6 +1531,16 @@ PressureDependMultiYield02::setResponse (const char **argv, int argc, OPS_Stream
 			curv(0,(i-1)*2) = atoi(argv[i]);
 		return new MaterialResponse(this, 4, curv);
   }
+
+  else if (strcmp(argv[0],"plasticStrain") == 0 || strcmp(argv[0],"plasticStrains") == 0)
+    return new MaterialResponse(this, 10, this->getPlasticStrain());
+
+  else if (strcmp(argv[0],"equivalentPlasticStrain") == 0 || strcmp(argv[0],"equivPlasticStrain") == 0)
+    return new MaterialResponse(this, 11, this->getEquivalentPlasticStrain());
+
+  else if (strcmp(argv[0],"plasticWork") == 0)
+    return new MaterialResponse(this, 12, this->getPlasticWork());
+
 	else
 		return 0;
 }
@@ -1569,6 +1632,16 @@ int PressureDependMultiYield02::getResponse (int responseID, Information &matInf
       *(matInfo.theVector) = getStressToRecord(7);
     return 0;
 	// end change by Alborz Ghofrani UW
+  case 10:
+    if (matInfo.theVector != 0)
+      *(matInfo.theVector) = getPlasticStrain();
+    return 0;
+  case 11:
+    matInfo.theDouble = getEquivalentPlasticStrain();
+    return 0;
+  case 12:
+    matInfo.theDouble = getPlasticWork();
+    return 0;
   default:
     return -1;
   }
@@ -1707,6 +1780,60 @@ const Vector & PressureDependMultiYield02::getCommittedStrain (void)
     workV[1] = workV6[1];
     workV[2] = workV6[3];
     return workV;
+  }
+}
+
+const Vector &
+PressureDependMultiYield02::getPlasticStrain (void)
+{
+  int ndm = ndmx[matN];
+  if (ndmx[matN] == 0) ndm = 2;
+
+  if (ndm==3)
+    return currentPlasticStrain.t2Vector(1);
+  else {
+    static Vector workV(3);
+    workV6 = currentPlasticStrain.t2Vector(1);
+    workV[0] = workV6[0];
+    workV[1] = workV6[1];
+    workV[2] = workV6[3];
+    return workV;
+  }
+}
+
+void
+PressureDependMultiYield02::getSecantModuli(double &G, double &K)
+{
+  int loadStage = loadStagex[matN];
+  double refShearModulus = refShearModulusx[matN];
+  double refBulkModulus = refBulkModulusx[matN];
+  double pressDependCoeff = pressDependCoeffx[matN];
+  double refPressure = refPressurex[matN];
+  double residualPress = residualPressx[matN];
+
+  if (loadStage == 0) {
+    // linear elastic stage -- same moduli used by getTangent()'s elastic branch
+    G = refShearModulus;
+    K = refBulkModulus;
+  }
+  else if (loadStage == 2) {
+    // consolidation stage -- same pressure-dependent factor used by getTangent()
+    double factor = (initPress-residualPress)/(refPressure-residualPress);
+    if (factor <= 1.e-10) factor = 1.e-10;
+    else factor = pow(factor, pressDependCoeff);
+    factor = (1.e-10>factor) ? 1.e-10 : factor;
+    G = refShearModulus*factor;
+    K = refBulkModulus*factor;
+  }
+  else {
+    // plastic stage -- same modulus-degradation factor used by getTangent()'s
+    // plastic branch (evaluated at the now-committed stress). Note: this
+    // intentionally omits any incremental-only corrections getTangent() applies,
+    // since those aren't meaningful for a *secant* (total stress-to-strain)
+    // decomposition.
+    double factor = getModulusFactor(currentStress);
+    G = refShearModulus*factor;
+    K = refBulkModulus*factor;
   }
 }
 
