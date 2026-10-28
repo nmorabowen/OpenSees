@@ -134,7 +134,9 @@ def test_B1_tension_and_preonset_passthrough():
     eY = _FY / _E
     # tension-only monotonic: always pass-through
     tens = [i * eY for i in [0, 1, 2, 4, 8, 12]]
-    assert _drive(_bar_fn, tens) == pytest.approx(_drive(_wrap_fn(8.0), tens))
+    # flattened (stress, tangent) rows: pytest>=9.2 rejects approx on nested tuples
+    assert ([x for row in _drive(_bar_fn, tens) for x in row]
+            == pytest.approx([x for row in _drive(_wrap_fn(8.0), tens) for x in row]))
 
     # compression shallower than yield (from virgin): e = eps > -eY => pass-through
     comp = [i * eY for i in [0, -0.25, -0.5, -0.75, -0.99]]
@@ -276,7 +278,9 @@ def test_GA0_identity_gate():
 def test_GA1_tension_passthrough():
     eY = _FY / _E
     tens = [i * eY for i in [0, 1, 3, 6, 10]]
-    assert _drive(_bar_fn, tens) == pytest.approx(_drive(_wrap_ga(8.0), tens))
+    # flattened (stress, tangent) rows: pytest>=9.2 rejects approx on nested tuples
+    assert ([x for row in _drive(_bar_fn, tens) for x in row]
+            == pytest.approx([x for row in _drive(_wrap_ga(8.0), tens) for x in row]))
 
 
 # GA2 -- buckled compression matches the ported Gomes formula
