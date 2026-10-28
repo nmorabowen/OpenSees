@@ -1364,9 +1364,7 @@ DOMAIN_LIBS =  $(FE)/domain/component/DomainComponent.o \
 	$(FE)/domain/load/Beam3dPointLoad.o \
 	$(FE)/domain/load/BrickSelfWeight.o \
 	$(FE)/domain/load/SurfaceLoader.o \
-	$(FE)/domain/load/ThermalHeatSource.o \
 	$(FE)/domain/load/LysmerVelocityLoader.o \
-	$(FE)/domain/load/ThermalBoundaryConditionTemperature.o \
 	$(FE)/domain/load/SelfWeight.o \
 	$(FE)/domain/load/ThermalHeatSource.o \
 	$(FE)/domain/load/ThermalBoundaryConditionTemperature.o \
@@ -1482,7 +1480,6 @@ ANALYSIS_LIBS = $(FE)/analysis/analysis/Analysis.o \
 	$(FE)/analysis/integrator/TransientIntegrator.o \
 	$(FE)/analysis/integrator/Newmark.o \
 	$(FE)/analysis/integrator/GimmeMCK.o \
-	$(FE)/analysis/integrator/ExplicitBathe.o \
 	$(FE)/analysis/integrator/PFEMIntegrator.o \
 	$(FE)/analysis/integrator/TRBDF2.o \
 	$(FE)/analysis/integrator/TRBDF3.o \

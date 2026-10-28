@@ -3109,20 +3109,13 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
   // Diagonal SOE & SOLVER
   else if (strcmp(argv[1],"Diagonal") == 0) {
 #ifdef _PARALLEL_PROCESSING
-      bool lumpDiag = false;
-      if (argc > 2)
-      {
-        lumpDiag = (bool) atoi(argv[2]);
-      }
-      opserr << "MPIDiagonalSOE lumpDiag = " << lumpDiag << endln;
       DistributedDiagonalSolver    *theSolver = new DistributedDiagonalSolver();   
       theSOE = new DistributedDiagonalSOE(*theSolver);
 #else
       bool lumped = (argc > 2 && (strcmp(argv[2],"-lumped") == 0 || strcmp(argv[2],"lumped") == 0));
-      DiagonalSolver    *theSolver = new DiagonalDirectSolver();
+      DiagonalSolver    *theSolver = new DiagonalDirectSolver();   
       theSOE = new DiagonalSOE(*theSolver, lumped);
 #endif
-
 
 
   } 
@@ -3130,16 +3123,7 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
   else if (strcmp(argv[1],"MPIDiagonal") == 0) {
       bool lumped = (argc > 2 && (strcmp(argv[2],"-lumped") == 0 || strcmp(argv[2],"lumped") == 0));
 #ifdef _PARALLEL_INTERPRETERS
-      bool lumpDiag = false;
-      if (argc > 2)
-      {
-        if (strcmp(argv[2],"-lumped") == 0)
-        {
-          lumpDiag = true;
-        }
-      }
-      opserr << "MPIDiagonal lumpDiag = " << (lumpDiag? "true" : "false") << endln;
-      MPIDiagonalSolver    *theSolver = new MPIDiagonalSolver();
+      MPIDiagonalSolver    *theSolver = new MPIDiagonalSolver();   
       theSOE = new MPIDiagonalSOE(*theSolver, lumped);
       setMPIDSOEFlag = true;
 #else

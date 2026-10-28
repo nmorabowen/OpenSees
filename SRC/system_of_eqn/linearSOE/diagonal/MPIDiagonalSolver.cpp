@@ -29,7 +29,8 @@ void* OPS_MPIDiagonalSolver()
       lumped = true;
   }
 
-  MPIDiagonalSolver *theSolver = new MPIDiagonalSolver();
+  
+  MPIDiagonalSolver *theSolver = new MPIDiagonalSolver();   
   return new MPIDiagonalSOE(*theSolver, lumped);
 }
 

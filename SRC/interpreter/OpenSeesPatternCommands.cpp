@@ -214,7 +214,6 @@ int OPS_NodalLoad()
 int OPS_ElementalLoad()
 {
 
-  opserr << "ELELOAD!" << endln;
     if (theActiveLoadPattern == 0) {
 	opserr << "WARNING no active load pattern - eleLoad\n";
 	return -1;

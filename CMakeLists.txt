@@ -48,7 +48,6 @@ find_package(MPI)
 # Compiler SPECIFIC
 #
 
-add_definitions(-DUSE_CXX11)
 
 
 if ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
@@ -808,12 +807,10 @@ if(MPI_FOUND)
         ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSOE.cpp
         ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSolver.cpp
       )
+      target_include_directories(OpenSeesMP PRIVATE ${MUMPS_DIR}/_deps/mumps-src/include)
     endif()
 
     target_include_directories(OpenSeesMP PRIVATE ${MPI_CXX_INCLUDE_DIRS})
-    if (DEFINED MUMPS_DIR)
-      target_include_directories(OpenSeesMP PRIVATE ${MUMPS_DIR}/_deps/mumps-src/include)
-    endif()
 
     target_compile_options(OpenSeesMP PRIVATE ${MPI_CXX_COMPILE_FLAGS})
 
@@ -1029,4 +1026,3 @@ endif()
 if (OPS_Use_Dev_Directories)
   add_subdirectory("${PROJECT_SOURCE_DIR}/DEVELOPER/")
 endif()
-
