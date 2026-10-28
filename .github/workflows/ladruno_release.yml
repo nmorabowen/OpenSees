@@ -9,7 +9,8 @@
 # opt-ins the mkl-compat job in ladruno.yml configures, linked DYNAMICALLY
 # against the oneMKL PyPI wheels. No Intel runtime file is shipped: the tarball
 # holds no libmkl*, and the step that packs it fails if one gets in. At run time
-# opensees.so needs `pip install mkl` in the same environment. Its RUNPATH is
+# opensees.so needs `pip install "mkl>=2024.2.2,<2026"` (MKL_RUNTIME_SPEC) in
+# the same environment. Its RUNPATH is
 # $ORIGIN/../.., which is the environment's lib/ dir (where the mkl wheel puts
 # libmkl_*.so.2) when opensees.so sits in that environment's site-packages, the
 # way apeGmsh's live-fork lane installs it. Anywhere else, put the dir holding
@@ -46,9 +47,11 @@ jobs:
     timeout-minutes: 75
     env:
       # The OLDEST oneMKL the fork supports (mkl-compat, WP-148). Linking against
-      # it keeps the binary loadable by any later mkl wheel with the same
-      # .so.2 SONAME; the smoke below runs both that version and the newest.
+      # it keeps the binary loadable by a later mkl wheel only while the wheel
+      # still ships the libmkl_*.so.2 SONAME: the 2026.x wheels do not (found
+      # by this workflow's smoke), so the runtime requirement is capped.
       MKL_BUILD_VERSION: "2024.2.2"
+      MKL_RUNTIME_SPEC: "mkl>=2024.2.2,<2026"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -131,7 +134,7 @@ jobs:
           {
             echo "--- MKL ---"
             echo "mkl: FEAST + PARDISO, linked dynamically against oneMKL $MKL_BUILD_VERSION (PyPI wheels); no MKL library is shipped"
-            echo "mkl_runtime: pip install mkl (>= $MKL_BUILD_VERSION) in the environment that imports opensees"
+            echo "mkl_runtime: pip install \"$MKL_RUNTIME_SPEC\" in the environment that imports opensees (2026.x wheels lack libmkl_*.so.2)"
             echo "mkl_runpath: \$ORIGIN/../.. (= <env>/lib when opensees.so is in <env>'s site-packages); else set LD_LIBRARY_PATH"
           } >> build/Release/BUILD_INFO.txt
           mkdir "$REL_NAME"
@@ -222,9 +225,9 @@ jobs:
           print("LADRUNO_MKL_SMOKE_OK")
           PY
           i=0
-          # The oldest supported MKL (the build version) and the newest wheel,
-          # which is what an unpinned `pip install mkl` gets.
-          for spec in "mkl==$MKL_BUILD_VERSION" "mkl"; do
+          # Both ends of MKL_RUNTIME_SPEC: the build version and the newest
+          # wheel the spec admits.
+          for spec in "mkl==$MKL_BUILD_VERSION" "$MKL_RUNTIME_SPEC"; do
             i=$((i+1)); v="$RUNNER_TEMP/venv$i"
             python -m venv "$v"
             "$v/bin/pip" install -q numpy "$spec"
@@ -244,6 +247,15 @@ jobs:
             if grep -E "WARNING|FEAST requires" "$RUNNER_TEMP/smoke$i.log"; then echo "::error::engine warning in smoke ($spec)"; exit 1; fi
           done
           echo "LADRUNO_MKL_VENV=$RUNNER_TEMP/venv2" >> "$GITHUB_ENV"
+      # Not a gate: what the newest, uncapped wheel ships, so a later SONAME
+      # change is visible in the log when the cap is revisited.
+      - name: Newest mkl wheel (information only)
+        run: |
+          v="$RUNNER_TEMP/venv-newest"
+          python -m venv "$v"
+          "$v/bin/pip" install -q mkl
+          "$v/bin/pip" show mkl | grep -E '^(Name|Version):'
+          ls "$v/lib" | grep -E '^libmkl_(intel_lp64|sequential|core)\.so' || true
       # The dependency is real: without the mkl wheel the import fails and names
       # the missing MKL library (nothing bundled, no silent fallback).
       - name: Without pip mkl, import opensees fails naming libmkl
@@ -311,4 +323,4 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" "$REL_NAME.tar.gz" \
             --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" \
-            --notes "Linux opensees.so (see BUILD_INFO.txt in the tarball), with MKL FEAST and PARDISO linked dynamically: run \`pip install mkl\` in the environment that imports it (no MKL library is shipped). The Windows installer is attached separately via Ladruno_scripts/publish_installer.ps1."
+            --notes "Linux opensees.so (see BUILD_INFO.txt in the tarball), with MKL FEAST and PARDISO linked dynamically: run \`pip install \"$MKL_RUNTIME_SPEC\"\` in the environment that imports it (no MKL library is shipped). The Windows installer is attached separately via Ladruno_scripts/publish_installer.ps1."
