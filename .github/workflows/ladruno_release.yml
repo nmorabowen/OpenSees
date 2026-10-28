@@ -32,6 +32,12 @@ on:
 permissions:
   contents: write
 
+# An explicit `shell: bash` runs every step with -o pipefail, so a failing
+# command piped into tee fails its step.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   linux-release:
     name: Linux tarball release
@@ -225,7 +231,9 @@ jobs:
             purelib=$("$v/bin/python" -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
             cp "$RUNNER_TEMP/pkg/opensees.so" "$purelib/"
             ldd "$purelib/opensees.so" | tee "$RUNNER_TEMP/ldd$i.txt"
-            if grep -q "not found" "$RUNNER_TEMP/ldd$i.txt"; then echo "::error::unresolved library ($spec)"; exit 1; fi
+            # libpython is NEEDED but comes from the importing interpreter (as
+            # before this change); every other library must resolve.
+            if grep "not found" "$RUNNER_TEMP/ldd$i.txt" | grep -vE '^\s*libpython3\.11\.so\.1\.0 => not found$'; then echo "::error::unresolved library ($spec)"; exit 1; fi
             for lib in libmkl_intel_lp64.so.2 libmkl_sequential.so.2 libmkl_core.so.2; do
               grep -qE "^\s*$lib => $v/lib/python3\.11/site-packages/\.\./\.\./$lib |^\s*$lib => $v/lib/$lib " "$RUNNER_TEMP/ldd$i.txt" || { echo "::error::$lib not resolved from $v/lib ($spec)"; exit 1; }
             done
