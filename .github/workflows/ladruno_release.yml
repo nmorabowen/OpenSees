@@ -59,20 +59,25 @@ jobs:
       MKL_BUILD_VERSION: "2024.2.2"
       MKL_RUNTIME_SPEC: "mkl>=2024.2.2,<2026"
     steps:
+      # On a PR, build the PR head (not the merge commit), so the dry-run
+      # artifact names, BUILD_INFO git_sha and ladrunoBuild all name the head.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - name: Release names
+        env:
+          BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             echo "REL_NAME=ladruno-opensees-linux-${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
             echo "REL_NAME_MKL=ladruno-opensees-linux-mkl-${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
           else
-            echo "REL_NAME=ladruno-opensees-linux-dryrun-${GITHUB_SHA::12}" >> "$GITHUB_ENV"
-            echo "REL_NAME_MKL=ladruno-opensees-linux-mkl-dryrun-${GITHUB_SHA::12}" >> "$GITHUB_ENV"
+            echo "REL_NAME=ladruno-opensees-linux-dryrun-${BUILD_SHA::12}" >> "$GITHUB_ENV"
+            echo "REL_NAME_MKL=ladruno-opensees-linux-mkl-dryrun-${BUILD_SHA::12}" >> "$GITHUB_ENV"
           fi
       - name: Cache Conan packages
         uses: actions/cache@v4
@@ -329,7 +334,9 @@ jobs:
           echo "LADRUNO_MKL_VENV=$RUNNER_TEMP/venv2" >> "$GITHUB_ENV"
       # Not a gate: what the newest, uncapped wheel ships, so a later SONAME
       # change is visible in the log when the cap is revisited.
+      # continue-on-error: a PyPI hiccup here must never block a tag's release.
       - name: Newest mkl wheel (information only)
+        continue-on-error: true
         run: |
           v="$RUNNER_TEMP/venv-newest"
           python -m venv "$v"
@@ -390,6 +397,7 @@ jobs:
           LD_LIBRARY_PATH="$LADRUNO_MKL_VENV/lib" build/ReleaseMKL/OpenSees "$RUNNER_TEMP/smoke.tcl" > "$RUNNER_TEMP/smoke_tcl.log" 2>&1 || true
           cat "$RUNNER_TEMP/smoke_tcl.log"
           grep -qx "LADRUNO_MKL_TCL_SMOKE_OK" "$RUNNER_TEMP/smoke_tcl.log" || { echo "::error::Tcl smoke marker missing"; exit 1; }
+          if grep -E "WARNING|FEAST requires" "$RUNNER_TEMP/smoke_tcl.log"; then echo "::error::engine warning in Tcl smoke"; exit 1; fi
       - name: Upload the dry-run MKL-free tarball
         if: github.ref_type != 'tag'
         uses: actions/upload-artifact@v4
