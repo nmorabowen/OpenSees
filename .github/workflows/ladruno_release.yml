@@ -1,12 +1,13 @@
 # WP-166: tag-triggered Linux release. Pushing a tag `ladruno-v*` builds the same
 # Linux target as Zone-A and creates a GitHub Release carrying
-# ladruno-opensees-linux-<tag>.tar.gz (opensees.so + BUILD_INFO.txt + LICENSE).
+# ladruno-opensees-linux-<tag>.tar.gz (opensees.so, OpenSees, tcl8.6/,
+# BUILD_INFO.txt, LICENSE, LICENSE.tcl).
 # The Windows installer is attached later, locally, by
 # Ladruno_scripts/publish_installer.ps1. Tags are created by the maintainer only.
 #
 # Two Linux tarballs (apeGmsh #2571, maintainer rulings 2026-10-27):
 #
-#   ladruno-opensees-linux-<tag>.tar.gz      the MKL-free build, exactly as
+#   ladruno-opensees-linux-<tag>.tar.gz      the MKL-free build, built as
 #                                            before; needs nothing extra.
 #   ladruno-opensees-linux-mkl-<tag>.tar.gz  the same build plus FEAST
 #                                            (`eigen -feast`) and PARDISO
@@ -22,6 +23,15 @@
 # environment's site-packages, the way apeGmsh's live-fork lane installs it.
 # Anywhere else, put the dir holding libmkl_*.so.2 on LD_LIBRARY_PATH. Without
 # MKL, importing the -mkl build fails, naming the missing libmkl_*.so.2.
+#
+# Both tarballs also ship the classic Tcl interpreter `OpenSees` (apeGmsh
+# #2603) and the Tcl script library it was built against, as tcl8.6/. Tcl is
+# linked statically (the checks below fail if libtcl is NEEDED), but the
+# interpreter still reads init.tcl at start-up, and its compiled-in library
+# path is a build-machine path: run it with TCL_LIBRARY=<unpacked>/tcl8.6.
+# The -mkl `OpenSees` has the same MKL NEEDED entries and $ORIGIN/../..
+# RUNPATH as the -mkl opensees.so, so it runs from the same place: copied
+# beside opensees.so into an environment's site-packages.
 #
 # Dry run: a pull request that edits this file, or a manual dispatch, runs the
 # same builds, package checks and smokes, and uploads both tarballs as workflow
@@ -95,6 +105,23 @@ jobs:
         run: |
           pip install conan numpy
           conan profile detect --force
+      # Shared by the exe checks of both tarballs: every library the shipped
+      # `OpenSees` NEEDs resolves, and none resolves from a path that exists
+      # only on the build machine (conan cache, toolcache, checkout, the
+      # build-time MKL tree).
+      - name: Exe library-resolution check (helper)
+        run: |
+          cat > "$RUNNER_TEMP/exe_libs_ok.sh" <<'SH'
+          #!/usr/bin/env bash
+          # usage: exe_libs_ok.sh <file holding ldd output> <label>
+          set -eu
+          f=$1; label=$2
+          if grep "not found" "$f"; then echo "::error::$label: unresolved library"; exit 1; fi
+          bad=$(awk '/=>/ {print $3}' "$f" | grep -E "^($HOME/\.conan2|/opt/hostedtoolcache|$GITHUB_WORKSPACE|$RUNNER_TEMP/mkl-build)/" || true)
+          [ -z "$bad" ] || { echo "::error::$label resolves libraries from build-only paths: $bad"; exit 1; }
+          echo "$label: every NEEDED library resolves, none from a build-only path"
+          SH
+          chmod +x "$RUNNER_TEMP/exe_libs_ok.sh"
 
       # ---- 1. the MKL-free tarball, built exactly as before -----------------
       # Identical to the zone-a-ubuntu build step in ladruno.yml.
@@ -106,15 +133,50 @@ jobs:
           cmake --build . --target OpenSees -j8
           cmake --build . --target OpenSeesPy -j8
           mv OpenSeesPy.so opensees.so
+      # The Tcl script library both tarballs ship: the conan tcl8.6 dir whose
+      # init.tcl the freshly built interpreter accepts (init.tcl requires the
+      # exact Tcl patchlevel, so a stale cached package fails here), with the
+      # licence the conan package carries.
+      - name: Tcl script library to ship
+        run: |
+          mapfile -t found < <(find ~/.conan2 -name init.tcl -path '*/lib/tcl8.6/init.tcl' | sort)
+          printf 'candidate: %s\n' "${found[@]}"
+          [ "${#found[@]}" -ge 1 ] || { echo "::error::no conan lib/tcl8.6/init.tcl"; exit 1; }
+          echo 'puts "TCL_OK [info patchlevel] [info library]"' > "$RUNNER_TEMP/tclinfo.tcl"
+          lib=
+          for f in "${found[@]}"; do
+            d=$(dirname "$f")
+            out=$(unset LD_LIBRARY_PATH; TCL_LIBRARY="$d" build/Release/OpenSees "$RUNNER_TEMP/tclinfo.tcl" 2>&1 || true)
+            echo "$out" | grep -E "TCL_OK|initialization failed" || true
+            if ! grep -q "initialization failed" <<<"$out" && grep -qE "^TCL_OK [0-9.]+ $d\$" <<<"$out"; then lib=$d; break; fi
+          done
+          [ -n "$lib" ] || { echo "::error::no conan tcl8.6 library initialises the built interpreter"; exit 1; }
+          lic="$(dirname "$(dirname "$lib")")/licenses/license.terms"
+          [ -f "$lic" ] || { echo "::error::no Tcl license.terms at $lic"; exit 1; }
+          echo "shipping Tcl library $lib (licence $lic)"
+          echo "LADRUNO_TCL_LIB=$lib" >> "$GITHUB_ENV"
+          echo "LADRUNO_TCL_LICENSE=$lic" >> "$GITHUB_ENV"
       - name: Package tarball
         run: |
-          export TCL_LIBRARY="$(dirname "$(find ~/.conan2 -name init.tcl -path '*/tcl8.6/*' | head -1)")"
+          export TCL_LIBRARY="$LADRUNO_TCL_LIB"
           bash Ladruno_scripts/make_linux_build_info.sh build/Release build/Release/BUILD_INFO.txt
+          {
+            echo "--- OpenSees (classic Tcl interpreter) ---"
+            echo "tcl: linked statically; run with TCL_LIBRARY=<this dir>/tcl8.6 (the Tcl script library it was built against)"
+          } >> build/Release/BUILD_INFO.txt
           mkdir "$REL_NAME"
-          cp build/Release/opensees.so build/Release/BUILD_INFO.txt "$REL_NAME/"
+          cp build/Release/opensees.so build/Release/OpenSees build/Release/BUILD_INFO.txt "$REL_NAME/"
+          cp -r "$LADRUNO_TCL_LIB" "$REL_NAME/tcl8.6"
           cp COPYRIGHT "$REL_NAME/LICENSE"
+          cp "$LADRUNO_TCL_LICENSE" "$REL_NAME/LICENSE.tcl"
           tar czf "$REL_NAME.tar.gz" "$REL_NAME"
           ls -l "$REL_NAME.tar.gz"
+          tar tzf "$REL_NAME.tar.gz" | sort > "$RUNNER_TEMP/listing-free.txt"
+          grep -v "^$REL_NAME/tcl8.6/." "$RUNNER_TEMP/listing-free.txt" | tee "$RUNNER_TEMP/top-free.txt"
+          printf '%s\n' "$REL_NAME/" "$REL_NAME/BUILD_INFO.txt" "$REL_NAME/LICENSE" "$REL_NAME/LICENSE.tcl" "$REL_NAME/OpenSees" "$REL_NAME/opensees.so" "$REL_NAME/tcl8.6/" | sort > "$RUNNER_TEMP/want-free.txt"
+          diff "$RUNNER_TEMP/want-free.txt" "$RUNNER_TEMP/top-free.txt" || { echo "::error::MKL-free tarball holds other than opensees.so, OpenSees, tcl8.6/, BUILD_INFO.txt, LICENSE, LICENSE.tcl"; exit 1; }
+          grep -qx "$REL_NAME/tcl8.6/init.tcl" "$RUNNER_TEMP/listing-free.txt" || { echo "::error::no tcl8.6/init.tcl in the MKL-free tarball"; exit 1; }
+          echo "tarball (MKL-free): opensees.so, OpenSees, tcl8.6/ ($(grep -c "^$REL_NAME/tcl8.6/." "$RUNNER_TEMP/listing-free.txt") entries), BUILD_INFO.txt, LICENSE, LICENSE.tcl (checked)"
       # The MKL-free tarball stays MKL-free: no libmkl NEEDED, and it imports and
       # solves in a venv that has no mkl.
       - name: MKL-free tarball has no MKL dependency and imports without mkl
@@ -164,6 +226,48 @@ jobs:
           (cd "$RUNNER_TEMP" && "$v/bin/python" smoke_free.py) > "$RUNNER_TEMP/smoke_free.log" 2>&1 || { cat "$RUNNER_TEMP/smoke_free.log"; echo "::error::MKL-free smoke failed"; exit 1; }
           cat "$RUNNER_TEMP/smoke_free.log"
           grep -qx "LADRUNO_FREE_SMOKE_OK" "$RUNNER_TEMP/smoke_free.log"
+      # The MKL-free classic interpreter, run where the tarball unpacks it: no
+      # MKL, no libtcl NEEDED, every library resolved outside the build-only
+      # paths, and the shipped tcl8.6/ is the library it initialises from.
+      # OpenSees exits 0 on a Tcl error, so only the trailing marker counts.
+      - name: Smoke the MKL-free Tcl interpreter from the unpacked tarball
+        run: |
+          unset LD_LIBRARY_PATH
+          exe="$RUNNER_TEMP/pkg/OpenSees"
+          [ -x "$exe" ] || { echo "::error::OpenSees is not an executable file in the MKL-free tarball"; exit 1; }
+          readelf -d "$exe" | grep -E '\((NEEDED|RUNPATH|RPATH)\)' | tee "$RUNNER_TEMP/dyn-free-exe.txt"
+          if grep -i mkl "$RUNNER_TEMP/dyn-free-exe.txt"; then echo "::error::the MKL-free OpenSees names MKL"; exit 1; fi
+          if grep -E '\(NEEDED\).*\[libtcl' "$RUNNER_TEMP/dyn-free-exe.txt"; then echo "::error::OpenSees NEEDs libtcl, which no tarball ships"; exit 1; fi
+          ldd "$exe" | tee "$RUNNER_TEMP/ldd-free-exe.txt"
+          "$RUNNER_TEMP/exe_libs_ok.sh" "$RUNNER_TEMP/ldd-free-exe.txt" "MKL-free OpenSees"
+          cat > "$RUNNER_TEMP/smoke_free.tcl" <<'TCL'
+          if {[info library] ne $env(TCL_LIBRARY)} { error "Tcl library [info library] is not the shipped $env(TCL_LIBRARY)" }
+          puts "tcl [info patchlevel] library [info library]"
+          wipe
+          model basic -ndm 2 -ndf 3
+          set L 4.0; set n 8; set E 2.0e11; set A 1.0e-2; set Iz 8.0e-6; set P 1.0e3
+          for {set i 0} {$i <= $n} {incr i} { node [expr {$i+1}] [expr {$i*$L/$n}] 0.0 }
+          fix 1 1 1 1
+          geomTransf Linear 1
+          for {set i 1} {$i <= $n} {incr i} { element elasticBeamColumn $i $i [expr {$i+1}] $A $E $Iz 1 }
+          timeSeries Linear 1
+          pattern Plain 1 1 { load [expr {$n+1}] 0.0 $P 0.0 }
+          constraints Plain; numberer RCM; system BandGeneral
+          algorithm Linear; integrator LoadControl 1.0; analysis Static
+          if {[analyze 1] != 0} { error "BandGeneral analyze failed" }
+          set u [nodeDisp [expr {$n+1}] 2]
+          set ref [expr {$P*pow($L,3)/(3.0*$E*$Iz)}]
+          if {abs($u-$ref) > 1e-9*abs($ref)} { error "BandGeneral tip $u != $ref" }
+          puts "bandgeneral tip $u closed form $ref"
+          puts LADRUNO_FREE_TCL_SMOKE_OK
+          TCL
+          rc=0
+          (cd "$RUNNER_TEMP" && TCL_LIBRARY="$RUNNER_TEMP/pkg/tcl8.6" "$exe" smoke_free.tcl) > "$RUNNER_TEMP/smoke_free_tcl.log" 2>&1 || rc=$?
+          cat "$RUNNER_TEMP/smoke_free_tcl.log"
+          echo "exit status $rc"
+          if grep "initialization failed" "$RUNNER_TEMP/smoke_free_tcl.log"; then echo "::error::the shipped tcl8.6 did not initialise OpenSees"; exit 1; fi
+          grep -qx "LADRUNO_FREE_TCL_SMOKE_OK" "$RUNNER_TEMP/smoke_free_tcl.log" || { echo "::error::MKL-free Tcl smoke marker missing"; exit 1; }
+          if grep -E "WARNING" "$RUNNER_TEMP/smoke_free_tcl.log"; then echo "::error::engine warning in the MKL-free Tcl smoke"; exit 1; fi
 
       # ---- 2. the -mkl tarball: FEAST + PARDISO, dynamic MKL -----------------
       # As in mkl-compat (ladruno.yml): the wheels are unpacked into a private
@@ -197,41 +301,53 @@ jobs:
           cmake --build . --target OpenSees -j8
           cmake --build . --target OpenSeesPy -j8
           mv OpenSeesPy.so opensees.so
-      - name: -mkl opensees.so links MKL dynamically, RUNPATH is $ORIGIN/../..
+      # Both shipped -mkl binaries: opensees.so and the OpenSees interpreter.
+      - name: -mkl opensees.so and OpenSees link MKL dynamically, RUNPATH is $ORIGIN/../..
         run: |
-          so=build/ReleaseMKL/opensees.so
-          readelf -d "$so" | tee "$RUNNER_TEMP/dyn.txt"
-          for lib in libmkl_intel_lp64.so.2 libmkl_sequential.so.2 libmkl_core.so.2; do
-            grep -qE "\(NEEDED\).*\[$lib\]" "$RUNNER_TEMP/dyn.txt" || { echo "::error::opensees.so does not NEED $lib"; exit 1; }
-          done
-          rp=$(grep -E '\((RUNPATH|RPATH)\)' "$RUNNER_TEMP/dyn.txt" | sed -E 's/.*\[(.*)\]$/\1/')
-          [ "$rp" = '$ORIGIN/../..' ] || { echo "::error::opensees.so RUNPATH is '$rp', want '\$ORIGIN/../..'"; exit 1; }
-          # FEAST and PARDISO come from MKL at load time, not from a static copy.
-          nm -D --undefined-only "$so" > "$RUNNER_TEMP/und.txt"
-          for sym in dfeast_scsrgv pardiso; do
-            grep -E " U ${sym}_?$" "$RUNNER_TEMP/und.txt" || { echo "::error::$sym is not imported from MKL"; exit 1; }
+          for bin in opensees.so OpenSees; do
+            f="build/ReleaseMKL/$bin"
+            readelf -d "$f" | tee "$RUNNER_TEMP/dyn-$bin.txt"
+            for lib in libmkl_intel_lp64.so.2 libmkl_sequential.so.2 libmkl_core.so.2; do
+              grep -qE "\(NEEDED\).*\[$lib\]" "$RUNNER_TEMP/dyn-$bin.txt" || { echo "::error::$bin does not NEED $lib"; exit 1; }
+            done
+            rp=$(grep -E '\((RUNPATH|RPATH)\)' "$RUNNER_TEMP/dyn-$bin.txt" | sed -E 's/.*\[(.*)\]$/\1/')
+            [ "$rp" = '$ORIGIN/../..' ] || { echo "::error::$bin RUNPATH is '$rp', want '\$ORIGIN/../..'"; exit 1; }
+            if grep -E '\(NEEDED\).*\[libtcl' "$RUNNER_TEMP/dyn-$bin.txt"; then echo "::error::$bin NEEDs libtcl, which no tarball ships"; exit 1; fi
+            # FEAST and PARDISO come from MKL at load time, not from a static copy.
+            nm -D --undefined-only "$f" > "$RUNNER_TEMP/und-$bin.txt"
+            for sym in dfeast_scsrgv pardiso; do
+              grep -E " U ${sym}_?$" "$RUNNER_TEMP/und-$bin.txt" || { echo "::error::$bin does not import $sym from MKL"; exit 1; }
+            done
+            echo "$bin: NEEDED has the 3 libmkl_*.so.2, RUNPATH \$ORIGIN/../.., no libtcl, FEAST and PARDISO imported (checked)"
           done
       - name: Package -mkl tarball (no MKL runtime inside)
         run: |
-          export TCL_LIBRARY="$(dirname "$(find ~/.conan2 -name init.tcl -path '*/tcl8.6/*' | head -1)")"
+          export TCL_LIBRARY="$LADRUNO_TCL_LIB"
           LD_LIBRARY_PATH="$LADRUNO_MKL_BUILD/lib" bash Ladruno_scripts/make_linux_build_info.sh build/ReleaseMKL build/ReleaseMKL/BUILD_INFO.txt
           {
             echo "--- MKL ---"
             echo "mkl: FEAST + PARDISO, linked dynamically against oneMKL $MKL_BUILD_VERSION (PyPI wheels); no MKL library is shipped"
             echo "mkl_runtime: pip install \"$MKL_RUNTIME_SPEC\" in the environment that imports opensees (2026.x wheels lack libmkl_*.so.2)"
             echo "mkl_runpath: \$ORIGIN/../.. (= <env>/lib when opensees.so is in <env>'s site-packages); else set LD_LIBRARY_PATH"
+            echo "--- OpenSees (classic Tcl interpreter) ---"
+            echo "tcl: linked statically; run with TCL_LIBRARY=<this dir>/tcl8.6 (the Tcl script library it was built against)"
+            echo "exe_mkl: same NEEDED and RUNPATH as opensees.so; copy it beside opensees.so in <env>'s site-packages, or set LD_LIBRARY_PATH"
           } >> build/ReleaseMKL/BUILD_INFO.txt
-          tail -4 build/ReleaseMKL/BUILD_INFO.txt
+          tail -7 build/ReleaseMKL/BUILD_INFO.txt
           mkdir "$REL_NAME_MKL"
-          cp build/ReleaseMKL/opensees.so build/ReleaseMKL/BUILD_INFO.txt "$REL_NAME_MKL/"
+          cp build/ReleaseMKL/opensees.so build/ReleaseMKL/OpenSees build/ReleaseMKL/BUILD_INFO.txt "$REL_NAME_MKL/"
+          cp -r "$LADRUNO_TCL_LIB" "$REL_NAME_MKL/tcl8.6"
           cp COPYRIGHT "$REL_NAME_MKL/LICENSE"
+          cp "$LADRUNO_TCL_LICENSE" "$REL_NAME_MKL/LICENSE.tcl"
           tar czf "$REL_NAME_MKL.tar.gz" "$REL_NAME_MKL"
           ls -l "$REL_NAME_MKL.tar.gz"
-          tar tzf "$REL_NAME_MKL.tar.gz" | sort | tee "$RUNNER_TEMP/listing.txt"
-          printf '%s\n' "$REL_NAME_MKL/" "$REL_NAME_MKL/BUILD_INFO.txt" "$REL_NAME_MKL/LICENSE" "$REL_NAME_MKL/opensees.so" | sort > "$RUNNER_TEMP/want.txt"
-          diff "$RUNNER_TEMP/want.txt" "$RUNNER_TEMP/listing.txt" || { echo "::error::tarball holds files other than opensees.so, BUILD_INFO.txt and LICENSE"; exit 1; }
+          tar tzf "$REL_NAME_MKL.tar.gz" | sort > "$RUNNER_TEMP/listing.txt"
+          grep -v "^$REL_NAME_MKL/tcl8.6/." "$RUNNER_TEMP/listing.txt" | tee "$RUNNER_TEMP/top.txt"
+          printf '%s\n' "$REL_NAME_MKL/" "$REL_NAME_MKL/BUILD_INFO.txt" "$REL_NAME_MKL/LICENSE" "$REL_NAME_MKL/LICENSE.tcl" "$REL_NAME_MKL/OpenSees" "$REL_NAME_MKL/opensees.so" "$REL_NAME_MKL/tcl8.6/" | sort > "$RUNNER_TEMP/want.txt"
+          diff "$RUNNER_TEMP/want.txt" "$RUNNER_TEMP/top.txt" || { echo "::error::tarball holds other than opensees.so, OpenSees, tcl8.6/, BUILD_INFO.txt, LICENSE, LICENSE.tcl"; exit 1; }
+          grep -qx "$REL_NAME_MKL/tcl8.6/init.tcl" "$RUNNER_TEMP/listing.txt" || { echo "::error::no tcl8.6/init.tcl in the -mkl tarball"; exit 1; }
           if grep -iE 'libmkl|iomp|tbb' "$RUNNER_TEMP/listing.txt"; then echo "::error::an Intel runtime file is in the tarball"; exit 1; fi
-          echo "tarball: no libmkl* (checked)"
+          echo "tarball (-mkl): opensees.so, OpenSees, tcl8.6/, BUILD_INFO.txt, LICENSE, LICENSE.tcl; no libmkl* (checked)"
       # From here on the build-time MKL tree is gone and LD_LIBRARY_PATH is
       # unset, so the smokes can only find MKL where `pip install mkl` put it.
       - name: Remove the build-time MKL tree
@@ -331,7 +447,6 @@ jobs:
             grep -qx "LADRUNO_MKL_SMOKE_OK" "$RUNNER_TEMP/smoke$i.log" || { echo "::error::no smoke marker ($spec)"; exit 1; }
             if grep -E "WARNING|FEAST requires" "$RUNNER_TEMP/smoke$i.log"; then echo "::error::engine warning in smoke ($spec)"; exit 1; fi
           done
-          echo "LADRUNO_MKL_VENV=$RUNNER_TEMP/venv2" >> "$GITHUB_ENV"
       # Not a gate: what the newest, uncapped wheel ships, so a later SONAME
       # change is visible in the log when the cap is revisited.
       # continue-on-error: a PyPI hiccup here must never block a tag's release.
@@ -344,27 +459,39 @@ jobs:
           "$v/bin/pip" show mkl | grep -E '^(Name|Version):'
           ls "$v/lib" | grep -E '^libmkl_(intel_lp64|sequential|core)\.so' || true
       # The dependency is real: without the mkl wheel the -mkl import fails and
-      # names the missing MKL library (nothing bundled, no silent fallback).
-      - name: Without pip mkl, importing the -mkl build fails naming libmkl
+      # names the missing MKL library (nothing bundled, no silent fallback), and
+      # so does the -mkl interpreter.
+      - name: Without pip mkl, the -mkl import and OpenSees fail naming libmkl
         run: |
           unset LD_LIBRARY_PATH
           v="$RUNNER_TEMP/venv-nomkl"
           python -m venv "$v"
           "$v/bin/pip" install -q numpy
           purelib=$("$v/bin/python" -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
-          cp "$RUNNER_TEMP/pkg-mkl/opensees.so" "$purelib/"
+          cp "$RUNNER_TEMP/pkg-mkl/opensees.so" "$RUNNER_TEMP/pkg-mkl/OpenSees" "$purelib/"
           if (cd "$RUNNER_TEMP" && "$v/bin/python" -c "import opensees") > "$RUNNER_TEMP/nomkl.log" 2>&1; then
             cat "$RUNNER_TEMP/nomkl.log"; echo "::error::opensees imported without MKL installed"; exit 1
           fi
           cat "$RUNNER_TEMP/nomkl.log"
           grep -q "libmkl_.*\.so\.2: cannot open shared object file" "$RUNNER_TEMP/nomkl.log"
-      # The same two checks through the -mkl classic Tcl interpreter (not
-      # shipped). OpenSees exits 0 on a Tcl error, so only the trailing marker
-      # counts.
-      - name: Smoke the -mkl Tcl interpreter (eigen -feast, system Pardiso)
+          echo 'puts LADRUNO_NOMKL_RAN' > "$RUNNER_TEMP/nomkl.tcl"
+          if TCL_LIBRARY="$RUNNER_TEMP/pkg-mkl/tcl8.6" "$purelib/OpenSees" "$RUNNER_TEMP/nomkl.tcl" > "$RUNNER_TEMP/nomkl_exe.log" 2>&1; then
+            cat "$RUNNER_TEMP/nomkl_exe.log"; echo "::error::the -mkl OpenSees ran without MKL installed"; exit 1
+          fi
+          cat "$RUNNER_TEMP/nomkl_exe.log"
+          if grep -q LADRUNO_NOMKL_RAN "$RUNNER_TEMP/nomkl_exe.log"; then echo "::error::the -mkl OpenSees ran without MKL installed"; exit 1; fi
+          grep -q "libmkl_.*\.so\.2: cannot open shared object file" "$RUNNER_TEMP/nomkl_exe.log"
+      # The same two checks through the shipped -mkl classic Tcl interpreter,
+      # copied beside opensees.so into each pip-mkl venv's site-packages (where
+      # apeGmsh's live-fork lane installs opensees.so), with LD_LIBRARY_PATH
+      # unset and TCL_LIBRARY on the unpacked tcl8.6/. OpenSees exits 0 on a
+      # Tcl error, so only the trailing marker counts.
+      - name: Smoke the shipped -mkl Tcl interpreter (eigen -feast, system Pardiso)
         run: |
-          export TCL_LIBRARY="$(dirname "$(find ~/.conan2 -name init.tcl -path '*/tcl8.6/*' | head -1)")"
+          unset LD_LIBRARY_PATH
           cat > "$RUNNER_TEMP/smoke.tcl" <<'TCL'
+          if {[info library] ne $env(TCL_LIBRARY)} { error "Tcl library [info library] is not the shipped $env(TCL_LIBRARY)" }
+          puts "tcl [info patchlevel] library [info library]"
           wipe
           model basic -ndm 2 -ndf 3
           set L 4.0; set n 8; set E 2.0e11; set A 1.0e-2; set Iz 8.0e-6; set P 1.0e3
@@ -394,10 +521,26 @@ jobs:
           puts "feast $lam arpack [lrange $ref 0 2]"
           puts LADRUNO_MKL_TCL_SMOKE_OK
           TCL
-          LD_LIBRARY_PATH="$LADRUNO_MKL_VENV/lib" build/ReleaseMKL/OpenSees "$RUNNER_TEMP/smoke.tcl" > "$RUNNER_TEMP/smoke_tcl.log" 2>&1 || true
-          cat "$RUNNER_TEMP/smoke_tcl.log"
-          grep -qx "LADRUNO_MKL_TCL_SMOKE_OK" "$RUNNER_TEMP/smoke_tcl.log" || { echo "::error::Tcl smoke marker missing"; exit 1; }
-          if grep -E "WARNING|FEAST requires" "$RUNNER_TEMP/smoke_tcl.log"; then echo "::error::engine warning in Tcl smoke"; exit 1; fi
+          for i in 1 2; do
+            v="$RUNNER_TEMP/venv$i"
+            "$v/bin/pip" show mkl | grep -E '^Version:'
+            purelib=$("$v/bin/python" -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
+            exe="$purelib/OpenSees"
+            cp "$RUNNER_TEMP/pkg-mkl/OpenSees" "$exe"
+            [ -x "$exe" ] || { echo "::error::OpenSees is not an executable file in the -mkl tarball"; exit 1; }
+            ldd "$exe" | tee "$RUNNER_TEMP/ldd-exe$i.txt"
+            "$RUNNER_TEMP/exe_libs_ok.sh" "$RUNNER_TEMP/ldd-exe$i.txt" "-mkl OpenSees (venv$i)"
+            for lib in libmkl_intel_lp64.so.2 libmkl_sequential.so.2 libmkl_core.so.2; do
+              grep -qE "^\s*$lib => $v/lib/python3\.11/site-packages/\.\./\.\./$lib |^\s*$lib => $v/lib/$lib " "$RUNNER_TEMP/ldd-exe$i.txt" || { echo "::error::$lib not resolved from $v/lib for OpenSees (venv$i)"; exit 1; }
+            done
+            rc=0
+            (cd "$RUNNER_TEMP" && TCL_LIBRARY="$RUNNER_TEMP/pkg-mkl/tcl8.6" "$exe" smoke.tcl) > "$RUNNER_TEMP/smoke_tcl$i.log" 2>&1 || rc=$?
+            cat "$RUNNER_TEMP/smoke_tcl$i.log"
+            echo "exit status $rc"
+            if grep "initialization failed" "$RUNNER_TEMP/smoke_tcl$i.log"; then echo "::error::the shipped tcl8.6 did not initialise OpenSees (venv$i)"; exit 1; fi
+            grep -qx "LADRUNO_MKL_TCL_SMOKE_OK" "$RUNNER_TEMP/smoke_tcl$i.log" || { echo "::error::Tcl smoke marker missing (venv$i)"; exit 1; }
+            if grep -E "WARNING|FEAST requires" "$RUNNER_TEMP/smoke_tcl$i.log"; then echo "::error::engine warning in Tcl smoke (venv$i)"; exit 1; fi
+          done
       - name: Upload the dry-run MKL-free tarball
         if: github.ref_type != 'tag'
         uses: actions/upload-artifact@v4
@@ -419,4 +562,4 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" "$REL_NAME.tar.gz" "$REL_NAME_MKL.tar.gz" \
             --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" \
-            --notes "Linux opensees.so, two builds (see BUILD_INFO.txt in each tarball). $REL_NAME.tar.gz needs nothing extra. $REL_NAME_MKL.tar.gz adds MKL FEAST and PARDISO, linked dynamically: run \`pip install \"$MKL_RUNTIME_SPEC\"\` in the environment that imports it (no MKL library is shipped). The Windows installer is attached separately via Ladruno_scripts/publish_installer.ps1."
+            --notes "Linux opensees.so and the classic Tcl interpreter OpenSees, two builds (see BUILD_INFO.txt in each tarball). $REL_NAME.tar.gz needs nothing extra. $REL_NAME_MKL.tar.gz adds MKL FEAST and PARDISO, linked dynamically: run \`pip install \"$MKL_RUNTIME_SPEC\"\` in the environment that imports it (no MKL library is shipped), and put OpenSees beside opensees.so in that environment's site-packages. Run OpenSees with TCL_LIBRARY=<unpacked dir>/tcl8.6. The Windows installer is attached separately via Ladruno_scripts/publish_installer.ps1."
