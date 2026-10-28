@@ -8,7 +8,8 @@
 # Two Linux tarballs (apeGmsh #2571, maintainer rulings 2026-10-27):
 #
 #   ladruno-opensees-linux-<tag>.tar.gz      the MKL-free build, built as
-#                                            before; needs nothing extra.
+#                                            before; needs nothing extra
+#                                            (its OpenSees: TCL_LIBRARY).
 #   ladruno-opensees-linux-mkl-<tag>.tar.gz  the same build plus FEAST
 #                                            (`eigen -feast`) and PARDISO
 #                                            (`system Pardiso`).
@@ -29,6 +30,8 @@
 # linked statically (the checks below fail if libtcl is NEEDED), but the
 # interpreter still reads init.tcl at start-up, and its compiled-in library
 # path is a build-machine path: run it with TCL_LIBRARY=<unpacked>/tcl8.6.
+# The MKL-free `OpenSees` ships with no RUNPATH (it NEEDs system libraries
+# only); the build tree's ended in an empty entry, the working directory.
 # The -mkl `OpenSees` has the same MKL NEEDED entries and $ORIGIN/../..
 # RUNPATH as the -mkl opensees.so, so it runs from the same place: copied
 # beside opensees.so into an environment's site-packages.
@@ -105,11 +108,16 @@ jobs:
         run: |
           pip install conan numpy
           conan profile detect --force
-      # Shared by the exe checks of both tarballs: every library the shipped
-      # `OpenSees` NEEDs resolves, and none resolves from a path that exists
-      # only on the build machine (conan cache, toolcache, checkout, the
-      # build-time MKL tree).
-      - name: Exe library-resolution check (helper)
+      # Shared by the exe checks of both tarballs.
+      # exe_libs_ok.sh: every library the shipped `OpenSees` NEEDs resolves,
+      # to an absolute path (a relative one, `=> ./x.so`, came from the
+      # working directory), and none from a path that exists only on the build
+      # machine (conan cache, toolcache, checkout, the build-time MKL tree).
+      # runpath_ok.sh: the RUNPATH is absent, or every entry is an absolute or
+      # $ORIGIN path outside the build-only paths. An empty entry (`a::b`, or a
+      # trailing `:`) is the current working directory to glibc, so a
+      # libgomp.so.1 in the solve directory would load first.
+      - name: Exe library-resolution and RUNPATH checks (helpers)
         run: |
           cat > "$RUNNER_TEMP/exe_libs_ok.sh" <<'SH'
           #!/usr/bin/env bash
@@ -117,11 +125,33 @@ jobs:
           set -eu
           f=$1; label=$2
           if grep "not found" "$f"; then echo "::error::$label: unresolved library"; exit 1; fi
+          rel=$(awk '/=>/ {print $3}' "$f" | grep -v '^/' || true)
+          [ -z "$rel" ] || { echo "::error::$label resolves libraries from relative paths (the working directory): $rel"; exit 1; }
           bad=$(awk '/=>/ {print $3}' "$f" | grep -E "^($HOME/\.conan2|/opt/hostedtoolcache|$GITHUB_WORKSPACE|$RUNNER_TEMP/mkl-build)/" || true)
           [ -z "$bad" ] || { echo "::error::$label resolves libraries from build-only paths: $bad"; exit 1; }
-          echo "$label: every NEEDED library resolves, none from a build-only path"
+          echo "$label: every NEEDED library resolves to an absolute path, none from a build-only path"
           SH
-          chmod +x "$RUNNER_TEMP/exe_libs_ok.sh"
+          cat > "$RUNNER_TEMP/runpath_ok.sh" <<'SH'
+          #!/usr/bin/env bash
+          # usage: runpath_ok.sh <file holding readelf -d output> <label>
+          set -eu
+          f=$1; label=$2
+          line=$(grep -E '\((RUNPATH|RPATH)\)' "$f" || true)
+          if [ -z "$line" ]; then echo "$label: no RUNPATH/RPATH (checked)"; exit 0; fi
+          [ "$(printf '%s\n' "$line" | wc -l)" -eq 1 ] || { echo "::error::$label has more than one RUNPATH/RPATH entry"; exit 1; }
+          rp=$(printf '%s\n' "$line" | sed -E 's/.*\[(.*)\]$/\1/')
+          [ -n "$rp" ] || { echo "::error::$label RUNPATH is empty (the working directory)"; exit 1; }
+          while IFS= read -r e; do
+            [ -n "$e" ] || { echo "::error::$label RUNPATH '$rp' has an empty entry (the working directory)"; exit 1; }
+            case "$e" in
+              '$ORIGIN'|'$ORIGIN/'*) ;;
+              /*) if printf '%s\n' "$e" | grep -qE "^($HOME/\.conan2|/opt/hostedtoolcache|$GITHUB_WORKSPACE|$RUNNER_TEMP)(/|$)"; then echo "::error::$label RUNPATH '$rp' names a build-only path: $e"; exit 1; fi ;;
+              *) echo "::error::$label RUNPATH '$rp' has a relative entry: $e"; exit 1 ;;
+            esac
+          done < <(printf '%s' "$rp" | awk -F: '{for (i = 1; i <= NF; i++) print $i}')
+          echo "$label: RUNPATH '$rp' has no empty, relative or build-only entry (checked)"
+          SH
+          chmod +x "$RUNNER_TEMP/exe_libs_ok.sh" "$RUNNER_TEMP/runpath_ok.sh"
 
       # ---- 1. the MKL-free tarball, built exactly as before -----------------
       # Identical to the zone-a-ubuntu build step in ladruno.yml.
@@ -166,6 +196,12 @@ jobs:
           } >> build/Release/BUILD_INFO.txt
           mkdir "$REL_NAME"
           cp build/Release/opensees.so build/Release/OpenSees build/Release/BUILD_INFO.txt "$REL_NAME/"
+          # The build-tree OpenSees has RUNPATH <conan hdf5, zlib, tcl lib dirs>
+          # plus a trailing empty entry, which glibc reads as the working
+          # directory. Every library it NEEDs is a system one (checked below),
+          # so the shipped copy carries no RUNPATH at all.
+          command -v patchelf > /dev/null || pip install -q patchelf
+          patchelf --remove-rpath "$REL_NAME/OpenSees"
           cp -r "$LADRUNO_TCL_LIB" "$REL_NAME/tcl8.6"
           cp COPYRIGHT "$REL_NAME/LICENSE"
           cp "$LADRUNO_TCL_LICENSE" "$REL_NAME/LICENSE.tcl"
@@ -238,7 +274,15 @@ jobs:
           readelf -d "$exe" | grep -E '\((NEEDED|RUNPATH|RPATH)\)' | tee "$RUNNER_TEMP/dyn-free-exe.txt"
           if grep -i mkl "$RUNNER_TEMP/dyn-free-exe.txt"; then echo "::error::the MKL-free OpenSees names MKL"; exit 1; fi
           if grep -E '\(NEEDED\).*\[libtcl' "$RUNNER_TEMP/dyn-free-exe.txt"; then echo "::error::OpenSees NEEDs libtcl, which no tarball ships"; exit 1; fi
-          ldd "$exe" | tee "$RUNNER_TEMP/ldd-free-exe.txt"
+          "$RUNNER_TEMP/runpath_ok.sh" "$RUNNER_TEMP/dyn-free-exe.txt" "MKL-free OpenSees"
+          # A solve directory holding decoy (empty) copies of the libraries
+          # OpenSees NEEDs. ldd and the smoke run from it, so a working-directory
+          # lookup would load a decoy and fail ("file too short").
+          decoy="$RUNNER_TEMP/decoy-free"
+          mkdir "$decoy"
+          : > "$decoy/libgomp.so.1"
+          : > "$decoy/libgfortran.so.5"
+          (cd "$decoy" && ldd "$exe") | tee "$RUNNER_TEMP/ldd-free-exe.txt"
           "$RUNNER_TEMP/exe_libs_ok.sh" "$RUNNER_TEMP/ldd-free-exe.txt" "MKL-free OpenSees"
           cat > "$RUNNER_TEMP/smoke_free.tcl" <<'TCL'
           if {[info library] ne $env(TCL_LIBRARY)} { error "Tcl library [info library] is not the shipped $env(TCL_LIBRARY)" }
@@ -261,8 +305,16 @@ jobs:
           puts "bandgeneral tip $u closed form $ref"
           puts LADRUNO_FREE_TCL_SMOKE_OK
           TCL
+          # Control: the unstripped build-tree OpenSees (RUNPATH ending in an
+          # empty entry) must trip on the decoy, or the decoy proves nothing.
+          if (cd "$decoy" && TCL_LIBRARY="$RUNNER_TEMP/pkg/tcl8.6" "$GITHUB_WORKSPACE/build/Release/OpenSees" "$RUNNER_TEMP/smoke_free.tcl") > "$RUNNER_TEMP/decoy_control.log" 2>&1; then
+            cat "$RUNNER_TEMP/decoy_control.log"; echo "::error::decoy control: the unstripped OpenSees ran despite the decoy libs"; exit 1
+          fi
+          cat "$RUNNER_TEMP/decoy_control.log"
+          grep -qE "lib(gomp\.so\.1|gfortran\.so\.5): file too short" "$RUNNER_TEMP/decoy_control.log" || { echo "::error::decoy control failed for another reason"; exit 1; }
+          echo "decoy control: the unstripped build-tree OpenSees loads the working-directory decoy (expected)"
           rc=0
-          (cd "$RUNNER_TEMP" && TCL_LIBRARY="$RUNNER_TEMP/pkg/tcl8.6" "$exe" smoke_free.tcl) > "$RUNNER_TEMP/smoke_free_tcl.log" 2>&1 || rc=$?
+          (cd "$decoy" && TCL_LIBRARY="$RUNNER_TEMP/pkg/tcl8.6" "$exe" "$RUNNER_TEMP/smoke_free.tcl") > "$RUNNER_TEMP/smoke_free_tcl.log" 2>&1 || rc=$?
           cat "$RUNNER_TEMP/smoke_free_tcl.log"
           echo "exit status $rc"
           if grep "initialization failed" "$RUNNER_TEMP/smoke_free_tcl.log"; then echo "::error::the shipped tcl8.6 did not initialise OpenSees"; exit 1; fi
@@ -521,6 +573,11 @@ jobs:
           puts "feast $lam arpack [lrange $ref 0 2]"
           puts LADRUNO_MKL_TCL_SMOKE_OK
           TCL
+          # The solve directory holds decoy (empty) libraries, as in the
+          # MKL-free smoke: a working-directory lookup would load one and fail.
+          decoy="$RUNNER_TEMP/decoy-mkl"
+          mkdir "$decoy"
+          for d in libgomp.so.1 libgfortran.so.5 libmkl_intel_lp64.so.2 libmkl_sequential.so.2 libmkl_core.so.2; do : > "$decoy/$d"; done
           for i in 1 2; do
             v="$RUNNER_TEMP/venv$i"
             "$v/bin/pip" show mkl | grep -E '^Version:'
@@ -528,13 +585,14 @@ jobs:
             exe="$purelib/OpenSees"
             cp "$RUNNER_TEMP/pkg-mkl/OpenSees" "$exe"
             [ -x "$exe" ] || { echo "::error::OpenSees is not an executable file in the -mkl tarball"; exit 1; }
-            ldd "$exe" | tee "$RUNNER_TEMP/ldd-exe$i.txt"
+            "$RUNNER_TEMP/runpath_ok.sh" <(readelf -d "$exe") "-mkl OpenSees (venv$i)"
+            (cd "$decoy" && ldd "$exe") | tee "$RUNNER_TEMP/ldd-exe$i.txt"
             "$RUNNER_TEMP/exe_libs_ok.sh" "$RUNNER_TEMP/ldd-exe$i.txt" "-mkl OpenSees (venv$i)"
             for lib in libmkl_intel_lp64.so.2 libmkl_sequential.so.2 libmkl_core.so.2; do
               grep -qE "^\s*$lib => $v/lib/python3\.11/site-packages/\.\./\.\./$lib |^\s*$lib => $v/lib/$lib " "$RUNNER_TEMP/ldd-exe$i.txt" || { echo "::error::$lib not resolved from $v/lib for OpenSees (venv$i)"; exit 1; }
             done
             rc=0
-            (cd "$RUNNER_TEMP" && TCL_LIBRARY="$RUNNER_TEMP/pkg-mkl/tcl8.6" "$exe" smoke.tcl) > "$RUNNER_TEMP/smoke_tcl$i.log" 2>&1 || rc=$?
+            (cd "$decoy" && TCL_LIBRARY="$RUNNER_TEMP/pkg-mkl/tcl8.6" "$exe" "$RUNNER_TEMP/smoke.tcl") > "$RUNNER_TEMP/smoke_tcl$i.log" 2>&1 || rc=$?
             cat "$RUNNER_TEMP/smoke_tcl$i.log"
             echo "exit status $rc"
             if grep "initialization failed" "$RUNNER_TEMP/smoke_tcl$i.log"; then echo "::error::the shipped tcl8.6 did not initialise OpenSees (venv$i)"; exit 1; fi
@@ -562,4 +620,4 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" "$REL_NAME.tar.gz" "$REL_NAME_MKL.tar.gz" \
             --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" \
-            --notes "Linux opensees.so and the classic Tcl interpreter OpenSees, two builds (see BUILD_INFO.txt in each tarball). $REL_NAME.tar.gz needs nothing extra. $REL_NAME_MKL.tar.gz adds MKL FEAST and PARDISO, linked dynamically: run \`pip install \"$MKL_RUNTIME_SPEC\"\` in the environment that imports it (no MKL library is shipped), and put OpenSees beside opensees.so in that environment's site-packages. Run OpenSees with TCL_LIBRARY=<unpacked dir>/tcl8.6. The Windows installer is attached separately via Ladruno_scripts/publish_installer.ps1."
+            --notes "Linux opensees.so and the classic Tcl interpreter OpenSees, two builds (see BUILD_INFO.txt in each tarball). $REL_NAME.tar.gz needs nothing extra beyond TCL_LIBRARY for its OpenSees. $REL_NAME_MKL.tar.gz adds MKL FEAST and PARDISO, linked dynamically: run \`pip install \"$MKL_RUNTIME_SPEC\"\` in the environment that imports it (no MKL library is shipped), and put OpenSees beside opensees.so in that environment's site-packages. Run OpenSees with TCL_LIBRARY=<unpacked dir>/tcl8.6. The Windows installer is attached separately via Ladruno_scripts/publish_installer.ps1."
