@@ -185,7 +185,8 @@ jobs:
           print(f"pardiso tip {u:.12e} closed form {ref:.12e}")
 
           # FEAST vs ARPACK on a 2-bay, 3-storey frame: the same eigenvalues, and
-          # exactly the modes below the band edge (midway between modes 4 and 5).
+          # exactly the modes below the band edge (midway between modes 3 and 4;
+          # modes 4-6 are a near-degenerate cluster at ~30 Hz).
           ops.wipe()
           ops.model("basic", "-ndm", 2, "-ndf", 3)
           nx, ny, m = 2, 3, 5.0e3
@@ -212,12 +213,12 @@ jobs:
                   ops.element("elasticBeamColumn", e, nid(i, j), nid(i + 1, j), 0.09, 30.0e9, 6.75e-4, 1)
           lam_ref = ops.eigen(6)
           f = [math.sqrt(x) / (2.0 * math.pi) for x in lam_ref]
-          assert f[4] > 1.05 * f[3], f
-          lam = ops.eigen("-feast", 0.0, 0.5 * (f[3] + f[4]))
-          assert len(lam) == 4, (lam, lam_ref)
-          for a, b in zip(lam, lam_ref[:4]):
+          assert f[3] > 1.05 * f[2], f
+          lam = ops.eigen("-feast", 0.0, 0.5 * (f[2] + f[3]))
+          assert len(lam) == 3, (lam, lam_ref)
+          for a, b in zip(lam, lam_ref[:3]):
               assert abs(a - b) <= 1e-6 * b, (lam, lam_ref)  # the fork's G-B gate
-          print("feast", [f"{x:.10e}" for x in lam], "arpack", [f"{x:.10e}" for x in lam_ref[:4]])
+          print("feast", [f"{x:.10e}" for x in lam], "arpack", [f"{x:.10e}" for x in lam_ref[:3]])
           print("LADRUNO_MKL_SMOKE_OK")
           PY
           i=0
