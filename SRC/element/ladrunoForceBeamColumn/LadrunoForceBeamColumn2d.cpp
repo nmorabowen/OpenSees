@@ -831,7 +831,8 @@ LadrunoForceBeamColumn2d::LadrunoForceBeamColumn2d(
     useImplex(eleImplex_), eleImplexErr(0.0), eleImplexErrCommit(0.0),
     postRestoreSync(false), vRestoreValid(false),
     vCommitBulk(NEBD), vTrialBulk(NEBD),
-    vSolved(NEBD), solvedValid(false)
+    vSolved(NEBD), solvedValid(false),
+    vSolvedCommit(NEBD), solvedCommitValid(false)
 {
   load.Zero();
   vRestore[0] = vRestore[1] = vRestore[2] = 0.0;
@@ -924,7 +925,8 @@ LadrunoForceBeamColumn2d::LadrunoForceBeamColumn2d()
     useImplex(false), eleImplexErr(0.0), eleImplexErrCommit(0.0),
     postRestoreSync(false), vRestoreValid(false),
     vCommitBulk(NEBD), vTrialBulk(NEBD),
-    vSolved(NEBD), solvedValid(false)
+    vSolved(NEBD), solvedValid(false),
+    vSolvedCommit(NEBD), solvedCommitValid(false)
 {
   load.Zero();
   vRestore[0] = vRestore[1] = vRestore[2] = 0.0;
@@ -1127,6 +1129,10 @@ LadrunoForceBeamColumn2d::commitState(void)
   kvcommit = kv;
   kvbulkCommit = kvbulk;
   Secommit = Se;
+  vSolvedCommit = vSolved;
+  solvedCommitValid = solvedValid;
+  solvedLoadsCommit = solvedLoads;
+  solvedLoadDataCommit = solvedLoadData;
   eleImplexErrCommit = eleImplexErr;
 
   return err;
@@ -1199,7 +1205,13 @@ LadrunoForceBeamColumn2d::revertToLastCommit(void)
   vCommitBulk(2) = vRestore[2] - (hingeOn && theHinge ? gammaI * hingeJumpCommit : 0.0)
                                - (hingeOn && theHingeJ ? gammaJ * hingeJumpJCommit : 0.0);
   vTrialBulk = vCommitBulk;
-  solvedValid = false;
+  // The trial state is the committed one again, solved at the committed basic
+  // deformation and loads: restore that record, so the load re-application of the
+  // next analyze does not re-solve at zero increment.
+  vSolved = vSolvedCommit;
+  solvedValid = solvedCommitValid;
+  solvedLoads = solvedLoadsCommit;
+  solvedLoadData = solvedLoadDataCommit;
 
   Se = Secommit;
   kv = kvcommit;
@@ -1226,6 +1238,7 @@ LadrunoForceBeamColumn2d::revertToStart(void)
   vCommitBulk.Zero();
   vTrialBulk.Zero();
   solvedValid = false;
+  solvedCommitValid = false;
 
   if (Ki != 0) {
     delete Ki;
@@ -3066,6 +3079,7 @@ LadrunoForceBeamColumn2d::recvSelf(int commitTag, Channel &theChannel, FEM_Objec
     vCommitBulk(i) = dData(loc++);
   vTrialBulk = vCommitBulk;
   solvedValid = false;
+  solvedCommitValid = false;
   for (i = 0; i < NEBD; i++)
     vRestore[i] = dData(loc++);
   GAvy = dData(loc++);

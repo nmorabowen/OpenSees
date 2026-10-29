@@ -34,3 +34,16 @@ date: 2026-10-29
   `recvSelf`). `update()` skips the re-solve when the basic deformation and the
   element loads (pointer, factor, data) are unchanged since the last solve.
   2D and 3D. Regression: `tests/test_ladruno_force_beam_column_trial_state.py`.
+
+#### Follow-up (2026-10-29): the solve record must survive `revertToLastCommit`
+
+- **Bites:** after a failed `analyze` (the domain reverts), the next step's Newton
+  history drifted from the no-revert run (04a: iteration counts matched on 32/77
+  steps, plain Newton failed at step 78 instead of 80). Validation ladders revert
+  after every tolerated rung.
+- **Why:** `revertToLastCommit` cleared the "last solved" record (`solvedValid`), so
+  the next `domainChanged` load re-application re-solved the span-loaded members
+  at zero increment again: the fibre flip above, now only after a revert.
+- **Fix:** `commitState` snapshots the record (`vSolvedCommit`, loads) and
+  `revertToLastCommit` restores it; the trial state it restores is the one solved
+  there. Regression: `test_lfbc_revert_to_last_commit_leaves_newton_history_unchanged`.

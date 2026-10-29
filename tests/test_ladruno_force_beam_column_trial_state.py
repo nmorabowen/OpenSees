@@ -194,3 +194,42 @@ def test_lfbc_committed_tangent_equals_last_iteration_tangent(model, node, dof, 
     _, lam_lad = _push(node, dof, 2.0, nsteps, on_converged=lambda k: gaps.append(_reapplied_load_tangent_gap()))
     assert max(gaps) == 0.0, ["%.2e" % g for g in gaps]
     np.testing.assert_allclose(lam_lad, lam_van, rtol=1.0e-9)
+
+
+def _failed_solve_then_revert():
+    """A solve that fails by construction; analyze then reverts the domain to the last commit."""
+    ops.test("NormUnbalance", 1.0e-99, 1, 0)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 0.0)
+    assert ops.analyze(1) != 0
+
+
+def _push_history(node, dof, du, nsteps, revert_first):
+    iters, lams = [], []
+    for k in range(nsteps):
+        if revert_first:
+            _failed_solve_then_revert()
+        ops.test("NormDispIncr", 1.0e-8, 50, 0)
+        ops.algorithm("Newton")
+        ops.integrator("DisplacementControl", node, dof, du)
+        if ops.analyze(1) != 0:
+            pytest.fail(f"Newton failed at displacement step {k + 1} (revert_first={revert_first})")
+        iters.append(ops.testIter())
+        lams.append(ops.getLoadFactor(2))
+    return iters, np.array(lams)
+
+
+@pytest.mark.parametrize("model,node,dof,nsteps", [
+    ("portal_2d", 3, 1, 40),
+    ("cantilever_3d", 2, 2, 20),
+])
+def test_lfbc_revert_to_last_commit_leaves_newton_history_unchanged(model, node, dof, nsteps):
+    """revertToLastCommit restores the committed state exactly: a failed solve + revert
+    before every step must give the same Newton history as no revert at all."""
+    build = {"portal_2d": _portal_2d, "cantilever_3d": _cantilever_3d}[model]
+    build("LadrunoForceBeamColumn")
+    it_ref, lam_ref = _push_history(node, dof, 2.0, nsteps, revert_first=False)
+    build("LadrunoForceBeamColumn")
+    it_rev, lam_rev = _push_history(node, dof, 2.0, nsteps, revert_first=True)
+    assert it_rev == it_ref
+    np.testing.assert_allclose(lam_rev, lam_ref, rtol=1.0e-12)

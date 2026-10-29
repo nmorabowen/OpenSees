@@ -276,6 +276,11 @@ class LadrunoForceBeamColumn3d : public Element
   bool solvedValid;
   std::vector<ElementalLoad *> solvedLoads;
   std::vector<double> solvedLoadData;
+  // The same record for the committed state, restored by revertToLastCommit.
+  Vector vSolvedCommit;
+  bool solvedCommitValid;
+  std::vector<ElementalLoad *> solvedLoadsCommit;
+  std::vector<double> solvedLoadDataCommit;
   bool solvedStateMatches(const Vector &v);
   void recordSolvedState(const Vector &v);
 
