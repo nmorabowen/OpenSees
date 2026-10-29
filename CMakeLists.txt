@@ -353,6 +353,29 @@ foreach(filepath ${ops_include_files})
 endforeach()
 list(REMOVE_DUPLICATES OPS_INCLUDE_DIRS)
 
+# OTHER/MUMPS/include holds the MUMPS 5.5.1 headers. With an external MUMPS
+# (MUMPS_DIR) its own headers must be the only ones on the include path: the
+# global list above comes before any per-target directory, so the bundled
+# dmumps_c.h would otherwise win, and DMUMPS_STRUC_C changes between MUMPS
+# versions (the solver then crashes in the first dmumps_c call). This applies
+# to every target that compiles MUMPS code, OPS_PFEM included.
+if (DEFINED MUMPS_DIR)
+  if (NOT DEFINED MUMPS_INCLUDE_DIR)
+    set (MUMPS_INCLUDE_DIR "${MUMPS_DIR}/_deps/mumps-src/include")
+  endif()
+  if (NOT EXISTS "${MUMPS_INCLUDE_DIR}/dmumps_c.h")
+    message(FATAL_ERROR "MUMPS_DIR is set but ${MUMPS_INCLUDE_DIR}/dmumps_c.h "
+      "does not exist; pass -DMUMPS_INCLUDE_DIR=<dir with the dmumps_c.h of that MUMPS>")
+  endif()
+  list(FILTER OPS_INCLUDE_DIRS EXCLUDE REGEX "/OTHER/+MUMPS/include/?$")
+  list(APPEND OPS_INCLUDE_DIRS "${MUMPS_INCLUDE_DIR}")
+  file(STRINGS "${MUMPS_INCLUDE_DIR}/dmumps_c.h" _mumps_version_line
+       REGEX "#define MUMPS_VERSION \"")
+  string(REGEX MATCH "[0-9][0-9.]*" _mumps_header_version "${_mumps_version_line}")
+  message(STATUS "MUMPS headers ${_mumps_header_version} from ${MUMPS_INCLUDE_DIR}; "
+    "they must match the MUMPS libraries in ${MUMPS_DIR}")
+endif()
+
 include_directories(${OPS_INCLUDE_DIRS})
 # end TODO
 
