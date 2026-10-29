@@ -1199,7 +1199,7 @@ LadrunoForceBeamColumn3d::LadrunoForceBeamColumn3d()
     pmP0t(0.0), pmPbal(0.0), pmMuBal(0.0), axialRelease(false), spanLoadMode(1),
     useImplex(false), eleImplexErr(0.0), eleImplexErrCommit(0.0),
     postRestoreSync(false), vRestoreValid(false),
-    vCommitBulk(NEBD), vTrialBulk(NEBD),
+    vCommitBulk(NEBD), vTrialBulk(NEBD), vTrialBulkCommit(NEBD),
     vSolved(NEBD), solvedValid(false),
     vSolvedCommit(NEBD), solvedCommitValid(false),
     maxSubdivisions(4), subdivideFactor(10.0),
@@ -1277,7 +1277,7 @@ LadrunoForceBeamColumn3d::LadrunoForceBeamColumn3d(
     pmP0t(inPmP0t), pmPbal(inPmPbal), pmMuBal(inPmMuBal), axialRelease(inAxialRelease), spanLoadMode(inSpanLoadMode),
     useImplex(eleImplex), eleImplexErr(0.0), eleImplexErrCommit(0.0),
     postRestoreSync(false), vRestoreValid(false),
-    vCommitBulk(NEBD), vTrialBulk(NEBD),
+    vCommitBulk(NEBD), vTrialBulk(NEBD), vTrialBulkCommit(NEBD),
     vSolved(NEBD), solvedValid(false),
     vSolvedCommit(NEBD), solvedCommitValid(false),
     maxSubdivisions(maxNumSub), subdivideFactor(subFac),
@@ -1521,6 +1521,7 @@ LadrunoForceBeamColumn3d::commitState()
   kvcommit = kv;
   kvbulkCommit = kvbulk;
   Secommit = Se;
+  vTrialBulkCommit = vTrialBulk;
   vSolvedCommit = vSolved;
   solvedCommitValid = solvedValid;
   solvedLoadsCommit = solvedLoads;
@@ -1667,7 +1668,7 @@ LadrunoForceBeamColumn3d::revertToLastCommit()
   vCommitBulk(3) = vRestore[3] - (hingeOn ? (betaI * hingeJumpCommitY  + betaJ * hingeJumpCommitYJ) : 0.0);
   vCommitBulk(4) = vRestore[4] - (hingeOn ? (gammaI * hingeJumpCommitY + gammaJ * hingeJumpCommitYJ) : 0.0);
   vCommitBulk(5) = vRestore[5];
-  vTrialBulk = vCommitBulk;
+  vTrialBulk = vTrialBulkCommit;
   // The trial state is the committed one again, solved at the committed basic
   // deformation and loads: restore that record, so the load re-application of the
   // next analyze does not re-solve at zero increment.
@@ -1723,6 +1724,7 @@ LadrunoForceBeamColumn3d::revertToStart()
   kvbulk.Zero();
   vCommitBulk.Zero();
   vTrialBulk.Zero();
+  vTrialBulkCommit.Zero();
   solvedValid = false;
   solvedCommitValid = false;
 
@@ -3033,6 +3035,7 @@ LadrunoForceBeamColumn3d::update()
   }
 
   if (initialFlag == 0 || (initialFlag == 3 && !vRestoreValid)) {
+    vTrialBulkCommit = vTrialBulk;
     kvcommit = kv;
     kvbulkCommit = kvbulk;
     Secommit = Se;
@@ -4018,6 +4021,7 @@ LadrunoForceBeamColumn3d::recvSelf(int commitTag, Channel &theChannel, FEM_Objec
   for (i = 0; i < NEBD; i++)
     vCommitBulk(i) = dData(loc++);
   vTrialBulk = vCommitBulk;
+  vTrialBulkCommit = vCommitBulk;
   solvedValid = false;
   solvedCommitValid = false;
   for (i = 0; i < NEBD; i++)

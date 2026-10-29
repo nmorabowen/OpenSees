@@ -47,3 +47,19 @@ date: 2026-10-29
 - **Fix:** `commitState` snapshots the record (`vSolvedCommit`, loads) and
   `revertToLastCommit` restores it; the trial state it restores is the one solved
   there. Regression: `test_lfbc_revert_to_last_commit_leaves_newton_history_unchanged`.
+
+#### Follow-up (2026-10-29): restore the deformation the trial state was solved at, not the committed one
+
+- **Bites:** a trial excursion + `revertToLastCommit` before every step changed the
+  trajectory by ~2e-13 relative (01b G-3 revert-hygiene gate: 1.36e-13, with or
+  without `-hingeI`). The restart-from-commit build was exact by construction;
+  vanilla `forceBeamColumn` is not (3.8e-13 on the same probe).
+- **Why:** when the last Newton correction is below `DBL_EPSILON`, `update()` returns
+  early, so the trial state stays solved at the previous basic deformation while
+  `commitState` records the node-based one (`vRestore` / `vCommitBulk`). The revert
+  set `vTrialBulk = vCommitBulk`, so the next solve's increment `v - vTrialBulk`
+  was off by that round-off (4.4e-17 measured).
+- **Fix:** `commitState` snapshots `vTrialBulk` (`vTrialBulkCommit`) and the revert
+  restores it. Regression: `test_lfbc_trial_excursion_and_revert_is_bit_exact`
+  (2D/3D x with/without `-hingeI`, mutation-checked).
+

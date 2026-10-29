@@ -254,6 +254,10 @@ class LadrunoForceBeamColumn2d : public Element
   // Bulk deformation the TRIAL state (Se, kvbulk, vs, fs, Ssr) was solved at.
   // evalBulkState iterates from that state, not from the committed one.
   Vector vTrialBulk;
+  // vTrialBulk at commitState. Not vCommitBulk: when the last Newton correction was
+  // below DBL_EPSILON update() returned early, and the committed state was solved
+  // at that earlier deformation, not at the committed one.
+  Vector vTrialBulkCommit;
   // Basic deformation and element loads the trial state was last solved for.
   // update() skips a re-solve when neither changed (see solvedStateMatches).
   Vector vSolved;

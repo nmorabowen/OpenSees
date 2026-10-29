@@ -233,3 +233,66 @@ def test_lfbc_revert_to_last_commit_leaves_newton_history_unchanged(model, node,
     it_rev, lam_rev = _push_history(node, dof, 2.0, nsteps, revert_first=True)
     assert it_rev == it_ref
     np.testing.assert_allclose(lam_rev, lam_ref, rtol=1.0e-12)
+
+
+def _elastic_cantilever(ndm, hinge):
+    """Elastic cantilever (L = 2 m), optionally with a cohesive -hingeI at node i (01b G-3 model)."""
+    L, E, A, Iz, Mc, Gf, Kpen = 2000.0, 30000.0, 60000.0, 4.5e8, 60.0e6, 1.2e6, 1.0e14
+    ops.wipe()
+    if ndm == 2:
+        ops.model("basic", "-ndm", 2, "-ndf", 3)
+        ops.node(1, 0.0, 0.0)
+        ops.node(2, L, 0.0)
+        ops.fix(1, 1, 1, 1)
+        ops.section("Elastic", 1, E, A, Iz)
+        ops.geomTransf("Linear", 1)
+    else:
+        ops.model("basic", "-ndm", 3, "-ndf", 6)
+        ops.node(1, 0.0, 0.0, 0.0)
+        ops.node(2, L, 0.0, 0.0)
+        ops.fix(1, 1, 1, 1, 1, 1, 1)
+        ops.section("Elastic", 1, E, A, Iz, Iz, 12500.0, 2.0 * Iz)
+        ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+    ops.beamIntegration("Lobatto", 1, 1, 5)
+    ops.uniaxialMaterial("LadrunoCohesiveHinge", 10, Mc, Gf, "-linear", "-penalty", Kpen)
+    ops.element("LadrunoForceBeamColumn", 1, 1, 2, 1, 1, *(("-hingeI", 10) if hinge else ()))
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, *([0.0, 1.0, 0.0] if ndm == 2 else [0.0, 1.0, 0.0, 0.0, 0.0, 0.0]))
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.analysis("Static")
+
+
+def _reaction_trajectory(ndm, hinge, excursion):
+    _elastic_cantilever(ndm, hinge)
+    ndf = 3 if ndm == 2 else 6
+    out = []
+    for i in range(20):
+        if excursion:
+            u = list(ops.nodeDisp(2))
+            u[1] += (-1.0) ** i * 5.0
+            ops.ladrunoSetNodeTrial(2, *u, *([0.0] * ndf), *([0.0] * ndf))
+            ops.ladrunoTrialResidualNorm()
+            _failed_solve_then_revert()
+        ops.test("NormDispIncr", 1.0e-12, 25, 0)
+        ops.algorithm("Newton")
+        ops.integrator("DisplacementControl", 2, 2, 0.5)
+        assert ops.analyze(1) == 0
+        ops.reactions()
+        out.append(-ops.nodeReaction(1, 2))
+    return out
+
+
+@pytest.mark.parametrize("ndm", [2, 3])
+@pytest.mark.parametrize("hinge", [False, True])
+def test_lfbc_trial_excursion_and_revert_is_bit_exact(ndm, hinge):
+    """A trial excursion followed by revertToLastCommit before every step leaves the
+    trajectory bit-identical (01b G-3). The committed state must restore the deformation
+    the trial state was actually solved at (vTrialBulkCommit): when the last Newton
+    correction is below DBL_EPSILON, update() returns early and that deformation differs
+    from the committed basic deformation by round-off."""
+    clean = _reaction_trajectory(ndm, hinge, excursion=False)
+    probed = _reaction_trajectory(ndm, hinge, excursion=True)
+    assert probed == clean
