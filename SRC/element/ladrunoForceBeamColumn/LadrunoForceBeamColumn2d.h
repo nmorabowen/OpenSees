@@ -56,6 +56,7 @@
 #include <BeamIntegration.h>
 #include <SectionForceDeformation.h>
 #include <CrdTransf.h>
+#include <vector>
 #include <Damping.h>
 
 class Response;
@@ -158,7 +159,7 @@ class LadrunoForceBeamColumn2d : public Element
   const Vector &computedqdh(int gradNumber);
   const Matrix &computedfedh(int gradNumber);
 
-  int evalBulkState(const Vector &v_tilde, const Vector &v_tilde_commit,
+  int evalBulkState(const Vector &v_tilde,
                     Vector &Se_out, Matrix &Kbulk_out, bool commitSubdivide = false);
   int solveHingeState(const Vector &v);
 
@@ -250,6 +251,17 @@ class LadrunoForceBeamColumn2d : public Element
   double vRestore[3];
   bool vRestoreValid;
   Vector vCommitBulk;
+  // Bulk deformation the TRIAL state (Se, kvbulk, vs, fs, Ssr) was solved at.
+  // evalBulkState iterates from that state, not from the committed one.
+  Vector vTrialBulk;
+  // Basic deformation and element loads the trial state was last solved for.
+  // update() skips a re-solve when neither changed (see solvedStateMatches).
+  Vector vSolved;
+  bool solvedValid;
+  std::vector<ElementalLoad *> solvedLoads;
+  std::vector<double> solvedLoadData;
+  bool solvedStateMatches(const Vector &v);
+  void recordSolvedState(const Vector &v);
 
   static thread_local Matrix theMatrix;
   static thread_local Vector theVector;
