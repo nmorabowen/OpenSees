@@ -135,6 +135,7 @@ GLOBS = [
     "SRC/analysis/integrator/LadrunoSolverQuery.h",
     "SRC/material/nD/LadrunoCohesiveHingeBiaxial.*",
     "SRC/material/uniaxial/LadrunoCohesiveHinge.*",
+    "SRC/material/uniaxial/LadrunoImplexClock.h",   # WP-217 shared IMPL-EX clock
     "SRC/utility/LadrunoParallelBuild.cpp",
     "SRC/analysis/algorithm/equiSolnAlgo/LadrunoFactorReuse*",   # WP-188
     "SRC/analysis/integrator/LadrunoThreadedAssembly.*",   # WP-192
