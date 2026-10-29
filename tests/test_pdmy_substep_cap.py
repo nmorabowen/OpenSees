@@ -28,7 +28,9 @@ small  D = 5.0e-4: 4 (PressureDependMultiYield) or 47 substeps from the
        change. The step converges with the top node at u_y - D (penalty
        error below 1e-9), the mean lateral stress equal to -P0 (lateral
        equilibrium) and the mean vertical stress equal to the value of the
-       unmodified code (relative tolerance 1e-4).
+       unmodified code (relative tolerance 1e-3: with the 1e12 penalty the
+       value depends on the round-off of the linear solver, e.g. -239.2341
+       with UmfPack and -239.2044 with FullGeneral on Linux/LAPACK).
 
 Each case runs in a child interpreter under a wall-clock timeout so that the
 unbounded loop fails the test instead of hanging the session.
@@ -175,5 +177,5 @@ def test_small_increment_unchanged(mat):
     s = out["stress"]
     assert len(s) == 12, out
     assert sum(s[0::3]) / 4.0 == pytest.approx(-P0, rel=1.0e-6), out
-    assert sum(s[1::3]) / 4.0 == pytest.approx(SYY_SMALL[mat], rel=1.0e-4), out
+    assert sum(s[1::3]) / 4.0 == pytest.approx(SYY_SMALL[mat], rel=1.0e-3), out
     assert "increment rejected" not in log, log
