@@ -27,14 +27,21 @@ date: 2026-10-29
   flips some of them. A test that drives a failure must pick an
   input whose outcome survives every perturbation it can see (the #2617 tests
   check 400 random ones from 1e-12 to 1e-4).
-- **Fix (apeGmsh #2617):** `setTrialStrain` returns `LADRUNO_MATERIAL_REFUSED`
-  when any `integrate()` in the call failed, on all three paths. In the
-  condensation loop the failure accumulates over the passes, per the
-  maintainer ruling on #2602: a pass that fell back fed its elastic
-  `Dtan6[2][2]` into the Newton on `eps_22`. Measured on the kernel at
-  increments of 3e-4: 10.5% of plane-stress trials fail on the last pass and
-  a further 36.8% only on an earlier pass, so accumulation refuses about four
-  times as many plane-stress trials as a last-pass check would.
+- **Fix (apeGmsh #2617, refusal rule B of the amended #2602 ruling):**
+  `setTrialStrain` returns `LADRUNO_MATERIAL_REFUSED` when the return map of
+  the state it returns failed: the one call on the 3D / plane-strain and
+  confined paths, the LAST pass of the `sigma_22 = 0` loop. The loop also
+  refuses when it exits with `sigma_22` unconverged (at `maxIt`, or on a
+  near-zero pivot), which used to return 0 with only a warning. A failure on
+  an earlier pass is not counted: those passes are iterates on `eps_22`, and
+  counting them (the first version of #1038) refused about four times as many
+  plane-stress trials (kernel, 3e-4 increments: 10.5% fail on the last pass,
+  a further 36.8% only on an earlier one) and made the refusal depend on the
+  warm start.
+- **The corbel still branches on the MKL path** with rule B: AVX2, AVX512 and
+  COMPATIBLE agree within 0.3% (348–349 kN per side) and MKL_CBWR unset
+  refuses early at 199 kN (apeGmsh run 40939966138). The ruling dropped the 2%
+  gate from this fix; robustness is a separate issue.
 - **This departs from the ADR-33/34 rule** that a material's best-effort
   miss returns 0 and lets the global Newton arbitrate. That rule holds for a
   best state; LadrunoConcrete3D's fallback is not one (it did not integrate

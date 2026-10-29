@@ -1074,7 +1074,9 @@ def test_confined_fiber_view_builds():
 # When the kernel's return map does not converge it hands back the elastic predictor with status 2.
 # Until #2617 setTrialStrain returned 0 regardless, so Newton accepted an off-surface state and the
 # #2602 corbel's softening peak moved +-15% with the BLAS rounding. setTrialStrain now returns
-# LADRUNO_MATERIAL_REFUSED (< 0) when ANY integrate() in the call failed, and the step is cut.
+# LADRUNO_MATERIAL_REFUSED (< 0) under refusal rule B (the amended #2602 ruling): the return map of
+# the RETURNED state failed (the last sigma_22 = 0 pass in plane stress), or the sigma_22 loop exited
+# unconverged. A failure on an earlier, discarded pass is not a refusal.
 #
 # Each case imposes ONE homogeneous strain increment from the virgin state: every node of a
 # constant-strain element carries an `sp` of the linear field u = eps . x (Penalty constraints,
@@ -1085,7 +1087,9 @@ def test_confined_fiber_view_builds():
 # Penalty imposition is exact only to ~1e-8. The probe is in the #2617 fork PR body.
 #   plane strain / 3D  (e00, e11, gamma01) = (-2.9e-4, 2.6e-4, -4.4e-4)  status 2
 #   plane stress FINAL (2.9e-4, 2.5e-4, -3.0e-4)   the last sigma_22 = 0 pass fails
-#   plane stress EARLY (9.7e-5, -2.8e-4, 4.4e-4)   an earlier pass fails, the last converges
+#   plane stress EARLY (9.7e-5, -2.8e-4, 4.4e-4)   an earlier pass fails, the last converges: ACCEPTED
+#   plane stress FAILOPEN (9.9e-5, -2.5e-4, 3.2e-4) every last pass converges but sigma_22 is still
+#                                                  unconverged at maxIt (returned 0 with a warning)
 #   plane stress CLEAN (-9.3e-5, 4.7e-5, 2.4e-4)   no pass fails, plastic (kappa_p > 0)
 # Hosts forward the code: Tri31 sums it (`ret +=`), LadrunoBrick fails only on the exact sentinel
 # (so a bare -1 would be swallowed there), ZeroLengthSection refuses `< 0` via NDFiberSection3d.
@@ -1094,6 +1098,7 @@ _TRI = {1: (0.0, 0.0), 2: (1.0, 0.0), 3: (0.0, 1.0)}
 _PE_FAIL = (-2.9e-4, 2.6e-4, -4.4e-4)
 _PS_FINAL = (2.9e-4, 2.5e-4, -3.0e-4)
 _PS_EARLY = (9.7e-5, -2.8e-4, 4.4e-4)
+_PS_FAILOPEN = (9.9e-5, -2.5e-4, 3.2e-4)
 _PS_CLEAN = (-9.3e-5, 4.7e-5, 2.4e-4)
 
 
@@ -1150,13 +1155,13 @@ def _brick_imposed(eps_eng):
 @pytest.mark.parametrize("qtype,eps_eng,what", [
     ("PlaneStrain", _PE_FAIL, "plane strain (no condensation)"),
     ("PlaneStress", _PS_FINAL, "plane stress, the last sigma_22 = 0 pass fails"),
-    ("PlaneStress", _PS_EARLY, "plane stress, an earlier pass fails and the last converges"),
+    ("PlaneStress", _PS_FAILOPEN, "plane stress, sigma_22 still unconverged at maxIt"),
 ])
 def test_failed_return_map_refuses_the_step(qtype, eps_eng, what):
-    """A trial strain the return map cannot integrate cuts the step: tri31 forwards the material's
+    """A trial strain the material cannot integrate cuts the step: tri31 forwards the material's
     code, so `analyze` fails. Before #2617 it returned 0 and the analysis accepted the elastic
-    predictor. The EARLY case is the accumulation seam: a fix that read only the last pass's status
-    (lastStatus, overwritten per pass) would still return 0 there."""
+    predictor. FAILOPEN is the sigma_22 seam: the last pass's return map converged, but the
+    condensation ran out of iterations, which used to return 0 with only a warning."""
     _tri_imposed(qtype, eps_eng)
     rc = ops.analyze(1)
     assert rc < 0, (f"{what}: the return map fails at {eps_eng} but analyze returned {rc}, so the "
@@ -1194,9 +1199,13 @@ def test_failed_confined_fiber_refuses_the_step():
     ("PlaneStrain", (1.0e-5, -4.0e-6, 6.0e-6)),  # purely elastic (onset ft/E = 1e-4)
     ("PlaneStress", (1.0e-5, -4.0e-6, 6.0e-6)),
     ("PlaneStress", _PS_CLEAN),                  # plastic, every pass converges
+    ("PlaneStress", _PS_EARLY),                  # an earlier pass fails, the last pass and sigma_22 converge
 ])
 def test_integrable_steps_are_not_refused(qtype, eps_eng):
-    """Degenerate and ordinary inputs keep returning 0: the refusal is for a failed return only."""
+    """Degenerate and ordinary inputs keep returning 0: the refusal is for a failed return only.
+    EARLY is rule B's acceptance seam: an earlier sigma_22 pass falls back to the elastic predictor,
+    but the returned state (the last pass) is integrated and in plane stress, so it is accepted; the
+    accumulating rule of the first #1038 version refused it."""
     _tri_imposed(qtype, eps_eng)
     assert ops.analyze(1) == 0, f"{qtype} {eps_eng} was refused"
 
