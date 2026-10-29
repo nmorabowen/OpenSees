@@ -180,10 +180,12 @@ class LadrunoConcrete3D : public NDMaterial {
   double wt_t, wc_t, dwt_t, dwc_t, depl_t[6], dtn_t;   // trial IMPL-EX bookkeeping
   double Dtan6[6][6];          // trial damaged tangent (kernel TENSOR convention)
   double omegaT, omegaC;       // trial damage variables (for recorders)
-  int    lastStatus;           // 0 converged, 2 no-converge (honest off-surface flag)
+  int    lastStatus;           // 0 converged, 2 no-converge (honest off-surface flag) of the LAST integrate()
 
   // helpers
-  void integrate(bool doTangent);
+  // One kernel call; returns its status (0 / 2). setTrialStrain turns any nonzero status in the call
+  // into LADRUNO_MATERIAL_REFUSED for the element (apeGmsh #2617).
+  int  integrate(bool doTangent);
   double compressiveEpsFc(double lch);   // -epsFc, or the Gc-energy table inversion at this lch
   void   ensureGcTable(void);
   void setupDim(void);             // fill ncomp/vmap/condense + size the return buffers
