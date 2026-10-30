@@ -490,6 +490,7 @@ int OPS_Pressure_Constraint();
 int OPS_DomainModalProperties();
 int OPS_ResponseSpectrumAnalysis();
 int OPS_complexEigen();
+int OPS_LadrunoModalResponseHistory();
 
 void* OPS_TimeSeriesIntegrator();
 

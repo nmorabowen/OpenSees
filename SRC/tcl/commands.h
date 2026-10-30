@@ -138,6 +138,9 @@ responseSpectrumAnalysis(ClientData clientData, Tcl_Interp* interp, int argc, TC
 int
 complexEigen(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
 
+int
+modalResponseHistory(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
 int 
 videoPlayer(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 
