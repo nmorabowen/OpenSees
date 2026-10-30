@@ -88,6 +88,7 @@ target_sources(OPS_Analysis
        ExplicitBathe.cpp                # JAA
        ExplicitDifferenceStatic.cpp     # JAA
        CriticalTimeStep.cpp
+       CentralDifferenceLadruno.cpp
     PUBLIC
        AlphaOS.h
        AlphaOS_TP.h
@@ -135,6 +136,7 @@ target_sources(OPS_Analysis
        ExplicitBathe.h
        ExplicitDifferenceStatic.h
        CriticalTimeStep.h
+       CentralDifferenceLadruno.h
 )
 
 target_sources(OPS_PFEM
