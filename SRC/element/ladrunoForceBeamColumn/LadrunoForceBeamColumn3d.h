@@ -278,6 +278,11 @@ class LadrunoForceBeamColumn3d : public Element
   // update() skips a re-solve when neither changed (see solvedStateMatches).
   Vector vSolved;
   bool solvedValid;
+  // The last update failed: the trial state is not a solution. update() must re-solve
+  // (no early return) and commitState refuses it. Callers that ignore update()'s
+  // return code (TransformationConstraintHandler::enforceSPs) would otherwise go on
+  // with, and commit, the failed iterate.
+  bool trialFailed;
   std::vector<ElementalLoad *> solvedLoads;
   std::vector<double> solvedLoadData;
   // The same record for the committed state, restored by revertToLastCommit.

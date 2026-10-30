@@ -65,6 +65,7 @@
 #include <NDMaterial.h>
 #include <LadrunoCohesiveHinge.h>
 #include <LadrunoCohesiveHingeBiaxial.h>
+#include <LadrunoMaterialStatus.h>
 #include <Bilin.h>
 #include <ModIMKPeakOriented.h>
 #include <LobattoBeamIntegration.h>
@@ -397,6 +398,49 @@ lfbc3dTryOptionalDouble(double &valOut)
     return false;
   int one = 1;
   return (OPS_GetDoubleInput(&one, &valOut) == 0);
+}
+
+// Largest compatibility error, relative to the deformation scale, that a converged
+// bulk state may carry (see evalBulkState). It is round-off on the tangent branch;
+// the initial-flexibility branches iterate on until below it. The non-physical
+// plateau states it rejects sit at about 1.
+static const double lfbcCompatTol = 1.0e-2;
+
+// Integrate one section's deformation vector ds into the basic system, as vr is.
+static void
+lfbc3dAddSectionToBasic(Vector &out, const Vector &ds, const ID &code,
+                        double xL, double wtL, double oneOverL, bool axialRelease)
+{
+  for (int ii = 0; ii < ds.Size(); ii++) {
+    double dei = ds(ii) * wtL;
+    switch (code(ii)) {
+    case SECTION_RESPONSE_P:
+      if (!axialRelease)
+        out(0) += dei;
+      break;
+    case SECTION_RESPONSE_MZ:
+      out(1) += (xL - 1.0) * dei;
+      out(2) += xL * dei;
+      break;
+    case SECTION_RESPONSE_VY:
+      out(1) += oneOverL * dei;
+      out(2) += oneOverL * dei;
+      break;
+    case SECTION_RESPONSE_MY:
+      out(3) += (xL - 1.0) * dei;
+      out(4) += xL * dei;
+      break;
+    case SECTION_RESPONSE_VZ:
+      out(3) += oneOverL * dei;
+      out(4) += oneOverL * dei;
+      break;
+    case SECTION_RESPONSE_T:
+      out(5) += dei;
+      break;
+    default:
+      break;
+    }
+  }
 }
 
 void *
@@ -1200,7 +1244,7 @@ LadrunoForceBeamColumn3d::LadrunoForceBeamColumn3d()
     useImplex(false), eleImplexErr(0.0), eleImplexErrCommit(0.0),
     postRestoreSync(false), vRestoreValid(false),
     vCommitBulk(NEBD), vTrialBulk(NEBD), vTrialBulkCommit(NEBD),
-    vSolved(NEBD), solvedValid(false),
+    vSolved(NEBD), solvedValid(false), trialFailed(false),
     vSolvedCommit(NEBD), solvedCommitValid(false),
     maxSubdivisions(4), subdivideFactor(10.0),
     parameterID(0)
@@ -1278,7 +1322,7 @@ LadrunoForceBeamColumn3d::LadrunoForceBeamColumn3d(
     useImplex(eleImplex), eleImplexErr(0.0), eleImplexErrCommit(0.0),
     postRestoreSync(false), vRestoreValid(false),
     vCommitBulk(NEBD), vTrialBulk(NEBD), vTrialBulkCommit(NEBD),
-    vSolved(NEBD), solvedValid(false),
+    vSolved(NEBD), solvedValid(false), trialFailed(false),
     vSolvedCommit(NEBD), solvedCommitValid(false),
     maxSubdivisions(maxNumSub), subdivideFactor(subFac),
     parameterID(0)
@@ -1501,6 +1545,15 @@ LadrunoForceBeamColumn3d::commitState()
   int err = 0;
   int i = 0;
 
+  // Domain::commit drops this return code; the refusal note fails the step.
+  if (trialFailed) {
+    { LadrunoOutputGuard ladrunoOut;
+      opserr << "WARNING - LadrunoForceBeamColumn3d::commitState - element " << this->getTag()
+             << ": the last update failed, refusing to commit its trial state\n"; }
+    ladrunoNoteCommitRefusal();
+    return -1;
+  }
+
   if ((err = this->Element::commitState()) != 0) {
     opserr << "LadrunoForceBeamColumn3d::commitState () - failed in base class\n";
   }
@@ -1680,6 +1733,7 @@ LadrunoForceBeamColumn3d::revertToLastCommit()
   eleImplexErr = eleImplexErrCommit;
   eleLoadDirty = (numEleLoads > 0);
   initialFlag = 1;
+  trialFailed = false;
 
   if (theDamping && (err = theDamping->revertToLastCommit()))
     return err;
@@ -1727,6 +1781,7 @@ LadrunoForceBeamColumn3d::revertToStart()
   vTrialBulkCommit.Zero();
   solvedValid = false;
   solvedCommitValid = false;
+  trialFailed = false;
 
   if (hingeOn) {
     hingeJumpZ = hingeJumpCommitZ = 0.0;
@@ -2097,6 +2152,7 @@ LadrunoForceBeamColumn3d::evalBulkState(const Vector &v_tilde,
   beamIntegr->getSectionWeights(numSections, L, wt);
 
   static thread_local Vector vr(NEBD);
+  static thread_local Vector vrRes(NEBD);
   static thread_local Matrix f(NEBD, NEBD);
   static thread_local Matrix I(NEBD, NEBD);
   static thread_local Vector dv(NEBD);
@@ -2148,7 +2204,7 @@ LadrunoForceBeamColumn3d::evalBulkState(const Vector &v_tilde,
   dvTrial = dvToDo;
 
   double factor = subdivideFactor;
-  double dW = 0.0, dW0 = 0.0;
+  double dW = 0.0, dW0 = 0.0, compatErr = 0.0;
   int numSubdivide = 1;
   bool converged = false;
 
@@ -2173,6 +2229,7 @@ LadrunoForceBeamColumn3d::evalBulkState(const Vector &v_tilde,
         for (int j = 0; j < numIters; j++) {
           f.Zero();
           vr.Zero();
+          vrRes.Zero();
 
           for (int i = 0; i < numSections; i++) {
             int order = sections[i]->getOrder();
@@ -2362,6 +2419,7 @@ LadrunoForceBeamColumn3d::evalBulkState(const Vector &v_tilde,
               }
             }
 
+            lfbc3dAddSectionToBasic(vrRes, dvs, code, xL, wtL, oneOverL, axialRelease);
             dvs.addVector(1.0, vsSubdivide[i], 1.0);
             for (int ii = 0; ii < order; ii++) {
               double dei = dvs(ii) * wtL;
@@ -2446,7 +2504,28 @@ LadrunoForceBeamColumn3d::evalBulkState(const Vector &v_tilde,
 
           SeTrial += dSe;
 
+          // |dW| < tol alone goes blind when a section's tangent vanishes. On a
+          // flat (crushed or fully yielded) plateau fs is huge, so kv -> 0, and the
+          // linearized correction fs*(Ss - Ssr) in vr absorbs any target v: dW passes
+          // while the sections carry the wrong force at a deformation incompatible
+          // with v. Accept only if the section deformations actually set are
+          // compatible with the target, e = v - (vr - vrRes) = dv + vrRes. On the
+          // tangent branch (l = 0) e is round-off.
+          bool compatible = true;
           if (fabs(dW) < tol) {
+            double eMax = 0.0, scale = 0.0;
+            for (int k = 0; k < NEBD; k++) {
+              double s = (k == 0) ? oneOverL : 1.0;
+              double e = fabs(dv(k) + vrRes(k)) * s;
+              double sc = (fabs(vin(k) + dvTrial(k)) + fabs(vr(k) - vrRes(k))) * s;
+              if (e > eMax) eMax = e;
+              if (sc > scale) scale = sc;
+            }
+            compatErr = (scale > 0.0) ? eMax / scale : eMax;
+            compatible = (eMax <= lfbcCompatTol * scale + 1.0e-14);
+          }
+
+          if (fabs(dW) < tol && compatible) {
             dvToDo -= dvTrial;
             vin += dvTrial;
 
@@ -2483,8 +2562,13 @@ LadrunoForceBeamColumn3d::evalBulkState(const Vector &v_tilde,
     }
   }
 
-  if (!converged)
+  if (!converged) {
+    { LadrunoOutputGuard ladrunoOut;
+      opserr << "WARNING - LadrunoForceBeamColumn3d::update - failed to get compatible element forces & deformations for element: "
+             << this->getTag() << " (dW: " << dW << ", dW0: " << dW0 << ", tol: " << tol
+             << ", compatibility error: " << compatErr << ")\n"; }
     return -1;
+  }
 
   current_section_lch = (lchMode == 2) ? userLch : L;
   Se_out = SeCur;
@@ -2987,7 +3071,9 @@ LadrunoForceBeamColumn3d::update()
   static thread_local Vector dv(NEBD);
   dv = crdTransf->getBasicIncrDeltaDisp();
 
-  if (initialFlag == 1 && dv.Norm() <= DBL_EPSILON && numEleLoads == 0 && !eleLoadDirty) {
+  // After a failed update neither early return holds: the Newton correction after
+  // enforceSPs' ignored failure is zero, and the trial state is not a solution.
+  if (initialFlag == 1 && !trialFailed && dv.Norm() <= DBL_EPSILON && numEleLoads == 0 && !eleLoadDirty) {
     ops_TheActiveElement = 0;
     return 0;
   }
@@ -2996,7 +3082,7 @@ LadrunoForceBeamColumn3d::update()
   // e.g. DisplacementControl::domainChanged's applyLoad + formUnbalance) must not
   // re-solve, or the sub-tolerance section residual left by the last solve is pushed
   // into the fibres and can flip them onto their unloading tangent.
-  if (initialFlag == 1 && this->solvedStateMatches(v)) {
+  if (initialFlag == 1 && !trialFailed && this->solvedStateMatches(v)) {
     eleLoadDirty = false;
     ops_TheActiveElement = 0;
     return 0;
@@ -3027,12 +3113,28 @@ LadrunoForceBeamColumn3d::update()
   }
 
   if (err != 0) {
-    LadrunoOutputGuard ladrunoOut;
-    opserr << "WARNING - LadrunoForceBeamColumn3d::update - failed to get compatible "
-           << "element forces & deformations for element: " << this->getTag() << endln;
+    // evalBulkState has reported it. The sections hold the failed iterate: put them
+    // back on the last solved trial state (vs), so a response or a commit never reads
+    // the failed one.
+    trialFailed = true;
+    solvedValid = false;
+    double L = crdTransf->getInitialLength();
+    double wt[maxNumSections];
+    beamIntegr->getSectionWeights(numSections, L, wt);
+    for (int k = 0; k < numSections; k++) {
+      if (lchMode == 1)
+        current_section_lch = L;
+      else if (lchMode == 2)
+        current_section_lch = userLch;
+      else
+        current_section_lch = wt[k] * L;
+      sections[k]->setTrialSectionDeformation(vs[k]);
+    }
+    current_section_lch = (lchMode == 2) ? userLch : L;
     ops_TheActiveElement = 0;
     return -1;
   }
+  trialFailed = false;
 
   if (initialFlag == 0 || (initialFlag == 3 && !vRestoreValid)) {
     vTrialBulkCommit = vTrialBulk;

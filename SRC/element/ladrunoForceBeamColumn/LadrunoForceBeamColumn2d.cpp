@@ -69,6 +69,7 @@
 #include <elementAPI.h>
 #include <UniaxialMaterial.h>
 #include <LadrunoCohesiveHinge.h>
+#include <LadrunoMaterialStatus.h>
 #include <Bilin.h>
 #include <ModIMKPeakOriented.h>
 #include <LobattoBeamIntegration.h>
@@ -257,6 +258,37 @@ static void lfbc2dInvertGen2x2Guarded(double H00, double H01, double H10, double
     Hinv[1][1] =  H00 * invDet;
   } else {
     lfbc2dInvertSym2x2Guarded(H00, H11, 0.5 * (H01 + H10), Hinv);
+  }
+}
+
+// Largest compatibility error, relative to the deformation scale, that a converged
+// bulk state may carry (see evalBulkState). It is round-off on the tangent branch;
+// the initial-flexibility branches iterate on until below it. The non-physical
+// plateau states it rejects sit at about 1.
+static const double lfbcCompatTol = 1.0e-2;
+
+// Integrate one section's deformation vector ds into the basic system, as vr is.
+static void lfbc2dAddSectionToBasic(Vector &out, const Vector &ds, const ID &code,
+                                    double xL, double wtL, double oneOverL, bool axialRelease)
+{
+  for (int ii = 0; ii < ds.Size(); ii++) {
+    double dei = ds(ii) * wtL;
+    switch (code(ii)) {
+    case SECTION_RESPONSE_P:
+      if (!axialRelease)
+        out(0) += dei;
+      break;
+    case SECTION_RESPONSE_MZ:
+      out(1) += (xL - 1.0) * dei;
+      out(2) += xL * dei;
+      break;
+    case SECTION_RESPONSE_VY:
+      out(1) += oneOverL * dei;
+      out(2) += oneOverL * dei;
+      break;
+    default:
+      break;
+    }
   }
 }
 
@@ -831,7 +863,7 @@ LadrunoForceBeamColumn2d::LadrunoForceBeamColumn2d(
     useImplex(eleImplex_), eleImplexErr(0.0), eleImplexErrCommit(0.0),
     postRestoreSync(false), vRestoreValid(false),
     vCommitBulk(NEBD), vTrialBulk(NEBD), vTrialBulkCommit(NEBD),
-    vSolved(NEBD), solvedValid(false),
+    vSolved(NEBD), solvedValid(false), trialFailed(false),
     vSolvedCommit(NEBD), solvedCommitValid(false)
 {
   load.Zero();
@@ -925,7 +957,7 @@ LadrunoForceBeamColumn2d::LadrunoForceBeamColumn2d()
     useImplex(false), eleImplexErr(0.0), eleImplexErrCommit(0.0),
     postRestoreSync(false), vRestoreValid(false),
     vCommitBulk(NEBD), vTrialBulk(NEBD), vTrialBulkCommit(NEBD),
-    vSolved(NEBD), solvedValid(false),
+    vSolved(NEBD), solvedValid(false), trialFailed(false),
     vSolvedCommit(NEBD), solvedCommitValid(false)
 {
   load.Zero();
@@ -1071,6 +1103,14 @@ LadrunoForceBeamColumn2d::commitState(void)
 {
   int err = 0;
   int i = 0;
+
+  // Domain::commit drops this return code; the refusal note fails the step.
+  if (trialFailed) {
+    opserr << "WARNING - LadrunoForceBeamColumn2d::commitState - element " << this->getTag()
+           << ": the last update failed, refusing to commit its trial state\n";
+    ladrunoNoteCommitRefusal();
+    return -1;
+  }
 
   if ((err = this->Element::commitState()) != 0) {
     opserr << "LadrunoForceBeamColumn2d::commitState() - Element::commitState failed\n";
@@ -1220,6 +1260,7 @@ LadrunoForceBeamColumn2d::revertToLastCommit(void)
   eleImplexErr = eleImplexErrCommit;
   eleLoadDirty = (numEleLoads > 0);
   initialFlag = 1;
+  trialFailed = false;
 
   return err;
 }
@@ -1241,6 +1282,7 @@ LadrunoForceBeamColumn2d::revertToStart(void)
   vTrialBulkCommit.Zero();
   solvedValid = false;
   solvedCommitValid = false;
+  trialFailed = false;
 
   if (Ki != 0) {
     delete Ki;
@@ -1527,6 +1569,7 @@ LadrunoForceBeamColumn2d::evalBulkState(const Vector &v_tilde,
   beamIntegr->getSectionWeights(numSections, L, wt);
 
   static thread_local Vector vr(NEBD);
+  static thread_local Vector vrRes(NEBD);
   static thread_local Matrix f(NEBD, NEBD);
   static thread_local Matrix I(NEBD, NEBD);
   static thread_local Vector dv(NEBD);
@@ -1578,6 +1621,7 @@ LadrunoForceBeamColumn2d::evalBulkState(const Vector &v_tilde,
   dvTrial = dvToDo;
 
   double factor = subdivideFactor;
+  double dW = 0.0, compatErr = 0.0;
   int numSubdivide = 1;
   bool converged = false;
 
@@ -1602,6 +1646,7 @@ LadrunoForceBeamColumn2d::evalBulkState(const Vector &v_tilde,
         for (int j = 0; j < numIters; j++) {
           f.Zero();
           vr.Zero();
+          vrRes.Zero();
 
           for (int i = 0; i < numSections; i++) {
             int order = sections[i]->getOrder();
@@ -1746,6 +1791,7 @@ LadrunoForceBeamColumn2d::evalBulkState(const Vector &v_tilde,
               }
             }
 
+            lfbc2dAddSectionToBasic(vrRes, dvs, code, xL, wtL, oneOverL, axialRelease);
             dvs.addVector(1.0, vsSubdivide[i], 1.0);
             for (int ii = 0; ii < order; ii++) {
               double dei = dvs(ii) * wtL;
@@ -1786,18 +1832,42 @@ LadrunoForceBeamColumn2d::evalBulkState(const Vector &v_tilde,
             vr(2) += dvShear;
           }
 
-          if (f.Solve(I, kvTrial) < 0)
+          if (f.Solve(I, kvTrial) < 0) {
+            opserr << "LadrunoForceBeamColumn2d::evalBulkState() -- could not invert flexibility for element with tag: "
+                   << this->getTag() << endln;
             return -1;
+          }
 
           dv = vin;
           dv += dvTrial;
           dv -= vr;
 
           dSe.addMatrixVector(0.0, kvTrial, dv, 1.0);
-          double dW = dv ^ dSe;
+          dW = dv ^ dSe;
           SeTrial += dSe;
 
+          // |dW| < tol alone goes blind when a section's tangent vanishes. On a
+          // flat (crushed or fully yielded) plateau fs is huge, so kv -> 0, and the
+          // linearized correction fs*(Ss - Ssr) in vr absorbs any target v: dW passes
+          // while the sections carry the wrong force at a deformation incompatible
+          // with v. Accept only if the section deformations actually set are
+          // compatible with the target, e = v - (vr - vrRes) = dv + vrRes. On the
+          // tangent branch (l = 0) e is round-off.
+          bool compatible = true;
           if (fabs(dW) < tol) {
+            double eMax = 0.0, scale = 0.0;
+            for (int k = 0; k < NEBD; k++) {
+              double s = (k == 0) ? oneOverL : 1.0;
+              double e = fabs(dv(k) + vrRes(k)) * s;
+              double sc = (fabs(vin(k) + dvTrial(k)) + fabs(vr(k) - vrRes(k))) * s;
+              if (e > eMax) eMax = e;
+              if (sc > scale) scale = sc;
+            }
+            compatErr = (scale > 0.0) ? eMax / scale : eMax;
+            compatible = (eMax <= lfbcCompatTol * scale + 1.0e-14);
+          }
+
+          if (fabs(dW) < tol && compatible) {
             dvToDo -= dvTrial;
             vin += dvTrial;
 
@@ -1834,8 +1904,12 @@ LadrunoForceBeamColumn2d::evalBulkState(const Vector &v_tilde,
     }
   }
 
-  if (!converged)
+  if (!converged) {
+    opserr << "WARNING - LadrunoForceBeamColumn2d::update - failed to get compatible element forces & deformations for element: "
+           << this->getTag() << " (dW: " << dW << ", tol: " << tol
+           << ", compatibility error: " << compatErr << ")\n";
     return -1;
+  }
 
   current_section_lch = (lchMode == 2) ? userLch : L;
   Se_out = SeCur;
@@ -2183,7 +2257,9 @@ LadrunoForceBeamColumn2d::update(void)
   static thread_local Vector dv(NEBD);
   dv = crdTransf->getBasicIncrDeltaDisp();
 
-  if (initialFlag == 1 && dv.Norm() <= DBL_EPSILON && numEleLoads == 0 && !eleLoadDirty) {
+  // After a failed update neither early return holds: the Newton correction after
+  // enforceSPs' ignored failure is zero, and the trial state is not a solution.
+  if (initialFlag == 1 && !trialFailed && dv.Norm() <= DBL_EPSILON && numEleLoads == 0 && !eleLoadDirty) {
     ops_TheActiveElement = 0;
     return 0;
   }
@@ -2192,7 +2268,7 @@ LadrunoForceBeamColumn2d::update(void)
   // e.g. DisplacementControl::domainChanged's applyLoad + formUnbalance) must not
   // re-solve, or the sub-tolerance section residual left by the last solve is pushed
   // into the fibres and can flip them onto their unloading tangent.
-  if (initialFlag == 1 && this->solvedStateMatches(v)) {
+  if (initialFlag == 1 && !trialFailed && this->solvedStateMatches(v)) {
     eleLoadDirty = false;
     ops_TheActiveElement = 0;
     return 0;
@@ -2224,9 +2300,27 @@ LadrunoForceBeamColumn2d::update(void)
   }
 
   if (err != 0) {
+    // The sections hold the failed iterate. Put them back on the last solved trial
+    // state (vs), so a response or a commit never reads the failed one.
+    trialFailed = true;
+    solvedValid = false;
+    double L = crdTransf->getInitialLength();
+    double wt[maxNumSections];
+    beamIntegr->getSectionWeights(numSections, L, wt);
+    for (int k = 0; k < numSections; k++) {
+      if (lchMode == 1)
+        current_section_lch = L;
+      else if (lchMode == 2)
+        current_section_lch = userLch;
+      else
+        current_section_lch = wt[k] * L;
+      sections[k]->setTrialSectionDeformation(vs[k]);
+    }
+    current_section_lch = (lchMode == 2) ? userLch : L;
     ops_TheActiveElement = 0;
     return err;
   }
+  trialFailed = false;
 
   if (initialFlag == 0 || (initialFlag == 3 && !vRestoreValid)) {
     vTrialBulkCommit = vTrialBulk;
