@@ -147,6 +147,18 @@ void *OPS_InitDefGradNDMaterial(void)
     }
   }
 
+  // Ladruno: refuse a singular -F0 here; the constructor would exit().
+  if (haveF0) {
+    double d = F0in[0]*(F0in[4]*F0in[8] - F0in[5]*F0in[7])
+             - F0in[1]*(F0in[3]*F0in[8] - F0in[5]*F0in[6])
+             + F0in[2]*(F0in[3]*F0in[7] - F0in[4]*F0in[6]);
+    if (d == 0.0) {
+      opserr << "WARNING nDMaterial InitDefGrad " << iData[0]
+             << " : -F0 is singular (det F0 = 0)\n";
+      return 0;
+    }
+  }
+
   return new InitDefGradNDMaterial(iData[0], *inner, active, haveF0 ? F0in : 0);
 }
 
