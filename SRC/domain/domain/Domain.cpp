@@ -1093,6 +1093,9 @@ Domain::clearAll(void) {
   }
   theEigenvalueSetTime = 0.0;
 
+  // a wiped model carries no damping
+  dmpAlphaM = 0.0;  dmpBetaK = 0.0;  dmpBetaK0 = 0.0;  dmpBetaKc = 0.0;
+
   // set the bounds around the origin
   initBounds = true;
   theBounds(0) = 0;
@@ -2128,6 +2131,9 @@ Domain::initialize(void)
 int
 Domain::setRayleighDampingFactors(double alphaM, double betaK, double betaK0, double betaKc)
 {
+  // domain-level copy: the cascade below leaves no record of the factors
+  dmpAlphaM = alphaM;  dmpBetaK = betaK;  dmpBetaK0 = betaK0;  dmpBetaKc = betaKc;
+
   int result = 0;
   Element *elePtr;
   ElementIter &theElemIter = this->getElements();    
@@ -2141,6 +2147,13 @@ Domain::setRayleighDampingFactors(double alphaM, double betaK, double betaK0, do
   }
 
   return result;
+}
+
+void
+Domain::getRayleighDampingFactors(double &alphaM, double &betaK,
+				  double &betaK0, double &betaKc) const
+{
+  alphaM = dmpAlphaM;  betaK = dmpBetaK;  betaK0 = dmpBetaK0;  betaKc = dmpBetaKc;
 }
 
 

@@ -251,6 +251,7 @@ extern void *OPS_WilsonTheta(void);
 // for response spectrum analysis
 extern int OPS_DomainModalProperties(void);
 extern int OPS_ResponseSpectrumAnalysis(void);
+extern int OPS_complexEigen(void);
 extern int OPS_sdfResponse(void);
 
 extern void OPS_SetReliabilityDomain(ReliabilityDomain *);
@@ -918,6 +919,8 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
     Tcl_CreateCommand(interp, "modalProperties", &modalProperties,
         (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
     Tcl_CreateCommand(interp, "responseSpectrumAnalysis", &responseSpectrumAnalysis,
+        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
+    Tcl_CreateCommand(interp, "complexEigen", &complexEigen,
         (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
     Tcl_CreateCommand(interp, "video", &videoPlayer, 
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);       
@@ -5873,6 +5876,15 @@ responseSpectrumAnalysis(ClientData clientData, Tcl_Interp* interp, int argc, TC
 {
     OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
     if (OPS_ResponseSpectrumAnalysis() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+int
+complexEigen(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_complexEigen() < 0)
 	    return TCL_ERROR;
     return TCL_OK;
 }

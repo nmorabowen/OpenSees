@@ -489,6 +489,7 @@ int OPS_ShallowFoundationGen();
 int OPS_Pressure_Constraint();
 int OPS_DomainModalProperties();
 int OPS_ResponseSpectrumAnalysis();
+int OPS_complexEigen();
 
 void* OPS_TimeSeriesIntegrator();
 

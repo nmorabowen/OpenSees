@@ -194,6 +194,10 @@ class Domain
     virtual void  unsetLoadConstant(void);
     virtual  int  initialize(void);    
     virtual  int  setRayleighDampingFactors(double alphaM, double betaK, double betaK0, double betaKc);
+    // the factors of the last setRayleighDampingFactors call (all 0 when
+    // none); the call itself only cascades them to elements and nodes
+    virtual  void getRayleighDampingFactors(double &alphaM, double &betaK,
+					    double &betaK0, double &betaKc) const;
 
     virtual  int  commit(void);
     virtual  int  revertToLastCommit(void);
@@ -314,6 +318,9 @@ class Domain
     DomainModalProperties* theModalProperties;
     Vector *theModalDampingFactors;
     bool inclModalMatrix;
+
+    // last factors passed to setRayleighDampingFactors
+    double dmpAlphaM = 0.0, dmpBetaK = 0.0, dmpBetaK0 = 0.0, dmpBetaKc = 0.0;
 
     int lastChannel;
 

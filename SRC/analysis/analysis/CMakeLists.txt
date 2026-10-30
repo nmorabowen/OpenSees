@@ -11,6 +11,8 @@ target_sources(OPS_Analysis
       DomainDecompositionAnalysis.cpp
       DomainUser.cpp 
       EigenAnalysis.cpp
+      LadrunoComplexEigen.cpp
+      LadrunoDampingAssembler.cpp
       ResponseSpectrumAnalysis.cpp
       SDFAnalysis.cpp
       StaticAnalysis.cpp 
@@ -25,6 +27,8 @@ target_sources(OPS_Analysis
       DomainDecompositionAnalysis.h
       DomainUser.h 
       EigenAnalysis.h
+      LadrunoComplexEigen.h
+      LadrunoDampingAssembler.h
       ResponseSpectrumAnalysis.h
       StaticAnalysis.h 
       StaticDomainDecompositionAnalysis.h 
