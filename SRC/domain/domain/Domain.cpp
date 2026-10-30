@@ -103,6 +103,23 @@ double        ops_Dt = 0.0;
 bool          ops_InitialStateAnalysis = false;
 int           ops_Creep = 0;
 
+// Ladruno (apeGmsh #2619): fold one element return code into the running code
+// of Domain::update WITHOUT summing. Upstream wrote `ok += theEle->update()`,
+// and the summing hosts (Tri31, FourNodeQuad, LadrunoQuad, ...) did the same
+// over their points, so the model-wide result was the integer sum of every
+// point's code. With LADRUNO_MATERIAL_REFUSED = -33086 that sum passes INT_MIN
+// at 64,907 refusing points in one update (about 16k fully refusing quads) and
+// wraps to a POSITIVE value, which the integrators' `< 0` checks accept: a
+// refusal became a silently accepted step. The fold keeps the most negative
+// code seen (so the sentinel survives as itself when it is the only code), and
+// a positive code only when nothing negative has been seen; it never wraps.
+static inline void
+ladrunoKeepWorstCode(int &acc, int rc)
+{
+  if (rc != 0 && (acc == 0 || rc < acc))
+    acc = rc;
+}
+
 Domain::Domain()
 :theRecorders(0), numRecorders(0),
  currentTime(0.0), committedTime(0.0), dT(0.0), currentGeoTag(0),
@@ -2507,7 +2524,7 @@ Domain::update(void)
     ops_TheActiveElement = theEle;
     {
       OPS_PROFILE_ELEMPTR_SCOPE(_ops_elemUpd, theEle);   // Ladruno (40b)
-      ok += theEle->update();
+      ladrunoKeepWorstCode(ok, theEle->update());        // Ladruno (apeGmsh #2619): never `ok +=`
     }
   }
 
@@ -2741,23 +2758,33 @@ Domain::ladrunoThreadedUpdate(int &ok)
   }
 
   // --- the loop: threaded runs and serial singletons, in serial order.
-  struct Ctx { Element **e; };
+  struct Ctx { Element **e; int *code; };
   struct Body {
     static int run(int i, void *c) {
-      Element *e = ((Ctx *)c)->e[i];
+      Ctx *ctx = (Ctx *)c;
+      Element *e = ctx->e[i];
       ops_TheActiveElement = e;          // thread_local (WP-107, Element.cpp)
-      return e->update();
+      const int r = e->update();
+      ctx->code[i] = r;                  // apeGmsh #2619: kept per element, folded serially below
+      return r;
     }
   };
 
-  int sum = 0;
+  // apeGmsh #2619: the element codes are folded with ladrunoKeepWorstCode (the
+  // most negative one wins), never summed. ladruno_parallelFor returns the
+  // integer SUM of the body results, which is the wrapping reduction this
+  // slice removes, so that return is ignored and each run's codes are reduced
+  // from the per-element slots the bodies filled. `ff` still comes from the
+  // bodies' nonzero returns.
+  std::vector<int> codes(nEle, 0);
+  int worst = 0;
   int firstFailIdx = nEle;
   int i = 0;
   while (i < nEle) {
     if (!safe[i]) {
       ops_TheActiveElement = eles[i];
       const int r = eles[i]->update();
-      sum += r;
+      ladrunoKeepWorstCode(worst, r);
       if (r != 0 && i < firstFailIdx)
         firstFailIdx = i;
       i++;
@@ -2766,9 +2793,11 @@ Domain::ladrunoThreadedUpdate(int &ok)
     int j = i;
     while (j < nEle && safe[j])
       j++;
-    Ctx ctx = { &eles[i] };
+    Ctx ctx = { &eles[i], &codes[i] };
     int ff = j - i;
-    sum += ladruno_parallelFor(j - i, nThreads, 8, &Body::run, &ctx, &ff);
+    (void)ladruno_parallelFor(j - i, nThreads, 8, &Body::run, &ctx, &ff);
+    for (int k = i; k < j; k++)
+      ladrunoKeepWorstCode(worst, codes[k]);
     if (ff < j - i && i + ff < firstFailIdx)
       firstFailIdx = i + ff;
     i = j;
@@ -2779,7 +2808,7 @@ Domain::ladrunoThreadedUpdate(int &ok)
   // exactly that residual, so a threaded update leaves the same global state.
   ops_TheActiveElement = eles[nEle - 1];
 
-  ok += sum;
+  ladrunoKeepWorstCode(ok, worst);
 
   if (ok != 0) {
     opserr << "Domain::update - domain failed in update\n";
