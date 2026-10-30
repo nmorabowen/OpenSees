@@ -786,7 +786,13 @@ int LadrunoQuad::update(void)
     this->shapeFunction(pts[i][0], pts[i][1]);
     this->formB(B);
     eps.addMatrixVector(0.0, B, u, 1.0);
-    ret += theMaterial[i]->setTrialStrain(eps);
+    // apeGmsh #2619: keep the MOST NEGATIVE code, never a sum. Summing
+    // LADRUNO_MATERIAL_REFUSED (-33086) over the points of a model wraps past
+    // INT_MIN at 64,907 refusing points and Domain::update then returns a
+    // POSITIVE number, which every `< 0` integrator check accepts.
+    const int rc = theMaterial[i]->setTrialStrain(eps);
+    if (rc != 0 && (ret == 0 || rc < ret))
+      ret = rc;
   }
   return ret;
 }
