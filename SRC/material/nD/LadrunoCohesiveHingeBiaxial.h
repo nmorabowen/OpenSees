@@ -45,7 +45,10 @@
 //   pre-peak T_eff = S r; softening calibrated to int T_eff dr = Gf_mix
 //     EXP    T_eff = S exp(-A(r-1)),  A = S/(Gf_mix - S/2)
 //     LINEAR T_eff = S(1-(r-1)/r_f),  r_f = 2(Gf_mix - S/2)/S
-//   Isotropic secant damage D = 1 - T_eff(r_max)/(S r_max); M_i = (1-D) Kpen_i alpha_i.
+//   Isotropic secant damage D = 1 - T_eff(r)/(S r) while LOADING; M_i = (1-D) Kpen_i alpha_i.
+//   D is the internal variable (WP-217, ADR 34 2026-10-29): with (r_max, w) the state at its
+//   last growth, loading is D_law(alpha) >= D(r_max, w); otherwise D is frozen (elastic-secant,
+//   conservative, exact diagonal tangent). eta = 1: D = D(r) and this is r >= r_max.
 //   Reduces to LadrunoCohesiveHinge(Mc_i, Gf_i) on each pure axis (peak, shape, Gf).
 //
 // classTag ND_TAG_LadrunoCohesiveHingeBiaxial = 33004 (Ladruno private ND band).
@@ -58,6 +61,7 @@
 #include <NDMaterial.h>
 #include <Vector.h>
 #include <Matrix.h>
+#include <LadrunoImplexClock.h>
 
 class LadrunoCohesiveHingeBiaxial : public NDMaterial
 {
@@ -92,6 +96,8 @@ class LadrunoCohesiveHingeBiaxial : public NDMaterial
   bool hasPM(void) const         { return P0 > 0.0; }
   bool isImplex(void) const      { return implex; }
   void setImplex(bool flag)      { implex = flag; }
+  void setImplexClock(int m)     { implexClock.mode = m; }   // WP-217: LadrunoImplexClock::STEP | PSEUDO
+  int  getImplexClock(void) const { return implexClock.mode; }
   double getImplexError(void) const;
 
   int commitState(void);
@@ -125,6 +131,8 @@ class LadrunoCohesiveHingeBiaxial : public NDMaterial
   //   returns S, Gf_mix, T_eff(r_max), dT_eff/dr(r_max)
   void effectiveLaw(double wz, double wy, double rMax,
                     double& S, double& Teff, double& dTeff) const;
+  // D = 1 - T_eff(rr)/(S rr) at mix (wz, wy), clamped to [0,1]
+  double damageAt(double wz, double wy, double rr) const;
 
   // material parameters
   double Mcz, Gfz, Mcy, Gfy;
@@ -147,13 +155,15 @@ class LadrunoCohesiveHingeBiaxial : public NDMaterial
   Matrix Kinit;            // diag(Kpenz, Kpeny) — closed-hinge initial tangent
 
   // committed history
-  double CrMax;            // max elliptical norm r ever seen (irreversible damage driver)
+  double CrMax;            // r at the last damage growth (eta = 1: max r ever seen)
   double CrMax_old;        // previous step committed max r (for IMPL-EX extrapolation)
   Vector Cstrain;          // committed jump (work anchor)
   Vector Cstress;          // committed moment (work anchor)
   double Cwork;            // committed path work int M . dalpha
   double dtime_n_commit;
   int    implexCommittedSteps;
+  double Cwz, Cwy;         // WP-217: mode mix at the last damage growth; D_c = D(CrMax, Cwz, Cwy)
+  LadrunoImplexClock implexClock;   // WP-217: per-step frozen extrapolation factor
 
   // trial state
   Vector Tstrain;          // [alpha_z, alpha_y]
@@ -161,6 +171,8 @@ class LadrunoCohesiveHingeBiaxial : public NDMaterial
   Matrix Ttangent;         // 2x2 dM/dalpha
   double TrMax;
   double Twork;
+  double Twz, Twy;         // trial mix of the damage state
+  double TD;               // trial (implicit) damage
 };
 
 #endif

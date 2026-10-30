@@ -62,7 +62,11 @@ Mixed peak-scale and fracture energy interpolate linearly (→ exact on each pur
 - `EXP`: `T_eff = S·exp(−A(r−1))`, `A = S/(Gf_mix − S/2)`.
 - `LINEAR`: `T_eff = S(1 − (r−1)/r_f)`, `r_f = 2(Gf_mix − S/2)/S`.
 
-**Isotropic secant damage** `D = 1 − T_eff(r_max)/(S r_max)` (with `S, Gf_mix` at the current mix).
+**Isotropic secant damage** `D = 1 − T_eff(r_max)/(S r_max)` (with `S, Gf_mix` at the current mix
+**while loading**). *Amended 2026-10-29 (WP-217):* D is the internal variable. `(r_max, w)` is the state at
+its last growth and `D_c = D(r_max, w)` at that mix. Loading is `D_law(α) ≥ D_c`, where
+`D_law(α) = 1 − T_eff(r)/(S r)` at the current point. Otherwise D is frozen at `D_c`. For `η = 1`,
+D does not depend on the mix and this is exactly `r ≥ r_max` (the original law). See the 2026-10-29 log.
 **Stress** `M_i = (1−D)·Kpen_i·α_i` (secant to origin → no strength recovery, no residual at α=0).
 
 **Reduction check (pure-z, w_z=1):** `S = Mc_z²/Kpen_z`, `Gf_mix = Gf_z`, `M_z = T_eff·Kpen_z/Mc_z`
@@ -72,7 +76,7 @@ Mixed peak-scale and fracture energy interpolate linearly (→ exact on each pur
 **2×2 tangent.** Loading (`r = r_max` increasing): `∂M_i/∂α_j = (1−D)Kpen_i δ_ij − Kpen_i α_i ∂D/∂α_j`,
 with `∂D/∂α_j` taken through `r` at frozen mix (`∂r/∂α_j = α_j/(α0_j² r)`) — **exact on radial paths**
 (the gates), a consistent mixed-mode tangent off-radial. Unloading (`r < r_max`): `D` frozen,
-`∂M_i/∂α_j = (1−D)Kpen_i δ_ij` (diagonal secant). The `−Kpen_i α_i ∂D/∂α_j` term is the **cohesive
+`∂M_i/∂α_j = (1−D)Kpen_i δ_ij` (diagonal secant; exact for every η since the 2026-10-29 amendment). The `−Kpen_i α_i ∂D/∂α_j` term is the **cohesive
 off-diagonal** that, added to the bulk `ks(MZ,MY)` term, makes the element's `K_αα` the true coupled 2×2.
 
 ## Where
@@ -103,6 +107,41 @@ off-diagonal** that, added to the bulk `ks(MZ,MY)` term, makes the element's `K_
   is the opt-in coupled law for cases needing the moment interaction ellipse.
 
 ## Implementation log
+
+### 2026-10-29 — WP-217: B-K elastic domain (frozen D) + IMPL-EX step clock
+
+frame-ladruno-validation's independent spec oracle (Wave B, B3) found that with `η ≠ 1` the
+"current mix" clause above also applied inside the activation surface. While `r < r_max` the secant
+`(1−D)Kpen` changed with the jump direction. Three things followed: (i) the diagonal unloading
+tangent was not the Jacobian (central FD 3.5e-4 off at (1.5, 3) after a square path, 4.3e-2 at
+ratio 10); (ii) a closed loop strictly inside did non-zero work (+1.15e-4 of Σ|M·dα|, and the
+reversed loop created energy); (iii) D could decrease on non-radial unloading (healing). That is
+not a tangent bug. With `D = D(r_max, w(α))` the free energy `½(1−D)α·Kα` is not a function of
+the internal variables alone, so the law is not elastic in its elastic domain.
+
+Options weighed:
+- **Add the missing `∂D/∂w · ∂w/∂α` term to the unloading tangent.** This fixes (i) only. The law
+  stays non-conservative and healing.
+- **Freeze the mix while `r < r_max`, keep `r ≥ r_max` as the loading test.** This fixes (i)–(iii)
+  inside, but on re-entry at a different mix D jumps from `D(r_max, w_frozen)` to
+  `D(r_max, w_now)`. That stress discontinuity across the surface hurts Newton.
+- **Chosen: D is the internal variable.** Loading is `D_law(α) ≥ D_c`. The stress
+  `(1 − max(D_c, D_law(α))) Kpen α` is continuous, and D never decreases, so the dissipation
+  `½ Ḋ α·Kα ≥ 0`. Inside, M is the gradient of `½(1−D_c)α·Kα`: zero work on closed loops and an
+  exact diagonal tangent. Inside `r < r_max` this is the freeze-mix law. The loading surface is
+  where it differs. While loading nothing changes: same D, same consistent PR-4b tangent, same
+  radial paths, same B-K dissipation. For `η = 1` the code keeps the literal `r ≥ r_max` branch
+  (identical law, bit-identical default). The stored history grows by the mix at the last growth
+  (`Cwz, Cwy`, serialized). For `η ≠ 1` the `rMax` response is now "r at the last growth".
+- **IMPL-EX** extrapolates `r_max` and evaluates `D~` at the frozen mix, so the step is linear in α
+  and the diagonal IMPL-EX tangent is exact. The extrapolation factor now comes from
+  `LadrunoImplexClock`: one per committed step by default, never the live `ops_Dt`. Under
+  DisplacementControl `ops_Dt` is the iterate's load-factor increment. `-implexDt pseudo` keeps the
+  `ops_Dt` ratio, latched per step.
+
+Validation tests pinned to the old B7 law (`D` at the current mix at every point) change with
+this amendment for `η ≠ 1` at the ~1e-4 level: the spec oracle's `damage(a, r_max)` must freeze
+the mix with D. Gates: `tests/test_ladruno_cohesive_hinge_implex_bk.py`.
 
 ### 2026-06-19 — PR-4b SHIPPED: B-K mode-mix + consistent off-radial tangent (item #1 + #2)
 

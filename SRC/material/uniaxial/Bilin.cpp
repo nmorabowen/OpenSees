@@ -71,7 +71,7 @@ OPS_Bilin()
   if (OPS_GetNumRemainingInputArgs() < 23) {
     opserr << "Invalid Args want: uniaxialMaterial Bilin tag? Ke? AsPos? AsNeg? My_pos? My_neg? LamdaS? ";
     opserr << "LamdaD?  LamdaA? LamdaK? Cs? Cd? Ca? Ck? Thetap_pos? Thetap_neg? Thetapc_pos? Thetapc_neg?KPos? ";
-    opserr << "KNeg? Thetau_pos? Thetau_neg? PDPlus?  PDNeg?  <nFactor?> <-implex>\n";
+    opserr << "KNeg? Thetau_pos? Thetau_neg? PDPlus?  PDNeg?  <nFactor?> <-implex> <-implexDt step|pseudo>\n";
     return 0;
   }
 
@@ -79,18 +79,26 @@ OPS_Bilin()
   if (OPS_GetDoubleInput(&numData, dData) != 0) {
     opserr << "Invalid Args want: uniaxialMaterial Bilin tag? Ke? AsPos? AsNeg? My_pos? My_neg? LamdaS? ";
     opserr << "LamdaD?  LamdaA? LamdaK? Cs? Cd? Ca? Ck? Thetap_pos? Thetap_neg? Thetapc_pos? Thetapc_neg?KPos? ";
-    opserr << "KNeg? Thetau_pos? Thetau_neg? PDPlus?  PDNeg? <nFactor?> <-implex>\n";
+    opserr << "KNeg? Thetau_pos? Thetau_neg? PDPlus?  PDNeg? <nFactor?> <-implex> <-implexDt step|pseudo>\n";
     return 0;
   }
 
   double nFactor = 0.0;
   bool hasNFactor = false;
   bool useImplex = false;
+  int implexClock = LadrunoImplexClock::STEP; // Ladruno WP-217
   while (OPS_GetNumRemainingInputArgs() > 0) {
     char optBuf[64];
     const char *opt = OPS_GetStringFromAll(optBuf, sizeof(optBuf));
     if (opt != 0 && (strcmp(opt, "-implex") == 0 || strcmp(opt, "-IMPLEX") == 0)) {
       useImplex = true;
+    } else if (opt != 0 && strcmp(opt, "-implexDt") == 0) { // Ladruno WP-217
+      char srcBuf[16];
+      const char *src = (OPS_GetNumRemainingInputArgs() > 0) ? OPS_GetStringFromAll(srcBuf, sizeof(srcBuf)) : 0;
+      if (!LadrunoImplexClock::parse(src, implexClock)) {
+        opserr << "WARNING Bilin -- -implexDt needs step or pseudo\n";
+        return 0;
+      }
     } else if (opt != 0 && opt[0] == '-' &&
                ((opt[1] >= 'a' && opt[1] <= 'z') || (opt[1] >= 'A' && opt[1] <= 'Z'))) {
       opserr << "WARNING Bilin -- unknown option '" << opt << "'\n";
@@ -122,6 +130,7 @@ OPS_Bilin()
     return 0;
   }
  
+  ((Bilin *)theMaterial)->setImplexClock(implexClock); // Ladruno WP-217
   return theMaterial;
 }
 
@@ -178,7 +187,9 @@ int
 Bilin::setTrialStrain(double strain, double strainRate)
 {  
   //all variables to the last commit
+  LadrunoImplexClock keepClock = implexClock_; // Ladruno WP-217: this revert is not a retry
   this->revertToLastCommit();
+  implexClock_ = keepClock;
  
   //Here I declare function variables
   double deltaD,d,temp_1,temp,betas,betak,betad,
@@ -203,11 +214,7 @@ Bilin::setTrialStrain(double strain, double strainRate)
       double k0 = (CKe > 0.0) ? CKe : Ke0 * (1.0 + nFactor);
       if (k0 <= 0.0) k0 = 1.0;
       double k_imp_c = CTangent;
-      double time_factor = 1.0;
-      if (ops_Dt > 0.0 && dtime_n_commit_ > 0.0) {
-        time_factor = ops_Dt / dtime_n_commit_;
-        if (time_factor > 2.0) time_factor = 2.0;
-      }
+      double time_factor = implexClock_.factor(dtime_n_commit_); // Ladruno WP-217: frozen per step
       double dU_expl = time_factor * dU_prev_;
       fP = CfP + (k_imp_c - k0) * dU_expl;
       Tangent = k0;
@@ -1162,11 +1169,7 @@ Bilin::setTrialStrain(double strain, double strainRate)
     double k0 = (CKe > 0.0) ? CKe : Ke0 * (1.0 + nFactor);
     if (k0 <= 0.0) k0 = 1.0;
     double k_imp_c = (commitCalledOnce == 1) ? CTangent : k0;
-    double time_factor = 1.0;
-    if (ops_Dt > 0.0 && dtime_n_commit_ > 0.0) {
-      time_factor = ops_Dt / dtime_n_commit_;
-      if (time_factor > 2.0) time_factor = 2.0;
-    }
+    double time_factor = implexClock_.factor(dtime_n_commit_); // Ladruno WP-217: frozen per step
     double dU_expl = time_factor * dU_prev_;
     fP = CfP + k0 * deltaD + (k_imp_c - k0) * dU_expl;
     Tangent = k0;
@@ -1212,7 +1215,7 @@ Bilin::commitState(void)
     if (k0 <= 0.0) k0 = 1.0;
     Tangent = k0;
   }
-  dtime_n_commit_ = ops_Dt;
+  dtime_n_commit_ = implexClock_.commitDt(); // Ladruno WP-217
   commitCalledOnce = 1;
   
   //commit trial  variables
@@ -1297,6 +1300,7 @@ Bilin::commitState(void)
 int
 Bilin::revertToLastCommit(void)
 {
+  implexClock_.reopen(); // Ladruno WP-217: a retried step latches its own dt
         //the opposite of commit trial history variables
    U=CU;
    Tangent=CTangent;
@@ -1389,6 +1393,7 @@ Bilin::revertToStart(void)
    Tangent_imp_ = Ke;
    dU_prev_ = 0.0;
    dtime_n_commit_ = 0.0;
+   implexClock_.reopen(); // Ladruno WP-217
    commitCalledOnce = 0;
 
    dNewLoadPos=CdNewLoadPos=0.0;
@@ -1610,6 +1615,7 @@ Bilin::getCopy(void)
    theCopy->Tangent_imp_=Tangent_imp_;
    theCopy->dU_prev_=dU_prev_;
    theCopy->dtime_n_commit_=dtime_n_commit_;
+   theCopy->implexClock_ = implexClock_; // Ladruno WP-217
 
     return theCopy;
 }
@@ -1790,7 +1796,7 @@ Bilin::sendSelf(int cTag, Channel &theChannel)
    data(159)=CKe;					// Updated: Filipe Ribeiro and Andre Barbosa
    data(160) = prodBeta;
    data(161)=CprodBeta;				// Updated: Filipe Ribeiro and Andre Barbosa
-   data(166) = useImplex_ ? 1.0 : 0.0; // Ladruno
+   data(166) = LadrunoImplexClock::pack(useImplex_, implexClock_.mode); // Ladruno WP-217: bit 1 = clock
    data(167) = dU_prev_; // Ladruno
    data(168) = dtime_n_commit_; // Ladruno
    data(169) = (double)commitCalledOnce; // Ladruno
@@ -1987,7 +1993,8 @@ Bilin::recvSelf(int cTag, Channel &theChannel,
    CKe=data(159);			// Updated: Filipe Ribeiro and Andre Barbosa
    prodBeta=data(160);		        // Updated: Filipe Ribeiro and Andre Barbosa
    CprodBeta = data(161);
-   useImplex_ = (data(166) != 0.0); // Ladruno
+   useImplex_ = LadrunoImplexClock::unpackImplex(data(166)); // Ladruno
+   implexClock_.mode = LadrunoImplexClock::unpackMode(data(166)); // Ladruno WP-217
    dU_prev_ = data(167); // Ladruno
    dtime_n_commit_ = data(168); // Ladruno
    commitCalledOnce = (int)data(169); // Ladruno

@@ -46,7 +46,7 @@
 //  OPS parser
 //   uniaxialMaterial LadrunoCohesiveHinge tag Mc Gf
 //        <-penalty K | -penaltyRatio r> <-exp | -linear>
-//        <-pm P0 <alpha>> <-implex>
+//        <-pm P0 <alpha>> <-implex> <-implexDt step|pseudo>
 // ===========================================================================
 static bool lchTryOptionalDouble(double& out)
 {
@@ -67,7 +67,7 @@ void* OPS_LadrunoCohesiveHinge(void)
   if (OPS_GetNumRemainingInputArgs() < 3) {
     opserr << "WARNING: insufficient args\n";
     opserr << "Want: uniaxialMaterial LadrunoCohesiveHinge tag? Mc? Gf? "
-           << "<-penalty K? | -penaltyRatio r?> <-exp | -linear> <-pm P0? <alpha?>> <-implex>\n";
+           << "<-penalty K? | -penaltyRatio r?> <-exp | -linear> <-pm P0? <alpha?>> <-implex> <-implexDt step|pseudo>\n";
     return 0;
   }
 
@@ -102,6 +102,7 @@ void* OPS_LadrunoCohesiveHinge(void)
   double Pbal = 0.0;
   double muBal = 1.0;
   bool   implex = false;
+  int    implexClock = LadrunoImplexClock::STEP;
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const char* flag = OPS_GetString();
@@ -155,6 +156,13 @@ void* OPS_LadrunoCohesiveHinge(void)
     else if (strcmp(flag, "-implex") == 0) {
       implex = true;
     }
+    else if (strcmp(flag, "-implexDt") == 0) {   // Ladruno WP-217
+      const char* src = (OPS_GetNumRemainingInputArgs() > 0) ? OPS_GetString() : 0;
+      if (!LadrunoImplexClock::parse(src, implexClock)) {
+        opserr << "WARNING LadrunoCohesiveHinge tag " << tag << ": -implexDt needs step or pseudo\n";
+        return 0;
+      }
+    }
     else {
       opserr << "WARNING LadrunoCohesiveHinge tag " << tag
              << ": unknown option '" << flag << "'\n";
@@ -162,8 +170,10 @@ void* OPS_LadrunoCohesiveHinge(void)
     }
   }
 
-  return new LadrunoCohesiveHinge(tag, Mc, Gf, Kpen, shape, penaltyRatio,
-                                  P0, alphaPM, implex, P0t, Pbal, muBal);
+  LadrunoCohesiveHinge* mat = new LadrunoCohesiveHinge(tag, Mc, Gf, Kpen, shape, penaltyRatio,
+                                                       P0, alphaPM, implex, P0t, Pbal, muBal);
+  mat->setImplexClock(implexClock);
+  return mat;
 }
 
 // ===========================================================================
@@ -334,14 +344,10 @@ int LadrunoCohesiveHinge::setTrialStrain(double strain, double)
     // Oliver et al. (2008) IMPL-EX step extrapolation of the damage driver:
     // extrapolate kappaMax from the previous committed increment and evaluate the
     // secant stiffness explicitly so the step tangent is strictly positive-definite
-    // and constant across global Newton iterations.
-    double time_factor = 1.0;
-    if (ops_Dt > 0.0 && dtime_n_commit > 0.0) {
-      time_factor = ops_Dt / dtime_n_commit;
-      if (time_factor > 2.0) time_factor = 2.0;
-    } else if (implexCommittedSteps == 0) {
-      time_factor = 0.0;
-    }
+    // and constant across global Newton iterations. The step ratio comes from
+    // LadrunoImplexClock (WP-217): frozen per step, never the live ops_Dt, which
+    // under DisplacementControl is the iterate's load-factor increment.
+    double time_factor = (implexCommittedSteps == 0) ? 0.0 : implexClock.factor(dtime_n_commit);
     double dKappaMax_n = CkappaMax - CkappaMax_old;
     double kappaMax_tilde = CkappaMax + time_factor * dKappaMax_n;
     if (kappaMax_tilde < CkappaMax) kappaMax_tilde = CkappaMax;
@@ -403,21 +409,23 @@ int LadrunoCohesiveHinge::commitState(void)
     Cwork   = Twork;
   }
   Cstrain        = Tstrain;
-  dtime_n_commit = ops_Dt;
+  dtime_n_commit = implexClock.commitDt();
   implexCommittedSteps++;
   return 0;
 }
 
 int LadrunoCohesiveHinge::revertToLastCommit(void)
 {
-  return this->setTrialStrain(Cstrain);
+  int res = this->setTrialStrain(Cstrain);
+  implexClock.reopen();   // the retried step latches its own dt
+  return res;
 }
 
 int LadrunoCohesiveHinge::revertToStart(void)
 {
   CkappaMax = 0.0; CkappaMax_old = 0.0;
   Cstrain = 0.0; Cstress = 0.0; Cwork = 0.0;
-  dtime_n_commit = 0.0; implexCommittedSteps = 0;
+  dtime_n_commit = 0.0; implexCommittedSteps = 0; implexClock.reopen();
   TkappaMax = 0.0; Tstrain = 0.0; Tstress = 0.0; Twork = 0.0;
   Ttangent = (P0 > 0.0) ? (Kpen * getPMMultiplier()) : Kpen;
   return 0;
@@ -441,6 +449,7 @@ UniaxialMaterial* LadrunoCohesiveHinge::getCopy(void)
   theCopy->Cwork                = Cwork;
   theCopy->dtime_n_commit       = dtime_n_commit;
   theCopy->implexCommittedSteps = implexCommittedSteps;
+  theCopy->implexClock          = implexClock;
   theCopy->TkappaMax            = TkappaMax;
   theCopy->Tstrain              = Tstrain;
   theCopy->Tstress              = Tstress;
@@ -469,7 +478,7 @@ int LadrunoCohesiveHinge::sendSelf(int cTag, Channel& theChannel)
   data(c++) = Cwork;
   data(c++) = P0;
   data(c++) = alphaPM;
-  data(c++) = implex ? 1.0 : 0.0;
+  data(c++) = LadrunoImplexClock::pack(implex, implexClock.mode);   // WP-217: bit 1 = clock
   data(c++) = P_axial;
   data(c++) = CkappaMax_old;
   data(c++) = dtime_n_commit;
@@ -508,7 +517,8 @@ int LadrunoCohesiveHinge::recvSelf(int cTag, Channel& theChannel, FEM_ObjectBrok
   Cwork                = data(c++);
   P0                   = data(c++);
   alphaPM              = data(c++);
-  implex               = (data(c++) != 0.0);
+  implexClock.mode     = LadrunoImplexClock::unpackMode(data(c));
+  implex               = LadrunoImplexClock::unpackImplex(data(c++));
   P_axial              = data(c++);
   CkappaMax_old        = data(c++);
   dtime_n_commit       = data(c++);
