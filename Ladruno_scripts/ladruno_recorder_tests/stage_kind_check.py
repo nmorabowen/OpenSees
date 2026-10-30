@@ -15,7 +15,9 @@ the two drifted apart once, apeGmsh#2034 review).
 <dist_bin> holds OpenSees.exe (and opensees.pyd for --buildpy); TCL_LIBRARY is
 set to <dist_bin>\\..\\lib\\tcl8.6. Exit 0 iff every case passes. Run it against
 a build without the #2034 fix and it must fail (dc_static_transient,
-flip_static_transient, dc_static_static, transient_only, record_before_analysis).
+flip_static_transient, dc_static_static, transient_only, record_before_analysis,
+freefield_shape -- the nmorabowen/OpenSees#1037 symptom: the transient stage
+written with KIND static by a build older than fork PR #986).
 """
 
 from __future__ import annotations
@@ -45,10 +47,14 @@ EXPECT = {
     "eigen_snapshot": [("static", 5)],
     "eigen_snapshot_transient": [("transient", 6)],
     "flip_then_topology": [("static", 4), ("transient", 5), ("transient", 2)],
+    # nmorabowen/OpenSees#1037: the San Ramon free-field shape (eigen between the
+    # stages, a topology change, rayleigh, UniformExcitation, -T dt sampling).
+    # A pre-#986 build writes [static 4, static 5] with no FORMAT_MINOR_VERSION.
+    "freefield_shape": [("static", 4), ("transient", 5)],
 }
 PY_CASES = ("dc_static_transient", "flip_static_transient",
             "dc_static_static", "internal_restamp", "override_kind",
-            "eigen_snapshot", "eigen_snapshot_transient")
+            "eigen_snapshot", "eigen_snapshot_transient", "freefield_shape")
 MARKER = "STAGE_KIND_MODEL OK"
 
 
