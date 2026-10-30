@@ -313,6 +313,7 @@
 #include "LogStrainNDMaterial.h"
 #include "LogStrain2D.h"
 #include "InitDefGradNDMaterial.h"
+#include "StagedStrainNDMaterial.h"
 #include "MinMaxNDMaterial.h"
 #include "ASDConcrete3DMaterial.h"
 #include "PlasticDamageConcrete3d.h"
@@ -2478,6 +2479,9 @@ FEM_ObjectBrokerAllClasses::getNewNDMaterial(int classTag)
 
   case ND_TAG_InitDefGradNDMaterial:
       return new InitDefGradNDMaterial();
+
+  case ND_TAG_StagedStrainNDMaterial:
+      return new StagedStrainNDMaterial();
 
   case ND_TAG_MinMaxNDMaterial:
       return new MinMaxNDMaterial();      

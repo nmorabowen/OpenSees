@@ -20,6 +20,7 @@ void* OPS_InitStrainNDMaterial();
 void* OPS_LogStrainNDMaterial();
 void* OPS_LogStrain2D();
 void* OPS_InitDefGradNDMaterial();
+void* OPS_StagedStrainNDMaterial();
 void* OPS_MinMaxNDMaterial();
 void* OPS_J2BeamFiber2dMaterial();
 void* OPS_J2BeamFiber3dMaterial();
@@ -133,6 +134,8 @@ namespace {
 	nDMaterialsMap.insert(std::make_pair("InitDefGradNDMaterial", &OPS_InitDefGradNDMaterial));
 	nDMaterialsMap.insert(std::make_pair("StagedDefGrad", &OPS_InitDefGradNDMaterial));
 	nDMaterialsMap.insert(std::make_pair("StagedDefGradNDMaterial", &OPS_InitDefGradNDMaterial));
+	nDMaterialsMap.insert(std::make_pair("StagedStrain", &OPS_StagedStrainNDMaterial));
+	nDMaterialsMap.insert(std::make_pair("StagedStrainNDMaterial", &OPS_StagedStrainNDMaterial));
 	nDMaterialsMap.insert(std::make_pair("MinMax", &OPS_MinMaxNDMaterial));	
 	nDMaterialsMap.insert(std::make_pair("J2BeamFiber", &J2BeamFiber2Dor3D));
 	nDMaterialsMap.insert(std::make_pair("J2PlateFibre", &OPS_J2PlateFibreMaterial));
