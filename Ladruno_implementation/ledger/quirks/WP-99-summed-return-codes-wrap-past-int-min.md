@@ -5,8 +5,9 @@ date: 2026-10-30
 ---
 ### Summing `setTrialStrain` codes wraps past INT_MIN: 64,907 refusing points turn a refusal into an accepted step
 
-- **Bites:** a model of FORWARD hosts (`Tri31`, `FourNodeQuad`, `LadrunoQuad`,
-  roster entry above) whose material returns `LADRUNO_MATERIAL_REFUSED`
+- **Bites:** a model of FORWARD hosts (`Tri31`, `FourNodeQuad`, `LadrunoQuad`;
+  the roster in `WP-99-element-refusal-roster-who-acts-on-a-material-s.md`)
+  whose material returns `LADRUNO_MATERIAL_REFUSED`
   (-33086) at every point: with about 16k fully refusing quads the step is
   COMMITTED, not cut, and nothing is printed beyond the per-point material
   warnings. Found in the Opus review of #1038 (apeGmsh #2619).
