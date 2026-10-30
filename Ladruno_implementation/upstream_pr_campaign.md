@@ -307,20 +307,23 @@ session (human or agent) that ports, opens, merges, or re-scopes a package
 | 0.41 | ElasticTimoshenkoBeam3d ignores its geomTransf | `up/41-timoshenko3d-geomtransf` | [jaabell#68](https://github.com/jaabell/OpenSees/pull/68) | **PR open** 2026-10-30. 1 commit, results-changing. Base 10 fail → 10 pass. Calls `update()` before forming Ki, which the fork does not (nmorabowen/OpenSees issue filed) |
 | 0.42 | ASDShellQ4/T3 corotational tangent has no geometric stiffness (`-pDelta` not sent) | `up/42-asdshell-corotational-tangent` | [jaabell#69](https://github.com/jaabell/OpenSees/pull/69) | **PR open** 2026-10-30. 2 commits. Base 6 fail / 2 pass → 8 pass; Newton 33 → 4, period ratio 1.000 → 1.405 |
 | 0.43 | `system Pardiso` does not compile against oneMKL 2026.1 | `up/43-pardiso-onemkl-2026` | [jaabell#61](https://github.com/jaabell/OpenSees/pull/61) | **PR open** 2026-10-30. 1 commit. Needed to build his base here |
-| 1.1 | Plane-strain σ_zz | — | — | not started |
-| 1.2 | Beam localAxes responses | — | — | not started |
-| 1.3 | DDM HHT/GeneralizedAlpha | — | — | not started; rides on 0.10 |
-| 1.4 | Robust statics (ArcLength/DR/IndirectControl) | — | — | not started |
+| 1.1 | Plane-strain σ_zz | `up/44-plane-strain-stress-zz` | [jaabell#70](https://github.com/jaabell/OpenSees/pull/70) | **PR open** 2026-10-30. 2 commits. Base 7 fail → 7 pass |
+| 1.2 | Beam localAxes responses | `up/45-beam-local-axes` | [jaabell#71](https://github.com/jaabell/OpenSees/pull/71) | **PR open** 2026-10-30. 1 commit. Base 30 fail → 30 pass |
+| 1.3 | DDM HHT/GeneralizedAlpha | `up/46-ladruno-ddm-integrators` | [jaabell#72](https://github.com/jaabell/OpenSees/pull/72) | **PR open** 2026-10-30. 2 commits, tags 33013/33014. Base 12 fail → 12 pass. Re-forms the current tangent before the sensitivity solves; the fork does not (ModifiedNewton/`-initial` gradients off by about 1e-3) |
+| 1.4 | Robust statics (ArcLength/DR/IndirectControl) | `up/47-ladruno-robust-statics` | [jaabell#73](https://github.com/jaabell/OpenSees/pull/73) | **PR open** 2026-10-30. 4 commits, tags 33000, 33004–33006. Base 75 fail / 5 pass / 3 skip → 83 pass. classTags.h one-hunk conflict with #72 (keep both) |
 | 1.5 | ASDPlastic Hoek–Brown + StiffSoil | — | — | **done by José** (`feat/asdp-hoekbrown`, `feat/asdp-stiffsoil`, 2026-10-01). Our later ASDP review fixes are a separate package (see §8) |
 | 2.1 | Explicit dynamics I | — | — | not started. ⚠ José merged his own `ExplicitBathe -lnvd` and `ExplicitDifferenceStatic` rework (2026-10-02): reconcile before porting |
 | 2.2 | Mass scaling | — | — | not started |
 | 2.3 | Projection handler | — | — | not started |
-| 2.4 | Finite-strain material infra | — | — | not started |
+| 2.4 | Finite-strain material infra | `up/48-finite-strain-infra` | [jaabell#74](https://github.com/jaabell/OpenSees/pull/74) | **PR open** 2026-10-30. 5 commits, nD tags 33010/33013/33014/33016. Base 25 fail / 4 pass → 29 pass; no stock element drives the finite-strain path, so command-level and kernel tests only |
 | 2.5 | Energy + recorders | — | proposal emailed 2026-10-06 | **proposed** (LadrunoRecorder). ⚠ José merged his own `EnergyBalanceRecorder` (tag 26, 482 lines, no shared kernel) on 2026-10-01; the email proposes reconciling both into `EnergyBalanceKernel.h`. Pending his answer on kernel, command name (`ladruno` vs neutral) and one or two PRs |
-| 3.1–3.7 | Element / material catalog | — | — | not started |
+| 3.1–3.6 | Element / material catalog | — | — | not started |
+| 3.7 | Modal/eigen (complexEigen, modalResponseHistory, frequency/random response, RSA `-combine`, per-mode RSA) | `up/49-ladruno-modal` | [jaabell#75](https://github.com/jaabell/OpenSees/pull/75) | **PR open** 2026-10-30. 7 commits. Base 76 fail / 33 pass → 109 pass. `wipe` clears eigenvalues; per-mode output lacks the Ritz keys |
 | W4 | contact+tie / FEAST / porous / rigid body / OpenSeesPyMP / profiler / numberer | — | — | deferred (decide w/ José) |
 
 ## 7. Decision & session log (append-only, newest first)
+
+- **2026-10-30 — round 5 sent: jaabell#70–#75 (packages 1.1, 1.2, 1.3, 1.4, 2.4, 3.7).** José asked for faster sends. Method: one porting agent per package in its own worktree on `5deb418e5`, a lint over added lines, commit messages and PR bodies (`Ladruno_scripts/upstream_lint.py`: internal references, trailers, fork paths, em dashes, we/you), one stacked build of all branches per round (OpenSees, OpenSeesSP, OpenSeesMP, OpenSeesPy) plus a per-package run of the new tests on the unmodified base, and a web check of every citation. Stacked `tests/`: 716 passed, 6 skipped; base 439 passed, 13 skipped. **Owner decision: classes keep their Ladruno names upstream** (text rules still apply). Port fixes not yet in the fork: LadrunoHHT/GeneralizedAlpha tangent re-form before DDM; optional-number parsing in LadrunoArcLength/DynamicRelaxation/IndirectControl (a failed read no longer eats the next flag); DR non-finite guard; InitDefGrad refuses singular F0; LogStrain reports inner `setTrialStrain` failure, and revert resets the staged trial.
 
 - **2026-10-30 — round 4 sent: jaabell#61–#69.** José took every earlier PR by 2026-10-30 (#39, #44, #49–#60), none left open. Fork fixes dated after the 2026-10-06 inventory were re-audited on `5deb418e5`; nine packages (0.35–0.43) were ported and verified together: new tests fail on the base, pass with the commits, `tests/` 483 passed, 5 skipped. Not built branch by branch. Still held: ManzariDafalias stage-static fix (#1005, owner HOLD on the family), H5DRM vertical flip and chunk cache (WP-186/187, coordinate first), ASDShell `-pDelta` (feature). José opens his own upstream OpenSees PRs from these (#1856 merged by Michael Scott on 2026-10-29).
 
