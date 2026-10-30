@@ -31,6 +31,14 @@
 //     (Sec. 5.2, piecewise-exact recurrence).
 //   Clough, R.W. and Penzien, J. (1993). Dynamics of Structures, 2nd ed.
 //     McGraw-Hill.
+//   Rice, S.O. (1944, 1945). Mathematical analysis of random noise. Bell
+//     System Technical Journal, 23(3), 282-332 and 24(1), 46-156.
+//     doi:10.1002/j.1538-7305.1944.tb00874.x,
+//     doi:10.1002/j.1538-7305.1945.tb00453.x
+//   Davenport, A.G. (1964). Note on the distribution of the largest value of
+//     a random function with application to gust loading. Proceedings of
+//     the Institution of Civil Engineers, 28(2), 187-196.
+//     doi:10.1680/iicep.1964.10112
 //
 // Description: modal-superposition response of a linear model on the modes
 // of the last `eigen` + `modalProperties` run.
@@ -83,6 +91,19 @@
 //   Frequencies are in Hz (Om = 2 pi f), in and out.  With -load the
 //   excitation is amp P e^{+iOm t} and f_a = psi_a^T P / m~_a; -baseAccel is
 //   the special case P = -M R (then f_a = -Gamma_a).
+//
+//   randomResponse: for a stationary excitation given as a one-sided power
+//   spectral density G(f) in Hz (sigma^2 = int_0^inf G df, the convention of
+//   wind, floor-vibration and equipment specifications), the response
+//   auto-PSD is G_xx(f) = |H_x(f)|^2 G(f) with H_x the frequencyResponse
+//   transfer function, and the band moments over the sweep grid are
+//   m_k = int f^k G_xx df (k = 0, 2, trapezoid rule): RMS = sqrt(m_0), mean
+//   zero-upcrossing rate nu_0 = sqrt(m_2/m_0) [Hz] (Rice 1944), and expected
+//   peak over a duration T, g * RMS with the Davenport (1964) peak factor
+//   g = sqrt(2 ln(nu_0 T)) + 0.5772/sqrt(2 ln(nu_0 T)), for nu_0 T > 1.
+//   Against the two-sided rad/s PSD S(Om) of random-vibration texts,
+//   G(f) = 4 pi S(Om); the white-noise SDOF variance is
+//   sigma_x^2 = G0/(8 xi w^3).
 
 #ifndef LadrunoModalResponse_h
 #define LadrunoModalResponse_h
@@ -243,5 +264,78 @@ private:
     std::string         m_outfile;
 };
 
+
+// ===========================================================================
+// randomResponse: stationary random response, PSD -> RMS (see the
+// description at the top of this file).
+//
+//   A zero-damped mode whose resonance lies inside the sweep band is refused:
+//   its variance integral diverges, so any finite number the grid returned
+//   would be meaningless (and a -biased grid samples exactly on the
+//   resonance).  Zero-damped modes strictly outside the band keep a finite
+//   in-band integrand and are accepted.
+//
+//   -load: the excitation is P(t) = s(t) * P with P the pattern's nodal-load
+//   shape and s(t) a stationary scalar of one-sided PSD G_s(f) [Hz] (all
+//   loads fully correlated); H_x is then the -load transfer function and
+//   G_xx = |H_x|^2 G_s.  For a white force PSD G_F on an SDOF,
+//   sigma_u^2 = G_F/(8 xi w^3 m^2).
+// ===========================================================================
+class LadrunoRandomResponse
+{
+public:
+    struct Stats {
+        double rms  = 0.0;   // sqrt(m0)
+        double m0   = 0.0;   // int   G_xx df   over the band
+        double m2   = 0.0;   // int f^2 G_xx df over the band
+        double nu0  = 0.0;   // sqrt(m2/m0), Hz
+        double peak = 0.0;   // Davenport expected peak (valid iff hasPeak)
+        bool   hasPeak = false;
+    };
+
+    explicit LadrunoRandomResponse(AnalysisModel* theModel);
+    ~LadrunoRandomResponse();
+
+    // excitation: uniform base acceleration along a global dir, with one-sided
+    // PSD G(f) [Hz] sampled from the time series (getFactor(f), f in Hz)
+    void setBaseAccel(int direction)
+    { m_ex = LadrunoFrequencyResponse::EX_BASE_ACCEL; m_direction = direction; }
+    // excitation: nodal-force pattern shape P scaled by a stationary scalar
+    // s(t) with one-sided PSD G_s(f) [Hz]: P(t) = s(t)*P (fully correlated)
+    void setLoadPattern(int patternTag)
+    { m_ex = LadrunoFrequencyResponse::EX_LOAD; m_patternTag = patternTag; }
+    void setInputPSD(TimeSeries* psd)    { m_psd = psd; }
+    void setSweep(double fmin, double fmax, int nf,
+                  LadrunoFrequencyResponse::SweepKind k)
+    { m_fmin = fmin; m_fmax = fmax; m_nf = nf; m_sweep = k; }
+    void setDamping(const LadrunoModalDamping& d) { m_damp = d; }
+    void setModeSubset(const std::vector<int>& modes_1based)
+    { m_modes_1based = modes_1based; }
+    void setResponse(int nodeTag, int dof, LadrunoFrequencyResponse::RespKind r)
+    { m_nodeTag = nodeTag; m_dof = dof; m_resp = r; }
+    void setOutputFile(const char* fname) { m_outfile = fname ? fname : ""; }
+    void setDuration(double T)            { m_duration = T; } // for E[peak]
+
+    // Evaluate: FRF sweep -> G_xx rows {f, G_in, G_xx} -> band moments/stats.
+    // Also writes `rows` to the output file if one was set. Returns 0 / -1.
+    int run(std::vector<std::vector<double> >& rows, Stats& out);
+
+private:
+    AnalysisModel*      m_model;
+    TimeSeries*         m_psd;
+    LadrunoFrequencyResponse::ExKind m_ex;
+    int                 m_direction;
+    int                 m_patternTag;
+    double              m_fmin, m_fmax;
+    int                 m_nf;
+    LadrunoFrequencyResponse::SweepKind m_sweep;
+    LadrunoModalDamping m_damp;
+    std::vector<int>    m_modes_1based;  // pass-through to the FRF (empty=all)
+    int                 m_nodeTag;
+    int                 m_dof;
+    LadrunoFrequencyResponse::RespKind  m_resp;
+    std::string         m_outfile;
+    double              m_duration;      // <=0: no peak estimate
+};
 
 #endif

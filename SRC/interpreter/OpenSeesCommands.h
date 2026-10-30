@@ -493,6 +493,7 @@ int OPS_complexEigen();
 int OPS_LadrunoModalResponseHistory();
 int OPS_LadrunoFrequencyResponse();
 int OPS_LadrunoSteadyStateDynamics();
+int OPS_LadrunoRandomResponse();
 
 void* OPS_TimeSeriesIntegrator();
 

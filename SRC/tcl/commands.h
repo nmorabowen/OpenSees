@@ -147,6 +147,9 @@ frequencyResponse(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char*
 int
 steadyStateDynamics(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
 
+int
+randomResponse(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
 int 
 videoPlayer(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 

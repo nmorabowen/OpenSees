@@ -812,6 +812,16 @@ static PyObject* Py_ops_steadyStateDynamics(PyObject* self, PyObject* args)
     return wrapper->getResults();
 }
 
+static PyObject* Py_ops_randomResponse(PyObject* self, PyObject* args)
+{
+    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
+    if (OPS_LadrunoRandomResponse() < 0) {
+        opserr<<(void*)0;
+        return NULL;
+    }
+    return wrapper->getResults();
+}
+
 static PyObject *Py_ops_nDMaterial(PyObject *self, PyObject *args)
 {
     wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
@@ -3167,6 +3177,7 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("modalResponseHistory", &Py_ops_modalResponseHistory);
     addCommand("frequencyResponse", &Py_ops_frequencyResponse);
     addCommand("steadyStateDynamics", &Py_ops_steadyStateDynamics);
+    addCommand("randomResponse", &Py_ops_randomResponse);
     addCommand("nDMaterial", &Py_ops_nDMaterial);
     addCommand("block2D", &Py_ops_block2d);
     addCommand("block3D", &Py_ops_block3d);
