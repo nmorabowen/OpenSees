@@ -54,12 +54,14 @@
 
 #include <TransientIntegrator.h>
 #include <CriticalTimeStep.h>
+#include <LadrunoProjectionConsumer.h>
 
 class DOF_Group;
 class FE_Element;
 class Vector;
+class LadrunoConstraintProjector;
 
-class ExplicitBathe : public TransientIntegrator
+class ExplicitBathe : public TransientIntegrator, public LadrunoProjectionConsumer
 {
 public:
     // Constructors
@@ -92,6 +94,10 @@ public:
     // central-difference limit (Noh and Bathe 2013), so the value is a
     // conservative bound.
     double getCriticalTimeStep(void) const override;
+
+    // LadrunoProjectionConsumer: stores the (non-owning) acceleration
+    // projector of a projection constraint handler.
+    void setConstraintProjector(LadrunoConstraintProjector *theProjector) override;
     
     // Methods for parallel processing
     virtual int sendSelf(int commitTag, Channel &theChannel);
@@ -157,6 +163,10 @@ private:
     double alpha_lnvd;  // Local non-viscous damping coefficient (0 = off)
 
     CTSLumping lumping; // element mass lumping of the critical-time-step pencil (-lump)
+
+    // constraint projector (not owned; null unless a projection handler
+    // provides one)
+    LadrunoConstraintProjector *theProjector;
 };
 
 #endif

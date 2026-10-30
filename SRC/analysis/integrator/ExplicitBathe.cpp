@@ -151,7 +151,8 @@ ExplicitBathe::ExplicitBathe()
       damped_critical_element_tag(0),
       undamped_critical_element_tag(0),
       alpha_lnvd(0.0),
-      lumping(CTSLumping::RowSum)
+      lumping(CTSLumping::RowSum),
+      theProjector(0)
 {}
 
 // Main constructor with parameters
@@ -175,7 +176,8 @@ ExplicitBathe::ExplicitBathe(double _p, int compute_critical_timestep_, double a
       damped_critical_element_tag(0),
       undamped_critical_element_tag(0),
       alpha_lnvd(alpha_lnvd_),
-      lumping(lumping_)
+      lumping(lumping_),
+      theProjector(0)
 {
     // Calculate integration coefficients from p parameter
     q1 = (1.0 - 2.0*p) / (2.0*p*(1.0 - p));
@@ -548,6 +550,11 @@ void ExplicitBathe::applyLocalDamping(Vector &accel, const Vector &vel) {
 // Get current velocity (for modal damping interface)
 const Vector &ExplicitBathe::getVel() {
     return *V_t;
+}
+
+// Projector of a projection constraint handler (owned by the handler)
+void ExplicitBathe::setConstraintProjector(LadrunoConstraintProjector *theProjector_) {
+    theProjector = theProjector_;
 }
 
 // Critical time step of the central-difference limit (see ExplicitBathe.h)
