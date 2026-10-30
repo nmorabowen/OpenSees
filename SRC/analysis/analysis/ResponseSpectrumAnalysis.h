@@ -61,6 +61,10 @@ public:
 	void setCombination(int rule, const std::vector<double>& xi);
 	int analyzeCombined();
 
+	// responseSpectrumPerMode applies the same modalProperties consistency
+	// check and the same spectral ordinate (check(), getSa()) per mode
+	friend int OPS_LadrunoResponseSpectrumPerMode(void);
+
 private:
 	int check();
 	int beginMode();

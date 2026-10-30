@@ -150,6 +150,9 @@ steadyStateDynamics(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Cha
 int
 randomResponse(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
 
+int
+responseSpectrumPerMode(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
 int 
 videoPlayer(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 

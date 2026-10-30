@@ -256,6 +256,7 @@ extern int OPS_LadrunoModalResponseHistory(void);
 extern int OPS_LadrunoFrequencyResponse(void);
 extern int OPS_LadrunoSteadyStateDynamics(void);
 extern int OPS_LadrunoRandomResponse(void);
+extern int OPS_LadrunoResponseSpectrumPerMode(void);
 extern int OPS_sdfResponse(void);
 
 extern void OPS_SetReliabilityDomain(ReliabilityDomain *);
@@ -933,6 +934,8 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
     Tcl_CreateCommand(interp, "steadyStateDynamics", &steadyStateDynamics,
         (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
     Tcl_CreateCommand(interp, "randomResponse", &randomResponse,
+        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
+    Tcl_CreateCommand(interp, "responseSpectrumPerMode", &responseSpectrumPerMode,
         (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
     Tcl_CreateCommand(interp, "video", &videoPlayer, 
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);       
@@ -5933,6 +5936,15 @@ randomResponse(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** a
 {
     OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
     if (OPS_LadrunoRandomResponse() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+int
+responseSpectrumPerMode(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_LadrunoResponseSpectrumPerMode() < 0)
 	    return TCL_ERROR;
     return TCL_OK;
 }
