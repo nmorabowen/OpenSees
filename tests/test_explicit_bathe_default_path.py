@@ -14,7 +14,8 @@ Checks:
   * the integrator is available from Python;
   * the default path matches the references to the precision they carry,
     |x - x_ref| <= 1e-20 + 2 ulp(x_ref);
-  * enabling the critical time step estimate does not change the trajectory:
+  * enabling the critical time step estimate (row-sum and HRZ lumping) does
+    not change the trajectory:
     the 500-step histories are equal as floats to the default run.
 """
 import math
@@ -46,6 +47,7 @@ REFERENCE = {
 DEFAULT = ("ExplicitBathe", 0.54)
 VARIANTS = [
     ("ExplicitBathe", 0.54, 1),
+    ("ExplicitBathe", 0.54, 1, "-lump", "hrz"),
 ]
 
 
