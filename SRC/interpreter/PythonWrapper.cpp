@@ -792,6 +792,26 @@ static PyObject* Py_ops_modalResponseHistory(PyObject* self, PyObject* args)
     return wrapper->getResults();
 }
 
+static PyObject* Py_ops_frequencyResponse(PyObject* self, PyObject* args)
+{
+    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
+    if (OPS_LadrunoFrequencyResponse() < 0) {
+        opserr<<(void*)0;
+        return NULL;
+    }
+    return wrapper->getResults();
+}
+
+static PyObject* Py_ops_steadyStateDynamics(PyObject* self, PyObject* args)
+{
+    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
+    if (OPS_LadrunoSteadyStateDynamics() < 0) {
+        opserr<<(void*)0;
+        return NULL;
+    }
+    return wrapper->getResults();
+}
+
 static PyObject *Py_ops_nDMaterial(PyObject *self, PyObject *args)
 {
     wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
@@ -3145,6 +3165,8 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("responseSpectrumAnalysis", &Py_ops_responseSpectrumAnalysis);
     addCommand("complexEigen", &Py_ops_complexEigen);
     addCommand("modalResponseHistory", &Py_ops_modalResponseHistory);
+    addCommand("frequencyResponse", &Py_ops_frequencyResponse);
+    addCommand("steadyStateDynamics", &Py_ops_steadyStateDynamics);
     addCommand("nDMaterial", &Py_ops_nDMaterial);
     addCommand("block2D", &Py_ops_block2d);
     addCommand("block3D", &Py_ops_block3d);

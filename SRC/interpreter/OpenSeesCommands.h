@@ -491,6 +491,8 @@ int OPS_DomainModalProperties();
 int OPS_ResponseSpectrumAnalysis();
 int OPS_complexEigen();
 int OPS_LadrunoModalResponseHistory();
+int OPS_LadrunoFrequencyResponse();
+int OPS_LadrunoSteadyStateDynamics();
 
 void* OPS_TimeSeriesIntegrator();
 

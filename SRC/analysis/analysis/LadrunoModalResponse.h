@@ -29,6 +29,8 @@
 //     doi:10.1109/TAC.1978.1101743
 //   Chopra, A.K. (2017). Dynamics of Structures, 5th ed. Pearson
 //     (Sec. 5.2, piecewise-exact recurrence).
+//   Clough, R.W. and Penzien, J. (1993). Dynamics of Structures, 2nd ed.
+//     McGraw-Hill.
 //
 // Description: modal-superposition response of a linear model on the modes
 // of the last `eigen` + `modalProperties` run.
@@ -65,6 +67,22 @@
 //   branches through the discriminant Delta = w^2 - (d/2)^2 (under,
 //   critical, over) and a rigid-body mode carrying Rayleigh mass-proportional
 //   damping (w=0, d=a0 > 0), which a pure q''=f rigid branch would miss.
+//
+//   frequencyResponse / steadyStateDynamics: the steady harmonic response
+//   to a uniform base acceleration u_g''(t) = amp e^{+iOm t} (relative
+//   formulation) is the modal sum
+//
+//       u_hat(Om) = amp * sum_a (phi_a Vscale_a) (-Gamma_a) H_a(Om),
+//       H_a(Om)   = 1 / (w_a^2 - Om^2 + i Om d_a),   d_a = c_a/m_a,
+//
+//   the frequency-domain image of the transient recovery above (same
+//   psi_a = phi_a Vscale_a and Gamma_a).  Velocity = i Om u_hat; relative
+//   acceleration = -Om^2 u_hat.  The time convention is e^{+iOm t} (the
+//   +i Om d_a term gives the -90 deg response lag at resonance); it agrees
+//   with the direct complex solve (K - Om^2 M + i Om C)^{-1}(-M R).
+//   Frequencies are in Hz (Om = 2 pi f), in and out.  With -load the
+//   excitation is amp P e^{+iOm t} and f_a = psi_a^T P / m~_a; -baseAccel is
+//   the special case P = -M R (then f_a = -Gamma_a).
 
 #ifndef LadrunoModalResponse_h
 #define LadrunoModalResponse_h
@@ -155,6 +173,74 @@ private:
     std::vector<double> m_xi_list; // per absolute-mode ratios
 
     std::vector<int>    m_modes;   // absolute 0-based mode indices to include
+};
+
+
+// ===========================================================================
+// frequencyResponse / steadyStateDynamics: modal frequency response and
+// steady-state amplitude (see the description at the top of this file).
+//
+//   EX_BASE_ACCEL  uniform base acceleration, modal load -Gamma_a
+//   EX_LOAD        nodal-force pattern amp P e^{+iOm t}; P is assembled from
+//                  the pattern's plain NodalLoads (reference values; the
+//                  pattern's own TimeSeries is ignored, the sweep replaces
+//                  it) and the modal load is
+//
+//                      f_a = psi_a^T P / m~_a,   m~_a = psi_a^T M psi_a,
+//
+//                  with psi_a = evec_a*Vscale_a, the basis in which
+//                  DomainModalProperties computes generalizedMasses() (the
+//                  -unorm scaling is applied before the generalized-mass and
+//                  participation products), so m~_a = generalizedMasses()(a).
+// ===========================================================================
+class LadrunoFrequencyResponse
+{
+public:
+    enum SweepKind { SWEEP_LIN, SWEEP_LOG, SWEEP_BIASED };
+    enum RespKind  { RESP_DISP, RESP_VEL, RESP_ACCEL };
+    enum ExKind    { EX_BASE_ACCEL, EX_LOAD };
+
+    explicit LadrunoFrequencyResponse(AnalysisModel* theModel);
+    ~LadrunoFrequencyResponse();
+
+    // excitation: uniform base acceleration of amplitude amp along a global dir
+    void setBaseAccel(int direction, double amp)
+    { m_ex = EX_BASE_ACCEL; m_direction = direction; m_amp = amp; }
+    // excitation: harmonic nodal-force pattern, amp * P * e^{+iOm t}
+    void setLoadPattern(int patternTag, double amp)
+    { m_ex = EX_LOAD; m_patternTag = patternTag; m_amp = amp; }
+    // frequency sweep in Hz
+    void setSweep(double fmin, double fmax, int nf, SweepKind k)
+    { m_fmin = fmin; m_fmax = fmax; m_nf = nf; m_sweep = k; }
+    void setDamping(const LadrunoModalDamping& d) { m_damp = d; }
+    void setModeSubset(const std::vector<int>& modes_1based);
+    void setResponse(int nodeTag, int dof, RespKind r)
+    { m_nodeTag = nodeTag; m_dof = dof; m_resp = r; }
+    void setOutputFile(const char* fname) { m_outfile = fname ? fname : ""; }
+
+    // Evaluate the sweep.  Fills `rows`, one per frequency:
+    //   ampOnly==false -> {f, Re, Im}   (full complex FRF)
+    //   ampOnly==true  -> {f, |H|}      (steady-state amplitude, SSD)
+    // Also writes `rows` to the output file if one was set. Returns 0 / -1.
+    int run(std::vector<std::vector<double> >& rows, bool ampOnly);
+
+private:
+    int  buildGrid(std::vector<double>& freqs) const; // Hz sample points
+
+    AnalysisModel*      m_model;
+    ExKind              m_ex;        // excitation channel
+    int                 m_direction; // 1-based global excitation dir (EX_BASE_ACCEL)
+    int                 m_patternTag;// load pattern tag (EX_LOAD)
+    double              m_amp;
+    double              m_fmin, m_fmax;
+    int                 m_nf;
+    SweepKind           m_sweep;
+    LadrunoModalDamping m_damp;
+    std::vector<int>    m_modes;     // absolute 0-based mode subset (empty=all)
+    int                 m_nodeTag;
+    int                 m_dof;       // 1-based response DOF
+    RespKind            m_resp;
+    std::string         m_outfile;
 };
 
 

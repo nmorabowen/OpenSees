@@ -20,7 +20,8 @@
 
 // Developed by: N. Mora Bowen, P. Palacios, J.A. Abell (Ladruño project)
 //
-// Description: modal-superposition response command (modalResponseHistory).
+// Description: modal-superposition response commands (modalResponseHistory,
+// frequencyResponse, steadyStateDynamics).
 // See LadrunoModalResponse.h for the formulation and references.
 
 #include <LadrunoModalResponse.h>
@@ -736,4 +737,533 @@ OPS_LadrunoModalResponseHistory(void)
 
     return mrh.analyze();
 }
+
+// ===========================================================================
+// modal frequency response / steady-state dynamics
+// ===========================================================================
+LadrunoFrequencyResponse::LadrunoFrequencyResponse(AnalysisModel* theModel)
+    : m_model(theModel)
+    , m_ex(EX_BASE_ACCEL)
+    , m_direction(0)
+    , m_patternTag(0)
+    , m_amp(1.0)
+    , m_fmin(0.0), m_fmax(0.0)
+    , m_nf(0)
+    , m_sweep(SWEEP_LIN)
+    , m_nodeTag(0)
+    , m_dof(0)
+    , m_resp(RESP_DISP)
+{
+}
+
+LadrunoFrequencyResponse::~LadrunoFrequencyResponse() {}
+
+void LadrunoFrequencyResponse::setModeSubset(const std::vector<int>& modes_1based)
+{
+    m_modes.clear();
+    for (int m : modes_1based) m_modes.push_back(m - 1); // to 0-based
+}
+
+// Build the Hz sample grid.  LIN: uniform in f.  LOG: geometric.  BIASED: a
+// LIN base grid PLUS a fine cluster around each in-band modal frequency f_a =
+// w_a/2pi so sharp (low-damping) resonant peaks are resolved.
+int
+LadrunoFrequencyResponse::buildGrid(std::vector<double>& freqs) const
+{
+    freqs.clear();
+    if (m_nf < 1 || m_fmin < 0.0)
+        return -1;
+
+    if (m_nf == 1) { freqs.push_back(m_fmin); return 0; }
+
+    // a multi-point sweep needs a real interval; fmax==fmin with nf>1 would emit
+    // nf identical rows (LIN/LOG don't de-dup). Use nf==1 for a single frequency.
+    if (m_fmax <= m_fmin)
+        return -1;
+
+    if (m_sweep == SWEEP_LOG) {
+        if (m_fmin <= 0.0) return -1; // log needs a positive lower bound
+        const double r = std::log(m_fmax / m_fmin) / (m_nf - 1);
+        for (int i = 0; i < m_nf; ++i)
+            freqs.push_back(m_fmin * std::exp(r * i));
+        return 0;
+    }
+
+    // LIN base grid (also the base for BIASED)
+    const double df = (m_fmax - m_fmin) / (m_nf - 1);
+    for (int i = 0; i < m_nf; ++i)
+        freqs.push_back(m_fmin + df * i);
+
+    if (m_sweep == SWEEP_BIASED && m_model && m_model->getDomainPtr()) {
+        const Vector& ev = m_model->getDomainPtr()->getEigenvalues();
+        // active modes for the cluster (default: all extracted)
+        std::vector<int> modes = m_modes;
+        if (modes.empty())
+            for (int i = 0; i < ev.Size(); ++i) modes.push_back(i);
+        const int NCLUST = 15; // points per side within the window
+        for (int m : modes) {
+            if (m < 0 || m >= ev.Size()) continue;
+            const double lam = ev(m);
+            if (lam <= 0.0) continue; // rigid mode: no resonant peak to resolve
+            const double fa = std::sqrt(lam) / (2.0 * M_PI);
+            if (fa < m_fmin || fa > m_fmax) continue;
+            const double halfw = 0.05 * fa; // +/-5% window around the peak
+            for (int k = -NCLUST; k <= NCLUST; ++k) {
+                const double f = fa + halfw * (double(k) / NCLUST);
+                if (f >= m_fmin && f <= m_fmax) freqs.push_back(f);
+            }
+        }
+        std::sort(freqs.begin(), freqs.end());
+        freqs.erase(std::unique(freqs.begin(), freqs.end()), freqs.end());
+    }
+    return 0;
+}
+
+int
+LadrunoFrequencyResponse::run(std::vector<std::vector<double> >& rows, bool ampOnly)
+{
+    rows.clear();
+    if (m_model == 0 || m_model->getDomainPtr() == 0) {
+        opserr << "frequencyResponse - no AnalysisModel/Domain.\n";
+        return -1;
+    }
+    Domain* domain = m_model->getDomainPtr();
+
+    const Vector& ev = domain->getEigenvalues();
+    if (ev.Size() < 1) {
+        opserr << "frequencyResponse - no eigenvalues; call 'eigen' first.\n";
+        return -1;
+    }
+    DomainModalProperties mp;
+    if (domain->getModalProperties(mp) < 0) {
+        opserr << "frequencyResponse - eigen and modalProperties have not been "
+                  "called.\n";
+        return -1;
+    }
+    if (ev.Size() != mp.eigenvalues().Size()) {
+        opserr << "frequencyResponse - modalProperties is stale vs the last eigen "
+                  "run; call 'modalProperties' right after 'eigen'.\n";
+        return -1;
+    }
+    // element-wise staleness check (same as modalResponseHistory): a re-run of
+    // `eigen` with the SAME mode count but a changed model leaves a same-size
+    // DomainModalProperties that the size test alone accepts; the FRF would then
+    // be built from
+    // stale w/Gamma/Vscale while the -biased grid reads the NEW domain eigenvalues
+    // (inconsistent, silent). Refuse unless the snapshot matches the domain.
+    {
+        const double tol = std::max(1.0e-15, 1.0e-12 * ev.Norm());
+        for (int i = 0; i < ev.Size(); ++i)
+            if (std::abs(ev(i) - mp.eigenvalues()(i)) > tol) {
+                opserr << "frequencyResponse - eigenvalue mismatch between the domain "
+                          "and DomainModalProperties (re-run modalProperties after "
+                          "eigen).\n";
+                return -1;
+            }
+    }
+    const int num_eigen = ev.Size();
+    const int ndf = mp.totalMass().Size();
+    int exdof = 0;
+    if (m_ex == EX_BASE_ACCEL) {
+        if (m_direction < 1 || m_direction > ndf) {
+            opserr << "frequencyResponse - -dir (" << m_direction
+                   << ") must be in 1.." << ndf << ".\n";
+            return -1;
+        }
+        exdof = m_direction - 1;
+    }
+
+    // response node/dof
+    Node* rnode = domain->getNode(m_nodeTag);
+    if (rnode == 0) {
+        opserr << "frequencyResponse - response node " << m_nodeTag
+               << " not found.\n";
+        return -1;
+    }
+    // probe with the non-exiting accessor first: Node::getEigenvectors() exit(0)s
+    // the whole process when unset (a fully-constrained node, or one outside the
+    // eigen analysis), which for a user-chosen response node would be a silent kill.
+    if (rnode->getNumEigenvectors() < 1) {
+        opserr << "frequencyResponse - response node " << m_nodeTag
+               << " has no eigenvector (fully constrained, or not in the last "
+                  "eigen analysis); pick a free node.\n";
+        return -1;
+    }
+    const Matrix& revec = rnode->getEigenvectors();
+    const int rndf = revec.noRows();
+    if (m_dof < 1 || m_dof > rndf) {
+        opserr << "frequencyResponse - -dof (" << m_dof << ") must be in 1.." << rndf
+               << " for node " << m_nodeTag << ".\n";
+        return -1;
+    }
+    const int rdof = m_dof - 1;
+
+    // active mode list (default: all), 0-based, no duplicates
+    std::vector<int> modes = m_modes;
+    if (modes.empty()) {
+        modes.resize(num_eigen);
+        for (int i = 0; i < num_eigen; ++i) modes[i] = i;
+    }
+    for (int m : modes)
+        if (m < 0 || m >= num_eigen) {
+            opserr << "frequencyResponse - requested mode " << (m + 1)
+                   << " is out of range 1.." << num_eigen << ".\n";
+            return -1;
+        }
+    {
+        std::vector<int> seen = modes;
+        std::sort(seen.begin(), seen.end());
+        if (std::adjacent_find(seen.begin(), seen.end()) != seen.end()) {
+            opserr << "frequencyResponse - -modes contains a duplicate index.\n";
+            return -1;
+        }
+    }
+    if (m_damp.kind == LadrunoModalDamping::MODAL_LIST) {
+        int maxmode = 0;
+        for (int m : modes) maxmode = std::max(maxmode, m);
+        if (static_cast<int>(m_damp.xis.size()) <= maxmode) {
+            opserr << "frequencyResponse - -modalDamp list has "
+                   << static_cast<int>(m_damp.xis.size()) << " ratios but mode "
+                   << (maxmode + 1) << " is used.\n";
+            return -1;
+        }
+    }
+    const int nm = static_cast<int>(modes.size());
+
+    // negative-eigenvalue guard (same policy as modalResponseHistory)
+    double maxAbsLambda = 0.0;
+    for (int m : modes)
+        maxAbsLambda = std::max(maxAbsLambda, std::abs(mp.eigenvalues()(m)));
+    const double negTol = std::max(1.0e-12, 1.0e-8 * maxAbsLambda);
+
+    // -load channel: assemble the RAW-eigenvector modal load sums
+    //   psiTP_raw[a] = sum_nodes sum_i evec(i, mode_a) * P_node(i)
+    // via the shared helper (Vscale applied with the recovery psi below so the
+    // pair matches the basis generalizedMasses() was computed in).
+    std::vector<double> psiTP;
+    if (m_ex == EX_LOAD) {
+        if (LadrunoAssembleModalLoadShape(domain, m_patternTag, ndf, modes,
+                                          "frequencyResponse", psiTP) < 0)
+            return -1;
+    }
+
+    // per-mode precompute: w, d, and the scalar recovery weight
+    //   base accel:  c_a = psi_a(node,dof) * (-Gamma_a)
+    //   nodal load:  c_a = psi_a(node,dof) * (psi_a^T P) / m~_a
+    // with psi_a = evec*Vscale and m~_a = generalizedMasses()(a) (same basis).
+    std::vector<double> w(nm), d(nm), cw(nm);
+    for (int a = 0; a < nm; ++a) {
+        const int mode0 = modes[a];
+        const double lambda = mp.eigenvalues()(mode0);
+        if (lambda < -negTol) {
+            opserr << "frequencyResponse - mode " << (mode0 + 1)
+                   << " has a negative eigenvalue (" << lambda << ").\n";
+            return -1;
+        }
+        const double wa = (lambda > 0.0) ? std::sqrt(lambda) : 0.0;
+        w[a] = wa;
+        d[a] = m_damp.coeff(mode0, wa);
+        const double Vscale = mp.eigenVectorScaleFactors()(mode0);
+        const double psi    = revec(rdof, mode0) * Vscale;
+        if (m_ex == EX_LOAD) {
+            const double ma = mp.generalizedMasses()(mode0);
+            if (!(ma > 0.0)) {
+                opserr << "frequencyResponse - mode " << (mode0 + 1)
+                       << " has a non-positive generalized mass (" << ma
+                       << "); the modal load f_a = psi^T P / m_a is "
+                          "undefined.\n";
+                return -1;
+            }
+            cw[a] = psi * (psiTP[a] * Vscale) / ma;
+        } else {
+            const double Gamma = mp.modalParticipationFactors()(mode0, exdof);
+            cw[a] = psi * (-Gamma);
+        }
+    }
+
+    std::vector<double> freqs;
+    if (buildGrid(freqs) < 0) {
+        opserr << "frequencyResponse - bad frequency sweep "
+                  "(need nf>=1, 0<=fmin<=fmax; log needs fmin>0).\n";
+        return -1;
+    }
+
+    // sweep
+    const std::complex<double> I(0.0, 1.0);
+    for (double f : freqs) {
+        const double Om = 2.0 * M_PI * f;
+        std::complex<double> uc(0.0, 0.0);
+        for (int a = 0; a < nm; ++a) {
+            const std::complex<double> denom(w[a] * w[a] - Om * Om, Om * d[a]);
+            uc += cw[a] / denom;               // psi*(-Gamma)*H_a(Om)
+        }
+        // response-quantity multiplier (relative), then excitation amplitude
+        if (m_resp == RESP_VEL)        uc *= I * Om;
+        else if (m_resp == RESP_ACCEL) uc *= -(Om * Om);
+        uc *= m_amp;
+
+        std::vector<double> row;
+        row.push_back(f);
+        if (ampOnly) {
+            row.push_back(std::abs(uc));
+        } else {
+            row.push_back(uc.real());
+            row.push_back(uc.imag());
+        }
+        rows.push_back(row);
+    }
+
+    // optional file output
+    if (!m_outfile.empty()) {
+        std::ofstream os(m_outfile.c_str());
+        if (!os) {
+            opserr << "frequencyResponse - cannot open output file '"
+                   << m_outfile.c_str() << "'.\n";
+            return -1;
+        }
+        os << std::scientific << std::setprecision(15);
+        for (const std::vector<double>& r : rows) {
+            for (size_t j = 0; j < r.size(); ++j)
+                os << (j ? " " : "") << r[j];
+            os << "\n";
+        }
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Shared parser for frequencyResponse / steadyStateDynamics.
+//
+//   frequencyResponse -freq fmin fmax nf [-lin|-log|-biased]
+//       (-baseAccel -dir $dir | -load $patternTag) [-amp $a]
+//       (-damp $xi | -rayleigh $a0 $a1 | -modalDamp $xi1 ...)
+//       -node $tag -dof $dof [-resp disp|vel|accel] [-modes ...] [-out $file]
+//
+//   steadyStateDynamics ...same... (reports |response| instead of Re/Im)
+//
+//   Excitation is exactly ONE of:
+//     -baseAccel -dir k   uniform base accel amp*e^{+iOm t} (relative response)
+//     -load $patternTag   nodal forces amp*P*e^{+iOm t}, P = the pattern's
+//                         plain NodalLoad reference values (the pattern's own
+//                         TimeSeries is IGNORED; absolute response)
+//
+// Requires a prior `eigen N` and `modalProperties`.  Returns the table to the
+// interpreter via OPS_SetDoubleListsOutput (and writes -out if given).
+// ---------------------------------------------------------------------------
+static int
+OPS_FreqResponseImpl(bool ampOnly, const char* cmd)
+{
+    AnalysisModel* theModel = *OPS_GetAnalysisModel();
+    if (theModel == 0 || theModel->getDomainPtr() == 0) {
+        opserr << cmd << " - no AnalysisModel/Domain available.\n";
+        return -1;
+    }
+
+    double fmin = 0.0, fmax = 0.0, amp = 1.0;
+    int nf = 0, dir = 0, nodeTag = 0, dof = 0, loadPatternTag = 0;
+    LadrunoFrequencyResponse::SweepKind sweep = LadrunoFrequencyResponse::SWEEP_LIN;
+    LadrunoFrequencyResponse::RespKind  resp  = LadrunoFrequencyResponse::RESP_DISP;
+    bool haveFreq = false, haveBase = false, haveLoad = false;
+    bool haveDamp = false, haveNode = false;
+    LadrunoModalDamping damp;
+    std::vector<int> modes;
+    std::string outfile;
+    int one = 1;
+
+    while (OPS_GetNumRemainingInputArgs() > 0) {
+        const char* opt = OPS_GetString();
+
+        if (strcmp(opt, "-freq") == 0) {
+            double fv[2]; int nd = 2;
+            if (OPS_GetNumRemainingInputArgs() < 3 || OPS_GetDoubleInput(&nd, fv) < 0
+                    || OPS_GetIntInput(&one, &nf) < 0) {
+                opserr << cmd << " - -freq requires fmin fmax nf.\n"; return -1;
+            }
+            fmin = fv[0]; fmax = fv[1]; haveFreq = true;
+        }
+        else if (strcmp(opt, "-lin") == 0)    sweep = LadrunoFrequencyResponse::SWEEP_LIN;
+        else if (strcmp(opt, "-log") == 0)    sweep = LadrunoFrequencyResponse::SWEEP_LOG;
+        else if (strcmp(opt, "-biased") == 0) sweep = LadrunoFrequencyResponse::SWEEP_BIASED;
+        else if (strcmp(opt, "-baseAccel") == 0) haveBase = true;
+        else if (strcmp(opt, "-load") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetInt(&one, &loadPatternTag) < 0) {
+                opserr << cmd << " - -load requires a loadPattern tag.\n"; return -1;
+            }
+            haveLoad = true;
+        }
+        else if (strcmp(opt, "-dir") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetInt(&one, &dir) < 0) {
+                opserr << cmd << " - -dir requires a value.\n"; return -1;
+            }
+        }
+        else if (strcmp(opt, "-amp") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetDouble(&one, &amp) < 0) {
+                opserr << cmd << " - -amp requires a value.\n"; return -1;
+            }
+        }
+        else if (strcmp(opt, "-node") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetInt(&one, &nodeTag) < 0) {
+                opserr << cmd << " - -node requires a tag.\n"; return -1;
+            }
+            haveNode = true;
+        }
+        else if (strcmp(opt, "-dof") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetInt(&one, &dof) < 0) {
+                opserr << cmd << " - -dof requires a value.\n"; return -1;
+            }
+        }
+        else if (strcmp(opt, "-resp") == 0 || strcmp(opt, "-response") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1) {
+                opserr << cmd << " - -resp requires disp|vel|accel.\n"; return -1;
+            }
+            const char* rname = OPS_GetString();
+            if (strcmp(rname, "disp") == 0)       resp = LadrunoFrequencyResponse::RESP_DISP;
+            else if (strcmp(rname, "vel") == 0)   resp = LadrunoFrequencyResponse::RESP_VEL;
+            else if (strcmp(rname, "accel") == 0) resp = LadrunoFrequencyResponse::RESP_ACCEL;
+            else {
+                opserr << cmd << " - unknown -resp '" << rname
+                       << "' (use disp|vel|accel).\n"; return -1;
+            }
+        }
+        else if (strcmp(opt, "-damp") == 0) {
+            double xi;
+            if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetDouble(&one, &xi) < 0) {
+                opserr << cmd << " - -damp requires a value.\n"; return -1;
+            }
+            // refuse negative damping: d_a = 2 xi w_a < 0 silently conjugates
+            // the FRF (H -> H*), identical |H| with the phase sign flipped, so a
+            // mistyped '-0.05' passes every magnitude check. xi==0 is legal (the
+            // undamped resonance is a genuine singularity).
+            if (xi < 0.0) {
+                opserr << cmd << " - -damp xi must be >= 0 (got " << xi
+                       << "); negative damping conjugates the FRF (same magnitude, "
+                          "flipped phase). Use xi=0 for the undamped case.\n";
+                return -1;
+            }
+            damp.kind = LadrunoModalDamping::UNIFORM; damp.xi = xi; haveDamp = true;
+        }
+        else if (strcmp(opt, "-rayleigh") == 0) {
+            double v[2]; int nd = 2;
+            if (OPS_GetNumRemainingInputArgs() < 2 || OPS_GetDoubleInput(&nd, v) < 0) {
+                opserr << cmd << " - -rayleigh requires a0 a1.\n"; return -1;
+            }
+            damp.kind = LadrunoModalDamping::RAYLEIGH; damp.a0 = v[0]; damp.a1 = v[1];
+            haveDamp = true;
+        }
+        else if (strcmp(opt, "-modalDamp") == 0 || strcmp(opt, "-modalDamping") == 0) {
+            damp.xis.clear();
+            while (OPS_GetNumRemainingInputArgs() > 0) {
+                double item;
+                int rem_before = OPS_GetNumRemainingInputArgs();
+                if (OPS_GetDoubleInput(&one, &item) < 0) {
+                    if (OPS_GetNumRemainingInputArgs() < rem_before)
+                        OPS_ResetCurrentInputArg(-1);
+                    break;
+                }
+                damp.xis.push_back(item);
+            }
+            if (damp.xis.empty()) {
+                opserr << cmd << " - -modalDamp requires >=1 ratio.\n"; return -1;
+            }
+            // every per-mode ratio must be >= 0 (same FRF conjugation by
+            // negative damping as -damp).
+            for (size_t j = 0; j < damp.xis.size(); ++j) {
+                if (damp.xis[j] < 0.0) {
+                    opserr << cmd << " - -modalDamp entry " << (int)j << " = "
+                           << damp.xis[j] << " must be >= 0 (negative damping "
+                              "conjugates the FRF).\n";
+                    return -1;
+                }
+            }
+            damp.kind = LadrunoModalDamping::MODAL_LIST; haveDamp = true;
+        }
+        else if (strcmp(opt, "-modes") == 0) {
+            modes.clear();
+            while (OPS_GetNumRemainingInputArgs() > 0) {
+                int item;
+                int rem_before = OPS_GetNumRemainingInputArgs();
+                if (OPS_GetIntInput(&one, &item) < 0) {
+                    if (OPS_GetNumRemainingInputArgs() < rem_before)
+                        OPS_ResetCurrentInputArg(-1);
+                    break;
+                }
+                modes.push_back(item);
+            }
+            if (modes.empty()) {
+                opserr << cmd << " - -modes requires >=1 mode index.\n"; return -1;
+            }
+        }
+        else if (strcmp(opt, "-out") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1) {
+                opserr << cmd << " - -out requires a filename.\n"; return -1;
+            }
+            outfile = OPS_GetString();
+        }
+        else {
+            opserr << cmd << " - unknown option '" << opt << "'.\n"; return -1;
+        }
+    }
+
+    if (!haveFreq) { opserr << cmd << " - -freq fmin fmax nf is required.\n"; return -1; }
+    if (haveBase && haveLoad) {
+        opserr << cmd << " - -baseAccel and -load are mutually exclusive "
+                  "(one excitation channel per sweep).\n"; return -1;
+    }
+    if (haveLoad) {
+        if (dir != 0)
+            opserr << "WARNING " << cmd << " - -dir is ignored with -load "
+                      "(the pattern's nodal loads define the shape).\n";
+    }
+    else if (!haveBase || dir < 1) {
+        opserr << cmd << " - an excitation channel is required: "
+                  "-baseAccel -dir <1..ndf>, or -load <patternTag>.\n"; return -1;
+    }
+    if (!haveNode || dof < 1) {
+        opserr << cmd << " - -node <tag> -dof <1..ndf> are required.\n"; return -1;
+    }
+    if (!haveDamp) {
+        opserr << cmd << " - a damping channel is required "
+                  "(-damp | -rayleigh | -modalDamp).\n"; return -1;
+    }
+
+    // a -biased grid places k=0 exactly on each in-band
+    // resonance f_a=w_a/2pi (f = fa + halfw*(k/NCLUST), k=0 => f=fa). With an
+    // exactly-zero d_a the denominator w_a^2-Om^2+i Om d_a is real and hits 0
+    // there => an inf/NaN FRF row. That is an honest singularity (not guarded),
+    // but -biased produces it by construction, so warn once: a zero-damping
+    // resonance-biased sweep is almost never intended.
+    if (sweep == LadrunoFrequencyResponse::SWEEP_BIASED) {
+        bool zeroDamp = false;
+        if (damp.kind == LadrunoModalDamping::UNIFORM)       zeroDamp = (damp.xi == 0.0);
+        else if (damp.kind == LadrunoModalDamping::RAYLEIGH) zeroDamp = (damp.a0 == 0.0 && damp.a1 == 0.0);
+        else if (damp.kind == LadrunoModalDamping::MODAL_LIST) {
+            for (size_t j = 0; j < damp.xis.size(); ++j)
+                if (damp.xis[j] == 0.0) { zeroDamp = true; break; }
+        }
+        if (zeroDamp)
+            opserr << "WARNING " << cmd << " - -biased with zero damping samples "
+                      "EXACTLY on an undamped resonance (f_a=w_a/2pi) => inf/NaN "
+                      "FRF row at that mode. Use a positive damping ratio or a "
+                      "-lin/-log grid.\n";
+    }
+
+    LadrunoFrequencyResponse fr(theModel);
+    if (haveLoad) fr.setLoadPattern(loadPatternTag, amp);
+    else          fr.setBaseAccel(dir, amp);
+    fr.setSweep(fmin, fmax, nf, sweep);
+    fr.setDamping(damp);
+    fr.setResponse(nodeTag, dof, resp);
+    if (!modes.empty())  fr.setModeSubset(modes);
+    if (!outfile.empty()) fr.setOutputFile(outfile.c_str());
+
+    std::vector<std::vector<double> > rows;
+    if (fr.run(rows, ampOnly) < 0)
+        return -1;
+
+    OPS_SetDoubleListsOutput(rows);
+    return 0;
+}
+
+int OPS_LadrunoFrequencyResponse(void)  { return OPS_FreqResponseImpl(false, "frequencyResponse"); }
+int OPS_LadrunoSteadyStateDynamics(void){ return OPS_FreqResponseImpl(true,  "steadyStateDynamics"); }
 
