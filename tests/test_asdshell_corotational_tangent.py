@@ -31,7 +31,7 @@ E, NU, T, B, H, M = 25.0e6, 0.2, 0.3, 1.0, 30.0, 100.0
 PCR_OUT = math.pi ** 2 * E * (B * T ** 3 / 12.0) / (4.0 * H ** 2)
 PCR_IN = math.pi ** 2 * E * (T * B ** 3 / 12.0) / (4.0 * H ** 2)
 
-ELEMENTS = [("ASDShellQ4", False)]
+ELEMENTS = [("ASDShellQ4", False), ("ASDShellT3", True)]
 
 
 def _strip(element, options, axial, tri, lateral_dof=2, nx=1, nz=10):
