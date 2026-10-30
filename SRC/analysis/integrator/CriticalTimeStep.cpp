@@ -24,6 +24,7 @@
 // See CriticalTimeStep.h for the method and its references.
 
 #include <CriticalTimeStep.h>
+#include <LadrunoMassLumping.h>
 #include <AnalysisModel.h>
 #include <Domain.h>
 #include <Element.h>
@@ -184,6 +185,34 @@ void lumpElementMass(Element *ele, const Matrix &M, CTSLumping lumping,
     if (lumping == CTSLumping::Diagonal) {
         for (int i = 0; i < n; ++i)
             mdiag[i] = M(i, i);
+    } else if (lumping == CTSLumping::HRZ) {
+        // DOF directions from the node layout: the first ndm DOFs of each node
+        // (ndm from that node's coordinates) are translational, the rest
+        // (rotations, pressure) are tagged -1
+        ID dofDir(n);
+        Node **nodes = ele->getNodePtrs();
+        int numNodes = ele->getNumExternalNodes();
+        int pos = 0;
+        bool built = (nodes != 0);
+        for (int a = 0; a < numNodes && built && pos < n; ++a) {
+            Node *nd = nodes[a];
+            if (nd == 0) { built = false; break; }
+            int ndmA = nd->getCrds().Size();
+            int ndfA = nd->getNumberDOF();
+            for (int k = 0; k < ndfA && pos < n; ++k, ++pos)
+                dofDir(pos) = (k < ndmA) ? k : -1;
+        }
+        if (built && pos == n) {
+            int rc = Ladruno::hrzLump(M, dofDir, mdiag, n);
+            if (rc != Ladruno::HRZ_OK)
+                opserr << "WARNING CriticalTimeStep - element " << ele->getTag()
+                       << ": HRZ lump fell back to diagonal-of-consistent\n";
+        } else {
+            // DOF layout not inferable (element DOFs other than the node DOFs)
+            opserr << "WARNING CriticalTimeStep - element " << ele->getTag()
+                   << ": -lump hrz could not tag DOFs, using diagonal\n";
+            for (int i = 0; i < n; ++i) mdiag[i] = M(i, i);
+        }
     } else {
         // row sum
         for (int i = 0; i < n; ++i) {

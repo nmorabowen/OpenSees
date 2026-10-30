@@ -137,6 +137,7 @@ target_sources(OPS_Analysis
        ExplicitDifferenceStatic.h
        CriticalTimeStep.h
        CentralDifferenceLadruno.h
+       LadrunoMassLumping.h
 )
 
 target_sources(OPS_PFEM

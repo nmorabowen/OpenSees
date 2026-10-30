@@ -51,7 +51,7 @@
 void *OPS_CentralDifferenceLadruno(void)
 {
     // integrator CentralDifferenceLadruno <-cfl> <-cflAbort> <-tangent>
-    //     <-recompute N> <-lump rowsum|diagonal> <-verbose> <-divergence f>
+    //     <-recompute N> <-lump rowsum|diagonal|hrz> <-verbose> <-divergence f>
     //     <-noMassCache> <-commitSolveState>
     int compute_critical_timestep = 0;
     bool verbose = false;
@@ -102,8 +102,9 @@ void *OPS_CentralDifferenceLadruno(void)
                 const char *m = OPS_GetString();
                 if (strcmp(m, "diagonal") == 0)      lumping = CTSLumping::Diagonal;
                 else if (strcmp(m, "rowsum") == 0)   lumping = CTSLumping::RowSum;
+                else if (strcmp(m, "hrz") == 0)      lumping = CTSLumping::HRZ;
                 else opserr << "WARNING CentralDifferenceLadruno - unknown -lump " << m
-                            << " (use rowsum|diagonal; keeping diagonal)\n";
+                            << " (use rowsum|diagonal|hrz; keeping diagonal)\n";
             }
         } else {
             opserr << "WARNING CentralDifferenceLadruno - unknown option " << arg
@@ -644,8 +645,10 @@ int CentralDifferenceLadruno::recvSelf(int cTag, Channel &theChannel, FEM_Object
     cflUseTangent    = (data(4) != 0.0);
     cflRecomputeEvery = (int)data(5);
     int lc = (int)data(6);
-    lumping = (lc == 0) ? CTSLumping::RowSum : CTSLumping::Diagonal;
-    if (lc < 0 || lc > 1)
+    lumping = (lc == 0) ? CTSLumping::RowSum
+            : (lc == 2) ? CTSLumping::HRZ
+                        : CTSLumping::Diagonal;
+    if (lc < 0 || lc > 2)
         opserr << "WARNING CentralDifferenceLadruno::recvSelf - unknown lumping "
                << "code " << lc << " (using Diagonal)\n";
 

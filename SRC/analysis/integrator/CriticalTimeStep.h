@@ -59,9 +59,13 @@ enum class CTSLumping {
     RowSum,   // (0) row sum onto the diagonal. Conserves mass, but can give
               //   zero or negative entries on higher-order elements and zero
               //   rotational inertia on beams and shells.
-    Diagonal  // (1) diagonal of the consistent mass, M_ii. Positive for a
+    Diagonal, // (1) diagonal of the consistent mass, M_ii. Positive for a
               //   consistent mass, so it avoids the rotational defect of the
               //   row sum, but it does not conserve mass.
+    HRZ       // (2) Hinton-Rock-Zienkiewicz lump (LadrunoMassLumping.h): the
+              //   consistent diagonal scaled per translational direction to
+              //   the element mass; rotational DOFs take the mean factor.
+              //   Positive, mass-conserving, nonzero rotational inertia.
 };
 
 // Result of one scan over the elements of the (local) domain.
@@ -100,7 +104,10 @@ CTSResult computeCriticalTimeStep(AnalysisModel *theModel,
                                   CTSLumping lumping);
 
 // Lump the consistent mass M of one element into mdiag (length M.noRows())
-// according to lumping. M is fully copied before returning.
+// according to lumping. M is fully copied before returning. For HRZ the
+// direction of each DOF is taken from the node layout of the element: the
+// first ndm DOFs of each node are translational and the element matrix is
+// assumed node by node.
 void lumpElementMass(Element *ele, const Matrix &M, CTSLumping lumping,
                      double *mdiag);
 
