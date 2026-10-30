@@ -10,9 +10,12 @@ with resisting-force sign. ASDAbsorbingBoundary2D/3D and LysmerTriangle
 publish it at commit; -v2 reports IE without it and the injected energy as
 E_inject. Checked, for an ASDAbsorbingBoundary2D compliant base (bottom,
 Ricker velocity) and an ASDAbsorbingBoundary2D lateral free-field column
-(initial velocity), Newmark average acceleration:
+(initial velocity), and a LysmerTriangle base driven by
+eleLoad -type -lysmerVelocityLoader (Ricker velocity), Newmark average
+acceleration:
   * the six-column IE carries a leak of at least 5 % of the energy scale;
-  * the -v2 IE is below 5 % of the energy scale once the motion has settled;
+  * the -v2 IE is below 5 % of the energy scale once the motion has
+    settled (ASD cases), and RES is the same in both layouts (Lysmer case);
   * E_inject equals IE_v2 - IE_six_column (the same leak through two paths);
   * a zero-amplitude control gives E_inject ~ 0.
 """
@@ -164,3 +167,65 @@ def test_asd_lateral_freefield_closure(tmp_path):
     d_v2 = run_asd_lateral_column(tmp_path, "lat_v2.txt", v2=True, amp_scale=1.0)
     d_ctl = run_asd_lateral_column(tmp_path, "lat_ctl.txt", v2=True, amp_scale=0.0)
     check_injection(d_six, d_v2, d_ctl)
+
+
+# ---------------------------------------------------------------------------
+# LysmerTriangle base driven by eleLoad -type -lysmerVelocityLoader
+#
+# 1 x 1 x NL soil column of stdBrick, x-polarized shear (y and z fixed), base
+# face covered by two LysmerTriangle (stage 0, pure dashpot), incident
+# x-velocity given by a Ricker pulse through the velocity loader.
+# ---------------------------------------------------------------------------
+def build_lysmer_column(amp_scale, nl=5):
+    rho, vs, nu = 2000.0, 200.0, 0.25
+    G = rho * vs * vs
+    E = 2.0 * G * (1.0 + nu)
+    vp = vs * math.sqrt((2.0 - 2.0 * nu) / (1.0 - 2.0 * nu))
+    dt = 1.0e-3
+    nstep = 200
+    f0, t0 = 10.0, 0.1
+    vals = []
+    for i in range(nstep + 1):
+        a = (math.pi * f0 * (i * dt - t0)) ** 2
+        vals.append(amp_scale * 0.1 * (1.0 - 2.0 * a) * math.exp(-a))
+
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    ops.nDMaterial("ElasticIsotropic", 1, E, nu, rho)
+    for k in range(nl + 1):
+        b = 4 * k
+        ops.node(b + 1, 0.0, 0.0, float(k))
+        ops.node(b + 2, 1.0, 0.0, float(k))
+        ops.node(b + 3, 1.0, 1.0, float(k))
+        ops.node(b + 4, 0.0, 1.0, float(k))
+    for n in range(1, 4 * (nl + 1) + 1):
+        ops.fix(n, 0, 1, 1)
+    for k in range(nl):
+        b, t = 4 * k, 4 * (k + 1)
+        ops.element("stdBrick", k + 1, b + 1, b + 2, b + 3, b + 4,
+                    t + 1, t + 2, t + 3, t + 4, 1)
+    ops.element("LysmerTriangle", 101, 1, 2, 3, rho, vp, vs)
+    ops.element("LysmerTriangle", 102, 1, 3, 4, rho, vp, vs)
+    ops.timeSeries("Path", 1, "-dt", dt, "-values", *vals)
+    ops.pattern("Plain", 1, 1)
+    ops.eleLoad("-ele", 101, 102, "-type", "-lysmerVelocityLoader", 1)
+    return dt, nstep
+
+
+def run_lysmer_column(tmp_path, fname, v2, amp_scale):
+    dt, nstep = build_lysmer_column(amp_scale)
+    return run_transient(str(tmp_path / fname), v2, nstep, dt)
+
+
+def test_lysmer_velocity_loader_injection_closure(tmp_path):
+    d_six = run_lysmer_column(tmp_path, "lys_six.txt", v2=False, amp_scale=1.0)
+    d_v2 = run_lysmer_column(tmp_path, "lys_v2.txt", v2=True, amp_scale=1.0)
+    d_ctl = run_lysmer_column(tmp_path, "lys_ctl.txt", v2=True, amp_scale=0.0)
+    # the column still holds strain energy at the end of the run, so IE_v2
+    # is not expected to vanish here
+    check_injection(d_six, d_v2, d_ctl, ie_settles=False)
+    # the incident wave puts energy into the column
+    assert d_v2[:, 7].max() > 0.0
+    # moving L between IE and E_inject leaves RES unchanged
+    scale = np.abs(d_six[:, 1:5]).max()
+    np.testing.assert_allclose(d_v2[:, -2], d_six[:, 5], rtol=0.0, atol=1e-6 * scale)
