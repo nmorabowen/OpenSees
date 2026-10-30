@@ -1066,3 +1066,176 @@ def test_confined_fiber_view_builds():
     assert len(rec) == 8
     for _, p in rec:
         assert math.isfinite(p)
+
+
+# ===========================================================================
+# A FAILED RETURN MAP REFUSES THE STEP (apeGmsh #2617, #2602 route 2)
+#
+# When the kernel's return map does not converge it hands back the elastic predictor with status 2.
+# Until #2617 setTrialStrain returned 0 regardless, so Newton accepted an off-surface state and the
+# #2602 corbel's softening peak moved +-15% with the BLAS rounding. setTrialStrain now returns
+# LADRUNO_MATERIAL_REFUSED (< 0) under refusal rule B (the amended #2602 ruling): the return map of
+# the RETURNED state failed (the last sigma_22 = 0 pass in plane stress), or the sigma_22 loop exited
+# unconverged. A failure on an earlier, discarded pass is not a refusal.
+#
+# Each case imposes ONE homogeneous strain increment from the virgin state: every node of a
+# constant-strain element carries an `sp` of the linear field u = eps . x (Penalty constraints,
+# `algorithm Linear`, a Constant series), so the material sees exactly that trial strain once.
+# The strains were picked on the kernel (LadrunoConcrete3DKernel.h, the battery's material) so the
+# outcome holds under every one of 400 random relative perturbations from 1e-12 to 1e-4 per
+# component: the return map's failure set is fractal (a 1e-6 change flips some inputs), and the
+# Penalty imposition is exact only to ~1e-8. The probe is in the #2617 fork PR body.
+#   plane strain / 3D  (e00, e11, gamma01) = (-2.9e-4, 2.6e-4, -4.4e-4)  status 2
+#   plane stress FINAL (2.9e-4, 2.5e-4, -3.0e-4)   the last sigma_22 = 0 pass fails
+#   plane stress EARLY (9.7e-5, -2.8e-4, 4.4e-4)   an earlier pass fails, the last converges: ACCEPTED
+#   plane stress FAILOPEN (9.9e-5, -2.5e-4, 3.2e-4) every last pass converges but sigma_22 is still
+#                                                  unconverged at maxIt (returned 0 with a warning)
+#   plane stress CLEAN (-9.3e-5, 4.7e-5, 2.4e-4)   no pass fails, plastic (kappa_p > 0)
+# Hosts forward the code: Tri31 sums it (`ret +=`), LadrunoBrick fails only on the exact sentinel
+# (so a bare -1 would be swallowed there), ZeroLengthSection refuses `< 0` via NDFiberSection3d.
+# ===========================================================================
+_TRI = {1: (0.0, 0.0), 2: (1.0, 0.0), 3: (0.0, 1.0)}
+_PE_FAIL = (-2.9e-4, 2.6e-4, -4.4e-4)
+_PS_FINAL = (2.9e-4, 2.5e-4, -3.0e-4)
+_PS_EARLY = (9.7e-5, -2.8e-4, 4.4e-4)
+_PS_FAILOPEN = (9.9e-5, -2.5e-4, 3.2e-4)
+_PS_CLEAN = (-9.3e-5, 4.7e-5, 2.4e-4)
+
+
+def _imposed_analysis():
+    ops.system("FullGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Penalty", 1.0e12, 1.0e12)
+    ops.integrator("LoadControl", 1.0)
+    ops.algorithm("Linear")
+    ops.analysis("Static")
+
+
+def _tri_sp(pattern, eps_eng):
+    """Pattern `pattern` imposing the 2D homogeneous engineering strain (exx, eyy, gxy) on the tri."""
+    exx, eyy, gxy = eps_eng
+    ops.pattern("Plain", pattern, 1)
+    for t, (x, y) in _TRI.items():
+        ops.sp(t, 1, exx * x + 0.5 * gxy * y)
+        ops.sp(t, 2, 0.5 * gxy * x + eyy * y)
+
+
+def _tri_imposed(qtype, eps_eng):
+    """A single tri31 of the reduced view `qtype` (one Gauss point) under the imposed strain."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    for t, (x, y) in _TRI.items():
+        ops.node(t, x, y)
+    _mat(1)
+    ops.element("tri31", 1, 1, 2, 3, 1.0, qtype, 1)
+    ops.timeSeries("Constant", 1)
+    _tri_sp(1, eps_eng)
+    _imposed_analysis()
+
+
+def _brick_imposed(eps_eng):
+    """A single LadrunoBrick unit cube (2x2x2 rule, every point at the same strain) under the imposed
+    3D engineering strain (exx, eyy, ezz, gxy, gyz, gzx)."""
+    exx, eyy, ezz, gxy, gyz, gzx = eps_eng
+    eps = [[exx, 0.5 * gxy, 0.5 * gzx], [0.5 * gxy, eyy, 0.5 * gyz], [0.5 * gzx, 0.5 * gyz, ezz]]
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for t, c in _CUBE.items():
+        ops.node(t, *c)
+    _mat(1)
+    ops.element("LadrunoBrick", 1, 1, 2, 3, 4, 5, 6, 7, 8, 1)
+    ops.timeSeries("Constant", 1)
+    ops.pattern("Plain", 1, 1)
+    for t, c in _CUBE.items():
+        for i in range(3):
+            ops.sp(t, i + 1, sum(eps[i][j] * c[j] for j in range(3)))
+    _imposed_analysis()
+
+
+@pytest.mark.parametrize("qtype,eps_eng,what", [
+    ("PlaneStrain", _PE_FAIL, "plane strain (no condensation)"),
+    ("PlaneStress", _PS_FINAL, "plane stress, the last sigma_22 = 0 pass fails"),
+    ("PlaneStress", _PS_FAILOPEN, "plane stress, sigma_22 still unconverged at maxIt"),
+])
+def test_failed_return_map_refuses_the_step(qtype, eps_eng, what):
+    """A trial strain the material cannot integrate cuts the step: tri31 forwards the material's
+    code, so `analyze` fails. Before #2617 it returned 0 and the analysis accepted the elastic
+    predictor. FAILOPEN is the sigma_22 seam: the last pass's return map converged, but the
+    condensation ran out of iterations, which used to return 0 with only a warning."""
+    _tri_imposed(qtype, eps_eng)
+    rc = ops.analyze(1)
+    assert rc < 0, (f"{what}: the return map fails at {eps_eng} but analyze returned {rc}, so the "
+                    f"step was accepted (setTrialStrain must return < 0)")
+
+
+def test_failed_return_map_refuses_on_the_sentinel_host():
+    """LadrunoBrick fails a step ONLY on the exact LADRUNO_MATERIAL_REFUSED (ADR-86b; ADR-33/34 keep
+    ASDConcrete3D's other negative codes from failing it). The 3D path refuses there, which a bare -1
+    or the kernel's +2 would not."""
+    exx, eyy, gxy = _PE_FAIL
+    _brick_imposed((exx, eyy, 0.0, gxy, 0.0, 0.0))
+    rc = ops.analyze(1)
+    assert rc < 0, f"LadrunoBrick accepted a failed return map (analyze returned {rc})"
+
+
+def test_failed_confined_fiber_refuses_the_step():
+    """The confined (BeamFiber) view refuses too: one -1e-3 axial step from the virgin state does not
+    integrate (driveConfinedFiber status 2 with or without the hoop), while -1e-4 does. The fiber sits
+    in an NDFiber section on a zeroLengthSection, which refuses a `< 0` section code."""
+    _build_confined_zls(1200.0)
+    ops.integrator("DisplacementControl", 2, 1, -1.0e-4)
+    ops.algorithm("Linear")
+    assert ops.analyze(1) == 0, "the integrable -1e-4 confined step was refused"
+    _build_confined_zls(1200.0)
+    ops.integrator("DisplacementControl", 2, 1, -1.0e-3)
+    ops.algorithm("Linear")
+    rc = ops.analyze(1)
+    assert rc < 0, f"the confined fiber accepted a failed return map (analyze returned {rc})"
+
+
+@pytest.mark.parametrize("qtype,eps_eng", [
+    ("PlaneStrain", (0.0, 0.0, 0.0)),            # zero strain increment
+    ("PlaneStress", (0.0, 0.0, 0.0)),
+    ("PlaneStrain", (1.0e-5, -4.0e-6, 6.0e-6)),  # purely elastic (onset ft/E = 1e-4)
+    ("PlaneStress", (1.0e-5, -4.0e-6, 6.0e-6)),
+    ("PlaneStress", _PS_CLEAN),                  # plastic, every pass converges
+    ("PlaneStress", _PS_EARLY),                  # an earlier pass fails, the last pass and sigma_22 converge
+])
+def test_integrable_steps_are_not_refused(qtype, eps_eng):
+    """Degenerate and ordinary inputs keep returning 0: the refusal is for a failed return only.
+    EARLY is rule B's acceptance seam: an earlier sigma_22 pass falls back to the elastic predictor,
+    but the returned state (the last pass) is integrated and in plane stress, so it is accepted; the
+    accumulating rule of the first #1038 version refused it."""
+    _tri_imposed(qtype, eps_eng)
+    assert ops.analyze(1) == 0, f"{qtype} {eps_eng} was refused"
+
+
+def test_hydrostatic_apex_is_not_refused():
+    """Hydrostatic tension past the apex goes through the vertex return, which converges: the step is
+    accepted and it is plastic (kappa_p > 0, sigma below the elastic 3K eps)."""
+    h = 1.0e-4
+    _brick_imposed((h, h, h, 0.0, 0.0, 0.0))
+    assert ops.analyze(1) == 0, "the hydrostatic apex step was refused"
+    kp = float(ops.eleResponse(1, "material", 1, "kappaP")[0])
+    sxx = float(ops.eleResponse(1, "material", 1, "stress")[0])
+    elastic = _E / (1.0 - 2.0 * _NU) * h               # 3K h
+    assert kp > 0.0, f"the apex step stayed elastic (kappa_p = {kp})"
+    assert 0.0 < sxx < 0.9 * elastic, f"sigma_xx {sxx} is not a vertex return (elastic {elastic})"
+
+
+def test_refused_step_leaves_the_committed_state_clean():
+    """A refused step writes no committed state: after the refusal, a retried integrable step gives
+    the same stress, strain and damage as a fresh model taking that step directly. Plane stress, so
+    the sigma_22 = 0 warm start (cEps22) is reverted too."""
+    _tri_imposed("PlaneStress", _PS_FINAL)
+    assert ops.analyze(1) < 0, "precondition: the PS_FINAL step must be refused"
+    ops.remove("loadPattern", 1)
+    _tri_sp(2, _PS_CLEAN)
+    assert ops.analyze(1) == 0, "the retried step was refused"
+    retried = [list(ops.eleResponse(1, "material", 1, k)) for k in ("stress", "strain", "damage", "kappaP")]
+    _tri_imposed("PlaneStress", _PS_CLEAN)
+    assert ops.analyze(1) == 0
+    fresh = [list(ops.eleResponse(1, "material", 1, k)) for k in ("stress", "strain", "damage", "kappaP")]
+    assert fresh[3][0] > 0.0, "precondition: the clean retry must be plastic"
+    for name, a, b in zip(("stress", "strain", "damage", "kappaP"), retried, fresh):
+        assert a == pytest.approx(b, rel=1e-12, abs=1e-15), f"{name} after the refusal {a} != fresh {b}"

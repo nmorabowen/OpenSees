@@ -294,6 +294,9 @@ extern int OPS_LadrunoModalResponseHistory(void);   // P1a: modalResponseHistory
 extern int OPS_LadrunoFrequencyResponse(void);      // P2:  frequencyResponse
 extern int OPS_LadrunoSteadyStateDynamics(void);    // P2:  steadyStateDynamics
 extern int OPS_LadrunoRandomResponse(void);         // P3:  randomResponse
+extern int OPS_LadrunoResidualModes(void);          // Ladruno WP-213: residualModes
+extern int OPS_LadrunoResponseSpectrumPerMode(void); // Ladruno WP-216: responseSpectrumPerMode
+extern int OPS_LadrunoRitzVectors(void);            // Ladruno WP-215: ritzVectors
 
 // Ladruno (ADR-78 P0.5): the contact verbs had the SAME gap, with a sharper
 // consequence. They are implemented once in OpenSeesOutputCommands.cpp and are
@@ -7281,6 +7284,36 @@ randomResponse(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** a
 {
     OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
     if (OPS_LadrunoRandomResponse() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+// Ladruno WP-213: residualModes, the same OPS_ResetInputNoBuilder bridge.
+int
+residualModes(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_LadrunoResidualModes() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+// Ladruno WP-215: ritzVectors, the same OPS_ResetInputNoBuilder bridge.
+int
+ritzVectors(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_LadrunoRitzVectors() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+// Ladruno WP-216: responseSpectrumPerMode, the same OPS_ResetInputNoBuilder bridge.
+int
+responseSpectrumPerMode(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_LadrunoResponseSpectrumPerMode() < 0)
 	    return TCL_ERROR;
     return TCL_OK;
 }

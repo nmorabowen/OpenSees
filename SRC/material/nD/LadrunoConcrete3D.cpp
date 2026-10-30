@@ -31,6 +31,7 @@
 
 #include <LadrunoConcrete3D.h>
 #include <LadrunoConcrete3DKernel.h>   // the header-only OpenSees-free CDPM2 kernel
+#include <LadrunoMaterialStatus.h>     // LADRUNO_MATERIAL_REFUSED: a failed return map cuts the step (apeGmsh #2617)
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <Information.h>
@@ -362,7 +363,7 @@ void LadrunoConcrete3D::condenseTangent(void)
 // ===========================================================================
 //  parameter pack + the kernel call
 // ===========================================================================
-void LadrunoConcrete3D::integrate(bool doTangent)
+int LadrunoConcrete3D::integrate(bool doTangent)
 {
   Params p;
   p.E = E; p.nu = nu; p.rho = rho;
@@ -427,6 +428,21 @@ void LadrunoConcrete3D::integrate(bool doTangent)
   if (lastStatus != 0)
     opserr << "WARNING LadrunoConcrete3D: return map did not converge (tag "
            << this->getTag() << ") — step-cut\n";
+  return lastStatus;
+}
+
+// apeGmsh #2617 (#2602 route 2): the code setTrialStrain hands its element. A failed integrate()
+// for the returned state (the one call on the 3D / plane-strain / confined paths; the LAST pass of the
+// plane-stress loop, rule B below) means that state is the off-surface elastic predictor, not an
+// integrated increment, so the step must be cut. Before this, setTrialStrain always returned 0: the
+// residual jumped wherever a Gauss point flipped between a converged return and the trial stress, and
+// the #2602 corbel's softening peak moved by +-15% with the BLAS rounding. The kernel's +2 is not
+// passed through, because DisplacementControl and LoadControl refuse only `< 0` and LadrunoBrick only
+// the exact sentinel (LadrunoMaterialStatus.h); a positive code is swallowed. integrate() writes only
+// the trial (_t) buffers, so the committed state is untouched and revertToLastCommit restarts clean.
+static inline int concrete3DTrialCode(bool failed)
+{
+  return failed ? LADRUNO_MATERIAL_REFUSED : 0;
 }
 
 // ===========================================================================
@@ -451,8 +467,7 @@ int LadrunoConcrete3D::setTrialStrain(const Vector& e)
       if (full >= 3) val *= 0.5;        // engineering -> tensor shear
       strain6[full] = val;
     }
-    this->integrate(true);
-    return 0;
+    return concrete3DTrialCode(this->integrate(true) != 0);
   }
 
   double eps22 = strain6[2];
@@ -466,31 +481,40 @@ int LadrunoConcrete3D::setTrialStrain(const Vector& e)
     strain6[full] = val;
   }
 
-  if (!condense) {
-    this->integrate(true);
-    return 0;
-  }
+  if (!condense)
+    return concrete3DTrialCode(this->integrate(true) != 0);
 
   // enforce sigma_22 = 0: Newton on eps_22 (= strain6[2]); dSNPO sec 9.2.3. The
   // CDPM2 tangent can soften/lose definiteness post-peak (snap-back) — guard the
   // pivot and warn rather than diverge silently.
+  // Refusal rule B (maintainer ruling on apeGmsh #2602, 2026-10-29): the call refuses when the LAST
+  // pass's return map failed, or when the loop exits with sigma_22 unconverged (maxIt, or a near-zero
+  // pivot with sigma_22 != 0). Earlier passes are iterates on eps_22: a failed one does not make a
+  // converged final state bad, so it is not counted (the review of #1038 measured that counting them
+  // refuses ~4x as many plane-stress trials and makes the refusal depend on the warm start).
+  bool lastFailed = false;
+  bool s22Converged = false;
   const int maxIt = 30;
   for (int it = 0; it < maxIt; it++) {
-    this->integrate(true);
+    lastFailed = (this->integrate(true) != 0);
     double d22 = Dtan6[2][2];
     double smag = 0.0;
     for (int i = 0; i < 6; i++) smag += stress6[i]*stress6[i];
     smag = sqrt(smag);
     double tol22 = 1.0e-9 * (smag > 1.0 ? smag : 1.0);
-    if (fabs(stress6[2]) <= tol22) break;
-    if (fabs(d22) < 1.0e-300) break;
+    if (fabs(stress6[2]) <= tol22) { s22Converged = true; break; }
+    if (fabs(d22) < 1.0e-300) {        // a near-zero pivot with sigma_22 != 0: unconverged, refuse
+      opserr << "WARNING LadrunoConcrete3D: sigma_22 condensation pivot vanished (tag "
+             << this->getTag() << ", |s22|=" << fabs(stress6[2]) << ")\n";
+      break;
+    }
     strain6[2] -= stress6[2] / d22;
     if (it == maxIt - 1)
       opserr << "WARNING LadrunoConcrete3D: sigma_22 condensation did not converge (tag "
              << this->getTag() << ", |s22|=" << fabs(stress6[2]) << ")\n";
   }
   this->condenseTangent();
-  return 0;
+  return concrete3DTrialCode(lastFailed || !s22Converged);
 }
 
 int LadrunoConcrete3D::setTrialStrain(const Vector& v, const Vector&) { return this->setTrialStrain(v); }

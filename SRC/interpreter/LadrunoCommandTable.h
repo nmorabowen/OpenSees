@@ -104,3 +104,6 @@ LADRUNO_COMMAND("modalResponseHistory",      OPS_LadrunoModalResponseHistory,  m
 LADRUNO_COMMAND("frequencyResponse",         OPS_LadrunoFrequencyResponse,     frequencyResponse)             // ADR-44 P2
 LADRUNO_COMMAND("steadyStateDynamics",       OPS_LadrunoSteadyStateDynamics,   steadyStateDynamics)           // ADR-44 P2
 LADRUNO_COMMAND("randomResponse",            OPS_LadrunoRandomResponse,        randomResponse)                // ADR-44 P3
+LADRUNO_COMMAND("residualModes",             OPS_LadrunoResidualModes,         residualModes)                 // WP-213
+LADRUNO_COMMAND("ritzVectors",               OPS_LadrunoRitzVectors,           ritzVectors)                   // WP-215
+LADRUNO_COMMAND("responseSpectrumPerMode",   OPS_LadrunoResponseSpectrumPerMode, responseSpectrumPerMode)   // WP-216

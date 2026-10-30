@@ -487,6 +487,9 @@ int OPS_LadrunoModalResponseHistory(); // Ladruno ADR44: modal-superposition tra
 int OPS_LadrunoFrequencyResponse();    // Ladruno ADR44 P2: modal FRF sweep
 int OPS_LadrunoSteadyStateDynamics();  // Ladruno ADR44 P2: steady-state amplitude sweep
 int OPS_LadrunoRandomResponse();       // Ladruno ADR44 P3: stationary random response (PSD->RMS)
+int OPS_LadrunoResidualModes();        // Ladruno WP-213: missing-mass static-correction pseudo-modes
+int OPS_LadrunoResponseSpectrumPerMode(); // Ladruno WP-216: per-mode RSA resultants in one call
+int OPS_LadrunoRitzVectors();          // Ladruno WP-215: load-dependent Ritz vectors as the mode set
 int* OPS_GetNumEigen();
 int OPS_systemSize();
 int OPS_domainCommitTag();

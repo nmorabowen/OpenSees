@@ -29,6 +29,7 @@
 // Ladruno_implementation/44_ladruno_frequency_domain_adr.md.
 
 #include <LadrunoModalResponse.h>
+#include <LadrunoRitzKernel.h>   // Ladruno WP-215: LadrunoModeKinds
 #include <AnalysisModel.h>
 #include <Domain.h>
 #include <DomainModalProperties.h>
@@ -1061,6 +1062,7 @@ OPS_FreqResponseImpl(bool ampOnly, const char* cmd)
         opserr << cmd << " - no AnalysisModel/Domain available.\n";
         return -1;
     }
+    LadrunoModeKinds::warnRitzBasis(theModel->getDomainPtr(), cmd);   // Ladruno WP-215
 
     double fmin = 0.0, fmax = 0.0, amp = 1.0;
     int nf = 0, dir = 0, nodeTag = 0, dof = 0, loadPatternTag = 0;
@@ -1476,6 +1478,7 @@ OPS_LadrunoRandomResponse(void)
         opserr << cmd << " - no AnalysisModel/Domain available.\n";
         return -1;
     }
+    LadrunoModeKinds::warnRitzBasis(theModel->getDomainPtr(), cmd);   // Ladruno WP-215
 
     double fmin = 0.0, fmax = 0.0, duration = 0.0;
     int nf = 0, dir = 0, nodeTag = 0, dof = 0, loadPatternTag = 0;
