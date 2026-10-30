@@ -41,6 +41,8 @@
 #include <OPS_Globals.h>
 #include <string.h>
 #include <math.h>
+#include <stdio.h>                    // PROBE #2621 diagnosis records
+#include <stdlib.h>                   // PROBE #2621 getenv
 #include <elementAPI.h>
 
 using Ladruno::Concrete3D::Params;
@@ -445,6 +447,81 @@ static inline int concrete3DTrialCode(bool failed)
   return failed ? LADRUNO_MATERIAL_REFUSED : 0;
 }
 
+// ---------------------------------------------------------------------------
+// PROBE (apeGmsh #2621 diagnosis, probe/2621-* branch only; NOT for merge).
+// LADRUNO_C3D_DIAG=<file>  : append one text record per REFUSED setTrialStrain (the committed
+//                            state, the imposed strain, the sigma_22 loop trace) plus a sampled
+//                            counters line, so the exact failing inputs can be replayed in the
+//                            standalone kernel harness.
+// LADRUNO_C3D_COLDSTART=1  : seed the plane-stress eps_22 Newton from the COMMITTED value
+//                            (cEps22) instead of the running trial value (lead 1 of #2621).
+// With both unset the material is byte-identical to the pin.
+// ---------------------------------------------------------------------------
+namespace {
+struct C3DDiag {
+  bool checked = false;
+  bool cold = false;
+  FILE* f = 0;
+  unsigned long long calls = 0, integ = 0, integFail = 0, psCalls = 0, psPasses = 0;
+  unsigned long long refusals = 0, refLast = 0, refS22 = 0, refBoth = 0, refPivot = 0;
+  void init() {
+    if (checked) return;
+    checked = true;
+    const char* p = getenv("LADRUNO_C3D_DIAG");
+    if (p && *p) f = fopen(p, "a");
+    const char* c = getenv("LADRUNO_C3D_COLDSTART");
+    cold = (c && *c && *c != '0');
+  }
+};
+static C3DDiag c3dDiag;
+}
+
+int LadrunoConcrete3D::diagLchEpsFc(double& lchOut)
+{
+  double lch = lchFixed;
+  if (autoReg && ops_TheActiveElement != 0) {
+    double l = ops_TheActiveElement->getCharacteristicLength();
+    if (l > 0.0) lch = l;
+  }
+  lchOut = lch;
+  return 0;
+}
+
+void LadrunoConcrete3D::diagCounters(const char* kind)
+{
+  if (!c3dDiag.f) return;
+  fprintf(c3dDiag.f, "%s calls=%llu integ=%llu integFail=%llu psCalls=%llu psPasses=%llu refusals=%llu refLast=%llu refS22=%llu refBoth=%llu refPivot=%llu\n",
+          kind, c3dDiag.calls, c3dDiag.integ, c3dDiag.integFail, c3dDiag.psCalls, c3dDiag.psPasses,
+          c3dDiag.refusals, c3dDiag.refLast, c3dDiag.refS22, c3dDiag.refBoth, c3dDiag.refPivot);
+  fflush(c3dDiag.f);
+}
+
+void LadrunoConcrete3D::diagRecord(const char* reason, int passes, const double* strainIn, double eps22Start,
+                                   double s22Final, double d22Final, int eleTag)
+{
+  if (!c3dDiag.f) return;
+  double lch; this->diagLchEpsFc(lch);
+  double epsFc = this->compressiveEpsFc(lch);
+  // P: material parameters (every record carries them; the harness dedups by tag)
+  fprintf(c3dDiag.f, "R tag=%d ele=%d dim=%d reason=%s passes=%d status=%d calls=%llu lch=%.17g epsFc=%.17g "
+          "E=%.17g nu=%.17g fc=%.17g ft=%.17g Gf=%.17g Gc=%.17g e=%.17g m0=%.17g Df=%.17g As=%.17g qh0=%.17g Hp=%.17g "
+          "Ah=%.17g Bh=%.17g Ch=%.17g Dh=%.17g tensionLaw=%d ctTemper=%d implex=%d eta=%.17g\n",
+          this->getTag(), eleTag, dim, reason, passes, lastStatus, c3dDiag.calls, lch, epsFc,
+          E, nu, fc, ft, Gf, Gc, ecc, m0, Df, As, qh0, Hp, Ah, Bh, Ch, Dh, tensionLaw, ctTemper, implex ? 1 : 0, eta);
+  fprintf(c3dDiag.f, "  in_eps"); for (int i = 0; i < 6; i++) fprintf(c3dDiag.f, " %.17g", eps_n[i]);
+  fprintf(c3dDiag.f, "\n  in_sig"); for (int i = 0; i < 6; i++) fprintf(c3dDiag.f, " %.17g", sig_n[i]);
+  fprintf(c3dDiag.f, "\n  in_sigEff"); for (int i = 0; i < 6; i++) fprintf(c3dDiag.f, " %.17g", sigEff_n[i]);
+  fprintf(c3dDiag.f, "\n  in_hist %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g\n",
+          kp_n, etmax_n, kdt1_n, kdt2_n, kdc_n, kdc1_n, kdc2_n, sigtmax_n, sigcmax_n);
+  fprintf(c3dDiag.f, "  strain_in"); for (int i = 0; i < 6; i++) fprintf(c3dDiag.f, " %.17g", strainIn[i]);
+  fprintf(c3dDiag.f, "\n  eps22 start=%.17g cEps22=%.17g end=%.17g s22=%.17g d22=%.17g\n",
+          eps22Start, cEps22, strain6[2], s22Final, d22Final);
+  fprintf(c3dDiag.f, "  out_sigEff"); for (int i = 0; i < 6; i++) fprintf(c3dDiag.f, " %.17g", sigEff6[i]);
+  fprintf(c3dDiag.f, "\n  out_stress"); for (int i = 0; i < 6; i++) fprintf(c3dDiag.f, " %.17g", stress6[i]);
+  fprintf(c3dDiag.f, "\n  out_kp %.17g\n", kp_t);
+  fflush(c3dDiag.f);
+}
+
 // ===========================================================================
 //  strain interface (element passes ENGINEERING shear; kernel wants TENSOR shear)
 //
@@ -470,7 +547,13 @@ int LadrunoConcrete3D::setTrialStrain(const Vector& e)
     return concrete3DTrialCode(this->integrate(true) != 0);
   }
 
+  c3dDiag.init();
+  c3dDiag.calls++;
+  if (c3dDiag.f && (c3dDiag.calls % 512) == 0) this->diagCounters("S");
+  const int diagEle = (ops_TheActiveElement != 0) ? ops_TheActiveElement->getTag() : -1;
+
   double eps22 = strain6[2];
+  if (c3dDiag.cold) eps22 = cEps22;   // PROBE lead 1: committed seed instead of the running trial value
   for (int i = 0; i < 6; i++) strain6[i] = 0.0;
   if (condense) strain6[2] = eps22;
 
@@ -480,9 +563,16 @@ int LadrunoConcrete3D::setTrialStrain(const Vector& e)
     if (full >= 3) val *= 0.5;          // engineering -> tensor shear
     strain6[full] = val;
   }
+  double diagStrainIn[6]; for (int i = 0; i < 6; i++) diagStrainIn[i] = strain6[i];
 
-  if (!condense)
-    return concrete3DTrialCode(this->integrate(true) != 0);
+  if (!condense) {
+    c3dDiag.integ++;
+    const bool failed = (this->integrate(true) != 0);
+    if (failed) { c3dDiag.integFail++; c3dDiag.refusals++; c3dDiag.refLast++;
+                  this->diagRecord("direct", 1, diagStrainIn, eps22, stress6[2], Dtan6[2][2], diagEle); }
+    return concrete3DTrialCode(failed);
+  }
+  c3dDiag.psCalls++;
 
   // enforce sigma_22 = 0: Newton on eps_22 (= strain6[2]); dSNPO sec 9.2.3. The
   // CDPM2 tangent can soften/lose definiteness post-peak (snap-back) — guard the
@@ -494,9 +584,13 @@ int LadrunoConcrete3D::setTrialStrain(const Vector& e)
   // refuses ~4x as many plane-stress trials and makes the refusal depend on the warm start).
   bool lastFailed = false;
   bool s22Converged = false;
+  bool diagPivot = false;
+  int diagPasses = 0;
   const int maxIt = 30;
   for (int it = 0; it < maxIt; it++) {
+    c3dDiag.integ++; c3dDiag.psPasses++; diagPasses++;
     lastFailed = (this->integrate(true) != 0);
+    if (lastFailed) c3dDiag.integFail++;
     double d22 = Dtan6[2][2];
     double smag = 0.0;
     for (int i = 0; i < 6; i++) smag += stress6[i]*stress6[i];
@@ -506,6 +600,7 @@ int LadrunoConcrete3D::setTrialStrain(const Vector& e)
     if (fabs(d22) < 1.0e-300) {        // a near-zero pivot with sigma_22 != 0: unconverged, refuse
       opserr << "WARNING LadrunoConcrete3D: sigma_22 condensation pivot vanished (tag "
              << this->getTag() << ", |s22|=" << fabs(stress6[2]) << ")\n";
+      diagPivot = true;
       break;
     }
     strain6[2] -= stress6[2] / d22;
@@ -513,7 +608,17 @@ int LadrunoConcrete3D::setTrialStrain(const Vector& e)
       opserr << "WARNING LadrunoConcrete3D: sigma_22 condensation did not converge (tag "
              << this->getTag() << ", |s22|=" << fabs(stress6[2]) << ")\n";
   }
+  const double diagD22 = Dtan6[2][2];
   this->condenseTangent();
+  if (lastFailed || !s22Converged) {
+    c3dDiag.refusals++;
+    if (lastFailed && !s22Converged) c3dDiag.refBoth++;
+    else if (lastFailed) c3dDiag.refLast++;
+    else c3dDiag.refS22++;
+    if (diagPivot) c3dDiag.refPivot++;
+    this->diagRecord(lastFailed ? (s22Converged ? "last" : "both") : (diagPivot ? "pivot" : "s22"),
+                     diagPasses, diagStrainIn, eps22, stress6[2], diagD22, diagEle);
+  }
   return concrete3DTrialCode(lastFailed || !s22Converged);
 }
 

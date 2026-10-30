@@ -191,6 +191,12 @@ class LadrunoConcrete3D : public NDMaterial {
   void setupDim(void);             // fill ncomp/vmap/condense + size the return buffers
   void condenseTangent(void);      // static condensation of the 33 dof (sigma_22 = 0)
 
+  // PROBE (apeGmsh #2621 diagnosis; probe/2621-* branch only, not for merge)
+  int  diagLchEpsFc(double& lchOut);
+  void diagCounters(const char* kind);
+  void diagRecord(const char* reason, int passes, const double* strainIn, double eps22Start,
+                  double s22Final, double d22Final, int eleTag);
+
   // element-facing return buffers
   Vector stressOut;
   Vector strainOut;
