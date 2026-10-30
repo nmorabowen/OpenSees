@@ -573,6 +573,7 @@
 
 #define ND_TAG_InitStrainNDMaterial 7020 // Massimo Petracca ASDEA Software
 #define ND_TAG_ASDPlasticMaterial3D 10000 // For ASDPlasticity-class material
+#define ND_TAG_LogStrainNDMaterial 33010 // N. Mora Bowen, P. Palacios, J.A. Abell
 
 #define ND_TAG_FAM_CS 40801 // Shaohui Zhang, Xiaodong Ji - Tsinghua University
 
