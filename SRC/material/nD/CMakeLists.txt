@@ -138,6 +138,8 @@ target_sources(OPS_Material
     WrapperNDMaterial.h
     InitStressNDMaterial.h
     InitStrainNDMaterial.h
+    FiniteStrainNDMaterial.h
+    FiniteStrainND2DMaterial.h
     MinMaxNDMaterial.h    
     IncrementalElasticIsotropicThreeDimensional.h
     ConcreteMcftNonLinear5.h
