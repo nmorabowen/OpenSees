@@ -90,8 +90,9 @@ LadrunoContactDomain::contactTagInUse(int tag) const
 
 int
 LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
-                                 double kn, const double *outward,
-                                 bool knAuto, double cellFrac, bool consistentNormal)
+                                 double kn, double kt, double mu, const double *outward,
+                                 bool knAuto, double cellFrac, bool consistentTan,
+                                 bool consistentNormal, double cohesion, double tauMax)
 {
     if (getSurface(masterSurfTag) == 0 || getSurface(slaveSurfTag) == 0) {
         opserr << "WARNING LadrunoContactDomain::addContact() - master/slave surface "
@@ -104,6 +105,30 @@ LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
                << " already exists (contact tags key the pair state)\n";
         return -1;
     }
+    if (kt < 0.0) {
+        // a negative stick penalty flips the sign of the elastic predictor
+        opserr << "WARNING LadrunoContactDomain::addContact() - friction stick penalty kt "
+                  "must be >= 0 (got " << kt << ")\n";
+        return -1;
+    }
+    if (mu < 0.0 || cohesion < 0.0) {
+        opserr << "WARNING LadrunoContactDomain::addContact() - friction mu and cohesion "
+                  "must be >= 0 (got mu " << mu << ", cohesion " << cohesion << ")\n";
+        return -1;
+    }
+    if (tauMax > 0.0 && mu <= 0.0 && cohesion <= 0.0) {
+        // cap = min(mu N + c, tauMax) = min(0, tauMax) = 0: free slip, almost
+        // certainly not the intent (a capped bond is -cohesion with -tauMax)
+        opserr << "WARNING LadrunoContactDomain::addContact() - -tauMax without -mu or "
+                  "-cohesion gives the cone min(mu*N + c, tauMax) = 0 (free slip); for a "
+                  "shear-capped bond use -cohesion <c>, optionally with -tauMax\n";
+        return -1;
+    }
+    if ((mu > 0.0 || cohesion > 0.0) && kt <= 0.0) {
+        opserr << "WARNING LadrunoContactDomain::addContact() - friction needs a "
+                  "tangential penalty kt > 0 (contact tag kn kt mu)\n";
+        return -1;
+    }
     if (kn < 0.0) {
         // kn < 0 is an attractive contact with a negative-definite tangent.
         // kn == 0 is accepted here (a topology-only definition); handle() refuses
@@ -114,12 +139,15 @@ LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
     }
     Contact c;
     c.tag = tag; c.masterSurfTag = masterSurfTag; c.slaveSurfTag = slaveSurfTag;
-    c.kn = kn;
+    c.kn = kn; c.kt = kt; c.mu = mu;
+    c.cohesion = (cohesion > 0.0) ? cohesion : 0.0;
+    c.tauMax = (tauMax > 0.0) ? tauMax : 0.0;
     c.knAuto = knAuto;
     c.hasOutward = (outward != 0);
     for (int d = 0; d < 3; d++) c.outward[d] = (outward != 0) ? outward[d] : 0.0;
     c.cellFrac = (cellFrac > 0.0) ? cellFrac : 1.0;
     c.consistentNormal = consistentNormal;
+    c.consistentTan = consistentTan;
     theContacts.push_back(c);
     return 0;
 }
@@ -147,17 +175,74 @@ LadrunoContactDomain::getNtsForce(int slaveTag) const
     return f;
 }
 
+LadrunoContactDomain::FrictionState &
+LadrunoContactDomain::getOrCreateFrictionState(int contactTag, int slaveTag, int segIndex)
+{
+    PairKey k; k.c = contactTag; k.s = slaveTag; k.g = segIndex;
+    // operator[] default-constructs a zeroed slot (engaged = false) when absent
+    return theFrictionStates[k];
+}
+
+void
+LadrunoContactDomain::frictionGCBegin(void)
+{
+    liveKeys.clear();
+}
+
+void
+LadrunoContactDomain::frictionGCMark(int contactTag, int slaveTag, int segIndex)
+{
+    PairKey k; k.c = contactTag; k.s = slaveTag; k.g = segIndex;
+    liveKeys.insert(k);
+}
+
+void
+LadrunoContactDomain::frictionGCEnd(void)
+{
+    // erase every slot whose key the current handle() did not mark live
+    for (std::map<PairKey, FrictionState>::iterator it = theFrictionStates.begin();
+         it != theFrictionStates.end(); ) {
+        if (liveKeys.find(it->first) == liveKeys.end())
+            theFrictionStates.erase(it++);     // post-increment keeps the iterator valid
+        else
+            ++it;
+    }
+    liveKeys.clear();
+}
+
 int
 LadrunoContactDomain::commit(bool)
 {
+    // promote the trial plastic slip and the engagement origin of every slot;
+    // the counter lets a test check that the Domain::commit() hook fires
     numCommits++;
+    for (std::map<PairKey, FrictionState>::iterator it = theFrictionStates.begin();
+         it != theFrictionStates.end(); ++it) {
+        FrictionState &st = it->second;
+        for (int d = 0; d < 3; d++) {
+            st.gpT[d] = st.gpTtrial[d];
+            st.gT0committed[d] = st.gT0[d];
+        }
+        st.engagedCommitted = st.engaged;
+    }
     return 0;
 }
 
 int
 LadrunoContactDomain::revertToLastCommit(void)
 {
+    // drop the trial back to the committed state (a failed implicit step, or a
+    // script that calls revertToLastCommit and retries)
     numReverts++;
+    for (std::map<PairKey, FrictionState>::iterator it = theFrictionStates.begin();
+         it != theFrictionStates.end(); ++it) {
+        FrictionState &st = it->second;
+        for (int d = 0; d < 3; d++) {
+            st.gpTtrial[d] = st.gpT[d];
+            st.gT0[d] = st.gT0committed[d];
+        }
+        st.engaged = st.engagedCommitted;
+    }
     return 0;
 }
 
@@ -166,6 +251,7 @@ LadrunoContactDomain::revertToStart(void)
 {
     // Every slot is recreated zeroed at the next handle() or residual
     // evaluation, i.e. in the state of a fresh run.
+    theFrictionStates.clear();
     theNtsForce.clear();
     return 0;
 }

@@ -16,6 +16,7 @@ target_sources(OPS_Domain
     LadrunoContactNormalField.h
     LadrunoContactBucketSort.h
     LadrunoMortarKernel.h
+    LadrunoFrictionKernel.h
 )
 
 target_include_directories(OPS_Domain PUBLIC ${CMAKE_CURRENT_LIST_DIR})

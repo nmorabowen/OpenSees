@@ -318,6 +318,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
     // project or does not penetrate gives zero force inside the adapter.
     if (cd != 0) {
         cd->clearNtsForce();     // the force readout keys are rebuilt below
+        cd->frictionGCBegin();   // friction slots of pairs not rebuilt below are collected
 
         // A slave node in the slave sets of two contacts gets two adapters and
         // the tractions add up; report it.
@@ -473,12 +474,18 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     }
                     LadrunoContactFE *fe =
                         new LadrunoContactFE(numFe++, sn, segNodes, nps, knUse, orientDir,
-                                             theDomain, ct.tag, seg, ct.consistentNormal);
+                                             ct.kt, ct.mu, theDomain, ct.tag, seg,
+                                             ct.consistentTan, ct.consistentNormal,
+                                             ct.cohesion, ct.tauMax);
                     if (fe == 0) return -5;
                     theModel->addFE_Element(fe);
+                    if (ct.hasFriction())
+                        cd->frictionGCMark(ct.tag, sTags(si), seg);  // live this handle()
                 }
             }
         }
+
+        cd->frictionGCEnd();     // erase the friction slots no live pair referenced
     }
 
     return count3;

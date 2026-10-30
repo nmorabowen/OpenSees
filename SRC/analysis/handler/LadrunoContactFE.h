@@ -70,9 +70,18 @@ class LadrunoContactFE : public FE_Element
     //     (contact tag, slave tag, global master-segment ordinal).
     //   consistentNormal: add the geometric normal tangent kn gN d^2gN/du^2
     //     (false: the main term kn B^T B only, exact for a flat fixed master).
+    //   kt, mu, cohesion, tauMax: penalty-regularized Coulomb/Tresca friction,
+    //     cone cap = min(mu N + cohesion, tauMax). The plastic slip lives on the
+    //     engine, keyed by the pair. mu, cohesion and tauMax all <= 0: the
+    //     frictionless path, no engine state is touched.
+    //   consistentTan: assemble the non-symmetric consistent friction tangent
+    //     (false: the symmetric one, safe on any solver). The friction tangent
+    //     enters only through addKtToTang/addKiToTang, i.e. implicit integrators.
     LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes, int nps, double kn,
-                     const double orientDir[3], Domain *theDomain = 0, int contactTag = 0,
-                     int segIndex = 0, bool consistentNormal = false);
+                     const double orientDir[3], double kt = 0.0, double mu = 0.0,
+                     Domain *theDomain = 0, int contactTag = 0, int segIndex = 0,
+                     bool consistentTan = false, bool consistentNormal = false,
+                     double cohesion = 0.0, double tauMax = 0.0);
     ~LadrunoContactFE();
 
     // Fill myID with the first ndm equations of each node (the translations).
@@ -111,7 +120,19 @@ class LadrunoContactFE : public FE_Element
     // Returns true when active (penetrating and in-bounds); then fills gap (< 0),
     // n[3], N[nps] and the gap operator B[ndof] = [ n^T | -N_i n^T ] over
     // [slave, segment nodes].
-    bool segmentActive(double &gap, double n[3], double N[4], double *B) const;
+    // If gTvec != 0 it also fills the tangential relative displacement at the
+    // contact point (the slip measure of the friction return map).
+    bool segmentActive(double &gap, double n[3], double N[4], double *B,
+                       double *gTvec = 0) const;
+
+    // true when the pair carries friction (mu, cohesion or tauMax > 0)
+    bool hasFriction(void) const { return mu > 0.0 || cohesion > 0.0 || tauMax > 0.0; }
+
+    // Scatter the 3 x 3 friction block K_ss (LadrunoFrictionKernel::
+    // frictionTangentBlock) into `tang` with G = [I | -N_i I]: block (a,b) is
+    // w_a w_b K_ss, w = [1, -N_0, ..., -N_nps].
+    void addFrictionTang(double fact, const double n[3], const double N[4], double tn,
+                         const double gTeff[3], const double gpT[3], bool consistent);
 
     // Geometric part of the consistent normal tangent, kn gN d^2gN/du^2
     // (LadrunoContactProjection::normalGeomTangent), added to `tang`.
@@ -135,6 +156,13 @@ class LadrunoContactFE : public FE_Element
     int contactTag;     // pair key: contact definition tag ...
     int segIndex;       // ... and the global master-segment ordinal (stable across rebuilds)
     bool consistentNormal;
+
+    // friction
+    double kt;          // tangential penalty
+    double mu;          // Coulomb coefficient
+    double cohesion;    // cone intercept
+    double tauMax;      // shear cap of the cone (<= 0: none)
+    bool consistentTan; // include the non-symmetric d_TN (x) n coupling
 };
 
 #endif

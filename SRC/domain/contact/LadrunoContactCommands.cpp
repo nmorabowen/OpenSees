@@ -27,6 +27,8 @@
 //   contactSurface tag -slave nodeTag...
 //   contactSurface tag -master nodesPerSeg nodeTag...
 //   contact tag masterSurfTag slaveSurfTag <kn | kn kt mu | auto <kt mu>> <options>
+//     options: -outward ox oy oz, -cell frac, -geomtan, -mu mu, -cohesion c,
+//              -tauMax tau, -consistanttan
 //   ladrunoContactInfo            -> numContacts numCommits numReverts
 //   ladrunoContactForce slaveTag  -> summed normal contact force on the node
 //
@@ -157,6 +159,7 @@ int OPS_LadrunoContactSurface()
 
 // contact tag masterSurfTag slaveSurfTag <kn | kn kt mu | auto <kt mu>>
 //         <-outward ox oy oz> <-cell frac> <-geomtan>
+//         <-mu mu> <-cohesion c> <-tauMax tau> <-consistanttan>
 int OPS_LadrunoContact()
 {
     if (OPS_GetNumRemainingInputArgs() < 3) {
@@ -213,6 +216,8 @@ int OPS_LadrunoContact()
     double outward[3] = {0.0, 0.0, 0.0};
     double cellFrac = 1.0;
     bool consistentNormal = false;
+    bool consistentTan = false;
+    double cohesion = 0.0, tauMax = 0.0;
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
         if (opt != 0 && strcmp(opt, "-outward") == 0) {
@@ -237,6 +242,26 @@ int OPS_LadrunoContact()
             // geometric part of the consistent normal tangent, for curved or
             // large-sliding masters; symmetric, so any solver works
             consistentNormal = true;
+        } else if (opt != 0 && (strcmp(opt, "-mu") == 0 || strcmp(opt, "-cohesion") == 0 ||
+                                strcmp(opt, "-tauMax") == 0)) {
+            // friction cone cap = min(mu N + cohesion, tauMax); -mu replaces the
+            // positional mu
+            double v[1]; int m = 1;
+            if (OPS_GetDoubleInput(&m, v) < 0) {
+                opserr << "WARNING contact " << opt << " - need a value\n";
+                return -1;
+            }
+            if (strcmp(opt, "-mu") == 0)            mu = v[0];
+            else if (strcmp(opt, "-cohesion") == 0) cohesion = v[0];
+            else                                    tauMax = v[0];
+        } else if (opt != 0 && strcmp(opt, "-consistanttan") == 0) {
+            // the non-symmetric consistent friction tangent (quadratic Newton
+            // convergence); a symmetric solver reads one triangle only and
+            // silently drops the coupling, so a non-symmetric one is needed
+            consistentTan = true;
+            opserr << "WARNING contact -consistanttan: the non-symmetric consistent "
+                      "friction tangent needs a non-symmetric solver (system FullGeneral/"
+                      "UmfPack/BandGeneral); symmetric solvers will silently corrupt it.\n";
         } else if (opt != 0 && strcmp(opt, "-soft") == 0) {
             opserr << "WARNING contact -soft - the soft penalty is sized from the time step "
                       "of an explicit integrator, and no integrator in this build reports "
@@ -244,13 +269,10 @@ int OPS_LadrunoContact()
             return -1;
         } else {
             opserr << "WARNING contact - unexpected token '" << (opt ? opt : "")
-                   << "' (expected -outward, -cell, -geomtan or end of arguments)\n";
+                   << "' (expected -outward, -cell, -geomtan, -mu, -cohesion, -tauMax, "
+                      "-consistanttan or end of arguments)\n";
             return -1;
         }
-    }
-    if (kt != 0.0 || mu != 0.0) {
-        opserr << "WARNING contact - kt and mu must be 0: friction is not available\n";
-        return -1;
     }
     Domain *theDomain = OPS_GetDomain();
     if (theDomain == 0) return -1;
@@ -259,8 +281,9 @@ int OPS_LadrunoContact()
         opserr << "WARNING contact - define a contactSurface first\n";
         return -1;
     }
-    return cd->addContact(idata[0], idata[1], idata[2], kn,
-                          hasOutward ? outward : 0, knAuto, cellFrac, consistentNormal);
+    return cd->addContact(idata[0], idata[1], idata[2], kn, kt, mu,
+                          hasOutward ? outward : 0, knAuto, cellFrac, consistentTan,
+                          consistentNormal, cohesion, tauMax);
 }
 
 // ladrunoContactInfo -> [numContacts, numCommits, numReverts] (zeros without an engine)

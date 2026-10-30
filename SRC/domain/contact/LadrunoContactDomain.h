@@ -82,10 +82,17 @@ class LadrunoContactDomain
     //             brute force).
     //   consistentNormal: add the geometric part kn gN d^2gN/du^2 of the
     //             consistent normal tangent (curved or large-sliding masters).
+    //   kt, mu, cohesion, tauMax: penalty-regularized friction, tangential
+    //             penalty kt and cone cap = min(mu N + cohesion, tauMax)
+    //             (tauMax <= 0: no cap); all of mu, cohesion, tauMax <= 0 is
+    //             frictionless.
+    //   consistentTan: assemble the non-symmetric consistent friction tangent
+    //             (false: the symmetric tangent, safe on any linear solver).
     int addContact(int tag, int masterSurfTag, int slaveSurfTag,
-                   double kn, const double *outward = 0,
+                   double kn, double kt, double mu, const double *outward = 0,
                    bool knAuto = false, double cellFrac = 1.0,
-                   bool consistentNormal = false);
+                   bool consistentTan = false, bool consistentNormal = false,
+                   double cohesion = 0.0, double tauMax = 0.0);
     int getNumContacts(void) const { return (int)theContacts.size(); }
 
     struct Contact {
@@ -95,12 +102,16 @@ class LadrunoContactDomain
         // not exist is refused when the surface is declared.
         bool retired = false;
         int tag, masterSurfTag, slaveSurfTag;
-        double kn;
+        double kn, kt, mu;
+        double cohesion;        // cone intercept c
+        double tauMax;          // shear cap of the cone (<= 0: none)
         bool knAuto;            // kn sized from the master solid element
         bool hasOutward;        // an explicit orientation direction was given
         double outward[3];      // orientation direction toward the allowed half-space
         double cellFrac;        // bucket-sort cell = cellFrac * median segment diagonal
         bool consistentNormal;  // assemble the geometric normal tangent
+        bool consistentTan;     // non-symmetric consistent friction tangent
+        bool hasFriction(void) const { return mu > 0.0 || cohesion > 0.0 || tauMax > 0.0; }
     };
     const Contact &getContact(int i) const { return theContacts[i]; }
 
@@ -114,6 +125,38 @@ class LadrunoContactDomain
     void   clearNtsForce(void);
     void   setNtsForce(int contactTag, int slaveTag, int segIndex, double tn);
     double getNtsForce(int slaveTag) const;   // sum over (contactTag, slaveTag, *)
+
+    // --- friction pair state, keyed (contactTag, slaveNodeTag, global master
+    //     segment ordinal), which is stable across adapter rebuilds. The adapter
+    //     reads the committed plastic slip gpT and the engagement origin gT0,
+    //     runs the return map and writes gpTtrial; commit() promotes the trial
+    //     and revertToLastCommit() drops it. ---
+    struct FrictionState {
+        double gpT[3];        // committed plastic slip from the engagement configuration
+        double gpTtrial[3];   // trial plastic slip (written at every residual evaluation)
+        double gT0[3];        // tangential origin at engagement (captured once)
+        bool   engaged;       // gT0 has been captured
+        // gT0 and engaged are set during a residual evaluation, so a rejected
+        // step must not keep an origin captured at its trial configuration:
+        // commit() copies them here and revertToLastCommit() restores them.
+        double gT0committed[3];
+        bool   engagedCommitted;
+        FrictionState() : engaged(false), engagedCommitted(false) {
+            for (int d = 0; d < 3; d++)
+                gpT[d] = gpTtrial[d] = gT0[d] = gT0committed[d] = 0.0;
+        }
+    };
+    // the slot of a pair, created zeroed (engaged = false) on first use
+    FrictionState &getOrCreateFrictionState(int contactTag, int slaveTag, int segIndex);
+
+    // The engine survives domainChanged() and later analyses, so slots of pairs
+    // that no longer exist (re-meshing, element removal) are collected: the
+    // handler calls frictionGCBegin(), frictionGCMark() for every frictional
+    // pair it builds, and frictionGCEnd(), which erases the unmarked slots.
+    void frictionGCBegin(void);
+    void frictionGCMark(int contactTag, int slaveTag, int segIndex);
+    void frictionGCEnd(void);
+    int  getNumFrictionStates(void) const { return (int)theFrictionStates.size(); }
 
     // --- lifecycle (driven by Domain::commit / revertToLastCommit / revertToStart) ---
     // augmenting: the Domain's within-step augmentation flag, passed for
@@ -145,6 +188,8 @@ class LadrunoContactDomain
         }
     };
     std::map<PairKey, double> theNtsForce;              // per-pair normal force readout
+    std::map<PairKey, FrictionState> theFrictionStates;
+    std::set<PairKey> liveKeys;                         // collection scratch (per handle())
 };
 
 #endif
