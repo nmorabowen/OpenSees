@@ -144,6 +144,10 @@ inline bool probeFixG() {
     return on;
 }
 inline unsigned long long& probeFixGCount() { static unsigned long long n = 0; return n; }
+inline int probeFixGMode() {
+    static const int mode = [] { const char* v = std::getenv("LADRUNO_C3D_FIXG"); return (v && *v) ? std::atoi(v) : 0; }();
+    return mode;
+}
 
 static const double SQRT3 = 1.7320508075688772;
 static const double SQRT6 = 2.449489742783178;
@@ -818,7 +822,9 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
     // f(0) = f_tr > 0; the SMALLEST positive root is the admissible return (dlam >= 0, kp >= kp_n by
     // construction). The 4x4 Newton has no such constraint and in tension-dominated states (m0 RR > 2 q2,
     // df/dq2 > 0) walks to the inadmissible root (kp < kp_n, dlam < 0) or cycles.
-    if (probeFixG() && !overshot) {
+    // LADRUNO_C3D_FIXG=1: at the fallback position only (zero accepted outcomes change, by construction).
+    // LADRUNO_C3D_FIXG=2: additionally skipped when the Newton overshot (the reviewer's narrower scope).
+    if (probeFixG() && !(probeFixGMode() == 2 && overshot)) {
         auto evalF = [&](double dl, double& x, double& p, double& k) {
             x = xi_tr - 3.0 * K * dl * m_v;
             p = (rho_tr - 2.0 * G * dl * m0 / (SQRT6 * fc)) / (1.0 + 6.0 * G * dl / (fc * fc));
