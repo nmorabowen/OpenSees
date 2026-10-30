@@ -145,6 +145,12 @@ int
 ladrunoContactInfo(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
 int
 ladrunoContactForce(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+int
+ladrunoMortarPenetration(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+int
+ladrunoBeginAugment(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+int
+ladrunoEndAugment(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
 
 int 
 videoPlayer(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);

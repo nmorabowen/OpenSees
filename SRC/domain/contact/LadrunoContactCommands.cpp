@@ -26,12 +26,17 @@
 //
 //   contactSurface tag -slave nodeTag...
 //   contactSurface tag -master nodesPerSeg nodeTag...
+//   contactSurface tag -slave-segments nodesPerSeg nodeTag...
 //   contact tag masterSurfTag slaveSurfTag <kn | kn kt mu | auto <kt mu>> <options>
 //     options: -outward ox oy oz, -cell frac, -geomtan, -mu mu, -cohesion c,
 //              -tauMax tau, -consistanttan, -visc muc
+//     mortar:  -mortar, -epsN auto|val, -augTol tol, -maxAug n, -ngp order
 //   contactPlane tag slaveSurfTag nx ny nz px py pz kn <-visc muc>
-//   ladrunoContactInfo            -> numContacts numCommits numReverts
+//   ladrunoContactInfo            -> numContacts numCommits numReverts numMortarContacts
 //   ladrunoContactForce slaveTag  -> summed normal contact force on the node
+//   ladrunoMortarPenetration      -> max mortar penetration on the active set
+//   ladrunoBeginAugment, ladrunoEndAugment
+//                                 -> open / close a held-load augmentation sweep
 //
 // The definitions are stored on the LadrunoContactDomain of the current
 // Domain, created on first use; `constraints LadrunoContact` builds the
@@ -85,11 +90,12 @@ static int ladrunoCountLeadingNumbers(int cap)
     return nnum;
 }
 
-// contactSurface tag (-slave | -master nodesPerSeg) nodeTag...
+// contactSurface tag (-slave | -master nodesPerSeg | -slave-segments nodesPerSeg) nodeTag...
 int OPS_LadrunoContactSurface()
 {
     if (OPS_GetNumRemainingInputArgs() < 3) {
-        opserr << "WARNING want - contactSurface tag (-slave | -master nodesPerSeg) nodeTag...\n";
+        opserr << "WARNING want - contactSurface tag (-slave | -master nodesPerSeg | "
+                  "-slave-segments nodesPerSeg) nodeTag...\n";
         return -1;
     }
     int tag, n = 1;
@@ -110,8 +116,17 @@ int OPS_LadrunoContactSurface()
                       "4 for a quadrilateral facet)\n";
             return -1;
         }
+    } else if (strcmp(kindStr, "-slave-segments") == 0) {
+        // a faceted slave surface, for mortar contact
+        kind = LadrunoContactSurface::SLAVE_SEGMENTS;
+        n = 1;
+        if (OPS_GetIntInput(&n, &nodesPerSeg) < 0 || nodesPerSeg < 3 || nodesPerSeg > 4) {
+            opserr << "WARNING contactSurface -slave-segments - need nodesPerSeg (3 for a "
+                      "triangle, 4 for a quadrilateral facet)\n";
+            return -1;
+        }
     } else {
-        opserr << "WARNING contactSurface - kind must be -slave or -master\n";
+        opserr << "WARNING contactSurface - kind must be -slave, -master or -slave-segments\n";
         return -1;
     }
     int nrem = OPS_GetNumRemainingInputArgs();
@@ -220,9 +235,56 @@ int OPS_LadrunoContact()
     bool consistentTan = false;
     double cohesion = 0.0, tauMax = 0.0;
     double muc = 0.0;
+    bool hasCell = false;
+    // mortar segment-to-segment contact
+    bool isMortar = false;          // -mortar
+    bool hasMortarOpt = false;      // a mortar-only option was given
+    double epsN = 0.0;              // -epsN value
+    bool epsNAuto = false;          // -epsN auto
+    double augTol = 1e-8;           // -augTol
+    int maxAug = 20, ngp = 2;       // -maxAug, -ngp
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
-        if (opt != 0 && strcmp(opt, "-outward") == 0) {
+        if (opt != 0 && strcmp(opt, "-mortar") == 0) {
+            isMortar = true;
+        } else if (opt != 0 && strcmp(opt, "-epsN") == 0) {
+            // normal penalty of the mortar augmented Lagrangian; auto sizes it
+            // from the solid that owns the master facet, as kn auto
+            if (OPS_GetNumRemainingInputArgs() < 1) {
+                opserr << "WARNING contact -epsN - need auto or a value\n";
+                return -1;
+            }
+            const char *e = OPS_GetString();
+            if (e != 0 && strcmp(e, "auto") == 0) {
+                epsNAuto = true;
+            } else {
+                OPS_ResetCurrentInputArg(-1);
+                double v[1]; int m = 1;
+                if (OPS_GetDoubleInput(&m, v) < 0) {
+                    opserr << "WARNING contact -epsN - need auto or a value\n";
+                    return -1;
+                }
+                epsN = v[0];
+            }
+            hasMortarOpt = true;
+        } else if (opt != 0 && strcmp(opt, "-augTol") == 0) {
+            double v[1]; int m = 1;
+            if (OPS_GetDoubleInput(&m, v) < 0) {
+                opserr << "WARNING contact -augTol - need a value\n";
+                return -1;
+            }
+            augTol = v[0];
+            hasMortarOpt = true;
+        } else if (opt != 0 && (strcmp(opt, "-maxAug") == 0 || strcmp(opt, "-ngp") == 0)) {
+            int v[1]; int m = 1;
+            if (OPS_GetIntInput(&m, v) < 0) {
+                opserr << "WARNING contact " << opt << " - need an integer\n";
+                return -1;
+            }
+            if (strcmp(opt, "-maxAug") == 0) maxAug = v[0];
+            else                             ngp = v[0];
+            hasMortarOpt = true;
+        } else if (opt != 0 && strcmp(opt, "-outward") == 0) {
             // direction toward the slave's allowed half-space
             double o[3]; int m = 3;
             if (OPS_GetDoubleInput(&m, o) < 0) {
@@ -240,6 +302,7 @@ int OPS_LadrunoContact()
                 return -1;
             }
             cellFrac = f[0];
+            hasCell = true;
         } else if (opt != 0 && strcmp(opt, "-geomtan") == 0) {
             // geometric part of the consistent normal tangent, for curved or
             // large-sliding masters; symmetric, so any solver works
@@ -281,7 +344,8 @@ int OPS_LadrunoContact()
         } else {
             opserr << "WARNING contact - unexpected token '" << (opt ? opt : "")
                    << "' (expected -outward, -cell, -geomtan, -mu, -cohesion, -tauMax, "
-                      "-consistanttan, -visc or end of arguments)\n";
+                      "-consistanttan, -visc, -mortar, -epsN, -augTol, -maxAug, -ngp or "
+                      "end of arguments)\n";
             return -1;
         }
     }
@@ -291,6 +355,35 @@ int OPS_LadrunoContact()
     if (cd == 0) {
         opserr << "WARNING contact - define a contactSurface first\n";
         return -1;
+    }
+    if (hasMortarOpt && !isMortar) {
+        opserr << "WARNING contact -epsN/-augTol/-maxAug/-ngp are -mortar options; add "
+                  "-mortar or remove them\n";
+        return -1;
+    }
+    if (isMortar) {
+        // options of the node-to-segment lane that the mortar lane does not use
+        if (consistentNormal) {
+            opserr << "WARNING contact -geomtan is a node-to-segment option; the mortar "
+                      "tangent does not include the variation of D, M and n\n";
+            return -1;
+        }
+        if (hasCell) {
+            opserr << "WARNING contact -cell is a node-to-segment option; mortar pairs every "
+                      "slave facet with every master facet\n";
+            return -1;
+        }
+        if (muc > 0.0) {
+            opserr << "WARNING contact -visc is a node-to-segment option; it is not available "
+                      "with -mortar\n";
+            return -1;
+        }
+        if (kt > 0.0 || mu > 0.0 || cohesion > 0.0 || tauMax > 0.0 || consistentTan) {
+            opserr << "WARNING contact - friction is not available with -mortar in this build\n";
+            return -1;
+        }
+        return cd->addMortarContact(idata[0], idata[1], idata[2], kn, knAuto, epsN, epsNAuto,
+                                    augTol, maxAug, ngp, hasOutward ? outward : 0);
     }
     return cd->addContact(idata[0], idata[1], idata[2], kn, kt, mu,
                           hasOutward ? outward : 0, knAuto, cellFrac, consistentTan,
@@ -351,22 +444,71 @@ int OPS_LadrunoContactPlane()
     return cd->addRigidPlane(idata[0], idata[1], p0, n, kn, muc);
 }
 
-// ladrunoContactInfo -> [numContacts, numCommits, numReverts] (zeros without an engine)
+// ladrunoContactInfo -> [numContacts, numCommits, numReverts, numMortarContacts]
+// (zeros without an engine); numContacts counts the node-to-segment contacts
 int OPS_LadrunoContactInfo()
 {
     Domain *theDomain = OPS_GetDomain();
-    int out[3] = {0, 0, 0};
+    int out[4] = {0, 0, 0, 0};
     if (theDomain != 0) {
         LadrunoContactDomain *cd = theDomain->getLadrunoContactDomain();
         if (cd != 0) {
             out[0] = cd->getNumContacts();
             out[1] = cd->getNumCommits();
             out[2] = cd->getNumReverts();
+            out[3] = cd->getNumMortarContacts();
         }
     }
-    int three = 3;
-    if (OPS_SetIntOutput(&three, out, false) < 0)
+    int four = 4;
+    if (OPS_SetIntOutput(&four, out, false) < 0)
         return -1;
+    return 0;
+}
+
+// ladrunoMortarPenetration -> the largest normal penetration max(0, -gbar_I)
+// over the mortar slave nodes with a compressive augmented pressure (0 without
+// an engine or out of contact). The convergence measure of a held-load
+// augmentation loop.
+int OPS_LadrunoMortarPenetration()
+{
+    Domain *theDomain = OPS_GetDomain();
+    double pen = 0.0;
+    if (theDomain != 0) {
+        LadrunoContactDomain *cd = theDomain->getLadrunoContactDomain();
+        if (cd != 0)
+            pen = cd->getMaxMortarPenetration();
+    }
+    int one = 1;
+    if (OPS_SetDoubleOutput(&one, &pen, true) < 0)
+        return -1;
+    return 0;
+}
+
+// ladrunoBeginAugment / ladrunoEndAugment: open and close a held-load
+// augmentation sweep. In between, Domain::commit() updates the contact
+// multipliers but records nothing and does not advance the commit tag, so the
+// repeated commits of an augmentation loop at a zero load increment add no
+// recorder samples. The flag is also cleared by wipe and wipeAnalysis.
+int OPS_LadrunoBeginAugment()
+{
+    Domain *theDomain = OPS_GetDomain();
+    if (theDomain != 0) {
+        // While the flag is on, every commit is silent; a second begin without
+        // an end means one end was missed and later recorder output is lost.
+        if (theDomain->isContactAugmenting())
+            opserr << "WARNING ladrunoBeginAugment - an augmentation sweep is already open (a "
+                      "ladrunoEndAugment was missed); recorders stay silent until "
+                      "ladrunoEndAugment, wipe or wipeAnalysis\n";
+        theDomain->setContactAugmenting(true);
+    }
+    return 0;
+}
+
+int OPS_LadrunoEndAugment()
+{
+    Domain *theDomain = OPS_GetDomain();
+    if (theDomain != 0)
+        theDomain->setContactAugmenting(false);
     return 0;
 }
 

@@ -27,6 +27,12 @@
 //     Springer, Berlin. doi:10.1007/978-3-662-04864-1
 //   Hallquist, J.O. (2006). LS-DYNA Theory Manual, Livermore Software
 //     Technology Corporation, Section 26 (Contact-Impact Algorithm).
+//   Puso, M.A. and Laursen, T.A. (2004). A mortar segment-to-segment contact
+//     method for large deformation solid mechanics. Computer Methods in Applied
+//     Mechanics and Engineering, 193(6-8), 601-629. doi:10.1016/j.cma.2003.10.010
+//   Simo, J.C. and Laursen, T.A. (1992). An augmented Lagrangian treatment of
+//     contact problems involving friction. Computers & Structures, 42(1),
+//     97-116. doi:10.1016/0045-7949(92)90540-G
 //
 // Description: LadrunoContactDomain, the contact engine attached to a Domain.
 // It owns the contact surfaces and the contact definitions, and the
@@ -132,6 +138,65 @@ class LadrunoContactDomain
     int getNumRigidPlanes(void) const { return (int)theRigidPlanes.size(); }
     const RigidPlane &getRigidPlane(int i) const { return theRigidPlanes[i]; }
 
+    // --- mortar segment-to-segment contact (Puso and Laursen 2004) between a
+    //     MASTER_SEGMENTS and a SLAVE_SEGMENTS surface; the handler builds one
+    //     adapter per (slave facet, master facet) pair and the clipped overlap
+    //     decides at every evaluation whether the pair carries anything. ---
+    struct MortarContact {
+        bool retired = false;   // set when the analysis removed every node of a surface
+        int tag, masterSurfTag, slaveSurfTag;
+        double kn;              // penalty from the positional kn slot (used when epsN is not given)
+        bool   knAuto;
+        double epsN;            // normal penalty of the augmented Lagrangian
+        bool   epsNAuto;        // size epsN from the solid that owns the master facet
+        double augTol;          // augmentation tolerance and limit, recorded for scripts
+        int    maxAug;          //   that drive the held-load augmentation (not read by the engine)
+        int    ngp;             // order of the triangle rule on the clipped overlap (2: 3 points)
+        bool   hasOutward;
+        double outward[3];      // direction toward the slave's allowed half-space
+    };
+    int addMortarContact(int tag, int masterSurfTag, int slaveSurfTag,
+                         double kn, bool knAuto, double epsN, bool epsNAuto,
+                         double augTol, int maxAug, int ngp, const double *outward = 0);
+    int getNumMortarContacts(void) const { return (int)theMortarContacts.size(); }
+    const MortarContact &getMortarContact(int i) const { return theMortarContacts[i]; }
+
+    // --- mortar normal multiplier, one per (contact, slave node). The nodal
+    //     pressure of a facet pair is p_I = min(0, lambda_I + epsN gbar_I), with
+    //     gbar_I = gt_I / a_I the weighted gap of that pair over its tributary
+    //     area a_I = sum_J D_IJ. lambda_I is changed only by commit() (one Uzawa
+    //     update, Simo and Laursen 1992), so revertToLastCommit() needs no copy.
+    //     The update uses the weighted gap and area summed over every facet pair
+    //     that integrates the node; the adapters report their part through
+    //     accumulateMortarGap(). A per-facet multiplier would differ between the
+    //     facets of a shared node and fail the patch test. ---
+    struct MortarNormalState {
+        double lambdaN;   // committed normal multiplier (<= 0)
+        double gtGlobal;  // sum over facet pairs of the weighted gap gt_I at the current trial
+        double aGlobal;   // sum over facet pairs of a_I
+        double epsN;      // penalty of the update (max over the facet pairs)
+        MortarNormalState() : lambdaN(0.0), gtGlobal(0.0), aGlobal(0.0), epsN(0.0) {}
+    };
+    MortarNormalState &getOrCreateMortarNormalState(int contactTag, int slaveNodeTag);
+    // A facet pair reports its weighted gap and area at a slave node. The entry
+    // is keyed by the adapter tag, so a repeated evaluation replaces its earlier
+    // value instead of adding to it.
+    void accumulateMortarGap(int contactTag, int slaveNodeTag, int feTag,
+                             double gtFacet, double aFacet, double epsN);
+    // max over the slave nodes with a compressive augmented pressure of
+    // max(0, -gbar_I) (0 without mortar contact): the convergence measure of a
+    // held-load augmentation loop (ladrunoMortarPenetration)
+    double getMaxMortarPenetration(void) const;
+    int  getNumMortarNormalStates(void) const { return (int)theMortarNormalStates.size(); }
+    // Collection of the multipliers of slave nodes that no longer belong to a
+    // built pair: the handler calls mortarNormalGCBegin(), mortarNormalGCMark()
+    // for every slave node of every pair it builds, and mortarNormalGCEnd(),
+    // which erases the unmarked slots and drops the per-adapter contributions
+    // (adapter tags change at every handle()).
+    void mortarNormalGCBegin(void);
+    void mortarNormalGCMark(int contactTag, int slaveNodeTag);
+    void mortarNormalGCEnd(void);
+
     // --- node-to-segment normal force readout (ladrunoContactForce) ---
     // Each segment adapter writes its normal penalty force tn = kn <-gap>+ into a
     // (contactTag, slaveTag, segIndex) slot at every residual evaluation, and
@@ -176,8 +241,9 @@ class LadrunoContactDomain
     int  getNumFrictionStates(void) const { return (int)theFrictionStates.size(); }
 
     // --- lifecycle (driven by Domain::commit / revertToLastCommit / revertToStart) ---
-    // augmenting: the Domain's within-step augmentation flag, passed for
-    // contact formulations that update multipliers on commit.
+    // augmenting: the Domain's within-step augmentation flag
+    // (ladrunoBeginAugment / ladrunoEndAugment). Every commit performs one
+    // Uzawa update of the mortar multipliers.
     int commit(bool augmenting = false);
     int revertToLastCommit(void);
     // Drop all path-dependent state so that Domain::revertToStart() returns
@@ -190,7 +256,8 @@ class LadrunoContactDomain
     // they reset with the model (wipe deletes the engine) and a second contact
     // with the same condition is still reported. True exactly once per key.
     enum WarnTopic {
-        WARN_VISC_STATIC = 0        // -visc under a static integrator: dashpot disabled
+        WARN_VISC_STATIC = 0,       // -visc under a static integrator: dashpot disabled
+        WARN_MORTAR_ORIENT          // mortar automatic orientation degenerate (coincident facets)
     };
     bool warnOnce(int contactTag, int topic);
 
@@ -198,6 +265,7 @@ class LadrunoContactDomain
     std::vector<LadrunoContactSurface *> theSurfaces;   // owned
     std::vector<Contact> theContacts;
     std::vector<RigidPlane> theRigidPlanes;
+    std::vector<MortarContact> theMortarContacts;
     // The contact tag is the leading key of every path-state store, so tags
     // must be unique across all contact definitions (checked by every add*).
     bool contactTagInUse(int tag) const;
@@ -217,6 +285,24 @@ class LadrunoContactDomain
     std::map<PairKey, FrictionState> theFrictionStates;
     std::set<PairKey> liveKeys;                         // collection scratch (per handle())
     std::set<std::pair<int, int> > theWarnOnce;         // (contactTag, WarnTopic) latches
+
+    // mortar multipliers, keyed (contactTag, slaveNodeTag)
+    struct NodeKey {
+        int c, n;
+        bool operator<(const NodeKey &o) const {
+            if (c != o.c) return c < o.c;
+            return n < o.n;
+        }
+    };
+    std::map<NodeKey, MortarNormalState> theMortarNormalStates;
+    std::set<NodeKey> liveNodeKeys;                     // collection scratch (per handle())
+    // contribution of one adapter to one slave node, keyed (contactTag,
+    // slaveNodeTag, adapter tag); cleared at every handle()
+    struct FacetContrib {
+        double gt, a;
+        FacetContrib() : gt(0.0), a(0.0) {}
+    };
+    std::map<PairKey, FacetContrib> theMortarFacetContribs;
 };
 
 #endif

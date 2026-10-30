@@ -496,6 +496,9 @@ int OPS_LadrunoContact();
 int OPS_LadrunoContactPlane();
 int OPS_LadrunoContactInfo();
 int OPS_LadrunoContactForce();
+int OPS_LadrunoMortarPenetration();
+int OPS_LadrunoBeginAugment();
+int OPS_LadrunoEndAugment();
 
 void* OPS_TimeSeriesIntegrator();
 

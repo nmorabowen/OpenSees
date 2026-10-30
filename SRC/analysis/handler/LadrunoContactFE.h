@@ -27,6 +27,12 @@
 //     Springer, Berlin. doi:10.1007/978-3-662-04864-1
 //   Hallquist, J.O. (2006). LS-DYNA Theory Manual, Livermore Software
 //     Technology Corporation, Section 26 (Contact-Impact Algorithm).
+//   Puso, M.A. and Laursen, T.A. (2004). A mortar segment-to-segment contact
+//     method for large deformation solid mechanics. Computer Methods in Applied
+//     Mechanics and Engineering, 193(6-8), 601-629. doi:10.1016/j.cma.2003.10.010
+//   Simo, J.C. and Laursen, T.A. (1992). An augmented Lagrangian treatment of
+//     contact problems involving friction. Computers & Structures, 42(1),
+//     97-116. doi:10.1016/0045-7949(92)90540-G
 //
 // Description: LadrunoContactFE, an FE_Element adapter that adds contact
 // contributions to the assembly without a Domain Element behind it
@@ -44,6 +50,13 @@
 //   SEGMENT  node-to-segment penalty contact of one slave node against one
 //            master segment (tri3 or quad4), connectivity {slave, segment
 //            nodes}, ndof = 3 (1 + nps).
+//   MORTAR   mortar segment-to-segment contact of one slave facet against one
+//            master facet (Puso and Laursen 2004): the overlap of the two
+//            facets on the auxiliary plane of the master facet is clipped and
+//            integrated with a triangle rule, giving the mortar matrices D
+//            (slave x slave), M (slave x master) and the weighted gap gt.
+//            Connectivity {slave facet nodes, master facet nodes},
+//            ndof = 3 (npsS + npsM).
 //
 // With myEle == 0 the FE_Element getResidual()/getTangent() and the force
 // helpers have no element to call, so this class owns its buffers and
@@ -93,6 +106,17 @@ class LadrunoContactFE : public FE_Element
                      Domain *theDomain = 0, int contactTag = 0, int segIndex = 0,
                      bool consistentTan = false, bool consistentNormal = false,
                      double cohesion = 0.0, double tauMax = 0.0, double muc = 0.0);
+    // Mortar contact of ONE slave facet against ONE master facet (tri3 or quad4
+    // each). Connectivity = {slave facet nodes} + {master facet nodes}.
+    //   epsN: normal penalty of the augmented Lagrangian.
+    //   orientDir: direction toward the slave's allowed half-space (orients the
+    //     master facet normal).
+    //   contactTag, slaveFacetIndex: the engine keys; theDomain is the engine
+    //     lookup (null: penalty only, no multiplier).
+    //   ngp: order of the triangle rule on the clipped overlap.
+    LadrunoContactFE(int tag, Node **slaveNodes, int npsS, Node **masterNodes, int npsM,
+                     double epsN, const double orientDir[3], int contactTag,
+                     int slaveFacetIndex, Domain *theDomain, int ngp = 2);
     ~LadrunoContactFE();
 
     // Fill myID with the first ndm equations of each node (the translations).
@@ -159,10 +183,22 @@ class LadrunoContactFE : public FE_Element
     // (LadrunoContactProjection::normalGeomTangent), added to `tang`.
     void addNormalGeomTang(double fact);
 
+    // Integrate the mortar facet pair at the current trial configuration
+    // (LadrunoMortarKernel::integratePair). Returns false when the overlap is
+    // empty or degenerate; otherwise fills D, M, the weighted gap g (one per
+    // slave node) and the master facet normal n oriented by orientDir.
+    bool mortarActive(double D[4][4], double M[4][4], double g[4], double n[3]) const;
+
+    // Mortar tangent K = epsN Bt^T diag(act_I / a_I) Bt (x) (n (x) n),
+    // Bt = [D, -M] over [slave | master] nodes, on the active set of the
+    // residual. The variation of D, M and n with the displacements is not
+    // included (exact for flat facets that do not slide).
+    void addMortarTang(double fact, bool initialStiff = false);
+
     Vector resid;
     Matrix tang;
 
-    enum Mode { RIGID_PLANE = 1, SEGMENT = 2 };
+    enum Mode { RIGID_PLANE = 1, SEGMENT = 2, MORTAR = 3 };
     Mode mode;
     Node *theSlave;
     int ndm;
@@ -192,6 +228,13 @@ class LadrunoContactFE : public FE_Element
     // viscous normal stabilization: force -muc gdot B, gdot = B v, while in
     // contact; damping tangent muc B^T B through addCtoTang
     double muc;
+
+    // MORTAR binding (kn holds epsN)
+    Node *mortarSlave[4];   // slave facet nodes
+    Node *mortarMaster[4];  // master facet nodes
+    int npsS, npsM;         // nodes per slave / master facet
+    int slaveFacetIndex;    // ordinal of the slave facet in its surface (stable across rebuilds)
+    int mortarOrder;        // order of the triangle rule on the clipped overlap
 };
 
 #endif
