@@ -42,7 +42,7 @@
 #                        analysis alive | loadConst, wipeAnalysis | a new node + element,
 #                        domainChange, rayleigh, UniformExcitation | transient 10 x 0.01
 #                        -> [static 4, transient 5]  (5 = the -T dt 0.02 samples of 10
-#                           steps; a pre-#986 build writes [static 4, static 5])
+#                           steps; a pre-#986 build writes [static 4, static 4])
 
 if {$argc < 2} { puts "usage: stage_kind_model.tcl <out.ladruno> <case>"; exit 1 }
 set out [lindex $argv 0]

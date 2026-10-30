@@ -49,7 +49,7 @@ EXPECT = {
     "flip_then_topology": [("static", 4), ("transient", 5), ("transient", 2)],
     # nmorabowen/OpenSees#1037: the San Ramon free-field shape (eigen between the
     # stages, a topology change, rayleigh, UniformExcitation, -T dt sampling).
-    # A pre-#986 build writes [static 4, static 5] with no FORMAT_MINOR_VERSION.
+    # A pre-#986 build writes [static 4, static 4] with no FORMAT_MINOR_VERSION.
     "freefield_shape": [("static", 4), ("transient", 5)],
 }
 PY_CASES = ("dc_static_transient", "flip_static_transient",
