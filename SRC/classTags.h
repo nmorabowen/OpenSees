@@ -1125,6 +1125,7 @@
 #define INTEGRATOR_TAGS_ExplicitBathe                   61
 #define INTEGRATOR_TAGS_ExplicitDifferenceStatic        62
 #define INTEGRATOR_TAGS_LadrunoArcLength                33004
+#define INTEGRATOR_TAGS_LadrunoIndirectControl          33006
 
 
 #define LinSOE_TAGS_FullGenLinSOE		1

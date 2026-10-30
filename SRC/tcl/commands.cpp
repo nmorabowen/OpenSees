@@ -222,6 +222,7 @@ extern void *OPS_CentralDifference(void);
 extern void *OPS_ExplicitBathe(void);
 extern void *OPS_ExplicitDifferenceStatic(void);
 extern void *OPS_LadrunoArcLength(void);
+extern void *OPS_LadrunoIndirectControl(void);
 extern void *OPS_CentralDifferenceAlternative(void);
 extern void *OPS_CentralDifferenceNoDamping(void);
 extern void *OPS_Collocation(void);
@@ -4586,6 +4587,12 @@ specifyIntegratorImpl(ClientData clientData, Tcl_Interp *interp, int argc,
 
   else if (strcmp(argv[1],"LadrunoArcLength") == 0) {
     theStaticIntegrator = (StaticIntegrator *)OPS_LadrunoArcLength();
+    if (theStaticIntegrator != 0 && theStaticAnalysis != 0)
+      setIntegratorIfAny(theStaticAnalysis, theStaticIntegrator);
+  }
+
+  else if (strcmp(argv[1],"LadrunoIndirectControl") == 0) {
+    theStaticIntegrator = (StaticIntegrator *)OPS_LadrunoIndirectControl();
     if (theStaticIntegrator != 0 && theStaticAnalysis != 0)
       setIntegratorIfAny(theStaticAnalysis, theStaticIntegrator);
   }

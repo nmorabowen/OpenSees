@@ -1770,6 +1770,9 @@ int OPS_Integrator()
     } else if (strcmp(type,"LadrunoArcLength") == 0) {
 	si = (StaticIntegrator*)OPS_LadrunoArcLength();
 
+    } else if (strcmp(type,"LadrunoIndirectControl") == 0) {
+	si = (StaticIntegrator*)OPS_LadrunoIndirectControl();
+
     } else if (strcmp(type,"HSConstraint") == 0) {
 	si = (StaticIntegrator*)OPS_HSConstraint();
 
