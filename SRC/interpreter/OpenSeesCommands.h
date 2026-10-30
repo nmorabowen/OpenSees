@@ -565,6 +565,7 @@ void* OPS_HHTHSIncrReduct_TP();
 void* OPS_HHTHSFixedNumIter();
 void* OPS_HHTHSFixedNumIter_TP();
 void* OPS_GeneralizedAlpha();
+void* OPS_LadrunoHHT();
 void* OPS_KRAlphaExplicit();
 void* OPS_KRAlphaExplicit_TP();
 void* OPS_AlphaOS();

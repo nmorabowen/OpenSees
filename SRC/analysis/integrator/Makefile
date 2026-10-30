@@ -25,6 +25,7 @@ OBJS       = AlphaOS.o \
 	EigenIntegrator.o \
 	GeneralizedAlpha.o \
 	HHT.o \
+	LadrunoHHT.o \
 	HHT_TP.o \
 	HHTExplicit.o \
 	HHTExplicit_TP.o \
