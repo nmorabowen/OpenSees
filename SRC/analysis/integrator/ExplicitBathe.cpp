@@ -83,7 +83,13 @@ void *OPS_ExplicitBathe(void) {
     int compute_critical_timestep = 0;
     double alpha_lnvd = 0.0;
     while (OPS_GetNumRemainingInputArgs() > 0) {
-        const char* opt = OPS_GetString();
+        // OPS_GetString() answers a placeholder for a numeric Python
+        // argument; OPS_GetStringFromAll() also returns it as text, so the
+        // integer flag below is read in both interpreters
+        char optBuf[64];
+        const char* opt = OPS_GetStringFromAll(optBuf, sizeof(optBuf));
+        if (opt == optBuf)
+            optBuf[sizeof(optBuf) - 1] = '\0';
         if (opt == 0) {
             // numeric argument from Python: the critical-timestep flag
             OPS_ResetCurrentInputArg(-1);
