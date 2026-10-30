@@ -85,7 +85,53 @@ LadrunoContactDomain::contactTagInUse(int tag) const
 {
     for (size_t i = 0; i < theContacts.size(); i++)
         if (theContacts[i].tag == tag) return true;
+    for (size_t i = 0; i < theRigidPlanes.size(); i++)
+        if (theRigidPlanes[i].tag == tag) return true;
     return false;
+}
+
+int
+LadrunoContactDomain::addRigidPlane(int tag, int slaveSurfTag,
+                                    const double p0[3], const double n[3], double kn)
+{
+    LadrunoContactSurface *surf = getSurface(slaveSurfTag);
+    if (surf == 0) {
+        opserr << "WARNING LadrunoContactDomain::addRigidPlane() - slave surface "
+               << slaveSurfTag << " not defined\n";
+        return -1;
+    }
+    if (contactTagInUse(tag)) {
+        opserr << "WARNING LadrunoContactDomain::addRigidPlane() - contact tag " << tag
+               << " already exists (tags are unique across contact/contactPlane)\n";
+        return -1;
+    }
+    if (surf->getKind() != LadrunoContactSurface::SLAVE_NODES) {
+        // a segment surface stores repeated connectivity; used as a node set it
+        // would count a shared node several times
+        opserr << "WARNING LadrunoContactDomain::addRigidPlane() - surface "
+               << slaveSurfTag << " is not a slave node-set\n";
+        return -1;
+    }
+    double nrm = sqrt(n[0]*n[0] + n[1]*n[1] + n[2]*n[2]);
+    if (nrm < 1e-14) {
+        opserr << "WARNING LadrunoContactDomain::addRigidPlane() - zero normal\n";
+        return -1;
+    }
+    // a normal that is already unit to 1e-12 is stored unchanged (dividing by
+    // its recomputed norm would change the last bits)
+    if (fabs(nrm - 1.0) < 1e-12)
+        nrm = 1.0;
+    if (kn <= 0.0) {
+        // kn < 0 is attractive with a negative-definite tangent; kn == 0 is inert
+        opserr << "WARNING LadrunoContactDomain::addRigidPlane() - penalty kn must be "
+               << "> 0 (got " << kn << ")\n";
+        return -1;
+    }
+    RigidPlane rp;
+    rp.tag = tag; rp.slaveSurfTag = slaveSurfTag; rp.kn = kn;
+    for (int d = 0; d < 3; d++) { rp.p0[d] = p0[d]; rp.n[d] = n[d] / nrm; }
+    theRigidPlanes.push_back(rp);
+    return 0;
 }
 
 int
@@ -292,6 +338,19 @@ LadrunoContactDomain::pruneRemovedNodes(Domain *dom)
             opserr << "LadrunoContactDomain: RETIRING contact " << c.tag
                    << " -- the analysis removed every node of its master or slave "
                       "surface, so the interaction no longer has a body to act on. "
+                      "The run continues without it.\n";
+        }
+    }
+    for (size_t i = 0; i < theRigidPlanes.size(); i++) {
+        RigidPlane &r = theRigidPlanes[i];
+        if (r.retired)
+            continue;
+        LadrunoContactSurface *ss = getSurface(r.slaveSurfTag);
+        if (ss == 0 || ss->getNodeTags().Size() == 0) {
+            r.retired = true;
+            retiredNow++;
+            opserr << "LadrunoContactDomain: RETIRING contactPlane " << r.tag
+                   << " -- the analysis removed every node of its slave surface. "
                       "The run continues without it.\n";
         }
     }

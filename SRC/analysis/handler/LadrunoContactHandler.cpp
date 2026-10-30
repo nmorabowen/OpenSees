@@ -488,6 +488,43 @@ LadrunoContactHandler::handle(const ID *nodesLast)
         cd->frictionGCEnd();     // erase the friction slots no live pair referenced
     }
 
+    // Rigid analytical planes: one adapter per slave node (connectivity = that
+    // node); ndm from the node coordinates.
+    if (cd != 0) {
+        for (int p = 0; p < cd->getNumRigidPlanes(); p++) {
+            const LadrunoContactDomain::RigidPlane &rp = cd->getRigidPlane(p);
+            if (rp.retired) continue;
+            LadrunoContactSurface *surf = cd->getSurface(rp.slaveSurfTag);
+            if (surf == 0) {
+                opserr << "FATAL LadrunoContactHandler::handle() - contactPlane " << rp.tag
+                       << ": slave surface " << rp.slaveSurfTag << " not defined\n";
+                return ladrunoContactFatal();
+            }
+            const ID &nodeTags = surf->getNodeTags();
+            for (int k = 0; k < nodeTags.Size(); k++) {
+                Node *sn = theDomain->getNode(nodeTags(k));
+                if (sn == 0) {
+                    opserr << "FATAL LadrunoContactHandler::handle() - rigid-plane slave node "
+                           << nodeTags(k) << " not in domain\n";
+                    return ladrunoContactFatal();
+                }
+                int nd = sn->getCrds().Size();
+                if (nd != 3 || sn->getNumberDOF() < nd) {
+                    // the adapter couples the first nd translational DOFs; fewer
+                    // DOFs than coordinates would leave myID slots unset
+                    opserr << "FATAL LadrunoContactHandler::handle() - rigid-plane slave node "
+                           << nodeTags(k) << " has ndm=" << nd << ", ndf=" << sn->getNumberDOF()
+                           << " (needs 3D coordinates and ndf >= 3)\n";
+                    return ladrunoContactFatal();
+                }
+                LadrunoContactFE *fe = new LadrunoContactFE(numFe++, sn, nd, rp.p0, rp.n, rp.kn,
+                                                            theDomain, rp.tag);
+                if (fe == 0) return -5;
+                theModel->addFE_Element(fe);
+            }
+        }
+    }
+
     return count3;
 }
 

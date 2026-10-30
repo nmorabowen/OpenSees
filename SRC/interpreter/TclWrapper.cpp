@@ -891,6 +891,14 @@ static int Tcl_ops_contact(ClientData clientData, Tcl_Interp *interp, int argc, 
     return TCL_OK;
 }
 
+static int Tcl_ops_contactPlane(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
+    wrapper->resetCommandLine(argc, 1, argv);
+
+    if (OPS_LadrunoContactPlane() < 0) return TCL_ERROR;
+
+    return TCL_OK;
+}
+
 static int Tcl_ops_ladrunoContactInfo(ClientData clientData, Tcl_Interp *interp, int argc,   TCL_Char **argv) {
     wrapper->resetCommandLine(argc, 1, argv);
 
@@ -1865,6 +1873,7 @@ TclWrapper::addOpenSeesCommands(Tcl_Interp* interp)
     addCommand(interp,"modalDampingQ", &Tcl_ops_modalDampingQ);
     addCommand(interp,"contactSurface", &Tcl_ops_contactSurface);
     addCommand(interp,"contact", &Tcl_ops_contact);
+    addCommand(interp,"contactPlane", &Tcl_ops_contactPlane);
     addCommand(interp,"ladrunoContactInfo", &Tcl_ops_ladrunoContactInfo);
     addCommand(interp,"ladrunoContactForce", &Tcl_ops_ladrunoContactForce);
     addCommand(interp,"setElementRayleighDampingFactors", &Tcl_ops_setElementRayleighDampingFactors);

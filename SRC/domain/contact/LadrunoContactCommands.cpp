@@ -29,6 +29,7 @@
 //   contact tag masterSurfTag slaveSurfTag <kn | kn kt mu | auto <kt mu>> <options>
 //     options: -outward ox oy oz, -cell frac, -geomtan, -mu mu, -cohesion c,
 //              -tauMax tau, -consistanttan
+//   contactPlane tag slaveSurfTag nx ny nz px py pz kn
 //   ladrunoContactInfo            -> numContacts numCommits numReverts
 //   ladrunoContactForce slaveTag  -> summed normal contact force on the node
 //
@@ -284,6 +285,52 @@ int OPS_LadrunoContact()
     return cd->addContact(idata[0], idata[1], idata[2], kn, kt, mu,
                           hasOutward ? outward : 0, knAuto, cellFrac, consistentTan,
                           consistentNormal, cohesion, tauMax);
+}
+
+// contactPlane tag slaveSurfTag nx ny nz px py pz kn
+// A rigid analytical plane through (px, py, pz) with outward normal
+// (nx, ny, nz) against the slave node set.
+int OPS_LadrunoContactPlane()
+{
+    if (OPS_GetNumRemainingInputArgs() < 9) {
+        opserr << "WARNING want - contactPlane tag slaveSurfTag nx ny nz px py pz kn\n";
+        return -1;
+    }
+    int idata[2], ni = 2;
+    if (OPS_GetIntInput(&ni, idata) < 0) {
+        opserr << "WARNING contactPlane - could not read tag/slaveSurfTag\n";
+        return -1;
+    }
+    double d[7];
+    int nd = 7;
+    if (OPS_GetDoubleInput(&nd, d) < 0) {
+        opserr << "WARNING contactPlane - could not read nx ny nz px py pz kn\n";
+        return -1;
+    }
+    double n[3]  = { d[0], d[1], d[2] };
+    double p0[3] = { d[3], d[4], d[5] };
+    double kn = d[6];
+    while (OPS_GetNumRemainingInputArgs() > 0) {
+        const char *opt = OPS_GetString();
+        if (opt != 0 && strcmp(opt, "-soft") == 0) {
+            opserr << "WARNING contactPlane -soft - the soft penalty is sized from the time "
+                      "step of an explicit integrator, and no integrator in this build "
+                      "reports one; use kn\n";
+            return -1;
+        } else {
+            opserr << "WARNING contactPlane - unexpected token '" << (opt ? opt : "")
+                   << "' (expected end of arguments)\n";
+            return -1;
+        }
+    }
+    Domain *theDomain = OPS_GetDomain();
+    if (theDomain == 0) return -1;
+    LadrunoContactDomain *cd = theDomain->getLadrunoContactDomain();
+    if (cd == 0) {
+        opserr << "WARNING contactPlane - define the slave contactSurface first\n";
+        return -1;
+    }
+    return cd->addRigidPlane(idata[0], idata[1], p0, n, kn);
 }
 
 // ladrunoContactInfo -> [numContacts, numCommits, numReverts] (zeros without an engine)

@@ -257,6 +257,7 @@ extern int OPS_sdfResponse(void);
 extern void *OPS_LadrunoContactHandler(void);
 extern int OPS_LadrunoContactSurface(void);
 extern int OPS_LadrunoContact(void);
+extern int OPS_LadrunoContactPlane(void);
 extern int OPS_LadrunoContactInfo(void);
 extern int OPS_LadrunoContactForce(void);
 
@@ -929,6 +930,8 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
     Tcl_CreateCommand(interp, "contactSurface", &ladrunoContactSurface,
         (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
     Tcl_CreateCommand(interp, "contact", &ladrunoContact,
+        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
+    Tcl_CreateCommand(interp, "contactPlane", &ladrunoContactPlane,
         (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
     Tcl_CreateCommand(interp, "ladrunoContactInfo", &ladrunoContactInfo,
         (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
@@ -5916,6 +5919,15 @@ ladrunoContact(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** a
 {
     OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
     if (OPS_LadrunoContact() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+int
+ladrunoContactPlane(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_LadrunoContactPlane() < 0)
 	    return TCL_ERROR;
     return TCL_OK;
 }

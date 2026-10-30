@@ -140,6 +140,8 @@ ladrunoContactSurface(ClientData clientData, Tcl_Interp* interp, int argc, TCL_C
 int
 ladrunoContact(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
 int
+ladrunoContactPlane(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+int
 ladrunoContactInfo(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
 int
 ladrunoContactForce(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);

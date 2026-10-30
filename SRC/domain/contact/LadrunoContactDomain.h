@@ -115,6 +115,19 @@ class LadrunoContactDomain
     };
     const Contact &getContact(int i) const { return theContacts[i]; }
 
+    // --- rigid analytical plane (point p0, outward unit normal n) against a
+    //     slave node set; one adapter per slave node. ---
+    struct RigidPlane {
+        bool retired = false;   // set when the analysis removed every slave node
+        int tag, slaveSurfTag;
+        double p0[3], n[3];     // n stored normalized
+        double kn;
+    };
+    int addRigidPlane(int tag, int slaveSurfTag,
+                      const double p0[3], const double n[3], double kn);
+    int getNumRigidPlanes(void) const { return (int)theRigidPlanes.size(); }
+    const RigidPlane &getRigidPlane(int i) const { return theRigidPlanes[i]; }
+
     // --- node-to-segment normal force readout (ladrunoContactForce) ---
     // Each segment adapter writes its normal penalty force tn = kn <-gap>+ into a
     // (contactTag, slaveTag, segIndex) slot at every residual evaluation, and
@@ -172,6 +185,7 @@ class LadrunoContactDomain
   private:
     std::vector<LadrunoContactSurface *> theSurfaces;   // owned
     std::vector<Contact> theContacts;
+    std::vector<RigidPlane> theRigidPlanes;
     // The contact tag is the leading key of every path-state store, so tags
     // must be unique across all contact definitions (checked by every add*).
     bool contactTagInUse(int tag) const;

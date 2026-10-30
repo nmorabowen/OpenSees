@@ -40,6 +40,26 @@ ladrunoContactTraction(double kn, double gap)
     return (gap < 0.0) ? kn * (-gap) : 0.0;
 }
 
+LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, int ndm_,
+                                   const double p0[3], const double n[3], double kn_,
+                                   Domain *dom, int contactTag_)
+  : FE_Element(tag, /*numDOF_Group=*/1, /*ndof=*/ndm_),
+    resid(ndm_), tang(ndm_, ndm_),
+    mode(RIGID_PLANE), theSlave(slaveNode), ndm(ndm_), kn(kn_), nps(0),
+    theDomain(dom), contactTag(contactTag_), segIndex(0), consistentNormal(false),
+    kt(0.0), mu(0.0), cohesion(0.0), tauMax(0.0), consistentTan(false)
+{
+    // Connectivity = the slave node's DOF_Group; setID() fills myID with its
+    // first ndm equation numbers (the translations), as for PenaltySP_FE.
+    if (slaveNode != 0) {
+        DOF_Group *dg = slaveNode->getDOF_GroupPtr();
+        if (dg != 0)
+            myDOF_Groups(0) = dg->getTag();
+    }
+    for (int d = 0; d < 3; d++) { planeP0[d] = p0[d]; planeN[d] = n[d]; orientDir[d] = 0.0; }
+    for (int i = 0; i < 4; i++) segNode[i] = 0;
+}
+
 LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes,
                                    int nps_, double kn_, const double odir[3],
                                    double kt_, double mu_, Domain *dom,
@@ -66,6 +86,7 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes,
         }
     }
     for (int i = nps; i < 4; i++) segNode[i] = 0;
+    for (int d = 0; d < 3; d++) { planeP0[d] = 0.0; planeN[d] = 0.0; }
     // a fixed direction, not the live slave position, so the orientation stays
     // correct after the slave penetrates
     for (int d = 0; d < 3; d++) orientDir[d] = odir[d];
@@ -86,6 +107,9 @@ LadrunoContactFE::setID(void)
 {
     Node *nodes[8]; int nn = 0;
     switch (mode) {
+    case RIGID_PLANE:
+        nodes[nn++] = theSlave;
+        break;
     case SEGMENT:
         nodes[nn++] = theSlave;
         for (int i = 0; i < nps; i++) nodes[nn++] = segNode[i];
@@ -116,6 +140,18 @@ LadrunoContactFE::setID(void)
         for (int j = 0; j < per; j++) myID(current++) = eq(j);
     }
     return 0;
+}
+
+double
+LadrunoContactFE::rigidPlaneGap(void) const
+{
+    // g = n.(x_s - p0), x_s = X_s + u_s (first ndm components)
+    const Vector &X = theSlave->getCrds();
+    const Vector &u = theSlave->getTrialDisp();
+    double g = 0.0;
+    for (int d = 0; d < ndm; d++)
+        g += planeN[d] * (X(d) + u(d) - planeP0[d]);
+    return g;
 }
 
 bool
@@ -209,7 +245,14 @@ const Vector &
 LadrunoContactFE::getResidual(Integrator *theIntegrator)
 {
     resid.Zero();
-    if (mode == SEGMENT) {
+    if (mode == RIGID_PLANE) {
+        double g = rigidPlaneGap();
+        if (g < 0.0) {                       // penetration: restoring force along +n
+            double tn = ladrunoContactTraction(kn, g);
+            for (int d = 0; d < ndm; d++)
+                resid(d) = tn * planeN[d];   // drives the slave toward g = 0 (as PenaltySP_FE)
+        }
+    } else if (mode == SEGMENT) {
         double gap, n[3], N[4], B[15], gTvec[3];   // ndof <= 3 (1 + 4) = 15
         LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
         if (!segmentActive(gap, n, N, B, gTvec)) {
@@ -280,7 +323,12 @@ LadrunoContactFE::zeroTangent(void)
 void
 LadrunoContactFE::addKtToTang(double fact)
 {
-    if (mode == SEGMENT) {
+    // rigid plane: K_c = kn (n (x) n) over the slave DOFs while penetrating
+    if (mode == RIGID_PLANE && rigidPlaneGap() < 0.0) {
+        for (int i = 0; i < ndm; i++)
+            for (int j = 0; j < ndm; j++)
+                tang(i, j) += fact * kn * planeN[i] * planeN[j];
+    } else if (mode == SEGMENT) {
         // K_c = kn B^T B, exact for a flat fixed master where n is constant;
         // with consistentNormal the geometric block kn gN d^2gN/du^2 is added
         // (zero for a flat facet).
@@ -316,7 +364,11 @@ LadrunoContactFE::addKiToTang(double fact)
     // Initial-stiffness algorithms (Newton -initial, ModifiedNewton -initial)
     // form the matrix from K_initial; the penalty K_c is used so the contact
     // stiffness is not dropped.
-    if (mode == SEGMENT) {
+    if (mode == RIGID_PLANE && rigidPlaneGap() < 0.0) {
+        for (int i = 0; i < ndm; i++)
+            for (int j = 0; j < ndm; j++)
+                tang(i, j) += fact * kn * planeN[i] * planeN[j];
+    } else if (mode == SEGMENT) {
         double gap, n[3], N[4], B[15];
         if (segmentActive(gap, n, N, B)) {
             int ndof = 3 * (1 + nps);

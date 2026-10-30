@@ -39,6 +39,8 @@
 // LadrunoContactDomain, so adapters can be rebuilt in every handle().
 //
 // Modes:
+//   RIGID_PLANE  one slave node against a rigid analytical plane, penalty
+//            normal, connectivity {slave}, ndof = ndm.
 //   SEGMENT  node-to-segment penalty contact of one slave node against one
 //            master segment (tri3 or quad4), connectivity {slave, segment
 //            nodes}, ndof = 3 (1 + nps).
@@ -61,6 +63,13 @@ class Domain;
 class LadrunoContactFE : public FE_Element
 {
   public:
+    // Rigid analytical plane against ONE slave node. Connectivity = {slave}
+    // (its first ndm translational DOFs). p0 = a point on the plane, n = the
+    // outward unit normal (toward the slave's allowed half-space), kn = penalty.
+    // contactTag = the contactPlane tag.
+    LadrunoContactFE(int tag, Node *slaveNode, int ndm,
+                     const double p0[3], const double n[3], double kn,
+                     Domain *theDomain = 0, int contactTag = 0);
     // Node-to-segment penalty contact against ONE master segment (tri3 or
     // quad4, nps nodes). Connectivity = {slave} + {segment nodes}. The normal is
     // derived at each evaluation and oriented toward orientDir (the slave's
@@ -115,6 +124,9 @@ class LadrunoContactFE : public FE_Element
     static double explicitTimeStep(Integrator *theIntegrator);
 
   private:
+    // gap n.(x_s - p0) at the slave's current trial position; < 0 = penetration
+    double rigidPlaneGap(void) const;
+
     // Project the slave onto the master segment at the current trial
     // configuration and derive the oriented normal, gap and shape weights.
     // Returns true when active (penetrating and in-bounds); then fills gap (< 0),
@@ -141,11 +153,15 @@ class LadrunoContactFE : public FE_Element
     Vector resid;
     Matrix tang;
 
-    enum Mode { SEGMENT = 2 };
+    enum Mode { RIGID_PLANE = 1, SEGMENT = 2 };
     Mode mode;
     Node *theSlave;
     int ndm;
     double kn;
+
+    // RIGID_PLANE binding
+    double planeP0[3];
+    double planeN[3];
 
     // SEGMENT binding
     Node *segNode[4];   // master segment nodes (tri3: 3, quad4: 4)

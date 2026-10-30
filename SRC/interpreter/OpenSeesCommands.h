@@ -493,6 +493,7 @@ int OPS_ResponseSpectrumAnalysis();
 // contact commands (SRC/domain/contact/LadrunoContactCommands.cpp)
 int OPS_LadrunoContactSurface();
 int OPS_LadrunoContact();
+int OPS_LadrunoContactPlane();
 int OPS_LadrunoContactInfo();
 int OPS_LadrunoContactForce();
 
