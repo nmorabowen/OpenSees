@@ -197,8 +197,12 @@ def test_lfbc_committed_tangent_equals_last_iteration_tangent(model, node, dof, 
 
 
 def _failed_solve_then_revert():
-    """A solve that fails by construction; analyze then reverts the domain to the last commit."""
-    ops.test("NormUnbalance", 1.0e-99, 1, 0)
+    """A solve that fails by construction; analyze then reverts the domain to the last commit.
+
+    The tolerance is negative: `norm <= tol` never holds. A tiny positive one does not fail by
+    construction: on an elastic model one Newton step can leave an exactly zero residual (Linux
+    CI did, Windows left round-off)."""
+    ops.test("NormUnbalance", -1.0, 1, 0)
     ops.algorithm("Newton")
     ops.integrator("LoadControl", 0.0)
     assert ops.analyze(1) != 0
