@@ -1811,6 +1811,9 @@ int OPS_Integrator()
     } else if (strcmp(type,"LadrunoHHT") == 0) {
 	ti = (TransientIntegrator*)OPS_LadrunoHHT();
 
+    } else if (strcmp(type,"LadrunoGeneralizedAlpha") == 0) {
+	ti = (TransientIntegrator*)OPS_LadrunoGeneralizedAlpha();
+
     } else if (strcmp(type,"HHT_TP") == 0) {
 	ti = (TransientIntegrator*)OPS_HHT_TP();
 

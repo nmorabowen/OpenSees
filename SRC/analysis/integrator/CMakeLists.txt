@@ -59,6 +59,7 @@ target_sources(OPS_Analysis
        GeneralizedAlpha.cpp
        HHT.cpp
        LadrunoHHT.cpp
+       LadrunoGeneralizedAlpha.cpp
        HHT_TP.cpp
        HHTExplicit.cpp
        HHTExplicit_TP.cpp
@@ -106,6 +107,7 @@ target_sources(OPS_Analysis
        GeneralizedAlpha.h
        HHT.h
        LadrunoHHT.h
+       LadrunoGeneralizedAlpha.h
        HHT_TP.h
        HHTExplicit.h
        HHTExplicit_TP.h
