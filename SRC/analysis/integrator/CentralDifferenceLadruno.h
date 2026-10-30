@@ -74,13 +74,16 @@
 
 #include <TransientIntegrator.h>
 #include <CriticalTimeStep.h>
+#include <LadrunoProjectionConsumer.h>
 
 class DOF_Group;
 class FE_Element;
 class Vector;
 class LinearSOE;
+class LadrunoConstraintProjector;
 
-class CentralDifferenceLadruno : public TransientIntegrator
+class CentralDifferenceLadruno : public TransientIntegrator,
+                                 public LadrunoProjectionConsumer
 {
 public:
     CentralDifferenceLadruno();
@@ -144,6 +147,12 @@ public:
     // with viscous materials).
     void setCommitSolveState(bool on) { commitSolveState = on; }
 
+    // LadrunoProjectionConsumer: stores the (non-owning) acceleration
+    // projector of a projection constraint handler and invalidates the mass
+    // tangent cache, since a new projector comes with a new constraint set
+    // and DOF numbering.
+    void setConstraintProjector(LadrunoConstraintProjector *theProjector) override;
+
     virtual int sendSelf(int commitTag, Channel &theChannel);
     virtual int recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBroker);
 
@@ -198,6 +207,10 @@ private:
     // -commitSolveState (transient, not serialized)
     bool   commitSolveState;
     bool   commitSolveStateNoted;
+
+    // constraint projector (not owned; null unless a projection handler
+    // provides one)
+    LadrunoConstraintProjector *theProjector;
 };
 
 #endif

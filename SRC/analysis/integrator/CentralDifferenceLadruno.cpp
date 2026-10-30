@@ -141,7 +141,8 @@ CentralDifferenceLadruno::CentralDifferenceLadruno()
       committedCflStepCount(0),
       cflFirstComputation(true), lumping(CTSLumping::Diagonal), betaKWarned(false),
       useMassCache(true), massTangentValid(false), massCacheNoted(false),
-      commitSolveState(false), commitSolveStateNoted(false)
+      commitSolveState(false), commitSolveStateNoted(false),
+      theProjector(0)
 {
 }
 
@@ -164,7 +165,8 @@ CentralDifferenceLadruno::CentralDifferenceLadruno(
       committedCflStepCount(0),
       cflFirstComputation(true), lumping(lumping_), betaKWarned(false),
       useMassCache(true), massTangentValid(false), massCacheNoted(false),
-      commitSolveState(false), commitSolveStateNoted(false)
+      commitSolveState(false), commitSolveStateNoted(false),
+      theProjector(0)
 {
 }
 
@@ -175,6 +177,14 @@ CentralDifferenceLadruno::~CentralDifferenceLadruno()
     if (Aprev != 0) delete Aprev;
     if (Vfull != 0) delete Vfull;
     if (Azero != 0) delete Azero;
+    // theProjector is owned by the constraint handler
+}
+
+void
+CentralDifferenceLadruno::setConstraintProjector(LadrunoConstraintProjector *p)
+{
+    theProjector = p;
+    massTangentValid = false;
 }
 
 int CentralDifferenceLadruno::formTangent(int statFlag)
