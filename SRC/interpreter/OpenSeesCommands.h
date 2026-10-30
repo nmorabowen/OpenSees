@@ -298,6 +298,8 @@ int OPS_getNDFF();
 int OPS_eleType();
 int OPS_classType();
 int OPS_nodeDOFs();
+// critical time step of the current explicit integrator
+int OPS_criticalTimeStep();
 int OPS_nodeMass();
 int OPS_nodePressure();
 int OPS_setNodePressure();

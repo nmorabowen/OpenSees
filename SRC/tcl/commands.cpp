@@ -867,6 +867,8 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);     
     Tcl_CreateCommand(interp, "getTime", &getTime,
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
+    Tcl_CreateCommand(interp, "criticalTimeStep", &criticalTimeStep,
+		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
     Tcl_CreateCommand(interp, "getLoadFactor", &getLoadFactor,
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
 		
@@ -1684,6 +1686,23 @@ setTime(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
       theDomain.setCurrentTime(newTime);
       theDomain.setCommittedTime(newTime);
   }
+  return TCL_OK;
+}
+
+// criticalTimeStep: the critical time step reported by the current
+// transient integrator; <= 0 when the integrator does not provide one or it
+// has not been computed yet
+int
+criticalTimeStep(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
+{
+  if (theTransientIntegrator == 0) {
+    opserr << "WARNING criticalTimeStep - no transient integrator is set\n";
+    return TCL_ERROR;
+  }
+  double value = theTransientIntegrator->getCriticalTimeStep();
+  char buffer[40];
+  sprintf(buffer, "%.17g", value);
+  Tcl_SetResult(interp, buffer, TCL_VOLATILE);
   return TCL_OK;
 }
 

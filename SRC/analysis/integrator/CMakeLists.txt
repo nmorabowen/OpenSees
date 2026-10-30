@@ -87,6 +87,7 @@ target_sources(OPS_Analysis
        GimmeMCK.cpp                     # MHS
        ExplicitBathe.cpp                # JAA
        ExplicitDifferenceStatic.cpp     # JAA
+       CriticalTimeStep.cpp
     PUBLIC
        AlphaOS.h
        AlphaOS_TP.h
@@ -133,6 +134,7 @@ target_sources(OPS_Analysis
        GimmeMCK.h
        ExplicitBathe.h
        ExplicitDifferenceStatic.h
+       CriticalTimeStep.h
 )
 
 target_sources(OPS_PFEM
