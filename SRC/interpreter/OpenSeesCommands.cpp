@@ -1696,6 +1696,9 @@ int OPS_CTest()
     } else if (strcmp(type,"NormUnbalance") == 0) {
 	theTest = (ConvergenceTest*)OPS_CTestNormUnbalance();
 
+    } else if (strcmp(type,"LadrunoStabilizedUnbalance") == 0) {
+	theTest = (ConvergenceTest*)OPS_LadrunoStabilizedUnbalance();
+
     } else if (strcmp(type,"NormDispIncr") == 0) {
 	theTest = (ConvergenceTest*)OPS_CTestNormDispIncr();
 

@@ -41,6 +41,7 @@
 
 // Convergence tests
 #include "convergenceTest/CTestNormUnbalance.h"
+#include "convergenceTest/LadrunoStabilizedUnbalance.h"
 #include "convergenceTest/CTestRelativeNormUnbalance.h"
 #include "convergenceTest/CTestNormDispIncr.h"
 #include "convergenceTest/CTestRelativeNormDispIncr.h"
@@ -2555,6 +2556,9 @@ FEM_ObjectBrokerAllClasses::getNewConvergenceTest(int classTag)
     switch(classTag) {
 	case CONVERGENCE_TEST_CTestNormUnbalance:  
 	     return new CTestNormUnbalance();
+
+	case CONVERGENCE_TEST_LadrunoStabilizedUnbalance:
+	     return new LadrunoStabilizedUnbalance();
 	     
 	case CONVERGENCE_TEST_CTestRelativeNormUnbalance:  
 	     return new CTestRelativeNormUnbalance();

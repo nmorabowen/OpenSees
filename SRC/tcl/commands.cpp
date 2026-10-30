@@ -138,6 +138,7 @@ extern "C" int         OPS_ResetInputNoBuilder(ClientData clientData, Tcl_Interp
 
 // convergence tests
 #include <CTestNormUnbalance.h>
+#include <LadrunoStabilizedUnbalance.h>
 #include <CTestNormDispIncr.h>
 #include <CTestEnergyIncr.h>
 #include <CTestRelativeNormUnbalance.h>
@@ -4391,6 +4392,8 @@ specifyCTest(ClientData clientData, Tcl_Interp *interp, int argc,
     }
     if (strcmp(argv[1],"NormUnbalance") == 0) 
       theNewTest = new CTestNormUnbalance(tol,numIter,printIt,normType,maxIncr, maxTol);       
+    else if (strcmp(argv[1],"LadrunoStabilizedUnbalance") == 0)
+      theNewTest = new LadrunoStabilizedUnbalance(tol,numIter,printIt,normType,maxTol);
     else if (strcmp(argv[1],"NormDispIncr") == 0) 
       theNewTest = new CTestNormDispIncr(tol,numIter,printIt,normType, maxTol);             
     else if (strcmp(argv[1],"NormDispAndUnbalance") == 0) 

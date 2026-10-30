@@ -41,6 +41,7 @@ using namespace OpenSees::Hash::literals;
 
 // Convergence tests
 #include "analysis/criteria/CTestNormUnbalance.h"
+#include <LadrunoStabilizedUnbalance.h>
 #include "analysis/criteria/CTestRelativeNormUnbalance.h"
 #include "analysis/criteria/CTestNormDispIncr.h"
 #include "analysis/criteria/CTestRelativeNormDispIncr.h"
@@ -1395,6 +1396,9 @@ TclPackageClassBroker::getNewConvergenceTest(int classTag)
   switch (classTag) {
   case CONVERGENCE_TEST_CTestNormUnbalance:
     return new CTestNormUnbalance();
+
+  case CONVERGENCE_TEST_LadrunoStabilizedUnbalance:
+    return new LadrunoStabilizedUnbalance();
 
   case CONVERGENCE_TEST_CTestRelativeNormUnbalance:
     return new CTestRelativeNormUnbalance();

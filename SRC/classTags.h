@@ -80,6 +80,7 @@
 #define CONVERGENCE_TEST_NormDispAndUnbalance               9
 #define CONVERGENCE_TEST_NormDispOrUnbalance               10
 #define CONVERGENCE_TEST_CTestPFEM                         11
+#define CONVERGENCE_TEST_LadrunoStabilizedUnbalance     33000
 
 
 #define GRND_TAG_ElCentroGroundMotion                 1

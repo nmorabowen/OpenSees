@@ -522,6 +522,7 @@ void* OPS_TransformationConstraintHandler();
 void* OPS_AutoConstraintHandler();
 
 void* OPS_CTestNormUnbalance();
+void* OPS_LadrunoStabilizedUnbalance();
 void* OPS_CTestNormDispIncr();
 void* OPS_CTestEnergyIncr();
 void* OPS_NormDispAndUnbalance();
