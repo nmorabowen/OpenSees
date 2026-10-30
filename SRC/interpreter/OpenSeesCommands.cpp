@@ -1905,6 +1905,9 @@ int OPS_Integrator()
     } else if (strcmp(type,"CentralDifferenceNoDamping") == 0) {
 	ti = (TransientIntegrator*)OPS_CentralDifferenceNoDamping();
 
+    } else if (strcmp(type,"LadrunoDynamicRelaxation") == 0) {
+	ti = (TransientIntegrator*)OPS_LadrunoDynamicRelaxation();
+
 	} else if (strcmp(type, "ExplicitDifference") == 0) {
     ti = (TransientIntegrator*)OPS_ExplicitDifference();
 
@@ -2789,6 +2792,13 @@ int OPS_LadrunoArcLengthCmd()
 {
     if (cmds == 0) return -1;
     return Ladruno::arcLengthCommand(cmds->getStaticIntegrator());
+}
+
+// ladrunoDR <sub>: the dispatch is in LadrunoSolverQuery.h
+int OPS_LadrunoDRCmd()
+{
+    if (cmds == 0) return -1;
+    return Ladruno::drCommand(cmds->getTransientIntegrator());
 }
 
 int OPS_Database()

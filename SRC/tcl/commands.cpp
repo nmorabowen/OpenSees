@@ -221,6 +221,7 @@ extern void *OPS_ExplicitDifference(void);
 extern void *OPS_CentralDifference(void);
 extern void *OPS_ExplicitBathe(void);
 extern void *OPS_ExplicitDifferenceStatic(void);
+extern void *OPS_LadrunoDynamicRelaxation(void);
 extern void *OPS_LadrunoArcLength(void);
 extern void *OPS_LadrunoIndirectControl(void);
 extern void *OPS_CentralDifferenceAlternative(void);
@@ -909,6 +910,8 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
     Tcl_CreateCommand(interp, "testIter", &getCTestIter, 
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);    
     Tcl_CreateCommand(interp, "ladrunoArcLength", &ladrunoArcLength,
+		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
+    Tcl_CreateCommand(interp, "ladrunoDR", &ladrunoDR,
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
 
     Tcl_CreateCommand(interp, "integrator", &specifyIntegrator, 
@@ -5389,6 +5392,12 @@ specifyIntegratorImpl(ClientData clientData, Tcl_Interp *interp, int argc,
     if (theTransientAnalysis != 0)
       setIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);
   }
+
+  else if (strcmp(argv[1],"LadrunoDynamicRelaxation") == 0) {
+    theTransientIntegrator = (TransientIntegrator *)OPS_LadrunoDynamicRelaxation();
+    if (theTransientIntegrator != 0 && theTransientAnalysis != 0)
+      setIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);
+  }
   
   else if (strcmp(argv[1],"Transient") == 0) {
 
@@ -6268,6 +6277,17 @@ ladrunoArcLength(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char *
 {
   OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
   if (Ladruno::arcLengthCommand(theStaticIntegrator) < 0)
+    return TCL_ERROR;
+  return TCL_OK;
+}
+
+// ladrunoDR <sub>: as ladrunoArcLength, with the transient integrator of
+// this interpreter
+int
+ladrunoDR(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
+{
+  OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+  if (Ladruno::drCommand(theTransientIntegrator) < 0)
     return TCL_ERROR;
   return TCL_OK;
 }

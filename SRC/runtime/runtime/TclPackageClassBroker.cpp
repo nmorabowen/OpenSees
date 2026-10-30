@@ -416,6 +416,7 @@ using namespace OpenSees::Hash::literals;
 // integrator header files
 #include "ArcLength.h"
 #include "LadrunoArcLength.h"
+#include "LadrunoDynamicRelaxation.h"
 #include "LadrunoIndirectControl.h"
 #include "DisplacementControl.h"
 #ifdef _PARALLEL_PROCESSING
@@ -1816,6 +1817,9 @@ TclPackageClassBroker::getNewTransientIntegrator(int classTag)
 
   case INTEGRATOR_TAGS_CentralDifference:
     return new CentralDifference(); // must recvSelf
+
+  case INTEGRATOR_TAGS_LadrunoDynamicRelaxation:
+    return new LadrunoDynamicRelaxation(); // must recvSelf
 
   case INTEGRATOR_TAGS_CentralDifferenceAlternative:
     return new CentralDifferenceAlternative(); // must recvSelf

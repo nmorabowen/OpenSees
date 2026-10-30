@@ -21,7 +21,8 @@
 // Developed by: N. Mora Bowen, P. Palacios, J.A. Abell (Ladruño project)
 //
 // Description: subcommand dispatch of the runtime solver commands that
-// query and steer an active integrator (`ladrunoArcLength`). The dispatch
+// query and steer an active integrator (`ladrunoArcLength`, `ladrunoDR`).
+// The dispatch
 // is shared by the classic Tcl interpreter (SRC/tcl/commands.cpp) and the
 // Python and Tcl wrappers (SRC/interpreter). It is header-only so that each
 // including translation unit binds the elementAPI calls (OPS_GetString,
@@ -35,6 +36,7 @@
 #include <StaticIntegrator.h>
 #include <TransientIntegrator.h>
 #include <LadrunoArcLength.h>
+#include <LadrunoDynamicRelaxation.h>
 #include <classTags.h>
 #include <elementAPI.h>
 #include <OPS_Globals.h>
@@ -125,6 +127,44 @@ inline int arcLengthCommand(StaticIntegrator *si)
                << "' (use reduceStep|increaseStep|setArcLength|scaleCVisc|arcLength|"
                   "deltaLambdaStep|currentLambda|sign|deltaUstepNorm|"
                   "dissipationRatio|dissipatedEnergy|referenceEnergy)\n";
+        return -1;
+    }
+    int n = 1;
+    OPS_SetDoubleOutput(&n, &out, true);
+    return 0;
+}
+
+// ladrunoDR <sub>: read-only state of the active LadrunoDynamicRelaxation.
+//   residualNorm    ||f_ext - f_int||_inf of the last step, the force
+//                   criterion for rest
+//   kineticEnergy   1/2 v^T M* v
+//   stabilityMargin largest (omega_max dt / 2)^2 measured since the last
+//                   domainChanged(); <= 1 inside the explicit stability
+//                   limit; -1 for a lumped or unity mass, -2 with the probe
+//                   off (not measured)
+inline int drCommand(TransientIntegrator *ti)
+{
+    if (ti == 0 || ti->getClassTag() != INTEGRATOR_TAGS_LadrunoDynamicRelaxation) {
+        opserr << "WARNING ladrunoDR - the active transient integrator is not a "
+                  "LadrunoDynamicRelaxation (set `integrator LadrunoDynamicRelaxation "
+                  "...` first)\n";
+        return -1;
+    }
+    LadrunoDynamicRelaxation *dr = (LadrunoDynamicRelaxation *)ti;
+
+    if (OPS_GetNumRemainingInputArgs() < 1) {
+        opserr << "WARNING ladrunoDR - expects a subcommand "
+                  "(residualNorm|kineticEnergy|stabilityMargin)\n";
+        return -1;
+    }
+    const char *sub = OPS_GetString();
+    double out = 0.0;
+    if      (strcmp(sub, "residualNorm") == 0)    out = dr->getResidualNorm();
+    else if (strcmp(sub, "kineticEnergy") == 0)   out = dr->getKineticEnergy();
+    else if (strcmp(sub, "stabilityMargin") == 0) out = dr->getStabilityMargin();
+    else {
+        opserr << "WARNING ladrunoDR - unknown subcommand '" << sub
+               << "' (use residualNorm|kineticEnergy|stabilityMargin)\n";
         return -1;
     }
     int n = 1;

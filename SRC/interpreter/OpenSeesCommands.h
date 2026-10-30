@@ -276,6 +276,7 @@ int OPS_printModelGID();
 int OPS_getCTestNorms();
 int OPS_getCTestIter();
 int OPS_LadrunoArcLengthCmd();
+int OPS_LadrunoDRCmd();
 int OPS_Recorder();
 int OPS_eleForce();
 int OPS_eleDynamicalForce();
@@ -586,6 +587,7 @@ void* OPS_CentralDifferenceAlternative();
 void* OPS_CentralDifferenceNoDamping();
 void* OPS_ExplicitDifference();
 void* OPS_ExplicitDifferenceStatic();
+void* OPS_LadrunoDynamicRelaxation();
 
 void* OPS_LinearAlgorithm();
 void* OPS_NewtonRaphsonAlgorithm();
