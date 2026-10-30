@@ -476,7 +476,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                         new LadrunoContactFE(numFe++, sn, segNodes, nps, knUse, orientDir,
                                              ct.kt, ct.mu, theDomain, ct.tag, seg,
                                              ct.consistentTan, ct.consistentNormal,
-                                             ct.cohesion, ct.tauMax);
+                                             ct.cohesion, ct.tauMax, ct.muc);
                     if (fe == 0) return -5;
                     theModel->addFE_Element(fe);
                     if (ct.hasFriction())
@@ -518,7 +518,7 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                     return ladrunoContactFatal();
                 }
                 LadrunoContactFE *fe = new LadrunoContactFE(numFe++, sn, nd, rp.p0, rp.n, rp.kn,
-                                                            theDomain, rp.tag);
+                                                            theDomain, rp.tag, rp.muc);
                 if (fe == 0) return -5;
                 theModel->addFE_Element(fe);
             }

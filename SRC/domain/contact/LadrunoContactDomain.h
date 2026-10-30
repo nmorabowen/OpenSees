@@ -88,11 +88,13 @@ class LadrunoContactDomain
     //             frictionless.
     //   consistentTan: assemble the non-symmetric consistent friction tangent
     //             (false: the symmetric tangent, safe on any linear solver).
+    //   muc:      viscous normal stabilization, a dashpot muc on the normal gap
+    //             rate while in contact (0: none).
     int addContact(int tag, int masterSurfTag, int slaveSurfTag,
                    double kn, double kt, double mu, const double *outward = 0,
                    bool knAuto = false, double cellFrac = 1.0,
                    bool consistentTan = false, bool consistentNormal = false,
-                   double cohesion = 0.0, double tauMax = 0.0);
+                   double cohesion = 0.0, double tauMax = 0.0, double muc = 0.0);
     int getNumContacts(void) const { return (int)theContacts.size(); }
 
     struct Contact {
@@ -111,6 +113,7 @@ class LadrunoContactDomain
         double cellFrac;        // bucket-sort cell = cellFrac * median segment diagonal
         bool consistentNormal;  // assemble the geometric normal tangent
         bool consistentTan;     // non-symmetric consistent friction tangent
+        double muc;             // viscous normal stabilization coefficient (0: none)
         bool hasFriction(void) const { return mu > 0.0 || cohesion > 0.0 || tauMax > 0.0; }
     };
     const Contact &getContact(int i) const { return theContacts[i]; }
@@ -122,9 +125,10 @@ class LadrunoContactDomain
         int tag, slaveSurfTag;
         double p0[3], n[3];     // n stored normalized
         double kn;
+        double muc;             // viscous normal stabilization coefficient (0: none)
     };
     int addRigidPlane(int tag, int slaveSurfTag,
-                      const double p0[3], const double n[3], double kn);
+                      const double p0[3], const double n[3], double kn, double muc = 0.0);
     int getNumRigidPlanes(void) const { return (int)theRigidPlanes.size(); }
     const RigidPlane &getRigidPlane(int i) const { return theRigidPlanes[i]; }
 
@@ -182,6 +186,14 @@ class LadrunoContactDomain
     int getNumCommits(void) const { return numCommits; }
     int getNumReverts(void) const { return numReverts; }
 
+    // One-time diagnostics, latched per (contact tag, topic) on the engine, so
+    // they reset with the model (wipe deletes the engine) and a second contact
+    // with the same condition is still reported. True exactly once per key.
+    enum WarnTopic {
+        WARN_VISC_STATIC = 0        // -visc under a static integrator: dashpot disabled
+    };
+    bool warnOnce(int contactTag, int topic);
+
   private:
     std::vector<LadrunoContactSurface *> theSurfaces;   // owned
     std::vector<Contact> theContacts;
@@ -204,6 +216,7 @@ class LadrunoContactDomain
     std::map<PairKey, double> theNtsForce;              // per-pair normal force readout
     std::map<PairKey, FrictionState> theFrictionStates;
     std::set<PairKey> liveKeys;                         // collection scratch (per handle())
+    std::set<std::pair<int, int> > theWarnOnce;         // (contactTag, WarnTopic) latches
 };
 
 #endif

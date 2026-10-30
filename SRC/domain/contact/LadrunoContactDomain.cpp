@@ -81,6 +81,12 @@ LadrunoContactDomain::getSurface(int tag) const
 }
 
 bool
+LadrunoContactDomain::warnOnce(int contactTag, int topic)
+{
+    return theWarnOnce.insert(std::make_pair(contactTag, topic)).second;
+}
+
+bool
 LadrunoContactDomain::contactTagInUse(int tag) const
 {
     for (size_t i = 0; i < theContacts.size(); i++)
@@ -92,7 +98,8 @@ LadrunoContactDomain::contactTagInUse(int tag) const
 
 int
 LadrunoContactDomain::addRigidPlane(int tag, int slaveSurfTag,
-                                    const double p0[3], const double n[3], double kn)
+                                    const double p0[3], const double n[3], double kn,
+                                    double muc)
 {
     LadrunoContactSurface *surf = getSurface(slaveSurfTag);
     if (surf == 0) {
@@ -129,6 +136,7 @@ LadrunoContactDomain::addRigidPlane(int tag, int slaveSurfTag,
     }
     RigidPlane rp;
     rp.tag = tag; rp.slaveSurfTag = slaveSurfTag; rp.kn = kn;
+    rp.muc = (muc > 0.0) ? muc : 0.0;
     for (int d = 0; d < 3; d++) { rp.p0[d] = p0[d]; rp.n[d] = n[d] / nrm; }
     theRigidPlanes.push_back(rp);
     return 0;
@@ -138,7 +146,8 @@ int
 LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
                                  double kn, double kt, double mu, const double *outward,
                                  bool knAuto, double cellFrac, bool consistentTan,
-                                 bool consistentNormal, double cohesion, double tauMax)
+                                 bool consistentNormal, double cohesion, double tauMax,
+                                 double muc)
 {
     if (getSurface(masterSurfTag) == 0 || getSurface(slaveSurfTag) == 0) {
         opserr << "WARNING LadrunoContactDomain::addContact() - master/slave surface "
@@ -194,6 +203,7 @@ LadrunoContactDomain::addContact(int tag, int masterSurfTag, int slaveSurfTag,
     c.cellFrac = (cellFrac > 0.0) ? cellFrac : 1.0;
     c.consistentNormal = consistentNormal;
     c.consistentTan = consistentTan;
+    c.muc = (muc > 0.0) ? muc : 0.0;
     theContacts.push_back(c);
     return 0;
 }

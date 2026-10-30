@@ -27,6 +27,7 @@
 #include <Node.h>
 #include <DOF_Group.h>
 #include <Integrator.h>
+#include <StaticIntegrator.h>
 #include <Domain.h>
 #include <LadrunoContactDomain.h>
 #include <LadrunoContactProjection.h>
@@ -42,12 +43,13 @@ ladrunoContactTraction(double kn, double gap)
 
 LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, int ndm_,
                                    const double p0[3], const double n[3], double kn_,
-                                   Domain *dom, int contactTag_)
+                                   Domain *dom, int contactTag_, double muc_)
   : FE_Element(tag, /*numDOF_Group=*/1, /*ndof=*/ndm_),
     resid(ndm_), tang(ndm_, ndm_),
     mode(RIGID_PLANE), theSlave(slaveNode), ndm(ndm_), kn(kn_), nps(0),
     theDomain(dom), contactTag(contactTag_), segIndex(0), consistentNormal(false),
-    kt(0.0), mu(0.0), cohesion(0.0), tauMax(0.0), consistentTan(false)
+    kt(0.0), mu(0.0), cohesion(0.0), tauMax(0.0), consistentTan(false),
+    muc(muc_ > 0.0 ? muc_ : 0.0)
 {
     // Connectivity = the slave node's DOF_Group; setID() fills myID with its
     // first ndm equation numbers (the translations), as for PenaltySP_FE.
@@ -64,13 +66,15 @@ LadrunoContactFE::LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes,
                                    int nps_, double kn_, const double odir[3],
                                    double kt_, double mu_, Domain *dom,
                                    int contactTag_, int segIndex_, bool consistentTan_,
-                                   bool consistentNormal_, double cohesion_, double tauMax_)
+                                   bool consistentNormal_, double cohesion_, double tauMax_,
+                                   double muc_)
   : FE_Element(tag, /*numDOF_Group=*/1 + nps_, /*ndof=*/3 * (1 + nps_)),
     resid(3 * (1 + nps_)), tang(3 * (1 + nps_), 3 * (1 + nps_)),
     mode(SEGMENT), theSlave(slaveNode), ndm(3), kn(kn_), nps(nps_),
     theDomain(dom), contactTag(contactTag_), segIndex(segIndex_),
     consistentNormal(consistentNormal_),
-    kt(kt_), mu(mu_), cohesion(cohesion_), tauMax(tauMax_), consistentTan(consistentTan_)
+    kt(kt_), mu(mu_), cohesion(cohesion_), tauMax(tauMax_), consistentTan(consistentTan_),
+    muc(muc_ > 0.0 ? muc_ : 0.0)
 {
     // Connectivity = slave DOF_Group + each segment-node DOF_Group; setID() fills
     // myID = [slave xyz | seg_1 xyz | ... | seg_nps xyz], the layout B assumes.
@@ -140,6 +144,20 @@ LadrunoContactFE::setID(void)
         for (int j = 0; j < per; j++) myID(current++) = eq(j);
     }
     return 0;
+}
+
+bool
+LadrunoContactFE::viscousActive(Integrator *theIntegrator) const
+{
+    if (muc <= 0.0) return false;
+    if (dynamic_cast<StaticIntegrator *>(theIntegrator) == 0) return true;   // transient: active
+    LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
+    if (cd == 0 || cd->warnOnce(contactTag, LadrunoContactDomain::WARN_VISC_STATIC))
+        opserr << "WARNING LadrunoContactFE - contact " << contactTag << ": -visc (viscous "
+                  "contact stabilization) is disabled under a static integrator; nodal "
+                  "velocities are not rates in a static analysis and the damping tangent "
+                  "is not assembled there. The dashpot acts again under a transient integrator.\n";
+    return false;
 }
 
 double
@@ -251,6 +269,14 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
             double tn = ladrunoContactTraction(kn, g);
             for (int d = 0; d < ndm; d++)
                 resid(d) = tn * planeN[d];   // drives the slave toward g = 0 (as PenaltySP_FE)
+            // viscous normal stabilization f = -muc (n.v_slave) n, opposing the
+            // approach rate, while in contact under a transient integrator
+            if (theSlave != 0 && viscousActive(theIntegrator)) {
+                const Vector &vs = theSlave->getTrialVel();
+                double gdot = 0.0;
+                for (int d = 0; d < ndm; d++) gdot += planeN[d] * vs(d);
+                for (int d = 0; d < ndm; d++) resid(d) += -muc * gdot * planeN[d];
+            }
         }
     } else if (mode == SEGMENT) {
         double gap, n[3], N[4], B[15], gTvec[3];   // ndof <= 3 (1 + 4) = 15
@@ -269,6 +295,20 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
             // normal force readout (ladrunoContactForce); no effect on resid/tang
             if (cd != 0)
                 cd->setNtsForce(contactTag, theSlave->getTag(), segIndex, tn);
+
+            // viscous normal stabilization: gdot = B v (normal relative velocity),
+            // f = -muc gdot B, opposing the approach, while in contact under a
+            // transient integrator (the damping tangent muc B^T B is in addCtoTang)
+            if (viscousActive(theIntegrator)) {
+                double gdot = 0.0;
+                const Vector &vs = theSlave->getTrialVel();
+                for (int d = 0; d < 3; d++) gdot += B[d] * vs(d);
+                for (int i = 0; i < nps; i++) {
+                    const Vector &vm = segNode[i]->getTrialVel();
+                    for (int d = 0; d < 3; d++) gdot += B[3 * (1 + i) + d] * vm(d);
+                }
+                for (int k = 0; k < ndof; k++) resid(k) += -muc * gdot * B[k];
+            }
 
             // --- Coulomb/Tresca friction (the tangent is in addKtToTang) ---
             // A frictionless pair returns before any state is touched.
@@ -388,8 +428,27 @@ LadrunoContactFE::addKiToTang(double fact)
 }
 
 void
-LadrunoContactFE::addCtoTang(double)
+LadrunoContactFE::addCtoTang(double fact)
 {
+    // The only contact damping: C = muc B^T B (the normal penalty operator with
+    // kn replaced by muc) on the active set of the residual dashpot. Transient
+    // integrators call addCtoTang(c2), so implicit Newton gets the consistent
+    // damping tangent; a static integrator does not call it.
+    if (muc <= 0.0)
+        return;
+    if (mode == RIGID_PLANE && rigidPlaneGap() < 0.0) {
+        for (int i = 0; i < ndm; i++)
+            for (int j = 0; j < ndm; j++)
+                tang(i, j) += fact * muc * planeN[i] * planeN[j];
+    } else if (mode == SEGMENT) {
+        double gap, n[3], N[4], B[15];
+        if (segmentActive(gap, n, N, B)) {
+            int ndof = 3 * (1 + nps);
+            for (int i = 0; i < ndof; i++)
+                for (int j = 0; j < ndof; j++)
+                    tang(i, j) += fact * muc * B[i] * B[j];
+        }
+    }
 }
 
 void

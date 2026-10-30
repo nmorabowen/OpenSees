@@ -28,8 +28,8 @@
 //   contactSurface tag -master nodesPerSeg nodeTag...
 //   contact tag masterSurfTag slaveSurfTag <kn | kn kt mu | auto <kt mu>> <options>
 //     options: -outward ox oy oz, -cell frac, -geomtan, -mu mu, -cohesion c,
-//              -tauMax tau, -consistanttan
-//   contactPlane tag slaveSurfTag nx ny nz px py pz kn
+//              -tauMax tau, -consistanttan, -visc muc
+//   contactPlane tag slaveSurfTag nx ny nz px py pz kn <-visc muc>
 //   ladrunoContactInfo            -> numContacts numCommits numReverts
 //   ladrunoContactForce slaveTag  -> summed normal contact force on the node
 //
@@ -160,7 +160,7 @@ int OPS_LadrunoContactSurface()
 
 // contact tag masterSurfTag slaveSurfTag <kn | kn kt mu | auto <kt mu>>
 //         <-outward ox oy oz> <-cell frac> <-geomtan>
-//         <-mu mu> <-cohesion c> <-tauMax tau> <-consistanttan>
+//         <-mu mu> <-cohesion c> <-tauMax tau> <-consistanttan> <-visc muc>
 int OPS_LadrunoContact()
 {
     if (OPS_GetNumRemainingInputArgs() < 3) {
@@ -219,6 +219,7 @@ int OPS_LadrunoContact()
     bool consistentNormal = false;
     bool consistentTan = false;
     double cohesion = 0.0, tauMax = 0.0;
+    double muc = 0.0;
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
         if (opt != 0 && strcmp(opt, "-outward") == 0) {
@@ -263,6 +264,15 @@ int OPS_LadrunoContact()
             opserr << "WARNING contact -consistanttan: the non-symmetric consistent "
                       "friction tangent needs a non-symmetric solver (system FullGeneral/"
                       "UmfPack/BandGeneral); symmetric solvers will silently corrupt it.\n";
+        } else if (opt != 0 && strcmp(opt, "-visc") == 0) {
+            // viscous normal stabilization: a dashpot muc on the normal gap rate
+            // while in contact, damping chatter in impact and rocking
+            double v[1]; int m = 1;
+            if (OPS_GetDoubleInput(&m, v) < 0) {
+                opserr << "WARNING contact -visc - need a coefficient value\n";
+                return -1;
+            }
+            muc = v[0];
         } else if (opt != 0 && strcmp(opt, "-soft") == 0) {
             opserr << "WARNING contact -soft - the soft penalty is sized from the time step "
                       "of an explicit integrator, and no integrator in this build reports "
@@ -271,7 +281,7 @@ int OPS_LadrunoContact()
         } else {
             opserr << "WARNING contact - unexpected token '" << (opt ? opt : "")
                    << "' (expected -outward, -cell, -geomtan, -mu, -cohesion, -tauMax, "
-                      "-consistanttan or end of arguments)\n";
+                      "-consistanttan, -visc or end of arguments)\n";
             return -1;
         }
     }
@@ -284,10 +294,10 @@ int OPS_LadrunoContact()
     }
     return cd->addContact(idata[0], idata[1], idata[2], kn, kt, mu,
                           hasOutward ? outward : 0, knAuto, cellFrac, consistentTan,
-                          consistentNormal, cohesion, tauMax);
+                          consistentNormal, cohesion, tauMax, muc);
 }
 
-// contactPlane tag slaveSurfTag nx ny nz px py pz kn
+// contactPlane tag slaveSurfTag nx ny nz px py pz kn <-visc muc>
 // A rigid analytical plane through (px, py, pz) with outward normal
 // (nx, ny, nz) against the slave node set.
 int OPS_LadrunoContactPlane()
@@ -310,16 +320,24 @@ int OPS_LadrunoContactPlane()
     double n[3]  = { d[0], d[1], d[2] };
     double p0[3] = { d[3], d[4], d[5] };
     double kn = d[6];
+    double muc = 0.0;
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char *opt = OPS_GetString();
-        if (opt != 0 && strcmp(opt, "-soft") == 0) {
+        if (opt != 0 && strcmp(opt, "-visc") == 0) {
+            double v[1]; int m = 1;
+            if (OPS_GetDoubleInput(&m, v) < 0) {
+                opserr << "WARNING contactPlane -visc - need a coefficient value\n";
+                return -1;
+            }
+            muc = v[0];
+        } else if (opt != 0 && strcmp(opt, "-soft") == 0) {
             opserr << "WARNING contactPlane -soft - the soft penalty is sized from the time "
                       "step of an explicit integrator, and no integrator in this build "
                       "reports one; use kn\n";
             return -1;
         } else {
             opserr << "WARNING contactPlane - unexpected token '" << (opt ? opt : "")
-                   << "' (expected end of arguments)\n";
+                   << "' (expected -visc or end of arguments)\n";
             return -1;
         }
     }
@@ -330,7 +348,7 @@ int OPS_LadrunoContactPlane()
         opserr << "WARNING contactPlane - define the slave contactSurface first\n";
         return -1;
     }
-    return cd->addRigidPlane(idata[0], idata[1], p0, n, kn);
+    return cd->addRigidPlane(idata[0], idata[1], p0, n, kn, muc);
 }
 
 // ladrunoContactInfo -> [numContacts, numCommits, numReverts] (zeros without an engine)

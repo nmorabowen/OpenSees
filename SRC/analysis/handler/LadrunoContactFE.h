@@ -66,10 +66,11 @@ class LadrunoContactFE : public FE_Element
     // Rigid analytical plane against ONE slave node. Connectivity = {slave}
     // (its first ndm translational DOFs). p0 = a point on the plane, n = the
     // outward unit normal (toward the slave's allowed half-space), kn = penalty.
-    // contactTag = the contactPlane tag.
+    // contactTag = the contactPlane tag. muc = viscous normal stabilization
+    // coefficient (0: none).
     LadrunoContactFE(int tag, Node *slaveNode, int ndm,
                      const double p0[3], const double n[3], double kn,
-                     Domain *theDomain = 0, int contactTag = 0);
+                     Domain *theDomain = 0, int contactTag = 0, double muc = 0.0);
     // Node-to-segment penalty contact against ONE master segment (tri3 or
     // quad4, nps nodes). Connectivity = {slave} + {segment nodes}. The normal is
     // derived at each evaluation and oriented toward orientDir (the slave's
@@ -86,11 +87,12 @@ class LadrunoContactFE : public FE_Element
     //   consistentTan: assemble the non-symmetric consistent friction tangent
     //     (false: the symmetric one, safe on any solver). The friction tangent
     //     enters only through addKtToTang/addKiToTang, i.e. implicit integrators.
+    //   muc: viscous normal stabilization coefficient (0: none).
     LadrunoContactFE(int tag, Node *slaveNode, Node **segNodes, int nps, double kn,
                      const double orientDir[3], double kt = 0.0, double mu = 0.0,
                      Domain *theDomain = 0, int contactTag = 0, int segIndex = 0,
                      bool consistentTan = false, bool consistentNormal = false,
-                     double cohesion = 0.0, double tauMax = 0.0);
+                     double cohesion = 0.0, double tauMax = 0.0, double muc = 0.0);
     ~LadrunoContactFE();
 
     // Fill myID with the first ndm equations of each node (the translations).
@@ -106,7 +108,7 @@ class LadrunoContactFE : public FE_Element
     void addKtToTang(double fact = 1.0);  // += fact K_c when the pair is active
     void addKiToTang(double fact = 1.0);  // initial stiffness: the penalty K_c, so
                                           // Newton -initial keeps the contact stiffness
-    void addCtoTang(double fact = 1.0);   // no damping
+    void addCtoTang(double fact = 1.0);   // viscous stabilization muc B^T B (else none)
     void addMtoTang(double fact = 1.0);   // contact pairs carry no mass
 
     // The FE_Element versions need an element; reachable off the assembly
@@ -136,6 +138,13 @@ class LadrunoContactFE : public FE_Element
     // contact point (the slip measure of the friction return map).
     bool segmentActive(double &gap, double n[3], double N[4], double *B,
                        double *gTvec = 0) const;
+
+    // The -visc dashpot is active when muc > 0 and the integrator is not a
+    // StaticIntegrator. Under a static integrator the nodal trial velocities are
+    // state left by an earlier transient stage, not rates, and the damping
+    // tangent is never assembled, so the dashpot is disabled there (reported
+    // once per contact).
+    bool viscousActive(Integrator *theIntegrator) const;
 
     // true when the pair carries friction (mu, cohesion or tauMax > 0)
     bool hasFriction(void) const { return mu > 0.0 || cohesion > 0.0 || tauMax > 0.0; }
@@ -179,6 +188,10 @@ class LadrunoContactFE : public FE_Element
     double cohesion;    // cone intercept
     double tauMax;      // shear cap of the cone (<= 0: none)
     bool consistentTan; // include the non-symmetric d_TN (x) n coupling
+
+    // viscous normal stabilization: force -muc gdot B, gdot = B v, while in
+    // contact; damping tangent muc B^T B through addCtoTang
+    double muc;
 };
 
 #endif
