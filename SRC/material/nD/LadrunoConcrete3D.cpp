@@ -473,8 +473,13 @@ struct C3DDiag {
     cold = (c && *c && *c != '0');
     const char* b = getenv("LADRUNO_C3D_FIXB");
     fixB = (b && *b && *b != '0');
+    const char* cc = getenv("LADRUNO_C3D_FIXC");
+    fixC = (cc && *cc) ? atoi(cc) : 0;
+    if (fixC > 8) fixC = 8;
   }
   bool fixB = false;
+  int fixC = 0;                       // substep levels (2^fixC max substeps); 0 = off
+  unsigned long long fixCUsed = 0; int fixCMaxLevel = 0;
 };
 static C3DDiag c3dDiag;
 }
@@ -493,10 +498,10 @@ int LadrunoConcrete3D::diagLchEpsFc(double& lchOut)
 void LadrunoConcrete3D::diagCounters(const char* kind)
 {
   if (!c3dDiag.f) return;
-  fprintf(c3dDiag.f, "%s calls=%llu integ=%llu integFail=%llu psCalls=%llu psPasses=%llu refusals=%llu refLast=%llu refS22=%llu refBoth=%llu refPivot=%llu fixG=%llu\n",
+  fprintf(c3dDiag.f, "%s calls=%llu integ=%llu integFail=%llu psCalls=%llu psPasses=%llu refusals=%llu refLast=%llu refS22=%llu refBoth=%llu refPivot=%llu fixG=%llu fixC=%llu fixCmax=%d\n",
           kind, c3dDiag.calls, c3dDiag.integ, c3dDiag.integFail, c3dDiag.psCalls, c3dDiag.psPasses,
           c3dDiag.refusals, c3dDiag.refLast, c3dDiag.refS22, c3dDiag.refBoth, c3dDiag.refPivot,
-          Ladruno::Concrete3D::probeFixGCount());
+          Ladruno::Concrete3D::probeFixGCount(), c3dDiag.fixCUsed, c3dDiag.fixCMaxLevel);
   fflush(c3dDiag.f);
 }
 
@@ -590,33 +595,35 @@ int LadrunoConcrete3D::setTrialStrain(const Vector& e)
   bool s22Converged = false;
   bool diagPivot = false;
   int diagPasses = 0;
-  // PROBE fix B (LADRUNO_C3D_FIXB=1): 200 passes, and when |s22| grew on the last Newton step, retreat
-  // half of that step instead of taking a fresh full one. The tolerance is unchanged (no fix E).
-  const int maxIt = c3dDiag.fixB ? 200 : 30;
-  double diagPrevAbs = 1.0e300, diagLastStep = 0.0;
-  for (int it = 0; it < maxIt; it++) {
-    c3dDiag.integ++; c3dDiag.psPasses++; diagPasses++;
-    lastFailed = (this->integrate(true) != 0);
-    if (lastFailed) c3dDiag.integFail++;
-    double d22 = Dtan6[2][2];
-    double smag = 0.0;
-    for (int i = 0; i < 6; i++) smag += stress6[i]*stress6[i];
-    smag = sqrt(smag);
-    double tol22 = 1.0e-9 * (smag > 1.0 ? smag : 1.0);
-    if (fabs(stress6[2]) <= tol22) { s22Converged = true; break; }
-    if (fabs(d22) < 1.0e-300) {        // a near-zero pivot with sigma_22 != 0: unconverged, refuse
-      opserr << "WARNING LadrunoConcrete3D: sigma_22 condensation pivot vanished (tag "
-             << this->getTag() << ", |s22|=" << fabs(stress6[2]) << ")\n";
-      diagPivot = true;
-      break;
+  this->probePsLoop(lastFailed, s22Converged, diagPivot, diagPasses);
+
+  // PROBE fix C (LADRUNO_C3D_FIXC=<levels>): when the whole increment is refused, re-integrate it from
+  // the committed state in 2, 4, ..., 2^levels equal substeps (each a full sigma_22 = 0 solve, committed
+  // internally), as OOFEM's ConcreteDPM2 sub-increments a failed plasticity return. Only a refused
+  // increment is touched. The committed (_n) state is snapshotted and restored.
+  if ((lastFailed || !s22Converged) && c3dDiag.fixC > 0) {
+    double snap[40]; this->probeSnapshot(snap);
+    double target[6], base[6];
+    for (int i = 0; i < 6; i++) { target[i] = diagStrainIn[i]; base[i] = eps_n[i]; }
+    bool ok = false;
+    for (int level = 1; level <= c3dDiag.fixC && !ok; level++) {
+      const int n = 1 << level;
+      this->probeRestore(snap);
+      double e22 = cEps22;
+      ok = true;
+      for (int k = 1; k <= n && ok; k++) {
+        for (int i = 0; i < 6; i++) strain6[i] = base[i] + (target[i] - base[i]) * (double)k / n;
+        strain6[2] = e22;
+        bool lf = false, sc = false, pv = false; int ps = 0;
+        this->probePsLoop(lf, sc, pv, ps);
+        diagPasses += ps;
+        if (lf || !sc) ok = false;
+        else { e22 = strain6[2]; if (k < n) this->commitState(); }
+      }
+      if (ok) { c3dDiag.fixCUsed++; if (level > c3dDiag.fixCMaxLevel) c3dDiag.fixCMaxLevel = level; }
     }
-    double step22 = -stress6[2] / d22;
-    if (c3dDiag.fixB && it > 0 && fabs(stress6[2]) > diagPrevAbs) step22 = -0.5 * diagLastStep;
-    diagPrevAbs = fabs(stress6[2]); diagLastStep = step22;
-    strain6[2] += step22;
-    if (it == maxIt - 1)
-      opserr << "WARNING LadrunoConcrete3D: sigma_22 condensation did not converge (tag "
-             << this->getTag() << ", |s22|=" << fabs(stress6[2]) << ")\n";
+    this->probeRestore(snap);          // the real committed state; the trial (_t) buffers hold the last substep
+    if (ok) { lastFailed = false; s22Converged = true; diagPivot = false; }
   }
   const double diagD22 = Dtan6[2][2];
   this->condenseTangent();
@@ -630,6 +637,64 @@ int LadrunoConcrete3D::setTrialStrain(const Vector& e)
                      diagPasses, diagStrainIn, eps22, stress6[2], diagD22, diagEle);
   }
   return concrete3DTrialCode(lastFailed || !s22Converged);
+}
+
+// PROBE helpers (#2621): the sigma_22 = 0 loop (rule B flags), and a committed-state snapshot/restore.
+void LadrunoConcrete3D::probePsLoop(bool& lastFailed, bool& s22Converged, bool& pivot, int& passes)
+{
+  lastFailed = false; s22Converged = false; pivot = false; passes = 0;
+  // PROBE fix B (LADRUNO_C3D_FIXB=1): 200 passes, and when |s22| grew on the last Newton step, retreat
+  // half of that step instead of taking a fresh full one. The tolerance is unchanged (no fix E).
+  const int maxIt = c3dDiag.fixB ? 200 : 30;
+  double prevAbs = 1.0e300, lastStep = 0.0;
+  for (int it = 0; it < maxIt; it++) {
+    c3dDiag.integ++; c3dDiag.psPasses++; passes++;
+    lastFailed = (this->integrate(true) != 0);
+    if (lastFailed) c3dDiag.integFail++;
+    double d22 = Dtan6[2][2];
+    double smag = 0.0;
+    for (int i = 0; i < 6; i++) smag += stress6[i]*stress6[i];
+    smag = sqrt(smag);
+    double tol22 = 1.0e-9 * (smag > 1.0 ? smag : 1.0);
+    if (fabs(stress6[2]) <= tol22) { s22Converged = true; break; }
+    if (fabs(d22) < 1.0e-300) {        // a near-zero pivot with sigma_22 != 0: unconverged, refuse
+      opserr << "WARNING LadrunoConcrete3D: sigma_22 condensation pivot vanished (tag "
+             << this->getTag() << ", |s22|=" << fabs(stress6[2]) << ")\n";
+      pivot = true;
+      break;
+    }
+    double step22 = -stress6[2] / d22;
+    if (c3dDiag.fixB && it > 0 && fabs(stress6[2]) > prevAbs) step22 = -0.5 * lastStep;
+    prevAbs = fabs(stress6[2]); lastStep = step22;
+    strain6[2] += step22;
+    if (it == maxIt - 1)
+      opserr << "WARNING LadrunoConcrete3D: sigma_22 condensation did not converge (tag "
+             << this->getTag() << ", |s22|=" << fabs(stress6[2]) << ")\n";
+  }
+}
+
+void LadrunoConcrete3D::probeSnapshot(double* b) const
+{
+  int i = 0;
+  for (int k = 0; k < 6; k++) b[i++] = eps_n[k];
+  for (int k = 0; k < 6; k++) b[i++] = sig_n[k];
+  for (int k = 0; k < 6; k++) b[i++] = sigEff_n[k];
+  for (int k = 0; k < 6; k++) b[i++] = depl_n[k];
+  b[i++] = kp_n; b[i++] = etmax_n; b[i++] = kdt1_n; b[i++] = kdt2_n; b[i++] = kdc_n; b[i++] = kdc1_n; b[i++] = kdc2_n;
+  b[i++] = sigtmax_n; b[i++] = sigcmax_n; b[i++] = wt_n; b[i++] = wc_n; b[i++] = dwt_n; b[i++] = dwc_n; b[i++] = dtn_n;
+  b[i++] = cEps22;
+}
+
+void LadrunoConcrete3D::probeRestore(const double* b)
+{
+  int i = 0;
+  for (int k = 0; k < 6; k++) eps_n[k] = b[i++];
+  for (int k = 0; k < 6; k++) sig_n[k] = b[i++];
+  for (int k = 0; k < 6; k++) sigEff_n[k] = b[i++];
+  for (int k = 0; k < 6; k++) depl_n[k] = b[i++];
+  kp_n = b[i++]; etmax_n = b[i++]; kdt1_n = b[i++]; kdt2_n = b[i++]; kdc_n = b[i++]; kdc1_n = b[i++]; kdc2_n = b[i++];
+  sigtmax_n = b[i++]; sigcmax_n = b[i++]; wt_n = b[i++]; wc_n = b[i++]; dwt_n = b[i++]; dwc_n = b[i++]; dtn_n = b[i++];
+  cEps22 = b[i++];
 }
 
 int LadrunoConcrete3D::setTrialStrain(const Vector& v, const Vector&) { return this->setTrialStrain(v); }

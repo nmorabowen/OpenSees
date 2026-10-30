@@ -196,6 +196,9 @@ class LadrunoConcrete3D : public NDMaterial {
   void diagCounters(const char* kind);
   void diagRecord(const char* reason, int passes, const double* strainIn, double eps22Start,
                   double s22Final, double d22Final, int eleTag);
+  void probePsLoop(bool& lastFailed, bool& s22Converged, bool& pivot, int& passes);   // the sigma_22 = 0 loop
+  void probeSnapshot(double* buf) const;   // copy the committed (_n) state + cEps22 (40 doubles)
+  void probeRestore(const double* buf);
 
   // element-facing return buffers
   Vector stressOut;
