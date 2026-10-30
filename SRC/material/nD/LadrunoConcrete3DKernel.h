@@ -78,6 +78,7 @@
 #define LadrunoConcrete3DKernel_h
 
 #include <cmath>
+#include <cstdlib>   // PROBE #2621: std::getenv for the probe switch
 
 namespace Ladruno {
 namespace Concrete3D {
@@ -137,6 +138,13 @@ struct Params {
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
+// PROBE switches (apeGmsh #2621 diagnosis, probe branch only): read once from the environment.
+inline bool probeFixG() {
+    static const bool on = [] { const char* v = std::getenv("LADRUNO_C3D_FIXG"); return v && *v && *v != '0'; }();
+    return on;
+}
+inline unsigned long long& probeFixGCount() { static unsigned long long n = 0; return n; }
+
 static const double SQRT3 = 1.7320508075688772;
 static const double SQRT6 = 2.449489742783178;
 static const double SQRT1_5 = 1.224744871391589;
@@ -798,6 +806,60 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
             if (std::fabs(R.f_after) < 1.0e-7 * (fc + 1.0) && admissible) {
                 R.xi = xi; R.rho = rho; R.dlam = dlam; R.kp = kp; R.apex = false; R.converged = true;
                 return R;
+            }
+        }
+    }
+    // PROBE fix G (apeGmsh #2621, probe branch; env LADRUNO_C3D_FIXG=1). Reached ONLY where the pin returns
+    // the failure fallback below (the regular Newton did not converge or landed inadmissible, the vertex
+    // was rejected, and no overshoot retry succeeded), so no accepted outcome changes. Scoped further to
+    // "Newton did not overshoot": an overshoot keeps the pin's fallback.
+    // With theta frozen the semi-implicit system is explicit in dlam: xi(dl) = xi_tr - 3K dl m_v,
+    // rho(dl) = (rho_tr - 2G dl m0/(sqrt6 fc)) / (1 + 6G dl/fc^2), kp(dl) = kp_n + dl |m| cos2 / xh(xi).
+    // f(0) = f_tr > 0; the SMALLEST positive root is the admissible return (dlam >= 0, kp >= kp_n by
+    // construction). The 4x4 Newton has no such constraint and in tension-dominated states (m0 RR > 2 q2,
+    // df/dq2 > 0) walks to the inadmissible root (kp < kp_n, dlam < 0) or cycles.
+    if (probeFixG() && !overshot) {
+        auto evalF = [&](double dl, double& x, double& p, double& k) {
+            x = xi_tr - 3.0 * K * dl * m_v;
+            p = (rho_tr - 2.0 * G * dl * m0 / (SQRT6 * fc)) / (1.0 + 6.0 * G * dl / (fc * fc));
+            const double ms = 3.0 * p / (fc * fc) + m0 / (SQRT6 * fc);
+            const double mn = std::sqrt(m_v * m_v + ms * ms);
+            const double xhh = ductilityXh(x / SQRT3, fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh);
+            k = kp_n + dl * mn / xhh * cos2;
+            return yfInvHard(x, p, r, k, mp);
+        };
+        const double dlMax = (rho_tr * SQRT6 * fc) / (2.0 * G * m0);   // rho(dlMax) = 0
+        double a = 0.0, b = -1.0, x, p, k;
+        // bracket: geometric march, factor 1.05 (a root PAIR narrower than 5 % in dlam would be stepped
+        // over; the harness checks the 435 corbel trials against a 2000-point scan: see #2621)
+        for (double dl = 1.0e-14; dl <= dlMax; dl *= 1.05) {
+            const double fd = evalF(dl, x, p, k);
+            if (!(fd > 0.0)) { b = dl; break; }
+            a = dl;
+        }
+        if (b < 0.0 && dlMax > 0.0 && !(evalF(dlMax, x, p, k) > 0.0)) b = dlMax;
+        if (b > 0.0) {
+            for (int it = 0; it < 200; ++it) {
+                const double mid = 0.5 * (a + b);
+                if (mid <= a || mid >= b) break;
+                const double fm = evalF(mid, x, p, k);
+                if (std::fabs(fm) < 1.0e-13) { a = b = mid; break; }
+                if (fm > 0.0) a = mid; else b = mid;
+            }
+            const double dl = 0.5 * (a + b);
+            double x2, p2, k2;
+            evalF(dl, x2, p2, k2);
+            if (p2 >= 0.0) {
+                const double p_new = x2 / SQRT3;
+                const double dev_scale = (rho_tr > 0.0) ? p2 / rho_tr : 0.0;
+                for (int a_ = 0; a_ < 3; ++a_) R.sp[a_] = R.s_tr[a_] * dev_scale + p_new;
+                double svn[6] = {R.sp[0], R.sp[1], R.sp[2], 0, 0, 0};
+                R.f_after = yieldF(svn, mp, qh1Of(k2, mp.qh0, mp.Hp), qh2Of(k2, mp.Hp));
+                if (std::isfinite(R.f_after) && std::fabs(R.f_after) < 1.0e-7 * (fc + 1.0) && k2 >= kp_n - 1.0e-12) {
+                    R.xi = x2; R.rho = p2; R.dlam = dl; R.kp = k2; R.apex = false; R.converged = true; R.plastic = true;
+                    ++probeFixGCount();
+                    return R;
+                }
             }
         }
     }

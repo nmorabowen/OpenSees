@@ -471,7 +471,10 @@ struct C3DDiag {
     if (p && *p) f = fopen(p, "a");
     const char* c = getenv("LADRUNO_C3D_COLDSTART");
     cold = (c && *c && *c != '0');
+    const char* b = getenv("LADRUNO_C3D_FIXB");
+    fixB = (b && *b && *b != '0');
   }
+  bool fixB = false;
 };
 static C3DDiag c3dDiag;
 }
@@ -490,9 +493,10 @@ int LadrunoConcrete3D::diagLchEpsFc(double& lchOut)
 void LadrunoConcrete3D::diagCounters(const char* kind)
 {
   if (!c3dDiag.f) return;
-  fprintf(c3dDiag.f, "%s calls=%llu integ=%llu integFail=%llu psCalls=%llu psPasses=%llu refusals=%llu refLast=%llu refS22=%llu refBoth=%llu refPivot=%llu\n",
+  fprintf(c3dDiag.f, "%s calls=%llu integ=%llu integFail=%llu psCalls=%llu psPasses=%llu refusals=%llu refLast=%llu refS22=%llu refBoth=%llu refPivot=%llu fixG=%llu\n",
           kind, c3dDiag.calls, c3dDiag.integ, c3dDiag.integFail, c3dDiag.psCalls, c3dDiag.psPasses,
-          c3dDiag.refusals, c3dDiag.refLast, c3dDiag.refS22, c3dDiag.refBoth, c3dDiag.refPivot);
+          c3dDiag.refusals, c3dDiag.refLast, c3dDiag.refS22, c3dDiag.refBoth, c3dDiag.refPivot,
+          Ladruno::Concrete3D::probeFixGCount());
   fflush(c3dDiag.f);
 }
 
@@ -586,7 +590,10 @@ int LadrunoConcrete3D::setTrialStrain(const Vector& e)
   bool s22Converged = false;
   bool diagPivot = false;
   int diagPasses = 0;
-  const int maxIt = 30;
+  // PROBE fix B (LADRUNO_C3D_FIXB=1): 200 passes, and when |s22| grew on the last Newton step, retreat
+  // half of that step instead of taking a fresh full one. The tolerance is unchanged (no fix E).
+  const int maxIt = c3dDiag.fixB ? 200 : 30;
+  double diagPrevAbs = 1.0e300, diagLastStep = 0.0;
   for (int it = 0; it < maxIt; it++) {
     c3dDiag.integ++; c3dDiag.psPasses++; diagPasses++;
     lastFailed = (this->integrate(true) != 0);
@@ -603,7 +610,10 @@ int LadrunoConcrete3D::setTrialStrain(const Vector& e)
       diagPivot = true;
       break;
     }
-    strain6[2] -= stress6[2] / d22;
+    double step22 = -stress6[2] / d22;
+    if (c3dDiag.fixB && it > 0 && fabs(stress6[2]) > diagPrevAbs) step22 = -0.5 * diagLastStep;
+    diagPrevAbs = fabs(stress6[2]); diagLastStep = step22;
+    strain6[2] += step22;
     if (it == maxIt - 1)
       opserr << "WARNING LadrunoConcrete3D: sigma_22 condensation did not converge (tag "
              << this->getTag() << ", |s22|=" << fabs(stress6[2]) << ")\n";
