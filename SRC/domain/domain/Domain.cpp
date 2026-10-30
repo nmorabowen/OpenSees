@@ -1089,6 +1089,15 @@ Domain::clearAll(void) {
 
   this->setModalDampingFactors(0);
 
+  // the spectrum belongs to the model being wiped: without this reset a
+  // command reading getEigenvalues() after wipe sees the previous model's
+  // eigenvalues
+  if (theEigenvalues != 0) {
+    delete theEigenvalues;
+    theEigenvalues = 0;
+  }
+  theEigenvalueSetTime = 0.0;
+
   // set the bounds around the origin
   initBounds = true;
   theBounds(0) = 0;
@@ -2372,6 +2381,12 @@ Domain::getEigenvalues(void)
 
   return *theEigenvalues;
 }  
+
+int
+Domain::getNumEigenvalues(void) const
+{
+  return (theEigenvalues == 0) ? 0 : theEigenvalues->Size();
+}
 
 double 
 Domain::getTimeEigenvaluesSet(void) 
