@@ -177,6 +177,7 @@ extern void* OPS_AutoConstraintHandler(void);
 #include <LoadControl.h>
 #include <StagedLoadControl.h>
 #include <ArcLength.h>
+#include <LadrunoSolverQuery.h>
 #include <ArcLength1.h>
 #include <HSConstraint.h>
 #include <MinUnbalDispNorm.h>
@@ -219,6 +220,7 @@ extern void *OPS_ExplicitDifference(void);
 extern void *OPS_CentralDifference(void);
 extern void *OPS_ExplicitBathe(void);
 extern void *OPS_ExplicitDifferenceStatic(void);
+extern void *OPS_LadrunoArcLength(void);
 extern void *OPS_CentralDifferenceAlternative(void);
 extern void *OPS_CentralDifferenceNoDamping(void);
 extern void *OPS_Collocation(void);
@@ -904,6 +906,8 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);	
     Tcl_CreateCommand(interp, "testIter", &getCTestIter, 
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);    
+    Tcl_CreateCommand(interp, "ladrunoArcLength", &ladrunoArcLength,
+		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
 
     Tcl_CreateCommand(interp, "integrator", &specifyIntegrator, 
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
@@ -4576,6 +4580,12 @@ specifyIntegratorImpl(ClientData clientData, Tcl_Interp *interp, int argc,
   if (theStaticAnalysis != 0)
     setIntegratorIfAny(theStaticAnalysis, theStaticIntegrator);
   }
+
+  else if (strcmp(argv[1],"LadrunoArcLength") == 0) {
+    theStaticIntegrator = (StaticIntegrator *)OPS_LadrunoArcLength();
+    if (theStaticIntegrator != 0 && theStaticAnalysis != 0)
+      setIntegratorIfAny(theStaticAnalysis, theStaticIntegrator);
+  }
   /************************added for HSConstraint*************************************/
   
   else if (strcmp(argv[1],"HSConstraint") == 0) {
@@ -6238,6 +6248,18 @@ getCTestIter(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **arg
 
   opserr << "ERROR testIter - no convergence test!\n";
   return TCL_ERROR;
+}
+
+// ladrunoArcLength <sub <value>>: the dispatch is shared with the Python and
+// Tcl wrappers (LadrunoSolverQuery.h); this interpreter passes its own
+// static integrator.
+int
+ladrunoArcLength(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
+{
+  OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+  if (Ladruno::arcLengthCommand(theStaticIntegrator) < 0)
+    return TCL_ERROR;
+  return TCL_OK;
 }
 
 int 

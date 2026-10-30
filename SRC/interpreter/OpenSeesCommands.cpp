@@ -83,6 +83,7 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <SymmGeneralizedEigenSOE.h>
 #include <ArpackSOE.h>
 #include <LoadControl.h>
+#include <LadrunoSolverQuery.h>
 #include <CTestPFEM.h>
 #include <PFEMIntegrator.h>
 #include <TransientIntegrator.h>
@@ -1763,6 +1764,9 @@ int OPS_Integrator()
     } else if (strcmp(type,"ArcLength1") == 0) {
 	si = (StaticIntegrator*)OPS_ArcLength1();
 
+    } else if (strcmp(type,"LadrunoArcLength") == 0) {
+	si = (StaticIntegrator*)OPS_LadrunoArcLength();
+
     } else if (strcmp(type,"HSConstraint") == 0) {
 	si = (StaticIntegrator*)OPS_HSConstraint();
 
@@ -2771,6 +2775,14 @@ int OPS_getCTestIter()
 
     opserr << "ERROR testIter - no convergence test!\n";
     return -1;
+}
+
+// ladrunoArcLength <sub <value>>: the dispatch is in LadrunoSolverQuery.h,
+// shared with the classic Tcl interpreter
+int OPS_LadrunoArcLengthCmd()
+{
+    if (cmds == 0) return -1;
+    return Ladruno::arcLengthCommand(cmds->getStaticIntegrator());
 }
 
 int OPS_Database()

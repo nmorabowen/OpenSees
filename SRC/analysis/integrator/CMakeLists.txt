@@ -9,6 +9,7 @@ target_sources(OPS_Analysis
        ExplicitDifference.cpp
        ArcLength.cpp
        ArcLength1.cpp
+       LadrunoArcLength.cpp
        BackwardEuler.cpp
        CentralDifference.cpp
        IncrementalIntegrator.cpp
@@ -26,6 +27,9 @@ target_sources(OPS_Analysis
        ExplicitDifference.h
        ArcLength.h
        ArcLength1.h
+       LadrunoArcLength.h
+       LadrunoFictitiousMass.h
+       LadrunoSolverQuery.h
        BackwardEuler.h
        CentralDifference.h
        IncrementalIntegrator.h
