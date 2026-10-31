@@ -25,7 +25,7 @@ glibc_fix="$here/concrete3d_replay_records.linux-glibc.txt"
 blob="$(git -C "$repo" hash-object "$repo/SRC/material/nD/LadrunoConcrete3DKernel.h")"
 
 # e.g. "ldd (Ubuntu GLIBC 2.39-0ubuntu8.4) 2.39" -> 2.39-0ubuntu8.4 (the distro build, not just the upstream version)
-ldd1="$(ldd --version | head -1)"
+ldd1="$(ldd --version | sed -n 1p)"
 glibc="$(printf '%s\n' "$ldd1" | sed -n 's/.*GLIBC \([^) ]*\)).*/\1/p')"
 [ -n "$glibc" ] || glibc="$(printf '%s\n' "$ldd1" | awk '{print $NF}')"
 case "$glibc" in ''|*[!A-Za-z0-9.+~_-]*) echo "ERROR: cannot read the glibc version from: $ldd1"; exit 2;; esac
