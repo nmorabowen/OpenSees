@@ -856,7 +856,8 @@ static void run_f2_chain() {
     // {1/2,1/2} and {1/4 x4} schedules (returnMapTensorSchedule).
     unsigned s3 = 2621u; auto rn = [&]() { s3 = s3 * 1664525u + 1013904223u; return (s3 >> 8) * (1.0 / 16777216.0); };
     int n2 = 0, n4 = 0, nF = 0, skipped = 0, tested = 0; double worstD = 0, worstK = 0, worstF = 0;
-    double mutBK = 1e300, mutLast = 1e300;                 // D2: the smallest error a wrong build would show
+    double mutBK = 1e300, mutLast = 1e300;                 // D2: how far the two mutants sit from the FD
+    double kerBK = 1e300, kerLast = 1e300;                 // D2: how far the KERNEL's Dtan6 sits from each mutant
     int nMut = 0;
     struct Case { double s0[6], d[6], k0; };
     Case c4[40]; int nc4 = 0;
@@ -889,7 +890,9 @@ static void run_f2_chain() {
             if (!sm) continue;
             ++nF; worstF = std::fmax(worstF, std::fmax(e1, e2));
         }
-        // D2 — mutations a wrong build would carry: the chain without b (x) K, and the last piece's tangent alone
+        // D2 — the kernel's Dtan6 is neither of two wrong builds, rebuilt here from the kernel's own pieces: the chain
+        // without b (x) K, and the last piece's tangent alone (pre-F2). A kernel carrying either mutation sits at
+        // distance 0 from it and fails; the FD distances show the 1e-7 D1 tolerance would catch it as well.
         {
             double Cel[6][6]; elasticC(q, Cel);
             double J[6][6] = {{0}}, Kr[6] = {0}, Jn[6][6] = {{0}}, s[6], k = k0, sp[6], kp2, Dl[6][6];
@@ -908,7 +911,8 @@ static void run_f2_chain() {
             double e1, e2, e3, e4; bool sm1, sm2; double dz[6] = {0, 0, 0, 0, 0, 0};
             fdSchedule(q, s0, d, k0, fr, nf, Jn, dz, e1, e2, sm1);
             fdSchedule(q, s0, d, k0, fr, nf, Dl, dz, e3, e4, sm2);
-            if (sm1 && sm2) { ++nMut; mutBK = std::fmin(mutBK, e1); mutLast = std::fmin(mutLast, e3); }
+            if (sm1 && sm2) { ++nMut; mutBK = std::fmin(mutBK, e1); mutLast = std::fmin(mutLast, e3);
+                              kerBK = std::fmin(kerBK, relF6(Dt, Jn)); kerLast = std::fmin(kerLast, relF6(Dt, Dl)); }
         }
     }
     check(n2 >= 20 && n4 >= 20 && skipped <= tested && worstD < 1.0e-7 && worstK < 1.0e-7,
@@ -916,9 +920,10 @@ static void run_f2_chain() {
     std::printf("       (2-piece %d, 4-piece %d, skipped (kink in the stencil) %d; worst Dtan6 %.2e, worst dkp %.2e)\n", n2, n4, skipped, worstD, worstK);
     check(nF >= 40 && worstF < 1.0e-7, "D1 forced {1/2,1/2} and {1/4 x4} schedules: chain-rule tangent == FD to 1e-7");
     std::printf("       (forced cases %d, worst %.2e)\n", nF, worstF);
-    check(nMut >= 20 && mutBK > 1.0e-5 && mutLast > 1.0e-3,
-          "D2 the check discriminates: a chain without b(x)K / the last-piece tangent miss the FD by > 1e-5 / > 1e-3");
-    std::printf("       (cases %d; smallest error without b(x)K %.2e, of the last-piece tangent %.2e)\n", nMut, mutBK, mutLast);
+    check(nMut >= 20 && kerBK > 1.0e-5 && kerLast > 1.0e-3 && mutBK > 1.0e-5 && mutLast > 1.0e-3,
+          "D2 the kernel's Dtan6 differs from a chain without b(x)K (> 1e-5) and from the last-piece tangent (> 1e-3)");
+    std::printf("       (cases %d; kernel vs no-b(x)K chain >= %.2e, vs last piece >= %.2e; those mutants miss the FD by >= %.2e / %.2e)\n",
+                nMut, kerBK, kerLast, mutBK, mutLast);
 
     // D3 — N = k +/- 1e-12 (a rounded piece count): pieces of 1/N plus the remainder piece; stress and tangent are
     // continuous in N at N = 4 (a tiny remainder piece adds nothing).
