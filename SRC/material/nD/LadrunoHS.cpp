@@ -461,6 +461,18 @@ void LadrunoHS::buildInitialTangent6x6(double Kt[6][6]) const {
     double ds_dp = 0.0, ds_dq = 0.0;
     stiffness_scale_and_derivs(params_, p_n, q_n, s0, ds_dp, ds_dq, k3_n);
   }
+  double norm_sig_n = 0.0;
+  for (int i = 0; i < 6; ++i) norm_sig_n += st_n_.sig[i] * st_n_.sig[i];
+  if (norm_sig_n > 1.0e-24) {
+    double p_n = 0.0, q_n = 0.0, x_n = 1.0, Th_n = 1.0, dTh_dx_n = 0.0;
+    double k3_n = 1.0 / 3.0, dk3_dx_n = 0.0, Th_sig_n = 1.0, dTh_sig_dx_n = 0.0;
+    double dq[6], dTh[6];
+    invariants_and_lode_grad(params_, st_n_.sig, p_n, q_n, x_n, Th_n, dq, dTh);
+    lode_factors_and_derivs(params_, x_n, Th_n, dTh_dx_n, k3_n, dk3_dx_n, Th_sig_n, dTh_sig_dx_n);
+    double s_n = 1.0, ds_dp = 0.0, ds_dq = 0.0;
+    stiffness_scale_and_derivs(params_, p_n, q_n, s_n, ds_dp, ds_dq, k3_n);
+    s0 = std::max(s0, s_n);
+  }
   double G0 = (params_.use_small_strain && params_.G0_ref > params_.Gur_ref)
                   ? (params_.G0_ref * s0)
                   : (params_.Gur_ref * s0);
@@ -520,18 +532,16 @@ void LadrunoHS::applyStageTransition(int newStage) {
     lode_factors_and_derivs(params_, x_n, Th_n, dTh_dx_n, k3_n, dk3_dx_n, Th_sig_n, dTh_sig_dx_n);
     double s_n = 1.0, ds1 = 0.0, ds2 = 0.0;
     if (params_.OCR > 1.0 + 1.0e-12 || params_.pop > 1.0e-12) {
-      double p_hat_n   = std::max(params_.p_min, p_n + params_.a_apex);
       double p_pre     = std::max(params_.p_min, p_n) * params_.OCR
                        + ((1.0 + 2.0 * params_.K0nc) / 3.0) * params_.pop;
+      double p_hat_pre = std::max(params_.p_min, p_pre + params_.a_apex);
       double eta_k0nc  = 3.0 * (1.0 - params_.K0nc) / (1.0 + 2.0 * params_.K0nc);
-      double q_pre     = std::max(q_n * params_.OCR, eta_k0nc * p_pre);
-      double q_cap_pre = std::min(q_pre, 0.95 * params_.M_c * p_hat_n / Th_n);
+      double q_pre     = eta_k0nc * p_hat_pre;
+      double q_cap_pre = std::min(q_pre, 0.95 * params_.M_c * p_hat_pre);
       double Phi_pre   = 0.0;
-      phi_shear(params_, p_n, q_cap_pre, Phi_pre, ds1, ds2, k3_n, Th_sig_n);
-      st_n_.gamma_p     = std::max(0.0, Phi_pre);
-      st_n_.is_virgin   = false;
-      st_trial_.gamma_p   = st_n_.gamma_p;
-      st_trial_.is_virgin = false;
+      phi_shear(params_, p_pre, q_cap_pre, Phi_pre, ds1, ds2, 1.0 / 3.0, 1.0);
+      st_n_.gamma_p     = std::max(st_n_.gamma_p, std::max(0.0, Phi_pre));
+      st_trial_.gamma_p = st_n_.gamma_p;
     } else if (q_n > 1.0e-12) {
       double p_hat_n = std::max(params_.p_min, p_n + params_.a_apex);
       double q_cap   = std::min(q_n, params_.M_c * p_hat_n / Th_n);

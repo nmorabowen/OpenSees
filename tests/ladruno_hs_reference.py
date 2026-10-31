@@ -763,46 +763,58 @@ def _solve_regime1_shear(
     Theta, _, k3, dk3_dx, Th_sig, dTh_sig_dx = lode_factors_and_derivs(p, x_sin3)
     kappa_KG = p.Kur_ref / p.Gur_ref
     inv_3Ge2 = 2.0 / (3.0 * Ge)
+    p_min_val = p.p_min - p.a_apex
     p_cur = max(1.0001 * p.p_min - p.a_apex, p_tr)
     q_max_fail = p.M_c * max(p.p_min, p_cur + p.a_apex) / Theta
     q_cur = min(q_tr, 0.98 * q_max_fail)
 
+    def finalize_sens(p_sol: float, q_sol: float):
+        dgam = inv_3Ge2 * (q_tr - q_sol)
+        if dgam < -1.0e-12:
+            return False, p_sol, q_sol, 0.0, np.zeros((2, 4))
+        if (Theta * q_sol) > p.M_c * (p_sol + p.a_apex) + 1.0e-10:
+            return False, p_sol, q_sol, 0.0, np.zeros((2, 4))
+        s_psim, dspsi_dp, dspsi_dq, dspsi_dx = _rowe_dilatancy(
+            p, p_sol, q_sol, void_ratio, k3, Th_sig, dk3_dx, dTh_sig_dx, return_dx=True
+        )
+        _, dPhi_dp, dPhi_dq, dPhi_dx = _phi_shear(
+            p, p_sol, q_sol, k3, Th_sig, dk3_dx, dTh_sig_dx, return_dx=True
+        )
+        J00 = 1.0 - Ke * dspsi_dp * dgam
+        J01 = -Ke * (dspsi_dq * dgam - s_psim * inv_3Ge2)
+        J10 = dPhi_dp
+        J11 = dPhi_dq + inv_3Ge2
+        J_y = np.array([[J00, J01], [J10, J11]], dtype=float)
+        J_tr = np.array(
+            [
+                [-1.0, -(2.0 / 3.0) * kappa_KG * s_psim, -Ke * dspsi_dx * dgam, 0.0],
+                [0.0, -inv_3Ge2, dPhi_dx, dgam / Ge],
+            ],
+            dtype=float,
+        )
+        sens = -np.linalg.solve(J_y, J_tr)
+        return True, p_sol, q_sol, max(0.0, dgam), sens
+
     for _ in range(45):
         p_hat = p_cur + p.a_apex
         if p_hat <= 0.5 * p.p_min:
-            return False, p_cur, q_cur, 0.0, np.zeros((2, 4))
+            break
 
         dgam = inv_3Ge2 * (q_tr - q_cur)
-        s_psim, dspsi_dp, dspsi_dq, dspsi_dx = _rowe_dilatancy(
+        s_psim, dspsi_dp, dspsi_dq, _ = _rowe_dilatancy(
             p, p_cur, q_cur, void_ratio, k3, Th_sig, dk3_dx, dTh_sig_dx, return_dx=True
         )
-        Phi_s, dPhi_dp, dPhi_dq, dPhi_dx = _phi_shear(
+        Phi_s, dPhi_dp, dPhi_dq, _ = _phi_shear(
             p, p_cur, q_cur, k3, Th_sig, dk3_dx, dTh_sig_dx, return_dx=True
         )
 
         R0 = p_cur - p_tr - Ke * s_psim * dgam
         R1 = Phi_s - gamma_p_n - dgam
         if max(abs(R0) / max(1.0, p.p_ref), abs(R1)) < 1.0e-13:
-            if dgam < -1.0e-12:
-                return False, p_cur, q_cur, 0.0, np.zeros((2, 4))
-            if (Theta * q_cur) > p.M_c * (p_cur + p.a_apex) + 1.0e-10:
-                return False, p_cur, q_cur, 0.0, np.zeros((2, 4))
-            # Analytical Jacobian J_y and J_tr = dR / d(p_tr, q_tr, x_sin3, Ge):
-            # Note: since Ke = kappa_KG * Ge, Ke * dgam = (2/3) * kappa_KG * (q_tr - q_cur) is independent of Ge!
-            J00 = 1.0 - Ke * dspsi_dp * dgam
-            J01 = -Ke * (dspsi_dq * dgam - s_psim * inv_3Ge2)
-            J10 = dPhi_dp
-            J11 = dPhi_dq + inv_3Ge2
-            J_y = np.array([[J00, J01], [J10, J11]], dtype=float)
-            J_tr = np.array(
-                [
-                    [-1.0, -(2.0 / 3.0) * kappa_KG * s_psim, -Ke * dspsi_dx * dgam, 0.0],
-                    [0.0, -inv_3Ge2, dPhi_dx, dgam / Ge],
-                ],
-                dtype=float,
-            )
-            sens = -np.linalg.solve(J_y, J_tr)
-            return True, p_cur, q_cur, max(0.0, dgam), sens
+            ok_f, p_f, q_f, dg_f, sens_f = finalize_sens(p_cur, q_cur)
+            if ok_f:
+                return True, p_f, q_f, dg_f, sens_f
+            break
 
         J00 = 1.0 - Ke * dspsi_dp * dgam
         J01 = -Ke * (dspsi_dq * dgam - s_psim * inv_3Ge2)
@@ -810,7 +822,7 @@ def _solve_regime1_shear(
         J11 = dPhi_dq + inv_3Ge2
         det = J00 * J11 - J01 * J10
         if abs(det) < 1.0e-30:
-            return False, p_cur, q_cur, 0.0, np.zeros((2, 4))
+            break
         dp = -(J11 * R0 - J01 * R1) / det
         dq = -(-J10 * R0 + J00 * R1) / det
 
@@ -825,7 +837,76 @@ def _solve_regime1_shear(
                 break
             alpha_ls *= 0.5
         else:
-            return False, p_cur, q_cur, 0.0, np.zeros((2, 4))
+            break
+
+    # 1D bracketed Newton-bisection fallback on q in [0, q_tr]:
+    def solve_p_for_q(q_val: float) -> float:
+        dgam = inv_3Ge2 * (q_tr - q_val)
+        p_lo = p_min_val
+        p_hi = max(p_lo, p_tr + Ke * max(0.0, p.sin_psi) * dgam)
+        p_est = max(p_lo, min(p_hi, p_tr))
+        for _ in range(35):
+            s_psim, dspsi_dp, _ = _rowe_dilatancy(p, p_est, q_val, void_ratio, k3, Th_sig)
+            r0 = p_est - p_tr - Ke * s_psim * dgam
+            if abs(r0) / max(1.0, p.p_ref) < 1.0e-14:
+                break
+            if r0 > 0.0:
+                p_hi = min(p_hi, p_est)
+            else:
+                p_lo = max(p_lo, p_est)
+            dr0 = 1.0 - Ke * dspsi_dp * dgam
+            pn = (p_est - r0 / dr0) if abs(dr0) > 1.0e-30 else 0.5 * (p_lo + p_hi)
+            p_est = pn if (p_lo < pn < p_hi) else 0.5 * (p_lo + p_hi)
+        return p_est
+
+    def eval_r1_at_q(q_val: float) -> Tuple[float, float]:
+        p_sol = solve_p_for_q(q_val)
+        dgam = inv_3Ge2 * (q_tr - q_val)
+        Phi_s, _, _ = _phi_shear(p, p_sol, q_val, k3, Th_sig)
+        return Phi_s - gamma_p_n - dgam, p_sol
+
+    q_lo, q_hi = 0.0, q_tr
+    p_at_tr = solve_p_for_q(q_tr)
+    if Theta * q_tr > p.M_c * (p_at_tr + p.a_apex):
+        ql, qh = 0.0, q_tr
+        for _ in range(35):
+            qm = 0.5 * (ql + qh)
+            pm = solve_p_for_q(qm)
+            if Theta * qm <= p.M_c * (pm + p.a_apex):
+                ql = qm
+            else:
+                qh = qm
+        q_hi = ql
+
+    r1_hi, p_hi_sol = eval_r1_at_q(q_hi)
+    if r1_hi < -1.0e-13:
+        return False, p_cur, q_cur, 0.0, np.zeros((2, 4))
+    if abs(r1_hi) < 1.0e-13:
+        return finalize_sens(p_hi_sol, q_hi)
+
+    r1_lo, _ = eval_r1_at_q(q_lo)
+    if r1_lo > 1.0e-13:
+        return False, p_cur, q_cur, 0.0, np.zeros((2, 4))
+
+    q_est = 0.5 * (q_lo + q_hi)
+    for _ in range(50):
+        r1, p_est = eval_r1_at_q(q_est)
+        if abs(r1) < 1.0e-13:
+            return finalize_sens(p_est, q_est)
+        if r1 > 0.0:
+            q_hi, r1_hi = q_est, r1
+        else:
+            q_lo, r1_lo = q_est, r1
+        q_sec = (
+            (q_lo - r1_lo * (q_hi - q_lo) / (r1_hi - r1_lo))
+            if abs(r1_hi - r1_lo) > 1.0e-30
+            else 0.5 * (q_lo + q_hi)
+        )
+        q_est = (
+            q_sec
+            if (q_lo + 0.05 * (q_hi - q_lo) < q_sec < q_hi - 0.05 * (q_hi - q_lo))
+            else 0.5 * (q_lo + q_hi)
+        )
 
     return False, p_cur, q_cur, 0.0, np.zeros((2, 4))
 
@@ -973,6 +1054,8 @@ def _solve_regime4_corner(
     Theta_0, _ = lode_theta_and_deriv(p, x_sin3)
     p_cur = max(1.0001 * p.p_min - p.a_apex, min(p_tr, max(p_p_n, 0.7 * p_tr)))
     q_cur = min(q_tr, 0.85 * p.M_c * max(p.p_min, p_cur + p.a_apex) / Theta_0)
+    scale0 = max(1.0, p.p_ref if failure_mode else 1.0)
+    scale1 = p.p_hat_ref ** 2
 
     def eval_residuals(
         p_val: float, q_val: float, p_tr_v: float, q_tr_v: float, x_v: float, Ge_v: float
@@ -1004,54 +1087,64 @@ def _solve_regime4_corner(
         R1 = (q_val * q_val) / alpha2 + p_hat * p_hat - pp_hat * pp_hat
         return R0, R1, dgam_p, deps_v_pc, pp_new
 
+    def finalize_r4_sens(
+        p_sol: float, q_sol: float, dgam_p: float, deps_v_pc: float, pp_new: float
+    ):
+        if dgam_p < -1.0e-10 or deps_v_pc < -1.0e-10:
+            return False, p_sol, q_sol, 0.0, p_p_n, np.zeros((2, 4))
+        if not failure_mode and (Theta_0 * q_sol) > p.M_c * (p_sol + p.a_apex) + 1.0e-10:
+            return False, p_sol, q_sol, 0.0, p_p_n, np.zeros((2, 4))
+        J_y = np.zeros((2, 2), dtype=float)
+        J_tr = np.zeros((2, 4), dtype=float)
+        hp = max(1.0e-8, 1.0e-8 * abs(p_sol))
+        hq = max(1.0e-8, 1.0e-8 * max(1.0, abs(q_sol)))
+        hx = 1.0e-8
+        hge = max(1.0e-6, 1.0e-8 * Ge)
+        r0p, r1p, _, _, _ = eval_residuals(p_sol + hp, q_sol, p_tr, q_tr, x_sin3, Ge)
+        r0m, r1m, _, _, _ = eval_residuals(p_sol - hp, q_sol, p_tr, q_tr, x_sin3, Ge)
+        J_y[0, 0] = (r0p - r0m) / (2.0 * hp)
+        J_y[1, 0] = (r1p - r1m) / (2.0 * hp)
+
+        r0p, r1p, _, _, _ = eval_residuals(p_sol, q_sol + hq, p_tr, q_tr, x_sin3, Ge)
+        r0m, r1m, _, _, _ = eval_residuals(p_sol, q_sol - hq, p_tr, q_tr, x_sin3, Ge)
+        J_y[0, 1] = (r0p - r0m) / (2.0 * hq)
+        J_y[1, 1] = (r1p - r1m) / (2.0 * hq)
+
+        r0p, r1p, _, _, _ = eval_residuals(p_sol, q_sol, p_tr + hp, q_tr, x_sin3, Ge)
+        r0m, r1m, _, _, _ = eval_residuals(p_sol, q_sol, p_tr - hp, q_tr, x_sin3, Ge)
+        J_tr[0, 0] = (r0p - r0m) / (2.0 * hp)
+        J_tr[1, 0] = (r1p - r1m) / (2.0 * hp)
+
+        r0p, r1p, _, _, _ = eval_residuals(p_sol, q_sol, p_tr, q_tr + hq, x_sin3, Ge)
+        r0m, r1m, _, _, _ = eval_residuals(p_sol, q_sol, p_tr, q_tr - hq, x_sin3, Ge)
+        J_tr[0, 1] = (r0p - r0m) / (2.0 * hq)
+        J_tr[1, 1] = (r1p - r1m) / (2.0 * hq)
+
+        xp = min(1.0, x_sin3 + hx)
+        xm = max(-1.0, x_sin3 - hx)
+        dx_span = max(1.0e-12, xp - xm)
+        r0p, r1p, _, _, _ = eval_residuals(p_sol, q_sol, p_tr, q_tr, xp, Ge)
+        r0m, r1m, _, _, _ = eval_residuals(p_sol, q_sol, p_tr, q_tr, xm, Ge)
+        J_tr[0, 2] = (r0p - r0m) / dx_span
+        J_tr[1, 2] = (r1p - r1m) / dx_span
+
+        r0p, r1p, _, _, _ = eval_residuals(p_sol, q_sol, p_tr, q_tr, x_sin3, Ge + hge)
+        r0m, r1m, _, _, _ = eval_residuals(p_sol, q_sol, p_tr, q_tr, x_sin3, Ge - hge)
+        J_tr[0, 3] = (r0p - r0m) / (2.0 * hge)
+        J_tr[1, 3] = (r1p - r1m) / (2.0 * hge)
+
+        sens = -np.linalg.solve(J_y, J_tr)
+        return True, p_sol, q_sol, max(0.0, dgam_p), pp_new, sens
+
     for _ in range(40):
         R0, R1, dgam_p, deps_v_pc, pp_new = eval_residuals(p_cur, q_cur, p_tr, q_tr, x_sin3, Ge)
-        if max(abs(R0) / max(1.0, p.p_ref if failure_mode else 1.0), abs(R1) / (p.p_hat_ref ** 2)) < 1.0e-12:
-            if dgam_p < -1.0e-10 or deps_v_pc < -1.0e-10:
-                return False, p_cur, q_cur, 0.0, p_p_n, np.zeros((2, 4))
-            if not failure_mode and (Theta_0 * q_cur) > p.M_c * (p_cur + p.a_apex) + 1.0e-10:
-                return False, p_cur, q_cur, 0.0, p_p_n, np.zeros((2, 4))
-            J_y = np.zeros((2, 2), dtype=float)
-            J_tr = np.zeros((2, 4), dtype=float)
-            hp = max(1.0e-8, 1.0e-8 * abs(p_cur))
-            hq = max(1.0e-8, 1.0e-8 * max(1.0, abs(q_cur)))
-            hx = 1.0e-8
-            hge = max(1.0e-6, 1.0e-8 * Ge)
-            r0p, r1p, _, _, _ = eval_residuals(p_cur + hp, q_cur, p_tr, q_tr, x_sin3, Ge)
-            r0m, r1m, _, _, _ = eval_residuals(p_cur - hp, q_cur, p_tr, q_tr, x_sin3, Ge)
-            J_y[0, 0] = (r0p - r0m) / (2.0 * hp)
-            J_y[1, 0] = (r1p - r1m) / (2.0 * hp)
-
-            r0p, r1p, _, _, _ = eval_residuals(p_cur, q_cur + hq, p_tr, q_tr, x_sin3, Ge)
-            r0m, r1m, _, _, _ = eval_residuals(p_cur, q_cur - hq, p_tr, q_tr, x_sin3, Ge)
-            J_y[0, 1] = (r0p - r0m) / (2.0 * hq)
-            J_y[1, 1] = (r1p - r1m) / (2.0 * hq)
-
-            r0p, r1p, _, _, _ = eval_residuals(p_cur, q_cur, p_tr + hp, q_tr, x_sin3, Ge)
-            r0m, r1m, _, _, _ = eval_residuals(p_cur, q_cur, p_tr - hp, q_tr, x_sin3, Ge)
-            J_tr[0, 0] = (r0p - r0m) / (2.0 * hp)
-            J_tr[1, 0] = (r1p - r1m) / (2.0 * hp)
-
-            r0p, r1p, _, _, _ = eval_residuals(p_cur, q_cur, p_tr, q_tr + hq, x_sin3, Ge)
-            r0m, r1m, _, _, _ = eval_residuals(p_cur, q_cur, p_tr, q_tr - hq, x_sin3, Ge)
-            J_tr[0, 1] = (r0p - r0m) / (2.0 * hq)
-            J_tr[1, 1] = (r1p - r1m) / (2.0 * hq)
-
-            xp = min(1.0, x_sin3 + hx)
-            xm = max(-1.0, x_sin3 - hx)
-            dx_span = max(1.0e-12, xp - xm)
-            r0p, r1p, _, _, _ = eval_residuals(p_cur, q_cur, p_tr, q_tr, xp, Ge)
-            r0m, r1m, _, _, _ = eval_residuals(p_cur, q_cur, p_tr, q_tr, xm, Ge)
-            J_tr[0, 2] = (r0p - r0m) / dx_span
-            J_tr[1, 2] = (r1p - r1m) / dx_span
-
-            r0p, r1p, _, _, _ = eval_residuals(p_cur, q_cur, p_tr, q_tr, x_sin3, Ge + hge)
-            r0m, r1m, _, _, _ = eval_residuals(p_cur, q_cur, p_tr, q_tr, x_sin3, Ge - hge)
-            J_tr[0, 3] = (r0p - r0m) / (2.0 * hge)
-            J_tr[1, 3] = (r1p - r1m) / (2.0 * hge)
-
-            sens = -np.linalg.solve(J_y, J_tr)
-            return True, p_cur, q_cur, max(0.0, dgam_p), pp_new, sens
+        if max(abs(R0) / scale0, abs(R1) / scale1) < 1.0e-12:
+            ok_f, p_f, q_f, dg_f, pp_f, sens_f = finalize_r4_sens(
+                p_cur, q_cur, dgam_p, deps_v_pc, pp_new
+            )
+            if ok_f:
+                return True, p_f, q_f, dg_f, pp_f, sens_f
+            break
 
         hp = max(1.0e-7, 1.0e-7 * abs(p_cur))
         hq = max(1.0e-7, 1.0e-7 * max(1.0, abs(q_cur)))
@@ -1081,6 +1174,30 @@ def _solve_regime4_corner(
             alpha_ls *= 0.5
         else:
             break
+
+    if failure_mode:
+        p_lo = p.p_min - p.a_apex
+        p_hi = p_tr + Ke * max(0.0, p.sin_psi) * (2.0 * q_tr / (3.0 * Ge))
+        _, r1_lo, _, _, _ = eval_residuals(
+            p_lo, (p.M_c / Theta_0) * (p_lo + p.a_apex), p_tr, q_tr, x_sin3, Ge
+        )
+        _, r1_hi, _, _, _ = eval_residuals(
+            p_hi, (p.M_c / Theta_0) * (p_hi + p.a_apex), p_tr, q_tr, x_sin3, Ge
+        )
+        if r1_lo <= 0.0 and r1_hi >= 0.0:
+            p_est = 0.5 * (p_lo + p_hi)
+            for _ in range(50):
+                q_est = (p.M_c / Theta_0) * (p_est + p.a_apex)
+                R0, R1, dgam_p, deps_v_pc, pp_new = eval_residuals(
+                    p_est, q_est, p_tr, q_tr, x_sin3, Ge
+                )
+                if max(abs(R0) / scale0, abs(R1) / scale1) < 1.0e-12:
+                    return finalize_r4_sens(p_est, q_est, dgam_p, deps_v_pc, pp_new)
+                if R1 > 0.0:
+                    p_hi = p_est
+                else:
+                    p_lo = p_est
+                p_est = 0.5 * (p_lo + p_hi)
 
     return False, p_cur, q_cur, 0.0, p_p_n, np.zeros((2, 4))
 
@@ -1238,33 +1355,7 @@ def return_map_3d(
                 solved = True
 
     if not solved:
-        p_new = max(p_cut, p_tr)
-        p_hat_fb = max(p.p_min, p_new + p.a_apex)
-        q_mc_fb = p.M_c * p_hat_fb / Theta
-        q_new = min(q_tr, q_mc_fb)
-        if f_cap_tr > 1.0e-10:
-            r_cap = math.sqrt((q_new ** 2) / (p.alpha_cap ** 2) + p_hat_fb ** 2)
-            if r_cap > pp_hat_n and r_cap > 1.0e-12:
-                sc = pp_hat_n / r_cap
-                p_hat_fb = max(p.p_min, p_hat_fb * sc)
-                p_new = max(p_cut, p_hat_fb - p.a_apex)
-                q_new = min(q_new * sc, p.M_c * p_hat_fb / Theta)
-        dgam_fb = max(0.0, (2.0 / (3.0 * Ge)) * (q_tr - q_new))
-        st_new.gamma_p = st_n.gamma_p + dgam_fb
-        sens = np.array(
-            [
-                [1.0, 0.0, 0.0, 0.0],
-                [
-                    (p.M_c / Theta) if q_new < q_tr else 0.0,
-                    1.0e-3 if q_new < q_tr else 1.0,
-                    0.0,
-                    0.0,
-                ],
-            ],
-            dtype=float,
-        )
-        regime = "failure_cap" if f_cap_tr > 1.0e-10 else "failure"
-        solved = True
+        return st_new, C_e_alg, "refused"
 
     # 4. Reconstruct 3D stress tensor & 6x6 Consistent Algorithmic Tangent:
     s_tr = sig_tr - p_tr * _I6_M

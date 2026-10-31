@@ -806,8 +806,10 @@ def test_stage_transition_and_implex_mode():
         assert abs(cap_after[0] - 0.85) < 1e-12
         assert abs(cap_after[1] - 1.2e-4) < 1e-15
 
-    # Verify (a) tag reuse with -stage 0 after wipe resets registry to 0, and
-    # (b) overconsolidated (OCR = 2.5) Stage 0 -> Stage 1 transition initializes prior shear cone gamma_p > 0:
+    # Verify (a) tag reuse with -stage 0 after wipe resets registry to 0,
+    # (b) overconsolidated (OCR = 2.5) Stage 0 -> Stage 1 transition initializes prior shear cone gamma_p
+    #     evaluated at p_pre (NOT unloaded p_n) while preserving virgin small-strain state (is_virgin == True), and
+    # (c) multi-threaded assembly under ladrunoThreads(2) safely synchronizes stage across all elements:
     _build_prescribed_cube(
         _hostun_args(
             1,
@@ -822,7 +824,61 @@ def test_stage_transition_and_implex_mode():
     assert ops.eleResponse(1, "material", 1, "gamma_p")[0] == 0.0  # Still in Stage 0 (not polluted by prior run!)
     ops.updateMaterialStage("-material", 1, "-stage", 1)
     gam_oc_after = ops.eleResponse(1, "material", 1, "gamma_p")[0]
-    assert gam_oc_after > 1.0e-4  # Overconsolidated shear cone initialized immediately before analyze(1)
+    # Exact analytical preconsolidation shear cone at p_pre = 2.5 * 100 = 250 kPa along K0_nc = 1 - sin(42 deg):
+    sin_phi = math.sin(math.radians(42.0))
+    k0_nc = 1.0 - sin_phi
+    eta_k0 = 3.0 * (1.0 - k0_nc) / (1.0 + 2.0 * k0_nc)
+    p_pre = 250.0
+    q_pre = eta_k0 * p_pre
+    sig3_pre = p_pre - q_pre / 3.0
+    qf_pre = (2.0 * sin_phi / (1.0 - sin_phi)) * sig3_pre
+    qa_pre = qf_pre / 0.9
+    ei_pre = (2.0 * 35000.0 / (2.0 - 0.9)) * (sig3_pre / 100.0) ** 0.5
+    eur_pre = 105000.0 * (sig3_pre / 100.0) ** 0.5
+    gam_oc_expected = (2.0 / ei_pre) * (q_pre / (1.0 - q_pre / qa_pre)) - (2.0 * q_pre / eur_pre)
+    assert abs(gam_oc_after - gam_oc_expected) < 1.0e-12
+    # Verify is_virgin remained True after Stage 0 -> Stage 1 (so first loading increment uses gamma_0.7, not 2*gamma_0.7):
+    assert _impose_cube_strain_open(np.array([0.0, 0.0, 0.0, 5.0e-4 + 1.5e-4, 0.0, 0.0])) == 0
+    g_sec_virgin = ops.eleResponse(1, "material", 1, "G_sec")[0]
+    sig_after = np.array(ops.eleResponse(1, "material", 1, "stress"))
+    sig3_after = 100.0 - abs(sig_after[3])
+    g0_at_sig3 = 140000.0 * (sig3_after / 100.0) ** 0.5
+    # At dgamma = gamma_0.7 = 1.5e-4 on virgin loading, G_sec / G0 = 1 / (1 + 0.385) = 0.72202
+    assert abs(g_sec_virgin / g0_at_sig3 - 1.0 / 1.385) < 1.0e-3
+
+    # Multi-threaded stage transition test with ladrunoThreads(2) over 8 elements:
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.ladrunoThreads(2)
+    try:
+        for i in range(9):
+            ops.node(i + 1, float(i), 0.0)
+            ops.node(i + 10, float(i), 1.0)
+            ops.fix(i + 1, 1, 1)
+            ops.fix(i + 10, 1, 1)
+        ops.nDMaterial(*_hostun_args(1, stage=0, sig0=100.0))
+        for e in range(1, 9):
+            ops.element("quad", e, e, e + 1, e + 10, e + 9, 1.0, "PlaneStrain", 1)
+        ops.system("FullGeneral")
+        ops.numberer("Plain")
+        ops.constraints("Plain")
+        ops.test("NormDispIncr", 1.0e-10, 20, 0)
+        ops.algorithm("Newton")
+        ops.integrator("LoadControl", 1.0)
+        ops.analysis("Static")
+        for i in range(9):
+            ops.setNodeDisp(i + 10, 1, 0.001, "-commit")
+            ops.setNodeDisp(i + 10, 2, -0.001, "-commit")
+        assert ops.analyze(1) == 0
+        ops.updateMaterialStage("-material", 1, "-stage", 1)
+        for i in range(9):
+            ops.setNodeDisp(i + 10, 1, 0.006, "-commit")
+        assert ops.analyze(1) == 0
+        for e in range(1, 9):
+            assert ops.eleResponse(e, "material", 1, "gamma_p")[0] > 1.0e-3
+    finally:
+        ops.ladrunoThreads(1)
+
 
 
 

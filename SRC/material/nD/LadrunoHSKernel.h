@@ -947,14 +947,40 @@ inline bool solve_regime1_shear(
     double Ke, double Ge, double gamma_p_n, double void_ratio,
     double& p_out, double& q_out, double& dgam_out, double sens[2][4]) {
   double inv_3Ge2   = 2.0 / (3.0 * Ge);
+  double p_min_val  = p.p_min - p.a_apex;
   double p_cur      = std::max(1.0001 * p.p_min - p.a_apex, p_tr);
   double q_max_fail = p.M_c * std::max(p.p_min, p_cur + p.a_apex) / Theta;
   double q_cur      = std::min(q_tr, 0.98 * q_max_fail);
 
+  auto finalize_sens = [&](double p_sol, double q_sol) -> bool {
+    double dgam = inv_3Ge2 * (q_tr - q_sol);
+    if (dgam < -1.0e-12) return false;
+    if ((Theta * q_sol) > p.M_c * (p_sol + p.a_apex) + 1.0e-10) return false;
+    double s_psim = 0.0, dspsi_dp = 0.0, dspsi_dq = 0.0, dspsi_dx = 0.0;
+    rowe_dilatancy(p, p_sol, q_sol, void_ratio, s_psim, dspsi_dp, dspsi_dq,
+                   k3, Theta_sig, dk3_dx, dTheta_sig_dx, &dspsi_dx);
+    double Phi_s = 0.0, dPhi_dp = 0.0, dPhi_dq = 0.0, dPhi_dx = 0.0;
+    phi_shear(p, p_sol, q_sol, Phi_s, dPhi_dp, dPhi_dq,
+              k3, Theta_sig, dk3_dx, dTheta_sig_dx, &dPhi_dx);
+    double J_y[2][2] = {
+        {1.0 - Ke * dspsi_dp * dgam, -Ke * (dspsi_dq * dgam - s_psim * inv_3Ge2)},
+        {dPhi_dp,                    dPhi_dq + inv_3Ge2}
+    };
+    double J_tr[2][4] = {
+        {-1.0, -Ke * s_psim * inv_3Ge2, -Ke * dspsi_dx * dgam, 0.0},
+        { 0.0, -inv_3Ge2,                dPhi_dx,              dgam / Ge}
+    };
+    if (!solve_2x4_neg(J_y, J_tr, sens)) return false;
+    p_out    = p_sol;
+    q_out    = q_sol;
+    dgam_out = std::max(0.0, dgam);
+    return true;
+  };
+
   for (int iter = 0; iter < 45; ++iter) {
     double p_hat = p_cur + p.a_apex;
     if (p_hat <= 0.5 * p.p_min) {
-      return false;
+      break;
     }
 
     double dgam = inv_3Ge2 * (q_tr - q_cur);
@@ -968,30 +994,17 @@ inline bool solve_regime1_shear(
     double R0 = p_cur - p_tr - Ke * s_psim * dgam;
     double R1 = Phi_s - gamma_p_n - dgam;
 
+    if (std::max(std::abs(R0) / std::max(1.0, p.p_ref), std::abs(R1)) < 1.0e-13) {
+      if (finalize_sens(p_cur, q_cur)) return true;
+      break;
+    }
+
     double J_y[2][2] = {
         {1.0 - Ke * dspsi_dp * dgam, -Ke * (dspsi_dq * dgam - s_psim * inv_3Ge2)},
         {dPhi_dp,                    dPhi_dq + inv_3Ge2}
     };
-
-    if (std::max(std::abs(R0) / std::max(1.0, p.p_ref), std::abs(R1)) < 1.0e-13) {
-      if (dgam < -1.0e-12) return false;
-      if ((Theta * q_cur) > p.M_c * (p_cur + p.a_apex) + 1.0e-10) return false;
-      // Note: Since Ke = (Kur_ref / Gur_ref) * Ge scales proportionally with Ge,
-      // the product Ke * dgam = (2/3)*(Kur_ref / Gur_ref)*(q_tr - q_cur) in R0
-      // has zero partial derivative wrt Ge at fixed (p_tr, q_tr, x_tr).
-      double J_tr[2][4] = {
-          {-1.0, -Ke * s_psim * inv_3Ge2, -Ke * dspsi_dx * dgam, 0.0},
-          { 0.0, -inv_3Ge2,                dPhi_dx,              dgam / Ge}
-      };
-      if (!solve_2x4_neg(J_y, J_tr, sens)) return false;
-      p_out    = p_cur;
-      q_out    = q_cur;
-      dgam_out = std::max(0.0, dgam);
-      return true;
-    }
-
     double det = J_y[0][0] * J_y[1][1] - J_y[0][1] * J_y[1][0];
-    if (std::abs(det) < 1.0e-30) return false;
+    if (std::abs(det) < 1.0e-30) break;
     double dp = -( J_y[1][1] * R0 - J_y[0][1] * R1) / det;
     double dq = -(-J_y[1][0] * R0 + J_y[0][0] * R1) / det;
 
@@ -1009,7 +1022,72 @@ inline bool solve_regime1_shear(
       }
       alpha_ls *= 0.5;
     }
-    if (!accepted) return false;
+    if (!accepted) break;
+  }
+
+  // 1D bracketed Newton-bisection fallback on q in [0, q_tr]:
+  auto solve_p_for_q = [&](double q_val) -> double {
+    double dgam  = inv_3Ge2 * (q_tr - q_val);
+    double p_lo  = p_min_val;
+    double p_hi  = std::max(p_lo, p_tr + Ke * std::max(0.0, p.sin_psi) * dgam);
+    double p_est = std::max(p_lo, std::min(p_hi, p_tr));
+    for (int it = 0; it < 35; ++it) {
+      double s_psim = 0.0, dspsi_dp = 0.0, dspsi_dq = 0.0;
+      rowe_dilatancy(p, p_est, q_val, void_ratio, s_psim, dspsi_dp, dspsi_dq, k3, Theta_sig);
+      double r0 = p_est - p_tr - Ke * s_psim * dgam;
+      if (std::abs(r0) / std::max(1.0, p.p_ref) < 1.0e-14) break;
+      if (r0 > 0.0) p_hi = std::min(p_hi, p_est);
+      else          p_lo = std::max(p_lo, p_est);
+      double dr0 = 1.0 - Ke * dspsi_dp * dgam;
+      double pn  = (std::abs(dr0) > 1.0e-30) ? (p_est - r0 / dr0) : 0.5 * (p_lo + p_hi);
+      p_est      = (pn > p_lo && pn < p_hi) ? pn : 0.5 * (p_lo + p_hi);
+    }
+    return p_est;
+  };
+
+  auto eval_r1_at_q = [&](double q_val, double& p_sol) -> double {
+    p_sol = solve_p_for_q(q_val);
+    double dgam = inv_3Ge2 * (q_tr - q_val);
+    double Phi_s = 0.0, d1 = 0.0, d2 = 0.0;
+    phi_shear(p, p_sol, q_val, Phi_s, d1, d2, k3, Theta_sig);
+    return Phi_s - gamma_p_n - dgam;
+  };
+
+  // Find upper bound q_hi <= q_tr such that Theta * q_hi <= M_c * (p(q_hi) + a_apex):
+  double q_lo = 0.0, q_hi = q_tr, p_hi_sol = p_tr;
+  double p_at_tr = solve_p_for_q(q_tr);
+  if (Theta * q_tr > p.M_c * (p_at_tr + p.a_apex)) {
+    double ql = 0.0, qh = q_tr;
+    for (int it = 0; it < 35; ++it) {
+      double qm = 0.5 * (ql + qh);
+      double pm = solve_p_for_q(qm);
+      if (Theta * qm <= p.M_c * (pm + p.a_apex)) ql = qm;
+      else                                       qh = qm;
+    }
+    q_hi = ql;
+  }
+  double r1_hi = eval_r1_at_q(q_hi, p_hi_sol);
+  if (r1_hi < -1.0e-13) return false;
+  if (std::abs(r1_hi) < 1.0e-13) return finalize_sens(p_hi_sol, q_hi);
+
+  double p_lo_sol = p_tr;
+  double r1_lo    = eval_r1_at_q(q_lo, p_lo_sol);
+  if (r1_lo > 1.0e-13) return false;
+
+  double q_est = 0.5 * (q_lo + q_hi), p_est = p_hi_sol;
+  for (int it = 0; it < 50; ++it) {
+    double r1 = eval_r1_at_q(q_est, p_est);
+    if (std::abs(r1) < 1.0e-13) {
+      return finalize_sens(p_est, q_est);
+    }
+    if (r1 > 0.0) { q_hi = q_est; r1_hi = r1; }
+    else          { q_lo = q_est; r1_lo = r1; }
+    double q_sec = (std::abs(r1_hi - r1_lo) > 1.0e-30)
+                       ? (q_lo - r1_lo * (q_hi - q_lo) / (r1_hi - r1_lo))
+                       : 0.5 * (q_lo + q_hi);
+    q_est = (q_sec > q_lo + 0.05 * (q_hi - q_lo) && q_sec < q_hi - 0.05 * (q_hi - q_lo))
+                ? q_sec
+                : 0.5 * (q_lo + q_hi);
   }
   return false;
 }
@@ -1181,6 +1259,57 @@ inline bool solve_regime4_corner(
   double p_cur    = std::max(p.p_min - p.a_apex, std::min(p_tr, std::max(p_p_n, 0.7 * p_tr)));
   double q_cur    = std::min(q_tr, 0.85 * p.M_c * (p_cur + p.a_apex) / Theta);
   double kappa_KG = p.Kur_ref / p.Gur_ref;
+  double scale0   = failure_mode ? std::max(1.0, p.p_ref) : 1.0;
+  double scale1   = p.p_hat_ref * p.p_hat_ref;
+
+  auto finalize_r4_sens = [&](double p_sol, double q_sol, double dgam_p, double deps_v_pc, double pp_new) -> bool {
+    if (dgam_p < -1.0e-10 || deps_v_pc < -1.0e-10) return false;
+    if (!failure_mode && (Theta * q_sol) > p.M_c * (p_sol + p.a_apex) + 1.0e-10) return false;
+    double J_y[2][2]  = {{0.0, 0.0}, {0.0, 0.0}};
+    double J_tr[2][4] = {{0.0, 0.0, 0.0, 0.0}, {0.0, 0.0, 0.0, 0.0}};
+    double hp  = std::max(1.0e-8, 1.0e-8 * std::abs(p_sol));
+    double hq  = std::max(1.0e-8, 1.0e-8 * std::max(1.0, std::abs(q_sol)));
+    double hx  = 1.0e-8;
+    double hge = std::max(1.0e-6, 1.0e-8 * Ge);
+    double r0p, r1p, r0m, r1m, g_tmp, e_tmp, pp_tmp;
+
+    eval_regime4_residuals(p, p_sol + hp, q_sol, p_tr, q_tr, Theta, k3, Theta_sig, Ke, Ge, gamma_p_n, p_p_n, void_ratio, failure_mode, r0p, r1p, g_tmp, e_tmp, pp_tmp);
+    eval_regime4_residuals(p, p_sol - hp, q_sol, p_tr, q_tr, Theta, k3, Theta_sig, Ke, Ge, gamma_p_n, p_p_n, void_ratio, failure_mode, r0m, r1m, g_tmp, e_tmp, pp_tmp);
+    J_y[0][0] = (r0p - r0m) / (2.0 * hp);
+    J_y[1][0] = (r1p - r1m) / (2.0 * hp);
+
+    eval_regime4_residuals(p, p_sol, q_sol + hq, p_tr, q_tr, Theta, k3, Theta_sig, Ke, Ge, gamma_p_n, p_p_n, void_ratio, failure_mode, r0p, r1p, g_tmp, e_tmp, pp_tmp);
+    eval_regime4_residuals(p, p_sol, q_sol - hq, p_tr, q_tr, Theta, k3, Theta_sig, Ke, Ge, gamma_p_n, p_p_n, void_ratio, failure_mode, r0m, r1m, g_tmp, e_tmp, pp_tmp);
+    J_y[0][1] = (r0p - r0m) / (2.0 * hq);
+    J_y[1][1] = (r1p - r1m) / (2.0 * hq);
+
+    eval_regime4_residuals(p, p_sol, q_sol, p_tr + hp, q_tr, Theta, k3, Theta_sig, Ke, Ge, gamma_p_n, p_p_n, void_ratio, failure_mode, r0p, r1p, g_tmp, e_tmp, pp_tmp);
+    eval_regime4_residuals(p, p_sol, q_sol, p_tr - hp, q_tr, Theta, k3, Theta_sig, Ke, Ge, gamma_p_n, p_p_n, void_ratio, failure_mode, r0m, r1m, g_tmp, e_tmp, pp_tmp);
+    J_tr[0][0] = (r0p - r0m) / (2.0 * hp);
+    J_tr[1][0] = (r1p - r1m) / (2.0 * hp);
+
+    eval_regime4_residuals(p, p_sol, q_sol, p_tr, q_tr + hq, Theta, k3, Theta_sig, Ke, Ge, gamma_p_n, p_p_n, void_ratio, failure_mode, r0p, r1p, g_tmp, e_tmp, pp_tmp);
+    eval_regime4_residuals(p, p_sol, q_sol, p_tr, q_tr - hq, Theta, k3, Theta_sig, Ke, Ge, gamma_p_n, p_p_n, void_ratio, failure_mode, r0m, r1m, g_tmp, e_tmp, pp_tmp);
+    J_tr[0][1] = (r0p - r0m) / (2.0 * hq);
+    J_tr[1][1] = (r1p - r1m) / (2.0 * hq);
+
+    eval_regime4_residuals(p, p_sol, q_sol, p_tr, q_tr, Theta + hx * dTheta_dx, k3 + hx * dk3_dx, Theta_sig + hx * dTheta_sig_dx, Ke, Ge, gamma_p_n, p_p_n, void_ratio, failure_mode, r0p, r1p, g_tmp, e_tmp, pp_tmp);
+    eval_regime4_residuals(p, p_sol, q_sol, p_tr, q_tr, Theta - hx * dTheta_dx, k3 - hx * dk3_dx, Theta_sig - hx * dTheta_sig_dx, Ke, Ge, gamma_p_n, p_p_n, void_ratio, failure_mode, r0m, r1m, g_tmp, e_tmp, pp_tmp);
+    J_tr[0][2] = (r0p - r0m) / (2.0 * hx);
+    J_tr[1][2] = (r1p - r1m) / (2.0 * hx);
+
+    eval_regime4_residuals(p, p_sol, q_sol, p_tr, q_tr, Theta, k3, Theta_sig, kappa_KG * (Ge + hge), Ge + hge, gamma_p_n, p_p_n, void_ratio, failure_mode, r0p, r1p, g_tmp, e_tmp, pp_tmp);
+    eval_regime4_residuals(p, p_sol, q_sol, p_tr, q_tr, Theta, k3, Theta_sig, kappa_KG * (Ge - hge), Ge - hge, gamma_p_n, p_p_n, void_ratio, failure_mode, r0m, r1m, g_tmp, e_tmp, pp_tmp);
+    J_tr[0][3] = (r0p - r0m) / (2.0 * hge);
+    J_tr[1][3] = (r1p - r1m) / (2.0 * hge);
+
+    if (!solve_2x4_neg(J_y, J_tr, sens)) return false;
+    p_out      = p_sol;
+    q_out      = q_sol;
+    dgam_s_out = std::max(0.0, dgam_p);
+    pp_out     = pp_new;
+    return true;
+  };
 
   for (int iter = 0; iter < 40; ++iter) {
     double R0 = 0.0, R1 = 0.0, dgam_p = 0.0, deps_v_pc = 0.0, pp_new = p_p_n;
@@ -1188,55 +1317,9 @@ inline bool solve_regime4_corner(
                            gamma_p_n, p_p_n, void_ratio, failure_mode,
                            R0, R1, dgam_p, deps_v_pc, pp_new);
 
-    double scale0 = failure_mode ? std::max(1.0, p.p_ref) : 1.0;
-    double scale1 = p.p_hat_ref * p.p_hat_ref;
     if (std::max(std::abs(R0) / scale0, std::abs(R1) / scale1) < 1.0e-12) {
-      if (dgam_p < -1.0e-10 || deps_v_pc < -1.0e-10) return false;
-      if (!failure_mode && (Theta * q_cur) > p.M_c * (p_cur + p.a_apex) + 1.0e-10) return false;
-      double J_y[2][2]  = {{0.0, 0.0}, {0.0, 0.0}};
-      double J_tr[2][4] = {{0.0, 0.0, 0.0, 0.0}, {0.0, 0.0, 0.0, 0.0}};
-      double hp  = std::max(1.0e-8, 1.0e-8 * std::abs(p_cur));
-      double hq  = std::max(1.0e-8, 1.0e-8 * std::max(1.0, std::abs(q_cur)));
-      double hx  = 1.0e-8;
-      double hge = std::max(1.0e-6, 1.0e-8 * Ge);
-      double r0p, r1p, r0m, r1m, g_tmp, e_tmp, pp_tmp;
-
-      eval_regime4_residuals(p, p_cur + hp, q_cur, p_tr, q_tr, Theta, k3, Theta_sig, Ke, Ge, gamma_p_n, p_p_n, void_ratio, failure_mode, r0p, r1p, g_tmp, e_tmp, pp_tmp);
-      eval_regime4_residuals(p, p_cur - hp, q_cur, p_tr, q_tr, Theta, k3, Theta_sig, Ke, Ge, gamma_p_n, p_p_n, void_ratio, failure_mode, r0m, r1m, g_tmp, e_tmp, pp_tmp);
-      J_y[0][0] = (r0p - r0m) / (2.0 * hp);
-      J_y[1][0] = (r1p - r1m) / (2.0 * hp);
-
-      eval_regime4_residuals(p, p_cur, q_cur + hq, p_tr, q_tr, Theta, k3, Theta_sig, Ke, Ge, gamma_p_n, p_p_n, void_ratio, failure_mode, r0p, r1p, g_tmp, e_tmp, pp_tmp);
-      eval_regime4_residuals(p, p_cur, q_cur - hq, p_tr, q_tr, Theta, k3, Theta_sig, Ke, Ge, gamma_p_n, p_p_n, void_ratio, failure_mode, r0m, r1m, g_tmp, e_tmp, pp_tmp);
-      J_y[0][1] = (r0p - r0m) / (2.0 * hq);
-      J_y[1][1] = (r1p - r1m) / (2.0 * hq);
-
-      eval_regime4_residuals(p, p_cur, q_cur, p_tr + hp, q_tr, Theta, k3, Theta_sig, Ke, Ge, gamma_p_n, p_p_n, void_ratio, failure_mode, r0p, r1p, g_tmp, e_tmp, pp_tmp);
-      eval_regime4_residuals(p, p_cur, q_cur, p_tr - hp, q_tr, Theta, k3, Theta_sig, Ke, Ge, gamma_p_n, p_p_n, void_ratio, failure_mode, r0m, r1m, g_tmp, e_tmp, pp_tmp);
-      J_tr[0][0] = (r0p - r0m) / (2.0 * hp);
-      J_tr[1][0] = (r1p - r1m) / (2.0 * hp);
-
-      eval_regime4_residuals(p, p_cur, q_cur, p_tr, q_tr + hq, Theta, k3, Theta_sig, Ke, Ge, gamma_p_n, p_p_n, void_ratio, failure_mode, r0p, r1p, g_tmp, e_tmp, pp_tmp);
-      eval_regime4_residuals(p, p_cur, q_cur, p_tr, q_tr - hq, Theta, k3, Theta_sig, Ke, Ge, gamma_p_n, p_p_n, void_ratio, failure_mode, r0m, r1m, g_tmp, e_tmp, pp_tmp);
-      J_tr[0][1] = (r0p - r0m) / (2.0 * hq);
-      J_tr[1][1] = (r1p - r1m) / (2.0 * hq);
-
-      eval_regime4_residuals(p, p_cur, q_cur, p_tr, q_tr, Theta + hx * dTheta_dx, k3 + hx * dk3_dx, Theta_sig + hx * dTheta_sig_dx, Ke, Ge, gamma_p_n, p_p_n, void_ratio, failure_mode, r0p, r1p, g_tmp, e_tmp, pp_tmp);
-      eval_regime4_residuals(p, p_cur, q_cur, p_tr, q_tr, Theta - hx * dTheta_dx, k3 - hx * dk3_dx, Theta_sig - hx * dTheta_sig_dx, Ke, Ge, gamma_p_n, p_p_n, void_ratio, failure_mode, r0m, r1m, g_tmp, e_tmp, pp_tmp);
-      J_tr[0][2] = (r0p - r0m) / (2.0 * hx);
-      J_tr[1][2] = (r1p - r1m) / (2.0 * hx);
-
-      eval_regime4_residuals(p, p_cur, q_cur, p_tr, q_tr, Theta, k3, Theta_sig, kappa_KG * (Ge + hge), Ge + hge, gamma_p_n, p_p_n, void_ratio, failure_mode, r0p, r1p, g_tmp, e_tmp, pp_tmp);
-      eval_regime4_residuals(p, p_cur, q_cur, p_tr, q_tr, Theta, k3, Theta_sig, kappa_KG * (Ge - hge), Ge - hge, gamma_p_n, p_p_n, void_ratio, failure_mode, r0m, r1m, g_tmp, e_tmp, pp_tmp);
-      J_tr[0][3] = (r0p - r0m) / (2.0 * hge);
-      J_tr[1][3] = (r1p - r1m) / (2.0 * hge);
-
-      if (!solve_2x4_neg(J_y, J_tr, sens)) return false;
-      p_out      = p_cur;
-      q_out      = q_cur;
-      dgam_s_out = std::max(0.0, dgam_p);
-      pp_out     = pp_new;
-      return true;
+      if (finalize_r4_sens(p_cur, q_cur, dgam_p, deps_v_pc, pp_new)) return true;
+      break;
     }
 
     double hp = std::max(1.0e-7, 1.0e-7 * std::abs(p_cur));
@@ -1253,7 +1336,7 @@ inline bool solve_regime4_corner(
     double J11 = (r1p - r1m) / (2.0 * hq);
 
     double det = J00 * J11 - J01 * J10;
-    if (std::abs(det) < 1.0e-30) return false;
+    if (std::abs(det) < 1.0e-30) break;
     double dp = -( J11 * R0 - J01 * R1) / det;
     double dq = -(-J10 * R0 + J00 * R1) / det;
 
@@ -1272,7 +1355,34 @@ inline bool solve_regime4_corner(
       }
       alpha_ls *= 0.5;
     }
-    if (!accepted) return false;
+    if (!accepted) break;
+  }
+
+  if (failure_mode) {
+    // 1D bracketed root-finder along the exact failure line q(p) = (M_c / Theta) * (p + a_apex):
+    double p_lo = p.p_min - p.a_apex;
+    double p_hi = p_tr + Ke * std::max(0.0, p.sin_psi) * (2.0 * q_tr / (3.0 * Ge));
+    double R0_lo, R1_lo, dg_lo, dv_lo, pp_lo;
+    double R0_hi, R1_hi, dg_hi, dv_hi, pp_hi;
+    eval_regime4_residuals(p, p_lo, (p.M_c / Theta) * (p_lo + p.a_apex), p_tr, q_tr, Theta, k3, Theta_sig, Ke, Ge,
+                           gamma_p_n, p_p_n, void_ratio, true, R0_lo, R1_lo, dg_lo, dv_lo, pp_lo);
+    eval_regime4_residuals(p, p_hi, (p.M_c / Theta) * (p_hi + p.a_apex), p_tr, q_tr, Theta, k3, Theta_sig, Ke, Ge,
+                           gamma_p_n, p_p_n, void_ratio, true, R0_hi, R1_hi, dg_hi, dv_hi, pp_hi);
+    if (R1_lo <= 0.0 && R1_hi >= 0.0) {
+      double p_est = 0.5 * (p_lo + p_hi);
+      for (int it = 0; it < 50; ++it) {
+        double q_est = (p.M_c / Theta) * (p_est + p.a_apex);
+        double R0 = 0.0, R1 = 0.0, dgam_p = 0.0, deps_v_pc = 0.0, pp_new = p_p_n;
+        eval_regime4_residuals(p, p_est, q_est, p_tr, q_tr, Theta, k3, Theta_sig, Ke, Ge,
+                               gamma_p_n, p_p_n, void_ratio, true, R0, R1, dgam_p, deps_v_pc, pp_new);
+        if (std::max(std::abs(R0) / scale0, std::abs(R1) / scale1) < 1.0e-12) {
+          return finalize_r4_sens(p_est, q_est, dgam_p, deps_v_pc, pp_new);
+        }
+        if (R1 > 0.0) { p_hi = p_est; R1_hi = R1; }
+        else          { p_lo = p_est; R1_lo = R1; }
+        p_est = 0.5 * (p_lo + p_hi);
+      }
+    }
   }
   return false;
 }
@@ -1466,29 +1576,7 @@ inline ActiveRegime return_map_3d_comp(
   }
 
   if (!solved) {
-    // Admissible fallback projection onto the Mohr-Coulomb / Cap / Apex envelope
-    // when contractive dilatancy at low confinement pulls (p, q) onto the apex cutoff:
-    p_new = std::max(p_cut, p_tr);
-    double p_hat_fb = std::max(p.p_min, p_new + p.a_apex);
-    double q_mc_fb  = p.M_c * p_hat_fb / Theta;
-    q_new = std::min(q_tr, q_mc_fb);
-    if (f_cap_tr > 1.0e-10) {
-      double r_cap = std::sqrt((q_new * q_new) / alpha2 + p_hat_fb * p_hat_fb);
-      if (r_cap > pp_hat_n && r_cap > 1.0e-12) {
-        double sc = pp_hat_n / r_cap;
-        p_hat_fb  = std::max(p.p_min, p_hat_fb * sc);
-        p_new     = std::max(p_cut, p_hat_fb - p.a_apex);
-        q_new     = std::min(q_new * sc, p.M_c * p_hat_fb / Theta);
-      }
-    }
-    double dgam_fb = std::max(0.0, (2.0 / (3.0 * Ge)) * (q_tr - q_new));
-    st_new.gamma_p = st_n.gamma_p + dgam_fb;
-    sens[0][0] = 1.0; sens[0][1] = 0.0; sens[0][2] = 0.0; sens[0][3] = 0.0;
-    sens[1][0] = (q_new < q_tr) ? (p.M_c / Theta) : 0.0;
-    sens[1][1] = (q_new < q_tr) ? 1.0e-3 : 1.0;
-    sens[1][2] = 0.0; sens[1][3] = 0.0;
-    regime = (f_cap_tr > 1.0e-10) ? REGIME_FAILURE_CAP : REGIME_FAILURE;
-    solved = true;
+    return REGIME_REFUSED;
   }
 
   // 4. Reconstruct 3D stress tensor & 6x6 Consistent Algorithmic Tangent:
