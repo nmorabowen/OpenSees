@@ -823,16 +823,19 @@ the shipped defaults, virgin plane-strain trials of |strain| ~0.3 and more still
 `benchmarks/01_3d_embedded_rebar/vecchio_shim/model.py` with `-subIncr` injected and apeGmsh 4d431defe; four runs side by
 side on one loaded workstation, so a wall-time stop is pessimistic; "no conv." = the ladder's smallest step failed):
 
-| run | PR head (handoff 2026-10-09) | r4 |
+| run | PR head (handoff 2026-10-09) | r4 (37a353fff) |
 |---|---|---|
-| B1 deterministic | 7.7 mm, no conv. | 381 kN at 11.9 mm, wall 3600 s, 32 escalations |
-| B1 refuse | 1.69 mm in 3600 s, 554 global failures | 250 kN at 5.10 mm, no conv. at 1585 s, 22 escalations |
-| C3 deterministic | 264 kN at 34.9 mm, no conv., 40 escalations | 249 kN at 31.85 mm, no conv. at 6722 s, 90 escalations |
-| C3 refuse | 135 kN at 14.4 mm, 308 escalations | 209 kN at 25.3 mm, no conv. at 4195 s, 55 escalations |
+| B1 deterministic | 7.7 mm, no conv. | 352 kN at 10.0 mm, wall 3600 s, 5 escalations |
+| B1 refuse | 1.69 mm in 3600 s, 554 global failures | 375 kN at 11.6 mm, wall 3600 s, 51 escalations |
+| C3 deterministic | 264 kN at 34.9 mm, no conv., 40 escalations | 245 kN at 31.4 mm, no conv. at 6194 s, 27 escalations |
+| C3 refuse | 135 kN at 14.4 mm, 308 escalations | 214 kN at 26.2 mm, no conv. at 3300 s, 36 escalations |
 
-`refuse` gains the most (B1 3x, C3 1.8x the reach) but is still behind `deterministic` on both beams, so the default stays
-`deterministic`; neither beam reaches its test peak (434 / 265 kN), and C3 deterministic stops 3 mm earlier than on the PR
-head. The tangent question (chain vs last piece) was not re-run.
+(The first r4 cut, plain Newton first in tension, measured B1 381 kN at 11.9 mm / 250 kN at 5.1 mm and C3 249 kN at
+31.9 mm / 209 kN at 25.3 mm.) `refuse` now matches or beats `deterministic` on B1 within the wall time and reaches 84 %
+of its C3 deflection; neither reaches its test peak (434 / 265 kN), and C3 deterministic still stops 3.5 mm earlier than
+on the PR head. Wall-time stops on a shared, loaded workstation are pessimistic and not comparable run to run; the
+"no conv." stops are. The default stays `deterministic` (switching it is the owner's call, on a cleaner run). The
+tangent question (chain vs last piece) was not re-run.
 
 **One refusal design with #1038 / rule B** (`ledger/quirks/ADR-31-concrete3d-failed-return-map-returned-zero.md`). Rule B is
 the base truth: `setTrialStrain` refuses when the returned state's kernel call failed or sigma_22 is unconverged. #877's
