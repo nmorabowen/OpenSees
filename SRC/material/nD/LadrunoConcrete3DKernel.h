@@ -190,6 +190,14 @@ struct Params {
     // regularization
     double lch = 1.0;            // parent-element characteristic length
     double lch_ref = 1.0;        // reference length of the input Gf/Gc
+    // Lode factor of the hardening law R4 (r4 port of db02ccc70; KERNEL-ONLY, not a material option). 0 = the
+    // legacy law (DEFAULT, = the numpy oracle and OOFEM): (2 cos theta_tr)^2 on the regular map, 1 on both vertices.
+    // 1 = regularized + consistent: cThetaReg(rho_tr, theta_tr) on the regular map AND the tension vertex, so the two
+    // kappa laws agree as rho -> 0. Measured (r4 probe9, virgin tension, lateral ratio swept 0..1): mode 0 jumps
+    // 0.65 / 2.7 / 8.9 MPa in sigma_eff where the return switches vertex <-> regular (x = 1.5 / 3 / 6 eps_cr);
+    // mode 1 is continuous there (<= 1.3e-3 MPa per 5e-5 step) and moves the jump to rho_tr <~ 1e-3 ft on the axis.
+    // Both modes: 0 direct-return failures and a unique root on review 3's MAJOR-1 windows.
+    int    lodeFactor = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -202,6 +210,8 @@ static const double SQRT1_5 = 1.224744871391589;
 // 3.1e-6 in MPa (fc = 30) but 0.3 in Pa (fc = 3e6), so an SI model accepted returns 30 % off the surface. The
 // value equals the MPa one at fc = 30 (every fixture unchanged).
 static const double F_TOL_HONEST = 3.1e-6;
+// Full-residual acceptance of the nested fallback return (R1, R2 relative to fc; R3; R4 relative to 1 + kp).
+static const double NESTED_RES_TOL = 1.0e-8;
 
 // ---------------------------------------------------------------------------
 // Stress invariants. sig = {s00,s11,s22,s01,s12,s02} TENSOR components.
@@ -244,6 +254,50 @@ inline double lodeR(double theta, double e)
     if (rad < 0.0) rad = 0.0;
     const double den = 2.0 * oneMe2 * ct + (2.0 * e - 1.0) * std::sqrt(rad);
     return num / den;
+}
+
+// dr/d(cos 3theta) of the Willam-Warnke r above, closed form (ported from db02ccc70 for the principal
+// Jacobian's dr/dw, which used a scalar central difference). cos(theta) is clamped to its range [0.5, 1]
+// and the radicand floored, so the derivative stays finite at the meridians.
+inline double drDcos3thetaRegularized(double cosTheta, double e)
+{
+    const double c = cosTheta < 0.5 ? 0.5 : (cosTheta > 1.0 ? 1.0 : cosTheta);
+    const double k = 1.0 - e * e;
+    const double m = 2.0 * e - 1.0;
+    double rad = k * (4.0 * c * c - 1.0) + m * m;
+    if (rad < 1.0e-16) rad = 1.0e-16;
+    const double s = std::sqrt(rad);
+    const double b = 2.0 * k * c + m * s;
+    const double bracket = (4.0 * k * c * c - m * m) * (k / (s + m) - m / (2.0 * c + 1.0)) + 4.0 * k * m * c;
+    return (2.0 * k / (3.0 * s * b * b)) * bracket;
+}
+
+// The Lode factor of the hardening law R4 (Grassl Eq.32: kp' = ||d eps_p|| / xh * (2 cos theta)^2), regularized
+// on the hydrostatic axis where theta is undefined: c = 1 + w ((2 cos theta_tr)^2 - 1), w = rho_tr^2/(rho_tr^2 +
+// rho_th^2), rho_th = 1e-4 ft. Off the axis (rho_tr >> rho_th) c -> (2 cos theta_tr)^2, relative change
+// (rho_th/rho_tr)^2; on it c -> 1, the vertex law's factor. Params::lodeFactor = 1 only (not the default): used by the
+// regular map AND the tension vertex so the two kappa laws agree in the limit rho -> 0, which makes the stress
+// continuous across the vertex/regular partition.
+inline double cThetaReg(double rho_tr, double cos_theta_tr, double ft)
+{
+    const double rho_th = 1.0e-4 * ft;
+    const double w = (rho_tr * rho_tr) / (rho_tr * rho_tr + rho_th * rho_th);
+    const double two_cos = 2.0 * cos_theta_tr;
+    return 1.0 + w * (two_cos * two_cos - 1.0);
+}
+
+// The ONE Lode factor of the hardening law R4, used by the regular return, the tension vertex, the nested
+// fallback and both principal Jacobians (they must agree, or the tangents differentiate a different map).
+inline double hardeningLodeFactor(double rho_tr, double theta_tr, const Params& mp)
+{
+    if (mp.lodeFactor == 1) return cThetaReg(rho_tr, std::cos(theta_tr), mp.ft);
+    const double c = 2.0 * std::cos(theta_tr);
+    return c * c;
+}
+// The vertex return's factor: the regular map's on the tension vertex in mode 1, else 1 (the legacy vertex law).
+inline double vertexLodeFactor(bool tensionVertex, double cos2, const Params& mp)
+{
+    return (mp.lodeFactor == 1 && tensionVertex) ? cos2 : 1.0;
 }
 
 inline double m0Of(double fc, double ft, double e)
@@ -732,12 +786,14 @@ inline PrincipalResult returnMapPrincipal(const double sigTr[3], const Params& m
 //     regular on the axis (Lode r multiplies rho=0). Accept iff dlam=(sigV_tr-sigV)/(K dg/dsigV)>=0 and
 //     rho_tr <= 2G dlam dg/drho (trial inside the cone of normals).
 // ---------------------------------------------------------------------------
-inline double vertexKappa(double kp_n, double sigV_tr, double rho_tr, double sigV, const Params& mp)
+// c_th (r4 port of db02ccc70): the Lode factor of the hardening law; 1 = the legacy vertex law (default). Under
+// Params::lodeFactor = 1 returnMapHardening passes the regular map's factor on the TENSION vertex (vertexLodeFactor).
+inline double vertexKappa(double kp_n, double sigV_tr, double rho_tr, double sigV, const Params& mp, double c_th = 1.0)
 {
     const double K = bulkK(mp), G = shearG(mp);
     const double d = sigV_tr - sigV, g = rho_tr / (2.0 * G);
     const double eq = std::sqrt(d * d / (3.0 * K * K) + g * g);
-    return kp_n + eq / ductilityXh(sigV, mp.fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh);
+    return kp_n + c_th * eq / ductilityXh(sigV, mp.fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh);
 }
 
 inline void cdpm2VertexPotentialGrad(double sigV, double kp, const Params& mp, double& dgs, double& dgr)
@@ -809,14 +865,14 @@ inline void cdpm2FlowGradJac(double xi, double rho, double kp, const Params& mp,
 }
 
 inline bool returnMapVertex(double sigV_tr, double rho_tr, const Params& mp, double kp_n,
-                            double& sigV, double& kp, double& dlam)
+                            double& sigV, double& kp, double& dlam, double c_th = 1.0)
 {
     const double fc = mp.fc, K = bulkK(mp), G = shearG(mp);
     bool tension;
     if (sigV_tr > 0.0) tension = true;
     else if (sigV_tr < 0.0 && kp_n < 1.0) tension = false;
     else return false;
-    auto F = [&](double s) { return yfInvHard(SQRT3 * s, 0.0, 1.0, vertexKappa(kp_n, sigV_tr, rho_tr, s, mp), mp); };
+    auto F = [&](double s) { return yfInvHard(SQRT3 * s, 0.0, 1.0, vertexKappa(kp_n, sigV_tr, rho_tr, s, mp, c_th), mp); };
     if (!(F(sigV_tr) > 0.0 && F(0.0) < 0.0)) return false;   // (also rejects NaN)
     double a = tension ? 0.0 : sigV_tr, b = tension ? sigV_tr : 0.0;   // a < b
     double Fa = F(a);
@@ -828,7 +884,7 @@ inline bool returnMapVertex(double sigV_tr, double rho_tr, const Params& mp, dou
         if ((Fm > 0.0) == (Fa > 0.0)) { a = mid; Fa = Fm; } else b = mid;
     }
     const double s = 0.5 * (a + b);
-    const double k = vertexKappa(kp_n, sigV_tr, rho_tr, s, mp);
+    const double k = vertexKappa(kp_n, sigV_tr, rho_tr, s, mp, c_th);
     double dgs, dgr;
     if (tension && mp.flowPotential == 1) {          // B1: the SAME potential as the regular map
         double d1[3], d2[3]; cdpm2PotentialDerivs(s, 0.0, k, mp, dgs, dgr, d1, d2);
@@ -905,6 +961,157 @@ inline void cdpm2HardeningResidual(double xi, double rho, double dlam, double kp
     J[3][3] = 1.0 - dlam * cos2 * dmn[2] / xh;
 }
 
+// ---------------------------------------------------------------------------
+// NESTED scalar fallback of the hardening return (r4 port of db02ccc70 DR-1a, adapted). The same 4-equation system
+// as the regular Newton, reduced to a 1-D root in rho in (0, rho_tr]: for a given rho, R2 fixes dlam = (rho_tr - rho)/
+// (2G m_s), R4 fixes kp = kp_n + cos2 ||d eps_p||/xh, and R1 is solved for xi by bracketed bisection; the outer
+// bisection then drives R3 = f(xi(rho), rho, kp(rho)) to zero. Every iterate is admissible by construction (rho in
+// (0, rho_tr], dlam >= 0, kp >= kp_n), which the globalized Newton's unprojected line search is not (review 3 of
+// #877, MAJOR 1: its last iterates sat at dlam < 0, kp < 0). `cos2` is the regular map's Lode factor (the root must
+// solve THAT system). Returns false when no bracket exists (phi(0+) >= 0: the vertex partition) or the inner solve
+// cannot bracket; a true return is a CANDIDATE only: the caller polishes it and checks the full residual.
+// ---------------------------------------------------------------------------
+// Bracketed scalar root of f on [a, b] with a sign change (Brent 1973: inverse quadratic / secant steps with a bisection
+// safeguard). Keeps a sign-change bracket on every iterate, so the root it returns is the bracketed one, deterministically;
+// never slower than bisection, usually superlinear. Stops on f = 0, a bracket narrower than xtol, or maxIt.
+template <class Fn>
+inline double bracketedRoot(Fn&& f, double a, double fa, double b, double fb, double xtol, int maxIt = 100)
+{
+    double c = a, fc = fa, d = b - a, e = d;
+    for (int it = 0; it < maxIt; ++it) {
+        if ((fb > 0.0) == (fc > 0.0)) { c = a; fc = fa; d = b - a; e = d; }
+        if (std::fabs(fc) < std::fabs(fb)) { a = b; b = c; c = a; fa = fb; fb = fc; fc = fa; }
+        const double tol1 = 2.0 * 2.2e-16 * std::fabs(b) + 0.5 * xtol, xm = 0.5 * (c - b);
+        if (std::fabs(xm) <= tol1 || fb == 0.0) return b;
+        if (std::fabs(e) >= tol1 && std::fabs(fa) > std::fabs(fb)) {
+            double p, q, r;
+            const double sv = fb / fa;
+            if (a == c) { p = 2.0 * xm * sv; q = 1.0 - sv; }
+            else { q = fa / fc; r = fb / fc; p = sv * (2.0 * xm * q * (q - r) - (b - a) * (r - 1.0)); q = (q - 1.0) * (r - 1.0) * (sv - 1.0); }
+            if (p > 0.0) q = -q; else p = -p;
+            const double min1 = 3.0 * xm * q - std::fabs(tol1 * q), min2 = std::fabs(e * q);
+            if (2.0 * p < (min1 < min2 ? min1 : min2)) { e = d; d = p / q; }
+            else { d = xm; e = d; }
+        } else { d = xm; e = d; }
+        a = b; fa = fb;
+        b += (std::fabs(d) > tol1) ? d : (xm > 0.0 ? tol1 : -tol1);
+        fb = f(b);
+    }
+    return b;
+}
+
+inline bool returnMapNested(double xi_tr, double rho_tr, double r_val, double cos2, const Params& mp, double kp_n,
+                            double& xi_sol, double& rho_sol, double& dlam_sol, double& kp_sol)
+{
+    const double fc = mp.fc, K = bulkK(mp), G = shearG(mp);
+    const bool cdpm2Flow = (mp.flowPotential == 1);
+    const double r_lo = 1.0e-11 * fc;
+    if (!(rho_tr > r_lo)) return false;
+
+    // R1 on xi for a fixed rho; kp and dlam follow from R2 / R4 exactly.
+    auto phi1 = [&](double rho, double xi, double& kp_val, double& dl_val) -> double {
+        const double drho = (rho_tr - rho > 0.0) ? (rho_tr - rho) : 0.0;
+        const double g_dev = drho / (2.0 * G);
+        const double g_vol = (xi_tr - xi) / (3.0 * K);
+        const double xh = ductilityXh(xi / SQRT3, fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh);
+        // R4: kp = kp_n + cos2 dlam ||m|| / xh, and on R1/R2 dlam m_v = (xi_tr - xi)/(3K), dlam m_s = drho/(2G).
+        const double eqR4 = std::sqrt(g_vol * g_vol + g_dev * g_dev);
+        kp_val = kp_n + cos2 * eqR4 / xh;
+        double mv, ms;
+        if (cdpm2Flow) { double dmv[3], dms[3]; cdpm2FlowGradJac(xi, rho, kp_val, mp, mv, ms, dmv, dms); }
+        else { mv = mp.Df * mp.m0 / (SQRT3 * fc); ms = 3.0 * rho / (fc * fc) + mp.m0 / (SQRT6 * fc); }
+        if (!(ms > 1.0e-15)) ms = 1.0e-15;
+        dl_val = drho / (2.0 * G * ms);
+        return xi - xi_tr + 3.0 * K * dl_val * mv;
+    };
+    auto solveInnerXi = [&](double rho, double& xi_res, double& kp_res, double& dl_res) -> bool {
+        double a = xi_tr - 40.0 * fc, b = xi_tr, kd, dd;
+        double fa = phi1(rho, a, kd, dd), fb = phi1(rho, b, kd, dd);
+        if (!std::isfinite(fb)) return false;
+        if (fb < 0.0) {
+            a = xi_tr; fa = fb; b = xi_tr + 40.0 * fc; fb = phi1(rho, b, kd, dd);
+            while (!(fb >= 0.0) && b < xi_tr + 200.0 * fc) { b += 20.0 * fc; fb = phi1(rho, b, kd, dd); }
+            if (!(fb >= 0.0)) return false;
+        } else {
+            while (!(fa <= 0.0) && a > xi_tr - 200.0 * fc) { a -= 20.0 * fc; fa = phi1(rho, a, kd, dd); }
+            if (!(fa <= 0.0)) return false;
+        }
+        xi_res = bracketedRoot([&](double x) { return phi1(rho, x, kd, dd); }, a, fa, b, fb,
+                               1.0e-12 * (std::fabs(xi_tr) + fc));
+        phi1(rho, xi_res, kp_res, dl_res);
+        return std::isfinite(kp_res) && std::isfinite(dl_res);
+    };
+    auto outerPhi = [&](double rho, double& xi_v, double& kp_v, double& dl_v, bool& ok) -> double {
+        ok = solveInnerXi(rho, xi_v, kp_v, dl_v);
+        return ok ? yfInvHard(xi_v, rho, r_val, kp_v, mp) : 0.0;
+    };
+    double ra = r_lo, rb = rho_tr, xa, ka, da, xb, kb, db;
+    bool oka, okb;
+    const double fa = outerPhi(ra, xa, ka, da, oka);
+    const double fb = outerPhi(rb, xb, kb, db, okb);
+    if (!oka || !okb || !(fa < 0.0) || !(fb > 0.0)) return false;   // no bracket: vertex partition / degenerate
+    bool innerOk = true;
+    rho_sol = bracketedRoot([&](double rm) { double xm, km, dm; bool okm; const double fm = outerPhi(rm, xm, km, dm, okm);
+                                             if (!okm) innerOk = false; return fm; },
+                            ra, fa, rb, fb, 1.0e-9 * rho_tr);   // coarse: polishHardeningRoot finishes it
+    if (!innerOk) return false;
+    bool ok;
+    outerPhi(rho_sol, xi_sol, kp_sol, dlam_sol, ok);
+    return ok;
+}
+
+// Polish a CANDIDATE root x = (xi, rho, dlam, kp) of the hardening return system with residual-decreasing Newton steps
+// that stay in the admissible set (rho >= 0, dlam >= 0, kp >= kp_n), then accept it ONLY if the FULL residual is small:
+// |R1|, |R2| < NESTED_RES_TOL fc (flow), |R3| < NESTED_RES_TOL (yield), |R4| < NESTED_RES_TOL (1 + kp) (hardening), and
+// the root is admissible. Used for the nested fallback (r4 port of db02ccc70, which set converged = true after 5
+// unchecked clamped steps and then gated on f alone). polishIters = 0 checks the candidate as given (kernel check D3).
+inline bool polishHardeningRoot(double x[4], double xi_tr, double rho_tr, double kp_n, double r, double cos2,
+                                const Params& mp, double tol = 1.0e-11, int polishIters = 8)
+{
+    const double fc = mp.fc;
+    const bool cdpm2Flow = (mp.flowPotential == 1);
+    const double sc[4] = {1.0 / fc, 1.0 / fc, 1.0, 1.0};
+    double Rn[4];
+    cdpm2HardeningResidual(x[0], x[1], x[2], x[3], xi_tr, rho_tr, kp_n, r, cos2, mp, Rn, nullptr, !cdpm2Flow);
+    double nn = 0.0; for (int i = 0; i < 4; ++i) nn += (Rn[i] * sc[i]) * (Rn[i] * sc[i]);
+    // polish to round-off (the bracketed root is coarse on purpose; a tangent FD leg needs the root, not tol): a step is
+    // taken only while it reduces the scaled residual, at most polishIters steps
+    const double ptol = 1.0e-3 * tol;
+    for (int it = 0; it < polishIters; ++it) {
+        if (std::fabs(Rn[0]) < ptol * fc && std::fabs(Rn[1]) < ptol * fc
+            && std::fabs(Rn[2]) < ptol && std::fabs(Rn[3]) < ptol) break;
+        double Rj[4], J[4][4];
+        cdpm2HardeningResidual(x[0], x[1], x[2], x[3], xi_tr, rho_tr, kp_n, r, cos2, mp, Rj, J, !cdpm2Flow);
+        double M[4][5];
+        for (int i = 0; i < 4; ++i) { for (int j = 0; j < 4; ++j) M[i][j] = J[i][j]; M[i][4] = -Rj[i]; }
+        bool singular = false;
+        for (int c = 0; c < 4 && !singular; ++c) {
+            int piv = c; for (int rr = c + 1; rr < 4; ++rr) if (std::fabs(M[rr][c]) > std::fabs(M[piv][c])) piv = rr;
+            for (int j = 0; j < 5; ++j) { double t = M[c][j]; M[c][j] = M[piv][j]; M[piv][j] = t; }
+            if (!(std::fabs(M[c][c]) > 1.0e-300)) { singular = true; break; }
+            for (int rr = 0; rr < 4; ++rr) if (rr != c) { double f = M[rr][c] / M[c][c]; for (int j = c; j < 5; ++j) M[rr][j] -= f * M[c][j]; }
+        }
+        if (singular) break;
+        double u[4] = { x[0] + M[0][4] / M[0][0], x[1] + M[1][4] / M[1][1], x[2] + M[2][4] / M[2][2], x[3] + M[3][4] / M[3][3] };
+        bool fin = true; for (int i = 0; i < 4; ++i) fin = fin && std::isfinite(u[i]);
+        // stay inside the admissible set the nested root lives in; a step that leaves it, or does not reduce
+        // the scaled residual, ends the polish (the nested root itself is then what is checked)
+        if (!fin || u[1] < 0.0 || u[2] < 0.0 || u[3] < kp_n) break;
+        double Ru[4];
+        cdpm2HardeningResidual(u[0], u[1], u[2], u[3], xi_tr, rho_tr, kp_n, r, cos2, mp, Ru, nullptr, !cdpm2Flow);
+        double nu = 0.0; for (int i = 0; i < 4; ++i) nu += (Ru[i] * sc[i]) * (Ru[i] * sc[i]);
+        if (!(nu < nn)) break;
+        for (int i = 0; i < 4; ++i) x[i] = u[i];
+        nn = nu;
+        for (int i = 0; i < 4; ++i) Rn[i] = Ru[i];
+    }
+    // HONESTY: the full residual of the 4-equation system, not f alone.
+    const bool resOk = std::fabs(Rn[0]) < NESTED_RES_TOL * fc && std::fabs(Rn[1]) < NESTED_RES_TOL * fc
+                    && std::fabs(Rn[2]) < NESTED_RES_TOL && std::fabs(Rn[3]) < NESTED_RES_TOL * (1.0 + x[3]);
+    const bool admissibleRoot = x[1] >= 0.0 && x[2] >= -1.0e-12 && x[3] >= kp_n - 1.0e-12;
+    return resOk && admissibleRoot;
+}
+
 inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& mp, double kp_n,
                                           double tol = 1.0e-11)
 {
@@ -926,7 +1133,32 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
         return R;
     }
 
-    const double cos2 = (2.0 * std::cos(th_tr)) * (2.0 * std::cos(th_tr));
+    const double cos2 = hardeningLodeFactor(rho_tr, th_tr, mp);
+
+    // VERTEX FIRST (r4 port of db02ccc70): a deterministic vertex-vs-regular selection. The vertex return is tried
+    // before the regular Newton and taken whenever it is admissible (trial inside the cone of potential normals,
+    // on-surface, kp >= kp_n). Before, it ran only after the regular Newton failed, so a trial with both an
+    // admissible vertex root and an admissible regular root got whichever the inner solvers happened to reach
+    // (review 3 of #877, probe6: kp 23 vs kp 113 in one 2e-6 window). Default (lodeFactor 0): the legacy vertex law
+    // (factor 1), so at that window the vertex root (kp 23) is now taken every time; lodeFactor 1 gives the tension
+    // vertex the regular map's factor (vertexLodeFactor), and that window returns the regular root (kp 113) instead.
+    // (WP concrete3d-oracle-diagnosis history of this branch: it replaced a sign-flipping apex projection that let
+    // hydrostatic compression never yield, OOFEM con2dpm3/4; returnMapVertex is unchanged apart from c_th.)
+    {
+        double sV = 0.0, kpv = kp_n, dlv = 0.0;
+        const double c_th_v = vertexLodeFactor(!(xi_tr < 0.0), cos2, mp);
+        if (returnMapVertex(xi_tr / SQRT3, rho_tr, mp, kp_n, sV, kpv, dlv, c_th_v)) {
+            double svv[6] = {sV, sV, sV, 0, 0, 0};
+            const double fv = yieldF(svv, mp, qh1Of(kpv, mp.qh0, mp.Hp), qh2Of(kpv, mp.Hp));
+            if (std::isfinite(fv) && std::fabs(fv) < F_TOL_HONEST && kpv >= kp_n - 1.0e-12) {
+                for (int a = 0; a < 3; ++a) R.sp[a] = sV;
+                R.xi = SQRT3 * sV; R.rho = 0.0; R.dlam = dlv; R.kp = kpv;
+                R.apex = true; R.converged = true; R.plastic = true; R.f_after = fv;
+                return R;
+            }
+        }
+    }
+
     const double m_v = Df * m0 / (SQRT3 * fc);
     double xi = xi_tr, rho = rho_tr, dlam = 0.0, kp = kp_n;
     bool apex = false, converged = false;
@@ -1091,19 +1323,41 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
     // a rescue, and only then to the honest failure. Measured on the plain legacy Newton alone: 10-13 % of
     // ordinary tension-dominated first-cracking increments (expansive lateral strain, what an FE Newton
     // iterate produces) failed the return map and silently fell to the elastic trial.
+    // NESTED FALLBACK (r4 port of db02ccc70 DR-1a, with the honesty defect fixed): the same system as a bracketed 1-D
+    // root (returnMapNested; every iterate admissible by construction), polished with residual-decreasing Newton steps
+    // and accepted ONLY if the FULL residual (R1, R2 flow, R3 yield, R4 hardening) is small and the root admissible
+    // (polishHardeningRoot). db02ccc70 set converged = true unconditionally after 5 unchecked, clamped polish steps and
+    // the gate below checked f alone, so an off-flow state could pass.
+    bool nestedTried = false;
+    auto tryNested = [&]() -> bool {
+        nestedTried = true;
+        double u[4];
+        if (returnMapNested(xi_tr, rho_tr, r, cos2, mp, kp_n, u[0], u[1], u[2], u[3])
+            && polishHardeningRoot(u, xi_tr, rho_tr, kp_n, r, cos2, mp, tol)) {
+            xi = u[0]; rho = u[1]; dlam = u[2]; kp = u[3]; converged = true; apex = false;
+            return true;
+        }
+        return false;
+    };
     if (cdpm2Flow && xi_tr > 0.0) {
-        // TENSION-dominated trial (sigma_V_trial > 0): plain Newton FIRST (mirror of the oracle). Measured at the
-        // first-crack step (virgin sigma_xx = 2 MPa, kappa_p < 1): newtonGlob burns 660-900 residual evaluations
-        // failing (line search bottoms out where the hardening system is locally indefinite) and the plain Newton
-        // then converges in ~25 iterations to the SAME state; newtonGlob (option A) is the rescue. If the plain
-        // scheme aborted on an axis overshoot (apex) and the rescue does not converge either, keep the apex
-        // verdict so the vertex test below still runs.
+        // TENSION-dominated trial (sigma_V_trial > 0): plain Newton FIRST (mirror of the oracle; every case it converges
+        // on is unchanged). r4: the rescue is the NESTED solve, not newtonGlob. Review 3 of #877 (MAJOR 1): once kappa_p
+        // passes ~2 the plain Newton fails on 30-97 % of first-crack trials and newtonGlob's unprojected line search
+        // then walks out of the admissible set (last iterates dlam < 0, kappa_p < 0) and fails too, so success was a
+        // coin flip on rounding. newtonGlob stays only as the last resort when the nested solve finds no bracket; if the
+        // plain scheme aborted on an axis overshoot (apex) and nothing converges, keep the apex verdict so the
+        // clamped retry below still runs.
         newton(false);
-        if (!converged) { const bool plainApex = apex; newtonGlob(); if (!converged && !apex) apex = plainApex; }
+        if (!converged) {
+            const bool plainApex = apex;
+            if (!tryNested()) { newtonGlob(); if (!converged && !apex) apex = plainApex; }
+        }
     }
     else if (cdpm2Flow) { newtonGlob(); if (!converged && !apex) newton(false); }
     else { newton(false); if (!converged && !apex) newtonGlob(); }
     const bool overshot = apex;
+    // compression / legacy flow: the nested solve is the rescue after both Newtons
+    if (!converged && !nestedTried) tryNested();
 
     R.xi = xi; R.rho = rho; R.dlam = dlam; R.kp = kp; R.plastic = true;
     if (!apex) {
@@ -1122,30 +1376,6 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
             return R;
         }
     }
-    // VERTEX RETURN (WP concrete3d-oracle-diagnosis; mirrors the oracle return_map_vertex). Reached when
-    // the regular (radial) return overshot the hydrostatic axis (rho<0), did not converge, or landed
-    // inadmissible. The OLD branch projected EVERY such trial onto the hydrostatic-TENSION vertex with the
-    // kp of the ABORTED Newton iterate: a deep-compression trial was sign-flipped to tension (then rejected
-    // by the PR #249 gate => ELASTIC fallback — hydrostatic compression never yielded, OOFEM con2dpm3), and
-    // the tension-vertex kp was an arbitrary iterate value (hydrostatic tension step-size dependent, no
-    // convergence under refinement, con2dpm4). returnMapVertex solves f(sigV, rho=0; kp(sigV)) = 0 with kp
-    // CONSISTENT with the vertex plastic strain, on the TENSION vertex (sigV_tr>0) or — while the [1-qh1]
-    // cap closes the surface (kp_n<1) — the COMPRESSION vertex, accepted only inside the cone of plastic-
-    // potential normals. Otherwise: SAFE honest failure (elastic predictor, converged=false => the
-    // caller's status!=0 cuts the step) — the PR #249 contract is unchanged.
-    {
-        double sV = 0.0, kpv = kp_n, dlv = 0.0;
-        if (returnMapVertex(xi_tr / SQRT3, rho_tr, mp, kp_n, sV, kpv, dlv)) {
-            double svv[6] = {sV, sV, sV, 0, 0, 0};
-            const double fv = yieldF(svv, mp, qh1Of(kpv, mp.qh0, mp.Hp), qh2Of(kpv, mp.Hp));
-            if (std::isfinite(fv) && std::fabs(fv) < F_TOL_HONEST && kpv >= kp_n - 1.0e-12) {
-                for (int a = 0; a < 3; ++a) R.sp[a] = sV;
-                R.xi = SQRT3 * sV; R.rho = 0.0; R.dlam = dlv; R.kp = kpv;
-                R.apex = true; R.converged = true; R.f_after = fv;
-                return R;
-            }
-        }
-    }
     // Regular RETRY with rho clamped at 0 (only after an axis overshoot whose vertex was rejected).
     if (overshot) {
         newton(true);
@@ -1157,7 +1387,7 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
             R.f_after = yieldF(svn, mp, qh1Of(kp, mp.qh0, mp.Hp), qh2Of(kp, mp.Hp));
             const bool admissible = std::isfinite(R.f_after) && dlam >= -1.0e-12 && kp >= kp_n - 1.0e-12;
             if (std::fabs(R.f_after) < F_TOL_HONEST && admissible) {
-                R.xi = xi; R.rho = rho; R.dlam = dlam; R.kp = kp; R.apex = false; R.converged = true;
+                R.xi = xi; R.rho = rho; R.dlam = dlam; R.kp = kp; R.apex = false; R.converged = true; R.plastic = true;
                 return R;
             }
         }
@@ -1287,14 +1517,21 @@ inline void principalJacobian(const double w[3], const PrincipalResult& pr, cons
     const double m_v = mp.Df * m0 / (SQRT3 * fc);
     const double m_s = 3.0 * rho / (fc * fc) + m0 / (SQRT6 * fc);
 
-    // dr/dw_b : scalar central difference of the (smooth-in-w) Lode r.
-    double dr_dw[3];
-    {
-        const double h = 1.0e-6 * (fc + 1.0);
+    // dr/dw_b, closed form (r4 port of db02ccc70; was a scalar central difference of lodeOfPrincipal):
+    //   cos 3theta = 3 sqrt6 J3 / rho^3,  d(cos 3theta)/dw_b = 3 sqrt6/rho^3 (s_b^2 - rho^2/3 - 3 J3 s_b / rho^2),
+    //   dr/dw_b = dr/d(cos 3theta) * d(cos 3theta)/dw_b.  Zero on the hydrostatic axis (rho_tr -> 0).
+    double dr_dw[3] = {0.0, 0.0, 0.0};
+    if (rho_tr > 1.0e-12 * fc) {
+        const double sigV_t = (w[0] + w[1] + w[2]) / 3.0;
+        const double s_t0[3] = { w[0] - sigV_t, w[1] - sigV_t, w[2] - sigV_t };
+        const double j3_t0 = s_t0[0] * s_t0[1] * s_t0[2];
+        double c3 = (3.0 * SQRT6 / (rho_tr * rho_tr * rho_tr)) * j3_t0;
+        if (c3 > 1.0) c3 = 1.0; else if (c3 < -1.0) c3 = -1.0;
+        const double dr_dc3 = drDcos3thetaRegularized(std::cos(std::acos(c3) / 3.0), mp.e);
         for (int b = 0; b < 3; ++b) {
-            double wp[3] = {w[0], w[1], w[2]}, wm[3] = {w[0], w[1], w[2]};
-            wp[b] += h; wm[b] -= h;
-            dr_dw[b] = (lodeOfPrincipal(wp, mp.e) - lodeOfPrincipal(wm, mp.e)) / (2.0 * h);
+            const double dc3_dwb = (3.0 * SQRT6 / (rho_tr * rho_tr * rho_tr))
+                                 * (s_t0[b] * s_t0[b] - (rho_tr * rho_tr) / 3.0 - (3.0 * j3_t0 / (rho_tr * rho_tr)) * s_t0[b]);
+            dr_dw[b] = dr_dc3 * dc3_dwb;
         }
     }
 
@@ -1330,7 +1567,7 @@ inline void principalJacobian(const double w[3], const PrincipalResult& pr, cons
         // 4x4 J_u (xi,rho,dlam,kp); reuse the analytic entries from returnMapHardening.
         double sv[6] = {w[0], w[1], w[2], 0, 0, 0}, xitr, rhotr, thtr;
         invariants(sv, xitr, rhotr, thtr);
-        const double cos2 = (2.0 * std::cos(thtr)) * (2.0 * std::cos(thtr));
+        const double cos2 = hardeningLodeFactor(rhotr, thtr, mp);
         const double mnorm = std::sqrt(m_v * m_v + m_s * m_s);
         const double sigV = xi / SQRT3;
         const double xh = ductilityXh(sigV, fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh);
@@ -1388,8 +1625,8 @@ inline void principalJacobian(const double w[3], const PrincipalResult& pr, cons
                 wp[b] += h; wm[b] -= h;
                 double svp[6] = {wp[0],wp[1],wp[2],0,0,0}, svm[6] = {wm[0],wm[1],wm[2],0,0,0};
                 double x1,r1,t1,x2,r2,t2; invariants(svp,x1,r1,t1); invariants(svm,x2,r2,t2);
-                const double cp = (2.0*std::cos(t1))*(2.0*std::cos(t1));
-                const double cm = (2.0*std::cos(t2))*(2.0*std::cos(t2));
+                const double cp = hardeningLodeFactor(r1, t1, mp);
+                const double cm = hardeningLodeFactor(r2, t2, mp);
                 dcos2_dw[b] = (cp - cm) / (2.0 * h);
             }
         }
@@ -1448,36 +1685,71 @@ inline void principalJacobian(const double w[3], const PrincipalResult& pr, cons
 inline bool vertexPrincipalJacobian(const double w[3], const PrincipalResult& pr, const Params& mp, double D[3][3],
                                     double* hs = nullptr)
 {
+    // r4 port of db02ccc70: kp = kp_n + c eq/xh(sigV) with c = vertexLodeFactor (lodeFactor 1: the regular map's factor on
+    // the TENSION vertex; otherwise 1, as returnMapHardening picks it), so kp can depend on w through c(w):
+    //   dkp/dw_b = (c/xh) d eq/dw_b + (eq/xh) dc/dw_b,  dc/dw_b = dc/drho_tr s_b/rho_tr + dc/dcos dcos/dcos3 dcos3/dw_b.
+    // With c = 1 this is exactly the previous Jacobian (F_sigVtr/3 + F_rhotr s_b/rho_tr, the rho_tr factor cancelled).
     const double fc = mp.fc, m0 = mp.m0, K = bulkK(mp), G = shearG(mp);
     const double sigV = pr.xi / SQRT3, kp = pr.kp;
     const double sigV_tr = (w[0] + w[1] + w[2]) / 3.0;
-    const double d = sigV_tr - sigV, g = pr.rho_tr / (2.0 * G);
-    const double eq = std::sqrt(d * d / (3.0 * K * K) + g * g);
+    const double dsig_v = sigV_tr - sigV;
+    const double rho_t0 = pr.rho_tr;
+    const double g_dev = rho_t0 / (2.0 * G);
+    const double N_vx = std::sqrt(dsig_v * dsig_v / (3.0 * K * K) + g_dev * g_dev);
     const double xh = ductilityXh(sigV, fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh);
-    const double dxh = dDuctilityXhdSigV(sigV, fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh);
-    if (!(eq > 0.0) || !(xh > 0.0)) return false;
-    const double kp_s  = (-d / (3.0 * K * K)) / (eq * xh) - eq * dxh / (xh * xh);   // dkp/dsigV
-    const double kp_st = ( d / (3.0 * K * K)) / (eq * xh);                           // dkp/dsigV_tr
+    const double dxh_dsig = dDuctilityXhdSigV(sigV, fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh);
+    if (!(N_vx > 0.0) || !(xh > 0.0)) return false;
+
+    double sv[6] = {w[0], w[1], w[2], 0, 0, 0}, xitr, rhotr, thtr;
+    invariants(sv, xitr, rhotr, thtr);
+    const bool tensionVertex = !(sigV_tr < 0.0);          // returnMapHardening: c_th_v = (xi_tr < 0) ? 1 : cos2
+    const double c_th0 = vertexLodeFactor(tensionVertex, hardeningLodeFactor(rho_t0, thtr, mp), mp);
+
+    const double dN_dsig = -(dsig_v / (3.0 * K * K)) / N_vx;
+    const double dkp_dsig = (c_th0 / xh) * dN_dsig - (c_th0 * N_vx / (xh * xh)) * dxh_dsig;
+
     // f on the axis: f = cap^2 + m0 q1^2 q2 s - q1^2 q2^2, cap = (1-q1) s^2, s = sigV/fc
     const double q1 = qh1Of(kp, mp.qh0, mp.Hp), q2 = qh2Of(kp, mp.Hp);
     const double dq1 = dqh1OfdKp(kp, mp.qh0, mp.Hp), dq2 = dqh2OfdKp(kp, mp.Hp);
     const double s = sigV / fc, cap = (1.0 - q1) * s * s;
-    const double f_s = (2.0 * cap * (1.0 - q1) * 2.0 * s + m0 * q1 * q1 * q2) / fc;
-    const double f_k = 2.0 * cap * (-dq1 * s * s) + m0 * s * (2.0 * q1 * q2 * dq1 + q1 * q1 * dq2)
-                     - (2.0 * q1 * q2 * q2 * dq1 + 2.0 * q1 * q1 * q2 * dq2);
-    const double F_s = f_s + f_k * kp_s;
-    if (!(std::fabs(F_s) > 0.0)) return false;
-    for (int b = 0; b < 3; ++b) {
-        const double dev_b = f_k * pr.s_tr[b] / (4.0 * G * G * eq * xh);         // F_rhotr * s_b/rho_tr
-        const double dsdw = -(f_k * kp_st / 3.0 + dev_b) / F_s;
-        for (int a = 0; a < 3; ++a) D[a][b] = dsdw;
-        // d kappa_new / d w_b = kp_s dsigV/dw_b + kp_st/3 + s_b/(4 G^2 eq xh)
-        if (hs) hs[3 + b] = kp_s * dsdw + kp_st / 3.0 + pr.s_tr[b] / (4.0 * G * G * eq * xh);
+    const double dF_dsig = (2.0 * cap * (1.0 - q1) * 2.0 * s + m0 * q1 * q1 * q2) / fc;
+    const double dF_dkp  = 2.0 * cap * (-dq1 * s * s) + m0 * s * (2.0 * q1 * q2 * dq1 + q1 * q1 * dq2)
+                         - (2.0 * q1 * q2 * q2 * dq1 + 2.0 * q1 * q1 * q2 * dq2);
+    const double denom_F = dF_dsig + dF_dkp * dkp_dsig;
+    if (!(std::fabs(denom_F) > 0.0)) return false;
+
+    // dc/dw (zero for the compressive vertex and in lodeFactor mode 0, where the vertex factor is the constant 1)
+    double dct_dw[3] = {0.0, 0.0, 0.0};
+    if (mp.lodeFactor == 1 && tensionVertex && rho_t0 > 1.0e-12 * fc) {
+        const double ft = mp.ft, rho_th = 1.0e-4 * ft;
+        const double cos_t0 = std::cos(thtr);
+        const double denom_ct = rho_t0 * rho_t0 + rho_th * rho_th;
+        const double w_ct = (rho_t0 * rho_t0) / denom_ct;
+        const double dw_ct_drho = 2.0 * rho_t0 * (rho_th * rho_th) / (denom_ct * denom_ct);
+        const double two_cos = 2.0 * cos_t0;
+        const double dct_drho = dw_ct_drho * (two_cos * two_cos - 1.0);
+        const double dct_dcos = w_ct * 8.0 * cos_t0;
+        const double denom_c3 = 3.0 * (4.0 * cos_t0 * cos_t0 - 1.0);   // d(cos 3theta)/d(cos theta)
+        const double dcos_dcos3 = (std::fabs(denom_c3) > 1.0e-5) ? (1.0 / denom_c3) : 0.0;
+        const double s_t0[3] = { w[0] - sigV_tr, w[1] - sigV_tr, w[2] - sigV_tr };
+        const double j3_t0 = s_t0[0] * s_t0[1] * s_t0[2];
+        for (int b = 0; b < 3; ++b) {
+            const double dcos3_dw_b = (3.0 * SQRT6 / (rho_t0 * rho_t0 * rho_t0))
+                                    * (s_t0[b] * s_t0[b] - (rho_t0 * rho_t0) / 3.0 - (3.0 * j3_t0 / (rho_t0 * rho_t0)) * s_t0[b]);
+            dct_dw[b] = dct_drho * (s_t0[b] / rho_t0) + dct_dcos * dcos_dcos3 * dcos3_dw_b;
+        }
     }
-    if (hs) {                                   // kappa_n enters kp = kp_n + eq/xh with unit weight: F_kn = f_k
-        const double dsdk = -f_k / F_s;
+    for (int b = 0; b < 3; ++b) {
+        const double dN_dw_b = (dsig_v / (9.0 * K * K) + pr.s_tr[b] / (4.0 * G * G)) / N_vx;
+        const double dkp_dw_b = (c_th0 / xh) * dN_dw_b + (N_vx / xh) * dct_dw[b];
+        const double dsdw = -(dF_dkp * dkp_dw_b) / denom_F;
+        for (int a = 0; a < 3; ++a) D[a][b] = dsdw;
+        if (hs) hs[3 + b] = dkp_dsig * dsdw + dkp_dw_b;
+    }
+    if (hs) {                                   // kappa_n enters kp = kp_n + c eq/xh with unit weight
+        const double dsdk = -dF_dkp / denom_F;
         for (int a = 0; a < 3; ++a) hs[a] = dsdk;
-        hs[6] = 1.0 + kp_s * dsdk;
+        hs[6] = 1.0 + dkp_dsig * dsdk;
     }
     return true;
 }
@@ -1540,9 +1812,11 @@ inline void consistentTangent(const double sig_tr[6], const double w[3], const d
     for (int a = 0; a < 3; ++a) for (int b = 0; b < 3; ++b) {
         if (a == b) continue;
         double dw = w[a] - w[b];
-        double gamma;
-        if (std::fabs(dw) > 1.0e-9 * (mp.fc + 1.0)) gamma = (pr.sp[a] - pr.sp[b]) / dw;
-        else gamma = D[a][a] - D[a][b];          // l'Hopital limit (repeated eigenvalues)
+        double gamma = 0.0;                      // apex: sp_a all equal and D rows equal => no spectral shear term
+        if (!pr.apex) {
+            if (std::fabs(dw) > 1.0e-9 * (mp.fc + 1.0)) gamma = (pr.sp[a] - pr.sp[b]) / dw;
+            else gamma = D[a][a] - D[a][b];      // l'Hopital limit (repeated eigenvalues)
+        }
         for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) for (int k = 0; k < 3; ++k) for (int l = 0; l < 3; ++l)
             Dt[i][j][k][l] += gamma * 0.5 * (E[a][i][k] * E[b][j][l] + E[a][i][l] * E[b][j][k]);
     }
@@ -2299,6 +2573,9 @@ inline int detPieces(const Params& mp, const double sig_n[6], const double deps[
 // increment, so sigma_eff and kappa_p JUMP where ceil(f_tr/c) changes, and again wherever the ladder switches level. The
 // jump is the discretization difference between the two integrations -- measured at 1e-19-apart strains on the
 // reviewer's probes: |dsigma_eff| 0.06-0.40 MPa (0.4-1.5 % of |sigma_eff|), kappa_p up to ~2.5 near first cracking.
+// r4 (review 3 of #877, MAJOR 1): the DENSE ladder switching in tension near first cracking is gone with the direct
+// tension return fixed (returnMapHardening: vertex first, nested fallback): 0 level flips in 4000 points at 1e-9 relative
+// spacing (was 1679-2203), 0 at fixed n in a 20000-point coarse scan (was 8257); the 63 n changes remain (jumps there).
 // Chosen over the failure-driven adaptive path because that one is discontinuous at every attempt boundary and depends on
 // the Newton iterate's noise (1.8 % vs 13.3 % measured), and because the deterministic map is a function of (state,
 // increment) only. Consumers that pin equality of nominally identical Gauss points (EAS alpha, hosting parity) must

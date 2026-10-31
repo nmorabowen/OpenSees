@@ -1107,24 +1107,28 @@ def test_confined_fiber_view_builds():
 # Each case imposes ONE homogeneous strain increment from the virgin state: every node of a
 # constant-strain element carries an `sp` of the linear field u = eps . x (Penalty constraints,
 # `algorithm Linear`, a Constant series), so the material sees exactly that trial strain once.
-# The strains were picked on the kernel (LadrunoConcrete3DKernel.h, the battery's material) so the
-# outcome holds under every one of 400 random relative perturbations from 1e-12 to 1e-4 per
-# component: the return map's failure set is fractal (a 1e-6 change flips some inputs), and the
-# Penalty imposition is exact only to ~1e-8. The probe is in the #2617 fork PR body.
-#   plane strain / 3D  (e00, e11, gamma01) = (-2.9e-4, 2.6e-4, -4.4e-4)  status 2
-#   plane stress FINAL (2.9e-4, 2.5e-4, -3.0e-4)   the last sigma_22 = 0 pass fails
-#   plane stress EARLY (9.7e-5, -2.8e-4, 4.4e-4)   an earlier pass fails, the last converges: ACCEPTED
-#   plane stress FAILOPEN (9.9e-5, -2.5e-4, 3.2e-4) every last pass converges but sigma_22 is still
+# The strains are re-picked for the r4 merge of fork PR #877 (2026-10-30) on THIS battery's material (`_mat`,
+# the legacy pin: exp law, legacy flow, Df 1, hardening 0.3 0.5): #877's tension-return fix (review 3, MAJOR 1)
+# integrates the #2617 originals, which were picked on the pre-fix kernel, where the failure set was fractal
+# (a 1e-6 change flipped some inputs). The failures left are biaxial COMPRESSION trials the legacy v1 flow cannot
+# return (it has no compressive cone: the vertex return rejects them, the nested fallback finds no bracket), a
+# region rather than a fractal: each outcome below held under 200 random relative perturbations from 1e-12 to
+# 1e-4 per component (EARLY's earlier-pass failure under 40 of 40), and the Penalty imposition is exact only to
+# ~1e-8. Picked by an FE-level random search on the r4 build and classified by its stderr warnings.
+#   plane strain / 3D  (e00, e11, gamma01) = (-8.3e-4, -9.7e-4, -9.7e-4)  status 2
+#   plane stress FINAL (-1.19e-3, -2.81e-3, 2.19e-3)  the last sigma_22 = 0 pass fails
+#   plane stress EARLY (-8.54e-4, -5.74e-4, 2.94e-4)  an earlier pass fails, the last converges: ACCEPTED
+#   plane stress FAILOPEN (-9.6e-4, -4.9e-4, 6.3e-4)  every pass converges but sigma_22 is still
 #                                                  unconverged at maxIt (returned 0 with a warning)
 #   plane stress CLEAN (-9.3e-5, 4.7e-5, 2.4e-4)   no pass fails, plastic (kappa_p > 0)
 # Hosts forward the code: Tri31 sums it (`ret +=`), LadrunoBrick fails only on the exact sentinel
 # (so a bare -1 would be swallowed there), ZeroLengthSection refuses `< 0` via NDFiberSection3d.
 # ===========================================================================
 _TRI = {1: (0.0, 0.0), 2: (1.0, 0.0), 3: (0.0, 1.0)}
-_PE_FAIL = (-2.9e-4, 2.6e-4, -4.4e-4)
-_PS_FINAL = (2.9e-4, 2.5e-4, -3.0e-4)
-_PS_EARLY = (9.7e-5, -2.8e-4, 4.4e-4)
-_PS_FAILOPEN = (9.9e-5, -2.5e-4, 3.2e-4)
+_PE_FAIL = (-8.3e-4, -9.7e-4, -9.7e-4)
+_PS_FINAL = (-1.19e-3, -2.81e-3, 2.19e-3)
+_PS_EARLY = (-8.54e-4, -5.74e-4, 2.94e-4)
+_PS_FAILOPEN = (-9.6e-4, -4.9e-4, 6.3e-4)
 _PS_CLEAN = (-9.3e-5, 4.7e-5, 2.4e-4)
 
 
@@ -1205,15 +1209,17 @@ def test_failed_return_map_refuses_on_the_sentinel_host():
 
 
 def test_failed_confined_fiber_refuses_the_step():
-    """The confined (BeamFiber) view refuses too: one -1e-3 axial step from the virgin state does not
-    integrate (driveConfinedFiber status 2 with or without the hoop), while -1e-4 does. The fiber sits
-    in an NDFiber section on a zeroLengthSection, which refuses a `< 0` section code."""
+    """The confined (BeamFiber) view refuses too: one +1e-2 axial (tension) step from the virgin state
+    does not integrate (driveConfinedFiber status 2 with or without the hoop), while -1e-4 does. (r4: the
+    #2617 original, a -1e-3 compressive step, integrates after #877's return fix; on this build every
+    compressive step to -0.2 does.) The fiber sits in an NDFiber section on a zeroLengthSection, which
+    refuses a `< 0` section code."""
     _build_confined_zls(1200.0)
     ops.integrator("DisplacementControl", 2, 1, -1.0e-4)
     ops.algorithm("Linear")
     assert ops.analyze(1) == 0, "the integrable -1e-4 confined step was refused"
     _build_confined_zls(1200.0)
-    ops.integrator("DisplacementControl", 2, 1, -1.0e-3)
+    ops.integrator("DisplacementControl", 2, 1, 1.0e-2)
     ops.algorithm("Linear")
     rc = ops.analyze(1)
     assert rc < 0, f"the confined fiber accepted a failed return map (analyze returned {rc})"

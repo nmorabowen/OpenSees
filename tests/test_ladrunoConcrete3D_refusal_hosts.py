@@ -10,7 +10,7 @@ NODAL state untouched (nodal displacements equal the pre-step values -- the latc
 committed), and (3) be recoverable: the same model, stepped again with a SMALLER increment, converges. That is "the analysis
 cuts the step" as opposed to "aborts".
 
-Wild strain: the review's probe_absorb.cpp direction after a realistic 30 x 2e-5 crack phase (shared with
+Wild strain: a magnitude-1 direction (r4; the review's probe_absorb.cpp direction now integrates) after a realistic 30 x 2e-5 crack phase (shared with
 test_ladrunoConcrete3D_wild_trial_refusal.py; shear doubled to engineering). At full magnitude the trial is refused; at 5 %
 it converges.
 """
@@ -28,7 +28,12 @@ _NODES = {
 _CONN = [1, 2, 3, 4, 5, 6, 7, 8]
 _CRACK_DIR = (1.0, -0.2, -0.2, 0.6, 0.0, 0.0)
 _CRACK_STEP, _CRACK_STEPS = 2.0e-5, 30
-_WILD_RAW = (0.174, -0.502, 0.956, 0.964, -0.732, -1.448)
+# r4 rescue of #877 (the tension-return fix, review 3 MAJOR 1): the kernel now INTEGRATES the review's original
+# probe_absorb direction (0.174, -0.502, 0.956, 0.964, -0.732, -1.448) at full magnitude (the nested bracketed
+# fallback returns it), so it no longer exercises a refusal. This direction (magnitude ~1, picked on the r4 build by an
+# FE-level random search) is refused by every host of both refusal test files, its 5 % retry converges, and the
+# outcome survives 12/12 relative perturbations from 1e-9 to 1e-3 of the direction.
+_WILD_RAW = (0.953, 0.327, -0.287, -0.274, 0.38, 0.348)
 
 
 def _affine_disp(x, y, z, e6):

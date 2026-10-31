@@ -712,7 +712,7 @@ shipped shape short. It corrects section 12 items 3 and 4 above.
   caller's global step cut is the recovery. Opt-in. Measured against `deterministic` (handoff 2026-10-09): equivalent where cracking is mild
   (K&R, PV20, confined columns), unusable on 3D crack-band models with embedded rebar (C3: 14.4 mm / 308 escalations vs 34.9 mm;
   B1: 1.69 mm in 3600 s, 554 global failures).
-- **Known defect (review 3, MAJOR 1; fix pending):** the map is discontinuous at `n` boundaries and, in tension near first cracking,
+- **Known defect (review 3, MAJOR 1; FIXED for the direct return in section 17):** the map is discontinuous at `n` boundaries and, in tension near first cracking,
   shows **dense ladder switching**: the direct tension return fails intermittently once kappa_p passes about 2 (non-convergence of the
   inner solvers; the globalized Newton's iterates leave the admissible set), so which ladder level serves an increment is a coin flip on
   rounding. Consequences: `refuse` turns the coin flips into global step cuts; the chain tangent is exact only where the level is stable
@@ -747,3 +747,65 @@ rejects it). A trial-versus-commit rule for sub-incrementation would require mov
 `LadrunoQuad`) are committed inside a scope during which `ladrunoNoteCommitRefusal()` is a no-op, so a refusal in a probe cannot fail the
 real commit. Nest-safe, cleared on wipe (`OPS_clearAllNDMaterial`), guarded by `tests/test_ladruno_probe_commit_guard.py`. The depth
 counter is a plain `static int` (not thread-safe, like the commit counter).
+
+## 17. Amendment 2026-10 — the direct tension return, and one refusal design with #1038 (r4 rescue of PR #877)
+
+The r4 rescue branch (`wp/concrete3d-integration-r4`) merges `ladruno` into #877 and ports the return-map part of
+db02ccc70 (`wp/concrete-dr1-dr5`), nothing else from it. It closes review 3's MAJOR 1 and the C8 half of MAJOR 2.
+
+**The direct hardening return** (`returnMapHardening`, `LadrunoConcrete3DKernel.h`).
+1. *Vertex first.* The vertex return is tried before the regular Newton and taken whenever it is admissible (trial inside
+   the cone of potential normals, on surface, kappa_p >= kappa_p,n). It used to run only after the regular Newton failed,
+   so a trial with an admissible root of each kind got whichever the solvers happened to reach (review 3 probe6: kappa_p
+   23 or 113 in one 2e-6 window). Now that window returns the vertex root, every time.
+2. *Nested fallback instead of newtonGlob.* In tension (sigma_V,tr > 0, CDPM2 flow) a failed plain Newton is rescued by
+   `returnMapNested`: R2 and R4 are eliminated exactly (dlam and kappa_p as functions of rho, xi), R1 is a bracketed root in
+   xi, and R3 = f a bracketed root in rho in (0, rho_tr] (Brent with a bisection safeguard, `bracketedRoot`). Every iterate is
+   admissible by construction, which newtonGlob's unprojected line search was not (its last iterates sat at dlam < 0, kappa_p
+   < 0). newtonGlob is kept only for a trial the nested solve cannot bracket; compression and the legacy flow keep their
+   order and get the nested solve as a last resort.
+3. *Honest acceptance.* `polishHardeningRoot` polishes the bracketed root with residual-decreasing Newton steps that stay in
+   the admissible set and accepts it only if the FULL residual is small (|R1|, |R2| < 1e-8 fc; |R3| < 1e-8; |R4| < 1e-8 (1 +
+   kappa_p)). db02ccc70 set `converged = true` after five unchecked clamped steps and the gate checked f alone.
+4. *Tangent pieces.* dr/dw of the principal Jacobian is closed form (`drDcos3thetaRegularized`; was a scalar central
+   difference); the vertex Jacobian carries a w-dependent Lode factor when one is used; an apex return adds no spectral
+   shear term.
+5. *Lode factor of R4* (`Params::lodeFactor`, kernel-only, not a material option). 0 (DEFAULT) = the legacy law, (2 cos
+   theta_tr)^2 on the regular map and 1 on both vertices, as the numpy oracle and OOFEM. 1 = `cThetaReg`: the regularized
+   factor on the regular map AND the tension vertex, so both kappa laws agree as rho -> 0. Both modes remove MAJOR 1. They
+   differ at the vertex/regular partition in tension: mode 0 jumps 0.65 / 2.7 / 8.9 MPa in sigma_eff at the switch (x =
+   1.5 / 3 / 6 eps_cr, lateral ratio swept 0..1 in steps of 5e-5), mode 1 is continuous there (<= 1.3e-3 MPa per step) and
+   concentrates the jump within rho_tr <~ 1e-3 ft of the axis. Mode 1 changes regular returns by (1e-4 ft / rho_tr)^2
+   relative and tension-vertex returns off the axis, so it is not the default without an oracle update; it is the
+   recommended follow-up.
+
+**Measured** (review 3 wrapper defaults; r4 scratchpad probes, PR head f19d55bd1 vs r4):
+
+| probe | PR head | r4 |
+|---|---|---|
+| direct-return failures, 2000-pt windows 2e-6 wide, lateral -0.2, x 1.5 / 3 / 6 | 645 / 904 / 1953 | 0 / 0 / 0 |
+| same, lateral 0 and +0.3 (x 1.5 / 3 / 6) | 1104 / 1055 / 1997, 1231 / 0 / 1971 | all 0 |
+| roots in the lateral +0.3, x 3 window | 2 (kappa_p 23.1 x1984, 113.1 x16) | 1 (23.1; mode 1: 113.1) |
+| ladder flips, 4000 pts at 1e-9 spacing, x 1.5 / 3 / 6 / 25 | 1679 / 2203 / 1737 / 2006 | 0 / 0 / 0 / 0 |
+| coarse 20 000-pt scan: level flips at fixed n / n changes | 8257 / 63 | 0 / 63 |
+| random first-crack increments with a +-1e-6 FD leg on another level (4000) | 3464 | 2 |
+| same, tangent vs FD (h 1e-9 rel) worse than 1e-4 | 3120 | 25 (worst 1.7e-3) |
+| `returnMapHardening` converged, 20 000 random tension trials | 1748 | 20 000 |
+| kernel check C8 (chain tangent, n = 1..64): states checked | 8 (4 skipped as straddling) | 12, no skip |
+
+The kernel check no longer skips a straddling C8 state (it fails instead) and gained section D: the MAJOR-1 windows in both
+Lode modes, the full residual of 6000 random tension returns, and the nested gate rejecting a candidate whose flow residual
+is off while f is not. The oracle fixture is unchanged and every fixture row passes. Cost: ordinary increments cost the
+same as before or less; a wild virgin trial (|strain| 0.03-3) now integrates instead of failing fast and costs up to ~0.4 s
+per call with the tangent (was ~0.2 s), from the damaged tangent's micro-FD legs re-running the chain.
+
+**Still open.** The `n`-boundary jumps (63 in the coarse scan). MAJOR 3: 25 of 4000 random first-crack states have a
+damaged tangent 1e-4..1.7e-3 off FD (the 0.56-1.6 cases of review 3 were measured on the fragmented map and are not
+reproduced). The legacy v1 flow still cannot return biaxial compression past its cap (no compressive cone): those trials
+refuse, and the #2617 refusal tests now use them. A confined (BeamFiber) single tension step of 6e-3 or more refuses.
+
+**One refusal design with #1038 / rule B** (`ledger/quirks/ADR-31-concrete3d-failed-return-map-returned-zero.md`). Rule B is
+the base truth: `setTrialStrain` refuses when the returned state's kernel call failed or sigma_22 is unconverged. #877's
+earlier plane-stress rule (warn and accept a sigma_22 miss) is dropped. On top of it, without contradiction: the kernel's
+sub-increment rescue (`-subIncr deterministic`, the default; `refuse` and `adaptive` opt-in) and the WP-99 commit latch,
+which now refuses exactly the trials `setTrialStrain` refused (`trialRefused`), a sigma_22 miss included.

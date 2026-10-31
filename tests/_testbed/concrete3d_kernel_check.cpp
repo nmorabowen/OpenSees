@@ -757,7 +757,7 @@ static void run_robustness() {
                 Params qf = q; qf.subIncrForceN = target;
                 double nd = 0, nn = 0; bool straddle = false;
                 for (int j = 0; j < 6; ++j) {
-                    const double h = 1e-10; double ep[6], em[6];
+                    const double h = (target == 1) ? 1e-8 : 1e-10; double ep[6], em[6];
                     for (int a = 0; a < 6; ++a) { ep[a] = e[a]; em[a] = e[a]; }
                     ep[j] += h; em[j] -= h;
                     double s1[6], s2[6], k1, k2, Dd[6][6]; int i1 = -9, i2 = -9;
@@ -765,16 +765,12 @@ static void run_robustness() {
                     if (i1 != inf || i2 != inf) straddle = true;   // a leg escalated the ladder: the map jumps within 1e-10 here
                     for (int a = 0; a < 6; ++a) { const double f = (s1[a] - s2[a]) / (2 * h); nd += (D[a][j] - f) * (D[a][j] - f); nn += f * f; }
                 }
-                if (straddle) {
-                    std::printf("       %s n=%2d (subInfo %2d): FD legs switch the ladder level within 1e-10 (map discontinuous here), skipped\n", dc == 0 ? "compression" : "tension    ", target, inf);
-                    continue;
-                }
                 const double rel = std::sqrt(nd / nn);
                 worst = std::fmax(worst, rel); ++nchecked; if (!(rel < 1.0e-6)) all = false;
-                std::printf("       %s n=%2d (subInfo %2d): ||T - D_fd||/||D_fd|| = %.2e\n", dc == 0 ? "compression" : "tension    ", target, inf, rel);
+                std::printf("       %s n=%2d (subInfo %2d): ||T - D_fd||/||D_fd|| = %.2e%s\n", dc == 0 ? "compression" : "tension    ", target, inf, rel, straddle ? " (straddle)" : "");
             }
         }
-        check(nchecked >= 8 && all, "chain tangent == FD of the same n-piece chain, n = 1..64, compression + tension (rel < 1e-6)");
+        check(nchecked >= 12 && all, "chain tangent == FD of the same n-piece chain, n = 1..64, compression + tension (rel < 1e-6)");
         std::printf("       (checked %d states, worst ||T - D_fd||/||D_fd|| = %.2e)\n", nchecked, worst);
     }
 
@@ -866,11 +862,111 @@ static void run_robustness() {
     }
 }
 
+// ---- (D) tension return (r4 rescue of #877; review 3 MAJOR 1 / probe6 / probe5d) ---------------
+// The wrapper defaults of review 3 (fc 30, ft 3, E 30000, Gf 0.1, lch 50, bilinear, cdpm2 flow + drive, tcTemper proj,
+// maxSubIncr 10, deterministic). Before the r4 port the DIRECT return failed on 645 / 904 / 1953 of 2000 points in a
+// 2e-6-wide window at lateral -0.2, x = 1.5 / 3 / 6 eps_cr, and one window at lateral +0.3, x = 3 returned two
+// different admissible roots (vertex kp 23 1984 times, regular kp 113 16 times).
+static Params tensionReturnParams() {
+    Params q; q.E = 30000; q.nu = 0.2; q.fc = 30; q.ft = 3; q.e = eccentricityFromKupfer(30, 3, 1.16);
+    q.m0 = m0Of(q.fc, q.ft, q.e); q.Df = 0.85; q.As = 2.0; q.qh0 = 0.3; q.Hp = 0.01; q.Gf = 0.1; q.Gc = 5.0;
+    q.lch = 50; q.lch_ref = 50; q.tensionLaw = 1; q.flowPotential = 1; q.compDrive = 1; q.tcTemper = 2;
+    q.maxSubIncr = 10; q.epsFc = 5.0 / (30 * 50); return q;
+}
+static void run_tension_return() {
+    std::printf("[D] tension return (review 3 of #877, MAJOR 1)\n");
+    const double z[6] = {0, 0, 0, 0, 0, 0};
+    for (int lode = 0; lode <= 1; ++lode) {
+        Params q = tensionReturnParams(); q.lodeFactor = lode;
+        const double ecr = q.ft / q.E;
+        const double lats[3] = {-0.2, 0.0, 0.3}, xs[3] = {1.5, 3.0, 6.0};
+        int fails = 0, flips = 0, multi = 0; double worstJump = 0.0;
+        for (double lat : lats) for (double x : xs) {
+            const int N = 400; int prevInf = -99; double kmin = 1e300, kmax = -1e300, prev[6]; bool hp = false;
+            for (int i = 0; i < N; ++i) {
+                const double sc = x * ecr * (1.0 + 2e-6 * (double)i / N);
+                const double d[6] = {sc, lat * sc, lat * sc, 0, 0, 0};
+                double s[6], k, D[6][6];
+                if (returnMapTensor1(q, z, d, 0.0, true, s, k, D, false) != 0) ++fails;
+                else { kmin = std::fmin(kmin, k); kmax = std::fmax(kmax, k); }
+                double s2[6], k2, D2[6][6]; int inf = -9;
+                returnMapTensor(q, z, d, 0.0, true, s2, k2, D2, false, &inf);
+                if (prevInf != -99 && inf != prevInf) ++flips; prevInf = inf;
+                if (hp) { double j = 0; for (int a = 0; a < 6; ++a) j += (s2[a] - prev[a]) * (s2[a] - prev[a]); worstJump = std::fmax(worstJump, std::sqrt(j)); }
+                for (int a = 0; a < 6; ++a) prev[a] = s2[a]; hp = true;
+            }
+            if (kmax - kmin > 1e-3 * (1.0 + kmax)) ++multi;   // two roots in one 2e-6 window
+        }
+        std::printf("       lodeFactor %d: direct-return failures %d / 3600, ladder flips %d, windows with two roots %d, max |dsig_eff| %.2e MPa\n",
+                    lode, fails, flips, multi, worstJump);
+        check(fails == 0 && flips == 0 && multi == 0 && worstJump < 1e-6,
+              lode == 0 ? "tension return: no direct-return failure, no ladder flip, one root per 2e-6 window (lodeFactor 0)"
+                        : "tension return: no direct-return failure, no ladder flip, one root per 2e-6 window (lodeFactor 1)");
+    }
+    // D2 — FULL-RESIDUAL HONESTY: every converged regular hardening return solves the 4-equation system (R1, R2 flow, R3
+    // yield, R4 hardening), not only f = 0 (db02ccc70's nested fallback was accepted on f alone after 5 unchecked polish
+    // steps). Random tension-dominated first-crack trials, virgin and preloaded; the vertex returns are checked on f.
+    {
+        Params q = tensionReturnParams();
+        const double ecr = q.ft / q.E, z6[6] = {0, 0, 0, 0, 0, 0};
+        unsigned long long sd = 777; auto rnd = [&]() { sd = sd * 6364136223846793005ULL + 1442695040888963407ULL; return ((sd >> 11) * (1.0 / 9007199254740992.0)); };
+        int n = 0, conv = 0, bad = 0, unconv = 0; double worst = 0.0;
+        for (int t = 0; t < 6000; ++t) {
+            const double kpn = (t % 2) ? 0.0 : 5.0 * rnd(), x = 1.2 + 30 * rnd();
+            const double d[6] = {x * ecr, (-0.3 + 0.6 * rnd()) * x * ecr, (-0.3 + 0.6 * rnd()) * x * ecr,
+                                 0.3 * (rnd() - 0.5) * x * ecr, 0.3 * (rnd() - 0.5) * x * ecr, 0.3 * (rnd() - 0.5) * x * ecr};
+            double sig_tr[6]; elasticPredTensor(z6, d, q, sig_tr);
+            double A[3][3], w[3], V[3][3]; voigtToMat(sig_tr, A); eig3sym(A, w, V);
+            PrincipalResult pr = returnMapHardening(w, q, kpn);
+            if (!pr.plastic) continue; ++n;
+            if (!pr.converged) { ++unconv; continue; } ++conv;
+            bool ok = pr.dlam >= -1e-12 && pr.kp >= kpn - 1e-12 && std::fabs(pr.f_after) < 3.1e-6;
+            if (!pr.apex) {
+                double sv[6] = {w[0], w[1], w[2], 0, 0, 0}, xi_tr, rho_tr, th_tr; invariants(sv, xi_tr, rho_tr, th_tr);
+                double Rr[4];
+                cdpm2HardeningResidual(pr.xi, pr.rho, pr.dlam, pr.kp, xi_tr, rho_tr, kpn, lodeR(th_tr, q.e),
+                                       hardeningLodeFactor(rho_tr, th_tr, q), q, Rr, nullptr, q.flowPotential != 1);
+                const double rel = std::fmax(std::fmax(std::fabs(Rr[0]) / q.fc, std::fabs(Rr[1]) / q.fc),
+                                             std::fmax(std::fabs(Rr[2]), std::fabs(Rr[3]) / (1.0 + pr.kp)));
+                worst = std::fmax(worst, rel);
+                if (!(rel < NESTED_RES_TOL)) ok = false;
+            }
+            if (!ok) ++bad;
+        }
+        std::printf("       %d plastic trials: %d converged, %d honest failures, %d dishonest; worst scaled residual %.2e\n", n, conv, unconv, bad, worst);
+        check(bad == 0 && unconv == 0, "every converged tension return solves the full residual (R1, R2, R3, R4), none fails");
+    }
+    // D3 -- the nested fallback's acceptance gate checks the FULL residual: a nested candidate is accepted as returned,
+    // and the same candidate with dlam moved 1 % (still admissible, R1/R2/R4 violated) is REJECTED when not polished;
+    // polishing it back to the root makes it acceptable again. (A gate on f alone would accept the perturbed one: the
+    // perturbation leaves (xi, rho, kp) and so f untouched.)
+    {
+        Params q = tensionReturnParams();
+        const double ecr = q.ft / q.E, z6[6] = {0, 0, 0, 0, 0, 0}, sc = 3.0 * ecr;
+        const double d[6] = {sc, -0.2 * sc, -0.2 * sc, 0, 0, 0};
+        double sig_tr[6]; elasticPredTensor(z6, d, q, sig_tr);
+        double A[3][3], w[3], V[3][3]; voigtToMat(sig_tr, A); eig3sym(A, w, V);
+        double sv[6] = {w[0], w[1], w[2], 0, 0, 0}, xi_tr, rho_tr, th_tr; invariants(sv, xi_tr, rho_tr, th_tr);
+        const double r = lodeR(th_tr, q.e), c2 = hardeningLodeFactor(rho_tr, th_tr, q);
+        double x[4];
+        const bool got = returnMapNested(xi_tr, rho_tr, r, c2, q, 0.0, x[0], x[1], x[2], x[3]);
+        double y[4] = {x[0], x[1], x[2] * 1.01, x[3]}, z[4] = {x[0], x[1], x[2] * 1.01, x[3]};
+        const double f_y = yfInvHard(y[0], y[1], r, y[3], q);
+        const bool accRaw = got && polishHardeningRoot(x, xi_tr, rho_tr, 0.0, r, c2, q, 1.0e-11, 0);
+        const bool accBad = polishHardeningRoot(y, xi_tr, rho_tr, 0.0, r, c2, q, 1.0e-11, 0);
+        const bool accFix = polishHardeningRoot(z, xi_tr, rho_tr, 0.0, r, c2, q, 1.0e-11, 8);
+        std::printf("       nested candidate kp %.4g: accepted %d; dlam +1%% (|f| = %.1e) accepted unpolished %d, polished %d\n",
+                    x[3], (int)accRaw, std::fabs(f_y), (int)accBad, (int)accFix);
+        check(got && accRaw && !accBad && accFix, "nested fallback gate: full residual, not f alone (perturbed-flow candidate rejected)");
+    }
+}
+
 int main(int argc, char** argv) {
     run_identities();
     const char* fix = argc > 1 ? argv[1] : "tests/_testbed/concrete3d_oracle_fixture.txt";
     run_oracle_dump(fix);
     run_robustness();
+    run_tension_return();
     std::printf(fails ? "\nKERNEL CHECK: %d FAIL\n" : "\nKERNEL CHECK: ALL PASS\n", fails);
     return fails ? 1 : 0;
 }

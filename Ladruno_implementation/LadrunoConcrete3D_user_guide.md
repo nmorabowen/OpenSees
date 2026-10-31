@@ -147,7 +147,7 @@ no runtime *enforcement*, but the parser **prints a warning at material creation
 including `-implex` and explicit integrators (it used to fall back silently to the elastic trial and commit it). Elements that
 forward the return code cut the step; a host that discards it (vanilla `stdBrick`) is stopped at commit and the model must be
 restarted from the last checkpoint. The deterministic sub-incrementation is discontinuous at its piece-count boundaries (0.4-2 % of the
-effective stress) and switches ladder levels densely in tension near first cracking (review 3, MAJOR 1; fix pending), and a dead (fully cracked or crushed) point carries its tensile effective stress elastically instead of flowing
+effective stress; the dense ladder switching in tension near first cracking that review 3 of #877 found is fixed, ADR-31 section 17), and a dead (fully cracked or crushed) point carries its tensile effective stress elastically instead of flowing
 (see `LadrunoConcrete3D_guide.md` §17b).
 
 ## 6. Worked example skeleton

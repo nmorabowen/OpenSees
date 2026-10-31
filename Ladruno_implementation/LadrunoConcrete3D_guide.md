@@ -408,10 +408,12 @@ nDMaterial LadrunoConcrete3D $tag ... <-subIncr deterministic|adaptive|refuse>  
   yield overshoot is `f_tr` is ALWAYS integrated in `n = clamp(ceil(f_tr/0.3), 1, 64)` equal pieces chained from the committed state
   (`n = 1` is the direct return); a piece failure redoes the chain with `2n` then `4n` pieces, then a bounded adaptive rescue, then the
   honest refusal. The map is a function of the (state, increment) only, but it is **discontinuous** where `n` changes (jumps 0.4-1.5 % of
-  `|sigma_eff|`, kappa_p up to ~2 %), and in tension near first cracking it shows **dense ladder switching** (third review of #877,
-  MAJOR 1; fix pending): the direct tension return itself fails intermittently once kappa_p passes about 2, so which ladder level serves
-  an increment is a coin flip on rounding (hundreds of level flips in 4000 points at 1e-9 relative spacing; effective-stress jumps up to
-  0.3 MPa at a flip; 30-97 % of first-crack points fail the direct return in 2e-6-wide windows). Nominally identical Gauss points therefore
+  `|sigma_eff|`, kappa_p up to ~2 %). Until the r4 merge of #877 it also showed **dense ladder switching** in tension near first
+  cracking (third review of #877, MAJOR 1): the direct tension return failed intermittently once kappa_p passed about 2, so which ladder
+  level served an increment was a coin flip on rounding (hundreds of level flips in 4000 points at 1e-9 relative spacing; 30-97 % of
+  first-crack points failed the direct return in 2e-6-wide windows). **Fixed** (ADR-31 section 17): the direct return now tries the vertex
+  first and rescues a failed plain Newton with a bracketed nested solve accepted on the full residual; the same scans give 0 failures and
+  0 level flips, so only the `n` boundaries remain. Nominally identical Gauss points therefore
   need not return bit-identical states (EAS alpha ~1e-11, hosting parity ~1e-3). The **reported tangent is the chain's own algorithmic
   tangent** (accumulated forward through the pieces incl. the kappa history; 1e-8 vs finite differences with `n` AND the ladder level
   pinned, where the level is stable), not the last piece's (which was 6/41/121 % off at n = 2/4/64). Where the ladder is dense (virgin
@@ -629,7 +631,7 @@ mm-scale. Compression-negative internally; enter `fc`, `ft` positive.
 ---
 
 14. **The deterministic sub-incrementation is discontinuous.** See §17b: the jump between two consistent
-    integrations (n vs n + 1 pieces) is 0.4-2 % of `sigma_eff`, and in tension near first cracking the ladder switches densely (review 3, MAJOR 1, fix pending); tests that pin equality of nominally identical
+    integrations (n vs n + 1 pieces) is 0.4-2 % of `sigma_eff` (the dense ladder switching near first cracking of review 3, MAJOR 1, is fixed: ADR-31 section 17); tests that pin equality of nominally identical
     Gauss points (EAS alpha, hosting parity, F vs Q@F objectivity) derive their tolerance from it. The chain's tangent is exact for a
     fixed `n`; a finite-difference reference must pin `n` (`Params::subIncrForceN`, oracle `subincr_force_n`).
 
