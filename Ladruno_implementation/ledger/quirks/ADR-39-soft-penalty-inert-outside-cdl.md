@@ -1,0 +1,10 @@
+---
+wp: ADR-39
+date: 2026-10-31
+title: "Contact -soft / -edgeSoft were silently inert under every explicit integrator except CentralDifferenceLadruno"
+---
+### Contact -soft / -edgeSoft were silently inert under every explicit integrator except CentralDifferenceLadruno
+- **Bites:** an explicit contact run with `-soft` (node-to-segment, `contactPlane`, `-mortar -soft` incl. its friction and `-visc`) or `-edgeSoft` under the stock `CentralDifference`, `NewmarkExplicit`, `ExplicitDifference` or `ExplicitBathe` diverges at the structural step exactly as if `-soft` were absent. There is no warning.
+- **Why:** the soft penalties were gated by `dynamic_cast<CentralDifferenceLadruno *>(theIntegrator)` (`softKn`, `softKt`, `softKnEdge`, `softKtEdge`, the SOFT=2 branch). Any other integrator failed the cast and got the configured stiff penalty. The upstream port (jaabell up/64) had already dropped the cast.
+- **Fix (2026-10-31):** `LadrunoContactFE::explicitTimeStep()` decides by what the integrator assembles: it calls `formEleTangent(this)` with `zeroTangent`/`addKtToTang`/`addKiToTang`/`addCtoTang` recording instead of assembling (`stiffnessProbe`, `tang` untouched). A transient integrator that asks for no stiffness is explicit for the contact. CDL keeps `getCurrentDeltaT()`. For the others dt = `Domain::getDT()`. Stock `CentralDifference` forms the residual at the committed time, so `getDT()` is 0 there; the step size is then `LadrunoContactDomain::getLastStepSize()`, which `Domain::commit()` records. Before the first commit no step size is known: the configured penalty is used for that one evaluation, with the existing once-per-contact `WARN_SOFT_NOMASS` / `WARN_EDGESOFT_NOMASS` / `WARN_SOFT2_NOMASS` warning. Static and implicit integrators are unchanged bitwise. Gate: `tests/test_ladruno_contact_soft_any_explicit.py`.
+- **Rule:** a contact feature that depends on "explicit vs implicit" must test what the integrator assembles, not its class. The fork has several explicit integrators and more keep arriving.

@@ -124,8 +124,8 @@ class LadrunoContactDomain
         bool consistentNormal;  // B3 (P2b-2c): true => assemble the consistent ∂n/∂u geometric
                                 // normal tangent (kn·gN·∂²gN/∂u²) for quadratic Newton on curved /
                                 // large-sliding interfaces. false (default) => kn·BᵀB (byte-identical).
-        double softScale;       // B1 (P4): LS-DYNA §26.15 SOFT=1 scale SOFSCL (>0 ⇒ on). Under the
-                                // explicit CentralDifferenceLadruno the adapter REPLACES kn with the
+        double softScale;       // B1 (P4): LS-DYNA §26.15 SOFT=1 scale SOFSCL (>0 ⇒ on). Under an
+                                // explicit integrator the adapter REPLACES kn with the
                                 // Courant-stable k_soft = SOFSCL·4·m_eff/dt² each step (m_eff from the
                                 // nodal masses), so the contact never throttles dt_cr. Inert under any
                                 // implicit integrator (the configured kn is used ⇒ byte-identical).
@@ -198,8 +198,8 @@ class LadrunoContactDomain
         bool   isTie;
         double muc;             // ADR-41 D2.2: viscous normal-stabilization coeff on the mortar contact
                                 // (0 ⇒ off; not allowed with isTie — a bond has no chatter regime).
-        double softScale;       // B2 (P5): LS-DYNA §26.15 SOFT=2 scale SOFSCL (>0 ⇒ on). Under the
-                                // explicit CentralDifferenceLadruno the adapter REPLACES the per-facet
+        double softScale;       // B2 (P5): LS-DYNA §26.15 SOFT=2 scale SOFSCL (>0 ⇒ on). Under an
+                                // explicit integrator the adapter REPLACES the per-facet
                                 // epsN with the Courant-stable k_soft = SOFSCL·4·m_eff/dt² per slave node
                                 // (segment-based gap-mode mass) and assembles a pure single-pass penalty
                                 // over the clipped overlap — catching the corner/edge/T-intersection
@@ -225,8 +225,8 @@ class LadrunoContactDomain
         double edgeTauMax;
         bool   edgeConsistentTan;
         // ADR-57 E5 — `-edgeSoft <SOFSCL>`: the explicit Courant-stable SOFT penalty for the edge-edge
-        // fallback (the B1/B2 SOFT analogue, edge gap-mode m_eff). >0 ⇒ on; under the explicit
-        // CentralDifferenceLadruno the edge penalty is replaced by k_soft = SOFSCL·4·m_eff/dt² so
+        // fallback (the B1/B2 SOFT analogue, edge gap-mode m_eff). >0 ⇒ on; under an explicit
+        // integrator the edge penalty is replaced by k_soft = SOFSCL·4·m_eff/dt² so
         // edge-on impact runs at the structural dt_cr. Inert under implicit ⇒ byte-identical.
         double edgeSoftScale;
         // ADR-57 E6 — `-edgeAlm`: the optional one-scalar commit-cycle ALM for the edge-edge fallback.
@@ -547,6 +547,10 @@ class LadrunoContactDomain
     void   clearNodalMass(void);
     void   setNodalMass(int nodeTag, const double m[3]);
     bool   getNodalMass(int nodeTag, double m[3]) const;   // false ⇒ not cached (adapter falls back)
+    // Ladruno (soft under any explicit integrator): the size of the last committed step (> 0), the
+    // SOFT step size for an integrator that forms the residual at the committed time (the stock
+    // CentralDifference, where Domain::getDT() is 0 during the step); 0 before the first commit.
+    double getLastStepSize(void) const { return lastStepSize; }
 
     // dead-slot GC (design-gate MAJOR: the engine survives domainChanged AND across
     // analyze() calls, so a re-meshed/re-paired analysis would leak old friction
@@ -687,7 +691,9 @@ class LadrunoContactDomain
     // --- lifecycle (driven by Domain::commit / revertToLastCommit / revertToStart) ---
     // P3: gpT = gpTtrial for every slot (+ counter). ADR-155: `augmenting` is the Domain's
     // held-load bracket flag (ladrunoBeginAugment); it only matters for an AUG_REQUEST contact.
-    int commit(bool augmenting = false);
+    // Ladruno (soft under any explicit integrator): stepSize = Domain::getDT() of the step being
+    // committed, recorded when > 0 (getLastStepSize).
+    int commit(bool augmenting = false, double stepSize = 0.0);
     int revertToLastCommit(void);  // P3: gpTtrial = gpT for every slot (+ counter)
     // contact-review P2 (2026-07) — drop ALL path-dependent state (friction slip +
     // engagement origins, mortar λ_N/λ_T/λ_tie, edge-edge signs/friction, NTS force
@@ -734,6 +740,7 @@ class LadrunoContactDomain
                                                         // signs (c, slaveTag, g = vertexTag)
     struct NodeMass { double m[3]; };                   // B1: assembled translational nodal mass
     std::map<int, NodeMass> theNodalMass;               // B1: per-node assembled mass (SOFT=1)
+    double lastStepSize = 0.0;                          // Ladruno: last committed step (soft dt)
 
     // ADR-60 re-emit state (one entry per opted-in contact). Rebuilt each handle(); the Trigger's
     // arming/cadence persists within an epoch (between handles) so it ticks per Domain::commit().
