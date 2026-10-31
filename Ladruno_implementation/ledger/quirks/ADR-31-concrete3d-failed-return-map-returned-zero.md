@@ -67,7 +67,9 @@ date: 2026-10-29
   holds for this material: a discarding host now fails the step at `Domain::commit` (terminal, not
   a cut — the latch cannot rewind sibling commits).
 - **The fractal failure statistics above are the pre-fix kernel.** The tension-return rework
-  (projected Newton without the unprojected line search, deterministic vertex-vs-regular root
-  choice, nested fallback, full-residual honesty check) removes the direct-return failures review 3
+  (in tension a fixed root order: the vertex, then a bracketed nested solve keeping the
+  least-hardening root, with the plain Newton and the unprojected-line-search newtonGlob only as the
+  last resort when the nested solve finds no bracket; a full-residual honesty check; compression
+  keeps the PR-head order) removes the direct-return failures review 3
   of #877 measured (MAJOR 1), so inputs picked to fail on the old kernel may now converge; the
   #2617 tests drive their failures with inputs re-checked on the merged kernel.

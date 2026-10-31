@@ -867,6 +867,7 @@ static void run_robustness() {
 // maxSubIncr 10, deterministic). Before the r4 port the DIRECT return failed on 645 / 904 / 1953 of 2000 points in a
 // 2e-6-wide window at lateral -0.2, x = 1.5 / 3 / 6 eps_cr, and one window at lateral +0.3, x = 3 returned two
 // different admissible roots (vertex kp 23 1984 times, regular kp 113 16 times).
+static const int D4_MAX_JUMPS = 14;   // measured on the r4 kernel (8 fold jumps + 6 vertex/regular switches, lodeFactor 0)
 static Params tensionReturnParams() {
     Params q; q.E = 30000; q.nu = 0.2; q.fc = 30; q.ft = 3; q.e = eccentricityFromKupfer(30, 3, 1.16);
     q.m0 = m0Of(q.fc, q.ft, q.e); q.Df = 0.85; q.As = 2.0; q.qh0 = 0.3; q.Hp = 0.01; q.Gf = 0.1; q.Gc = 5.0;
@@ -958,6 +959,40 @@ static void run_tension_return() {
         std::printf("       nested candidate kp %.4g: accepted %d; dlam +1%% (|f| = %.1e) accepted unpolished %d, polished %d\n",
                     x[3], (int)accRaw, std::fabs(f_y), (int)accBad, (int)accFix);
         check(got && accRaw && !accBad && accFix, "nested fallback gate: full residual, not f alone (perturbed-flow candidate rejected)");
+    }
+    // D4 -- MAGNITUDE SWEEP (r4 review of #877, item 2): 40 random tension rays, virgin, x = 1..41 eps_cr in steps of
+    // 0.01 eps_cr (lateral -0.4..0.4, shear +-0.2 of the axial strain). The first r4 cut ran the plain Newton first and
+    // the nested solve as the rescue, and the two converged to DIFFERENT genuine roots on neighbouring trials (the
+    // review: 351 neighbour jumps > 1 MPa, up to 102 MPa, flipping back and forth). With the fixed root order (vertex,
+    // nested with the smallest-kappa_p root, then the Newtons) what is left are ONE-SIDED jumps where the least-hardening
+    // branch ends (a fold of the backward-Euler system) and the vertex/regular switch of lodeFactor 0. Gate: no failure,
+    // no ray jumps > 1 MPa more than twice (no flip-flopping), and the total stays at the measured count (14: 8 fold jumps,
+    // 6 vertex/regular switches, worst 23 MPa). The plain-Newton-first order fails it (110 jumps, 10 on one ray, 99.7 MPa).
+    {
+        Params q = tensionReturnParams();
+        const double ecr = q.ft / q.E, z6[6] = {0, 0, 0, 0, 0, 0};
+        unsigned long long sd = 4242; auto U = [&]() { sd = sd * 2862933555777941757ULL + 3037000493ULL; return (double)(sd >> 11) / 9007199254740992.0; };
+        int total = 0, worstRay = 0, fails = 0; double worstJump = 0.0;
+        for (int dir = 0; dir < 40; ++dir) {
+            const double d[6] = {1.0, -0.4 + 0.8 * U(), -0.4 + 0.8 * U(), 0.4 * (U() - 0.5), 0.4 * (U() - 0.5), 0.4 * (U() - 0.5)};
+            double prev[6]; bool hp = false; int nray = 0; const int N = 4000;
+            for (int i = 0; i <= N; ++i) {
+                const double x = 1.0 + 40.0 * i / N;
+                double de[6]; for (int a = 0; a < 6; ++a) de[a] = d[a] * x * ecr;
+                double sg[6], k, D[6][6];
+                if (returnMapTensor1(q, z6, de, 0.0, true, sg, k, D, false) != 0) { ++fails; hp = false; continue; }
+                if (hp) {
+                    double j = 0; for (int a = 0; a < 6; ++a) j += (sg[a] - prev[a]) * (sg[a] - prev[a]); j = std::sqrt(j);
+                    if (j > 1.0) { ++nray; ++total; worstJump = std::fmax(worstJump, j); }
+                }
+                for (int a = 0; a < 6; ++a) prev[a] = sg[a]; hp = true;
+            }
+            worstRay = nray > worstRay ? nray : worstRay;
+        }
+        std::printf("       40 rays x 4001 points: direct-return failures %d, neighbour jumps > 1 MPa %d (worst %.1f MPa), most on one ray %d\n",
+                    fails, total, worstJump, worstRay);
+        check(fails == 0 && worstRay <= 2 && total <= D4_MAX_JUMPS,
+              "tension magnitude sweep: no failure, at most 2 one-sided jumps per ray, total <= measured");
     }
 }
 

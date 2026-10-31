@@ -206,6 +206,11 @@ def test_serialization_carries_the_c2_params():
         ops.pattern("Plain", 5, 1)
         for t, (x, y, z) in _CUBE.items():
             ops.sp(t, 2, -2.0e-4 * y)     # unload eyy 1e-3 -> 8e-4 (elastic unloading)
+        # Removing pattern 3 frees every ux, so the x rigid-body translation is unrestrained and the FullGeneral system
+        # is singular: the 2nd step's solve then returned a 6.6e9 displacement correction and diverged (analyze -3,
+        # deterministically, on the PR head f19d55bd1 build as on the r4 merge). Pin node 1 (x = 0, where ux = exx*x = 0
+        # already) so only the rigid mode is removed; every deformation mode stays free.
+        ops.sp(1, 1, 0.0)
         ops.integrator("LoadControl", 0.5)
         for _ in range(2):
             assert ops.analyze(1) == 0

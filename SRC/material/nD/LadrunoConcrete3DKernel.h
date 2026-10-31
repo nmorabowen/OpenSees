@@ -212,6 +212,8 @@ static const double SQRT1_5 = 1.224744871391589;
 static const double F_TOL_HONEST = 3.1e-6;
 // Full-residual acceptance of the nested fallback return (R1, R2 relative to fc; R3; R4 relative to 1 + kp).
 static const double NESTED_RES_TOL = 1.0e-8;
+// Grid cells of the nested solve's root scan (returnMapNested).
+static const int NESTED_SCAN = 16;
 
 // ---------------------------------------------------------------------------
 // Stress invariants. sig = {s00,s11,s22,s01,s12,s02} TENSOR components.
@@ -1050,14 +1052,38 @@ inline bool returnMapNested(double xi_tr, double rho_tr, double r_val, double co
     const double fa = outerPhi(ra, xa, ka, da, oka);
     const double fb = outerPhi(rb, xb, kb, db, okb);
     if (!oka || !okb || !(fa < 0.0) || !(fb > 0.0)) return false;   // no bracket: vertex partition / degenerate
-    bool innerOk = true;
-    rho_sol = bracketedRoot([&](double rm) { double xm, km, dm; bool okm; const double fm = outerPhi(rm, xm, km, dm, okm);
-                                             if (!okm) innerOk = false; return fm; },
-                            ra, fa, rb, fb, 1.0e-9 * rho_tr);   // coarse: polishHardeningRoot finishes it
-    if (!innerOk) return false;
-    bool ok;
-    outerPhi(rho_sol, xi_sol, kp_sol, dlam_sol, ok);
-    return ok;
+    // ROOT SELECTION: the system can have more than one admissible root in (0, rho_tr] (r4 review: kappa_p 135 vs 697 on
+    // one ray; the extra root is a hardening-expanded one, qh2 = 1 + Hp (kappa_p - 1) large enough for the surface to
+    // reach the trial). Scan (0, rho_tr] on a fixed grid of NESTED_SCAN cells, solve every sign change, and keep the
+    // root with the SMALLEST kappa_p (the least hardening; along a loading ray it is the branch that starts at the
+    // trial, dlam = 0, at first yield, and the one the plain Newton reaches from the trial on ordinary increments).
+    // Deterministic; resolution limited: two roots inside one cell (rho_tr / NESTED_SCAN) are not told apart.
+    bool found = false;
+    {
+        double rHi = rb, fHi = fb;
+        for (int k = 1; k <= NESTED_SCAN; ++k) {
+            const double rLo = (k == NESTED_SCAN) ? ra : rho_tr * (1.0 - (double)k / NESTED_SCAN);
+            double xk, kk, dk; bool okk;
+            const double fLo = (k == NESTED_SCAN) ? fa : outerPhi(rLo, xk, kk, dk, okk);
+            if (k < NESTED_SCAN && !okk) return false;
+            if ((fLo < 0.0) != (fHi < 0.0)) {
+                bool innerOk = true;
+                const double flo = fLo < 0.0 ? fLo : fHi, fhi = fLo < 0.0 ? fHi : fLo;
+                const double alo = fLo < 0.0 ? rLo : rHi, ahi = fLo < 0.0 ? rHi : rLo;
+                const double rr = bracketedRoot([&](double rm) { double xm, km, dm; bool okm;
+                                                     const double fm = outerPhi(rm, xm, km, dm, okm);
+                                                     if (!okm) innerOk = false; return fm; },
+                                                alo, flo, ahi, fhi, 1.0e-9 * rho_tr);   // coarse: polishHardeningRoot finishes it
+                double xr, kr, dr; bool okr;
+                outerPhi(rr, xr, kr, dr, okr);
+                if (innerOk && okr && (!found || kr < kp_sol)) {
+                    found = true; rho_sol = rr; xi_sol = xr; kp_sol = kr; dlam_sol = dr;
+                }
+            }
+            rHi = rLo; fHi = fLo;
+        }
+    }
+    return found;
 }
 
 // Polish a CANDIDATE root x = (xi, rho, dlam, kp) of the hardening return system with residual-decreasing Newton steps
@@ -1065,6 +1091,8 @@ inline bool returnMapNested(double xi_tr, double rho_tr, double r_val, double co
 // |R1|, |R2| < NESTED_RES_TOL fc (flow), |R3| < NESTED_RES_TOL (yield), |R4| < NESTED_RES_TOL (1 + kp) (hardening), and
 // the root is admissible. Used for the nested fallback (r4 port of db02ccc70, which set converged = true after 5
 // unchecked clamped steps and then gated on f alone). polishIters = 0 checks the candidate as given (kernel check D3).
+inline bool cdpm2Flow0(const Params& mp) { return mp.flowPotential == 1; }
+
 inline bool polishHardeningRoot(double x[4], double xi_tr, double rho_tr, double kp_n, double r, double cos2,
                                 const Params& mp, double tol = 1.0e-11, int polishIters = 8)
 {
@@ -1135,16 +1163,11 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
 
     const double cos2 = hardeningLodeFactor(rho_tr, th_tr, mp);
 
-    // VERTEX FIRST (r4 port of db02ccc70): a deterministic vertex-vs-regular selection. The vertex return is tried
-    // before the regular Newton and taken whenever it is admissible (trial inside the cone of potential normals,
-    // on-surface, kp >= kp_n). Before, it ran only after the regular Newton failed, so a trial with both an
-    // admissible vertex root and an admissible regular root got whichever the inner solvers happened to reach
-    // (review 3 of #877, probe6: kp 23 vs kp 113 in one 2e-6 window). Default (lodeFactor 0): the legacy vertex law
-    // (factor 1), so at that window the vertex root (kp 23) is now taken every time; lodeFactor 1 gives the tension
-    // vertex the regular map's factor (vertexLodeFactor), and that window returns the regular root (kp 113) instead.
-    // (WP concrete3d-oracle-diagnosis history of this branch: it replaced a sign-flipping apex projection that let
-    // hydrostatic compression never yield, OOFEM con2dpm3/4; returnMapVertex is unchanged apart from c_th.)
-    {
+    // VERTEX RETURN (WP concrete3d-oracle-diagnosis; mirrors the oracle return_map_vertex): f(sigV, rho=0; kp(sigV)) = 0 with
+    // kp consistent with the vertex plastic strain, on the TENSION vertex (sigV_tr > 0) or, while the [1-qh1] cap closes
+    // the surface (kp_n < 1), the COMPRESSION vertex; accepted only inside the cone of potential normals (it replaced a
+    // sign-flipping apex projection that let hydrostatic compression never yield, OOFEM con2dpm3/4).
+    auto tryVertex = [&]() -> bool {
         double sV = 0.0, kpv = kp_n, dlv = 0.0;
         const double c_th_v = vertexLodeFactor(!(xi_tr < 0.0), cos2, mp);
         if (returnMapVertex(xi_tr / SQRT3, rho_tr, mp, kp_n, sV, kpv, dlv, c_th_v)) {
@@ -1154,10 +1177,22 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
                 for (int a = 0; a < 3; ++a) R.sp[a] = sV;
                 R.xi = SQRT3 * sV; R.rho = 0.0; R.dlam = dlv; R.kp = kpv;
                 R.apex = true; R.converged = true; R.plastic = true; R.f_after = fv;
-                return R;
+                return true;
             }
         }
-    }
+        return false;
+    };
+    // The TENSION path (CDPM2 flow, sigma_V,tr > 0) is where review 3 of #877 found the direct return failing and its root
+    // a coin flip (MAJOR 1). r4: there the root is chosen by a FIXED order that does not depend on which inner solver
+    // happens to converge: (1) the vertex, taken whenever it is admissible (probe6: kp 23 vs kp 113 in one 2e-6 window
+    // before); (2) the NESTED bracketed solve (returnMapNested + polishHardeningRoot, full-residual acceptance); only
+    // if that finds no bracket, (3) the plain Newton and (4) newtonGlob. With the plain Newton first (the first r4 cut)
+    // the two solvers converged to different genuine roots on neighbouring trials (r4 review: 351 neighbour jumps
+    // > 1 MPa on 40 rays x = 1..41 eps_cr, up to 102 MPa). Compression and the legacy flow keep the PR-head / oracle order
+    // (regular Newtons first, then the vertex, then the clamped retry); the nested solve is added after all of them,
+    // so it changes only trials that used to FAIL.
+    const bool tensionPath = cdpm2Flow0(mp) && xi_tr > 0.0;
+    if (tensionPath && tryVertex()) return R;
 
     const double m_v = Df * m0 / (SQRT3 * fc);
     double xi = xi_tr, rho = rho_tr, dlam = 0.0, kp = kp_n;
@@ -1339,59 +1374,42 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
         }
         return false;
     };
-    if (cdpm2Flow && xi_tr > 0.0) {
-        // TENSION-dominated trial (sigma_V_trial > 0): plain Newton FIRST (mirror of the oracle; every case it converges
-        // on is unchanged). r4: the rescue is the NESTED solve, not newtonGlob. Review 3 of #877 (MAJOR 1): once kappa_p
-        // passes ~2 the plain Newton fails on 30-97 % of first-crack trials and newtonGlob's unprojected line search
-        // then walks out of the admissible set (last iterates dlam < 0, kappa_p < 0) and fails too, so success was a
-        // coin flip on rounding. newtonGlob stays only as the last resort when the nested solve finds no bracket; if the
-        // plain scheme aborted on an axis overshoot (apex) and nothing converges, keep the apex verdict so the
+    if (tensionPath) {
+        // r4 order (see tensionPath above): nested first; the plain Newton and newtonGlob only when it finds no bracket.
+        // If the plain scheme aborted on an axis overshoot (apex) and nothing converges, keep the apex verdict so the
         // clamped retry below still runs.
-        newton(false);
-        if (!converged) {
-            const bool plainApex = apex;
-            if (!tryNested()) { newtonGlob(); if (!converged && !apex) apex = plainApex; }
+        if (!tryNested()) {
+            newton(false);
+            if (!converged) { const bool plainApex = apex; newtonGlob(); if (!converged && !apex) apex = plainApex; }
         }
     }
     else if (cdpm2Flow) { newtonGlob(); if (!converged && !apex) newton(false); }
     else { newton(false); if (!converged && !apex) newtonGlob(); }
     const bool overshot = apex;
-    // compression / legacy flow: the nested solve is the rescue after both Newtons
-    if (!converged && !nestedTried) tryNested();
 
-    R.xi = xi; R.rho = rho; R.dlam = dlam; R.kp = kp; R.plastic = true;
-    if (!apex) {
+    // regular-root acceptance: dlam >= 0, kp >= kp_n, honest on-surface f at the returned stress with its own Lode angle
+    auto acceptRegular = [&]() -> bool {
+        R.xi = xi; R.rho = rho; R.dlam = dlam; R.kp = kp; R.plastic = true;
         const double p_new = xi / SQRT3;
         const double dev_scale = (rho_tr > 0.0) ? rho / rho_tr : 0.0;
         for (int a = 0; a < 3; ++a) R.sp[a] = R.s_tr[a] * dev_scale + p_new;
-        // HONEST convergence: recompute f at the returned stress with ITS OWN Lode angle.
         double svn[6] = {R.sp[0], R.sp[1], R.sp[2], 0, 0, 0};
         R.f_after = yieldF(svn, mp, qh1Of(kp, mp.qh0, mp.Hp), qh2Of(kp, mp.Hp));
-        // ADMISSIBILITY (PR #249 adversarial-review fix): a valid plastic return needs dlam>=0 and a
-        // NON-DECREASING hardening variable (kp>=kp_n). Never report converged for an inadmissible/
-        // off-surface state.
         const bool admissible = std::isfinite(R.f_after) && dlam >= -1.0e-12 && kp >= kp_n - 1.0e-12;
-        if (converged && std::fabs(R.f_after) < F_TOL_HONEST && admissible) {
-            R.converged = true;
-            return R;
-        }
-    }
+        if (converged && std::fabs(R.f_after) < F_TOL_HONEST && admissible) { R.apex = false; R.converged = true; return true; }
+        return false;
+    };
+    R.xi = xi; R.rho = rho; R.dlam = dlam; R.kp = kp; R.plastic = true;
+    if (!apex && acceptRegular()) return R;
+    // compression / legacy flow: the vertex AFTER the regular Newtons (the PR-head and oracle order)
+    if (!tensionPath && tryVertex()) return R;
     // Regular RETRY with rho clamped at 0 (only after an axis overshoot whose vertex was rejected).
     if (overshot) {
         newton(true);
-        if (converged && rho > 0.0) {
-            const double p_new = xi / SQRT3;
-            const double dev_scale = (rho_tr > 0.0) ? rho / rho_tr : 0.0;
-            for (int a = 0; a < 3; ++a) R.sp[a] = R.s_tr[a] * dev_scale + p_new;
-            double svn[6] = {R.sp[0], R.sp[1], R.sp[2], 0, 0, 0};
-            R.f_after = yieldF(svn, mp, qh1Of(kp, mp.qh0, mp.Hp), qh2Of(kp, mp.Hp));
-            const bool admissible = std::isfinite(R.f_after) && dlam >= -1.0e-12 && kp >= kp_n - 1.0e-12;
-            if (std::fabs(R.f_after) < F_TOL_HONEST && admissible) {
-                R.xi = xi; R.rho = rho; R.dlam = dlam; R.kp = kp; R.apex = false; R.converged = true; R.plastic = true;
-                return R;
-            }
-        }
+        if (converged && rho > 0.0 && acceptRegular()) return R;
     }
+    // compression / legacy flow: the nested solve last, so it can only rescue a trial the PR-head path failed
+    if (!nestedTried && tryNested() && acceptRegular()) return R;
     for (int a = 0; a < 3; ++a) R.sp[a] = sigTr[a];   // safe fallback = elastic predictor
     R.kp = kp_n; R.xi = xi_tr; R.rho = rho_tr; R.dlam = 0.0; R.apex = false;
     R.f_after = yfInvHard(xi_tr, rho_tr, r, kp_n, mp);
@@ -2574,7 +2592,7 @@ inline int detPieces(const Params& mp, const double sig_n[6], const double deps[
 // jump is the discretization difference between the two integrations -- measured at 1e-19-apart strains on the
 // reviewer's probes: |dsigma_eff| 0.06-0.40 MPa (0.4-1.5 % of |sigma_eff|), kappa_p up to ~2.5 near first cracking.
 // r4 (review 3 of #877, MAJOR 1): the DENSE ladder switching in tension near first cracking is gone with the direct
-// tension return fixed (returnMapHardening: vertex first, nested fallback): 0 level flips in 4000 points at 1e-9 relative
+// tension return fixed (returnMapHardening: in tension the vertex, then the nested solve): 0 level flips in 4000 points at 1e-9 relative
 // spacing (was 1679-2203), 0 at fixed n in a 20000-point coarse scan (was 8257); the 63 n changes remain (jumps there).
 // Chosen over the failure-driven adaptive path because that one is discontinuous at every attempt boundary and depends on
 // the Newton iterate's noise (1.8 % vs 13.3 % measured), and because the deterministic map is a function of (state,

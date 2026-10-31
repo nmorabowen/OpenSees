@@ -5,9 +5,9 @@ about 2: in 2000-point windows of 2e-6 relative width in virgin near-uniaxial te
 defaults below) it failed 645 / 904 / 1953 times at x = 1.5 / 3 / 6 eps_cr (re-measured on the PR head f19d55bd1 with
 the kernel probe), and one window at lateral +0.3, x = 3 returned two different admissible roots (vertex kappa_p 23,
 1984 times; regular kappa_p 113, 16 times). Cause: the plain Newton fails there and the globalized Newton's
-unprojected line search walks out of the admissible set (dlam < 0, kappa_p < 0). The r4 port of db02ccc70 tries the
-vertex first (a deterministic vertex-vs-regular selection) and rescues a failed plain Newton with a bracketed nested
-solve whose root is accepted only on the FULL residual (LadrunoConcrete3DKernel.h returnMapHardening /
+unprojected line search walks out of the admissible set (dlam < 0, kappa_p < 0). The r4 port of db02ccc70 uses a fixed
+root order in tension: the vertex when admissible, then a bracketed nested solve (least-hardening root) accepted only on
+the FULL residual, the Newtons only if it finds no bracket (LadrunoConcrete3DKernel.h returnMapHardening /
 returnMapNested / polishHardeningRoot; kernel side pinned by concrete3d_kernel_check.cpp section D).
 
 These cases pin it through the built material under `-subIncr refuse`, the mode that has NO sub-increment rescue, so a

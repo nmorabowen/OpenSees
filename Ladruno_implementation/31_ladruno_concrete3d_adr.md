@@ -754,16 +754,24 @@ The r4 rescue branch (`wp/concrete3d-integration-r4`) merges `ladruno` into #877
 db02ccc70 (`wp/concrete-dr1-dr5`), nothing else from it. It closes review 3's MAJOR 1 and the C8 half of MAJOR 2.
 
 **The direct hardening return** (`returnMapHardening`, `LadrunoConcrete3DKernel.h`).
-1. *Vertex first.* The vertex return is tried before the regular Newton and taken whenever it is admissible (trial inside
-   the cone of potential normals, on surface, kappa_p >= kappa_p,n). It used to run only after the regular Newton failed,
-   so a trial with an admissible root of each kind got whichever the solvers happened to reach (review 3 probe6: kappa_p
-   23 or 113 in one 2e-6 window). Now that window returns the vertex root, every time.
-2. *Nested fallback instead of newtonGlob.* In tension (sigma_V,tr > 0, CDPM2 flow) a failed plain Newton is rescued by
-   `returnMapNested`: R2 and R4 are eliminated exactly (dlam and kappa_p as functions of rho, xi), R1 is a bracketed root in
-   xi, and R3 = f a bracketed root in rho in (0, rho_tr] (Brent with a bisection safeguard, `bracketedRoot`). Every iterate is
-   admissible by construction, which newtonGlob's unprojected line search was not (its last iterates sat at dlam < 0, kappa_p
-   < 0). newtonGlob is kept only for a trial the nested solve cannot bracket; compression and the legacy flow keep their
-   order and get the nested solve as a last resort.
+1. *A fixed root order in tension* (CDPM2 flow, sigma_V,tr > 0; amended after the r4 review). (a) The vertex return,
+   taken whenever admissible (trial inside the cone of potential normals, on surface, kappa_p >= kappa_p,n): before, it ran
+   only after the regular Newton failed, so review 3's probe6 window returned kappa_p 23 or 113 by rounding; it now
+   returns the vertex root (23.1) at every one of its 2000 points. (b) The NESTED solve `returnMapNested`: R2 and R4
+   eliminated exactly (dlam and kappa_p as functions of rho, xi), R1 a bracketed root in xi, R3 = f scanned on 16 cells of
+   (0, rho_tr], every sign change solved (Brent with a bisection safeguard, `bracketedRoot`), and the root with the
+   SMALLEST kappa_p kept (the least-hardening branch; the other roots are hardening-expanded ones, qh2 large enough for
+   the surface to reach the trial). Every iterate is admissible by construction, which newtonGlob's unprojected line
+   search was not (its last iterates sat at dlam < 0, kappa_p < 0). (c) Only if the nested solve finds no bracket: the
+   plain Newton, then newtonGlob (unprojected line search) as the last resort. The first r4 cut ran the plain Newton
+   first with the nested solve as its rescue; the two converge to different genuine roots on neighbouring trials (r4
+   review: 351 neighbour jumps > 1 MPa on 40 rays x = 1..41 eps_cr, up to 102 MPa).
+2. *Compression and the legacy flow are unchanged:* the PR-head / oracle order (regular Newtons, then the vertex, then
+   the clamped retry; `concrete3d_ref.py` is regular-first), with the nested solve added after all of them so it can only
+   rescue a trial that used to fail. The first r4 cut also put the vertex first in compression, which changed 95 of 20000
+   compression-dominated and 320 of 20000 near-hydrostatic random trials (up to 56.7 MPa) and added a 20.2 MPa jump on a
+   shear sweep; with the restriction the r4 review's probe_diff gives 0 changed results in both compression sets against
+   the PR head.
 3. *Honest acceptance.* `polishHardeningRoot` polishes the bracketed root with residual-decreasing Newton steps that stay in
    the admissible set and accepts it only if the FULL residual is small (|R1|, |R2| < 1e-8 fc; |R3| < 1e-8; |R4| < 1e-8 (1 +
    kappa_p)). db02ccc70 set `converged = true` after five unchecked clamped steps and the gate checked f alone.
@@ -785,23 +793,28 @@ db02ccc70 (`wp/concrete-dr1-dr5`), nothing else from it. It closes review 3's MA
 |---|---|---|
 | direct-return failures, 2000-pt windows 2e-6 wide, lateral -0.2, x 1.5 / 3 / 6 | 645 / 904 / 1953 | 0 / 0 / 0 |
 | same, lateral 0 and +0.3 (x 1.5 / 3 / 6) | 1104 / 1055 / 1997, 1231 / 0 / 1971 | all 0 |
-| roots in the lateral +0.3, x 3 window | 2 (kappa_p 23.1 x1984, 113.1 x16) | 1 (23.1; mode 1: 113.1) |
+| roots in the lateral +0.3, x 3 window (2000 pts) | 2 (kappa_p 23.1 x1984, 113.1 x16) | 1 (23.1; mode 1: 113.1) |
+| neighbour jumps > 1 MPa, 40 random tension rays x = 1..41 eps_cr, step 0.002 eps_cr (r4 review probe) | (see the first r4 cut: 351, up to 102 MPa) | 14: 8 one-sided fold jumps (up to 23 MPa) + 6 vertex/regular switches |
+| compression random sets (2 x 20 000) vs PR head | - | 0 changed |
 | ladder flips, 4000 pts at 1e-9 spacing, x 1.5 / 3 / 6 / 25 | 1679 / 2203 / 1737 / 2006 | 0 / 0 / 0 / 0 |
 | coarse 20 000-pt scan: level flips at fixed n / n changes | 8257 / 63 | 0 / 63 |
 | random first-crack increments with a +-1e-6 FD leg on another level (4000) | 3464 | 2 |
-| same, tangent vs FD (h 1e-9 rel) worse than 1e-4 | 3120 | 25 (worst 1.7e-3) |
+| same, tangent vs FD (h 1e-9 rel) worse than 1e-4 | 3120 | 0 (worst 8.3e-6) |
 | `returnMapHardening` converged, 20 000 random tension trials | 1748 | 20 000 |
 | kernel check C8 (chain tangent, n = 1..64): states checked | 8 (4 skipped as straddling) | 12, no skip |
 
 The kernel check no longer skips a straddling C8 state (it fails instead) and gained section D: the MAJOR-1 windows in both
-Lode modes, the full residual of 6000 random tension returns, and the nested gate rejecting a candidate whose flow residual
-is off while f is not. The oracle fixture is unchanged and every fixture row passes. Cost: ordinary increments cost the
-same as before or less; a wild virgin trial (|strain| 0.03-3) now integrates instead of failing fast and costs up to ~0.4 s
-per call with the tangent (was ~0.2 s), from the damaged tangent's micro-FD legs re-running the chain.
+Lode modes, the full residual of 6000 random tension returns, the nested gate rejecting a candidate whose flow residual
+is off while f is not, and the magnitude sweep (D4: 40 rays, at most 2 jumps on a ray, at most 14 in all; the
+plain-Newton-first order gives 110, 10 on one ray). "One root" is claimed only where it is tested: the MAJOR-1 windows.
+On a ray the selected root can still jump, one-sidedly, where the least-hardening branch ends. The oracle fixture is unchanged and every fixture row passes. Cost: ordinary increments cost the
+same as before (random virgin trials |strain| <= 3e-2: 0.3-12 ms mean per call with the tangent, PR head 1-15 ms); a wild
+trial (|strain| 0.1-3) now integrates instead of failing fast and costs up to ~1 s per call with the tangent (PR head
+~0.15 s), from the damaged tangent's micro-FD legs re-running the chain.
 
-**Still open.** The `n`-boundary jumps (63 in the coarse scan). MAJOR 3: 25 of 4000 random first-crack states have a
-damaged tangent 1e-4..1.7e-3 off FD (the 0.56-1.6 cases of review 3 were measured on the fragmented map and are not
-reproduced). The legacy v1 flow still cannot return biaxial compression past its cap (no compressive cone): those trials
+**Still open.** The `n`-boundary jumps (63 in the coarse scan) and the one-sided fold jumps on a ray (D4). MAJOR 3 is
+not reproduced on the r4 map (probe8: 0 of 4000 random first-crack states off FD by more than 1e-4, worst 8.3e-6); it
+was not root-caused separately, the 0.56-1.6 cases of review 3 were measured on the fragmented map. The legacy v1 flow still cannot return biaxial compression past its cap (no compressive cone): those trials
 refuse, and the #2617 refusal tests now use them. A confined (BeamFiber) single tension step of 6e-3 or more refuses. On
 the shipped defaults, virgin plane-strain trials of |strain| ~0.3 and more still fail on a set that is NOT robust to
 1e-12..1e-4 perturbations (none found up to 0.1), so the far-wild regime is still a coin flip.

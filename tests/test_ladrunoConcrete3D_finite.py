@@ -193,36 +193,25 @@ def _objectivity_err(scale):
 def test_finite_objectivity_through_damage():
     """sigma(QF) = Q sigma(F) Q^T through damage, EXACTLY (isotropic scalar damage, no co-rotating variable).
 
-    SCALE, derived from measurement (WP concrete3d-hang-diagnosis review M1). The Hencky strains of F and Q@F are
-    rotations of each other, equal to ~1e-16 (and the global solve reproduces them to its 1e-10 tolerance), and the
-    kernel is exactly objective for one and the same branch of the deterministic sub-incrementation map (kernel probe,
-    virgin state, scales 0.005..0.03: ||sigma(QF) - Q sigma(F) Q^T|| = 1e-15). The two solves can only differ if a 1e-12 change of
-    the strain changes the BRANCH: the piece count n = ceil(f_tr/0.3) (the trial sits >= 0.13 from an integer at these
-    scales, so no), or the failure ladder n -> 2n -> 4n. The ladder flickers because ONE piece of the chain -- the first
-    plastic tensile piece, sigma_xx ~ 2.8 = 0.92 ft, kappa_p ~ 0.05, f_tr = 0.088 -- fails its direct return in ~30 % of
-    1e-12 perturbations (Newton at the edge of convergence in the locally indefinite tension regime), so a chain of n pieces
-    escalates with probability ~ 1 - (1 - p)^n. Measured by perturbing the Hencky strain by 1e-12, 40 draws each:
-        scale 0.01 (n = 9):  ladder level differs in  0/40, stress changes <= 4e-9   -> branch-safe
-        scale 0.02 (n = 42): differs in 12/40, stress changes up to 4.6e-3
-        scale 0.03 (n = 64, saturated, subInfo 128): differs in 29/40, up to 5.0e-3
-        scale 0.10 (saturated, subInfo 256): F and QF land on kappa_p 58.7 vs 54.2, error 3.2e-2 (below)
-    Scale 0.01 is the largest of these with no observed flip and still damages (omega_t = 0.29); the earlier 0.03 passed
-    only by luck of the ladder level (0.04, 0.06 likewise; 0.05, 0.10 did not)."""
-    err, wt = _objectivity_err(0.01)
+    SCALE 0.03 (r4 rescue of #877, re-tightened after review). Before the tension-return fix the deterministic
+    sub-increment ladder flickered (the first plastic tensile piece failed its direct return in ~30 % of 1e-12
+    perturbations), so F and Q@F could land on different ladder levels: the PR head had dropped this to scale 0.01, where
+    no flip was observed. With the direct return fixed (no failures, no level flips; ADR-31 section 17) the two solves
+    take the same branch and agree to round-off at 0.03 (measured on the r4 build, see the saturated case below)."""
+    err, wt = _objectivity_err(0.03)
     assert wt > 0.01, f"objectivity test is vacuous — no damage developed (ωt={wt})"
     assert err < 1.0e-8, f"NOT objective through damage: ‖σ(QF)−Qσ(F)Qᵀ‖={err:.3e} (isotropic ⇒ should be exact)"
 
 
 def test_finite_objectivity_saturated_branch_jump_bound():
-    """Where the trial saturates the piece count (scale 0.10: f_tr/c ~ 5e3 >> nmax = 64) F and Q@F may land on different
-    ladder levels of the sub-incremented return -- two consistent integrations of the same increment, not a violation of
-    isotropy. The difference is BOUNDED by the branch jump of the deterministic map: measured 3.2e-2 in the normalized
-    stress (kappa_p 58.7 vs 54.2, omega_t 0.394 vs 0.375); the review measured 0.4-1.5 % of sigma_eff at n boundaries
-    (0.06-0.40 MPa on 15-41 MPa) and 1-2 % of sigma_eff with kappa_p jumps of 1.1-2.5 at ladder switches near first
-    cracking. Bound 6e-2 = 2x the measured stress difference."""
+    """Where the trial saturates the piece count (scale 0.10: f_tr/c ~ 5e3 >> nmax = 64). On the PR head F and Q@F
+    could land on different ladder levels there (measured 3.2e-2 in the normalized stress, kappa_p 58.7 vs 54.2), and
+    the bound was 6e-2. With the direct tension return fixed the ladder no longer escalates on round-off; the r4
+    review measured 2.7e-14 .. 1.3e-12 for the objectivity error over these scales, so the bound is 1e-10: tight
+    enough that a single ladder-level flip (>= 1e-3) fails it."""
     err, wt = _objectivity_err(0.10)
     assert wt > 0.01
-    assert err < 6.0e-2, f"branch jump exceeds the documented bound: {err:.3e}"
+    assert err < 1.0e-10, f"F and Q@F took different branches of the return map: {err:.3e}"
 
 
 # --------------------------------------------------------------------------- #
