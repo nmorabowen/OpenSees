@@ -164,6 +164,11 @@ static const double SQRT1_5 = 1.224744871391589;
 // value equals the MPa one at fc = 30 (every fixture unchanged).
 static const double F_TOL_HONEST = 3.1e-6;
 
+// Per-thread call counters (apeGmsh #2621 F2). The kernel self-check reads them to hold the invariant that the
+// damaged tangent runs NO return map (damagedTangent cannot reach returnMapTensor: it is declared after it).
+struct KernelCallCounters { unsigned long long returnMapTensor = 0; };
+inline KernelCallCounters& kernelCallCounters() { static thread_local KernelCallCounters c; return c; }
+
 // ---------------------------------------------------------------------------
 // Stress invariants. sig = {s00,s11,s22,s01,s12,s02} TENSOR components.
 // Returns xi (=I1/sqrt3), rho (=sqrt(2 J2)), theta (Lode angle in [0,pi/3]).
@@ -1175,8 +1180,13 @@ inline double lodeOfPrincipal(const double w[3], double e)
     return lodeR(th, e);
 }
 
+// Optional kappa outputs (apeGmsh #2621 F2, the sub-step chain rule): dspDkn[a] = d(sp_a)/d(kp_n),
+// dkpDw[b] = d(kp)/d(w_b), *dkpDkn = d(kp)/d(kp_n), from the SAME converged 4x4 IFT with the extra kp_n
+// right-hand side dR/dkp_n = (0, 0, 0, -1) (only R4 = kp - kp_n - ... carries kp_n). D is computed exactly as
+// before (the extra solve is separate), so the reported direct-return tangent is unchanged bit for bit.
 inline void principalJacobian(const double w[3], const PrincipalResult& pr, const Params& mp,
-                              bool hardening, double D[3][3])
+                              bool hardening, double D[3][3],
+                              double dspDkn[3] = nullptr, double dkpDw[3] = nullptr, double* dkpDkn = nullptr)
 {
     const double fc = mp.fc, m0 = mp.m0, K = bulkK(mp), G = shearG(mp);
     const double rho_tr = pr.rho_tr, rho = pr.rho, dlam = pr.dlam, r = pr.r, xi = pr.xi, kp = pr.kp;
@@ -1222,6 +1232,9 @@ inline void principalJacobian(const double w[3], const PrincipalResult& pr, cons
                 D[a][b] = ds_tr_a * scale + pr.s_tr[a] * dscale + (1.0 / SQRT3) * dxi;
             }
         }
+        // perfect-plastic map: kp is not a variable (kp = kp_n)
+        for (int a = 0; a < 3; ++a) { if (dspDkn) dspDkn[a] = 0.0; if (dkpDw) dkpDw[a] = 0.0; }
+        if (dkpDkn) *dkpDkn = 1.0;
     } else {
         // 4x4 J_u (xi,rho,dlam,kp); reuse the analytic entries from returnMapHardening.
         double sv[6] = {w[0], w[1], w[2], 0, 0, 0}, xitr, rhotr, thtr;
@@ -1314,6 +1327,21 @@ inline void principalJacobian(const double w[3], const PrincipalResult& pr, cons
                 const double ds_tr_a = (a == b ? 1.0 : 0.0) - 1.0 / 3.0;
                 D[a][b] = ds_tr_a * scale + pr.s_tr[a] * dscale + (1.0 / SQRT3) * dxi;
             }
+            if (dkpDw) dkpDw[b] = M[3][4] / M[3][3];
+        }
+        if (dspDkn || dkpDkn) {
+            // the kp_n column: Ju u = -(0, 0, 0, -1); s_tr and rho_tr do not depend on kp_n
+            double M[4][5];
+            for (int i = 0; i < 4; ++i) { for (int j = 0; j < 4; ++j) M[i][j] = Ju[i][j]; M[i][4] = (i == 3) ? 1.0 : 0.0; }
+            for (int c = 0; c < 4; ++c) {
+                int piv = c; for (int rr = c + 1; rr < 4; ++rr) if (std::fabs(M[rr][c]) > std::fabs(M[piv][c])) piv = rr;
+                for (int j = 0; j < 5; ++j) { double t = M[c][j]; M[c][j] = M[piv][j]; M[piv][j] = t; }
+                for (int rr = 0; rr < 4; ++rr) if (rr != c) { double f = M[rr][c] / M[c][c]; for (int j = c; j < 5; ++j) M[rr][j] -= f * M[c][j]; }
+            }
+            const double dxi = M[0][4] / M[0][0], drho = M[1][4] / M[1][1];
+            const double scale_k = (rhotr > 0.0) ? drho / rhotr : 0.0;
+            if (dspDkn) for (int a = 0; a < 3; ++a) dspDkn[a] = pr.s_tr[a] * scale_k + (1.0 / SQRT3) * dxi;
+            if (dkpDkn) *dkpDkn = M[3][4] / M[3][3];
         }
     }
 }
@@ -1327,7 +1355,11 @@ inline void principalJacobian(const double w[3], const PrincipalResult& pr, cons
 // hydrostatic trial is regular. Every row equal => zero deviatoric stiffness (the stress is pinned to the
 // axis) — the rank-deficient apex tangent handoff §6 listed as owed. Returns false on a degenerate state.
 // ---------------------------------------------------------------------------
-inline bool vertexPrincipalJacobian(const double w[3], const PrincipalResult& pr, const Params& mp, double D[3][3])
+// Optional kappa outputs (F2), the same IFT: F_kpn = f_k (kp = kp_n + eq/xh => dkp/dkp_n|explicit = 1), so
+//   dsigV/dkp_n = -f_k / F_s,  dkp/dkp_n = 1 + kp_s dsigV/dkp_n,
+//   dkp/dw_b = kp_s dsigV/dw_b + kp_st/3 + s_tr_b/(4 G^2 eq xh).
+inline bool vertexPrincipalJacobian(const double w[3], const PrincipalResult& pr, const Params& mp, double D[3][3],
+                                    double dspDkn[3] = nullptr, double dkpDw[3] = nullptr, double* dkpDkn = nullptr)
 {
     const double fc = mp.fc, m0 = mp.m0, K = bulkK(mp), G = shearG(mp);
     const double sigV = pr.xi / SQRT3, kp = pr.kp;
@@ -1352,8 +1384,88 @@ inline bool vertexPrincipalJacobian(const double w[3], const PrincipalResult& pr
         const double dev_b = f_k * pr.s_tr[b] / (4.0 * G * G * eq * xh);         // F_rhotr * s_b/rho_tr
         const double dsdw = -(f_k * kp_st / 3.0 + dev_b) / F_s;
         for (int a = 0; a < 3; ++a) D[a][b] = dsdw;
+        if (dkpDw) dkpDw[b] = kp_s * dsdw + kp_st / 3.0 + pr.s_tr[b] / (4.0 * G * G * eq * xh);
     }
+    const double dsdk = -f_k / F_s;
+    if (dspDkn) for (int a = 0; a < 3; ++a) dspDkn[a] = dsdk;
+    if (dkpDkn) *dkpDkn = 1.0 + kp_s * dsdk;
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// Spectral lift of a principal Jacobian D[a][b] = d(sp_a)/d(w_b) to the 4th-order d(sigma)/d(sigma_trial)
+// (eigenprojection part + the spin part, de Souza Neto Box A.6). Shared by consistentTangent and pieceJacobian.
+// ---------------------------------------------------------------------------
+inline void principalLift(const double w[3], const double V[3][3], const PrincipalResult& pr, const Params& mp,
+                          const double D[3][3], double Dt[3][3][3][3])
+{
+    // eigenprojections E_a = e_a (x) e_a (rank-1)
+    double E[3][3][3];
+    for (int a = 0; a < 3; ++a) for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) E[a][i][j] = V[i][a] * V[j][a];
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) for (int k = 0; k < 3; ++k) for (int l = 0; l < 3; ++l) {
+        double val = 0.0;
+        for (int a = 0; a < 3; ++a) for (int b = 0; b < 3; ++b) val += D[a][b] * E[a][i][j] * E[b][k][l];
+        Dt[i][j][k][l] = val;
+    }
+    // spin part: sum_{a!=b} gamma_ab * 0.5*(E_a_ik E_b_jl + E_a_il E_b_jk)
+    for (int a = 0; a < 3; ++a) for (int b = 0; b < 3; ++b) {
+        if (a == b) continue;
+        double dw = w[a] - w[b];
+        double gamma;
+        if (std::fabs(dw) > 1.0e-9 * (mp.fc + 1.0)) gamma = (pr.sp[a] - pr.sp[b]) / dw;
+        else gamma = D[a][a] - D[a][b];          // l'Hopital limit (repeated eigenvalues)
+        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) for (int k = 0; k < 3; ++k) for (int l = 0; l < 3; ++l)
+            Dt[i][j][k][l] += gamma * 0.5 * (E[a][i][k] * E[b][j][l] + E[a][i][l] * E[b][j][k]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Partials of ONE converged direct return (apeGmsh #2621 F2: the sub-step chain rule of Perez-Foguet,
+// Rodriguez-Ferran & Huerta, CMAME 2001). All in the 6x6 tensor-Voigt convention of consistentTangent (shear
+// COLUMNS doubled, so a matrix times a tensor-component 6-vector gives the tensor-component response):
+//   A = d sig / d sig_tr (6x6; consistentTangent's Dtan6 == A * elasticC up to rounding)
+//   b = d sig / d kp_n   (6)
+//   a = d kp / d sig_tr  (6, a row: d kp = sum_A a[A] d sig_tr[A])
+//   e = d kp / d kp_n
+// An elastic piece is the identity (A = I, b = a = 0, e = 1); so is a perfect-plastic apex or a degenerate vertex
+// Jacobian, where consistentTangent reports the elastic surrogate.
+// ---------------------------------------------------------------------------
+struct PieceJac { double A[6][6]; double b[6]; double a[6]; double e; };
+
+inline void pieceJacobian(const double w[3], const double V[3][3], const PrincipalResult& pr, const Params& mp,
+                          bool hardening, PieceJac& pj)
+{
+    static const double W6[6] = {1.0, 1.0, 1.0, 2.0, 2.0, 2.0};
+    for (int i = 0; i < 6; ++i) { pj.b[i] = 0.0; pj.a[i] = 0.0; for (int j = 0; j < 6; ++j) pj.A[i][j] = (i == j) ? 1.0 : 0.0; }
+    pj.e = 1.0;
+    if (!pr.plastic || (pr.apex && !hardening)) return;
+    double D[3][3], dspDkn[3], dkpDw[3], dkpDkn = 1.0;
+    if (pr.apex) {
+        if (!vertexPrincipalJacobian(w, pr, mp, D, dspDkn, dkpDw, &dkpDkn)) return;
+    } else {
+        principalJacobian(w, pr, mp, hardening, D, dspDkn, dkpDw, &dkpDkn);
+    }
+    double Dt[3][3][3][3];
+    principalLift(w, V, pr, mp, D, Dt);
+    const int I[6][2] = {{0,0},{1,1},{2,2},{0,1},{1,2},{0,2}};
+    for (int A = 0; A < 6; ++A) {
+        const int i = I[A][0], j = I[A][1];
+        for (int B = 0; B < 6; ++B) {
+            const int m = I[B][0], n = I[B][1];
+            double v = 0.5 * (Dt[i][j][m][n] + Dt[j][i][m][n]);
+            if (B >= 3) v += 0.5 * (Dt[i][j][n][m] + Dt[j][i][n][m]);
+            pj.A[A][B] = v;
+        }
+        double bv = 0.0, av = 0.0;
+        for (int c = 0; c < 3; ++c) {
+            const double Ec = V[i][c] * V[j][c];
+            bv += dspDkn[c] * Ec;
+            av += dkpDw[c] * Ec;
+        }
+        pj.b[A] = bv;
+        pj.a[A] = W6[A] * av;
+    }
+    pj.e = dkpDkn;
 }
 
 // ---------------------------------------------------------------------------
@@ -1378,9 +1490,6 @@ inline void consistentTangent(const double sig_tr[6], const double w[3], const d
     // Jacobian (vertexPrincipalJacobian: rank-1, purely volumetric, zero deviatoric stiffness); the
     // perfect-plastic apex (returnMapPrincipal) keeps the elastic surrogate.
     if (!pr.plastic || !pr.converged || (pr.apex && !hardening)) { elasticC(mp, Dtan6); return; }
-    // eigenprojections E_a = e_a (x) e_a (rank-1)
-    double E[3][3][3];
-    for (int a = 0; a < 3; ++a) for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) E[a][i][j] = V[i][a] * V[j][a];
     double D[3][3];
     if (pr.apex) {
         if (!vertexPrincipalJacobian(w, pr, mp, D)) { elasticC(mp, Dtan6); return; }
@@ -1390,21 +1499,7 @@ inline void consistentTangent(const double sig_tr[6], const double w[3], const d
 
     // dsigma/dsig_tr as a 4th-order tensor 𝔻_ijkl
     double Dt[3][3][3][3];
-    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) for (int k = 0; k < 3; ++k) for (int l = 0; l < 3; ++l) {
-        double val = 0.0;
-        for (int a = 0; a < 3; ++a) for (int b = 0; b < 3; ++b) val += D[a][b] * E[a][i][j] * E[b][k][l];
-        Dt[i][j][k][l] = val;
-    }
-    // spin part: sum_{a!=b} gamma_ab * 0.5*(E_a_ik E_b_jl + E_a_il E_b_jk)
-    for (int a = 0; a < 3; ++a) for (int b = 0; b < 3; ++b) {
-        if (a == b) continue;
-        double dw = w[a] - w[b];
-        double gamma;
-        if (std::fabs(dw) > 1.0e-9 * (mp.fc + 1.0)) gamma = (pr.sp[a] - pr.sp[b]) / dw;
-        else gamma = D[a][a] - D[a][b];          // l'Hopital limit (repeated eigenvalues)
-        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) for (int k = 0; k < 3; ++k) for (int l = 0; l < 3; ++l)
-            Dt[i][j][k][l] += gamma * 0.5 * (E[a][i][k] * E[b][j][l] + E[a][i][l] * E[b][j][k]);
-    }
+    principalLift(w, V, pr, mp, D, Dt);
 
     // contract with the elastic operator: dsigma/deps_ij = 𝔻_ijkl C_klmn ... but C is
     // isotropic so 𝔻:C in tensor form. Build C as a 4th-order tensor (lam dij dkl + 2G I_sym).
@@ -1478,11 +1573,9 @@ inline void plasticStrain6(const double sig_eff[6], const double eps[6], const P
     for (int k = 3; k < 6; ++k) epl[k] = eps[k] - sig_eff[k] * (1.0 + nu) / E;  // eps_ij = sig_ij/(2G)
 }
 
-// forward decl (damagedTangent's d beta_c/dε does a composite micro-FD through the return map, and
-// returnMapTensor is defined further down)
-inline int returnMapTensor(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
-                           bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
-                           bool doTangent, int* subInfo = nullptr);
+// NB (apeGmsh #2621 F2): returnMapTensor is deliberately NOT forward-declared here. damagedTangent below used to
+// micro-FD the whole return map (up to 36 maps per tangent, across sub-step piece-count changes); it is now
+// analytic, and the declaration order makes a return-map call from it a compile error.
 
 // CDPM2 beta_c (Eq.50, P2f): the factor scaling the PLASTIC-strain part of the compressive-damage
 // driver kappa_dc1 (Eq.48). beta_c = ft*qh2(kp)*sqrt(2/3) / (rho_bar*sqrt(1+2*Df^2)), rho_bar = sqrt(2 J2)
@@ -1699,6 +1792,105 @@ inline void dscalarDsig(int which, const double sig6[6], const Params& mp, doubl
 }
 
 // ---------------------------------------------------------------------------
+// Closed-form gradients of the two proj damage weights (apeGmsh #2621 F2; they replace composite micro-FDs
+// through the return map). For a weight q(sig_bar, depl), gs[k] = dq/d sig_bar6[k] with depl held and
+// gd[k] = dq/d depl6[k] with sig_bar held, both per Voigt component (a shear slot moves both symmetric entries),
+// so dq/dε = Ceff^T gs + (I - C^-1 Ceff)^T gd. Zero wherever the weight is locally constant.
+// ---------------------------------------------------------------------------
+// PV20 tcTemper proj: q = ||Phi P Phi||_F / ||M||_F (compressiveDamageWeight). In the global frame
+// ||Phi P Phi||^2 = tr(S M S M), S = sum_a tcPhi(w_a)^2 E_a, an isotropic tensor function of sig_bar, so
+// d/d sig_bar is its Box A.6 derivative (isotropicTangent, l'Hopital at repeated eigenvalues) and d/dM = 2 S M S.
+inline void compressiveDamageWeightGrad(const Params& mp, const double depl6[6], const double w[3],
+                                        const double V[3][3], double gs[6], double gd[6])
+{
+    static const double W6[6] = {1.0, 1.0, 1.0, 2.0, 2.0, 2.0};
+    for (int k = 0; k < 6; ++k) { gs[k] = 0.0; gd[k] = 0.0; }
+    if (mp.tcTemper != 2) return;
+    double mx = w[0]; for (int a = 1; a < 3; ++a) if (w[a] > mx) mx = w[a];
+    if (mx <= TC_DEAD * mp.ft) return;                       // q == 1 on a neighbourhood
+    double M[3][3]; voigtToMat(depl6, M);
+    double n2 = 0.0;
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) n2 += M[i][j] * M[i][j];
+    if (n2 <= 1.0e-300) return;                              // q == 1 (no plastic increment)
+    const double band = (TC_BAND - TC_DEAD) * mp.ft;
+    double psi[3], dpsi[3];
+    for (int a = 0; a < 3; ++a) {
+        const double v = 1.0 - (w[a] - TC_DEAD * mp.ft) / band;
+        const double phi = tcPhi(mp, w[a]);
+        const double dphi = (v > 0.0 && v < 1.0) ? -1.0 / band : 0.0;
+        psi[a] = phi * phi; dpsi[a] = 2.0 * phi * dphi;
+    }
+    double S[3][3], SM[3][3], MSM[3][3], SMS[3][3];
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) {
+        double v = 0.0; for (int a = 0; a < 3; ++a) v += V[i][a] * psi[a] * V[j][a];
+        S[i][j] = v;
+    }
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) {
+        double v = 0.0; for (int k = 0; k < 3; ++k) v += S[i][k] * M[k][j];
+        SM[i][j] = v;
+    }
+    double p2 = 0.0;
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) p2 += SM[i][j] * SM[j][i];
+    if (!(p2 > 0.0)) return;                                 // q == 0 (every direction a crack)
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) {
+        double v = 0.0, u = 0.0;
+        for (int k = 0; k < 3; ++k) { v += M[i][k] * SM[k][j]; u += SM[i][k] * S[k][j]; }
+        MSM[i][j] = v; SMS[i][j] = u;
+    }
+    const double q = std::sqrt(p2) / std::sqrt(n2);
+    double MSM6[6], SMS6[6]; matToVoigt(MSM, MSM6); matToVoigt(SMS, SMS6);
+    for (int k = 0; k < 6; ++k) gd[k] = q * W6[k] * (SMS6[k] / p2 - depl6[k] / n2);
+    double Dpsi[6][6]; isotropicTangent(w, V, psi, dpsi, Dpsi);
+    for (int k = 0; k < 6; ++k) {
+        double t = 0.0; for (int A = 0; A < 6; ++A) t += W6[A] * Dpsi[A][k] * MSM6[A];
+        gs[k] = q * t / p2;
+    }
+}
+
+// P2h ctTemper proj: q = sqrt(sum_{a: w_a > 1e-6 ft} P_aa^2) / ||M||_F, P = V^T M V (tensileDamageWeight). d/dM is
+// sum_a 2 P_aa E_a; d/d sig_bar goes through the eigenvectors, d P_aa = 2 sum_{c != a} P_ca (v_c . dsig v_a) /
+// (w_a - w_c). A (numerically) repeated pair is skipped: q itself depends on the eigenbasis chosen there.
+inline void tensileDamageWeightGrad(const Params& mp, const double depl6[6], const double w[3],
+                                    const double V[3][3], double gs[6], double gd[6])
+{
+    static const double W6[6] = {1.0, 1.0, 1.0, 2.0, 2.0, 2.0};
+    for (int k = 0; k < 6; ++k) { gs[k] = 0.0; gd[k] = 0.0; }
+    if (mp.ctTemper != 2) return;
+    double M[3][3]; voigtToMat(depl6, M);
+    double n2 = 0.0;
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) n2 += M[i][j] * M[i][j];
+    if (n2 <= 1.0e-300) return;                              // q == 1
+    const double floor = 1.0e-6 * mp.ft;
+    double P[3][3];
+    for (int a = 0; a < 3; ++a) for (int b = 0; b < 3; ++b) {
+        double d = 0.0;
+        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) d += V[i][a] * M[i][j] * V[j][b];
+        P[a][b] = d;
+    }
+    double tens = 0.0;
+    for (int a = 0; a < 3; ++a) if (w[a] > floor) tens += P[a][a] * P[a][a];
+    if (!(tens > 0.0)) return;
+    const double q = std::sqrt(tens) / std::sqrt(n2);
+    const int I[6][2] = {{0,0},{1,1},{2,2},{0,1},{1,2},{0,2}};
+    const double tol = 1.0e-9 * (mp.fc + 1.0);
+    for (int k = 0; k < 6; ++k) {
+        const int i = I[k][0], j = I[k][1];
+        double R = 0.0, dt = 0.0;
+        for (int a = 0; a < 3; ++a) {
+            if (!(w[a] > floor)) continue;
+            R += 2.0 * P[a][a] * V[i][a] * V[j][a];
+            for (int c = 0; c < 3; ++c) {
+                if (c == a || std::fabs(w[a] - w[c]) <= tol) continue;
+                const double sym = (k < 3) ? V[i][c] * V[i][a] : V[i][c] * V[j][a] + V[j][c] * V[i][a];
+                dt += 2.0 * P[a][a] * 2.0 * P[c][a] * sym / (w[a] - w[c]);
+            }
+        }
+        gd[k] = q * W6[k] * (R / (2.0 * tens) - depl6[k] / n2);
+        gs[k] = q * dt / (2.0 * tens);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // P3b ANALYTIC dual-projector DAMAGED consistent tangent (mirrors the oracle
 // damaged_tangent_analytic VERBATIM):
 //     C = D_dam : C_eff  -  sig_t (x) dω_t/dε  -  sig_c (x) dω_c/dε        (ADR §4.3 MAJOR)
@@ -1713,8 +1905,12 @@ inline void dscalarDsig(int which, const double sig6[6], const Params& mp, doubl
 // the [1,1,1,2,2,2] double-contraction weight W6 BEFORE Ceff^T; the per-component micro-FD scalar
 // grads (det/dxs/dac) do NOT (already per-component).
 // ---------------------------------------------------------------------------
+// apeGmsh #2621 F2: the three composite micro-FDs THROUGH the return map (d beta_c/dε, the ctTemper and tcTemper
+// proj weights) are replaced by closed forms chained through Ceff and dkpDeps = d kp/dε (the return map's own
+// kappa row, sub-step chain rule included). damagedTangent runs no return map at all.
 inline void damagedTangent(const Params& mp, const State& in, const double sig_eff[6],
-                           const double eps_new[6], double kp_new, const double Ceff[6][6], double D6[6][6])
+                           const double eps_new[6], double kp_new, const double Ceff[6][6],
+                           const double dkpDeps[6], double D6[6][6])
 {
     static const double W6[6] = {1.0, 1.0, 1.0, 2.0, 2.0, 2.0};
     const double eps0   = mp.ft / mp.E;
@@ -1847,15 +2043,28 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
         else for (int i = 0; i < 6; ++i) dDc_deps[i] = 0.0;
     }
 
-    // ||Deps_p|| gradient: depl_deps = I - C^-1 Ceff ; dnorm/dε = depl_deps^T (W6 . depl) / dnorm
-    double dnorm_deps[6];
-    if (dnorm > 1.0e-14) {
-        double Cel[6][6], Cinv[6][6], CinvCeff[6][6];
+    // d(depl)/dε = I - C^-1 Ceff (shared by the ||Deps_p|| gradient and the proj weights below)
+    double CinvCeff[6][6];
+    {
+        double Cel[6][6], Cinv[6][6];
         elasticC(mp, Cel); invert6(Cel, Cinv);
         for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
             double v = 0.0; for (int k = 0; k < 6; ++k) v += Cinv[i][k] * Ceff[k][j];
             CinvCeff[i][j] = v;
         }
+    }
+    // (d depl/dε)^T g  (d(scalar of depl)/dε for a per-Voigt-component gradient g)
+    auto DeplT = [&](const double g[6], double out[6]) {
+        for (int k = 0; k < 6; ++k) {
+            double v = 0.0;
+            for (int i = 0; i < 6; ++i) v += (((i == k) ? 1.0 : 0.0) - CinvCeff[i][k]) * g[i];
+            out[k] = v;
+        }
+    };
+
+    // ||Deps_p|| gradient: depl_deps = I - C^-1 Ceff ; dnorm/dε = depl_deps^T (W6 . depl) / dnorm
+    double dnorm_deps[6];
+    if (dnorm > 1.0e-14) {
         double x[6]; for (int i = 0; i < 6; ++i) x[i] = W6[i] * depl[i];
         for (int k = 0; k < 6; ++k) {
             double v = 0.0;
@@ -1867,90 +2076,54 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
         }
     } else for (int i = 0; i < 6; ++i) dnorm_deps[i] = 0.0;
 
-    // d(beta_c)/dε (P2f): beta_c depends on BOTH rho_bar(sig_bar) AND qh2(kp), so a single composite
-    // micro-FD THROUGH the return map captures the full gradient (mirror of the oracle; same step as the
-    // numerical reference so the FD truncation correlates). Only needed under compressive loading.
+    // d(beta_c)/dε (P2f), CLOSED FORM (F2): beta_c = ft qh2(kp) sqrt(2/3) / (rho_bar sqrt(1+2Df^2)), clamped to [0,1]
+    // and 1 on the hydrostatic axis (betaC). rho_bar = ||dev sig_bar|| => d rho_bar/d sig6[k] = W6[k] s6[k]/rho_bar per
+    // Voigt component; qh2(kp) chains through dkpDeps. A clamped beta_c has a zero gradient. Only needed under
+    // compressive loading.
     double dbc_deps[6] = {0,0,0,0,0,0};
     const bool needBc = cdc ? (cAdv && eqcNew > eps0) : loading;
     if (needBc && bc > 0.0) {
-        double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = eps_new[i] - in.eps[i];
-        const double base = mp.fc / mp.E;
-        for (int j = 0; j < 6; ++j) {
-            const double hh = 1.0e-6 * (std::fabs(deps[j]) + base);
-            double dp[6], dm[6]; for (int i = 0; i < 6; ++i) { dp[i] = deps[i]; dm[i] = deps[i]; }
-            dp[j] += hh; dm[j] -= hh;
-            double sbp[6], sbm[6], kpp, kpm, dum[6][6];
-            returnMapTensor(mp, in.sigEff, dp, in.kp, true, sbp, kpp, dum, false);
-            returnMapTensor(mp, in.sigEff, dm, in.kp, true, sbm, kpm, dum, false);
-            double Ap[3][3], wp[3], Vp[3][3], Am[3][3], wm[3], Vm[3][3];
-            voigtToMat(sbp, Ap); eig3sym(Ap, wp, Vp);
-            voigtToMat(sbm, Am); eig3sym(Am, wm, Vm);
-            dbc_deps[j] = (betaC(wp, kpp, mp) - betaC(wm, kpm, mp)) / (2.0 * hh);
+        double xi_b, rb, th_b;
+        { const double svb[6] = {w[0], w[1], w[2], 0.0, 0.0, 0.0}; invariants(svb, xi_b, rb, th_b); }
+        if (rb > 1.0e-12) {
+            const double q2 = qh2Of(kp_new, mp.Hp);
+            const double raw = mp.ft * q2 * std::sqrt(2.0 / 3.0) / (rb * std::sqrt(1.0 + 2.0 * mp.Df * mp.Df));
+            if (raw < 1.0) {
+                const double pm = (sig_eff[0] + sig_eff[1] + sig_eff[2]) / 3.0;
+                double g[6], t[6];
+                for (int k = 0; k < 6; ++k) g[k] = -raw / (rb * rb) * W6[k] * (sig_eff[k] - (k < 3 ? pm : 0.0));
+                CeffT(g, t);
+                const double dlq2 = dqh2OfdKp(kp_new, mp.Hp) / q2;
+                for (int k = 0; k < 6; ++k) dbc_deps[k] = t[k] + raw * dlq2 * dkpDeps[k];
+            }
         }
     }
 
     // d(w_t)/dε for the ctTemper modes (P2h): none -> 0 (unchanged tangent); alphat -> -d(alpha_c)/dε
-    // (analytic, reuses dac_deps); proj -> composite micro-FD through the return map (w_t = the tensile-
-    // stress-projected plastic-strain fraction). Only under loading.
+    // (analytic, reuses dac_deps); proj -> the closed-form weight gradient (F2) chained through Ceff (the stress
+    // frame) and I - C^-1 Ceff (the plastic-strain increment). Only under loading.
     double dwtw_deps[6] = {0,0,0,0,0,0};
     const bool tAdv = bilin ? (det_raw > 0.0) : loading;         // the tensile history advances this step
     if (tAdv && mp.ctTemper == 1) {
         for (int i = 0; i < 6; ++i) dwtw_deps[i] = -dac_deps[i];
     } else if (tAdv && mp.ctTemper == 2) {
-        double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = eps_new[i] - in.eps[i];
-        const double base = mp.fc / mp.E;
-        double epln[6]; plasticStrain6(in.sigEff, in.eps, mp, epln);
-        for (int j = 0; j < 6; ++j) {
-            const double hh = 1.0e-6 * (std::fabs(deps[j]) + base);
-            double dp[6], dm[6]; for (int i = 0; i < 6; ++i) { dp[i] = deps[i]; dm[i] = deps[i]; }
-            dp[j] += hh; dm[j] -= hh;
-            double sbp[6], sbm[6], kpp, kpm, dum[6][6];
-            returnMapTensor(mp, in.sigEff, dp, in.kp, true, sbp, kpp, dum, false);
-            returnMapTensor(mp, in.sigEff, dm, in.kp, true, sbm, kpm, dum, false);
-            double Ap[3][3], wp[3], Vp[3][3], Am[3][3], wm[3], Vm[3][3];
-            voigtToMat(sbp, Ap); eig3sym(Ap, wp, Vp);
-            voigtToMat(sbm, Am); eig3sym(Am, wm, Vm);
-            double eplp[6], eplm[6], dplp[6], dplm[6], epsp[6], epsm[6];
-            for (int i = 0; i < 6; ++i) { epsp[i] = in.eps[i] + dp[i]; epsm[i] = in.eps[i] + dm[i]; }
-            plasticStrain6(sbp, epsp, mp, eplp);
-            plasticStrain6(sbm, epsm, mp, eplm);
-            for (int i = 0; i < 6; ++i) { dplp[i] = eplp[i] - epln[i]; dplm[i] = eplm[i] - epln[i]; }
-            const double wpv = tensileDamageWeight(mp, alphaCompression(wp), dplp, wp, Vp);
-            const double wmv = tensileDamageWeight(mp, alphaCompression(wm), dplm, wm, Vm);
-            dwtw_deps[j] = (wpv - wmv) / (2.0 * hh);
-        }
+        double gs[6], gd[6], ts[6], td[6];
+        tensileDamageWeightGrad(mp, depl, w, V, gs, gd);
+        CeffT(gs, ts); DeplT(gd, td);
+        for (int i = 0; i < 6; ++i) dwtw_deps[i] = ts[i] + td[i];
     }
 
-    // PV20 tcTemper proj: d(dnorm w_c)/dε (w_c by composite micro-FD through the return map, as the ctTemper proj
-    // weight) and d(eps_tilde_c)/dε. none (or no tensile effective principal) -> dnc_deps == dnorm_deps,
-    // detc_deps == det_deps (byte-identical).
+    // PV20 tcTemper proj: d(dnorm w_c)/dε (the closed-form weight gradient, F2) and d(eps_tilde_c)/dε. none (or no
+    // tensile effective principal) -> dnc_deps == dnorm_deps, detc_deps == det_deps (byte-identical).
     double dnc_deps[6], detc_deps[6];
     for (int i = 0; i < 6; ++i) { dnc_deps[i] = dnorm_deps[i]; detc_deps[i] = det_deps[i]; }
     {
         double mxw = w[0]; for (int a = 1; a < 3; ++a) if (w[a] > mxw) mxw = w[a];
         if (mp.tcTemper == 2 && mxw > TC_DEAD * mp.ft) {
-            double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = eps_new[i] - in.eps[i];
-            const double base = mp.fc / mp.E;
-            double epln[6]; plasticStrain6(in.sigEff, in.eps, mp, epln);
-            double dwcw[6];
-            for (int j = 0; j < 6; ++j) {
-                const double hh = 1.0e-6 * (std::fabs(deps[j]) + base);
-                double dp[6], dm[6]; for (int i = 0; i < 6; ++i) { dp[i] = deps[i]; dm[i] = deps[i]; }
-                dp[j] += hh; dm[j] -= hh;
-                double sbp[6], sbm[6], kpp, kpm, dum[6][6];
-                returnMapTensor(mp, in.sigEff, dp, in.kp, true, sbp, kpp, dum, false);
-                returnMapTensor(mp, in.sigEff, dm, in.kp, true, sbm, kpm, dum, false);
-                double Ap[3][3], wp[3], Vp[3][3], Am[3][3], wm[3], Vm[3][3];
-                voigtToMat(sbp, Ap); eig3sym(Ap, wp, Vp);
-                voigtToMat(sbm, Am); eig3sym(Am, wm, Vm);
-                double eplp[6], eplm[6], dplp[6], dplm[6], epsp[6], epsm[6];
-                for (int i = 0; i < 6; ++i) { epsp[i] = in.eps[i] + dp[i]; epsm[i] = in.eps[i] + dm[i]; }
-                plasticStrain6(sbp, epsp, mp, eplp);
-                plasticStrain6(sbm, epsm, mp, eplm);
-                for (int i = 0; i < 6; ++i) { dplp[i] = eplp[i] - epln[i]; dplm[i] = eplm[i] - epln[i]; }
-                dwcw[j] = (compressiveDamageWeight(mp, dplp, wp, Vp) - compressiveDamageWeight(mp, dplm, wm, Vm))
-                        / (2.0 * hh);
-            }
+            double gs[6], gd[6], ts[6], td[6], dwcw[6];
+            compressiveDamageWeightGrad(mp, depl, w, V, gs, gd);
+            CeffT(gs, ts); DeplT(gd, td);
+            for (int i = 0; i < 6; ++i) dwcw[i] = ts[i] + td[i];
             for (int i = 0; i < 6; ++i) dnc_deps[i] = wcw * dnorm_deps[i] + dnorm * dwcw[i];
             double g_etc[6]; dscalarDsig(3, sig_eff, mp, g_etc); CeffT(g_etc, detc_deps);
         }
@@ -2054,31 +2227,67 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
 // ---------------------------------------------------------------------------
 inline int returnMapTensor1(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
                             bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
-                            bool doTangent);
+                            bool doTangent, PieceJac* pj = nullptr);
 
 // Tensor return with OOFEM-style SUB-INCREMENTATION (B1; mirror of the oracle return_map_tensor). The direct
 // return first; if it fails and mp.maxSubIncr > 0 (hardening map), the strain increment is halved and the
 // sub-increments integrated in sequence from the committed state (doubling back after each success) down to
-// 2^-maxSubIncr. The reported tangent is the LAST sub-increment's consistent tangent (an approximation of the
-// sub-stepped algorithmic tangent). maxSubIncr = 0 => byte-identical to the direct return.
+// 2^-maxSubIncr. maxSubIncr = 0 => byte-identical to the direct return.
+// TANGENT (apeGmsh #2621 F2): the sub-stepped map is a composition of N converged pieces, so its algorithmic
+// tangent is the chain rule over the pieces (Perez-Foguet, Rodriguez-Ferran & Huerta, CMAME 2001). With
+// J = d sig/dε and K = d kp/dε after k pieces (J_0 = K_0 = 0) and piece k of fraction f_k (its trial stress
+// sig_{k-1} + f_k C:Δε, so d sig_tr/dε = J_{k-1} + f_k C):
+//     J_k = A_k (J_{k-1} + f_k C) + b_k (x) K_{k-1},     K_k = a_k . (J_{k-1} + f_k C) + e_k K_{k-1}
+// (pieceJacobian gives A_k, b_k, a_k, e_k). Dtan6 = J_N. A direct return (one piece) keeps consistentTangent's
+// Dtan6 bit for bit. dkpDeps (optional, only with doTangent) = K_N = d kp/dε, which the damaged tangent needs
+// for beta_c's qh2(kp). Until F2 the LAST piece's tangent was reported, O(1) wrong once N >= 2.
 inline int returnMapTensor(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
                            bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
-                           bool doTangent, int* subInfo)
+                           bool doTangent, int* subInfo = nullptr, double dkpDeps[6] = nullptr)
 {
+    ++kernelCallCounters().returnMapTensor;
+    const bool wantK = doTangent && dkpDeps != nullptr;
+    if (wantK) for (int i = 0; i < 6; ++i) dkpDeps[i] = 0.0;
+    double Cel[6][6];
+    elasticC(mp, Cel);
     // subInfo (diagnostic, optional): 0 = direct return, n >= 2 = sub-incremented in n pieces, -1 = FINAL failure
-    const int st0 = returnMapTensor1(mp, sig_n, deps, kp_n, hardening, sig_new, kp_new, Dtan6, doTangent);
+    PieceJac pj0;
+    const int st0 = returnMapTensor1(mp, sig_n, deps, kp_n, hardening, sig_new, kp_new, Dtan6, doTangent,
+                                     wantK ? &pj0 : nullptr);
     if (subInfo) *subInfo = (st0 == 0) ? 0 : -1;
-    if (st0 == 0 || mp.maxSubIncr <= 0 || !hardening) return st0;
+    if (st0 == 0) {
+        if (wantK) for (int j = 0; j < 6; ++j) { double v = 0.0; for (int i = 0; i < 6; ++i) v += pj0.a[i] * Cel[i][j]; dkpDeps[j] = v; }
+        return 0;
+    }
+    if (mp.maxSubIncr <= 0 || !hardening) return st0;
     int pieces = 0;
     double s[6], k = kp_n, done = 0.0, frac = 0.5;
     const double floorFrac = std::ldexp(1.0, -mp.maxSubIncr);
     for (int i = 0; i < 6; ++i) s[i] = sig_n[i];
     double sn[6], kn, Dt[6][6];
+    double J[6][6], Kr[6];
+    for (int i = 0; i < 6; ++i) { Kr[i] = 0.0; for (int j = 0; j < 6; ++j) J[i][j] = 0.0; }
     while (done < 1.0) {
         const double f = (frac < 1.0 - done) ? frac : 1.0 - done;
         double d[6]; for (int i = 0; i < 6; ++i) d[i] = deps[i] * f;
-        const int st = returnMapTensor1(mp, s, d, k, true, sn, kn, Dt, doTangent && (done + f >= 1.0));
+        PieceJac pj;
+        const int st = returnMapTensor1(mp, s, d, k, true, sn, kn, Dt, false, doTangent ? &pj : nullptr);
         if (st == 0) {
+            if (doTangent) {
+                double T[6][6], Jn[6][6], Kn[6];
+                for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) T[i][j] = J[i][j] + f * Cel[i][j];
+                for (int j = 0; j < 6; ++j) {
+                    double kv = pj.e * Kr[j];
+                    for (int i = 0; i < 6; ++i) kv += pj.a[i] * T[i][j];
+                    Kn[j] = kv;
+                    for (int i = 0; i < 6; ++i) {
+                        double v = pj.b[i] * Kr[j];
+                        for (int m = 0; m < 6; ++m) v += pj.A[i][m] * T[m][j];
+                        Jn[i][j] = v;
+                    }
+                }
+                for (int i = 0; i < 6; ++i) { Kr[i] = Kn[i]; for (int j = 0; j < 6; ++j) J[i][j] = Jn[i][j]; }
+            }
             for (int i = 0; i < 6; ++i) s[i] = sn[i];
             k = kn; done += f; ++pieces;
             frac = (2.0 * frac < 1.0) ? 2.0 * frac : 1.0;
@@ -2089,14 +2298,15 @@ inline int returnMapTensor(const Params& mp, const double sig_n[6], const double
     }
     for (int i = 0; i < 6; ++i) sig_new[i] = s[i];
     kp_new = k;
-    if (doTangent) for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Dtan6[i][j] = Dt[i][j];
+    if (doTangent) for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Dtan6[i][j] = J[i][j];
+    if (wantK) for (int i = 0; i < 6; ++i) dkpDeps[i] = Kr[i];
     if (subInfo) *subInfo = pieces;
     return 0;
 }
 
 inline int returnMapTensor1(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
                             bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
-                            bool doTangent)
+                            bool doTangent, PieceJac* pj)
 {
     double sig_tr[6];
     elasticPredTensor(sig_n, deps, mp, sig_tr);
@@ -2130,6 +2340,7 @@ inline int returnMapTensor1(const Params& mp, const double sig_n[6], const doubl
     }
 
     if (doTangent) consistentTangent(sig_tr, w, V, pr, mp, hardening, Dtan6);
+    if (pj && pr.converged) pieceJacobian(w, V, pr, mp, hardening, *pj);   // F2: the sub-step chain rule
     return pr.converged ? 0 : 2;   // 0 OK, 2 = no-converge (honest flag)
 }
 
@@ -2163,8 +2374,9 @@ inline int returnMap(const Params& mp, const double strain[6], const State& in, 
     for (int i = 0; i < 6; ++i) deps[i] = strain[i] - in.eps[i];
     // (1) IMPLICIT EFFECTIVE-stress return from the committed EFFECTIVE state (NOT the nominal sig).
     double sig_eff[6], kp_new;
+    double dkp[6] = {0, 0, 0, 0, 0, 0};                // d kp/dε (F2: beta_c's qh2(kp) in the damaged tangent)
     int status = returnMapTensor(mp, in.sigEff, deps, in.kp, hardening, sig_eff, kp_new, Dtan6, doTangent,
-                                 &out.subInfo);
+                                 &out.subInfo, dkp);
     // (1b) Duvaut-Lions viscoplastic relaxation at the PLASTIC level (ADR §4.4; oracle PR #316). Relax the
     //   inviscid effective return + kp toward the elastic trial by beta = dt/(eta+dt) (Simo-Hughes closed
     //   form). beta < 1 only with a positive viscosity AND a positive dt; eta==0 OR dt<=0 => beta=1 =>
@@ -2184,6 +2396,7 @@ inline int returnMap(const Params& mp, const double strain[6], const State& in, 
             double C0[6][6]; elasticC(mp, C0);
             for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j)
                 Dtan6[i][j] = (1.0 - beta) * C0[i][j] + beta * Dtan6[i][j];
+            for (int i = 0; i < 6; ++i) dkp[i] *= beta;    // kp_new = (1-beta) kp_n + beta kp
         }
     }
     for (int i = 0; i < 6; ++i) { out.eps[i] = strain[i]; out.sigEff[i] = sig_eff[i]; sigEffImplicit[i] = sig_eff[i]; }
@@ -2208,7 +2421,7 @@ inline int returnMap(const Params& mp, const double strain[6], const State& in, 
         if (doTangent && status == 0) {
             double Ceff[6][6];
             for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Ceff[i][j] = Dtan6[i][j];
-            damagedTangent(mp, in, sig_eff, strain, kp_new, Ceff, Dtan6);
+            damagedTangent(mp, in, sig_eff, strain, kp_new, Ceff, dkp, Dtan6);
         }
         return status;
     }
@@ -2314,6 +2527,7 @@ inline int driveConfinedFiber(const Params& mp, double strain[6], const State& i
     const int L[3] = {1, 2, 4};                       // condensed lateral block (eps_11, eps_22, gamma_12)
     const double tol = 1.0e-10 * (mp.fc + 1.0);
     double sig_eff[6] = {0,0,0,0,0,0}, kp_new = in.kp, Ceff[6][6];
+    double dkpF[6] = {0,0,0,0,0,0};                  // d kp/dε at the converged lateral strain (F2)
     int status = 0;
     for (int it = 0; it < 80; ++it) {                 // nested lateral Newton vs the hoop residual
         double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = strain[i] - in.eps[i];
@@ -2336,7 +2550,7 @@ inline int driveConfinedFiber(const Params& mp, double strain[6], const State& i
     // and flag a genuinely unmet lateral balance as non-converged (status 2 => the caller cuts the step).
     {
         double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = strain[i] - in.eps[i];
-        status = returnMapTensor(mp, in.sigEff, deps, in.kp, true, sig_eff, kp_new, Ceff, true, &out.subInfo);
+        status = returnMapTensor(mp, in.sigEff, deps, in.kp, true, sig_eff, kp_new, Ceff, true, &out.subInfo, dkpF);
         const double rf[3] = { sig_eff[1] + hoopStress(strain[1], hoopK, hoopFy),
                                sig_eff[2] + hoopStress(strain[2], hoopK, hoopFy),
                                sig_eff[4] };
@@ -2358,7 +2572,7 @@ inline int driveConfinedFiber(const Params& mp, double strain[6], const State& i
     if (doTangent) {
         if (status != 0) { elasticC(mp, Dtan6); return status; }   // safe fallback; caller cuts the step
         double Cdam[6][6];
-        damagedTangent(mp, in, sig_eff, strain, kp_new, Ceff, Cdam);
+        damagedTangent(mp, in, sig_eff, strain, kp_new, Ceff, dkpF, Cdam);
         double Kll[3][3];
         for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) Kll[i][j] = Ceff[L[i]][L[j]];
         Kll[0][0] += hoopStiffness(strain[1], hoopK, hoopFy);
