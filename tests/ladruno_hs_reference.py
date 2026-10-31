@@ -5,8 +5,8 @@ Pure-numpy reference implementation of SRC/material/nD/LadrunoHSKernel.h:
       - Surface 1 (f^s): Hyperbolic shear-hardening cone with Rowe (1962)
         stress-dilatancy and optional e >= e_max dilatancy cutoff.
       - Surface 2 (f^f): Ultimate failure truncation at q_tilde = M_c * (p + a).
-      - Surface 3 (f^c): Elliptical volumetric cap with associated flow in
-        (p, q_tilde) space and exact constructor auto-calibration of (alpha, beta)
+      - Surface 3 (f^c): Circular-q elliptical volumetric cap with exact 3D associated
+        flow in (p', q) space and exact constructor auto-calibration of (alpha, beta)
         from (E_oed^ref, K_0^nc).
       - Surface 4 (f^t): Rankine/apex tension cutoff at p + a >= p_cut.
   * Dual Lode-angle formulations (-lodeShape mc | mn):
@@ -1047,6 +1047,7 @@ def _solve_regime4_corner(
     p_p_n: float,
     void_ratio: float,
     failure_mode: bool = False,
+    force_1d_fallback: bool = False,
 ) -> Tuple[bool, float, float, float, float, np.ndarray]:
     """Solve Regime 4 (Simultaneous Shear [f^s or f^f] + Cap [f^c] corner)."""
     alpha2 = p.alpha_cap * p.alpha_cap
@@ -1136,7 +1137,7 @@ def _solve_regime4_corner(
         sens = -np.linalg.solve(J_y, J_tr)
         return True, p_sol, q_sol, max(0.0, dgam_p), pp_new, sens
 
-    for _ in range(40):
+    for _ in range(0 if force_1d_fallback else 40):
         R0, R1, dgam_p, deps_v_pc, pp_new = eval_residuals(p_cur, q_cur, p_tr, q_tr, x_sin3, Ge)
         if max(abs(R0) / scale0, abs(R1) / scale1) < 1.0e-12:
             ok_f, p_f, q_f, dg_f, pp_f, sens_f = finalize_r4_sens(
@@ -1198,6 +1199,69 @@ def _solve_regime4_corner(
                 else:
                     p_lo = p_est
                 p_est = 0.5 * (p_lo + p_hi)
+    else:
+        def solve_q_for_p(p_val: float):
+            p_hat_v = max(p.p_min, p_val + p.a_apex)
+            q_hi_v = min(q_tr, (p.M_c / Theta_0) * p_hat_v)
+            q_lo_v = 0.0
+            r0_lo, r1_lo, dg_lo, dv_lo, pp_lo = eval_residuals(
+                p_val, q_lo_v, p_tr, q_tr, x_sin3, Ge
+            )
+            r0_hi, r1_hi, dg_hi, dv_hi, pp_hi = eval_residuals(
+                p_val, q_hi_v, p_tr, q_tr, x_sin3, Ge
+            )
+            if r0_hi <= 0.0:
+                return q_hi_v, r0_hi, r1_hi, dg_hi, dv_hi, pp_hi
+            if r0_lo >= 0.0:
+                return q_lo_v, r0_lo, r1_lo, dg_lo, dv_lo, pp_lo
+            q_m = 0.5 * (q_lo_v + q_hi_v)
+            for it_q in range(60):
+                r0_m, r1_m, dg_m, dv_m, pp_m = eval_residuals(
+                    p_val, q_m, p_tr, q_tr, x_sin3, Ge
+                )
+                if abs(r0_m) / scale0 < 1.0e-14 or abs(q_hi_v - q_lo_v) <= 1.0e-14 * max(1.0, q_hi_v):
+                    return q_m, r0_m, r1_m, dg_m, dv_m, pp_m
+                if r0_m > 0.0:
+                    q_hi_v, r0_hi = q_m, r0_m
+                else:
+                    q_lo_v, r0_lo = q_m, r0_m
+                if (it_q % 2 == 0) and abs(r0_hi - r0_lo) > 1.0e-30:
+                    q_sec = q_lo_v - r0_lo * (q_hi_v - q_lo_v) / (r0_hi - r0_lo)
+                    q_m = (
+                        q_sec
+                        if (q_lo_v + 0.05 * (q_hi_v - q_lo_v) < q_sec < q_hi_v - 0.05 * (q_hi_v - q_lo_v))
+                        else 0.5 * (q_lo_v + q_hi_v)
+                    )
+                else:
+                    q_m = 0.5 * (q_lo_v + q_hi_v)
+            r0_m, r1_m, dg_m, dv_m, pp_m = eval_residuals(
+                p_val, q_m, p_tr, q_tr, x_sin3, Ge
+            )
+            return q_m, r0_m, r1_m, dg_m, dv_m, pp_m
+
+        p_lo = p.p_min - p.a_apex
+        p_hi = p_tr + Ke * max(0.0, p.sin_psi) * (2.0 * q_tr / (3.0 * Ge))
+        _, _, r1_lo, _, _, _ = solve_q_for_p(p_lo)
+        _, _, r1_hi, _, _, _ = solve_q_for_p(p_hi)
+        if r1_lo <= 0.0 and r1_hi >= 0.0:
+            p_est = 0.5 * (p_lo + p_hi)
+            for it_p in range(60):
+                q_est, R0, R1, dgam_p, deps_v_pc, pp_new = solve_q_for_p(p_est)
+                if max(abs(R0) / scale0, abs(R1) / scale1) < 1.0e-12:
+                    return finalize_r4_sens(p_est, q_est, dgam_p, deps_v_pc, pp_new)
+                if R1 > 0.0:
+                    p_hi, r1_hi = p_est, R1
+                else:
+                    p_lo, r1_lo = p_est, R1
+                if (it_p % 2 == 0) and abs(r1_hi - r1_lo) > 1.0e-30:
+                    p_sec = p_lo - r1_lo * (p_hi - p_lo) / (r1_hi - r1_lo)
+                    p_est = (
+                        p_sec
+                        if (p_lo + 0.05 * (p_hi - p_lo) < p_sec < p_hi - 0.05 * (p_hi - p_lo))
+                        else 0.5 * (p_lo + p_hi)
+                    )
+                else:
+                    p_est = 0.5 * (p_lo + p_hi)
 
     return False, p_cur, q_cur, 0.0, p_p_n, np.zeros((2, 4))
 

@@ -683,9 +683,11 @@ def test_plane_strain_biaxial_and_footing_mn_strictly_bounds_mc():
         top_mid2 = top_left + 2
         ops.equalDOF(top_left, top_mid1, 2)
         ops.equalDOF(top_left, top_mid2, 2)
-        # Constant top-surface overburden traction balancing -sig0 100.0 kPa on the 2.0 m wide mesh (dx = 0.5 m):
+        # Constant top-surface overburden traction (100 kPa) balancing -sig0 100.0 at u = 0;
+        # add P_pattern10_on_footing = 100.0 * 1.0 kN/m back for consistent total bearing reaction:
         ops.timeSeries("Constant", 10)
         ops.pattern("Plain", 10, 10)
+        p0_footing = 100.0 * 1.0
         for i in range(nx + 1):
             nid = ny * (nx + 1) + i + 1
             trib_w = 0.25 if (i == 0 or i == nx) else 0.50
@@ -702,7 +704,7 @@ def test_plane_strain_biaxial_and_footing_mn_strictly_bounds_mc():
         ops.analysis("Static")
         for _ in range(30):
             assert ops.analyze(1) == 0
-        return float(ops.getLoadFactor(1))
+        return float(ops.getLoadFactor(1)) + p0_footing
 
     r_mc = run_strip_footing_bvp("mc")
     r_mn = run_strip_footing_bvp("mn")

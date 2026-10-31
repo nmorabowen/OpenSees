@@ -492,6 +492,28 @@ def test_t2c_consistent_tangent_fd_all_regimes(lode: str) -> None:
     rel_err_hss = np.linalg.norm(C_alg_hss - C_fd_hss) / max(1.0, np.linalg.norm(C_fd_hss))
     assert rel_err_hss < 1.0e-7
 
+    # Also verify the nested 1D fallback in _solve_regime4_corner (failure_mode=False)
+    # converges to the exact same root and sensitivities as 2D Newton:
+    p_n, q_n, x_n, _, _, _ = hs.invariants_and_lode_grad(p, st_k0.sig)
+    _, _, k3_n, _, _, _ = hs.lode_factors_and_derivs(p, x_n)
+    s_n, _, _ = hs._stiffness_scale_and_derivs(p, p_n, q_n, k3_n)
+    Ke_k0 = p.Kur_ref * s_n
+    Ge_k0 = p.Gur_ref * s_n
+    ok_2d, p_2d, q_2d, dg_2d, pp_2d, sens_2d = hs._solve_regime4_corner(
+        p, 110.0, 138.5, 0.35, Ke_k0, Ge_k0, st_k0.gamma_p, st_k0.p_p, st_k0.void_ratio,
+        failure_mode=False, force_1d_fallback=False,
+    )
+    ok_1d, p_1d, q_1d, dg_1d, pp_1d, sens_1d = hs._solve_regime4_corner(
+        p, 110.0, 138.5, 0.35, Ke_k0, Ge_k0, st_k0.gamma_p, st_k0.p_p, st_k0.void_ratio,
+        failure_mode=False, force_1d_fallback=True,
+    )
+    assert ok_2d and ok_1d
+    assert abs(p_2d - p_1d) < 1.0e-10
+    assert abs(q_2d - q_1d) < 1.0e-10
+    assert abs(dg_2d - dg_1d) < 1.0e-12
+    assert abs(pp_2d - pp_1d) < 1.0e-10
+    assert np.max(np.abs(sens_2d - sens_1d)) < 1.0e-6
+
 
 def test_t1b_cide_triaxial_extension_hyperbolic_backbone_and_dilatancy() -> None:
     """In Drained Triaxial Extension (TXE, theta = -30 deg, x = -1) at constant minor

@@ -1255,7 +1255,8 @@ inline bool solve_regime4_corner(
     double Theta, double dTheta_dx, double k3, double dk3_dx, double Theta_sig, double dTheta_sig_dx,
     double Ke, double Ge, double gamma_p_n, double p_p_n, double void_ratio,
     bool failure_mode,
-    double& p_out, double& q_out, double& dgam_s_out, double& pp_out, double sens[2][4]) {
+    double& p_out, double& q_out, double& dgam_s_out, double& pp_out, double sens[2][4],
+    bool force_1d_fallback = false) {
   double p_cur    = std::max(p.p_min - p.a_apex, std::min(p_tr, std::max(p_p_n, 0.7 * p_tr)));
   double q_cur    = std::min(q_tr, 0.85 * p.M_c * (p_cur + p.a_apex) / Theta);
   double kappa_KG = p.Kur_ref / p.Gur_ref;
@@ -1311,7 +1312,7 @@ inline bool solve_regime4_corner(
     return true;
   };
 
-  for (int iter = 0; iter < 40; ++iter) {
+  for (int iter = 0; !force_1d_fallback && iter < 40; ++iter) {
     double R0 = 0.0, R1 = 0.0, dgam_p = 0.0, deps_v_pc = 0.0, pp_new = p_p_n;
     eval_regime4_residuals(p, p_cur, q_cur, p_tr, q_tr, Theta, k3, Theta_sig, Ke, Ge,
                            gamma_p_n, p_p_n, void_ratio, failure_mode,
@@ -1381,6 +1382,91 @@ inline bool solve_regime4_corner(
         if (R1 > 0.0) { p_hi = p_est; R1_hi = R1; }
         else          { p_lo = p_est; R1_lo = R1; }
         p_est = 0.5 * (p_lo + p_hi);
+      }
+    }
+  } else {
+    // Nested 1D bracketed root-finder for REGIME_SHEAR_CAP (failure_mode == false):
+    // For any candidate p in [p_min - a_apex, p_hi], R0(p, q) is strictly increasing in
+    // q in [0, q_hi(p)] where q_hi(p) = min(q_tr, M_c * max(p_min, p + a_apex) / Theta).
+    // An inner 60-step hybrid secant/bisection solver finds q*(p) uniquely, and an outer 60-step
+    // hybrid secant/bisection solver solves R1(p, q*(p)) = 0 to < 1.0e-12.
+    auto solve_q_for_p = [&](double p_val, double& q_sol, double& R0_out, double& R1_out,
+                             double& dgam_out, double& deps_out, double& pp_out_v) {
+      double p_hat_v = std::max(p.p_min, p_val + p.a_apex);
+      double q_hi_v  = std::min(q_tr, (p.M_c / Theta) * p_hat_v);
+      double q_lo_v  = 0.0;
+      double r0_lo = 0.0, r1_lo = 0.0, dg_lo = 0.0, dv_lo = 0.0, pp_lo = p_p_n;
+      eval_regime4_residuals(p, p_val, q_lo_v, p_tr, q_tr, Theta, k3, Theta_sig, Ke, Ge,
+                             gamma_p_n, p_p_n, void_ratio, false, r0_lo, r1_lo, dg_lo, dv_lo, pp_lo);
+      double r0_hi = 0.0, r1_hi = 0.0, dg_hi = 0.0, dv_hi = 0.0, pp_hi = p_p_n;
+      eval_regime4_residuals(p, p_val, q_hi_v, p_tr, q_tr, Theta, k3, Theta_sig, Ke, Ge,
+                             gamma_p_n, p_p_n, void_ratio, false, r0_hi, r1_hi, dg_hi, dv_hi, pp_hi);
+      if (r0_hi <= 0.0) {
+        q_sol    = q_hi_v;
+        R0_out   = r0_hi;
+        R1_out   = r1_hi;
+        dgam_out = dg_hi;
+        deps_out = dv_hi;
+        pp_out_v = pp_hi;
+        return;
+      }
+      if (r0_lo >= 0.0) {
+        q_sol    = q_lo_v;
+        R0_out   = r0_lo;
+        R1_out   = r1_lo;
+        dgam_out = dg_lo;
+        deps_out = dv_lo;
+        pp_out_v = pp_lo;
+        return;
+      }
+      double q_m = 0.5 * (q_lo_v + q_hi_v);
+      for (int it_q = 0; it_q < 60; ++it_q) {
+        eval_regime4_residuals(p, p_val, q_m, p_tr, q_tr, Theta, k3, Theta_sig, Ke, Ge,
+                               gamma_p_n, p_p_n, void_ratio, false, R0_out, R1_out, dgam_out, deps_out, pp_out_v);
+        if (std::abs(R0_out) / scale0 < 1.0e-14 || std::abs(q_hi_v - q_lo_v) <= 1.0e-14 * std::max(1.0, q_hi_v)) {
+          q_sol = q_m;
+          return;
+        }
+        if (R0_out > 0.0) { q_hi_v = q_m; r0_hi = R0_out; }
+        else              { q_lo_v = q_m; r0_lo = R0_out; }
+        if ((it_q % 2 == 0) && std::abs(r0_hi - r0_lo) > 1.0e-30) {
+          double q_sec = q_lo_v - r0_lo * (q_hi_v - q_lo_v) / (r0_hi - r0_lo);
+          q_m = (q_sec > q_lo_v + 0.05 * (q_hi_v - q_lo_v) && q_sec < q_hi_v - 0.05 * (q_hi_v - q_lo_v))
+                    ? q_sec
+                    : 0.5 * (q_lo_v + q_hi_v);
+        } else {
+          q_m = 0.5 * (q_lo_v + q_hi_v);
+        }
+      }
+      eval_regime4_residuals(p, p_val, q_m, p_tr, q_tr, Theta, k3, Theta_sig, Ke, Ge,
+                             gamma_p_n, p_p_n, void_ratio, false, R0_out, R1_out, dgam_out, deps_out, pp_out_v);
+      q_sol = q_m;
+    };
+
+    double p_lo = p.p_min - p.a_apex;
+    double p_hi = p_tr + Ke * std::max(0.0, p.sin_psi) * (2.0 * q_tr / (3.0 * Ge));
+    double q_lo_s = 0.0, R0_lo = 0.0, R1_lo = 0.0, dg_lo = 0.0, dv_lo = 0.0, pp_lo = p_p_n;
+    double q_hi_s = 0.0, R0_hi = 0.0, R1_hi = 0.0, dg_hi = 0.0, dv_hi = 0.0, pp_hi = p_p_n;
+    solve_q_for_p(p_lo, q_lo_s, R0_lo, R1_lo, dg_lo, dv_lo, pp_lo);
+    solve_q_for_p(p_hi, q_hi_s, R0_hi, R1_hi, dg_hi, dv_hi, pp_hi);
+    if (R1_lo <= 0.0 && R1_hi >= 0.0) {
+      double p_est = 0.5 * (p_lo + p_hi);
+      for (int it_p = 0; it_p < 60; ++it_p) {
+        double q_est = 0.0, R0 = 0.0, R1 = 0.0, dgam_p = 0.0, deps_v_pc = 0.0, pp_new = p_p_n;
+        solve_q_for_p(p_est, q_est, R0, R1, dgam_p, deps_v_pc, pp_new);
+        if (std::max(std::abs(R0) / scale0, std::abs(R1) / scale1) < 1.0e-12) {
+          return finalize_r4_sens(p_est, q_est, dgam_p, deps_v_pc, pp_new);
+        }
+        if (R1 > 0.0) { p_hi = p_est; R1_hi = R1; }
+        else          { p_lo = p_est; R1_hi = R1_hi; R1_lo = R1; }
+        if ((it_p % 2 == 0) && std::abs(R1_hi - R1_lo) > 1.0e-30) {
+          double p_sec = p_lo - R1_lo * (p_hi - p_lo) / (R1_hi - R1_lo);
+          p_est = (p_sec > p_lo + 0.05 * (p_hi - p_lo) && p_sec < p_hi - 0.05 * (p_hi - p_lo))
+                      ? p_sec
+                      : 0.5 * (p_lo + p_hi);
+        } else {
+          p_est = 0.5 * (p_lo + p_hi);
+        }
       }
     }
   }
