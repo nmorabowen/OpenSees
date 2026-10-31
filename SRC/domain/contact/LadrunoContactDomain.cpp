@@ -1320,8 +1320,10 @@ LadrunoContactDomain::frictionGCEnd(void)
 }
 
 int
-LadrunoContactDomain::commit(bool augmenting)
+LadrunoContactDomain::commit(bool augmenting, double stepSize)
 {
+    if (stepSize > 0.0)
+        lastStepSize = stepSize;   // Ladruno: the soft step size of a committed-time integrator
     // P3: promote the trial plastic slip to committed for every friction slot. The
     // counter (kept from P1b) lets a test confirm the Domain::commit() hook fires.
     numCommits++;
@@ -1493,6 +1495,7 @@ LadrunoContactDomain::revertToStart(void)
     theNtsForce.clear();                // B3 force snapshots (side-channel, re-written per step)
     theVtx2DSide.clear();               // ADR-85 T1b vertex side signs (re-captured on a fresh run)
     theNodalMass.clear();               // B1 assembled-mass cache (rebuilt when soft contacts exist)
+    lastStepSize = 0.0;                 // Ladruno: no committed step after a reset
     // ADR-60 re-emit: drop anchors + membership fingerprints + the persistent Trigger —
     // the handler re-registers everything at the next handle() (one conservative
     // recompute, the Q-RESTART posture; hysteresis/cadence restart from scratch at t=0).

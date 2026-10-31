@@ -37,6 +37,7 @@
 #include <Integrator.h>
 #include <StaticIntegrator.h>       // Ladruno: contact-review P5 (-visc static-integrator gate)
 #include <CentralDifferenceLadruno.h> // Ladruno: ADR-39 B1 (explicit dt for the SOFT=1 penalty)
+#include <TransientIntegrator.h>      // Ladruno: soft penalty under any explicit integrator
 #include <Domain.h>                 // Ladruno: ADR-39 P3 (lazy engine re-fetch)
 #include <LadrunoContactDomain.h>   // Ladruno: ADR-39 P3 (per-pair friction state)
 #include <LadrunoContactKernel.h>     // Ladruno: ADR-39 P2b (penalty normal-law / traction)
@@ -1342,8 +1343,8 @@ ladrunoInvMassProj(const double m[3], const double n[3])
 // plane (N==0) it collapses to the slave mass. Then the contact's own central-difference stability
 // bound ω·dt ≤ 2 (ω = √(k/m_eff)) gives the LARGEST non-throttling penalty 4·m_eff/dt²; SOFT picks
 // k_soft = SOFSCL·4·m_eff/dt² (SOFSCL < 1 the safety margin). Validated: proto_b1_soft_penalty.py.
-// Only active under the explicit CentralDifferenceLadruno (dynamic_cast — catches its SMS subclasses
-// too); any implicit integrator fails the cast ⇒ the configured kn is returned ⇒ byte-identical.
+// Only active under an explicit integrator (explicitTimeStep() >= 0); a static or implicit integrator
+// assembles the contact stiffness ⇒ the configured kn is returned ⇒ byte-identical.
 // B1 — gap-mode inverse effective mass B M⁻¹ Bᵀ for unit direction `dir`, B = [dir | −N_i dir] over
 // [slave | seg nodes]; N==0 ⇒ RIGID_PLANE (slave only). A DOF with no mass ⇒ ∞ mass ⇒ 0 contribution
 // (a FIXED master node drops out, leaving m_eff = m_slave). ≤0 ⇒ massless slave (caller cannot size).
@@ -1381,22 +1382,58 @@ LadrunoContactFE::viscousActive(Integrator *theIntegrator) const
     return false;
 }
 
+// Ladruno (soft under any explicit integrator) — the step size of the SOFT penalties, or < 0 when
+// the integrator assembles a contact stiffness. The SOFT penalty exists for integrators whose system
+// matrix does NOT contain the contact stiffness: there the contact mode bounds the stable step. That
+// is decided by WHAT the integrator assembles, not by its class: CentralDifferenceLadruno keeps its
+// own getCurrentDeltaT() (the source B1/B2/E5 shipped with, unchanged); any other transient
+// integrator forms this adapter's tangent with the add*ToTang calls recording (stiffnessProbe) — the
+// stock CentralDifference, NewmarkExplicit, ExplicitDifference and ExplicitBathe form only M (and C),
+// static and implicit integrators add K. For a probed explicit integrator dt = Domain::getDT() (the
+// step being taken: NewmarkExplicit, ExplicitDifference, an ExplicitBathe substep); one that forms
+// the residual at the committed time (stock CentralDifference) leaves getDT() at 0, and the last
+// committed step (LadrunoContactDomain::getLastStepSize, recorded by Domain::commit) is used — 0
+// before the first commit, so the caller warns once and uses the configured penalty for that step.
+// A StaticIntegrator is never probed (it always assembles K).
 double
-LadrunoContactFE::softKn(Integrator *theIntegrator, const double n[3], const double N[4]) const
+LadrunoContactFE::explicitTimeStep(Integrator *theIntegrator)
+{
+    if (theIntegrator == 0)
+        return -1.0;
+    CentralDifferenceLadruno *cdl = dynamic_cast<CentralDifferenceLadruno *>(theIntegrator);
+    if (cdl != 0)
+        return cdl->getCurrentDeltaT();           // shipped CDL source (incl. the SMS subclasses)
+    if (dynamic_cast<TransientIntegrator *>(theIntegrator) == 0)
+        return -1.0;                              // static ⇒ configured penalty
+    stiffnessProbe = true;
+    probeSawStiffness = false;
+    theIntegrator->formEleTangent(this);          // records only; tang is left as it was
+    stiffnessProbe = false;
+    if (probeSawStiffness)
+        return -1.0;                              // implicit transient ⇒ configured penalty
+    double dt = (theDomain != 0) ? theDomain->getDT() : 0.0;
+    if (dt > 0.0)
+        return dt;
+    LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
+    return (cd != 0) ? cd->getLastStepSize() : 0.0;
+}
+
+double
+LadrunoContactFE::softKn(Integrator *theIntegrator, const double n[3], const double N[4])
 {
     if (softScale <= 0.0 || theIntegrator == 0)
         return kn;
-    CentralDifferenceLadruno *cdl = dynamic_cast<CentralDifferenceLadruno *>(theIntegrator);
-    if (cdl == 0)
-        return kn;                                // implicit / non-CDL ⇒ inert (byte-identical)
-    double dt = cdl->getCurrentDeltaT();
+    double dt = explicitTimeStep(theIntegrator);
+    if (dt < 0.0)
+        return kn;                                // static / implicit ⇒ inert (byte-identical)
     double invSum = gapModeInvMass(n, N);         // 0 ⇒ massless slave (fail below)
     if (dt <= 0.0 || invSum <= 0.0) {            // massless slave or no dt ⇒ cannot soft-size
         // contact-review P5: per-(contact, topic) engine latch, not a process-lifetime static
         LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
         if (cd == 0 || cd->warnOnce(contactTag, LadrunoContactDomain::WARN_SOFT_NOMASS))
             opserr << "WARNING LadrunoContactFE - contact " << contactTag << ": -soft could not "
-                      "size a penalty under the explicit integrator (non-positive dt or a contact "
+                      "size a penalty under the explicit integrator (no step size yet — the first "
+                      "step of an integrator that evaluates at the committed time — or a contact "
                       "node with no assembled mass — neither a nodal `mass` nor element-density "
                       "mass); using the configured kn. Give the contact nodes mass for the SOFT=1 "
                       "stable penalty.\n";
@@ -1418,14 +1455,13 @@ LadrunoContactFE::softKn(Integrator *theIntegrator, const double n[3], const dou
 // gate as softKn (soft off / implicit / no dt-or-mass ⇒ the configured kt ⇒ byte-identical; softKn,
 // called first in getResidual, already emits the no-mass warning). SEGMENT (NTS) friction only.
 double
-LadrunoContactFE::softKt(Integrator *theIntegrator, const double n[3], const double N[4]) const
+LadrunoContactFE::softKt(Integrator *theIntegrator, const double n[3], const double N[4])
 {
     if (softScale <= 0.0 || theIntegrator == 0)
         return kt;
-    CentralDifferenceLadruno *cdl = dynamic_cast<CentralDifferenceLadruno *>(theIntegrator);
-    if (cdl == 0)
-        return kt;                                // implicit / non-CDL ⇒ inert (byte-identical)
-    double dt = cdl->getCurrentDeltaT();
+    double dt = explicitTimeStep(theIntegrator);
+    if (dt < 0.0)
+        return kt;                                // static / implicit ⇒ inert (byte-identical)
     // ADR-85 T1b -- the explicit 2D branch (How/6): the 2D tangent space is ONE-
     // dimensional, t = perp(n) -- EXACT per-mode. The 3D least-aligned-axis
     // construction below would pick the OUT-OF-PLANE axis as t1 for an in-plane
@@ -1434,7 +1470,7 @@ LadrunoContactFE::softKt(Integrator *theIntegrator, const double n[3], const dou
     // friction through getResidual/addKtToTang/addKiToTang (LadrunoContactFE::
     // returnMap1D call sites), and softKt is called only from that friction
     // path, so a `-soft`+`-mu` 2D deck now REACHES this branch under the
-    // explicit CentralDifferenceLadruno exactly as coded. The B2 coupled-K_c
+    // explicit integrator exactly as coded. The B2 coupled-K_c
     // anisotropic-mass caveat (m_x != m_y makes the per-mode bound necessary-
     // not-sufficient) transfers to 2D verbatim.
     if (ndm == 2) {
@@ -1482,24 +1518,23 @@ LadrunoContactFE::edgeGapModeInvMass(const double dir[3], double s, double t) co
 }
 
 // ADR-57 E5 — the edge-edge SOFT=1-analogue NORMAL penalty (the B1 softKn for the edge operator).
-// Only active under the explicit CentralDifferenceLadruno (dynamic_cast — catches its SMS subclasses);
-// any implicit integrator fails the cast ⇒ the configured kn is returned ⇒ byte-identical.
+// Only active under an explicit integrator (explicitTimeStep() >= 0); a static or implicit integrator
+// ⇒ the configured kn is returned ⇒ byte-identical.
 double
-LadrunoContactFE::softKnEdge(Integrator *theIntegrator, const double n[3], double s, double t) const
+LadrunoContactFE::softKnEdge(Integrator *theIntegrator, const double n[3], double s, double t)
 {
     if (softScale <= 0.0 || theIntegrator == 0)
         return kn;
-    CentralDifferenceLadruno *cdl = dynamic_cast<CentralDifferenceLadruno *>(theIntegrator);
-    if (cdl == 0)
-        return kn;                                // implicit / non-CDL ⇒ inert (byte-identical)
-    double dt = cdl->getCurrentDeltaT();
+    double dt = explicitTimeStep(theIntegrator);
+    if (dt < 0.0)
+        return kn;                                // static / implicit ⇒ inert (byte-identical)
     double invSum = edgeGapModeInvMass(n, s, t);  // 0 ⇒ massless pair (fail below)
     if (dt <= 0.0 || invSum <= 0.0) {            // massless / no dt ⇒ cannot soft-size
         // contact-review P5: per-(contact, topic) engine latch, not a process-lifetime static
         LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
         if (cd == 0 || cd->warnOnce(contactTag, LadrunoContactDomain::WARN_EDGESOFT_NOMASS))
             opserr << "WARNING LadrunoContactFE - contact " << contactTag << ": edge-edge -edgeSoft "
-                      "could not size a penalty under the explicit integrator (non-positive dt or an "
+                      "could not size a penalty under the explicit integrator (no step size yet or an "
                       "edge node with no assembled mass — neither a nodal `mass` nor element-density "
                       "mass); using the configured edgeKn. Give the edge nodes mass for the SOFT "
                       "stable penalty.\n";
@@ -1514,14 +1549,13 @@ LadrunoContactFE::softKnEdge(Integrator *theIntegrator, const double n[3], doubl
 // throttles dt_cr via the stick mode). Same gate as softKnEdge (soft off / implicit / no dt-or-mass
 // ⇒ the configured kt ⇒ byte-identical; softKnEdge, called first in getResidual, emits any no-mass warning).
 double
-LadrunoContactFE::softKtEdge(Integrator *theIntegrator, const double n[3], double s, double t) const
+LadrunoContactFE::softKtEdge(Integrator *theIntegrator, const double n[3], double s, double t)
 {
     if (softScale <= 0.0 || theIntegrator == 0)
         return kt;
-    CentralDifferenceLadruno *cdl = dynamic_cast<CentralDifferenceLadruno *>(theIntegrator);
-    if (cdl == 0)
-        return kt;                                // implicit / non-CDL ⇒ inert (byte-identical)
-    double dt = cdl->getCurrentDeltaT();
+    double dt = explicitTimeStep(theIntegrator);
+    if (dt < 0.0)
+        return kt;                                // static / implicit ⇒ inert (byte-identical)
     // two orthonormal tangents to n: t1 ⟂ n from the coordinate axis least aligned with n, t2=n×t1
     int k = 0; double amin = std::fabs(n[0]);
     if (std::fabs(n[1]) < amin) { amin = std::fabs(n[1]); k = 1; }
@@ -1958,19 +1992,21 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
         // independent (oracle T8). The GLOBAL gap is accumulated here ONLY for the commit-time
         // Uzawa update of λ_I + the ‖ḡ‖ query — never read back into THIS sweep's force.
         // Force along n (self-equilibrating ⇒ Σφ=1): F^s_K = −(D·p)_K n, F^m_L = +(Mᵀ·p)_L n.
-        // B2 (P5) — SOFT=2 segment-based EXPLICIT penalty. Under the explicit CentralDifferenceLadruno
-        // ONLY (the same dynamic_cast gate as B1), replace the per-facet epsN with the Courant-stable
+        // B2 (P5) — SOFT=2 segment-based EXPLICIT penalty. Under an explicit integrator ONLY (the
+        // same explicitTimeStep() gate as B1), replace the per-facet epsN with the Courant-stable
         // k_soft = SOFSCL·4·m_eff/dt² per slave node and assemble a pure single-pass penalty over the
         // clipped overlap (no ALM, no λ accumulation) — catching the corner/edge/T-intersection cases
-        // the NTS SOFT=1 lane misses while keeping explicit dt_cr un-throttled. Under any implicit
-        // integrator the cast fails ⇒ fall through to the shipped penalty/ALM path with the configured
+        // the NTS SOFT=1 lane misses while keeping explicit dt_cr un-throttled. Under a static or
+        // implicit integrator (explicitTimeStep() < 0) fall through to the shipped penalty/ALM path with the configured
         // epsN (SOFT=2 is explicit-only ⇒ implicit byte-identical to a plain -mortar penalty).
         // addSoft2Penalty also assembles the SOFT=2 viscous damper (-visc, D2.2) and Courant-stable
         // Coulomb/Tresca friction (-mu/-cohesion/-tauMax) on the same overlap; only -tie is refused.
-        if (softScale > 0.0 &&
-            dynamic_cast<CentralDifferenceLadruno *>(theIntegrator) != 0) {
-            addSoft2Penalty(theIntegrator);
-            return resid;
+        if (softScale > 0.0) {
+            double dtSoft = explicitTimeStep(theIntegrator);
+            if (dtSoft >= 0.0) {
+                addSoft2Penalty(dtSoft);
+                return resid;
+            }
         }
         double D[4][4], M[4][4], g[4], n[3];
         LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
@@ -2328,15 +2364,11 @@ LadrunoContactFE::addMortarTieForce(const double D[4][4], const double M[4][4],
 // segment B_I=[D,−M]/a_I). p_I = min(0, k_soft,I·ḡ_I) scatters self-equilibratingly along n exactly
 // like the C2 normal block: f^s_K = −(D·p)_K n, f^m_L = +(Mᵀ·p)_L n. Validated: proto_b2_soft2_segment.py.
 void
-LadrunoContactFE::addSoft2Penalty(Integrator *theIntegrator)
+LadrunoContactFE::addSoft2Penalty(double dt)
 {
     double D[4][4], M[4][4], g[4], n[3];
     if (!mortarActive(D, M, g, n))
         return;                                   // no overlap this eval ⇒ zero force (KKT separation)
-
-    double dt = 0.0;
-    CentralDifferenceLadruno *cdl = dynamic_cast<CentralDifferenceLadruno *>(theIntegrator);
-    if (cdl != 0) dt = cdl->getCurrentDeltaT();   // caller guarantees the cast, but be defensive
 
     // assembled translational masses of the facet nodes (kept FULL so the friction block below can
     // re-project them on the surface tangents), and their projection on the gap normal n (B1 helpers)
@@ -2372,7 +2404,7 @@ LadrunoContactFE::addSoft2Penalty(Integrator *theIntegrator)
             if (cdW == 0 || cdW->warnOnce(contactTag, LadrunoContactDomain::WARN_SOFT2_NOMASS))
                 opserr << "WARNING LadrunoContactFE - contact " << contactTag << ": -mortar -soft "
                           "(SOFT=2) could not size a segment-based penalty under the explicit "
-                          "integrator (non-positive dt or a contact node with no assembled mass); "
+                          "integrator (no step size yet or a contact node with no assembled mass); "
                           "using the configured epsN. Give the contact nodes mass for the SOFT=2 "
                           "stable penalty.\n";
         }
@@ -2556,12 +2588,17 @@ LadrunoContactFE::getTangent(Integrator *theIntegrator)
 void
 LadrunoContactFE::zeroTangent(void)
 {
+    if (stiffnessProbe) return;   // Ladruno: explicitTimeStep() probe leaves tang as it was
     tang.Zero();   // formEleTangent zeroes the element tangent before assembling
 }
 
 void
 LadrunoContactFE::addKtToTang(double fact)
 {
+    if (stiffnessProbe) {         // Ladruno: explicitTimeStep() probe — record only
+        if (fact != 0.0) probeSawStiffness = true;
+        return;
+    }
     // K_c = kn (n (x) n) over the slave DOFs, only when the pair is penetrating.
     if (mode == RIGID_PLANE && rigidPlaneGap() < 0.0) {
         for (int i = 0; i < ndm; i++)
@@ -2660,9 +2697,9 @@ LadrunoContactFE::addKtToTang(double fact)
         // The committed sign was captured by getResidual (which runs first in the iterate); read it.
         // E5 NOTE: this tangent uses `kn` (and friction `kt`) — NOT the SOFT `k_soft`. That is the
         // shipped B1/B2 SOFT contract: SOFT is RESIDUAL-ONLY, and addKtToTang is assembled ONLY under
-        // implicit integrators (the explicit CentralDifferenceLadruno is mass-only — it never calls
-        // addKtToTang). Under implicit, softKnEdge/softKtEdge return kn/kt (the dynamic_cast to CDL
-        // fails), so the residual's knEff/ktEff ≡ kn/kt here ⇒ the tangent IS the residual derivative.
+        // integrators that assemble stiffness (an explicit one never calls addKtToTang, which is
+        // what explicitTimeStep() probes). There softKnEdge/softKtEdge return kn/kt, so the
+        // residual's knEff/ktEff ≡ kn/kt here ⇒ the tangent IS the residual derivative.
         LadrunoContactDomain *cd = (theDomain != 0) ? theDomain->getLadrunoContactDomain() : 0;
         LadrunoContactDomain::EdgeEdgeState *st = 0;
         int committedSign = 0;
@@ -2898,6 +2935,10 @@ LadrunoContactFE::addMortarTang(double fact, bool initialStiff)
 void
 LadrunoContactFE::addKiToTang(double fact)
 {
+    if (stiffnessProbe) {         // Ladruno: explicitTimeStep() probe — record only
+        if (fact != 0.0) probeSawStiffness = true;
+        return;
+    }
     // Initial-stiffness algorithms (Newton -initial, ModifiedNewton -initial,
     // HALL_TANGENT) form the LHS from K_initial. For a flat rigid plane the normal
     // is constant, so K_initial == K_current == kn (n (x) n) when penetrating;
@@ -3001,6 +3042,7 @@ LadrunoContactFE::addKiToTang(double fact)
 void
 LadrunoContactFE::addCtoTang(double fact)
 {
+    if (stiffnessProbe) return;   // Ladruno: explicitTimeStep() probe — damping is not stiffness
     // D2 viscous stabilization — the only contact damping. C_visc = muc·B Bᵀ (the normal-penalty
     // operator with kn→muc), assembled on the SAME active set as the residual viscous force. The
     // transient integrators call formEleTangent → addCtoTang(c2) (Newmark/HHT/CentralDifference),
