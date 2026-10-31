@@ -801,11 +801,233 @@ static void run_robustness() {
     }
 }
 
+// ---- (D) apeGmsh #2621 F2: the sub-step chain-rule tangent + the analytic damaged tangent ---------------------
+static double relF6(const double A[6][6], const double R[6][6]) {
+    double n = 0, d = 0;
+    for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) { n += (A[i][j] - R[i][j]) * (A[i][j] - R[i][j]); d += R[i][j] * R[i][j]; }
+    return d > 0 ? std::sqrt(n / d) : std::sqrt(n);
+}
+static double relV6(const double a[6], const double r[6]) {
+    double n = 0, d = 0;
+    for (int i = 0; i < 6; ++i) { n += (a[i] - r[i]) * (a[i] - r[i]); d += r[i] * r[i]; }
+    return d > 0 ? std::sqrt(n / d) : std::sqrt(n);
+}
+// the failure-driven piece schedule of returnMapTensor, re-derived independently (the oracle side of D1)
+static int failureSchedule(const Params& q, const double s0[6], const double d[6], double k0, double fr[64]) {
+    double sn[6], kn, Dt[6][6];
+    if (returnMapTensor1(q, s0, d, k0, true, sn, kn, Dt, false) == 0) return 0;
+    double s[6], k = k0, done = 0.0, frac = 0.5; int n = 0;
+    for (int i = 0; i < 6; ++i) s[i] = s0[i];
+    while (done < 1.0 && n < 64) {
+        const double f = (frac < 1.0 - done) ? frac : 1.0 - done; double dd[6]; for (int i = 0; i < 6; ++i) dd[i] = d[i] * f;
+        if (returnMapTensor1(q, s, dd, k, true, sn, kn, Dt, false) == 0) { for (int i = 0; i < 6; ++i) s[i] = sn[i]; k = kn; done += f; fr[n++] = f; frac = (2 * frac < 1) ? 2 * frac : 1; }
+        else { frac *= 0.5; if (frac < std::ldexp(1.0, -q.maxSubIncr)) return -1; }
+    }
+    return n;
+}
+// central FD (h in {1e-8, 1e-9, 1e-10}) of the GIVEN-schedule map, effective stress and kp. Returns the best error of
+// (D, dk); `smooth` = false when two step sizes disagree by > 1e-6 (the stencil crosses a yield/apex switch).
+static void fdSchedule(const Params& q, const double s0[6], const double d[6], double k0, const double* fr, int n,
+                       const double D[6][6], const double dk[6], double& eD, double& eK, bool& smooth) {
+    eD = eK = 1e300; smooth = true; double prev[6][6]; bool havePrev = false;
+    for (double h : {1e-8, 1e-9, 1e-10}) {
+        double F[6][6], FK[6]; bool ok = true;
+        for (int j = 0; j < 6 && ok; ++j) {
+            double dp[6], dm[6], sp[6], sm[6], kp, km, J[6][6]; for (int i = 0; i < 6; ++i) dp[i] = dm[i] = d[i]; dp[j] += h; dm[j] -= h;
+            ok = returnMapTensorSchedule(q, s0, dp, k0, fr, n, sp, kp, J, false) == 0 && returnMapTensorSchedule(q, s0, dm, k0, fr, n, sm, km, J, false) == 0;
+            for (int i = 0; i < 6; ++i) F[i][j] = (sp[i] - sm[i]) / (2 * h);
+            FK[j] = (kp - km) / (2 * h);
+        }
+        if (!ok) { smooth = false; continue; }
+        if (havePrev && relF6(F, prev) > 1.0e-6) smooth = false;
+        for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) prev[i][j] = F[i][j];
+        havePrev = true;
+        eD = std::fmin(eD, relF6(D, F)); eK = std::fmin(eK, relV6(dk, FK));
+    }
+}
+
+static void run_f2_chain() {
+    std::printf("[D] F2 (apeGmsh #2621): sub-step chain-rule tangent + analytic damaged tangent\n");
+    Params q; q.E = 30000; q.nu = 0.2; q.fc = 30; q.ft = 3; q.e = eccentricityFromKupfer(30, 3, 1.16); q.m0 = m0Of(30, 3, q.e);
+    q.qh0 = 0.3; q.Hp = 0.01; q.Df = 0.85; q.Ah = 0.08; q.Bh = 0.003; q.Ch = 2.0; q.Dh = 1e-6;
+    q.flowPotential = 1; q.maxSubIncr = 10;
+    // D1 — failure-driven 2- and 4-piece returns: returnMapTensor's Dtan6 and d kp/dε == the central FD of the map with
+    // that schedule frozen, to 1e-7 (the pre-F2 last-piece tangent was O(1) off here). Same trials pushed through FORCED
+    // {1/2,1/2} and {1/4 x4} schedules (returnMapTensorSchedule).
+    unsigned s3 = 2621u; auto rn = [&]() { s3 = s3 * 1664525u + 1013904223u; return (s3 >> 8) * (1.0 / 16777216.0); };
+    int n2 = 0, n4 = 0, nF = 0, skipped = 0, tested = 0; double worstD = 0, worstK = 0, worstF = 0;
+    double mutBK = 1e300, mutLast = 1e300;                 // D2: the smallest error a wrong build would show
+    int nMut = 0;
+    struct Case { double s0[6], d[6], k0; };
+    Case c4[40]; int nc4 = 0;
+    for (long t = 0; t < 400000 && (n2 < 40 || n4 < 40); ++t) {
+        const int mode = t % 4; double d[6];
+        if (mode == 0) { for (int i = 0; i < 6; ++i) d[i] = (rn() * 2 - 1) * 3e-3; for (int i = 3; i < 6; ++i) d[i] *= 0.5; }
+        else if (mode == 1) { const double v = -rn() * 8e-3; for (int i = 0; i < 3; ++i) d[i] = v + (rn() * 2 - 1) * 2e-4; for (int i = 3; i < 6; ++i) d[i] = (rn() * 2 - 1) * 1e-4; }
+        else if (mode == 2) { d[0] = -rn() * 5e-3; d[1] = (rn() * 2 - 1) * 1.5e-3; d[2] = (rn() * 2 - 1) * 1.5e-3; d[3] = (rn() * 2 - 1) * 5e-4; d[4] = d[5] = 0; }
+        else { const double v = rn() * 1e-3; for (int i = 0; i < 3; ++i) d[i] = v + (rn() * 2 - 1) * 3e-4; for (int i = 3; i < 6; ++i) d[i] = (rn() * 2 - 1) * 2e-4; }
+        const double k0 = rn() * 1.5;
+        double s0[6] = {0, 0, 0, 0, 0, 0};
+        if (t % 5 == 1) { const double p = -(rn()) * 10.0; s0[0] = s0[1] = s0[2] = p; s0[3] = (rn() * 2 - 1) * 3.0; }   // pre-stressed
+        double sn[6], kn, Dt[6][6], dk[6]; int sub = 0;
+        if (returnMapTensor(q, s0, d, k0, true, sn, kn, Dt, true, &sub, dk) != 0 || sub == 0) continue;
+        if (!((sub == 2 && n2 < 40) || (sub == 4 && n4 < 40))) continue;
+        double fr[64]; const int nf = failureSchedule(q, s0, d, k0, fr);
+        if (nf != sub) { ++skipped; continue; }
+        double eD, eK; bool smooth;
+        fdSchedule(q, s0, d, k0, fr, nf, Dt, dk, eD, eK, smooth);
+        if (!smooth) { ++skipped; continue; }
+        ++tested; if (sub == 2) ++n2; else { ++n4; if (nc4 < 40) { Case& c = c4[nc4++]; for (int i = 0; i < 6; ++i) { c.s0[i] = s0[i]; c.d[i] = d[i]; } c.k0 = k0; } }
+        worstD = std::fmax(worstD, eD); worstK = std::fmax(worstK, eK);
+        // forced schedules through the public schedule entry point
+        const double h2[2] = {0.5, 0.5}, h4[4] = {0.25, 0.25, 0.25, 0.25};
+        for (int f = 0; f < 2; ++f) {
+            const double* fr2 = f ? h4 : h2; const int nn = f ? 4 : 2;
+            double sF[6], kF, DF[6][6], dkF[6];
+            if (returnMapTensorSchedule(q, s0, d, k0, fr2, nn, sF, kF, DF, true, dkF) != 0) continue;
+            double e1, e2; bool sm; fdSchedule(q, s0, d, k0, fr2, nn, DF, dkF, e1, e2, sm);
+            if (!sm) continue;
+            ++nF; worstF = std::fmax(worstF, std::fmax(e1, e2));
+        }
+        // D2 — mutations a wrong build would carry: the chain without b (x) K, and the last piece's tangent alone
+        {
+            double Cel[6][6]; elasticC(q, Cel);
+            double J[6][6] = {{0}}, Kr[6] = {0}, Jn[6][6] = {{0}}, s[6], k = k0, sp[6], kp2, Dl[6][6];
+            for (int i = 0; i < 6; ++i) s[i] = s0[i];
+            for (int p = 0; p < nf; ++p) {
+                double dd[6]; for (int i = 0; i < 6; ++i) dd[i] = d[i] * fr[p];
+                PieceJac pj; returnMapTensor1(q, s, dd, k, true, sp, kp2, Dl, p == nf - 1, &pj);
+                double T[6][6], Jm[6][6], Km[6];
+                for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) T[i][j] = J[i][j] + fr[p] * Cel[i][j];
+                for (int j = 0; j < 6; ++j) { double kv = pj.e * Kr[j]; for (int i = 0; i < 6; ++i) kv += pj.a[i] * T[i][j]; Km[j] = kv;
+                    for (int i = 0; i < 6; ++i) { double v = 0.0; for (int m = 0; m < 6; ++m) v += pj.A[i][m] * T[m][j]; Jm[i][j] = v; } }   // no b (x) K
+                for (int i = 0; i < 6; ++i) { Kr[i] = Km[i]; for (int j = 0; j < 6; ++j) J[i][j] = Jm[i][j]; }
+                for (int i = 0; i < 6; ++i) s[i] = sp[i]; k = kp2;
+            }
+            for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Jn[i][j] = J[i][j];
+            double e1, e2, e3, e4; bool sm1, sm2; double dz[6] = {0, 0, 0, 0, 0, 0};
+            fdSchedule(q, s0, d, k0, fr, nf, Jn, dz, e1, e2, sm1);
+            fdSchedule(q, s0, d, k0, fr, nf, Dl, dz, e3, e4, sm2);
+            if (sm1 && sm2) { ++nMut; mutBK = std::fmin(mutBK, e1); mutLast = std::fmin(mutLast, e3); }
+        }
+    }
+    check(n2 >= 20 && n4 >= 20 && skipped <= tested && worstD < 1.0e-7 && worstK < 1.0e-7,
+          "D1 failure-driven 2-/4-piece returns: chain-rule Dtan6 and d kp/de == frozen-schedule FD to 1e-7");
+    std::printf("       (2-piece %d, 4-piece %d, skipped (kink in the stencil) %d; worst Dtan6 %.2e, worst dkp %.2e)\n", n2, n4, skipped, worstD, worstK);
+    check(nF >= 40 && worstF < 1.0e-7, "D1 forced {1/2,1/2} and {1/4 x4} schedules: chain-rule tangent == FD to 1e-7");
+    std::printf("       (forced cases %d, worst %.2e)\n", nF, worstF);
+    check(nMut >= 20 && mutBK > 1.0e-5 && mutLast > 1.0e-3,
+          "D2 the check discriminates: a chain without b(x)K / the last-piece tangent miss the FD by > 1e-5 / > 1e-3");
+    std::printf("       (cases %d; smallest error without b(x)K %.2e, of the last-piece tangent %.2e)\n", nMut, mutBK, mutLast);
+
+    // D3 — N = k +/- 1e-12 (a rounded piece count): pieces of 1/N plus the remainder piece; stress and tangent are
+    // continuous in N at N = 4 (a tiny remainder piece adds nothing).
+    {
+        double worstS = 0, worstT = 0; int n = 0;
+        for (int c = 0; c < nc4; ++c) {
+            const Case& cs = c4[c];
+            const double f4[4] = {0.25, 0.25, 0.25, 0.25};
+            double sA[6], kA, DA[6][6], dkA[6];
+            if (returnMapTensorSchedule(q, cs.s0, cs.d, cs.k0, f4, 4, sA, kA, DA, true, dkA) != 0) continue;
+            bool all = true; double es = 0, et = 0;
+            for (int sgn = -1; sgn <= 1; sgn += 2) {
+                const double N = 4.0 + sgn * 1.0e-12; const int nfull = (int)std::floor(N);
+                double fr[6]; int m = 0; for (int i = 0; i < nfull; ++i) fr[m++] = 1.0 / N;
+                const double rem = 1.0 - nfull / N; if (rem > 0.0) fr[m++] = rem;
+                double sB[6], kB, DB[6][6], dkB[6];
+                if (returnMapTensorSchedule(q, cs.s0, cs.d, cs.k0, fr, m, sB, kB, DB, true, dkB) != 0) { all = false; break; }
+                for (int i = 0; i < 6; ++i) es = std::fmax(es, std::fabs(sB[i] - sA[i]) / q.fc);
+                et = std::fmax(et, relF6(DB, DA));
+            }
+            if (!all) continue;
+            ++n; worstS = std::fmax(worstS, es); worstT = std::fmax(worstT, et);
+        }
+        check(n >= 10 && worstS < 1.0e-9 && worstT < 1.0e-7, "D3 N = 4 +/- 1e-12 pieces: stress and chain-rule tangent continuous in N");
+        std::printf("       (cases %d, worst |dsigma|/fc %.2e, worst tangent %.2e)\n", n, worstS, worstT);
+    }
+
+    // D4 — the call counter: damagedTangent runs NO return map (every mode whose old tangent micro-FD'd the map:
+    // the beta_c gradient under compressive loading, ctTemper proj, tcTemper proj), and returnMap runs exactly one.
+    {
+        Params p = q; p.tensionLaw = 1; p.compDrive = 1; p.tcTemper = 2; p.Gf = 0.1; p.Gc = 5.0; p.lch = 50.0;
+        p.epsFc = 1e-3; p.As = 2.0;
+        unsigned long long inDT = 0, perMap = 0; int nmaps = 0, nDT = 0;
+        for (int ct = 0; ct <= 2; ct += 2) {
+            p.ctTemper = ct;
+            State in; double sg[6], se[6], D[6][6];
+            // crack in tension, then compress with shear (tensile + compressive histories, sub-incremented steps)
+            for (int k = 1; k <= 40; ++k) {
+                double e[6] = {k <= 15 ? 1.2e-5 * k : 1.8e-4 - 1.5e-4 * (k - 15), -2e-5 * k, 0.0, 4e-5 * k, 0, 0};
+                State o;
+                KernelCallCounters before = kernelCallCounters();
+                returnMap(p, e, in, o, sg, se, D, true, -1.0, true);
+                { const unsigned long long dm = kernelCallCounters().returnMapTensor - before.returnMapTensor; if (dm > perMap) perMap = dm; }
+                ++nmaps;
+                double deps[6], sn[6], kn, Ce[6][6], dk[6];
+                for (int i = 0; i < 6; ++i) deps[i] = e[i] - in.eps[i];
+                if (returnMapTensor(p, in.sigEff, deps, in.kp, true, sn, kn, Ce, true, nullptr, dk) == 0) {
+                    KernelCallCounters b2 = kernelCallCounters();
+                    double Dd[6][6]; damagedTangent(p, in, sn, e, kn, Ce, dk, Dd);
+                    inDT += (kernelCallCounters().returnMapTensor - b2.returnMapTensor) + (kernelCallCounters().pieceReturns - b2.pieceReturns);
+                    ++nDT;
+                }
+                in = o;
+            }
+        }
+        check(nDT > 0 && inDT == 0 && perMap == 1, "D4 call counter: damagedTangent runs 0 return maps; returnMap runs exactly 1");
+        std::printf("       (damagedTangent calls %d: return maps inside %llu; returnMap calls %d: max maps per call %llu)\n", nDT, inDT, nmaps, perMap);
+    }
+
+    // D5 — the closed-form proj-weight gradients == a central FD of the closed-form weights themselves.
+    {
+        Params p = q; p.ctTemper = 2; p.tcTemper = 2;
+        unsigned s5 = 77u; auto r5 = [&]() { s5 = s5 * 1664525u + 1013904223u; return (s5 >> 8) * (1.0 / 16777216.0); };
+        double worstC = 0, worstT = 0; int nC = 0, nT = 0;
+        for (int t = 0; t < 400; ++t) {
+            double sb[6], dp[6];
+            sb[0] = (r5() * 2 - 1) * 20.0; sb[1] = p.ft * (0.002 + 0.045 * r5()); sb[2] = (r5() * 2 - 1) * 5.0;   // one principal in the tcPhi band
+            sb[3] = (r5() * 2 - 1) * 0.02; sb[4] = (r5() * 2 - 1) * 0.02; sb[5] = (r5() * 2 - 1) * 0.5;
+            for (int i = 0; i < 6; ++i) dp[i] = (r5() * 2 - 1) * 1e-4;
+            double A[3][3], w[3], V[3][3]; voigtToMat(sb, A); eig3sym(A, w, V);
+            double gap = 1e300; for (int a = 0; a < 3; ++a) for (int b = a + 1; b < 3; ++b) gap = std::fmin(gap, std::fabs(w[a] - w[b]));
+            if (gap < 0.5) continue;                       // keep the FD off near-repeated eigenvalues (1/gap eigenvector sensitivity)
+            double gs[6], gd[6], hs[6], hd[6];
+            compressiveDamageWeightGrad(p, dp, w, V, gs, gd);
+            tensileDamageWeightGrad(p, dp, w, V, hs, hd);
+            double fsC[6], fdC[6], fsT[6], fdT[6]; bool kink = false;
+            for (int k = 0; k < 6; ++k) {
+                const double hsg = 1e-6 * p.fc, hdp = 1e-6 * 1e-4;
+                double a[6], b[6]; for (int i = 0; i < 6; ++i) { a[i] = sb[i]; b[i] = sb[i]; } a[k] += hsg; b[k] -= hsg;
+                double Aa[3][3], wa[3], Va[3][3], Ab[3][3], wb[3], Vb[3][3]; voigtToMat(a, Aa); eig3sym(Aa, wa, Va); voigtToMat(b, Ab); eig3sym(Ab, wb, Vb);
+                for (int c = 0; c < 3; ++c) { const double lo = TC_DEAD * p.ft, hi = TC_BAND * p.ft;
+                    const double fl = 1e-6 * p.ft; if ((wa[c] - lo) * (wb[c] - lo) <= 0 || (wa[c] - hi) * (wb[c] - hi) <= 0 || wa[c] * wb[c] <= 0 || (wa[c] - fl) * (wb[c] - fl) <= 0) kink = true; }
+                fsC[k] = (compressiveDamageWeight(p, dp, wa, Va) - compressiveDamageWeight(p, dp, wb, Vb)) / (2 * hsg);
+                fsT[k] = (tensileDamageWeight(p, 0.0, dp, wa, Va) - tensileDamageWeight(p, 0.0, dp, wb, Vb)) / (2 * hsg);
+                double c1[6], c2[6]; for (int i = 0; i < 6; ++i) { c1[i] = dp[i]; c2[i] = dp[i]; } c1[k] += hdp; c2[k] -= hdp;
+                fdC[k] = (compressiveDamageWeight(p, c1, w, V) - compressiveDamageWeight(p, c2, w, V)) / (2 * hdp);
+                fdT[k] = (tensileDamageWeight(p, 0.0, c1, w, V) - tensileDamageWeight(p, 0.0, c2, w, V)) / (2 * hdp);
+            }
+            if (kink) continue;
+            double vC[12], vCf[12], vT[12], vTf[12];
+            for (int k = 0; k < 6; ++k) { vC[k] = gs[k] * p.fc; vCf[k] = fsC[k] * p.fc; vC[6 + k] = gd[k] * 1e-4; vCf[6 + k] = fdC[k] * 1e-4;
+                                         vT[k] = hs[k] * p.fc; vTf[k] = fsT[k] * p.fc; vT[6 + k] = hd[k] * 1e-4; vTf[6 + k] = fdT[k] * 1e-4; }
+            double nC2 = 0, dC2 = 0, nT2 = 0, dT2 = 0;
+            for (int k = 0; k < 12; ++k) { nC2 += (vC[k] - vCf[k]) * (vC[k] - vCf[k]); dC2 += vCf[k] * vCf[k]; nT2 += (vT[k] - vTf[k]) * (vT[k] - vTf[k]); dT2 += vTf[k] * vTf[k]; }
+            if (dC2 > 0) { ++nC; worstC = std::fmax(worstC, std::sqrt(nC2 / dC2)); }
+            if (dT2 > 0) { ++nT; worstT = std::fmax(worstT, std::sqrt(nT2 / dT2)); }
+        }
+        check(nC >= 50 && nT >= 50 && worstC < 1.0e-6 && worstT < 1.0e-6,
+              "D5 closed-form tcTemper/ctTemper proj-weight gradients == FD of the weights to 1e-6");
+        std::printf("       (tc cases %d worst %.2e; ct cases %d worst %.2e)\n", nC, worstC, nT, worstT);
+    }
+}
+
 int main(int argc, char** argv) {
     run_identities();
     const char* fix = argc > 1 ? argv[1] : "tests/_testbed/concrete3d_oracle_fixture.txt";
     run_oracle_dump(fix);
     run_robustness();
+    run_f2_chain();
     std::printf(fails ? "\nKERNEL CHECK: %d FAIL\n" : "\nKERNEL CHECK: ALL PASS\n", fails);
     return fails ? 1 : 0;
 }

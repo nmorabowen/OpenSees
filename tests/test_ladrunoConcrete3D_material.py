@@ -558,6 +558,20 @@ def test_tc_temper_gate():
     assert r["PASS"]
 
 
+def test_f2_chain_rule_tangent_gate():
+    """apeGmsh #2621 F2 — the sub-step chain-rule tangent. C1 the chain rule over the pieces (numerical per-piece
+    partials + J_k = A_k (J_{k-1} + f_k C) + b_k (x) K_{k-1}, K_k = a_k . (J_{k-1} + f_k C) + e_k K_{k-1}) == the
+    FD of the map with its piece schedule frozen, for sigma AND kp (1e-5); C2 it reduces to the direct-return
+    tangent; C3 the pre-F2 last-piece tangent misses by > 1e-3; C4 the closed-form proj-weight gradients the
+    analytic damaged tangent uses == FD of the weights (1e-6)."""
+    r = ref.run_f2_chain_gate(verbose=False)
+    assert r["C1_ok"], (r["C1_n"], r["C1_worst"], r["C1_worst_kp"])
+    assert r["C2_ok"], r["C2_rel"]
+    assert r["C3_ok"], r["C3_min_last_piece"]
+    assert r["C4_ok"], (r["C4_n"], r["C4_worst_tc"], r["C4_worst_ct"])
+    assert r["PASS"]
+
+
 def test_p2_no_spurious_healing():
     """Regression for the PR #261 adversarial-review CRITICAL: the implicit omega solve must not
     clamp-stall to 0 on a physical softening path (a raw clamped Newton did, so the cracked material
