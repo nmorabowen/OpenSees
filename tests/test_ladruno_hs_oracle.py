@@ -514,6 +514,25 @@ def test_t2c_consistent_tangent_fd_all_regimes(lode: str) -> None:
     assert abs(pp_2d - pp_1d) < 1.0e-10
     assert np.max(np.abs(sens_2d - sens_1d)) < 1.0e-6
 
+    # Also verify high-confinement / small-p_ref regime4_corner (ULP scaling regression check):
+    p_hi = hs.HSParams(
+        37000.0, 29600.0, 90000.0, 0.50, 5.0, 38.0, 10.0, p_ref=0.1, K0nc=0.38, lode_shape=lode
+    )
+    ok_hi2d, p_hi2d, q_hi2d, dg_hi2d, pp_hi2d, sens_hi2d = hs._solve_regime4_corner(
+        p_hi, 65000.0, 30000.0, 0.35, p_hi.Kur_ref, p_hi.Gur_ref,
+        1.0e-5, 50000.0, 0.65, failure_mode=False, force_1d_fallback=False,
+    )
+    ok_hi1d, p_hi1d, q_hi1d, dg_hi1d, pp_hi1d, sens_hi1d = hs._solve_regime4_corner(
+        p_hi, 65000.0, 30000.0, 0.35, p_hi.Kur_ref, p_hi.Gur_ref,
+        1.0e-5, 50000.0, 0.65, failure_mode=False, force_1d_fallback=True,
+    )
+    assert ok_hi2d and ok_hi1d
+    assert abs(p_hi2d - p_hi1d) / p_hi2d < 1.0e-11
+    assert abs(q_hi2d - q_hi1d) / q_hi2d < 1.0e-11
+    assert abs(dg_hi2d - dg_hi1d) / dg_hi2d < 1.0e-11
+    assert abs(pp_hi2d - pp_hi1d) / pp_hi2d < 1.0e-11
+    assert np.max(np.abs(sens_hi2d - sens_hi1d)) < 1.0e-5
+
 
 def test_t1b_cide_triaxial_extension_hyperbolic_backbone_and_dilatancy() -> None:
     """In Drained Triaxial Extension (TXE, theta = -30 deg, x = -1) at constant minor

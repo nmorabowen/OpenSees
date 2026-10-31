@@ -218,6 +218,30 @@ int main() {
                      p_2d, p_1d, q_2d, q_1d);
         return 15;
       }
+
+      // High-confinement / small-p_ref ULP scaling check for solve_regime4_corner:
+      HSParams p_hi = p;
+      p_hi.p_ref     = 0.1;
+      p_hi.alpha_cap = -1.0;
+      p_hi.beta_cap  = -1.0;
+      if (!p_hi.finalize()) return 16;
+      double p_hi2d = 0.0, q_hi2d = 0.0, dg_hi2d = 0.0, pp_hi2d = 0.0, sens_hi2d[2][4];
+      double p_hi1d = 0.0, q_hi1d = 0.0, dg_hi1d = 0.0, pp_hi1d = 0.0, sens_hi1d[2][4];
+      bool ok_hi2d = solve_regime4_corner(
+          p_hi, 65000.0, 30000.0, Th_f, dTh_f, k3_f, dk3_f, Ths_f, dThs_f,
+          p_hi.Kur_ref, p_hi.Gur_ref, 1.0e-5, 50000.0, 0.65,
+          false, p_hi2d, q_hi2d, dg_hi2d, pp_hi2d, sens_hi2d, false);
+      bool ok_hi1d = solve_regime4_corner(
+          p_hi, 65000.0, 30000.0, Th_f, dTh_f, k3_f, dk3_f, Ths_f, dThs_f,
+          p_hi.Kur_ref, p_hi.Gur_ref, 1.0e-5, 50000.0, 0.65,
+          false, p_hi1d, q_hi1d, dg_hi1d, pp_hi1d, sens_hi1d, true);
+      if (!ok_hi2d || !ok_hi1d ||
+          std::abs(p_hi2d - p_hi1d) / p_hi2d > 1.0e-11 ||
+          std::abs(q_hi2d - q_hi1d) / q_hi2d > 1.0e-11) {
+        std::fprintf(stderr, "FAIL [regime4_hi_ulp]: ok2d=%d ok1d=%d p_2d=%.12f p_1d=%.12f\n",
+                     static_cast<int>(ok_hi2d), static_cast<int>(ok_hi1d), p_hi2d, p_hi1d);
+        return 17;
+      }
     }
 
     // Emit machine-precision comparison row for Python parity test:

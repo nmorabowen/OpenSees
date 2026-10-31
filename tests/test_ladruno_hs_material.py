@@ -704,7 +704,11 @@ def test_plane_strain_biaxial_and_footing_mn_strictly_bounds_mc():
         ops.analysis("Static")
         for _ in range(30):
             assert ops.analyze(1) == 0
-        return float(ops.getLoadFactor(1)) + p0_footing
+        ops.reactions()
+        r_total = float(ops.getLoadFactor(1)) + p0_footing
+        bot_ry = sum(float(ops.nodeReaction(i + 1, 2)) for i in range(nx + 1))
+        assert abs((bot_ry - 100.0) - r_total) < 1.0e-6
+        return r_total
 
     r_mc = run_strip_footing_bvp("mc")
     r_mn = run_strip_footing_bvp("mn")

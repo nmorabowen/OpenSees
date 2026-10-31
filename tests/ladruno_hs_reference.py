@@ -977,6 +977,9 @@ def _solve_regime3_cap(
     p_cur = max(p_lo, min(p_tr, p_p_n))
     q_cur = q_tr
 
+    p_scale = max(p.p_hat_ref, p_p_n + p.a_apex, p_tr + p.a_apex)
+    scale_c = p_scale * p_scale
+
     for _ in range(50):
         p_hat = max(p.p_min, p_cur + p.a_apex)
         deps_v_pc = max(0.0, (p_tr - p_cur) / Ke)
@@ -986,7 +989,9 @@ def _solve_regime3_cap(
         pp_hat = pp_new + p.a_apex
 
         R = (q_cur * q_cur) / alpha2 + p_hat * p_hat - pp_hat * pp_hat
-        if abs(R) / (p.p_hat_ref * p.p_hat_ref) < 1.0e-13:
+        if abs(R) / scale_c < 1.0e-13 or (
+            abs(p_hi - p_lo) <= 1.0e-14 * max(1.0, abs(p_cur)) and abs(R) / scale_c < 1.0e-9
+        ):
             # Note: since Ke = kappa_KG * Ge, Ge * deps_v_pc = (p_tr - p_cur) / kappa_KG is independent of Ge,
             # while d(deps_v_pc)/dGe = -deps_v_pc / Ge in the cap hardening equation!
             dcq_dp = (3.0 * Ge / alpha2) * (
@@ -1052,17 +1057,28 @@ def _solve_regime4_corner(
     """Solve Regime 4 (Simultaneous Shear [f^s or f^f] + Cap [f^c] corner)."""
     alpha2 = p.alpha_cap * p.alpha_cap
     kappa_KG = p.Kur_ref / p.Gur_ref
-    Theta_0, _ = lode_theta_and_deriv(p, x_sin3)
-    p_cur = max(1.0001 * p.p_min - p.a_apex, min(p_tr, max(p_p_n, 0.7 * p_tr)))
-    q_cur = min(q_tr, 0.85 * p.M_c * max(p.p_min, p_cur + p.a_apex) / Theta_0)
-    scale0 = max(1.0, p.p_ref if failure_mode else 1.0)
-    scale1 = p.p_hat_ref ** 2
+    Theta_0, dTheta_dx, k3_0, dk3_dx, Theta_sig_0, dTheta_sig_dx = lode_factors_and_derivs(p, x_sin3)
+    p_cur = max(p.p_min - p.a_apex, min(p_tr, max(p_p_n, 0.7 * p_tr)))
+    q_cur = (
+        (p.M_c * max(p.p_min, p_cur + p.a_apex) / Theta_0)
+        if failure_mode
+        else min(q_tr, 0.8 * p.M_c * max(p.p_min, p_cur + p.a_apex) / Theta_0)
+    )
+    p_scale = max(p.p_hat_ref, p_p_n + p.a_apex, p_tr + p.a_apex)
+    scale0 = max(1.0, p_scale) if failure_mode else 1.0
+    scale1 = p_scale * p_scale
 
     def eval_residuals(
-        p_val: float, q_val: float, p_tr_v: float, q_tr_v: float, x_v: float, Ge_v: float
+        p_val: float,
+        q_val: float,
+        p_tr_v: float,
+        q_tr_v: float,
+        Th_v: float,
+        k3_v: float,
+        Th_sig_v: float,
+        Ke_v: float,
+        Ge_v: float,
     ):
-        Th_v, _, k3_v, _, Th_sig_v, _ = lode_factors_and_derivs(p, x_v)
-        Ke_v = kappa_KG * Ge_v
         p_hat = max(p.p_min, p_val + p.a_apex)
         q_tilde = Th_v * q_val
         deps_v_p = (p_tr_v - p_val) / Ke_v
@@ -1101,36 +1117,41 @@ def _solve_regime4_corner(
         hq = max(1.0e-8, 1.0e-8 * max(1.0, abs(q_sol)))
         hx = 1.0e-8
         hge = max(1.0e-6, 1.0e-8 * Ge)
-        r0p, r1p, _, _, _ = eval_residuals(p_sol + hp, q_sol, p_tr, q_tr, x_sin3, Ge)
-        r0m, r1m, _, _, _ = eval_residuals(p_sol - hp, q_sol, p_tr, q_tr, x_sin3, Ge)
+        r0p, r1p, _, _, _ = eval_residuals(p_sol + hp, q_sol, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge)
+        r0m, r1m, _, _, _ = eval_residuals(p_sol - hp, q_sol, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge)
         J_y[0, 0] = (r0p - r0m) / (2.0 * hp)
         J_y[1, 0] = (r1p - r1m) / (2.0 * hp)
 
-        r0p, r1p, _, _, _ = eval_residuals(p_sol, q_sol + hq, p_tr, q_tr, x_sin3, Ge)
-        r0m, r1m, _, _, _ = eval_residuals(p_sol, q_sol - hq, p_tr, q_tr, x_sin3, Ge)
+        r0p, r1p, _, _, _ = eval_residuals(p_sol, q_sol + hq, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge)
+        r0m, r1m, _, _, _ = eval_residuals(p_sol, q_sol - hq, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge)
         J_y[0, 1] = (r0p - r0m) / (2.0 * hq)
         J_y[1, 1] = (r1p - r1m) / (2.0 * hq)
 
-        r0p, r1p, _, _, _ = eval_residuals(p_sol, q_sol, p_tr + hp, q_tr, x_sin3, Ge)
-        r0m, r1m, _, _, _ = eval_residuals(p_sol, q_sol, p_tr - hp, q_tr, x_sin3, Ge)
+        r0p, r1p, _, _, _ = eval_residuals(p_sol, q_sol, p_tr + hp, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge)
+        r0m, r1m, _, _, _ = eval_residuals(p_sol, q_sol, p_tr - hp, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge)
         J_tr[0, 0] = (r0p - r0m) / (2.0 * hp)
         J_tr[1, 0] = (r1p - r1m) / (2.0 * hp)
 
-        r0p, r1p, _, _, _ = eval_residuals(p_sol, q_sol, p_tr, q_tr + hq, x_sin3, Ge)
-        r0m, r1m, _, _, _ = eval_residuals(p_sol, q_sol, p_tr, q_tr - hq, x_sin3, Ge)
+        r0p, r1p, _, _, _ = eval_residuals(p_sol, q_sol, p_tr, q_tr + hq, Theta_0, k3_0, Theta_sig_0, Ke, Ge)
+        r0m, r1m, _, _, _ = eval_residuals(p_sol, q_sol, p_tr, q_tr - hq, Theta_0, k3_0, Theta_sig_0, Ke, Ge)
         J_tr[0, 1] = (r0p - r0m) / (2.0 * hq)
         J_tr[1, 1] = (r1p - r1m) / (2.0 * hq)
 
-        xp = min(1.0, x_sin3 + hx)
-        xm = max(-1.0, x_sin3 - hx)
-        dx_span = max(1.0e-12, xp - xm)
-        r0p, r1p, _, _, _ = eval_residuals(p_sol, q_sol, p_tr, q_tr, xp, Ge)
-        r0m, r1m, _, _, _ = eval_residuals(p_sol, q_sol, p_tr, q_tr, xm, Ge)
-        J_tr[0, 2] = (r0p - r0m) / dx_span
-        J_tr[1, 2] = (r1p - r1m) / dx_span
+        r0p, r1p, _, _, _ = eval_residuals(
+            p_sol, q_sol, p_tr, q_tr,
+            Theta_0 + hx * dTheta_dx, k3_0 + hx * dk3_dx, Theta_sig_0 + hx * dTheta_sig_dx,
+            Ke, Ge,
+        )
+        r0m, r1m, _, _, _ = eval_residuals(
+            p_sol, q_sol, p_tr, q_tr,
+            Theta_0 - hx * dTheta_dx, k3_0 - hx * dk3_dx, Theta_sig_0 - hx * dTheta_sig_dx,
+            Ke, Ge,
+        )
+        J_tr[0, 2] = (r0p - r0m) / (2.0 * hx)
+        J_tr[1, 2] = (r1p - r1m) / (2.0 * hx)
 
-        r0p, r1p, _, _, _ = eval_residuals(p_sol, q_sol, p_tr, q_tr, x_sin3, Ge + hge)
-        r0m, r1m, _, _, _ = eval_residuals(p_sol, q_sol, p_tr, q_tr, x_sin3, Ge - hge)
+        r0p, r1p, _, _, _ = eval_residuals(p_sol, q_sol, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, kappa_KG * (Ge + hge), Ge + hge)
+        r0m, r1m, _, _, _ = eval_residuals(p_sol, q_sol, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, kappa_KG * (Ge - hge), Ge - hge)
         J_tr[0, 3] = (r0p - r0m) / (2.0 * hge)
         J_tr[1, 3] = (r1p - r1m) / (2.0 * hge)
 
@@ -1138,7 +1159,7 @@ def _solve_regime4_corner(
         return True, p_sol, q_sol, max(0.0, dgam_p), pp_new, sens
 
     for _ in range(0 if force_1d_fallback else 40):
-        R0, R1, dgam_p, deps_v_pc, pp_new = eval_residuals(p_cur, q_cur, p_tr, q_tr, x_sin3, Ge)
+        R0, R1, dgam_p, deps_v_pc, pp_new = eval_residuals(p_cur, q_cur, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge)
         if max(abs(R0) / scale0, abs(R1) / scale1) < 1.0e-12:
             ok_f, p_f, q_f, dg_f, pp_f, sens_f = finalize_r4_sens(
                 p_cur, q_cur, dgam_p, deps_v_pc, pp_new
@@ -1149,12 +1170,12 @@ def _solve_regime4_corner(
 
         hp = max(1.0e-7, 1.0e-7 * abs(p_cur))
         hq = max(1.0e-7, 1.0e-7 * max(1.0, abs(q_cur)))
-        r0p, r1p, _, _, _ = eval_residuals(p_cur + hp, q_cur, p_tr, q_tr, x_sin3, Ge)
-        r0m, r1m, _, _, _ = eval_residuals(p_cur - hp, q_cur, p_tr, q_tr, x_sin3, Ge)
+        r0p, r1p, _, _, _ = eval_residuals(p_cur + hp, q_cur, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge)
+        r0m, r1m, _, _, _ = eval_residuals(p_cur - hp, q_cur, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge)
         J00 = (r0p - r0m) / (2.0 * hp)
         J10 = (r1p - r1m) / (2.0 * hp)
-        r0p, r1p, _, _, _ = eval_residuals(p_cur, q_cur + hq, p_tr, q_tr, x_sin3, Ge)
-        r0m, r1m, _, _, _ = eval_residuals(p_cur, q_cur - hq, p_tr, q_tr, x_sin3, Ge)
+        r0p, r1p, _, _, _ = eval_residuals(p_cur, q_cur + hq, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge)
+        r0m, r1m, _, _, _ = eval_residuals(p_cur, q_cur - hq, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge)
         J01 = (r0p - r0m) / (2.0 * hq)
         J11 = (r1p - r1m) / (2.0 * hq)
         det = J00 * J11 - J01 * J10
@@ -1164,7 +1185,7 @@ def _solve_regime4_corner(
         dq = -(-J10 * R0 + J00 * R1) / det
 
         alpha_ls = 1.0
-        for _ in range(10):
+        for _ in range(12):
             p_next = p_cur + alpha_ls * dp
             q_next = max(0.0, q_cur + alpha_ls * dq)
             if (p_next + p.a_apex) > 0.99 * p.p_min and (
@@ -1180,19 +1201,22 @@ def _solve_regime4_corner(
         p_lo = p.p_min - p.a_apex
         p_hi = p_tr + Ke * max(0.0, p.sin_psi) * (2.0 * q_tr / (3.0 * Ge))
         _, r1_lo, _, _, _ = eval_residuals(
-            p_lo, (p.M_c / Theta_0) * (p_lo + p.a_apex), p_tr, q_tr, x_sin3, Ge
+            p_lo, (p.M_c / Theta_0) * (p_lo + p.a_apex), p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge
         )
         _, r1_hi, _, _, _ = eval_residuals(
-            p_hi, (p.M_c / Theta_0) * (p_hi + p.a_apex), p_tr, q_tr, x_sin3, Ge
+            p_hi, (p.M_c / Theta_0) * (p_hi + p.a_apex), p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge
         )
         if r1_lo <= 0.0 and r1_hi >= 0.0:
             p_est = 0.5 * (p_lo + p_hi)
             for _ in range(50):
                 q_est = (p.M_c / Theta_0) * (p_est + p.a_apex)
                 R0, R1, dgam_p, deps_v_pc, pp_new = eval_residuals(
-                    p_est, q_est, p_tr, q_tr, x_sin3, Ge
+                    p_est, q_est, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge
                 )
-                if max(abs(R0) / scale0, abs(R1) / scale1) < 1.0e-12:
+                res_norm = max(abs(R0) / scale0, abs(R1) / scale1)
+                if res_norm < 1.0e-12 or (
+                    abs(p_hi - p_lo) <= 1.0e-14 * max(1.0, abs(p_est)) and res_norm < 1.0e-9
+                ):
                     return finalize_r4_sens(p_est, q_est, dgam_p, deps_v_pc, pp_new)
                 if R1 > 0.0:
                     p_hi = p_est
@@ -1205,10 +1229,10 @@ def _solve_regime4_corner(
             q_hi_v = min(q_tr, (p.M_c / Theta_0) * p_hat_v)
             q_lo_v = 0.0
             r0_lo, r1_lo, dg_lo, dv_lo, pp_lo = eval_residuals(
-                p_val, q_lo_v, p_tr, q_tr, x_sin3, Ge
+                p_val, q_lo_v, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge
             )
             r0_hi, r1_hi, dg_hi, dv_hi, pp_hi = eval_residuals(
-                p_val, q_hi_v, p_tr, q_tr, x_sin3, Ge
+                p_val, q_hi_v, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge
             )
             if r0_hi <= 0.0:
                 return q_hi_v, r0_hi, r1_hi, dg_hi, dv_hi, pp_hi
@@ -1217,7 +1241,7 @@ def _solve_regime4_corner(
             q_m = 0.5 * (q_lo_v + q_hi_v)
             for it_q in range(60):
                 r0_m, r1_m, dg_m, dv_m, pp_m = eval_residuals(
-                    p_val, q_m, p_tr, q_tr, x_sin3, Ge
+                    p_val, q_m, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge
                 )
                 if abs(r0_m) / scale0 < 1.0e-14 or abs(q_hi_v - q_lo_v) <= 1.0e-14 * max(1.0, q_hi_v):
                     return q_m, r0_m, r1_m, dg_m, dv_m, pp_m
@@ -1235,7 +1259,7 @@ def _solve_regime4_corner(
                 else:
                     q_m = 0.5 * (q_lo_v + q_hi_v)
             r0_m, r1_m, dg_m, dv_m, pp_m = eval_residuals(
-                p_val, q_m, p_tr, q_tr, x_sin3, Ge
+                p_val, q_m, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge
             )
             return q_m, r0_m, r1_m, dg_m, dv_m, pp_m
 
@@ -1247,7 +1271,10 @@ def _solve_regime4_corner(
             p_est = 0.5 * (p_lo + p_hi)
             for it_p in range(60):
                 q_est, R0, R1, dgam_p, deps_v_pc, pp_new = solve_q_for_p(p_est)
-                if max(abs(R0) / scale0, abs(R1) / scale1) < 1.0e-12:
+                res_norm = max(abs(R0) / scale0, abs(R1) / scale1)
+                if res_norm < 1.0e-12 or (
+                    abs(p_hi - p_lo) <= 1.0e-14 * max(1.0, abs(p_est)) and res_norm < 1.0e-9
+                ):
                     return finalize_r4_sens(p_est, q_est, dgam_p, deps_v_pc, pp_new)
                 if R1 > 0.0:
                     p_hi, r1_hi = p_est, R1
@@ -1341,7 +1368,9 @@ def return_map_3d(
     pp_hat_n = st_n.p_p + p.a_apex
     f_cap_tr = (q_tr * q_tr) / (p.alpha_cap ** 2) + p_hat_tr * p_hat_tr - pp_hat_n * pp_hat_n
 
-    if f_shear_tr <= 1.0e-12 and f_fail_tr <= 1.0e-12 and f_cap_tr <= 1.0e-10:
+    if float(np.dot(deps, deps)) <= 1.0e-30 or (
+        f_shear_tr <= 1.0e-12 and f_fail_tr <= 1.0e-12 and f_cap_tr <= 1.0e-10
+    ):
         st_new.sig = sig_tr
         return st_new, C_e_alg, "elastic"
 

@@ -1144,6 +1144,9 @@ inline bool solve_regime3_cap(
   double alpha2 = p.alpha_cap * p.alpha_cap;
   double c_q    = (3.0 * Ge) / alpha2;
 
+  double p_scale = std::max(p.p_hat_ref, std::max(p_p_n + p.a_apex, p_tr + p.a_apex));
+  double scale_c = p_scale * p_scale;
+
   for (int iter = 0; iter < 50; ++iter) {
     double deps_v_pc = (p_tr - p_cur) / Ke;
     if (deps_v_pc < -1.0e-12) return false;
@@ -1168,7 +1171,8 @@ inline bool solve_regime3_cap(
                  + 2.0 * p_hat
                  + (2.0 * pp_hat / Ke) * dpp_ddeps;
 
-    if (std::abs(R) / (p.p_hat_ref * p.p_hat_ref) < 1.0e-13) {
+    if (std::abs(R) / scale_c < 1.0e-13 ||
+        (std::abs(p_hi - p_lo) <= 1.0e-14 * std::max(1.0, std::abs(p_cur)) && std::abs(R) / scale_c < 1.0e-9)) {
       double dR_dptr = (2.0 * q_cur / alpha2) * dq_dptr - (2.0 * pp_hat / Ke) * dpp_ddeps;
       double dR_dqtr = (2.0 * q_cur / alpha2) * dq_dqtr;
       double dR_dGe  = (2.0 * q_cur / alpha2) * dq_dGe
@@ -1258,10 +1262,13 @@ inline bool solve_regime4_corner(
     double& p_out, double& q_out, double& dgam_s_out, double& pp_out, double sens[2][4],
     bool force_1d_fallback = false) {
   double p_cur    = std::max(p.p_min - p.a_apex, std::min(p_tr, std::max(p_p_n, 0.7 * p_tr)));
-  double q_cur    = std::min(q_tr, 0.85 * p.M_c * (p_cur + p.a_apex) / Theta);
+  double q_cur    = failure_mode
+                        ? (p.M_c * std::max(p.p_min, p_cur + p.a_apex) / Theta)
+                        : std::min(q_tr, 0.8 * p.M_c * std::max(p.p_min, p_cur + p.a_apex) / Theta);
   double kappa_KG = p.Kur_ref / p.Gur_ref;
-  double scale0   = failure_mode ? std::max(1.0, p.p_ref) : 1.0;
-  double scale1   = p.p_hat_ref * p.p_hat_ref;
+  double p_scale  = std::max(p.p_hat_ref, std::max(p_p_n + p.a_apex, p_tr + p.a_apex));
+  double scale0   = failure_mode ? std::max(1.0, p_scale) : 1.0;
+  double scale1   = p_scale * p_scale;
 
   auto finalize_r4_sens = [&](double p_sol, double q_sol, double dgam_p, double deps_v_pc, double pp_new) -> bool {
     if (dgam_p < -1.0e-10 || deps_v_pc < -1.0e-10) return false;
@@ -1376,7 +1383,9 @@ inline bool solve_regime4_corner(
         double R0 = 0.0, R1 = 0.0, dgam_p = 0.0, deps_v_pc = 0.0, pp_new = p_p_n;
         eval_regime4_residuals(p, p_est, q_est, p_tr, q_tr, Theta, k3, Theta_sig, Ke, Ge,
                                gamma_p_n, p_p_n, void_ratio, true, R0, R1, dgam_p, deps_v_pc, pp_new);
-        if (std::max(std::abs(R0) / scale0, std::abs(R1) / scale1) < 1.0e-12) {
+        double res_norm = std::max(std::abs(R0) / scale0, std::abs(R1) / scale1);
+        if (res_norm < 1.0e-12 ||
+            (std::abs(p_hi - p_lo) <= 1.0e-14 * std::max(1.0, std::abs(p_est)) && res_norm < 1.0e-9)) {
           return finalize_r4_sens(p_est, q_est, dgam_p, deps_v_pc, pp_new);
         }
         if (R1 > 0.0) { p_hi = p_est; R1_hi = R1; }
@@ -1454,11 +1463,13 @@ inline bool solve_regime4_corner(
       for (int it_p = 0; it_p < 60; ++it_p) {
         double q_est = 0.0, R0 = 0.0, R1 = 0.0, dgam_p = 0.0, deps_v_pc = 0.0, pp_new = p_p_n;
         solve_q_for_p(p_est, q_est, R0, R1, dgam_p, deps_v_pc, pp_new);
-        if (std::max(std::abs(R0) / scale0, std::abs(R1) / scale1) < 1.0e-12) {
+        double res_norm = std::max(std::abs(R0) / scale0, std::abs(R1) / scale1);
+        if (res_norm < 1.0e-12 ||
+            (std::abs(p_hi - p_lo) <= 1.0e-14 * std::max(1.0, std::abs(p_est)) && res_norm < 1.0e-9)) {
           return finalize_r4_sens(p_est, q_est, dgam_p, deps_v_pc, pp_new);
         }
         if (R1 > 0.0) { p_hi = p_est; R1_hi = R1; }
-        else          { p_lo = p_est; R1_hi = R1_hi; R1_lo = R1; }
+        else          { p_lo = p_est; R1_lo = R1; }
         if ((it_p % 2 == 0) && std::abs(R1_hi - R1_lo) > 1.0e-30) {
           double p_sec = p_lo - R1_lo * (p_hi - p_lo) / (R1_hi - R1_lo);
           p_est = (p_sec > p_lo + 0.05 * (p_hi - p_lo) && p_sec < p_hi - 0.05 * (p_hi - p_lo))
@@ -1573,7 +1584,8 @@ inline ActiveRegime return_map_3d_comp(
   double f_cap_tr = (q_tr * q_tr) / (p.alpha_cap * p.alpha_cap)
                   + p_hat_tr * p_hat_tr - pp_hat_n * pp_hat_n;
 
-  if (f_shear_tr <= 1.0e-12 && f_fail_tr <= 1.0e-12 && f_cap_tr <= 1.0e-10) {
+  if (norm_deps_sq <= 1.0e-30 ||
+      (f_shear_tr <= 1.0e-12 && f_fail_tr <= 1.0e-12 && f_cap_tr <= 1.0e-10)) {
     for (int i = 0; i < 6; ++i) {
       st_new.sig[i] = sig_tr[i];
       for (int j = 0; j < 6; ++j) {

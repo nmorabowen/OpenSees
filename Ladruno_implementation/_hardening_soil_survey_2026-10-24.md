@@ -74,8 +74,8 @@ Why support **both** `-lodeShape mc` (Mohr–Coulomb hexagon) and `-lodeShape mn
 2. **Surface 2 — Ultimate Failure Truncation ($f^f$ at $q_{\text{eq}} = q_f$):**
    Truncates $f^s$ when $\gamma^p \ge \gamma^p_f = \frac{2q_f}{E_i(1-R_f)} - \frac{2q_f}{E_{ur}}$ so $q_{\text{eq}}$ never exceeds $q_f = R_f q_a$, transitioning to perfect plasticity with constant dilatancy $\psi$.
 3. **Surface 3 — Elliptical Volumetric Cap ($f^c$, Associated Flow $g^c = f^c$):**
-   $$f^c(\boldsymbol{\sigma}', p_p) = \frac{\tilde{q}^2}{\alpha^2} + (p' + a)^2 - (p_p + a)^2 = 0, \qquad \dot{p}_p = H_c(p_p)\,\dot{\varepsilon}_v^{p,c}$$
-   where $a = c'\cot\phi'$, $\tilde{q} = \sigma'_1 + (\delta - 1)\sigma'_2 - \delta\sigma'_3$ (`mc`) or $\Theta_{\text{MN}}(\vartheta, \phi')\sqrt{3J_2}$ (`mn`), with $(\alpha, \beta)$ solved automatically at construction from $(E_{\text{oed}}^{\text{ref}}, K_0^{\text{nc}})$.
+   $$f^c(\boldsymbol{\sigma}', p_p) = \frac{q^2}{\alpha^2} + (p' + a)^2 - (p_p + a)^2 = 0, \qquad \dot{p}_p = H_c(p_p)\,\dot{\varepsilon}_v^{p,c}$$
+   where $a = c'\cot\phi'$ and $q = \sqrt{3J_2}$ (so the cap is circular in the $\pi$-plane in $(p', q)$ space), with $(\alpha, \beta)$ solved automatically at construction from $(E_{\text{oed}}^{\text{ref}}, K_0^{\text{nc}})$.
 4. **Surface 4 — Rankine Tension Cutoff ($f^t$, Associated Flow $g^t = f^t$):**
    $$f^t_i(\boldsymbol{\sigma}') = -\sigma'_i - \sigma_t = 0 \quad (i = 1, 2, 3)$$
 5. **Opt-In `HSsmall` Overlay (`-smallStrain $G0_ref $gamma07`, Benz 2007 [`5PU9KPRT`] / Benz, Vermeer & Schwab 2009 [`2U66T7JX`]):**
