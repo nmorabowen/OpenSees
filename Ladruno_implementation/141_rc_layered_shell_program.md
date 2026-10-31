@@ -220,7 +220,7 @@ and `-local` pinned (P1c), so P2 baseline runs wait for #877.
 
 ### P3 — `LadrunoRCConcrete` regularization (the accuracy phase)
 
-Order after P2e (plan §3, re-ranking for the owner to confirm): **P3d → P3c → P3a**; P3b parked;
+Order after P2e (plan §3, re-ranking confirmed by the owner 2026-10-31): **P3d → P3c → P3a**; P3b parked;
 P3e optional. **P3c and P3d are blocked on #877**: they edit the tension-stiffening and
 regularization paths #877 changes (VC-1986 TS default, c = 200, `-crackedNu`), and their G-B/G-C/G-PV
 baselines must be re-measured on its build. The rules below are fixed here; their gate numbers are
@@ -346,16 +346,17 @@ when study family 03 reaches it.
 1. Under `-corotational`, confirm the frame of the material's crack normal equals the frame the
    override projects in (both are `ASDShellQ4`'s local system — verify, don't assume).
 2. ~~Whether the EAS factor ½ should apply to the directional length (G-A decides).~~ Settled by P2e:
-   no fixed factor is right under EAS, so the seam returns the full h(n). **Open (owner):** when a
-   material with `-autoRegularization` sits on an EAS `ASDShellQ4`, warn once or refuse with the
-   material sentinel. Refusing breaks every existing EAS crack-band model; warning keeps a known
-   up-to-2× energy error running silently after the first line of output.
+   no fixed factor is right under EAS, so the seam returns the full h(n). **Decided (owner,
+   2026-10-31):** warn once now. A material with `-autoRegularization` on an EAS `ASDShellQ4` prints
+   one warning that names the up-to-2× energy error. It refuses with the material sentinel only once
+   P3a lands, and that change goes in the P3a release note. Refusing today would break every
+   existing EAS crack-band model before a fix exists.
 3. How the apeGmsh builder should expose "reinforced layer" marking for P3c without leaking OpenSees
    flags into geometry code.
 4. Whether `ASDShellQ4` should also override `getExplicitCriticalTimeStep` (explicit cyclic walls use a
    manual dt today) — out of scope unless P2/P4 runs need it.
-5. **Which spacing P3c uses (owner, before P3c).** RTD's rule wants the mean crack spacing; EC2 eq.
-   7.11 gives s_r,max. Proposed: s_rm = s_r,max/1.7 (the characteristic-to-mean ratio behind EC2
+5. **Which spacing P3c uses — decided (owner, 2026-10-31).** RTD's rule wants the mean crack spacing; EC2 eq.
+   7.11 gives s_r,max. Adopted: s_rm = s_r,max/1.7 (the characteristic-to-mean ratio behind EC2
    7.11; MC 1990 β = 1.7), so the G-B tie of the 2026-09-28 run has s_rm ≈ 380 mm, not 646. The
    G-B energy gate checks the rule against whatever s_rm is chosen; whether that s_rm is physical is
    a separate check against a tension-tie test with counted cracks.
@@ -363,7 +364,8 @@ when study family 03 reaches it.
    the strain) nothing stops every element of a uniformly stressed reinforced zone from cracking,
    so plain crack band over-dissipates by s_rm/h (G-B h/s_rm = ½: expected 2.0). `min(h, s_θ)`
    leaves that case alone, as RTD does. Using h_eff = s_θ for every reinforced layer would fix it
-   and would change today's fine-mesh results. Decide from the G-B ½ arm, not before.
+   and would change today's fine-mesh results. **Owner (2026-10-31): decide from the G-B ½ arm on
+   the #877 build (P2f), not before.**
 7. P3c and P3d wait for #877. If #877 changes the TS law or its default before merging, the P3d
    margins quoted in §4 (σ_cap/σ_ts at τ_max) are re-measured on the merged build before P3d's
    design is frozen.

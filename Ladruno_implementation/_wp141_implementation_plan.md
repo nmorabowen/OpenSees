@@ -141,7 +141,7 @@ Bažant chain, the periodic cell, tied node lines, ν = 0 — both columns softe
 - `-drillingStab 1.0` still stores 0.75·Gf·t·ℓ_c.
 - G-A's "3.25 diffuse" did not reproduce.
 
-*Re-ranking (proposed, owner to confirm):*
+*Re-ranking (confirmed by the owner, 2026-10-31):*
 - **R1 (cheap, now):**
   - quirk rows + guide: crack-band RC on `ASDShellQ4` ⇒ `-noeas`, and `-drillingNL` where localized
     inclined cracks form;
@@ -219,7 +219,7 @@ Bažant chain, the periodic cell, tied node lines, ν = 0 — both columns softe
 - O3a (T1, RTD 1016 §2.4.3.1) `h_eff = min(h, s_θ)`, `s_θ = 1/(|cosθ|/s_rx + |sinθ|/s_ry)`, with θ
   between the crack normal at onset and x; h is the scalar today, h(n) after P3a. s_rx, s_ry are
   **mean** crack spacings, user-given or computed by the apeGmsh builder as s_r,max(EC2 7.11)/1.7
-  (ADR Q5 — owner to confirm). Limits θ = 0 → s_rx and θ = 90° → s_ry are unit tests. The rule
+  (ADR Q5 — decided 2026-10-31). Limits θ = 0 → s_rx and θ = 90° → s_ry are unit tests. The rule
   applies only to layers flagged reinforced, to tension only.
 - O3b (T3) G-B tie, re-run on the #877 build (P2f) with `-noeas`, lch = h, `LadrunoLoadControl`:
   - a membrane strip with `PlateRebar` (ρ ≈ 1 %), **elastic** steel, length L = 12·s_rm, mesh
