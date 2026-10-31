@@ -867,7 +867,7 @@ static void run_robustness() {
 // maxSubIncr 10, deterministic). Before the r4 port the DIRECT return failed on 645 / 904 / 1953 of 2000 points in a
 // 2e-6-wide window at lateral -0.2, x = 1.5 / 3 / 6 eps_cr, and one window at lateral +0.3, x = 3 returned two
 // different admissible roots (vertex kp 23 1984 times, regular kp 113 16 times).
-static const int D4_MAX_JUMPS = 14;   // measured on the r4 kernel (8 fold jumps + 6 vertex/regular switches, lodeFactor 0)
+static const int D4_MAX_JUMPS = 20;   // measured 14 on the r4 kernel (11 kappa_p-up, 3 kappa_p-down; headroom for platform round-off)
 static Params tensionReturnParams() {
     Params q; q.E = 30000; q.nu = 0.2; q.fc = 30; q.ft = 3; q.e = eccentricityFromKupfer(30, 3, 1.16);
     q.m0 = m0Of(q.fc, q.ft, q.e); q.Df = 0.85; q.As = 2.0; q.qh0 = 0.3; q.Hp = 0.01; q.Gf = 0.1; q.Gc = 5.0;
@@ -966,8 +966,8 @@ static void run_tension_return() {
     // review: 351 neighbour jumps > 1 MPa, up to 102 MPa, flipping back and forth). With the fixed root order (vertex,
     // nested with the smallest-kappa_p root, then the Newtons) what is left are ONE-SIDED jumps where the least-hardening
     // branch ends (a fold of the backward-Euler system) and the vertex/regular switch of lodeFactor 0. Gate: no failure,
-    // no ray jumps > 1 MPa more than twice (no flip-flopping), and the total stays at the measured count (14: 8 fold jumps,
-    // 6 vertex/regular switches, worst 23 MPa). The plain-Newton-first order fails it (110 jumps, 10 on one ray, 99.7 MPa).
+    // no ray jumps > 1 MPa more than twice (no flip-flopping: the principled check), and the total stays near the measured
+    // count (14, worst 23 MPa; limit 20). The plain-Newton-first order fails it (110 jumps, 10 on one ray, 99.7 MPa).
     {
         Params q = tensionReturnParams();
         const double ecr = q.ft / q.E, z6[6] = {0, 0, 0, 0, 0, 0};

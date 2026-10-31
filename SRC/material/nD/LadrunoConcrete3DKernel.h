@@ -212,8 +212,18 @@ static const double SQRT1_5 = 1.224744871391589;
 static const double F_TOL_HONEST = 3.1e-6;
 // Full-residual acceptance of the nested fallback return (R1, R2 relative to fc; R3; R4 relative to 1 + kp).
 static const double NESTED_RES_TOL = 1.0e-8;
-// Grid cells of the nested solve's root scan (returnMapNested).
+// Grid cells of the nested solve's root scan (returnMapNested), and the inner-solve tolerance used while scanning
+// (the scan only needs the sign of f at the grid points; every root is then re-solved at 1e-12).
 static const int NESTED_SCAN = 16;
+static const double NESTED_SCAN_XTOL = 1.0e-8;
+// COST GATE of the scan below a converged plain-Newton root (r4 re-review: scanning on every sub-increment piece made the
+// default mode 2x slower than the PR head): it runs only when the Newton root's deviatoric plastic strain (rho_tr - rho)/2G
+// exceeds NESTED_LOWER_GDEV ft/E. EMPIRICAL: every smaller-kappa_p root found below a Newton root on the r4 probes (531 of
+// 54 276 Newton roots: the 40 x 20001-point rays plus 200 000 random tension trials, kappa_p,n 0..50) sat under a root with
+// at least 2.3 ft/E of deviatoric plastic strain (a hardening-expanded root needs a large plastic increment); with the
+// gate at 0.5 the rays and the random sets return bit-identical results to the ungated scan, and 4 % of the default
+// mode's sub-increment pieces are scanned.
+static const double NESTED_LOWER_GDEV = 0.5;
 
 // ---------------------------------------------------------------------------
 // Stress invariants. sig = {s00,s11,s22,s01,s12,s02} TENSOR components.
@@ -1003,8 +1013,10 @@ inline double bracketedRoot(Fn&& f, double a, double fa, double b, double fb, do
 }
 
 inline bool returnMapNested(double xi_tr, double rho_tr, double r_val, double cos2, const Params& mp, double kp_n,
-                            double& xi_sol, double& rho_sol, double& dlam_sol, double& kp_sol)
+                            double& xi_sol, double& rho_sol, double& dlam_sol, double& kp_sol, double rhoCap = -1.0)
 {
+    // rhoCap > 0: scan only the grid cells below rhoCap (the caller already has a root at rhoCap and asks whether a
+    // smaller-kappa_p one lies below it); false then means "none found below".
     const double fc = mp.fc, K = bulkK(mp), G = shearG(mp);
     const bool cdpm2Flow = (mp.flowPotential == 1);
     const double r_lo = 1.0e-11 * fc;
@@ -1026,8 +1038,44 @@ inline bool returnMapNested(double xi_tr, double rho_tr, double r_val, double co
         dl_val = drho / (2.0 * G * ms);
         return xi - xi_tr + 3.0 * K * dl_val * mv;
     };
-    auto solveInnerXi = [&](double rho, double& xi_res, double& kp_res, double& dl_res) -> bool {
-        double a = xi_tr - 40.0 * fc, b = xi_tr, kd, dd;
+    // hint (scan only): the previous grid point's xi; a local bracket around it is tried first (xi(rho) is smooth), and the
+    // global bracket below only if that does not change sign. xtolRel: the scan needs the SIGN of f, not the root.
+    auto solveInnerXi = [&](double rho, double& xi_res, double& kp_res, double& dl_res,
+                            const double* hint = nullptr, double xtolRel = 1.0e-12) -> bool {
+        double kd, dd;
+        if (hint && std::isfinite(*hint)) {
+            // secant from the hint (the scan's inner solves are a smooth sequence in rho), accepted only once a sign
+            // change brackets it to xtolRel; otherwise the local / global brackets below
+            const double sc = std::fabs(xi_tr) + fc;
+            double x0 = *hint, f0 = phi1(rho, x0, kd, dd), x1 = x0 + 1.0e-4 * sc, f1 = phi1(rho, x1, kd, dd);
+            for (int it = 0; it < 8 && std::isfinite(f0) && std::isfinite(f1) && f1 != f0; ++it) {
+                const double x2 = x1 - f1 * (x1 - x0) / (f1 - f0);
+                if (!std::isfinite(x2)) break;
+                const double f2 = phi1(rho, x2, kd, dd);
+                if (std::fabs(x2 - x1) < xtolRel * sc) {
+                    // confirm with a bracket of half-width xtolRel*sc around x2
+                    const double hb = xtolRel * sc, fm = phi1(rho, x2 - hb, kd, dd), fp = phi1(rho, x2 + hb, kd, dd);
+                    if ((fm <= 0.0) != (fp <= 0.0)) { xi_res = x2; phi1(rho, xi_res, kp_res, dl_res);
+                                                        return std::isfinite(kp_res) && std::isfinite(dl_res); }
+                    break;
+                }
+                x0 = x1; f0 = f1; x1 = x2; f1 = f2;
+            }
+            double h = 1.0e-3 * (std::fabs(xi_tr) + fc);
+            for (int e = 0; e < 6; ++e, h *= 8.0) {
+                const double la = *hint - h, lb = *hint + h;
+                const double fla = phi1(rho, la, kd, dd), flb = phi1(rho, lb, kd, dd);
+                if (!std::isfinite(fla) || !std::isfinite(flb)) break;
+                if ((fla <= 0.0) != (flb <= 0.0)) {
+                    const bool up = fla <= 0.0;
+                    xi_res = bracketedRoot([&](double x) { return phi1(rho, x, kd, dd); }, up ? la : lb, up ? fla : flb,
+                                           up ? lb : la, up ? flb : fla, xtolRel * (std::fabs(xi_tr) + fc));
+                    phi1(rho, xi_res, kp_res, dl_res);
+                    return std::isfinite(kp_res) && std::isfinite(dl_res);
+                }
+            }
+        }
+        double a = xi_tr - 40.0 * fc, b = xi_tr;
         double fa = phi1(rho, a, kd, dd), fb = phi1(rho, b, kd, dd);
         if (!std::isfinite(fb)) return false;
         if (fb < 0.0) {
@@ -1039,19 +1087,31 @@ inline bool returnMapNested(double xi_tr, double rho_tr, double r_val, double co
             if (!(fa <= 0.0)) return false;
         }
         xi_res = bracketedRoot([&](double x) { return phi1(rho, x, kd, dd); }, a, fa, b, fb,
-                               1.0e-12 * (std::fabs(xi_tr) + fc));
+                               xtolRel * (std::fabs(xi_tr) + fc));
         phi1(rho, xi_res, kp_res, dl_res);
         return std::isfinite(kp_res) && std::isfinite(dl_res);
     };
-    auto outerPhi = [&](double rho, double& xi_v, double& kp_v, double& dl_v, bool& ok) -> double {
-        ok = solveInnerXi(rho, xi_v, kp_v, dl_v);
+    auto outerPhi = [&](double rho, double& xi_v, double& kp_v, double& dl_v, bool& ok,
+                        const double* hint = nullptr, double xtolRel = 1.0e-12) -> double {
+        ok = solveInnerXi(rho, xi_v, kp_v, dl_v, hint, xtolRel);
         return ok ? yfInvHard(xi_v, rho, r_val, kp_v, mp) : 0.0;
     };
     double ra = r_lo, rb = rho_tr, xa, ka, da, xb, kb, db;
     bool oka, okb;
     const double fa = outerPhi(ra, xa, ka, da, oka);
-    const double fb = outerPhi(rb, xb, kb, db, okb);
+    double fb = outerPhi(rb, xb, kb, db, okb);
     if (!oka || !okb || !(fa < 0.0) || !(fb > 0.0)) return false;   // no bracket: vertex partition / degenerate
+    int kStart = 1;
+    if (rhoCap > 0.0) {   // start from the highest grid point strictly below rhoCap
+        while (kStart < NESTED_SCAN && rho_tr * (1.0 - (double)kStart / NESTED_SCAN) >= rhoCap) ++kStart;
+        if (kStart >= NESTED_SCAN) return false;
+        double xk, kk, dk; bool okk;
+        rb = rho_tr * (1.0 - (double)kStart / NESTED_SCAN);
+        fb = outerPhi(rb, xk, kk, dk, okk);
+        xb = xk;
+        if (!okk) return false;
+        ++kStart;
+    }
     // ROOT SELECTION: the system can have more than one admissible root in (0, rho_tr] (r4 review: kappa_p 135 vs 697 on
     // one ray; the extra root is a hardening-expanded one, qh2 = 1 + Hp (kappa_p - 1) large enough for the surface to
     // reach the trial). Scan (0, rho_tr] on a fixed grid of NESTED_SCAN cells, solve every sign change, and keep the
@@ -1060,11 +1120,12 @@ inline bool returnMapNested(double xi_tr, double rho_tr, double r_val, double co
     // Deterministic; resolution limited: two roots inside one cell (rho_tr / NESTED_SCAN) are not told apart.
     bool found = false;
     {
-        double rHi = rb, fHi = fb;
-        for (int k = 1; k <= NESTED_SCAN; ++k) {
+        double rHi = rb, fHi = fb, xHint = xb;
+        for (int k = kStart; k <= NESTED_SCAN; ++k) {
             const double rLo = (k == NESTED_SCAN) ? ra : rho_tr * (1.0 - (double)k / NESTED_SCAN);
-            double xk, kk, dk; bool okk;
-            const double fLo = (k == NESTED_SCAN) ? fa : outerPhi(rLo, xk, kk, dk, okk);
+            double xk = xHint, kk, dk; bool okk;
+            const double fLo = (k == NESTED_SCAN) ? fa : outerPhi(rLo, xk, kk, dk, okk, &xHint, NESTED_SCAN_XTOL);
+            if (k < NESTED_SCAN && okk) xHint = xk;
             if (k < NESTED_SCAN && !okk) return false;
             if ((fLo < 0.0) != (fHi < 0.0)) {
                 bool innerOk = true;
@@ -1183,14 +1244,15 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
         return false;
     };
     // The TENSION path (CDPM2 flow, sigma_V,tr > 0) is where review 3 of #877 found the direct return failing and its root
-    // a coin flip (MAJOR 1). r4: there the root is chosen by a FIXED order that does not depend on which inner solver
-    // happens to converge: (1) the vertex, taken whenever it is admissible (probe6: kp 23 vs kp 113 in one 2e-6 window
-    // before); (2) the NESTED bracketed solve (returnMapNested + polishHardeningRoot, full-residual acceptance); only
-    // if that finds no bracket, (3) the plain Newton and (4) newtonGlob. With the plain Newton first (the first r4 cut)
-    // the two solvers converged to different genuine roots on neighbouring trials (r4 review: 351 neighbour jumps
-    // > 1 MPa on 40 rays x = 1..41 eps_cr, up to 102 MPa). Compression and the legacy flow keep the PR-head / oracle order
-    // (regular Newtons first, then the vertex, then the clamped retry); the nested solve is added after all of them,
-    // so it changes only trials that used to FAIL.
+    // a coin flip (MAJOR 1). r4: (1) the vertex, taken whenever it is admissible (probe6: kp 23 vs kp 113 in one 2e-6
+    // window before); (2) among regular roots a deterministic SELECTION RULE, the smallest kappa_p resolvable on the
+    // returnMapNested grid, evaluated as: the plain Newton, plus a scan below its root when it carries enough plastic
+    // strain (NESTED_LOWER_GDEV), else the full nested scan; newtonGlob last. A rule, not continuation: on a loading ray
+    // the selected root can still jump one-sidedly (ADR-31 section 17). Without the rule (the first r4 cut: Newton root,
+    // nested only as rescue) the two solvers gave different genuine roots on neighbouring trials (351 neighbour jumps
+    // > 1 MPa on 40 rays, up to 102 MPa). Compression and the legacy flow keep the PR-head / oracle order (regular
+    // Newtons first, then the vertex, then the clamped retry); the nested solve is added after all of them, so it changes
+    // only trials that used to FAIL.
     const bool tensionPath = cdpm2Flow0(mp) && xi_tr > 0.0;
     if (tensionPath && tryVertex()) return R;
 
@@ -1375,12 +1437,23 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
         return false;
     };
     if (tensionPath) {
-        // r4 order (see tensionPath above): nested first; the plain Newton and newtonGlob only when it finds no bracket.
-        // If the plain scheme aborted on an axis overshoot (apex) and nothing converges, keep the apex verdict so the
-        // clamped retry below still runs.
-        if (!tryNested()) {
-            newton(false);
-            if (!converged) { const bool plainApex = apex; newtonGlob(); if (!converged && !apex) apex = plainApex; }
+        // r4 order (see tensionPath above). If the plain scheme aborted on an axis overshoot (apex) and nothing converges,
+        // keep the apex verdict so the clamped retry below still runs.
+        // Cost (r4 re-review): the full 16-cell scan on every piece made the default mode 2x slower than the PR head, so
+        // the plain Newton goes first; when it converges to an admissible root at rho_N with enough plastic strain
+        // (NESTED_LOWER_GDEV), only the grid cells BELOW rho_N are scanned for a smaller-kappa_p root, and the smaller is
+        // kept. Bit-identical to the full scan on the rays, probe_diff and probe_jumpdir; the full scan runs when the
+        // Newton fails.
+        newton(false);
+        if (converged && !apex && rho > 0.0 && dlam >= -1.0e-12 && kp >= kp_n - 1.0e-12) {
+            double u[4];
+            if ((rho_tr - rho) / (2.0 * G) > NESTED_LOWER_GDEV * mp.ft / mp.E && returnMapNested(xi_tr, rho_tr, r, cos2, mp, kp_n, u[0], u[1], u[2], u[3], rho)
+                && u[3] < kp && polishHardeningRoot(u, xi_tr, rho_tr, kp_n, r, cos2, mp, tol) && u[3] < kp) {
+                xi = u[0]; rho = u[1]; dlam = u[2]; kp = u[3];
+            }
+        } else {
+            const bool plainApex = apex;
+            if (!tryNested()) { newtonGlob(); if (!converged && !apex) apex = plainApex; }
         }
     }
     else if (cdpm2Flow) { newtonGlob(); if (!converged && !apex) newton(false); }

@@ -193,12 +193,11 @@ def _objectivity_err(scale):
 def test_finite_objectivity_through_damage():
     """sigma(QF) = Q sigma(F) Q^T through damage, EXACTLY (isotropic scalar damage, no co-rotating variable).
 
-    SCALE 0.03 (r4 rescue of #877, re-tightened after review). Before the tension-return fix the deterministic
-    sub-increment ladder flickered (the first plastic tensile piece failed its direct return in ~30 % of 1e-12
-    perturbations), so F and Q@F could land on different ladder levels: the PR head had dropped this to scale 0.01, where
-    no flip was observed. With the direct return fixed (no failures, no level flips; ADR-31 section 17) the two solves
-    take the same branch and agree to round-off at 0.03 (measured on the r4 build, see the saturated case below)."""
-    err, wt = _objectivity_err(0.03)
+    FULL F (scale 1.0), as on origin/ladruno (r4 rescue of #877, restored after review). Before the tension-return fix
+    the deterministic sub-increment ladder flickered (the first plastic tensile piece failed its direct return in ~30 % of
+    1e-12 perturbations), so F and Q@F could land on different ladder levels and the PR head had dropped this to scale
+    0.01. With the direct return fixed (ADR-31 section 17) the two solves take the same branch and agree to round-off."""
+    err, wt = _objectivity_err(1.0)
     assert wt > 0.01, f"objectivity test is vacuous — no damage developed (ωt={wt})"
     assert err < 1.0e-8, f"NOT objective through damage: ‖σ(QF)−Qσ(F)Qᵀ‖={err:.3e} (isotropic ⇒ should be exact)"
 
