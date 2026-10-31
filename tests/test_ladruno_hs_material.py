@@ -169,12 +169,17 @@ def test_parser_fail_closed_guards():
         _hostun_args(1, E50_ref=0.0),
         # Eur_ref < E50_ref
         _hostun_args(1, E50_ref=35000.0, Eur_ref=20000.0),
+        # Eur_ref > E50_ref but Eur_ref < 1.001 * Ei_ref (Ei_ref = 2*35000/(2-0.9) = 63636.36)
+        _hostun_args(1, E50_ref=35000.0, Eur_ref=50000.0, Rf=0.9),
         # m outside [0, 1]
         _hostun_args(1, m=1.2),
         _hostun_args(1, m=-0.1),
         # phi out of (0, 89)
         _hostun_args(1, phi=0.0),
         _hostun_args(1, phi=89.5),
+        # psi out of [0, phi]
+        _hostun_args(1, phi=30.0, psi=35.0),
+        _hostun_args(1, phi=30.0, psi=-1.0),
         # nu out of (-1, 0.5)
         _hostun_args(1, nu=0.5),
         # Rf out of (0, 1]
@@ -737,15 +742,27 @@ def test_stage_transition_and_implex_mode():
         ops.analysis("Static")
 
         # Step 1 in stage 0 (elastic): gamma_p must remain 0.0 under elastic shear (tau = 21.875 kPa < tau_f)
+        # Apply both compressive vertical strain and shear strain in stage 0 so committed gravity stress
+        # differs from sig0, making the Stage 0 -> Stage 1 p_p re-initialization observable before analyze(1):
         for n, (x, y) in node_coords:
             ops.setNodeDisp(n, 1, 0.0005 * y, "-commit")
+            ops.setNodeDisp(n, 2, -0.001 * y, "-commit")
         assert ops.analyze(1) == 0
         assert ops.eleResponse(1, "material", 1, "gamma_p")[0] == 0.0
         assert ops.eleResponse(2, "material", 1, "gamma_p")[0] == 0.0
+        pp_before_switch = ops.eleResponse(2, "material", 1, "pp")[0]
         sig_stage0 = np.array(ops.eleResponse(1, "material", 1, "stress"))
 
         # Switch to stage 1 (plastic) via updateMaterialStage (must flip both element 1 and element 2!)
         ops.updateMaterialStage("-material", 1, "-stage", 1)
+        # Immediately query element 2 BEFORE ops.analyze(1) to verify syncStageFromRegistry() inside getResponse():
+        pp_ele1_after = ops.eleResponse(1, "material", 1, "pp")[0]
+        pp_ele2_after = ops.eleResponse(2, "material", 1, "pp")[0]
+        state_ele2_after = np.array(ops.eleResponse(2, "material", 1, "state"))
+        assert pp_ele1_after > pp_before_switch + 10.0
+        assert abs(pp_ele2_after - pp_ele1_after) < 1.0e-12
+        assert abs(state_ele2_after[4] - pp_ele1_after) < 1.0e-12
+
         # First small step in stage 1 (dgamma = 2e-5) must increment from end-of-stage-0 strain (no jump!)
         for n, (x, y) in node_coords:
             ops.setNodeDisp(n, 1, (0.0005 + 2.0e-5) * y, "-commit")
@@ -788,6 +805,25 @@ def test_stage_transition_and_implex_mode():
         cap_after = np.array(ops.eleResponse(1, "material", 1, "capParams"))
         assert abs(cap_after[0] - 0.85) < 1e-12
         assert abs(cap_after[1] - 1.2e-4) < 1e-15
+
+    # Verify (a) tag reuse with -stage 0 after wipe resets registry to 0, and
+    # (b) overconsolidated (OCR = 2.5) Stage 0 -> Stage 1 transition initializes prior shear cone gamma_p > 0:
+    _build_prescribed_cube(
+        _hostun_args(
+            1,
+            cmd="LadrunoHSSmall",
+            smallStrain=(140000.0, 1.5e-4),
+            OCR=2.5,
+            stage=0,
+            sig0=100.0,
+        )
+    )
+    assert _impose_cube_strain_open(np.array([0.0, 0.0, 0.0, 5.0e-4, 0.0, 0.0])) == 0
+    assert ops.eleResponse(1, "material", 1, "gamma_p")[0] == 0.0  # Still in Stage 0 (not polluted by prior run!)
+    ops.updateMaterialStage("-material", 1, "-stage", 1)
+    gam_oc_after = ops.eleResponse(1, "material", 1, "gamma_p")[0]
+    assert gam_oc_after > 1.0e-4  # Overconsolidated shear cone initialized immediately before analyze(1)
+
 
 
 def test_reduced_dimensional_views_planestress_and_platefiber():

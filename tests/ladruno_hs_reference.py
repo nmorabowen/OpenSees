@@ -560,14 +560,22 @@ def _rowe_dilatancy(
             return 0.0, 0.0, 0.0, 0.0
         return 0.0, 0.0, 0.0
 
+    dspsi_dp = dspsim_dsphim * dsphim_dp
+    dspsi_dq = dspsim_dsphim * dsphim_dq
+    dspsi_dx = dspsim_dsphim * dsphim_dx
+    if s_psim < 0.0 and (p_mean + p.a_apex) < 2.0 * p.p_min:
+        t = max(0.0, min(1.0, (p_mean + p.a_apex - p.p_min) / p.p_min))
+        eta = t * t * (3.0 - 2.0 * t)
+        deta_dp = (6.0 * t * (1.0 - t) / p.p_min) if (0.0 < t < 1.0) else 0.0
+        s_raw = s_psim
+        s_psim = eta * s_raw
+        dspsi_dp = deta_dp * s_raw + eta * dspsi_dp
+        dspsi_dq = eta * dspsi_dq
+        dspsi_dx = eta * dspsi_dx
+
     if return_dx:
-        return (
-            s_psim,
-            dspsim_dsphim * dsphim_dp,
-            dspsim_dsphim * dsphim_dq,
-            dspsim_dsphim * dsphim_dx,
-        )
-    return s_psim, dspsim_dsphim * dsphim_dp, dspsim_dsphim * dsphim_dq
+        return s_psim, dspsi_dp, dspsi_dq, dspsi_dx
+    return s_psim, dspsi_dp, dspsi_dq
 
 
 def _cap_pp_and_deriv(p: HSParams, p_p_n: float, deps_v_pc: float) -> Tuple[float, float]:
@@ -755,14 +763,13 @@ def _solve_regime1_shear(
     Theta, _, k3, dk3_dx, Th_sig, dTh_sig_dx = lode_factors_and_derivs(p, x_sin3)
     kappa_KG = p.Kur_ref / p.Gur_ref
     inv_3Ge2 = 2.0 / (3.0 * Ge)
-    p_cur = max(p.p_min - p.a_apex, p_tr)
+    p_cur = max(1.0001 * p.p_min - p.a_apex, p_tr)
     q_max_fail = p.M_c * max(p.p_min, p_cur + p.a_apex) / Theta
-    q_cur = min(q_tr, 0.95 * q_max_fail)
+    q_cur = min(q_tr, 0.98 * q_max_fail)
 
-    for _ in range(35):
-        q_tilde = Theta * q_cur
+    for _ in range(45):
         p_hat = p_cur + p.a_apex
-        if p_hat <= p.p_min or q_tilde >= p.M_c * p_hat:
+        if p_hat <= 0.5 * p.p_min:
             return False, p_cur, q_cur, 0.0, np.zeros((2, 4))
 
         dgam = inv_3Ge2 * (q_tr - q_cur)
@@ -777,6 +784,8 @@ def _solve_regime1_shear(
         R1 = Phi_s - gamma_p_n - dgam
         if max(abs(R0) / max(1.0, p.p_ref), abs(R1)) < 1.0e-13:
             if dgam < -1.0e-12:
+                return False, p_cur, q_cur, 0.0, np.zeros((2, 4))
+            if (Theta * q_cur) > p.M_c * (p_cur + p.a_apex) + 1.0e-10:
                 return False, p_cur, q_cur, 0.0, np.zeros((2, 4))
             # Analytical Jacobian J_y and J_tr = dR / d(p_tr, q_tr, x_sin3, Ge):
             # Note: since Ke = kappa_KG * Ge, Ke * dgam = (2/3) * kappa_KG * (q_tr - q_cur) is independent of Ge!
@@ -809,7 +818,9 @@ def _solve_regime1_shear(
         for _ in range(12):
             p_next = p_cur + alpha_ls * dp
             q_next = max(0.0, min(q_tr, q_cur + alpha_ls * dq))
-            if (p_next + p.a_apex) > p.p_min and (Theta * q_next) < 0.9995 * p.M_c * (p_next + p.a_apex):
+            if (p_next + p.a_apex) > 0.99 * p.p_min and (
+                Theta * q_next
+            ) < 1.00001 * p.M_c * max(p.p_min, p_next + p.a_apex):
                 p_cur, q_cur = p_next, q_next
                 break
             alpha_ls *= 0.5
@@ -880,10 +891,12 @@ def _solve_regime3_cap(
     """Solve Regime 3 (Elliptical volumetric cap f^c = 0 only, dgam_p = 0)."""
     _ = x_sin3
     alpha2 = p.alpha_cap * p.alpha_cap
-    p_cur = max(p_p_n * 0.5, min(p_tr, p_p_n))
+    p_lo = p.p_min - p.a_apex
+    p_hi = p_tr
+    p_cur = max(p_lo, min(p_tr, p_p_n))
     q_cur = q_tr
 
-    for _ in range(35):
+    for _ in range(50):
         p_hat = max(p.p_min, p_cur + p.a_apex)
         deps_v_pc = max(0.0, (p_tr - p_cur) / Ke)
         c_q = 1.0 + (3.0 * Ge / alpha2) * (deps_v_pc / p_hat)
@@ -920,6 +933,10 @@ def _solve_regime3_cap(
             sens = -np.linalg.solve(J_y, J_tr)
             return True, p_cur, q_cur, pp_new, deps_v_pc, sens
 
+        if R > 0.0:
+            p_hi = min(p_hi, p_cur)
+        else:
+            p_lo = max(p_lo, p_cur)
         dcq_dp = (3.0 * Ge / alpha2) * (
             -(1.0 / (Ke * p_hat)) - (deps_v_pc / (p_hat * p_hat))
         )
@@ -929,8 +946,11 @@ def _solve_regime3_cap(
             + 2.0 * p_hat
             + 2.0 * pp_hat * dpp_ddeps * (1.0 / Ke)
         )
-        dp = -R / dR_dp
-        p_cur = max(p.p_min - p.a_apex, min(p_tr, p_cur + dp))
+        p_next = p_cur - R / dR_dp
+        if p_next <= p_lo or p_next >= p_hi:
+            p_cur = 0.5 * (p_lo + p_hi)
+        else:
+            p_cur = p_next
 
     return False, p_cur, q_cur, p_p_n, 0.0, np.zeros((2, 4))
 
@@ -951,8 +971,8 @@ def _solve_regime4_corner(
     alpha2 = p.alpha_cap * p.alpha_cap
     kappa_KG = p.Kur_ref / p.Gur_ref
     Theta_0, _ = lode_theta_and_deriv(p, x_sin3)
-    p_cur = max(p.p_min - p.a_apex, min(p_tr, max(p_p_n, 0.7 * p_tr)))
-    q_cur = min(q_tr, 0.85 * p.M_c * (p_cur + p.a_apex) / Theta_0)
+    p_cur = max(1.0001 * p.p_min - p.a_apex, min(p_tr, max(p_p_n, 0.7 * p_tr)))
+    q_cur = min(q_tr, 0.85 * p.M_c * max(p.p_min, p_cur + p.a_apex) / Theta_0)
 
     def eval_residuals(
         p_val: float, q_val: float, p_tr_v: float, q_tr_v: float, x_v: float, Ge_v: float
@@ -988,6 +1008,8 @@ def _solve_regime4_corner(
         R0, R1, dgam_p, deps_v_pc, pp_new = eval_residuals(p_cur, q_cur, p_tr, q_tr, x_sin3, Ge)
         if max(abs(R0) / max(1.0, p.p_ref if failure_mode else 1.0), abs(R1) / (p.p_hat_ref ** 2)) < 1.0e-12:
             if dgam_p < -1.0e-10 or deps_v_pc < -1.0e-10:
+                return False, p_cur, q_cur, 0.0, p_p_n, np.zeros((2, 4))
+            if not failure_mode and (Theta_0 * q_cur) > p.M_c * (p_cur + p.a_apex) + 1.0e-10:
                 return False, p_cur, q_cur, 0.0, p_p_n, np.zeros((2, 4))
             J_y = np.zeros((2, 2), dtype=float)
             J_tr = np.zeros((2, 4), dtype=float)
@@ -1051,8 +1073,8 @@ def _solve_regime4_corner(
         for _ in range(10):
             p_next = p_cur + alpha_ls * dp
             q_next = max(0.0, q_cur + alpha_ls * dq)
-            if (p_next + p.a_apex) > p.p_min and (
-                failure_mode or (Theta_0 * q_next) < 0.9995 * p.M_c * (p_next + p.a_apex)
+            if (p_next + p.a_apex) > 0.99 * p.p_min and (
+                failure_mode or (Theta_0 * q_next) < 1.00001 * p.M_c * max(p.p_min, p_next + p.a_apex)
             ):
                 p_cur, q_cur = p_next, q_next
                 break
@@ -1214,6 +1236,35 @@ def return_map_3d(
                 )
                 regime = "failure_cap"
                 solved = True
+
+    if not solved:
+        p_new = max(p_cut, p_tr)
+        p_hat_fb = max(p.p_min, p_new + p.a_apex)
+        q_mc_fb = p.M_c * p_hat_fb / Theta
+        q_new = min(q_tr, q_mc_fb)
+        if f_cap_tr > 1.0e-10:
+            r_cap = math.sqrt((q_new ** 2) / (p.alpha_cap ** 2) + p_hat_fb ** 2)
+            if r_cap > pp_hat_n and r_cap > 1.0e-12:
+                sc = pp_hat_n / r_cap
+                p_hat_fb = max(p.p_min, p_hat_fb * sc)
+                p_new = max(p_cut, p_hat_fb - p.a_apex)
+                q_new = min(q_new * sc, p.M_c * p_hat_fb / Theta)
+        dgam_fb = max(0.0, (2.0 / (3.0 * Ge)) * (q_tr - q_new))
+        st_new.gamma_p = st_n.gamma_p + dgam_fb
+        sens = np.array(
+            [
+                [1.0, 0.0, 0.0, 0.0],
+                [
+                    (p.M_c / Theta) if q_new < q_tr else 0.0,
+                    1.0e-3 if q_new < q_tr else 1.0,
+                    0.0,
+                    0.0,
+                ],
+            ],
+            dtype=float,
+        )
+        regime = "failure_cap" if f_cap_tr > 1.0e-10 else "failure"
+        solved = True
 
     # 4. Reconstruct 3D stress tensor & 6x6 Consistent Algorithmic Tangent:
     s_tr = sig_tr - p_tr * _I6_M

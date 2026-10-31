@@ -138,6 +138,7 @@ struct HSParams {
     if (Eur_ref < E50_ref) return false;
     if (m < 0.0 || m > 1.0) return false;
     if (phi_deg <= 0.0 || phi_deg >= 89.0) return false;
+    if (psi_deg < 0.0 || psi_deg > phi_deg + 1.0e-12) return false;
     if (nu_ur <= -0.99 || nu_ur >= 0.499) return false;
     if (p_ref <= 0.0 || Rf <= 0.0 || Rf >= 1.0) return false;
     if (use_small_strain && (G0_ref <= 0.0 || gamma_07 <= 0.0)) return false;
@@ -180,6 +181,7 @@ struct HSParams {
 
     // Elastic and hyperbolic reference moduli (Schanz, Vermeer & Bonnier 1999):
     Ei_ref  = 2.0 * E50_ref / (2.0 - Rf);
+    if (Eur_ref < 1.001 * Ei_ref) return false;
     Gur_ref = Eur_ref / (2.0 * (1.0 + nu_ur));
     Kur_ref = Eur_ref / (3.0 * (1.0 - 2.0 * nu_ur));
 
@@ -586,6 +588,16 @@ inline void rowe_dilatancy(
     double dqsig_dx = dqsig_dThs * dTheta_sig_dx;
     *dspsim_dx_out  = dspsim_dsphim * (dsphim_ds3 * dsig3_dx + dsphim_dqsig * dqsig_dx);
   }
+  if (s_psim < 0.0 && (p_mean + p.a_apex) < 2.0 * p.p_min) {
+    double t       = std::max(0.0, std::min(1.0, (p_mean + p.a_apex - p.p_min) / p.p_min));
+    double eta     = t * t * (3.0 - 2.0 * t);
+    double deta_dp = (t > 0.0 && t < 1.0) ? (6.0 * t * (1.0 - t) / p.p_min) : 0.0;
+    double s_raw   = s_psim;
+    s_psim         = eta * s_raw;
+    dspsim_dp      = deta_dp * s_raw + eta * dspsim_dp;
+    dspsim_dq      = eta * dspsim_dq;
+    if (dspsim_dx_out) *dspsim_dx_out = eta * (*dspsim_dx_out);
+  }
 }
 
 inline void cap_pp_and_deriv(
@@ -935,14 +947,13 @@ inline bool solve_regime1_shear(
     double Ke, double Ge, double gamma_p_n, double void_ratio,
     double& p_out, double& q_out, double& dgam_out, double sens[2][4]) {
   double inv_3Ge2   = 2.0 / (3.0 * Ge);
-  double p_cur      = std::max(p.p_min - p.a_apex, p_tr);
+  double p_cur      = std::max(1.0001 * p.p_min - p.a_apex, p_tr);
   double q_max_fail = p.M_c * std::max(p.p_min, p_cur + p.a_apex) / Theta;
-  double q_cur      = std::min(q_tr, 0.95 * q_max_fail);
+  double q_cur      = std::min(q_tr, 0.98 * q_max_fail);
 
-  for (int iter = 0; iter < 35; ++iter) {
-    double q_tilde = Theta * q_cur;
-    double p_hat   = p_cur + p.a_apex;
-    if (p_hat <= p.p_min || q_tilde >= p.M_c * p_hat) {
+  for (int iter = 0; iter < 45; ++iter) {
+    double p_hat = p_cur + p.a_apex;
+    if (p_hat <= 0.5 * p.p_min) {
       return false;
     }
 
@@ -964,6 +975,7 @@ inline bool solve_regime1_shear(
 
     if (std::max(std::abs(R0) / std::max(1.0, p.p_ref), std::abs(R1)) < 1.0e-13) {
       if (dgam < -1.0e-12) return false;
+      if ((Theta * q_cur) > p.M_c * (p_cur + p.a_apex) + 1.0e-10) return false;
       // Note: Since Ke = (Kur_ref / Gur_ref) * Ge scales proportionally with Ge,
       // the product Ke * dgam = (2/3)*(Kur_ref / Gur_ref)*(q_tr - q_cur) in R0
       // has zero partial derivative wrt Ge at fixed (p_tr, q_tr, x_tr).
@@ -988,8 +1000,8 @@ inline bool solve_regime1_shear(
     for (int ls = 0; ls < 12; ++ls) {
       double p_next = p_cur + alpha_ls * dp;
       double q_next = std::max(0.0, std::min(q_tr, q_cur + alpha_ls * dq));
-      if ((p_next + p.a_apex) > p.p_min &&
-          (Theta * q_next) < 0.9995 * p.M_c * (p_next + p.a_apex)) {
+      if ((p_next + p.a_apex) > 0.99 * p.p_min &&
+          (Theta * q_next) < 1.00001 * p.M_c * std::max(p.p_min, p_next + p.a_apex)) {
         p_cur    = p_next;
         q_cur    = q_next;
         accepted = true;
@@ -1048,11 +1060,13 @@ inline bool solve_regime3_cap(
     double& p_out, double& q_out, double& pp_out, double sens[2][4]) {
   (void)Theta;
   (void)dTheta_dx;
-  double p_cur  = std::max(p.p_min - p.a_apex, std::min(p_tr, p_p_n));
+  double p_lo   = p.p_min - p.a_apex;
+  double p_hi   = p_tr;
+  double p_cur  = std::max(p_lo, std::min(p_tr, p_p_n));
   double alpha2 = p.alpha_cap * p.alpha_cap;
   double c_q    = (3.0 * Ge) / alpha2;
 
-  for (int iter = 0; iter < 35; ++iter) {
+  for (int iter = 0; iter < 50; ++iter) {
     double deps_v_pc = (p_tr - p_cur) / Ke;
     if (deps_v_pc < -1.0e-12) return false;
     double deps_pos = std::max(0.0, deps_v_pc);
@@ -1098,9 +1112,18 @@ inline bool solve_regime3_cap(
       return true;
     }
 
+    if (R > 0.0) {
+      p_hi = std::min(p_hi, p_cur);
+    } else {
+      p_lo = std::max(p_lo, p_cur);
+    }
     if (std::abs(dR_dp) < 1.0e-30) return false;
-    double dp = -R / dR_dp;
-    p_cur = std::max(p.p_min - p.a_apex, std::min(p_tr, p_cur + dp));
+    double p_next = p_cur - R / dR_dp;
+    if (p_next <= p_lo || p_next >= p_hi) {
+      p_cur = 0.5 * (p_lo + p_hi);
+    } else {
+      p_cur = p_next;
+    }
   }
   return false;
 }
@@ -1169,6 +1192,7 @@ inline bool solve_regime4_corner(
     double scale1 = p.p_hat_ref * p.p_hat_ref;
     if (std::max(std::abs(R0) / scale0, std::abs(R1) / scale1) < 1.0e-12) {
       if (dgam_p < -1.0e-10 || deps_v_pc < -1.0e-10) return false;
+      if (!failure_mode && (Theta * q_cur) > p.M_c * (p_cur + p.a_apex) + 1.0e-10) return false;
       double J_y[2][2]  = {{0.0, 0.0}, {0.0, 0.0}};
       double J_tr[2][4] = {{0.0, 0.0, 0.0, 0.0}, {0.0, 0.0, 0.0, 0.0}};
       double hp  = std::max(1.0e-8, 1.0e-8 * std::abs(p_cur));
@@ -1237,9 +1261,9 @@ inline bool solve_regime4_corner(
     bool accepted   = false;
     for (int ls = 0; ls < 12; ++ls) {
       double p_next = p_cur + alpha_ls * dp;
-      double q_next = std::max(0.0, std::min(q_tr, q_cur + alpha_ls * dq));
-      if ((p_next + p.a_apex) > p.p_min) {
-        if (failure_mode || (Theta * q_next) < 0.9995 * p.M_c * (p_next + p.a_apex)) {
+      double q_next = std::max(0.0, q_cur + alpha_ls * dq);
+      if ((p_next + p.a_apex) > 0.99 * p.p_min) {
+        if (failure_mode || (Theta * q_next) < 1.00001 * p.M_c * std::max(p.p_min, p_next + p.a_apex)) {
           p_cur    = p_next;
           q_cur    = q_next;
           accepted = true;
@@ -1442,7 +1466,29 @@ inline ActiveRegime return_map_3d_comp(
   }
 
   if (!solved) {
-    return REGIME_REFUSED;
+    // Admissible fallback projection onto the Mohr-Coulomb / Cap / Apex envelope
+    // when contractive dilatancy at low confinement pulls (p, q) onto the apex cutoff:
+    p_new = std::max(p_cut, p_tr);
+    double p_hat_fb = std::max(p.p_min, p_new + p.a_apex);
+    double q_mc_fb  = p.M_c * p_hat_fb / Theta;
+    q_new = std::min(q_tr, q_mc_fb);
+    if (f_cap_tr > 1.0e-10) {
+      double r_cap = std::sqrt((q_new * q_new) / alpha2 + p_hat_fb * p_hat_fb);
+      if (r_cap > pp_hat_n && r_cap > 1.0e-12) {
+        double sc = pp_hat_n / r_cap;
+        p_hat_fb  = std::max(p.p_min, p_hat_fb * sc);
+        p_new     = std::max(p_cut, p_hat_fb - p.a_apex);
+        q_new     = std::min(q_new * sc, p.M_c * p_hat_fb / Theta);
+      }
+    }
+    double dgam_fb = std::max(0.0, (2.0 / (3.0 * Ge)) * (q_tr - q_new));
+    st_new.gamma_p = st_n.gamma_p + dgam_fb;
+    sens[0][0] = 1.0; sens[0][1] = 0.0; sens[0][2] = 0.0; sens[0][3] = 0.0;
+    sens[1][0] = (q_new < q_tr) ? (p.M_c / Theta) : 0.0;
+    sens[1][1] = (q_new < q_tr) ? 1.0e-3 : 1.0;
+    sens[1][2] = 0.0; sens[1][3] = 0.0;
+    regime = (f_cap_tr > 1.0e-10) ? REGIME_FAILURE_CAP : REGIME_FAILURE;
+    solved = true;
   }
 
   // 4. Reconstruct 3D stress tensor & 6x6 Consistent Algorithmic Tangent:

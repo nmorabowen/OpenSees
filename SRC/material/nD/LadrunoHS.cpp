@@ -44,6 +44,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <unordered_map>
 
 using namespace LadrunoHSKernel;
@@ -54,9 +55,13 @@ namespace {
 // exits its element loop after the FIRST matching element, so only eid=1
 // receives updateParameter(1, info). Storing the stage keyed by material tag
 // (with reference-counted cleanup in ~LadrunoHS() when ops.wipe() destroys all
-// instances of a tag) allows every other element's Gauss point to lazily run
-// applyStageTransition() at the top of integrate3D() without getCopy() clobbering
-// an active stage transition.
+// instances of a tag, guarded by an immortal mutex) allows every other element's
+// Gauss point to lazily run applyStageTransition() via syncStageFromRegistry().
+std::mutex& ladrunoHSTagMutex() {
+  static auto* s_mutex = new std::mutex();
+  return *s_mutex;
+}
+
 std::unordered_map<int, int>& ladrunoHSTagStageMap() {
   static auto* s_map = new std::unordered_map<int, int>();
   return *s_map;
@@ -291,7 +296,10 @@ static void* parseLadrunoHSCommon(bool presetSmallStrain) {
     return nullptr;
   }
 
-  ladrunoHSTagStageMap()[tag] = stage;
+  {
+    std::lock_guard<std::mutex> lock(ladrunoHSTagMutex());
+    ladrunoHSTagStageMap()[tag] = stage;
+  }
   return new LadrunoHS(tag, p, rho, LadrunoHS::DIM_3D, stage, implex, hasSig0, sig0Comp);
 }
 
@@ -367,17 +375,18 @@ LadrunoHS::LadrunoHS(int tag,
   if (condense_) {
     sig0_comp_[2] = 0.0;
   }
-  auto& refs = ladrunoHSTagRefCountMap();
-  if (refs[this->getTag()] == 0) {
+  {
+    std::lock_guard<std::mutex> lock(ladrunoHSTagMutex());
     ladrunoHSTagStageMap()[this->getTag()] = stage_;
+    ladrunoHSTagRefCountMap()[this->getTag()] += 1;
   }
-  refs[this->getTag()] += 1;
   this->revertToStart();
 }
 
 LadrunoHS::~LadrunoHS() {
   if (registered_in_tag_map_) {
     int t = this->getTag();
+    std::lock_guard<std::mutex> lock(ladrunoHSTagMutex());
     auto& refs = ladrunoHSTagRefCountMap();
     auto it = refs.find(t);
     if (it != refs.end()) {
@@ -465,6 +474,20 @@ void LadrunoHS::buildInitialTangent6x6(double Kt[6][6]) const {
 // ===========================================================================
 //  Constitutive Integration (Stage 0 Elastic / Stage 1 HS / IMPL-EX)
 // ===========================================================================
+void LadrunoHS::syncStageFromRegistry(void) {
+  int regStage = stage_;
+  {
+    std::lock_guard<std::mutex> lock(ladrunoHSTagMutex());
+    auto it = ladrunoHSTagStageMap().find(this->getTag());
+    if (it != ladrunoHSTagStageMap().end()) {
+      regStage = it->second;
+    }
+  }
+  if (regStage != stage_) {
+    this->applyStageTransition(regStage);
+  }
+}
+
 void LadrunoHS::applyStageTransition(int newStage) {
   if (stage_ == 0 && newStage == 1) {
     // Transition from elastic gravity stage (0) to elastoplastic HS (1):
@@ -489,15 +512,49 @@ void LadrunoHS::applyStageTransition(int newStage) {
     st_n_.e_dev[0][2] = st_n_.e_dev[2][0] = 0.5 * eps_saved[5];
     st_n_.void_ratio = e_saved;
     st_trial_ = st_n_;
+
+    double p_n = 0.0, q_n = 0.0, x_n = 1.0, Th_n = 1.0, dTh_dx_n = 0.0;
+    double k3_n = 1.0 / 3.0, dk3_dx_n = 0.0, Th_sig_n = 1.0, dTh_sig_dx_n = 0.0;
+    double dq[6], dTh[6];
+    invariants_and_lode_grad(params_, st_n_.sig, p_n, q_n, x_n, Th_n, dq, dTh);
+    lode_factors_and_derivs(params_, x_n, Th_n, dTh_dx_n, k3_n, dk3_dx_n, Th_sig_n, dTh_sig_dx_n);
+    double s_n = 1.0, ds1 = 0.0, ds2 = 0.0;
+    if (params_.OCR > 1.0 + 1.0e-12 || params_.pop > 1.0e-12) {
+      double p_hat_n   = std::max(params_.p_min, p_n + params_.a_apex);
+      double p_pre     = std::max(params_.p_min, p_n) * params_.OCR
+                       + ((1.0 + 2.0 * params_.K0nc) / 3.0) * params_.pop;
+      double eta_k0nc  = 3.0 * (1.0 - params_.K0nc) / (1.0 + 2.0 * params_.K0nc);
+      double q_pre     = std::max(q_n * params_.OCR, eta_k0nc * p_pre);
+      double q_cap_pre = std::min(q_pre, 0.95 * params_.M_c * p_hat_n / Th_n);
+      double Phi_pre   = 0.0;
+      phi_shear(params_, p_n, q_cap_pre, Phi_pre, ds1, ds2, k3_n, Th_sig_n);
+      st_n_.gamma_p     = std::max(0.0, Phi_pre);
+      st_n_.is_virgin   = false;
+      st_trial_.gamma_p   = st_n_.gamma_p;
+      st_trial_.is_virgin = false;
+    } else if (q_n > 1.0e-12) {
+      double p_hat_n = std::max(params_.p_min, p_n + params_.a_apex);
+      double q_cap   = std::min(q_n, params_.M_c * p_hat_n / Th_n);
+      double Phi_cap = 0.0;
+      phi_shear(params_, p_n, q_cap, Phi_cap, ds1, ds2, k3_n, Th_sig_n);
+      st_n_.gamma_p     = std::min(st_n_.gamma_p, std::max(0.0, Phi_cap));
+      st_trial_.gamma_p = st_n_.gamma_p;
+    }
+    stiffness_scale_and_derivs(params_, p_n, q_n, s_n, ds1, ds2, k3_n);
+    double G_s1 = (params_.use_small_strain && params_.G0_ref > params_.Gur_ref)
+                      ? (params_.G0_ref * s_n)
+                      : (params_.Gur_ref * s_n);
+    double K_s1 = (params_.Kur_ref / params_.Gur_ref) * G_s1;
+    build_isotropic_elastic_tangent(K_s1, G_s1, Dtan_);
+    for (int i = 0; i < 6; ++i) {
+      for (int j = 0; j < 6; ++j) Dtan_n_[i][j] = Dtan_[i][j];
+    }
   }
   stage_ = newStage;
 }
 
 int LadrunoHS::integrate3D(const double epsComp[6]) {
-  auto itStage = ladrunoHSTagStageMap().find(this->getTag());
-  if (itStage != ladrunoHSTagStageMap().end() && itStage->second != stage_) {
-    this->applyStageTransition(itStage->second);
-  }
+  this->syncStageFromRegistry();
   if (stage_ == 0) {
     // Stage 0: pressure-independent linear elastic gravity initialization
     for (int i = 0; i < 6; ++i) {
@@ -520,7 +577,9 @@ int LadrunoHS::integrate3D(const double epsComp[6]) {
     st_trial_.e_dev[1][2] = st_trial_.e_dev[2][1] = 0.5 * epsComp[4];
     st_trial_.e_dev[0][2] = st_trial_.e_dev[2][0] = 0.5 * epsComp[5];
 
-    build_isotropic_elastic_tangent(params_.Kur_ref, params_.Gur_ref, Dtan_);
+    double nu_s0 = std::max(params_.nu_ur, std::min(0.49, params_.K0nc / (1.0 + params_.K0nc)));
+    double K_s0  = params_.Gur_ref * (2.0 * (1.0 + nu_s0)) / (3.0 * (1.0 - 2.0 * nu_s0));
+    build_isotropic_elastic_tangent(K_s0, params_.Gur_ref, Dtan_);
     for (int i = 0; i < 6; ++i) {
       double dsig_i = 0.0;
       for (int j = 0; j < 6; ++j) dsig_i += Dtan_[i][j] * deps[j];
@@ -683,6 +742,7 @@ int LadrunoHS::setTrialStrainIncr(const Vector& v, const Vector&) {
 //  Element-Facing Stress, Strain & Tangent Getters (OpenSees Sign Convention)
 // ===========================================================================
 const Vector& LadrunoHS::getStress(void) {
+  this->syncStageFromRegistry();
   for (int a = 0; a < ncomp_; ++a) {
     stressOut_(a) = -st_trial_.sig[vmap_[a]];
   }
@@ -690,6 +750,7 @@ const Vector& LadrunoHS::getStress(void) {
 }
 
 double LadrunoHS::getStressZZ(void) {
+  this->syncStageFromRegistry();
   if (dim_ == DIM_PSTRAIN) {
     return -st_trial_.sig[2];
   }
@@ -697,6 +758,7 @@ double LadrunoHS::getStressZZ(void) {
 }
 
 const Vector& LadrunoHS::getStrain(void) {
+  this->syncStageFromRegistry();
   for (int a = 0; a < ncomp_; ++a) {
     strainOut_(a) = -st_trial_.eps[vmap_[a]];
   }
@@ -704,6 +766,7 @@ const Vector& LadrunoHS::getStrain(void) {
 }
 
 const Matrix& LadrunoHS::getTangent(void) {
+  this->syncStageFromRegistry();
   for (int a = 0; a < ncomp_; ++a) {
     for (int b = 0; b < ncomp_; ++b) {
       tangentOut_(a, b) = Dtan_[vmap_[a]][vmap_[b]];
@@ -713,6 +776,7 @@ const Matrix& LadrunoHS::getTangent(void) {
 }
 
 const Matrix& LadrunoHS::getInitialTangent(void) {
+  this->syncStageFromRegistry();
   double Kt[6][6];
   this->buildInitialTangent6x6(Kt);
   for (int a = 0; a < ncomp_; ++a) {
@@ -737,6 +801,7 @@ const char* LadrunoHS::getType(void) const {
 //  State Commit / Revert Cycle
 // ===========================================================================
 int LadrunoHS::commitState(void) {
+  this->syncStageFromRegistry();
   if (refused_) {
     ladrunoNoteCommitRefusal();
     return LADRUNO_MATERIAL_REFUSED;
@@ -763,6 +828,7 @@ int LadrunoHS::commitState(void) {
 }
 
 int LadrunoHS::revertToLastCommit(void) {
+  this->syncStageFromRegistry();
   st_trial_     = st_n_;
   regime_trial_ = regime_n_;
   if (condense_) {
@@ -817,10 +883,9 @@ int LadrunoHS::revertToStart(void) {
 //  Copies (Propagating State & Refusal Latch per Quirk Rule)
 // ===========================================================================
 NDMaterial* LadrunoHS::getCopy(void) {
-  auto itStage = ladrunoHSTagStageMap().find(this->getTag());
-  int activeStage = (itStage != ladrunoHSTagStageMap().end()) ? itStage->second : this->stage_;
+  this->syncStageFromRegistry();
   LadrunoHS* copy = new LadrunoHS(
-      this->getTag(), params_, rho_, dim_, activeStage, implex_, has_sig0_, sig0_comp_);
+      this->getTag(), params_, rho_, dim_, this->stage_, implex_, has_sig0_, sig0_comp_);
   copy->st_n_         = this->st_n_;
   copy->st_trial_     = this->st_trial_;
   copy->regime_n_     = this->regime_n_;
@@ -840,6 +905,7 @@ NDMaterial* LadrunoHS::getCopy(void) {
 }
 
 NDMaterial* LadrunoHS::getCopy(const char* type) {
+  this->syncStageFromRegistry();
   int d = -1;
   if (std::strcmp(type, "ThreeDimensional") == 0 || std::strcmp(type, "3D") == 0) {
     d = DIM_3D;
@@ -856,10 +922,8 @@ NDMaterial* LadrunoHS::getCopy(const char* type) {
     return NDMaterial::getCopy(type);
   }
 
-  auto itStage = ladrunoHSTagStageMap().find(this->getTag());
-  int activeStage = (itStage != ladrunoHSTagStageMap().end()) ? itStage->second : this->stage_;
   LadrunoHS* copy = new LadrunoHS(
-      this->getTag(), params_, rho_, d, activeStage, implex_, has_sig0_, sig0_comp_);
+      this->getTag(), params_, rho_, d, this->stage_, implex_, has_sig0_, sig0_comp_);
   if (copy->condense_ && !this->condense_) {
     // Condensed copy from a 3D prototype: keep the plane-stress / plate-fiber
     // initialization from revertToStart() (where sig0_comp_[2] == 0.0 and st_n_.sig[2] == 0.0)
@@ -893,6 +957,7 @@ NDMaterial* LadrunoHS::getCopy(const char* type) {
 static constexpr int kLadrunoHSWireSize = 76;
 
 int LadrunoHS::sendSelf(int commitTag, Channel& theChannel) {
+  this->syncStageFromRegistry();
   static Vector data(kLadrunoHSWireSize);
   int c = 0;
   data(c++) = this->getTag();
@@ -974,6 +1039,7 @@ int LadrunoHS::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker&) {
   int c = 0;
   if (registered_in_tag_map_) {
     int oldTag = this->getTag();
+    std::lock_guard<std::mutex> lock(ladrunoHSTagMutex());
     auto& refs = ladrunoHSTagRefCountMap();
     auto it = refs.find(oldTag);
     if (it != refs.end()) {
@@ -1056,9 +1122,12 @@ int LadrunoHS::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker&) {
 
   st_trial_     = st_n_;
   regime_trial_ = regime_n_;
-  ladrunoHSTagRefCountMap()[this->getTag()] += 1;
+  {
+    std::lock_guard<std::mutex> lock(ladrunoHSTagMutex());
+    ladrunoHSTagRefCountMap()[this->getTag()] += 1;
+    ladrunoHSTagStageMap()[this->getTag()] = stage_;
+  }
   registered_in_tag_map_ = true;
-  ladrunoHSTagStageMap()[this->getTag()] = stage_;
   this->buildInitialTangent6x6(Dtan_);
   for (int i = 0; i < 6; ++i) {
     for (int j = 0; j < 6; ++j) {
@@ -1117,7 +1186,10 @@ int LadrunoHS::updateParameter(int parameterID, Information& info) {
     case 1:
     case 13: {
       int newStage = (parameterID == 1) ? info.theInt : static_cast<int>(info.theDouble);
-      ladrunoHSTagStageMap()[this->getTag()] = newStage;
+      {
+        std::lock_guard<std::mutex> lock(ladrunoHSTagMutex());
+        ladrunoHSTagStageMap()[this->getTag()] = newStage;
+      }
       this->applyStageTransition(newStage);
       return 0;
     }
@@ -1137,6 +1209,7 @@ int LadrunoHS::updateParameter(int parameterID, Information& info) {
 }
 
 void LadrunoHS::Print(OPS_Stream& s, int) {
+  this->syncStageFromRegistry();
   s << "LadrunoHS Material (tag: " << this->getTag() << ", type: " << this->getType() << ")" << endln;
   s << "  E50_ref=" << params_.E50_ref << " Eoed_ref=" << params_.Eoed_ref
     << " Eur_ref=" << params_.Eur_ref << " m=" << params_.m << endln;
@@ -1193,6 +1266,7 @@ Response* LadrunoHS::setResponse(const char** argv, int argc, OPS_Stream& s) {
 }
 
 int LadrunoHS::getResponse(int responseID, Information& matInfo) {
+  this->syncStageFromRegistry();
   auto evalSmallStrainModuli = [this](double& G_sec_out, double& G_tan_out) {
     const double* sig_ref = st_n_.sig;
     double norm_sig = 0.0;
