@@ -174,18 +174,19 @@ jobs:
   # tests/_testbed/concrete3d_replay.cpp puts records the shipped pyd wrote (refusals, sub-increments, kinks,
   # floor-class-C failures) back through this tree's header-only kernel and requires the recorded answer bit for bit.
   # The committed libmmt records replay only under the Windows pyd's libm (the self-hosted job at the bottom of this
-  # file). On glibc there is NO committed fixture yet, so this job is RECORD-ONLY AND NOT A GATE: it records the
-  # inputs under glibc and uploads them; the glibc fixture must be committed from that artifact before the F1 PR
-  # merges, and from then on the same script replays it bit-exactly as a gate (see the script's header). g++ and the
-  # header only, no build: seconds, so it runs on drafts too.
+  # file). The glibc gate replays tests/_testbed/concrete3d_replay_records.linux-glibc.txt bit-exactly; while that
+  # fixture is missing the job FAILS after uploading its glibc recording: the first run of the PR that adds this lane
+  # is red by design, its artifact is committed as the fixture, and the next run gates on it (the script's header).
+  # Pinned image: the libm tag carries the glibc version (ldd --version), so an image update is a libm mismatch, not
+  # a kernel change; re-record on a deliberate image bump. g++ and the header only, no build: runs on drafts too.
   concrete3d-replay:
-    name: Concrete3D glibc recording (record-only, NOT a gate until the glibc fixture is committed)
+    name: Concrete3D record replay (glibc 24.04, bit-exact; red until the glibc fixture is committed)
     if: github.repository == 'nmorabowen/OpenSees'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: libm guard, glibc recording (and the glibc-fixture replay once one is committed)
+      - name: libm guard, glibc recording, replay of the committed glibc fixture (fails while it is missing)
         run: bash tests/_testbed/concrete3d_replay_ci.sh "$RUNNER_TEMP/c3d_replay"
       - name: Upload the glibc recording
         if: always()

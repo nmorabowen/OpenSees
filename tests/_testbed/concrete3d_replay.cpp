@@ -16,7 +16,8 @@
 // after every pyd-written value of the record replayed bit-exactly. A C record must carry D, an R or F record M.
 // Bit-exactness holds only on the libm the records were written with: Intel's libmmt for the Windows pyd (its Fortran
 // objects pull it in by /DEFAULTLIB), glibc for the Linux build. The build defines C3D_REPLAY_LIBM to the libm it
-// links, and `check` refuses a fixture recorded under another one (pass --cross to compare anyway; still bit-exact).
+// links (for glibc linux-glibc-<the version ldd --version reports>, checked against the loaded libc at start-up), and
+// `check` refuses a fixture recorded under another one, another glibc version included (--cross compares anyway).
 // A KERNEL CHANGE THAT MOVES RESULTS FAILS `check` BY DESIGN. Such a PR re-records the fixture on each libm (`record`)
 // and commits it; the fixture's diff is the exact list of values the change moved, and the reviewers judge that diff.
 //
@@ -39,7 +40,10 @@
 #include <vector>
 
 #ifndef C3D_REPLAY_LIBM
-#error "define C3D_REPLAY_LIBM to the libm this build links (win-libmmt, win-ucrt, linux-glibc)"
+#error "define C3D_REPLAY_LIBM to the libm this build links (win-libmmt, win-ucrt, linux-glibc-<ldd --version>)"
+#endif
+#ifdef __GLIBC__
+#include <gnu/libc-version.h>
 #endif
 
 namespace K = Ladruno::Concrete3D;
@@ -285,7 +289,20 @@ static int modeRecord(const Fixture& fx, const char* outPath, const std::string&
     return 0;
 }
 
+// A glibc tag names the glibc version (linux-glibc-2.39-0ubuntu8.4): the C library this process actually loaded must be
+// that version, so a build tagged on one image cannot run as if it were on another.
+static void checkRuntimeLibm() {
+#ifdef __GLIBC__
+    const std::string tag = C3D_REPLAY_LIBM, pre = "linux-glibc-", run = gnu_get_libc_version();
+    if (tag.rfind(pre, 0) != 0) die("a glibc build must carry a linux-glibc-<version> tag, not " + tag);
+    const std::string ver = tag.substr(pre.size());
+    if (ver.compare(0, run.size(), run) != 0 || (ver.size() > run.size() && ver[run.size()] != '-'))
+        die("built for glibc " + ver + " but running on glibc " + run);
+#endif
+}
+
 int main(int argc, char** argv) {
+    checkRuntimeLibm();
     if (argc >= 3 && std::strcmp(argv[1], "check") == 0) {
         bool cross = false; for (int i = 3; i < argc; ++i) { if (std::strcmp(argv[i], "--cross") == 0) cross = true; else die(std::string("unknown option ") + argv[i]); }
         return modeCheck(load(argv[2]), cross);
