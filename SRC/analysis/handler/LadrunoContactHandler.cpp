@@ -35,6 +35,7 @@
 #include <LadrunoContactReemit.h>   // Ladruno: ADR-60 (finite-sliding re-emit band/metric)
 #include <LadrunoContactNormalField.h> // Ladruno: ADR-63 #4a (nodal-normal smoothing status/build)
 #include <LadrunoEdgeKernel.h>       // Ladruno: ADR-57 E2 (edge-edge routing + closest point)
+#include <LadrunoMortarKernel.h>     // Ladruno (r6 backport): default -tie proximity guard
 #include <Matrix.h>                  // Ladruno: ADR-39 P2b-2b (master getInitialStiff)
 #include <Domain.h>
 #include <AnalysisModel.h>
@@ -2349,6 +2350,16 @@ LadrunoContactHandler::handle(const ID *nodesLast)
             // C2.1 review: ~44% area lost on a coarse-slave/fine-master pairing). A
             // slave-aware mortar broad phase (corner-span query / max-diag cell) is a
             // follow-up ("mortar P2.5"); correctness-first brute force here, like NTS P2b-1.
+            //
+            // Ladruno (r6 backport, the default -tie proximity guard): a -tie binds only the
+            // pairs whose mean |gap| over their REFERENCE-config overlap is at most
+            // 0.5 sqrt(A_s), A_s the slave facet area. The clip accepts an anti-parallel facet
+            // across a closed or folded surface (the far side of a tube projects onto the
+            // auxiliary plane of a near facet), so without it every slave facet is ALSO tied
+            // to the antipodal master facets (separation ~ the surface diameter; facing pairs
+            // ~ the facet sagitta). The LadrunoTie -mortar exclusion with tolerance factor 1.
+            // An explicit -maxGap replaces it.
+            int nTieExcluded = 0;
             for (int sf = 0; sf < nSegS; sf++) {
                 Node *sNodes[4]; bool ok = true; double scen[3] = {0.0, 0.0, 0.0};
                 double Sx[4][3];                                  // ref coords (ADR-57 E2 stand-down)
@@ -2371,6 +2382,19 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                 }
                 if (!ok) continue;
                 for (int d = 0; d < 3; d++) scen[d] /= npsS;     // slave-facet centroid
+                // Ladruno (r6 backport): default -tie proximity tolerance 0.5 sqrt(A_s), A_s
+                // from the slave facet clipped with itself; < 0 => degenerate facet, no guard.
+                double tieGapTol = -1.0;
+                if (mc.isTie && mc.maxGap <= 0.0) {
+                    double SxK[LadrunoMortarKernel::MAXN][3], nS[3];
+                    for (int k = 0; k < npsS; k++)
+                        for (int d = 0; d < 3; d++) SxK[k][d] = Sx[k][d];
+                    ladrunoFacetNormalNewell(npsS, Sx, nS);
+                    LadrunoMortarKernel::PairResult prSelf;
+                    if (LadrunoMortarKernel::integratePair(npsS, SxK, npsS, SxK, nS, prSelf,
+                                                           mc.ngp) == 0 && prSelf.area > 1e-300)
+                        tieGapTol = 0.5 * std::sqrt(prSelf.area);
+                }
 
                 for (int seg = 0; seg < nSegM; seg++) {
                     Node *mNodes[4]; ok = true; double mcen[3] = {0.0, 0.0, 0.0};
@@ -2460,6 +2484,22 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                             }
                         }
                     }
+                    // Ladruno (r6 backport): the default -tie proximity guard (see above).
+                    if (tieGapTol > 0.0) {
+                        double SxK[LadrunoMortarKernel::MAXN][3], MxK[LadrunoMortarKernel::MAXN][3];
+                        for (int k = 0; k < npsS; k++)
+                            for (int d = 0; d < 3; d++) SxK[k][d] = Sx[k][d];
+                        for (int k = 0; k < npsM; k++)
+                            for (int d = 0; d < 3; d++) MxK[k][d] = Mx[k][d];
+                        LadrunoMortarKernel::PairResult pr0;
+                        if (LadrunoMortarKernel::integratePair(npsS, SxK, npsM, MxK, orientDir,
+                                                               pr0, mc.ngp) != 0)
+                            continue;                             // no overlap as built: not bonded
+                        if (pr0.gapL1 > tieGapTol * pr0.area) {
+                            nTieExcluded++;                       // a distant (antipodal) pair
+                            continue;
+                        }
+                    }
 
                     double epsUse = epsFixed;
                     if (epsAuto) {
@@ -2535,6 +2575,11 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                             cd->mortarFrictionGCMark(mc.tag, sTags(sf * npsS + k), sf, seg);
                 }
             }
+            if (nTieExcluded > 0 && cd->warnOnce(mc.tag, LadrunoContactDomain::WARN_TIE_EXCLUDED))
+                opserr << "LadrunoContactHandler::handle() - mortar tie " << mc.tag << ": "
+                       << nTieExcluded << " overlapping facet pair(s) farther apart than half "
+                          "the slave facet size were not tied (the far side of a closed or "
+                          "folded surface). Pass -maxGap to choose the pairing distance.\n";
         }
         cd->mortarNormalGCEnd();   // prune λ_N slots no live mortar pair referenced
     }

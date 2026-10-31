@@ -18,7 +18,8 @@ Ladruno_implementation/contact_prototypes/proto_adr155_r05.py):
   * N-2: `request` = pure penalty on physical steps, ALM inside the analyze_augmented bracket;
     `never` = pure penalty even inside the bracket.
   * N-1: one closed-cylinder tie with `-maxGap` == the 4-sector split (the R1 workaround) within
-    1e-6 relative; without the guard it is far stiffer.
+    1e-6 relative, and so is the default -tie (the r6-backport proximity guard); a -maxGap that
+    admits the far side is far stiffer.
   * G-9: `-adjust` on a faceted tube inside a faceted ring (non-matching, spurious gaps AND
     penetrations as meshed) starts with EXACTLY zero displacement and zero penetration under zero
     load; the unadjusted interface does not.
@@ -327,16 +328,20 @@ def _tube_tie(sectors, extra):
 
 
 def test_n1_maxgap_closed_cylinder_tie_matches_sector_split():
-    """One tie around the whole cylinder with -maxGap == the 4-sector split (the R1 workaround).
-    Without the guard every tube facet is also tied to the far side of the ring (the clip accepts
-    the anti-parallel facet), which stiffens the tube laterally."""
+    """One tie around the whole cylinder == the 4-sector split (the R1 workaround), with the
+    DEFAULT proximity guard (r6 backport: a -tie pair whose reference mean |gap| exceeds
+    0.5*sqrt(A_s) is not tied) and with -maxGap 0.1. A -maxGap wide enough to admit the far side
+    ties every tube facet to the antipodal ring facets too (the clip accepts the anti-parallel
+    facet), which stiffens the tube laterally: the bound the guard removes."""
     split = _tube_tie(4, ("-augment", "never"))
+    default = _tube_tie(1, ("-augment", "never"))
     guarded = _tube_tie(1, ("-augment", "never", "-maxGap", 0.1))
-    bare = _tube_tie(1, ("-augment", "never"))
+    bare = _tube_tie(1, ("-augment", "never", "-maxGap", 10.0))
+    assert default == pytest.approx(split, rel=1e-6)
     assert guarded == pytest.approx(split, rel=1e-6)
-    # measured: bare 4.308e-4 vs split 4.456e-4 (-3.3 %) on this slice; on the R1 pile, where the
-    # antipodal ties also lock the pile's rotation, the same defect was 3.65x.
-    assert bare < 0.99 * split, f"unguarded closed tie no longer over-stiff? bare {bare}, split {split}"
+    # measured before the default guard: unguarded 4.308e-4 vs split 4.456e-4 (-3.3 %) on this
+    # slice; on the R1 pile, where the antipodal ties also lock the pile's rotation, it was 3.65x.
+    assert bare < 0.99 * split, f"antipodal ties no longer over-stiff? bare {bare}, split {split}"
 
 
 def test_g9_adjust_faceted_tube_starts_stress_free():

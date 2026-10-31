@@ -1728,7 +1728,17 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
         }
     } else if (mode == SEGMENT) {
         double gap, n[3], N[4], B[15], gTvec[3];   // ndof <= 3*(1+4) = 15
-        if (segmentActive(gap, n, N, B, gTvec)) {
+        bool act3d = segmentActive(gap, n, N, B, gTvec);
+        // Ladruno (r6 backport) -- the 3D twin of the ADR-85 T4 2D fix above: a released pair
+        // reports zero force. setNtsForce ran only on the active path and theNtsForce clears
+        // once per handle() epoch, so a pair that engaged and later released kept its last
+        // active force in the ladrunoContactForce readout until the next handle().
+        if (!act3d && theDomain != 0 && theSlave != 0) {
+            LadrunoContactDomain *cdZ = theDomain->getLadrunoContactDomain();
+            if (cdZ != 0)
+                cdZ->setNtsForce(contactTag, theSlave->getTag(), segIndex, 0.0);
+        }
+        if (act3d) {
             // B1: under explicit, kn → the Courant-stable SOFT=1 k_soft (m_eff from the slave +
             // shape-projected segment masses on n); otherwise the configured kn (byte-identical).
             double knEff = softKn(theIntegrator, n, N);
@@ -1739,13 +1749,7 @@ LadrunoContactFE::getResidual(Integrator *theIntegrator)
 
             // B3: report the normal force into the engine snapshot (the `ladrunoContactForce`
             // query). Pure side-channel — no effect on resid/tang. Overwrites this pair's slot.
-            // KNOWN DEFECT (ADR-85 T4, LEDGER_quirks.md): this call, like its 2D twin used to,
-            // only runs on the ACTIVE path -- a pair that engages and later RELEASES keeps
-            // reporting its last-active force (theNtsForce clears once per handle() epoch, not
-            // once per residual eval). Reproduced on an isolated 3D facet rig. FIXED for 2D
-            // (LadrunoContactFE::getResidual's SEGMENT/ndm==2 branch, above); DEFERRED here to
-            // avoid perturbing the shipped contact_dump byte-identity gate -- see the ledger for
-            // the follow-up PR this owes (fix + re-measure probe_b3_hertz3.py + re-baseline dump).
+            // The released (non-active) path zeroes the slot above (r6 backport).
             if (theDomain != 0) {
                 LadrunoContactDomain *cdF = theDomain->getLadrunoContactDomain();
                 if (cdF != 0)

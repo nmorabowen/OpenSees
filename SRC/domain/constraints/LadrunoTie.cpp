@@ -745,10 +745,21 @@ LadrunoTie::generateMortar(Domain *dom,
     //   gap       = Sum_fm pair.gapL1 / covered area (L1 — no cancellation blind spot,
     //               strictly stronger than the old signed nodal average, by design).
     // Serendipity products need the degree-6 rule (ADR-78 D4); linear pairs keep order 4.
+    //
+    // Ladruno (r6 backport) -- pair proximity: a pair whose own mean |gap| exceeds the
+    // conforming tolerance tolFrac * 0.5 * sqrt(A) is EXCLUDED from D and M. On a closed or
+    // folded surface (a tube, a box) the far side projects onto the auxiliary plane of a near
+    // facet with a separation of the order of the surface diameter; integrating that pair
+    // ties each slave facet to the antipodal master facets as well. A normal-orientation test
+    // cannot see those pairs (the facets are parallel), the separation can. Tube of radius
+    // 0.5, 16 master / 24 slave facets, tol 0.1: near pairs separate by at most 0.0096,
+    // antipodal pairs by 0.98.
     const int gpOrder = (npsS > 4 || npsM > 4) ? 6 : 4;
     Matrix D(Ns, Ns), M(Ns, Nm);
     D.Zero(); M.Zero();
     double totalArea = 0.0;
+    std::vector<double> pairGapTol(nfS, -1.0);   // per slave facet; < 0 = no exclusion
+    int nExcluded = 0;
     for (int fs = 0; fs < nfS; fs++) {
         double Xs[8][3];
         for (int i = 0; i < npsS; i++) {
@@ -770,7 +781,10 @@ LadrunoTie::generateMortar(Domain *dom,
             return -1;
         }
         double areaFull = (rcSelf == 0) ? prSelf.area : 0.0;
+        if (areaFull > 1e-300)
+            pairGapTol[fs] = tolFrac * 0.5 * std::sqrt(areaFull);   // Ladruno (r6 backport)
         double areaCov = 0.0, gapL1 = 0.0;
+        double areaExcl = 0.0, gapExclMin = 0.0;
         for (int fm = 0; fm < nfM; fm++) {
             double Xm[8][3];
             for (int i = 0; i < npsM; i++)
@@ -786,6 +800,15 @@ LadrunoTie::generateMortar(Domain *dom,
             }
             if (rc != 0)
                 continue;                              // empty/degenerate overlap
+            if (pairGapTol[fs] >= 0.0 && pr.gapL1 > pairGapTol[fs] * pr.area) {
+                // Ladruno (r6 backport): farther apart than the conforming tolerance --
+                // not part of the bond (the far side of a closed or folded surface)
+                double g = pr.gapL1 / pr.area;
+                if (areaExcl <= 0.0 || g < gapExclMin) gapExclMin = g;
+                areaExcl += pr.area;
+                nExcluded++;
+                continue;
+            }
             areaCov += pr.area;
             gapL1   += pr.gapL1;
             for (int a = 0; a < npsS; a++) {
@@ -802,11 +825,19 @@ LadrunoTie::generateMortar(Domain *dom,
         // surface protrudes beyond the master there (a partial / extrapolated bond).
         // 0.1% slack for clip/quadrature noise (the shipped tolerance, unchanged).
         if (areaFull > 1e-300 && areaCov < (1.0 - 1.0e-3) * areaFull) {
-            opserr << "WARNING LadrunoTie -mortar - slave facet " << fs << " (first node "
-                   << sfn(fs*npsS) << ") is only " << (areaCov / areaFull) * 100.0
-                   << "% covered by the master surface (the slave surface protrudes beyond the "
-                      "master). A mesh-tie needs the master surface to cover the whole slave "
-                      "surface. Extend the master surface or trim the slave.\n";
+            if (areaExcl > 0.0)   // Ladruno (r6 backport): an OFFSET slave is refused here now
+                opserr << "WARNING LadrunoTie -mortar - slave facet " << fs << " (first node "
+                       << sfn(fs*npsS) << ") sits a mean |gap| of at least " << gapExclMin
+                       << " off the master surface (tol " << pairGapTol[fs] << ") over "
+                       << (1.0 - areaCov / areaFull) * 100.0 << "% of its area. v1 requires "
+                          "conforming-at-interface geometry (coincident surfaces). Move the "
+                          "slave onto the interface, or relax -tol.\n";
+            else
+                opserr << "WARNING LadrunoTie -mortar - slave facet " << fs << " (first node "
+                       << sfn(fs*npsS) << ") is only " << (areaCov / areaFull) * 100.0
+                       << "% covered by the master surface (the slave surface protrudes beyond the "
+                          "master). A mesh-tie needs the master surface to cover the whole slave "
+                          "surface. Extend the master surface or trim the slave.\n";
             return -1;
         }
         if (areaCov > 1e-300) {
@@ -830,6 +861,10 @@ LadrunoTie::generateMortar(Domain *dom,
                   "(zero integrated area). Check the facets are coincident and the nps/winding correct.\n";
         return -1;
     }
+    if (nExcluded > 0)   // Ladruno (r6 backport)
+        opserr << "LadrunoTie -mortar - NOTE: " << nExcluded << " overlapping facet pair(s) "
+                  "separated by more than the conforming tolerance were excluded (the far side "
+                  "of a closed or folded surface).\n";
 
     // --- BLOCKER-2 (PER-DOF): every tied slave node carries lumped mass on every tied DOF
     //     (P3: a shell tie's rotational DOFs are checked against the shell's rotary mass) ---
@@ -887,6 +922,8 @@ LadrunoTie::generateMortar(Domain *dom,
                 LadrunoMortarKernel::PairResult pr;
                 if (LadrunoMortarKernel::integratePair(npsS, Xs, npsM, Xm, refDir, pr, gpOrder) != 0)
                     continue;                          // (-2 already hard-errored in pass 1)
+                if (pairGapTol[fs] >= 0.0 && pr.gapL1 > pairGapTol[fs] * pr.area)
+                    continue;                          // excluded far pair (r6 backport, as above)
                 for (int a = 0; a < npsS; a++) {
                     for (int b = 0; b < npsS; b++) De(a,b) += pr.D[a][b];
                     for (int k = 0; k < npsM; k++) Me(a, mIdx[mfn(fm*npsM+k)]) += pr.M[a][k];
