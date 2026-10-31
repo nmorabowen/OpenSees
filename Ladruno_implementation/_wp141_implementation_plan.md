@@ -1,6 +1,6 @@
 # WP-141 implementation plan — tasks, models, effort, oracles
 
-Companion to [[141_rc_layered_shell_program]]. Drafted 2026-09-27. Quality first, then tokens.
+Companion to [[141_rc_layered_shell_program]]. Drafted 2026-09-27; revised 2026-10-31 after the #882 review (H1–H3). Quality first, then tokens.
 
 ## 0. Rules for every phase
 
@@ -81,11 +81,12 @@ to Sonnet/Haiku subagents. No task uses `max`.
 | P2a | G-A inclined-crack rig: periodic unit cell (study repo) | Opus 5.5 high | O2c | 1 |
 | P2b | G-B reinforced tension tie rig | Sonnet 5 high | O3b | 0.5 |
 | P2c | G-C lightly reinforced panel rig | Sonnet 5 high | O4b | 0.25 |
+| P2f | Re-baseline on the #877 build (`-noeas`, lch = h, `LadrunoLoadControl`, `-local`): G-B both arms (O3b), G-C (O4b), G-PV PV19/PV20/PV27 (O4d) | Sonnet 5 high | O3b, O4b, O4d | 0.5 |
 | P2d | **Baseline run + decision gate D-P2** (below) | Opus 5.5 medium | — | 0.25 |
-| P3a | `Element::getCharacteristicLength(const Vector& n)` + `ASDShellQ4` override (vanilla) | Opus 5.5 high + `/code-review high` | O1 | 0.75 |
-| P3b | Directional latch at crack onset (`LadrunoRCConcrete`) — design+oracle, then C++ | Opus 5.5 **xhigh** → high; Fable 5.1 review | O2 | 1.5 |
-| P3c | Crack-spacing band in reinforced layers | Opus 5.5 high | O3 | 0.75 |
-| P3d | Tension-stiffening cutoff at steel yield | Opus 5.5 high | O4 | 0.5 |
+| P3a | `Element::getCharacteristicLength(const Vector& n)` + `ASDShellQ4` override returning the full h(n) and reporting EAS (vanilla); after P3c/P3d and R2 | Opus 5.5 high + `/code-review high` | O1 | 0.75 |
+| P3b | **Parked.** Directional latch at crack onset (`LadrunoRCConcrete`) — design+oracle, then C++ | Opus 5.5 **xhigh** → high; Fable 5.1 review | O2 | (1.5) |
+| P3c | Crack-spacing band in reinforced layers (blocked on #877; Q5/Q6 first) | Opus 5.5 high | O3 | 0.75 |
+| P3d | Tension-stiffening crack check (MCFT reserve over the bar sets; blocked on #877) | Opus 5.5 high | O4 | 0.75 |
 | P3e | (optional) cyclic TS: ε1,max envelope + secant unload | Opus 5.5 high | O4c | 0.75 |
 | P4a | Confined plate view — derivation + numpy oracle + fixture | Opus 5.5 **xhigh**; Fable 5.1 review | O5a–d, O5g | 1 |
 | P4b | C++ kernel + wrapper + g++ check + Zone-A | Opus 5.5 high | O5b, O5c, O5e | 1 |
@@ -109,7 +110,8 @@ Re-ranking:
   `ASDConcrete3D`. Quantify drilling contamination on PV20 and a diagonal-cracking wall. The outcome
   decides the correct length factor.
 - **P3a re-scoped:** the new directional method carries the *corrected* length (EAS factor first,
-  direction second), leaving the vanilla scalar untouched.
+  direction second), leaving the vanilla scalar untouched. (P2e then settled the factor: the full
+  h(n), paired with `-noeas`; see the amendment below.)
 - **P3b deferred** until a seeded-strip gate shows a single-element-wide band along θ exists.
 - **G-A gate replaced** by a seeded straight strip or band at θ, `-noeas` or with a corrected factor,
   with drilling energy measured. The periodic cell stays as the locking detector.
@@ -148,10 +150,16 @@ Bažant chain, the periodic cell, tied node lines, ν = 0 — both columns softe
 - **R2 (gate before R1 becomes guidance):** the in-plane bending cost of `-noeas` — a cantilever wall
   with n = 1/2/4/8 elements across, EAS vs `-noeas` vs Timoshenko closed form. apeGmsh measured
   0.74× tip displacement for one element.
-- **P3a/P3b parked.** The factor problem is solved by `-noeas` with no seam, and directional h(n) fixes
-  neither mesh locking nor the 3-element 45° staircase. Revisit only with unstructured-mesh evidence.
-  D3a stays decided but unbuilt.
-- **P3c/P3d next**, after #877.
+- ~~**P3a/P3b parked.**~~ **Amended 2026-10-31 (#882 review H1): P3b parked, P3a not.** The factor
+  problem is solved by `-noeas` with no seam, and directional h(n) fixes neither mesh locking nor the
+  3-element 45° staircase on the periodic cell, so P3b (the inclined-crack latch) waits. But P2e
+  finding 3 measured a separate error that `-noeas` does not touch: on 2:1 elements the band is h_x
+  wide while lch is the min node distance h_y, 2.06 under EAS and 1.58 under `-noeas` (partial; the
+  length error alone predicts 2.0) — ADR G12. That is P3a's job: the seam returns the full h(n),
+  paired with `-noeas`, and under EAS it reports EAS so the material warns or refuses (ADR Q2). P3a
+  runs after P3c/P3d and R2; its consumer is the P3c onset rescale.
+- **P3d, then P3c**, after #877 (both edit the paths #877 changes; their gates are re-baselined on
+  its build in P2f). P3d first: it is the smaller change, and G-C/G-PV fully specify it.
 - **New P3f (research):** a drilling law that follows the section's current secant stiffness instead
   of NL damage. This is vanilla `ASDShellQ4` — owner decision; an upstream suggestion is the
   alternative.
@@ -163,17 +171,24 @@ Bažant chain, the periodic cell, tied node lines, ν = 0 — both columns softe
 **O1 — directional length seam (P3a)**
 - O1a (T1) For a parallelogram/rectangle with edges a, b, the projection formula
   `h(n) = 2 / Σ_a |∇N_a(ξ=0)·n|` equals the centroidal chord `min(a/|n·x̂|, b/|n·ŷ|)`. On a square:
-  a, 1.1547·a, √2·a at 0°, 30°, 45°. Under EAS the upstream factor ½ applies.
+  a, 1.1547·a, √2·a at 0°, 30°, 45°. The seam returns the full h(n) with EAS on or off (no factor ½;
+  P2e); under EAS it reports EAS.
 - O1b (T2) An independent numpy `h(n)` on 1000 random convex quads; C++ within 1e-12. Probe it through
   a material-side response (`lchUsed`) so no second vanilla touch is needed.
 - O1c (T3) Rigid rotation of the element in 3-D with `-local` rotated alike: h unchanged (1e-12).
   Every other element keeps the scalar default, and the **whole Zone-A battery is bit-identical**.
 - O1d (T3) Under `-corotational`: in-plane tension along local x′ of a rotated element gives h = a,
   not a global projection. This checks the frame of n (ADR open question 1).
-- Mutants: drop the EAS factor; use `n` in the global frame; return the projected width
-  a(|c|+|s|) instead of the chord.
+- O1e (T3, **the physics claim**, replaces O2c as P3a's gate) Seeded strip, `-noeas`, plain
+  `LadrunoRCConcrete -autoRegularization` consuming the seam, elements 2:1 and 1:2, crack normal along
+  each side: W/(Gf·t·ℓ_c) = 1.00 ± 0.05. Baseline with the scalar (min node distance) on 2:1 with the
+  normal along the long side: ≈ 2.0 (P2e beam rows 1.58, partial); square elements: 1.00 (control).
+- O1f (T3) Under EAS, a material with `-autoRegularization` behaves as ADR Q2 decides (one warning,
+  or the sentinel); `-noeas` is silent.
+- Mutants: apply the upstream factor ½ under EAS (killed by O1a/O1f); use `n` in the global frame;
+  return the projected width a(|c|+|s|) instead of the chord; use min(h_x, h_y) (killed by O1e).
 
-**O2 — directional latch (P3b)**
+**O2 — directional latch (P3b, parked; O2c is now the recorded locking detector, not a gate)**
 - O2a (T2) `rc_shell_ref.py`: the latch fires in the step where ε1 first reaches ε_cr and uses that
   step's principal direction. The rescale happens before any softening (elastic pre-crack response
   is lch-free). Fixture → `rc_reg_gpp.cpp` byte-check 1e-14.
@@ -186,7 +201,7 @@ Bažant chain, the periodic cell, tied node lines, ν = 0 — both columns softe
   - **Oracle:** `W_diss / (t · ℓ_c) = Gf`, with ℓ_c = L·√(p²+q²) for tanθ = p/q in lowest terms.
     The periodic crack is a closed line of direction (−p, q) on the torus: L at 0°, L√2 at 45°, L√5
     at tanθ = ½, L√17 at tanθ = ¼. It equals L/cosθ only at 0° and 45° (corrected 2026-09-27).
-  - Gate after P3: ±10 % at all angles. The baseline is recorded, not gated.
+  - Recorded, not gated (P3b parked; amended 2026-10-31). The former "±10 % at all angles after P3" was unattainable: 45° `-noeas` reads 2.13 from locking and drilling, which h(n) does not fix.
   - The damaged-element map must follow θ; if the band locks to mesh lines, the test reports locking instead of passing.
   - Smoke first: θ = 0 must reproduce the existing Bažant-bar result (`test_ladrunoRCConcrete_meshobj.py`).
 - O2d (T3) Wrong-instant guard: a non-proportional pre-crack path rotates the principal axis by 30°
@@ -196,24 +211,57 @@ Bažant chain, the periodic cell, tied node lines, ν = 0 — both columns softe
 - Mutants: latch at first call; latch every step; skip the rescale under `-implex`.
 
 **O3 — crack-spacing band (P3c)**
-- O3a (T1, RTD 1016 §2.4.3.1) `h_eff = min(h(n), s_θ)`, `s_θ = 1/(|cosθ|/s_rx + |sinθ|/s_ry)`, with θ
-  between the crack normal and x. s_rx, s_ry are mean crack spacings, user-given or computed by the
-  apeGmsh builder from EC2 7.11. Limits θ = 0 → s_rx and θ = 90° → s_ry are unit tests. The rule
-  applies only to layers flagged reinforced.
-- O3b (T3) G-B tie:
-  - a membrane strip with `PlateRebar` (ρ ≈ 1 %), mesh h/s_rm ∈ {1, 2, 4} — the coarse-shell regime this rule targets; h < s_rm is plain crack band, already covered by `_meshobj`;
-  - **Oracle:** the EC2 eq. 7.9 closed form for mean strain, `ε_m = max(σ_s/E_s − k_t·f_ct·(1+α_e·ρ)/(ρ·E_s), 0.6·σ_s/E_s)`, with k_t = 0.6 and σ_s = N/A_s;
-  - gate: within ±15 % in stabilized cracking, and mesh spread ≤ 10 %;
-  - run with TS off (the cyclic regime) and with TS on + cutoff.
-- Mutants: `max` instead of `min`; spacing applied to plain layers.
+- O3a (T1, RTD 1016 §2.4.3.1) `h_eff = min(h, s_θ)`, `s_θ = 1/(|cosθ|/s_rx + |sinθ|/s_ry)`, with θ
+  between the crack normal at onset and x; h is the scalar today, h(n) after P3a. s_rx, s_ry are
+  **mean** crack spacings, user-given or computed by the apeGmsh builder as s_r,max(EC2 7.11)/1.7
+  (ADR Q5 — owner to confirm). Limits θ = 0 → s_rx and θ = 90° → s_ry are unit tests. The rule
+  applies only to layers flagged reinforced, to tension only.
+- O3b (T3) G-B tie, re-run on the #877 build (P2f) with `-noeas`, lch = h, `LadrunoLoadControl`:
+  - a membrane strip with `PlateRebar` (ρ ≈ 1 %), **elastic** steel, length L = 12·s_rm, mesh
+    h/s_rm ∈ {½, 1, 2, 4}, one element 1 % thinner as the seed;
+  - **TS-off arm (the P3c gate), energy oracle (T1):** with perfect bond every element cracks once,
+    the tie forms L/s_rm cracks. Run until every concrete GP has d_t > 0.99; `W_conc` = Σ_gp ∫σ:dε
+    over the concrete layers minus their remaining elastic energy. Gate
+    `W_conc / (G_F·A_c·L/s_rm) = 1.00 ± 0.05` at h/s_rm ∈ {1, 2, 4}. Baseline expected
+    1.00 / 0.50 / 0.25 (= s_rm/h: each element dissipates G_F·A_c once); h/s_rm = ½ recorded only,
+    expected 2.0 before and after P3c (ADR Q6);
+  - **TS-on arm (no-regress for P3c and P3d):** the EC2 eq. 7.9 closed form for mean strain,
+    `ε_m = max(σ_s/E_s − k_t·f_ct·(1+α_e·ρ)/(ρ·E_s), 0.6·σ_s/E_s)`, k_t = 0.6, σ_s = N/A_s, within
+    ±15 % in stabilized cracking (σ_s ∈ [1.3·σ_sr, 0.8·f_y]) and mesh spread ≤ 10 pp. The
+    2026-09-28 run passed it at baseline (+7.0–7.1 %, 0.1 pp);
+  - EC2 7.9 is **not** an oracle for the TS-off arm: it contains tension stiffening, so TS off sits
+    +55–62 % above it by construction (the 2026-09-28 numbers), whatever P3c does.
+- O3c (T3, optional physics) a tension-tie test with counted cracks, to check that the chosen s_rm
+  is physical — O3b only checks the rule against the s_rm it is given.
+- Mutants: `max` instead of `min` (O3b TS-off fails at h/s_rm = 2, 4); spacing applied to plain layers
+  (a plain-layer arm keeps 1/h dissipation); latch kept after a cut step (a forced cut-and-retry at
+  crack onset must reproduce the uncut result).
 
-**O4 — tension-stiffening cutoff (P3d/P3e)**
-- O4a (T1) σ_ts = 0 for ε1 ≥ ε_y, continuous, with no jump: a fade over a band chosen in the P3 design
-  session. Below the fade start the old curve holds to 1e-15. g++ one-sided FD tangent at both
-  fade boundaries.
-- O4b (T3) G-C: a lightly reinforced (ρ 0.3–0.5 %) panel in uniaxial tension with elastic-perfectly-plastic steel.
-  - Gate with the cutoff: the plateau `N/(A_s·f_y) = 1.00 ± 0.01`.
-  - Baseline without the cutoff: `A_s·f_y + A_c·σ_ts(ε_y)`, recorded as the documented overestimate.
+**O4 — tension-stiffening crack check (P3d) and cyclic TS (P3e)**
+P3d is the MCFT crack check (ADR §4), not a cutoff on ε1:
+`σ_ts ≤ σ_cap = Σ_i ρ_i·max(0, f_y,i − f_s,i)·cos²θ_i`, `f_s,i = clip(E_s,i·n_iᵀεn_i, ±f_y,i)`.
+- O4a (T1, material point) σ_cap in closed form for one bar set at θ ∈ {0°, 30°, 60°} to the crack
+  normal and for two orthogonal sets with one yielded; 1e-14. Where σ_ts < σ_cap the stress and
+  tangent equal the uncapped path bit for bit. σ_cap → 0 continuously as the last bar yields; g++
+  one-sided FD tangent on both sides of the activation point.
+- O4b (T3) G-C: a lightly reinforced (ρ 0.3–0.5 %) panel in uniaxial tension along the bars with
+  elastic-perfectly-plastic steel.
+  - Gate with the crack check: `N/(A_s·f_y) ≤ 1.01` at every strain after cracking, and the plateau
+    `1.00 ± 0.01` on [ε_y, 10·ε_y]. In a tie along the bars the check is exactly "steel at the
+    crack ≤ f_y", so the cap may bind before ε_y — that is the physics, not a defect.
+  - Baseline without the rule: `A_s·f_y + A_c·σ_ts(ε_y)`, +117 / +70 % at ε_y pre-#877 (c = 500);
+    re-measured in P2f (c = 200).
+  - Uniaxial only: it cannot tell a crack check from a cutoff on ε1, because here ε1 is the bar strain.
+- O4d (T3) G-PV: PV19/PV20/PV27 (study `pv_panels`, MCFT flag set, `-local` pinned, EAS and `-noeas`).
+  - Gate: τ_max within ±7 % of test, and the pre-peak τ–γ curve bit-identical to the pre-P3d binary.
+  - Expected: the cap is inactive up to the peak. From the study CSVs, σ_cap/σ_ts at τ_max is
+    1.93 / 2.13 / 3.67 (PV20 / PV19 / PV27, ν = 0.2) and 1.23 / 1.35 / 2.95 (ν = 0). Re-measured in P2f.
+  - Why it discriminates: ε1 passes the y-bar ε_y = 1.5e-3 at γ ≈ 1.7–2.0e-3 and the y bars yield at
+    γ = 3.4e-3 / 4.75e-3, all before γ_peak = 8.1e-3 / 10.6e-3. A cutoff on ε1 or on "any bar
+    yielded" removes tension stiffening there and gives the `-betaC`-alone curve, 3.61 MPa
+    (−15 %), which fails.
+- Mutants: cutoff on ε1 (killed by O4d); cutoff when any bar yields (O4d); cos² dropped (O4a at 30°,
+  60°); cap left out (O4b).
 - O4c (T1, P3e) Unloading from (ε1,max, σ_ts) runs along the secant to the origin and reloads along
   it. No re-inflation on unload (monotone check).
 
@@ -267,7 +315,9 @@ mirror it in fork Zone-A.
 
 ```
 now:            P1b, P1c, P2a–c (rigs, study repo try branch)   [independent of #877]
-#877 merged:    P1a, P1d, P2d baseline + D-P2  ->  P3a -> P3b -> P3c -> P3d (-> P3e)
+#877 merged:    P1a, P1d, P2f re-baseline  ->  P3d -> P3c (-> P3e)
+R2 + P3c done:  P3a (seam, -noeas, elongated elements)
+parked:         P3b (until a seeded strip shows a one-element band along theta)
 P1a landed:     P4a -> P4b -> P4c              [B1/B2 arrive with #877]
 ```
 
