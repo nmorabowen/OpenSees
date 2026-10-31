@@ -1,5 +1,6 @@
 ---
 wp: ADR-69
+date: 2026-10-31
 title: "EnergyBalance -v2 optional columns were decided per rank -- a rank without DRM elements wrote one column fewer"
 ---
 ### EnergyBalance -v2 optional columns were decided per rank -- a rank without DRM elements wrote one column fewer
