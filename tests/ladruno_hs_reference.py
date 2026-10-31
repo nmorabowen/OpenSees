@@ -413,8 +413,8 @@ def initialize_state_from_stress(
     q_tilde = Theta * q
     p_hat = max(p.p_min, p_mean + p.a_apex)
 
-    # Equivalent preconsolidation pressure on the cap passing through (p_mean, q_tilde):
-    p_eq = math.sqrt(p_hat * p_hat + (q_tilde / p.alpha_cap) ** 2) - p.a_apex
+    # Equivalent preconsolidation pressure on the circular-in-pi-plane cap passing through (p_mean, q):
+    p_eq = math.sqrt(p_hat * p_hat + (q / p.alpha_cap) ** 2) - p.a_apex
     ocr_use = p.OCR if ocr <= 0.0 else ocr
     pop_use = p.pop if pop < 0.0 else pop
     st.p_p = max(p.p_min, max(p_eq * ocr_use, p_eq + pop_use))
@@ -878,8 +878,7 @@ def _solve_regime3_cap(
     p_p_n: float,
 ) -> Tuple[bool, float, float, float, float, np.ndarray]:
     """Solve Regime 3 (Elliptical volumetric cap f^c = 0 only, dgam_p = 0)."""
-    Theta, dTheta_dx = lode_theta_and_deriv(p, x_sin3)
-    kappa_KG = p.Kur_ref / p.Gur_ref
+    _ = x_sin3
     alpha2 = p.alpha_cap * p.alpha_cap
     p_cur = max(p_p_n * 0.5, min(p_tr, p_p_n))
     q_cur = q_tr
@@ -887,35 +886,32 @@ def _solve_regime3_cap(
     for _ in range(35):
         p_hat = max(p.p_min, p_cur + p.a_apex)
         deps_v_pc = max(0.0, (p_tr - p_cur) / Ke)
-        c_q = 1.0 + (3.0 * Ge * Theta * Theta / alpha2) * (deps_v_pc / p_hat)
+        c_q = 1.0 + (3.0 * Ge / alpha2) * (deps_v_pc / p_hat)
         q_cur = q_tr / c_q
         pp_new, dpp_ddeps = _cap_pp_and_deriv(p, p_p_n, deps_v_pc)
         pp_hat = pp_new + p.a_apex
 
-        q_tilde = Theta * q_cur
-        R = (q_tilde * q_tilde) / alpha2 + p_hat * p_hat - pp_hat * pp_hat
+        R = (q_cur * q_cur) / alpha2 + p_hat * p_hat - pp_hat * pp_hat
         if abs(R) / (p.p_hat_ref * p.p_hat_ref) < 1.0e-13:
             # Note: since Ke = kappa_KG * Ge, Ge * deps_v_pc = (p_tr - p_cur) / kappa_KG is independent of Ge,
             # while d(deps_v_pc)/dGe = -deps_v_pc / Ge in the cap hardening equation!
-            dcq_dp = (3.0 * Ge * Theta * Theta / alpha2) * (
+            dcq_dp = (3.0 * Ge / alpha2) * (
                 -(1.0 / (Ke * p_hat)) - (deps_v_pc / (p_hat * p_hat))
             )
-            dcq_dptr = (3.0 * Ge * Theta * Theta / alpha2) * (1.0 / (Ke * p_hat))
-            dcq_dTh = (6.0 * Ge * Theta / alpha2) * (deps_v_pc / p_hat)
-            dcq_dx = dcq_dTh * dTheta_dx
+            dcq_dptr = (3.0 * Ge / alpha2) * (1.0 / (Ke * p_hat))
 
             J00 = q_cur * dcq_dp
             J01 = c_q
             J10 = 2.0 * p_hat + 2.0 * pp_hat * dpp_ddeps * (1.0 / Ke)
-            J11 = 2.0 * Theta * Theta * q_cur / alpha2
+            J11 = 2.0 * q_cur / alpha2
             J_y = np.array([[J00, J01], [J10, J11]], dtype=float)
             J_tr = np.array(
                 [
-                    [q_cur * dcq_dptr, -1.0, q_cur * dcq_dx, 0.0],
+                    [q_cur * dcq_dptr, -1.0, 0.0, 0.0],
                     [
                         -2.0 * pp_hat * dpp_ddeps * (1.0 / Ke),
                         0.0,
-                        (2.0 * Theta * q_cur * q_cur / alpha2) * dTheta_dx,
+                        0.0,
                         2.0 * pp_hat * dpp_ddeps * (deps_v_pc / Ge),
                     ],
                 ],
@@ -924,12 +920,12 @@ def _solve_regime3_cap(
             sens = -np.linalg.solve(J_y, J_tr)
             return True, p_cur, q_cur, pp_new, deps_v_pc, sens
 
-        dcq_dp = (3.0 * Ge * Theta * Theta / alpha2) * (
+        dcq_dp = (3.0 * Ge / alpha2) * (
             -(1.0 / (Ke * p_hat)) - (deps_v_pc / (p_hat * p_hat))
         )
         dq_dp = -(q_cur / c_q) * dcq_dp
         dR_dp = (
-            (2.0 * Theta * Theta * q_cur / alpha2) * dq_dp
+            (2.0 * q_cur / alpha2) * dq_dp
             + 2.0 * p_hat
             + 2.0 * pp_hat * dpp_ddeps * (1.0 / Ke)
         )
@@ -972,7 +968,7 @@ def _solve_regime4_corner(
         else:
             s_psim, _, _ = _rowe_dilatancy(p, p_val, q_val, void_ratio, k3_v, Th_sig_v)
 
-        k_cap = (Th_v * Th_v * q_val) / (alpha2 * p_hat)
+        k_cap = q_val / (alpha2 * p_hat)
         denom = max(0.05, 0.5 + k_cap * s_psim)
         dgam_p = (deps_q_p - k_cap * deps_v_p) / denom
         deps_v_pc = deps_v_p + s_psim * dgam_p
@@ -985,7 +981,7 @@ def _solve_regime4_corner(
         else:
             Phi_s, _, _ = _phi_shear(p, p_val, q_val, k3_v, Th_sig_v)
             R0 = Phi_s - gamma_p_n - dgam_p
-        R1 = (q_tilde * q_tilde) / alpha2 + p_hat * p_hat - pp_hat * pp_hat
+        R1 = (q_val * q_val) / alpha2 + p_hat * p_hat - pp_hat * pp_hat
         return R0, R1, dgam_p, deps_v_pc, pp_new
 
     for _ in range(40):
@@ -1140,7 +1136,7 @@ def return_map_3d(
         f_shear_tr = 1.0
 
     pp_hat_n = st_n.p_p + p.a_apex
-    f_cap_tr = (q_tilde_tr * q_tilde_tr) / (p.alpha_cap ** 2) + p_hat_tr * p_hat_tr - pp_hat_n * pp_hat_n
+    f_cap_tr = (q_tr * q_tr) / (p.alpha_cap ** 2) + p_hat_tr * p_hat_tr - pp_hat_n * pp_hat_n
 
     if f_shear_tr <= 1.0e-12 and f_fail_tr <= 1.0e-12 and f_cap_tr <= 1.0e-10:
         st_new.sig = sig_tr
@@ -1159,7 +1155,7 @@ def return_map_3d(
             p, p_tr, q_tr, x_tr, Ke, Ge, st_n.gamma_p, st_n.void_ratio
         )
         if ok1:
-            fc1 = ((Theta * q1) ** 2) / (p.alpha_cap ** 2) + (p1 + p.a_apex) ** 2 - pp_hat_n ** 2
+            fc1 = (q1 ** 2) / (p.alpha_cap ** 2) + (p1 + p.a_apex) ** 2 - pp_hat_n ** 2
             if fc1 <= 1.0e-8:
                 p_new, q_new, st_new.gamma_p, sens = p1, q1, st_n.gamma_p + dgam1, sens1
                 regime = "shear"
@@ -1169,7 +1165,7 @@ def return_map_3d(
                 p, p_tr, q_tr, x_tr, Ke, Ge, st_n.void_ratio
             )
             if ok2:
-                fc2 = ((Theta * q2) ** 2) / (p.alpha_cap ** 2) + (p2 + p.a_apex) ** 2 - pp_hat_n ** 2
+                fc2 = (q2 ** 2) / (p.alpha_cap ** 2) + (p2 + p.a_apex) ** 2 - pp_hat_n ** 2
                 if fc2 <= 1.0e-8:
                     p_new, q_new, st_new.gamma_p, sens = p2, q2, st_n.gamma_p + dgam2, sens2
                     regime = "failure"

@@ -116,6 +116,56 @@ int main() {
     if (!check_fd_tangent(p, st_fail_cap, e_fc, REGIME_FAILURE_CAP, "failure_cap")) return 10;
     if (!check_fd_tangent(p, st_ocr,      e_tn, REGIME_TENSION,     "tension"))     return 7;
 
+    // 3D cap normality check at general Lode angle (theta != +/- pi/6):
+    {
+      HSState st_cap;
+      double C_cap[6][6];
+      ActiveRegime reg_cap = return_map_3d_comp(p, st_iso, e_cp, st_cap, C_cap);
+      if (reg_cap != REGIME_CAP) return 13;
+      double p_n = 0.0, q_n = 0.0, x_n = 1.0, Th_n = 1.0, dTh_dx_n = 0.0;
+      double k3_n = 1.0 / 3.0, dk3_dx_n = 0.0, Th_sig_n = 1.0, dTh_sig_dx_n = 0.0;
+      double dq_n[6], dTh_n[6], ds_dp = 0.0, ds_dq = 0.0, s_n = 1.0;
+      invariants_and_lode_grad(p, st_iso.sig, p_n, q_n, x_n, Th_n, dq_n, dTh_n);
+      lode_factors_and_derivs(p, x_n, Th_n, dTh_dx_n, k3_n, dk3_dx_n, Th_sig_n, dTh_sig_dx_n);
+      stiffness_scale_and_derivs(p, p_n, q_n, s_n, ds_dp, ds_dq, k3_n);
+      double Ke = p.Kur_ref * s_n;
+      double Ge = p.Gur_ref * s_n;
+      double dsig[6];
+      for (int i = 0; i < 6; ++i) dsig[i] = st_cap.sig[i] - st_iso.sig[i];
+      double dp = (dsig[0] + dsig[1] + dsig[2]) / 3.0;
+      double deps_e[6] = {
+          dp / (3.0 * Ke) + (dsig[0] - dp) / (2.0 * Ge),
+          dp / (3.0 * Ke) + (dsig[1] - dp) / (2.0 * Ge),
+          dp / (3.0 * Ke) + (dsig[2] - dp) / (2.0 * Ge),
+          dsig[3] / Ge,
+          dsig[4] / Ge,
+          dsig[5] / Ge
+      };
+      double deps_p[6];
+      for (int i = 0; i < 6; ++i) deps_p[i] = e_cp[i] - deps_e[i];
+      double p_c = 0.0, q_c = 0.0, x_c = 1.0, Th_c = 1.0;
+      double dq_c[6], dTh_c[6];
+      invariants_and_lode_grad(p, st_cap.sig, p_c, q_c, x_c, Th_c, dq_c, dTh_c);
+      double p_hat_c = p_c + p.a_apex;
+      double grad_fc[6];
+      for (int i = 0; i < 6; ++i) {
+        double m_i = (i < 3) ? (1.0 / 3.0) : 0.0;
+        grad_fc[i] = 2.0 * p_hat_c * m_i + (2.0 * q_c / (p.alpha_cap * p.alpha_cap)) * dq_c[i];
+      }
+      static const double w_t[6] = {1.0, 1.0, 1.0, 0.5, 0.5, 0.5};
+      double dot = 0.0, np2 = 0.0, ng2 = 0.0;
+      for (int i = 0; i < 6; ++i) {
+        dot += w_t[i] * deps_p[i] * grad_fc[i];
+        np2 += w_t[i] * deps_p[i] * deps_p[i];
+        ng2 += w_t[i] * grad_fc[i] * grad_fc[i];
+      }
+      double cos_ang = dot / std::sqrt(np2 * ng2);
+      if (std::abs(1.0 - cos_ang) > 1.0e-13) {
+        std::fprintf(stderr, "FAIL [cap_normality]: 1 - cos_ang = %.3e\n", 1.0 - cos_ang);
+        return 14;
+      }
+    }
+
     // HSsmall elastoplastic tangent check:
     HSParams p_hss = p;
     p_hss.E50_ref          = 30000.0;

@@ -551,8 +551,9 @@ int LadrunoHS::integrate3D(const double epsComp[6]) {
 
   if (implex_) {
     // Oliver et al. (2008) IMPL-EX:
-    //   1. Evaluate SPD paraelastic tangent C_e(sig_n) at the committed stress st_n_.sig.
-    //   2. Compute elastic predictor stress sig_tr = sig_n + C_e(sig_n) : deps.
+    //   1. Evaluate SPD paraelastic secant tangent C_e(sig_n, Ge) at the committed state st_n_,
+    //      preserving constant Poisson's ratio nu_ur via Ke = (Kur_ref / Gur_ref) * Ge.
+    //   2. Compute elastic predictor stress sig_tr = sig_n + C_e(sig_n, Ge) : deps.
     //   3. Record current step's plastic stress correction dsig_p_trial_ = sig_tr - sig_impl_trial_.
     //   4. Expose extrapolated stress sig_tilde = sig_tr - dsig_p_n_ as st_trial_.sig for global
     //      equilibrium while committing sig_impl_trial_ into st_n_.sig at commitState().
@@ -568,7 +569,18 @@ int LadrunoHS::integrate3D(const double epsComp[6]) {
       double ds1 = 0.0, ds2 = 0.0;
       stiffness_scale_and_derivs(params_, p_n, q_n, s_n, ds1, ds2, k3_n);
     }
-    build_isotropic_elastic_tangent(params_.Kur_ref * s_n, params_.Gur_ref * s_n, Dtan_);
+    double Ge_implex = params_.Gur_ref * s_n;
+    if (params_.use_small_strain && params_.G0_ref > params_.Gur_ref) {
+      double e_dev_tmp[3][3], H_tmp[3][3], C_e_tmp[6][6], dGe_tmp[6];
+      bool virgin_tmp = st_n_.is_virgin;
+      hssmall_predictor(
+          params_, st_n_, epsComp, s_n, Ge_implex,
+          e_dev_tmp, H_tmp, virgin_tmp, C_e_tmp, dGe_tmp);
+    }
+    double Ke_implex = (params_.Gur_ref > 0.0)
+                           ? ((params_.Kur_ref / params_.Gur_ref) * Ge_implex)
+                           : (params_.Kur_ref * s_n);
+    build_isotropic_elastic_tangent(Ke_implex, Ge_implex, Dtan_);
     double deps[6];
     for (int i = 0; i < 6; ++i) deps[i] = epsComp[i] - st_n_.eps[i];
     for (int i = 0; i < 6; ++i) {
@@ -597,7 +609,7 @@ int LadrunoHS::setTrialStrain(const Vector& v) {
 
   double epsComp[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
   if (condense_) {
-    epsComp[2] = st_trial_.eps[2];
+    epsComp[2] = cEps22_comp_;
   }
   // OpenSees continuum strain is tension-positive; kernel is compression-positive:
   for (int a = 0; a < ncomp_; ++a) {
@@ -1154,6 +1166,7 @@ Response* LadrunoHS::setResponse(const char** argv, int argc, OPS_Stream& s) {
   if (std::strcmp(a, "state") == 0 || std::strcmp(a, "internal") == 0)
     return new MaterialResponse(this, 4, Vector(7));
   if (std::strcmp(a, "plasticShearStrain") == 0 ||
+      std::strcmp(a, "plasticStrain") == 0 ||
       std::strcmp(a, "gamma_p") == 0 ||
       std::strcmp(a, "gammap") == 0)
     return new MaterialResponse(this, 5, Vector(1));
@@ -1161,17 +1174,77 @@ Response* LadrunoHS::setResponse(const char** argv, int argc, OPS_Stream& s) {
       std::strcmp(a, "p_p") == 0 ||
       std::strcmp(a, "pp") == 0)
     return new MaterialResponse(this, 6, Vector(1));
-  if (std::strcmp(a, "voidRatio") == 0 || std::strcmp(a, "e") == 0)
+  if (std::strcmp(a, "voidRatio") == 0 ||
+      std::strcmp(a, "void_ratio") == 0 ||
+      std::strcmp(a, "e") == 0)
     return new MaterialResponse(this, 7, Vector(1));
   if (std::strcmp(a, "regime") == 0 || std::strcmp(a, "activeSurface") == 0)
     return new MaterialResponse(this, 8, Vector(1));
   if (std::strcmp(a, "capParams") == 0 || std::strcmp(a, "alphaCap") == 0)
     return new MaterialResponse(this, 9, Vector(2));
+  if (std::strcmp(a, "G_sec") == 0 || std::strcmp(a, "Gsec") == 0)
+    return new MaterialResponse(this, 10, Vector(1));
+  if (std::strcmp(a, "G_tan") == 0 || std::strcmp(a, "Gtan") == 0)
+    return new MaterialResponse(this, 11, Vector(1));
+  if (std::strcmp(a, "smallStrainModulus") == 0)
+    return new MaterialResponse(this, 12, Vector(2));
 
   return NDMaterial::setResponse(argv, argc, s);
 }
 
 int LadrunoHS::getResponse(int responseID, Information& matInfo) {
+  auto evalSmallStrainModuli = [this](double& G_sec_out, double& G_tan_out) {
+    const double* sig_ref = st_n_.sig;
+    double norm_sig = 0.0;
+    for (int i = 0; i < 6; ++i) norm_sig += sig_ref[i] * sig_ref[i];
+    if (norm_sig <= 1.0e-24) {
+      sig_ref = st_trial_.sig;
+      norm_sig = 0.0;
+      for (int i = 0; i < 6; ++i) norm_sig += sig_ref[i] * sig_ref[i];
+    }
+    double s_ref = 1.0;
+    if (norm_sig > 1.0e-24) {
+      double p_n = 0.0, q_n = 0.0, x_n = 1.0, Th_n = 1.0, dTh_dx_n = 0.0;
+      double k3_n = 1.0 / 3.0, dk3_dx_n = 0.0, Th_sig_n = 1.0, dTh_sig_dx_n = 0.0;
+      double dq[6], dTh[6];
+      invariants_and_lode_grad(params_, sig_ref, p_n, q_n, x_n, Th_n, dq, dTh);
+      lode_factors_and_derivs(params_, x_n, Th_n, dTh_dx_n, k3_n, dk3_dx_n, Th_sig_n, dTh_sig_dx_n);
+      double ds1 = 0.0, ds2 = 0.0;
+      stiffness_scale_and_derivs(params_, p_n, q_n, s_ref, ds1, ds2, k3_n);
+    }
+    double Gur = params_.Gur_ref * s_ref;
+    if (!params_.use_small_strain || params_.G0_ref <= params_.Gur_ref) {
+      G_sec_out = Gur;
+      G_tan_out = Gur;
+      return;
+    }
+    double G0 = params_.G0_ref * s_ref;
+    double sum_H_sq = 0.0;
+    for (int i = 0; i < 3; ++i)
+      for (int j = 0; j < 3; ++j)
+        sum_H_sq += st_trial_.H_hist[i][j] * st_trial_.H_hist[i][j];
+    double gam_cur = std::sqrt(std::max(0.0, 2.0 * sum_H_sq));
+    double m_fac   = st_trial_.is_virgin ? 1.0 : 2.0;
+    double c_h     = 0.385 / (m_fac * std::max(1.0e-12, params_.gamma_07));
+    double phi_val = 0.0;
+    phi_hssmall_integral(G0, Gur, c_h, gam_cur, phi_val, G_tan_out);
+
+    double deps_sq = 0.0;
+    for (int i = 0; i < 6; ++i) {
+      double d = st_trial_.eps[i] - st_n_.eps[i];
+      deps_sq += d * d;
+    }
+    if (deps_sq > 1.0e-30) {
+      double e_dev_tmp[3][3], H_tmp[3][3], C_e_tmp[6][6], dGe_tmp[6];
+      bool virgin_tmp = st_n_.is_virgin;
+      hssmall_predictor(
+          params_, st_n_, st_trial_.eps, s_ref, G_sec_out,
+          e_dev_tmp, H_tmp, virgin_tmp, C_e_tmp, dGe_tmp);
+    } else {
+      G_sec_out = (gam_cur > 1.0e-15) ? std::max(Gur, std::min(G0, phi_val / gam_cur)) : G0;
+    }
+  };
+
   switch (responseID) {
     case 1:
       if (matInfo.theVector) *(matInfo.theVector) = this->getStress();
@@ -1213,6 +1286,28 @@ int LadrunoHS::getResponse(int responseID, Information& matInfo) {
       if (matInfo.theVector) {
         (*(matInfo.theVector))(0) = params_.alpha_cap;
         (*(matInfo.theVector))(1) = params_.beta_cap;
+      }
+      return 0;
+    case 10:
+      if (matInfo.theVector) {
+        double G_sec = 0.0, G_tan = 0.0;
+        evalSmallStrainModuli(G_sec, G_tan);
+        (*(matInfo.theVector))(0) = G_sec;
+      }
+      return 0;
+    case 11:
+      if (matInfo.theVector) {
+        double G_sec = 0.0, G_tan = 0.0;
+        evalSmallStrainModuli(G_sec, G_tan);
+        (*(matInfo.theVector))(0) = G_tan;
+      }
+      return 0;
+    case 12:
+      if (matInfo.theVector) {
+        double G_sec = 0.0, G_tan = 0.0;
+        evalSmallStrainModuli(G_sec, G_tan);
+        (*(matInfo.theVector))(0) = G_sec;
+        (*(matInfo.theVector))(1) = G_tan;
       }
       return 0;
     default:

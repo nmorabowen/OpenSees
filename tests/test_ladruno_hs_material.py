@@ -1035,3 +1035,117 @@ def test_drained_triaxial_extension_and_non_auxetic_hssmall():
     assert abs(ctan[0, 1] / (ctan[0, 0] + ctan[0, 1]) - 0.20) < 1e-4
 
 
+def test_implex_hssmall_and_condensed_planestress_and_responses():
+    """Verify:
+      1. LadrunoHSSmall -implex uses the non-auxetic small-strain secant modulus Ge and
+         Ke = (Kur_ref/Gur_ref)*Ge (preserving nu_ur = 0.20 and SPD tangent), with zero
+         spurious dsig_p drift across purely elastic steps.
+      2. Recordable response aliases plasticStrain, void_ratio, G_sec, G_tan, and
+         smallStrainModulus return the exact internal variables.
+      3. Condensed PlaneStress mode enforces sig_zz == 0 and produces a consistent 3x3 tangent.
+    """
+    _build_prescribed_cube(
+        _hostun_args(
+            1,
+            cmd="LadrunoHSSmall",
+            E50_ref=25000.0,
+            Eoed_ref=25000.0,
+            Eur_ref=72000.0,
+            nu=0.20,
+            OCR=20.0,
+            smallStrain=(150000.0, 2.0e-4),
+            sig0=100.0,
+            implex=True,
+        )
+    )
+    # Mobilize shear cone first, then take two consecutive purely elastic unloading steps:
+    assert _impose_cube_strain_open(np.array([-2.0e-4, 0.0, 0.0, 0.0, 0.0, 0.0])) == 0
+    assert _impose_cube_strain_open(np.array([-1.999e-4, 0.0, 0.0, 0.0, 0.0, 0.0])) == 0
+    assert int(ops.eleResponse(1, "material", 1, "regime")[0]) == 0
+
+    ctan_imp = np.array(ops.eleResponse(1, "material", 1, "tangent")).reshape(6, 6)
+    g_sec = ops.eleResponse(1, "material", 1, "G_sec")[0]
+    g_tan = ops.eleResponse(1, "material", 1, "G_tan")[0]
+    ss_mod = ops.eleResponse(1, "material", 1, "smallStrainModulus")
+    assert abs(ss_mod[0] - g_sec) < 1e-12
+    assert abs(ss_mod[1] - g_tan) < 1e-12
+    assert g_sec > 140000.0  # Near G0_ref = 150000 kPa on elastic reversal (vs Gur ~ 31500 kPa)
+    assert abs(ctan_imp[3, 3] - g_sec) / g_sec < 1e-4
+    assert abs(ctan_imp[0, 1] / (ctan_imp[0, 0] + ctan_imp[0, 1]) - 0.20) < 1e-12
+
+    # Second elastic unloading step: verify IMPL-EX stress matches implicit elastic stress
+    # (confirming dsig_p was identically zero on the preceding elastic step!)
+    assert _impose_cube_strain_open(np.array([-1.998e-4, 0.0, 0.0, 0.0, 0.0, 0.0])) == 0
+    sig_imp2 = np.array(ops.eleResponse(1, "material", 1, "stress"))
+
+    _build_prescribed_cube(
+        _hostun_args(
+            1,
+            cmd="LadrunoHSSmall",
+            E50_ref=25000.0,
+            Eoed_ref=25000.0,
+            Eur_ref=72000.0,
+            nu=0.20,
+            OCR=20.0,
+            smallStrain=(150000.0, 2.0e-4),
+            sig0=100.0,
+            implex=False,
+        )
+    )
+    assert _impose_cube_strain_open(np.array([-2.0e-4, 0.0, 0.0, 0.0, 0.0, 0.0])) == 0
+    assert _impose_cube_strain_open(np.array([-1.999e-4, 0.0, 0.0, 0.0, 0.0, 0.0])) == 0
+    assert _impose_cube_strain_open(np.array([-1.998e-4, 0.0, 0.0, 0.0, 0.0, 0.0])) == 0
+    sig_std2 = np.array(ops.eleResponse(1, "material", 1, "stress"))
+    np.testing.assert_allclose(sig_imp2, sig_std2, rtol=1e-12, atol=1e-10)
+
+    # Check response aliases plasticStrain and void_ratio:
+    gam_p1 = ops.eleResponse(1, "material", 1, "gamma_p")[0]
+    gam_p2 = ops.eleResponse(1, "material", 1, "plasticStrain")[0]
+    assert abs(gam_p1 - gam_p2) < 1e-15
+    vr1 = ops.eleResponse(1, "material", 1, "voidRatio")[0]
+    vr2 = ops.eleResponse(1, "material", 1, "void_ratio")[0]
+    assert abs(vr1 - vr2) < 1e-15
+
+    # Check 2D PlaneStress condensed mode central-FD 3x3 tangent consistency:
+    def eval_planestress(eps_inplane: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        ops.wipe()
+        ops.model("basic", "-ndm", 2, "-ndf", 2)
+        ops.node(1, 0.0, 0.0)
+        ops.node(2, 1.0, 0.0)
+        ops.node(3, 1.0, 1.0)
+        ops.node(4, 0.0, 1.0)
+        for n in (1, 2, 3, 4):
+            ops.fix(n, 1, 1)
+        ops.nDMaterial(*_hostun_args(1, c=25.0, sigmat=20.0, OCR=1.2, sig0=50.0))
+        ops.element("quad", 1, 1, 2, 3, 4, 1.0, "PlaneStress", 1)
+        ops.system("FullGeneral")
+        ops.numberer("Plain")
+        ops.constraints("Plain")
+        ops.test("NormDispIncr", 1e-10, 20, 0)
+        ops.algorithm("Newton")
+        ops.integrator("LoadControl", 1.0)
+        ops.analysis("Static")
+        exx, eyy, gxy = float(eps_inplane[0]), float(eps_inplane[1]), float(eps_inplane[2])
+        for n, (x, y) in ((1, (0.0, 0.0)), (2, (1.0, 0.0)), (3, (1.0, 1.0)), (4, (0.0, 1.0))):
+            ops.setNodeDisp(n, 1, exx * x + 0.5 * gxy * y, "-commit")
+            ops.setNodeDisp(n, 2, eyy * y + 0.5 * gxy * x, "-commit")
+        assert ops.analyze(1) == 0
+        sig3 = np.array(ops.eleResponse(1, "material", 1, "stress"))
+        tan3 = np.array(ops.eleResponse(1, "material", 1, "tangent")).reshape(3, 3)
+        return sig3, tan3
+
+    eps_ps0 = np.array([-1.2e-3, -0.4e-3, 0.5e-3])
+    _, tan_ps = eval_planestress(eps_ps0)
+    delta_ps = 1.0e-7
+    tan_ps_fd = np.zeros((3, 3))
+    for j in range(3):
+        ep = eps_ps0.copy()
+        em = eps_ps0.copy()
+        ep[j] += delta_ps
+        em[j] -= delta_ps
+        sp, _ = eval_planestress(ep)
+        sm, _ = eval_planestress(em)
+        tan_ps_fd[:, j] = (sp - sm) / (2.0 * delta_ps)
+    rel_err_ps = np.linalg.norm(tan_ps - tan_ps_fd) / max(1.0, np.linalg.norm(tan_ps_fd))
+    assert rel_err_ps < 1.0e-5
+

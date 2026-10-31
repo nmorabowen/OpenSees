@@ -638,3 +638,59 @@ def test_t1d_hssmall_non_auxetic_constant_poisson_and_extended_masing() -> None:
     rel_err = np.linalg.norm(C_cross - C_fd) / max(1.0, np.linalg.norm(C_fd))
     assert rel_err < 1.0e-7
 
+
+@pytest.mark.parametrize("lode", ["mc", "mn"])
+def test_t2d_cap_associated_normality_general_lode_angles(lode: str) -> None:
+    """Verify that in REGIME_CAP at general non-triaxial Lode angles (theta != +/- pi/6),
+    the plastic strain increment deps^p,c is strictly coaxial with the 3D gradient
+    df^c / d(sigma') (zero normality angle error to machine precision).
+    """
+    p = hs.HSParams(
+        37000.0, 29600.0, 90000.0, 0.50, 5.0, 38.0, 10.0, K0nc=0.38, lode_shape=lode
+    )
+    st_iso = hs.initialize_state_from_stress(
+        p, np.array([100.0, 100.0, 100.0, 0.0, 0.0, 0.0]), ocr=1.0
+    )
+    st_iso.gamma_p = 0.05  # Keep shear cone inactive so pure cap regime is isolated
+
+    w_t = np.array([1.0, 1.0, 1.0, 0.5, 0.5, 0.5])
+
+    # Probe multiple general 3D strain increments spanning plane-strain / pure-shear Lode angles
+    eps_targets = [
+        np.array([2.0e-3, 1.9e-3, 1.8e-3, 1.0e-4, -5.0e-5, 5.0e-5]),
+        np.array([2.2e-3, 2.0e-3, 1.8e-3, 0.0, 0.0, 0.0]),
+        np.array([2.1e-3, 1.95e-3, 1.85e-3, 1.5e-4, 8.0e-5, -6.0e-5]),
+    ]
+    for eps_target in eps_targets:
+        st_cap, _, reg = hs.return_map_3d(p, st_iso, eps_target)
+        assert reg == "cap"
+        p_n, q_n, x_n, _, _, _ = hs.invariants_and_lode_grad(p, st_iso.sig)
+        _, _, k3_n, _, _, _ = hs.lode_factors_and_derivs(p, x_n)
+        s_n, _, _ = hs._stiffness_scale_and_derivs(p, p_n, q_n, k3_n)
+        Ke = p.Kur_ref * s_n
+        Ge = p.Gur_ref * s_n
+        dsig = st_cap.sig - st_iso.sig
+        dp = float(np.mean(dsig[:3]))
+        deps_e = np.array(
+            [
+                dp / (3.0 * Ke) + (dsig[0] - dp) / (2.0 * Ge),
+                dp / (3.0 * Ke) + (dsig[1] - dp) / (2.0 * Ge),
+                dp / (3.0 * Ke) + (dsig[2] - dp) / (2.0 * Ge),
+                dsig[3] / Ge,
+                dsig[4] / Ge,
+                dsig[5] / Ge,
+            ]
+        )
+        deps_p = eps_target - deps_e
+        p_c, q_c, x_c, _, dq_c, _ = hs.invariants_and_lode_grad(p, st_cap.sig)
+        assert abs(x_c) < 0.95  # Strictly non-triaxial Lode angle
+        p_hat_c = p_c + p.a_apex
+        grad_fc = (
+            2.0 * p_hat_c * (hs._I6_M / 3.0)
+            + (2.0 * q_c / (p.alpha_cap * p.alpha_cap)) * dq_c
+        )
+        cos_ang = float(np.sum(w_t * deps_p * grad_fc)) / math.sqrt(
+            float(np.sum(w_t * deps_p * deps_p)) * float(np.sum(w_t * grad_fc * grad_fc))
+        )
+        assert abs(1.0 - cos_ang) < 1.0e-14
+

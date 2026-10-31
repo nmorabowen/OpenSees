@@ -638,7 +638,7 @@ inline void initialize_state_from_stress(
   double q_tilde = Theta * q;
   double p_hat   = std::max(p.p_min, p_mean + p.a_apex);
 
-  double p_eq    = std::sqrt(p_hat * p_hat + (q_tilde / p.alpha_cap) * (q_tilde / p.alpha_cap)) - p.a_apex;
+  double p_eq    = std::sqrt(p_hat * p_hat + (q / p.alpha_cap) * (q / p.alpha_cap)) - p.a_apex;
   double ocr_use = (ocr <= 0.0) ? p.OCR : ocr;
   double pop_use = (pop <  0.0) ? p.pop : pop;
   st.p_p         = std::max(p.p_min, std::max(p_eq * ocr_use, p_eq + pop_use));
@@ -1046,9 +1046,11 @@ inline bool solve_regime3_cap(
     double p_tr, double q_tr, double Theta, double dTheta_dx,
     double Ke, double Ge, double p_p_n,
     double& p_out, double& q_out, double& pp_out, double sens[2][4]) {
+  (void)Theta;
+  (void)dTheta_dx;
   double p_cur  = std::max(p.p_min - p.a_apex, std::min(p_tr, p_p_n));
   double alpha2 = p.alpha_cap * p.alpha_cap;
-  double c_q    = (3.0 * Ge * Theta * Theta) / (Ke * alpha2);
+  double c_q    = (3.0 * Ge) / alpha2;
 
   for (int iter = 0; iter < 35; ++iter) {
     double deps_v_pc = (p_tr - p_cur) / Ke;
@@ -1060,38 +1062,34 @@ inline bool solve_regime3_cap(
     cap_pp_and_deriv(p, p_p_n, deps_pos, pp_new, dpp_ddeps);
     double pp_hat = pp_new + p.a_apex;
 
-    // Note: Since Ke = (Kur_ref / Gur_ref) * Ge, c_q = 3*Ge*Theta^2/(Ke*alpha^2) is independent of Ge,
-    // while d(deps_pos)/dGe = -deps_pos / Ge.
+    // Note: Since Ke = (Kur_ref / Gur_ref) * Ge, c_q * deps_pos = (3*Ge/(Ke*alpha^2))*(p_tr - p_cur)
+    // is independent of Ge, while d(deps_pos)/dGe = -deps_pos / Ge in the cap hardening law.
     double denom_q = p_hat + c_q * deps_pos;
     double q_cur   = q_tr * p_hat / denom_q;
     double dq_dp   = q_tr * c_q * (p_tr + p.a_apex) / (Ke * denom_q * denom_q);
     double dq_dptr = -q_tr * p_hat * c_q / (Ke * denom_q * denom_q);
     double dq_dqtr = p_hat / denom_q;
-    double dq_dTh  = -q_tr * p_hat * deps_pos * (6.0 * Ge * Theta / (Ke * alpha2)) / (denom_q * denom_q);
-    double dq_dGe  = q_tr * p_hat * c_q * deps_pos / (Ge * denom_q * denom_q);
+    double dq_dGe  = 0.0;
 
-    double q_tilde = Theta * q_cur;
-    double R = (q_tilde * q_tilde) / alpha2 + p_hat * p_hat - pp_hat * pp_hat;
-    double dR_dp = (2.0 * Theta * Theta * q_cur / alpha2) * dq_dp
+    double R = (q_cur * q_cur) / alpha2 + p_hat * p_hat - pp_hat * pp_hat;
+    double dR_dp = (2.0 * q_cur / alpha2) * dq_dp
                  + 2.0 * p_hat
                  + (2.0 * pp_hat / Ke) * dpp_ddeps;
 
     if (std::abs(R) / (p.p_hat_ref * p.p_hat_ref) < 1.0e-13) {
-      double dR_dptr = (2.0 * Theta * Theta * q_cur / alpha2) * dq_dptr - (2.0 * pp_hat / Ke) * dpp_ddeps;
-      double dR_dqtr = (2.0 * Theta * Theta * q_cur / alpha2) * dq_dqtr;
-      double dR_dTh  = (2.0 * q_tilde / alpha2) * (q_cur + Theta * dq_dTh);
-      double dR_dGe  = (2.0 * Theta * Theta * q_cur / alpha2) * dq_dGe
+      double dR_dptr = (2.0 * q_cur / alpha2) * dq_dptr - (2.0 * pp_hat / Ke) * dpp_ddeps;
+      double dR_dqtr = (2.0 * q_cur / alpha2) * dq_dqtr;
+      double dR_dGe  = (2.0 * q_cur / alpha2) * dq_dGe
                      + (2.0 * pp_hat * deps_pos / Ge) * dpp_ddeps;
 
-      double dp_dTh = -dR_dTh / dR_dp;
       sens[0][0] = -dR_dptr / dR_dp;
       sens[0][1] = -dR_dqtr / dR_dp;
-      sens[0][2] = dp_dTh * dTheta_dx;
+      sens[0][2] = 0.0;
       sens[0][3] = -dR_dGe  / dR_dp;
 
       sens[1][0] = dq_dptr + dq_dp * sens[0][0];
       sens[1][1] = dq_dqtr + dq_dp * sens[0][1];
-      sens[1][2] = (dq_dTh + dq_dp * dp_dTh) * dTheta_dx;
+      sens[1][2] = 0.0;
       sens[1][3] = dq_dGe  + dq_dp * sens[0][3];
 
       p_out  = p_cur;
@@ -1131,7 +1129,7 @@ inline void eval_regime4_residuals(
     rowe_dilatancy(p, p_val, q_val, void_ratio, s_psim, d1, d2, k3_v, Th_sig_v);
   }
 
-  double k_cap = (Th_v * Th_v * q_val) / (alpha2 * p_hat);
+  double k_cap = q_val / (alpha2 * p_hat);
   double denom = std::max(0.05, 0.5 + k_cap * s_psim);
   dgam_p       = (deps_q_p - k_cap * deps_v_p) / denom;
   deps_v_pc    = deps_v_p + s_psim * dgam_p;
@@ -1147,7 +1145,7 @@ inline void eval_regime4_residuals(
     phi_shear(p, p_val, q_val, Phi_s, d1, d2, k3_v, Th_sig_v);
     R0 = Phi_s - gamma_p_n - dgam_p;
   }
-  R1 = (q_tilde * q_tilde) / alpha2 + p_hat * p_hat - pp_hat * pp_hat;
+  R1 = (q_val * q_val) / alpha2 + p_hat * p_hat - pp_hat * pp_hat;
 }
 
 inline bool solve_regime4_corner(
@@ -1352,7 +1350,7 @@ inline ActiveRegime return_map_3d_comp(
   }
 
   double pp_hat_n = st_n.p_p + p.a_apex;
-  double f_cap_tr = (q_tilde_tr * q_tilde_tr) / (p.alpha_cap * p.alpha_cap)
+  double f_cap_tr = (q_tr * q_tr) / (p.alpha_cap * p.alpha_cap)
                   + p_hat_tr * p_hat_tr - pp_hat_n * pp_hat_n;
 
   if (f_shear_tr <= 1.0e-12 && f_fail_tr <= 1.0e-12 && f_cap_tr <= 1.0e-10) {
@@ -1380,7 +1378,7 @@ inline ActiveRegime return_map_3d_comp(
     if (solve_regime1_shear(p, p_tr, q_tr, Theta, k3, dk3_dx, Theta_sig, dTheta_sig_dx,
                             Ke, Ge, st_n.gamma_p, st_n.void_ratio,
                             p1, q1, dgam1, sens1)) {
-      double fc1 = ((Theta * q1) * (Theta * q1)) / alpha2 + (p1 + p.a_apex) * (p1 + p.a_apex) - pp_hat_n * pp_hat_n;
+      double fc1 = (q1 * q1) / alpha2 + (p1 + p.a_apex) * (p1 + p.a_apex) - pp_hat_n * pp_hat_n;
       if (fc1 <= 1.0e-8) {
         p_new = p1; q_new = q1; st_new.gamma_p = st_n.gamma_p + dgam1;
         for (int r = 0; r < 2; ++r) for (int c = 0; c < 4; ++c) sens[r][c] = sens1[r][c];
@@ -1392,7 +1390,7 @@ inline ActiveRegime return_map_3d_comp(
       double p2 = 0.0, q2 = 0.0, dgam2 = 0.0, sens2[2][4];
       if (solve_regime2_failure(p, p_tr, q_tr, Theta, dTheta_dx, Ke, Ge, st_n.void_ratio,
                                 p2, q2, dgam2, sens2)) {
-        double fc2 = ((Theta * q2) * (Theta * q2)) / alpha2 + (p2 + p.a_apex) * (p2 + p.a_apex) - pp_hat_n * pp_hat_n;
+        double fc2 = (q2 * q2) / alpha2 + (p2 + p.a_apex) * (p2 + p.a_apex) - pp_hat_n * pp_hat_n;
         if (fc2 <= 1.0e-8) {
           p_new = p2; q_new = q2; st_new.gamma_p = st_n.gamma_p + dgam2;
           for (int r = 0; r < 2; ++r) for (int c = 0; c < 4; ++c) sens[r][c] = sens2[r][c];
