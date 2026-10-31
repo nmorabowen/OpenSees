@@ -217,13 +217,18 @@ static const double NESTED_RES_TOL = 1.0e-8;
 static const int NESTED_SCAN = 16;
 static const double NESTED_SCAN_XTOL = 1.0e-8;
 // COST GATE of the scan below a converged plain-Newton root (r4 re-review: scanning on every sub-increment piece made the
-// default mode 2x slower than the PR head): it runs only when the Newton root's deviatoric plastic strain (rho_tr - rho)/2G
-// exceeds NESTED_LOWER_GDEV ft/E. EMPIRICAL: every smaller-kappa_p root found below a Newton root on the r4 probes (531 of
-// 54 276 Newton roots: the 40 x 20001-point rays plus 200 000 random tension trials, kappa_p,n 0..50) sat under a root with
-// at least 2.3 ft/E of deviatoric plastic strain (a hardening-expanded root needs a large plastic increment); with the
-// gate at 0.5 the rays and the random sets return bit-identical results to the ungated scan, and 4 % of the default
-// mode's sub-increment pieces are scanned.
+// default mode 2x slower than the PR head). It runs when the Newton root carries more than NESTED_LOWER_GDEV ft/E of
+// deviatoric plastic strain (rho_tr - rho)/2G, OR the step raised qh2 by more than NESTED_LOWER_DQH2 (Hp (kp - kp_n) > 1:
+// the surface grew by more than its initial size in this step). A smaller-kappa_p root below a Newton root means the Newton
+// root is hardening-expanded; it needs either a large deviatoric plastic increment or, at large Hp, a large hardening
+// increment from a nearly volumetric return. EMPIRICAL, tested on: the 40 x 20001-point rays, 200 000 random tension
+// trials (kappa_p,n 0..50) at the default material, and three out-of-sample sets of 100 000 (fc 20-80, ft/fc .06-.12,
+// E 25-45 GPa, nu .15-.25, Df .6-.95, qh0 .1-.4, Hp 0.001 / 0.01 / 0.1 / 0.5, lch 20-100, prior hardening, history
+// states, x 0.8-60 eps_cr; the r4 review's two seeds and one fresh one): 0 smaller-kappa_p roots skipped (the
+// gdev-only gate skipped 86 and 109 of them, all at Hp 0.1 / 0.5). In the out-of-sample sets every skipped-root case had
+// Hp (kp - kp_n) >= 3.3 or gdev >= 0.5 ft/E. Not a proof: a material outside these ranges may need the gate re-checked.
 static const double NESTED_LOWER_GDEV = 0.5;
+static const double NESTED_LOWER_DQH2 = 1.0;
 
 // ---------------------------------------------------------------------------
 // Stress invariants. sig = {s00,s11,s22,s01,s12,s02} TENSOR components.
@@ -1441,13 +1446,14 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
         // keep the apex verdict so the clamped retry below still runs.
         // Cost (r4 re-review): the full 16-cell scan on every piece made the default mode 2x slower than the PR head, so
         // the plain Newton goes first; when it converges to an admissible root at rho_N with enough plastic strain
-        // (NESTED_LOWER_GDEV), only the grid cells BELOW rho_N are scanned for a smaller-kappa_p root, and the smaller is
-        // kept. Bit-identical to the full scan on the rays, probe_diff and probe_jumpdir; the full scan runs when the
+        // (NESTED_LOWER_GDEV / _DQH2), only the grid cells BELOW rho_N are scanned for a smaller-kappa_p root, and the smaller is
+        // kept. Same roots as the full scan, to round-off, on every probe run (ADR-31 section 17); the full scan runs when the
         // Newton fails.
         newton(false);
         if (converged && !apex && rho > 0.0 && dlam >= -1.0e-12 && kp >= kp_n - 1.0e-12) {
             double u[4];
-            if ((rho_tr - rho) / (2.0 * G) > NESTED_LOWER_GDEV * mp.ft / mp.E && returnMapNested(xi_tr, rho_tr, r, cos2, mp, kp_n, u[0], u[1], u[2], u[3], rho)
+            if (((rho_tr - rho) / (2.0 * G) > NESTED_LOWER_GDEV * mp.ft / mp.E || mp.Hp * (kp - kp_n) > NESTED_LOWER_DQH2)
+                && returnMapNested(xi_tr, rho_tr, r, cos2, mp, kp_n, u[0], u[1], u[2], u[3], rho)
                 && u[3] < kp && polishHardeningRoot(u, xi_tr, rho_tr, kp_n, r, cos2, mp, tol) && u[3] < kp) {
                 xi = u[0]; rho = u[1]; dlam = u[2]; kp = u[3];
             }

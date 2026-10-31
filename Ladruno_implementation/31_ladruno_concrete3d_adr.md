@@ -762,14 +762,20 @@ db02ccc70 (`wp/concrete-dr1-dr5`), nothing else from it. It closes review 3's MA
    continuation along the loading branch: on a ray of increasing strain the selected root still jumps where that branch
    ends or where a new lower-kappa_p root appears. The other roots are hardening-expanded ones (qh2 large enough for the
    surface to reach the trial). (c) How it is evaluated, cheaply: the plain Newton first; when it converges to an
-   admissible root at rho_N and that root carries more than 0.5 ft/E of deviatoric plastic strain, the grid cells BELOW
+   admissible root at rho_N and that root carries more than 0.5 ft/E of deviatoric plastic strain OR the step raised qh2
+   by more than 1 (Hp (kappa_p - kappa_p,n) > 1), the grid cells BELOW
    rho_N are scanned (`returnMapNested` with `rhoCap`) and a smaller-kappa_p root found there replaces it; when the Newton
    fails, the full scan (`returnMapNested`: R2 and R4 eliminated exactly, R1 a bracketed root in xi, R3 = f on the grid,
    every sign change solved by Brent with a bisection safeguard, `bracketedRoot`); newtonGlob (unprojected line search) only
    if the scan finds no bracket. Every scan iterate is admissible by construction, which newtonGlob's line search was not.
-   The 0.5 ft/E gate is EMPIRICAL (`NESTED_LOWER_GDEV`): every smaller-kappa_p root found below a Newton root on the probes
-   (531 of 54 276 Newton roots on the 40 x 20001-point rays and 200 000 random tension trials) sat under a root with at
-   least 2.3 ft/E; with the gate the rays, `probe_diff` and `probe_jumpdir` are bit-identical to the ungated full scan.
+   The gate is EMPIRICAL (`NESTED_LOWER_GDEV`, `NESTED_LOWER_DQH2`) and claimed only where tested: the default material
+   (the 40 x 20001-point rays, 200 000 random tension trials with kappa_p,n 0..50) and three out-of-sample sets of 100 000
+   direct returns (fc 20-80, ft/fc .06-.12, E 25-45 GPa, nu .15-.25, Df .6-.95, qh0 .1-.4, Hp 0.001 / 0.01 / 0.1 / 0.5,
+   lch 20-100, prior hardening and history states, x 0.8-60 eps_cr; the r4 review's two seeds and a fresh one, plus the
+   default-mode runs of two of them). On all of them the gated evaluation returns the same root as the always-scan one:
+   0 smaller-kappa_p roots skipped (the first, gdev-only gate skipped 86 and 109, all at Hp 0.1 / 0.5, from hardening-
+   expanded, nearly volumetric Newton roots). Against the full scan of 37a353fff the rays, `probe_diff` and
+   `probe_jumpdir` (hash 9306200968456590466) agree to round-off (4e-12 at most).
    History: the first r4 cut (plain Newton first, nested as rescue, no root rule) gave 351 neighbour jumps > 1 MPa on the
    40 rays, up to 102 MPa; nested-first with the full scan on every call (37a353fff) fixed that but made the default mode
    2x slower than the PR head.
