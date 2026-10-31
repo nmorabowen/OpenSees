@@ -913,3 +913,125 @@ def test_database_roundtrip_two_rounds_mid_plastic_hssmall():
         probe_fn=probe_state,
         rounds=2,
     )
+
+
+def test_drained_triaxial_extension_and_non_auxetic_hssmall():
+    """Verify:
+      1. Drained Triaxial Extension (TXE, constant minor principal stress sig3 = 100 kPa on z-face,
+         equal radial compression on x and y faces) gives exact mc == mn parity and matches the
+         analytical constant-sig3 hyperbolic curve.
+      2. Non-auxetic LadrunoHSSmall with G0_ref / Gur_ref = 5.0 preserves nu_eff == nu_ur = 0.20 > 0.
+    """
+    def run_cide_py(lode_shape: str):
+        ops.wipe()
+        ops.model("basic", "-ndm", 3, "-ndf", 3)
+        for n, (x, y, z) in _CUBE.items():
+            ops.node(n, x, y, z)
+        ops.fix(1, 1, 1, 1)
+        ops.fix(2, 0, 1, 1)
+        ops.fix(3, 0, 0, 1)
+        ops.fix(4, 1, 0, 1)
+        ops.fix(5, 1, 1, 0)
+        ops.fix(6, 0, 1, 0)
+        ops.fix(8, 1, 0, 0)
+        for n in (3, 6, 7):
+            ops.equalDOF(2, n, 1)
+        for n in (3, 7, 8):
+            ops.equalDOF(4, n, 2)
+        for n in (6, 7, 8):
+            ops.equalDOF(5, n, 3)
+
+        ops.nDMaterial(
+            *_hostun_args(
+                1,
+                E50_ref=35000.0,
+                Eoed_ref=35000.0,
+                Eur_ref=105000.0,
+                m=0.5,
+                c=0.0,
+                phi=42.0,
+                psi=12.0,
+                nu=0.2,
+                pref=100.0,
+                Rf=0.9,
+                OCR=10.0,
+                lodeShape=lode_shape,
+                sig0=100.0,
+            )
+        )
+        ops.element("stdBrick", 1, 1, 2, 3, 4, 5, 6, 7, 8, 1)
+
+        # Constant axial stress sig_3 = 100 kPa on +z face; equal radial compression on +x and +y faces:
+        ops.timeSeries("Constant", 1)
+        ops.pattern("Plain", 1, 1)
+        ops.load(5, 0.0, 0.0, -100.0)
+
+        ops.timeSeries("Linear", 2)
+        ops.pattern("Plain", 2, 2)
+        ops.load(2, -1.0, 0.0, 0.0)
+        ops.load(4, 0.0, -1.0, 0.0)
+
+        ops.system("FullGeneral")
+        ops.numberer("Plain")
+        ops.constraints("Plain")
+        ops.test("NormDispIncr", 1.0e-10, 40, 0)
+        ops.algorithm("Newton")
+        ops.integrator("DisplacementControl", 2, 1, -0.015 / 30)
+        ops.analysis("Static")
+
+        q_hist = []
+        gam_hist = []
+        for _ in range(30):
+            assert ops.analyze(1) == 0
+            sig = np.array(ops.eleResponse(1, "material", 1, "stress"))
+            gam_p = ops.eleResponse(1, "material", 1, "gamma_p")[0]
+            # In TXE: sig1_comp = sig2_comp = -sig[0], sig3_comp = -sig[2] = 100 kPa
+            assert abs(-sig[2] - 100.0) < 1e-6
+            assert abs(sig[0] - sig[1]) < 1e-8
+            q_hist.append((-sig[0]) - (-sig[2]))
+            gam_hist.append(gam_p)
+        return np.array(q_hist), np.array(gam_hist)
+
+    q_mc, gam_mc = run_cide_py("mc")
+    q_mn, gam_mn = run_cide_py("mn")
+    np.testing.assert_allclose(q_mc, q_mn, rtol=1e-11, atol=1e-10)
+    np.testing.assert_allclose(gam_mc, gam_mn, rtol=1e-11, atol=1e-12)
+
+    # Check exact constant-sig3 hyperbolic formula at step 15:
+    sin_phi = math.sin(math.radians(42.0))
+    qf = 100.0 * (2.0 * sin_phi / (1.0 - sin_phi))
+    qa = qf / 0.9
+    ei_ref = 2.0 * 35000.0 / (2.0 - 0.9)
+    q_mid = q_mc[14]
+    gam_ana = (2.0 / ei_ref) * (q_mid / (1.0 - q_mid / qa)) - (2.0 * q_mid / 105000.0)
+    assert abs(gam_mc[14] - gam_ana) < 1e-5
+
+    # Check non-auxetic LadrunoHSSmall tangent with G0_ref / Gur_ref = 5.0:
+    # First mobilize the shear yield locus to eps_x = -2e-4, then apply a small elastic
+    # unloading reversal (eps_x = -1.99e-4) where regime == 0 and Ge resets to G0_ref:
+    _build_prescribed_cube(
+        _hostun_args(
+            1,
+            cmd="LadrunoHSSmall",
+            E50_ref=25000.0,
+            Eoed_ref=25000.0,
+            Eur_ref=72000.0,
+            nu=0.20,
+            OCR=20.0,
+            smallStrain=(150000.0, 2.0e-4),
+            sig0=100.0,
+        )
+    )
+    assert _impose_cube_strain_open(np.array([-2.0e-4, 0.0, 0.0, 0.0, 0.0, 0.0])) == 0
+    sig_pre = np.array(ops.eleResponse(1, "material", 1, "stress"))
+    assert _impose_cube_strain_open(np.array([-1.999e-4, 0.0, 0.0, 0.0, 0.0, 0.0])) == 0
+    assert int(ops.eleResponse(1, "material", 1, "regime")[0]) == 0
+    sig_hss = np.array(ops.eleResponse(1, "material", 1, "stress"))
+    dsig_hss = sig_hss - sig_pre
+    nu_eff = dsig_hss[1] / (dsig_hss[0] + dsig_hss[1])
+    assert abs(nu_eff - 0.20) < 1e-6
+    ctan = np.array(ops.eleResponse(1, "material", 1, "tangent")).reshape(6, 6)
+    assert ctan[0, 1] > 0.0
+    assert abs(ctan[0, 1] / (ctan[0, 0] + ctan[0, 1]) - 0.20) < 1e-4
+
+

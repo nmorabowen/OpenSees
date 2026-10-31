@@ -491,3 +491,150 @@ def test_t2c_consistent_tangent_fd_all_regimes(lode: str) -> None:
         C_fd_hss[:, j] = (sp.sig - sm.sig) / (2.0 * delta)
     rel_err_hss = np.linalg.norm(C_alg_hss - C_fd_hss) / max(1.0, np.linalg.norm(C_fd_hss))
     assert rel_err_hss < 1.0e-7
+
+
+def test_t1b_cide_triaxial_extension_hyperbolic_backbone_and_dilatancy() -> None:
+    """In Drained Triaxial Extension (TXE, theta = -30 deg, x = -1) at constant minor
+    principal stress sig3 = p_ref = 100 kPa (with sig1 = sig2 >= sig3), verify:
+      1. True minor principal stress sig3_hat = p_hat - k3(-1)*q == sig3_0 = 100 kPa,
+         so stiffness scaling s == 1.0 throughout TXE.
+      2. Exact hyperbolic curve gamma_p(q) and asymptotic failure q_f = sig3_0 * 2*sin(phi)/(1-sin(phi)).
+      3. Exact Rowe stress-dilatancy rate d(eps_v^p,s)/d(gamma^p) = -sin(psi_m) reaching -sin(psi) at failure.
+      4. Exact coincidence of -lodeShape mc and -lodeShape mn in TXE.
+    """
+    p_mc = hs.HSParams(
+        37000.0, 29600.0, 90000.0, 0.50, 0.0, 41.0, 14.0, K0nc=0.34, OCR=10.0, lode_shape="mc"
+    )
+    p_mn = hs.HSParams(
+        37000.0, 29600.0, 90000.0, 0.50, 0.0, 41.0, 14.0, K0nc=0.34, OCR=10.0, lode_shape="mn"
+    )
+    sig3_0 = 100.0
+    st_mc = hs.initialize_state_from_stress(
+        p_mc, np.array([sig3_0, sig3_0, sig3_0, 0.0, 0.0, 0.0]), ocr=10.0
+    )
+    st_mn = hs.initialize_state_from_stress(
+        p_mn, np.array([sig3_0, sig3_0, sig3_0, 0.0, 0.0, 0.0]), ocr=10.0
+    )
+
+    # In TXE with constant minor principal stress sig_33 = sig3_0 = 100 kPa and
+    # radial compression eps_11 = eps_22 > 0 (so sig_11 = sig_22 = sig3_0 + q > sig_33):
+    qf = sig3_0 * (2.0 * p_mc.sin_phi / (1.0 - p_mc.sin_phi))
+    qa = qf / p_mc.Rf
+
+    def step_txe_const_sig3(
+        p_mat: hs.HSParams, st_in: hs.HSState, eps_rad: float
+    ) -> Tuple[hs.HSState, str]:
+        eps3 = st_in.eps[2]
+        for _ in range(30):
+            eps_vec = np.array([eps_rad, eps_rad, eps3, 0.0, 0.0, 0.0], dtype=float)
+            st_try, C_alg, reg = hs.return_map_3d(p_mat, st_in, eps_vec)
+            res = st_try.sig[2] - sig3_0
+            if abs(res) < 1.0e-10:
+                return st_try, reg
+            eps3 -= res / max(1.0, C_alg[2, 2])
+        raise RuntimeError("TXE axial stress Newton did not converge")
+
+    for eps_rad in np.linspace(0.0, 0.025, 41)[1:]:
+        st_prev = st_mc.copy()
+        st_mc, reg_mc = step_txe_const_sig3(p_mc, st_mc, float(eps_rad))
+        st_mn, reg_mn = step_txe_const_sig3(p_mn, st_mn, float(eps_rad))
+
+        assert np.max(np.abs(st_mc.sig - st_mn.sig)) < 1.0e-9
+        assert abs(st_mc.gamma_p - st_mn.gamma_p) < 1.0e-12
+
+        p_cur, q_cur, x_cur, _, _, _ = hs.invariants_and_lode_grad(p_mc, st_mc.sig)
+        _, _, k3_cur, _, Th_sig_cur, _ = hs.lode_factors_and_derivs(p_mc, x_cur)
+        assert abs(x_cur - (-1.0)) < 1.0e-9
+        assert abs(k3_cur - (2.0 / 3.0)) < 1.0e-6
+        assert abs(Th_sig_cur - 1.0) < 1.0e-6
+
+        s_cur, _, _ = hs._stiffness_scale_and_derivs(p_mc, p_cur, q_cur, k3_cur)
+        assert abs(s_cur - 1.0) < 1.0e-6
+
+        if reg_mc == "shear":
+            gam_p_ana = (2.0 / p_mc.Ei_ref) * (q_cur / (1.0 - q_cur / qa)) - (
+                2.0 * q_cur / p_mc.Eur_ref
+            )
+            assert abs(st_mc.gamma_p - gam_p_ana) < 1.0e-5
+        elif reg_mc == "failure":
+            assert abs(q_cur - qf) / qf < 1.0e-5
+            dgam_p = st_mc.gamma_p - st_prev.gamma_p
+            dp = float(np.mean(st_mc.sig[:3]) - np.mean(st_prev.sig[:3]))
+            deps_v = float(np.sum(st_mc.eps[:3]) - np.sum(st_prev.eps[:3]))
+            deps_v_ps = deps_v - dp / p_mc.Kur_ref
+            assert abs(deps_v_ps / dgam_p + p_mc.sin_psi) < 1.0e-6
+
+
+def test_t1d_hssmall_non_auxetic_constant_poisson_and_extended_masing() -> None:
+    """Verify:
+      1. Non-auxetic small-strain elasticity: even when G0_ref / Gur_ref = 5.0 > 3,
+         K_e scales with G_e at constant nu_ur = 0.20 (never producing negative nu).
+      2. Extended Masing rule: reloading beyond the historical peak gamma_max
+         rejoins the virgin Hardin-Drnevich backbone (step-size independent) and
+         maintains an exact central-FD consistent tangent across the transition.
+    """
+    p = hs.HSParams(
+        25000.0,
+        25000.0,
+        72000.0,   # Gur_ref = 72000 / 2.4 = 30000 kPa, Kur_ref = 72000 / 1.8 = 40000 kPa
+        0.50,
+        0.0,
+        40.0,
+        10.0,
+        nu_ur=0.20,
+        OCR=20.0,
+        use_small_strain=True,
+        G0_ref=150000.0,  # G0_ref / Gur_ref = 5.0 (would be auxetic nu = -0.538 if K were unscaled!)
+        gamma_07=2.0e-4,
+        stiff_stress="p",
+    )
+    st0 = hs.initialize_state_from_stress(
+        p, np.array([100.0, 100.0, 100.0, 0.0, 0.0, 0.0]), ocr=20.0
+    )
+    st0.gamma_p = 0.10  # Keep shear cone inactive during small-strain cyclic checks
+
+    # 1. Check effective Poisson ratio at zero strain (initial tangent) and finite strain (secant):
+    _, C0_init, _ = hs.return_map_3d(p, st0, np.zeros(6))
+    nu_init = C0_init[0, 1] / (C0_init[0, 0] + C0_init[0, 1])
+    assert abs(nu_init - p.nu_ur) < 1.0e-14, f"Expected nu_init == {p.nu_ur}, got {nu_init}"
+
+    st_ax, _, _ = hs.return_map_3d(p, st0, np.array([1.0e-4, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    dsig_ax = st_ax.sig - st0.sig
+    nu_sec = dsig_ax[1] / (dsig_ax[0] + dsig_ax[1])
+    assert abs(nu_sec - p.nu_ur) < 1.0e-14, f"Expected nu_sec == {p.nu_ur}, got {nu_sec}"
+
+    # 2. Extended Masing rule: load to +gam1, unload to -gam1, reload past +gam1 to +gam2:
+    gam1 = 0.8 * p.gamma_07
+    gam2 = 2.0 * p.gamma_07
+    st_load, _, _ = hs.return_map_3d(p, st0, np.array([0.0, 0.0, 0.0, gam1, 0.0, 0.0]))
+    st_unl, _, _ = hs.return_map_3d(p, st_load, np.array([0.0, 0.0, 0.0, -gam1, 0.0, 0.0]))
+
+    # Reload from -gam1 to +gam2 in 1 step vs 25 steps:
+    st_rel_1step, _, _ = hs.return_map_3d(p, st_unl, np.array([0.0, 0.0, 0.0, gam2, 0.0, 0.0]))
+    st_rel_multi = st_unl.copy()
+    for g in np.linspace(-gam1, gam2, 26)[1:]:
+        st_rel_multi, _, _ = hs.return_map_3d(
+            p, st_rel_multi, np.array([0.0, 0.0, 0.0, float(g), 0.0, 0.0])
+        )
+
+    tau_virgin_gam2 = p.G0_ref * gam2 / (1.0 + 0.385 * gam2 / p.gamma_07)
+    assert abs(st_rel_1step.sig[3] - tau_virgin_gam2) < 1.0e-10
+    assert abs(st_rel_multi.sig[3] - tau_virgin_gam2) < 1.0e-10
+    assert st_rel_1step.is_virgin and st_rel_multi.is_virgin
+
+    # 3. Central-FD tangent check on a combined volumetric + deviatoric step crossing gamma_hist_max:
+    eps_cross = np.array([1.5e-4, 0.5e-4, -0.5e-4, 1.3 * gam1, 0.2 * gam1, -0.1 * gam1])
+    _, C_cross, _ = hs.return_map_3d(p, st_unl, eps_cross)
+    delta = 1.0e-7
+    C_fd = np.zeros((6, 6), dtype=float)
+    for j in range(6):
+        ep = eps_cross.copy()
+        ep[j] += delta
+        em = eps_cross.copy()
+        em[j] -= delta
+        sp, _, _ = hs.return_map_3d(p, st_unl, ep)
+        sm, _, _ = hs.return_map_3d(p, st_unl, em)
+        C_fd[:, j] = (sp.sig - sm.sig) / (2.0 * delta)
+    rel_err = np.linalg.norm(C_cross - C_fd) / max(1.0, np.linalg.norm(C_fd))
+    assert rel_err < 1.0e-7
+

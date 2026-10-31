@@ -132,13 +132,22 @@ int main() {
     p_hss.beta_cap         = -1.0;
     if (!p_hss.finalize()) return 8;
 
-    HSState st_hss0, st_hss1;
+    HSState st_hss0, st_hss1, st_hss_unl, st_hss_iso;
     double C_tmp[6][6];
     initialize_state_from_stress(p_hss, sig_ocr, st_hss0, 5.0);
     const double e_pre[6]  = {2.0e-4, -1.0e-4, -1.0e-4, 1.5e-4, 0.0, 0.0};
     const double e_next[6] = {1.4e-3, -6.0e-4, -5.0e-4, 4.0e-4, -1.0e-4, 1.0e-4};
     return_map_3d_comp(p_hss, st_hss0, e_pre, st_hss1, C_tmp);
     if (!check_fd_tangent(p_hss, st_hss1, e_next, REGIME_SHEAR, "hss_shear")) return 9;
+
+    const double e_unl[6]   = {-2.0e-4, 1.0e-4, 1.0e-4, -1.5e-4, 0.0, 0.0};
+    const double e_cross[6] = {3.2e-4, -1.4e-4, -1.5e-4, 2.5e-4, -2.0e-5, 1.0e-5};
+    return_map_3d_comp(p_hss, st_hss1, e_unl, st_hss_unl, C_tmp);
+    if (!check_fd_tangent(p_hss, st_hss_unl, e_cross, REGIME_SHEAR, "hss_masing_cross")) return 11;
+
+    initialize_state_from_stress(p_hss, sig_iso, st_hss_iso, 1.0);
+    st_hss_iso.gamma_p = 0.05;
+    if (!check_fd_tangent(p_hss, st_hss_iso, e_cp, REGIME_CAP, "hss_cap")) return 12;
 
     // Emit machine-precision comparison row for Python parity test:
     HSState st_out;

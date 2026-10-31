@@ -444,16 +444,18 @@ void LadrunoHS::condenseTangent(double D[6][6]) const {
 void LadrunoHS::buildInitialTangent6x6(double Kt[6][6]) const {
   double s0 = 1.0;
   if (has_sig0_) {
-    double p_n = 0.0, q_n = 0.0, x_n = 1.0, Th_n = 1.0;
+    double p_n = 0.0, q_n = 0.0, x_n = 1.0, Th_n = 1.0, dTh_dx_n = 0.0;
+    double k3_n = 1.0 / 3.0, dk3_dx_n = 0.0, Th_sig_n = 1.0, dTh_sig_dx_n = 0.0;
     double dq[6], dTh[6];
     invariants_and_lode_grad(params_, sig0_comp_, p_n, q_n, x_n, Th_n, dq, dTh);
+    lode_factors_and_derivs(params_, x_n, Th_n, dTh_dx_n, k3_n, dk3_dx_n, Th_sig_n, dTh_sig_dx_n);
     double ds_dp = 0.0, ds_dq = 0.0;
-    stiffness_scale_and_derivs(params_, p_n, Th_n * q_n, s0, ds_dp, ds_dq);
+    stiffness_scale_and_derivs(params_, p_n, q_n, s0, ds_dp, ds_dq, k3_n);
   }
-  double K0 = params_.Kur_ref * s0;
   double G0 = (params_.use_small_strain && params_.G0_ref > params_.Gur_ref)
                   ? (params_.G0_ref * s0)
                   : (params_.Gur_ref * s0);
+  double K0 = (params_.Kur_ref / params_.Gur_ref) * G0;
   build_isotropic_elastic_tangent(K0, G0, Kt);
   if (condense_) {
     this->condenseTangent(Kt);
@@ -558,11 +560,13 @@ int LadrunoHS::integrate3D(const double epsComp[6]) {
     for (int i = 0; i < 6; ++i) norm_sig_n += st_n_.sig[i] * st_n_.sig[i];
     double s_n = 1.0;
     if (norm_sig_n > 1.0e-24) {
-      double p_n = 0.0, q_n = 0.0, x_n = 1.0, Th_n = 1.0;
+      double p_n = 0.0, q_n = 0.0, x_n = 1.0, Th_n = 1.0, dTh_dx_n = 0.0;
+      double k3_n = 1.0 / 3.0, dk3_dx_n = 0.0, Th_sig_n = 1.0, dTh_sig_dx_n = 0.0;
       double dq[6], dTh[6];
       invariants_and_lode_grad(params_, st_n_.sig, p_n, q_n, x_n, Th_n, dq, dTh);
+      lode_factors_and_derivs(params_, x_n, Th_n, dTh_dx_n, k3_n, dk3_dx_n, Th_sig_n, dTh_sig_dx_n);
       double ds1 = 0.0, ds2 = 0.0;
-      stiffness_scale_and_derivs(params_, p_n, Th_n * q_n, s_n, ds1, ds2);
+      stiffness_scale_and_derivs(params_, p_n, q_n, s_n, ds1, ds2, k3_n);
     }
     build_isotropic_elastic_tangent(params_.Kur_ref * s_n, params_.Gur_ref * s_n, Dtan_);
     double deps[6];
@@ -874,7 +878,7 @@ NDMaterial* LadrunoHS::getCopy(const char* type) {
 // ===========================================================================
 //  Wire Serialization (sendSelf / recvSelf)
 // ===========================================================================
-static constexpr int kLadrunoHSWireSize = 75;
+static constexpr int kLadrunoHSWireSize = 76;
 
 int LadrunoHS::sendSelf(int commitTag, Channel& theChannel) {
   static Vector data(kLadrunoHSWireSize);
@@ -913,7 +917,7 @@ int LadrunoHS::sendSelf(int commitTag, Channel& theChannel) {
   data(c++) = has_sig0_ ? 1.0 : 0.0;
   for (int i = 0; i < 6; ++i) data(c++) = sig0_comp_[i];
 
-  // Committed state st_n_ + IMPL-EX correction + flags (37 doubles):
+  // Committed state st_n_ + IMPL-EX correction + flags (38 doubles):
   for (int i = 0; i < 6; ++i) data(c++) = st_n_.sig[i];
   for (int i = 0; i < 6; ++i) data(c++) = st_n_.eps[i];
   data(c++) = st_n_.gamma_p;
@@ -932,6 +936,7 @@ int LadrunoHS::sendSelf(int commitTag, Channel& theChannel) {
   data(c++) = st_n_.H_hist[1][2];
   data(c++) = st_n_.H_hist[0][2];
   data(c++) = st_n_.is_virgin ? 1.0 : 0.0;
+  data(c++) = st_n_.gamma_hist_max;
   data(c++) = static_cast<double>(regime_n_);
   data(c++) = cEps22_comp_;
   data(c++) = refused_ ? 1.0 : 0.0;
@@ -1022,8 +1027,9 @@ int LadrunoHS::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker&) {
   st_n_.H_hist[0][1] = st_n_.H_hist[1][0] = data(c++);
   st_n_.H_hist[1][2] = st_n_.H_hist[2][1] = data(c++);
   st_n_.H_hist[0][2] = st_n_.H_hist[2][0] = data(c++);
-  st_n_.is_virgin  = (data(c++) != 0.0);
-  regime_n_        = static_cast<ActiveRegime>(static_cast<int>(data(c++)));
+  st_n_.is_virgin      = (data(c++) != 0.0);
+  st_n_.gamma_hist_max = data(c++);
+  regime_n_            = static_cast<ActiveRegime>(static_cast<int>(data(c++)));
   cEps22_comp_     = data(c++);
   refused_         = (data(c++) != 0.0);
   for (int i = 0; i < 6; ++i) {
