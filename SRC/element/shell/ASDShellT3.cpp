@@ -818,6 +818,9 @@ int ASDShellT3::commitState()
 {
     int success = 0;
 
+    // Ladruno WP-209: refresh committed tangent Kc for betaKc Rayleigh damping
+    success += this->Element::commitState();
+
     // transformation
     m_transformation->commit();
 
@@ -829,6 +832,30 @@ int ASDShellT3::commitState()
         m_nldrill->stress_comm = m_sections[0]->getStressResultant();
         m_nldrill->strain_comm = m_sections[0]->getSectionDeformation();
         m_nldrill->damage_comm = m_nldrill->damage;
+    }
+
+    // Ladruno WP-209: snapshot committed preload membrane forces before loadConst
+    if (m_pdelta && !(this->getDomain() != nullptr && this->getDomain()->isLoadConstant())) {
+        static thread_local Matrix Rs(8, 8);
+        static thread_local Vector Slocal(8);
+        if (m_angle != 0.0)
+            getRotationMatrixForGeneralizedStresses(m_angle, Rs);
+        int ngp = m_reduced_integration ? 1 : 3;
+        for (int i = 0; i < ngp; i++) {
+            const Vector& Ssec = m_sections[i]->getStressResultant();
+            if (m_angle != 0.0) {
+                Slocal.addMatrixVector(0.0, Rs, Ssec, 1.0);
+                m_pdelta_N[i][0] = Slocal(0);
+                m_pdelta_N[i][1] = Slocal(1);
+                m_pdelta_N[i][2] = Slocal(2);
+            }
+            else {
+                m_pdelta_N[i][0] = Ssec(0);
+                m_pdelta_N[i][1] = Ssec(1);
+                m_pdelta_N[i][2] = Ssec(2);
+            }
+        }
+        m_pdelta_frozen = true;
     }
 
     // damping
@@ -886,6 +913,12 @@ int  ASDShellT3::revertToStart()
     for (int i = 0; i < 3; i++)
         if (m_damping[i])
             success += m_damping[i]->revertToStart();
+
+    // Ladruno WP-209: clear frozen preload membrane forces
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++)
+            m_pdelta_N[i][j] = 0.0;
+    m_pdelta_frozen = false;
 
     return success;
 }
@@ -1048,7 +1081,7 @@ int  ASDShellT3::sendSelf(int commitTag, Channel& theChannel)
     // 1 -> reduced integration flag
     // 1 -> non-linear drilling flag
     // 1 -> local_x flag
-    static ID idData(19);   // Ladruno WP-205: +1 (pDelta flag)
+    static thread_local ID idData(19);   // Ladruno WP-205: +1 (pDelta flag)
     counter = 0;
     idData(counter++) = getTag();
     for (int i = 0; i < 3; ++i)
@@ -1106,8 +1139,9 @@ int  ASDShellT3::sendSelf(int commitTag, Channel& theChannel)
     int Nlocalx = m_local_x ? 3 : 0;
     int NLoad = has_load ? 18 : 0;
     int Nnldrill = m_nldrill ? 18 : 0;
+    int Npdelta = m_pdelta ? 10 : 0; // Ladruno WP-209: m_pdelta_frozen + m_pdelta_N[3][3]
     int NT = m_transformation->internalDataSize();
-    Vector vectData(4 + 3 + 1 + 1 + Nlocalx + Nnldrill + NLoad + NT);
+    Vector vectData(4 + 3 + 1 + 1 + Nlocalx + Nnldrill + NLoad + Npdelta + NT);
     counter = 0;
     vectData(counter++) = alphaM;
     vectData(counter++) = betaK;
@@ -1135,6 +1169,12 @@ int  ASDShellT3::sendSelf(int commitTag, Channel& theChannel)
             vectData(counter++) = (*m_load)(i);
     }
     m_transformation->saveInternalData(vectData, counter);
+    if (m_pdelta) {
+        vectData(counter++) = m_pdelta_frozen ? 1.0 : 0.0;
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                vectData(counter++) = m_pdelta_N[i][j];
+    }
 
     res = theChannel.sendVector(dataTag, commitTag, vectData);
     if (res < 0) {
@@ -1186,7 +1226,7 @@ int  ASDShellT3::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& 
     // 1 -> reduced integration flag
     // 1 -> non-linear drilling flag
     // 1 -> local_x flag
-    static ID idData(19);   // Ladruno WP-205: +1 (pDelta flag)
+    static thread_local ID idData(19);   // Ladruno WP-205: +1 (pDelta flag)
     res = theChannel.recvID(dataTag, commitTag, idData);
     if (res < 0) {
         opserr << "WARNING ASDShellT3::recvSelf() - " << this->getTag() << " failed to receive ID\n";
@@ -1264,8 +1304,9 @@ int  ASDShellT3::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& 
     int Nlocalx = use_local_x ? 3 : 0;
     int NLoad = has_load ? 18 : 0;
     int Nnldrill = use_nldrill ? 18 : 0;
+    int Npdelta = m_pdelta ? 10 : 0; // Ladruno WP-209: m_pdelta_frozen + m_pdelta_N[3][3]
     int NT = m_transformation->internalDataSize();
-    Vector vectData(4 + 3 + 1 + 1 + Nnldrill + NLoad + NT);
+    Vector vectData(4 + 3 + 1 + 1 + Nlocalx + Nnldrill + NLoad + Npdelta + NT);
     res = theChannel.recvVector(dataTag, commitTag, vectData);
     if (res < 0) {
         opserr << "WARNING ASDShellT3::recvSelf() - " << this->getTag() << " failed to receive Vector\n";
@@ -1299,6 +1340,18 @@ int  ASDShellT3::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& 
             (*m_load)(i) = vectData(counter++);
     }
     m_transformation->restoreInternalData(vectData, counter);
+    if (m_pdelta) {
+        m_pdelta_frozen = (vectData(counter++) != 0.0);
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                m_pdelta_N[i][j] = vectData(counter++);
+    }
+    else {
+        m_pdelta_frozen = false;
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                m_pdelta_N[i][j] = 0.0;
+    }
 
     // all sections
     for (int i = 0; i < 3; i++) {
@@ -1812,12 +1865,23 @@ int ASDShellT3::calculateAll(Matrix& LHS, Vector& RHS, int options)
         // local translation (u, v, w); see ASDShellQ4::calculateAll
         if (do_ksig)
         {
-            const Vector& Ssec = m_sections[igauss]->getStressResultant();
-            if (m_angle != 0.0)
-                Slocal.addMatrixVector(0.0, Rs, Ssec, 1.0);
-            else
-                Slocal = Ssec;
-            double n11 = Slocal(0), n22 = Slocal(1), n12 = Slocal(2);
+            double n11, n22, n12;
+            // Ladruno WP-209: after loadConst, hold K_sigma at the committed preload N0
+            if (m_pdelta_frozen && this->getDomain() != nullptr && this->getDomain()->isLoadConstant()) {
+                n11 = m_pdelta_N[igauss][0];
+                n22 = m_pdelta_N[igauss][1];
+                n12 = m_pdelta_N[igauss][2];
+            }
+            else {
+                const Vector& Ssec = m_sections[igauss]->getStressResultant();
+                if (m_angle != 0.0)
+                    Slocal.addMatrixVector(0.0, Rs, Ssec, 1.0);
+                else
+                    Slocal = Ssec;
+                n11 = Slocal(0);
+                n22 = Slocal(1);
+                n12 = Slocal(2);
+            }
             for (int a = 0; a < 3; a++) {
                 for (int b = 0; b < 3; b++) {
                     double g = (dNdX(a, 0) * (n11 * dNdX(b, 0) + n12 * dNdX(b, 1)) +

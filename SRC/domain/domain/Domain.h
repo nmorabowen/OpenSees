@@ -193,6 +193,7 @@ class Domain
     virtual  void applyLoad(double pseudoTime);
     virtual  void setLoadConstant(void);
     virtual void  unsetLoadConstant(void);
+    bool isLoadConstant(void) const { return m_loadConstActive; }   // Ladruno WP-209
     virtual  int  initialize(void);    
     virtual  int  setRayleighDampingFactors(double alphaM, double betaK, double betaK0, double betaKc);
     // Ladruno ADR46: the factors are cascaded to elements/nodes and were never
@@ -410,6 +411,7 @@ class Domain
     LadrunoContactDomain *theContactDomain;   // Ladruno: ADR-39 (owned, nullable; declared last)
     bool contactAugmenting = false;           // Ladruno: ADR-41 D1 (held-load augmentation suppression; the
                                               // in-class init is a safety net — every ctor also sets it false)
+    bool m_loadConstActive = false;           // Ladruno WP-209: true after setLoadConstant() until unset/reset/wipe
 };
 
 #endif

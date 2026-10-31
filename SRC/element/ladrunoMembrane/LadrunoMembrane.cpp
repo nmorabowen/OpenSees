@@ -792,7 +792,27 @@ LadrunoMembrane::resolveAndBuildTransfer(void)
           m_meshSubSegmentsUnit.push_back(0.5 * (sub.wa + sub.wb));
         }
 
+        m_frameInfos[k].endFaUnit = 0.0; // Ladruno WP-209
+        m_frameInfos[k].endFbUnit = 0.0; // Ladruno WP-209
+        double fa_fallback = 0.0;
+        double fb_fallback = 0.0;
+        if (fl.end_F_a > 0.0) {
+          if (fl.aL <= 1e-6 && m_frameInfos[k].extNodeI >= 0) {
+            m_frameInfos[k].endFaUnit = fl.end_F_a;
+          } else {
+            fa_fallback = fl.end_F_a;
+          }
+        }
+        if (fl.end_F_b > 0.0) {
+          if (fl.bL >= 1.0 - 1e-6 && m_frameInfos[k].extNodeJ >= 0) {
+            m_frameInfos[k].endFbUnit = fl.end_F_b;
+          } else {
+            fb_fallback = fl.end_F_b;
+          }
+        }
+
         double L_k = m_frameInfos[k].length;
+        std::size_t firstSubIdx = m_unitSubLoads.size();
         if (m_segments > 0 && !fl.sub_loads.empty() && fl.bL > fl.aL + 1e-12) {
           double spanA = fl.aL;
           double spanB = fl.bL;
@@ -829,6 +849,18 @@ LadrunoMembrane::resolveAndBuildTransfer(void)
             if (L_seg > 1e-14 && (std::abs(sub.wa) + std::abs(sub.wb) > 1e-15)) {
               m_unitSubLoads.push_back({static_cast<int>(k), sub.aL, sub.bL, sub.wa, sub.wb, L_seg});
             }
+          }
+        }
+        if (m_unitSubLoads.size() > firstSubIdx) {
+          if (fa_fallback > 0.0 && m_unitSubLoads[firstSubIdx].length > 1e-14) {
+            double Ls = m_unitSubLoads[firstSubIdx].length;
+            m_unitSubLoads[firstSubIdx].waUnit += 4.0 * fa_fallback / Ls;
+            m_unitSubLoads[firstSubIdx].wbUnit -= 2.0 * fa_fallback / Ls;
+          }
+          if (fb_fallback > 0.0 && m_unitSubLoads.back().length > 1e-14) {
+            double Ls = m_unitSubLoads.back().length;
+            m_unitSubLoads.back().waUnit -= 2.0 * fb_fallback / Ls;
+            m_unitSubLoads.back().wbUnit += 4.0 * fb_fallback / Ls;
           }
         }
       }
@@ -1388,6 +1420,32 @@ LadrunoMembrane::addLoad(ElementalLoad *theLoad, double loadFactor)
     m_appliedTotalLoad(0) += areaSeg * qx;
     m_appliedTotalLoad(1) += areaSeg * qy;
     m_appliedTotalLoad(2) += areaSeg * qz;
+  }
+
+  // 1b. Emit off-span endpoint-clamped tributary loads at frame end nodes (Ladruno WP-209)
+  for (const auto &fInfo : m_frameInfos) {
+    if (fInfo.endFaUnit > 0.0 && fInfo.extNodeI >= 0) {
+      int off = m_nodeDofOffsets[fInfo.extNodeI];
+      m_Q(off + 0) += fInfo.endFaUnit * qx;
+      m_Q(off + 1) += fInfo.endFaUnit * qy;
+      if (m_ndm == 3) {
+        m_Q(off + 2) += fInfo.endFaUnit * qz;
+      }
+      m_appliedTotalLoad(0) += fInfo.endFaUnit * qx;
+      m_appliedTotalLoad(1) += fInfo.endFaUnit * qy;
+      m_appliedTotalLoad(2) += fInfo.endFaUnit * qz;
+    }
+    if (fInfo.endFbUnit > 0.0 && fInfo.extNodeJ >= 0) {
+      int off = m_nodeDofOffsets[fInfo.extNodeJ];
+      m_Q(off + 0) += fInfo.endFbUnit * qx;
+      m_Q(off + 1) += fInfo.endFbUnit * qy;
+      if (m_ndm == 3) {
+        m_Q(off + 2) += fInfo.endFbUnit * qz;
+      }
+      m_appliedTotalLoad(0) += fInfo.endFbUnit * qx;
+      m_appliedTotalLoad(1) += fInfo.endFbUnit * qy;
+      m_appliedTotalLoad(2) += fInfo.endFbUnit * qz;
+    }
   }
 
   // 2. Accumulate point support reactions into m_Q

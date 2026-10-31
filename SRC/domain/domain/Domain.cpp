@@ -134,7 +134,7 @@ Domain::Domain()
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0),
  paramIndex(0), paramSize(0), numParameters(0),
- theContactDomain(0), contactAugmenting(false)   // Ladruno: ADR-39 + D1
+ theContactDomain(0), contactAugmenting(false), m_loadConstActive(false)   // Ladruno: ADR-39 + D1 + WP-209
 {
   
     // init the arrays for storing the domain components
@@ -193,7 +193,7 @@ Domain::Domain(int numNodes, int numElements, int numSPs, int numMPs, int numEQs
  theModalProperties(0),
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0), paramIndex(0), paramSize(0), numParameters(0),
- theContactDomain(0), contactAugmenting(false)   // Ladruno: ADR-39 + D1
+ theContactDomain(0), contactAugmenting(false), m_loadConstActive(false)   // Ladruno: ADR-39 + D1 + WP-209
 {
     // init the arrays for storing the domain components
     theElements = new MapOfTaggedObjects();
@@ -260,7 +260,7 @@ Domain::Domain(TaggedObjectStorage &theNodesStorage,
  theModalProperties(0),
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0),paramIndex(0), paramSize(0), numParameters(0),
- theContactDomain(0), contactAugmenting(false)   // Ladruno: ADR-39 + D1
+ theContactDomain(0), contactAugmenting(false), m_loadConstActive(false)   // Ladruno: ADR-39 + D1 + WP-209
 {
     // init the arrays for storing the domain components
     thePCs      = new MapOfTaggedObjects();
@@ -323,7 +323,7 @@ Domain::Domain(TaggedObjectStorage &theStorage)
  theModalProperties(0),
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0),paramIndex(0), paramSize(0), numParameters(0),
- theContactDomain(0), contactAugmenting(false)   // Ladruno: ADR-39 + D1
+ theContactDomain(0), contactAugmenting(false), m_loadConstActive(false)   // Ladruno: ADR-39 + D1 + WP-209
 {
     // init the arrays for storing the domain components
     theStorage.clearAll(); // clear the storage just in case populated
@@ -1154,6 +1154,7 @@ Domain::clearAll(void) {
   // contactAugmenting is ON this Domain commits recorder-silently, so leaking it across a
   // `wipe` into the next model would silently produce empty recorder files there.
   contactAugmenting = false;
+  m_loadConstActive = false;   // Ladruno WP-209
 
   // set the time back to 0.0
   currentTime = 0.0;
@@ -2169,6 +2170,7 @@ Domain::applyLoad(double timeStep)
 void
 Domain::setLoadConstant(void)
 {
+    m_loadConstActive = true;   // Ladruno WP-209
     // loop over all the load patterns that are currently added to the domain
     // getting them to set their loads as now constant
     LoadPattern *thePattern;
@@ -2181,6 +2183,7 @@ Domain::setLoadConstant(void)
 void
 Domain::unsetLoadConstant(void)
 {
+    m_loadConstActive = false;   // Ladruno WP-209
     // loop over all the load patterns that are currently added to the domain
     // getting them to set their loads as now constant
     LoadPattern *thePattern;
@@ -2454,6 +2457,7 @@ Domain::revertToLastCommit(void)
 int
 Domain::revertToStart(void)
 {
+    m_loadConstActive = false;   // Ladruno WP-209
     // 
     // first invoke revertToLastCommit  on all nodes and 
     // elements in the domain
@@ -3617,7 +3621,7 @@ Domain::sendSelf(int cTag, Channel &theChannel)
   if (contactSize > 0 && dbContact == 0)
     dbContact = theChannel.getDbTag();
 
-  ID domainData(19);
+  ID domainData(20);
   domainData(0) = currentGeoTag;
   domainData(1) = numNod;
   domainData(2) = numEle;
@@ -3629,6 +3633,7 @@ Domain::sendSelf(int cTag, Channel &theChannel)
   domainData(11) = numParam;
   domainData(17) = contactSize;   // Ladruno: ADR-78 P2
   domainData(18) = dbContact;     // Ladruno: ADR-78 P2
+  domainData(19) = m_loadConstActive ? 1 : 0; // Ladruno WP-209
 
   // add the database tag for the ID's storing node, element, constraints
   // and loadpattern data into domainData
@@ -4043,7 +4048,8 @@ Domain::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
   // Ladruno (ADR-78 P2): 17 -> 19, matching sendSelf. Slot 17 = the packed size of
   // the contact engine's definitions Vector (0 = none), slot 18 = its dbTag; the
   // Vector itself is consumed at the very end of this method.
-  ID domainData(19);
+  // Ladruno WP-209: slot 19 = m_loadConstActive (0 or 1).
+  ID domainData(20);
   if (theChannel.recvID(theDbTag, commitTag, domainData) < 0) {
     opserr << "Domain::recv - channel failed to recv the initial ID\n";
     return -1;
@@ -4058,6 +4064,7 @@ Domain::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 
   currentTime = domainTime(0);
   committedTime = currentTime;
+  m_loadConstActive = (domainData(19) != 0); // Ladruno WP-209
 
   // 
   // now if the currentGeoTag does not agree with what's in the domain
@@ -4091,6 +4098,7 @@ Domain::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 
     currentTime = domainTime(0);
     committedTime = currentTime;
+    m_loadConstActive = (domainData(19) != 0); // Ladruno WP-209
 
     // 
     // now we rebuild the nodes
