@@ -1,24 +1,29 @@
 // concrete3d_replay.cpp -- record-replay testbed for LadrunoConcrete3DKernel.h (apeGmsh #2621, increment F1).
 //
-// The fixture (concrete3d_replay_records.txt) is a verbatim subset of the LADRUNO_C3D_DIAG record dump written by the
-// shipped opensees.pyd on the #2602 corbel (fork probe/2621-recdump, a counters-only instrumentation of d14fb6958). A
-// record carries EVERYTHING the kernel reads (every Params field, the full committed State, the trial strain) and what
-// the binary returned. This testbed puts each record back through the kernel and requires the recorded answer BIT FOR
-// BIT; nothing is compared with a tolerance.
+// The fixture (concrete3d_replay_records.txt) is a subset of the LADRUNO_C3D_DIAG record dump written by the shipped
+// opensees.pyd on the #2602 corbel (fork probe/2621-recdump, a counters-only instrumentation of d14fb6958). A record
+// carries EVERYTHING the kernel reads (every Params field, the full committed State, the trial strain) and what the
+// binary returned. This testbed puts each record back through the kernel OF THIS TREE and requires the recorded answer
+// BIT FOR BIT; nothing is compared with a tolerance and no field or record class is exempt.
 //   C, F  one integrate(): K::returnMap exactly as LadrunoConcrete3D::integrate calls it. Compared: status, piece count
-//         (subInfo), kappa, omega_t, omega_c, nominal and effective stress, the 6x6 tangent (C records), and eig3sym of
-//         the effective stress (W line: the libm canary, eig3sym is atan2/cos/acos-heavy).
+//         (subInfo), kappa, omega_t, omega_c, nominal and effective stress, the full 6x6 tangent, and eig3sym of the
+//         effective stress (W line: the libm canary, eig3sym is atan2/cos/acos-heavy).
 //   R     one refused plane-stress setTrialStrain: the sigma_22 Newton of LadrunoConcrete3D::setTrialStrain (rule B,
 //         copied below) from the recorded eps_22 start. Compared: the refusal reason, the pass count and every pass's
-//         eps_22, sigma_22, D_22, status and piece count, plus the last pass's outcome (O) and eig3sym (W).
+//         eps_22, sigma_22, D_22, status and piece count, plus the last pass's outcome (O), full 6x6 tangent and eig3sym.
+// Tangent lines: D = written by the pyd (it dumped the 6x6 only on C records); M = the 6x6 the pyd computed but did not
+// dump (F records, the last pass of R records), recorded by this testbed under the same libm on the same kernel blob,
+// after every pyd-written value of the record replayed bit-exactly. A C record must carry D, an R or F record M.
 // Bit-exactness holds only on the libm the records were written with: Intel's libmmt for the Windows pyd (its Fortran
 // objects pull it in by /DEFAULTLIB), glibc for the Linux build. The build defines C3D_REPLAY_LIBM to the libm it
 // links, and `check` refuses a fixture recorded under another one (pass --cross to compare anyway; still bit-exact).
+// A KERNEL CHANGE THAT MOVES RESULTS FAILS `check` BY DESIGN. Such a PR re-records the fixture on each libm (`record`)
+// and commits it; the fixture's diff is the exact list of values the change moved, and the reviewers judge that diff.
 //
-//   concrete3d_replay check  <fixture> [--cross]   exit 0 iff every record replays bit-exactly
-//   concrete3d_replay record <fixture> <out>       re-record the fixture's outputs on THIS build (same inputs, same
-//                                                  order); used by record-and-compare on a libm without committed
-//                                                  records (concrete3d_replay_ci.sh)
+//   concrete3d_replay check  <fixture> [--cross]                 exit 0 iff every record replays bit-exactly
+//   concrete3d_replay record <fixture> <out> --kernel-blob <sha> re-record every output on THIS build (inputs, order
+//                                                                and selection kept), stamped with this libm and the
+//                                                                kernel header's git blob
 // Builds: concrete3d_replay_ci.sh (g++, glibc) and concrete3d_replay_libmmt.bat (MSVC + Intel libmmt, as the pyd).
 // The sigma_22 loop below is a COPY of the wrapper's: the fixture's R records prove the copy matches the wrapper the
 // records were written by; a later change to LadrunoConcrete3D::setTrialStrain must be mirrored here.
@@ -48,7 +53,7 @@ struct Rec {
     std::map<std::string, std::string> pkv; std::string pLine;
     std::vector<std::string> stateLines;                              // E S X H I C T, verbatim
     double eps[6], sig[6], sigEff[6], h[11], im[11], c[2], strain[6];
-    bool hasO = false, hasD = false, hasW = false;
+    bool hasO = false, hasD = false, hasW = false; char dKind = 0;   // 'D' (pyd-written) or 'M' (testbed-recorded)
     double o[17], D[36], w[12];
     std::vector<Pass> z;
 };
@@ -81,7 +86,11 @@ static Fixture load(const char* path) {
             fx.recs.emplace_back(); r = &fx.recs.back(); r->kLine = line; kv(line, r->k);
             const std::string kind = r->k["kind"];
             if (kind != "C" && kind != "F" && kind != "R") die("unknown record kind '" + kind + "' (" + line.substr(0, 40) + ")");
-            r->kind = kind[0]; r->code = std::atoi(r->k["pass"].c_str());
+            for (const char* key : {"kind", "seq", "dim", "pass", "status", "subInfo"})
+                if (!r->k.count(key)) die(std::string("K line lacks ") + key + ": " + line.substr(0, 60));
+            char* end = 0; r->code = (int)std::strtol(r->k["pass"].c_str(), &end, 10);
+            if (r->k["pass"].empty() || *end) die("K line pass= is not an integer: " + line.substr(0, 60));
+            r->kind = kind[0];
             continue;
         }
         if (!r) die("record line before the first K line: " + line.substr(0, 40));
@@ -96,16 +105,18 @@ static Fixture load(const char* path) {
         case 'C': copy(nums(line, 2), r->c); r->stateLines.push_back(line); break;
         case 'T': copy(nums(line, 6), r->strain); r->stateLines.push_back(line); break;
         case 'O': copy(nums(line, 17), r->o); r->hasO = true; break;
-        case 'D': copy(nums(line, 36), r->D); r->hasD = true; break;
+        case 'D': case 'M': if (r->hasD) die("two tangent lines in one record: " + r->kLine);
+                  copy(nums(line, 36), r->D); r->hasD = true; r->dKind = c; break;
         case 'W': copy(nums(line, 12), r->w); r->hasW = true; break;
         case 'Z': { auto v = nums(line, 6); Pass p{(int)v[0], (int)v[4], (int)v[5], v[1], v[2], v[3]}; r->z.push_back(p); break; }
-        default: die(std::string("unknown line kind '") + c + "' (the fixture is the record-dump subset: Q K G P E S X H I C T O D W Z)");
+        default: die(std::string("unknown line kind '") + c + "' (the fixture is the record-dump subset: Q K G P E S X H I C T O D M W Z)");
         }
     }
     if (fx.recs.empty()) die("the fixture has no records");
     for (const Rec& q : fx.recs) {
         if (q.pLine.empty() || q.stateLines.size() != 7 || !q.hasO || !q.hasW) die("incomplete record: " + q.kLine);
-        if (q.kind == 'C' && !q.hasD) die("C record without its tangent (D line): " + q.kLine);
+        if (!q.hasD || q.dKind != (q.kind == 'C' ? 'D' : 'M'))
+            die(std::string("a ") + q.kind + " record must carry its 6x6 tangent as a " + (q.kind == 'C' ? "D" : "M") + " line: " + q.kLine);
         if (q.kind == 'R' && (q.z.empty() || (q.k.at("dim") != "4" && q.k.at("dim") != "3"))) die("R record without a condensed sigma_22 trace: " + q.kLine);
         if (q.kind != 'R' && !q.z.empty()) die("Z lines on a non-R record: " + q.kLine);
     }
@@ -198,8 +209,8 @@ static Replay replay(const Rec& r) {
 static int modeCheck(const Fixture& fx, bool cross) {
     const std::string libm = fx.meta.count("libm") ? fx.meta.at("libm") : "";
     if (libm.empty()) die("the fixture's #@ line names no libm");
-    std::printf("fixture: %zu records, recorded with libm=%s kernel=%s; this build: libm=%s\n", fx.recs.size(), libm.c_str(),
-                fx.meta.count("kernel") ? fx.meta.at("kernel").c_str() : "?", C3D_REPLAY_LIBM);
+    std::printf("fixture: %zu records, recorded with libm=%s kernel-blob=%s; this build: libm=%s\n", fx.recs.size(), libm.c_str(),
+                fx.meta.count("kernel-blob") ? fx.meta.at("kernel-blob").c_str() : "?", C3D_REPLAY_LIBM);
     if (libm != C3D_REPLAY_LIBM && !cross)
         die("records written under libm=" + libm + " do not replay bit-exactly under " + C3D_REPLAY_LIBM +
             " (run `record` for record-and-compare on this libm, or --cross to measure the difference)");
@@ -219,7 +230,7 @@ static int modeCheck(const Fixture& fx, bool cross) {
         auto cmpInt = [&](const std::string& what, long a, long b) { if (a != b) note(what + " " + std::to_string(a) + "!=" + std::to_string(b)); };
         static const char* oName[17] = {"status", "pieces", "kappa", "omega_t", "omega_c", "sig0", "sig1", "sig2", "sig3", "sig4", "sig5", "sigEff0", "sigEff1", "sigEff2", "sigEff3", "sigEff4", "sigEff5"};
         for (int i = 0; i < 17; ++i) { if (i < 2) cmpInt(oName[i], (long)x.o[i], (long)r.o[i]); else cmp(oName[i], x.o[i], r.o[i]); }
-        if (r.hasD) for (int i = 0; i < 36; ++i) cmp("D" + std::to_string(i / 6) + std::to_string(i % 6), (&x.ev.D[0][0])[i], r.D[i]);
+        for (int i = 0; i < 36; ++i) cmp(std::string(1, r.dKind) + std::to_string(i / 6) + std::to_string(i % 6), (&x.ev.D[0][0])[i], r.D[i]);
         for (int i = 0; i < 12; ++i) cmp("eig3sym" + std::to_string(i), x.w[i], r.w[i]);
         if (r.kind == 'R') {
             cmpInt("reason", x.loop.code, r.code);
@@ -242,12 +253,16 @@ static int modeCheck(const Fixture& fx, bool cross) {
 }
 
 static std::string fmt(const double* v, int n) { std::string s; char b[40]; for (int i = 0; i < n; ++i) { std::snprintf(b, sizeof b, " %.17g", v[i]); s += b; } return s; }
-static int modeRecord(const Fixture& fx, const char* outPath) {
+static int modeRecord(const Fixture& fx, const char* outPath, const std::string& blob) {
+    if (blob.size() != 40 || blob.find_first_not_of("0123456789abcdef") != std::string::npos)
+        die("--kernel-blob must be the 40-hex git blob of the kernel header this build compiled (git hash-object)");
     std::ofstream out(outPath); if (!out) die(std::string("cannot write ") + outPath);
+    out << "# RE-RECORDED by `concrete3d_replay record` under libm=" << C3D_REPLAY_LIBM << " on kernel-blob=" << blob
+        << ": every O/D/M/W/Z line and the K line's outcome fields are THIS build's output; the inputs (P E S X H I C T),\n"
+        << "# the selection (G) and the order are the source fixture's. The source fixture's header follows.\n";
     for (const std::string& h : fx.header) {
         if (h.rfind("#@ ", 0) != 0) { out << h << "\n"; continue; }
-        std::map<std::string, std::string> m = fx.meta; m["libm"] = C3D_REPLAY_LIBM; m["recorded-by"] = "concrete3d_replay";
-        out << "#@"; for (const auto& p : m) out << " " << p.first << "=" << p.second; out << "\n";
+        out << "#@ libm=" << C3D_REPLAY_LIBM << " kernel-blob=" << blob << " binary=concrete3d_replay-record\n";
     }
     out << qProbe() << "\n";
     for (const Rec& r : fx.recs) {
@@ -262,7 +277,7 @@ static int modeRecord(const Fixture& fx, const char* outPath) {
         if (!r.gLine.empty()) out << r.gLine << "\n";
         out << r.pLine << "\n"; for (const std::string& s : r.stateLines) out << s << "\n";
         out << "O" << fmt(x.o, 17) << "\n";
-        if (r.hasD) out << "D" << fmt(&x.ev.D[0][0], 36) << "\n";
+        out << (r.kind == 'C' ? "D" : "M") << fmt(&x.ev.D[0][0], 36) << "\n";
         out << "W" << fmt(x.w, 12) << "\n";
         for (const Pass& p : x.loop.z) { const double v[6] = {(double)p.p, p.eps22, p.s22, p.d22, (double)p.status, (double)p.sub}; out << "Z" << fmt(v, 6) << "\n"; }
     }
@@ -275,7 +290,8 @@ int main(int argc, char** argv) {
         bool cross = false; for (int i = 3; i < argc; ++i) { if (std::strcmp(argv[i], "--cross") == 0) cross = true; else die(std::string("unknown option ") + argv[i]); }
         return modeCheck(load(argv[2]), cross);
     }
-    if (argc == 4 && std::strcmp(argv[1], "record") == 0) return modeRecord(load(argv[2]), argv[3]);
-    std::fprintf(stderr, "usage: %s check <fixture> [--cross] | record <fixture> <out>\n", argv[0]);
+    if (argc == 6 && std::strcmp(argv[1], "record") == 0 && std::strcmp(argv[4], "--kernel-blob") == 0)
+        return modeRecord(load(argv[2]), argv[3], argv[5]);
+    std::fprintf(stderr, "usage: %s check <fixture> [--cross] | record <fixture> <out> --kernel-blob <sha>\n", argv[0]);
     return 2;
 }

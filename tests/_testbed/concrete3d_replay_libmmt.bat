@@ -1,19 +1,24 @@
 @echo off
-REM concrete3d_replay_libmmt.bat <replay|replay-ucrt|selfcheck|selfcheck-ucrt> [outdir]   (run from anywhere; apeGmsh #2621 F1)
+REM concrete3d_replay_libmmt.bat <replay|replay-ucrt|record|selfcheck|selfcheck-ucrt> [outdir]   (apeGmsh #2621 F1)
 REM
 REM Builds the LadrunoConcrete3D kernel testbeds the way the shipped Windows opensees.pyd is built: MSVC with the fork's
 REM Release flags (/O2 /Ob2 /DNDEBUG /EHsc /std:c++17 /MT, no /arch, no /fp) and the math library the pyd links. The
 REM pyd's atan2/cos/sin/exp/log/pow/acos resolve to Intel's libmmt, pulled in by the Fortran objects'
 REM /DEFAULTLIB:libmmt directives, NOT to the UCRT a plain MSVC link uses; eig3sym differs by 1-13 ulp between the two.
-REM   replay          concrete3d_replay.cpp vs concrete3d_replay_records.txt (recorded by the pyd under libmmt), built
-REM                   against the kernel the records were written by (the fixture's kernel-blob); exit 0 iff bit-exact
+REM Every build uses THIS TREE's kernel header; there is no fallback to the header the records were written by.
+REM   replay          concrete3d_replay.cpp vs concrete3d_replay_records.txt (written under libmmt); exit 0 iff every
+REM                   record replays bit-exactly. A kernel change that moves any value FAILS here by design: that PR runs
+REM                   `record`, commits the re-recorded fixture, and its diff (exactly the values that moved) is what the
+REM                   reviewers judge. No field or record class is exempt.
 REM   replay-ucrt     the same replay with a plain (UCRT) link and --cross: shows what a wrong libm does to the records
-REM   selfcheck       concrete3d_kernel_check.cpp under libmmt, against this tree's kernel. KNOWN ISSUE: the pristine
-REM                   d14fb6958 kernel fails C7 (1 of 120000 CDPM2-potential fuzz trials) under libmmt and passes under
-REM                   the UCRT; it is NOT skipped here. Unset LADRUNO_FUZZ_TRIALS for the full trial count.
-REM   selfcheck-ucrt  the same self-check with a plain (UCRT) link, for the comparison
-REM Needs Visual Studio (vswhere) and the oneAPI compiler's static libraries (ONEAPI_ROOT or the default install).
-setlocal EnableExtensions EnableDelayedExpansion
+REM   record          re-record the fixture under libmmt on this tree's kernel into <outdir>\concrete3d_replay_records.txt
+REM   selfcheck       concrete3d_kernel_check.cpp under libmmt, full trial count. KNOWN ISSUE: the pristine d14fb6958
+REM                   kernel fails C7 (1 of 120000 CDPM2-potential fuzz trials) under libmmt and passes under the UCRT.
+REM                   It is NOT skipped: the script refuses to run when LADRUNO_FUZZ_TRIALS is set, because a smaller
+REM                   count (e.g. the Zone-A 200) never reaches the failing trial and reports ALL PASS.
+REM   selfcheck-ucrt  the same self-check with a plain (UCRT) link, for the comparison (same refusal)
+REM Needs Visual Studio (vswhere), git, and the oneAPI compiler's static libraries (ONEAPI_ROOT or the default install).
+setlocal EnableExtensions
 set "MODE=%~1"
 set "OUT=%~2"
 if "%OUT%"=="" set "OUT=%TEMP%\c3d_replay_libmmt"
@@ -21,6 +26,7 @@ set "REPO=%~dp0..\.."
 pushd "%REPO%" || exit /b 2
 set "REPO=%CD%"
 if not exist "%OUT%" mkdir "%OUT%"
+set "FIX=%REPO%\tests\_testbed\concrete3d_replay_records.txt"
 
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
 if not exist "%VSWHERE%" (echo ERROR: vswhere not found & popd & exit /b 2)
@@ -31,64 +37,71 @@ if "%ONEAPI_ROOT%"=="" set "ONEAPI_ROOT=%ProgramFiles(x86)%\Intel\oneAPI"
 set "INTEL_LIB=%ONEAPI_ROOT%\compiler\latest\lib"
 set "LIBMMT=/link /LIBPATH:"%INTEL_LIB%" libmmt.lib libircmt.lib svml_dispmt.lib libirc.lib"
 set "CLFLAGS=/nologo /O2 /Ob2 /DNDEBUG /EHsc /std:c++17 /MT"
+set "HAVE="
+for /f "usebackq delims=" %%h in (`git hash-object SRC\material\nD\LadrunoConcrete3DKernel.h`) do set "HAVE=%%h"
+if "%HAVE%"=="" (echo ERROR: git hash-object of the kernel header failed & popd & exit /b 2)
 
 if /i "%MODE%"=="replay" goto replay
 if /i "%MODE%"=="replay-ucrt" goto replay_ucrt
+if /i "%MODE%"=="record" goto record
 if /i "%MODE%"=="selfcheck" goto selfcheck
 if /i "%MODE%"=="selfcheck-ucrt" goto selfcheck_ucrt
-echo usage: %~nx0 ^<replay^|replay-ucrt^|selfcheck^|selfcheck-ucrt^> [outdir]
+echo usage: %~nx0 ^<replay^|replay-ucrt^|record^|selfcheck^|selfcheck-ucrt^> [outdir]
 popd & exit /b 2
 
 :needmmt
-if not exist "%INTEL_LIB%\libmmt.lib" (echo ERROR: libmmt.lib not found in "%INTEL_LIB%": this build would not link the pyd's libm & popd & exit /b 2)
+if not exist "%INTEL_LIB%\libmmt.lib" (echo ERROR: libmmt.lib not found in "%INTEL_LIB%": this build would not link the pyd's libm & exit /b 2)
 exit /b 0
 
-:replay_ucrt
-set "TAG=win-ucrt"
-set "LINKLIBS="
-set "CROSS=--cross"
-goto replay_build
+:fulltrials
+if defined LADRUNO_FUZZ_TRIALS (echo ERROR: LADRUNO_FUZZ_TRIALS=%LADRUNO_FUZZ_TRIALS% is set: the self-check must run the full trial count, where C7 fails under libmmt. Unset it. & exit /b 2)
+exit /b 0
+
+:build_replay
+REM %1 = libm tag; LINKLIBS = the link libraries (empty for the UCRT)
+cl %CLFLAGS% /DC3D_REPLAY_LIBM=\"%~1\" /I"%REPO%" /Fo:"%OUT%\replay_%~1.obj" /Fe:"%OUT%\concrete3d_replay_%~1.exe" tests\_testbed\concrete3d_replay.cpp %LINKLIBS% >"%OUT%\build_replay_%~1.log" 2>&1
+if errorlevel 1 (type "%OUT%\build_replay_%~1.log" & exit /b 2)
+echo built against this tree's kernel header, blob %HAVE%
+exit /b 0
 
 :replay
-call :needmmt || exit /b 2
-set "TAG=win-libmmt"
+call :needmmt || (popd & exit /b 2)
 set "LINKLIBS=%LIBMMT%"
-set "CROSS="
+call :build_replay win-libmmt || (popd & exit /b 2)
+"%OUT%\concrete3d_replay_win-libmmt.exe" check "%FIX%"
+set "RC=%ERRORLEVEL%"
+popd & exit /b %RC%
 
-:replay_build
-set "FIX=%REPO%\tests\_testbed\concrete3d_replay_records.txt"
-set "WANT="
-for /f "usebackq tokens=*" %%l in (`findstr /b /c:"#@ " "%FIX%"`) do set "META=%%l"
-set "META=!META:*kernel-blob=!"
-for /f "tokens=1" %%a in ("!META:~1!") do set "WANT=%%a"
-if "%WANT%"=="" (echo ERROR: the fixture names no kernel-blob & popd & exit /b 2)
-for /f "usebackq delims=" %%h in (`git hash-object SRC\material\nD\LadrunoConcrete3DKernel.h`) do set "HAVE=%%h"
-set "INC=%REPO%"
-if not "%HAVE%"=="%WANT%" (
-  echo kernel header %HAVE% differs from the recording kernel %WANT%: building the replay against the recorded blob
-  if not exist "%OUT%\ref\SRC\material\nD" mkdir "%OUT%\ref\SRC\material\nD"
-  git cat-file blob %WANT% > "%OUT%\ref\SRC\material\nD\LadrunoConcrete3DKernel.h" || (echo ERROR: blob %WANT% not in this clone & popd & exit /b 2)
-  set "INC=%OUT%\ref"
-)
-cl %CLFLAGS% /DC3D_REPLAY_LIBM=\"%TAG%\" /I"%INC%" /Fo:"%OUT%\replay_%TAG%.obj" /Fe:"%OUT%\concrete3d_replay_%TAG%.exe" tests\_testbed\concrete3d_replay.cpp %LINKLIBS% >"%OUT%\build_replay_%TAG%.log" 2>&1
-if errorlevel 1 (type "%OUT%\build_replay_%TAG%.log" & popd & exit /b 2)
-"%OUT%\concrete3d_replay_%TAG%.exe" check "%FIX%" %CROSS%
+:replay_ucrt
+set "LINKLIBS="
+call :build_replay win-ucrt || (popd & exit /b 2)
+"%OUT%\concrete3d_replay_win-ucrt.exe" check "%FIX%" --cross
+set "RC=%ERRORLEVEL%"
+popd & exit /b %RC%
+
+:record
+call :needmmt || (popd & exit /b 2)
+set "LINKLIBS=%LIBMMT%"
+call :build_replay win-libmmt || (popd & exit /b 2)
+"%OUT%\concrete3d_replay_win-libmmt.exe" record "%FIX%" "%OUT%\concrete3d_replay_records.txt" --kernel-blob %HAVE%
 set "RC=%ERRORLEVEL%"
 popd & exit /b %RC%
 
 :selfcheck
-call :needmmt || exit /b 2
+call :fulltrials || (popd & exit /b 2)
+call :needmmt || (popd & exit /b 2)
 cl %CLFLAGS% /I"%REPO%" /Fo:"%OUT%\c3dchk_libmmt.obj" /Fe:"%OUT%\c3dchk_libmmt.exe" tests\_testbed\concrete3d_kernel_check.cpp %LIBMMT% >"%OUT%\build_selfcheck.log" 2>&1
 if errorlevel 1 (type "%OUT%\build_selfcheck.log" & popd & exit /b 2)
-echo kernel self-check under Intel libmmt (the pyd's libm); LADRUNO_FUZZ_TRIALS=%LADRUNO_FUZZ_TRIALS%
+echo kernel self-check under Intel libmmt (the pyd's libm), full trial count, kernel blob %HAVE%
 "%OUT%\c3dchk_libmmt.exe" tests\_testbed\concrete3d_oracle_fixture.txt
 set "RC=%ERRORLEVEL%"
 popd & exit /b %RC%
 
 :selfcheck_ucrt
+call :fulltrials || (popd & exit /b 2)
 cl %CLFLAGS% /I"%REPO%" /Fo:"%OUT%\c3dchk_ucrt.obj" /Fe:"%OUT%\c3dchk_ucrt.exe" tests\_testbed\concrete3d_kernel_check.cpp >"%OUT%\build_selfcheck_ucrt.log" 2>&1
 if errorlevel 1 (type "%OUT%\build_selfcheck_ucrt.log" & popd & exit /b 2)
-echo kernel self-check under the UCRT (NOT the pyd's libm; comparison only); LADRUNO_FUZZ_TRIALS=%LADRUNO_FUZZ_TRIALS%
+echo kernel self-check under the UCRT (NOT the pyd's libm; comparison only), full trial count, kernel blob %HAVE%
 "%OUT%\c3dchk_ucrt.exe" tests\_testbed\concrete3d_oracle_fixture.txt
 set "RC=%ERRORLEVEL%"
 popd & exit /b %RC%

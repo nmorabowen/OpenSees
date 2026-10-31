@@ -172,19 +172,20 @@ jobs:
 
   # ---- LadrunoConcrete3D record replay, glibc lane (apeGmsh #2621 F1) ----
   # tests/_testbed/concrete3d_replay.cpp puts records the shipped pyd wrote (refusals, sub-increments, kinks,
-  # floor-class-C failures) back through the header-only kernel and requires the recorded answer bit for bit. The
-  # committed records carry the Windows pyd's libm (Intel libmmt) and replay only there (the self-hosted job at the
-  # bottom of this file); on glibc the lane is record-and-compare plus the libm guard (the script's header). g++ and
-  # the header only, no build: seconds, so it runs on drafts too. The checkout stays shallow; the script unshallows
-  # only if the kernel header has moved off the recording blob.
+  # floor-class-C failures) back through this tree's header-only kernel and requires the recorded answer bit for bit.
+  # The committed libmmt records replay only under the Windows pyd's libm (the self-hosted job at the bottom of this
+  # file). On glibc there is NO committed fixture yet, so this job is RECORD-ONLY AND NOT A GATE: it records the
+  # inputs under glibc and uploads them; the glibc fixture must be committed from that artifact before the F1 PR
+  # merges, and from then on the same script replays it bit-exactly as a gate (see the script's header). g++ and the
+  # header only, no build: seconds, so it runs on drafts too.
   concrete3d-replay:
-    name: Concrete3D record replay (glibc, record-and-compare)
+    name: Concrete3D glibc recording (record-only, NOT a gate until the glibc fixture is committed)
     if: github.repository == 'nmorabowen/OpenSees'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: libm guard + glibc record-and-compare
+      - name: libm guard, glibc recording (and the glibc-fixture replay once one is committed)
         run: bash tests/_testbed/concrete3d_replay_ci.sh "$RUNNER_TEMP/c3d_replay"
       - name: Upload the glibc recording
         if: always()
@@ -414,7 +415,9 @@ jobs:
   # jobs, kept apart on purpose: the replay is green on the pristine kernel; the self-check is NOT (C7, the CDPM2
   # potential fuzz, fails 1 of 120000 trials under libmmt and passes under the UCRT, a known issue filed on its
   # own). The self-check runs the full trial count and is neither skipped nor allowed to fail, so its job stays red
-  # until C7 is fixed and cannot hide a replay failure. Opt-in like the jobs above (WP-180: vars.WINDOWS_RUNNER).
+  # until C7 is fixed and cannot hide a replay failure. Both build against this tree's kernel header; a kernel change
+  # that moves a recorded value fails the replay until its PR re-records the fixture (`.bat record`) and commits the
+  # diff. Opt-in like the jobs above (WP-180: vars.WINDOWS_RUNNER).
   concrete3d-replay-libmmt:
     name: Concrete3D record replay (Intel libmmt, bit-exact vs the pyd's records)
     if: >-
@@ -424,9 +427,7 @@ jobs:
     runs-on: [self-hosted, windows, ladruno-perf]
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Replay the committed libmmt records (bit-exact)
+      - name: Replay the committed libmmt records on this tree's kernel (bit-exact)
         shell: cmd
         run: call tests\_testbed\concrete3d_replay_libmmt.bat replay "%RUNNER_TEMP%\c3d_replay"
 
@@ -439,6 +440,7 @@ jobs:
     runs-on: [self-hosted, windows, ladruno-perf]
     steps:
       - uses: actions/checkout@v4
+      # the script refuses to run with LADRUNO_FUZZ_TRIALS set: a reduced count never reaches the failing C7 trial
       - name: concrete3d_kernel_check.cpp under libmmt, full trials (C7 fails 1/120000 on d14fb6958)
         shell: cmd
         run: call tests\_testbed\concrete3d_replay_libmmt.bat selfcheck "%RUNNER_TEMP%\c3d_selfcheck"
