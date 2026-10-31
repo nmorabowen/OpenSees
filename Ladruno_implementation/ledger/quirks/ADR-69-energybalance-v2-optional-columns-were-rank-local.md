@@ -1,0 +1,9 @@
+---
+wp: ADR-69
+title: "EnergyBalance -v2 optional columns were decided per rank -- a rank without DRM elements wrote one column fewer"
+---
+### EnergyBalance -v2 optional columns were decided per rank -- a rank without DRM elements wrote one column fewer
+- **Bites:** an interpreter-per-rank (`openseesmp`) H5DRM run with `recorder EnergyBalance -v2`: ranks that own no DRM-loaded element echo and write `[model: KE_ele KE_nod IE DW_ele DW_nod ULW RES ERR%]`, the others `... ULW E_inject RES ERR%`. Per-rank readers that require identical echoes fail (PBD-V'26 coarse-mesh runs on esmeralda, 2026-10-31: ranks 0/2/4/6 had `E_inject`, 1/3/5/7 not). The same held for `E_lnvd`, `E_modal`, `E_hg`, `KE_ms`, `DW_rel W_ref`.
+- **Why:** `initialize()` set each column from a process-local test (the `EnergyChannelRegistry` declared set, the hourglass probe, the SMS registry, the relative-mass-damping count). The recorder TU sits in the sequential OPS_Recorder OBJECT library, so it cannot call MPI itself.
+- **Fix:** the flags are MAX-reduced across `MPI_COMM_WORLD` by `ladrunoEnergyBalanceAgreeMax` in `SRC/recorder/LadrunoEnergyBalanceMPI.cpp`, a per-target TU (`OPS_MPI_PER_TARGET_SOURCES`), `_PARALLEL_INTERPRETERS` builds only. A rank with no local contribution writes 0 in that column; RES/ERR% are unchanged (the kernel folds every channel into RES whether or not its column is written). Gate: `tests/test_energyBalance_mp_columns.py`.
+- **Caveat -- the reduction is collective:** under `openseesmp` every rank must define the `-v2` recorder, or the first `record()` blocks. PartitionedDomain builds (`_PARALLEL_PROCESSING`) keep the old rank-local layout: there the recorder lives on P0 only, so a collective would hang. Runs written before the fix still need a reader that treats a missing `E_inject` as 0.
