@@ -13,7 +13,7 @@ related:
   - "[[LadrunoRCConcrete_guide]]"
   - "[[LEDGER_quirks]]"
 external:
-  - "PR #877 (wp/concrete3d-integration, OPEN): CDPM2 fixes #867 + Phase C (#873: -crackedNu/-betaC, VC-1986 TS default, bare -1 cuts the step)"
+  - "PR #877 (wp/concrete3d-integration @ f19d55bd1, OPEN, CONFLICTING vs ladruno on 2026-10-31): CDPM2 B1/B2 (the content of #867, which closes as superseded) + Phase C (#873: -crackedNu/-betaC, VC-1986 TS default c = 200) + material failures return the ADR-86b/94 sentinel LADRUNO_MATERIAL_REFUSED (−33086), which cuts the step"
   - "Validation study C:/Users/nmora/Documents/gitAPE/ladruno-concrete-validation (fix_plan.md phases A–E; family 03 = layered shells)"
 tags: [adr, program, rc, shell, layered-shell, crack-band, regularization, confinement, validation]
 updated: 2026-10-31
@@ -70,21 +70,32 @@ Both expose a native PlateFiber view (their own σ33 = 0 condensation). No code 
 ### 2.2 Materials
 
 - **`LadrunoRCConcrete`** — the tested shell material (`tests/test_ladrunoRCConcrete_shell.py`, `_meshobj`,
-  `_tensstiff`, `_wall`, `_objectivity`). Guarded, damped σ33 Newton, returns −1 on failure. lch latched
+  `_tensstiff`, `_wall`, `_objectivity`). Guarded, damped σ33 Newton. It still returns a bare −1 on
+  failure (legacy code, `LadrunoRCConcrete.cpp:371, 623-640` @ f19d55bd1); `ladrunoMaterialMustCut`
+  accepts both −1 and the sentinel, so the step is cut either way. lch latched
   once (`-autoRegularization lch_ref`), loud failure if none. Tension stiffening is **monotonic only**
   and is **not** lch-scaled. No smeared steel inside (the ADR-19 `nWebRebar`/`rho[8]` design was never
   built). PR #877 adds `-crackedNu`, `-betaC`, and `-tensStiff vc` default `c = 200`; the study's
   PV20/PV19/PV27 pure-shear panels are within +6.4 / +5.0 / −0.9 % of test (τ_max 4.53 / 4.15 /
-  6.30 MPa) with `C = 0.34/ε'c`. Nothing gates these numbers yet; P2 G-PV does.
-- **`LadrunoConcrete3D`** — PlateFiber view exists but is **untested in a shell** and its σ33 Newton is
-  undamped with a fixed tolerance and **returns 0 on non-convergence** (`LadrunoConcrete3D.cpp:440-459`;
-  unchanged on the #877 branch). Study fix-plan item **B4**; WP-141 P1a takes the PlateFiber part. lch re-read every call
-  (not latched), silent fallback to `-lch`. Plastic dissipation not regularized (~30 % lch-dependent).
-  `-hoop` is inert outside the BeamFiber view.
-- **`ASDConcrete3D`** (vanilla) — only via the silent `PlateFiberMaterial` wrapper.
+  6.30 MPa) with `-crackedNu 0` and `C = 0.34/ε'c` (189 for PV20, not the fixed 170 — the gate
+  numbers are taken with it). Nothing gates these numbers yet; P2 G-PV does.
+- **`LadrunoConcrete3D`** — PlateFiber view exists but is **untested in a shell**. On #877
+  (@ f19d55bd1) a kernel return-map failure already refuses with the sentinel: the fibre returns it,
+  `LayeredShellFiberSection::setTrialSectionDeformation` sums the fibre codes, `ASDShellQ4` adds the
+  section code and returns it, and the step is cut. What is left is the σ33 = 0 condensation itself
+  (`LadrunoConcrete3D.cpp:~590-620`): an undamped 30-iteration Newton, tolerance
+  1e-9·max(|σ|, 1), whose **miss warns and accepts** (the code comment defers the honest refusal to
+  P1a). Study fix-plan item **B4**; WP-141 P1a takes the condensation part. `-tcTemper proj` is the
+  default now (`:125`). lch re-read every call (not latched, `:~460-468`), including the Gc → ε_fc
+  table, so it inherits the EAS halving (G10); silent fallback to `-lch`. Plastic dissipation not
+  regularized (~30 % lch-dependent). `-hoop` is inert outside the BeamFiber view.
+- **`ASDConcrete3D`** (vanilla) — only via the silent `PlateFiberMaterial` wrapper; reads the scalar
+  `getCharacteristicLength()` (`ASDConcrete3DMaterial.cpp:1615`), so G10 reaches it too.
 - **Steel** — any uniaxial inside `PlateRebar`. `ASDSteel1D -auto_regularization` reads
   `getCharacteristicLength()/2` (`ASDSteel1DMaterial.cpp:2150`); on `ASDShellQ4` + EAS that is
-  (min node distance)/4, unrelated to the bar direction or the tie spacing. `LadrunoUniaxialJ2` and
+  (min node distance)/4, unrelated to the bar direction or the tie spacing. The D3a seam is a new
+  virtual with the scalar as default, so it changes none of these scalar readers
+  (`LadrunoConcrete3D`, `ASDConcrete3D`, `ASDSteel1D`); for them `-noeas` (R1) is the only fix. `LadrunoUniaxialJ2` and
   `LadrunoRebarBuckling` (`-lsr s/d`) are element-independent. `LadrunoJ2` as a layer is an isotropic
   **plate**, right for steel plates/liners, wrong for rebar.
 
@@ -96,7 +107,7 @@ Both expose a native PlateFiber view (their own σ33 = 0 condensation). No code 
 | G2 | element-size band in reinforced layers | too brittle when h > mean crack spacing s_rm, especially in cyclic runs where TS is off | RTD 1016 §2.4.3.1 (G_F^RC = max(1, h/s_rm)·G_F); ATENA §2.2.8 |
 | G3 | tension stiffening + bare steel with no crack check | overestimates post-yield tension capacity by ≈ A_c·σ_ts; TS re-inflates on unload | Vecchio–Collins 1986; `LadrunoRCConcrete_guide.md:281-287` |
 | G4 | transverse shear uniform, not degrading by depth | no out-of-plane shear/punching failure in the director shell; solid-shell zoom under-predicts PG-1 ~2.5–3× | `LadrunoSolidShell_guide.md:130-143`; Hrynyk & Vecchio 2015 (VecTor4 mean 1.01) |
-| G5 | silent failures | `LadrunoConcrete3D` plate view and vanilla `PlateFiberMaterial` return 0 unconverged | §2.1, §2.2 |
+| G5 | silent failures | on #877 only the `LadrunoConcrete3D` σ33-condensation miss (warn and accept) and vanilla `PlateFiberMaterial` (returns 0 unconverged) remain; kernel failures refuse | §2.1, §2.2 |
 | G6 | through-thickness confinement impossible (σ33 ≡ 0) | boundary-element cores lose CDPM2's confined strength/ductility | §4 P4 |
 | G7 | observability | bar stress/strain/buckling state unreachable inside `PlateRebar` | `PlateRebarMaterial.cpp` (no `setResponse`) |
 | G8 | doc drift | "lch = edge length" is half that under EAS (`LEDGER_quirks.md:1523`, `tests/test_ladrunoRCConcrete_meshobj.py:149` labels); ADR-66:134-136 says in-kernel smeared steel shipped (it did not); the midpoint-rule quirk header (`LEDGER_quirks.md:2616`) says "≈2% at 5 uniform layers" — for n equal layers of one material the bending loss is exactly 1/n² (4 % at 5, 1 % at 10; per layer ∫z²dz = t·z_i² + t³/12), the measured 2.07 % was the G7 mixed stack | §2.2 |
@@ -146,12 +157,20 @@ Both expose a native PlateFiber view (their own σ33 = 0 condensation). No code 
 
 ### P1 — Cleanup (small; coordinate with #877 and study B4)
 
+**Prerequisites for P1a (and P4):** #877 merged, and its two open kernel decisions settled: the
+`-subIncr` default (`deterministic` today; `refuse` landed as an option in 0ba6a269a) and the
+`-tangent` policy (chain rule vs last piece across the deterministic ladder). Ownership: #877 owns
+`LadrunoConcrete3D.cpp` until it merges; P1a then branches from `ladruno` and owns the condensation
+block of `setTrialStrain` only. The old agreement "the study will not touch `LadrunoConcrete3D.cpp`
+until P1a" was overtaken: the study's `-subIncr refuse` work landed on #877. Merge order: #877 → P1a.
+
 | Item | Gate |
 |---|---|
-| P1a `LadrunoConcrete3D` plate view: tolerance relative to `ft`, damped Newton, return −1 on failure — the PlateFiber part of study fix_plan B4, **handed to WP-141 by the study session (2026-09-27)**; branch after #877 | PV20 with `LadrunoConcrete3D` layers: 0 silent failures (every failure is a cut step); a `LadrunoConcrete3D`-in-`ASDShellQ4` Zone-A test (there is none today) |
+| P1a `LadrunoConcrete3D` σ33 condensation (the only silent path left on #877) — the PlateFiber part of study fix_plan B4, **handed to WP-141 by the study session (2026-09-27)**; branch after #877. **Decided:** (1) a miss returns `LADRUNO_MATERIAL_REFUSED`, never −1 (ADR-94; `test_R5_*` expects the sentinel only); (2) tolerance relative to `ft`; (3) a safeguarded scalar solve, not only damping: σ33(ε33) is piecewise discontinuous at the deterministic-ladder boundaries (study register 31 M1: jumps up to 1.7 % σ, 7 % κp) and can change sign without a root, so Newton runs inside a bracket with a bisection/secant fallback, and "sign change across a jump, no root within tol" is a refusal; (4) an inner iterate whose `integrate()` failed is not used — today the next ε33 step takes that call's elastic-fallback stress and tangent, and `lastStatus` sees only the last call; a failed iterate shrinks the bracket toward the last good one; (5) dead and crushed points (ω ≥ `omegaDead`) are a defined case of the pivot (σ33 flat in ε33), solved by the bracket, not divided by a zero pivot. **Blocked on #877, and what decides it:** the condensed-tangent gate. Under a chain-rule `-tangent`, FD 1e-6 stands; under last-piece (FD error 6–121 %) it cannot pass, and the gate becomes the global Newton rate on PV20 (the condensed tangent feeds the Newton that stalled in study B1). Also `-subIncr refuse` as default would move inner failures into the bracket (20 absorbed in one PV20 run). | (a) PV20 with `LadrunoConcrete3D` layers: 0 accepted misses (every miss is a cut step, counted by `returnFailures`); (b) τ(γ) within 1 % of the #877 baseline wherever that baseline converged (4.67 MPa still rising at γ = 0.02, +9.6 % vs test: P1a is a robustness change, and accuracy against test is not its gate — CDPM2 has no MCFT compression softening); (c) the condensed `LadrunoSolidShell` softening tests (`test_ladrunoSolidShell_explicit.py::test_softening_band_sms_completes`, `test_ladrunoSolidShell_softening.py::test_g5_*`), which became hard failures when a first cut refused the miss, pass by converging; (d) a `LadrunoConcrete3D`-in-`ASDShellQ4` Zone-A test (there is none today) |
 | P1b D3b `PlateRebar` response forwarding (vanilla, additive) | `eleResponse(e,'material',gp,'fiber',k,'stress')` still returns the 5-comp plate stress; a new key reaches the bar (`LadrunoRebarBuckling` state, `ASDSteel1D` damage) |
-| P1c Guidance: in shells, `ASDSteel1D` without `-auto_regularization`, `-buckling` with the **tie spacing**; always pin `ASDShellQ4 -local` when a section has `PlateRebar` layers (G9 — confirm the frame difference in the fork and upstream sources first) | RC guide + `LEDGER_quirks` rows |
+| P1c Guidance: in shells, `ASDSteel1D` without `-auto_regularization`, `-buckling` with the **tie spacing**; always pin `ASDShellQ4 -local` when a section has `PlateRebar` layers (G9 — confirm the frame difference in the fork and upstream sources first). Separate from study register 16: apeGmsh used to emit `-localCS`, which the parser ignores (fixed on apeGmsh main); the PV panels have no pin and no `-noeas` and match only because the fork's default frame happens to be right — G-PV reruns them pinned | RC guide + `LEDGER_quirks` rows |
 | P1d Doc drift G8 — after #877 merges (it edits ADR-19 and the RC guide) | grep clean |
+| P1f **R1** (plan §3, P2e): quirk rows + guide — crack-band RC on `ASDShellQ4` ⇒ `-noeas` with lch = h, `-drillingNL` where localized inclined cracks form; `test_ladrunoRCConcrete_meshobj.py` gates the **absolute** W/(Gf·A) under `-noeas` (today ratios only, `:155`, and its u_y = 0 chain reads 1.94 under EAS); apeGmsh warns when a crack-band layer meets EAS. Owns study defect 21 (G10/G11). Becomes guidance only after **R2** | R2: cantilever wall, n = 1/2/4/8 across, EAS vs `-noeas` vs Timoshenko (apeGmsh: 0.74× tip displacement for one element), plus a reinforced strip with bars **parallel** to the crack under EAS and `-noeas` (P2e did not test it; steel may suppress the one-column bifurcation) |
 | P1e apeGmsh: `PlateFiber`, `ShellLayer` guards (uniaxial → points to `PlateRebar`), `RCLayeredShell`/`RebarMesh` builder, `ASDShellQ4(no_eas=)` | built 2026-09-27 on apeGmsh branch `feat/layered-shell-rc-primitives` (uncommitted), live 9/9 on the fork and on stock openseespy 3.7.1.2; `PlateRebar`/`PlateFromPlaneStress` (#1182) and `-local`/drilling flags (#1183) were already merged |
 
 ### P2 — Validation baseline (reuse study family 03; add only what measures P3)
@@ -163,15 +182,20 @@ target. All P2 runs use the #877 build, `LadrunoLoadControl`, `ASDShellQ4 -noeas
 and `-local` pinned (P1c), so P2 baseline runs wait for #877.
 
 - **G-PV no-regress (P3c, P3d, and P3b if it is ever built):** PV19/PV20/PV27, the study's MCFT flag
-  set, `-local` pinned, EAS and `-noeas`. Gate: τ_max within ±7 % of test on every panel. Baseline
+  set with `-crackedNu 0` and C = 0.34/ε'c, `-local` pinned, EAS and `-noeas`. With `-noeas` lch
+  becomes h, so the backbone authoring length (`lch_ref = h/2` today, a no-op under EAS) and the
+  study's l_max check (2071–2545 mm vs h = 890) are redone first. Gate: τ_max within ±7 % of test on every panel. Baseline
   +5.0 / +6.4 / −0.9 % (EAS) and PV20 4×4 `-noeas` 4.276 MPa (+0.4 %, P2e B1): passes today. It
   exists because G-C is uniaxial: a rule that is right in a tie can still remove tension
   stiffening in a biaxial panel before the peak. `-betaC` alone gives 3.61 MPa on PV20 (−15 %), so
   any change that zeroes tension stiffening before the peak fails it.
-- **G-A inclined crack (plan O2c):** periodic cell, recorded, not gated — a locking detector. The
-  partial baseline did not show the expected √2: 45° `-noeas` gave 2.13 (drilling 0.84, a
-  3-element staircase) and tanθ = ½ locked to mesh lines. The directional-length gate is the
-  elongated-element strip of P3a.
+- **G-A inclined crack (plan O2c):** rig = the plan's periodic unit cell (the rotated-PV20 rig of the
+  2026-09-27 draft is dropped); oracle W_diss/(t·ℓ_c) = Gf with ℓ_c = L·√(p²+q²) for tanθ = p/q;
+  **no tolerance — recorded, not gated**, a locking detector. The partial baseline did not show the
+  expected √2: 45° `-noeas` gave 2.13 (drilling 0.84, a 3-element staircase) and tanθ = ½ locked to
+  (1,0) (0.45). Neither h(n) nor `-noeas` brings 45° near 1: that needs drilling bridging (P3f) and
+  locking fixed. The directional-length gate is the elongated-element strip of P3a; P3b's revival
+  test is a seeded strip at θ (plan D-P2).
 - **G-B size vs crack spacing (P3c's gate):** reinforced membrane tie of length L = 12·s_rm, mesh
   h/s_rm ∈ {½, 1, 2, 4}, **elastic** steel (no yield bifurcation), ρ ≈ 1 %. Two arms:
   - *TS off — energy (T1).* With perfect bond every element cracks once, so plain crack band
@@ -224,7 +248,7 @@ set on the #877 build.
   check (v_ci) stays deferred; the interlock covers it.
 
   *Why the cutoff on ε1 was wrong.* ε1 is a principal strain, not a bar strain. In PV20 (study
-  `PV20_rc_mcft*.csv`) ε1 passes the y-bar yield strain 1.5e-3 at γ ≈ 1.7–2.0e-3, a fifth of
+  `runs/03_layered_shell/pv_panels/PV*_rc_mcft*.csv`, `_beta`; provenance below) ε1 passes the y-bar yield strain 1.5e-3 at γ ≈ 1.7–2.0e-3, a fifth of
   γ_peak (8.1e-3 at ν = 0, 10.6e-3 at ν = 0.2). The literal rule removes tension stiffening for
   most of the pre-peak curve, which is the `-betaC`-alone response, 3.61 vs 4.25 MPa (−15 % vs
   test). A cutoff on "any bar yielded" fails the same way: the y bars yield at γ = 3.4e-3 / 4.75e-3,
@@ -232,6 +256,15 @@ set on the #877 build.
   crack check sees that reserve: at τ_max, σ_cap/σ_ts = 1.93 / 2.13 / 3.67 (PV20 / PV19 / PV27,
   ν = 0.2) and 1.23 / 1.35 / 2.95 (ν = 0), so the cap is inactive up to the peak on all three
   panels and their pre-peak curves are unchanged.
+
+  *Provenance of these numbers.* The CSVs were committed in study 3a137e9 (2026-09-26) and ran on the
+  **local 2026-06-25 build**, pre-#877 (pv_panels README, "Results (local build 2026-06-25)"): stock
+  `LoadControl`, `-tensStiffC 200` passed explicitly, β with the hard-wired 170, **no
+  `-crackedNu`**. They are the "before" row of the study's C2 table, not the #877 configuration
+  G-PV gates (`-crackedNu 0`, C = 0.34/ε'c), whose CSVs are not committed. `-crackedNu 0` behaves
+  like the ν = 0 runs, so the relevant PV20 margin is the thin one, ≈ 1.2, not 1.9. The 3.61 MPa
+  `-betaC`-alone figure is from the same June build (ν = 0.2). All of it is re-measured in P2f on
+  the #877 build before P3d's design is frozen (§6 Q7).
 - **P3c Crack-spacing band.** For layers the user marks as reinforced, the tension softening uses
   `h_eff = min(h, s_θ)`, `s_θ = 1/(|cosθ|/s_rx + |sinθ|/s_ry)` (RTD 1016 §2.4.3.1), θ the crack
   normal at onset measured from x, h the element length in use (the scalar today, h(n) after P3a).
@@ -254,6 +287,8 @@ set on the #877 build.
   bridging (G11), which h(n) does not fix. Revisit only when a seeded strip at θ shows a band one
   element wide along θ (plan D-P2). The design stays as written: at crack onset call the seam with
   the crack normal and rescale once, before any softening; same trial/commit rule as P3c.
+  Crack onset is one definition shared by the P3b/P3c rescale, the interlock freeze and the
+  `-crackedNu` switch (today two separate tests of "cracked").
 - **P3e (optional) cyclic tension stiffening:** ε1,max envelope + secant unload (ADR-19 deferred item).
 - **Gates.** Each gate names what fails it at baseline or under the wrong rule:
   - *P3d:* the O4a material point (σ_cap closed form at θ ∈ {0°, 30°, 60°}, one and two bar sets;
@@ -272,7 +307,11 @@ set on the #877 build.
 ### P4 — `LadrunoConcrete3D` confined plate view
 
 Confinement from cross-ties through the wall thickness is impossible while σ33 ≡ 0. Make it passive,
-reusing the BeamFiber machinery (`LadrunoConcrete3DKernel.h:1585-1700`) with one confined direction:
+reusing the BeamFiber machinery (`LadrunoConcrete3DKernel.h`: `hoopStress` `:~2735`,
+`driveConfinedFiber` `:~2775-2900` @ f19d55bd1) with one confined direction. #877 added dead-point
+and crushed-freeze handling to that path (the dead-aware effective-stress return, `:~2487`, review
+M2), and the deterministic sub-increment ladder runs inside its nested lateral solve; P4 inherits
+both, and has the same prerequisites as P1a (the two #877 kernel decisions):
 
 - residual `σ33 + σ_h(ε33) = 0` (today `σ33 = 0`); hoop stiffness added to the condensation pivot
   and to `condenseTangent()`;
@@ -283,11 +322,12 @@ reusing the BeamFiber machinery (`LadrunoConcrete3DKernel.h:1585-1700`) with one
   independent and unloads along its loading curve — wrong for cyclic walls); serialized;
 - **nominal** stress balance (the BeamFiber view balances the *effective* stress; acceptable at the
   peak where ω ≈ 0, not in a cyclically damaged boundary element) — decide and document the divergence;
-- only core layers of boundary-element sections get `-hoop`; `hoopK = 0` ⇒ byte-identical to today;
+- only core layers of boundary-element sections get `-hoop`; `hoopK = 0` ⇒ byte-identical to today,
+  **dead and crushed points included** (plan O5b, O5e);
 - **not** a constant f_l: it would pre-compress the layer at zero load and put compression through the
   thickness during the boundary element's tension excursions.
 
-**Depends on** study B1/B2 (CDPM2 plastic potential and compressive-damage drive, in #867/#877):
+**Depends on** study B1/B2 (CDPM2 plastic potential and compressive-damage drive, in #877; #867 closes as superseded):
 confined accuracy is meaningless before those land. **Gates:** material-point oracle for the confined
 plate path; `hoopK = 0` bit-identity; a boundary-element prism as shell-with-confined-view vs
 `LadrunoBrick` + embedded ties (study E3, Sheikh & Uzumeri); Thomsen & Wallace RW2 boundary elements
@@ -327,6 +367,10 @@ when study family 03 reaches it.
 7. P3c and P3d wait for #877. If #877 changes the TS law or its default before merging, the P3d
    margins quoted in §4 (σ_cap/σ_ts at τ_max) are re-measured on the merged build before P3d's
    design is frozen.
+8. **Upstream report to the `ASDShellQ4` authors** (P2e evidence, no patch): needs owner approval
+   and is not tracked anywhere yet; open a fork issue when approved.
+9. **P3f (research):** a drilling law that follows the section's current secant stiffness (vanilla
+   `ASDShellQ4`, owner decision; an upstream suggestion is the alternative).
 
 ## 7. Sources
 

@@ -49,11 +49,11 @@ to Sonnet/Haiku subagents. No task uses `max`.
 
 | Needs | Blocks | Owner |
 |---|---|---|
-| PR #877 merged (RC schema v6, `-crackedNu/-betaC`, TS `c=200`; CDPM2 B1/B2 via #867; element-side return codes C3). Zone-A was red on 3 tests on 2026-09-27; a test-only fix sits unpushed on the study's local branch `wp/concrete3d-integration-zonea` (894d1b138) — **owner action** | P1a, P1d, P2 baseline runs, P3, P4 | owner |
+| PR #877 merged (RC schema v6, `-crackedNu/-betaC`, TS `c=200`; CDPM2 B1/B2 — #867 closes as superseded, its content is in #877; material sentinel −33086, ADR-86b/94). State on 2026-10-31: head f19d55bd1, OPEN, **CONFLICTING** vs `ladruno`. At the #882 review (2026-10-10) Zone-A had 1 failure in 2906 (`test_R5_ladrunobrick_checks_only_the_sentinel`); 62dd7336c ("LadrunoBrick sentinel-only") targets it — not re-verified here. **Plus its two open kernel decisions:** the `-subIncr` default (`refuse` exists since 0ba6a269a) and the `-tangent` policy (chain vs last piece) — **owner action** | P1a, P1d, P2 baseline runs (P2f), P3c, P3d, P4 | owner |
 | apeGmsh #1185 merged (`RCLayeredShell`, `PlateFiber`, guards, `no_eas`) | P2 rig authoring convenience (not correctness) | owner |
 
 **Agreed with the concrete study session (2026-09-27):**
-- WP-141 owns the PlateFiber part of study B4 (P1a). The study will not touch `LadrunoConcrete3D.cpp` until P1a lands.
+- WP-141 owns the PlateFiber part of study B4 (P1a). ~~The study will not touch `LadrunoConcrete3D.cpp` until P1a lands.~~ Overtaken (#882 review M4): the study's `-subIncr refuse` landed on #877 (0ba6a269a). Restated: #877 owns `LadrunoConcrete3D.cpp` until it merges; P1a then owns the condensation block of `setTrialStrain`; merge order #877 → P1a.
 - After #877 the study plans no edits to `LadrunoRCKernel.h` / `LadrunoRCConcrete.cpp`. It may still edit `LadrunoConcrete3DKernel.h` (CDPM2 compression calibration), under the oracle doctrine.
 - No one else plans to touch `Element.h/.cpp`, `ASDShellQ4`, `PlateRebarMaterial`, or the hoop/BeamFiber code.
 - The structural gates (P2) live in the study repo as `benchmarks/03_layered_shell/<case>/`, following its conventions:
@@ -61,11 +61,11 @@ to Sonnet/Haiku subagents. No task uses `max`.
   - commits go to a try branch `work/<gupi>/<topic>`, never `main`, with commits ending in a `Gupi: <name>` line + Co-Authored-By;
   - prescribed displacements run through `ops.integrator.LadrunoLoadControl(dlam, tangent_predictor=True)` (the owner's standing rule).
 - The kernel-level oracles stay as fork tests.
-- Baseline numbers already measured on the #877 build, PV20 τ_max:
+- Baseline numbers, PV20 τ_max, measured on the fork branches that #877 integrates (RC row: `wp/phase-c-elements` @ 8cd8f43f5; `LadrunoConcrete3D` row: `wp/concrete3d-damage-drive` @ c96df92a4, `-tcTemper proj`, the default now) — re-measure on the merged build in P2f:
 
   | Model | τ_max (MPa) |
   |---|---|
-  | `LadrunoRCConcrete` + MCFT + `-crackedNu` | 4.53–4.62 (= MCFT hand solution) |
+  | `LadrunoRCConcrete` + MCFT + `-crackedNu 0` | 4.53 (C = 0.34/ε'c = 189) – 4.62 (C = 170); MCFT hand solution 4.55 |
   | `LadrunoConcrete3D` PlateFiber | 4.67, still rising |
   | `ASDConcrete3D` | 4.41 |
   | test | 4.26 |
@@ -74,9 +74,10 @@ to Sonnet/Haiku subagents. No task uses `max`.
 
 | ID | Task | Model / effort | Oracles | Est. sessions |
 |---|---|---|---|---|
-| P1a | `LadrunoConcrete3D` PlateFiber σ33 condensation: damped Newton, tolerance relative to `ft`, honest nonzero return (**study B4, handed to WP-141**); first-ever PlateFiber tests | Opus 5.5 high | O7 | 0.75 |
+| P1a | `LadrunoConcrete3D` PlateFiber σ33 condensation — the condensation miss only (kernel failures already refuse on #877): bracketed Newton with bisection/secant fallback, tolerance relative to `ft`, failed inner iterates discarded, dead/crushed pivot case, miss → sentinel (**study B4, handed to WP-141**); first-ever PlateFiber tests. Blocked on #877 + its two kernel decisions | Opus 5.5 high | O7 | 1 |
 | P1b | `PlateRebarMaterial` forwards unknown `setResponse` keys to its uniaxial (vanilla, additive, `// Ladruno`) | Sonnet 5 medium + `/code-review high` | O6 | 0.5 |
 | P1c | Verify the `ASDShellQ4` default in-plane frame in fork vs upstream 3.7.1 sources; RC guide + quirk rows (`-local` with rebar; `ASDSteel1D` in shells) | Opus 5.5 medium | O8 | 0.25 |
+| P1f | R1 guidance + absolute `_meshobj` gate + apeGmsh EAS warning (owns study defect 21), after R2 | Sonnet 5 medium | R2, `_meshobj` absolute | 0.5 |
 | P1d | Doc drift G8 (lch "= edge", midpoint 1/n², in-kernel steel claim, ADR-19 banner) — after #877 | Sonnet 5 low | grep-clean | 0.25 |
 | P2a | G-A inclined-crack rig: periodic unit cell (study repo) | Opus 5.5 high | O2c | 1 |
 | P2b | G-B reinforced tension tie rig | Sonnet 5 high | O3b | 0.5 |
@@ -149,7 +150,11 @@ Bažant chain, the periodic cell, tied node lines, ν = 0 — both columns softe
   - apeGmsh warns when a crack-band layer section meets EAS.
 - **R2 (gate before R1 becomes guidance):** the in-plane bending cost of `-noeas` — a cantilever wall
   with n = 1/2/4/8 elements across, EAS vs `-noeas` vs Timoshenko closed form. apeGmsh measured
-  0.74× tip displacement for one element.
+  0.74× tip displacement for one element. **Added (#882 review M2):** a reinforced strip with bars
+  parallel to the crack, EAS vs `-noeas` (untested by P2e; steel stiffens the lateral strain and may
+  suppress the one-column bifurcation). R1 is ADR task P1f; it owns study defect 21. The PV panels,
+  G-B and G-C use `lch_ref = h/2` (a no-op under EAS); with `-noeas` lch = h, so their backbone
+  calibration and the PV l_max check (2071–2545 mm vs h = 890) are redone in P2f.
 - ~~**P3a/P3b parked.**~~ **Amended 2026-10-31 (#882 review H1): P3b parked, P3a not.** The factor
   problem is solved by `-noeas` with no seam, and directional h(n) fixes neither mesh locking nor the
   3-element 45° staircase on the periodic cell, so P3b (the inclined-crack latch) waits. But P2e
@@ -252,10 +257,14 @@ P3d is the MCFT crack check (ADR §4), not a cutoff on ε1:
   - Baseline without the rule: `A_s·f_y + A_c·σ_ts(ε_y)`, +117 / +70 % at ε_y pre-#877 (c = 500);
     re-measured in P2f (c = 200).
   - Uniaxial only: it cannot tell a crack check from a cutoff on ε1, because here ε1 is the bar strain.
-- O4d (T3) G-PV: PV19/PV20/PV27 (study `pv_panels`, MCFT flag set, `-local` pinned, EAS and `-noeas`).
+- O4d (T3) G-PV: PV19/PV20/PV27 (study `pv_panels`, MCFT flag set with `-crackedNu 0` and C = 0.34/ε'c,
+  `-local` pinned, EAS and `-noeas`).
   - Gate: τ_max within ±7 % of test, and the pre-peak τ–γ curve bit-identical to the pre-P3d binary.
   - Expected: the cap is inactive up to the peak. From the study CSVs, σ_cap/σ_ts at τ_max is
-    1.93 / 2.13 / 3.67 (PV20 / PV19 / PV27, ν = 0.2) and 1.23 / 1.35 / 2.95 (ν = 0). Re-measured in P2f.
+    1.93 / 2.13 / 3.67 (PV20 / PV19 / PV27, ν = 0.2) and 1.23 / 1.35 / 2.95 (ν = 0). **Provenance:** study
+    3a137e9, local 2026-06-25 build (pre-#877, stock `LoadControl`, `-tensStiffC 200`, β = 170, no
+    `-crackedNu`) — not the #877 configuration this gate runs. `-crackedNu 0` behaves like ν = 0, so
+    expect the thin PV20 margin (≈ 1.2). Re-measured in P2f before P3d's design is frozen.
   - Why it discriminates: ε1 passes the y-bar ε_y = 1.5e-3 at γ ≈ 1.7–2.0e-3 and the y bars yield at
     γ = 3.4e-3 / 4.75e-3, all before γ_peak = 8.1e-3 / 10.6e-3. A cutoff on ε1 or on "any bar
     yielded" removes tension stiffening there and gives the `-betaC`-alone curve, 3.61 MPa
@@ -269,7 +278,9 @@ P3d is the MCFT crack check (ADR §4), not a cutoff on ε1:
 - O5a (T1) Elastic closed form. With in-plane strains prescribed and the tie active (ε33 > 0):
   `ε33 = −λ(ε11+ε22)/(λ+2μ+K)`, then σ11, σ22, τ12 in closed form; 1e-12. The tie is tension-only
   (slack for ε33 ≤ ε_p).
-- O5b (T3, limits, nonlinear, same binary) `hoopK = 0` is byte-identical to the post-B4 plate view.
+- O5b (T3, limits, nonlinear, same binary) `hoopK = 0` is byte-identical to the post-B4 plate view,
+  including dead (ω ≥ `omegaDead`) and crushed-frozen points and the deterministic sub-increment
+  ladder inside the nested solve (both added by #877).
   `hoopK = 1e6·E` matches the 3-D view driven with ε33 = 0, retained components within 1e-6,
   **damage included**. This is the strongest single check of the whole chain.
 - O5c (T2) `concrete3d_ref.py::confined_plate_step`, mirroring `confined_step` (:1501) with one
@@ -279,14 +290,15 @@ P3d is the MCFT crack check (ADR §4), not a cutoff on ε1:
   force while ε33 ≤ ε_p.
 - O5e (T3, pre-peak cross-view) The plate view with ε22 set to the BeamFiber view's converged
   lateral strain reproduces its σ22 = σ33 = −σ_hoop and σ11 (1e-8). This holds only where ω ≈ 0,
-  because the BeamFiber view balances the effective stress.
+  because the BeamFiber view balances the effective stress. A second case drives a point the
+  BeamFiber view has marked dead, through the dead-aware effective return (#877 M2).
 - O5f (T3, physics) A tied column as a shell: plane = axis × one lateral, thickness = the other
   lateral.
   - Through-thickness tie legs → `-hoop K fy`; in-plane legs → `PlateRebar` at 90°.
   - Compare against study E3 (Sheikh & Uzumeri 1980 2A1-1 / 4B3-19 / 4D6-24, and the `LadrunoBrick` + embedded-tie model).
   - Gates: peak within 10 % of test; post-peak ductility ordered by tie spacing; tie stress rising at the peak.
-  - Also PV20 with `LadrunoConcrete3D` layers and `-tcTemper proj`, `hoopK = 0`: must not regress
-    (the study saw the strut collapse without that flag).
+  - Also PV20 with `LadrunoConcrete3D` layers (`-tcTemper proj` is the default on #877; nothing to
+    pass), `hoopK = 0`: must not regress (the study saw the strut collapse under `-tcTemper none`).
 - O5g Mutants: effective instead of nominal balance (killed by a damaged state with ω > 0.3); tie
   memory dropped; tie stiffness left out of `condenseTangent()`.
 
@@ -294,17 +306,32 @@ P3d is the MCFT crack check (ADR §4), not a cutoff on ε1:
 `ε11c² + ε22s² + γ12cs` from the same history gives the same forwarded response (bit-exact). The
 plate `stress` stays 5 components. Mutant: forward to a stale copy.
 
-**O7 — plate-view honest failure (P1a)**
-- (T1) Every converged point has |σ33| ≤ tol·ft (a self-certifying residual).
-- (T2) A numpy plate-fiber driver in `concrete3d_ref.py` (nested ε33 Newton over
-  `damaged_step_tensor`). Fixture block → g++ byte-check → condensed-tangent FD. The PlateFiber view
-  has had no test at all until now.
+**O7 — plate-view honest failure (P1a)** — scope narrowed after #877: kernel failures already refuse
+(fibre sentinel → `LayeredShellFiberSection` sums codes → `ASDShellQ4` returns it → step cut). Only
+the σ33 condensation miss is left.
+- (T1) Every accepted point has |σ33| ≤ tol·ft (a self-certifying residual).
+- (T1) Discontinuity case: a σ33(ε33) map with a ladder jump that changes sign without a root
+  (study register 31 M1: jumps up to 1.7 % σ, 7 % κp). The bracketed solve refuses; plain Newton
+  cycles. Also a dead point (σ33 flat in ε33): bracketed, no division by the zero pivot.
+- (T2) A numpy plate-fiber driver in `concrete3d_ref.py` (bracketed ε33 solve over
+  `damaged_step_tensor`). Fixture block → g++ byte-check. The PlateFiber view has had no test at all
+  until now.
+- (T2/T3) **Condensed tangent — gate blocked on the #877 `-tangent` decision.** Chain-rule policy:
+  FD 1e-6. Last-piece policy (FD error 6–121 %): FD 1e-6 cannot pass; the gate is instead the global
+  Newton iteration count on PV20 with `LadrunoConcrete3D` layers, no worse than the #877 baseline.
 - (T3, same binary) Drive the 3-D view with the plate's converged ε33: σ33 = 0 and the retained
   components are identical.
-- (T3) A forced snap-back state returns −1, and `ASDShellQ4` cuts the step. PV20 with
-  `LadrunoConcrete3D` layers and `-tcTemper proj` shows 0 silent failures (`returnFailures` response
-  from #877).
-- Mutants: return 0 on non-convergence; absolute tolerance; undamped step.
+- (T3) A forced miss returns `LADRUNO_MATERIAL_REFUSED` (never −1: ADR-94, `test_R5_*`), and
+  `ASDShellQ4` cuts the step. An inner `integrate()` failure followed by a converged final call is
+  accepted, and its elastic-fallback stress never seeds the next ε33 step.
+- (T3) PV20 with `LadrunoConcrete3D` layers: 0 accepted misses (`returnFailures`), τ(γ) within 1 % of
+  the #877 baseline where that converged (4.67 MPa still rising at γ = 0.02, +9.6 % vs test — accuracy
+  vs test is not P1a's gate). Run under the `-subIncr` default #877 settles on, and once with
+  `refuse` (20 inner failures absorbed in one PV20 run today).
+- (T3) The condensed `LadrunoSolidShell` softening tests (`test_softening_band_sms_completes`,
+  `test_g5_*`) pass by converging; they failed when a first cut refused every miss.
+- Mutants: accept the miss (warn only); return −1 instead of the sentinel; absolute tolerance;
+  unbracketed Newton (killed by the discontinuity case); reuse a failed iterate's stress.
 
 **O8 — rebar frame (P1c)** (T3) One `ASDShellQ4` with `PlateRebar` at 0° and `-local` along a
 rotated direction: membrane N/ε along `-local` equals `E_c(h−Σt) + E_s·t` (1e-6), and without
