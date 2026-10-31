@@ -47,6 +47,7 @@
 #include <Element.h>
 #include <ElementIter.h>
 #include "Ladruno_LaunchEnv.h"   // Ladruno WP-163 M4/MP-3
+#include "LadrunoEnergyBalanceMPI.h"   // Ladruno: optional -v2 columns agreed across ranks
 #include <MeshRegion.h>
 #include <Vector.h>
 #include <ID.h>
@@ -869,6 +870,21 @@ EnergyBalanceRecorder::initialize(void)
         chMassScale =
             Ladruno::MassScalingEnergyRegistry::instance().anyActive();
         chRelMass = forceRelMass || (OPS_numRelativeMassDampings() > 0);   // Ladruno (relativeMassDamping)
+        // Ladruno: the flags above are RANK-LOCAL (a rank that owns no DRM /
+        // absorbing element has no ABSORB_LEAK producer, and so on). Agree them
+        // across ranks so every interpreter-per-rank file and echo has the same
+        // layout; a rank with no local contribution writes 0 there. The kernel
+        // folds every channel into RES whether or not its column is written, so
+        // RES/ERR% are unchanged. Identity outside openseesmp-style MPI.
+        {
+            int fl[6] = { chInject ? 1 : 0, chLnvd ? 1 : 0, chModal ? 1 : 0,
+                          chHourglass ? 1 : 0, chMassScale ? 1 : 0,
+                          chRelMass ? 1 : 0 };
+            ladrunoEnergyBalanceAgreeMax(fl, 6);
+            chInject = fl[0] != 0; chLnvd = fl[1] != 0; chModal = fl[2] != 0;
+            chHourglass = fl[3] != 0; chMassScale = fl[4] != 0;
+            chRelMass = fl[5] != 0;
+        }
         numModelCols = 6 + (chInject ? 1 : 0) + (chLnvd ? 1 : 0)
                      + (chModal ? 1 : 0) + (chHourglass ? 1 : 0)
                      + (chMassScale ? 1 : 0) + (chRelMass ? 2 : 0) + 2;
