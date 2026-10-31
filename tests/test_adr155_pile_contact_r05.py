@@ -20,6 +20,9 @@ Ladruno_implementation/contact_prototypes/proto_adr155_r05.py):
   * N-1: one closed-cylinder tie with `-maxGap` == the 4-sector split (the R1 workaround) within
     1e-6 relative, and so is the default -tie (the r6-backport proximity guard); a -maxGap that
     admits the far side is far stiffer.
+  * N-1: a tie with automatic orientation bonds a COINCIDENT pair (up/61's box: one bond by
+    default and under -maxGap 0.5, two under -maxGap 2) and a zero-gap staggered pair on a tilted
+    plane, where the normal component of scen - mcen is round-off rather than 0.
   * G-9: `-adjust` on a faceted tube inside a faceted ring (non-matching, spurious gaps AND
     penetrations as meshed) starts with EXACTLY zero displacement and zero penetration under zero
     load; the unadjusted interface does not.
@@ -342,6 +345,83 @@ def test_n1_maxgap_closed_cylinder_tie_matches_sector_split():
     # measured before the default guard: unguarded 4.308e-4 vs split 4.456e-4 (-3.3 %) on this
     # slice; on the R1 pile, where the antipodal ties also lock the pile's rotation, it was 3.65x.
     assert bare < 0.99 * split, f"antipodal ties no longer over-stiff? bare {bare}, split {split}"
+
+
+def _box_tie(extra=()):
+    """up/61's box: master = two parallel fixed facets, z = 0 and z = 1. Slave = one facet
+    COINCIDENT with the top one, free in z, pulled up by 1, automatic orientation. epsTie 1e4 and
+    A = 1, so one bond gives u = 1e-4 and two give 0.5e-4. Returns the slave z-displacement."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for base, z in ((1, 0.0), (5, 1.0), (9, 1.0)):
+        for t, x, y in zip(range(base, base + 4), (0.0, 1.0, 1.0, 0.0), (0.0, 0.0, 1.0, 1.0)):
+            ops.node(t, x, y, z)
+            ops.fix(t, 1, 1, 0 if base == 9 else 1)
+    ops.contactSurface(1, "-master", 4, 1, 2, 3, 4, 5, 6, 7, 8)
+    ops.contactSurface(2, "-slave-segments", 4, 9, 10, 11, 12)
+    ops.contact(1, 1, 2, "-mortar", "-tie", "-epsTie", 1.0e4, *extra)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for t in (9, 10, 11, 12):
+        ops.load(t, 0.0, 0.0, 0.25)
+    _static()
+    ops.integrator("LoadControl", 1.0)
+    assert ops.analyze(1) == 0
+    return ops.nodeDisp(9, 3)
+
+
+def test_n1_coincident_tie_bonds_the_near_facet():
+    """A slave facet coincident with a master facet has scen - mcen = 0, and the projection's
+    fail-safe refused every GP of that pair: the default and -maxGap 0.5 were singular, and
+    -maxGap 2 bonded only the FAR facet. Now the default and -maxGap 0.5 bond the near facet
+    once, and -maxGap 2 admits the far one too (up/61's expectations)."""
+    assert _box_tie() == pytest.approx(1.0e-4, rel=1e-10)
+    assert _box_tie(("-maxGap", 0.5)) == pytest.approx(1.0e-4, rel=1e-10)
+    assert _box_tie(("-maxGap", 2.0)) == pytest.approx(0.5e-4, rel=1e-10)
+
+
+def test_n1_zero_gap_staggered_tie_on_a_tilted_plane():
+    """A zero-gap NON-MATCHING tie (one master quad, two half-width slave quads) on a plane tilted
+    30 deg: scen - mcen is tangential, so its component along the master normal is round-off
+    (~1e-17), not an exact 0, and still under the projection's 1e-12 refusal. Both slave facets
+    must bond: a pull P = 1 along the normal moves every slave node by P/(epsTie A) = 1/epsTie
+    along it (A = 1, tributary loads, so the uniform translation is exact)."""
+    epsTie = 1.0e4
+    ang, ax = math.radians(30.0), (1.0 / math.sqrt(5.0), 2.0 / math.sqrt(5.0), 0.0)
+    c, s = math.cos(ang), math.sin(ang)
+    x, y, z = ax
+    R = [[c + x * x * (1 - c), x * y * (1 - c) - z * s, x * z * (1 - c) + y * s],
+         [y * x * (1 - c) + z * s, c + y * y * (1 - c), y * z * (1 - c) - x * s],
+         [z * x * (1 - c) - y * s, z * y * (1 - c) + x * s, c + z * z * (1 - c)]]
+
+    def rot(p):
+        return [sum(R[i][j] * p[j] for j in range(3)) for i in range(3)]
+
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for t, p in zip((1, 2, 3, 4), ((0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0))):
+        ops.node(t, *rot(p))
+        ops.fix(t, 1, 1, 1)
+    slave = {11: (0, 0, 0), 12: (0.5, 0, 0), 13: (1, 0, 0),
+             14: (0, 1, 0), 15: (0.5, 1, 0), 16: (1, 1, 0)}
+    for t, p in slave.items():
+        ops.node(t, *rot(p))
+    ops.contactSurface(1, "-master", 4, 1, 2, 3, 4)
+    ops.contactSurface(2, "-slave-segments", 4, 11, 12, 15, 14, 12, 13, 16, 15)
+    ops.contact(1, 1, 2, "-mortar", "-tie", "-epsTie", epsTie)
+    n = rot((0.0, 0.0, 1.0))
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for t in slave:
+        w = 0.25 if t in (12, 15) else 0.125          # tributary area of A = 1
+        ops.load(t, *(w * n[d] for d in range(3)))
+    _static()
+    ops.integrator("LoadControl", 1.0)
+    assert ops.analyze(1) == 0
+    for t in slave:
+        u = ops.nodeDisp(t)
+        for d in range(3):
+            assert u[d] == pytest.approx(n[d] / epsTie, rel=1e-8, abs=1e-14)
 
 
 def test_g9_adjust_faceted_tube_starts_stress_free():

@@ -2459,6 +2459,27 @@ LadrunoContactHandler::handle(const ID *nodesLast)
                         // ≤ 2h; far coplanar pairs the clip rejects anyway stay silent). A -tie pair
                         // is exempt (its full 3-vec bond r→0 is sign-independent — and ties are the
                         // COMMON coincident case). Thresholds RELATIVE to the facet size (unit-safe).
+                        //
+                        // Ladruno (coincident -tie): exempt from the warning, NOT from the hazard.
+                        // The projection's fail-safe (LadrunoContactProjection::normalOriented,
+                        // gate H2) REFUSES every GP whose orientDir is within 1e-12 of the facet
+                        // plane, so a coincident tie pair (orientDir = 0) integrated nothing and
+                        // was silently never bonded (singular with nothing else holding the slave;
+                        // the up/61 box test). A tie's bond is sign-independent, so a degenerate
+                        // automatic direction takes the master facet normal. The test is relative
+                        // and 1e3 above the projection's 1e-12, so a zero-gap staggered pair on a
+                        // tilted facet (round-off, not an exact 0) is caught too.
+                        if (mc.isTie) {
+                            double nM[3];
+                            ladrunoFacetNormalNewell(npsM, Mx, nM);   // unit (zero if degenerate)
+                            double odn = nM[0]*orientDir[0] + nM[1]*orientDir[1]
+                                       + nM[2]*orientDir[2];
+                            double od = std::sqrt(orientDir[0]*orientDir[0]
+                                                  + orientDir[1]*orientDir[1]
+                                                  + orientDir[2]*orientDir[2]);
+                            if (std::fabs(odn) <= 1e-9 * od)
+                                for (int d = 0; d < 3; d++) orientDir[d] = nM[d];
+                        }
                         if (!mc.isTie) {
                             double d2 = orientDir[0]*orientDir[0] + orientDir[1]*orientDir[1]
                                       + orientDir[2]*orientDir[2];
