@@ -166,7 +166,7 @@ static const double F_TOL_HONEST = 3.1e-6;
 
 // Per-thread call counters (apeGmsh #2621 F2). The kernel self-check reads them to hold the invariant that the
 // damaged tangent runs NO return map (damagedTangent cannot reach returnMapTensor: it is declared after it).
-struct KernelCallCounters { unsigned long long returnMapTensor = 0; };
+struct KernelCallCounters { unsigned long long returnMapTensor = 0, pieceReturns = 0; };
 inline KernelCallCounters& kernelCallCounters() { static thread_local KernelCallCounters c; return c; }
 
 // ---------------------------------------------------------------------------
@@ -2192,7 +2192,9 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
         const double Fw = -sigtMax - spd * kdt2;
         for (int i = 0; i < 6; ++i)
             dwt[i] = (-(1.0 - wt) / Fw) * dDt_deps[i] + (spd / Fw) * dkdt1[i] + (spd * wt / Fw) * dkdt2[i];
-    } else if (wt > 0.0 && wt < 1.0) {
+    } else if (!bilin && wt > 0.0 && wt < 1.0) {
+        // (F2) legacy exponential law only: a bilinear omega_t AT the OMEGA_MAX cap is flat (d omega = 0) and used to
+        // fall through to this exponential-law IFT (an O(1) wrong tangent on fully open cracks)
         const double Ht = sigtMax * ((1.0 - wt) * kdt2 / eps_f - 1.0);
         const double a0 = -(1.0 - wt) / Ht;
         const double a1 = -(1.0 - wt) * sigtMax / (eps_f * Ht);
@@ -2206,7 +2208,7 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
         const double a1 = -(1.0 - wc) * Dcc / (eps_fc * Hc);
         const double a2 = -(1.0 - wc) * Dcc * wc / (eps_fc * Hc);
         for (int i = 0; i < 6; ++i) dwc[i] = a0 * mp.E * dkdc[i] + a1 * dkdc1[i] + a2 * dkdc2[i];
-    } else if (wc > 0.0 && wc < 1.0) {
+    } else if (!cdc && wc > 0.0 && wc < 1.0) {     // (F2) legacy drive only; a CDPM2 omega_c at the cap is flat
         const double Hc = sigcMax * ((1.0 - wc) * kdc2 / eps_fc - 1.0);
         const double a0 = -(1.0 - wc) / Hc;
         const double a1 = -(1.0 - wc) * sigcMax / (eps_fc * Hc);
@@ -2228,6 +2230,51 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
 inline int returnMapTensor1(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
                             bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
                             bool doTangent, PieceJac* pj = nullptr);
+
+// One step of the sub-step chain rule (below): J <- A (J + f C) + b (x) K,  K <- a . (J + f C) + e K.
+inline void chainPiece(double J[6][6], double K[6], const PieceJac& pj, double f, const double Cel[6][6])
+{
+    double T[6][6], Jn[6][6], Kn[6];
+    for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) T[i][j] = J[i][j] + f * Cel[i][j];
+    for (int j = 0; j < 6; ++j) {
+        double kv = pj.e * K[j];
+        for (int i = 0; i < 6; ++i) kv += pj.a[i] * T[i][j];
+        Kn[j] = kv;
+        for (int i = 0; i < 6; ++i) {
+            double v = pj.b[i] * K[j];
+            for (int m = 0; m < 6; ++m) v += pj.A[i][m] * T[m][j];
+            Jn[i][j] = v;
+        }
+    }
+    for (int i = 0; i < 6; ++i) { K[i] = Kn[i]; for (int j = 0; j < 6; ++j) J[i][j] = Jn[i][j]; }
+}
+
+// Integrate a GIVEN piece schedule (fractions fr[0..n-1] of deps, in order; hardening map) with the chain-rule
+// tangent. Returns 0 if every piece converged, else 2 with sig_new/kp_new at the last converged piece. The kernel
+// self-check drives forced 2- and 4-piece schedules through it, and a deterministic partition (F2b) would too.
+inline int returnMapTensorSchedule(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
+                                   const double* fr, int n, double sig_new[6], double& kp_new,
+                                   double Dtan6[6][6], bool doTangent, double dkpDeps[6] = nullptr)
+{
+    ++kernelCallCounters().returnMapTensor;
+    double Cel[6][6]; elasticC(mp, Cel);
+    double J[6][6], K[6], s[6], k = kp_n, sn[6], kn, Dt[6][6];
+    for (int i = 0; i < 6; ++i) { K[i] = 0.0; s[i] = sig_n[i]; for (int j = 0; j < 6; ++j) J[i][j] = 0.0; }
+    int status = 0;
+    for (int p = 0; p < n; ++p) {
+        double d[6]; for (int i = 0; i < 6; ++i) d[i] = deps[i] * fr[p];
+        PieceJac pj;
+        if (returnMapTensor1(mp, s, d, k, true, sn, kn, Dt, false, doTangent ? &pj : nullptr) != 0) { status = 2; break; }
+        if (doTangent) chainPiece(J, K, pj, fr[p], Cel);
+        for (int i = 0; i < 6; ++i) s[i] = sn[i];
+        k = kn;
+    }
+    for (int i = 0; i < 6; ++i) sig_new[i] = s[i];
+    kp_new = k;
+    if (doTangent) for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Dtan6[i][j] = J[i][j];
+    if (doTangent && dkpDeps) for (int i = 0; i < 6; ++i) dkpDeps[i] = K[i];
+    return status;
+}
 
 // Tensor return with OOFEM-style SUB-INCREMENTATION (B1; mirror of the oracle return_map_tensor). The direct
 // return first; if it fails and mp.maxSubIncr > 0 (hardening map), the strain increment is halved and the
@@ -2273,21 +2320,7 @@ inline int returnMapTensor(const Params& mp, const double sig_n[6], const double
         PieceJac pj;
         const int st = returnMapTensor1(mp, s, d, k, true, sn, kn, Dt, false, doTangent ? &pj : nullptr);
         if (st == 0) {
-            if (doTangent) {
-                double T[6][6], Jn[6][6], Kn[6];
-                for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) T[i][j] = J[i][j] + f * Cel[i][j];
-                for (int j = 0; j < 6; ++j) {
-                    double kv = pj.e * Kr[j];
-                    for (int i = 0; i < 6; ++i) kv += pj.a[i] * T[i][j];
-                    Kn[j] = kv;
-                    for (int i = 0; i < 6; ++i) {
-                        double v = pj.b[i] * Kr[j];
-                        for (int m = 0; m < 6; ++m) v += pj.A[i][m] * T[m][j];
-                        Jn[i][j] = v;
-                    }
-                }
-                for (int i = 0; i < 6; ++i) { Kr[i] = Kn[i]; for (int j = 0; j < 6; ++j) J[i][j] = Jn[i][j]; }
-            }
+            if (doTangent) chainPiece(J, Kr, pj, f, Cel);
             for (int i = 0; i < 6; ++i) s[i] = sn[i];
             k = kn; done += f; ++pieces;
             frac = (2.0 * frac < 1.0) ? 2.0 * frac : 1.0;
@@ -2308,6 +2341,7 @@ inline int returnMapTensor1(const Params& mp, const double sig_n[6], const doubl
                             bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
                             bool doTangent, PieceJac* pj)
 {
+    ++kernelCallCounters().pieceReturns;
     double sig_tr[6];
     elasticPredTensor(sig_n, deps, mp, sig_tr);
     double A[3][3], w[3], V[3][3];
