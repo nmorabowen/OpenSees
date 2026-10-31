@@ -97,6 +97,15 @@ NDMaterial *OPS_getNDMaterial(int tag)
 // SANISAND header out of the base-class file. Defined in LadrunoSANISAND.cpp.
 extern void ladrunoSanisandResetImplexGlobals(void);   // Ladruno WP-104
 extern void ladrunoConcrete3dResetWarningBudget(void); // Ladruno WP concrete3d-hang-diagnosis review
+// Ladruno #2044: ASDConcrete3D's per-tag hardening-law registry must not outlive
+// the model -- a later same-tag material silently took the first model's laws.
+// Defined in ASDConcrete3DMaterial.cpp.
+extern void ladrunoAsdConcrete3DResetStorage(void);    // Ladruno #2044
+// Ladruno #2444: ManzariDafalias' class-wide stage flag (mElastFlag) is set
+// only by its initialiser and updateMaterialStage, never by a constructor, so
+// `wipe` is what returns the NEXT model to the elastic-stage default.
+// Defined in ManzariDafalias.cpp.
+extern void ladrunoManzariDafaliasResetStage(void);    // Ladruno #2444
 
 void OPS_clearAllNDMaterial(void)
 {
@@ -105,6 +114,8 @@ void OPS_clearAllNDMaterial(void)
     ladrunoConcrete3dResetWarningBudget();    // Ladruno WP concrete3d-hang-diagnosis review
     ladrunoClearCommitRefusals();             // Ladruno WP-99 hygiene (review #877 minor 4): a refusal declared by an NDTest/probe
                                               // commit (or a model that died mid-commit) must not fail the NEXT model's first commit
+    ladrunoAsdConcrete3DResetStorage();       // Ladruno #2044
+    ladrunoManzariDafaliasResetStage();       // Ladruno #2444
 }
 
 void OPS_printNDMaterial(OPS_Stream &s, int flag) {

@@ -54,14 +54,14 @@ legacy_seq: 447
 | `E_SFI` | **FORWARD** | `update()`@599: `errCode1 += ...setTrialStrain(...)`, `return errCode1` | `:617` |
 | `E_SFI_MVLEM_3D` | **FORWARD** | `update()`@781: `errCode += ...setTrialStrain(...)`, `return errCode` | `:798` |
 | `EightNodeQuad` | **FORWARD** | `update()`@386: `ret += ...setTrialStrain(...)`, `return ret` | `:437` |
-| `FourNodeQuad` | **FORWARD** | `update()`@576: `ret += ...setTrialStrain(...)`, `return ret` | `:615` |
+| `FourNodeQuad` | **FORWARD** | `update()`@576: folds the most negative `setTrialStrain` code into `ret` (was `ret +=`; apeGmsh #2619), `return ret` | `:615` |
 | `FourNodeQuad3d` | **FORWARD** | `update()`@384: `ret += ...setTrialStrain(...)`, `return ret` | `:424` |
 | `FourNodeQuadUP` | **FORWARD** | `update()`@359: `ret += ...setTrialStrain(...)`, `return ret` | `:419` |
 | `FourNodeQuadWithSensitivity` | **FORWARD** | `update()`@346: `ret += ...setTrialStrain(...)`, `return ret` | `:385` |
 | `LadrunoBrick20` | **FORWARD** | `update()`@945: `ret += ...setTrialStrain(...)`, `return ret` | `:972` |
 | `LadrunoCST` | **FORWARD** | `update()`@212: `ret += ...setTrialStrain(...)`, `return ret` | `:234` |
 | `LadrunoLST` | **FORWARD** | `update()`@252: `ret += ...setTrialStrain(...)`, `return ret` | `:271` |
-| `LadrunoQuad` | **FORWARD** | `update()`@710: `ret += ...setTrialStrain(...)`, `return ret` | `:534` |
+| `LadrunoQuad` | **FORWARD** | `update()`@737: std/bbar fold the most negative `setTrialStrain` code into `ret` (was `ret +=`; apeGmsh #2619), `return ret`; ssp returns the one code, eas `formEAStrue`'s | `:789` |
 | `LadrunoUP` | **FORWARD** | `update()`@856: `ret += ...setTrialStrain(...)`, `return ret` | `:916` |
 | `Nine_Four_Node_QuadUP` | **FORWARD** | `update()`@507: `ret += ...setTrialStrain(...)`, `return ret` | `:572` |
 | `Nine_Four_Node_QuadUPOld` | **FORWARD** | `update()`@235: `ret += ...setTrialStrain(...)`, `return ret` | `:266` |
@@ -70,7 +70,7 @@ legacy_seq: 447
 | `SFI_MVLEM_3D` | **FORWARD** | `update()`@893: `errCode += ...setTrialStrain(...)`, `return errCode` | `:911` |
 | `SixNodeTri` | **FORWARD** | `update()`@352: `ret += ...setTrialStrain(...)`, `return ret` | `:397` |
 | `TenNodeTetrahedron` | **FORWARD** | `update()`@1029: `success += ...setTrialStrain(...)`, `return success` | `:1213` |
-| `Tri31` | **FORWARD** | `update()`@550: `ret += ...setTrialStrain(...)`, `return ret` | `:586` |
+| `Tri31` | **FORWARD** | `update()`@550: folds the most negative `setTrialStrain` code into `ret` (was `ret +=`; apeGmsh #2619), `return ret` | `:586` |
 | `Twenty_Eight_Node_BrickUP` | **FORWARD** | `update()`@819: `ret += ...setTrialStrain(...)`, `return ret` | `:983` |
 | `Twenty_Node_Brick` | **FORWARD** | `update()`@427: `ret += ...setTrialStrain(...)`, `return ret` | `:509` |
 | `LadrunoBrick` | **SENTINEL** | `update()`@985 tests `== LADRUNO_MATERIAL_REFUSED` | `:1034` |

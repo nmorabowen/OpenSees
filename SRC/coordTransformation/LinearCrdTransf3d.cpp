@@ -44,8 +44,8 @@
 #include <LinearCrdTransf3d.h>
 
 // initialize static variables
-Matrix LinearCrdTransf3d::Tlg(12,12);
-Matrix LinearCrdTransf3d::kg(12,12);
+thread_local Matrix LinearCrdTransf3d::Tlg(12,12);   // Ladruno WP-192
+thread_local Matrix LinearCrdTransf3d::kg(12,12);   // Ladruno WP-192
 
 void* OPS_LinearCrdTransf3d()
 {
@@ -233,9 +233,9 @@ LinearCrdTransf3d::initialize(Node *nodeIPointer, Node *nodeJPointer)
     if ((error = this->computeElemtLengthAndOrient()))
         return error;
     
-    static Vector XAxis(3);
-    static Vector YAxis(3);
-    static Vector ZAxis(3);
+    static thread_local Vector XAxis(3);   // Ladruno WP-192
+    static thread_local Vector YAxis(3);   // Ladruno WP-192
+    static thread_local Vector ZAxis(3);   // Ladruno WP-192
     
     // get 3by3 rotation matrix
     if ((error = this->getLocalAxes(XAxis, YAxis, ZAxis)))
@@ -256,7 +256,7 @@ int
 LinearCrdTransf3d::computeElemtLengthAndOrient()
 {
     // element projection
-    static Vector dx(3);
+    static thread_local Vector dx(3);   // Ladruno WP-192
     
     const Vector &ndICoords = nodeIPtr->getCrds();
     const Vector &ndJCoords = nodeJPtr->getCrds();
@@ -331,14 +331,14 @@ LinearCrdTransf3d::getLocalAxes(Vector &XAxis, Vector &YAxis, Vector &ZAxis)
 {
     // Compute y = v cross x
     // Note: v(i) is stored in R[2][i]
-    static Vector vAxis(3);
+    static thread_local Vector vAxis(3);   // Ladruno WP-192
     vAxis(0) = R[2][0];	vAxis(1) = R[2][1];	vAxis(2) = R[2][2];
     
-    static Vector xAxis(3);
+    static thread_local Vector xAxis(3);   // Ladruno WP-192
     xAxis(0) = R[0][0];	xAxis(1) = R[0][1];	xAxis(2) = R[0][2];
     XAxis(0) = xAxis(0);    XAxis(1) = xAxis(1);    XAxis(2) = xAxis(2);
     
-    static Vector yAxis(3);
+    static thread_local Vector yAxis(3);   // Ladruno WP-192
     yAxis(0) = vAxis(1)*xAxis(2) - vAxis(2)*xAxis(1);
     yAxis(1) = vAxis(2)*xAxis(0) - vAxis(0)*xAxis(2);
     yAxis(2) = vAxis(0)*xAxis(1) - vAxis(1)*xAxis(0);
@@ -356,7 +356,7 @@ LinearCrdTransf3d::getLocalAxes(Vector &XAxis, Vector &YAxis, Vector &ZAxis)
     YAxis(0) = yAxis(0);    YAxis(1) = yAxis(1);    YAxis(2) = yAxis(2);
     
     // Compute z = x cross y
-    static Vector zAxis(3);
+    static thread_local Vector zAxis(3);   // Ladruno WP-192
     
     zAxis(0) = xAxis(1)*yAxis(2) - xAxis(2)*yAxis(1);
     zAxis(1) = xAxis(2)*yAxis(0) - xAxis(0)*yAxis(2);
@@ -414,7 +414,7 @@ LinearCrdTransf3d::getBasicTrialDisp(void)
     const Vector &disp1 = nodeIPtr->getTrialDisp();
     const Vector &disp2 = nodeJPtr->getTrialDisp();
     
-    static double ug[12];
+    static thread_local double ug[12];   // Ladruno WP-192
     for (int i = 0; i < 6; i++) {
         ug[i]   = disp1(i);
         ug[i+6] = disp2(i);
@@ -432,9 +432,9 @@ LinearCrdTransf3d::getBasicTrialDisp(void)
     
     double oneOverL = 1.0/L;
     
-    static Vector ub(6);
+    static thread_local Vector ub(6);   // Ladruno WP-192
     
-    static double ul[12];
+    static thread_local double ul[12];   // Ladruno WP-192
     
     ul[0]  = R[0][0]*ug[0] + R[0][1]*ug[1] + R[0][2]*ug[2];
     ul[1]  = R[1][0]*ug[0] + R[1][1]*ug[1] + R[1][2]*ug[2];
@@ -452,7 +452,7 @@ LinearCrdTransf3d::getBasicTrialDisp(void)
     ul[10] = R[1][0]*ug[9] + R[1][1]*ug[10] + R[1][2]*ug[11];
     ul[11] = R[2][0]*ug[9] + R[2][1]*ug[10] + R[2][2]*ug[11];
     
-    static double Wu[3];
+    static thread_local double Wu[3];   // Ladruno WP-192
     if (nodeIOffset) {
         Wu[0] =  nodeIOffset[2]*ug[4] - nodeIOffset[1]*ug[5];
         Wu[1] = -nodeIOffset[2]*ug[3] + nodeIOffset[0]*ug[5];
@@ -494,7 +494,7 @@ LinearCrdTransf3d::getBasicIncrDisp(void)
     const Vector &disp1 = nodeIPtr->getIncrDisp();
     const Vector &disp2 = nodeJPtr->getIncrDisp();
     
-    static double ug[12];
+    static thread_local double ug[12];   // Ladruno WP-192
     for (int i = 0; i < 6; i++) {
         ug[i]   = disp1(i);
         ug[i+6] = disp2(i);
@@ -502,9 +502,9 @@ LinearCrdTransf3d::getBasicIncrDisp(void)
     
     double oneOverL = 1.0/L;
     
-    static Vector ub(6);
+    static thread_local Vector ub(6);   // Ladruno WP-192
     
-    static double ul[12];
+    static thread_local double ul[12];   // Ladruno WP-192
     
     ul[0]  = R[0][0]*ug[0] + R[0][1]*ug[1] + R[0][2]*ug[2];
     ul[1]  = R[1][0]*ug[0] + R[1][1]*ug[1] + R[1][2]*ug[2];
@@ -522,7 +522,7 @@ LinearCrdTransf3d::getBasicIncrDisp(void)
     ul[10] = R[1][0]*ug[9] + R[1][1]*ug[10] + R[1][2]*ug[11];
     ul[11] = R[2][0]*ug[9] + R[2][1]*ug[10] + R[2][2]*ug[11];
     
-    static double Wu[3];
+    static thread_local double Wu[3];   // Ladruno WP-192
     if (nodeIOffset) {
         Wu[0] =  nodeIOffset[2]*ug[4] - nodeIOffset[1]*ug[5];
         Wu[1] = -nodeIOffset[2]*ug[3] + nodeIOffset[0]*ug[5];
@@ -564,7 +564,7 @@ LinearCrdTransf3d::getBasicIncrDeltaDisp(void)
     const Vector &disp1 = nodeIPtr->getIncrDeltaDisp();
     const Vector &disp2 = nodeJPtr->getIncrDeltaDisp();
     
-    static double ug[12];
+    static thread_local double ug[12];   // Ladruno WP-192
     for (int i = 0; i < 6; i++) {
         ug[i]   = disp1(i);
         ug[i+6] = disp2(i);
@@ -572,9 +572,9 @@ LinearCrdTransf3d::getBasicIncrDeltaDisp(void)
     
     double oneOverL = 1.0/L;
     
-    static Vector ub(6);
+    static thread_local Vector ub(6);   // Ladruno WP-192
     
-    static double ul[12];
+    static thread_local double ul[12];   // Ladruno WP-192
     
     ul[0]  = R[0][0]*ug[0] + R[0][1]*ug[1] + R[0][2]*ug[2];
     ul[1]  = R[1][0]*ug[0] + R[1][1]*ug[1] + R[1][2]*ug[2];
@@ -592,7 +592,7 @@ LinearCrdTransf3d::getBasicIncrDeltaDisp(void)
     ul[10] = R[1][0]*ug[9] + R[1][1]*ug[10] + R[1][2]*ug[11];
     ul[11] = R[2][0]*ug[9] + R[2][1]*ug[10] + R[2][2]*ug[11];
     
-    static double Wu[3];
+    static thread_local double Wu[3];   // Ladruno WP-192
     if (nodeIOffset) {
         Wu[0] =  nodeIOffset[2]*ug[4] - nodeIOffset[1]*ug[5];
         Wu[1] = -nodeIOffset[2]*ug[3] + nodeIOffset[0]*ug[5];
@@ -634,7 +634,7 @@ LinearCrdTransf3d::getBasicTrialVel(void)
 	const Vector &vel1 = nodeIPtr->getTrialVel();
 	const Vector &vel2 = nodeJPtr->getTrialVel();
 	
-	static double vg[12];
+	static thread_local double vg[12];   // Ladruno WP-192
 	for (int i = 0; i < 6; i++) {
 		vg[i]   = vel1(i);
 		vg[i+6] = vel2(i);
@@ -642,9 +642,9 @@ LinearCrdTransf3d::getBasicTrialVel(void)
 	
 	double oneOverL = 1.0/L;
 	
-	static Vector vb(6);
+	static thread_local Vector vb(6);   // Ladruno WP-192
 	
-	static double vl[12];
+	static thread_local double vl[12];   // Ladruno WP-192
 	
 	vl[0]  = R[0][0]*vg[0] + R[0][1]*vg[1] + R[0][2]*vg[2];
 	vl[1]  = R[1][0]*vg[0] + R[1][1]*vg[1] + R[1][2]*vg[2];
@@ -662,7 +662,7 @@ LinearCrdTransf3d::getBasicTrialVel(void)
 	vl[10] = R[1][0]*vg[9] + R[1][1]*vg[10] + R[1][2]*vg[11];
 	vl[11] = R[2][0]*vg[9] + R[2][1]*vg[10] + R[2][2]*vg[11];
 	
-	static double Wu[3];
+	static thread_local double Wu[3];   // Ladruno WP-192
 	if (nodeIOffset) {
 		Wu[0] =  nodeIOffset[2]*vg[4] - nodeIOffset[1]*vg[5];
 		Wu[1] = -nodeIOffset[2]*vg[3] + nodeIOffset[0]*vg[5];
@@ -704,7 +704,7 @@ LinearCrdTransf3d::getBasicTrialAccel(void)
 	const Vector &accel1 = nodeIPtr->getTrialAccel();
 	const Vector &accel2 = nodeJPtr->getTrialAccel();
 	
-	static double ag[12];
+	static thread_local double ag[12];   // Ladruno WP-192
 	for (int i = 0; i < 6; i++) {
 		ag[i]   = accel1(i);
 		ag[i+6] = accel2(i);
@@ -712,9 +712,9 @@ LinearCrdTransf3d::getBasicTrialAccel(void)
 	
 	double oneOverL = 1.0/L;
 	
-	static Vector ab(6);
+	static thread_local Vector ab(6);   // Ladruno WP-192
 	
-	static double al[12];
+	static thread_local double al[12];   // Ladruno WP-192
 	
 	al[0]  = R[0][0]*ag[0] + R[0][1]*ag[1] + R[0][2]*ag[2];
 	al[1]  = R[1][0]*ag[0] + R[1][1]*ag[1] + R[1][2]*ag[2];
@@ -732,7 +732,7 @@ LinearCrdTransf3d::getBasicTrialAccel(void)
 	al[10] = R[1][0]*ag[9] + R[1][1]*ag[10] + R[1][2]*ag[11];
 	al[11] = R[2][0]*ag[9] + R[2][1]*ag[10] + R[2][2]*ag[11];
 	
-	static double Wu[3];
+	static thread_local double Wu[3];   // Ladruno WP-192
 	if (nodeIOffset) {
 		Wu[0] =  nodeIOffset[2]*ag[4] - nodeIOffset[1]*ag[5];
 		Wu[1] = -nodeIOffset[2]*ag[3] + nodeIOffset[0]*ag[5];
@@ -771,7 +771,7 @@ const Vector &
 LinearCrdTransf3d::getGlobalResistingForce(const Vector &pb, const Vector &p0)
 {
     // transform resisting forces from the basic system to local coordinates
-    static double pl[12];
+    static thread_local double pl[12];   // Ladruno WP-192
     
     double q0 = pb(0);
     double q1 = pb(1);
@@ -802,7 +802,7 @@ LinearCrdTransf3d::getGlobalResistingForce(const Vector &pb, const Vector &p0)
     pl[8] += p0(4);
     
     // transform resisting forces  from local to global coordinates
-    static Vector pg(12);
+    static thread_local Vector pg(12);   // Ladruno WP-192
     
     pg(0)  = R[0][0]*pl[0] + R[1][0]*pl[1] + R[2][0]*pl[2];
     pg(1)  = R[0][1]*pl[0] + R[1][1]*pl[1] + R[2][1]*pl[2];
@@ -839,9 +839,9 @@ LinearCrdTransf3d::getGlobalResistingForce(const Vector &pb, const Vector &p0)
 const Matrix &
 LinearCrdTransf3d::getGlobalStiffMatrix(const Matrix &KB, const Vector &pb)
 {
-    static double kb[6][6];		// Basic stiffness
-    static double kl[12][12];	// Local stiffness
-    static double tmp[12][12];	// Temporary storage
+    static thread_local double kb[6][6];		// Basic stiffness   // Ladruno WP-192
+    static thread_local double kl[12][12];	// Local stiffness   // Ladruno WP-192
+    static thread_local double tmp[12][12];	// Temporary storage   // Ladruno WP-192
     double oneOverL = 1.0/L;
     
     int i,j;
@@ -882,7 +882,7 @@ LinearCrdTransf3d::getGlobalStiffMatrix(const Matrix &KB, const Vector &pb)
             kl[11][i] =  tmp[2][i];
         }
         
-        static double RWI[3][3];
+        static thread_local double RWI[3][3];   // Ladruno WP-192
         
         if (nodeIOffset) {
             // Compute RWI
@@ -899,7 +899,7 @@ LinearCrdTransf3d::getGlobalStiffMatrix(const Matrix &KB, const Vector &pb)
             RWI[2][2] = -R[2][0]*nodeIOffset[1] + R[2][1]*nodeIOffset[0];
         }
         
-        static double RWJ[3][3];
+        static thread_local double RWJ[3][3];   // Ladruno WP-192
         
         if (nodeJOffset) {
             // Compute RWJ
@@ -988,9 +988,9 @@ LinearCrdTransf3d::getGlobalStiffMatrix(const Matrix &KB, const Vector &pb)
 const Matrix &
 LinearCrdTransf3d::getInitialGlobalStiffMatrix(const Matrix &KB)
 {
-    static double kb[6][6];		// Basic stiffness
-    static double kl[12][12];	// Local stiffness
-    static double tmp[12][12];	// Temporary storage
+    static thread_local double kb[6][6];		// Basic stiffness   // Ladruno WP-192
+    static thread_local double kl[12][12];	// Local stiffness   // Ladruno WP-192
+    static thread_local double tmp[12][12];	// Temporary storage   // Ladruno WP-192
     double oneOverL = 1.0/L;
     
     int i,j;
@@ -1031,7 +1031,7 @@ LinearCrdTransf3d::getInitialGlobalStiffMatrix(const Matrix &KB)
             kl[11][i] =  tmp[2][i];
         }
         
-        static double RWI[3][3];
+        static thread_local double RWI[3][3];   // Ladruno WP-192
         
         if (nodeIOffset) {
             // Compute RWI
@@ -1048,7 +1048,7 @@ LinearCrdTransf3d::getInitialGlobalStiffMatrix(const Matrix &KB)
             RWI[2][2] = -R[2][0]*nodeIOffset[1] + R[2][1]*nodeIOffset[0];
         }
         
-        static double RWJ[3][3];
+        static thread_local double RWJ[3][3];   // Ladruno WP-192
         
         if (nodeJOffset) {
             // Compute RWJ
@@ -1141,7 +1141,7 @@ LinearCrdTransf3d::getCopy3d(void)
     
     LinearCrdTransf3d *theCopy;
     
-    static Vector xz(3);
+    static thread_local Vector xz(3);   // Ladruno WP-192
     xz(0) = R[2][0];
     xz(1) = R[2][1];
     xz(2) = R[2][2];
@@ -1179,7 +1179,7 @@ LinearCrdTransf3d::sendSelf(int cTag, Channel &theChannel)
 {
     int res = 0;
     
-    static Vector data(23);
+    static thread_local Vector data(23);   // Ladruno WP-192
     data(0) = this->getTag();
     data(1) = L;
     
@@ -1255,7 +1255,7 @@ LinearCrdTransf3d::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &the
 {
     int res = 0;
     
-    static Vector data(23);
+    static thread_local Vector data(23);   // Ladruno WP-192
     
     res += theChannel.recvVector(this->getDbTag(), cTag, data);
     if (res < 0) {
@@ -1340,7 +1340,7 @@ LinearCrdTransf3d::getGlobalMatrixFromLocal(const Matrix &ml)
 const Vector &
 LinearCrdTransf3d::getPointGlobalCoordFromLocal(const Vector &xl)
 {
-    static Vector xg(3);
+    static thread_local Vector xg(3);   // Ladruno WP-192
     
     //xg = nodeIPtr->getCrds() + nodeIOffset;
     xg = nodeIPtr->getCrds();
@@ -1375,7 +1375,7 @@ LinearCrdTransf3d::getPointGlobalDisplFromBasic(double xi, const Vector &uxb)
     const Vector &disp1 = nodeIPtr->getTrialDisp();
     const Vector &disp2 = nodeJPtr->getTrialDisp();
     
-    static double ug[12];
+    static thread_local double ug[12];   // Ladruno WP-192
     for (int i = 0; i < 6; i++)
     {
         ug[i]   = disp1(i);
@@ -1396,7 +1396,7 @@ LinearCrdTransf3d::getPointGlobalDisplFromBasic(double xi, const Vector &uxb)
     
     // transform global end displacements to local coordinates
     //ul.addMatrixVector(0.0, Tlg,  ug, 1.0);       //  ul = Tlg *  ug;
-    static double ul[12];
+    static thread_local double ul[12];   // Ladruno WP-192
     
     ul[0]  = R[0][0]*ug[0] + R[0][1]*ug[1] + R[0][2]*ug[2];
     ul[1]  = R[1][0]*ug[0] + R[1][1]*ug[1] + R[1][2]*ug[2];
@@ -1405,7 +1405,7 @@ LinearCrdTransf3d::getPointGlobalDisplFromBasic(double xi, const Vector &uxb)
     ul[7]  = R[1][0]*ug[6] + R[1][1]*ug[7] + R[1][2]*ug[8];
     ul[8]  = R[2][0]*ug[6] + R[2][1]*ug[7] + R[2][2]*ug[8];
     
-    static double Wu[3];
+    static thread_local double Wu[3];   // Ladruno WP-192
     if (nodeIOffset) {
         Wu[0] =  nodeIOffset[2]*ug[4] - nodeIOffset[1]*ug[5];
         Wu[1] = -nodeIOffset[2]*ug[3] + nodeIOffset[0]*ug[5];
@@ -1426,8 +1426,8 @@ LinearCrdTransf3d::getPointGlobalDisplFromBasic(double xi, const Vector &uxb)
     }
     
     // compute displacements at point xi, in local coordinates
-    static double uxl[3];
-    static Vector uxg(3);
+    static thread_local double uxl[3];   // Ladruno WP-192
+    static thread_local Vector uxg(3);   // Ladruno WP-192
     
     uxl[0] = uxb(0) +        ul[0];
     uxl[1] = uxb(1) + (1-xi)*ul[1] + xi*ul[7];
@@ -1451,7 +1451,7 @@ LinearCrdTransf3d::getPointLocalDisplFromBasic(double xi, const Vector &uxb)
     const Vector &disp1 = nodeIPtr->getTrialDisp();
     const Vector &disp2 = nodeJPtr->getTrialDisp();
     
-    static double ug[12];
+    static thread_local double ug[12];   // Ladruno WP-192
     for (int i = 0; i < 6; i++)
     {
         ug[i]   = disp1(i);
@@ -1472,7 +1472,7 @@ LinearCrdTransf3d::getPointLocalDisplFromBasic(double xi, const Vector &uxb)
     
     // transform global end displacements to local coordinates
     //ul.addMatrixVector(0.0, Tlg,  ug, 1.0);       //  ul = Tlg *  ug;
-    static double ul[12];
+    static thread_local double ul[12];   // Ladruno WP-192
     
     ul[0]  = R[0][0]*ug[0] + R[0][1]*ug[1] + R[0][2]*ug[2];
     ul[1]  = R[1][0]*ug[0] + R[1][1]*ug[1] + R[1][2]*ug[2];
@@ -1481,7 +1481,7 @@ LinearCrdTransf3d::getPointLocalDisplFromBasic(double xi, const Vector &uxb)
     ul[7]  = R[1][0]*ug[6] + R[1][1]*ug[7] + R[1][2]*ug[8];
     ul[8]  = R[2][0]*ug[6] + R[2][1]*ug[7] + R[2][2]*ug[8];
     
-    static double Wu[3];
+    static thread_local double Wu[3];   // Ladruno WP-192
     if (nodeIOffset) {
         Wu[0] =  nodeIOffset[2]*ug[4] - nodeIOffset[1]*ug[5];
         Wu[1] = -nodeIOffset[2]*ug[3] + nodeIOffset[0]*ug[5];
@@ -1502,7 +1502,7 @@ LinearCrdTransf3d::getPointLocalDisplFromBasic(double xi, const Vector &uxb)
     }
     
     // compute displacements at point xi, in local coordinates
-    static Vector uxl(3);
+    static thread_local Vector uxl(3);   // Ladruno WP-192
     
     uxl(0) = uxb(0) +        ul[0];
     uxl(1) = uxb(1) + (1-xi)*ul[1] + xi*ul[7];
@@ -1540,7 +1540,7 @@ const Vector &
 LinearCrdTransf3d::getBasicDisplSensitivity(int gradNumber)
 {
   
-  static double ug[12];
+  static thread_local double ug[12];   // Ladruno WP-192
   for (int i = 0; i < 6; i++) {
     ug[i]   = nodeIPtr->getDispSensitivity((i+1),gradNumber);
     ug[i+6] = nodeJPtr->getDispSensitivity((i+1),gradNumber);
@@ -1548,9 +1548,9 @@ LinearCrdTransf3d::getBasicDisplSensitivity(int gradNumber)
 
 	double oneOverL = 1.0/L;
 
-	static Vector ub(6);
+	static thread_local Vector ub(6);   // Ladruno WP-192
 
-	static double ul[12];
+	static thread_local double ul[12];   // Ladruno WP-192
 
 	ul[0]  = R[0][0]*ug[0] + R[0][1]*ug[1] + R[0][2]*ug[2];
 	ul[1]  = R[1][0]*ug[0] + R[1][1]*ug[1] + R[1][2]*ug[2];
@@ -1568,7 +1568,7 @@ LinearCrdTransf3d::getBasicDisplSensitivity(int gradNumber)
 	ul[10] = R[1][0]*ug[9] + R[1][1]*ug[10] + R[1][2]*ug[11];
 	ul[11] = R[2][0]*ug[9] + R[2][1]*ug[10] + R[2][2]*ug[11];
 
-	static double Wu[3];
+	static thread_local double Wu[3];   // Ladruno WP-192
 	if (nodeIOffset) {
 		Wu[0] =  nodeIOffset[2]*ug[4] - nodeIOffset[1]*ug[5];
 		Wu[1] = -nodeIOffset[2]*ug[3] + nodeIOffset[0]*ug[5];

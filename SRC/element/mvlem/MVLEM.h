@@ -89,6 +89,7 @@ class MVLEM : public Element {
   void Print(OPS_Stream &s, int flag = 0);;
   Response *setResponse(const char **argv, int argc, OPS_Stream &s);
   int getResponse(int responseID, Information &eleInformation);
+  double getCharacteristicLength(void); // Ladruno WP-200
   
  protected:
   

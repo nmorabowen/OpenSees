@@ -839,33 +839,33 @@ ElasticBeam2d::addLoad(ElementalLoad *theLoad, double loadFactor)
     //q0[2] += 0.0;
   }
   else if (type == LOAD_TAG_Beam2dPartialUniformLoad) {
-	// These equations should works for partial trapezoidal load
-    double waa = data(2)*loadFactor;  // Axial
-    double wab = data(3)*loadFactor;  // Axial
-    double wya = data(0)*loadFactor;  // Transverse
-    double wyb = data(1)*loadFactor;  // Transverse
-    double a = data(4)*L;
-    double b = data(5)*L;
+    // Ladruno: cancellation-free trapezoidal partial load with end-release support
+    double wya = data(0) * loadFactor;  // Transverse at start
+    double wyb = data(1) * loadFactor;  // Transverse at end
+    double waa = data(2) * loadFactor;  // Axial at start
+    double wab = data(3) * loadFactor;  // Axial at end
+    double a = data(4) * L;
+    double b = data(5) * L;
+    double ell = b - a;
+    if (ell <= 0.0 || a < 0.0 || b > L)
+      return 0;
 
-	// auxiliary values
-    double ba = b-a;
-    double ba2 = pow(b, 2.0) - pow(a, 2.0);
-    double ba3 = pow(b, 3.0) - pow(a, 3.0);
-    double ba4 = pow(b, 4.0) - pow(a, 4.0);
-    double ba5 = pow(b, 5.0) - pow(a, 5.0);
-    double z1 = wya + (wya*a)/ba - (wyb*a)/ba;
-    double wybpa = wya+wyb;
-    double wybma = wyb-wya;
-    double L2 = pow(L, 2.0);
+    double J0 = 0.5 * ell * (wya + wyb);
+    double J1 = (ell * ell / 6.0) * (wya + 2.0 * wyb);
+    double J2 = (ell * ell * ell / 12.0) * (wya + 3.0 * wyb);
+    double J3 = (ell * ell * ell * ell / 20.0) * (wya + 4.0 * wyb);
+    double I0 = J0;
+    double I1 = a * J0 + J1;
+    double I2 = a * a * J0 + 2.0 * a * J1 + J2;
+    double I3 = a * a * a * J0 + 3.0 * a * a * J1 + 3.0 * a * J2 + J3;
 
-    // equivalent nodal forces
-    double Fyt = 0.5*wybpa*ba;
-    double V2 = (1.0/L)*(wya*ba*(a+0.5*ba)+0.5*wybma*ba*(a+(2.0/3.0)*ba));
-    double V1 = Fyt-V2;
-    double M1 = (0.5*z1*ba2) + (wybma*ba3/(3.0*ba)) - (z1*ba3*2.0/(3.0*L)) - (wybma*ba4/(2.0*L*ba)) + (z1*ba4/(4.0*L2)) + (wybma*ba5/(5.0*L2*ba));
-    double M2 = (-1.0*z1*ba3/(3.0*L)) - (wybma*ba4/(4.0*L*ba)) + (z1*ba4/(4.0*L2)) + (wybma*ba5/(5.0*L2*ba));
-    double P = waa*ba + 0.5*(wab-waa)*ba;
-    double PJ = (1.0/L)*(waa*ba*(a+0.5*ba)+0.5*(wab-waa)*ba*(a+(2.0/3.0)*ba));
+    double V2 = I1 / L;
+    double V1 = I0 - V2;
+    double M1 = -I1 + (2.0 / L) * I2 - (1.0 / (L * L)) * I3;
+    double M2 = (1.0 / L) * I2 - (1.0 / (L * L)) * I3;
+
+    double P = 0.5 * ell * (waa + wab);
+    double PJ = (a * P + (ell * ell / 6.0) * (waa + 2.0 * wab)) / L;
 
     // Reactions in basic system
     p0[0] -= P;
@@ -874,9 +874,15 @@ ElasticBeam2d::addLoad(ElementalLoad *theLoad, double loadFactor)
 
     // Fixed end forces in basic system
     q0[0] -= PJ;
-    q0[1] -= M1;
-    q0[2] -= M2;
-}
+    if (release == 0) {
+      q0[1] += M1;
+      q0[2] += M2;
+    } else if (release == 1) {
+      q0[2] += M2 - 0.5 * M1;
+    } else if (release == 2) {
+      q0[1] += M1 - 0.5 * M2;
+    }
+  }
 
   else if (type == LOAD_TAG_Beam2dPointLoad) {
     double P = data(0)*loadFactor;

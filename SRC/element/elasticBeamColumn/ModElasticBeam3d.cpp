@@ -478,46 +478,65 @@ int ModElasticBeam3d::addLoad(ElementalLoad *theLoad, double loadFactor) {
     q0[4] -= My;
 
   } else if (type == LOAD_TAG_Beam3dPartialUniformLoad) {
-    double wa = data(2) * loadFactor; // Axial
-    double wy = data(0) * loadFactor; // Transverse
-    double wz = data(1) * loadFactor; // Transverse
-    double a = data(3) * L;
-    double b = data(4) * L;
-    double c = 0.5 * (b + a);
-    double cOverL = c / L;
+    // Ladruno: trapezoidal 3D partial load support
+    double wya = data(0) * loadFactor; // Transverse Y at start
+    double wza = data(1) * loadFactor; // Transverse Z at start
+    double waa = data(2) * loadFactor; // Axial at start
+    double a   = data(3) * L;
+    double b   = data(4) * L;
+    double wyb = data(5) * loadFactor; // Transverse Y at end
+    double wzb = data(6) * loadFactor; // Transverse Z at end
+    double wab = data(7) * loadFactor; // Axial at end
 
-    double P = wa * (b - a);
-    double Fy = wy * (b - a);
-    double Fz = wz * (b - a);
+    double ell = b - a;
+    if (ell <= 0.0 || a < 0.0 || b > L)
+      return 0;
+
+    // Axial
+    double P  = 0.5 * ell * (waa + wab);
+    double PJ = (a * P + (ell * ell / 6.0) * (waa + 2.0 * wab)) / L;
+
+    // Transverse Y (bending about z)
+    double J0y = 0.5 * ell * (wya + wyb);
+    double J1y = (ell * ell / 6.0) * (wya + 2.0 * wyb);
+    double J2y = (ell * ell * ell / 12.0) * (wya + 3.0 * wyb);
+    double J3y = (ell * ell * ell * ell / 20.0) * (wya + 4.0 * wyb);
+    double I0y = J0y;
+    double I1y = a * J0y + J1y;
+    double I2y = a * a * J0y + 2.0 * a * J1y + J2y;
+    double I3y = a * a * a * J0y + 3.0 * a * a * J1y + 3.0 * a * J2y + J3y;
+    double Vy2 = I1y / L;
+    double Vy1 = I0y - Vy2;
+    double M1y = -I1y + (2.0 / L) * I2y - (1.0 / (L * L)) * I3y;
+    double M2y = (1.0 / L) * I2y - (1.0 / (L * L)) * I3y;
+
+    // Transverse Z (bending about y)
+    double J0z = 0.5 * ell * (wza + wzb);
+    double J1z = (ell * ell / 6.0) * (wza + 2.0 * wzb);
+    double J2z = (ell * ell * ell / 12.0) * (wza + 3.0 * wzb);
+    double J3z = (ell * ell * ell * ell / 20.0) * (wza + 4.0 * wzb);
+    double I0z = J0z;
+    double I1z = a * J0z + J1z;
+    double I2z = a * a * J0z + 2.0 * a * J1z + J2z;
+    double I3z = a * a * a * J0z + 3.0 * a * a * J1z + 3.0 * a * J2z + J3z;
+    double Vz2 = I1z / L;
+    double Vz1 = I0z - Vz2;
+    double M1z = -I1z + (2.0 / L) * I2z - (1.0 / (L * L)) * I3z;
+    double M2z = (1.0 / L) * I2z - (1.0 / (L * L)) * I3z;
 
     // Reactions in basic system
     p0[0] -= P;
-    double V1, V2;
-    V1 = Fy * (1.0 - cOverL);
-    V2 = Fy * cOverL;
-    p0[1] -= V1;
-    p0[2] -= V2;
-    V1 = Fz * (1.0 - cOverL);
-    V2 = Fz * cOverL;
-    p0[3] -= V1;
-    p0[4] -= V2;
+    p0[1] -= Vy1;
+    p0[2] -= Vy2;
+    p0[3] -= Vz1;
+    p0[4] -= Vz2;
 
     // Fixed end forces in basic system
-    q0[0] -= P * cOverL;
-    double M1, M2;
-    double beta2 = (1 - cOverL) * (1 - cOverL);
-    double alfa2 = (cOverL) * (cOverL);
-    double gamma2 = (b - a) / L;
-    gamma2 *= gamma2;
-
-    M1 = -wy * (b - a) * (c * beta2 + gamma2 / 12.0 * (L - 3 * (L - c)));
-    M2 = wy * (b - a) * ((L - c) * alfa2 + gamma2 / 12.0 * (L - 3 * c));
-    q0[1] += M1;
-    q0[2] += M2;
-    M1 = -wz * (b - a) * (c * beta2 + gamma2 / 12.0 * (L - 3 * (L - c)));
-    M2 = wz * (b - a) * ((L - c) * alfa2 + gamma2 / 12.0 * (L - 3 * c));
-    q0[3] -= M1;
-    q0[4] -= M2;
+    q0[0] -= PJ;
+    q0[1] += M1y;
+    q0[2] += M2y;
+    q0[3] -= M1z;
+    q0[4] -= M2z;
   } else if (type == LOAD_TAG_Beam3dPointLoad) {
     double Py = data(0) * loadFactor;
     double Pz = data(1) * loadFactor;

@@ -51,6 +51,7 @@ using OpenSees::Versor;
 
 class DOF_Group;
 class NodalThermalAction; //L.Jiang [ SIF ]
+class RelativeMassDamping;  // Ladruno (relativeMassDamping)
 
 class Node : public DomainComponent
 {
@@ -121,6 +122,14 @@ class Node : public DomainComponent
 
     virtual int setRayleighDampingFactor(double alphaM);
     virtual const Matrix &getDamp(void);
+    // Ladruno (relativeMassDamping): optional reference velocity of the
+    // nodal mass-proportional term, f_D = alphaM*M*(v - v_ref(t)); the tangent
+    // (getDamp) is unchanged. Absent (0) => every path is the original.
+    virtual int setMassDampingReference(RelativeMassDamping *theRef);
+    RelativeMassDamping *getMassDampingReference(void) const {return massDampingRef;}
+    double getRayleighDampingFactor(void) const {return alphaM;}
+    // v - v_ref(t) for a velocity vector v of this node (t = domain time)
+    const Vector &getMassDampingRelativeVel(const Vector &v);
 
     // public methods for eigen vector
     virtual int setNumEigenvectors(int numVectorsToStore);
@@ -221,6 +230,8 @@ class Node : public DomainComponent
     Matrix *mass;                       // pointer to mass matrix
     Vector *unbalLoadWithInertia;       
     double alphaM;                    // rayleigh damping factor
+    RelativeMassDamping *massDampingRef = 0; // Ladruno: non-owning, see RelativeMassDamping.h
+    Vector *massDampingRelVel = 0;         // Ladruno: scratch for getMassDampingRelativeVel
     
     Matrix *theEigenvectors;
 

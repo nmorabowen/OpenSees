@@ -43,6 +43,7 @@
 #include <Element.h>                  // Ladruno P3: getClassTag() on the assembled element
 #include <profiler/ProfilerMacros.h>  // Ladruno P3: deep per-element-type timing
 #include <LadrunoEnergyChannels.h>    // Ladruno ADR-69 P2: modal-damping energy channel
+#include <LadrunoThreadedAssembly.h>   // Ladruno WP-192: threaded tangent / residual loops
 
 IncrementalIntegrator::IncrementalIntegrator(int clasTag)
 :Integrator(clasTag),
@@ -107,6 +108,12 @@ IncrementalIntegrator::formTangent(int statFlag)
     // times each element's getTangent and folds it into its classTag bucket. Both
     // are inert (no clock reads, no getElement() call) unless the deep gate is on.
     OPS_PROFILE_SCOPE_DEEP_NAMED(_ops_elemTan, "elem.tangent");
+
+    // Ladruno WP-192: the threaded loop (chunked compute, ordered serial
+    // scatter: bit-identical to the loop below). false = run the loop below.
+    if (ladrunoThreadedFELoop(theAnalysisModel, theSOE, this, LADRUNO_FE_TANGENT, -3,
+                              "WARNING IncrementalIntegrator::formTangent -", result))
+        return result;
 
     // loop through the FE_Elements adding their contributions to the tangent
     FE_Element *elePtr;
@@ -325,6 +332,11 @@ IncrementalIntegrator::formElementResidual(void)
 
     // Ladruno P3: deep per-element-type residual timing (mirrors formTangent).
     OPS_PROFILE_SCOPE_DEEP_NAMED(_ops_elemRes, "elem.residual");
+
+    // Ladruno WP-192: threaded residual loop (bit-identical to the loop below).
+    if (ladrunoThreadedFELoop(theAnalysisModel, theSOE, this, LADRUNO_FE_RESIDUAL, -2,
+                              "WARNING IncrementalIntegrator::formElementResidual -", res))
+        return res;
 
     FE_EleIter &theEles2 = theAnalysisModel->getFEs();
     while((elePtr = theEles2()) != 0) {

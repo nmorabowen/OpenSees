@@ -66,7 +66,9 @@ class LadrunoCohesiveHingeBiaxial : public NDMaterial
 
   LadrunoCohesiveHingeBiaxial(int tag, double Mcz, double Gfz, double Mcy, double Gfy,
                               int shape = EXP, double penaltyRatio = 1000.0,
-                              double bkEta = 1.0);
+                              double bkEta = 1.0, double P0 = 0.0,
+                              double alphaPM = 0.5, bool implex = false,
+                              double P0t = 0.0, double Pbal = 0.0, double muBal = 1.0);
   LadrunoCohesiveHingeBiaxial();
   ~LadrunoCohesiveHingeBiaxial();
 
@@ -77,7 +79,20 @@ class LadrunoCohesiveHingeBiaxial : public NDMaterial
   const Vector& getStress(void)        { return Tstress; }
   const Vector& getStrain(void)        { return Tstrain; }
   const Matrix& getTangent(void)       { return Ttangent; }
-  const Matrix& getInitialTangent(void){ return Kinit; }
+  const Matrix& getInitialTangent(void);
+
+  void setAxialForce(double P)   { P_axial = P; }
+  double getAxialForce(void) const { return P_axial; }
+  double getPMMultiplier(void) const;
+  double getPMDerivative(void) const;
+  void setPM(double p0, double apm) { P0 = p0; alphaPM = apm; P0t = 0.0; Pbal = 0.0; }
+  void setPMBal(double p0c, double p0t, double pbal, double mubal) {
+    P0 = p0c; P0t = p0t; Pbal = pbal; muBal = mubal;
+  }
+  bool hasPM(void) const         { return P0 > 0.0; }
+  bool isImplex(void) const      { return implex; }
+  void setImplex(bool flag)      { implex = flag; }
+  double getImplexError(void) const;
 
   int commitState(void);
   int revertToLastCommit(void);
@@ -96,7 +111,13 @@ class LadrunoCohesiveHingeBiaxial : public NDMaterial
   Response* setResponse(const char** argv, int argc, OPS_Stream& s);
   int getResponse(int responseID, Information& matInfo);
 
+  int setParameter(const char** argv, int argc, Parameter& param);
+  int updateParameter(int parameterID, Information& info);
+
   double getEnergy(void) { return Twork; }   // path work int M . dalpha
+
+  bool ladrunoThreadSafeUpdate(void) const { return true; }
+  bool ladrunoThreadSafeForm(void) const   { return true; }
 
  private:
   void computeDerived(void);   // per-axis Kpen/alpha0 from (Mc_i, Gf_i), enforce the floor
@@ -110,6 +131,15 @@ class LadrunoCohesiveHingeBiaxial : public NDMaterial
   int    shape;
   double penaltyRatio;
   double bkEta;            // Benzeggagh-Kenane mode-mix exponent (1 = linear Gf interpolation)
+  double P0;               // axial compressive capacity for P-M interaction (<=0 disables)
+  double alphaPM;          // parabolic P-M interaction coefficient
+  double P0t;              // tensile axial capacity for -pmBal (>0 enables 4-parameter RC balance law)
+  double Pbal;             // compressive balance axial load for -pmBal (0 < Pbal < P0)
+  double muBal;            // balance moment ratio M_bal / M_0 for -pmBal
+  bool   implex;           // Oliver et al. (2008) IMPL-EX integration flag
+
+  // transient axial force supplied by parent beam element
+  double P_axial;
 
   // derived (rebuilt by computeDerived, never serialized)
   double Kpenz, Kpeny;     // per-axis near-rigid penalties
@@ -118,9 +148,12 @@ class LadrunoCohesiveHingeBiaxial : public NDMaterial
 
   // committed history
   double CrMax;            // max elliptical norm r ever seen (irreversible damage driver)
+  double CrMax_old;        // previous step committed max r (for IMPL-EX extrapolation)
   Vector Cstrain;          // committed jump (work anchor)
   Vector Cstress;          // committed moment (work anchor)
   double Cwork;            // committed path work int M . dalpha
+  double dtime_n_commit;
+  int    implexCommittedSteps;
 
   // trial state
   Vector Tstrain;          // [alpha_z, alpha_y]

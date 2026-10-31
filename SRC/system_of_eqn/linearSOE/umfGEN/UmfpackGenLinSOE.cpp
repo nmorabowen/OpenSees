@@ -100,9 +100,20 @@ UmfpackGenLinSOE::setSize(Graph &theGraph)
     }
 
     // resize A, B, X
+    // Ladruno WP-197 (#981): rebuild the CSC pattern from scratch. Ap/Ai used to be
+    // reserve()d and push_back()ed WITHOUT clearing, so a second setSize after the
+    // DOF graph changed (sp after the first analyze, element added/removed) appended
+    // the new pattern to the old one: Ap[0..n] still described the OLD pattern, addA
+    // DISCARDED entries, symbolic analysis rejected rows >= n, and a smaller nnz let
+    // addA write past the end of Ax. Ax is assign()ed, not resize()d: umfpack_*_symbolic
+    // reads Ax, and resize() left the last assembled tangent there, so a re-setSize on an
+    // unchanged graph saw different values than the first setSize (zeros) and differed
+    // in the last bits from the run without it. Upstream master has the same bug.
+    Ap.clear();
+    Ai.clear();
     Ap.reserve(size+1);
     Ai.reserve(nnz);
-    Ax.resize(nnz,0.0);
+    Ax.assign(nnz,0.0);
     B.resize(size);
     B.Zero();
     X.resize(size);

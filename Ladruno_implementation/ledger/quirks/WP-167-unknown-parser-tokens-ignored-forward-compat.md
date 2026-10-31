@@ -18,3 +18,6 @@ Classified by reading the unknown-token branch (heuristic for "fatal": the warni
 
 #### Follow-up (PR-877)
 Fork PR #877 (Ladruno C2) declares `{"-betaC", 1, "PR-877"}` and `{"-crackedNu", 1, "PR-877"}` in `kLadrunoRCOptions` (their ladder branches already exist in both parsers); `tests/test_ladrunoRCConcrete_failclosed.py` lists them in `ACCEPTED`, and its refusal cases are the misspelling and the bare word. The re-merge onto `ladruno` after WP-167 missed this at first (merge auto-resolved, 8 Zone-A failures: `unknown option '-crackedNu'`): a fork option added on a branch cut before WP-167 must be added to the table in the same PR.
+
+#### Follow-up (WP-200)
+`LadrunoDispBeamColumn2d`, `LadrunoDispBeamColumn3d`, `LadrunoIMKBeam2d`, and `LadrunoIMKBeam` now validate options via `LadrunoOptSpec.h` (`ladrunoReportUnknownOpt` / `ladrunoCheckOptArity`); `LadrunoDispBeamColumn2d.cpp` and `LadrunoDispBeamColumn3d.cpp` were removed from `UNKNOWN_TOKEN_LEGACY` in `ci/check_quirk_patterns.py`.

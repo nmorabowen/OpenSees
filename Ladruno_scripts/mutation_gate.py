@@ -78,6 +78,15 @@ FAMILIES = {
         "paths": ["test_ladrunoShellModifier*.py"],
         "min_score": {"ZERO": 0.60, "SCALE": 0.30, "IDENT": 0.0},
     },
+    "CPML": {
+        "paths": [
+            "test_ladruno_cpml_waveguide_mms.py",
+            "test_ladruno_cpml_greens_lamb.py",
+            "test_ladruno_cpml_ecosystem.py",
+            "test_ladruno_cpml_up.py",
+        ],
+        "min_score": {"ZERO": 0.60, "SCALE": 0.40, "IDENT": 0.0},
+    },
     # --- WP-3 lanes: gates NOT yet inserted in these families' elements. -----
     # Registering the paths here is deliberate (it documents the intended
     # evidence suite), but running a gate before the call sites exist would
@@ -92,7 +101,7 @@ FAMILIES = {
 # Families whose C++ call sites are live. WP-3 moves the rest across as it
 # inserts their gates; `run` refuses an ungated family so a 0.0 score can never
 # be mistaken for "this suite is worthless".
-GATED_FAMILIES = {"CONTINUUM", "SHELLMOD"}
+GATED_FAMILIES = {"CONTINUUM", "SHELLMOD", "CPML"}
 
 PROBE = (
     "import json,sys\n"

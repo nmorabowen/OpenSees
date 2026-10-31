@@ -37,6 +37,8 @@
 #include <math.h>
 
 #include "Element.h"
+#include <LadrunoThreads.h>   // Ladruno WP-192: ladruno_inThreadedRegion
+#include <vector>
 #include "ElementResponse.h"
 //#include <Renderer.h>
 #include <Vector.h>
@@ -57,6 +59,58 @@
 // value left behind after the loop is "the last element this thread handled"
 // instead of "the last element in iteration order". Nothing reads the residual.
 thread_local Element *ops_TheActiveElement = 0;
+
+// Ladruno WP-192: the per-thread twin of Element's class-wide Rayleigh pool.
+// theMatrices / theVectors1 / theVectors2 hand ONE Matrix and two Vectors to
+// every element with the same number of dof, and getDamp / getMass /
+// getResistingForceIncInertia / getRayleighDampingForces build their results
+// in them -- a 100% collision for two same-size elements on two threads.
+// Inside a WP-192 threaded loop (ladruno_inThreadedRegion) each thread gets its
+// own Matrix / Vector of the same size for the same slot; everywhere else the
+// shared objects are returned, so every serial path is untouched.
+namespace {
+  struct LadrunoElePool {
+    std::vector<Matrix *> m;
+    std::vector<Vector *> v1, v2;
+    ~LadrunoElePool() {
+      for (size_t i = 0; i < m.size(); i++) delete m[i];
+      for (size_t i = 0; i < v1.size(); i++) delete v1[i];
+      for (size_t i = 0; i < v2.size(); i++) delete v2[i];
+    }
+  };
+  thread_local LadrunoElePool ladrunoElePool;
+}
+
+static Matrix *
+ladrunoElePoolM(Matrix *shared, int slot)
+{
+  if (!ladruno_inThreadedRegion() || shared == 0 || slot < 0)
+    return shared;
+  std::vector<Matrix *> &m = ladrunoElePool.m;
+  if ((int)m.size() <= slot)
+    m.resize(slot + 1, (Matrix *)0);
+  if (m[slot] == 0 || m[slot]->noRows() != shared->noRows() || m[slot]->noCols() != shared->noCols()) {
+    delete m[slot];
+    m[slot] = new Matrix(shared->noRows(), shared->noCols());
+  }
+  return m[slot];
+}
+
+static Vector *
+ladrunoElePoolV(Vector *shared, int slot, int which)
+{
+  if (!ladruno_inThreadedRegion() || shared == 0 || slot < 0)
+    return shared;
+  std::vector<Vector *> &v = (which == 1) ? ladrunoElePool.v1 : ladrunoElePool.v2;
+  if ((int)v.size() <= slot)
+    v.resize(slot + 1, (Vector *)0);
+  if (v[slot] == 0 || v[slot]->Size() != shared->Size()) {
+    delete v[slot];
+    v[slot] = new Vector(shared->Size());
+  }
+  return v[slot];
+}
+
 
 Matrix **Element::theMatrices; 
 Vector **Element::theVectors1; 
@@ -227,7 +281,7 @@ Element::getDamp(void)
   }
 
   // now compute the damping matrix
-  Matrix *theMatrix = theMatrices[index]; 
+  Matrix *theMatrix = ladrunoElePoolM(theMatrices[index], index);   // Ladruno WP-192 
   theMatrix->Zero();
   if (alphaM != 0.0)
     theMatrix->addMatrix(0.0, this->getMass(), alphaM);
@@ -252,7 +306,7 @@ Element::getMass(void)
   }
 
   // zero the matrix & return it
-  Matrix *theMatrix = theMatrices[index]; 
+  Matrix *theMatrix = ladrunoElePoolM(theMatrices[index], index);   // Ladruno WP-192 
   theMatrix->Zero();
   return *theMatrix;
 }
@@ -264,9 +318,9 @@ Element::getResistingForceIncInertia(void)
     this->Element::setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);   // Ladruno
   }
 
-  Matrix *theMatrix = theMatrices[index]; 
-  Vector *theVector = theVectors2[index];
-  Vector *theVector2 = theVectors1[index];
+  Matrix *theMatrix = ladrunoElePoolM(theMatrices[index], index);   // Ladruno WP-192 
+  Vector *theVector = ladrunoElePoolV(theVectors2[index], index, 2);   // Ladruno WP-192
+  Vector *theVector2 = ladrunoElePoolV(theVectors1[index], index, 1);   // Ladruno WP-192
 
   //
   // perform: R = P(U) - Pext(t);
@@ -340,9 +394,9 @@ Element::getRayleighDampingForces(void)
     this->Element::setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);   // Ladruno
   }
 
-  Matrix *theMatrix = theMatrices[index]; 
-  Vector *theVector = theVectors2[index];
-  Vector *theVector2 = theVectors1[index];
+  Matrix *theMatrix = ladrunoElePoolM(theMatrices[index], index);   // Ladruno WP-192 
+  Vector *theVector = ladrunoElePoolV(theVectors2[index], index, 2);   // Ladruno WP-192
+  Vector *theVector2 = ladrunoElePoolV(theVectors1[index], index, 1);   // Ladruno WP-192
 
   //
   // perform: R = (alphaM * M + betaK0 * K0 + betaK * K) * v
@@ -544,7 +598,7 @@ Element::getResistingForceSensitivity(int gradIndex)
     this->Element::setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);   // Ladruno
   }
 
-  Vector *theVector = theVectors1[index];
+  Vector *theVector = ladrunoElePoolV(theVectors1[index], index, 1);   // Ladruno WP-192
   theVector->Zero();
 
   return *theVector;
@@ -563,7 +617,7 @@ Element::getTangentStiffSensitivity(int gradIndex)
     warningShown = true;
   }
 
-  Matrix *theMatrix = theMatrices[index];
+  Matrix *theMatrix = ladrunoElePoolM(theMatrices[index], index);   // Ladruno WP-192
   theMatrix->Zero();
 
   return *theMatrix;
@@ -583,7 +637,7 @@ Element::getInitialStiffSensitivity(int gradIndex)
     warningShown = true;
   }
 
-  Matrix *theMatrix = theMatrices[index];
+  Matrix *theMatrix = ladrunoElePoolM(theMatrices[index], index);   // Ladruno WP-192
   theMatrix->Zero();
 
   return *theMatrix;
@@ -602,7 +656,7 @@ Element::getCommittedStiffSensitivity(int gradIndex)
     warningShown = true;
   }
 
-  Matrix *theMatrix = theMatrices[index];
+  Matrix *theMatrix = ladrunoElePoolM(theMatrices[index], index);   // Ladruno WP-192
   theMatrix->Zero();
 
   return *theMatrix;
@@ -615,7 +669,7 @@ Element::getMassSensitivity(int gradIndex)
     this->Element::setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);   // Ladruno
   }
 
-  Matrix *theMatrix = theMatrices[index];
+  Matrix *theMatrix = ladrunoElePoolM(theMatrices[index], index);   // Ladruno WP-192
   theMatrix->Zero();
 
   return *theMatrix;
@@ -646,7 +700,7 @@ Element::getDampSensitivity(int gradIndex)
   }
 
   // now compute the damping matrix
-  Matrix *theMatrix = theMatrices[index]; 
+  Matrix *theMatrix = ladrunoElePoolM(theMatrices[index], index);   // Ladruno WP-192 
   theMatrix->Zero();
   if (alphaM != 0.0) {
     theMatrix->addMatrix(0.0, this->getMassSensitivity(gradIndex), alphaM);
@@ -837,7 +891,7 @@ Element::getGeometricTangentStiff()
 	this->Element::setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);   // Ladruno
     }
     
-    Matrix *theMatrix = theMatrices[index];
+    Matrix *theMatrix = ladrunoElePoolM(theMatrices[index], index);   // Ladruno WP-192
     theMatrix->Zero();
     
     return *theMatrix;
@@ -902,4 +956,23 @@ Vector Element::getRayleighDampingFactors() const
    out(2) = betaK0;
    out(3) = betaKc;
    return out;
+}
+
+
+// Ladruno WP-192 -- see Element.h. Runs SERIALLY before a threaded tangent /
+// residual loop, so the lazy `index == -1` allocation of the shared Rayleigh
+// pool never happens inside the parallel region.
+bool
+Element::ladrunoPrepareThreadedForm(void)
+{
+  if (index != -1)
+    return true;
+  // Allocating the slot is pure bookkeeping, EXCEPT that the base
+  // setRayleighDampingFactors also captures Kc = getTangentStiff() when
+  // betaKc != 0 -- an evaluation whose timing the serial loop decides. Leave
+  // that element to the serial path rather than move the capture.
+  if (betaKc != 0.0 && Kc == 0)
+    return false;
+  this->Element::setRayleighDampingFactors(alphaM, betaK, betaK0, betaKc);
+  return index != -1;
 }

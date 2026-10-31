@@ -19,3 +19,14 @@ alphabetical test order deciding the victim. **Rule: every test file gives its
 ASDConcrete3D materials a file-unique tag** (ADR-72 uses 337218). Same class
 of static-registry risk: `CrackPlanesStorage` (same file). Upstream ASDEA
 code — fix-on-touch only.
+
+**FIXED (2026-10-15, apeGmsh #2044):** `wipe` clears both registries
+(`ladrunoAsdConcrete3DResetStorage()`, called from `OPS_clearAllNDMaterial()`).
+The poisoning also replaced the ELASTIC modulus, not only the softening branch:
+E=3e6 then E=30e6 under the same tag gave sigma_zz = -720 for -7200 and Newton
+diverged in an elastic step. File-unique tags remain good hygiene but are no
+longer load-bearing across a `wipe`. Regression:
+`tests/test_asdconcrete3d_wipe_storage.py`. `ASDConcrete1D` carried the same
+registry and is cleared from `OPS_clearAllUniaxialMaterial()`
+(`tests/test_asdconcrete1d_wipe_storage.py`). Known residual: OpenSeesSP's
+`ActorSubdomain::clearAll` does not reset the stores.

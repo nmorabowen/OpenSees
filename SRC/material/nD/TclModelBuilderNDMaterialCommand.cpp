@@ -118,6 +118,8 @@ extern  void *OPS_StagedStrainNDMaterial(void);        // Ladruno
 extern  void *OPS_LadrunoRCConcrete(void);             // Ladruno
 extern  void *OPS_LadrunoRCFiniteStrain(void);         // Ladruno
 extern  void *OPS_LadrunoConcrete3D(void);             // Ladruno
+extern  void *OPS_LadrunoHS(void);                     // Ladruno (WP-210)
+extern  void *OPS_LadrunoHSSmall(void);                // Ladruno (WP-210)
 extern  void *OPS_PlaneStressLayeredMaterial(void);
 extern  void *OPS_PlaneStressRebarMaterial(void);
 extern  void *OPS_PlateFiberMaterial(void);
@@ -351,6 +353,22 @@ TclModelBuilderNDMaterialCommand (ClientData clientData, Tcl_Interp *interp, int
 
     else if ((strcmp(argv[1],"LadrunoConcrete3D") == 0)) {
       void *theMat = OPS_LadrunoConcrete3D();
+      if (theMat != 0)
+        theMaterial = (NDMaterial *)theMat;
+      else
+        return TCL_ERROR;
+    }
+
+    else if ((strcmp(argv[1],"LadrunoHS") == 0)) { // Ladruno (WP-210)
+      void *theMat = OPS_LadrunoHS();
+      if (theMat != 0)
+        theMaterial = (NDMaterial *)theMat;
+      else
+        return TCL_ERROR;
+    }
+
+    else if ((strcmp(argv[1],"LadrunoHSSmall") == 0)) { // Ladruno (WP-210)
+      void *theMat = OPS_LadrunoHSSmall();
       if (theMat != 0)
         theMaterial = (NDMaterial *)theMat;
       else

@@ -82,6 +82,8 @@ extern "C" int OPS_ResetInputNoBuilder(ClientData clientData, Tcl_Interp *interp
 extern void *OPS_LadrunoPorousOverlay();
 
 #include <string.h>
+#include <cctype>   // Ladruno WP-187: isalpha (H5DRM flag parse)
+#include <vector>   // Ladruno WP-187
 
 #include <SimulationInformation.h>
 extern SimulationInformation simulationInfo;
@@ -494,7 +496,57 @@ TclPatternCommand(ClientData clientData, Tcl_Interp *interp,
   else if ((strcmp(argv[1],"H5DRM") == 0) ||
        (strcmp(argv[1],"h5drm") == 0) ) 
   {
+      // Ladruno WP-187: trailing flags -verbose, -prefetch <nsteps>, -chunkCacheMB <mb>
+      // (see OPS_H5DRMLoadPattern). They are taken out of argv here, so the positional
+      // parse below (argc thresholds, the 12 T/x0 values) sees exactly what it saw
+      // before. A flag is '-' followed by a letter, so negative numbers stay positional.
+      bool h5_verbose = false;
+      int h5_prefetch = -1;
+      double h5_cache_mb = -1.0;
+      std::vector<TCL_Char *> h5_args;
+      {
+          bool inflags = false;
+          for (int i = 0; i < argc; ++i) {
+              TCL_Char *s = argv[i];
+              const bool isflag = (i >= 4 && s[0] == '-' && isalpha((unsigned char) s[1]));
+              if (!isflag) {
+                  if (inflags) {
+                      opserr << "WARNING pattern H5DRM: positional argument after a flag; flags go last\n";
+                      return TCL_ERROR;
+                  }
+                  h5_args.push_back(s);
+                  continue;
+              }
+              inflags = true;
+              if (strcmp(s, "-verbose") == 0) {
+                  h5_verbose = true;
+              } else if (strcmp(s, "-prefetch") == 0) {
+                  if (i + 1 >= argc || Tcl_GetInt(interp, argv[i + 1], &h5_prefetch) != TCL_OK) {
+                      opserr << "WARNING pattern H5DRM: -prefetch needs an integer\n";
+                      return TCL_ERROR;
+                  }
+                  ++i;
+              } else if (strcmp(s, "-chunkCacheMB") == 0) {
+                  if (i + 1 >= argc || Tcl_GetDouble(interp, argv[i + 1], &h5_cache_mb) != TCL_OK) {
+                      opserr << "WARNING pattern H5DRM: -chunkCacheMB needs a number\n";
+                      return TCL_ERROR;
+                  }
+                  ++i;
+              } else {
+                  opserr << "WARNING pattern H5DRM: unknown flag " << s << " (known: -verbose, -prefetch n, -chunkCacheMB mb)\n";
+                  return TCL_ERROR;
+              }
+          }
+      }
+      // Shadow argc/argv with the positional tokens for the rest of this branch.
+      const int argc = (int) h5_args.size();
+      TCL_Char **argv = h5_args.data();
+
       int tag = 0;
+      if (argc < 4) {
+          opserr << "WARNING insufficient number of arguments - want: pattern H5DRM tag filename\n";
+          return TCL_ERROR;
+      }
       if (Tcl_GetInt(interp, argv[2], &tag) != TCL_OK) {
           opserr << "WARNING insufficient number of arguments - want: pattern ";
           opserr << "H5DRM tag filename\n";
@@ -596,6 +648,7 @@ TclPatternCommand(ClientData clientData, Tcl_Interp *interp,
       
 
       thePattern = new H5DRMLoadPattern(tag, filename, factor,crd_scale, distance_tolerance, do_coordinate_transformation, T00, T01, T02, T10, T11, T12, T20, T21, T22, x00, x01, x02);
+      ((H5DRMLoadPattern *) thePattern)->setReadOptions(h5_verbose, h5_prefetch, h5_cache_mb);   // Ladruno WP-187
 
       // opserr << "Done! Creating H5DRM tag = " << tag << " filename = " << filename.c_str() << " factor = " << factor << endln;
 

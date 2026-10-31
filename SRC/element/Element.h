@@ -142,6 +142,48 @@ class Element : public DomainComponent
     //      re-entrant. (Red-team N2; nothing on today's allowlist throws.)
     virtual bool ladrunoThreadSafeUpdate(void) const { return false; }
 
+    // Ladruno WP-192. May the OTHER element loops run this element concurrently
+    // with other elements: getTangentStiff / getInitialStiff / getDamp / getMass
+    // (the integrators' tangent loop), getResistingForce(IncInertia) (the
+    // residual loop) and commitState (Domain::commit)? Same contract as
+    // ladrunoThreadSafeUpdate -- items 1-5 above -- over THOSE call graphs, which
+    // is a strictly larger audit: an element can be update-safe while its
+    // tangent still runs on class-static scratch (LadrunoQuad::K / ::P). The
+    // FE_Element / TransformationFE / Element-Rayleigh pools on the same paths
+    // are made per-thread by WP-192 itself, so a class answers only for its own
+    // code and its materials (Material::ladrunoThreadSafeForm). Default false.
+    virtual bool ladrunoThreadSafeForm(void) const { return false; }
+
+    // Ladruno WP-192. May commitState() run concurrently with other elements'?
+    // Defaults to the form answer; an element whose commit feeds a process-wide
+    // accumulator (an energy channel, a global counter) overrides it to false.
+    virtual bool ladrunoThreadSafeCommit(void) const { return this->ladrunoThreadSafeForm(); }
+
+    // Ladruno WP-192. Called SERIALLY before a threaded tangent/residual loop:
+    // allocates this element's slot in Element's class-wide Rayleigh pool (the
+    // lazy `index == -1` path mutates the shared pool array, so it must not
+    // first happen inside the parallel region). Returns false when the element
+    // cannot be prepared without changing what the serial loop would compute
+    // (betaKc != 0 with Kc not yet captured); the caller then runs it serially.
+    bool ladrunoPrepareThreadedForm(void);
+
+    // Ladruno WP-196. True when this element's damping is EXACTLY the base
+    // Rayleigh combination, so the energy kernel's WP-184 check (is the damping
+    // force the element adds outside getResistingForce() equal to C v?) is known
+    // to pass and is skipped. The element answers for all three of:
+    //   (a) getDamp() is Element::getDamp() (alphaM M + betaK K + betaK0 K0 +
+    //       betaKc Kc): no Damping object, no rate-dependent material whose
+    //       viscous tangent would appear in C while its force sits in F;
+    //   (b) getResistingForceIncInertia() = getResistingForce()
+    //       + getRayleighDampingForces() + M a (trial vel/accel), so after a
+    //       commit g = F_inc - F - M a equals C v to round-off;
+    //   (c) getMass(), getDamp() and getResistingForce() set no trial state:
+    //       evaluating them again at the same state is idempotent, so the
+    //       kernel may evaluate them fewer times (or not at all when every
+    //       nodal velocity of the element is zero).
+    // Default false: the kernel runs the WP-184 check, as before.
+    virtual bool ladrunoEnergyRayleighOnly(void) const { return false; }
+
     virtual bool isSubdomain(void);
     
     // methods to return the current linearized stiffness,

@@ -32,6 +32,8 @@ StagedDefGrad/InitDefGrad — stress-free staged activation (finite)
 StagedStrain — stress-free staged activation (small-strain)
 Lemaitre ductile damage (-damage lemaitre, +lch, +IMPL-EX)
 LadrunoIMKBeam — concentrated-plasticity IMK beam hinges
+LadrunoDispBeamColumn — regularized disp beam + cohesive hinges
+LadrunoForceBeamColumn — regularized force beam + cohesive hinges
 LadrunoRebarBuckling — rebar buckling wrapper (cyclic)
 LadrunoRCConcrete — RC plastic-damage + MCFT softening (shell)
 LadrunoRCFiniteStrain — finite-strain (Hencky) RC plastic-damage
@@ -66,6 +68,10 @@ FeastEigen — band-targeted eigensolver (eigen -feast)
 LadrunoModalResponse — exact PWL modal-superposition transient
 Modal combination — SRSS/CQC/ABS/TenPercent response spectrum
 Modal frequency domain — FRF sweep, steady-state, random PSD
+residualModes — missing-mass static-correction pseudo-modes
+ritzVectors — load-dependent Ritz vectors as the mode set
+modalProperties -print tags residual / Ritz modes (R / Z)
+responseSpectrumPerMode — per-mode RSA reactions and resultants in one call
 LadrunoUP — Biot u-p saturated-porous element family
 LadrunoPorousOverlay — staggered u-p overlay pattern
 system Pardiso — threaded MKL sparse-direct (reuse, -krylov, -stats)
@@ -85,3 +91,9 @@ LadrunoSANISAND — IntScheme 129 SAS-ME (alpha-aware error, refuses, no force-a
 LadrunoSANISAND — SAS-ME -sasHFloor / -sasReseatHyst / -sasSoftCap (WP-151 R1)
 LadrunoSANISAND — SAS-ME -sasTensionCutoff (separation at p' ~ 0, WP-152)
 system Pardiso — -deterministic / -cbwr (MKL CNR, reproducible)
+relativeMassDamping: Rayleigh mass term relative to a v_ref(t)
+LadrunoMembrane — polygonal tributary & FEA load-transfer membrane
+LadrunoMembrane — exact all-node diaphragm, -f11/-f22/-f12, membrane forces (WP-204)
+LadrunoCPML — 2D/3D CFS-PML absorber (9 shapes, box/plane, Biot -up)
+
+LadrunoHS/HSSmall — Hardening Soil + HSsmall (mc/mn Lode, WP-210)

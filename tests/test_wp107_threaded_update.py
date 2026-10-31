@@ -148,7 +148,8 @@ def _build(nx, ny, form="bbar", mix="none", mode="static"):
       "eas"        -- `-formulation eas` (element-level: formEAStrue runs on
                       ~12 shared function-scope statics and condenses through
                       Matrix inversion).
-    "zerolength" adds an un-audited ELEMENT beside the allowlisted ones.
+    "zerolength" adds an un-audited ELEMENT (a Truss since WP-195) beside the
+    allowlisted ones.
     """
     ops.wipe()
     ops.model("basic", "-ndm", 2, "-ndf", 2)
@@ -204,8 +205,9 @@ _ZL_TAG = 900000
 
 
 def _add_unaudited_zerolength():
-    """A `zeroLength` -- un-audited, and NOT a LadrunoQuad, so it exercises the
-    element half of the allowlist rather than the material half.
+    """A `Truss` -- un-audited, and NOT a LadrunoQuad, so it exercises the
+    element half of the allowlist rather than the material half. (It was a
+    `zeroLength` until WP-195 audited and opted zeroLength in.)
 
     BOTH nodes are fully restrained on purpose: the re-audit test removes this
     element again mid-run, and a node left with a free DOF and nothing attached
@@ -214,11 +216,10 @@ def _add_unaudited_zerolength():
     """
     ops.uniaxialMaterial("Elastic", 99, 1.0e6)
     ops.node(_ZL_FIXED, 0.0, -1.0)
-    ops.node(_ZL_FREE, 0.0, -1.0)
+    ops.node(_ZL_FREE, 1.0, -1.0)
     ops.fix(_ZL_FIXED, 1, 1)
     ops.fix(_ZL_FREE, 1, 1)
-    ops.element("zeroLength", _ZL_TAG, _ZL_FIXED, _ZL_FREE, "-mat", 99,
-                "-dir", 1)
+    ops.element("Truss", _ZL_TAG, _ZL_FIXED, _ZL_FREE, 1.0, 99)
 
 
 def _run_and_hash(nid, steps, mode="static", probe_ele=1):
@@ -329,7 +330,7 @@ def test_refusal_names_the_tag_and_is_byte_identical_to_serial(mix, expect_tag,
 
 
 def test_refusal_on_an_unaudited_element_class(capfd):
-    """Same, but the offender is an un-audited ELEMENT (`zeroLength`) rather
+    """Same, but the offender is an un-audited ELEMENT (`Truss`) rather
     than an un-audited material -- the two halves of the allowlist."""
     counts = _threads_available()
     if len(counts) < 2:

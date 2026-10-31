@@ -241,14 +241,14 @@ option(LADRUNO_CMS_BUILD_TESTS "Build standalone LadrunoCMS C++ numerical checks
 # Empty family (the default) adds no definition at all, so a normal build is
 # untouched -- the header then defaults every family to LADRUNO_MUT_NONE.
 set(LADRUNO_MUTATE_FAMILY "" CACHE STRING
-    "ADR-87 D2 mutation gate: physics family to sabotage (CONTINUUM, UP, CONTACT, EXPLICIT, SANISAND). Empty = normal build.")
+    "ADR-87 D2 mutation gate: physics family to sabotage (CONTINUUM, UP, CONTACT, EXPLICIT, SANISAND, SHELLMOD, CPML). Empty = normal build.")
 set(LADRUNO_MUTATE_MODE "ZERO" CACHE STRING
     "ADR-87 D2 mutation mode: ZERO (force->0), SCALE (force*1.5), IDENT (tangent->I).")
-set_property(CACHE LADRUNO_MUTATE_FAMILY PROPERTY STRINGS "" CONTINUUM UP CONTACT EXPLICIT SANISAND SHELLMOD)  # Ladruno: SHELLMOD added by ADR 91
+set_property(CACHE LADRUNO_MUTATE_FAMILY PROPERTY STRINGS "" CONTINUUM UP CONTACT EXPLICIT SANISAND SHELLMOD CPML)  # Ladruno: SHELLMOD added by ADR 91, CPML added for C-PML
 set_property(CACHE LADRUNO_MUTATE_MODE PROPERTY STRINGS ZERO SCALE IDENT)
 
 if(NOT LADRUNO_MUTATE_FAMILY STREQUAL "")
-  set(_ladruno_valid_families CONTINUUM UP CONTACT EXPLICIT SANISAND SHELLMOD)  # Ladruno: SHELLMOD added by ADR 91
+  set(_ladruno_valid_families CONTINUUM UP CONTACT EXPLICIT SANISAND SHELLMOD CPML)  # Ladruno: SHELLMOD added by ADR 91, CPML added for C-PML
   if(NOT LADRUNO_MUTATE_FAMILY IN_LIST _ladruno_valid_families)
     message(FATAL_ERROR
       "LADRUNO_MUTATE_FAMILY='${LADRUNO_MUTATE_FAMILY}' is not a known family. "
@@ -546,6 +546,41 @@ if(MPI_FOUND)
        set (MUMPS_LIBRARIES "${MUMPS_DIR}/dmumps.lib;${MUMPS_DIR}/mumps_common.lib;${MUMPS_DIR}/pord.lib")
      else()
        set (MUMPS_LIBRARIES "${MUMPS_DIR}/libdmumps.a;${MUMPS_DIR}/libmumps_common.a;${MUMPS_DIR}/libpord.a")
+     endif()
+
+     # Ladruno WP-194: mixed-precision MUMPS (`system Mumps -precision single`)
+     # needs the single-precision arithmetic (libsmumps + smumps_c.h), which a
+     # MUMPS built with BUILD_SINGLE=OFF does not have. AUTO compiles the option
+     # in when both are found (else `-precision single` is refused at the
+     # command), ON makes their absence a configure error, OFF builds it out.
+     set(LADRUNO_MUMPS_SINGLE "AUTO" CACHE STRING
+         "Mixed-precision MUMPS factor (-precision single): AUTO | ON | OFF")
+     set_property(CACHE LADRUNO_MUMPS_SINGLE PROPERTY STRINGS AUTO ON OFF)
+     if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+       set(_ladruno_smumps_lib "${MUMPS_DIR}/smumps.lib")
+     else()
+       set(_ladruno_smumps_lib "${MUMPS_DIR}/libsmumps.a")
+     endif()
+     if(DEFINED MUMPS_INCLUDE_DIR)
+       set(_ladruno_smumps_inc "${MUMPS_INCLUDE_DIR}")
+     else()
+       set(_ladruno_smumps_inc "${MUMPS_DIR}/_deps/mumps-src/include")
+     endif()
+     set(_ladruno_have_smumps FALSE)
+     if(NOT LADRUNO_MUMPS_SINGLE STREQUAL "OFF" AND EXISTS "${_ladruno_smumps_lib}"
+        AND EXISTS "${_ladruno_smumps_inc}/smumps_c.h")
+       set(_ladruno_have_smumps TRUE)
+     endif()
+     if(LADRUNO_MUMPS_SINGLE STREQUAL "ON" AND NOT _ladruno_have_smumps)
+       message(FATAL_ERROR "LADRUNO_MUMPS_SINGLE=ON but ${_ladruno_smumps_lib} or "
+                           "${_ladruno_smumps_inc}/smumps_c.h is missing (build MUMPS with BUILD_SINGLE=ON)")
+     endif()
+     if(_ladruno_have_smumps)
+       list(PREPEND MUMPS_LIBRARIES "${_ladruno_smumps_lib}")
+       list(APPEND MUMPS_FLAG _LADRUNO_SMUMPS)
+       message(STATUS "Ladruno WP-194: single-precision MUMPS found -- system Mumps -precision single compiled in")
+     else()
+       message(STATUS "Ladruno WP-194: no single-precision MUMPS -- system Mumps -precision single will be refused")
      endif()
 
   endif()
@@ -1078,6 +1113,7 @@ set(OPS_MPI_PER_TARGET_SOURCES
     ${OPS_SRC_DIR}/analysis/handler/LadrunoContactAbort.cpp
     ${OPS_SRC_DIR}/analysis/handler/LadrunoAutoPenaltyReduce.cpp
     ${OPS_SRC_DIR}/utility/LadrunoParallelBuild.cpp   # Ladruno WP-107 red-team B2 (MPI fence)
+    ${OPS_SRC_DIR}/analysis/algorithm/equiSolnAlgo/LadrunoFactorReuseMPI.cpp  # Ladruno WP-188 (reuse decisions agreed across ranks)
 )
 
 target_compile_definitions(OPS_InterpTcl PUBLIC _TCL85)
@@ -1366,6 +1402,7 @@ if(MPI_FOUND)
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsSolver.cpp
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSOE.cpp
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSolver.cpp
+      ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/LadrunoMumpsMixed.cpp   # Ladruno WP-194
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/sparseGEN/DistributedSuperLU.cpp
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/sparseGEN/DistributedSparseGenColLinSOE.cpp
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/sparseGEN/DistributedSparseGenRowLinSOE.cpp
@@ -1438,6 +1475,7 @@ if(MPI_FOUND)
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsSolver.cpp
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSOE.cpp
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSolver.cpp
+      ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/LadrunoMumpsMixed.cpp   # Ladruno WP-194
       # Ladruno ADR43 P3c-MPI: distributed FEAST inner solve (self-registers
       # the LadrunoFeastInnerSolve factory; _PARALLEL_INTERPRETERS targets only)
       ${OPS_SRC_DIR}/system_of_eqn/eigenSOE/LadrunoDistBlockZKernel.cpp
@@ -1553,6 +1591,7 @@ add_library(OpenSeesPyMP SHARED EXCLUDE_FROM_ALL
   ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsSolver.cpp
   ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSOE.cpp
   ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSolver.cpp
+  ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/LadrunoMumpsMixed.cpp   # Ladruno WP-194
   # Ladruno ADR43 P3c-MPI: distributed FEAST inner solve (self-registers the
   # LadrunoFeastInnerSolve factory; _PARALLEL_INTERPRETERS targets only)
   ${OPS_SRC_DIR}/system_of_eqn/eigenSOE/LadrunoDistBlockZKernel.cpp

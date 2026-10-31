@@ -50,6 +50,7 @@
 #include <ElementResponse.h>
 #include <ElementalLoad.h>
 #include <DummyStream.h>
+#include <LadrunoResponseTokens.h> // Ladruno WP-200
 
 #include <elementAPI.h>
 
@@ -89,6 +90,10 @@ void* OPS_SFI_MVLEM_3D(void)
 	}
 
 	int m = iData[5];
+	if (m <= 0) {
+		opserr << "WARNING invalid m = " << m << " for element SFI_MVLEM_3D " << iData[0] << endln;
+		return 0;
+	}
 	const char* str = 0;
 
 	double* theThickness = new double[m];
@@ -103,6 +108,13 @@ void* OPS_SFI_MVLEM_3D(void)
 		theMaterials[i] = 0;
 	}
 
+	auto cleanup = [&]() {
+		delete[] theThickness;
+		delete[] theWidth;
+		delete[] matTags;
+		delete[] theMaterials;
+	};
+
 	numArgs = OPS_GetNumRemainingInputArgs();
 
 	double Eave = 0.0;
@@ -113,6 +125,7 @@ void* OPS_SFI_MVLEM_3D(void)
 			numData = m;
 			if (OPS_GetDoubleInput(&numData, theThickness) != 0) {
 				opserr << "Invalid thick parameter for SFI_MVLEM   " << iData[0] << endln;
+				cleanup();
 				return 0;
 			}
 		}
@@ -120,6 +133,7 @@ void* OPS_SFI_MVLEM_3D(void)
 			numData = m;
 			if (OPS_GetDoubleInput(&numData, theWidth) != 0) {
 				opserr << "Invalid width value for SFI_MVLEM  " << iData[0] << endln;
+				cleanup();
 				return 0;
 			}
 		}
@@ -127,6 +141,7 @@ void* OPS_SFI_MVLEM_3D(void)
 			numData = m;
 			if (OPS_GetIntInput(&numData, matTags) != 0) {
 				opserr << "Invalid mat tags for SFI_MVLEM  " << iData[0] << endln;
+				cleanup();
 				return 0;
 			}
 			for (int i = 0; i < m; i++) {
@@ -134,6 +149,7 @@ void* OPS_SFI_MVLEM_3D(void)
 				theMaterials[i] = OPS_getNDMaterial(matTags[i]);
 				if (theMaterials[i] == 0) {
 					opserr << "Invalid material tag " << matTags[i] << "  for SFI_MVLEM  " << iData[0] << endln;
+					cleanup();
 					return 0;
 				}
 			}
@@ -144,6 +160,7 @@ void* OPS_SFI_MVLEM_3D(void)
 			numData = 1;
 			if (OPS_GetDoubleInput(&numData, &dData[0]) != 0) {
 				opserr << "Invalid CoR parameter for MVLEM   " << iData[0] << endln;
+				cleanup();
 				return 0;
 			}
 		}
@@ -151,6 +168,7 @@ void* OPS_SFI_MVLEM_3D(void)
 			numData = 1;
 			if (OPS_GetDoubleInput(&numData, &dData[1]) != 0) {
 				opserr << "Invalid ThickMod parameter for MVLEM   " << iData[0] << endln;
+				cleanup();
 				return 0;
 			}
 		}
@@ -158,6 +176,7 @@ void* OPS_SFI_MVLEM_3D(void)
 			numData = 1;
 			if (OPS_GetDoubleInput(&numData, &dData[2]) != 0) {
 				opserr << "Invalid Poisson parameter for MVLEM   " << iData[0] << endln;
+				cleanup();
 				return 0;
 			}
 		}
@@ -165,6 +184,7 @@ void* OPS_SFI_MVLEM_3D(void)
 			numData = 1;
 			if (OPS_GetDoubleInput(&numData, &dData[3]) != 0) {
 				opserr << "Invalid Dens parameter for MVLEM   " << iData[0] << endln;
+				cleanup();
 				return 0;
 			}
 		}
@@ -172,11 +192,31 @@ void* OPS_SFI_MVLEM_3D(void)
 			numData = 1;
 			if (OPS_GetDoubleInput(&numData, &Eave) != 0) {
 				opserr << "Invalid Eave parameter for MVLEM   " << iData[0] << endln;
+				cleanup();
 				return 0;
 			}
-		}		
+		}
+		else {
+			// Ladruno WP-200: fail closed on unknown option
+			opserr << "WARNING unknown option " << str << " for element SFI_MVLEM_3D " << iData[0] << endln;
+			cleanup();
+			return 0;
+		}
 		numArgs = OPS_GetNumRemainingInputArgs();
 
+	}
+
+	for (int i = 0; i < m; i++) {
+		if (theThickness[i] <= 0.0 || theWidth[i] <= 0.0) {
+			opserr << "WARNING invalid thickness or width for element SFI_MVLEM_3D " << iData[0] << endln;
+			cleanup();
+			return 0;
+		}
+		if (theMaterials[i] == 0) {
+			opserr << "WARNING missing materials for element SFI_MVLEM_3D " << iData[0] << endln;
+			cleanup();
+			return 0;
+		}
 	}
 
 	theElement = new SFI_MVLEM_3D(iData[0], dData[3],
@@ -187,15 +227,7 @@ void* OPS_SFI_MVLEM_3D(void)
 				      iData[5], dData[0], dData[2], dData[1], Eave);
 
 	// Cleanup dynamic memory
-	if (theThickness != 0)
-		delete[] theThickness;
-	if (theWidth != 0)
-		delete[] theWidth;
-	if (matTags != 0)
-		delete[] matTags;
-
-	if (theMaterials != 0)
-		delete[] theMaterials;
+	cleanup();
 
 	return theElement;
 }
@@ -620,6 +652,7 @@ void SFI_MVLEM_3D::setDomain(Domain *theDomain)
 
 	// Element height
 	h = (h1 + h2) / 2.0;
+	ops_TheActiveElement = this; // Ladruno WP-200
 
 	// Calculate average wall thickness
 	for (int i = 0; i < m; i++) {
@@ -785,7 +818,17 @@ void SFI_MVLEM_3D::setDomain(Domain *theDomain)
 	  Response *theResponse = theMaterial[i]->setResponse(argv, 1, theDummyStream);
 
 	  //if (theResponses[0] == 0) {
-		if (theResponse == 0) {		  
+		if (theResponse == 0) {
+			// Ladruno WP-200: fallback to uniaxial-equivalent modulus Eeq from D0 for non-FSAM NDMaterials
+			const Matrix &D0 = theMaterial[i]->getInitialTangent();
+			if (D0.noRows() > 1) {
+				double Eeq = D0(1, 1) - (D0(0, 0) > 0.0 ? D0(1, 0) * D0(0, 1) / D0(0, 0) : 0.0);
+				if (Eeq <= 0.0) Eeq = D0(1, 1);
+				if (Eeq > 0.0) {
+					Eave_FSAM += AcY[i] * Eeq / A;
+					continue;
+				}
+			}
 			opserr << " SFI_MVLEM_3D::SFI_MVLEM_3D - failed to get input parameters for FSAM material with tag: " << this->getTag() << endln;
 			exit(-1);
 		}
@@ -892,6 +935,7 @@ int SFI_MVLEM_3D::revertToStart()
 // Update state
 int SFI_MVLEM_3D::update()
 {
+	ops_TheActiveElement = this; // Ladruno WP-200
 	// Get the current strain given trial displacements at nodes 
 	//SFI_MVLEM_3DStrain = this->computeCurrentStrain();
 	this->computeCurrentStrain();
@@ -2887,6 +2931,8 @@ void SFI_MVLEM_3D::Print(OPS_Stream &s, int flag)
 // Set element responses
 Response *SFI_MVLEM_3D::setResponse(const char **argv, int argc, OPS_Stream &s)
 {
+	if (argc < 1)
+		return 0;
 
 	Response *theResponse = 0;
 
@@ -2898,8 +2944,10 @@ Response *SFI_MVLEM_3D::setResponse(const char **argv, int argc, OPS_Stream &s)
 	s.attr("node3", externalNodes[3]);
 	s.attr("node4", externalNodes[2]);
 
-	// Nodal forces in global cs
-	if (strcmp(argv[0], "force") == 0 || strcmp(argv[0], "forces") == 0 ||
+	// Nodal forces in global cs (Ladruno WP-200)
+	if (LadrunoResp::isGlobalForce(argv[0]) ||
+		strcmp(argv[0], "force") == 0 || strcmp(argv[0], "forces") == 0 ||
+		strcmp(argv[0], "forceG") == 0 || strcmp(argv[0], "forcesG") == 0 ||
 		strcmp(argv[0], "globalForce") == 0 || strcmp(argv[0], "globalForces") == 0) {
 
 		s.tag("ResponseType", "Fx_i");
@@ -2930,8 +2978,9 @@ Response *SFI_MVLEM_3D::setResponse(const char **argv, int argc, OPS_Stream &s)
 		theResponse = new ElementResponse(this, 1, Vector(24));
 
 	}
-	// Nodal forces in local cs
-	else if (strcmp(argv[0], "forceL") == 0 || strcmp(argv[0], "forcesL") == 0 ||
+	// Nodal forces in local cs (Ladruno WP-200)
+	else if (LadrunoResp::isLocalForce(argv[0]) ||
+		strcmp(argv[0], "forceL") == 0 || strcmp(argv[0], "forcesL") == 0 ||
 		strcmp(argv[0], "localForce") == 0 || strcmp(argv[0], "localForces") == 0) {
 
 		s.tag("ResponseType", "Fx_i");
@@ -2980,6 +3029,16 @@ Response *SFI_MVLEM_3D::setResponse(const char **argv, int argc, OPS_Stream &s)
 		theResponse = new ElementResponse(this, 4, 0.0);
 	}
 
+	// Integration weights (fiber widths)
+	else if (strcmp(argv[0], "integrationWeights") == 0) {
+		theResponse = new ElementResponse(this, 5, Vector(m));
+	}
+
+	// Local axes
+	else if (LadrunoResp::isLocalAxes(argv[0])) {
+		theResponse = new ElementResponse(this, 6, Vector(9));
+	}
+
 	// Material output
 	else if (strcmp(argv[0], "RCpanel") == 0 || strcmp(argv[0], "RCPanel") == 0
 		|| strcmp(argv[0], "RC_panel") == 0 || strcmp(argv[0], "RC_Panel") == 0
@@ -2987,8 +3046,9 @@ Response *SFI_MVLEM_3D::setResponse(const char **argv, int argc, OPS_Stream &s)
 	{
 
 		// Check if correct # of arguments passed
-		if (argc != 3) {
+		if (argc < 3) {
 			opserr << "WARNING: Number of recorder input for RC Panel is: " << argc - 1 << "; should be 2: panTag (one panel only: 1 to m) and $Response_Type.\n";
+			s.endTag();
 			return 0;
 		}
 
@@ -3000,7 +3060,8 @@ Response *SFI_MVLEM_3D::setResponse(const char **argv, int argc, OPS_Stream &s)
 			s.attr("eta", x[matNum - 1] / Lw * 2.0);
 			s.attr("weight", b[matNum - 1] / Lw * 2.0);
 
-			theResponse = theMaterial[matNum - 1]->setResponse(&argv[argc - 1], argc - 2, s);
+			theResponse = theMaterial[matNum - 1]->setResponse(&argv[2], argc - 2, s);
+			s.endTag();
 		}
 
 	}
@@ -3029,7 +3090,7 @@ double SFI_MVLEM_3D::getCurvature(void)
 // Get global forces at 24 DOFs (top and bottom node)
 Vector SFI_MVLEM_3D::getResistingForce_24DOF(void)
 {
-
+	this->getResistingForce();
 	for (int i = 0; i < 24; i++) {
 		P_24DOF(i) = SFI_MVLEM_3DR(i);
 	}
@@ -3055,17 +3116,39 @@ int SFI_MVLEM_3D::getResponse(int responseID, Information &eleInfo)
 	case 4:  // Curvature
 		return eleInfo.setDouble(this->getCurvature());
 
+	case 5: { // Integration weights (fiber widths)
+		Vector w(m);
+		for (int i = 0; i < m; i++)
+			w(i) = b[i];
+		return eleInfo.setVector(w);
+	}
+
+	case 6: { // Local axes (9-component flat vector: vx, vy, vz rows of Tt)
+		Vector axes(9);
+		for (int r = 0; r < 3; r++)
+			for (int c = 0; c < 3; c++)
+				axes(3 * r + c) = Tt(r, c);
+		return eleInfo.setVector(axes);
+	}
+
 	default:
 
-		return 0;
+		return -1;
 
 	}
 
 }
 
+double SFI_MVLEM_3D::getCharacteristicLength(void)
+{
+	// Ladruno WP-200: macro-fiber strain is normalized over wall element height h
+	return (h > 0.0) ? h : Element::getCharacteristicLength();
+}
+
 // Return element local forces 
 Vector SFI_MVLEM_3D::getResistingForce_24DOF_local(void)
 {
+	this->getResistingForce();
 	for (int i = 0; i < 24; i++) {
 		P_24DOF_local(i) = SFI_MVLEM_3DRlocal(i);
 	}

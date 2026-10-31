@@ -105,8 +105,8 @@ private:
     double R[3][3];	 // rotation matrix
     double L;        // undeformed element length
 
-    static Matrix Tlg;  // matrix that transforms from global to local coordinates
-    static Matrix kg;   // global stiffness matrix
+    static thread_local Matrix Tlg;  // matrix that transforms from global to local coordinates   // Ladruno WP-192
+    static thread_local Matrix kg;   // global stiffness matrix   // Ladruno WP-192
 
     double *nodeIInitialDisp, *nodeJInitialDisp;
     bool initialDispChecked;

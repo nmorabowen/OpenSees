@@ -48,6 +48,7 @@
 
 // AddingSensitivity:BEGIN //////////////////////////
 #include <Domain.h>
+#include <RelativeMassDamping.h>  // Ladruno (relativeMassDamping)
 #include <Element.h>
 #include <ElementIter.h>
 #include <SP_Constraint.h>
@@ -519,6 +520,9 @@ Node::~Node()
 
     if (unbalLoadWithInertia != 0)
       delete unbalLoadWithInertia;
+
+    if (massDampingRelVel != 0)       // Ladruno (relativeMassDamping)
+      delete massDampingRelVel;
 
     if (theEigenvectors != 0)
       delete theEigenvectors;
@@ -1088,7 +1092,10 @@ Node::getUnbalancedLoadIncInertia(void)
 
       if (alphaM != 0.0) {
 	const Vector &theVel = this->getTrialVel(); // in case vel not created
-	unbalLoadWithInertia->addMatrixVector(1.0, *mass, theVel, -alphaM);
+	if (massDampingRef == 0)
+	  unbalLoadWithInertia->addMatrixVector(1.0, *mass, theVel, -alphaM);
+	else  // Ladruno (relativeMassDamping): alphaM*M*(v - v_ref(t))
+	  unbalLoadWithInertia->addMatrixVector(1.0, *mass, this->getMassDampingRelativeVel(theVel), -alphaM);
       }
     } 
 
@@ -1229,6 +1236,28 @@ int
 Node::setRayleighDampingFactor(double alpham) {
   alphaM = alpham;
   return 0;
+}
+
+// Ladruno (relativeMassDamping)
+int
+Node::setMassDampingReference(RelativeMassDamping *theRef) {
+  massDampingRef = theRef;
+  return 0;
+}
+
+// Ladruno (relativeMassDamping): v - v_ref(t), t = current domain time.
+// Only called when massDampingRef != 0.
+const Vector &
+Node::getMassDampingRelativeVel(const Vector &v) {
+  if (massDampingRelVel == 0)
+    massDampingRelVel = new Vector(numberDOF);
+  *massDampingRelVel = v;
+  if (massDampingRef != 0) {
+    Domain *theDomain = this->getDomain();
+    double t = (theDomain != 0) ? theDomain->getCurrentTime() : 0.0;
+    massDampingRelVel->addVector(1.0, massDampingRef->getVelocity(t, numberDOF), -1.0);
+  }
+  return *massDampingRelVel;
 }
 
 
@@ -2261,7 +2290,10 @@ Node::resetReactionForce(int flag){
     if (mass != 0 && alphaM != 0) {
       if (alphaM != 0.0) {
 	const Vector &theVel = this->getTrialVel(); // in case vel not created
-	reaction->addMatrixVector(1.0, *mass, theVel, alphaM);
+	if (massDampingRef == 0)
+	  reaction->addMatrixVector(1.0, *mass, theVel, alphaM);
+	else  // Ladruno (relativeMassDamping)
+	  reaction->addMatrixVector(1.0, *mass, this->getMassDampingRelativeVel(theVel), alphaM);
       }
     }
   }
@@ -2324,7 +2356,10 @@ Node::getResponse(NodeResponseType responseType)
     }
     if (alphaM != 0.0 && mass != 0) {
       const Vector &theVel = this->getTrialVel(); // in case vel not created
-      unbalLoadWithInertia->addMatrixVector(0.0, *mass, theVel, -alphaM);
+      if (massDampingRef == 0)
+        unbalLoadWithInertia->addMatrixVector(0.0, *mass, theVel, -alphaM);
+      else  // Ladruno (relativeMassDamping)
+        unbalLoadWithInertia->addMatrixVector(0.0, *mass, this->getMassDampingRelativeVel(theVel), -alphaM);
     } else
       unbalLoadWithInertia->Zero();
 

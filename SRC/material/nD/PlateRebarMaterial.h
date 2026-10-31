@@ -53,6 +53,9 @@ class PlateRebarMaterial: public NDMaterial{
 
     //make a clone of this material
     NDMaterial *getCopy( ) ;
+    // Ladruno WP-192: threaded element loops opt-in (delegates to the wrapped uniaxial material).
+    bool ladrunoThreadSafeUpdate(void) const { return theMat != 0 && theMat->ladrunoThreadSafeUpdate(); }
+    bool ladrunoThreadSafeForm(void) const { return theMat != 0 && theMat->ladrunoThreadSafeForm(); }
     NDMaterial *getCopy( const char *type ) ;
 
     //send back order of strain in vector form
@@ -105,8 +108,8 @@ private :
     double angle, c, s;
 
     Vector strain ;
-    static Vector stress ;
-    static Matrix tangent ;
+    static thread_local Vector stress ;   // Ladruno WP-192
+    static thread_local Matrix tangent ;   // Ladruno WP-192
 
 } ;
 

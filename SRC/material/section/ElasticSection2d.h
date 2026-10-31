@@ -56,6 +56,8 @@ class ElasticSection2d: public SectionForceDeformation
   const Matrix &getInitialFlexibility(void);
   
   SectionForceDeformation *getCopy(void);
+  bool ladrunoThreadSafeUpdate(void) const { return true; } // Ladruno
+  bool ladrunoThreadSafeForm(void) const   { return true; } // Ladruno
   const ID &getType(void);
   int getOrder(void) const;
   
@@ -83,8 +85,8 @@ class ElasticSection2d: public SectionForceDeformation
   
   Vector e;			// section trial deformations
   
-  static Vector s;
-  static Matrix ks;
+  static thread_local Vector s;   // Ladruno
+  static thread_local Matrix ks;  // Ladruno
   static ID code;
   
   int parameterID;

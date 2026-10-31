@@ -164,6 +164,8 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • StagedStrain — stress-free staged activation (small-strain)\n"
 "        • Lemaitre ductile damage (-damage lemaitre, +lch, +IMPL-EX)\n"
 "        • LadrunoIMKBeam — concentrated-plasticity IMK beam hinges\n"
+"        • LadrunoDispBeamColumn — regularized disp beam + cohesive hinges\n"
+"        • LadrunoForceBeamColumn — regularized force beam + cohesive hinges\n"
 "        • LadrunoRebarBuckling — rebar buckling wrapper (cyclic)\n"
 "        • LadrunoRCConcrete — RC plastic-damage + MCFT softening (shell)\n"
 "        • LadrunoRCFiniteStrain — finite-strain (Hencky) RC plastic-damage\n"
@@ -198,6 +200,10 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • LadrunoModalResponse — exact PWL modal-superposition transient\n"
 "        • Modal combination — SRSS/CQC/ABS/TenPercent response spectrum\n"
 "        • Modal frequency domain — FRF sweep, steady-state, random PSD\n"
+"        • residualModes — missing-mass static-correction pseudo-modes\n"
+"        • ritzVectors — load-dependent Ritz vectors as the mode set\n"
+"        • modalProperties -print tags residual / Ritz modes (R / Z)\n"
+"        • responseSpectrumPerMode — per-mode RSA reactions and resultants in one call\n"
 "        • LadrunoUP — Biot u-p saturated-porous element family\n"
 "        • LadrunoPorousOverlay — staggered u-p overlay pattern\n"
 "        • system Pardiso — threaded MKL sparse-direct (reuse, -krylov, -stats)\n"
@@ -217,6 +223,11 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • LadrunoSANISAND — SAS-ME -sasHFloor / -sasReseatHyst / -sasSoftCap (WP-151 R1)\n"
 "        • LadrunoSANISAND — SAS-ME -sasTensionCutoff (separation at p' ~ 0, WP-152)\n"
 "        • system Pardiso — -deterministic / -cbwr (MKL CNR, reproducible)\n"
+"        • relativeMassDamping: Rayleigh mass term relative to a v_ref(t)\n"
+"        • LadrunoMembrane — polygonal tributary & FEA load-transfer membrane\n"
+"        • LadrunoMembrane — exact all-node diaphragm, -f11/-f22/-f12, membrane forces (WP-204)\n"
+"        • LadrunoCPML — 2D/3D CFS-PML absorber (9 shapes, box/plane, Biot -up)\n"
+"        • LadrunoHS/HSSmall — Hardening Soil + HSsmall (mc/mn Lode, WP-210)\n"
 "\n";
     // FEATURES-END
 

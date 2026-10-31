@@ -31,7 +31,7 @@
 
 #include <LadrunoConcrete3D.h>
 #include <LadrunoConcrete3DKernel.h>   // the header-only OpenSees-free CDPM2 kernel
-#include <LadrunoMaterialStatus.h>     // Ladruno (WP concrete3d-hang-diagnosis, ADR-86b/WP-99): LADRUNO_MATERIAL_REFUSED
+#include <LadrunoMaterialStatus.h>     // LADRUNO_MATERIAL_REFUSED: a failed return map cuts the step (apeGmsh #2617; WP-99 commit latch)
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <Information.h>
@@ -362,7 +362,7 @@ LadrunoConcrete3D::LadrunoConcrete3D()
     kp_t(0.0), etmax_t(0.0), kdt1_t(0.0), kdt2_t(0.0), kdc_t(0.0), kdc1_t(0.0), kdc2_t(0.0),
     sigtmax_t(0.0), sigcmax_t(0.0),
     wt_t(0.0), wc_t(0.0), dwt_t(0.0), dwc_t(0.0), dtn_t(0.0),
-    omegaT(0.0), omegaC(0.0), lastStatus(0),
+    omegaT(0.0), omegaC(0.0), lastStatus(0), trialRefused(false),
     stressOut(6), strainOut(6), tangentOut(6, 6)
 {
   this->setupDim();
@@ -392,7 +392,7 @@ LadrunoConcrete3D::LadrunoConcrete3D(int tag, double E_, double nu_, double fc_,
     kp_t(0.0), etmax_t(0.0), kdt1_t(0.0), kdt2_t(0.0), kdc_t(0.0), kdc1_t(0.0), kdc2_t(0.0),
     sigtmax_t(0.0), sigcmax_t(0.0),
     wt_t(0.0), wc_t(0.0), dwt_t(0.0), dwc_t(0.0), dtn_t(0.0),
-    omegaT(0.0), omegaC(0.0), lastStatus(0),
+    omegaT(0.0), omegaC(0.0), lastStatus(0), trialRefused(false),
     stressOut(6), strainOut(6), tangentOut(6, 6)
 {
   this->setupDim();
@@ -445,7 +445,7 @@ void LadrunoConcrete3D::condenseTangent(void)
 // ===========================================================================
 //  parameter pack + the kernel call
 // ===========================================================================
-void LadrunoConcrete3D::integrate(bool doTangent)
+int LadrunoConcrete3D::integrate(bool doTangent)
 {
   Params p;
   p.E = E; p.nu = nu; p.rho = rho;
@@ -534,6 +534,21 @@ void LadrunoConcrete3D::integrate(bool doTangent)
       opserr << "WARNING LadrunoConcrete3D: further return-map warnings suppressed (use -verbose, or "
              << "getResponse \"returnFailures\" / \"substeps\" per material point)\n";
   }
+  return lastStatus;
+}
+
+// apeGmsh #2617 (#2602 route 2): the code setTrialStrain hands its element. A failed integrate()
+// for the returned state (the one call on the 3D / plane-strain / confined paths; the LAST pass of the
+// plane-stress loop, rule B below) means that state is the off-surface elastic predictor, not an
+// integrated increment, so the step must be cut. Before this, setTrialStrain always returned 0: the
+// residual jumped wherever a Gauss point flipped between a converged return and the trial stress, and
+// the #2602 corbel's softening peak moved by +-15% with the BLAS rounding. The kernel's +2 is not
+// passed through, because DisplacementControl and LoadControl refuse only `< 0` and LadrunoBrick only
+// the exact sentinel (LadrunoMaterialStatus.h); a positive code is swallowed. integrate() writes only
+// the trial (_t) buffers, so the committed state is untouched and revertToLastCommit restarts clean.
+static inline int concrete3DTrialCode(bool failed)
+{
+  return failed ? LADRUNO_MATERIAL_REFUSED : 0;
 }
 
 // ===========================================================================
@@ -569,8 +584,8 @@ int LadrunoConcrete3D::setTrialStrain(const Vector& e)
       if (full >= 3) val *= 0.5;        // engineering -> tensor shear
       strain6[full] = val;
     }
-    this->integrate(true);
-    return (lastStatus != 0) ? LADRUNO_MATERIAL_REFUSED : 0;
+    trialRefused = (this->integrate(true) != 0);
+    return concrete3DTrialCode(trialRefused);
   }
 
   double eps22 = strain6[2];
@@ -585,37 +600,47 @@ int LadrunoConcrete3D::setTrialStrain(const Vector& e)
   }
 
   if (!condense) {
-    this->integrate(true);
-    return (lastStatus != 0) ? LADRUNO_MATERIAL_REFUSED : 0;
+    trialRefused = (this->integrate(true) != 0);
+    return concrete3DTrialCode(trialRefused);
   }
 
   // enforce sigma_22 = 0: Newton on eps_22 (= strain6[2]); dSNPO sec 9.2.3. The
   // CDPM2 tangent can soften/lose definiteness post-peak (snap-back) — guard the
   // pivot and warn rather than diverge silently.
+  // Refusal rule B (maintainer ruling on apeGmsh #2602, 2026-10-29): the call refuses when the LAST
+  // pass's return map failed, or when the loop exits with sigma_22 unconverged (maxIt, or a near-zero
+  // pivot with sigma_22 != 0). Earlier passes are iterates on eps_22: a failed one does not make a
+  // converged final state bad, so it is not counted (the review of #1038 measured that counting them
+  // refuses ~4x as many plane-stress trials and makes the refusal depend on the warm start).
+  bool lastFailed = false;
+  bool s22Converged = false;
   const int maxIt = 30;
   for (int it = 0; it < maxIt; it++) {
-    this->integrate(true);
+    lastFailed = (this->integrate(true) != 0);
     double d22 = Dtan6[2][2];
     double smag = 0.0;
     for (int i = 0; i < 6; i++) smag += stress6[i]*stress6[i];
     smag = sqrt(smag);
     double tol22 = 1.0e-9 * (smag > 1.0 ? smag : 1.0);
-    if (fabs(stress6[2]) <= tol22) break;
-    if (fabs(d22) < 1.0e-300) break;
+    if (fabs(stress6[2]) <= tol22) { s22Converged = true; break; }
+    if (fabs(d22) < 1.0e-300) {        // a near-zero pivot with sigma_22 != 0: unconverged, refuse
+      opserr << "WARNING LadrunoConcrete3D: sigma_22 condensation pivot vanished (tag "
+             << this->getTag() << ", |s22|=" << fabs(stress6[2]) << ")\n";
+      break;
+    }
     strain6[2] -= stress6[2] / d22;
     if (it == maxIt - 1)
       opserr << "WARNING LadrunoConcrete3D: sigma_22 condensation did not converge (tag "
              << this->getTag() << ", |s22|=" << fabs(stress6[2]) << ")\n";
   }
   this->condenseTangent();
-  // Refuse ONLY when the KERNEL reports a final return-map failure on the last call. A sigma_22
-  // condensation MISS (the 30-iteration Newton above not reaching |s22| <= tol22) keeps the previous
-  // warn-and-accept behaviour: the sigma33-condensation part of B4 (damped Newton, ft-relative
-  // tolerance, and an honest refusal code for a condensation miss) is scoped to WP-141 P1a, agreed
-  // to land after #877. Refusing the miss here (as the first cut of the defect-1 fix did) turned the
-  // condensed solid-shell softening runs (test_ladrunoSolidShell_explicit.py::test_softening_band_sms_
-  // completes, test_ladrunoSolidShell_softening.py::test_g5_*) into hard failures before that work exists.
-  return (lastStatus != 0) ? LADRUNO_MATERIAL_REFUSED : 0;
+  // #877 x #1038 reconciliation (r4 merge): refusal rule B is the base truth -- the call refuses when the
+  // LAST pass's return map failed or sigma_22 is still unconverged. #877 used to warn-and-accept a
+  // sigma_22 miss (deferring it to WP-141 P1a); ladruno's merged #1038/rule B decided otherwise, so the
+  // miss refuses here, and commitState's WP-99 latch refuses exactly the trials this code refused
+  // (trialRefused), so a host that drops the code cannot commit them either.
+  trialRefused = (lastFailed || !s22Converged);
+  return concrete3DTrialCode(trialRefused);
 }
 
 int LadrunoConcrete3D::setTrialStrain(const Vector& v, const Vector&) { return this->setTrialStrain(v); }
@@ -736,10 +761,12 @@ int LadrunoConcrete3D::commitState(void)
   // (the WP-99 measurement on LadrunoSANISAND: without the declaration, two stacked stdBrick under
   // `algorithm Linear` ran 20 more accepted steps with the starved element frozen as a rigid
   // inclusion, analyze() == 0 throughout).
-  if (lastStatus != 0) {
+  // r4 merge: the latch refuses exactly what setTrialStrain refused (trialRefused: rule B, incl. a
+  // sigma_22 miss) plus any failed kernel call left in lastStatus.
+  if (lastStatus != 0 || trialRefused) {
     ladrunoNoteCommitRefusal();
     this->revertToLastCommit();
-    lastStatus = 0;
+    lastStatus = 0; trialRefused = false;
     return LADRUNO_MATERIAL_REFUSED;
   }
 
@@ -772,7 +799,7 @@ int LadrunoConcrete3D::revertToLastCommit(void)
   wt_t = wt_n; wc_t = wc_n; dwt_t = dwt_n; dwc_t = dwc_n; dtn_t = dtn_n;
   for (int i = 0; i < 6; i++) depl_t[i] = depl_n[i];
   omegaT = 0.0; omegaC = 0.0;
-  lastStatus = 0;    // review #877 minor 4: a reverted trial's refusal must not survive into the next commitState()
+  lastStatus = 0; trialRefused = false;    // review #877 minor 4: a reverted trial's refusal must not survive into the next commitState()
   Params p; p.E = E; p.nu = nu;
   Ladruno::Concrete3D::elasticC(p, Dtan6);
   if (condense) this->condenseTangent();
@@ -792,7 +819,7 @@ int LadrunoConcrete3D::revertToStart(void)
   eqc_n = etp_n = eqc_t = etp_t = 0.0;                   // B2 compressive drive history
   wt_n = wc_n = dwt_n = dwc_n = dtn_n = 0.0;
   wt_t = wc_t = dwt_t = dwc_t = dtn_t = 0.0;
-  omegaT = 0.0; omegaC = 0.0; lastStatus = 0;
+  omegaT = 0.0; omegaC = 0.0; lastStatus = 0; trialRefused = false;
   cEps22 = 0.0;
   Params p; p.E = E; p.nu = nu;
   Ladruno::Concrete3D::elasticC(p, Dtan6);

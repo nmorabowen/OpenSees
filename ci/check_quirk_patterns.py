@@ -1159,8 +1159,6 @@ STRING_TEST = re.compile(r"\b(?:strcmp|strcasecmp|_stricmp|stricmp|strncmp)\s*\(
 # silent ladder in a legacy file is not exempt); FEWER is a finding too ("lower the
 # count"), so the list cannot go stale.
 UNKNOWN_TOKEN_LEGACY = {
-    "SRC/element/ladrunoDispBeamColumn/LadrunoDispBeamColumn2d.cpp": 1,   # element ladder, no final else
-    "SRC/element/ladrunoDispBeamColumn/LadrunoDispBeamColumn3d.cpp": 1,   # element ladder, no final else
     "SRC/recorder/EnergyBalanceRecorder.cpp": 1,                          # recorder ladder, no final else
     "SRC/recorder/LadrunoMonitorRecorder.cpp": 2,                         # ladder + "ignored (forward-compatible)"
 }

@@ -49,14 +49,41 @@
 #include <vector>
 
 // initialise the class wide variables
-Matrix ZeroLength::ZeroLengthM2(2,2);
-Matrix ZeroLength::ZeroLengthM4(4,4);
-Matrix ZeroLength::ZeroLengthM6(6,6);
-Matrix ZeroLength::ZeroLengthM12(12,12);
-Vector ZeroLength::ZeroLengthV2(2);
-Vector ZeroLength::ZeroLengthV4(4);
-Vector ZeroLength::ZeroLengthV6(6);
-Vector ZeroLength::ZeroLengthV12(12);
+thread_local Matrix ZeroLength::ZeroLengthM2(2,2);
+thread_local Matrix ZeroLength::ZeroLengthM4(4,4);
+thread_local Matrix ZeroLength::ZeroLengthM6(6,6);
+thread_local Matrix ZeroLength::ZeroLengthM12(12,12);
+thread_local Vector ZeroLength::ZeroLengthV2(2);
+thread_local Vector ZeroLength::ZeroLengthV4(4);
+thread_local Vector ZeroLength::ZeroLengthV6(6);
+thread_local Vector ZeroLength::ZeroLengthV12(12);
+// Ladruno WP-195: the class-wide matrices/vectors above are per THREAD so that
+// the WP-192 element loops may run zeroLength concurrently. theMatrix /
+// theVector (set in setDomain) keep pointing at the constructing thread's
+// copy and are no longer read on the state path: ladrunoM()/ladrunoV()
+// return the CALLING thread's copy of the same size (numDOF selects it,
+// exactly as setDomain pairs them).
+Matrix &
+ZeroLength::ladrunoM(void) const
+{
+  switch (numDOF) {
+  case 2:  return ZeroLengthM2;
+  case 4:  return ZeroLengthM4;
+  case 6:  return ZeroLengthM6;
+  default: return ZeroLengthM12;
+  }
+}
+
+Vector &
+ZeroLength::ladrunoV(void) const
+{
+  switch (numDOF) {
+  case 2:  return ZeroLengthV2;
+  case 4:  return ZeroLengthV4;
+  case 6:  return ZeroLengthV6;
+  default: return ZeroLengthV12;
+  }
+}
 
 void* OPS_ZeroLength()
 {
@@ -929,7 +956,7 @@ ZeroLength::getTangentStiff(void)
     double E;
 
     // stiff is a reference to the matrix holding the stiffness matrix
-    Matrix& stiff = *theMatrix;
+    Matrix& stiff = ladrunoM();
     
     // zero stiffness matrix
     stiff.Zero();
@@ -967,7 +994,7 @@ ZeroLength::getInitialStiff(void)
     double E;
 
     // stiff is a reference to the matrix holding the stiffness matrix
-    Matrix& stiff = *theMatrix;
+    Matrix& stiff = ladrunoM();
     
     // zero stiffness matrix
     stiff.Zero();
@@ -1003,7 +1030,7 @@ const Matrix &
 ZeroLength::getDamp(void)
 {
     // damp is a reference to the matrix holding the damping matrix
-    Matrix& damp = *theMatrix;
+    Matrix& damp = ladrunoM();
 
     // zero damping matrix
     damp.Zero();
@@ -1062,8 +1089,8 @@ const Matrix &
 ZeroLength::getMass(void)
 {
   // no mass 
-  theMatrix->Zero();
-  return (numDOFPassenger > 0) ? scatterPassenger(*theMatrix) : *theMatrix;   // Ladruno (ADR-96)
+  ladrunoM().Zero();
+  return (numDOFPassenger > 0) ? scatterPassenger(ladrunoM()) : ladrunoM();   // Ladruno (ADR-96)
 }
 
 
@@ -1095,7 +1122,7 @@ ZeroLength::getResistingForce()
   double force;
   
   // zero the residual
-  theVector->Zero();
+  ladrunoV().Zero();
   
   // loop over 1d materials
   for (int mat=0; mat<numMaterials1d; mat++) {
@@ -1105,11 +1132,11 @@ ZeroLength::getResistingForce()
     
     // compute residual due to resisting force
     for (int i=0; i<numDOF; i++)
-      (*theVector)(i)  += (*t1d)(mat,i) * force;
+      ladrunoV()(i)  += (*t1d)(mat,i) * force;
     
   } // end loop over 1d materials 
   
-  return (numDOFPassenger > 0) ? scatterPassenger(*theVector) : *theVector;   // Ladruno (ADR-96)
+  return (numDOFPassenger > 0) ? scatterPassenger(ladrunoV()) : ladrunoV();   // Ladruno (ADR-96)
 }
 
 
@@ -1143,18 +1170,18 @@ ZeroLength::getResistingForceIncInertia()
   // this already includes damping forces from materials
   this->getResistingForce();
   
-  if (theDamping) { this->getDampingForce(); *theVector += *fd; }   // Ladruno (ADR-96): core fd, not the scattered public return
+  if (theDamping) { this->getDampingForce(); ladrunoV() += *fd; }   // Ladruno (ADR-96): core fd, not the scattered public return
   
   // add the damping forces from rayleigh damping
   if (useRayleighDamping == 1) {
     if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0) {
       if (numDOFPassenger > 0) {   // Ladruno (ADR-96): Rayleigh forces are element-sized
         Vector &out = *passengerVector;
-        scatterPassenger(*theVector);
+        scatterPassenger(ladrunoV());
         out += this->getRayleighDampingForces();
         return out;
       }
-      *theVector += this->getRayleighDampingForces();
+      ladrunoV() += this->getRayleighDampingForces();
     }  
   } else if (useRayleighDamping == 2) {
       // loop over 1d materials
@@ -1165,11 +1192,11 @@ ZeroLength::getResistingForceIncInertia()
     
 	// compute residual due to resisting force
 	for (int i=0; i<numDOF; i++)
-	  (*theVector)(i)  += (*t1d)(mat,i) * force;
+	  ladrunoV()(i)  += (*t1d)(mat,i) * force;
       }
   }
 
-  return (numDOFPassenger > 0) ? scatterPassenger(*theVector) : *theVector;   // Ladruno (ADR-96)
+  return (numDOFPassenger > 0) ? scatterPassenger(ladrunoV()) : ladrunoV();   // Ladruno (ADR-96)
 }
 
 
@@ -1431,8 +1458,8 @@ ZeroLength::displaySelf(Renderer &theViewer, int displayMode, float fact, const 
        return 0;
 
     // get the end point display coords    
-    static Vector v1(3);
-    static Vector v2(3);
+    static thread_local Vector v1(3);   // Ladruno WP-195
+    static thread_local Vector v2(3);   // Ladruno WP-195
     theNodes[0]->getDisplayCrds(v1, fact, displayMode);
     theNodes[1]->getDisplayCrds(v2, fact, displayMode);
 
@@ -1459,7 +1486,7 @@ ZeroLength::Print(OPS_Stream &s, int flag)
     double force =0.0;
      
     for (int i=0; i<numDOF; i++)
-	(*theVector)(i) = (*t1d)(0,i)*force;
+	ladrunoV()(i) = (*t1d)(0,i)*force;
     
     if (flag == OPS_PRINT_CURRENTSTATE) { // print everything
         s << "Element: " << this->getTag();
@@ -1682,10 +1709,10 @@ ZeroLength::getResponse(int responseID, Information &eleInformation)
         return eleInformation.setVector(this->getResistingForce());
 
     case 15:
-      theVector->Zero();
+      ladrunoV().Zero();
       if (useRayleighDamping == 1) {
         if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
-            *theVector += this->getRayleighDampingForces();      
+            ladrunoV() += this->getRayleighDampingForces();      
       } else if (useRayleighDamping == 2) {
 	for (int mat=0; mat<numMaterials1d; mat++) {
 	  
@@ -1694,10 +1721,10 @@ ZeroLength::getResponse(int responseID, Information &eleInformation)
 	  
 	  // compute residual due to resisting force
 	  for (int i=0; i<numDOF; i++)
-	    (*theVector)(i)  += (*t1d)(mat,i) * force;
+	    ladrunoV()(i)  += (*t1d)(mat,i) * force;
 	}
       }
-      return eleInformation.setVector(*theVector);
+      return eleInformation.setVector(ladrunoV());
 
     case 31:
         return eleInformation.setVector(this->getDampingForce());
@@ -1812,7 +1839,7 @@ ZeroLength::getResistingForceSensitivity(int gradIndex)
   double dfdh;
 
   // zero the residual
-  theVector->Zero();
+  ladrunoV().Zero();
 
   // loop over 1d materials
   for (int mat=0; mat<numMaterials1d; mat++) {
@@ -1822,11 +1849,11 @@ ZeroLength::getResistingForceSensitivity(int gradIndex)
 
     // compute residual due to resisting force
     for (int i=0; i<numDOF; i++)
-      (*theVector)(i)  += (*t1d)(mat,i) * dfdh;
+      ladrunoV()(i)  += (*t1d)(mat,i) * dfdh;
     
   } // end loop over 1d materials 
   
-  return (numDOFPassenger > 0) ? scatterPassenger(*theVector) : *theVector;   // Ladruno (ADR-96)
+  return (numDOFPassenger > 0) ? scatterPassenger(ladrunoV()) : ladrunoV();   // Ladruno (ADR-96)
 }
  
 int
@@ -1855,7 +1882,7 @@ ZeroLength::getTangentStiffSensitivity(int gradIndex)
     double E;
 
     // stiff is a reference to the matrix holding the stiffness matrix
-    Matrix& stiff = *theMatrix;
+    Matrix& stiff = ladrunoM();
     
     // zero stiffness matrix
     stiff.Zero();
@@ -1892,7 +1919,7 @@ ZeroLength::getInitialStiffSensitivity(int gradIndex)
     double E;
 
     // stiff is a reference to the matrix holding the stiffness matrix
-    Matrix& stiff = *theMatrix;
+    Matrix& stiff = ladrunoM();
     
     // zero stiffness matrix
     stiff.Zero();
@@ -2129,4 +2156,36 @@ void
 ZeroLength::onDeactivate()
 {
 
+}
+
+
+// Ladruno WP-195 -- WP-192 per-type opt-in. Audit (update, tangent/residual/
+// damp/mass, commit): the class-wide M*/V* pools are thread_local and read
+// through ladrunoM()/ladrunoV(); t1d, fd, d0/v0 and the passenger buffers are
+// per element; update() builds its difference vectors locally; no opserr or
+// throw on these paths. A Damping object (not audited) refuses, as for
+// Brick/ASDShellQ4. Every uniaxial material (stiffness and, under
+// -doRayleigh 2, the damping copies) must itself opt in.
+bool
+ZeroLength::ladrunoThreadSafeUpdate(void) const
+{
+  if (theDamping != 0 || theMaterial1d == 0 || ladrunoDisabled)
+    return false;
+  int n = (useRayleighDamping == 2) ? 2*numMaterials1d : numMaterials1d;
+  for (int i = 0; i < n; i++)
+    if (theMaterial1d[i] == 0 || !theMaterial1d[i]->ladrunoThreadSafeUpdate())
+      return false;
+  return true;
+}
+
+bool
+ZeroLength::ladrunoThreadSafeForm(void) const
+{
+  if (!this->ladrunoThreadSafeUpdate())
+    return false;
+  int n = (useRayleighDamping == 2) ? 2*numMaterials1d : numMaterials1d;
+  for (int i = 0; i < n; i++)
+    if (!theMaterial1d[i]->ladrunoThreadSafeForm())
+      return false;
+  return true;
 }

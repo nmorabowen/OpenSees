@@ -683,7 +683,18 @@ reach for the single-point forms when their ~8× material-eval saving matters
 (explicit dynamics, or very large ASDConcrete3D+IMPLEX models) and **monitor
 `hourglassEnergy`**.
 
-## KNOWN DEFECT (upstream, reported 2026-08-12, NOT fixed) — the tag-keyed hardening-law cache
+## FIXED DEFECT (upstream, reported 2026-08-12, fixed 2026-10-15 in #990) — the tag-keyed hardening-law cache
+
+**Fixed:** `wipe` now clears the registry. `OPS_clearAllNDMaterial()` calls
+`ladrunoAsdConcrete3DResetStorage()` (and `OPS_clearAllUniaxialMaterial()` calls
+`ladrunoAsdConcrete1DResetStorage()` for the identical store in `ASDConcrete1D`).
+The poisoning also replaced the **elastic modulus**, not only the softening branch
+(apeGmsh #2044: E=3e6 then E=30e6 under one tag gave sigma_zz = -720 for -7200 and
+Newton diverged in an elastic step). `test_notched_bend_mesh_objectivity` passes in a
+full single-process run again, and the nightly deselect + sentinel are gone. Gates:
+`tests/test_asdconcrete3d_wipe_storage.py`, `tests/test_asdconcrete1d_wipe_storage.py`.
+The history below is kept as the record of what the defect was.
+
 
 `ASDConcrete3D` silently reuses the **first** hardening law ever registered under a
 material tag. `HardeningLawStorage` (`ASDConcrete3DMaterial.cpp:1263`) is a
@@ -706,9 +717,9 @@ silently gets the brittle curve. Result:
 run**, on the reachability precondition (`coarse: only reached d=0.034`) rather than on
 either mesh-objectivity assertion.
 
-That failure is **expected and correct** until the material is fixed. Do not repair,
-retag, or xfail the bend test to make the suite green — it is the only thing currently
-detecting this. Reported rather than fixed by deliberate decision (upstream file).
+That failure was **expected and correct** until the material was fixed (it now passes;
+a full-run failure of it today is a regression). Reported rather than fixed by
+deliberate decision (upstream file) until #990.
 
 Evidence, standalone reproducer, the two candidate fixes, and the instrument traps
 found while measuring it: `Ladruno_files/testbed/asdconcrete_tag_cache/`. See also

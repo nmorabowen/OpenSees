@@ -10,7 +10,7 @@ related:
   - "[[ladruno_schema_v1]] (INFO RUN_ID / RUN_ID_SCOPE, MODEL_STAGE EMPTY_PARTITION)"
   - "[[ladruno_apegmsh_contract]] (part-set validation)"
 tags: [recorder, multi-stage, energy, partition, wp-165]
-updated: 2026-10-03
+updated: 2026-10-15
 ---
 
 # WP-165 — Ladruno recorder stage semantics
@@ -54,3 +54,46 @@ updated: 2026-10-03
 
 `tests/test_ladruno_recorder_hardening.py` R2 case updated: the removed region is now an `EMPTY_PARTITION`
 stage (zero-length `NODES/ID`), no error.
+
+## 4. Amendment: user stage barriers and per-stage KIND (apeGmsh #2034, 2026-10-15)
+
+R6 keyed the stage on topology, which also folded the one stamp move that IS a stage
+boundary: apeGmsh emits a user `domainChange` at every program stage, and pairs
+`MODEL_STAGE`s to its stages by position. A same-topology gravity → transient run came
+back as one stage with `KIND=static`. The maintainer ruled B + A on #2034:
+
+- **B, user barrier.** The interpreters' `domainChange` command (`tcl/commands.cpp`,
+  `interpreter/OpenSeesMiscCommands.cpp` `OPS_domainChange`) calls
+  `ladrunoNoteUserStageBarrier()`, a process-local counter in `LadrunoRecorder.cpp`
+  (not in the Domain). A moved count opens a new stage even with an unchanged
+  fingerprint. `Domain::domainChange()` called internally does not move it, so the R6
+  folding of SP patterns, `eleLoad` and contact `-reemit` stands.
+- **A, kind flip.** A static ↔ transient flip of the running analysis opens a new
+  stage whatever the label, so no stage mixes static and transient steps. An
+  unresolved kind (no analysis) is never a flip; a repeated kind never splits.
+- **KIND per stage** from the analysis running at the stage's first record; eigen
+  promotion first, `-kind` an override of the label only. With no analysis yet, a
+  provisional `static` is rewritten by the first step that sees one.
+- **Eigen snapshot.** The classic Tcl `eigen` builds a transient analysis when none
+  exists and keeps it; openseespy deletes it. `commands.cpp` marks it
+  (`ladrunoNoteEigenOnlyAnalysis`) and `analysis` / `analyze` / `wipeAnalysis` clear
+  the mark, so `eigen …; record; … analysis Static` is one static stage in both.
+- **Stage id** = `max(open id + 1, stamp)`: a barrier or flip may arrive without a
+  stamp move, and a later stamp can never collide with an id already used.
+- Schema: `INFO/FORMAT_MINOR_VERSION = 1` (schema §2a).
+
+**Parallel.** openseesmp runs the script on every rank, so barriers and flips agree. An
+OpenSeesSP (PartitionedDomain) worker runs no interpreter and `Subdomain::getDDAnalysis()`
+is protected, so the worker sees neither: it keeps topology-only stages and a provisional
+`KIND`, and warns once when it folds a stamp move (its part file may hold fewer stages
+than part 0). Making the worker agree needs a public analysis-kind accessor on
+`Subdomain` (out of this slice's files).
+
+**Verification.** `ladruno_recorder_tests/stage_kind_check.py <dist_bin> <out> --buildpy
+<python>`, wired into `run_regression.bat`: user barrier static → transient and static →
+static give 2 stages; the flip without `domainChange` gives `[static, transient]`; a
+repeated kind, an SP pattern + `eleLoad`, and a barrier before the first analyze give 1
+stage; transient-only and record-before-analysis give `transient`; `-kind` sets the
+label while flips and barriers still split; an `eigen …; record` snapshot gives the
+same stage list in Tcl and openseespy (asserted). Contact `-reemit` re-sorts fold
+(review probe: 4000 steps, 1 stage).

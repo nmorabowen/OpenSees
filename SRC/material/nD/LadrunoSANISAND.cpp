@@ -1703,7 +1703,7 @@ LadrunoSANISAND::setLadrunoSasOptions(const LadrunoSasOptions &opt, bool verbose
 // WHEN IT IS OBSERVABLE, exactly (blue-team BLOCK-1, measured -- do NOT re-derive
 // this by reading GetElasticModuli alone):
 //
-//   `mElastFlag` is a STATIC on the base, 0 in every constructor and flipped to 1
+//   `mElastFlag` is a STATIC on the base, 0 by default and after `wipe`, flipped to 1
 //   by `updateMaterialStage ... 1`. In the mElastFlag == 0 branch of all three
 //   GetElasticModuli overloads the `sqrt(pn / P_atm)` factor is DROPPED
 //   (ManzariDafalias.cpp :4922 / :4951 / :4980) -- the gravity stage runs a

@@ -41,6 +41,8 @@
 //#include <Timer.h>
 
 class Accelerator;
+class LadrunoFactorReuse;          // Ladruno WP-188
+struct LadrunoFactorReuseOptions;  // Ladruno WP-188
 
 class AcceleratedNewton: public EquiSolnAlgo
 {
@@ -53,6 +55,11 @@ class AcceleratedNewton: public EquiSolnAlgo
   int solveCurrentStep(void);    
   int setConvergenceTest(ConvergenceTest *theNewTest);
   ConvergenceTest *getTest(void);     
+
+  // Ladruno WP-188: factorization reuse across steps (KrylovNewton -reuseFactor m ...).
+  // Off unless called; with it off solveCurrentStep is the vanilla code path.
+  int setFactorReuse(const LadrunoFactorReuseOptions &opts);
+  int domainChanged(void);
   
   int getNumFactorizations(void) {return numFactorizations;}
   int getNumIterations(void) {return numIterations;}
@@ -95,6 +102,9 @@ class AcceleratedNewton: public EquiSolnAlgo
   //double accelTimeCPU;
 
   bool firstTangent;
+
+  LadrunoFactorReuse *theReuse;     // Ladruno WP-188 (null = off)
+  friend class LadrunoFactorReuse;  // Ladruno WP-188: its step driver uses the members above
 };
 
 #endif

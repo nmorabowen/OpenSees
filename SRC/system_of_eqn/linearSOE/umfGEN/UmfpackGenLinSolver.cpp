@@ -277,6 +277,18 @@ UmfpackGenLinSolver::setSize()
     int n = theSOE->X.Size();
     int nnz = (int)theSOE->Ai.size();
     if (n == 0 || nnz == 0) {
+        // Ladruno WP-197 (#981): no symbolic object may outlive the pattern it was
+        // built for; the non-empty path below frees and rebuilds it on every call.
+        if (Symbolic != 0) {
+            if (useLongIndices) {
+#ifdef _UMFPACK_DLONG
+                umfpack_dl_free_symbolic(&Symbolic);
+#endif
+            } else {
+                umfpack_di_free_symbolic(&Symbolic);
+            }
+            Symbolic = 0;
+        }
         Ap64.clear();
         Ai64.clear();
         return 0;

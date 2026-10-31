@@ -543,6 +543,7 @@ FeastEigenSolver::solve(int numModesRequested, bool generalized, bool findSmalle
     if (nq > 0)        fpm[1] = nq;
     fpm[2]  = tolExp;
     if (maxRefine > 0) fpm[3] = maxRefine;
+    fpm[5]  = theSOE->traceStop ? 0 : 1;   // WP-203, see the main solve
     fpm[13] = 2;                              // stochastic estimate only
 
     int mGuess = (n < 40) ? n : 40;           // random-vector count for estimate
@@ -607,6 +608,14 @@ FeastEigenSolver::solve(int numModesRequested, bool generalized, bool findSmalle
     if (nq > 0)        fpm[1] = nq;
     fpm[2] = tolExp;
     if (maxRefine > 0) fpm[3] = maxRefine;
+    // WP-203: stop on the relative RESIDUAL (fpm(6)=1). With feastinit's
+    // trace criterion (fpm(6)=0) this MKL ran EVERY one of the maxRefine
+    // loops on a building model (frame + ASDShellQ4 floors, 38k DOF): 127 s,
+    // although the trace error it prints is 1e-13..1e-15 from loop 2; with
+    // the residual test it stops after 3 loops, 21 s, identical eigenvalues
+    // (YOO SLE port: 406 s at 150k DOF vs 12 s for ARPACK). -traceStop
+    // restores MKL's default; gate B3 still checks the reported residuals.
+    fpm[5] = theSOE->traceStop ? 0 : 1;
 
     double epsout = 0.0;
     int loop = 0;

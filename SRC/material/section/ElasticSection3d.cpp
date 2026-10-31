@@ -35,8 +35,8 @@
 #include <classTags.h>
 #include <elementAPI.h>
 
-Vector ElasticSection3d::s(4);
-Matrix ElasticSection3d::ks(4,4);
+thread_local Vector ElasticSection3d::s(4);    // Ladruno
+thread_local Matrix ElasticSection3d::ks(4,4); // Ladruno
 ID ElasticSection3d::code(4);
 
 void* OPS_ElasticSection3d()
@@ -231,7 +231,7 @@ ElasticSection3d::sendSelf(int commitTag, Channel &theChannel)
 {
     int res = 0;
 
-    static Vector data(7);
+    static thread_local Vector data(7); // Ladruno
 
     int dataTag = this->getDbTag();
     
@@ -258,7 +258,7 @@ ElasticSection3d::recvSelf(int commitTag, Channel &theChannel,
 {
     int res = 0;
     
-	static Vector data(7);
+	static thread_local Vector data(7); // Ladruno
 
     int dataTag = this->getDbTag();
 

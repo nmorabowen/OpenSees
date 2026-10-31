@@ -46,13 +46,13 @@ class ModIMKPeakOriented : public UniaxialMaterial
                        double Ls, double Ld, double La, double Lk, double Cs, double Cd, double Ca, double Ck,
                        double ThetaPpos, double ThetaPneg, double ThetaPCpos, double ThetaPCneg,
                        double ResfacPos, double ResfacNeg, double FracDispPos, double FracDispNeg,
-                       double DPos, double DNeg, double nFactor);		// Updated: Filipe Ribeiro and Andre Barbosa
+                       double DPos, double DNeg, double nFactor, bool useImplex = false);		// Updated: Filipe Ribeiro and Andre Barbosa // Ladruno
 
 	ModIMKPeakOriented(int tag, double Ke0, double AlfanPos, double AlfanNeg, double My_pos, double My_neg,			// Updated: Filipe Ribeiro and Andre Barbosa 
 					   double Ls, double Ld, double La, double Lk, double Cs, double Cd, double Ca, double Ck,
 					   double ThetaPpos, double ThetaPneg, double ThetaPCpos, double ThetaPCneg,
 					   double ResfacPos, double ResfacNeg, double FracDispPos, double FracDispNeg,
-					   double DPos, double DNeg);					   
+					   double DPos, double DNeg, bool useImplex = false); // Ladruno					   
 					   
     ModIMKPeakOriented();
     ~ModIMKPeakOriented();
@@ -82,6 +82,19 @@ class ModIMKPeakOriented : public UniaxialMaterial
     void Print(OPS_Stream &s, int flag =0);
     Response *setResponse (const char **argv, int argc, OPS_Stream &theOutputStream);
     int getResponse (int responseID, Information &matInformation);    
+
+    void setImplex(bool flag) { useImplex_ = flag; } // Ladruno
+    bool isImplex(void) const { return useImplex_; } // Ladruno
+    double getImplexError(void) const {              // Ladruno
+      if (!useImplex_) return 0.0;
+      double d = fP - fP_imp_;
+      if (d < 0.0) d = -d;
+      double m = (fP_imp_ < 0.0) ? -fP_imp_ : fP_imp_;
+      return d / (m + 1.0e-12);
+    }
+
+    bool ladrunoThreadSafeUpdate(void) const { return true; } // Ladruno
+    bool ladrunoThreadSafeForm(void) const   { return true; } // Ladruno
 
    
   protected:
@@ -195,6 +208,12 @@ class ModIMKPeakOriented : public UniaxialMaterial
     double AlfaNeg, CAlfaNeg;	// Updated: Filipe Ribeiro and Andre Barbosa
 	double prodBeta, CprodBeta; // Updated: Filipe Ribeiro and Andre Barbosa
 	int commitCalledOnce;		// Updated: Filipe Ribeiro and Andre Barbosa
+
+    bool useImplex_;      // Ladruno: IMPL-EX integration flag
+    double dU_prev_;      // Ladruno: previous committed strain increment
+    double fP_imp_;       // Ladruno: implicit trial stress
+    double Tangent_imp_;  // Ladruno: implicit trial tangent
+    double dtime_n_commit_; // Ladruno: previous committed time step dt_n
 
 };
 

@@ -3,6 +3,8 @@ wp: PR-111
 title: "LadrunoIMKBeam"
 pr: "#111, #113, #116, #131"
 status: "shipped — v1 PR #111; Zone-A battery 6/6 (v1: elastic-degenerate ↔ elasticBeamC…"
+class_tags: ["ELE_TAG_LadrunoIMKBeam=33003", "ELE_TAG_LadrunoIMKBeam2d=33004"]
+banner: "LadrunoIMKBeam — concentrated-plasticity IMK beam hinges"
 section: "table"
 legacy_seq: 76
 ---

@@ -121,6 +121,9 @@ public:
 	int getResponse(int responseID, Information& matInformation);
 	double getEnergy(void);
 
+	bool ladrunoThreadSafeUpdate(void) const { return !params.slip; } // Ladruno
+	bool ladrunoThreadSafeForm(void) const   { return !params.slip; } // Ladruno
+
 private:
 	int homogenize(bool do_implex);
 	const Vector& getBucklingIndicator() const;

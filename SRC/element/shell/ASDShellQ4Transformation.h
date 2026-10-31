@@ -164,9 +164,9 @@ public:
 
     virtual const MatrixType& computeTransformationMatrix(const ASDShellQ4LocalCoordinateSystem& LCS) const
     {
-        static MatrixType R(24, 24);
-        static MatrixType T(24, 24);
-        static MatrixType W(24, 24);
+        static thread_local MatrixType R(24, 24);   // Ladruno WP-192
+        static thread_local MatrixType T(24, 24);   // Ladruno WP-192
+        static thread_local MatrixType W(24, 24);   // Ladruno WP-192
         if (LCS.IsWarped()) {
             LCS.ComputeTotalRotationMatrix(R);
             LCS.ComputeTotalWarpageMatrix(W);
@@ -195,8 +195,8 @@ public:
         VectorType& RHS,
         bool LHSrequired)
     {
-        static MatrixType RT_LHS(24, 24);
-        static VectorType RHScopy(24);
+        static thread_local MatrixType RT_LHS(24, 24);   // Ladruno WP-192
+        static thread_local VectorType RHScopy(24);   // Ladruno WP-192
         const MatrixType& R = computeTransformationMatrix(LCS);
         RHScopy = RHS;
         RHS.addMatrixTransposeVector(0.0, R, RHScopy, 1.0);
@@ -212,7 +212,7 @@ public:
         VectorType& RHS,
         bool LHSrequired)
     {
-        static VectorType dummy;
+        static thread_local VectorType dummy;   // Ladruno WP-192
         transformToGlobal(LCS, dummy, dummy, LHS, RHS, LHSrequired);
     }
 

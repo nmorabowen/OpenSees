@@ -36,6 +36,7 @@
 #include <vector>
 class AnalysisModel;
 class TimeSeries;
+class DomainModalProperties; // Ladruno WP-212
 
 class ResponseSpectrumAnalysis
 {
@@ -61,12 +62,32 @@ public:
 	void setCombination(int rule, const std::vector<double>& xi);
 	int analyzeCombined();
 
-private:
+	// Ladruno WP-207: opt-in incremental mode (-increment). Each mode imposes
+	// trial = committed + sign*u_k, updates the domain and records, but does NOT
+	// commit, so a preloaded (gravity + loadConst) state survives. The trial
+	// state of the last mode is left in place for eleResponse; revertAtEnd
+	// (-revert) returns to the committed state before the call returns.
+	void setIncrement(double sign, bool revertAtEnd);
+
+	// Ladruno WP-212: -requireMass r, in (0, 1]. Below r the mass-shortfall
+	// warning of checkMass() becomes an error. 0 => warn only (default).
+	void setRequiredMassRatio(double ratio);
+
+	// Ladruno WP-216: public so responseSpectrumPerMode applies the same
+	// modalProperties consistency check, the same WP-212 mass guard and the
+	// same spectral ordinate (-scale included) as the per-mode path.
 	int check();
+	double getSa(double T) const;
+	// Ladruno WP-212: report the cumulative effective-mass ratio of the excited
+	// direction once per call; warn below 90%, error with no participating mass
+	// or below -requireMass.
+	int checkMass(const DomainModalProperties& mp) const;
+
+private:
 	int beginMode();
 	int endMode();
 	int solveMode();
-	double getSa(double T) const;
+	double getSaUnscaled(double T) const; // Ladruno WP-202
 
 private:
 	// the model
@@ -85,6 +106,12 @@ private:
 	// and per-mode damping ratios (for CQC).
 	int m_combine = -1;
 	std::vector<double> m_xi;
+	// Ladruno WP-207: incremental mode (false => stock replace-and-commit).
+	bool m_increment = false;
+	double m_sign = 1.0;
+	bool m_revert_at_end = false;
+	// Ladruno WP-212: required cumulative mass ratio (0 => warn only).
+	double m_require_mass = 0.0;
 };
 
 #endif

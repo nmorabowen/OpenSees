@@ -17,6 +17,7 @@ target_sources(OPS_Analysis
       KrylovNewton.cpp 
       PeriodicNewton.cpp 
       AcceleratedNewton.cpp
+      LadrunoFactorReuse.cpp      # Ladruno WP-188
       LineSearch.cpp 
       InitialInterpolatedLineSearch.cpp 
       NewtonHallM.cpp
@@ -35,6 +36,7 @@ target_sources(OPS_Analysis
       KrylovNewton.h 
       PeriodicNewton.h 
       AcceleratedNewton.h
+      LadrunoFactorReuse.h        # Ladruno WP-188
       LineSearch.h 
       InitialInterpolatedLineSearch.h 
       NewtonHallM.h

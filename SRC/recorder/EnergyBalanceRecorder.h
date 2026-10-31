@@ -214,6 +214,16 @@ private:
     bool chModal;                // Ladruno ADR-69 P2: MODAL_WORK -> E_modal
     bool chHourglass;            // Ladruno ADR-69 P2: response probe hit -> E_hg
     bool chMassScale;            // Ladruno ADR-69 P3: SMS registry active -> KE_ms
+    // Ladruno (relativeMassDamping): DW_rel / W_ref advisory split of
+    // DW_nod for nodes carrying a relative-mass-damping reference. Columns present when the
+    // recorder was given -relativeMassSplit, or when a reference exists at
+    // initialize(). Trapezoidal, same first-record rule as the accumulators.
+    bool chRelMass = false;
+    bool forceRelMass = false;
+    double rr_dwRel = 0.0, rr_wRef = 0.0, rr_prevRel = 0.0, rr_prevRef = 0.0;
+  public:
+    void setRelativeMassSplit(bool on) {forceRelMass = on;}
+  private:
     int  numModelCols;           // model-block width (6 legacy or v2 width)
     ebkernel::EnergyAccumulatorV2 model_acc2;
 
@@ -258,6 +268,20 @@ private:
     int cachedNumNodes;
     int maxNumDOF;
     Vector velScratch;
+
+    // ---- Ladruno WP-196: the element sweep ----
+    // Every record() snapshots the live element order, forms each element's
+    // terms (ebkernel::elementEnergyTerms; on the WP-192 threads when allowed)
+    // into its own slot, and reduces the slots in that order -- so the sums are
+    // the serial ones bit for bit at any thread count.
+    void sweepElements(void);
+    int  sweepThreads(int nEle);
+    std::vector<Element *> sweepEles;
+    std::vector<ebkernel::ElementEnergyTerms> sweepTerms;
+    std::vector<Element *> safeFor;   // the element list sweepSafe answers for
+    std::vector<char> sweepSafe;      // ladrunoThreadSafeForm && prepared
+    int  sweepNumSafe;
+    int  sweepAnnounced;              // last thread count announced (0 = none)
 };
 
 #endif

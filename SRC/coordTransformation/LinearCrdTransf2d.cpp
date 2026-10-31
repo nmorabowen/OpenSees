@@ -46,8 +46,8 @@
 #include <LinearCrdTransf2d.h>
 
 // initialize static variables
-Matrix LinearCrdTransf2d::Tlg(6,6);
-Matrix LinearCrdTransf2d::kg(6,6);
+thread_local Matrix LinearCrdTransf2d::Tlg(6,6);   // Ladruno
+thread_local Matrix LinearCrdTransf2d::kg(6,6);   // Ladruno
 
 void* OPS_LinearCrdTransf2d()
 {
@@ -227,7 +227,7 @@ int
 LinearCrdTransf2d::computeElemtLengthAndOrient()
 {
     // element projection
-    static Vector dx(2);
+    static thread_local Vector dx(2);   // Ladruno
     
     const Vector &ndICoords = nodeIPtr->getCrds();
     const Vector &ndJCoords = nodeJPtr->getCrds();
@@ -308,7 +308,7 @@ LinearCrdTransf2d::getBasicTrialDisp(void)
     const Vector &disp1 = nodeIPtr->getTrialDisp();
     const Vector &disp2 = nodeJPtr->getTrialDisp();
     
-    static double ug[6];
+    static thread_local double ug[6];   // Ladruno
     for (int i = 0; i < 3; i++) {
         ug[i]   = disp1(i);
         ug[i+3] = disp2(i);
@@ -324,7 +324,7 @@ LinearCrdTransf2d::getBasicTrialDisp(void)
             ug[j+3] -= nodeJInitialDisp[j];
     }
     
-    static Vector ub(3);
+    static thread_local Vector ub(3);   // Ladruno
     
     double oneOverL = 1.0/L;
     double sl = sinTheta*oneOverL;
@@ -363,13 +363,13 @@ LinearCrdTransf2d::getBasicIncrDisp(void)
     const Vector &disp1 = nodeIPtr->getIncrDisp();
     const Vector &disp2 = nodeJPtr->getIncrDisp();
     
-    static double dug[6];
+    static thread_local double dug[6];   // Ladruno
     for (int i = 0; i < 3; i++) {
         dug[i]   = disp1(i);
         dug[i+3] = disp2(i);
     }
     
-    static Vector dub(3);
+    static thread_local Vector dub(3);   // Ladruno
     
     double oneOverL = 1.0/L;
     double sl = sinTheta*oneOverL;
@@ -408,13 +408,13 @@ LinearCrdTransf2d::getBasicIncrDeltaDisp(void)
     const Vector &disp1 = nodeIPtr->getIncrDeltaDisp();
     const Vector &disp2 = nodeJPtr->getIncrDeltaDisp();
     
-    static double Dug[6];
+    static thread_local double Dug[6];   // Ladruno
     for (int i = 0; i < 3; i++) {
         Dug[i]   = disp1(i);
         Dug[i+3] = disp2(i);
     }
     
-    static Vector Dub(3);
+    static thread_local Vector Dub(3);   // Ladruno
     
     double oneOverL = 1.0/L;
     double sl = sinTheta*oneOverL;
@@ -453,13 +453,13 @@ LinearCrdTransf2d::getBasicTrialVel(void)
 	const Vector &vel1 = nodeIPtr->getTrialVel();
 	const Vector &vel2 = nodeJPtr->getTrialVel();
 	
-	static double vg[6];
+	static thread_local double vg[6];   // Ladruno
 	for (int i = 0; i < 3; i++) {
 		vg[i]   = vel1(i);
 		vg[i+3] = vel2(i);
 	}
 	
-	static Vector vb(3);
+	static thread_local Vector vb(3);   // Ladruno
 	
 	double oneOverL = 1.0/L;
 	double sl = sinTheta*oneOverL;
@@ -498,13 +498,13 @@ LinearCrdTransf2d::getBasicTrialAccel(void)
 	const Vector &accel1 = nodeIPtr->getTrialAccel();
 	const Vector &accel2 = nodeJPtr->getTrialAccel();
 	
-	static double ag[6];
+	static thread_local double ag[6];   // Ladruno
 	for (int i = 0; i < 3; i++) {
 		ag[i]   = accel1(i);
 		ag[i+3] = accel2(i);
 	}
 	
-	static Vector ab(3);
+	static thread_local Vector ab(3);   // Ladruno
 	
 	double oneOverL = 1.0/L;
 	double sl = sinTheta*oneOverL;
@@ -540,7 +540,7 @@ const Vector &
 LinearCrdTransf2d::getGlobalResistingForce(const Vector &pb, const Vector &p0)
 {
     // transform resisting forces from the basic system to local coordinates
-    static double pl[6];
+    static thread_local double pl[6];   // Ladruno
     
     double q0 = pb(0);
     double q1 = pb(1);
@@ -562,7 +562,7 @@ LinearCrdTransf2d::getGlobalResistingForce(const Vector &pb, const Vector &p0)
     pl[4] += p0(2);
     
     // transform resisting forces  from local to global coordinates
-    static Vector pg(6);
+    static thread_local Vector pg(6);   // Ladruno
     
     pg(0) = cosTheta*pl[0] - sinTheta*pl[1];
     pg(1) = sinTheta*pl[0] + cosTheta*pl[1];
@@ -595,7 +595,7 @@ const Vector &
 LinearCrdTransf2d::getGlobalResistingForceShapeSensitivity(const Vector &pb, const Vector &p0)
 {
     // transform resisting forces from the basic system to local coordinates
-    static double pl[6];
+    static thread_local double pl[6];   // Ladruno
     
     double q0 = pb(0);
     double q1 = pb(1);
@@ -617,10 +617,10 @@ LinearCrdTransf2d::getGlobalResistingForceShapeSensitivity(const Vector &pb, con
     //	pl[4] += p0(2);
     
     // transform resisting forces  from local to global coordinates
-    static Vector pg(6);
+    static thread_local Vector pg(6);   // Ladruno
     pg.Zero();
     
-    static ID nodeParameterID(2);
+    static thread_local ID nodeParameterID(2);   // Ladruno
     nodeParameterID(0) = nodeIPtr->getCrdsSensitivity();
     nodeParameterID(1) = nodeJPtr->getCrdsSensitivity();
     
@@ -675,7 +675,7 @@ LinearCrdTransf2d::getGlobalResistingForceShapeSensitivity(const Vector &pb, con
 const Matrix &
 LinearCrdTransf2d::getGlobalStiffMatrix(const Matrix &kb, const Vector &pb)
 {
-    static double tmp [6][6];
+    static thread_local double tmp [6][6];   // Ladruno
     double oneOverL = 1.0/L;
     double kb00, kb01, kb02, kb10, kb11, kb12, kb20, kb21, kb22;
     
@@ -796,7 +796,7 @@ LinearCrdTransf2d::getGlobalStiffMatrix(const Matrix &kb, const Vector &pb)
 const Matrix &
 LinearCrdTransf2d::getInitialGlobalStiffMatrix(const Matrix &kb)
 {
-    static double tmp [6][6];
+    static thread_local double tmp [6][6];   // Ladruno
     double oneOverL = 1.0/L;
     double kb00, kb01, kb02, kb10, kb11, kb12, kb20, kb21, kb22;
     
@@ -951,7 +951,7 @@ LinearCrdTransf2d::sendSelf(int cTag, Channel &theChannel)
 {
     int res = 0;
     
-    static Vector data(12);
+    static thread_local Vector data(12);   // Ladruno
     data(0) = this->getTag();
     data(1) = L;
     if (nodeIOffset != 0) {
@@ -1005,7 +1005,7 @@ LinearCrdTransf2d::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &the
 {
     int res = 0;
     
-    static Vector data(12);
+    static thread_local Vector data(12);   // Ladruno
     
     res += theChannel.recvVector(this->getDbTag(), cTag, data);
     if (res < 0) {
@@ -1084,7 +1084,7 @@ LinearCrdTransf2d::getGlobalMatrixFromLocal(const Matrix &ml)
 const Vector &
 LinearCrdTransf2d::getPointGlobalCoordFromLocal(const Vector &xl)
 {
-    static Vector xg(2);
+    static thread_local Vector xg(2);   // Ladruno
     
     const Vector &nodeICoords = nodeIPtr->getCrds();
     xg(0) = nodeICoords(0);
@@ -1110,7 +1110,7 @@ LinearCrdTransf2d::getPointGlobalDisplFromBasic(double xi, const Vector &uxb)
     const Vector &disp1 = nodeIPtr->getTrialDisp();
     const Vector &disp2 = nodeJPtr->getTrialDisp();
     
-    static Vector ug(6);
+    static thread_local Vector ug(6);   // Ladruno
     for (int i = 0; i < 3; i++)
     {
         ug(i)   = disp1(i);
@@ -1128,7 +1128,7 @@ LinearCrdTransf2d::getPointGlobalDisplFromBasic(double xi, const Vector &uxb)
     }
     
     // transform global end displacements to local coordinates
-    static Vector ul(6);      // total displacements
+    static thread_local Vector ul(6);      // total displacements   // Ladruno
     
     ul(0) =  cosTheta*ug(0) + sinTheta*ug(1);
     ul(1) = -sinTheta*ug(0) + cosTheta*ug(1);
@@ -1154,7 +1154,7 @@ LinearCrdTransf2d::getPointGlobalDisplFromBasic(double xi, const Vector &uxb)
     }
     
     // compute displacements at point xi, in local coordinates
-    static Vector uxl(2),  uxg(2);
+    static thread_local Vector uxl(2),  uxg(2);   // Ladruno
     
     uxl(0) = uxb(0) +        ul(0);
     uxl(1) = uxb(1) + (1-xi)*ul(1) + xi*ul(4);
@@ -1175,7 +1175,7 @@ LinearCrdTransf2d::getPointLocalDisplFromBasic(double xi, const Vector &uxb)
     const Vector &disp1 = nodeIPtr->getTrialDisp();
     const Vector &disp2 = nodeJPtr->getTrialDisp();
     
-    static Vector ug(6);
+    static thread_local Vector ug(6);   // Ladruno
     for (int i = 0; i < 3; i++)
     {
         ug(i)   = disp1(i);
@@ -1193,7 +1193,7 @@ LinearCrdTransf2d::getPointLocalDisplFromBasic(double xi, const Vector &uxb)
     }
     
     // transform global end displacements to local coordinates
-    static Vector ul(6);      // total displacements
+    static thread_local Vector ul(6);      // total displacements   // Ladruno
     
     ul(0) =  cosTheta*ug(0) + sinTheta*ug(1);
     ul(1) = -sinTheta*ug(0) + cosTheta*ug(1);
@@ -1219,7 +1219,7 @@ LinearCrdTransf2d::getPointLocalDisplFromBasic(double xi, const Vector &uxb)
     }
     
     // compute displacements at point xi, in local coordinates
-    static Vector uxl(2);
+    static thread_local Vector uxl(2);   // Ladruno
     
     uxl(0) = uxb(0) +        ul(0);
     uxl(1) = uxb(1) + (1-xi)*ul(1) + xi*ul(4);
@@ -1258,7 +1258,7 @@ LinearCrdTransf2d::getGlobalResistingForceShapeSensitivity(const Vector &pb,
 							   int gradNumber)
 {
 	// transform resisting forces from the basic system to local coordinates
-	static double pl[6];
+	static thread_local double pl[6];   // Ladruno
 
 	double q0 = pb(0);
 	double q1 = pb(1);
@@ -1280,10 +1280,10 @@ LinearCrdTransf2d::getGlobalResistingForceShapeSensitivity(const Vector &pb,
 	pl[4] += p0(2);
 
 	// transform resisting forces  from local to global coordinates
-	static Vector pg(6);
+	static thread_local Vector pg(6);   // Ladruno
 	pg.Zero();
 
-	static ID nodeParameterID(2);
+	static thread_local ID nodeParameterID(2);   // Ladruno
 	nodeParameterID(0) = nodeIPtr->getCrdsSensitivity();
 	nodeParameterID(1) = nodeJPtr->getCrdsSensitivity();
 
@@ -1338,8 +1338,8 @@ LinearCrdTransf2d::getGlobalResistingForceShapeSensitivity(const Vector &pb,
 const Vector &
 LinearCrdTransf2d::getBasicDisplSensitivity(int gradNumber)
 {
-  static Vector U(6);
-  static Vector dUdh(6);
+  static thread_local Vector U(6);   // Ladruno
+  static thread_local Vector dUdh(6);   // Ladruno
 
   const Vector &dispI = nodeIPtr->getTrialDisp();
   const Vector &dispJ = nodeJPtr->getTrialDisp();
@@ -1352,7 +1352,7 @@ LinearCrdTransf2d::getBasicDisplSensitivity(int gradNumber)
     dUdh(i+3) = nodeJPtr->getDispSensitivity((i+1),gradNumber);
   }
 
-  static Vector dvdh(3);
+  static thread_local Vector dvdh(3);   // Ladruno
 
   double dcosThetadh = 0.0;
   double dsinThetadh = 0.0;
@@ -1384,7 +1384,7 @@ LinearCrdTransf2d::getBasicDisplSensitivity(int gradNumber)
     dcosThetadh = -dx*dy/(L*L*L);
   }
 
-  static Vector dudh(6);
+  static thread_local Vector dudh(6);   // Ladruno
   //dudh = A*dUdh + dAdh*U;
   dudh(0) =  cosTheta*dUdh(0) + sinTheta*dUdh(1) + dcosThetadh*U(0) + dsinThetadh*U(1);
   dudh(1) = -sinTheta*dUdh(0) + cosTheta*dUdh(1) - dsinThetadh*U(0) + dcosThetadh*U(1);
@@ -1393,7 +1393,7 @@ LinearCrdTransf2d::getBasicDisplSensitivity(int gradNumber)
   dudh(4) = -sinTheta*dUdh(3) + cosTheta*dUdh(4) - dsinThetadh*U(3) + dcosThetadh*U(4);
   dudh(5) =  dUdh(5);
 
-  static Vector u(6);
+  static thread_local Vector u(6);   // Ladruno
   //u = A*U;
   u(0) =  cosTheta*U(0) + sinTheta*U(1);
   u(1) = -sinTheta*U(0) + cosTheta*U(1);
@@ -1493,7 +1493,7 @@ LinearCrdTransf2d::getBasicTrialDispShapeSensitivity(void)
     const Vector &disp1 = nodeIPtr->getTrialDisp();
     const Vector &disp2 = nodeJPtr->getTrialDisp();
 
-    static double ug[6];
+    static thread_local double ug[6];   // Ladruno
     for (int i = 0; i < 3; i++) {
         ug[i]   = disp1(i);
         ug[i+3] = disp2(i);
@@ -1509,10 +1509,10 @@ LinearCrdTransf2d::getBasicTrialDispShapeSensitivity(void)
             ug[j+3] -= nodeJInitialDisp[j];
     }
 
-    static Vector ub(3);
+    static thread_local Vector ub(3);   // Ladruno
     ub.Zero();
 
-    static ID nodeParameterID(2);
+    static thread_local ID nodeParameterID(2);   // Ladruno
     nodeParameterID(0) = nodeIPtr->getCrdsSensitivity();
     nodeParameterID(1) = nodeJPtr->getCrdsSensitivity();
 
@@ -1577,13 +1577,13 @@ LinearCrdTransf2d::getBasicDisplSensitivity(int gradNumber, int flag)
     // up the nodal displacements we just pick up 
     // the nodal displacement sensitivities. 
     
-    static double ug[6];
+    static thread_local double ug[6];   // Ladruno
     for (int i = 0; i < 3; i++) {
         ug[i]   = nodeIPtr->getDispSensitivity((i+1),gradNumber);
         ug[i+3] = nodeJPtr->getDispSensitivity((i+1),gradNumber);
     }
     
-    static Vector ub(3);
+    static thread_local Vector ub(3);   // Ladruno
     
     double oneOverL = 1.0/L;
     double sl = sinTheta*oneOverL;
