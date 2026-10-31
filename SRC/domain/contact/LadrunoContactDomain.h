@@ -654,8 +654,10 @@ class LadrunoContactDomain
                                     // perpendicular) with no co-declared NTS contact on the
                                     // same surfaces to cover it -- the ownership protocol's
                                     // loud half (How/3 decision 2b.4)
-        WARN_2D_NGP_NOOP            // ADR-85 T3: -ngp accepted-and-ignored on 2D mortar
+        WARN_2D_NGP_NOOP,           // ADR-85 T3: -ngp accepted-and-ignored on 2D mortar
                                     // (2-pt Gauss is exact for straight-segment overlaps)
+        WARN_TIE_EXCLUDED           // Ladruno (r6 backport): 3D mortar -tie pairs dropped by the default
+                                    // proximity guard (the far side of a closed surface)
     };
     bool warnOnce(int contactTag, int topic);
 

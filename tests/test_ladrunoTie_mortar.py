@@ -20,7 +20,11 @@ Mesh — a GENUINELY non-matching solid interface at x=1 (no coincident interfac
   EXPLICIT the tie holds to machine precision on CentralDifferenceLadruno +
            LadrunoProjection (SSPbrick lumped mass).
   REFUSE   uncovered slave node, off-manifold (non-coincident) surface, non-disjoint.
+  CLOSED   a tie around a closed tube follows a rigid rotation: the antipodal facet pairs
+           are excluded by their separation (r6 backport).
 """
+import math
+
 import pytest
 
 from _testbed import ops
@@ -399,3 +403,64 @@ def test_dual_requires_mortar():
     with pytest.raises(Exception):
         ops.LadrunoTie("-dual", "-slaveNodes", 1, _stag(0, 0, 0),
                        "-masterFacets", 4, 1, *MASTER_FACET)
+
+
+# --------------------------------------------------------------------------
+# CLOSED SURFACE — the antipodal-pair exclusion (r6 backport)
+# --------------------------------------------------------------------------
+R_TUBE, L_TUBE, W_ROT = 0.5, 1.0, 0.01
+
+
+def _ring(n, tag0):
+    nodes, fac = {}, []
+    for k in range(n):
+        a = 2.0 * math.pi * k / n
+        for j, z in enumerate((0.0, L_TUBE)):
+            nodes[tag0 + 2 * k + j] = (R_TUBE * math.cos(a), R_TUBE * math.sin(a), z)
+    for k in range(n):
+        k1 = (k + 1) % n
+        fac += [tag0 + 2 * k, tag0 + 2 * k1, tag0 + 2 * k1 + 1, tag0 + 2 * k + 1]
+    return nodes, fac
+
+
+@pytest.mark.parametrize("tol", [0.1, 3.5])
+def test_mortar_closed_tube_follows_rigid_rotation(tol):
+    """One tie around a closed tube (16 master / 24 slave facets), masters prescribed to a
+    rigid rotation about the tube axis, each slave held by a soft spring to the ground. The
+    far side of the tube projects onto the auxiliary plane of every near facet; those pairs
+    are excluded by their separation, so the slaves follow the rotation (u_t = W R).
+
+    Before the exclusion the tie was refused at tol <= 1 (mean gap 0.49 per slave facet,
+    the antipodal pairs counted into it) and accepted at tol = 3.5 with the slaves at 97 %
+    of W R error (averaged with the opposite side, which moves the other way). With it the
+    error is 0.9 % of W R, the faceting offset between the 16- and 24-gon (<= 0.0096
+    radially); bound at 2 %."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    mn, mf = _ring(16, 1)
+    sn, sf = _ring(24, 1001)
+    ops.uniaxialMaterial("Elastic", 9, 1.0e-3)
+    for t, (x, y, z) in mn.items():
+        ops.node(t, x, y, z)
+    for t, (x, y, z) in sn.items():
+        ops.node(t, x, y, z)
+        ops.mass(t, 1.0, 1.0, 1.0)            # BLOCKER-2: lumped mass on every tied DOF
+        ops.node(t + 5000, x, y, z)
+        ops.fix(t + 5000, 1, 1, 1)
+        ops.element("zeroLength", t, t + 5000, t, "-mat", 9, 9, 9, "-dir", 1, 2, 3)
+    ops.LadrunoTie("-mortar", "-slaveFacets", 4, len(sf) // 4, *sf,
+                   "-masterFacets", 4, len(mf) // 4, *mf,
+                   "-tol", tol, "-outward", 1.0, 0.3, 0.2)
+    ops.timeSeries("Constant", 1)
+    ops.pattern("Plain", 1, 1)
+    for t, (x, y, z) in mn.items():
+        ops.sp(t, 1, -W_ROT * y)
+        ops.sp(t, 2, W_ROT * x)
+        ops.sp(t, 3, 0.0)
+    _static_solve("Lagrange")
+    err = 0.0
+    for t, (x, y, z) in sn.items():
+        err = max(err, abs(ops.nodeDisp(t, 1) + W_ROT * y),
+                  abs(ops.nodeDisp(t, 2) - W_ROT * x), abs(ops.nodeDisp(t, 3)))
+    assert err <= 0.02 * W_ROT * R_TUBE, \
+        f"slaves do not follow the rotation: err/(W R) = {err / (W_ROT * R_TUBE)}"
