@@ -809,7 +809,7 @@ db02ccc70 (`wp/concrete-dr1-dr5`), nothing else from it. It closes review 3's MA
 | ladder flips, 4000 pts at 1e-9 spacing, x 1.5 / 3 / 6 / 25 | 1679 / 2203 / 1737 / 2006 | 0 / 0 / 0 / 0 |
 | coarse 20 000-pt scan: level flips at fixed n / n changes | 8257 / 63 | 0 / 63 |
 | random first-crack increments with a +-1e-6 FD leg on another level (4000) | 3464 | 2 |
-| same, tangent vs FD (h 1e-9 rel) worse than 1e-4 | 3120 | 0 (worst 8.3e-6) |
+| same, tangent vs FD worse than 1e-4: h 1e-9 rel / h 1e-7 rel | 3120 / - | 25 (worst 1.7e-3; FD noise of the 1e-11 Newton tolerance) / 0 (worst 1.2e-5) |
 | `returnMapHardening` converged, 20 000 random tension trials | 1748 | 20 000 |
 | kernel check C8 (chain tangent, n = 1..64): states checked | 8 (4 skipped as straddling) | 12, no skip |
 
@@ -824,7 +824,8 @@ first r4 cut 5d1a21932 276 us as measured by the review, 37a353fff 1226 us). A w
 instead of failing fast and costs up to ~1 s per call with the tangent (PR head ~0.15 s).
 
 **Still open.** The `n`-boundary jumps (63 in the coarse scan) and the one-sided fold jumps on a ray (D4). MAJOR 3 is
-not reproduced on the r4 map (probe8: 0 of 4000 random first-crack states off FD by more than 1e-4, worst 8.3e-6); it
+not reproduced on the r4 map (probe8 with an FD step of 1e-7 relative: 0 of 4000 random first-crack states off by more
+than 1e-4, worst 1.2e-5; at 1e-9 the plain Newton's 1e-11 tolerance dominates the FD and 25 exceed 1e-4); it
 was not root-caused separately, the 0.56-1.6 cases of review 3 were measured on the fragmented map. The legacy v1 flow still cannot return biaxial compression past its cap (no compressive cone): those trials
 refuse, and the #2617 refusal tests now use them. A confined (BeamFiber) single tension step of 6e-3 or more refuses. On
 the shipped defaults, virgin plane-strain trials of |strain| ~0.3 and more still fail on a set that is NOT robust to
