@@ -802,7 +802,24 @@ per call with the tangent (was ~0.2 s), from the damaged tangent's micro-FD legs
 **Still open.** The `n`-boundary jumps (63 in the coarse scan). MAJOR 3: 25 of 4000 random first-crack states have a
 damaged tangent 1e-4..1.7e-3 off FD (the 0.56-1.6 cases of review 3 were measured on the fragmented map and are not
 reproduced). The legacy v1 flow still cannot return biaxial compression past its cap (no compressive cone): those trials
-refuse, and the #2617 refusal tests now use them. A confined (BeamFiber) single tension step of 6e-3 or more refuses.
+refuse, and the #2617 refusal tests now use them. A confined (BeamFiber) single tension step of 6e-3 or more refuses. On
+the shipped defaults, virgin plane-strain trials of |strain| ~0.3 and more still fail on a set that is NOT robust to
+1e-12..1e-4 perturbations (none found up to 0.1), so the far-wild regime is still a coin flip.
+
+**B1 / C3 re-measured** (Vecchio & Shim coarse embedded, LadrunoLoadControl, tol 1e-7, the validation repo's
+`benchmarks/01_3d_embedded_rebar/vecchio_shim/model.py` with `-subIncr` injected and apeGmsh 4d431defe; four runs side by
+side on one loaded workstation, so a wall-time stop is pessimistic; "no conv." = the ladder's smallest step failed):
+
+| run | PR head (handoff 2026-10-09) | r4 |
+|---|---|---|
+| B1 deterministic | 7.7 mm, no conv. | 381 kN at 11.9 mm, wall 3600 s, 32 escalations |
+| B1 refuse | 1.69 mm in 3600 s, 554 global failures | 250 kN at 5.10 mm, no conv. at 1585 s, 22 escalations |
+| C3 deterministic | 264 kN at 34.9 mm, no conv., 40 escalations | 249 kN at 31.85 mm, no conv. at 6722 s, 90 escalations |
+| C3 refuse | 135 kN at 14.4 mm, 308 escalations | 209 kN at 25.3 mm, no conv. at 4195 s, 55 escalations |
+
+`refuse` gains the most (B1 3x, C3 1.8x the reach) but is still behind `deterministic` on both beams, so the default stays
+`deterministic`; neither beam reaches its test peak (434 / 265 kN), and C3 deterministic stops 3 mm earlier than on the PR
+head. The tangent question (chain vs last piece) was not re-run.
 
 **One refusal design with #1038 / rule B** (`ledger/quirks/ADR-31-concrete3d-failed-return-map-returned-zero.md`). Rule B is
 the base truth: `setTrialStrain` refuses when the returned state's kernel call failed or sigma_22 is unconverged. #877's
