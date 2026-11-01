@@ -1026,6 +1026,41 @@ static void run_f2_chain() {
         std::printf("       (tc cases %d worst %.2e; ct cases %d worst %.2e)\n", nC, worstC, nT, worstT);
     }
 
+}
+
+// Units (apeGmsh #2621 F2 review r2): D6 and D7 run in three unit systems. s scales every stress-dimensioned parameter
+// (E, fc, ft; Gf and Gc as s*L), L every length (lch; Gf and Gc): MPa-mm (s = 1, L = 1: the original cases), kPa-m
+// (s = 1e3, L = 1e-3) and Pa-m (s = 1e6, L = 1e-3, the fork's SI default). Strain, omega and the relative tangent
+// error are dimensionless, so a unit-free tangent gives the same answer in all three up to round-off. (The STRESS
+// path is not exactly unit-free: its pre-existing absolute guards move a converged kp in the 5th digit between
+// units on D6a, and an isolated direct-return failure (below) lands on a different step in each unit system.)
+static Params scaledBase(double s) {
+    Params q; q.E = 30000 * s; q.nu = 0.2; q.fc = 30 * s; q.ft = 3 * s; q.e = eccentricityFromKupfer(30 * s, 3 * s, 1.16);
+    q.m0 = m0Of(30 * s, 3 * s, q.e);
+    q.qh0 = 0.3; q.Hp = 0.01; q.Df = 0.85; q.Ah = 0.08; q.Bh = 0.003; q.Ch = 2.0; q.Dh = 1e-6;
+    return q;
+}
+static std::string label(const char* tag, const char* name) { return tag[0] ? std::string(name) + " [" + tag + "]" : std::string(name); }
+
+// An ISOLATED direct-return failure (D6, D8): the centre's direct return fails and it is sub-stepped, while its FD
+// stencil returns on another schedule, so the stencil's FD reads a different branch of a discontinuous map. The test
+// that applies there: the effective chain-rule tangent and d kp/de at the centre (what damagedTangent consumes) ==
+// the FD of the map with the centre's own failure-driven schedule frozen (failureSchedule / fdSchedule, D1's 1e-7).
+static bool isolatedScheduleOk(const Params& p, const double e[6], const State& in, double& eD, double& eK) {
+    double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = e[i] - in.eps[i];
+    double sb[6], kpn, Ce[6][6], dk[6]; int sub = 0;
+    returnMapTensor(p, in.sigEff, deps, in.kp, true, sb, kpn, Ce, true, &sub, dk);
+    double fr[64]; const int n = failureSchedule(p, in.sigEff, deps, in.kp, fr);
+    eD = eK = 1e300;
+    if (n < 2 || sub != n) return false;
+    bool smooth;
+    fdSchedule(p, in.sigEff, deps, in.kp, fr, n, Ce, dk, eD, eK, smooth);
+    return smooth && eD < 1.0e-7 && eK < 1.0e-7;
+}
+
+static void run_f2_cap(double s, double L, const char* tag) {
+    std::printf("[D6] F2 (apeGmsh #2621): damaged tangent at the omega cap%s%s\n", tag[0] ? ", units " : "", tag);
+    Params q = scaledBase(s); q.flowPotential = 1; q.maxSubIncr = 10;
     // D6 — the omega cap: an omega AT OMEGA_MAX is flat (d omega = 0) in damagedTangent. Before F2 a bilinear omega_t
     // (and a CDPM2-drive omega_c) at the cap fell through to the legacy exponential-law IFT, an O(1) wrong tangent on
     // a fully open crack. Drive the material INTO the cap and require the full damaged tangent (returnMap's Dtan6) ==
@@ -1034,28 +1069,47 @@ static void run_f2_chain() {
     // perturbed maps converge with that omega still == OMEGA_MAX (at the cap onset the map is one-sided). A cap step
     // with no such h is an onset step; it is printed and FAILS the check, so every cap step is in fact tested.
     // (A kernel with both F2 cap guards reverted misses here by O(1): the omega_t paths by ~2e1, omega_c by ~0.9.)
+    // An h also needs every stencil map on the CENTRE's piece schedule (State::subInfo), or its FD differentiates a
+    // different map. The one case this leaves is an ISOLATED direct-return failure (a pre-existing defect of the
+    // direct return, filed separately): the centre's direct return fails and it is sub-stepped, while every stencil
+    // neighbour at +/-1e-8..1e-10 returns directly. The map is discontinuous there and the neighbours' FD reads the
+    // direct branch (1.7e-3 off on D6a in Pa). Such a step is counted, printed, and tested against the right
+    // reference: the effective tangent and d kp/de that the damaged tangent consumes == the FD of the map with the
+    // centre's schedule frozen (D1's 1e-7). At most 1 isolated step per unit system (0 in MPa and kPa, 1 in Pa).
     {
         // the central FD of the full damaged map at strain e from the committed state `in`; best error over the
-        // h whose stencil stays at the cap of omega_t (which == 0) or omega_c (which == 1). false = no such h.
-        auto fdAtCap = [](const Params& p, const double e[6], const State& in, const double D[6][6], int which, double& err) {
-            err = 1e300; bool any = false;
+        // h whose stencil stays at the cap of omega_t (which == 0) or omega_c (which == 1) on the centre's schedule.
+        // 0 = tested (err); 1 = onset (some stencil map leaves the cap or fails); 2 = isolated schedule (every stencil
+        // map converged at the cap, but on a piece schedule other than the centre's for every h).
+        auto fdAtCap = [](const Params& p, const double e[6], const State& in, const double D[6][6], int which, int sub0,
+                          double& err) {
+            err = 1e300; bool any = false, onlySched = true;
             for (double h : {1e-8, 1e-9, 1e-10}) {
-                double F[6][6]; bool stay = true;
+                double F[6][6]; bool stay = true, sched = true;
                 for (int j = 0; j < 6 && stay; ++j) {
                     double ep[6], em[6]; for (int i = 0; i < 6; ++i) ep[i] = em[i] = e[i]; ep[j] += h; em[j] -= h;
-                    State ot; double sp[6], sm[6], se[6], J[6][6], wtp, wcp, wtm, wcm;
-                    const int a = returnMap(p, ep, in, ot, sp, se, J, false, -1.0, true, &wtp, &wcp);
-                    const int b = returnMap(p, em, in, ot, sm, se, J, false, -1.0, true, &wtm, &wcm);
+                    State op, om; double sp[6], sm[6], se[6], J[6][6], wtp, wcp, wtm, wcm;
+                    const int a = returnMap(p, ep, in, op, sp, se, J, false, -1.0, true, &wtp, &wcp);
+                    const int b = returnMap(p, em, in, om, sm, se, J, false, -1.0, true, &wtm, &wcm);
                     const double wp = which ? wcp : wtp, wm = which ? wcm : wtm;
                     if (a != 0 || b != 0 || wp != OMEGA_MAX || wm != OMEGA_MAX) stay = false;
+                    if (op.subInfo != sub0 || om.subInfo != sub0) sched = false;
                     for (int i = 0; i < 6; ++i) F[i][j] = (sp[i] - sm[i]) / (2 * h);
                 }
-                if (!stay) continue;
+                if (!stay) { onlySched = false; continue; }
+                if (!sched) continue;
                 any = true; err = std::fmin(err, relF6(D, F));
             }
-            return any;
+            return any ? 0 : (onlySched ? 2 : 1);
         };
-        Params p = q; p.tensionLaw = 1; p.compDrive = 1; p.tcTemper = 2; p.Gf = 0.1; p.Gc = 5.0; p.lch = 50.0;
+        int nIso = 0; bool isoOk = true;
+        auto isoStep = [&](const Params& p, const double e[6], const State& in, const State& o, const char* which, int k) {
+            double eD, eK; const bool ok = isolatedScheduleOk(p, e, in, eD, eK);
+            ++nIso; isoOk = isoOk && ok;
+            std::printf("       (%s step %d: isolated direct-return failure, centre on %d pieces, the stencil on another schedule; "
+                        "frozen-schedule FD: Ceff %.2e, dkp %.2e%s)\n", which, k, o.subInfo, eD, eK, ok ? "" : " FAIL");
+        };
+        Params p = q; p.tensionLaw = 1; p.compDrive = 1; p.tcTemper = 2; p.Gf = 0.1 * s * L; p.Gc = 5.0 * s * L; p.lch = 50.0 * L;
         p.epsFc = 1e-3; p.As = 2.0;
         // D6a — bilinear omega_t: two biaxial/shear tension paths far past wf (200 steps each, 179 + 176 at the cap;
         // path 0 enters it at step 22, where the guard-reverted kernel misses the FD by 2.6)
@@ -1069,13 +1123,14 @@ static void run_f2_chain() {
                 State o; double sg[6], se[6], D[6][6], wt, wc;
                 const int st = returnMap(p, e, in, o, sg, se, D, true, -1.0, true, &wt, &wc);
                 if (st == 0 && wt == OMEGA_MAX) {
-                    double err; if (fdAtCap(p, e, in, D, 0, err)) { ++nT; worstT = std::fmax(worstT, err); } else ++onT;
+                    double err; const int r = fdAtCap(p, e, in, D, 0, o.subInfo, err);
+                    if (r == 0) { ++nT; worstT = std::fmax(worstT, err); } else if (r == 2) isoStep(p, e, in, o, "D6a", k); else ++onT;
                 }
                 in = o;
             }
         }
         check(nT >= 300 && onT == 0 && worstT < 1.0e-6,
-              "D6a bilinear omega_t at OMEGA_MAX: damaged tangent == FD of the full damaged map to 1e-6 (every cap step)");
+              label(tag, "D6a bilinear omega_t at OMEGA_MAX: damaged tangent == FD of the full damaged map to 1e-6 (every cap step)").c_str());
         std::printf("       (cap steps checked %d, onset steps (stencil leaves the cap) %d; worst %.2e)\n", nT, onT, worstT);
         // D6b — CDPM2-drive omega_c: compression with lateral tension and shear (distinct principals). A brittle
         // compressive law (epsFc = 1e-4) enters the cap at step 78 (3.9% axial strain; 123 cap steps). With the
@@ -1092,14 +1147,18 @@ static void run_f2_chain() {
                 State o; double sg[6], se[6], D[6][6], wt, wc;
                 const int st = returnMap(pc, e, in, o, sg, se, D, true, -1.0, true, &wt, &wc);
                 if (st == 0 && wc == OMEGA_MAX) {
-                    double err; if (fdAtCap(pc, e, in, D, 1, err)) { ++nC; worstC = std::fmax(worstC, err); } else ++onC;
+                    double err; const int r = fdAtCap(pc, e, in, D, 1, o.subInfo, err);
+                    if (r == 0) { ++nC; worstC = std::fmax(worstC, err); } else if (r == 2) isoStep(pc, e, in, o, "D6b", k); else ++onC;
                 }
                 in = o;
             }
         }
         check(nC >= 100 && onC == 0 && worstC < 1.0e-6,
-              "D6b CDPM2-drive omega_c at OMEGA_MAX: damaged tangent == FD of the full damaged map to 1e-6 (every cap step)");
+              label(tag, "D6b CDPM2-drive omega_c at OMEGA_MAX: damaged tangent == FD of the full damaged map to 1e-6 (every cap step)").c_str());
         std::printf("       (cap steps checked %d, onset steps (stencil leaves the cap) %d; worst %.2e)\n", nC, onC, worstC);
+        check(nIso <= 1 && isoOk,
+              label(tag, "D6 isolated direct-return failures (<= 1): chain-rule tangent == frozen-schedule FD to 1e-7").c_str());
+        std::printf("       (isolated steps %d)\n", nIso);
     }
 }
 
@@ -1109,11 +1168,10 @@ static void run_f2_chain() {
 // sig_bar on the axis, so the true gradient is the one ALONG the axis (dscalarDsigAxis). Hydrostatic tension from the
 // virgin state, legacy + cdpm2 flow x ctTemper none/proj x tcTemper none/proj, every damage-loading apex step: the
 // damaged tangent == the central FD (best of h 1e-8/1e-9/1e-10, every stencil point converged and still on the apex).
-static void run_f2_apex() {
-    std::printf("[D7] F2 (apeGmsh #2621): damaged tangent at the tension-apex return\n");
-    Params q; q.E = 30000; q.nu = 0.2; q.fc = 30; q.ft = 3; q.e = eccentricityFromKupfer(30, 3, 1.16); q.m0 = m0Of(30, 3, q.e);
-    q.qh0 = 0.3; q.Hp = 0.01; q.Df = 0.85; q.Ah = 0.08; q.Bh = 0.003; q.Ch = 2.0; q.Dh = 1e-6;
-    q.tensionLaw = 1; q.compDrive = 1; q.Gf = 0.1; q.Gc = 5.0; q.lch = 50.0; q.epsFc = 1e-3; q.As = 2.0;
+static void run_f2_apex(double s, double L, const char* tag) {
+    std::printf("[D7] F2 (apeGmsh #2621): damaged tangent at the tension-apex return%s%s\n", tag[0] ? ", units " : "", tag);
+    Params q = scaledBase(s);
+    q.tensionLaw = 1; q.compDrive = 1; q.Gf = 0.1 * s * L; q.Gc = 5.0 * s * L; q.lch = 50.0 * L; q.epsFc = 1e-3; q.As = 2.0;
     auto rhoOf = [](const double s[6]) { double xi, rho, th; invariants(s, xi, rho, th); return rho; };
     int n = 0, skipped = 0; double worst = 0;
     for (int fl = 0; fl <= 1; ++fl) for (int ct = 0; ct <= 2; ct += 2) for (int tc = 0; tc <= 2; tc += 2) {
@@ -1124,7 +1182,7 @@ static void run_f2_apex() {
             double e[6] = {a, a, a, 0, 0, 0};
             State o; double sg[6], se[6], D[6][6];
             const int st = returnMap(p, e, in, o, sg, se, D, true, -1.0, true);
-            if (st == 0 && rhoOf(se) <= 1e-12 && se[0] > 0 && o.wt > 0 && o.wt < OMEGA_MAX && o.et_max > in.et_max) {
+            if (st == 0 && rhoOf(se) <= 1e-12 * s && se[0] > 0 && o.wt > 0 && o.wt < OMEGA_MAX && o.et_max > in.et_max) {
                 double best = 1e300; bool anyOk = false;
                 for (double h : {1e-8, 1e-9, 1e-10}) {
                     double F[6][6]; bool ok = true;
@@ -1132,7 +1190,7 @@ static void run_f2_apex() {
                         double ep[6], em[6]; for (int i = 0; i < 6; ++i) ep[i] = em[i] = e[i]; ep[j] += h; em[j] -= h;
                         State t; double a1[6], b1[6], c1[6], d1[6], J[6][6];
                         ok = returnMap(p, ep, in, t, a1, b1, J, false, -1.0, true) == 0 && returnMap(p, em, in, t, c1, d1, J, false, -1.0, true) == 0
-                             && rhoOf(b1) <= 1e-10 && rhoOf(d1) <= 1e-10;
+                             && rhoOf(b1) <= 1e-10 * s && rhoOf(d1) <= 1e-10 * s;
                         for (int i = 0; i < 6; ++i) F[i][j] = (a1[i] - c1[i]) / (2 * h);
                     }
                     if (!ok) continue;
@@ -1143,8 +1201,57 @@ static void run_f2_apex() {
             in = o;
         }
     }
-    check(n >= 50 && worst < 1.0e-6, "D7 tension-apex return: damaged tangent == FD of the damaged map to 1e-6");
+    // skipped = an apex state for which no h keeps every stencil point converged and on the apex: an untested state,
+    // so none is allowed (216 tested in each unit system).
+    check(n >= 50 && skipped == 0 && worst < 1.0e-6,
+          label(tag, "D7 tension-apex return: damaged tangent == FD of the damaged map to 1e-6, no apex state skipped").c_str());
     std::printf("       (apex damage-loading states %d, skipped %d, worst %.2e)\n", n, skipped, worst);
+}
+
+// D8 — d kp/de under Duvaut-Lions (apeGmsh #2621 F2 review r2). The relaxed kp is (1 - beta) kp_n + beta kp, so the
+// d kp/de that beta_c's qh2(kp) consumes is beta times the inviscid one (returnMap: dkp *= beta). It matters only where
+// all three hold: kp >= 1 (qh2 is flat below), beta_c active (0 < beta_c < 1 under compressive loading) and
+// -eta > 0. Triaxial compression with lateral expansion (cdpm2 flow, Hp = 0.5 so qh2 moves, eta = dt => beta = 1/2):
+// every step that starts at kp >= 1 (qh2 on its linear branch over the whole step) with 0 < beta_c < 1 and kp
+// advancing, damaged tangent == the FD of the damaged map at the same dt, every stencil map on the centre's piece
+// schedule, none skipped. (The first-yield step, kp 0 -> 1.6, starts below 1; it is also an isolated direct-return
+// failure, the pre-existing defect filed separately.) Deleting the dkp *= beta line misses here by 2.2e-3. (MPa only: the
+// residual 1.8e-7 is the absolute dscalarDsig step of #2639, ~6e-9 with a relative step, so this case is not run in
+// Pa until #2639 lands.)
+static void run_f2_viscous_kp() {
+    std::printf("[D8] F2 (apeGmsh #2621): d kp/de under Duvaut-Lions (kp >= 1, beta_c active, eta > 0)\n");
+    Params p = scaledBase(1.0); p.Hp = 0.5;
+    p.tensionLaw = 1; p.compDrive = 1; p.Gf = 0.1; p.Gc = 5.0; p.lch = 50.0; p.epsFc = 1e-3; p.As = 2.0;
+    p.flowPotential = 1; p.maxSubIncr = 10; p.eta = 1.0;
+    const double dt = 1.0;
+    State in; int n = 0, skipped = 0; double worst = 0;
+    for (int k = 1; k <= 120; ++k) {
+        const double t = k / 120.0, M = 3e-2;
+        double e[6] = {-M * t, 0.5 * M * t, 0.5 * M * t, 0.1 * M * t, 0, 0};
+        State o; double sg[6], se[6], D[6][6];
+        const int st = returnMap(p, e, in, o, sg, se, D, true, dt, true);
+        double A[3][3], w[3], V[3][3]; voigtToMat(se, A); eig3sym(A, w, V);
+        const double bc = betaC(w, o.kp, p);
+        if (st == 0 && in.kp >= 1.0 && bc > 0.0 && bc < 1.0 && o.kp > in.kp) {
+            double best = 1e300;
+            for (double h : {1e-8, 1e-9, 1e-10}) {
+                double F[6][6]; bool ok = true, sched = true;
+                for (int j = 0; j < 6 && ok; ++j) {
+                    double ep[6], em[6]; for (int i = 0; i < 6; ++i) ep[i] = em[i] = e[i]; ep[j] += h; em[j] -= h;
+                    State a, c; double a1[6], b1[6], c1[6], d1[6], J[6][6];
+                    ok = returnMap(p, ep, in, a, a1, b1, J, false, dt, true) == 0 && returnMap(p, em, in, c, c1, d1, J, false, dt, true) == 0;
+                    if (a.subInfo != o.subInfo || c.subInfo != o.subInfo) sched = false;
+                    for (int i = 0; i < 6; ++i) F[i][j] = (a1[i] - c1[i]) / (2 * h);
+                }
+                if (ok && sched) best = std::fmin(best, relF6(D, F));
+            }
+            if (best < 1e300) { ++n; worst = std::fmax(worst, best); } else ++skipped;
+        }
+        in = o;
+    }
+    check(n >= 100 && skipped == 0 && worst < 1.0e-6,
+          "D8 kp >= 1, beta_c active, eta > 0: damaged tangent == FD of the damaged map to 1e-6 (d kp/de scaled by beta)");
+    std::printf("       (states %d, skipped %d, worst %.2e)\n", n, skipped, worst);
 }
 
 int main(int argc, char** argv) {
@@ -1153,7 +1260,13 @@ int main(int argc, char** argv) {
     run_oracle_dump(fix);
     run_robustness();
     run_f2_chain();
-    run_f2_apex();
+    run_f2_cap(1.0, 1.0, "");
+    run_f2_apex(1.0, 1.0, "");
+    run_f2_cap(1.0e3, 1.0e-3, "kPa-m");      // units sweep (review r2): the same cases in kPa and in Pa (SI)
+    run_f2_apex(1.0e3, 1.0e-3, "kPa-m");
+    run_f2_cap(1.0e6, 1.0e-3, "Pa-m");
+    run_f2_apex(1.0e6, 1.0e-3, "Pa-m");
+    run_f2_viscous_kp();
     std::printf(fails ? "\nKERNEL CHECK: %d FAIL\n" : "\nKERNEL CHECK: ALL PASS\n", fails);
     return fails ? 1 : 0;
 }

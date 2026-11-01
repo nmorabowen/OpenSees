@@ -1799,7 +1799,27 @@ inline void dscalarDsig(int which, const double sig6[6], const Params& mp, doubl
 // It is the exact chain-rule input whenever the effective map keeps sig_bar on the axis (the apex return: Ceff has a
 // hydrostatic range). A step that leaves the axis from it (elastic, or Duvaut-Lions relaxed) is a cone in the strain
 // too and has no derivative; there this drops the spurious meridian average and keeps the hydrostatic part exact.
-inline void dscalarDsigAxis(int which, const double sig6[6], const Params& mp, double g[6], double h = 1.0e-6)
+//
+// Units (apeGmsh #2621 F2 review r2). The axis test and the step are relative to the stress scale
+// S = max(ft, max_a |w_a|) of the effective state (ft floors it near zero stress). The first version used an absolute
+// 1e-12 test and a 1e-6 step, which held only in MPa: in Pa the round-off rho_bar of an apex return reaches 1.6e-9,
+// the test missed 48 of D7's 216 apex states, and the damaged tangent was off by up to 0.99.
+//  - AXIS_RHO_REL = 1e-13. An apex return lands on the axis up to round-off: rho_bar / S <= 2.9e-16 (~1.3 ulp) on
+//    D7's apex states in MPa, kPa and Pa alike. The test sits ~350x above that round-off, and 13 decades below any
+//    deviator the damage drivers resolve.
+//  - AXIS_FD_REL = 1e-6, so h = 1e-6 S. The central FD's truncation error is O(delta^2) ~ 1e-12, because the drivers
+//    vary on the scale S along the axis. Its round-off is O(eps_mach / delta) ~ 2e-10. Both sit under the floor of
+//    D7's own reference FD (~3e-9). Measured on D7, delta = 1e-6, 6e-6 or 3e-5 all read 2.1e-9 to 3.7e-9 in the three
+//    unit systems, and 1e-7 reads up to 6.5e-9, where round-off starts to show.
+static const double AXIS_RHO_REL = 1.0e-13;
+static const double AXIS_FD_REL = 1.0e-6;
+inline double axisStressScale(const double w[3], const Params& mp)
+{
+    double s = mp.ft;
+    for (int a = 0; a < 3; ++a) if (std::fabs(w[a]) > s) s = std::fabs(w[a]);
+    return s;
+}
+inline void dscalarDsigAxis(int which, const double sig6[6], const Params& mp, double g[6], double h)
 {
     double dp[6], dm[6];
     for (int i = 0; i < 6; ++i) { dp[i] = sig6[i]; dm[i] = sig6[i]; }
@@ -2038,12 +2058,15 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
     auto CeffT = [&](const double g[6], double out[6]) {
         for (int k = 0; k < 6; ++k) { double v = 0.0; for (int i = 0; i < 6; ++i) v += Ceff[i][k] * g[i]; out[k] = v; }
     };
-    // On the hydrostatic axis (rho_bar == 0, the guard betaC uses) the drivers are cones: their gradient is taken along
-    // the axis (dscalarDsigAxis; apeGmsh #2621, the tension-apex return), elsewhere per Voigt component.
+    // On the hydrostatic axis (rho_bar == 0) the drivers are cones: their gradient is taken along the axis
+    // (dscalarDsigAxis; apeGmsh #2621, the tension-apex return), elsewhere per Voigt component. The axis test and the
+    // along-axis step are relative to the state's stress scale (axisStressScale), so they hold in any unit system.
+    const double sAx = axisStressScale(w, mp);
     bool onAxis = false;
     { double xi_a, rho_a, th_a; const double sva[6] = {w[0], w[1], w[2], 0.0, 0.0, 0.0}; invariants(sva, xi_a, rho_a, th_a);
-      onAxis = rho_a <= 1.0e-12; }
-    auto driverGrad = [&](int which, double g[6]) { if (onAxis) dscalarDsigAxis(which, sig_eff, mp, g); else dscalarDsig(which, sig_eff, mp, g); };
+      onAxis = rho_a <= AXIS_RHO_REL * sAx; }
+    const double hAx = AXIS_FD_REL * sAx;
+    auto driverGrad = [&](int which, double g[6]) { if (onAxis) dscalarDsigAxis(which, sig_eff, mp, g, hAx); else dscalarDsig(which, sig_eff, mp, g); };
     double g_et[6], g_xs[6], g_ac[6], det_deps[6], dxs_deps[6], dac_deps[6];
     driverGrad(0, g_et);   CeffT(g_et, det_deps);
     driverGrad(1, g_xs);   CeffT(g_xs, dxs_deps);

@@ -565,13 +565,17 @@ def test_f2_chain_rule_tangent_gate():
     tangent; C3 the pre-F2 last-piece tangent misses by > 1e-3; C4 the closed-form proj-weight gradients the
     analytic damaged tangent uses == FD of the weights (1e-6); C5 the damaged tangent at the tension-apex return
     (driver gradients along the hydrostatic axis) == the FD of the damaged step (1e-6; the old per-component
-    micro-FD across the axis cone read 0.11-1.00)."""
+    micro-FD across the axis cone read 0.11-1.00), in MPa-mm, kPa-m and Pa-m (review r2: an absolute axis guard
+    and step read 0.97-0.98 in kPa and Pa)."""
     r = ref.run_f2_chain_gate(verbose=False)
     assert r["C1_ok"], (r["C1_n"], r["C1_worst"], r["C1_worst_kp"])
     assert r["C2_ok"], r["C2_rel"]
     assert r["C3_ok"], r["C3_min_last_piece"]
     assert r["C4_ok"], (r["C4_n"], r["C4_worst_tc"], r["C4_worst_ct"])
-    assert r["C5_ok"], (r["C5_n"], r["C5_worst"])
+    assert set(r["C5_units"]) == {"MPa-mm", "kPa-m", "Pa-m"}
+    for units, (n, worst) in r["C5_units"].items():
+        assert n >= 5 and worst < 1.0e-6, (units, n, worst)
+    assert r["C5_ok"], r["C5_units"]
     assert r["PASS"]
 
 
