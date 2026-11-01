@@ -51,3 +51,25 @@ date: 2026-10-29
   element of the WP-99 refusal roster. On a DISCARD host (`stdBrick`,
   `SSPquad`, `FourNodeTetrahedron`, `LadrunoSolidShell`, ...) the failed
   return is still accepted silently.
+
+#### Reconciliation with fork PR #877 (r4 merge of `ladruno` into `wp/concrete3d-integration`, 2026-10-30)
+- **One refusal design.** Rule B above is the base truth and is unchanged: `setTrialStrain`
+  refuses when the returned state's kernel call failed or `sigma_22` is unconverged. #877's own
+  rule (refuse only a failed kernel call; warn-and-accept a `sigma_22` miss, deferred to WP-141 P1a)
+  is dropped in favour of rule B.
+- **What #877 adds on top, without contradicting it:** (1) the kernel's sub-increment rescue
+  (`-subIncr deterministic`, the DEFAULT): a direct-return failure is re-integrated in `n` pieces
+  before status 2 is returned, so rule B sees fewer failures; (2) `-subIncr refuse` (opt-in): no
+  rescue, a failed direct return is status 2 and therefore a refusal under rule B; `-subIncr
+  adaptive` is the old rescue; (3) the WP-99 commit latch: `commitState` refuses (reverts, declares
+  `ladrunoNoteCommitRefusal()`) exactly the trials `setTrialStrain` refused (`trialRefused`, which
+  includes a `sigma_22` miss), so the "DISCARD host accepts it silently" bullet above no longer
+  holds for this material: a discarding host now fails the step at `Domain::commit` (terminal, not
+  a cut — the latch cannot rewind sibling commits).
+- **The fractal failure statistics above are the pre-fix kernel.** The tension-return rework
+  (in tension a fixed root order: the vertex, then a bracketed nested solve keeping the
+  least-hardening root, with the plain Newton and the unprojected-line-search newtonGlob only as the
+  last resort when the nested solve finds no bracket; a full-residual honesty check; compression
+  keeps the PR-head order) removes the direct-return failures review 3
+  of #877 measured (MAJOR 1), so inputs picked to fail on the old kernel may now converge; the
+  #2617 tests drive their failures with inputs re-checked on the merged kernel.

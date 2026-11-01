@@ -512,6 +512,9 @@ static Fixture loadStream(std::istream& in, bool needN = true) {
       if (b.size() != 40 || b.find_first_not_of("0123456789abcdef") != std::string::npos) die("the #@ kernel-blob is not a 40-hex git blob: " + b); }
     for (const Rec& q : fx.recs) {
         for (char c : std::string(needN ? "GPESXHICTOWN" : "GPESXHICTOW")) if (!q.seen.count(c)) die(std::string("record lacks its ") + c + " line: " + q.kLine);
+        // the line shape first (note 5): a record whose kind= disagrees with its Z lines is refused for that, before any
+        // value pin below can refuse it for a pass-dependent reason (a re-recorded R record's rule-B code can be 0)
+        if (q.kind != 'R' && !q.z.empty()) die("Z lines on a non-R record: " + q.kLine);
         if (std::memcmp(&q.c[0], &q.eps[2], sizeof(double)) != 0) die("C line's committed eps_22 is not E[2] bit for bit: " + q.kLine);
         if (q.kind != 'R' && q.code == 0 && std::memcmp(&q.c[1], &q.strain[2], sizeof(double)) != 0)
             die("a pass-0 C/F record's loop start C[1] is not its trial T[2] bit for bit: " + q.kLine);
@@ -519,7 +522,6 @@ static Fixture loadStream(std::istream& in, bool needN = true) {
         if (!q.hasD || q.dKind != (q.kind == 'C' ? 'D' : 'M'))
             die(std::string("a ") + q.kind + " record must carry its 6x6 tangent as a " + (q.kind == 'C' ? "D" : "M") + " line: " + q.kLine);
         if (q.kind == 'R' && (q.z.empty() || (q.k.at("dim") != "4" && q.k.at("dim") != "3"))) die("R record without a condensed sigma_22 trace: " + q.kLine);
-        if (q.kind != 'R' && !q.z.empty()) die("Z lines on a non-R record: " + q.kLine);
         if (q.status != (int)q.o[0] || q.subInfo != (int)q.o[1])
             die("K line status=/subInfo= disagree with the O line's status/sub: " + q.kLine);
         const bool subOk = q.status != 0 ? q.subInfo == -1 : (q.subInfo == 0 || (q.subInfo >= 2 && pp.maxSubIncr > 0));

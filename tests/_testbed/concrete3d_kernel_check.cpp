@@ -203,7 +203,7 @@ static void run_oracle_dump(const char* path) {
         for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
         fh >> in.kp;
         fh >> in.et_max >> in.kdt1 >> in.kdt2 >> in.kdc >> in.kdc1 >> in.kdc2;
-        fh >> in.sigtMax >> in.sigcMax;   // P2g monotone-drive history (8-field line)
+        fh >> in.sigtMax >> in.sigcMax >> in.wt >> in.wc >> mp.omegaDead;   // P2g monotone-drive history (8-field line)
         double deps[6], sigO[6];
         for (int i = 0; i < 6; ++i) fh >> deps[i];
         for (int i = 0; i < 6; ++i) fh >> sigO[i];
@@ -237,14 +237,15 @@ static void run_oracle_dump(const char* path) {
         // increment, committed `in` held fixed (mirrors oracle damaged_consistent_tangent, rel_step 1e-6).
         double Cn[6][6];
         const double base = mp.fc / mp.E;
+        Params mpf = mp; mpf.subIncrForceN = returnMapPieces(mp, in, strain);   // both FD legs use the CENTRAL n (the map is discontinuous at n boundaries)
         for (int j = 0; j < 6; ++j) {
             const double dd = 1.0e-6 * (std::fabs(deps[j]) + base);
             double sp[6], sm[6], se[6], junk[6][6]; State o2;
             double strp[6], strm[6];
             for (int i = 0; i < 6; ++i) { strp[i] = strain[i]; strm[i] = strain[i]; }
             strp[j] += dd; strm[j] -= dd;
-            returnMap(mp, strp, in, o2, sp, se, junk, false, -1.0, true);
-            returnMap(mp, strm, in, o2, sm, se, junk, false, -1.0, true);
+            returnMap(mpf, strp, in, o2, sp, se, junk, false, -1.0, true);
+            returnMap(mpf, strm, in, o2, sm, se, junk, false, -1.0, true);
             for (int i = 0; i < 6; ++i) Cn[i][j] = (sp[i] - sm[i]) / (2.0 * dd);
         }
         double nd = 0, nn = 0, cmax = 0;
@@ -285,7 +286,7 @@ static void run_oracle_dump(const char* path) {
         for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
         fh >> in.kp;
         fh >> in.et_max >> in.kdt1 >> in.kdt2 >> in.kdc >> in.kdc1 >> in.kdc2;
-        fh >> in.sigtMax >> in.sigcMax;
+        fh >> in.sigtMax >> in.sigcMax >> in.wt >> in.wc >> mp.omegaDead;   // + committed omega_t/omega_c + dead threshold
         double e11_next, hoopK, hoopFy;
         fh >> e11_next >> hoopK >> hoopFy;
         double sigO[6]; for (int i = 0; i < 6; ++i) fh >> sigO[i];
@@ -374,7 +375,7 @@ static void run_oracle_dump(const char* path) {
         for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
         fh >> in.kp;
         fh >> in.et_max >> in.kdt1 >> in.kdt2 >> in.kdc >> in.kdc1 >> in.kdc2;
-        fh >> in.sigtMax >> in.sigcMax;   // P2g monotone-drive history (8-field line)
+        fh >> in.sigtMax >> in.sigcMax >> in.wt >> in.wc >> mp.omegaDead;   // P2g monotone-drive history (8-field line)
         double deps[6], sigVisc[6], sigInv[6];
         for (int i = 0; i < 6; ++i) fh >> deps[i];
         for (int i = 0; i < 6; ++i) fh >> sigVisc[i];
@@ -429,7 +430,7 @@ static void run_oracle_dump(const char* path) {
             fh >> tok; std::string label; fh >> label;
             double pb[12]; for (int i = 0; i < 12; ++i) fh >> pb[i];
             Params mp = makeParams(pb);
-            int nsteps; fh >> mp.flowPotential >> mp.maxSubIncr >> nsteps;
+            int nsteps; fh >> mp.flowPotential >> mp.maxSubIncr >> mp.subIncrMode >> nsteps;   // subIncrMode: 0 deterministic (default), 1 adaptive
             double sig_n[6] = {0,0,0,0,0,0}, kp_n = 0.0, maxs = 0, maxk = 0;
             for (int s = 0; s < nsteps; ++s) {
                 double deps[6], sigO[6], kpO;
@@ -488,7 +489,7 @@ static void run_oracle_dump(const char* path) {
             for (int i = 0; i < 6; ++i) fh >> in.eps[i];
             for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
             fh >> in.kp >> in.et_max >> in.kdt1 >> in.kdt2 >> in.kdc >> in.kdc1 >> in.kdc2
-               >> in.sigtMax >> in.sigcMax >> in.eqc >> in.etPrev;
+               >> in.sigtMax >> in.sigcMax >> in.eqc >> in.etPrev >> in.wt >> in.wc >> mp.omegaDead;
             double deps[6], sigO[6];
             for (int i = 0; i < 6; ++i) fh >> deps[i];
             for (int i = 0; i < 6; ++i) fh >> sigO[i];
@@ -497,20 +498,26 @@ static void run_oracle_dump(const char* path) {
             returnMap(mp, strain, in, out, sigC, sigEff, Da, true, -1.0, true);
             double maxs = 0; for (int i = 0; i < 6; ++i) maxs = std::fmax(maxs, std::fabs(sigC[i] - sigO[i]));
             double Cn[6][6]; const double base = mp.fc / mp.E;
+    Params mpf = mp; mpf.subIncrForceN = returnMapPieces(mp, in, strain);   // both FD legs use the CENTRAL n (the map is discontinuous at n boundaries)
             for (int j = 0; j < 6; ++j) {
                 const double dd = 1.0e-6 * (std::fabs(deps[j]) + base);
                 double sp[6], sm[6], se[6], junk[6][6]; State o2; double strp[6], strm[6];
                 for (int i = 0; i < 6; ++i) { strp[i] = strain[i]; strm[i] = strain[i]; }
                 strp[j] += dd; strm[j] -= dd;
-                returnMap(mp, strp, in, o2, sp, se, junk, false, -1.0, true);
-                returnMap(mp, strm, in, o2, sm, se, junk, false, -1.0, true);
+                returnMap(mpf, strp, in, o2, sp, se, junk, false, -1.0, true);
+                returnMap(mpf, strm, in, o2, sm, se, junk, false, -1.0, true);
                 for (int i = 0; i < 6; ++i) Cn[i][j] = (sp[i] - sm[i]) / (2.0 * dd);
             }
             double nd = 0, nn = 0;
             for (int A = 0; A < 6; ++A) for (int B = 0; B < 6; ++B) { const double df = Da[A][B] - Cn[A][B]; nd += df * df; nn += Cn[A][B] * Cn[A][B]; }
             const double rel = std::sqrt(nd / nn);
             worst_dmg = std::fmax(worst_dmg, maxs); worst_dtan = std::fmax(worst_dtan, rel);
-            const bool ok = maxs < 1.0e-6 && rel < 5.0e-5;
+            // tangent tolerance 5e-5 for EVERY record (direct returns and sub-incremented chains alike): the reported tangent of an
+            // n-piece chain is the chain's own algorithmic tangent (accumulated forward incl. the kappa history, C8), and the FD
+            // reference pins n on both legs (mpf), so a chain is as consistent as a direct return. (It was loosened to 5e-2 for
+            // maxSubIncr > 0 while the last piece's tangent was reported: 6/41/121 % off at n = 2/4/64 in compression.)
+        const double tanTol = 5.0e-5;
+            const bool ok = maxs < 1.0e-6 && rel < tanTol;
             if (!ok) ++fails;
             std::printf("  %-24s nom_sig_err=%.2e  tan_rel=%.2e  wc=%.3f  %s\n", label.c_str(), maxs, rel, out.wc, ok ? "ok" : "FAIL");
         }
@@ -529,7 +536,7 @@ static void run_oracle_dump(const char* path) {
             for (int i = 0; i < 6; ++i) fh >> in.eps[i];
             for (int i = 0; i < 6; ++i) fh >> in.sigEff[i];
             fh >> in.kp >> in.et_max >> in.kdt1 >> in.kdt2 >> in.kdc >> in.kdc1 >> in.kdc2
-               >> in.sigtMax >> in.sigcMax >> in.eqc >> in.etPrev;
+               >> in.sigtMax >> in.sigcMax >> in.eqc >> in.etPrev >> in.wt >> in.wc >> mp.omegaDead;
             double deps[6], sigO[6];
             for (int i = 0; i < 6; ++i) fh >> deps[i];
             for (int i = 0; i < 6; ++i) fh >> sigO[i];
@@ -538,20 +545,26 @@ static void run_oracle_dump(const char* path) {
             returnMap(mp, strain, in, out, sigC, sigEff, Da, true, -1.0, true);
             double maxs = 0; for (int i = 0; i < 6; ++i) maxs = std::fmax(maxs, std::fabs(sigC[i] - sigO[i]));
             double Cn[6][6]; const double base = mp.fc / mp.E;
+    Params mpf = mp; mpf.subIncrForceN = returnMapPieces(mp, in, strain);   // both FD legs use the CENTRAL n (the map is discontinuous at n boundaries)
             for (int j = 0; j < 6; ++j) {
                 const double dd = 1.0e-6 * (std::fabs(deps[j]) + base);
                 double sp[6], sm[6], se[6], junk[6][6]; State o2; double strp[6], strm[6];
                 for (int i = 0; i < 6; ++i) { strp[i] = strain[i]; strm[i] = strain[i]; }
                 strp[j] += dd; strm[j] -= dd;
-                returnMap(mp, strp, in, o2, sp, se, junk, false, -1.0, true);
-                returnMap(mp, strm, in, o2, sm, se, junk, false, -1.0, true);
+                returnMap(mpf, strp, in, o2, sp, se, junk, false, -1.0, true);
+                returnMap(mpf, strm, in, o2, sm, se, junk, false, -1.0, true);
                 for (int i = 0; i < 6; ++i) Cn[i][j] = (sp[i] - sm[i]) / (2.0 * dd);
             }
             double nd = 0, nn = 0;
             for (int A = 0; A < 6; ++A) for (int B = 0; B < 6; ++B) { const double df = Da[A][B] - Cn[A][B]; nd += df * df; nn += Cn[A][B] * Cn[A][B]; }
             const double rel = std::sqrt(nd / nn);
             worst_dmg = std::fmax(worst_dmg, maxs); worst_dtan = std::fmax(worst_dtan, rel);
-            const bool ok = maxs < 1.0e-6 && rel < 5.0e-5;
+            // tangent tolerance 5e-5 for EVERY record (direct returns and sub-incremented chains alike): the reported tangent of an
+            // n-piece chain is the chain's own algorithmic tangent (accumulated forward incl. the kappa history, C8), and the FD
+            // reference pins n on both legs (mpf), so a chain is as consistent as a direct return. (It was loosened to 5e-2 for
+            // maxSubIncr > 0 while the last piece's tangent was reported: 6/41/121 % off at n = 2/4/64 in compression.)
+        const double tanTol = 5.0e-5;
+            const bool ok = maxs < 1.0e-6 && rel < tanTol;
             if (!ok) ++fails;
             std::printf("  %-24s nom_sig_err=%.2e  tan_rel=%.2e  wc=%.3f  %s\n", label.c_str(), maxs, rel, out.wc, ok ? "ok" : "FAIL");
         }
@@ -713,6 +726,54 @@ static void run_robustness() {
         std::printf("       (W*lch = %.2f N/m vs Gf = 120, unconverged steps %d, sigma_end = %.2e Pa)\n", G, unconv, sp);
     }
 
+    // C8 — CHAIN TANGENT of the deterministic sub-incrementation (WP concrete3d-hang-diagnosis, review M1). The reported
+    // tangent of an n-piece chain is the chain's own algorithmic tangent, accumulated forward through the pieces
+    // (G_p = (Dt C^-1) G_(p-1) + Sk (x) g_(p-1) + Dt/n, g_p = R G_(p-1) + Kk g_(p-1) + R C/n; kappa history included),
+    // NOT the last piece's (which the review measured 6 % / 41 % / 121 % off at n = 2 / 4 / 64 in compression). Reference:
+    // central differences of the SAME chain with n PINNED on both legs (Params::subIncrForceN; the map is discontinuous
+    // where n changes). Virgin state, the reviewer's compression direction, and the tensile direction; every state whose
+    // ladder did not escalate (subInfo == n). Bound 1e-6 (measured 1e-8..1e-10, the floor is the FD truncation and the
+    // scalar Lode-angle central differences inside the principal Jacobian).
+    {
+        Params q = mp; q.Gf = 0.1; q.Gc = 5.0; q.Df = 0.85; q.As = 2.0; q.qh0 = 0.3; q.Hp = 0.01; q.lch = 50; q.lch_ref = 50;
+        q.tensionLaw = 1; q.flowPotential = 1; q.compDrive = 1; q.tcTemper = 2; q.maxSubIncr = 10; q.epsFc = 5.0 / (30 * 50);
+        const double dirs[2][6] = {{-1.0, 0.25, 0.25, 0.2, 0, 0}, {1.0, -0.2, -0.2, 0, 0, 0}};
+        const int targets[6] = {1, 2, 4, 9, 26, 64};
+        double worst = 0.0; int nchecked = 0; bool all = true;
+        for (int dc = 0; dc < 2; ++dc) {
+            for (int ti = 0; ti < 6; ++ti) {
+                const int target = targets[ti];
+                double z[6] = {0, 0, 0, 0, 0, 0}, e[6] = {0, 0, 0, 0, 0, 0}; bool found = false;
+                for (double sc = 2e-4; sc < 5e-2 && !found; sc *= 1.004) {
+                    double d[6]; for (int a = 0; a < 6; ++a) d[a] = sc * dirs[dc][a];
+                    if (detPieces(q, z, d, 0.0) != target) continue;
+                    double sg[6], kk, DD[6][6]; int inf = -9;
+                    returnMapTensor(q, z, d, 0.0, true, sg, kk, DD, false, &inf);
+                    if (inf == (target == 1 ? 0 : target)) { for (int a = 0; a < 6; ++a) e[a] = d[a]; found = true; }
+                }
+                if (!found) continue;                       // (tension: n = 1..4 always escalate the ladder near first cracking)
+                double sg[6], kk, D[6][6]; int inf;
+                returnMapTensor(q, z, e, 0.0, true, sg, kk, D, true, &inf);
+                Params qf = q; qf.subIncrForceN = target;
+                double nd = 0, nn = 0; bool straddle = false;
+                for (int j = 0; j < 6; ++j) {
+                    const double h = (target == 1) ? 1e-8 : 1e-10; double ep[6], em[6];
+                    for (int a = 0; a < 6; ++a) { ep[a] = e[a]; em[a] = e[a]; }
+                    ep[j] += h; em[j] -= h;
+                    double s1[6], s2[6], k1, k2, Dd[6][6]; int i1 = -9, i2 = -9;
+                    returnMapTensor(qf, z, ep, 0.0, true, s1, k1, Dd, false, &i1); returnMapTensor(qf, z, em, 0.0, true, s2, k2, Dd, false, &i2);
+                    if (i1 != inf || i2 != inf) straddle = true;   // a leg escalated the ladder: the map jumps within 1e-10 here
+                    for (int a = 0; a < 6; ++a) { const double f = (s1[a] - s2[a]) / (2 * h); nd += (D[a][j] - f) * (D[a][j] - f); nn += f * f; }
+                }
+                const double rel = std::sqrt(nd / nn);
+                worst = std::fmax(worst, rel); ++nchecked; if (!(rel < 1.0e-6)) all = false;
+                std::printf("       %s n=%2d (subInfo %2d): ||T - D_fd||/||D_fd|| = %.2e%s\n", dc == 0 ? "compression" : "tension    ", target, inf, rel, straddle ? " (straddle)" : "");
+            }
+        }
+        check(nchecked >= 12 && all, "chain tangent == FD of the same n-piece chain, n = 1..64, compression + tension (rel < 1e-6)");
+        std::printf("       (checked %d states, worst ||T - D_fd||/||D_fd|| = %.2e)\n", nchecked, worst);
+    }
+
     // C7 — FULL CDPM2 POTENTIAL robustness (B1): 120k random tensor increments from the stress-free state with
     // random kappa_p in [0,1.5], Df in {0.85, 1.0, 0.6}, Hp in {0.01, 0.5} — generic, deep NEAR-AXIS compression
     // (the closed-cap regime), uniaxial-ish compression with shear, near-apex tension — with sub-incrementation:
@@ -801,11 +862,146 @@ static void run_robustness() {
     }
 }
 
+// ---- (D) tension return (r4 rescue of #877; review 3 MAJOR 1 / probe6 / probe5d) ---------------
+// The wrapper defaults of review 3 (fc 30, ft 3, E 30000, Gf 0.1, lch 50, bilinear, cdpm2 flow + drive, tcTemper proj,
+// maxSubIncr 10, deterministic). Before the r4 port the DIRECT return failed on 645 / 904 / 1953 of 2000 points in a
+// 2e-6-wide window at lateral -0.2, x = 1.5 / 3 / 6 eps_cr, and one window at lateral +0.3, x = 3 returned two
+// different admissible roots (vertex kp 23 1984 times, regular kp 113 16 times).
+static const int D4_MAX_JUMPS = 20;   // measured 14 on the r4 kernel (11 kappa_p-up, 3 kappa_p-down; headroom for platform round-off)
+static Params tensionReturnParams() {
+    Params q; q.E = 30000; q.nu = 0.2; q.fc = 30; q.ft = 3; q.e = eccentricityFromKupfer(30, 3, 1.16);
+    q.m0 = m0Of(q.fc, q.ft, q.e); q.Df = 0.85; q.As = 2.0; q.qh0 = 0.3; q.Hp = 0.01; q.Gf = 0.1; q.Gc = 5.0;
+    q.lch = 50; q.lch_ref = 50; q.tensionLaw = 1; q.flowPotential = 1; q.compDrive = 1; q.tcTemper = 2;
+    q.maxSubIncr = 10; q.epsFc = 5.0 / (30 * 50); return q;
+}
+static void run_tension_return() {
+    std::printf("[D] tension return (review 3 of #877, MAJOR 1)\n");
+    const double z[6] = {0, 0, 0, 0, 0, 0};
+    for (int lode = 0; lode <= 1; ++lode) {
+        Params q = tensionReturnParams(); q.lodeFactor = lode;
+        const double ecr = q.ft / q.E;
+        const double lats[3] = {-0.2, 0.0, 0.3}, xs[3] = {1.5, 3.0, 6.0};
+        int fails = 0, flips = 0, multi = 0; double worstJump = 0.0;
+        for (double lat : lats) for (double x : xs) {
+            const int N = 400; int prevInf = -99; double kmin = 1e300, kmax = -1e300, prev[6]; bool hp = false;
+            for (int i = 0; i < N; ++i) {
+                const double sc = x * ecr * (1.0 + 2e-6 * (double)i / N);
+                const double d[6] = {sc, lat * sc, lat * sc, 0, 0, 0};
+                double s[6], k, D[6][6];
+                if (returnMapTensor1(q, z, d, 0.0, true, s, k, D, false) != 0) ++fails;
+                else { kmin = std::fmin(kmin, k); kmax = std::fmax(kmax, k); }
+                double s2[6], k2, D2[6][6]; int inf = -9;
+                returnMapTensor(q, z, d, 0.0, true, s2, k2, D2, false, &inf);
+                if (prevInf != -99 && inf != prevInf) ++flips; prevInf = inf;
+                if (hp) { double j = 0; for (int a = 0; a < 6; ++a) j += (s2[a] - prev[a]) * (s2[a] - prev[a]); worstJump = std::fmax(worstJump, std::sqrt(j)); }
+                for (int a = 0; a < 6; ++a) prev[a] = s2[a]; hp = true;
+            }
+            if (kmax - kmin > 1e-3 * (1.0 + kmax)) ++multi;   // two roots in one 2e-6 window
+        }
+        std::printf("       lodeFactor %d: direct-return failures %d / 3600, ladder flips %d, windows with two roots %d, max |dsig_eff| %.2e MPa\n",
+                    lode, fails, flips, multi, worstJump);
+        check(fails == 0 && flips == 0 && multi == 0 && worstJump < 1e-6,
+              lode == 0 ? "tension return: no direct-return failure, no ladder flip, one root per 2e-6 window (lodeFactor 0)"
+                        : "tension return: no direct-return failure, no ladder flip, one root per 2e-6 window (lodeFactor 1)");
+    }
+    // D2 — FULL-RESIDUAL HONESTY: every converged regular hardening return solves the 4-equation system (R1, R2 flow, R3
+    // yield, R4 hardening), not only f = 0 (db02ccc70's nested fallback was accepted on f alone after 5 unchecked polish
+    // steps). Random tension-dominated first-crack trials, virgin and preloaded; the vertex returns are checked on f.
+    {
+        Params q = tensionReturnParams();
+        const double ecr = q.ft / q.E, z6[6] = {0, 0, 0, 0, 0, 0};
+        unsigned long long sd = 777; auto rnd = [&]() { sd = sd * 6364136223846793005ULL + 1442695040888963407ULL; return ((sd >> 11) * (1.0 / 9007199254740992.0)); };
+        int n = 0, conv = 0, bad = 0, unconv = 0; double worst = 0.0;
+        for (int t = 0; t < 6000; ++t) {
+            const double kpn = (t % 2) ? 0.0 : 5.0 * rnd(), x = 1.2 + 30 * rnd();
+            const double d[6] = {x * ecr, (-0.3 + 0.6 * rnd()) * x * ecr, (-0.3 + 0.6 * rnd()) * x * ecr,
+                                 0.3 * (rnd() - 0.5) * x * ecr, 0.3 * (rnd() - 0.5) * x * ecr, 0.3 * (rnd() - 0.5) * x * ecr};
+            double sig_tr[6]; elasticPredTensor(z6, d, q, sig_tr);
+            double A[3][3], w[3], V[3][3]; voigtToMat(sig_tr, A); eig3sym(A, w, V);
+            PrincipalResult pr = returnMapHardening(w, q, kpn);
+            if (!pr.plastic) continue; ++n;
+            if (!pr.converged) { ++unconv; continue; } ++conv;
+            bool ok = pr.dlam >= -1e-12 && pr.kp >= kpn - 1e-12 && std::fabs(pr.f_after) < 3.1e-6;
+            if (!pr.apex) {
+                double sv[6] = {w[0], w[1], w[2], 0, 0, 0}, xi_tr, rho_tr, th_tr; invariants(sv, xi_tr, rho_tr, th_tr);
+                double Rr[4];
+                cdpm2HardeningResidual(pr.xi, pr.rho, pr.dlam, pr.kp, xi_tr, rho_tr, kpn, lodeR(th_tr, q.e),
+                                       hardeningLodeFactor(rho_tr, th_tr, q), q, Rr, nullptr, q.flowPotential != 1);
+                const double rel = std::fmax(std::fmax(std::fabs(Rr[0]) / q.fc, std::fabs(Rr[1]) / q.fc),
+                                             std::fmax(std::fabs(Rr[2]), std::fabs(Rr[3]) / (1.0 + pr.kp)));
+                worst = std::fmax(worst, rel);
+                if (!(rel < NESTED_RES_TOL)) ok = false;
+            }
+            if (!ok) ++bad;
+        }
+        std::printf("       %d plastic trials: %d converged, %d honest failures, %d dishonest; worst scaled residual %.2e\n", n, conv, unconv, bad, worst);
+        check(bad == 0 && unconv == 0, "every converged tension return solves the full residual (R1, R2, R3, R4), none fails");
+    }
+    // D3 -- the nested fallback's acceptance gate checks the FULL residual: a nested candidate is accepted as returned,
+    // and the same candidate with dlam moved 1 % (still admissible, R1/R2/R4 violated) is REJECTED when not polished;
+    // polishing it back to the root makes it acceptable again. (A gate on f alone would accept the perturbed one: the
+    // perturbation leaves (xi, rho, kp) and so f untouched.)
+    {
+        Params q = tensionReturnParams();
+        const double ecr = q.ft / q.E, z6[6] = {0, 0, 0, 0, 0, 0}, sc = 3.0 * ecr;
+        const double d[6] = {sc, -0.2 * sc, -0.2 * sc, 0, 0, 0};
+        double sig_tr[6]; elasticPredTensor(z6, d, q, sig_tr);
+        double A[3][3], w[3], V[3][3]; voigtToMat(sig_tr, A); eig3sym(A, w, V);
+        double sv[6] = {w[0], w[1], w[2], 0, 0, 0}, xi_tr, rho_tr, th_tr; invariants(sv, xi_tr, rho_tr, th_tr);
+        const double r = lodeR(th_tr, q.e), c2 = hardeningLodeFactor(rho_tr, th_tr, q);
+        double x[4];
+        const bool got = returnMapNested(xi_tr, rho_tr, r, c2, q, 0.0, x[0], x[1], x[2], x[3]);
+        double y[4] = {x[0], x[1], x[2] * 1.01, x[3]}, z[4] = {x[0], x[1], x[2] * 1.01, x[3]};
+        const double f_y = yfInvHard(y[0], y[1], r, y[3], q);
+        const bool accRaw = got && polishHardeningRoot(x, xi_tr, rho_tr, 0.0, r, c2, q, 1.0e-11, 0);
+        const bool accBad = polishHardeningRoot(y, xi_tr, rho_tr, 0.0, r, c2, q, 1.0e-11, 0);
+        const bool accFix = polishHardeningRoot(z, xi_tr, rho_tr, 0.0, r, c2, q, 1.0e-11, 8);
+        std::printf("       nested candidate kp %.4g: accepted %d; dlam +1%% (|f| = %.1e) accepted unpolished %d, polished %d\n",
+                    x[3], (int)accRaw, std::fabs(f_y), (int)accBad, (int)accFix);
+        check(got && accRaw && !accBad && accFix, "nested fallback gate: full residual, not f alone (perturbed-flow candidate rejected)");
+    }
+    // D4 -- MAGNITUDE SWEEP (r4 review of #877, item 2): 40 random tension rays, virgin, x = 1..41 eps_cr in steps of
+    // 0.01 eps_cr (lateral -0.4..0.4, shear +-0.2 of the axial strain). The first r4 cut ran the plain Newton first and
+    // the nested solve as the rescue, and the two converged to DIFFERENT genuine roots on neighbouring trials (the
+    // review: 351 neighbour jumps > 1 MPa, up to 102 MPa, flipping back and forth). With the fixed root order (vertex,
+    // nested with the smallest-kappa_p root, then the Newtons) what is left are ONE-SIDED jumps where the least-hardening
+    // branch ends (a fold of the backward-Euler system) and the vertex/regular switch of lodeFactor 0. Gate: no failure,
+    // no ray jumps > 1 MPa more than twice (no flip-flopping: the principled check), and the total stays near the measured
+    // count (14, worst 23 MPa; limit 20). The plain-Newton-first order fails it (110 jumps, 10 on one ray, 99.7 MPa).
+    {
+        Params q = tensionReturnParams();
+        const double ecr = q.ft / q.E, z6[6] = {0, 0, 0, 0, 0, 0};
+        unsigned long long sd = 4242; auto U = [&]() { sd = sd * 2862933555777941757ULL + 3037000493ULL; return (double)(sd >> 11) / 9007199254740992.0; };
+        int total = 0, worstRay = 0, fails = 0; double worstJump = 0.0;
+        for (int dir = 0; dir < 40; ++dir) {
+            const double d[6] = {1.0, -0.4 + 0.8 * U(), -0.4 + 0.8 * U(), 0.4 * (U() - 0.5), 0.4 * (U() - 0.5), 0.4 * (U() - 0.5)};
+            double prev[6]; bool hp = false; int nray = 0; const int N = 4000;
+            for (int i = 0; i <= N; ++i) {
+                const double x = 1.0 + 40.0 * i / N;
+                double de[6]; for (int a = 0; a < 6; ++a) de[a] = d[a] * x * ecr;
+                double sg[6], k, D[6][6];
+                if (returnMapTensor1(q, z6, de, 0.0, true, sg, k, D, false) != 0) { ++fails; hp = false; continue; }
+                if (hp) {
+                    double j = 0; for (int a = 0; a < 6; ++a) j += (sg[a] - prev[a]) * (sg[a] - prev[a]); j = std::sqrt(j);
+                    if (j > 1.0) { ++nray; ++total; worstJump = std::fmax(worstJump, j); }
+                }
+                for (int a = 0; a < 6; ++a) prev[a] = sg[a]; hp = true;
+            }
+            worstRay = nray > worstRay ? nray : worstRay;
+        }
+        std::printf("       40 rays x 4001 points: direct-return failures %d, neighbour jumps > 1 MPa %d (worst %.1f MPa), most on one ray %d\n",
+                    fails, total, worstJump, worstRay);
+        check(fails == 0 && worstRay <= 2 && total <= D4_MAX_JUMPS,
+              "tension magnitude sweep: no failure, at most 2 one-sided jumps per ray, total <= measured");
+    }
+}
+
 int main(int argc, char** argv) {
     run_identities();
     const char* fix = argc > 1 ? argv[1] : "tests/_testbed/concrete3d_oracle_fixture.txt";
     run_oracle_dump(fix);
     run_robustness();
+    run_tension_return();
     std::printf(fails ? "\nKERNEL CHECK: %d FAIL\n" : "\nKERNEL CHECK: ALL PASS\n", fails);
     return fails ? 1 : 0;
 }

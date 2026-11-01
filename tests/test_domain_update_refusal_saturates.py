@@ -43,8 +43,15 @@ _N_WRAP = (-_INT32_MIN) // (-_SENTINEL) + 1          # 64,907: the first count w
 # integrate from the virgin state (test_ladrunoConcrete3D_element._PE_FAIL, fork #1038; robust to
 # 1e-4 relative perturbations). lch is Element::getCharacteristicLength = the shortest node pair,
 # 1.0 on a unit quad exactly as on #1038's unit tri, so the classification carries over.
-_CONCRETE = (30000.0, 0.2, 30.0, 3.0, 0.1, 5.0)
-_PE_FAIL = (-2.9e-4, 2.6e-4, -4.4e-4)
+# r4 merge of fork #877: its tension-return fix integrates #1038's original (-2.9e-4, 2.6e-4, -4.4e-4) on the
+# shipped defaults, and on those defaults the failures left (|strain| >~ 0.3) are not robust to perturbation. So the
+# material carries the element battery's legacy pin (`_mat` of test_ladrunoConcrete3D_element: the legacy v1 flow
+# has no compressive cone and refuses biaxial compression past its cap, a region, not a fractal) and _PE_FAIL is that
+# battery's re-picked strain. The material is incidental here: the gate is about summing the codes.
+_CONCRETE = (30000.0, 0.2, 30.0, 3.0, 0.1, 5.0,
+             "-tensionLaw", "exp", "-gcLegacy", "-flowPotential", "legacy", "-compressionDrive", "legacy",
+             "-tcTemper", "none", "-Df", 1.0, "-hardening", 0.3, 0.5)
+_PE_FAIL = (-8.3e-4, -9.7e-4, -9.7e-4)
 
 # 132 x 132 unit quads, 4 points each: 69,696 refusing points, inside the wrap window with a
 # margin of ~4,800 points on the low side.

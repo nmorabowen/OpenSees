@@ -33,6 +33,7 @@
 #include <Channel.h>
 #include <MaterialResponse.h>
 #include <Information.h>
+#include <LadrunoMaterialStatus.h>   // Ladruno (ADR-86b/94) - LADRUNO_MATERIAL_REFUSED
 #include <OPS_Globals.h>   // ops_Dt (IMPL-EX) + ops_TheActiveElement (Phase 3b lch latch)
 #include <Element.h>       // Element::getCharacteristicLength()
 #include <string.h>
@@ -79,7 +80,13 @@ void* OPS_LadrunoRCFiniteStrain(void)
   bool   implexOn = false, implexCtrl = false;
   double implexAlpha = 1.0, implexErrTol = 0.05, implexTimeRedLim = 0.01;
   int    tensStiffMode = 0;
-  double tensStiffC = 500.0, tensStiffAlpha = 1.0;
+  // Ladruno (C2): the vc default is the Vecchio-Collins 1986 MCFT constant 200
+  // (f1 = ft/(1+sqrt(200 e1))); it was 500 (Collins-Mitchell 1991, = the cm law) before C2.
+  // Pass -tensStiffC 500 for the pre-C2 vc curve.
+  double tensStiffC = 200.0, tensStiffAlpha = 1.0;
+  bool   tensStiffCGiven = false;
+  // Ladruno (C2): MCFT softening coefficient + cracked-state Poisson ratio (defaults = pre-C2)
+  double betaC = 170.0, crackedNu = -1.0;
   bool   autoReg = false;
   double lchRef = 1.0;
 
@@ -151,7 +158,11 @@ void* OPS_LadrunoRCFiniteStrain(void)
       else if (m && strcmp(m, "cm") == 0) tensStiffMode = 2;
       else { opserr << "LadrunoRCFiniteStrain: -tensStiff needs {vc|cm}.\n"; return 0; }
     }
-    else if (strcmp(opt, "-tensStiffC") == 0)     { int nd = 1; if (OPS_GetDoubleInput(&nd, &tensStiffC) < 0)     { opserr << "LadrunoRCFiniteStrain: -tensStiffC needs a value.\n";     return 0; } }
+    else if (strcmp(opt, "-tensStiffC") == 0)     { int nd = 1; tensStiffCGiven = true; if (OPS_GetDoubleInput(&nd, &tensStiffC) < 0)     { opserr << "LadrunoRCFiniteStrain: -tensStiffC needs a value.\n";     return 0; } }
+    // Ladruno (C2): -betaC C  (beta = 1/(0.8 + C eps1); default 170; V&C 1986: 0.34/|eps'c|)
+    else if (strcmp(opt, "-betaC") == 0)          { int nd = 1; if (OPS_GetDoubleInput(&nd, &betaC) < 0)          { opserr << "LadrunoRCFiniteStrain: -betaC needs a value.\n";          return 0; } }
+    // Ladruno (C2): -crackedNu nu  (Poisson ratio once eps1 >= eps_cr; default off = elastic nu kept)
+    else if (strcmp(opt, "-crackedNu") == 0)      { int nd = 1; if (OPS_GetDoubleInput(&nd, &crackedNu) < 0)      { opserr << "LadrunoRCFiniteStrain: -crackedNu needs a value.\n";      return 0; } }
     else if (strcmp(opt, "-tensStiffAlpha") == 0) { int nd = 1; if (OPS_GetDoubleInput(&nd, &tensStiffAlpha) < 0) { opserr << "LadrunoRCFiniteStrain: -tensStiffAlpha needs a value.\n"; return 0; } }
     else if (strcmp(opt, "-autoRegularization") == 0) {
       autoReg = true; int nd = 1;
@@ -170,9 +181,17 @@ void* OPS_LadrunoRCFiniteStrain(void)
     opserr << "nDMaterial LadrunoRCFiniteStrain error: -tensStiffC must be > 0.\n";
     return 0;
   }
-  if (tensStiffMode == 2 && tensStiffC != 500.0)
+  if (tensStiffMode == 2 && tensStiffCGiven && tensStiffC != 500.0)   // Ladruno (C2): only a USER value
     opserr << "WARNING nDMaterial LadrunoRCFiniteStrain: -tensStiffC is ignored in cm mode "
               "(cm uses the fixed Collins-Mitchell 500); use -tensStiff vc for a tunable c.\n";
+  if (betaC <= 0.0) {   // Ladruno (C2)
+    opserr << "nDMaterial LadrunoRCFiniteStrain error: -betaC must be > 0.\n";
+    return 0;
+  }
+  if (crackedNu >= 0.5) {   // Ladruno (C2); a negative value means off
+    opserr << "nDMaterial LadrunoRCFiniteStrain error: -crackedNu must be in [0, 0.5).\n";
+    return 0;
+  }
   if (autoReg && lchRef <= 0.0) {
     opserr << "nDMaterial LadrunoRCFiniteStrain error: -autoRegularization $lch_ref must be > 0.\n";
     return 0;
@@ -200,6 +219,7 @@ void* OPS_LadrunoRCFiniteStrain(void)
   P.tensStiffMode = tensStiffMode; P.tensStiffC = tensStiffC;
   P.tensStiffAlpha = tensStiffAlpha; P.ftPeak = 0.0;
   P.autoReg = autoReg; P.lchRef = lchRef;
+  P.betaC = betaC; P.crackedNu = crackedNu;   // Ladruno (C2)
 
   std::vector<double> Cdf(Ce.size(), 0.0), Tdf(Te.size(), 0.0);
   for (size_t i = 0; i < Cd.size() && i < Cdf.size(); ++i) Cdf[i] = Cd[i];
@@ -295,7 +315,9 @@ int LadrunoRCFiniteStrain::setTrialF(const Matrix& F)
 {
   using namespace logstrain_kernel;
 
-  if (this->regularizeIfNeeded() < 0) { status = STATUS_NO_CONVERGE; return -1; }
+  // ADR-94: a refused trial returns the sentinel, never a bare -1. Every failure return below happens BEFORE the
+  // committed state (histN) is touched: setTrialF writes only Ftrial9/Jdet/Btotal9/strain6/stress6/Dtan/histTr/status.
+  if (this->regularizeIfNeeded() < 0) { status = STATUS_NO_CONVERGE; return LADRUNO_MATERIAL_REFUSED; }
 
   for (int i = 0; i < 3; i++)
     for (int j = 0; j < 3; j++) Ftrial9[3*i+j] = F(i, j);
@@ -307,7 +329,7 @@ int LadrunoRCFiniteStrain::setTrialF(const Matrix& F)
   if (Jdet <= 0.0) {
     opserr << "LadrunoRCFiniteStrain::setTrialF - non-positive det F (" << Jdet
            << "); element inverted/degenerate\n";
-    return -1;
+    return LADRUNO_MATERIAL_REFUSED;
   }
   double Ft[9]; mat3_transpose(Ftrial9, Ft);
   mat3_mul(Ftrial9, Ft, Btotal9);
@@ -328,7 +350,7 @@ int LadrunoRCFiniteStrain::setTrialF(const Matrix& F)
   const double tf  = this->implexTimeFactor();
 
   this->integrate(dox, tf);              // stress6 = Kirchhoff τ, Dtan = ∂τ/∂εᵉ
-  if (status == STATUS_NO_CONVERGE) return -1;
+  if (status == STATUS_NO_CONVERGE) return LADRUNO_MATERIAL_REFUSED;
 
   // Cauchy σ = τ/J and material spatial tangent c = (1/2J)[D:L:B] at B
   double D6[36];
@@ -417,7 +439,7 @@ NDMaterial* LadrunoRCFiniteStrain::getCopy(const char* type)
 //  parallel  (serialize params + backbones + committed history; no dim/cEps33,
 //  the finite view is 3D-only and condensation-free — its own schema)
 // ===========================================================================
-static const int RCF_SCHEMA_VERSION = 1;
+static const int RCF_SCHEMA_VERSION = 2;   // v2 = +betaC,crackedNu,nuCracked (Ladruno C2)
 static const int RCF_NSCALAR = 1 /*schemaVersion*/ + 2 /*tag,rho*/
                             + 10 /*E,nu,Kc,fcft,betaFloor,cdf,eta,betaOn,lubRed,tanMode*/
                             + 9 /*interlockOn,shearRetMode,shearRetFactor,aggSize,crackStrain,crackSpacing,lch,betaSrMin,sqrtFc*/
@@ -428,8 +450,8 @@ static const int RCF_NSCALAR = 1 /*schemaVersion*/ + 2 /*tag,rho*/
                             + 4 /*autoReg,lchRef,regularizationDone,regLch*/
                             + 5 /*dtime_n,dtime_n_commit,dtime_0,commitDone,implexError*/;
 static const int RCF_BACK = 1 + 3*MAXPTS;
-static const int RCF_HIST = 6 + 6 + 6 + 5 + 2 + 2 + 3;
-static const int RCF_DATA = RCF_NSCALAR + 2*RCF_BACK + RCF_HIST;
+static const int RCF_HIST = 6 + 6 + 6 + 5 + 2 + 2 + 3 + 1 /*nuCracked, C2*/;
+static const int RCF_DATA = RCF_NSCALAR + 2*RCF_BACK + RCF_HIST + 2 /*betaC,crackedNu (C2)*/;
 
 int LadrunoRCFiniteStrain::sendSelf(int commitTag, Channel& theChannel)
 {
@@ -460,6 +482,7 @@ int LadrunoRCFiniteStrain::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = regularizationDone ? 1.0 : 0.0; data(c++) = regLch;
   data(c++) = dtime_n; data(c++) = dtime_n_commit; data(c++) = dtime_0;
   data(c++) = commitDone ? 1.0 : 0.0; data(c++) = implexError;
+  data(c++) = P.betaC; data(c++) = P.crackedNu;   // v2 (C2)
   data(c++) = P.ht.n;
   for (int i = 0; i < MAXPTS; i++) data(c++) = P.ht.x[i];
   for (int i = 0; i < MAXPTS; i++) data(c++) = P.ht.y[i];
@@ -478,6 +501,7 @@ int LadrunoRCFiniteStrain::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = histN.tauCr; data(c++) = histN.gammaCr;
   data(c++) = histN.cracked2; data(c++) = histN.slipCum;
   data(c++) = histN.xt_old; data(c++) = histN.xc_old; data(c++) = histN.eps1_old;
+  data(c++) = histN.nuCracked;   // v2 (C2)
 
   if (theChannel.sendVector(this->getDbTag(), commitTag, data) < 0) {
     opserr << "LadrunoRCFiniteStrain::sendSelf - failed to send vector\n";
@@ -524,6 +548,7 @@ int LadrunoRCFiniteStrain::recvSelf(int commitTag, Channel& theChannel, FEM_Obje
   regularizationDone = (data(c++) != 0.0); regLch = data(c++);
   dtime_n = data(c++); dtime_n_commit = data(c++); dtime_0 = data(c++);
   commitDone = (data(c++) != 0.0); implexError = data(c++);
+  P.betaC = data(c++); P.crackedNu = data(c++);   // v2 (C2)
   P.ht.n = (int)data(c++);
   for (int i = 0; i < MAXPTS; i++) P.ht.x[i] = data(c++);
   for (int i = 0; i < MAXPTS; i++) P.ht.y[i] = data(c++);
@@ -542,6 +567,7 @@ int LadrunoRCFiniteStrain::recvSelf(int commitTag, Channel& theChannel, FEM_Obje
   histN.tauCr = data(c++); histN.gammaCr = data(c++);
   histN.cracked2 = data(c++); histN.slipCum = data(c++);
   histN.xt_old = data(c++); histN.xc_old = data(c++); histN.eps1_old = data(c++);
+  histN.nuCracked = data(c++);   // v2 (C2)
 
   histTr = histN;
   for (int i = 0; i < 6; i++) { strain6[i] = 0.0; stress6[i] = 0.0; }

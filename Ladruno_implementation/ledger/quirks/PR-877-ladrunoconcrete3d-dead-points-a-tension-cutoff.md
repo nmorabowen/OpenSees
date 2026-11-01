@@ -1,0 +1,9 @@
+---
+wp: PR-877
+title: "LadrunoConcrete3D dead points: a tension cutoff on the plastic flow CAPS the runaway, it does not cure q2 growth (WP concrete3d-hang-diagnosis, #877)"
+pr: "#877"
+date: 2026-10-10
+---
+### LadrunoConcrete3D dead points: a tension cutoff on the plastic flow CAPS the runaway, it does not cure q2 growth (WP concrete3d-hang-diagnosis, [#877](https://github.com/nmorabowen/OpenSees/pull/877))
+- **Bites:** past the loss of its strength a point kept flowing plastically: kappa_p and sig_eff diverged (K&R coarse 3.4e4 / 813 MPa; G5 band 3.2e4 / 779 MPa; ExplicitBathe 579 / 869 MPa) until the return map refused. `omega_dead = 0.998` (committed damage; `-deadThreshold` in [0.99, 1), `-noDead` off): omega_t dead => the tensile spectral part of the trial effective stress is carried elastically and only the compressive remainder is returned; omega_c dead => strict freeze at the floor. Also in the `BeamFiber` view.
+- **Not a cure:** kappa_p keeps the value it had at death (the review's uniaxial-strain tension probe, lch 50: kappa_p = 1386, 15 x ft of hardened strength; strongly Hp-dependent), and q2 still grows under tensile flow before that. omega -> 1 there only because sigma_eff is inflated, so a threshold on omega alone would cut the bilinear second branch if it were applied to the IMPL-EX explicit stress (an override that did so lost 50 % of the G5 dissipation and was dropped). Absorbing the tension into the plastic strain instead was rejected (a permanent strain locks a full-stiffness compression in on unloading); freezing at the committed omega instead of the floor was rejected (the residual then grows with the elastic sig_eff: Gc-calibration gate 62 % off). The PV20 shear-panel strut becomes 1.87 fc (was 1.23) and tau_max 18.3 MPa (was 12.0): the plane-stress mixed step is ill-posed with a dead direction.

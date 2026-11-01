@@ -298,10 +298,29 @@ def run_p0_gate(fc=30.0, ft=3.0, target_fcc_ratio=1.16, verbose=True):
 # Hardening qh1/qh2 + ductility measure x(sigma) = the NEXT P1 increment (this slice gives the
 # PEAK-STRENGTH envelope, which is the failure surface and the headline confined-triaxial gate).
 # ===========================================================================
+# Sub-incrementation mode the gates below build their materials with ("det" = the deterministic DEFAULT, "adaptive" =
+# the direct-then-halving path). The two OOFEM-referenced gates (run_flow_potential_gate F2, run_compression_drive_gate G1)
+# pin the DIRECT backward-Euler value of a far-outside increment (OOFEM's own one-step con2dpm2 -2.5448 MPa, and the
+# step-converged 10-sub values), which is by definition what a single direct return gives; the deterministic default
+# deliberately subdivides such increments (n = ceil(f_trial/0.3) pieces) and lands elsewhere (-2.25 at one sub-step,
+# +1.1 % at ten), so those gates run in "adaptive" mode (direct where it converges) -- see _pin_adaptive().
+_DEFAULT_SUBINCR_MODE = "det"
+
+
+class _pin_adaptive:
+    def __enter__(self):
+        global _DEFAULT_SUBINCR_MODE
+        self._old, _DEFAULT_SUBINCR_MODE = _DEFAULT_SUBINCR_MODE, "adaptive"
+
+    def __exit__(self, *a):
+        global _DEFAULT_SUBINCR_MODE
+        _DEFAULT_SUBINCR_MODE = self._old
+
+
 def make_material(E, nu, fc, ft, Df=1.0, target_fcc_ratio=1.16, e=None,
                   qh0=0.3, Hp=0.5, Ah=0.08, Bh=0.003, Ch=2.0, Dh=1.0e-6, eta=0.0,
                   ct_temper="none", tension_law="exp", eps_fc=0.0, flow_potential="legacy",
-                  max_subincr=0, compression_drive="legacy", tc_temper="none"):
+                  max_subincr=0, compression_drive="legacy", tc_temper="none", subincr_mode=None):
     # qh0,Hp: hardening laws Eq.30-31.  Ah,Bh,Ch,Dh: ductility measure Eq.33 (literature defaults;
     # calibrated per-concrete from peak strains — flagged in ADR 6 as recalibrate-for-fork-data).
     # eta: Duvaut-Lions viscoplastic relaxation time (ADR 4.4). eta=0 => inviscid, BYTE-identical to
@@ -318,7 +337,8 @@ def make_material(E, nu, fc, ft, Df=1.0, target_fcc_ratio=1.16, e=None,
     return dict(E=E, nu=nu, fc=fc, ft=ft, e=e, m0=m0_of(fc, ft, e), Df=Df, K=K, G=G,
                 qh0=qh0, Hp=Hp, Ah=Ah, Bh=Bh, Ch=Ch, Dh=Dh, eta=eta, ct_temper=ct_temper,
                 tension_law=tension_law, eps_fc=eps_fc, flow_potential=flow_potential,
-                max_subincr=max_subincr, compression_drive=compression_drive, tc_temper=tc_temper)
+                max_subincr=max_subincr, compression_drive=compression_drive, tc_temper=tc_temper,
+                subincr_mode=(subincr_mode or _DEFAULT_SUBINCR_MODE))
 
 
 # ---------------------------------------------------------------------------
@@ -835,13 +855,33 @@ def return_map_hardening(sig_tr, mp, kp_n, tol=1.0e-11):
         # at isolated strains => a DISCONTINUOUS stress(strain) map with spurious roots for the element Newton
         # (OOFEM con2dpm2 at one sub-step: C++ -3.22 vs -2.55). A trial whose solution is the VERTEX cannot
         # satisfy R2 with rho pinned at 0 => it stops early (rho stuck at 0) and returns apex=True.
+        #
+        # WP concrete3d-hang-diagnosis review, defect 2 (MAJOR), option A: the ORIGINAL scheme projected
+        # (rho, dlam, kp) onto their admissible ranges on EVERY line-search trial iterate, not just the
+        # accepted one. In a TENSION-dominated trial at kappa_p < 1 (m0*RR > 1, the hardening system is
+        # locally INDEFINITE there -- df/dkappa_p > 0), that per-iterate projection repeatedly pins the
+        # iterate back onto the same clamped face: the line search bottoms out at a=1/64 almost every
+        # step, and the loop burns its full 100-iteration budget (~800 residual evaluations) before
+        # falling through to the plain Newton anyway -- which measured orders of magnitude faster on the
+        # same trial. Clamping every iterate also makes the scheme's OWN internal trajectory
+        # path-dependent in a way the unclamped Newton is not, part of why the direct and sub-incremented
+        # returns can land on visibly different states near first cracking.
+        #
+        # Fix: clamp ONLY at acceptance. The line search still evaluates the residual at the raw
+        # (unprojected) `un` to decide whether to keep halving `a`; the projection that used to feed BACK
+        # into `u` (and so into the next Jacobian and the "stuck" apex heuristic) is gone. The physically-
+        # required projection (rho>=0, dlam>=0, kp>=kp_n) is enforced exactly once, on the FINAL returned
+        # iterate -- the caller already runs u through the ADMISSIBILITY gate (dlam>=-1e-12,
+        # kp>=kp_n-1e-12, on-surface f_after) before accepting "converged", so a root this raw Newton
+        # finds outside the admissible cone is rejected there and falls through to the plain scheme /
+        # vertex return, exactly as for any other non-convergence.
         sc = np.array([1.0 / fc, 1.0 / fc, 1.0, 1.0])
         u = np.array([xi_tr, rho_tr, 0.0, kp_n])
         Rr = resid(u)
         stuck = 0
         for _ in range(100):
             if (abs(Rr[0]) < tol * fc and abs(Rr[1]) < tol * fc and abs(Rr[2]) < tol and abs(Rr[3]) < tol):
-                return u, True, False
+                break
             J = np.zeros((4, 4))
             for j in range(4):
                 du = 1.0e-8 * (abs(u[j]) + 1.0e-6)
@@ -857,24 +897,55 @@ def return_map_hardening(sig_tr, mp, kp_n, tol=1.0e-11):
             n0 = float(np.linalg.norm(Rr * sc))
             a = 1.0
             while True:
-                un = u + a * step
-                un[1] = max(un[1], 0.0); un[2] = max(un[2], 0.0); un[3] = max(un[3], kp_n)
+                un = u + a * step            # UNPROJECTED -- no per-iterate clamp (option A)
                 Rn = resid(un)
                 if (np.all(np.isfinite(Rn)) and float(np.linalg.norm(Rn * sc)) < (1.0 - 1.0e-4 * a) * n0) or a < 1.0 / 64.0:
                     break
                 a *= 0.5
             u, Rr = un, Rn
-            stuck = stuck + 1 if u[1] == 0.0 else 0
+            stuck = stuck + 1 if u[1] <= 0.0 else 0
             if stuck >= 3:
+                u[1] = max(u[1], 0.0); u[2] = max(u[2], 0.0); u[3] = max(u[3], kp_n)
                 return u, False, True
-        return u, False, False
+        else:
+            return u, False, False
+        # Converged (residual small at the raw iterate). ADMISSIBILITY is decided on the UNPROJECTED root (review #877 minor 1:
+        # the caller's gate used to see the already-projected dlam / kappa_p, which are admissible by construction, so a root
+        # with dlam < 0 or kappa_p < kappa_n was silently accepted as its clamp): a root outside the cone is a non-convergence
+        # and falls through to the plain scheme / vertex return. Only an admissible root is then projected once, here --
+        # downstream sign conventions (rho used as a norm, kp used in qh1Of/qh2Of ranges) assume the physical ranges.
+        admissible_root = (u[2] >= -1.0e-12) and (u[3] >= kp_n - 1.0e-12)
+        u[1] = max(u[1], 0.0); u[2] = max(u[2], 0.0); u[3] = max(u[3], kp_n)
+        return u, bool(admissible_root), False
 
-    if cdpm2_flow:                            # globalized first; plain scheme (+ vertex + clamped retry) as fallback
+    if cdpm2_flow and xi_tr > 0.0:
+        # TENSION-dominated trial (sigma_V_trial > 0): plain Newton FIRST (#877 follow-up, defect 2 cost). Measured
+        # on the first-crack step (virgin sigma_xx = 2 MPa, kappa_p < 1): the globalized Newton burns 660-900
+        # residual evaluations failing (its line search bottoms out where the hardening system is locally
+        # indefinite, m0*RR > 1) and the plain Newton then converges in ~25 iterations to the SAME state, so
+        # the plain scheme goes first here and newtonGlob (option A) is the rescue. If the plain scheme aborted on
+        # an axis overshoot (apex) and the rescue does not converge either, keep the apex verdict so the vertex
+        # test below still runs, exactly as when the plain scheme ran second.
+        u, converged, apex = _newton(False)
+        if not converged:
+            plain_apex = apex
+            u, converged, apex = _newton_glob()
+            if not converged and not apex:
+                apex = plain_apex
+    elif cdpm2_flow:                          # compressive / mixed: globalized first; plain scheme (+ vertex + clamped retry) as fallback
         u, converged, apex = _newton_glob()
         if not converged and not apex:
             u, converged, apex = _newton(False)
     else:
+        # LEGACY flow (WP concrete3d-hang-diagnosis review #877 follow-up): the direct plain Newton runs FIRST
+        # exactly as before (every converging case, hence every pinned fixture, is byte-identical); only on
+        # a non-convergent, non-apex outcome does the globalized (unprojected-line-search, option A) Newton
+        # get its turn as a rescue before the honest failure. Measured on the legacy plain Newton alone:
+        # 10-13 % of ordinary tension-dominated first-cracking increments (expansive lateral strain, the
+        # kind an FE Newton iterate produces) failed the return map and silently fell to the elastic trial.
         u, converged, apex = _newton(False)
+        if not converged and not apex:
+            u, converged, apex = _newton_glob()
     xi, rho, dlam, kp = u
     if not apex:
         p_new = xi / SQRT3
@@ -1192,28 +1263,123 @@ def return_map_tensor(sig_n, deps, mp, kp_n, hardening=True):
 
     SUB-INCREMENTATION (B1; mp["max_subincr"] > 0, hardening map only): if the direct return fails, the
     strain increment is halved (OOFEM ConcreteDPM2::performPlasticityReturn) and the sub-increments are
-    integrated in sequence from the committed state, doubling back up after each success, down to a floor
-    of 2^-max_subincr of the increment. max_subincr = 0 (the oracle default) => the direct return only,
-    byte-identical to the pre-B1 map. The damage update downstream sees only the final effective state."""
-    out = _return_map_tensor_1(sig_n, deps, mp, kp_n, hardening)
+    integrated in sequence from the committed state, doubling back up (to at most 2x the size that just
+    succeeded) after each success, down to a floor of 2^-max_subincr of the increment. max_subincr = 0
+    (the oracle default) => the direct return only, byte-identical to the pre-B1 map. The damage update
+    downstream sees only the final effective state.
+
+    ATTEMPT BUDGET (WP concrete3d-hang-diagnosis): a Gauss point that only ever succeeds near the floor
+    alternates fail/succeed and can legally spend up to ~2 * 2^max_subincr return maps (of up to 100
+    Newton iterations each -- see return_map_hardening) reaching done=1.0. At max_subincr=10 (the CDPM2
+    wrapper default, LadrunoConcrete3D.cpp -- ensureGcTable's Params) that is ~2048 attempts per material
+    point per Newton iteration; over a full mesh x algorithm iterations that is the multi-hour hang
+    (C3/B1 vecchio_shim, sheikh_uzumeri confined column) diagnosed 2026-09-27 -- nothing ever failed, so
+    the analysis never cut the step and nothing was logged. max_sub_attempts caps the TOTAL number of
+    _return_map_tensor_1 calls (successes + failures) in this loop; once exhausted, return the honest
+    failure (the direct-return fallback) so the caller's status != 0 cuts the step, exactly like any
+    other non-convergence. Default 64 keeps the worst case at 64 * 100 Newton iterations -- bounded and
+    fast -- instead of up to 2048 * 100.
+
+    SUB-INCREMENTATION MODE (WP concrete3d-hang-diagnosis #877 follow-up): with max_subincr > 0 the DEFAULT is
+    the DETERMINISTIC path (mp["subincr_mode"] = "det", see _return_map_tensor_det): the piece count is a
+    function of the trial overshoot only, so one (state, increment) always takes the same path -- measured on
+    the study's 562 random plastic-trial states the "direct, then halving on failure" path below is
+    discontinuous under a 1e-11 strain perturbation in 12.8 % of states (worst jump ratio 1e8) because the
+    direct and the sub-incremented returns land on different roots. mp["subincr_mode"] = "adaptive" keeps
+    the path described above (opt-in, so old numbers stay reproducible)."""
     nmax = int(mp.get("max_subincr", 0))
+    if nmax > 0 and hardening and mp.get("subincr_mode", "det") != "adaptive":
+        return _return_map_tensor_det(sig_n, deps, mp, kp_n)
+    return _return_map_tensor_adaptive(sig_n, deps, mp, kp_n, hardening)
+
+
+def _return_map_tensor_adaptive(sig_n, deps, mp, kp_n, hardening=True):
+    """ADAPTIVE sub-incrementation (subincr_mode = "adaptive", and the deterministic mode's last resort): the
+    direct return first; on failure halving/doubling down to 2^-max_subincr, bounded by max_sub_attempts."""
+    nmax = int(mp.get("max_subincr", 0))
+    out = _return_map_tensor_1(sig_n, deps, mp, kp_n, hardening)
     if out[3] or nmax <= 0 or not hardening:
         return out
+    max_attempts = int(mp.get("max_sub_attempts", 64))
     s = np.array(sig_n, float).copy()
     k = kp_n
     done, frac, floor = 0.0, 0.5, 0.5 ** nmax
     deps = np.asarray(deps, float)
+    attempts = 0
     while done < 1.0:
+        if attempts >= max_attempts:
+            return out                         # honest failure: budget exhausted, keep the elastic fallback
+        attempts += 1
         f = min(frac, 1.0 - done)
         sn, kn, _pl, cv = _return_map_tensor_1(s, deps * f, mp, k, True)
         if cv:
             s, k, done = sn, kn, done + f
-            frac = min(2.0 * frac, 1.0)
+            frac = min(2.0 * f, 1.0)           # at most 2x the size that just succeeded, not the stale frac
         else:
             frac *= 0.5
             if frac < floor:
                 return out                     # honest failure: the direct-return fallback (elastic predictor)
     return s, k, True, True
+
+
+def _trial_overshoot(sig_n, deps, mp, kp_n):
+    """Dimensionless yield-function value f_tr of the elastic trial (the same f_tr return_map_hardening tests)."""
+    sig_tr = elastic_pred_tensor(sig_n, deps, mp)
+    w, _V = np.linalg.eigh(voigt_to_mat(sig_tr))
+    xi, rho, th = invariants(np.array([w[0], w[1], w[2], 0.0, 0.0, 0.0]))[:3]
+    return _yf_inv_hard(xi, rho, lode_r(th, mp["e"]), kp_n, mp)
+
+
+def det_pieces(sig_n, deps, mp, kp_n):
+    """The deterministic piece count n = clamp(ceil(f_tr / c), 1, nmax_pieces), c = mp["subincr_c"] (0.3), nmax_pieces =
+    mp["subincr_max_pieces"] (64). mp["subincr_force_n"] > 0 pins n (the finite-difference reference of the algorithmic
+    tangent must use the CENTRAL evaluation's n on both legs, or a leg can straddle an n boundary)."""
+    force = int(mp.get("subincr_force_n", 0))
+    if force > 0:
+        return force
+    c = float(mp.get("subincr_c", 0.3))
+    nmax_pieces = int(mp.get("subincr_max_pieces", 64))
+    f_tr = _trial_overshoot(sig_n, np.asarray(deps, float), mp, kp_n)
+    return 1 if f_tr <= 0.0 else int(min(nmax_pieces, max(1, np.ceil(f_tr / c))))
+
+
+def _return_map_tensor_det(sig_n, deps, mp, kp_n):
+    """DETERMINISTIC sub-incrementation (hardening map): n = clamp(ceil(f_tr / c), 1, nmax_pieces) equal pieces,
+    each a direct return, chained from the committed state; ALWAYS applied (no 'try direct first'), so a given
+    (state, increment) always takes the same path. If a piece fails, the whole chain is redone with 2n and then
+    4n pieces (a deterministic ladder: each regime is a continuous function of the increment; the only branch is
+    the level, which changes only where a level fails). Refuse (honest failure = the direct-return fallback)
+    only after the ladder. The total work is structurally bounded by n + 2n + 4n <= 7 * nmax_pieces direct
+    returns. c = mp["subincr_c"] (0.3), nmax_pieces = mp["subincr_max_pieces"] (64). n = 1 (f_tr <= c, incl.
+    elastic trials) is one direct return, byte-identical to the direct map.
+
+    DISCONTINUITIES (measured on the reviewer's probes, honest): the map is a function of the increment, but it is NOT
+    continuous where n changes (a chain of n and of n + 1 pieces are two different integrations of the same increment) nor
+    where the ladder switches level; the jump is the difference between two consistent integrations, ~0.4-1.5 % of
+    sigma_eff and up to ~2.5 in kappa_p near first cracking for the compressive/tensile probes (see the kernel comment).
+    It is smaller than the failure-driven adaptive path's (1.8 % vs 13.3 % measured), which is discontinuous at every
+    attempt boundary and depends on the Newton iterate's noise."""
+    deps = np.asarray(deps, float)
+    n = det_pieces(sig_n, deps, mp, kp_n)
+    if n == 1:
+        r = _return_map_tensor_1(sig_n, deps, mp, kp_n, True)
+        if r[3]:
+            return r
+    for level in ((n, 2 * n, 4 * n) if n > 1 else (2, 4)):
+        s, k, ok = np.array(sig_n, float).copy(), kp_n, True
+        for _ in range(level):
+            s, k, _pl, cv = _return_map_tensor_1(s, deps / level, mp, k, True)
+            if not cv:
+                ok = False
+                break
+        if ok:
+            return s, k, True, True
+    if mp.get("subincr_rescue", True):
+        # ladder exhausted: last resort = the ADAPTIVE path (bounded by max_sub_attempts), then the honest failure.
+        # Reached only in the small share of states the fixed-n chains cannot integrate at all, where the
+        # alternative is a step cut; the map can only be discontinuous THERE.
+        return _return_map_tensor_adaptive(sig_n, deps, mp, kp_n, True)
+    return _return_map_tensor_1(sig_n, deps, mp, kp_n, True)   # honest failure: the direct-return fallback
 
 
 def _return_map_tensor_1(sig_n, deps, mp, kp_n, hardening=True):
@@ -2017,23 +2183,56 @@ def confined_step(st, e11, mp, Gf, Gc, lch, As=2.0, hoop_K=0.0, hoop_fy=1.0e30):
     et_max = st["et_max"]; sigt_max = st["sigt_max"]; sigc_max = st["sigc_max"]
     kdt1 = st["kdt1"]; kdt2 = st["kdt2"]; kdc = st["kdc"]; kdc1 = st["kdc1"]; kdc2 = st["kdc2"]
     epl_prev = st["epl_prev"].copy()
+    # DEAD POINTS (review M2: the BeamFiber view had no dead-point treatment; same rule as damaged_step_tensor): decided on
+    # the COMMITTED damage. omega_c >= omega_dead (crushed): frozen -- elastic effective stress on the fixed plastic strain,
+    # both damages at OMEGA_MAX, nominal (1-OMEGA_MAX) sig_eff, histories and kappa_p as committed. omega_t >= omega_dead
+    # (cracked): the tensile PART of the trial effective stress (this fibre is diagonal, so its positive principals) is
+    # carried elastically and the return map runs on the compressive remainder; the plastic-strain increment the damage
+    # histories see is the compressive return's alone (epl_prev is re-based on the trial).
+    om_dead = _omega_dead(mp)
+    wt_c, wc_c = st.get("wt", 0.0), st.get("wc", 0.0)
+    crushed = wc_c >= om_dead
+    cut = (not crushed) and wt_c >= om_dead
+    sig_eff_n, kp_n = sig_eff.copy(), kp
+
+    def _eff(deps):
+        """Effective-stress return of the trial from the committed (sig_eff_n, kp_n): -> (sig_eff, kp)."""
+        sig_tr = _elastic_pred(sig_eff_n, deps, mp)
+        if crushed:
+            return sig_tr, kp_n
+        if cut:
+            sm, kpn, _, _, _ = return_map_hardening(np.minimum(sig_tr, 0.0), mp, kp_n)
+            return sm + np.maximum(sig_tr, 0.0), kpn
+        s_, kpn, _, _, _ = return_map_hardening(sig_tr, mp, kp_n)
+        return s_, kpn
 
     for _ in range(80):                              # lateral Newton: sig_lat_eff + sig_hoop(el) -> 0
         deps = np.array([e11 - eps[0], el - eps[1], el - eps[2]])
-        snew, _, _, _, _ = return_map_hardening(_elastic_pred(sig_eff, deps, mp), mp, kp)
+        snew = _eff(deps)[0]
         res = 0.5 * (snew[1] + snew[2]) + hoop_stress(el, hoop_K, hoop_fy)
         if abs(res) < 1.0e-10 * (fc + 1.0):
             break
         d = 1.0e-8 * (abs(el) + 1.0e-6)
         deps2 = np.array([e11 - eps[0], (el + d) - eps[1], (el + d) - eps[2]])
-        snew2, _, _, _, _ = return_map_hardening(_elastic_pred(sig_eff, deps2, mp), mp, kp)
+        snew2 = _eff(deps2)[0]
         Jd = (0.5 * (snew2[1] + snew2[2]) + hoop_stress(el + d, hoop_K, hoop_fy) - res) / d
         if abs(Jd) < 1.0e-12:
             Jd = 1.0e-12 if Jd >= 0 else -1.0e-12
         el -= res / Jd
     deps = np.array([e11 - eps[0], el - eps[1], el - eps[2]])
-    sig_eff, kp, _, _, _ = return_map_hardening(_elastic_pred(sig_eff, deps, mp), mp, kp)
+    sig_eff, kp = _eff(deps)
+    eps_prev_n = eps
     eps = np.array([e11, el, el])
+    if crushed:
+        new = dict(st)
+        new.update(eps=eps, sig_eff=sig_eff, el=el, wt=OMEGA_MAX, wc=OMEGA_MAX)
+        return ((1.0 - OMEGA_MAX) * sig_eff, hoop_stress(el, hoop_K, hoop_fy), new,
+                dict(wt=OMEGA_MAX, wc=OMEGA_MAX, sig_eff=sig_eff.copy(), kp=kp))
+    if cut:                                          # re-base the plastic-strain reference on the elastic trial
+        sig_tr_f = _elastic_pred(sig_eff_n, deps, mp)
+        epl_prev = eps - np.array([(sig_tr_f[0] - nu * (sig_tr_f[1] + sig_tr_f[2])) / E,
+                                   (sig_tr_f[1] - nu * (sig_tr_f[0] + sig_tr_f[2])) / E,
+                                   (sig_tr_f[2] - nu * (sig_tr_f[0] + sig_tr_f[1])) / E])
 
     et, ac, xs = _damage_drivers(sig_eff, mp, As)
     above = max(et - max(et_max, eps0), 0.0)
@@ -2064,7 +2263,7 @@ def confined_step(st, e11, mp, Gf, Gc, lch, As=2.0, hoop_K=0.0, hoop_fy=1.0e30):
     sig_nom = apply_damage_principal(sig_eff, wt, wc)
     new = dict(eps=eps, sig_eff=sig_eff, kp=kp, el=el, et_max=et_max, sigt_max=sigt_max,
                sigc_max=sigc_max, kdt1=kdt1, kdt2=kdt2, kdc=kdc, kdc1=kdc1, kdc2=kdc2, epl_prev=epl,
-               eqc=eqc, etp=etp)
+               eqc=eqc, etp=etp, wt=wt, wc=wc)
     return sig_nom, hoop_stress(el, hoop_K, hoop_fy), new, dict(wt=wt, wc=wc, sig_eff=sig_eff.copy(), kp=kp)
 
 
@@ -2370,6 +2569,27 @@ def _dl_beta(mp, dt):
     return 1.0
 
 
+OMEGA_DEAD = 0.998     # default dead-point threshold on the committed damage (mp["omega_dead"]); >= 1 disables
+
+
+def _omega_dead(mp):
+    return float(mp.get("omega_dead", OMEGA_DEAD))
+
+
+def _tension_split_trial(state, deps6, mp):
+    """Spectral split of the elastic trial sig_tr = sig_bar + C:deps of a tension-dead point (omega_t >= omega_dead):
+    returns (sig_plus, sig_minus, state_rebased) where sig_plus/sig_minus are the tensile/compressive spectral parts of
+    sig_tr and state_rebased is the committed state re-based on the TRIAL (sig_bar = sig_tr, eps = the new strain), so a
+    zero-increment update of it sees a plastic-strain increment made of the compressive return alone."""
+    sig_tr = elastic_pred_tensor(state["sig_bar"], deps6, mp)
+    w, V = np.linalg.eigh(voigt_to_mat(sig_tr))
+    plus = mat_to_voigt(V @ np.diag(np.maximum(w, 0.0)) @ V.T)
+    minus = mat_to_voigt(V @ np.diag(np.minimum(w, 0.0)) @ V.T)
+    st = dict(state)
+    st.update(sig_bar=sig_tr, eps=state["eps"] + np.asarray(deps6, float))
+    return plus, minus, st
+
+
 def damaged_step_tensor(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     """ONE constitutive update: committed `state` + strain increment `deps6` -> (nominal sigma[6],
     NEW state, diagnostics). Pure (does not mutate `state`). Identical kinematics to
@@ -2387,7 +2607,40 @@ def damaged_step_tensor(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     eps_f = Gf / (ft * lch)
     eps_fc = _eps_fc(mp, Gc, lch)
     deps6 = np.asarray(deps6, float)
-    sig_bar, kp_new, plastic, conv = return_map_tensor(state["sig_bar"], deps6, mp, state["kp"])
+    # DEAD POINTS (WP concrete3d-hang-diagnosis #877 follow-up, owner decision 2026-09-28). Without this kappa_p and sig_bar
+    # run away on a point that has already lost its strength (K&R: kappa_p 3.4e4, sig_bar 813 MPa at fc = 24; G5 band:
+    # kappa_p 3.2e4, 779 MPa at omega_t = 0.9993) until the return map cannot integrate them, and the nominal residual
+    # (1-omega)*sig_bar is a spurious fraction of ft. Decided on the COMMITTED damage, threshold mp["omega_dead"]
+    # (default OMEGA_DEAD = 0.998, i.e. a residual strength fraction of 2e-3; >= 1 disables):
+    #   * omega_c >= omega_dead (crushed): STRICT FREEZE -- kappa_p, the plastic strain and every damage history frozen, the
+    #     effective stress purely ELASTIC on the frozen plastic strain (sig_bar + C:deps, zero again when the strain returns
+    #     to eps_p, no return map can fail), nominal (1-OMEGA_MAX)*sig_bar (both damages go to the floor OMEGA_MAX and stay
+    #     there), kernel tangent (1-OMEGA_MAX)*C.
+    #   * omega_t >= omega_dead (crack fully open): TENSION CUTOFF ON THE PLASTIC FLOW -- the tensile spectral part of the
+    #     trial effective stress is carried ELASTICALLY (no flow, no kappa_p growth from tension, back to zero at eps_p on
+    #     unloading) and the ordinary return map runs on the compressive remainder only (a cracked point keeps its
+    #     compressive strut: plasticity, hardening, omega_c). Realised by re-basing the committed state on the trial
+    #     (sig_bar = sig_tr, eps = new strain) and a zero increment, so the plastic-strain increment seen by the damage
+    #     histories is the compressive return's alone. (Absorbing the tension into the plastic strain was measured and
+    #     rejected: the permanent strain locks a full-stiffness compression in on unloading.)
+    om_dead = _omega_dead(mp)
+    wt_c, wc_c = state.get("wt", 0.0), state.get("wc", 0.0)
+    if wc_c >= om_dead:
+        # the point is dead in every direction: both damages go to the floor OMEGA_MAX and stay there. (Freezing at the
+        # COMMITTED damage instead -- review #877 minor 2 -- was measured and rejected: the residual (1-omega) sig_bar then
+        # grows with the elastic sig_bar and the Gc-calibration gate goes 62 % off. The nominal drop at the freeze is at most
+        # (1-omega_dead)*|sig_bar| = 2e-3 |sig_bar|.)
+        sig_bar_d = elastic_pred_tensor(state["sig_bar"], deps6, mp)
+        new_state = dict(state)
+        new_state.update(sig_bar=sig_bar_d, eps=state["eps"] + deps6, wt=OMEGA_MAX, wc=OMEGA_MAX)
+        return (1.0 - OMEGA_MAX) * sig_bar_d, new_state, dict(wt=OMEGA_MAX, wc=OMEGA_MAX, plastic=False, conv=True, dead=True)
+    if wt_c >= om_dead:
+        sig_plus, sig_minus, state = _tension_split_trial(state, deps6, mp)
+        deps6 = np.zeros(6)
+        sig_bar_m, kp_new, plastic, conv = return_map_tensor(sig_minus, deps6, mp, state["kp"])
+        sig_bar = sig_plus + sig_bar_m
+    else:
+        sig_bar, kp_new, plastic, conv = return_map_tensor(state["sig_bar"], deps6, mp, state["kp"])
     beta = _dl_beta(mp, dt)
     if beta < 1.0:                                        # Duvaut-Lions: relax toward the inviscid return
         sig_tr = elastic_pred_tensor(state["sig_bar"], deps6, mp)
@@ -2445,7 +2698,7 @@ def damaged_step_tensor(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     sig_nom = mat_to_voigt(V @ np.diag(apply_damage_principal(w, wt, wc)) @ V.T)   # Eq.1, recompose
     new_state = dict(sig_bar=sig_bar, kp=kp_new, eps=eps_new, et_max=et_max,
                      kdt1=kdt1, kdt2=kdt2, kdc=kdc, kdc1=kdc1, kdc2=kdc2,
-                     sigt_max=sigt_max, sigc_max=sigc_max, eqc=eqc, etp=etp)
+                     sigt_max=sigt_max, sigc_max=sigc_max, eqc=eqc, etp=etp, wt=wt, wc=wc)
     return sig_nom, new_state, dict(wt=wt, wc=wc, plastic=plastic, conv=conv)
 
 
@@ -2455,12 +2708,17 @@ def damaged_consistent_tangent(state, deps6, mp, Gf, Gc, lch, As=2.0, rel_step=1
     Duvaut-Lions relaxation (beta is constant in deps, so the FD picks up the blended effective tangent)."""
     base = mp["fc"] / mp["E"]
     C = np.zeros((6, 6))
+    mp_leg = mp
+    if mp.get("subincr_mode", "det") != "adaptive" and int(mp.get("max_subincr", 0)) > 0             and state.get("wt", 0.0) < _omega_dead(mp) and state.get("wc", 0.0) < _omega_dead(mp):
+        # the deterministic map is discontinuous where n = ceil(f_tr/c) changes: pin the CENTRAL evaluation's n on both
+        # FD legs (dead points take their own path; their n follows the remainder, left unpinned here)
+        mp_leg = dict(mp, subincr_force_n=det_pieces(state["sig_bar"], np.asarray(deps6, float), mp, state["kp"]))
     for j in range(6):
         d = rel_step * (abs(deps6[j]) + base)
         dp = np.array(deps6, float); dp[j] += d
         dm = np.array(deps6, float); dm[j] -= d
-        sp, _, _ = damaged_step_tensor(state, dp, mp, Gf, Gc, lch, As, dt=dt)
-        sm, _, _ = damaged_step_tensor(state, dm, mp, Gf, Gc, lch, As, dt=dt)
+        sp, _, _ = damaged_step_tensor(state, dp, mp_leg, Gf, Gc, lch, As, dt=dt)
+        sm, _, _ = damaged_step_tensor(state, dm, mp_leg, Gf, Gc, lch, As, dt=dt)
         C[:, j] = (sp - sm) / (2.0 * d)
     return C
 
@@ -2486,10 +2744,13 @@ def run_p2d_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, Gc=5.0, As=2.0, ver
     # OWN (axial, lateral) strain history through damaged_step_tensor step-by-step and match sig11.
     du = drive_damaged_unified(mp, np.linspace(0, 0.008, 1500), Gf, Gc, lch, As)
     st = make_damage_state(mp)
+    # the path driver has no dead-point logic (it is the P2c reference), so the equivalence is checked with the
+    # dead-point treatment disabled (omega_dead = 2); the treatment itself is gated by the dead-point tests
+    mp_td0 = dict(mp, omega_dead=2.0)
     sig_step = []
     for i in range(len(du["eps11"])):
         eps_i = np.array([du["eps11"][i], du["eps_lat"][i], du["eps_lat"][i], 0.0, 0.0, 0.0])
-        s, st, _ = damaged_step_tensor(st, eps_i - st["eps"], mp, Gf, Gc, lch, As)
+        s, st, _ = damaged_step_tensor(st, eps_i - st["eps"], mp_td0, Gf, Gc, lch, As)
         sig_step.append(s[0])
     res["TD0_tension_maxdiff"] = float(np.max(np.abs(np.array(sig_step) - du["sig11"])))
     duc = drive_damaged_unified(mp, np.linspace(0, -0.12, 2000), Gf, Gc, lch, As)
@@ -2686,6 +2947,14 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     eps_f = Gf / (ft * lch)
     eps_fc = _eps_fc(mp, Gc, lch)
     deps6 = np.asarray(deps6, float)
+    om_dead = _omega_dead(mp)
+    wt_c, wc_c = state.get("wt", 0.0), state.get("wc", 0.0)
+    if wc_c >= om_dead:
+        # crushed (see damaged_step_tensor): tangent = the floored (1-OMEGA_MAX) * elastic operator
+        return _OMEGA_TAN_FLOOR * elastic_C(mp)
+    if wt_c >= om_dead:
+        # tension cutoff on the plastic flow: the tangent of the split step is taken by central difference of the update
+        return damaged_consistent_tangent(state, deps6, mp, Gf, Gc, lch, As, dt=dt)
     sig_bar, kp_new, plastic, conv = return_map_tensor(state["sig_bar"], deps6, mp, state["kp"])
     beta = _dl_beta(mp, dt)
     if beta < 1.0:                                        # relax the effective stress + kp (mirror the update)
@@ -4115,7 +4384,7 @@ def _uniaxial_stress_step(st, exx, mp, Gf, Gc, lch, As):
     return ev(m)
 
 
-def run_flow_potential_gate(verbose=True, fuzz_n=1500):
+def _run_flow_potential_gate_impl(verbose=True, fuzz_n=1500):
     """B1 — the FULL CDPM2 plastic potential (Eq.22-29) replacing the v1 always-dilatant flow.
       F1 the analytic gradient (dg/dsigV, dg/drho) and its Hessian rows == central FD of the potential value
          (grad < 1e-6, Hessian < 1e-4 relative) at cap / pre-peak / post-peak / tension / deep-compression states;
@@ -4226,7 +4495,7 @@ def run_flow_potential_gate(verbose=True, fuzz_n=1500):
     return res
 
 
-def run_compression_drive_gate(verbose=True):
+def _run_compression_drive_gate_impl(verbose=True):
     """B2 — CDPM2 compressive damage drive (Grassl 2013 Eq.47-49/53/55; OOFEM computeDamage).
       G1 OOFEM con2dpm2 (SI, eps_fc 1e-4, CDPM2 flow, 10 sub-steps): step 5 == the independent OOFEM
          transcription (-1.3222) to 0.5 % (the legacy drive gives -1.3482).
@@ -4355,6 +4624,16 @@ def run_p2_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, Gf=0.1, verbose=True):
               + f"  spread={res['D3_total_spread']:.2f}*Gf  [CDPM2 damage-only regularization]")
         print(f"  => P2 GATE {'PASS' if ok else 'FAIL'}")
     return res
+
+
+def run_flow_potential_gate(*a, **k):
+    with _pin_adaptive():
+        return _run_flow_potential_gate_impl(*a, **k)
+
+
+def run_compression_drive_gate(*a, **k):
+    with _pin_adaptive():
+        return _run_compression_drive_gate_impl(*a, **k)
 
 
 if __name__ == "__main__":
@@ -4563,6 +4842,11 @@ def run_tc_temper_gate(verbose=True):
         res[("T2", tc)] = (max(r[1] for r in pp), min(r[2] for r in pp), pp[-1][3])
     res["T2_ok"] = bool(-res[("T2", "none")][1] < 0.3 * fc and -res[("T2", "proj")][1] > 0.9 * fc)
     mp = pv20_material("proj")
+    # T3 probes the analytic damaged tangent in the partially-crushed cracked-strut regime (0 < wc < 1 next to a tensile
+    # principal). With the dead-point tension cutoff active the 'proj' strut never crushes on this path (it carries
+    # 1.87 fc to the end of the PV20 strain history), so the regime is reached on the legacy dead-point path
+    # (omega_dead = 2, i.e. disabled): the analytic tangent code under test is the same one live points use.
+    mp["omega_dead"] = 2.0
     kn = np.vstack([PV20_KNOTS, [[1.4e-2, 4.49e-4, 8.65e-4]]])
     pp = pv20_path(mp, 200, kn)
     k = next(i for i, r in enumerate(pp) if 0.2 < r[3] < 0.7)
@@ -4578,6 +4862,11 @@ def run_tc_temper_gate(verbose=True):
         sg = {}
         for tc in ("none", "proj"):
             m4 = pv20_material(tc)
+            # T4 isolates the tcTemper logic (its premise: no effective principal above TC_DEAD*ft). The lateral
+            # dilatancy of the post-peak path cracks the point (omega_t past omega_dead) and the dead-point tension cutoff
+            # then carries that lateral tension elastically (unbounded), which puts 'proj' legitimately to work (~1 % fc
+            # difference in the tail), so the premise is kept by running T4 on the legacy dead-point path (omega_dead = 2).
+            m4["omega_dead"] = 2.0
             st = make_damage_state(m4); e = np.zeros(6); v = []
             for kk in range(1, 61):
                 e[0] = -6.0e-3 * kk / 60
@@ -4599,5 +4888,6 @@ def run_tc_temper_gate(verbose=True):
             print(f"  T2 {tc}: PV20 path tau_max {t[0]:.3f} MPa, strut min {t[1]:+.2f} MPa ({-t[1] / fc:.2f} fc), "
                   f"wc end {t[2]:.3f}")
         print(f"  T3 analytic vs FD tangent (wc={res['T3_wc']:.3f}): {res['T3_rel']:.2e}")
-        print(f"  T4 proj vs none, uniaxial/equibiaxial compression: max |d sigma|/fc = {res['T4_dev']:.1e}   PASS={res['PASS']}")
+        print(f"  T4 proj vs none, uniaxial/equibiaxial compression: max |d sigma|/fc = {res['T4_dev']:.1e}")
+        print(f"  PASS={res['PASS']}")
     return res
