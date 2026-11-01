@@ -210,6 +210,11 @@ static const double SQRT1_5 = 1.224744871391589;
 // 3.1e-6 in MPa (fc = 30) but 0.3 in Pa (fc = 3e6), so an SI model accepted returns 30 % off the surface. The
 // value equals the MPa one at fc = 30 (every fixture unchanged).
 static const double F_TOL_HONEST = 3.1e-6;
+
+// Per-thread call counters (apeGmsh #2621 F2). The kernel self-check reads them to hold the invariant that the
+// damaged tangent runs NO return map (damagedTangent cannot reach returnMapTensor: it is declared after it).
+struct KernelCallCounters { unsigned long long returnMapTensor = 0, pieceReturns = 0; };
+inline KernelCallCounters& kernelCallCounters() { static thread_local KernelCallCounters c; return c; }
 // Full-residual acceptance of the nested fallback return (R1, R2 relative to fc; R3; R4 relative to 1 + kp).
 static const double NESTED_RES_TOL = 1.0e-8;
 // Grid cells of the nested solve's root scan (returnMapNested), and the inner-solve tolerance used while scanning
@@ -1990,11 +1995,9 @@ inline void plasticStrain6(const double sig_eff[6], const double eps[6], const P
     for (int k = 3; k < 6; ++k) epl[k] = eps[k] - sig_eff[k] * (1.0 + nu) / E;  // eps_ij = sig_ij/(2G)
 }
 
-// forward decl (damagedTangent's d beta_c/dε does a composite micro-FD through the return map, and
-// returnMapTensor is defined further down)
-inline int returnMapTensor(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
-                           bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
-                           bool doTangent, int* subInfo = nullptr);
+// NB (apeGmsh #2621 F2): returnMapTensor is deliberately NOT forward-declared here. damagedTangent below used to
+// micro-FD the whole return map (up to 36 maps per tangent; on #877's deterministic map with the piece count pinned,
+// rmForFD); it is now analytic, and the declaration order makes a return-map call from it a compile error.
 
 // CDPM2 beta_c (Eq.50, P2f): the factor scaling the PLASTIC-strain part of the compressive-damage
 // driver kappa_dc1 (Eq.48). beta_c = ft*qh2(kp)*sqrt(2/3) / (rho_bar*sqrt(1+2*Df^2)), rho_bar = sqrt(2 J2)
@@ -2197,16 +2200,163 @@ inline double scalarDriver(int which, const double sig6[6], const Params& mp)
     return alphaCompression(w);
 }
 
-// Isolated micro-FD gradient d(scalarDriver)/d(sig) per Voigt component (oracle _dscalar_dsig,
-// h=1e-6). These are PER-COMPONENT grads of a scalar-of-stress => NO [1,1,1,2,2,2] tensor weight
+// Isolated micro-FD gradient d(scalarDriver)/d(sig) per Voigt component (oracle _dscalar_dsig).
+// These are PER-COMPONENT grads of a scalar-of-stress => NO [1,1,1,2,2,2] tensor weight
 // (unlike the eigenprojection / ||Deps_p|| gradients below, which DO carry it — LEDGER quirk).
-inline void dscalarDsig(int which, const double sig6[6], const Params& mp, double g[6], double h = 1.0e-6)
+// h is the caller's step, DRIVER_FD_REL * driverStressScale (below): it has no default, because an absolute step
+// is right in one unit system only (apeGmsh #2639: the former h = 1e-6, in stress units, put the damaged tangent of a
+// Pa model 1e-4 to 4e-3 off at p90 on the far-compressive states, where 1e-6 Pa is ~1e-15 of the stress).
+inline void dscalarDsig(int which, const double sig6[6], const Params& mp, double g[6], double h)
 {
     for (int k = 0; k < 6; ++k) {
         double dp[6], dm[6];
         for (int i = 0; i < 6; ++i) { dp[i] = sig6[i]; dm[i] = sig6[i]; }
         dp[k] += h; dm[k] -= h;
         g[k] = (scalarDriver(which, dp, mp) - scalarDriver(which, dm, mp)) / (2.0 * h);
+    }
+}
+
+// The same gradient ON THE HYDROSTATIC AXIS (rho_bar == 0; apeGmsh #2621). There every scalar driver is a cone in the
+// deviatoric directions (eps_tilde grows like rho_bar r(theta) with a meridian-dependent slope), so the per-component
+// central FD above averages two DIFFERENT meridian slopes (+h e_k sits on the tensile meridian, -h e_k on the
+// compressive one) into a spurious hydrostatic gradient: an O(1) wrong damaged tangent at the tension apex. Only the
+// derivative ALONG the axis exists there: g_k = (1/3) d/dp f(sig + p I) on the three normal slots, 0 on the shears.
+// It is the exact chain-rule input whenever the effective map keeps sig_bar on the axis (the apex return: Ceff has a
+// hydrostatic range). A step that leaves the axis from it (elastic, or Duvaut-Lions relaxed) is a cone in the strain
+// too and has no derivative; there this drops the spurious meridian average and keeps the hydrostatic part exact.
+//
+// Units (apeGmsh #2621 F2 review r2; #2639). The axis test and BOTH driver-gradient steps (dscalarDsig off the axis,
+// dscalarDsigAxis on it) are relative to the stress scale S = max(ft, max_a |w_a|) of the effective state (ft floors
+// it near zero stress), so the damaged tangent is the same in every unit system up to round-off. The first versions
+// used an absolute 1e-12 test and an absolute 1e-6 step, which held only in MPa: in Pa the round-off rho_bar of an
+// apex return reaches 1.6e-9, the test missed 48 of D7's 216 apex states, and the damaged tangent was off by up to
+// 0.99 (review r2); off the axis the absolute step read 1e-4 to 4e-3 at p90 on the Pa record dumps (#2639).
+//  - AXIS_RHO_REL = 1e-13. An apex return lands on the axis up to round-off: rho_bar / S <= 2.9e-16 (~1.3 ulp) on
+//    D7's apex states in MPa, kPa and Pa alike. The test sits ~350x above that round-off, and 13 decades below any
+//    deviator the damage drivers resolve.
+//  - DRIVER_FD_REL = 1e-6, so h = 1e-6 S on and off the axis. The drivers vary on the stress scale S (eps_tilde is
+//    of degree 1 in sig_bar, x_s and alpha_c of degree 0), so with delta = h / S the central FD's truncation error
+//    is O(delta^2) and its round-off O(eps_mach / delta), relative, in any unit system; they cross near
+//    delta ~ eps_mach^(1/3) ~ 5e-6. Measured (#2639), off the axis, on the corbel record dumps (6 397 + 10 750) scaled
+//    to MPa, kPa and Pa: the damaged-tangent p90 is 9.9e-8 at delta = 1e-8 (round-off, p50 8e-9), 7.1e-8 to 7.3e-8
+//    at 1e-7, 1e-6 and 1e-5 (the reference FD's own floor, p50 <= 2.1e-9), and 1.07e-7 at 1e-4 (truncation), the same
+//    in all three systems; the kernel check's D9 far-compressive path (|sig_bar| to 2.5e3 MPa) reads 2.6e-6 / 3.8e-7 /
+//    1.9e-7 / 2.1e-7 / 3.8e-6 at delta = 1e-8 / 1e-7 / 1e-6 / 1e-5 / 1e-4. The absolute 1e-6 it replaces is delta =
+//    1e-6 / S: ~3e-8 in MPa and ~3e-14 in Pa at S = 30 MPa, ~4e-10 in MPa at 2.5e3 MPa. On the axis, D7 reads
+//    2.1e-9 to 3.7e-9 for delta = 1e-6, 6e-6 or 3e-5 in all three unit systems and up to 6.5e-9 at 1e-7.
+static const double AXIS_RHO_REL = 1.0e-13;
+static const double DRIVER_FD_REL = 1.0e-6;
+inline double driverStressScale(const double w[3], const Params& mp)
+{
+    double s = mp.ft;
+    for (int a = 0; a < 3; ++a) if (std::fabs(w[a]) > s) s = std::fabs(w[a]);
+    return s;
+}
+inline void dscalarDsigAxis(int which, const double sig6[6], const Params& mp, double g[6], double h)
+{
+    double dp[6], dm[6];
+    for (int i = 0; i < 6; ++i) { dp[i] = sig6[i]; dm[i] = sig6[i]; }
+    for (int i = 0; i < 3; ++i) { dp[i] += h; dm[i] -= h; }
+    const double d = (scalarDriver(which, dp, mp) - scalarDriver(which, dm, mp)) / (2.0 * h);
+    for (int k = 0; k < 6; ++k) g[k] = (k < 3) ? d / 3.0 : 0.0;
+}
+
+// ---------------------------------------------------------------------------
+// Closed-form gradients of the two proj damage weights (apeGmsh #2621 F2; they replace composite micro-FDs
+// through the return map). For a weight q(sig_bar, depl), gs[k] = dq/d sig_bar6[k] with depl held and
+// gd[k] = dq/d depl6[k] with sig_bar held, both per Voigt component (a shear slot moves both symmetric entries),
+// so dq/dε = Ceff^T gs + (I - C^-1 Ceff)^T gd. Zero wherever the weight is locally constant.
+// ---------------------------------------------------------------------------
+// PV20 tcTemper proj: q = ||Phi P Phi||_F / ||M||_F (compressiveDamageWeight). In the global frame
+// ||Phi P Phi||^2 = tr(S M S M), S = sum_a tcPhi(w_a)^2 E_a, an isotropic tensor function of sig_bar, so
+// d/d sig_bar is its Box A.6 derivative (isotropicTangent, l'Hopital at repeated eigenvalues) and d/dM = 2 S M S.
+inline void compressiveDamageWeightGrad(const Params& mp, const double depl6[6], const double w[3],
+                                        const double V[3][3], double gs[6], double gd[6])
+{
+    static const double W6[6] = {1.0, 1.0, 1.0, 2.0, 2.0, 2.0};
+    for (int k = 0; k < 6; ++k) { gs[k] = 0.0; gd[k] = 0.0; }
+    if (mp.tcTemper != 2) return;
+    double mx = w[0]; for (int a = 1; a < 3; ++a) if (w[a] > mx) mx = w[a];
+    if (mx <= TC_DEAD * mp.ft) return;                       // q == 1 on a neighbourhood
+    double M[3][3]; voigtToMat(depl6, M);
+    double n2 = 0.0;
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) n2 += M[i][j] * M[i][j];
+    if (n2 <= 1.0e-300) return;                              // q == 1 (no plastic increment)
+    const double band = (TC_BAND - TC_DEAD) * mp.ft;
+    double psi[3], dpsi[3];
+    for (int a = 0; a < 3; ++a) {
+        const double v = 1.0 - (w[a] - TC_DEAD * mp.ft) / band;
+        const double phi = tcPhi(mp, w[a]);
+        const double dphi = (v > 0.0 && v < 1.0) ? -1.0 / band : 0.0;
+        psi[a] = phi * phi; dpsi[a] = 2.0 * phi * dphi;
+    }
+    double S[3][3], SM[3][3], MSM[3][3], SMS[3][3];
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) {
+        double v = 0.0; for (int a = 0; a < 3; ++a) v += V[i][a] * psi[a] * V[j][a];
+        S[i][j] = v;
+    }
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) {
+        double v = 0.0; for (int k = 0; k < 3; ++k) v += S[i][k] * M[k][j];
+        SM[i][j] = v;
+    }
+    double p2 = 0.0;
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) p2 += SM[i][j] * SM[j][i];
+    if (!(p2 > 0.0)) return;                                 // q == 0 (every direction a crack)
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) {
+        double v = 0.0, u = 0.0;
+        for (int k = 0; k < 3; ++k) { v += M[i][k] * SM[k][j]; u += SM[i][k] * S[k][j]; }
+        MSM[i][j] = v; SMS[i][j] = u;
+    }
+    const double q = std::sqrt(p2) / std::sqrt(n2);
+    double MSM6[6], SMS6[6]; matToVoigt(MSM, MSM6); matToVoigt(SMS, SMS6);
+    for (int k = 0; k < 6; ++k) gd[k] = q * W6[k] * (SMS6[k] / p2 - depl6[k] / n2);
+    double Dpsi[6][6]; isotropicTangent(w, V, psi, dpsi, Dpsi);
+    for (int k = 0; k < 6; ++k) {
+        double t = 0.0; for (int A = 0; A < 6; ++A) t += W6[A] * Dpsi[A][k] * MSM6[A];
+        gs[k] = q * t / p2;
+    }
+}
+
+// P2h ctTemper proj: q = sqrt(sum_{a: w_a > 1e-6 ft} P_aa^2) / ||M||_F, P = V^T M V (tensileDamageWeight). d/dM is
+// sum_a 2 P_aa E_a; d/d sig_bar goes through the eigenvectors, d P_aa = 2 sum_{c != a} P_ca (v_c . dsig v_a) /
+// (w_a - w_c). A (numerically) repeated pair is skipped: q itself depends on the eigenbasis chosen there.
+inline void tensileDamageWeightGrad(const Params& mp, const double depl6[6], const double w[3],
+                                    const double V[3][3], double gs[6], double gd[6])
+{
+    static const double W6[6] = {1.0, 1.0, 1.0, 2.0, 2.0, 2.0};
+    for (int k = 0; k < 6; ++k) { gs[k] = 0.0; gd[k] = 0.0; }
+    if (mp.ctTemper != 2) return;
+    double M[3][3]; voigtToMat(depl6, M);
+    double n2 = 0.0;
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) n2 += M[i][j] * M[i][j];
+    if (n2 <= 1.0e-300) return;                              // q == 1
+    const double floor = 1.0e-6 * mp.ft;
+    double P[3][3];
+    for (int a = 0; a < 3; ++a) for (int b = 0; b < 3; ++b) {
+        double d = 0.0;
+        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) d += V[i][a] * M[i][j] * V[j][b];
+        P[a][b] = d;
+    }
+    double tens = 0.0;
+    for (int a = 0; a < 3; ++a) if (w[a] > floor) tens += P[a][a] * P[a][a];
+    if (!(tens > 0.0)) return;
+    const double q = std::sqrt(tens) / std::sqrt(n2);
+    const int I[6][2] = {{0,0},{1,1},{2,2},{0,1},{1,2},{0,2}};
+    const double tol = 1.0e-9 * (mp.fc + 1.0);
+    for (int k = 0; k < 6; ++k) {
+        const int i = I[k][0], j = I[k][1];
+        double R = 0.0, dt = 0.0;
+        for (int a = 0; a < 3; ++a) {
+            if (!(w[a] > floor)) continue;
+            R += 2.0 * P[a][a] * V[i][a] * V[j][a];
+            for (int c = 0; c < 3; ++c) {
+                if (c == a || std::fabs(w[a] - w[c]) <= tol) continue;
+                const double sym = (k < 3) ? V[i][c] * V[i][a] : V[i][c] * V[j][a] + V[j][c] * V[i][a];
+                dt += 2.0 * P[a][a] * 2.0 * P[c][a] * sym / (w[a] - w[c]);
+            }
+        }
+        gd[k] = q * W6[k] * (R / (2.0 * tens) - depl6[k] / n2);
+        gs[k] = q * dt / (2.0 * tens);
     }
 }
 
@@ -2225,16 +2375,10 @@ inline void dscalarDsig(int which, const double sig6[6], const Params& mp, doubl
 // the [1,1,1,2,2,2] double-contraction weight W6 BEFORE Ceff^T; the per-component micro-FD scalar
 // grads (det/dxs/dac) do NOT (already per-component).
 // ---------------------------------------------------------------------------
-// Return-map evaluation at the committed state for the composite micro-FDs of the damaged tangent. For a live point this is
-// exactly returnMapTensor(mp, in.sigEff, d, in.kp, true, ...). For a TENSION-DEAD point (returnMap re-bases `in` on the
-// trial: eps = new strain, sigEff = sig_tr, so the FD increment d is a perturbation of the trial) the perturbed trial is
-// split spectrally, the tensile part is carried elastically and the return map runs on the compressive remainder -- the
-// same map returnMap applies, so the FD tracks the tangent actually being assembled.
-//
-// PIECE COUNT PINNED: the deterministic map is discontinuous where n = ceil(f_tr/c) changes, so a +/- leg that lands on
-// the other side of an n boundary would differentiate the jump. Both legs therefore use the CENTRAL evaluation's n
-// (rmPiecesFD at the central increment, passed as nForce); if the central point itself sits exactly on a boundary the
-// legs simply follow the central side, which is the branch returnMap took for the reported stress.
+// The deterministic piece count returnMap uses at a committed state `in` and increment d (returnMapPieces): for a
+// TENSION-DEAD point (returnMap re-bases `in` on the trial: eps = new strain, sigEff = sig_tr) the return map runs on
+// the compressive remainder of the trial with a zero increment. (#877 also used it to pin the piece count of the
+// damaged tangent's micro-FDs through the return map, rmForFD; F2 replaced those by closed forms.)
 inline int detPieces(const Params& mp, const double sig_n[6], const double deps[6], double kp_n);
 
 inline int rmPiecesFD(const Params& mp, const State& in, const double d[6])
@@ -2253,37 +2397,18 @@ inline int rmPiecesFD(const Params& mp, const State& in, const double d[6])
     return detPieces(mp, minus, zero, in.kp);
 }
 
-inline void rmForFD(const Params& mp, const State& in, const double d[6], int nForce, double sb[6], double& kp)
-{
-    double dum[6][6];
-    Params q = mp; q.subIncrForceN = nForce;
-    if (!(in.wt >= mp.omegaDead)) { returnMapTensor(q, in.sigEff, d, in.kp, true, sb, kp, dum, false); return; }
-    double sigTr[6]; elasticPredTensor(in.sigEff, d, mp, sigTr);
-    double A[3][3], w[3], V[3][3]; voigtToMat(sigTr, A); eig3sym(A, w, V);
-    double sm[3], sq[3];
-    for (int a = 0; a < 3; ++a) { sm[a] = w[a] < 0.0 ? w[a] : 0.0; sq[a] = w[a] > 0.0 ? w[a] : 0.0; }
-    double S[3][3], Q[3][3], minus[6], plus[6];
-    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) {
-        double v = 0.0, u = 0.0;
-        for (int a = 0; a < 3; ++a) { v += V[i][a] * sm[a] * V[j][a]; u += V[i][a] * sq[a] * V[j][a]; }
-        S[i][j] = v; Q[i][j] = u;
-    }
-    matToVoigt(S, minus); matToVoigt(Q, plus);
-    const double zero[6] = {0, 0, 0, 0, 0, 0};
-    returnMapTensor(q, minus, zero, in.kp, true, sb, kp, dum, false);
-    for (int i = 0; i < 6; ++i) sb[i] += plus[i];
-}
-
+// apeGmsh #2621 F2: the three composite micro-FDs THROUGH the return map (d beta_c/dε, the ctTemper and tcTemper
+// proj weights) are replaced by closed forms chained through Ceff and dkpDeps = d kp/dε (the effective return's own
+// kappa row: the sub-step chain rule, the tension-dead cut and Duvaut-Lions included, see effectiveReturn).
+// damagedTangent runs no return map at all.
 inline void damagedTangent(const Params& mp, const State& in, const double sig_eff[6],
-                           const double eps_new[6], double kp_new, const double Ceff[6][6], double D6[6][6])
+                           const double eps_new[6], double kp_new, const double Ceff[6][6],
+                           const double dkpDeps[6], double D6[6][6])
 {
     static const double W6[6] = {1.0, 1.0, 1.0, 2.0, 2.0, 2.0};
     const double eps0   = mp.ft / mp.E;
     const double eps_f  = mp.Gf / (mp.ft * mp.lch);
     const double eps_fc = epsFcOf(mp);
-    // piece count of the CENTRAL evaluation, pinned on every micro-FD leg below (see rmForFD)
-    int nFD = 1;
-    { double dC[6]; for (int i = 0; i < 6; ++i) dC[i] = eps_new[i] - in.eps[i]; nFD = rmPiecesFD(mp, in, dC); }
     const bool bilin = (mp.tensionLaw == 1);
 
     double A[3][3], w[3], V[3][3];
@@ -2400,10 +2525,20 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
     auto CeffT = [&](const double g[6], double out[6]) {
         for (int k = 0; k < 6; ++k) { double v = 0.0; for (int i = 0; i < 6; ++i) v += Ceff[i][k] * g[i]; out[k] = v; }
     };
+    // On the hydrostatic axis (rho_bar == 0) the drivers are cones: their gradient is taken along the axis
+    // (dscalarDsigAxis; apeGmsh #2621, the tension-apex return), elsewhere per Voigt component. The axis test and the
+    // one FD step of both are relative to the state's stress scale (driverStressScale), so they hold in any unit
+    // system (#2621 review r2 on the axis, #2639 off it).
+    const double sDrv = driverStressScale(w, mp);
+    bool onAxis = false;
+    { double xi_a, rho_a, th_a; const double sva[6] = {w[0], w[1], w[2], 0.0, 0.0, 0.0}; invariants(sva, xi_a, rho_a, th_a);
+      onAxis = rho_a <= AXIS_RHO_REL * sDrv; }
+    const double hDrv = DRIVER_FD_REL * sDrv;
+    auto driverGrad = [&](int which, double g[6]) { if (onAxis) dscalarDsigAxis(which, sig_eff, mp, g, hDrv); else dscalarDsig(which, sig_eff, mp, g, hDrv); };
     double g_et[6], g_xs[6], g_ac[6], det_deps[6], dxs_deps[6], dac_deps[6];
-    dscalarDsig(0, sig_eff, mp, g_et);   CeffT(g_et, det_deps);
-    dscalarDsig(1, sig_eff, mp, g_xs);   CeffT(g_xs, dxs_deps);
-    dscalarDsig(2, sig_eff, mp, g_ac);   CeffT(g_ac, dac_deps);
+    driverGrad(0, g_et);   CeffT(g_et, det_deps);
+    driverGrad(1, g_xs);   CeffT(g_xs, dxs_deps);
+    driverGrad(2, g_ac);   CeffT(g_ac, dac_deps);
 
     // drive gradients. P2i: the TENSILE drive is E*et, so d(Dt)/dε = E * det_deps (the equiv-strain
     // gradient already assembled above), NOT the extreme-principal eigenprojection. det_deps is a
@@ -2422,15 +2557,28 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
         else for (int i = 0; i < 6; ++i) dDc_deps[i] = 0.0;
     }
 
-    // ||Deps_p|| gradient: depl_deps = I - C^-1 Ceff ; dnorm/dε = depl_deps^T (W6 . depl) / dnorm
-    double dnorm_deps[6];
-    if (dnorm > 1.0e-14) {
-        double Cel[6][6], Cinv[6][6], CinvCeff[6][6];
+    // d(depl)/dε = I - C^-1 Ceff (shared by the ||Deps_p|| gradient and the proj weights below)
+    double CinvCeff[6][6];
+    {
+        double Cel[6][6], Cinv[6][6];
         elasticC(mp, Cel); invert6(Cel, Cinv);
         for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
             double v = 0.0; for (int k = 0; k < 6; ++k) v += Cinv[i][k] * Ceff[k][j];
             CinvCeff[i][j] = v;
         }
+    }
+    // (d depl/dε)^T g  (d(scalar of depl)/dε for a per-Voigt-component gradient g)
+    auto DeplT = [&](const double g[6], double out[6]) {
+        for (int k = 0; k < 6; ++k) {
+            double v = 0.0;
+            for (int i = 0; i < 6; ++i) v += (((i == k) ? 1.0 : 0.0) - CinvCeff[i][k]) * g[i];
+            out[k] = v;
+        }
+    };
+
+    // ||Deps_p|| gradient: depl_deps = I - C^-1 Ceff ; dnorm/dε = depl_deps^T (W6 . depl) / dnorm
+    double dnorm_deps[6];
+    if (dnorm > 1.0e-14) {
         double x[6]; for (int i = 0; i < 6; ++i) x[i] = W6[i] * depl[i];
         for (int k = 0; k < 6; ++k) {
             double v = 0.0;
@@ -2442,92 +2590,56 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
         }
     } else for (int i = 0; i < 6; ++i) dnorm_deps[i] = 0.0;
 
-    // d(beta_c)/dε (P2f): beta_c depends on BOTH rho_bar(sig_bar) AND qh2(kp), so a single composite
-    // micro-FD THROUGH the return map captures the full gradient (mirror of the oracle; same step as the
-    // numerical reference so the FD truncation correlates). Only needed under compressive loading.
+    // d(beta_c)/dε (P2f), CLOSED FORM (F2): beta_c = ft qh2(kp) sqrt(2/3) / (rho_bar sqrt(1+2Df^2)), clamped to [0,1]
+    // and 1 on the hydrostatic axis (betaC). rho_bar = ||dev sig_bar|| => d rho_bar/d sig6[k] = W6[k] s6[k]/rho_bar per
+    // Voigt component; qh2(kp) chains through dkpDeps. A clamped beta_c has a zero gradient. Only needed under
+    // compressive loading.
     double dbc_deps[6] = {0,0,0,0,0,0};
     const bool needBc = cdc ? (cAdv && eqcNew > eps0) : loading;
     if (needBc && bc > 0.0) {
-        double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = eps_new[i] - in.eps[i];
-        const double base = mp.fc / mp.E;
-        for (int j = 0; j < 6; ++j) {
-            const double hh = 1.0e-6 * (std::fabs(deps[j]) + base);
-            double dp[6], dm[6]; for (int i = 0; i < 6; ++i) { dp[i] = deps[i]; dm[i] = deps[i]; }
-            dp[j] += hh; dm[j] -= hh;
-            double sbp[6], sbm[6], kpp, kpm, dum[6][6];
-            rmForFD(mp, in, dp, nFD, sbp, kpp);
-            rmForFD(mp, in, dm, nFD, sbm, kpm);
-            double Ap[3][3], wp[3], Vp[3][3], Am[3][3], wm[3], Vm[3][3];
-            voigtToMat(sbp, Ap); eig3sym(Ap, wp, Vp);
-            voigtToMat(sbm, Am); eig3sym(Am, wm, Vm);
-            dbc_deps[j] = (betaC(wp, kpp, mp) - betaC(wm, kpm, mp)) / (2.0 * hh);
+        double xi_b, rb, th_b;
+        { const double svb[6] = {w[0], w[1], w[2], 0.0, 0.0, 0.0}; invariants(svb, xi_b, rb, th_b); }
+        if (rb > 1.0e-12) {
+            const double q2 = qh2Of(kp_new, mp.Hp);
+            const double raw = mp.ft * q2 * std::sqrt(2.0 / 3.0) / (rb * std::sqrt(1.0 + 2.0 * mp.Df * mp.Df));
+            if (raw < 1.0) {
+                const double pm = (sig_eff[0] + sig_eff[1] + sig_eff[2]) / 3.0;
+                double g[6], t[6];
+                for (int k = 0; k < 6; ++k) g[k] = -raw / (rb * rb) * W6[k] * (sig_eff[k] - (k < 3 ? pm : 0.0));
+                CeffT(g, t);
+                const double dlq2 = dqh2OfdKp(kp_new, mp.Hp) / q2;
+                for (int k = 0; k < 6; ++k) dbc_deps[k] = t[k] + raw * dlq2 * dkpDeps[k];
+            }
         }
     }
 
     // d(w_t)/dε for the ctTemper modes (P2h): none -> 0 (unchanged tangent); alphat -> -d(alpha_c)/dε
-    // (analytic, reuses dac_deps); proj -> composite micro-FD through the return map (w_t = the tensile-
-    // stress-projected plastic-strain fraction). Only under loading.
+    // (analytic, reuses dac_deps); proj -> the closed-form weight gradient (F2) chained through Ceff (the stress
+    // frame) and I - C^-1 Ceff (the plastic-strain increment). Only under loading.
     double dwtw_deps[6] = {0,0,0,0,0,0};
     const bool tAdv = bilin ? (det_raw > 0.0) : loading;         // the tensile history advances this step
     if (tAdv && mp.ctTemper == 1) {
         for (int i = 0; i < 6; ++i) dwtw_deps[i] = -dac_deps[i];
     } else if (tAdv && mp.ctTemper == 2) {
-        double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = eps_new[i] - in.eps[i];
-        const double base = mp.fc / mp.E;
-        double epln[6]; plasticStrain6(in.sigEff, in.eps, mp, epln);
-        for (int j = 0; j < 6; ++j) {
-            const double hh = 1.0e-6 * (std::fabs(deps[j]) + base);
-            double dp[6], dm[6]; for (int i = 0; i < 6; ++i) { dp[i] = deps[i]; dm[i] = deps[i]; }
-            dp[j] += hh; dm[j] -= hh;
-            double sbp[6], sbm[6], kpp, kpm, dum[6][6];
-            rmForFD(mp, in, dp, nFD, sbp, kpp);
-            rmForFD(mp, in, dm, nFD, sbm, kpm);
-            double Ap[3][3], wp[3], Vp[3][3], Am[3][3], wm[3], Vm[3][3];
-            voigtToMat(sbp, Ap); eig3sym(Ap, wp, Vp);
-            voigtToMat(sbm, Am); eig3sym(Am, wm, Vm);
-            double eplp[6], eplm[6], dplp[6], dplm[6], epsp[6], epsm[6];
-            for (int i = 0; i < 6; ++i) { epsp[i] = in.eps[i] + dp[i]; epsm[i] = in.eps[i] + dm[i]; }
-            plasticStrain6(sbp, epsp, mp, eplp);
-            plasticStrain6(sbm, epsm, mp, eplm);
-            for (int i = 0; i < 6; ++i) { dplp[i] = eplp[i] - epln[i]; dplm[i] = eplm[i] - epln[i]; }
-            const double wpv = tensileDamageWeight(mp, alphaCompression(wp), dplp, wp, Vp);
-            const double wmv = tensileDamageWeight(mp, alphaCompression(wm), dplm, wm, Vm);
-            dwtw_deps[j] = (wpv - wmv) / (2.0 * hh);
-        }
+        double gs[6], gd[6], ts[6], td[6];
+        tensileDamageWeightGrad(mp, depl, w, V, gs, gd);
+        CeffT(gs, ts); DeplT(gd, td);
+        for (int i = 0; i < 6; ++i) dwtw_deps[i] = ts[i] + td[i];
     }
 
-    // PV20 tcTemper proj: d(dnorm w_c)/dε (w_c by composite micro-FD through the return map, as the ctTemper proj
-    // weight) and d(eps_tilde_c)/dε. none (or no tensile effective principal) -> dnc_deps == dnorm_deps,
-    // detc_deps == det_deps (byte-identical).
+    // PV20 tcTemper proj: d(dnorm w_c)/dε (the closed-form weight gradient, F2) and d(eps_tilde_c)/dε. none (or no
+    // tensile effective principal) -> dnc_deps == dnorm_deps, detc_deps == det_deps (byte-identical).
     double dnc_deps[6], detc_deps[6];
     for (int i = 0; i < 6; ++i) { dnc_deps[i] = dnorm_deps[i]; detc_deps[i] = det_deps[i]; }
     {
         double mxw = w[0]; for (int a = 1; a < 3; ++a) if (w[a] > mxw) mxw = w[a];
         if (mp.tcTemper == 2 && mxw > TC_DEAD * mp.ft) {
-            double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = eps_new[i] - in.eps[i];
-            const double base = mp.fc / mp.E;
-            double epln[6]; plasticStrain6(in.sigEff, in.eps, mp, epln);
-            double dwcw[6];
-            for (int j = 0; j < 6; ++j) {
-                const double hh = 1.0e-6 * (std::fabs(deps[j]) + base);
-                double dp[6], dm[6]; for (int i = 0; i < 6; ++i) { dp[i] = deps[i]; dm[i] = deps[i]; }
-                dp[j] += hh; dm[j] -= hh;
-                double sbp[6], sbm[6], kpp, kpm, dum[6][6];
-                rmForFD(mp, in, dp, nFD, sbp, kpp);
-                rmForFD(mp, in, dm, nFD, sbm, kpm);
-                double Ap[3][3], wp[3], Vp[3][3], Am[3][3], wm[3], Vm[3][3];
-                voigtToMat(sbp, Ap); eig3sym(Ap, wp, Vp);
-                voigtToMat(sbm, Am); eig3sym(Am, wm, Vm);
-                double eplp[6], eplm[6], dplp[6], dplm[6], epsp[6], epsm[6];
-                for (int i = 0; i < 6; ++i) { epsp[i] = in.eps[i] + dp[i]; epsm[i] = in.eps[i] + dm[i]; }
-                plasticStrain6(sbp, epsp, mp, eplp);
-                plasticStrain6(sbm, epsm, mp, eplm);
-                for (int i = 0; i < 6; ++i) { dplp[i] = eplp[i] - epln[i]; dplm[i] = eplm[i] - epln[i]; }
-                dwcw[j] = (compressiveDamageWeight(mp, dplp, wp, Vp) - compressiveDamageWeight(mp, dplm, wm, Vm))
-                        / (2.0 * hh);
-            }
+            double gs[6], gd[6], ts[6], td[6], dwcw[6];
+            compressiveDamageWeightGrad(mp, depl, w, V, gs, gd);
+            CeffT(gs, ts); DeplT(gd, td);
+            for (int i = 0; i < 6; ++i) dwcw[i] = ts[i] + td[i];
             for (int i = 0; i < 6; ++i) dnc_deps[i] = wcw * dnorm_deps[i] + dnorm * dwcw[i];
-            double g_etc[6]; dscalarDsig(3, sig_eff, mp, g_etc); CeffT(g_etc, detc_deps);
+            double g_etc[6]; driverGrad(3, g_etc); CeffT(g_etc, detc_deps);
         }
     }
 
@@ -2593,7 +2705,9 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
         const double Fw = -sigtMax - spd * kdt2;
         for (int i = 0; i < 6; ++i)
             dwt[i] = (-(1.0 - wt) / Fw) * dDt_deps[i] + (spd / Fw) * dkdt1[i] + (spd * wt / Fw) * dkdt2[i];
-    } else if (wt > 0.0 && wt < 1.0) {
+    } else if (!bilin && wt > 0.0 && wt < 1.0) {
+        // (F2) legacy exponential law only: a bilinear omega_t AT the OMEGA_MAX cap is flat (d omega = 0) and used to
+        // fall through to this exponential-law IFT (an O(1) wrong tangent on fully open cracks)
         const double Ht = sigtMax * ((1.0 - wt) * kdt2 / eps_f - 1.0);
         const double a0 = -(1.0 - wt) / Ht;
         const double a1 = -(1.0 - wt) * sigtMax / (eps_f * Ht);
@@ -2607,7 +2721,7 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
         const double a1 = -(1.0 - wc) * Dcc / (eps_fc * Hc);
         const double a2 = -(1.0 - wc) * Dcc * wc / (eps_fc * Hc);
         for (int i = 0; i < 6; ++i) dwc[i] = a0 * mp.E * dkdc[i] + a1 * dkdc1[i] + a2 * dkdc2[i];
-    } else if (wc > 0.0 && wc < 1.0) {
+    } else if (!cdc && wc > 0.0 && wc < 1.0) {     // (F2) legacy drive only; a CDPM2 omega_c at the cap is flat
         const double Hc = sigcMax * ((1.0 - wc) * kdc2 / eps_fc - 1.0);
         const double a0 = -(1.0 - wc) / Hc;
         const double a1 = -(1.0 - wc) * sigcMax / (eps_fc * Hc);
@@ -2634,7 +2748,77 @@ inline int returnMapTensor1(const Params& mp, const double sig_n[6], const doubl
 
 inline int returnMapTensorAdaptive(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
                                    bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
-                                   bool doTangent, int* subInfo);
+                                   bool doTangent, int* subInfo, double dkpDeps[6] = nullptr, bool wrtStart = false);
+
+// ---------------------------------------------------------------------------
+// The sub-step chain rule (apeGmsh #2621 F2; Perez-Foguet, Rodriguez-Ferran & Huerta, CMAME 2001), one piece. With
+// G = d sig/d(deps) and g = d kp/d(deps) after the previous pieces (G_0 = 0, g_0 = 0) and a piece of fraction f
+// (increment f deps, trial sig_(p-1) + f C deps) whose direct-return sensitivities are Dt = d sig_p/d(its increment)
+// (consistentTangent, = A C with A = d sig_p/d sig_tr), Sk, R, Kk (PieceSens, the SAME 4x4 IFT at the piece's root):
+//     G_p = (Dt C^-1) G_(p-1) + Sk (x) g_(p-1) + f Dt,      g_p = R G_(p-1) + Kk g_(p-1) + f R C.
+// The IFT is the derivative of whichever root the piece returned (vertex, plain Newton, the below-root or nested scan
+// root, newtonGlob): every converged hardening return solves R1..R4 (polishHardeningRoot's honesty gate), and locally
+// the selected root is a smooth branch of that system. The deterministic map (returnMapTensorDet) carries the same
+// recurrence inline (f = 1/L); this helper serves the adaptive path and returnMapTensorSchedule.
+// wrtStart (the tension-dead cut, effectiveReturn): the derivative with respect to the START stress sig_n instead of the
+// increment, returned multiplied by C (so a one-piece return reports its usual Dt = A C): G_0 = C, g_0 = 0 and no
+// injection (f = 0), i.e. G_p = (Dt C^-1) G_(p-1) + Sk (x) g_(p-1), g_p = R G_(p-1) + Kk g_(p-1). The cut runs the map
+// from the compressive remainder of the trial with a ZERO increment, where d/d(deps) (all injections f C . 0 = 0 in
+// the stress, but f Dt in the tangent) is not the derivative of anything the cut uses.
+// ---------------------------------------------------------------------------
+inline void chainPieceSens(double G[6][6], double g[6], const double Dt[6][6], const PieceSens& ps, double f,
+                           const double C0m[6][6], const double Cinv[6][6])
+{
+    double A[6][6], RC[6], Gn[6][6], gn[6];
+    for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
+        double v = 0.0; for (int q = 0; q < 6; ++q) v += Dt[i][q] * Cinv[q][j];
+        A[i][j] = v;
+    }
+    for (int j = 0; j < 6; ++j) { double v = 0.0; for (int q = 0; q < 6; ++q) v += ps.R[q] * C0m[q][j]; RC[j] = v; }
+    for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
+        double v = f * Dt[i][j] + ps.Sk[i] * g[j]; for (int q = 0; q < 6; ++q) v += A[i][q] * G[q][j];
+        Gn[i][j] = v;
+    }
+    for (int j = 0; j < 6; ++j) {
+        double v = ps.Kk * g[j] + f * RC[j]; for (int q = 0; q < 6; ++q) v += ps.R[q] * G[q][j];
+        gn[j] = v;
+    }
+    for (int i = 0; i < 6; ++i) { g[i] = gn[i]; for (int j = 0; j < 6; ++j) G[i][j] = Gn[i][j]; }
+}
+
+// d kp/d(deps) of ONE direct return (= R C), the kappa row the damaged tangent consumes on a direct return.
+inline void directKappaRow(const PieceSens& ps, const Params& mp, double dkpDeps[6])
+{
+    double C0m[6][6]; elasticC(mp, C0m);
+    for (int j = 0; j < 6; ++j) { double v = 0.0; for (int q = 0; q < 6; ++q) v += ps.R[q] * C0m[q][j]; dkpDeps[j] = v; }
+}
+
+// Integrate a GIVEN piece schedule (fractions fr[0..n-1] of deps, in order; hardening map) with the chain-rule
+// tangent (apeGmsh #2621 F2). Returns 0 if every piece converged, else 2 with sig_new/kp_new at the last converged
+// piece. The kernel self-check drives forced and failure-driven schedules through it.
+inline int returnMapTensorSchedule(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
+                                   const double* fr, int n, double sig_new[6], double& kp_new,
+                                   double Dtan6[6][6], bool doTangent, double dkpDeps[6] = nullptr)
+{
+    ++kernelCallCounters().returnMapTensor;
+    double C0m[6][6], Cinv[6][6]; elasticC(mp, C0m); invert6(C0m, Cinv);
+    double G[6][6], g[6], s[6], k = kp_n, sn[6], kn, Dt[6][6];
+    for (int i = 0; i < 6; ++i) { g[i] = 0.0; s[i] = sig_n[i]; for (int j = 0; j < 6; ++j) G[i][j] = 0.0; }
+    int status = 0;
+    for (int p = 0; p < n; ++p) {
+        double d[6]; for (int i = 0; i < 6; ++i) d[i] = deps[i] * fr[p];
+        PieceSens ps;
+        if (returnMapTensor1(mp, s, d, k, true, sn, kn, Dt, doTangent, doTangent ? &ps : nullptr) != 0) { status = 2; break; }
+        if (doTangent) chainPieceSens(G, g, Dt, ps, fr[p], C0m, Cinv);
+        for (int i = 0; i < 6; ++i) s[i] = sn[i];
+        k = kn;
+    }
+    for (int i = 0; i < 6; ++i) sig_new[i] = s[i];
+    kp_new = k;
+    if (doTangent) for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Dtan6[i][j] = G[i][j];
+    if (doTangent && dkpDeps) for (int i = 0; i < 6; ++i) dkpDeps[i] = g[i];
+    return status;
+}
 
 // Dimensionless yield-function value f_tr of the ELASTIC TRIAL (the same f_tr returnMapHardening tests).
 inline double trialOvershoot(const Params& mp, const double sig_n[6], const double deps[6], double kp_n)
@@ -2679,12 +2863,15 @@ inline int detPieces(const Params& mp, const double sig_n[6], const double deps[
 // allow the jump. The reported TANGENT is the CHAIN's (accumulated forward through the pieces, see the loop), not the
 // last piece's; Params::subIncrForceN pins n for finite-difference references of it.
 inline int returnMapTensorDet(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
-                              double sig_new[6], double& kp_new, double Dtan6[6][6], bool doTangent, int* subInfo)
+                              double sig_new[6], double& kp_new, double Dtan6[6][6], bool doTangent, int* subInfo,
+                              double dkpDeps[6] = nullptr, bool wrtStart = false)
 {
+    const bool wantK = doTangent && dkpDeps != nullptr;      // F2: d kp/d(deps), the kappa row of the same chain
     const int n = detPieces(mp, sig_n, deps, kp_n);
     if (n == 1) {
-        const int st = returnMapTensor1(mp, sig_n, deps, kp_n, true, sig_new, kp_new, Dtan6, doTangent);
-        if (st == 0) { if (subInfo) *subInfo = 0; return 0; }
+        PieceSens ps1;
+        const int st = returnMapTensor1(mp, sig_n, deps, kp_n, true, sig_new, kp_new, Dtan6, doTangent, wantK ? &ps1 : nullptr);
+        if (st == 0) { if (subInfo) *subInfo = 0; if (wantK) directKappaRow(ps1, mp, dkpDeps); return 0; }
     }
     const int levels[3] = { n, 2 * n, 4 * n };
     for (int li = (n == 1 ? 1 : 0); li < 3; ++li) {
@@ -2693,8 +2880,9 @@ inline int returnMapTensorDet(const Params& mp, const double sig_n[6], const dou
         PieceSens ps;
         for (int i = 0; i < 6; ++i) s[i] = sig_n[i];
         if (doTangent) {
-            for (int i = 0; i < 6; ++i) { g[i] = 0.0; for (int j = 0; j < 6; ++j) G[i][j] = 0.0; }
             elasticC(mp, C0m); invert6(C0m, Cinv);
+            // G_0 = 0 (d/d deps), or C (wrtStart: d/d sig_n times C, see chainPieceSens)
+            for (int i = 0; i < 6; ++i) { g[i] = 0.0; for (int j = 0; j < 6; ++j) G[i][j] = wrtStart ? C0m[i][j] : 0.0; }
         }
         bool ok = true;
         for (int p = 0; p < L && ok; ++p) {
@@ -2720,11 +2908,11 @@ inline int returnMapTensorDet(const Params& mp, const double sig_n[6], const dou
                     }
                     for (int j = 0; j < 6; ++j) { double v = 0.0; for (int q = 0; q < 6; ++q) v += ps.R[q] * C0m[q][j]; RC[j] = v; }
                     for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
-                        double v = Dt[i][j] / L + ps.Sk[i] * g[j]; for (int q = 0; q < 6; ++q) v += A[i][q] * G[q][j];
+                        double v = (wrtStart ? 0.0 : Dt[i][j] / L) + ps.Sk[i] * g[j]; for (int q = 0; q < 6; ++q) v += A[i][q] * G[q][j];
                         Gn[i][j] = v;
                     }
                     for (int j = 0; j < 6; ++j) {
-                        double v = ps.Kk * g[j] + RC[j] / L; for (int q = 0; q < 6; ++q) v += ps.R[q] * G[q][j];
+                        double v = ps.Kk * g[j] + (wrtStart ? 0.0 : RC[j] / L); for (int q = 0; q < 6; ++q) v += ps.R[q] * G[q][j];
                         gn[j] = v;
                     }
                     for (int i = 0; i < 6; ++i) { g[i] = gn[i]; for (int j = 0; j < 6; ++j) G[i][j] = Gn[i][j]; }
@@ -2735,6 +2923,7 @@ inline int returnMapTensorDet(const Params& mp, const double sig_n[6], const dou
             for (int i = 0; i < 6; ++i) sig_new[i] = s[i];
             kp_new = k;
             if (doTangent) for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Dtan6[i][j] = G[i][j];
+            if (wantK) for (int i = 0; i < 6; ++i) dkpDeps[i] = g[i];
             if (subInfo) *subInfo = L;
             return 0;
         }
@@ -2743,18 +2932,23 @@ inline int returnMapTensorDet(const Params& mp, const double sig_n[6], const dou
     // honest failure. Reached only in the small share of states the fixed-n chains cannot integrate at all, where the
     // alternative is a step cut. (The deterministic map is NOT continuous overall: see the DISCONTINUITY note above.)
     if (mp.subIncrRescue)
-        return returnMapTensorAdaptive(mp, sig_n, deps, kp_n, true, sig_new, kp_new, Dtan6, doTangent, subInfo);
-    const int st0 = returnMapTensor1(mp, sig_n, deps, kp_n, true, sig_new, kp_new, Dtan6, doTangent);
+        return returnMapTensorAdaptive(mp, sig_n, deps, kp_n, true, sig_new, kp_new, Dtan6, doTangent, subInfo, dkpDeps,
+                                       wrtStart);
+    PieceSens ps0;
+    const int st0 = returnMapTensor1(mp, sig_n, deps, kp_n, true, sig_new, kp_new, Dtan6, doTangent, wantK ? &ps0 : nullptr);
     if (subInfo) *subInfo = (st0 == 0) ? 0 : -1;
+    if (st0 == 0 && wantK) directKappaRow(ps0, mp, dkpDeps);
     return st0;
 }
 
 // Tensor return with OOFEM-style SUB-INCREMENTATION (B1; mirror of the oracle return_map_tensor). The direct
 // return first; if it fails and mp.maxSubIncr > 0 (hardening map), the strain increment is halved and the
 // sub-increments integrated in sequence from the committed state (doubling back, to at most 2x the size that
-// just succeeded, after each success) down to 2^-maxSubIncr. The reported tangent is the LAST sub-increment's
-// consistent tangent (an approximation of the sub-stepped algorithmic tangent). maxSubIncr = 0 => byte-identical
-// to the direct return.
+// just succeeded, after each success) down to 2^-maxSubIncr. maxSubIncr = 0 => byte-identical to the direct return.
+// TANGENT (apeGmsh #2621 F2): every sub-incremented path (deterministic, adaptive, the deterministic mode's adaptive
+// rescue) reports the chain rule over its converged pieces (chainPieceSens), not the last piece's tangent (O(1) wrong
+// once N >= 2). dkpDeps (optional, only with doTangent) = d kp/d(deps) of the same chain: the damaged tangent needs it
+// for beta_c's qh2(kp).
 //
 // ATTEMPT BUDGET (WP concrete3d-hang-diagnosis, 2026-09-27): mp.maxSubAttempts caps the TOTAL number of
 // returnMapTensor1 calls in this loop (successes + failures). Without it, a GP that only ever succeeds at the
@@ -2767,41 +2961,56 @@ inline int returnMapTensorDet(const Params& mp, const double sig_n[6], const dou
 // != 0 cuts the step. maxSubIncr = 0 stays byte-identical (the budget only applies inside this loop).
 inline int returnMapTensor(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
                            bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
-                           bool doTangent, int* subInfo)
+                           bool doTangent, int* subInfo = nullptr, double dkpDeps[6] = nullptr, bool wrtStart = false)
 {
+    ++kernelCallCounters().returnMapTensor;
+    if (doTangent && dkpDeps) for (int i = 0; i < 6; ++i) dkpDeps[i] = 0.0;
     // subInfo (diagnostic, optional): 0 = direct return, n >= 2 = sub-incremented in n pieces, -1 = FINAL failure
     if (mp.subIncrMode == 2) {          // REFUSE: direct return only (equals maxSubIncr = 0), a failure is a refusal
-        const int st0 = returnMapTensor1(mp, sig_n, deps, kp_n, hardening, sig_new, kp_new, Dtan6, doTangent);
+        PieceSens ps;
+        const bool wantK = doTangent && dkpDeps != nullptr;
+        const int st0 = returnMapTensor1(mp, sig_n, deps, kp_n, hardening, sig_new, kp_new, Dtan6, doTangent, wantK ? &ps : nullptr);
         if (subInfo) *subInfo = (st0 == 0) ? 0 : -1;
+        if (st0 == 0 && wantK) directKappaRow(ps, mp, dkpDeps);
         return st0;
     }
     if (mp.maxSubIncr > 0 && hardening && mp.subIncrMode == 0)
-        return returnMapTensorDet(mp, sig_n, deps, kp_n, sig_new, kp_new, Dtan6, doTangent, subInfo);
-    return returnMapTensorAdaptive(mp, sig_n, deps, kp_n, hardening, sig_new, kp_new, Dtan6, doTangent, subInfo);
+        return returnMapTensorDet(mp, sig_n, deps, kp_n, sig_new, kp_new, Dtan6, doTangent, subInfo, dkpDeps, wrtStart);
+    return returnMapTensorAdaptive(mp, sig_n, deps, kp_n, hardening, sig_new, kp_new, Dtan6, doTangent, subInfo, dkpDeps,
+                                   wrtStart);
 }
 
 // ADAPTIVE sub-incrementation (subIncrMode = 1, and the deterministic mode's last resort): direct return first, on
 // failure halving/doubling down to 2^-maxSubIncr, bounded by maxSubAttempts. See the comments above.
 inline int returnMapTensorAdaptive(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
                                    bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
-                                   bool doTangent, int* subInfo)
+                                   bool doTangent, int* subInfo, double dkpDeps[6], bool wrtStart)
 {
-    const int st0 = returnMapTensor1(mp, sig_n, deps, kp_n, hardening, sig_new, kp_new, Dtan6, doTangent);
+    const bool wantK = doTangent && dkpDeps != nullptr;
+    PieceSens ps0;
+    const int st0 = returnMapTensor1(mp, sig_n, deps, kp_n, hardening, sig_new, kp_new, Dtan6, doTangent, wantK ? &ps0 : nullptr);
     if (subInfo) *subInfo = (st0 == 0) ? 0 : -1;
-    if (st0 == 0 || mp.maxSubIncr <= 0 || !hardening) return st0;
+    if (st0 == 0) { if (wantK) directKappaRow(ps0, mp, dkpDeps); return 0; }
+    if (mp.maxSubIncr <= 0 || !hardening) return st0;
     const int maxAttempts = (mp.maxSubAttempts > 0) ? mp.maxSubAttempts : 64;
     int pieces = 0, attempts = 0;
     double s[6], k = kp_n, done = 0.0, frac = 0.5;
     const double floorFrac = std::ldexp(1.0, -mp.maxSubIncr);
     for (int i = 0; i < 6; ++i) s[i] = sig_n[i];
     double sn[6], kn, Dt[6][6];
+    // F2: the chain-rule tangent over the converged pieces (chainPieceSens); a failed attempt leaves G, g unchanged
+    double G[6][6], g[6], C0m[6][6], Cinv[6][6];
+    if (doTangent) { elasticC(mp, C0m); invert6(C0m, Cinv); }
+    for (int i = 0; i < 6; ++i) { g[i] = 0.0; for (int j = 0; j < 6; ++j) G[i][j] = (wrtStart && doTangent) ? C0m[i][j] : 0.0; }
     while (done < 1.0) {
         if (attempts >= maxAttempts) return st0;        // honest failure: budget exhausted, keep the fallback
         ++attempts;
         const double f = (frac < 1.0 - done) ? frac : 1.0 - done;
         double d[6]; for (int i = 0; i < 6; ++i) d[i] = deps[i] * f;
-        const int st = returnMapTensor1(mp, s, d, k, true, sn, kn, Dt, doTangent && (done + f >= 1.0));
+        PieceSens ps;
+        const int st = returnMapTensor1(mp, s, d, k, true, sn, kn, Dt, doTangent, doTangent ? &ps : nullptr);
         if (st == 0) {
+            if (doTangent) chainPieceSens(G, g, Dt, ps, wrtStart ? 0.0 : f, C0m, Cinv);
             for (int i = 0; i < 6; ++i) s[i] = sn[i];
             k = kn; done += f; ++pieces;
             frac = (2.0 * f < 1.0) ? 2.0 * f : 1.0;     // at most 2x the size that just succeeded (not the stale frac)
@@ -2812,7 +3021,8 @@ inline int returnMapTensorAdaptive(const Params& mp, const double sig_n[6], cons
     }
     for (int i = 0; i < 6; ++i) sig_new[i] = s[i];
     kp_new = k;
-    if (doTangent) for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Dtan6[i][j] = Dt[i][j];
+    if (doTangent) for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Dtan6[i][j] = G[i][j];
+    if (wantK) for (int i = 0; i < 6; ++i) dkpDeps[i] = g[i];
     if (subInfo) *subInfo = pieces;
     return 0;
 }
@@ -2821,6 +3031,7 @@ inline int returnMapTensor1(const Params& mp, const double sig_n[6], const doubl
                             bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
                             bool doTangent, PieceSens* ps)
 {
+    ++kernelCallCounters().pieceReturns;
     if (ps) *ps = PieceSens();
     double sig_tr[6];
     elasticPredTensor(sig_n, deps, mp, sig_tr);
@@ -2868,12 +3079,18 @@ inline int returnMapTensor1(const Params& mp, const double sig_n[6], const doubl
 // permanent strain locks a full-stiffness compression in on unloading.)
 // Outputs: inEff -> the committed state to hand to damagedUpdate/damagedTangent (inRaw itself, or the re-based copy in
 // cutBuf); cutT; sig_eff/kp_new/Dtan6 = the EFFECTIVE stress, kappa_p and effective tangent; return = the return-map status.
+// dkpDeps (optional, with doTangent; apeGmsh #2621 F2) = d kp_new/d strain of the SAME effective map (the chain rule's
+// kappa row, through the cut and the Duvaut-Lions blend), the input damagedTangent's beta_c gradient needs.
 // Includes the Duvaut-Lions relaxation (only when !implex && eta > 0 && dt > 0).
 // ===========================================================================
 inline int effectiveReturn(const Params& mp, const double strain[6], const State& inRaw, bool hardening, double dt,
                            bool doTangent, State& cutBuf, const State*& inEff, bool& cutT,
-                           double sig_eff[6], double& kp_new, double Dtan6[6][6], int* subInfo)
+                           double sig_eff[6], double& kp_new, double Dtan6[6][6], int* subInfo,
+                           double dkpDeps[6] = nullptr)
 {
+    double dkpLoc[6] = {0, 0, 0, 0, 0, 0};
+    double* dkp = dkpDeps ? dkpDeps : dkpLoc;
+    for (int i = 0; i < 6; ++i) dkp[i] = 0.0;
     double deps[6];
     for (int i = 0; i < 6; ++i) deps[i] = strain[i] - inRaw.eps[i];
     cutT = (inRaw.wt >= mp.omegaDead);
@@ -2897,8 +3114,10 @@ inline int effectiveReturn(const Params& mp, const double strain[6], const State
     inEff = cutT ? &cutBuf : &inRaw;
     const State& in = *inEff;
     // (1) IMPLICIT EFFECTIVE-stress return from the committed EFFECTIVE state (NOT the nominal sig).
+    // (F2 port) the cut differentiates the map with respect to its START (the compressive remainder; zero increment):
+    // wrtStart. #877 used d/d(deps) C^-1 there, which equals it for a one-piece return only (O(1) off at n >= 2 pieces).
     int status = returnMapTensor(mp, cutT ? sigMinus : in.sigEff, deps, in.kp, hardening, sig_eff, kp_new, Dtan6, doTangent,
-                                 subInfo);
+                                 subInfo, dkp, cutT);
     if (cutT) for (int i = 0; i < 6; ++i) sig_eff[i] += sigPlus[i];   // tensile part carried elastically
     // (1b) Duvaut-Lions viscoplastic relaxation at the PLASTIC level (ADR §4.4; oracle PR #316). Relax the
     //   inviscid effective return + kp toward the elastic trial by beta = dt/(eta+dt) (Simo-Hughes closed
@@ -2919,11 +3138,12 @@ inline int effectiveReturn(const Params& mp, const double strain[6], const State
             double C0[6][6]; elasticC(mp, C0);
             for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j)
                 Dtan6[i][j] = (1.0 - beta) * C0[i][j] + beta * Dtan6[i][j];
+            for (int i = 0; i < 6; ++i) dkp[i] *= beta;    // (F2) kp_new = (1-beta) kp_n + beta kp
         }
     }
     if (cutT && doTangent && status == 0) {
-        // sig_eff = Plus(sig_tr) + RM(Minus(sig_tr)):  d sig_eff/d eps = C0 + (Dret C0^-1 - I) Ddam- C0, with Dret = A C0 the
-        // return map's own tangent at the compressive remainder and Ddam- the spectral derivative of the negative-part map.
+        // sig_eff = Plus(sig_tr) + RM(Minus(sig_tr)):  d sig_eff/d eps = C0 + (Dret C0^-1 - I) Ddam- C0, with Dret = H C0 (H the
+        // start-derivative of the return map at the compressive remainder, wrtStart) and Ddam- the spectral derivative of the negative-part map.
         double yv[3], ypv[3], Ddam[6][6], C0[6][6], C0i[6][6], T1[6][6], T2[6][6];
         for (int a = 0; a < 3; ++a) { yv[a] = cutW[a] < 0.0 ? cutW[a] : 0.0; ypv[a] = cutW[a] < 0.0 ? 1.0 : 0.0; }
         isotropicTangent(cutW, cutV, yv, ypv, Ddam);
@@ -2940,6 +3160,12 @@ inline int effectiveReturn(const Params& mp, const double strain[6], const State
             double v = C0[i][j]; for (int k = 0; k < 6; ++k) v += T1[i][k] * T2[k][j];
             Dtan6[i][j] = v;
         }
+        // (F2) the kappa row through the same cut: kp = K(Minus(sig_tr)), d kp/d eps = (dkp C0^-1) Ddam- C0, with dkp C0^-1
+        // the return map's own kappa row at the compressive remainder (the same reading of the map as Dret C0^-1 above)
+        double kr[6], kn[6];
+        for (int j = 0; j < 6; ++j) { double v = 0.0; for (int k = 0; k < 6; ++k) v += dkp[k] * C0i[k][j]; kr[j] = v; }
+        for (int j = 0; j < 6; ++j) { double v = 0.0; for (int k = 0; k < 6; ++k) v += kr[k] * T2[k][j]; kn[j] = v; }
+        for (int j = 0; j < 6; ++j) dkp[j] = kn[j];
     }
     return status;
 }
@@ -3005,8 +3231,9 @@ inline int returnMap(const Params& mp, const double strain[6], const State& inRa
     // (1)+(1b) dead-aware EFFECTIVE-stress return (CRACKED points: tension cutoff on the plastic flow; see effectiveReturn)
     State cutBuf; const State* inP = nullptr; bool cutT = false;
     double sig_eff[6], kp_new;
+    double dkp[6] = {0, 0, 0, 0, 0, 0};                // d kp/dε (F2: beta_c's qh2(kp) in the damaged tangent)
     int status = effectiveReturn(mp, strain, inRaw, hardening, dt, doTangent, cutBuf, inP, cutT, sig_eff, kp_new, Dtan6,
-                                 &out.subInfo);
+                                 &out.subInfo, dkp);
     const State& in = *inP;
     for (int i = 0; i < 6; ++i) { out.eps[i] = strain[i]; out.sigEff[i] = sig_eff[i]; sigEffImplicit[i] = sig_eff[i]; }
     out.kp = kp_new;
@@ -3030,7 +3257,7 @@ inline int returnMap(const Params& mp, const double strain[6], const State& inRa
         if (doTangent && status == 0) {
             double Ceff[6][6];
             for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Ceff[i][j] = Dtan6[i][j];
-            damagedTangent(mp, in, sig_eff, strain, kp_new, Ceff, Dtan6);
+            damagedTangent(mp, in, sig_eff, strain, kp_new, Ceff, dkp, Dtan6);
         }
         return status;
     }
@@ -3153,6 +3380,7 @@ inline int driveConfinedFiber(const Params& mp, double strain[6], const State& i
     const int L[3] = {1, 2, 4};                       // condensed lateral block (eps_11, eps_22, gamma_12)
     const double tol = 1.0e-10 * (mp.fc + 1.0);
     double sig_eff[6] = {0,0,0,0,0,0}, kp_new = inRaw.kp, Ceff[6][6];
+    double dkpF[6] = {0,0,0,0,0,0};                  // d kp/dε at the converged lateral strain (F2)
     int status = 0;
     // DEAD POINTS (review M2; the same treatment as returnMap, via the shared effectiveReturn): a CRUSHED fibre point
     // (omega_c >= omegaDead) is frozen -- elastic on the fixed plastic strain, both damages at the floor; a CRACKED one
@@ -3163,10 +3391,11 @@ inline int driveConfinedFiber(const Params& mp, double strain[6], const State& i
         if (crushed) {
             double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = eps[i] - inRaw.eps[i];
             elasticPredTensor(inRaw.sigEff, deps, mp, sig_eff); kp_new = inRaw.kp; elasticC(mp, Ceff);
+            for (int i = 0; i < 6; ++i) dkpF[i] = 0.0;
             if (subInfo) *subInfo = 0;
             return 0;
         }
-        return effectiveReturn(mp, eps, inRaw, true, 0.0, true, cutBuf, inP, cutT, sig_eff, kp_new, Ceff, subInfo);
+        return effectiveReturn(mp, eps, inRaw, true, 0.0, true, cutBuf, inP, cutT, sig_eff, kp_new, Ceff, subInfo, dkpF);
     };
     for (int it = 0; it < 80; ++it) {                 // nested lateral Newton vs the hoop residual
         status = effective(strain, nullptr);
@@ -3219,7 +3448,7 @@ inline int driveConfinedFiber(const Params& mp, double strain[6], const State& i
           plasticStrain6(in.sigEff,  in.eps,  mp, epl_n);
           for (int i = 0; i < 6; ++i) out.depl[i] = epl[i] - epl_n[i]; }
         out.dt_n = (dt > 0.0) ? dt : in.dt_n;
-        if (doTangent && status == 0) damagedTangent(mp, in, sig_eff, strain, kp_new, Ceff, Cdam);
+        if (doTangent && status == 0) damagedTangent(mp, in, sig_eff, strain, kp_new, Ceff, dkpF, Cdam);
     }
 
     if (doTangent) {
