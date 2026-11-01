@@ -26,6 +26,11 @@
 //                                                                and selection kept), stamped with this libm and the
 //                                                                kernel header's git blob
 // Builds: concrete3d_replay_ci.sh (g++, glibc) and concrete3d_replay_libmmt.bat (MSVC + Intel libmmt, as the pyd).
+// Fixture fields that are NOT compared, by design (informational, carried as written): the G line's pick=; on C and F
+// records the K line's pass= and dim= and the C line's eps_22 start (C[1]); on every record K cls=, calls=, integ=,
+// tag=, ele=, seq= and the #@ line's binary=/M-lines=. Every other field is an input the kernel reads, or an output
+// compared bit for bit, or (C[0], the committed eps_22) required to equal its copy E[2] at load. T[2] on an R record is
+// an OUTPUT: the eps_22 the wrapper's sigma_22 Newton left in the trial strain; it is compared, and `record` rewrites it.
 // The sigma_22 loop below is a COPY of the wrapper's: the fixture's R records prove the copy matches the wrapper the
 // records were written by; a later change to LadrunoConcrete3D::setTrialStrain must be mirrored here.
 #include "SRC/material/nD/LadrunoConcrete3DKernel.h"
@@ -55,7 +60,7 @@ namespace K = Ladruno::Concrete3D;
 
 struct Pass { int p, status, sub; double eps22, s22, d22; };
 struct Rec {
-    std::string kLine, gLine; std::map<std::string, std::string> k;   // K line (verbatim + parsed), G line (selection)
+    std::string kLine, gLine; std::map<std::string, std::string> k, g;   // K line (verbatim + parsed), G line (selection)
     char kind = 0; int code = 0;
     std::map<std::string, std::string> pkv; std::string pLine;
     std::vector<std::string> stateLines;                              // E S X H I C T, verbatim
@@ -97,17 +102,19 @@ static int asInt(double v, const std::string& what, const std::string& line) {
     return (int)v;
 }
 
+static void fillParams(const Rec& r, K::Params& p, double& dt);
+
 struct Fixture { std::map<std::string, std::string> meta; std::string qLine; std::vector<Rec> recs; std::vector<std::string> header; };
 
 static Fixture load(const char* path) {
     std::ifstream in(path); if (!in) die(std::string("cannot open ") + path);
-    Fixture fx; std::string line; Rec* r = 0;
+    Fixture fx; std::string line; Rec* r = 0; bool haveMeta = false;
     auto copy = [](const std::vector<double>& v, double* d) { for (size_t i = 0; i < v.size(); ++i) d[i] = v[i]; };
     while (std::getline(in, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.empty()) continue;
         if (line[0] == '#') {
-            if (line.rfind("#@ ", 0) == 0) { if (r || !fx.meta.empty()) die("the #@ line must come once, before the records"); kv(line.substr(1), fx.meta); }
+            if (line.rfind("#@ ", 0) == 0) { if (r || haveMeta) die("the #@ line must come once, before the records"); haveMeta = true; kv(line.substr(1), fx.meta); }
             if (!r) fx.header.push_back(line);
             continue;
         }
@@ -121,9 +128,9 @@ static Fixture load(const char* path) {
             for (const auto& e : r->k) if (!kKeys.count(e.first)) die("K line has an unexpected key " + e.first + ": " + line.substr(0, 60));
             const std::string kind = r->k.at("kind");
             if (kind != "C" && kind != "F" && kind != "R") die("unknown record kind '" + kind + "' (" + line.substr(0, 40) + ")");
-            for (const char* key : {"seq", "tag", "ele", "dim", "status", "subInfo", "cls"})
+            for (const char* key : {"tag", "ele", "dim", "status", "subInfo", "cls"})
                 asInt(num(r->k.at(key), line), std::string("K ") + key, line);
-            for (const char* key : {"calls", "integ"}) {   // informational counters: whole numbers, may outgrow int
+            for (const char* key : {"seq", "calls", "integ"}) {   // counters: whole numbers, may outgrow int
                 const double v = num(r->k.at(key), line);
                 if (!std::isfinite(v) || v != std::trunc(v) || v < 0) die(std::string("K ") + key + " is not a whole number: " + line.substr(0, 60));
             }
@@ -134,7 +141,13 @@ static Fixture load(const char* path) {
         if (!r) die("record line before the first K line: " + line.substr(0, 40));
         if (c != 'Z' && !r->seen.insert(c == 'M' ? 'D' : c).second) die(std::string("two ") + c + " lines in one record: " + r->kLine);
         switch (c) {
-        case 'G': r->gLine = line; break;
+        case 'G': {
+            r->gLine = line; kv(line, r->g);
+            if (r->g.size() != 3 || !r->g.count("dump") || !r->g.count("class") || !r->g.count("pick")) die("G line must carry exactly dump= class= pick=: " + line);
+            const std::string& d = r->g.at("dump"); const std::string& cl = r->g.at("class");
+            if (d != "unset" && d != "COMPATIBLE") die("G dump= is not unset|COMPATIBLE: " + line);
+            if (cl != "refusal" && cl != "floor-C" && cl != "sub-increment" && cl != "kink" && cl != "direct") die("G class= is not a record class: " + line);
+            break; }
         case 'P': r->pLine = line; kv(line, r->pkv); break;
         case 'E': copy(nums(line, 6), r->eps); r->stateLines.push_back(line); break;
         case 'S': copy(nums(line, 6), r->sig); r->stateLines.push_back(line); break;
@@ -156,8 +169,14 @@ static Fixture load(const char* path) {
     if (fx.recs.empty()) die("the fixture has no records");
     if (fx.qLine.empty()) die("the fixture has no Q line (libm probes)");
     for (const char* key : {"libm", "kernel-blob"}) if (!fx.meta.count(key)) die(std::string("the #@ line lacks ") + key);
+    for (const auto& e : fx.meta)
+        if (e.first != "libm" && e.first != "kernel-blob" && e.first != "binary" && e.first != "M-lines") die("the #@ line has an unexpected key " + e.first);
+    { const std::string& b = fx.meta.at("kernel-blob");
+      if (b.size() != 40 || b.find_first_not_of("0123456789abcdef") != std::string::npos) die("the #@ kernel-blob is not a 40-hex git blob: " + b); }
     for (const Rec& q : fx.recs) {
-        for (char c : std::string("PESXHICTOW")) if (!q.seen.count(c)) die(std::string("record lacks its ") + c + " line: " + q.kLine);
+        for (char c : std::string("GPESXHICTOW")) if (!q.seen.count(c)) die(std::string("record lacks its ") + c + " line: " + q.kLine);
+        if (std::memcmp(&q.c[0], &q.eps[2], sizeof(double)) != 0) die("C line's committed eps_22 is not E[2] bit for bit: " + q.kLine);
+        { K::Params pp; double dt = 0; fillParams(q, pp, dt); }   // every P line is validated before anything replays
         if (!q.hasD || q.dKind != (q.kind == 'C' ? 'D' : 'M'))
             die(std::string("a ") + q.kind + " record must carry its 6x6 tangent as a " + (q.kind == 'C' ? "D" : "M") + " line: " + q.kLine);
         if (q.kind == 'R' && (q.z.empty() || (q.k.at("dim") != "4" && q.k.at("dim") != "3"))) die("R record without a condensed sigma_22 trace: " + q.kLine);
@@ -179,7 +198,18 @@ static void fillParams(const Rec& r, K::Params& p, double& dt) {
     p.Ah = d("Ah"); p.Bh = d("Bh"); p.Ch = d("Ch"); p.Dh = d("Dh"); p.epsFc = d("epsFc"); p.eta = d("eta");
     p.implexRmax = d("implexRmax"); p.lch = d("lch"); p.lch_ref = d("lch_ref");
     p.ctTemper = i("ctTemper"); p.tcTemper = i("tcTemper"); p.tensionLaw = i("tensionLaw");
-    p.flowPotential = i("flowPotential"); p.maxSubIncr = i("maxSubIncr"); p.compDrive = i("compDrive"); p.implex = i("implex") != 0;
+    p.flowPotential = i("flowPotential"); p.maxSubIncr = i("maxSubIncr"); p.compDrive = i("compDrive");
+    const int implex = i("implex"); p.implex = implex != 0;
+    // only values LadrunoConcrete3D's option parser can produce (-ctTemper none|alphat|proj, -tcTemper none|proj,
+    // -tensionLaw exp|bilinear, -flowPotential legacy|cdpm2, -compressionDrive legacy|cdpm2, -implex, maxSubIncr = 10
+    // iff the CDPM2 potential): anything else would replay as some other mode without a word
+    auto in = [&](const char* key, int v, std::initializer_list<int> ok) {
+        for (int o : ok) if (v == o) return;
+        die(std::string("P ") + key + "=" + std::to_string(v) + " is not a value the wrapper writes: " + r.kLine);
+    };
+    in("ctTemper", p.ctTemper, {0, 1, 2}); in("tcTemper", p.tcTemper, {0, 2}); in("tensionLaw", p.tensionLaw, {0, 1});
+    in("flowPotential", p.flowPotential, {0, 1}); in("compDrive", p.compDrive, {0, 1}); in("implex", implex, {0, 1});
+    in("maxSubIncr", p.maxSubIncr, {p.flowPotential == 1 ? 10 : 0});
     // the honest-f tolerance is a kernel constant, not a parameter: records written under another one do not replay
     if (d("ftol") != K::F_TOL_HONEST) die("record written with F_TOL_HONEST " + r.pkv.at("ftol") + ", this kernel has another: " + r.kLine);
     dt = d("dt");
@@ -200,7 +230,7 @@ static Ev integrate(const K::Params& mp, const K::State& in, const double s6[6],
 }
 // LadrunoConcrete3D::setTrialStrain, the condensed (PlaneStress / PlateFiber) branch, rule B. Code: 0 sigma_22 not
 // converged, 1 last pass failed, 2 both, 3 vanished pivot with the last pass converged; -1 accepted.
-struct Loop { int code = -1; std::vector<Pass> z; Ev last; };
+struct Loop { int code = -1; std::vector<Pass> z; Ev last; double eps22End = 0; };   // eps22End: s6[2] at exit
 static Loop sigma22Loop(const K::Params& mp, const K::State& in, const double strain[6], double eps22, double dt) {
     double s6[6]; for (int i = 0; i < 6; ++i) s6[i] = strain[i]; s6[2] = eps22;
     Loop L; bool lastFailed = false, conv = false, pivot = false; const int maxIt = 30;
@@ -215,6 +245,7 @@ static Loop sigma22Loop(const K::Params& mp, const K::State& in, const double st
         s6[2] -= m.sig[2] / d22;
     }
     if (lastFailed || !conv) L.code = lastFailed ? (conv ? 1 : 2) : (pivot ? 3 : 0);
+    L.eps22End = s6[2];
     return L;
 }
 
@@ -280,17 +311,18 @@ static int modeCheck(const Fixture& fx, bool cross) {
         if (r.kind == 'R') {
             cmpInt("reason", x.loop.code, r.code);
             cmpInt("passes", (long)x.loop.z.size(), (long)r.z.size());
+            cmp("T2end", x.loop.eps22End, r.strain[2]);
             for (size_t p = 0; p < x.loop.z.size() && p < r.z.size(); ++p) {
                 const Pass &a = x.loop.z[p], &b = r.z[p]; const std::string at = "pass" + std::to_string(p) + ".";
                 cmpInt(at + "status", a.status, b.status); cmpInt(at + "pieces", a.sub, b.sub);
                 cmp(at + "eps22", a.eps22, b.eps22); cmp(at + "s22", a.s22, b.s22); cmp(at + "D22", a.d22, b.d22);
             }
         }
-        std::map<std::string, std::string> g; if (!r.gLine.empty()) kv(r.gLine, g);
-        auto& cnt = byGroup[g.count("class") ? g["class"] : std::string("?")]; ++cnt.first;
+        const std::map<std::string, std::string>& g = r.g;
+        auto& cnt = byGroup[g.at("class")]; ++cnt.first;
         if (!nDiff) ++cnt.second;
         else { ++bad; std::printf("  MISMATCH %s seq=%s (%s %s): %d values differ:%s%s\n", r.k.at("kind").c_str(), r.k.at("seq").c_str(),
-                                  g.count("dump") ? g["dump"].c_str() : "?", g.count("class") ? g["class"].c_str() : "?", nDiff, why.c_str(), nDiff > 6 ? " ..." : ""); }
+                                  g.at("dump").c_str(), g.at("class").c_str(), nDiff, why.c_str(), nDiff > 6 ? " ..." : ""); }
     }
     for (const auto& kvp : byGroup) std::printf("  %-14s %2d records, bit-exact %2d\n", kvp.first.c_str(), kvp.second.first, kvp.second.second);
     std::printf("REPLAY %s: %d of %zu records bit-exact%s\n", bad ? "FAIL" : "PASS", (int)fx.recs.size() - (bad - (qOk ? 0 : 1)), fx.recs.size(), qOk ? "" : ", libm probes differ");
@@ -319,8 +351,12 @@ static int modeRecord(const Fixture& fx, const char* outPath, const std::string&
         out << "K"; for (const char* key : order) { auto it = k.find(key); if (it == k.end()) die(std::string("K line lacks ") + key); out << " " << key << "=" << it->second; k.erase(it); }
         if (!k.empty()) die("K line has an unexpected key " + k.begin()->first);
         out << "\n";
-        if (!r.gLine.empty()) out << r.gLine << "\n";
-        out << r.pLine << "\n"; for (const std::string& s : r.stateLines) out << s << "\n";
+        out << r.gLine << "\n";
+        out << r.pLine << "\n";
+        for (const std::string& s : r.stateLines) {
+            if (r.kind == 'R' && s[0] == 'T') { double t[6]; for (int i = 0; i < 6; ++i) t[i] = r.strain[i]; t[2] = x.loop.eps22End; out << "T" << fmt(t, 6) << "\n"; }
+            else out << s << "\n";
+        }
         out << "O" << fmt(x.o, 17) << "\n";
         out << (r.kind == 'C' ? "D" : "M") << fmt(&x.ev.D[0][0], 36) << "\n";
         out << "W" << fmt(x.w, 12) << "\n";

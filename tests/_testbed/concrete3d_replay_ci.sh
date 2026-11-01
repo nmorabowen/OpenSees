@@ -41,25 +41,36 @@ cat "$out/guard.txt"
 [ "$rc" -eq 2 ] && grep -q "do not replay bit-exactly under $tag" "$out/guard.txt" \
   || { echo "ERROR: the libm guard did not refuse (exit $rc)"; exit 1; }
 
-echo "== load guard: a corrupted fixture must be refused at load, never truncated, defaulted or ignored"
-# name | awk edit of the libmmt fixture (first matching line only) | the refusal it must produce. Each edit is one the
-# pre-guard loader accepted (REPLAY PASS): a value that truncates back, trailing junk, an unchecked index or key.
-while IFS='|' read -r m prog want; do
+echo "== fixture guard: a corrupted fixture must be refused, never truncated, defaulted or ignored"
+# name | awk edit of the libmmt fixture | exit | the message it must produce. Every edit is one an earlier loader
+# accepted (REPLAY PASS 28/28): a value that truncates back, trailing junk, an unchecked index, key, line or domain, a
+# field that was parsed and never compared. Exit 2 = refused at load; exit 1 = a compared value differs.
+while IFS='|' read -r m prog want_rc want; do
   awk "$prog" "$fix" > "$out/$m.txt"
   cmp -s "$fix" "$out/$m.txt" && { echo "ERROR: mutant $m changed nothing"; exit 1; }
   set +e; "$out/concrete3d_replay" check "$out/$m.txt" --cross > "$out/$m.log" 2>&1; rc=$?; set -e
-  echo "$m: exit $rc: $(tail -1 "$out/$m.log")"
-  [ "$rc" -eq 2 ] && grep -q "$want" "$out/$m.log" || { echo "ERROR: mutant $m was not refused with '$want' (exit $rc)"; exit 1; }
+  echo "$m: exit $rc: $(grep -E 'REPLAY (ERROR|FAIL)|MISMATCH' "$out/$m.log" | head -1)"
+  [ "$rc" -eq "$want_rc" ] && grep -q "$want" "$out/$m.log" || { echo "ERROR: mutant $m did not give exit $want_rc with '$want' (exit $rc)"; exit 1; }
 done <<'MUTANTS'
-O_status_frac|!d && /^O /{$2=$2+0.5; d=1} 1|O status is not an integer
-Z_status_frac|!d && /^Z /{$6=$6+0.5; d=1} 1|Z status is not an integer
-Z_pass_index|!d && /^Z /{$2=$2+1; d=1} 1|is not its position
-Z_pass_range|!d && /^Z /{$2="4294967296"; d=1} 1|Z pass is out of int range
-P_int_frac|!d && /^P /{sub(/ maxSubIncr=[0-9]+/, "&.5"); d=1} 1|P maxSubIncr is not an integer
-P_num_junk|!d && /^P /{sub(/ E=[^ ]+/, "&zz"); d=1} 1|not a number
-K_extra_key|!d && /^K /{$0=$0 " junk=1"; d=1} 1|unexpected key junk
-K_dup_key|!d && /^K /{$0=$0 " seq=1"; d=1} 1|duplicate key seq
-W_twice|!d && /^W /{print; d=1} 1|two W lines
+O_status_frac|!d && /^O /{$2=$2+0.5; d=1} 1|2|O status is not an integer
+Z_status_frac|!d && /^Z /{$6=$6+0.5; d=1} 1|2|Z status is not an integer
+Z_pass_index|!d && /^Z /{$2=$2+1; d=1} 1|2|is not its position
+Z_pass_range|!d && /^Z /{$2="4294967296"; d=1} 1|2|Z pass is out of int range
+P_int_frac|!d && /^P /{sub(/ maxSubIncr=[0-9]+/, "&.5"); d=1} 1|2|P maxSubIncr is not an integer
+P_num_junk|!d && /^P /{sub(/ E=[^ ]+/, "&zz"); d=1} 1|2|not a number
+P_ctTemper_domain|/^P /{sub(/ ctTemper=0/, " ctTemper=3")} 1|2|P ctTemper=3 is not a value the wrapper writes
+P_implex_domain|!d && /^P /{sub(/ implex=0/, " implex=2"); d=1} 1|2|P implex=2 is not a value the wrapper writes
+P_maxSubIncr_domain|!d && /^P /{sub(/ maxSubIncr=10/, " maxSubIncr=9"); d=1} 1|2|P maxSubIncr=9 is not a value the wrapper writes
+K_extra_key|!d && /^K /{$0=$0 " junk=1"; d=1} 1|2|unexpected key junk
+K_dup_key|!d && /^K /{$0=$0 " seq=1"; d=1} 1|2|duplicate key seq
+W_twice|!d && /^W /{print; d=1} 1|2|two W lines
+G_drop|!d && /^G /{d=1; next} 1|2|lacks its G line
+G_class|!d && /^G /{sub(/ class=[^ ]+/, " class=other"); d=1} 1|2|G class= is not a record class
+C0_not_E2|!d && /^C /{$2="1e-3"; d=1} 1|2|is not E\[2\] bit for bit
+meta_twice|!d && /^#@ /{print "#@ "; d=1} 1|2|the #@ line must come once
+meta_key|/^#@ /{$0=$0 " junk=1"} 1|2|the #@ line has an unexpected key junk
+meta_blob|/^#@ /{sub(/kernel-blob=[0-9a-f]+/, "kernel-blob=x")} 1|2|kernel-blob is not a 40-hex
+T2_end_R|!d && /^T /{$4="0.5"; d=1} 1|1|T2end
 MUTANTS
 
 echo "== recording the inputs under glibc (artifact)"
