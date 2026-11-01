@@ -1961,6 +1961,215 @@ static void run_meridian_kappa(double s, const char* tag) {
                 n, nLo, nHi, n1, n2, worst, worstMapFD);
 }
 
+// D13 — the tangent against an EXACT reference where the FD cannot reach it (apeGmsh #2621 F2, the unmet strata of the
+// post-fix acceptance). On the compressive meridian (two equal principal trial stresses) theta = acos(cos 3theta)/3 has a
+// square-root kink and the map's own cos2 carries a random ~sqrt(eps) theta round-off, so a central FD of the map reads
+// ~1e-7..1e-5 there however good the tangent is; at the tension vertex the stress is pinned (d sigV/d sigV_tr ~ 4.5e-7) and
+// an FD of the bisected root is limited by its adjacent-double bracket. The reference here involves no FD of the map:
+//  * effective tangent and kappa row of the pinned n-piece chain, each piece by the IFT of cdpm2HardeningResidual (its
+//    analytic Jacobian): on the meridian the trial right-hand side is exactly (d xi_tr, d rho_tr, 0, 0) (cos 3theta is at its
+//    extremum, every theta term has a zero symmetric derivative); off it, -dR/dw by a Richardson central FD of the residual
+//    at fixed unknowns (smooth there); on the vertex, the analytic IFT of the scalar vertex residual f(sqrt3 s, 0; kappa(s));
+//    assembled by an independent spectral formula (the l'Hopital limit on a repeated pair) and chained over the pieces
+//    (Duvaut-Lions blend included). Bound 1e-7 (acceptance (a)'s effective bound).
+//  * damaged tangent: the damage update FD'd ALONG that exact effective linearization (sigma_eff + h Ce e_j, kappa + h g_j,
+//    eps + h e_j), best of central / one-sided second order over h = (0.1..1000) x 1e-7 of the strain scale (a damage
+//    switch is a kink the one-sided stencil takes). Bound 1e-6 (the damaged / kink bound).
+//  * under Duvaut-Lions, a damage-loading state whose effective stress sits ON the hydrostatic axis (rho_bar <= 1e-13 S: the
+//    tension apex) has no damaged derivative: the drivers are a cone there whose slope differs on the two meridians. Every
+//    state is compared; one that misses the bound on the apex must prove it has no derivative (left and right derivatives
+//    along e_0 differ by >= 0.1; measured >= 1.1), else it fails.
+// Corbel-like material (bilinear tension, CDPM2 drive, tcTemper proj), both flows, eta 0 and 2, the six drives that produced
+// the strata (equal-lateral compression, its reversal into tension, hydrostatic tension, two off-meridian drives).
+static bool d13Piece(const Params& q, const double s[6], const double d[6], double k,
+                     double P[6][6], double Sk[6], double Rr[6], double& Kk, double sOut[6], double& kOut, int& kind) {
+    double tr[6]; elasticPredTensor(s, d, q, tr);
+    double A[3][3], w[3], V[3][3]; voigtToMat(tr, A); eig3sym(A, w, V);
+    const PrincipalResult pr = returnMapHardening(w, q, k);
+    double Dp[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}, dspk[3] = {0, 0, 0}, dkw[3] = {0, 0, 0}; Kk = 1.0;
+    double sp[3] = {w[0], w[1], w[2]};
+    kind = 0;                                                                     // 0 elastic, 1 meridian, 2 off-meridian, 3 vertex
+    if (!pr.converged) return false;
+    if (pr.plastic) {
+        double sv[6] = {w[0], w[1], w[2], 0, 0, 0}, xitr, rhotr, thtr; invariants(sv, xitr, rhotr, thtr);
+        const double sV = (w[0] + w[1] + w[2]) / 3.0, st[3] = {w[0] - sV, w[1] - sV, w[2] - sV};
+        if (pr.apex) {
+            if (q.lodeFactor != 0) return false;
+            kind = 3;
+            const double sVtr = xitr / SQRT3; double s0, k0, dl;
+            if (!returnMapVertex(sVtr, rhotr, q, k, s0, k0, dl, 1.0) || std::fabs(s0 - pr.sp[0]) > 1e-12 * std::max(1.0, std::fabs(s0))) return false;
+            const double Kb = bulkK(q), Gs = shearG(q), dd = sVtr - s0, gg = rhotr / (2.0 * Gs);
+            const double eqv = std::sqrt(dd * dd / (3.0 * Kb * Kb) + gg * gg);
+            const double xh = ductilityXh(s0, q.fc, q.Ah, q.Bh, q.Ch, q.Dh), dxh = dDuctilityXhdSigV(s0, q.fc, q.Ah, q.Bh, q.Ch, q.Dh);
+            const double eqT = eqv > 0 ? dd / (3.0 * Kb * Kb * eqv) : 0.0, eqR = eqv > 0 ? gg / (2.0 * Gs * eqv) : 0.0;
+            const double KT = eqT / xh, KR = eqR / xh, Ks = (-eqT * xh - eqv * dxh) / (xh * xh);
+            double R3v[4], J3[4][4];
+            cdpm2HardeningResidual(SQRT3 * s0, 0.0, 0.0, k0, xitr, rhotr, k, 1.0, 1.0, q, R3v, J3, q.flowPotential != 1);
+            const double Fs = SQRT3 * J3[2][0] + J3[2][3] * Ks, FT = J3[2][3] * KT, FR = J3[2][3] * KR, FK = J3[2][3];
+            const double dsT = -FT / Fs, dsR = -FR / Fs, dsK = -FK / Fs;
+            const double dkT = KT + Ks * dsT, dkR = KR + Ks * dsR, dkK = 1.0 + Ks * dsK;
+            for (int a = 0; a < 3; ++a) { for (int b = 0; b < 3; ++b) Dp[a][b] = dsT / 3.0 + dsR * (rhotr > 0 ? st[b] / rhotr : 0.0); dspk[a] = dsK; sp[a] = s0; }
+            for (int b = 0; b < 3; ++b) dkw[b] = dkT / 3.0 + dkR * (rhotr > 0 ? st[b] / rhotr : 0.0);
+            Kk = dkK;
+        } else {
+            const double m = std::max(std::fabs(w[0]), std::max(std::fabs(w[1]), std::fabs(w[2])));
+            const double gap = std::min(std::fabs(w[0] - w[1]), std::min(std::fabs(w[0] - w[2]), std::fabs(w[1] - w[2])));
+            const bool onMer = !(gap > 1e-12 * m);
+            kind = onMer ? 1 : 2;
+            double R[4], J[4][4];
+            cdpm2HardeningResidual(pr.xi, pr.rho, pr.dlam, pr.kp, xitr, rhotr, k, lodeR(thtr, q.e), hardeningLodeFactor(rhotr, thtr, q),
+                                   q, R, J, q.flowPotential != 1);
+            auto solve = [&](const double rhs[4], double u[4]) {
+                double M[4][5]; for (int i = 0; i < 4; ++i) { for (int j = 0; j < 4; ++j) M[i][j] = J[i][j]; M[i][4] = rhs[i]; }
+                for (int c = 0; c < 4; ++c) { int piv = c; for (int r = c + 1; r < 4; ++r) if (std::fabs(M[r][c]) > std::fabs(M[piv][c])) piv = r;
+                    for (int j = 0; j < 5; ++j) std::swap(M[c][j], M[piv][j]);
+                    for (int r = 0; r < 4; ++r) if (r != c) { const double f = M[r][c] / M[c][c]; for (int j = c; j < 5; ++j) M[r][j] -= f * M[c][j]; } }
+                for (int i = 0; i < 4; ++i) u[i] = M[i][4] / M[i][i];
+            };
+            for (int b = 0; b < 3; ++b) {
+                double rhs[4] = {1.0 / SQRT3, rhotr > 0 ? st[b] / rhotr : 0.0, 0.0, 0.0};
+                if (!onMer) {
+                    auto resAt = [&](double t, double Ro[4]) { double ww[3] = {w[0], w[1], w[2]}; ww[b] += t;
+                        double s2[6] = {ww[0], ww[1], ww[2], 0, 0, 0}, x2, r2, t2; invariants(s2, x2, r2, t2);
+                        cdpm2HardeningResidual(pr.xi, pr.rho, pr.dlam, pr.kp, x2, r2, k, lodeR(t2, q.e), hardeningLodeFactor(r2, t2, q), q, Ro, nullptr, q.flowPotential != 1); };
+                    const double hh = 1e-4 * m; double Rp[4], Rm[4], Rp2[4], Rm2[4]; resAt(hh, Rp); resAt(-hh, Rm); resAt(hh / 2, Rp2); resAt(-hh / 2, Rm2);
+                    for (int i = 0; i < 4; ++i) { const double d1 = (Rp[i] - Rm[i]) / (2 * hh), d2 = (Rp2[i] - Rm2[i]) / hh; rhs[i] = -(4 * d2 - d1) / 3; }
+                }
+                double u[4]; solve(rhs, u);
+                for (int a = 0; a < 3; ++a) {
+                    const double dsd = (rhotr > 0) ? (u[1] * rhotr - pr.rho * (st[b] / rhotr)) / (rhotr * rhotr) : 0.0;
+                    Dp[a][b] = ((a == b ? 1.0 : 0.0) - 1.0 / 3.0) * (rhotr > 0 ? pr.rho / rhotr : 0.0) + st[a] * dsd + u[0] / SQRT3;
+                }
+                dkw[b] = u[3];
+            }
+            { const double rhs[4] = {0, 0, 0, 1.0}; double u[4]; solve(rhs, u);
+              for (int a = 0; a < 3; ++a) dspk[a] = st[a] * (rhotr > 0 ? u[1] / rhotr : 0.0) + u[0] / SQRT3; Kk = u[3]; }
+            for (int a = 0; a < 3; ++a) sp[a] = st[a] * (rhotr > 0 ? pr.rho / rhotr : 0.0) + pr.xi / SQRT3;
+        }
+    }
+    for (int j = 0; j < 6; ++j) {                                                 // independent spectral assembly
+        double e[6] = {0, 0, 0, 0, 0, 0}; e[j] = 1.0; double dA[3][3]; voigtToMat(e, dA);
+        double dw[3], dS[3][3] = {{0}};
+        for (int a = 0; a < 3; ++a) { double v = 0; for (int i = 0; i < 3; ++i) for (int l = 0; l < 3; ++l) v += V[i][a] * dA[i][l] * V[l][a]; dw[a] = v; }
+        double dsp[3]; for (int a = 0; a < 3; ++a) { dsp[a] = 0; for (int b = 0; b < 3; ++b) dsp[a] += Dp[a][b] * dw[b]; }
+        double dk = 0; for (int b = 0; b < 3; ++b) dk += dkw[b] * dw[b];
+        for (int a = 0; a < 3; ++a) for (int i = 0; i < 3; ++i) for (int l = 0; l < 3; ++l) dS[i][l] += dsp[a] * V[i][a] * V[l][a];
+        const double scale = std::max(std::fabs(w[0]), std::max(std::fabs(w[1]), std::fabs(w[2]))) + 1e-300;
+        for (int a = 0; a < 3; ++a) for (int b = 0; b < 3; ++b) if (a != b) {
+            double vab = 0; for (int i = 0; i < 3; ++i) for (int l = 0; l < 3; ++l) vab += V[i][a] * dA[i][l] * V[l][b];
+            const double coef = (std::fabs(w[a] - w[b]) > 1e-10 * scale) ? (sp[a] - sp[b]) / (w[a] - w[b]) : (Dp[a][a] - Dp[a][b]);
+            for (int i = 0; i < 3; ++i) for (int l = 0; l < 3; ++l) dS[i][l] += coef * vab * V[i][a] * V[l][b];
+        }
+        double col[6]; matToVoigt(dS, col); for (int i = 0; i < 6; ++i) P[i][j] = col[i];
+        Rr[j] = dk;
+    }
+    { double dS[3][3] = {{0}}; for (int a = 0; a < 3; ++a) for (int i = 0; i < 3; ++i) for (int l = 0; l < 3; ++l) dS[i][l] += dspk[a] * V[i][a] * V[l][a]; matToVoigt(dS, Sk); }
+    double tmp[6], kk, Dt[6][6]; if (returnMapTensor1(q, s, d, k, true, tmp, kk, Dt, false) != 0) return false;
+    for (int i = 0; i < 6; ++i) sOut[i] = tmp[i]; kOut = kk; return true;
+}
+static bool d13Effective(const Params& mp, const State& in, const double s6[6], double dt, int nPin, double Ce[6][6], double g[6], int kinds[4]) {
+    Params q = mp; q.subIncrForceN = nPin;
+    double Cel[6][6]; elasticC(q, Cel);
+    double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = s6[i] - in.eps[i];
+    const int L = nPin >= 2 ? nPin : 1;
+    double G[6][6] = {{0}}, gk[6] = {0, 0, 0, 0, 0, 0}, s[6], k = in.kp;
+    for (int i = 0; i < 6; ++i) s[i] = in.sigEff[i];
+    for (int p = 0; p < L; ++p) {
+        double d[6]; for (int i = 0; i < 6; ++i) d[i] = deps[i] / L;
+        double P[6][6], Sk[6], Rr[6], Kk, sn[6], kn; int kind;
+        if (!d13Piece(q, s, d, k, P, Sk, Rr, Kk, sn, kn, kind)) return false;
+        ++kinds[kind];
+        double T[6][6]; for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) T[i][j] = G[i][j] + Cel[i][j] / L;
+        double Gn[6][6], gn[6];
+        for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) { double v = Sk[i] * gk[j]; for (int m = 0; m < 6; ++m) v += P[i][m] * T[m][j]; Gn[i][j] = v; }
+        for (int j = 0; j < 6; ++j) { double v = Kk * gk[j]; for (int m = 0; m < 6; ++m) v += Rr[m] * T[m][j]; gn[j] = v; }
+        for (int i = 0; i < 6; ++i) { gk[i] = gn[i]; s[i] = sn[i]; for (int j = 0; j < 6; ++j) G[i][j] = Gn[i][j]; } k = kn;
+    }
+    double beta = 1.0; if (mp.eta > 0.0 && dt > 0.0) beta = dt / (mp.eta + dt);
+    for (int i = 0; i < 6; ++i) { g[i] = beta * gk[i]; for (int j = 0; j < 6; ++j) Ce[i][j] = (1.0 - beta) * Cel[i][j] + beta * G[i][j]; }
+    return true;
+}
+static double d13Damaged(const Params& mp, const State& in, const double s6[6], double dt, int nPin, const double Ce[6][6], const double g[6],
+                         const double D[6][6]) {
+    Params q = mp; q.subIncrForceN = nPin;
+    State cb; const State* ie = nullptr; bool ct = false; double seE[6], kE, JJ[6][6]; int sb = 0;
+    effectiveReturn(q, s6, in, true, dt, false, cb, ie, ct, seE, kE, JJ, &sb);
+    auto nominal = [&](int j, double t, double out[6]) {
+        double se[6], e[6]; for (int i = 0; i < 6; ++i) { se[i] = seE[i] + t * Ce[i][j]; e[i] = s6[i]; } e[j] += t;
+        State od; damagedUpdate(q, *ie, se, kE + t * g[j], e, od); for (int i = 0; i < 6; ++i) out[i] = od.sig[i];
+    };
+    double best = 1e300;
+    for (double mult : {0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 100.0, 1000.0}) {
+        const double h = mult * 1e-7 * (std::fabs(s6[0]) + std::fabs(s6[1]) + std::fabs(s6[2]) + mp.fc / mp.E);
+        double FC[6][6], FF[6][6], FB[6][6];
+        for (int j = 0; j < 6; ++j) {
+            double p1[6], p2[6], m1[6], m2[6], c0[6]; nominal(j, h, p1); nominal(j, 2 * h, p2); nominal(j, -h, m1); nominal(j, -2 * h, m2); nominal(j, 0, c0);
+            for (int i = 0; i < 6; ++i) { FC[i][j] = (p1[i] - m1[i]) / (2 * h); FF[i][j] = (-3 * c0[i] + 4 * p1[i] - p2[i]) / (2 * h); FB[i][j] = (3 * c0[i] - 4 * m1[i] + m2[i]) / (2 * h); }
+        }
+        best = std::min(best, std::min(relF6(D, FC), std::min(relF6(D, FF), relF6(D, FB))));
+    }
+    return best;
+}
+static void d13PathStrain(int path, int k, double e[6]) {   // the acceptance (a) driven paths that produced the strata
+    for (int i = 0; i < 6; ++i) e[i] = 0; const double t = k / 120.0;
+    switch (path) {
+    case 0: e[0] = -4e-3 * t; e[1] = e[2] = 0.8e-3 * t; break;                                                    // equal-lateral compression
+    case 1: e[0] = t < 0.3 ? 6e-4 * t / 0.3 : 6e-4 - 4e-3 * (t - 0.3); e[1] = -1e-3 * t; e[3] = 6e-4 * t; break;   // off-meridian
+    case 5: e[0] = -1.5e-2 * t; e[1] = e[2] = 0.3 * 1.5e-2 * t; break;                                              // deep equal-lateral compression
+    case 6: e[0] = t < 0.25 ? 4e-4 * t / 0.25 : 4e-4 - 6e-3 * (t - 0.25); e[3] = 1.5e-3 * t; e[1] = 2e-4 * t; break;  // off-meridian
+    case 7: e[0] = t < 0.5 ? -3e-3 * t / 0.5 : -3e-3 + 8e-3 * (t - 0.5); e[1] = e[2] = 0.6e-3 * std::min(t / 0.5, 1.0); break;   // reversal
+    default: e[0] = e[1] = e[2] = 6e-4 * t; break;                                                                    // hydrostatic tension
+    }
+}
+static void run_exact_tangent(double s, double L, const char* tag) {
+    std::printf("[D13] apeGmsh #2621: the tangent against an exact reference (meridian, vertex, off-meridian)%s%s\n", tag[0] ? ", units " : "", tag);
+    int n = 0, nDam = 0, nApex = 0, apexBad = 0, kinds[4] = {0, 0, 0, 0}, nSkip = 0;
+    double worstE = 0, worstK = 0, worstD = 0, minApexSplit = 1e300;
+    for (int fl = 0; fl <= 1; ++fl) for (int ve = 0; ve <= 1; ++ve) for (int path : {0, 1, 5, 6, 7, 9}) {
+        Params p = scaledBase(s); p.flowPotential = fl; p.maxSubIncr = 10; p.tensionLaw = 1; p.compDrive = 1; p.tcTemper = 2;
+        p.Gf = 0.1 * s * L; p.Gc = 5.0 * s * L; p.lch = 50.0 * L; p.epsFc = 1e-3; p.As = 2.0; p.eta = ve ? 2.0 : 0.0;
+        const double dt = ve ? 1.0 : -1.0;
+        State in;
+        for (int k = 1; k <= 120; ++k) {
+            double e[6]; d13PathStrain(path, k, e); State o; double sg[6], se[6], D[6][6];
+            if (returnMap(p, e, in, o, sg, se, D, true, dt, true) != 0) { in = o; continue; }
+            if (in.wt < p.omegaDead && in.wc < p.omegaDead && (k % 2) == 0) {
+                const int nPin = returnMapPieces(p, in, e);
+                double Ce[6][6], g[6];
+                if (d13Effective(p, in, e, dt, nPin, Ce, g, kinds)) {
+                    Params q = p; q.subIncrForceN = nPin; State cb; const State* ie = nullptr; bool ct = false; double s2[6], k2, CeK[6][6], gK[6]; int sb = 0;
+                    effectiveReturn(q, e, in, true, dt, true, cb, ie, ct, s2, k2, CeK, &sb, gK);
+                    ++n; worstE = std::max(worstE, relF6(CeK, Ce)); worstK = std::max(worstK, relV6(gK, g));
+                    double xi, rho, th; invariants(s2, xi, rho, th);
+                    const double S = std::max(p.ft, std::max(std::fabs(s2[0]), std::max(std::fabs(s2[1]), std::fabs(s2[2]))));
+                    const double eD = d13Damaged(p, in, e, dt, nPin, Ce, g, D);
+                    if (eD < 1.0e-6) { ++nDam; worstD = std::max(worstD, eD); }
+                    else if (p.eta > 0.0 && rho <= 1e-13 * S) {
+                        // the Duvaut-Lions tension apex with damage loading: prove no derivative exists (left and right
+                        // derivatives along e_0 differ); a state that is not proven non-differentiable fails the check
+                        ++nApex; const double h = 1e-7 * (std::fabs(e[0]) + p.fc / p.E);
+                        double ep[6], em[6], gp[6], gm[6], sE[6], J[6][6]; State oo;
+                        for (int i = 0; i < 6; ++i) { ep[i] = em[i] = e[i]; } ep[0] += h; em[0] -= h;
+                        returnMap(q, ep, in, oo, gp, sE, J, false, dt, true); returnMap(q, em, in, oo, gm, sE, J, false, dt, true);
+                        double np = 0, nd = 0; for (int i = 0; i < 6; ++i) { const double a = (gp[i] - sg[i]) / h, b = (sg[i] - gm[i]) / h; np += a * a; nd += (a - b) * (a - b); }
+                        const double split = std::sqrt(nd / std::max(np, 1e-300)); minApexSplit = std::min(minApexSplit, split);
+                        if (!(split >= 0.1)) ++apexBad;
+                    } else { ++nDam; worstD = std::max(worstD, eD); }
+                } else ++nSkip;
+            }
+            in = o;
+        }
+    }
+    check(n >= 600 && kinds[1] >= 200 && kinds[2] >= 100 && kinds[3] >= 30 && worstE < 1.0e-7 && worstK < 1.0e-7,
+          label(tag, "D13 effective tangent and kappa row == exact reference (meridian, off-meridian, vertex) to 1e-7").c_str());
+    check(nDam >= 500 && worstD < 1.0e-6,
+          label(tag, "D13 damaged tangent == the damage update along the exact effective linearization to 1e-6").c_str());
+    check(nApex >= 20 && apexBad == 0,
+          label(tag, "D13 Duvaut-Lions tension apex: no derivative exists (left/right derivatives differ >= 0.1)").c_str());
+    std::printf("       (states %d, pieces elastic/meridian/off/vertex %d/%d/%d/%d, not referenced %d; worst Ceff %.2e, kappa %.2e; damaged %d, worst %.2e; apex %d, min split %.2f)\n",
+                n, kinds[0], kinds[1], kinds[2], kinds[3], nSkip, worstE, worstK, nDam, worstD, nApex, minApexSplit);
+}
+
 int main(int argc, char** argv) {
     run_identities();
     const char* fix = argc > 1 ? argv[1] : "tests/_testbed/concrete3d_oracle_fixture.txt";
@@ -1992,6 +2201,9 @@ int main(int argc, char** argv) {
     run_meridian_kappa(1.0, "");
     run_meridian_kappa(1.0e3, "kPa-m");
     run_meridian_kappa(1.0e6, "Pa-m");
+    run_exact_tangent(1.0, 1.0, "");
+    run_exact_tangent(1.0e3, 1.0e-3, "kPa-m");
+    run_exact_tangent(1.0e6, 1.0e-3, "Pa-m");
     std::printf(fails ? "\nKERNEL CHECK: %d FAIL\n" : "\nKERNEL CHECK: ALL PASS\n", fails);
     return fails ? 1 : 0;
 }
