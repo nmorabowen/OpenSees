@@ -249,6 +249,12 @@ int LogStrainNDMaterial::commitState(void)
 
 int LogStrainNDMaterial::revertToLastCommit(void)
 {
+  // Ladruno: discard the trial state too, so a commit without a new
+  // setTrialF() keeps the committed one instead of the reverted trial.
+  for (int i = 0; i < 9; i++) {
+    Ftrial9[i] = Fn[i]; BeTrial9[i] = Be_n[i]; Be_trialUpd[i] = Be_n[i];
+  }
+  for (int k = 0; k < 6; k++) epsFeedTrial[k] = epsFeed_n[k];
   return theMaterial->revertToLastCommit();
 }
 
