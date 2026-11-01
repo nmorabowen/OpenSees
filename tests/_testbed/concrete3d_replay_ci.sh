@@ -167,10 +167,10 @@ echo "blob-tie mutant: exit $rc: $(head -1 "$out/blob_tie_mut.log")"
 [ "$rc" -eq 1 ] && grep -q "^ERROR: the libmmt fixture is recorded on kernel-blob=$other, this tree's kernel is $blob" "$out/blob_tie_mut.log" \
   || { echo "ERROR: the blob tie did not fire on a fixture recorded on another kernel blob (exit $rc)"; exit 1; }
 mutants "$glibc_fix" "$exe" inputs-match MUT "$fix" <<'MUTANTS'
-rec_drop|/^K /{n++} n!=2|1|INPUTS DIFFER: 27 records vs 28
+rec_drop|/^K /{n++} n!=2|1|INPUTS DIFFER: 29 records vs 30
 S_edit|!d && /^S /{$2=sprintf("%.17g", $2*1.25); d=1} 1|1|INPUTS DIFFER at record 0 (seq=376): S line
 K_ele_edit|!d && /^K /{sub(/ ele=[0-9]+/, "&0"); d=1} 1|1|INPUTS DIFFER at record 0 (seq=376): K ele=
-T2_R_exempt|!d && /^T /{$4="0.5"; d=1} 1|0|INPUTS MATCH: 28 records
+T2_R_exempt|!d && /^T /{$4="0.5"; d=1} 1|0|INPUTS MATCH: 30 records
 MUTANTS
 
 echo "== compare guard: an output corrupted in the glibc fixture must be caught (on this libm's own records, after the gate)"
