@@ -2752,8 +2752,10 @@ def isotropic_tangent(lam, V, yv, ypv, tol=1.0e-8):
     return D
 
 
-def _dscalar_dsig(fn, sig6, h=1.0e-6):
-    """Isolated micro-FD gradient d(fn)/d(sig) of a scalar-of-stress function (per Voigt component)."""
+def _dscalar_dsig(fn, sig6, h):
+    """Isolated micro-FD gradient d(fn)/d(sig) of a scalar-of-stress function (per Voigt component). h is the
+    caller's scaled step, _DRIVER_FD_REL * _driver_stress_scale (mirror of the kernel dscalarDsig; no default:
+    the former absolute h = 1e-6 was right in MPa only, apeGmsh #2639)."""
     g = np.zeros(6)
     for k in range(6):
         dp = np.array(sig6, float); dp[k] += h
@@ -2762,13 +2764,13 @@ def _dscalar_dsig(fn, sig6, h=1.0e-6):
     return g
 
 
-# the hydrostatic-axis test and the along-axis FD step, relative to the stress scale S = max(ft, max|lam|)
-# (mirror of the kernel AXIS_RHO_REL / AXIS_FD_REL / axisStressScale, which justify the constants; apeGmsh #2621 F2
-# review r2: an absolute 1e-12 test and a 1e-6 step held only in MPa)
-_AXIS_RHO_REL, _AXIS_FD_REL = 1.0e-13, 1.0e-6
+# the hydrostatic-axis test and the one driver-gradient FD step (on and off the axis), relative to the stress scale
+# S = max(ft, max|lam|) (mirror of the kernel AXIS_RHO_REL / DRIVER_FD_REL / driverStressScale, which justify the
+# constants; an absolute 1e-12 test and a 1e-6 step held only in MPa: apeGmsh #2621 F2 review r2 and #2639)
+_AXIS_RHO_REL, _DRIVER_FD_REL = 1.0e-13, 1.0e-6
 
 
-def _axis_stress_scale(lam, mp):
+def _driver_stress_scale(lam, mp):
     return max(float(mp["ft"]), float(np.max(np.abs(lam))))
 
 
@@ -2929,9 +2931,10 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     depl_deps = np.eye(6) - Cinv @ Ceff                                  # d(eps_p)/d(eps)
     # on the hydrostatic axis (rho_bar == 0, the beta_c guard) the drivers are cones: gradient along the axis (#2621)
     _, rb_ax, *_ = invariants(np.array([lam[0], lam[1], lam[2], 0.0, 0.0, 0.0]))
-    s_ax = _axis_stress_scale(lam, mp)
-    h_ax = _AXIS_FD_REL * s_ax
-    _grad = (lambda fn, s6: _dscalar_dsig_axis(fn, s6, h_ax)) if rb_ax <= _AXIS_RHO_REL * s_ax else _dscalar_dsig
+    s_drv = _driver_stress_scale(lam, mp)
+    h_drv = _DRIVER_FD_REL * s_drv                                     # relative step on and off the axis (#2639)
+    _gfd = _dscalar_dsig_axis if rb_ax <= _AXIS_RHO_REL * s_drv else _dscalar_dsig
+    _grad = lambda fn, s6: _gfd(fn, s6, h_drv)
     det_deps = Ceff.T @ _grad(lambda s: equiv_strain_general(np.linalg.eigvalsh(voigt_to_mat(s)), mp), sig_bar)
     dxs_deps = Ceff.T @ _grad(lambda s: _damage_drivers(np.linalg.eigvalsh(voigt_to_mat(s)), mp, As)[2], sig_bar)
     dac_deps = Ceff.T @ _grad(lambda s: alpha_compression(np.linalg.eigvalsh(voigt_to_mat(s))), sig_bar)
@@ -4760,7 +4763,9 @@ def run_f2_chain_gate(verbose=True):
     C3 the last-piece-only tangent misses the same FD by > 1e-3 (C1 discriminates);
     C4 the closed-form proj-weight gradients == FD of the weights (1e-6);
     C5 the damaged tangent at the tension-apex return == the FD of the damaged step (1e-6; the per-component
-       driver micro-FD across the hydrostatic-axis cone was O(1) off there, apeGmsh #2621)."""
+       driver micro-FD across the hydrostatic-axis cone was O(1) off there, apeGmsh #2621);
+    C6 the relative driver-gradient step (mirror of kernel check D9, apeGmsh #2639): far-compressive and ordinary
+       damage-advancing states, damaged tangent == the FD of the damaged step (1e-6) in MPa-mm, kPa-m and Pa-m."""
     res = {}
     mp = make_material(30000.0, 0.2, 30.0, 3.0, Df=0.85, Hp=0.01, flow_potential="cdpm2", max_subincr=10)
     rng = np.random.default_rng(2621)
@@ -4862,12 +4867,50 @@ def run_f2_chain_gate(verbose=True):
         res["C5_units"][tag] = (len(errs5), (max(errs5) if errs5 else 1.0))
     res["C5_n"], res["C5_worst"] = res["C5_units"]["MPa-mm"]
     res["C5_ok"] = bool(all(n >= 5 and w < 1.0e-6 for n, w in res["C5_units"].values()))
-    res["PASS"] = bool(res["C1_ok"] and res["C2_ok"] and res["C3_ok"] and res["C4_ok"] and res["C5_ok"])
+    # C6 the driver-gradient step (mirror of kernel check D9, apeGmsh #2639). _dscalar_dsig stepped an ABSOLUTE 1e-6
+    # in stress units: round-off dominated on far-compressive states and in Pa. Now _DRIVER_FD_REL * S. Three cdpm2-
+    # flow paths (D9's: (0) oedometric compression with shear, |sig_bar| to 2.5e3 MPa; (1) compression with lateral
+    # expansion and shear; (2) tension with shear), 120 steps, every step that advances an omega already > 0, on a
+    # direct return (damaged_consistent_tangent is not schedule-frozen, so a sub-incremented step would be counted
+    # and fail the gate: none occurs). Reference rel_step 1e-5: path 0's residual grows as 1/rel_step below it
+    # (1e-5 / 1e-6 / 1e-7: 3.3e-7 / 2.2e-6 / 2.1e-5), reference round-off. With the absolute step path 0 read 5.7e-5
+    # (MPa), 7.4e-2 (kPa) and 1.1e2 (Pa), paths 1 and 2 7.8e-4 and 6.2e-4 in Pa; now <= 3.6e-7 in all three.
+    res["C6_units"] = {}
+    for tag, s, L in (("MPa-mm", 1.0, 1.0), ("kPa-m", 1.0e3, 1.0e-3), ("Pa-m", 1.0e6, 1.0e-3)):
+        m6 = make_material(30000.0 * s, 0.2, 30.0 * s, 3.0 * s, Df=0.85, Hp=0.01, flow_potential="cdpm2", max_subincr=10,
+                           tension_law="bilinear", compression_drive="cdpm2", eps_fc=1e-3)
+        Gf6, Gc6, lch6 = 0.1 * s * L, 5.0 * s * L, 50.0 * L
+        for path in range(3):
+            st6, wt6, wc6, errs6, sub6 = make_damage_state(m6), 0.0, 0.0, [], 0
+            for k in range(1, 121):
+                t, e6 = k / 120.0, np.zeros(6)
+                if path == 0:
+                    e6[0], e6[3], e6[4] = -1.5e-1 * t, 0.04 * 1.5e-1 * t, 0.02 * 1.5e-1 * t
+                elif path == 1:
+                    e6[0], e6[1], e6[2], e6[3] = -3e-2 * t, 0.5 * 3e-2 * t, 0.4 * 3e-2 * t, 0.1 * 3e-2 * t
+                else:
+                    e6[0], e6[1], e6[3], e6[5] = 1.5e-3 * t, -3e-4 * t, 6e-4 * t, 2e-4 * t
+                deps = e6 - st6["eps"]
+                _, new6, info6 = damaged_step_tensor(st6, deps, m6, Gf6, Gc6, lch6)
+                if (info6["wc"] > wc6 > 0.0) or (info6["wt"] > wt6 > 0.0):
+                    if return_map_schedule(st6["sig_bar"], deps, m6, st6["kp"]):
+                        sub6 += 1
+                    else:
+                        Da = damaged_tangent_analytic(st6, deps, m6, Gf6, Gc6, lch6)
+                        Dn = damaged_consistent_tangent(st6, deps, m6, Gf6, Gc6, lch6, rel_step=1.0e-5)
+                        errs6.append(float(np.linalg.norm(Da - Dn) / np.linalg.norm(Dn)))
+                st6, wt6, wc6 = new6, info6["wt"], info6["wc"]
+            res["C6_units"][(tag, path)] = (len(errs6), sub6, (max(errs6) if errs6 else 1.0))
+    res["C6_ok"] = bool(all(n >= (40, 20, 100)[p] and sb == 0 and w < 1.0e-6 for (_, p), (n, sb, w) in res["C6_units"].items()))
+    res["PASS"] = bool(res["C1_ok"] and res["C2_ok"] and res["C3_ok"] and res["C4_ok"] and res["C5_ok"] and res["C6_ok"])
     if verbose:
         print(f"  C1 chain rule vs frozen-schedule FD: n={res['C1_n']} pieces={npieces} worst sigma {res['C1_worst']:.2e} "
               f"kp {res['C1_worst_kp']:.2e}")
         print(f"  C2 direct return: {res['C2_rel']:.2e}   C3 last-piece tangent misses by >= {res['C3_min_last_piece']:.2e}")
         print(f"  C4 proj-weight gradients: n={n4} tc {worst_c:.2e} ct {worst_t:.2e}")
         print("  C5 tension-apex damaged tangent vs FD: "
-              + ", ".join(f"{t} n={n} worst {w:.2e}" for t, (n, w) in res["C5_units"].items()) + f"   PASS={res['PASS']}")
+              + ", ".join(f"{t} n={n} worst {w:.2e}" for t, (n, w) in res["C5_units"].items()))
+        print("  C6 driver-gradient step, damaged tangent vs FD: "
+              + ", ".join(f"{t} path {p} n={n} worst {w:.2e}" for (t, p), (n, _, w) in res["C6_units"].items())
+              + f"   PASS={res['PASS']}")
     return res

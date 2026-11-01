@@ -1215,13 +1215,14 @@ static void run_f2_apex(double s, double L, const char* tag) {
 // every step that starts at kp >= 1 (qh2 on its linear branch over the whole step) with 0 < beta_c < 1 and kp
 // advancing, damaged tangent == the FD of the damaged map at the same dt, every stencil map on the centre's piece
 // schedule, none skipped. (The first-yield step, kp 0 -> 1.6, starts below 1; it is also an isolated direct-return
-// failure, the pre-existing defect filed separately.) Deleting the dkp *= beta line misses here by 2.2e-3. (MPa only: the
-// residual 1.8e-7 is the absolute dscalarDsig step of #2639, ~6e-9 with a relative step, so this case is not run in
-// Pa until #2639 lands.)
-static void run_f2_viscous_kp() {
-    std::printf("[D8] F2 (apeGmsh #2621): d kp/de under Duvaut-Lions (kp >= 1, beta_c active, eta > 0)\n");
-    Params p = scaledBase(1.0); p.Hp = 0.5;
-    p.tensionLaw = 1; p.compDrive = 1; p.Gf = 0.1; p.Gc = 5.0; p.lch = 50.0; p.epsFc = 1e-3; p.As = 2.0;
+// failure, the pre-existing defect filed separately.) Deleting the dkp *= beta line misses here by 2.2e-3. Run in the
+// three unit systems since #2639 made the driver-gradient step relative (with the absolute step the MPa residual was
+// 1.8e-7 and Pa was not run).
+static void run_f2_viscous_kp(double s, double L, const char* tag) {
+    std::printf("[D8] F2 (apeGmsh #2621): d kp/de under Duvaut-Lions (kp >= 1, beta_c active, eta > 0)%s%s\n",
+                tag[0] ? ", units " : "", tag);
+    Params p = scaledBase(s); p.Hp = 0.5;
+    p.tensionLaw = 1; p.compDrive = 1; p.Gf = 0.1 * s * L; p.Gc = 5.0 * s * L; p.lch = 50.0 * L; p.epsFc = 1e-3; p.As = 2.0;
     p.flowPotential = 1; p.maxSubIncr = 10; p.eta = 1.0;
     const double dt = 1.0;
     State in; int n = 0, skipped = 0; double worst = 0;
@@ -1250,8 +1251,58 @@ static void run_f2_viscous_kp() {
         in = o;
     }
     check(n >= 100 && skipped == 0 && worst < 1.0e-6,
-          "D8 kp >= 1, beta_c active, eta > 0: damaged tangent == FD of the damaged map to 1e-6 (d kp/de scaled by beta)");
+          label(tag, "D8 kp >= 1, beta_c active, eta > 0: damaged tangent == FD of the damaged map to 1e-6 (d kp/de scaled by beta)").c_str());
     std::printf("       (states %d, skipped %d, worst %.2e)\n", n, skipped, worst);
+}
+
+// D9 — the driver-gradient step (apeGmsh #2639). damagedTangent differentiates the damage drivers (eps_tilde, x_s,
+// alpha_c, eps_tilde_c) with respect to sig_bar by a central micro-FD. Its step was an ABSOLUTE 1e-6 in stress units:
+// far below the stress scale on far-compressive states and in Pa, where round-off dominates. It is now DRIVER_FD_REL *
+// S, S = max(ft, max|w_a|). Three cdpm2-flow paths, every step that ADVANCES an omega that is already > 0 (the onset
+// step is a kink of omega and is not differentiable): (0) far compressive, oedometric compression with shear, |sig_bar|
+// up to 2.5e3 MPa; (1) compression with lateral expansion and shear; (2) tension with shear. The damaged tangent ==
+// the central FD of the damaged map (best of h 1e-8/1e-9/1e-10, every stencil map converged on the centre's piece
+// schedule) to 1e-6, none skipped. At c861b88e4 (the absolute step) path 0 misses in every unit system (MPa 6.9e-5,
+// kPa 6.0e-2, Pa 7.1e1) and paths 1 and 2 miss in Pa (1.2e-3, 6.9e-4); with the relative step all read <= 2.7e-7.
+static void run_f2_driver_step(double s, double L, const char* tag) {
+    std::printf("[D9] F2 (apeGmsh #2639): damaged tangent with the relative driver-gradient step%s%s\n",
+                tag[0] ? ", units " : "", tag);
+    Params q = scaledBase(s);
+    q.tensionLaw = 1; q.compDrive = 1; q.Gf = 0.1 * s * L; q.Gc = 5.0 * s * L; q.lch = 50.0 * L; q.epsFc = 1e-3; q.As = 2.0;
+    q.flowPotential = 1; q.maxSubIncr = 10;
+    const char* names[3] = {"far compressive", "compression + lateral expansion", "tension + shear"};
+    const int minN[3] = {40, 20, 100};
+    for (int path = 0; path < 3; ++path) {
+        State in; int n = 0, skipped = 0; double worst = 0, sMax = 0;
+        for (int k = 1; k <= 120; ++k) {
+            const double t = k / 120.0; double e[6] = {0, 0, 0, 0, 0, 0};
+            if (path == 0)      { const double M = 1.5e-1; e[0] = -M * t; e[3] = 0.04 * M * t; e[4] = 0.02 * M * t; }
+            else if (path == 1) { const double M = 3e-2; e[0] = -M * t; e[1] = 0.5 * M * t; e[2] = 0.4 * M * t; e[3] = 0.1 * M * t; }
+            else                { e[0] = 1.5e-3 * t; e[1] = -3e-4 * t; e[3] = 6e-4 * t; e[5] = 2e-4 * t; }
+            State o; double sg[6], se[6], D[6][6];
+            const int st = returnMap(q, e, in, o, sg, se, D, true, -1.0, true);
+            if (st == 0 && ((o.wc > in.wc && in.wc > 0.0) || (o.wt > in.wt && in.wt > 0.0))) {
+                double best = 1e300;
+                for (double h : {1e-8, 1e-9, 1e-10}) {
+                    double F[6][6]; bool ok = true;
+                    for (int j = 0; j < 6 && ok; ++j) {
+                        double ep[6], em[6]; for (int i = 0; i < 6; ++i) ep[i] = em[i] = e[i]; ep[j] += h; em[j] -= h;
+                        State a, c; double a1[6], b1[6], c1[6], d1[6], J[6][6];
+                        ok = returnMap(q, ep, in, a, a1, b1, J, false, -1.0, true) == 0 && returnMap(q, em, in, c, c1, d1, J, false, -1.0, true) == 0
+                             && a.subInfo == o.subInfo && c.subInfo == o.subInfo;
+                        for (int i = 0; i < 6; ++i) F[i][j] = (a1[i] - c1[i]) / (2 * h);
+                    }
+                    if (ok) best = std::fmin(best, relF6(D, F));
+                }
+                if (best < 1e300) { ++n; worst = std::fmax(worst, best); } else ++skipped;
+                for (int i = 0; i < 3; ++i) sMax = std::fmax(sMax, std::fabs(se[i]) / s);
+            }
+            in = o;
+        }
+        check(n >= minN[path] && skipped == 0 && worst < 1.0e-6,
+              label(tag, (std::string("D9 ") + names[path] + ": damaged tangent == FD of the damaged map to 1e-6, none skipped").c_str()).c_str());
+        std::printf("       (damage-advancing states %d, skipped %d, worst %.2e, max |sig_bar| %.3g MPa)\n", n, skipped, worst, sMax);
+    }
 }
 
 int main(int argc, char** argv) {
@@ -1266,7 +1317,12 @@ int main(int argc, char** argv) {
     run_f2_apex(1.0e3, 1.0e-3, "kPa-m");
     run_f2_cap(1.0e6, 1.0e-3, "Pa-m");
     run_f2_apex(1.0e6, 1.0e-3, "Pa-m");
-    run_f2_viscous_kp();
+    run_f2_viscous_kp(1.0, 1.0, "");
+    run_f2_viscous_kp(1.0e3, 1.0e-3, "kPa-m");
+    run_f2_viscous_kp(1.0e6, 1.0e-3, "Pa-m");
+    run_f2_driver_step(1.0, 1.0, "");
+    run_f2_driver_step(1.0e3, 1.0e-3, "kPa-m");
+    run_f2_driver_step(1.0e6, 1.0e-3, "Pa-m");
     std::printf(fails ? "\nKERNEL CHECK: %d FAIL\n" : "\nKERNEL CHECK: ALL PASS\n", fails);
     return fails ? 1 : 0;
 }
