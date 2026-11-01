@@ -41,14 +41,26 @@ cat "$out/guard.txt"
 [ "$rc" -eq 2 ] && grep -q "do not replay bit-exactly under $tag" "$out/guard.txt" \
   || { echo "ERROR: the libm guard did not refuse (exit $rc)"; exit 1; }
 
-echo "== load guard: a non-integer status in an O or Z line must be refused, never truncated"
-awk '!d && /^O /{$2=$2+0.5; d=1} 1' "$fix" > "$out/nonint_O.txt"
-awk '!d && /^Z /{$6=$6+0.5; d=1} 1' "$fix" > "$out/nonint_Z.txt"
-for m in nonint_O nonint_Z; do
+echo "== load guard: a corrupted fixture must be refused at load, never truncated, defaulted or ignored"
+# name | awk edit of the libmmt fixture (first matching line only) | the refusal it must produce. Each edit is one the
+# pre-guard loader accepted (REPLAY PASS): a value that truncates back, trailing junk, an unchecked index or key.
+while IFS='|' read -r m prog want; do
+  awk "$prog" "$fix" > "$out/$m.txt"
+  cmp -s "$fix" "$out/$m.txt" && { echo "ERROR: mutant $m changed nothing"; exit 1; }
   set +e; "$out/concrete3d_replay" check "$out/$m.txt" --cross > "$out/$m.log" 2>&1; rc=$?; set -e
-  cat "$out/$m.log"
-  [ "$rc" -eq 2 ] && grep -q "is not an integer" "$out/$m.log"     || { echo "ERROR: $m was not refused as a non-integer (exit $rc)"; exit 1; }
-done
+  echo "$m: exit $rc: $(tail -1 "$out/$m.log")"
+  [ "$rc" -eq 2 ] && grep -q "$want" "$out/$m.log" || { echo "ERROR: mutant $m was not refused with '$want' (exit $rc)"; exit 1; }
+done <<'MUTANTS'
+O_status_frac|!d && /^O /{$2=$2+0.5; d=1} 1|O status is not an integer
+Z_status_frac|!d && /^Z /{$6=$6+0.5; d=1} 1|Z status is not an integer
+Z_pass_index|!d && /^Z /{$2=$2+1; d=1} 1|is not its position
+Z_pass_range|!d && /^Z /{$2="4294967296"; d=1} 1|Z pass is out of int range
+P_int_frac|!d && /^P /{sub(/ maxSubIncr=[0-9]+/, "&.5"); d=1} 1|P maxSubIncr is not an integer
+P_num_junk|!d && /^P /{sub(/ E=[^ ]+/, "&zz"); d=1} 1|not a number
+K_extra_key|!d && /^K /{$0=$0 " junk=1"; d=1} 1|unexpected key junk
+K_dup_key|!d && /^K /{$0=$0 " seq=1"; d=1} 1|duplicate key seq
+W_twice|!d && /^W /{print; d=1} 1|two W lines
+MUTANTS
 
 echo "== recording the inputs under glibc (artifact)"
 "$out/concrete3d_replay" record "$fix" "$out/concrete3d_replay_records.linux-glibc.txt" --kernel-blob "$blob"

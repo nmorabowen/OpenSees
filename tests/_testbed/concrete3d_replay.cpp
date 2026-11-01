@@ -29,12 +29,15 @@
 // The sigma_22 loop below is a COPY of the wrapper's: the fixture's R records prove the copy matches the wrapper the
 // records were written by; a later change to LadrunoConcrete3D::setTrialStrain must be mirrored here.
 #include "SRC/material/nD/LadrunoConcrete3DKernel.h"
+#include <cerrno>
+#include <climits>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -60,23 +63,37 @@ struct Rec {
     bool hasO = false, hasD = false, hasW = false; char dKind = 0;   // 'D' (pyd-written) or 'M' (testbed-recorded)
     double o[17], D[36], w[12];
     std::vector<Pass> z;
+    std::set<char> seen;                                              // every line kind but Z comes at most once
 };
 
+// Every number the fixture holds is read strictly: the whole token must parse (no trailing junk, no empty value), and an
+// overflow to +-inf is an error, not a silent infinity.
+static double num(const std::string& t, const std::string& line) {
+    char* end = 0; errno = 0; const double x = std::strtod(t.c_str(), &end);
+    if (t.empty() || end == t.c_str() || *end) die("not a number: '" + t + "' in: " + line.substr(0, 60));
+    if (errno == ERANGE && std::isinf(x)) die("number overflows a double: " + t + " in: " + line.substr(0, 60));
+    return x;
+}
 static std::vector<double> nums(const std::string& line, size_t want) {
     std::istringstream is(line.substr(1)); std::vector<double> v; std::string t;
-    while (is >> t) { char* end = 0; const double x = std::strtod(t.c_str(), &end); if (*end) die("not a number: " + t + " in: " + line.substr(0, 60)); v.push_back(x); }
+    while (is >> t) v.push_back(num(t, line));
     if (want && v.size() != want) die("line has " + std::to_string(v.size()) + " values, expected " + std::to_string(want) + ": " + line.substr(0, 60));
     return v;
 }
 static void kv(const std::string& line, std::map<std::string, std::string>& m) {
     std::istringstream is(line.substr(1)); std::string t;
-    while (is >> t) { const size_t p = t.find('='); if (p == std::string::npos) die("not key=value: " + t); m[t.substr(0, p)] = t.substr(p + 1); }
+    while (is >> t) {
+        const size_t p = t.find('=');
+        if (p == std::string::npos || p == 0 || p + 1 == t.size()) die("not key=value: " + t + " in: " + line.substr(0, 60));
+        if (!m.emplace(t.substr(0, p), t.substr(p + 1)).second) die("duplicate key " + t.substr(0, p) + " in: " + line.substr(0, 60));
+    }
 }
 
-// An integer field (status, piece count, pass index) parsed as a double: a non-integral or non-finite value is an error,
-// never truncated (a truncating cast would let a corrupted 0.9 replay as 0).
-static int asInt(double v, const char* what, const std::string& line) {
-    if (!std::isfinite(v) || v != std::trunc(v)) die(std::string(what) + " is not an integer: " + line.substr(0, 60));
+// An integer field (status, piece count, pass index, an integer parameter): a non-integral or non-finite value is an
+// error, never truncated (a truncating cast would let a corrupted 0.9 replay as 0), and so is one outside int's range.
+static int asInt(double v, const std::string& what, const std::string& line) {
+    if (!std::isfinite(v) || v != std::trunc(v)) die(what + " is not an integer: " + line.substr(0, 60));
+    if (v < (double)INT_MIN || v > (double)INT_MAX) die(what + " is out of int range: " + line.substr(0, 60));
     return (int)v;
 }
 
@@ -89,22 +106,33 @@ static Fixture load(const char* path) {
     while (std::getline(in, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.empty()) continue;
-        if (line[0] == '#') { if (line.rfind("#@ ", 0) == 0) kv(line.substr(1), fx.meta); if (!r) fx.header.push_back(line); continue; }
+        if (line[0] == '#') {
+            if (line.rfind("#@ ", 0) == 0) { if (r || !fx.meta.empty()) die("the #@ line must come once, before the records"); kv(line.substr(1), fx.meta); }
+            if (!r) fx.header.push_back(line);
+            continue;
+        }
         if (line.size() < 2 || line[1] != ' ') die("malformed line: " + line.substr(0, 60));
         const char c = line[0];
         if (c == 'Q') { if (r || !fx.qLine.empty()) die("Q line must come once, before the records"); fx.qLine = line; continue; }
         if (c == 'K') {
             fx.recs.emplace_back(); r = &fx.recs.back(); r->kLine = line; kv(line, r->k);
-            const std::string kind = r->k["kind"];
+            static const std::set<std::string> kKeys = {"kind", "seq", "tag", "ele", "dim", "pass", "status", "subInfo", "cls", "calls", "integ"};
+            for (const std::string& key : kKeys) if (!r->k.count(key)) die("K line lacks " + key + ": " + line.substr(0, 60));
+            for (const auto& e : r->k) if (!kKeys.count(e.first)) die("K line has an unexpected key " + e.first + ": " + line.substr(0, 60));
+            const std::string kind = r->k.at("kind");
             if (kind != "C" && kind != "F" && kind != "R") die("unknown record kind '" + kind + "' (" + line.substr(0, 40) + ")");
-            for (const char* key : {"kind", "seq", "dim", "pass", "status", "subInfo"})
-                if (!r->k.count(key)) die(std::string("K line lacks ") + key + ": " + line.substr(0, 60));
-            char* end = 0; r->code = (int)std::strtol(r->k["pass"].c_str(), &end, 10);
-            if (r->k["pass"].empty() || *end) die("K line pass= is not an integer: " + line.substr(0, 60));
+            for (const char* key : {"seq", "tag", "ele", "dim", "status", "subInfo", "cls"})
+                asInt(num(r->k.at(key), line), std::string("K ") + key, line);
+            for (const char* key : {"calls", "integ"}) {   // informational counters: whole numbers, may outgrow int
+                const double v = num(r->k.at(key), line);
+                if (!std::isfinite(v) || v != std::trunc(v) || v < 0) die(std::string("K ") + key + " is not a whole number: " + line.substr(0, 60));
+            }
+            r->code = asInt(num(r->k.at("pass"), line), "K pass", line);
             r->kind = kind[0];
             continue;
         }
         if (!r) die("record line before the first K line: " + line.substr(0, 40));
+        if (c != 'Z' && !r->seen.insert(c == 'M' ? 'D' : c).second) die(std::string("two ") + c + " lines in one record: " + r->kLine);
         switch (c) {
         case 'G': r->gLine = line; break;
         case 'P': r->pLine = line; kv(line, r->pkv); break;
@@ -119,13 +147,17 @@ static Fixture load(const char* path) {
         case 'D': case 'M': if (r->hasD) die("two tangent lines in one record: " + r->kLine);
                   copy(nums(line, 36), r->D); r->hasD = true; r->dKind = c; break;
         case 'W': copy(nums(line, 12), r->w); r->hasW = true; break;
-        case 'Z': { auto v = nums(line, 6); Pass p{asInt(v[0], "Z pass", line), asInt(v[4], "Z status", line), asInt(v[5], "Z sub", line), v[1], v[2], v[3]}; r->z.push_back(p); break; }
+        case 'Z': { auto v = nums(line, 6); Pass p{asInt(v[0], "Z pass", line), asInt(v[4], "Z status", line), asInt(v[5], "Z sub", line), v[1], v[2], v[3]};
+                    if (p.p != (int)r->z.size()) die("Z pass index " + std::to_string(p.p) + " is not its position " + std::to_string(r->z.size()) + ": " + r->kLine);
+                    r->z.push_back(p); break; }
         default: die(std::string("unknown line kind '") + c + "' (the fixture is the record-dump subset: Q K G P E S X H I C T O D M W Z)");
         }
     }
     if (fx.recs.empty()) die("the fixture has no records");
+    if (fx.qLine.empty()) die("the fixture has no Q line (libm probes)");
+    for (const char* key : {"libm", "kernel-blob"}) if (!fx.meta.count(key)) die(std::string("the #@ line lacks ") + key);
     for (const Rec& q : fx.recs) {
-        if (q.pLine.empty() || q.stateLines.size() != 7 || !q.hasO || !q.hasW) die("incomplete record: " + q.kLine);
+        for (char c : std::string("PESXHICTOW")) if (!q.seen.count(c)) die(std::string("record lacks its ") + c + " line: " + q.kLine);
         if (!q.hasD || q.dKind != (q.kind == 'C' ? 'D' : 'M'))
             die(std::string("a ") + q.kind + " record must carry its 6x6 tangent as a " + (q.kind == 'C' ? "D" : "M") + " line: " + q.kLine);
         if (q.kind == 'R' && (q.z.empty() || (q.k.at("dim") != "4" && q.k.at("dim") != "3"))) die("R record without a condensed sigma_22 trace: " + q.kLine);
@@ -140,8 +172,8 @@ static Fixture load(const char* path) {
 static void fillParams(const Rec& r, K::Params& p, double& dt) {
     std::map<std::string, std::string> m = r.pkv;
     auto take = [&](const char* key) -> std::string { auto it = m.find(key); if (it == m.end()) die(std::string("P line lacks ") + key + ": " + r.kLine); std::string v = it->second; m.erase(it); return v; };
-    auto d = [&](const char* key) { return std::strtod(take(key).c_str(), 0); };
-    auto i = [&](const char* key) { return std::atoi(take(key).c_str()); };
+    auto d = [&](const char* key) { return num(take(key), r.pLine); };
+    auto i = [&](const char* key) { return asInt(num(take(key), r.pLine), std::string("P ") + key, r.pLine); };
     p.E = d("E"); p.nu = d("nu"); p.rho = d("rho"); p.fc = d("fc"); p.ft = d("ft"); p.e = d("e"); p.m0 = d("m0");
     p.Gf = d("Gf"); p.Gc = d("Gc"); p.Df = d("Df"); p.As = d("As"); p.qh0 = d("qh0"); p.Hp = d("Hp");
     p.Ah = d("Ah"); p.Bh = d("Bh"); p.Ch = d("Ch"); p.Dh = d("Dh"); p.epsFc = d("epsFc"); p.eta = d("eta");
