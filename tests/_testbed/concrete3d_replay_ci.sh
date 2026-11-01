@@ -47,16 +47,14 @@ tag="linux-glibc-$glibc"
 echo "libm tag $tag (from: $ldd1)"
 
 # build <exe> <include root>: the testbed against <root>/SRC/material/nD/LadrunoConcrete3DKernel.h
-build() { g++ -std=c++17 -O2 -DC3D_REPLAY_LIBM="\"$tag\"" -I "$2" "$here/concrete3d_replay.cpp" -o "$1"; }
+# (-pthread: `contract` runs its rows on worker threads)
+build() { g++ -std=c++17 -O2 -pthread -DC3D_REPLAY_LIBM="\"$tag\"" -I "$2" "$here/concrete3d_replay.cpp" -o "$1"; }
 exe="$out/concrete3d_replay"
 
 if [ "$contract" = 1 ]; then
-  # the replay step's testbed when it is newer than both of its sources (one build per job), else a fresh build
-  if [ -x "$exe" ] && [ "$exe" -nt "$here/concrete3d_replay.cpp" ] && [ "$exe" -nt "$repo/$kernel" ]; then
-    echo "reusing $exe (built by the replay step from this tree's kernel header, blob $blob)"
-  else
-    build "$exe" "$repo"; echo "built against this tree's kernel header, blob $blob"
-  fi
+  # always a fresh build of this tree (a binary left in a shared out dir could be another tree's)
+  exe="$out/concrete3d_replay_contract"
+  build "$exe" "$repo"; echo "built against this tree's kernel header, blob $blob"
   [ -f "$glibc_fix" ] || { echo "::error::No glibc fixture is committed: the contract runs on it (see the replay step)."; exit 1; }
   echo "== the header's FIELD TABLE block must be the compiled field table (its single source)"
   "$exe" fields --check "$here/concrete3d_replay.cpp"

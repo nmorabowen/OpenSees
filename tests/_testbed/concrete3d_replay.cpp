@@ -51,12 +51,15 @@
 // column of every entry (per domain value for {}), perturbs that field on every record in its scope (with its ties),
 // and requires the class's outcome: an IN row must FAIL (exit 1, its first mismatch naming a compared field) or be
 // refused at load where the entry says so; an OUT row must fail naming its own compare; a PIN row must be refused; an
-// UNREAD or INFO row must still PASS on every record. So a later edit that stops reading or comparing an IN field turns its row
-// red, and a kernel that starts reading an UNREAD one turns that row red. The rows run in-process through the same
-// load / replay / compare as `check` (a refusal is exit 2, a difference exit 1); a record whose input lines a row did
-// not touch reuses the base fixture's replay (the replay is a pure function of them), and a row that must fail stops
-// at its first mismatching record. ci.sh --contract runs them on the glibc fixture (its own workflow step), the .bat's
-// `contract` on the libmmt fixture.
+// UNREAD or INFO row, and a swap row (a pinned value moved within its domain), must still PASS on every record. So a
+// later edit that stops reading or comparing an IN field turns its row red, and a kernel that starts reading an UNREAD
+// or INFO one turns that row red. The scopes classifying one field must partition the records (checked at start-up),
+// so no field is classified on only some of them. The rows run in-process, on worker threads, through the same
+// load / replay / compare as `check` (a refusal is exit 2, a difference exit 1). A record whose K, G, P and E S X H I
+// C T lines a row left untouched reuses the base fixture's replay (the replay is a pure function of what it reads,
+// and every line it could read is in the key); a row that edits a line before the first K line runs uncached; a row
+// that must fail stops at its first mismatching record. ci.sh --contract runs them on the glibc fixture (its own
+// workflow step), the .bat's `contract` on the libmmt fixture.
 //   ---- BEGIN FIELD TABLE (the output of `concrete3d_replay fields`; `fields --check` compares) ----
 //   ln cols          class  scope pert    tie            expect -- note
 //   #  text          INFO   all   -       -              -- header comments: only before the first K line
@@ -66,20 +69,21 @@
 //   #@ M-lines       INFO   all   =x      -              -- who wrote the M lines
 //   #@ N-lines       INFO   all   =x      -              -- who wrote the N lines
 //   Q  0-20          OUT    all   x1.25   -              fail:libm probes (Q line, 21 values): DIFFER -- 21 libm probes, vs this build's
-//   K  kind          IN     R     =F      -              refuse:Z lines on a non-R record -- C/F: one integrate, R: the sigma_22 loop; domain C,F,R
+//   K  kind          IN     R     =F      -              refuse:Z lines on a non-R record -- C/F: one integrate, R: the sigma_22 loop (note 5); domain C,F,R
+//   K  kind          IN     CF    =R      -              refuse:without a condensed sigma_22 trace -- (as above); domain C,F,R
 //   K  seq           INFO   all   +1      -              -- the dump's identifiers and counters: the kernel has none
 //   K  tag           INFO   all   +1      -              -- (as seq)
 //   K  ele           INFO   all   +1      -              -- (as seq)
 //   K  calls         INFO   all   +1      -              -- (as seq)
 //   K  integ         INFO   all   +1      -              -- (as seq)
 //   K  dim           INFO   CF    +1      -              -- the wrapper's element dimension: the kernel is always 3-D
-//   K  dim           PIN    R     =5      -              refuse:without a condensed sigma_22 trace -- a condensed element: 3 or 4
+//   K  dim           PIN    R     =5|swap -              refuse:without a condensed sigma_22 trace -- a condensed element; 3 and 4 replay alike; domain 3,4
 //   K  pass          OUT    R     +1      -              fail: reason  -- the rule-B refusal code of the replayed loop
 //   K  pass          INFO   CF    +1      -              -- the sigma_22 pass of the recorded integrate(); pass 0 ties C[1] to T[2]
 //   K  status        PIN    all   +1      -              refuse:disagree with the O line -- = O[0]
 //   K  subInfo       PIN    all   +1      -              refuse:disagree with the O line -- = O[1] and N[40], in its domain (note 1)
 //   K  cls           OUT    all   +1      -              refuse:is not what the dump writes -- derived (note 1); its load pin refuses first
-//   G  dump          INFO   all   =unset  -              -- why the record was picked; domain unset,COMPATIBLE
+//   G  dump          INFO   all   {}      -              -- why the record was picked; domain unset,COMPATIBLE
 //   G  class         INFO   all   =direct -              -- groups the report; domain refusal,floor-C,sub-increment,kink,direct
 //   G  pick          INFO   all   =x      -              -- the selection rule
 //   P  E             IN     all   x1.25   -
@@ -103,7 +107,8 @@
 //   P  tcTemper      IN     all   {}      -              -- -tcTemper none|proj; domain 0,2
 //   P  tensionLaw    IN     all   {}      -              -- -tensionLaw exp|bilinear; domain 0,1
 //   P  epsFc         IN     all   x1.25   -
-//   P  flowPotential IN     cls0  =0      P.maxSubIncr=0 -- cls 0 only: elsewhere the cls pin refuses it; domain 0,1
+//   P  flowPotential IN     cls0  =0      P.maxSubIncr=0 -- on a cls 0 record the potential reaches the outputs; domain 0,1
+//   P  flowPotential PIN    cls>0 =0      P.maxSubIncr=0 refuse:is not what the dump writes -- on a cls > 0 record the cls formula pins it; domain 0,1
 //   P  maxSubIncr    PIN    all   =0      -              refuse:is not a value the wrapper writes -- 10 iff flowPotential=1, else 0
 //   P  compDrive     IN     all   {}      -              -- -compressionDrive legacy|cdpm2; domain 0,1
 //   P  eta           IN     all   x1.25   -              -- 0 on every record: 0 -> 0.25 switches Duvaut-Lions on
@@ -113,7 +118,7 @@
 //   P  lch_ref       PIN    all   x1.25   -              refuse:is not lch bit for bit -- the dump prints lch twice; never read
 //   P  ftol          PIN    all   x1.25   -              refuse:this kernel has another -- = this kernel's F_TOL_HONEST (a constant)
 //   P  dt            IN     dt>0  x1.25   -              -- into N.dt_n
-//   P  dt            UNREAD dt<0  x1.25   -              -- only its sign is read (Duvaut-Lions and IMPL-EX off)
+//   P  dt            UNREAD dt<=0 x1.25   -              -- only dt > 0 is tested (Duvaut-Lions and IMPL-EX off)
 //   E  0-1           IN     all   x1.25   -              -- committed strain State::eps
 //   E  2             IN     all   x1.25   C.0
 //   E  3-5           IN     all   x1.25   -
@@ -163,8 +168,8 @@
 //   4. H: in.etPrev reaches N.eqc and the outputs through the CDPM2 compressive history (compDrive = 1 on every record);
 //      the kernel sets N.etPrev from this step's drive. I: wt wc reach N.dwt N.dwc. P eta and implex are mode
 //      switches, 0 on every record, so the Duvaut-Lions and IMPL-EX paths are a coverage limit of this fixture.
-//   5. K kind= is IN, but every changed kind is refused at load by its line shape (Z lines, the D/M tangent letter):
-//      the R rows (C[1]@R, T[i]@R) prove the R replay reads the loop start and strain the C/F replay does not.
+//   5. K kind= is IN, but every changed kind is refused at load by its line shape (R -> F: its Z lines; C/F -> R: no
+//      Z trace): the R rows (C[1]@R, T[i]@R) prove the R replay reads the loop start and strain the C/F replay does not.
 //   6. A C/F record's C[1] at pass > 0 is INFO: the passes before the recorded one are not in the record, so the path
 //      from C[1] to T[2] is not replayed. `record` writes its banner as #= lines and drops a source's #= lines.
 // Tangent lines: a C record must carry D, an R or F record M.
@@ -172,6 +177,7 @@
 // records were written by; a later change to LadrunoConcrete3D::setTrialStrain must be mirrored here.
 #include "SRC/material/nD/LadrunoConcrete3DKernel.h"
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <climits>
@@ -186,6 +192,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #ifndef C3D_REPLAY_LIBM
@@ -227,10 +234,14 @@ static const char* zName[6] = {"index", "eps22", "s22", "D22", "status", "pieces
 // and a class cannot be wrong without its row going red.
 //   cols    a key (key=value lines) or an index range a-b (numeric lines; Q counts its key=value tokens)
 //   class   IN | OUT | PIN | UNREAD | INFO (the header's definitions)
-//   scope   the records a row edits: all | R | CF | CF0 (C/F at pass 0) | CF>0 | dt>0 | dt<0 | dt<=0 (the record's
-//           P dt) | cls0 (K cls=0); lines before the first K line are always `all`
+//   scope   the records a row edits: all | R | CF | CF0 (C/F at pass 0) | CF>0 | dt>0 | dt<=0 (the record's P dt) |
+//           cls0 | cls>0 (K cls=); lines before the first K line are always `all`. The scopes of the entries covering
+//           one field must be exactly one partition of the records: {all}, {R,CF}, {R,CF0,CF>0}, {dt>0,dt<=0} or
+//           {cls0,cls>0} (checked at start-up), so no field is classified on only some records
 //   pert    x1.25 (a double: v*1.25, 0 -> 0.25) | +1 (an integer) | =V (set V) | {} (one row per domain value, =V; a
-//           value no record in scope lacks is reported as skipped) | ~last (flip the last hex digit) | - (no row)
+//           value no record in scope lacks is reported as skipped) | ~last (flip the last hex digit) | swap (exchange
+//           the two domain values; that row must PASS: the value is not read within its domain) | - (no row); several
+//           separated by |
 //   tie     edits the same row makes elsewhere, a pin it must keep: <line>.<col>[@scope][=V], comma-separated;
 //           without =V the row's own perturbation, applied to that field's own (bit-equal) value
 //   domain  the values the loader accepts (comma-separated), "" when not enumerated
@@ -246,20 +257,21 @@ static const FieldSpec FIELDS[] = {
     {"#@", "M-lines",       "INFO",   "all",  "=x",    "", "", "", "who wrote the M lines"},
     {"#@", "N-lines",       "INFO",   "all",  "=x",    "", "", "", "who wrote the N lines"},
     {"Q",  "0-20",          "OUT",    "all",  "x1.25", "", "", "fail:libm probes (Q line, 21 values): DIFFER", "21 libm probes, vs this build's"},
-    {"K",  "kind",          "IN",     "R",    "=F",    "", "C,F,R", "refuse:Z lines on a non-R record", "C/F: one integrate, R: the sigma_22 loop"},
+    {"K",  "kind",          "IN",     "R",    "=F",    "", "C,F,R", "refuse:Z lines on a non-R record", "C/F: one integrate, R: the sigma_22 loop (note 5)"},
+    {"K",  "kind",          "IN",     "CF",   "=R",    "", "C,F,R", "refuse:without a condensed sigma_22 trace", "(as above)"},
     {"K",  "seq",           "INFO",   "all",  "+1",    "", "", "", "the dump's identifiers and counters: the kernel has none"},
     {"K",  "tag",           "INFO",   "all",  "+1",    "", "", "", "(as seq)"},
     {"K",  "ele",           "INFO",   "all",  "+1",    "", "", "", "(as seq)"},
     {"K",  "calls",         "INFO",   "all",  "+1",    "", "", "", "(as seq)"},
     {"K",  "integ",         "INFO",   "all",  "+1",    "", "", "", "(as seq)"},
     {"K",  "dim",           "INFO",   "CF",   "+1",    "", "", "", "the wrapper's element dimension: the kernel is always 3-D"},
-    {"K",  "dim",           "PIN",    "R",    "=5",    "", "", "refuse:without a condensed sigma_22 trace", "a condensed element: 3 or 4"},
+    {"K",  "dim",           "PIN",    "R",    "=5|swap", "", "3,4", "refuse:without a condensed sigma_22 trace", "a condensed element; 3 and 4 replay alike"},
     {"K",  "pass",          "OUT",    "R",    "+1",    "", "", "fail: reason ", "the rule-B refusal code of the replayed loop"},
     {"K",  "pass",          "INFO",   "CF",   "+1",    "", "", "", "the sigma_22 pass of the recorded integrate(); pass 0 ties C[1] to T[2]"},
     {"K",  "status",        "PIN",    "all",  "+1",    "", "", "refuse:disagree with the O line", "= O[0]"},
     {"K",  "subInfo",       "PIN",    "all",  "+1",    "", "", "refuse:disagree with the O line", "= O[1] and N[40], in its domain (note 1)"},
     {"K",  "cls",           "OUT",    "all",  "+1",    "", "", "refuse:is not what the dump writes", "derived (note 1); its load pin refuses first"},
-    {"G",  "dump",          "INFO",   "all",  "=unset", "", "unset,COMPATIBLE", "", "why the record was picked"},
+    {"G",  "dump",          "INFO",   "all",  "{}",    "", "unset,COMPATIBLE", "", "why the record was picked"},
     {"G",  "class",         "INFO",   "all",  "=direct", "", "refusal,floor-C,sub-increment,kink,direct", "", "groups the report"},
     {"G",  "pick",          "INFO",   "all",  "=x",    "", "", "", "the selection rule"},
     {"P",  "E",             "IN",     "all",  "x1.25", "", "", "", ""},
@@ -283,7 +295,8 @@ static const FieldSpec FIELDS[] = {
     {"P",  "tcTemper",      "IN",     "all",  "{}",    "", "0,2", "", "-tcTemper none|proj"},
     {"P",  "tensionLaw",    "IN",     "all",  "{}",    "", "0,1", "", "-tensionLaw exp|bilinear"},
     {"P",  "epsFc",         "IN",     "all",  "x1.25", "", "", "", ""},
-    {"P",  "flowPotential", "IN",     "cls0", "=0",    "P.maxSubIncr=0", "0,1", "", "cls 0 only: elsewhere the cls pin refuses it"},
+    {"P",  "flowPotential", "IN",     "cls0", "=0",    "P.maxSubIncr=0", "0,1", "", "on a cls 0 record the potential reaches the outputs"},
+    {"P",  "flowPotential", "PIN",    "cls>0", "=0",   "P.maxSubIncr=0", "0,1", "refuse:is not what the dump writes", "on a cls > 0 record the cls formula pins it"},
     {"P",  "maxSubIncr",    "PIN",    "all",  "=0",    "", "", "refuse:is not a value the wrapper writes", "10 iff flowPotential=1, else 0"},
     {"P",  "compDrive",     "IN",     "all",  "{}",    "", "0,1", "", "-compressionDrive legacy|cdpm2"},
     {"P",  "eta",           "IN",     "all",  "x1.25", "", "", "", "0 on every record: 0 -> 0.25 switches Duvaut-Lions on"},
@@ -293,7 +306,7 @@ static const FieldSpec FIELDS[] = {
     {"P",  "lch_ref",       "PIN",    "all",  "x1.25", "", "", "refuse:is not lch bit for bit", "the dump prints lch twice; never read"},
     {"P",  "ftol",          "PIN",    "all",  "x1.25", "", "", "refuse:this kernel has another", "= this kernel's F_TOL_HONEST (a constant)"},
     {"P",  "dt",            "IN",     "dt>0", "x1.25", "", "", "", "into N.dt_n"},
-    {"P",  "dt",            "UNREAD", "dt<0", "x1.25", "", "", "", "only its sign is read (Duvaut-Lions and IMPL-EX off)"},
+    {"P",  "dt",            "UNREAD", "dt<=0", "x1.25", "", "", "", "only dt > 0 is tested (Duvaut-Lions and IMPL-EX off)"},
     {"E",  "0-1",           "IN",     "all",  "x1.25", "", "", "", "committed strain State::eps"},
     {"E",  "2",             "IN",     "all",  "x1.25", "C.0", "", "", ""},
     {"E",  "3-5",           "IN",     "all",  "x1.25", "", "", "", ""},
@@ -440,7 +453,8 @@ struct Fixture { std::map<std::string, std::string> meta; std::string qLine; std
 static Fixture loadStream(std::istream& in, bool needN = true) {
     Fixture fx; std::string line; Rec* r = 0; bool haveMeta = false;
     static const std::set<std::string> kKeys = keysOf("K"), gKeys = keysOf("G"), metaKeys = keysOf("#@");
-    static const std::vector<std::string> kinds = domainOf("K", "kind"), dumps = domainOf("G", "dump"), classes = domainOf("G", "class");
+    static const std::vector<std::string> kinds = domainOf("K", "kind"), dims = domainOf("K", "dim"), dumps = domainOf("G", "dump"),
+                                          classes = domainOf("G", "class");
     auto inDomain = [](const std::vector<std::string>& d, const std::string& v) { return std::find(d.begin(), d.end(), v) != d.end(); };
     auto copy = [](const std::vector<double>& v, double* d) { for (size_t i = 0; i < v.size(); ++i) d[i] = v[i]; };
     while (std::getline(in, line)) {
@@ -521,7 +535,7 @@ static Fixture loadStream(std::istream& in, bool needN = true) {
         K::Params pp; double dt = 0; fillParams(q, pp, dt);   // every P line is validated before anything replays
         if (!q.hasD || q.dKind != (q.kind == 'C' ? 'D' : 'M'))
             die(std::string("a ") + q.kind + " record must carry its 6x6 tangent as a " + (q.kind == 'C' ? "D" : "M") + " line: " + q.kLine);
-        if (q.kind == 'R' && (q.z.empty() || (q.k.at("dim") != "4" && q.k.at("dim") != "3"))) die("R record without a condensed sigma_22 trace: " + q.kLine);
+        if (q.kind == 'R' && (q.z.empty() || !inDomain(dims, q.k.at("dim")))) die("R record without a condensed sigma_22 trace: " + q.kLine);
         if (q.status != (int)q.o[0] || q.subInfo != (int)q.o[1])
             die("K line status=/subInfo= disagree with the O line's status/sub: " + q.kLine);
         const bool subOk = q.status != 0 ? q.subInfo == -1 : (q.subInfo == 0 || (q.subInfo >= 2 && pp.maxSubIncr > 0));
@@ -679,11 +693,12 @@ static void checkBlobArg(const std::string& blob) {
         die("--kernel-blob must be the 40-hex git blob of the kernel header this build compiled (git hash-object)");
 }
 
-// The replay is a pure function of a record's inputs: its kind, its P line and its E S X H I C T lines (verbatim, the
-// unread ones included). `contract` replays the base fixture once and reuses a replay for a record whose inputs a row
-// did not touch; a record it touched is replayed afresh.
+// `contract` replays the base fixture once and reuses a replay for a record none of whose input-side lines a row
+// touched: the key is the record's K, G and P lines and its E S X H I C T lines, verbatim (every line of a record but
+// the compared O D/M W Z N, so an INFO or UNREAD field the replay started to read is replayed afresh, never reused).
+// A row that edits a line before the first K line (#, #@, Q) runs with no cache at all.
 static std::string inputKey(const Rec& r) {
-    std::string k(1, r.kind); k += "\n" + r.pLine;
+    std::string k = r.kLine + "\n" + r.gLine + "\n" + r.pLine;
     for (const std::string& s : r.stateLines) k += "\n" + s;
     return k;
 }
@@ -855,7 +870,7 @@ static int modeFieldsCheck(const char* src) {
 }
 
 // ---- the table's own consistency, checked at start-up (every mode) --------------------------------------------------
-static const std::set<std::string> SCOPES = {"all", "R", "CF", "CF0", "CF>0", "dt>0", "dt<0", "dt<=0", "cls0"};
+static const std::set<std::string> SCOPES = {"all", "R", "CF", "CF0", "CF>0", "dt>0", "dt<=0", "cls0", "cls>0"};
 struct Tie { std::string line, col, scope, set; };
 static std::vector<Tie> parseTies(const FieldSpec& f) {
     std::vector<Tie> v;
@@ -879,7 +894,10 @@ static void tableSelfCheck() {
         used.insert(f.line);
         if (c != "IN" && c != "OUT" && c != "PIN" && c != "UNREAD" && c != "INFO") die("field table: unknown class " + c + " (" + id + ")");
         if (!SCOPES.count(f.scope)) die("field table: unknown scope (" + id + ")");
-        if (p != "-" && p != "x1.25" && p != "+1" && p != "~last" && p != "{}" && p[0] != '=') die("field table: unknown pert " + p + " (" + id + ")");
+        for (const std::string& q : split(p, '|'))
+            if (q != "-" && q != "x1.25" && q != "+1" && q != "~last" && q != "{}" && q != "swap" && (q.empty() || q[0] != '='))
+                die("field table: unknown pert " + q + " (" + id + ")");
+        if (p.find("swap") != std::string::npos && split(f.domain, ',').size() != 2) die("field table: swap needs a two-value domain (" + id + ")");
         if (p == "{}" && !*f.domain) die("field table: pert {} needs a domain (" + id + ")");
         if (c == "PIN" && e.rfind("refuse:", 0) != 0) die("field table: a PIN entry must name its refusal (" + id + ")");
         if ((c == "UNREAD" || c == "INFO") && !e.empty()) die("field table: an UNREAD or INFO entry passes; it takes no expect (" + id + ")");
@@ -892,6 +910,23 @@ static void tableSelfCheck() {
         if (*f.tie) for (const Tie& t : parseTies(f)) if (!lines.count(t.line)) die("field table: tie on an unknown line (" + id + ")");
     }
     for (const std::string& l : lines) if (!used.count(l)) die("field table: no entry for line kind " + l);
+    // the scopes classifying one field (a key, or one column) must be exactly one partition of the records
+    static const std::vector<std::set<std::string>> PARTITIONS = {{"all"}, {"R", "CF"}, {"R", "CF0", "CF>0"}, {"dt>0", "dt<=0"}, {"cls0", "cls>0"}};
+    std::map<std::string, std::multiset<std::string>> scopesOf;
+    for (const FieldSpec& f : FIELDS) {
+        if (indexed(f)) { int a, b; colRange(f, a, b); for (int i = a; i <= b; ++i) scopesOf[strf("%s[%d]", f.line, i)].insert(f.scope); }
+        else scopesOf[std::string(f.line) + "." + f.cols].insert(f.scope);
+    }
+    for (const auto& e : scopesOf) {
+        bool ok = false;
+        for (const std::set<std::string>& part : PARTITIONS)
+            ok = ok || (e.second.size() == part.size() && std::set<std::string>(e.second.begin(), e.second.end()) == part);
+        if (!ok) {
+            std::string got; for (const std::string& x : e.second) got += " " + x;
+            die("field table: the scopes classifying " + e.first + " are {" + got + " }, not one partition of the records "
+                "({all}, {R,CF}, {R,CF0,CF>0}, {dt>0,dt<=0} or {cls0,cls>0}): some records leave it unclassified");
+        }
+    }
     // every column of every numeric line is classified, and the table's counts are the code's
     const std::map<std::string, int> code = {{"E", 6}, {"S", 6}, {"X", 6}, {"H", 11}, {"I", 11}, {"C", 2}, {"T", 6}, {"O", 17},
                                              {"D", 36}, {"M", 36}, {"W", 12}, {"Z", 6}, {"N", N_STATE}, {"Q", (int)toks(qProbe()).size()}};
@@ -913,8 +948,11 @@ static std::vector<Row> rowsOf() {
     for (const FieldSpec& f : FIELDS) {
         if (!std::strcmp(f.pert, "-")) continue;
         std::vector<std::string> perts;
-        if (!std::strcmp(f.pert, "{}")) for (const std::string& d : split(f.domain, ',')) perts.push_back("=" + d);
-        else perts.push_back(f.pert);
+        for (const std::string& q : split(f.pert, '|')) {
+            if (q == "{}") for (const std::string& d : split(f.domain, ',')) perts.push_back("=" + d);
+            else if (q == "swap") perts.push_back("swap:" + std::string(f.domain));
+            else perts.push_back(q);
+        }
         std::vector<std::string> cols;
         if (indexed(f)) { int a, b; colRange(f, a, b); for (int i = a; i <= b; ++i) cols.push_back(std::to_string(i)); }
         else cols.push_back(f.cols);
@@ -922,17 +960,25 @@ static std::vector<Row> rowsOf() {
             std::string id = std::string(f.line) + (indexed(f) ? "[" + c + "]" : "." + c);
             if (indexed(f)) { const std::string lab = colLabel(f.line, std::atoi(c.c_str())); if (!lab.empty()) id += "(" + lab + ")"; }
             if (std::strcmp(f.scope, "all")) id += std::string("@") + f.scope;
-            if (!std::strcmp(f.pert, "{}")) id += p;
-            v.push_back(Row{id, &f, c, p, !std::strcmp(f.pert, "{}")});
+            const bool dom = !std::strcmp(f.pert, "{}");
+            if (dom) id += p;
+            else if (p.rfind("swap", 0) == 0) id += ":swap";
+            else if (std::strchr(f.pert, '|')) id += ":" + p;
+            v.push_back(Row{id, &f, c, p, dom});
         }
     }
     return v;
 }
+// a swap row moves a pinned value WITHIN its domain: it must pass (the value is not read within the domain)
+static bool passRow(const Row& r) {
+    const std::string c = r.f->cls;
+    return c == "UNREAD" || c == "INFO" || r.pert.rfind("swap", 0) == 0;
+}
 static std::string expectText(const Row& r) {
     const std::string c = r.f->cls, e = r.f->expect;
+    if (passRow(r)) return "exit 0, REPLAY PASS";
     if (e.rfind("refuse:", 0) == 0) return "exit 2, refused at load: '" + e.substr(7) + "'";
     if (e.rfind("fail:", 0) == 0) return "exit 1: '" + e.substr(5) + "'";
-    if (c == "UNREAD" || c == "INFO") return "exit 0, REPLAY PASS";
     if (c == "OUT") return "exit 1 naming " + colName(r.f->line, std::atoi(r.col.c_str()));
     return "exit 1 naming a compared field";
 }
@@ -953,14 +999,18 @@ static bool inScope(const std::string& scope, int ri, const std::vector<RecCtx>&
     if (scope == "CF0") return c.kind != "R" && c.pass == 0;
     if (scope == "CF>0") return c.kind != "R" && c.pass > 0;
     if (scope == "dt>0") return c.dt > 0;
-    if (scope == "dt<0") return c.dt < 0;
     if (scope == "dt<=0") return c.dt <= 0;
     if (scope == "cls0") return c.cls == 0;
+    if (scope == "cls>0") return c.cls > 0;
     die("unknown scope " + scope);
 }
 static std::string perturb(const std::string& v, const std::string& pert) {
     if (pert == "x1.25") { const double x = std::strtod(v.c_str(), 0); return strf("%.17g", x == 0 ? 0.25 : x * 1.25); }
     if (pert == "+1") return std::to_string(std::strtoll(v.c_str(), 0, 10) + 1);
+    if (pert.rfind("swap:", 0) == 0) {
+        const std::vector<std::string> d = split(pert.substr(5), ',');
+        return v == d[0] ? d[1] : v == d[1] ? d[0] : v;
+    }
     if (pert == "~last") { std::string s = v; if (!s.empty()) s.back() = s.back() == '0' ? '1' : '0'; return s; }
     if (!pert.empty() && pert[0] == '=') return pert.substr(1);
     die("cannot apply pert " + pert);
@@ -971,7 +1021,7 @@ static std::string lineKind(const std::string& l) {
     return l.substr(0, 1);
 }
 static int editLines(std::vector<std::string>& L, const std::vector<int>& recOf, const std::vector<RecCtx>& ctx,
-                     const std::string& line, const std::string& col, const std::string& scope, const std::string& pert) {
+                     const std::string& line, const std::string& col, const std::string& scope, const std::string& pert, bool& preK) {
     const bool idx = col[0] >= '0' && col[0] <= '9'; int n = 0;
     for (size_t i = 0; i < L.size(); ++i) {
         if (lineKind(L[i]) != line || !inScope(scope, recOf[i], ctx)) continue;
@@ -984,7 +1034,7 @@ static int editLines(std::vector<std::string>& L, const std::vector<int>& recOf,
         if (!idx || line == "Q") *tok = tok->substr(0, eq + 1) + perturb(tok->substr(eq + 1), pert);
         else *tok = perturb(*tok, pert);
         std::string s = t[0]; for (size_t k = 1; k < t.size(); ++k) s += " " + t[k];
-        if (s != L[i]) ++n;
+        if (s != L[i]) { ++n; if (recOf[i] < 0) preK = true; }
         L[i] = s;
     }
     return n;
@@ -1004,17 +1054,62 @@ static std::string firstNamed(const std::string& text) {
     return text.substr(a, b == std::string::npos ? std::string::npos : b - a);
 }
 static bool isCompareName(const std::string& n) {
-    static std::set<std::string> names;
-    if (names.empty()) {
-        for (const char* l : {"O", "D", "M", "W", "N"}) for (int i = 0; i < ncols(l); ++i) names.insert(colName(l, i));
-        for (const char* s : {"cls", "reason", "passes", "T2end"}) names.insert(s);
-    }
+    static const std::set<std::string> names = [] {
+        std::set<std::string> v;
+        for (const char* l : {"O", "D", "M", "W", "N"}) for (int i = 0; i < ncols(l); ++i) v.insert(colName(l, i));
+        for (const char* x : {"cls", "reason", "passes", "T2end"}) v.insert(x);
+        return v;
+    }();
     if (names.count(n)) return true;
     if (n.rfind("pass", 0) == 0) {   // pass<p>.<Z field>
         const size_t d = n.find('.'); if (d == std::string::npos || d == 4 || n.find_first_not_of("0123456789", 4) != d) return false;
         for (int i = 1; i < 6; ++i) if (n.substr(d + 1) == zName[i]) return true;
     }
     return false;
+}
+
+
+// One generated row, judged: its report line, and whether it gave its class's outcome
+struct RowResult { std::string line, cls; bool ok = false, skipped = false, ran = false; };
+static RowResult runRow(const Row& row, const std::vector<std::string>& base, const std::vector<int>& recOf, const std::vector<RecCtx>& ctx,
+                        const ReplayCache& cache, const std::string& blob, const std::string& nRec) {
+    RowResult res; const FieldSpec& f = *row.f; const std::string cls = f.cls, e = f.expect; res.cls = cls;
+    std::vector<std::string> L = base; bool preK = false;
+    const int n = editLines(L, recOf, ctx, f.line, row.col, f.scope, row.pert, preK);
+    if (*f.tie) for (const Tie& t : parseTies(f)) editLines(L, recOf, ctx, t.line, t.col, t.scope, t.set.empty() ? row.pert : "=" + t.set, preK);
+    if (n == 0) {
+        if (row.skipNoop) { res.skipped = true; res.line = strf("  skip %-6s %-26s every record in scope already has %s", cls.c_str(), row.id.c_str(), row.pert.c_str() + 1); return res; }
+        res.ran = true; res.line = strf("CONTRACT FAIL: %s (%s): the row changed nothing (scope %s matches no %s line)", row.id.c_str(), cls.c_str(), f.scope, f.line);
+        return res;
+    }
+    res.ran = true;
+    const bool mustFail = !passRow(row);
+    int rc; std::string text;
+    try {
+        std::istringstream is(joinLines(L));
+        const Fixture m = loadStream(is);
+        // a row that edited a line before the first K line (#, #@, Q) shares nothing with the base: no cache
+        rc = runCheck(m, false, blob, [&](const std::string& s) { text += s; }, preK ? 0 : &cache, mustFail);
+    } catch (const Refusal& x) { rc = 2; text += "REPLAY ERROR: " + x.msg + "\n"; }
+    int wantRc = mustFail ? 1 : 0; std::string want;
+    bool ok;
+    if (!mustFail) { want = "REPLAY PASS: " + nRec + " of " + nRec; ok = rc == 0 && text.find(want) != std::string::npos; }
+    else if (e.rfind("refuse:", 0) == 0) { wantRc = 2; want = e.substr(7); ok = rc == 2 && text.find(want) != std::string::npos; }
+    else if (e.rfind("fail:", 0) == 0) { want = e.substr(5); ok = rc == 1 && text.find(want) != std::string::npos; }
+    else if (cls == "OUT") {
+        want = colName(f.line, std::atoi(row.col.c_str()));
+        ok = rc == 1 && (text.find(" " + want + "(") != std::string::npos || text.find(" " + want + " ") != std::string::npos);
+    } else { want = "a compared field"; ok = rc == 1 && isCompareName(firstNamed(text)); }
+    std::string shown;
+    for (const std::string& l : split(text, '\n'))
+        if (l.find("MISMATCH") != std::string::npos || l.find("REPLAY ERROR") != std::string::npos || l.find("REPLAY PASS") != std::string::npos) { shown = l; break; }
+    if (shown.empty()) for (const std::string& l : split(text, '\n')) if (l.find("REPLAY FAIL") != std::string::npos) shown = l;
+    while (!shown.empty() && shown[0] == ' ') shown.erase(0, 1);
+    res.ok = ok;
+    if (ok) res.line = strf("  ok   %-6s %-26s exit %d%s: %s", cls.c_str(), row.id.c_str(), rc, preK ? " (uncached)" : "", shown.substr(0, 110).c_str());
+    else res.line = strf("CONTRACT FAIL: %s (%s, scope %s, %s): expected %s, got exit %d: %s", row.id.c_str(), cls.c_str(), f.scope, row.pert.c_str(),
+                         (wantRc == 2 ? "exit 2 with '" + want + "'" : "exit " + std::to_string(wantRc) + " " + want).c_str(), rc, shown.substr(0, 160).c_str());
+    return res;
 }
 
 static int modeContract(const char* path, const std::string& blob) {
@@ -1048,49 +1143,33 @@ static int modeContract(const char* path, const std::string& blob) {
         recOf[i] = ri;
     }
     const std::string nRec = std::to_string(fx.recs.size());
+    // the rows are independent pure functions of (row, base text, cache): run them on worker threads (the kernel is
+    // header-only with no mutable static state), and print the results in row order
+    const std::vector<Row> rows = rowsOf();
+    std::vector<RowResult> results(rows.size());
+    const unsigned hw = std::thread::hardware_concurrency();
+    const unsigned nThreads = std::max(1u, std::min(hw == 0 ? 1u : hw, 8u));
+    std::printf("contract: %zu rows generated from the field table, on %s (%s records), %u worker threads\n", rows.size(), path, nRec.c_str(), nThreads);
+    std::fflush(stdout);
+    std::atomic<size_t> next(0);
+    std::atomic<bool> failed(false); std::string failMsg;
+    auto worker = [&] {
+        for (size_t i; (i = next++) < rows.size();) {
+            try { results[i] = runRow(rows[i], base, recOf, ctx, cache, blob, nRec); }
+            catch (const Refusal& x) { if (!failed.exchange(true)) failMsg = x.msg; }
+        }
+    };
+    std::vector<std::thread> pool;
+    for (unsigned t = 0; t < nThreads; ++t) pool.emplace_back(worker);
+    for (std::thread& t : pool) t.join();
+    if (failed) die("contract: " + failMsg);
     std::map<std::string, std::pair<int, int>> byCls;   // class -> (rows run, rows as designed)
     int bad = 0, skipped = 0;
-    std::printf("contract: %zu rows generated from the field table, on %s (%s records)\n", rowsOf().size(), path, nRec.c_str());
-    for (const Row& row : rowsOf()) {
-        const FieldSpec& f = *row.f; const std::string cls = f.cls, e = f.expect;
-        std::vector<std::string> L = base;
-        int n = editLines(L, recOf, ctx, f.line, row.col, f.scope, row.pert);
-        if (*f.tie) for (const Tie& t : parseTies(f)) editLines(L, recOf, ctx, t.line, t.col, t.scope, t.set.empty() ? row.pert : "=" + t.set);
-        if (n == 0) {
-            if (row.skipNoop) { ++skipped; std::printf("  skip %-6s %-26s every record in scope already has %s\n", cls.c_str(), row.id.c_str(), row.pert.c_str() + 1); continue; }
-            ++bad; std::printf("CONTRACT FAIL: %s (%s): the row changed nothing (scope %s matches no %s line)\n", row.id.c_str(), cls.c_str(), f.scope, f.line);
-            continue;
-        }
-        const bool mustFail = !(cls == "UNREAD" || cls == "INFO");
-        int rc; std::string text;
-        try {
-            std::istringstream is(joinLines(L));
-            const Fixture m = loadStream(is);
-            rc = runCheck(m, false, blob, [&](const std::string& s) { text += s; }, &cache, mustFail);
-        } catch (const Refusal& x) { rc = 2; text += "REPLAY ERROR: " + x.msg + "\n"; }
-        // what the row must give
-        int wantRc = mustFail ? 1 : 0; std::string want, got;
-        bool ok;
-        if (e.rfind("refuse:", 0) == 0) { wantRc = 2; want = e.substr(7); ok = rc == 2 && text.find(want) != std::string::npos; }
-        else if (e.rfind("fail:", 0) == 0) { want = e.substr(5); ok = rc == 1 && text.find(want) != std::string::npos; }
-        else if (!mustFail) { want = "REPLAY PASS: " + nRec + " of " + nRec; ok = rc == 0 && text.find(want) != std::string::npos; }
-        else if (cls == "OUT") {
-            want = colName(f.line, std::atoi(row.col.c_str()));
-            ok = rc == 1 && (text.find(" " + want + "(") != std::string::npos || text.find(" " + want + " ") != std::string::npos);
-        } else { want = "a compared field"; got = firstNamed(text); ok = rc == 1 && isCompareName(got); }
-        std::string shown;
-        for (const std::string& l : split(text, '\n'))
-            if (l.find("MISMATCH") != std::string::npos || l.find("REPLAY ERROR") != std::string::npos || l.find("REPLAY PASS") != std::string::npos) { shown = l; break; }
-        if (shown.empty()) for (const std::string& l : split(text, '\n')) if (l.find("REPLAY FAIL") != std::string::npos) shown = l;
-        while (!shown.empty() && shown[0] == ' ') shown.erase(0, 1);
-        auto& c = byCls[cls]; ++c.first;
-        if (ok) { ++c.second; std::printf("  ok   %-6s %-26s exit %d: %s\n", cls.c_str(), row.id.c_str(), rc, shown.substr(0, 110).c_str()); }
-        else {
-            ++bad;
-            std::printf("CONTRACT FAIL: %s (%s, scope %s, %s): expected %s, got exit %d: %s\n", row.id.c_str(), cls.c_str(), f.scope,
-                        row.pert.c_str(), (wantRc == 2 ? "exit 2 with '" + want + "'" : "exit " + std::to_string(wantRc) + " " + want).c_str(),
-                        rc, shown.substr(0, 160).c_str());
-        }
+    for (const RowResult& r : results) {
+        std::printf("%s\n", r.line.c_str());
+        if (r.skipped) { ++skipped; continue; }
+        auto& c = byCls[r.cls]; ++c.first;
+        if (r.ok) ++c.second; else ++bad;
     }
     std::string sum;
     for (const auto& c : byCls) sum += strf(" %s %d/%d", c.first.c_str(), c.second.second, c.second.first);

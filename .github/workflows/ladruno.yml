@@ -433,6 +433,9 @@ jobs:
       - name: Replay the committed libmmt records on this tree's kernel (bit-exact)
         shell: cmd
         run: call tests\_testbed\concrete3d_replay_libmmt.bat replay "%RUNNER_TEMP%\c3d_replay"
+      - name: Field-classification contract under libmmt (rows generated from the testbed's field table)
+        shell: cmd
+        run: call tests\_testbed\concrete3d_replay_libmmt.bat contract "%RUNNER_TEMP%\c3d_replay"
 
   concrete3d-selfcheck-libmmt:
     name: Concrete3D kernel self-check under Intel libmmt (known C7 failure)
