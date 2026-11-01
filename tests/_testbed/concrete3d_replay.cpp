@@ -222,11 +222,21 @@
 namespace K = Ladruno::Concrete3D;
 
 // Every K::Params field is read from the P line (fillParams) and every K::State field is fed (fillState) and compared
-// (stateOut, the N line). A kernel that adds, removes or retypes a field changes these sizes and stops the build here:
-// map the field (and classify it in FIELDS) before updating the number. x86-64, MSVC and g++ alike (no padding
-// difference: 8-byte doubles, 4-byte ints, a 1-byte bool).
-static_assert(sizeof(K::Params) == 264, "K::Params changed: map every field in fillParams and FIELDS (the P line), then update 264");
-static_assert(sizeof(K::State) == 328, "K::State changed: map every field in fillState/stateOut and FIELDS (E S X H I, N), then update 328");
+// (stateOut, the N line). Two build-time guards hold the member lists to that mapping:
+//   * the MEMBER COUNT: a structured binding must name every non-static data member, so Params with other than 37
+//     members, or State with other than 21, does not compile (an added or removed field, padding or not: an int put
+//     into one of Params' 4-byte holes or State's hole after subInfo keeps sizeof but fails here);
+//   * sizeof: a same-count change that changes the layout size (e.g. an int turned into a double).
+// Neither catches a same-size retype or a rename/reorder at the same count and size; fillParams' key map and the P
+// line's key check, and FIELDS, are the guard there. On a failure: map the field and classify it in FIELDS first,
+// then update the count and the size. x86-64 MSVC and g++ lay both structs out alike (8-byte doubles, 4-byte ints,
+// a 1-byte bool).
+[[maybe_unused]] static void memberCountGuard(K::Params& p, K::State& s) {
+    [[maybe_unused]] auto& [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22, p23, p24, p25, p26, p27, p28, p29, p30, p31, p32, p33, p34, p35, p36, p37] = p;   // 37: K::Params
+    [[maybe_unused]] auto& [s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13, s14, s15, s16, s17, s18, s19, s20, s21] = s;   // 21: K::State
+}
+static_assert(sizeof(K::Params) == 264, "K::Params changed size: map every field in fillParams and FIELDS (the P line), then update 264");
+static_assert(sizeof(K::State) == 328, "K::State changed size: map every field in fillState/stateOut and FIELDS (E S X H I, N), then update 328");
 
 // A refusal at load (exit 2). It is thrown, not exited, so `contract` can run a refused mutant in-process; main()
 // prints it as "REPLAY ERROR: ..." and exits 2, exactly as `check` always has.

@@ -167,10 +167,10 @@ echo "blob-tie mutant: exit $rc: $(head -1 "$out/blob_tie_mut.log")"
 [ "$rc" -eq 1 ] && grep -q "^ERROR: the libmmt fixture is recorded on kernel-blob=$other, this tree's kernel is $blob" "$out/blob_tie_mut.log" \
   || { echo "ERROR: the blob tie did not fire on a fixture recorded on another kernel blob (exit $rc)"; exit 1; }
 mutants "$glibc_fix" "$exe" inputs-match MUT "$fix" <<'MUTANTS'
-rec_drop|/^K /{n++} n!=2|1|INPUTS DIFFER: 27 records vs 28
+rec_drop|/^K /{n++} n!=2|1|INPUTS DIFFER: 29 records vs 30
 S_edit|!d && /^S /{$2=sprintf("%.17g", $2*1.25); d=1} 1|1|INPUTS DIFFER at record 0 (seq=376): S line
 K_ele_edit|!d && /^K /{sub(/ ele=[0-9]+/, "&0"); d=1} 1|1|INPUTS DIFFER at record 0 (seq=376): K ele=
-T2_R_exempt|!d && /^T /{$4="0.5"; d=1} 1|0|INPUTS MATCH: 28 records
+T2_R_exempt|!d && /^T /{$4="0.5"; d=1} 1|0|INPUTS MATCH: 30 records
 MUTANTS
 
 echo "== compare guard: an output corrupted in the glibc fixture must be caught (on this libm's own records, after the gate)"
@@ -208,4 +208,18 @@ echo "== kernel mutants: a kernel that changes only the returned State must fail
 kmut sigcMax_etPrev sigcMax "out.sigcMax = sigcMax;" "out.sigcMax = 2.0 * sigcMax + 1.0;" \
                             "out.etPrev = etc;" "out.etPrev = 1.5 * etc + 1e-3;"
 kmut dwt dwt "    out.dwt = wt_impl - in.wt;" "    out.dwt = wt_impl + in.wt;"
+# The member-count guard: an int added into a padding hole keeps sizeof (Params: after lodeFactor; State: after
+# subInfo) and must still stop the testbed's build, on the structured binding (krefuse <name> <anchor> <replacement>).
+krefuse() {
+  local name="$1" root="$out/krefuse_$1" rc
+  mkdir -p "$root/$(dirname "$kernel")"
+  awk -v a="$2" -v b="$3" '{ i = index($0, a); if (i) { $0 = substr($0, 1, i - 1) b substr($0, i + length(a)); n++ } print }
+                           END { if (n != 1) { print "anchor found " n + 0 " times, not once: " a > "/dev/stderr"; exit 3 } }'     "$repo/$kernel" > "$root/$kernel" || { echo "ERROR: build-refusal mutant $name: its anchor is not in the header exactly once: $2"; exit 1; }
+  set +e; build "$root/concrete3d_replay" "$root" > "$root/build.log" 2>&1; rc=$?; set -e
+  echo "build-refusal mutant $name: exit $rc: $(grep -m1 -E 'error' "$root/build.log")"
+  [ "$rc" -ne 0 ] && grep -q "structured binding" "$root/build.log" && ! grep -q "static assertion failed" "$root/build.log"     || { echo "ERROR: build-refusal mutant $name was not stopped by the member-count guard alone (exit $rc)"; tail -5 "$root/build.log"; exit 1; }
+}
+echo "== member-count guard: a field added into a padding hole (same sizeof) must stop the build"
+krefuse padP "    int    lodeFactor = 0;" "    int    lodeFactor = 0; int newSwitch = 0;"
+krefuse padS "    int subInfo = 0;" "    int subInfo = 0; int newDiag = 0;"
 echo "== all glibc-lane checks passed"
