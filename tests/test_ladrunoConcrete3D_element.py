@@ -48,12 +48,10 @@ def _mat(tag, **kw):
     Gf = kw.get("Gf", _GF); Gc = kw.get("Gc", _GC)
     args = ["LadrunoConcrete3D", tag, E, nu, fc, ft, Gf, Gc]
     # WP concrete3d-oracle-diagnosis changed two wrapper DEFAULTS (ADR-31 §11): the CDPM2 bilinear tension law
-    # and Gc as a PHYSICAL compressive energy (eps_fc calibrated per lch). The battery runs the SHIPPED defaults
-    # (law="default"); only tests that compare numbers against the numpy oracle's LEGACY semantics
-    # (make_material / drive_*: exponential law, eps_fc = Gc/(fc lch), v1 flow, legacy drive) pin law="legacy".
-    # Measured 2026-09-26: those two (explicit backbone, confined-fiber reduce-to-oracle) are the only ones
-    # that fail unpinned.
-    if kw.get("law", "default") == "legacy":
+    # and Gc as a PHYSICAL compressive energy (eps_fc calibrated per lch). This battery cross-checks against
+    # the oracle's LEGACY semantics (make_material defaults: exponential law, eps_fc = Gc/(fc lch)), so pin
+    # them explicitly unless a test asks for the new defaults (law="default").
+    if kw.get("law", "legacy") == "legacy":
         args += ["-tensionLaw", "exp", "-gcLegacy", "-flowPotential", "legacy",
                  "-compressionDrive", "legacy", "-tcTemper", "none",                 # + B1 flow, B2 drive, PV20
                  "-Df", 1.0, "-hardening", 0.3, 0.5]                                 # + B3: pre-B3 defaults
@@ -127,10 +125,22 @@ def _run(mat_fn, eps_target, nsteps):
 def _drive_adaptive(mat_fn, eps_target, base_steps, max_cuts=7, solver="FullGeneral"):
     """Displacement-control driver with step-CUTTING through the softening limit point — the only
     way a single implicit element gets past an unconfined tension/compression peak (the snap-back
-    regime). Returns [(eps_xx, sig_xx, omega_t)] for every converged increment."""
+    regime). Returns [(eps_xx, sig_xx, omega_t)] for every converged increment.
+
+    WP concrete3d-hang-diagnosis review follow-up (2026-09-28): a refusal right at first cracking
+    (the WP-99 commit-time latch going live for the first time surfaced this -- see
+    test_cttemper_parses_and_runs[proj]) can leave DisplacementControl's own internal deltaLambda
+    computation degenerate on the immediately-following analyze() call, printing an astronomic
+    "domain at load factor -3.5e+161"-style diagnostic even though `step` itself is still sane and
+    `cuts` is correctly bounded by max_cuts. That's cosmetic (the assertion below already fails
+    cleanly either way), but a floor on `step` makes the failure mode explicit and stops the driver
+    from ever proposing a step so small it could not possibly integrate anything, rather than
+    relying solely on max_cuts consecutive-failure counting to notice.
+    """
     _build(mat_fn, solver=solver)
     out = []
     step = eps_target / base_steps
+    step_floor = abs(eps_target) * 1.0e-8
     cuts = 0
     guard = 0
     while abs(ops.nodeDisp(2, 1)) < abs(eps_target) and guard < base_steps * 40:
@@ -142,7 +152,7 @@ def _drive_adaptive(mat_fn, eps_target, base_steps, max_cuts=7, solver="FullGene
                 step *= 2.0; cuts -= 1
         else:
             step *= 0.5; cuts += 1
-            if cuts > max_cuts:
+            if cuts > max_cuts or abs(step) < step_floor:
                 break                                     # genuinely stuck — keep what converged
     return out
 
@@ -966,7 +976,20 @@ def test_explicit_completes_where_fixedstep_implicit_stalls():
     lch = 50.0
     implicit_fixed = _run(lambda t: _mat(t, lch=lch), 0.03, 300)  # plain DisplacementControl, breaks on stall
     explicit = _run_explicit(CDL, 0.03, _NSTEPS_EXPL, _DT_EXPL, alphaM=20.0, lch=lch)
-    assert len(implicit_fixed) < 60, (
+    # NOTE (WP concrete3d-hang-diagnosis #877 follow-up): this used to assert < 60 steps. Before the honest
+    # return code + the rescue chain, the LOCAL return map failed at the very first softening state and fell
+    # silently to the elastic trial, so fixed-step implicit died after a handful of steps for the wrong
+    # reason (a hidden material fallback). With the local map now integrating there, the stall is the real
+    # global one: plain DisplacementControl stops at the snap-back limit point after 73 of the 300 steps
+    # (measured). The Tier-3 claim -- fixed-step implicit does NOT get through the ramp, explicit does --
+    # is unchanged, so the bound is "well short of the 300 requested steps" rather than the old number.
+    # HISTORY (WP concrete3d-hang-diagnosis): this stall is a real property (the snap-back limit point), measured three ways.
+    # ac72f0388 (the chain reports its LAST piece's tangent): 73 of the 300 steps. The dead-point commit briefly measured 300/300
+    # -- an artefact of the WRONG tangent (a chain reporting its last piece's tangent, 6-121 % off, lets fixed-step Newton
+    # "converge" across the limit point on a bad Jacobian). With the chain's own algorithmic tangent (review M1) plain
+    # DisplacementControl stops at the limit point after 7 of the 300 steps. The Tier-3 claim -- fixed-step implicit does NOT
+    # get through the ramp, explicit does -- is unchanged.
+    assert len(implicit_fixed) < 150, (
         f"fixed-step implicit unexpectedly survived steep softening ({len(implicit_fixed)} steps) — "
         "contrast no longer demonstrates the Tier-3 payoff")
     assert len(explicit) == _NSTEPS_EXPL, (
@@ -1084,24 +1107,28 @@ def test_confined_fiber_view_builds():
 # Each case imposes ONE homogeneous strain increment from the virgin state: every node of a
 # constant-strain element carries an `sp` of the linear field u = eps . x (Penalty constraints,
 # `algorithm Linear`, a Constant series), so the material sees exactly that trial strain once.
-# The strains were picked on the kernel (LadrunoConcrete3DKernel.h, the battery's material) so the
-# outcome holds under every one of 400 random relative perturbations from 1e-12 to 1e-4 per
-# component: the return map's failure set is fractal (a 1e-6 change flips some inputs), and the
-# Penalty imposition is exact only to ~1e-8. The probe is in the #2617 fork PR body.
-#   plane strain / 3D  (e00, e11, gamma01) = (-2.9e-4, 2.6e-4, -4.4e-4)  status 2
-#   plane stress FINAL (2.9e-4, 2.5e-4, -3.0e-4)   the last sigma_22 = 0 pass fails
-#   plane stress EARLY (9.7e-5, -2.8e-4, 4.4e-4)   an earlier pass fails, the last converges: ACCEPTED
-#   plane stress FAILOPEN (9.9e-5, -2.5e-4, 3.2e-4) every last pass converges but sigma_22 is still
+# The strains are re-picked for the r4 merge of fork PR #877 (2026-10-30) on THIS battery's material (`_mat`,
+# the legacy pin: exp law, legacy flow, Df 1, hardening 0.3 0.5): #877's tension-return fix (review 3, MAJOR 1)
+# integrates the #2617 originals, which were picked on the pre-fix kernel, where the failure set was fractal
+# (a 1e-6 change flipped some inputs). The failures left are biaxial COMPRESSION trials the legacy v1 flow cannot
+# return (it has no compressive cone: the vertex return rejects them, the nested fallback finds no bracket), a
+# region rather than a fractal: each outcome below held under 200 random relative perturbations from 1e-12 to
+# 1e-4 per component (EARLY's earlier-pass failure under 40 of 40), and the Penalty imposition is exact only to
+# ~1e-8. Picked by an FE-level random search on the r4 build and classified by its stderr warnings.
+#   plane strain / 3D  (e00, e11, gamma01) = (-8.3e-4, -9.7e-4, -9.7e-4)  status 2
+#   plane stress FINAL (-1.19e-3, -2.81e-3, 2.19e-3)  the last sigma_22 = 0 pass fails
+#   plane stress EARLY (-8.54e-4, -5.74e-4, 2.94e-4)  an earlier pass fails, the last converges: ACCEPTED
+#   plane stress FAILOPEN (-9.6e-4, -4.9e-4, 6.3e-4)  every pass converges but sigma_22 is still
 #                                                  unconverged at maxIt (returned 0 with a warning)
 #   plane stress CLEAN (-9.3e-5, 4.7e-5, 2.4e-4)   no pass fails, plastic (kappa_p > 0)
 # Hosts forward the code: Tri31 sums it (`ret +=`), LadrunoBrick fails only on the exact sentinel
 # (so a bare -1 would be swallowed there), ZeroLengthSection refuses `< 0` via NDFiberSection3d.
 # ===========================================================================
 _TRI = {1: (0.0, 0.0), 2: (1.0, 0.0), 3: (0.0, 1.0)}
-_PE_FAIL = (-2.9e-4, 2.6e-4, -4.4e-4)
-_PS_FINAL = (2.9e-4, 2.5e-4, -3.0e-4)
-_PS_EARLY = (9.7e-5, -2.8e-4, 4.4e-4)
-_PS_FAILOPEN = (9.9e-5, -2.5e-4, 3.2e-4)
+_PE_FAIL = (-8.3e-4, -9.7e-4, -9.7e-4)
+_PS_FINAL = (-1.19e-3, -2.81e-3, 2.19e-3)
+_PS_EARLY = (-8.54e-4, -5.74e-4, 2.94e-4)
+_PS_FAILOPEN = (-9.6e-4, -4.9e-4, 6.3e-4)
 _PS_CLEAN = (-9.3e-5, 4.7e-5, 2.4e-4)
 
 
@@ -1182,15 +1209,17 @@ def test_failed_return_map_refuses_on_the_sentinel_host():
 
 
 def test_failed_confined_fiber_refuses_the_step():
-    """The confined (BeamFiber) view refuses too: one -1e-3 axial step from the virgin state does not
-    integrate (driveConfinedFiber status 2 with or without the hoop), while -1e-4 does. The fiber sits
-    in an NDFiber section on a zeroLengthSection, which refuses a `< 0` section code."""
+    """The confined (BeamFiber) view refuses too: one +1e-2 axial (tension) step from the virgin state
+    does not integrate (driveConfinedFiber status 2 with or without the hoop), while -1e-4 does. (r4: the
+    #2617 original, a -1e-3 compressive step, integrates after #877's return fix; on this build every
+    compressive step to -0.2 does.) The fiber sits in an NDFiber section on a zeroLengthSection, which
+    refuses a `< 0` section code."""
     _build_confined_zls(1200.0)
     ops.integrator("DisplacementControl", 2, 1, -1.0e-4)
     ops.algorithm("Linear")
     assert ops.analyze(1) == 0, "the integrable -1e-4 confined step was refused"
     _build_confined_zls(1200.0)
-    ops.integrator("DisplacementControl", 2, 1, -1.0e-3)
+    ops.integrator("DisplacementControl", 2, 1, 1.0e-2)
     ops.algorithm("Linear")
     rc = ops.analyze(1)
     assert rc < 0, f"the confined fiber accepted a failed return map (analyze returned {rc})"

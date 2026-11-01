@@ -10,11 +10,25 @@ symmetric; slave block ≡ 0 for a flat facet) + the C++ standalone b3_cpp_check
 Gates (capstone B3 row):
   (1) implicit Newton converges QUADRATICALLY on a curved interface where kn·BᵀB-only is
       slower — fewer Newton iterations, SAME converged root.
-  (2) Hertz: a stiff curved indenter on a deformable half-space reproduces the analytic
-      contact radius a + peak pressure p0 to a (coarse-mesh) tolerance, and refining the
-      mesh moves the FE answer toward Hertz.
+  (2) Hertz: a rigid sphere (the faceted MASTER, fixed, lowered by δ) pressed into an
+      elastic stdBrick block whose top nodes are the SLAVES reproduces the analytic Hertz
+      contact radius a = √(Rδ) to 15 %, a centre-peaked pressure, and the a ∝ √δ,
+      P ∝ δ^1.5 depth scaling.
   (3) flat / fixed-master path is BYTE-IDENTICAL to the shipped tangent (∂n/∂u ≡ 0 there).
   (5) the geometric normal tangent is SYMMETRIC ⇒ solver-safe on a symmetric solver.
+  (6) `ladrunoContactForce` reports exactly 0.0 for a 3D pair that has RELEASED (static
+      pull-off and explicit rebound).
+
+Gate (2) history (r6 backport, jaabell/OpenSees upstream round 6): the previous Hertz
+deck pinned the slaves ON the lowered sphere and made the block the master, and checked
+the GEOMETRIC radius √(2Rδ). It passed only because of the 3D stale-force readout (a pair
+that engaged during the Newton iterations and then released kept its last force, see
+Ladruno_implementation/ledger/quirks/LEGACY-ladrunocontactforce-keeps-a-stale-reading-on-a.md):
+every slave inside the seeded interference reported a force, so the "patch" was the
+interference circle. With the readout fixed that deck's patch is the compliant one and
+the geometric oracle is wrong. The redesigned deck (the indenter is the master, the
+deformable body's nodes are the slaves, the compliant radius √(Rδ) is the oracle) is the
+one validated for the upstream port: 37-69 slaves in contact across these cases.
 """
 import math
 
@@ -28,85 +42,83 @@ KN = 2.0e6
 
 
 # ---------------------------------------------------------- Hertz FE harness
-def _hertz_indent(nx=16, nz=6, W=3.0, H=1.5, R=20.0, delta=0.004, E=1000.0,
-                  nu=0.3, kn=1.0e4, ns=25, geom=False, tol=1e-8, span=None):
-    """A FIXED rigid spherical indenter (slaves pinned at the lowered sphere surface ⇒ NO
-    free body ⇒ robust convergence) on a deformable half-space block (MASTER, flat top).
-    Each slave's EXACT normal force tn=kn·<−gap>₊ is read via the `ladrunoContactForce`
-    query (the adapter traction is not in nodeReaction). Returns (rc, [(r, pressure, force)]).
-    """
+def _hertz_indent(nx=24, nz=8, W=2.0, H=1.0, R=20.0, delta=0.004, E=1000.0,
+                  nu=0.3, kn=1.0e4, nm=41, geom=False, span=None):
+    """A rigid sphere pressed into an elastic stdBrick block. The indenter is the MASTER:
+    fixed quad facets on the sphere surface, lowered by δ. The SLAVES are the top nodes
+    of the block, so `ladrunoContactForce` gives the nodal contact force of the deformable
+    body (the adapter traction is not in nodeReaction). Returns
+    (rc, sorted [(r, pressure, force)] of the slaves in contact)."""
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
-    dx = W / nx
-    dz = H / nz
+    dx, dz = W / nx, H / nz
     nid = {}
     t = 1
     for k in range(nz + 1):
         for j in range(nx + 1):
             for i in range(nx + 1):
-                ops.node(t, -W/2 + i*dx, -W/2 + j*dx, -H + k*dz)
+                ops.node(t, -W / 2 + i * dx, -W / 2 + j * dx, -H + k * dz)
                 nid[(i, j, k)] = t
-                t += 1
-    for k in range(nz + 1):
-        for j in range(nx + 1):
-            for i in range(nx + 1):
                 if k == 0:
-                    ops.fix(nid[(i, j, 0)], 1, 1, 1)              # half-space base
+                    ops.fix(t, 1, 1, 1)                  # half-space base
                 elif i in (0, nx) or j in (0, nx):
-                    ops.fix(nid[(i, j, k)], 1, 1, 0)             # roller side walls
+                    ops.fix(t, 1, 1, 0)                  # roller side walls
+                t += 1
     ops.nDMaterial("ElasticIsotropic", 1, E, nu)
     eid = 1
     for k in range(nz):
         for j in range(nx):
             for i in range(nx):
-                ops.element("LadrunoBrick", eid,
-                            nid[(i,j,k)], nid[(i+1,j,k)], nid[(i+1,j+1,k)], nid[(i,j+1,k)],
-                            nid[(i,j,k+1)], nid[(i+1,j,k+1)], nid[(i+1,j+1,k+1)], nid[(i,j+1,k+1)], 1)
+                ops.element("stdBrick", eid,
+                            nid[(i, j, k)], nid[(i + 1, j, k)],
+                            nid[(i + 1, j + 1, k)], nid[(i, j + 1, k)],
+                            nid[(i, j, k + 1)], nid[(i + 1, j, k + 1)],
+                            nid[(i + 1, j + 1, k + 1)], nid[(i, j + 1, k + 1)], 1)
                 eid += 1
-    mtags = []
-    for j in range(nx):
-        for i in range(nx):
-            mtags += [nid[(i,j,nz)], nid[(i+1,j,nz)], nid[(i+1,j+1,nz)], nid[(i,j+1,nz)]]
-    ops.contactSurface(10, "-master", 4, *mtags)
-    a_geo = math.sqrt(2 * R * delta)                              # geometric contact radius
     if span is None:
-        span = 1.6 * a_geo                                        # slave cloud half-width
-    sdx = 2 * span / (ns - 1)
-    slaves = []
-    scoord = {}
-    sid = 500000
-    for jj in range(ns):
-        for ii in range(ns):
-            x = -span + ii*sdx
-            y = -span + jj*sdx
-            r = math.hypot(x, y)
-            if r > span:
-                continue
-            zsl = (R - math.sqrt(R*R - r*r)) - delta              # lowered rigid sphere
-            ops.node(sid, x, y, zsl)
-            ops.fix(sid, 1, 1, 1)
-            slaves.append(sid)
-            scoord[sid] = (r, sdx * sdx)
-            sid += 1
+        span = 2.0 * math.sqrt(R * delta)
+    sdx = 2 * span / (nm - 1)
+    mid = {}
+    m = 400000
+    for jj in range(nm):
+        for ii in range(nm):
+            x, y = -span + ii * sdx, -span + jj * sdx
+            ops.node(m, x, y, (R - math.sqrt(R * R - x * x - y * y)) - delta)
+            ops.fix(m, 1, 1, 1)
+            mid[(ii, jj)] = m
+            m += 1
+    mt = []
+    for jj in range(nm - 1):
+        for ii in range(nm - 1):
+            mt += [mid[(ii, jj)], mid[(ii + 1, jj)],
+                   mid[(ii + 1, jj + 1)], mid[(ii, jj + 1)]]
+    ops.contactSurface(10, "-master", 4, *mt)
+    slaves, coord = [], {}
+    for j in range(nx + 1):
+        for i in range(nx + 1):
+            x, y = -W / 2 + i * dx, -W / 2 + j * dx
+            if abs(x) < span and abs(y) < span:
+                s = nid[(i, j, nz)]
+                slaves.append(s)
+                coord[s] = math.hypot(x, y)
     ops.contactSurface(20, "-slave", *slaves)
-    args = [1, 10, 20, kn, 0.0, 0.0, "-outward", 0.0, 0.0, 1.0]
+    args = [1, 10, 20, kn, 0.0, 0.0, "-outward", 0.0, 0.0, -1.0]
     if geom:
         args.append("-geomtan")
     ops.contact(*args)
     ops.constraints("LadrunoContact")
-    ops.numberer("Plain")
+    ops.numberer("RCM")
     ops.system("ProfileSPD")
     ops.integrator("LoadControl", 1.0)
-    ops.test("NormDispIncr", tol, 60, 0)
+    ops.test("NormDispIncr", 1e-10, 60, 0)
     ops.algorithm("Newton")
     ops.analysis("Static")
     rc = ops.analyze(1)
     data = []
     for s in slaves:
-        r, area = scoord[s]
         f = ops.ladrunoContactForce(s)
-        if f > 1e-9:
-            data.append((r, f / area, f))
+        if f > 0.0:
+            data.append((coord[s], f / (dx * dx), f))
     data.sort()
     return rc, data
 
@@ -224,30 +236,25 @@ def test_b3_contact_force_query_exact():
 
 
 def test_b3_hertz_contact_radius():
-    """Hertz benchmark — a rigid sphere (R) indenting an elastic half-space by δ. The NTS
-    contact CONVERGES and the contact-patch radius reproduces the analytic rigid-indenter
-    (geometric) Hertz contact radius a = √(2Rδ) to a coarse-mesh tolerance. (The smaller
-    COMPLIANT Hertz radius √(Rδ) — the edge drawn in by surface deflection — needs a much
-    finer master than Zone-A allows; see the module docstring + LEDGER_quirks.)"""
+    """Hertz benchmark — a rigid sphere (R) indenting an elastic half-space by δ: the
+    contact-patch radius reproduces the analytic Hertz radius a = √(Rδ) (rigid indenter,
+    compliant body) to a coarse-mesh tolerance."""
     R, delta = 20.0, 0.004
-    a_geo = math.sqrt(2 * R * delta)                 # 0.400
-    rc, data = _hertz_indent(nx=16, nz=6, R=R, delta=delta, ns=25)
+    a_hertz = math.sqrt(R * delta)                   # 0.283
+    rc, data = _hertz_indent(R=R, delta=delta)
     assert rc == 0, "Hertz indentation must converge"
     assert len(data) > 30, f"too few contact nodes ({len(data)}) to resolve the patch"
     a_fe = max(r for r, p, f in data)
-    assert abs(a_fe - a_geo) / a_geo < 0.15, f"contact radius FE={a_fe:.4f} vs √(2Rδ)={a_geo:.4f}"
+    assert abs(a_fe - a_hertz) / a_hertz < 0.15, f"contact radius FE={a_fe:.4f} vs √(Rδ)={a_hertz:.4f}"
 
 
 def test_b3_hertz_geomtan_converges_same_patch():
     """Exercise `-geomtan` (the B3 geometric tangent, `normalGeomTangent`) on the CURVED
     Hertz interface: the indentation converges with the geometric tangent ON and reproduces
     the SAME contact-patch radius as the shipped `kn·BᵀB` path — the residual (hence the
-    converged contact geometry) is tangent-INVARIANT; only the Newton path/robustness
-    differs. (Per-node penalty pressures are noisy when the master conforms, so the
-    tangent-invariant check is on the patch radius, the robust quantity.)"""
-    R, delta = 20.0, 0.004
-    rc0, d0 = _hertz_indent(nx=16, nz=6, R=R, delta=delta, ns=25, geom=False)
-    rc1, d1 = _hertz_indent(nx=16, nz=6, R=R, delta=delta, ns=25, geom=True)
+    converged contact geometry) is tangent-INVARIANT; only the Newton path differs."""
+    rc0, d0 = _hertz_indent(geom=False)
+    rc1, d1 = _hertz_indent(geom=True)
     assert rc0 == 0 and rc1 == 0, "Hertz must converge with -geomtan on this patch"
     a0 = max(r for r, p, f in d0)
     a1 = max(r for r, p, f in d1)
@@ -259,7 +266,7 @@ def test_b3_hertz_pressure_decreasing():
     edge: the mean pressure over the inner third of the patch is well above the mean over
     the outer third, and the peak sits in the inner half. (Per-node penalty pressures are
     noisy at this resolution, so the check is on radial-bin means, not node-by-node.)"""
-    rc, data = _hertz_indent(nx=16, nz=6, R=20.0, delta=0.004, ns=25)
+    rc, data = _hertz_indent()
     assert rc == 0
     a = max(r for r, p, f in data)
     inner = [p for r, p, f in data if r < a / 3.0]
@@ -268,21 +275,19 @@ def test_b3_hertz_pressure_decreasing():
     mean_in = sum(inner) / len(inner)
     mean_out = sum(outer) / len(outer)
     assert mean_in > 1.5 * mean_out, f"pressure not center-peaked: inner {mean_in:.1f} vs outer {mean_out:.1f}"
-    # the peak-pressure node is in the inner half of the patch (Hertzian, not edge-singular)
     r_peak = max(data, key=lambda t: t[1])[0]
     assert r_peak < 0.5 * a, f"peak pressure at r={r_peak:.3f} not in the inner half (a={a:.3f})"
 
 
 def test_b3_hertz_load_grows_with_depth():
-    """The Hertz load–indentation relation is monotone: a deeper approach δ carries a
-    larger total contact load and a wider patch. Both depths use the SAME fixed slave
-    cloud (span sized for the DEEPER δ), so the patch radius a is a MEASURED outcome (which
-    slaves penetrate), not a construction artifact of a δ-scaled cloud — and the measured
-    radii track the analytic geometric ratio √(δ2/δ1)."""
+    """The Hertz load–indentation relation: a deeper approach carries a larger load over a
+    wider patch, with a ∝ √δ (radius ratio √2 to 0.30 for a doubled depth) and P ∝ δ^1.5
+    (to 15 %). Both depths use the SAME master (span sized for the deeper δ), so the patch
+    radius is a measured outcome, not a construction artifact."""
     R, d1v, d2v = 20.0, 0.003, 0.006
-    fixed_span = 1.6 * math.sqrt(2 * R * d2v)        # one cloud, sized for the deeper case
-    rc1, d1 = _hertz_indent(nx=16, nz=6, R=R, delta=d1v, ns=33, span=fixed_span)
-    rc2, d2 = _hertz_indent(nx=16, nz=6, R=R, delta=d2v, ns=33, span=fixed_span)
+    span = 2.0 * math.sqrt(R * d2v)
+    rc1, d1 = _hertz_indent(R=R, delta=d1v, span=span)
+    rc2, d2 = _hertz_indent(R=R, delta=d2v, span=span)
     assert rc1 == 0 and rc2 == 0
     P1 = sum(f for r, p, f in d1)
     P2 = sum(f for r, p, f in d2)
@@ -290,6 +295,75 @@ def test_b3_hertz_load_grows_with_depth():
     a2 = max(r for r, p, f in d2)
     assert P2 > P1, f"deeper indentation must carry more load: {P2:.2f} vs {P1:.2f}"
     assert a2 > a1, f"deeper indentation must have a wider patch: {a2:.3f} vs {a1:.3f}"
-    # the MEASURED patch radii track the analytic geometric scaling a ∝ √δ (falsifiable —
-    # a wrong contact geometry would not reproduce the √(δ2/δ1) ratio within the coarse tol)
     assert abs((a2 / a1) - math.sqrt(d2v / d1v)) < 0.30, f"radius ratio {a2/a1:.3f} vs √2={math.sqrt(2):.3f}"
+    ratio = (d2v / d1v) ** 1.5
+    assert abs(P2 / P1 - ratio) / ratio < 0.15, f"load ratio {P2/P1:.3f} vs (δ2/δ1)^1.5={ratio:.3f}"
+
+
+# --------------------------------------------------------- gate (6) released pairs
+def _flat_master(L, base=101):
+    h = L / 2.0
+    tags = []
+    for i, (x, y) in enumerate([(-h, -h), (h, -h), (h, h), (-h, h)]):
+        ops.node(base + i, x, y, 0.0)
+        ops.fix(base + i, 1, 1, 1)
+        tags.append(base + i)
+    return tags
+
+
+def test_b3_contact_force_is_zero_after_release():
+    """A slave on a soft z spring pressed into a fixed facet, then pulled back out: the
+    reported normal force goes from the penalty value to exactly 0.0 (before the r6
+    backport it kept the last active value)."""
+    KN1, KS, P, Q, g0 = 1.0e6, 1.0e3, 1.0e2, 50.0, 1.0e-8
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    mt = _flat_master(L=2.0)
+    ops.node(1, 0.0, 0.0, -g0); ops.fix(1, 1, 1, 0)
+    ops.node(2, 0.0, 0.0, -g0); ops.fix(2, 1, 1, 1)
+    ops.uniaxialMaterial("Elastic", 1, KS)
+    ops.element("zeroLength", 1, 2, 1, "-mat", 1, "-dir", 3)
+    ops.contactSurface(10, "-master", 4, *mt)
+    ops.contactSurface(20, "-slave", 1)
+    ops.contact(1, 10, 20, KN1, 0.0, 0.0, "-outward", 0.0, 0.0, 1.0)
+    ops.timeSeries("Constant", 1); ops.pattern("Plain", 1, 1); ops.load(1, 0.0, 0.0, -P)
+    ops.constraints("LadrunoContact"); ops.numberer("Plain"); ops.system("FullGeneral")
+    ops.integrator("LoadControl", 1.0); ops.test("NormDispIncr", 1e-12, 30, 0)
+    ops.algorithm("Newton"); ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    u = -(P - KN1 * g0) / (KN1 + KS)                 # kn (g0 - u) + KS (-u) = P
+    f_ref = KN1 * (g0 - u)
+    f1 = ops.ladrunoContactForce(1)
+    assert abs(f1 - f_ref) / f_ref < 1e-6, (f1, f_ref)
+
+    ops.remove("loadPattern", 1)
+    ops.timeSeries("Constant", 2); ops.pattern("Plain", 2, 2); ops.load(1, 0.0, 0.0, Q)
+    assert ops.analyze(1) == 0
+    z = -g0 + ops.nodeDisp(1, 3)
+    assert abs(z - (-g0 + Q / KS)) < 1e-9, z         # separated, spring only
+    assert ops.ladrunoContactForce(1) == 0.0
+
+
+def test_b3_contact_force_is_zero_after_rebound():
+    """Explicit drop on a fixed facet: once the slave has bounced clear the reported
+    normal force is exactly 0.0."""
+    KN1, gap0 = 1.0e6, 0.01
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    mt = _flat_master(L=1.0)
+    ops.node(1, 0.0, 0.0, gap0)
+    ops.mass(1, 1.0, 1.0, 1.0)
+    ops.contactSurface(10, "-master", 4, *mt)
+    ops.contactSurface(20, "-slave", 1)
+    ops.contact(1, 10, 20, KN1, 0.0, 0.0, "-outward", 0.0, 0.0, 1.0)
+    ops.setNodeVel(1, 3, -2.0, "-commit")
+    ops.constraints("LadrunoContact"); ops.numberer("Plain"); ops.system("Diagonal")
+    ops.integrator("NewmarkExplicit", 0.5); ops.algorithm("Linear"); ops.analysis("Transient")
+    dt = math.sqrt(1.0 / KN1)
+    f_max = 0.0
+    for _ in range(4000):
+        assert ops.analyze(1, dt) == 0
+        f_max = max(f_max, ops.ladrunoContactForce(1))
+    assert f_max > 0.0
+    assert gap0 + ops.nodeDisp(1, 3) > 0.5 * gap0
+    assert ops.ladrunoContactForce(1) == 0.0

@@ -139,6 +139,45 @@ struct Params {
     // Return-map sub-incrementation depth (B1): if the direct return fails, halve the strain increment down to
     // 2^-maxSubIncr (OOFEM performPlasticityReturn). 0 => the direct return only (byte-identical legacy).
     int    maxSubIncr = 0;
+    // TOTAL attempt budget for the sub-increment loop in returnMapTensor (successes + failures), WP
+    // concrete3d-hang-diagnosis: a GP that only ever succeeds near the 2^-maxSubIncr floor alternates
+    // fail/succeed and can legally spend up to ~2 * 2^maxSubIncr attempts (of up to 100 Newton iterations
+    // each) reaching done=1.0 -- at the CDPM2 wrapper default maxSubIncr=10 that is ~2048 attempts per
+    // material point per global Newton iteration, which is the multi-hour analyze(1) hang (nothing ever
+    // fails, so nothing is logged and the step is never cut). Independent of maxSubIncr; only matters when
+    // maxSubIncr > 0. Default 64 bounds the worst case to 64 * 100 Newton iterations per call.
+    int    maxSubAttempts = 64;
+    // Sub-incrementation MODE (only when maxSubIncr > 0, hardening map). 0 = DETERMINISTIC (DEFAULT, WP
+    // concrete3d-hang-diagnosis #877 follow-up): the piece count n = clamp(ceil(f_trial / subIncrC), 1,
+    // subIncrMaxPieces) is a function of the trial overshoot only and is ALWAYS applied, with a deterministic
+    // ladder n -> 2n -> 4n on a piece failure; refuse only after the ladder. 1 = ADAPTIVE: the direct return first,
+    // then halving/doubling on failure (bounded by maxSubAttempts) -- the pre-follow-up path, opt-in so old numbers
+    // stay reproducible (nDMaterial -subIncr adaptive). 2 = REFUSE: the direct backward-Euler return only, no
+    // sub-incrementation at all; a failed return is a refusal and the caller's global step cut is the recovery
+    // (nDMaterial -subIncr refuse; the map is exactly maxSubIncr = 0). Committed memory is then a function of the
+    // converged local solve alone, not of an internal convergence choice.
+    int    subIncrMode = 0;
+    double subIncrC = 0.3;
+    int    subIncrMaxPieces = 64;
+    int    subIncrForceN = 0;   // > 0 pins the deterministic piece count n (finite-difference legs of the algorithmic tangent use the CENTRAL n)
+    int    subIncrRescue = 1;   // deterministic mode only: after the ladder fails, try the ADAPTIVE path (bounded by maxSubAttempts) before refusing
+    // DEAD POINTS (WP concrete3d-hang-diagnosis, owner decision 2026-09-28): the residual-strength fraction (1 - omega) at or
+    // below which a point's crack (omega_t) or crush (omega_c) is treated as fully open. Committed damage >= omegaDead:
+    //   * omega_t: TENSION CUTOFF ON THE PLASTIC FLOW -- the tensile spectral part of the trial effective stress is carried
+    //     ELASTICALLY (no flow, no kappa_p growth from tension; returns to zero at eps_p on unloading) and the return map
+    //     runs on the compressive remainder only (a cracked point keeps its compressive strut);
+    //   * omega_c: STRICT FREEZE -- a crushed point carries nothing: kappa_p, the plastic strain and the damage histories
+    //     are frozen, the effective stress is elastic on the fixed plastic strain, both damages go to the floor OMEGA_MAX,
+    //     nominal = (1-OMEGA_MAX)*sig_eff, tangent = (1-OMEGA_MAX)*C (the jump to the floor costs at most
+    //     (1-omegaDead)*|sig_eff| of nominal stress; freezing at the committed omega instead was measured to break the
+    //     Gc-calibration gate, 62 % off, because the residual then grows with the elastic sig_eff).
+    // Without it kappa_p and sig_eff run away on a point that has already lost its strength (K&R coarse: kappa_p 3.4e4,
+    // sig_eff 813 MPa at fc = 24; G5 band: kappa_p 3.2e4, sig_eff 779 MPa at omega_t = 0.9993) until the return map cannot
+    // integrate them; the nominal residual (1-omega)*sig_eff is then a spurious fraction of ft. omegaDead >= 1 disables
+    // (parser: -deadThreshold takes [0.99, 1); -noDead sets 2.0, the A/B knob that reproduces the pre-treatment behaviour).
+    // The default is the smallest threshold that clears the measured runaway states (ExplicitBathe tension softening on
+    // the legacy exp law only reaches omega_t = 0.99856 when its return map refuses). Parser flag -deadThreshold.
+    double omegaDead = 0.998;
     // Compressive damage drive (B2, WP concrete3d-damage-drive). 0 = legacy fork drive ((1-wc)(-sig_min) = fc exp(..),
     // histories from the onset only; the kernel/oracle default). 1 = CDPM2 Eq.47-49/53/55 (OOFEM computeDamage /
     // computeDamageParamCompression): eqc += alpha_c d(eps_tilde), kappa_dc = max eqc, kdc2 from the start, kdc1 with
@@ -151,6 +190,14 @@ struct Params {
     // regularization
     double lch = 1.0;            // parent-element characteristic length
     double lch_ref = 1.0;        // reference length of the input Gf/Gc
+    // Lode factor of the hardening law R4 (r4 port of db02ccc70; KERNEL-ONLY, not a material option). 0 = the
+    // legacy law (DEFAULT, = the numpy oracle and OOFEM): (2 cos theta_tr)^2 on the regular map, 1 on both vertices.
+    // 1 = regularized + consistent: cThetaReg(rho_tr, theta_tr) on the regular map AND the tension vertex, so the two
+    // kappa laws agree as rho -> 0. Measured (r4 probe9, virgin tension, lateral ratio swept 0..1): mode 0 jumps
+    // 0.65 / 2.7 / 8.9 MPa in sigma_eff where the return switches vertex <-> regular (x = 1.5 / 3 / 6 eps_cr);
+    // mode 1 is continuous there (<= 1.3e-3 MPa per 5e-5 step) and moves the jump to rho_tr <~ 1e-3 ft on the axis.
+    // Both modes: 0 direct-return failures and a unique root on review 3's MAJOR-1 windows.
+    int    lodeFactor = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -168,6 +215,25 @@ static const double F_TOL_HONEST = 3.1e-6;
 // damaged tangent runs NO return map (damagedTangent cannot reach returnMapTensor: it is declared after it).
 struct KernelCallCounters { unsigned long long returnMapTensor = 0, pieceReturns = 0; };
 inline KernelCallCounters& kernelCallCounters() { static thread_local KernelCallCounters c; return c; }
+// Full-residual acceptance of the nested fallback return (R1, R2 relative to fc; R3; R4 relative to 1 + kp).
+static const double NESTED_RES_TOL = 1.0e-8;
+// Grid cells of the nested solve's root scan (returnMapNested), and the inner-solve tolerance used while scanning
+// (the scan only needs the sign of f at the grid points; every root is then re-solved at 1e-12).
+static const int NESTED_SCAN = 16;
+static const double NESTED_SCAN_XTOL = 1.0e-8;
+// COST GATE of the scan below a converged plain-Newton root (r4 re-review: scanning on every sub-increment piece made the
+// default mode 2x slower than the PR head). It runs when the Newton root carries more than NESTED_LOWER_GDEV ft/E of
+// deviatoric plastic strain (rho_tr - rho)/2G, OR the step raised qh2 by more than NESTED_LOWER_DQH2 (Hp (kp - kp_n) > 1:
+// the surface grew by more than its initial size in this step). A smaller-kappa_p root below a Newton root means the Newton
+// root is hardening-expanded; it needs either a large deviatoric plastic increment or, at large Hp, a large hardening
+// increment from a nearly volumetric return. EMPIRICAL, tested on: the 40 x 20001-point rays, 200 000 random tension
+// trials (kappa_p,n 0..50) at the default material, and three out-of-sample sets of 100 000 (fc 20-80, ft/fc .06-.12,
+// E 25-45 GPa, nu .15-.25, Df .6-.95, qh0 .1-.4, Hp 0.001 / 0.01 / 0.1 / 0.5, lch 20-100, prior hardening, history
+// states, x 0.8-60 eps_cr; the r4 review's two seeds and one fresh one): 0 smaller-kappa_p roots skipped (the
+// gdev-only gate skipped 86 and 109 of them, all at Hp 0.1 / 0.5). In the out-of-sample sets every skipped-root case had
+// Hp (kp - kp_n) >= 3.3 or gdev >= 0.5 ft/E. Not a proof: a material outside these ranges may need the gate re-checked.
+static const double NESTED_LOWER_GDEV = 0.5;
+static const double NESTED_LOWER_DQH2 = 1.0;
 
 // ---------------------------------------------------------------------------
 // Stress invariants. sig = {s00,s11,s22,s01,s12,s02} TENSOR components.
@@ -210,6 +276,50 @@ inline double lodeR(double theta, double e)
     if (rad < 0.0) rad = 0.0;
     const double den = 2.0 * oneMe2 * ct + (2.0 * e - 1.0) * std::sqrt(rad);
     return num / den;
+}
+
+// dr/d(cos 3theta) of the Willam-Warnke r above, closed form (ported from db02ccc70 for the principal
+// Jacobian's dr/dw, which used a scalar central difference). cos(theta) is clamped to its range [0.5, 1]
+// and the radicand floored, so the derivative stays finite at the meridians.
+inline double drDcos3thetaRegularized(double cosTheta, double e)
+{
+    const double c = cosTheta < 0.5 ? 0.5 : (cosTheta > 1.0 ? 1.0 : cosTheta);
+    const double k = 1.0 - e * e;
+    const double m = 2.0 * e - 1.0;
+    double rad = k * (4.0 * c * c - 1.0) + m * m;
+    if (rad < 1.0e-16) rad = 1.0e-16;
+    const double s = std::sqrt(rad);
+    const double b = 2.0 * k * c + m * s;
+    const double bracket = (4.0 * k * c * c - m * m) * (k / (s + m) - m / (2.0 * c + 1.0)) + 4.0 * k * m * c;
+    return (2.0 * k / (3.0 * s * b * b)) * bracket;
+}
+
+// The Lode factor of the hardening law R4 (Grassl Eq.32: kp' = ||d eps_p|| / xh * (2 cos theta)^2), regularized
+// on the hydrostatic axis where theta is undefined: c = 1 + w ((2 cos theta_tr)^2 - 1), w = rho_tr^2/(rho_tr^2 +
+// rho_th^2), rho_th = 1e-4 ft. Off the axis (rho_tr >> rho_th) c -> (2 cos theta_tr)^2, relative change
+// (rho_th/rho_tr)^2; on it c -> 1, the vertex law's factor. Params::lodeFactor = 1 only (not the default): used by the
+// regular map AND the tension vertex so the two kappa laws agree in the limit rho -> 0, which makes the stress
+// continuous across the vertex/regular partition.
+inline double cThetaReg(double rho_tr, double cos_theta_tr, double ft)
+{
+    const double rho_th = 1.0e-4 * ft;
+    const double w = (rho_tr * rho_tr) / (rho_tr * rho_tr + rho_th * rho_th);
+    const double two_cos = 2.0 * cos_theta_tr;
+    return 1.0 + w * (two_cos * two_cos - 1.0);
+}
+
+// The ONE Lode factor of the hardening law R4, used by the regular return, the tension vertex, the nested
+// fallback and both principal Jacobians (they must agree, or the tangents differentiate a different map).
+inline double hardeningLodeFactor(double rho_tr, double theta_tr, const Params& mp)
+{
+    if (mp.lodeFactor == 1) return cThetaReg(rho_tr, std::cos(theta_tr), mp.ft);
+    const double c = 2.0 * std::cos(theta_tr);
+    return c * c;
+}
+// The vertex return's factor: the regular map's on the tension vertex in mode 1, else 1 (the legacy vertex law).
+inline double vertexLodeFactor(bool tensionVertex, double cos2, const Params& mp)
+{
+    return (mp.lodeFactor == 1 && tensionVertex) ? cos2 : 1.0;
 }
 
 inline double m0Of(double fc, double ft, double e)
@@ -698,12 +808,14 @@ inline PrincipalResult returnMapPrincipal(const double sigTr[3], const Params& m
 //     regular on the axis (Lode r multiplies rho=0). Accept iff dlam=(sigV_tr-sigV)/(K dg/dsigV)>=0 and
 //     rho_tr <= 2G dlam dg/drho (trial inside the cone of normals).
 // ---------------------------------------------------------------------------
-inline double vertexKappa(double kp_n, double sigV_tr, double rho_tr, double sigV, const Params& mp)
+// c_th (r4 port of db02ccc70): the Lode factor of the hardening law; 1 = the legacy vertex law (default). Under
+// Params::lodeFactor = 1 returnMapHardening passes the regular map's factor on the TENSION vertex (vertexLodeFactor).
+inline double vertexKappa(double kp_n, double sigV_tr, double rho_tr, double sigV, const Params& mp, double c_th = 1.0)
 {
     const double K = bulkK(mp), G = shearG(mp);
     const double d = sigV_tr - sigV, g = rho_tr / (2.0 * G);
     const double eq = std::sqrt(d * d / (3.0 * K * K) + g * g);
-    return kp_n + eq / ductilityXh(sigV, mp.fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh);
+    return kp_n + c_th * eq / ductilityXh(sigV, mp.fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh);
 }
 
 inline void cdpm2VertexPotentialGrad(double sigV, double kp, const Params& mp, double& dgs, double& dgr)
@@ -775,14 +887,14 @@ inline void cdpm2FlowGradJac(double xi, double rho, double kp, const Params& mp,
 }
 
 inline bool returnMapVertex(double sigV_tr, double rho_tr, const Params& mp, double kp_n,
-                            double& sigV, double& kp, double& dlam)
+                            double& sigV, double& kp, double& dlam, double c_th = 1.0)
 {
     const double fc = mp.fc, K = bulkK(mp), G = shearG(mp);
     bool tension;
     if (sigV_tr > 0.0) tension = true;
     else if (sigV_tr < 0.0 && kp_n < 1.0) tension = false;
     else return false;
-    auto F = [&](double s) { return yfInvHard(SQRT3 * s, 0.0, 1.0, vertexKappa(kp_n, sigV_tr, rho_tr, s, mp), mp); };
+    auto F = [&](double s) { return yfInvHard(SQRT3 * s, 0.0, 1.0, vertexKappa(kp_n, sigV_tr, rho_tr, s, mp, c_th), mp); };
     if (!(F(sigV_tr) > 0.0 && F(0.0) < 0.0)) return false;   // (also rejects NaN)
     double a = tension ? 0.0 : sigV_tr, b = tension ? sigV_tr : 0.0;   // a < b
     double Fa = F(a);
@@ -794,7 +906,7 @@ inline bool returnMapVertex(double sigV_tr, double rho_tr, const Params& mp, dou
         if ((Fm > 0.0) == (Fa > 0.0)) { a = mid; Fa = Fm; } else b = mid;
     }
     const double s = 0.5 * (a + b);
-    const double k = vertexKappa(kp_n, sigV_tr, rho_tr, s, mp);
+    const double k = vertexKappa(kp_n, sigV_tr, rho_tr, s, mp, c_th);
     double dgs, dgr;
     if (tension && mp.flowPotential == 1) {          // B1: the SAME potential as the regular map
         double d1[3], d2[3]; cdpm2PotentialDerivs(s, 0.0, k, mp, dgs, dgr, d1, d2);
@@ -817,13 +929,24 @@ inline bool returnMapVertex(double sigV_tr, double rho_tr, const Params& mp, dou
 // Residual R[4] (and, if J != nullptr, the analytic 4x4 Jacobian) of the hardening return system with the FULL
 // CDPM2 plastic potential (B1): R1 = xi - xi_tr + 3K dlam m_v, R2 = rho - rho_tr + 2G dlam m_s, R3 = f_p (frozen
 // Lode r), R4 = kp - kp_n - dlam ||m||/xh cos2. Used by the globalized Newton (line search needs R alone).
+//   legacyFlow = true (WP concrete3d-hang-diagnosis #877 follow-up): the SAME system with the legacy v1 flow
+//   (m_v = Df m0/(sqrt3 fc) constant, m_s = 3 rho/fc^2 + m0/(sqrt6 fc)) so the globalized Newton can be the
+//   rescue for flowPotential = legacy too; the Hessian terms are dmv = 0 and dms = (0, 3/fc^2, 0), which
+//   reproduces the legacy-branch Jacobian rows of the plain newton() exactly.
 inline void cdpm2HardeningResidual(double xi, double rho, double dlam, double kp, double xi_tr, double rho_tr,
                                    double kp_n, double r, double cos2, const Params& mp, double R[4],
-                                   double J[4][4] = nullptr)
+                                   double J[4][4] = nullptr, bool legacyFlow = false)
 {
     const double fc = mp.fc, m0 = mp.m0, K = bulkK(mp), G = shearG(mp);
     double m_v, m_s, dmv[3], dms[3];
-    cdpm2FlowGradJac(xi, rho, kp, mp, m_v, m_s, dmv, dms);
+    if (legacyFlow) {
+        m_v = mp.Df * m0 / (SQRT3 * fc);
+        m_s = 3.0 * rho / (fc * fc) + m0 / (SQRT6 * fc);
+        dmv[0] = dmv[1] = dmv[2] = 0.0;
+        dms[0] = 0.0; dms[1] = 3.0 / (fc * fc); dms[2] = 0.0;
+    } else {
+        cdpm2FlowGradJac(xi, rho, kp, mp, m_v, m_s, dmv, dms);
+    }
     const double mnorm = std::sqrt(m_v * m_v + m_s * m_s);
     const double sigV = xi / SQRT3;
     const double xh = ductilityXh(sigV, fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh);
@@ -860,6 +983,234 @@ inline void cdpm2HardeningResidual(double xi, double rho, double dlam, double kp
     J[3][3] = 1.0 - dlam * cos2 * dmn[2] / xh;
 }
 
+// ---------------------------------------------------------------------------
+// NESTED scalar fallback of the hardening return (r4 port of db02ccc70 DR-1a, adapted). The same 4-equation system
+// as the regular Newton, reduced to a 1-D root in rho in (0, rho_tr]: for a given rho, R2 fixes dlam = (rho_tr - rho)/
+// (2G m_s), R4 fixes kp = kp_n + cos2 ||d eps_p||/xh, and R1 is solved for xi by bracketed bisection; the outer
+// bisection then drives R3 = f(xi(rho), rho, kp(rho)) to zero. Every iterate is admissible by construction (rho in
+// (0, rho_tr], dlam >= 0, kp >= kp_n), which the globalized Newton's unprojected line search is not (review 3 of
+// #877, MAJOR 1: its last iterates sat at dlam < 0, kp < 0). `cos2` is the regular map's Lode factor (the root must
+// solve THAT system). Returns false when no bracket exists (phi(0+) >= 0: the vertex partition) or the inner solve
+// cannot bracket; a true return is a CANDIDATE only: the caller polishes it and checks the full residual.
+// ---------------------------------------------------------------------------
+// Bracketed scalar root of f on [a, b] with a sign change (Brent 1973: inverse quadratic / secant steps with a bisection
+// safeguard). Keeps a sign-change bracket on every iterate, so the root it returns is the bracketed one, deterministically;
+// never slower than bisection, usually superlinear. Stops on f = 0, a bracket narrower than xtol, or maxIt.
+template <class Fn>
+inline double bracketedRoot(Fn&& f, double a, double fa, double b, double fb, double xtol, int maxIt = 100)
+{
+    double c = a, fc = fa, d = b - a, e = d;
+    for (int it = 0; it < maxIt; ++it) {
+        if ((fb > 0.0) == (fc > 0.0)) { c = a; fc = fa; d = b - a; e = d; }
+        if (std::fabs(fc) < std::fabs(fb)) { a = b; b = c; c = a; fa = fb; fb = fc; fc = fa; }
+        const double tol1 = 2.0 * 2.2e-16 * std::fabs(b) + 0.5 * xtol, xm = 0.5 * (c - b);
+        if (std::fabs(xm) <= tol1 || fb == 0.0) return b;
+        if (std::fabs(e) >= tol1 && std::fabs(fa) > std::fabs(fb)) {
+            double p, q, r;
+            const double sv = fb / fa;
+            if (a == c) { p = 2.0 * xm * sv; q = 1.0 - sv; }
+            else { q = fa / fc; r = fb / fc; p = sv * (2.0 * xm * q * (q - r) - (b - a) * (r - 1.0)); q = (q - 1.0) * (r - 1.0) * (sv - 1.0); }
+            if (p > 0.0) q = -q; else p = -p;
+            const double min1 = 3.0 * xm * q - std::fabs(tol1 * q), min2 = std::fabs(e * q);
+            if (2.0 * p < (min1 < min2 ? min1 : min2)) { e = d; d = p / q; }
+            else { d = xm; e = d; }
+        } else { d = xm; e = d; }
+        a = b; fa = fb;
+        b += (std::fabs(d) > tol1) ? d : (xm > 0.0 ? tol1 : -tol1);
+        fb = f(b);
+    }
+    return b;
+}
+
+inline bool returnMapNested(double xi_tr, double rho_tr, double r_val, double cos2, const Params& mp, double kp_n,
+                            double& xi_sol, double& rho_sol, double& dlam_sol, double& kp_sol, double rhoCap = -1.0)
+{
+    // rhoCap > 0: scan only the grid cells below rhoCap (the caller already has a root at rhoCap and asks whether a
+    // smaller-kappa_p one lies below it); false then means "none found below".
+    const double fc = mp.fc, K = bulkK(mp), G = shearG(mp);
+    const bool cdpm2Flow = (mp.flowPotential == 1);
+    const double r_lo = 1.0e-11 * fc;
+    if (!(rho_tr > r_lo)) return false;
+
+    // R1 on xi for a fixed rho; kp and dlam follow from R2 / R4 exactly.
+    auto phi1 = [&](double rho, double xi, double& kp_val, double& dl_val) -> double {
+        const double drho = (rho_tr - rho > 0.0) ? (rho_tr - rho) : 0.0;
+        const double g_dev = drho / (2.0 * G);
+        const double g_vol = (xi_tr - xi) / (3.0 * K);
+        const double xh = ductilityXh(xi / SQRT3, fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh);
+        // R4: kp = kp_n + cos2 dlam ||m|| / xh, and on R1/R2 dlam m_v = (xi_tr - xi)/(3K), dlam m_s = drho/(2G).
+        const double eqR4 = std::sqrt(g_vol * g_vol + g_dev * g_dev);
+        kp_val = kp_n + cos2 * eqR4 / xh;
+        double mv, ms;
+        if (cdpm2Flow) { double dmv[3], dms[3]; cdpm2FlowGradJac(xi, rho, kp_val, mp, mv, ms, dmv, dms); }
+        else { mv = mp.Df * mp.m0 / (SQRT3 * fc); ms = 3.0 * rho / (fc * fc) + mp.m0 / (SQRT6 * fc); }
+        if (!(ms > 1.0e-15)) ms = 1.0e-15;
+        dl_val = drho / (2.0 * G * ms);
+        return xi - xi_tr + 3.0 * K * dl_val * mv;
+    };
+    // hint (scan only): the previous grid point's xi; a local bracket around it is tried first (xi(rho) is smooth), and the
+    // global bracket below only if that does not change sign. xtolRel: the scan needs the SIGN of f, not the root.
+    auto solveInnerXi = [&](double rho, double& xi_res, double& kp_res, double& dl_res,
+                            const double* hint = nullptr, double xtolRel = 1.0e-12) -> bool {
+        double kd, dd;
+        if (hint && std::isfinite(*hint)) {
+            // secant from the hint (the scan's inner solves are a smooth sequence in rho), accepted only once a sign
+            // change brackets it to xtolRel; otherwise the local / global brackets below
+            const double sc = std::fabs(xi_tr) + fc;
+            double x0 = *hint, f0 = phi1(rho, x0, kd, dd), x1 = x0 + 1.0e-4 * sc, f1 = phi1(rho, x1, kd, dd);
+            for (int it = 0; it < 8 && std::isfinite(f0) && std::isfinite(f1) && f1 != f0; ++it) {
+                const double x2 = x1 - f1 * (x1 - x0) / (f1 - f0);
+                if (!std::isfinite(x2)) break;
+                const double f2 = phi1(rho, x2, kd, dd);
+                if (std::fabs(x2 - x1) < xtolRel * sc) {
+                    // confirm with a bracket of half-width xtolRel*sc around x2
+                    const double hb = xtolRel * sc, fm = phi1(rho, x2 - hb, kd, dd), fp = phi1(rho, x2 + hb, kd, dd);
+                    if ((fm <= 0.0) != (fp <= 0.0)) { xi_res = x2; phi1(rho, xi_res, kp_res, dl_res);
+                                                        return std::isfinite(kp_res) && std::isfinite(dl_res); }
+                    break;
+                }
+                x0 = x1; f0 = f1; x1 = x2; f1 = f2;
+            }
+            double h = 1.0e-3 * (std::fabs(xi_tr) + fc);
+            for (int e = 0; e < 6; ++e, h *= 8.0) {
+                const double la = *hint - h, lb = *hint + h;
+                const double fla = phi1(rho, la, kd, dd), flb = phi1(rho, lb, kd, dd);
+                if (!std::isfinite(fla) || !std::isfinite(flb)) break;
+                if ((fla <= 0.0) != (flb <= 0.0)) {
+                    const bool up = fla <= 0.0;
+                    xi_res = bracketedRoot([&](double x) { return phi1(rho, x, kd, dd); }, up ? la : lb, up ? fla : flb,
+                                           up ? lb : la, up ? flb : fla, xtolRel * (std::fabs(xi_tr) + fc));
+                    phi1(rho, xi_res, kp_res, dl_res);
+                    return std::isfinite(kp_res) && std::isfinite(dl_res);
+                }
+            }
+        }
+        double a = xi_tr - 40.0 * fc, b = xi_tr;
+        double fa = phi1(rho, a, kd, dd), fb = phi1(rho, b, kd, dd);
+        if (!std::isfinite(fb)) return false;
+        if (fb < 0.0) {
+            a = xi_tr; fa = fb; b = xi_tr + 40.0 * fc; fb = phi1(rho, b, kd, dd);
+            while (!(fb >= 0.0) && b < xi_tr + 200.0 * fc) { b += 20.0 * fc; fb = phi1(rho, b, kd, dd); }
+            if (!(fb >= 0.0)) return false;
+        } else {
+            while (!(fa <= 0.0) && a > xi_tr - 200.0 * fc) { a -= 20.0 * fc; fa = phi1(rho, a, kd, dd); }
+            if (!(fa <= 0.0)) return false;
+        }
+        xi_res = bracketedRoot([&](double x) { return phi1(rho, x, kd, dd); }, a, fa, b, fb,
+                               xtolRel * (std::fabs(xi_tr) + fc));
+        phi1(rho, xi_res, kp_res, dl_res);
+        return std::isfinite(kp_res) && std::isfinite(dl_res);
+    };
+    auto outerPhi = [&](double rho, double& xi_v, double& kp_v, double& dl_v, bool& ok,
+                        const double* hint = nullptr, double xtolRel = 1.0e-12) -> double {
+        ok = solveInnerXi(rho, xi_v, kp_v, dl_v, hint, xtolRel);
+        return ok ? yfInvHard(xi_v, rho, r_val, kp_v, mp) : 0.0;
+    };
+    double ra = r_lo, rb = rho_tr, xa, ka, da, xb, kb, db;
+    bool oka, okb;
+    const double fa = outerPhi(ra, xa, ka, da, oka);
+    double fb = outerPhi(rb, xb, kb, db, okb);
+    if (!oka || !okb || !(fa < 0.0) || !(fb > 0.0)) return false;   // no bracket: vertex partition / degenerate
+    int kStart = 1;
+    if (rhoCap > 0.0) {   // start from the highest grid point strictly below rhoCap
+        while (kStart < NESTED_SCAN && rho_tr * (1.0 - (double)kStart / NESTED_SCAN) >= rhoCap) ++kStart;
+        if (kStart >= NESTED_SCAN) return false;
+        double xk, kk, dk; bool okk;
+        rb = rho_tr * (1.0 - (double)kStart / NESTED_SCAN);
+        fb = outerPhi(rb, xk, kk, dk, okk);
+        xb = xk;
+        if (!okk) return false;
+        ++kStart;
+    }
+    // ROOT SELECTION: the system can have more than one admissible root in (0, rho_tr] (r4 review: kappa_p 135 vs 697 on
+    // one ray; the extra root is a hardening-expanded one, qh2 = 1 + Hp (kappa_p - 1) large enough for the surface to
+    // reach the trial). Scan (0, rho_tr] on a fixed grid of NESTED_SCAN cells, solve every sign change, and keep the
+    // root with the SMALLEST kappa_p (the least hardening; along a loading ray it is the branch that starts at the
+    // trial, dlam = 0, at first yield, and the one the plain Newton reaches from the trial on ordinary increments).
+    // Deterministic; resolution limited: two roots inside one cell (rho_tr / NESTED_SCAN) are not told apart.
+    bool found = false;
+    {
+        double rHi = rb, fHi = fb, xHint = xb;
+        for (int k = kStart; k <= NESTED_SCAN; ++k) {
+            const double rLo = (k == NESTED_SCAN) ? ra : rho_tr * (1.0 - (double)k / NESTED_SCAN);
+            double xk = xHint, kk, dk; bool okk;
+            const double fLo = (k == NESTED_SCAN) ? fa : outerPhi(rLo, xk, kk, dk, okk, &xHint, NESTED_SCAN_XTOL);
+            if (k < NESTED_SCAN && okk) xHint = xk;
+            if (k < NESTED_SCAN && !okk) return false;
+            if ((fLo < 0.0) != (fHi < 0.0)) {
+                bool innerOk = true;
+                const double flo = fLo < 0.0 ? fLo : fHi, fhi = fLo < 0.0 ? fHi : fLo;
+                const double alo = fLo < 0.0 ? rLo : rHi, ahi = fLo < 0.0 ? rHi : rLo;
+                const double rr = bracketedRoot([&](double rm) { double xm, km, dm; bool okm;
+                                                     const double fm = outerPhi(rm, xm, km, dm, okm);
+                                                     if (!okm) innerOk = false; return fm; },
+                                                alo, flo, ahi, fhi, 1.0e-9 * rho_tr);   // coarse: polishHardeningRoot finishes it
+                double xr, kr, dr; bool okr;
+                outerPhi(rr, xr, kr, dr, okr);
+                if (innerOk && okr && (!found || kr < kp_sol)) {
+                    found = true; rho_sol = rr; xi_sol = xr; kp_sol = kr; dlam_sol = dr;
+                }
+            }
+            rHi = rLo; fHi = fLo;
+        }
+    }
+    return found;
+}
+
+// Polish a CANDIDATE root x = (xi, rho, dlam, kp) of the hardening return system with residual-decreasing Newton steps
+// that stay in the admissible set (rho >= 0, dlam >= 0, kp >= kp_n), then accept it ONLY if the FULL residual is small:
+// |R1|, |R2| < NESTED_RES_TOL fc (flow), |R3| < NESTED_RES_TOL (yield), |R4| < NESTED_RES_TOL (1 + kp) (hardening), and
+// the root is admissible. Used for the nested fallback (r4 port of db02ccc70, which set converged = true after 5
+// unchecked clamped steps and then gated on f alone). polishIters = 0 checks the candidate as given (kernel check D3).
+inline bool cdpm2Flow0(const Params& mp) { return mp.flowPotential == 1; }
+
+inline bool polishHardeningRoot(double x[4], double xi_tr, double rho_tr, double kp_n, double r, double cos2,
+                                const Params& mp, double tol = 1.0e-11, int polishIters = 8)
+{
+    const double fc = mp.fc;
+    const bool cdpm2Flow = (mp.flowPotential == 1);
+    const double sc[4] = {1.0 / fc, 1.0 / fc, 1.0, 1.0};
+    double Rn[4];
+    cdpm2HardeningResidual(x[0], x[1], x[2], x[3], xi_tr, rho_tr, kp_n, r, cos2, mp, Rn, nullptr, !cdpm2Flow);
+    double nn = 0.0; for (int i = 0; i < 4; ++i) nn += (Rn[i] * sc[i]) * (Rn[i] * sc[i]);
+    // polish to round-off (the bracketed root is coarse on purpose; a tangent FD leg needs the root, not tol): a step is
+    // taken only while it reduces the scaled residual, at most polishIters steps
+    const double ptol = 1.0e-3 * tol;
+    for (int it = 0; it < polishIters; ++it) {
+        if (std::fabs(Rn[0]) < ptol * fc && std::fabs(Rn[1]) < ptol * fc
+            && std::fabs(Rn[2]) < ptol && std::fabs(Rn[3]) < ptol) break;
+        double Rj[4], J[4][4];
+        cdpm2HardeningResidual(x[0], x[1], x[2], x[3], xi_tr, rho_tr, kp_n, r, cos2, mp, Rj, J, !cdpm2Flow);
+        double M[4][5];
+        for (int i = 0; i < 4; ++i) { for (int j = 0; j < 4; ++j) M[i][j] = J[i][j]; M[i][4] = -Rj[i]; }
+        bool singular = false;
+        for (int c = 0; c < 4 && !singular; ++c) {
+            int piv = c; for (int rr = c + 1; rr < 4; ++rr) if (std::fabs(M[rr][c]) > std::fabs(M[piv][c])) piv = rr;
+            for (int j = 0; j < 5; ++j) { double t = M[c][j]; M[c][j] = M[piv][j]; M[piv][j] = t; }
+            if (!(std::fabs(M[c][c]) > 1.0e-300)) { singular = true; break; }
+            for (int rr = 0; rr < 4; ++rr) if (rr != c) { double f = M[rr][c] / M[c][c]; for (int j = c; j < 5; ++j) M[rr][j] -= f * M[c][j]; }
+        }
+        if (singular) break;
+        double u[4] = { x[0] + M[0][4] / M[0][0], x[1] + M[1][4] / M[1][1], x[2] + M[2][4] / M[2][2], x[3] + M[3][4] / M[3][3] };
+        bool fin = true; for (int i = 0; i < 4; ++i) fin = fin && std::isfinite(u[i]);
+        // stay inside the admissible set the nested root lives in; a step that leaves it, or does not reduce
+        // the scaled residual, ends the polish (the nested root itself is then what is checked)
+        if (!fin || u[1] < 0.0 || u[2] < 0.0 || u[3] < kp_n) break;
+        double Ru[4];
+        cdpm2HardeningResidual(u[0], u[1], u[2], u[3], xi_tr, rho_tr, kp_n, r, cos2, mp, Ru, nullptr, !cdpm2Flow);
+        double nu = 0.0; for (int i = 0; i < 4; ++i) nu += (Ru[i] * sc[i]) * (Ru[i] * sc[i]);
+        if (!(nu < nn)) break;
+        for (int i = 0; i < 4; ++i) x[i] = u[i];
+        nn = nu;
+        for (int i = 0; i < 4; ++i) Rn[i] = Ru[i];
+    }
+    // HONESTY: the full residual of the 4-equation system, not f alone.
+    const bool resOk = std::fabs(Rn[0]) < NESTED_RES_TOL * fc && std::fabs(Rn[1]) < NESTED_RES_TOL * fc
+                    && std::fabs(Rn[2]) < NESTED_RES_TOL && std::fabs(Rn[3]) < NESTED_RES_TOL * (1.0 + x[3]);
+    const bool admissibleRoot = x[1] >= 0.0 && x[2] >= -1.0e-12 && x[3] >= kp_n - 1.0e-12;
+    return resOk && admissibleRoot;
+}
+
 inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& mp, double kp_n,
                                           double tol = 1.0e-11)
 {
@@ -881,7 +1232,40 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
         return R;
     }
 
-    const double cos2 = (2.0 * std::cos(th_tr)) * (2.0 * std::cos(th_tr));
+    const double cos2 = hardeningLodeFactor(rho_tr, th_tr, mp);
+
+    // VERTEX RETURN (WP concrete3d-oracle-diagnosis; mirrors the oracle return_map_vertex): f(sigV, rho=0; kp(sigV)) = 0 with
+    // kp consistent with the vertex plastic strain, on the TENSION vertex (sigV_tr > 0) or, while the [1-qh1] cap closes
+    // the surface (kp_n < 1), the COMPRESSION vertex; accepted only inside the cone of potential normals (it replaced a
+    // sign-flipping apex projection that let hydrostatic compression never yield, OOFEM con2dpm3/4).
+    auto tryVertex = [&]() -> bool {
+        double sV = 0.0, kpv = kp_n, dlv = 0.0;
+        const double c_th_v = vertexLodeFactor(!(xi_tr < 0.0), cos2, mp);
+        if (returnMapVertex(xi_tr / SQRT3, rho_tr, mp, kp_n, sV, kpv, dlv, c_th_v)) {
+            double svv[6] = {sV, sV, sV, 0, 0, 0};
+            const double fv = yieldF(svv, mp, qh1Of(kpv, mp.qh0, mp.Hp), qh2Of(kpv, mp.Hp));
+            if (std::isfinite(fv) && std::fabs(fv) < F_TOL_HONEST && kpv >= kp_n - 1.0e-12) {
+                for (int a = 0; a < 3; ++a) R.sp[a] = sV;
+                R.xi = SQRT3 * sV; R.rho = 0.0; R.dlam = dlv; R.kp = kpv;
+                R.apex = true; R.converged = true; R.plastic = true; R.f_after = fv;
+                return true;
+            }
+        }
+        return false;
+    };
+    // The TENSION path (CDPM2 flow, sigma_V,tr > 0) is where review 3 of #877 found the direct return failing and its root
+    // a coin flip (MAJOR 1). r4: (1) the vertex, taken whenever it is admissible (probe6: kp 23 vs kp 113 in one 2e-6
+    // window before); (2) among regular roots a deterministic SELECTION RULE, the smallest kappa_p resolvable on the
+    // returnMapNested grid, evaluated as: the plain Newton, plus a scan below its root when it carries enough plastic
+    // strain (NESTED_LOWER_GDEV), else the full nested scan; newtonGlob last. A rule, not continuation: on a loading ray
+    // the selected root can still jump one-sidedly (ADR-31 section 17). Without the rule (the first r4 cut: Newton root,
+    // nested only as rescue) the two solvers gave different genuine roots on neighbouring trials (351 neighbour jumps
+    // > 1 MPa on 40 rays, up to 102 MPa). Compression and the legacy flow keep the PR-head / oracle order (regular
+    // Newtons first, then the vertex, then the clamped retry); the nested solve is added after all of them, so it changes
+    // only trials that used to FAIL.
+    const bool tensionPath = cdpm2Flow0(mp) && xi_tr > 0.0;
+    if (tensionPath && tryVertex()) return R;
+
     const double m_v = Df * m0 / (SQRT3 * fc);
     double xi = xi_tr, rho = rho_tr, dlam = 0.0, kp = kp_n;
     bool apex = false, converged = false;
@@ -975,16 +1359,40 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
     // then made the stress a DISCONTINUOUS function of the strain (spurious element-Newton roots: OOFEM con2dpm2
     // at one sub-step gave -3.22 MPa + return-map warnings in the C++ build). A vertex solution cannot satisfy R2
     // with rho pinned at 0 => stop early (rho stuck at 0 for 3 iterations) and flag apex => vertex candidate.
+    //
+    // WP concrete3d-hang-diagnosis review #877, defect 2 (MAJOR), option A (mirror of the oracle _newton_glob):
+    // the ORIGINAL scheme projected (rho, dlam, kp) onto their admissible ranges on EVERY line-search trial
+    // iterate, not just the accepted one. In a TENSION-dominated trial at kappa_p < 1 (m0*RR > 1, the hardening
+    // system is locally INDEFINITE there -- df/dkappa_p > 0) that per-iterate projection repeatedly pins the
+    // iterate back onto the same clamped face: the line search bottoms out at a=1/64 nearly every step and the
+    // loop burns its 100-iteration budget (~800 residual evaluations) before falling through to the plain Newton
+    // anyway, which is also what made the direct and sub-incremented returns land on different states near
+    // first cracking (stress discontinuous in strain). Fix: the line search evaluates the UNPROJECTED iterate;
+    // the physically-required projection (rho>=0, dlam>=0, kp>=kp_n) is applied exactly once, to the FINAL
+    // returned iterate (on convergence and on the rho-stuck apex exit). The caller's admissibility gate
+    // (dlam>=-1e-12, kp>=kp_n-1e-12, on-surface f_after) remains the honesty check on whatever root is found.
     auto newtonGlob = [&]() {
         xi = xi_tr; rho = rho_tr; dlam = 0.0; kp = kp_n; apex = false; converged = false;
         double Rr[4];
-        cdpm2HardeningResidual(xi, rho, dlam, kp, xi_tr, rho_tr, kp_n, r, cos2, mp, Rr);
+        cdpm2HardeningResidual(xi, rho, dlam, kp, xi_tr, rho_tr, kp_n, r, cos2, mp, Rr, nullptr, !cdpm2Flow);
         int stuck = 0;
+        auto project = [&]() {
+            if (rho < 0.0) rho = 0.0;
+            if (dlam < 0.0) dlam = 0.0;
+            if (kp < kp_n) kp = kp_n;
+        };
         for (int it = 0; it < 100; ++it) {
             if (std::fabs(Rr[0]) < tol * fc && std::fabs(Rr[1]) < tol * fc
-                && std::fabs(Rr[2]) < tol && std::fabs(Rr[3]) < tol) { converged = true; return; }
+                && std::fabs(Rr[2]) < tol && std::fabs(Rr[3]) < tol) {
+                // ADMISSIBILITY on the UNPROJECTED root (review #877 minor 1; mirror of the oracle _newton_glob): the caller's
+                // gate sees the projected dlam / kp (admissible by construction), so a root with dlam < 0 or kp < kp_n used to
+                // be accepted as its clamp. Outside the cone it is a non-convergence and falls through to the plain scheme /
+                // vertex return.
+                const bool admissibleRoot = (dlam >= -1.0e-12) && (kp >= kp_n - 1.0e-12);
+                project(); converged = admissibleRoot; return;
+            }
             double Rj[4], J[4][4];
-            cdpm2HardeningResidual(xi, rho, dlam, kp, xi_tr, rho_tr, kp_n, r, cos2, mp, Rj, J);
+            cdpm2HardeningResidual(xi, rho, dlam, kp, xi_tr, rho_tr, kp_n, r, cos2, mp, Rj, J, !cdpm2Flow);
             double M[4][5];
             for (int i = 0; i < 4; ++i) { for (int j = 0; j < 4; ++j) M[i][j] = J[i][j]; M[i][4] = -Rr[i]; }
             for (int c = 0; c < 4; ++c) {
@@ -1001,10 +1409,8 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
             double a = 1.0, un[4], Rn[4];
             for (;;) {
                 un[0] = xi + a * step[0]; un[1] = rho + a * step[1]; un[2] = dlam + a * step[2]; un[3] = kp + a * step[3];
-                if (un[1] < 0.0) un[1] = 0.0;
-                if (un[2] < 0.0) un[2] = 0.0;
-                if (un[3] < kp_n) un[3] = kp_n;
-                cdpm2HardeningResidual(un[0], un[1], un[2], un[3], xi_tr, rho_tr, kp_n, r, cos2, mp, Rn);
+                // UNPROJECTED (option A): no per-iterate clamp; see the block comment above newtonGlob.
+                cdpm2HardeningResidual(un[0], un[1], un[2], un[3], xi_tr, rho_tr, kp_n, r, cos2, mp, Rn, nullptr, !cdpm2Flow);
                 double nn = 0.0; bool fin = true;
                 for (int i = 0; i < 4; ++i) { fin = fin && std::isfinite(Rn[i]); nn += (Rn[i] * sc[i]) * (Rn[i] * sc[i]); }
                 if ((fin && std::sqrt(nn) < (1.0 - 1.0e-4 * a) * n0) || a < 1.0 / 64.0) break;
@@ -1012,73 +1418,82 @@ inline PrincipalResult returnMapHardening(const double sigTr[3], const Params& m
             }
             xi = un[0]; rho = un[1]; dlam = un[2]; kp = un[3];
             for (int i = 0; i < 4; ++i) Rr[i] = Rn[i];
-            stuck = (rho == 0.0) ? stuck + 1 : 0;
-            if (stuck >= 3) { apex = true; return; }
+            stuck = (rho <= 0.0) ? stuck + 1 : 0;
+            if (stuck >= 3) { project(); apex = true; return; }
         }
     };
     // cdpm2: the globalized Newton first; if it fails (not an axis overshoot), fall back to the plain scheme
     // (whose rho<0 abort feeds the vertex test + the clamped retry below) before giving up.
-    if (cdpm2Flow) { newtonGlob(); if (!converged && !apex) newton(false); }
-    else newton(false);
+    // legacy (WP concrete3d-hang-diagnosis #877 follow-up): the direct plain Newton runs first EXACTLY as
+    // before (every converging case, hence every pinned fixture, is byte-identical); only a non-convergent,
+    // non-apex outcome hands over to the globalized Newton (legacy-flow residual, unprojected line search) as
+    // a rescue, and only then to the honest failure. Measured on the plain legacy Newton alone: 10-13 % of
+    // ordinary tension-dominated first-cracking increments (expansive lateral strain, what an FE Newton
+    // iterate produces) failed the return map and silently fell to the elastic trial.
+    // NESTED FALLBACK (r4 port of db02ccc70 DR-1a, with the honesty defect fixed): the same system as a bracketed 1-D
+    // root (returnMapNested; every iterate admissible by construction), polished with residual-decreasing Newton steps
+    // and accepted ONLY if the FULL residual (R1, R2 flow, R3 yield, R4 hardening) is small and the root admissible
+    // (polishHardeningRoot). db02ccc70 set converged = true unconditionally after 5 unchecked, clamped polish steps and
+    // the gate below checked f alone, so an off-flow state could pass.
+    bool nestedTried = false;
+    auto tryNested = [&]() -> bool {
+        nestedTried = true;
+        double u[4];
+        if (returnMapNested(xi_tr, rho_tr, r, cos2, mp, kp_n, u[0], u[1], u[2], u[3])
+            && polishHardeningRoot(u, xi_tr, rho_tr, kp_n, r, cos2, mp, tol)) {
+            xi = u[0]; rho = u[1]; dlam = u[2]; kp = u[3]; converged = true; apex = false;
+            return true;
+        }
+        return false;
+    };
+    if (tensionPath) {
+        // r4 order (see tensionPath above). If the plain scheme aborted on an axis overshoot (apex) and nothing converges,
+        // keep the apex verdict so the clamped retry below still runs.
+        // Cost (r4 re-review): the full 16-cell scan on every piece made the default mode 2x slower than the PR head, so
+        // the plain Newton goes first; when it converges to an admissible root at rho_N with enough plastic strain
+        // (NESTED_LOWER_GDEV / _DQH2), only the grid cells BELOW rho_N are scanned for a smaller-kappa_p root, and the smaller is
+        // kept. Same roots as the full scan, to round-off, on every probe run (ADR-31 section 17); the full scan runs when the
+        // Newton fails.
+        newton(false);
+        if (converged && !apex && rho > 0.0 && dlam >= -1.0e-12 && kp >= kp_n - 1.0e-12) {
+            double u[4];
+            if (((rho_tr - rho) / (2.0 * G) > NESTED_LOWER_GDEV * mp.ft / mp.E || mp.Hp * (kp - kp_n) > NESTED_LOWER_DQH2)
+                && returnMapNested(xi_tr, rho_tr, r, cos2, mp, kp_n, u[0], u[1], u[2], u[3], rho)
+                && u[3] < kp && polishHardeningRoot(u, xi_tr, rho_tr, kp_n, r, cos2, mp, tol) && u[3] < kp) {
+                xi = u[0]; rho = u[1]; dlam = u[2]; kp = u[3];
+            }
+        } else {
+            const bool plainApex = apex;
+            if (!tryNested()) { newtonGlob(); if (!converged && !apex) apex = plainApex; }
+        }
+    }
+    else if (cdpm2Flow) { newtonGlob(); if (!converged && !apex) newton(false); }
+    else { newton(false); if (!converged && !apex) newtonGlob(); }
     const bool overshot = apex;
 
-    R.xi = xi; R.rho = rho; R.dlam = dlam; R.kp = kp; R.plastic = true;
-    if (!apex) {
+    // regular-root acceptance: dlam >= 0, kp >= kp_n, honest on-surface f at the returned stress with its own Lode angle
+    auto acceptRegular = [&]() -> bool {
+        R.xi = xi; R.rho = rho; R.dlam = dlam; R.kp = kp; R.plastic = true;
         const double p_new = xi / SQRT3;
         const double dev_scale = (rho_tr > 0.0) ? rho / rho_tr : 0.0;
         for (int a = 0; a < 3; ++a) R.sp[a] = R.s_tr[a] * dev_scale + p_new;
-        // HONEST convergence: recompute f at the returned stress with ITS OWN Lode angle.
         double svn[6] = {R.sp[0], R.sp[1], R.sp[2], 0, 0, 0};
         R.f_after = yieldF(svn, mp, qh1Of(kp, mp.qh0, mp.Hp), qh2Of(kp, mp.Hp));
-        // ADMISSIBILITY (PR #249 adversarial-review fix): a valid plastic return needs dlam>=0 and a
-        // NON-DECREASING hardening variable (kp>=kp_n). Never report converged for an inadmissible/
-        // off-surface state.
         const bool admissible = std::isfinite(R.f_after) && dlam >= -1.0e-12 && kp >= kp_n - 1.0e-12;
-        if (converged && std::fabs(R.f_after) < F_TOL_HONEST && admissible) {
-            R.converged = true;
-            return R;
-        }
-    }
-    // VERTEX RETURN (WP concrete3d-oracle-diagnosis; mirrors the oracle return_map_vertex). Reached when
-    // the regular (radial) return overshot the hydrostatic axis (rho<0), did not converge, or landed
-    // inadmissible. The OLD branch projected EVERY such trial onto the hydrostatic-TENSION vertex with the
-    // kp of the ABORTED Newton iterate: a deep-compression trial was sign-flipped to tension (then rejected
-    // by the PR #249 gate => ELASTIC fallback — hydrostatic compression never yielded, OOFEM con2dpm3), and
-    // the tension-vertex kp was an arbitrary iterate value (hydrostatic tension step-size dependent, no
-    // convergence under refinement, con2dpm4). returnMapVertex solves f(sigV, rho=0; kp(sigV)) = 0 with kp
-    // CONSISTENT with the vertex plastic strain, on the TENSION vertex (sigV_tr>0) or — while the [1-qh1]
-    // cap closes the surface (kp_n<1) — the COMPRESSION vertex, accepted only inside the cone of plastic-
-    // potential normals. Otherwise: SAFE honest failure (elastic predictor, converged=false => the
-    // caller's status!=0 cuts the step) — the PR #249 contract is unchanged.
-    {
-        double sV = 0.0, kpv = kp_n, dlv = 0.0;
-        if (returnMapVertex(xi_tr / SQRT3, rho_tr, mp, kp_n, sV, kpv, dlv)) {
-            double svv[6] = {sV, sV, sV, 0, 0, 0};
-            const double fv = yieldF(svv, mp, qh1Of(kpv, mp.qh0, mp.Hp), qh2Of(kpv, mp.Hp));
-            if (std::isfinite(fv) && std::fabs(fv) < F_TOL_HONEST && kpv >= kp_n - 1.0e-12) {
-                for (int a = 0; a < 3; ++a) R.sp[a] = sV;
-                R.xi = SQRT3 * sV; R.rho = 0.0; R.dlam = dlv; R.kp = kpv;
-                R.apex = true; R.converged = true; R.f_after = fv;
-                return R;
-            }
-        }
-    }
+        if (converged && std::fabs(R.f_after) < F_TOL_HONEST && admissible) { R.apex = false; R.converged = true; return true; }
+        return false;
+    };
+    R.xi = xi; R.rho = rho; R.dlam = dlam; R.kp = kp; R.plastic = true;
+    if (!apex && acceptRegular()) return R;
+    // compression / legacy flow: the vertex AFTER the regular Newtons (the PR-head and oracle order)
+    if (!tensionPath && tryVertex()) return R;
     // Regular RETRY with rho clamped at 0 (only after an axis overshoot whose vertex was rejected).
     if (overshot) {
         newton(true);
-        if (converged && rho > 0.0) {
-            const double p_new = xi / SQRT3;
-            const double dev_scale = (rho_tr > 0.0) ? rho / rho_tr : 0.0;
-            for (int a = 0; a < 3; ++a) R.sp[a] = R.s_tr[a] * dev_scale + p_new;
-            double svn[6] = {R.sp[0], R.sp[1], R.sp[2], 0, 0, 0};
-            R.f_after = yieldF(svn, mp, qh1Of(kp, mp.qh0, mp.Hp), qh2Of(kp, mp.Hp));
-            const bool admissible = std::isfinite(R.f_after) && dlam >= -1.0e-12 && kp >= kp_n - 1.0e-12;
-            if (std::fabs(R.f_after) < F_TOL_HONEST && admissible) {
-                R.xi = xi; R.rho = rho; R.dlam = dlam; R.kp = kp; R.apex = false; R.converged = true;
-                return R;
-            }
-        }
+        if (converged && rho > 0.0 && acceptRegular()) return R;
     }
+    // compression / legacy flow: the nested solve last, so it can only rescue a trial the PR-head path failed
+    if (!nestedTried && tryNested() && acceptRegular()) return R;
     for (int a = 0; a < 3; ++a) R.sp[a] = sigTr[a];   // safe fallback = elastic predictor
     R.kp = kp_n; R.xi = xi_tr; R.rho = rho_tr; R.dlam = 0.0; R.apex = false;
     R.f_after = yfInvHard(xi_tr, rho_tr, r, kp_n, mp);
@@ -1165,6 +1580,21 @@ inline void elasticPredTensor(const double sig_n[6], const double deps[6], const
 }
 
 // ---------------------------------------------------------------------------
+// Hardening-history sensitivities of ONE direct return (needed to chain sub-incremented pieces exactly): with
+// sigma_new = R(sigma_tr, kappa_n) and kappa_new = K(sigma_tr, kappa_n),
+//   Sk = d sigma_new / d kappa_n   (tensor-Voigt vector),
+//   R  = d kappa_new / d sigma_tr  (row over the tensor-Voigt sigma_tr; shear entries carry the factor 2),
+//   Kk = d kappa_new / d kappa_n.
+// Defaults are the ELASTIC piece (Sk = 0, R = 0, Kk = 1). Fed by the same implicit-function solve as the principal
+// Jacobian (one extra right-hand side, dR4/dkappa_n = -1), so it costs one more back-substitution.
+// ---------------------------------------------------------------------------
+struct PieceSens {
+    double Sk[6] = {0, 0, 0, 0, 0, 0};
+    double R[6]  = {0, 0, 0, 0, 0, 0};
+    double Kk = 1.0;
+};
+
+// ---------------------------------------------------------------------------
 // Principal Jacobian D[a][b] = d(sp_a)/d(w_b) by the implicit-function theorem on
 // the SAME residual the inner Newton solved (perfect-plastic OR hardening). This is
 // the analytic backbone of the consistent tangent. The single Lode directional
@@ -1180,27 +1610,30 @@ inline double lodeOfPrincipal(const double w[3], double e)
     return lodeR(th, e);
 }
 
-// Optional kappa outputs (apeGmsh #2621 F2, the sub-step chain rule): dspDkn[a] = d(sp_a)/d(kp_n),
-// dkpDw[b] = d(kp)/d(w_b), *dkpDkn = d(kp)/d(kp_n), from the SAME converged 4x4 IFT with the extra kp_n
-// right-hand side dR/dkp_n = (0, 0, 0, -1) (only R4 = kp - kp_n - ... carries kp_n). D is computed exactly as
-// before (the extra solve is separate), so the reported direct-return tangent is unchanged bit for bit.
 inline void principalJacobian(const double w[3], const PrincipalResult& pr, const Params& mp,
-                              bool hardening, double D[3][3],
-                              double dspDkn[3] = nullptr, double dkpDw[3] = nullptr, double* dkpDkn = nullptr)
+                              bool hardening, double D[3][3], double* hs = nullptr)
 {
+    // hs (optional, 7 doubles, hardening branch): [0..2] d sp_a/d kappa_n, [3..5] d kappa_new/d w_b, [6] d kappa_new/d kappa_n
     const double fc = mp.fc, m0 = mp.m0, K = bulkK(mp), G = shearG(mp);
     const double rho_tr = pr.rho_tr, rho = pr.rho, dlam = pr.dlam, r = pr.r, xi = pr.xi, kp = pr.kp;
     const double m_v = mp.Df * m0 / (SQRT3 * fc);
     const double m_s = 3.0 * rho / (fc * fc) + m0 / (SQRT6 * fc);
 
-    // dr/dw_b : scalar central difference of the (smooth-in-w) Lode r.
-    double dr_dw[3];
-    {
-        const double h = 1.0e-6 * (fc + 1.0);
+    // dr/dw_b, closed form (r4 port of db02ccc70; was a scalar central difference of lodeOfPrincipal):
+    //   cos 3theta = 3 sqrt6 J3 / rho^3,  d(cos 3theta)/dw_b = 3 sqrt6/rho^3 (s_b^2 - rho^2/3 - 3 J3 s_b / rho^2),
+    //   dr/dw_b = dr/d(cos 3theta) * d(cos 3theta)/dw_b.  Zero on the hydrostatic axis (rho_tr -> 0).
+    double dr_dw[3] = {0.0, 0.0, 0.0};
+    if (rho_tr > 1.0e-12 * fc) {
+        const double sigV_t = (w[0] + w[1] + w[2]) / 3.0;
+        const double s_t0[3] = { w[0] - sigV_t, w[1] - sigV_t, w[2] - sigV_t };
+        const double j3_t0 = s_t0[0] * s_t0[1] * s_t0[2];
+        double c3 = (3.0 * SQRT6 / (rho_tr * rho_tr * rho_tr)) * j3_t0;
+        if (c3 > 1.0) c3 = 1.0; else if (c3 < -1.0) c3 = -1.0;
+        const double dr_dc3 = drDcos3thetaRegularized(std::cos(std::acos(c3) / 3.0), mp.e);
         for (int b = 0; b < 3; ++b) {
-            double wp[3] = {w[0], w[1], w[2]}, wm[3] = {w[0], w[1], w[2]};
-            wp[b] += h; wm[b] -= h;
-            dr_dw[b] = (lodeOfPrincipal(wp, mp.e) - lodeOfPrincipal(wm, mp.e)) / (2.0 * h);
+            const double dc3_dwb = (3.0 * SQRT6 / (rho_tr * rho_tr * rho_tr))
+                                 * (s_t0[b] * s_t0[b] - (rho_tr * rho_tr) / 3.0 - (3.0 * j3_t0 / (rho_tr * rho_tr)) * s_t0[b]);
+            dr_dw[b] = dr_dc3 * dc3_dwb;
         }
     }
 
@@ -1232,14 +1665,11 @@ inline void principalJacobian(const double w[3], const PrincipalResult& pr, cons
                 D[a][b] = ds_tr_a * scale + pr.s_tr[a] * dscale + (1.0 / SQRT3) * dxi;
             }
         }
-        // perfect-plastic map: kp is not a variable (kp = kp_n)
-        for (int a = 0; a < 3; ++a) { if (dspDkn) dspDkn[a] = 0.0; if (dkpDw) dkpDw[a] = 0.0; }
-        if (dkpDkn) *dkpDkn = 1.0;
     } else {
         // 4x4 J_u (xi,rho,dlam,kp); reuse the analytic entries from returnMapHardening.
         double sv[6] = {w[0], w[1], w[2], 0, 0, 0}, xitr, rhotr, thtr;
         invariants(sv, xitr, rhotr, thtr);
-        const double cos2 = (2.0 * std::cos(thtr)) * (2.0 * std::cos(thtr));
+        const double cos2 = hardeningLodeFactor(rhotr, thtr, mp);
         const double mnorm = std::sqrt(m_v * m_v + m_s * m_s);
         const double sigV = xi / SQRT3;
         const double xh = ductilityXh(sigV, fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh);
@@ -1297,8 +1727,8 @@ inline void principalJacobian(const double w[3], const PrincipalResult& pr, cons
                 wp[b] += h; wm[b] -= h;
                 double svp[6] = {wp[0],wp[1],wp[2],0,0,0}, svm[6] = {wm[0],wm[1],wm[2],0,0,0};
                 double x1,r1,t1,x2,r2,t2; invariants(svp,x1,r1,t1); invariants(svm,x2,r2,t2);
-                const double cp = (2.0*std::cos(t1))*(2.0*std::cos(t1));
-                const double cm = (2.0*std::cos(t2))*(2.0*std::cos(t2));
+                const double cp = hardeningLodeFactor(r1, t1, mp);
+                const double cm = hardeningLodeFactor(r2, t2, mp);
                 dcos2_dw[b] = (cp - cm) / (2.0 * h);
             }
         }
@@ -1321,27 +1751,26 @@ inline void principalJacobian(const double w[3], const PrincipalResult& pr, cons
             }
             const double dxi  = M[0][4] / M[0][0];
             const double drho = M[1][4] / M[1][1];
+            if (hs) hs[3 + b] = M[3][4] / M[3][3];                     // d kappa_new / d w_b
             const double dscale = (rhotr > 0.0) ? (drho * rhotr - rho * (s_tr_b / rhotr)) / (rhotr * rhotr) : 0.0;
             const double scale = (rhotr > 0.0) ? rho / rhotr : 0.0;
             for (int a = 0; a < 3; ++a) {
                 const double ds_tr_a = (a == b ? 1.0 : 0.0) - 1.0 / 3.0;
                 D[a][b] = ds_tr_a * scale + pr.s_tr[a] * dscale + (1.0 / SQRT3) * dxi;
             }
-            if (dkpDw) dkpDw[b] = M[3][4] / M[3][3];
         }
-        if (dspDkn || dkpDkn) {
-            // the kp_n column: Ju u = -(0, 0, 0, -1); s_tr and rho_tr do not depend on kp_n
+        if (hs) {
+            // kappa_n column: R4 = kappa - kappa_n - ..., so J u = +e4 (u = d(xi,rho,dlam,kappa)/d kappa_n)
             double M[4][5];
             for (int i = 0; i < 4; ++i) { for (int j = 0; j < 4; ++j) M[i][j] = Ju[i][j]; M[i][4] = (i == 3) ? 1.0 : 0.0; }
             for (int c = 0; c < 4; ++c) {
                 int piv = c; for (int rr = c + 1; rr < 4; ++rr) if (std::fabs(M[rr][c]) > std::fabs(M[piv][c])) piv = rr;
-                for (int j = 0; j < 5; ++j) { double t = M[c][j]; M[c][j] = M[piv][j]; M[piv][j] = t; }
+                for (int j = 0; j < 5; ++j) { double tt = M[c][j]; M[c][j] = M[piv][j]; M[piv][j] = tt; }
                 for (int rr = 0; rr < 4; ++rr) if (rr != c) { double f = M[rr][c] / M[c][c]; for (int j = c; j < 5; ++j) M[rr][j] -= f * M[c][j]; }
             }
-            const double dxi = M[0][4] / M[0][0], drho = M[1][4] / M[1][1];
-            const double scale_k = (rhotr > 0.0) ? drho / rhotr : 0.0;
-            if (dspDkn) for (int a = 0; a < 3; ++a) dspDkn[a] = pr.s_tr[a] * scale_k + (1.0 / SQRT3) * dxi;
-            if (dkpDkn) *dkpDkn = M[3][4] / M[3][3];
+            const double dxi_k = M[0][4] / M[0][0], drho_k = M[1][4] / M[1][1];
+            for (int a = 0; a < 3; ++a) hs[a] = pr.s_tr[a] * ((rhotr > 0.0) ? drho_k / rhotr : 0.0) + dxi_k / SQRT3;
+            hs[6] = M[3][4] / M[3][3];
         }
     }
 }
@@ -1355,117 +1784,76 @@ inline void principalJacobian(const double w[3], const PrincipalResult& pr, cons
 // hydrostatic trial is regular. Every row equal => zero deviatoric stiffness (the stress is pinned to the
 // axis) — the rank-deficient apex tangent handoff §6 listed as owed. Returns false on a degenerate state.
 // ---------------------------------------------------------------------------
-// Optional kappa outputs (F2), the same IFT: F_kpn = f_k (kp = kp_n + eq/xh => dkp/dkp_n|explicit = 1), so
-//   dsigV/dkp_n = -f_k / F_s,  dkp/dkp_n = 1 + kp_s dsigV/dkp_n,
-//   dkp/dw_b = kp_s dsigV/dw_b + kp_st/3 + s_tr_b/(4 G^2 eq xh).
 inline bool vertexPrincipalJacobian(const double w[3], const PrincipalResult& pr, const Params& mp, double D[3][3],
-                                    double dspDkn[3] = nullptr, double dkpDw[3] = nullptr, double* dkpDkn = nullptr)
+                                    double* hs = nullptr)
 {
+    // r4 port of db02ccc70: kp = kp_n + c eq/xh(sigV) with c = vertexLodeFactor (lodeFactor 1: the regular map's factor on
+    // the TENSION vertex; otherwise 1, as returnMapHardening picks it), so kp can depend on w through c(w):
+    //   dkp/dw_b = (c/xh) d eq/dw_b + (eq/xh) dc/dw_b,  dc/dw_b = dc/drho_tr s_b/rho_tr + dc/dcos dcos/dcos3 dcos3/dw_b.
+    // With c = 1 this is exactly the previous Jacobian (F_sigVtr/3 + F_rhotr s_b/rho_tr, the rho_tr factor cancelled).
     const double fc = mp.fc, m0 = mp.m0, K = bulkK(mp), G = shearG(mp);
     const double sigV = pr.xi / SQRT3, kp = pr.kp;
     const double sigV_tr = (w[0] + w[1] + w[2]) / 3.0;
-    const double d = sigV_tr - sigV, g = pr.rho_tr / (2.0 * G);
-    const double eq = std::sqrt(d * d / (3.0 * K * K) + g * g);
+    const double dsig_v = sigV_tr - sigV;
+    const double rho_t0 = pr.rho_tr;
+    const double g_dev = rho_t0 / (2.0 * G);
+    const double N_vx = std::sqrt(dsig_v * dsig_v / (3.0 * K * K) + g_dev * g_dev);
     const double xh = ductilityXh(sigV, fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh);
-    const double dxh = dDuctilityXhdSigV(sigV, fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh);
-    if (!(eq > 0.0) || !(xh > 0.0)) return false;
-    const double kp_s  = (-d / (3.0 * K * K)) / (eq * xh) - eq * dxh / (xh * xh);   // dkp/dsigV
-    const double kp_st = ( d / (3.0 * K * K)) / (eq * xh);                           // dkp/dsigV_tr
+    const double dxh_dsig = dDuctilityXhdSigV(sigV, fc, mp.Ah, mp.Bh, mp.Ch, mp.Dh);
+    if (!(N_vx > 0.0) || !(xh > 0.0)) return false;
+
+    double sv[6] = {w[0], w[1], w[2], 0, 0, 0}, xitr, rhotr, thtr;
+    invariants(sv, xitr, rhotr, thtr);
+    const bool tensionVertex = !(sigV_tr < 0.0);          // returnMapHardening: c_th_v = (xi_tr < 0) ? 1 : cos2
+    const double c_th0 = vertexLodeFactor(tensionVertex, hardeningLodeFactor(rho_t0, thtr, mp), mp);
+
+    const double dN_dsig = -(dsig_v / (3.0 * K * K)) / N_vx;
+    const double dkp_dsig = (c_th0 / xh) * dN_dsig - (c_th0 * N_vx / (xh * xh)) * dxh_dsig;
+
     // f on the axis: f = cap^2 + m0 q1^2 q2 s - q1^2 q2^2, cap = (1-q1) s^2, s = sigV/fc
     const double q1 = qh1Of(kp, mp.qh0, mp.Hp), q2 = qh2Of(kp, mp.Hp);
     const double dq1 = dqh1OfdKp(kp, mp.qh0, mp.Hp), dq2 = dqh2OfdKp(kp, mp.Hp);
     const double s = sigV / fc, cap = (1.0 - q1) * s * s;
-    const double f_s = (2.0 * cap * (1.0 - q1) * 2.0 * s + m0 * q1 * q1 * q2) / fc;
-    const double f_k = 2.0 * cap * (-dq1 * s * s) + m0 * s * (2.0 * q1 * q2 * dq1 + q1 * q1 * dq2)
-                     - (2.0 * q1 * q2 * q2 * dq1 + 2.0 * q1 * q1 * q2 * dq2);
-    const double F_s = f_s + f_k * kp_s;
-    if (!(std::fabs(F_s) > 0.0)) return false;
+    const double dF_dsig = (2.0 * cap * (1.0 - q1) * 2.0 * s + m0 * q1 * q1 * q2) / fc;
+    const double dF_dkp  = 2.0 * cap * (-dq1 * s * s) + m0 * s * (2.0 * q1 * q2 * dq1 + q1 * q1 * dq2)
+                         - (2.0 * q1 * q2 * q2 * dq1 + 2.0 * q1 * q1 * q2 * dq2);
+    const double denom_F = dF_dsig + dF_dkp * dkp_dsig;
+    if (!(std::fabs(denom_F) > 0.0)) return false;
+
+    // dc/dw (zero for the compressive vertex and in lodeFactor mode 0, where the vertex factor is the constant 1)
+    double dct_dw[3] = {0.0, 0.0, 0.0};
+    if (mp.lodeFactor == 1 && tensionVertex && rho_t0 > 1.0e-12 * fc) {
+        const double ft = mp.ft, rho_th = 1.0e-4 * ft;
+        const double cos_t0 = std::cos(thtr);
+        const double denom_ct = rho_t0 * rho_t0 + rho_th * rho_th;
+        const double w_ct = (rho_t0 * rho_t0) / denom_ct;
+        const double dw_ct_drho = 2.0 * rho_t0 * (rho_th * rho_th) / (denom_ct * denom_ct);
+        const double two_cos = 2.0 * cos_t0;
+        const double dct_drho = dw_ct_drho * (two_cos * two_cos - 1.0);
+        const double dct_dcos = w_ct * 8.0 * cos_t0;
+        const double denom_c3 = 3.0 * (4.0 * cos_t0 * cos_t0 - 1.0);   // d(cos 3theta)/d(cos theta)
+        const double dcos_dcos3 = (std::fabs(denom_c3) > 1.0e-5) ? (1.0 / denom_c3) : 0.0;
+        const double s_t0[3] = { w[0] - sigV_tr, w[1] - sigV_tr, w[2] - sigV_tr };
+        const double j3_t0 = s_t0[0] * s_t0[1] * s_t0[2];
+        for (int b = 0; b < 3; ++b) {
+            const double dcos3_dw_b = (3.0 * SQRT6 / (rho_t0 * rho_t0 * rho_t0))
+                                    * (s_t0[b] * s_t0[b] - (rho_t0 * rho_t0) / 3.0 - (3.0 * j3_t0 / (rho_t0 * rho_t0)) * s_t0[b]);
+            dct_dw[b] = dct_drho * (s_t0[b] / rho_t0) + dct_dcos * dcos_dcos3 * dcos3_dw_b;
+        }
+    }
     for (int b = 0; b < 3; ++b) {
-        const double dev_b = f_k * pr.s_tr[b] / (4.0 * G * G * eq * xh);         // F_rhotr * s_b/rho_tr
-        const double dsdw = -(f_k * kp_st / 3.0 + dev_b) / F_s;
+        const double dN_dw_b = (dsig_v / (9.0 * K * K) + pr.s_tr[b] / (4.0 * G * G)) / N_vx;
+        const double dkp_dw_b = (c_th0 / xh) * dN_dw_b + (N_vx / xh) * dct_dw[b];
+        const double dsdw = -(dF_dkp * dkp_dw_b) / denom_F;
         for (int a = 0; a < 3; ++a) D[a][b] = dsdw;
-        if (dkpDw) dkpDw[b] = kp_s * dsdw + kp_st / 3.0 + pr.s_tr[b] / (4.0 * G * G * eq * xh);
+        if (hs) hs[3 + b] = dkp_dsig * dsdw + dkp_dw_b;
     }
-    const double dsdk = -f_k / F_s;
-    if (dspDkn) for (int a = 0; a < 3; ++a) dspDkn[a] = dsdk;
-    if (dkpDkn) *dkpDkn = 1.0 + kp_s * dsdk;
+    if (hs) {                                   // kappa_n enters kp = kp_n + c eq/xh with unit weight
+        const double dsdk = -dF_dkp / denom_F;
+        for (int a = 0; a < 3; ++a) hs[a] = dsdk;
+        hs[6] = 1.0 + dkp_dsig * dsdk;
+    }
     return true;
-}
-
-// ---------------------------------------------------------------------------
-// Spectral lift of a principal Jacobian D[a][b] = d(sp_a)/d(w_b) to the 4th-order d(sigma)/d(sigma_trial)
-// (eigenprojection part + the spin part, de Souza Neto Box A.6). Shared by consistentTangent and pieceJacobian.
-// ---------------------------------------------------------------------------
-inline void principalLift(const double w[3], const double V[3][3], const PrincipalResult& pr, const Params& mp,
-                          const double D[3][3], double Dt[3][3][3][3])
-{
-    // eigenprojections E_a = e_a (x) e_a (rank-1)
-    double E[3][3][3];
-    for (int a = 0; a < 3; ++a) for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) E[a][i][j] = V[i][a] * V[j][a];
-    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) for (int k = 0; k < 3; ++k) for (int l = 0; l < 3; ++l) {
-        double val = 0.0;
-        for (int a = 0; a < 3; ++a) for (int b = 0; b < 3; ++b) val += D[a][b] * E[a][i][j] * E[b][k][l];
-        Dt[i][j][k][l] = val;
-    }
-    // spin part: sum_{a!=b} gamma_ab * 0.5*(E_a_ik E_b_jl + E_a_il E_b_jk)
-    for (int a = 0; a < 3; ++a) for (int b = 0; b < 3; ++b) {
-        if (a == b) continue;
-        double dw = w[a] - w[b];
-        double gamma;
-        if (std::fabs(dw) > 1.0e-9 * (mp.fc + 1.0)) gamma = (pr.sp[a] - pr.sp[b]) / dw;
-        else gamma = D[a][a] - D[a][b];          // l'Hopital limit (repeated eigenvalues)
-        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) for (int k = 0; k < 3; ++k) for (int l = 0; l < 3; ++l)
-            Dt[i][j][k][l] += gamma * 0.5 * (E[a][i][k] * E[b][j][l] + E[a][i][l] * E[b][j][k]);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Partials of ONE converged direct return (apeGmsh #2621 F2: the sub-step chain rule of Perez-Foguet,
-// Rodriguez-Ferran & Huerta, CMAME 2001). All in the 6x6 tensor-Voigt convention of consistentTangent (shear
-// COLUMNS doubled, so a matrix times a tensor-component 6-vector gives the tensor-component response):
-//   A = d sig / d sig_tr (6x6; consistentTangent's Dtan6 == A * elasticC up to rounding)
-//   b = d sig / d kp_n   (6)
-//   a = d kp / d sig_tr  (6, a row: d kp = sum_A a[A] d sig_tr[A])
-//   e = d kp / d kp_n
-// An elastic piece is the identity (A = I, b = a = 0, e = 1); so is a perfect-plastic apex or a degenerate vertex
-// Jacobian, where consistentTangent reports the elastic surrogate.
-// ---------------------------------------------------------------------------
-struct PieceJac { double A[6][6]; double b[6]; double a[6]; double e; };
-
-inline void pieceJacobian(const double w[3], const double V[3][3], const PrincipalResult& pr, const Params& mp,
-                          bool hardening, PieceJac& pj)
-{
-    static const double W6[6] = {1.0, 1.0, 1.0, 2.0, 2.0, 2.0};
-    for (int i = 0; i < 6; ++i) { pj.b[i] = 0.0; pj.a[i] = 0.0; for (int j = 0; j < 6; ++j) pj.A[i][j] = (i == j) ? 1.0 : 0.0; }
-    pj.e = 1.0;
-    if (!pr.plastic || (pr.apex && !hardening)) return;
-    double D[3][3], dspDkn[3], dkpDw[3], dkpDkn = 1.0;
-    if (pr.apex) {
-        if (!vertexPrincipalJacobian(w, pr, mp, D, dspDkn, dkpDw, &dkpDkn)) return;
-    } else {
-        principalJacobian(w, pr, mp, hardening, D, dspDkn, dkpDw, &dkpDkn);
-    }
-    double Dt[3][3][3][3];
-    principalLift(w, V, pr, mp, D, Dt);
-    const int I[6][2] = {{0,0},{1,1},{2,2},{0,1},{1,2},{0,2}};
-    for (int A = 0; A < 6; ++A) {
-        const int i = I[A][0], j = I[A][1];
-        for (int B = 0; B < 6; ++B) {
-            const int m = I[B][0], n = I[B][1];
-            double v = 0.5 * (Dt[i][j][m][n] + Dt[j][i][m][n]);
-            if (B >= 3) v += 0.5 * (Dt[i][j][n][m] + Dt[j][i][n][m]);
-            pj.A[A][B] = v;
-        }
-        double bv = 0.0, av = 0.0;
-        for (int c = 0; c < 3; ++c) {
-            const double Ec = V[i][c] * V[j][c];
-            bv += dspDkn[c] * Ec;
-            av += dkpDw[c] * Ec;
-        }
-        pj.b[A] = bv;
-        pj.a[A] = W6[A] * av;
-    }
-    pj.e = dkpDkn;
 }
 
 // ---------------------------------------------------------------------------
@@ -1477,8 +1865,9 @@ inline void pieceJacobian(const double w[3], const double V[3][3], const Princip
 // ---------------------------------------------------------------------------
 inline void consistentTangent(const double sig_tr[6], const double w[3], const double V[3][3],
                               const PrincipalResult& pr, const Params& mp, bool hardening,
-                              double Dtan6[6][6])
+                              double Dtan6[6][6], PieceSens* ps = nullptr)
 {
+    if (ps) *ps = PieceSens();   // elastic / fallback default
     // Elastic step, the non-converged safe fallback (returnMapHardening reset to the elastic
     // predictor), or a converged apex => the elastic operator. NOTE (PR #249 review): at a true
     // apex the physical tangent collapses toward zero (the stress is pinned at the vertex — an
@@ -1490,16 +1879,49 @@ inline void consistentTangent(const double sig_tr[6], const double w[3], const d
     // Jacobian (vertexPrincipalJacobian: rank-1, purely volumetric, zero deviatoric stiffness); the
     // perfect-plastic apex (returnMapPrincipal) keeps the elastic surrogate.
     if (!pr.plastic || !pr.converged || (pr.apex && !hardening)) { elasticC(mp, Dtan6); return; }
+    // eigenprojections E_a = e_a (x) e_a (rank-1)
+    double E[3][3][3];
+    for (int a = 0; a < 3; ++a) for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) E[a][i][j] = V[i][a] * V[j][a];
     double D[3][3];
+    double hs[7] = {0, 0, 0, 0, 0, 0, 1.0};
+    double* hsp = (ps && hardening) ? hs : nullptr;
     if (pr.apex) {
-        if (!vertexPrincipalJacobian(w, pr, mp, D)) { elasticC(mp, Dtan6); return; }
+        if (!vertexPrincipalJacobian(w, pr, mp, D, hsp)) { elasticC(mp, Dtan6); return; }
     } else {
-        principalJacobian(w, pr, mp, hardening, D);
+        principalJacobian(w, pr, mp, hardening, D, hsp);
+    }
+    if (hsp) {
+        double Sm[3][3], Gm[3][3];
+        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) {
+            double s1 = 0.0, s2 = 0.0;
+            for (int a = 0; a < 3; ++a) { s1 += hs[a] * E[a][i][j]; s2 += hs[3 + a] * E[a][i][j]; }
+            Sm[i][j] = s1; Gm[i][j] = s2;
+        }
+        matToVoigt(Sm, ps->Sk);
+        ps->R[0] = Gm[0][0]; ps->R[1] = Gm[1][1]; ps->R[2] = Gm[2][2];
+        ps->R[3] = 2.0 * Gm[0][1]; ps->R[4] = 2.0 * Gm[1][2]; ps->R[5] = 2.0 * Gm[0][2];
+        ps->Kk = hs[6];
     }
 
     // dsigma/dsig_tr as a 4th-order tensor 𝔻_ijkl
     double Dt[3][3][3][3];
-    principalLift(w, V, pr, mp, D, Dt);
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) for (int k = 0; k < 3; ++k) for (int l = 0; l < 3; ++l) {
+        double val = 0.0;
+        for (int a = 0; a < 3; ++a) for (int b = 0; b < 3; ++b) val += D[a][b] * E[a][i][j] * E[b][k][l];
+        Dt[i][j][k][l] = val;
+    }
+    // spin part: sum_{a!=b} gamma_ab * 0.5*(E_a_ik E_b_jl + E_a_il E_b_jk)
+    for (int a = 0; a < 3; ++a) for (int b = 0; b < 3; ++b) {
+        if (a == b) continue;
+        double dw = w[a] - w[b];
+        double gamma = 0.0;                      // apex: sp_a all equal and D rows equal => no spectral shear term
+        if (!pr.apex) {
+            if (std::fabs(dw) > 1.0e-9 * (mp.fc + 1.0)) gamma = (pr.sp[a] - pr.sp[b]) / dw;
+            else gamma = D[a][a] - D[a][b];      // l'Hopital limit (repeated eigenvalues)
+        }
+        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) for (int k = 0; k < 3; ++k) for (int l = 0; l < 3; ++l)
+            Dt[i][j][k][l] += gamma * 0.5 * (E[a][i][k] * E[b][j][l] + E[a][i][l] * E[b][j][k]);
+    }
 
     // contract with the elastic operator: dsigma/deps_ij = 𝔻_ijkl C_klmn ... but C is
     // isotropic so 𝔻:C in tensor form. Build C as a 4th-order tensor (lam dij dkl + 2G I_sym).
@@ -1574,8 +1996,8 @@ inline void plasticStrain6(const double sig_eff[6], const double eps[6], const P
 }
 
 // NB (apeGmsh #2621 F2): returnMapTensor is deliberately NOT forward-declared here. damagedTangent below used to
-// micro-FD the whole return map (up to 36 maps per tangent, across sub-step piece-count changes); it is now
-// analytic, and the declaration order makes a return-map call from it a compile error.
+// micro-FD the whole return map (up to 36 maps per tangent; on #877's deterministic map with the piece count pinned,
+// rmForFD); it is now analytic, and the declaration order makes a return-map call from it a compile error.
 
 // CDPM2 beta_c (Eq.50, P2f): the factor scaling the PLASTIC-strain part of the compressive-damage
 // driver kappa_dc1 (Eq.48). beta_c = ft*qh2(kp)*sqrt(2/3) / (rho_bar*sqrt(1+2*Df^2)), rho_bar = sqrt(2 J2)
@@ -1778,10 +2200,13 @@ inline double scalarDriver(int which, const double sig6[6], const Params& mp)
     return alphaCompression(w);
 }
 
-// Isolated micro-FD gradient d(scalarDriver)/d(sig) per Voigt component (oracle _dscalar_dsig,
-// h=1e-6). These are PER-COMPONENT grads of a scalar-of-stress => NO [1,1,1,2,2,2] tensor weight
+// Isolated micro-FD gradient d(scalarDriver)/d(sig) per Voigt component (oracle _dscalar_dsig).
+// These are PER-COMPONENT grads of a scalar-of-stress => NO [1,1,1,2,2,2] tensor weight
 // (unlike the eigenprojection / ||Deps_p|| gradients below, which DO carry it — LEDGER quirk).
-inline void dscalarDsig(int which, const double sig6[6], const Params& mp, double g[6], double h = 1.0e-6)
+// h is the caller's step, DRIVER_FD_REL * driverStressScale (below): it has no default, because an absolute step
+// is right in one unit system only (apeGmsh #2639: the former h = 1e-6, in stress units, put the damaged tangent of a
+// Pa model 1e-4 to 4e-3 off at p90 on the far-compressive states, where 1e-6 Pa is ~1e-15 of the stress).
+inline void dscalarDsig(int which, const double sig6[6], const Params& mp, double g[6], double h)
 {
     for (int k = 0; k < 6; ++k) {
         double dp[6], dm[6];
@@ -1800,20 +2225,28 @@ inline void dscalarDsig(int which, const double sig6[6], const Params& mp, doubl
 // hydrostatic range). A step that leaves the axis from it (elastic, or Duvaut-Lions relaxed) is a cone in the strain
 // too and has no derivative; there this drops the spurious meridian average and keeps the hydrostatic part exact.
 //
-// Units (apeGmsh #2621 F2 review r2). The axis test and the step are relative to the stress scale
-// S = max(ft, max_a |w_a|) of the effective state (ft floors it near zero stress). The first version used an absolute
-// 1e-12 test and a 1e-6 step, which held only in MPa: in Pa the round-off rho_bar of an apex return reaches 1.6e-9,
-// the test missed 48 of D7's 216 apex states, and the damaged tangent was off by up to 0.99.
+// Units (apeGmsh #2621 F2 review r2; #2639). The axis test and BOTH driver-gradient steps (dscalarDsig off the axis,
+// dscalarDsigAxis on it) are relative to the stress scale S = max(ft, max_a |w_a|) of the effective state (ft floors
+// it near zero stress), so the damaged tangent is the same in every unit system up to round-off. The first versions
+// used an absolute 1e-12 test and an absolute 1e-6 step, which held only in MPa: in Pa the round-off rho_bar of an
+// apex return reaches 1.6e-9, the test missed 48 of D7's 216 apex states, and the damaged tangent was off by up to
+// 0.99 (review r2); off the axis the absolute step read 1e-4 to 4e-3 at p90 on the Pa record dumps (#2639).
 //  - AXIS_RHO_REL = 1e-13. An apex return lands on the axis up to round-off: rho_bar / S <= 2.9e-16 (~1.3 ulp) on
 //    D7's apex states in MPa, kPa and Pa alike. The test sits ~350x above that round-off, and 13 decades below any
 //    deviator the damage drivers resolve.
-//  - AXIS_FD_REL = 1e-6, so h = 1e-6 S. The central FD's truncation error is O(delta^2) ~ 1e-12, because the drivers
-//    vary on the scale S along the axis. Its round-off is O(eps_mach / delta) ~ 2e-10. Both sit under the floor of
-//    D7's own reference FD (~3e-9). Measured on D7, delta = 1e-6, 6e-6 or 3e-5 all read 2.1e-9 to 3.7e-9 in the three
-//    unit systems, and 1e-7 reads up to 6.5e-9, where round-off starts to show.
+//  - DRIVER_FD_REL = 1e-6, so h = 1e-6 S on and off the axis. The drivers vary on the stress scale S (eps_tilde is
+//    of degree 1 in sig_bar, x_s and alpha_c of degree 0), so with delta = h / S the central FD's truncation error
+//    is O(delta^2) and its round-off O(eps_mach / delta), relative, in any unit system; they cross near
+//    delta ~ eps_mach^(1/3) ~ 5e-6. Measured (#2639), off the axis, on the corbel record dumps (6 397 + 10 750) scaled
+//    to MPa, kPa and Pa: the damaged-tangent p90 is 9.9e-8 at delta = 1e-8 (round-off, p50 8e-9), 7.1e-8 to 7.3e-8
+//    at 1e-7, 1e-6 and 1e-5 (the reference FD's own floor, p50 <= 2.1e-9), and 1.07e-7 at 1e-4 (truncation), the same
+//    in all three systems; the kernel check's E9 (D9 on the F2 branch) far-compressive path (|sig_bar| to 2.5e3 MPa) reads 2.6e-6 / 3.8e-7 /
+//    1.9e-7 / 2.1e-7 / 3.8e-6 at delta = 1e-8 / 1e-7 / 1e-6 / 1e-5 / 1e-4. The absolute 1e-6 it replaces is delta =
+//    1e-6 / S: ~3e-8 in MPa and ~3e-14 in Pa at S = 30 MPa, ~4e-10 in MPa at 2.5e3 MPa. On the axis, D7 reads
+//    2.1e-9 to 3.7e-9 for delta = 1e-6, 6e-6 or 3e-5 in all three unit systems and up to 6.5e-9 at 1e-7.
 static const double AXIS_RHO_REL = 1.0e-13;
-static const double AXIS_FD_REL = 1.0e-6;
-inline double axisStressScale(const double w[3], const Params& mp)
+static const double DRIVER_FD_REL = 1.0e-6;
+inline double driverStressScale(const double w[3], const Params& mp)
 {
     double s = mp.ft;
     for (int a = 0; a < 3; ++a) if (std::fabs(w[a]) > s) s = std::fabs(w[a]);
@@ -1942,9 +2375,32 @@ inline void tensileDamageWeightGrad(const Params& mp, const double depl6[6], con
 // the [1,1,1,2,2,2] double-contraction weight W6 BEFORE Ceff^T; the per-component micro-FD scalar
 // grads (det/dxs/dac) do NOT (already per-component).
 // ---------------------------------------------------------------------------
+// The deterministic piece count returnMap uses at a committed state `in` and increment d (returnMapPieces): for a
+// TENSION-DEAD point (returnMap re-bases `in` on the trial: eps = new strain, sigEff = sig_tr) the return map runs on
+// the compressive remainder of the trial with a zero increment. (#877 also used it to pin the piece count of the
+// damaged tangent's micro-FDs through the return map, rmForFD; F2 replaced those by closed forms.)
+inline int detPieces(const Params& mp, const double sig_n[6], const double deps[6], double kp_n);
+
+inline int rmPiecesFD(const Params& mp, const State& in, const double d[6])
+{
+    if (!(in.wt >= mp.omegaDead)) return detPieces(mp, in.sigEff, d, in.kp);
+    double sigTr[6]; elasticPredTensor(in.sigEff, d, mp, sigTr);
+    double A[3][3], w[3], V[3][3]; voigtToMat(sigTr, A); eig3sym(A, w, V);
+    double sm[3]; for (int a = 0; a < 3; ++a) sm[a] = w[a] < 0.0 ? w[a] : 0.0;
+    double S[3][3], minus[6];
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) {
+        double v = 0.0; for (int a = 0; a < 3; ++a) v += V[i][a] * sm[a] * V[j][a];
+        S[i][j] = v;
+    }
+    matToVoigt(S, minus);
+    const double zero[6] = {0, 0, 0, 0, 0, 0};
+    return detPieces(mp, minus, zero, in.kp);
+}
+
 // apeGmsh #2621 F2: the three composite micro-FDs THROUGH the return map (d beta_c/dε, the ctTemper and tcTemper
-// proj weights) are replaced by closed forms chained through Ceff and dkpDeps = d kp/dε (the return map's own
-// kappa row, sub-step chain rule included). damagedTangent runs no return map at all.
+// proj weights) are replaced by closed forms chained through Ceff and dkpDeps = d kp/dε (the effective return's own
+// kappa row: the sub-step chain rule, the tension-dead cut and Duvaut-Lions included, see effectiveReturn).
+// damagedTangent runs no return map at all.
 inline void damagedTangent(const Params& mp, const State& in, const double sig_eff[6],
                            const double eps_new[6], double kp_new, const double Ceff[6][6],
                            const double dkpDeps[6], double D6[6][6])
@@ -2053,6 +2509,17 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
         C[i][j] = v;
     }
 
+    // (C3c, cost) dω_t/dε and dω_c/dε are NON-zero only for an interior damage 0<ω<1 (see the IFT
+    // branches below: a clamped or inactive ω is insensitive). Everything from here to the assembly
+    // feeds ONLY dwt/dwc -- three micro-FD scalar gradients (36 eigendecompositions), the dnorm
+    // gradient, and under loading two more composite FDs through the return map. Skipping it when
+    // neither ω is interior (every ELASTIC point) leaves dwt = dwc = 0, i.e. the SAME assembly
+    // arithmetic and a bit-identical tangent. Re-applied on the damage-drive kernel: the interior test
+    // is the union of the IFT branch conditions (wt < OMEGA_MAX && bilin; wc < OMEGA_MAX && cdc; wc < 1
+    // legacy), so `< 1.0` is a safe superset.
+    double dwt[6] = {0, 0, 0, 0, 0, 0}, dwc[6] = {0, 0, 0, 0, 0, 0};
+    const bool needDw = (wt > 0.0 && wt < 1.0) || (wc > 0.0 && wc < 1.0);
+    if (needDw) {
     // --- chain-rule gradient pieces (each d(.)/dε, 6-vector) ---
     // Ceff^T @ g  (d(scalar of sig_eff)/dε = (d sig_eff/dε)^T @ (d scalar/d sig_eff))
     auto CeffT = [&](const double g[6], double out[6]) {
@@ -2060,13 +2527,14 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
     };
     // On the hydrostatic axis (rho_bar == 0) the drivers are cones: their gradient is taken along the axis
     // (dscalarDsigAxis; apeGmsh #2621, the tension-apex return), elsewhere per Voigt component. The axis test and the
-    // along-axis step are relative to the state's stress scale (axisStressScale), so they hold in any unit system.
-    const double sAx = axisStressScale(w, mp);
+    // one FD step of both are relative to the state's stress scale (driverStressScale), so they hold in any unit
+    // system (#2621 review r2 on the axis, #2639 off it).
+    const double sDrv = driverStressScale(w, mp);
     bool onAxis = false;
     { double xi_a, rho_a, th_a; const double sva[6] = {w[0], w[1], w[2], 0.0, 0.0, 0.0}; invariants(sva, xi_a, rho_a, th_a);
-      onAxis = rho_a <= AXIS_RHO_REL * sAx; }
-    const double hAx = AXIS_FD_REL * sAx;
-    auto driverGrad = [&](int which, double g[6]) { if (onAxis) dscalarDsigAxis(which, sig_eff, mp, g, hAx); else dscalarDsig(which, sig_eff, mp, g); };
+      onAxis = rho_a <= AXIS_RHO_REL * sDrv; }
+    const double hDrv = DRIVER_FD_REL * sDrv;
+    auto driverGrad = [&](int which, double g[6]) { if (onAxis) dscalarDsigAxis(which, sig_eff, mp, g, hDrv); else dscalarDsig(which, sig_eff, mp, g, hDrv); };
     double g_et[6], g_xs[6], g_ac[6], det_deps[6], dxs_deps[6], dac_deps[6];
     driverGrad(0, g_et);   CeffT(g_et, det_deps);
     driverGrad(1, g_xs);   CeffT(g_xs, dxs_deps);
@@ -2229,7 +2697,6 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
     // ω via IFT (only when interior 0<ω<1; clamped/inactive ω is insensitive => dω=0)
     // (P2g) D = the MONOTONE drive sigtMax/sigcMax; dDt_deps/dDc_deps are already zeroed on unload, so an
     // unloading channel contributes d(omega)=0 (secant). On loading D == live drive => unchanged.
-    double dwt[6], dwc[6];
     if (wt > 0.0 && wt < OMEGA_MAX && bilin) {
         // IFT on F(w) = (1-w)D - sigma(h(kd1+w kd2)): F_w = -D - sigma' h kd2 (sigma' = active branch slope)
         const double wf_b = mp.Gf / (BILIN_GF * mp.ft);
@@ -2262,6 +2729,8 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
         for (int i = 0; i < 6; ++i) dwc[i] = a0 * dDc_deps[i] + a1 * dkdc1[i] + a2 * dkdc2[i];
     } else for (int i = 0; i < 6; ++i) dwc[i] = 0.0;
 
+    }   // needDw (C3c)
+
     // assemble: C - sig_t (x) dω_t - sig_c (x) dω_c
     for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j)
         D6[i][j] = C[i][j] - sig_t[i] * dwt[j] - sig_c[i] * dwc[j];
@@ -2275,101 +2744,276 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
 // ---------------------------------------------------------------------------
 inline int returnMapTensor1(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
                             bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
-                            bool doTangent, PieceJac* pj = nullptr);
+                            bool doTangent, PieceSens* ps = nullptr);
 
-// One step of the sub-step chain rule (below): J <- A (J + f C) + b (x) K,  K <- a . (J + f C) + e K.
-inline void chainPiece(double J[6][6], double K[6], const PieceJac& pj, double f, const double Cel[6][6])
+inline int returnMapTensorAdaptive(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
+                                   bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
+                                   bool doTangent, int* subInfo, double dkpDeps[6] = nullptr, bool wrtStart = false);
+
+// ---------------------------------------------------------------------------
+// The sub-step chain rule (apeGmsh #2621 F2; Perez-Foguet, Rodriguez-Ferran & Huerta, CMAME 2001), one piece. With
+// G = d sig/d(deps) and g = d kp/d(deps) after the previous pieces (G_0 = 0, g_0 = 0) and a piece of fraction f
+// (increment f deps, trial sig_(p-1) + f C deps) whose direct-return sensitivities are Dt = d sig_p/d(its increment)
+// (consistentTangent, = A C with A = d sig_p/d sig_tr), Sk, R, Kk (PieceSens, the SAME 4x4 IFT at the piece's root):
+//     G_p = (Dt C^-1) G_(p-1) + Sk (x) g_(p-1) + f Dt,      g_p = R G_(p-1) + Kk g_(p-1) + f R C.
+// The IFT is the derivative of whichever root the piece returned (vertex, plain Newton, the below-root or nested scan
+// root, newtonGlob): every converged hardening return solves R1..R4 (polishHardeningRoot's honesty gate), and locally
+// the selected root is a smooth branch of that system. The deterministic map (returnMapTensorDet) carries the same
+// recurrence inline (f = 1/L); this helper serves the adaptive path and returnMapTensorSchedule.
+// wrtStart (the tension-dead cut, effectiveReturn): the derivative with respect to the START stress sig_n instead of the
+// increment, returned multiplied by C (so a one-piece return reports its usual Dt = A C): G_0 = C, g_0 = 0 and no
+// injection (f = 0), i.e. G_p = (Dt C^-1) G_(p-1) + Sk (x) g_(p-1), g_p = R G_(p-1) + Kk g_(p-1). The cut runs the map
+// from the compressive remainder of the trial with a ZERO increment, where d/d(deps) (all injections f C . 0 = 0 in
+// the stress, but f Dt in the tangent) is not the derivative of anything the cut uses.
+// ---------------------------------------------------------------------------
+inline void chainPieceSens(double G[6][6], double g[6], const double Dt[6][6], const PieceSens& ps, double f,
+                           const double C0m[6][6], const double Cinv[6][6])
 {
-    double T[6][6], Jn[6][6], Kn[6];
-    for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) T[i][j] = J[i][j] + f * Cel[i][j];
-    for (int j = 0; j < 6; ++j) {
-        double kv = pj.e * K[j];
-        for (int i = 0; i < 6; ++i) kv += pj.a[i] * T[i][j];
-        Kn[j] = kv;
-        for (int i = 0; i < 6; ++i) {
-            double v = pj.b[i] * K[j];
-            for (int m = 0; m < 6; ++m) v += pj.A[i][m] * T[m][j];
-            Jn[i][j] = v;
-        }
+    double A[6][6], RC[6], Gn[6][6], gn[6];
+    for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
+        double v = 0.0; for (int q = 0; q < 6; ++q) v += Dt[i][q] * Cinv[q][j];
+        A[i][j] = v;
     }
-    for (int i = 0; i < 6; ++i) { K[i] = Kn[i]; for (int j = 0; j < 6; ++j) J[i][j] = Jn[i][j]; }
+    for (int j = 0; j < 6; ++j) { double v = 0.0; for (int q = 0; q < 6; ++q) v += ps.R[q] * C0m[q][j]; RC[j] = v; }
+    for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
+        double v = f * Dt[i][j] + ps.Sk[i] * g[j]; for (int q = 0; q < 6; ++q) v += A[i][q] * G[q][j];
+        Gn[i][j] = v;
+    }
+    for (int j = 0; j < 6; ++j) {
+        double v = ps.Kk * g[j] + f * RC[j]; for (int q = 0; q < 6; ++q) v += ps.R[q] * G[q][j];
+        gn[j] = v;
+    }
+    for (int i = 0; i < 6; ++i) { g[i] = gn[i]; for (int j = 0; j < 6; ++j) G[i][j] = Gn[i][j]; }
+}
+
+// d kp/d(deps) of ONE direct return (= R C), the kappa row the damaged tangent consumes on a direct return.
+inline void directKappaRow(const PieceSens& ps, const Params& mp, double dkpDeps[6])
+{
+    double C0m[6][6]; elasticC(mp, C0m);
+    for (int j = 0; j < 6; ++j) { double v = 0.0; for (int q = 0; q < 6; ++q) v += ps.R[q] * C0m[q][j]; dkpDeps[j] = v; }
 }
 
 // Integrate a GIVEN piece schedule (fractions fr[0..n-1] of deps, in order; hardening map) with the chain-rule
-// tangent. Returns 0 if every piece converged, else 2 with sig_new/kp_new at the last converged piece. The kernel
-// self-check drives forced 2- and 4-piece schedules through it, and a deterministic partition (F2b) would too.
+// tangent (apeGmsh #2621 F2). Returns 0 if every piece converged, else 2 with sig_new/kp_new at the last converged
+// piece. The kernel self-check drives forced and failure-driven schedules through it.
 inline int returnMapTensorSchedule(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
                                    const double* fr, int n, double sig_new[6], double& kp_new,
                                    double Dtan6[6][6], bool doTangent, double dkpDeps[6] = nullptr)
 {
     ++kernelCallCounters().returnMapTensor;
-    double Cel[6][6]; elasticC(mp, Cel);
-    double J[6][6], K[6], s[6], k = kp_n, sn[6], kn, Dt[6][6];
-    for (int i = 0; i < 6; ++i) { K[i] = 0.0; s[i] = sig_n[i]; for (int j = 0; j < 6; ++j) J[i][j] = 0.0; }
+    double C0m[6][6], Cinv[6][6]; elasticC(mp, C0m); invert6(C0m, Cinv);
+    double G[6][6], g[6], s[6], k = kp_n, sn[6], kn, Dt[6][6];
+    for (int i = 0; i < 6; ++i) { g[i] = 0.0; s[i] = sig_n[i]; for (int j = 0; j < 6; ++j) G[i][j] = 0.0; }
     int status = 0;
     for (int p = 0; p < n; ++p) {
         double d[6]; for (int i = 0; i < 6; ++i) d[i] = deps[i] * fr[p];
-        PieceJac pj;
-        if (returnMapTensor1(mp, s, d, k, true, sn, kn, Dt, false, doTangent ? &pj : nullptr) != 0) { status = 2; break; }
-        if (doTangent) chainPiece(J, K, pj, fr[p], Cel);
+        PieceSens ps;
+        if (returnMapTensor1(mp, s, d, k, true, sn, kn, Dt, doTangent, doTangent ? &ps : nullptr) != 0) { status = 2; break; }
+        if (doTangent) chainPieceSens(G, g, Dt, ps, fr[p], C0m, Cinv);
         for (int i = 0; i < 6; ++i) s[i] = sn[i];
         k = kn;
     }
     for (int i = 0; i < 6; ++i) sig_new[i] = s[i];
     kp_new = k;
-    if (doTangent) for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Dtan6[i][j] = J[i][j];
-    if (doTangent && dkpDeps) for (int i = 0; i < 6; ++i) dkpDeps[i] = K[i];
+    if (doTangent) for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Dtan6[i][j] = G[i][j];
+    if (doTangent && dkpDeps) for (int i = 0; i < 6; ++i) dkpDeps[i] = g[i];
     return status;
+}
+
+// Dimensionless yield-function value f_tr of the ELASTIC TRIAL (the same f_tr returnMapHardening tests).
+inline double trialOvershoot(const Params& mp, const double sig_n[6], const double deps[6], double kp_n)
+{
+    double sig_tr[6]; elasticPredTensor(sig_n, deps, mp, sig_tr);
+    double A[3][3], w[3], V[3][3]; voigtToMat(sig_tr, A); eig3sym(A, w, V);
+    double sv[6] = {w[0], w[1], w[2], 0.0, 0.0, 0.0}, xi, rho, th;
+    invariants(sv, xi, rho, th);
+    return yfInvHard(xi, rho, lodeR(th, mp.e), kp_n, mp);
+}
+
+// The deterministic piece count n = clamp(ceil(f_tr/c), 1, nmax) of a (state, increment); Params::subIncrForceN > 0 pins it.
+inline int detPieces(const Params& mp, const double sig_n[6], const double deps[6], double kp_n)
+{
+    if (mp.subIncrForceN > 0) return mp.subIncrForceN;
+    const double c = (mp.subIncrC > 0.0) ? mp.subIncrC : 0.3;
+    const int nmaxP = (mp.subIncrMaxPieces > 0) ? mp.subIncrMaxPieces : 64;
+    const double fTr = trialOvershoot(mp, sig_n, deps, kp_n);
+    int n = 1;
+    if (fTr > 0.0) { const double q = std::ceil(fTr / c); n = (q >= (double)nmaxP) ? nmaxP : (q < 1.0 ? 1 : (int)q); }
+    return n;
+}
+
+// DETERMINISTIC sub-incrementation (mirror of the oracle _return_map_tensor_det): n = clamp(ceil(f_tr/c), 1, nmax)
+// equal pieces, each a direct return, chained from the committed state, ALWAYS applied -- one (state, increment)
+// always takes the same path. A piece failure redoes the whole chain with 2n and then 4n pieces; the honest failure
+// (the direct-return fallback, status != 0) only after that. Structurally bounded: n + 2n + 4n <= 7 nmax direct
+// returns. n = 1 (f_tr <= c, incl. elastic trials) is one direct return, byte-identical to the direct map.
+// subInfo: 0 = direct, L >= 2 = the ladder level (piece count) that succeeded, -1 = final failure.
+//
+// DISCONTINUITY (honest statement; the earlier text here said the map was discontinuous only at ladder failures, which is
+// false): a chain of n pieces and a chain of n + 1 pieces are two different, each consistent, integrations of the same
+// increment, so sigma_eff and kappa_p JUMP where ceil(f_tr/c) changes, and again wherever the ladder switches level. The
+// jump is the discretization difference between the two integrations -- measured at 1e-19-apart strains on the
+// reviewer's probes: |dsigma_eff| 0.06-0.40 MPa (0.4-1.5 % of |sigma_eff|), kappa_p up to ~2.5 near first cracking.
+// r4 (review 3 of #877, MAJOR 1): the DENSE ladder switching in tension near first cracking is gone with the direct
+// tension return fixed (returnMapHardening: in tension the vertex, then the nested solve): 0 level flips in 4000 points at 1e-9 relative
+// spacing (was 1679-2203), 0 at fixed n in a 20000-point coarse scan (was 8257); the 63 n changes remain (jumps there).
+// Chosen over the failure-driven adaptive path because that one is discontinuous at every attempt boundary and depends on
+// the Newton iterate's noise (1.8 % vs 13.3 % measured), and because the deterministic map is a function of (state,
+// increment) only. Consumers that pin equality of nominally identical Gauss points (EAS alpha, hosting parity) must
+// allow the jump. The reported TANGENT is the CHAIN's (accumulated forward through the pieces, see the loop), not the
+// last piece's; Params::subIncrForceN pins n for finite-difference references of it.
+inline int returnMapTensorDet(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
+                              double sig_new[6], double& kp_new, double Dtan6[6][6], bool doTangent, int* subInfo,
+                              double dkpDeps[6] = nullptr, bool wrtStart = false)
+{
+    const bool wantK = doTangent && dkpDeps != nullptr;      // F2: d kp/d(deps), the kappa row of the same chain
+    const int n = detPieces(mp, sig_n, deps, kp_n);
+    if (n == 1) {
+        PieceSens ps1;
+        const int st = returnMapTensor1(mp, sig_n, deps, kp_n, true, sig_new, kp_new, Dtan6, doTangent, wantK ? &ps1 : nullptr);
+        if (st == 0) { if (subInfo) *subInfo = 0; if (wantK) directKappaRow(ps1, mp, dkpDeps); return 0; }
+    }
+    const int levels[3] = { n, 2 * n, 4 * n };
+    for (int li = (n == 1 ? 1 : 0); li < 3; ++li) {
+        const int L = levels[li];
+        double s[6], k = kp_n, sn[6], kn, Dt[6][6], G[6][6], Gn[6][6], Cinv[6][6], C0m[6][6], g[6], gn[6];
+        PieceSens ps;
+        for (int i = 0; i < 6; ++i) s[i] = sig_n[i];
+        if (doTangent) {
+            elasticC(mp, C0m); invert6(C0m, Cinv);
+            // G_0 = 0 (d/d deps), or C (wrtStart: d/d sig_n times C, see chainPieceSens)
+            for (int i = 0; i < 6; ++i) { g[i] = 0.0; for (int j = 0; j < 6; ++j) G[i][j] = wrtStart ? C0m[i][j] : 0.0; }
+        }
+        bool ok = true;
+        for (int p = 0; p < L && ok; ++p) {
+            double d[6]; for (int i = 0; i < 6; ++i) d[i] = deps[i] / L;
+            if (returnMapTensor1(mp, s, d, k, true, sn, kn, Dt, doTangent, doTangent ? &ps : nullptr) != 0) ok = false;
+            else {
+                for (int i = 0; i < 6; ++i) s[i] = sn[i];
+                k = kn;
+                if (doTangent) {
+                    // CHAIN tangent, accumulated forward through the pieces. Piece p is sig_p = R(sig_(p-1) + C d/L, kappa_(p-1)),
+                    // kappa_p = K(same arguments), with the direct-return sensitivities Dt (= d sig_p/d(d/L)), Sk, R, Kk:
+                    //   d sig_p/d sig_(p-1) = Dt C^-1,   d sig_p/d kappa_(p-1) = Sk,
+                    //   d kappa_p/d sig_(p-1) = R,       d kappa_p/d kappa_(p-1) = Kk,     d kappa_p/d(d/L) = R C
+                    // and, with G = d sig/d(deps) (6x6) and g = d kappa/d(deps) (1x6), G_0 = 0, g_0 = 0:
+                    //   G_p = (Dt C^-1) G_(p-1) + Sk (x) g_(p-1) + Dt/L ,   g_p = R G_(p-1) + Kk g_(p-1) + (R C)/L .
+                    // This is the EXACT derivative of the fixed-n chain (the kappa history coupling included); the only
+                    // approximations left are the Lode-angle scalar central differences inside the principal Jacobian
+                    // and, in a ladder/rescue state, the chain that was actually integrated.
+                    double A[6][6], RC[6];
+                    for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
+                        double v = 0.0; for (int q = 0; q < 6; ++q) v += Dt[i][q] * Cinv[q][j];
+                        A[i][j] = v;
+                    }
+                    for (int j = 0; j < 6; ++j) { double v = 0.0; for (int q = 0; q < 6; ++q) v += ps.R[q] * C0m[q][j]; RC[j] = v; }
+                    for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
+                        double v = (wrtStart ? 0.0 : Dt[i][j] / L) + ps.Sk[i] * g[j]; for (int q = 0; q < 6; ++q) v += A[i][q] * G[q][j];
+                        Gn[i][j] = v;
+                    }
+                    for (int j = 0; j < 6; ++j) {
+                        double v = ps.Kk * g[j] + (wrtStart ? 0.0 : RC[j] / L); for (int q = 0; q < 6; ++q) v += ps.R[q] * G[q][j];
+                        gn[j] = v;
+                    }
+                    for (int i = 0; i < 6; ++i) { g[i] = gn[i]; for (int j = 0; j < 6; ++j) G[i][j] = Gn[i][j]; }
+                }
+            }
+        }
+        if (ok) {
+            for (int i = 0; i < 6; ++i) sig_new[i] = s[i];
+            kp_new = k;
+            if (doTangent) for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Dtan6[i][j] = G[i][j];
+            if (wantK) for (int i = 0; i < 6; ++i) dkpDeps[i] = g[i];
+            if (subInfo) *subInfo = L;
+            return 0;
+        }
+    }
+    // ladder exhausted: last resort = the ADAPTIVE path (direct, then halving; bounded by maxSubAttempts), then the
+    // honest failure. Reached only in the small share of states the fixed-n chains cannot integrate at all, where the
+    // alternative is a step cut. (The deterministic map is NOT continuous overall: see the DISCONTINUITY note above.)
+    if (mp.subIncrRescue)
+        return returnMapTensorAdaptive(mp, sig_n, deps, kp_n, true, sig_new, kp_new, Dtan6, doTangent, subInfo, dkpDeps,
+                                       wrtStart);
+    PieceSens ps0;
+    const int st0 = returnMapTensor1(mp, sig_n, deps, kp_n, true, sig_new, kp_new, Dtan6, doTangent, wantK ? &ps0 : nullptr);
+    if (subInfo) *subInfo = (st0 == 0) ? 0 : -1;
+    if (st0 == 0 && wantK) directKappaRow(ps0, mp, dkpDeps);
+    return st0;
 }
 
 // Tensor return with OOFEM-style SUB-INCREMENTATION (B1; mirror of the oracle return_map_tensor). The direct
 // return first; if it fails and mp.maxSubIncr > 0 (hardening map), the strain increment is halved and the
-// sub-increments integrated in sequence from the committed state (doubling back after each success) down to
-// 2^-maxSubIncr. maxSubIncr = 0 => byte-identical to the direct return.
-// TANGENT (apeGmsh #2621 F2): the sub-stepped map is a composition of N converged pieces, so its algorithmic
-// tangent is the chain rule over the pieces (Perez-Foguet, Rodriguez-Ferran & Huerta, CMAME 2001). With
-// J = d sig/dε and K = d kp/dε after k pieces (J_0 = K_0 = 0) and piece k of fraction f_k (its trial stress
-// sig_{k-1} + f_k C:Δε, so d sig_tr/dε = J_{k-1} + f_k C):
-//     J_k = A_k (J_{k-1} + f_k C) + b_k (x) K_{k-1},     K_k = a_k . (J_{k-1} + f_k C) + e_k K_{k-1}
-// (pieceJacobian gives A_k, b_k, a_k, e_k). Dtan6 = J_N. A direct return (one piece) keeps consistentTangent's
-// Dtan6 bit for bit. dkpDeps (optional, only with doTangent) = K_N = d kp/dε, which the damaged tangent needs
-// for beta_c's qh2(kp). Until F2 the LAST piece's tangent was reported, O(1) wrong once N >= 2.
+// sub-increments integrated in sequence from the committed state (doubling back, to at most 2x the size that
+// just succeeded, after each success) down to 2^-maxSubIncr. maxSubIncr = 0 => byte-identical to the direct return.
+// TANGENT (apeGmsh #2621 F2): every sub-incremented path (deterministic, adaptive, the deterministic mode's adaptive
+// rescue) reports the chain rule over its converged pieces (chainPieceSens), not the last piece's tangent (O(1) wrong
+// once N >= 2). dkpDeps (optional, only with doTangent) = d kp/d(deps) of the same chain: the damaged tangent needs it
+// for beta_c's qh2(kp).
+//
+// ATTEMPT BUDGET (WP concrete3d-hang-diagnosis, 2026-09-27): mp.maxSubAttempts caps the TOTAL number of
+// returnMapTensor1 calls in this loop (successes + failures). Without it, a GP that only ever succeeds at the
+// 2^-maxSubIncr floor alternates fail/succeed and can legally run ~2 * 2^maxSubIncr attempts (~2048 at the
+// CDPM2 wrapper's maxSubIncr=10) of up to 100 Newton iterations each, PER material point PER global Newton
+// iteration -- with nothing ever failing, so nothing is logged and the step is never cut. That is the observed
+// analyze(1) hang (C3/B1 vecchio_shim, sheikh_uzumeri confined column): 100% CPU, no opserr output, no
+// recorder output, for 30-40+ minutes on a single step. Once the budget is exhausted, return the honest
+// failure (st0, the direct-return fallback) exactly like any other non-convergence, so the caller's status
+// != 0 cuts the step. maxSubIncr = 0 stays byte-identical (the budget only applies inside this loop).
 inline int returnMapTensor(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
                            bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
-                           bool doTangent, int* subInfo = nullptr, double dkpDeps[6] = nullptr)
+                           bool doTangent, int* subInfo = nullptr, double dkpDeps[6] = nullptr, bool wrtStart = false)
 {
     ++kernelCallCounters().returnMapTensor;
-    const bool wantK = doTangent && dkpDeps != nullptr;
-    if (wantK) for (int i = 0; i < 6; ++i) dkpDeps[i] = 0.0;
-    double Cel[6][6];
-    elasticC(mp, Cel);
+    if (doTangent && dkpDeps) for (int i = 0; i < 6; ++i) dkpDeps[i] = 0.0;
     // subInfo (diagnostic, optional): 0 = direct return, n >= 2 = sub-incremented in n pieces, -1 = FINAL failure
-    PieceJac pj0;
-    const int st0 = returnMapTensor1(mp, sig_n, deps, kp_n, hardening, sig_new, kp_new, Dtan6, doTangent,
-                                     wantK ? &pj0 : nullptr);
-    if (subInfo) *subInfo = (st0 == 0) ? 0 : -1;
-    if (st0 == 0) {
-        if (wantK) for (int j = 0; j < 6; ++j) { double v = 0.0; for (int i = 0; i < 6; ++i) v += pj0.a[i] * Cel[i][j]; dkpDeps[j] = v; }
-        return 0;
+    if (mp.subIncrMode == 2) {          // REFUSE: direct return only (equals maxSubIncr = 0), a failure is a refusal
+        PieceSens ps;
+        const bool wantK = doTangent && dkpDeps != nullptr;
+        const int st0 = returnMapTensor1(mp, sig_n, deps, kp_n, hardening, sig_new, kp_new, Dtan6, doTangent, wantK ? &ps : nullptr);
+        if (subInfo) *subInfo = (st0 == 0) ? 0 : -1;
+        if (st0 == 0 && wantK) directKappaRow(ps, mp, dkpDeps);
+        return st0;
     }
+    if (mp.maxSubIncr > 0 && hardening && mp.subIncrMode == 0)
+        return returnMapTensorDet(mp, sig_n, deps, kp_n, sig_new, kp_new, Dtan6, doTangent, subInfo, dkpDeps, wrtStart);
+    return returnMapTensorAdaptive(mp, sig_n, deps, kp_n, hardening, sig_new, kp_new, Dtan6, doTangent, subInfo, dkpDeps,
+                                   wrtStart);
+}
+
+// ADAPTIVE sub-incrementation (subIncrMode = 1, and the deterministic mode's last resort): direct return first, on
+// failure halving/doubling down to 2^-maxSubIncr, bounded by maxSubAttempts. See the comments above.
+inline int returnMapTensorAdaptive(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
+                                   bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
+                                   bool doTangent, int* subInfo, double dkpDeps[6], bool wrtStart)
+{
+    const bool wantK = doTangent && dkpDeps != nullptr;
+    PieceSens ps0;
+    const int st0 = returnMapTensor1(mp, sig_n, deps, kp_n, hardening, sig_new, kp_new, Dtan6, doTangent, wantK ? &ps0 : nullptr);
+    if (subInfo) *subInfo = (st0 == 0) ? 0 : -1;
+    if (st0 == 0) { if (wantK) directKappaRow(ps0, mp, dkpDeps); return 0; }
     if (mp.maxSubIncr <= 0 || !hardening) return st0;
-    int pieces = 0;
+    const int maxAttempts = (mp.maxSubAttempts > 0) ? mp.maxSubAttempts : 64;
+    int pieces = 0, attempts = 0;
     double s[6], k = kp_n, done = 0.0, frac = 0.5;
     const double floorFrac = std::ldexp(1.0, -mp.maxSubIncr);
     for (int i = 0; i < 6; ++i) s[i] = sig_n[i];
     double sn[6], kn, Dt[6][6];
-    double J[6][6], Kr[6];
-    for (int i = 0; i < 6; ++i) { Kr[i] = 0.0; for (int j = 0; j < 6; ++j) J[i][j] = 0.0; }
+    // F2: the chain-rule tangent over the converged pieces (chainPieceSens); a failed attempt leaves G, g unchanged
+    double G[6][6], g[6], C0m[6][6], Cinv[6][6];
+    if (doTangent) { elasticC(mp, C0m); invert6(C0m, Cinv); }
+    for (int i = 0; i < 6; ++i) { g[i] = 0.0; for (int j = 0; j < 6; ++j) G[i][j] = (wrtStart && doTangent) ? C0m[i][j] : 0.0; }
     while (done < 1.0) {
+        if (attempts >= maxAttempts) return st0;        // honest failure: budget exhausted, keep the fallback
+        ++attempts;
         const double f = (frac < 1.0 - done) ? frac : 1.0 - done;
         double d[6]; for (int i = 0; i < 6; ++i) d[i] = deps[i] * f;
-        PieceJac pj;
-        const int st = returnMapTensor1(mp, s, d, k, true, sn, kn, Dt, false, doTangent ? &pj : nullptr);
+        PieceSens ps;
+        const int st = returnMapTensor1(mp, s, d, k, true, sn, kn, Dt, doTangent, doTangent ? &ps : nullptr);
         if (st == 0) {
-            if (doTangent) chainPiece(J, Kr, pj, f, Cel);
+            if (doTangent) chainPieceSens(G, g, Dt, ps, wrtStart ? 0.0 : f, C0m, Cinv);
             for (int i = 0; i < 6; ++i) s[i] = sn[i];
             k = kn; done += f; ++pieces;
-            frac = (2.0 * frac < 1.0) ? 2.0 * frac : 1.0;
+            frac = (2.0 * f < 1.0) ? 2.0 * f : 1.0;     // at most 2x the size that just succeeded (not the stale frac)
         } else {
             frac *= 0.5;
             if (frac < floorFrac) return st0;          // honest failure: keep the direct-return fallback
@@ -2377,17 +3021,18 @@ inline int returnMapTensor(const Params& mp, const double sig_n[6], const double
     }
     for (int i = 0; i < 6; ++i) sig_new[i] = s[i];
     kp_new = k;
-    if (doTangent) for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Dtan6[i][j] = J[i][j];
-    if (wantK) for (int i = 0; i < 6; ++i) dkpDeps[i] = Kr[i];
+    if (doTangent) for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Dtan6[i][j] = G[i][j];
+    if (wantK) for (int i = 0; i < 6; ++i) dkpDeps[i] = g[i];
     if (subInfo) *subInfo = pieces;
     return 0;
 }
 
 inline int returnMapTensor1(const Params& mp, const double sig_n[6], const double deps[6], double kp_n,
                             bool hardening, double sig_new[6], double& kp_new, double Dtan6[6][6],
-                            bool doTangent, PieceJac* pj)
+                            bool doTangent, PieceSens* ps)
 {
     ++kernelCallCounters().pieceReturns;
+    if (ps) *ps = PieceSens();
     double sig_tr[6];
     elasticPredTensor(sig_n, deps, mp, sig_tr);
     double A[3][3], w[3], V[3][3];
@@ -2419,9 +3064,110 @@ inline int returnMapTensor1(const Params& mp, const double sig_n[6], const doubl
         return 2;
     }
 
-    if (doTangent) consistentTangent(sig_tr, w, V, pr, mp, hardening, Dtan6);
-    if (pj && pr.converged) pieceJacobian(w, V, pr, mp, hardening, *pj);   // F2: the sub-step chain rule
+    if (doTangent) consistentTangent(sig_tr, w, V, pr, mp, hardening, Dtan6, ps);
     return pr.converged ? 0 : 2;   // 0 OK, 2 = no-converge (honest flag)
+}
+
+// ===========================================================================
+// DEAD-AWARE EFFECTIVE-stress return, shared by returnMap and driveConfinedFiber (review M2: the BeamFiber view called
+// returnMapTensor/damagedUpdate directly and so never saw the dead-point treatment). Precondition: the point is not
+// CRUSHED (inRaw.wc < mp.omegaDead; a crushed point is frozen by the caller). Decided on the COMMITTED omega_t:
+// CRACKED (omega_t dead): tension cutoff on the plastic flow. sig_tr = sig_n + C:deps is split spectrally; the tensile part
+// is carried elastically, the return map runs on the compressive remainder with a zero increment. The committed state is
+// re-based on the trial (eps = new strain, sigEff = sig_tr) so the plastic-strain increment the damage update sees is the
+// compressive return's alone. (Absorbing the tension into the plastic strain instead was measured and rejected: the
+// permanent strain locks a full-stiffness compression in on unloading.)
+// Outputs: inEff -> the committed state to hand to damagedUpdate/damagedTangent (inRaw itself, or the re-based copy in
+// cutBuf); cutT; sig_eff/kp_new/Dtan6 = the EFFECTIVE stress, kappa_p and effective tangent; return = the return-map status.
+// dkpDeps (optional, with doTangent; apeGmsh #2621 F2) = d kp_new/d strain of the SAME effective map (the chain rule's
+// kappa row, through the cut and the Duvaut-Lions blend), the input damagedTangent's beta_c gradient needs.
+// Includes the Duvaut-Lions relaxation (only when !implex && eta > 0 && dt > 0).
+// ===========================================================================
+inline int effectiveReturn(const Params& mp, const double strain[6], const State& inRaw, bool hardening, double dt,
+                           bool doTangent, State& cutBuf, const State*& inEff, bool& cutT,
+                           double sig_eff[6], double& kp_new, double Dtan6[6][6], int* subInfo,
+                           double dkpDeps[6] = nullptr)
+{
+    double dkpLoc[6] = {0, 0, 0, 0, 0, 0};
+    double* dkp = dkpDeps ? dkpDeps : dkpLoc;
+    for (int i = 0; i < 6; ++i) dkp[i] = 0.0;
+    double deps[6];
+    for (int i = 0; i < 6; ++i) deps[i] = strain[i] - inRaw.eps[i];
+    cutT = (inRaw.wt >= mp.omegaDead);
+    double cutW[3] = {0, 0, 0}, cutV[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+    double sigPlus[6] = {0, 0, 0, 0, 0, 0}, sigMinus[6] = {0, 0, 0, 0, 0, 0};
+    if (cutT) {
+        double sigTr[6]; elasticPredTensor(inRaw.sigEff, deps, mp, sigTr);
+        double A[3][3]; voigtToMat(sigTr, A); eig3sym(A, cutW, cutV);
+        double sm[3], sq[3];
+        for (int a = 0; a < 3; ++a) { sm[a] = cutW[a] < 0.0 ? cutW[a] : 0.0; sq[a] = cutW[a] > 0.0 ? cutW[a] : 0.0; }
+        double S[3][3], Q[3][3];
+        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) {
+            double v = 0.0, u = 0.0;
+            for (int a = 0; a < 3; ++a) { v += cutV[i][a] * sm[a] * cutV[j][a]; u += cutV[i][a] * sq[a] * cutV[j][a]; }
+            S[i][j] = v; Q[i][j] = u;
+        }
+        cutBuf = inRaw;
+        matToVoigt(S, sigMinus); matToVoigt(Q, sigPlus);
+        for (int i = 0; i < 6; ++i) { cutBuf.sigEff[i] = sigTr[i]; cutBuf.eps[i] = strain[i]; deps[i] = 0.0; }
+    }
+    inEff = cutT ? &cutBuf : &inRaw;
+    const State& in = *inEff;
+    // (1) IMPLICIT EFFECTIVE-stress return from the committed EFFECTIVE state (NOT the nominal sig).
+    // (F2 port) the cut differentiates the map with respect to its START (the compressive remainder; zero increment):
+    // wrtStart. #877 used d/d(deps) C^-1 there, which equals it for a one-piece return only (O(1) off at n >= 2 pieces).
+    int status = returnMapTensor(mp, cutT ? sigMinus : in.sigEff, deps, in.kp, hardening, sig_eff, kp_new, Dtan6, doTangent,
+                                 subInfo, dkp, cutT);
+    if (cutT) for (int i = 0; i < 6; ++i) sig_eff[i] += sigPlus[i];   // tensile part carried elastically
+    // (1b) Duvaut-Lions viscoplastic relaxation at the PLASTIC level (ADR §4.4; oracle PR #316). Relax the
+    //   inviscid effective return + kp toward the elastic trial by beta = dt/(eta+dt) (Simo-Hughes closed
+    //   form). beta < 1 only with a positive viscosity AND a positive dt; eta==0 OR dt<=0 => beta=1 =>
+    //   BYTE-identical to the inviscid Tier-1 path (a missing time increment falls back to inviscid, NOT
+    //   to the elastic beta->0 limit). Damage then follows from the RELAXED effective stress (downstream
+    //   uses sig_eff/kp_new), and the EFFECTIVE consistent tangent blends C_eff <- (1-beta)C0 + beta C_eff
+    //   (damagedTangent chains its damage linearization through this blended C_eff). v1: Tier-1 only —
+    //   gated on !implex so the IMPL-EX implicit solve stays inviscid (matches the oracle scope; the
+    //   -eta + -implex composition is deferred).
+    if (!mp.implex && mp.eta > 0.0 && dt > 0.0) {
+        const double beta = dt / (mp.eta + dt);
+        double sig_tr[6];
+        elasticPredTensor(in.sigEff, deps, mp, sig_tr);
+        for (int i = 0; i < 6; ++i) sig_eff[i] = (1.0 - beta) * sig_tr[i] + beta * sig_eff[i];
+        kp_new = (1.0 - beta) * in.kp + beta * kp_new;
+        if (doTangent && status == 0) {
+            double C0[6][6]; elasticC(mp, C0);
+            for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j)
+                Dtan6[i][j] = (1.0 - beta) * C0[i][j] + beta * Dtan6[i][j];
+            for (int i = 0; i < 6; ++i) dkp[i] *= beta;    // (F2) kp_new = (1-beta) kp_n + beta kp
+        }
+    }
+    if (cutT && doTangent && status == 0) {
+        // sig_eff = Plus(sig_tr) + RM(Minus(sig_tr)):  d sig_eff/d eps = C0 + (Dret C0^-1 - I) Ddam- C0, with Dret = H C0 (H the
+        // start-derivative of the return map at the compressive remainder, wrtStart) and Ddam- the spectral derivative of the negative-part map.
+        double yv[3], ypv[3], Ddam[6][6], C0[6][6], C0i[6][6], T1[6][6], T2[6][6];
+        for (int a = 0; a < 3; ++a) { yv[a] = cutW[a] < 0.0 ? cutW[a] : 0.0; ypv[a] = cutW[a] < 0.0 ? 1.0 : 0.0; }
+        isotropicTangent(cutW, cutV, yv, ypv, Ddam);
+        elasticC(mp, C0); invert6(C0, C0i);
+        for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
+            double v = 0.0; for (int k = 0; k < 6; ++k) v += Dtan6[i][k] * C0i[k][j];
+            T1[i][j] = v - (i == j ? 1.0 : 0.0);                           // Dret C0^-1 - I
+        }
+        for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
+            double v = 0.0; for (int k = 0; k < 6; ++k) v += Ddam[i][k] * C0[k][j];
+            T2[i][j] = v;                                                  // Ddam- C0
+        }
+        for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
+            double v = C0[i][j]; for (int k = 0; k < 6; ++k) v += T1[i][k] * T2[k][j];
+            Dtan6[i][j] = v;
+        }
+        // (F2) the kappa row through the same cut: kp = K(Minus(sig_tr)), d kp/d eps = (dkp C0^-1) Ddam- C0, with dkp C0^-1
+        // the return map's own kappa row at the compressive remainder (the same reading of the map as Dret C0^-1 above)
+        double kr[6], kn[6];
+        for (int j = 0; j < 6; ++j) { double v = 0.0; for (int k = 0; k < 6; ++k) v += dkp[k] * C0i[k][j]; kr[j] = v; }
+        for (int j = 0; j < 6; ++j) { double v = 0.0; for (int k = 0; k < 6; ++k) v += kr[k] * T2[k][j]; kn[j] = v; }
+        for (int j = 0; j < 6; ++j) dkp[j] = kn[j];
+    }
+    return status;
 }
 
 // ===========================================================================
@@ -2445,40 +3191,50 @@ inline int returnMapTensor1(const Params& mp, const double sig_n[6], const doubl
 //   d(sigma)/d(strain) of the reported explicit stress. sigEffImplicit stays the IMPLICIT effective
 //   stress regardless of tier (the LogStrain b^e contract, ADR R3).
 // ===========================================================================
-inline int returnMap(const Params& mp, const double strain[6], const State& in, State& out,
+inline int returnMap(const Params& mp, const double strain[6], const State& inRaw, State& out,
                      double sigma[6], double sigEffImplicit[6], double Dtan6[6][6],
                      bool doTangent, double dt = 0.0, bool hardening = true,
                      double* wtOut = nullptr, double* wcOut = nullptr)
 {
+    // (0) DEAD POINTS (WP concrete3d-hang-diagnosis #877 follow-up, owner decision 2026-09-28; see Params::omegaDead).
+    // Mirror of the oracle damaged_step_tensor. Decided on the COMMITTED damage.
     double deps[6];
-    for (int i = 0; i < 6; ++i) deps[i] = strain[i] - in.eps[i];
-    // (1) IMPLICIT EFFECTIVE-stress return from the committed EFFECTIVE state (NOT the nominal sig).
+    for (int i = 0; i < 6; ++i) deps[i] = strain[i] - inRaw.eps[i];
+    if (inRaw.wc >= mp.omegaDead) {
+        // CRUSHED: strict freeze. The point is dead in every direction: both damages go to the floor (OMEGA_MAX) and stay
+        // there, nominal = (1-OMEGA_MAX)*sig_eff (scalar), tangent (1-OMEGA_MAX)*C, plastic state and histories frozen.
+        // Review #877 minor 2 asked to freeze at the COMMITTED omega instead (no jump). MEASURED and rejected: with the
+        // committed omega (>= omegaDead) the residual (1-omega)*sig_eff GROWS with the elastic sig_eff of the frozen point and
+        // the Gc-calibration gate (uniaxial compression dissipates Gc within 5 %) goes 62 % off, because the post-peak tail
+        // never decays below 1 % of the peak. The jump to the floor is small in ABSOLUTE terms -- the nominal stress drops
+        // by at most (1-omegaDead)*|sig_eff,dead| = 2e-3 |sig_eff| at the freeze (~0.06 MPa at fc = 30), 1e-2 at the loosest
+        // admissible threshold -- which is what a dead point should do (the law's tail is exhausted to that fraction).
+        double sigEffD[6]; elasticPredTensor(inRaw.sigEff, deps, mp, sigEffD);
+        const double k = 1.0 - OMEGA_MAX;
+        out = inRaw;
+        out.wt = OMEGA_MAX; out.wc = OMEGA_MAX;
+        for (int i = 0; i < 6; ++i) {
+            out.eps[i] = strain[i]; out.sigEff[i] = sigEffD[i]; sigEffImplicit[i] = sigEffD[i];
+            out.sig[i] = k * sigEffD[i]; sigma[i] = out.sig[i]; out.depl[i] = 0.0;
+        }
+        out.subInfo = 0; out.dwt = 0.0; out.dwc = 0.0;
+        out.dt_n = (dt > 0.0) ? dt : inRaw.dt_n;
+        if (wtOut) *wtOut = OMEGA_MAX;
+        if (wcOut) *wcOut = OMEGA_MAX;
+        if (doTangent) {
+            const double kT = k > OMEGA_TAN_FLOOR ? k : OMEGA_TAN_FLOOR;
+            double C0[6][6]; elasticC(mp, C0);
+            for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Dtan6[i][j] = kT * C0[i][j];
+        }
+        return 0;
+    }
+    // (1)+(1b) dead-aware EFFECTIVE-stress return (CRACKED points: tension cutoff on the plastic flow; see effectiveReturn)
+    State cutBuf; const State* inP = nullptr; bool cutT = false;
     double sig_eff[6], kp_new;
     double dkp[6] = {0, 0, 0, 0, 0, 0};                // d kp/dε (F2: beta_c's qh2(kp) in the damaged tangent)
-    int status = returnMapTensor(mp, in.sigEff, deps, in.kp, hardening, sig_eff, kp_new, Dtan6, doTangent,
+    int status = effectiveReturn(mp, strain, inRaw, hardening, dt, doTangent, cutBuf, inP, cutT, sig_eff, kp_new, Dtan6,
                                  &out.subInfo, dkp);
-    // (1b) Duvaut-Lions viscoplastic relaxation at the PLASTIC level (ADR §4.4; oracle PR #316). Relax the
-    //   inviscid effective return + kp toward the elastic trial by beta = dt/(eta+dt) (Simo-Hughes closed
-    //   form). beta < 1 only with a positive viscosity AND a positive dt; eta==0 OR dt<=0 => beta=1 =>
-    //   BYTE-identical to the inviscid Tier-1 path (a missing time increment falls back to inviscid, NOT
-    //   to the elastic beta->0 limit). Damage then follows from the RELAXED effective stress (downstream
-    //   uses sig_eff/kp_new), and the EFFECTIVE consistent tangent blends C_eff <- (1-beta)C0 + beta C_eff
-    //   (damagedTangent chains its damage linearization through this blended C_eff). v1: Tier-1 only —
-    //   gated on !implex so the IMPL-EX implicit solve stays inviscid (matches the oracle scope; the
-    //   -eta + -implex composition is deferred).
-    if (!mp.implex && mp.eta > 0.0 && dt > 0.0) {
-        const double beta = dt / (mp.eta + dt);
-        double sig_tr[6];
-        elasticPredTensor(in.sigEff, deps, mp, sig_tr);
-        for (int i = 0; i < 6; ++i) sig_eff[i] = (1.0 - beta) * sig_tr[i] + beta * sig_eff[i];
-        kp_new = (1.0 - beta) * in.kp + beta * kp_new;
-        if (doTangent && status == 0) {
-            double C0[6][6]; elasticC(mp, C0);
-            for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j)
-                Dtan6[i][j] = (1.0 - beta) * C0[i][j] + beta * Dtan6[i][j];
-            for (int i = 0; i < 6; ++i) dkp[i] *= beta;    // kp_new = (1-beta) kp_n + beta kp
-        }
-    }
+    const State& in = *inP;
     for (int i = 0; i < 6; ++i) { out.eps[i] = strain[i]; out.sigEff[i] = sig_eff[i]; sigEffImplicit[i] = sig_eff[i]; }
     out.kp = kp_new;
     // (2) IMPLICIT P2 dual-damage NOMINAL stress (writes out.sig + the damage history). Unilateral by re-split.
@@ -2512,9 +3268,9 @@ inline int returnMap(const Params& mp, const double strain[6], const State& in, 
     double wt_x = in.wt + r * in.dwt; if (wt_x < 0.0) wt_x = 0.0; if (wt_x > 1.0 - 1.0e-12) wt_x = 1.0 - 1.0e-12;
     double wc_x = in.wc + r * in.dwc; if (wc_x < 0.0) wc_x = 0.0; if (wc_x > 1.0 - 1.0e-12) wc_x = 1.0 - 1.0e-12;
     double deps_eff[6];
-    for (int i = 0; i < 6; ++i) deps_eff[i] = deps[i] - r * in.depl[i];   // frozen plastic-strain increment
+    for (int i = 0; i < 6; ++i) deps_eff[i] = (strain[i] - inRaw.eps[i]) - r * inRaw.depl[i];   // frozen plastic-strain increment
     double sig_bar_x[6];
-    elasticPredTensor(in.sigEff, deps_eff, mp, sig_bar_x);               // LINEAR in deps => elastic tangent
+    elasticPredTensor(inRaw.sigEff, deps_eff, mp, sig_bar_x);               // LINEAR in deps => elastic tangent
     double A[3][3], w[3], V[3][3]; voigtToMat(sig_bar_x, A); eig3sym(A, w, V);
     double sp[3];
     for (int i = 0; i < 3; ++i) {
@@ -2540,6 +3296,23 @@ inline int returnMap(const Params& mp, const double strain[6], const State& in, 
         }
     }
     return status;
+}
+
+// The deterministic piece count that returnMap(mp, strain, inRaw, ...) uses for its (first) return map -- for tests and
+// finite-difference references that must pin n on both legs (Params::subIncrForceN). 1 for a crushed (frozen) point.
+inline int returnMapPieces(const Params& mp, const State& inRaw, const double strain[6])
+{
+    double deps[6];
+    for (int i = 0; i < 6; ++i) deps[i] = strain[i] - inRaw.eps[i];
+    if (inRaw.wc >= mp.omegaDead) return 1;
+    if (inRaw.wt >= mp.omegaDead) {
+        State rebased = inRaw;                       // rmPiecesFD reads the re-based trial state like damagedTangent does
+        double sigTr[6]; elasticPredTensor(inRaw.sigEff, deps, mp, sigTr);
+        for (int i = 0; i < 6; ++i) { rebased.sigEff[i] = sigTr[i]; rebased.eps[i] = strain[i]; }
+        const double zero[6] = {0, 0, 0, 0, 0, 0};
+        return rmPiecesFD(mp, rebased, zero);
+    }
+    return detPieces(mp, inRaw.sigEff, deps, inRaw.kp);
 }
 
 // ===========================================================================
@@ -2600,18 +3373,32 @@ inline bool solve3(const double A[3][3], const double b[3], double x[3])
 // (Cdam = the P2 damaged tangent for the output rows; the constraint block uses the EFFECTIVE tangent
 // Ceff_LL + the hoop stiffness on the lateral-normal diagonal). Reduces to a plain static condensation
 // where omega->0 (Cdam->Ceff). Returns 0 converged / 2 the inviscid effective return did not converge.
-inline int driveConfinedFiber(const Params& mp, double strain[6], const State& in, State& out,
+inline int driveConfinedFiber(const Params& mp, double strain[6], const State& inRaw, State& out,
                               double sigma[6], double sigEffImpl[6], double Dtan6[6][6],
                               bool doTangent, double hoopK, double hoopFy, double dt = 0.0)
 {
     const int L[3] = {1, 2, 4};                       // condensed lateral block (eps_11, eps_22, gamma_12)
     const double tol = 1.0e-10 * (mp.fc + 1.0);
-    double sig_eff[6] = {0,0,0,0,0,0}, kp_new = in.kp, Ceff[6][6];
+    double sig_eff[6] = {0,0,0,0,0,0}, kp_new = inRaw.kp, Ceff[6][6];
     double dkpF[6] = {0,0,0,0,0,0};                  // d kp/dε at the converged lateral strain (F2)
     int status = 0;
+    // DEAD POINTS (review M2; the same treatment as returnMap, via the shared effectiveReturn): a CRUSHED fibre point
+    // (omega_c >= omegaDead) is frozen -- elastic on the fixed plastic strain, both damages at the floor; a CRACKED one
+    // (omega_t >= omegaDead) carries its tensile effective stress elastically and returns on the compressive remainder.
+    const bool crushed = (inRaw.wc >= mp.omegaDead);
+    State cutBuf; const State* inP = &inRaw; bool cutT = false;
+    auto effective = [&](const double eps[6], int* subInfo) {
+        if (crushed) {
+            double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = eps[i] - inRaw.eps[i];
+            elasticPredTensor(inRaw.sigEff, deps, mp, sig_eff); kp_new = inRaw.kp; elasticC(mp, Ceff);
+            for (int i = 0; i < 6; ++i) dkpF[i] = 0.0;
+            if (subInfo) *subInfo = 0;
+            return 0;
+        }
+        return effectiveReturn(mp, eps, inRaw, true, 0.0, true, cutBuf, inP, cutT, sig_eff, kp_new, Ceff, subInfo, dkpF);
+    };
     for (int it = 0; it < 80; ++it) {                 // nested lateral Newton vs the hoop residual
-        double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = strain[i] - in.eps[i];
-        status = returnMapTensor(mp, in.sigEff, deps, in.kp, true, sig_eff, kp_new, Ceff, true);
+        status = effective(strain, nullptr);
         double r[3] = { sig_eff[1] + hoopStress(strain[1], hoopK, hoopFy),
                         sig_eff[2] + hoopStress(strain[2], hoopK, hoopFy),
                         sig_eff[4] };
@@ -2626,33 +3413,46 @@ inline int driveConfinedFiber(const Params& mp, double strain[6], const State& i
     }
     // final sync (mirror the oracle's post-loop re-evaluation): recompute the effective return at the
     // converged lateral strain so sig_eff/Ceff/kp_new always correspond to the committed strain (guards
-    // the rare 80-iter-exhausted case where the last lateral update post-dates the last returnMapTensor),
+    // the rare 80-iter-exhausted case where the last lateral update post-dates the last effective return),
     // and flag a genuinely unmet lateral balance as non-converged (status 2 => the caller cuts the step).
     {
-        double deps[6]; for (int i = 0; i < 6; ++i) deps[i] = strain[i] - in.eps[i];
-        status = returnMapTensor(mp, in.sigEff, deps, in.kp, true, sig_eff, kp_new, Ceff, true, &out.subInfo, dkpF);
+        status = effective(strain, &out.subInfo);
         const double rf[3] = { sig_eff[1] + hoopStress(strain[1], hoopK, hoopFy),
                                sig_eff[2] + hoopStress(strain[2], hoopK, hoopFy),
                                sig_eff[4] };
         if (std::sqrt(rf[0]*rf[0] + rf[1]*rf[1] + rf[2]*rf[2]) >= 1.0e-6 * (mp.fc + 1.0)) status = 2;
     }
-    // commit the converged effective state + the IMPLICIT P2 dual-damage nominal stress (mirror returnMap)
-    for (int i = 0; i < 6; ++i) { out.eps[i] = strain[i]; out.sigEff[i] = sig_eff[i]; sigEffImpl[i] = sig_eff[i]; }
-    out.kp = kp_new;
-    double wt_impl = 0.0, wc_impl = 0.0;
-    damagedUpdate(mp, in, sig_eff, kp_new, strain, out, &wt_impl, &wc_impl);
-    for (int i = 0; i < 6; ++i) sigma[i] = out.sig[i];
-    out.wt = wt_impl; out.wc = wc_impl; out.dwt = wt_impl - in.wt; out.dwc = wc_impl - in.wc;
-    { double epl[6], epl_n[6];
-      plasticStrain6(out.sigEff, out.eps, mp, epl);
-      plasticStrain6(in.sigEff,  in.eps,  mp, epl_n);
-      for (int i = 0; i < 6; ++i) out.depl[i] = epl[i] - epl_n[i]; }
-    out.dt_n = (dt > 0.0) ? dt : in.dt_n;
+    const State& in = *inP;
+    double Cdam[6][6];
+    if (crushed) {
+        // frozen point (same rule as returnMap, see the note there): histories and kappa_p as committed, both damages at the
+        // floor, nominal = (1-OMEGA_MAX) sig_eff
+        out = inRaw;
+        const double k = 1.0 - OMEGA_MAX;
+        for (int i = 0; i < 6; ++i) { out.eps[i] = strain[i]; out.sigEff[i] = sig_eff[i]; sigEffImpl[i] = sig_eff[i];
+                                       out.sig[i] = k * sig_eff[i]; sigma[i] = out.sig[i]; out.depl[i] = 0.0; }
+        out.wt = OMEGA_MAX; out.wc = OMEGA_MAX; out.dwt = 0.0; out.dwc = 0.0;
+        out.dt_n = (dt > 0.0) ? dt : inRaw.dt_n;
+        if (doTangent) { double C0[6][6]; elasticC(mp, C0); const double kT = k > OMEGA_TAN_FLOOR ? k : OMEGA_TAN_FLOOR;
+                          for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Cdam[i][j] = kT * C0[i][j]; }
+    } else {
+        // commit the converged effective state + the IMPLICIT P2 dual-damage nominal stress (mirror returnMap)
+        for (int i = 0; i < 6; ++i) { out.eps[i] = strain[i]; out.sigEff[i] = sig_eff[i]; sigEffImpl[i] = sig_eff[i]; }
+        out.kp = kp_new;
+        double wt_impl = 0.0, wc_impl = 0.0;
+        damagedUpdate(mp, in, sig_eff, kp_new, strain, out, &wt_impl, &wc_impl);
+        for (int i = 0; i < 6; ++i) sigma[i] = out.sig[i];
+        out.wt = wt_impl; out.wc = wc_impl; out.dwt = wt_impl - in.wt; out.dwc = wc_impl - in.wc;
+        { double epl[6], epl_n[6];
+          plasticStrain6(out.sigEff, out.eps, mp, epl);
+          plasticStrain6(in.sigEff,  in.eps,  mp, epl_n);
+          for (int i = 0; i < 6; ++i) out.depl[i] = epl[i] - epl_n[i]; }
+        out.dt_n = (dt > 0.0) ? dt : in.dt_n;
+        if (doTangent && status == 0) damagedTangent(mp, in, sig_eff, strain, kp_new, Ceff, dkpF, Cdam);
+    }
 
     if (doTangent) {
         if (status != 0) { elasticC(mp, Dtan6); return status; }   // safe fallback; caller cuts the step
-        double Cdam[6][6];
-        damagedTangent(mp, in, sig_eff, strain, kp_new, Ceff, dkpF, Cdam);
         double Kll[3][3];
         for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) Kll[i][j] = Ceff[L[i]][L[j]];
         Kll[0][0] += hoopStiffness(strain[1], hoopK, hoopFy);

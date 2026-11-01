@@ -432,6 +432,14 @@ LadrunoHHT::computeSensitivities()
     theSOE->zeroB();
     this->formIndependentSensitivityRHS();
 
+    // Ladruno: re-form the current tangent at the converged state once; the
+    // solves for every parameter below reuse this factorization. The one left
+    // by the primal algorithm can be stale (ModifiedNewton) or built from the
+    // initial stiffness (-initial); with ModifiedNewton on a yielding Steel01
+    // truss reusing it gives a relative gradient error of about 1e-3. Same
+    // treatment as LadrunoGeneralizedAlpha.
+    this->formTangent(CURRENT_TANGENT);
+
     AnalysisModel *theModel = this->getAnalysisModel();
     Domain *theDomain = theModel->getDomainPtr();
     ParameterIter &paramIter = theDomain->getParameters();

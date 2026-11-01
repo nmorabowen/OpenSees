@@ -112,7 +112,7 @@ GLOBS = [
     "SRC/recorder/LadrunoRecorder.*",
     "SRC/recorder/Ladruno_*.cpp", "SRC/recorder/Ladruno_*.h",
     "SRC/recorder/LadrunoMonitor*.cpp", "SRC/recorder/LadrunoMonitor*.h",
-    "SRC/recorder/EnergyBalanceRecorder.*", "SRC/recorder/EnergyBalanceKernel.h",
+    "SRC/recorder/EnergyBalanceRecorder.*", "SRC/recorder/EnergyBalanceKernel.h", "SRC/recorder/LadrunoEnergyBalanceMPI.*",
     "SRC/convergenceTest/LadrunoStabilizedUnbalance.*",
     "SRC/analysis/handler/LadrunoProjectionHandler.*",
     "SRC/analysis/handler/LadrunoConstraintProjector.*",
