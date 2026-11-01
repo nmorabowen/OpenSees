@@ -5097,7 +5097,7 @@ def run_f2_chain_gate(verbose=True):
     C5 the damaged tangent at the tension-apex return == the FD of the damaged step (1e-6; the per-component
        driver micro-FD across the hydrostatic-axis cone was O(1) off there, apeGmsh #2621);
     C6 the relative driver-gradient step (mirror of kernel check E9, apeGmsh #2639): far-compressive and ordinary
-       damage-advancing states, damaged tangent == the FD of the damaged step (1e-6) in MPa-mm, kPa-m and Pa-m."""
+       damage-advancing states, damaged tangent == the FD of the damaged step (1e-6; 2e-6 on path 0) in MPa-mm, kPa-m and Pa-m."""
     res = {}
     mp_det = make_material(30000.0, 0.2, 30.0, 3.0, Df=0.85, Hp=0.01, flow_potential="cdpm2", max_subincr=10)
     mp_ad = make_material(30000.0, 0.2, 30.0, 3.0, Df=0.85, Hp=0.01, flow_potential="legacy", max_subincr=10,
@@ -5218,9 +5218,11 @@ def run_f2_chain_gate(verbose=True):
     # deterministic map most of these steps are sub-incremented in n equal pieces; damaged_consistent_tangent pins the
     # centre's n on both FD legs, so they are tested too. A step whose schedule is NOT n equal pieces (the adaptive
     # rescue) is counted in sub6 and fails the gate (the reference would not be frozen there): none occurs.
-    # Reference rel_step 1e-5: path 0's residual grows as 1/rel_step below it
-    # (1e-5 / 1e-6 / 1e-7: 3.3e-7 / 2.2e-6 / 2.1e-5), reference round-off. With the absolute step path 0 read 5.7e-5
-    # (MPa), 7.4e-2 (kPa) and 1.1e2 (Pa), paths 1 and 2 7.8e-4 and 6.2e-4 in Pa; now <= 3.6e-7 in all three.
+    # Reference rel_step 1e-5. On #877's kernel path 0 reads ~9e-7 (9.0e-7 / 9.7e-7 / 9.6e-7 in MPa / kPa / Pa) and
+    # the residual does NOT shrink with the step (rel_step 3e-6 / 1e-5 / 3e-5 / 1e-4: 1.2e-6 / 9.0e-7 / 9.0e-7 / 9.1e-7),
+    # so it is not reference round-off; the kernel's E9 reads 2.2e-7 on the same path, so it sits on the oracle side
+    # (cause not isolated). Path 0's bound is 2e-6 for that reason; paths 1 and 2 keep 1e-6. With the absolute step
+    # path 0 read 5.7e-5 (MPa), 7.4e-2 (kPa) and 1.1e2 (Pa), paths 1 and 2 7.8e-4 and 6.2e-4 in Pa.
     res["C6_units"] = {}
     for tag, s, L in (("MPa-mm", 1.0, 1.0), ("kPa-m", 1.0e3, 1.0e-3), ("Pa-m", 1.0e6, 1.0e-3)):
         m6 = make_material(30000.0 * s, 0.2, 30.0 * s, 3.0 * s, Df=0.85, Hp=0.01, flow_potential="cdpm2", max_subincr=10,
@@ -5248,7 +5250,7 @@ def run_f2_chain_gate(verbose=True):
                         errs6.append(float(np.linalg.norm(Da - Dn) / np.linalg.norm(Dn)))
                 st6, wt6, wc6 = new6, info6["wt"], info6["wc"]
             res["C6_units"][(tag, path)] = (len(errs6), sub6, (max(errs6) if errs6 else 1.0))
-    res["C6_ok"] = bool(all(n >= (40, 20, 100)[p] and sb == 0 and w < 1.0e-6 for (_, p), (n, sb, w) in res["C6_units"].items()))
+    res["C6_ok"] = bool(all(n >= (40, 20, 100)[p] and sb == 0 and w < (2.0e-6, 1.0e-6, 1.0e-6)[p] for (_, p), (n, sb, w) in res["C6_units"].items()))
     res["PASS"] = bool(res["C1_ok"] and res["C2_ok"] and res["C3_ok"] and res["C4_ok"] and res["C5_ok"] and res["C6_ok"])
     if verbose:
         print(f"  C1 chain rule vs frozen-schedule FD: n={res['C1_n']} pieces={npieces} worst sigma {res['C1_worst']:.2e} "

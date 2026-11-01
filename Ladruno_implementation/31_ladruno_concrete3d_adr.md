@@ -601,7 +601,8 @@ near-axis cap returns had no regular solution, and uniaxial compression reached 
 3. **Sub-incrementation** (OOFEM `performPlasticityReturn`): a failed direct return halves the strain increment
    (depth 10) and integrates the pieces; the tangent is the last piece's. 120k-trial fuzz: 0 failures (direct
    return alone: 30 %). *(Superseded by section 16: the default is now the deterministic chain and its tangent is
-   the chain's own, not the last piece's.)*
+   the chain's own, not the last piece's. Since PR #1050 the `adaptive` path's tangent is the chain-rule derivative
+   of its piece schedule too.)*
 4. `-flowPotential legacy` restores the v1 flow (byte-identical pre-B1 flow). *(Corrected by section 16: it no
    longer disables sub-incrementation; `maxSubIncr = 10` applies to both flows since the #877 follow-up.)*
 5. Gate results: con2dpm2 plasticity == an independent OOFEM transcription at equal sub-steps; Kupfer peak
@@ -677,8 +678,9 @@ weight in the effective-stress eigenframe: 1 for σ̄_a ≤ 1e-3·ft, 0 for σ̄
   σ̄_lat ~ 1e-5·ft of uniaxial-stress compression at ω_t ≈ 1. So every compressive backbone, the Gc table, Kupfer
   and con2dpm2 are unchanged.
 - The tensile channel is untouched.
-- The analytic damaged tangent carries d(‖Δε_p‖ w_c)/dε (composite micro-FD through the return map, as for
-  `-ctTemper proj`) and dε̃_c/dε.
+- The analytic damaged tangent carries d(‖Δε_p‖ w_c)/dε and dε̃_c/dε. (Before PR #1050 these went through a
+  composite micro-FD of the return map, as for `-ctTemper proj`; #1050 replaced both with closed-form gradients
+  built on the return map's κp row.)
 
 **Gate** `run_tc_temper_gate` / `test_tc_temper_gate`:
 

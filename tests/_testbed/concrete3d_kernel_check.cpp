@@ -1139,7 +1139,9 @@ static void run_f2_chain() {
                               kerBK = std::fmin(kerBK, relF6(Dt, Jn)); kerLast = std::fmin(kerLast, relF6(Dt, Dl)); }
         }
     }
-    check(n2 >= 20 && n4 >= 20 && skipped <= tested && worstD < 1.0e-7 && worstK < 1.0e-7,
+    // n2/n4 >= 20 is the coverage floor; the skip bound only catches a generator that mostly misses (75 skipped vs
+    // 80 tested with g++/MSVC on #877's kernel, so skipped <= tested had a 6 % margin and was libm-sensitive).
+    check(n2 >= 20 && n4 >= 20 && skipped <= 2 * tested && worstD < 1.0e-7 && worstK < 1.0e-7,
           "E1 failure-driven 2-/4-piece returns: chain-rule Dtan6 and d kp/de == frozen-schedule FD to 1e-7");
     std::printf("       (2-piece %d, 4-piece %d, skipped (kink in the stencil) %d; worst Dtan6 %.2e, worst dkp %.2e)\n", n2, n4, skipped, worstD, worstK);
     check(nF >= 40 && worstF < 1.0e-7, "E1 forced {1/2,1/2} and {1/4 x4} schedules: chain-rule tangent == FD to 1e-7");
