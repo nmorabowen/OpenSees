@@ -62,6 +62,27 @@
 #include <elementAPI.h>
 #include <classTags.h>
 
+// Ladruno: read an optional trailing number. On failure the token is left in
+// place for the option loop: the Python reader advances past a token it cannot
+// convert, the Tcl reader does not (quirk LEGACY-a-failed-ops-getintinput...),
+// so only un-read when the count actually dropped.
+static bool
+ladrunoArcLengthOptionalDouble(double &value)
+{
+    int before = OPS_GetNumRemainingInputArgs();
+    if (before < 1)
+        return false;
+    int nd = 1;
+    double v;
+    if (OPS_GetDoubleInput(&nd, &v) == 0) {
+        value = v;
+        return true;
+    }
+    if (OPS_GetNumRemainingInputArgs() < before)
+        OPS_ResetCurrentInputArg(-1);
+    return false;
+}
+
 void* OPS_LadrunoArcLength()
 {
     // Usage: integrator LadrunoArcLength arcLength alpha
@@ -125,10 +146,7 @@ void* OPS_LadrunoArcLength()
             }
         } else if (strcmp(opt, "-stabilize") == 0) {
             stabilize = true;
-            if (OPS_GetNumRemainingInputArgs() > 0) {   // optional trailing f fraction
-                int nd = 1; double f;
-                if (OPS_GetDoubleInput(&nd, &f) == 0) fTarget = f;
-            }
+            ladrunoArcLengthOptionalDouble(fTarget);   // optional trailing f fraction
         } else if (strcmp(opt, "-adaptStab") == 0) {
             adaptStab = true;
         } else if (strcmp(opt, "-cVisc") == 0) {
@@ -146,9 +164,7 @@ void* OPS_LadrunoArcLength()
             if (strcmp(m, "gershgorin") == 0)      massMode = 0;
             else if (strcmp(m, "lumped") == 0) {
                 massMode = 1;
-                if (OPS_GetNumRemainingInputArgs() > 0) {
-                    int nd = 1; if (OPS_GetDoubleInput(&nd, &massScale) < 0) massScale = 1.0;
-                }
+                ladrunoArcLengthOptionalDouble(massScale);
             } else if (strcmp(m, "unity") == 0)    massMode = 2;
             else opserr << "WARNING integrator LadrunoArcLength - unknown -mass " << m
                         << " (keeping gershgorin)\n";
@@ -496,6 +512,11 @@ LadrunoArcLength::domainChanged(void)
     currentLambda = theModel->getCurrentDomainTime();
     currentLambda += 1.0;
     theModel->applyLoadDomain(currentLambda);
+    // Ladruno: on a repeat domainChanged M* is still set from the last build and
+    // deltaUstep keeps its old values, so the formUnbalance override would
+    // subtract f_v from phat. Zero M*; it is rebuilt below.
+    if (Mstar != 0)
+        Mstar->Zero();
     this->formUnbalance();   // NOTE: assumes unbalance at last was 0
     (*phat) = theLinSOE->getB();
     currentLambda -= 1.0;

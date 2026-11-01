@@ -120,9 +120,18 @@ void *OPS_LadrunoIndirectControl(void)
                           "read numIter\n";
                 return 0;
             }
-            if (OPS_GetNumRemainingInputArgs() >= 2) {
+            // Ladruno: optional dmin dmax; on a failed read un-read only what the
+            // reader consumed (Python advances, Tcl does not).
+            int before = OPS_GetNumRemainingInputArgs();
+            if (before >= 2) {
                 int nd2 = 2; double mm[2];
-                if (OPS_GetDoubleInput(&nd2, mm) == 0) { dmin = mm[0]; dmax = mm[1]; }
+                if (OPS_GetDoubleInput(&nd2, mm) == 0) {
+                    dmin = mm[0]; dmax = mm[1];
+                } else {
+                    int consumed = before - OPS_GetNumRemainingInputArgs();
+                    if (consumed > 0)
+                        OPS_ResetCurrentInputArg(-consumed);
+                }
             }
             haveIter = true;
         } else {
