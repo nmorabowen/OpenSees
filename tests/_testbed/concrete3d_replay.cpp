@@ -73,6 +73,13 @@ static void kv(const std::string& line, std::map<std::string, std::string>& m) {
     while (is >> t) { const size_t p = t.find('='); if (p == std::string::npos) die("not key=value: " + t); m[t.substr(0, p)] = t.substr(p + 1); }
 }
 
+// An integer field (status, piece count, pass index) parsed as a double: a non-integral or non-finite value is an error,
+// never truncated (a truncating cast would let a corrupted 0.9 replay as 0).
+static int asInt(double v, const char* what, const std::string& line) {
+    if (!std::isfinite(v) || v != std::trunc(v)) die(std::string(what) + " is not an integer: " + line.substr(0, 60));
+    return (int)v;
+}
+
 struct Fixture { std::map<std::string, std::string> meta; std::string qLine; std::vector<Rec> recs; std::vector<std::string> header; };
 
 static Fixture load(const char* path) {
@@ -108,11 +115,11 @@ static Fixture load(const char* path) {
         case 'I': copy(nums(line, 11), r->im); r->stateLines.push_back(line); break;
         case 'C': copy(nums(line, 2), r->c); r->stateLines.push_back(line); break;
         case 'T': copy(nums(line, 6), r->strain); r->stateLines.push_back(line); break;
-        case 'O': copy(nums(line, 17), r->o); r->hasO = true; break;
+        case 'O': copy(nums(line, 17), r->o); asInt(r->o[0], "O status", line); asInt(r->o[1], "O sub", line); r->hasO = true; break;
         case 'D': case 'M': if (r->hasD) die("two tangent lines in one record: " + r->kLine);
                   copy(nums(line, 36), r->D); r->hasD = true; r->dKind = c; break;
         case 'W': copy(nums(line, 12), r->w); r->hasW = true; break;
-        case 'Z': { auto v = nums(line, 6); Pass p{(int)v[0], (int)v[4], (int)v[5], v[1], v[2], v[3]}; r->z.push_back(p); break; }
+        case 'Z': { auto v = nums(line, 6); Pass p{asInt(v[0], "Z pass", line), asInt(v[4], "Z status", line), asInt(v[5], "Z sub", line), v[1], v[2], v[3]}; r->z.push_back(p); break; }
         default: die(std::string("unknown line kind '") + c + "' (the fixture is the record-dump subset: Q K G P E S X H I C T O D M W Z)");
         }
     }

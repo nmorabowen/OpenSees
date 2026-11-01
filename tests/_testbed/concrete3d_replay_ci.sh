@@ -41,6 +41,15 @@ cat "$out/guard.txt"
 [ "$rc" -eq 2 ] && grep -q "do not replay bit-exactly under $tag" "$out/guard.txt" \
   || { echo "ERROR: the libm guard did not refuse (exit $rc)"; exit 1; }
 
+echo "== load guard: a non-integer status in an O or Z line must be refused, never truncated"
+awk '!d && /^O /{$2=$2+0.5; d=1} 1' "$fix" > "$out/nonint_O.txt"
+awk '!d && /^Z /{$6=$6+0.5; d=1} 1' "$fix" > "$out/nonint_Z.txt"
+for m in nonint_O nonint_Z; do
+  set +e; "$out/concrete3d_replay" check "$out/$m.txt" --cross > "$out/$m.log" 2>&1; rc=$?; set -e
+  cat "$out/$m.log"
+  [ "$rc" -eq 2 ] && grep -q "is not an integer" "$out/$m.log"     || { echo "ERROR: $m was not refused as a non-integer (exit $rc)"; exit 1; }
+done
+
 echo "== recording the inputs under glibc (artifact)"
 "$out/concrete3d_replay" record "$fix" "$out/concrete3d_replay_records.linux-glibc.txt" --kernel-blob "$blob"
 
