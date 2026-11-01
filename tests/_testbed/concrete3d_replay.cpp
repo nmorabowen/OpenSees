@@ -25,6 +25,10 @@
 //                                                                      libm and the kernel header's git blob
 //   concrete3d_replay inputs-match <a> <b>                             exit 0 iff the two fixtures hold the same
 //                                                                      records in the same order with the same inputs
+//   concrete3d_replay fields [--header|--rows|--check <this .cpp>]     the field table (below); --rows its generated
+//                                                                      rows; --check exit 0 iff the header block is it
+//   concrete3d_replay contract <fixture> --kernel-blob <sha>           exit 0 iff every generated row gives its
+//                                                                      class's outcome (the two-way contract below)
 // Exit codes: 0 pass; 1 a compared value (or the kernel blob, or the libm probes) differs; 2 refused at load.
 // Builds: concrete3d_replay_ci.sh (g++, glibc) and concrete3d_replay_libmmt.bat (MSVC + Intel libmmt, as the pyd).
 //
@@ -33,81 +37,151 @@
 //   OUT    a compared output (the compare named); `record` rewrites it
 //   PIN    required at load to equal a dump rule or another field, bit for bit
 //   UNREAD an input the kernel does not read in this fixture's modes (implex=0, eta=0, epsFc>0). A coverage limit,
-//          stated and ENFORCED: ci.sh's `unread inputs` table perturbs each one by 25 % (0 -> 0.25) and requires the
-//          replay to still pass, so a kernel change that starts reading one turns that test red and this table must
-//          be updated. (implexRmax and lch_ref are not in it: they are PIN, so a perturbed one is refused at load.)
-//   INFO   informational, not compared, with the reason. Across the two fixtures `inputs-match` ties every field
-//          marked (x) together, so neither fixture can drop, reorder or edit a record on its own.
+//          stated and ENFORCED (below)
+//   INFO   informational, not compared, with the reason.
+// Across the two fixtures `inputs-match` ties the G P E S X H I C T lines (but an R record's T[2]) and the K keys kind
+// seq tag ele dim calls integ (and a C/F record's pass) together, so neither fixture can drop, reorder or edit a record
+// on its own.
 // Every number is canonical: a double token must be exactly its own %.17g (what every writer prints), an integer token
 // exactly its decimal (no '+', leading zero or -0); anything else is refused at load.
-//   #  (header) comment lines: INFO. Only before the first K line; a # line inside the records is refused (it could
-//      hide a record or a line). `record` writes its banner as #= lines and drops a source's #= lines.
-//   #@ libm=        the libm the outputs were written under: `check` refuses another one (exit 2; --cross waives).
-//      kernel-blob= the kernel header's git blob the outputs were written on: compared with --kernel-blob (exit 1).
-//      binary=      INFO: who wrote the O/D/W/Z values and the K outcome fields (opensees.pyd@ec969aef2 for the
-//                   libmmt fixture; `record` keeps it only when it reproduced every one of those values on the same
-//                   libm, otherwise it writes concrete3d_replay-record).
-//      M-lines= N-lines=  INFO: who wrote the M and N lines (concrete3d_replay-record).
-//   Q  21 libm probes (log exp cos sin pow atan2 acos at three points): OUT, compared with this build's own probes.
-//   K  kind=        IN (x): selects the replay (C/F one integrate, R the sigma_22 loop).
-//      seq= tag= ele= calls= integ=  INFO (x): the dump's identifiers and provenance counters; the kernel has none.
-//      dim=         R: PIN to a condensed element (3 or 4). C/F: INFO (x): the wrapper's element dimension (the
-//                   kernel is always 3-D; the record's T is the full 6-component strain).
-//      pass=        R: OUT (the rule-B refusal code of the replayed loop). C/F: INFO (x): the sigma_22 pass index of
-//                   the recorded integrate(); its strain is T, and pass 0 ties C[1] to T[2] (below).
-//      status= subInfo=  PIN to O[0] and O[1] (which are OUT). subInfo also PIN to the dump's domain: -1 when status
-//                   != 0, else 0 or (with maxSubIncr > 0) the piece count >= 2; and to N's subInfo (N[40]).
-//      cls=         OUT: the dump's return class (0 direct, 1 sub-incremented, 2 floor A, 3 floor B, 4 floor C,
-//                   5 direct failure), DERIVED from the replayed returnMap: status 0 -> 0 if subInfo is 0, else 1;
-//                   status != 0 -> 4 if maxSubIncr > 0, else 5. This tree's kernel has no class API (the probe's
-//                   DiagMap is not in it): the return status and State::subInfo are its whole report, and they
-//                   determine every class the probe could write. Class 3 is never assigned by the probe; class 2 needs
-//                   a piece f < 2^-maxSubIncr, impossible because every piece and every partial sum is an exact
-//                   multiple of 2^-maxSubIncr; a failure with maxSubIncr > 0 leaves only through floor C. Also PIN at
-//                   load: the K line's cls must be that formula of its own status, subInfo and the P line's maxSubIncr.
-//   G  dump= class= pick=  INFO (x): why the record was picked; domain-checked; class= groups the report.
-//   P  E nu fc ft e m0 Gf Df As qh0 Hp Ah Bh Ch Dh epsFc lch ctTemper tcTemper tensionLaw flowPotential compDrive
-//      implex eta   IN (x). eta and implex are read as mode switches; eta=0 and implex=0 on every record, so the
-//                   Duvaut-Lions and IMPL-EX paths are a coverage limit of this fixture, not exercised.
-//      dt           IN (x): read into State::dt_n (N) when dt > 0 (Duvaut-Lions and IMPL-EX are off).
-//      maxSubIncr   PIN: 10 iff flowPotential=1, else 0 (the wrapper's rule).
-//      implexRmax   PIN: 2 (the dump prints the constant 2.0; the wrapper never sets it). Read only under IMPL-EX.
-//      lch_ref      PIN: = lch bit for bit (the dump prints lch twice; integrate sets p.lch_ref = lch). Never read.
-//      ftol         PIN: = this kernel's F_TOL_HONEST (a constant, not a parameter).
-//      rho          UNREAD (x): the kernel has no use of Params::rho.
-//      Gc           UNREAD (x): read only when epsFc <= 0 (epsFcOf); epsFc > 0 on every record.
-//   E  committed strain State::eps[6]: IN (x).
-//   S  committed nominal stress State::sig[6]: UNREAD (x): returnMap never reads in.sig (it returns from X).
-//   X  committed effective stress State::sigEff[6]: IN (x).
-//   H  kp et_max kdt1 kdt2 kdc kdc1 kdc2 sigtMax sigcMax eqc etPrev: IN (x) (each but etPrev also reaches its own N field;
-//      the kernel sets N.etPrev from this step's drive, and in.etPrev reaches N.eqc and the outputs through the CDPM2
-//      compressive history, compDrive = 1 on every record).
-//   I  wt wc: IN (x) (into N dwt, dwc).  dwt dwc: UNREAD (x) (IMPL-EX only).  dt_n: IN (x) (into N dt_n when dt <= 0).
-//      depl[6]: UNREAD (x) (IMPL-EX only).
-//   C  C[0], the committed eps_22: PIN to E[2] (x). C[1], the sigma_22 loop's start: R: IN (x) (the loop starts
-//      there). C/F at pass 0: PIN to T[2] (pass 0 runs at the start). C/F at pass > 0: INFO (x): the passes before the
-//      recorded one are not in the record, so the path from C[1] to T[2] is not replayed.
-//   T  the trial strain: IN (x), except T[2] on an R record: OUT (the eps_22 the loop left in the trial strain).
-//   O  status pieces kappa omega_t omega_c sig[6] sigEff[6]: OUT (17 values; status and pieces as integers).
-//   D  the 6x6 tangent the pyd dumped (C records): OUT.  M  the same for F and R (last pass), testbed-recorded: OUT.
-//   W  eig3sym of the effective stress (3 eigenvalues + the 3x3 vectors), the libm canary: OUT.
-//   Z  per pass of an R record: index (PIN to its position), eps22, s22, D22 (OUT), status, pieces (OUT, integers).
-//   N  the full State returnMap returned (R: after the last pass), i.e. what the next step would read: eps[6] sig[6]
-//      sigEff[6] kp et_max kdt1 kdt2 kdc kdc1 kdc2 sigtMax sigcMax eqc etPrev wt wc dwt dwc dt_n depl[6] subInfo,
-//      41 values, every State field: OUT, required on every record. Testbed-recorded under the fixture's libm, like
-//      M. On the libmmt fixture they were recorded by a build that reproduced every pyd-written value of every record
-//      bit for bit (`record` keeps #@ binary=opensees.pyd@ec969aef2 only then).
+// The table below is GENERATED: it is the output of `concrete3d_replay fields`, which prints FIELDS (the field table
+// in this file, its single source), and `fields --check <this file>` fails when the two differ (ci.sh and the .bat run
+// it). The loader takes every numeric line's column count, every key set and every domain from FIELDS, so a field
+// cannot be added unclassified. It is a TWO-WAY CONTRACT: `concrete3d_replay contract <fixture>` generates one row per
+// column of every entry (per domain value for {}), perturbs that field on every record in its scope (with its ties),
+// and requires the class's outcome: an IN row must FAIL (exit 1, its first mismatch naming a compared field) or be
+// refused at load where the entry says so; an OUT row must fail naming its own compare; a PIN row must be refused; an
+// UNREAD or INFO row must still PASS on every record. So a later edit that stops reading or comparing an IN field turns its row
+// red, and a kernel that starts reading an UNREAD one turns that row red. The rows run in-process through the same
+// load / replay / compare as `check` (a refusal is exit 2, a difference exit 1); a record whose input lines a row did
+// not touch reuses the base fixture's replay (the replay is a pure function of them), and a row that must fail stops
+// at its first mismatching record. ci.sh --contract runs them on the glibc fixture (its own workflow step), the .bat's
+// `contract` on the libmmt fixture.
+//   ---- BEGIN FIELD TABLE (the output of `concrete3d_replay fields`; `fields --check` compares) ----
+//   ln cols          class  scope pert    tie            expect -- note
+//   #  text          INFO   all   -       -              -- header comments: only before the first K line
+//   #@ libm          PIN    all   =other  -              refuse:do not replay bit-exactly under -- the outputs' libm; --cross waives
+//   #@ kernel-blob   OUT    all   ~last   -              fail:KERNEL-BLOB MISMATCH -- the kernel header blob, vs --kernel-blob
+//   #@ binary        INFO   all   =x      -              -- who wrote the O/D/W/Z values and the K outcome fields (note 2)
+//   #@ M-lines       INFO   all   =x      -              -- who wrote the M lines
+//   #@ N-lines       INFO   all   =x      -              -- who wrote the N lines
+//   Q  0-20          OUT    all   x1.25   -              fail:libm probes (Q line, 21 values): DIFFER -- 21 libm probes, vs this build's
+//   K  kind          IN     R     =F      -              refuse:Z lines on a non-R record -- C/F: one integrate, R: the sigma_22 loop; domain C,F,R
+//   K  seq           INFO   all   +1      -              -- the dump's identifiers and counters: the kernel has none
+//   K  tag           INFO   all   +1      -              -- (as seq)
+//   K  ele           INFO   all   +1      -              -- (as seq)
+//   K  calls         INFO   all   +1      -              -- (as seq)
+//   K  integ         INFO   all   +1      -              -- (as seq)
+//   K  dim           INFO   CF    +1      -              -- the wrapper's element dimension: the kernel is always 3-D
+//   K  dim           PIN    R     =5      -              refuse:without a condensed sigma_22 trace -- a condensed element: 3 or 4
+//   K  pass          OUT    R     +1      -              fail: reason  -- the rule-B refusal code of the replayed loop
+//   K  pass          INFO   CF    +1      -              -- the sigma_22 pass of the recorded integrate(); pass 0 ties C[1] to T[2]
+//   K  status        PIN    all   +1      -              refuse:disagree with the O line -- = O[0]
+//   K  subInfo       PIN    all   +1      -              refuse:disagree with the O line -- = O[1] and N[40], in its domain (note 1)
+//   K  cls           OUT    all   +1      -              refuse:is not what the dump writes -- derived (note 1); its load pin refuses first
+//   G  dump          INFO   all   =unset  -              -- why the record was picked; domain unset,COMPATIBLE
+//   G  class         INFO   all   =direct -              -- groups the report; domain refusal,floor-C,sub-increment,kink,direct
+//   G  pick          INFO   all   =x      -              -- the selection rule
+//   P  E             IN     all   x1.25   -
+//   P  nu            IN     all   x1.25   -
+//   P  rho           UNREAD all   x1.25   -              -- the kernel has no use of Params::rho
+//   P  fc            IN     all   x1.25   -
+//   P  ft            IN     all   x1.25   -
+//   P  e             IN     all   x1.25   -
+//   P  m0            IN     all   x1.25   -
+//   P  Gf            IN     all   x1.25   -
+//   P  Gc            UNREAD all   x1.25   -              -- read only when epsFc <= 0 (epsFcOf); epsFc > 0 on every record
+//   P  Df            IN     all   x1.25   -
+//   P  As            IN     all   x1.25   -
+//   P  qh0           IN     all   x1.25   -
+//   P  Hp            IN     all   x1.25   -
+//   P  Ah            IN     all   x1.25   -
+//   P  Bh            IN     all   x1.25   -
+//   P  Ch            IN     all   x1.25   -
+//   P  Dh            IN     all   x1.25   -
+//   P  ctTemper      IN     all   {}      -              -- -ctTemper none|alphat|proj; domain 0,1,2
+//   P  tcTemper      IN     all   {}      -              -- -tcTemper none|proj; domain 0,2
+//   P  tensionLaw    IN     all   {}      -              -- -tensionLaw exp|bilinear; domain 0,1
+//   P  epsFc         IN     all   x1.25   -
+//   P  flowPotential IN     cls0  =0      P.maxSubIncr=0 -- cls 0 only: elsewhere the cls pin refuses it; domain 0,1
+//   P  maxSubIncr    PIN    all   =0      -              refuse:is not a value the wrapper writes -- 10 iff flowPotential=1, else 0
+//   P  compDrive     IN     all   {}      -              -- -compressionDrive legacy|cdpm2; domain 0,1
+//   P  eta           IN     all   x1.25   -              -- 0 on every record: 0 -> 0.25 switches Duvaut-Lions on
+//   P  implex        IN     all   {}      -              -- 0 on every record: the IMPL-EX path is a coverage limit; domain 0,1
+//   P  implexRmax    PIN    all   x1.25   -              refuse:is not the dump's constant 2 -- the dump's constant; IMPL-EX only
+//   P  lch           IN     all   x1.25   P.lch_ref
+//   P  lch_ref       PIN    all   x1.25   -              refuse:is not lch bit for bit -- the dump prints lch twice; never read
+//   P  ftol          PIN    all   x1.25   -              refuse:this kernel has another -- = this kernel's F_TOL_HONEST (a constant)
+//   P  dt            IN     dt>0  x1.25   -              -- into N.dt_n
+//   P  dt            UNREAD dt<0  x1.25   -              -- only its sign is read (Duvaut-Lions and IMPL-EX off)
+//   E  0-1           IN     all   x1.25   -              -- committed strain State::eps
+//   E  2             IN     all   x1.25   C.0
+//   E  3-5           IN     all   x1.25   -
+//   S  0-5           UNREAD all   x1.25   -              -- State::sig: returnMap never reads in.sig (it returns from X)
+//   X  0-5           IN     all   x1.25   -              -- committed effective stress State::sigEff
+//   H  0-10          IN     all   x1.25   -              -- kp et_max kdt1 kdt2 kdc kdc1 kdc2 sigtMax sigcMax eqc etPrev
+//   I  0-1           IN     all   x1.25   -              -- wt wc, into N.dwt N.dwc
+//   I  2-3           UNREAD all   x1.25   -              -- dwt dwc: IMPL-EX only
+//   I  4             IN     dt<=0 x1.25   -              -- dt_n, into N.dt_n when dt <= 0
+//   I  4             UNREAD dt>0  x1.25   -              -- dt_n: N.dt_n = dt when dt > 0
+//   I  5-10          UNREAD all   x1.25   -              -- depl[6]: IMPL-EX only
+//   C  0             PIN    all   x1.25   -              refuse:is not E[2] bit for bit -- the committed eps_22 = E[2]
+//   C  1             IN     R     x1.25   -              -- the sigma_22 loop's start
+//   C  1             PIN    CF0   x1.25   -              refuse:loop start C[1] is not its trial T[2] -- pass 0 runs at the start
+//   C  1             INFO   CF>0  x1.25   -              -- the passes before the recorded one are not in the record
+//   T  0-1           IN     CF    x1.25   -              -- the trial strain
+//   T  2             IN     CF    x1.25   C.1@CF0
+//   T  3-5           IN     CF    x1.25   -
+//   T  0-1           IN     R     x1.25   -
+//   T  2             OUT    R     x1.25   -              fail: T2end( -- the eps_22 the loop left in the trial strain
+//   T  3-5           IN     R     x1.25   -
+//   O  0-1           OUT    all   +1      -              refuse:disagree with the O line -- status pieces; PIN to K status= subInfo=
+//   O  2-16          OUT    all   x1.25   -              -- kappa omega_t omega_c sig[6] sigEff[6]
+//   D  0-35          OUT    all   x1.25   -              -- the 6x6 tangent the pyd dumped (C records)
+//   M  0-35          OUT    all   x1.25   -              -- the same for F and R (last pass), testbed-recorded
+//   W  0-11          OUT    all   x1.25   -              -- eig3sym of the effective stress: the libm canary
+//   Z  0             PIN    all   +1      -              refuse:is not its position -- per pass of an R record: the pass index
+//   Z  1-3           OUT    all   x1.25   -              -- eps22 s22 D22
+//   Z  4-5           OUT    all   +1      -              -- status pieces
+//   N  0-39          OUT    all   x1.25   -              -- the full State returnMap returned (note 3)
+//   N  40            PIN    all   +1      -              refuse:N line's subInfo is not the K line's -- subInfo; PIN to K subInfo=
+//   ---- END FIELD TABLE ----
+// Notes to the table:
+//   1. K cls= is the dump's return class (0 direct, 1 sub-incremented, 2 floor A, 3 floor B, 4 floor C, 5 direct
+//      failure), DERIVED from the replayed returnMap: status 0 -> 0 if subInfo is 0, else 1; status != 0 -> 4 if
+//      maxSubIncr > 0, else 5. This tree's kernel has no class API (the probe's DiagMap is not in it): the return status
+//      and State::subInfo are its whole report, and they determine every class the probe could write. Class 3 is never
+//      assigned by the probe; class 2 needs a piece f < 2^-maxSubIncr, impossible because every piece and every partial
+//      sum is an exact multiple of 2^-maxSubIncr; a failure with maxSubIncr > 0 leaves only through floor C. K subInfo=
+//      is -1 when status != 0, else 0 or (with maxSubIncr > 0) the piece count >= 2.
+//   2. #@ binary= is opensees.pyd@ec969aef2 for the libmmt fixture; `record` keeps it only when it reproduced every
+//      O/D/W/Z value and K outcome field on the same libm, otherwise it writes concrete3d_replay-record.
+//   3. N: eps[6] sig[6] sigEff[6] kp et_max kdt1 kdt2 kdc kdc1 kdc2 sigtMax sigcMax eqc etPrev wt wc dwt dwc dt_n
+//      depl[6] subInfo, 41 values, every State field, what the next step would read (R: after the last pass); required
+//      on every record. Testbed-recorded under the fixture's libm, like M. On the libmmt fixture they were recorded by a
+//      build that reproduced every pyd-written value of every record bit for bit.
+//   4. H: in.etPrev reaches N.eqc and the outputs through the CDPM2 compressive history (compDrive = 1 on every record);
+//      the kernel sets N.etPrev from this step's drive. I: wt wc reach N.dwt N.dwc. P eta and implex are mode
+//      switches, 0 on every record, so the Duvaut-Lions and IMPL-EX paths are a coverage limit of this fixture.
+//   5. K kind= is IN, but every changed kind is refused at load by its line shape (Z lines, the D/M tangent letter):
+//      the R rows (C[1]@R, T[i]@R) prove the R replay reads the loop start and strain the C/F replay does not.
+//   6. A C/F record's C[1] at pass > 0 is INFO: the passes before the recorded one are not in the record, so the path
+//      from C[1] to T[2] is not replayed. `record` writes its banner as #= lines and drops a source's #= lines.
 // Tangent lines: a C record must carry D, an R or F record M.
 // The sigma_22 loop below is a COPY of the wrapper's: the fixture's R records prove the copy matches the wrapper the
 // records were written by; a later change to LadrunoConcrete3D::setTrialStrain must be mirrored here.
 #include "SRC/material/nD/LadrunoConcrete3DKernel.h"
+#include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <climits>
 #include <cmath>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <set>
 #include <sstream>
@@ -123,7 +197,13 @@
 
 namespace K = Ladruno::Concrete3D;
 
-[[noreturn]] static void die(const std::string& m) { std::fprintf(stderr, "REPLAY ERROR: %s\n", m.c_str()); std::exit(2); }
+// A refusal at load (exit 2). It is thrown, not exited, so `contract` can run a refused mutant in-process; main()
+// prints it as "REPLAY ERROR: ..." and exits 2, exactly as `check` always has.
+struct Refusal { std::string msg; };
+[[noreturn]] static void die(const std::string& m) { throw Refusal{m}; }
+static std::string strf(const char* f, ...) {
+    va_list a; va_start(a, f); char b[4096]; std::vsnprintf(b, sizeof b, f, a); va_end(a); return b;
+}
 
 static const int N_STATE = 41;
 static const char* nName[N_STATE] = {
@@ -131,6 +211,161 @@ static const char* nName[N_STATE] = {
     "sigEff0", "sigEff1", "sigEff2", "sigEff3", "sigEff4", "sigEff5", "kp", "et_max", "kdt1", "kdt2", "kdc", "kdc1",
     "kdc2", "sigtMax", "sigcMax", "eqc", "etPrev", "wt", "wc", "dwt", "dwc", "dt_n",
     "depl0", "depl1", "depl2", "depl3", "depl4", "depl5", "subInfo"};
+static const char* oName[17] = {"status", "pieces", "kappa", "omega_t", "omega_c", "sig0", "sig1", "sig2", "sig3", "sig4",
+                                "sig5", "sigEff0", "sigEff1", "sigEff2", "sigEff3", "sigEff4", "sigEff5"};
+static const char* hName[11] = {"kp", "et_max", "kdt1", "kdt2", "kdc", "kdc1", "kdc2", "sigtMax", "sigcMax", "eqc", "etPrev"};
+static const char* iName[11] = {"wt", "wc", "dwt", "dwc", "dt_n", "depl0", "depl1", "depl2", "depl3", "depl4", "depl5"};
+static const char* zName[6] = {"index", "eps22", "s22", "D22", "status", "pieces"};
+
+// ---- THE FIELD TABLE: the single source of the FIELD CLASSIFICATION -------------------------------------------------
+// One entry per field, or per run of columns that share a class and a scope. It drives:
+//   * the loader: each numeric line's column count, each key=value line's key set, every enumerated domain;
+//   * `fields`: the table printed; the header block between BEGIN/END FIELD TABLE is that output verbatim, and
+//     `fields --check <this .cpp>` (run by ci.sh and the .bat) fails when the two differ;
+//   * `contract`: one generated row per column (per domain value for {}), its perturbation and its expected outcome.
+// So a new column cannot be loaded without an entry, and an entry is a row: a field cannot be added unclassified,
+// and a class cannot be wrong without its row going red.
+//   cols    a key (key=value lines) or an index range a-b (numeric lines; Q counts its key=value tokens)
+//   class   IN | OUT | PIN | UNREAD | INFO (the header's definitions)
+//   scope   the records a row edits: all | R | CF | CF0 (C/F at pass 0) | CF>0 | dt>0 | dt<0 | dt<=0 (the record's
+//           P dt) | cls0 (K cls=0); lines before the first K line are always `all`
+//   pert    x1.25 (a double: v*1.25, 0 -> 0.25) | +1 (an integer) | =V (set V) | {} (one row per domain value, =V; a
+//           value no record in scope lacks is reported as skipped) | ~last (flip the last hex digit) | - (no row)
+//   tie     edits the same row makes elsewhere, a pin it must keep: <line>.<col>[@scope][=V], comma-separated;
+//           without =V the row's own perturbation, applied to that field's own (bit-equal) value
+//   domain  the values the loader accepts (comma-separated), "" when not enumerated
+//   expect  "" = the class's outcome: IN fails (exit 1, the first mismatch names a compared field); OUT fails naming
+//           its own compare; UNREAD and INFO pass. refuse:<text> = exit 2, refused at load with <text> (a pinned
+//           interaction); fail:<text> = exit 1 with <text> in the report.
+struct FieldSpec { const char *line, *cols, *cls, *scope, *pert, *tie, *domain, *expect, *note; };
+static const FieldSpec FIELDS[] = {
+    {"#",  "text",          "INFO",   "all",  "-",     "", "", "", "header comments: only before the first K line"},
+    {"#@", "libm",          "PIN",    "all",  "=other", "", "", "refuse:do not replay bit-exactly under", "the outputs' libm; --cross waives"},
+    {"#@", "kernel-blob",   "OUT",    "all",  "~last", "", "", "fail:KERNEL-BLOB MISMATCH", "the kernel header blob, vs --kernel-blob"},
+    {"#@", "binary",        "INFO",   "all",  "=x",    "", "", "", "who wrote the O/D/W/Z values and the K outcome fields (note 2)"},
+    {"#@", "M-lines",       "INFO",   "all",  "=x",    "", "", "", "who wrote the M lines"},
+    {"#@", "N-lines",       "INFO",   "all",  "=x",    "", "", "", "who wrote the N lines"},
+    {"Q",  "0-20",          "OUT",    "all",  "x1.25", "", "", "fail:libm probes (Q line, 21 values): DIFFER", "21 libm probes, vs this build's"},
+    {"K",  "kind",          "IN",     "R",    "=F",    "", "C,F,R", "refuse:Z lines on a non-R record", "C/F: one integrate, R: the sigma_22 loop"},
+    {"K",  "seq",           "INFO",   "all",  "+1",    "", "", "", "the dump's identifiers and counters: the kernel has none"},
+    {"K",  "tag",           "INFO",   "all",  "+1",    "", "", "", "(as seq)"},
+    {"K",  "ele",           "INFO",   "all",  "+1",    "", "", "", "(as seq)"},
+    {"K",  "calls",         "INFO",   "all",  "+1",    "", "", "", "(as seq)"},
+    {"K",  "integ",         "INFO",   "all",  "+1",    "", "", "", "(as seq)"},
+    {"K",  "dim",           "INFO",   "CF",   "+1",    "", "", "", "the wrapper's element dimension: the kernel is always 3-D"},
+    {"K",  "dim",           "PIN",    "R",    "=5",    "", "", "refuse:without a condensed sigma_22 trace", "a condensed element: 3 or 4"},
+    {"K",  "pass",          "OUT",    "R",    "+1",    "", "", "fail: reason ", "the rule-B refusal code of the replayed loop"},
+    {"K",  "pass",          "INFO",   "CF",   "+1",    "", "", "", "the sigma_22 pass of the recorded integrate(); pass 0 ties C[1] to T[2]"},
+    {"K",  "status",        "PIN",    "all",  "+1",    "", "", "refuse:disagree with the O line", "= O[0]"},
+    {"K",  "subInfo",       "PIN",    "all",  "+1",    "", "", "refuse:disagree with the O line", "= O[1] and N[40], in its domain (note 1)"},
+    {"K",  "cls",           "OUT",    "all",  "+1",    "", "", "refuse:is not what the dump writes", "derived (note 1); its load pin refuses first"},
+    {"G",  "dump",          "INFO",   "all",  "=unset", "", "unset,COMPATIBLE", "", "why the record was picked"},
+    {"G",  "class",         "INFO",   "all",  "=direct", "", "refusal,floor-C,sub-increment,kink,direct", "", "groups the report"},
+    {"G",  "pick",          "INFO",   "all",  "=x",    "", "", "", "the selection rule"},
+    {"P",  "E",             "IN",     "all",  "x1.25", "", "", "", ""},
+    {"P",  "nu",            "IN",     "all",  "x1.25", "", "", "", ""},
+    {"P",  "rho",           "UNREAD", "all",  "x1.25", "", "", "", "the kernel has no use of Params::rho"},
+    {"P",  "fc",            "IN",     "all",  "x1.25", "", "", "", ""},
+    {"P",  "ft",            "IN",     "all",  "x1.25", "", "", "", ""},
+    {"P",  "e",             "IN",     "all",  "x1.25", "", "", "", ""},
+    {"P",  "m0",            "IN",     "all",  "x1.25", "", "", "", ""},
+    {"P",  "Gf",            "IN",     "all",  "x1.25", "", "", "", ""},
+    {"P",  "Gc",            "UNREAD", "all",  "x1.25", "", "", "", "read only when epsFc <= 0 (epsFcOf); epsFc > 0 on every record"},
+    {"P",  "Df",            "IN",     "all",  "x1.25", "", "", "", ""},
+    {"P",  "As",            "IN",     "all",  "x1.25", "", "", "", ""},
+    {"P",  "qh0",           "IN",     "all",  "x1.25", "", "", "", ""},
+    {"P",  "Hp",            "IN",     "all",  "x1.25", "", "", "", ""},
+    {"P",  "Ah",            "IN",     "all",  "x1.25", "", "", "", ""},
+    {"P",  "Bh",            "IN",     "all",  "x1.25", "", "", "", ""},
+    {"P",  "Ch",            "IN",     "all",  "x1.25", "", "", "", ""},
+    {"P",  "Dh",            "IN",     "all",  "x1.25", "", "", "", ""},
+    {"P",  "ctTemper",      "IN",     "all",  "{}",    "", "0,1,2", "", "-ctTemper none|alphat|proj"},
+    {"P",  "tcTemper",      "IN",     "all",  "{}",    "", "0,2", "", "-tcTemper none|proj"},
+    {"P",  "tensionLaw",    "IN",     "all",  "{}",    "", "0,1", "", "-tensionLaw exp|bilinear"},
+    {"P",  "epsFc",         "IN",     "all",  "x1.25", "", "", "", ""},
+    {"P",  "flowPotential", "IN",     "cls0", "=0",    "P.maxSubIncr=0", "0,1", "", "cls 0 only: elsewhere the cls pin refuses it"},
+    {"P",  "maxSubIncr",    "PIN",    "all",  "=0",    "", "", "refuse:is not a value the wrapper writes", "10 iff flowPotential=1, else 0"},
+    {"P",  "compDrive",     "IN",     "all",  "{}",    "", "0,1", "", "-compressionDrive legacy|cdpm2"},
+    {"P",  "eta",           "IN",     "all",  "x1.25", "", "", "", "0 on every record: 0 -> 0.25 switches Duvaut-Lions on"},
+    {"P",  "implex",        "IN",     "all",  "{}",    "", "0,1", "", "0 on every record: the IMPL-EX path is a coverage limit"},
+    {"P",  "implexRmax",    "PIN",    "all",  "x1.25", "", "", "refuse:is not the dump's constant 2", "the dump's constant; IMPL-EX only"},
+    {"P",  "lch",           "IN",     "all",  "x1.25", "P.lch_ref", "", "", ""},
+    {"P",  "lch_ref",       "PIN",    "all",  "x1.25", "", "", "refuse:is not lch bit for bit", "the dump prints lch twice; never read"},
+    {"P",  "ftol",          "PIN",    "all",  "x1.25", "", "", "refuse:this kernel has another", "= this kernel's F_TOL_HONEST (a constant)"},
+    {"P",  "dt",            "IN",     "dt>0", "x1.25", "", "", "", "into N.dt_n"},
+    {"P",  "dt",            "UNREAD", "dt<0", "x1.25", "", "", "", "only its sign is read (Duvaut-Lions and IMPL-EX off)"},
+    {"E",  "0-1",           "IN",     "all",  "x1.25", "", "", "", "committed strain State::eps"},
+    {"E",  "2",             "IN",     "all",  "x1.25", "C.0", "", "", ""},
+    {"E",  "3-5",           "IN",     "all",  "x1.25", "", "", "", ""},
+    {"S",  "0-5",           "UNREAD", "all",  "x1.25", "", "", "", "State::sig: returnMap never reads in.sig (it returns from X)"},
+    {"X",  "0-5",           "IN",     "all",  "x1.25", "", "", "", "committed effective stress State::sigEff"},
+    {"H",  "0-10",          "IN",     "all",  "x1.25", "", "", "", "kp et_max kdt1 kdt2 kdc kdc1 kdc2 sigtMax sigcMax eqc etPrev"},
+    {"I",  "0-1",           "IN",     "all",  "x1.25", "", "", "", "wt wc, into N.dwt N.dwc"},
+    {"I",  "2-3",           "UNREAD", "all",  "x1.25", "", "", "", "dwt dwc: IMPL-EX only"},
+    {"I",  "4",             "IN",     "dt<=0", "x1.25", "", "", "", "dt_n, into N.dt_n when dt <= 0"},
+    {"I",  "4",             "UNREAD", "dt>0", "x1.25", "", "", "", "dt_n: N.dt_n = dt when dt > 0"},
+    {"I",  "5-10",          "UNREAD", "all",  "x1.25", "", "", "", "depl[6]: IMPL-EX only"},
+    {"C",  "0",             "PIN",    "all",  "x1.25", "", "", "refuse:is not E[2] bit for bit", "the committed eps_22 = E[2]"},
+    {"C",  "1",             "IN",     "R",    "x1.25", "", "", "", "the sigma_22 loop's start"},
+    {"C",  "1",             "PIN",    "CF0",  "x1.25", "", "", "refuse:loop start C[1] is not its trial T[2]", "pass 0 runs at the start"},
+    {"C",  "1",             "INFO",   "CF>0", "x1.25", "", "", "", "the passes before the recorded one are not in the record"},
+    {"T",  "0-1",           "IN",     "CF",   "x1.25", "", "", "", "the trial strain"},
+    {"T",  "2",             "IN",     "CF",   "x1.25", "C.1@CF0", "", "", ""},
+    {"T",  "3-5",           "IN",     "CF",   "x1.25", "", "", "", ""},
+    {"T",  "0-1",           "IN",     "R",    "x1.25", "", "", "", ""},
+    {"T",  "2",             "OUT",    "R",    "x1.25", "", "", "fail: T2end(", "the eps_22 the loop left in the trial strain"},
+    {"T",  "3-5",           "IN",     "R",    "x1.25", "", "", "", ""},
+    {"O",  "0-1",           "OUT",    "all",  "+1",    "", "", "refuse:disagree with the O line", "status pieces; PIN to K status= subInfo="},
+    {"O",  "2-16",          "OUT",    "all",  "x1.25", "", "", "", "kappa omega_t omega_c sig[6] sigEff[6]"},
+    {"D",  "0-35",          "OUT",    "all",  "x1.25", "", "", "", "the 6x6 tangent the pyd dumped (C records)"},
+    {"M",  "0-35",          "OUT",    "all",  "x1.25", "", "", "", "the same for F and R (last pass), testbed-recorded"},
+    {"W",  "0-11",          "OUT",    "all",  "x1.25", "", "", "", "eig3sym of the effective stress: the libm canary"},
+    {"Z",  "0",             "PIN",    "all",  "+1",    "", "", "refuse:is not its position", "per pass of an R record: the pass index"},
+    {"Z",  "1-3",           "OUT",    "all",  "x1.25", "", "", "", "eps22 s22 D22"},
+    {"Z",  "4-5",           "OUT",    "all",  "+1",    "", "", "", "status pieces"},
+    {"N",  "0-39",          "OUT",    "all",  "x1.25", "", "", "", "the full State returnMap returned (note 3)"},
+    {"N",  "40",            "PIN",    "all",  "+1",    "", "", "refuse:N line's subInfo is not the K line's", "subInfo; PIN to K subInfo="},
+};
+static const char* LINE_KINDS[] = {"#", "#@", "Q", "K", "G", "P", "E", "S", "X", "H", "I", "C", "T", "O", "D", "M", "W", "Z", "N"};
+
+static bool indexed(const FieldSpec& f) { return f.cols[0] >= '0' && f.cols[0] <= '9'; }
+static void colRange(const FieldSpec& f, int& a, int& b) {
+    const char* dash = std::strchr(f.cols, '-'); a = std::atoi(f.cols); b = dash ? std::atoi(dash + 1) : a;
+}
+static int ncols(const char* line) {   // a numeric line's column count, from the table
+    int n = 0; for (const FieldSpec& f : FIELDS) if (!std::strcmp(f.line, line) && indexed(f)) { int a, b; colRange(f, a, b); n = std::max(n, b + 1); }
+    return n;
+}
+static std::set<std::string> keysOf(const char* line) {
+    std::set<std::string> s; for (const FieldSpec& f : FIELDS) if (!std::strcmp(f.line, line) && !indexed(f)) s.insert(f.cols);
+    return s;
+}
+static std::vector<std::string> split(const std::string& s, char c) {
+    std::vector<std::string> v; if (s.empty()) return v; size_t p = 0, q;
+    while ((q = s.find(c, p)) != std::string::npos) { v.push_back(s.substr(p, q - p)); p = q + 1; }
+    v.push_back(s.substr(p)); return v;
+}
+static std::vector<std::string> domainOf(const char* line, const char* key) {
+    for (const FieldSpec& f : FIELDS) if (!std::strcmp(f.line, line) && !std::strcmp(f.cols, key) && *f.domain) return split(f.domain, ',');
+    die(std::string("field table: ") + line + "." + key + " has no domain");
+}
+// the label of numeric column i (row ids) and, for a compared line, the name compare() reports it by
+static std::string colLabel(const std::string& line, int i) {
+    if (line == "H") return hName[i];
+    if (line == "I") return iName[i];
+    if (line == "O") return oName[i];
+    if (line == "N") return nName[i];
+    if (line == "Z") return zName[i];
+    return "";
+}
+static std::string colName(const std::string& line, int i) {
+    if (line == "O") return oName[i];
+    if (line == "N") return std::string("N.") + nName[i];
+    if (line == "D" || line == "M") return line + std::to_string(i / 6) + std::to_string(i % 6);
+    if (line == "W") return "eig3sym" + std::to_string(i);
+    if (line == "Z") return std::string("pass0.") + zName[i];   // every R record has a pass 0
+    return "";
+}
 
 struct Pass { int p, status, sub; double eps22, s22, d22; };
 struct Rec {
@@ -201,9 +436,12 @@ static void fillParams(const Rec& r, K::Params& p, double& dt);
 struct Fixture { std::map<std::string, std::string> meta; std::string qLine; std::vector<Rec> recs; std::vector<std::string> header; };
 
 // needN: every record must carry its N line (check, inputs-match); `record` also reads a source written before N lines.
-static Fixture load(const char* path, bool needN = true) {
-    std::ifstream in(path); if (!in) die(std::string("cannot open ") + path);
+// Column counts, key sets and domains come from the field table.
+static Fixture loadStream(std::istream& in, bool needN = true) {
     Fixture fx; std::string line; Rec* r = 0; bool haveMeta = false;
+    static const std::set<std::string> kKeys = keysOf("K"), gKeys = keysOf("G"), metaKeys = keysOf("#@");
+    static const std::vector<std::string> kinds = domainOf("K", "kind"), dumps = domainOf("G", "dump"), classes = domainOf("G", "class");
+    auto inDomain = [](const std::vector<std::string>& d, const std::string& v) { return std::find(d.begin(), d.end(), v) != d.end(); };
     auto copy = [](const std::vector<double>& v, double* d) { for (size_t i = 0; i < v.size(); ++i) d[i] = v[i]; };
     while (std::getline(in, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
@@ -219,11 +457,10 @@ static Fixture load(const char* path, bool needN = true) {
         if (c == 'Q') { if (r || !fx.qLine.empty()) die("Q line must come once, before the records"); fx.qLine = line; continue; }
         if (c == 'K') {
             fx.recs.emplace_back(); r = &fx.recs.back(); r->kLine = line; kv(line, r->k);
-            static const std::set<std::string> kKeys = {"kind", "seq", "tag", "ele", "dim", "pass", "status", "subInfo", "cls", "calls", "integ"};
             for (const std::string& key : kKeys) if (!r->k.count(key)) die("K line lacks " + key + ": " + line.substr(0, 60));
             for (const auto& e : r->k) if (!kKeys.count(e.first)) die("K line has an unexpected key " + e.first + ": " + line.substr(0, 60));
             const std::string kind = r->k.at("kind");
-            if (kind != "C" && kind != "F" && kind != "R") die("unknown record kind '" + kind + "' (" + line.substr(0, 40) + ")");
+            if (!inDomain(kinds, kind)) die("unknown record kind '" + kind + "' (" + line.substr(0, 40) + ")");
             for (const char* key : {"tag", "ele", "dim"}) intTok(r->k.at(key), std::string("K ") + key, line);
             for (const char* key : {"seq", "calls", "integ"}) counterTok(r->k.at(key), std::string("K ") + key, line);
             r->code = intTok(r->k.at("pass"), "K pass", line);
@@ -238,24 +475,30 @@ static Fixture load(const char* path, bool needN = true) {
         switch (c) {
         case 'G': {
             r->gLine = line; kv(line, r->g);
-            if (r->g.size() != 3 || !r->g.count("dump") || !r->g.count("class") || !r->g.count("pick")) die("G line must carry exactly dump= class= pick=: " + line);
-            const std::string& d = r->g.at("dump"); const std::string& cl = r->g.at("class");
-            if (d != "unset" && d != "COMPATIBLE") die("G dump= is not unset|COMPATIBLE: " + line);
-            if (cl != "refusal" && cl != "floor-C" && cl != "sub-increment" && cl != "kink" && cl != "direct") die("G class= is not a record class: " + line);
+            bool keysOk = r->g.size() == gKeys.size();
+            for (const std::string& key : gKeys) keysOk = keysOk && r->g.count(key);
+            if (!keysOk) die("G line must carry exactly dump= class= pick=: " + line);
+            if (!inDomain(dumps, r->g.at("dump"))) die("G dump= is not unset|COMPATIBLE: " + line);
+            if (!inDomain(classes, r->g.at("class"))) die("G class= is not a record class: " + line);
             break; }
-        case 'P': r->pLine = line; kv(line, r->pkv); break;
-        case 'E': copy(nums(line, 6), r->eps); r->stateLines.push_back(line); break;
-        case 'S': copy(nums(line, 6), r->sig); r->stateLines.push_back(line); break;
-        case 'X': copy(nums(line, 6), r->sigEff); r->stateLines.push_back(line); break;
-        case 'H': copy(nums(line, 11), r->h); r->stateLines.push_back(line); break;
-        case 'I': copy(nums(line, 11), r->im); r->stateLines.push_back(line); break;
-        case 'C': copy(nums(line, 2), r->c); r->stateLines.push_back(line); break;
-        case 'T': copy(nums(line, 6), r->strain); r->tTok = toks(line); r->stateLines.push_back(line); break;
-        case 'O': copy(nums(line, 17, {0, 1}), r->o); r->hasO = true; break;
-        case 'D': case 'M': copy(nums(line, 36), r->D); r->hasD = true; r->dKind = c; break;
-        case 'W': copy(nums(line, 12), r->w); r->hasW = true; break;
-        case 'N': copy(nums(line, N_STATE, {N_STATE - 1}), r->n); r->hasN = true; break;
-        case 'Z': { auto v = nums(line, 6, {0, 4, 5}); Pass p{(int)v[0], (int)v[4], (int)v[5], v[1], v[2], v[3]};
+        case 'P': {
+            r->pLine = line; kv(line, r->pkv);
+            static const std::set<std::string> pKeys = keysOf("P");
+            for (const std::string& key : pKeys) if (!r->pkv.count(key)) die("P line lacks " + key + ": " + r->kLine);
+            for (const auto& e : r->pkv) if (!pKeys.count(e.first)) die("P line has a key this testbed does not map: " + e.first + " (" + r->kLine + ")");
+            break; }
+        case 'E': copy(nums(line, ncols("E")), r->eps); r->stateLines.push_back(line); break;
+        case 'S': copy(nums(line, ncols("S")), r->sig); r->stateLines.push_back(line); break;
+        case 'X': copy(nums(line, ncols("X")), r->sigEff); r->stateLines.push_back(line); break;
+        case 'H': copy(nums(line, ncols("H")), r->h); r->stateLines.push_back(line); break;
+        case 'I': copy(nums(line, ncols("I")), r->im); r->stateLines.push_back(line); break;
+        case 'C': copy(nums(line, ncols("C")), r->c); r->stateLines.push_back(line); break;
+        case 'T': copy(nums(line, ncols("T")), r->strain); r->tTok = toks(line); r->stateLines.push_back(line); break;
+        case 'O': copy(nums(line, ncols("O"), {0, 1}), r->o); r->hasO = true; break;
+        case 'D': case 'M': copy(nums(line, ncols(c == 'D' ? "D" : "M")), r->D); r->hasD = true; r->dKind = c; break;
+        case 'W': copy(nums(line, ncols("W")), r->w); r->hasW = true; break;
+        case 'N': copy(nums(line, ncols("N"), {N_STATE - 1}), r->n); r->hasN = true; break;
+        case 'Z': { auto v = nums(line, ncols("Z"), {0, 4, 5}); Pass p{(int)v[0], (int)v[4], (int)v[5], v[1], v[2], v[3]};
                     if (p.p != (int)r->z.size()) die("Z pass index " + std::to_string(p.p) + " is not its position " + std::to_string(r->z.size()) + ": " + r->kLine);
                     r->z.push_back(p); break; }
         default: die(std::string("unknown line kind '") + c + "' (the fixture is the record-dump subset: Q K G P E S X H I C T O D M W Z N)");
@@ -264,9 +507,7 @@ static Fixture load(const char* path, bool needN = true) {
     if (fx.recs.empty()) die("the fixture has no records");
     if (fx.qLine.empty()) die("the fixture has no Q line (libm probes)");
     for (const char* key : {"libm", "kernel-blob"}) if (!fx.meta.count(key)) die(std::string("the #@ line lacks ") + key);
-    for (const auto& e : fx.meta)
-        if (e.first != "libm" && e.first != "kernel-blob" && e.first != "binary" && e.first != "M-lines" && e.first != "N-lines")
-            die("the #@ line has an unexpected key " + e.first);
+    for (const auto& e : fx.meta) if (!metaKeys.count(e.first)) die("the #@ line has an unexpected key " + e.first);
     { const std::string& b = fx.meta.at("kernel-blob");
       if (b.size() != 40 || b.find_first_not_of("0123456789abcdef") != std::string::npos) die("the #@ kernel-blob is not a 40-hex git blob: " + b); }
     for (const Rec& q : fx.recs) {
@@ -289,6 +530,10 @@ static Fixture load(const char* path, bool needN = true) {
     }
     return fx;
 }
+static Fixture load(const char* path, bool needN = true) {
+    std::ifstream in(path); if (!in) die(std::string("cannot open ") + path);
+    return loadStream(in, needN);
+}
 
 // EVERY Params field from the P line; a key the kernel does not have, or a field the line lacks, is an error.
 static void fillParams(const Rec& r, K::Params& p, double& dt) {
@@ -303,16 +548,16 @@ static void fillParams(const Rec& r, K::Params& p, double& dt) {
     p.ctTemper = i("ctTemper"); p.tcTemper = i("tcTemper"); p.tensionLaw = i("tensionLaw");
     p.flowPotential = i("flowPotential"); p.maxSubIncr = i("maxSubIncr"); p.compDrive = i("compDrive");
     const int implex = i("implex"); p.implex = implex != 0;
-    // only values LadrunoConcrete3D's option parser can produce (-ctTemper none|alphat|proj, -tcTemper none|proj,
-    // -tensionLaw exp|bilinear, -flowPotential legacy|cdpm2, -compressionDrive legacy|cdpm2, -implex, maxSubIncr = 10
-    // iff the CDPM2 potential): anything else would replay as some other mode without a word
-    auto in = [&](const char* key, int v, std::initializer_list<int> ok) {
-        for (int o : ok) if (v == o) return;
-        die(std::string("P ") + key + "=" + std::to_string(v) + " is not a value the wrapper writes: " + r.kLine);
+    // only values LadrunoConcrete3D's option parser can produce (the field table's domains, and maxSubIncr = 10 iff
+    // the CDPM2 potential): anything else would replay as some other mode without a word
+    auto bad = [&](const char* key, int v) { die(std::string("P ") + key + "=" + std::to_string(v) + " is not a value the wrapper writes: " + r.kLine); };
+    auto in = [&](const char* key, int v) {
+        for (const std::string& o : domainOf("P", key)) if (std::to_string(v) == o) return;
+        bad(key, v);
     };
-    in("ctTemper", p.ctTemper, {0, 1, 2}); in("tcTemper", p.tcTemper, {0, 2}); in("tensionLaw", p.tensionLaw, {0, 1});
-    in("flowPotential", p.flowPotential, {0, 1}); in("compDrive", p.compDrive, {0, 1}); in("implex", implex, {0, 1});
-    in("maxSubIncr", p.maxSubIncr, {p.flowPotential == 1 ? 10 : 0});
+    in("ctTemper", p.ctTemper); in("tcTemper", p.tcTemper); in("tensionLaw", p.tensionLaw);
+    in("flowPotential", p.flowPotential); in("compDrive", p.compDrive); in("implex", implex);
+    if (p.maxSubIncr != (p.flowPotential == 1 ? 10 : 0)) bad("maxSubIncr", p.maxSubIncr);
     // the dump's two constant rules: LadrunoConcrete3D::diagRecord (ec969aef2) prints the literal 2.0 for implexRmax
     // and lch for both lch and lch_ref (integrate sets p.lch_ref = lch and never sets implexRmax)
     { const double two = 2.0; if (std::memcmp(&p.implexRmax, &two, sizeof(double)) != 0) die("P implexRmax=" + r.pkv.at("implexRmax") + " is not the dump's constant 2: " + r.kLine); }
@@ -406,14 +651,13 @@ static int compare(const Rec& r, const Replay& x, std::string& why, bool withN =
         if (u) note(what + (u < 0 ? "(sign/nonfinite)" : "(" + std::to_string(u) + " ulp)"));
     };
     auto cmpInt = [&](const std::string& what, long a, long b) { if (a != b) note(what + " " + std::to_string(a) + "!=" + std::to_string(b)); };
-    static const char* oName[17] = {"status", "pieces", "kappa", "omega_t", "omega_c", "sig0", "sig1", "sig2", "sig3", "sig4", "sig5", "sigEff0", "sigEff1", "sigEff2", "sigEff3", "sigEff4", "sigEff5"};
-    for (int i = 0; i < 17; ++i) { if (i < 2) cmpInt(oName[i], (long)x.o[i], (long)r.o[i]); else cmp(oName[i], x.o[i], r.o[i]); }
+    for (int i = 0; i < 17; ++i) { if (i < 2) cmpInt(colName("O", i), (long)x.o[i], (long)r.o[i]); else cmp(colName("O", i), x.o[i], r.o[i]); }
     cmpInt("cls", x.cls, r.cls);
-    for (int i = 0; i < 36; ++i) cmp(std::string(1, r.dKind) + std::to_string(i / 6) + std::to_string(i % 6), (&x.ev.D[0][0])[i], r.D[i]);
-    for (int i = 0; i < 12; ++i) cmp("eig3sym" + std::to_string(i), x.w[i], r.w[i]);
+    for (int i = 0; i < 36; ++i) cmp(colName(std::string(1, r.dKind), i), (&x.ev.D[0][0])[i], r.D[i]);
+    for (int i = 0; i < 12; ++i) cmp(colName("W", i), x.w[i], r.w[i]);
     if (withN) for (int i = 0; i < N_STATE; ++i) {
-        if (i == N_STATE - 1) cmpInt(std::string("N.") + nName[i], (long)x.n[i], (long)r.n[i]);
-        else cmp(std::string("N.") + nName[i], x.n[i], r.n[i]);
+        if (i == N_STATE - 1) cmpInt(colName("N", i), (long)x.n[i], (long)r.n[i]);
+        else cmp(colName("N", i), x.n[i], r.n[i]);
     }
     if (r.kind == 'R') {
         cmpInt("reason", x.loop.code, r.code);
@@ -421,8 +665,8 @@ static int compare(const Rec& r, const Replay& x, std::string& why, bool withN =
         cmp("T2end", x.loop.eps22End, r.strain[2]);
         for (size_t p = 0; p < x.loop.z.size() && p < r.z.size(); ++p) {
             const Pass &a = x.loop.z[p], &b = r.z[p]; const std::string at = "pass" + std::to_string(p) + ".";
-            cmpInt(at + "status", a.status, b.status); cmpInt(at + "pieces", a.sub, b.sub);
-            cmp(at + "eps22", a.eps22, b.eps22); cmp(at + "s22", a.s22, b.s22); cmp(at + "D22", a.d22, b.d22);
+            cmpInt(at + zName[4], a.status, b.status); cmpInt(at + zName[5], a.sub, b.sub);
+            cmp(at + zName[1], a.eps22, b.eps22); cmp(at + zName[2], a.s22, b.s22); cmp(at + zName[3], a.d22, b.d22);
         }
     }
     return nDiff;
@@ -433,33 +677,57 @@ static void checkBlobArg(const std::string& blob) {
         die("--kernel-blob must be the 40-hex git blob of the kernel header this build compiled (git hash-object)");
 }
 
-static int modeCheck(const Fixture& fx, bool cross, const std::string& blob) {
+// The replay is a pure function of a record's inputs: its kind, its P line and its E S X H I C T lines (verbatim, the
+// unread ones included). `contract` replays the base fixture once and reuses a replay for a record whose inputs a row
+// did not touch; a record it touched is replayed afresh.
+static std::string inputKey(const Rec& r) {
+    std::string k(1, r.kind); k += "\n" + r.pLine;
+    for (const std::string& s : r.stateLines) k += "\n" + s;
+    return k;
+}
+struct ReplayCache { std::map<std::string, Replay> byKey; std::vector<size_t> order; };   // order: cheapest record first
+
+// `check`'s whole verdict, written through `emit`. cache: reuse the base replays; stopAtFirst: stop at the first
+// mismatching record (cheapest first), for a row that must fail. Returns 0 pass, 1 fail; a refusal throws.
+static int runCheck(const Fixture& fx, bool cross, const std::string& blob, const std::function<void(const std::string&)>& emit,
+                    const ReplayCache* cache = 0, bool stopAtFirst = false) {
     const std::string& libm = fx.meta.at("libm");
-    std::printf("fixture: %zu records, recorded with libm=%s kernel-blob=%s; this build: libm=%s kernel-blob=%s\n", fx.recs.size(),
-                libm.c_str(), fx.meta.at("kernel-blob").c_str(), C3D_REPLAY_LIBM, blob.c_str());
+    emit(strf("fixture: %zu records, recorded with libm=%s kernel-blob=%s; this build: libm=%s kernel-blob=%s\n", fx.recs.size(),
+              libm.c_str(), fx.meta.at("kernel-blob").c_str(), C3D_REPLAY_LIBM, blob.c_str()));
     if (libm != C3D_REPLAY_LIBM && !cross)
         die("records written under libm=" + libm + " do not replay bit-exactly under " + C3D_REPLAY_LIBM +
             " (run `record` for record-and-compare on this libm, or --cross to measure the difference)");
-    if (cross) std::printf("CROSS-LIBM comparison (diagnostic): a mismatch here is the libm, not the kernel\n");
+    if (cross) emit("CROSS-LIBM comparison (diagnostic): a mismatch here is the libm, not the kernel\n");
     const bool blobOk = (fx.meta.at("kernel-blob") == blob);
-    if (!blobOk) std::printf("KERNEL-BLOB MISMATCH: the fixture was recorded on kernel-blob %s, this build compiled %s: re-record (`record`)\n",
-                             fx.meta.at("kernel-blob").c_str(), blob.c_str());
-    int bad = 0; const bool qOk = (qProbe() == fx.qLine);
-    std::printf("libm probes (Q line, 21 values): %s\n", qOk ? "bit-identical" : "DIFFER");
+    if (!blobOk) emit(strf("KERNEL-BLOB MISMATCH: the fixture was recorded on kernel-blob %s, this build compiled %s: re-record (`record`)\n",
+                           fx.meta.at("kernel-blob").c_str(), blob.c_str()));
+    int bad = 0, seen = 0; const bool qOk = (qProbe() == fx.qLine);
+    emit(strf("libm probes (Q line, 21 values): %s\n", qOk ? "bit-identical" : "DIFFER"));
     std::map<std::string, std::pair<int, int>> byGroup;   // selection class -> (records, bit-exact)
-    for (const Rec& r : fx.recs) {
-        std::string why; const int nDiff = compare(r, replay(r), why);
+    std::vector<size_t> order;
+    if (cache && cache->order.size() == fx.recs.size()) order = cache->order;
+    else for (size_t i = 0; i < fx.recs.size(); ++i) order.push_back(i);
+    for (size_t ri : order) {
+        if (stopAtFirst && (bad || !qOk || !blobOk)) break;
+        const Rec& r = fx.recs[ri]; ++seen;
+        std::map<std::string, Replay>::const_iterator hit;
+        const bool cached = cache && (hit = cache->byKey.find(inputKey(r))) != cache->byKey.end();
+        std::string why; const int nDiff = compare(r, cached ? hit->second : replay(r), why);
         const std::map<std::string, std::string>& g = r.g;
         auto& cnt = byGroup[g.at("class")]; ++cnt.first;
         if (!nDiff) ++cnt.second;
-        else { ++bad; std::printf("  MISMATCH %s seq=%s (%s %s): %d values differ:%s%s\n", r.k.at("kind").c_str(), r.k.at("seq").c_str(),
-                                  g.at("dump").c_str(), g.at("class").c_str(), nDiff, why.c_str(), nDiff > 6 ? " ..." : ""); }
+        else { ++bad; emit(strf("  MISMATCH %s seq=%s (%s %s): %d values differ:%s%s\n", r.k.at("kind").c_str(), r.k.at("seq").c_str(),
+                                g.at("dump").c_str(), g.at("class").c_str(), nDiff, why.c_str(), nDiff > 6 ? " ..." : "")); }
     }
-    for (const auto& kvp : byGroup) std::printf("  %-14s %2d records, bit-exact %2d\n", kvp.first.c_str(), kvp.second.first, kvp.second.second);
+    for (const auto& kvp : byGroup) emit(strf("  %-14s %2d records, bit-exact %2d\n", kvp.first.c_str(), kvp.second.first, kvp.second.second));
     const bool fail = bad || !qOk || !blobOk;
-    std::printf("REPLAY %s: %d of %zu records bit-exact%s%s\n", fail ? "FAIL" : "PASS", (int)fx.recs.size() - bad, fx.recs.size(),
-                qOk ? "" : ", libm probes differ", blobOk ? "" : ", kernel-blob differs");
+    emit(strf("REPLAY %s: %d of %zu records bit-exact%s%s%s\n", fail ? "FAIL" : "PASS", seen - bad, fx.recs.size(),
+              qOk ? "" : ", libm probes differ", blobOk ? "" : ", kernel-blob differs",
+              seen < (int)fx.recs.size() ? " (stopped at the first mismatch)" : ""));
     return fail ? 1 : 0;
+}
+static int modeCheck(const Fixture& fx, bool cross, const std::string& blob) {
+    return runCheck(fx, cross, blob, [](const std::string& s) { std::fputs(s.c_str(), stdout); });
 }
 
 static std::string fmt(const double* v, int n) { std::string s; char b[40]; for (int i = 0; i < n; ++i) { std::snprintf(b, sizeof b, " %.17g", v[i]); s += b; } return s; }
@@ -541,6 +809,294 @@ static int modeInputsMatch(const Fixture& a, const Fixture& b) {
     return bad ? 1 : 0;
 }
 
+// ---- fields: the table, printed; checked against the header block -------------------------------------------------
+static std::vector<std::string> fieldsText() {
+    std::vector<std::string> v;
+    v.push_back(strf("%-2s %-13s %-6s %-5s %-7s %-14s %s", "ln", "cols", "class", "scope", "pert", "tie", "expect -- note"));
+    for (const FieldSpec& f : FIELDS) {
+        std::string tail = *f.expect ? f.expect : "";
+        std::string note = f.note; if (*f.domain) note += std::string(note.empty() ? "" : "; ") + "domain " + f.domain;
+        if (!note.empty()) tail += (tail.empty() ? "-- " : " -- ") + note;
+        std::string s = strf("%-2s %-13s %-6s %-5s %-7s %-14s %s", f.line, f.cols, f.cls, f.scope, f.pert, *f.tie ? f.tie : "-", tail.c_str());
+        while (!s.empty() && s.back() == ' ') s.pop_back();
+        v.push_back(s);
+    }
+    return v;
+}
+static const char* BEGIN_MARK = "BEGIN FIELD TABLE";
+static const char* END_MARK = "END FIELD TABLE";
+// The block between the markers in <source>, each line "//   " + a line of fieldsText(), must equal fieldsText().
+static int modeFieldsCheck(const char* src) {
+    std::ifstream in(src); if (!in) die(std::string("cannot open ") + src);
+    std::vector<std::string> got; std::string line; int state = 0;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.rfind(std::string("//   ---- ") + BEGIN_MARK, 0) == 0) { if (state) die("two BEGIN FIELD TABLE markers"); state = 1; continue; }
+        if (line.rfind(std::string("//   ---- ") + END_MARK, 0) == 0) { if (state != 1) die("END FIELD TABLE without BEGIN"); state = 2; continue; }
+        if (state == 1) {
+            if (line.rfind("//   ", 0) != 0) die("a field-table header line does not start with '//   ': " + line.substr(0, 60));
+            got.push_back(line.substr(5));
+        }
+    }
+    if (state != 2) die(std::string("no BEGIN/END FIELD TABLE block in ") + src);
+    const std::vector<std::string> want = fieldsText();
+    for (size_t i = 0; i < std::max(got.size(), want.size()); ++i) {
+        const std::string a = i < got.size() ? got[i] : "(missing)", b = i < want.size() ? want[i] : "(missing)";
+        if (a != b) {
+            std::printf("FIELD TABLE DIFFERS from the compiled table at header line %zu:\n  header: %s\n  table:  %s\n"
+                        "regenerate the block with `concrete3d_replay fields --header`\n", i + 1, a.c_str(), b.c_str());
+            return 1;
+        }
+    }
+    std::printf("FIELD TABLE MATCHES: the header block is the compiled table (%zu entries)\n", want.size() - 1);
+    return 0;
+}
+
+// ---- the table's own consistency, checked at start-up (every mode) --------------------------------------------------
+static const std::set<std::string> SCOPES = {"all", "R", "CF", "CF0", "CF>0", "dt>0", "dt<0", "dt<=0", "cls0"};
+struct Tie { std::string line, col, scope, set; };
+static std::vector<Tie> parseTies(const FieldSpec& f) {
+    std::vector<Tie> v;
+    for (const std::string& t : split(f.tie, ',')) {
+        Tie x; std::string s = t; size_t p;
+        if ((p = s.find('=')) != std::string::npos) { x.set = s.substr(p + 1); s = s.substr(0, p); }
+        if ((p = s.find('@')) != std::string::npos) { x.scope = s.substr(p + 1); s = s.substr(0, p); } else x.scope = f.scope;
+        if ((p = s.find('.')) == std::string::npos) die(std::string("field table: tie '") + t + "' is not <line>.<col>");
+        x.line = s.substr(0, p); x.col = s.substr(p + 1);
+        if (!SCOPES.count(x.scope)) die("field table: tie '" + t + "' has an unknown scope");
+        v.push_back(x);
+    }
+    return v;
+}
+static void tableSelfCheck() {
+    std::set<std::string> lines(std::begin(LINE_KINDS), std::end(LINE_KINDS)), used, entries;
+    for (const FieldSpec& f : FIELDS) {
+        const std::string id = std::string(f.line) + "." + f.cols + "@" + f.scope, c = f.cls, p = f.pert, e = f.expect;
+        if (!lines.count(f.line)) die("field table: unknown line kind " + id);
+        if (!entries.insert(id).second) die("field table: two entries for " + id);
+        used.insert(f.line);
+        if (c != "IN" && c != "OUT" && c != "PIN" && c != "UNREAD" && c != "INFO") die("field table: unknown class " + c + " (" + id + ")");
+        if (!SCOPES.count(f.scope)) die("field table: unknown scope (" + id + ")");
+        if (p != "-" && p != "x1.25" && p != "+1" && p != "~last" && p != "{}" && p[0] != '=') die("field table: unknown pert " + p + " (" + id + ")");
+        if (p == "{}" && !*f.domain) die("field table: pert {} needs a domain (" + id + ")");
+        if (c == "PIN" && e.rfind("refuse:", 0) != 0) die("field table: a PIN entry must name its refusal (" + id + ")");
+        if ((c == "UNREAD" || c == "INFO") && !e.empty()) die("field table: an UNREAD or INFO entry passes; it takes no expect (" + id + ")");
+        if (!e.empty() && e.rfind("refuse:", 0) != 0 && e.rfind("fail:", 0) != 0) die("field table: expect is refuse:|fail: (" + id + ")");
+        if (c == "OUT" && e.empty() && (!indexed(f) || colName(f.line, 0).empty())) die("field table: an OUT entry without a compare name needs fail: (" + id + ")");
+        if (indexed(f) && std::string(f.line) != "Q") {   // only lines whose columns are fed or compared in the code
+            int a, b; colRange(f, a, b);
+            if (a > b) die("field table: bad range (" + id + ")");
+        }
+        if (*f.tie) for (const Tie& t : parseTies(f)) if (!lines.count(t.line)) die("field table: tie on an unknown line (" + id + ")");
+    }
+    for (const std::string& l : lines) if (!used.count(l)) die("field table: no entry for line kind " + l);
+    // every column of every numeric line is classified, and the table's counts are the code's
+    const std::map<std::string, int> code = {{"E", 6}, {"S", 6}, {"X", 6}, {"H", 11}, {"I", 11}, {"C", 2}, {"T", 6}, {"O", 17},
+                                             {"D", 36}, {"M", 36}, {"W", 12}, {"Z", 6}, {"N", N_STATE}, {"Q", (int)toks(qProbe()).size()}};
+    for (const auto& e : code) {
+        const int n = ncols(e.first.c_str());
+        if (n != e.second) die(strf("field table: line %s has %d columns, the code %d", e.first.c_str(), n, e.second));
+        for (int i = 0; i < n; ++i) {
+            bool cov = false;
+            for (const FieldSpec& f : FIELDS) if (e.first == f.line && indexed(f)) { int a, b; colRange(f, a, b); cov = cov || (a <= i && i <= b); }
+            if (!cov) die(strf("field table: column %s[%d] is not classified", e.first.c_str(), i));
+        }
+    }
+}
+
+// ---- contract: the rows generated from the table, run in-process --------------------------------------------------
+struct Row { std::string id; const FieldSpec* f; std::string col; std::string pert; bool skipNoop; };
+static std::vector<Row> rowsOf() {
+    std::vector<Row> v;
+    for (const FieldSpec& f : FIELDS) {
+        if (!std::strcmp(f.pert, "-")) continue;
+        std::vector<std::string> perts;
+        if (!std::strcmp(f.pert, "{}")) for (const std::string& d : split(f.domain, ',')) perts.push_back("=" + d);
+        else perts.push_back(f.pert);
+        std::vector<std::string> cols;
+        if (indexed(f)) { int a, b; colRange(f, a, b); for (int i = a; i <= b; ++i) cols.push_back(std::to_string(i)); }
+        else cols.push_back(f.cols);
+        for (const std::string& c : cols) for (const std::string& p : perts) {
+            std::string id = std::string(f.line) + (indexed(f) ? "[" + c + "]" : "." + c);
+            if (indexed(f)) { const std::string lab = colLabel(f.line, std::atoi(c.c_str())); if (!lab.empty()) id += "(" + lab + ")"; }
+            if (std::strcmp(f.scope, "all")) id += std::string("@") + f.scope;
+            if (!std::strcmp(f.pert, "{}")) id += p;
+            v.push_back(Row{id, &f, c, p, !std::strcmp(f.pert, "{}")});
+        }
+    }
+    return v;
+}
+static std::string expectText(const Row& r) {
+    const std::string c = r.f->cls, e = r.f->expect;
+    if (e.rfind("refuse:", 0) == 0) return "exit 2, refused at load: '" + e.substr(7) + "'";
+    if (e.rfind("fail:", 0) == 0) return "exit 1: '" + e.substr(5) + "'";
+    if (c == "UNREAD" || c == "INFO") return "exit 0, REPLAY PASS";
+    if (c == "OUT") return "exit 1 naming " + colName(r.f->line, std::atoi(r.col.c_str()));
+    return "exit 1 naming a compared field";
+}
+static int modeFieldsRows() {
+    for (const Row& r : rowsOf())
+        std::printf("%-26s %-6s %-5s %-9s %s\n", r.id.c_str(), r.f->cls, r.f->scope, r.pert.c_str(), expectText(r).c_str());
+    return 0;
+}
+
+// text-level mutation: the fixture's lines with one row's edit (and its ties), by token, never through the loader
+struct RecCtx { std::string kind; int pass = 0, cls = 0; double dt = 0; };
+static bool inScope(const std::string& scope, int ri, const std::vector<RecCtx>& ctx) {
+    if (scope == "all") return true;
+    if (ri < 0) return false;
+    const RecCtx& c = ctx[ri];
+    if (scope == "R") return c.kind == "R";
+    if (scope == "CF") return c.kind != "R";
+    if (scope == "CF0") return c.kind != "R" && c.pass == 0;
+    if (scope == "CF>0") return c.kind != "R" && c.pass > 0;
+    if (scope == "dt>0") return c.dt > 0;
+    if (scope == "dt<0") return c.dt < 0;
+    if (scope == "dt<=0") return c.dt <= 0;
+    if (scope == "cls0") return c.cls == 0;
+    die("unknown scope " + scope);
+}
+static std::string perturb(const std::string& v, const std::string& pert) {
+    if (pert == "x1.25") { const double x = std::strtod(v.c_str(), 0); return strf("%.17g", x == 0 ? 0.25 : x * 1.25); }
+    if (pert == "+1") return std::to_string(std::strtoll(v.c_str(), 0, 10) + 1);
+    if (pert == "~last") { std::string s = v; if (!s.empty()) s.back() = s.back() == '0' ? '1' : '0'; return s; }
+    if (!pert.empty() && pert[0] == '=') return pert.substr(1);
+    die("cannot apply pert " + pert);
+}
+static std::string lineKind(const std::string& l) {
+    if (l.rfind("#@ ", 0) == 0) return "#@";
+    if (!l.empty() && l[0] == '#') return "#";
+    return l.substr(0, 1);
+}
+static int editLines(std::vector<std::string>& L, const std::vector<int>& recOf, const std::vector<RecCtx>& ctx,
+                     const std::string& line, const std::string& col, const std::string& scope, const std::string& pert) {
+    const bool idx = col[0] >= '0' && col[0] <= '9'; int n = 0;
+    for (size_t i = 0; i < L.size(); ++i) {
+        if (lineKind(L[i]) != line || !inScope(scope, recOf[i], ctx)) continue;
+        std::vector<std::string> t = split(L[i], ' ');
+        std::string* tok = 0; size_t eq = 0;
+        if (idx) { const size_t k = 1 + std::atoi(col.c_str()); if (k < t.size()) tok = &t[k]; }
+        else for (size_t k = 1; k < t.size(); ++k) if (t[k].rfind(col + "=", 0) == 0) { tok = &t[k]; break; }
+        if (!tok) die("contract: " + line + " " + col + " is not on the line: " + L[i].substr(0, 60));
+        if (!idx || line == "Q") { eq = tok->find('='); if (eq == std::string::npos) die("contract: not key=value: " + *tok); }
+        if (!idx || line == "Q") *tok = tok->substr(0, eq + 1) + perturb(tok->substr(eq + 1), pert);
+        else *tok = perturb(*tok, pert);
+        std::string s = t[0]; for (size_t k = 1; k < t.size(); ++k) s += " " + t[k];
+        if (s != L[i]) ++n;
+        L[i] = s;
+    }
+    return n;
+}
+static std::vector<std::string> readLines(const char* path) {
+    std::ifstream in(path, std::ios::binary); if (!in) die(std::string("cannot open ") + path);
+    std::vector<std::string> v; std::string l;
+    while (std::getline(in, l)) { if (!l.empty() && l.back() == '\r') l.pop_back(); v.push_back(l); }
+    return v;
+}
+static std::string joinLines(const std::vector<std::string>& L) { std::string s; for (const std::string& l : L) s += l + "\n"; return s; }
+
+// The first compared field a MISMATCH line names ("values differ: <name>(..." or "<name> a!=b")
+static std::string firstNamed(const std::string& text) {
+    const size_t p = text.find("values differ: "); if (p == std::string::npos) return "";
+    const size_t a = p + 15, b = text.find_first_of("( \n", a);
+    return text.substr(a, b == std::string::npos ? std::string::npos : b - a);
+}
+static bool isCompareName(const std::string& n) {
+    static std::set<std::string> names;
+    if (names.empty()) {
+        for (const char* l : {"O", "D", "M", "W", "N"}) for (int i = 0; i < ncols(l); ++i) names.insert(colName(l, i));
+        for (const char* s : {"cls", "reason", "passes", "T2end"}) names.insert(s);
+    }
+    if (names.count(n)) return true;
+    if (n.rfind("pass", 0) == 0) {   // pass<p>.<Z field>
+        const size_t d = n.find('.'); if (d == std::string::npos || d == 4 || n.find_first_not_of("0123456789", 4) != d) return false;
+        for (int i = 1; i < 6; ++i) if (n.substr(d + 1) == zName[i]) return true;
+    }
+    return false;
+}
+
+static int modeContract(const char* path, const std::string& blob) {
+    const auto t0 = std::chrono::steady_clock::now();
+    const std::vector<std::string> base = readLines(path);
+    // the base fixture must pass first (the gate); its replays become the cache, cheapest record first
+    const Fixture fx = load(path);
+    ReplayCache cache; std::vector<std::pair<double, size_t>> cost;
+    for (size_t i = 0; i < fx.recs.size(); ++i) {
+        const auto a = std::chrono::steady_clock::now();
+        cache.byKey[inputKey(fx.recs[i])] = replay(fx.recs[i]);
+        cost.push_back({std::chrono::duration<double>(std::chrono::steady_clock::now() - a).count(), i});
+    }
+    std::sort(cost.begin(), cost.end());
+    for (const auto& c : cost) cache.order.push_back(c.second);
+    std::string baseText;
+    if (runCheck(fx, false, blob, [&](const std::string& s) { baseText += s; }, &cache) != 0) {
+        std::fputs(baseText.c_str(), stdout);
+        std::printf("CONTRACT ERROR: the base fixture does not replay (the gate fails): no row can be judged\n");
+        return 2;
+    }
+    // per-line record index and each record's scope context, read from the text
+    std::vector<int> recOf(base.size(), -1); std::vector<RecCtx> ctx; int ri = -1;
+    for (size_t i = 0; i < base.size(); ++i) {
+        if (base[i].rfind("K ", 0) == 0) {
+            ++ri; ctx.emplace_back(); std::map<std::string, std::string> k; kv(base[i], k);
+            ctx.back().kind = k.at("kind"); ctx.back().pass = std::atoi(k.at("pass").c_str()); ctx.back().cls = std::atoi(k.at("cls").c_str());
+        } else if (base[i].rfind("P ", 0) == 0 && ri >= 0) {
+            std::map<std::string, std::string> p; kv(base[i], p); ctx[ri].dt = std::strtod(p.at("dt").c_str(), 0);
+        }
+        recOf[i] = ri;
+    }
+    const std::string nRec = std::to_string(fx.recs.size());
+    std::map<std::string, std::pair<int, int>> byCls;   // class -> (rows run, rows as designed)
+    int bad = 0, skipped = 0;
+    std::printf("contract: %zu rows generated from the field table, on %s (%s records)\n", rowsOf().size(), path, nRec.c_str());
+    for (const Row& row : rowsOf()) {
+        const FieldSpec& f = *row.f; const std::string cls = f.cls, e = f.expect;
+        std::vector<std::string> L = base;
+        int n = editLines(L, recOf, ctx, f.line, row.col, f.scope, row.pert);
+        if (*f.tie) for (const Tie& t : parseTies(f)) editLines(L, recOf, ctx, t.line, t.col, t.scope, t.set.empty() ? row.pert : "=" + t.set);
+        if (n == 0) {
+            if (row.skipNoop) { ++skipped; std::printf("  skip %-6s %-26s every record in scope already has %s\n", cls.c_str(), row.id.c_str(), row.pert.c_str() + 1); continue; }
+            ++bad; std::printf("CONTRACT FAIL: %s (%s): the row changed nothing (scope %s matches no %s line)\n", row.id.c_str(), cls.c_str(), f.scope, f.line);
+            continue;
+        }
+        const bool mustFail = !(cls == "UNREAD" || cls == "INFO");
+        int rc; std::string text;
+        try {
+            std::istringstream is(joinLines(L));
+            const Fixture m = loadStream(is);
+            rc = runCheck(m, false, blob, [&](const std::string& s) { text += s; }, &cache, mustFail);
+        } catch (const Refusal& x) { rc = 2; text += "REPLAY ERROR: " + x.msg + "\n"; }
+        // what the row must give
+        int wantRc = mustFail ? 1 : 0; std::string want, got;
+        bool ok;
+        if (e.rfind("refuse:", 0) == 0) { wantRc = 2; want = e.substr(7); ok = rc == 2 && text.find(want) != std::string::npos; }
+        else if (e.rfind("fail:", 0) == 0) { want = e.substr(5); ok = rc == 1 && text.find(want) != std::string::npos; }
+        else if (!mustFail) { want = "REPLAY PASS: " + nRec + " of " + nRec; ok = rc == 0 && text.find(want) != std::string::npos; }
+        else if (cls == "OUT") {
+            want = colName(f.line, std::atoi(row.col.c_str()));
+            ok = rc == 1 && (text.find(" " + want + "(") != std::string::npos || text.find(" " + want + " ") != std::string::npos);
+        } else { want = "a compared field"; got = firstNamed(text); ok = rc == 1 && isCompareName(got); }
+        std::string shown;
+        for (const std::string& l : split(text, '\n'))
+            if (l.find("MISMATCH") != std::string::npos || l.find("REPLAY ERROR") != std::string::npos || l.find("REPLAY PASS") != std::string::npos) { shown = l; break; }
+        if (shown.empty()) for (const std::string& l : split(text, '\n')) if (l.find("REPLAY FAIL") != std::string::npos) shown = l;
+        while (!shown.empty() && shown[0] == ' ') shown.erase(0, 1);
+        auto& c = byCls[cls]; ++c.first;
+        if (ok) { ++c.second; std::printf("  ok   %-6s %-26s exit %d: %s\n", cls.c_str(), row.id.c_str(), rc, shown.substr(0, 110).c_str()); }
+        else {
+            ++bad;
+            std::printf("CONTRACT FAIL: %s (%s, scope %s, %s): expected %s, got exit %d: %s\n", row.id.c_str(), cls.c_str(), f.scope,
+                        row.pert.c_str(), (wantRc == 2 ? "exit 2 with '" + want + "'" : "exit " + std::to_string(wantRc) + " " + want).c_str(),
+                        rc, shown.substr(0, 160).c_str());
+        }
+    }
+    std::string sum;
+    for (const auto& c : byCls) sum += strf(" %s %d/%d", c.first.c_str(), c.second.second, c.second.first);
+    std::printf("CONTRACT %s: rows as designed by class:%s; %d skipped (domain value already everywhere); %.1f s\n",
+                bad ? "FAIL" : "PASS", sum.c_str(), skipped, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+    return bad ? 1 : 0;
+}
+
 // A glibc tag names the glibc version (linux-glibc-2.39-0ubuntu8.4): the C library this process actually loaded must be
 // that version, so a build tagged on one image cannot run as if it were on another.
 static void checkRuntimeLibm() {
@@ -553,8 +1109,22 @@ static void checkRuntimeLibm() {
 #endif
 }
 
-int main(int argc, char** argv) {
+static int run(int argc, char** argv) {
     checkRuntimeLibm();
+    tableSelfCheck();
+    if (argc == 2 && std::strcmp(argv[1], "fields") == 0) { for (const std::string& s : fieldsText()) std::printf("%s\n", s.c_str()); return 0; }
+    if (argc == 3 && std::strcmp(argv[1], "fields") == 0 && std::strcmp(argv[2], "--header") == 0) {
+        std::printf("//   ---- %s (the output of `concrete3d_replay fields`; `fields --check` compares) ----\n", BEGIN_MARK);
+        for (const std::string& s : fieldsText()) std::printf("//   %s\n", s.c_str());
+        std::printf("//   ---- %s ----\n", END_MARK);
+        return 0;
+    }
+    if (argc == 3 && std::strcmp(argv[1], "fields") == 0 && std::strcmp(argv[2], "--rows") == 0) return modeFieldsRows();
+    if (argc == 4 && std::strcmp(argv[1], "fields") == 0 && std::strcmp(argv[2], "--check") == 0) return modeFieldsCheck(argv[3]);
+    if (argc == 5 && std::strcmp(argv[1], "contract") == 0 && std::strcmp(argv[3], "--kernel-blob") == 0) {
+        checkBlobArg(argv[4]);
+        return modeContract(argv[2], argv[4]);
+    }
     if (argc >= 3 && std::strcmp(argv[1], "check") == 0) {
         bool cross = false; std::string blob;
         for (int i = 3; i < argc; ++i) {
@@ -571,6 +1141,11 @@ int main(int argc, char** argv) {
         return modeRecord(load(argv[2], false), argv[3], argv[5]);
     }
     if (argc == 4 && std::strcmp(argv[1], "inputs-match") == 0) return modeInputsMatch(load(argv[2]), load(argv[3]));
-    std::fprintf(stderr, "usage: %s check <fixture> --kernel-blob <sha> [--cross] | record <fixture> <out> --kernel-blob <sha> | inputs-match <a> <b>\n", argv[0]);
+    std::fprintf(stderr, "usage: %s check <fixture> --kernel-blob <sha> [--cross] | record <fixture> <out> --kernel-blob <sha> | "
+                         "inputs-match <a> <b> | fields [--header|--rows|--check <concrete3d_replay.cpp>] | contract <fixture> --kernel-blob <sha>\n", argv[0]);
     return 2;
+}
+int main(int argc, char** argv) {
+    try { return run(argc, argv); }
+    catch (const Refusal& e) { std::fflush(stdout); std::fprintf(stderr, "REPLAY ERROR: %s\n", e.msg.c_str()); return 2; }
 }

@@ -188,6 +188,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: libm guard, glibc recording, replay of the committed glibc fixture (fails while it is missing)
         run: bash tests/_testbed/concrete3d_replay_ci.sh "$RUNNER_TEMP/c3d_replay"
+      - name: Field-classification contract (rows generated from the testbed's field table, on the glibc fixture)
+        run: bash tests/_testbed/concrete3d_replay_ci.sh --contract "$RUNNER_TEMP/c3d_replay"
       - name: Upload the glibc recording
         if: always()
         uses: actions/upload-artifact@v4

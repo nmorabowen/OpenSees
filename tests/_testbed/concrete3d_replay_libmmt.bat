@@ -1,5 +1,5 @@
 @echo off
-REM concrete3d_replay_libmmt.bat <replay|replay-ucrt|record|selfcheck|selfcheck-ucrt> [outdir]   (apeGmsh #2621 F1)
+REM concrete3d_replay_libmmt.bat <replay|replay-ucrt|contract|record|selfcheck|selfcheck-ucrt> [outdir]   (apeGmsh #2621 F1)
 REM concrete3d_replay_libmmt.bat replay-kernel <outdir> <root>   (the kernel-mutant proof, see below)
 REM
 REM Builds the LadrunoConcrete3D kernel testbeds the way the shipped Windows opensees.pyd is built: MSVC with the fork's
@@ -12,6 +12,10 @@ REM                   record replays bit-exactly. A kernel change that moves any
 REM                   `record`, commits the re-recorded fixture, and its diff (exactly the values that moved) is what the
 REM                   reviewers judge. No field or record class is exempt.
 REM   replay-ucrt     the same replay with a plain (UCRT) link and --cross: shows what a wrong libm does to the records
+REM   contract        the field-classification contract under libmmt (ci.sh --contract's mirror, on the libmmt
+REM                   fixture): the header's FIELD TABLE block must be the compiled table (`fields --check`), and every
+REM                   row `contract` generates from it must give its class's outcome; exit 0 iff all do. Each CONTRACT
+REM                   FAIL line names the field and its class.
 REM   replay-kernel   replay under libmmt built against <root>\SRC\material\nD\LadrunoConcrete3DKernel.h instead of
 REM                   this tree's (a mutated copy: ci.sh's kernel mutants), with that header's own blob. Must FAIL (exit 1).
 REM   record          re-record the fixture under libmmt on this tree's kernel into <outdir>\concrete3d_replay_records.txt
@@ -48,11 +52,12 @@ if "%HAVE%"=="" (echo ERROR: git hash-object of the kernel header failed & popd 
 
 if /i "%MODE%"=="replay" goto replay
 if /i "%MODE%"=="replay-ucrt" goto replay_ucrt
+if /i "%MODE%"=="contract" goto contract
 if /i "%MODE%"=="replay-kernel" goto replay_kernel
 if /i "%MODE%"=="record" goto record
 if /i "%MODE%"=="selfcheck" goto selfcheck
 if /i "%MODE%"=="selfcheck-ucrt" goto selfcheck_ucrt
-echo usage: %~nx0 ^<replay^|replay-ucrt^|record^|selfcheck^|selfcheck-ucrt^> [outdir]   ^|   replay-kernel ^<outdir^> ^<root^>
+echo usage: %~nx0 ^<replay^|replay-ucrt^|contract^|record^|selfcheck^|selfcheck-ucrt^> [outdir]   ^|   replay-kernel ^<outdir^> ^<root^>
 popd & exit /b 2
 
 :needmmt
@@ -84,6 +89,17 @@ set "LINKLIBS="
 call :build_replay win-ucrt || (popd & exit /b 2)
 "%OUT%\concrete3d_replay_win-ucrt.exe" check "%FIX%" --cross --kernel-blob %HAVE%
 set "RC=%ERRORLEVEL%"
+popd & exit /b %RC%
+
+:contract
+call :needmmt || (popd & exit /b 2)
+set "LINKLIBS=%LIBMMT%"
+call :build_replay win-libmmt || (popd & exit /b 2)
+"%OUT%\concrete3d_replay_win-libmmt.exe" fields --check tests\_testbed\concrete3d_replay.cpp
+if errorlevel 1 (echo ERROR: the header's FIELD TABLE block is not the compiled field table & popd & exit /b 1)
+"%OUT%\concrete3d_replay_win-libmmt.exe" contract "%FIX%" --kernel-blob %HAVE%
+set "RC=%ERRORLEVEL%"
+if not "%RC%"=="0" echo ERROR: the field-classification contract failed (exit %RC%): each CONTRACT FAIL line names the field and its class
 popd & exit /b %RC%
 
 :replay_kernel

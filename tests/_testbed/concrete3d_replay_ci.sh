@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# concrete3d_replay_ci.sh [outdir] -- the Linux (glibc) lane of the LadrunoConcrete3D record replay (apeGmsh #2621 F1).
-# Run from anywhere inside the repo; needs g++, git, awk and ldd. Builds against THIS TREE's kernel header, always.
+# concrete3d_replay_ci.sh [outdir]            -- the Linux (glibc) lane of the LadrunoConcrete3D record replay
+# concrete3d_replay_ci.sh --contract [outdir] -- its field-classification contract (a workflow step of its own)
+# (apeGmsh #2621 F1). Run from anywhere inside the repo; needs g++, git, awk and ldd. Builds against THIS TREE's kernel
+# header, always.
 #
 # The committed libmmt records (concrete3d_replay_records.txt) were written by the Windows pyd and replay bit-exactly
 # only under Intel's libmmt (concrete3d_replay_libmmt.bat). The glibc fixture is concrete3d_replay_records.linux-glibc.txt,
@@ -12,8 +14,13 @@
 #     the full returned State (N lines) included. THAT IS THE GATE. A kernel change that moves any value fails it by
 #     design; that PR re-records (this run's artifact, or `record` on the same image), commits the new fixture, and
 #     the reviewers judge its diff. After the gate: the glibc fixture must hold the libmmt fixture's records, order and
-#     inputs (`inputs-match`); corrupted outputs must be caught; the documented UNREAD inputs, perturbed by 25 %, must
-#     still replay (the coverage limit, enforced); and two mutated kernels must FAIL the replay on their N lines.
+#     inputs (`inputs-match`); the libmmt fixture must be recorded on this tree's kernel blob (the blob tie, proven by
+#     its own mutant); corrupted outputs must be caught; and two mutated kernels must FAIL the replay on their N lines.
+#   - --contract (the next workflow step, after the gate): the testbed's field table, the single source of the FIELD
+#     CLASSIFICATION, must match the header block it generates (`fields --check`), and every row `contract` generates
+#     from it must give its class's outcome on the glibc fixture: each IN row FAILS (or is refused where its entry says
+#     so), each OUT row fails naming its compare, each PIN row is refused, and each UNREAD and INFO row still PASSES
+#     (the coverage limit, enforced). Each failure line names the field and its class.
 #   - glibc fixture missing: the job FAILS, after recording. The flow: the first CI run of the PR that adds this lane is
 #     red by design and uploads <outdir>/concrete3d_replay_records.linux-glibc.txt; that file is committed as
 #     tests/_testbed/concrete3d_replay_records.linux-glibc.txt, and the next run replays it as the gate.
@@ -22,6 +29,8 @@
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
+contract=0
+if [ "${1:-}" = --contract ]; then contract=1; shift; fi
 out="${1:-${RUNNER_TEMP:-/tmp}/c3d_replay}"
 mkdir -p "$out"
 fix="$here/concrete3d_replay_records.txt"
@@ -40,6 +49,25 @@ echo "libm tag $tag (from: $ldd1)"
 # build <exe> <include root>: the testbed against <root>/SRC/material/nD/LadrunoConcrete3DKernel.h
 build() { g++ -std=c++17 -O2 -DC3D_REPLAY_LIBM="\"$tag\"" -I "$2" "$here/concrete3d_replay.cpp" -o "$1"; }
 exe="$out/concrete3d_replay"
+
+if [ "$contract" = 1 ]; then
+  # the replay step's testbed when it is newer than both of its sources (one build per job), else a fresh build
+  if [ -x "$exe" ] && [ "$exe" -nt "$here/concrete3d_replay.cpp" ] && [ "$exe" -nt "$repo/$kernel" ]; then
+    echo "reusing $exe (built by the replay step from this tree's kernel header, blob $blob)"
+  else
+    build "$exe" "$repo"; echo "built against this tree's kernel header, blob $blob"
+  fi
+  [ -f "$glibc_fix" ] || { echo "::error::No glibc fixture is committed: the contract runs on it (see the replay step)."; exit 1; }
+  echo "== the header's FIELD TABLE block must be the compiled field table (its single source)"
+  "$exe" fields --check "$here/concrete3d_replay.cpp"
+  echo "== contract: every row generated from the field table, on the glibc fixture (this libm's own records)"
+  set +e; "$exe" contract "$glibc_fix" --kernel-blob "$blob" > "$out/contract.txt" 2>&1; rc=$?; set -e
+  cat "$out/contract.txt"
+  grep '^CONTRACT FAIL: ' "$out/contract.txt" | sed 's/^CONTRACT FAIL: /::error::field-classification contract: /' || true
+  [ "$rc" -eq 0 ] || { echo "ERROR: the field-classification contract failed (exit $rc): each CONTRACT FAIL line names the field and its class"; exit 1; }
+  exit 0
+fi
+
 build "$exe" "$repo"
 echo "built against this tree's kernel header, blob $blob"
 
@@ -122,9 +150,21 @@ echo "== the glibc fixture holds the libmmt fixture's records, in its order, wit
 "$exe" inputs-match "$glibc_fix" "$fix"
 # inputs-match compares inputs only: the libmmt fixture (the pyd's values) must also be re-recorded on THIS kernel.
 # Its values are proven only by the self-hosted libmmt replay; this ties its blob to the tree on every PR run.
-fix_blob="$(sed -n 's/^#@ .*kernel-blob=\([0-9a-f]*\).*/\1/p' "$fix")"
-[ "$fix_blob" = "$blob" ] || { echo "ERROR: the libmmt fixture is recorded on kernel-blob=$fix_blob, this tree's kernel is $blob: re-record it under libmmt (concrete3d_replay_libmmt.bat record) in this PR"; exit 1; }
-echo "libmmt fixture kernel-blob matches this tree ($blob)"
+# blob_tie <fixture>: returns 1, with the ERROR line, unless <fixture> is recorded on this tree's kernel blob
+blob_tie() {
+  local fb; fb="$(sed -n 's/^#@ .*kernel-blob=\([0-9a-f]*\).*/\1/p' "$1")"
+  [ "$fb" = "$blob" ] || { echo "ERROR: the libmmt fixture is recorded on kernel-blob=$fb, this tree's kernel is $blob: re-record it under libmmt (concrete3d_replay_libmmt.bat record) in this PR"; return 1; }
+  echo "libmmt fixture kernel-blob matches this tree ($blob)"
+}
+blob_tie "$fix" || exit 1
+# the tie must fire: the same function on a copy of the libmmt fixture recorded on another kernel blob
+other="$(printf '%040d' 0)"; [ "$other" != "$blob" ] || other="$(printf '1%039d' 0)"
+awk -v b="$other" '/^#@ /{sub(/kernel-blob=[0-9a-f]+/, "kernel-blob=" b)} 1' "$fix" > "$out/blob_tie_mut.txt"
+cmp -s "$fix" "$out/blob_tie_mut.txt" && { echo "ERROR: the blob-tie mutant changed nothing"; exit 1; }
+set +e; blob_tie "$out/blob_tie_mut.txt" > "$out/blob_tie_mut.log" 2>&1; rc=$?; set -e
+echo "blob-tie mutant: exit $rc: $(head -1 "$out/blob_tie_mut.log")"
+[ "$rc" -eq 1 ] && grep -q "^ERROR: the libmmt fixture is recorded on kernel-blob=$other, this tree's kernel is $blob" "$out/blob_tie_mut.log" \
+  || { echo "ERROR: the blob tie did not fire on a fixture recorded on another kernel blob (exit $rc)"; exit 1; }
 mutants "$glibc_fix" "$exe" inputs-match MUT "$fix" <<'MUTANTS'
 rec_drop|/^K /{n++} n!=2|1|INPUTS DIFFER: 27 records vs 28
 S_edit|!d && /^S /{$2=sprintf("%.17g", $2*1.25); d=1} 1|1|INPUTS DIFFER at record 0 (seq=4523): S line
@@ -138,29 +178,8 @@ T2_end_R|!d && /^T /{$4="0.5"; d=1} 1|1|1 values differ: T2end
 N_state_value|!d && /^N /{$28=sprintf("%.17g", $28 * 1.25 + 1); d=1} 1|1|1 values differ: N.sigcMax
 MUTANTS
 
-# The coverage limit, enforced: each input the classification calls UNREAD (concrete3d_replay.cpp's table) is
-# perturbed by 25 % (0 -> 0.25) on every record, and the replay must still PASS. A kernel change that starts reading one
-# turns its row red, and the table must be updated. implexRmax and lch_ref are not here: they are pinned to the dump's
-# rules, so a perturbed one is refused at load (P_implexRmax_rule, P_lch_ref_rule above).
-echo "== unread inputs: each documented UNREAD input, perturbed by 25 %, must still replay bit-exactly"
-mutants "$glibc_fix" "$exe" check MUT --kernel-blob "$blob" <<'MUTANTS'
-S0_sig0|/^S /{$2=sprintf("%.17g", $2 == 0 ? 0.25 : $2 * 1.25)} 1|0|REPLAY PASS: 28 of 28
-S1_sig1|/^S /{$3=sprintf("%.17g", $3 == 0 ? 0.25 : $3 * 1.25)} 1|0|REPLAY PASS: 28 of 28
-S2_sig2|/^S /{$4=sprintf("%.17g", $4 == 0 ? 0.25 : $4 * 1.25)} 1|0|REPLAY PASS: 28 of 28
-S3_sig3|/^S /{$5=sprintf("%.17g", $5 == 0 ? 0.25 : $5 * 1.25)} 1|0|REPLAY PASS: 28 of 28
-S4_sig4|/^S /{$6=sprintf("%.17g", $6 == 0 ? 0.25 : $6 * 1.25)} 1|0|REPLAY PASS: 28 of 28
-S5_sig5|/^S /{$7=sprintf("%.17g", $7 == 0 ? 0.25 : $7 * 1.25)} 1|0|REPLAY PASS: 28 of 28
-I2_dwt|/^I /{$4=sprintf("%.17g", $4 == 0 ? 0.25 : $4 * 1.25)} 1|0|REPLAY PASS: 28 of 28
-I3_dwc|/^I /{$5=sprintf("%.17g", $5 == 0 ? 0.25 : $5 * 1.25)} 1|0|REPLAY PASS: 28 of 28
-I5_depl0|/^I /{$7=sprintf("%.17g", $7 == 0 ? 0.25 : $7 * 1.25)} 1|0|REPLAY PASS: 28 of 28
-I6_depl1|/^I /{$8=sprintf("%.17g", $8 == 0 ? 0.25 : $8 * 1.25)} 1|0|REPLAY PASS: 28 of 28
-I7_depl2|/^I /{$9=sprintf("%.17g", $9 == 0 ? 0.25 : $9 * 1.25)} 1|0|REPLAY PASS: 28 of 28
-I8_depl3|/^I /{$10=sprintf("%.17g", $10 == 0 ? 0.25 : $10 * 1.25)} 1|0|REPLAY PASS: 28 of 28
-I9_depl4|/^I /{$11=sprintf("%.17g", $11 == 0 ? 0.25 : $11 * 1.25)} 1|0|REPLAY PASS: 28 of 28
-I10_depl5|/^I /{$12=sprintf("%.17g", $12 == 0 ? 0.25 : $12 * 1.25)} 1|0|REPLAY PASS: 28 of 28
-P_rho|/^P /{for (i = 2; i <= NF; i++) if ($i ~ /^rho=/) {v = substr($i, 5) + 0; $i = "rho=" sprintf("%.17g", v == 0 ? 0.25 : v * 1.25)}} 1|0|REPLAY PASS: 28 of 28
-P_Gc|/^P /{for (i = 2; i <= NF; i++) if ($i ~ /^Gc=/) {v = substr($i, 4) + 0; $i = "Gc=" sprintf("%.17g", v == 0 ? 0.25 : v * 1.25)}} 1|0|REPLAY PASS: 28 of 28
-MUTANTS
+# The coverage limit (the UNREAD rows) is enforced by --contract, the next workflow step: its rows are generated from
+# the field table in concrete3d_replay.cpp, never written here.
 
 # Mutated kernels: a copy of this tree's header with an exact, pinned edit (each anchor must occur exactly once, or
 # the step fails loudly), built as a second testbed and replayed on the glibc fixture. Each moves only returned State
