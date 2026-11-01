@@ -123,6 +123,8 @@ static Fixture load(const char* path) {
             die(std::string("a ") + q.kind + " record must carry its 6x6 tangent as a " + (q.kind == 'C' ? "D" : "M") + " line: " + q.kLine);
         if (q.kind == 'R' && (q.z.empty() || (q.k.at("dim") != "4" && q.k.at("dim") != "3"))) die("R record without a condensed sigma_22 trace: " + q.kLine);
         if (q.kind != 'R' && !q.z.empty()) die("Z lines on a non-R record: " + q.kLine);
+        if (q.k.at("status") != std::to_string((long)q.o[0]) || q.k.at("subInfo") != std::to_string((long)q.o[1]))
+            die("K line status=/subInfo= disagree with the O line's status/sub: " + q.kLine);
     }
     return fx;
 }
@@ -273,7 +275,7 @@ static int modeRecord(const Fixture& fx, const char* outPath, const std::string&
         const Replay x = replay(r);
         std::map<std::string, std::string> k = r.k;
         if (r.kind == 'R') k["pass"] = std::to_string(x.loop.code);
-        else { k["status"] = std::to_string(x.ev.status); k["subInfo"] = std::to_string(x.ev.sub); }
+        k["status"] = std::to_string(x.ev.status); k["subInfo"] = std::to_string(x.ev.sub);   // every kind: they mirror O[0], O[1]
         static const char* order[] = {"kind", "seq", "tag", "ele", "dim", "pass", "status", "subInfo", "cls", "calls", "integ"};
         out << "K"; for (const char* key : order) { auto it = k.find(key); if (it == k.end()) die(std::string("K line lacks ") + key); out << " " << key << "=" << it->second; k.erase(it); }
         if (!k.empty()) die("K line has an unexpected key " + k.begin()->first);
