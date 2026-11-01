@@ -96,6 +96,66 @@ lfbc3dScalePM(double P, double P0, double alpha)
   return f;
 }
 
+static inline double
+lfbc3dScalePMDeriv(double P, double P0, double alpha)
+{
+  if (P0 <= 0.0)
+    return 0.0;
+  double n = P / P0;
+  double f = 1.0 - alpha * n - (1.0 - alpha) * n * n;
+  if (f <= 0.05 || f >= 2.5)
+    return 0.0;
+  return (-alpha - 2.0 * (1.0 - alpha) * n) / P0;
+}
+
+static inline void
+lfbc3dEvalPM(double P, double P0, double alpha,
+             double P0t, double Pbal, double muBal,
+             double &fOut, double &dfOut)
+{
+  if (P0 <= 0.0) {
+    fOut = 1.0;
+    dfOut = 0.0;
+    return;
+  }
+  if (Pbal > 0.0 && P0 > Pbal && P0t > 0.0 && muBal >= 1.0) {
+    double Ncomp = -P;
+    double f = 1.0, df_dNcomp = 0.0;
+    if (Ncomp >= 0.0) {
+      double d1 = Pbal;
+      double d2 = P0 - Pbal;
+      if (Ncomp <= Pbal && d1 > 1.0e-12) {
+        double xi = Ncomp / d1;
+        f = 1.0 + (muBal - 1.0) * xi * (2.0 - xi);
+        df_dNcomp = (muBal - 1.0) * (2.0 - 2.0 * xi) / d1;
+      } else if (Ncomp > Pbal && d2 > 1.0e-12) {
+        double xi = (Ncomp - Pbal) / d2;
+        f = muBal * (1.0 - xi * xi);
+        df_dNcomp = -2.0 * muBal * xi / d2;
+      } else {
+        f = 0.05;
+        df_dNcomp = 0.0;
+      }
+    } else {
+      f = 1.0 + Ncomp / P0t;
+      df_dNcomp = 1.0 / P0t;
+    }
+    if (f <= 0.05) {
+      fOut = 0.05;
+      dfOut = 0.0;
+    } else if (f >= 3.0) {
+      fOut = 3.0;
+      dfOut = 0.0;
+    } else {
+      fOut = f;
+      dfOut = -df_dNcomp;
+    }
+    return;
+  }
+  fOut = lfbc3dScalePM(P, P0, alpha);
+  dfOut = lfbc3dScalePMDeriv(P, P0, alpha);
+}
+
 static inline bool
 lfbc3dHingeIsImplex(UniaxialMaterial *m)
 {
@@ -221,6 +281,87 @@ lfbc3dFlooredInv4x4(const double Kaa[4][4], const bool active[4], double floor,
   }
 }
 
+static void
+lfbc3dFlooredInvGen4x4(const double Kaa[4][4], const bool active[4], double floor,
+                       double invKaa[4][4])
+{
+  double asym = 0.0, norm = 0.0;
+  for (int i = 0; i < 4; i++) {
+    for (int j = 0; j < 4; j++) {
+      if (active[i] && active[j]) {
+        asym += fabs(Kaa[i][j] - Kaa[j][i]);
+        norm += fabs(Kaa[i][j]);
+      }
+    }
+  }
+  if (asym <= 1.0e-14 * (norm + 1.0e-30)) {
+    lfbc3dFlooredInv4x4(Kaa, active, floor, invKaa);
+    return;
+  }
+
+  double aug[4][8];
+  for (int i = 0; i < 4; i++) {
+    for (int j = 0; j < 4; j++) {
+      if (active[i] && active[j])
+        aug[i][j] = Kaa[i][j];
+      else
+        aug[i][j] = (i == j) ? 1.0 : 0.0;
+      aug[i][4 + j] = (i == j) ? 1.0 : 0.0;
+    }
+  }
+
+  bool ok = true;
+  for (int col = 0; col < 4; col++) {
+    int piv = col;
+    double maxVal = fabs(aug[col][col]);
+    for (int row = col + 1; row < 4; row++) {
+      if (fabs(aug[row][col]) > maxVal) {
+        maxVal = fabs(aug[row][col]);
+        piv = row;
+      }
+    }
+    if (active[col] && maxVal < floor) {
+      ok = false;
+      break;
+    }
+    if (piv != col) {
+      for (int k = 0; k < 8; k++) {
+        double tmp = aug[col][k];
+        aug[col][k] = aug[piv][k];
+        aug[piv][k] = tmp;
+      }
+    }
+    double diag = aug[col][col];
+    if (fabs(diag) < 1.0e-300) {
+      ok = false;
+      break;
+    }
+    double invDiag = 1.0 / diag;
+    for (int k = 0; k < 8; k++)
+      aug[col][k] *= invDiag;
+    for (int row = 0; row < 4; row++) {
+      if (row == col)
+        continue;
+      double factor = aug[row][col];
+      if (factor != 0.0) {
+        for (int k = 0; k < 8; k++)
+          aug[row][k] -= factor * aug[col][k];
+      }
+    }
+  }
+
+  if (!ok) {
+    lfbc3dFlooredInv4x4(Kaa, active, floor, invKaa);
+    return;
+  }
+
+  for (int i = 0; i < 4; i++) {
+    for (int j = 0; j < 4; j++) {
+      invKaa[i][j] = (active[i] && active[j]) ? aug[i][4 + j] : 0.0;
+    }
+  }
+}
+
 static bool
 lfbc3dTryOptionalInt(int &valOut)
 {
@@ -335,7 +476,10 @@ OPS_LadrunoForceBeamColumn3d()
   int dualHingeMode = 0;
   double hingeXiI = 0.0, hingeXiJ = 1.0;
   double elePmP0 = 0.0, elePmAlpha = 0.5;
+  double elePmP0t = 0.0, elePmPbal = 0.0, elePmMuBal = 0.0;
   bool eleImplex = false;
+  bool eleAxialRelease = false;
+  int spanLoadMode = 1;
   double gavy = 0.0, gavz = 0.0;
 
   numData = 1;
@@ -819,6 +963,40 @@ OPS_LadrunoForceBeamColumn3d()
         }
         elePmAlpha = optAlpha;
       }
+      elePmP0t = 0.0;
+      elePmPbal = 0.0;
+      elePmMuBal = 0.0;
+    }
+    else if (strcmp(type, "-pmBal") == 0 || strcmp(type, "-PMBal") == 0) {
+      double pmArgs[4];
+      numData = 4;
+      if (OPS_GetNumRemainingInputArgs() < 4 ||
+          OPS_GetDoubleInput(&numData, pmArgs) < 0 ||
+          !std::isfinite(pmArgs[0]) || pmArgs[0] <= 0.0 ||
+          !std::isfinite(pmArgs[1]) || pmArgs[1] <= 0.0 ||
+          !std::isfinite(pmArgs[2]) || pmArgs[2] < 0.0 || pmArgs[2] >= pmArgs[0] ||
+          !std::isfinite(pmArgs[3]) || pmArgs[3] < 1.0) {
+        opserr << "WARNING LadrunoForceBeamColumn3d: -pmBal needs P0c>0 P0t>0 0<=Pbal<P0c muBal>=1\n";
+        delete legacyBi;
+        return 0;
+      }
+      elePmP0 = pmArgs[0];
+      elePmP0t = pmArgs[1];
+      elePmPbal = pmArgs[2];
+      elePmMuBal = pmArgs[3];
+    }
+    else if (strcmp(type, "-axialRelease") == 0 || strcmp(type, "-decoupleAxial") == 0) {
+      eleAxialRelease = true;
+    }
+    else if (strcmp(type, "-spanLoad") == 0 || strcmp(type, "-spanLoadEnhancement") == 0) {
+      int optFlag = 1;
+      if (lfbc3dTryOptionalInt(optFlag))
+        spanLoadMode = (optFlag != 0) ? 1 : 0;
+      else
+        spanLoadMode = 1;
+    }
+    else if (strcmp(type, "-noSpanLoad") == 0) {
+      spanLoadMode = 0;
     }
     else if (strcmp(type, "-shear") == 0) {
       numData = 1;
@@ -937,7 +1115,10 @@ OPS_LadrunoForceBeamColumn3d()
         tmpPtr = hPtr->getCopy();
         if (LadrunoCohesiveHinge *ch = dynamic_cast<LadrunoCohesiveHinge*>(tmpPtr)) {
           if (eleImplex) ch->setImplex(true);
-          if (elePmP0 > 0.0) ch->setPM(elePmP0, elePmAlpha);
+          if (elePmP0t > 0.0 && elePmMuBal >= 1.0)
+            ch->setPMBal(elePmP0, elePmP0t, elePmPbal, elePmMuBal);
+          else if (elePmP0 > 0.0)
+            ch->setPM(elePmP0, elePmAlpha);
         } else if (Bilin *b = dynamic_cast<Bilin*>(tmpPtr)) {
           if (eleImplex) b->setImplex(true);
         } else if (ModIMKPeakOriented *m = dynamic_cast<ModIMKPeakOriented*>(tmpPtr)) {
@@ -952,7 +1133,10 @@ OPS_LadrunoForceBeamColumn3d()
         if (tmpPtr == 0) tmpPtr = hPtr->getCopy();
         if (LadrunoCohesiveHingeBiaxial *ch = dynamic_cast<LadrunoCohesiveHingeBiaxial*>(tmpPtr)) {
           if (eleImplex) ch->setImplex(true);
-          if (elePmP0 > 0.0) ch->setPM(elePmP0, elePmAlpha);
+          if (elePmP0t > 0.0 && elePmMuBal >= 1.0)
+            ch->setPMBal(elePmP0, elePmP0t, elePmPbal, elePmMuBal);
+          else if (elePmP0 > 0.0)
+            ch->setPM(elePmP0, elePmAlpha);
         }
         hPtr = tmpPtr;
       }
@@ -973,7 +1157,8 @@ OPS_LadrunoForceBeamColumn3d()
       hingeMatZJ, hingeMatYJ, hingeMatCJ,
       dualHingeMode, hingeXiI, hingeXiJ,
       elePmP0, elePmAlpha, eleImplex,
-      gavy, gavz);
+      gavy, gavz,
+      elePmP0t, elePmPbal, elePmMuBal, eleAxialRelease, spanLoadMode);
 
   delete hZ_tmp;
   delete hY_tmp;
@@ -1011,6 +1196,7 @@ LadrunoForceBeamColumn3d::LadrunoForceBeamColumn3d()
     hingeMscaleZJ(0.0), hingeMscaleCommitZJ(0.0),
     hingeMscaleYJ(0.0), hingeMscaleCommitYJ(0.0),
     pmP0(0.0), pmAlpha(0.5),
+    pmP0t(0.0), pmPbal(0.0), pmMuBal(0.0), axialRelease(false), spanLoadMode(1),
     useImplex(false), eleImplexErr(0.0), eleImplexErrCommit(0.0),
     postRestoreSync(false), vRestoreValid(false),
     vCommitBulk(NEBD),
@@ -1026,6 +1212,8 @@ LadrunoForceBeamColumn3d::LadrunoForceBeamColumn3d()
     for (int m = 0; m < 4; m++) {
       hingeDualKv[a][m] = 0.0;
       hingeDualKvCommit[a][m] = 0.0;
+      hingeDualKav[m][a] = 0.0;
+      hingeDualKavCommit[m][a] = 0.0;
     }
   }
   for (int m = 0; m < 4; m++) {
@@ -1054,7 +1242,9 @@ LadrunoForceBeamColumn3d::LadrunoForceBeamColumn3d(
     int dualMode, double xiI, double xiJ,
     double inPmP0, double inPmAlpha,
     bool eleImplex,
-    double gavy_, double gavz_)
+    double gavy_, double gavz_,
+    double inPmP0t, double inPmPbal,
+    double inPmMuBal, bool inAxialRelease, int inSpanLoadMode)
   : Element(tag, ELE_TAG_LadrunoForceBeamColumn3d),
     connectedExternalNodes(2),
     beamIntegr(0), numSections(0), sections(0), crdTransf(0),
@@ -1082,6 +1272,7 @@ LadrunoForceBeamColumn3d::LadrunoForceBeamColumn3d(
     hingeMscaleZJ(0.0), hingeMscaleCommitZJ(0.0),
     hingeMscaleYJ(0.0), hingeMscaleCommitYJ(0.0),
     pmP0(inPmP0), pmAlpha(inPmAlpha),
+    pmP0t(inPmP0t), pmPbal(inPmPbal), pmMuBal(inPmMuBal), axialRelease(inAxialRelease), spanLoadMode(inSpanLoadMode),
     useImplex(eleImplex), eleImplexErr(0.0), eleImplexErrCommit(0.0),
     postRestoreSync(false), vRestoreValid(false),
     vCommitBulk(NEBD),
@@ -1102,6 +1293,8 @@ LadrunoForceBeamColumn3d::LadrunoForceBeamColumn3d(
     for (int m = 0; m < 4; m++) {
       hingeDualKv[a][m] = 0.0;
       hingeDualKvCommit[a][m] = 0.0;
+      hingeDualKav[m][a] = 0.0;
+      hingeDualKavCommit[m][a] = 0.0;
     }
   }
   for (int m = 0; m < 4; m++) {
@@ -1333,8 +1526,8 @@ LadrunoForceBeamColumn3d::commitState()
 
   if (hingeOn) {
     const double betaI  = 1.0 - hingeXiI;
-    const double gammaI = hingeXiI;
-    const double betaJ  = 1.0 - hingeXiJ;
+    const double gammaI = -hingeXiI;
+    const double betaJ  = hingeXiJ - 1.0;
     const double gammaJ = hingeXiJ;
     vCommitBulk(0) = v(0);
     vCommitBulk(1) = v(1) - betaI * hingeJumpZ  - betaJ * hingeJumpZJ;
@@ -1351,9 +1544,12 @@ LadrunoForceBeamColumn3d::commitState()
     hingeMscaleCommitY  = hingeMscaleY;
     hingeMscaleCommitZJ = hingeMscaleZJ;
     hingeMscaleCommitYJ = hingeMscaleYJ;
-    for (int a = 0; a < 6; a++)
-      for (int m = 0; m < 4; m++)
+    for (int a = 0; a < 6; a++) {
+      for (int m = 0; m < 4; m++) {
         hingeDualKvCommit[a][m] = hingeDualKv[a][m];
+        hingeDualKavCommit[m][a] = hingeDualKav[m][a];
+      }
+    }
     for (int m = 0; m < 4; m++)
       for (int n = 0; n < 4; n++)
         hingeDualKaaInvCommit[m][n] = hingeDualKaaInv[m][n];
@@ -1433,9 +1629,12 @@ LadrunoForceBeamColumn3d::revertToLastCommit()
     hingeMscaleY  = hingeMscaleCommitY;
     hingeMscaleZJ = hingeMscaleCommitZJ;
     hingeMscaleYJ = hingeMscaleCommitYJ;
-    for (int a = 0; a < 6; a++)
-      for (int m = 0; m < 4; m++)
+    for (int a = 0; a < 6; a++) {
+      for (int m = 0; m < 4; m++) {
         hingeDualKv[a][m] = hingeDualKvCommit[a][m];
+        hingeDualKav[m][a] = hingeDualKavCommit[m][a];
+      }
+    }
     for (int m = 0; m < 4; m++)
       for (int n = 0; n < 4; n++)
         hingeDualKaaInv[m][n] = hingeDualKaaInvCommit[m][n];
@@ -1451,8 +1650,8 @@ LadrunoForceBeamColumn3d::revertToLastCommit()
   }
 
   const double betaI  = 1.0 - hingeXiI;
-  const double gammaI = hingeXiI;
-  const double betaJ  = 1.0 - hingeXiJ;
+  const double gammaI = -hingeXiI;
+  const double betaJ  = hingeXiJ - 1.0;
   const double gammaJ = hingeXiJ;
   vCommitBulk(0) = vRestore[0];
   vCommitBulk(1) = vRestore[1] - (hingeOn ? (betaI * hingeJumpCommitZ  + betaJ * hingeJumpCommitZJ) : 0.0);
@@ -1521,6 +1720,8 @@ LadrunoForceBeamColumn3d::revertToStart()
       for (int m = 0; m < 4; m++) {
         hingeDualKv[a][m] = 0.0;
         hingeDualKvCommit[a][m] = 0.0;
+        hingeDualKav[m][a] = 0.0;
+        hingeDualKavCommit[m][a] = 0.0;
       }
     }
     for (int m = 0; m < 4; m++) {
@@ -1579,8 +1780,8 @@ LadrunoForceBeamColumn3d::getInitialStiff(void)
 
   if (hingeOn) {
     const double betaI  = 1.0 - hingeXiI;
-    const double gammaI = hingeXiI;
-    const double betaJ  = 1.0 - hingeXiJ;
+    const double gammaI = -hingeXiI;
+    const double betaJ  = hingeXiJ - 1.0;
     const double gammaJ = hingeXiJ;
     double W[6][4] = {{0.0}};
     W[1][0] = betaI;  W[2][0] = gammaI;
@@ -1974,7 +2175,7 @@ LadrunoForceBeamColumn3d::evalBulkState(const Vector &v_tilde, const Vector &v_t
             for (int ii = 0; ii < order; ii++) {
               switch (code(ii)) {
               case SECTION_RESPONSE_P:
-                Ss(ii) = SeTrial(0);
+                Ss(ii) = axialRelease ? 0.0 : SeTrial(0);
                 break;
               case SECTION_RESPONSE_MZ:
                 Ss(ii) = xL1 * SeTrial(1) + xL * SeTrial(2);
@@ -1997,8 +2198,14 @@ LadrunoForceBeamColumn3d::evalBulkState(const Vector &v_tilde, const Vector &v_t
               }
             }
 
-            if (numEleLoads > 0)
+            if (numEleLoads > 0) {
               this->computeSectionForces(Ss, i);
+              if (axialRelease) {
+                for (int ii = 0; ii < order; ii++)
+                  if (code(ii) == SECTION_RESPONSE_P)
+                    Ss(ii) = 0.0;
+              }
+            }
 
             dSs = Ss;
             dSs.addVector(1.0, SsrSubdivide[i], -1.0);
@@ -2038,8 +2245,10 @@ LadrunoForceBeamColumn3d::evalBulkState(const Vector &v_tilde, const Vector &v_t
             for (int ii = 0; ii < order; ii++) {
               switch (code(ii)) {
               case SECTION_RESPONSE_P:
-                for (int jj = 0; jj < order; jj++)
-                  fb(jj, 0) += fSec(jj, ii) * wtL;
+                if (!axialRelease) {
+                  for (int jj = 0; jj < order; jj++)
+                    fb(jj, 0) += fSec(jj, ii) * wtL;
+                }
                 break;
               case SECTION_RESPONSE_MZ:
                 for (int jj = 0; jj < order; jj++) {
@@ -2081,8 +2290,13 @@ LadrunoForceBeamColumn3d::evalBulkState(const Vector &v_tilde, const Vector &v_t
             for (int ii = 0; ii < order; ii++) {
               switch (code(ii)) {
               case SECTION_RESPONSE_P:
-                for (int jj = 0; jj < NEBD; jj++)
-                  f(0, jj) += fb(ii, jj);
+                if (axialRelease) {
+                  const Matrix &fs0 = sections[i]->getInitialFlexibility();
+                  f(0, 0) += fs0(ii, ii) * wtL;
+                } else {
+                  for (int jj = 0; jj < NEBD; jj++)
+                    f(0, jj) += fb(ii, jj);
+                }
                 break;
               case SECTION_RESPONSE_MZ:
                 for (int jj = 0; jj < NEBD; jj++) {
@@ -2126,7 +2340,12 @@ LadrunoForceBeamColumn3d::evalBulkState(const Vector &v_tilde, const Vector &v_t
               double dei = dvs(ii) * wtL;
               switch (code(ii)) {
               case SECTION_RESPONSE_P:
-                vr(0) += dei;
+                if (axialRelease) {
+                  const Matrix &fs0 = sections[i]->getInitialFlexibility();
+                  vr(0) += fs0(ii, ii) * SeTrial(0) * wtL;
+                } else {
+                  vr(0) += dei;
+                }
                 break;
               case SECTION_RESPONSE_MZ:
                 vr(1) += xL1 * dei;
@@ -2258,8 +2477,8 @@ int
 LadrunoForceBeamColumn3d::solveHingeState(const Vector &v)
 {
   const double betaI  = 1.0 - hingeXiI;
-  const double gammaI = hingeXiI;
-  const double betaJ  = 1.0 - hingeXiJ;
+  const double gammaI = -hingeXiI;
+  const double betaJ  = hingeXiJ - 1.0;
   const double gammaJ = hingeXiJ;
 
   double W[6][4] = {{0.0}};
@@ -2299,7 +2518,181 @@ LadrunoForceBeamColumn3d::solveHingeState(const Vector &v)
   static thread_local Matrix Kbulk(NEBD, NEBD);
 
   double Kva[6][4] = {{0.0}};
+  double Kav[4][6] = {{0.0}};
   double invKaa[4][4] = {{0.0}};
+
+  auto evalCohesive = [&](const double aVec[4], double q0_ax,
+                          const double Kva_cur[6][4],
+                          double Mcoh[4], double Kaa[4][4],
+                          double gPM[4], double &CdiagSum) {
+    for (int m = 0; m < 4; m++) {
+      Mcoh[m] = 0.0;
+      gPM[m] = 0.0;
+      for (int n = 0; n < 4; n++) {
+        if (active[m] && active[n]) {
+          double sum = 0.0;
+          for (int a = 0; a < 6; a++)
+            sum -= W[a][m] * Kva_cur[a][n];
+          Kaa[m][n] = sum;
+        } else {
+          Kaa[m][n] = (m == n) ? 1.0 : 0.0;
+        }
+      }
+    }
+    CdiagSum = 0.0;
+
+    double fElePM = 1.0, dfElePM = 0.0;
+    lfbc3dEvalPM(q0_ax, pmP0, pmAlpha, pmP0t, pmPbal, pmMuBal, fElePM, dfElePM);
+
+    if (theHingeC != 0) {
+      if (chCI != 0) chCI->setAxialForce(q0_ax);
+      double fPMCI = (chCI == 0 && pmP0 > 0.0) ? fElePM : 1.0;
+      double dfPMCI = (chCI == 0 && pmP0 > 0.0) ? dfElePM : 0.0;
+      if (!freezeCI) {
+        static thread_local Vector jumpI(2);
+        jumpI(0) = aVec[0];
+        jumpI(1) = aVec[1];
+        theHingeC->setTrialStrain(jumpI);
+      }
+      const Vector &MI = theHingeC->getStress();
+      const Matrix &KcI = theHingeC->getTangent();
+      Mcoh[0] = fPMCI * MI(0);
+      Mcoh[1] = fPMCI * MI(1);
+      if (chCI != 0 && chCI->hasPM() && !chCI->isImplex()) {
+        double fM = chCI->getPMMultiplier();
+        double dfM = chCI->getPMDerivative();
+        if (fM > 0.0) {
+          gPM[0] = (MI(0) / fM) * dfM;
+          gPM[1] = (MI(1) / fM) * dfM;
+        }
+      } else if (chCI == 0 && pmP0 > 0.0) {
+        gPM[0] = dfPMCI * MI(0);
+        gPM[1] = dfPMCI * MI(1);
+      }
+      double c00 = fPMCI * KcI(0, 0), c11 = fPMCI * KcI(1, 1), c01 = 0.5 * fPMCI * (KcI(0, 1) + KcI(1, 0));
+      Kaa[0][0] += c00; Kaa[1][1] += c11;
+      Kaa[0][1] += c01; Kaa[1][0] += c01;
+      CdiagSum += fabs(c00) + fabs(c11);
+    } else {
+      if (theHingeZ != 0) {
+        if (chZI != 0) chZI->setAxialForce(q0_ax);
+        double fPMZI = (chZI == 0 && pmP0 > 0.0) ? fElePM : 1.0;
+        double dfPMZI = (chZI == 0 && pmP0 > 0.0) ? dfElePM : 0.0;
+        if (!freezeZI)
+          theHingeZ->setTrialStrain(aVec[0]);
+        double sRaw = theHingeZ->getStress();
+        Mcoh[0] = fPMZI * sRaw;
+        if (chZI != 0 && chZI->hasPM() && !chZI->isImplex()) {
+          double fM = chZI->getPMMultiplier();
+          double dfM = chZI->getPMDerivative();
+          if (fM > 0.0) gPM[0] = (sRaw / fM) * dfM;
+        } else if (chZI == 0 && pmP0 > 0.0) {
+          gPM[0] = dfPMZI * sRaw;
+        }
+        double c00 = fPMZI * theHingeZ->getTangent();
+        Kaa[0][0] += c00;
+        CdiagSum += fabs(c00);
+      }
+      if (theHingeY != 0) {
+        if (chYI != 0) chYI->setAxialForce(q0_ax);
+        double fPMYI = (chYI == 0 && pmP0 > 0.0) ? fElePM : 1.0;
+        double dfPMYI = (chYI == 0 && pmP0 > 0.0) ? dfElePM : 0.0;
+        if (!freezeYI)
+          theHingeY->setTrialStrain(aVec[1]);
+        double sRaw = theHingeY->getStress();
+        Mcoh[1] = fPMYI * sRaw;
+        if (chYI != 0 && chYI->hasPM() && !chYI->isImplex()) {
+          double fM = chYI->getPMMultiplier();
+          double dfM = chYI->getPMDerivative();
+          if (fM > 0.0) gPM[1] = (sRaw / fM) * dfM;
+        } else if (chYI == 0 && pmP0 > 0.0) {
+          gPM[1] = dfPMYI * sRaw;
+        }
+        double c11 = fPMYI * theHingeY->getTangent();
+        Kaa[1][1] += c11;
+        CdiagSum += fabs(c11);
+      }
+    }
+
+    if (theHingeCJ != 0) {
+      if (chCJ != 0) chCJ->setAxialForce(q0_ax);
+      double fPMCJ = (chCJ == 0 && pmP0 > 0.0) ? fElePM : 1.0;
+      double dfPMCJ = (chCJ == 0 && pmP0 > 0.0) ? dfElePM : 0.0;
+      if (!freezeCJ) {
+        static thread_local Vector jumpJ(2);
+        jumpJ(0) = aVec[2];
+        jumpJ(1) = aVec[3];
+        theHingeCJ->setTrialStrain(jumpJ);
+      }
+      const Vector &MJ = theHingeCJ->getStress();
+      const Matrix &KcJ = theHingeCJ->getTangent();
+      Mcoh[2] = fPMCJ * MJ(0);
+      Mcoh[3] = fPMCJ * MJ(1);
+      if (chCJ != 0 && chCJ->hasPM() && !chCJ->isImplex()) {
+        double fM = chCJ->getPMMultiplier();
+        double dfM = chCJ->getPMDerivative();
+        if (fM > 0.0) {
+          gPM[2] = (MJ(0) / fM) * dfM;
+          gPM[3] = (MJ(1) / fM) * dfM;
+        }
+      } else if (chCJ == 0 && pmP0 > 0.0) {
+        gPM[2] = dfPMCJ * MJ(0);
+        gPM[3] = dfPMCJ * MJ(1);
+      }
+      double c22 = fPMCJ * KcJ(0, 0), c33 = fPMCJ * KcJ(1, 1), c23 = 0.5 * fPMCJ * (KcJ(0, 1) + KcJ(1, 0));
+      Kaa[2][2] += c22; Kaa[3][3] += c33;
+      Kaa[2][3] += c23; Kaa[3][2] += c23;
+      CdiagSum += fabs(c22) + fabs(c33);
+    } else {
+      if (theHingeZJ != 0) {
+        if (chZJ != 0) chZJ->setAxialForce(q0_ax);
+        double fPMZJ = (chZJ == 0 && pmP0 > 0.0) ? fElePM : 1.0;
+        double dfPMZJ = (chZJ == 0 && pmP0 > 0.0) ? dfElePM : 0.0;
+        if (!freezeZJ)
+          theHingeZJ->setTrialStrain(aVec[2]);
+        double sRaw = theHingeZJ->getStress();
+        Mcoh[2] = fPMZJ * sRaw;
+        if (chZJ != 0 && chZJ->hasPM() && !chZJ->isImplex()) {
+          double fM = chZJ->getPMMultiplier();
+          double dfM = chZJ->getPMDerivative();
+          if (fM > 0.0) gPM[2] = (sRaw / fM) * dfM;
+        } else if (chZJ == 0 && pmP0 > 0.0) {
+          gPM[2] = dfPMZJ * sRaw;
+        }
+        double c22 = fPMZJ * theHingeZJ->getTangent();
+        Kaa[2][2] += c22;
+        CdiagSum += fabs(c22);
+      }
+      if (theHingeYJ != 0) {
+        if (chYJ != 0) chYJ->setAxialForce(q0_ax);
+        double fPMYJ = (chYJ == 0 && pmP0 > 0.0) ? fElePM : 1.0;
+        double dfPMYJ = (chYJ == 0 && pmP0 > 0.0) ? dfElePM : 0.0;
+        if (!freezeYJ)
+          theHingeYJ->setTrialStrain(aVec[3]);
+        double sRaw = theHingeYJ->getStress();
+        Mcoh[3] = fPMYJ * sRaw;
+        if (chYJ != 0 && chYJ->hasPM() && !chYJ->isImplex()) {
+          double fM = chYJ->getPMMultiplier();
+          double dfM = chYJ->getPMDerivative();
+          if (fM > 0.0) gPM[3] = (sRaw / fM) * dfM;
+        } else if (chYJ == 0 && pmP0 > 0.0) {
+          gPM[3] = dfPMYJ * sRaw;
+        }
+        double c33 = fPMYJ * theHingeYJ->getTangent();
+        Kaa[3][3] += c33;
+        CdiagSum += fabs(c33);
+      }
+    }
+
+    for (int m = 0; m < 4; m++) {
+      if (active[m] && gPM[m] != 0.0) {
+        for (int n = 0; n < 4; n++) {
+          if (active[n])
+            Kaa[m][n] += gPM[m] * Kva_cur[0][n];
+        }
+      }
+    }
+  };
 
   const int maxOuter = 20;
   for (int outer = 0; outer < maxOuter; outer++) {
@@ -2325,106 +2718,8 @@ LadrunoForceBeamColumn3d::solveHingeState(const Vector &v)
       }
     }
 
-    auto evalCohesive = [&](const double aVec[4], double q0_ax,
-                            double Mcoh[4], double Kaa[4][4], double &CdiagSum) {
-      for (int m = 0; m < 4; m++) {
-        Mcoh[m] = 0.0;
-        for (int n = 0; n < 4; n++) {
-          if (active[m] && active[n]) {
-            double sum = 0.0;
-            for (int a = 0; a < 6; a++)
-              sum -= W[a][m] * Kva[a][n];
-            Kaa[m][n] = sum;
-          } else {
-            Kaa[m][n] = (m == n) ? 1.0 : 0.0;
-          }
-        }
-      }
-      CdiagSum = 0.0;
-
-      if (theHingeC != 0) {
-        if (chCI != 0) chCI->setAxialForce(q0_ax);
-        double fPMCI = (chCI == 0 && pmP0 > 0.0) ? lfbc3dScalePM(q0_ax, pmP0, pmAlpha) : 1.0;
-        if (!freezeCI) {
-          static thread_local Vector jumpI(2);
-          jumpI(0) = aVec[0];
-          jumpI(1) = aVec[1];
-          theHingeC->setTrialStrain(jumpI);
-        }
-        const Vector &MI = theHingeC->getStress();
-        const Matrix &KcI = theHingeC->getTangent();
-        Mcoh[0] = fPMCI * MI(0);
-        Mcoh[1] = fPMCI * MI(1);
-        double c00 = fPMCI * KcI(0, 0), c11 = fPMCI * KcI(1, 1), c01 = 0.5 * fPMCI * (KcI(0, 1) + KcI(1, 0));
-        Kaa[0][0] += c00; Kaa[1][1] += c11;
-        Kaa[0][1] += c01; Kaa[1][0] += c01;
-        CdiagSum += fabs(c00) + fabs(c11);
-      } else {
-        if (theHingeZ != 0) {
-          if (chZI != 0) chZI->setAxialForce(q0_ax);
-          double fPMZI = (chZI == 0 && pmP0 > 0.0) ? lfbc3dScalePM(q0_ax, pmP0, pmAlpha) : 1.0;
-          if (!freezeZI)
-            theHingeZ->setTrialStrain(aVec[0]);
-          Mcoh[0] = fPMZI * theHingeZ->getStress();
-          double c00 = fPMZI * theHingeZ->getTangent();
-          Kaa[0][0] += c00;
-          CdiagSum += fabs(c00);
-        }
-        if (theHingeY != 0) {
-          if (chYI != 0) chYI->setAxialForce(q0_ax);
-          double fPMYI = (chYI == 0 && pmP0 > 0.0) ? lfbc3dScalePM(q0_ax, pmP0, pmAlpha) : 1.0;
-          if (!freezeYI)
-            theHingeY->setTrialStrain(aVec[1]);
-          Mcoh[1] = fPMYI * theHingeY->getStress();
-          double c11 = fPMYI * theHingeY->getTangent();
-          Kaa[1][1] += c11;
-          CdiagSum += fabs(c11);
-        }
-      }
-
-      if (theHingeCJ != 0) {
-        if (chCJ != 0) chCJ->setAxialForce(q0_ax);
-        double fPMCJ = (chCJ == 0 && pmP0 > 0.0) ? lfbc3dScalePM(q0_ax, pmP0, pmAlpha) : 1.0;
-        if (!freezeCJ) {
-          static thread_local Vector jumpJ(2);
-          jumpJ(0) = aVec[2];
-          jumpJ(1) = aVec[3];
-          theHingeCJ->setTrialStrain(jumpJ);
-        }
-        const Vector &MJ = theHingeCJ->getStress();
-        const Matrix &KcJ = theHingeCJ->getTangent();
-        Mcoh[2] = fPMCJ * MJ(0);
-        Mcoh[3] = fPMCJ * MJ(1);
-        double c22 = fPMCJ * KcJ(0, 0), c33 = fPMCJ * KcJ(1, 1), c23 = 0.5 * fPMCJ * (KcJ(0, 1) + KcJ(1, 0));
-        Kaa[2][2] += c22; Kaa[3][3] += c33;
-        Kaa[2][3] += c23; Kaa[3][2] += c23;
-        CdiagSum += fabs(c22) + fabs(c33);
-      } else {
-        if (theHingeZJ != 0) {
-          if (chZJ != 0) chZJ->setAxialForce(q0_ax);
-          double fPMZJ = (chZJ == 0 && pmP0 > 0.0) ? lfbc3dScalePM(q0_ax, pmP0, pmAlpha) : 1.0;
-          if (!freezeZJ)
-            theHingeZJ->setTrialStrain(aVec[2]);
-          Mcoh[2] = fPMZJ * theHingeZJ->getStress();
-          double c22 = fPMZJ * theHingeZJ->getTangent();
-          Kaa[2][2] += c22;
-          CdiagSum += fabs(c22);
-        }
-        if (theHingeYJ != 0) {
-          if (chYJ != 0) chYJ->setAxialForce(q0_ax);
-          double fPMYJ = (chYJ == 0 && pmP0 > 0.0) ? lfbc3dScalePM(q0_ax, pmP0, pmAlpha) : 1.0;
-          if (!freezeYJ)
-            theHingeYJ->setTrialStrain(aVec[3]);
-          Mcoh[3] = fPMYJ * theHingeYJ->getStress();
-          double c33 = fPMYJ * theHingeYJ->getTangent();
-          Kaa[3][3] += c33;
-          CdiagSum += fabs(c33);
-        }
-      }
-    };
-
-    double Mcoh[4], Kaa[4][4], CdiagSum = 0.0;
-    evalCohesive(alpha, q_bulk(0), Mcoh, Kaa, CdiagSum);
+    double Mcoh[4], Kaa[4][4], gPM[4], CdiagSum = 0.0;
+    evalCohesive(alpha, q_bulk(0), Kva, Mcoh, Kaa, gPM, CdiagSum);
 
     double Mbulk[4] = {0.0, 0.0, 0.0, 0.0};
     for (int m = 0; m < 4; m++)
@@ -2446,7 +2741,7 @@ LadrunoForceBeamColumn3d::solveHingeState(const Vector &v)
     double bulkDiagSum = 0.0;
     for (int a = 1; a <= 4; a++) bulkDiagSum += fabs(Kbulk(a, a));
     double floor = 1.0e-8 * (bulkDiagSum + CdiagSum) + 1.0e-300;
-    lfbc3dFlooredInv4x4(Kaa, active, floor, invKaa);
+    lfbc3dFlooredInvGen4x4(Kaa, active, floor, invKaa);
 
     double *mscales[4] = {&hingeMscaleZ, &hingeMscaleY, &hingeMscaleZJ, &hingeMscaleYJ};
     bool allOk = true;
@@ -2477,7 +2772,7 @@ LadrunoForceBeamColumn3d::solveHingeState(const Vector &v)
           q_lin[a] += Kva[a][m] * (alpha[m] - a0[m]);
       }
 
-      evalCohesive(alpha, q_lin[0], Mcoh, Kaa, CdiagSum);
+      evalCohesive(alpha, q_lin[0], Kva, Mcoh, Kaa, gPM, CdiagSum);
 
       for (int m = 0; m < 4; m++) {
         Mbulk[m] = 0.0;
@@ -2487,7 +2782,7 @@ LadrunoForceBeamColumn3d::solveHingeState(const Vector &v)
       }
 
       floor = 1.0e-8 * (bulkDiagSum + CdiagSum) + 1.0e-300;
-      lfbc3dFlooredInv4x4(Kaa, active, floor, invKaa);
+      lfbc3dFlooredInvGen4x4(Kaa, active, floor, invKaa);
 
       bool innerOk = true;
       bool innerAllZero = true;
@@ -2536,40 +2831,33 @@ LadrunoForceBeamColumn3d::solveHingeState(const Vector &v)
   if (err != 0)
     return err;
 
-  if (theHingeC != 0) {
-    if (chCI != 0) chCI->setAxialForce(Se(0));
-    if (!freezeCI) {
-      static thread_local Vector jumpI(2);
-      jumpI(0) = alpha[0];
-      jumpI(1) = alpha[1];
-      theHingeC->setTrialStrain(jumpI);
-    }
-  } else {
-    if (theHingeZ != 0) {
-      if (chZI != 0) chZI->setAxialForce(Se(0));
-      if (!freezeZI) theHingeZ->setTrialStrain(alpha[0]);
-    }
-    if (theHingeY != 0) {
-      if (chYI != 0) chYI->setAxialForce(Se(0));
-      if (!freezeYI) theHingeY->setTrialStrain(alpha[1]);
+  for (int m = 0; m < 4; m++) {
+    for (int a = 0; a < 6; a++) {
+      double kv_am = 0.0;
+      if (active[m]) {
+        for (int b = 0; b < 6; b++)
+          kv_am -= kvbulk(a, b) * W[b][m];
+      }
+      Kva[a][m] = kv_am;
     }
   }
-  if (theHingeCJ != 0) {
-    if (chCJ != 0) chCJ->setAxialForce(Se(0));
-    if (!freezeCJ) {
-      static thread_local Vector jumpJ(2);
-      jumpJ(0) = alpha[2];
-      jumpJ(1) = alpha[3];
-      theHingeCJ->setTrialStrain(jumpJ);
-    }
-  } else {
-    if (theHingeZJ != 0) {
-      if (chZJ != 0) chZJ->setAxialForce(Se(0));
-      if (!freezeZJ) theHingeZJ->setTrialStrain(alpha[2]);
-    }
-    if (theHingeYJ != 0) {
-      if (chYJ != 0) chYJ->setAxialForce(Se(0));
-      if (!freezeYJ) theHingeYJ->setTrialStrain(alpha[3]);
+
+  double McohFinal[4], KaaFinal[4][4], gPMFinal[4], CdiagFinal = 0.0;
+  evalCohesive(alpha, Se(0), Kva, McohFinal, KaaFinal, gPMFinal, CdiagFinal);
+  double bulkDiagFinal = 0.0;
+  for (int a = 1; a <= 4; a++) bulkDiagFinal += fabs(kvbulk(a, a));
+  double floorFinal = 1.0e-8 * (bulkDiagFinal + CdiagFinal) + 1.0e-300;
+  lfbc3dFlooredInvGen4x4(KaaFinal, active, floorFinal, invKaa);
+
+  for (int m = 0; m < 4; m++) {
+    for (int b = 0; b < 6; b++) {
+      double kav_mb = 0.0;
+      if (active[m]) {
+        for (int a = 0; a < 6; a++)
+          kav_mb -= W[a][m] * kvbulk(a, b);
+        kav_mb += gPMFinal[m] * kvbulk(0, b);
+      }
+      Kav[m][b] = kav_mb;
     }
   }
 
@@ -2577,9 +2865,12 @@ LadrunoForceBeamColumn3d::solveHingeState(const Vector &v)
   hingeJumpY  = alpha[1];
   hingeJumpZJ = alpha[2];
   hingeJumpYJ = alpha[3];
-  for (int a = 0; a < 6; a++)
-    for (int m = 0; m < 4; m++)
+  for (int a = 0; a < 6; a++) {
+    for (int m = 0; m < 4; m++) {
       hingeDualKv[a][m] = Kva[a][m];
+      hingeDualKav[m][a] = Kav[m][a];
+    }
+  }
   for (int m = 0; m < 4; m++)
     for (int n = 0; n < 4; n++)
       hingeDualKaaInv[m][n] = invKaa[m][n];
@@ -2590,15 +2881,18 @@ LadrunoForceBeamColumn3d::solveHingeState(const Vector &v)
       double sub = 0.0;
       for (int m = 0; m < 4; m++)
         for (int n = 0; n < 4; n++)
-          sub += Kva[a][m] * invKaa[m][n] * Kva[b][n];
+          sub += Kva[a][m] * invKaa[m][n] * Kav[n][b];
       kv(a, b) -= sub;
     }
   }
 
   if (postRestoreSync) {
-    for (int a = 0; a < 6; a++)
-      for (int m = 0; m < 4; m++)
+    for (int a = 0; a < 6; a++) {
+      for (int m = 0; m < 4; m++) {
         hingeDualKvCommit[a][m] = hingeDualKv[a][m];
+        hingeDualKavCommit[m][a] = hingeDualKav[m][a];
+      }
+    }
     for (int m = 0; m < 4; m++)
       for (int n = 0; n < 4; n++)
         hingeDualKaaInvCommit[m][n] = hingeDualKaaInv[m][n];
@@ -2669,8 +2963,8 @@ LadrunoForceBeamColumn3d::update()
       Ssrcommit[k] = Ssr[k];
     }
     const double betaI  = 1.0 - hingeXiI;
-    const double gammaI = hingeXiI;
-    const double betaJ  = 1.0 - hingeXiJ;
+    const double gammaI = -hingeXiI;
+    const double betaJ  = hingeXiJ - 1.0;
     const double gammaJ = hingeXiJ;
     vCommitBulk(0) = v(0);
     vCommitBulk(1) = v(1) - (hingeOn ? (betaI * hingeJumpZ  + betaJ * hingeJumpZJ) : 0.0);
@@ -2855,6 +3149,8 @@ LadrunoForceBeamColumn3d::addLoad(ElementalLoad *theLoad, double loadFactor)
 void
 LadrunoForceBeamColumn3d::computeSectionForces(Vector &sp, int isec)
 {
+  if (!spanLoadMode)
+    return;
   int type;
   double L = crdTransf->getInitialLength();
 
@@ -3298,7 +3594,7 @@ LadrunoForceBeamColumn3d::sendSelf(int commitTag, Channel &theChannel)
     idData(12) = dmpDbTag;
   }
 
-  idData(15) = hingeOn + 2 * dualHingeMode + (useImplex ? 4 : 0);
+  idData(15) = hingeOn + 2 * dualHingeMode + (useImplex ? 4 : 0) + (axialRelease ? 8 : 0) + (spanLoadMode == 0 ? 16 : 0);
   UniaxialMaterial *uniList[4] = {theHingeZ, theHingeY, theHingeZJ, theHingeYJ};
   for (int m = 0; m < 4; m++) {
     if (uniList[m] != 0) {
@@ -3380,8 +3676,9 @@ LadrunoForceBeamColumn3d::sendSelf(int commitTag, Channel &theChannel)
 
   // Extra doubles: kvbulkCommit (36), vCommitBulk (6), vRestore (6),
   // hingeXiI, hingeXiJ, 4x jumpCommit, 4x mscaleCommit, 24x hingeDualKvCommit,
-  // 16x hingeDualKaaInvCommit, pmP0, pmAlpha, eleImplexErrCommit, GAvy, GAvz -> 36+6+6+2+4+4+24+16+5 = 103
-  Vector dData(3 + NEBD + NEBD * NEBD + secDefSize + 5 + 103);
+  // 24x hingeDualKavCommit, 16x hingeDualKaaInvCommit, pmP0, pmAlpha, pmP0t, pmPbal, pmMuBal,
+  // eleImplexErrCommit, GAvy, GAvz -> 36+6+6+2+4+4+24+24+16+8 = 130
+  Vector dData(3 + NEBD + NEBD * NEBD + secDefSize + 5 + 130);
   loc = 0;
 
   dData(loc++) = rho;
@@ -3426,10 +3723,16 @@ LadrunoForceBeamColumn3d::sendSelf(int commitTag, Channel &theChannel)
     for (int m = 0; m < 4; m++)
       dData(loc++) = hingeDualKvCommit[a][m];
   for (int m = 0; m < 4; m++)
+    for (int a = 0; a < 6; a++)
+      dData(loc++) = hingeDualKavCommit[m][a];
+  for (int m = 0; m < 4; m++)
     for (int n = 0; n < 4; n++)
       dData(loc++) = hingeDualKaaInvCommit[m][n];
   dData(loc++) = pmP0;
   dData(loc++) = pmAlpha;
+  dData(loc++) = pmP0t;
+  dData(loc++) = pmPbal;
+  dData(loc++) = pmMuBal;
   dData(loc++) = eleImplexErrCommit;
   dData(loc++) = GAvy;
   dData(loc++) = GAvz;
@@ -3484,6 +3787,8 @@ LadrunoForceBeamColumn3d::recvSelf(int commitTag, Channel &theChannel, FEM_Objec
   hingeOn = idData(15) & 1;
   dualHingeMode = (idData(15) >> 1) & 1;
   useImplex = ((idData(15) >> 2) & 1) != 0;
+  axialRelease = ((idData(15) >> 3) & 1) != 0;
+  spanLoadMode = (((idData(15) >> 4) & 1) != 0) ? 0 : 1;
   vRestoreValid = (idData(28) != 0);
 
   int crdTransfClassTag = idData(7);
@@ -3586,7 +3891,7 @@ LadrunoForceBeamColumn3d::recvSelf(int commitTag, Channel &theChannel, FEM_Objec
   for (int ii = 0; ii < numSections; ii++)
     secDefSize += sections[ii]->getOrder();
 
-  Vector dData(3 + NEBD + NEBD * NEBD + secDefSize + 5 + 103);
+  Vector dData(3 + NEBD + NEBD * NEBD + secDefSize + 5 + 130);
   if (theChannel.recvVector(dbTag, commitTag, dData) < 0) {
     opserr << "LadrunoForceBeamColumn3d::recvSelf() - failed to recv Vector data\n";
     return -1;
@@ -3648,10 +3953,16 @@ LadrunoForceBeamColumn3d::recvSelf(int commitTag, Channel &theChannel, FEM_Objec
     for (int m = 0; m < 4; m++)
       hingeDualKv[a][m] = hingeDualKvCommit[a][m] = dData(loc++);
   for (int m = 0; m < 4; m++)
+    for (int a = 0; a < 6; a++)
+      hingeDualKav[m][a] = hingeDualKavCommit[m][a] = dData(loc++);
+  for (int m = 0; m < 4; m++)
     for (int n = 0; n < 4; n++)
       hingeDualKaaInv[m][n] = hingeDualKaaInvCommit[m][n] = dData(loc++);
   pmP0 = dData(loc++);
   pmAlpha = dData(loc++);
+  pmP0t = dData(loc++);
+  pmPbal = dData(loc++);
+  pmMuBal = dData(loc++);
   eleImplexErr = eleImplexErrCommit = dData(loc++);
   GAvy = dData(loc++);
   GAvz = dData(loc++);
@@ -3754,8 +4065,10 @@ LadrunoForceBeamColumn3d::getInitialFlexibility(Matrix &fe, bool includeHinges)
     for (ii = 0; ii < order; ii++) {
       switch (code(ii)) {
       case SECTION_RESPONSE_P:
-        for (jj = 0; jj < order; jj++)
-          fb(jj, 0) += fSec(jj, ii) * wtL;
+        if (!axialRelease) {
+          for (jj = 0; jj < order; jj++)
+            fb(jj, 0) += fSec(jj, ii) * wtL;
+        }
         break;
       case SECTION_RESPONSE_MZ:
         for (jj = 0; jj < order; jj++) {
@@ -3796,8 +4109,12 @@ LadrunoForceBeamColumn3d::getInitialFlexibility(Matrix &fe, bool includeHinges)
     for (ii = 0; ii < order; ii++) {
       switch (code(ii)) {
       case SECTION_RESPONSE_P:
-        for (jj = 0; jj < NEBD; jj++)
-          fe(0, jj) += fb(ii, jj);
+        if (axialRelease) {
+          fe(0, 0) += fSec(ii, ii) * wtL;
+        } else {
+          for (jj = 0; jj < NEBD; jj++)
+            fe(0, jj) += fb(ii, jj);
+        }
         break;
       case SECTION_RESPONSE_MZ:
         for (jj = 0; jj < NEBD; jj++) {
@@ -3857,10 +4174,11 @@ LadrunoForceBeamColumn3d::getInitialFlexibility(Matrix &fe, bool includeHinges)
 
   if (includeHinges && hingeOn) {
     const double betaI  = 1.0 - hingeXiI;
-    const double gammaI = hingeXiI;
-    const double betaJ  = 1.0 - hingeXiJ;
+    const double gammaI = -hingeXiI;
+    const double betaJ  = hingeXiJ - 1.0;
     const double gammaJ = hingeXiJ;
-    const double fPM = (pmP0 > 0.0) ? lfbc3dScalePM(Se(0), pmP0, pmAlpha) : 1.0;
+    double fPM = 1.0, dfPM_unused = 0.0;
+    lfbc3dEvalPM(Se(0), pmP0, pmAlpha, pmP0t, pmPbal, pmMuBal, fPM, dfPM_unused);
     if (theHingeC != 0) {
       if (dynamic_cast<LadrunoCohesiveHingeBiaxial*>(theHingeC) == 0) {
         const Matrix &C0 = theHingeC->getInitialTangent();
@@ -4500,7 +4818,8 @@ LadrunoForceBeamColumn3d::getResponse(int responseID, Information &eleInfo)
       hs(2) = hingeJumpZJ;
       hs(4) = hingeJumpY;
       hs(6) = hingeJumpYJ;
-      double fPM = (pmP0 > 0.0) ? lfbc3dScalePM(Se(0), pmP0, pmAlpha) : 1.0;
+      double fPM = 1.0, dfPM_unused = 0.0;
+      lfbc3dEvalPM(Se(0), pmP0, pmAlpha, pmP0t, pmPbal, pmMuBal, fPM, dfPM_unused);
       if (theHingeC != 0) {
         double f = (dynamic_cast<LadrunoCohesiveHingeBiaxial*>(theHingeC) == 0) ? fPM : 1.0;
         const Vector &s = theHingeC->getStress();
@@ -4867,7 +5186,8 @@ LadrunoForceBeamColumn3d::getResponse(int responseID, Information &eleInfo)
     for (int i = 0; i < numSections; i++)
       energy += sections[i]->getEnergy() * xi[i] * L;
     if (hingeOn) {
-      double fPM = (pmP0 > 0.0) ? lfbc3dScalePM(Se(0), pmP0, pmAlpha) : 1.0;
+      double fPM = 1.0, dfPM_unused = 0.0;
+      lfbc3dEvalPM(Se(0), pmP0, pmAlpha, pmP0t, pmPbal, pmMuBal, fPM, dfPM_unused);
       if (theHingeZ != 0) {
         double f = (dynamic_cast<LadrunoCohesiveHinge*>(theHingeZ) == 0) ? fPM : 1.0;
         energy += f * theHingeZ->getEnergy();

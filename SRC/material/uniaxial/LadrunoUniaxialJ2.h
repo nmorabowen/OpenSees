@@ -65,7 +65,8 @@ class LadrunoUniaxialJ2 : public UniaxialMaterial
                     double sig0, double Qinf, double bIso, double Hiso,
                     int nBack, const double* C, const double* gam,
                     bool dmgOn = false, double dmgR = 0.0, double dmgS = 1.0,
-                    double dmgPD = 0.0, double dmgDc = 1.0, bool dmgImplex = false);
+                    double dmgPD = 0.0, double dmgDc = 1.0, bool dmgImplex = false,
+                    double dmgLchRef = 0.0);
   LadrunoUniaxialJ2();
   ~LadrunoUniaxialJ2();
 
@@ -118,6 +119,7 @@ class LadrunoUniaxialJ2 : public UniaxialMaterial
   double dmgPD;                 // accumulated-plastic-strain damage threshold
   double dmgDc;                 // critical (rupture) damage
   bool   dmgImplex;             // -implex (IMPL-EX: SPD tangent via extrapolated D)
+  double dmgLchRef;             // reference characteristic length for crack-band regularization (0 = off)
 
   // committed history
   double CplasticStrain;        // plastic strain eps^p

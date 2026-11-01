@@ -95,6 +95,9 @@ void* OPS_LadrunoCohesiveHingeBiaxial(void)
   int    shape = LadrunoCohesiveHingeBiaxial::EXP;
   double P0 = 0.0;
   double alphaPM = 0.5;
+  double P0t = 0.0;
+  double Pbal = 0.0;
+  double muBal = 1.0;
   bool   implex = false;
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
@@ -131,10 +134,26 @@ void* OPS_LadrunoCohesiveHingeBiaxial(void)
         opserr << "WARNING LadrunoCohesiveHingeBiaxial tag " << tag << ": -pm needs P0 > 0\n";
         return 0;
       }
+      P0t = 0.0;
+      Pbal = 0.0;
       double optAlpha = alphaPM;
       if (lchbTryOptionalDouble(optAlpha)) {
         alphaPM = optAlpha;
       }
+    }
+    else if (strcmp(flag, "-pmBal") == 0 || strcmp(flag, "-PMBal") == 0) {
+      double pmb[4];
+      numData = 4;
+      if (OPS_GetNumRemainingInputArgs() < 4 || OPS_GetDoubleInput(&numData, pmb) < 0 ||
+          pmb[0] <= 0.0 || pmb[1] <= 0.0 || pmb[2] <= 0.0 || pmb[2] >= pmb[0] || pmb[3] <= 0.0) {
+        opserr << "WARNING LadrunoCohesiveHingeBiaxial tag " << tag
+               << ": -pmBal needs P0c>0 P0t>0 0<Pbal<P0c muBal>0\n";
+        return 0;
+      }
+      P0    = pmb[0];
+      P0t   = pmb[1];
+      Pbal  = pmb[2];
+      muBal = pmb[3];
     }
     else if (strcmp(flag, "-implex") == 0) {
       implex = true;
@@ -147,7 +166,8 @@ void* OPS_LadrunoCohesiveHingeBiaxial(void)
   }
 
   return new LadrunoCohesiveHingeBiaxial(tag, mp[0], mp[1], mp[2], mp[3],
-                                         shape, penaltyRatio, bkEta, P0, alphaPM, implex);
+                                         shape, penaltyRatio, bkEta, P0, alphaPM, implex,
+                                         P0t, Pbal, muBal);
 }
 
 // ===========================================================================
@@ -156,10 +176,11 @@ void* OPS_LadrunoCohesiveHingeBiaxial(void)
 LadrunoCohesiveHingeBiaxial::LadrunoCohesiveHingeBiaxial(int tag, double mcz, double gfz,
                                                          double mcy, double gfy,
                                                          int shp, double pratio, double eta,
-                                                         double p0, double apm, bool impl)
+                                                         double p0, double apm, bool impl,
+                                                         double p0t, double pbal, double mubal)
   : NDMaterial(tag, ND_TAG_LadrunoCohesiveHingeBiaxial),
     Mcz(mcz), Gfz(gfz), Mcy(mcy), Gfy(gfy), shape(shp), penaltyRatio(pratio), bkEta(eta),
-    P0(p0), alphaPM(apm), implex(impl), P_axial(0.0),
+    P0(p0), alphaPM(apm), P0t(p0t), Pbal(pbal), muBal(mubal), implex(impl), P_axial(0.0),
     Kpenz(0.0), Kpeny(0.0), a0z(0.0), a0y(0.0), Kinit(2,2),
     CrMax(0.0), CrMax_old(0.0), Cstrain(2), Cstress(2), Cwork(0.0),
     dtime_n_commit(0.0), implexCommittedSteps(0),
@@ -171,7 +192,7 @@ LadrunoCohesiveHingeBiaxial::LadrunoCohesiveHingeBiaxial(int tag, double mcz, do
 LadrunoCohesiveHingeBiaxial::LadrunoCohesiveHingeBiaxial()
   : NDMaterial(0, ND_TAG_LadrunoCohesiveHingeBiaxial),
     Mcz(0.0), Gfz(0.0), Mcy(0.0), Gfy(0.0), shape(EXP), penaltyRatio(1000.0), bkEta(1.0),
-    P0(0.0), alphaPM(0.5), implex(false), P_axial(0.0),
+    P0(0.0), alphaPM(0.5), P0t(0.0), Pbal(0.0), muBal(1.0), implex(false), P_axial(0.0),
     Kpenz(0.0), Kpeny(0.0), a0z(0.0), a0y(0.0), Kinit(2,2),
     CrMax(0.0), CrMax_old(0.0), Cstrain(2), Cstress(2), Cwork(0.0),
     dtime_n_commit(0.0), implexCommittedSteps(0),
@@ -187,6 +208,23 @@ LadrunoCohesiveHingeBiaxial::~LadrunoCohesiveHingeBiaxial()
 double LadrunoCohesiveHingeBiaxial::getPMMultiplier(void) const
 {
   if (P0 <= 0.0) return 1.0;
+  // 4-parameter C^1 piecewise-parabolic RC balance-point law (-pmBal)
+  if (Pbal > 0.0 && P0 > Pbal && P0t > 0.0) {
+    double f = 0.0;
+    if (P_axial >= 0.0 && P_axial <= P0t) {
+      f = 1.0 - P_axial / P0t;
+    } else if (P_axial < 0.0 && P_axial >= -Pbal) {
+      double u = (P_axial + Pbal) / Pbal;
+      f = 1.0 + (muBal - 1.0) * (1.0 - u * u);
+    } else if (P_axial < -Pbal && P_axial >= -P0) {
+      double denom = P0 - Pbal;
+      double u = (P_axial + Pbal) / denom;
+      f = muBal * (1.0 - u * u);
+    }
+    if (f < 0.05) f = 0.05;
+    else if (f > 3.0) f = 3.0;
+    return f;
+  }
   // OpenSees beam basic axial force q(0): positive in tension, negative in compression.
   // Parabolic P-M scaling: f(n) = clamp(1 - alphaPM * n - (1 - alphaPM) * n^2, 0.05, 2.5)
   double n = P_axial / P0;
@@ -194,6 +232,33 @@ double LadrunoCohesiveHingeBiaxial::getPMMultiplier(void) const
   if (f < 0.05) f = 0.05;
   else if (f > 2.5) f = 2.5;
   return f;
+}
+
+double LadrunoCohesiveHingeBiaxial::getPMDerivative(void) const
+{
+  if (P0 <= 0.0) return 0.0;
+  if (Pbal > 0.0 && P0 > Pbal && P0t > 0.0) {
+    double f = 0.0, df = 0.0;
+    if (P_axial >= 0.0 && P_axial <= P0t) {
+      f  = 1.0 - P_axial / P0t;
+      df = -1.0 / P0t;
+    } else if (P_axial < 0.0 && P_axial >= -Pbal) {
+      double u = (P_axial + Pbal) / Pbal;
+      f  = 1.0 + (muBal - 1.0) * (1.0 - u * u);
+      df = -2.0 * (muBal - 1.0) * (P_axial + Pbal) / (Pbal * Pbal);
+    } else if (P_axial < -Pbal && P_axial >= -P0) {
+      double denom = P0 - Pbal;
+      double u = (P_axial + Pbal) / denom;
+      f  = muBal * (1.0 - u * u);
+      df = -2.0 * muBal * (P_axial + Pbal) / (denom * denom);
+    }
+    if (f <= 0.05 || f >= 3.0) return 0.0;
+    return df;
+  }
+  double n = P_axial / P0;
+  double f = 1.0 - alphaPM * n - (1.0 - alphaPM) * n * n;
+  if (f <= 0.05 || f >= 2.5) return 0.0;
+  return (-alphaPM - 2.0 * (1.0 - alphaPM) * n) / P0;
 }
 
 const Matrix& LadrunoCohesiveHingeBiaxial::getInitialTangent(void)
@@ -463,7 +528,8 @@ NDMaterial* LadrunoCohesiveHingeBiaxial::getCopy(void)
 {
   LadrunoCohesiveHingeBiaxial* theCopy =
     new LadrunoCohesiveHingeBiaxial(this->getTag(), Mcz, Gfz, Mcy, Gfy,
-                                    shape, penaltyRatio, bkEta, P0, alphaPM, implex);
+                                    shape, penaltyRatio, bkEta, P0, alphaPM, implex,
+                                    P0t, Pbal, muBal);
   theCopy->P_axial              = P_axial;
   theCopy->CrMax                = CrMax;
   theCopy->CrMax_old            = CrMax_old;
@@ -491,7 +557,7 @@ NDMaterial* LadrunoCohesiveHingeBiaxial::getCopy(const char*)
 // ===========================================================================
 int LadrunoCohesiveHingeBiaxial::sendSelf(int cTag, Channel& theChannel)
 {
-  static thread_local Vector data(25);   // tag + 7 params + CrMax + Cstrain(2) + Cstress(2) + Cwork + 11 extended
+  static thread_local Vector data(28);   // tag + 7 params + CrMax + Cstrain(2) + Cstress(2) + Cwork + 14 extended
   int c = 0;
   data(c++) = this->getTag();
   data(c++) = Mcz;  data(c++) = Gfz;  data(c++) = Mcy;  data(c++) = Gfy;
@@ -511,6 +577,9 @@ int LadrunoCohesiveHingeBiaxial::sendSelf(int cTag, Channel& theChannel)
   data(c++) = (double)implexCommittedSteps;
   data(c++) = Tstress(0); data(c++) = Tstress(1);
   data(c++) = Ttangent(0, 0); data(c++) = Ttangent(1, 1);
+  data(c++) = P0t;
+  data(c++) = Pbal;
+  data(c++) = muBal;
 
   if (theChannel.sendVector(this->getDbTag(), cTag, data) < 0) {
     opserr << "LadrunoCohesiveHingeBiaxial::sendSelf - failed to send vector\n";
@@ -521,7 +590,7 @@ int LadrunoCohesiveHingeBiaxial::sendSelf(int cTag, Channel& theChannel)
 
 int LadrunoCohesiveHingeBiaxial::recvSelf(int cTag, Channel& theChannel, FEM_ObjectBroker&)
 {
-  static thread_local Vector data(25);
+  static thread_local Vector data(28);
   if (theChannel.recvVector(this->getDbTag(), cTag, data) < 0) {
     opserr << "LadrunoCohesiveHingeBiaxial::recvSelf - failed to recv vector\n";
     return -1;
@@ -545,6 +614,9 @@ int LadrunoCohesiveHingeBiaxial::recvSelf(int cTag, Channel& theChannel, FEM_Obj
   implexCommittedSteps = (int)data(c++);
   double savedTstress0 = data(c++); double savedTstress1 = data(c++);
   double savedTtan00   = data(c++); double savedTtan11   = data(c++);
+  P0t   = data(c++);
+  Pbal  = data(c++);
+  muBal = data(c++);
 
   computeDerived();
   if (implex) {
@@ -583,7 +655,9 @@ void LadrunoCohesiveHingeBiaxial::Print(OPS_Stream& s, int flag)
   s << "  Mcy/Gfy: " << Mcy << " / " << Gfy << "   (weak-axis capacity / fracture energy)" << endln;
   s << "  shape  : " << (shape == LINEAR ? "linear" : "exponential") << endln;
   s << "  bkEta  : " << bkEta << "   (Benzeggagh-Kenane mode-mix exponent; 1 = linear)" << endln;
-  if (P0 > 0.0)
+  if (P0 > 0.0 && Pbal > 0.0)
+    s << "  pmBal  : P0c=" << P0 << " P0t=" << P0t << " Pbal=" << Pbal << " muBal=" << muBal << endln;
+  else if (P0 > 0.0)
     s << "  P0     : " << P0 << "   alphaPM: " << alphaPM << endln;
   if (implex)
     s << "  implex : on" << endln;
@@ -618,6 +692,8 @@ Response* LadrunoCohesiveHingeBiaxial::setResponse(const char** argv, int argc, 
     return new MaterialResponse(this, 208, 0.0);
   if (strcmp(a, "implexError") == 0 || strcmp(a, "ImplexError") == 0)
     return new MaterialResponse(this, 209, 0.0);
+  if (strcmp(a, "pmDerivative") == 0 || strcmp(a, "dfpm") == 0)
+    return new MaterialResponse(this, 210, 0.0);
 
   return NDMaterial::setResponse(argv, argc, s);
 }
@@ -680,6 +756,9 @@ int LadrunoCohesiveHingeBiaxial::getResponse(int responseID, Information& matInf
     case 209:
       matInfo.theDouble = getImplexError();
       return 0;
+    case 210:
+      matInfo.theDouble = getPMDerivative();
+      return 0;
     default:
       return NDMaterial::getResponse(responseID, matInfo);
   }
@@ -696,6 +775,9 @@ int LadrunoCohesiveHingeBiaxial::setParameter(const char** argv, int argc, Param
   if (strcmp(argv[0], "alphaPM") == 0)                           return param.addObject(6, this);
   if (strcmp(argv[0], "bkEta") == 0 || strcmp(argv[0], "eta") == 0) return param.addObject(7, this);
   if (strcmp(argv[0], "penaltyRatio") == 0)                      return param.addObject(8, this);
+  if (strcmp(argv[0], "P0t") == 0)                               return param.addObject(9, this);
+  if (strcmp(argv[0], "Pbal") == 0)                              return param.addObject(10, this);
+  if (strcmp(argv[0], "muBal") == 0)                             return param.addObject(11, this);
   return -1;
 }
 
@@ -710,6 +792,9 @@ int LadrunoCohesiveHingeBiaxial::updateParameter(int parameterID, Information& i
     case 6: alphaPM = info.theDouble; return 0;
     case 7: bkEta = info.theDouble; return 0;
     case 8: penaltyRatio = info.theDouble; computeDerived(); return 0;
+    case 9: P0t = info.theDouble; return 0;
+    case 10: Pbal = info.theDouble; return 0;
+    case 11: muBal = info.theDouble; return 0;
     default: return -1;
   }
 }

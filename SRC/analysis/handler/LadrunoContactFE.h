@@ -118,7 +118,7 @@ class LadrunoContactFE : public FE_Element
     // epsN carries epsTie; mu/cohesion/tauMax are refused with -tie upstream. theDomain==0 ⇒ a pure
     // penalty tie (λ_tie≡0). Mutually exclusive with the friction args (a tie has no cone).
     // B2 (P5) softScale: SOFT=2 SOFSCL (>0 ⇒ on). The SEGMENT-BASED explicit penalty — under the
-    // explicit CentralDifferenceLadruno getResidual REPLACES the per-facet epsN with the Courant-
+    // explicit integrator (explicitTimeStep() >= 0) getResidual REPLACES the per-facet epsN with the Courant-
     // stable k_soft = SOFSCL·4·m_eff/dt² per slave node (m_eff the segment-based gap-mode generalized
     // mass over the slave+master facet nodes) and assembles a pure single-pass penalty (NO ALM) over
     // the clipped overlap, so explicit dt_cr stays un-throttled while CATCHING the corner/edge/
@@ -151,7 +151,7 @@ class LadrunoContactFE : public FE_Element
     // EdgeEdgeState (the 4th consumer: NTS, mortar, SOFT=2, now edge-edge — no new friction code). All
     // ≤ 0 ⇒ byte-identical to the E2 frictionless path (no slot touch — the NTS `mu>0` short-circuit).
     // consistentTan = the non-symmetric Coulomb Csl tangent (false ⇒ symmetric, solver-safe).
-    // E5 (softScale > 0 ⇒ under the explicit CentralDifferenceLadruno the edge penalty εN is replaced
+    // E5 (softScale > 0 ⇒ under an explicit integrator (explicitTimeStep() >= 0) the edge penalty εN is replaced
     // by the Courant-stable k_soft = SOFSCL·4·m_eff/dt², m_eff = the 4-node edge gap-mode generalized
     // mass; inert under implicit / SOFT-absent ⇒ byte-identical, exactly the B1/B2 SOFT gate).
     LadrunoContactFE(int tag, Node *sNodeA, Node *sNodeB, Node *mNodeA, Node *mNodeB,
@@ -360,12 +360,12 @@ class LadrunoContactFE : public FE_Element
     bool viscousActive(class Integrator *theIntegrator) const;
 
     // B1 (P4): the SOFT=1 effective penalty for this evaluation. If softScale>0 AND the integrator
-    // is the explicit CentralDifferenceLadruno (dynamic_cast) with a valid dt, returns the Courant-
+    // is explicit (explicitTimeStep() >= 0) with a valid dt, returns the Courant-
     // stable k_soft = softScale·4·m_eff/dt², m_eff = 1/(B M⁻¹ Bᵀ) = 1/(invMproj_slave +
     // Σ N_i²·invMproj_seg_i) from the nodal masses projected on the gap normal n (N==0 ⇒ RIGID_PLANE,
     // slave only). Otherwise (soft off / implicit / missing dt-or-mass) returns the configured kn —
     // so an absent -soft and any implicit run are byte-identical to the shipped penalty.
-    double softKn(class Integrator *theIntegrator, const double n[3], const double N[4]) const;
+    double softKn(class Integrator *theIntegrator, const double n[3], const double N[4]);
 
     // B1: gap-mode INVERSE effective mass B M⁻¹ Bᵀ for unit direction `dir`, with the gap operator
     // B = [dir | −N_i dir] over [slave | seg nodes] (N==0 ⇒ RIGID_PLANE, slave only) and the ASSEMBLED
@@ -378,7 +378,7 @@ class LadrunoContactFE : public FE_Element
     // k_soft_t = softScale·4·m_eff_t/dt² with m_eff_t = the WORST-CASE (smallest) gap-mode mass over
     // the two tangents to n (conservative; == m_eff_n for ISOTROPIC nodal mass) ⇒ ω_t·dt = 2√softScale
     // ≤ 2. Same gate as softKn (soft off / implicit / no dt-or-mass ⇒ the configured kt ⇒ byte-identical).
-    double softKt(class Integrator *theIntegrator, const double n[3], const double N[4]) const;
+    double softKt(class Integrator *theIntegrator, const double n[3], const double N[4]);
 
     // ADR-57 E5 — the edge-edge gap-mode INVERSE effective mass B M⁻¹ Bᵀ for unit direction `dir`,
     // with the 4-node edge operator B = [(1−s)dir, s dir, −(1−t)dir, −t dir] over [a0,a1,b0,b1] and
@@ -387,17 +387,29 @@ class LadrunoContactFE : public FE_Element
     // to the 4-node edge operator. m_eff = 1/(returned); ≤0 ⇒ massless (caller cannot soft-size).
     double edgeGapModeInvMass(const double dir[3], double s, double t) const;
 
-    // ADR-57 E5 — the edge-edge SOFT=1-analogue NORMAL penalty. Under the explicit
-    // CentralDifferenceLadruno (dynamic_cast) with a valid dt, returns the Courant-stable
+    // ADR-57 E5 — the edge-edge SOFT=1-analogue NORMAL penalty. Under an explicit integrator
+    // (explicitTimeStep() >= 0) with a valid dt, returns the Courant-stable
     // k_soft = softScale·4·m_eff/dt², m_eff = 1/edgeGapModeInvMass(n,s,t); otherwise (soft off /
     // implicit / no dt-or-mass) returns the configured kn ⇒ byte-identical. The B1 softKn for the edge.
-    double softKnEdge(class Integrator *theIntegrator, const double n[3], double s, double t) const;
+    double softKnEdge(class Integrator *theIntegrator, const double n[3], double s, double t);
 
     // ADR-57 E5 — the edge-edge SOFT TANGENTIAL (Coulomb stick) penalty, the B1-kt n→t rule on the edge
     // operator: k_soft_t = softScale·4·m_eff_t/dt², m_eff_t the WORST-CASE (smallest) edge gap-mode mass
     // over the two basis tangents t1,t2 to n, so a stiff friction kt never throttles dt_cr via the stick
     // mode ω_t. Same gate as softKnEdge (soft off / implicit / no dt-or-mass ⇒ the configured kt).
-    double softKtEdge(class Integrator *theIntegrator, const double n[3], double s, double t) const;
+    double softKtEdge(class Integrator *theIntegrator, const double n[3], double s, double t);
+
+    // Ladruno (soft under any explicit integrator): the step size of the SOFT penalties of this
+    // evaluation. < 0 ⇒ the integrator assembles a contact stiffness (static / implicit) and the
+    // configured penalty applies; else the step size (0 ⇒ not known yet, the caller warns and uses
+    // the configured penalty). CentralDifferenceLadruno (and its SMS subclasses) keep their own
+    // getCurrentDeltaT(). Any other transient integrator is asked to form this adapter's tangent
+    // with the add*ToTang calls RECORDING instead of assembling (stiffnessProbe): one that requests
+    // no stiffness (stock CentralDifference, NewmarkExplicit, ExplicitDifference, ExplicitBathe) is
+    // explicit for the contact, and dt = Domain::getDT(), or the last committed step for an
+    // integrator that forms the residual at the committed time (stock CentralDifference, where
+    // getDT() is 0). No integrator is named. The probe leaves tang untouched.
+    double explicitTimeStep(class Integrator *theIntegrator);
 
     // B3 (P2b-2c): assemble the consistent ∂n/∂u geometric NORMAL tangent block
     // K_geom = kn·gN·∂²gN/∂u² into `tang` (SEGMENT mode). Re-projects the current config
@@ -500,9 +512,9 @@ class LadrunoContactFE : public FE_Element
     bool consistentNormal; // B3 (P2b-2c): SEGMENT — add the consistent ∂n/∂u geometric normal
                         // tangent (kn·gN·∂²gN/∂u²). false ⇒ shipped kn·BᵀB only (byte-identical).
     double softScale;   // B1 (P4): SOFT=1 SOFSCL (>0 ⇒ on). RIGID_PLANE + SEGMENT (NTS). Under the
-                        // explicit CentralDifferenceLadruno getResidual replaces kn with the
-                        // Courant-stable k_soft = SOFSCL·4·m_eff/dt² (m_eff from the nodal masses,
-                        // dt from the integrator); inert otherwise ⇒ kn used ⇒ byte-identical.
+                        // explicit integrator (explicitTimeStep() >= 0) getResidual replaces kn
+                        // with the Courant-stable k_soft = SOFSCL·4·m_eff/dt² (m_eff from the nodal
+                        // masses); inert otherwise ⇒ kn used ⇒ byte-identical.
 
     // C2.1 MORTAR binding (mode == MORTAR). The penalty epsN rides `kn`. The slave-facet
     // ordinal `slaveFacetIndex` (+ contactTag) keys the per-node λ_N state in C2.2.
@@ -636,7 +648,14 @@ class LadrunoContactFE : public FE_Element
     // implicit the caller falls through to the shipped penalty/ALM path (configured epsN). dt comes
     // from the integrator; a contact node with no assembled mass / no dt falls back to the configured
     // epsN (warn once), mirroring B1's softKn.
-    void addSoft2Penalty(class Integrator *theIntegrator);
+    // Ladruno: dt is explicitTimeStep() (>= 0), computed by the caller.
+    void addSoft2Penalty(double dt);
+
+    // Ladruno: the stiffness probe of explicitTimeStep(): while stiffnessProbe is set,
+    // zeroTangent/addKtToTang/addKiToTang/addCtoTang only record whether a stiffness
+    // (fact != 0) was requested.
+    bool stiffnessProbe    = false;
+    bool probeSawStiffness = false;
 };
 
 #endif

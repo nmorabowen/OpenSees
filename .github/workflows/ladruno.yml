@@ -170,6 +170,35 @@ jobs:
       - name: MKL-touching units vs oneMKL 2024.2.2 (M1 compile, M2 symbols, self-test)
         run: python ci/check_mkl_compat.py --build-dir build/mkl --self-test
 
+  # ---- LadrunoConcrete3D record replay, glibc lane (apeGmsh #2621 F1) ----
+  # tests/_testbed/concrete3d_replay.cpp puts records the shipped pyd wrote (refusals, sub-increments, kinks,
+  # floor-class-C failures) back through this tree's header-only kernel and requires the recorded answer bit for bit.
+  # The committed libmmt records replay only under the Windows pyd's libm (the self-hosted job at the bottom of this
+  # file). The glibc gate replays tests/_testbed/concrete3d_replay_records.linux-glibc.txt bit-exactly; while that
+  # fixture is missing the job FAILS after uploading its glibc recording: the first run of the PR that adds this lane
+  # is red by design, its artifact is committed as the fixture, and the next run gates on it (the script's header).
+  # Pinned image: the libm tag carries the glibc version (ldd --version), so an image update is a libm mismatch, not
+  # a kernel change; re-record on a deliberate image bump. g++ and the header only, no build: runs on drafts too.
+  concrete3d-replay:
+    name: Concrete3D record replay (glibc 24.04, bit-exact; red until the glibc fixture is committed)
+    if: github.repository == 'nmorabowen/OpenSees'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: libm guard, glibc recording, replay of the committed glibc fixture (fails while it is missing)
+        run: bash tests/_testbed/concrete3d_replay_ci.sh "$RUNNER_TEMP/c3d_replay"
+      - name: Field-classification contract (rows generated from the testbed's field table, on the glibc fixture)
+        run: bash tests/_testbed/concrete3d_replay_ci.sh --contract "$RUNNER_TEMP/c3d_replay"
+      - name: Upload the glibc recording
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: concrete3d-replay-linux-glibc-${{ github.sha }}
+          path: ${{ runner.temp }}/c3d_replay/concrete3d_replay_records.linux-glibc.txt
+          retention-days: 30
+          if-no-files-found: warn
+
   # ---- Zone-A: build + pytest(zone_a) + gated Tcl suite ------------------
   zone-a-ubuntu:
     name: Zone-A (Ubuntu)
@@ -239,6 +268,18 @@ jobs:
       # That test discovers TCL_LIBRARY itself as a fallback, but exporting it
       # here keeps the discovery off the hot path and matches the proven idiom.
       - name: pytest Zone-A
+        env:
+          # WP concrete3d-damage-drive CI fix: LadrunoConcrete3D's flow-potential fuzz
+          # (test_flow_potential_gate, tests/test_ladrunoConcrete3D_material.py) and the g++
+          # self-check's own fuzzes (tests/_testbed/concrete3d_kernel_check.cpp, run by
+          # test_cpp_kernel_matches_oracle_dump) share this knob. Unset it is the FULL trial
+          # count (1500 / 180000 / 90000 / 120000) -- thorough, but ~3 min combined on a fast
+          # box, and one of several contributors (alongside the newly @pytest.mark.slow gates
+          # in the same file) to the Zone-A (Ubuntu) job blowing its 40-min timeout. 200 keeps
+          # both a real smoke of the SAME fuzz (deterministic RNG seeds, so this is a
+          # reproducible subsample, not a weaker gate) on every push; run with --runslow /
+          # LADRUNO_RUN_SLOW=1 and this unset for the full-trial nightly/manual coverage.
+          LADRUNO_FUZZ_TRIALS: "200"
         run: |
           export TCL_LIBRARY="$(dirname "$(find ~/.conan2 -name init.tcl -path '*/tcl8.6/*' | head -1)")"
           cp build/Release/opensees.so tests/
@@ -370,3 +411,41 @@ jobs:
         env:
           LADRUNO_CMS_BUILD: "1"
         run: call Ladruno_scripts\build.bat OpenSeesMP
+
+  # ---- LadrunoConcrete3D on the Windows pyd's libm (apeGmsh #2621 F1) -------
+  # The Windows pyd's atan2/cos/sin/exp/log/pow/acos come from Intel's libmmt (the Fortran objects' /DEFAULTLIB),
+  # not the UCRT, so the kernel testbeds are built here with MSVC + libmmt by concrete3d_replay_libmmt.bat. Two
+  # jobs, kept apart on purpose so a self-check failure cannot hide a replay failure or the reverse. The self-check
+  # runs the full trial count and is neither skipped nor allowed to fail (on d14fb6958 its C7 CDPM2-potential fuzz
+  # failed 1 of 120000 trials under libmmt; ladruno's kernel passes it). Both build against this tree's kernel header; a kernel change
+  # that moves a recorded value fails the replay until its PR re-records the fixture (`.bat record`) and commits the
+  # diff. Opt-in like the jobs above (WP-180: vars.WINDOWS_RUNNER).
+  concrete3d-replay-libmmt:
+    name: Concrete3D record replay (Intel libmmt, bit-exact vs the pyd's records)
+    if: >-
+      github.repository == 'nmorabowen/OpenSees' &&
+      vars.WINDOWS_RUNNER == 'true' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: [self-hosted, windows, ladruno-perf]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Replay the committed libmmt records on this tree's kernel (bit-exact)
+        shell: cmd
+        run: call tests\_testbed\concrete3d_replay_libmmt.bat replay "%RUNNER_TEMP%\c3d_replay"
+      - name: Field-classification contract under libmmt (rows generated from the testbed's field table)
+        shell: cmd
+        run: call tests\_testbed\concrete3d_replay_libmmt.bat contract "%RUNNER_TEMP%\c3d_replay"
+
+  concrete3d-selfcheck-libmmt:
+    name: Concrete3D kernel self-check under Intel libmmt (full trial count)
+    if: >-
+      github.repository == 'nmorabowen/OpenSees' &&
+      vars.WINDOWS_RUNNER == 'true' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: [self-hosted, windows, ladruno-perf]
+    steps:
+      - uses: actions/checkout@v4
+      # the script refuses to run with LADRUNO_FUZZ_TRIALS set: a reduced count never reaches a rare trial (d14fb6958 failed C7 at 1 in 120000)
+      - name: concrete3d_kernel_check.cpp under libmmt, full trials
+        shell: cmd
+        run: call tests\_testbed\concrete3d_replay_libmmt.bat selfcheck "%RUNNER_TEMP%\c3d_selfcheck"

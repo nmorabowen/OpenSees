@@ -855,6 +855,30 @@ was empirically falsified on a single-element ASDShellQ4 panel before implementi
   incomplete-geometric + secant tangent), a slab **punching** benchmark, and an EAS internal-mode
   growth-stability check under post-peak softening.
 
+### Amendment 2026-09-26 (Ladruno C2) — cracked-state Poisson ratio, `β` coefficient, VC-1986 tension-stiffening default
+- **Evidence:** the PV20/PV19/PV27 pure-shear panels (validation repo `benchmarks/03_layered_shell/
+  pv_panels`, `ASDShellQ4` + `LayeredShell`): keeping `ν = 0.2` after cracking costs 8–10 % of the shear
+  strength (the transverse tensile strain unloads the strut effective stress through `C0(ν)`); the PV20
+  match at `ν = 0.2` was a cancellation against the MCFT's own +7 %.
+- **D7 (new):** `-crackedNu $ν_c` — the elastic operator of the effective-stress predictor switches to
+  `ν_c` once the in-plane principal tensile strain reaches `ε_cr` (irreversible, serialized latch
+  `RCHist::nuCracked`). Isotropic `C0(E, ν_c)`, not an orthotropic cracked operator: it removes the
+  Poisson coupling that MCFT/DSFM omit, without introducing a crack frame into the spine. Off by default.
+- **D4 amendment:** the `β` coefficient is `Params::betaC` (`-betaC`, default 170 = `0.34/0.002`); the
+  1986 MCFT value is `0.34/|ε'c|` (189 for PV20). Default arithmetic unchanged (bit-identical).
+- **Phase 3a amendment:** `-tensStiff vc` defaults to `c = 200` (Vecchio–Collins 1986), which is what
+  reproduces Table 2; the pre-C2 default 500 (= `cm`) stays reachable with `-tensStiffC 500`. This is a
+  default change for decks that used `-tensStiff vc` without `-tensStiffC`.
+- **Wire:** `LadrunoRCConcrete` schema v6, `LadrunoRCFiniteStrain` schema v2 (+betaC, crackedNu, nuCracked).
+- **Gate (measured, `mcft` flags, `-crackedNu 0`, elastic `ν = 0.2`):** PV20 / PV19 / PV27 peaks
+  4.62 / 4.08 / 6.41 MPa at `C = 170` (+8.3 / +3.3 / +0.9 % vs test) and 4.53 / 4.15 / 6.30 MPa at
+  `C = 0.34/ε'c` (+6.4 / +5.0 / −0.9 %). The ±5 % test gate holds for PV19 and PV27; PV20 stays at
+  +6–8 %, the MCFT hand solution's own +7 % for this panel (4.55 MPa, reproduced to −0.4 % at
+  `C = 0.34/ε'c`). Internal PV20 variables vs Table 2 at every tabulated γ: θ within 0.6°, |fc2|/f'c
+  within 0.02, fsx within 15 MPa (5 at the peak), fsy within 4 MPa. Flags off: PV20/PV27 `mcft`,
+  `plain`, `beta` curves byte-identical to the pre-C2 binary.
+- Details and the table: [[LadrunoRCConcrete_guide]] §3 and §5.1.
+
 ---
 
 ## Validation plan (mapped to the two-zone testbed)

@@ -260,6 +260,7 @@
 #include "LadrunoRCConcrete.h"     // Ladruno — RC plastic-damage + MCFT compression softening (ADR 19)
 #include "LadrunoRCFiniteStrain.h" // Ladruno — finite-strain (Hencky) view of the RC plastic-damage material (ADR 19 Phase 4b)
 #include "LadrunoConcrete3D.h"     // Ladruno — CDPM2-grade solid-concrete plastic-damage (ADR 31)
+#include "LadrunoHS.h"             // Ladruno — Hardening Soil + HSsmall with mc/mn Lode cross-section (WP-210)
 #include "ElasticOrthotropicThreeDimensional.h"
 #include "ElasticOrthotropicPlaneStress.h"
 #include "J2PlaneStrain.h"
@@ -2458,6 +2459,9 @@ FEM_ObjectBrokerAllClasses::getNewNDMaterial(int classTag)
 
   case ND_TAG_LadrunoConcrete3D:                  // Ladruno — CDPM2-grade solid-concrete plastic-damage (ADR 31)
     return new LadrunoConcrete3D();
+
+  case ND_TAG_LadrunoHS:                          // Ladruno — Hardening Soil + HSsmall (WP-210)
+    return new LadrunoHS();
 
   case ND_TAG_ElasticOrthotropicThreeDimensional:
     return new ElasticOrthotropicThreeDimensional();

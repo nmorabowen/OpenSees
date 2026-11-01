@@ -65,6 +65,10 @@ GLOBS = [
     "SRC/analysis/analysis/LadrunoDampingAssembler.*",
     "SRC/analysis/analysis/LadrunoModalResponse.*",
     "SRC/analysis/analysis/LadrunoModalCombination.*",
+    "SRC/analysis/analysis/LadrunoRitzKernel.*",       # WP-213
+    "SRC/analysis/analysis/LadrunoResidualModes.*",    # WP-213
+    "SRC/analysis/analysis/LadrunoRitzVectors.*",      # WP-215
+    "SRC/analysis/analysis/LadrunoRSAPerMode.*",       # WP-216
     "SRC/system_of_eqn/eigenSOE/FeastEigenSOE.*",
     "SRC/system_of_eqn/eigenSOE/FeastEigenSolver.*",
     "SRC/system_of_eqn/eigenSOE/LadrunoBlockZKernel.*",
@@ -82,6 +86,7 @@ GLOBS = [
     "SRC/material/nD/LadrunoSANISANDSasME.cpp",
     "SRC/material/nD/LadrunoSANISANDPlaneStrain.*",
     "SRC/material/nD/LadrunoConcrete3D.*", "SRC/material/nD/LadrunoConcrete3DKernel.h",
+    "SRC/material/nD/LadrunoHS.*", "SRC/material/nD/LadrunoHSKernel.h",
     "SRC/material/nD/LadrunoHardening.h",
     "SRC/material/uniaxial/LadrunoUniaxialJ2.*",
     "SRC/material/uniaxial/LadrunoRebarBuckling.*",
@@ -107,7 +112,7 @@ GLOBS = [
     "SRC/recorder/LadrunoRecorder.*",
     "SRC/recorder/Ladruno_*.cpp", "SRC/recorder/Ladruno_*.h",
     "SRC/recorder/LadrunoMonitor*.cpp", "SRC/recorder/LadrunoMonitor*.h",
-    "SRC/recorder/EnergyBalanceRecorder.*", "SRC/recorder/EnergyBalanceKernel.h",
+    "SRC/recorder/EnergyBalanceRecorder.*", "SRC/recorder/EnergyBalanceKernel.h", "SRC/recorder/LadrunoEnergyBalanceMPI.*",
     "SRC/convergenceTest/LadrunoStabilizedUnbalance.*",
     "SRC/analysis/handler/LadrunoProjectionHandler.*",
     "SRC/analysis/handler/LadrunoConstraintProjector.*",
