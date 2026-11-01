@@ -94,6 +94,10 @@
 #include <DomainModalProperties.h>
 #include <RelativeMassDamping.h>  // Ladruno (relativeMassDamping)
 
+// Ladruno WP-209: flag bit OR-ed into domainData(17) (the contact-definitions size,
+// always far below 2^30) when setLoadConstant is active; see Domain::sendSelf.
+static const int LADRUNO_DOMAIN_LOADCONST_BIT = 1 << 30;
+
 //
 // global variables
 //
@@ -3592,7 +3596,7 @@ Domain::sendSelf(int cTag, Channel &theChannel)
   if (contactSize > 0 && dbContact == 0)
     dbContact = theChannel.getDbTag();
 
-  ID domainData(20);
+  ID domainData(19);
   domainData(0) = currentGeoTag;
   domainData(1) = numNod;
   domainData(2) = numEle;
@@ -3604,7 +3608,12 @@ Domain::sendSelf(int cTag, Channel &theChannel)
   domainData(11) = numParam;
   domainData(17) = contactSize;   // Ladruno: ADR-78 P2
   domainData(18) = dbContact;     // Ladruno: ADR-78 P2
-  domainData(19) = m_loadConstActive ? 1 : 0; // Ladruno WP-209
+  // Ladruno WP-209: m_loadConstActive rides as a flag bit of slot 17 instead of a
+  // 20th slot. The header stays ID(19), so a database written before WP-209 (whose
+  // records are keyed by size: db.IDs.19.*) still restores, with the bit clear =
+  // load not constant, the pre-WP-209 behaviour.
+  if (m_loadConstActive)
+    domainData(17) |= LADRUNO_DOMAIN_LOADCONST_BIT;
 
   // add the database tag for the ID's storing node, element, constraints
   // and loadpattern data into domainData
@@ -4019,8 +4028,9 @@ Domain::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
   // Ladruno (ADR-78 P2): 17 -> 19, matching sendSelf. Slot 17 = the packed size of
   // the contact engine's definitions Vector (0 = none), slot 18 = its dbTag; the
   // Vector itself is consumed at the very end of this method.
-  // Ladruno WP-209: slot 19 = m_loadConstActive (0 or 1).
-  ID domainData(20);
+  // Ladruno WP-209: slot 17 also carries m_loadConstActive as the flag bit
+  // LADRUNO_DOMAIN_LOADCONST_BIT (see sendSelf); strip it before using the size.
+  ID domainData(19);
   if (theChannel.recvID(theDbTag, commitTag, domainData) < 0) {
     opserr << "Domain::recv - channel failed to recv the initial ID\n";
     return -1;
@@ -4035,7 +4045,7 @@ Domain::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 
   currentTime = domainTime(0);
   committedTime = currentTime;
-  m_loadConstActive = (domainData(19) != 0); // Ladruno WP-209
+  m_loadConstActive = (domainData(17) & LADRUNO_DOMAIN_LOADCONST_BIT) != 0; // Ladruno WP-209
 
   // 
   // now if the currentGeoTag does not agree with what's in the domain
@@ -4069,7 +4079,7 @@ Domain::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 
     currentTime = domainTime(0);
     committedTime = currentTime;
-    m_loadConstActive = (domainData(19) != 0); // Ladruno WP-209
+    m_loadConstActive = (domainData(17) & LADRUNO_DOMAIN_LOADCONST_BIT) != 0; // Ladruno WP-209
 
     // 
     // now we rebuild the nodes
@@ -4496,7 +4506,7 @@ Domain::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
   // add* choke points; a POPULATED one (the recv-again branch above) keeps its live
   // definitions and only VERIFIES the stream matches, warning loudly on divergence.
   {
-    int contactSize = domainData(17);
+    int contactSize = domainData(17) & ~LADRUNO_DOMAIN_LOADCONST_BIT; // Ladruno WP-209
     if (contactSize > 0) {
       dbContact = domainData(18);
       if (theContactDomain == 0)

@@ -1369,11 +1369,17 @@ inline std::vector<FrameLoadResult> finalize_frame_results(
         fa_end = 0.0;
         fb_end = 0.0;
 #endif
+        // The end shares are transverse point loads at xi = aL_min / bL_max: they add
+        // to the simply-supported shears p0[1..2] and the fixed-end moments q0[1..2],
+        // never to the axial slot p0[0].
         F_tot += fa_end + fb_end;
         M_orig += fa_end * (aL_min * L_k) + fb_end * (bL_max * L_k);
-        p0_sum[0] -= (fa_end + fb_end);
         p0_sum[1] -= fa_end * (1.0 - aL_min) + fb_end * (1.0 - bL_max);
         p0_sum[2] -= fa_end * aL_min + fb_end * bL_max;
+        q0_sum[1] -= L_k * (fa_end * aL_min * (1.0 - aL_min) * (1.0 - aL_min)
+                          + fb_end * bL_max * (1.0 - bL_max) * (1.0 - bL_max));
+        q0_sum[2] += L_k * (fa_end * aL_min * aL_min * (1.0 - aL_min)
+                          + fb_end * bL_max * bL_max * (1.0 - bL_max));
 
         double L_active = (bL_max - aL_min) * L_k;
         double M_active = M_orig - F_tot * (aL_min * L_k);
