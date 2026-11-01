@@ -1791,6 +1791,23 @@ inline void dscalarDsig(int which, const double sig6[6], const Params& mp, doubl
     }
 }
 
+// The same gradient ON THE HYDROSTATIC AXIS (rho_bar == 0; apeGmsh #2621). There every scalar driver is a cone in the
+// deviatoric directions (eps_tilde grows like rho_bar r(theta) with a meridian-dependent slope), so the per-component
+// central FD above averages two DIFFERENT meridian slopes (+h e_k sits on the tensile meridian, -h e_k on the
+// compressive one) into a spurious hydrostatic gradient: an O(1) wrong damaged tangent at the tension apex. Only the
+// derivative ALONG the axis exists there: g_k = (1/3) d/dp f(sig + p I) on the three normal slots, 0 on the shears.
+// It is the exact chain-rule input whenever the effective map keeps sig_bar on the axis (the apex return: Ceff has a
+// hydrostatic range). A step that leaves the axis from it (elastic, or Duvaut-Lions relaxed) is a cone in the strain
+// too and has no derivative; there this drops the spurious meridian average and keeps the hydrostatic part exact.
+inline void dscalarDsigAxis(int which, const double sig6[6], const Params& mp, double g[6], double h = 1.0e-6)
+{
+    double dp[6], dm[6];
+    for (int i = 0; i < 6; ++i) { dp[i] = sig6[i]; dm[i] = sig6[i]; }
+    for (int i = 0; i < 3; ++i) { dp[i] += h; dm[i] -= h; }
+    const double d = (scalarDriver(which, dp, mp) - scalarDriver(which, dm, mp)) / (2.0 * h);
+    for (int k = 0; k < 6; ++k) g[k] = (k < 3) ? d / 3.0 : 0.0;
+}
+
 // ---------------------------------------------------------------------------
 // Closed-form gradients of the two proj damage weights (apeGmsh #2621 F2; they replace composite micro-FDs
 // through the return map). For a weight q(sig_bar, depl), gs[k] = dq/d sig_bar6[k] with depl held and
@@ -2021,10 +2038,16 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
     auto CeffT = [&](const double g[6], double out[6]) {
         for (int k = 0; k < 6; ++k) { double v = 0.0; for (int i = 0; i < 6; ++i) v += Ceff[i][k] * g[i]; out[k] = v; }
     };
+    // On the hydrostatic axis (rho_bar == 0, the guard betaC uses) the drivers are cones: their gradient is taken along
+    // the axis (dscalarDsigAxis; apeGmsh #2621, the tension-apex return), elsewhere per Voigt component.
+    bool onAxis = false;
+    { double xi_a, rho_a, th_a; const double sva[6] = {w[0], w[1], w[2], 0.0, 0.0, 0.0}; invariants(sva, xi_a, rho_a, th_a);
+      onAxis = rho_a <= 1.0e-12; }
+    auto driverGrad = [&](int which, double g[6]) { if (onAxis) dscalarDsigAxis(which, sig_eff, mp, g); else dscalarDsig(which, sig_eff, mp, g); };
     double g_et[6], g_xs[6], g_ac[6], det_deps[6], dxs_deps[6], dac_deps[6];
-    dscalarDsig(0, sig_eff, mp, g_et);   CeffT(g_et, det_deps);
-    dscalarDsig(1, sig_eff, mp, g_xs);   CeffT(g_xs, dxs_deps);
-    dscalarDsig(2, sig_eff, mp, g_ac);   CeffT(g_ac, dac_deps);
+    driverGrad(0, g_et);   CeffT(g_et, det_deps);
+    driverGrad(1, g_xs);   CeffT(g_xs, dxs_deps);
+    driverGrad(2, g_ac);   CeffT(g_ac, dac_deps);
 
     // drive gradients. P2i: the TENSILE drive is E*et, so d(Dt)/dε = E * det_deps (the equiv-strain
     // gradient already assembled above), NOT the extreme-principal eigenprojection. det_deps is a
@@ -2125,7 +2148,7 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
             CeffT(gs, ts); DeplT(gd, td);
             for (int i = 0; i < 6; ++i) dwcw[i] = ts[i] + td[i];
             for (int i = 0; i < 6; ++i) dnc_deps[i] = wcw * dnorm_deps[i] + dnorm * dwcw[i];
-            double g_etc[6]; dscalarDsig(3, sig_eff, mp, g_etc); CeffT(g_etc, detc_deps);
+            double g_etc[6]; driverGrad(3, g_etc); CeffT(g_etc, detc_deps);
         }
     }
 

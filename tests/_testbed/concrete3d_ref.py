@@ -2762,6 +2762,17 @@ def _dscalar_dsig(fn, sig6, h=1.0e-6):
     return g
 
 
+def _dscalar_dsig_axis(fn, sig6, h=1.0e-6):
+    """The same gradient ON THE HYDROSTATIC AXIS (rho_bar == 0; mirror of the kernel dscalarDsigAxis, apeGmsh #2621).
+    The damage drivers are cones there (+h e_k and -h e_k sit on different meridians), so the per-component central FD
+    averages two different slopes into a spurious hydrostatic gradient. Only the derivative along the axis exists:
+    g_k = (1/3) d/dp fn(sig + p I) on the three normal slots, 0 on the shears (exact for the apex return)."""
+    dp = np.array(sig6, float); dp[:3] += h
+    dm = np.array(sig6, float); dm[:3] -= h
+    d = (fn(dp) - fn(dm)) / (2.0 * h)
+    return np.array([d / 3.0, d / 3.0, d / 3.0, 0.0, 0.0, 0.0])
+
+
 def compressive_damage_weight_grad(mp, depl6, w, V):
     """Closed-form gradients (gs = d w_c/d sig_bar6 with depl held, gd = d w_c/d depl6 with sig_bar held, per Voigt
     component) of compressive_damage_weight (#2621 F2, mirror of the kernel). ||Phi P Phi||^2 = tr(S M S M) with
@@ -2905,9 +2916,12 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     # chain-rule pieces (each a 6-vector d(.)/deps)
     Cinv = np.linalg.inv(elastic_C(mp))
     depl_deps = np.eye(6) - Cinv @ Ceff                                  # d(eps_p)/d(eps)
-    det_deps = Ceff.T @ _dscalar_dsig(lambda s: equiv_strain_general(np.linalg.eigvalsh(voigt_to_mat(s)), mp), sig_bar)
-    dxs_deps = Ceff.T @ _dscalar_dsig(lambda s: _damage_drivers(np.linalg.eigvalsh(voigt_to_mat(s)), mp, As)[2], sig_bar)
-    dac_deps = Ceff.T @ _dscalar_dsig(lambda s: alpha_compression(np.linalg.eigvalsh(voigt_to_mat(s))), sig_bar)
+    # on the hydrostatic axis (rho_bar == 0, the beta_c guard) the drivers are cones: gradient along the axis (#2621)
+    _, rb_ax, *_ = invariants(np.array([lam[0], lam[1], lam[2], 0.0, 0.0, 0.0]))
+    _grad = _dscalar_dsig_axis if rb_ax <= 1.0e-12 else _dscalar_dsig
+    det_deps = Ceff.T @ _grad(lambda s: equiv_strain_general(np.linalg.eigvalsh(voigt_to_mat(s)), mp), sig_bar)
+    dxs_deps = Ceff.T @ _grad(lambda s: _damage_drivers(np.linalg.eigvalsh(voigt_to_mat(s)), mp, As)[2], sig_bar)
+    dac_deps = Ceff.T @ _grad(lambda s: alpha_compression(np.linalg.eigvalsh(voigt_to_mat(s))), sig_bar)
     Emax = np.outer(V[:, 2], V[:, 2]); Emin = np.outer(V[:, 0], V[:, 0])  # eigh ascending
     # d(drive_max)/d(eps): the live eigenprojection ONLY while the channel advances its running max
     # (P2g); frozen (zero) on unload so the -sig(x)d(omega) rank-update vanishes => secant tangent.
@@ -2957,7 +2971,7 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
             ev = np.linalg.eigvalsh(voigt_to_mat(s_))
             return compressive_equiv_strain(mp, ev, equiv_strain_general(ev, mp))
 
-        detc_deps = Ceff.T @ _dscalar_dsig(_etc_of, sig_bar)
+        detc_deps = Ceff.T @ _grad(_etc_of, sig_bar)
 
     if bilin:
         # literal Eq.45/44: kdt2 += w det_raw/xs (history advancing), kdt1 += w frac dnorm/xs (past onset)
@@ -4731,7 +4745,9 @@ def run_f2_chain_gate(verbose=True):
        sub-incremented cdpm2 returns (2..>=5 pieces), to 1e-5 (FD of FD);
     C2 a direct return: the recurrence reduces to A C == the FD tangent;
     C3 the last-piece-only tangent misses the same FD by > 1e-3 (C1 discriminates);
-    C4 the closed-form proj-weight gradients == FD of the weights (1e-6)."""
+    C4 the closed-form proj-weight gradients == FD of the weights (1e-6);
+    C5 the damaged tangent at the tension-apex return == the FD of the damaged step (1e-6; the per-component
+       driver micro-FD across the hydrostatic-axis cone was O(1) off there, apeGmsh #2621)."""
     res = {}
     mp = make_material(30000.0, 0.2, 30.0, 3.0, Df=0.85, Hp=0.01, flow_potential="cdpm2", max_subincr=10)
     rng = np.random.default_rng(2621)
@@ -4809,10 +4825,28 @@ def run_f2_chain_gate(verbose=True):
             worst_t = max(worst_t, float(np.linalg.norm(va - vf) / np.linalg.norm(vf)))
     res["C4_n"], res["C4_worst_tc"], res["C4_worst_ct"] = n4, worst_c, worst_t
     res["C4_ok"] = bool(n4 >= 20 and worst_c < 1.0e-6 and worst_t < 1.0e-6)
-    res["PASS"] = bool(res["C1_ok"] and res["C2_ok"] and res["C3_ok"] and res["C4_ok"])
+    # C5 the tension-apex return (mirror of kernel check D7): hydrostatic tension, every damage-loading apex step;
+    # damaged_tangent_analytic (driver gradients ALONG the axis at rho_bar == 0) == the FD of damaged_step_tensor
+    m5 = make_material(30000.0, 0.2, 30.0, 3.0, Df=0.85, Hp=0.01, flow_potential="cdpm2", max_subincr=10,
+                       tension_law="bilinear", compression_drive="cdpm2", eps_fc=1e-3)
+    st5, errs5 = make_damage_state(m5), []
+    for k in range(1, 31):
+        deps = np.full(3, 6e-4 * k / 30.0)
+        deps = np.r_[deps, 0.0, 0.0, 0.0] - st5["eps"]
+        _, new5, info5 = damaged_step_tensor(st5, deps, m5, 0.1, 5.0, 50.0)
+        _, rb5, *_ = invariants(np.asarray(new5["sig_bar"], float))
+        if rb5 <= 1.0e-12 and new5["sig_bar"][0] > 0.0 and 0.0 < info5["wt"] < 1.0 and new5["et_max"] > st5["et_max"]:
+            Da = damaged_tangent_analytic(st5, deps, m5, 0.1, 5.0, 50.0)
+            Dn = damaged_consistent_tangent(st5, deps, m5, 0.1, 5.0, 50.0)
+            errs5.append(float(np.linalg.norm(Da - Dn) / np.linalg.norm(Dn)))
+        st5 = new5
+    res["C5_n"], res["C5_worst"] = len(errs5), (max(errs5) if errs5 else 1.0)
+    res["C5_ok"] = bool(len(errs5) >= 5 and res["C5_worst"] < 1.0e-6)
+    res["PASS"] = bool(res["C1_ok"] and res["C2_ok"] and res["C3_ok"] and res["C4_ok"] and res["C5_ok"])
     if verbose:
         print(f"  C1 chain rule vs frozen-schedule FD: n={res['C1_n']} pieces={npieces} worst sigma {res['C1_worst']:.2e} "
               f"kp {res['C1_worst_kp']:.2e}")
         print(f"  C2 direct return: {res['C2_rel']:.2e}   C3 last-piece tangent misses by >= {res['C3_min_last_piece']:.2e}")
-        print(f"  C4 proj-weight gradients: n={n4} tc {worst_c:.2e} ct {worst_t:.2e}   PASS={res['PASS']}")
+        print(f"  C4 proj-weight gradients: n={n4} tc {worst_c:.2e} ct {worst_t:.2e}")
+        print(f"  C5 tension-apex damaged tangent vs FD: n={res['C5_n']} worst {res['C5_worst']:.2e}   PASS={res['PASS']}")
     return res

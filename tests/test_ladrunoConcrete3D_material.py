@@ -563,12 +563,15 @@ def test_f2_chain_rule_tangent_gate():
     partials + J_k = A_k (J_{k-1} + f_k C) + b_k (x) K_{k-1}, K_k = a_k . (J_{k-1} + f_k C) + e_k K_{k-1}) == the
     FD of the map with its piece schedule frozen, for sigma AND kp (1e-5); C2 it reduces to the direct-return
     tangent; C3 the pre-F2 last-piece tangent misses by > 1e-3; C4 the closed-form proj-weight gradients the
-    analytic damaged tangent uses == FD of the weights (1e-6)."""
+    analytic damaged tangent uses == FD of the weights (1e-6); C5 the damaged tangent at the tension-apex return
+    (driver gradients along the hydrostatic axis) == the FD of the damaged step (1e-6; the old per-component
+    micro-FD across the axis cone read 0.11-1.00)."""
     r = ref.run_f2_chain_gate(verbose=False)
     assert r["C1_ok"], (r["C1_n"], r["C1_worst"], r["C1_worst_kp"])
     assert r["C2_ok"], r["C2_rel"]
     assert r["C3_ok"], r["C3_min_last_piece"]
     assert r["C4_ok"], (r["C4_n"], r["C4_worst_tc"], r["C4_worst_ct"])
+    assert r["C5_ok"], (r["C5_n"], r["C5_worst"])
     assert r["PASS"]
 
 

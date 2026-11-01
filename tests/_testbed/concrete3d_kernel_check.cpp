@@ -1103,12 +1103,57 @@ static void run_f2_chain() {
     }
 }
 
+// D7 — the tension-apex return (apeGmsh #2621 F2 onset audit): on the hydrostatic axis the damage drivers (eps_tilde,
+// x_s, alpha_c, eps_tilde_c) are cones, and the per-component central micro-FD of their gradient averaged the tensile-
+// and compressive-meridian slopes into a spurious hydrostatic gradient (O(1): 0.97 at 7b33e02fc). The apex return keeps
+// sig_bar on the axis, so the true gradient is the one ALONG the axis (dscalarDsigAxis). Hydrostatic tension from the
+// virgin state, legacy + cdpm2 flow x ctTemper none/proj x tcTemper none/proj, every damage-loading apex step: the
+// damaged tangent == the central FD (best of h 1e-8/1e-9/1e-10, every stencil point converged and still on the apex).
+static void run_f2_apex() {
+    std::printf("[D7] F2 (apeGmsh #2621): damaged tangent at the tension-apex return\n");
+    Params q; q.E = 30000; q.nu = 0.2; q.fc = 30; q.ft = 3; q.e = eccentricityFromKupfer(30, 3, 1.16); q.m0 = m0Of(30, 3, q.e);
+    q.qh0 = 0.3; q.Hp = 0.01; q.Df = 0.85; q.Ah = 0.08; q.Bh = 0.003; q.Ch = 2.0; q.Dh = 1e-6;
+    q.tensionLaw = 1; q.compDrive = 1; q.Gf = 0.1; q.Gc = 5.0; q.lch = 50.0; q.epsFc = 1e-3; q.As = 2.0;
+    auto rhoOf = [](const double s[6]) { double xi, rho, th; invariants(s, xi, rho, th); return rho; };
+    int n = 0, skipped = 0; double worst = 0;
+    for (int fl = 0; fl <= 1; ++fl) for (int ct = 0; ct <= 2; ct += 2) for (int tc = 0; tc <= 2; tc += 2) {
+        Params p = q; p.flowPotential = fl; p.maxSubIncr = fl ? 10 : 0; p.ctTemper = ct; p.tcTemper = tc;
+        State in;
+        for (int k = 1; k <= 30; ++k) {
+            const double a = 6e-4 * k / 30.0;
+            double e[6] = {a, a, a, 0, 0, 0};
+            State o; double sg[6], se[6], D[6][6];
+            const int st = returnMap(p, e, in, o, sg, se, D, true, -1.0, true);
+            if (st == 0 && rhoOf(se) <= 1e-12 && se[0] > 0 && o.wt > 0 && o.wt < OMEGA_MAX && o.et_max > in.et_max) {
+                double best = 1e300; bool anyOk = false;
+                for (double h : {1e-8, 1e-9, 1e-10}) {
+                    double F[6][6]; bool ok = true;
+                    for (int j = 0; j < 6 && ok; ++j) {
+                        double ep[6], em[6]; for (int i = 0; i < 6; ++i) ep[i] = em[i] = e[i]; ep[j] += h; em[j] -= h;
+                        State t; double a1[6], b1[6], c1[6], d1[6], J[6][6];
+                        ok = returnMap(p, ep, in, t, a1, b1, J, false, -1.0, true) == 0 && returnMap(p, em, in, t, c1, d1, J, false, -1.0, true) == 0
+                             && rhoOf(b1) <= 1e-10 && rhoOf(d1) <= 1e-10;
+                        for (int i = 0; i < 6; ++i) F[i][j] = (a1[i] - c1[i]) / (2 * h);
+                    }
+                    if (!ok) continue;
+                    anyOk = true; best = std::fmin(best, relF6(D, F));
+                }
+                if (anyOk) { ++n; worst = std::fmax(worst, best); } else ++skipped;
+            }
+            in = o;
+        }
+    }
+    check(n >= 50 && worst < 1.0e-6, "D7 tension-apex return: damaged tangent == FD of the damaged map to 1e-6");
+    std::printf("       (apex damage-loading states %d, skipped %d, worst %.2e)\n", n, skipped, worst);
+}
+
 int main(int argc, char** argv) {
     run_identities();
     const char* fix = argc > 1 ? argv[1] : "tests/_testbed/concrete3d_oracle_fixture.txt";
     run_oracle_dump(fix);
     run_robustness();
     run_f2_chain();
+    run_f2_apex();
     std::printf(fails ? "\nKERNEL CHECK: %d FAIL\n" : "\nKERNEL CHECK: ALL PASS\n", fails);
     return fails ? 1 : 0;
 }
