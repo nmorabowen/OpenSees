@@ -1025,6 +1025,82 @@ static void run_f2_chain() {
               "D5 closed-form tcTemper/ctTemper proj-weight gradients == FD of the weights to 1e-6");
         std::printf("       (tc cases %d worst %.2e; ct cases %d worst %.2e)\n", nC, worstC, nT, worstT);
     }
+
+    // D6 — the omega cap: an omega AT OMEGA_MAX is flat (d omega = 0) in damagedTangent. Before F2 a bilinear omega_t
+    // (and a CDPM2-drive omega_c) at the cap fell through to the legacy exponential-law IFT, an O(1) wrong tangent on
+    // a fully open crack. Drive the material INTO the cap and require the full damaged tangent (returnMap's Dtan6) ==
+    // the central FD of the full damaged map (returnMap's nominal stress) to 1e-6 on EVERY converged step whose omega
+    // sits at the cap. The one thing excluded is an h whose stencil leaves the cap: an h counts only when all 12
+    // perturbed maps converge with that omega still == OMEGA_MAX (at the cap onset the map is one-sided). A cap step
+    // with no such h is an onset step; it is printed and FAILS the check, so every cap step is in fact tested.
+    // (A kernel with both F2 cap guards reverted misses here by O(1): the omega_t paths by ~2e1, omega_c by ~0.9.)
+    {
+        // the central FD of the full damaged map at strain e from the committed state `in`; best error over the
+        // h whose stencil stays at the cap of omega_t (which == 0) or omega_c (which == 1). false = no such h.
+        auto fdAtCap = [](const Params& p, const double e[6], const State& in, const double D[6][6], int which, double& err) {
+            err = 1e300; bool any = false;
+            for (double h : {1e-8, 1e-9, 1e-10}) {
+                double F[6][6]; bool stay = true;
+                for (int j = 0; j < 6 && stay; ++j) {
+                    double ep[6], em[6]; for (int i = 0; i < 6; ++i) ep[i] = em[i] = e[i]; ep[j] += h; em[j] -= h;
+                    State ot; double sp[6], sm[6], se[6], J[6][6], wtp, wcp, wtm, wcm;
+                    const int a = returnMap(p, ep, in, ot, sp, se, J, false, -1.0, true, &wtp, &wcp);
+                    const int b = returnMap(p, em, in, ot, sm, se, J, false, -1.0, true, &wtm, &wcm);
+                    const double wp = which ? wcp : wtp, wm = which ? wcm : wtm;
+                    if (a != 0 || b != 0 || wp != OMEGA_MAX || wm != OMEGA_MAX) stay = false;
+                    for (int i = 0; i < 6; ++i) F[i][j] = (sp[i] - sm[i]) / (2 * h);
+                }
+                if (!stay) continue;
+                any = true; err = std::fmin(err, relF6(D, F));
+            }
+            return any;
+        };
+        Params p = q; p.tensionLaw = 1; p.compDrive = 1; p.tcTemper = 2; p.Gf = 0.1; p.Gc = 5.0; p.lch = 50.0;
+        p.epsFc = 1e-3; p.As = 2.0;
+        // D6a — bilinear omega_t: two biaxial/shear tension paths far past wf (200 steps each, 179 + 176 at the cap;
+        // path 0 enters it at step 22, where the guard-reverted kernel misses the FD by 2.6)
+        int nT = 0, onT = 0; double worstT = 0;
+        for (int path = 0; path < 2; ++path) {
+            State in;
+            for (int k = 1; k <= 200; ++k) {
+                const double t = k / 200.0; double e[6] = {0, 0, 0, 0, 0, 0};
+                if (path == 0) { e[0] = 2e-2 * t; e[1] = 1.5e-2 * t; e[2] = 0.5e-2 * t; }
+                else           { e[0] = 2e-2 * t; e[1] = 1e-2 * t; e[3] = 2e-3 * t; }
+                State o; double sg[6], se[6], D[6][6], wt, wc;
+                const int st = returnMap(p, e, in, o, sg, se, D, true, -1.0, true, &wt, &wc);
+                if (st == 0 && wt == OMEGA_MAX) {
+                    double err; if (fdAtCap(p, e, in, D, 0, err)) { ++nT; worstT = std::fmax(worstT, err); } else ++onT;
+                }
+                in = o;
+            }
+        }
+        check(nT >= 300 && onT == 0 && worstT < 1.0e-6,
+              "D6a bilinear omega_t at OMEGA_MAX: damaged tangent == FD of the full damaged map to 1e-6 (every cap step)");
+        std::printf("       (cap steps checked %d, onset steps (stencil leaves the cap) %d; worst %.2e)\n", nT, onT, worstT);
+        // D6b — CDPM2-drive omega_c: compression with lateral tension and shear (distinct principals). A brittle
+        // compressive law (epsFc = 1e-4) enters the cap at step 78 (3.9% axial strain; 123 cap steps). With the
+        // default epsFc = 1e-3 the cap needs ~30% strain. omega_t sits at its cap on these steps as well, so D6b
+        // fails on either revert: the omega_c guard alone by 0.88, the omega_t guard alone by 3e-2 (D6a reads
+        // the same with the omega_c guard reverted, so it isolates the omega_t guard).
+        Params pc = p; pc.epsFc = 1e-4;
+        int nC = 0, onC = 0; double worstC = 0;
+        {
+            State in;
+            for (int k = 1; k <= 200; ++k) {
+                const double t = k / 200.0, M = 1e-1;
+                double e[6] = {-M * t, M * t, 0.8 * M * t, 0.2 * M * t, 0, 0};
+                State o; double sg[6], se[6], D[6][6], wt, wc;
+                const int st = returnMap(pc, e, in, o, sg, se, D, true, -1.0, true, &wt, &wc);
+                if (st == 0 && wc == OMEGA_MAX) {
+                    double err; if (fdAtCap(pc, e, in, D, 1, err)) { ++nC; worstC = std::fmax(worstC, err); } else ++onC;
+                }
+                in = o;
+            }
+        }
+        check(nC >= 100 && onC == 0 && worstC < 1.0e-6,
+              "D6b CDPM2-drive omega_c at OMEGA_MAX: damaged tangent == FD of the full damaged map to 1e-6 (every cap step)");
+        std::printf("       (cap steps checked %d, onset steps (stencil leaves the cap) %d; worst %.2e)\n", nC, onC, worstC);
+    }
 }
 
 int main(int argc, char** argv) {
