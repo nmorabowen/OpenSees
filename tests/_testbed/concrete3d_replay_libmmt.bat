@@ -22,6 +22,8 @@ REM                   count (e.g. the Zone-A 200) never reaches the failing tria
 REM   selfcheck-ucrt  the same self-check with a plain (UCRT) link, for the comparison (same refusal)
 REM Needs Visual Studio (vswhere), git, and the oneAPI compiler's static libraries (ONEAPI_ROOT or the default install).
 setlocal EnableExtensions
+REM only replay-kernel sets INCROOT on purpose: one inherited from the caller's environment must not redirect a build
+set "INCROOT="
 set "MODE=%~1"
 set "OUT=%~2"
 if "%OUT%"=="" set "OUT=%TEMP%\c3d_replay_libmmt"

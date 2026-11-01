@@ -55,7 +55,8 @@
 //                   kernel is always 3-D; the record's T is the full 6-component strain).
 //      pass=        R: OUT (the rule-B refusal code of the replayed loop). C/F: INFO (x): the sigma_22 pass index of
 //                   the recorded integrate(); its strain is T, and pass 0 ties C[1] to T[2] (below).
-//      status= subInfo=  PIN to O[0] and O[1] (which are OUT).
+//      status= subInfo=  PIN to O[0] and O[1] (which are OUT). subInfo also PIN to the dump's domain: -1 when status
+//                   != 0, else 0 or (with maxSubIncr > 0) the piece count >= 2; and to N's subInfo (N[40]).
 //      cls=         OUT: the dump's return class (0 direct, 1 sub-incremented, 2 floor A, 3 floor B, 4 floor C,
 //                   5 direct failure), DERIVED from the replayed returnMap: status 0 -> 0 if subInfo is 0, else 1;
 //                   status != 0 -> 4 if maxSubIncr > 0, else 5. This tree's kernel has no class API (the probe's
@@ -78,7 +79,9 @@
 //   E  committed strain State::eps[6]: IN (x).
 //   S  committed nominal stress State::sig[6]: UNREAD (x): returnMap never reads in.sig (it returns from X).
 //   X  committed effective stress State::sigEff[6]: IN (x).
-//   H  kp et_max kdt1 kdt2 kdc kdc1 kdc2 sigtMax sigcMax eqc etPrev: IN (x) (each also reaches its own N field).
+//   H  kp et_max kdt1 kdt2 kdc kdc1 kdc2 sigtMax sigcMax eqc etPrev: IN (x) (each but etPrev also reaches its own N field;
+//      the kernel sets N.etPrev from this step's drive, and in.etPrev reaches N.eqc and the outputs through the CDPM2
+//      compressive history, compDrive = 1 on every record).
 //   I  wt wc: IN (x) (into N dwt, dwc).  dwt dwc: UNREAD (x) (IMPL-EX only).  dt_n: IN (x) (into N dt_n when dt <= 0).
 //      depl[6]: UNREAD (x) (IMPL-EX only).
 //   C  C[0], the committed eps_22: PIN to E[2] (x). C[1], the sigma_22 loop's start: R: IN (x) (the loop starts

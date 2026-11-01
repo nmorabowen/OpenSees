@@ -120,6 +120,11 @@ echo "== GATE: the committed glibc fixture, bit-exact on this tree's kernel (ref
 
 echo "== the glibc fixture holds the libmmt fixture's records, in its order, with its inputs"
 "$exe" inputs-match "$glibc_fix" "$fix"
+# inputs-match compares inputs only: the libmmt fixture (the pyd's values) must also be re-recorded on THIS kernel.
+# Its values are proven only by the self-hosted libmmt replay; this ties its blob to the tree on every PR run.
+fix_blob="$(sed -n 's/^#@ .*kernel-blob=\([0-9a-f]*\).*/\1/p' "$fix")"
+[ "$fix_blob" = "$blob" ] || { echo "ERROR: the libmmt fixture is recorded on kernel-blob=$fix_blob, this tree's kernel is $blob: re-record it under libmmt (concrete3d_replay_libmmt.bat record) in this PR"; exit 1; }
+echo "libmmt fixture kernel-blob matches this tree ($blob)"
 mutants "$glibc_fix" "$exe" inputs-match MUT "$fix" <<'MUTANTS'
 rec_drop|/^K /{n++} n!=2|1|INPUTS DIFFER: 27 records vs 28
 S_edit|!d && /^S /{$2=sprintf("%.17g", $2*1.25); d=1} 1|1|INPUTS DIFFER at record 0 (seq=4523): S line
