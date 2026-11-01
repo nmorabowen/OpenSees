@@ -49,7 +49,7 @@ to Sonnet/Haiku subagents. No task uses `max`.
 
 | Needs | Blocks | Owner |
 |---|---|---|
-| PR #877 merged (RC schema v6, `-crackedNu/-betaC`, TS `c=200`; CDPM2 B1/B2 — #867 closes as superseded, its content is in #877; material sentinel −33086, ADR-86b/94). State on 2026-10-31: head f19d55bd1, OPEN, **CONFLICTING** vs `ladruno`. At the #882 review (2026-10-10) Zone-A had 1 failure in 2906 (`test_R5_ladrunobrick_checks_only_the_sentinel`); 62dd7336c ("LadrunoBrick sentinel-only") targets it — not re-verified here. **Plus its two open kernel decisions:** the `-subIncr` default (`refuse` exists since 0ba6a269a) and the `-tangent` policy (chain vs last piece) — **owner action** | P1a, P1d, P2 baseline runs (P2f), P3c, P3d, P4 | owner |
+| PR #877 merged (RC schema v6, `-crackedNu/-betaC`, TS `c=200`; CDPM2 B1/B2 — #867 closes as superseded, its content is in #877; material sentinel −33086, ADR-86b/94). **MERGED into `ladruno` 2026-11-01 as 0175755f9** (Zone-A green). Its two kernel decisions are settled there: `-subIncr deterministic` is the default (`refuse` and `adaptive` opt-in) and the tangent is the chain's own. The sub-step chain-rule tangent in every mode is apeGmsh #2621 F2 (fallback PR #1050), not yet merged | P1a, P1d, P2 baseline runs (P2f), P3c, P3d, P4 | owner |
 | apeGmsh #1185 merged (`RCLayeredShell`, `PlateFiber`, guards, `no_eas`) | P2 rig authoring convenience (not correctness) | owner |
 
 **Agreed with the concrete study session (2026-09-27):**

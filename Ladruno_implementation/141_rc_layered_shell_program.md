@@ -13,7 +13,7 @@ related:
   - "[[LadrunoRCConcrete_guide]]"
   - "[[LEDGER_quirks]]"
 external:
-  - "PR #877 (wp/concrete3d-integration @ f19d55bd1, OPEN, CONFLICTING vs ladruno on 2026-10-31): CDPM2 B1/B2 (the content of #867, which closes as superseded) + Phase C (#873: -crackedNu/-betaC, VC-1986 TS default c = 200) + material failures return the ADR-86b/94 sentinel LADRUNO_MATERIAL_REFUSED (−33086), which cuts the step"
+  - "PR #877 (wp/concrete3d-integration; MERGED into ladruno 2026-11-01 as 0175755f9, cited below @ f19d55bd1 where line numbers matter): CDPM2 B1/B2 (the content of #867, which closes as superseded) + Phase C (#873: -crackedNu/-betaC, VC-1986 TS default c = 200) + material failures return the ADR-86b/94 sentinel LADRUNO_MATERIAL_REFUSED (−33086), which cuts the step"
   - "Validation study C:/Users/nmora/Documents/gitAPE/ladruno-concrete-validation (fix_plan.md phases A–E; family 03 = layered shells)"
 tags: [adr, program, rc, shell, layered-shell, crack-band, regularization, confinement, validation]
 updated: 2026-10-31
