@@ -1,5 +1,6 @@
 @echo off
 REM concrete3d_replay_libmmt.bat <replay|replay-ucrt|record|selfcheck|selfcheck-ucrt> [outdir]   (apeGmsh #2621 F1)
+REM concrete3d_replay_libmmt.bat replay-kernel <outdir> <root>   (the kernel-mutant proof, see below)
 REM
 REM Builds the LadrunoConcrete3D kernel testbeds the way the shipped Windows opensees.pyd is built: MSVC with the fork's
 REM Release flags (/O2 /Ob2 /DNDEBUG /EHsc /std:c++17 /MT, no /arch, no /fp) and the math library the pyd links. The
@@ -11,6 +12,8 @@ REM                   record replays bit-exactly. A kernel change that moves any
 REM                   `record`, commits the re-recorded fixture, and its diff (exactly the values that moved) is what the
 REM                   reviewers judge. No field or record class is exempt.
 REM   replay-ucrt     the same replay with a plain (UCRT) link and --cross: shows what a wrong libm does to the records
+REM   replay-kernel   replay under libmmt built against <root>\SRC\material\nD\LadrunoConcrete3DKernel.h instead of
+REM                   this tree's (a mutated copy: ci.sh's kernel mutants), with that header's own blob. Must FAIL (exit 1).
 REM   record          re-record the fixture under libmmt on this tree's kernel into <outdir>\concrete3d_replay_records.txt
 REM   selfcheck       concrete3d_kernel_check.cpp under libmmt, full trial count. KNOWN ISSUE: the pristine d14fb6958
 REM                   kernel fails C7 (1 of 120000 CDPM2-potential fuzz trials) under libmmt and passes under the UCRT.
@@ -43,10 +46,11 @@ if "%HAVE%"=="" (echo ERROR: git hash-object of the kernel header failed & popd 
 
 if /i "%MODE%"=="replay" goto replay
 if /i "%MODE%"=="replay-ucrt" goto replay_ucrt
+if /i "%MODE%"=="replay-kernel" goto replay_kernel
 if /i "%MODE%"=="record" goto record
 if /i "%MODE%"=="selfcheck" goto selfcheck
 if /i "%MODE%"=="selfcheck-ucrt" goto selfcheck_ucrt
-echo usage: %~nx0 ^<replay^|replay-ucrt^|record^|selfcheck^|selfcheck-ucrt^> [outdir]
+echo usage: %~nx0 ^<replay^|replay-ucrt^|record^|selfcheck^|selfcheck-ucrt^> [outdir]   ^|   replay-kernel ^<outdir^> ^<root^>
 popd & exit /b 2
 
 :needmmt
@@ -58,24 +62,38 @@ if defined LADRUNO_FUZZ_TRIALS (echo ERROR: LADRUNO_FUZZ_TRIALS=%LADRUNO_FUZZ_TR
 exit /b 0
 
 :build_replay
-REM %1 = libm tag; LINKLIBS = the link libraries (empty for the UCRT)
-cl %CLFLAGS% /DC3D_REPLAY_LIBM=\"%~1\" /I"%REPO%" /Fo:"%OUT%\replay_%~1.obj" /Fe:"%OUT%\concrete3d_replay_%~1.exe" tests\_testbed\concrete3d_replay.cpp %LINKLIBS% >"%OUT%\build_replay_%~1.log" 2>&1
+REM %1 = libm tag; LINKLIBS = the link libraries (empty for the UCRT); INCROOT = the kernel header's root (default the repo)
+if "%INCROOT%"=="" set "INCROOT=%REPO%"
+cl %CLFLAGS% /DC3D_REPLAY_LIBM=\"%~1\" /I"%INCROOT%" /Fo:"%OUT%\replay_%~1.obj" /Fe:"%OUT%\concrete3d_replay_%~1.exe" tests\_testbed\concrete3d_replay.cpp %LINKLIBS% >"%OUT%\build_replay_%~1.log" 2>&1
 if errorlevel 1 (type "%OUT%\build_replay_%~1.log" & exit /b 2)
-echo built against this tree's kernel header, blob %HAVE%
+echo built against the kernel header under %INCROOT%, blob %HAVE%
 exit /b 0
 
 :replay
 call :needmmt || (popd & exit /b 2)
 set "LINKLIBS=%LIBMMT%"
 call :build_replay win-libmmt || (popd & exit /b 2)
-"%OUT%\concrete3d_replay_win-libmmt.exe" check "%FIX%"
+"%OUT%\concrete3d_replay_win-libmmt.exe" check "%FIX%" --kernel-blob %HAVE%
 set "RC=%ERRORLEVEL%"
 popd & exit /b %RC%
 
 :replay_ucrt
 set "LINKLIBS="
 call :build_replay win-ucrt || (popd & exit /b 2)
-"%OUT%\concrete3d_replay_win-ucrt.exe" check "%FIX%" --cross
+"%OUT%\concrete3d_replay_win-ucrt.exe" check "%FIX%" --cross --kernel-blob %HAVE%
+set "RC=%ERRORLEVEL%"
+popd & exit /b %RC%
+
+:replay_kernel
+call :needmmt || (popd & exit /b 2)
+set "INCROOT=%~3"
+if not exist "%INCROOT%\SRC\material\nD\LadrunoConcrete3DKernel.h" (echo ERROR: no kernel header under "%INCROOT%" & popd & exit /b 2)
+set "HAVE="
+for /f "usebackq delims=" %%h in (`git hash-object "%INCROOT%\SRC\material\nD\LadrunoConcrete3DKernel.h"`) do set "HAVE=%%h"
+if "%HAVE%"=="" (echo ERROR: git hash-object of the mutated kernel header failed & popd & exit /b 2)
+set "LINKLIBS=%LIBMMT%"
+call :build_replay win-libmmt || (popd & exit /b 2)
+"%OUT%\concrete3d_replay_win-libmmt.exe" check "%FIX%" --kernel-blob %HAVE%
 set "RC=%ERRORLEVEL%"
 popd & exit /b %RC%
 
