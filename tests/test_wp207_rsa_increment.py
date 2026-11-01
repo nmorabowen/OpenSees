@@ -197,3 +197,67 @@ def test_guards(extra):
     _setup()
     with pytest.raises(Exception):
         _rsa(*extra)
+
+
+def test_asdshell_pdelta_rsa_increment_antisymmetry_and_zero_vertical_reaction():
+    """WP-209 + WP-207: on a preloaded ASDShellQ4 -pDelta wall after loadConst,
+    per-mode RSA with -increment (+1 vs -1) produces exact opposite reaction
+    increments and zero spurious vertical reaction (no quadratic K_sigma(dN_m)*u_m
+    or cross K_sigma(dN_m)*u_0 contamination)."""
+    bw, hw, tw = 4.0, 9.0, 0.25
+    ew, nuw = 30.0e6, 0.2
+    p_grav = 10000.0
+    nx, nz = 2, 6
+    ops.wipe()
+    ops.model('basic', '-ndm', 3, '-ndf', 6)
+    tg = lambda i, k: 1 + i + k * (nx + 1)
+    for k in range(nz + 1):
+        for i in range(nx + 1):
+            ops.node(tg(i, k), i * bw / nx, 0.0, k * hw / nz)
+            if k == 0:
+                ops.fix(tg(i, k), 1, 1, 1, 1, 1, 1)
+            else:
+                ops.mass(tg(i, k), 10.0, 0.0, 10.0, 0.0, 0.0, 0.0)
+    ops.section('ElasticMembranePlateSection', 1, ew, nuw, tw, 0.0)
+    e = 1
+    for k in range(nz):
+        for i in range(nx):
+            ops.element('ASDShellQ4', e, tg(i, k), tg(i + 1, k), tg(i + 1, k + 1), tg(i, k + 1), 1, '-pDelta')
+            e += 1
+    top = [tg(i, nz) for i in range(nx + 1)]
+    base = [tg(i, 0) for i in range(nx + 1)]
+    ops.timeSeries('Linear', 1)
+    ops.pattern('Plain', 1, 1)
+    for i, n in enumerate(top):
+        w = 0.5 if i in (0, nx) else 1.0
+        ops.load(n, 0.0, 0.0, -p_grav * (w / nx), 0.0, 0.0, 0.0)
+    ops.system('UmfPack'); ops.numberer('RCM'); ops.constraints('Plain')
+    ops.integrator('LoadControl', 1.0)
+    ops.test('NormDispIncr', 1.0e-12, 50)
+    ops.algorithm('Newton'); ops.analysis('Static')
+    assert ops.analyze(1) == 0
+    ops.loadConst('-time', 0.0)
+    ops.reactions()
+    r_grav = [sum(ops.nodeReaction(n, d) for n in base) for d in range(1, 7)]
+    assert r_grav[2] == pytest.approx(p_grav, rel=1e-12)
+
+    ops.eigen('-fullGenLapack', 3)
+    ops.modalProperties()
+
+    ops.responseSpectrumAnalysis(1, '-Tn', *TN, '-Sa', *SA, '-mode', 1, '-increment', '-sign', 1)
+    ops.reactions()
+    dr_pos = [sum(ops.nodeReaction(n, d) for n in base) - r_grav[d - 1] for d in range(1, 7)]
+
+    ops.responseSpectrumAnalysis(1, '-Tn', *TN, '-Sa', *SA, '-mode', 1, '-increment', '-sign', -1)
+    ops.reactions()
+    dr_neg = [sum(ops.nodeReaction(n, d) for n in base) - r_grav[d - 1] for d in range(1, 7)]
+
+    assert abs(dr_pos[0]) > 1.0
+    _close(dr_pos, [-x for x in dr_neg], rel=1e-12, abs_=1e-10)
+    assert dr_pos[2] == pytest.approx(0.0, abs=1e-10)
+    assert dr_neg[2] == pytest.approx(0.0, abs=1e-10)
+
+    ops.responseSpectrumAnalysis('-revert')
+    ops.reactions()
+    r_after = [sum(ops.nodeReaction(n, d) for n in base) for d in range(1, 7)]
+    _close(r_after, r_grav, rel=1e-12, abs_=1e-10)

@@ -76,6 +76,8 @@ static void print_dist_result(const DistributionResult& r) {
         std::cout << "\"F_total\":" << std::setprecision(17) << fl.F_total << ",";
         std::cout << "\"M_origin\":" << std::setprecision(17) << fl.M_origin << ",";
         std::cout << "\"overhang_torque\":" << std::setprecision(17) << fl.overhang_torque << ",";
+        std::cout << "\"end_F_a\":" << std::setprecision(17) << fl.end_F_a << ",";
+        std::cout << "\"end_F_b\":" << std::setprecision(17) << fl.end_F_b << ",";
         std::cout << "\"p0_2d\":";
         print_arr(fl.p0_2d);
         std::cout << ",\"q0_2d\":";
@@ -314,6 +316,8 @@ def _assert_dist_matches(cpp_res: dict, py_res: ref.DistributionResult, atol: fl
         np.testing.assert_allclose(c_fl["F_total"], p_fl.F_total, rtol=atol, atol=atol)
         np.testing.assert_allclose(c_fl["M_origin"], p_fl.M_origin, rtol=atol, atol=atol)
         np.testing.assert_allclose(c_fl["overhang_torque"], p_fl.overhang_torque, rtol=atol, atol=atol)
+        np.testing.assert_allclose(c_fl["end_F_a"], p_fl.end_F_a, rtol=atol, atol=atol)
+        np.testing.assert_allclose(c_fl["end_F_b"], p_fl.end_F_b, rtol=atol, atol=atol)
         np.testing.assert_allclose(c_fl["p0_2d"], p_fl.p0_2d, rtol=atol, atol=atol)
         np.testing.assert_allclose(c_fl["q0_2d"], p_fl.q0_2d, rtol=atol, atol=atol)
 

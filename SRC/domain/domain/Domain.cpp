@@ -94,6 +94,10 @@
 #include <DomainModalProperties.h>
 #include <RelativeMassDamping.h>  // Ladruno (relativeMassDamping)
 
+// Ladruno WP-209: flag bit OR-ed into domainData(17) (the contact-definitions size,
+// always far below 2^30) when setLoadConstant is active; see Domain::sendSelf.
+static const int LADRUNO_DOMAIN_LOADCONST_BIT = 1 << 30;
+
 //
 // global variables
 //
@@ -134,7 +138,7 @@ Domain::Domain()
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0),
  paramIndex(0), paramSize(0), numParameters(0),
- theContactDomain(0), contactAugmenting(false)   // Ladruno: ADR-39 + D1
+ theContactDomain(0), contactAugmenting(false), m_loadConstActive(false)   // Ladruno: ADR-39 + D1 + WP-209
 {
   
     // init the arrays for storing the domain components
@@ -193,7 +197,7 @@ Domain::Domain(int numNodes, int numElements, int numSPs, int numMPs, int numEQs
  theModalProperties(0),
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0), paramIndex(0), paramSize(0), numParameters(0),
- theContactDomain(0), contactAugmenting(false)   // Ladruno: ADR-39 + D1
+ theContactDomain(0), contactAugmenting(false), m_loadConstActive(false)   // Ladruno: ADR-39 + D1 + WP-209
 {
     // init the arrays for storing the domain components
     theElements = new MapOfTaggedObjects();
@@ -260,7 +264,7 @@ Domain::Domain(TaggedObjectStorage &theNodesStorage,
  theModalProperties(0),
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0),paramIndex(0), paramSize(0), numParameters(0),
- theContactDomain(0), contactAugmenting(false)   // Ladruno: ADR-39 + D1
+ theContactDomain(0), contactAugmenting(false), m_loadConstActive(false)   // Ladruno: ADR-39 + D1 + WP-209
 {
     // init the arrays for storing the domain components
     thePCs      = new MapOfTaggedObjects();
@@ -323,7 +327,7 @@ Domain::Domain(TaggedObjectStorage &theStorage)
  theModalProperties(0),
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0),paramIndex(0), paramSize(0), numParameters(0),
- theContactDomain(0), contactAugmenting(false)   // Ladruno: ADR-39 + D1
+ theContactDomain(0), contactAugmenting(false), m_loadConstActive(false)   // Ladruno: ADR-39 + D1 + WP-209
 {
     // init the arrays for storing the domain components
     theStorage.clearAll(); // clear the storage just in case populated
@@ -1154,6 +1158,7 @@ Domain::clearAll(void) {
   // contactAugmenting is ON this Domain commits recorder-silently, so leaking it across a
   // `wipe` into the next model would silently produce empty recorder files there.
   contactAugmenting = false;
+  m_loadConstActive = false;   // Ladruno WP-209
 
   // set the time back to 0.0
   currentTime = 0.0;
@@ -2169,6 +2174,7 @@ Domain::applyLoad(double timeStep)
 void
 Domain::setLoadConstant(void)
 {
+    m_loadConstActive = true;   // Ladruno WP-209
     // loop over all the load patterns that are currently added to the domain
     // getting them to set their loads as now constant
     LoadPattern *thePattern;
@@ -2181,6 +2187,7 @@ Domain::setLoadConstant(void)
 void
 Domain::unsetLoadConstant(void)
 {
+    m_loadConstActive = false;   // Ladruno WP-209
     // loop over all the load patterns that are currently added to the domain
     // getting them to set their loads as now constant
     LoadPattern *thePattern;
@@ -2456,6 +2463,7 @@ Domain::revertToLastCommit(void)
 int
 Domain::revertToStart(void)
 {
+    m_loadConstActive = false;   // Ladruno WP-209
     // 
     // first invoke revertToLastCommit  on all nodes and 
     // elements in the domain
@@ -3631,6 +3639,12 @@ Domain::sendSelf(int cTag, Channel &theChannel)
   domainData(11) = numParam;
   domainData(17) = contactSize;   // Ladruno: ADR-78 P2
   domainData(18) = dbContact;     // Ladruno: ADR-78 P2
+  // Ladruno WP-209: m_loadConstActive rides as a flag bit of slot 17 instead of a
+  // 20th slot. The header stays ID(19), so a database written before WP-209 (whose
+  // records are keyed by size: db.IDs.19.*) still restores, with the bit clear =
+  // load not constant, the pre-WP-209 behaviour.
+  if (m_loadConstActive)
+    domainData(17) |= LADRUNO_DOMAIN_LOADCONST_BIT;
 
   // add the database tag for the ID's storing node, element, constraints
   // and loadpattern data into domainData
@@ -4045,6 +4059,8 @@ Domain::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
   // Ladruno (ADR-78 P2): 17 -> 19, matching sendSelf. Slot 17 = the packed size of
   // the contact engine's definitions Vector (0 = none), slot 18 = its dbTag; the
   // Vector itself is consumed at the very end of this method.
+  // Ladruno WP-209: slot 17 also carries m_loadConstActive as the flag bit
+  // LADRUNO_DOMAIN_LOADCONST_BIT (see sendSelf); strip it before using the size.
   ID domainData(19);
   if (theChannel.recvID(theDbTag, commitTag, domainData) < 0) {
     opserr << "Domain::recv - channel failed to recv the initial ID\n";
@@ -4060,6 +4076,7 @@ Domain::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 
   currentTime = domainTime(0);
   committedTime = currentTime;
+  m_loadConstActive = (domainData(17) & LADRUNO_DOMAIN_LOADCONST_BIT) != 0; // Ladruno WP-209
 
   // 
   // now if the currentGeoTag does not agree with what's in the domain
@@ -4093,6 +4110,7 @@ Domain::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 
     currentTime = domainTime(0);
     committedTime = currentTime;
+    m_loadConstActive = (domainData(17) & LADRUNO_DOMAIN_LOADCONST_BIT) != 0; // Ladruno WP-209
 
     // 
     // now we rebuild the nodes
@@ -4519,7 +4537,7 @@ Domain::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
   // add* choke points; a POPULATED one (the recv-again branch above) keeps its live
   // definitions and only VERIFIES the stream matches, warning loudly on divergence.
   {
-    int contactSize = domainData(17);
+    int contactSize = domainData(17) & ~LADRUNO_DOMAIN_LOADCONST_BIT; // Ladruno WP-209
     if (contactSize > 0) {
       dbContact = domainData(18);
       if (theContactDomain == 0)
