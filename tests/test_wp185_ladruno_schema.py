@@ -134,8 +134,9 @@ def _check_shape(text, engine, commands):
     for mat in RC_FAMILY:
         for tok, want in PINNED_RC.items():
             assert opts[mat].get(tok) == want, f"{mat} {tok}: {opts[mat].get(tok)} != {want}"
-        # refused until fork PR #877 declares them (WP-167)
-        assert "-crackedNu" not in opts[mat] and "-betaC" not in opts[mat]
+        # declared by fork PR #877 (WP-167); refused before it
+        for tok in ("-crackedNu", "-betaC"):
+            assert opts[mat].get(tok) == {"nargs": 1, "since": "PR-877"},                 f"{mat} {tok}: {opts[mat].get(tok)}"
     return doc
 
 
