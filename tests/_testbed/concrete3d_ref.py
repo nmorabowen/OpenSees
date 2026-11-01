@@ -786,9 +786,12 @@ def flow_grad_jac(xi, rho, kp, mp):
 
 
 
-def return_map_hardening(sig_tr, mp, kp_n, tol=1.0e-11):
+def return_map_hardening(sig_tr, mp, kp_n, tol=1.0e-11, u0=None, out=None):
     """sig_tr = 3 trial principal stresses, kp_n = committed kappa_p.
-    Returns (sig_new[3], kp_new, plastic, f_after, converged)."""
+    Returns (sig_new[3], kp_new, plastic, f_after, converged).
+    u0 (optional, the F2 C1 reference): start the plain Newton from u0 = (xi, rho, dlam, kp) instead of the trial and run
+    nothing else (no globalized Newton, no vertex): the branch of a neighbouring converged root. out (optional dict):
+    receives "u" (the converged unknowns of a regular return) and "vertex". Both default off: byte-identical."""
     fc, m0, Df, K, G = mp["fc"], mp["m0"], mp["Df"], mp["K"], mp["G"]
     sv = np.array([sig_tr[0], sig_tr[1], sig_tr[2], 0.0, 0.0, 0.0])
     xi_tr, rho_tr, th_tr, *_ = invariants(sv)
@@ -819,12 +822,12 @@ def return_map_hardening(sig_tr, mp, kp_n, tol=1.0e-11):
             kp - kp_n - dlam * mnorm / xh * cos2,
         ])
 
-    def _newton(clamp_rho):
+    def _newton(clamp_rho, start=None):
         # clamp_rho=False: the ORIGINAL scheme — an iterate crossing the hydrostatic axis (rho<0) aborts
         # (apex=True -> vertex candidate). clamp_rho=True: the RETRY used only after a rejected vertex (the
         # trial is OUTSIDE the cone of normals, so a regular rho>0 solution exists and the abort was a
         # Newton overshoot): rho is clamped to >=0 and the iteration continues (OOFEM's max(rho,0)).
-        u = np.array([xi_tr, rho_tr, 0.0, kp_n])
+        u = np.array([xi_tr, rho_tr, 0.0, kp_n]) if start is None else np.array(start, float)
         for _ in range(100):
             R = resid(u)
             if (abs(R[0]) < tol * fc and abs(R[1]) < tol * fc
@@ -918,6 +921,19 @@ def return_map_hardening(sig_tr, mp, kp_n, tol=1.0e-11):
         u[1] = max(u[1], 0.0); u[2] = max(u[2], 0.0); u[3] = max(u[3], kp_n)
         return u, bool(admissible_root), False
 
+    if u0 is not None:                        # the warm-started branch (see the docstring): plain Newton only
+        u, converged, apex = _newton(False, u0)
+        xi, rho, dlam, kp = u
+        if converged and not apex:
+            p_new = xi / SQRT3
+            sig_new = s_tr * (rho / rho_tr if rho_tr > 0.0 else 0.0) + p_new
+            f_indep = yield_f(np.array([sig_new[0], sig_new[1], sig_new[2], 0.0, 0.0, 0.0]),
+                              fc, mp["ft"], mp["e"], qh1(kp, mp["qh0"], mp["Hp"]), qh2(kp, mp["Hp"]))
+            if np.isfinite(f_indep) and abs(f_indep) < F_TOL_HONEST and dlam >= -1.0e-12 and kp >= kp_n - 1.0e-12:
+                if out is not None:
+                    out["u"], out["vertex"] = np.array(u, float), False
+                return sig_new, kp, True, f_indep, True
+        return np.array(sig_tr, float), kp_n, True, f_tr, False
     if cdpm2_flow and xi_tr > 0.0:
         # TENSION-dominated trial (sigma_V_trial > 0): plain Newton FIRST (#877 follow-up, defect 2 cost). Measured
         # on the first-crack step (virgin sigma_xx = 2 MPa, kappa_p < 1): the globalized Newton burns 660-900
@@ -961,6 +977,8 @@ def return_map_hardening(sig_tr, mp, kp_n, tol=1.0e-11):
         # return needs dlam>=0 AND a non-decreasing hardening variable kp>=kp_n.
         admissible = bool(np.isfinite(f_indep) and dlam >= -1.0e-12 and kp >= kp_n - 1.0e-12)
         if converged and abs(f_indep) < F_TOL_HONEST and admissible:
+            if out is not None:
+                out["u"], out["vertex"] = np.array(u, float), False
             return sig_new, kp, True, f_indep, True
     # VERTEX RETURN (WP concrete3d-oracle-diagnosis, 2026-09). Reached when the regular (radial) return
     # overshot the hydrostatic axis (rho<0), did not converge, or landed inadmissible. The OLD branch here
@@ -981,6 +999,8 @@ def return_map_hardening(sig_tr, mp, kp_n, tol=1.0e-11):
         f_indep = yield_f(np.array([sV, sV, sV, 0.0, 0.0, 0.0]),
                           fc, mp["ft"], mp["e"], qh1(kpv, mp["qh0"], mp["Hp"]), qh2(kpv, mp["Hp"]))
         if np.isfinite(f_indep) and abs(f_indep) < F_TOL_HONEST and kpv >= kp_n - 1.0e-12:
+            if out is not None:
+                out["vertex"] = True
             return sig_new, kpv, True, f_indep, True
     if apex:                                  # regular RETRY with rho clamped at 0 (vertex rejected)
         u, converged, _ = _newton(True)
@@ -993,6 +1013,8 @@ def return_map_hardening(sig_tr, mp, kp_n, tol=1.0e-11):
                               fc, mp["ft"], mp["e"], qh1(kp, mp["qh0"], mp["Hp"]), qh2(kp, mp["Hp"]))
             admissible = bool(np.isfinite(f_indep) and dlam >= -1.0e-12 and kp >= kp_n - 1.0e-12)
             if abs(f_indep) < F_TOL_HONEST and admissible:
+                if out is not None:
+                    out["u"], out["vertex"] = np.array(u, float), False
                 return sig_new, kp, True, f_indep, True
     f_tr_now = _yf_inv_hard(xi_tr, rho_tr, r, kp_n, mp)
     return np.array(sig_tr, float), kp_n, True, f_tr_now, False
@@ -1382,12 +1404,12 @@ def _return_map_tensor_det(sig_n, deps, mp, kp_n):
     return _return_map_tensor_1(sig_n, deps, mp, kp_n, True)   # honest failure: the direct-return fallback
 
 
-def _return_map_tensor_1(sig_n, deps, mp, kp_n, hardening=True):
-    """One direct (un-sub-incremented) tensor return — the pre-B1 return_map_tensor."""
+def _return_map_tensor_1(sig_n, deps, mp, kp_n, hardening=True, u0=None, out=None):
+    """One direct (un-sub-incremented) tensor return — the pre-B1 return_map_tensor. u0 / out: see return_map_hardening."""
     sig_tr = elastic_pred_tensor(sig_n, deps, mp)
     w, V = np.linalg.eigh(voigt_to_mat(sig_tr))           # w ascending, V columns = eigenvectors
     if hardening:
-        sp, kp_new, plastic, _, conv = return_map_hardening(w, mp, kp_n)
+        sp, kp_new, plastic, _, conv = return_map_hardening(w, mp, kp_n, u0=u0, out=out)
     else:
         sp, plastic, _, _, conv = return_map_principal(w, mp)
         kp_new = kp_n
@@ -1464,6 +1486,62 @@ def return_map_tensor_frozen(sig_n, deps, mp, kp_n, fs, hardening=True):
     return s, k, True
 
 
+def _branch_piece(sx, d, mp, kx, branch):
+    """One piece on a GIVEN branch: ("regular", u_c) warm-starts the plain Newton from the root u_c, ("vertex", None)
+    evaluates the vertex return directly, ("elastic", None) / None the default return. Returns (sig, kp, ok)."""
+    if branch is not None and branch[0] == "regular":
+        o = _return_map_tensor_1(sx, d, mp, kx, True, u0=branch[1])
+        return o[0], o[1], bool(o[3])
+    if branch is not None and branch[0] == "vertex":
+        tr = elastic_pred_tensor(sx, d, mp)
+        xi_t, rho_t, _th, *_ = invariants(tr)
+        vx = return_map_vertex(xi_t / SQRT3, rho_t, mp, kx)
+        if vx is None:
+            return np.array(sx, float), kx, False
+        return np.array([vx[0], vx[0], vx[0], 0.0, 0.0, 0.0]), vx[1], True
+    o = _return_map_tensor_1(sx, d, mp, kx, True)
+    return o[0], o[1], bool(o[3])
+
+
+def consistent_tangent_kp_branch(sig_n, deps, mp, kp_n, rel_step=1.0e-6):
+    """consistent_tangent_kp's frozen-schedule central FD, with every piece of every leg following the CENTRE piece's
+    branch (its regular root warm-started, its vertex, or elastic; _branch_piece) and a failed leg reported, not
+    differenced: (C, dk) or None. For the C1 gate (apeGmsh #2621 F2 review): an adaptive schedule's pieces sit at the
+    edge of their Newton's convergence, so the default solve of a leg can fail or land on another branch."""
+    fs = return_map_schedule(sig_n, deps, mp, kp_n, True) if int(mp.get("max_subincr", 0)) > 0 else []
+    if fs is None:
+        return None
+    deps = np.asarray(deps, float)
+    branches, s, k = [], np.array(sig_n, float).copy(), kp_n
+    for f in (fs if fs else [1.0]):
+        cen = {}
+        sn, kn, pl, cv = _return_map_tensor_1(s, deps * f, mp, k, True, out=cen)
+        if not cv:
+            return None
+        branches.append(("regular", cen["u"]) if "u" in cen else (("vertex", None) if (pl and cen.get("vertex")) else ("elastic", None)))
+        s, k = sn, kn
+
+    def run(dl):
+        sx, kx = np.array(sig_n, float).copy(), kp_n
+        for f, br in zip((fs if fs else [1.0]), branches):
+            sx, kx, ok = _branch_piece(sx, dl * f, mp, kx, br)
+            if not ok:
+                return None
+        return sx, kx
+    base = mp["fc"] / mp["E"]
+    C, dk = np.zeros((6, 6)), np.zeros(6)
+    for j in range(6):
+        h = rel_step * (abs(deps[j]) + base)
+        dp = deps.copy(); dp[j] += h
+        dm = deps.copy(); dm[j] -= h
+        a, b = run(dp), run(dm)
+        if a is None or b is None:
+            return None
+        C[:, j] = (a[0] - b[0]) / (2.0 * h)
+        dk[j] = (a[1] - b[1]) / (2.0 * h)
+    return C, dk
+
+
 def consistent_tangent_kp(sig_n, deps, mp, kp_n, hardening=True, rel_step=1.0e-6):
     """Numerical algorithmic tangent (dsigma/depsilon 6x6, dkp/depsilon 6) by central difference of the map.
     A sub-incremented return is differenced with its piece schedule FROZEN (F2): the as-is map changes its piece
@@ -1501,7 +1579,12 @@ def chain_rule_tangent(sig_n, deps, mp, kp_n, rel_step=1.0e-7):
     Voigt slot of sig_n moves both symmetric entries, the kernel's convention), then
         J_k = A_k (J_{k-1} + f_k C) + b_k (x) K_{k-1},   K_k = a_k . (J_{k-1} + f_k C) + e_k K_{k-1},  J_0 = K_0 = 0.
     Returns (J, K, fs) or None if the map fails, or if a perturbed piece of the per-piece FD does not converge (its
-    partials would be the FD of the fallback, not of the piece)."""
+    partials would be the FD of the fallback, not of the piece). Every perturbed piece follows the CENTRE piece's
+    branch: a regular centre's root warm-starts the leg's plain Newton (u0), a vertex centre evaluates the leg on the
+    vertex (return_map_vertex). An adaptive schedule's pieces sit at the edge of their Newton's convergence by
+    construction, so a leg 1e-7 away could fail from the trial start, or converge to another branch, while the root
+    branch the centre converged to, the one the chain differentiates, is still there (C1's skips, apeGmsh #2621 F2
+    review: 20 skipped vs 16 tested before)."""
     fs = return_map_schedule(sig_n, deps, mp, kp_n, True)
     if fs is None:
         return None
@@ -1512,19 +1595,27 @@ def chain_rule_tangent(sig_n, deps, mp, kp_n, rel_step=1.0e-7):
     for f in (fs if fs else [1.0]):
         d = deps * f
         A, a = np.zeros((6, 6)), np.zeros(6)
+        cen = {}
+        oc = _return_map_tensor_1(s, d, mp, k, True, out=cen)
+        branch = ("regular", cen["u"]) if "u" in cen else (("vertex", None) if (oc[2] and cen.get("vertex")) else ("elastic", None))
+
+        def piece(sx, kx):
+            # every leg follows the CENTRE's branch (_branch_piece): its regular root warm-started, its vertex, or elastic
+            sg, kk, ok = _branch_piece(sx, d, mp, kx, branch)
+            return sg, kk, True, ok
         for m in range(6):
             hs = rel_step * (np.max(np.abs(s)) + mp["fc"])
             sp_, sm_ = s.copy(), s.copy()
             sp_[m] += hs; sm_[m] -= hs
-            o1 = _return_map_tensor_1(sp_, d, mp, k, True)
-            o2 = _return_map_tensor_1(sm_, d, mp, k, True)
+            o1 = piece(sp_, k)
+            o2 = piece(sm_, k)
             if not (o1[3] and o2[3]):
                 return None
             A[:, m] = (o1[0] - o2[0]) / (2.0 * hs)
             a[m] = (o1[1] - o2[1]) / (2.0 * hs)
         hk = rel_step * (1.0 + abs(k))
-        o1 = _return_map_tensor_1(s, d, mp, k + hk, True)
-        o2 = _return_map_tensor_1(s, d, mp, k - hk, True)
+        o1 = piece(s, k + hk)
+        o2 = piece(s, k - hk)
         if not (o1[3] and o2[3]):
             return None
         b = (o1[0] - o2[0]) / (2.0 * hk)
@@ -5113,6 +5204,7 @@ def run_f2_chain_gate(verbose=True):
     errs, errk, lastp, npieces = [], [], [], []
     n_by = {"det": 0, "adaptive": 0}
     tries = 0
+    skipped = 0                                          # sub-incremented samples with no usable reference (bounded below)
     while (n_by["det"] < 8 or n_by["adaptive"] < 8) and tries < 8000:
         tries += 1
         d = rng.uniform(-1.0, 1.0, 6) * np.array([3e-3, 3e-3, 3e-3, 1.5e-3, 1.5e-3, 1.5e-3])
@@ -5125,11 +5217,17 @@ def run_f2_chain_gate(verbose=True):
             continue
         cr = chain_rule_tangent(np.zeros(6), d, mp, kp0)
         if cr is None:
+            skipped += 1
             continue
         J, K, _ = cr
-        C, dk = consistent_tangent_kp(np.zeros(6), d, mp, kp0)
-        C2, _ = consistent_tangent_kp(np.zeros(6), d, mp, kp0, rel_step=3.0e-7)
+        r1 = consistent_tangent_kp_branch(np.zeros(6), d, mp, kp0)
+        r2 = consistent_tangent_kp_branch(np.zeros(6), d, mp, kp0, rel_step=3.0e-7)
+        if r1 is None or r2 is None:
+            skipped += 1                                 # a leg fails even on the centre's branch: no reference
+            continue
+        (C, dk), (C2, _) = r1, r2
         if np.linalg.norm(C - C2) > 1.0e-5 * np.linalg.norm(C):
+            skipped += 1
             continue                                     # the stencil crosses a yield/apex switch
         errs.append(float(np.linalg.norm(J - C) / np.linalg.norm(C)))
         errk.append(float(np.linalg.norm(K - dk) / max(np.linalg.norm(dk), 1e-300)))
@@ -5147,8 +5245,9 @@ def run_f2_chain_gate(verbose=True):
     res["C1_n"], res["C1_pieces"] = len(errs), npieces
     res["C1_worst"], res["C1_worst_kp"] = (max(errs) if errs else 1.0), (max(errk) if errk else 1.0)
     res["C1_n_by_mode"] = dict(n_by)
+    res["C1_skipped"] = skipped                          # bounded like the kernel check's E1: skipped <= tested
     res["C1_ok"] = bool(n_by["det"] >= 8 and n_by["adaptive"] >= 8 and res["C1_worst"] < 1.0e-5
-                        and res["C1_worst_kp"] < 1.0e-5)
+                        and res["C1_worst_kp"] < 1.0e-5 and skipped <= len(errs))
     mp = mp_det
     d = np.array([-4.0e-4, 1.0e-4, 1.0e-4, 5.0e-5, 0.0, 0.0])
     J, K, fs = chain_rule_tangent(np.zeros(6), d, mp, 0.2)
@@ -5260,7 +5359,7 @@ def run_f2_chain_gate(verbose=True):
     res["C6_ok"] = bool(all(n >= (40, 20, 100)[p] and sb == 0 and w < 1.0e-6 for (_, p), (n, sb, w) in res["C6_units"].items()))
     res["PASS"] = bool(res["C1_ok"] and res["C2_ok"] and res["C3_ok"] and res["C4_ok"] and res["C5_ok"] and res["C6_ok"])
     if verbose:
-        print(f"  C1 chain rule vs frozen-schedule FD: n={res['C1_n']} pieces={npieces} worst sigma {res['C1_worst']:.2e} "
+        print(f"  C1 chain rule vs frozen-schedule FD: n={res['C1_n']} (skipped {res['C1_skipped']}) pieces={npieces} worst sigma {res['C1_worst']:.2e} "
               f"kp {res['C1_worst_kp']:.2e}")
         print(f"  C2 direct return: {res['C2_rel']:.2e}   C3 last-piece tangent misses by >= {res['C3_min_last_piece']:.2e}")
         print(f"  C4 proj-weight gradients: n={n4} tc {worst_c:.2e} ct {worst_t:.2e}")

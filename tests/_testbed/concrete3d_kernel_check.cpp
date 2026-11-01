@@ -1196,7 +1196,7 @@ static void run_f2_chain() {
     // tested against the warm-start reference (fdScheduleWarm: the same equations, each leg's piece Newton started from
     // the centre's root, i.e. the branch the IFT differentiates); skipped = neither reference applies.
     unsigned s3 = 2621u; auto rn = [&]() { s3 = s3 * 1664525u + 1013904223u; return (s3 >> 8) * (1.0 / 16777216.0); };
-    int n2 = 0, n4 = 0, nF = 0, skipped = 0, tested = 0, testedWarm = 0; double worstDW = 0, worstKW = 0; double worstD = 0, worstK = 0, worstF = 0;
+    int n2 = 0, n4 = 0, nF = 0, skipped = 0, tested = 0, testedWarm = 0, skippedNoWarm = 0, skippedWarmRough = 0; double worstDW = 0, worstKW = 0; double worstD = 0, worstK = 0, worstF = 0;
     double mutBK = 1e300, mutLast = 1e300;                 // E2: how far the two mutants sit from the FD
     double kerBK = 1e300, kerLast = 1e300;                 // E2: how far the KERNEL's Dtan6 sits from each mutant
     int nMut = 0;
@@ -1226,7 +1226,7 @@ static void run_f2_chain() {
         fdSchedule(q, s0, d, k0, fr, nf, Dt, dk, eD, eK, smooth);
         if (!smooth) {
             bool okW = false; fdScheduleWarm(q, s0, d, k0, fr, nf, Dt, dk, eD, eK, smooth, okW);
-            if (!smooth) { ++skipped; continue; }
+            if (!smooth) { ++skipped; if (okW) ++skippedWarmRough; else ++skippedNoWarm; continue; }
             ++testedWarm; worstDW = std::fmax(worstDW, eD); worstKW = std::fmax(worstKW, eK);
         }
         ++tested; if (sub == 2) ++n2; else { ++n4; if (nc4 < 40) { Case& c = c4[nc4++]; for (int i = 0; i < 6; ++i) { c.s0[i] = s0[i]; c.d[i] = d[i]; } c.k0 = k0; c.fl = q.flowPotential; } }
@@ -1270,8 +1270,8 @@ static void run_f2_chain() {
     // n2/n4 >= 20 is the coverage floor; skipped <= tested catches a generator that mostly misses.
     check(n2 >= 20 && n4 >= 20 && skipped <= tested && worstD < 1.0e-7 && worstK < 1.0e-7,
           "E1 failure-driven 2-/4-piece returns: chain-rule Dtan6 and d kp/de == frozen-schedule FD to 1e-7");
-    std::printf("       (2-piece %d, 4-piece %d, of them on the warm-start reference %d (worst %.2e / %.2e); skipped (no reference) %d; worst Dtan6 %.2e, worst dkp %.2e)\n",
-                n2, n4, testedWarm, worstDW, worstKW, skipped, worstD, worstK);
+    std::printf("       (2-piece %d, 4-piece %d, of them on the warm-start reference %d (worst %.2e / %.2e); skipped (no reference) %d = no warm branch %d + warm branch not smooth %d; worst Dtan6 %.2e, worst dkp %.2e)\n",
+                n2, n4, testedWarm, worstDW, worstKW, skipped, skippedNoWarm, skippedWarmRough, worstD, worstK);
     check(nF >= 40 && worstF < 1.0e-7, "E1 forced {1/2,1/2} and {1/4 x4} schedules: chain-rule tangent == FD to 1e-7");
     std::printf("       (forced cases %d, worst %.2e)\n", nF, worstF);
     check(nMut >= 20 && kerBK > 1.0e-5 && kerLast > 1.0e-3 && mutBK > 1.0e-5 && mutLast > 1.0e-3,
@@ -2032,7 +2032,9 @@ static bool d13Piece(const Params& q, const double s[6], const double d[6], doub
                     auto resAt = [&](double t, double Ro[4]) { double ww[3] = {w[0], w[1], w[2]}; ww[b] += t;
                         double s2[6] = {ww[0], ww[1], ww[2], 0, 0, 0}, x2, r2, t2; invariants(s2, x2, r2, t2);
                         cdpm2HardeningResidual(pr.xi, pr.rho, pr.dlam, pr.kp, x2, r2, k, lodeR(t2, q.e), hardeningLodeFactor(r2, t2, q), q, Ro, nullptr, q.flowPotential != 1); };
-                    const double hh = 1e-4 * m; double Rp[4], Rm[4], Rp2[4], Rm2[4]; resAt(hh, Rp); resAt(-hh, Rm); resAt(hh / 2, Rp2); resAt(-hh / 2, Rm2);
+                    // step 1e-5 max|w|: the reference's truncation at 1e-4 reached 2.7e-7 on a strongly curved 10-piece rescue
+                    // (sweep 1e-3 / 3e-4 / 1e-4 / 3e-5 / 1e-5 / 1e-6: 2.7e-3 / 2.2e-5 / 2.7e-7 / 2.3e-9 / <= 7.7e-10 / 4-7e-9, round-off)
+                    const double hh = 1e-5 * m; double Rp[4], Rm[4], Rp2[4], Rm2[4]; resAt(hh, Rp); resAt(-hh, Rm); resAt(hh / 2, Rp2); resAt(-hh / 2, Rm2);
                     for (int i = 0; i < 4; ++i) { const double d1 = (Rp[i] - Rm[i]) / (2 * hh), d2 = (Rp2[i] - Rm2[i]) / hh; rhs[i] = -(4 * d2 - d1) / 3; }
                 }
                 double u[4]; solve(rhs, u);
@@ -2170,6 +2172,121 @@ static void run_exact_tangent(double s, double L, const char* tag) {
                 n, kinds[0], kinds[1], kinds[2], kinds[3], nSkip, worstE, worstK, nDam, worstD, nApex, minApexSplit);
 }
 
+// D12b — the Lode factor's axis weight in lodeFactor mode 1 (apeGmsh #2621 F2 review). With -lodeFactor 1 (Params::
+// lodeFactor = 1; the replay contract does not admit it as a material option, so it is covered here) R4's factor is
+// cThetaReg = 1 + W(rho_tr) ((2 cos theta)^2 - 1), W = rho^2 / (rho^2 + rho_th^2), rho_th = 1e-4 ft, and principalJacobian's
+// closed-form d cos2/dw carries the term dW/drho (4x^2 - 1) s_b / rho_tr. Its weight relative to d cos2 falls like
+// (rho_th / rho_tr)^2, so regular returns with a small deviator see it: trials just below the tension apex (0.95-0.999 of its
+// hydrostatic level) with an off-meridian deviator of 1e-3..1e-1 ft. Both flows, kappa_n below and
+// above 1, MPa / kPa / Pa: principalJacobian's d sp/dw (the stress rows) and d kappa/dw == the IFT of cdpm2HardeningResidual
+// with -dR/dw by a Richardson central FD of the residual at fixed unknowns (step 1e-3 rho_tr, so the axis weight is
+// resolved), to 1e-7.
+static void run_lode_weight_kappa(double s, const char* tag) {
+    std::printf("[D12b] apeGmsh #2621: the lodeFactor 1 axis weight in the regular return's tangent%s%s\n", tag[0] ? ", units " : "", tag);
+    int n = 0, nLo = 0, nHi = 0; double worstK = 0, worstS = 0, minRho = 1e300, maxRho = 0;
+    for (int flow = 0; flow < 2; ++flow) for (double k0 : {0.3, 0.8, 1.2}) for (double fr : {0.999, 0.99, 0.95})
+    for (double rr : {1e-3, 3e-3, 1e-2, 3e-2, 1e-1}) for (int shape = 0; shape < 3; ++shape) {
+        Params q = scaledBase(s); q.flowPotential = flow; q.lodeFactor = 1;
+        // just below the tension apex (sigV_apex: f(sqrt3 sigV, 0) = 0, bisected), an off-meridian deviator of size rr ft
+        // (three distinct principals): the regular return with a small rho_tr, where the axis weight counts
+        double lo = 0.0, hi = 10.0 * q.ft;
+        for (int it = 0; it < 200; ++it) { const double m = 0.5 * (lo + hi); if (yfInvHard(SQRT3 * m, 0.0, 1.0, k0, q) > 0.0) hi = m; else lo = m; }
+        const double dirs[3][3] = {{2.0, -1.2, -0.8}, {1.5, 0.3, -1.8}, {-2.0, 1.4, 0.6}};
+        double nd = 0; for (int a = 0; a < 3; ++a) nd += dirs[shape][a] * dirs[shape][a];
+        double w[3]; for (int a = 0; a < 3; ++a) w[a] = fr * lo + rr * q.ft * dirs[shape][a] / std::sqrt(nd);
+        const PrincipalResult pr = returnMapHardening(w, q, k0);
+        if (!pr.converged || !pr.plastic || pr.apex) continue;
+        double D[3][3], hs[7]; principalJacobian(w, pr, q, true, D, hs);
+        double sv[6] = {w[0], w[1], w[2], 0, 0, 0}, xitr, rhotr, thtr; invariants(sv, xitr, rhotr, thtr);
+        double R[4], J[4][4];
+        cdpm2HardeningResidual(pr.xi, pr.rho, pr.dlam, pr.kp, xitr, rhotr, k0, lodeR(thtr, q.e), hardeningLodeFactor(rhotr, thtr, q), q, R, J, flow != 1);
+        const double sV = (w[0] + w[1] + w[2]) / 3.0, st[3] = {w[0] - sV, w[1] - sV, w[2] - sV};
+        double errK = 0, errS = 0, nK = 0, nS = 0;
+        for (int b = 0; b < 3; ++b) {
+            auto resAt = [&](double t, double Ro[4]) { double ww[3] = {w[0], w[1], w[2]}; ww[b] += t;
+                double s2[6] = {ww[0], ww[1], ww[2], 0, 0, 0}, x2, r2, t2; invariants(s2, x2, r2, t2);
+                cdpm2HardeningResidual(pr.xi, pr.rho, pr.dlam, pr.kp, x2, r2, k0, lodeR(t2, q.e), hardeningLodeFactor(r2, t2, q), q, Ro, nullptr, flow != 1); };
+            const double hh = 1e-3 * rhotr; double Rp[4], Rm[4], Rp2[4], Rm2[4]; resAt(hh, Rp); resAt(-hh, Rm); resAt(hh / 2, Rp2); resAt(-hh / 2, Rm2);
+            double M[4][5];
+            for (int i = 0; i < 4; ++i) { for (int j = 0; j < 4; ++j) M[i][j] = J[i][j]; const double d1 = (Rp[i] - Rm[i]) / (2 * hh), d2 = (Rp2[i] - Rm2[i]) / hh; M[i][4] = -(4 * d2 - d1) / 3; }
+            for (int c = 0; c < 4; ++c) { int piv = c; for (int r = c + 1; r < 4; ++r) if (std::fabs(M[r][c]) > std::fabs(M[piv][c])) piv = r;
+                for (int j = 0; j < 5; ++j) std::swap(M[c][j], M[piv][j]);
+                for (int r = 0; r < 4; ++r) if (r != c) { const double f = M[r][c] / M[c][c]; for (int j = c; j < 5; ++j) M[r][j] -= f * M[c][j]; } }
+            double u[4]; for (int i = 0; i < 4; ++i) u[i] = M[i][4] / M[i][i];
+            const double eK = hs[3 + b] - u[3]; errK += eK * eK; nK += u[3] * u[3];
+            for (int a = 0; a < 3; ++a) {
+                const double dsd = (u[1] * rhotr - pr.rho * (st[b] / rhotr)) / (rhotr * rhotr);
+                const double ref = ((a == b ? 1.0 : 0.0) - 1.0 / 3.0) * (pr.rho / rhotr) + st[a] * dsd + u[0] / SQRT3;
+                errS += (D[a][b] - ref) * (D[a][b] - ref); nS += ref * ref;
+            }
+        }
+        const double eK = std::sqrt(errK / std::max(nK, 1e-300)), eS = std::sqrt(errS / std::max(nS, 1e-300));
+        ++n; worstK = std::max(worstK, eK); worstS = std::max(worstS, eS); minRho = std::min(minRho, rhotr / q.ft); maxRho = std::max(maxRho, rhotr / q.ft);
+        if (k0 < 1.0) ++nLo; else ++nHi;
+    }
+    check(n >= 40 && nLo >= 10 && nHi >= 10 && worstK < 1.0e-7 && worstS < 1.0e-7,
+          label(tag, "D12b lodeFactor 1, off the meridian near the tension apex: d kappa/dw and d sp/dw == the residual IFT to 1e-7").c_str());
+    std::printf("       (returns %d, kappa_n < 1: %d, >= 1: %d, rho_tr/ft %.1e..%.1e; worst kappa row %.2e, stress rows %.2e)\n",
+                n, nLo, nHi, minRho, maxRho, worstK, worstS);
+}
+
+// D13r — the adaptive rescue against the exact reference (apeGmsh #2621 F2: the rescue stratum). The rescue integrates
+// the failure-driven halving schedule; D10 checks its tangent against the FD on that frozen schedule where one exists
+// (D10a) and, where a piece converges at the centre only, against the chain rebuilt from the kernel's own piece
+// sensitivities (D10b, a consistency check). Here EVERY rescue case, measurable or not, is checked against the exact
+// chain over its own schedule: each piece by the IFT of cdpm2HardeningResidual (d13Piece: exact-Lode on the meridian,
+// residual-FD right-hand side off it, analytic vertex IFT), an independent spectral assembly, chained with the pieces'
+// own fractions. returnMapTensor's Dtan6 and d kp/de == that chain to 1e-7, D10's generator, MPa / kPa / Pa.
+static void run_rescue_exact(double s, const char* tag) {
+    std::printf("[D13r] apeGmsh #2621: the adaptive rescue's tangent against the exact chain over its own schedule%s%s\n", tag[0] ? ", units " : "", tag);
+    Params qb = scaledBase(s); qb.maxSubIncr = 10; qb.subIncrMode = 0; qb.subIncrMaxPieces = 1; qb.subIncrRescue = true;
+    unsigned sr = 2621001u; auto rn = [&]() { sr = sr * 1664525u + 1013904223u; return (sr >> 8) * (1.0 / 16777216.0); };
+    int n = 0, nCd = 0, nLeg = 0, notRef = 0, kinds[4] = {0, 0, 0, 0}; double worstD = 0, worstK = 0;
+    for (long t = 0; t < 400000 && (n < 60 || nLeg < 10); ++t) {   // the legacy-flow rescues are rarer: run until 10 of them
+        Params q = qb; q.flowPotential = ((t >> 2) & 1) ? 1 : 0;
+        const double scT = q.flowPotential ? 25.0 : 1.5;
+        const int mode = t % 4; double d[6];
+        if (mode == 0) { for (int i = 0; i < 6; ++i) d[i] = (rn() * 2 - 1) * 3e-3; for (int i = 3; i < 6; ++i) d[i] *= 0.5; }
+        else if (mode == 1) { const double v = -rn() * 8e-3; for (int i = 0; i < 3; ++i) d[i] = v + (rn() * 2 - 1) * 2e-4; for (int i = 3; i < 6; ++i) d[i] = (rn() * 2 - 1) * 1e-4; }
+        else if (mode == 2) { d[0] = -rn() * 5e-3; d[1] = (rn() * 2 - 1) * 1.5e-3; d[2] = (rn() * 2 - 1) * 1.5e-3; d[3] = (rn() * 2 - 1) * 5e-4; d[4] = d[5] = 0; }
+        else { const double v = rn() * 1e-3; for (int i = 0; i < 3; ++i) d[i] = v + (rn() * 2 - 1) * 3e-4; for (int i = 3; i < 6; ++i) d[i] = (rn() * 2 - 1) * 2e-4; }
+        for (int i = 0; i < 6; ++i) d[i] *= scT;
+        const double k0 = rn() * 1.5;
+        double s0[6] = {0, 0, 0, 0, 0, 0};
+        if (t % 5 == 1) { const double p = -(rn()) * 10.0 * s; s0[0] = s0[1] = s0[2] = p; s0[3] = (rn() * 2 - 1) * 3.0 * s; }
+        double sn[6], kn, Dt[6][6], dk[6]; int sub = 0;
+        if (returnMapTensor(q, s0, d, k0, true, sn, kn, Dt, true, &sub, dk) != 0 || sub < 2) continue;
+        { double a[6], b, c[6][6]; if (returnMapTensor1(q, s0, d, k0, true, a, b, c, false) == 0) continue; }
+        const double h2[2] = {0.5, 0.5}, h4[4] = {0.25, 0.25, 0.25, 0.25};
+        { double a[6], b, c[6][6];
+          if (returnMapTensorSchedule(q, s0, d, k0, h2, 2, a, b, c, false) == 0 || returnMapTensorSchedule(q, s0, d, k0, h4, 4, a, b, c, false) == 0) continue; }
+        double fr[64]; const int nf = failureSchedule(q, s0, d, k0, fr);
+        if (nf != sub) continue;                                 // not the kernel's schedule (D10 counts these)
+        // the exact chain over the schedule
+        double Cel[6][6]; elasticC(q, Cel);
+        double G[6][6] = {{0}}, g[6] = {0, 0, 0, 0, 0, 0}, sp[6], k = k0; bool ok = true;
+        for (int i = 0; i < 6; ++i) sp[i] = s0[i];
+        for (int p = 0; p < nf && ok; ++p) {
+            double dd[6]; for (int i = 0; i < 6; ++i) dd[i] = d[i] * fr[p];
+            double P[6][6], Sk[6], Rr[6], Kk, sq[6], kq; int kind;
+            if (!d13Piece(q, sp, dd, k, P, Sk, Rr, Kk, sq, kq, kind)) { ok = false; break; }
+            ++kinds[kind];
+            double T[6][6]; for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) T[i][j] = G[i][j] + Cel[i][j] * fr[p];
+            double Gn[6][6], gn[6];
+            for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) { double v = Sk[i] * g[j]; for (int m = 0; m < 6; ++m) v += P[i][m] * T[m][j]; Gn[i][j] = v; }
+            for (int j = 0; j < 6; ++j) { double v = Kk * g[j]; for (int m = 0; m < 6; ++m) v += Rr[m] * T[m][j]; gn[j] = v; }
+            for (int i = 0; i < 6; ++i) { g[i] = gn[i]; sp[i] = sq[i]; for (int j = 0; j < 6; ++j) G[i][j] = Gn[i][j]; } k = kq;
+        }
+        if (!ok) { ++notRef; continue; }
+        ++n; worstD = std::max(worstD, relF6(Dt, G)); worstK = std::max(worstK, relV6(dk, g));
+        if (q.flowPotential) ++nCd; else ++nLeg;
+    }
+    check(n >= 40 && nCd >= 10 && nLeg >= 10 && notRef <= n / 10 && worstD < 1.0e-7 && worstK < 1.0e-7,
+          label(tag, "D13r adaptive rescue: Dtan6 and d kp/de == the exact chain over its own schedule to 1e-7").c_str());
+    std::printf("       (rescue cases %d (legacy %d, cdpm2 %d), no exact piece %d; pieces elastic/meridian/off/vertex %d/%d/%d/%d; worst Dtan6 %.2e, dkp %.2e)\n",
+                n, nLeg, nCd, notRef, kinds[0], kinds[1], kinds[2], kinds[3], worstD, worstK);
+}
+
 int main(int argc, char** argv) {
     run_identities();
     const char* fix = argc > 1 ? argv[1] : "tests/_testbed/concrete3d_oracle_fixture.txt";
@@ -2204,6 +2321,12 @@ int main(int argc, char** argv) {
     run_exact_tangent(1.0, 1.0, "");
     run_exact_tangent(1.0e3, 1.0e-3, "kPa-m");
     run_exact_tangent(1.0e6, 1.0e-3, "Pa-m");
+    run_lode_weight_kappa(1.0, "");
+    run_lode_weight_kappa(1.0e3, "kPa-m");
+    run_lode_weight_kappa(1.0e6, "Pa-m");
+    run_rescue_exact(1.0, "");
+    run_rescue_exact(1.0e3, "kPa-m");
+    run_rescue_exact(1.0e6, "Pa-m");
     std::printf(fails ? "\nKERNEL CHECK: %d FAIL\n" : "\nKERNEL CHECK: ALL PASS\n", fails);
     return fails ? 1 : 0;
 }
