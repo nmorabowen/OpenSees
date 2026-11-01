@@ -41,17 +41,29 @@ cat "$out/guard.txt"
 [ "$rc" -eq 2 ] && grep -q "do not replay bit-exactly under $tag" "$out/guard.txt" \
   || { echo "ERROR: the libm guard did not refuse (exit $rc)"; exit 1; }
 
-echo "== fixture guard: a corrupted fixture must be refused, never truncated, defaulted or ignored"
-# name | awk edit of the libmmt fixture | exit | the message it must produce. Every edit is one an earlier loader
-# accepted (REPLAY PASS 28/28): a value that truncates back, trailing junk, an unchecked index, key, line or domain, a
-# field that was parsed and never compared. Exit 2 = refused at load; exit 1 = a compared value differs.
-while IFS='|' read -r m prog want_rc want; do
-  awk "$prog" "$fix" > "$out/$m.txt"
-  cmp -s "$fix" "$out/$m.txt" && { echo "ERROR: mutant $m changed nothing"; exit 1; }
-  set +e; "$out/concrete3d_replay" check "$out/$m.txt" --cross > "$out/$m.log" 2>&1; rc=$?; set -e
-  echo "$m: exit $rc: $(grep -E 'REPLAY (ERROR|FAIL)|MISMATCH' "$out/$m.log" | head -1)"
-  [ "$rc" -eq "$want_rc" ] && grep -q "$want" "$out/$m.log" || { echo "ERROR: mutant $m did not give exit $want_rc with '$want' (exit $rc)"; exit 1; }
-done <<'MUTANTS'
+echo "== recording the inputs under glibc (artifact)"
+"$out/concrete3d_replay" record "$fix" "$out/concrete3d_replay_records.linux-glibc.txt" --kernel-blob "$blob"
+
+echo "== reported, not gated: the libmmt records replayed under glibc (cross-libm diagnostic)"
+"$out/concrete3d_replay" check "$fix" --cross || true
+
+# mutants <fixture> <cross flag or ""> : each row of stdin is name | awk edit (applied to <fixture>) | exit | message.
+# Every edit is one an earlier loader accepted (REPLAY PASS 28/28): a value that truncates back, trailing junk, an
+# unchecked index, key, line or parameter domain, a field that was parsed and never compared. A mutant that changes
+# nothing is an error. Exit 2 = refused at load; exit 1 = a compared value differs.
+mutants() {
+  local src="$1" cross="$2" m prog want_rc want rc
+  while IFS='|' read -r m prog want_rc want; do
+    awk "$prog" "$src" > "$out/$m.txt"
+    cmp -s "$src" "$out/$m.txt" && { echo "ERROR: mutant $m changed nothing"; exit 1; }
+    set +e; "$out/concrete3d_replay" check "$out/$m.txt" $cross > "$out/$m.log" 2>&1; rc=$?; set -e
+    echo "$m: exit $rc: $(grep -E 'REPLAY (ERROR|FAIL)|MISMATCH' "$out/$m.log" | head -1)"
+    [ "$rc" -eq "$want_rc" ] && grep -q "$want" "$out/$m.log" || { echo "ERROR: mutant $m did not give exit $want_rc with '$want' (exit $rc)"; exit 1; }
+  done
+}
+
+echo "== load guard: corrupted libmmt fixtures must be refused at load (libm-independent: load runs before any replay)"
+mutants "$fix" --cross <<'MUTANTS'
 O_status_frac|!d && /^O /{$2=$2+0.5; d=1} 1|2|O status is not an integer
 Z_status_frac|!d && /^Z /{$6=$6+0.5; d=1} 1|2|Z status is not an integer
 Z_pass_index|!d && /^Z /{$2=$2+1; d=1} 1|2|is not its position
@@ -70,18 +82,15 @@ C0_not_E2|!d && /^C /{$2="1e-3"; d=1} 1|2|is not E\[2\] bit for bit
 meta_twice|!d && /^#@ /{print "#@ "; d=1} 1|2|the #@ line must come once
 meta_key|/^#@ /{$0=$0 " junk=1"} 1|2|the #@ line has an unexpected key junk
 meta_blob|/^#@ /{sub(/kernel-blob=[0-9a-f]+/, "kernel-blob=x")} 1|2|kernel-blob is not a 40-hex
-T2_end_R|!d && /^T /{$4="0.5"; d=1} 1|1|T2end
 MUTANTS
-
-echo "== recording the inputs under glibc (artifact)"
-"$out/concrete3d_replay" record "$fix" "$out/concrete3d_replay_records.linux-glibc.txt" --kernel-blob "$blob"
-
-echo "== reported, not gated: the libmmt records replayed under glibc (cross-libm diagnostic)"
-"$out/concrete3d_replay" check "$fix" --cross || true
 
 if [ -f "$glibc_fix" ]; then
   echo "== GATE: the committed glibc fixture, bit-exact on this tree's kernel (refused if its glibc is not $glibc)"
   "$out/concrete3d_replay" check "$glibc_fix"
+  echo "== compare guard: an output corrupted in the glibc fixture must be caught (on this libm's own records, after the gate)"
+  mutants "$glibc_fix" "" <<'MUTANTS'
+T2_end_R|!d && /^T /{$4="0.5"; d=1} 1|1|1 values differ: T2end
+MUTANTS
 else
   echo "::error::No glibc fixture is committed (tests/_testbed/concrete3d_replay_records.linux-glibc.txt): FAILING BY DESIGN."
   echo "Commit this run's artifact concrete3d_replay_records.linux-glibc.txt ($tag) at that path; the next run gates on it."
