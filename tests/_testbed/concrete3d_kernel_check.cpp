@@ -21,6 +21,7 @@
 #include <fstream>
 #include <string>
 #include <initializer_list>
+#include <vector>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -1081,6 +1082,102 @@ static void fdSchedule(const Params& q, const double s0[6], const double d[6], d
     }
 }
 
+// The WARM-START reference of a frozen schedule (apeGmsh #2621 F2, E1 at the cdpm2 trials' 20x scale). At kappa_p ~ 1e4
+// with a trial overshoot ~ 1e4 a piece can sit on the edge of its return Newton's convergence basin: the centre converges,
+// and the same Newton from its default start (the trial) DIVERGES at a leg 1e-8, 1e-10 or even 1e-13 away (kappa_p to
+// -1.6 from 8.1e3, |R1|/fc ~ 1e6: not a tolerance, the starting guess). The map has no FD there, but the object the IFT
+// differentiates does: the root branch the centre converged to. This reference follows that branch. Every leg runs the
+// SAME schedule; a plastic piece solves the same system (cdpm2HardeningResidual, the kernel's R1..R4 and analytic
+// Jacobian) by Newton STARTED FROM THE CENTRE'S ROOT of that piece; an elastic centre piece must stay elastic in the
+// kernel's own return. A vertex (apex) piece is not followed (returns false). At zero perturbation the branch must
+// reproduce the kernel's centre (stress to 1e-12 of its scale, kp to 1e-12), or the reference is not used.
+struct WarmPiece { bool elastic; double xi, rho, dlam, kp; };
+static bool warmPieceReturn(const Params& q, const double s[6], const double dd[6], double k, const WarmPiece& c,
+                            double sOut[6], double& kOut) {
+    double str[6]; elasticPredTensor(s, dd, q, str);
+    double A[3][3], w[3], V[3][3]; voigtToMat(str, A); eig3sym(A, w, V);
+    if (c.elastic) {
+        const PrincipalResult pr = returnMapHardening(w, q, k);
+        if (pr.plastic || !pr.converged) return false;
+        for (int i = 0; i < 6; ++i) sOut[i] = str[i]; kOut = k; return true;
+    }
+    double sv[6] = {w[0], w[1], w[2], 0, 0, 0}, xitr, rhotr, thtr; invariants(sv, xitr, rhotr, thtr);
+    const double r = lodeR(thtr, q.e), cos2 = hardeningLodeFactor(rhotr, thtr, q);
+    double u[4] = {c.xi, c.rho, c.dlam, c.kp}; bool conv = false;
+    for (int it = 0; it < 30 && !conv; ++it) {
+        double R[4], J[4][4];
+        cdpm2HardeningResidual(u[0], u[1], u[2], u[3], xitr, rhotr, k, r, cos2, q, R, J, q.flowPotential != 1);
+        double M[4][5]; for (int i = 0; i < 4; ++i) { for (int j = 0; j < 4; ++j) M[i][j] = J[i][j]; M[i][4] = -R[i]; }
+        for (int cc = 0; cc < 4; ++cc) {
+            int piv = cc; for (int qq = cc + 1; qq < 4; ++qq) if (std::fabs(M[qq][cc]) > std::fabs(M[piv][cc])) piv = qq;
+            for (int j = 0; j < 5; ++j) { const double t = M[cc][j]; M[cc][j] = M[piv][j]; M[piv][j] = t; }
+            if (M[cc][cc] == 0.0) return false;
+            for (int qq = 0; qq < 4; ++qq) if (qq != cc) { const double f = M[qq][cc] / M[cc][cc]; for (int j = cc; j < 5; ++j) M[qq][j] -= f * M[cc][j]; }
+        }
+        double du[4]; bool small = true;
+        for (int i = 0; i < 4; ++i) { du[i] = M[i][4] / M[i][i]; u[i] += du[i]; }
+        const double sc[4] = {q.fc, q.fc, std::fabs(u[2]) + 1e-300, std::fabs(u[3]) + 1.0};
+        for (int i = 0; i < 4; ++i) if (std::fabs(du[i]) > 1.0e-14 * sc[i]) small = false;
+        conv = small;
+    }
+    if (!conv || !(u[1] > 0.0) || !(u[2] >= 0.0) || !(u[3] >= k)) return false;
+    double sp[3]; const double pn = u[0] / SQRT3, ps = (xitr / SQRT3);
+    for (int a = 0; a < 3; ++a) sp[a] = (w[a] - ps) * (u[1] / rhotr) + pn;
+    double S[3][3]; for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) { double v = 0.0; for (int a = 0; a < 3; ++a) v += V[i][a] * sp[a] * V[j][a]; S[i][j] = v; }
+    matToVoigt(S, sOut); kOut = u[3]; return true;
+}
+// The centre's piece roots on its schedule (the kernel's own return), then the warm-start central FD (h in 1e-8/1e-9/
+// 1e-10, as fdSchedule; smooth = two steps agree to 1e-6). ok = false when a piece is a vertex, when the branch does not
+// reproduce the centre, or when a leg does not converge.
+static void fdScheduleWarm(const Params& q, const double s0[6], const double d[6], double k0, const double* fr, int n,
+                           const double D[6][6], const double dk[6], double& eD, double& eK, bool& smooth, bool& ok) {
+    eD = eK = 1e300; smooth = false; ok = false;
+    std::vector<WarmPiece> roots(n);
+    double s[6], k = k0, sK[6], kK;
+    for (int i = 0; i < 6; ++i) s[i] = s0[i];
+    for (int p = 0; p < n; ++p) {
+        double dd[6]; for (int i = 0; i < 6; ++i) dd[i] = d[i] * fr[p];
+        double str[6]; elasticPredTensor(s, dd, q, str);
+        double A[3][3], w[3], V[3][3]; voigtToMat(str, A); eig3sym(A, w, V);
+        const PrincipalResult pr = returnMapHardening(w, q, k);
+        if (!pr.converged || pr.apex) return;
+        roots[p] = {!pr.plastic, pr.xi, pr.rho, pr.dlam, pr.kp};
+        double Dl[6][6]; if (returnMapTensor1(q, s, dd, k, true, sK, kK, Dl, false) != 0) return;
+        for (int i = 0; i < 6; ++i) s[i] = sK[i]; k = kK;
+    }
+    auto run = [&](const double dl[6], double so[6], double& ko) {
+        double ss[6], kk = k0; for (int i = 0; i < 6; ++i) ss[i] = s0[i];
+        for (int p = 0; p < n; ++p) {
+            double dd[6]; for (int i = 0; i < 6; ++i) dd[i] = dl[i] * fr[p];
+            double sn[6], kn; if (!warmPieceReturn(q, ss, dd, kk, roots[p], sn, kn)) return false;
+            for (int i = 0; i < 6; ++i) ss[i] = sn[i]; kk = kn;
+        }
+        for (int i = 0; i < 6; ++i) so[i] = ss[i]; ko = kk; return true;
+    };
+    {   // the branch reproduces the kernel's centre
+        double sc[6], kc; if (!run(d, sc, kc)) return;
+        double sm = 0.0, ds = 0.0; for (int i = 0; i < 6; ++i) { sm = std::fmax(sm, std::fabs(s[i])); ds = std::fmax(ds, std::fabs(sc[i] - s[i])); }
+        if (ds > 1.0e-12 * std::fmax(sm, q.fc) || std::fabs(kc - k) > 1.0e-12 * std::fmax(1.0, std::fabs(k))) return;
+    }
+    ok = true;
+    double prev[6][6]; bool havePrev = false; bool sm = true; int good = 0;
+    for (double h : {1e-8, 1e-9, 1e-10}) {
+        double F[6][6], FK[6]; bool legs = true;
+        for (int j = 0; j < 6 && legs; ++j) {
+            double dp[6], dm[6], sp[6], smv[6], kp, km; for (int i = 0; i < 6; ++i) dp[i] = dm[i] = d[i]; dp[j] += h; dm[j] -= h;
+            legs = run(dp, sp, kp) && run(dm, smv, km);
+            for (int i = 0; i < 6; ++i) F[i][j] = (sp[i] - smv[i]) / (2 * h);
+            FK[j] = (kp - km) / (2 * h);
+        }
+        if (!legs) { sm = false; continue; }
+        if (havePrev && relF6(F, prev) > 1.0e-6) sm = false;
+        for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) prev[i][j] = F[i][j];
+        havePrev = true; ++good;
+        eD = std::fmin(eD, relF6(D, F)); eK = std::fmin(eK, relV6(dk, FK));
+    }
+    smooth = sm && good >= 2;
+}
+
 static void run_f2_chain() {
     std::printf("[E] F2 (apeGmsh #2621): sub-step chain-rule tangent + analytic damaged tangent\n");
     Params q; q.E = 30000; q.nu = 0.2; q.fc = 30; q.ft = 3; q.e = eccentricityFromKupfer(30, 3, 1.16); q.m0 = m0Of(30, 3, q.e);
@@ -1092,13 +1189,14 @@ static void run_f2_chain() {
     // {1/2,1/2} and {1/4 x4} schedules (returnMapTensorSchedule).
     // On #877 the cdpm2-flow direct return rarely fails at F2's increment sizes (0 of 40000 trials at scale 1; ~10 % at
     // scale 20-30), while the legacy flow still fails ~3 %: the trials alternate legacy flow at F2's scale and cdpm2 flow
-    // at 8x it, so both flows reach the adaptive sub-stepped path. (At 20x the cdpm2 trials land at kappa_p ~ 1e4-8e4 with
-    // a trial overshoot f_tr ~ 1e4, where a piece of the frozen schedule sits on the edge of its Newton's convergence: the
-    // centre returns on that schedule but a stencil leg 1e-8, 1e-10 or even 1e-13 away fails (rc 2), so the FD reference is
-    // unusable and the sample is skipped -- 82 skipped vs 80 tested under UCRT, 76 under libmmt. At 8x: 3 skipped, the
-    // same 3 under both, 37 of the 80 tested on the cdpm2 flow.)
+    // at 20x it, so both flows reach the adaptive sub-stepped path. At 20x the cdpm2 trials land at kappa_p ~ 1e4-8e4 with a
+    // trial overshoot ~ 1e4, where a piece of the frozen schedule can sit on the edge of its return Newton's convergence
+    // basin: the centre returns, and a stencil leg 1e-8 to 1e-13 away diverges from the trial start (kappa_p to -1.6 from
+    // 8.1e3), so fdSchedule's FD does not exist there (82 such samples under UCRT, 76 under libmmt). Those samples are
+    // tested against the warm-start reference (fdScheduleWarm: the same equations, each leg's piece Newton started from
+    // the centre's root, i.e. the branch the IFT differentiates); skipped = neither reference applies.
     unsigned s3 = 2621u; auto rn = [&]() { s3 = s3 * 1664525u + 1013904223u; return (s3 >> 8) * (1.0 / 16777216.0); };
-    int n2 = 0, n4 = 0, nF = 0, skipped = 0, tested = 0; double worstD = 0, worstK = 0, worstF = 0;
+    int n2 = 0, n4 = 0, nF = 0, skipped = 0, tested = 0, testedWarm = 0; double worstDW = 0, worstKW = 0; double worstD = 0, worstK = 0, worstF = 0;
     double mutBK = 1e300, mutLast = 1e300;                 // E2: how far the two mutants sit from the FD
     double kerBK = 1e300, kerLast = 1e300;                 // E2: how far the KERNEL's Dtan6 sits from each mutant
     int nMut = 0;
@@ -1109,7 +1207,7 @@ static void run_f2_chain() {
     for (long t = 0; t < 400000 && (n2 < 40 || n4 < 40); ++t) {
         const bool cdT = ((t >> 2) & 1) != 0;
         const Params& q = cdT ? qCd : qLeg;               // (shadows the base parameters for this trial)
-        const double scT = cdT ? 8.0 : 1.0;
+        const double scT = cdT ? 20.0 : 1.0;
         const int mode = t % 4; double d[6];
         if (mode == 0) { for (int i = 0; i < 6; ++i) d[i] = (rn() * 2 - 1) * 3e-3; for (int i = 3; i < 6; ++i) d[i] *= 0.5; }
         else if (mode == 1) { const double v = -rn() * 8e-3; for (int i = 0; i < 3; ++i) d[i] = v + (rn() * 2 - 1) * 2e-4; for (int i = 3; i < 6; ++i) d[i] = (rn() * 2 - 1) * 1e-4; }
@@ -1126,7 +1224,11 @@ static void run_f2_chain() {
         if (nf != sub) { ++skipped; continue; }
         double eD, eK; bool smooth;
         fdSchedule(q, s0, d, k0, fr, nf, Dt, dk, eD, eK, smooth);
-        if (!smooth) { ++skipped; continue; }
+        if (!smooth) {
+            bool okW = false; fdScheduleWarm(q, s0, d, k0, fr, nf, Dt, dk, eD, eK, smooth, okW);
+            if (!smooth) { ++skipped; continue; }
+            ++testedWarm; worstDW = std::fmax(worstDW, eD); worstKW = std::fmax(worstKW, eK);
+        }
         ++tested; if (sub == 2) ++n2; else { ++n4; if (nc4 < 40) { Case& c = c4[nc4++]; for (int i = 0; i < 6; ++i) { c.s0[i] = s0[i]; c.d[i] = d[i]; } c.k0 = k0; c.fl = q.flowPotential; } }
         worstD = std::fmax(worstD, eD); worstK = std::fmax(worstK, eK);
         // forced schedules through the public schedule entry point
@@ -1165,11 +1267,11 @@ static void run_f2_chain() {
                               kerBK = std::fmin(kerBK, relF6(Dt, Jn)); kerLast = std::fmin(kerLast, relF6(Dt, Dl)); }
         }
     }
-    // n2/n4 >= 20 is the coverage floor; skipped <= tested catches a generator that mostly misses (the 20x cdpm2 scale
-    // did: 82 skipped vs 80 tested under UCRT, see above; at 8x 3 vs 80 under UCRT and libmmt).
+    // n2/n4 >= 20 is the coverage floor; skipped <= tested catches a generator that mostly misses.
     check(n2 >= 20 && n4 >= 20 && skipped <= tested && worstD < 1.0e-7 && worstK < 1.0e-7,
           "E1 failure-driven 2-/4-piece returns: chain-rule Dtan6 and d kp/de == frozen-schedule FD to 1e-7");
-    std::printf("       (2-piece %d, 4-piece %d, skipped (kink in the stencil) %d; worst Dtan6 %.2e, worst dkp %.2e)\n", n2, n4, skipped, worstD, worstK);
+    std::printf("       (2-piece %d, 4-piece %d, of them on the warm-start reference %d (worst %.2e / %.2e); skipped (no reference) %d; worst Dtan6 %.2e, worst dkp %.2e)\n",
+                n2, n4, testedWarm, worstDW, worstKW, skipped, worstD, worstK);
     check(nF >= 40 && worstF < 1.0e-7, "E1 forced {1/2,1/2} and {1/4 x4} schedules: chain-rule tangent == FD to 1e-7");
     std::printf("       (forced cases %d, worst %.2e)\n", nF, worstF);
     check(nMut >= 20 && kerBK > 1.0e-5 && kerLast > 1.0e-3 && mutBK > 1.0e-5 && mutLast > 1.0e-3,
