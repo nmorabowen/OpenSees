@@ -87,9 +87,9 @@ static bool ebIsNumber(const char* tok)
 }
 
 // Ladruno (r6 parity): the documented <computeCriticalTimestep> positional after the
-// leading numbers (`integrator ExplicitBathe 0.54 1`). It used to reach the option
-// loop as "unknown option 1 (ignored)", leaving dt_cr off; the upstream parser
-// honours it. A non-number is un-read for the option loop.
+// leading numbers (`integrator ExplicitBathe 0.54 1`). The option loop has no branch
+// for a bare number, so the flag never took effect and dt_cr stayed off; the
+// upstream parser honours it. A non-number is un-read for the option loop.
 static void ebReadCtsPositional(int &computeCriticalTimestep)
 {
     if (OPS_GetNumRemainingInputArgs() <= 0)
