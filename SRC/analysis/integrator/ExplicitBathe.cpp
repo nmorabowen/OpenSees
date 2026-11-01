@@ -85,6 +85,22 @@ static bool ebIsNumber(const char* tok)
     strtod(tok, &end);
     return end != tok && *end == '\0';
 }
+
+// Ladruno (r6 parity): the documented <computeCriticalTimestep> positional after the
+// leading numbers (`integrator ExplicitBathe 0.54 1`). It used to reach the option
+// loop as "unknown option 1 (ignored)", leaving dt_cr off; the upstream parser
+// honours it. A non-number is un-read for the option loop.
+static void ebReadCtsPositional(int &computeCriticalTimestep)
+{
+    if (OPS_GetNumRemainingInputArgs() <= 0)
+        return;
+    char buf[64];
+    const char* tok = ebTok(buf, sizeof(buf));
+    if (ebIsNumber(tok))
+        computeCriticalTimestep = (strtod(tok, 0) != 0.0) ? 1 : 0;
+    else
+        OPS_ResetCurrentInputArg(-1);
+}
 #include <stdlib.h>
 
 #include <Domain.h>
@@ -208,6 +224,7 @@ void *OPS_ExplicitBathe(void) {
             return 0;
         }
     }
+    ebReadCtsPositional(compute_critical_timestep);
     while (OPS_GetNumRemainingInputArgs() > 0) {
         char argBuf[128];
         const char *arg = ebTok(argBuf, sizeof(argBuf));
@@ -375,6 +392,7 @@ void *OPS_ExplicitBatheLNVD(void) {
             return 0;
         }
     }
+    ebReadCtsPositional(compute_critical_timestep);
     while (OPS_GetNumRemainingInputArgs() > 0) {
         char argBuf[128];
         const char *arg = ebTok(argBuf, sizeof(argBuf));
