@@ -516,7 +516,10 @@ static void run_oracle_dump(const char* path) {
             // n-piece chain is the chain's own algorithmic tangent (accumulated forward incl. the kappa history, C8), and the FD
             // reference pins n on both legs (mpf), so a chain is as consistent as a direct return. (It was loosened to 5e-2 for
             // maxSubIncr > 0 while the last piece's tangent was reported: 6/41/121 % off at n = 2/4/64 in compression.)
-        const double tanTol = 5.0e-5;
+            // dmgc_uniax_onset is the step on which omega_c first leaves 0: the central FD there has no converged value
+            // (FD step 1e-4..1e-6 of the strain scale: 3.0e-5 / 3.1e-5 / 4.5e-5 / 1.9e-5 on this kernel, 4.6e-5 / 4.7e-5 /
+            // 6.0e-5 / 3.4e-5 on #877's; it grows below that), and glibc read 5.1e-5. It keeps 1e-4; every other record 5e-5.
+        const double tanTol = (label == "dmgc_uniax_onset") ? 1.0e-4 : 5.0e-5;
             const bool ok = maxs < 1.0e-6 && rel < tanTol;
             if (!ok) ++fails;
             std::printf("  %-24s nom_sig_err=%.2e  tan_rel=%.2e  wc=%.3f  %s\n", label.c_str(), maxs, rel, out.wc, ok ? "ok" : "FAIL");
