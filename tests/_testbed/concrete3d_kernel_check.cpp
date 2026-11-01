@@ -497,28 +497,47 @@ static void run_oracle_dump(const char* path) {
             double sigC[6], sigEff[6], Da[6][6];
             returnMap(mp, strain, in, out, sigC, sigEff, Da, true, -1.0, true);
             double maxs = 0; for (int i = 0; i < 6; ++i) maxs = std::fmax(maxs, std::fabs(sigC[i] - sigO[i]));
-            double Cn[6][6]; const double base = mp.fc / mp.E;
-    Params mpf = mp; mpf.subIncrForceN = returnMapPieces(mp, in, strain);   // both FD legs use the CENTRAL n (the map is discontinuous at n boundaries)
-            for (int j = 0; j < 6; ++j) {
-                const double dd = 1.0e-6 * (std::fabs(deps[j]) + base);
-                double sp[6], sm[6], se[6], junk[6][6]; State o2; double strp[6], strm[6];
-                for (int i = 0; i < 6; ++i) { strp[i] = strain[i]; strm[i] = strain[i]; }
-                strp[j] += dd; strm[j] -= dd;
-                returnMap(mpf, strp, in, o2, sp, se, junk, false, -1.0, true);
-                returnMap(mpf, strm, in, o2, sm, se, junk, false, -1.0, true);
-                for (int i = 0; i < 6; ++i) Cn[i][j] = (sp[i] - sm[i]) / (2.0 * dd);
-            }
-            double nd = 0, nn = 0;
-            for (int A = 0; A < 6; ++A) for (int B = 0; B < 6; ++B) { const double df = Da[A][B] - Cn[A][B]; nd += df * df; nn += Cn[A][B] * Cn[A][B]; }
-            const double rel = std::sqrt(nd / nn);
+            const double base = mp.fc / mp.E;
+            Params mpf = mp; mpf.subIncrForceN = returnMapPieces(mp, in, strain);   // both FD legs use the CENTRAL n (the map is discontinuous at n boundaries)
+            auto fdAt = [&](double fac, double Cn[6][6]) {
+                for (int j = 0; j < 6; ++j) {
+                    const double dd = fac * (std::fabs(deps[j]) + base);
+                    double sp[6], sm[6], se[6], junk[6][6]; State o2; double strp[6], strm[6];
+                    for (int i = 0; i < 6; ++i) { strp[i] = strain[i]; strm[i] = strain[i]; }
+                    strp[j] += dd; strm[j] -= dd;
+                    returnMap(mpf, strp, in, o2, sp, se, junk, false, -1.0, true);
+                    returnMap(mpf, strm, in, o2, sm, se, junk, false, -1.0, true);
+                    for (int i = 0; i < 6; ++i) Cn[i][j] = (sp[i] - sm[i]) / (2.0 * dd);
+                }
+            };
+            auto relTo = [](const double A[6][6], const double R[6][6]) {
+                double nd = 0, nn = 0;
+                for (int a = 0; a < 6; ++a) for (int b = 0; b < 6; ++b) { const double df = A[a][b] - R[a][b]; nd += df * df; nn += R[a][b] * R[a][b]; }
+                return std::sqrt(nd / nn);
+            };
+            // The FD step: 1e-6 of the strain scale, except on the omega_c ONSET step (dmgc_uniax_onset, where omega_c first
+            // leaves 0). There the nominal stress carries the kappa_p Newton's round-off (~1e-10 in kappa_p, ~2.5e-9 MPa through
+            // omega_c, measured on a 1e-10 strain grid), so at 1e-6 the FD is noise-limited: the sweep 1e-4 / 3e-5 / 1e-5 /
+            // 3e-6 / 1e-6 reads 3.04e-5 / 2.99e-5 / 3.09e-5 / 4.48e-5 / 1.89e-5, UCRT and libmmt alike. It is not a kink: no
+            // flag flips inside the stencil (the onset is >= 1.3e-5 strain away, 1e4 steps). From 1e-4 to 1e-5 the FD has
+            // converged (Richardson at 1e-4: 3.08e-5), so the onset step is checked against the 1e-4 FD, guarded by the 1e-5 FD
+            // agreeing with it (the plateau), with the same 5e-5 bound. The plateau's 3e-5 is a real residual: the kappa row of
+            // the hardening return (dkpDeps) is ~1.4e-3 off its FD on this state and enters through d omega_c (follow-up,
+            // apeGmsh #2621 F2 onset audit).
+            const bool onset = (label == "dmgc_uniax_onset");
+            double Cn[6][6]; fdAt(onset ? 1.0e-4 : 1.0e-6, Cn);
+            double plateau = 0.0;
+            if (onset) { double C5[6][6]; fdAt(1.0e-5, C5); plateau = relTo(C5, Cn); }
+            const double rel = relTo(Da, Cn);
             worst_dmg = std::fmax(worst_dmg, maxs); worst_dtan = std::fmax(worst_dtan, rel);
             // tangent tolerance 5e-5 for EVERY record (direct returns and sub-incremented chains alike): the reported tangent of an
             // n-piece chain is the chain's own algorithmic tangent (accumulated forward incl. the kappa history, C8), and the FD
             // reference pins n on both legs (mpf), so a chain is as consistent as a direct return. (It was loosened to 5e-2 for
             // maxSubIncr > 0 while the last piece's tangent was reported: 6/41/121 % off at n = 2/4/64 in compression.)
-        const double tanTol = 5.0e-5;
-            const bool ok = maxs < 1.0e-6 && rel < tanTol;
+            const double tanTol = 5.0e-5;
+            const bool ok = maxs < 1.0e-6 && rel < tanTol && plateau < 1.0e-5;
             if (!ok) ++fails;
+            if (onset) std::printf("  %-24s FD step 1e-4; plateau |FD(1e-5) - FD(1e-4)| / |FD(1e-4)| = %.2e (< 1e-5)\n", label.c_str(), plateau);
             std::printf("  %-24s nom_sig_err=%.2e  tan_rel=%.2e  wc=%.3f  %s\n", label.c_str(), maxs, rel, out.wc, ok ? "ok" : "FAIL");
         }
     }
