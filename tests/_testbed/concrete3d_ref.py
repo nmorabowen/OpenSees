@@ -1395,18 +1395,145 @@ def _return_map_tensor_1(sig_n, deps, mp, kp_n, hardening=True):
     return sig_new, kp_new, plastic, conv
 
 
-def consistent_tangent(sig_n, deps, mp, kp_n, hardening=True, rel_step=1.0e-6):
-    """Numerical algorithmic tangent dsigma/depsilon (6x6) by central difference of the map."""
+def _adaptive_schedule(sig_n, deps, mp, kp_n):
+    """The piece schedule _return_map_tensor_adaptive integrates after a failed direct return: the fractions (in order),
+    or None when it fails (doubling back to at most 2x the size that just succeeded, max_sub_attempts budget)."""
+    nmax = int(mp.get("max_subincr", 0))
+    max_attempts = int(mp.get("max_sub_attempts", 64))
+    s, k = np.array(sig_n, float).copy(), kp_n
+    done, frac, floor, fs, attempts = 0.0, 0.5, 0.5 ** nmax, [], 0
+    deps = np.asarray(deps, float)
+    while done < 1.0:
+        if attempts >= max_attempts:
+            return None
+        attempts += 1
+        f = min(frac, 1.0 - done)
+        sn, kn, _pl, cv = _return_map_tensor_1(s, deps * f, mp, k, True)
+        if cv:
+            s, k, done = sn, kn, done + f
+            fs.append(f)
+            frac = min(2.0 * f, 1.0)
+        else:
+            frac *= 0.5
+            if frac < floor:
+                return None
+    return fs
+
+
+def return_map_schedule(sig_n, deps, mp, kp_n, hardening=True):
+    """The piece schedule return_map_tensor integrates: [] = the direct return, a list of fractions of deps
+    (in order) when it sub-increments, None when it fails (apeGmsh #2621 F2). Follows the mode return_map_tensor
+    takes (#877): the DETERMINISTIC default (n = det_pieces equal pieces, the n/2n/4n ladder, then the adaptive
+    rescue) or the ADAPTIVE path (direct first, halving on failure)."""
+    nmax = int(mp.get("max_subincr", 0))
+    deps = np.asarray(deps, float)
+    if nmax <= 0 or not hardening:
+        return [] if _return_map_tensor_1(sig_n, deps, mp, kp_n, hardening)[3] else None
+    if mp.get("subincr_mode", "det") == "adaptive":
+        if _return_map_tensor_1(sig_n, deps, mp, kp_n, True)[3]:
+            return []
+        return _adaptive_schedule(sig_n, deps, mp, kp_n)
+    n = det_pieces(sig_n, deps, mp, kp_n)
+    if n == 1 and _return_map_tensor_1(sig_n, deps, mp, kp_n, True)[3]:
+        return []
+    for level in ((n, 2 * n, 4 * n) if n > 1 else (2, 4)):
+        s, k, ok = np.array(sig_n, float).copy(), kp_n, True
+        for _ in range(level):
+            s, k, _pl, cv = _return_map_tensor_1(s, deps / level, mp, k, True)
+            if not cv:
+                ok = False
+                break
+        if ok:
+            return [1.0 / level] * level
+    if mp.get("subincr_rescue", True):
+        if _return_map_tensor_1(sig_n, deps, mp, kp_n, True)[3]:
+            return []
+        return _adaptive_schedule(sig_n, deps, mp, kp_n)
+    return [] if _return_map_tensor_1(sig_n, deps, mp, kp_n, True)[3] else None
+
+
+def return_map_tensor_frozen(sig_n, deps, mp, kp_n, fs, hardening=True):
+    """The return map with its piece schedule FROZEN at `fs` ([] = direct). Returns (sig, kp, ok)."""
+    s, k = np.array(sig_n, float).copy(), kp_n
+    deps = np.asarray(deps, float)
+    for f in (fs if fs else [1.0]):
+        sn, kn, _pl, cv = _return_map_tensor_1(s, deps * f, mp, k, hardening)
+        if not cv:
+            return s, k, False
+        s, k = sn, kn
+    return s, k, True
+
+
+def consistent_tangent_kp(sig_n, deps, mp, kp_n, hardening=True, rel_step=1.0e-6):
+    """Numerical algorithmic tangent (dsigma/depsilon 6x6, dkp/depsilon 6) by central difference of the map.
+    A sub-incremented return is differenced with its piece schedule FROZEN (F2): the as-is map changes its piece
+    count inside the stencil, so its FD is not a derivative there (the record-dump review, #2621). A direct return
+    is differenced exactly as before (byte-identical)."""
+    fs = return_map_schedule(sig_n, deps, mp, kp_n, hardening) if (hardening and int(mp.get("max_subincr", 0)) > 0) else []
     base = mp["fc"] / mp["E"]
     C = np.zeros((6, 6))
+    dk = np.zeros(6)
     for j in range(6):
         d = rel_step * (abs(deps[j]) + base)
         dp = np.array(deps, float).copy(); dp[j] += d
         dm = np.array(deps, float).copy(); dm[j] -= d
-        sp, _, _, _ = return_map_tensor(sig_n, dp, mp, kp_n, hardening)
-        sm, _, _, _ = return_map_tensor(sig_n, dm, mp, kp_n, hardening)
+        if fs:
+            sp, kpp, _ = return_map_tensor_frozen(sig_n, dp, mp, kp_n, fs, hardening)
+            sm, kpm, _ = return_map_tensor_frozen(sig_n, dm, mp, kp_n, fs, hardening)
+        else:
+            sp, kpp, _, _ = return_map_tensor(sig_n, dp, mp, kp_n, hardening)
+            sm, kpm, _, _ = return_map_tensor(sig_n, dm, mp, kp_n, hardening)
         C[:, j] = (sp - sm) / (2.0 * d)
-    return C
+        dk[j] = (kpp - kpm) / (2.0 * d)
+    return C, dk
+
+
+def consistent_tangent(sig_n, deps, mp, kp_n, hardening=True, rel_step=1.0e-6):
+    """Numerical algorithmic tangent dsigma/depsilon (6x6) by central difference of the map (frozen piece schedule
+    on a sub-incremented return; see consistent_tangent_kp)."""
+    return consistent_tangent_kp(sig_n, deps, mp, kp_n, hardening, rel_step)[0]
+
+
+def chain_rule_tangent(sig_n, deps, mp, kp_n, rel_step=1.0e-7):
+    """The sub-step chain rule (Perez-Foguet, Rodriguez-Ferran & Huerta, CMAME 2001), the oracle of the kernel's
+    returnMapTensor tangent (#2621 F2), assembled from NUMERICAL per-piece partials of the one-piece map:
+    A = dsig/dsig_n, b = dsig/dkp_n, a = dkp/dsig_n, e = dkp/dkp_n (central FD of _return_map_tensor_1; a shear
+    Voigt slot of sig_n moves both symmetric entries, the kernel's convention), then
+        J_k = A_k (J_{k-1} + f_k C) + b_k (x) K_{k-1},   K_k = a_k . (J_{k-1} + f_k C) + e_k K_{k-1},  J_0 = K_0 = 0.
+    Returns (J, K, fs) or None if the map fails, or if a perturbed piece of the per-piece FD does not converge (its
+    partials would be the FD of the fallback, not of the piece)."""
+    fs = return_map_schedule(sig_n, deps, mp, kp_n, True)
+    if fs is None:
+        return None
+    Cel = elastic_C(mp)
+    deps = np.asarray(deps, float)
+    J, K = np.zeros((6, 6)), np.zeros(6)
+    s, k = np.array(sig_n, float).copy(), kp_n
+    for f in (fs if fs else [1.0]):
+        d = deps * f
+        A, a = np.zeros((6, 6)), np.zeros(6)
+        for m in range(6):
+            hs = rel_step * (np.max(np.abs(s)) + mp["fc"])
+            sp_, sm_ = s.copy(), s.copy()
+            sp_[m] += hs; sm_[m] -= hs
+            o1 = _return_map_tensor_1(sp_, d, mp, k, True)
+            o2 = _return_map_tensor_1(sm_, d, mp, k, True)
+            if not (o1[3] and o2[3]):
+                return None
+            A[:, m] = (o1[0] - o2[0]) / (2.0 * hs)
+            a[m] = (o1[1] - o2[1]) / (2.0 * hs)
+        hk = rel_step * (1.0 + abs(k))
+        o1 = _return_map_tensor_1(s, d, mp, k + hk, True)
+        o2 = _return_map_tensor_1(s, d, mp, k - hk, True)
+        if not (o1[3] and o2[3]):
+            return None
+        b = (o1[0] - o2[0]) / (2.0 * hk)
+        e = (o1[1] - o2[1]) / (2.0 * hk)
+        T = J + f * Cel
+        J, K = A @ T + np.outer(b, K), a @ T + e * K
+        sn, kn, _pl, _cv = _return_map_tensor_1(s, d, mp, k, True)
+        s, k = sn, kn
+    return J, K, fs
 
 
 def run_tangent_gate(E=30000.0, nu=0.2, fc=30.0, ft=3.0, verbose=True):
@@ -2923,8 +3050,10 @@ def isotropic_tangent(lam, V, yv, ypv, tol=1.0e-8):
     return D
 
 
-def _dscalar_dsig(fn, sig6, h=1.0e-6):
-    """Isolated micro-FD gradient d(fn)/d(sig) of a scalar-of-stress function (per Voigt component)."""
+def _dscalar_dsig(fn, sig6, h):
+    """Isolated micro-FD gradient d(fn)/d(sig) of a scalar-of-stress function (per Voigt component). h is the
+    caller's scaled step, _DRIVER_FD_REL * _driver_stress_scale (mirror of the kernel dscalarDsig; no default:
+    the former absolute h = 1e-6 was right in MPa only, apeGmsh #2639)."""
     g = np.zeros(6)
     for k in range(6):
         dp = np.array(sig6, float); dp[k] += h
@@ -2933,7 +3062,89 @@ def _dscalar_dsig(fn, sig6, h=1.0e-6):
     return g
 
 
-def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
+# the hydrostatic-axis test and the one driver-gradient FD step (on and off the axis), relative to the stress scale
+# S = max(ft, max|lam|) (mirror of the kernel AXIS_RHO_REL / DRIVER_FD_REL / driverStressScale, which justify the
+# constants; an absolute 1e-12 test and a 1e-6 step held only in MPa: apeGmsh #2621 F2 review r2 and #2639)
+_AXIS_RHO_REL, _DRIVER_FD_REL = 1.0e-13, 1.0e-6
+
+
+def _driver_stress_scale(lam, mp):
+    return max(float(mp["ft"]), float(np.max(np.abs(lam))))
+
+
+def _dscalar_dsig_axis(fn, sig6, h):
+    """The same gradient ON THE HYDROSTATIC AXIS (rho_bar == 0; mirror of the kernel dscalarDsigAxis, apeGmsh #2621).
+    The damage drivers are cones there (+h e_k and -h e_k sit on different meridians), so the per-component central FD
+    averages two different slopes into a spurious hydrostatic gradient. Only the derivative along the axis exists:
+    g_k = (1/3) d/dp fn(sig + p I) on the three normal slots, 0 on the shears (exact for the apex return).
+    h is the caller's scaled step (1e-6 S)."""
+    dp = np.array(sig6, float); dp[:3] += h
+    dm = np.array(sig6, float); dm[:3] -= h
+    d = (fn(dp) - fn(dm)) / (2.0 * h)
+    return np.array([d / 3.0, d / 3.0, d / 3.0, 0.0, 0.0, 0.0])
+
+
+def compressive_damage_weight_grad(mp, depl6, w, V):
+    """Closed-form gradients (gs = d w_c/d sig_bar6 with depl held, gd = d w_c/d depl6 with sig_bar held, per Voigt
+    component) of compressive_damage_weight (#2621 F2, mirror of the kernel). ||Phi P Phi||^2 = tr(S M S M) with
+    S = sum_a tc_phi(w_a)^2 E_a an isotropic tensor function: d/d sig_bar = its Box A.6 derivative, d/dM = 2 S M S."""
+    gs, gd = np.zeros(6), np.zeros(6)
+    if mp.get("tc_temper", "none") != "proj" or float(np.max(w)) <= TC_DEAD * mp["ft"]:
+        return gs, gd
+    M = voigt_to_mat(depl6)
+    n2 = float(np.sum(M * M))
+    if n2 <= 1.0e-300:
+        return gs, gd
+    band = (TC_BAND - TC_DEAD) * mp["ft"]
+    v = 1.0 - (np.asarray(w, float) - TC_DEAD * mp["ft"]) / band
+    phi = _tc_phi(mp, w)
+    dphi = np.where((v > 0.0) & (v < 1.0), -1.0 / band, 0.0)
+    psi, dpsi = phi * phi, 2.0 * phi * dphi
+    S = V @ np.diag(psi) @ V.T
+    SM = S @ M
+    p2 = float(np.trace(SM @ SM))
+    if not p2 > 0.0:
+        return gs, gd
+    q = np.sqrt(p2) / np.sqrt(n2)
+    gd = q * _TENSOR_W6 * (mat_to_voigt(SM @ S) / p2 - np.asarray(depl6, float) / n2)
+    Dpsi = isotropic_tangent(w, V, psi, dpsi)
+    gs = q * (Dpsi.T @ (_TENSOR_W6 * mat_to_voigt(M @ SM))) / p2
+    return gs, gd
+
+
+def tensile_damage_weight_grad(mp, depl6, w, V):
+    """Closed-form gradients of tensile_damage_weight 'proj' (#2621 F2, mirror of the kernel): d/dM = sum_a 2 P_aa E_a
+    over the tensile directions; d/d sig_bar through the eigenvectors, dP_aa = 2 sum_{c!=a} P_ca (v_c . dsig v_a) /
+    (w_a - w_c); a (numerically) repeated pair is skipped."""
+    gs, gd = np.zeros(6), np.zeros(6)
+    if mp.get("ct_temper", "none") != "proj":
+        return gs, gd
+    M = voigt_to_mat(depl6)
+    n2 = float(np.sum(M * M))
+    if n2 <= 1.0e-300:
+        return gs, gd
+    floor = 1.0e-6 * mp["ft"]
+    P = V.T @ M @ V
+    T = [a for a in range(3) if w[a] > floor]
+    tens = sum(P[a, a] ** 2 for a in T)
+    if not tens > 0.0:
+        return gs, gd
+    q = np.sqrt(tens) / np.sqrt(n2)
+    R = sum(2.0 * P[a, a] * np.outer(V[:, a], V[:, a]) for a in T)
+    gd = q * _TENSOR_W6 * (mat_to_voigt(R) / (2.0 * tens) - np.asarray(depl6, float) / n2)
+    tol = 1.0e-9 * (mp["fc"] + 1.0)
+    dt6 = np.zeros(6)
+    for a in T:
+        for c in range(3):
+            if c == a or abs(w[a] - w[c]) <= tol:
+                continue
+            sym = mat_to_voigt(np.outer(V[:, c], V[:, a]) + np.outer(V[:, a], V[:, c])) * np.array([0.5, 0.5, 0.5, 1, 1, 1])
+            dt6 += 4.0 * P[a, a] * P[c, a] * sym / (w[a] - w[c])
+    gs = q * dt6 / (2.0 * tens)
+    return gs, gd
+
+
+def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0, ceff_rel_step=1.0e-6):
     """ANALYTIC dual-projector damaged consistent tangent (6x6). Recomputes the same step as
     `damaged_step_tensor` (so it is self-contained) and assembles D_dam:C_eff - sig_t(x)dw_t -
     sig_c(x)dw_c. FD-verified against `damaged_consistent_tangent` at smooth states (run_p2e_gate).
@@ -2941,7 +3152,11 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     Duvaut-Lions (ADR 4.4): with `mp["eta"]>0` and `dt>0` the effective stress is relaxed exactly as in
     `damaged_step_tensor`, and the effective consistent tangent blends `C_eff <- (1-beta)C_elastic +
     beta C_eff_inviscid` (since beta is constant in deps and sig_tr is linear in deps). The damage
-    linearization then chains through the RELAXED effective stress and its blended tangent automatically."""
+    linearization then chains through the RELAXED effective stress and its blended tangent automatically.
+
+    The effective tangent C_eff and d kp/d eps are themselves a central FD of the return map (consistent_tangent_kp,
+    relative step `ceff_rel_step`, 1e-6 by default), so this "analytic" damaged tangent carries that FD's error:
+    ~1e-6 relative on far-compressive states at the default step (C6 path 0, apeGmsh #2621), ~2e-7 at 1e-5."""
     E, fc, ft = mp["E"], mp["fc"], mp["ft"]
     eps0 = ft / E
     eps_f = Gf / (ft * lch)
@@ -3004,9 +3219,11 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     wt = _omega_t(mp, kdt1, kdt2, sigt_max, Gf, lch) if (et_max2 > eps0 and sigt_max > 1.0e-6 * ft) else 0.0
     wc = _omega_c(mp, kdc, kdc1, kdc2, sigc_max, eps_fc)
 
-    Ceff = consistent_tangent(state["sig_bar"], deps6, mp, state["kp"], hardening=True)
+    Ceff, dkp_deps = consistent_tangent_kp(state["sig_bar"], deps6, mp, state["kp"], hardening=True,
+                                           rel_step=ceff_rel_step)
     if beta < 1.0:                                        # Duvaut-Lions blended effective tangent
         Ceff = (1.0 - beta) * elastic_C(mp) + beta * Ceff
+        dkp_deps = beta * dkp_deps                        # kp = (1-beta) kp_n + beta kp
 
     # D_dam: spectral derivative of the per-principal damage with omega FROZEN
     # residual TANGENT stiffness (mirror of the kernel OMEGA_TAN_FLOOR): (1-omega) >= 1e-6 in the tangent only
@@ -3023,9 +3240,15 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     # chain-rule pieces (each a 6-vector d(.)/deps)
     Cinv = np.linalg.inv(elastic_C(mp))
     depl_deps = np.eye(6) - Cinv @ Ceff                                  # d(eps_p)/d(eps)
-    det_deps = Ceff.T @ _dscalar_dsig(lambda s: equiv_strain_general(np.linalg.eigvalsh(voigt_to_mat(s)), mp), sig_bar)
-    dxs_deps = Ceff.T @ _dscalar_dsig(lambda s: _damage_drivers(np.linalg.eigvalsh(voigt_to_mat(s)), mp, As)[2], sig_bar)
-    dac_deps = Ceff.T @ _dscalar_dsig(lambda s: alpha_compression(np.linalg.eigvalsh(voigt_to_mat(s))), sig_bar)
+    # on the hydrostatic axis (rho_bar == 0, the beta_c guard) the drivers are cones: gradient along the axis (#2621)
+    _, rb_ax, *_ = invariants(np.array([lam[0], lam[1], lam[2], 0.0, 0.0, 0.0]))
+    s_drv = _driver_stress_scale(lam, mp)
+    h_drv = _DRIVER_FD_REL * s_drv                                     # relative step on and off the axis (#2639)
+    _gfd = _dscalar_dsig_axis if rb_ax <= _AXIS_RHO_REL * s_drv else _dscalar_dsig
+    _grad = lambda fn, s6: _gfd(fn, s6, h_drv)
+    det_deps = Ceff.T @ _grad(lambda s: equiv_strain_general(np.linalg.eigvalsh(voigt_to_mat(s)), mp), sig_bar)
+    dxs_deps = Ceff.T @ _grad(lambda s: _damage_drivers(np.linalg.eigvalsh(voigt_to_mat(s)), mp, As)[2], sig_bar)
+    dac_deps = Ceff.T @ _grad(lambda s: alpha_compression(np.linalg.eigvalsh(voigt_to_mat(s))), sig_bar)
     Emax = np.outer(V[:, 2], V[:, 2]); Emin = np.outer(V[:, 0], V[:, 0])  # eigh ascending
     # d(drive_max)/d(eps): the live eigenprojection ONLY while the channel advances its running max
     # (P2g); frozen (zero) on unload so the -sig(x)d(omega) rank-update vanishes => secant tangent.
@@ -3035,81 +3258,47 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
     dDt_deps = E * det_deps if (Dt > 0.0 and t_loading) else np.zeros(6)
     dDc_deps = -(Ceff.T @ (_TENSOR_W6 * mat_to_voigt(Emin))) if (Dc > 0.0 and c_loading) else np.zeros(6)
     dnorm_deps = (depl_deps.T @ (_TENSOR_W6 * depl)) / dnorm if dnorm > 1.0e-14 else np.zeros(6)
-    # d(beta_c)/d(eps): beta_c = beta_c(sig_bar(eps), kp(eps)) depends on BOTH rho_bar(sig_bar) AND
-    # qh2(kp), so a single composite micro-FD THROUGH the return map captures the full gradient (the
-    # rho_bar part is smooth; the qh2(kp) part needs d kp/d eps, which the C++ kernel gets analytically
-    # from the 4-unknown return-map IFT — here it is the legitimate oracle micro-FD, same step as the
-    # numerical reference so the FD truncation correlates). Only needed under compressive loading.
+    # d(beta_c)/d(eps), CLOSED FORM (#2621 F2; mirror of the kernel): beta_c = ft qh2(kp) sqrt(2/3) / (rho_bar
+    # sqrt(1+2Df^2)), clamped to [0,1], 1 on the hydrostatic axis. d rho_bar/d sig6 = W6 s6 / rho_bar (per Voigt
+    # component), qh2(kp) chains through dkp_deps (the effective map's own d kp/d eps). Replaces the composite
+    # micro-FD THROUGH the return map (which crossed sub-step piece-count changes). Only under compressive loading.
     dbc_deps = np.zeros(6)
     need_bc = (c_adv and eqc_new > eps0) if cdc else loading
     if need_bc and bc > 0.0:
-        base = fc / E
+        _, rb, *_ = invariants(np.array([lam[0], lam[1], lam[2], 0.0, 0.0, 0.0]))
+        if rb > 1.0e-12:
+            q2 = qh2(kp_new, mp["Hp"])
+            raw = ft * q2 * np.sqrt(2.0 / 3.0) / (rb * np.sqrt(1.0 + 2.0 * mp["Df"] ** 2))
+            if raw < 1.0:
+                dev = np.array(sig_bar, float).copy(); dev[:3] -= np.sum(dev[:3]) / 3.0
+                g = -raw / (rb * rb) * _TENSOR_W6 * dev
+                dbc_deps = Ceff.T @ g + raw * (_dqh2(kp_new, mp["Hp"]) / q2) * dkp_deps
 
-        def _bc_of(d6):
-            sb, kpv, _, _ = return_map_tensor(state["sig_bar"], d6, mp, state["kp"])
-            if beta < 1.0:
-                sb = (1.0 - beta) * elastic_pred_tensor(state["sig_bar"], d6, mp) + beta * sb
-                kpv = (1.0 - beta) * state["kp"] + beta * kpv
-            return beta_c(np.linalg.eigvalsh(voigt_to_mat(sb)), kpv, mp)
-
-        for j in range(6):
-            hh = 1.0e-6 * (abs(deps6[j]) + base)
-            dp = np.array(deps6, float); dp[j] += hh
-            dm = np.array(deps6, float); dm[j] -= hh
-            dbc_deps[j] = (_bc_of(dp) - _bc_of(dm)) / (2.0 * hh)
-
-    # d(w_t)/d(eps) for the ctTemper modes (P2h): 'none' -> 0 (unchanged tangent); 'alphat' ->
-    # -d(alpha_c)/deps (analytic, reuses dac_deps); 'proj' -> composite micro-FD through the return map
-    # (w_t is the tensile fraction of the plastic-strain increment). Only under loading.
+    # d(w_t)/d(eps) for the ctTemper modes (P2h): 'none' -> 0 (unchanged tangent); 'alphat' -> -d(alpha_c)/deps
+    # (analytic, reuses dac_deps); 'proj' -> the closed-form weight gradient (F2) chained through Ceff and
+    # depl_deps. Only under loading.
     mode = mp.get("ct_temper", "none")
     dwt_w_deps = np.zeros(6)
     t_adv = (det_raw > 0.0) if bilin else loading         # the tensile history advances this step
     if t_adv and mode == "alphat":
         dwt_w_deps = -dac_deps
     elif t_adv and mode == "proj":
-        base = fc / E
+        gs, gd = tensile_damage_weight_grad(mp, depl, lam, V)
+        dwt_w_deps = Ceff.T @ gs + depl_deps.T @ gd
 
-        def _wtw_of(d6):
-            sb, _, _, _ = return_map_tensor(state["sig_bar"], d6, mp, state["kp"])
-            if beta < 1.0:
-                sb = (1.0 - beta) * elastic_pred_tensor(state["sig_bar"], d6, mp) + beta * sb
-            dpl = _plastic_strain6(sb, state["eps"] + d6, mp) - _plastic_strain6(state["sig_bar"], state["eps"], mp)
-            wv, Vv = np.linalg.eigh(voigt_to_mat(sb))
-            return tensile_damage_weight(mp, ac, dpl, wv, Vv)
-
-        for j in range(6):
-            hh = 1.0e-6 * (abs(deps6[j]) + base)
-            dp = np.array(deps6, float); dp[j] += hh
-            dm = np.array(deps6, float); dm[j] -= hh
-            dwt_w_deps[j] = (_wtw_of(dp) - _wtw_of(dm)) / (2.0 * hh)
-
-    # PV20 tcTemper 'proj': d(dnorm * w_c)/d(eps) (w_c by composite micro-FD through the return map, as the
-    # ctTemper 'proj' weight) and d(eps_tilde_c)/d(eps). 'none' -> dnc_deps == dnorm_deps, detc_deps == det_deps.
+    # PV20 tcTemper 'proj': d(dnorm * w_c)/d(eps) (the closed-form weight gradient, F2) and d(eps_tilde_c)/d(eps).
+    # 'none' -> dnc_deps == dnorm_deps, detc_deps == det_deps.
     dnc_deps, detc_deps = dnorm_deps, det_deps
     if mp.get("tc_temper", "none") == "proj" and float(np.max(lam)) > TC_DEAD * ft:
-        base = fc / E
-
-        def _wcw_of(d6):
-            sb, _, _, _ = return_map_tensor(state["sig_bar"], d6, mp, state["kp"])
-            if beta < 1.0:
-                sb = (1.0 - beta) * elastic_pred_tensor(state["sig_bar"], d6, mp) + beta * sb
-            dpl = _plastic_strain6(sb, state["eps"] + d6, mp) - _plastic_strain6(state["sig_bar"], state["eps"], mp)
-            wv, Vv = np.linalg.eigh(voigt_to_mat(sb))
-            return compressive_damage_weight(mp, dpl, wv, Vv)
-
-        dwcw = np.zeros(6)
-        for j in range(6):
-            hh = 1.0e-6 * (abs(deps6[j]) + base)
-            dp = np.array(deps6, float); dp[j] += hh
-            dm = np.array(deps6, float); dm[j] -= hh
-            dwcw[j] = (_wcw_of(dp) - _wcw_of(dm)) / (2.0 * hh)
+        gs, gd = compressive_damage_weight_grad(mp, depl, lam, V)
+        dwcw = Ceff.T @ gs + depl_deps.T @ gd
         dnc_deps = wc_w * dnorm_deps + dnorm * dwcw
 
         def _etc_of(s_):
             ev = np.linalg.eigvalsh(voigt_to_mat(s_))
             return compressive_equiv_strain(mp, ev, equiv_strain_general(ev, mp))
 
-        detc_deps = Ceff.T @ _dscalar_dsig(_etc_of, sig_bar)
+        detc_deps = Ceff.T @ _grad(_etc_of, sig_bar)
 
     if bilin:
         # literal Eq.45/44: kdt2 += w det_raw/xs (history advancing), kdt1 += w frac dnorm/xs (past onset)
@@ -3162,7 +3351,7 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
         spd = _bilinear_sigma(lch * (kdt1 + wt * kdt2), ft, wf_b)[1] * lch
         Fw = -sigt_max - spd * kdt2
         dwt = (-(1.0 - wt) / Fw) * dDt_deps + (spd / Fw) * dkdt1 + (spd * wt / Fw) * dkdt2
-    elif 0.0 < wt < 1.0:
+    elif (not bilin) and 0.0 < wt < 1.0:             # F2: legacy law only; a bilinear omega_t at the cap is flat
         Ht = sigt_max * ((1.0 - wt) * kdt2 / eps_f - 1.0)
         dwt = (-(1.0 - wt) / Ht) * dDt_deps + (-(1.0 - wt) * sigt_max / (eps_f * Ht)) * dkdt1 \
             + (-(1.0 - wt) * sigt_max * wt / (eps_f * Ht)) * dkdt2
@@ -3174,7 +3363,7 @@ def damaged_tangent_analytic(state, deps6, mp, Gf, Gc, lch, As=2.0, dt=0.0):
         dDcc = E * dkdc
         dwc = (-(1.0 - wc) / Hc) * dDcc + (-(1.0 - wc) * Dcc / (eps_fc * Hc)) * dkdc1 \
             + (-(1.0 - wc) * Dcc * wc / (eps_fc * Hc)) * dkdc2
-    elif 0.0 < wc < 1.0:
+    elif (not cdc) and 0.0 < wc < 1.0:                # F2: legacy drive only; a CDPM2 omega_c at the cap is flat
         Hc = sigc_max * ((1.0 - wc) * kdc2 / eps_fc - 1.0)
         dwc = (-(1.0 - wc) / Hc) * dDc_deps + (-(1.0 - wc) * sigc_max / (eps_fc * Hc)) * dkdc1 \
             + (-(1.0 - wc) * sigc_max * wc / (eps_fc * Hc)) * dkdc2
@@ -4890,4 +5079,193 @@ def run_tc_temper_gate(verbose=True):
         print(f"  T3 analytic vs FD tangent (wc={res['T3_wc']:.3f}): {res['T3_rel']:.2e}")
         print(f"  T4 proj vs none, uniaxial/equibiaxial compression: max |d sigma|/fc = {res['T4_dev']:.1e}")
         print(f"  PASS={res['PASS']}")
+    return res
+
+
+# ---------------------------------------------------------------------------
+# apeGmsh #2621 F2 — the SUB-STEP CHAIN-RULE tangent (the oracle of the kernel's returnMapTensor tangent).
+# A sub-incremented return is a composition of N one-piece maps; its algorithmic tangent is the chain rule over
+# the pieces (chain_rule_tangent, from numerical per-piece partials) and must equal the FD of the map with the
+# piece schedule frozen (consistent_tangent_kp). Until F2 the kernel reported the LAST piece's tangent.
+# ---------------------------------------------------------------------------
+def run_f2_chain_gate(verbose=True):
+    """C1 chain rule (numerical per-piece partials + the recurrence) == frozen-schedule FD of sigma AND kp on
+       sub-incremented returns, to 1e-5 (FD of FD): the DETERMINISTIC default (cdpm2 flow, n equal pieces) and the
+       ADAPTIVE path (legacy flow, whose direct return still fails at these increments on #877's kernel; the
+       cdpm2-flow direct return rarely fails there);
+    C2 a direct return: the recurrence reduces to A C == the FD tangent;
+    C3 the last-piece-only tangent (#877's ADAPTIVE tangent before the F2 port) misses the same FD by > 1e-3 on the
+       adaptive cases (C1 discriminates). On the deterministic map it is no discriminator: where every piece but the
+       last stays elastic (an overshoot split into n pieces can leave the first ones inside the surface) the chain
+       IS the last piece's tangent;
+    C4 the closed-form proj-weight gradients == FD of the weights (1e-6);
+    C5 the damaged tangent at the tension-apex return == the FD of the damaged step (1e-6; the per-component
+       driver micro-FD across the hydrostatic-axis cone was O(1) off there, apeGmsh #2621);
+    C6 the relative driver-gradient step (mirror of kernel check D9, apeGmsh #2639): far-compressive and ordinary
+       damage-advancing states, damaged tangent == the FD of the damaged step (1e-6; 2e-6 on path 0) in MPa-mm, kPa-m and Pa-m."""
+    res = {}
+    mp_det = make_material(30000.0, 0.2, 30.0, 3.0, Df=0.85, Hp=0.01, flow_potential="cdpm2", max_subincr=10)
+    mp_ad = make_material(30000.0, 0.2, 30.0, 3.0, Df=0.85, Hp=0.01, flow_potential="legacy", max_subincr=10,
+                          subincr_mode="adaptive")
+    mp = mp_det
+    rng = np.random.default_rng(2621)
+    errs, errk, lastp, npieces = [], [], [], []
+    n_by = {"det": 0, "adaptive": 0}
+    tries = 0
+    while (n_by["det"] < 8 or n_by["adaptive"] < 8) and tries < 8000:
+        tries += 1
+        d = rng.uniform(-1.0, 1.0, 6) * np.array([3e-3, 3e-3, 3e-3, 1.5e-3, 1.5e-3, 1.5e-3])
+        d[:3] -= rng.uniform(0.0, 4e-3)
+        kp0 = float(rng.uniform(0.0, 1.2))
+        which = "det" if n_by["det"] < 8 and (tries % 2 or n_by["adaptive"] >= 8) else "adaptive"
+        mp = mp_det if which == "det" else mp_ad
+        fs = return_map_schedule(np.zeros(6), d, mp, kp0)
+        if not fs:
+            continue
+        cr = chain_rule_tangent(np.zeros(6), d, mp, kp0)
+        if cr is None:
+            continue
+        J, K, _ = cr
+        C, dk = consistent_tangent_kp(np.zeros(6), d, mp, kp0)
+        C2, _ = consistent_tangent_kp(np.zeros(6), d, mp, kp0, rel_step=3.0e-7)
+        if np.linalg.norm(C - C2) > 1.0e-5 * np.linalg.norm(C):
+            continue                                     # the stencil crosses a yield/apex switch
+        errs.append(float(np.linalg.norm(J - C) / np.linalg.norm(C)))
+        errk.append(float(np.linalg.norm(K - dk) / max(np.linalg.norm(dk), 1e-300)))
+        npieces.append((which, len(fs)))
+        n_by[which] += 1
+        if which == "det":
+            continue
+        # the pre-F2 tangent: the last piece's one-piece consistent tangent
+        s, k = np.zeros(6), kp0
+        for f in fs[:-1]:
+            s, k, _pl, _cv = _return_map_tensor_1(s, d * f, mp, k, True)
+        mpd = dict(mp); mpd["max_subincr"] = 0
+        Cl = consistent_tangent(s, d * fs[-1], mpd, k)
+        lastp.append(float(np.linalg.norm(Cl - C) / np.linalg.norm(C)))
+    res["C1_n"], res["C1_pieces"] = len(errs), npieces
+    res["C1_worst"], res["C1_worst_kp"] = (max(errs) if errs else 1.0), (max(errk) if errk else 1.0)
+    res["C1_n_by_mode"] = dict(n_by)
+    res["C1_ok"] = bool(n_by["det"] >= 8 and n_by["adaptive"] >= 8 and res["C1_worst"] < 1.0e-5
+                        and res["C1_worst_kp"] < 1.0e-5)
+    mp = mp_det
+    d = np.array([-4.0e-4, 1.0e-4, 1.0e-4, 5.0e-5, 0.0, 0.0])
+    J, K, fs = chain_rule_tangent(np.zeros(6), d, mp, 0.2)
+    C, dk = consistent_tangent_kp(np.zeros(6), d, mp, 0.2)
+    res["C2_rel"] = float(np.linalg.norm(J - C) / np.linalg.norm(C))
+    res["C2_ok"] = bool(fs == [] and res["C2_rel"] < 1.0e-5)
+    res["C3_min_last_piece"] = min(lastp) if lastp else 0.0
+    res["C3_ok"] = bool(len(lastp) >= 8 and res["C3_min_last_piece"] > 1.0e-3)
+    # C4 closed-form proj-weight gradients vs FD of the weights
+    m4 = dict(mp); m4["ct_temper"] = "proj"; m4["tc_temper"] = "proj"
+    worst_c = worst_t = 0.0
+    n4 = 0
+    for _ in range(60):
+        sb = np.array([rng.uniform(-20, 20), m4["ft"] * rng.uniform(0.002, 0.047), rng.uniform(-5, 5),
+                       rng.uniform(-0.02, 0.02), rng.uniform(-0.02, 0.02), rng.uniform(-0.5, 0.5)])
+        dp = rng.uniform(-1e-4, 1e-4, 6)
+        w, V = np.linalg.eigh(voigt_to_mat(sb))
+        if np.min(np.diff(np.sort(w))) < 0.5:
+            continue
+        gs, gd = compressive_damage_weight_grad(m4, dp, w, V)
+        hs_, hd_ = tensile_damage_weight_grad(m4, dp, w, V)
+        fsc, fdc, fst, fdt = np.zeros(6), np.zeros(6), np.zeros(6), np.zeros(6)
+        kink = False
+        for k in range(6):
+            h1, h2 = 1e-6 * m4["fc"], 1e-10
+            a, b = sb.copy(), sb.copy(); a[k] += h1; b[k] -= h1
+            wa, Va = np.linalg.eigh(voigt_to_mat(a)); wb, Vb = np.linalg.eigh(voigt_to_mat(b))
+            for lim in (0.0, 1e-6 * m4["ft"], TC_DEAD * m4["ft"], TC_BAND * m4["ft"]):
+                kink = kink or bool(np.any((wa - lim) * (wb - lim) <= 0.0))
+            fsc[k] = (compressive_damage_weight(m4, dp, wa, Va) - compressive_damage_weight(m4, dp, wb, Vb)) / (2 * h1)
+            fst[k] = (tensile_damage_weight(m4, 0.0, dp, wa, Va) - tensile_damage_weight(m4, 0.0, dp, wb, Vb)) / (2 * h1)
+            c1, c2 = dp.copy(), dp.copy(); c1[k] += h2; c2[k] -= h2
+            fdc[k] = (compressive_damage_weight(m4, c1, w, V) - compressive_damage_weight(m4, c2, w, V)) / (2 * h2)
+            fdt[k] = (tensile_damage_weight(m4, 0.0, c1, w, V) - tensile_damage_weight(m4, 0.0, c2, w, V)) / (2 * h2)
+        if kink:
+            continue
+        n4 += 1
+        va, vf = np.r_[gs * m4["fc"], gd * 1e-4], np.r_[fsc * m4["fc"], fdc * 1e-4]
+        worst_c = max(worst_c, float(np.linalg.norm(va - vf) / np.linalg.norm(vf)))
+        va, vf = np.r_[hs_ * m4["fc"], hd_ * 1e-4], np.r_[fst * m4["fc"], fdt * 1e-4]
+        if np.linalg.norm(vf) > 0:
+            worst_t = max(worst_t, float(np.linalg.norm(va - vf) / np.linalg.norm(vf)))
+    res["C4_n"], res["C4_worst_tc"], res["C4_worst_ct"] = n4, worst_c, worst_t
+    res["C4_ok"] = bool(n4 >= 20 and worst_c < 1.0e-6 and worst_t < 1.0e-6)
+    # C5 the tension-apex return (mirror of kernel check D7): hydrostatic tension, every damage-loading apex step;
+    # damaged_tangent_analytic (driver gradients ALONG the axis at rho_bar == 0) == the FD of damaged_step_tensor.
+    # Run in three unit systems (#2621 F2 review r2; s scales stresses, L lengths, Gf/Gc as s*L): MPa-mm, kPa-m and
+    # Pa-m (the fork's SI default). C5_n / C5_worst are the MPa case; C5_units holds all three.
+    res["C5_units"] = {}
+    for tag, s, L in (("MPa-mm", 1.0, 1.0), ("kPa-m", 1.0e3, 1.0e-3), ("Pa-m", 1.0e6, 1.0e-3)):
+        m5 = make_material(30000.0 * s, 0.2, 30.0 * s, 3.0 * s, Df=0.85, Hp=0.01, flow_potential="cdpm2", max_subincr=10,
+                           tension_law="bilinear", compression_drive="cdpm2", eps_fc=1e-3)
+        Gf5, Gc5, lch5 = 0.1 * s * L, 5.0 * s * L, 50.0 * L
+        st5, errs5 = make_damage_state(m5), []
+        for k in range(1, 31):
+            deps = np.full(3, 6e-4 * k / 30.0)
+            deps = np.r_[deps, 0.0, 0.0, 0.0] - st5["eps"]
+            _, new5, info5 = damaged_step_tensor(st5, deps, m5, Gf5, Gc5, lch5)
+            _, rb5, *_ = invariants(np.asarray(new5["sig_bar"], float))
+            if (rb5 <= 1.0e-12 * s and new5["sig_bar"][0] > 0.0 and 0.0 < info5["wt"] < 1.0
+                    and new5["et_max"] > st5["et_max"]):
+                Da = damaged_tangent_analytic(st5, deps, m5, Gf5, Gc5, lch5)
+                Dn = damaged_consistent_tangent(st5, deps, m5, Gf5, Gc5, lch5)
+                errs5.append(float(np.linalg.norm(Da - Dn) / np.linalg.norm(Dn)))
+            st5 = new5
+        res["C5_units"][tag] = (len(errs5), (max(errs5) if errs5 else 1.0))
+    res["C5_n"], res["C5_worst"] = res["C5_units"]["MPa-mm"]
+    res["C5_ok"] = bool(all(n >= 5 and w < 1.0e-6 for n, w in res["C5_units"].values()))
+    # C6 the driver-gradient step (mirror of kernel check D9, apeGmsh #2639). _dscalar_dsig stepped an ABSOLUTE 1e-6
+    # in stress units: round-off dominated on far-compressive states and in Pa. Now _DRIVER_FD_REL * S. Three cdpm2-
+    # flow paths (D9's: (0) oedometric compression with shear, |sig_bar| to 2.5e3 MPa; (1) compression with lateral
+    # expansion and shear; (2) tension with shear), 120 steps, every step that advances an omega already > 0. On #877's
+    # deterministic map most of these steps are sub-incremented in n equal pieces; damaged_consistent_tangent pins the
+    # centre's n on both FD legs, so they are tested too. A step whose schedule is NOT n equal pieces (the adaptive
+    # rescue) is counted in sub6 and fails the gate (the reference would not be frozen there): none occurs.
+    # Reference rel_step 1e-5. The oracle's damaged tangent consumes an FD effective tangent (consistent_tangent_kp);
+    # at its default 1e-6 step path 0 read ~9e-7 (9.0e-7 / 9.7e-7 / 9.6e-7 in MPa / kPa / Pa), a residual that did not
+    # shrink with the REFERENCE step because it sat in that inner FD: inner step 1e-6 / 3e-6 / 1e-5 / 3e-5 reads
+    # 9.0e-7 / 3.2e-7 / 1.8e-7 / 2.1e-7 on path 0 in MPa (the kernel's D9, analytic Ceff, reads 2.2e-7 there). C6 runs
+    # the inner FD at 1e-5 (ceff_rel_step) and every path keeps the 1e-6 bound. With the absolute driver step path 0
+    # read 5.7e-5 (MPa), 7.4e-2 (kPa) and 1.1e2 (Pa), paths 1 and 2 7.8e-4 and 6.2e-4 in Pa.
+    res["C6_units"] = {}
+    for tag, s, L in (("MPa-mm", 1.0, 1.0), ("kPa-m", 1.0e3, 1.0e-3), ("Pa-m", 1.0e6, 1.0e-3)):
+        m6 = make_material(30000.0 * s, 0.2, 30.0 * s, 3.0 * s, Df=0.85, Hp=0.01, flow_potential="cdpm2", max_subincr=10,
+                           tension_law="bilinear", compression_drive="cdpm2", eps_fc=1e-3)
+        Gf6, Gc6, lch6 = 0.1 * s * L, 5.0 * s * L, 50.0 * L
+        for path in range(3):
+            st6, wt6, wc6, errs6, sub6 = make_damage_state(m6), 0.0, 0.0, [], 0
+            for k in range(1, 121):
+                t, e6 = k / 120.0, np.zeros(6)
+                if path == 0:
+                    e6[0], e6[3], e6[4] = -1.5e-1 * t, 0.04 * 1.5e-1 * t, 0.02 * 1.5e-1 * t
+                elif path == 1:
+                    e6[0], e6[1], e6[2], e6[3] = -3e-2 * t, 0.5 * 3e-2 * t, 0.4 * 3e-2 * t, 0.1 * 3e-2 * t
+                else:
+                    e6[0], e6[1], e6[3], e6[5] = 1.5e-3 * t, -3e-4 * t, 6e-4 * t, 2e-4 * t
+                deps = e6 - st6["eps"]
+                _, new6, info6 = damaged_step_tensor(st6, deps, m6, Gf6, Gc6, lch6)
+                if (info6["wc"] > wc6 > 0.0) or (info6["wt"] > wt6 > 0.0):
+                    fs6 = return_map_schedule(st6["sig_bar"], deps, m6, st6["kp"])
+                    if fs6 is None or (fs6 and any(f != fs6[0] for f in fs6)):
+                        sub6 += 1
+                    else:
+                        Da = damaged_tangent_analytic(st6, deps, m6, Gf6, Gc6, lch6, ceff_rel_step=1.0e-5)
+                        Dn = damaged_consistent_tangent(st6, deps, m6, Gf6, Gc6, lch6, rel_step=1.0e-5)
+                        errs6.append(float(np.linalg.norm(Da - Dn) / np.linalg.norm(Dn)))
+                st6, wt6, wc6 = new6, info6["wt"], info6["wc"]
+            res["C6_units"][(tag, path)] = (len(errs6), sub6, (max(errs6) if errs6 else 1.0))
+    res["C6_ok"] = bool(all(n >= (40, 20, 100)[p] and sb == 0 and w < 1.0e-6 for (_, p), (n, sb, w) in res["C6_units"].items()))
+    res["PASS"] = bool(res["C1_ok"] and res["C2_ok"] and res["C3_ok"] and res["C4_ok"] and res["C5_ok"] and res["C6_ok"])
+    if verbose:
+        print(f"  C1 chain rule vs frozen-schedule FD: n={res['C1_n']} pieces={npieces} worst sigma {res['C1_worst']:.2e} "
+              f"kp {res['C1_worst_kp']:.2e}")
+        print(f"  C2 direct return: {res['C2_rel']:.2e}   C3 last-piece tangent misses by >= {res['C3_min_last_piece']:.2e}")
+        print(f"  C4 proj-weight gradients: n={n4} tc {worst_c:.2e} ct {worst_t:.2e}")
+        print("  C5 tension-apex damaged tangent vs FD: "
+              + ", ".join(f"{t} n={n} worst {w:.2e}" for t, (n, w) in res["C5_units"].items()))
+        print("  C6 driver-gradient step, damaged tangent vs FD: "
+              + ", ".join(f"{t} path {p} n={n} worst {w:.2e}" for (t, p), (n, _, w) in res["C6_units"].items())
+              + f"   PASS={res['PASS']}")
     return res
