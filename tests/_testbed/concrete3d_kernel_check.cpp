@@ -521,9 +521,10 @@ static void run_oracle_dump(const char* path) {
             // 3e-6 / 1e-6 reads 3.04e-5 / 2.99e-5 / 3.09e-5 / 4.48e-5 / 1.89e-5, UCRT and libmmt alike. It is not a kink: no
             // flag flips inside the stencil (the onset is >= 1.3e-5 strain away, 1e4 steps). From 1e-4 to 1e-5 the FD has
             // converged (Richardson at 1e-4: 3.08e-5), so the onset step is checked against the 1e-4 FD, guarded by the 1e-5 FD
-            // agreeing with it (the plateau), with the same 5e-5 bound. The plateau's 3e-5 is a real residual: the kappa row of
-            // the hardening return (dkpDeps) is ~1.4e-3 off its FD on this state and enters through d omega_c (follow-up,
-            // apeGmsh #2621 F2 onset audit).
+            // agreeing with it (the plateau), with the same 5e-5 bound. That plateau first read 3.04e-5, a real residual: the
+            // kappa row of the hardening return was 1.6e-3 off on this uniaxial state (principalJacobian's micro-FD of the
+            // R4 Lode factor on the compressive meridian, D12) and entered through d omega_c. With the closed form the onset
+            // step reads 2.3e-6 (sweep 1e-4 / 3e-5 / 1e-5 / 3e-6 / 1e-6: 2.3e-6 / 6.0e-7 / 1.0e-6 / 1.7e-5 / 1.5e-5).
             const bool onset = (label == "dmgc_uniax_onset");
             double Cn[6][6]; fdAt(onset ? 1.0e-4 : 1.0e-6, Cn);
             double plateau = 0.0;
@@ -1784,6 +1785,80 @@ static void run_cut_chain(double s, double L, const char* tag) {
     std::printf("       (cut states n >= 2: %d, n = 1: %d, skipped %d; worst Ceff %.2e, dkp %.2e, damaged %.2e)\n", nMulti, nOne, skipped, wE, wK, wD);
 }
 
+// D12 â€” the kappa row of the hardening return ON THE COMPRESSIVE MERIDIAN (apeGmsh #2621 F2 onset audit). With two
+// equal principal trial stresses (every uniaxial and axisymmetric compression state) cos 3theta sits at its extremum,
+// where theta = acos(cos 3theta)/3 has a square-root kink. principalJacobian took d cos2/dw (R4's Lode factor) by a
+// central micro-FD there, which read the round-off in cos 3theta as a slope (2.8e-4 for an exact 0 along the axial
+// principal): the stress rows were right (closed-form dr/dw), the kappa row was not (1.6e-3 on a uniaxial direct
+// return, the residual of dmgc_uniax_onset).
+// Reference: along the two principal directions that keep the meridian (the distinct principal; the equal pair together)
+// theta stays EXACTLY pi/3, so dR3/dw = dR4/dw = 0 and the trial enters R1, R2 only through xi_tr and rho_tr. The kappa
+// derivative is then the IFT of the residual cdpm2HardeningResidual (its own analytic Jacobian, separate code from
+// principalJacobian's) with that exact right-hand side. Every piece of schedules {1} and {1/2, 1/2}, both flows, kappa_n
+// below and above 1, MPa / kPa / Pa: principalJacobian's d kappa/dw along both directions == the reference, 2-vector, to
+// 1e-7. (A central FD of the map cannot certify this at 1e-7 on the meridian: the same sqrt(eps) theta round-off leaves a
+// random ~2.4e-8 relative offset in the map's own cos2, so an FD of kappa there reads ~1e-6 at h = 1e-5; it is printed.)
+static void run_meridian_kappa(double s, const char* tag) {
+    std::printf("[D12] apeGmsh #2621: the kappa row on the compressive meridian%s%s\n", tag[0] ? ", units " : "", tag);
+    int n = 0, nLo = 0, nHi = 0, n1 = 0, n2 = 0; double worst = 0.0, worstMapFD = 0.0;
+    for (int flow = 0; flow < 2; ++flow) for (double k0 : {0.3, 0.95, 1.05, 1.5}) for (double a : {-1.0e-3, -2.0e-3, -4.0e-3})
+    for (double lat : {0.0, 0.2, -0.1}) for (double pre : {0.0, -0.3}) for (int sch = 0; sch < 2; ++sch) {
+        Params q = scaledBase(s); q.flowPotential = flow; q.maxSubIncr = 10;
+        const double s0[6] = {pre * q.fc, 0.05 * pre * q.fc, 0.05 * pre * q.fc, 0, 0, 0};
+        const double d[6] = {a, -lat * a, -lat * a, 0, 0, 0};
+        const int nf = sch ? 2 : 1;
+        double sp[6]; for (int i = 0; i < 6; ++i) sp[i] = s0[i]; double kpp = k0;
+        for (int p = 0; p < nf; ++p) {
+            double dd[6]; for (int i = 0; i < 6; ++i) dd[i] = d[i] / nf;
+            double str[6]; elasticPredTensor(sp, dd, q, str);
+            double Am[3][3], w[3], V[3][3]; voigtToMat(str, Am); eig3sym(Am, w, V);
+            const PrincipalResult pr = returnMapHardening(w, q, kpp);
+            if (pr.converged && pr.plastic && !pr.apex && pr.kp > kpp) {
+                double Dp[3][3], hs[7]; principalJacobian(w, pr, q, true, Dp, hs);
+                // the distinct principal (the axial one) and the equal pair
+                int i0 = 0; { double best = -1.0; for (int i = 0; i < 3; ++i) { const double g = std::fabs(w[i] - w[(i + 1) % 3]) + std::fabs(w[i] - w[(i + 2) % 3]); if (g > best) { best = g; i0 = i; } } }
+                double dv[2][3] = {{0, 0, 0}, {1, 1, 1}}; dv[0][i0] = 1.0; dv[1][i0] = 0.0;
+                double sv[6] = {w[0], w[1], w[2], 0, 0, 0}, xitr, rhotr, thtr; invariants(sv, xitr, rhotr, thtr);
+                double R[4], J[4][4];
+                cdpm2HardeningResidual(pr.xi, pr.rho, pr.dlam, pr.kp, xitr, rhotr, kpp, lodeR(thtr, q.e), hardeningLodeFactor(rhotr, thtr, q),
+                                       q, R, J, q.flowPotential != 1);
+                const double sV = (w[0] + w[1] + w[2]) / 3.0, st[3] = {w[0] - sV, w[1] - sV, w[2] - sV};
+                double an[2], ref[2];
+                for (int r = 0; r < 2; ++r) {
+                    an[r] = 0.0; double dxi = 0.0, drho = 0.0;
+                    for (int b = 0; b < 3; ++b) { an[r] += hs[3 + b] * dv[r][b]; dxi += dv[r][b] / SQRT3; drho += st[b] / rhotr * dv[r][b]; }
+                    double M[4][5]; const double rhs[4] = {dxi, drho, 0.0, 0.0};   // -dR/dw: R1 = xi - xi_tr .., R2 = rho - rho_tr ..
+                    for (int i = 0; i < 4; ++i) { for (int j = 0; j < 4; ++j) M[i][j] = J[i][j]; M[i][4] = rhs[i]; }
+                    for (int c = 0; c < 4; ++c) {
+                        int piv = c; for (int qq = c + 1; qq < 4; ++qq) if (std::fabs(M[qq][c]) > std::fabs(M[piv][c])) piv = qq;
+                        for (int j = 0; j < 5; ++j) { const double t = M[c][j]; M[c][j] = M[piv][j]; M[piv][j] = t; }
+                        for (int qq = 0; qq < 4; ++qq) if (qq != c) { const double f = M[qq][c] / M[c][c]; for (int j = c; j < 5; ++j) M[qq][j] -= f * M[c][j]; }
+                    }
+                    ref[r] = M[3][4] / M[3][3];
+                }
+                const double e0 = an[0] - ref[0], e1 = an[1] - ref[1];
+                const double err = std::sqrt(e0 * e0 + e1 * e1) / std::sqrt(ref[0] * ref[0] + ref[1] * ref[1]);
+                ++n; worst = std::fmax(worst, err);
+                if (kpp < 1.0) ++nLo; else ++nHi;
+                if (sch) ++n2; else ++n1;
+                // informational: the central FD of the map's kappa in w (h = 1e-5 fc), the meridian's round-off floor
+                double fdv[2];
+                for (int r = 0; r < 2; ++r) { const double h = 1.0e-5 * q.fc; double wp[3], wm[3];
+                    for (int b = 0; b < 3; ++b) { wp[b] = w[b] + h * dv[r][b]; wm[b] = w[b] - h * dv[r][b]; }
+                    fdv[r] = (returnMapHardening(wp, q, kpp).kp - returnMapHardening(wm, q, kpp).kp) / (2.0 * h); }
+                worstMapFD = std::fmax(worstMapFD, std::sqrt((an[0] - fdv[0]) * (an[0] - fdv[0]) + (an[1] - fdv[1]) * (an[1] - fdv[1]))
+                                                   / std::sqrt(fdv[0] * fdv[0] + fdv[1] * fdv[1]));
+            }
+            double Dt[6][6], sn[6], kn; returnMapTensor1(q, sp, dd, kpp, true, sn, kn, Dt, false);
+            for (int i = 0; i < 6; ++i) sp[i] = sn[i]; kpp = kn;
+        }
+    }
+    check(n >= 100 && nLo >= 30 && nHi >= 30 && n1 >= 30 && n2 >= 30 && worst < 1.0e-7,
+          label(tag, "D12 kappa row on the compressive meridian (pieces of n = 1 and 2, kappa_n < 1 and >= 1): d kappa/dw == exact-Lode IFT to 1e-7").c_str());
+    std::printf("       (pieces compared %d, kappa_n < 1: %d, >= 1: %d, of n = 1: %d, of n = 2: %d; worst %.2e; the map's own FD at h = 1e-5 fc reads %.2e)\n",
+                n, nLo, nHi, n1, n2, worst, worstMapFD);
+}
+
 int main(int argc, char** argv) {
     run_identities();
     const char* fix = argc > 1 ? argv[1] : "tests/_testbed/concrete3d_oracle_fixture.txt";
@@ -1812,6 +1887,9 @@ int main(int argc, char** argv) {
     run_cut_chain(1.0, 1.0, "");
     run_cut_chain(1.0e3, 1.0e-3, "kPa-m");
     run_cut_chain(1.0e6, 1.0e-3, "Pa-m");
+    run_meridian_kappa(1.0, "");
+    run_meridian_kappa(1.0e3, "kPa-m");
+    run_meridian_kappa(1.0e6, "Pa-m");
     std::printf(fails ? "\nKERNEL CHECK: %d FAIL\n" : "\nKERNEL CHECK: ALL PASS\n", fails);
     return fails ? 1 : 0;
 }

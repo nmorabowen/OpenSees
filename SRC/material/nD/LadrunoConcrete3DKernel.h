@@ -1718,18 +1718,36 @@ inline void principalJacobian(const double w[3], const PrincipalResult& pr, cons
         // dr depends on theta (frozen) which depends on w; the R4 cos2 term ALSO depends on
         // theta(w). For the principal-block Jacobian we include the dominant trial couplings
         // (xi_tr,rho_tr) analytically and the r/theta coupling via dr/dw (R3) + dcos2/dw (R4).
-        // dcos2/dw_b via the same scalar-FD route as dr/dw (cheap, robust).
-        double dcos2_dw[3];
-        {
-            const double h = 1.0e-6 * (fc + 1.0);
+        // dcos2/dw_b in closed form (apeGmsh #2621 F2 onset audit), the regular map's twin of vertexPrincipalJacobian's
+        // dc/dw: cos2 = W(rho_tr) (2x)^2 + 1 - W (W = 1 in lodeFactor mode 0), x = cos theta_tr, 4x^3 - 3x = cos 3theta, so
+        //   dcos2/dw_b = W 8x/(3(4x^2-1)) d(cos 3theta)/dw_b + (4x^2-1) dW/drho s_b/rho_tr.
+        // On the compressive meridian (two equal principals: every uniaxial and axisymmetric state) cos 3theta is at its
+        // extremum, so d(cos 3theta)/dw = 0 while 1/(4x^2-1) diverges: theta = acos(cos 3theta)/3 has a square-root kink
+        // there, and the symmetric derivative (what a central FD of the map reads) is 0. The guard (the vertex's) takes
+        // that 0 when |3(4x^2-1)| <= 1e-5. It replaces a central micro-FD of hardeningLodeFactor at the absolute step
+        // 1e-6 (fc + 1): on the meridian the round-off in cos 3theta (~1e-16) reaches theta through the square root
+        // (~5e-9) and the FD read it as a slope (2.8e-4 in d cos2/d w_axial, exactly 0), which left d kappa/d eps 1.6e-3
+        // off on a uniaxial-compression direct return while the stress rows (closed-form dr/dw) were right.
+        double dcos2_dw[3] = {0.0, 0.0, 0.0};
+        if (rhotr > 1.0e-12 * fc) {
+            const double sigV_t = (w[0] + w[1] + w[2]) / 3.0;
+            const double s_t0[3] = { w[0] - sigV_t, w[1] - sigV_t, w[2] - sigV_t };
+            const double j3_t0 = s_t0[0] * s_t0[1] * s_t0[2];
+            double c3 = (3.0 * SQRT6 / (rhotr * rhotr * rhotr)) * j3_t0;
+            if (c3 > 1.0) c3 = 1.0; else if (c3 < -1.0) c3 = -1.0;
+            const double x = std::cos(std::acos(c3) / 3.0);
+            const double denom_c3 = 3.0 * (4.0 * x * x - 1.0);          // d(cos 3theta)/d(cos theta)
+            const double dx_dc3 = (std::fabs(denom_c3) > 1.0e-5) ? (1.0 / denom_c3) : 0.0;
+            double W = 1.0, dW_drho = 0.0;
+            if (mp.lodeFactor == 1) {                                   // cThetaReg's axis weight
+                const double rho_th = 1.0e-4 * mp.ft, den = rhotr * rhotr + rho_th * rho_th;
+                W = (rhotr * rhotr) / den;
+                dW_drho = 2.0 * rhotr * (rho_th * rho_th) / (den * den);
+            }
             for (int b = 0; b < 3; ++b) {
-                double wp[3] = {w[0], w[1], w[2]}, wm[3] = {w[0], w[1], w[2]};
-                wp[b] += h; wm[b] -= h;
-                double svp[6] = {wp[0],wp[1],wp[2],0,0,0}, svm[6] = {wm[0],wm[1],wm[2],0,0,0};
-                double x1,r1,t1,x2,r2,t2; invariants(svp,x1,r1,t1); invariants(svm,x2,r2,t2);
-                const double cp = hardeningLodeFactor(r1, t1, mp);
-                const double cm = hardeningLodeFactor(r2, t2, mp);
-                dcos2_dw[b] = (cp - cm) / (2.0 * h);
+                const double dc3_dwb = (3.0 * SQRT6 / (rhotr * rhotr * rhotr))
+                                     * (s_t0[b] * s_t0[b] - (rhotr * rhotr) / 3.0 - (3.0 * j3_t0 / (rhotr * rhotr)) * s_t0[b]);
+                dcos2_dw[b] = W * 8.0 * x * dx_dc3 * dc3_dwb + dW_drho * (4.0 * x * x - 1.0) * (s_t0[b] / rhotr);
             }
         }
         for (int b = 0; b < 3; ++b) {
