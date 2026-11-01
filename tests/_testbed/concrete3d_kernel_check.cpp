@@ -1091,7 +1091,11 @@ static void run_f2_chain() {
     // {1/2,1/2} and {1/4 x4} schedules (returnMapTensorSchedule).
     // On #877 the cdpm2-flow direct return rarely fails at F2's increment sizes (0 of 40000 trials at scale 1; ~10 % at
     // scale 20-30), while the legacy flow still fails ~3 %: the trials alternate legacy flow at F2's scale and cdpm2 flow
-    // at 20x it, so both flows reach the adaptive sub-stepped path.
+    // at 8x it, so both flows reach the adaptive sub-stepped path. (At 20x the cdpm2 trials land at kappa_p ~ 1e4-8e4 with
+    // a trial overshoot f_tr ~ 1e4, where a piece of the frozen schedule sits on the edge of its Newton's convergence: the
+    // centre returns on that schedule but a stencil leg 1e-8, 1e-10 or even 1e-13 away fails (rc 2), so the FD reference is
+    // unusable and the sample is skipped -- 82 skipped vs 80 tested under UCRT, 76 under libmmt. At 8x: 3 skipped, the
+    // same 3 under both, 37 of the 80 tested on the cdpm2 flow.)
     unsigned s3 = 2621u; auto rn = [&]() { s3 = s3 * 1664525u + 1013904223u; return (s3 >> 8) * (1.0 / 16777216.0); };
     int n2 = 0, n4 = 0, nF = 0, skipped = 0, tested = 0; double worstD = 0, worstK = 0, worstF = 0;
     double mutBK = 1e300, mutLast = 1e300;                 // E2: how far the two mutants sit from the FD
@@ -1104,7 +1108,7 @@ static void run_f2_chain() {
     for (long t = 0; t < 400000 && (n2 < 40 || n4 < 40); ++t) {
         const bool cdT = ((t >> 2) & 1) != 0;
         const Params& q = cdT ? qCd : qLeg;               // (shadows the base parameters for this trial)
-        const double scT = cdT ? 20.0 : 1.0;
+        const double scT = cdT ? 8.0 : 1.0;
         const int mode = t % 4; double d[6];
         if (mode == 0) { for (int i = 0; i < 6; ++i) d[i] = (rn() * 2 - 1) * 3e-3; for (int i = 3; i < 6; ++i) d[i] *= 0.5; }
         else if (mode == 1) { const double v = -rn() * 8e-3; for (int i = 0; i < 3; ++i) d[i] = v + (rn() * 2 - 1) * 2e-4; for (int i = 3; i < 6; ++i) d[i] = (rn() * 2 - 1) * 1e-4; }
@@ -1160,9 +1164,9 @@ static void run_f2_chain() {
                               kerBK = std::fmin(kerBK, relF6(Dt, Jn)); kerLast = std::fmin(kerLast, relF6(Dt, Dl)); }
         }
     }
-    // n2/n4 >= 20 is the coverage floor; the skip bound only catches a generator that mostly misses (75 skipped vs
-    // 80 tested with g++/MSVC on #877's kernel, so skipped <= tested had a 6 % margin and was libm-sensitive).
-    check(n2 >= 20 && n4 >= 20 && skipped <= 2 * tested && worstD < 1.0e-7 && worstK < 1.0e-7,
+    // n2/n4 >= 20 is the coverage floor; skipped <= tested catches a generator that mostly misses (the 20x cdpm2 scale
+    // did: 82 skipped vs 80 tested under UCRT, see above; at 8x 3 vs 80 under UCRT and libmmt).
+    check(n2 >= 20 && n4 >= 20 && skipped <= tested && worstD < 1.0e-7 && worstK < 1.0e-7,
           "E1 failure-driven 2-/4-piece returns: chain-rule Dtan6 and d kp/de == frozen-schedule FD to 1e-7");
     std::printf("       (2-piece %d, 4-piece %d, skipped (kink in the stencil) %d; worst Dtan6 %.2e, worst dkp %.2e)\n", n2, n4, skipped, worstD, worstK);
     check(nF >= 40 && worstF < 1.0e-7, "E1 forced {1/2,1/2} and {1/4 x4} schedules: chain-rule tangent == FD to 1e-7");

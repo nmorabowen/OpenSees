@@ -5102,7 +5102,8 @@ def run_f2_chain_gate(verbose=True):
     C5 the damaged tangent at the tension-apex return == the FD of the damaged step (1e-6; the per-component
        driver micro-FD across the hydrostatic-axis cone was O(1) off there, apeGmsh #2621);
     C6 the relative driver-gradient step (mirror of kernel check D9, apeGmsh #2639): far-compressive and ordinary
-       damage-advancing states, damaged tangent == the FD of the damaged step (1e-6; 2e-6 on path 0) in MPa-mm, kPa-m and Pa-m."""
+       damage-advancing states, damaged tangent == the FD of the damaged step (1e-6 on every path; the oracle's
+       FD effective tangent runs at a 1e-5 relative step, ceff_rel_step) in MPa-mm, kPa-m and Pa-m."""
     res = {}
     mp_det = make_material(30000.0, 0.2, 30.0, 3.0, Df=0.85, Hp=0.01, flow_potential="cdpm2", max_subincr=10)
     mp_ad = make_material(30000.0, 0.2, 30.0, 3.0, Df=0.85, Hp=0.01, flow_potential="legacy", max_subincr=10,
