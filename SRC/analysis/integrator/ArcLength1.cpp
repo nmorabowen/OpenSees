@@ -47,6 +47,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <elementAPI.h>
+#include <LadrunoReferenceLoad.h>
 
 void* OPS_ArcLength1()
 {
@@ -268,10 +269,15 @@ ArcLength1::domainChanged(void)
     // do this by incrementing lambda by 1, applying load
     // and getting phat from unbalance.
     currentLambda = theModel->getCurrentDomainTime();
+    // Ladruno (WP-220): see LadrunoReferenceLoad.h
+    theModel->applyLoadDomain(currentLambda);
+    this->formUnbalance();
+    Vector unbalanceNow(theLinSOE->getB());
     currentLambda += 1.0;
     theModel->applyLoadDomain(currentLambda);    
-    this->formUnbalance(); // NOTE: this assumes unbalance at last was 0
+    this->formUnbalance();
     (*phat) = theLinSOE->getB();
+    ladrunoRemoveUnbalance(*phat, unbalanceNow);
     currentLambda -= 1.0;
     theModel->setCurrentDomainTime(currentLambda);    
     

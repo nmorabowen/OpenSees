@@ -44,6 +44,7 @@
 #include <Vector.h>
 #include <Channel.h>
 #include <math.h>
+#include <LadrunoReferenceLoad.h>
 #include "ElementIter.h"
 #include "Domain.h"
 #include "Node.h"
@@ -459,10 +460,15 @@ EQPath::domainChanged(void)
     // do this by incrementing lambda by 1, applying load
     // and getting phat from unbalance.
     double currentLambda = theModel->getCurrentDomainTime();
+    // Ladruno (WP-220): see LadrunoReferenceLoad.h
+    theModel->applyLoadDomain(currentLambda);
+    this->formUnbalance();
+    Vector unbalanceNow(theLinSOE->getB());
     currentLambda += 1.0;
     theModel->applyLoadDomain(currentLambda);    
-    this->formUnbalance(); // NOTE: this assumes unbalance at last was 0
+    this->formUnbalance();
     (*q) = theLinSOE->getB();
+    ladrunoRemoveUnbalance(*q, unbalanceNow);
     currentLambda -= 1.0;
     theModel->setCurrentDomainTime(currentLambda);    
 

@@ -49,6 +49,7 @@
 #include <string.h>
 #include <elementAPI.h>
 #include <classTags.h>
+#include <LadrunoReferenceLoad.h>
 
 void *OPS_LadrunoIndirectControl(void)
 {
@@ -359,10 +360,15 @@ LadrunoIndirectControl::domainChanged(void)
 
     // determine phat: increment lambda by 1, apply load, read the unbalance
     currentLambda = theModel->getCurrentDomainTime();
+    // Ladruno (WP-220): see LadrunoReferenceLoad.h
+    theModel->applyLoadDomain(currentLambda);
+    this->formUnbalance();
+    Vector unbalanceNow(theLinSOE->getB());
     currentLambda += 1.0;
     theModel->applyLoadDomain(currentLambda);
-    this->formUnbalance();   // assumes unbalance at last was 0
+    this->formUnbalance();
     (*phat) = theLinSOE->getB();
+    ladrunoRemoveUnbalance(*phat, unbalanceNow);
     currentLambda -= 1.0;
     theModel->setCurrentDomainTime(currentLambda);
 

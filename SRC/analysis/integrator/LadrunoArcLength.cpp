@@ -61,6 +61,7 @@
 #include <string.h>
 #include <elementAPI.h>
 #include <classTags.h>
+#include <LadrunoReferenceLoad.h>
 
 // Ladruno: read an optional trailing number. On failure the token is left in
 // place for the option loop: the Python reader advances past a token it cannot
@@ -510,6 +511,12 @@ LadrunoArcLength::domainChanged(void)
     // do this by incrementing lambda by 1, applying load and getting phat
     // from the unbalance.
     currentLambda = theModel->getCurrentDomainTime();
+    // Ladruno (WP-220): see LadrunoReferenceLoad.h
+    theModel->applyLoadDomain(currentLambda);
+    if (Mstar != 0)
+        Mstar->Zero();   // as below: no f_v in either unbalance
+    this->formUnbalance();
+    Vector unbalanceNow(theLinSOE->getB());
     currentLambda += 1.0;
     theModel->applyLoadDomain(currentLambda);
     // Ladruno: on a repeat domainChanged M* is still set from the last build and
@@ -517,8 +524,9 @@ LadrunoArcLength::domainChanged(void)
     // subtract f_v from phat. Zero M*; it is rebuilt below.
     if (Mstar != 0)
         Mstar->Zero();
-    this->formUnbalance();   // NOTE: assumes unbalance at last was 0
+    this->formUnbalance();
     (*phat) = theLinSOE->getB();
+    ladrunoRemoveUnbalance(*phat, unbalanceNow);
     currentLambda -= 1.0;
     theModel->setCurrentDomainTime(currentLambda);
 

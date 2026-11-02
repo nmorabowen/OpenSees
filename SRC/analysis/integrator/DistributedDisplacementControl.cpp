@@ -46,6 +46,7 @@
 #include <DOF_Group.h>
 #include <ID.h>
 #include <stdlib.h>
+#include <LadrunoReferenceLoad.h>
 
 DistributedDisplacementControl::DistributedDisplacementControl(int node, int dof, 
 							       double increment, 
@@ -368,11 +369,16 @@ DistributedDisplacementControl::domainChanged(void)
     // and getting phat from unbalance.
     currentLambda = theModel->getCurrentDomainTime();
 
+    // Ladruno (WP-220): see LadrunoReferenceLoad.h
+    theModel->applyLoadDomain(currentLambda);
+    this->formUnbalance();
+    Vector unbalanceNow(theLinSOE->getB());
     currentLambda += 1.0;
     theModel->applyLoadDomain(currentLambda);    
     
-    this->formUnbalance(); // NOTE: this assumes unbalance at last was 0
+    this->formUnbalance();
     (*phat) = theLinSOE->getB();
+    ladrunoRemoveUnbalance(*phat, unbalanceNow);
 
     currentLambda -= 1.0;
     theModel->setCurrentDomainTime(currentLambda);    
