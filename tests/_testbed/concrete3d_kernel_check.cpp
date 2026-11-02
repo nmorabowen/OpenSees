@@ -1977,8 +1977,10 @@ static void run_meridian_kappa(double s, const char* tag) {
 //    switch is a kink the one-sided stencil takes). Bound 1e-6 (the damaged / kink bound).
 //  * under Duvaut-Lions, a damage-loading state whose effective stress sits ON the hydrostatic axis (rho_bar <= 1e-13 S: the
 //    tension apex) has no damaged derivative: the drivers are a cone there whose slope differs on the two meridians. Every
-//    state is compared; one that misses the bound on the apex must prove it has no derivative (left and right derivatives
-//    along e_0 differ by >= 0.1; measured >= 1.1), else it fails.
+//    state is compared; one that misses the bound on the apex must prove it has no 6x6 derivative (left and right derivatives
+//    along e_0 differ by >= 0.1), else it fails. The exemption covers the 6x6 only: the derivative along the hydrostatic
+//    direction e_h = (1, 1, 1, 0, 0, 0)/sqrt3 exists there (the state stays on the axis), so D e_h must still match the central
+//    FD of the map along e_h to 1e-6. That FD runs none of the Jacobian helpers the kernel and d13Piece share.
 // Corbel-like material (bilinear tension, CDPM2 drive, tcTemper proj), both flows, eta 0 and 2, the six drives that produced
 // the strata (equal-lateral compression, its reversal into tension, hydrostatic tension, two off-meridian drives).
 static bool d13Piece(const Params& q, const double s[6], const double d[6], double k,
@@ -2126,7 +2128,7 @@ static void d13PathStrain(int path, int k, double e[6]) {   // the acceptance (a
 static void run_exact_tangent(double s, double L, const char* tag) {
     std::printf("[D13] apeGmsh #2621: the tangent against an exact reference (meridian, vertex, off-meridian)%s%s\n", tag[0] ? ", units " : "", tag);
     int n = 0, nDam = 0, nApex = 0, apexBad = 0, kinds[4] = {0, 0, 0, 0}, nSkip = 0;
-    double worstE = 0, worstK = 0, worstD = 0, minApexSplit = 1e300;
+    double worstE = 0, worstK = 0, worstD = 0, minApexSplit = 1e300, worstApexDir = 0;
     for (int fl = 0; fl <= 1; ++fl) for (int ve = 0; ve <= 1; ++ve) for (int path : {0, 1, 5, 6, 7, 9}) {
         Params p = scaledBase(s); p.flowPotential = fl; p.maxSubIncr = 10; p.tensionLaw = 1; p.compDrive = 1; p.tcTemper = 2;
         p.Gf = 0.1 * s * L; p.Gc = 5.0 * s * L; p.lch = 50.0 * L; p.epsFc = 1e-3; p.As = 2.0; p.eta = ve ? 2.0 : 0.0;
@@ -2147,8 +2149,9 @@ static void run_exact_tangent(double s, double L, const char* tag) {
                     const double eD = d13Damaged(p, in, e, dt, nPin, Ce, g, D);
                     if (eD < 1.0e-6) { ++nDam; worstD = std::max(worstD, eD); }
                     else if (p.eta > 0.0 && rho <= 1e-13 * S) {
-                        // the Duvaut-Lions tension apex with damage loading: prove no derivative exists (left and right
-                        // derivatives along e_0 differ); a state that is not proven non-differentiable fails the check
+                        // the Duvaut-Lions tension apex with damage loading: prove no 6x6 derivative exists (left and right
+                        // derivatives along e_0 differ); a state that is not proven non-differentiable fails the check.
+                        // The tangent still answers for the one direction with a derivative, the hydrostatic e_h.
                         ++nApex; const double h = 1e-7 * (std::fabs(e[0]) + p.fc / p.E);
                         double ep[6], em[6], gp[6], gm[6], sE[6], J[6][6]; State oo;
                         for (int i = 0; i < 6; ++i) { ep[i] = em[i] = e[i]; } ep[0] += h; em[0] -= h;
@@ -2156,20 +2159,30 @@ static void run_exact_tangent(double s, double L, const char* tag) {
                         double np = 0, nd = 0; for (int i = 0; i < 6; ++i) { const double a = (gp[i] - sg[i]) / h, b = (sg[i] - gm[i]) / h; np += a * a; nd += (a - b) * (a - b); }
                         const double split = std::sqrt(nd / std::max(np, 1e-300)); minApexSplit = std::min(minApexSplit, split);
                         if (!(split >= 0.1)) ++apexBad;
+                        const double eh = 1.0 / SQRT3, hH = h;
+                        for (int i = 0; i < 6; ++i) { ep[i] = e[i] + (i < 3 ? hH * eh : 0.0); em[i] = e[i] - (i < 3 ? hH * eh : 0.0); }
+                        returnMap(q, ep, in, oo, gp, sE, J, false, dt, true); returnMap(q, em, in, oo, gm, sE, J, false, dt, true);
+                        double dH[6], fH[6];
+                        for (int i = 0; i < 6; ++i) { dH[i] = eh * (D[i][0] + D[i][1] + D[i][2]); fH[i] = (gp[i] - gm[i]) / (2.0 * hH); }
+                        worstApexDir = std::max(worstApexDir, relV6(dH, fH));
                     } else { ++nDam; worstD = std::max(worstD, eD); }
                 } else ++nSkip;
             }
             in = o;
         }
     }
-    check(n >= 600 && kinds[1] >= 200 && kinds[2] >= 100 && kinds[3] >= 30 && worstE < 1.0e-7 && worstK < 1.0e-7,
+    // a state with no exact reference is one whose pinned n-piece chain has no converged piece (the kernel rescues it, D13r's
+    // case; measured: 1 state per unit system, a legacy-flow first piece of 18 just before that path's refusals). 1421 compared.
+    check(n >= 1400 && nSkip <= n / 100 && kinds[1] >= 200 && kinds[2] >= 100 && kinds[3] >= 30 && worstE < 1.0e-7 && worstK < 1.0e-7,
           label(tag, "D13 effective tangent and kappa row == exact reference (meridian, off-meridian, vertex) to 1e-7").c_str());
     check(nDam >= 500 && worstD < 1.0e-6,
           label(tag, "D13 damaged tangent == the damage update along the exact effective linearization to 1e-6").c_str());
     check(nApex >= 20 && apexBad == 0,
-          label(tag, "D13 Duvaut-Lions tension apex: no derivative exists (left/right derivatives differ >= 0.1)").c_str());
-    std::printf("       (states %d, pieces elastic/meridian/off/vertex %d/%d/%d/%d, not referenced %d; worst Ceff %.2e, kappa %.2e; damaged %d, worst %.2e; apex %d, min split %.2f)\n",
-                n, kinds[0], kinds[1], kinds[2], kinds[3], nSkip, worstE, worstK, nDam, worstD, nApex, minApexSplit);
+          label(tag, "D13 Duvaut-Lions tension apex: no 6x6 derivative exists (left/right derivatives differ >= 0.1)").c_str());
+    check(nApex >= 20 && worstApexDir < 1.0e-6,
+          label(tag, "D13 Duvaut-Lions tension apex: D e_h == the FD of the map along the hydrostatic direction to 1e-6").c_str());
+    std::printf("       (states %d, pieces elastic/meridian/off/vertex %d/%d/%d/%d, not referenced %d; worst Ceff %.2e, kappa %.2e; damaged %d, worst %.2e; apex %d, min split %.2f, D e_h worst %.2e)\n",
+                n, kinds[0], kinds[1], kinds[2], kinds[3], nSkip, worstE, worstK, nDam, worstD, nApex, minApexSplit, worstApexDir);
 }
 
 // D12b — the Lode factor's axis weight in lodeFactor mode 1 (apeGmsh #2621 F2 review). With -lodeFactor 1 (Params::
