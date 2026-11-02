@@ -95,6 +95,7 @@ LADRUNO_COMMAND("ladrunoSetNodeTrial",       OPS_LadrunoSetNodeTrial,          L
 LADRUNO_COMMAND("ladrunoArcLength",          OPS_LadrunoArcLengthCmd,          ladrunoArcLength)              // #729
 LADRUNO_COMMAND("ladrunoDR",                 OPS_LadrunoDRCmd,                 ladrunoDR)                     // #729
 LADRUNO_COMMAND("ladrunoLoadControl",        OPS_LadrunoLoadControlCmd,        LADRUNO_NONE)                  // ADR-80 S1
+LADRUNO_COMMAND("ladrunoSymmetryGuard",      OPS_LadrunoSymmetryGuard,         ladrunoSymmetryGuard)          // WP-221
 
 // ---- analysis drivers --------------------------------------------------------
 LADRUNO_COMMAND("LadrunoStaggeredAnalyze",   OPS_LadrunoStaggeredAnalyze,      TclCommand_ladrunoStaggeredAnalyze)   // ADR-73 P2

@@ -206,6 +206,9 @@ ladrunoArcLength(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char**
 int
 ladrunoDR(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
 
+int   // Ladruno WP-221: half-storage asymmetry guard query
+ladrunoSymmetryGuard(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
 int
 videoPlayer(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 

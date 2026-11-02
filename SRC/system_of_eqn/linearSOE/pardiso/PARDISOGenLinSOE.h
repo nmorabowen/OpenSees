@@ -29,6 +29,7 @@
 
 #include <LinearSOE.h>
 #include <Vector.h>
+#include <LadrunoSymmetryGuard.h>   // Ladruno WP-221
 
 class PARDISOGenLinSolver;
 
@@ -69,6 +70,13 @@ class PARDISOGenLinSOE : public LinearSOE
 
     int getNumEqn(void) const;
     int getMatType(void) const;   // Ladruno ADR-75 P1d
+    // Ladruno WP-221: the asymmetry guard, readable (ladrunoSymmetryGuard) and
+    // optionally fatal (-strictSymmetry: every assembly checked, and solve()
+    // refuses once it has latched).
+    const LadrunoSymmetryGuard &getSymmetryGuard(void) const { return symGuard; }
+    void setStrictSymmetry(int flag) { symGuard.strict = flag ? 1 : 0; }
+    int getStrictSymmetry(void) const { return symGuard.strict; }
+    int solve(void);
     int setSize(Graph &theGraph);
     int addA(const Matrix &, const ID &, double fact = 1.0);
     int addB(const Vector &, const ID &, double fact = 1.0);    
@@ -100,7 +108,8 @@ class PARDISOGenLinSOE : public LinearSOE
     int Asize, Bsize;    // size of the 1d array holding A
     bool factored;
     int matType;         // Ladruno ADR-75 P1d: 0 unsym / 1 SPD / 2 sym-general
-    int asymWarned;      // Ladruno ADR-75 P1d: half-store asymmetry reported once
+    LadrunoSymmetryGuard symGuard; // Ladruno ADR-75 P1d / WP-221: half-store
+                         // asymmetry latch (reported once) + what it saw
     int asymBudget;      // ...and how many more element matrices to check
     int asymPass;        // ...and how many tangent assemblies this pattern has
                          // seen, so the check can RE-ARM periodically and catch

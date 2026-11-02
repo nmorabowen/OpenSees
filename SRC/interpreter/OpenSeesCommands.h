@@ -302,6 +302,7 @@ int OPS_getCTestIter();
 int OPS_LadrunoArcLengthCmd();   // Ladruno: Layer-B reduceStep/revert runtime command
 int OPS_LadrunoLoadControlCmd();   // Ladruno (ADR-80 S1): setDeltaLambda without reconstructing
 int OPS_LadrunoDRCmd();          // Ladruno: rung-5 DR settling/micro-burst query command
+int OPS_LadrunoSymmetryGuard();  // Ladruno WP-221: half-storage asymmetry guard query
 int OPS_Recorder();
 int OPS_eleForce();
 int OPS_eleDynamicalForce();
