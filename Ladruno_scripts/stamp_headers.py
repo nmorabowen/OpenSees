@@ -145,6 +145,7 @@ GLOBS = [
     "SRC/analysis/algorithm/equiSolnAlgo/LadrunoFactorReuse*",   # WP-188
     "SRC/analysis/integrator/LadrunoThreadedAssembly.*",   # WP-192
     "SRC/system_of_eqn/linearSOE/mumps/LadrunoMumpsMixed*",   # WP-194
+    "SRC/system_of_eqn/linearSOE/LadrunoSymmetryGuard*.h",   # WP-221
     # WP-122: fork-added files that were never stamped, so the quirk lint never scanned
     # them (WP-120 R1: added on ladruno, absent upstream and at the merge-base)
     "SRC/Ladruno_mutation.h",

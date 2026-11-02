@@ -108,6 +108,7 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <LadrunoLoadControl.h>       // Ladruno (ADR-80 S1): -extrapolate predictor
 #include <LadrunoDynamicRelaxation.h> // Ladruno: rung-5 DR settling/micro-burst query command
 #include <LadrunoSolverQuery.h>       // Ladruno (#729): shared ladrunoArcLength/ladrunoDR dispatch
+#include <LadrunoSymmetryGuardQuery.h>   // Ladruno WP-221: shared ladrunoSymmetryGuard
 #include <LadrunoStaggeredDriver.h>   // Ladruno (ADR-73 P2): iterated fixed-stress overlay driver
 #include <classTags.h>               // Ladruno: INTEGRATOR_TAGS_LadrunoArcLength guard
 #include <PFEMSolver.h>
@@ -3678,6 +3679,14 @@ int OPS_LadrunoDRCmd()
     return Ladruno::drCommand(cmds->getTransientIntegrator());
 }
 
+// Ladruno WP-221: the half-storage asymmetry guard of the active system; the
+// dispatch is shared with classic Tcl (LadrunoSymmetryGuardQuery.h).
+int OPS_LadrunoSymmetryGuard()
+{
+    if (cmds == 0) return 0;
+    return Ladruno::symmetryGuardCommand(cmds->getSOE());
+}
+
 
 int OPS_Database()
 {
@@ -4986,6 +4995,7 @@ void* OPS_PARDISOGenLinSolver() {
     int krylovDigits = 0; // Ladruno ADR-75 P1e: -krylov <L>, 0 = direct only
     int cnrBranch = -1;   // Ladruno WP-132: -deterministic / -cbwr <BRANCH>
     int cnrKeepEnv = 0;   // Ladruno WP-132: bare -deterministic keeps MKL_CBWR
+    int strictSym = 0;    // Ladruno WP-221: -strictSymmetry
 
     // Ladruno ADR-75 P2b lesson, applied pre-emptively: "> 0", not "> 1" — the
     // bare flags (-symmetric/-spd/-stats/-pardisoStats) take no value, so a
@@ -5020,6 +5030,13 @@ void* OPS_PARDISOGenLinSolver() {
             matType = 2;
         } else if (strcmp(opt, "-spd") == 0) {
             matType = 1;
+        } else if (strcmp(opt, "-strictSymmetry") == 0) {
+            // Ladruno WP-221: a bare flag. With half-storage (-matrixType
+            // 1|2) the asymmetry guard checks EVERY assembly and a detected
+            // asymmetry makes the solve fail (analyze/eigen return non-zero)
+            // instead of solving the reflected system. A no-op on the full
+            // CSR (-matrixType 0), where nothing is discarded.
+            strictSym = 1;
         } else if (strcmp(opt, "-stats") == 0 || strcmp(opt, "-pardisoStats") == 0) {
             // Ladruno ADR-75 P1k: `-pardisoStats` is a spelled-out alias for
             // `-stats`, matching the `-stats`/`-mumpsStats` pair `system Mumps`
@@ -5089,6 +5106,7 @@ void* OPS_PARDISOGenLinSolver() {
     if (cnrBranch >= 0)
         theSolver->setDeterministic(cnrBranch, cnrKeepEnv);
     PARDISOGenLinSOE *thePardisoSOE = new PARDISOGenLinSOE(*theSolver, matType);
+    thePardisoSOE->setStrictSymmetry(strictSym);   // Ladruno WP-221
     return thePardisoSOE;
 #else
     opserr << "WARNING system Pardiso - this build has no MKL; "

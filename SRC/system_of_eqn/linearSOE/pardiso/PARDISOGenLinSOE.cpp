@@ -51,7 +51,7 @@ PARDISOGenLinSOE::PARDISOGenLinSOE(PARDISOGenLinSolver &the_Solver)
 	size(0), nnz(0), A(0), B(0), X(0), colA(0), rowStartA(0),
 	vectX(0), vectB(0),
 	Asize(0), Bsize(0),
-	factored(false), matType(0), asymWarned(0), asymBudget(0), asymPass(0),
+	factored(false), matType(0), asymBudget(0), asymPass(0),
 	missWarned(0)
 {
 	the_Solver.setLinearSOE(*this);
@@ -67,7 +67,7 @@ PARDISOGenLinSOE::PARDISOGenLinSOE(PARDISOGenLinSolver &the_Solver, int _matType
 	size(0), nnz(0), A(0), B(0), X(0), colA(0), rowStartA(0),
 	vectX(0), vectB(0),
 	Asize(0), Bsize(0),
-	factored(false), matType(_matType), asymWarned(0), asymBudget(0), asymPass(0),
+	factored(false), matType(_matType), asymBudget(0), asymPass(0),
 	missWarned(0)
 {
 	if (matType < 0 || matType > 2) {
@@ -141,7 +141,8 @@ PARDISOGenLinSOE::setSize(Graph &theGraph)
 	// The pass counter is re-anchored here too: it counts assemblies of THIS
 	// pattern, and zeroA re-arms the budget every ASYM_RESAMPLE_PERIOD of them.
 	asymPass = 0;
-	if (matType != 0 && asymWarned == 0)
+	symGuard.newPattern();   // Ladruno WP-221
+	if (matType != 0 && symGuard.latched == 0)
 		asymBudget = ASYM_CHECK_BUDGET;
 
 	// Ladruno ADR-75 P1d (adversarial review): this OOM path was DEAD CODE.
@@ -458,7 +459,7 @@ PARDISOGenLinSOE::addA(const Matrix &m, const ID &id, double fact)
 	// already in cache. Reported ONCE per SOE, not per element.
 	// BUDGETED (in assembly passes — see setSize/zeroA), and fused into a single
 	// lower-triangle pass. This is a diagnostic, not physics: on a correctly
-	// symmetric model `asymWarned` never latches, so without a budget the check
+	// symmetric model `symGuard.latched` never latches, so without a budget the check
 	// would tax the assembly loop of a PERFORMANCE feature for the entire
 	// analysis.
 	//
@@ -482,39 +483,40 @@ PARDISOGenLinSOE::addA(const Matrix &m, const ID &id, double fact)
 	//
 	// Still not a proof: it is a sampler, so an asymmetry that appears and
 	// vanishes entirely inside one sleep window is missable, and `-matrixType 2`
-	// still requires the author to know their tangent is symmetric. `asymWarned`
+	// still requires the author to know their tangent is symmetric. `symGuard.latched`
 	// remains a once-per-SOE latch — after the first report the guard stops
 	// re-arming for good.
-	if (halfStore && asymWarned == 0 && asymBudget > 0 &&
+	//
+	// Ladruno WP-221: `-strictSymmetry` drops the budget (every assembly is
+	// checked, so the guard is a proof over the whole run rather than a
+	// sampler) and the latch then makes solve() refuse, see below. The state is
+	// what `ladrunoSymmetryGuard` returns, so a caller no longer has to scrape
+	// this warning off stderr.
+	if (halfStore && symGuard.latched == 0 &&
+	    (asymBudget > 0 || symGuard.strict) &&
 	    idSize == m.noRows() && idSize == m.noCols()) {
-		double worstDev = 0.0, scale = 0.0;
-		for (int i = 0; i < idSize; i++)
-			for (int j = 0; j < i; j++) {
-				double u = m(i, j), v = m(j, i);
-				double au = u < 0.0 ? -u : u;
-				double av = v < 0.0 ? -v : v;
-				if (au > scale) scale = au;
-				if (av > scale) scale = av;
-				double d = u - v;
-				if (d < 0.0) d = -d;
-				if (d > worstDev) worstDev = d;
-			}
-		if (scale > 0.0 && worstDev > 1.0e-8 * scale) {
-			asymWarned = 1;
+		if (symGuard.check(m, idSize, asymPass)) {
 			opserr << "WARNING PARDISOGenLinSOE: an assembled element matrix is "
-			          "UNSYMMETRIC (max deviation " << worstDev << " vs scale "
-			       << scale << ") at TANGENT ASSEMBLY " << asymPass
+			          "UNSYMMETRIC (max deviation " << symGuard.worstDev
+			       << " vs scale " << symGuard.scale
+			       << ") at TANGENT ASSEMBLY " << asymPass
 			       << " of this pattern, but `system Pardiso -matrixType "
 			       << matType << "` stores only the upper triangle.\n"
 			          "     Assembly " << asymPass << " is where to look: if it is "
 			          "not the first few, the tangent turned unsymmetric DURING the "
 			          "run (yield, contact closing) — correlate it with your load "
-			          "step.\n"
-			          "     The lower half is being DISCARDED, so this run solves "
-			          "the REFLECTED system and may converge to a WRONG answer.\n"
-			          "     Use the default `system Pardiso` (-matrixType 0) for "
+			          "step.\n";
+			if (symGuard.strict)
+				opserr << "     -strictSymmetry is set: every further solve with "
+				          "this system is REFUSED (analyze/eigen return non-zero).\n";
+			else
+				opserr << "     The lower half is being DISCARDED, so this run "
+				          "solves the REFLECTED system and may converge to a WRONG "
+				          "answer.\n";
+			opserr << "     Use the default `system Pardiso` (-matrixType 0) for "
 			          "contact, non-associated flow, follower loads, corotational "
-			          "transforms or LadrunoUP. Reported once.\n";
+			          "transforms or LadrunoUP. Reported once; query it with "
+			          "`ladrunoSymmetryGuard`.\n";
 		}
 	}
 
@@ -680,15 +682,35 @@ PARDISOGenLinSOE::zeroA(void)
 	// passes, so the guard keeps sampling instead of dying elastic. Without this
 	// a non-associated flow rule or a contact pair that first bites at step 50
 	// was never checked at all — the budget was long spent. Re-arming stops for
-	// good once `asymWarned` latches (reported once per SOE, unchanged), and the
+	// good once `symGuard.latched` latches (reported once per SOE, unchanged), and the
 	// duty cycle is ASYM_CHECK_BUDGET/ASYM_RESAMPLE_PERIOD — see addA.
 	asymPass++;
 
-	if (matType != 0 && asymWarned == 0 &&
+	if (matType != 0 && symGuard.latched == 0 &&
 	    (asymPass % ASYM_RESAMPLE_PERIOD) == 0)
 		asymBudget = ASYM_CHECK_BUDGET;
 	else if (asymBudget > 0)
 		asymBudget--;
+}
+
+// Ladruno WP-221: -strictSymmetry. Refusing HERE, not in addA, is what makes the
+// strict mode reach every caller: an algorithm's failed solve fails `analyze`,
+// and ArpackSolver now stops on a failed solve (it used to ignore the return),
+// so `eigen` fails too. addA's own return cannot carry it: the eigen assembly
+// loop records an addA failure and then returns 0 regardless.
+int
+PARDISOGenLinSOE::solve(void)
+{
+	if (symGuard.strict && symGuard.latched) {
+		if (symGuard.refused++ == 0)
+			opserr << "WARNING PARDISOGenLinSOE::solve - -strictSymmetry: the "
+			          "assembled tangent is UNSYMMETRIC (assembly "
+			       << symGuard.pass << ", deviation " << symGuard.worstDev
+			       << " vs scale " << symGuard.scale << "); refusing to solve "
+			          "the half-stored system.\n";
+		return -1;
+	}
+	return LinearSOE::solve();
 }
 
 void
