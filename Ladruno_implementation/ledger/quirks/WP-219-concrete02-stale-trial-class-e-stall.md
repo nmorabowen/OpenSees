@@ -1,6 +1,7 @@
 ---
 wp: WP-219
 title: "Concrete02 returned the previous trial's stress at its committed strain: the force-based 'class E' stall"
+pr: "#1056"
 date: 2026-11-01
 ---
 ### Force-based element stops with `dW` just above its tolerance, at any tolerance, chaotically in step size and solver (cyclic RC columns with Concrete02)

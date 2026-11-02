@@ -1,6 +1,7 @@
 ---
 wp: WP-219
 title: "LadrunoDispBeamColumn -spanLoad bubble diverged on cracked sections and reported success"
+pr: "#1056"
 date: 2026-11-01
 ---
 ### `LadrunoDispBeamColumn -spanLoad` push stops on a fine mesh (Newton cycles at a large norm), `-noSpanLoad` completes, force changes after a converged `analyze`

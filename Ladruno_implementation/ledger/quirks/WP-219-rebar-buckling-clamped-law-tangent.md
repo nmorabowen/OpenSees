@@ -1,6 +1,7 @@
 ---
 wp: WP-219
 title: "LadrunoRebarBuckling used the law's tangent on the bare stress when g_law was clamped"
+pr: "#1056"
 date: 2026-11-01
 ---
 ### `LadrunoRebarBuckling` tangent differs from the finite difference of its stress for a stocky bar; `reduction` readout reports huge values
