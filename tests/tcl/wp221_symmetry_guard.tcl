@@ -45,6 +45,13 @@ check "exists" {[llength [info commands ladrunoSymmetryGuard]] == 1}
 build
 check "no-system.errors" {[catch {ladrunoSymmetryGuard}] == 1}
 
+# a full-storage system: no half-storage guard, but the eigen-side one answers
+build
+system UmfPack
+eigen 2
+check "umfpack.no-linear-guard" {[catch {ladrunoSymmetryGuard}] == 1}
+check "umfpack.eigen.checks" {[ladrunoSymmetryGuard -eigen checks] == 2}
+
 set systems [list [list ProfileSPD -strictSymmetry] [list ProfileSPD]]
 if {![catch {system Pardiso -matrixType 2}]} {
     lappend systems [list Pardiso -matrixType 2 -strictSymmetry] [list Pardiso -matrixType 2]
@@ -61,6 +68,9 @@ foreach sys $systems {
     check "$sys.latched" {[ladrunoSymmetryGuard latched] == 0} "rec='$rec'"
     set want [expr {[lsearch $sys -strictSymmetry] >= 0 ? 1 : 0}]
     check "$sys.strict" {[ladrunoSymmetryGuard strict] == $want} "rec='$rec'"
+    # the eigen-side guard (ArpackSOE): every element K of the eigen
+    check "$sys.eigen.checks" {[ladrunoSymmetryGuard -eigen checks] == 2}
+    check "$sys.eigen.latched" {[ladrunoSymmetryGuard -eigen latched] == 0}
 }
 
 if {$failures == 0} {

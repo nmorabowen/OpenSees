@@ -37,7 +37,7 @@ def test_classic_tcl_symmetry_guard():
                           stdin=subprocess.DEVNULL)
     out = proc.stdout + proc.stderr
     assert "SELF-TEST:" in out, f"deck did not reach its verdict:\n{out}"
-    # 2 header checks + 5 per system; ProfileSPD x2 always, Pardiso x2 with MKL
-    assert out.count("PASS ") >= 12, f"too few checks ran:\n{out}"
+    # 4 header checks + 7 per system; ProfileSPD x2 always, Pardiso x2 with MKL
+    assert out.count("PASS ") >= 18, f"too few checks ran:\n{out}"
     assert "SELF-TEST: PASS" in out and proc.returncode == 0, (
         f"classic-Tcl symmetry-guard deck failed (rc={proc.returncode}):\n{out}")
