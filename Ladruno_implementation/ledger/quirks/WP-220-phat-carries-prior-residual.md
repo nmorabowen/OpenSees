@@ -1,6 +1,7 @@
 ---
 wp: WP-220
 title: "Path-control integrators built phat with the prior residual inside it"
+pr: "#1057"
 date: 2026-11-02
 ---
 ### Load factor lags the element force after re-issuing `integrator DisplacementControl`, or adding a pattern at t != 0; residual stays at the drive DOF under `NormDispIncr`
