@@ -38,6 +38,7 @@
 #define ModIMKPeakOriented_h
 
 #include <UniaxialMaterial.h>
+#include <LadrunoImplexClock.h> // Ladruno WP-217
 
 class ModIMKPeakOriented : public UniaxialMaterial
 {
@@ -85,6 +86,8 @@ class ModIMKPeakOriented : public UniaxialMaterial
 
     void setImplex(bool flag) { useImplex_ = flag; } // Ladruno
     bool isImplex(void) const { return useImplex_; } // Ladruno
+    void setImplexClock(int m) { implexClock_.mode = m; } // Ladruno WP-217
+    int getImplexClock(void) const { return implexClock_.mode; } // Ladruno WP-217
     double getImplexError(void) const {              // Ladruno
       if (!useImplex_) return 0.0;
       double d = fP - fP_imp_;
@@ -214,6 +217,7 @@ class ModIMKPeakOriented : public UniaxialMaterial
     double fP_imp_;       // Ladruno: implicit trial stress
     double Tangent_imp_;  // Ladruno: implicit trial tangent
     double dtime_n_commit_; // Ladruno: previous committed time step dt_n
+    LadrunoImplexClock implexClock_; // Ladruno WP-217: per-step frozen IMPL-EX factor
 
 };
 

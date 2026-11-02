@@ -68,6 +68,7 @@
 #define LadrunoCohesiveHinge_h
 
 #include <UniaxialMaterial.h>
+#include <LadrunoImplexClock.h>
 
 class LadrunoCohesiveHinge : public UniaxialMaterial
 {
@@ -107,6 +108,8 @@ class LadrunoCohesiveHinge : public UniaxialMaterial
   bool hasPM(void) const         { return P0 > 0.0; }
   bool isImplex(void) const      { return implex; }
   void setImplex(bool flag)      { implex = flag; }
+  void setImplexClock(int m)     { implexClock.mode = m; }   // WP-217: LadrunoImplexClock::STEP | PSEUDO
+  int  getImplexClock(void) const { return implexClock.mode; }
   double getImplexError(void) const;
 
   bool ladrunoThreadSafeUpdate(void) const { return true; }
@@ -165,6 +168,7 @@ class LadrunoCohesiveHinge : public UniaxialMaterial
   double Cwork;         // committed path work int M d[[theta]]
   double dtime_n_commit;
   int    implexCommittedSteps;
+  LadrunoImplexClock implexClock;   // WP-217: per-step frozen extrapolation factor
 
   // trial state
   double Tstrain;
