@@ -2887,6 +2887,57 @@ LadrunoDispBeamColumn3d::solveDualHingeJump3d(const Vector &v, double L)
   return 0;
 }
 
+// Span-load bubble inner solve: the same strategy as LadrunoDispBeamColumn2d. With the
+// committed history fixed the residual is the gradient of a potential in beta, so a
+// positive definite Newton direction with a line search on that potential's directional
+// derivative. Search on |r| stalls at its kinks; plain Newton diverges through Kbb's small
+// and negative eigenvalues.
+static const int spanBubbleMaxOuter3d = 60;
+static const int spanBubbleMaxSearch3d = 12;
+// Residual accepted if the budget runs out, relative to the section force scale. The
+// normal test is 1e-11.
+static const double spanBubbleLooseTol3d = 1.0e-8;
+
+// Solve (H + tau I) p = -g by Cholesky, raising tau until H + tau I is positive definite.
+static void spanBubbleDirection3d(const double H[3][3], const double g[3], double p[3])
+{
+  double scale = 0.0;
+  for (int m = 0; m < 3; m++)
+    for (int n = 0; n < 3; n++)
+      if (fabs(H[m][n]) > scale) scale = fabs(H[m][n]);
+  const double floorPivot = 1.0e-6 * scale + 1.0e-12;
+  double tau = 0.0;
+  double C[3][3];
+  for (int attempt = 0; attempt < 60; attempt++) {
+    bool ok = true;
+    for (int m = 0; m < 3 && ok; m++) {
+      for (int n = 0; n <= m; n++) {
+        double sum = H[m][n] + ((m == n) ? tau : 0.0);
+        for (int k = 0; k < n; k++) sum -= C[m][k] * C[n][k];
+        if (m == n) {
+          if (sum <= floorPivot) { ok = false; break; }
+          C[m][m] = sqrt(sum);
+        } else {
+          C[m][n] = sum / C[n][n];
+        }
+      }
+    }
+    if (ok) break;
+    tau = (tau == 0.0) ? floorPivot : 4.0 * tau;
+  }
+  double y[3];
+  for (int m = 0; m < 3; m++) {
+    double sum = -g[m];
+    for (int k = 0; k < m; k++) sum -= C[m][k] * y[k];
+    y[m] = sum / C[m][m];
+  }
+  for (int m = 2; m >= 0; m--) {
+    double sum = y[m];
+    for (int k = m + 1; k < 3; k++) sum -= C[k][m] * p[k];
+    p[m] = sum / C[m][m];
+  }
+}
+
 // Ladruno (WP-200): Exact Span-Load Internal Strain + Quartic Bubble Enhancement (3D).
 int
 LadrunoDispBeamColumn3d::solveSpanLoadBubble3d(const Vector &v, double L, const double *xi, const double *wt)
@@ -2971,14 +3022,16 @@ LadrunoDispBeamColumn3d::solveSpanLoadBubble3d(const Vector &v, double L, const 
   double by = (useBubble && hasAnyMY) ? spanBetaYCommit : 0.0;
   double Kvb[6][3] = {{0.0}};
   double invKbb[3][3] = {{0.0}};
-  double damp = 1.0;
-  double rPrev = 1.0e300;
-  const int maxIter = useBubble ? 40 : 1;
+  double rp = 0.0, rz = 0.0, ry = 0.0;
+  double Kbb[3][3] = {{0.0}};
 
-  for (int iter = 0; iter < maxIter; iter++) {
+  // Set the sections at (bpT, bzT, byT); leaves the residual and the bubble stiffness.
+  auto evalAt = [&](double bpT, double bzT, double byT) -> int {
     int err = 0;
-    double rp = 0.0, rz = 0.0, ry = 0.0;
-    double Kbb[3][3] = {{0.0}};
+    rp = 0.0; rz = 0.0; ry = 0.0;
+    for (int m = 0; m < 3; m++)
+      for (int n = 0; n < 3; n++)
+        Kbb[m][n] = 0.0;
     for (int a = 0; a < 6; a++)
       for (int m = 0; m < 3; m++)
         Kvb[a][m] = 0.0;
@@ -2993,13 +3046,13 @@ LadrunoDispBeamColumn3d::solveSpanLoadBubble3d(const Vector &v, double L, const 
         double e0j = (j < 8) ? e0[i][j] : 0.0;
         switch (code(j)) {
         case SECTION_RESPONSE_P:
-          e(j) = oneOverL * (v(0) + phi[i] * bp) + e0j;
+          e(j) = oneOverL * (v(0) + phi[i] * bpT) + e0j;
           break;
         case SECTION_RESPONSE_MZ:
-          e(j) = oneOverL * ((xi6 - 4.0) * v(1) + (xi6 - 2.0) * v(2) + phi[i] * bz) + e0j;
+          e(j) = oneOverL * ((xi6 - 4.0) * v(1) + (xi6 - 2.0) * v(2) + phi[i] * bzT) + e0j;
           break;
         case SECTION_RESPONSE_MY:
-          e(j) = oneOverL * ((xi6 - 4.0) * v(3) + (xi6 - 2.0) * v(4) + phi[i] * by) + e0j;
+          e(j) = oneOverL * ((xi6 - 4.0) * v(3) + (xi6 - 2.0) * v(4) + phi[i] * byT) + e0j;
           break;
         case SECTION_RESPONSE_T:
           e(j) = oneOverL * v(5) + e0j;
@@ -3014,7 +3067,7 @@ LadrunoDispBeamColumn3d::solveSpanLoadBubble3d(const Vector &v, double L, const 
       else if (lchMode == 2)  current_section_lch = userLch;
       else                    current_section_lch = wt[i] * L;
 
-      err += ldbc3dSetSectionTrial(theSections[i], e, order, code, axialRelease, eps0Axial[i], phi[i] * oneOverL * bp);
+      err += ldbc3dSetSectionTrial(theSections[i], e, order, code, axialRelease, eps0Axial[i], phi[i] * oneOverL * bpT);
 
       if (useBubble) {
         const Vector &s  = theSections[i]->getStressResultant();
@@ -3097,75 +3150,113 @@ LadrunoDispBeamColumn3d::solveSpanLoadBubble3d(const Vector &v, double L, const 
     if (err != 0) {
       LadrunoOutputGuard og;
       opserr << "LadrunoDispBeamColumn3d::solveSpanLoadBubble3d() - failed setTrialSectionDeformations()\n";
-      return err;
     }
+    return err;
+  };
 
-    if (!useBubble) {
-      spanBetaP = 0.0;
-      spanBetaZ = 0.0;
-      spanBetaY = 0.0;
-      for (int m = 0; m < 3; m++) {
-        for (int n = 0; n < 3; n++) spanKbbInv[m][n] = 0.0;
-        for (int a = 0; a < 6; a++) spanKvb[a][m] = 0.0;
-      }
-      return 0;
-    }
+  int err = evalAt(bp, bz, by);
+  if (err != 0)
+    return err;
 
-    double dScale[3];
-    dScale[0] = (hasAnyP  && Kbb0_pp > 1.0e-30) ? sqrt(Kbb0_pp) : 1.0;
-    dScale[1] = (hasAnyMZ && Kbb0_zz > 1.0e-30) ? sqrt(Kbb0_zz) : 1.0;
-    dScale[2] = (hasAnyMY && Kbb0_yy > 1.0e-30) ? sqrt(Kbb0_yy) : 1.0;
-    bool act4[4] = {hasAnyP, hasAnyMZ, hasAnyMY, false};
-    double sKbb[4][4] = {{0.0}};
-    sKbb[3][3] = 1.0;
+  if (!useBubble) {
+    spanBetaP = 0.0;
+    spanBetaZ = 0.0;
+    spanBetaY = 0.0;
     for (int m = 0; m < 3; m++) {
-      for (int n = 0; n < 3; n++) {
-        if (act4[m] && act4[n])
-          sKbb[m][n] = Kbb[m][n] / (dScale[m] * dScale[n]);
-        else
-          sKbb[m][n] = (m == n) ? 1.0 : 0.0;
-      }
+      for (int n = 0; n < 3; n++) spanKbbInv[m][n] = 0.0;
+      for (int a = 0; a < 6; a++) spanKvb[a][m] = 0.0;
     }
-    double sInv[4][4] = {{0.0}};
-    ladrunoFlooredInv4x4(sKbb, act4, 1.0e-8, sInv);
-    for (int m = 0; m < 3; m++) {
-      for (int n = 0; n < 3; n++) {
-        invKbb[m][n] = (act4[m] && act4[n]) ? (sInv[m][n] / (dScale[m] * dScale[n])) : 0.0;
-      }
-    }
-
-    bool okP = !hasAnyP  || (fabs(rp) <= 1.0e-11 * pScale  + 1.0e-12);
-    bool okZ = !hasAnyMZ || (fabs(rz) <= 1.0e-11 * mScaleZ + 1.0e-12);
-    bool okY = !hasAnyMY || (fabs(ry) <= 1.0e-11 * mScaleY + 1.0e-12);
-    if ((okP && okZ && okY) || (Kbb0_pp <= 0.0 && Kbb0_zz <= 0.0 && Kbb0_yy <= 0.0)) {
-      spanBetaP = bp;
-      spanBetaZ = bz;
-      spanBetaY = by;
-      for (int m = 0; m < 3; m++) {
-        for (int n = 0; n < 3; n++) spanKbbInv[m][n] = invKbb[m][n];
-        for (int a = 0; a < 6; a++) spanKvb[a][m] = Kvb[a][m];
-      }
-      if (postRestoreSync) {
-        for (int m = 0; m < 3; m++) {
-          for (int n = 0; n < 3; n++) spanKbbInvCommit[m][n] = invKbb[m][n];
-          for (int a = 0; a < 6; a++) spanKvbCommit[a][m] = Kvb[a][m];
-        }
-      }
-      return 0;
-    }
-
-    double rnP = hasAnyP  ? (rp / (pScale  + 1.0e-12)) : 0.0;
-    double rnZ = hasAnyMZ ? (rz / (mScaleZ + 1.0e-12)) : 0.0;
-    double rnY = hasAnyMY ? (ry / (mScaleY + 1.0e-12)) : 0.0;
-    double rnorm = sqrt(rnP * rnP + rnZ * rnZ + rnY * rnY);
-    if (rnorm > rPrev) damp *= 0.5;
-    else               damp = (damp * 1.5 < 1.0) ? damp * 1.5 : 1.0;
-    rPrev = rnorm;
-
-    if (hasAnyP)  bp -= damp * (invKbb[0][0] * rp + invKbb[0][1] * rz + invKbb[0][2] * ry);
-    if (hasAnyMZ) bz -= damp * (invKbb[1][0] * rp + invKbb[1][1] * rz + invKbb[1][2] * ry);
-    if (hasAnyMY) by -= damp * (invKbb[2][0] * rp + invKbb[2][1] * rz + invKbb[2][2] * ry);
+    return 0;
   }
+
+  // Coordinates scaled by the elastic bubble stiffness, as in the 2D element.
+  double dScale[3];
+  dScale[0] = (hasAnyP  && Kbb0_pp > 1.0e-30) ? sqrt(Kbb0_pp) : 1.0;
+  dScale[1] = (hasAnyMZ && Kbb0_zz > 1.0e-30) ? sqrt(Kbb0_zz) : 1.0;
+  dScale[2] = (hasAnyMY && Kbb0_yy > 1.0e-30) ? sqrt(Kbb0_yy) : 1.0;
+  const bool act[3] = {hasAnyP, hasAnyMZ, hasAnyMY};
+  auto grad = [&](double g[3]) {
+    g[0] = act[0] ? rp / dScale[0] : 0.0;
+    g[1] = act[1] ? rz / dScale[1] : 0.0;
+    g[2] = act[2] ? ry / dScale[2] : 0.0;
+  };
+  auto scaledKbb = [&](double H[3][3]) {
+    for (int m = 0; m < 3; m++)
+      for (int n = 0; n < 3; n++)
+        H[m][n] = (act[m] && act[n]) ? Kbb[m][n] / (dScale[m] * dScale[n]) : ((m == n) ? 1.0 : 0.0);
+  };
+  auto isConverged = [&](double relTol) {
+    return (!hasAnyP  || fabs(rp) <= relTol * pScale  + 1.0e-12) &&
+           (!hasAnyMZ || fabs(rz) <= relTol * (mScaleZ + mScaleY) + 1.0e-12) &&
+           (!hasAnyMY || fabs(ry) <= relTol * (mScaleZ + mScaleY) + 1.0e-12);
+  };
+  auto merit = [&]() { double g[3]; grad(g); return sqrt(g[0]*g[0] + g[1]*g[1] + g[2]*g[2]); };
+
+  bool done = isConverged(1.0e-11) || (Kbb0_pp <= 0.0 && Kbb0_zz <= 0.0 && Kbb0_yy <= 0.0);
+  double bpBest = bp, bzBest = bz, byBest = by, rBest = merit();
+  for (int outer = 0; outer < spanBubbleMaxOuter3d && !done; outer++) {
+    double g0[3], H[3][3], p[3];
+    grad(g0);
+    scaledKbb(H);
+    spanBubbleDirection3d(H, g0, p);
+    const double dbp = p[0] / dScale[0], dbz = p[1] / dScale[1], dby = p[2] / dScale[2];
+    const double slope0 = g0[0]*p[0] + g0[1]*p[1] + g0[2]*p[2];   // < 0: p descends the potential
+    const double bpBase = bp, bzBase = bz, byBase = by;
+
+    double sLo = 0.0, slopeLo = slope0, sHi = -1.0, slopeHi = 0.0, step = 1.0;
+    for (int ls = 0; ls < spanBubbleMaxSearch3d; ls++) {
+      bp = bpBase + step * dbp;
+      bz = bzBase + step * dbz;
+      by = byBase + step * dby;
+      err = evalAt(bp, bz, by);
+      if (err != 0)
+        return err;
+      double m = merit();
+      if (m < rBest) { rBest = m; bpBest = bp; bzBest = bz; byBest = by; }
+      if ((done = isConverged(1.0e-11)))
+        break;
+      double g[3];
+      grad(g);
+      double slope = g[0]*p[0] + g[1]*p[1] + g[2]*p[2];
+      if (fabs(slope) <= 0.25 * fabs(slope0))
+        break;
+      if (slope < 0.0) { sLo = step; slopeLo = slope; }
+      else             { sHi = step; slopeHi = slope; }
+      if (sHi < 0.0) {
+        step *= 2.0;
+      } else {
+        double t = -slopeLo / (slopeHi - slopeLo);
+        if (t < 0.1) t = 0.1;
+        if (t > 0.9) t = 0.9;
+        step = sLo + t * (sHi - sLo);
+      }
+    }
+  }
+
+  if (!done) {
+    // Out of budget: stand on the best iterate, so the force, the tangent and the stored
+    // beta all describe one state.
+    bp = bpBest; bz = bzBest; by = byBest;
+    err = evalAt(bp, bz, by);
+    if (err != 0)
+      return err;
+  }
+
+  bool act4[4] = {hasAnyP, hasAnyMZ, hasAnyMY, false};
+  double sKbb[4][4] = {{0.0}};
+  sKbb[3][3] = 1.0;
+  {
+    double H[3][3];
+    scaledKbb(H);
+    for (int m = 0; m < 3; m++)
+      for (int n = 0; n < 3; n++)
+        sKbb[m][n] = H[m][n];
+  }
+  double sInv[4][4] = {{0.0}};
+  ladrunoFlooredInv4x4(sKbb, act4, 1.0e-8, sInv);
+  for (int m = 0; m < 3; m++)
+    for (int n = 0; n < 3; n++)
+      invKbb[m][n] = (act4[m] && act4[n]) ? (sInv[m][n] / (dScale[m] * dScale[n])) : 0.0;
 
   spanBetaP = bp;
   spanBetaZ = bz;
@@ -3173,6 +3264,20 @@ LadrunoDispBeamColumn3d::solveSpanLoadBubble3d(const Vector &v, double L, const 
   for (int m = 0; m < 3; m++) {
     for (int n = 0; n < 3; n++) spanKbbInv[m][n] = invKbb[m][n];
     for (int a = 0; a < 6; a++) spanKvb[a][m] = Kvb[a][m];
+  }
+  if (done && postRestoreSync) {
+    for (int m = 0; m < 3; m++) {
+      for (int n = 0; n < 3; n++) spanKbbInvCommit[m][n] = invKbb[m][n];
+      for (int a = 0; a < 6; a++) spanKvbCommit[a][m] = Kvb[a][m];
+    }
+  }
+  if (!done && !isConverged(spanBubbleLooseTol3d)) {
+    // No solution was found: report it. A force from this state would not be a function
+    // of the deformation, and no global iteration could converge on it.
+    LadrunoOutputGuard og;
+    opserr << "WARNING LadrunoDispBeamColumn3d::solveSpanLoadBubble3d - no bubble solution for element "
+           << this->getTag() << " (residual " << rBest << ")\n";
+    return -2;
   }
   return 0;
 }
