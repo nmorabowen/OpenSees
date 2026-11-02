@@ -2159,7 +2159,8 @@ static void run_exact_tangent(double s, double L, const char* tag) {
                         double np = 0, nd = 0; for (int i = 0; i < 6; ++i) { const double a = (gp[i] - sg[i]) / h, b = (sg[i] - gm[i]) / h; np += a * a; nd += (a - b) * (a - b); }
                         const double split = std::sqrt(nd / std::max(np, 1e-300)); minApexSplit = std::min(minApexSplit, split);
                         if (!(split >= 0.1)) ++apexBad;
-                        const double eh = 1.0 / SQRT3, hH = h;
+                        // step 1e-6 of the strain scale, the FD's minimum (1e-8 / 1e-7 / 1e-6 / 1e-5: 1.1e-7 / 1.5e-8 / 3.5e-9 / 1.9e-7)
+                        const double eh = 1.0 / SQRT3, hH = 10.0 * h;
                         for (int i = 0; i < 6; ++i) { ep[i] = e[i] + (i < 3 ? hH * eh : 0.0); em[i] = e[i] - (i < 3 ? hH * eh : 0.0); }
                         returnMap(q, ep, in, oo, gp, sE, J, false, dt, true); returnMap(q, em, in, oo, gm, sE, J, false, dt, true);
                         double dH[6], fH[6];
@@ -2177,9 +2178,9 @@ static void run_exact_tangent(double s, double L, const char* tag) {
           label(tag, "D13 effective tangent and kappa row == exact reference (meridian, off-meridian, vertex) to 1e-7").c_str());
     check(nDam >= 500 && worstD < 1.0e-6,
           label(tag, "D13 damaged tangent == the damage update along the exact effective linearization to 1e-6").c_str());
-    check(nApex >= 20 && apexBad == 0,
+    check(nApex >= 100 && apexBad == 0,
           label(tag, "D13 Duvaut-Lions tension apex: no 6x6 derivative exists (left/right derivatives differ >= 0.1)").c_str());
-    check(nApex >= 20 && worstApexDir < 1.0e-6,
+    check(nApex >= 100 && worstApexDir < 1.0e-6,
           label(tag, "D13 Duvaut-Lions tension apex: D e_h == the FD of the map along the hydrostatic direction to 1e-6").c_str());
     std::printf("       (states %d, pieces elastic/meridian/off/vertex %d/%d/%d/%d, not referenced %d; worst Ceff %.2e, kappa %.2e; damaged %d, worst %.2e; apex %d, min split %.2f, D e_h worst %.2e)\n",
                 n, kinds[0], kinds[1], kinds[2], kinds[3], nSkip, worstE, worstK, nDam, worstD, nApex, minApexSplit, worstApexDir);
