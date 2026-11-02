@@ -669,6 +669,35 @@ def test_dead_point_crushed_freeze_gate():
         assert np.max(np.abs(s)) <= 1.01e-6 * np.max(np.abs(st["sig_bar"])) + 1e-15
 
 
+def test_f2_chain_rule_tangent_gate():
+    """apeGmsh #2621 F2 — the sub-step chain-rule tangent. C1 the chain rule over the pieces (numerical per-piece
+    partials + J_k = A_k (J_{k-1} + f_k C) + b_k (x) K_{k-1}, K_k = a_k . (J_{k-1} + f_k C) + e_k K_{k-1}) == the
+    FD of the map with its piece schedule frozen, for sigma AND kp (1e-5), on the deterministic default and on the
+    adaptive path (on #877's kernel); C2 it reduces to the direct-return tangent; C3 the last-piece tangent (the adaptive
+    path's tangent before the F2 port) misses by > 1e-3; C4 the closed-form proj-weight gradients the
+    analytic damaged tangent uses == FD of the weights (1e-6); C5 the damaged tangent at the tension-apex return
+    (driver gradients along the hydrostatic axis) == the FD of the damaged step (1e-6; the old per-component
+    micro-FD across the axis cone read 0.11-1.00), in MPa-mm, kPa-m and Pa-m (review r2: an absolute axis guard
+    and step read 0.97-0.98 in kPa and Pa); C6 the relative driver-gradient step (#2639, mirror of kernel check D9):
+    far-compressive and ordinary damage-advancing states, damaged tangent == FD (1e-6; the oracle's effective tangent,
+    itself an FD, runs at a 1e-5 relative step there: at 1e-6 its round-off read ~9e-7 on path 0) in the three unit systems
+    (the absolute 1e-6 step read 5.7e-5 in MPa, 7.4e-2 in kPa and 1.1e2 in Pa on the far-compressive path)."""
+    r = ref.run_f2_chain_gate(verbose=False)
+    assert r["C1_ok"], (r["C1_n"], r["C1_worst"], r["C1_worst_kp"])
+    assert r["C2_ok"], r["C2_rel"]
+    assert r["C3_ok"], r["C3_min_last_piece"]
+    assert r["C4_ok"], (r["C4_n"], r["C4_worst_tc"], r["C4_worst_ct"])
+    assert set(r["C5_units"]) == {"MPa-mm", "kPa-m", "Pa-m"}
+    for units, (n, worst) in r["C5_units"].items():
+        assert n >= 5 and worst < 1.0e-6, (units, n, worst)
+    assert r["C5_ok"], r["C5_units"]
+    assert {u for u, _ in r["C6_units"]} == {"MPa-mm", "kPa-m", "Pa-m"} and len(r["C6_units"]) == 9
+    for (units, path), (n, nsub, worst) in r["C6_units"].items():
+        assert n >= (40, 20, 100)[path] and nsub == 0 and worst < 1.0e-6, (units, path, n, nsub, worst)
+    assert r["C6_ok"], r["C6_units"]
+    assert r["PASS"]
+
+
 def test_p2_no_spurious_healing():
     """Regression for the PR #261 adversarial-review CRITICAL: the implicit omega solve must not
     clamp-stall to 0 on a physical softening path (a raw clamped Newton did, so the cracked material

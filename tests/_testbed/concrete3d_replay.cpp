@@ -225,7 +225,8 @@ namespace K = Ladruno::Concrete3D;
 // (stateOut, the N line). Two build-time guards hold the member lists to that mapping:
 //   * the MEMBER COUNT: a structured binding must name every non-static data member, so Params with other than 37
 //     members, or State with other than 21, does not compile (an added or removed field, padding or not: an int put
-//     into one of Params' 4-byte holes or State's hole after subInfo keeps sizeof but fails here);
+//     into one of Params' 4-byte holes or its 7-byte hole after the bool implex, or into State's hole after subInfo,
+//     keeps sizeof but fails here);
 //   * sizeof: a same-count change that changes the layout size (e.g. an int turned into a double).
 // Neither catches a same-size retype or a rename/reorder at the same count and size; fillParams' key map and the P
 // line's key check, and FIELDS, are the guard there. On a failure: map the field and classify it in FIELDS first,
