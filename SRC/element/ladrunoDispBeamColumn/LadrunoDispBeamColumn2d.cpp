@@ -1281,6 +1281,34 @@ LadrunoDispBeamColumn2d::update(void)
   return 0;
 }
 
+// Span-load bubble inner solve (solveSpanLoadBubble). With the committed history fixed,
+// each fiber's stress is a function of its strain, so the bubble residual is the gradient
+// of a potential in beta even though |r| has kinks and Kbb can be nearly rank one (a
+// cracked section with one bar layer yielded). So: a positive definite Newton direction
+// and a line search on the directional derivative of that potential. Search on |r|
+// stalls at the kinks; plain Newton diverges through the small and negative eigenvalues.
+static const int spanBubbleMaxOuter = 60;
+static const int spanBubbleMaxSearch = 12;
+// Residual accepted if the budget runs out, relative to the section force scale. The
+// normal test is 1e-11.
+static const double spanBubbleLooseTol = 1.0e-8;
+
+// Solve (A + tau I) p = -g for the 2x2 symmetric A with tau making it positive definite.
+static void spanBubbleDirection2d(double A, double B, double C, double g1, double g2,
+                                  double &p1, double &p2)
+{
+  double avg = 0.5 * (A + B);
+  double disc = sqrt(0.25 * (A - B) * (A - B) + C * C);
+  double lamMin = avg - disc;
+  double scale = fabs(avg) + disc;
+  double floorLam = 1.0e-6 * scale + 1.0e-12;
+  double tau = (lamMin < floorLam) ? (floorLam - lamMin) : 0.0;
+  double a = A + tau, b = B + tau;
+  double det = a * b - C * C;
+  p1 = -( b * g1 - C * g2) / det;
+  p2 = -(-C * g1 + a * g2) / det;
+}
+
 int
 LadrunoDispBeamColumn2d::solveSpanLoadBubble(const Vector &v, double L)
 {
@@ -1358,16 +1386,16 @@ LadrunoDispBeamColumn2d::solveSpanLoadBubble(const Vector &v, double L)
   const bool useBubble = (phiNorm2 > 1.0e-8) && (hasAnyP || hasAnyMZ);
   double bp = (useBubble && hasAnyP)  ? spanBetaPCommit : 0.0;
   double bz = (useBubble && hasAnyMZ) ? spanBetaZCommit : 0.0;
-  const int maxIter = useBubble ? 25 : 1;
-  double damp = 1.0;
-  double rPrev = 1.0e300;
   double Kvb[3][2] = {{0.0}};
   double invKbb[2][2] = {{0.0}};
+  double rp = 0.0, rz = 0.0;
+  double Kbb_PP = 0.0, Kbb_ZZ = 0.0, Kbb_PZ = 0.0;
 
-  for (int iter = 0; iter < maxIter; iter++) {
+  // Set the sections at (bpT, bzT); leaves the residual and the bubble stiffness.
+  auto evalAt = [&](double bpT, double bzT) -> int {
     int err = 0;
-    double rp = 0.0, rz = 0.0;
-    double Kbb_PP = 0.0, Kbb_ZZ = 0.0, Kbb_PZ = 0.0;
+    rp = 0.0; rz = 0.0;
+    Kbb_PP = 0.0; Kbb_ZZ = 0.0; Kbb_PZ = 0.0;
     for (int a = 0; a < 3; a++) {
       Kvb[a][0] = 0.0;
       Kvb[a][1] = 0.0;
@@ -1382,10 +1410,10 @@ LadrunoDispBeamColumn2d::solveSpanLoadBubble(const Vector &v, double L)
       for (int j = 0; j < order; j++) {
         switch (code(j)) {
         case SECTION_RESPONSE_P:
-          e(j) = oneOverL * (v(0) + phi[i] * bp) + e0P[i];
+          e(j) = oneOverL * (v(0) + phi[i] * bpT) + e0P[i];
           break;
         case SECTION_RESPONSE_MZ:
-          e(j) = oneOverL * ((xi6 - 4.0) * v(1) + (xi6 - 2.0) * v(2) + phi[i] * bz) + e0Mz[i];
+          e(j) = oneOverL * ((xi6 - 4.0) * v(1) + (xi6 - 2.0) * v(2) + phi[i] * bzT) + e0Mz[i];
           break;
         default:
           e(j) = 0.0;
@@ -1439,70 +1467,118 @@ LadrunoDispBeamColumn2d::solveSpanLoadBubble(const Vector &v, double L)
         }
       }
     }
-
     if (err != 0) {
       LadrunoOutputGuard og;
       opserr << "LadrunoDispBeamColumn2d::solveSpanLoadBubble() - failed setTrialSectionDeformations()\n";
-      return err;
     }
+    return err;
+  };
 
-    if (!useBubble) {
-      spanBetaP = 0.0;
-      spanBetaZ = 0.0;
-      for (int m = 0; m < 2; m++) {
-        for (int n = 0; n < 2; n++) spanKbbInv[m][n] = 0.0;
-        for (int a = 0; a < 3; a++) spanKvb[a][m] = 0.0;
-      }
-      return 0;
+  int err = evalAt(bp, bz);
+  if (err != 0)
+    return err;
+
+  if (!useBubble) {
+    spanBetaP = 0.0;
+    spanBetaZ = 0.0;
+    for (int m = 0; m < 2; m++) {
+      for (int n = 0; n < 2; n++) spanKbbInv[m][n] = 0.0;
+      for (int a = 0; a < 3; a++) spanKvb[a][m] = 0.0;
     }
+    return 0;
+  }
 
-    // Diagonal-equilibrated 2x2 guarded inverse so axial and flexural units never cross-floor
-    double dP = (hasAnyP  && Kbb0_PP > 1.0e-30) ? sqrt(Kbb0_PP) : 1.0;
-    double dZ = (hasAnyMZ && Kbb0_ZZ > 1.0e-30) ? sqrt(Kbb0_ZZ) : 1.0;
+  // Work in coordinates scaled by the elastic bubble stiffness, so axial and flexural
+  // units never mix: x = d*beta, g = r/d, H = Kbb/(d d).
+  const double dP = (hasAnyP  && Kbb0_PP > 1.0e-30) ? sqrt(Kbb0_PP) : 1.0;
+  const double dZ = (hasAnyMZ && Kbb0_ZZ > 1.0e-30) ? sqrt(Kbb0_ZZ) : 1.0;
+  auto gradP = [&]() { return hasAnyP  ? rp / dP : 0.0; };
+  auto gradZ = [&]() { return hasAnyMZ ? rz / dZ : 0.0; };
+  auto isConverged = [&](double relTol) {
+    return (!hasAnyP  || fabs(rp) <= relTol * pScale + 1.0e-12) &&
+           (!hasAnyMZ || fabs(rz) <= relTol * mScale + 1.0e-12);
+  };
+  auto merit = [&]() { double a = gradP(), b = gradZ(); return sqrt(a * a + b * b); };
+
+  bool done = isConverged(1.0e-11);
+  double bpBest = bp, bzBest = bz, rBest = merit();
+  for (int outer = 0; outer < spanBubbleMaxOuter && !done; outer++) {
+    double g1 = gradP(), g2 = gradZ();
     double sPP = hasAnyP  ? (Kbb_PP / (dP * dP)) : 1.0;
     double sZZ = hasAnyMZ ? (Kbb_ZZ / (dZ * dZ)) : 1.0;
     double sPZ = (hasAnyP && hasAnyMZ) ? (Kbb_PZ / (dP * dZ)) : 0.0;
-    double sInv[2][2] = {{0.0}};
-    invertSym2x2Guarded2d(sPP, sZZ, sPZ, sInv);
-    invKbb[0][0] = hasAnyP  ? (sInv[0][0] / (dP * dP)) : 0.0;
-    invKbb[1][1] = hasAnyMZ ? (sInv[1][1] / (dZ * dZ)) : 0.0;
-    invKbb[0][1] = (hasAnyP && hasAnyMZ) ? (sInv[0][1] / (dP * dZ)) : 0.0;
-    invKbb[1][0] = invKbb[0][1];
+    double p1, p2;
+    spanBubbleDirection2d(sPP, sZZ, sPZ, g1, g2, p1, p2);
+    const double dbp = p1 / dP, dbz = p2 / dZ;
+    const double slope0 = g1 * p1 + g2 * p2;        // < 0: p descends the potential
+    const double bpBase = bp, bzBase = bz;
 
-    bool okP = !hasAnyP  || (fabs(rp) <= 1.0e-11 * pScale + 1.0e-12);
-    bool okZ = !hasAnyMZ || (fabs(rz) <= 1.0e-11 * mScale + 1.0e-12);
-    if (okP && okZ) {
-      spanBetaP = bp;
-      spanBetaZ = bz;
-      for (int m = 0; m < 2; m++) {
-        for (int n = 0; n < 2; n++) spanKbbInv[m][n] = invKbb[m][n];
-        for (int a = 0; a < 3; a++) spanKvb[a][m] = Kvb[a][m];
+    // Find a step where the slope along p has dropped: expand while it stays negative,
+    // false position once the root is bracketed.
+    double sLo = 0.0, slopeLo = slope0, sHi = -1.0, slopeHi = 0.0, step = 1.0;
+    for (int ls = 0; ls < spanBubbleMaxSearch; ls++) {
+      bp = bpBase + step * dbp;
+      bz = bzBase + step * dbz;
+      err = evalAt(bp, bz);
+      if (err != 0)
+        return err;
+      double m = merit();
+      if (m < rBest) { rBest = m; bpBest = bp; bzBest = bz; }
+      if ((done = isConverged(1.0e-11)))
+        break;
+      double slope = gradP() * p1 + gradZ() * p2;
+      if (fabs(slope) <= 0.25 * fabs(slope0))
+        break;
+      if (slope < 0.0) { sLo = step; slopeLo = slope; }
+      else             { sHi = step; slopeHi = slope; }
+      if (sHi < 0.0) {
+        step *= 2.0;
+      } else {
+        double t = -slopeLo / (slopeHi - slopeLo);
+        if (t < 0.1) t = 0.1;
+        if (t > 0.9) t = 0.9;
+        step = sLo + t * (sHi - sLo);
       }
-      if (postRestoreSync) {
-        for (int m = 0; m < 2; m++) {
-          for (int n = 0; n < 2; n++) spanKbbInvCommit[m][n] = invKbb[m][n];
-          for (int a = 0; a < 3; a++) spanKvbCommit[a][m] = Kvb[a][m];
-        }
-      }
-      return 0;
     }
-
-    double rnP = hasAnyP  ? (rp / (pScale + 1.0e-12)) : 0.0;
-    double rnZ = hasAnyMZ ? (rz / (mScale + 1.0e-12)) : 0.0;
-    double rNorm = sqrt(rnP * rnP + rnZ * rnZ);
-    if (rNorm > rPrev) damp *= 0.5;
-    else               damp = (damp * 1.5 < 1.0) ? damp * 1.5 : 1.0;
-    rPrev = rNorm;
-
-    if (hasAnyP)  bp -= damp * (invKbb[0][0] * rp + invKbb[0][1] * rz);
-    if (hasAnyMZ) bz -= damp * (invKbb[1][0] * rp + invKbb[1][1] * rz);
   }
+
+  if (!done) {
+    // Out of budget: stand on the best iterate, so the force, the tangent and the stored
+    // beta all describe one state.
+    bp = bpBest; bz = bzBest;
+    err = evalAt(bp, bz);
+    if (err != 0)
+      return err;
+  }
+
+  double sInv[2][2] = {{0.0}};
+  invertSym2x2Guarded2d(hasAnyP  ? (Kbb_PP / (dP * dP)) : 1.0,
+                        hasAnyMZ ? (Kbb_ZZ / (dZ * dZ)) : 1.0,
+                        (hasAnyP && hasAnyMZ) ? (Kbb_PZ / (dP * dZ)) : 0.0, sInv);
+  invKbb[0][0] = hasAnyP  ? (sInv[0][0] / (dP * dP)) : 0.0;
+  invKbb[1][1] = hasAnyMZ ? (sInv[1][1] / (dZ * dZ)) : 0.0;
+  invKbb[0][1] = (hasAnyP && hasAnyMZ) ? (sInv[0][1] / (dP * dZ)) : 0.0;
+  invKbb[1][0] = invKbb[0][1];
 
   spanBetaP = bp;
   spanBetaZ = bz;
   for (int m = 0; m < 2; m++) {
     for (int n = 0; n < 2; n++) spanKbbInv[m][n] = invKbb[m][n];
     for (int a = 0; a < 3; a++) spanKvb[a][m] = Kvb[a][m];
+  }
+  if (done && postRestoreSync) {
+    for (int m = 0; m < 2; m++) {
+      for (int n = 0; n < 2; n++) spanKbbInvCommit[m][n] = invKbb[m][n];
+      for (int a = 0; a < 3; a++) spanKvbCommit[a][m] = Kvb[a][m];
+    }
+  }
+  if (!done && !isConverged(spanBubbleLooseTol)) {
+    // No solution was found: report it. A force from this state would not be a function
+    // of the deformation, and no global iteration could converge on it.
+    LadrunoOutputGuard og;
+    opserr << "WARNING LadrunoDispBeamColumn2d::solveSpanLoadBubble - no bubble solution for element "
+           << this->getTag() << " (residual " << rBest << ")\n";
+    return -2;
   }
   return 0;
 }

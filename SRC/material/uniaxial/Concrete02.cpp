@@ -180,10 +180,16 @@ Concrete02::setTrialStrain(double trialStrain, double strainRate)
   eps = trialStrain;
   double deps = eps - epsP;
 
-  if (fabs(deps) < DBL_EPSILON)
+  // Ladruno: back at the committed strain the response is the committed one. The upstream
+  // bare return left sig and e at the previous TRIAL, so the stress jumped by a whole
+  // iterate at this one strain and an element iteration could cycle on the jump forever.
+  if (fabs(deps) < DBL_EPSILON) {
+    sig = sigP;
+    e = eP;
     return 0;
+  }
 
-  // if the current strain is less than the smallest previous strain 
+  // if the current strain is less than the smallest previous strain
   // call the monotonic envelope in compression and reset minimum strain 
 
   if (eps < ecmin) {

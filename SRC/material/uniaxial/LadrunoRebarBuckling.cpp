@@ -253,6 +253,14 @@ LadrunoRebarBuckling::LadrunoRebarBuckling(int tag, UniaxialMaterial& bar,
   Ctangent = Ttangent;
 }
 
+// The "reduction" readout sigma/sigma_bare. It has no meaning while sigma_bare passes
+// through zero with a raise held (the ratio is arbitrarily large and changes sign), so
+// below 1 % of fy it reports 1. Readout only: nothing in the response uses it.
+static inline double lrbReduction(double sigma, double sBare, double fy)
+{
+  return (fabs(sBare) > 1.0e-2 * fabs(fy) && sBare != 0.0) ? sigma / sBare : 1.0;
+}
+
 LadrunoRebarBuckling::LadrunoRebarBuckling()
   : UniaxialMaterial(0, MAT_TAG_LadrunoRebarBuckling),
     theBar(0), model(MODEL_DM), lsr(0.0), alpha(1.0),
@@ -515,7 +523,7 @@ void LadrunoRebarBuckling::bucklingBranch(double eps, double sBare, double kBare
   Tg       = g;
   Tstress  = sBare + g;                             // sigma = sigma_bare + raise
   Ttangent = tang;
-  Tr       = (sBare != 0.0) ? Tstress / sBare : 1.0;
+  Tr       = lrbReduction(Tstress, sBare, fy);
 
   // deepen the monotone bow envelope (the carry re-merge target)
   if (Te_bow == LRB_INVALID || eps < Te_bow) {
@@ -557,7 +565,7 @@ void LadrunoRebarBuckling::restraightenBranch(double eps, double sBare, double k
   Tg       = g;
   Tstress  = sBare + g;
   Ttangent = tang;
-  Tr = (sBare != 0.0) ? Tstress / sBare : 1.0;
+  Tr = lrbReduction(Tstress, sBare, fy);
 }
 
 // ===========================================================================
@@ -608,7 +616,13 @@ int LadrunoRebarBuckling::setTrialStrain(double strain, double strainRate)
   double sigV1, kV1;
   this->lawV1(strain, sBare, kBare, sigV1, kV1);
   Tg_law = sigV1 - sBare;
-  if (Tg_law < 0.0) Tg_law = 0.0;
+  if (Tg_law < 0.0) {
+    // the law sits below bare and the raise is clamped, so sigma = sBare: its
+    // tangent must be the bare one too, not the law's.
+    Tg_law = 0.0;
+    sigV1  = sBare;
+    kV1    = kBare;
+  }
 
   if (Cbranch == BR_PASS) {
     if (this->onsetReached(strain, e_cross_live)) {
