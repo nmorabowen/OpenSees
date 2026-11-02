@@ -1,7 +1,7 @@
 ---
 wp: WP-221
 title: "eigen ignored a failed linear solve; an unsymmetric K is wrong for eigen under any storage"
-pr: "TBD"
+pr: "#1059"
 date: 2026-11-02
 ---
 ### `eigen` returns 0 although the linear system failed to solve; eigenvalues of a loaded corotational / non-associated model change from run to run, even on `system Pardiso` (full CSR)
