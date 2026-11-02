@@ -346,7 +346,10 @@ zero-pivot message now says exactly that.
   every assembly and refuses every solve once latched (`PARDISOGenLinSOE::solve`), failing
   `analyze` and `eigen`. Confirmed: `eigen` assembles K through this SOE's `addA` (ArpackSOE
   forwards); `ArpackSolver` had to stop on a failed linear solve (it ignored the return). Same
-  treatment for `ProfileSPDLinSOE`. Recipe: `75c_pardiso_solver_recipe.md` Trap 1.
+  treatment for `ProfileSPDLinSOE`. ArpackSOE gained its own every-K check (`ladrunoSymmetryGuard
+  -eigen`): its solver is symmetric Lanczos, so an unsymmetric K is wrong for `eigen` under ANY
+  storage, and `-strictSymmetry` fails that eigen on `-matrixType 0` too. Recipe:
+  `75c_pardiso_solver_recipe.md` Trap 1.
 - **P1e — factorization-preconditioned CGS (`-krylov <L>`). ✅ DONE, AND IT COVERS THE CASE P1a CANNOT**
   (`phase1/RESULTS_p1e_krylov.md`). P1a's reuse gate keys on the SOE `factored` flag, which answers
   "is A unchanged" — so it pays under ModifiedNewton/Initial/Krylov/IMPL-EX and **nothing under full

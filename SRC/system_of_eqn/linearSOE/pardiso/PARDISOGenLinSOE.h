@@ -75,6 +75,7 @@ class PARDISOGenLinSOE : public LinearSOE
     // refuses once it has latched).
     const LadrunoSymmetryGuard &getSymmetryGuard(void) const { return symGuard; }
     void setStrictSymmetry(int flag) { symGuard.strict = flag ? 1 : 0; }
+    int getStrictSymmetry(void) const { return symGuard.strict; }
     int solve(void);
     int setSize(Graph &theGraph);
     int addA(const Matrix &, const ID &, double fact = 1.0);

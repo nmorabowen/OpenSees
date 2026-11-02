@@ -32,6 +32,13 @@
 //       latched worstDeviation scale assembly checkedAssemblies checks
 //       strict matrixType maxRelative refused
 //   ladrunoSymmetryGuard <field>    -> that one value
+//   ladrunoSymmetryGuard -eigen [field]
+//                                   -> the same record for the stiffness of the
+//      most recent `eigen` (ArpackSOE's own guard). The eigen solver is
+//      symmetric, so this one checks EVERY element K whatever the system
+//      stores: on `-matrixType 0` an unsymmetric K is still wrong for eigen.
+//      There `assembly` counts eigen calls, matrixType is -1, and `strict` is
+//      the system's -strictSymmetry, which makes that eigen fail.
 //
 //   latched            1 once an element matrix exceeded tolerance (1e-8 relative)
 //   worstDeviation     max |m(i,j) - m(j,i)| of the matrix that latched it
@@ -63,6 +70,8 @@
 #include <PARDISOGenLinSOE.h>
 #endif
 #include <LadrunoSymmetryGuard.h>
+#include <EigenSOE.h>
+#include <ArpackSOE.h>
 #include <classTags.h>
 #include <elementAPI.h>
 #include <OPS_Globals.h>
@@ -70,21 +79,41 @@
 
 namespace Ladruno {
 
-inline int symmetryGuardCommand(LinearSOE *soe)
+inline int symmetryGuardCommand(LinearSOE *soe, EigenSOE *eigenSOE)
 {
-    if (soe == 0) {
+    const LadrunoSymmetryGuard *g = 0;
+    int matType = 0;
+
+    // `-eigen` selects the eigen-side guard; any other first word is a field
+    bool eigenSide = false;
+    if (OPS_GetNumRemainingInputArgs() > 0) {
+        const char *first = OPS_GetString();
+        if (strcmp(first, "-eigen") == 0)
+            eigenSide = true;
+        else
+            OPS_ResetCurrentInputArg(-1);   // un-read: it is the field name
+    }
+    if (eigenSide) {
+        if (eigenSOE == 0 || eigenSOE->getClassTag() != EigenSOE_TAGS_ArpackSOE) {
+            opserr << "WARNING ladrunoSymmetryGuard -eigen - no eigen has run with "
+                      "the default (ARPACK) eigen solver\n";
+            return -1;
+        }
+        g = &((ArpackSOE *)eigenSOE)->getSymmetryGuard();
+        matType = -1;
+    }
+
+    if (g == 0 && soe == 0) {
         opserr << "WARNING ladrunoSymmetryGuard - no system has been defined yet\n";
         return -1;
     }
 
-    const LadrunoSymmetryGuard *g = 0;
-    int matType = 0;
-    if (soe->getClassTag() == LinSOE_TAGS_ProfileSPDLinSOE) {
+    if (g == 0 && soe->getClassTag() == LinSOE_TAGS_ProfileSPDLinSOE) {
         g = &((ProfileSPDLinSOE *)soe)->getSymmetryGuard();
         matType = 1;
     }
 #ifdef _PARDISO
-    else if (soe->getClassTag() == LinSOE_TAGS_PARDISOGenLinSOE) {
+    else if (g == 0 && soe->getClassTag() == LinSOE_TAGS_PARDISOGenLinSOE) {
         PARDISOGenLinSOE *p = (PARDISOGenLinSOE *)soe;
         g = &p->getSymmetryGuard();
         matType = p->getMatType();
@@ -93,7 +122,8 @@ inline int symmetryGuardCommand(LinearSOE *soe)
     if (g == 0) {
         opserr << "WARNING ladrunoSymmetryGuard - the active system has no "
                   "half-storage asymmetry guard (only `system Pardiso` and "
-                  "`system ProfileSPD` carry one)\n";
+                  "`system ProfileSPD` carry one; `ladrunoSymmetryGuard -eigen` "
+                  "reads the eigen-side guard under any system)\n";
         return -1;
     }
 

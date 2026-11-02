@@ -3684,7 +3684,7 @@ int OPS_LadrunoDRCmd()
 int OPS_LadrunoSymmetryGuard()
 {
     if (cmds == 0) return 0;
-    return Ladruno::symmetryGuardCommand(cmds->getSOE());
+    return Ladruno::symmetryGuardCommand(cmds->getSOE(), cmds->getEigenSOE());
 }
 
 
@@ -5034,8 +5034,10 @@ void* OPS_PARDISOGenLinSolver() {
             // Ladruno WP-221: a bare flag. With half-storage (-matrixType
             // 1|2) the asymmetry guard checks EVERY assembly and a detected
             // asymmetry makes the solve fail (analyze/eigen return non-zero)
-            // instead of solving the reflected system. A no-op on the full
-            // CSR (-matrixType 0), where nothing is discarded.
+            // instead of solving the reflected system. On the full CSR
+            // (-matrixType 0) nothing is discarded, so static solves are
+            // unaffected, but an `eigen` of an unsymmetric K still fails:
+            // ARPACK is symmetric whatever the storage (ArpackSOE::solve).
             strictSym = 1;
         } else if (strcmp(opt, "-stats") == 0 || strcmp(opt, "-pardisoStats") == 0) {
             // Ladruno ADR-75 P1k: `-pardisoStats` is a spelled-out alias for

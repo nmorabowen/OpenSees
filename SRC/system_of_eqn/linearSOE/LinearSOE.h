@@ -58,6 +58,9 @@ class LinearSOE : public MovableObject
     virtual ~LinearSOE();
 
     virtual int solve(void);    
+    // Ladruno WP-221: `system ... -strictSymmetry`. ArpackSOE reads it so an
+    // eigen refuses an unsymmetric K whatever this system stores.
+    virtual int getStrictSymmetry(void) const { return 0; }
     virtual int setLinks(AnalysisModel &theModel);    
 
     // pure virtual functions

@@ -15,11 +15,17 @@ Deck: the 2x2x2 stdBrick cube of test_pardiso_asym_rearm.py. Elastic it is
 exactly symmetric; with non-associated DruckerPrager it turns unsymmetric only
 once a Gauss point yields (late onset, after the 3-assembly startup budget).
 
-Item 3 of the WP is checked by test_eigen_assembles_through_the_guard: `eigen`
+Item 3 of the WP is checked by test_symmetric_eigen_is_clean: `eigen`
 assembles K through the active linear SOE's addA (ArpackSOE forwards to it), so
-the guard's `checks` count moves on an eigen-only run. The eigen-strict tests
-need ArpackSolver to stop on a failed linear solve, which it ignored before
-WP-221.
+the guard's `checks` count moves on an eigen-only run. ArpackSolver also had to
+stop on a failed linear solve, which it ignored before WP-221.
+
+The eigen-side guard (`ladrunoSymmetryGuard -eigen`): ARPACK's path is symmetric
+Lanczos, so an unsymmetric K gives wrong modes under ANY storage. Full CSR is no
+remedy (the YOO probe saw a corotational cantilever's mode 1 vary 143-152
+between identical runs on -matrixType 0). ArpackSOE checks every element K of
+every eigen, and the system's -strictSymmetry (Pardiso, any -matrixType, or
+ProfileSPD) makes such an eigen fail.
 
 Never assert on the warning TEXT here: the whole point is that callers no longer
 depend on it.
@@ -113,13 +119,14 @@ def _ramp(nsteps=_NSTEPS):
     return done
 
 
-def _guard():
-    rec = ops.ladrunoSymmetryGuard()
+def _guard(*side):
+    """The linear system's guard, or with "-eigen" the eigen-side one."""
+    rec = ops.ladrunoSymmetryGuard(*side)
     assert len(rec) == len(FIELDS), rec
     g = dict(zip(FIELDS, rec))
     # every field is also its own subcommand, and agrees with the record
     for f in FIELDS:
-        assert ops.ladrunoSymmetryGuard(f) == pytest.approx(g[f]), f
+        assert ops.ladrunoSymmetryGuard(*side, f) == pytest.approx(g[f]), f
     return g
 
 
@@ -264,4 +271,58 @@ def test_unsymmetric_eigen_strict_fails(system_args):
     with pytest.raises(Exception):
         ops.eigen(3)
     g = _guard()
-    assert g["latched"] == 1 and g["strict"] == 1 and g["refused"] >= 1, g
+    assert g["latched"] == 1 and g["strict"] == 1, g
+    # the eigen side refuses first, before the linear solve is ever attempted
+    e = _guard("-eigen")
+    assert e["latched"] == 1 and e["strict"] == 1 and e["refused"] >= 1, e
+
+
+# ---- the eigen-side guard: storage-independent --------------------------------
+
+FULL_SYSTEMS = [pytest.param(["Pardiso"], marks=needs_pardiso, id="pardiso-full"),
+                pytest.param(["UmfPack"], id="umfpack"),
+                pytest.param(["FullGeneral"], id="fullgeneral")]
+
+
+@pytest.mark.parametrize("system_args", FULL_SYSTEMS + [PARDISO_SAMPLE, PROFILE_SAMPLE])
+def test_eigen_guard_symmetric_is_clean(system_args):
+    _model(elastic=True)
+    ops.system(*system_args)
+    ops.eigen(3)
+    e = _guard("-eigen")
+    assert e["checks"] == 8 and e["checkedAssemblies"] == 1, e   # 8 bricks, one K
+    assert e["latched"] == 0 and e["matrixType"] == -1 and e["refused"] == 0, e
+
+
+@pytest.mark.parametrize("system_args", FULL_SYSTEMS)
+def test_eigen_guard_catches_unsymmetric_K_on_full_storage(system_args):
+    """Full storage keeps the lower half, but the eigen solver is still symmetric."""
+    _yielded_then(system_args)
+    ops.eigen(3)                                 # default: warns, does not fail
+    e = _guard("-eigen")
+    assert e["latched"] == 1 and e["strict"] == 0 and e["refused"] == 0, e
+    assert e["worstDeviation"] > 1e-8 * e["scale"] > 0, e
+    # the record describes the MOST RECENT eigen: an elastic one is clean again
+    _model(elastic=True)
+    ops.system(*system_args)
+    ops.eigen(3)
+    assert _guard("-eigen")["latched"] == 0
+
+
+@needs_pardiso
+def test_eigen_strict_on_full_csr_fails():
+    """`system Pardiso -strictSymmetry` (matrixType 0): static is unaffected, eigen refuses."""
+    _yielded_then(["Pardiso", "-strictSymmetry"])
+    with pytest.raises(Exception):
+        ops.eigen(3)
+    e = _guard("-eigen")
+    assert e["latched"] == 1 and e["strict"] == 1 and e["refused"] >= 1, e
+    assert _guard()["checks"] == 0   # nothing half-stored, the static guard never looks
+
+
+def test_eigen_guard_needs_an_arpack_eigen():
+    _model(elastic=True)
+    ops.system("UmfPack")
+    ops.eigen("-fullGenLapack", 2)
+    with pytest.raises(Exception):
+        ops.ladrunoSymmetryGuard("-eigen")

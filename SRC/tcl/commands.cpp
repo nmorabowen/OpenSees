@@ -7470,12 +7470,13 @@ ladrunoDR(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
     return TCL_OK;
 }
 
-// Ladruno WP-221: classic Tcl owns its system in the file-scope `theSOE`.
+// Ladruno WP-221: classic Tcl owns its systems in the file-scope `theSOE` /
+// `theEigenSOE`.
 int
 ladrunoSymmetryGuard(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
 {
     OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
-    if (Ladruno::symmetryGuardCommand(theSOE) < 0)
+    if (Ladruno::symmetryGuardCommand(theSOE, theEigenSOE) < 0)
 	    return TCL_ERROR;
     return TCL_OK;
 }

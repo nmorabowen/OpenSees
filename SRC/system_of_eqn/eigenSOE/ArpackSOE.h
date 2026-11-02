@@ -33,6 +33,7 @@
 
 #include "eigenSOE/EigenSOE.h"
 #include <Vector.h>
+#include <LadrunoSymmetryGuard.h>   // Ladruno WP-221
 
 class AnalysisModel;
 class ArpackSolver;
@@ -65,6 +66,13 @@ class ArpackSOE : public EigenSOE
     void zeroM(void);
 
     double getShift(void);
+
+    // Ladruno WP-221: ARPACK's path here is symmetric Lanczos (dsaupd), so an
+    // unsymmetric K gives wrong modes under ANY `system` storage -- full CSR
+    // is no remedy. Every element K of every eigen is checked; the record
+    // describes the most recent eigen (`ladrunoSymmetryGuard -eigen`).
+    int solve(int numModes, bool generalized, bool findSmallest = true);
+    const LadrunoSymmetryGuard &getSymmetryGuard(void) const { return symGuard; }
     
     int sendSelf(int commitTag, Channel &theChannel);
     int recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBroker);
@@ -88,6 +96,11 @@ class ArpackSOE : public EigenSOE
     Channel **theChannels;
     ID **localCol;
     ID *sizeLocal;
+
+    LadrunoSymmetryGuard symGuard;   // Ladruno WP-221
+    int symPass;                     // eigen K assemblies seen by this SOE
+    bool inAddM;                     // addM reuses addA for -shift*M
+    bool symWarned;                  // warning printed once per SOE
 };
 
 

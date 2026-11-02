@@ -65,7 +65,7 @@ Measured there on the cluster-bench tower deck (nlev=20, one core): UmfPack
 | `-spd` | *(flag)* | — | alias for `-matrixType 1` |
 | `-krylov` | int `L` | off | reuse the previous factorization as a **preconditioner** (CGS); stops at `10^-L` |
 | `-stats` | *(flag)* | off | dump PARDISO's own peak-memory counters + CGS decisions, once per pattern |
-| `-strictSymmetry` | *(flag)* | off | with `-matrixType 1\|2`: check EVERY assembly for asymmetry and **fail the solve** (analyze/eigen return non-zero) once one is found (WP-221). No-op on `-matrixType 0` |
+| `-strictSymmetry` | *(flag)* | off | with `-matrixType 1\|2`: check EVERY assembly for asymmetry and **fail the solve** (analyze/eigen return non-zero) once one is found. With any `-matrixType`: fail an `eigen` whose K is unsymmetric (WP-221) |
 
 Same spelling in Tcl and Python. Numbering deliberately matches
 `system Mumps -matrixType`.
@@ -155,7 +155,18 @@ except Exception:
 
 `eigen` IS covered: it assembles K through the active system's `addA`
 (ArpackSOE forwards to it). `system ProfileSPD` carries the same guard, flag and
-query. Without `-strictSymmetry` treat `-matrixType 1|2` as an assertion you are
+query.
+
+**For `eigen`, full storage is no remedy.** The default eigen solver is ARPACK's
+symmetric Lanczos, so an unsymmetric K gives wrong modes on `-matrixType 0`
+too: on a loaded corotational cantilever, mode 1 came out 143.5 / 152.3 / 149.3
+/ 144.0 on four identical runs. ArpackSOE therefore checks every element K of
+every eigen, whatever the system, and warns once. `ladrunoSymmetryGuard -eigen`
+reads that check for the most recent eigen, and the system's `-strictSymmetry`
+makes such an eigen fail. Falling back to `system Pardiso` is right for
+`analyze`. It is wrong for `eigen`: there, an unsymmetric K is a modelling
+question (eigen of a loaded state with a non-conservative tangent), not a
+storage one. Without `-strictSymmetry` treat `-matrixType 1|2` as an assertion you are
 making, not a check the code performs.
 
 ### Trap 2 — `-matrixType 1` (SPD) fails on any indefinite tangent

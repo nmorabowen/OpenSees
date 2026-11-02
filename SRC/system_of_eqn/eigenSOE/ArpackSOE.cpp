@@ -45,7 +45,8 @@
 ArpackSOE::ArpackSOE(double s)
 :EigenSOE(EigenSOE_TAGS_ArpackSOE),
  M(0), Msize(0), mDiagonal(false), shift(s), theModel(0), theSOE(0),
- processID(-1), numChannels(0), theChannels(0), localCol(0), sizeLocal(0)
+ processID(-1), numChannels(0), theChannels(0), localCol(0), sizeLocal(0),
+ symPass(0), inAddM(false), symWarned(false)
 {
   ArpackSolver *theSolvr = new ArpackSolver();
   this->setSolver(*theSolvr);
@@ -201,6 +202,25 @@ ArpackSOE::addA(const Matrix &m, const ID &id, double fact)
   // check for a quick return 
   if (fact == 0.0)  return 0;
 
+  // Ladruno WP-221: check every element STIFFNESS of the eigen (not the
+  // -shift*M that addM routes through here). One assembly per eigen, so no
+  // sampling budget: the cost is a half-matrix compare per element, once.
+  int n = id.Size();
+  if (!inAddM && symGuard.latched == 0 && n == m.noRows() && n == m.noCols() &&
+      symGuard.check(m, n, symPass) && !symWarned) {
+    symWarned = true;
+    opserr << "WARNING ArpackSOE: the stiffness assembled for eigen is "
+              "UNSYMMETRIC (max deviation " << symGuard.worstDev << " vs scale "
+           << symGuard.scale << "). The eigen solver is symmetric (ARPACK "
+              "dsaupd), so the modes are NOT reliable under any `system` "
+              "storage, full or half.\n";
+    if (theSOE->getStrictSymmetry())
+      opserr << "     -strictSymmetry is set on the system: this eigen is "
+                "REFUSED.\n";
+    opserr << "     Reported once; query it with `ladrunoSymmetryGuard "
+              "-eigen`.\n";
+  }
+
   return theSOE->addA(m, id, fact);
 }
 
@@ -212,6 +232,11 @@ ArpackSOE::zeroA(void)
     opserr << "ArpackSOE::zeroA() - no SOE set\n";
     return;
   }
+  // Ladruno WP-221: a new eigen assembly; the guard record describes the most
+  // recent eigen only.
+  symGuard = LadrunoSymmetryGuard();
+  symGuard.strict = theSOE->getStrictSymmetry();
+  symPass++;
   return theSOE->zeroA();
 }
 
@@ -223,7 +248,9 @@ ArpackSOE::addM(const Matrix &m, const ID &id, double fact)
     return -1;
   }
 
+  inAddM = true;    // Ladruno WP-221: M is not the guarded stiffness
   int res = this->addA(m, id, -shift);
+  inAddM = false;
 
   if (res < 0)
     return res;
@@ -268,6 +295,21 @@ ArpackSOE::zeroM(void)
     M[i] = 0;
 }
 
+
+// Ladruno WP-221: refuse the eigen of an unsymmetric K when the system was
+// declared -strictSymmetry (the analysis' eigen() turns this into -4).
+int
+ArpackSOE::solve(int numModes, bool generalized, bool findSmallest)
+{
+  if (symGuard.latched && theSOE != 0 && theSOE->getStrictSymmetry()) {
+    symGuard.refused++;
+    opserr << "WARNING ArpackSOE::solve - -strictSymmetry: the eigen stiffness "
+              "is UNSYMMETRIC (deviation " << symGuard.worstDev << " vs scale "
+           << symGuard.scale << "); refusing the symmetric eigen solve.\n";
+    return -1;
+  }
+  return EigenSOE::solve(numModes, generalized, findSmallest);
+}
 
 double 
 ArpackSOE::getShift(void)

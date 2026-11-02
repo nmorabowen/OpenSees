@@ -76,6 +76,7 @@ class ProfileSPDLinSOE : public LinearSOE
     // overrides solve(), so strict refusal is serial-only.
     const LadrunoSymmetryGuard &getSymmetryGuard(void) const { return symGuard; }
     void setStrictSymmetry(int flag) { symGuard.strict = flag ? 1 : 0; }
+    int getStrictSymmetry(void) const { return symGuard.strict; }
     virtual int solve(void);
     virtual int sendSelf(int commitTag, Channel &theChannel);
     virtual int recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBroker);
