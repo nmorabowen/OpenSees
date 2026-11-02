@@ -124,6 +124,7 @@ OPS_LadrunoMembrane(void)
   double nu_direct = 0.2;
   double rho = 0.0;
   bool lumped = false;
+  bool noMemo = false; // WP-222
   double pressure = 0.0;
   double b1 = 0.0, b2 = 0.0, b3 = 0.0;
   std::vector<int> diaphragmNodes;               // WP-204
@@ -290,6 +291,8 @@ OPS_LadrunoMembrane(void)
       }
     } else if (std::strcmp(tok, "-lumped") == 0) {
       lumped = true;
+    } else if (std::strcmp(tok, "-noMemo") == 0) {
+      noMemo = true; // WP-222
     } else if (std::strcmp(tok, "-pressure") == 0) {
       numData = 1;
       if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetDoubleInput(&numData, &pressure) < 0) {
@@ -370,6 +373,10 @@ OPS_LadrunoMembrane(void)
       b3,
       diaphragmNodes,
       inPlaneMods);
+
+  if (noMemo) {
+    theEle->setTransferMemo(false);
+  }
 
   Domain *theDomain = OPS_GetDomain();
   if (theDomain != nullptr) {
