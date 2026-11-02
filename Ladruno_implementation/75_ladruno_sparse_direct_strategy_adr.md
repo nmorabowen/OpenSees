@@ -339,6 +339,14 @@ zero-pivot message now says exactly that.
   actually moves — and it is **exact**, so unlike BLR it is legal on byte-identical/oracle paths.
   Against the P1c capability wall this is the largest memory lever ADR-75 has produced.
   **Default stays `0` (unsymmetric)** — see §5.2-bis.
+  **Follow-up (WP-221, 2026-11-02):** the half-storage asymmetry guard is now readable and
+  optionally fatal. `ladrunoSymmetryGuard` returns its state (latched, worst deviation/scale,
+  assembly, checks, strict, matrixType, maxRelative, refused) to openseespy and both Tcl
+  engines, so a caller no longer scrapes stderr for `UNSYMMETRIC`. `-strictSymmetry` checks
+  every assembly and refuses every solve once latched (`PARDISOGenLinSOE::solve`), failing
+  `analyze` and `eigen`. Confirmed: `eigen` assembles K through this SOE's `addA` (ArpackSOE
+  forwards); `ArpackSolver` had to stop on a failed linear solve (it ignored the return). Same
+  treatment for `ProfileSPDLinSOE`. Recipe: `75c_pardiso_solver_recipe.md` Trap 1.
 - **P1e — factorization-preconditioned CGS (`-krylov <L>`). ✅ DONE, AND IT COVERS THE CASE P1a CANNOT**
   (`phase1/RESULTS_p1e_krylov.md`). P1a's reuse gate keys on the SOE `factored` flag, which answers
   "is A unchanged" — so it pays under ModifiedNewton/Initial/Krylov/IMPL-EX and **nothing under full
