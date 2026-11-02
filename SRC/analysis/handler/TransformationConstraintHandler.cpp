@@ -515,12 +515,16 @@ TransformationConstraintHandler::enforceSPs(void)
 	theDof->enforceSPs(0);
     }
 
+    // Ladruno (WP-220): report an element that failed to update. Upstream dropped the code,
+    // so the step went on from, and could commit, a state with no valid element force.
+    int res = 0;
     for (int j=0; j<numFE; j++) {
       FE_Element *theEle = theFEs[j];
-      theEle->updateElement();
+      if (theEle->updateElement() < 0)
+        res = -1;
     }
 
-    return 0;
+    return res;
 }
 
 int 

@@ -105,6 +105,7 @@ GLOBS = [
     "SRC/analysis/integrator/LadrunoMassScalingEnergy.*",
     "SRC/analysis/integrator/LadrunoEnergyChannels.h",
     "SRC/analysis/integrator/LadrunoArcLength.*",
+    "SRC/analysis/integrator/LadrunoReferenceLoad.h",
     "SRC/analysis/integrator/LadrunoDynamicRelaxation.*",
     "SRC/analysis/integrator/LadrunoFictitiousMass.h",
     "SRC/analysis/integrator/LadrunoIndirectControl.*",
