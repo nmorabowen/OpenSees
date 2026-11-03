@@ -10,6 +10,9 @@ floor-level node (under Transformation part of it sits on MP slaves, WP-211).
     t = build_tower(nst=10, h=0.4)      # 18.5k nodes, 17.8k elements
     t = build_tower(nst=45, h=0.5)      # 50.2k nodes, 48.6k elements
 
+`transf` ('Linear', 'PDelta', ..) is the frames' geomTransf and `shell_args`
+extra ASDShellQ4 flags (e.g. ('-pDelta',)), both for WP-223.
+
 `t` is a dict of tags: supports, pier groups (element tags + cut nodes per
 storey), storey node groups (for inertia resultants), masters.
 """
@@ -43,7 +46,7 @@ BEAMS = [((6.0, 6.0), (15.0, 6.0)), ((15.0, 6.0), (24.0, 6.0)),
 
 
 def build_tower(nst=10, h=0.4, handler='Transformation', system='UmfPack',
-                wall_t=0.3, membrane=True):
+                wall_t=0.3, membrane=True, transf='Linear', shell_args=()):
     ops.wipe()
     ops.model('basic', '-ndm', 3, '-ndf', 6)
     nv = max(1, int(round(STOREY_H / h)))          # wall rows per storey
@@ -80,7 +83,7 @@ def build_tower(nst=10, h=0.4, handler='Transformation', system='UmfPack',
                 n1, n2 = node(*p, j), node(*q, j)
                 n3, n4 = node(*q, j + 1), node(*p, j + 1)
                 t = etag()
-                ops.element('ASDShellQ4', t, n1, n2, n3, n4, 1)
+                ops.element('ASDShellQ4', t, n1, n2, n3, n4, 1, *shell_args)
                 if wi < len(CORE):
                     core_ele.add(t)
                     if j % nv == 0:     # bottom row of the storey: a pier cut
@@ -89,8 +92,8 @@ def build_tower(nst=10, h=0.4, handler='Transformation', system='UmfPack',
                         g[1].update((n1, n2))
 
     # columns and beams (Timoshenko, rectangular 0.6 x 0.6 and 0.4 x 0.7)
-    ops.geomTransf('Linear', 1, 1.0, 0.0, 0.0)      # vertical members
-    ops.geomTransf('Linear', 2, 0.0, 0.0, 1.0)      # horizontal members
+    ops.geomTransf(transf, 1, 1.0, 0.0, 0.0)        # vertical members
+    ops.geomTransf(transf, 2, 0.0, 0.0, 1.0)        # horizontal members
     G = E_C / (2 * (1 + NU_C))
 
     def rect(b, d):
