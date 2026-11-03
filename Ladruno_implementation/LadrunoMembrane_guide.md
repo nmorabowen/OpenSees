@@ -69,6 +69,7 @@ ops.element(
 | `-rho` | `$rho` ($\ge 0$) | `0.0` | Volumetric mass density (so areal mass density is $\rho_{\text{area}} = \rho \cdot t$, or $\rho$ directly if $t = 0$). |
 | `-lumped` | *(flag)* | `false` | Uses row-sum lumped nodal mass on the polygon boundary nodes instead of Guyan-condensed consistent CST mass. |
 | `-meshSize` | `$hMax` (`> 0`) | $0.12 L_{\text{char}}$ | Maximum triangle circumradius / edge target for Chew-Ruppert CDT refinement (clamped to $[10^{-4}\sqrt{A},\; 10 L_{\text{char}}]$ with a 4000-vertex safety cap). |
+| `-noMemo` | *(flag)* | memo on | WP-222: build this panel cold instead of reusing the transfer of an earlier panel with bit-identical 2D inputs (the same slab on another storey). The outputs are identical bit for bit either way; the flag exists for verification (`tests/test_wp222_membrane_build_memo.py`) and is not saved by `sendSelf`. |
 
 ---
 
@@ -142,6 +143,7 @@ Query any `LadrunoMembrane` via `ops.eleResponse(eleTag, query)` or Tcl `eleResp
 | `"meshNodalField"` (alias `"meshField"`) | `[phi_0, ..., phi_{NV-1}]` (length $N_{\text{verts}}$) | Solved transverse scalar field at each CDT vertex scaled by $q_n$: membrane deflection $w(x,y)$ (`fea_poisson`), DKT plate deflection $w(x,y)$ (`fea_plate`), or tributary roof height / distance-to-support (`tributary`, `oneway`). |
 | `"meshTriangleLoadFlow"` (alias `"meshLoadVectors"`) | `[targetTag, qx, qy, qz, ...]` ($4 \times N_{\text{tris}}$) | Per-triangle load-transfer target (`+frameTag` for a beam, `-supportNodeTag` for an isolated column/wall node) and 3D global load-flow vector $(q_x, q_y, q_z)$ pointing toward the receiving support. |
 | `"yieldLines"` | `[X1, Y1, Z1, X2, Y2, Z2, tagA, tagB, ...]` ($8 \times N_{\text{ridge}}$) | 3D global coordinates of interior tributary watershed / yield-line ridge segments separating adjacent support regions `tagA` and `tagB`. |
+| `"transferMemo"` | `[nValidation, nDistribution, nDiaphragm, nEntries]` (length 4) | WP-222 diagnostics: how many of this element's three build stages (validation mesh, load distribution, diaphragm mesh + condensation) were reused from the memo, and the memo's entry count over all stages. The memo is emptied when the last membrane is destroyed (`wipe`). |
 
 ---
 
