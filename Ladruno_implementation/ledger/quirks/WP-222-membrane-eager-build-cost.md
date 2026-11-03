@@ -1,6 +1,7 @@
 ---
 wp: WP-222
 title: "LadrunoMembrane's eager transfer build dominated a tower's model build"
+pr: "#1061"
 date: 2026-11-02
 ---
 ### `o.element('LadrunoMembrane', ...)` takes ~30 ms each and a 46-storey tower spends ~80 s in `apeSees.run` before any analysis
