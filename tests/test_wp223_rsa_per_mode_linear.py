@@ -222,7 +222,8 @@ def _assert_scaled_exactly(on):
 
 
 def _fingerprint():
-    """sha256 of the modal input the command reads"""
+    """sha256 of the input the command reads: modal properties, eigenvectors
+    and the committed displacements"""
     h = hashlib.sha256()
     mp = ops.modalProperties('-unorm', '-return')
     for k in sorted(mp):
@@ -233,6 +234,10 @@ def _fingerprint():
                     h.update(y.hex().encode())
     nmodes = len(mp['eigenLambda'])
     for n in ops.getNodeTags():
+        # the committed (gravity) state: its solve can move in the last bit
+        # under load, and the outputs are increments over it
+        for y in ops.nodeDisp(n):
+            h.update(float(y).hex().encode())
         for k in range(1, nmodes + 1):
             for y in ops.nodeEigenvector(n, k):
                 h.update(float(y).hex().encode())

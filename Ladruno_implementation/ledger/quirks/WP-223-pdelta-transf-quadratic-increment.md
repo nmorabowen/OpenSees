@@ -2,7 +2,7 @@
 wp: WP-223
 title: "PDelta geomTransf is not linear about a preloaded state: the increment carries dP x dDelta"
 date: 2026-11-02
-pr: "TBD"
+pr: "#1060"
 ---
 ### `geomTransf PDelta` is not exactly linear about its committed state: an imposed increment carries a dP·dΔ term
 
