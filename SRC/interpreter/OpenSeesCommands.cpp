@@ -1895,6 +1895,9 @@ int OPS_Integrator()
     } else if (strcmp(type,"CentralDifferenceNoDamping") == 0) {
 	ti = (TransientIntegrator*)OPS_CentralDifferenceNoDamping();
 
+    } else if (strcmp(type,"CentralDifferenceExplicit") == 0) {
+	ti = (TransientIntegrator*)OPS_CentralDifferenceExplicit();
+
 	} else if (strcmp(type, "ExplicitDifference") == 0) {
     ti = (TransientIntegrator*)OPS_ExplicitDifference();
 

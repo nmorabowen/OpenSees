@@ -16,6 +16,8 @@ OBJS       = AlphaOS.o \
 	CentralDifference.o \
 	CentralDifferenceAlternative.o \
 	CentralDifferenceNoDamping.o \
+	CentralDifferenceExplicit.o \
+	CriticalTimeStep.o \
 	Collocation.o \
 	CollocationHSFixedNumIter.o \
 	CollocationHSIncrLimit.o \

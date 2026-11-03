@@ -221,6 +221,7 @@ extern void *OPS_ExplicitBathe(void);
 extern void *OPS_ExplicitDifferenceStatic(void);
 extern void *OPS_CentralDifferenceAlternative(void);
 extern void *OPS_CentralDifferenceNoDamping(void);
+extern void *OPS_CentralDifferenceExplicit(void);
 extern void *OPS_Collocation(void);
 extern void *OPS_CollocationHSFixedNumIter(void);
 extern void *OPS_CollocationHSIncrLimit(void);
@@ -5352,6 +5353,13 @@ specifyIntegratorImpl(ClientData clientData, Tcl_Interp *interp, int argc,
   else if (strcmp(argv[1],"CentralDifferenceNoDamping") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_CentralDifferenceNoDamping();
     
+    if (theTransientAnalysis != 0)
+      setIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);
+  }
+
+  else if (strcmp(argv[1],"CentralDifferenceExplicit") == 0) {
+    theTransientIntegrator = (TransientIntegrator *)OPS_CentralDifferenceExplicit();
+
     if (theTransientAnalysis != 0)
       setIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);
   }

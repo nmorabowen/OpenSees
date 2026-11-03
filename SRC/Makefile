@@ -1499,6 +1499,8 @@ ANALYSIS_LIBS = $(FE)/analysis/analysis/Analysis.o \
 	$(FE)/analysis/integrator/CentralDifference.o \
 	$(FE)/analysis/integrator/CentralDifferenceAlternative.o \
 	$(FE)/analysis/integrator/CentralDifferenceNoDamping.o \
+	$(FE)/analysis/integrator/CentralDifferenceExplicit.o \
+	$(FE)/analysis/integrator/CriticalTimeStep.o \
 	$(FE)/analysis/integrator/WilsonTheta.o \
 	$(FE)/analysis/integrator/ExplicitDifference.o \
 	$(FE)/analysis/integrator/ExplicitDifferenceStatic.o \

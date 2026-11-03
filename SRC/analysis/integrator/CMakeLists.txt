@@ -48,6 +48,8 @@ target_sources(OPS_Analysis
        AlphaOSGeneralized_TP.cpp            # Andreas Schellenberg
        CentralDifferenceAlternative.cpp     # fmk
        CentralDifferenceNoDamping.cpp
+       CentralDifferenceExplicit.cpp
+       CriticalTimeStep.cpp
        Collocation.cpp                      # Andreas Schellenberg
        CollocationHSFixedNumIter.cpp
        CollocationHSIncrLimit.cpp
@@ -94,6 +96,8 @@ target_sources(OPS_Analysis
        AlphaOSGeneralized_TP.h
        CentralDifferenceAlternative.h
        CentralDifferenceNoDamping.h
+       CentralDifferenceExplicit.h
+       CriticalTimeStep.h
        Collocation.h
        CollocationHSFixedNumIter.h
        CollocationHSIncrLimit.h
