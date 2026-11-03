@@ -29,6 +29,7 @@
 //       <-reactionSet $name $node.. <-about ..>> ...
 //       <-eleGroup $name -ele $ele.. <-cut $node..> <-about ..>> ...
 //       <-inertia $name $node.. <-about ..>> ...
+//       <-linear <-linearTol $tol> <-linearCheck ($m1 $m2 .. | all)>>
 //
 // Per mode k and direction d the amplitude is the one responseSpectrumAnalysis
 // -mode k -increment imposes (ADR 213 D3b Sa-period override included):
@@ -47,6 +48,21 @@
 // INCREMENT over the committed state, flat [dir][mode][component]. -about adds
 // r x F about the point to the moments of the group it follows.
 // The domain is left at its committed state.
+//
+// Ladruno WP-223 (ADR 214 D10): -linear evaluates each mode ONCE, at the
+// direction of largest |Gamma_k,d|, and scales the element-based outputs to
+// the other directions by Gamma_k,d / Gamma_k,ref (exact zeros where
+// Gamma_k,d = 0): 2 element updates per mode instead of 2 per (direction,
+// mode). That is valid only if the touched elements respond linearly about
+// the committed state, so the command checks it: for the -linearCheck modes
+// (default the first mode with a non-zero amplitude) it also evaluates the
+// mode at -1/2 of the reference amplitude, and refuses the call when -2 x
+// that response differs from the reference response by more than
+// -linearTol (default 1e-6) of the summed magnitude of that output
+// component's terms (floored at 1e-6 of the terms of the total forces, the
+// round-off floor over a preload). -1/2 catches both even (P-Delta, corotational) and odd
+// (symmetric yielding) nonlinearity. Inertias are exact either way. Without
+// -linear the per-(direction, mode) loop is unchanged.
 
 #include <ResponseSpectrumAnalysis.h>
 #include <LadrunoRitzKernel.h>
@@ -174,6 +190,32 @@ void addBlock(double* r, int ncomp, const double* f, int ndfNode, Node* nd,
     }
 }
 
+// the term magnitude of addBlock (WP-223 -linear check scale): f holds
+// absolute values, the moment of each product term counts in absolute value
+void addBlockAbs(double* r, int ncomp, const double* f, int ndfNode, Node* nd,
+                 const Group& g)
+{
+    const int nd3 = (ncomp == 6 && ndfNode == 4) ? 3 : ndfNode;
+    const int n = std::min(nd3, ncomp);
+    for (int i = 0; i < n; ++i)
+        r[i] += f[i];
+    if (!g.about) return;
+    const Vector& x = nd->getCrds();
+    const double rx = std::fabs(x(0) - g.p[0]);
+    const double ry = std::fabs((x.Size() > 1 ? x(1) : 0.0) - g.p[1]);
+    if (ncomp == 6) {
+        const double rz = std::fabs((x.Size() > 2 ? x(2) : 0.0) - g.p[2]);
+        const double fx = n > 0 ? f[0] : 0.0, fy = n > 1 ? f[1] : 0.0, fz = n > 2 ? f[2] : 0.0;
+        r[3] += ry * fz + rz * fy;
+        r[4] += rz * fx + rx * fz;
+        r[5] += rx * fy + ry * fx;
+    }
+    else if (ncomp == 3) {
+        const double fx = n > 0 ? f[0] : 0.0, fy = n > 1 ? f[1] : 0.0;
+        r[2] += rx * fy + ry * fx;
+    }
+}
+
 // one node block of a touched element: element force offset + node
 struct Contrib {
     int ele;      // index into the touched-element list
@@ -219,6 +261,10 @@ OPS_LadrunoResponseSpectrumPerMode(void)
     Group* last = 0;
     std::set<std::string> keys;
     char tok[256];
+    bool linear = false;                  // WP-223
+    double linTol = 1.0e-6;
+    std::vector<int> linCheck;
+    bool linCheckAll = false, haveLinCheck = false, haveLinTol = false;
 
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char* opt = OPS_GetStringFromAll(tok, sizeof(tok));
@@ -332,6 +378,32 @@ OPS_LadrunoResponseSpectrumPerMode(void)
             last->about = true;
             for (int i = 0; i < ndm && i < 3; ++i) last->p[i] = p[i];
         }
+        else if (o == "-linear") {
+            linear = true;
+        }
+        else if (o == "-linearTol") {
+            int one = 1;
+            if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetDoubleInput(&one, &linTol) < 0
+                || !(linTol > 0.0)) {
+                opserr << CMD << ": -linearTol requires a positive value\n";
+                return -1;
+            }
+            haveLinTol = true;
+        }
+        else if (o == "-linearCheck") {
+            haveLinCheck = true;
+            const char* all = OPS_GetNumRemainingInputArgs() > 0 ? OPS_GetStringFromAll(tok, sizeof(tok)) : 0;
+            if (all != 0 && strcmp(all, "all") == 0)
+                linCheckAll = true;
+            else {
+                if (all != 0) OPS_ResetCurrentInputArg(-1);
+                readList(linCheck);
+                if (linCheck.empty()) {
+                    opserr << CMD << ": -linearCheck requires mode numbers or 'all'\n";
+                    return -1;
+                }
+            }
+        }
         else {
             opserr << CMD << ": unknown option '" << opt << "'\n";
             return -1;
@@ -386,6 +458,11 @@ OPS_LadrunoResponseSpectrumPerMode(void)
         return -1;
     }
 
+    if ((haveLinTol || haveLinCheck) && !linear) {
+        opserr << CMD << ": -linearTol and -linearCheck require -linear\n";
+        return -1;
+    }
+
     // the stock consistency check: modalProperties of THIS mode set
     ResponseSpectrumAnalysis rsa0(theModel, ts, Tn, Sa, dirs[0], scale);
     if (rsa0.check() < 0)
@@ -422,6 +499,18 @@ OPS_LadrunoResponseSpectrumPerMode(void)
             }
         }
     }
+
+    // -linear self-check modes, as flags on `modes` (WP-223)
+    std::vector<char> isCheck(modes.size(), 0);
+    for (int m : linCheck) {
+        auto it = std::find(modes.begin(), modes.end(), m);
+        if (it == modes.end()) {
+            opserr << CMD << ": -linearCheck mode " << m << " is not among the computed modes\n";
+            return -1;
+        }
+        isCheck[it - modes.begin()] = 1;
+    }
+    if (linCheckAll) std::fill(isCheck.begin(), isCheck.end(), 1);
 
     // ---- supported nodes and the elements a quantity needs ------------------
     std::map<int, int> supIdx;            // node tag -> index into sup
@@ -620,102 +709,251 @@ OPS_LadrunoResponseSpectrumPerMode(void)
     std::vector<double> fblk(6), ablk(6), mvec(6);
     int rc = 0;
 
-    for (int d = 0; d < ndir && rc == 0; ++d) {
-        for (int a = 0; a < nm && rc == 0; ++a) {
-            const int k = modes[a] - 1;
-            const double lambda = mp.eigenvalues()(k);
-            const double mga = SaV[d * nm + a];
-            const double Vscale = mp.eigenVectorScaleFactors()(k);
-            const double MPF = gamma[d * nm + a];
-            const size_t o = ((size_t)d * nm + a) * ncomp;
+    // the element-based outputs of one pass, in this order:
+    // [reactions][reactionSet ..][eleGroup ..], each ncomp long
+    const int nOut = (total ? 1 : 0) + (int)reactionSets.size() + (int)eleGroups.size();
+    std::vector<double*> dst(nOut);
+    auto dstAt = [&](size_t o) {
+        int j = 0;
+        if (total) dst[j++] = &outTotal[o];
+        for (size_t gi = 0; gi < reactionSets.size(); ++gi) dst[j++] = &outSet[gi][o];
+        for (size_t gi = 0; gi < eleGroups.size(); ++gi) dst[j++] = &outEle[gi][o];
+    };
 
-            // the -increment sequence on the touched objects only: revert and
-            // update at the committed state (Domain::revertToLastCommit), then
-            // trial = committed + u_k (solveMode) and update (updateDomain).
-            // Elements that condense internal DOFs incrementally (ASDShellQ4)
-            // depend on the previous trial, so the first update is not skipped.
-            for (Node* nd : tNodes) nd->revertToLastCommit();
-            for (size_t i = 0; i < touched.size() && rc == 0; ++i) {
-                touched[i]->revertToLastCommit();
-                if (touched[i]->update() < 0) {
-                    opserr << CMD << ": element " << touched[i]->getTag() << " failed in update at mode "
-                           << modes[a] << "\n";
-                    rc = -1;
-                }
-            }
-            if (rc) break;
-            for (Node* nd : tNodes) {
-                if (nd->getNumEigenvectors() <= k) continue;
-                const Matrix& ev = nd->getEigenvectors();
-                const int nndf = ev.noRows();
-                const Vector& uc = nd->getDisp();
-                for (int i = 0; i < std::min(nndf, ncomp); ++i) {
-                    if (ncomp == 6 && nndf == 4 && i == 3) continue;
-                    const double V = ev(i, k) * Vscale;
-                    double u = V * MPF * mga / lambda;
-                    u = uc(i) + 1.0 * u;
-                    nd->setTrialDisp(u, i);
-                }
-            }
-            for (size_t i = 0; i < touched.size(); ++i) {
-                if (touched[i]->update() < 0) {
-                    opserr << CMD << ": element " << touched[i]->getTag() << " failed in update at mode "
-                           << modes[a] << "\n";
-                    rc = -1;
-                    break;
-                }
-                Ft[i] = touched[i]->getResistingForce();
-            }
-            if (rc) break;
+    // one element pass of mode a at participation factor MPF, accumulated
+    // into the zeroed blocks dst[]
+    auto elemPass = [&](int a, double MPF) -> int {
+        const int k = modes[a] - 1;
+        const double lambda = mp.eigenvalues()(k);
+        const double mga = SaV[a];                  // the same in every direction
+        const double Vscale = mp.eigenVectorScaleFactors()(k);
 
-            if (needReactions) {
-                std::fill(Rt.begin(), Rt.end(), 0.0);
-                for (size_t c = 0; c < supContrib.size(); ++c) {
-                    const Contrib& b = supContrib[c];
-                    for (int i = 0; i < b.ndf && i < 6; ++i)
-                        Rt[supOf[c] * 6 + i] += Ft[b.ele](b.off + i);
-                }
-                auto addNode = [&](double* r, int s, const Group& g) {
-                    const int nd = std::min(sup[s]->getNumberDOF(), 6);
-                    // a reaction exists only on an SP-constrained DOF; at a free
-                    // DOF the element sum is the mode's out-of-balance force
-                    for (int i = 0; i < nd; ++i)
-                        fblk[i] = supMask[s * 6 + i] ? Rt[s * 6 + i] - R0[s * 6 + i] : 0.0;
-                    addBlock(r, ncomp, fblk.data(), nd, sup[s], g);
-                };
-                if (total)
-                    for (size_t s = 0; s < sup.size(); ++s) addNode(&outTotal[o], (int)s, totalGroup);
-                for (size_t gi = 0; gi < reactionSets.size(); ++gi)
-                    for (int nt : reactionSets[gi].nodes)
-                        addNode(&outSet[gi][o], supIdx[nt], reactionSets[gi]);
-            }
-            for (size_t gi = 0; gi < eleGroups.size(); ++gi) {
-                double* r = &outEle[gi][o];
-                for (const Contrib& b : eleContrib[gi])
-                    addBlock(r, ncomp, &Ft[b.ele](b.off), b.ndf, b.node, eleGroups[gi]);
-                for (int i = 0; i < ncomp; ++i) r[i] -= G0[gi][i];
-            }
-            // modal inertia M (phi s Gamma Sa) = lambda M u_k (no element work)
-            for (size_t gi = 0; gi < inertias.size(); ++gi) {
-                double* r = &outIn[gi][o];
-                for (Node* nd : inNodes[gi]) {
-                    if (nd->getNumEigenvectors() <= k) continue;
-                    const Matrix& ev = nd->getEigenvectors();
-                    const int nndf = std::min(ev.noRows(), 6);
-                    const Matrix& M = nd->getMass();
-                    for (int i = 0; i < nndf; ++i) {
-                        const bool p = (ncomp == 6 && ev.noRows() == 4 && i == 3) || i >= ncomp;
-                        ablk[i] = p ? 0.0 : ev(i, k) * Vscale * MPF * mga;
-                    }
-                    for (int i = 0; i < nndf; ++i) {
-                        double s = 0.0;
-                        for (int j = 0; j < nndf; ++j) s += M(i, j) * ablk[j];
-                        mvec[i] = s;
-                    }
-                    addBlock(r, ncomp, mvec.data(), nndf, nd, inertias[gi]);
-                }
+        // the -increment sequence on the touched objects only: revert and
+        // update at the committed state (Domain::revertToLastCommit), then
+        // trial = committed + u_k (solveMode) and update (updateDomain).
+        // Elements that condense internal DOFs incrementally (ASDShellQ4)
+        // depend on the previous trial, so the first update is not skipped.
+        for (Node* nd : tNodes) nd->revertToLastCommit();
+        for (size_t i = 0; i < touched.size(); ++i) {
+            touched[i]->revertToLastCommit();
+            if (touched[i]->update() < 0) {
+                opserr << CMD << ": element " << touched[i]->getTag() << " failed in update at mode "
+                       << modes[a] << "\n";
+                return -1;
             }
         }
+        for (Node* nd : tNodes) {
+            if (nd->getNumEigenvectors() <= k) continue;
+            const Matrix& ev = nd->getEigenvectors();
+            const int nndf = ev.noRows();
+            const Vector& uc = nd->getDisp();
+            for (int i = 0; i < std::min(nndf, ncomp); ++i) {
+                if (ncomp == 6 && nndf == 4 && i == 3) continue;
+                const double V = ev(i, k) * Vscale;
+                double u = V * MPF * mga / lambda;
+                u = uc(i) + 1.0 * u;
+                nd->setTrialDisp(u, i);
+            }
+        }
+        for (size_t i = 0; i < touched.size(); ++i) {
+            if (touched[i]->update() < 0) {
+                opserr << CMD << ": element " << touched[i]->getTag() << " failed in update at mode "
+                       << modes[a] << "\n";
+                return -1;
+            }
+            Ft[i] = touched[i]->getResistingForce();
+        }
+
+        int j = 0;
+        if (needReactions) {
+            std::fill(Rt.begin(), Rt.end(), 0.0);
+            for (size_t c = 0; c < supContrib.size(); ++c) {
+                const Contrib& b = supContrib[c];
+                for (int i = 0; i < b.ndf && i < 6; ++i)
+                    Rt[supOf[c] * 6 + i] += Ft[b.ele](b.off + i);
+            }
+            auto addNode = [&](double* r, int s, const Group& g) {
+                const int nd = std::min(sup[s]->getNumberDOF(), 6);
+                // a reaction exists only on an SP-constrained DOF; at a free
+                // DOF the element sum is the mode's out-of-balance force
+                for (int i = 0; i < nd; ++i)
+                    fblk[i] = supMask[s * 6 + i] ? Rt[s * 6 + i] - R0[s * 6 + i] : 0.0;
+                addBlock(r, ncomp, fblk.data(), nd, sup[s], g);
+            };
+            if (total) {
+                for (size_t s = 0; s < sup.size(); ++s) addNode(dst[j], (int)s, totalGroup);
+                ++j;
+            }
+            for (size_t gi = 0; gi < reactionSets.size(); ++gi, ++j)
+                for (int nt : reactionSets[gi].nodes)
+                    addNode(dst[j], supIdx[nt], reactionSets[gi]);
+        }
+        for (size_t gi = 0; gi < eleGroups.size(); ++gi, ++j) {
+            double* r = dst[j];
+            for (const Contrib& b : eleContrib[gi])
+                addBlock(r, ncomp, &Ft[b.ele](b.off), b.ndf, b.node, eleGroups[gi]);
+            for (int i = 0; i < ncomp; ++i) r[i] -= G0[gi][i];
+        }
+        return 0;
+    };
+
+    // modal inertia M (phi s Gamma Sa) = lambda M u_k (no element work)
+    auto inertiaPass = [&](int d, int a) {
+        const int k = modes[a] - 1;
+        const double mga = SaV[d * nm + a];
+        const double Vscale = mp.eigenVectorScaleFactors()(k);
+        const double MPF = gamma[d * nm + a];
+        const size_t o = ((size_t)d * nm + a) * ncomp;
+        for (size_t gi = 0; gi < inertias.size(); ++gi) {
+            double* r = &outIn[gi][o];
+            for (Node* nd : inNodes[gi]) {
+                if (nd->getNumEigenvectors() <= k) continue;
+                const Matrix& ev = nd->getEigenvectors();
+                const int nndf = std::min(ev.noRows(), 6);
+                const Matrix& M = nd->getMass();
+                for (int i = 0; i < nndf; ++i) {
+                    const bool p = (ncomp == 6 && ev.noRows() == 4 && i == 3) || i >= ncomp;
+                    ablk[i] = p ? 0.0 : ev(i, k) * Vscale * MPF * mga;
+                }
+                for (int i = 0; i < nndf; ++i) {
+                    double s = 0.0;
+                    for (int j = 0; j < nndf; ++j) s += M(i, j) * ablk[j];
+                    mvec[i] = s;
+                }
+                addBlock(r, ncomp, mvec.data(), nndf, nd, inertias[gi]);
+            }
+        }
+    };
+
+    // -linear self-check record (WP-223)
+    double linErr = 0.0;
+    std::vector<double> linModes;
+
+    if (!linear) {
+        // exact: one pass per (direction, mode)
+        for (int d = 0; d < ndir && rc == 0; ++d) {
+            for (int a = 0; a < nm && rc == 0; ++a) {
+                dstAt(((size_t)d * nm + a) * ncomp);
+                rc = elemPass(a, gamma[d * nm + a]);
+                if (rc) break;
+                inertiaPass(d, a);
+            }
+        }
+    }
+    else {
+        // WP-223: one pass per mode at the direction of largest |Gamma|,
+        // scaled to the others by Gamma_d / Gamma_ref
+        std::vector<double> chk((size_t)nOut * ncomp);
+        std::vector<double> sInc(chk.size()), sTot(chk.size());   // check term scales
+        std::vector<double> aInc(sup.size() * 6), aTot(sup.size() * 6);
+        std::vector<double*> refs(nOut);
+        auto refDir = [&](int a) {
+            int dRef = -1;
+            double gmax = 0.0;
+            for (int d = 0; d < ndir; ++d)
+                if (std::fabs(gamma[d * nm + a]) > gmax) { gmax = std::fabs(gamma[d * nm + a]); dRef = d; }
+            return dRef;
+        };
+        // the self-check of mode a: the pass at -1/2 the reference amplitude,
+        // x -2, against the reference outputs, per output component, relative
+        // to the summed magnitude of its terms (a resultant that cancels by
+        // equilibrium is round-off of its terms, not of itself), floored at
+        // 1e-6 of the terms of the total (committed + increment) forces, the
+        // round-off floor of an increment over a preloaded state
+        auto checkMode = [&](int a, int dRef) -> int {
+            std::fill(chk.begin(), chk.end(), 0.0);
+            for (int j = 0; j < nOut; ++j) dst[j] = &chk[(size_t)j * ncomp];
+            if (elemPass(a, -0.5 * gamma[dRef * nm + a]) < 0) return -1;
+            linModes.push_back(modes[a]);
+            // term magnitudes of the check pass (Ft is its force)
+            std::fill(sInc.begin(), sInc.end(), 0.0);
+            std::fill(sTot.begin(), sTot.end(), 0.0);
+            int j = 0;
+            if (needReactions) {
+                std::fill(aInc.begin(), aInc.end(), 0.0);
+                std::fill(aTot.begin(), aTot.end(), 0.0);
+                for (size_t c = 0; c < supContrib.size(); ++c) {
+                    const Contrib& b = supContrib[c];
+                    for (int i = 0; i < b.ndf && i < 6; ++i) {
+                        aInc[supOf[c] * 6 + i] += std::fabs(Ft[b.ele](b.off + i) - F0[b.ele](b.off + i));
+                        aTot[supOf[c] * 6 + i] += std::fabs(Ft[b.ele](b.off + i));
+                    }
+                }
+                auto absNode = [&](int jj, int s, const Group& g) {
+                    const int nd = std::min(sup[s]->getNumberDOF(), 6);
+                    for (int i = 0; i < nd; ++i) fblk[i] = supMask[s * 6 + i] ? aInc[s * 6 + i] : 0.0;
+                    addBlockAbs(&sInc[(size_t)jj * ncomp], ncomp, fblk.data(), nd, sup[s], g);
+                    for (int i = 0; i < nd; ++i) fblk[i] = supMask[s * 6 + i] ? aTot[s * 6 + i] : 0.0;
+                    addBlockAbs(&sTot[(size_t)jj * ncomp], ncomp, fblk.data(), nd, sup[s], g);
+                };
+                if (total) {
+                    for (size_t s = 0; s < sup.size(); ++s) absNode(j, (int)s, totalGroup);
+                    ++j;
+                }
+                for (size_t gi = 0; gi < reactionSets.size(); ++gi, ++j)
+                    for (int nt : reactionSets[gi].nodes) absNode(j, supIdx[nt], reactionSets[gi]);
+            }
+            for (size_t gi = 0; gi < eleGroups.size(); ++gi, ++j)
+                for (const Contrib& b : eleContrib[gi]) {
+                    for (int i = 0; i < b.ndf && i < 6; ++i)
+                        fblk[i] = std::fabs(Ft[b.ele](b.off + i) - F0[b.ele](b.off + i));
+                    addBlockAbs(&sInc[(size_t)j * ncomp], ncomp, fblk.data(), std::min(b.ndf, 6), b.node, eleGroups[gi]);
+                    for (int i = 0; i < b.ndf && i < 6; ++i)
+                        fblk[i] = std::fabs(Ft[b.ele](b.off + i));
+                    addBlockAbs(&sTot[(size_t)j * ncomp], ncomp, fblk.data(), std::min(b.ndf, 6), b.node, eleGroups[gi]);
+                }
+            dstAt(((size_t)dRef * nm + a) * ncomp);
+            for (j = 0; j < nOut; ++j) {
+                const double* ref = dst[j];
+                const double* c = &chk[(size_t)j * ncomp];
+                for (int i = 0; i < ncomp; ++i) {
+                    const size_t q = (size_t)j * ncomp + i;
+                    const double scl = std::max(2.0 * sInc[q], 1.0e-6 * sTot[q]);
+                    if (scl == 0.0) continue;
+                    const double err = std::fabs(-2.0 * c[i] - ref[i]) / scl;
+                    linErr = std::max(linErr, err);
+                    if (err > linTol) {
+                        const int g = j - (total ? 1 : 0);
+                        const std::string& key = g < 0 ? totalGroup.key
+                            : g < (int)reactionSets.size() ? reactionSets[g].key
+                            : eleGroups[g - reactionSets.size()].key;
+                        opserr << CMD << " -linear: the touched elements are not linear about the committed state"
+                               << " (mode " << modes[a] << ", " << key.c_str() << " component " << i + 1
+                               << "): the response at -1/2 the amplitude, x -2, differs from it by " << err
+                               << " of the component's terms, over -linearTol " << linTol
+                               << ". Drop -linear (the exact per-direction loop) or raise -linearTol\n";
+                        return -1;
+                    }
+                }
+            }
+            return 0;
+        };
+        const bool defaultCheck = linCheck.empty() && !linCheckAll;
+        int firstLive = -1;
+        for (int a = 0; a < nm && rc == 0; ++a) {
+            for (int d = 0; d < ndir; ++d) inertiaPass(d, a);
+            const int dRef = refDir(a);
+            if (dRef < 0) continue;                      // no amplitude: exact zeros
+            if (firstLive < 0) firstLive = a;
+            const size_t oRef = ((size_t)dRef * nm + a) * ncomp;
+            dstAt(oRef);
+            rc = elemPass(a, gamma[dRef * nm + a]);
+            if (rc) break;
+            refs = dst;
+            for (int d = 0; d < ndir; ++d) {
+                if (d == dRef) continue;
+                const double ratio = gamma[d * nm + a] / gamma[dRef * nm + a];
+                dstAt(((size_t)d * nm + a) * ncomp);
+                for (int j = 0; j < nOut; ++j)
+                    for (int i = 0; i < ncomp; ++i)
+                        dst[j][i] = ratio == 0.0 ? 0.0 : ratio * refs[j][i];
+            }
+            if (nOut > 0 && (isCheck[a] || (defaultCheck && a == firstLive)))
+                rc = checkMode(a, dRef);
+        }
+        // the named check modes had no amplitude: check the first that has one
+        if (rc == 0 && nOut > 0 && linModes.empty() && firstLive >= 0)
+            rc = checkMode(firstLive, refDir(firstLive));
     }
 
     // ---- leave the touched objects at the committed state -------------------
@@ -742,6 +980,11 @@ OPS_LadrunoResponseSpectrumPerMode(void)
     data["numSupports"] = {(double)sup.size()};
     data["numUpdated"] = {(double)touched.size()};
     if (total) data["reactions"] = outTotal;
+    if (linear) {                                  // WP-223
+        data["linearCheckModes"] = linModes;
+        data["linearCheckError"] = {linErr};
+        data["linearTol"] = {linTol};
+    }
     auto put = [&](const Group& g, std::vector<double>& v) {
         names.push_back(g.key);
         data[names.back().c_str()] = v;

@@ -8,10 +8,11 @@ owner: nmora
 related:
   - "[[213_ladruno_modal_basis_completeness_adr]] (mode sets, LadrunoModeKinds, D3b Sa-period override)"
   - "WP-207 (`responseSpectrumAnalysis -increment`), WP-212 (mass guard)"
+  - "WP-223: D10 `-linear` (one element pass per mode, self-check)"
   - "Program issue #1024 (dynamic analysis), chain M link P1"
   - "apeWorkbench opensees-dynamic-analysis, branch work/claude/rsa-gap-study: studies/rsa-gaps/apegmsh-adoption-guide.md §1.1, §5"
-tags: [adr, response-spectrum, performance, reactions, wp-216]
-updated: 2026-10-27
+tags: [adr, response-spectrum, performance, reactions, wp-216, wp-223]
+updated: 2026-11-02
 ---
 
 # ADR 214 — Native per-mode RSA output
@@ -177,13 +178,78 @@ are grown to the largest element node count. Any Transformation model with
 a membrane of more than 64 nodes was exposed, including the tower that
 motivated P1.
 
+### D10 — `-linear`: one element pass per mode, behind a self-check (WP-223)
+
+```tcl
+responseSpectrumPerMode ... <-linear <-linearTol $tol> <-linearCheck ($m1 $m2 .. | all)>>
+```
+
+Revisits the rejected "linearity shortcut" below. The readback had become
+the second-largest cost of a project tower run (68 s for 60 modes × 2
+directions on a 46-storey shell tower), and the guard missing in 2026-10 is
+now in place: a model that is not linear is refused, never scaled. Gain and
+agreement on the synthetic tower: §4.1.
+
+- **What changes.** For a fixed mode the direction changes only the scalar
+  amplitude c_k,d = s_k Γ_k,d Sa_k / λ_k. With `-linear` each mode is
+  evaluated once, at the direction of largest |Γ_k,d| (the D4 revert /
+  update / set / update pass, unchanged), and the element-based outputs
+  (`reactions`, `reaction:`, `ele:`) of every other direction are
+  (Γ_k,d / Γ_k,ref) × the reference ones. A direction with Γ_k,d = 0 gets
+  exact zeros. That is 2 element updates per mode instead of 2 per
+  (direction, mode). The reference direction is computed exactly as without
+  the flag. `inertia:` is computed per direction either way (no element work).
+- **Self-check.** For the `-linearCheck` modes (default: the first requested
+  mode with a non-zero amplitude; `all`; or a list, which must be among the
+  computed modes) the command makes one more pass at −½ the reference
+  amplitude and compares −2 × that response with the reference response,
+  output by output and component by component. The error is relative to the
+  summed magnitude of the component's terms (element blocks at the supports
+  or the cut, with their `-about` moments), floored at 10⁻⁶ of the terms of
+  the total (committed + increment) forces. If any error exceeds
+  `-linearTol` (default 10⁻⁶) the call is **refused** with the mode, the
+  output key, the component and the error, and the domain is left at the
+  committed state. The run is refused rather than silently falling back to
+  the exact loop, as the fork does elsewhere (WP-212 mass guard, D8): the user
+  asked for a scaled result and has to be told it is not valid. Dropping
+  `-linear` is the fallback.
+- **Why −½.** −1 catches only even-order terms (P-Δ, corotational): a
+  symmetric material yielding from a zero-stress state gives an odd response
+  that a ± check passes. +2 extrapolates past the amplitudes in use. −½
+  catches both orders, stays inside the amplitude range, and also tests the
+  sign the other directions may take.
+- **Why the term scale.** A resultant that cancels by equilibrium (the net
+  base shear of a torsional mode, the net force on an element group without
+  `-cut`) is round-off of its terms. Relative to itself it reads as an
+  O(1) error on a linear model; relative to its terms it reads 10⁻¹⁰. The
+  10⁻⁶ total-force floor keeps the round-off of an increment taken over a
+  heavy preload (Rt − R0) below the tolerance.
+- **Output.** With `-linear` the dict also has `linearCheckModes`,
+  `linearCheckError` (largest error found) and `linearTol`. Without it the
+  dict and every number in it are byte-identical to the build before WP-223
+  (the golden test in §3).
+- **What is linear.** Elastic sections with Linear transformations, and
+  `ASDShellQ4 -pDelta` after `loadConst` (it freezes the membrane forces,
+  WP-209), pass at 10⁻¹⁰. **`geomTransf PDelta` does not**: it multiplies the
+  trial axial force by the trial chord drift, so the increment carries
+  dP·dΔ (ledger quirk WP-223). In a pure P-Δ frame the exact path itself
+  differs from linear by 1.2 × 10⁻³ on an edge-row support set (independent of
+  the gravity preload) and `-linear` is refused. In the shell tower, where
+  the walls carry the overturning, it passes. Where the user accepts that
+  second-order gap, `-linearTol` above it is an explicit opt-out; the error
+  is reported.
+- **No element knowledge.** The check is a property of the outputs, not of
+  element types; nothing in the code branches on an element, a material or
+  a project.
+
 ### Rejected
 
 - **Linearity shortcut** (one update per mode, scale by Γ_d Sa_d for the
   other directions): halves the element work but is exact only for linear
   elements; a `-pDelta` preload or corotational element would make the
   output depend on the shortcut. Not worth a second code path at the
-  measured cost (§4).
+  measured cost (§4). *Revisited in D10 (WP-223): adopted as opt-in
+  `-linear`, behind a self-check that refuses a model that is not linear.*
 - **`calculateNodalReactions` per mode**: the whole-domain sweep is the cost
   being removed.
 - **Combining inside the command**: CQC/SRSS per quantity is cheap in the
@@ -246,6 +312,20 @@ too noisy an estimate of its size, and Linux Zone-A failed it.)
 | classic Tcl bridge = Python (2D), unexpanded `-Tn $Tn -Sa $Sa`, node list `$top` | 1e-12; the good call after the `-dir 2` mass refusal is bit-identical (Tcl and Python) |
 | a direction without mass (`-dir 2`, alone or with `-dir 1`): refused in Python and Tcl, as stock `-mode k -increment` | pass |
 
+### 3.1 `-linear` (WP-223, `tests/test_wp223_rsa_per_mode_linear.py`)
+
+| check | result |
+|---|---|
+| flag off = the build before WP-223, byte for byte (`float.hex`), golden `tests/data/wp223_rsa_flagoff_golden.json` recorded on d56fbfc48: coarse towers (`-pDelta` shells + PDelta frames over a preload; a `-modes 4 1 3` one-direction subset) and a PDelta frame with `-scale`; each case gated on a fingerprint of the modal input | identical on this branch's build. A case whose eigen input differs on another platform is skipped, not compared (the ARPACK + UmfPack tower moved in the last bits between runs, so the golden towers use `-fullGenLapack`) |
+| flag on vs off, ASDShellQ4 / Timoshenko tower over a gravity preload + `loadConst`: Linear frames, `-pDelta` shells, PDelta frames + `-pDelta` shells | ≤ 1e-9 of each key's largest component (measured ≤ 1e-15 Linear); inertia bit-identical |
+| flag on vs off, Linear elastic 3D frame, `-linearCheck all` | ≤ 1e-12; check error < 1e-8 |
+| non-reference directions = Γ_d / Γ_ref × reference, bit for bit; a mode with Γ_d = 0 gives exact zeros | pass |
+| `-modes 5 2`, `-ts`, `-scale`, one direction; default check = first listed mode | pass |
+| Corotational 2D frame under 0.27 P_Euler; Steel01 base spring past yield, no preload (odd response); pure PDelta-geomTransf frame (exact path itself off linear by 1.2e-3 on a support subset, for P = 1e5 and 4e5 alike) | refused at the default tolerance; domain left committed (next exact call bit-identical); the Corotational frame at 1e-7 of the amplitude passes |
+| `-linearTol` / `-linearCheck` without `-linear`, tolerance ≤ 0 or missing, a check mode not computed, empty list | refused |
+| inertia-only request | no element pass, no check, inertia bit-identical |
+| classic Tcl = Python | 1e-12; `-linearTol` without `-linear` refused |
+
 ## 4. Profile and gain
 
 `tests/bench_wp216_rsa_per_mode.py` on the synthetic tower
@@ -280,6 +360,34 @@ bound). The new call requests the same quantities in one command.
 - **Tower scale.** The tower that motivated P1 spent 232 s on 120 pairs at
   ~52k nodes. At the 45-storey rate (18 ms per pair) the same readback is
   about 2 s.
+
+### 4.1 `-linear` (WP-223)
+
+Same machine and tower generator, `h = 0.5 m`, 60 modes × 2 directions,
+`system Pardiso`, flag off and on in the same process on the same modes.
+The two 45-storey variants ran at the same time (and next to a test sweep),
+so absolute times carry some noise; the ratio is the number to read.
+
+| tower (nodes / elements) | request | elements updated per pass | exact | `-linear` | gain | exact vs `-linear` (per key) | exact vs itself, `-dir 2 1` |
+|---|---|---|---|---|---|---|---|
+| 45 storeys, Linear (50 190 / 48 555) | reactions + piers at storeys 1 and 22 | 268 | 2.52 s | 1.68 s | 1.5× | 1.0e-15 | 1.2e-15 |
+| same | reactions + piers at all 45 storeys (`-about`) | 3 708 | 27.60 s | 14.96 s | 1.85× | 4.9e-15 | 2.9e-15 |
+| 45 storeys, preload + PDelta frames + `-pDelta` shells | reactions + piers at storeys 1 and 22 | 268 | 2.02 s | 1.31 s | 1.5× | 5.3e-10 | 1.9e-15 |
+| same | reactions + piers at all 45 storeys | 3 708 | 23.14 s | 13.49 s | 1.72× | 5.3e-10 | 2.5e-15 |
+| 10 storeys, Linear (11 305 / 10 790) | reactions + piers at all 10 storeys | 908 | 6.92 s | 3.56 s | 1.94× | 3.2e-16 | 5.4e-16 |
+
+- The ceiling is 2× with two directions (one element pass per mode instead of
+  two). The check costs one pass, and the per-call fixed cost (one
+  `revertDomainToLastCommit`, the connectivity scan, the modal checks)
+  is not halved.
+- `-inertia` is not accelerated. In `tests/bench_wp216_rsa_per_mode.py` the
+  two inertia groups are near-whole-model node sets (storey 1 holds 49 950
+  nodes), so they take 6.0 of the 8.2 s of the default request, and `-linear`
+  takes it only to 7.0 s. The gain is in the element work: many element
+  groups, as in a pier-by-storey readback.
+- The P-Δ variant passes the check (2.7e-7 on mode 1) and differs from the
+  exact path by 5.3e-10: the dP·dΔ term of the PDelta frames, small here
+  because the walls carry the overturning.
 
 ## 5. Consequences
 
