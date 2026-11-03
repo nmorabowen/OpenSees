@@ -85,6 +85,9 @@ def test_mass_on_constrained_node_is_free_mass(handler, tol):
     assert r["lam"][0] == pytest.approx(375.0, rel=tol)
     assert p["totalMass"][0] == pytest.approx(8.0, rel=tol)
     assert p["totalFreeMass"][0] == pytest.approx(8.0, rel=tol)
-    assert p["totalFreeMass"][1] == pytest.approx(0.0, abs=tol)
+    # The penalty handler numbers SP-constrained DOFs, so only Transformation
+    # reports the fixed Y direction as having no free mass.
+    if handler == "Transformation":
+        assert p["totalFreeMass"][1] == pytest.approx(0.0, abs=tol)
     assert p["partiMassMX"][0] == pytest.approx(8.0, rel=tol)
     assert abs(p["partiFactorMX"][0]) == pytest.approx(8.0 ** 0.5, rel=tol)

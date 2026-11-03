@@ -19,8 +19,13 @@ displacements are exact closed forms:
   sp_add       sp on node 3 of 0.002 x t added after the first analyze, t = 2:
                u = (0.004 / 3, 0.008 / 3, 0.004)
 
-  elem_add     brace added after the first analyze (pattern grows)
-               lambda = 1: (0.1, 0.2, 0.3); lambda = 2: (0.2, 0.3, 0.4)
+  elem_add     brace added after the first analyze (pattern grows). Truss
+               records the current elongation 0.2 as initial displacement and
+               adds it to its length, L = 2.2, so k = 100 / 2.2 and the brace
+               starts unstressed:
+               lambda = 1: (0.1, 0.2, 0.3)
+               lambda = 2: 50 x + (100 / 2.2) (x - 0.2) = 20 gives
+                           x = u3 - u1 = 32 / 105, u = (0.2, 0.2 + x / 2, 0.2 + x)
   elem_remove  brace removed after the first analyze (pattern shrinks)
                lambda = 1: (0.1, 0.15, 0.2); lambda = 2: (0.2, 0.4, 0.6)
   sp_add       free equations drop from 3 to 2
@@ -95,7 +100,7 @@ print("RESULT " + json.dumps(out))
 
 EXPECTED = {
     "sp_add": ([0.1, 0.2, 0.3], [0.004 / 3, 0.008 / 3, 0.004]),
-    "elem_add": ([0.1, 0.2, 0.3], [0.2, 0.3, 0.4]),
+    "elem_add": ([0.1, 0.2, 0.3], [0.2, 0.2 + 16.0 / 105.0, 0.2 + 32.0 / 105.0]),
     "elem_remove": ([0.1, 0.15, 0.2], [0.2, 0.4, 0.6]),
 }
 
