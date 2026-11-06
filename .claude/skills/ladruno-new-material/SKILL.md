@@ -70,6 +70,10 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       INITIALISED (and not taken after a callee wrote them), and EVERY evolved vector advanced,
       elastic strain included. Gate it with an identity the sub-steps must satisfy, not with
       a comparison to another integrator (WP-160). Quirks: "it passes uninitialised `nG, nK`".
+- [ ] An invariant-space (p, q) return map needs its tangent checked AT q_tr = 0 (purely
+      isotropic strain from an isotropic state): a `q > tol` guard whose `else` keeps only
+      `grad_p` drops all shear stiffness (WP-210). Quirks: "ZERO shear stiffness under
+      isotropic loading".
 - [ ] Implement `getInitialTangent()` honestly: the base default returns `getTangent()`, so
       `-initial` silently becomes full Newton. Quirks: "`NDMaterial::getInitialTangent()` DEFAULTS".
 - [ ] Substep schemes need error control and yield-drift correction, and must honour the
