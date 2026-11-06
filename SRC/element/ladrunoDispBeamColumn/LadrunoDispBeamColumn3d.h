@@ -92,7 +92,12 @@ class LadrunoDispBeamColumn3d : public Element
               double xiJ = 1.0,                       // Ladruno (WP-200): normalized location of hinge J in [0, 1]
               double pmP0 = 0.0,
               double pmAlpha = 0.5,
-              int spanLoadMode = 1);
+              int spanLoadMode = 1,
+              int pmBalMode = 0,
+              double pmP0t = 0.0,
+              double pmPbal = 0.0,
+              double pmMuBal = 1.0,
+              int axialRelease = 0);
     LadrunoDispBeamColumn3d();
     ~LadrunoDispBeamColumn3d();
 
@@ -210,10 +215,17 @@ class LadrunoDispBeamColumn3d : public Element
     double           hingeMscaleCommitYJ;
     double           hingeDualKv[6][4];         // cached 6x4 K_{v,alpha} for [azI, ayI, azJ, ayJ]
     double           hingeDualKvCommit[6][4];
+    double           hingeDualKav[4][6];        // cached 4x6 K_{alpha,v} including P-M derivative
+    double           hingeDualKavCommit[4][6];
     double           hingeDualKaaInv[4][4];     // cached 4x4 eigenvalue-floored inverse of K_{alpha,alpha}
     double           hingeDualKaaInvCommit[4][4];
     double           pmP0;                      // P-M interaction squash load P0 (>0 enables scaling for general hinges)
     double           pmAlpha;                   // P-M interaction linear/parabolic weight (default 0.5)
+    int              pmBalMode;                 // 1 if 4-param RC balance-point P-M interaction is active
+    double           pmP0t;                     // P-M tension capacity (>0)
+    double           pmPbal;                    // P-M balance compression load (>0)
+    double           pmMuBal;                   // P-M moment ratio Mbal/M0 at P = Pbal
+    int              axialRelease;              // 1 = decouple fiber axial strain from basic chord elongation v(0)
     bool             postRestoreSync;           // true right after recvSelf/revertToLastCommit until v or loads change
     bool             vRestoreValid;
     double           vRestore[6];
@@ -269,6 +281,8 @@ class LadrunoDispBeamColumn3d : public Element
     double spanKbbInvCommit[3][3];
     double spanKvb[6][3];                   // cached 6x3 K_{v,beta} coupling matrix
     double spanKvbCommit[6][3];
+    double eps0Axial[maxNumSections];       // trial neutral-axis strain for -axialRelease
+    double eps0AxialCommit[maxNumSections]; // committed neutral-axis strain for -axialRelease
 };
 
 #endif

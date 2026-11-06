@@ -296,3 +296,40 @@ def test_2034_eigen_snapshot_opens_no_stage(tmp_path):
     ops.wipe()
     got, _ = _kinds(out)
     assert got == [("static", 5)], got
+
+
+def test_1037_freefield_shape_transient_stage_is_kind_transient(tmp_path):
+    """nmorabowen/OpenSees#1037 (San Ramon free field): the recorder is created
+    before both stages and samples on ``-T dt``; gravity runs Static, `eigen`
+    feeds rayleigh while the static analysis is alive, the stage close is
+    loadConst + wipeAnalysis, and the earthquake stage adds a node and an
+    element (stamp and fingerprint move), fires apeGmsh's `domainChange`
+    barrier, binds rayleigh, drives a UniformExcitation and runs Transient.
+    The transient stage is KIND transient (a build older than fork PR #986
+    wrote [static, static]). The classic-Tcl twin is `freefield_shape` in
+    Ladruno_scripts/ladruno_recorder_tests/stage_kind_check.py."""
+    out = str(tmp_path / "ff.ladruno")
+    _truss()
+    ops.recorder("ladruno", out, "-N", "displacement", "-T", "dt", 0.02)
+    ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1); ops.load(3, 1.0, 0.0)
+    _static(0.25)
+    assert ops.analyze(4) == 0
+    lam = ops.eigen("-fullGenLapack", 1)
+    ops.loadConst("-time", 0.0)
+    ops.wipeAnalysis()
+    ops.node(4, 3.0, 0.0); ops.fix(4, 0, 1); ops.mass(4, 1.0, 0.0)
+    ops.element("Truss", 3, 3, 4, 1.0, 1)
+    ops.domainChange()
+    w = lam[0] ** 0.5
+    ops.rayleigh(0.05 * w, 0.0, 0.05 / w, 0.0)
+    ops.timeSeries("Path", 4, "-dt", 0.01, "-values",
+                   0.0, 0.5, 1.0, 0.5, 0.0, -0.5, -1.0, -0.5, 0.0, 0.5, 1.0, 0.5)
+    ops.pattern("UniformExcitation", 4, 1, "-accel", 4)
+    _transient()
+    assert ops.analyze(10, 0.01) == 0
+    ops.wipe()
+    got, minor = _kinds(out)
+    # 4 static steps 0.25 apart all sample; 10 transient steps of 0.01 on the
+    # 0.02 grid sample at 0.01, 0.03, 0.05, 0.07, 0.09.
+    assert got == [("static", 4), ("transient", 5)], got
+    assert minor == 1

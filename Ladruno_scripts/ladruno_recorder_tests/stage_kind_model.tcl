@@ -37,6 +37,12 @@
 #                        -> [static 4, transient 5, transient 2], ids strictly increasing
 #                           (a flip that did not move the stamp must not collide with
 #                            the stamp of the later topology change)
+#   freefield_shape      nmorabowen/OpenSees#1037 (the San Ramon free-field deck shape,
+#                        sampled on -T dt 0.02): gravity static 4 | eigen with the static
+#                        analysis alive | loadConst, wipeAnalysis | a new node + element,
+#                        domainChange, rayleigh, UniformExcitation | transient 10 x 0.01
+#                        -> [static 4, transient 5]  (5 = the -T dt 0.02 samples of 10
+#                           steps; a pre-#986 build writes [static 4, static 4])
 
 if {$argc < 2} { puts "usage: stage_kind_model.tcl <out.ladruno> <case>"; exit 1 }
 set out [lindex $argv 0]
@@ -55,7 +61,10 @@ element elasticBeamColumn 1 1 2 0.1 2.0e8 1.0e-3 1
 set kind_opt {}
 if {$case == "override_kind"} { set kind_opt {-kind static} }
 if {$case == "override_kind_dc"} { set kind_opt {-kind transient} }
-recorder ladruno $out -N displacement {*}$kind_opt -T dt 0.0
+# #1037: the free-field deck samples on a -T dt grid; every other case records every step.
+set t_opt {-T dt 0.0}
+if {$case == "freefield_shape"} { set t_opt {-T dt 0.02} }
+recorder ladruno $out -N displacement {*}$kind_opt {*}$t_opt
 
 proc static_chain {} {
     constraints Plain
@@ -164,6 +173,28 @@ switch -- $case {
         fix 3 1 1 1
         element elasticBeamColumn 2 2 3 0.1 2.0e8 1.0e-3 1
         analyze 2 0.01
+    }
+    freefield_shape {
+        # nmorabowen/OpenSees#1037: the San Ramon free-field deck, reduced. The
+        # recorder was created before both stages and samples on -T dt 0.02
+        # (set above). Gravity runs Static; `eigen` feeds rayleigh while the
+        # static analysis is alive (no eigen-only mark); the stage close is
+        # loadConst + wipeAnalysis; the earthquake stage adds a node and an
+        # element (stamp AND fingerprint move), fires apeGmsh's domainChange
+        # barrier, binds rayleigh, drives a UniformExcitation and runs Transient.
+        gravity; static_chain; analyze 4
+        set lambda [eigen 1]
+        loadConst -time 0.0
+        wipeAnalysis
+        node 3 1.0 3.0
+        mass 3 5.0 5.0 0.0
+        element elasticBeamColumn 2 2 3 0.1 2.0e8 1.0e-3 1
+        domainChange
+        set w [expr {sqrt([lindex $lambda 0])}]
+        rayleigh [expr {0.05 * $w}] 0.0 [expr {0.05 / $w}] 0.0
+        timeSeries Path 4 -dt 0.01 -values {0.0 0.5 1.0 0.5 0.0 -0.5 -1.0 -0.5 0.0 0.5 1.0 0.5}
+        pattern UniformExcitation 4 1 -accel 4
+        transient_chain; analyze 10 0.01
     }
     default {
         puts "unknown case $case"

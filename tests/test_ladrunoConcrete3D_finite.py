@@ -93,10 +93,21 @@ def _impose_and_solve(u, geom):
     ops.numberer("Plain")
     ops.system("FullGeneral")                       # CDPM2 tangent is NON-SYMMETRIC
     ops.test("NormDispIncr", 1.0e-10, 60, 0)
-    ops.algorithm("Newton")
     ops.integrator("LoadControl", 1.0)
     ops.analysis("Static")
-    return ops.analyze(1)
+    # Solver ladder (WP concrete3d-hang-diagnosis #877 follow-up): the whole prescribed deformation is imposed
+    # in ONE load step, so plain Newton's basin of attraction decides whether the (physically fine) state is
+    # reached -- test_finite_objectivity_through_damage documents this ("either the F or the Q@F state,
+    # unpredictably"), and the return-map changes of #877 moved it across the basin boundary. Retrying the SAME
+    # step with a more globalized algorithm changes the path, not the physics or the tolerance.
+    rc = -1
+    for alg in (("Newton",), ("NewtonLineSearch", "-type", "Bisection"), ("KrylovNewton",),
+                ("Newton", "-initial")):
+        ops.algorithm(*alg)
+        rc = ops.analyze(1)
+        if rc == 0:
+            break
+    return rc
 
 
 def _gp_cauchy(geom="finite"):
@@ -162,24 +173,44 @@ def test_finite_rigid_rotation_stress_free():
 #    EXACTLY — LadrunoConcrete3D is isotropic (scalar damage, no co-rotating internal var),
 #    so there is NO de Souza Neto §14.11 boundary (contrast LadrunoJ2Finite's backstress).
 # --------------------------------------------------------------------------- #
-def test_finite_objectivity_through_damage():
-    # a non-symmetric stretch driven WELL past tensile onset so damage develops (ωt>0), then rotate it
-    F = np.array([[1.10, 0.03, 0.02],
-                  [0.0, 0.97, 0.015],
-                  [0.0, 0.0, 0.98]])
-    Q = _rot([0.2, 0.5, -0.84], 1.1)                 # ~63°
-
+def _objectivity_err(scale):
+    """Solve the damaged stretch F = I + scale*(F_full - I) and its rotation Q@F; return (err, omega_t) with
+    err = ||sigma(QF) - Q sigma(F) Q^T||_max / max(||sigma(QF)||_max, 1)."""
+    F_full = np.array([[1.10, 0.03, 0.02],
+                        [0.0, 0.97, 0.015],
+                        [0.0, 0.0, 0.98]])
+    F = np.eye(3) + scale * (F_full - np.eye(3))
+    Q = _rot([0.2, 0.5, -0.84], 1.1)                 # ~63 deg
     assert _impose_and_solve(_affine_disp(F.tolist()), "finite") == 0
     sF = _voigt_to_mat(_gp_cauchy()[0])
     wt = list(ops.eleResponse(1, "material", 1, "damage"))[0]
-    assert wt > 0.01, f"objectivity test is vacuous — no damage developed (ωt={wt})"
-
     assert _impose_and_solve(_affine_disp((Q @ F).tolist()), "finite") == 0
     sQF = _voigt_to_mat(_gp_cauchy()[0])
-
     pushed = Q @ sF @ Q.T
-    err = np.abs(sQF - pushed).max() / max(np.abs(sQF).max(), 1.0)
+    return np.abs(sQF - pushed).max() / max(np.abs(sQF).max(), 1.0), wt
+
+
+def test_finite_objectivity_through_damage():
+    """sigma(QF) = Q sigma(F) Q^T through damage, EXACTLY (isotropic scalar damage, no co-rotating variable).
+
+    FULL F (scale 1.0), as on origin/ladruno (r4 rescue of #877, restored after review). Before the tension-return fix
+    the deterministic sub-increment ladder flickered (the first plastic tensile piece failed its direct return in ~30 % of
+    1e-12 perturbations), so F and Q@F could land on different ladder levels and the PR head had dropped this to scale
+    0.01. With the direct return fixed (ADR-31 section 17) the two solves take the same branch and agree to round-off."""
+    err, wt = _objectivity_err(1.0)
+    assert wt > 0.01, f"objectivity test is vacuous — no damage developed (ωt={wt})"
     assert err < 1.0e-8, f"NOT objective through damage: ‖σ(QF)−Qσ(F)Qᵀ‖={err:.3e} (isotropic ⇒ should be exact)"
+
+
+def test_finite_objectivity_saturated_branch_jump_bound():
+    """Where the trial saturates the piece count (scale 0.10: f_tr/c ~ 5e3 >> nmax = 64). On the PR head F and Q@F
+    could land on different ladder levels there (measured 3.2e-2 in the normalized stress, kappa_p 58.7 vs 54.2), and
+    the bound was 6e-2. With the direct tension return fixed the ladder no longer escalates on round-off; the r4
+    review measured 2.7e-14 .. 1.3e-12 for the objectivity error over these scales, so the bound is 1e-10: tight
+    enough that a single ladder-level flip (>= 1e-3) fails it."""
+    err, wt = _objectivity_err(0.10)
+    assert wt > 0.01
+    assert err < 1.0e-10, f"F and Q@F took different branches of the return map: {err:.3e}"
 
 
 # --------------------------------------------------------------------------- #
@@ -187,8 +218,16 @@ def test_finite_objectivity_through_damage():
 #    Gauss-point Cauchy == small-strain stress at the Hencky strain ½lnB, pushed by /J.
 # --------------------------------------------------------------------------- #
 def test_finite_uniaxial_stretch_matches_hencky_seam():
-    lam = 1.012                                       # log axial ≈1.2e-2 ≫ onset ε0≈1e-4 ⇒ tensile damage
-    lat = 1.0 / math.sqrt(lam)                        # a prescribed (near-isochoric) F — exact value irrelevant
+    # Under the current CDPM2-default kernel (B1 flow potential, B2 damage drive), an ISOCHORIC
+    # uniaxial stretch (lat = 1/sqrt(lam), the pre-B1/B2 choice here) has zero trace Hencky strain,
+    # so the trial state is purely deviatoric (sigma_V = 0) and the M-W return map for this triaxiality
+    # lands entirely in the COMPRESSIVE regime (ωc grows, ωt stays exactly 0 — verified numerically:
+    # at lam=1.012 the Gauss-point Cauchy is [-1.8, -44.7, -44.7] MPa, all compressive). "exact value
+    # irrelevant" no longer holds: pin lat = 1.0 (no lateral contraction) so the Hencky strain keeps a
+    # net tensile trace and the return map actually damages the TENSILE side (ωt), matching this test's
+    # intent (the seam through TENSILE damage; ωc growth is already covered elsewhere).
+    lam = 1.0003                                      # log axial ≈3e-4 ≫ onset ε0≈1e-4 ⇒ tensile damage
+    lat = 1.0
     Fm = np.diag([lam, lat, lat])
     assert _impose_and_solve(_affine_disp(Fm.tolist()), "finite") == 0
     s = _gp_cauchy()

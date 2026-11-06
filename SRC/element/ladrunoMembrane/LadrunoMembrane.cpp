@@ -27,6 +27,7 @@
 #include "LadrunoMembrane.h"
 #include "LadrunoMembraneKernel.h"
 #include "LadrunoMembraneDiaphragm.h"
+#include "LadrunoMembraneMemo.h"
 
 #include <Beam2dPartialUniformLoad.h>
 #include <Beam2dUniformLoad.h>
@@ -48,9 +49,61 @@
 #include <SurfaceLoader.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+
+// WP-222: memo of the pure kernel stages of resolveAndBuildTransfer (see
+// LadrunoMembraneMemo.h). Emptied when the last membrane is destroyed.
+namespace {
+
+struct TestMeshValue {
+  double totalArea = 0.0;
+  double charLength = 0.0;
+};
+
+struct DiaphragmValue {
+  std::vector<LadrunoMembraneKernel::Point2D> vertices;
+  std::vector<std::array<int, 3>> triangles;
+  double charLength = 0.0;
+  LadrunoMembraneDiaphragm::Condensed cond;
+};
+
+LadrunoMembraneMemo::Store<TestMeshValue> &testMeshMemo()
+{
+  static LadrunoMembraneMemo::Store<TestMeshValue> s;
+  return s;
+}
+
+LadrunoMembraneMemo::Store<LadrunoMembraneKernel::DistributionResult> &distributionMemo()
+{
+  static LadrunoMembraneMemo::Store<LadrunoMembraneKernel::DistributionResult> s;
+  return s;
+}
+
+LadrunoMembraneMemo::Store<DiaphragmValue> &diaphragmMemo()
+{
+  static LadrunoMembraneMemo::Store<DiaphragmValue> s;
+  return s;
+}
+
+std::atomic<long> liveMembranes{0};
+
+std::size_t distributionBytes(const LadrunoMembraneKernel::DistributionResult &r)
+{
+  using LadrunoMembraneMemo::vecBytes;
+  std::size_t b = sizeof(r) + vecBytes(r.support_node_reactions) + vecBytes(r.mesh.vertices) +
+                  vecBytes(r.mesh.triangles) + vecBytes(r.mesh.subsegments) +
+                  r.mesh.is_acute.size() / 8 + vecBytes(r.mesh.boundary_vertex_indices) +
+                  vecBytes(r.mesh.support_node_vertex_indices) + vecBytes(r.vertex_flags) +
+                  vecBytes(r.nodal_field) + vecBytes(r.triangle_support_id) +
+                  vecBytes(r.triangle_flux_2d) + vecBytes(r.yield_lines);
+  for (const auto &f : r.frame_loads) b += sizeof(f) + vecBytes(f.sub_loads);
+  return b;
+}
+
+} // namespace
 
 LadrunoMembrane::LadrunoMembrane(int tag,
                                  const std::vector<int> &polyNodes,
@@ -117,8 +170,11 @@ LadrunoMembrane::LadrunoMembrane(int tag,
     m_diaphragmNodeTags(diaphragmNodes),
     m_inPlaneMods(inPlaneMods),
     m_Dmod{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+    m_useMemo(true),
+    m_memoHits{0, 0, 0},
     Ki(0)
 {
+  ++liveMembranes;
   if (theMat != nullptr) {
     m_theMaterial = theMat->getCopy("PlaneStress");
     if (m_theMaterial == nullptr) {
@@ -169,8 +225,11 @@ LadrunoMembrane::LadrunoMembrane()
     m_appliedGlobalTraction{0.0, 0.0, 0.0},
     m_inPlaneMods{1.0, 1.0, 1.0},
     m_Dmod{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+    m_useMemo(true),
+    m_memoHits{0, 0, 0},
     Ki(0)
 {
+  ++liveMembranes;
 }
 
 LadrunoMembrane::~LadrunoMembrane()
@@ -180,6 +239,18 @@ LadrunoMembrane::~LadrunoMembrane()
     m_theMaterial = nullptr;
   }
   LadrunoShell::dropKi(Ki);
+  // WP-222: the last membrane gone (wipe, a rebuilt model): drop the memo
+  if (--liveMembranes == 0) {
+    testMeshMemo().clear();
+    distributionMemo().clear();
+    diaphragmMemo().clear();
+  }
+}
+
+void
+LadrunoMembrane::setTransferMemo(bool on)
+{
+  m_useMemo = on;
 }
 
 void
@@ -405,9 +476,26 @@ LadrunoMembrane::buildPlaneBasis(void)
         };
       }
     }
-    auto testMesh = LadrunoMembraneKernel::build_pslg_cdt_mesh(outer2d, holes2d, {}, {}, 0.0);
-    m_slabArea = testMesh.total_area;
-    m_charLen = testMesh.char_length;
+    // WP-222: the validation mesh is a pure function of the 2D loops
+    LadrunoMembraneMemo::Key key;
+    std::shared_ptr<const TestMeshValue> hit;
+    if (m_useMemo) {
+      key.pts(outer2d);
+      key.loops(holes2d);
+      hit = testMeshMemo().find(key);
+    }
+    if (hit) {
+      ++m_memoHits[0];
+    } else {
+      auto testMesh = LadrunoMembraneKernel::build_pslg_cdt_mesh(outer2d, holes2d, {}, {}, 0.0);
+      auto v = std::make_shared<TestMeshValue>();
+      v->totalArea = testMesh.total_area;
+      v->charLength = testMesh.char_length;
+      if (m_useMemo) testMeshMemo().insert(key, v, sizeof(TestMeshValue));
+      hit = v;
+    }
+    m_slabArea = hit->totalArea;
+    m_charLen = hit->charLength;
   } catch (const std::exception &ex) {
     opserr << "LadrunoMembrane::buildPlaneBasis - invalid PSLG geometry on element "
            << this->getTag() << ": " << ex.what() << "\n";
@@ -694,17 +782,39 @@ LadrunoMembrane::resolveAndBuildTransfer(void)
   }
 
   try {
-    LadrunoMembraneKernel::DistributionResult distRes;
     bool hasExplicitSupports = (!frames2d.empty() || !support2d.empty());
-    if (hasExplicitSupports) {
-      distRes = LadrunoMembraneKernel::distribute_surface_load(
-          outer2d, 1.0, m_method, frames2d, holes2d, support2d,
-          span2d, m_orthoRatio, nu_mat, m_meshSize);
-    } else {
-      distRes = LadrunoMembraneKernel::distribute_surface_load(
-          outer2d, 1.0, "tributary", {}, holes2d, outer2d,
-          span2d, m_orthoRatio, nu_mat, m_meshSize);
+    // WP-222: the distribution is a pure function of its arguments; the
+    // key is their exact bit image (see LadrunoMembraneMemo.h)
+    const std::string &distMethod = hasExplicitSupports ? m_method : std::string("tributary");
+    const std::vector<LadrunoMembraneKernel::Segment2D> noFrames;
+    const auto &distFrames = hasExplicitSupports ? frames2d : noFrames;
+    const auto &distSupports = hasExplicitSupports ? support2d : outer2d;
+    LadrunoMembraneMemo::Key distKey;
+    std::shared_ptr<const LadrunoMembraneKernel::DistributionResult> distPtr;
+    if (m_useMemo) {
+      distKey.pts(outer2d);
+      distKey.s(distMethod);
+      distKey.segs(distFrames);
+      distKey.loops(holes2d);
+      distKey.pts(distSupports);
+      distKey.d(span2d.x);
+      distKey.d(span2d.y);
+      distKey.d(m_orthoRatio);
+      distKey.d(nu_mat);
+      distKey.d(m_meshSize);
+      distPtr = distributionMemo().find(distKey);
     }
+    if (distPtr) {
+      ++m_memoHits[1];
+    } else {
+      auto computed = std::make_shared<LadrunoMembraneKernel::DistributionResult>(
+          LadrunoMembraneKernel::distribute_surface_load(
+              outer2d, 1.0, distMethod, distFrames, holes2d, distSupports,
+              span2d, m_orthoRatio, nu_mat, m_meshSize));
+      if (m_useMemo) distributionMemo().insert(distKey, computed, distributionBytes(*computed));
+      distPtr = computed;
+    }
+    const LadrunoMembraneKernel::DistributionResult &distRes = *distPtr;
 
     m_slabArea = distRes.mesh.total_area;
     m_charLen = distRes.mesh.char_length;
@@ -792,7 +902,27 @@ LadrunoMembrane::resolveAndBuildTransfer(void)
           m_meshSubSegmentsUnit.push_back(0.5 * (sub.wa + sub.wb));
         }
 
+        m_frameInfos[k].endFaUnit = 0.0; // Ladruno WP-209
+        m_frameInfos[k].endFbUnit = 0.0; // Ladruno WP-209
+        double fa_fallback = 0.0;
+        double fb_fallback = 0.0;
+        if (fl.end_F_a > 0.0) {
+          if (fl.aL <= 1e-6 && m_frameInfos[k].extNodeI >= 0) {
+            m_frameInfos[k].endFaUnit = fl.end_F_a;
+          } else {
+            fa_fallback = fl.end_F_a;
+          }
+        }
+        if (fl.end_F_b > 0.0) {
+          if (fl.bL >= 1.0 - 1e-6 && m_frameInfos[k].extNodeJ >= 0) {
+            m_frameInfos[k].endFbUnit = fl.end_F_b;
+          } else {
+            fb_fallback = fl.end_F_b;
+          }
+        }
+
         double L_k = m_frameInfos[k].length;
+        std::size_t firstSubIdx = m_unitSubLoads.size();
         if (m_segments > 0 && !fl.sub_loads.empty() && fl.bL > fl.aL + 1e-12) {
           double spanA = fl.aL;
           double spanB = fl.bL;
@@ -829,6 +959,18 @@ LadrunoMembrane::resolveAndBuildTransfer(void)
             if (L_seg > 1e-14 && (std::abs(sub.wa) + std::abs(sub.wb) > 1e-15)) {
               m_unitSubLoads.push_back({static_cast<int>(k), sub.aL, sub.bL, sub.wa, sub.wb, L_seg});
             }
+          }
+        }
+        if (m_unitSubLoads.size() > firstSubIdx) {
+          if (fa_fallback > 0.0 && m_unitSubLoads[firstSubIdx].length > 1e-14) {
+            double Ls = m_unitSubLoads[firstSubIdx].length;
+            m_unitSubLoads[firstSubIdx].waUnit += 4.0 * fa_fallback / Ls;
+            m_unitSubLoads[firstSubIdx].wbUnit -= 2.0 * fa_fallback / Ls;
+          }
+          if (fb_fallback > 0.0 && m_unitSubLoads.back().length > 1e-14) {
+            double Ls = m_unitSubLoads.back().length;
+            m_unitSubLoads.back().waUnit -= 2.0 * fb_fallback / Ls;
+            m_unitSubLoads.back().wbUnit += 4.0 * fb_fallback / Ls;
           }
         }
       }
@@ -943,7 +1085,44 @@ LadrunoMembrane::resolveAndBuildTransfer(void)
         }
       }
 
-      auto dmesh = LadrunoMembraneKernel::build_pslg_cdt_mesh(outer2d, holes2d, linkFrames2d, extra2d, m_meshSize, 6000);
+      // WP-222: mesh + condensation are a pure function of these inputs (the
+      // retained-vertex match below depends only on the mesh and ext2d)
+      double rhoT = wantMass ? rhoEff * m_thick : 0.0;
+      LadrunoMembraneMemo::Key diaKey;
+      std::shared_ptr<const DiaphragmValue> diaPtr;
+      if (m_useMemo) {
+        diaKey.pts(outer2d);
+        diaKey.loops(holes2d);
+        diaKey.segs(linkFrames2d);
+        diaKey.pts(extra2d);
+        diaKey.d(m_meshSize);
+        diaKey.pts(ext2d);
+        for (int i = 0; i < 9; ++i) diaKey.d(Dm[i]);
+        diaKey.d(m_thick);
+        diaKey.d(rhoT);
+        diaKey.i(static_cast<long long>(links.size()));
+        for (const auto &L : links) {
+          diaKey.d(L.a.x); diaKey.d(L.a.y); diaKey.d(L.b.x); diaKey.d(L.b.y);
+          diaKey.i(L.slotA); diaKey.i(L.slotB);
+        }
+        diaPtr = diaphragmMemo().find(diaKey);
+      }
+      std::shared_ptr<DiaphragmValue> diaNew;
+      if (diaPtr) {
+        ++m_memoHits[2];
+      } else {
+        auto mesh = LadrunoMembraneKernel::build_pslg_cdt_mesh(outer2d, holes2d, linkFrames2d, extra2d, m_meshSize, 6000);
+        diaNew = std::make_shared<DiaphragmValue>();
+        diaNew->vertices = std::move(mesh.vertices);
+        diaNew->triangles = std::move(mesh.triangles);
+        diaNew->charLength = mesh.char_length;
+      }
+      const DiaphragmValue &dia = diaPtr ? *diaPtr : *diaNew;
+      struct {
+        const std::vector<LadrunoMembraneKernel::Point2D> &vertices;
+        const std::vector<std::array<int, 3>> &triangles;
+        double char_length;
+      } dmesh{dia.vertices, dia.triangles, dia.charLength};
 
       // retained slot a (= external node a) -> mesh vertex
       double tol = 1e-6 * std::max(dmesh.char_length, 1e-12);
@@ -965,9 +1144,20 @@ LadrunoMembrane::resolveAndBuildTransfer(void)
         if (best >= 0) taken[best] = 1;
         retained[a] = best;
       }
-      auto cond = LadrunoMembraneDiaphragm::condense_lst(
-          dmesh.vertices, dmesh.triangles, retained, Dm, m_thick,
-          wantMass ? rhoEff * m_thick : 0.0, links);
+      if (diaNew) {
+        diaNew->cond = LadrunoMembraneDiaphragm::condense_lst(
+            dmesh.vertices, dmesh.triangles, retained, Dm, m_thick, rhoT, links);
+        if (m_useMemo) {
+          const auto &c = diaNew->cond;
+          using LadrunoMembraneMemo::vecBytes;
+          std::size_t b = sizeof(DiaphragmValue) + vecBytes(diaNew->vertices) +
+                          vecBytes(diaNew->triangles) + vecBytes(c.K) + vecBytes(c.M) +
+                          vecBytes(c.strainOp) + vecBytes(c.meanStrainOp) +
+                          vecBytes(c.triArea) + vecBytes(c.isolated);
+          diaphragmMemo().insert(diaKey, diaNew, b);
+        }
+      }
+      const LadrunoMembraneDiaphragm::Condensed &cond = dia.cond;
       for (int slot : cond.isolated) {
         opserr << "WARNING LadrunoMembrane " << this->getTag() << ": node "
                << m_connectedExternalNodes(slot) << " is not on the panel (outside it or"
@@ -1388,6 +1578,32 @@ LadrunoMembrane::addLoad(ElementalLoad *theLoad, double loadFactor)
     m_appliedTotalLoad(0) += areaSeg * qx;
     m_appliedTotalLoad(1) += areaSeg * qy;
     m_appliedTotalLoad(2) += areaSeg * qz;
+  }
+
+  // 1b. Emit off-span endpoint-clamped tributary loads at frame end nodes (Ladruno WP-209)
+  for (const auto &fInfo : m_frameInfos) {
+    if (fInfo.endFaUnit > 0.0 && fInfo.extNodeI >= 0) {
+      int off = m_nodeDofOffsets[fInfo.extNodeI];
+      m_Q(off + 0) += fInfo.endFaUnit * qx;
+      m_Q(off + 1) += fInfo.endFaUnit * qy;
+      if (m_ndm == 3) {
+        m_Q(off + 2) += fInfo.endFaUnit * qz;
+      }
+      m_appliedTotalLoad(0) += fInfo.endFaUnit * qx;
+      m_appliedTotalLoad(1) += fInfo.endFaUnit * qy;
+      m_appliedTotalLoad(2) += fInfo.endFaUnit * qz;
+    }
+    if (fInfo.endFbUnit > 0.0 && fInfo.extNodeJ >= 0) {
+      int off = m_nodeDofOffsets[fInfo.extNodeJ];
+      m_Q(off + 0) += fInfo.endFbUnit * qx;
+      m_Q(off + 1) += fInfo.endFbUnit * qy;
+      if (m_ndm == 3) {
+        m_Q(off + 2) += fInfo.endFbUnit * qz;
+      }
+      m_appliedTotalLoad(0) += fInfo.endFbUnit * qx;
+      m_appliedTotalLoad(1) += fInfo.endFbUnit * qy;
+      m_appliedTotalLoad(2) += fInfo.endFbUnit * qz;
+    }
   }
 
   // 2. Accumulate point support reactions into m_Q
@@ -1875,6 +2091,10 @@ LadrunoMembrane::setResponse(const char **argv, int argc, OPS_Stream &output)
         snprintf(nm, sizeof(nm), "N12_%d", t + 1); output.tag("ResponseType", nm);
       }
       theResponse = new ElementResponse(this, 20, Vector(nT > 0 ? 3 * nT : 1));
+    } else if (strcmp(argv[0], "transferMemo") == 0) {
+      // WP-222: [validation-mesh hits, distribution hits, diaphragm hits,
+      // memo entries (all stages)], for tests and diagnostics
+      theResponse = new ElementResponse(this, 25, Vector(4));
     } else if (strcmp(argv[0], "diaphragmVertices") == 0) {
       int n = static_cast<int>(m_dVerts3d.size());
       theResponse = new ElementResponse(this, 21, Vector(n > 0 ? n : 1));
@@ -2222,6 +2442,16 @@ LadrunoMembrane::getResponse(int responseID, Information &eleInfo)
     v.resize(n > 0 ? n : 1);
     v.Zero();
     for (int i = 0; i < n; ++i) v(i) = static_cast<double>(m_dTris[i]);
+    return eleInfo.setVector(v);
+  }
+
+  case 25: {
+    static thread_local Vector v(4);
+    v(0) = static_cast<double>(m_memoHits[0]);
+    v(1) = static_cast<double>(m_memoHits[1]);
+    v(2) = static_cast<double>(m_memoHits[2]);
+    v(3) = static_cast<double>(testMeshMemo().size() + distributionMemo().size() +
+                               diaphragmMemo().size());
     return eleInfo.setVector(v);
   }
 

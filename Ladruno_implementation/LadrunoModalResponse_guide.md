@@ -120,12 +120,42 @@ u = ops.nodeDisp(node, dof)
 
 - `-combine` absent ⇒ **byte-identical** to the stock per-mode behavior.
 - `-combine` and `-mode` are mutually exclusive (combination needs all modes).
-- **Combination is per-quantity and nonlinear**: this combines the nodal
-  **displacement** field. Combined element forces/drifts are *not* obtained by
-  deriving them from the combined displacements — combine those quantities' own
-  per-mode peaks instead (record per-mode with `-mode k`, then combine).
-- Known stock quirk: the `-scale` factor is ignored by the per-mode recovery
-  (`solveMode` never applies it); the combined path matches that behavior.
+- **`-combine` combines nodal displacements only.** It combines the
+  displacement field and commits it. Element forces, reactions and drifts read
+  afterwards are derived from that combined field, and they are **not** the CQC
+  (SRSS, …) of each quantity (ASCE 7-22 §12.9.1.3; Wilson §15.9). Combination
+  is per quantity and nonlinear: CQC takes absolute values, so the combined
+  field loses the signs that make a column bend in double curvature. In the
+  WP-212 test frame, the ground-column shear read after `-combine CQC` is about
+  3× the CQC of the per-mode shears. For design forces, run `-mode k` for each
+  mode, read each quantity, and combine those per-mode peaks. Since WP-212 every
+  `-combine` call prints one warning that says so.
+- `-scale` applies to every path (fixed in WP-202; before that it was parsed
+  and ignored).
+
+### Mass-participation report and guard (WP-212)
+
+Every `responseSpectrumAnalysis` call (`-mode k`, all modes, `-combine`,
+`-increment`) reads the cumulative effective-mass ratio of the excited
+direction from `modalProperties` and prints it once to stderr:
+
+```
+ResponseSpectrumAnalysis: cumulative effective mass in direction 1 = 30.85% of the free mass (2 modes).
+```
+
+- `LADRUNO_OPENSEES_QUIET=1` hides this line. It does not hide the warnings
+  and errors below.
+- **Below 90%**, it warns. ASCE 7-22 §12.9.1.1 asks for 100% (90% per
+  horizontal direction is the exception), and NEC-SE-DS §6.2.2e asks for 90%.
+- **`-requireMass $ratio`**, in (0, 1], turns that into an error (return −1)
+  below `$ratio`. A complete basis sums to 1 only to round-off: the comparison
+  allows a relative 1e-12.
+- **Error, always:** the direction has no free mass, or every participation
+  factor of the extracted modes in that direction is zero. That is the
+  signature of the diaphragm-mass bug fixed in WP-211 (an RSA of exactly zero),
+  kept as a permanent guard.
+- The computed field does not change: without `-requireMass`, the results are
+  byte-identical to the stock ones.
 
 ## Per-mode RSA about a preloaded state — `responseSpectrumAnalysis -increment` (WP-207)
 

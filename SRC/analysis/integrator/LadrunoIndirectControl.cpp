@@ -49,6 +49,7 @@
 #include <string.h>
 #include <elementAPI.h>
 #include <classTags.h>
+#include <LadrunoReferenceLoad.h>
 
 void *OPS_LadrunoIndirectControl(void)
 {
@@ -120,9 +121,18 @@ void *OPS_LadrunoIndirectControl(void)
                           "read numIter\n";
                 return 0;
             }
-            if (OPS_GetNumRemainingInputArgs() >= 2) {
+            // Ladruno: optional dmin dmax; on a failed read un-read only what the
+            // reader consumed (Python advances, Tcl does not).
+            int before = OPS_GetNumRemainingInputArgs();
+            if (before >= 2) {
                 int nd2 = 2; double mm[2];
-                if (OPS_GetDoubleInput(&nd2, mm) == 0) { dmin = mm[0]; dmax = mm[1]; }
+                if (OPS_GetDoubleInput(&nd2, mm) == 0) {
+                    dmin = mm[0]; dmax = mm[1];
+                } else {
+                    int consumed = before - OPS_GetNumRemainingInputArgs();
+                    if (consumed > 0)
+                        OPS_ResetCurrentInputArg(-consumed);
+                }
             }
             haveIter = true;
         } else {
@@ -350,10 +360,15 @@ LadrunoIndirectControl::domainChanged(void)
 
     // determine phat: increment lambda by 1, apply load, read the unbalance
     currentLambda = theModel->getCurrentDomainTime();
+    // Ladruno (WP-220): see LadrunoReferenceLoad.h
+    theModel->applyLoadDomain(currentLambda);
+    this->formUnbalance();
+    Vector unbalanceNow(theLinSOE->getB());
     currentLambda += 1.0;
     theModel->applyLoadDomain(currentLambda);
-    this->formUnbalance();   // assumes unbalance at last was 0
+    this->formUnbalance();
     (*phat) = theLinSOE->getB();
+    ladrunoRemoveUnbalance(*phat, unbalanceNow);
     currentLambda -= 1.0;
     theModel->setCurrentDomainTime(currentLambda);
 

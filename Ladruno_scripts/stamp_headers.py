@@ -65,6 +65,10 @@ GLOBS = [
     "SRC/analysis/analysis/LadrunoDampingAssembler.*",
     "SRC/analysis/analysis/LadrunoModalResponse.*",
     "SRC/analysis/analysis/LadrunoModalCombination.*",
+    "SRC/analysis/analysis/LadrunoRitzKernel.*",       # WP-213
+    "SRC/analysis/analysis/LadrunoResidualModes.*",    # WP-213
+    "SRC/analysis/analysis/LadrunoRitzVectors.*",      # WP-215
+    "SRC/analysis/analysis/LadrunoRSAPerMode.*",       # WP-216
     "SRC/system_of_eqn/eigenSOE/FeastEigenSOE.*",
     "SRC/system_of_eqn/eigenSOE/FeastEigenSolver.*",
     "SRC/system_of_eqn/eigenSOE/LadrunoBlockZKernel.*",
@@ -101,6 +105,7 @@ GLOBS = [
     "SRC/analysis/integrator/LadrunoMassScalingEnergy.*",
     "SRC/analysis/integrator/LadrunoEnergyChannels.h",
     "SRC/analysis/integrator/LadrunoArcLength.*",
+    "SRC/analysis/integrator/LadrunoReferenceLoad.h",
     "SRC/analysis/integrator/LadrunoDynamicRelaxation.*",
     "SRC/analysis/integrator/LadrunoFictitiousMass.h",
     "SRC/analysis/integrator/LadrunoIndirectControl.*",
@@ -108,7 +113,7 @@ GLOBS = [
     "SRC/recorder/LadrunoRecorder.*",
     "SRC/recorder/Ladruno_*.cpp", "SRC/recorder/Ladruno_*.h",
     "SRC/recorder/LadrunoMonitor*.cpp", "SRC/recorder/LadrunoMonitor*.h",
-    "SRC/recorder/EnergyBalanceRecorder.*", "SRC/recorder/EnergyBalanceKernel.h",
+    "SRC/recorder/EnergyBalanceRecorder.*", "SRC/recorder/EnergyBalanceKernel.h", "SRC/recorder/LadrunoEnergyBalanceMPI.*",
     "SRC/convergenceTest/LadrunoStabilizedUnbalance.*",
     "SRC/analysis/handler/LadrunoProjectionHandler.*",
     "SRC/analysis/handler/LadrunoConstraintProjector.*",
@@ -135,10 +140,12 @@ GLOBS = [
     "SRC/analysis/integrator/LadrunoSolverQuery.h",
     "SRC/material/nD/LadrunoCohesiveHingeBiaxial.*",
     "SRC/material/uniaxial/LadrunoCohesiveHinge.*",
+    "SRC/material/uniaxial/LadrunoImplexClock.h",   # WP-217 shared IMPL-EX clock
     "SRC/utility/LadrunoParallelBuild.cpp",
     "SRC/analysis/algorithm/equiSolnAlgo/LadrunoFactorReuse*",   # WP-188
     "SRC/analysis/integrator/LadrunoThreadedAssembly.*",   # WP-192
     "SRC/system_of_eqn/linearSOE/mumps/LadrunoMumpsMixed*",   # WP-194
+    "SRC/system_of_eqn/linearSOE/LadrunoSymmetryGuard*.h",   # WP-221
     # WP-122: fork-added files that were never stamped, so the quirk lint never scanned
     # them (WP-120 R1: added on ladruno, absent upstream and at the merge-base)
     "SRC/Ladruno_mutation.h",

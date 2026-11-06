@@ -57,6 +57,7 @@
 #include <BeamIntegration.h>
 #include <SectionForceDeformation.h>
 #include <CrdTransf.h>
+#include <vector>
 #include <Damping.h>
 
 class Response;
@@ -86,7 +87,10 @@ class LadrunoForceBeamColumn3d : public Element
                             double xiI = 0.0, double xiJ = 1.0,
                             double pmP0 = 0.0, double pmAlpha = 0.5,
                             bool eleImplex = false,
-                            double GAvy = 0.0, double GAvz = 0.0);
+                            double GAvy = 0.0, double GAvz = 0.0,
+                            double pmP0t = 0.0, double pmPbal = 0.0,
+                            double pmMuBal = 0.0, bool axialRelease = false,
+                            int spanLoadMode = 1);
 
   ~LadrunoForceBeamColumn3d();
 
@@ -156,7 +160,7 @@ class LadrunoForceBeamColumn3d : public Element
   void computeReactions(double *p0);
   void computeSectionForces(Vector &sp, int isec);
 
-  int evalBulkState(const Vector &v_tilde, const Vector &v_tilde_commit,
+  int evalBulkState(const Vector &v_tilde,
                     Vector &Se_out, Matrix &Kbulk_out, bool commitSubdivide = false);
   int solveHingeState(const Vector &v);
 
@@ -245,10 +249,17 @@ class LadrunoForceBeamColumn3d : public Element
   double hingeMscaleCommitYJ;
   double hingeDualKv[6][4];
   double hingeDualKvCommit[6][4];
+  double hingeDualKav[4][6];
+  double hingeDualKavCommit[4][6];
   double hingeDualKaaInv[4][4];
   double hingeDualKaaInvCommit[4][4];
   double pmP0;
   double pmAlpha;
+  double pmP0t;
+  double pmPbal;
+  double pmMuBal;
+  bool axialRelease;
+  int spanLoadMode;
   bool useImplex;
   double eleImplexErr;
   double eleImplexErrCommit;
@@ -256,6 +267,31 @@ class LadrunoForceBeamColumn3d : public Element
   double vRestore[6];
   bool vRestoreValid;
   Vector vCommitBulk;
+  // Bulk deformation the TRIAL state (Se, kvbulk, vs, fs, Ssr) was solved at.
+  // evalBulkState iterates from that state, not from the committed one.
+  Vector vTrialBulk;
+  // vTrialBulk at commitState. Not vCommitBulk: when the last Newton correction was
+  // below DBL_EPSILON update() returned early, and the committed state was solved
+  // at that earlier deformation, not at the committed one.
+  Vector vTrialBulkCommit;
+  // Basic deformation and element loads the trial state was last solved for.
+  // update() skips a re-solve when neither changed (see solvedStateMatches).
+  Vector vSolved;
+  bool solvedValid;
+  // The last update failed: the trial state is not a solution. update() must re-solve
+  // (no early return) and commitState refuses it. Callers that ignore update()'s
+  // return code (TransformationConstraintHandler::enforceSPs) would otherwise go on
+  // with, and commit, the failed iterate.
+  bool trialFailed;
+  std::vector<ElementalLoad *> solvedLoads;
+  std::vector<double> solvedLoadData;
+  // The same record for the committed state, restored by revertToLastCommit.
+  Vector vSolvedCommit;
+  bool solvedCommitValid;
+  std::vector<ElementalLoad *> solvedLoadsCommit;
+  std::vector<double> solvedLoadDataCommit;
+  bool solvedStateMatches(const Vector &v);
+  void recordSolvedState(const Vector &v);
 
   static thread_local Matrix theMatrix;
   static thread_local Vector theVector;

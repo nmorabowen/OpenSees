@@ -10,7 +10,7 @@ command, and the running analysis is read through OpenSeesCommands' accessors.
 Cases (same expectations as the Tcl deck; stage_kind_check.py asserts the Tcl
 and the openseespy stage lists are identical):
     dc_static_transient, flip_static_transient, dc_static_static, internal_restamp,
-    override_kind, eigen_snapshot, eigen_snapshot_transient
+    override_kind, eigen_snapshot, eigen_snapshot_transient, freefield_shape
 Prints "STAGE_KIND_MODEL OK <case>" last on success.
 """
 
@@ -40,7 +40,9 @@ ops.mass(2, 10.0, 10.0, 0.0)
 ops.geomTransf("Linear", 1)
 ops.element("elasticBeamColumn", 1, 1, 2, 0.1, 2.0e8, 1.0e-3, 1)
 KIND_OPT = ["-kind", "static"] if CASE == "override_kind" else []
-ops.recorder("ladruno", OUT, "-N", "displacement", *KIND_OPT, "-T", "dt", 0.0)
+# #1037: the free-field deck samples on a -T dt grid; every other case records every step.
+T_DT = 0.02 if CASE == "freefield_shape" else 0.0
+ops.recorder("ladruno", OUT, "-N", "displacement", *KIND_OPT, "-T", "dt", T_DT)
 
 
 def chain(kind):
@@ -105,6 +107,23 @@ elif CASE == "eigen_snapshot_transient":
     ops.eigen(1)
     ops.record()
     lateral(); chain("transient"); ok(ops.analyze(5, 0.01))
+elif CASE == "freefield_shape":
+    # nmorabowen/OpenSees#1037: the San Ramon free-field deck, reduced (see the
+    # Tcl twin). -T dt 0.02 is set at the recorder above.
+    gravity(); chain("static"); ok(ops.analyze(4))
+    lam = ops.eigen(1)
+    ops.loadConst("-time", 0.0)
+    ops.wipeAnalysis()
+    ops.node(3, 1.0, 3.0)
+    ops.mass(3, 5.0, 5.0, 0.0)
+    ops.element("elasticBeamColumn", 2, 2, 3, 0.1, 2.0e8, 1.0e-3, 1)
+    ops.domainChange()
+    w = lam[0] ** 0.5
+    ops.rayleigh(0.05 * w, 0.0, 0.05 / w, 0.0)
+    ops.timeSeries("Path", 4, "-dt", 0.01, "-values",
+                   0.0, 0.5, 1.0, 0.5, 0.0, -0.5, -1.0, -0.5, 0.0, 0.5, 1.0, 0.5)
+    ops.pattern("UniformExcitation", 4, 1, "-accel", 4)
+    chain("transient"); ok(ops.analyze(10, 0.01))
 else:
     raise SystemExit(f"unknown case {CASE}")
 

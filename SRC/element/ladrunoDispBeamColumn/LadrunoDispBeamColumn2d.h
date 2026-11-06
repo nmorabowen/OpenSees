@@ -87,7 +87,12 @@ class LadrunoDispBeamColumn2d : public Element
 		     double hingeXiJ = 1.0,
 		     double pmP0 = 0.0,
 		     double pmAlpha = 0.5,
-		     int spanLoadMode = 1);
+		     int spanLoadMode = 1,
+		     double pmBalP0c = 0.0,
+		     double pmBalP0t = 0.0,
+		     double pmBalPbal = 0.0,
+		     double pmBalMu = 1.0,
+		     bool axialRelease = false);
     LadrunoDispBeamColumn2d();
     ~LadrunoDispBeamColumn2d();
 
@@ -194,10 +199,16 @@ class LadrunoDispBeamColumn2d : public Element
     double           hingeHinvCommit[2][2]; // committed 2x2 guarded H^-1
     double           hingeKva[3][2];        // cached 3x2 K_v-alpha (dual-hinge mode)
     double           hingeKvaCommit[3][2];  // committed 3x2 K_v-alpha
+    double           hingeKav[2][3];        // cached 2x3 K_alpha-v including dM_coh/dN
+    double           hingeKavCommit[2][3];  // committed 2x3 K_alpha-v
     double           hingeMscale;       // running moment scale (~Mc) for inner-Newton tol
     double           hingeMscaleCommit; // committed running moment scale
     double           pmP0;              // P-M interaction squash load P0 (>0 enables scaling for general hinges)
     double           pmAlpha;           // P-M interaction linear/parabolic weight (default 0.5)
+    double           pmBalP0c;          // 4-parameter C^1 RC P-M balance law (-pmBal)
+    double           pmBalP0t;
+    double           pmBalPbal;
+    double           pmBalMu;
     bool             postRestoreSync;   // true right after recvSelf/revertToLastCommit until v or loads change
     bool             vRestoreValid;
     double           vRestore[3];
@@ -242,6 +253,9 @@ class LadrunoDispBeamColumn2d : public Element
     double spanKbbInvCommit[2][2];          // committed guarded 2x2 bubble flexibility K_bb^-1
     double spanKvb[3][2];                   // cached 3x2 coupling K_vb
     double spanKvbCommit[3][2];             // committed 3x2 coupling K_vb
+    bool   axialRelease;                    // -axialRelease / -decoupleAxial for fiber RC beams
+    double eps0Axial[maxNumSections];       // trial zero-axial-force centroidal strain per IP
+    double eps0AxialCommit[maxNumSections]; // committed zero-axial-force centroidal strain per IP
 
     // AddingSensitivity:BEGIN //////////////////////////////////////////
     int parameterID;

@@ -3471,7 +3471,7 @@ def test_t16_deep_investigator_regressions(tmp_path):
     alpha_xi = ops.eleResponse(1, "hingeJump")[0]
     assert abs(alpha_xi) > 1.0e-5
     vp_xi = ops.eleResponse(1, "plasticRotation")
-    assert vp_xi == pytest.approx([0.0, (1.0 - xi_I) * alpha_xi, xi_I * alpha_xi], rel=1e-10, abs=1e-12)
+    assert vp_xi == pytest.approx([0.0, (1.0 - xi_I) * alpha_xi, -xi_I * alpha_xi], rel=1e-10, abs=1e-12)
 
     # --- F8: SFI_MVLEM_3D with ElasticIsotropic uses plane-stress Eeq = E (matching explicit -Eave E_wall) ---
     ops.wipe()
@@ -5224,10 +5224,8 @@ def test_r2_opus_review_edge_cases(tmp_path):
     # Exact internal strain energy of core + hinges + shearHinge when v = 0:
     # In LadrunoIMKHinge.h, at v=0, core elastic rotations are ve1 = -th_i + gamRot, ve2 = -th_j + gamRot
     # where gamRot = gammaS / Lc - gamRot0 and gamRot0 = -Fs0 * (q0ic + q0jc)
-    q0_1 = -wy * L * L / 12.0
-    q0_2 = wy * L * L / 12.0
-    q0ic = ((L - dI) * q0_1 - dI * q0_2) / L
-    q0jc = (-dJ * q0_1 + (L - dJ) * q0_2) / L
+    q0ic = -wy * Lc * Lc / 12.0
+    q0jc = wy * Lc * Lc / 12.0
     Fs0 = 1.0 / (Lc * Lc * Ks0)
     gamRot = sh2d[0] / Lc - (-Fs0 * (q0ic + q0jc))
     ve1 = -th2d[0] + gamRot
@@ -5268,10 +5266,8 @@ def test_r2_opus_review_edge_cases(tmp_path):
     en3d = ops.eleResponse(1, "energy")[0]
     th3d = ops.eleResponse(1, "hingeRotation")
     sh3d = ops.eleResponse(1, "shearHinge")  # [gammaSY, VsY, gammaSZ, VsZ]
-    q0y_1 = wz * L * L / 12.0
-    q0y_2 = -wz * L * L / 12.0
-    q0yic = ((L - dI) * q0y_1 - dI * q0y_2) / L
-    q0yjc = (-dJ * q0y_1 + (L - dJ) * q0y_2) / L
+    q0yic = wz * Lc * Lc / 12.0
+    q0yjc = -wz * Lc * Lc / 12.0
     gamRotZ = sh3d[2] / Lc - (-Fs0 * (q0yic + q0yjc))
     ve3 = -th3d[2] + gamRotZ
     ve4 = -th3d[3] + gamRotZ

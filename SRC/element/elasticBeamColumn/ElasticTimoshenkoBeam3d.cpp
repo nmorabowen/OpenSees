@@ -1047,6 +1047,10 @@ Response* ElasticTimoshenkoBeam3d::setResponse(const char **argv, int argc,
 
         theResponse =  new ElementResponse(this, 3, Vector(6));
     }
+    // Ladruno WP-209: local-axis direction cosines for LadrunoMembrane frame load projection
+    else if (strcmp(argv[0], "localAxes") == 0) {
+        theResponse = new ElementResponse(this, 30, Vector(9));
+    }
 
     output.endTag(); // ElementOutput
 
@@ -1085,6 +1089,18 @@ int ElasticTimoshenkoBeam3d::getResponse (int responseID, Information &eleInfo)
             qOut(3) = ql(4); qOut(4) = ql(10); qOut(5) = ql(9);
         }
         return eleInfo.setVector(qOut);
+    }
+
+    case 30: { // Ladruno WP-209: local axes (vx, vy, vz dir cosines) from the CrdTransf
+        static thread_local Vector la(9);
+        static thread_local Vector vx(3), vy(3), vz(3);
+        theCoordTransf->getLocalAxes(vx, vy, vz);
+        for (int i = 0; i < 3; ++i) {
+            la(i)     = vx(i);
+            la(i + 3) = vy(i);
+            la(i + 6) = vz(i);
+        }
+        return eleInfo.setVector(la);
     }
 
     default:

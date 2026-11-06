@@ -294,6 +294,9 @@ extern int OPS_LadrunoModalResponseHistory(void);   // P1a: modalResponseHistory
 extern int OPS_LadrunoFrequencyResponse(void);      // P2:  frequencyResponse
 extern int OPS_LadrunoSteadyStateDynamics(void);    // P2:  steadyStateDynamics
 extern int OPS_LadrunoRandomResponse(void);         // P3:  randomResponse
+extern int OPS_LadrunoResidualModes(void);          // Ladruno WP-213: residualModes
+extern int OPS_LadrunoResponseSpectrumPerMode(void); // Ladruno WP-216: responseSpectrumPerMode
+extern int OPS_LadrunoRitzVectors(void);            // Ladruno WP-215: ritzVectors
 
 // Ladruno (ADR-78 P0.5): the contact verbs had the SAME gap, with a sharper
 // consequence. They are implemented once in OpenSeesOutputCommands.cpp and are
@@ -340,6 +343,7 @@ extern int OPS_LadrunoEndAugment(void);             // ADR-41 D1
 //    which is worse than the missing-command error it replaced. Classic Tcl owns
 //    its integrators in theStaticIntegrator / theTransientIntegrator below.
 #include <LadrunoSolverQuery.h>
+#include <LadrunoSymmetryGuardQuery.h>   // Ladruno WP-221: same shape, takes theSOE
 
 extern void OPS_SetReliabilityDomain(ReliabilityDomain *);
 
@@ -3678,10 +3682,21 @@ ladrunoSpecifySOEImpl(ClientData clientData, Tcl_Interp *interp, int argc, TCL_C
       theSolver = new ProfileSPDLinDirectSolver(); 	
     ***************************************************************  */
 
+    // Ladruno WP-221: `system ProfileSPD -strictSymmetry` (the only option
+    // this branch reads; anything else is still ignored, as upstream).
+    int strictSym = 0;
+    for (int i = 2; i < argc; i++)
+      if (strcmp(argv[i], "-strictSymmetry") == 0)
+	strictSym = 1;
 #ifdef _PARALLEL_PROCESSING
     theSOE = new DistributedProfileSPDLinSOE(*theSolver);
+    if (strictSym)
+      opserr << "WARNING system ProfileSPD -strictSymmetry is serial-only "
+                "(DistributedProfileSPDLinSOE solves on its own); ignored\n";
 #else
-    theSOE = new ProfileSPDLinSOE(*theSolver);      
+    ProfileSPDLinSOE *theProfileSOE = new ProfileSPDLinSOE(*theSolver);
+    theProfileSOE->setStrictSymmetry(strictSym);
+    theSOE = theProfileSOE;
 #endif
   }
 
@@ -4033,6 +4048,7 @@ ladrunoSpecifySOEImpl(ClientData clientData, Tcl_Interp *interp, int argc, TCL_C
     int krylovDigits = 0; // Ladruno ADR-75 P1e: -krylov <L>, 0 = direct only
     int cnrBranch = -1;   // Ladruno WP-132: -deterministic / -cbwr <BRANCH>
     int cnrKeepEnv = 0;   // Ladruno WP-132: bare -deterministic keeps MKL_CBWR
+    int strictSym = 0;    // Ladruno WP-221: -strictSymmetry
     int count = 2;
 
     // Ladruno ADR-75 P1d (adversarial review): this loop originally diverged
@@ -4064,6 +4080,9 @@ ladrunoSpecifySOEImpl(ClientData clientData, Tcl_Interp *interp, int argc, TCL_C
 	matType = 2;
       } else if (strcmp(argv[count],"-spd") == 0) {
 	matType = 1;
+      } else if (strcmp(argv[count],"-strictSymmetry") == 0) {
+	// Ladruno WP-221: bare flag; see OPS_PARDISOGenLinSolver.
+	strictSym = 1;
       } else if (strcmp(argv[count],"-stats") == 0 ||
                  strcmp(argv[count],"-pardisoStats") == 0) {
 	// Ladruno ADR-75 P1k: `-pardisoStats` is a spelled-out alias for
@@ -4127,7 +4146,9 @@ ladrunoSpecifySOEImpl(ClientData clientData, Tcl_Interp *interp, int argc, TCL_C
       delete theSolver;
       return TCL_ERROR;
     }
-    theSOE = new PARDISOGenLinSOE(*theSolver, matType);
+    PARDISOGenLinSOE *thePardisoSOE = new PARDISOGenLinSOE(*theSolver, matType);
+    thePardisoSOE->setStrictSymmetry(strictSym);   // Ladruno WP-221
+    theSOE = thePardisoSOE;
   }
 #else
   // Ladruno ADR-75 P1d (adversarial review): REFUSE explicitly in builds without
@@ -7285,6 +7306,36 @@ randomResponse(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** a
     return TCL_OK;
 }
 
+// Ladruno WP-213: residualModes, the same OPS_ResetInputNoBuilder bridge.
+int
+residualModes(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_LadrunoResidualModes() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+// Ladruno WP-215: ritzVectors, the same OPS_ResetInputNoBuilder bridge.
+int
+ritzVectors(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_LadrunoRitzVectors() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+// Ladruno WP-216: responseSpectrumPerMode, the same OPS_ResetInputNoBuilder bridge.
+int
+responseSpectrumPerMode(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_LadrunoResponseSpectrumPerMode() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
 // Ladruno (ADR-78 P0.5): classic-Tcl bridges for the contact family. Each is the
 // same two-line shape as responseSpectrumAnalysis / the ADR-44 modal bridges
 // above — OPS_ResetInputNoBuilder plumbs argv into the elementAPI arg cursor
@@ -7415,6 +7466,17 @@ ladrunoDR(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
 {
     OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
     if (Ladruno::drCommand(theTransientIntegrator) < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+// Ladruno WP-221: classic Tcl owns its systems in the file-scope `theSOE` /
+// `theEigenSOE`.
+int
+ladrunoSymmetryGuard(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (Ladruno::symmetryGuardCommand(theSOE, theEigenSOE) < 0)
 	    return TCL_ERROR;
     return TCL_OK;
 }

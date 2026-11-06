@@ -32,6 +32,7 @@
 #include <LadrunoThreads.h>   // Ladruno WP-192
 #include <TransformationDOF_Group.h>
 #include <vector>
+#include <algorithm> // Ladruno WP-216: std::max
 #include <stdlib.h>
 
 #include <Element.h>
@@ -58,6 +59,10 @@ double *TransformationFE::dataBuffer = 0;
 double *TransformationFE::localKbuffer = 0;          
 int    *TransformationFE::dofData = 0;    ;          
 int TransformationFE::sizeBuffer(0);            
+// Ladruno WP-216: entries in dofData. It holds one count PER NODE
+// (numDOFs.setData(dofData, numGroups)), so it must hold the largest element's
+// node count, not MAX_NUM_DOF; file-static to leave the header alone.
+static int ladrunoSizeDofData = 0;
 
 //  TransformationFE(Element *, Integrator *theIntegrator);
 //	construictor that take the corresponding model element.
@@ -123,6 +128,7 @@ TransformationFE::TransformationFE(int tag, Element *ele)
 	dataBuffer = new double[MAX_NUM_DOF*MAX_NUM_DOF];
 	localKbuffer = new double[MAX_NUM_DOF*MAX_NUM_DOF];
 	dofData      = new int[MAX_NUM_DOF];
+	ladrunoSizeDofData = MAX_NUM_DOF; // Ladruno WP-216
 	sizeBuffer = MAX_NUM_DOF*MAX_NUM_DOF;
 	
 	if (modMatrices == 0 || modVectors == 0 || dataBuffer == 0 ||
@@ -137,6 +143,16 @@ TransformationFE::TransformationFE(int tag, Element *ele)
 	    modMatrices[i] = 0;
 	    modVectors[i] = 0;
 	}
+    }
+
+    // Ladruno WP-216: an element with more than MAX_NUM_DOF nodes (a
+    // LadrunoMembrane floor panel) wrote past dofData on every
+    // getTangent / getResidual / get*_Force: heap corruption under
+    // constraints Transformation. Grow it to the node count.
+    if (numNodes > ladrunoSizeDofData) {
+	delete [] dofData;
+	dofData = new int[numNodes];
+	ladrunoSizeDofData = numNodes;
     }
 
     // increment the number of transformations
@@ -192,6 +208,7 @@ TransformationFE::~TransformationFE()
 	dataBuffer = 0;
 	localKbuffer = 0;
 	dofData = 0;
+	ladrunoSizeDofData = 0; // Ladruno WP-216
 	sizeTransformations = 0;
 	sizeBuffer = 0;
 	transCounter = 0;
@@ -324,8 +341,10 @@ TransformationFE::ladrunoScratch(int *&dofs, Matrix **&trans, double *&localK,
                                  double *&data, Matrix **modT, Vector **modR) const
 {
     LadrunoTFEScratch &t = ladrunoTFE;
-    if ((int)t.dofs.size() < MAX_NUM_DOF)
-      t.dofs.resize(MAX_NUM_DOF);
+    // Ladruno WP-216: one entry per node, like dofData
+    const int nDofs = std::max(MAX_NUM_DOF, sizeTransformations);
+    if ((int)t.dofs.size() < nDofs)
+      t.dofs.resize(nDofs);
     if ((int)t.trans.size() < sizeTransformations)
       t.trans.resize(sizeTransformations, (Matrix *)0);
     if ((int)t.localK.size() < sizeBuffer)

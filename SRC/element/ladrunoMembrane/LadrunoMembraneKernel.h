@@ -1246,6 +1246,8 @@ struct FrameLoadResult {
     std::array<double, 3> p0_2d{};
     std::array<double, 3> q0_2d{};
     double overhang_torque = 0.0;
+    double end_F_a = 0.0; // Ladruno WP-209
+    double end_F_b = 0.0; // Ladruno WP-209
 };
 
 struct YieldLineSegment2D {
@@ -1304,7 +1306,9 @@ inline std::vector<FrameLoadResult> finalize_frame_results(
     const std::vector<std::vector<SubSegment>>& frame_sub_groups,
     const std::vector<std::vector<double>>& sub_F,
     const std::vector<std::vector<double>>& sub_M,
-    const std::vector<double>& overhang_torques = {})
+    const std::vector<double>& overhang_torques = {},
+    const std::vector<double>& end_F_a = {},
+    const std::vector<double>& end_F_b = {})
 {
     std::vector<FrameLoadResult> results;
     results.reserve(frames.size());
@@ -1359,6 +1363,24 @@ inline std::vector<FrameLoadResult> finalize_frame_results(
             }
         }
 
+        double fa_end = (k < end_F_a.size()) ? end_F_a[k] : 0.0; // Ladruno WP-209
+        double fb_end = (k < end_F_b.size()) ? end_F_b[k] : 0.0; // Ladruno WP-209
+#ifdef LADRUNO_MUTATE_MEMBRANE
+        fa_end = 0.0;
+        fb_end = 0.0;
+#endif
+        // The end shares are transverse point loads at xi = aL_min / bL_max: they add
+        // to the simply-supported shears p0[1..2] and the fixed-end moments q0[1..2],
+        // never to the axial slot p0[0].
+        F_tot += fa_end + fb_end;
+        M_orig += fa_end * (aL_min * L_k) + fb_end * (bL_max * L_k);
+        p0_sum[1] -= fa_end * (1.0 - aL_min) + fb_end * (1.0 - bL_max);
+        p0_sum[2] -= fa_end * aL_min + fb_end * bL_max;
+        q0_sum[1] -= L_k * (fa_end * aL_min * (1.0 - aL_min) * (1.0 - aL_min)
+                          + fb_end * bL_max * (1.0 - bL_max) * (1.0 - bL_max));
+        q0_sum[2] += L_k * (fa_end * aL_min * aL_min * (1.0 - aL_min)
+                          + fb_end * bL_max * bL_max * (1.0 - bL_max));
+
         double L_active = (bL_max - aL_min) * L_k;
         double M_active = M_orig - F_tot * (aL_min * L_k);
         auto [wa_eq, wb_eq] = moment_conserving_trapezoid(F_tot, M_active, L_active);
@@ -1376,7 +1398,9 @@ inline std::vector<FrameLoadResult> finalize_frame_results(
             std::move(sub_loads),
             p0_sum,
             q0_sum,
-            torq
+            torq,
+            fa_end,
+            fb_end
         });
     }
     return results;
@@ -1740,6 +1764,59 @@ inline DistributionResult distribute_surface_load(
         }
     }
 
+    // WP-222: the per-triangle recursion below inserts into a sorted unique feature set and two
+    // 3-slot lists millions of times per membrane. SmallSet / Tiny3 keep std::set / std::vector
+    // semantics (sorted unique, the same iteration order) without a heap allocation per call.
+    // -DLADRUNO_MEMBRANE_KERNEL_REFERENCE compiles the pre-WP-222 containers and nearest-feature
+    // query instead; tests/test_wp222_membrane_build_memo.py checks both builds bit for bit.
+#ifdef LADRUNO_MEMBRANE_KERNEL_REFERENCE
+    struct SmallSet {
+        std::set<int> s;
+        void insert(int x) { s.insert(x); }
+        std::size_t size() const { return s.size(); }
+        std::set<int>::const_iterator begin() const { return s.begin(); }
+        std::set<int>::const_iterator end() const { return s.end(); }
+        std::vector<int> sorted() const { return std::vector<int>(s.begin(), s.end()); }
+    };
+    using Tiny3 = std::vector<int>;
+#else
+    struct SmallSet {
+        int n = 0;
+        int a[32];
+        std::vector<int> big;
+        void insert(int x) {
+            if (!big.empty()) {
+                auto it = std::lower_bound(big.begin(), big.end(), x);
+                if (it == big.end() || *it != x) big.insert(it, x);
+                return;
+            }
+            int i = 0;
+            while (i < n && a[i] < x) ++i;
+            if (i < n && a[i] == x) return;
+            if (n == 32) {
+                big.assign(a, a + n);
+                big.insert(big.begin() + i, x);
+                return;
+            }
+            for (int j = n; j > i; --j) a[j] = a[j - 1];
+            a[i] = x;
+            ++n;
+        }
+        std::size_t size() const { return big.empty() ? static_cast<std::size_t>(n) : big.size(); }
+        const int* begin() const { return big.empty() ? a : big.data(); }
+        const int* end() const { return begin() + size(); }
+        int operator[](std::size_t i) const { return begin()[i]; }
+        const SmallSet& sorted() const { return *this; }
+    };
+    struct Tiny3 {
+        int v[3];
+        int n = 0;
+        void push_back(int x) { v[n++] = x; }
+        std::size_t size() const { return static_cast<std::size_t>(n); }
+        int operator[](std::size_t i) const { return v[i]; }
+    };
+#endif
+
     struct TiedFeat {
         int fid;
         double tf;
@@ -1748,6 +1825,7 @@ inline DistributionResult distribute_surface_load(
         double cy;
     };
 
+#ifdef LADRUNO_MEMBRANE_KERNEL_REFERENCE
     auto nearest_features = [&](double px, double py) -> std::pair<std::vector<TiedFeat>, double> {
         double best_d = 1e30;
         struct Cand {
@@ -1792,6 +1870,77 @@ inline DistributionResult distribute_surface_load(
         }
         return {tied, best_d};
     };
+#else
+    // WP-222: the nearest supporting feature(s) of a point, called ~29 M times on a 46-storey
+    // tower. Same candidates, same order and the same arithmetic for every value returned as the
+    // reference query above; std::hypot (the cost) is evaluated only on the shortlist whose
+    // squared distance is within a relative 1e-9 margin of the tie window, and nothing is
+    // allocated per call (the buffers are reused). Returns a reference to the reused tied
+    // buffer, so a caller must not hold it across a second call.
+    struct Cand {
+        int fid;
+        double dd;
+        double tf;
+        bool in_sp;
+        double cx;
+        double cy;
+    };
+    std::vector<Cand> nf_cand;
+    nf_cand.reserve(active_frame_geom.size() + n_supp_nodes);
+    std::vector<TiedFeat> nf_tied;
+    nf_tied.reserve(active_frame_geom.size() + n_supp_nodes);
+    std::vector<double> nf_d(active_frame_geom.size() + n_supp_nodes, 0.0);
+    auto nearest_features = [&](double px, double py) -> std::pair<const std::vector<TiedFeat>&, double> {
+        nf_cand.clear();
+        double min_dd = 1e300;
+        for (const auto& afg : active_frame_geom) {
+            double dx = afg.bx - afg.ax;
+            double dy = afg.by - afg.ay;
+            double l2 = dx * dx + dy * dy;
+            double t_raw = (l2 > 1e-30) ? (((px - afg.ax) * dx + (py - afg.ay) * dy) / l2) : 0.0;
+            bool in_span = (t_raw >= -1e-7 && t_raw <= 1.0 + 1e-7);
+            double t_sub = std::max(0.0, std::min(1.0, t_raw));
+            double cx = afg.ax + t_sub * dx;
+            double cy = afg.ay + t_sub * dy;
+            double ex = px - cx, ey = py - cy;
+            double dd = ex * ex + ey * ey;
+            double t_f = afg.a_min + t_sub * (afg.b_max - afg.a_min);
+            nf_cand.push_back({afg.k, dd, t_f, in_span, cx, cy});
+            if (dd < min_dd) min_dd = dd;
+        }
+        for (std::size_t m = 0; m < n_supp_nodes; ++m) {
+            double cx = support_nodes[m].x;
+            double cy = support_nodes[m].y;
+            double ex = px - cx, ey = py - cy;
+            double dd = ex * ex + ey * ey;
+            nf_cand.push_back({static_cast<int>(n_frames + m), dd, 0.0, true, cx, cy});
+            if (dd < min_dd) min_dd = dd;
+        }
+        // shortlist: sqrt(dd) and hypot differ by a few ulp, so every candidate that can be the
+        // exact minimum or inside its 1e-11 tie window satisfies sqrt(dd) <= lim
+        double lim = (std::sqrt(min_dd) + 1e-11) * (1.0 + 1e-9) + 1e-200;
+        double lim2 = lim * lim;
+        double best_d = 1e30;
+        for (std::size_t i = 0; i < nf_cand.size(); ++i) {
+            const auto& c = nf_cand[i];
+            if (c.dd <= lim2) {
+                double d = std::hypot(px - c.cx, py - c.cy);
+                nf_d[i] = d;
+                if (d < best_d) best_d = d;
+            } else {
+                nf_d[i] = 1e300;
+            }
+        }
+        nf_tied.clear();
+        for (std::size_t i = 0; i < nf_cand.size(); ++i) {
+            if (nf_d[i] <= best_d + 1e-11) {
+                const auto& c = nf_cand[i];
+                nf_tied.push_back({c.fid, c.tf, c.in_sp, c.cx, c.cy});
+            }
+        }
+        return {nf_tied, best_d};
+    };
+#endif
 
     auto feature_point_dist = [&](int fid, double px, double py) -> std::pair<double, bool> {
         if (fid >= 0 && fid < static_cast<int>(n_frames)) {
@@ -1849,7 +1998,7 @@ inline DistributionResult distribute_surface_load(
             {0.25 * p0.x + 0.25 * p1.x + 0.5 * p2.x, 0.25 * p0.y + 0.25 * p1.y + 0.5 * p2.y},
             {(p0.x + p1.x + p2.x) / 3.0, (p0.y + p1.y + p2.y) / 3.0}
         }};
-        std::set<int> fids;
+        SmallSet fids;
         for (const auto& s : samples) {
             auto [tied, _] = nearest_features(s.x, s.y);
             for (const auto& tf : tied) fids.insert(tf.fid);
@@ -1862,7 +2011,7 @@ inline DistributionResult distribute_surface_load(
             return;
         }
         if (fids.size() >= 2 && depth < 4) {
-            std::vector<int> sorted_fids(fids.begin(), fids.end());
+            const auto& sorted_fids = fids.sorted();
             for (std::size_t ia = 0; ia < sorted_fids.size(); ++ia) {
                 for (std::size_t ib = ia + 1; ib < sorted_fids.size(); ++ib) {
                     int fA = sorted_fids[ia];
@@ -1873,7 +2022,7 @@ inline DistributionResult distribute_surface_load(
                         auto [d2, _2] = feature_point_dist(fB, corners[i].x, corners[i].y);
                         g_vals[i] = d1 - d2;
                     }
-                    std::vector<int> pos, neg;
+                    Tiny3 pos, neg;
                     for (int i = 0; i < 3; ++i) {
                         if (g_vals[i] > 1e-12) pos.push_back(i);
                         if (g_vals[i] < -1e-12) neg.push_back(i);
@@ -1924,15 +2073,34 @@ inline DistributionResult distribute_surface_load(
     }
 
     if (mode_clean == "tributary") {
+        std::vector<double> end_F_a(n_frames, 0.0); // Ladruno WP-209
+        std::vector<double> end_F_b(n_frames, 0.0); // Ladruno WP-209
         auto deposit_tributary_point = [&](double px, double py, double df) {
             auto [tied, _] = nearest_features(px, py);
             double share = df / static_cast<double>(tied.size());
             for (const auto& tf : tied) {
                 if (tf.fid < static_cast<int>(n_frames)) {
-                    double L_k = std::hypot(
-                        frames[tf.fid].p2.x - frames[tf.fid].p1.x,
-                        frames[tf.fid].p2.y - frames[tf.fid].p1.y);
-                    deposit_point_load_to_frame(tf.fid, tf.tf, L_k, share, frame_sub_groups, sub_F, sub_M);
+                    if (!tf.in_sp) { // Ladruno WP-209
+                        double a_min = 0.0;
+                        double b_max = 1.0;
+                        for (const auto& afg : active_frame_geom) {
+                            if (afg.k == tf.fid) {
+                                a_min = afg.a_min;
+                                b_max = afg.b_max;
+                                break;
+                            }
+                        }
+                        if (tf.tf <= 0.5 * (a_min + b_max)) {
+                            end_F_a[tf.fid] += share;
+                        } else {
+                            end_F_b[tf.fid] += share;
+                        }
+                    } else {
+                        double L_k = std::hypot(
+                            frames[tf.fid].p2.x - frames[tf.fid].p1.x,
+                            frames[tf.fid].p2.y - frames[tf.fid].p1.y);
+                        deposit_point_load_to_frame(tf.fid, tf.tf, L_k, share, frame_sub_groups, sub_F, sub_M);
+                    }
                 } else {
                     node_reactions[tf.fid - static_cast<int>(n_frames)] += share;
                 }
@@ -1977,7 +2145,7 @@ inline DistributionResult distribute_surface_load(
                 {0.25 * p0.x + 0.25 * p1.x + 0.5 * p2.x, 0.25 * p0.y + 0.25 * p1.y + 0.5 * p2.y},
                 {(p0.x + p1.x + p2.x) / 3.0, (p0.y + p1.y + p2.y) / 3.0}
             }};
-            std::set<int> fids;
+            SmallSet fids;
             bool all_int = true;
             for (const auto& s : int_samples) {
                 auto [tied, _] = nearest_features(s.x, s.y);
@@ -2011,7 +2179,7 @@ inline DistributionResult distribute_surface_load(
             }
 
             if (fids.size() >= 2 && all_frames && depth < 6) {
-                std::vector<int> sorted_fids(fids.begin(), fids.end());
+                const auto& sorted_fids = fids.sorted();
                 for (std::size_t idx_a = 0; idx_a < sorted_fids.size(); ++idx_a) {
                     for (std::size_t idx_b = idx_a + 1; idx_b < sorted_fids.size(); ++idx_b) {
                         const auto& g1 = geom_by_k[sorted_fids[idx_a]];
@@ -2027,7 +2195,7 @@ inline DistributionResult distribute_surface_load(
                             g_vals[i] = d1 - d2;
                         }
                         if (ok_int) {
-                            std::vector<int> pos, neg;
+                            Tiny3 pos, neg;
                             for (int i = 0; i < 3; ++i) {
                                 if (g_vals[i] > 1e-12) pos.push_back(i);
                                 if (g_vals[i] < -1e-12) neg.push_back(i);
@@ -2116,7 +2284,8 @@ inline DistributionResult distribute_surface_load(
             }
         }
 
-        auto frame_results = finalize_frame_results(frames, frame_sub_groups, sub_F, sub_M);
+        auto frame_results = finalize_frame_results(
+            frames, frame_sub_groups, sub_F, sub_M, {}, end_F_a, end_F_b); // Ladruno WP-209
         return DistributionResult{
             mode_clean,
             total_load,

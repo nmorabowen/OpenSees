@@ -71,7 +71,7 @@ OPS_ModIMKPeakOriented()
   if (remArgs < 23) {
     opserr << "Invalid Args want: uniaxialMaterial ModIMKPeakOriented tag? Ke?, alfaPos?, alfaNeg?, My_pos?, My_neg? ";
     opserr << "Ls?, Ld?, La?, Lk?, Cs?, Cd?, Ca?, Ck?, thetaPpos?, thetaPneg?, thetaPCpos?, thetaPCneg? ";
-    opserr << "ResfacPos?, ResfacNeg?, fracDispPos?, fracDispNeg?, DPos?, DNeg?, <nFactor?> <-implex>\n";
+    opserr << "ResfacPos?, ResfacNeg?, fracDispPos?, fracDispNeg?, DPos?, DNeg?, <nFactor?> <-implex> <-implexDt step|pseudo>\n";
     return 0;
   }
 
@@ -79,18 +79,27 @@ OPS_ModIMKPeakOriented()
   if (OPS_GetDoubleInput(&numData, dData) != 0) {
     opserr << "Invalid Args want: uniaxialMaterial ModIMKPeakOriented tag? Ke?, alfaPos?, alfaNeg?, My_pos?, My_neg? ";
     opserr << "Ls?, Ld?, La?, Lk?, Cs?, Cd?, Ca?, Ck?, thetaPpos?, thetaPneg?, thetaPCpos?, thetaPCneg? ";
-    opserr << "ResfacPos?, ResfacNeg?, fracDispPos?, fracDispNeg?, DPos?, DNeg?, <nFactor?> <-implex>\n";
+    opserr << "ResfacPos?, ResfacNeg?, fracDispPos?, fracDispNeg?, DPos?, DNeg?, <nFactor?> <-implex> <-implexDt step|pseudo>\n";
     return 0;
   }
 
   bool hasNFactor = false;
   double nFactorVal = 0.0;
   bool useImplex = false;
+  int implexClock = LadrunoImplexClock::STEP; // Ladruno WP-217
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
-    const char *opt = OPS_GetString();
+    char optBuf[64];
+    const char *opt = OPS_GetStringFromAll(optBuf, sizeof(optBuf));
     if (opt != 0 && (strcmp(opt, "-implex") == 0 || strcmp(opt, "-IMPLEX") == 0)) {
       useImplex = true;
+    } else if (opt != 0 && strcmp(opt, "-implexDt") == 0) { // Ladruno WP-217
+      char srcBuf[16];
+      const char *src = (OPS_GetNumRemainingInputArgs() > 0) ? OPS_GetStringFromAll(srcBuf, sizeof(srcBuf)) : 0;
+      if (!LadrunoImplexClock::parse(src, implexClock)) {
+        opserr << "WARNING ModIMKPeakOriented: -implexDt needs step or pseudo\n";
+        return 0;
+      }
     } else if (!hasNFactor) {
       OPS_ResetCurrentInputArg(-1);
       int one = 1;
@@ -128,6 +137,7 @@ OPS_ModIMKPeakOriented()
     return 0;
   }
  
+  ((ModIMKPeakOriented *)theMaterial)->setImplexClock(implexClock); // Ladruno WP-217
   return theMaterial;
 }
 
@@ -192,7 +202,9 @@ ModIMKPeakOriented::setTrialStrain(double strain, double strainRate)
 {
   //all variables to the last commit state
  
+  LadrunoImplexClock keepClock = implexClock_; // Ladruno WP-217: this revert is not a retry
   this->revertToLastCommit();
+  implexClock_ = keepClock;
  
   double f,d,deltaD;
  
@@ -205,20 +217,21 @@ ModIMKPeakOriented::setTrialStrain(double strain, double strainRate)
  
   flagdeg = 0;
   if (fabs(deltaD) < 1.0e-18 && strain != 0.0 && commitCalledOnce == 1) {		// Updated: Filipe Ribeiro and Andre Barbosa
+    double k0 = (CKe > 0.0) ? CKe : Ke0 * (1.0 + nFactor);
+    if (k0 <= 0.0) k0 = 1.0;
+    double k_imp_c = (Ckon == 0) ? k0 : Ctangent;
     if (useImplex_) { // Ladruno: IMPL-EX zero-increment consistency
-      double k0 = (CKe > 0.0) ? CKe : Ke0 * (1.0 + nFactor);
-      if (k0 <= 0.0) k0 = 1.0;
-      double k_imp_c = (Ckon == 0) ? k0 : Ctangent;
-      double time_factor = 1.0;
-      if (ops_Dt > 0.0 && dtime_n_commit_ > 0.0) {
-        time_factor = ops_Dt / dtime_n_commit_;
-        if (time_factor > 2.0) time_factor = 2.0;
-      }
+      double time_factor = implexClock_.factor(dtime_n_commit_); // Ladruno WP-217: frozen per step
       double dU_expl = time_factor * dU_prev_;
       fP_imp_ = CfP;
       Tangent_imp_ = k_imp_c;
       fP = CfP + (k_imp_c - k0) * dU_expl;
       Tangent = k0;
+    } else {
+      fP = CfP + k_imp_c * deltaD;
+      fP_imp_ = fP;
+      Tangent = k_imp_c;
+      Tangent_imp_ = k_imp_c;
     }
     return 0;
   }
@@ -573,42 +586,43 @@ ModIMKPeakOriented::setTrialStrain(double strain, double strainRate)
     double betac = 0.0;
    
     if(flagdeg == 1){		//this cycle was reformulated // Filipe Ribeiro and Andre Barbosa
-          
-      if(Enrgtot >= Enrgts && Enrgts != 0.0){      
-        betas = 1.0;
-      } else if (Enrgtot >= Enrgta && Enrgta != 0.0) {  
-        betaa = 1.0;
-      } else if(Enrgtot >= Enrgtd && Enrgtd == 0.0) {  
-        betac = 1.0;
-     
-      // cyclic deterioration
-	  } else {
-     
-		if(Ls != 0.0){
-			betas = pow(Enrgc/(Enrgts-Enrgtot),Cs);        
-		} else {
-			betas = 0.0;
-		}
-		
-		if(La != 0.0){
-			betaa = pow(Enrgc/(Enrgta-Enrgtot),Ca);
-		} else {
-			betaa = 0.0;
-		}
-		if(Ld != 0.0){
-			betac = pow(Enrgc/(Enrgtd-Enrgtot),Cd);
-		} else {
-			betac = 0.0;
-		}
-		if(fabs(betas) >= 1.0) {
-			betas = 1.0;
-		}
-		if(fabs(betaa) >= 1.0){
-			betaa = 1.0;
-		}
-		if(fabs(betac) >= 1.0){
-			betac = 1.0;                                                           
-		}
+      if (Ls != 0.0 && Enrgts != 0.0) {
+        if (Enrgtot >= Enrgts) {
+          betas = 1.0;
+        } else {
+          betas = pow(Enrgc / (Enrgts - Enrgtot), Cs);
+          if (fabs(betas) >= 1.0) {
+            betas = 1.0;
+          }
+        }
+      } else {
+        betas = 0.0;
+      }
+
+      if (La != 0.0 && Enrgta != 0.0) {
+        if (Enrgtot >= Enrgta) {
+          betaa = 1.0;
+        } else {
+          betaa = pow(Enrgc / (Enrgta - Enrgtot), Ca);
+          if (fabs(betaa) >= 1.0) {
+            betaa = 1.0;
+          }
+        }
+      } else {
+        betaa = 0.0;
+      }
+
+      if (Ld != 0.0 && Enrgtd != 0.0) {
+        if (Enrgtot >= Enrgtd) {
+          betac = 1.0;
+        } else {
+          betac = pow(Enrgc / (Enrgtd - Enrgtot), Cd);
+          if (fabs(betac) >= 1.0) {
+            betac = 1.0;
+          }
+        }
+      } else {
+        betac = 0.0;
       }
    
     //  Update values for the next half cycle
@@ -752,11 +766,7 @@ ModIMKPeakOriented::setTrialStrain(double strain, double strainRate)
     double k0 = (CKe > 0.0) ? CKe : Ke0 * (1.0 + nFactor);
     if (k0 <= 0.0) k0 = 1.0;
     double k_imp_c = (Ckon == 0) ? k0 : Ctangent;
-    double time_factor = 1.0;
-    if (ops_Dt > 0.0 && dtime_n_commit_ > 0.0) {
-      time_factor = ops_Dt / dtime_n_commit_;
-      if (time_factor > 2.0) time_factor = 2.0;
-    }
+    double time_factor = implexClock_.factor(dtime_n_commit_); // Ladruno WP-217: frozen per step
     double dU_expl = time_factor * dU_prev_;
     fP = CfP + k0 * deltaD + (k_imp_c - k0) * dU_expl;
     Tangent = k0;
@@ -807,7 +817,7 @@ int ModIMKPeakOriented::commitState(void)
     if (k0 <= 0.0) k0 = 1.0;
     Tangent = k0;
   }
-  dtime_n_commit_ = ops_Dt;
+  dtime_n_commit_ = implexClock_.commitDt(); // Ladruno WP-217
   
   Cstrain = dP;
   Cstress = useImplex_ ? fP_imp_ : fP;
@@ -877,6 +887,7 @@ int ModIMKPeakOriented::commitState(void)
 
 int ModIMKPeakOriented::revertToLastCommit(void)
 {
+  implexClock_.reopen(); // Ladruno WP-217: a retried step latches its own dt
   dP = Cstrain;
   fP = Cstress;
   Tangent = Ctangent;
@@ -1071,6 +1082,7 @@ int ModIMKPeakOriented::revertToStart(void)
   fP_imp_ = 0.0;
   Tangent_imp_ = Ke;
   dtime_n_commit_ = 0.0;
+  implexClock_.reopen(); // Ladruno WP-217
  
   return 0;
 }
@@ -1210,6 +1222,7 @@ ModIMKPeakOriented::getCopy(void)
   theCopy->fP_imp_ = fP_imp_;
   theCopy->Tangent_imp_ = Tangent_imp_;
   theCopy->dtime_n_commit_ = dtime_n_commit_;
+  theCopy->implexClock_ = implexClock_; // Ladruno WP-217
 
   return theCopy;
 }
@@ -1317,7 +1330,7 @@ ModIMKPeakOriented::sendSelf(int cTag, Channel &theChannel)
   data(73)=CAlfaPos;		// Updated: Filipe Ribeiro and Andre Barbosa
   data(74)=prodBeta;				// Updated: Filipe Ribeiro and Andre Barbosa
   data(75)=CprodBeta;				// Updated: Filipe Ribeiro and Andre Barbosa
-  data(76) = useImplex_ ? 1.0 : 0.0; // Ladruno
+  data(76) = LadrunoImplexClock::pack(useImplex_, implexClock_.mode); // Ladruno WP-217: bit 1 = clock
   data(77) = dU_prev_; // Ladruno
   data(78) = dtime_n_commit_; // Ladruno
   data(79) = (double)commitCalledOnce; // Ladruno
@@ -1440,7 +1453,8 @@ ModIMKPeakOriented::recvSelf(int cTag, Channel &theChannel,
 	CAlfaPos=data(73);		// Updated: Filipe Ribeiro and Andre Barbosa
 	prodBeta=data(74);				// Updated: Filipe Ribeiro and Andre Barbosa
 	CprodBeta=data(75);				// Updated: Filipe Ribeiro and Andre Barbosa
-    useImplex_ = (data(76) != 0.0); // Ladruno
+    useImplex_ = LadrunoImplexClock::unpackImplex(data(76)); // Ladruno
+    implexClock_.mode = LadrunoImplexClock::unpackMode(data(76)); // Ladruno WP-217
     dU_prev_ = data(77); // Ladruno
     dtime_n_commit_ = data(78); // Ladruno
     commitCalledOnce = (int)data(79); // Ladruno

@@ -94,7 +94,9 @@ def build_solid():
     # 2026-09-26 against the pre-2026-09 semantics (-tensionLaw exp -gcLegacy): punching limit 317.1 vs
     # 315.6 kN total (+0.5 %), steel 0.123 vs 0.120 fy, upper-core omega 1.00 both — the band is unchanged.
     ops.nDMaterial('LadrunoConcrete3D', 1, EC, NU, FC, FT, GF, GC,
-                   '-autoRegularization', '-implex')
+                   '-autoRegularization', '-implex', '-tensionLaw', 'exp', '-gcLegacy',
+                   '-flowPotential', 'legacy', '-compressionDrive', 'legacy', '-tcTemper', 'none',
+                   '-Df', 1.0, '-hardening', 0.3, 0.5)
     ops.nDMaterial('ElasticIsotropic', 2, 3.0 * EC, NU)      # column stub
     n = len(XS) - 1
     for i in range(n + 1):

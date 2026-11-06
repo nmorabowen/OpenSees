@@ -256,6 +256,18 @@ ArpackSolver::solve(int numModes, bool generalized, bool findSmallest)
 	theSOE->setB(theVector);
 
       ierr = theSOE->solve();
+      // Ladruno WP-221: a failed linear solve used to be IGNORED here (ierr
+      // was stored and never read), so ARPACK iterated on whatever X held
+      // and `eigen` could return 0 with modes of a system that was never
+      // solved. Stop instead: this is also what lets `system Pardiso
+      // -strictSymmetry` (and ProfileSPD's) fail an eigen whose stiffness is
+      // unsymmetric. Serial semantics: a rank-local failure is not made
+      // collective here.
+      if (ierr < 0) {
+	opserr << "ArpackSolver::solve() - the LinearSOE failed to solve "
+	          "(returned " << ierr << "); eigen aborted\n";
+	return -1;
+      }
       const Vector &X = theSOE->getX();
       theVector = X;
       
@@ -273,7 +285,12 @@ ArpackSolver::solve(int numModes, bool generalized, bool findSmallest)
       else
 	      theSOE->setB(theVector);
 
-      theSOE->solve();
+      ierr = theSOE->solve();   // Ladruno WP-221: checked, as above
+      if (ierr < 0) {
+	opserr << "ArpackSolver::solve() - the LinearSOE failed to solve "
+	          "(returned " << ierr << "); eigen aborted\n";
+	return -1;
+      }
    
       const Vector &X = theSOE->getX();
       theVector = X;

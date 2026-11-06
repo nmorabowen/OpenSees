@@ -94,6 +94,10 @@
 #include <DomainModalProperties.h>
 #include <RelativeMassDamping.h>  // Ladruno (relativeMassDamping)
 
+// Ladruno WP-209: flag bit OR-ed into domainData(17) (the contact-definitions size,
+// always far below 2^30) when setLoadConstant is active; see Domain::sendSelf.
+static const int LADRUNO_DOMAIN_LOADCONST_BIT = 1 << 30;
+
 //
 // global variables
 //
@@ -102,6 +106,23 @@ Domain       *ops_TheActiveDomain = 0;
 double        ops_Dt = 0.0;
 bool          ops_InitialStateAnalysis = false;
 int           ops_Creep = 0;
+
+// Ladruno (apeGmsh #2619): fold one element return code into the running code
+// of Domain::update WITHOUT summing. Upstream wrote `ok += theEle->update()`,
+// and the summing hosts (Tri31, FourNodeQuad, LadrunoQuad, ...) did the same
+// over their points, so the model-wide result was the integer sum of every
+// point's code. With LADRUNO_MATERIAL_REFUSED = -33086 that sum passes INT_MIN
+// at 64,907 refusing points in one update (about 16k fully refusing quads) and
+// wraps to a POSITIVE value, which the integrators' `< 0` checks accept: a
+// refusal became a silently accepted step. The fold keeps the most negative
+// code seen (so the sentinel survives as itself when it is the only code), and
+// a positive code only when nothing negative has been seen; it never wraps.
+static inline void
+ladrunoKeepWorstCode(int &acc, int rc)
+{
+  if (rc != 0 && (acc == 0 || rc < acc))
+    acc = rc;
+}
 
 Domain::Domain()
 :theRecorders(0), numRecorders(0),
@@ -117,7 +138,7 @@ Domain::Domain()
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0),
  paramIndex(0), paramSize(0), numParameters(0),
- theContactDomain(0), contactAugmenting(false)   // Ladruno: ADR-39 + D1
+ theContactDomain(0), contactAugmenting(false), m_loadConstActive(false)   // Ladruno: ADR-39 + D1 + WP-209
 {
   
     // init the arrays for storing the domain components
@@ -176,7 +197,7 @@ Domain::Domain(int numNodes, int numElements, int numSPs, int numMPs, int numEQs
  theModalProperties(0),
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0), paramIndex(0), paramSize(0), numParameters(0),
- theContactDomain(0), contactAugmenting(false)   // Ladruno: ADR-39 + D1
+ theContactDomain(0), contactAugmenting(false), m_loadConstActive(false)   // Ladruno: ADR-39 + D1 + WP-209
 {
     // init the arrays for storing the domain components
     theElements = new MapOfTaggedObjects();
@@ -243,7 +264,7 @@ Domain::Domain(TaggedObjectStorage &theNodesStorage,
  theModalProperties(0),
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0),paramIndex(0), paramSize(0), numParameters(0),
- theContactDomain(0), contactAugmenting(false)   // Ladruno: ADR-39 + D1
+ theContactDomain(0), contactAugmenting(false), m_loadConstActive(false)   // Ladruno: ADR-39 + D1 + WP-209
 {
     // init the arrays for storing the domain components
     thePCs      = new MapOfTaggedObjects();
@@ -306,7 +327,7 @@ Domain::Domain(TaggedObjectStorage &theStorage)
  theModalProperties(0),
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0),paramIndex(0), paramSize(0), numParameters(0),
- theContactDomain(0), contactAugmenting(false)   // Ladruno: ADR-39 + D1
+ theContactDomain(0), contactAugmenting(false), m_loadConstActive(false)   // Ladruno: ADR-39 + D1 + WP-209
 {
     // init the arrays for storing the domain components
     theStorage.clearAll(); // clear the storage just in case populated
@@ -1137,6 +1158,7 @@ Domain::clearAll(void) {
   // contactAugmenting is ON this Domain commits recorder-silently, so leaking it across a
   // `wipe` into the next model would silently produce empty recorder files there.
   contactAugmenting = false;
+  m_loadConstActive = false;   // Ladruno WP-209
 
   // set the time back to 0.0
   currentTime = 0.0;
@@ -2152,6 +2174,7 @@ Domain::applyLoad(double timeStep)
 void
 Domain::setLoadConstant(void)
 {
+    m_loadConstActive = true;   // Ladruno WP-209
     // loop over all the load patterns that are currently added to the domain
     // getting them to set their loads as now constant
     LoadPattern *thePattern;
@@ -2164,6 +2187,7 @@ Domain::setLoadConstant(void)
 void
 Domain::unsetLoadConstant(void)
 {
+    m_loadConstActive = false;   // Ladruno WP-209
     // loop over all the load patterns that are currently added to the domain
     // getting them to set their loads as now constant
     LoadPattern *thePattern;
@@ -2336,8 +2360,10 @@ Domain::commit(void)
     // ConstraintHandler is never called at commit).
     // Ladruno (ADR-155): pass the held-load augmentation flag so a `-augment request` mortar
     // contact augments only inside the ladrunoBeginAugment bracket (default contacts ignore it).
+    // Ladruno: dT is the committed step, the soft-penalty step size of an integrator that forms
+    // the residual at the committed time (stock CentralDifference).
     if (theContactDomain != 0)
-      theContactDomain->commit(contactAugmenting);
+      theContactDomain->commit(contactAugmenting, dT);
 
     // Ladruno (ADR-60): finite-sliding NTS re-emit. If a slave has migrated past the broad-phase
     // search band since the last sort, raise the domain-changed flag so the NEXT step re-handles
@@ -2437,6 +2463,7 @@ Domain::revertToLastCommit(void)
 int
 Domain::revertToStart(void)
 {
+    m_loadConstActive = false;   // Ladruno WP-209
     // 
     // first invoke revertToLastCommit  on all nodes and 
     // elements in the domain
@@ -2507,7 +2534,7 @@ Domain::update(void)
     ops_TheActiveElement = theEle;
     {
       OPS_PROFILE_ELEMPTR_SCOPE(_ops_elemUpd, theEle);   // Ladruno (40b)
-      ok += theEle->update();
+      ladrunoKeepWorstCode(ok, theEle->update());        // Ladruno (apeGmsh #2619): never `ok +=`
     }
   }
 
@@ -2741,23 +2768,33 @@ Domain::ladrunoThreadedUpdate(int &ok)
   }
 
   // --- the loop: threaded runs and serial singletons, in serial order.
-  struct Ctx { Element **e; };
+  struct Ctx { Element **e; int *code; };
   struct Body {
     static int run(int i, void *c) {
-      Element *e = ((Ctx *)c)->e[i];
+      Ctx *ctx = (Ctx *)c;
+      Element *e = ctx->e[i];
       ops_TheActiveElement = e;          // thread_local (WP-107, Element.cpp)
-      return e->update();
+      const int r = e->update();
+      ctx->code[i] = r;                  // apeGmsh #2619: kept per element, folded serially below
+      return r;
     }
   };
 
-  int sum = 0;
+  // apeGmsh #2619: the element codes are folded with ladrunoKeepWorstCode (the
+  // most negative one wins), never summed. ladruno_parallelFor returns the
+  // integer SUM of the body results, which is the wrapping reduction this
+  // slice removes, so that return is ignored and each run's codes are reduced
+  // from the per-element slots the bodies filled. `ff` still comes from the
+  // bodies' nonzero returns.
+  std::vector<int> codes(nEle, 0);
+  int worst = 0;
   int firstFailIdx = nEle;
   int i = 0;
   while (i < nEle) {
     if (!safe[i]) {
       ops_TheActiveElement = eles[i];
       const int r = eles[i]->update();
-      sum += r;
+      ladrunoKeepWorstCode(worst, r);
       if (r != 0 && i < firstFailIdx)
         firstFailIdx = i;
       i++;
@@ -2766,9 +2803,11 @@ Domain::ladrunoThreadedUpdate(int &ok)
     int j = i;
     while (j < nEle && safe[j])
       j++;
-    Ctx ctx = { &eles[i] };
+    Ctx ctx = { &eles[i], &codes[i] };
     int ff = j - i;
-    sum += ladruno_parallelFor(j - i, nThreads, 8, &Body::run, &ctx, &ff);
+    (void)ladruno_parallelFor(j - i, nThreads, 8, &Body::run, &ctx, &ff);
+    for (int k = i; k < j; k++)
+      ladrunoKeepWorstCode(worst, codes[k]);
     if (ff < j - i && i + ff < firstFailIdx)
       firstFailIdx = i + ff;
     i = j;
@@ -2779,7 +2818,7 @@ Domain::ladrunoThreadedUpdate(int &ok)
   // exactly that residual, so a threaded update leaves the same global state.
   ops_TheActiveElement = eles[nEle - 1];
 
-  ok += sum;
+  ladrunoKeepWorstCode(ok, worst);
 
   if (ok != 0) {
     opserr << "Domain::update - domain failed in update\n";
@@ -3600,6 +3639,12 @@ Domain::sendSelf(int cTag, Channel &theChannel)
   domainData(11) = numParam;
   domainData(17) = contactSize;   // Ladruno: ADR-78 P2
   domainData(18) = dbContact;     // Ladruno: ADR-78 P2
+  // Ladruno WP-209: m_loadConstActive rides as a flag bit of slot 17 instead of a
+  // 20th slot. The header stays ID(19), so a database written before WP-209 (whose
+  // records are keyed by size: db.IDs.19.*) still restores, with the bit clear =
+  // load not constant, the pre-WP-209 behaviour.
+  if (m_loadConstActive)
+    domainData(17) |= LADRUNO_DOMAIN_LOADCONST_BIT;
 
   // add the database tag for the ID's storing node, element, constraints
   // and loadpattern data into domainData
@@ -4014,6 +4059,8 @@ Domain::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
   // Ladruno (ADR-78 P2): 17 -> 19, matching sendSelf. Slot 17 = the packed size of
   // the contact engine's definitions Vector (0 = none), slot 18 = its dbTag; the
   // Vector itself is consumed at the very end of this method.
+  // Ladruno WP-209: slot 17 also carries m_loadConstActive as the flag bit
+  // LADRUNO_DOMAIN_LOADCONST_BIT (see sendSelf); strip it before using the size.
   ID domainData(19);
   if (theChannel.recvID(theDbTag, commitTag, domainData) < 0) {
     opserr << "Domain::recv - channel failed to recv the initial ID\n";
@@ -4029,6 +4076,7 @@ Domain::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 
   currentTime = domainTime(0);
   committedTime = currentTime;
+  m_loadConstActive = (domainData(17) & LADRUNO_DOMAIN_LOADCONST_BIT) != 0; // Ladruno WP-209
 
   // 
   // now if the currentGeoTag does not agree with what's in the domain
@@ -4062,6 +4110,7 @@ Domain::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 
     currentTime = domainTime(0);
     committedTime = currentTime;
+    m_loadConstActive = (domainData(17) & LADRUNO_DOMAIN_LOADCONST_BIT) != 0; // Ladruno WP-209
 
     // 
     // now we rebuild the nodes
@@ -4488,7 +4537,7 @@ Domain::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
   // add* choke points; a POPULATED one (the recv-again branch above) keeps its live
   // definitions and only VERIFIES the stream matches, warning loudly on divergence.
   {
-    int contactSize = domainData(17);
+    int contactSize = domainData(17) & ~LADRUNO_DOMAIN_LOADCONST_BIT; // Ladruno WP-209
     if (contactSize > 0) {
       dbContact = domainData(18);
       if (theContactDomain == 0)

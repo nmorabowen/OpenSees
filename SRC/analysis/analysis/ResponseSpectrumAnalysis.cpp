@@ -39,10 +39,13 @@
 #include <Node.h>
 #include <NodeIter.h>
 #include <LadrunoModalCombination.h> // Ladruno ADR44 P1b
+#include <LadrunoRitzKernel.h>       // Ladruno WP-213: Sa-period override
 #include <vector>
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <cstdio>  // Ladruno WP-212
+#include <cstdlib> // Ladruno WP-212
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -146,6 +149,8 @@ OPS_ResponseSpectrumAnalysis(void)
 	bool sign_given = false;
 	bool revert_at_end = false;
 	double sign = 1.0;
+	// Ladruno WP-212: required cumulative mass ratio (0 => warn only)
+	double require_mass = 0.0;
 
 	// make sure eigenvalue and modal properties have been called before
 	DomainModalProperties modal_props;
@@ -164,6 +169,8 @@ OPS_ResponseSpectrumAnalysis(void)
 			// Ladruno WP-207
 			<< "with <-increment <-sign $sign> <-revert>> to impose each mode about the committed state,\n"
 			<< "and ResponseSpectrumAnalysis -revert to return to it.\n"
+			// Ladruno WP-212
+			<< "<-requireMass $ratio> errors when the modes carry less than $ratio of the free mass.\n"
 			"Error: at least 2 arguments should be provided.\n";
 		return -1;
 	}
@@ -287,6 +294,17 @@ OPS_ResponseSpectrumAnalysis(void)
 		else if (strcmp(value, "-revert") == 0) {
 			revert_at_end = true;
 		}
+		// Ladruno WP-212: -requireMass $ratio, in (0, 1]
+		else if (strcmp(value, "-requireMass") == 0) {
+			if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetDouble(&numData, &require_mass) < 0) {
+				opserr << "ResponseSpectrumAnalysis Error: -requireMass requires a ratio in (0, 1].\n";
+				return -1;
+			}
+			if (!(require_mass > 0.0 && require_mass <= 1.0)) {
+				opserr << "ResponseSpectrumAnalysis Error: -requireMass must be in (0, 1] (got " << require_mass << ").\n";
+				return -1;
+			}
+		}
 		else if (strcmp(value, "-modalDamp") == 0 || strcmp(value, "-modalDamping") == 0) {
 			xi_list.clear();
 			while (OPS_GetNumRemainingInputArgs() > 0) {
@@ -402,6 +420,7 @@ OPS_ResponseSpectrumAnalysis(void)
 	ResponseSpectrumAnalysis rsa(theAnalysisModel, ts, Tn, Sa, dir, scale);
 	if (increment)
 		rsa.setIncrement(sign, revert_at_end); // Ladruno WP-207
+	rsa.setRequiredMassRatio(require_mass); // Ladruno WP-212
 	int result;
 	// Ladruno ADR44 P1b: if -combine given, run the combination stage (one
 	// committed field); otherwise the stock per-mode behavior is byte-identical.
@@ -465,6 +484,10 @@ int ResponseSpectrumAnalysis::analyze()
 	error_code = check();
 	if (error_code < 0) return error_code;
 
+	// Ladruno WP-212: mass-shortfall report and guard
+	error_code = checkMass(mp);
+	if (error_code < 0) return error_code;
+
 	// loop over all required eigen-modes, compute the modal displacement
 	// and save the results.
 	// we just compute modal displacements without doing any (SRSS, CQC, etc..)
@@ -517,6 +540,10 @@ int ResponseSpectrumAnalysis::analyze(int mode_id)
 	// check consistency
 	int error_code;
 	error_code = check();
+	if (error_code < 0) return error_code;
+
+	// Ladruno WP-212: mass-shortfall report and guard
+	error_code = checkMass(mp);
 	if (error_code < 0) return error_code;
 
 	// init the new step
@@ -660,7 +687,10 @@ int ResponseSpectrumAnalysis::solveMode()
 	double omega = std::sqrt(lambda);
 	double freq = omega / 2.0 / M_PI;
 	double period = 1.0 / freq;
-	double mga = getSa(period);
+	// Ladruno WP-213: a residualModes -period T pseudo-mode reads Sa(T); lambda
+	// (and so u = phi Gamma Sa / lambda) stays its own. No override => stock.
+	const double sa_period = LadrunoModeKinds::saPeriod(domain, m_current_mode);
+	double mga = getSa(sa_period > 0.0 ? sa_period : period);
 	double Vscale = mp.eigenVectorScaleFactors()(m_current_mode);
 	double MPF = mp.modalParticipationFactors()(m_current_mode, exdof);
 
@@ -720,6 +750,62 @@ void ResponseSpectrumAnalysis::setIncrement(double sign, bool revertAtEnd)
 	m_revert_at_end = revertAtEnd;
 }
 
+// Ladruno WP-212: -requireMass.
+void ResponseSpectrumAnalysis::setRequiredMassRatio(double ratio)
+{
+	m_require_mass = ratio;
+}
+
+// Ladruno WP-212: ASCE 7-22 12.9.1.1 wants the modes to carry 100% of the mass
+// (90% per horizontal direction as the exception); NEC-SE-DS 6.2.2e wants 90%.
+// Report the cumulative effective-mass ratio of the excited direction, warn
+// below 90%, and refuse a direction with no free or no participating mass (the
+// signature of the WP-211 diaphragm-mass bug: every Gamma zero, RSA field zero).
+// Only stderr is touched: the computed field is the stock one.
+int ResponseSpectrumAnalysis::checkMass(const DomainModalProperties& mp) const
+{
+	const int exdof = m_direction - 1;
+	const int num_eigen = mp.eigenvalues().Size();
+	if (num_eigen < 1 || exdof < 0 || exdof >= mp.totalFreeMass().Size())
+		return 0; // check() and the parser report these
+
+	const double free_mass = mp.totalFreeMass()(exdof);
+	if (!(free_mass > 0.0)) {
+		opserr << "ResponseSpectrumAnalysis Error: no free mass in direction " << m_direction
+			<< ": the spectrum excites nothing. Check the mass assignment, the constraints and the direction.\n";
+		return -1;
+	}
+	const double ratio = mp.modalParticipationMassRatiosCumulative()(num_eigen - 1, exdof);
+
+	char pct[32];
+	std::snprintf(pct, sizeof(pct), "%.2f%%", 100.0 * ratio);
+
+	if (!(ratio > 1.0e-12)) {
+		opserr << "ResponseSpectrumAnalysis Error: no participating mass in direction " << m_direction
+			<< " (every participation factor of the " << num_eigen << " modes is zero, ratio " << pct
+			<< "): the response would be zero. Check that the modes see the mass (constraints, diaphragms).\n";
+		return -1;
+	}
+
+	if (std::getenv("LADRUNO_OPENSEES_QUIET") == nullptr)
+		opserr << "ResponseSpectrumAnalysis: cumulative effective mass in direction " << m_direction
+			<< " = " << pct << " of the free mass (" << num_eigen << " modes).\n";
+
+	// relative 1e-12 slack: a complete basis sums to 1 only to round-off
+	if (m_require_mass > 0.0 && ratio < m_require_mass * (1.0 - 1.0e-12)) {
+		char req[32];
+		std::snprintf(req, sizeof(req), "%.2f%%", 100.0 * m_require_mass);
+		opserr << "ResponseSpectrumAnalysis Error: the modes carry " << pct << " of the free mass in direction "
+			<< m_direction << ", below -requireMass " << req << ". Extract more modes.\n";
+		return -1;
+	}
+	if (ratio < 0.9)
+		opserr << "ResponseSpectrumAnalysis WARNING: the modes carry only " << pct << " of the free mass in direction "
+			<< m_direction << ", below 90% (ASCE 7-22 12.9.1.1, NEC-SE-DS 6.2.2e). Extract more modes.\n";
+
+	return 0;
+}
+
 // Ladruno ADR44 P1b: combine the per-mode peak nodal DISPLACEMENTS into one
 // design field (CQC/SRSS/ABS/TenPercent) and commit a single state, instead of
 // the per-mode states the stock analyze() produces. Combination is per-quantity
@@ -736,6 +822,17 @@ int ResponseSpectrumAnalysis::analyzeCombined()
 	int error_code = check();
 	if (error_code < 0) return error_code;
 
+	// Ladruno WP-212: mass-shortfall report and guard
+	error_code = checkMass(mp);
+	if (error_code < 0) return error_code;
+
+	// Ladruno WP-212: what is committed below is the combined DISPLACEMENT field;
+	// any force, reaction or drift recovered from it is not the combination of
+	// that quantity (ASCE 7-22 12.9.1.3). Say so once per call.
+	opserr << "ResponseSpectrumAnalysis WARNING: -combine combines nodal displacements only; "
+	          "forces, reactions and drifts recovered from them are not modally combined. "
+	          "Use -mode k per mode and combine each quantity.\n";
+
 	const int num_eigen = domain->getEigenvalues().Size();
 	const int ndf = mp.totalMass().Size();
 	const int exdof = m_direction - 1;
@@ -744,13 +841,23 @@ int ResponseSpectrumAnalysis::analyzeCombined()
 	std::vector<double> w(num_eigen), T(num_eigen), MPF(num_eigen),
 	                    Vscale(num_eigen), Sa(num_eigen), lambda(num_eigen),
 	                    xi(num_eigen);
+	// Ladruno WP-213: per-mode Sa-period overrides (residualModes -period T).
+	// An overridden mode is one rigid mode at T (ASCE 7-22 12.9.1.1): Sa, the
+	// CQC omega and the TenPercent period all use T, so overridden modes
+	// correlate fully with each other; lambda in u = phi Gamma Sa / lambda
+	// stays the mode's own, so its displacement is the static response x Sa(T)
+	const std::vector<double> sa_period = LadrunoModeKinds::saPeriods(domain);
 	for (int a = 0; a < num_eigen; ++a) {
 		lambda[a] = mp.eigenvalues()(a);
 		const double omega = (lambda[a] > 0.0) ? std::sqrt(lambda[a]) : 0.0;
 		w[a] = omega;
 		const double period = (omega > 0.0) ? (2.0 * M_PI / omega) : 0.0;
 		T[a] = period;
-		Sa[a] = getSa(period);
+		if (lambda[a] > 0.0 && a < (int)sa_period.size() && sa_period[a] > 0.0) {
+			T[a] = sa_period[a];                 // Ladruno WP-213
+			w[a] = 2.0 * M_PI / sa_period[a];
+		}
+		Sa[a] = getSa(T[a]);
 		Vscale[a] = mp.eigenVectorScaleFactors()(a);
 		MPF[a] = mp.modalParticipationFactors()(a, exdof);
 		if (m_xi.size() == 1) xi[a] = m_xi[0];               // broadcast
@@ -789,6 +896,33 @@ int ResponseSpectrumAnalysis::analyzeCombined()
 	Node* node;
 	NodeIter& theNodes = domain->getNodes();
 	std::vector<double> R(num_eigen);
+	// Ladruno WP-213: the modes sharing one Sa-period override are ONE rigid
+	// mode (ASCE 7-22 12.9.1.1): their R are summed into a single term before
+	// the rule sees them, so SRSS / ABS / TenPercent treat them as one mode as
+	// well as CQC. Without overrides every mode keeps its own slot (identity).
+	std::vector<int> slot(num_eigen);
+	std::vector<double> wc, xic, Tc, groupT;
+	std::vector<int> groupSlot;
+	for (int a = 0; a < num_eigen; ++a) {
+		const bool over = lambda[a] > 0.0 && a < (int)sa_period.size() && sa_period[a] > 0.0;
+		int g = -1;
+		if (over)
+			for (int k = 0; k < (int)groupT.size(); ++k)
+				if (groupT[k] == sa_period[a]) { g = k; break; }
+		if (g >= 0) {
+			slot[a] = groupSlot[g];
+			continue;
+		}
+		slot[a] = (int)wc.size();
+		wc.push_back(w[a]);
+		xic.push_back(xi[a]);
+		Tc.push_back(T[a]);
+		if (over) {
+			groupT.push_back(sa_period[a]);
+			groupSlot.push_back(slot[a]);
+		}
+	}
+	std::vector<double> Rc(wc.size());
 	while ((node = theNodes()) != 0) {
 		const Matrix& node_evec = node->getEigenvectors();
 		const int node_ndf = node_evec.noRows();
@@ -803,9 +937,12 @@ int ResponseSpectrumAnalysis::analyzeCombined()
 				// avoids the div-by-~0 blow-up for a rigid/spurious mode
 				R[a] = (lambda[a] > 0.0) ? V * MPF[a] * Sa[a] / lambda[a] : 0.0;
 			}
+			std::fill(Rc.begin(), Rc.end(), 0.0); // Ladruno WP-213
+			for (int a = 0; a < num_eigen; ++a)
+				Rc[slot[a]] += R[a];
 			const double u_comb = LadrunoModalCombination::combine(
 				static_cast<LadrunoModalCombination::Rule>(m_combine),
-				R, w, xi, T);
+				Rc, wc, xic, Tc);
 			node->setTrialDisp(u_comb, i);
 		}
 	}

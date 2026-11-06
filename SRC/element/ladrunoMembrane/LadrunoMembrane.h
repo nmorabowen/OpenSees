@@ -114,6 +114,8 @@ public:
   int updateParameter(int parameterID, Information &info) override;
 
   bool validateNodesAndBasis(Domain *theDomain);
+  // WP-222: -noMemo turns off the transfer-build memo for this element
+  void setTransferMemo(bool on);
   bool isGeometryValid(void) const { return m_geometryValid; }
 
 private:
@@ -136,6 +138,8 @@ private:
     double wbEqUnit = 0.0;
     double areaUnit = 0.0;
     double overhangTorqueUnit = 0.0;
+    double endFaUnit = 0.0; // Ladruno WP-209
+    double endFbUnit = 0.0; // Ladruno WP-209
     std::array<double, 3> vx = {1.0, 0.0, 0.0};
     std::array<double, 3> vy = {0.0, 1.0, 0.0};
     std::array<double, 3> vz = {0.0, 0.0, 1.0};
@@ -224,6 +228,11 @@ private:
   std::vector<double> m_dVerts3d;         // diaphragm mesh vertices (global)
   std::vector<int> m_dTris;               // diaphragm mesh triangles
   std::vector<double> m_dTriArea;
+
+  // WP-222: transfer-build memo switch and hit counts (validation mesh,
+  // distribution, diaphragm); a performance switch only, not sent by sendSelf
+  bool m_useMemo;
+  int m_memoHits[3];
 
   Matrix m_Kbase;
   Matrix m_Mbase;

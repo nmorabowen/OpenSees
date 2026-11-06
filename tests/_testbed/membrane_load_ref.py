@@ -983,6 +983,10 @@ class FrameLoadResult:
     p0_2d: np.ndarray = field(default_factory=lambda: np.zeros(3))
     q0_2d: np.ndarray = field(default_factory=lambda: np.zeros(3))
     overhang_torque: float = 0.0
+    # WP-209: off-span (endpoint-clamped) tributary shares, delivered at the frame
+    # end nodes instead of being smeared over the end sub-segment.
+    end_F_a: float = 0.0
+    end_F_b: float = 0.0
 
 
 @dataclass
@@ -1032,6 +1036,8 @@ def _finalize_frame_results(
     sub_F: list[list[float]],
     sub_M: list[list[float]],
     overhang_torques: list[float] | None = None,
+    end_F_a: list[float] | None = None,
+    end_F_b: list[float] | None = None,
 ) -> list[FrameLoadResult]:
     results: list[FrameLoadResult] = []
     for k, (fp1, fp2) in enumerate(frames):
@@ -1074,6 +1080,17 @@ def _finalize_frame_results(
             p0_sum += fef["p0"]
             q0_sum += fef["q0"]
 
+        # WP-209: the end shares are transverse point loads at xi = aL_min / bL_max.
+        fa_end = end_F_a[k] if end_F_a is not None else 0.0
+        fb_end = end_F_b[k] if end_F_b is not None else 0.0
+        F_tot += fa_end + fb_end
+        M_orig += fa_end * (aL_min * L_k) + fb_end * (bL_max * L_k)
+        for f_e, xi in ((fa_end, aL_min), (fb_end, bL_max)):
+            p0_sum[1] -= f_e * (1.0 - xi)
+            p0_sum[2] -= f_e * xi
+            q0_sum[1] -= L_k * f_e * xi * (1.0 - xi) * (1.0 - xi)
+            q0_sum[2] += L_k * f_e * xi * xi * (1.0 - xi)
+
         L_active = (bL_max - aL_min) * L_k
         M_active = M_orig - F_tot * (aL_min * L_k)
         wa_eq, wb_eq = moment_conserving_trapezoid(F_tot, M_active, L_active)
@@ -1092,6 +1109,8 @@ def _finalize_frame_results(
                 p0_2d=p0_sum,
                 q0_2d=q0_sum,
                 overhang_torque=torq,
+                end_F_a=fa_end,
+                end_F_b=fb_end,
             )
         )
     return results
@@ -1226,11 +1245,22 @@ def distribute_surface_load(
             tied = [(fid, tf, in_sp) for (fid, d, tf, in_sp) in candidates if d <= best_d + 1e-11]
             return tied, best_d
 
+        end_F_a = [0.0] * n_frames
+        end_F_b = [0.0] * n_frames
+
         def deposit_tributary_point(px: float, py: float, df: float) -> None:
             tied, _ = nearest_features(px, py)
             share = df / float(len(tied))
-            for fid, t_f, _ in tied:
-                if fid < n_frames:
+            for fid, t_f, in_sp in tied:
+                if fid < n_frames and not in_sp:
+                    # WP-209: a point outside the perpendicular span of the frame clamps
+                    # to a frame end; its share is a point load at that end node.
+                    _, _, _, _, _, a_min, b_max, _ = geom_by_k[fid]
+                    if t_f <= 0.5 * (a_min + b_max):
+                        end_F_a[fid] += share
+                    else:
+                        end_F_b[fid] += share
+                elif fid < n_frames:
                     L_k = math.hypot(
                         frames[fid][1][0] - frames[fid][0][0],
                         frames[fid][1][1] - frames[fid][0][1],
@@ -1386,7 +1416,9 @@ def distribute_surface_load(
                 0,
             )
 
-        frame_results = _finalize_frame_results(frames, frame_sub_groups, sub_F, sub_M)
+        frame_results = _finalize_frame_results(
+            frames, frame_sub_groups, sub_F, sub_M, end_F_a=end_F_a, end_F_b=end_F_b
+        )
         return DistributionResult(
             mode=mode_clean,
             total_applied_load=total_load,

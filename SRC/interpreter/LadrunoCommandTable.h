@@ -95,6 +95,7 @@ LADRUNO_COMMAND("ladrunoSetNodeTrial",       OPS_LadrunoSetNodeTrial,          L
 LADRUNO_COMMAND("ladrunoArcLength",          OPS_LadrunoArcLengthCmd,          ladrunoArcLength)              // #729
 LADRUNO_COMMAND("ladrunoDR",                 OPS_LadrunoDRCmd,                 ladrunoDR)                     // #729
 LADRUNO_COMMAND("ladrunoLoadControl",        OPS_LadrunoLoadControlCmd,        LADRUNO_NONE)                  // ADR-80 S1
+LADRUNO_COMMAND("ladrunoSymmetryGuard",      OPS_LadrunoSymmetryGuard,         ladrunoSymmetryGuard)          // WP-221
 
 // ---- analysis drivers --------------------------------------------------------
 LADRUNO_COMMAND("LadrunoStaggeredAnalyze",   OPS_LadrunoStaggeredAnalyze,      TclCommand_ladrunoStaggeredAnalyze)   // ADR-73 P2
@@ -104,3 +105,6 @@ LADRUNO_COMMAND("modalResponseHistory",      OPS_LadrunoModalResponseHistory,  m
 LADRUNO_COMMAND("frequencyResponse",         OPS_LadrunoFrequencyResponse,     frequencyResponse)             // ADR-44 P2
 LADRUNO_COMMAND("steadyStateDynamics",       OPS_LadrunoSteadyStateDynamics,   steadyStateDynamics)           // ADR-44 P2
 LADRUNO_COMMAND("randomResponse",            OPS_LadrunoRandomResponse,        randomResponse)                // ADR-44 P3
+LADRUNO_COMMAND("residualModes",             OPS_LadrunoResidualModes,         residualModes)                 // WP-213
+LADRUNO_COMMAND("ritzVectors",               OPS_LadrunoRitzVectors,           ritzVectors)                   // WP-215
+LADRUNO_COMMAND("responseSpectrumPerMode",   OPS_LadrunoResponseSpectrumPerMode, responseSpectrumPerMode)   // WP-216

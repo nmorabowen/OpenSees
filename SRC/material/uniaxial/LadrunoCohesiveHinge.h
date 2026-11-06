@@ -68,6 +68,7 @@
 #define LadrunoCohesiveHinge_h
 
 #include <UniaxialMaterial.h>
+#include <LadrunoImplexClock.h>
 
 class LadrunoCohesiveHinge : public UniaxialMaterial
 {
@@ -80,7 +81,10 @@ class LadrunoCohesiveHinge : public UniaxialMaterial
                        double penaltyRatio = 1000.0,
                        double P0 = 0.0,
                        double alphaPM = 0.5,
-                       bool implex = false);
+                       bool implex = false,
+                       double P0t = 0.0,
+                       double Pbal = 0.0,
+                       double muBal = 1.0);
   LadrunoCohesiveHinge();
   ~LadrunoCohesiveHinge();
 
@@ -96,16 +100,16 @@ class LadrunoCohesiveHinge : public UniaxialMaterial
   void setAxialForce(double P)   { P_axial = P; }
   double getAxialForce(void) const { return P_axial; }
   double getPMMultiplier(void) const;
-  double getPMDerivative(void) const {
-    if (P0 <= 0.0) return 0.0;
-    double n = P_axial / P0;
-    double f = 1.0 - alphaPM * n - (1.0 - alphaPM) * n * n;
-    if (f <= 0.05 || f >= 2.5) return 0.0;
-    return (-alphaPM - 2.0 * (1.0 - alphaPM) * n) / P0;
+  double getPMDerivative(void) const;
+  void setPM(double p0, double apm) { P0 = p0; alphaPM = apm; P0t = 0.0; Pbal = 0.0; }
+  void setPMBal(double p0c, double p0t, double pbal, double mubal) {
+    P0 = p0c; P0t = p0t; Pbal = pbal; muBal = mubal;
   }
-  void setPM(double p0, double apm) { P0 = p0; alphaPM = apm; }
+  bool hasPM(void) const         { return P0 > 0.0; }
   bool isImplex(void) const      { return implex; }
   void setImplex(bool flag)      { implex = flag; }
+  void setImplexClock(int m)     { implexClock.mode = m; }   // WP-217: LadrunoImplexClock::STEP | PSEUDO
+  int  getImplexClock(void) const { return implexClock.mode; }
   double getImplexError(void) const;
 
   bool ladrunoThreadSafeUpdate(void) const { return true; }
@@ -143,6 +147,9 @@ class LadrunoCohesiveHinge : public UniaxialMaterial
   double penaltyRatio;  // default-penalty multiple of the floor (record for getCopy)
   double P0;            // axial compressive capacity for P-M interaction (<=0 disables)
   double alphaPM;       // parabolic P-M interaction coefficient
+  double P0t;           // tensile axial capacity for -pmBal (>0 enables 4-parameter RC balance law)
+  double Pbal;          // compressive balance axial load for -pmBal (0 < Pbal < P0)
+  double muBal;         // balance moment ratio M_bal / M_0 for -pmBal
   bool   implex;        // Oliver et al. (2008) IMPL-EX integration flag
 
   // transient axial force supplied by parent beam element
@@ -161,6 +168,7 @@ class LadrunoCohesiveHinge : public UniaxialMaterial
   double Cwork;         // committed path work int M d[[theta]]
   double dtime_n_commit;
   int    implexCommittedSteps;
+  LadrunoImplexClock implexClock;   // WP-217: per-step frozen extrapolation factor
 
   // trial state
   double Tstrain;

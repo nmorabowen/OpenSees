@@ -69,6 +69,7 @@
 #include <elementAPI.h>
 #include <UniaxialMaterial.h>
 #include <LadrunoCohesiveHinge.h>
+#include <LadrunoMaterialStatus.h>
 #include <Bilin.h>
 #include <ModIMKPeakOriented.h>
 #include <LobattoBeamIntegration.h>
@@ -158,6 +159,60 @@ static double lfbc2dScalePM(double N, double P0, double alpha)
   return f;
 }
 
+static double lfbc2dScalePMDeriv(double N, double P0, double alpha)
+{
+  if (P0 <= 0.0) return 0.0;
+  double n = N / P0;
+  double f = 1.0 - alpha * n - (1.0 - alpha) * n * n;
+  if (f <= 0.05 || f >= 2.5) return 0.0;
+  return (-alpha - 2.0 * (1.0 - alpha) * n) / P0;
+}
+
+static double lfbc2dEvalPM(double N, double P0, double alpha,
+                           double P0t, double Pbal, double muBal,
+                           double &dfdN)
+{
+  dfdN = 0.0;
+  if (P0 <= 0.0) return 1.0;
+  if (Pbal > 0.0 && P0 > Pbal && P0t > 0.0 && muBal >= 1.0) {
+    double P = -N; // compression positive
+    double f = 1.0;
+    double dfdP = 0.0;
+    if (P <= 0.0) {
+      double u = 1.0 + P / P0t;
+      if (u <= 0.05) {
+        return 0.05;
+      }
+      f = u;
+      dfdP = 1.0 / P0t;
+    } else if (Pbal > 0.0 && P <= Pbal) {
+      double r = P / Pbal;
+      f = 1.0 + (muBal - 1.0) * r * (2.0 - r);
+      dfdP = (muBal - 1.0) * (2.0 - 2.0 * r) / Pbal;
+    } else {
+      double denom = P0 - Pbal;
+      if (denom <= 1.0e-12 * P0) {
+        return 0.05;
+      }
+      double r = (P - Pbal) / denom;
+      f = muBal * (1.0 - r * r);
+      dfdP = -2.0 * muBal * r / denom;
+    }
+    if (f <= 0.05) {
+      dfdN = 0.0;
+      return 0.05;
+    }
+    if (f >= 3.0) {
+      dfdN = 0.0;
+      return 3.0;
+    }
+    dfdN = -dfdP;
+    return f;
+  }
+  dfdN = lfbc2dScalePMDeriv(N, P0, alpha);
+  return lfbc2dScalePM(N, P0, alpha);
+}
+
 static void lfbc2dInvertSym2x2Guarded(double A, double B, double C, double (&Hinv)[2][2])
 {
   double avg = 0.5 * (A + B);
@@ -187,6 +242,54 @@ static void lfbc2dInvertSym2x2Guarded(double A, double B, double C, double (&Hin
   Hinv[1][1] = v1y * v1y * inv1 + v2y * v2y * inv2;
   Hinv[0][1] = v1z * v1y * inv1 + v2z * v2y * inv2;
   Hinv[1][0] = Hinv[0][1];
+}
+
+static void lfbc2dInvertGen2x2Guarded(double H00, double H01, double H10, double H11,
+                                      double (&Hinv)[2][2])
+{
+  double scale = fabs(H00) + fabs(H11) + fabs(H01) + fabs(H10);
+  double det = H00 * H11 - H01 * H10;
+  double floor = (1.0e-8 * scale) * (1.0e-8 * scale) + 1.0e-300;
+  if (fabs(det) >= floor) {
+    double invDet = 1.0 / det;
+    Hinv[0][0] =  H11 * invDet;
+    Hinv[0][1] = -H01 * invDet;
+    Hinv[1][0] = -H10 * invDet;
+    Hinv[1][1] =  H00 * invDet;
+  } else {
+    lfbc2dInvertSym2x2Guarded(H00, H11, 0.5 * (H01 + H10), Hinv);
+  }
+}
+
+// Largest compatibility error, relative to the deformation scale, that a converged
+// bulk state may carry (see evalBulkState). It is round-off on the tangent branch;
+// the initial-flexibility branches iterate on until below it. The non-physical
+// plateau states it rejects sit at about 1.
+static const double lfbcCompatTol = 1.0e-2;
+
+// Integrate one section's deformation vector ds into the basic system, as vr is.
+static void lfbc2dAddSectionToBasic(Vector &out, const Vector &ds, const ID &code,
+                                    double xL, double wtL, double oneOverL, bool axialRelease)
+{
+  for (int ii = 0; ii < ds.Size(); ii++) {
+    double dei = ds(ii) * wtL;
+    switch (code(ii)) {
+    case SECTION_RESPONSE_P:
+      if (!axialRelease)
+        out(0) += dei;
+      break;
+    case SECTION_RESPONSE_MZ:
+      out(1) += (xL - 1.0) * dei;
+      out(2) += xL * dei;
+      break;
+    case SECTION_RESPONSE_VY:
+      out(1) += oneOverL * dei;
+      out(2) += oneOverL * dei;
+      break;
+    default:
+      break;
+    }
+  }
 }
 
 void* OPS_LadrunoForceBeamColumn2d()
@@ -287,7 +390,12 @@ void* OPS_LadrunoForceBeamColumn2d()
   bool eleImplex = false;
   double elePmP0 = 0.0;
   double elePmAlpha = 0.5;
+  double elePmP0t = 0.0;
+  double elePmPbal = 0.0;
+  double elePmMuBal = 1.0;
   double gavy = 0.0;
+  bool axialRelease = false;
+  int spanLoadMode = 1;
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const char *type = OPS_GetString();
@@ -379,7 +487,8 @@ void* OPS_LadrunoForceBeamColumn2d()
         delete legacyBi;
         return 0;
       }
-      const char *arg = OPS_GetString();
+      char lchBuf[64];
+      const char *arg = OPS_GetStringFromAll(lchBuf, sizeof(lchBuf));
       if (strcmp(arg, "ip") == 0) {
         lchMode = 0;
       } else if (strcmp(arg, "element") == 0) {
@@ -566,6 +675,26 @@ void* OPS_LadrunoForceBeamColumn2d()
         }
         elePmAlpha = optAlpha;
       }
+      elePmP0t = 0.0;
+      elePmPbal = 0.0;
+      elePmMuBal = 1.0;
+    }
+    else if (strcmp(type, "-pmBal") == 0 || strcmp(type, "-PMBal") == 0) {
+      double pb[4] = {0.0, 0.0, 0.0, 1.0};
+      numData = 4;
+      if (OPS_GetNumRemainingInputArgs() < 4 ||
+          OPS_GetDoubleInput(&numData, pb) < 0 ||
+          !std::isfinite(pb[0]) || !std::isfinite(pb[1]) ||
+          !std::isfinite(pb[2]) || !std::isfinite(pb[3]) ||
+          pb[0] <= 0.0 || pb[1] <= 0.0 || pb[2] < 0.0 || pb[2] >= pb[0] || pb[3] < 1.0) {
+        opserr << "WARNING LadrunoForceBeamColumn2d: -pmBal needs P0c>0 P0t>0 0<=Pbal<P0c muBal>=1\n";
+        delete legacyBi;
+        return 0;
+      }
+      elePmP0 = pb[0];
+      elePmP0t = pb[1];
+      elePmPbal = pb[2];
+      elePmMuBal = pb[3];
     }
     else if (strcmp(type, "-shear") == 0 || strcmp(type, "-shearY") == 0) {
       numData = 1;
@@ -575,6 +704,19 @@ void* OPS_LadrunoForceBeamColumn2d()
         delete legacyBi;
         return 0;
       }
+    }
+    else if (strcmp(type, "-axialRelease") == 0 || strcmp(type, "-decoupleAxial") == 0) {
+      axialRelease = true;
+    }
+    else if (strcmp(type, "-spanLoad") == 0 || strcmp(type, "-spanLoadEnhancement") == 0) {
+      int optFlag = 1;
+      if (lfbc2dTryOptionalInt(optFlag))
+        spanLoadMode = (optFlag != 0) ? 1 : 0;
+      else
+        spanLoadMode = 1;
+    }
+    else if (strcmp(type, "-noSpanLoad") == 0) {
+      spanLoadMode = 0;
     }
     else {
       opserr << "WARNING LadrunoForceBeamColumn2d: unknown option '" << type << "'\n";
@@ -647,7 +789,12 @@ void* OPS_LadrunoForceBeamColumn2d()
         tmpPtr = hPtr->getCopy();
         if (LadrunoCohesiveHinge *ch = dynamic_cast<LadrunoCohesiveHinge*>(tmpPtr)) {
           if (eleImplex) ch->setImplex(true);
-          if (elePmP0 > 0.0) ch->setPM(elePmP0, elePmAlpha);
+          if (elePmP0 > 0.0) {
+            if (elePmP0t > 0.0 && elePmMuBal >= 1.0)
+              ch->setPMBal(elePmP0, elePmP0t, elePmPbal, elePmMuBal);
+            else
+              ch->setPM(elePmP0, elePmAlpha);
+          }
         } else if (Bilin *b = dynamic_cast<Bilin*>(tmpPtr)) {
           if (eleImplex) b->setImplex(true);
         } else if (ModIMKPeakOriented *m = dynamic_cast<ModIMKPeakOriented*>(tmpPtr)) {
@@ -665,7 +812,7 @@ void* OPS_LadrunoForceBeamColumn2d()
       mass, maxIters, tol, cmass, theDamping, lchMode, userLch,
       hingeMat, hingeMatJ, dualHingeMode, hingeXiI, hingeXiJ,
       elePmP0, elePmAlpha, maxSubdivisions, subdivideFactor, eleImplex,
-      gavy);
+      gavy, elePmP0t, elePmPbal, elePmMuBal, axialRelease, spanLoadMode);
 
   delete hI_tmp;
   delete hJ_tmp;
@@ -689,7 +836,9 @@ LadrunoForceBeamColumn2d::LadrunoForceBeamColumn2d(
     double pmP0_, double pmAlpha_,
     int maxSub, double subFac,
     bool eleImplex_,
-    double gavy_)
+    double gavy_,
+    double pmP0t_, double pmPbal_, double pmMuBal_,
+    bool axialRelease_, int spanLoadMode_)
   : Element(tag, ELE_TAG_LadrunoForceBeamColumn2d),
     numSections(0), sections(0), crdTransf(0), beamIntegr(0),
     connectedExternalNodes(2), load(NEGD),
@@ -709,9 +858,13 @@ LadrunoForceBeamColumn2d::LadrunoForceBeamColumn2d(
     hingeJumpJ(0.0), hingeJumpJCommit(0.0),
     hingeMscale(0.0), hingeMscaleCommit(0.0),
     pmP0(pmP0_), pmAlpha(pmAlpha_),
+    pmP0t(pmP0t_), pmPbal(pmPbal_), pmMuBal(pmMuBal_),
+    axialRelease(axialRelease_), spanLoadMode(spanLoadMode_),
     useImplex(eleImplex_), eleImplexErr(0.0), eleImplexErrCommit(0.0),
     postRestoreSync(false), vRestoreValid(false),
-    vCommitBulk(NEBD)
+    vCommitBulk(NEBD), vTrialBulk(NEBD), vTrialBulkCommit(NEBD),
+    vSolved(NEBD), solvedValid(false), trialFailed(false),
+    vSolvedCommit(NEBD), solvedCommitValid(false)
 {
   load.Zero();
   vRestore[0] = vRestore[1] = vRestore[2] = 0.0;
@@ -723,6 +876,8 @@ LadrunoForceBeamColumn2d::LadrunoForceBeamColumn2d(
     for (int a = 0; a < 3; a++) {
       hingeKva[a][m] = 0.0;
       hingeKvaCommit[a][m] = 0.0;
+      hingeKav[m][a] = 0.0;
+      hingeKavCommit[m][a] = 0.0;
     }
   }
 
@@ -797,9 +952,13 @@ LadrunoForceBeamColumn2d::LadrunoForceBeamColumn2d()
     hingeJumpJ(0.0), hingeJumpJCommit(0.0),
     hingeMscale(0.0), hingeMscaleCommit(0.0),
     pmP0(0.0), pmAlpha(0.5),
+    pmP0t(0.0), pmPbal(0.0), pmMuBal(1.0),
+    axialRelease(false), spanLoadMode(1),
     useImplex(false), eleImplexErr(0.0), eleImplexErrCommit(0.0),
     postRestoreSync(false), vRestoreValid(false),
-    vCommitBulk(NEBD)
+    vCommitBulk(NEBD), vTrialBulk(NEBD), vTrialBulkCommit(NEBD),
+    vSolved(NEBD), solvedValid(false), trialFailed(false),
+    vSolvedCommit(NEBD), solvedCommitValid(false)
 {
   load.Zero();
   vRestore[0] = vRestore[1] = vRestore[2] = 0.0;
@@ -811,6 +970,8 @@ LadrunoForceBeamColumn2d::LadrunoForceBeamColumn2d()
     for (int a = 0; a < 3; a++) {
       hingeKva[a][m] = 0.0;
       hingeKvaCommit[a][m] = 0.0;
+      hingeKav[m][a] = 0.0;
+      hingeKavCommit[m][a] = 0.0;
     }
   }
   theNodes[0] = 0;
@@ -943,6 +1104,14 @@ LadrunoForceBeamColumn2d::commitState(void)
   int err = 0;
   int i = 0;
 
+  // Domain::commit drops this return code; the refusal note fails the step.
+  if (trialFailed) {
+    opserr << "WARNING - LadrunoForceBeamColumn2d::commitState - element " << this->getTag()
+           << ": the last update failed, refusing to commit its trial state\n";
+    ladrunoNoteCommitRefusal();
+    return -1;
+  }
+
   if ((err = this->Element::commitState()) != 0) {
     opserr << "LadrunoForceBeamColumn2d::commitState() - Element::commitState failed\n";
     return err;
@@ -975,8 +1144,10 @@ LadrunoForceBeamColumn2d::commitState(void)
     for (int m = 0; m < 2; m++) {
       for (int n = 0; n < 2; n++)
         hingeHinvCommit[m][n] = hingeHinv[m][n];
-      for (int a = 0; a < 3; a++)
+      for (int a = 0; a < 3; a++) {
         hingeKvaCommit[a][m] = hingeKva[a][m];
+        hingeKavCommit[m][a] = hingeKav[m][a];
+      }
     }
   }
 
@@ -987,8 +1158,8 @@ LadrunoForceBeamColumn2d::commitState(void)
   vRestoreValid = true;
   postRestoreSync = false;
 
-  double betaI = 1.0 - hingeXiI, gammaI = hingeXiI;
-  double betaJ = 1.0 - hingeXiJ, gammaJ = hingeXiJ;
+  double betaI = 1.0 - hingeXiI, gammaI = -hingeXiI;
+  double betaJ = hingeXiJ - 1.0, gammaJ = hingeXiJ;
   vCommitBulk(0) = v(0);
   vCommitBulk(1) = v(1) - (hingeOn && theHinge ? betaI * hingeJumpCommit : 0.0)
                         - (hingeOn && theHingeJ ? betaJ * hingeJumpJCommit : 0.0);
@@ -998,6 +1169,11 @@ LadrunoForceBeamColumn2d::commitState(void)
   kvcommit = kv;
   kvbulkCommit = kvbulk;
   Secommit = Se;
+  vTrialBulkCommit = vTrialBulk;
+  vSolvedCommit = vSolved;
+  solvedCommitValid = solvedValid;
+  solvedLoadsCommit = solvedLoads;
+  solvedLoadDataCommit = solvedLoadData;
   eleImplexErrCommit = eleImplexErr;
 
   return err;
@@ -1053,20 +1229,30 @@ LadrunoForceBeamColumn2d::revertToLastCommit(void)
     for (int m = 0; m < 2; m++) {
       for (int n = 0; n < 2; n++)
         hingeHinv[m][n] = hingeHinvCommit[m][n];
-      for (int a = 0; a < 3; a++)
+      for (int a = 0; a < 3; a++) {
         hingeKva[a][m] = hingeKvaCommit[a][m];
+        hingeKav[m][a] = hingeKavCommit[m][a];
+      }
     }
     if (theHinge) err += theHinge->revertToLastCommit();
     if (theHingeJ) err += theHingeJ->revertToLastCommit();
   }
 
-  double betaI = 1.0 - hingeXiI, gammaI = hingeXiI;
-  double betaJ = 1.0 - hingeXiJ, gammaJ = hingeXiJ;
+  double betaI = 1.0 - hingeXiI, gammaI = -hingeXiI;
+  double betaJ = hingeXiJ - 1.0, gammaJ = hingeXiJ;
   vCommitBulk(0) = vRestore[0];
   vCommitBulk(1) = vRestore[1] - (hingeOn && theHinge ? betaI * hingeJumpCommit : 0.0)
                                - (hingeOn && theHingeJ ? betaJ * hingeJumpJCommit : 0.0);
   vCommitBulk(2) = vRestore[2] - (hingeOn && theHinge ? gammaI * hingeJumpCommit : 0.0)
                                - (hingeOn && theHingeJ ? gammaJ * hingeJumpJCommit : 0.0);
+  vTrialBulk = vTrialBulkCommit;
+  // The trial state is the committed one again, solved at the committed basic
+  // deformation and loads: restore that record, so the load re-application of the
+  // next analyze does not re-solve at zero increment.
+  vSolved = vSolvedCommit;
+  solvedValid = solvedCommitValid;
+  solvedLoads = solvedLoadsCommit;
+  solvedLoadData = solvedLoadDataCommit;
 
   Se = Secommit;
   kv = kvcommit;
@@ -1074,6 +1260,7 @@ LadrunoForceBeamColumn2d::revertToLastCommit(void)
   eleImplexErr = eleImplexErrCommit;
   eleLoadDirty = (numEleLoads > 0);
   initialFlag = 1;
+  trialFailed = false;
 
   return err;
 }
@@ -1091,6 +1278,11 @@ LadrunoForceBeamColumn2d::revertToStart(void)
   kv.Zero();
   kvbulk.Zero();
   vCommitBulk.Zero();
+  vTrialBulk.Zero();
+  vTrialBulkCommit.Zero();
+  solvedValid = false;
+  solvedCommitValid = false;
+  trialFailed = false;
 
   if (Ki != 0) {
     delete Ki;
@@ -1133,6 +1325,8 @@ LadrunoForceBeamColumn2d::revertToStart(void)
       for (int a = 0; a < 3; a++) {
         hingeKva[a][m] = 0.0;
         hingeKvaCommit[a][m] = 0.0;
+        hingeKav[m][a] = 0.0;
+        hingeKavCommit[m][a] = 0.0;
       }
     }
     if (theHinge) err += theHinge->revertToStart();
@@ -1168,8 +1362,8 @@ LadrunoForceBeamColumn2d::getInitialStiff(void)
   f.Invert(kvInit);
 
   if (hingeOn) {
-    double betaI = 1.0 - hingeXiI, gammaI = hingeXiI;
-    double betaJ = 1.0 - hingeXiJ, gammaJ = hingeXiJ;
+    double betaI = 1.0 - hingeXiI, gammaI = -hingeXiI;
+    double betaJ = hingeXiJ - 1.0, gammaJ = hingeXiJ;
     bool hasI = (theHinge != 0);
     bool hasJ = (theHingeJ != 0);
     double KcohI = hasI ? theHinge->getInitialTangent() : 0.0;
@@ -1363,7 +1557,7 @@ LadrunoForceBeamColumn2d::initializeSectionHistoryVariables(void)
 }
 
 int
-LadrunoForceBeamColumn2d::evalBulkState(const Vector &v_tilde, const Vector &v_tilde_commit,
+LadrunoForceBeamColumn2d::evalBulkState(const Vector &v_tilde,
                                         Vector &Se_out, Matrix &Kbulk_out, bool commitSubdivide)
 {
   double L = crdTransf->getInitialLength();
@@ -1375,6 +1569,7 @@ LadrunoForceBeamColumn2d::evalBulkState(const Vector &v_tilde, const Vector &v_t
   beamIntegr->getSectionWeights(numSections, L, wt);
 
   static thread_local Vector vr(NEBD);
+  static thread_local Vector vrRes(NEBD);
   static thread_local Matrix f(NEBD, NEBD);
   static thread_local Matrix I(NEBD, NEBD);
   static thread_local Vector dv(NEBD);
@@ -1406,20 +1601,27 @@ LadrunoForceBeamColumn2d::evalBulkState(const Vector &v_tilde, const Vector &v_t
     }
   }
 
-  SeCur = (initialFlag == 0) ? Se : Secommit;
-  kvCur = (initialFlag == 0) ? kvbulk : kvbulkCommit;
+  // Iterate from the last TRIAL bulk state, as ForceBeamColumn2d does. Restarting
+  // every call from the committed state re-solves the whole step to the element
+  // tolerance each time, so the force carries a tolerance-sized error that no
+  // global Newton iteration removes: the residual stalls at that floor instead of
+  // converging quadratically. revertToLastCommit resets the trial state and
+  // vTrialBulk to the committed ones.
+  SeCur = Se;
+  kvCur = kvbulk;
   for (int i = 0; i < numSections; i++) {
-    vsCur[i] = (initialFlag == 0) ? vs[i] : vscommit[i];
-    fsCur[i] = (initialFlag == 0) ? fs[i] : fscommit[i];
-    SsrCur[i] = (initialFlag == 0) ? Ssr[i] : Ssrcommit[i];
+    vsCur[i] = vs[i];
+    fsCur[i] = fs[i];
+    SsrCur[i] = Ssr[i];
   }
 
-  vin = v_tilde_commit;
+  vin = vTrialBulk;
   dvToDo = v_tilde;
-  dvToDo -= v_tilde_commit;
+  dvToDo -= vTrialBulk;
   dvTrial = dvToDo;
 
   double factor = subdivideFactor;
+  double dW = 0.0, compatErr = 0.0;
   int numSubdivide = 1;
   bool converged = false;
 
@@ -1444,6 +1646,7 @@ LadrunoForceBeamColumn2d::evalBulkState(const Vector &v_tilde, const Vector &v_t
         for (int j = 0; j < numIters; j++) {
           f.Zero();
           vr.Zero();
+          vrRes.Zero();
 
           for (int i = 0; i < numSections; i++) {
             int order = sections[i]->getOrder();
@@ -1473,7 +1676,7 @@ LadrunoForceBeamColumn2d::evalBulkState(const Vector &v_tilde, const Vector &v_t
             for (int ii = 0; ii < order; ii++) {
               switch (code(ii)) {
               case SECTION_RESPONSE_P:
-                Ss(ii) = SeTrial(0);
+                Ss(ii) = axialRelease ? 0.0 : SeTrial(0);
                 break;
               case SECTION_RESPONSE_MZ:
                 Ss(ii) = xL1 * SeTrial(1) + xL * SeTrial(2);
@@ -1487,8 +1690,14 @@ LadrunoForceBeamColumn2d::evalBulkState(const Vector &v_tilde, const Vector &v_t
               }
             }
 
-            if (numEleLoads > 0)
+            if (numEleLoads > 0) {
               this->computeSectionForces(Ss, i);
+              if (axialRelease) {
+                for (int ii = 0; ii < order; ii++)
+                  if (code(ii) == SECTION_RESPONSE_P)
+                    Ss(ii) = 0.0;
+              }
+            }
 
             dSs = Ss;
             dSs.addVector(1.0, SsrSubdivide[i], -1.0);
@@ -1528,8 +1737,10 @@ LadrunoForceBeamColumn2d::evalBulkState(const Vector &v_tilde, const Vector &v_t
             for (int ii = 0; ii < order; ii++) {
               switch (code(ii)) {
               case SECTION_RESPONSE_P:
-                for (int jj = 0; jj < order; jj++)
-                  fb(jj, 0) += fSec(jj, ii) * wtL;
+                if (!axialRelease) {
+                  for (int jj = 0; jj < order; jj++)
+                    fb(jj, 0) += fSec(jj, ii) * wtL;
+                }
                 break;
               case SECTION_RESPONSE_MZ:
                 for (int jj = 0; jj < order; jj++) {
@@ -1553,8 +1764,13 @@ LadrunoForceBeamColumn2d::evalBulkState(const Vector &v_tilde, const Vector &v_t
             for (int ii = 0; ii < order; ii++) {
               switch (code(ii)) {
               case SECTION_RESPONSE_P:
-                for (int jj = 0; jj < NEBD; jj++)
-                  f(0, jj) += fb(ii, jj);
+                if (axialRelease) {
+                  const Matrix &fs0 = sections[i]->getInitialFlexibility();
+                  f(0, 0) += fs0(ii, ii) * wtL;
+                } else {
+                  for (int jj = 0; jj < NEBD; jj++)
+                    f(0, jj) += fb(ii, jj);
+                }
                 break;
               case SECTION_RESPONSE_MZ:
                 for (int jj = 0; jj < NEBD; jj++) {
@@ -1575,12 +1791,18 @@ LadrunoForceBeamColumn2d::evalBulkState(const Vector &v_tilde, const Vector &v_t
               }
             }
 
+            lfbc2dAddSectionToBasic(vrRes, dvs, code, xL, wtL, oneOverL, axialRelease);
             dvs.addVector(1.0, vsSubdivide[i], 1.0);
             for (int ii = 0; ii < order; ii++) {
               double dei = dvs(ii) * wtL;
               switch (code(ii)) {
               case SECTION_RESPONSE_P:
-                vr(0) += dei;
+                if (axialRelease) {
+                  const Matrix &fs0 = sections[i]->getInitialFlexibility();
+                  vr(0) += fs0(ii, ii) * SeTrial(0) * wtL;
+                } else {
+                  vr(0) += dei;
+                }
                 break;
               case SECTION_RESPONSE_MZ:
                 vr(1) += xL1 * dei;
@@ -1610,18 +1832,42 @@ LadrunoForceBeamColumn2d::evalBulkState(const Vector &v_tilde, const Vector &v_t
             vr(2) += dvShear;
           }
 
-          if (f.Solve(I, kvTrial) < 0)
+          if (f.Solve(I, kvTrial) < 0) {
+            opserr << "LadrunoForceBeamColumn2d::evalBulkState() -- could not invert flexibility for element with tag: "
+                   << this->getTag() << endln;
             return -1;
+          }
 
           dv = vin;
           dv += dvTrial;
           dv -= vr;
 
           dSe.addMatrixVector(0.0, kvTrial, dv, 1.0);
-          double dW = dv ^ dSe;
+          dW = dv ^ dSe;
           SeTrial += dSe;
 
+          // |dW| < tol alone goes blind when a section's tangent vanishes. On a
+          // flat (crushed or fully yielded) plateau fs is huge, so kv -> 0, and the
+          // linearized correction fs*(Ss - Ssr) in vr absorbs any target v: dW passes
+          // while the sections carry the wrong force at a deformation incompatible
+          // with v. Accept only if the section deformations actually set are
+          // compatible with the target, e = v - (vr - vrRes) = dv + vrRes. On the
+          // tangent branch (l = 0) e is round-off.
+          bool compatible = true;
           if (fabs(dW) < tol) {
+            double eMax = 0.0, scale = 0.0;
+            for (int k = 0; k < NEBD; k++) {
+              double s = (k == 0) ? oneOverL : 1.0;
+              double e = fabs(dv(k) + vrRes(k)) * s;
+              double sc = (fabs(vin(k) + dvTrial(k)) + fabs(vr(k) - vrRes(k))) * s;
+              if (e > eMax) eMax = e;
+              if (sc > scale) scale = sc;
+            }
+            compatErr = (scale > 0.0) ? eMax / scale : eMax;
+            compatible = (eMax <= lfbcCompatTol * scale + 1.0e-14);
+          }
+
+          if (fabs(dW) < tol && compatible) {
             dvToDo -= dvTrial;
             vin += dvTrial;
 
@@ -1658,8 +1904,12 @@ LadrunoForceBeamColumn2d::evalBulkState(const Vector &v_tilde, const Vector &v_t
     }
   }
 
-  if (!converged)
+  if (!converged) {
+    opserr << "WARNING - LadrunoForceBeamColumn2d::update - failed to get compatible element forces & deformations for element: "
+           << this->getTag() << " (dW: " << dW << ", tol: " << tol
+           << ", compatibility error: " << compatErr << ")\n";
     return -1;
+  }
 
   current_section_lch = (lchMode == 2) ? userLch : L;
   Se_out = SeCur;
@@ -1670,6 +1920,7 @@ LadrunoForceBeamColumn2d::evalBulkState(const Vector &v_tilde, const Vector &v_t
       fs[k] = fsCur[k];
       Ssr[k] = SsrCur[k];
     }
+    vTrialBulk = v_tilde;
   }
   return 0;
 }
@@ -1682,8 +1933,8 @@ LadrunoForceBeamColumn2d::solveHingeState(const Vector &v)
   const bool freezeI = postRestoreSync && hasI && lfbc2dHingeIsImplex(theHinge);
   const bool freezeJ = postRestoreSync && hasJ && lfbc2dHingeIsImplex(theHingeJ);
   const double betaI = 1.0 - hingeXiI;
-  const double gammaI = hingeXiI;
-  const double betaJ = 1.0 - hingeXiJ;
+  const double gammaI = -hingeXiI;
+  const double betaJ = hingeXiJ - 1.0;
   const double gammaJ = hingeXiJ;
 
   double alphaI = hasI ? hingeJumpCommit : 0.0;
@@ -1698,6 +1949,8 @@ LadrunoForceBeamColumn2d::solveHingeState(const Vector &v)
 
   double Hinv[2][2] = {{0.0, 0.0}, {0.0, 0.0}};
   double Kva[3][2] = {{0.0, 0.0}, {0.0, 0.0}, {0.0, 0.0}};
+  double Kav[2][3] = {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}};
+  double gI = 0.0, gJ = 0.0;
 
   const int maxOuter = 20;
   for (int outer = 0; outer < maxOuter; outer++) {
@@ -1705,7 +1958,7 @@ LadrunoForceBeamColumn2d::solveHingeState(const Vector &v)
     v_tilde(1) = v(1) - (hasI ? betaI * alphaI : 0.0) - (hasJ ? betaJ * alphaJ : 0.0);
     v_tilde(2) = v(2) - (hasI ? gammaI * alphaI : 0.0) - (hasJ ? gammaJ * alphaJ : 0.0);
 
-    int err = this->evalBulkState(v_tilde, vCommitBulk, q_bulk, Kbulk, false);
+    int err = this->evalBulkState(v_tilde, q_bulk, Kbulk, false);
     if (err != 0)
       return err;
 
@@ -1716,35 +1969,60 @@ LadrunoForceBeamColumn2d::solveHingeState(const Vector &v)
 
     if (cohI != 0) cohI->setAxialForce(q_bulk(0));
     if (cohJ != 0) cohJ->setAxialForce(q_bulk(0));
-    double fPMI = (cohI == 0 && pmP0 > 0.0) ? lfbc2dScalePM(q_bulk(0), pmP0, pmAlpha) : 1.0;
-    double fPMJ = (cohJ == 0 && pmP0 > 0.0) ? lfbc2dScalePM(q_bulk(0), pmP0, pmAlpha) : 1.0;
+    double dfPMIDN = 0.0, dfPMJDN = 0.0;
+    double fPMI = (cohI == 0 && pmP0 > 0.0)
+                      ? lfbc2dEvalPM(q_bulk(0), pmP0, pmAlpha, pmP0t, pmPbal, pmMuBal, dfPMIDN)
+                      : 1.0;
+    double fPMJ = (cohJ == 0 && pmP0 > 0.0)
+                      ? lfbc2dEvalPM(q_bulk(0), pmP0, pmAlpha, pmP0t, pmPbal, pmMuBal, dfPMJDN)
+                      : 1.0;
 
     double McohI = 0.0, KcohI = 0.0, hI = 0.0;
+    gI = 0.0;
     if (hasI) {
       if (!freezeI)
         theHinge->setTrialStrain(alphaI);
-      McohI = fPMI * theHinge->getStress();
+      double rawM = theHinge->getStress();
+      McohI = fPMI * rawM;
       KcohI = fPMI * theHinge->getTangent();
+      if (!freezeI) {
+        if (cohI != 0 && cohI->hasPM() && !cohI->isImplex()) {
+          double fM = cohI->getPMMultiplier();
+          if (fM > 0.0) gI = (cohI->getPMDerivative() / fM) * McohI;
+        } else if (cohI == 0 && pmP0 > 0.0) {
+          gI = dfPMIDN * rawM;
+        }
+      }
       double qBulkI = betaI * q_bulk(1) + gammaI * q_bulk(2);
       hI = (freezeI || initialFlag == 0) ? 0.0 : (-qBulkI + McohI);
     }
 
     double McohJ = 0.0, KcohJ = 0.0, hJ = 0.0;
+    gJ = 0.0;
     if (hasJ) {
       if (!freezeJ)
         theHingeJ->setTrialStrain(alphaJ);
-      McohJ = fPMJ * theHingeJ->getStress();
+      double rawM = theHingeJ->getStress();
+      McohJ = fPMJ * rawM;
       KcohJ = fPMJ * theHingeJ->getTangent();
+      if (!freezeJ) {
+        if (cohJ != 0 && cohJ->hasPM() && !cohJ->isImplex()) {
+          double fM = cohJ->getPMMultiplier();
+          if (fM > 0.0) gJ = (cohJ->getPMDerivative() / fM) * McohJ;
+        } else if (cohJ == 0 && pmP0 > 0.0) {
+          gJ = dfPMJDN * rawM;
+        }
+      }
       double qBulkJ = betaJ * q_bulk(1) + gammaJ * q_bulk(2);
       hJ = (freezeJ || initialFlag == 0) ? 0.0 : (-qBulkJ + McohJ);
     }
 
-    double H00 = hasI ? (-(betaI * Kva[1][0] + gammaI * Kva[2][0]) + KcohI) : 1.0;
-    double H11 = hasJ ? (-(betaJ * Kva[1][1] + gammaJ * Kva[2][1]) + KcohJ) : 1.0;
-    double H01 = (hasI && hasJ) ? -0.5 * ((betaI * Kva[1][1] + gammaI * Kva[2][1]) +
-                                          (betaJ * Kva[1][0] + gammaJ * Kva[2][0])) : 0.0;
+    double H00 = hasI ? (-(betaI * Kva[1][0] + gammaI * Kva[2][0]) + KcohI + gI * Kva[0][0]) : 1.0;
+    double H11 = hasJ ? (-(betaJ * Kva[1][1] + gammaJ * Kva[2][1]) + KcohJ + gJ * Kva[0][1]) : 1.0;
+    double H01 = (hasI && hasJ) ? (-(betaI * Kva[1][1] + gammaI * Kva[2][1]) + gI * Kva[0][1]) : 0.0;
+    double H10 = (hasI && hasJ) ? (-(betaJ * Kva[1][0] + gammaJ * Kva[2][0]) + gJ * Kva[0][0]) : 0.0;
 
-    lfbc2dInvertSym2x2Guarded(H00, H11, H01, Hinv);
+    lfbc2dInvertGen2x2Guarded(H00, H01, H10, H11, Hinv);
     if (!hasI) { Hinv[0][0] = 0.0; Hinv[0][1] = 0.0; Hinv[1][0] = 0.0; }
     if (!hasJ) { Hinv[1][1] = 0.0; Hinv[0][1] = 0.0; Hinv[1][0] = 0.0; }
 
@@ -1771,27 +2049,53 @@ LadrunoForceBeamColumn2d::solveHingeState(const Vector &v)
 
       if (cohI != 0) cohI->setAxialForce(q0_lin);
       if (cohJ != 0) cohJ->setAxialForce(q0_lin);
-      fPMI = (cohI == 0 && pmP0 > 0.0) ? lfbc2dScalePM(q0_lin, pmP0, pmAlpha) : 1.0;
-      fPMJ = (cohJ == 0 && pmP0 > 0.0) ? lfbc2dScalePM(q0_lin, pmP0, pmAlpha) : 1.0;
+      dfPMIDN = 0.0;
+      dfPMJDN = 0.0;
+      fPMI = (cohI == 0 && pmP0 > 0.0)
+                 ? lfbc2dEvalPM(q0_lin, pmP0, pmAlpha, pmP0t, pmPbal, pmMuBal, dfPMIDN)
+                 : 1.0;
+      fPMJ = (cohJ == 0 && pmP0 > 0.0)
+                 ? lfbc2dEvalPM(q0_lin, pmP0, pmAlpha, pmP0t, pmPbal, pmMuBal, dfPMJDN)
+                 : 1.0;
 
+      gI = 0.0;
       if (hasI) {
         if (!freezeI) theHinge->setTrialStrain(alphaI);
-        McohI = fPMI * theHinge->getStress();
+        double rawM = theHinge->getStress();
+        McohI = fPMI * rawM;
         KcohI = fPMI * theHinge->getTangent();
+        if (!freezeI) {
+          if (cohI != 0 && cohI->hasPM() && !cohI->isImplex()) {
+            double fM = cohI->getPMMultiplier();
+            if (fM > 0.0) gI = (cohI->getPMDerivative() / fM) * McohI;
+          } else if (cohI == 0 && pmP0 > 0.0) {
+            gI = dfPMIDN * rawM;
+          }
+        }
         hI = freezeI ? 0.0 : (-(betaI * q1_lin + gammaI * q2_lin) + McohI);
       }
+      gJ = 0.0;
       if (hasJ) {
         if (!freezeJ) theHingeJ->setTrialStrain(alphaJ);
-        McohJ = fPMJ * theHingeJ->getStress();
+        double rawM = theHingeJ->getStress();
+        McohJ = fPMJ * rawM;
         KcohJ = fPMJ * theHingeJ->getTangent();
+        if (!freezeJ) {
+          if (cohJ != 0 && cohJ->hasPM() && !cohJ->isImplex()) {
+            double fM = cohJ->getPMMultiplier();
+            if (fM > 0.0) gJ = (cohJ->getPMDerivative() / fM) * McohJ;
+          } else if (cohJ == 0 && pmP0 > 0.0) {
+            gJ = dfPMJDN * rawM;
+          }
+        }
         hJ = freezeJ ? 0.0 : (-(betaJ * q1_lin + gammaJ * q2_lin) + McohJ);
       }
 
-      H00 = hasI ? (-(betaI * Kva[1][0] + gammaI * Kva[2][0]) + KcohI) : 1.0;
-      H11 = hasJ ? (-(betaJ * Kva[1][1] + gammaJ * Kva[2][1]) + KcohJ) : 1.0;
-      H01 = (hasI && hasJ) ? -0.5 * ((betaI * Kva[1][1] + gammaI * Kva[2][1]) +
-                                     (betaJ * Kva[1][0] + gammaJ * Kva[2][0])) : 0.0;
-      lfbc2dInvertSym2x2Guarded(H00, H11, H01, Hinv);
+      H00 = hasI ? (-(betaI * Kva[1][0] + gammaI * Kva[2][0]) + KcohI + gI * Kva[0][0]) : 1.0;
+      H11 = hasJ ? (-(betaJ * Kva[1][1] + gammaJ * Kva[2][1]) + KcohJ + gJ * Kva[0][1]) : 1.0;
+      H01 = (hasI && hasJ) ? (-(betaI * Kva[1][1] + gammaI * Kva[2][1]) + gI * Kva[0][1]) : 0.0;
+      H10 = (hasI && hasJ) ? (-(betaJ * Kva[1][0] + gammaJ * Kva[2][0]) + gJ * Kva[0][0]) : 0.0;
+      lfbc2dInvertGen2x2Guarded(H00, H01, H10, H11, Hinv);
       if (!hasI) { Hinv[0][0] = 0.0; Hinv[0][1] = 0.0; Hinv[1][0] = 0.0; }
       if (!hasJ) { Hinv[1][1] = 0.0; Hinv[0][1] = 0.0; Hinv[1][0] = 0.0; }
 
@@ -1813,7 +2117,7 @@ LadrunoForceBeamColumn2d::solveHingeState(const Vector &v)
   v_tilde(0) = v(0);
   v_tilde(1) = v(1) - (hasI ? betaI * alphaI : 0.0) - (hasJ ? betaJ * alphaJ : 0.0);
   v_tilde(2) = v(2) - (hasI ? gammaI * alphaI : 0.0) - (hasJ ? gammaJ * alphaJ : 0.0);
-  int err = this->evalBulkState(v_tilde, vCommitBulk, q_bulk, Kbulk, true);
+  int err = this->evalBulkState(v_tilde, q_bulk, Kbulk, true);
   if (err != 0)
     return err;
 
@@ -1822,16 +2126,61 @@ LadrunoForceBeamColumn2d::solveHingeState(const Vector &v)
   if (hasI && !freezeI) theHinge->setTrialStrain(alphaI);
   if (hasJ && !freezeJ) theHingeJ->setTrialStrain(alphaJ);
 
+  double dfPMIDN = 0.0, dfPMJDN = 0.0;
+  double fPMI = (cohI == 0 && pmP0 > 0.0)
+                    ? lfbc2dEvalPM(q_bulk(0), pmP0, pmAlpha, pmP0t, pmPbal, pmMuBal, dfPMIDN)
+                    : 1.0;
+  double fPMJ = (cohJ == 0 && pmP0 > 0.0)
+                    ? lfbc2dEvalPM(q_bulk(0), pmP0, pmAlpha, pmP0t, pmPbal, pmMuBal, dfPMJDN)
+                    : 1.0;
+  double KcohI = hasI ? (fPMI * theHinge->getTangent()) : 0.0;
+  double KcohJ = hasJ ? (fPMJ * theHingeJ->getTangent()) : 0.0;
+  gI = 0.0;
+  if (hasI && !freezeI) {
+    if (cohI != 0) {
+      double fM = cohI->getPMMultiplier();
+      if (fM > 0.0) gI = (cohI->getPMDerivative() / fM) * (fPMI * theHinge->getStress());
+    }
+    else if (pmP0 > 0.0) gI = dfPMIDN * theHinge->getStress();
+  }
+  gJ = 0.0;
+  if (hasJ && !freezeJ) {
+    if (cohJ != 0) {
+      double fM = cohJ->getPMMultiplier();
+      if (fM > 0.0) gJ = (cohJ->getPMDerivative() / fM) * (fPMJ * theHingeJ->getStress());
+    }
+    else if (pmP0 > 0.0) gJ = dfPMJDN * theHingeJ->getStress();
+  }
+  for (int a = 0; a < 3; a++) {
+    Kva[a][0] = hasI ? -(Kbulk(a, 1) * betaI + Kbulk(a, 2) * gammaI) : 0.0;
+    Kva[a][1] = hasJ ? -(Kbulk(a, 1) * betaJ + Kbulk(a, 2) * gammaJ) : 0.0;
+    Kav[0][a] = hasI ? (-(betaI * Kbulk(1, a) + gammaI * Kbulk(2, a)) + gI * Kbulk(0, a)) : 0.0;
+    Kav[1][a] = hasJ ? (-(betaJ * Kbulk(1, a) + gammaJ * Kbulk(2, a)) + gJ * Kbulk(0, a)) : 0.0;
+  }
+  double H00 = hasI ? (-(betaI * Kva[1][0] + gammaI * Kva[2][0]) + KcohI + gI * Kva[0][0]) : 1.0;
+  double H11 = hasJ ? (-(betaJ * Kva[1][1] + gammaJ * Kva[2][1]) + KcohJ + gJ * Kva[0][1]) : 1.0;
+  double H01 = (hasI && hasJ) ? (-(betaI * Kva[1][1] + gammaI * Kva[2][1]) + gI * Kva[0][1]) : 0.0;
+  double H10 = (hasI && hasJ) ? (-(betaJ * Kva[1][0] + gammaJ * Kva[2][0]) + gJ * Kva[0][0]) : 0.0;
+  lfbc2dInvertGen2x2Guarded(H00, H01, H10, H11, Hinv);
+  if (!hasI) { Hinv[0][0] = 0.0; Hinv[0][1] = 0.0; Hinv[1][0] = 0.0; }
+  if (!hasJ) { Hinv[1][1] = 0.0; Hinv[0][1] = 0.0; Hinv[1][0] = 0.0; }
+
   for (int m = 0; m < 2; m++) {
     for (int n = 0; n < 2; n++) hingeHinv[m][n] = Hinv[m][n];
-    for (int a = 0; a < 3; a++) hingeKva[a][m] = Kva[a][m];
+    for (int a = 0; a < 3; a++) {
+      hingeKva[a][m] = Kva[a][m];
+      hingeKav[m][a] = Kav[m][a];
+    }
   }
   hingeJump = alphaI;
   hingeJumpJ = alphaJ;
   if (postRestoreSync) {
     for (int m = 0; m < 2; m++) {
       for (int n = 0; n < 2; n++) hingeHinvCommit[m][n] = hingeHinv[m][n];
-      for (int a = 0; a < 3; a++) hingeKvaCommit[a][m] = hingeKva[a][m];
+      for (int a = 0; a < 3; a++) {
+        hingeKvaCommit[a][m] = hingeKva[a][m];
+        hingeKavCommit[m][a] = hingeKav[m][a];
+      }
     }
   }
 
@@ -1843,12 +2192,55 @@ LadrunoForceBeamColumn2d::solveHingeState(const Vector &v)
       double c = 0.0;
       for (int m = 0; m < 2; m++)
         for (int n = 0; n < 2; n++)
-          c += hingeKva[a][m] * hingeHinv[m][n] * hingeKva[b][n];
+          c += hingeKva[a][m] * hingeHinv[m][n] * hingeKav[n][b];
       kv(a, b) -= c;
     }
   }
 
   return 0;
+}
+
+bool
+LadrunoForceBeamColumn2d::solvedStateMatches(const Vector &v)
+{
+  if (!solvedValid || (size_t)numEleLoads != solvedLoads.size())
+    return false;
+  for (int i = 0; i < NEBD; i++)
+    if (v(i) != vSolved(i))
+      return false;
+  size_t k = 0;
+  for (int i = 0; i < numEleLoads; i++) {
+    if (eleLoads[i] != solvedLoads[i])
+      return false;
+    int type;
+    const Vector &data = eleLoads[i]->getData(type, eleLoadFactors[i]);
+    if (k + 2 + data.Size() > solvedLoadData.size())
+      return false;
+    if (solvedLoadData[k++] != eleLoadFactors[i] || solvedLoadData[k++] != (double)type)
+      return false;
+    for (int j = 0; j < data.Size(); j++)
+      if (solvedLoadData[k++] != data(j))
+        return false;
+  }
+  return k == solvedLoadData.size();
+}
+
+void
+LadrunoForceBeamColumn2d::recordSolvedState(const Vector &v)
+{
+  vSolved = v;
+  solvedLoads.clear();
+  solvedLoadData.clear();
+  for (int i = 0; i < numEleLoads; i++) {
+    solvedLoads.push_back(eleLoads[i]);
+    int type;
+    const Vector &data = eleLoads[i]->getData(type, eleLoadFactors[i]);
+    solvedLoadData.push_back(eleLoadFactors[i]);
+    solvedLoadData.push_back((double)type);
+    for (int j = 0; j < data.Size(); j++)
+      solvedLoadData.push_back(data(j));
+  }
+  solvedValid = true;
 }
 
 int
@@ -1865,7 +2257,19 @@ LadrunoForceBeamColumn2d::update(void)
   static thread_local Vector dv(NEBD);
   dv = crdTransf->getBasicIncrDeltaDisp();
 
-  if (initialFlag == 1 && dv.Norm() <= DBL_EPSILON && numEleLoads == 0 && !eleLoadDirty) {
+  // After a failed update neither early return holds: the Newton correction after
+  // enforceSPs' ignored failure is zero, and the trial state is not a solution.
+  if (initialFlag == 1 && !trialFailed && dv.Norm() <= DBL_EPSILON && numEleLoads == 0 && !eleLoadDirty) {
+    ops_TheActiveElement = 0;
+    return 0;
+  }
+
+  // Nothing changed since the last solve: a load re-application (eleLoadDirty,
+  // e.g. DisplacementControl::domainChanged's applyLoad + formUnbalance) must not
+  // re-solve, or the sub-tolerance section residual left by the last solve is pushed
+  // into the fibres and can flip them onto their unloading tangent.
+  if (initialFlag == 1 && !trialFailed && this->solvedStateMatches(v)) {
+    eleLoadDirty = false;
     ops_TheActiveElement = 0;
     return 0;
   }
@@ -1891,16 +2295,35 @@ LadrunoForceBeamColumn2d::update(void)
   if (hingeOn) {
     err = this->solveHingeState(v);
   } else {
-    err = this->evalBulkState(v, vCommitBulk, Se, kvbulk, true);
+    err = this->evalBulkState(v, Se, kvbulk, true);
     kv = kvbulk;
   }
 
   if (err != 0) {
+    // The sections hold the failed iterate. Put them back on the last solved trial
+    // state (vs), so a response or a commit never reads the failed one.
+    trialFailed = true;
+    solvedValid = false;
+    double L = crdTransf->getInitialLength();
+    double wt[maxNumSections];
+    beamIntegr->getSectionWeights(numSections, L, wt);
+    for (int k = 0; k < numSections; k++) {
+      if (lchMode == 1)
+        current_section_lch = L;
+      else if (lchMode == 2)
+        current_section_lch = userLch;
+      else
+        current_section_lch = wt[k] * L;
+      sections[k]->setTrialSectionDeformation(vs[k]);
+    }
+    current_section_lch = (lchMode == 2) ? userLch : L;
     ops_TheActiveElement = 0;
     return err;
   }
+  trialFailed = false;
 
   if (initialFlag == 0 || (initialFlag == 3 && !vRestoreValid)) {
+    vTrialBulkCommit = vTrialBulk;
     kvcommit = kv;
     kvbulkCommit = kvbulk;
     Secommit = Se;
@@ -1909,8 +2332,8 @@ LadrunoForceBeamColumn2d::update(void)
       fscommit[k] = fs[k];
       Ssrcommit[k] = Ssr[k];
     }
-    double betaI = 1.0 - hingeXiI, gammaI = hingeXiI;
-    double betaJ = 1.0 - hingeXiJ, gammaJ = hingeXiJ;
+    double betaI = 1.0 - hingeXiI, gammaI = -hingeXiI;
+    double betaJ = hingeXiJ - 1.0, gammaJ = hingeXiJ;
     vCommitBulk(0) = v(0);
     vCommitBulk(1) = v(1) - (hingeOn && theHinge ? betaI * hingeJump : 0.0)
                           - (hingeOn && theHingeJ ? betaJ * hingeJumpJ : 0.0);
@@ -1935,6 +2358,7 @@ LadrunoForceBeamColumn2d::update(void)
 
   initialFlag = 1;
   eleLoadDirty = false;
+  this->recordSolvedState(v);
 
   if (theDamping && theDamping->update(Se)) {
     opserr << "LadrunoForceBeamColumn2d::update: failed to update damping\n";
@@ -2048,6 +2472,8 @@ LadrunoForceBeamColumn2d::addLoad(ElementalLoad *theLoad, double loadFactor)
 void
 LadrunoForceBeamColumn2d::computeSectionForces(Vector &sp, int isec)
 {
+  if (!spanLoadMode)
+    return;
   int type;
   double L = crdTransf->getInitialLength();
   double xi[maxNumSections];
@@ -2402,7 +2828,7 @@ LadrunoForceBeamColumn2d::sendSelf(int commitTag, Channel &theChannel)
     idData(12) = dmpDbTag;
   }
 
-  idData(13) = cMass + 2 * lchMode + (useImplex ? 8 : 0);
+  idData(13) = cMass + 2 * lchMode + (useImplex ? 8 : 0) + (axialRelease ? 16 : 0) + (spanLoadMode == 0 ? 32 : 0);
   idData(14) = hingeOn + 2 * dualHingeMode;
   idData(15) = (theHinge != 0) ? theHinge->getClassTag() : 0;
   idData(16) = 0;
@@ -2480,7 +2906,7 @@ LadrunoForceBeamColumn2d::sendSelf(int commitTag, Channel &theChannel)
   for (i = 0; i < numSections; i++)
     secDefSize += sections[i]->getOrder();
 
-  Vector dData(3 + NEBD + 2 * NEBD * NEBD + secDefSize + 5 + 8 + 2 * NEBD + 1 + 10);
+  Vector dData(3 + NEBD + 2 * NEBD * NEBD + secDefSize + 5 + 8 + 2 * NEBD + 1 + 19);
   loc = 0;
   dData(loc++) = rho;
   dData(loc++) = tol;
@@ -2527,6 +2953,12 @@ LadrunoForceBeamColumn2d::sendSelf(int commitTag, Channel &theChannel)
   for (int a = 0; a < 3; a++)
     for (int m = 0; m < 2; m++)
       dData(loc++) = hingeKvaCommit[a][m];
+  for (int m = 0; m < 2; m++)
+    for (int a = 0; a < 3; a++)
+      dData(loc++) = hingeKavCommit[m][a];
+  dData(loc++) = pmP0t;
+  dData(loc++) = pmPbal;
+  dData(loc++) = pmMuBal;
 
   if (theChannel.sendVector(dbTag, commitTag, dData) < 0) {
     opserr << "LadrunoForceBeamColumn2d::sendSelf() - failed to send Vector data\n";
@@ -2562,6 +2994,8 @@ LadrunoForceBeamColumn2d::recvSelf(int commitTag, Channel &theChannel, FEM_Objec
   cMass = idData(13) & 1;
   lchMode = (idData(13) >> 1) & 3;
   useImplex = ((idData(13) & 8) != 0);
+  axialRelease = ((idData(13) & 16) != 0);
+  spanLoadMode = ((idData(13) & 32) != 0) ? 0 : 1;
   hingeOn = idData(14) & 1;
   dualHingeMode = (idData(14) >> 1) & 1;
 
@@ -2682,7 +3116,7 @@ LadrunoForceBeamColumn2d::recvSelf(int commitTag, Channel &theChannel, FEM_Objec
   for (int ii = 0; ii < numSections; ii++)
     secDefSize += sections[ii]->getOrder();
 
-  Vector dData(3 + NEBD + 2 * NEBD * NEBD + secDefSize + 5 + 8 + 2 * NEBD + 1 + 10);
+  Vector dData(3 + NEBD + 2 * NEBD * NEBD + secDefSize + 5 + 8 + 2 * NEBD + 1 + 19);
   if (theChannel.recvVector(dbTag, commitTag, dData) < 0)
     return -1;
 
@@ -2740,6 +3174,10 @@ LadrunoForceBeamColumn2d::recvSelf(int commitTag, Channel &theChannel, FEM_Objec
 
   for (i = 0; i < NEBD; i++)
     vCommitBulk(i) = dData(loc++);
+  vTrialBulk = vCommitBulk;
+  vTrialBulkCommit = vCommitBulk;
+  solvedValid = false;
+  solvedCommitValid = false;
   for (i = 0; i < NEBD; i++)
     vRestore[i] = dData(loc++);
   GAvy = dData(loc++);
@@ -2749,6 +3187,12 @@ LadrunoForceBeamColumn2d::recvSelf(int commitTag, Channel &theChannel, FEM_Objec
   for (int a = 0; a < 3; a++)
     for (int m = 0; m < 2; m++)
       hingeKva[a][m] = hingeKvaCommit[a][m] = dData(loc++);
+  for (int m = 0; m < 2; m++)
+    for (int a = 0; a < 3; a++)
+      hingeKav[m][a] = hingeKavCommit[m][a] = dData(loc++);
+  pmP0t = dData(loc++);
+  pmPbal = dData(loc++);
+  pmMuBal = dData(loc++);
 
   if (Ki != 0) {
     delete Ki;
@@ -2805,8 +3249,10 @@ LadrunoForceBeamColumn2d::getInitialFlexibility(Matrix &fe, bool includeHinges)
     for (int ii = 0; ii < order; ii++) {
       switch (code(ii)) {
       case SECTION_RESPONSE_P:
-        for (int jj = 0; jj < order; jj++)
-          fb(jj, 0) += fSec(jj, ii) * wtL;
+        if (!axialRelease) {
+          for (int jj = 0; jj < order; jj++)
+            fb(jj, 0) += fSec(jj, ii) * wtL;
+        }
         break;
       case SECTION_RESPONSE_MZ:
         for (int jj = 0; jj < order; jj++) {
@@ -2829,8 +3275,12 @@ LadrunoForceBeamColumn2d::getInitialFlexibility(Matrix &fe, bool includeHinges)
     for (int ii = 0; ii < order; ii++) {
       switch (code(ii)) {
       case SECTION_RESPONSE_P:
-        for (int jj = 0; jj < NEBD; jj++)
-          fe(0, jj) += fb(ii, jj);
+        if (axialRelease) {
+          fe(0, 0) += fSec(ii, ii) * wtL;
+        } else {
+          for (int jj = 0; jj < NEBD; jj++)
+            fe(0, jj) += fb(ii, jj);
+        }
         break;
       case SECTION_RESPONSE_MZ:
         for (int jj = 0; jj < NEBD; jj++) {
@@ -2859,9 +3309,10 @@ LadrunoForceBeamColumn2d::getInitialFlexibility(Matrix &fe, bool includeHinges)
     fe(2, 2) += fsY;
   }
   if (includeHinges && hingeOn) {
-    double betaI = 1.0 - hingeXiI, gammaI = hingeXiI;
-    double betaJ = 1.0 - hingeXiJ, gammaJ = hingeXiJ;
-    double fPM = (pmP0 > 0.0) ? lfbc2dScalePM(Se(0), pmP0, pmAlpha) : 1.0;
+    double betaI = 1.0 - hingeXiI, gammaI = -hingeXiI;
+    double betaJ = hingeXiJ - 1.0, gammaJ = hingeXiJ;
+    double dummyDeriv = 0.0;
+    double fPM = (pmP0 > 0.0) ? lfbc2dEvalPM(Se(0), pmP0, pmAlpha, pmP0t, pmPbal, pmMuBal, dummyDeriv) : 1.0;
     if (theHinge != 0 && dynamic_cast<LadrunoCohesiveHinge*>(theHinge) == 0) {
       double k0I = fPM * theHinge->getInitialTangent();
       if (k0I > 0.0) {
@@ -3330,15 +3781,16 @@ LadrunoForceBeamColumn2d::getResponse(int responseID, Information &eleInfo)
   else if (responseID == 31) {
     static thread_local Vector hs(4);
     hs.Zero();
+    double dummyDeriv = 0.0;
     if (hingeOn && theHinge != 0) {
       double fPMI = (dynamic_cast<LadrunoCohesiveHinge*>(theHinge) == 0 && pmP0 > 0.0)
-                        ? lfbc2dScalePM(Se(0), pmP0, pmAlpha) : 1.0;
+                        ? lfbc2dEvalPM(Se(0), pmP0, pmAlpha, pmP0t, pmPbal, pmMuBal, dummyDeriv) : 1.0;
       hs(0) = hingeJump;
       hs(1) = fPMI * theHinge->getStress();
     }
     if (hingeOn && theHingeJ != 0) {
       double fPMJ = (dynamic_cast<LadrunoCohesiveHinge*>(theHingeJ) == 0 && pmP0 > 0.0)
-                        ? lfbc2dScalePM(Se(0), pmP0, pmAlpha) : 1.0;
+                        ? lfbc2dEvalPM(Se(0), pmP0, pmAlpha, pmP0t, pmPbal, pmMuBal, dummyDeriv) : 1.0;
       hs(2) = hingeJumpJ;
       hs(3) = fPMJ * theHingeJ->getStress();
     }
@@ -3577,14 +4029,15 @@ LadrunoForceBeamColumn2d::getResponse(int responseID, Information &eleInfo)
     double energy = 0.0;
     for (int i = 0; i < numSections; i++)
       energy += sections[i]->getEnergy() * wt[i] * L;
+    double dummyDeriv = 0.0;
     if (hingeOn && theHinge != 0) {
       double fPMI = (dynamic_cast<LadrunoCohesiveHinge*>(theHinge) == 0 && pmP0 > 0.0)
-                        ? lfbc2dScalePM(Se(0), pmP0, pmAlpha) : 1.0;
+                        ? lfbc2dEvalPM(Se(0), pmP0, pmAlpha, pmP0t, pmPbal, pmMuBal, dummyDeriv) : 1.0;
       energy += fPMI * theHinge->getEnergy();
     }
     if (hingeOn && theHingeJ != 0) {
       double fPMJ = (dynamic_cast<LadrunoCohesiveHinge*>(theHingeJ) == 0 && pmP0 > 0.0)
-                        ? lfbc2dScalePM(Se(0), pmP0, pmAlpha) : 1.0;
+                        ? lfbc2dEvalPM(Se(0), pmP0, pmAlpha, pmP0t, pmPbal, pmMuBal, dummyDeriv) : 1.0;
       energy += fPMJ * theHingeJ->getEnergy();
     }
     return eleInfo.setDouble(energy);

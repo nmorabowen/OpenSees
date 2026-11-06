@@ -612,7 +612,13 @@ FourNodeQuad::update()
 		}
 
 		// Set the material strain
-		ret += theMaterial[i]->setTrialStrain(eps);
+		// Ladruno (apeGmsh #2619): keep the MOST NEGATIVE code, never a sum.
+		// Summing LADRUNO_MATERIAL_REFUSED (-33086) over the points of a model
+		// wraps past INT_MIN at 64,907 refusing points and Domain::update then
+		// returns a POSITIVE number, which every `< 0` integrator check accepts.
+		const int rc = theMaterial[i]->setTrialStrain(eps);
+		if (rc != 0 && (ret == 0 || rc < ret))
+			ret = rc;
 	}
 
 	return ret;
