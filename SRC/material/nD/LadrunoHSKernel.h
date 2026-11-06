@@ -133,7 +133,44 @@ struct HSParams {
   double Gur_ref    = 37500.0;
   double Kur_ref    = 50000.0;
 
+  // Cap auto-calibration diagnostics, rebuilt by every finalize() (not serialized:
+  // derived from the parameters). Bit set => the closed form hit a guard and the
+  // auto-calibrated cap does NOT reproduce (Eoed_ref, K0nc) exactly.
+  enum CalibFlag : int {
+    CALIB_ALPHA_CLAMPED = 1,  // alpha_cap clipped to [0.2, 5]
+    CALIB_AV_FLOORED    = 2,  // volumetric cap plastic rate floored (Eoed_ref too stiff for Eur/E50)
+    CALIB_AQ_FLOORED    = 4,  // deviatoric cap plastic rate floored
+    CALIB_K0_AT_LIMIT   = 8   // K0nc path at/beyond the hyperbolic shear asymptote (K0nc too low)
+  };
+  int calib_flags = 0;
+
+  // Mobilised friction ratio q/qa along the K0nc path (>= 0.99 means the K0nc state is
+  // at the shear asymptote, i.e. K0nc is too low for phi and Rf):
+  double r_k0_raw() const {
+    double kf = 2.0 * sin_phi / (1.0 - sin_phi);
+    return Rf * (1.0 - K0nc) / (K0nc * kf);
+  }
+
+  // Mobilised dilatancy, PLAXIS HS flow rule (Material Models Manual, HS "flow rule"):
+  //   sin(phi_m) <  3/4 sin(phi)            -> psi_m = 0
+  //   sin(phi_m) >= 3/4 sin(phi), psi > 0   -> sin(psi_m) = max(Rowe, 0)
+  //   psi = 0                               -> psi_m = 0
+  // Rowe's contractant branch (sin psi_m < 0) is NOT used: plastic compaction is the
+  // cap's job, and a contractant shear flow parallel to the cap normal makes the
+  // two-surface corner (regime 4) kinematically degenerate (0.5 + k*s_psim -> 0).
+  // Returns sin(psi_m); dRowe_out (if given) is d sin(psi_m) / d sin(phi_m) (0 where clipped).
+  double mobilised_sin_psi(double s_phim, double* dRowe_out = nullptr) const {
+    if (dRowe_out) *dRowe_out = 0.0;
+    if (sin_psi <= 0.0 || s_phim < 0.75 * sin_phi) return 0.0;
+    double den  = 1.0 - s_phim * sin_phicv;
+    double rowe = (s_phim - sin_phicv) / den;
+    if (rowe <= 0.0) return 0.0;
+    if (dRowe_out) *dRowe_out = (1.0 - sin_phicv * sin_phicv) / (den * den);
+    return rowe;
+  }
+
   bool finalize() {
+    calib_flags = 0;
     if (E50_ref <= 0.0 || Eoed_ref <= 0.0 || Eur_ref <= 0.0) return false;
     if (Eur_ref < E50_ref) return false;
     if (m < 0.0 || m > 1.0) return false;
@@ -185,9 +222,14 @@ struct HSParams {
     Gur_ref = Eur_ref / (2.0 * (1.0 + nu_ur));
     Kur_ref = Eur_ref / (3.0 * (1.0 - 2.0 * nu_ur));
 
+    if (K0nc >= 1.0) return false;  // eta_K0 = 0: the cap aspect ratio is undefined
+    if (r_k0_raw() >= 0.99) calib_flags |= CALIB_K0_AT_LIMIT;
+
     if (user_alpha_cap > 0.0) alpha_cap = user_alpha_cap;
     if (user_beta_cap > 0.0)  beta_cap  = user_beta_cap;
     if (alpha_cap <= 0.0 || beta_cap <= 0.0) {
+      // Fail closed: the closed form needs a K0nc path strictly inside the shear cone.
+      if (calib_flags & CALIB_K0_AT_LIMIT) return false;
       calibrate_cap_closed_form();
     }
     return true;
@@ -200,12 +242,11 @@ struct HSParams {
                         ? std::pow(K0nc, m)
                         : std::pow((1.0 + 2.0 * K0nc) / 3.0, m);
 
-    double kf = 2.0 * sin_phi / (1.0 - sin_phi);
-    double r_k0 = std::min(0.99, Rf * (1.0 - K0nc) / (K0nc * kf));
+    double r_k0 = std::min(0.99, r_k0_raw());
 
-    // Rowe dilatancy on the K0nc line:
+    // Mobilised dilatancy on the K0nc line (same PLAXIS rule as rowe_dilatancy()):
     double s_phim_k0 = (1.0 - K0nc) / (1.0 + K0nc);
-    double s_psim_k0 = (s_phim_k0 - sin_phicv) / (1.0 - s_phim_k0 * sin_phicv);
+    double s_psim_k0 = mobilised_sin_psi(s_phim_k0);
 
     // Elastic strain rates per unit d(sig_1):
     double deps_v_e_d1 = (1.0 + 2.0 * K0nc) / (3.0 * Kur_ref * s_k0);
@@ -223,12 +264,16 @@ struct HSParams {
     double deps_v_pc_d1 = deps1_d1 - deps_v_e_d1 - deps_v_ps_d1;
     double deps_q_pc_d1 = (2.0 / 3.0) * deps1_d1 - deps_q_e_d1 - deps_q_ps_d1;
 
-    double Av_eff = std::max(deps_v_pc_d1, 1.0e-3 / Eoed_ref);
-    double Aq_eff = std::max(deps_q_pc_d1, 1.0e-3 / Eoed_ref);
+    double floor_rate = 1.0e-3 / Eoed_ref;
+    if (deps_v_pc_d1 < floor_rate) calib_flags |= CALIB_AV_FLOORED;
+    if (deps_q_pc_d1 < floor_rate) calib_flags |= CALIB_AQ_FLOORED;
+    double Av_eff = std::max(deps_v_pc_d1, floor_rate);
+    double Aq_eff = std::max(deps_q_pc_d1, floor_rate);
 
     if (alpha_cap <= 0.0) {
-      alpha_cap = std::sqrt(eta_k0 * Av_eff / Aq_eff);
-      alpha_cap = std::max(0.20, std::min(5.0, alpha_cap));
+      double a_raw = std::sqrt(eta_k0 * Av_eff / Aq_eff);
+      alpha_cap = std::max(0.20, std::min(5.0, a_raw));
+      if (alpha_cap != a_raw) calib_flags |= CALIB_ALPHA_CLAMPED;
     }
 
     if (beta_cap <= 0.0) {
@@ -569,10 +614,8 @@ inline void rowe_dilatancy(
     dsphim_dqsig =  2.0 * sig3_hat / (denom * denom);
   }
 
-  double scv           = p.sin_phicv;
-  double denom_r       = 1.0 - s_phim * scv;
-  s_psim               = (s_phim - scv) / denom_r;
-  double dspsim_dsphim = (1.0 - scv * scv) / (denom_r * denom_r);
+  double dspsim_dsphim = 0.0;
+  s_psim = p.mobilised_sin_psi(s_phim, &dspsim_dsphim);
 
   if (p.emax > 0.0 && void_ratio >= p.emax && s_psim > 0.0) {
     s_psim    = 0.0;
@@ -587,16 +630,6 @@ inline void rowe_dilatancy(
     double dsig3_dx = dsig3_dk3 * dk3_dx;
     double dqsig_dx = dqsig_dThs * dTheta_sig_dx;
     *dspsim_dx_out  = dspsim_dsphim * (dsphim_ds3 * dsig3_dx + dsphim_dqsig * dqsig_dx);
-  }
-  if (s_psim < 0.0 && (p_mean + p.a_apex) < 2.0 * p.p_min) {
-    double t       = std::max(0.0, std::min(1.0, (p_mean + p.a_apex - p.p_min) / p.p_min));
-    double eta     = t * t * (3.0 - 2.0 * t);
-    double deta_dp = (t > 0.0 && t < 1.0) ? (6.0 * t * (1.0 - t) / p.p_min) : 0.0;
-    double s_raw   = s_psim;
-    s_psim         = eta * s_raw;
-    dspsim_dp      = deta_dp * s_raw + eta * dspsim_dp;
-    dspsim_dq      = eta * dspsim_dq;
-    if (dspsim_dx_out) *dspsim_dx_out = eta * (*dspsim_dx_out);
   }
 }
 
@@ -1235,7 +1268,9 @@ inline void eval_regime4_residuals(
   }
 
   double k_cap = q_val / (alpha2 * p_hat);
-  double denom = std::max(0.05, 0.5 + k_cap * s_psim);
+  // s_psim >= 0 (mobilised_sin_psi never returns a contractant value) and k_cap >= 0,
+  // so the shear and cap flow directions are never parallel and denom >= 0.5 exactly.
+  double denom = 0.5 + k_cap * s_psim;
   dgam_p       = (deps_q_p - k_cap * deps_v_p) / denom;
   deps_v_pc    = deps_v_p + s_psim * dgam_p;
 
@@ -1527,6 +1562,11 @@ inline ActiveRegime return_map_3d_comp(
     lode_factors_and_derivs(p, x_n, Th_n, dTh_dx_n, k3_n, dk3_dx_n, Th_sig_n, dTh_sig_dx_n);
     double ds_dp = 0.0, ds_dq = 0.0;
     stiffness_scale_and_derivs(p, p_n, q_n, s_n, ds_dp, ds_dq, k3_n);
+  } else {
+    // Exactly stress-free state: use the same law at sigma = 0 (sigma3_hat = c cot(phi),
+    // floored at p_min) instead of s = 1, so the stiffness is continuous at zero stress.
+    double ds_dp = 0.0, ds_dq = 0.0;
+    stiffness_scale_and_derivs(p, 0.0, 0.0, s_n, ds_dp, ds_dq);
   }
 
   double Ge = p.Gur_ref * s_n;
@@ -1557,15 +1597,23 @@ inline ActiveRegime return_map_3d_comp(
   invariants_and_lode_grad(p, sig_tr, p_tr, q_tr, x_tr, Theta, dq_dsig_tr, dTheta_dsig_tr, dx_dsig_tr);
   lode_factors_and_derivs(p, x_tr, Theta, dTheta_dx, k3, dk3_dx, Theta_sig, dTheta_sig_dx);
 
-  // 1. Check Rankine / Apex Tension Cutoff (Surface 4):
+  // 1. Apex tension cutoff on the MEAN stress (Surface 4). This is NOT a principal-stress
+  //    Rankine cutoff: it only fires when p_tr falls below the cone apex / -sigma_t.
+  //    Below the apex every admissible stress collapses to the apex point, so the return is
+  //    exact and step-size independent: sigma = p_cut * I, the whole trial deviator is
+  //    plastic (dgamma_p = 2 * q_tr / (3 Ge), same split as the shear regimes), and the cap
+  //    does not harden (tension unloads it). The exact tangent of this map is zero; a
+  //    residual 1e-3 * C_e is returned in the TANGENT ONLY so the global stiffness stays
+  //    non-singular -- it changes the Newton rate, never the converged stress.
   double p_cut = std::max(p.p_min - p.a_apex, -p.sigma_t);
   if (p_tr <= p_cut) {
     for (int i = 0; i < 6; ++i) {
-      st_new.sig[i] = p_cut * I6_M[i] + 1.0e-3 * (sig_tr[i] - p_cut * I6_M[i]);
+      st_new.sig[i] = p_cut * I6_M[i];
       for (int j = 0; j < 6; ++j) {
         C_alg[i][j] = 1.0e-3 * C_e_alg[i][j];
       }
     }
+    if (Ge > 0.0) st_new.gamma_p = st_n.gamma_p + 2.0 * q_tr / (3.0 * Ge);
     return REGIME_TENSION;
   }
 
@@ -1716,13 +1764,27 @@ inline ActiveRegime return_map_3d_comp(
       }
     }
   } else {
-    for (int i = 0; i < 6; ++i) st_new.sig[i] = p_new * I6_M[i];
+    // Isotropic trial state (q_tr ~ 0; in practice the cap regime under isotropic
+    // compression). The radial map s = (q/q_tr) s_tr has the finite limit
+    // q/q_tr -> dq/dq_tr = sens[1][1] (cap: p_hat / (p_hat + c_q deps_v^pc), in (0, 1]),
+    // so the deviatoric block of d(sigma)/d(sigma_tr) is sens[1][1] * I_dev. Dropping it
+    // (as before) gave a rank-1 volumetric tangent with ZERO shear stiffness, i.e. a
+    // singular element matrix at the start of every isotropic (CIU/CID) consolidation.
+    double scale_q = std::max(0.0, std::min(1.0, sens[1][1]));
+    for (int i = 0; i < 6; ++i) st_new.sig[i] = p_new * I6_M[i] + scale_q * s_tr[i];
     double grad_p[6];
     for (int j = 0; j < 6; ++j) grad_p[j] = sens[0][0] * (I6_M[j] / 3.0);
+    double dsig_dsig_tr[6][6];
+    for (int i = 0; i < 6; ++i) {
+      for (int j = 0; j < 6; ++j) {
+        double i_dev_ij = ((i == j) ? 1.0 : 0.0) - (I6_M[i] * I6_M[j]) / 3.0;
+        dsig_dsig_tr[i][j] = I6_M[i] * grad_p[j] + scale_q * i_dev_ij;
+      }
+    }
     for (int i = 0; i < 6; ++i) {
       for (int j = 0; j < 6; ++j) {
         double sum = 0.0;
-        for (int k = 0; k < 6; ++k) sum += (I6_M[i] * grad_p[k]) * C_e_alg[k][j];
+        for (int k = 0; k < 6; ++k) sum += dsig_dsig_tr[i][k] * C_e_alg[k][j];
         C_alg[i][j] = sum + sens[0][3] * I6_M[i] * dGe_deps[j];
       }
     }

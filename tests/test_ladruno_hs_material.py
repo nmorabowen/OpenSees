@@ -382,6 +382,56 @@ def test_oedometer_virgin_compression_k0nc_and_unload():
     assert abs(pp_after_unload - pp_after_load) < 1e-9
 
 
+def test_isotropic_ncc_consolidation_keeps_shear_tangent():
+    """Force-controlled isotropic consolidation of an NC brick past p_p (WP-210 round 3).
+
+    The cap-regime tangent at q_tr = 0 used to drop its deviatoric block (zero shear
+    stiffness, C11 = C12): the first stage of every CIU/CID test. Gate: Newton converges
+    on every step, the state is on the cap, and the material tangent keeps C44 > 0 and a
+    positive deviatoric stiffness C11 - C12 > 0.
+    """
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for n, (x, y, z) in _CUBE.items():
+        ops.node(n, x, y, z)
+        ops.fix(n, 1 if x == 0.0 else 0, 1 if y == 0.0 else 0, 1 if z == 0.0 else 0)
+    p0, p1 = 50.0, 200.0
+    ops.nDMaterial(*_hostun_args(1, phi=35.0, psi=5.0, K0nc=0.45, OCR=1.0, sig0=p0))
+    ops.element("stdBrick", 1, 1, 2, 3, 4, 5, 6, 7, 8, 1)
+
+    def face_loads(pressure: float) -> None:
+        for n, (x, y, z) in _CUBE.items():
+            ops.load(n, -0.25 * pressure * x, -0.25 * pressure * y, -0.25 * pressure * z)
+
+    ops.timeSeries("Constant", 1)
+    ops.pattern("Plain", 1, 1)
+    face_loads(p0)  # balances the -sig0 initial stress
+    ops.timeSeries("Linear", 2)
+    ops.pattern("Plain", 2, 2)
+    face_loads(p1 - p0)
+
+    ops.system("FullGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.test("NormUnbalance", 1.0e-8, 25, 0)
+    ops.algorithm("Newton")
+    nsteps = 15
+    ops.integrator("LoadControl", 1.0 / nsteps)
+    ops.analysis("Static")
+    for k in range(nsteps):
+        assert ops.analyze(1) == 0, f"isotropic consolidation step {k} did not converge"
+        assert ops.testIter() <= 10, f"step {k}: {ops.testIter()} Newton iterations"
+
+    sig = -np.array(ops.eleResponse(1, "material", 1, "stress"))
+    assert np.allclose(sig[:3], p1, rtol=1e-6) and np.allclose(sig[3:], 0.0, atol=1e-6)
+    assert ops.eleResponse(1, "material", 1, "regime")[0] == _REGIME_NAME_TO_CODE["cap"]
+    assert ops.eleResponse(1, "material", 1, "pp")[0] > 0.99 * p1
+
+    C = np.array(ops.eleResponse(1, "material", 1, "tangent")).reshape(6, 6)
+    assert C[3, 3] > 0.0 and C[4, 4] > 0.0 and C[5, 5] > 0.0, "cap tangent lost its shear stiffness"
+    assert C[0, 0] - C[0, 1] > 0.0, "cap tangent is purely volumetric (C11 == C12)"
+
+
 def test_drained_triaxial_compression_mc_equals_mn_and_tcl_parity():
     """Drained triaxial compression (CIDC) on a 3D stdBrick: verifies mc == mn parity and Tcl parity."""
     def run_cidc_py(lode_shape: str):

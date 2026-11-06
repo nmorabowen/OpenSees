@@ -114,7 +114,29 @@ int main() {
     if (!check_fd_tangent(p, st_iso,      e_cp, REGIME_CAP,         "cap"))         return 5;
     if (!check_fd_tangent(p, st_k0,       e_sc, REGIME_SHEAR_CAP,   "shear_cap"))   return 6;
     if (!check_fd_tangent(p, st_fail_cap, e_fc, REGIME_FAILURE_CAP, "failure_cap")) return 10;
-    if (!check_fd_tangent(p, st_ocr,      e_tn, REGIME_TENSION,     "tension"))     return 7;
+    // Purely isotropic cap loading (q_tr = 0): used to return a tangent with zero shear
+    // stiffness; FD perturbs the shear strains, so a missing deviatoric block fails here.
+    const double e_iso[6]  = {2.0e-3, 2.0e-3, 2.0e-3, 0.0, 0.0, 0.0};
+    if (!check_fd_tangent(p, st_iso,      e_iso, REGIME_CAP,        "cap_isotropic")) return 17;
+
+    // Apex tension cutoff: exact apex stress, independent of the trial deviator (the old
+    // 1e-3-leak return was step-size dependent); the tangent is the residual 1e-3 C_e.
+    {
+      HSState s_a, s_b;
+      double C_a[6][6], C_b[6][6];
+      const double e_tn2[6] = {-2.1e-2, -1.9e-2, -2.0e-2, 1.0e-3, 0.0, 0.0};
+      if (return_map_3d_comp(p, st_ocr, e_tn,  s_a, C_a) != REGIME_TENSION) return 7;
+      if (return_map_3d_comp(p, st_ocr, e_tn2, s_b, C_b) != REGIME_TENSION) return 7;
+      const double p_cut = std::max(p.p_min - p.a_apex, -p.sigma_t);
+      for (int i = 0; i < 6; ++i) {
+        const double expect = (i < 3) ? p_cut : 0.0;
+        if (std::abs(s_a.sig[i] - expect) > 1.0e-12 || std::abs(s_b.sig[i] - expect) > 1.0e-12) {
+          std::fprintf(stderr, "FAIL [tension]: stress not at the apex\n");
+          return 7;
+        }
+      }
+      if (!(s_a.gamma_p > st_ocr.gamma_p)) return 7;
+    }
 
     // 3D cap normality check at general Lode angle (theta != +/- pi/6):
     {

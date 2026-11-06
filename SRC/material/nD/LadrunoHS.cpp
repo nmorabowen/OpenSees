@@ -293,7 +293,21 @@ static void* parseLadrunoHSCommon(bool presetSmallStrain) {
   if (!p.finalize()) {
     opserr << "WARNING LadrunoHS (tag " << tag
            << "): invalid material parameter combination (check E50ref, Eoedref, Eurref, m, phi, nu, Rf, G0ref, gamma07)\n";
+    if (p.calib_flags & HSParams::CALIB_K0_AT_LIMIT) {
+      opserr << "         K0nc = " << p.K0nc << " puts the K0nc path at the hyperbolic shear limit "
+             << "(Rf (1-K0nc) / (K0nc kf) >= 0.99): raise K0nc or give -alphaCap/-betaCap\n";
+    }
     return nullptr;
+  }
+  if (p.calib_flags != 0) {
+    opserr << "WARNING LadrunoHS (tag " << tag << "): cap auto-calibration hit a guard"
+           << " (alpha = " << p.alpha_cap << ", beta = " << p.beta_cap << "):";
+    if (p.calib_flags & HSParams::CALIB_ALPHA_CLAMPED) opserr << " alpha clipped to [0.2, 5];";
+    if (p.calib_flags & HSParams::CALIB_AV_FLOORED)    opserr << " volumetric cap rate floored;";
+    if (p.calib_flags & HSParams::CALIB_AQ_FLOORED)    opserr << " deviatoric cap rate floored;";
+    if (p.calib_flags & HSParams::CALIB_K0_AT_LIMIT)   opserr << " K0nc at the shear limit;";
+    opserr << " the oedometer will NOT reproduce Eoedref / K0nc exactly."
+           << " Check Eoedref against E50ref/Eurref, or give -alphaCap/-betaCap.\n";
   }
 
   {
@@ -637,6 +651,9 @@ int LadrunoHS::integrate3D(const double epsComp[6]) {
       lode_factors_and_derivs(params_, x_n, Th_n, dTh_dx_n, k3_n, dk3_dx_n, Th_sig_n, dTh_sig_dx_n);
       double ds1 = 0.0, ds2 = 0.0;
       stiffness_scale_and_derivs(params_, p_n, q_n, s_n, ds1, ds2, k3_n);
+    } else {
+      double ds1 = 0.0, ds2 = 0.0;  // same zero-stress law as return_map_3d_comp
+      stiffness_scale_and_derivs(params_, 0.0, 0.0, s_n, ds1, ds2);
     }
     double Ge_implex = params_.Gur_ref * s_n;
     if (params_.use_small_strain && params_.G0_ref > params_.Gur_ref) {
@@ -859,14 +876,16 @@ int LadrunoHS::revertToStart(void) {
   if (has_sig0_) {
     initialize_state_from_stress(params_, sig0_comp_, st_n_);
   } else {
-    // Initialize preconsolidation pressure p_p at reference K0nc stress while keeping sig = 0:
-    const double sigRef[6] = {
-        params_.p_ref,
-        params_.p_ref * params_.K0nc,
-        params_.p_ref * params_.K0nc,
-        0.0, 0.0, 0.0
-    };
-    initialize_state_from_stress(params_, sigRef, st_n_);
+    // Stress-free start (no -sig0): the material has no stress history except an explicit
+    // -pop, so the cap sits at the K0nc state with sigma_1 = POP (p_min when POP = 0) and
+    // loading from zero (stage-1 gravity) follows normally consolidated cap hardening.
+    // Previously p_p was taken from a hidden sigma_1 = p_ref K0nc state, which made every
+    // stress-free Gauss point overconsolidated to ~p_ref regardless of depth. OCR has no
+    // meaning without a stress to multiply: it is applied at the stage 0 -> 1 transition
+    // (applyStageTransition) or with -sig0/-sig03.
+    const double s1 = params_.pop;
+    const double sigRef[6] = {s1, s1 * params_.K0nc, s1 * params_.K0nc, 0.0, 0.0, 0.0};
+    initialize_state_from_stress(params_, sigRef, st_n_, 1.0, 0.0);
     for (int i = 0; i < 6; ++i) st_n_.sig[i] = 0.0;
     st_n_.gamma_p = 0.0;
   }
@@ -1187,10 +1206,20 @@ int LadrunoHS::setParameter(const char** argv, int argc, Parameter& param) {
 }
 
 int LadrunoHS::updateParameter(int parameterID, Information& info) {
-  auto recalibrateCapAndFinalize = [this]() {
+  // A parameter update that makes the set invalid is refused (returns -1) and the old
+  // parameters are kept; before, finalize()'s verdict was ignored and the material ran on
+  // a half-finalized parameter set.
+  const HSParams saved = params_;
+  auto recalibrateCapAndFinalize = [this, &saved]() -> int {
     params_.alpha_cap = params_.user_alpha_cap;
     params_.beta_cap  = params_.user_beta_cap;
-    params_.finalize();
+    if (!params_.finalize()) {
+      opserr << "WARNING LadrunoHS (tag " << this->getTag()
+             << "): updateParameter gives an invalid parameter set; update refused\n";
+      params_ = saved;
+      return -1;
+    }
+    return 0;
   };
   switch (parameterID) {
     case 1:
@@ -1203,14 +1232,14 @@ int LadrunoHS::updateParameter(int parameterID, Information& info) {
       this->applyStageTransition(newStage);
       return 0;
     }
-    case 2: params_.E50_ref  = info.theDouble; recalibrateCapAndFinalize(); return 0;
-    case 3: params_.Eoed_ref = info.theDouble; recalibrateCapAndFinalize(); return 0;
-    case 4: params_.Eur_ref  = info.theDouble; recalibrateCapAndFinalize(); return 0;
-    case 5: params_.c        = info.theDouble; recalibrateCapAndFinalize(); return 0;
-    case 6: params_.phi_deg  = info.theDouble; recalibrateCapAndFinalize(); return 0;
-    case 7: params_.psi_deg  = info.theDouble; recalibrateCapAndFinalize(); return 0;
-    case 8: params_.G0_ref   = info.theDouble; params_.finalize(); return 0;
-    case 9: params_.gamma_07 = info.theDouble; params_.finalize(); return 0;
+    case 2: params_.E50_ref  = info.theDouble; return recalibrateCapAndFinalize();
+    case 3: params_.Eoed_ref = info.theDouble; return recalibrateCapAndFinalize();
+    case 4: params_.Eur_ref  = info.theDouble; return recalibrateCapAndFinalize();
+    case 5: params_.c        = info.theDouble; return recalibrateCapAndFinalize();
+    case 6: params_.phi_deg  = info.theDouble; return recalibrateCapAndFinalize();
+    case 7: params_.psi_deg  = info.theDouble; return recalibrateCapAndFinalize();
+    case 8: params_.G0_ref   = info.theDouble; return recalibrateCapAndFinalize();
+    case 9: params_.gamma_07 = info.theDouble; return recalibrateCapAndFinalize();
     case 10: params_.OCR     = info.theDouble; return 0;
     case 11: params_.pop     = info.theDouble; return 0;
     case 12: rho_            = info.theDouble; return 0;

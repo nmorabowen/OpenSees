@@ -437,13 +437,28 @@ def test_t2c_consistent_tangent_fd_all_regimes(lode: str) -> None:
         ("cap", st_iso, np.array([2.0e-3, 1.9e-3, 1.8e-3, 1.0e-4, -5.0e-5, 5.0e-5])),
         ("shear_cap", st_k0, np.array([1.5e-3, 0.0, 0.0, 1.0e-4, -5.0e-5, 3.0e-5])),
         ("failure_cap", st_fail_cap, np.array([2.5e-2, -9.0e-3, -9.0e-3, 3.0e-3, -1.0e-3, 1.0e-3])),
-        ("tension", st_ocr, np.array([-2.0e-2, -2.0e-2, -2.0e-2, 0.0, 0.0, 0.0])),
+        # Purely isotropic cap loading (q_tr = 0): the case whose tangent used to have ZERO
+        # shear stiffness. FD perturbs the shear components, so a missing deviatoric block fails.
+        ("cap", st_iso, np.array([2.0e-3, 2.0e-3, 2.0e-3, 0.0, 0.0, 0.0])),
     ]
+
+    # Apex tension cutoff: the stress map is exactly constant (sigma = p_cut I), so its FD
+    # derivative is zero; the returned tangent is the documented residual 1e-3 C_e.
+    sig_t, C_t, reg_t = hs.return_map_3d(p, st_ocr, np.array([-2.0e-2, -2.0e-2, -2.0e-2, 0.0, 0.0, 0.0]))
+    assert reg_t == "tension"
+    p_cut = max(p.p_min - p.a_apex, -p.sigma_t)
+    assert np.allclose(sig_t.sig, p_cut * np.array([1, 1, 1, 0, 0, 0.0]), atol=1e-12)
+    s_t2, _, _ = hs.return_map_3d(p, st_ocr, np.array([-2.1e-2, -1.9e-2, -2.0e-2, 1e-3, 0.0, 0.0]))
+    assert np.allclose(s_t2.sig, sig_t.sig, atol=1e-12), "apex return must not depend on the trial deviator"
+    assert sig_t.gamma_p > st_ocr.gamma_p
 
     delta = 1.0e-7
     for expected_reg, st_base, eps_target in cases:
         _, C_alg, reg = hs.return_map_3d(p, st_base, eps_target)
         assert reg == expected_reg
+        if expected_reg == "cap" and abs(eps_target[3]) == 0.0:
+            G_shear = C_alg[3, 3]
+            assert G_shear > 0.0, "isotropic cap tangent lost its shear stiffness"
         C_fd = np.zeros((6, 6), dtype=float)
         for j in range(6):
             ep = eps_target.copy()
@@ -508,11 +523,14 @@ def test_t2c_consistent_tangent_fd_all_regimes(lode: str) -> None:
         failure_mode=False, force_1d_fallback=True,
     )
     assert ok_2d and ok_1d
-    assert abs(p_2d - p_1d) < 1.0e-10
-    assert abs(q_2d - q_1d) < 1.0e-10
+    # Both solvers stop on a RELATIVE residual, and the nested 1D fallback brackets to
+    # ~1e-11 relative, so compare roots relatively. The sensitivities come from central FD
+    # of the residuals (h = 1e-8), accurate to ~1e-7 relative: compare them relatively too.
+    assert abs(p_2d - p_1d) < 1.0e-10 * max(1.0, abs(p_2d))
+    assert abs(q_2d - q_1d) < 1.0e-10 * max(1.0, abs(q_2d))
     assert abs(dg_2d - dg_1d) < 1.0e-12
-    assert abs(pp_2d - pp_1d) < 1.0e-10
-    assert np.max(np.abs(sens_2d - sens_1d)) < 1.0e-6
+    assert abs(pp_2d - pp_1d) < 1.0e-10 * max(1.0, abs(pp_2d))
+    assert np.max(np.abs(sens_2d - sens_1d) / np.maximum(1.0, np.abs(sens_2d))) < 1.0e-6
 
     # Also verify high-confinement / small-p_ref regime4_corner (ULP scaling regression check):
     p_hi = hs.HSParams(
@@ -531,7 +549,7 @@ def test_t2c_consistent_tangent_fd_all_regimes(lode: str) -> None:
     assert abs(q_hi2d - q_hi1d) / q_hi2d < 1.0e-11
     assert abs(dg_hi2d - dg_hi1d) / dg_hi2d < 1.0e-11
     assert abs(pp_hi2d - pp_hi1d) / pp_hi2d < 1.0e-11
-    assert np.max(np.abs(sens_hi2d - sens_hi1d)) < 1.0e-5
+    assert np.max(np.abs(sens_hi2d - sens_hi1d) / np.maximum(1.0, np.abs(sens_hi2d))) < 1.0e-6  # FD-built sens: relative
 
 
 def test_t1b_cide_triaxial_extension_hyperbolic_backbone_and_dilatancy() -> None:

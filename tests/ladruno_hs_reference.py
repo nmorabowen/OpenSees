@@ -123,6 +123,7 @@ class HSParams:
     cos_phi: float = field(init=False)
     sin_psi: float = field(init=False)
     sin_phicv: float = field(init=False)
+    calib_flags: int = field(init=False, default=0)
     a_apex: float = field(init=False)
     p_hat_ref: float = field(init=False)
     p_min: float = field(init=False)
@@ -191,12 +192,30 @@ class HSParams:
         if self.stiff_stress not in ("sigma3", "p"):
             raise ValueError(f"Unknown stiff_stress '{self.stiff_stress}' (expected 'sigma3' or 'p').")
 
+        if self.K0nc >= 1.0:
+            raise ValueError("K0nc must be < 1.")
+        self.calib_flags = 0
         if self.alpha_cap <= 0.0 or self.beta_cap <= 0.0:
             alpha_cal, beta_cal = calibrate_cap_parameters(self)
             if self.alpha_cap <= 0.0:
                 self.alpha_cap = alpha_cal
             if self.beta_cap <= 0.0:
                 self.beta_cap = beta_cal
+
+
+def mobilised_sin_psi(p: HSParams, s_phim: float) -> Tuple[float, float]:
+    """PLAXIS HS mobilised dilatancy: (sin psi_m, d sin psi_m / d sin phi_m).
+
+    psi_m = 0 for sin phi_m < 3/4 sin phi or psi = 0; otherwise max(Rowe, 0). Mirrors
+    HSParams::mobilised_sin_psi in LadrunoHSKernel.h (no contractant branch).
+    """
+    if p.sin_psi <= 0.0 or s_phim < 0.75 * p.sin_phi:
+        return 0.0, 0.0
+    den = 1.0 - s_phim * p.sin_phicv
+    rowe = (s_phim - p.sin_phicv) / den
+    if rowe <= 0.0:
+        return 0.0, 0.0
+    return rowe, (1.0 - p.sin_phicv ** 2) / (den * den)
 
 
 def calibrate_cap_parameters(p: HSParams) -> Tuple[float, float]:
@@ -213,10 +232,13 @@ def calibrate_cap_parameters(p: HSParams) -> Tuple[float, float]:
     eta_K0 = kq / kp
 
     r_K0 = p.Rf * ((1.0 - K0) / K0) * ((1.0 - p.sin_phi) / (2.0 * p.sin_phi))
-    r_K0 = min(r_K0, 0.99)
+    if r_K0 >= 0.99:
+        raise ValueError(
+            f"K0nc = {K0} puts the K0nc path at the hyperbolic shear limit (r = {r_K0:.3f} >= 0.99)."
+        )
 
     s_phim_K0 = (1.0 - K0) / (1.0 + K0)
-    s_psim_K0 = (s_phim_K0 - p.sin_phicv) / (1.0 - s_phim_K0 * p.sin_phicv)
+    s_psim_K0, _ = mobilised_sin_psi(p, s_phim_K0)
 
     s_K0 = (K0 ** p.m) if p.stiff_stress == "sigma3" else (kp ** p.m)
 
@@ -229,11 +251,20 @@ def calibrate_cap_parameters(p: HSParams) -> Tuple[float, float]:
     Aq = 2.0 / (3.0 * p.Eoed_ref) - kq / (3.0 * p.Gur_ref * s_K0) - 0.5 * d_gam_p
 
     # Guard admissible positive cap compliances:
-    Av_eff = max(Av, 1.0e-3 / p.Eoed_ref)
-    Aq_eff = max(Aq, 1.0e-3 / p.Eoed_ref)
+    floor = 1.0e-3 / p.Eoed_ref
+    flags = 0
+    if Av < floor:
+        flags |= 2
+    if Aq < floor:
+        flags |= 4
+    Av_eff = max(Av, floor)
+    Aq_eff = max(Aq, floor)
 
-    alpha = math.sqrt(eta_K0 * Av_eff / Aq_eff)
-    alpha = max(0.20, min(5.0, alpha))
+    alpha_raw = math.sqrt(eta_K0 * Av_eff / Aq_eff)
+    alpha = max(0.20, min(5.0, alpha_raw))
+    if alpha != alpha_raw:
+        flags |= 1
+    p.calib_flags = flags
     kpp = kp * math.sqrt(1.0 + (eta_K0 / alpha) ** 2)
     beta_cap = Av_eff * (kpp ** (p.m - 1.0))
     return alpha, beta_cap
@@ -549,10 +580,7 @@ def _rowe_dilatancy(
         dsphim_dq = 0.0
         dsphim_dx = 0.0
 
-    scv = p.sin_phicv
-    denom_r = 1.0 - s_phim * scv
-    s_psim = (s_phim - scv) / denom_r
-    dspsim_dsphim = (1.0 - scv * scv) / (denom_r * denom_r)
+    s_psim, dspsim_dsphim = mobilised_sin_psi(p, s_phim)
 
     # Dilatancy cutoff when void_ratio >= emax and soil attempts to dilate (s_psim > 0):
     if p.emax > 0.0 and void_ratio >= p.emax and s_psim > 0.0:
@@ -563,15 +591,6 @@ def _rowe_dilatancy(
     dspsi_dp = dspsim_dsphim * dsphim_dp
     dspsi_dq = dspsim_dsphim * dsphim_dq
     dspsi_dx = dspsim_dsphim * dsphim_dx
-    if s_psim < 0.0 and (p_mean + p.a_apex) < 2.0 * p.p_min:
-        t = max(0.0, min(1.0, (p_mean + p.a_apex - p.p_min) / p.p_min))
-        eta = t * t * (3.0 - 2.0 * t)
-        deta_dp = (6.0 * t * (1.0 - t) / p.p_min) if (0.0 < t < 1.0) else 0.0
-        s_raw = s_psim
-        s_psim = eta * s_raw
-        dspsi_dp = deta_dp * s_raw + eta * dspsi_dp
-        dspsi_dq = eta * dspsi_dq
-        dspsi_dx = eta * dspsi_dx
 
     if return_dx:
         return s_psim, dspsi_dp, dspsi_dq, dspsi_dx
@@ -1089,7 +1108,7 @@ def _solve_regime4_corner(
             s_psim, _, _ = _rowe_dilatancy(p, p_val, q_val, void_ratio, k3_v, Th_sig_v)
 
         k_cap = q_val / (alpha2 * p_hat)
-        denom = max(0.05, 0.5 + k_cap * s_psim)
+        denom = 0.5 + k_cap * s_psim  # s_psim >= 0, k_cap >= 0 -> denom >= 0.5
         dgam_p = (deps_q_p - k_cap * deps_v_p) / denom
         deps_v_pc = deps_v_p + s_psim * dgam_p
 
@@ -1315,8 +1334,8 @@ def return_map_3d(
     st_new.void_ratio = st_n.void_ratio - (1.0 + st_n.void_ratio) * deps_v
 
     # Committed reference stress scale s_n using exact Lode minor principal stress factor k3_n:
-    if np.linalg.norm(st_n.sig) < 1.0e-12:
-        s_n = 1.0
+    if float(np.dot(st_n.sig, st_n.sig)) <= 1.0e-24:
+        s_n, _, _ = _stiffness_scale_and_derivs(p, 0.0, 0.0)
     else:
         p_n, q_n, x_n, _, _, _ = invariants_and_lode_grad(p, st_n.sig)
         _, _, k3_n, _, _, _ = lode_factors_and_derivs(p, x_n)
@@ -1351,7 +1370,10 @@ def return_map_3d(
     # 1. Check Rankine / Apex Tension Cutoff (Surface 4):
     p_cut = max(p.p_min - p.a_apex, -p.sigma_t)
     if p_tr <= p_cut:
-        st_new.sig = p_cut * _I6_M + 1.0e-3 * (sig_tr - p_cut * _I6_M)
+        # Exact apex return (stress), residual 1e-3 C_e in the tangent only:
+        st_new.sig = p_cut * _I6_M
+        if Ge > 0.0:
+            st_new.gamma_p = st_n.gamma_p + 2.0 * q_tr / (3.0 * Ge)
         C_floor = 1.0e-3 * C_e_alg
         return st_new, C_floor, "tension"
 
@@ -1480,10 +1502,13 @@ def return_map_3d(
             + sens[1, 3] * np.outer(n_s, dGe_deps)
         )
     else:
-        st_new.sig = p_new * _I6_M
+        # Isotropic trial state: radial scale -> dq/dq_tr = sens[1, 1] (keeps shear stiffness).
+        scale_q = max(0.0, min(1.0, float(sens[1, 1])))
+        st_new.sig = p_new * _I6_M + scale_q * s_tr
         dp_tr_dsig = _I6_M / 3.0
         grad_p = sens[0, 0] * dp_tr_dsig
-        dsig_dsig_tr = np.outer(_I6_M, grad_p)
+        I_dev_stress = np.eye(6, dtype=float) - np.outer(_I6_M, _I6_M) / 3.0
+        dsig_dsig_tr = np.outer(_I6_M, grad_p) + scale_q * I_dev_stress
         C_alg = dsig_dsig_tr @ C_e_alg + sens[0, 3] * np.outer(_I6_M, dGe_deps)
 
     return st_new, C_alg, regime
