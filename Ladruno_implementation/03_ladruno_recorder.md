@@ -269,11 +269,11 @@ Keep MPCO's genuinely good ideas; fix its worst ergonomics.
 └── MODEL_STAGE[<stamp>]
     ├── MODEL       NODES, ELEMENTS, LOCAL_AXES, SECTION_ASSIGNMENTS, SETS   (≈ as today)
     └── RESULTS
-        ├── ON_NODES/<name>/{ID, DATA/STEP_k}
-        ├── ON_ELEMENTS/<name>/{ID, META, DATA/STEP_k}
-        ├── ON_DOMAIN/<name>/{ID={0}, DATA/STEP_k}         # NEW (v2), [1 × nComp]; e.g.
+        ├── ON_NODES/<name>/{ID, DATA[T×nIds×nComp], TIME[T], STEP[T]}   # D3 (was DATA/STEP_k)
+        ├── ON_ELEMENTS/<name>/{ID, META, DATA, TIME, STEP}
+        ├── ON_DOMAIN/<name>/{ID={0}, DATA, TIME, STEP}    # NEW (v2), [1 × nComp]; e.g.
         │       energyBalance  COMPONENTS="KE,IE,DW,ULW,RES,ERR"
-        ├── ON_REGIONS/<name>/{ID=[regionTags], DATA/STEP_k}  # NEW (v2), [nRegions × nComp]
+        ├── ON_REGIONS/<name>/{ID=[regionTags], DATA, TIME, STEP}  # NEW (v2), [nRegions × nComp]
         └── ENVELOPES/ON_{NODES,ELEMENTS,DOMAIN,REGIONS}/<name>/  # NEW (v3)
                 {ID, MIN, MAX, ABSMAX, ARG_STEP}
 ```
@@ -289,8 +289,15 @@ and `STKO_to_python` can parse without the bespoke decoder.
 > 2026-05-30), **co-designed with apeGmsh's reader**. Its centerpiece is a
 > self-describing `BASIS`/`QUADRATURE` descriptor per element group (replacing the two
 > closed enums) so second-order/Bézier elements and Belytschko co-rotational beams need
-> no reader-side per-class logic. `FORMAT_VERSION` lets readers branch; apeGmsh owns
-> the spec going forward.
+> no reader-side per-class logic. `FORMAT_VERSION` lets readers branch.
+>
+> **Ownership (maintainer ruling, apeGmsh #2079 open point 3, 2026-10-15).** This
+> corrects an earlier line here that said apeGmsh owns the spec going forward. **The
+> fork owns the `.ladruno` format:** the layout, the buckets, the token names,
+> `FORMAT_VERSION`/`FORMAT_MINOR_VERSION` and `ladruno_format.py` (the executable spec).
+> apeGmsh co-designed v1 and is the canonical consumer, but it changes the format only
+> through a fork PR. **apeGmsh owns only the `INFO/PROVENANCE` attributes it stamps**
+> after the recorder closes ([[ladruno_schema_v1]] §7b.1).
 
 ### apeGmsh integration
 
@@ -327,10 +334,15 @@ the apeGmsh repo**, co-versioned with the recorder's `FORMAT_VERSION`.
 **Parallel (kept from MPCO, D5).** `sendSelf`/`recvSelf` broadcast only the recorder
 *spec* from p0 to all ranks (extend the `Serializer` payload for new request types;
 keep enum values stable). Each rank records its own subdomain to `part-<p_id>.mpco`.
-The **only** collective op in the record loop is the existing single-int
-`MPI_Allreduce` (line 4594) that synchronizes the `hasDomainChanged()` stamp so every
-rank names its `MODEL_STAGE[<stamp>]` group identically — result data is never
-communicated. apeGmsh stitches part files on read (it owns the contract now).
+~~The only collective op in the record loop is the existing single-int
+`MPI_Allreduce` (line 4594) that synchronizes the `hasDomainChanged()` stamp~~
+**Correction (WP-163/165 review):** that `MPI_Allreduce` is the frozen recorder's only
+`_PARALLEL_PROCESSING` code, and it is compiled out — `OPS_Recorder` is built sequentially
+for every target (LEDGER_quirks). Each rank uses its own stamp. WP-165 makes a stamp move
+start a new `MODEL_STAGE` only when the node/element set changed, which removes the common
+rank-local causes of divergent stage names (contact re-emit, `eleLoad`, SP patterns); a
+genuinely rank-local topology change can still give ranks different stage names. Result
+data is never communicated. apeGmsh stitches part files on read; the part-file naming and `INFO` partition manifest it reads are the fork's contract ([[ladruno_schema_v1]] §2, §7c).
 
 **Envelopes via a sink, not a new hierarchy.** `EnvelopeSink` wraps any
 `ResultSource`; the only parallel-aware knob is a per-source
@@ -351,9 +363,10 @@ energy/`ON_DOMAIN` channel needs — so v3b co-lands with that work.
 index of each extreme; `commitTag` is global across ranks so it's a valid local id).
 Envelopes are **per `MODEL_STAGE`** — flush-and-reset on `hasDomainChanged()`.
 Because `finalize()` has no clean OpenSees callback (only destructor / stage change),
-the sink **periodically rewrites** envelope datasets in place alongside the existing
-per-step `H5Fflush`, so a kernel crash ([[project_mpco_exit_crash]]) loses at most the
-last N steps of envelope.
+the sink rewrites the envelope datasets in place — every recorded step for envelopes up
+to 8 MiB, on the `-flush` cadence (default 10 s) above that (WP-164) — so a kernel crash
+([[project_mpco_exit_crash]]) loses at most the last `-flush` seconds of envelope. (Before
+WP-164 it deleted and recreated every envelope group on every recorded step.)
 
 ### Testing — layered, frozen-MPCO-as-oracle
 

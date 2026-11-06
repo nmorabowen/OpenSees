@@ -165,7 +165,13 @@ EigenIntegrator::formM()
    // loop through the FE_Elements getting them to add the tangent    
     int result = 0;
     FE_EleIter &theEles2 = theAnalysisModel->getFEs();    
-    while((elePtr = theEles2()) != 0) {     
+    while((elePtr = theEles2()) != 0) {
+	// Ladruno WP-183: an FE_Element without an Element (Penalty/Lagrange
+	// MP/SP/EQ, LadrunoContactFE) carries no mass. The constraint FEs'
+	// getTangent ignores the integrator and returns the constraint
+	// stiffness (alpha C^T C, alpha), which upstream added to M here.
+	if (elePtr->getElement() == 0)
+	    continue;
 	if (theSOE->addM(elePtr->getTangent(this), elePtr->getID()) < 0) {
 	    opserr << "WARNING EigenIntegrator::formK -";
 	    opserr << " failed in addA for ID " << elePtr->getID();	    

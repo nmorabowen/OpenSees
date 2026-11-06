@@ -119,6 +119,7 @@ class StagedStrainNDMaterial : public NDMaterial
   // Ladruno WP-144 (G2 close): read-only view of the wrapped material, for the LogStrain factories'
   // construction-time check (is a LadrunoElasticStrainProvider hidden behind this wrapper?).
   const NDMaterial *getInner(void) const { return theMaterial; }
+  void setMaxStrain(double e) { maxStrain = e; }          // Ladruno (C3b): -maxStrain
   ~StagedStrainNDMaterial();
 
   const char *getClassType(void) const { return "StagedStrainNDMaterial"; }
@@ -166,6 +167,8 @@ class StagedStrainNDMaterial : public NDMaterial
   bool   eps0Explicit;       // ε0 supplied at construction (revertToStart keeps it)
   Vector eps0;               // birth strain (sized to inner order)
   Vector totalStrain;        // last total strain seen (for the totalStrain response)
+  double maxStrain;          // Ladruno (C3b): -maxStrain guard (<= 0 off). |eps_rel|_inf above it
+                             // => setTrialStrain returns a bare -1 WITHOUT touching the inner
 
   void sizeBuffers(int n);   // size ε0/totalStrain to a given order
   // shared strain-seam: capture ε0 at birth, forward ε − ε0 (rate optional).

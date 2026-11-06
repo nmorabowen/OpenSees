@@ -46,6 +46,7 @@
 #include <DOF_GrpIter.h>
 #include <Element.h>                  // Ladruno P3: getClassTag() on the assembled element
 #include <profiler/ProfilerMacros.h>  // Ladruno P3: deep per-element-type timing
+#include <LadrunoThreadedAssembly.h>   // Ladruno WP-192: threaded tangent loop
 
 TransientIntegrator::TransientIntegrator(int clasTag)
 :IncrementalIntegrator(clasTag)
@@ -118,6 +119,15 @@ TransientIntegrator::formTangent(int statFlag)
     // Ladruno P3: deep per-element-type tangent timing (transient path; the DOF_Group
     // mass/damping loop above is not element-keyed and is left untimed here).
     OPS_PROFILE_SCOPE_DEEP_NAMED(_ops_elemTan, "elem.tangent");
+
+    // Ladruno WP-192: threaded tangent loop (bit-identical to the loop below).
+    {
+      int ladrunoRes = 0;
+      if (ladrunoThreadedFELoop(theModel, theLinSOE, this, LADRUNO_FE_TANGENT, -2,
+                                "TransientIntegrator::formTangent() - failed to addA:ele;", ladrunoRes))
+        return (ladrunoRes != 0) ? ladrunoRes : result;
+    }
+
     FE_EleIter &theEles2 = theModel->getFEs();
     FE_Element *elePtr;
     while((elePtr = theEles2()) != 0)     {

@@ -548,6 +548,48 @@ int ElasticTimoshenkoBeam2d::addLoad(ElementalLoad *load, double loadFactor)
         ql0(4) -= V;
         ql0(5) += M;
     }
+    else if (type == LOAD_TAG_Beam2dPartialUniformLoad) {
+        // Ladruno: cancellation-free trapezoidal partial load with Timoshenko shear flexibility phi
+        double wya = data(0) * loadFactor;  // Transverse at start
+        double wyb = data(1) * loadFactor;  // Transverse at end
+        double waa = data(2) * loadFactor;  // Axial at start
+        double wab = data(3) * loadFactor;  // Axial at end
+        double a = data(4) * L;
+        double b = data(5) * L;
+        double ell = b - a;
+        if (ell <= 0.0 || a < 0.0 || b > L)
+            return 0;
+
+        double J0 = 0.5 * ell * (wya + wyb);
+        double J1 = (ell * ell / 6.0) * (wya + 2.0 * wyb);
+        double J2 = (ell * ell * ell / 12.0) * (wya + 3.0 * wyb);
+        double J3 = (ell * ell * ell * ell / 20.0) * (wya + 4.0 * wyb);
+        double I0 = J0;
+        double I1 = a * J0 + J1;
+        double I2 = a * a * J0 + 2.0 * a * J1 + J2;
+        double I3 = a * a * a * J0 + 3.0 * a * a * J1 + 3.0 * a * J2 + J3;
+
+        double Vy2 = I1 / L;
+        double Vy1 = I0 - Vy2;
+        double M1_eb = -I1 + (2.0 / L) * I2 - (1.0 / (L * L)) * I3;
+        double M2_eb = (1.0 / L) * I2 - (1.0 / (L * L)) * I3;
+
+        double Mz1 = (M1_eb + 0.5 * phi * (M1_eb - M2_eb)) / (1.0 + phi);
+        double Mz2 = (M2_eb - 0.5 * phi * (M1_eb - M2_eb)) / (1.0 + phi);
+        double dV = (Mz1 + Mz2) / L;
+
+        double P = 0.5 * ell * (waa + wab);
+        double PJ = (a * P + (ell * ell / 6.0) * (waa + 2.0 * wab)) / L;
+        double PI = P - PJ;
+
+        // fixed end forces in local system
+        ql0(0) -= PI;
+        ql0(1) += -Vy1 + dV;
+        ql0(2) += Mz1;
+        ql0(3) -= PJ;
+        ql0(4) += -Vy2 - dV;
+        ql0(5) += Mz2;
+    }
     
     else {
         opserr <<"ElasticTimoshenkoBeam2d::addLoad() - "

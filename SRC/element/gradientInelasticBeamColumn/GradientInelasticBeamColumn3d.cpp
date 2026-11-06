@@ -92,7 +92,7 @@ void* OPS_GradientInelasticBeamColumn3d()
 	double lc;
 	numData = 1;
 	if (OPS_GetDoubleInput(&numData, &lc) < 0) {
-		opserr << "WARNING! gradientInelasticBeamColumn2d - invalid double input\n";
+		opserr << "WARNING! gradientInelasticBeamColumn3d - invalid double input\n"; // Ladruno: fix 2d->3d typo
 		return 0;
 	}
 	
@@ -261,7 +261,7 @@ GradientInelasticBeamColumn3d::GradientInelasticBeamColumn3d(int tag, int nodeI,
 	}
 
 	double *secX = new double[numSections];
-	beamIntegr->getSectionLocations(numSections, L, secX);	// relative locations of sections (x/L)
+	beamIntegr->getSectionLocations(numSections, 1.0, secX);	// relative locations of sections (x/L) // Ladruno: L is 0.0 before setDomain; pass 1.0
 
 	for (int i = 0; i < numSections; i++) {
 		if (secX[i] >= 1.0 - secLR2)

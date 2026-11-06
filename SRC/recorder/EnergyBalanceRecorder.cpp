@@ -46,12 +46,15 @@
 #include <NodeIter.h>
 #include <Element.h>
 #include <ElementIter.h>
+#include "Ladruno_LaunchEnv.h"   // Ladruno WP-163 M4/MP-3
+#include "LadrunoEnergyBalanceMPI.h"   // Ladruno: optional -v2 columns agreed across ranks
 #include <MeshRegion.h>
 #include <Vector.h>
 #include <ID.h>
 #include <Matrix.h>
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
+#include <RelativeMassDamping.h>   // Ladruno (relativeMassDamping)
 
 #include <StandardStream.h>
 #include <DataFileStream.h>
@@ -73,6 +76,10 @@
 #include <string>    // Ladruno ADR-69 P2: per-rank filename suffix
 #include <sstream>   // Ladruno ADR-69 P2
 #include <cstdlib>   // Ladruno ADR-69 P2: std::getenv
+#include <profiler/ProfilerMacros.h>   // Ladruno WP-196: commit-phase split
+#include <profiler/Profiler.h>         // Ladruno WP-196: deep() gate
+#include <LadrunoThreads.h>            // Ladruno WP-196: the WP-192 parallel-for
+#include <OPS_Globals.h>               // Ladruno WP-196: ops_TheActiveElement
 
 void*
 OPS_EnergyBalanceRecorder()
@@ -102,6 +109,7 @@ OPS_EnergyBalanceRecorder()
     bool closeOnWrite = false;
     bool v2Layout = false;        // Ladruno ADR-69
     int ownedNodesRegion = -1;    // Ladruno ADR-69 P2: -ownedNodes region tag
+    bool relMassSplit = false;     // Ladruno (relativeMassDamping)
 
     const char *inetAddr = 0;
     int inetPort = 0;
@@ -118,6 +126,10 @@ OPS_EnergyBalanceRecorder()
         else if (strcmp(option, "-v2") == 0) {
             // Ladruno ADR-69: channel-aware layout with element/nodal split
             v2Layout = true;
+        }
+        else if (strcmp(option, "-relativeMassSplit") == 0) {
+            // Ladruno (relativeMassDamping): DW_rel / W_ref columns (-v2)
+            relMassSplit = true;
         }
         else if (strcmp(option, "-scientific") == 0) {
             doScientific = true;
@@ -210,28 +222,28 @@ OPS_EnergyBalanceRecorder()
     // extension; appended when there is none).
     std::string partFilename;
     if (filename != 0) {
-        static const char* const size_rank_env[][2] = {
-            { "PMI_SIZE",             "PMI_RANK" },
-            { "OMPI_COMM_WORLD_SIZE", "OMPI_COMM_WORLD_RANK" },
-            { "SLURM_NTASKS",         "SLURM_PROCID" },
-        };
-        for (size_t i = 0; i < sizeof(size_rank_env)/sizeof(size_rank_env[0]); ++i) {
-            const char* size_env = std::getenv(size_rank_env[i][0]);
-            if (size_env != 0 && std::atoi(size_env) > 1) {
-                const char* rank_env = std::getenv(size_rank_env[i][1]);
-                const int rank = (rank_env != 0) ? std::atoi(rank_env) : 0;
-                std::string stem(filename), ext;
-                const size_t dot = stem.find_last_of('.');
-                if (dot != std::string::npos && dot > 0) {
-                    ext = stem.substr(dot);
-                    stem.erase(dot);
-                }
-                std::stringstream ss;
-                ss << stem << ".part-" << rank << ext;
-                partFilename = ss.str();
-                filename = partFilename.c_str();
-                break;
+        // WP-163 M4/MP-3: the shared probe (Ladruno_LaunchEnv.h) — SLURM only
+        // inside an srun step; SIZE > 1 without a valid RANK is refused.
+        int rank = 0, size = 1;
+        std::string source, error;
+        const ladruno::launch::Status st =
+            ladruno::launch::detectRank(rank, size, source, error);
+        if (st == ladruno::launch::Inconsistent) {
+            opserr << "WARNING: EnergyBalance: " << error.c_str()
+                   << " - cannot tell which per-rank file this process owns\n";
+            return 0;
+        }
+        if (st == ladruno::launch::Launched) {
+            std::string stem(filename), ext;
+            const size_t dot = stem.find_last_of('.');
+            if (dot != std::string::npos && dot > 0) {
+                ext = stem.substr(dot);
+                stem.erase(dot);
             }
+            std::stringstream ss;
+            ss << stem << ".part-" << rank << ext;
+            partFilename = ss.str();
+            filename = partFilename.c_str();
         }
     }
 
@@ -269,6 +281,12 @@ OPS_EnergyBalanceRecorder()
     EnergyBalanceRecorder* recorder = new EnergyBalanceRecorder(
         *domain, *theOutputStream, echoTimeFlag, regions, v2Layout,
         ownedNodesRegion);
+    if (relMassSplit) {
+        if (!v2Layout)
+            opserr << "EnergyBalanceRecorder: WARNING -relativeMassSplit needs -v2; ignored" << endln;
+        else
+            recorder->setRelativeMassSplit(true);
+    }
 
     return recorder;
 }
@@ -288,7 +306,8 @@ EnergyBalanceRecorder::EnergyBalanceRecorder()
       regionTags(), numRegions(0),
       region_acc(),
       cacheValid(false), cachedNumElements(-1), cachedNumNodes(-1),
-      maxNumDOF(0), velScratch()
+      maxNumDOF(0), velScratch(),
+      sweepNumSafe(0), sweepAnnounced(0)   // Ladruno WP-196
 {
 
 }
@@ -314,7 +333,8 @@ EnergyBalanceRecorder::EnergyBalanceRecorder(
       regionTags(regions), numRegions(regions.Size()),
       region_acc((size_t)regions.Size()),
       cacheValid(false), cachedNumElements(-1), cachedNumNodes(-1),
-      maxNumDOF(0), velScratch()
+      maxNumDOF(0), velScratch(),
+      sweepNumSafe(0), sweepAnnounced(0)   // Ladruno WP-196
 {
     response.Zero();
 }
@@ -383,6 +403,10 @@ EnergyBalanceRecorder::buildCache(void)
     Element *ele;
     ElementIter &elements = theDomain->getElements();
     while ((ele = elements()) != 0) {
+        // Ladruno WP-163 M1: skip the SP ShadowSubdomains P0's iterator yields
+        // (no node pointers; a setResponse probe would go to the remote actor).
+        if (ele->isSubdomain())
+            continue;
         const int n = ele->getNumDOF();
         if (n > maxNumDOF)
             maxNumDOF = n;
@@ -490,22 +514,28 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
     // out-param (null on the legacy path -> zero extra work there).
     double v2_ke_ele = 0., v2_ke_nod = 0., v2_dw_ele = 0., v2_dw_nod = 0.;
     double v2_ms_ke = 0.;
+    double rr_rel_rate = 0., rr_ref_rate = 0.;   // Ladruno (relativeMassDamping)
     std::vector<double> step_region_ke((size_t)numRegions, 0.0);
     std::vector<double> step_region_internal_rate((size_t)numRegions, 0.0);
     std::vector<double> step_region_damping_rate((size_t)numRegions, 0.0);
     std::vector<double> step_region_unbalanced_rate((size_t)numRegions, 0.0);
 
     {
-        Element *ele;
-        ElementIter &elements = theDomain->getElements();
-        while ((ele = elements()) != 0) {
-            // Ladruno ADR-69 P2.1: an element swapped in at unchanged counts
-            // can exceed the cached max DOF - grow the scratch, never overrun
-            if (ele->getNumDOF() > velScratch.Size())
-                velScratch.resize(ele->getNumDOF());
-            double ke = 0., ie = 0., dw = 0.;
-            ebkernel::addElementEnergy(ele, velScratch, ke, ie, dw,
-                                       v2Layout ? &v2_ms_ke : 0);
+        // Ladruno WP-196: the per-element terms are formed first (threaded when
+        // allowed, see sweepElements) and reduced here in the live element
+        // order, so every sum below sees the same operands in the same order
+        // as the former one-pass loop. ebkernel::elementEnergyTerms is bitwise
+        // addElementEnergy on zeroed locals; t.ms is what it added to *msKE.
+        OPS_PROFILE_SCOPE("eb.elements");
+        this->sweepElements();
+        const bool msActive = v2Layout &&
+            Ladruno::MassScalingEnergyRegistry::instance().active();
+        for (size_t e = 0; e < sweepEles.size(); ++e) {
+            Element *ele = sweepEles[e];
+            const ebkernel::ElementEnergyTerms &t = sweepTerms[e];
+            const double ke = t.ke, ie = t.ie, dw = t.dw;
+            if (msActive)
+                v2_ms_ke += t.ms;
             g_ke += ke; g_internal_rate += ie; g_damping_rate += dw;
             if (v2Layout) { v2_ke_ele += ke; v2_dw_ele += dw; }
 
@@ -524,6 +554,7 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
     }
 
     {
+        OPS_PROFILE_SCOPE("eb.nodes");   // Ladruno WP-196
         Node *node;
         NodeIter &nodes = theDomain->getNodes();
         while ((node = nodes()) != 0) {
@@ -534,7 +565,9 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
                 continue;
             double ke = 0., dw = 0., ulw = 0.;
             ebkernel::addNodeEnergy(node, ke, dw, ulw,
-                                    v2Layout ? &v2_ms_ke : 0);
+                                    v2Layout ? &v2_ms_ke : 0,
+                                    chRelMass ? &rr_rel_rate : 0,
+                                    chRelMass ? &rr_ref_rate : 0);
             g_ke += ke; g_damping_rate += dw; g_unbalanced_rate += ulw;
             if (v2Layout) { v2_ke_nod += ke; v2_dw_nod += dw; }
 
@@ -606,6 +639,20 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
             response(col++) = out[ebkernel::V2_E_HG];
         if (chMassScale)
             response(col++) = out[ebkernel::V2_KE_MS];
+        if (chRelMass) {
+            // Ladruno (relativeMassDamping): advisory split of DW_nod
+            if (firstRecord) {
+                rr_dwRel += rr_rel_rate * dT;
+                rr_wRef  += rr_ref_rate * dT;
+            } else {
+                rr_dwRel += 0.5 * (rr_prevRel + rr_rel_rate) * dT;
+                rr_wRef  += 0.5 * (rr_prevRef + rr_ref_rate) * dT;
+            }
+            rr_prevRel = rr_rel_rate;
+            rr_prevRef = rr_ref_rate;
+            response(col++) = rr_dwRel;
+            response(col++) = rr_wRef;
+        }
         response(col++) = out[ebkernel::V2_RES];
         response(col++) = out[ebkernel::V2_ERR];
     }
@@ -634,11 +681,121 @@ EnergyBalanceRecorder::record(int commitTag, double timeStamp)
 
     firstRecord = false;
 
-    theOutputHandler->write(response);
+    { OPS_PROFILE_SCOPE("eb.write");   // Ladruno WP-196
+    theOutputHandler->write(response); }
 
     time_last = timeStamp;
 
     return 0;
+}
+
+
+// Ladruno WP-196: the element sweep. Snapshot the live element order, form
+// every element's terms into its own slot, and leave the reduction to record().
+// Threaded runs follow the WP-192 shape: maximal runs of thread-safe elements
+// are formed on the threads, every other element alone on this thread in its
+// place, so an element that is not audited sees exactly its serial context.
+void
+EnergyBalanceRecorder::sweepElements(void)
+{
+    sweepEles.clear();
+    {
+        Element *ele;
+        ElementIter &elements = theDomain->getElements();
+        while ((ele = elements()) != 0)
+            sweepEles.push_back(ele);
+    }
+    const int nEle = (int)sweepEles.size();
+    if ((int)sweepTerms.size() != nEle)
+        sweepTerms.resize((size_t)nEle);
+    const bool legacy = ebkernel::legacyEnergyCheck();
+
+    const int nThreads = this->sweepThreads(nEle);
+    if (nThreads <= 1) {
+        for (int i = 0; i < nEle; ++i)
+            ebkernel::elementEnergyTerms(sweepEles[i], legacy, sweepTerms[i]);
+        return;
+    }
+
+    struct Ctx {
+        Element **e;
+        ebkernel::ElementEnergyTerms *t;
+        bool legacy;
+    };
+    struct Body {
+        static int run(int i, void *c) {
+            Ctx *x = (Ctx *)c;
+            ebkernel::elementEnergyTerms(x->e[i], x->legacy, x->t[i]);
+            return 0;
+        }
+    };
+    Element *activeBefore = ops_TheActiveElement;
+    int i = 0;
+    while (i < nEle) {
+        if (!sweepSafe[(size_t)i]) {
+            ebkernel::elementEnergyTerms(sweepEles[i], legacy, sweepTerms[i]);
+            i++;
+            continue;
+        }
+        int j = i;
+        while (j < nEle && sweepSafe[(size_t)j])
+            j++;
+        Ctx ctx = { &sweepEles[(size_t)i], &sweepTerms[(size_t)i], legacy };
+        ladruno_parallelFor(j - i, nThreads, 16, &Body::run, &ctx, 0);
+        i = j;
+    }
+    // the serial sweep does not touch ops_TheActiveElement; neither may this
+    ops_TheActiveElement = activeBefore;
+}
+
+
+// Ladruno WP-196: how many threads the element sweep may use (1 = serial).
+// The WP-192 gates (requested count, OpenMP, the MPI hybrid acknowledgement,
+// the LADRUNO_THREADS_LOOPS mask bit 16, a plain Domain, no deep profiler),
+// plus: no consistent selective-mass-scaling registry (its per-element
+// lookups are not audited), and at least two thread-safe elements.
+int
+EnergyBalanceRecorder::sweepThreads(int nEle)
+{
+    const char *why = 0;
+    const int n = ladruno_loopThreads(&why);
+    if (n <= 1)
+        return 1;
+    if (!ladruno_loopEnabled(LADRUNO_LOOP_ENERGY))
+        return 1;
+    if (theDomain->ladrunoThreadedUpdateAllowed() == false)
+        return 1;
+    if (ops_profiler::theProfiler().deep())
+        return 1;
+    if (Ladruno::MassScalingEnergyRegistry::instance().active())
+        return 1;
+
+    // per-element opt-in, re-derived whenever the element list changed
+    if (safeFor != sweepEles) {
+        safeFor = sweepEles;
+        sweepSafe.assign((size_t)nEle, 0);
+        sweepNumSafe = 0;
+        for (int i = 0; i < nEle; ++i) {
+            Element *e = sweepEles[(size_t)i];
+            if (e->isSubdomain() || e->getNodePtrs() == 0)
+                continue;
+            // ladrunoPrepareThreadedForm allocates the Rayleigh pool slot here,
+            // serially, as the WP-192 form loops do
+            if (e->ladrunoThreadSafeForm() && e->ladrunoPrepareThreadedForm()) {
+                sweepSafe[(size_t)i] = 1;
+                sweepNumSafe++;
+            }
+        }
+    }
+    if (sweepNumSafe < 2)
+        return 1;
+    if (sweepAnnounced != n) {
+        opserr << "EnergyBalanceRecorder: element sweep threaded on " << n
+               << " threads: " << sweepNumSafe << " of " << nEle
+               << " elements formed in parallel, summed in serial order (WP-196)\n";
+        sweepAnnounced = n;
+    }
+    return n;
 }
 
 
@@ -712,9 +869,25 @@ EnergyBalanceRecorder::initialize(void)
         // documented limitation as the registry channels).
         chMassScale =
             Ladruno::MassScalingEnergyRegistry::instance().anyActive();
+        chRelMass = forceRelMass || (OPS_numRelativeMassDampings() > 0);   // Ladruno (relativeMassDamping)
+        // Ladruno: the flags above are RANK-LOCAL (a rank that owns no DRM /
+        // absorbing element has no ABSORB_LEAK producer, and so on). Agree them
+        // across ranks so every interpreter-per-rank file and echo has the same
+        // layout; a rank with no local contribution writes 0 there. The kernel
+        // folds every channel into RES whether or not its column is written, so
+        // RES/ERR% are unchanged. Identity outside openseesmp-style MPI.
+        {
+            int fl[6] = { chInject ? 1 : 0, chLnvd ? 1 : 0, chModal ? 1 : 0,
+                          chHourglass ? 1 : 0, chMassScale ? 1 : 0,
+                          chRelMass ? 1 : 0 };
+            ladrunoEnergyBalanceAgreeMax(fl, 6);
+            chInject = fl[0] != 0; chLnvd = fl[1] != 0; chModal = fl[2] != 0;
+            chHourglass = fl[3] != 0; chMassScale = fl[4] != 0;
+            chRelMass = fl[5] != 0;
+        }
         numModelCols = 6 + (chInject ? 1 : 0) + (chLnvd ? 1 : 0)
                      + (chModal ? 1 : 0) + (chHourglass ? 1 : 0)
-                     + (chMassScale ? 1 : 0) + 2;
+                     + (chMassScale ? 1 : 0) + (chRelMass ? 2 : 0) + 2;
 
         // Coverage (ADR-69 P1.5/P1.6): ASDAbsorbingBoundary2D/3D publish
         // both their BOTTOM compliant-base injection (addBaseActions) and
@@ -734,6 +907,7 @@ EnergyBalanceRecorder::initialize(void)
 
     model_acc.reset();
     model_acc2.reset();
+    rr_dwRel = rr_wRef = rr_prevRel = rr_prevRef = 0.0;   // Ladruno (relativeMassDamping)
     region_acc.assign((size_t)numRegions, ebkernel::EnergyAccumulator());
 
     // self-describing column metadata (consumed by XML/binary streams; text
@@ -762,6 +936,7 @@ EnergyBalanceRecorder::initialize(void)
         if (chModal)  theOutputHandler->tag("ResponseType", "E_modal");
         if (chHourglass) theOutputHandler->tag("ResponseType", "E_hg");
         if (chMassScale) theOutputHandler->tag("ResponseType", "KE_ms");
+        if (chRelMass) { theOutputHandler->tag("ResponseType", "DW_rel"); theOutputHandler->tag("ResponseType", "W_ref"); }
         theOutputHandler->tag("ResponseType", "RES");
         theOutputHandler->tag("ResponseType", "ERR%");
     } else {
@@ -790,6 +965,7 @@ EnergyBalanceRecorder::initialize(void)
         if (chModal)  opserr << " E_modal";
         if (chHourglass) opserr << " E_hg";
         if (chMassScale) opserr << " KE_ms";
+        if (chRelMass)    opserr << " DW_rel W_ref";
         opserr << " RES ERR%]";
     } else {
         opserr << " [model: KE IE DW ULW RES ERR%]";

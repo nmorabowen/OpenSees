@@ -27,6 +27,14 @@ Re-pinned since (one deck at a time, every other deck left byte-for-byte):
            with the WP-158 build (origin/ladruno d63f49750 + the WP-158
            ManzariDafalias.cpp edit), 2026-10-01; the 17 other decks matched
            the pinned values exactly on that build.
+  ls3d_s4, ls3d_s6, ls3d_s7, ls3d_s8, ls3d_s9  WP-160 -- MaxStrainInc /
+           MaxEnergyInc now hand their sub-steps the committed moduli (were
+           uninitialised) and advance the elastic strain; plastic rows 10-29
+           move, elastic rows 0-9 do not, and ls3d_s4 is now pinned in full
+           (NONDETERMINISTIC emptied). Captured with the WP-160 build on top
+           of WP-158 (origin/ladruno 5300da720 + the WP-160 ManzariDafalias.cpp
+           edit), 2026-10-02; the 13 other decks matched the pinned values
+           exactly on that build.
 
 Not collected by pytest (no `test_` prefix); imported by the test.
 """
@@ -94,11 +102,13 @@ _INCS_CYC = ([(-_E / 10, _E / 10)] * 8 + [(_E / 10, -_E / 10)] * 12
              + [(-_E / 10, _E / 10)] * 8)
 
 LS_SCHEMES = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 45)
-# decks whose PLASTIC rows are not reproducible even on the unmodified binary
-# (measured: two runs of ls3d_s4 in one process differ) -> number of leading
-# rows (the elastic stage) that ARE pinned. Cause: MaxEnergyInc's uninitialised
-# `double nG, nK` handed to ForwardEuler when it sub-steps (LEDGER_quirks).
-NONDETERMINISTIC = {"ls3d_s4": 10}
+# decks whose PLASTIC rows are not reproducible -> number of leading rows (the
+# elastic stage) that ARE pinned. Was {"ls3d_s4": 10} (MaxEnergyInc's
+# uninitialised `double nG, nK`, WP-129); EMPTY since WP-160 fixed it -- three
+# run_all() passes in one process are bit-identical on all 18 decks (and differ
+# on ls3d_s4 on the pre-fix binary), so ls3d_s4 is pinned in full. Keep the
+# mechanism for a future deck that genuinely needs it.
+NONDETERMINISTIC = {}
 MD_SCHEMES = (1, 2, 45)
 
 

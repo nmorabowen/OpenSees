@@ -71,12 +71,14 @@ apeGmsh reads.
 ├── INFO
 │   ├── GENERATOR        (string)  "Ladruno"
 │   ├── FORMAT_VERSION   (int)     1
+│   ├── FORMAT_MINOR_VERSION (int) 1          ← absent = 0 (§2a)
 │   ├── SOLVER_NAME      (string)  "OpenSees"
 │   ├── SOLVER_VERSION   (int[3])
-│   └── SPATIAL_DIM      (int)     1 | 2 | 3
+│   ├── SPATIAL_DIM      (int)     1 | 2 | 3
+│   └── PROVENANCE       (group)   empty from the recorder; consumer attributes, §7b.1
 │
-└── MODEL_STAGE[<stamp>]                         (one per Domain::hasDomainChanged())
-    ├── attrs STEP(int), TIME(double), KIND(string "transient"|"static"|"eigen")
+└── MODEL_STAGE[<id>]                            (one per analysis stage, §2a)
+    ├── attrs STEP(int), TIME(double), KIND(string "transient"|"static"|"eigen")  ← per stage, §2a
     ├── MODEL
     │   ├── NODES         { ID[nN], COORDINATES[nN×ndim] }
     │   ├── ELEMENTS      { <group> … }           ← see §3 (BASIS/QUADRATURE)
@@ -98,12 +100,69 @@ apeGmsh reads.
 |---|---|---|---|
 | `GENERATOR` | string | `"Ladruno"` | **reader branch key** — distinguishes from STKO `.mpco` |
 | `FORMAT_VERSION` | int | `1` | bump on any breaking layout change |
+| `FORMAT_MINOR_VERSION` | int | `1` | apeGmsh #2034: a semantic, layout-compatible revision. Absent means 0. Minor 1 = per-stage `KIND` from the running analysis, and the stage boundaries of §2a |
 | `SOLVER_NAME` | string | `"OpenSees"` | |
 | `SOLVER_VERSION` | int[3] | e.g. `[3,5,1]` | `OPS_VERSION` split on `.` |
 | `SPATIAL_DIM` | int | 1/2/3 | from first node, enforced uniform |
 | `PARTITIONED` | int | 0/1 | 1 if this is one `.part-N` of a partitioned run |
 | `PARTITION_ID` | int | `N` | this file's 0-based partition index (0 if not partitioned) |
 | `NUM_PARTITIONS` | int | total | partition count of the set (1 if not partitioned) |
+| `RUN_ID` | string | e.g. `slurm-81234.0` | WP-165 (MP-9): identity of the run that wrote this file; identical across the part files of one run unless `RUN_ID_SCOPE == "process"` |
+| `RUN_ID_SCOPE` | string | `broadcast` / `user` / `launcher` / `process` | where `RUN_ID` came from: P0 broadcast (PartitionedDomain), `LADRUNO_RUN_ID`, the launcher's job id (SLURM / OpenMPI), or process-unique (no shared identity available — readers must not cross-check it) |
+
+`MODEL_STAGE[<stamp>]` may carry `EMPTY_PARTITION = 1` (WP-165, MP-8): this process had
+no nodes of the recorded set (e.g. a `-R` region that lives on other ranks); its
+`MODEL/NODES/ID` and `COORDINATES` are zero-length and it holds no node/element results.
+
+### 2a. `MODEL_STAGE` boundaries and `KIND` (`FORMAT_MINOR_VERSION = 1`, apeGmsh #2034)
+
+A recorder opens a new `MODEL_STAGE` at a recorded step when any of these holds since
+the open stage began:
+
+1. the node / element / pressure-constraint set changed (WP-165 topology fingerprint);
+2. the user ran `domainChange` (Tcl or openseespy): a **stage barrier**. Internal
+   re-stamps of the domain-change stamp (an SP pattern, `eleLoad`, contact `-reemit`)
+   are NOT barriers and stay folded into the open stage;
+3. the running analysis flipped between static and transient, whatever the `KIND`
+   label (`-kind` and eigen promotion set the label only), so no stage mixes static
+   and transient steps.
+
+The run's first recorded step opens the first stage; a barrier before it opens nothing.
+A repeated kind is never a boundary: static → `wipeAnalysis` → static is one stage
+unless a `domainChange` separates them.
+
+`KIND` is decided per stage, at the stage's first record:
+
+| Precedence | Source | `KIND` |
+|---|---|---|
+| 1 | a modal request (`-N modesOfVibration[Rotational]`) | `"eigen"` |
+| 2 | `-kind <transient\|static\|eigen>` | that value for every stage (a label only: barriers and flips still split) |
+| 3 | the running analysis: `analysis Static` | `"static"` |
+|   | `analysis Transient` / `VariableTransient` / `PFEM` | `"transient"` |
+| 4 | no analysis visible yet (an explicit `record` first, or an `eigen …; record` snapshot) | provisional `"static"`, rewritten by the first recorded step that sees an analysis; a warning if the stage closes still unresolved |
+
+The transient analysis the classic Tcl `eigen` command builds when none is defined is
+not a running analysis (openseespy deletes it after the solve; classic Tcl keeps it)
+until an `analysis` or `analyze` command, so `eigen …; record; … analysis Static` is
+one static stage in both interpreters.
+
+The `<id>` in `MODEL_STAGE[<id>]` is the domain-change stamp when the stamp moved past the
+open stage's id, else open id + 1 (a flip or barrier can arrive without a stamp move).
+Ids are strictly increasing and never reused; readers sort them numerically and must
+not assume they equal `Domain::hasDomainChanged()`.
+
+Minor 0 files (no `FORMAT_MINOR_VERSION`): `KIND` was the recorder-wide `-kind`
+(default `"static"`, so a transient stage read `static`), and from WP-165 until minor 1
+a stage opened only on a topology change, so a same-topology static → transient run
+was one stage.
+
+Parallel: on openseesmp every rank runs the same commands, so barriers and flips agree
+across `part-N` files. An OpenSeesSP (PartitionedDomain) worker runs no interpreter: it
+sees neither the barrier nor the analysis type, so its part file follows topology-only
+stages with a provisional `KIND` and warns (WP-165 doc §4).
+A new `MODEL_STAGE` starts only when the node/element/pressure-constraint SET changes
+(WP-165, R6) — not on every domain-change stamp move (SP patterns, `eleLoad`, contact
+re-emit continue the current stage).
 
 A reader that doesn't find `GENERATOR=="Ladruno"` must treat the file as a
 legacy STKO `.mpco` (or refuse it).
@@ -314,6 +373,129 @@ extreme of a partial cannot be recombined (max(a+b) ≠ max a + max b). Serial f
 carry a `SUM` envelope (there is only one partition). Validator:
 `ladruno_format._validate_partition_reduction`.
 
+#### 7.1.1 Kinematic node results: names and `COMPONENTS` labels (apeGmsh #2128)
+
+Translation and rotation are **two separate result groups**. There is no combined
+6-component displacement group. A reader that draws a deformed shape reads
+`DISPLACEMENT`, and adds `ROTATION` only if it needs nodal rotations. Mode shapes follow
+the same split. Values below are copied from the writer source. `COMPONENTS` is one
+comma-separated string attr (`h5::group::createResultGroup`, `SRC/recorder/Ladruno_Hdf5.h`).
+
+| Recorder token (`-N`) | Group `ON_NODES/<name>` | `DISPLAY_NAME` | ndm = 1 | ndm = 2 | ndm = 3 | `DIMENSION` | Writer |
+|---|---|---|---|---|---|---|---|
+| `displacement` | `DISPLACEMENT` | `Displacement` | `Ux` | `Ux,Uy` | `Ux,Uy,Uz` | `L` | `DisplacementSource::build()` |
+| `rotation` | `ROTATION` | `Rotation` | `Rx,Ry,Rz` | `Rz` | `Rx,Ry,Rz` | `A` | `RotationSource::build()` |
+| `modesOfVibration` | `MODES_OF_VIBRATION(U)` | `Modes of Vibration (U)` | `Ux` | `Ux,Uy` | `Ux,Uy,Uz` | `""` | `ModesOfVibrationSource::build()` |
+| `modesOfVibrationRotational` | `MODES_OF_VIBRATION(R)` | `Modes of Vibration (R)` | `Rx,Ry,Rz` | `Rz` | `Rx,Ry,Rz` | `""` | `ModesOfVibrationRotationalSource::build()` |
+
+All four writers are in `SRC/recorder/Ladruno_NodeResults.cpp`. The token-to-type mapping
+is in the `-N` option parser in `SRC/recorder/LadrunoRecorder.cpp`.
+
+**The labels depend on ndm only.** They do not depend on ndf, the element family, or
+the analysis. `ndm` is `INFO/SPATIAL_DIM`: the coordinate count of the **first node** in
+the domain (`LadrunoRecorder.cpp`, model-write setup, rejected outside 1..3). Each
+`build()` fixes the labels once, at construction. A mixed-ndf model therefore has one
+label set for every node.
+
+**ndf affects only the values** (`bufferNodeResponseVec3u` / `bufferNodeResponseVec3r`,
+`SRC/recorder/Ladruno_Types.h`):
+
+- `DISPLACEMENT` holds the node's first `ndm` DOFs of `getTrialDisp()`. Missing DOFs are
+  written as `0.0`.
+- `ROTATION` with ndm = 2 holds DOF index 2, or `0.0` if the node has ndf ≤ 2.
+  With ndm = 3 it holds DOF indices 3, 4, 5 when ndf > 5, and all zeros otherwise.
+  With ndm = 1 it writes three columns of zeros.
+- The modal groups use the same rules on the eigenvector rows. A node with no
+  eigenvector for the current mode stays `0.0`.
+
+**Reader caveat (not a label ambiguity).** `ROTATION` (and `MODES_OF_VIBRATION(R)`)
+copies a DOF index. It does not check what the DOF means. With ndm = 2 and ndf = 3 on a
+u-p node (the `*UP` / pressure-DOF elements), `Rz` holds the **pore pressure**, not a
+rotation. A reader that needs a true rotation must check the element family itself.
+`DISPLACEMENT` is not affected.
+
+#### 7.1.2 Every other `ON_NODES` group: names and `COMPONENTS` labels (apeGmsh #2214)
+
+This completes §7.1.1. The tables list every group the writer can put in
+`ON_NODES`. Unless a row says otherwise, the writer is in
+`SRC/recorder/Ladruno_NodeResults.cpp`. The `-N` / `-NS` tokens are parsed in
+`SRC/recorder/LadrunoRecorder.cpp`. §7.1.1 rules apply here too: labels depend on ndm
+(`INFO/SPATIAL_DIM`) only, are fixed at construction, and missing DOFs are written as `0.0`.
+
+Each group belongs to one of two families, by the buffer helper it uses
+(`SRC/recorder/Ladruno_Types.h`):
+
+- **Translational** (`bufferNodeResponseVec3u`): one label per ndm, from the node's
+  first `ndm` DOFs.
+- **Rotational** (`bufferNodeResponseVec3r`): ndm = 2 gives one `z` label from DOF index
+  2; ndm = 3 gives `x,y,z` from DOF indices 3, 4, 5 (when ndf > 5); ndm = 1 gives
+  `x,y,z` written as zeros. The §7.1.1 u-p caveat applies to every rotational group:
+  with ndm = 2 and ndf = 3, the `z` column holds whatever DOF 2 is.
+
+**Translational groups**
+
+| `-N` token | Group `ON_NODES/<name>` | `DISPLAY_NAME` | ndm = 1 | ndm = 2 | ndm = 3 | `DIMENSION` | Writer | Node vector read |
+|---|---|---|---|---|---|---|---|---|
+| `velocity` | `VELOCITY` | `Velocity` | `Vx` | `Vx,Vy` | `Vx,Vy,Vz` | `L/t` | `VelocitySource::build()` | `getTrialVel()` |
+| `acceleration` | `ACCELERATION` | `Acceleration` | `Ax` | `Ax,Ay` | `Ax,Ay,Az` | `L/t^2` | `AccelerationSource::build()` | `getTrialAccel()` |
+| `reactionForce` | `REACTION_FORCE` | `Reaction Force` | `RFx` | `RFx,RFy` | `RFx,RFy,RFz` | `F` | `ReactionForceSource::build()` | `getReaction()` |
+| `reactionForceIncludingInertia` | `REACTION_FORCE_INCLUDING_INERTIA` | `Reaction Force Including Inertia` | `RFx` | `RFx,RFy` | `RFx,RFy,RFz` | `F` | `ReactionForceSource::build()`, called by `ReactionForceIncInertiaSource` | `getReaction()` |
+| `rayleighForce` | `RAYLEIGH_FORCE` | `Rayleigh Force` | `RFx` | `RFx,RFy` | `RFx,RFy,RFz` | `F` | `ReactionForceSource::build()`, called by `RayleighForceSource` | `getReaction()` |
+| `unbalancedForce` | `UNBALANCED_FORCE` | `Unbalanced Force` | `Fx` | `Fx,Fy` | `Fx,Fy,Fz` | `F` | `UnbalancedForceSource::build()` | `getUnbalancedLoad()` |
+| `unbalancedForceIncludingInertia` | `UNBALANCED_FORCE_INCLUDING_INERTIA` | `Unbalanced Force Including Inertia` | `Fx` | `Fx,Fy` | `Fx,Fy,Fz` | `F` | `UnbalancedForceSource::build()`, called by `UnbalancedForceIncInertiaSource` | `getUnbalancedLoadIncInertia()` |
+| `constraintTieForce` (alias `tieForce`) | `CONSTRAINT_TIE_FORCE` | `Constraint Tie Force` | `TFx` | `TFx,TFy` | `TFx,TFy,TFz` | `F` | `ConstraintTieForceSource::build()` | `getProjectionTieForce()` |
+
+**Rotational groups**
+
+| `-N` token | Group `ON_NODES/<name>` | `DISPLAY_NAME` | ndm = 1 | ndm = 2 | ndm = 3 | `DIMENSION` | Writer | Node vector read |
+|---|---|---|---|---|---|---|---|---|
+| `angularVelocity` | `ANGULAR_VELOCITY` | `Angular Velocity` | `RVx,RVy,RVz` | `RVz` | `RVx,RVy,RVz` | `L/t*A` | `AngularVelocitySource::build()` | `getTrialVel()` |
+| `angularAcceleration` | `ANGULAR_ACCELERATION` | `Angular Acceleration` | `RAx,RAy,RAz` | `RAz` | `RAx,RAy,RAz` | `L/t^2*A` | `AngularAccelerationSource::build()` | `getTrialAccel()` |
+| `reactionMoment` | `REACTION_MOMENT` | `Reaction Moment` | `RMx,RMy,RMz` | `RMz` | `RMx,RMy,RMz` | `F*L` | `ReactionMomentSource::build()` | `getReaction()` |
+| `reactionMomentIncludingInertia` | `REACTION_MOMENT_INCLUDING_INERTIA` | `Reaction Moment Including Inertia` | `RMx,RMy,RMz` | `RMz` | `RMx,RMy,RMz` | `F*L` | `ReactionMomentSource::build()`, called by `ReactionMomentIncInertiaSource` | `getReaction()` |
+| `rayleighMoment` | `RAYLEIGH_MOMENT` | `Rayleigh Moment` | `RMx,RMy,RMz` | `RMz` | `RMx,RMy,RMz` | `F*L` | `ReactionMomentSource::build()`, called by `RayleighMomentSource` | `getReaction()` |
+| `unbalancedMoment` | `UNBALANCED_MOMENT` | `Unbalanced Moment` | `Mx,My,Mz` | `Mz` | `Mx,My,Mz` | `F*L` | `UnbalancedMomentSource::build()` | `getUnbalancedLoad()` |
+| `unbalancedMomentIncludingInertia` | `UNBALANCED_MOMENT_INCLUDING_INERTIA` | `Unbalanced Moment Including Inertia` | `Mx,My,Mz` | `Mz` | `Mx,My,Mz` | `F*L` | `UnbalancedMomentSource::build()`, called by `UnbalancedMomentIncInertiaSource` | `getUnbalancedLoadIncInertia()` |
+
+The plain, `…IncludingInertia` and Rayleigh variants share labels. Only the group name
+tells them apart. Each reaction source passes its own `reactionFlag()` to the reaction
+computation, so the three read different reactions through the same `getReaction()`.
+
+**Scalar groups (one component, label independent of ndm)**
+
+| Token | Group `ON_NODES/<name>` | `DISPLAY_NAME` | `COMPONENTS` | `DIMENSION` | Writer |
+|---|---|---|---|---|---|
+| `-N pressure` | `PRESSURE` | `Pressure` | `p` | `F/L^2` | `PressureSource::build()` |
+| none (one group per ready `LadrunoPorousOverlay`) | `overlayPressure_<patternTag>` | `Overlay pore pressure <patternTag>` | `p` | `F/L^2` | `OverlayPressureSource::buildSchema()`, `SRC/recorder/Ladruno_OverlayResults.cpp` |
+
+The `PRESSURE` **label** is fixed. The **value** depends on the element family attached
+to the node (`PressureSource::evaluate()` / `scanUPContract()`): it reads DOF `ndm` (index
+2 in 2D, 3 in 3D) only when the node has exactly `ndm + 1` DOFs. A node attached to a
+`LadrunoUP` element is read from the displacement vector. A node attached only to an
+upstream `*UP` element (FourNodeQuadUP, BrickUP, Nine_Four_Node_QuadUP,
+Twenty_Eight_Node_BrickUP, BBarFourNodeQuadUP, BBarBrickUP, SSPquadUP, SSPbrickUP) is read
+from the velocity vector, because their DOF is ∫p dt. A node attached to both reads the
+displacement vector and the recorder warns once. Every other node reads the velocity
+vector, and is `0.0` unless it has exactly `ndm + 1` DOFs. The overlay group name is
+lowercase-camel and has no `-N` token. The recorder adds it from `initOverlaySources()`
+in `LadrunoRecorder.cpp`.
+
+**Sensitivity groups (`-NS <token> <gradIndex>`).** The gradient index `<g>` is part of
+the group name and of every label. The families and ndm rules are as above:
+
+| `-NS` token | Group `ON_NODES/<name>` | ndm = 1 | ndm = 2 | ndm = 3 | Writer |
+|---|---|---|---|---|---|
+| `displacementSensitivity` | `DISPLACEMENT_SENSITIVITY_<g>` | `d_Ux/d_q<g>` | `d_Ux/d_q<g>,d_Uy/d_q<g>` | `d_Ux/d_q<g>,d_Uy/d_q<g>,d_Uz/d_q<g>` | `DisplacementSensitivitySource::build()` |
+| `rotationSensitivity` | `ROTATION_SENSITIVITY_<g>` | `d_Rx/d_q<g>,d_Ry/d_q<g>,d_Rz/d_q<g>` | `d_Rz/d_q<g>` | `d_Rx/d_q<g>,d_Ry/d_q<g>,d_Rz/d_q<g>` | `RotationSensitivitySource::build()` |
+| `velocitySensitivity` | `VELOCITY_SENSITIVITY_<g>` | `d_Vx/d_q<g>` | `d_Vx/d_q<g>,d_Vy/d_q<g>` | `d_Vx/d_q<g>,d_Vy/d_q<g>,d_Vz/d_q<g>` | `VelocitySensitivitySource::build()` |
+| `angularVelocitySensitivity` | `ANGULAR_VELOCITY_SENSITIVITY_<g>` | `d_RVx/d_q<g>,d_RVy/d_q<g>,d_RVz/d_q<g>` | `d_RVz/d_q<g>` | `d_RVx/d_q<g>,d_RVy/d_q<g>,d_RVz/d_q<g>` | `AngularVelocitySensitivitySource::build()` |
+| `accelerationSensitivity` | `ACCELERATION_SENSITIVITY_<g>` | `d_Ax/d_q<g>` | `d_Ax/d_q<g>,d_Ay/d_q<g>` | `d_Ax/d_q<g>,d_Ay/d_q<g>,d_Az/d_q<g>` | `AccelerationSensitivitySource::build()` |
+| `angularAccelerationSensitivity` | `ANGULAR_ACCELERATION_SENSITIVITY_<g>` | `d_RAx/d_q<g>,d_RAy/d_q<g>,d_RAz/d_q<g>` | `d_RAz/d_q<g>` | `d_RAx/d_q<g>,d_RAy/d_q<g>,d_RAz/d_q<g>` | `AngularAccelerationSensitivitySource::build()` |
+
+Their `DISPLAY_NAME` is `<Quantity> Sensitivity d_<sym>/d_q<g>`, and `DIMENSION` is `""`.
+`<g>` is the 1-based sensitivity parameter index. If `<g>` is out of range
+(`< 1` or `> getNumParameters()`), the group is written as all zeros and the recorder warns.
+
 ### 7.2 `ON_ELEMENTS/<result>` — structured column map (replaces the `;`-string)
 
 ```
@@ -410,10 +592,75 @@ source (the user's stated priority: performance + robustness on OpenSees first):
   recorded step (as MPCO does), **rewrite envelope/aggregate datasets periodically**
   (§7.4), and provide an **explicit flush/close recorder control** so a user can force a
   clean close in the same cell before copying off local disk.
-- **Provenance / lineage slot.** `INFO/PROVENANCE` (group) reserves
-  `MODEL_HASH`/`RESULTS_HASH` string slots so apeGmsh can chain its blake2b lineage
-  (`fem_hash → model_hash → results_hash`). OpenSees stamps a stable results identity;
-  apeGmsh stamps the model side. Lets the reader detect model/results drift.
+- **Provenance / lineage slot.** The recorder creates `INFO/PROVENANCE` as an
+  **empty group** at open (`LadrunoRecorder.cpp`, beside the `RUN_ID` stamps) and
+  writes nothing into it. It is the one place in a `.ladruno` file that a consumer may
+  write into. The rules are in §7b.1.
+
+### 7b.1 `INFO/PROVENANCE`: consumer-written pairing attributes
+
+*Ratified in apeGmsh #2079 (2026-10-15, open points 2 and 3); the apeGmsh side is
+apeGmsh ADR 0122.* `.ladruno` is apeGmsh's canonical results format. After a run,
+apeGmsh stamps the attributes below so its viewer can pair the results file with the
+model that produced it (`<stem>.h5`), without a sidecar file.
+
+**Ownership.** The fork owns the `.ladruno` format: the layout, the buckets, the token
+names, `FORMAT_VERSION`/`FORMAT_MINOR_VERSION` and `ladruno_format.py`. A consumer
+(apeGmsh) owns only the `INFO/PROVENANCE` attributes it stamps, as listed here.
+
+**Write rules.** A consumer that stamps provenance:
+1. writes **attributes only**: no datasets, no subgroups;
+2. writes **only in `INFO/PROVENANCE`**: never in `INFO` itself, `MODEL_STAGE[*]`, or
+   any other group, and never modifies an attribute the recorder wrote;
+3. writes **only on a closed file**: after the recorder has closed it (`remove
+   recorder`, `wipe`, or interpreter exit) and with no OpenSees process holding it
+   open, and with **no other process** (OpenSees, a viewer, an `h5py` session) holding
+   it open. If the file will not open for writing, the consumer skips stamping and
+   warns; it never disables HDF5 file locking to force the write. A file that was never
+   closed cleanly (a crash or a killed process) is not stamped: the consumer SHOULD
+   require `ladruno_format.validate()` to pass first. For a partitioned run, the consumer
+   stamps each `<stem>.part-<N>.ladruno` it pairs;
+4. writes **lowercase** attribute names. The case marks the owner: lowercase in
+   `PROVENANCE` belongs to the consumer, and UPPERCASE stays reserved for the fork (an
+   optional, later recorder-side `-provenance` flag would write UPPERCASE names here).
+   The `MODEL_HASH`/`RESULTS_HASH` slots this section used to reserve were never written
+   by the recorder; they are withdrawn as consumer slots and remain fork-reserved names.
+   The lowercase names are a deliberate exception to this document's UPPERCASE naming
+   convention: they are the only names a consumer writes.
+
+| Attribute | Type | Meaning |
+|---|---|---|
+| `model_hash` | string | apeGmsh model lineage hash, copied byte-equal from `<stem>.h5` `/meta/lineage` |
+| `fem_hash` | string | apeGmsh FEM-snapshot lineage hash, copied byte-equal from `<stem>.h5` `/meta/lineage` |
+| `stage_names` | string (JSON array of strings) | program stage names, one per `MODEL_STAGE[*]` in stage order; written only when the stage count and kinds match the program's stages |
+| `element_index_space` | string | `"fem"` when every element ID in the file is a paired FEM element id; absent otherwise (the reader treats absence as "unverified") |
+| `unsupported` | string (JSON array of strings) | categories present in the source that the consumer did not read or convert (e.g. layered shells, energy, MPCO springs); `"[]"` when none |
+| `writer` | string | the apeGmsh component and version that stamped (or, for a converted file, produced) the file, e.g. `apeGmsh <version>` or `apeGmsh mpco->ladruno <version>`. A converted file keeps `INFO/GENERATOR="Ladruno"`; `writer` is what marks it as converted |
+| `opensees_backend` | string | *optional; added 2026-10-19 (apeGmsh G10).* Which OpenSees ran the analysis: exactly `"ladruno"` (this fork), `"stock"` (upstream OpenSees), or `"unknown"`. The `.ladruno` recorder exists only in the fork, so a file the recorder wrote is always `"ladruno"`. `"stock"` can occur only on a converted file (`writer` = `apeGmsh mpco->ladruno …`) whose source `.mpco` came from upstream OpenSees |
+| `opensees_build_sha` | string | *optional; added 2026-10-19 (apeGmsh G10).* The git commit the OpenSees binary was built from: 40 lowercase hex characters, exactly as the fork's `ladrunoBuild` command returns it (Tcl `ladrunoBuild`, Python `ops.ladrunoBuild()`; CMake stamps `git log -1 --format=%H` into `OPENSEES_VERSION`). `"unknown"` when the build reported no hash (`ladrunoBuild` itself returns `"unknown"` then) or the backend could not be queried. The consumer writes it as returned and does not shorten it |
+
+All of these are scalar attributes stored as variable-length UTF-8 strings (the apeGmsh viewer's stamp check expects vlen UTF-8, not fixed-length). JSON values are compact, UTF-8,
+and never NaN. A reader must tolerate any subset of these attributes being absent (a
+file that was never stamped has an empty `PROVENANCE`). `opensees_backend` and
+`opensees_build_sha` are newer than the other six, so files stamped before 2026-10-19
+lack them and stay valid. A reader treats their absence as unknown.
+
+**No fork-side equivalent today.** The recorder writes no build hash into a `.ladruno`
+file. `INFO/GENERATOR="Ladruno"` marks the writer, and `INFO/SOLVER_VERSION` is a fixed
+`[3,5,1]`, not a commit. The build hash is available only at run time, through
+`ladrunoBuild`. That is why the consumer stamps it here. If the recorder later writes its
+own build hash (an UPPERCASE name, e.g. via the `-provenance` flag), the fork's attribute
+takes precedence and `opensees_build_sha` becomes redundant.
+
+**Partitioned sets.** The attributes are per file. `stage_names` describes that file's
+own `MODEL_STAGE[*]` (part files may differ, WP-165). A reader treats a partitioned set as
+paired only when every part carries the same `model_hash` and `fem_hash`; a set that was
+stamped only partly (a consumer that stopped part-way) is unpaired.
+
+**Versioning.** This is additive. `FORMAT_VERSION` stays `1` and
+`FORMAT_MINOR_VERSION` does not move: the recorder writes nothing new, and a v1 reader
+that ignores `PROVENANCE` still reads every file. `ladruno_format.validate()` does not
+inspect `PROVENANCE`, so a stamped file stays conformant.
 
 ## 7c. apeGmsh consumption contract (interop summary)
 
@@ -429,6 +676,7 @@ branch) is the canonical consumer. Hard contract points:
 | Stage kind | `MODEL_STAGE/@KIND` | "assume transient" |
 | Format/version gate | `INFO/{GENERATOR,FORMAT_VERSION}` | none → silent multi-partition corruption |
 | Contiguous partition discovery | `<stem>.part-<N>.ladruno` (0-based) | — (already matched, now pinned) |
+| Model ↔ results pairing | `INFO/PROVENANCE` consumer attributes (§7b.1) | a sidecar file or a native `results.h5` copy |
 
 Self-contained ⇒ no `model_h5=` sibling: regions (`SETS`), local axes, section index
 all live in the one file.
@@ -469,7 +717,8 @@ in STKO). Fiber section as today.
   synthetic fixture, and run on real recorder output in the per-element gates. A
   conformant writer/reader is whatever passes both.
 - Additive changes (new optional groups) keep the version; any change that breaks a v1
-  reader bumps it. New element families (Bézier/IGA/Belytschko) opt in via self-declaration
+  reader bumps it. A semantic change a v1 reader still parses bumps
+  `INFO/FORMAT_MINOR_VERSION` instead (absent = 0); minor 1 = §2a (apeGmsh #2034). New element families (Bézier/IGA/Belytschko) opt in via self-declaration
   (`basisInfo`) without a version bump — that is the whole point of the inverted dispatch.
 - apeGmsh and `STKO_to_python` gate on `GENERATOR`/`FORMAT_VERSION` and SHOULD import
   `ladruno_format` (validator + oracle) so both readers gate on one shared spec.
@@ -575,3 +824,32 @@ in STKO). Fiber section as today.
   role was chiefly the GP coords MPCO omits). Remaining naming follow-up: a per-column
   `COLUMN_MAP` on element ENVELOPES (gauss/section/fiber structure, not just result-
   level COMPONENTS).
+- 2026-10-15 — **apeGmsh #2034: per-stage `KIND` and stage barriers (`FORMAT_MINOR_VERSION=1`).**
+  `KIND` is resolved per stage from the running analysis (`OPS_GetStaticAnalysis` /
+  `OPS_GetTransientAnalysis`), with eigen promotion first and `-kind` as an override.
+  A `MODEL_STAGE` now also opens on a user `domainChange` (an interpreter-side barrier
+  counter, `ladrunoNoteUserStageBarrier()`) and on a static↔transient flip; internal
+  re-stamps stay folded (WP-165). Stage ids stay strictly increasing when no stamp moved.
+  Gate: `ladruno_recorder_tests/stage_kind_check.py` (13 Tcl + 7 openseespy cases,
+  Tcl and openseespy stage lists asserted identical). Review follow-up: the flip
+  splits under `-kind` too (a label only), and the classic-Tcl `eigen` analysis does
+  not count as running until `analysis`/`analyze`.
+- 2026-10-15 — **apeGmsh #2079: consumer-written `INFO/PROVENANCE` (§7b.1).** `.ladruno`
+  is apeGmsh's canonical results format. apeGmsh may stamp six lowercase pairing
+  attributes into the recorder's empty `PROVENANCE` group, on a closed file only. The fork
+  owns the format; the consumer owns only those attributes. Doc only: no recorder change,
+  no version bump.
+- 2026-10-18 — **apeGmsh #2128: kinematic node result names and labels (§7.1.1).** The
+  schema documents the exact `DISPLACEMENT` / `ROTATION` / `MODES_OF_VIBRATION(U|R)` group
+  names and their `COMPONENTS` per ndm, from `Ladruno_NodeResults.cpp`. This replaces the
+  "e.g. `Ux,Uy,Uz`" example in the 2026-05-31 line as the reference. Doc only: no recorder
+  change, no version bump.
+- 2026-10-19 — **apeGmsh G10: two more consumer `PROVENANCE` attributes (§7b.1).**
+  `opensees_backend` (`ladruno`/`stock`/`unknown`) and `opensees_build_sha` (the
+  `ladrunoBuild` hash). Both are optional, so older files stay valid. Doc only: no
+  recorder change, no version bump.
+- 2026-10-19 — **apeGmsh #2214: every `ON_NODES` group's name and labels (§7.1.2).**
+  Adds velocity, acceleration, reaction, Rayleigh, unbalanced and tie-force groups, the
+  angular groups, `PRESSURE`, `overlayPressure_<tag>` and the `-NS` sensitivity groups,
+  each with its writer from `Ladruno_NodeResults.cpp` / `Ladruno_OverlayResults.cpp`.
+  Doc only: no recorder change, no version bump.

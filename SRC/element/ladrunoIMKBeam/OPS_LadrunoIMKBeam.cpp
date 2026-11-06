@@ -64,6 +64,7 @@
 #include <OPS_Globals.h>
 #include <CrdTransf.h>
 #include <UniaxialMaterial.h>
+#include <NDMaterial.h>
 
 #include <string.h>
 
@@ -87,6 +88,43 @@ static UniaxialMaterial *getMatArg(const char *flag)
     opserr << "WARNING LadrunoIMKBeam -- uniaxialMaterial " << mtag
            << " (" << flag << ") not found\n";
   return m;
+}
+
+static NDMaterial *getNDMatArg(const char *flag)
+{
+  if (OPS_GetNumRemainingInputArgs() < 1) {
+    opserr << "WARNING LadrunoIMKBeam -- " << flag << " needs an NDMaterial tag\n";
+    return 0;
+  }
+  int mtag, num = 1;
+  if (OPS_GetIntInput(&num, &mtag) < 0) {
+    opserr << "WARNING LadrunoIMKBeam -- invalid " << flag << " tag\n";
+    return 0;
+  }
+  NDMaterial *m = OPS_getNDMaterial(mtag);
+  if (m == 0) {
+    opserr << "WARNING LadrunoIMKBeam -- nDMaterial " << mtag
+           << " (" << flag << ") not found\n";
+    return 0;
+  }
+  if (m->getOrder() != 2) {
+    opserr << "WARNING LadrunoIMKBeam -- nDMaterial " << mtag
+           << " (" << flag << ") must have order 2 (got " << m->getOrder() << ")\n";
+    return 0;
+  }
+  return m;
+}
+
+static bool peekNextIsIntArg()
+{
+  if (OPS_GetNumRemainingInputArgs() <= 0)
+    return false;
+  const char *nxt = OPS_GetString();
+  bool isFlag = (nxt != 0 && nxt[0] == '-' &&
+                 ((nxt[1] >= 'a' && nxt[1] <= 'z') ||
+                  (nxt[1] >= 'A' && nxt[1] <= 'Z')));
+  OPS_ResetCurrentInputArg(-1);
+  return !isFlag;
 }
 
 // Planar builder (LadrunoIMKBeam2d), defined in OPS_LadrunoIMKBeam2d.cpp. The
@@ -147,29 +185,39 @@ void *OPS_LadrunoIMKBeam()
   }
 
   // options
-  int hingeMode = 0;  // 0 both, 1 i, 2 j  (gates the SYMMETRIC -matZ/-matY)
+  int hingeMode = 0;  // 0 both, 1 i, 2 j  (gates the SYMMETRIC -matZ/-matY/-hingeBiaxial)
   UniaxialMaterial *matZ = 0;   // symmetric strong-axis law (applied per -hinge)
   UniaxialMaterial *matY = 0;   // symmetric weak-axis law
   // per-end overrides (asymmetric end laws): take precedence over -matZ/-matY,
   // independent of -hinge (naming an end IS the request to hinge it there).
   UniaxialMaterial *matZi = 0, *matZj = 0, *matYi = 0, *matYj = 0;
   bool setZi = false, setZj = false, setYi = false, setYj = false;
+  UniaxialMaterial *shearMatY = 0, *shearMatZ = 0;
+  NDMaterial *biMat = 0, *biMatI = 0, *biMatJ = 0;
+  bool setBiI = false, setBiJ = false;
   double rho = 0.0;
+  int cMass = 0;
+  double GAvy = 0.0, GAvz = 0.0;
+  double P0 = 0.0, pmAlpha = 0.5;
+  double P0t = 0.0, Pbal = 0.0, muBal = 1.0;
+  double dI = 0.0, dJ = 0.0;
+  bool useImplex = false;
 
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const char *opt = OPS_GetString();
 
     if (strcmp(opt, "-hinge") == 0) {
       if (OPS_GetNumRemainingInputArgs() < 1) {
-        opserr << "WARNING LadrunoIMKBeam -- -hinge needs both|i|j\n";
+        opserr << "WARNING LadrunoIMKBeam -- -hinge needs both|i|j|none\n";
         return 0;
       }
       const char *h = OPS_GetString();
-      if (strcmp(h, "both") == 0)      hingeMode = 0;
-      else if (strcmp(h, "i") == 0)    hingeMode = 1;
-      else if (strcmp(h, "j") == 0)    hingeMode = 2;
+      if (strcmp(h, "both") == 0 || strcmp(h, "BOTH") == 0)         hingeMode = 0;
+      else if (strcmp(h, "i") == 0 || strcmp(h, "I") == 0)          hingeMode = 1;
+      else if (strcmp(h, "j") == 0 || strcmp(h, "J") == 0)          hingeMode = 2;
+      else if (strcmp(h, "none") == 0 || strcmp(h, "NONE") == 0)    hingeMode = 3;
       else {
-        opserr << "WARNING LadrunoIMKBeam -- -hinge must be both|i|j\n";
+        opserr << "WARNING LadrunoIMKBeam -- -hinge must be both|i|j|none\n";
         return 0;
       }
 
@@ -186,6 +234,45 @@ void *OPS_LadrunoIMKBeam()
     } else if (strcmp(opt, "-matYj") == 0) {
       if ((matYj = getMatArg("-matYj")) == 0) return 0;  setYj = true;
 
+    } else if (strcmp(opt, "-shearHinge") == 0 || strcmp(opt, "-matShear") == 0) {
+      if ((shearMatY = getMatArg(opt)) == 0) return 0;
+      if (peekNextIsIntArg()) {
+        if ((shearMatZ = getMatArg(opt)) == 0) return 0;
+      }
+    } else if (strcmp(opt, "-shearHingeY") == 0 || strcmp(opt, "-matShearY") == 0) {
+      if ((shearMatY = getMatArg(opt)) == 0) return 0;
+    } else if (strcmp(opt, "-shearHingeZ") == 0 || strcmp(opt, "-matShearZ") == 0) {
+      if ((shearMatZ = getMatArg(opt)) == 0) return 0;
+
+    } else if (strcmp(opt, "-hingeBiaxial") == 0 || strcmp(opt, "-hingeC") == 0) {
+      NDMaterial *m1 = getNDMatArg(opt);
+      if (m1 == 0) return 0;
+      if (peekNextIsIntArg()) {
+        NDMaterial *m2 = getNDMatArg(opt);
+        if (m2 == 0) return 0;
+        biMatI = m1; setBiI = true;
+        biMatJ = m2; setBiJ = true;
+      } else {
+        biMat = m1;
+      }
+    } else if (strcmp(opt, "-hingeBiaxialI") == 0 || strcmp(opt, "-hingeCI") == 0 ||
+               strcmp(opt, "-hingeBiaxial1") == 0) {
+      if ((biMatI = getNDMatArg(opt)) == 0) return 0;
+      setBiI = true;
+    } else if (strcmp(opt, "-hingeBiaxialJ") == 0 || strcmp(opt, "-hingeCJ") == 0 ||
+               strcmp(opt, "-hingeBiaxial2") == 0) {
+      if ((biMatJ = getNDMatArg(opt)) == 0) return 0;
+      setBiJ = true;
+    } else if (strcmp(opt, "-hingeBiaxialIJ") == 0 || strcmp(opt, "-hingeCIJ") == 0) {
+      NDMaterial *m1 = getNDMatArg(opt);
+      if (m1 == 0) return 0;
+      NDMaterial *m2 = m1;
+      if (peekNextIsIntArg()) {
+        if ((m2 = getNDMatArg(opt)) == 0) return 0;
+      }
+      biMatI = m1; setBiI = true;
+      biMatJ = m2; setBiJ = true;
+
     } else if (strcmp(opt, "-mass") == 0) {
       if (OPS_GetNumRemainingInputArgs() < 1) {
         opserr << "WARNING LadrunoIMKBeam -- -mass needs rho\n";
@@ -196,6 +283,105 @@ void *OPS_LadrunoIMKBeam()
         opserr << "WARNING LadrunoIMKBeam -- invalid -mass rho\n";
         return 0;
       }
+
+    } else if (strcmp(opt, "-cMass") == 0 || strcmp(opt, "-cmass") == 0) {
+      cMass = 1;
+
+    } else if (strcmp(opt, "-implex") == 0) {
+      useImplex = true;
+
+    } else if (strcmp(opt, "-endZones") == 0 || strcmp(opt, "-endZone") == 0) {
+      if (OPS_GetNumRemainingInputArgs() < 2) {
+        opserr << "WARNING LadrunoIMKBeam -- -endZones needs dI dJ\n";
+        return 0;
+      }
+      double dz[2] = {0.0, 0.0};
+      num = 2;
+      if (OPS_GetDoubleInput(&num, dz) < 0 || dz[0] < 0.0 || dz[1] < 0.0) {
+        opserr << "WARNING LadrunoIMKBeam -- invalid -endZones dI dJ\n";
+        return 0;
+      }
+      dI = dz[0];
+      dJ = dz[1];
+
+    } else if (strcmp(opt, "-shear") == 0) {
+      if (OPS_GetNumRemainingInputArgs() < 2) {
+        opserr << "WARNING LadrunoIMKBeam -- -shear needs <GAy GAz> or <G Avy Avz>\n";
+        return 0;
+      }
+      double sVals[3] = {0.0, 0.0, 0.0};
+      num = 2;
+      if (OPS_GetDoubleInput(&num, sVals) < 0 || sVals[0] <= 0.0 || sVals[1] <= 0.0) {
+        opserr << "WARNING LadrunoIMKBeam -- invalid -shear parameters\n";
+        return 0;
+      }
+      int nShearArgs = 2;
+      if (OPS_GetNumRemainingInputArgs() > 0) {
+        const char *nxt = OPS_GetString();
+        bool nextIsFlag = (nxt != 0 && nxt[0] == '-' &&
+                           ((nxt[1] >= 'a' && nxt[1] <= 'z') ||
+                            (nxt[1] >= 'A' && nxt[1] <= 'Z')));
+        OPS_ResetCurrentInputArg(-1);
+        if (!nextIsFlag) {
+          num = 1;
+          if (OPS_GetDoubleInput(&num, &sVals[2]) < 0 || sVals[2] <= 0.0) {
+            opserr << "WARNING LadrunoIMKBeam -- invalid -shear Avz\n";
+            return 0;
+          }
+          nShearArgs = 3;
+        }
+      }
+      if (nShearArgs == 3) {
+        GAvy = sVals[0] * sVals[1];
+        GAvz = sVals[0] * sVals[2];
+      } else {
+        GAvy = sVals[0];
+        GAvz = sVals[1];
+      }
+
+    } else if (strcmp(opt, "-pm") == 0 || strcmp(opt, "-PM") == 0 ||
+               strcmp(opt, "-pmZ") == 0 || strcmp(opt, "-pmY") == 0) {
+      if (OPS_GetNumRemainingInputArgs() < 1) {
+        opserr << "WARNING LadrunoIMKBeam -- -pm needs P0 [alpha]\n";
+        return 0;
+      }
+      num = 1;
+      if (OPS_GetDoubleInput(&num, &P0) < 0 || P0 <= 0.0) {
+        opserr << "WARNING LadrunoIMKBeam -- invalid -pm P0 (must be > 0)\n";
+        return 0;
+      }
+      P0t = 0.0; Pbal = 0.0;
+      if (OPS_GetNumRemainingInputArgs() > 0) {
+        const char *nxt = OPS_GetString();
+        bool nextIsFlag = (nxt != 0 && nxt[0] == '-' &&
+                           ((nxt[1] >= 'a' && nxt[1] <= 'z') ||
+                            (nxt[1] >= 'A' && nxt[1] <= 'Z')));
+        OPS_ResetCurrentInputArg(-1);
+        if (!nextIsFlag) {
+          num = 1;
+          if (OPS_GetDoubleInput(&num, &pmAlpha) < 0) {
+            opserr << "WARNING LadrunoIMKBeam -- invalid -pm alpha\n";
+            return 0;
+          }
+        }
+      }
+
+    } else if (strcmp(opt, "-pmBal") == 0 || strcmp(opt, "-PMBal") == 0) {
+      if (OPS_GetNumRemainingInputArgs() < 4) {
+        opserr << "WARNING LadrunoIMKBeam -- -pmBal needs P0c P0t Pbal muBal\n";
+        return 0;
+      }
+      double pmb[4] = {0.0, 0.0, 0.0, 1.0};
+      num = 4;
+      if (OPS_GetDoubleInput(&num, pmb) < 0 ||
+          pmb[0] <= 0.0 || pmb[1] <= 0.0 || pmb[2] <= 0.0 || pmb[0] <= pmb[2] || pmb[3] < 1.0) {
+        opserr << "WARNING LadrunoIMKBeam -- invalid -pmBal P0c P0t Pbal muBal\n";
+        return 0;
+      }
+      P0    = pmb[0];
+      P0t   = pmb[1];
+      Pbal  = pmb[2];
+      muBal = pmb[3];
 
     } else {
       opserr << "WARNING LadrunoIMKBeam -- unknown option '" << opt << "'\n";
@@ -213,9 +399,20 @@ void *OPS_LadrunoIMKBeam()
   UniaxialMaterial *mYi = setYi ? matYi : ((matY && hI) ? matY : 0);
   UniaxialMaterial *mYj = setYj ? matYj : ((matY && hJ) ? matY : 0);
 
+  NDMaterial *mBiI = setBiI ? biMatI : ((biMat && hI) ? biMat : 0);
+  NDMaterial *mBiJ = setBiJ ? biMatJ : ((biMat && hJ) ? biMat : 0);
+
+  if ((mBiI != 0 || mBiJ != 0) && (mZi != 0 || mZj != 0 || mYi != 0 || mYj != 0)) {
+    opserr << "WARNING LadrunoIMKBeam -- -hingeBiaxial* and uniaxial -matZ*/-matY* are mutually exclusive\n";
+    return 0;
+  }
+
   Element *theEle = new LadrunoIMKBeam(iData[0], iData[1], iData[2],
                                        dData[0], dData[1], dData[2], dData[3],
                                        dData[4], dData[5], *theTransf,
-                                       mZi, mZj, mYi, mYj, rho);
+                                       mZi, mZj, mYi, mYj, rho, cMass,
+                                       GAvy, GAvz, P0, pmAlpha, dI, dJ, useImplex,
+                                       shearMatY, shearMatZ, mBiI, mBiJ,
+                                       P0t, Pbal, muBal);
   return theEle;
 }

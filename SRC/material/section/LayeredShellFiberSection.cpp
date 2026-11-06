@@ -141,9 +141,9 @@ void* OPS_LayeredShellFiberSection()
 }
 
 //static vector and matrices
-Vector  LayeredShellFiberSection::stressResultant(8) ;
-Matrix  LayeredShellFiberSection::tangent(8,8) ;
-ID      LayeredShellFiberSection::array(8) ;
+thread_local Vector  LayeredShellFiberSection::stressResultant(8) ;   // Ladruno WP-192
+thread_local Matrix  LayeredShellFiberSection::tangent(8,8) ;   // Ladruno WP-192
+thread_local ID      LayeredShellFiberSection::array(8) ;   // Ladruno WP-192
 
 //null constructor
 LayeredShellFiberSection::LayeredShellFiberSection( ) : 
@@ -422,7 +422,7 @@ setTrialSectionDeformation( const Vector &strainResultant_from_element)
 {
   this->strainResultant = strainResultant_from_element ;
 
-  static Vector strain(5) ;
+  static thread_local Vector strain(5) ;   // Ladruno WP-192
 
   int success = 0 ;
 
@@ -463,7 +463,7 @@ const Vector& LayeredShellFiberSection::getSectionDeformation( )
 const Vector&  LayeredShellFiberSection::getStressResultant( )
 {
 
-  static Vector stress(5) ;
+  static thread_local Vector stress(5) ;   // Ladruno WP-192
 
   int i ;
 
@@ -507,7 +507,7 @@ const Vector&  LayeredShellFiberSection::getStressResultant( )
 //send back the tangent 
 const Matrix&  LayeredShellFiberSection::getSectionTangent( )
 {
-  static Matrix dd(5,5) ;
+  static thread_local Matrix dd(5,5) ;   // Ladruno WP-192
 
 //  static Matrix Aeps(5,8) ;
 
@@ -709,7 +709,7 @@ LayeredShellFiberSection::sendSelf(int commitTag, Channel &theChannel)
 
   int dataTag = this->getDbTag();
 
-  static ID iData(3);
+  static thread_local ID iData(3);   // Ladruno WP-192
   iData(0) = this->getTag();
   iData(1) = nLayers;
 
@@ -771,7 +771,7 @@ LayeredShellFiberSection::recvSelf(int commitTag, Channel &theChannel, FEM_Objec
   
   int dataTag = this->getDbTag();
 
-  static ID iData(3);
+  static thread_local ID iData(3);   // Ladruno WP-192
   res += theChannel.recvID(dataTag, commitTag, iData);
 
   if (res < 0) {
@@ -843,6 +843,28 @@ LayeredShellFiberSection::recvSelf(int commitTag, Channel &theChannel, FEM_Objec
     
   return res;
 }
- 
 
+// Ladruno WP-192 -- the section's own scratch (stressResultant, tangent,
+// array and the function-scope work vectors) is thread_local, so the answer is
+// the layers'.
+bool
+LayeredShellFiberSection::ladrunoThreadSafeUpdate(void) const
+{
+  if (theFibers == 0 || nLayers < 1)
+    return false;
+  for (int i = 0; i < nLayers; i++)
+    if (theFibers[i] == 0 || !theFibers[i]->ladrunoThreadSafeUpdate())
+      return false;
+  return true;
+}
 
+bool
+LayeredShellFiberSection::ladrunoThreadSafeForm(void) const
+{
+  if (!this->ladrunoThreadSafeUpdate())
+    return false;
+  for (int i = 0; i < nLayers; i++)
+    if (!theFibers[i]->ladrunoThreadSafeForm())
+      return false;
+  return true;
+}

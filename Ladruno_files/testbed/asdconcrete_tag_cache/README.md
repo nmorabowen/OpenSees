@@ -1,13 +1,19 @@
 # asdconcrete_tag_cache — ASDConcrete3D silently reuses the FIRST hardening law registered under a material tag
 
-**Status: REPORTED, NOT FIXED (decision 2026-08-12).** `ASDConcrete3DMaterial.cpp`
-is upstream and the fix was deliberately deferred rather than taken here. This
-directory is the evidence, so nobody has to re-derive it.
+**Status: FIXED 2026-10-15 (#990, apeGmsh #2044).** Reported 2026-08-12 and
+deliberately deferred then (upstream file). The fix is neither candidate below:
+`wipe` clears the registry (`OPS_clearAllNDMaterial()` →
+`ladrunoAsdConcrete3DResetStorage()`; `ASDConcrete1D` has the identical store and
+is cleared from `OPS_clearAllUniaxialMaterial()`). Within one model a tag is
+unique, so clearing at the model boundary removes the collision while keeping the
+sharing the cache exists for. The defect also replaced the **elastic modulus**:
+E=3e6 then E=30e6 under one tag gave sigma_zz = -720 for -7200.
 
-**Live consequence:** `tests/test_ladrunoBrick_asdconcrete_bend.py::test_notched_bend_mesh_objectivity`
-FAILS in a full-suite run and PASSES in isolation. That is expected until the
-material is fixed — **do not "repair" that test**; it is correctly detecting this
-bug. See the §Why the test fails section below.
+**Consequence now:** `test_notched_bend_mesh_objectivity` passes in a full-suite run
+again, and the nightly deselect + sentinel were removed. This directory stays as the
+evidence of what the defect was. Gates: `tests/test_asdconcrete3d_wipe_storage.py`,
+`tests/test_asdconcrete1d_wipe_storage.py`; `repro_tag_cache.py` now reads
+`identical = False`.
 
 ## The defect
 
@@ -122,7 +128,7 @@ Which of the three tests in the single-element file leaks:
 | `test_lch_handshake_mesh_objectivity` | yes | **leaks** |
 | `test_tier_a_damage_scaled_kstab` | yes | **leaks** |
 
-## If someone fixes it later
+## The fixes considered (before #990)
 
 The two candidate fixes, both in `HardeningLawStorage`:
 

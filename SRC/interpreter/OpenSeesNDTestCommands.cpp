@@ -43,6 +43,7 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 // ============================================================================
 
 #include "TimeSeries.h"
+#include <LadrunoMaterialStatus.h>   // Ladruno WP-99: LadrunoProbeCommitScope
 #include "map"
 #include "string.h"
 #include "elementAPI.h"
@@ -316,7 +317,13 @@ void* OPS_NDCommitState()
     }
 
 
-    mat->commitState();
+    {
+        // Ladruno WP-99 hygiene (review #877 minor 4): NDTest commits a material OUTSIDE Domain::commit(), which is the only
+        // place the commit-refusal counter is checked and cleared. Scope it like a probe commit so a refusal declared here
+        // cannot leak into (and fail) the next real Domain::commit().
+        LadrunoProbeCommitScope probe;
+        mat->commitState();
+    }
 
     return 0;
 }

@@ -374,24 +374,43 @@ namespace {
         }
     }
     
+    // Ladruno WP-189: range of the signed det J of the H8 mapping over the 8 gauss
+    // points, on the nodes in the user's order. The sign of det J only says whether
+    // the nodes were written right- or left-handed (the integrals use |det J|); a
+    // brick is genuinely bad when det J changes sign between gauss points
+    // (inverted / folded) or when it collapses (|det J| ~ 0).
+    inline void H8_detJRange(const std::vector<Node*>& nodes, double& dmin, double& dmax) {
+        Matrix P(3, 8);
+        Matrix dN(8, 3);
+        Matrix J(3, 3);
+        H8_nodeMatrix(nodes, P);
+        for (int g = 0; g < static_cast<int>(H8_GW.size()); ++g) {
+            H8_dN(H8_GX[g], H8_GY[g], H8_GZ[g], dN);
+            J.addMatrixProduct(0.0, P, dN, 1.0);
+            double d = H8_det3(J);
+            if (g == 0 || d < dmin) dmin = d;
+            if (g == 0 || d > dmax) dmax = d;
+        }
+    }
+
     // handle sorted node distortion
     inline void handleDistortion(std::vector<SortedNode>& nodes) {
 
         // H8 node matrix
-        static Matrix P(3, 8);
+        static thread_local Matrix P(3, 8);   // Ladruno WP-192
         H8_nodeMatrix(nodes, P);
 
         // jacobian at center
-        static Matrix dN(8, 3);
-        static Matrix J0(3, 3);
+        static thread_local Matrix dN(8, 3);   // Ladruno WP-192
+        static thread_local Matrix J0(3, 3);   // Ladruno WP-192
         H8_dN(0.0, 0.0, 0.0, dN);
         J0.addMatrixProduct(0.0, P, dN, 1.0);
         double detJ0 = H8_det3(J0);
         double v0 = detJ0 * 8.0;
 
         // modified Jacobian
-        static Matrix J(3, 3);
-        static Vector Jnorms(3);
+        static thread_local Matrix J(3, 3);   // Ladruno WP-192
+        static thread_local Vector Jnorms(3);   // Ladruno WP-192
         J = J0;
         for (int j = 0; j < 3; ++j) {
             double jn = std::sqrt(std::pow(J(0, j), 2) + std::pow(J(1, j), 2) + std::pow(J(2, j), 2));
@@ -432,14 +451,14 @@ namespace {
         J *= scale;
 
         // centroid
-        static Vector C(3);
+        static thread_local Vector C(3);   // Ladruno WP-192
         for (int j = 0; j < 8; ++j)
             for (int i = 0; i < 3; ++i)
                 C(i) += P(i, j);
         C /= 3.0;
 
         // un-distored points of an equivalent-volume element
-        static Matrix P0(3, 8);
+        static thread_local Matrix P0(3, 8);   // Ladruno WP-192
         P0.Zero();
         P0(0, 1) = 1.0;
         P0(0, 2) = 1.0;
@@ -455,7 +474,7 @@ namespace {
         P0(2, 7) = 1.0;
         P0 *= 2.0;
         P0 -= 1.0;
-        static Matrix PE(3, 8);
+        static thread_local Matrix PE(3, 8);   // Ladruno WP-192
         for (int j = 0; j < 8; ++j)
             for (int i = 0; i < 3; ++i)
                 PE(i, j) = C(i);
@@ -738,6 +757,27 @@ void ASDAbsorbingBoundary3D::setDomain(Domain* theDomain)
 
     }
 
+    // Ladruno WP-189: refuse a degenerate brick: det J changing sign between gauss
+    // points (inverted / folded) or collapsed (min |det J| < 1e-6 max |det J|, or
+    // all zero). Either handedness of a sound brick is accepted: the free-field
+    // integrals use |det J|. Only vertical boundaries integrate the free-field
+    // column, so only those are checked; a pure BOTTOM element never uses det J.
+    if (!(m_boundary & BND_BOTTOM) || (m_boundary & (BND_LEFT | BND_RIGHT | BND_FRONT | BND_BACK))) {
+        double dmin = 0.0, dmax = 0.0;
+        H8_detJRange(m_nodes, dmin, dmax);
+        double amax = std::max(std::abs(dmin), std::abs(dmax));
+        double amin = (dmin > 0.0 || dmax < 0.0) ? std::min(std::abs(dmin), std::abs(dmax)) : 0.0;
+        if (!(amax > 0.0) || !(amin >= 1.0e-6 * amax)) {
+            opserr << "ASDAbsorbingBoundary3D Error in setDomain: element " << this->getTag()
+                << " is a degenerate brick (det J over the 8 gauss points: min = " << dmin
+                << ", max = " << dmax << "; it must keep one sign and not collapse). Nodes (as given):";
+            for (std::size_t i = 0; i < m_nodes.size(); ++i)
+                opserr << " " << m_node_ids(static_cast<int>(i));
+            opserr << "\n";
+            exit(-1);
+        }
+    }
+
     // only on setDomain during creation, not after a recvSelf
     if (!m_initialized) {
 
@@ -919,7 +959,7 @@ int ASDAbsorbingBoundary3D::commitState()
     if (m_stage != Stage_StaticConstraint) {
         Domain* dom = getDomain();
         if (dom != 0) {
-            static Vector Rinj;
+            static thread_local Vector Rinj;   // Ladruno WP-192
             Rinj.resize(m_num_dofs);
             Rinj.Zero();
             if (m_boundary & BND_BOTTOM)
@@ -949,7 +989,7 @@ int ASDAbsorbingBoundary3D::commitState()
 const Matrix& ASDAbsorbingBoundary3D::getTangentStiff(void)
 {
     // initialize matrix
-    static Matrix K;
+    static thread_local Matrix K;   // Ladruno WP-192
     K.resize(m_num_dofs, m_num_dofs);
     K.Zero();
 
@@ -975,7 +1015,7 @@ const Matrix& ASDAbsorbingBoundary3D::getInitialStiff(void)
 const Matrix& ASDAbsorbingBoundary3D::getDamp(void)
 {
     // initialize matrix
-    static Matrix C;
+    static thread_local Matrix C;   // Ladruno WP-192
     C.resize(m_num_dofs, m_num_dofs);
     C.Zero();
 
@@ -992,7 +1032,7 @@ const Matrix& ASDAbsorbingBoundary3D::getDamp(void)
 const Matrix& ASDAbsorbingBoundary3D::getMass(void)
 {
     // initialize matrix
-    static Matrix M;
+    static thread_local Matrix M;   // Ladruno WP-192
     M.resize(m_num_dofs, m_num_dofs);
     M.Zero();
 
@@ -1014,7 +1054,7 @@ int ASDAbsorbingBoundary3D::addInertiaLoadToUnbalance(const Vector& accel)
 const Vector& ASDAbsorbingBoundary3D::getResistingForce()
 {
     // initialize vector
-    static Vector R;
+    static thread_local Vector R;   // Ladruno WP-192
     R.resize(m_num_dofs);
     R.Zero();
 
@@ -1037,7 +1077,7 @@ const Vector& ASDAbsorbingBoundary3D::getResistingForce()
 const Vector& ASDAbsorbingBoundary3D::getResistingForceIncInertia()
 {
     // initialize vector
-    static Vector R;
+    static thread_local Vector R;   // Ladruno WP-192
     R.resize(m_num_dofs);
     R.Zero();
 
@@ -1083,7 +1123,7 @@ int ASDAbsorbingBoundary3D::sendSelf(int commitTag, Channel& theChannel)
     int pos = 0;
 
     // INT data
-    static ID idData(55);
+    static thread_local ID idData(55);   // Ladruno WP-192
 
     // tag
     idData(pos++) = getTag();
@@ -1164,7 +1204,7 @@ int ASDAbsorbingBoundary3D::sendSelf(int commitTag, Channel& theChannel)
     }
 
     // DOUBLE data
-    static Vector vectData;
+    static thread_local Vector vectData;   // Ladruno WP-192
     vectData.resize(dsize);
 
     pos = 0;
@@ -1219,7 +1259,7 @@ int ASDAbsorbingBoundary3D::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
     int pos = 0;
 
     // INT data
-    static ID idData(55);
+    static thread_local ID idData(55);   // Ladruno WP-192
     res += theChannel.recvID(dataTag, commitTag, idData);
     if (res < 0) {
         opserr << "WARNING ASDAbsorbingBoundary3D::recvSelf() - " << this->getTag() << " failed to receive ID\n";
@@ -1283,7 +1323,7 @@ int ASDAbsorbingBoundary3D::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
     int dsize = idData(pos++);
 
     // DOUBLE data
-    static Vector vectData;
+    static thread_local Vector vectData;   // Ladruno WP-192
     vectData.resize(dsize);
 
     res += theChannel.recvVector(dataTag, commitTag, vectData);
@@ -1487,7 +1527,7 @@ Response* ASDAbsorbingBoundary3D::setResponse(const char** argv, int argc, OPS_S
 
 int ASDAbsorbingBoundary3D::getResponse(int responseID, Information& eleInfo)
 {
-    static Vector r1(1);
+    static thread_local Vector r1(1);   // Ladruno WP-192
     switch (responseID) {
     case 1: r1(0) = static_cast<double>(m_stage); return eleInfo.setVector(r1);
     case 2: r1(0) = m_G; return eleInfo.setVector(r1);
@@ -1511,7 +1551,7 @@ void ASDAbsorbingBoundary3D::addDisplacement(Vector& U)
 
 const Vector& ASDAbsorbingBoundary3D::getDisplacement()
 {
-    static Vector U;
+    static thread_local Vector U;   // Ladruno WP-192
     U.resize(m_num_dofs);
     U.Zero();
     addDisplacement(U);
@@ -1521,7 +1561,7 @@ const Vector& ASDAbsorbingBoundary3D::getDisplacement()
 
 const Vector& ASDAbsorbingBoundary3D::getVelocity()
 {
-    static Vector U;
+    static thread_local Vector U;   // Ladruno WP-192
     U.resize(m_num_dofs);
     int counter = 0;
     for (Node* node : m_nodes) {
@@ -1534,7 +1574,7 @@ const Vector& ASDAbsorbingBoundary3D::getVelocity()
 
 const Vector& ASDAbsorbingBoundary3D::getAcceleration()
 {
-    static Vector U;
+    static thread_local Vector U;   // Ladruno WP-192
     U.resize(m_num_dofs);
     int counter = 0;
     for (Node* node : m_nodes) {
@@ -1954,7 +1994,7 @@ void ASDAbsorbingBoundary3D::addRMff(Vector& R)
 
 const ID& ASDAbsorbingBoundary3D::ffMapping()
 {
-    static ID m(24);
+    static thread_local ID m(24);   // Ladruno WP-192
 
     // h8 is formed with the original order, but with a local dofset
     int counter = 0;
@@ -2021,23 +2061,23 @@ void ASDAbsorbingBoundary3D::addKff(Matrix& K, double scale)
     const ID& T = ffMapping();
 
     // H8 node matrix
-    static Matrix P(3, 8);
+    static thread_local Matrix P(3, 8);   // Ladruno WP-192
     H8_nodeMatrix(m_nodes, P);
 
     // elasticity constants
     double mu = m_G;
     double lam = 2.0 * mu * m_v / (1.0 - 2.0 * m_v);
-    static Matrix E(6, 6);
+    static thread_local Matrix E(6, 6);   // Ladruno WP-192
     H8_C0(lam, mu, E);
 
     // other data
-    static Matrix dN(8, 3);
-    static Matrix J(3, 3);
-    static Matrix invJ(3, 3);
+    static thread_local Matrix dN(8, 3);   // Ladruno WP-192
+    static thread_local Matrix J(3, 3);   // Ladruno WP-192
+    static thread_local Matrix invJ(3, 3);   // Ladruno WP-192
     double detJ = 0.0;
-    static Matrix dNdX(8, 3);
-    static Matrix B(6, 24);
-    static Matrix BB;
+    static thread_local Matrix dNdX(8, 3);   // Ladruno WP-192
+    static thread_local Matrix B(6, 24);   // Ladruno WP-192
+    static thread_local Matrix BB;   // Ladruno WP-192
     BB.resize(6, m_num_dofs);
 
     // gauss integration
@@ -2069,7 +2109,7 @@ void ASDAbsorbingBoundary3D::addKff(Matrix& K, double scale)
         }
 
         // integrate
-        double dV = detJ * gw * scale;
+        double dV = std::abs(detJ) * gw * scale; // Ladruno WP-189: volume measure, independent of node-order handedness
         K.addMatrixTripleProduct(1.0, BB, E, dV);
     }
 }
@@ -2089,26 +2129,26 @@ void ASDAbsorbingBoundary3D::addRff(Vector& R)
     const Vector& U = getDisplacement();
 
     // H8 node matrix
-    static Matrix P(3, 8);
+    static thread_local Matrix P(3, 8);   // Ladruno WP-192
     H8_nodeMatrix(m_nodes, P);
 
     // elasticity constants
     double mu = m_G;
     double lam = 2.0 * mu * m_v / (1.0 - 2.0 * m_v);
-    static Matrix E(6, 6);
+    static thread_local Matrix E(6, 6);   // Ladruno WP-192
     H8_C0(lam, mu, E);
 
     // other data
-    static Matrix dN(8, 3);
-    static Matrix J(3, 3);
-    static Matrix invJ(3, 3);
+    static thread_local Matrix dN(8, 3);   // Ladruno WP-192
+    static thread_local Matrix J(3, 3);   // Ladruno WP-192
+    static thread_local Matrix invJ(3, 3);   // Ladruno WP-192
     double detJ = 0.0;
-    static Matrix dNdX(8, 3);
-    static Matrix B(6, 24);
-    static Matrix BB;
+    static thread_local Matrix dNdX(8, 3);   // Ladruno WP-192
+    static thread_local Matrix B(6, 24);   // Ladruno WP-192
+    static thread_local Matrix BB;   // Ladruno WP-192
     BB.resize(6, m_num_dofs);
-    static Vector strain(6);
-    static Vector stress(6);
+    static thread_local Vector strain(6);   // Ladruno WP-192
+    static thread_local Vector stress(6);   // Ladruno WP-192
 
     // gauss integration
     for (int gauss_id = 0; gauss_id < H8_GW.size(); ++gauss_id) {
@@ -2145,7 +2185,7 @@ void ASDAbsorbingBoundary3D::addRff(Vector& R)
         stress.addMatrixVector(0.0, E, strain, 1.0);
 
         // integrate
-        double dV = detJ * gw;
+        double dV = std::abs(detJ) * gw; // Ladruno WP-189: volume measure, independent of node-order handedness
         R.addMatrixTransposeVector(1.0, BB, stress, dV);
     }
 }
@@ -2155,14 +2195,14 @@ const Matrix& ASDAbsorbingBoundary3D::computeNmatrix()
     // N matrix to obtain the traction vector
     // from the free-field stress 
     // applied on the soil nodes
-    static Matrix N;
+    static thread_local Matrix N;   // Ladruno WP-192
     N.resize(m_num_dofs, 6);
     N.Zero();
 
     // aux vector for normal from free-field to soil
     // (it should be soil-to-free-field, but we invert the sign
     // here because these are external forces!
-    static Vector n(3);
+    static thread_local Vector n(3);   // Ladruno WP-192
 
     // choose ff-ss pairs (same as per LK dashpots)
     const std::vector<LKnodes>& pairs = LKselectPairs(m_boundary);
@@ -2238,28 +2278,28 @@ void ASDAbsorbingBoundary3D::addKffToSoil(Matrix& K)
     const ID& T = ffMapping();
 
     // H8 node matrix
-    static Matrix P(3, 8);
+    static thread_local Matrix P(3, 8);   // Ladruno WP-192
     H8_nodeMatrix(m_nodes, P);
 
     // elasticity constants
     double mu = m_G;
     double lam = 2.0 * mu * m_v / (1.0 - 2.0 * m_v);
-    static Matrix E(6, 6);
+    static thread_local Matrix E(6, 6);   // Ladruno WP-192
     H8_C0(lam, mu, E);
 
     // N matrix
     const Matrix& N = computeNmatrix();
 
     // other data
-    static Matrix dN(8, 3);
-    static Matrix J(3, 3);
-    static Matrix invJ(3, 3);
+    static thread_local Matrix dN(8, 3);   // Ladruno WP-192
+    static thread_local Matrix J(3, 3);   // Ladruno WP-192
+    static thread_local Matrix invJ(3, 3);   // Ladruno WP-192
     double detJ = 0.0;
-    static Matrix dNdX(8, 3);
-    static Matrix B(6, 24);
-    static Matrix BB;
+    static thread_local Matrix dNdX(8, 3);   // Ladruno WP-192
+    static thread_local Matrix B(6, 24);   // Ladruno WP-192
+    static thread_local Matrix BB;   // Ladruno WP-192
     BB.resize(6, m_num_dofs);
-    static Matrix NE;
+    static thread_local Matrix NE;   // Ladruno WP-192
     NE.resize(m_num_dofs, 6);
 
     // gauss integration
@@ -2312,28 +2352,33 @@ void ASDAbsorbingBoundary3D::addRffToSoil(Vector& R)
     const Vector& U = getDisplacement();
 
     // H8 node matrix
-    static Matrix P(3, 8);
+    static thread_local Matrix P(3, 8);   // Ladruno WP-192
     H8_nodeMatrix(m_nodes, P);
 
     // elasticity constants
     double mu = m_G;
     double lam = 2.0 * mu * m_v / (1.0 - 2.0 * m_v);
-    static Matrix E(6, 6);
+    static thread_local Matrix E(6, 6);   // Ladruno WP-192
     H8_C0(lam, mu, E);
 
     // N matrix
     const Matrix& N = computeNmatrix();
 
     // other data
-    static Matrix dN(8, 3);
-    static Matrix J(3, 3);
-    static Matrix invJ(3, 3);
+    static thread_local Matrix dN(8, 3);   // Ladruno WP-192
+    static thread_local Matrix J(3, 3);   // Ladruno WP-192
+    static thread_local Matrix invJ(3, 3);   // Ladruno WP-192
     double detJ = 0.0;
-    static Matrix dNdX(8, 3);
-    static Matrix B(6, 24);
-    static Matrix BB(6, m_num_dofs);
-    static Vector strain(6);
-    static Vector stress(6);
+    static thread_local Matrix dNdX(8, 3);   // Ladruno WP-192
+    static thread_local Matrix B(6, 24);   // Ladruno WP-192
+    static thread_local Matrix BB(6, m_num_dofs);   // Ladruno WP-192
+    // Ladruno WP-192: size it per call like the three sibling kernels do. The
+    // static was sized ONCE by the first caller's m_num_dofs, so a later skin
+    // element with a different dof count indexed past its end; per-thread
+    // copies would also each be sized by a different first caller.
+    BB.resize(6, m_num_dofs);
+    static thread_local Vector strain(6);   // Ladruno WP-192
+    static thread_local Vector stress(6);   // Ladruno WP-192
 
     // gauss integration
     for (int gauss_id = 0; gauss_id < H8_GW.size(); ++gauss_id) {
@@ -2422,7 +2467,7 @@ void ASDAbsorbingBoundary3D::addRCff(Vector& R)
         return;
 
     // compute damping matrix of the free-field
-    static Matrix C;
+    static thread_local Matrix C;   // Ladruno WP-192
     C.resize(m_num_dofs, m_num_dofs);
     C.Zero();
 
@@ -2467,8 +2512,8 @@ void ASDAbsorbingBoundary3D::addClk(Matrix& C)
     const std::vector<LKnodes>& pairs = LKselectPairs(m_boundary);
 
     // aux
-    static Vector direction(3);
-    static Vector coeff(3);
+    static thread_local Vector direction(3);   // Ladruno WP-192
+    static thread_local Vector coeff(3);   // Ladruno WP-192
 
     // process each pair
     for (const LKnodes& ip : pairs) {
@@ -2548,8 +2593,8 @@ void ASDAbsorbingBoundary3D::addRlk(Vector& R)
     const std::vector<LKnodes>& pairs = LKselectPairs(m_boundary);
 
     // aux
-    static Vector direction(3);
-    static Vector coeff(3);
+    static thread_local Vector direction(3);   // Ladruno WP-192
+    static thread_local Vector coeff(3);   // Ladruno WP-192
 
     // process each pair
     for (const LKnodes& ip : pairs) {
@@ -2643,7 +2688,7 @@ void ASDAbsorbingBoundary3D::addBaseActions(Vector& R)
     std::array<double, 3> f = { {2.0 * as * vx, 2.0 * as * vy, 2.0 * ap * vz} };
 
     // add forces on top nodes
-    static ID loaded_nodes(4);
+    static thread_local ID loaded_nodes(4);   // Ladruno WP-192
     if ((m_boundary & BND_LEFT) || (m_boundary & BND_RIGHT)) {
         if ((m_boundary & BND_FRONT) || (m_boundary & BND_BACK)) {
             // corner: 4 contributions on same node (1)

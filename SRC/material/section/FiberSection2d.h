@@ -67,6 +67,8 @@ class FiberSection2d : public SectionForceDeformation
     int   revertToStart(void);
  
     SectionForceDeformation *getCopy(void);
+    bool ladrunoThreadSafeUpdate(void) const; // Ladruno
+    bool ladrunoThreadSafeForm(void) const;   // Ladruno
     const ID &getType (void);
     int getOrder (void) const;
     

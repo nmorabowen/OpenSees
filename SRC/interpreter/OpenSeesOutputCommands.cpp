@@ -41,6 +41,7 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <elementAPI.h>
 #include <Ladruno_mutation.h>                  // Ladruno: ADR-87 D2 mutation gates
 #include <LadrunoThreads.h>                    // Ladruno: WP-107 thread-count knob
+#include "LadrunoSchema.h"                     // Ladruno: WP-185 ladrunoSchema
 #include <cstring>                             // Ladruno: ADR-87 D2 (strncat/strncpy)
 #include <ConstraintHandler.h>                 // Ladruno: ADR-30 P3 tie-force query
 #include <LadrunoProjectionHandler.h>          // Ladruno: ADR-30 P3
@@ -1717,6 +1718,30 @@ int OPS_LadrunoBuild()   // Ladruno
 }
 
 
+// Ladruno WP-185 (apeGmsh#1667): `ladrunoSchema` -> one JSON string describing
+// what this build offers (LadrunoSchema.h has the shape). Takes no arguments;
+// any argument is refused, so a frontend can never mistake a future v1 request
+// for an answer.
+int OPS_LadrunoSchema()   // Ladruno WP-185
+{
+    int numArgs = OPS_GetNumRemainingInputArgs();
+    if (numArgs > 0) {
+        opserr << "WARNING ladrunoSchema: takes no arguments, got " << numArgs
+               << " (schema v" << ladruno_schema::kSchemaVersion << ")\n";
+        return -1;
+    }
+    std::string json, err;
+    if (!ladruno_schema::render(ladruno_schema::ENGINE_DL, json, err)) {
+        opserr << "WARNING ladrunoSchema: " << err.c_str() << "\n";
+        return -1;
+    }
+    if (OPS_SetString(json.c_str()) < 0) {
+        opserr << "WARNING ladrunoSchema: failed to set the schema string\n";
+        return -1;
+    }
+    return 0;
+}
+
 // Ladruno WP-107 (ADR-75b L3-1): `ladrunoThreads` -- the ONE knob for the
 // element state-determination loop's thread count (ADR-75b P-5: MKL solver
 // threads x assembly threads x MPI ranks oversubscribe and make every bench
@@ -1724,6 +1749,7 @@ int OPS_LadrunoBuild()   // Ladruno
 //
 //   ladrunoThreads          -> query; returns the current count
 //   ladrunoThreads <n>      -> request n threads; returns what was stored
+//   ladrunoThreads <n> -hybrid -> also allow threads on an MPI binary (WP-192)
 //
 // Default is 1 (ADR-40's standing "OpenMP-by-default is an anti-goal"), seeded
 // from the LADRUNO_THREADS environment variable. Asking for n > 1 in a binary
@@ -1745,6 +1771,17 @@ int OPS_LadrunoThreads()   // Ladruno WP-107
         // ladruno_setNumThreads (WP-107 red-team S7), so the env path and both
         // interpreter verbs say the same thing in the same words.
         int stored = ladruno_setNumThreads(n);
+        // Ladruno WP-192: `-hybrid` acknowledges hybrid MPI+threads, the one
+        // way an MPI binary honours the count (ladruno_hybridAllowed).
+        while (OPS_GetNumRemainingInputArgs() > 0) {
+            const char *flag = OPS_GetString();
+            if (flag != 0 && strcmp(flag, "-hybrid") == 0)
+                ladruno_setHybridAllowed(true);
+            else {
+                opserr << "WARNING ladrunoThreads: unknown option "
+                       << (flag ? flag : "?") << " -- ignored (known: -hybrid)\n";
+            }
+        }
         if (stored > 1 && !ladruno_openmpCompiledIn()) {
             opserr << "WARNING ladrunoThreads: this binary was built WITHOUT "
                    << "LADRUNO_OPENMP, so the element loop stays SERIAL no "
@@ -1787,6 +1824,7 @@ int OPS_LadrunoMutation()   // Ladruno
         {"EXPLICIT",  LADRUNO_MUTATE_EXPLICIT},
         {"SANISAND",  LADRUNO_MUTATE_SANISAND},
         {"SHELLMOD",  LADRUNO_MUTATE_SHELLMOD},   // Ladruno: ADR 91
+        {"CPML",      LADRUNO_MUTATE_CPML},       // Ladruno: C-PML wave absorbing element
     };
     const char *modeName[] = {"NONE", "ZERO", "SCALE", "IDENT"};
 

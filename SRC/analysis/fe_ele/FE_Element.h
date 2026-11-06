@@ -61,6 +61,11 @@ class FE_Element: public TaggedObject
     virtual const Matrix &getTangent(Integrator *theIntegrator);
     virtual const Vector &getResidual(Integrator *theIntegrator);
 
+    // Ladruno WP-192: may the threaded tangent / residual loops run this FE
+    // concurrently with others? See FE_Element.cpp. Prepares the element's
+    // Rayleigh pool slot as a side effect, so call it serially.
+    virtual bool ladrunoThreadSafeFE(void);
+
     // methods to allow integrator to build tangent
     virtual void  zeroTangent(void);
     virtual void  addKtToTang(double fact = 1.0);
@@ -136,6 +141,12 @@ class FE_Element: public TaggedObject
     int numDOF;
     AnalysisModel *theModel;
     Element *myEle;
+    // Ladruno WP-192: the buffer to build into -- the per-thread twin of the
+    // class-wide pool inside a threaded loop, theTangent / theResidual otherwise.
+    Matrix *ladrunoTan(void) const;
+    Vector *ladrunoRes(void) const;
+    bool ladrunoPooled;   // theTangent / theResidual are the class-wide pool's
+
     Vector *theResidual;
     Matrix *theTangent;
     Integrator *theIntegrator; // need for Subdomain

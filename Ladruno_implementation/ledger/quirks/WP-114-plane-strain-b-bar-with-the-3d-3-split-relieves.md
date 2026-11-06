@@ -1,0 +1,10 @@
+---
+wp: WP-114
+title: "Plane-strain B-bar with the 3D ÷3 split relieves NOTHING under isochoric flow — a 3-row plane-strain B needs the ½ split (BezierTri6 -bbar, fixed WP-114)"
+legacy_seq: 471
+---
+### Plane-strain B-bar with the 3D ÷3 split relieves NOTHING under isochoric flow — a 3-row plane-strain B needs the ½ split (BezierTri6 `-bbar`, fixed WP-114)
+- **Bites:** a 2D element's `-bbar` built by copying the 3D mean-dilatation recipe, (B̄+2B)/3 and (B̄−B)/3 on the normal rows, onto a 3-row plane-strain B (εxx, εyy, γxy). The εzz row, (B̄−B)/3, has nowhere to go and is dropped, so the material sees an in-plane trace of (θ+2θ̄)/3, not θ̄. Averaged over the element that is θ̄, so "trace = 0 at every GP" still forces θ = 0 at every GP: the T6 keeps **3** volumetric constraints, the same as the plain element (the ½ split leaves **1**). Elastic tests, patch tests and an FD tangent check (1e-11) all pass; the defect only shows under ψ=0 / critical-state flow, as intra-element pressure checkerboarding (median I1 spread 41% of the mean, p90 223%, vs exactly 0 after the fix) that drives scattered GPs to the Drucker-Prager apex and walls a rigid punch (s/B = 0.039, 63 apex GPs; the TIMs deck walled at 0.0022 with 123).
+- **Why:** the 3D ÷3 split distributes the dilatation correction over three normal strains; with εzz ≡ 0 only two are available, so the correction must be split ½/½ (θ̄−θ)/2 on εxx and εyy. The same rule gives the 2D F-bar power ½, not ⅓ (see the LadrunoFiniteStrain2D row).
+- **Check:** with a nearly incompressible elastic material (ν = 0.4999999) count the bulk-dominated eigenvalues of one element's `eleResponse … stiffness`: T6 std 3, correct `-bbar` 1, ÷3 `-bbar` 3. Or impose a field with varying dilatation and check εxx+εyy at every GP equals the plain element's average θ. Both are in `tests/test_beziertri6_bbar_plane_strain.py`.
+- **Status (2026-09-18):** BezierTri6 fixed in b42ca77d8 (PR #848). LadrunoQuad and LadrunoUP (2D) already used ½; LadrunoLST/CST have no B-bar. Audit any NEW 2D B-bar/F-bar for this.

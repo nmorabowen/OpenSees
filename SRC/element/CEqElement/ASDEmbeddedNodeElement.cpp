@@ -587,7 +587,7 @@ const Matrix& ASDEmbeddedNodeElement::getTangentStiff()
     const Matrix& KL = compute_local();
 
     // output matrix
-    static Matrix K;
+    static thread_local Matrix K;   // Ladruno WP-192
     K.resize(m_num_dofs, m_num_dofs);
     K.Zero();
 
@@ -611,7 +611,7 @@ const Matrix& ASDEmbeddedNodeElement::getInitialStiff()
 
 const Matrix& ASDEmbeddedNodeElement::getMass()
 {
-    static Matrix M;
+    static thread_local Matrix M;   // Ladruno WP-192
     M.resize(m_num_dofs, m_num_dofs);
     M.Zero();
     return M;
@@ -619,7 +619,7 @@ const Matrix& ASDEmbeddedNodeElement::getMass()
 
 const Matrix& ASDEmbeddedNodeElement::getDamp()
 {
-    static Matrix C;
+    static thread_local Matrix C;   // Ladruno WP-192
     C.resize(m_num_dofs, m_num_dofs);
     C.Zero();
     return C;
@@ -633,7 +633,7 @@ ASDEmbeddedNodeElement::addInertiaLoadToUnbalance(const Vector& accel)
 
 const Vector& ASDEmbeddedNodeElement::getResistingForce()
 {
-    static Vector F;
+    static thread_local Vector F;   // Ladruno WP-192
     F.resize(m_num_dofs);
     const Matrix& K = getTangentStiff();
     const Vector& U = getGlobalDisplacements();
@@ -668,7 +668,7 @@ int ASDEmbeddedNodeElement::sendSelf(int commitTag, Channel& theChannel)
     // U0_computed
     // number of local dofs (at most 20)
     // mapping of local dofs (if less then 20, the last ones will be set to 0)
-    static ID idData(35);
+    static thread_local ID idData(35);   // Ladruno WP-192
     idData.Zero();
     idData(0) = getTag();
     idData(1) = m_node_ids.Size();
@@ -698,7 +698,7 @@ int ASDEmbeddedNodeElement::sendSelf(int commitTag, Channel& theChannel)
     // K
     // KP
     // initial displacement (at most we can have 30 dofs)
-    static Vector vectData(32);
+    static thread_local Vector vectData(32);   // Ladruno WP-192
     vectData.Zero();
     vectData(0) = m_K;
     vectData(1) = m_KP;
@@ -733,7 +733,7 @@ int ASDEmbeddedNodeElement::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
     // U0_computed
     // number of local dofs (at most 20)
     // mapping of local dofs (if less then 20, the last ones will be set to 0)
-    static ID idData(35);
+    static thread_local ID idData(35);   // Ladruno WP-192
     res += theChannel.recvID(dataTag, commitTag, idData);
     if (res < 0) {
         opserr << "WARNING ASDEmbeddedNodeElement::recvSelf() - " << this->getTag() << " failed to receive ID\n";
@@ -765,7 +765,7 @@ int ASDEmbeddedNodeElement::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
     // DOUBLE data
     // K
     // KP
-    static Vector vectData(32);
+    static thread_local Vector vectData(32);   // Ladruno WP-192
     res += theChannel.recvVector(dataTag, commitTag, vectData);
     if (res < 0) {
         opserr << "WARNING ASDEmbeddedNodeElement::sendSelf() - " << this->getTag() << " failed to receive Vector\n";
@@ -783,7 +783,7 @@ int ASDEmbeddedNodeElement::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
 
 const Vector& ASDEmbeddedNodeElement::getGlobalDisplacements() const
 {
-    static Vector U;
+    static thread_local Vector U;   // Ladruno WP-192
     U.resize(m_num_dofs);
     int counter = 0;
     for (Node* node : m_nodes) {
@@ -801,10 +801,10 @@ const Vector& ASDEmbeddedNodeElement::getGlobalDisplacements() const
 const Matrix& ASDEmbeddedNodeElement::TRI_2D_U()
 {
     // output
-    static Matrix K(8, 8);
+    static thread_local Matrix K(8, 8);   // Ladruno WP-192
 
     // collect triangle coordinates
-    static Matrix X(2, 3);
+    static thread_local Matrix X(2, 3);   // Ladruno WP-192
     for (int i = 1; i < 4; i++) {
         const Node* node = m_nodes[static_cast<std::size_t>(i)];
         X(0, i-1) = node->getCrds()(0);
@@ -812,15 +812,15 @@ const Matrix& ASDEmbeddedNodeElement::TRI_2D_U()
     }
 
     // shape functions natural derivatives
-    static Matrix dN(3, 2);
+    static thread_local Matrix dN(3, 2);   // Ladruno WP-192
     tri::shapeFunDer(dN);
 
     // jacobian
-    static Matrix J(2, 2);
+    static thread_local Matrix J(2, 2);   // Ladruno WP-192
     J.addMatrixProduct(0.0, X, dN, 1.0);
     double detJ = det2(J);
     double V = detJ / 2.0;
-    static Matrix invJ(2, 2);
+    static thread_local Matrix invJ(2, 2);   // Ladruno WP-192
     J.Invert(invJ);
 
     // find local coordinates of constrained node
@@ -828,14 +828,14 @@ const Matrix& ASDEmbeddedNodeElement::TRI_2D_U()
     tri::localCoord(X, invJ, m_nodes[0]->getCrds()(0), m_nodes[0]->getCrds()(1), lx, ly);
 
     // compute shape functions at constrained node
-    static Vector N(3);
+    static thread_local Vector N(3);   // Ladruno WP-192
     for(int i = 0; i < 3; ++i)
         N(i) = tri::shapeFun(lx, ly, i);
 
     // compute B matrix
     // UCx = sum(N*URx) -> sum(N*URx) - UCx = 0
     // UCy = sum(N*URy) -> sum(N*URy) - UCy = 0
-    static Matrix B(2, 8);
+    static thread_local Matrix B(2, 8);   // Ladruno WP-192
     B.Zero();
     for (int i = 0; i < 2; i++)
         B(i, i) = -1.0;
@@ -858,10 +858,10 @@ const Matrix& ASDEmbeddedNodeElement::TRI_2D_U()
 const Matrix& ASDEmbeddedNodeElement::TRI_2D_UR()
 {
     // output
-    static Matrix K(9, 9);
+    static thread_local Matrix K(9, 9);   // Ladruno WP-192
     
     // collect triangle coordinates
-    static Matrix X(2, 3);
+    static thread_local Matrix X(2, 3);   // Ladruno WP-192
     for (int i = 1; i < 4; i++) {
         const Node* node = m_nodes[static_cast<std::size_t>(i)];
         X(0, i - 1) = node->getCrds()(0);
@@ -869,19 +869,19 @@ const Matrix& ASDEmbeddedNodeElement::TRI_2D_UR()
     }
 
     // shape functions natural derivatives
-    static Matrix dN(3, 2);
+    static thread_local Matrix dN(3, 2);   // Ladruno WP-192
     tri::shapeFunDer(dN);
 
     // jacobian
-    static Matrix J(2, 2);
+    static thread_local Matrix J(2, 2);   // Ladruno WP-192
     J.addMatrixProduct(0.0, X, dN, 1.0);
     double detJ = det2(J);
     double V = detJ / 2.0;
-    static Matrix invJ(2, 2);
+    static thread_local Matrix invJ(2, 2);   // Ladruno WP-192
     J.Invert(invJ);
 
     // shape functions cartesian derivatives
-    static Matrix dNdX(3, 2);
+    static thread_local Matrix dNdX(3, 2);   // Ladruno WP-192
     dNdX.addMatrixProduct(0.0, dN, invJ, 1.0);
 
     // find local coordinates of constrained node
@@ -889,7 +889,7 @@ const Matrix& ASDEmbeddedNodeElement::TRI_2D_UR()
     tri::localCoord(X, invJ, m_nodes[0]->getCrds()(0), m_nodes[0]->getCrds()(1), lx, ly);
 
     // compute shape functions at constrained node
-    static Vector N(3);
+    static thread_local Vector N(3);   // Ladruno WP-192
     for (int i = 0; i < 3; ++i)
         N(i) = tri::shapeFun(lx, ly, i);
 
@@ -897,7 +897,7 @@ const Matrix& ASDEmbeddedNodeElement::TRI_2D_UR()
     // UCx = sum(N*URx) -> sum(N*URx) - UCx = 0
     // UCy = sum(N*URy) -> sum(N*URy) - UCy = 0
     // RCz = sum(d_URy_dX - d_URx_dY)/2.0 -> sum(d_URy_dX - d_URx_dY)/2.0 - RCz = 0
-    static Matrix B(3, 9);
+    static thread_local Matrix B(3, 9);   // Ladruno WP-192
     B.Zero();
     for (int i = 0; i < 3; i++)
         B(i, i) = -1.0;
@@ -921,10 +921,10 @@ const Matrix& ASDEmbeddedNodeElement::TRI_2D_UR()
 const Matrix& ASDEmbeddedNodeElement::TRI_2D_UP()
 {
     // output
-    static Matrix K(12, 12);
+    static thread_local Matrix K(12, 12);   // Ladruno WP-192
 
     // collect triangle coordinates
-    static Matrix X(2, 3);
+    static thread_local Matrix X(2, 3);   // Ladruno WP-192
     for (int i = 1; i < 4; i++) {
         const Node* node = m_nodes[static_cast<std::size_t>(i)];
         X(0, i - 1) = node->getCrds()(0);
@@ -932,15 +932,15 @@ const Matrix& ASDEmbeddedNodeElement::TRI_2D_UP()
     }
 
     // shape functions natural derivatives
-    static Matrix dN(3, 2);
+    static thread_local Matrix dN(3, 2);   // Ladruno WP-192
     tri::shapeFunDer(dN);
 
     // jacobian
-    static Matrix J(2, 2);
+    static thread_local Matrix J(2, 2);   // Ladruno WP-192
     J.addMatrixProduct(0.0, X, dN, 1.0);
     double detJ = det2(J);
     double V = detJ / 2.0;
-    static Matrix invJ(2, 2);
+    static thread_local Matrix invJ(2, 2);   // Ladruno WP-192
     J.Invert(invJ);
 
     // find local coordinates of constrained node
@@ -948,7 +948,7 @@ const Matrix& ASDEmbeddedNodeElement::TRI_2D_UP()
     tri::localCoord(X, invJ, m_nodes[0]->getCrds()(0), m_nodes[0]->getCrds()(1), lx, ly);
 
     // compute shape functions at constrained node
-    static Vector N(3);
+    static thread_local Vector N(3);   // Ladruno WP-192
     for (int i = 0; i < 3; ++i)
         N(i) = tri::shapeFun(lx, ly, i);
 
@@ -956,7 +956,7 @@ const Matrix& ASDEmbeddedNodeElement::TRI_2D_UP()
     // UCx = sum(N*URx) -> sum(N*URx) - UCx = 0
     // UCy = sum(N*URy) -> sum(N*URy) - UCy = 0
     // UCp = sum(N*URp) -> sum(N*URp) - UCp = 0
-    static Matrix B(3, 12);
+    static thread_local Matrix B(3, 12);   // Ladruno WP-192
     B.Zero();
     for (int i = 0; i < 3; i++)
         B(i, i) = -1.0;
@@ -970,7 +970,7 @@ const Matrix& ASDEmbeddedNodeElement::TRI_2D_UP()
     // Penalty stiffness
     double iK = m_K * std::sqrt(V);
     double iKP = m_KP * std::sqrt(V);
-    static Matrix C(3, 3);
+    static thread_local Matrix C(3, 3);   // Ladruno WP-192
     C.Zero();
     C(0, 0) = C(1, 1) = iK;
     C(2, 2) = iKP;
@@ -985,10 +985,10 @@ const Matrix& ASDEmbeddedNodeElement::TRI_2D_UP()
 const Matrix& ASDEmbeddedNodeElement::TRI_3D_U()
 {
     // output
-    static Matrix K(12, 12);
+    static thread_local Matrix K(12, 12);   // Ladruno WP-192
 
     // collect triangle coordinates
-    static Matrix X(3, 3);
+    static thread_local Matrix X(3, 3);   // Ladruno WP-192
     for (int i = 1; i < 4; i++) {
         const Node* node = m_nodes[static_cast<std::size_t>(i)];
         X(0, i - 1) = node->getCrds()(0);
@@ -997,17 +997,17 @@ const Matrix& ASDEmbeddedNodeElement::TRI_3D_U()
     }
 
     // shape functions natural derivatives
-    static Matrix dN(3, 3);
+    static thread_local Matrix dN(3, 3);   // Ladruno WP-192
     dN.Zero(); // note: the tri::shapeFunDer fills the first 2 columns, the 3rd should be zero!
     tri::shapeFunDer(dN);
 
     // jacobian
-    static Matrix J(3, 3);
+    static thread_local Matrix J(3, 3);   // Ladruno WP-192
     J.addMatrixProduct(0.0, X, dN, 1.0);
     tri::fillVzInJacobian(J); // note: the 3rd column will be zero, so fill it with the unit normal vector
     double detJ = det3(J);
     double V = detJ / 2.0;
-    static Matrix invJ(3, 3);
+    static thread_local Matrix invJ(3, 3);   // Ladruno WP-192
     J.Invert(invJ);
     for (int i = 0; i < 3; ++i) invJ(i, 2) = 0.0; // note: the 3rd column in the inverse should be zero
 
@@ -1016,7 +1016,7 @@ const Matrix& ASDEmbeddedNodeElement::TRI_3D_U()
     tri::localCoord(X, invJ, m_nodes[0]->getCrds()(0), m_nodes[0]->getCrds()(1), m_nodes[0]->getCrds()(2), lx, ly);
 
     // compute shape functions at constrained node
-    static Vector N(3);
+    static thread_local Vector N(3);   // Ladruno WP-192
     for (int i = 0; i < 3; ++i)
         N(i) = tri::shapeFun(lx, ly, i);
 
@@ -1024,7 +1024,7 @@ const Matrix& ASDEmbeddedNodeElement::TRI_3D_U()
     // UCx = sum(N*URx) -> sum(N*URx) - UCx = 0
     // UCy = sum(N*URy) -> sum(N*URy) - UCy = 0
     // UCz = sum(N*URz) -> sum(N*URz) - UCz = 0
-    static Matrix B(3, 12);
+    static thread_local Matrix B(3, 12);   // Ladruno WP-192
     B.Zero();
     for (int i = 0; i < 3; i++)
         B(i, i) = -1.0;
@@ -1048,11 +1048,11 @@ const Matrix& ASDEmbeddedNodeElement::TRI_3D_U()
 const Matrix& ASDEmbeddedNodeElement::TRI_3D_UR()
 {
     // output
-    static Matrix K(15, 15);
+    static thread_local Matrix K(15, 15);   // Ladruno WP-192
 
     // collect triangle coordinates
     // in global coordinates
-    static Matrix X(3, 3);
+    static thread_local Matrix X(3, 3);   // Ladruno WP-192
     for (int i = 1; i < 4; i++) {
         const Node* node = m_nodes[static_cast<std::size_t>(i)];
         X(0, i - 1) = node->getCrds()(0);
@@ -1061,9 +1061,9 @@ const Matrix& ASDEmbeddedNodeElement::TRI_3D_UR()
     }
 
     // compute orientation
-    static Vector dx(3);
-    static Vector dy(3);
-    static Vector dz(3);
+    static thread_local Vector dx(3);   // Ladruno WP-192
+    static thread_local Vector dy(3);   // Ladruno WP-192
+    static thread_local Vector dz(3);   // Ladruno WP-192
     for (int i = 0; i < 3; ++i) {
         dx(i) = X(i, 1) - X(i, 0);
         dy(i) = X(i, 2) - X(i, 0);
@@ -1075,7 +1075,7 @@ const Matrix& ASDEmbeddedNodeElement::TRI_3D_UR()
     cross(dz, dx, dy);
 
     // assemble orientation matrix (transposed of rotation)
-    static Matrix R(3, 3);
+    static thread_local Matrix R(3, 3);   // Ladruno WP-192
     for (int i = 0; i < 3; ++i) {
         R(0, i) = dx(i);
         R(1, i) = dy(i);
@@ -1083,26 +1083,26 @@ const Matrix& ASDEmbeddedNodeElement::TRI_3D_UR()
     }
 
     // triangle coordinates in local coordinates
-    static Matrix XL(2, 3);
+    static thread_local Matrix XL(2, 3);   // Ladruno WP-192
     for (int i = 0; i < 3; ++i) {
         XL(0, i) = X(0, i) * dx(0) + X(1, i) * dx(1) + X(2, i) * dx(2);
         XL(1, i) = X(0, i) * dy(0) + X(1, i) * dy(1) + X(2, i) * dy(2);
     }
 
     // shape functions natural derivatives
-    static Matrix dN(3, 2);
+    static thread_local Matrix dN(3, 2);   // Ladruno WP-192
     tri::shapeFunDer(dN);
 
     // jacobian
-    static Matrix J(2, 2);
+    static thread_local Matrix J(2, 2);   // Ladruno WP-192
     J.addMatrixProduct(0.0, XL, dN, 1.0);
     double detJ = det2(J);
     double V = detJ / 2.0;
-    static Matrix invJ(2, 2);
+    static thread_local Matrix invJ(2, 2);   // Ladruno WP-192
     J.Invert(invJ);
 
     // shape functions cartesian derivatives
-    static Matrix dNdX(3, 2);
+    static thread_local Matrix dNdX(3, 2);   // Ladruno WP-192
     dNdX.addMatrixProduct(0.0, dN, invJ, 1.0);
 
     // find local coordinates of constrained node
@@ -1113,7 +1113,7 @@ const Matrix& ASDEmbeddedNodeElement::TRI_3D_UR()
     tri::localCoord(XL, invJ, CPosX, CPosY, lx, ly);
 
     // compute shape functions at constrained node
-    static Vector N(3);
+    static thread_local Vector N(3);   // Ladruno WP-192
     for (int i = 0; i < 3; ++i)
         N(i) = tri::shapeFun(lx, ly, i);
 
@@ -1124,7 +1124,7 @@ const Matrix& ASDEmbeddedNodeElement::TRI_3D_UR()
     // RCx = sum( d_URz_dY) -> sum( d_URz_dY) - RCx = 0 (local)
     // RCy = sum(-d_URz_dX) -> sum(-d_URz_dX) - RCy = 0 (local)
     // RCz = sum(d_URy_dX - d_URx_dY)/2.0 -> sum(d_URy_dX - d_URx_dY)/2.0 - RCz = 0 (local)
-    static Matrix B(6, 15);
+    static thread_local Matrix B(6, 15);   // Ladruno WP-192
     B.Zero();
     // fill the -identity 6x6 block (transformed to global coordinates)
     // for constrained node+
@@ -1137,8 +1137,8 @@ const Matrix& ASDEmbeddedNodeElement::TRI_3D_UR()
                 B(j + row, j + col) = -R(row, col);
     }
     // fill the 2 rows of 3 3x3 blocks (transformed to global coordinates)
-    static Matrix BL(3, 3);
-    static Matrix BG(3, 3);
+    static thread_local Matrix BL(3, 3);   // Ladruno WP-192
+    static thread_local Matrix BG(3, 3);   // Ladruno WP-192
     for (int i = 0; i < 3; ++i) {
         int j = 6 + i * 3;
         // U block
@@ -1175,10 +1175,10 @@ const Matrix& ASDEmbeddedNodeElement::TRI_3D_UR()
 const Matrix& ASDEmbeddedNodeElement::TRI_3D_UP()
 {
     // output
-    static Matrix K(16, 16);
+    static thread_local Matrix K(16, 16);   // Ladruno WP-192
 
     // collect triangle coordinates
-    static Matrix X(3, 3);
+    static thread_local Matrix X(3, 3);   // Ladruno WP-192
     for (int i = 1; i < 4; i++) {
         const Node* node = m_nodes[static_cast<std::size_t>(i)];
         X(0, i - 1) = node->getCrds()(0);
@@ -1187,17 +1187,17 @@ const Matrix& ASDEmbeddedNodeElement::TRI_3D_UP()
     }
 
     // shape functions natural derivatives
-    static Matrix dN(3, 3);
+    static thread_local Matrix dN(3, 3);   // Ladruno WP-192
     dN.Zero(); // note: the tri::shapeFunDer fills the first 2 columns, the 3rd should be zero!
     tri::shapeFunDer(dN);
 
     // jacobian
-    static Matrix J(3, 3);
+    static thread_local Matrix J(3, 3);   // Ladruno WP-192
     J.addMatrixProduct(0.0, X, dN, 1.0);
     tri::fillVzInJacobian(J); // note: the 3rd column will be zero, so fill it with the unit normal vector
     double detJ = det3(J);
     double V = detJ / 2.0;
-    static Matrix invJ(3, 3);
+    static thread_local Matrix invJ(3, 3);   // Ladruno WP-192
     J.Invert(invJ);
     for (int i = 0; i < 3; ++i) invJ(i, 2) = 0.0; // note: the 3rd column in the inverse should be zero
 
@@ -1206,7 +1206,7 @@ const Matrix& ASDEmbeddedNodeElement::TRI_3D_UP()
     tri::localCoord(X, invJ, m_nodes[0]->getCrds()(0), m_nodes[0]->getCrds()(1), m_nodes[0]->getCrds()(2), lx, ly);
 
     // compute shape functions at constrained node
-    static Vector N(3);
+    static thread_local Vector N(3);   // Ladruno WP-192
     for (int i = 0; i < 3; ++i)
         N(i) = tri::shapeFun(lx, ly, i);
 
@@ -1215,7 +1215,7 @@ const Matrix& ASDEmbeddedNodeElement::TRI_3D_UP()
     // UCy = sum(N*URy) -> sum(N*URy) - UCy = 0
     // UCz = sum(N*URz) -> sum(N*URz) - UCz = 0
     // UCp = sum(N*URp) -> sum(N*URp) - UCp = 0
-    static Matrix B(4, 16);
+    static thread_local Matrix B(4, 16);   // Ladruno WP-192
     B.Zero();
     for (int i = 0; i < 4; i++)
         B(i, i) = -1.0;
@@ -1230,7 +1230,7 @@ const Matrix& ASDEmbeddedNodeElement::TRI_3D_UP()
     // Penalty stiffness
     double iK = m_K * std::sqrt(V);
     double iKP = m_KP * std::sqrt(V);
-    static Matrix C(4, 4);
+    static thread_local Matrix C(4, 4);   // Ladruno WP-192
     C.Zero();
     C(0, 0) = C(1, 1) = C(2, 2) = iK;
     C(3, 3) = iKP;
@@ -1245,10 +1245,10 @@ const Matrix& ASDEmbeddedNodeElement::TRI_3D_UP()
 const Matrix& ASDEmbeddedNodeElement::TET_3D_U()
 {
     // output
-    static Matrix K(15, 15);
+    static thread_local Matrix K(15, 15);   // Ladruno WP-192
 
     // collect tetrahedron coordinates
-    static Matrix X(3, 4);
+    static thread_local Matrix X(3, 4);   // Ladruno WP-192
     for (int i = 1; i < 5; i++) {
         const Node* node = m_nodes[static_cast<std::size_t>(i)];
         X(0, i - 1) = node->getCrds()(0);
@@ -1257,15 +1257,15 @@ const Matrix& ASDEmbeddedNodeElement::TET_3D_U()
     }
 
     // shape functions natural derivatives
-    static Matrix dN(4, 3);
+    static thread_local Matrix dN(4, 3);   // Ladruno WP-192
     tet::shapeFunDer(dN);
 
     // jacobian
-    static Matrix J(3, 3);
+    static thread_local Matrix J(3, 3);   // Ladruno WP-192
     J.addMatrixProduct(0.0, X, dN, 1.0);
     double detJ = det3(J);
     double V = detJ / 6.0;
-    static Matrix invJ(3, 3);
+    static thread_local Matrix invJ(3, 3);   // Ladruno WP-192
     J.Invert(invJ);
 
     // find local coordinates of constrained node
@@ -1273,7 +1273,7 @@ const Matrix& ASDEmbeddedNodeElement::TET_3D_U()
     tet::localCoord(X, invJ, m_nodes[0]->getCrds()(0), m_nodes[0]->getCrds()(1), m_nodes[0]->getCrds()(2), lx, ly, lz);
 
     // compute shape functions at constrained node
-    static Vector N(4);
+    static thread_local Vector N(4);   // Ladruno WP-192
     for (int i = 0; i < 4; ++i)
         N(i) = tet::shapeFun(lx, ly, lz, i);
 
@@ -1281,7 +1281,7 @@ const Matrix& ASDEmbeddedNodeElement::TET_3D_U()
     // UCx = sum(N*URx) -> sum(N*URx) - UCx = 0
     // UCy = sum(N*URy) -> sum(N*URy) - UCy = 0
     // UCz = sum(N*URz) -> sum(N*URz) - UCz = 0
-    static Matrix B(3, 15);
+    static thread_local Matrix B(3, 15);   // Ladruno WP-192
     B.Zero();
     for (int i = 0; i < 3; i++)
         B(i, i) = -1.0;
@@ -1305,10 +1305,10 @@ const Matrix& ASDEmbeddedNodeElement::TET_3D_U()
 const Matrix& ASDEmbeddedNodeElement::TET_3D_UR()
 {
     // output
-    static Matrix K(18, 18);
+    static thread_local Matrix K(18, 18);   // Ladruno WP-192
 
     // collect tetrahedron coordinates
-    static Matrix X(3, 4);
+    static thread_local Matrix X(3, 4);   // Ladruno WP-192
     for (int i = 1; i < 5; i++) {
         const Node* node = m_nodes[static_cast<std::size_t>(i)];
         X(0, i - 1) = node->getCrds()(0);
@@ -1317,19 +1317,19 @@ const Matrix& ASDEmbeddedNodeElement::TET_3D_UR()
     }
 
     // shape functions natural derivatives
-    static Matrix dN(4, 3);
+    static thread_local Matrix dN(4, 3);   // Ladruno WP-192
     tet::shapeFunDer(dN);
 
     // jacobian
-    static Matrix J(3, 3);
+    static thread_local Matrix J(3, 3);   // Ladruno WP-192
     J.addMatrixProduct(0.0, X, dN, 1.0);
     double detJ = det3(J);
     double V = detJ / 6.0;
-    static Matrix invJ(3, 3);
+    static thread_local Matrix invJ(3, 3);   // Ladruno WP-192
     J.Invert(invJ);
 
     // shape functions cartesian derivatives
-    static Matrix dNdX(4, 3);
+    static thread_local Matrix dNdX(4, 3);   // Ladruno WP-192
     dNdX.addMatrixProduct(0.0, dN, invJ, 1.0);
 
     // find local coordinates of constrained node
@@ -1337,7 +1337,7 @@ const Matrix& ASDEmbeddedNodeElement::TET_3D_UR()
     tet::localCoord(X, invJ, m_nodes[0]->getCrds()(0), m_nodes[0]->getCrds()(1), m_nodes[0]->getCrds()(2), lx, ly, lz);
 
     // compute shape functions at constrained node
-    static Vector N(4);
+    static thread_local Vector N(4);   // Ladruno WP-192
     for (int i = 0; i < 4; ++i)
         N(i) = tet::shapeFun(lx, ly, lz, i);
 
@@ -1348,7 +1348,7 @@ const Matrix& ASDEmbeddedNodeElement::TET_3D_UR()
     // RCx = sum(d_URz_dY - d_URy_dZ)/2.0 -> sum(d_URz_dY - d_URy_dZ)/2.0 - RCx = 0
     // RCy = sum(d_URx_dZ - d_URz_dX)/2.0 -> sum(d_URx_dZ - d_URz_dX)/2.0 - RCy = 0
     // RCz = sum(d_URy_dX - d_URx_dY)/2.0 -> sum(d_URy_dX - d_URx_dY)/2.0 - RCz = 0
-    static Matrix B(6, 18);
+    static thread_local Matrix B(6, 18);   // Ladruno WP-192
     B.Zero();
     for (int i = 0; i < 6; i++)
         B(i, i) = -1.0;
@@ -1375,10 +1375,10 @@ const Matrix& ASDEmbeddedNodeElement::TET_3D_UR()
 const Matrix& ASDEmbeddedNodeElement::TET_3D_UP()
 {
     // output
-    static Matrix K(20, 20);
+    static thread_local Matrix K(20, 20);   // Ladruno WP-192
 
     // collect tetrahedron coordinates
-    static Matrix X(3, 4);
+    static thread_local Matrix X(3, 4);   // Ladruno WP-192
     for (int i = 1; i < 5; i++) {
         const Node* node = m_nodes[static_cast<std::size_t>(i)];
         X(0, i - 1) = node->getCrds()(0);
@@ -1387,15 +1387,15 @@ const Matrix& ASDEmbeddedNodeElement::TET_3D_UP()
     }
 
     // shape functions natural derivatives
-    static Matrix dN(4, 3);
+    static thread_local Matrix dN(4, 3);   // Ladruno WP-192
     tet::shapeFunDer(dN);
 
     // jacobian
-    static Matrix J(3, 3);
+    static thread_local Matrix J(3, 3);   // Ladruno WP-192
     J.addMatrixProduct(0.0, X, dN, 1.0);
     double detJ = det3(J);
     double V = detJ / 6.0;
-    static Matrix invJ(3, 3);
+    static thread_local Matrix invJ(3, 3);   // Ladruno WP-192
     J.Invert(invJ);
 
     // find local coordinates of constrained node
@@ -1403,7 +1403,7 @@ const Matrix& ASDEmbeddedNodeElement::TET_3D_UP()
     tet::localCoord(X, invJ, m_nodes[0]->getCrds()(0), m_nodes[0]->getCrds()(1), m_nodes[0]->getCrds()(2), lx, ly, lz);
 
     // compute shape functions at constrained node
-    static Vector N(4);
+    static thread_local Vector N(4);   // Ladruno WP-192
     for (int i = 0; i < 4; ++i)
         N(i) = tet::shapeFun(lx, ly, lz, i);
 
@@ -1412,7 +1412,7 @@ const Matrix& ASDEmbeddedNodeElement::TET_3D_UP()
     // UCy = sum(N*URy) -> sum(N*URy) - UCy = 0
     // UCz = sum(N*URz) -> sum(N*URz) - UCz = 0
     // UCp = sum(N*URp) -> sum(N*URp) - UCp = 0
-    static Matrix B(4, 20);
+    static thread_local Matrix B(4, 20);   // Ladruno WP-192
     B.Zero();
     for (int i = 0; i < 4; i++)
         B(i, i) = -1.0;
@@ -1427,7 +1427,7 @@ const Matrix& ASDEmbeddedNodeElement::TET_3D_UP()
     // Penalty stiffness
     double iK = m_K * std::cbrt(V);
     double iKP = m_KP * std::cbrt(V);
-    static Matrix C(4, 4);
+    static thread_local Matrix C(4, 4);   // Ladruno WP-192
     C.Zero();
     C(0, 0) = C(1, 1) = C(2, 2) = iK;
     C(3, 3) = iKP;

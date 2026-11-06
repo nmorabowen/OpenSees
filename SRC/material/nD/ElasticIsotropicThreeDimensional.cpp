@@ -23,8 +23,8 @@
 
 #include <elementAPI.h>
 
-Vector ElasticIsotropicThreeDimensional::sigma(6);
-Matrix ElasticIsotropicThreeDimensional::D(6,6);
+thread_local Vector ElasticIsotropicThreeDimensional::sigma(6);   // Ladruno WP-192
+thread_local Matrix ElasticIsotropicThreeDimensional::D(6,6);   // Ladruno WP-192
 
 void *
 OPS_ElasticIsotropic3D(void)

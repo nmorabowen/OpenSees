@@ -1,0 +1,12 @@
+---
+wp: WP-132
+title: "864 -- upstreamable-table row(s)"
+pr: "#864"
+files: ["`SRC/system_of_eqn/linearSOE/pardiso/PARDISOGenLinSolver.{h,cpp}`", "`SRC/tcl/commands.cpp`", "`SRC/interpreter/OpenSeesCommands.cpp`", "`SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}`"]
+table: "upstreamable"
+legacy_seq: [659, 660, 661, 662]
+---
+| `SRC/system_of_eqn/linearSOE/pardiso/PARDISOGenLinSolver.{h,cpp}` | `// Ladruno WP-132` (TIMs F22) — **deterministic mode.** New `setDeterministic(branch, keepEnv)`: `mkl_cbwr_get` → `mkl_cbwr_set` → read back, rc decoded (MODE_CHANGE_FAILURE names the `MKL_CBWR=` relaunch fix); a bare `-deterministic` keeps a branch the `MKL_CBWR` env var already fixed, and re-requesting the branch in force is a no-op (re-setting after MKL has computed can itself fail). Static `cbwrBranchFromName()` (MKL_CBWR spellings + `,STRICT`) keeps the parsers MKL-header-free. `iparm[33]` (= iparm(34), PARDISO's CNR thread count) = `mkl_get_max_threads()` at every symbolic phase — that block zeroes `iparm`. One-time notice per solver object, read back from MKL (branch, AUTO→concrete branch, STRICT, iparm(34), ACTIVE/NOT ACTIVE). Off by default: no `mkl_cbwr_*` call, `iparm[33]` stays 0 → byte-identical. Reachability guard (not `#ifdef`): only the serial exe / sequential pyd can construct the solver, so none of it runs in the MP MKL DLL. +`<string.h>`. | [#864](https://github.com/nmorabowen/OpenSees/pull/864) |
+| `SRC/tcl/commands.cpp` | `// Ladruno WP-132`: `system Pardiso` gains `-deterministic` (bare flag) and `-cbwr <BRANCH>`; an unknown branch or a refused mode (`setDeterministic` < 0) returns `TCL_ERROR` (the solver is deleted) — a reproducibility request that cannot be honoured is a script-stopping condition in Tcl, matching the ladder's existing "bad argument = stop" rule. Additive. | [#864](https://github.com/nmorabowen/OpenSees/pull/864) |
+| `SRC/interpreter/OpenSeesCommands.cpp` | `// Ladruno WP-132`: `OPS_PARDISOGenLinSolver()` gains `-deterministic` / `-cbwr <BRANCH>`; unknown branch → warn + AUTO, refused mode → the solver's warning + continue (never `return 0`, which would silently select ProfileSPD — the ADR-75 P1d rule). Additive. | [#864](https://github.com/nmorabowen/OpenSees/pull/864) |
+| `SRC/{tcl/tclMain.cpp,interpreter/PythonModule.cpp}` | Splash-banner feature list regen (`FEATURES-START/END`) via `patch_banner.py` — adds `system Pardiso — -deterministic / -cbwr (MKL CNR, reproducible)`. Generated, not hand-edited. | [#864](https://github.com/nmorabowen/OpenSees/pull/864) |

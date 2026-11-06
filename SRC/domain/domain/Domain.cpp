@@ -81,6 +81,7 @@
 #include <Matrix.h>
 #include <Graph.h>
 #include <Recorder.h>
+#include <classTags.h>   // Ladruno WP-196: recorder scope names
 #include <MeshRegion.h>
 #include <LadrunoContactDomain.h>   // Ladruno: ADR-39
 #include <LadrunoPorousOverlay.h>   // Ladruno: ADR-73
@@ -91,6 +92,11 @@
 #include <FEM_ObjectBroker.h>
 
 #include <DomainModalProperties.h>
+#include <RelativeMassDamping.h>  // Ladruno (relativeMassDamping)
+
+// Ladruno WP-209: flag bit OR-ed into domainData(17) (the contact-definitions size,
+// always far below 2^30) when setLoadConstant is active; see Domain::sendSelf.
+static const int LADRUNO_DOMAIN_LOADCONST_BIT = 1 << 30;
 
 //
 // global variables
@@ -100,6 +106,23 @@ Domain       *ops_TheActiveDomain = 0;
 double        ops_Dt = 0.0;
 bool          ops_InitialStateAnalysis = false;
 int           ops_Creep = 0;
+
+// Ladruno (apeGmsh #2619): fold one element return code into the running code
+// of Domain::update WITHOUT summing. Upstream wrote `ok += theEle->update()`,
+// and the summing hosts (Tri31, FourNodeQuad, LadrunoQuad, ...) did the same
+// over their points, so the model-wide result was the integer sum of every
+// point's code. With LADRUNO_MATERIAL_REFUSED = -33086 that sum passes INT_MIN
+// at 64,907 refusing points in one update (about 16k fully refusing quads) and
+// wraps to a POSITIVE value, which the integrators' `< 0` checks accept: a
+// refusal became a silently accepted step. The fold keeps the most negative
+// code seen (so the sentinel survives as itself when it is the only code), and
+// a positive code only when nothing negative has been seen; it never wraps.
+static inline void
+ladrunoKeepWorstCode(int &acc, int rc)
+{
+  if (rc != 0 && (acc == 0 || rc < acc))
+    acc = rc;
+}
 
 Domain::Domain()
 :theRecorders(0), numRecorders(0),
@@ -115,7 +138,7 @@ Domain::Domain()
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0),
  paramIndex(0), paramSize(0), numParameters(0),
- theContactDomain(0), contactAugmenting(false)   // Ladruno: ADR-39 + D1
+ theContactDomain(0), contactAugmenting(false), m_loadConstActive(false)   // Ladruno: ADR-39 + D1 + WP-209
 {
   
     // init the arrays for storing the domain components
@@ -174,7 +197,7 @@ Domain::Domain(int numNodes, int numElements, int numSPs, int numMPs, int numEQs
  theModalProperties(0),
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0), paramIndex(0), paramSize(0), numParameters(0),
- theContactDomain(0), contactAugmenting(false)   // Ladruno: ADR-39 + D1
+ theContactDomain(0), contactAugmenting(false), m_loadConstActive(false)   // Ladruno: ADR-39 + D1 + WP-209
 {
     // init the arrays for storing the domain components
     theElements = new MapOfTaggedObjects();
@@ -241,7 +264,7 @@ Domain::Domain(TaggedObjectStorage &theNodesStorage,
  theModalProperties(0),
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0),paramIndex(0), paramSize(0), numParameters(0),
- theContactDomain(0), contactAugmenting(false)   // Ladruno: ADR-39 + D1
+ theContactDomain(0), contactAugmenting(false), m_loadConstActive(false)   // Ladruno: ADR-39 + D1 + WP-209
 {
     // init the arrays for storing the domain components
     thePCs      = new MapOfTaggedObjects();
@@ -304,7 +327,7 @@ Domain::Domain(TaggedObjectStorage &theStorage)
  theModalProperties(0),
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0),paramIndex(0), paramSize(0), numParameters(0),
- theContactDomain(0), contactAugmenting(false)   // Ladruno: ADR-39 + D1
+ theContactDomain(0), contactAugmenting(false), m_loadConstActive(false)   // Ladruno: ADR-39 + D1 + WP-209
 {
     // init the arrays for storing the domain components
     theStorage.clearAll(); // clear the storage just in case populated
@@ -1075,6 +1098,10 @@ Domain::clearAll(void) {
   // it is a different model and says so.
   ladrunoEleGeneration++;
 
+  // Ladruno (relativeMassDamping): references die with the model (nodes hold
+  // non-owning pointers and are deleted below).
+  OPS_clearAllRelativeMassDampings();
+
   // clean out the containers
   theElements->clearAll();
   theNodes->clearAll();
@@ -1131,6 +1158,7 @@ Domain::clearAll(void) {
   // contactAugmenting is ON this Domain commits recorder-silently, so leaking it across a
   // `wipe` into the next model would silently produce empty recorder files there.
   contactAugmenting = false;
+  m_loadConstActive = false;   // Ladruno WP-209
 
   // set the time back to 0.0
   currentTime = 0.0;
@@ -2146,6 +2174,7 @@ Domain::applyLoad(double timeStep)
 void
 Domain::setLoadConstant(void)
 {
+    m_loadConstActive = true;   // Ladruno WP-209
     // loop over all the load patterns that are currently added to the domain
     // getting them to set their loads as now constant
     LoadPattern *thePattern;
@@ -2158,6 +2187,7 @@ Domain::setLoadConstant(void)
 void
 Domain::unsetLoadConstant(void)
 {
+    m_loadConstActive = false;   // Ladruno WP-209
     // loop over all the load patterns that are currently added to the domain
     // getting them to set their loads as now constant
     LoadPattern *thePattern;
@@ -2227,6 +2257,23 @@ Domain::getNumEigenvalues(void) const
 }
 
 
+// Ladruno WP-196: a persistent scope name per recorder (the profiler keys its
+// tree on the name pointer's string, so the names must outlive the run).
+static const char *
+ladrunoRecorderScopeName(int classTag, int i)
+{
+  static const char *lad[8] = {"rec.ladruno.0", "rec.ladruno.1", "rec.ladruno.2",
+    "rec.ladruno.3", "rec.ladruno.4", "rec.ladruno.5", "rec.ladruno.6", "rec.ladruno.7"};
+  static const char *oth[8] = {"rec.other.0", "rec.other.1", "rec.other.2",
+    "rec.other.3", "rec.other.4", "rec.other.5", "rec.other.6", "rec.other.7"};
+  if (classTag == RECORDER_TAGS_EnergyBalanceRecorder)
+    return "rec.energyBalance";
+  if (classTag == RECORDER_TAGS_NodeRecorder)
+    return "rec.node";
+  const int k = (i < 7) ? i : 7;
+  return (classTag == RECORDER_TAGS_LadrunoRecorder) ? lad[k] : oth[k];
+}
+
 int
 Domain::record(bool fromAnalysis)
 {
@@ -2269,10 +2316,14 @@ Domain::commit(void)
     // 
     // first invoke commit on all nodes and elements in the domain
     //
+    // Ladruno WP-196: the commit phase split into nodes / elements / recorders
+    // (coarse scopes, one branch each when the profiler is off).
+    { OPS_PROFILE_SCOPE("commit.nodes");
     Node *nodePtr;
     NodeIter &theNodeIter = this->getNodes();
     while ((nodePtr = theNodeIter()) != 0) {
       nodePtr->commitState();
+    }
     }
 
     // Ladruno (WP-144 G2): the commit-refusal counter is PER COMMIT. It is
@@ -2294,13 +2345,19 @@ Domain::commit(void)
     // the refusals the parent had already collected from the elements committed
     // before it, and the parent's post-loop check would then read 0 and let an
     // invalid commit through. See LadrunoCommitDepthGuard above.
+    // The clear sits BEFORE the WP-192 serial/threaded split, so it covers both loops.
     if (ladrunoDepth.outermost())
       ladrunoClearCommitRefusals();                                  // Ladruno WP-144 (G2)
 
-    Element *elePtr;
-    ElementIter &theElemIter = this->getElements();
-    while ((elePtr = theElemIter()) != 0) {
-      elePtr->commitState();
+    // Ladruno WP-192: threaded element commit (per-type opt-in); false = serial.
+    { OPS_PROFILE_SCOPE("commit.elements");
+    if (this->ladrunoThreadedCommit() == false) {
+      Element *elePtr;
+      ElementIter &theElemIter = this->getElements();
+      while ((elePtr = theElemIter()) != 0) {
+        elePtr->commitState();
+      }
+    }
     }
 
     // Ladruno (WP-99 F7): a material that could NOT integrate this commit.
@@ -2349,8 +2406,10 @@ Domain::commit(void)
     // ConstraintHandler is never called at commit).
     // Ladruno (ADR-155): pass the held-load augmentation flag so a `-augment request` mortar
     // contact augments only inside the ladrunoBeginAugment bracket (default contacts ignore it).
+    // Ladruno: dT is the committed step, the soft-penalty step size of an integrator that forms
+    // the residual at the committed time (stock CentralDifference).
     if (theContactDomain != 0)
-      theContactDomain->commit(contactAugmenting);
+      theContactDomain->commit(contactAugmenting, dT);
 
     // Ladruno (ADR-60): finite-sliding NTS re-emit. If a slave has migrated past the broad-phase
     // search band since the last sort, raise the domain-changed flag so the NEXT step re-handles
@@ -2399,9 +2458,13 @@ Domain::commit(void)
     // STILL runs (that is the point of the pass). Default OFF => byte-identical to stock.
     if (!contactAugmenting) {
       // invoke record on all recorders
+      // Ladruno WP-196: one coarse scope per recorder (by class and position).
+      OPS_PROFILE_SCOPE("commit.record");
       for (int i=0; i<numRecorders; i++)
-        if (theRecorders[i] != 0)
+        if (theRecorders[i] != 0) {
+	  OPS_PROFILE_SCOPE(ladrunoRecorderScopeName(theRecorders[i]->getClassTag(), i));
 	  theRecorders[i]->record(commitTag, currentTime);
+        }
 
       // update the commitTag
       commitTag++;
@@ -2446,6 +2509,7 @@ Domain::revertToLastCommit(void)
 int
 Domain::revertToStart(void)
 {
+    m_loadConstActive = false;   // Ladruno WP-209
     // 
     // first invoke revertToLastCommit  on all nodes and 
     // elements in the domain
@@ -2516,7 +2580,7 @@ Domain::update(void)
     ops_TheActiveElement = theEle;
     {
       OPS_PROFILE_ELEMPTR_SCOPE(_ops_elemUpd, theEle);   // Ladruno (40b)
-      ok += theEle->update();
+      ladrunoKeepWorstCode(ok, theEle->update());        // Ladruno (apeGmsh #2619): never `ok +=`
     }
   }
 
@@ -2605,6 +2669,8 @@ Domain::ladrunoThreadedUpdate(int &ok)
   const int nThreads = ladruno_getNumThreads();
   if (nThreads <= 1)
     return false;   // the default: serial, byte-identical, no parallel region
+  if (!ladruno_loopEnabled(LADRUNO_LOOP_UPDATE))
+    return false;   // WP-192 diagnostic mask (LADRUNO_THREADS_LOOPS)
 
   // --- refusals. Announced once per DOMAIN per audit outcome, NOT once per
   // process (red-team S3): see Domain::ladrunoAnnounceAudit.
@@ -2618,25 +2684,30 @@ Domain::ladrunoThreadedUpdate(int &ok)
   // would happily thread every rank. Since the count is seeded from an
   // environment variable and mpiexec propagates the environment, a single
   // `set LADRUNO_THREADS=8` in a job script would silently make an np-8 run
-  // 64-way oversubscribed. Hybrid MPI+threads is ADR-75b section 11 q6 and is
-  // DEFERRED, so a parallel binary refuses outright -- on the BUILD, not on
-  // the rank count, because np==1 under OpenSeesMP is still the parallel code
-  // path and is not the desktop case this WP measured.
+  // 64-way oversubscribed.
+  //
+  // Ladruno WP-192: the refusal stays the DEFAULT, but an explicit
+  // acknowledgement lifts it -- `ladrunoThreads <n> -hybrid` in the deck or
+  // LADRUNO_THREADS_HYBRID=1 -- for the layouts with few ranks per node
+  // (16x1, 2x8) where each rank carries more elements. An inherited
+  // LADRUNO_THREADS alone still cannot oversubscribe a job.
   //
   // ladruno_parallelBuild() lives in its own per-target translation unit
   // because an #ifdef _PARALLEL_* written HERE would compile to nothing in
   // every binary: OPS_Domain is one OBJECT library built once with neither
   // define. See SRC/utility/LadrunoParallelBuild.cpp (and ADR-78 P1, which
   // measured that trap the hard way).
-  if (ladruno_parallelBuild()) {
+  if (ladruno_parallelBuild() && !ladruno_hybridAllowed()) {
     if (this->ladrunoAnnounceAudit(LADRUNO_TA_PARALLEL_BUILD, 0, nThreads))
       opserr << "WARNING ladrunoThreads: this is an MPI binary (OpenSeesSP / "
              << "OpenSeesMP / OpenSeesPyMP, " << ladruno_parallelRanks()
-             << " rank(s)) -- the threaded element loop is REFUSED, running "
-             << "SERIAL. WP-107 is shared-memory/desktop-scoped; hybrid "
-             << "MPI+threads is ADR-75b section 11 q6 and is still deferred. "
-             << "LADRUNO_THREADS is inherited by every rank under mpiexec, so "
-             << "honouring it here would oversubscribe the job silently.\n";
+             << " rank(s)) -- the threaded element loops are REFUSED, running "
+             << "SERIAL. LADRUNO_THREADS is inherited by every rank under "
+             << "mpiexec, so honouring it alone would oversubscribe the job "
+             << "silently. To run hybrid MPI+threads on purpose, add "
+             << "`ladrunoThreads <n> -hybrid` to the deck or set "
+             << "LADRUNO_THREADS_HYBRID=1 (WP-192), and size ranks x threads "
+             << "to the cores.\n";
     return false;
   }
 
@@ -2644,8 +2715,8 @@ Domain::ladrunoThreadedUpdate(int &ok)
     if (this->ladrunoAnnounceAudit(LADRUNO_TA_PARTITIONED, 0, nThreads))
       opserr << "WARNING ladrunoThreads: the threaded element loop is NOT "
              << "available on a PartitionedDomain/Subdomain -- running SERIAL. "
-             << "(WP-107 is shared-memory/desktop-scoped; hybrid MPI+threads is "
-             << "ADR-75b section 11 q6 and is still deferred.)\n";
+             << "(OpenSeesMP's plain per-rank Domain is the hybrid path, "
+             << "WP-192.)\n";
     return false;
   }
 
@@ -2658,7 +2729,7 @@ Domain::ladrunoThreadedUpdate(int &ok)
     if (this->ladrunoAnnounceAudit(LADRUNO_TA_PROFILER, 0, nThreads))
       opserr << "WARNING ladrunoThreads: the DEEP profiler gate is armed, whose "
              << "per-element buckets are not thread-safe -- running the element "
-             << "loop SERIAL. Use coarse `profiler start -perStep` to time a "
+             << "loops SERIAL. Use coarse `profiler start -perStep` to time a "
              << "threaded run.\n";
     return false;
   }
@@ -2676,21 +2747,38 @@ Domain::ladrunoThreadedUpdate(int &ok)
   if (nEle < 2)
     return false;
 
-  // --- the allowlist. Default-empty by construction: Element's base
-  // implementation answers false, so a domain holding ONE un-audited element
-  // runs entirely serial. Deliberately all-or-nothing rather than a mixed
-  // parallel/serial split -- a mixed loop would still let an audited element
-  // run concurrently with an un-audited one that writes shared node state.
+  // --- the allowlist, PER ELEMENT (WP-192; WP-107 was all-or-nothing).
+  //
+  // Element's base implementation answers false, so an un-audited element is
+  // never run concurrently with anything. WP-107 made the whole loop serial
+  // when it met one; WP-192 keeps it in its SERIAL PLACE instead: the loop is
+  // cut into maximal runs of consecutive audited elements, each run is
+  // threaded, and every un-audited element runs alone, on the calling thread,
+  // after the run before it has finished and before the run after it starts.
+  // An un-audited element therefore sees exactly the state it sees serially
+  // (the ADR-75b 2.1b "it may write shared node state" hazard stays fenced),
+  // and only audited elements -- whose update() touches nothing but their own
+  // state -- are reordered among themselves.
+  std::vector<char> safe(nEle, 0);
+  int nSafe = 0;
+  int firstUnsafe = -1;
   for (int i = 0; i < nEle; i++) {
-    if (eles[i]->ladrunoThreadSafeUpdate() == false) {
-      if (this->ladrunoAnnounceAudit(LADRUNO_TA_ELEMENT, eles[i]->getTag(), nThreads))
-        opserr << "WARNING ladrunoThreads: element " << eles[i]->getTag()
-               << " (classTag " << eles[i]->getClassTag() << ") is not on the "
-               << "WP-107 thread-safe allowlist -- running the element loop "
-               << "SERIAL. See Ladruno_implementation/"
-               << "107_ladruno_openmp_element_loop.md for what qualifies.\n";
-      return false;
-    }
+    if (eles[i]->ladrunoThreadSafeUpdate()) {
+      safe[i] = 1;
+      nSafe++;
+    } else if (firstUnsafe < 0)
+      firstUnsafe = i;
+  }
+
+  if (nSafe < 2) {
+    if (firstUnsafe >= 0 &&
+        this->ladrunoAnnounceAudit(LADRUNO_TA_ELEMENT, eles[firstUnsafe]->getTag(), nThreads))
+      opserr << "WARNING ladrunoThreads: element " << eles[firstUnsafe]->getTag()
+             << " (classTag " << eles[firstUnsafe]->getClassTag() << ") is not on the "
+             << "thread-safe allowlist and fewer than 2 elements are -- running the "
+             << "element loop SERIAL. See Ladruno_implementation/"
+             << "192_ladruno_threaded_element_loops_adr.md for what qualifies.\n";
+    return false;
   }
 
   // --- H4: force the lazy Node trial-state allocation NOW, on one thread.
@@ -2708,51 +2796,75 @@ Domain::ladrunoThreadedUpdate(int &ok)
     }
   }
 
-  // --- the loop.
-  //
-  // `ok` reproduces the serial `ok += theEle->update()` exactly: an INTEGER sum,
-  // so the reduction is order-independent and the returned value is identical at
-  // every thread count (unlike an FP reduction, which is why loops B/C are out
-  // of scope).
-  //
-  // firstFailIdx makes the DIAGNOSTIC deterministic too: whichever element
-  // fails, the tag reported is the one with the lowest index in serial
-  // iteration order, not whichever thread happened to get there first.
-  // Announce the FIRST threaded loop, once. Fail-loud in BOTH directions is the
-  // point: every refusal above already prints, so without this a run that was
-  // quietly serial (because some element was not on the allowlist) and a run
-  // that was threaded but had no payoff look identical in a bench table. They
-  // are very different results.
-  //
-  // Red-team S3: once per DOMAIN per outcome, not once per process. A second
-  // model in the same interpreter -- pytest, apeGmsh, any in-process parameter
-  // study -- must say what it did too.
-  if (this->ladrunoAnnounceAudit(LADRUNO_TA_THREADED, 0, nThreads))
-    opserr << "ladrunoThreads: element update loop THREADED on " << nThreads
-           << " threads (" << nEle << " elements)\n";
-
-  // NOTE on the min: MSVC implements OpenMP 2.0 only, where `reduction(min:)`
-  // does not exist (3.1+). A critical section is used instead -- it is entered
-  // ONLY on a failing element, so it costs nothing on the hot path.
-  int sum = 0;
-  int firstFailIdx = nEle;
-
-  #pragma omp parallel for schedule(dynamic, 8) num_threads(nThreads) reduction(+:sum)
-  for (int i = 0; i < nEle; i++) {
-    Element *e = eles[i];
-    ops_TheActiveElement = e;          // thread_local (WP-107, Element.cpp)
-    int r = e->update();
-    sum += r;
-    if (r != 0) {
-      #pragma omp critical (ladruno_wp107_updateFail)
-      {
-        if (i < firstFailIdx)
-          firstFailIdx = i;
-      }
-    }
+  // Announce the outcome (fail-loud in BOTH directions: a quietly serial run and
+  // a threaded one must not look alike in a bench table). Per DOMAIN per outcome
+  // (red-team S3).
+  if (nSafe == nEle) {
+    if (this->ladrunoAnnounceAudit(LADRUNO_TA_THREADED, 0, nThreads))
+      opserr << "ladrunoThreads: element update loop THREADED on " << nThreads
+             << " threads (" << nEle << " elements)\n";
+  } else {
+    if (this->ladrunoAnnounceAudit(LADRUNO_TA_MIXED, eles[firstUnsafe]->getTag(), nThreads))
+      opserr << "ladrunoThreads: element update loop PARTLY threaded on " << nThreads
+             << " threads: " << nSafe << " of " << nEle << " elements threaded, "
+             << (nEle - nSafe) << " run SERIAL in their place; the first of those, element "
+             << eles[firstUnsafe]->getTag() << " (classTag "
+             << eles[firstUnsafe]->getClassTag() << "), is not on the thread-safe "
+             << "allowlist (WP-192 per-type opt-in).\n";
   }
 
-  ok += sum;
+  // --- the loop: threaded runs and serial singletons, in serial order.
+  struct Ctx { Element **e; int *code; };
+  struct Body {
+    static int run(int i, void *c) {
+      Ctx *ctx = (Ctx *)c;
+      Element *e = ctx->e[i];
+      ops_TheActiveElement = e;          // thread_local (WP-107, Element.cpp)
+      const int r = e->update();
+      ctx->code[i] = r;                  // apeGmsh #2619: kept per element, folded serially below
+      return r;
+    }
+  };
+
+  // apeGmsh #2619: the element codes are folded with ladrunoKeepWorstCode (the
+  // most negative one wins), never summed. ladruno_parallelFor returns the
+  // integer SUM of the body results, which is the wrapping reduction this
+  // slice removes, so that return is ignored and each run's codes are reduced
+  // from the per-element slots the bodies filled. `ff` still comes from the
+  // bodies' nonzero returns.
+  std::vector<int> codes(nEle, 0);
+  int worst = 0;
+  int firstFailIdx = nEle;
+  int i = 0;
+  while (i < nEle) {
+    if (!safe[i]) {
+      ops_TheActiveElement = eles[i];
+      const int r = eles[i]->update();
+      ladrunoKeepWorstCode(worst, r);
+      if (r != 0 && i < firstFailIdx)
+        firstFailIdx = i;
+      i++;
+      continue;
+    }
+    int j = i;
+    while (j < nEle && safe[j])
+      j++;
+    Ctx ctx = { &eles[i], &codes[i] };
+    int ff = j - i;
+    (void)ladruno_parallelFor(j - i, nThreads, 8, &Body::run, &ctx, &ff);
+    for (int k = i; k < j; k++)
+      ladrunoKeepWorstCode(worst, codes[k]);
+    if (ff < j - i && i + ff < firstFailIdx)
+      firstFailIdx = i + ff;
+    i = j;
+  }
+
+  // The serial loop leaves ops_TheActiveElement on the LAST element in
+  // iteration order, and code after the loop can read it (ADR-75b H7). Restore
+  // exactly that residual, so a threaded update leaves the same global state.
+  ops_TheActiveElement = eles[nEle - 1];
+
+  ladrunoKeepWorstCode(ok, worst);
 
   if (ok != 0) {
     opserr << "Domain::update - domain failed in update\n";
@@ -2761,6 +2873,85 @@ Domain::ladrunoThreadedUpdate(int &ok)
              << eles[firstFailIdx]->getTag() << endln;
   }
 
+  return true;
+#endif
+}
+
+
+// ---------------------------------------------------------------------------
+// Ladruno WP-192 -- the threaded element COMMIT loop of Domain::commit().
+//
+// Same shape as the update loop above: no reduction (each element commits its
+// own state); maximal runs of consecutive elements whose ladrunoThreadSafeCommit()
+// is true are threaded, everything else commits alone in its serial place.
+// Return values are dropped exactly as the serial loop drops them (upstream
+// contract; WP-99 F7 reaches refusals out of band through
+// ladrunoNoteCommitRefusal, which WP-192 made atomic). The refusals and the
+// announcement belong to the update loop, which always runs first.
+// Returns true when it ran the loop.
+// ---------------------------------------------------------------------------
+bool
+Domain::ladrunoThreadedCommit(void)
+{
+#ifndef _LADRUNO_OPENMP
+  return false;
+#else
+  const int nThreads = ladruno_getNumThreads();
+  if (nThreads <= 1)
+    return false;
+  if (ladruno_parallelBuild() && !ladruno_hybridAllowed())
+    return false;
+  if (!ladruno_loopEnabled(LADRUNO_LOOP_COMMIT))
+    return false;   // WP-192 diagnostic mask
+  if (this->ladrunoThreadedUpdateAllowed() == false)
+    return false;
+  if (ops_profiler::theProfiler().deep())
+    return false;
+
+  std::vector<Element *> eles;
+  eles.reserve(theElements->getNumComponents());
+  {
+    ElementIter &theEles = this->getElements();
+    Element *e;
+    while ((e = theEles()) != 0)
+      eles.push_back(e);
+  }
+  const int nEle = (int)eles.size();
+  std::vector<char> safe(nEle, 0);
+  int nSafe = 0;
+  for (int i = 0; i < nEle; i++)
+    if (eles[i]->ladrunoThreadSafeCommit()) {
+      safe[i] = 1;
+      nSafe++;
+    }
+  if (nSafe < 2)
+    return false;
+
+  struct Ctx { Element **e; };
+  struct Body {
+    static int run(int i, void *c) {
+      ((Ctx *)c)->e[i]->commitState();
+      return 0;
+    }
+  };
+
+  Element *activeBefore = ops_TheActiveElement;
+  int i = 0;
+  while (i < nEle) {
+    if (!safe[i]) {
+      eles[i]->commitState();
+      i++;
+      continue;
+    }
+    int j = i;
+    while (j < nEle && safe[j])
+      j++;
+    Ctx ctx = { &eles[i] };
+    ladruno_parallelFor(j - i, nThreads, 16, &Body::run, &ctx, 0);
+    i = j;
+  }
+  // The serial commit loop does not touch ops_TheActiveElement; neither may this.
+  ops_TheActiveElement = activeBefore;
   return true;
 #endif
 }
@@ -3494,6 +3685,12 @@ Domain::sendSelf(int cTag, Channel &theChannel)
   domainData(11) = numParam;
   domainData(17) = contactSize;   // Ladruno: ADR-78 P2
   domainData(18) = dbContact;     // Ladruno: ADR-78 P2
+  // Ladruno WP-209: m_loadConstActive rides as a flag bit of slot 17 instead of a
+  // 20th slot. The header stays ID(19), so a database written before WP-209 (whose
+  // records are keyed by size: db.IDs.19.*) still restores, with the bit clear =
+  // load not constant, the pre-WP-209 behaviour.
+  if (m_loadConstActive)
+    domainData(17) |= LADRUNO_DOMAIN_LOADCONST_BIT;
 
   // add the database tag for the ID's storing node, element, constraints
   // and loadpattern data into domainData
@@ -3908,6 +4105,8 @@ Domain::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
   // Ladruno (ADR-78 P2): 17 -> 19, matching sendSelf. Slot 17 = the packed size of
   // the contact engine's definitions Vector (0 = none), slot 18 = its dbTag; the
   // Vector itself is consumed at the very end of this method.
+  // Ladruno WP-209: slot 17 also carries m_loadConstActive as the flag bit
+  // LADRUNO_DOMAIN_LOADCONST_BIT (see sendSelf); strip it before using the size.
   ID domainData(19);
   if (theChannel.recvID(theDbTag, commitTag, domainData) < 0) {
     opserr << "Domain::recv - channel failed to recv the initial ID\n";
@@ -3923,6 +4122,7 @@ Domain::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 
   currentTime = domainTime(0);
   committedTime = currentTime;
+  m_loadConstActive = (domainData(17) & LADRUNO_DOMAIN_LOADCONST_BIT) != 0; // Ladruno WP-209
 
   // 
   // now if the currentGeoTag does not agree with what's in the domain
@@ -3956,6 +4156,7 @@ Domain::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 
     currentTime = domainTime(0);
     committedTime = currentTime;
+    m_loadConstActive = (domainData(17) & LADRUNO_DOMAIN_LOADCONST_BIT) != 0; // Ladruno WP-209
 
     // 
     // now we rebuild the nodes
@@ -4382,7 +4583,7 @@ Domain::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
   // add* choke points; a POPULATED one (the recv-again branch above) keeps its live
   // definitions and only VERIFIES the stream matches, warning loudly on divergence.
   {
-    int contactSize = domainData(17);
+    int contactSize = domainData(17) & ~LADRUNO_DOMAIN_LOADCONST_BIT; // Ladruno WP-209
     if (contactSize > 0) {
       dbContact = domainData(18);
       if (theContactDomain == 0)

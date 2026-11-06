@@ -35,8 +35,8 @@
 #include <elementAPI.h>
 
 //static vector and matrices
-Vector  PlaneStressMaterial::stress(3) ;
-Matrix  PlaneStressMaterial::tangent(3,3) ;
+thread_local Vector  PlaneStressMaterial::stress(3) ;   // Ladruno WP-192
+thread_local Matrix  PlaneStressMaterial::tangent(3,3) ;   // Ladruno WP-192
 
 //      0  1  2  3  4  5
 // ND: 11 22 33 12 23 31
@@ -217,10 +217,10 @@ PlaneStressMaterial::setTrialStrain( const Vector &strainFromElement )
   this->strain(2) = strainFromElement(2) ;
 
   double norm ;
-  static Vector condensedStress(3);
-  static Vector strainIncrement(3);
-  static Vector threeDstrain(6);
-  static Matrix dd22(3,3);
+  static thread_local Vector condensedStress(3);   // Ladruno WP-192
+  static thread_local Vector strainIncrement(3);   // Ladruno WP-192
+  static thread_local Vector threeDstrain(6);   // Ladruno WP-192
+  static thread_local Matrix dd22(3,3);   // Ladruno WP-192
 
   int count = 0;
   const int maxCount = 20;
@@ -320,7 +320,7 @@ PlaneStressMaterial::getStressSensitivity(int gradIndex,
 
   const Matrix &threeDtangent = theMaterial->getTangent();
 
-  static Matrix dd12(3,3);
+  static thread_local Matrix dd12(3,3);   // Ladruno WP-192
   dd12(0,0) = threeDtangent(0,2);
   dd12(1,0) = threeDtangent(1,2);
   dd12(2,0) = threeDtangent(3,2);
@@ -334,7 +334,7 @@ PlaneStressMaterial::getStressSensitivity(int gradIndex,
   dd12(2,2) = threeDtangent(3,5);
 
 
-  static Matrix dd22(3,3);
+  static thread_local Matrix dd22(3,3);   // Ladruno WP-192
   dd22(0,0) = threeDtangent(2,2);
   dd22(1,0) = threeDtangent(4,2);
   dd22(2,0) = threeDtangent(5,2);
@@ -348,12 +348,12 @@ PlaneStressMaterial::getStressSensitivity(int gradIndex,
   dd22(2,2) = threeDtangent(5,5);
 
   
-  static Vector sigma2(3);
+  static thread_local Vector sigma2(3);   // Ladruno WP-192
   sigma2(0) = threeDstress(2);
   sigma2(1) = threeDstress(4);
   sigma2(2) = threeDstress(5);
 
-  static Vector dd22sigma2(3);
+  static thread_local Vector dd22sigma2(3);   // Ladruno WP-192
   dd22.Solve(sigma2,dd22sigma2);
 
   stress.addMatrixVector(1.0, dd12, dd22sigma2, -1.0);
@@ -367,7 +367,7 @@ PlaneStressMaterial::getTangent( )
 {
   const Matrix &threeDtangent = theMaterial->getTangent();
 
-  static Matrix dd11(3,3);
+  static thread_local Matrix dd11(3,3);   // Ladruno WP-192
   dd11(0,0) = threeDtangent(0,0);
   dd11(1,0) = threeDtangent(1,0);
   dd11(2,0) = threeDtangent(3,0);
@@ -381,7 +381,7 @@ PlaneStressMaterial::getTangent( )
   dd11(2,2) = threeDtangent(3,3);
 
 
-  static Matrix dd12(3,3);
+  static thread_local Matrix dd12(3,3);   // Ladruno WP-192
   dd12(0,0) = threeDtangent(0,2);
   dd12(1,0) = threeDtangent(1,2);
   dd12(2,0) = threeDtangent(3,2);
@@ -394,7 +394,7 @@ PlaneStressMaterial::getTangent( )
   dd12(1,2) = threeDtangent(1,5);
   dd12(2,2) = threeDtangent(3,5);
 
-  static Matrix dd21(3,3);
+  static thread_local Matrix dd21(3,3);   // Ladruno WP-192
   dd21(0,0) = threeDtangent(2,0);
   dd21(1,0) = threeDtangent(4,0);
   dd21(2,0) = threeDtangent(5,0);
@@ -408,7 +408,7 @@ PlaneStressMaterial::getTangent( )
   dd21(2,2) = threeDtangent(5,3);
 
 
-  static Matrix dd22(3,3);
+  static thread_local Matrix dd22(3,3);   // Ladruno WP-192
   dd22(0,0) = threeDtangent(2,2);
   dd22(1,0) = threeDtangent(4,2);
   dd22(2,0) = threeDtangent(5,2);
@@ -425,7 +425,7 @@ PlaneStressMaterial::getTangent( )
   //int Solve(const Vector &V, Vector &res) const;
   //int Solve(const Matrix &M, Matrix &res) const;
   //condensation 
-  static Matrix dd22invdd21(3,3);
+  static thread_local Matrix dd22invdd21(3,3);   // Ladruno WP-192
   dd22.Solve(dd21, dd22invdd21);
 
   //this->tangent   = dd11 ; 
@@ -443,7 +443,7 @@ PlaneStressMaterial::getInitialTangent( )
 {
   const Matrix &threeDtangent = theMaterial->getInitialTangent();
 
-  static Matrix dd11(3,3);
+  static thread_local Matrix dd11(3,3);   // Ladruno WP-192
   dd11(0,0) = threeDtangent(0,0);
   dd11(1,0) = threeDtangent(1,0);
   dd11(2,0) = threeDtangent(3,0);
@@ -457,7 +457,7 @@ PlaneStressMaterial::getInitialTangent( )
   dd11(2,2) = threeDtangent(3,3);
 
 
-  static Matrix dd12(3,3);
+  static thread_local Matrix dd12(3,3);   // Ladruno WP-192
   dd12(0,0) = threeDtangent(0,2);
   dd12(1,0) = threeDtangent(1,2);
   dd12(2,0) = threeDtangent(3,2);
@@ -470,7 +470,7 @@ PlaneStressMaterial::getInitialTangent( )
   dd12(1,2) = threeDtangent(1,5);
   dd12(2,2) = threeDtangent(3,5);
 
-  static Matrix dd21(3,3);
+  static thread_local Matrix dd21(3,3);   // Ladruno WP-192
   dd21(0,0) = threeDtangent(2,0);
   dd21(1,0) = threeDtangent(4,0);
   dd21(2,0) = threeDtangent(5,0);
@@ -484,7 +484,7 @@ PlaneStressMaterial::getInitialTangent( )
   dd21(2,2) = threeDtangent(5,3);
 
 
-  static Matrix dd22(3,3);
+  static thread_local Matrix dd22(3,3);   // Ladruno WP-192
   dd22(0,0) = threeDtangent(2,2);
   dd22(1,0) = threeDtangent(4,2);
   dd22(2,0) = threeDtangent(5,2);
@@ -501,7 +501,7 @@ PlaneStressMaterial::getInitialTangent( )
   //int Solve(const Vector &V, Vector &res) const;
   //int Solve(const Matrix &M, Matrix &res) const;
   //condensation 
-  static Matrix dd22invdd21(3,3);
+  static thread_local Matrix dd22invdd21(3,3);   // Ladruno WP-192
   dd22.Solve(dd21, dd22invdd21);
 
   //this->tangent   = dd11 ; 
@@ -533,7 +533,7 @@ PlaneStressMaterial::sendSelf(int commitTag, Channel &theChannel)
   int res = 0;
 
   // put tag and associated materials class and database tags into an id and send it
-  static ID idData(3);
+  static thread_local ID idData(3);   // Ladruno WP-192
   idData(0) = this->getTag();
   idData(1) = theMaterial->getClassTag();
   int matDbTag = theMaterial->getDbTag();
@@ -550,7 +550,7 @@ PlaneStressMaterial::sendSelf(int commitTag, Channel &theChannel)
   }
 
   // put the strains in a vector and send it
-  static Vector vecData(9);
+  static thread_local Vector vecData(9);   // Ladruno WP-192
   vecData(0) = Tstrain22;
   vecData(1) = Tgamma02;
   vecData(2) = Tgamma12;
@@ -581,7 +581,7 @@ PlaneStressMaterial::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBrok
   int res = 0;
 
   // recv an id containing the tag and associated materials class and db tags
-  static ID idData(3);
+  static thread_local ID idData(3);   // Ladruno WP-192
   res = theChannel.recvID(this->getDbTag(), commitTag, idData);
   if (res < 0) {
     opserr << "PlaneStressMaterial::recvSelf() - failed to recv id data\n";
@@ -605,7 +605,7 @@ PlaneStressMaterial::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBrok
   theMaterial->setDbTag(idData(2));
 
   // recv a vector containing strains and set the strains
-  static Vector vecData(9);
+  static thread_local Vector vecData(9);   // Ladruno WP-192
   res = theChannel.recvVector(this->getDbTag(), commitTag, vecData);
   if (res < 0) {
     opserr << "PlaneStressMaterial::recvSelf() - failed to recv vector data\n";

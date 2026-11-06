@@ -1,0 +1,12 @@
+{
+ "sigma": [
+  2.003611121642993,
+  2.003611121642993,
+  2.003611121642993,
+  0.0,
+  0.0,
+  -1.0798107242300363e-17
+ ],
+ "e": 0.6943822088,
+ "note": "stdBrick, stage 0 isotropic compression eps_v = 1.05e-05 in 5 steps, then the flip (alpha = alpha_in = 0)"
+}

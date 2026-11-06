@@ -43,7 +43,8 @@ TD = [0.0,                                     # damage points: d = 1 - y/(E·x)
       1.0 - 0.05 / (E * 8.0e-3)]
 CE, CS, CD = [-ET0, -1.0e-3], [-FT, -1.0], [0.0, 0.0]   # mild compression (unused)
 LCH_REF = 1.0
-HG_FLOOR = 0.01                                # must match HG_DAMAGE_FLOOR in the C++
+HG_FLOOR = 1.0e-4                              # LadrunoBrick::kHgFloorDefault (C3a; 0.01 = -hgLegacy)
+HG_FLOOR_LEGACY = 0.01                         # LadrunoBrick::kHgFloorLegacy
 
 _CONN = [1, 2, 3, 4, 5, 6, 7, 8]
 
@@ -237,15 +238,20 @@ def _prescribed_run(form_args, material, nsteps=120, eps_max=5.0e-3, beta=1.0e-3
     return out
 
 
-@pytest.mark.parametrize("form_args", [
-    ["-formulation", "ssp"],
-    ["-formulation", "uri", "-hourglass", "stiffness"],
+@pytest.mark.parametrize("form_args,floor", [
+    (["-formulation", "ssp", "-hgLegacy"], HG_FLOOR_LEGACY),
+    (["-formulation", "uri", "-hourglass", "stiffness", "-hgLegacy"], HG_FLOOR_LEGACY),
+    (["-formulation", "ssp", "-hgDamage", "centroid"], HG_FLOOR),
+    (["-formulation", "uri", "-hourglass", "stiffness", "-hgDamage", "centroid"], HG_FLOOR),
 ])
-def test_tier_a_damage_scaled_kstab(form_args):
+def test_tier_a_damage_scaled_kstab(form_args, floor):
     """For an IDENTICAL prescribed deformation, the stored stabilization energy of
     an ASDConcrete3D element relative to an elastic element (same E, ν → identical
     elastic Kstab) must equal exactly max(floor, 1 - max(d_t, d_c)) at every step:
-    full elastic value when intact, degrading with damage, never below the floor."""
+    full elastic value when intact, degrading with damage, never below the floor.
+    Centroid sampling (the pre-C3a probe); the C3a Gauss-point sampling is covered in
+    test_ladrunoBrick_hourglass_damage_gauss.py."""
+    HG_FLOOR = floor
     elastic = _prescribed_run(form_args, "elastic")
     concrete = _prescribed_run(form_args, "concrete")
 
@@ -266,4 +272,5 @@ def test_tier_a_damage_scaled_kstab(form_args):
             assert s_meas == pytest.approx(HG_FLOOR, abs=2e-3)  # floored, not zero
 
     assert saw_intact, f"{form_args}: never sampled the intact (elastic) regime"
-    assert saw_floor, f"{form_args}: never reached the damage floor"
+    # the 1e-4 default floor lies beyond this backbone's last damage point (d = 0.9998)
+    assert saw_floor or floor < 1e-3, f"{form_args}: never reached the damage floor"

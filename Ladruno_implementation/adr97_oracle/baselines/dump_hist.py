@@ -93,11 +93,18 @@ def child(name, out):
         rec['ladrunoBuild'] = str(ops.ladrunoBuild())
     except Exception:                                   # pragma: no cover
         rec['ladrunoBuild'] = 'unknown'
+    # Ladruno (WP-177): the bits belong to the dumping HOST too (WP-175), so
+    # record which one; hosts.json files a baseline under this key.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from hostkey import host_key
+    rec['host'] = host_key()
     try:
         build, nsteps = _build_one(name)
         build()
     except Exception as exc:
-        rec = {"build_error": repr(exc)}
+        # Ladruno (WP-175): update, not rebind -- rebinding dropped the
+        # ladrunoBuild provenance recorded above from every dump.
+        rec["build_error"] = repr(exc)
     else:
         codes, sig, eps = [], [], []
         for _ in range(nsteps):
@@ -107,7 +114,7 @@ def child(name, out):
                 break
             sig.append([float(x) for x in list(ops.eleResponse(1, "stresses"))[0:6]])
             eps.append([float(x) for x in list(ops.eleResponse(1, "strains"))[0:6]])
-        rec = {"codes": codes, "stress": sig, "strain": eps}
+        rec.update(codes=codes, stress=sig, strain=eps)
     with open(out, "w") as f:
         json.dump(rec, f)
 
@@ -115,19 +122,27 @@ def child(name, out):
 def main(out):
     hist = {}
     tmp = out + ".part"
-    env = dict(os.environ)
+    # Ladruno (WP-176): load the engine HERE and pin every child to it (`-S`,
+    # this sys.path, `_testbed._ops` refuses any other `opensees`) -- a boot
+    # `.pth` can no longer swap the build a baseline is dumped from.
+    from _testbed import ops
+    from _testbed.subprocess_run import pinned_child
+    print("engine: %s  ladrunoBuild %s" % (ops.__file__, ops.ladrunoBuild()))
     for name in _decks():
         if os.path.exists(tmp):
             os.remove(tmp)
-        p = subprocess.run([sys.executable, os.path.abspath(__file__), "--one", name, tmp],
-                           env=env, capture_output=True, text=True)
+        argv, env = pinned_child([os.path.abspath(__file__), "--one", name, tmp])
+        p = subprocess.run(argv, env=env, capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, encoding="utf-8",
+                           errors="replace")
         if os.path.exists(tmp):
             hist[name] = json.load(open(tmp))
         else:
             hist[name] = {"child_error": (p.stdout + p.stderr)[-400:]}
         v = hist[name]
         print("  %-46s %s" % (name, "steps=%d rc=%s" % (len(v["stress"]), set(v["codes"]))
-                              if "stress" in v else list(v)[0]))
+                              if "stress" in v
+                              else [k for k in v if k.endswith("_error")]))
         sys.stdout.flush()
     with open(out, "w") as f:
         json.dump(hist, f, indent=1, sort_keys=True)

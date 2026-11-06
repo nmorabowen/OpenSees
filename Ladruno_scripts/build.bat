@@ -409,17 +409,22 @@ echo === Step 5: Copying binaries to dist\ ===
 if not exist "%DIST%\bin"         mkdir "%DIST%\bin"
 if not exist "%DIST%\lib\tcl8.6"  mkdir "%DIST%\lib\tcl8.6"
 
+REM Ladruno WP-178: EVERY copy into dist\ goes through :copy_or_die. A bare
+REM `copy` here used to discard its result: on 2026-10-06 the opensees.pyd copy
+REM hit "being used by another process" (a test run had the old pyd loaded),
+REM the build exited 0, and dist\bin held a STALE pyd beside fresh exes --
+REM AGENTS.md rule 2's mixed binary, made by the script itself.
 REM Executables and the OpenSeesPy module
 for %%F in (OpenSees.exe OpenSeesSP.exe OpenSeesMP.exe) do (
     if exist "%BUILD_DIR%\%%F" (
         echo   copying %%F
-        copy /y "%BUILD_DIR%\%%F" "%DIST%\bin\" >nul
+        call :copy_or_die "%BUILD_DIR%\%%F" "%DIST%\bin\%%F" || exit /b 1
     )
 )
 REM OpenSeesPy is built as OpenSeesPy.dll; Python expects opensees.pyd
 if exist "%BUILD_DIR%\OpenSeesPy.dll" (
     echo   copying OpenSeesPy.dll -^> opensees.pyd
-    copy /y "%BUILD_DIR%\OpenSeesPy.dll" "%DIST%\bin\opensees.pyd" >nul
+    call :copy_or_die "%BUILD_DIR%\OpenSeesPy.dll" "%DIST%\bin\opensees.pyd" || exit /b 1
 )
 
 REM ----- OpenSeesPyMP: self-contained MPI Python package ------------------
@@ -435,18 +440,18 @@ REM   %DIST%\openseesmp\mpiexec -n 4 python driver.py
 if not exist "%BUILD_DIR%\openseesmp.dll" goto :no_openseesmp
 if not exist "%DIST%\openseesmp" mkdir "%DIST%\openseesmp"
 echo   copying openseesmp.dll -^> openseesmp\openseesmp.pyd
-copy /y "%BUILD_DIR%\openseesmp.dll" "%DIST%\openseesmp\openseesmp.pyd" >nul
+call :copy_or_die "%BUILD_DIR%\openseesmp.dll" "%DIST%\openseesmp\openseesmp.pyd" || exit /b 1
 echo   bundling Intel MPI runtime + Hydra launcher into openseesmp\
 for %%M in (impi.dll mpiexec.exe hydra_bstrap_proxy.exe hydra_pmi_proxy.exe hydra_service.exe) do (
-    if exist "%IMPI_BIN%\%%M" copy /y "%IMPI_BIN%\%%M" "%DIST%\openseesmp\" >nul
+    if exist "%IMPI_BIN%\%%M" call :copy_or_die "%IMPI_BIN%\%%M" "%DIST%\openseesmp\%%M" || exit /b 1
 )
-if exist "%IMPI_LIBFABRIC%\libfabric.dll" copy /y "%IMPI_LIBFABRIC%\libfabric.dll" "%DIST%\openseesmp\" >nul
+if exist "%IMPI_LIBFABRIC%\libfabric.dll" call :copy_or_die "%IMPI_LIBFABRIC%\libfabric.dll" "%DIST%\openseesmp\libfabric.dll" || exit /b 1
 echo   mirroring MKL runtime into openseesmp\ (self-contained off oneAPI shell)
 del /q "%DIST%\openseesmp\mkl_*.dll" 2>nul
 for %%B in (%MKL_RUNTIME_DLLS%) do (
-    for %%F in ("%MKL_BIN%\%%B.*.dll") do copy /y "%%F" "%DIST%\openseesmp\" >nul
+    for %%F in ("%MKL_BIN%\%%B.*.dll") do call :copy_or_die "%%F" "%DIST%\openseesmp\%%~nxF" || exit /b 1
 )
-if exist "%ICOMP_BIN%\libiomp5md.dll" copy /y "%ICOMP_BIN%\libiomp5md.dll" "%DIST%\openseesmp\" >nul
+if exist "%ICOMP_BIN%\libiomp5md.dll" call :copy_or_die "%ICOMP_BIN%\libiomp5md.dll" "%DIST%\openseesmp\libiomp5md.dll" || exit /b 1
 :no_openseesmp
 
 REM (OpenSeesPySP packaging removed — Python has no SP subsystem; SP is
@@ -459,9 +464,9 @@ REM mkl_scalapack_lp64 + mkl_blacs_intelmpi_lp64 are needed by OpenSeesSP/MP.
 echo   copying Intel MKL runtime DLLs
 del /q "%DIST%\bin\mkl_*.dll" 2>nul
 for %%B in (%MKL_RUNTIME_DLLS%) do (
-    for %%F in ("%MKL_BIN%\%%B.*.dll") do copy /y "%%F" "%DIST%\bin\" >nul
+    for %%F in ("%MKL_BIN%\%%B.*.dll") do call :copy_or_die "%%F" "%DIST%\bin\%%~nxF" || exit /b 1
 )
-if exist "%ICOMP_BIN%\libiomp5md.dll" copy /y "%ICOMP_BIN%\libiomp5md.dll" "%DIST%\bin\" >nul
+if exist "%ICOMP_BIN%\libiomp5md.dll" call :copy_or_die "%ICOMP_BIN%\libiomp5md.dll" "%DIST%\bin\libiomp5md.dll" || exit /b 1
 
 REM Intel MPI runtime is deliberately NOT copied into %DIST%\bin. To launch
 REM the Tcl OpenSeesSP / OpenSeesMP exes the user runs them via mpiexec,
@@ -488,9 +493,26 @@ for /f "delims=" %%I in ('dir /s /b /a-d "%USERPROFILE%\.conan2\init.tcl" 2^>nul
 if defined TCL_INIT (
     for %%D in ("!TCL_INIT!") do set "TCL_LIB_DIR=%%~dpD"
     echo   copying Tcl library from !TCL_LIB_DIR!
-    xcopy /e /q /y "!TCL_LIB_DIR!" "%DIST%\lib\tcl8.6\" >nul
+    xcopy /e /q /y "!TCL_LIB_DIR!" "%DIST%\lib\tcl8.6\" >nul || (echo ERROR: copying the Tcl library into %DIST%\lib\tcl8.6 failed & exit /b 1)
 ) else (
     echo   WARNING: init.tcl not found in Conan cache; OpenSees.exe will warn at startup
+)
+
+REM Ladruno WP-178: the engine binaries in dist\ must BE the ones just built.
+REM :copy_or_die catches a failed copy; this byte-compare catches every other
+REM way dist\ can disagree with the build (it costs ~1 s). Only artifacts this
+REM build produced are checked, so a named-target build verifies what it made.
+echo   verifying dist\ engine binaries against the build
+for %%P in ("OpenSees.exe:bin\OpenSees.exe" "OpenSeesSP.exe:bin\OpenSeesSP.exe" "OpenSeesMP.exe:bin\OpenSeesMP.exe" "OpenSeesPy.dll:bin\opensees.pyd" "openseesmp.dll:openseesmp\openseesmp.pyd") do (
+    for /f "tokens=1,2 delims=:" %%A in (%%P) do (
+        if exist "%BUILD_DIR%\%%A" (
+            fc /b "%BUILD_DIR%\%%A" "%DIST%\%%B" >nul 2>&1 || (
+                echo ERROR: %DIST%\%%B is NOT the %%A just built ^(stale or partial copy^).
+                echo        dist\ is now a MIXED install. Close whatever has it loaded and rerun.
+                exit /b 1
+            )
+        )
+    )
 )
 
 echo.
@@ -521,3 +543,27 @@ if defined WANT_INSTALLER (
     )
 )
 endlocal
+exit /b 0
+
+REM ----- :copy_or_die <src> <dst> (Ladruno WP-178) --------------------------
+REM Copy one file and FAIL THE BUILD if the copy fails. Outside any
+REM parenthesized block, `if errorlevel 1` is reliable here; callers chain
+REM `call :copy_or_die ... || exit /b 1`, the idiom Step 4 already trusts.
+REM The usual cause is a lock: a Python/pytest process that imported the old
+REM opensees.pyd, VS Code holding the MKL DLLs (BUILD_GOTCHAS installer
+REM DLL-lock), or a running OpenSees*.exe.
+REM NO parenthesized block below, on purpose: the sources include
+REM "C:\Program Files (x86)\..." (MKL, libiomp5md), and a %~1 expanded inside
+REM `if errorlevel 1 ( ... )` would close the block at "(x86)" (BUILD_GOTCHAS
+REM section 10b). Straight-line code has nothing to close.
+:copy_or_die
+copy /y "%~1" "%~2" >nul && exit /b 0
+echo.
+echo ERROR: could not copy
+echo          "%~1"
+echo        to
+echo          "%~2"
+echo        The destination is probably open in another process: a Python
+echo        session that imported it, VS Code, or a running OpenSees*.exe.
+echo        dist\ was NOT refreshed. Close it and rerun build.bat.
+exit /b 1

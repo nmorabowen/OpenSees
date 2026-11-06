@@ -1,0 +1,9 @@
+---
+wp: ADR-30
+title: "LadrunoProjection (ADR-30): every TIED DOF needs lumped mass, and the transport Ccr is frozen small-rotation"
+legacy_seq: 104
+---
+### LadrunoProjection (ADR-30): every TIED DOF needs lumped mass, and the transport Ccr is frozen small-rotation
+- **Bites (massless tied DOF):** unlike `constraints Transformation` (which ELIMINATES slave DOFs), `LadrunoProjection` keeps every constrained/retained DOF in the equation set and reads its diagonal mass for the projection weight `LᵀML`. So a tied DOF with zero lumped mass is refused at the first solve (`buildMass`, named error). This bites `rigidLink -beam` and 3D `rigidDiaphragm`, which tie the slave's **perpendicular rotation** (rz) — physical models usually give those nodes zero rotational mass. Fix: add a small rotational mass (~0.01–0.1% of the node's translational mass) to every tied rotational DOF, OR use Penalty/Transformation. (Relaxing this = ADR-30 P4 SOE-cooperative elimination.) Learned 2026-06-20, ADR-30 P2 (Gate-C).
+- **Bites (frozen Ccr):** the transport lever-arm coefficients (`Ccr`) are captured ONCE at constraint construction (small-rotation). For an explicit run that accumulates large rotation (|θ| ≳ 0.1 rad) the projection enforces the tie with stale geometry → silently wrong. This is the SAME limitation `constraints Transformation` carries (both read the same frozen `Ccr` from the `MP_Constraint`), so it is not a regression — but there is no runtime guard yet (a per-step lever-arm staleness check is deferred). For finite-rotation rigid offsets use the RBE2 element route (`LadrunoKinematicCoupling`) or Transformation. Learned 2026-06-20, ADR-30 P2 (Gate-C).
+- **Minor (near-singular `LᵀML`):** the per-group rank check (`Matrix::Solve`/DGESV) catches an EXACT zero pivot (massless direction, exact redundancy) but not a merely ill-conditioned `LᵀML` (e.g. a tied DOF with mass ~1e-12). Acceptable for v1 (ADR O1); a condition-number gate is a deferred hardening.

@@ -150,6 +150,18 @@ steadyStateDynamics(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Cha
 int
 randomResponse(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
 
+// Ladruno WP-213: residualModes (missing-mass pseudo-modes), same bridge shape.
+int
+residualModes(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
+// Ladruno WP-215: ritzVectors (load-dependent Ritz vectors), same bridge shape.
+int
+ritzVectors(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
+// Ladruno WP-216: responseSpectrumPerMode (per-mode RSA resultants), same bridge shape.
+int
+responseSpectrumPerMode(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
 // Ladruno (ADR-78 P0.5): contact-family classic-Tcl handlers (bridges to the
 // OPS_Ladruno* entry points, which are already linked into every target via
 // OpenSeesLIB but were registered only in TclWrapper/PythonWrapper). Declared
@@ -193,6 +205,9 @@ ladrunoArcLength(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char**
 
 int
 ladrunoDR(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
+int   // Ladruno WP-221: half-storage asymmetry guard query
+ladrunoSymmetryGuard(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
 
 int
 videoPlayer(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
@@ -372,6 +387,10 @@ stopTimer(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 
 int 
 rayleighDamping(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
+
+// Ladruno (relativeMassDamping)
+int
+relativeMassDampingCmd(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 
 int 
 modalDamping(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);

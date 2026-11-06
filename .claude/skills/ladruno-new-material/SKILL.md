@@ -2,17 +2,19 @@
 name: ladruno-new-material
 description: >
   Checklist for adding or changing a MATERIAL in the Ladruno OpenSees fork (SRC/material/,
-  nD or uniaxial: LadrunoSANISAND, LadrunoJ2, LadrunoConcrete3D, Staged*/LogStrain wrappers,
-  ASDPlasticMaterial3D changes, ManzariDafalias-family fixes). Use before writing or modifying
+  nD or uniaxial: LadrunoSANISAND, LadrunoNorSand, LadrunoHS, LadrunoHSSmall, LadrunoJ2,
+  LadrunoConcrete3D, LadrunoCohesiveHinge, LadrunoCohesiveHingeBiaxial, Bilin,
+  ModIMKPeakOriented, Staged*/LogStrain wrappers, ASDPlasticMaterial3D changes,
+  ManzariDafalias-family fixes). Use before writing or modifying
   a return map / substepping scheme, getTangent/getInitialTangent, IMPL-EX, getCopy,
   commit/revert, any static or process-wide state, a Tcl/Python material parser, or material
-  tests. Every item points to the LEDGER_quirks entry that explains it.
+  tests. Every item points to the quirks-ledger entry that explains it.
 ---
 
 # New or changed material — checklist
 
 Read this before adding or changing a material under `SRC/material/`. Each item names the
-`Ladruno_implementation/LEDGER_quirks.md` heading to grep for; read that entry when the item
+quirk heading to grep for in `Ladruno_implementation/ledger/quirks/` (`rg`); read that entry when the item
 applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns.py`.
 
 ## Registration (a new material)
@@ -34,6 +36,13 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       and a loud failure must not latch. A REFUSAL latch (bound to one integration point) is NOT
       copied: a clone starts clear, and only sendSelf keeps it. Quirks: "getCopy must PROPAGATE the
       latch", "getCopy of a LATCHED LadrunoNorSand".
+- [ ] `MaterialStageParameter::setDomain` stops after the FIRST element that accepts
+      `"updateMaterialStage"`, and never touches the prototype in `Domain::theNDMaterials`:
+      a material without a class-wide static stage flag must store stage updates (for both
+      `"updateMaterialStage"` and `"stage"`/`"materialState"`) in a ref-counted tag-keyed map,
+      apply the stage transition lazily at the top of `setTrialStrain`, and adopt the active
+      stage in `getCopy()` without clobbering the map (WP-210 `LadrunoHS`). Quirks:
+      "`updateMaterialStage` reaches one element; the static `mElastFlag` hides it".
 
 - [ ] Vanilla materials that keep per-material data in static `...x[matN]` arrays (PDMY/PIMY
       family): a new field needs the constructor store, the `matCount%20` copy loop AND the
@@ -59,6 +68,10 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       Vector r = ...;` makes a new `r` that dies at the `;` (L9). And give every substep
       integrator's tangent an FD gate of its own: ForwardEuler's was wrong twice over and no gate
       saw it (WP-158). Quirks: "has a shadowed `Vector r`".
+- [ ] A sub-stepper must hand each sub-step what the un-sub-stepped call would get -- moduli
+      INITIALISED (and not taken after a callee wrote them), and EVERY evolved vector advanced,
+      elastic strain included. Gate it with an identity the sub-steps must satisfy, not with
+      a comparison to another integrator (WP-160). Quirks: "it passes uninitialised `nG, nK`".
 - [ ] Implement `getInitialTangent()` honestly: the base default returns `getTangent()`, so
       `-initial` silently becomes full Newton. Quirks: "`NDMaterial::getInitialTangent()` DEFAULTS".
 - [ ] Substep schemes need error control and yield-drift correction, and must honour the
@@ -81,6 +94,45 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       the units. Quirks: "`D_factor` dilatancy sigmoid is DIMENSIONAL".
 
 - [ ] A fork block appended to a base `sendSelf` under the same dbTag and commitTag must NOT have the length of any vector the base sends: FE_Datastore keys vectors by size, and a same-size block overwrites the base state. `static_assert` the size. Quirks: "FE_Datastore keys a sent Vector by its SIZE".
+
+## Concentrated, cohesive & reinforcing-steel materials (`Bilin`, `ModIMKPeakOriented`, `LadrunoCohesiveHinge`, `LadrunoCohesiveHingeBiaxial`, `LadrunoRebarBuckling`, `LadrunoUniaxialJ2`)
+
+- [ ] **IMK cyclic deterioration guard & energy/hardening parameter units (`FB-5`):** In
+      `ModIMKPeakOriented.cpp` (`lines 581, 616, 1084, 1117`), guard post-capping energy
+      deterioration with `if (Enrgtd != 0.0 && Enrgts != 0.0)` (NOT `Enrgtd == 0.0`). In both
+      `Bilin.cpp` (`Enrgts = LamdaS * My_pos`) and `ModIMKPeakOriented.cpp` (`Enrgts = Ls * My_pos`),
+      `LamdaS` and `Ls` have units of **radians** (`LamdaS = LamdaS_ratio * Thetap_pos`,
+      `Ls = gamma_haselton * theta_y_member` with $\theta_{y,\text{member}} = M_y L / (6 EI_{\text{eff}})$),
+      NOT dimensionless ratios! Furthermore, `ModIMKPeakOriented` computes elastic rotation
+      internally as `My_pos / Ke`, so `alfaPos = (Mc/My - 1) * (My_pos / Ke) / thetaPpos` scales by
+      the **hinge** yield rotation `My_pos / Ke`, not $\theta_{y,\text{member}}$. In `apeGmsh`,
+      always use `Bilin.from_lignos_ratios(...)` and `ModIMKPeakOriented.from_haselton_gamma(...)`.
+- [ ] **Series $n$-factor core flexibility correction (`G7-F03-4`):** When a concentrated hinge sits
+      in series with an elastic core of stiffness $K_{\text{core}} = \frac{n+1}{n}\frac{6EI}{L}$
+      ($n=10$, $K_e = 66 EI/L$, `nFactor = 0.0`), convert member-level plastic rotations to isolated
+      hinge parameters: $\theta_{p,\text{hinge}} = \theta_{p,\text{member}} - (M_c - M_y)/K_{\text{core}}$
+      and $\theta_{pc,\text{hinge}} = \theta_{pc,\text{member}} + M_c/K_{\text{core}}$
+      (`apply_series_core_correction=True, K_core=...` in `Bilin.from_lignos_ratios`).
+- [ ] **OpenSeesPy numeric `nFactor` parser & `-implex` (`FB-4`, `FB-10`):** In `OPS_Bilin` /
+      `OPS_ModIMKPeakOriented`, never pass `OPS_GetString()` directly to `strcmp(opt, "-implex")`
+      without checking `opt != 0` and falling back to `OPS_GetDoubleInput` when a numeric `nFactor`
+      is passed from Python (`FB-4`). When `implexFlag == 1`, `getTangent()` returns positive elastic
+      `Ke` while committing the deteriorated state at `commitState()`; when hosted inside
+      `LadrunoIMKBeam -implex`, `LadrunoIMKHinge.h` automatically calls `setImplex(false)` on the
+      element's private hinge clones so element-level plastic-rotation extrapolation is not bypassed
+      (`FB-10`).
+- [ ] **Asymmetric RC column P–M spline (`-pmBal P0c P0t Pbal Mbal_ratio` / `pm_bal`, `FB-6`, `DR-2`, `DR-3`):**
+      `LadrunoCohesiveHinge` and `LadrunoCohesiveHingeBiaxial` support both symmetric steel
+      `-pm P0 alpha` and the 4-parameter $C^1$ Hermite spline `-pmBal P0c P0t Pbal Mbal_ratio`
+      (`ladrunoIMKScalePMBal` / `ladrunoIMKScalePMBalDeriv`, `DR-3`), exposing `getPMDerivative()`
+      for the host frame element's basic axial tangent column (`FB-6`). Enforce the
+      Double-Localization Guard $\eta = M_c f_{\text{pm}}(N) / M_{\text{peak,fib}}(N) \le 0.90$ when
+      pairing with a softening fiber section (`DR-2`).
+- [ ] **Rebar buckling & uniaxial J2 (`FB-6`, `FB-7`, `FB-9`):** In `LadrunoRebarBuckling::copyCommittedToTrial()`,
+      always reset `TmaxTenStrain = CmaxTenStrain` (`FB-7`) so non-convergent Newton steps do not
+      pollute `e_cross_live` (note `BR_RESTRAIGHTEN` retains $+g_{\text{rev}}$ tensile overshoot at
+      $L_{\text{eff}}/d_b \ge 10$ by design per ADR 14 §9, `FB-9`). In `LadrunoUniaxialJ2`, read
+      `ops_TheActiveElement->getCharacteristicLength()` when `lch` is auto-regularized (`FB-6`).
 
 ## NaN and silent success
 
@@ -130,5 +182,6 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 
 - [ ] A material option that REPLACES another model's constants (LadrunoNorSand `-energy HAR` vs the BA06 five) must REFUSE a constant it does not read, not accept and drop it; a state-moving feature (the p' floor) is COUNTED, not refused, and everything derived from the initial state is recomputed from the (possibly projected) state. Quirks: "`-energy HAR` REPLACES the BA06 constants", "The p' floor of LadrunoNorSand".
 
-Found a new trap? Add it to `LEDGER_quirks.md`, then add one line here pointing to it. If the
+Found a new trap? Write a quirks fragment (`Ladruno_implementation/ledger/quirks/WP-<nnn>-<slug>.md`;
+never edit the generated `LEDGER_quirks.md`), then add one line here pointing to it. If the
 trap has a greppable pattern, add a rule to `ci/check_quirk_patterns.py` instead.

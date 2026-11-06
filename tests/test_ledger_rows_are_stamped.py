@@ -41,6 +41,19 @@ LEDGERS = [
     REPO / "Ladruno_implementation" / "LEDGER_implementations.md",
     REPO / "Ladruno_implementation" / "LEDGER_quirks.md",
 ]
+# WP-161: the ledgers are per-WP fragments; the LEDGER_*.md above are stubs then.
+FRAGMENT_DIRS = {
+    "LEDGER_vanilla_files.md": REPO / "Ladruno_implementation" / "ledger" / "vanilla",
+    "LEDGER_implementations.md": REPO / "Ladruno_implementation" / "ledger" / "implementations",
+    "LEDGER_quirks.md": REPO / "Ladruno_implementation" / "ledger" / "quirks",
+}
+
+
+def _sources(ledger):
+    """The files that hold this ledger's rows: its fragments (WP-161), else the file."""
+    d = FRAGMENT_DIRS[ledger.name]
+    frags = sorted(p for p in d.glob("*.md") if not p.name.startswith("_")) if d.is_dir() else []
+    return frags or ([ledger] if ledger.exists() else [])
 
 MARKER = "(this PR"
 
@@ -48,17 +61,20 @@ MARKER = "(this PR"
 @pytest.mark.parametrize("ledger", LEDGERS, ids=lambda p: p.name)
 def test_no_unstamped_rows(ledger):
     """No row may still say `(this PR)` -- name the PR that landed it."""
-    if not ledger.exists():                     # a ledger may be renamed one day
+    sources = _sources(ledger)
+    if not sources:                             # a ledger may be renamed one day
         pytest.skip(f"{ledger.name} not present")
     offenders = []
-    with io.open(ledger, encoding="utf-8") as fh:
-        for n, line in enumerate(fh, 1):
-            if MARKER not in line:
-                continue
-            # the row's subject = its first table cell, else the leading text
-            cells = line.split("|")
-            subject = (cells[1] if len(cells) > 2 else line).strip()
-            offenders.append((n, subject[:88]))
+    for src in sources:
+        with io.open(src, encoding="utf-8") as fh:
+            for n, line in enumerate(fh, 1):
+                if MARKER not in line:
+                    continue
+                # the row's subject = its first table cell, else the leading text
+                cells = line.split("|")
+                subject = (cells[1] if len(cells) > 2 else line).strip()
+                where = n if src == ledger else f"{src.name}:{n}"
+                offenders.append((where, subject[:88]))
     assert not offenders, (
         f"{ledger.name}: {len(offenders)} row(s) still say '(this PR)'. Replace "
         f"each with a link to the PR that lands it, e.g. "
@@ -77,6 +93,7 @@ def test_the_guard_can_actually_fail():
     sample = "| `SRC/foo.cpp` | did a thing | (this PR) |\n"
     assert MARKER in sample
     # and that the real ledgers are actually being read, not skipped into a pass
-    assert any(p.exists() for p in LEDGERS), "no ledger was found to check"
-    assert any(p.stat().st_size > 1000 for p in LEDGERS if p.exists()), \
+    sources = [s for p in LEDGERS for s in _sources(p)]
+    assert sources, "no ledger was found to check"
+    assert sum(s.stat().st_size for s in sources) > 1000, \
         "ledgers found but suspiciously small -- is the path still right?"

@@ -1,0 +1,8 @@
+---
+wp: WP-128
+title: "α_in is re-seated ONCE per global increment, so inside the substeps (α − α_in):n goes to 0 (h = 1e10) and then NEGATIVE (h < 0) — the trigger of the α escape (…"
+legacy_seq: 489
+---
+### α_in is re-seated ONCE per global increment, so inside the substeps `(α − α_in):n` goes to 0 (`h = 1e10`) and then NEGATIVE (`h < 0`) — the trigger of the α escape (finding G, WP-128 → WP-129)
+- **Bites:** `ManzariDafalias::integrate()` decides the reversal once, from the sign of `(α_n − α_in_n):Ce:dε`, before any integrator runs. Every substep of every explicit scheme then evaluates `h = b0/((α − α_in):n)` (`GetStateDependent`) with that α_in. Right after a reset `(α − α_in):n = 0` → the `1e10` sentinel; one stage later it can be negative → `h < 0`, `Kp` of the wrong sign, the `dγ < 0` "drag" branch (row above). 37 of 38 α-escaping substeps in WP-128 show `(α − α_in):n ≤ 0` in a stage; `h = b0/⟨(α − α_in):n⟩` alone keeps α inside (0.55–0.93 against 5–7).
+- **Workaround/status:** SAS-ME uses the PAPER's rule (`-sasAlphaIn reseat`, the default, = WP-134's oracle): `α_in := α` wherever a stage finds `(α − α_in):n < 0` (a new loading process starts there; that stage runs with the `h = 1e10` sentinel) and after an accepted substep that ends with it negative -- NOT unconditionally at every plastic onset (an onset with `(α − α_in):n ≥ 0` keeps α_in); integrate()'s trial-based reset is undone and the P2-5 noise guard skipped for it. WP-134: the paper rule makes `h < 0` impossible (0/960 exact runs), UW's gives it in 146/480. `bracket` = the stage sentinel only; `stale` = today's behaviour (attribution only). Counted in `sasStats` (`hBrackets`, `alphaInReseats`).

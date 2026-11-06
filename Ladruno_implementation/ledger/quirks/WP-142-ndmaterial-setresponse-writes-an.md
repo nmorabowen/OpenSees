@@ -1,0 +1,9 @@
+---
+wp: WP-142
+title: "NDMaterial::setResponse writes an NdMaterialOutput tag even when it returns null — a wrapper that falls back after the base leaves an EMPTY material block in t…"
+legacy_seq: 525
+---
+### `NDMaterial::setResponse` writes an `NdMaterialOutput` tag even when it returns null — a wrapper that falls back after the base leaves an EMPTY material block in the recorder metadata (WP-142)
+The base opens `output.tag("NdMaterialOutput")` + attributes before testing the key and closes it at the end whatever the outcome (`NDMaterial.cpp:274`, `:348`). A wrapper that calls the base first and forwards on null therefore emits an empty `<NdMaterialOutput …/>` ahead of the inner material's own block: visible in `-xml` element recorders, and one more thing MPCO's descriptor stream has to clean up (it deletes duplicate material children, `MPCORecorder.cpp:3297-3304`). (`UniaxialMaterial::setResponse` decides from the key first and writes nothing for an unknown key.)
+- **Rule:** to fall back after a base `setResponse`, probe the base on a `DummyStream` first; on success delete the probe Response and re-ask the base with the real stream; otherwise forward INSIDE one material tag of your own. Do not drop the tag altogether: MPCO needs a material node per fiber, and an inner material that writes no tags for a key (LadrunoUniaxialJ2 `plasticStrain`) then leaves none — `recorder mpco … section.fiber.plasticStrain` failed with `invalid response data size` and 0 columns on the probe-only build. (Or decide from the key BEFORE writing anything, as `LadrunoRebarBuckling` does, and still emit its own tag.)
+- **Workaround/status:** ✅ `PlateRebarMaterial::setResponse` probes and wraps (WP-142); gated by `test_recorder_metadata_is_one_material_block_per_fiber` (`-xml` metadata) and `test_mpco_section_fiber_forwarded_key` (MPCO). *2026-09-28.*

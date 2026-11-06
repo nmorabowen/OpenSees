@@ -1,0 +1,9 @@
+---
+wp: WP-138
+title: "WP-138 (TIMs F18) — strip-footing A/B: ModifiedEuler vs SAS-ME, end to end"
+pr: "#878"
+status: "measured — reported, not shipped as a feature (draft PR; ladders interim)"
+section: "table"
+legacy_seq: 186
+---
+| **WP-138 (TIMs F18) — strip-footing A/B: ModifiedEuler vs SAS-ME, end to end** ([[138_footing_sas_me_ab]]). This is the fork's own copy of the TIMs 2D footing deck: a 2 430-element LadrunoQuad bbar mesh reconstructed from the act's tags, a rough rigid footing through LadrunoKinematicCoupling, and the campaign SANISAND. It was run locally and on Esmeralda (build 7936ed6e0). **Verdict:** SAS-ME (IntScheme 129, TanType 0, TolR 1e-4) moves the step-floor wall from s/B 0.0292 (ModifiedEuler, inside TIMs' 0.026–0.041) to 0.0508 (q 966.7 kPa, still rising, no peak or plateau), but does not remove it. Every SANISAND arm is MODE = FLOOR; the SAS-ME arms get there on `loadingNonPosH` (first at 0.0363 on E_B). It is DM04's h-singularity at α_in re-seats (WP-150 memo, #892): constitutive, not an integration defect. TolR 1e-3 walls earlier (0.0410), TanType 1 collapses the step (0.0114, 13× cost), and B/16 floors at 0.0135 with bands one element wide (non-associated localization). **Default recommended to the owner/TIMs:** IntScheme 129, TanType 0, TolR 1e-4 and the driver's step policy. Sensitivity ladders (Presidual, e_init, fabric/peak/dilatancy ablation, A0, h0) are FINAL: every leg walls on NonPosH (A0 = 0.001 only delays it, 0.0363 → 0.0426). | measurement harness (testbed) | **none — no new classes** | `Ladruno_files/testbed/footing_sas_me_ab/` (deck `footing_ab.py`, `esmeralda/`, `runs/E_*`, `ladders_final/`, `wall_table.py`, `plot_qs_final.py`, replay tooling), `Ladruno_implementation/138_footing_sas_me_ab.md`, 4 rows in `LEDGER_quirks.md` | **measured — reported, not shipped as a feature** (draft PR; ladders interim) | [#878](https://github.com/nmorabowen/OpenSees/pull/878) |

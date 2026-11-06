@@ -45,7 +45,10 @@
 //   pre-peak T_eff = S r; softening calibrated to int T_eff dr = Gf_mix
 //     EXP    T_eff = S exp(-A(r-1)),  A = S/(Gf_mix - S/2)
 //     LINEAR T_eff = S(1-(r-1)/r_f),  r_f = 2(Gf_mix - S/2)/S
-//   Isotropic secant damage D = 1 - T_eff(r_max)/(S r_max); M_i = (1-D) Kpen_i alpha_i.
+//   Isotropic secant damage D = 1 - T_eff(r)/(S r) while LOADING; M_i = (1-D) Kpen_i alpha_i.
+//   D is the internal variable (WP-217, ADR 34 2026-10-29): with (r_max, w) the state at its
+//   last growth, loading is D_law(alpha) >= D(r_max, w); otherwise D is frozen (elastic-secant,
+//   conservative, exact diagonal tangent). eta = 1: D = D(r) and this is r >= r_max.
 //   Reduces to LadrunoCohesiveHinge(Mc_i, Gf_i) on each pure axis (peak, shape, Gf).
 //
 // classTag ND_TAG_LadrunoCohesiveHingeBiaxial = 33004 (Ladruno private ND band).
@@ -58,6 +61,7 @@
 #include <NDMaterial.h>
 #include <Vector.h>
 #include <Matrix.h>
+#include <LadrunoImplexClock.h>
 
 class LadrunoCohesiveHingeBiaxial : public NDMaterial
 {
@@ -66,7 +70,9 @@ class LadrunoCohesiveHingeBiaxial : public NDMaterial
 
   LadrunoCohesiveHingeBiaxial(int tag, double Mcz, double Gfz, double Mcy, double Gfy,
                               int shape = EXP, double penaltyRatio = 1000.0,
-                              double bkEta = 1.0);
+                              double bkEta = 1.0, double P0 = 0.0,
+                              double alphaPM = 0.5, bool implex = false,
+                              double P0t = 0.0, double Pbal = 0.0, double muBal = 1.0);
   LadrunoCohesiveHingeBiaxial();
   ~LadrunoCohesiveHingeBiaxial();
 
@@ -77,7 +83,22 @@ class LadrunoCohesiveHingeBiaxial : public NDMaterial
   const Vector& getStress(void)        { return Tstress; }
   const Vector& getStrain(void)        { return Tstrain; }
   const Matrix& getTangent(void)       { return Ttangent; }
-  const Matrix& getInitialTangent(void){ return Kinit; }
+  const Matrix& getInitialTangent(void);
+
+  void setAxialForce(double P)   { P_axial = P; }
+  double getAxialForce(void) const { return P_axial; }
+  double getPMMultiplier(void) const;
+  double getPMDerivative(void) const;
+  void setPM(double p0, double apm) { P0 = p0; alphaPM = apm; P0t = 0.0; Pbal = 0.0; }
+  void setPMBal(double p0c, double p0t, double pbal, double mubal) {
+    P0 = p0c; P0t = p0t; Pbal = pbal; muBal = mubal;
+  }
+  bool hasPM(void) const         { return P0 > 0.0; }
+  bool isImplex(void) const      { return implex; }
+  void setImplex(bool flag)      { implex = flag; }
+  void setImplexClock(int m)     { implexClock.mode = m; }   // WP-217: LadrunoImplexClock::STEP | PSEUDO
+  int  getImplexClock(void) const { return implexClock.mode; }
+  double getImplexError(void) const;
 
   int commitState(void);
   int revertToLastCommit(void);
@@ -96,7 +117,13 @@ class LadrunoCohesiveHingeBiaxial : public NDMaterial
   Response* setResponse(const char** argv, int argc, OPS_Stream& s);
   int getResponse(int responseID, Information& matInfo);
 
+  int setParameter(const char** argv, int argc, Parameter& param);
+  int updateParameter(int parameterID, Information& info);
+
   double getEnergy(void) { return Twork; }   // path work int M . dalpha
+
+  bool ladrunoThreadSafeUpdate(void) const { return true; }
+  bool ladrunoThreadSafeForm(void) const   { return true; }
 
  private:
   void computeDerived(void);   // per-axis Kpen/alpha0 from (Mc_i, Gf_i), enforce the floor
@@ -104,12 +131,23 @@ class LadrunoCohesiveHingeBiaxial : public NDMaterial
   //   returns S, Gf_mix, T_eff(r_max), dT_eff/dr(r_max)
   void effectiveLaw(double wz, double wy, double rMax,
                     double& S, double& Teff, double& dTeff) const;
+  // D = 1 - T_eff(rr)/(S rr) at mix (wz, wy), clamped to [0,1]
+  double damageAt(double wz, double wy, double rr) const;
 
   // material parameters
   double Mcz, Gfz, Mcy, Gfy;
   int    shape;
   double penaltyRatio;
   double bkEta;            // Benzeggagh-Kenane mode-mix exponent (1 = linear Gf interpolation)
+  double P0;               // axial compressive capacity for P-M interaction (<=0 disables)
+  double alphaPM;          // parabolic P-M interaction coefficient
+  double P0t;              // tensile axial capacity for -pmBal (>0 enables 4-parameter RC balance law)
+  double Pbal;             // compressive balance axial load for -pmBal (0 < Pbal < P0)
+  double muBal;            // balance moment ratio M_bal / M_0 for -pmBal
+  bool   implex;           // Oliver et al. (2008) IMPL-EX integration flag
+
+  // transient axial force supplied by parent beam element
+  double P_axial;
 
   // derived (rebuilt by computeDerived, never serialized)
   double Kpenz, Kpeny;     // per-axis near-rigid penalties
@@ -117,10 +155,15 @@ class LadrunoCohesiveHingeBiaxial : public NDMaterial
   Matrix Kinit;            // diag(Kpenz, Kpeny) — closed-hinge initial tangent
 
   // committed history
-  double CrMax;            // max elliptical norm r ever seen (irreversible damage driver)
+  double CrMax;            // r at the last damage growth (eta = 1: max r ever seen)
+  double CrMax_old;        // previous step committed max r (for IMPL-EX extrapolation)
   Vector Cstrain;          // committed jump (work anchor)
   Vector Cstress;          // committed moment (work anchor)
   double Cwork;            // committed path work int M . dalpha
+  double dtime_n_commit;
+  int    implexCommittedSteps;
+  double Cwz, Cwy;         // WP-217: mode mix at the last damage growth; D_c = D(CrMax, Cwz, Cwy)
+  LadrunoImplexClock implexClock;   // WP-217: per-step frozen extrapolation factor
 
   // trial state
   Vector Tstrain;          // [alpha_z, alpha_y]
@@ -128,6 +171,8 @@ class LadrunoCohesiveHingeBiaxial : public NDMaterial
   Matrix Ttangent;         // 2x2 dM/dalpha
   double TrMax;
   double Twork;
+  double Twz, Twy;         // trial mix of the damage state
+  double TD;               // trial (implicit) damage
 };
 
 #endif

@@ -135,10 +135,24 @@ public:
     virtual ~ASDShellQ4();
 
     const char *getClassType(void) const {return "ASDShellQ4";}
-    
+
+    // Ladruno WP-205: -pDelta, linear kinematics plus the initial-stress
+    // (geometric) stiffness of the current membrane forces, the shell
+    // counterpart of a PDelta transformation (ETABS-style P-Delta about gravity)
+    void setPDelta(bool on) { m_pdelta = on; }
+
     // domain
     void setDomain(Domain* theDomain);
     int setDamping(Domain *theDomain, Damping *theDamping);
+
+    // Ladruno WP-192: per-type opt-in for the threaded element loops. The
+    // element's scratch (ASDShellQ4Globals, the transformations' work
+    // matrices) is per-thread; the answer is its sections' (and no Damping).
+    bool ladrunoThreadSafeUpdate(void) const;
+    bool ladrunoThreadSafeForm(void) const;
+    // Ladruno WP-196: Rayleigh-only damping (no Damping object); the RHS/LHS
+    // evaluations read the sections' committed answers without setting them.
+    bool ladrunoEnergyRayleighOnly(void) const;
 
     // print
     void Print(OPS_Stream& s, int flag);
@@ -219,6 +233,13 @@ private:
     // section orientation with respect to the local coordinate system
     Vector* m_local_x = nullptr;
     double m_angle = 0.0;
+
+    // Ladruno WP-205: initial-stress stiffness with linear kinematics
+    bool m_pdelta = false;
+    // Ladruno WP-209: committed preload membrane forces (n11, n22, n12) per GP,
+    // frozen once Domain::setLoadConstant() is called
+    double m_pdelta_N[4][3] = { {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0} };
+    bool m_pdelta_frozen = false;
 
     // members for non-linear treatment of AGQI internal DOFs:
     // it has 24 displacement DOFs

@@ -81,10 +81,18 @@ namespace ladruno {
 	protected:
 		// Resolve a node tag -> Node* via the domain held in `info`.
 		Node* getNode(const detail::ProcessInfo& info, int tag) const;
+		// WP-164 (P5): Node* of row i, resolved once per source. `getNode(tag)` is
+		// a std::map walk (Domain's MapOfTaggedObjects) per node per channel per
+		// step. The cache is valid for the source's lifetime: sources are rebuilt
+		// on every domain-change stamp (any node add/remove bumps it) before the
+		// next evaluate(), and a failed rebuild releases them (WP-163 R2).
+		Node* nodeAt(const detail::ProcessInfo& info, size_t i) const;
 
 	protected:
 		int m_ndim;                 // info.num_dimensions, frozen m_ndim
 		std::vector<int> m_ids;     // node tags this source covers
+		mutable std::vector<Node*> m_nodes;   // WP-164: lazily resolved, m_ids order
+		mutable bool m_nodes_resolved = false;
 		ResultSchema m_schema;      // constant for the lifetime of the source
 	};
 
@@ -293,7 +301,7 @@ namespace ladruno {
 	/* Modes of vibration — SPECIAL CASE (multi-mode per step).              */
 	/*                                                                       */
 	/* In the frozen recorder ModesOfVibration overrides record() to loop    */
-	/* over OPS_GetNumEigen() modes, writing one MODE_<k> dataset per mode    */
+	/* over the captured modes, writing one MODE_<k> dataset per mode       */
 	/* under a per-step group, each carrying MODE/LAMBDA/OMEGA/FREQUENCY/     */
 	/* PERIOD attributes. The ResultSource contract yields ONE flat buffer    */
 	/* per evaluate(), so we expose:                                          */
@@ -314,7 +322,7 @@ namespace ladruno {
 		void evaluate(const detail::ProcessInfo& info, std::vector<double>& buffer) override;
 
 		// Mode-aware API for the mode-loop driver (StreamingSink).
-		int numModes(const detail::ProcessInfo& info) const;  // *OPS_GetNumEigen()
+		int numModes(const detail::ProcessInfo& info) const;  // captured spectrum size (WP-163 R1)
 		void setCurrentMode(int k) { m_current_mode = k; }
 		int currentMode() const { return m_current_mode; }
 		// Per-mode scalars (frozen ModesOfVibration::record math).

@@ -1,0 +1,9 @@
+---
+wp: LEGACY
+title: "Commit-hook \"next-newStep\" force refresh is TWO commits stale under the CDL family — fatal for explicit-in-time load values, fine for implicit"
+legacy_seq: 198
+---
+### Commit-hook "next-newStep" force refresh is TWO commits stale under the CDL family — fatal for explicit-in-time load values, fine for implicit
+- **Bites:** a LoadPattern that refreshes its injected nodal forces at `Domain::commit` (the ADR-73 overlay hook idiom) and expects the solid's NEXT step to move under the refreshed value: under `CentralDifferenceLadruno` (and its SMS subclasses) the displacement advance of step k+1 uses `Aprev` — the acceleration formed during step k's SOLVE, i.e., with the forces applied at step k's newStep, i.e., the values committed at step k−1. The refreshed value first moves u at step k+2. For the ADR-73 explicit-fluid lane this one extra lag step was UNCONDITIONALLY destabilizing (vertical p-checkerboard, growth ∝ dt, no stable Δt — toy-lag replica reproduced the divergence to 7 significant digits); the implicit-fluid lanes tolerate it (dissipation absorbs an O(Δt) lag; P1–P3 shipped and gated with it).
+- **Why:** CDL's leapfrog does advance-then-updateDomain: `newStep` moves u with the stored `Aprev`, THEN applies loads and solves for the NEW acceleration. Equilibrium pairing is correct for TIME-series loads (evaluated at the right time); it is one step stale for loads whose VALUE is refreshed at commit.
+- **Workaround/status (2026-07-19, ADR-73 P3b):** value-refreshed injected forces that must pair tightly with the current step belong at LOAD-APPLICATION time (inside `applyLoad`, after newStep's trial set, reading TRIAL state), not at the commit hook — the P3b explicit lane does exactly this (advance-from-committed on the trial window Δu, idempotent under re-applies). Audit any future commit-hook force refresher against this pairing before assuming ZPC-class stability results transfer. ADR §12 P3b item 1.

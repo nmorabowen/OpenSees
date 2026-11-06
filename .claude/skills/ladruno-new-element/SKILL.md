@@ -2,22 +2,24 @@
 name: ladruno-new-element
 description: >
   Checklist for adding or changing an ELEMENT in the Ladruno OpenSees fork (SRC/element/,
-  fork-authored classes such as LadrunoBrick/Quad/CST/LST/UP/SolidShell, Bezier*, couplings).
+  fork-authored classes such as LadrunoBrick/Quad/CST/LST/UP/SolidShell, Bezier*,
+  LadrunoDispBeamColumn, LadrunoForceBeamColumn, LadrunoIMKBeam, couplings).
   Use before writing or modifying getResistingForceIncInertia, getTangentStiff, getMass,
   getDamp/Rayleigh, sendSelf/recvSelf, setResponse/getResponse, an OPS_ parser, or when
-  registering a new element classTag. Every item points to the LEDGER_quirks entry that
+  registering a new element classTag. Every item points to the quirks-ledger entry that
   explains it.
 ---
 
 # New or changed element — checklist
 
 Read this before adding or changing an element under `SRC/element/`. Each item names the
-`Ladruno_implementation/LEDGER_quirks.md` heading to grep for; read that entry when the item
+quirk heading to grep for in `Ladruno_implementation/ledger/quirks/` (`rg`); read that entry when the item
 applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns.py`.
 
 ## Registration (a new element)
 
-- [ ] classTag in `SRC/classTags.h` (fork band), recorded in `LEDGER_implementations.md`;
+- [ ] classTag in `SRC/classTags.h` (fork band), recorded in your implementations fragment's
+      `class_tags` (`Ladruno_implementation/ledger/implementations/WP-<nnn>-<slug>.md`);
       `python ci/check_classtags.py` clean.
 - [ ] Register in ALL dispatch sites: `classTags.h`, `FEM_ObjectBrokerAllClasses.cpp`, the
       `functionMap` in `OpenSeesElementCommands.cpp` (Python), AND the Tcl table in
@@ -75,6 +77,50 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       restore into the live domain calls `recvSelf` + `update()`, never `setDomain` (WP-124
       C6/C14). Test it with a save → change → restore into the SAME domain, not wipe+restore.
 
+## Frame & beam-column elements (`LadrunoDispBeamColumn`, `LadrunoForceBeamColumn`, `LadrunoIMKBeam`)
+
+- [ ] **Crack-band `-lch` regularization (`FB-8`):** `getCharacteristicLength(int ip)` must return
+      the explicit `-lch $lch` value when `lchOverride > 0`, falling back to `w_ip * L` only when
+      unset — and the parser must try `OPS_GetDoubleInput` before `OPS_GetString` so numeric `float`
+      `-lch` inputs in OpenSeesPy are not rejected.
+- [ ] **Tier-2 embedded cohesive hinges (`FB-1`, `FB-2`, `FB-6`, `DR-2`):**
+      (a) Interior `-hingeLoc xi_k` projection weight must be kinematically admissible
+      $\mathbf{W}_k = (-(1-\xi_k), +\xi_k)$ (`FB-1`).
+      (b) Legacy single `-hinge $tag` without `-hingeLoc` uses `dualHingeMode = 0` ($G = -1/L$,
+      average moment $VL/2$); explicit `-hingeI` / `-hingeJ` activates `dualHingeMode = 1` at the
+      endpoint (`FB-2`).
+      (c) Static condensation of the hinge must assemble the consistent $\partial M_{\text{coh}}/\partial N$
+      (`getPMDerivative()`) column into basic axial column 0 (`FB-6`).
+      (d) When pairing a softening fiber section with an embedded cohesive hinge, enforce the
+      Double-Localization Guard $\eta = M_c f_{\text{pm}}(N) / M_{\text{peak,fib}}(N) \le 0.90$ (`DR-2`).
+- [ ] **Clear-span `-endZones` + `-beamUniform` equilibrium (`FB-3`):** On `LadrunoIMKBeam`,
+      `ladrunoIMKClearSpanBeamUniformReactions2d/3d` must integrate fixed-end moments ($-w L_c^2/12$)
+      over the clear span $L_c = L - d_I - d_J$ and transfer clear-span shear across rigid offsets.
+- [ ] **Axial release under rigid diaphragms (`-axialRelease` / `axial_release`, Enhancement C):**
+      When `axialRelease == 1`, release basic axial force ($N = 0$) — in `LadrunoDispBeamColumn`,
+      iterate neutral-axis strain $\varepsilon_0(x_i)$ at each IP so $N(\varepsilon_0, \kappa) = N_{\text{target}}$
+      and statically condense `ksOut(idxMZ, idxMZ) -= ks(idxMZ, idxP)*ks(idxP, idxMZ)/kPP`; in
+      `LadrunoForceBeamColumn`, enforce `Ss(0) = 0` in the flexibility loop — while keeping `CrdTransf`
+      geometric stiffness intact so $P\text{--}\Delta$ story shears remain exact.
+- [ ] **Asymmetric RC column P–M interaction (`-pmBal P0c P0t Pbal Mbal_ratio` / `pm_bal`, `DR-3`):**
+      Alongside symmetric steel `-pm P0 alpha`, support the 4-parameter $C^1$ Hermite spline
+      `ladrunoIMKScalePMBal` / `ladrunoIMKScalePMBalDeriv` (`pmBalFlag=1`): linear tension decay
+      $1 - P/P_{0t}$ ($P \ge 0$), quadratic compression rise $1 + (\mu_{\text{bal}}-1)(1 - u^2)$
+      with $u = (P + P_{\text{bal}})/P_{\text{bal}}$ ($-P_{\text{bal}} \le P < 0$), and compression
+      cap decay $\mu_{\text{bal}}(1 - u^2)$ with $u = (P + P_{\text{bal}})/(P_{0c} - P_{\text{bal}})$
+      ($P < -P_{\text{bal}}$), clamped to $[0.05, 3.0]$.
+- [ ] **Span-load section forces (`-spanLoad` / `-noSpanLoad` / `span_load`, `DR-1`):** Gate interior
+      section force/curvature shifts (`computeSectionForces` on `LadrunoForceBeamColumn`, coupled
+      $(\beta_P, \beta_Z)$ quartic bubble + Tier-2 $q_0^{\text{eff}} = q_0 + q_0^{\text{part}}$ on
+      `LadrunoDispBeamColumn`) on `spanLoadMode`, and serialize `spanLoadMode` in `sendSelf`/`recvSelf`.
+      `LadrunoForceBeamColumn` defaults to `spanLoadMode = 1`; `LadrunoDispBeamColumn` defaults to `0`.
+- [ ] **Element-level `-implex` (`FB-10`, `FB-11`):** In `LadrunoIMKHinge.h`, when element-level
+      `useImplex == true`, call `setImplex(false)` on the element's private hinge clones (`FB-10`)
+      and call `ladrunoIMKInitAxis(EI_over_L, phi, dI, dJ, L, Kb)` before returning in
+      `ladrunoIMKSolveAxis` (`FB-11`) so `getTangentStiff()` returns the exact initial elastic core
+      tangent $\mathbf{K}_{c,0}$. Do not combine `LadrunoDispBeamColumn -nl` with `Corotational` on
+      multi-element members (double-counts bowing).
+
 ## State and re-entrancy
 
 - [ ] `static Matrix`/`static Vector` scratch returned by reference is non-re-entrant (matters
@@ -113,5 +159,6 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
 - [ ] Break each new gate on purpose once (revert the fix, confirm it fails). Quirks: "A test can
       be GREEN because of the very bug".
 
-Found a new trap? Add it to `LEDGER_quirks.md`, then add one line here pointing to it. If the
+Found a new trap? Write a quirks fragment (`Ladruno_implementation/ledger/quirks/WP-<nnn>-<slug>.md`;
+never edit the generated `LEDGER_quirks.md`), then add one line here pointing to it. If the
 trap has a greppable pattern, add a rule to `ci/check_quirk_patterns.py` instead.

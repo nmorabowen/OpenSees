@@ -6393,8 +6393,15 @@ int MPCORecorder::recordResultsOnNodes()
 	some preprocessing before recording modes of vibration.
 	*/
 	m_data->info.record_eigen_on_this_step = false;
-	int num_eigen = *OPS_GetNumEigen();
-	if (num_eigen > 0) { 
+	/*
+	apeGmsh #1983 (port of LadrunoRecorder's WP-163 R1 gate): gate on the
+	DOMAIN's spectrum, not the interpreter's numEigen. `wipe` clears the domain
+	eigenvalues but never resets numEigen, so after `eigen; wipe; <new model>`
+	the old count survived and Domain::getEigenvalues() exit(-1)'d the process.
+	getNumEigenvalues() (ADR46) is the non-exiting presence probe.
+	*/
+	int num_eigen = m_data->info.domain->getNumEigenvalues();
+	if (num_eigen > 0) {
 		/*
 		only if we have eigenvalues
 		*/

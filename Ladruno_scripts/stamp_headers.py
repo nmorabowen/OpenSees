@@ -49,18 +49,26 @@ GLOBS = [
     "SRC/element/ladrunoEmbeddedNode/*.cpp", "SRC/element/ladrunoEmbeddedNode/*.h",
     "SRC/element/ladrunoPlane/*.cpp", "SRC/element/ladrunoPlane/*.h",
     "SRC/element/ladrunoUP/*.cpp", "SRC/element/ladrunoUP/*.h",
+    "SRC/element/ladrunoCPML/*.cpp", "SRC/element/ladrunoCPML/*.h",
     "SRC/element/ladrunoDistributingCoupling/*.cpp", "SRC/element/ladrunoDistributingCoupling/*.h",
     "SRC/element/ladrunoKinematicCoupling/*.cpp", "SRC/element/ladrunoKinematicCoupling/*.h",
     "SRC/element/ladrunoRigidBody/*.cpp", "SRC/element/ladrunoRigidBody/*.h",
     "SRC/element/ladrunoDispBeamColumn/*.cpp", "SRC/element/ladrunoDispBeamColumn/*.h",   # WP-116: was unstamped, so the quirk lint skipped it
+    "SRC/element/ladrunoForceBeamColumn/*.cpp", "SRC/element/ladrunoForceBeamColumn/*.h", # WP-200: regularized force beam + cohesive hinges
+    "SRC/element/ladrunoMembrane/*.cpp", "SRC/element/ladrunoMembrane/*.h",
     "SRC/element/bezierTriangle/*.cpp", "SRC/element/bezierTriangle/*.h",
     "SRC/element/bezierTetrahedron/*.cpp", "SRC/element/bezierTetrahedron/*.h",
     "SRC/element/solidTransformation/*.cpp", "SRC/element/solidTransformation/*.h",
     "SRC/utility/profiler/*.cpp", "SRC/utility/profiler/*.h",
+    "SRC/domain/node/RelativeMassDamping.*",   # relativeMassDamping
     "SRC/analysis/analysis/LadrunoComplexEigen.*",
     "SRC/analysis/analysis/LadrunoDampingAssembler.*",
     "SRC/analysis/analysis/LadrunoModalResponse.*",
     "SRC/analysis/analysis/LadrunoModalCombination.*",
+    "SRC/analysis/analysis/LadrunoRitzKernel.*",       # WP-213
+    "SRC/analysis/analysis/LadrunoResidualModes.*",    # WP-213
+    "SRC/analysis/analysis/LadrunoRitzVectors.*",      # WP-215
+    "SRC/analysis/analysis/LadrunoRSAPerMode.*",       # WP-216
     "SRC/system_of_eqn/eigenSOE/FeastEigenSOE.*",
     "SRC/system_of_eqn/eigenSOE/FeastEigenSolver.*",
     "SRC/system_of_eqn/eigenSOE/LadrunoBlockZKernel.*",
@@ -72,6 +80,7 @@ GLOBS = [
     "SRC/material/nD/LadrunoRCConcrete.*", "SRC/material/nD/LadrunoRCKernel.h",
     "SRC/material/nD/LadrunoRCFiniteStrain.*",
     "SRC/material/LadrunoMaterialStatus.h",
+    "SRC/material/LadrunoOptSpec.h",                  # WP-167 fail-closed option tables
     "SRC/material/nD/LadrunoSANISAND.*",
     "SRC/material/nD/LadrunoSANISAND3D.*",
     "SRC/material/nD/LadrunoSANISANDSasME.cpp",
@@ -82,6 +91,7 @@ GLOBS = [
     "SRC/material/nD/LadrunoNorSandKernel.h",
     "SRC/material/nD/LadrunoElasticStrainProvider.h",   # WP-144 G2: LogStrain elastic-strain mixin
     "SRC/material/nD/LadrunoConcrete3D.*", "SRC/material/nD/LadrunoConcrete3DKernel.h",
+    "SRC/material/nD/LadrunoHS.*", "SRC/material/nD/LadrunoHSKernel.h",
     "SRC/material/nD/LadrunoHardening.h",
     "SRC/material/uniaxial/LadrunoUniaxialJ2.*",
     "SRC/material/uniaxial/LadrunoRebarBuckling.*",
@@ -100,6 +110,7 @@ GLOBS = [
     "SRC/analysis/integrator/LadrunoMassScalingEnergy.*",
     "SRC/analysis/integrator/LadrunoEnergyChannels.h",
     "SRC/analysis/integrator/LadrunoArcLength.*",
+    "SRC/analysis/integrator/LadrunoReferenceLoad.h",
     "SRC/analysis/integrator/LadrunoDynamicRelaxation.*",
     "SRC/analysis/integrator/LadrunoFictitiousMass.h",
     "SRC/analysis/integrator/LadrunoIndirectControl.*",
@@ -107,7 +118,7 @@ GLOBS = [
     "SRC/recorder/LadrunoRecorder.*",
     "SRC/recorder/Ladruno_*.cpp", "SRC/recorder/Ladruno_*.h",
     "SRC/recorder/LadrunoMonitor*.cpp", "SRC/recorder/LadrunoMonitor*.h",
-    "SRC/recorder/EnergyBalanceRecorder.*", "SRC/recorder/EnergyBalanceKernel.h",
+    "SRC/recorder/EnergyBalanceRecorder.*", "SRC/recorder/EnergyBalanceKernel.h", "SRC/recorder/LadrunoEnergyBalanceMPI.*",
     "SRC/convergenceTest/LadrunoStabilizedUnbalance.*",
     "SRC/analysis/handler/LadrunoProjectionHandler.*",
     "SRC/analysis/handler/LadrunoConstraintProjector.*",
@@ -134,7 +145,12 @@ GLOBS = [
     "SRC/analysis/integrator/LadrunoSolverQuery.h",
     "SRC/material/nD/LadrunoCohesiveHingeBiaxial.*",
     "SRC/material/uniaxial/LadrunoCohesiveHinge.*",
+    "SRC/material/uniaxial/LadrunoImplexClock.h",   # WP-217 shared IMPL-EX clock
     "SRC/utility/LadrunoParallelBuild.cpp",
+    "SRC/analysis/algorithm/equiSolnAlgo/LadrunoFactorReuse*",   # WP-188
+    "SRC/analysis/integrator/LadrunoThreadedAssembly.*",   # WP-192
+    "SRC/system_of_eqn/linearSOE/mumps/LadrunoMumpsMixed*",   # WP-194
+    "SRC/system_of_eqn/linearSOE/LadrunoSymmetryGuard*.h",   # WP-221
     # WP-122: fork-added files that were never stamped, so the quirk lint never scanned
     # them (WP-120 R1: added on ladruno, absent upstream and at the merge-base)
     "SRC/Ladruno_mutation.h",
@@ -148,6 +164,9 @@ GLOBS = [
     "SRC/element/LadrunoMassCache.h",
     "SRC/element/LadrunoResponseTokens.h",
     "SRC/interpreter/PythonMPIModule.cpp",
+    "SRC/interpreter/LadrunoCommand*.h",   # WP-168 command table + DL registration hooks
+    "SRC/interpreter/LadrunoSchema.h",     # WP-185 ladrunoSchema generator
+    "SRC/tcl/LadrunoCommandsClassicTcl.h",   # WP-168 classic-Tcl registration hook
     "SRC/material/nD/LadrunoDamage.h",
     "SRC/utility/LadrunoThreads.*",
     "SRC/material/nD/ASDPlasticMaterial3D/HoekBrown_*.h",

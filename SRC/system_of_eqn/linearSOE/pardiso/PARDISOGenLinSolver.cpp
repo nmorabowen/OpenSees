@@ -101,15 +101,31 @@ static const struct { const char *name; int code; } ops_cbwr_table[] = {
 	{"AUTO",          MKL_CBWR_AUTO},
 	{"COMPATIBLE",    MKL_CBWR_COMPATIBLE},
 	{"SSE2",          MKL_CBWR_SSE2},
+	// Ladruno WP-181: oneMKL 2026.1 removed the legacy branches SSE3, SSSE3,
+	// SSE4_1, AVX, AVX512_MIC and AVX512_MIC_E1 from mkl_types.h, so each
+	// goes behind its own #ifdef. With 2026.1 those names report an unknown
+	// branch, which is true for that MKL.
+#ifdef MKL_CBWR_SSE3
 	{"SSE3",          MKL_CBWR_SSE3},
+#endif
+#ifdef MKL_CBWR_SSSE3
 	{"SSSE3",         MKL_CBWR_SSSE3},
+#endif
+#ifdef MKL_CBWR_SSE4_1
 	{"SSE4_1",        MKL_CBWR_SSE4_1},
+#endif
 	{"SSE4_2",        MKL_CBWR_SSE4_2},
+#ifdef MKL_CBWR_AVX
 	{"AVX",           MKL_CBWR_AVX},
+#endif
 	{"AVX2",          MKL_CBWR_AVX2},
+#ifdef MKL_CBWR_AVX512_MIC
 	{"AVX512_MIC",    MKL_CBWR_AVX512_MIC},
+#endif
 	{"AVX512",        MKL_CBWR_AVX512},
+#ifdef MKL_CBWR_AVX512_MIC_E1
 	{"AVX512_MIC_E1", MKL_CBWR_AVX512_MIC_E1},
+#endif
 	{"AVX512_E1",     MKL_CBWR_AVX512_E1},
 	// Ladruno (pardiso-linux): MKL_CBWR_AVX10 first appears in oneMKL 2025.0.
 	// The Linux PARDISO opt-in builds against oneMKL 2024.2 on esmeralda, where

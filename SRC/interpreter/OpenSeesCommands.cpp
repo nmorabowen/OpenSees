@@ -108,6 +108,7 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <LadrunoLoadControl.h>       // Ladruno (ADR-80 S1): -extrapolate predictor
 #include <LadrunoDynamicRelaxation.h> // Ladruno: rung-5 DR settling/micro-burst query command
 #include <LadrunoSolverQuery.h>       // Ladruno (#729): shared ladrunoArcLength/ladrunoDR dispatch
+#include <LadrunoSymmetryGuardQuery.h>   // Ladruno WP-221: shared ladrunoSymmetryGuard
 #include <LadrunoStaggeredDriver.h>   // Ladruno (ADR-73 P2): iterated fixed-stress overlay driver
 #include <classTags.h>               // Ladruno: INTEGRATOR_TAGS_LadrunoArcLength guard
 #include <PFEMSolver.h>
@@ -117,6 +118,7 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <Accelerator.h>
 #include <KrylovAccelerator.h>
 #include <AcceleratedNewton.h>
+#include <LadrunoFactorReuse.h>   // Ladruno WP-188
 #include <RaphsonAccelerator.h>
 #include <SecantAccelerator1.h>
 #include <SecantAccelerator2.h>
@@ -426,11 +428,8 @@ OpenSeesCommands::eigen(int typeSolver, double shift,
 	FeastEigenSOE *fsoe = static_cast<FeastEigenSOE *>(theEigenSOE);
 	const int mFound = fsoe->getNumFoundModes();
 	if (mFound < numEigen) {
-	    const Vector &lam = theDomain->getEigenvalues();
-	    Vector trimmed(mFound);
-	    for (int i = 0; i < mFound; i++)
-		trimmed(i) = lam(i);
-	    theDomain->setEigenvalues(trimmed);
+	    // WP-203: trims the node eigenvectors too (modalProperties abort)
+	    FeastEigenSOE::trimDomainModes(*theDomain, mFound);
 	    numEigen = mFound;
 	}
     }
@@ -1605,6 +1604,15 @@ int OPS_System()
     	return -1;
     }
 
+    // Ladruno WP-172: a null factory result must be an ERROR (the ADR-76 /
+    // WP-171 shape). This used to fall through to setX(0) + `return 0`: no
+    // Python exception, and setX(0) NULLED the global, so the next `analysis`
+    // silently built a default system.
+    if (theSOE == 0) {
+	opserr << "WARNING failed to create the system - previous system left unchanged\n";
+	return -1;
+    }
+
     // set soe
     if (cmds != 0) {
 	cmds->setSOE(theSOE);
@@ -1659,6 +1667,15 @@ int OPS_Numberer()
     	return -1;
     }
 
+    // Ladruno WP-172: a null factory result must be an ERROR (the ADR-76 /
+    // WP-171 shape). This used to fall through to setX(0) + `return 0`: no
+    // Python exception, and setX(0) NULLED the global, so the next `analysis`
+    // silently built a default numberer.
+    if (theNumberer == 0) {
+	opserr << "WARNING failed to create the numberer - previous numberer left unchanged\n";
+	return -1;
+    }
+
     // set numberer
     if (cmds != 0) {
 	cmds->setNumberer(theNumberer);
@@ -1707,6 +1724,15 @@ int OPS_ConstraintHandler()
     } else {
     	opserr<<"WARNING unknown ConstraintHandler type "<<type<<"\n";
     	return -1;
+    }
+
+    // Ladruno WP-172: a null factory result must be an ERROR (the ADR-76 /
+    // WP-171 shape). This used to fall through to setX(0) + `return 0`: no
+    // Python exception, and setX(0) NULLED the global, so the next `analysis`
+    // silently built a default constraint handler.
+    if (theHandler == 0) {
+	opserr << "WARNING failed to create the constraint handler - previous constraint handler left unchanged\n";
+	return -1;
     }
 
     // set handler
@@ -1769,6 +1795,15 @@ int OPS_CTest()
 
 	opserr<<"WARNING unknown CTest type "<<type<<"\n";
     	return -1;
+    }
+
+    // Ladruno WP-172: a null factory result must be an ERROR (the ADR-76 /
+    // WP-171 shape). This used to fall through to setX(0) + `return 0`: no
+    // Python exception, and setX(0) NULLED the global, so the next `analysis`
+    // silently built a default convergence test.
+    if (theTest == 0) {
+	opserr << "WARNING failed to create the convergence test - previous convergence test left unchanged\n";
+	return -1;
     }
 
     // set test
@@ -1994,6 +2029,16 @@ int OPS_Integrator()
 	opserr<<"WARNING unknown integrator type "<<type<<"\n";
     }
 
+    // Ladruno WP-171: a null factory result must be an ERROR -- the ADR-76 fix
+    // OPS_Algorithm got, applied to integrators. This used to fall through to
+    // `return 0`, so openseespy raised nothing for a refused integrator (e.g.
+    // `ExplicitBathe 0.54 -lnvd 1.5`) and the PREVIOUS integrator silently stayed
+    // in force. Every factory and the unknown-type branch reach this one check.
+    if (si == 0 && ti == 0) {
+	opserr << "WARNING failed to create the integrator - previous integrator left unchanged\n";
+	return -1;
+    }
+
     // set integrator
     if (si != 0) {
 	if (cmds != 0) {
@@ -2123,6 +2168,8 @@ int OPS_Analysis() {
 
   } else {
     opserr << "WARNING unknown analysis type " << type << "\n";
+    return -1;   // Ladruno WP-172: was `return 0` -- openseespy raised nothing and the
+                 // previous analysis silently stayed in force
   }
 
   return 0;
@@ -2290,6 +2337,7 @@ static int OPS_eigenFeast()
     bool certify = false;
     bool blockZGate = false;   // Ladruno ADR43 P3b
     bool rci = false;          // Ladruno ADR43 P3c
+    bool traceStop = false; // Ladruno WP-203
     while (OPS_GetNumRemainingInputArgs() > 0) {
 	const char* flag = OPS_GetString();
 	if (strcmp(flag, "-m0") == 0 && OPS_GetNumRemainingInputArgs() > 0) {
@@ -2329,6 +2377,10 @@ static int OPS_eigenFeast()
 	    // (sweeps the contour flattening Im(z) -> 0 on the SOE's own CSR
 	    // and refuses if the 2n block-real solve degrades; see the ADR)
 	    blockZGate = true;
+	} else if (strcmp(flag, "-traceStop") == 0) {
+	    // Ladruno WP-203: stop on MKL's trace criterion (fpm(6)=0) instead
+	    // of the relative residual (the default; see FeastEigenSolver::solve)
+	    traceStop = true;
 	} else if (strcmp(flag, "-rci") == 0) {
 	    // Ladruno ADR43 P3c: drive FEAST through the dfeast_srci RCI with
 	    // the block-real kernel as the inner contour solve (the seam the
@@ -2355,6 +2407,7 @@ static int OPS_eigenFeast()
     theSOE->setCertify(certify);
     theSOE->setBlockZGate(blockZGate);   // Ladruno ADR43 P3b
     theSOE->setRci(rci);                 // Ladruno ADR43 P3c
+    theSOE->setTraceStop(traceStop); // Ladruno WP-203
 
     // analysis-side mode-loop cap; the reconcile trims to the found count.
     // NOT tied to m0: m0 is the FEAST subspace SEED (auto-enlarged on
@@ -3106,6 +3159,7 @@ void* OPS_KrylovNewton()
     int incrementTangent = CURRENT_TANGENT;
     int iterateTangent = CURRENT_TANGENT;
     int maxDim = 3;
+    LadrunoFactorReuseOptions reuseOpts;   // Ladruno WP-188
     while (OPS_GetNumRemainingInputArgs() > 0) {
 	const char* flag = OPS_GetString();
 
@@ -3141,8 +3195,12 @@ void* OPS_KrylovNewton()
 		opserr<< "WARNING KrylovNewton failed to read maxDim\n";
 		return 0;
 	    }
+	} else if (LadrunoFactorReuse::parseOPS(flag, reuseOpts) < 0) {  // Ladruno WP-188
+	    return 0;
 	}
     }
+    if (!reuseOpts.consistent())   // Ladruno WP-188
+      return 0;
 
     ConvergenceTest* theTest = cmds->getCTest();
     if (theTest == 0) {
@@ -3153,7 +3211,10 @@ void* OPS_KrylovNewton()
     Accelerator *theAccel;
     theAccel = new KrylovAccelerator(maxDim, iterateTangent);
 
-    return new AcceleratedNewton(*theTest, theAccel, incrementTangent);
+    AcceleratedNewton *theAlgo = new AcceleratedNewton(*theTest, theAccel, incrementTangent);
+    if (reuseOpts.maxSteps > 0)   // Ladruno WP-188
+      theAlgo->setFactorReuse(reuseOpts);
+    return theAlgo;
 }
 
 void* OPS_RaphsonNewton()
@@ -3616,6 +3677,14 @@ int OPS_LadrunoDRCmd()
 {
     if (cmds == 0) return 0;
     return Ladruno::drCommand(cmds->getTransientIntegrator());
+}
+
+// Ladruno WP-221: the half-storage asymmetry guard of the active system; the
+// dispatch is shared with classic Tcl (LadrunoSymmetryGuardQuery.h).
+int OPS_LadrunoSymmetryGuard()
+{
+    if (cmds == 0) return 0;
+    return Ladruno::symmetryGuardCommand(cmds->getSOE(), cmds->getEigenSOE());
 }
 
 
@@ -4926,6 +4995,7 @@ void* OPS_PARDISOGenLinSolver() {
     int krylovDigits = 0; // Ladruno ADR-75 P1e: -krylov <L>, 0 = direct only
     int cnrBranch = -1;   // Ladruno WP-132: -deterministic / -cbwr <BRANCH>
     int cnrKeepEnv = 0;   // Ladruno WP-132: bare -deterministic keeps MKL_CBWR
+    int strictSym = 0;    // Ladruno WP-221: -strictSymmetry
 
     // Ladruno ADR-75 P2b lesson, applied pre-emptively: "> 0", not "> 1" — the
     // bare flags (-symmetric/-spd/-stats/-pardisoStats) take no value, so a
@@ -4960,6 +5030,15 @@ void* OPS_PARDISOGenLinSolver() {
             matType = 2;
         } else if (strcmp(opt, "-spd") == 0) {
             matType = 1;
+        } else if (strcmp(opt, "-strictSymmetry") == 0) {
+            // Ladruno WP-221: a bare flag. With half-storage (-matrixType
+            // 1|2) the asymmetry guard checks EVERY assembly and a detected
+            // asymmetry makes the solve fail (analyze/eigen return non-zero)
+            // instead of solving the reflected system. On the full CSR
+            // (-matrixType 0) nothing is discarded, so static solves are
+            // unaffected, but an `eigen` of an unsymmetric K still fails:
+            // ARPACK is symmetric whatever the storage (ArpackSOE::solve).
+            strictSym = 1;
         } else if (strcmp(opt, "-stats") == 0 || strcmp(opt, "-pardisoStats") == 0) {
             // Ladruno ADR-75 P1k: `-pardisoStats` is a spelled-out alias for
             // `-stats`, matching the `-stats`/`-mumpsStats` pair `system Mumps`
@@ -5029,6 +5108,7 @@ void* OPS_PARDISOGenLinSolver() {
     if (cnrBranch >= 0)
         theSolver->setDeterministic(cnrBranch, cnrKeepEnv);
     PARDISOGenLinSOE *thePardisoSOE = new PARDISOGenLinSOE(*theSolver, matType);
+    thePardisoSOE->setStrictSymmetry(strictSym);   // Ladruno WP-221
     return thePardisoSOE;
 #else
     opserr << "WARNING system Pardiso - this build has no MKL; "
@@ -5045,6 +5125,9 @@ void* OPS_MumpsSolver() {
     int icntl35 = 0;           // Ladruno ADR-75 P2: BLR off by default
     double cntl7 = 0.0;        // Ladruno ADR-75 P2: BLR dropping tolerance
     int mumpsStats = 0;        // Ladruno ADR-75 P2b: -stats dumps INFOG/RINFOG
+    int mumpsPrecision = 0;    // Ladruno WP-194: -precision single|double (-mixed)
+    int mumpsRefine = 0;       // Ladruno WP-194: -refine k
+    bool mumpsSawRefine = false;
     // Ladruno ADR43 P3a: loop guard was "> 2", which silently skipped parsing
     // when exactly one "-opt value" pair remained (the common openseespy
     // system('Mumps','-ICNTL14',n) spelling) — every option needed opt+value,
@@ -5097,6 +5180,31 @@ void* OPS_MumpsSolver() {
             // Ladruno ADR-75 P2b: no value token -- consume nothing further.
             mumpsStats = 1;
             continue;
+        } else if (strcmp(opt, "-precision") == 0) {
+            // Ladruno WP-194: factor precision; residual/update stay double.
+            // Fail closed on anything but single/double.
+            if (OPS_GetNumRemainingInputArgs() < 1) {
+                opserr << "WARNING: -precision needs single or double\n";
+                return 0;
+            }
+            const char* val = OPS_GetString();
+            if (strcmp(val, "single") == 0 || strcmp(val, "mixed") == 0)
+                mumpsPrecision = 1;
+            else if (strcmp(val, "double") == 0)
+                mumpsPrecision = 0;
+            else {
+                opserr << "WARNING: -precision takes single or double, got " << val << "\n";
+                return 0;
+            }
+        } else if (strcmp(opt, "-mixed") == 0) {
+            mumpsPrecision = 1;    // Ladruno WP-194: alias of -precision single
+            continue;
+        } else if (strcmp(opt, "-refine") == 0) {
+            if (OPS_GetIntInput(&num, &mumpsRefine) < 0 || mumpsRefine < 0) {
+                opserr << "WARNING: -refine needs an integer >= 0\n";
+                return 0;
+            }
+            mumpsSawRefine = true;
         } else if (strcmp(opt, "-ICNTL35") == 0) {
             if (OPS_GetIntInput(&num, &icntl35) < 0) {
                 opserr << "WARNING: failed to get icntl35\n";
@@ -5125,13 +5233,25 @@ void* OPS_MumpsSolver() {
         }
     }
 
+    // Ladruno WP-194: refuse rather than factor in a precision not asked for
+    if (mumpsSawRefine && mumpsPrecision == 0) {
+        opserr << "WARNING: -refine applies to -precision single only\n";
+        return 0;
+    }
+
 #ifdef _PARALLEL_INTERPRETERS
 #ifdef _MUMPS
     MumpsParallelSOE* soe = 0;
 
+    if (mumpsPrecision != 0 && !MumpsParallelSolver::singlePrecisionAvailable()) {
+        opserr << "WARNING: -precision single needs single-precision MUMPS (libsmumps); "
+                  "this build has none -- rebuild with MUMPS BUILD_SINGLE=ON, or drop the option\n";
+        return 0;
+    }
     MumpsParallelSolver *solver= new MumpsParallelSolver(icntl7, icntl14,
 							 icntl35, cntl7,
 							 mumpsStats);
+    solver->setPrecision(mumpsPrecision, mumpsRefine);   // Ladruno WP-194
     soe = new MumpsParallelSOE(*solver, matType);
 
     if (commColor >= 0) {
@@ -5197,6 +5317,10 @@ void* OPS_MumpsSolver() {
 #endif
 #else
 #ifdef _MUMPS
+    if (mumpsPrecision != 0) {   // Ladruno WP-194: parallel MUMPS only
+        opserr << "WARNING: -precision single is implemented for the parallel MUMPS solver (openseesmp) only\n";
+        return 0;
+    }
     MumpsSolver *theSolver = new MumpsSolver(icntl7, icntl14);
     theSOE = new MumpsSOE(*theSolver, matType);
     return theSOE;

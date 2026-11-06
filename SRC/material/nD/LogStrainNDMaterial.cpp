@@ -34,6 +34,7 @@
 // against tests/logstrain_reference.py).
 
 #include <LogStrainNDMaterial.h>
+#include <LadrunoMaterialStatus.h>   // Ladruno (ADR-86b) - LADRUNO_MATERIAL_REFUSED
 #include <LogStrainKernel.h>
 #include <ID.h>
 #include <Channel.h>
@@ -211,6 +212,9 @@ int LogStrainNDMaterial::setTrialF(const Matrix &F)
   // The inner's trial is frozen at n on a refusal, so nothing below is meaningful: return BEFORE
   // touching sigmaCauchy / aTangent / Be_trialUpd / epsFeedTrial. On a 0 (or any other) return this
   // block is a no-op, so every non-refusing inner is bit-identical.
+  // Merge note: LadrunoConcrete3D review M3 (ladruno) forwarded the same sentinel independently; this
+  // block is that forwarding plus the trialRefused flag that commitState() below reads. ADR-94 R5:
+  // the sentinel only (materials convert a bare -1 into it).
   if (theMaterial->setTrialStrain(epsFeedV) == LADRUNO_MATERIAL_REFUSED) {
     trialRefused = true;
     return LADRUNO_MATERIAL_REFUSED;     // every element tests `< 0` (LadrunoBrick::updateFinite etc.)
@@ -316,6 +320,12 @@ int LogStrainNDMaterial::commitState(void)
 int LogStrainNDMaterial::revertToLastCommit(void)
 {
   trialRefused = false;                                          // Ladruno WP-144 (G2 close)
+  // Ladruno: discard the trial state too, so a commit without a new
+  // setTrialF() keeps the committed one instead of the reverted trial.
+  for (int i = 0; i < 9; i++) {
+    Ftrial9[i] = Fn[i]; BeTrial9[i] = Be_n[i]; Be_trialUpd[i] = Be_n[i];
+  }
+  for (int k = 0; k < 6; k++) epsFeedTrial[k] = epsFeed_n[k];
   return theMaterial->revertToLastCommit();
 }
 

@@ -1,0 +1,10 @@
+---
+wp: LEGACY
+title: "Threaded MKL PARDISO is NOT byte-reproducible run-to-run — and one run per thread count cannot detect it"
+legacy_seq: 212
+---
+### Threaded MKL PARDISO is NOT byte-reproducible run-to-run — and one run per thread count cannot detect it
+- **Bites:** anyone building a byte-identical CI gate, an oracle comparison, or an A/B that judges a code change by comparing outputs, while `MKL_NUM_THREADS > 1`. At 4 threads a 14³ Lane-B model returns **two distinct tip displacements across 10 runs of the SAME binary** (`2.13985383446834687` vs `…732`, ~1 ULP, a 5/5 split). At 1 thread it is 10/10 identical. It is **size-dependent**: an 8³ model is reproducible even at 4 threads.
+- **Why it was missed:** ADR-75 P1 concluded "bit-identical at every thread count ⇒ threading introduces no FP drift ⇒ the determinism concern is Lane-3-only" from **one run per thread count**. That design cannot distinguish *deterministic* from *the same value came up twice* — with a 50/50 split, a single-sample check passes half the time. The claim was published in `RESULTS_p1_pardiso.md` and the ADR and stood for a day; both now carry corrections.
+- **How it surfaced:** an A/B of the P1f `addA` change reported "ux DIFFERS" at 4 threads. The natural reading is "my change broke exactness". The correct next step was **not** to debug the change but to ask whether each binary reproduces *itself* — the OLD binary showed the identical 5/5 split, proving the variation was MKL's and the change was exact (confirmed at 1 thread, 10/10 identical between old and new).
+- **Workaround/status:** pin `MKL_NUM_THREADS=1` for any byte-identical gate. PARDISO's own CNR control is `iparm[33]`, and it **is** available to this fork — Intel only forbids it when `iparm[1]=3` (parallel METIS) and we set `iparm[1]=2`. Not currently exposed as an option; wire it if a threaded reproducible mode is ever needed. Drift is last-bit, so this is a *reproducibility* problem, not an accuracy one — every configuration still matches UmfPack to `0.0` on a single run. **General lesson: "deterministic" is a claim about a DISTRIBUTION; never conclude it from n=1.** *2026-07-25 (ADR-75 P1f).*

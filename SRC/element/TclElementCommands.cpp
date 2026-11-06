@@ -106,11 +106,13 @@ extern void *OPS_ModElasticBeam3d(void);
 extern void *OPS_ElasticBeam2d(const ID &info);
 extern void *OPS_ElasticBeam3d(void);
 extern void *OPS_LadrunoIMKBeam(void); // N. Mora-Bowen (Ladruno)
+extern void *OPS_LadrunoIMKBeam2d(void); // Ladruno WP-200
 extern void *OPS_LadrunoBrick(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoSolidShell(void); // N. Mora-Bowen (Ladruno) ADR 66
 extern void *OPS_LadrunoQuad(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoCST(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoUP(void); // N. Mora-Bowen (Ladruno) ADR 71
+extern void *OPS_LadrunoCPML(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoLST(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoCSTPair(void); // N. Mora-Bowen (Ladruno) ADR 70 P4a
 extern void *OPS_LadrunoBrick20(void); // N. Mora-Bowen (Ladruno) ADR 72
@@ -118,8 +120,14 @@ extern void *OPS_LadrunoDistributingCoupling(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoKinematicCoupling(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoRigidBody(void); // N. Mora-Bowen (Ladruno) ADR 58
 extern void *OPS_LadrunoDispBeamColumn(void); // N. Mora-Bowen (Ladruno)
+extern void *OPS_LadrunoDispBeamColumn2d(void); // Ladruno WP-200
+extern void *OPS_LadrunoDispBeamColumn3d(void); // Ladruno WP-200
+extern void *OPS_LadrunoForceBeamColumn(void); // Ladruno WP-200
+extern void *OPS_LadrunoForceBeamColumn2d(void); // Ladruno WP-200
+extern void *OPS_LadrunoForceBeamColumn3d(void); // Ladruno WP-200
 extern void *OPS_LadrunoEmbeddedNode(void); // N. Mora-Bowen (Ladruno)
 extern void *OPS_LadrunoEmbeddedRebar(void); // N. Mora-Bowen (Ladruno)
+extern void *OPS_LadrunoMembrane(void); // N. Mora-Bowen (Ladruno) ADR 98
 extern void *OPS_BezierTri6(void);  // Ladruno (fork element; also wired into the Python functionMap)
 extern void *OPS_BezierTet10(void); // Ladruno (fork element; also wired into the Python functionMap)
 extern void *OPS_ElasticTimoshenkoBeam2d(void);
@@ -593,11 +601,13 @@ TclModelBuilderElementCommand(ClientData clientData, Tcl_Interp *interp,
       void *(*factory)(void);
     } ladrunoElementTable[] = {
       {"LadrunoIMKBeam",              "ladrunoIMKBeam",              OPS_LadrunoIMKBeam},
+      {"LadrunoIMKBeam2d",            "ladrunoIMKBeam2d",            OPS_LadrunoIMKBeam2d},            // Ladruno WP-200
       {"LadrunoBrick",                "ladrunoBrick",                OPS_LadrunoBrick},
       {"LadrunoSolidShell",           "ladrunoSolidShell",           OPS_LadrunoSolidShell},
       {"LadrunoQuad",                 "ladrunoQuad",                 OPS_LadrunoQuad},
       {"LadrunoCST",                  "ladrunoCST",                  OPS_LadrunoCST},
       {"LadrunoUP",                   "ladrunoUP",                   OPS_LadrunoUP},   // N. Mora-Bowen (Ladruno) ADR 71
+      {"LadrunoCPML",                 "ladrunoCPML",                 OPS_LadrunoCPML}, // N. Mora-Bowen (Ladruno)
       {"LadrunoLST",                  "ladrunoLST",                  OPS_LadrunoLST}, // N. Mora-Bowen (Ladruno)
       {"LadrunoCSTPair",              "ladrunoCSTPair",              OPS_LadrunoCSTPair}, // N. Mora-Bowen (Ladruno) ADR 70 P4a
       {"LadrunoBrick20",              "ladrunoBrick20",              OPS_LadrunoBrick20}, // N. Mora-Bowen (Ladruno) ADR 72
@@ -605,10 +615,16 @@ TclModelBuilderElementCommand(ClientData clientData, Tcl_Interp *interp,
       {"LadrunoKinematicCoupling",    "ladrunoKinematicCoupling",    OPS_LadrunoKinematicCoupling},
       {"LadrunoRigidBody",            "ladrunoRigidBody",            OPS_LadrunoRigidBody},
       {"LadrunoDispBeamColumn",       "ladrunoDispBeamColumn",       OPS_LadrunoDispBeamColumn},
+      {"LadrunoDispBeamColumn2d",     "ladrunoDispBeamColumn2d",     OPS_LadrunoDispBeamColumn2d},     // Ladruno WP-200
+      {"LadrunoDispBeamColumn3d",     "ladrunoDispBeamColumn3d",     OPS_LadrunoDispBeamColumn3d},     // Ladruno WP-200
+      {"LadrunoForceBeamColumn",      "ladrunoForceBeamColumn",      OPS_LadrunoForceBeamColumn},      // Ladruno WP-200
+      {"LadrunoForceBeamColumn2d",    "ladrunoForceBeamColumn2d",    OPS_LadrunoForceBeamColumn2d},    // Ladruno WP-200
+      {"LadrunoForceBeamColumn3d",    "ladrunoForceBeamColumn3d",    OPS_LadrunoForceBeamColumn3d},    // Ladruno WP-200
       {"LadrunoEmbeddedNode",         "ladrunoEmbeddedNode",         OPS_LadrunoEmbeddedNode},
       {"LadrunoEmbeddedRebar",        "ladrunoEmbeddedRebar",        OPS_LadrunoEmbeddedRebar},
       {"BezierTri6",                  "bezierTri6",                  OPS_BezierTri6},   // Ladruno (fork)
       {"BezierTet10",                 "bezierTet10",                 OPS_BezierTet10},  // Ladruno (fork)
+      {"LadrunoMembrane",             "ladrunoMembrane",             OPS_LadrunoMembrane}, // N. Mora-Bowen (Ladruno) ADR 98
     };
     const int nLadruno = (int)(sizeof(ladrunoElementTable) / sizeof(ladrunoElementTable[0]));
     Element *theEle = 0;

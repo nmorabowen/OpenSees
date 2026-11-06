@@ -1,0 +1,11 @@
+---
+wp: LEGACY
+title: "A profile recorded BEFORE 2026-07-27 shows soe.factor = 0.00% on a PARDISO run — that means \"not instrumented\", never \"free\""
+date: 2026-07-27
+legacy_seq: 219
+---
+### A profile recorded BEFORE 2026-07-27 shows `soe.factor = 0.00%` on a PARDISO run — that means "not instrumented", never "free"
+- **Bites:** you re-read one of the archived ADR-75/75b profiles (e.g. `Ladruno_files/testbed/perf/lane3/l3a_laneB_pard*.json`, dated 2026-07-25) and conclude PARDISO's factorization is free, or that `linearSolve` is entirely triangular solve. Both wrong. Until [#667](https://github.com/nmorabowen/OpenSees/pull/667) (`62768d1f1`) `PARDISOGenLinSolver`/`PARDISOGenLinSOE` carried **zero** `OPS_PROFILE` scopes, so on a `system Pardiso` run the whole phase 11/22/23/33 cycle collapsed into one opaque `linearSolve` blob and every `soe.*` counter read zero.
+- **Now:** 7 brackets exist — `soe.symbolic` (phase 11), `soe.factor` (22), `soe.trisolve` (33) using **UmfPack's exact names** so a cross-solver profile lines the phases up; `soe.cgs` (23) as its OWN bracket; `dc.s.fill`/`dc.s.verify` on the `setSize` CSR build; and a DEEP-gated `soe.addA`. CI: `tests/test_pardiso_solver.py::test_profiler_brackets_present`.
+- **Two traps in reading the new brackets.** (1) **`soe.cgs` is not a subset of `soe.factor`.** When `-krylov`'s CGS gives up, PARDISO refactorizes *inside* the phase-23 call (Intel's automatic fallback), so that factorization bills to `soe.cgs` — a `-krylov` run's `soe.factor` therefore **understates** total factorization work. Use `iparm[19]` / `-stats` win-rate to interpret it. (2) **`soe.addA` is DEEP-gated**, so a coarse `profiler start` run shows it absent; that is the gating working, not a missing scatter cost.
+- ✅ **The run-attribute half is FIXED too** (ADR-75 P1i, same day): `threads` was `threads_.size()` — profiler-*registered* threads, 1 on any single-threaded command layer regardless of `MKL_NUM_THREADS` — and `nElem`/`nNode` were promised by a comment and filled by nobody. **But any profile recorded before 2026-07-27 still carries `threads=1`**, so treat the attribute as unreliable on archived files and trust the harness log instead. `nnz` is still a uniform 0 by decision. *2026-07-27.*

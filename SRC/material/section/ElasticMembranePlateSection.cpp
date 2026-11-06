@@ -41,9 +41,9 @@
 const double ElasticMembranePlateSection::five6 = 5.0/6.0 ; //shear correction
 
 //static vector and matrices
-Vector  ElasticMembranePlateSection::stress(8) ;
-Matrix  ElasticMembranePlateSection::tangent(8,8) ;
-ID      ElasticMembranePlateSection::array(8) ;
+thread_local Vector  ElasticMembranePlateSection::stress(8) ;   // Ladruno WP-192
+thread_local Matrix  ElasticMembranePlateSection::tangent(8,8) ;   // Ladruno WP-192
+thread_local ID      ElasticMembranePlateSection::array(8) ;   // Ladruno WP-192
 
 void* OPS_ElasticMembranePlateSection()
 {
@@ -359,7 +359,7 @@ void  ElasticMembranePlateSection::Print( OPS_Stream &s, int flag )
 int ElasticMembranePlateSection::sendSelf(int cTag, Channel &theChannel) 
 {
   int res = 0;
-  static Vector data(6);
+  static thread_local Vector data(6);   // Ladruno WP-192
   data(0) = this->getTag();
   data(1) = Em;
   data(2) = nu;
@@ -379,7 +379,7 @@ int ElasticMembranePlateSection::recvSelf(int cTag, Channel &theChannel,
 				      FEM_ObjectBroker &theBroker)
 {
   int res = 0;
-  static Vector data(6);
+  static thread_local Vector data(6);   // Ladruno WP-192
   res = theChannel.recvVector(this->getDbTag(), cTag, data);
   if (res < 0) 
     opserr << "ElasticMembranePlateSection::recvSelf() - failed to recv data\n";

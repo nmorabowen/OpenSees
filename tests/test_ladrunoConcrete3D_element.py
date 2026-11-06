@@ -48,12 +48,13 @@ def _mat(tag, **kw):
     Gf = kw.get("Gf", _GF); Gc = kw.get("Gc", _GC)
     args = ["LadrunoConcrete3D", tag, E, nu, fc, ft, Gf, Gc]
     # WP concrete3d-oracle-diagnosis changed two wrapper DEFAULTS (ADR-31 §11): the CDPM2 bilinear tension law
-    # and Gc as a PHYSICAL compressive energy (eps_fc calibrated per lch). The battery runs the SHIPPED defaults
-    # (law="default"); only tests that compare numbers against the numpy oracle's LEGACY semantics
-    # (make_material / drive_*: exponential law, eps_fc = Gc/(fc lch)) pin law="legacy". Measured 2026-09-26:
-    # those two (explicit backbone, confined-fiber reduce-to-oracle) are the only ones that fail unpinned.
-    if kw.get("law", "default") == "legacy":
-        args += ["-tensionLaw", "exp", "-gcLegacy"]
+    # and Gc as a PHYSICAL compressive energy (eps_fc calibrated per lch). This battery cross-checks against
+    # the oracle's LEGACY semantics (make_material defaults: exponential law, eps_fc = Gc/(fc lch)), so pin
+    # them explicitly unless a test asks for the new defaults (law="default").
+    if kw.get("law", "legacy") == "legacy":
+        args += ["-tensionLaw", "exp", "-gcLegacy", "-flowPotential", "legacy",
+                 "-compressionDrive", "legacy", "-tcTemper", "none",                 # + B1 flow, B2 drive, PV20
+                 "-Df", 1.0, "-hardening", 0.3, 0.5]                                 # + B3: pre-B3 defaults
     if "rho" in kw:
         args += ["-rho", kw["rho"]]
     if "lch" in kw:
@@ -124,10 +125,22 @@ def _run(mat_fn, eps_target, nsteps):
 def _drive_adaptive(mat_fn, eps_target, base_steps, max_cuts=7, solver="FullGeneral"):
     """Displacement-control driver with step-CUTTING through the softening limit point — the only
     way a single implicit element gets past an unconfined tension/compression peak (the snap-back
-    regime). Returns [(eps_xx, sig_xx, omega_t)] for every converged increment."""
+    regime). Returns [(eps_xx, sig_xx, omega_t)] for every converged increment.
+
+    WP concrete3d-hang-diagnosis review follow-up (2026-09-28): a refusal right at first cracking
+    (the WP-99 commit-time latch going live for the first time surfaced this -- see
+    test_cttemper_parses_and_runs[proj]) can leave DisplacementControl's own internal deltaLambda
+    computation degenerate on the immediately-following analyze() call, printing an astronomic
+    "domain at load factor -3.5e+161"-style diagnostic even though `step` itself is still sane and
+    `cuts` is correctly bounded by max_cuts. That's cosmetic (the assertion below already fails
+    cleanly either way), but a floor on `step` makes the failure mode explicit and stops the driver
+    from ever proposing a step so small it could not possibly integrate anything, rather than
+    relying solely on max_cuts consecutive-failure counting to notice.
+    """
     _build(mat_fn, solver=solver)
     out = []
     step = eps_target / base_steps
+    step_floor = abs(eps_target) * 1.0e-8
     cuts = 0
     guard = 0
     while abs(ops.nodeDisp(2, 1)) < abs(eps_target) and guard < base_steps * 40:
@@ -139,7 +152,7 @@ def _drive_adaptive(mat_fn, eps_target, base_steps, max_cuts=7, solver="FullGene
                 step *= 2.0; cuts -= 1
         else:
             step *= 0.5; cuts += 1
-            if cuts > max_cuts:
+            if cuts > max_cuts or abs(step) < step_floor:
                 break                                     # genuinely stuck — keep what converged
     return out
 
@@ -963,7 +976,20 @@ def test_explicit_completes_where_fixedstep_implicit_stalls():
     lch = 50.0
     implicit_fixed = _run(lambda t: _mat(t, lch=lch), 0.03, 300)  # plain DisplacementControl, breaks on stall
     explicit = _run_explicit(CDL, 0.03, _NSTEPS_EXPL, _DT_EXPL, alphaM=20.0, lch=lch)
-    assert len(implicit_fixed) < 60, (
+    # NOTE (WP concrete3d-hang-diagnosis #877 follow-up): this used to assert < 60 steps. Before the honest
+    # return code + the rescue chain, the LOCAL return map failed at the very first softening state and fell
+    # silently to the elastic trial, so fixed-step implicit died after a handful of steps for the wrong
+    # reason (a hidden material fallback). With the local map now integrating there, the stall is the real
+    # global one: plain DisplacementControl stops at the snap-back limit point after 73 of the 300 steps
+    # (measured). The Tier-3 claim -- fixed-step implicit does NOT get through the ramp, explicit does --
+    # is unchanged, so the bound is "well short of the 300 requested steps" rather than the old number.
+    # HISTORY (WP concrete3d-hang-diagnosis): this stall is a real property (the snap-back limit point), measured three ways.
+    # ac72f0388 (the chain reports its LAST piece's tangent): 73 of the 300 steps. The dead-point commit briefly measured 300/300
+    # -- an artefact of the WRONG tangent (a chain reporting its last piece's tangent, 6-121 % off, lets fixed-step Newton
+    # "converge" across the limit point on a bad Jacobian). With the chain's own algorithmic tangent (review M1) plain
+    # DisplacementControl stops at the limit point after 7 of the 300 steps. The Tier-3 claim -- fixed-step implicit does NOT
+    # get through the ramp, explicit does -- is unchanged.
+    assert len(implicit_fixed) < 150, (
         f"fixed-step implicit unexpectedly survived steep softening ({len(implicit_fixed)} steps) — "
         "contrast no longer demonstrates the Tier-3 payoff")
     assert len(explicit) == _NSTEPS_EXPL, (
@@ -1066,3 +1092,182 @@ def test_confined_fiber_view_builds():
     assert len(rec) == 8
     for _, p in rec:
         assert math.isfinite(p)
+
+
+# ===========================================================================
+# A FAILED RETURN MAP REFUSES THE STEP (apeGmsh #2617, #2602 route 2)
+#
+# When the kernel's return map does not converge it hands back the elastic predictor with status 2.
+# Until #2617 setTrialStrain returned 0 regardless, so Newton accepted an off-surface state and the
+# #2602 corbel's softening peak moved +-15% with the BLAS rounding. setTrialStrain now returns
+# LADRUNO_MATERIAL_REFUSED (< 0) under refusal rule B (the amended #2602 ruling): the return map of
+# the RETURNED state failed (the last sigma_22 = 0 pass in plane stress), or the sigma_22 loop exited
+# unconverged. A failure on an earlier, discarded pass is not a refusal.
+#
+# Each case imposes ONE homogeneous strain increment from the virgin state: every node of a
+# constant-strain element carries an `sp` of the linear field u = eps . x (Penalty constraints,
+# `algorithm Linear`, a Constant series), so the material sees exactly that trial strain once.
+# The strains are re-picked for the r4 merge of fork PR #877 (2026-10-30) on THIS battery's material (`_mat`,
+# the legacy pin: exp law, legacy flow, Df 1, hardening 0.3 0.5): #877's tension-return fix (review 3, MAJOR 1)
+# integrates the #2617 originals, which were picked on the pre-fix kernel, where the failure set was fractal
+# (a 1e-6 change flipped some inputs). The failures left are biaxial COMPRESSION trials the legacy v1 flow cannot
+# return (it has no compressive cone: the vertex return rejects them, the nested fallback finds no bracket), a
+# region rather than a fractal: each outcome below held under 200 random relative perturbations from 1e-12 to
+# 1e-4 per component (EARLY's earlier-pass failure under 40 of 40), and the Penalty imposition is exact only to
+# ~1e-8. Picked by an FE-level random search on the r4 build and classified by its stderr warnings.
+#   plane strain / 3D  (e00, e11, gamma01) = (-8.3e-4, -9.7e-4, -9.7e-4)  status 2
+#   plane stress FINAL (-1.19e-3, -2.81e-3, 2.19e-3)  the last sigma_22 = 0 pass fails
+#   plane stress EARLY (-8.54e-4, -5.74e-4, 2.94e-4)  an earlier pass fails, the last converges: ACCEPTED
+#   plane stress FAILOPEN (-9.6e-4, -4.9e-4, 6.3e-4)  every pass converges but sigma_22 is still
+#                                                  unconverged at maxIt (returned 0 with a warning)
+#   plane stress CLEAN (-9.3e-5, 4.7e-5, 2.4e-4)   no pass fails, plastic (kappa_p > 0)
+# Hosts forward the code: Tri31 sums it (`ret +=`), LadrunoBrick fails only on the exact sentinel
+# (so a bare -1 would be swallowed there), ZeroLengthSection refuses `< 0` via NDFiberSection3d.
+# ===========================================================================
+_TRI = {1: (0.0, 0.0), 2: (1.0, 0.0), 3: (0.0, 1.0)}
+_PE_FAIL = (-8.3e-4, -9.7e-4, -9.7e-4)
+_PS_FINAL = (-1.19e-3, -2.81e-3, 2.19e-3)
+_PS_EARLY = (-8.54e-4, -5.74e-4, 2.94e-4)
+_PS_FAILOPEN = (-9.6e-4, -4.9e-4, 6.3e-4)
+_PS_CLEAN = (-9.3e-5, 4.7e-5, 2.4e-4)
+
+
+def _imposed_analysis():
+    ops.system("FullGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Penalty", 1.0e12, 1.0e12)
+    ops.integrator("LoadControl", 1.0)
+    ops.algorithm("Linear")
+    ops.analysis("Static")
+
+
+def _tri_sp(pattern, eps_eng):
+    """Pattern `pattern` imposing the 2D homogeneous engineering strain (exx, eyy, gxy) on the tri."""
+    exx, eyy, gxy = eps_eng
+    ops.pattern("Plain", pattern, 1)
+    for t, (x, y) in _TRI.items():
+        ops.sp(t, 1, exx * x + 0.5 * gxy * y)
+        ops.sp(t, 2, 0.5 * gxy * x + eyy * y)
+
+
+def _tri_imposed(qtype, eps_eng):
+    """A single tri31 of the reduced view `qtype` (one Gauss point) under the imposed strain."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    for t, (x, y) in _TRI.items():
+        ops.node(t, x, y)
+    _mat(1)
+    ops.element("tri31", 1, 1, 2, 3, 1.0, qtype, 1)
+    ops.timeSeries("Constant", 1)
+    _tri_sp(1, eps_eng)
+    _imposed_analysis()
+
+
+def _brick_imposed(eps_eng):
+    """A single LadrunoBrick unit cube (2x2x2 rule, every point at the same strain) under the imposed
+    3D engineering strain (exx, eyy, ezz, gxy, gyz, gzx)."""
+    exx, eyy, ezz, gxy, gyz, gzx = eps_eng
+    eps = [[exx, 0.5 * gxy, 0.5 * gzx], [0.5 * gxy, eyy, 0.5 * gyz], [0.5 * gzx, 0.5 * gyz, ezz]]
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for t, c in _CUBE.items():
+        ops.node(t, *c)
+    _mat(1)
+    ops.element("LadrunoBrick", 1, 1, 2, 3, 4, 5, 6, 7, 8, 1)
+    ops.timeSeries("Constant", 1)
+    ops.pattern("Plain", 1, 1)
+    for t, c in _CUBE.items():
+        for i in range(3):
+            ops.sp(t, i + 1, sum(eps[i][j] * c[j] for j in range(3)))
+    _imposed_analysis()
+
+
+@pytest.mark.parametrize("qtype,eps_eng,what", [
+    ("PlaneStrain", _PE_FAIL, "plane strain (no condensation)"),
+    ("PlaneStress", _PS_FINAL, "plane stress, the last sigma_22 = 0 pass fails"),
+    ("PlaneStress", _PS_FAILOPEN, "plane stress, sigma_22 still unconverged at maxIt"),
+])
+def test_failed_return_map_refuses_the_step(qtype, eps_eng, what):
+    """A trial strain the material cannot integrate cuts the step: tri31 forwards the material's
+    code, so `analyze` fails. Before #2617 it returned 0 and the analysis accepted the elastic
+    predictor. FAILOPEN is the sigma_22 seam: the last pass's return map converged, but the
+    condensation ran out of iterations, which used to return 0 with only a warning."""
+    _tri_imposed(qtype, eps_eng)
+    rc = ops.analyze(1)
+    assert rc < 0, (f"{what}: the return map fails at {eps_eng} but analyze returned {rc}, so the "
+                    f"step was accepted (setTrialStrain must return < 0)")
+
+
+def test_failed_return_map_refuses_on_the_sentinel_host():
+    """LadrunoBrick fails a step ONLY on the exact LADRUNO_MATERIAL_REFUSED (ADR-86b; ADR-33/34 keep
+    ASDConcrete3D's other negative codes from failing it). The 3D path refuses there, which a bare -1
+    or the kernel's +2 would not."""
+    exx, eyy, gxy = _PE_FAIL
+    _brick_imposed((exx, eyy, 0.0, gxy, 0.0, 0.0))
+    rc = ops.analyze(1)
+    assert rc < 0, f"LadrunoBrick accepted a failed return map (analyze returned {rc})"
+
+
+def test_failed_confined_fiber_refuses_the_step():
+    """The confined (BeamFiber) view refuses too: one +1e-2 axial (tension) step from the virgin state
+    does not integrate (driveConfinedFiber status 2 with or without the hoop), while -1e-4 does. (r4: the
+    #2617 original, a -1e-3 compressive step, integrates after #877's return fix; on this build every
+    compressive step to -0.2 does.) The fiber sits in an NDFiber section on a zeroLengthSection, which
+    refuses a `< 0` section code."""
+    _build_confined_zls(1200.0)
+    ops.integrator("DisplacementControl", 2, 1, -1.0e-4)
+    ops.algorithm("Linear")
+    assert ops.analyze(1) == 0, "the integrable -1e-4 confined step was refused"
+    _build_confined_zls(1200.0)
+    ops.integrator("DisplacementControl", 2, 1, 1.0e-2)
+    ops.algorithm("Linear")
+    rc = ops.analyze(1)
+    assert rc < 0, f"the confined fiber accepted a failed return map (analyze returned {rc})"
+
+
+@pytest.mark.parametrize("qtype,eps_eng", [
+    ("PlaneStrain", (0.0, 0.0, 0.0)),            # zero strain increment
+    ("PlaneStress", (0.0, 0.0, 0.0)),
+    ("PlaneStrain", (1.0e-5, -4.0e-6, 6.0e-6)),  # purely elastic (onset ft/E = 1e-4)
+    ("PlaneStress", (1.0e-5, -4.0e-6, 6.0e-6)),
+    ("PlaneStress", _PS_CLEAN),                  # plastic, every pass converges
+    ("PlaneStress", _PS_EARLY),                  # an earlier pass fails, the last pass and sigma_22 converge
+])
+def test_integrable_steps_are_not_refused(qtype, eps_eng):
+    """Degenerate and ordinary inputs keep returning 0: the refusal is for a failed return only.
+    EARLY is rule B's acceptance seam: an earlier sigma_22 pass falls back to the elastic predictor,
+    but the returned state (the last pass) is integrated and in plane stress, so it is accepted; the
+    accumulating rule of the first #1038 version refused it."""
+    _tri_imposed(qtype, eps_eng)
+    assert ops.analyze(1) == 0, f"{qtype} {eps_eng} was refused"
+
+
+def test_hydrostatic_apex_is_not_refused():
+    """Hydrostatic tension past the apex goes through the vertex return, which converges: the step is
+    accepted and it is plastic (kappa_p > 0, sigma below the elastic 3K eps)."""
+    h = 1.0e-4
+    _brick_imposed((h, h, h, 0.0, 0.0, 0.0))
+    assert ops.analyze(1) == 0, "the hydrostatic apex step was refused"
+    kp = float(ops.eleResponse(1, "material", 1, "kappaP")[0])
+    sxx = float(ops.eleResponse(1, "material", 1, "stress")[0])
+    elastic = _E / (1.0 - 2.0 * _NU) * h               # 3K h
+    assert kp > 0.0, f"the apex step stayed elastic (kappa_p = {kp})"
+    assert 0.0 < sxx < 0.9 * elastic, f"sigma_xx {sxx} is not a vertex return (elastic {elastic})"
+
+
+def test_refused_step_leaves_the_committed_state_clean():
+    """A refused step writes no committed state: after the refusal, a retried integrable step gives
+    the same stress, strain and damage as a fresh model taking that step directly. Plane stress, so
+    the sigma_22 = 0 warm start (cEps22) is reverted too."""
+    _tri_imposed("PlaneStress", _PS_FINAL)
+    assert ops.analyze(1) < 0, "precondition: the PS_FINAL step must be refused"
+    ops.remove("loadPattern", 1)
+    _tri_sp(2, _PS_CLEAN)
+    assert ops.analyze(1) == 0, "the retried step was refused"
+    retried = [list(ops.eleResponse(1, "material", 1, k)) for k in ("stress", "strain", "damage", "kappaP")]
+    _tri_imposed("PlaneStress", _PS_CLEAN)
+    assert ops.analyze(1) == 0
+    fresh = [list(ops.eleResponse(1, "material", 1, k)) for k in ("stress", "strain", "damage", "kappaP")]
+    assert fresh[3][0] > 0.0, "precondition: the clean retry must be plastic"
+    for name, a, b in zip(("stress", "strain", "damage", "kappaP"), retried, fresh):
+        assert a == pytest.approx(b, rel=1e-12, abs=1e-15), f"{name} after the refusal {a} != fresh {b}"

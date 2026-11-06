@@ -81,7 +81,7 @@ inline const char *canon(const char *s)
 
     // ---- forces (element-wide) -------------------------------------------
     {"force",              {"forces", "couplingForce", 0}},
-    {"globalForce",        {"globalForces", 0}},
+    {"globalForce",        {"globalForces", "endForces", "endForce", 0}},
     {"localForce",         {"localForces", "frameForce", "interfaceForce", 0}},
     {"basicForce",         {"basicForces", 0}},
     {"globalDampingForce", {"globalDampingForces", 0}},
@@ -115,6 +115,7 @@ inline const char *canon(const char *s)
     {"plasticRotation",    {"plasticDeformation", "hingeRotation",
                             "hingeRotations", 0}},
     {"hingeMoment",        {"hingeMoments", 0}},
+    {"hingeSummary",       {"hingeState", 0}},
 
     // ---- penalty / tie / coupling family ----------------------------------
     {"penalty",            {"kt", "k", "penaltyStiffness", 0}},
@@ -164,6 +165,46 @@ inline bool is(const char *a, const char *b)
   if (a == 0 || b == 0)
     return false;
   return strcmp(canon(a), canon(b)) == 0;
+}
+
+inline bool isGlobalForce(const char *s)
+{
+  return is(s, "force") || is(s, "globalForce");
+}
+
+inline bool isLocalForce(const char *s)
+{
+  return is(s, "localForce");
+}
+
+inline bool isBasicForce(const char *s)
+{
+  return is(s, "basicForce");
+}
+
+inline bool isBasicDef(const char *s)
+{
+  return is(s, "chordRotation");
+}
+
+inline bool isPlasticDef(const char *s)
+{
+  return is(s, "plasticRotation");
+}
+
+inline bool isRayleighForce(const char *s)
+{
+  return is(s, "RayleighForces");
+}
+
+inline bool isEnergy(const char *s)
+{
+  return is(s, "energy");
+}
+
+inline bool isLocalAxes(const char *s)
+{
+  return is(s, "localAxes");
 }
 
 } // namespace LadrunoResp

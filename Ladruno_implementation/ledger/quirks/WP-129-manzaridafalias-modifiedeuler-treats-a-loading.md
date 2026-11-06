@@ -1,0 +1,8 @@
+---
+wp: WP-129
+title: "ManzariDafalias::ModifiedEuler treats a LOADING stage with a negative denominator as elastic and re-derives α from the stress ratio (finding F, WP-129)"
+legacy_seq: 487
+---
+### `ManzariDafalias::ModifiedEuler` treats a LOADING stage with a negative denominator as elastic and re-derives α from the stress ratio (finding F, WP-129)
+- **Bites:** each Heun stage computes `dγ = (2G n:de_dev − K dε_v n:r) / (Kp + 2G(B − C tr n³) − K D n:r)` and takes the `dγ < 0` branch as "elastic": elastic stress plus `Δα = 3(dev σ/tr σ − dev σ₀/tr σ₀)`, i.e. α dragged along with the stress ratio, no bounding check. The sign of `dγ` is the sign of numerator × denominator, so a stage whose numerator is POSITIVE (the elastic trial loads the surface) but whose denominator is NEGATIVE — `Kp` very negative, which happens once α is outside the bounding surface (`b:n < 0`) or `h < 0` (stale α_in, below) — is misread as unloading. WP-128 measured it on 17 of 35 extShear crossings and on TIMs b8 1950/3 `isoExt 1e-6` (err 0, `f = 0.118`) and ranked it a compounder; WP-134's exact oracle OVERTURNS that: with the uncapped `q` (row below) this path drives the error to exactly 0, so no tolerance catches it, it accounts for ALL 25 campaign-ME ring escapes from admissible starts, and it gives 20-65 % stress errors on benign 20-100 kPa states even at TolE 1e-8 (row "the err = 0 path").
+- **Workaround/status:** `IntScheme 129` (SAS-ME, WP-129) classifies each stage from the elastic-trial numerator alone: `N ≤ 0` is elastic with α and z UNCHANGED; `N > 0` with `H ≤ 0` is a refusal (stage 1, a property of the accepted start state) or a cut (stage 2). ModifiedEuler is unchanged (byte-identity).

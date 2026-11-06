@@ -60,6 +60,9 @@ class PlateFiberMaterial: public NDMaterial{
 
     //make a clone of this material
     NDMaterial *getCopy( ) ;
+    // Ladruno WP-192: threaded element loops opt-in (delegates to the wrapped 3D material).
+    bool ladrunoThreadSafeUpdate(void) const { return theMaterial != 0 && theMaterial->ladrunoThreadSafeUpdate(); }
+    bool ladrunoThreadSafeForm(void) const { return theMaterial != 0 && theMaterial->ladrunoThreadSafeForm(); }
     NDMaterial *getCopy( const char *type ) ;
 
     //send back order of strain in vector form
@@ -115,9 +118,9 @@ class PlateFiberMaterial: public NDMaterial{
 
     Vector strain ;
 
-    static Vector stress ;
+    static thread_local Vector stress ;   // Ladruno WP-192
 
-    static Matrix tangent ;
+    static thread_local Matrix tangent ;   // Ladruno WP-192
 } ; //end of PlateFiberMaterial declarations
 
 

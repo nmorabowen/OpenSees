@@ -86,6 +86,12 @@ public:
 
     // methods to return the current linearized stiffness,
     // damping and mass matrices
+    // Ladruno WP-192: threaded element loops opt-in. update() is the base no-op
+    // and the kernels' scratch is thread_local; commitState() books the
+    // ABSORB_LEAK energy channel (a process-wide FP sum), so commit stays serial.
+    bool ladrunoThreadSafeUpdate(void) const { return true; }
+    bool ladrunoThreadSafeForm(void) const { return true; }
+    bool ladrunoThreadSafeCommit(void) const { return false; }
     const Matrix& getTangentStiff(void);
     const Matrix& getInitialStiff(void);
     const Matrix& getDamp(void);

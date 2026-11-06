@@ -96,6 +96,10 @@ public:
 
     const char* getClassType(void) const { return "ASDShellT3"; }
 
+    // Ladruno WP-205: -pDelta, linear kinematics plus the initial-stress
+    // (geometric) stiffness of the current membrane forces (see ASDShellQ4)
+    void setPDelta(bool on) { m_pdelta = on; }
+
     // domain
     void setDomain(Domain* theDomain);
     int setDamping(Domain* theDomain, Damping* theDamping);
@@ -179,6 +183,13 @@ private:
     // section orientation with respect to the local coordinate system
     Vector* m_local_x = nullptr;
     double m_angle = 0.0;
+
+    // Ladruno WP-205: initial-stress stiffness with linear kinematics
+    bool m_pdelta = false;
+    // Ladruno WP-209: committed preload membrane forces (n11, n22, n12) per GP,
+    // frozen once Domain::setLoadConstant() is called
+    double m_pdelta_N[3][3] = { {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0} };
+    bool m_pdelta_frozen = false;
 
     // damping
     Damping* m_damping[3] = { nullptr, nullptr, nullptr };

@@ -939,24 +939,30 @@ Bilin02::setTrialStrain(double strain, double strainRate)
  
   if((flagstopdeg==0)&&(flagdeg==1)) {
    
-    if((Enrgtot>=Enrgts)&&(Enrgts!=0.0)) {
-      betas = 1.0;
-    } else if((Enrgtot>=Enrgtd)&&(Enrgtd!=0.0)) {
-      betad = 1.0;
-    } else {
-      if(LamdaS!=0.0) {
-        betas = pow((Enrgc/(Enrgts-Enrgtot)),Cs);
-      }
-      if(LamdaD!=0.0) {
-        betad = pow((Enrgc/(Enrgtd-Enrgtot)),Cd);
-      }
-     
-      if(fabs(betas)>=1.0) {
+    if (LamdaS != 0.0 && Enrgts != 0.0) {
+      if (Enrgtot >= Enrgts) {
         betas = 1.0;
+      } else {
+        betas = pow((Enrgc / (Enrgts - Enrgtot)), Cs);
+        if (fabs(betas) >= 1.0) {
+          betas = 1.0;
+        }
       }
-      if(fabs(betad)>=1.0) {
+    } else {
+      betas = 0.0;
+    }
+
+    if (LamdaD != 0.0 && Enrgtd != 0.0) {
+      if (Enrgtot >= Enrgtd) {
         betad = 1.0;
+      } else {
+        betad = pow((Enrgc / (Enrgtd - Enrgtot)), Cd);
+        if (fabs(betad) >= 1.0) {
+          betad = 1.0;
+        }
       }
+    } else {
+      betad = 0.0;
     }
     ////            Initialize energy of the cycle and Kstif for next loop -------
    

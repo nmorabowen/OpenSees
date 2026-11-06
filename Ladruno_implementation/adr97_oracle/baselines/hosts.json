@@ -1,0 +1,8 @@
+{
+  "win32 | AMD Ryzen AI 7 PRO 350 w/ Radeon 860M": {
+    "file": "be_secant_baseline_3622d6214.json",
+    "dumped": "2026-10-06",
+    "toolchain": "MSVC 14.44.35207, Windows SDK 10.0.26100.0, eigen/3.4.0 conan rev e7256a46",
+    "by": "WP-175 (#938)"
+  }
+}

@@ -291,7 +291,13 @@ TransientDomainDecompositionAnalysis::eigen(int numMode, bool generalized, bool 
     if (generalized == true) {
       int result = 0;
       FE_EleIter &theEles2 = theAnalysisModel->getFEs();    
-      while((elePtr = theEles2()) != 0) {     
+      while((elePtr = theEles2()) != 0) {
+	// Ladruno WP-183: an FE_Element without an Element (Penalty/Lagrange
+	// MP/SP/EQ, LadrunoContactFE) carries no mass. The constraint FEs'
+	// getTangent ignores the integrator and returns the constraint
+	// stiffness (alpha C^T C, alpha), which upstream added to M here.
+	if (elePtr->getElement() == 0)
+	    continue;
 	elePtr->zeroTangent();
 	elePtr->addMtoTang(1.0);
 	if (theEigenSOE->addM(elePtr->getTangent(0), elePtr->getID()) < 0) {

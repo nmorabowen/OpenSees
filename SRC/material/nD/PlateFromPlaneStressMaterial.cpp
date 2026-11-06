@@ -39,8 +39,8 @@ Earthquake Engineering & Structural Dynamics, 2013, 42(5): 705-723*/
 #include <elementAPI.h>
 
 //static vector and matrices
-Vector  PlateFromPlaneStressMaterial::stress(5) ;
-Matrix  PlateFromPlaneStressMaterial::tangent(5,5) ;
+thread_local Vector  PlateFromPlaneStressMaterial::stress(5) ;   // Ladruno WP-192
+thread_local Matrix  PlateFromPlaneStressMaterial::tangent(5,5) ;   // Ladruno WP-192
 
 void* OPS_PlateFromPlaneStressMaterial()
 {
@@ -193,7 +193,7 @@ PlateFromPlaneStressMaterial::setTrialStrain( const Vector &strainFromElement )
   strain(3) = strainFromElement(3) ;
   strain(4) = strainFromElement(4) ;
 
-  static Vector PSStrain(3) ;
+  static thread_local Vector PSStrain(3) ;   // Ladruno WP-192
   
   PSStrain(0) = strain(0);
   PSStrain(1) = strain(1);
@@ -308,7 +308,7 @@ PlateFromPlaneStressMaterial::sendSelf(int commitTag, Channel &theChannel)
 
   int matDbTag;
   
-  static ID idData(3);
+  static thread_local ID idData(3);   // Ladruno WP-192
   idData(0) = dataTag;
   idData(1) = theMat->getClassTag();
   matDbTag = theMat->getDbTag();
@@ -324,7 +324,7 @@ PlateFromPlaneStressMaterial::sendSelf(int commitTag, Channel &theChannel)
     return res;
   }
 
-  static Vector vecData(1);
+  static thread_local Vector vecData(1);   // Ladruno WP-192
   vecData(0) = gmod;
 
   res = theChannel.sendVector(dataTag, commitTag, vecData);
@@ -349,7 +349,7 @@ PlateFromPlaneStressMaterial::recvSelf(int commitTag, Channel &theChannel, FEM_O
   int dataTag = this->getDbTag();
 
   // recv an id containing the tag and associated materials class and db tags
-  static ID idData(3);
+  static thread_local ID idData(3);   // Ladruno WP-192
   res = theChannel.recvID(dataTag, commitTag, idData);
   if (res < 0) {
     opserr << "PlateFromPlaneStressMaterial::sendSelf() - failed to receive id data" << endln;
@@ -368,7 +368,7 @@ PlateFromPlaneStressMaterial::recvSelf(int commitTag, Channel &theChannel, FEM_O
   }
   theMat->setDbTag(idData(2));
 
-  static Vector vecData(1);
+  static thread_local Vector vecData(1);   // Ladruno WP-192
   res = theChannel.recvVector(dataTag, commitTag, vecData);
   if (res < 0) {
     opserr << "PlateFromPlaneStressMaterial::sendSelf() - failed to receive vector data" << endln;

@@ -1,0 +1,10 @@
+---
+wp: ADR-94
+title: "A dead call site protects a wrong answer, and reviving it exposes it (ADR-94 wp/94c B4)"
+legacy_seq: 403
+---
+### A dead call site protects a wrong answer, and reviving it exposes it (ADR-94 wp/94c B4)
+- **Bites:** `Backward_Euler`'s apex return (~2093-2161) was commented out in its entirety, so `yf.check_apex_region(...)` was CALLED and its answer DISCARDED for every yield function declaring `yf_has_apex`. Under that cover: `DruckerPrager_YF::CHECK_APEX_REGION`/`APEX_STRESS` were `// Implement!!!` stubs (`return false`, and the ZERO stress); `HoekBrown_YF`'s pair had an inverted sign convention and fired in hydrostatic COMPRESSION, returning an interior point as the "apex"; `MohrCoulomb_YF`'s test was the bare `p beyond p_apex` rather than a normal-cone test; and `RoundedMohrCoulomb_YF` declared the trait while defining NEITHER method, so registering it would have failed to COMPILE the moment the site went live.
+- **Rule:** a `if constexpr (trait)` block whose body is commented out is worse than no trait -- it type-checks the declaration without exercising it. Before reviving one, audit every implementation of the trait; expect at least one to be a stub and at least one to be silently wrong.
+- **The integrator must not trust the YF's geometry.** wp/94c's revived site evaluates `f(sigma_apex)` and only commits the projection when `|f| <= tol`; otherwise it falls through to the generic return map (or refuses under `strict_convergence`). That is what makes a wrong `apex_stress` a performance problem instead of a fabricated stress.
+- **What it still cannot check:** a MISCLASSIFICATION. `check_apex_region` is a Euclidean normal-cone test in `(p, sqrt(J2))`, while the exact condition is in the ELASTIC metric (`p - p_apex >= (K*etabar/G)*q` for DP), and the YF signature cannot see `K` or `G`. `f(sigma_apex) = 0` by construction, so the gate cannot catch a state that should have returned to the flank. Keep apex-region tests conservative, and prefer the degenerate case (`sqrt(J2) -> 0`, where there is no flank direction at all) when in doubt.

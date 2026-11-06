@@ -138,6 +138,10 @@ class ZeroLength : public Element
     int sendSelf(int commitTag, Channel &theChannel);
     int recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBroker);
     int displaySelf(Renderer &, int mode, float fact, const char **displayModes=0, int numModes=0);
+
+    // Ladruno WP-195: WP-192 threaded element loops opt-in (see the .cpp).
+    bool ladrunoThreadSafeUpdate(void) const;
+    bool ladrunoThreadSafeForm(void) const;
     void Print(OPS_Stream &s, int flag =0);    
 
     Response *setResponse(const char **argv, int argc, OPS_Stream &s);
@@ -218,15 +222,17 @@ class ZeroLength : public Element
     Vector *d0;
     Vector *v0;
 
+    Matrix &ladrunoM(void) const;   // Ladruno WP-195: this thread's numDOF-sized pool
+    Vector &ladrunoV(void) const;   // Ladruno WP-195
     // static data - single copy for all objects of the class	
-    static Matrix ZeroLengthM2;   // class wide matrix for 2*2
-    static Matrix ZeroLengthM4;   // class wide matrix for 4*4
-    static Matrix ZeroLengthM6;   // class wide matrix for 6*6
-    static Matrix ZeroLengthM12;  // class wide matrix for 12*12
-    static Vector ZeroLengthV2;   // class wide Vector for size 2
-    static Vector ZeroLengthV4;   // class wide Vector for size 4
-    static Vector ZeroLengthV6;   // class wide Vector for size 6
-    static Vector ZeroLengthV12;  // class wide Vector for size 12
+    static thread_local Matrix ZeroLengthM2;   // class wide matrix for 2*2
+    static thread_local Matrix ZeroLengthM4;   // class wide matrix for 4*4
+    static thread_local Matrix ZeroLengthM6;   // class wide matrix for 6*6
+    static thread_local Matrix ZeroLengthM12;  // class wide matrix for 12*12
+    static thread_local Vector ZeroLengthV2;   // class wide Vector for size 2
+    static thread_local Vector ZeroLengthV4;   // class wide Vector for size 4
+    static thread_local Vector ZeroLengthV6;   // class wide Vector for size 6
+    static thread_local Vector ZeroLengthV12;  // class wide Vector for size 12
 
     int mInitialize;  // tag to fix bug in recvSelf/setDomain when using database command
 

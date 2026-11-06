@@ -127,17 +127,17 @@ private:
     Vector ulcommit;            // committed local displacements
     Vector ulpr;                // previous local displacements
     
-    static Matrix RI;           // nodal triad for node 1
-    static Matrix RJ;           // nodal triad for node 2
-    static Matrix Rbar;         // mean nodal triad 
-    static Matrix e;            // base vectors
-    static Matrix Tp;           // transformation matrix to renumber dofs
-    static Matrix T;            // transformation matrix from basic to global system
-    static Matrix Tlg;          // transformation matrix from global to local system
-    static Matrix TlgInv;       // inverse of transformation matrix from global to local system
-    static Matrix Tbl;          // transformation matrix from local to basic system
-    static Matrix kg;           // global stiffness matrix
-    static Matrix Lr2, Lr3, A;  // auxiliary matrices
+    static thread_local Matrix RI;           // nodal triad for node 1   // Ladruno
+    static thread_local Matrix RJ;           // nodal triad for node 2   // Ladruno
+    static thread_local Matrix Rbar;         // mean nodal triad   // Ladruno
+    static thread_local Matrix e;            // base vectors   // Ladruno
+    static Matrix Tp;                        // transformation matrix to renumber dofs (constant, initialized once)   // Ladruno
+    static thread_local Matrix T;            // transformation matrix from basic to global system   // Ladruno
+    static thread_local Matrix Tlg;          // transformation matrix from global to local system   // Ladruno
+    static thread_local Matrix TlgInv;       // inverse of transformation matrix from global to local system   // Ladruno
+    static thread_local Matrix Tbl;          // transformation matrix from local to basic system   // Ladruno
+    static thread_local Matrix kg;           // global stiffness matrix   // Ladruno
+    static thread_local Matrix Lr2, Lr3, A;  // auxiliary matrices   // Ladruno
     
     double *nodeIInitialDisp, *nodeJInitialDisp;
     bool initialDispChecked;

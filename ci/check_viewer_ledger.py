@@ -3,8 +3,12 @@
 
   V1 ledger     A change that brings a new SOURCE file into a tool directory under
                 `Ladruno_tools/` (the profiler and monitor viewers) must add a line to
-                `Ladruno_implementation/LEDGER_implementations.md` that names that tool
-                directory (`Ladruno_tools/<tool>`) -- i.e. it edits that tool's row.
+                the implementations ledger that names that tool directory
+                (`Ladruno_tools/<tool>`) -- i.e. it edits that tool's row. Since WP-161
+                the ledger is per-WP fragments, so the line may be in any file under
+                `Ladruno_implementation/ledger/implementations/` (the tool's fragment, or
+                a new fragment naming it); `LEDGER_implementations.md` still counts
+                before the split.
                 AGENTS.md has required the row since before the viewers existed; a
                 2026-05-31 lesson ("prior PRs ... missed LEDGER_implementations' row;
                 check that row explicitly", PR #56) restated it, and it still recurred:
@@ -52,6 +56,7 @@ from pathlib import Path
 
 SCOPE = "Ladruno_tools/"
 LEDGER = "Ladruno_implementation/LEDGER_implementations.md"
+FRAGMENTS = "Ladruno_implementation/ledger/implementations/"   # WP-161
 SOURCE_SUFFIXES = (".py", ".pyw", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
                    ".html", ".css", ".bat", ".cmd", ".sh", ".ps1")
 
@@ -154,7 +159,7 @@ def find_violations(changes: list[Change], ledger_added: list[str],
         if any(names_tool(line, tool) for line in edits):
             continue
         findings.append(
-            f"V1 {path}: new source file, but no added line in {LEDGER} names {tool} -- "
+            f"V1 {path}: new source file, but no added line in {FRAGMENTS} (or {LEDGER}) names {tool} -- "
             f"add or update that tool's row in the same PR (AGENTS.md, 'Build-control ledgers')")
     return findings
 
@@ -183,7 +188,7 @@ def collect(root: Path, base: str, head: str) -> tuple[list[Change], list[str], 
             raise LookupError(f"cannot resolve {rev!r} to a commit in {root}")
     rng = f"{base}...{head}"
     changes = parse_name_status(_diff(root, rng, ["--name-status", "-z", "-M"]))
-    added, removed = parse_unified_diff(_diff(root, rng, ["-U0"], [LEDGER]))
+    added, removed = parse_unified_diff(_diff(root, rng, ["-U0"], [LEDGER, FRAGMENTS]))
     return changes, added, removed
 
 

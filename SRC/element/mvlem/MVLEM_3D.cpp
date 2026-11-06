@@ -47,6 +47,7 @@
 #include <Renderer.h>
 #include <ElementResponse.h>
 #include <ElementalLoad.h>
+#include <LadrunoResponseTokens.h> // Ladruno WP-200
 
 
 // initialize the class wide variables
@@ -100,6 +101,10 @@ void* OPS_MVLEM_3D(void)
 	}
 
 	int m = iData[5];
+	if (m <= 0) {
+		opserr << "WARNING invalid m = " << m << " for element MVLEM_3D " << iData[0] << endln;
+		return 0;
+	}
 	const char* str = 0;
 
 	double* theThickness = new double[m];
@@ -111,10 +116,24 @@ void* OPS_MVLEM_3D(void)
 	UniaxialMaterial** theMaterialsSteel = new UniaxialMaterial * [m];
 	UniaxialMaterial** theMaterialsShear = new UniaxialMaterial * [1];
 	for (int i = 0; i < m; i++) {
+		theThickness[i] = 0.0;
+		theWidth[i] = 0.0;
+		theRho[i] = 0.0;
+		matTags[i] = 0;
 		theMaterialsConcrete[i] = 0;
 		theMaterialsSteel[i] = 0;
 	}
 	theMaterialsShear[0] = 0;
+
+	auto cleanup = [&]() {
+		delete[] theThickness;
+		delete[] theWidth;
+		delete[] theRho;
+		delete[] matTags;
+		delete[] theMaterialsConcrete;
+		delete[] theMaterialsSteel;
+		delete[] theMaterialsShear;
+	};
 
 	numArgs = OPS_GetNumRemainingInputArgs();
 	while (numArgs > 0) {
@@ -124,6 +143,7 @@ void* OPS_MVLEM_3D(void)
 			numData = m;
 			if (OPS_GetDoubleInput(&numData, theThickness) != 0) {
 				opserr << "Invalid thick parameter for MVLEM   " << iData[0] << endln;
+				cleanup();
 				return 0;
 			}
 		}
@@ -131,6 +151,7 @@ void* OPS_MVLEM_3D(void)
 			numData = m;
 			if (OPS_GetDoubleInput(&numData, theWidth) != 0) {
 				opserr << "Invalid width value for MVLEM  " << iData[0] << endln;
+				cleanup();
 				return 0;
 			}
 		}
@@ -138,6 +159,7 @@ void* OPS_MVLEM_3D(void)
 			numData = m;
 			if (OPS_GetDoubleInput(&numData, theRho) != 0) {
 				opserr << "Invalid rho value for MVLEM  " << iData[0] << endln;
+				cleanup();
 				return 0;
 			}
 		}
@@ -145,6 +167,7 @@ void* OPS_MVLEM_3D(void)
 			numData = m;
 			if (OPS_GetIntInput(&numData, matTags) != 0) {
 				opserr << "Invalid concrete tags for MVLEM  " << iData[0] << endln;
+				cleanup();
 				return 0;
 			}
 			for (int i = 0; i < m; i++) {
@@ -152,6 +175,7 @@ void* OPS_MVLEM_3D(void)
 				theMaterialsConcrete[i] = OPS_getUniaxialMaterial(matTags[i]);
 				if (theMaterialsConcrete[i] == 0) {
 					opserr << "Invalid material tag " << matTags[i] << "  for MVLEM  " << iData[0] << endln;
+					cleanup();
 					return 0;
 				}
 			}
@@ -160,6 +184,7 @@ void* OPS_MVLEM_3D(void)
 			numData = m;
 			if (OPS_GetIntInput(&numData, matTags) != 0) {
 				opserr << "Invalid steel tags for MVLEM  " << iData[0] << endln;
+				cleanup();
 				return 0;
 			}
 			for (int i = 0; i < m; i++) {
@@ -167,6 +192,7 @@ void* OPS_MVLEM_3D(void)
 				theMaterialsSteel[i] = OPS_getUniaxialMaterial(matTags[i]);
 				if (theMaterialsSteel[i] == 0) {
 					opserr << "Invalid material tag " << matTags[i] << "  for MVLEM  " << iData[0] << endln;
+					cleanup();
 					return 0;
 				}
 			}
@@ -175,6 +201,7 @@ void* OPS_MVLEM_3D(void)
 			numData = 1;
 			if (OPS_GetIntInput(&numData, matTags) != 0) {
 				opserr << "Invalid shear tags for MVLEM  " << iData[0] << endln;
+				cleanup();
 				return 0;
 			}
 			for (int i = 0; i < 1; i++) {
@@ -182,6 +209,7 @@ void* OPS_MVLEM_3D(void)
 				theMaterialsShear[i] = OPS_getUniaxialMaterial(matTags[i]);
 				if (theMaterialsShear[i] == 0) {
 					opserr << "Invalid material tag " << matTags[i] << "  for MVLEM  " << iData[0] << endln;
+					cleanup();
 					return 0;
 				}
 			}
@@ -191,6 +219,7 @@ void* OPS_MVLEM_3D(void)
 			numData = 1;
 			if (OPS_GetDoubleInput(&numData, &dData[0]) != 0) {
 				opserr << "Invalid CoR parameter for MVLEM   " << iData[0] << endln;
+				cleanup();
 				return 0;
 			}
 		}
@@ -198,6 +227,7 @@ void* OPS_MVLEM_3D(void)
 			numData = 1;
 			if (OPS_GetDoubleInput(&numData, &dData[1]) != 0) {
 				opserr << "Invalid thickMod parameter for MVLEM   " << iData[0] << endln;
+				cleanup();
 				return 0;
 			}
 		}
@@ -205,6 +235,7 @@ void* OPS_MVLEM_3D(void)
 			numData = 1;
 			if (OPS_GetDoubleInput(&numData, &dData[2]) != 0) {
 				opserr << "Invalid Poisson parameter for MVLEM   " << iData[0] << endln;
+				cleanup();
 				return 0;
 			}
 		}
@@ -212,11 +243,36 @@ void* OPS_MVLEM_3D(void)
 			numData = 1;
 			if (OPS_GetDoubleInput(&numData, &dData[3]) != 0) {
 				opserr << "Invalid Dens parameter for MVLEM   " << iData[0] << endln;
+				cleanup();
 				return 0;
 			}
 		}
+		else {
+			// Ladruno WP-200: fail closed on unknown option
+			opserr << "WARNING unknown option " << str << " for element MVLEM_3D " << iData[0] << endln;
+			cleanup();
+			return 0;
+		}
 		numArgs = OPS_GetNumRemainingInputArgs();
 
+	}
+
+	for (int i = 0; i < m; i++) {
+		if (theThickness[i] <= 0.0 || theWidth[i] <= 0.0 || theRho[i] < 0.0) {
+			opserr << "WARNING invalid thickness, width, or rho for element MVLEM_3D " << iData[0] << endln;
+			cleanup();
+			return 0;
+		}
+		if (theMaterialsConcrete[i] == 0 || theMaterialsSteel[i] == 0) {
+			opserr << "WARNING missing concrete or steel materials for element MVLEM_3D " << iData[0] << endln;
+			cleanup();
+			return 0;
+		}
+	}
+	if (theMaterialsShear[0] == 0) {
+		opserr << "WARNING missing shear material for element MVLEM_3D " << iData[0] << endln;
+		cleanup();
+		return 0;
 	}
 
 	theElement = new MVLEM_3D(iData[0], dData[3], 
@@ -225,21 +281,7 @@ void* OPS_MVLEM_3D(void)
 		theWidth, iData[5], dData[0], dData[2], dData[1]);
 
 	// Cleanup dynamic memory
-	if (theThickness != 0)
-		delete[] theThickness;
-	if (theWidth != 0)
-		delete[] theWidth;
-	if (theRho != 0)
-		delete[] theRho;
-	if (matTags != 0)
-		delete[] matTags;
-
-	if (theMaterialsConcrete != 0)
-		delete[] theMaterialsConcrete;
-	if (theMaterialsSteel != 0)
-		delete[] theMaterialsSteel;
-	if (theMaterialsShear != 0)
-		delete[] theMaterialsShear;
+	cleanup();
 
 	return theElement;
 }
@@ -632,6 +674,7 @@ void MVLEM_3D::setDomain(Domain *theDomain)
 
 	// Element height
 	h = (h1 + h2) / 2.0;
+	ops_TheActiveElement = this; // Ladruno WP-200
 
 	// Calculate average wall thickness (for out-of-plane behavior)
 	Tave = 0.0;
@@ -806,7 +849,7 @@ int MVLEM_3D::revertToStart() {
 
 // Update the element
 int MVLEM_3D::update() {
-
+	ops_TheActiveElement = this; // Ladruno WP-200
 	// Determine the current strain given trial displacements at nodes
 	MVLEM_3DStrain = this->computeCurrentStrain();
 
@@ -2959,6 +3002,9 @@ void MVLEM_3D::Print(OPS_Stream &s, int flag)
 // Set recorders
 Response *MVLEM_3D::setResponse(const char **argv, int argc, OPS_Stream &s)
 {
+	if (argc < 1)
+		return 0;
+
 	Response *theResponse = 0;
 
 	s.tag("ElementOutput");
@@ -2969,8 +3015,10 @@ Response *MVLEM_3D::setResponse(const char **argv, int argc, OPS_Stream &s)
 	s.attr("node3", externalNodes[3]);
 	s.attr("node4", externalNodes[2]);
 
-	// Nodal forces in global cs
-	if (strcmp(argv[0], "forceG") == 0 || strcmp(argv[0], "forcesG") == 0 ||
+	// Nodal forces in global cs (Ladruno WP-200)
+	if (LadrunoResp::isGlobalForce(argv[0]) ||
+		strcmp(argv[0], "force") == 0 || strcmp(argv[0], "forces") == 0 ||
+		strcmp(argv[0], "forceG") == 0 || strcmp(argv[0], "forcesG") == 0 ||
 		strcmp(argv[0], "globalForce") == 0 || strcmp(argv[0], "globalForces") == 0) {
 
 		s.tag("ResponseType", "globalFx_i");
@@ -3002,8 +3050,9 @@ Response *MVLEM_3D::setResponse(const char **argv, int argc, OPS_Stream &s)
 
 	}
 
-	// Nodal forces in local cs
-	else if (strcmp(argv[0], "forceL") == 0 || strcmp(argv[0], "forcesL") == 0 ||
+	// Nodal forces in local cs (Ladruno WP-200)
+	else if (LadrunoResp::isLocalForce(argv[0]) ||
+		strcmp(argv[0], "forceL") == 0 || strcmp(argv[0], "forcesL") == 0 ||
 		strcmp(argv[0], "localForce") == 0 || strcmp(argv[0], "localForces") == 0) {
 
 		s.tag("ResponseType", "localFx_i");
@@ -3105,6 +3154,16 @@ Response *MVLEM_3D::setResponse(const char **argv, int argc, OPS_Stream &s)
 		theResponse = new ElementResponse(this, 8, 0.0);
 	}
 
+	// Integration weights (fiber widths)
+	else if (strcmp(argv[0], "integrationWeights") == 0) {
+		theResponse = new ElementResponse(this, 9, Vector(m));
+	}
+
+	// Local axes
+	else if (LadrunoResp::isLocalAxes(argv[0])) {
+		theResponse = new ElementResponse(this, 10, Vector(9));
+	}
+
 	// Results at specified integration point
 	else if (strcmp(argv[0], "material") == 0 && (argc > 2)) {
 		int pointNum = atoi(argv[1]);
@@ -3124,6 +3183,9 @@ Response *MVLEM_3D::setResponse(const char **argv, int argc, OPS_Stream &s)
 				else if (strcmp(argv[2], "shear") == 0 || strcmp(argv[2], "Shear") == 0) {
 					theResponse = theMaterialsShear[0]->setResponse(&argv[3], argc - 3, s);
 				}
+			}
+			else {
+				theResponse = theMaterialsConcrete[pointNum - 1]->setResponse(&argv[2], argc - 2, s);
 			}
 			s.endTag();
 		}
@@ -3163,11 +3225,32 @@ int MVLEM_3D::getResponse(int responseID, Information &eleInfo)
 	case 8:  // Shear Deformtion
 		return eleInfo.setDouble(this->getShearDef());
 
+	case 9: { // Integration weights (fiber widths)
+		Vector w(m);
+		for (int i = 0; i < m; i++)
+			w(i) = b[i];
+		return eleInfo.setVector(w);
+	}
+
+	case 10: { // Local axes (9-component flat vector: vx, vy, vz rows of Tt)
+		Vector axes(9);
+		for (int r = 0; r < 3; r++)
+			for (int c = 0; c < 3; c++)
+				axes(3 * r + c) = Tt(r, c);
+		return eleInfo.setVector(axes);
+	}
+
 	default:
 
-		return 0;
+		return -1;
 
 	}
+}
+
+double MVLEM_3D::getCharacteristicLength(void)
+{
+	// Ladruno WP-200: macro-fiber strain is normalized over wall element height h
+	return (h > 0.0) ? h : Element::getCharacteristicLength();
 }
 
 // Return element local forces

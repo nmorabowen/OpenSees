@@ -11,7 +11,7 @@ on:
     # include ready_for_review so marking a draft "ready" re-triggers the build
     types: [opened, synchronize, reopened, ready_for_review]
   schedule:
-    - cron: "0 6 * * *"   # nightly Zone-B / perf (self-hosted)
+    - cron: "0 6 * * *"   # nightly Zone-A; Zone-B/perf only with vars.WINDOWS_RUNNER (WP-180)
   workflow_dispatch:
 
 # Cancel an in-flight run when a newer commit lands on the same branch/PR, so
@@ -34,8 +34,39 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install pyyaml
+      # Duplicate definitions (WP-162): two PRs that both took quirk rule "L9" both
+      # added `def _l9` to one test file, and the merge was clean -- every WP-153
+      # test then ran WP-158's helper. D1 fails on a def/class defined twice in
+      # one scope; ruff F811 (pinned) catches the rest of its family (a duplicated
+      # test name, a re-import) but not that incident (ci/check_duplicate_defs.py).
+      # Before the classTag step on purpose: WP-161 adds its steps after it.
+      - name: duplicate definitions -- D1 + ruff F811 (WP-162)
+        run: |
+          pip install ruff==0.16.10
+          python ci/check_duplicate_defs.py
+          ruff check --no-cache --select F811 ci tests Ladruno_scripts
       - name: classTag collision + drift (Axis 1, G2)
         run: python ci/check_classtags.py
+      # Ledger fragments (WP-161): the build-control ledgers are one file per entry
+      # under Ladruno_implementation/ledger/<kind>/, so no two PRs write the same
+      # file and the ledgers stop forcing merge-ups. The gate checks the fragments
+      # (schema, name <-> wp, duplicates, class tags vs classTags.h, the stubs);
+      # the self-test carries the round-trip proof build(split(ledgers)) ==
+      # ledgers. The rendered LEDGER_*.md are gitignored, so they are built here
+      # and uploaded as the `ledgers` artifact.
+      - name: ledger fragments gate + round-trip self-test (WP-161)
+        run: |
+          pip install pytest
+          python ci/check_ledger_fragments.py
+          pytest -q ci/test_ledger.py
+      - name: build the ledgers (WP-161)
+        run: python ci/ledger.py build
+      - name: upload the built ledgers (WP-161)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ledgers
+          path: Ladruno_implementation/ledger/_build/
+          if-no-files-found: error
       - name: manifest ledger (G9)
         run: python ci/check_manifest.py
       # MPCO_Ladruno schema-v1 gate (D5): the validator is the executable spec and
@@ -58,14 +89,13 @@ jobs:
       - name: header stamp covers GLOBS (WP-122)
         run: python Ladruno_scripts/stamp_headers.py --check
       # Quirk-pattern gate (WP-115): LEDGER_quirks entries that name a greppable
-      # pattern, enforced -- L1 Rayleigh snapshot (#562), L2 singleton reset on
-      # wipe, L3 task-guide pointers, L4 element commitState chains to the base
-      # (betaKc Kc refresh, WP-118), L5 ground-motion load subtracted once and
-      # L6 ground-motion load has the right sign (both scan all element files,
-      # vanilla included; WP-119, WP-117). Last in the job so a red lint never hides
-      # the gates above. The self-test proves each rule still fires.
-      - name: quirk-pattern lint self-test (WP-115)
-        run: pytest -q ci/test_check_quirk_patterns.py
+      # pattern, enforced as rules named by slug (WP-162; the rule table in
+      # ci/README.md is generated from RULES). Last in the job so a red lint never
+      # hides the gates above. One self-test file per rule (ci/test_quirk_<slug>.py)
+      # proves each rule still fires; test_quirk_rules.py checks the registry, and
+      # test_duplicate_defs.py the duplicate-definition gate.
+      - name: quirk-pattern lint self-test (WP-115, per rule WP-162)
+        run: pytest -q ci/test_quirk_*.py ci/test_duplicate_defs.py
       - name: quirk-pattern lints (WP-115)
         run: python ci/check_quirk_patterns.py
       # Viewer-tools ledger gate (WP-121): a change that adds a source file to a
@@ -140,6 +170,35 @@ jobs:
       - name: MKL-touching units vs oneMKL 2024.2.2 (M1 compile, M2 symbols, self-test)
         run: python ci/check_mkl_compat.py --build-dir build/mkl --self-test
 
+  # ---- LadrunoConcrete3D record replay, glibc lane (apeGmsh #2621 F1) ----
+  # tests/_testbed/concrete3d_replay.cpp puts records the shipped pyd wrote (refusals, sub-increments, kinks,
+  # floor-class-C failures) back through this tree's header-only kernel and requires the recorded answer bit for bit.
+  # The committed libmmt records replay only under the Windows pyd's libm (the self-hosted job at the bottom of this
+  # file). The glibc gate replays tests/_testbed/concrete3d_replay_records.linux-glibc.txt bit-exactly; while that
+  # fixture is missing the job FAILS after uploading its glibc recording: the first run of the PR that adds this lane
+  # is red by design, its artifact is committed as the fixture, and the next run gates on it (the script's header).
+  # Pinned image: the libm tag carries the glibc version (ldd --version), so an image update is a libm mismatch, not
+  # a kernel change; re-record on a deliberate image bump. g++ and the header only, no build: runs on drafts too.
+  concrete3d-replay:
+    name: Concrete3D record replay (glibc 24.04, bit-exact; red until the glibc fixture is committed)
+    if: github.repository == 'nmorabowen/OpenSees'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: libm guard, glibc recording, replay of the committed glibc fixture (fails while it is missing)
+        run: bash tests/_testbed/concrete3d_replay_ci.sh "$RUNNER_TEMP/c3d_replay"
+      - name: Field-classification contract (rows generated from the testbed's field table, on the glibc fixture)
+        run: bash tests/_testbed/concrete3d_replay_ci.sh --contract "$RUNNER_TEMP/c3d_replay"
+      - name: Upload the glibc recording
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: concrete3d-replay-linux-glibc-${{ github.sha }}
+          path: ${{ runner.temp }}/c3d_replay/concrete3d_replay_records.linux-glibc.txt
+          retention-days: 30
+          if-no-files-found: warn
+
   # ---- Zone-A: build + pytest(zone_a) + gated Tcl suite ------------------
   zone-a-ubuntu:
     name: Zone-A (Ubuntu)
@@ -186,6 +245,21 @@ jobs:
           cmake --build . --target OpenSees -j8
           cmake --build . --target OpenSeesPy -j8
           mv OpenSeesPy.so opensees.so
+      # WP-166: publish the built Linux python module so downstream pins (apeGmsh
+      # F2) can download it. Additive step; BUILD_INFO via the shared script.
+      - name: Collect BUILD_INFO.txt
+        run: |
+          export TCL_LIBRARY="$(dirname "$(find ~/.conan2 -name init.tcl -path '*/tcl8.6/*' | head -1)")"
+          bash Ladruno_scripts/make_linux_build_info.sh build/Release build/Release/BUILD_INFO.txt
+      - name: Upload opensees.so artifact (WP-166)
+        uses: actions/upload-artifact@v4
+        with:
+          name: opensees-linux-${{ github.sha }}
+          path: |
+            build/Release/opensees.so
+            build/Release/BUILD_INFO.txt
+          retention-days: 90
+          if-no-files-found: error
       # TCL_LIBRARY (WORKFLOW_GOTCHAS §7), same export the two Tcl steps below
       # already carry: any Zone-A test that shells out to `build/Release/OpenSees`
       # dies before a single OpenSees command is registered without the conan Tcl
@@ -194,6 +268,18 @@ jobs:
       # That test discovers TCL_LIBRARY itself as a fallback, but exporting it
       # here keeps the discovery off the hot path and matches the proven idiom.
       - name: pytest Zone-A
+        env:
+          # WP concrete3d-damage-drive CI fix: LadrunoConcrete3D's flow-potential fuzz
+          # (test_flow_potential_gate, tests/test_ladrunoConcrete3D_material.py) and the g++
+          # self-check's own fuzzes (tests/_testbed/concrete3d_kernel_check.cpp, run by
+          # test_cpp_kernel_matches_oracle_dump) share this knob. Unset it is the FULL trial
+          # count (1500 / 180000 / 90000 / 120000) -- thorough, but ~3 min combined on a fast
+          # box, and one of several contributors (alongside the newly @pytest.mark.slow gates
+          # in the same file) to the Zone-A (Ubuntu) job blowing its 40-min timeout. 200 keeps
+          # both a real smoke of the SAME fuzz (deterministic RNG seeds, so this is a
+          # reproducible subsample, not a weaker gate) on every push; run with --runslow /
+          # LADRUNO_RUN_SLOW=1 and this unset for the full-trial nightly/manual coverage.
+          LADRUNO_FUZZ_TRIALS: "200"
         run: |
           export TCL_LIBRARY="$(dirname "$(find ~/.conan2 -name init.tcl -path '*/tcl8.6/*' | head -1)")"
           cp build/Release/opensees.so tests/
@@ -255,57 +341,49 @@ jobs:
   # "Zone-B is broken", and conflating them makes the check ambiguous.
   cross-tier-nightly:
     name: Full suite, one process (cross-tier leaks)
+    # WP-180: opt-in via the repository variable WINDOWS_RUNNER=true (see
+    # zone-b-nightly below for why).
     if: >-
       github.repository == 'nmorabowen/OpenSees' &&
+      vars.WINDOWS_RUNNER == 'true' &&
       (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: [self-hosted, windows, ladruno-perf]
     steps:
       - uses: actions/checkout@v4
-      # ~50 min. The ONE deselect is the known, deliberately-unfixed
-      # ASDConcrete3D defect (ADR-11 §KNOWN DEFECT, LEDGER_quirks,
-      # Ladruno_files/testbed/asdconcrete_tag_cache/). Deselecting it here does
-      # NOT hide it: the test still fails locally in a full run, which is the
-      # documented expectation, and the sentinel step below fails this job the
-      # moment the defect stops reproducing. Without the deselect this job would
-      # be red every single night, which trains people to ignore it -- and a
-      # permanently-red gate catches nothing.
+      # ~50 min. No deselects: the ASDConcrete3D tag-cache defect this step used to
+      # deselect test_notched_bend_mesh_objectivity for (and the sentinel step that
+      # required it to keep reproducing) was fixed in #990 -- `wipe` now clears the
+      # per-tag HardeningLawStorage (apeGmsh #2044). The bend test must pass in a
+      # full single-process run again; a failure here is a regression.
       - name: Full suite, unfiltered, single process
         shell: pwsh
         run: |
           $env:APEGMSH_SKIP_VIEWER = "1"
           cd tests
-          pytest -v --deselect test_ladrunoBrick_asdconcrete_bend.py::test_notched_bend_mesh_objectivity
-      # Sentinel for the allowance above. Runs the minimal poisoning PAIR (~75 s)
-      # and requires it to FAIL. If someone fixes the material, this goes green,
-      # the step goes red, and whoever fixed it is told to delete the deselect
-      # rather than leaving a stale exemption behind forever.
-      # NB the pair is required: the bend test PASSES on its own (order-dependent),
-      # so asserting on it alone would be meaningless.
-      - name: Sentinel — the known ASDConcrete3D defect still reproduces
-        shell: pwsh
-        run: |
-          cd tests
-          pytest -q test_ladrunoBrick_asdconcrete.py::test_lch_handshake_mesh_objectivity test_ladrunoBrick_asdconcrete_bend.py::test_notched_bend_mesh_objectivity
-          $rc = $LASTEXITCODE
-          if ($rc -eq 0) {
-            Write-Host "::error::The ASDConcrete3D tag-cache defect no longer reproduces."
-            Write-Host "::error::If it was fixed: delete the --deselect in the step above, drop this"
-            Write-Host "::error::sentinel, and update ADR-11 + LEDGER_quirks + the testbed README."
-            exit 1
-          }
-          Write-Host "Sentinel OK - the known defect still reproduces (pytest exit $rc), so the deselect above is still earned."
-          exit 0
+          pytest -v
 
   # ---- Zone-B + perf: nightly, self-hosted oneAPI box -------------------
   # Also runs on manual workflow_dispatch so the self-hosted tier (Zone-B
   # cross-checks, perf, and the ADR-1000 CMS LADRUNO_CMS=ON build+checks) can be
   # validated ON DEMAND once the ladruno-perf runner is (re)registered — instead
-  # of waiting for the 06:00 UTC cron. Needs the self-hosted runner online; when
-  # it is offline the job queues and is cancelled (harmless, but no coverage).
+  # of waiting for the 06:00 UTC cron.
+  #
+  # WP-180: BOTH self-hosted jobs are OPT-IN via the repository variable
+  # WINDOWS_RUNNER=true (Settings -> Secrets and variables -> Actions ->
+  # Variables). Without a runner they are not "harmless": with no ladruno-perf
+  # runner registered (since ~2026-06-20, #934, and by owner choice since
+  # 2026-10-08, WP-179), every nightly AND every workflow_dispatch parked both
+  # jobs QUEUED for GitHub's 24-hour limit before cancelling them. Over
+  # 2026-09-09..10-08 that was 71 runs and ~1,200 run-hours of waiting, against
+  # ~90 h of real Ubuntu work. On 2026-10-09 GitHub paused Actions on this fork
+  # "because of its GitHub Actions usage", which blocked every merge until the
+  # owner re-enabled it. Set the variable only when a runner with the
+  # ladruno-perf label is actually registered.
   zone-b-nightly:
     name: Zone-B + perf (self-hosted)
     if: >-
       github.repository == 'nmorabowen/OpenSees' &&
+      vars.WINDOWS_RUNNER == 'true' &&
       (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: [self-hosted, windows, ladruno-perf]
     steps:
@@ -333,3 +411,41 @@ jobs:
         env:
           LADRUNO_CMS_BUILD: "1"
         run: call Ladruno_scripts\build.bat OpenSeesMP
+
+  # ---- LadrunoConcrete3D on the Windows pyd's libm (apeGmsh #2621 F1) -------
+  # The Windows pyd's atan2/cos/sin/exp/log/pow/acos come from Intel's libmmt (the Fortran objects' /DEFAULTLIB),
+  # not the UCRT, so the kernel testbeds are built here with MSVC + libmmt by concrete3d_replay_libmmt.bat. Two
+  # jobs, kept apart on purpose so a self-check failure cannot hide a replay failure or the reverse. The self-check
+  # runs the full trial count and is neither skipped nor allowed to fail (on d14fb6958 its C7 CDPM2-potential fuzz
+  # failed 1 of 120000 trials under libmmt; ladruno's kernel passes it). Both build against this tree's kernel header; a kernel change
+  # that moves a recorded value fails the replay until its PR re-records the fixture (`.bat record`) and commits the
+  # diff. Opt-in like the jobs above (WP-180: vars.WINDOWS_RUNNER).
+  concrete3d-replay-libmmt:
+    name: Concrete3D record replay (Intel libmmt, bit-exact vs the pyd's records)
+    if: >-
+      github.repository == 'nmorabowen/OpenSees' &&
+      vars.WINDOWS_RUNNER == 'true' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: [self-hosted, windows, ladruno-perf]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Replay the committed libmmt records on this tree's kernel (bit-exact)
+        shell: cmd
+        run: call tests\_testbed\concrete3d_replay_libmmt.bat replay "%RUNNER_TEMP%\c3d_replay"
+      - name: Field-classification contract under libmmt (rows generated from the testbed's field table)
+        shell: cmd
+        run: call tests\_testbed\concrete3d_replay_libmmt.bat contract "%RUNNER_TEMP%\c3d_replay"
+
+  concrete3d-selfcheck-libmmt:
+    name: Concrete3D kernel self-check under Intel libmmt (full trial count)
+    if: >-
+      github.repository == 'nmorabowen/OpenSees' &&
+      vars.WINDOWS_RUNNER == 'true' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: [self-hosted, windows, ladruno-perf]
+    steps:
+      - uses: actions/checkout@v4
+      # the script refuses to run with LADRUNO_FUZZ_TRIALS set: a reduced count never reaches a rare trial (d14fb6958 failed C7 at 1 in 120000)
+      - name: concrete3d_kernel_check.cpp under libmmt, full trials
+        shell: cmd
+        run: call tests\_testbed\concrete3d_replay_libmmt.bat selfcheck "%RUNNER_TEMP%\c3d_selfcheck"

@@ -37,6 +37,8 @@
 
 #include <ProfileSPDLinDirectSolver.h>
 #include <ProfileSPDLinSOE.h>
+#include <elementAPI.h>   // Ladruno WP-221: -strictSymmetry option parse
+#include <string.h>
 #include <math.h>
 #include <stdlib.h>
 
@@ -46,8 +48,21 @@
 
 void* OPS_ProfileSPDLinDirectSolver()
 {
+    // Ladruno WP-221: `system ProfileSPD -strictSymmetry` -- the asymmetry
+    // guard checks every assembly and a detected asymmetry fails the solve
+    // (see ProfileSPDLinSOE::solve). Unknown options warn.
+    int strictSym = 0;
+    while (OPS_GetNumRemainingInputArgs() > 0) {
+        const char *opt = OPS_GetString();
+        if (strcmp(opt, "-strictSymmetry") == 0)
+            strictSym = 1;
+        else
+            opserr << "WARNING system ProfileSPD - unknown option " << opt
+                   << ", ignored\n";
+    }
     ProfileSPDLinSolver *theSolver = new ProfileSPDLinDirectSolver();
     ProfileSPDLinSOE* theSOE = new ProfileSPDLinSOE(*theSolver);
+    theSOE->setStrictSymmetry(strictSym);
     return theSOE;
 }
 

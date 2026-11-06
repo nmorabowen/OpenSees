@@ -68,6 +68,7 @@
 #define LadrunoCohesiveHinge_h
 
 #include <UniaxialMaterial.h>
+#include <LadrunoImplexClock.h>
 
 class LadrunoCohesiveHinge : public UniaxialMaterial
 {
@@ -77,7 +78,13 @@ class LadrunoCohesiveHinge : public UniaxialMaterial
   LadrunoCohesiveHinge(int tag, double Mc, double Gf,
                        double Kpen = -1.0,            // <0 -> default penaltyRatio*floor
                        int shape = EXP,
-                       double penaltyRatio = 1000.0);
+                       double penaltyRatio = 1000.0,
+                       double P0 = 0.0,
+                       double alphaPM = 0.5,
+                       bool implex = false,
+                       double P0t = 0.0,
+                       double Pbal = 0.0,
+                       double muBal = 1.0);
   LadrunoCohesiveHinge();
   ~LadrunoCohesiveHinge();
 
@@ -87,8 +94,26 @@ class LadrunoCohesiveHinge : public UniaxialMaterial
   double getStrain(void)         { return Tstrain; }
   double getStress(void)         { return Tstress; }
   double getTangent(void)        { return Ttangent; }
-  double getInitialTangent(void) { return Kpen; }   // near-rigid: hinge starts closed
+  double getInitialTangent(void) { return (P0 > 0.0) ? Kpen * getPMMultiplier() : Kpen; }   // near-rigid: hinge starts closed
   double getEnergy(void)         { return Twork; }   // path work int M d[[theta]]
+
+  void setAxialForce(double P)   { P_axial = P; }
+  double getAxialForce(void) const { return P_axial; }
+  double getPMMultiplier(void) const;
+  double getPMDerivative(void) const;
+  void setPM(double p0, double apm) { P0 = p0; alphaPM = apm; P0t = 0.0; Pbal = 0.0; }
+  void setPMBal(double p0c, double p0t, double pbal, double mubal) {
+    P0 = p0c; P0t = p0t; Pbal = pbal; muBal = mubal;
+  }
+  bool hasPM(void) const         { return P0 > 0.0; }
+  bool isImplex(void) const      { return implex; }
+  void setImplex(bool flag)      { implex = flag; }
+  void setImplexClock(int m)     { implexClock.mode = m; }   // WP-217: LadrunoImplexClock::STEP | PSEUDO
+  int  getImplexClock(void) const { return implexClock.mode; }
+  double getImplexError(void) const;
+
+  bool ladrunoThreadSafeUpdate(void) const { return true; }
+  bool ladrunoThreadSafeForm(void) const   { return true; }
 
   int commitState(void);
   int revertToLastCommit(void);
@@ -104,6 +129,9 @@ class LadrunoCohesiveHinge : public UniaxialMaterial
   Response* setResponse(const char** argv, int argc, OPS_Stream& s);
   int getResponse(int responseID, Information& matInfo);
 
+  int setParameter(const char** argv, int argc, Parameter& param);
+  int updateParameter(int parameterID, Information& info);
+
  private:
   // calibrate kappa0 / aExp / kappaf from (Mc, Gf, Kpen, shape); enforce the floor.
   void computeDerived(void);
@@ -114,8 +142,18 @@ class LadrunoCohesiveHinge : public UniaxialMaterial
   double Mc;            // cohesive moment capacity (peak)
   double Gf;            // fracture energy per hinge (energy units)
   double Kpen;          // near-rigid penalty stiffness
+  bool   userKpen;      // true if user explicitly specified -penalty / Kpen > 0
   int    shape;         // EXP or LINEAR
   double penaltyRatio;  // default-penalty multiple of the floor (record for getCopy)
+  double P0;            // axial compressive capacity for P-M interaction (<=0 disables)
+  double alphaPM;       // parabolic P-M interaction coefficient
+  double P0t;           // tensile axial capacity for -pmBal (>0 enables 4-parameter RC balance law)
+  double Pbal;          // compressive balance axial load for -pmBal (0 < Pbal < P0)
+  double muBal;         // balance moment ratio M_bal / M_0 for -pmBal
+  bool   implex;        // Oliver et al. (2008) IMPL-EX integration flag
+
+  // transient axial force supplied by parent beam element
+  double P_axial;
 
   // derived (rebuilt by computeDerived, never serialized)
   double kappa0;        // Mc/Kpen   -- jump at activation
@@ -124,9 +162,13 @@ class LadrunoCohesiveHinge : public UniaxialMaterial
 
   // committed history
   double CkappaMax;     // max |kappa| ever seen (irreversible damage driver)
+  double CkappaMax_old; // previous step committed max |kappa| (for IMPL-EX extrapolation)
   double Cstrain;       // committed jump   (work-integral anchor)
   double Cstress;       // committed moment (work-integral anchor)
   double Cwork;         // committed path work int M d[[theta]]
+  double dtime_n_commit;
+  int    implexCommittedSteps;
+  LadrunoImplexClock implexClock;   // WP-217: per-step frozen extrapolation factor
 
   // trial state
   double Tstrain;

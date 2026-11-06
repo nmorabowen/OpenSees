@@ -43,8 +43,8 @@
 #include <PDeltaCrdTransf3d.h>
 
 // initialize static variables
-Matrix PDeltaCrdTransf3d::Tlg(12,12);
-Matrix PDeltaCrdTransf3d::kg(12,12);
+thread_local Matrix PDeltaCrdTransf3d::Tlg(12,12);   // Ladruno
+thread_local Matrix PDeltaCrdTransf3d::kg(12,12);   // Ladruno
 
 void* OPS_PDeltaCrdTransf3d()
 {
@@ -235,9 +235,9 @@ PDeltaCrdTransf3d::initialize(Node *nodeIPointer, Node *nodeJPointer)
     if ((error = this->computeElemtLengthAndOrient()))
         return error;
     
-    static Vector XAxis(3);
-    static Vector YAxis(3);
-    static Vector ZAxis(3);
+    static thread_local Vector XAxis(3);   // Ladruno
+    static thread_local Vector YAxis(3);   // Ladruno
+    static thread_local Vector ZAxis(3);   // Ladruno
     
     // get 3by3 rotation matrix
     if ((error = this->getLocalAxes(XAxis, YAxis, ZAxis)))      
@@ -253,7 +253,7 @@ PDeltaCrdTransf3d::update(void)
     const Vector &disp1 = nodeIPtr->getTrialDisp();
     const Vector &disp2 = nodeJPtr->getTrialDisp();
     
-    static double ug[12];
+    static thread_local double ug[12];   // Ladruno
     for (int i = 0; i < 6; i++) {
         ug[i]   = disp1(i);
         ug[i+6] = disp2(i);
@@ -277,7 +277,7 @@ PDeltaCrdTransf3d::update(void)
     ul7 = R[1][0]*ug[6] + R[1][1]*ug[7] + R[1][2]*ug[8];
     ul8 = R[2][0]*ug[6] + R[2][1]*ug[7] + R[2][2]*ug[8];
     
-    static double Wu[3];
+    static thread_local double Wu[3];   // Ladruno
     
     if (nodeIOffset) {
         Wu[0] =  nodeIOffset[2]*ug[4] - nodeIOffset[1]*ug[5];
@@ -308,7 +308,7 @@ int
 PDeltaCrdTransf3d::computeElemtLengthAndOrient()
 {
     // element projection
-    static Vector dx(3);
+    static thread_local Vector dx(3);   // Ladruno
     
     const Vector &ndICoords = nodeIPtr->getCrds();
     const Vector &ndJCoords = nodeJPtr->getCrds();
@@ -383,14 +383,14 @@ PDeltaCrdTransf3d::getLocalAxes(Vector &XAxis, Vector &YAxis, Vector &ZAxis)
 {
     // Compute y = v cross x
     // Note: v(i) is stored in R[2][i]
-    static Vector vAxis(3);
+    static thread_local Vector vAxis(3);   // Ladruno
     vAxis(0) = R[2][0];	vAxis(1) = R[2][1];	vAxis(2) = R[2][2];
     
-    static Vector xAxis(3);
+    static thread_local Vector xAxis(3);   // Ladruno
     xAxis(0) = R[0][0];	xAxis(1) = R[0][1];	xAxis(2) = R[0][2];
     XAxis(0) = xAxis(0);    XAxis(1) = xAxis(1);    XAxis(2) = xAxis(2);
     
-    static Vector yAxis(3);
+    static thread_local Vector yAxis(3);   // Ladruno
     
     yAxis(0) = vAxis(1)*xAxis(2) - vAxis(2)*xAxis(1);
     yAxis(1) = vAxis(2)*xAxis(0) - vAxis(0)*xAxis(2);
@@ -409,7 +409,7 @@ PDeltaCrdTransf3d::getLocalAxes(Vector &XAxis, Vector &YAxis, Vector &ZAxis)
     YAxis(0) = yAxis(0);    YAxis(1) = yAxis(1);    YAxis(2) = yAxis(2);
     
     // Compute z = x cross y
-    static Vector zAxis(3);
+    static thread_local Vector zAxis(3);   // Ladruno
     
     zAxis(0) = xAxis(1)*yAxis(2) - xAxis(2)*yAxis(1);
     zAxis(1) = xAxis(2)*yAxis(0) - xAxis(0)*yAxis(2);
@@ -466,7 +466,7 @@ PDeltaCrdTransf3d::getBasicTrialDisp(void)
     const Vector &disp1 = nodeIPtr->getTrialDisp();
     const Vector &disp2 = nodeJPtr->getTrialDisp();
     
-    static double ug[12];
+    static thread_local double ug[12];   // Ladruno
     for (int i = 0; i < 6; i++) {
         ug[i]   = disp1(i);
         ug[i+6] = disp2(i);
@@ -484,9 +484,9 @@ PDeltaCrdTransf3d::getBasicTrialDisp(void)
     
     double oneOverL = 1.0/L;
     
-    static Vector ub(6);
+    static thread_local Vector ub(6);   // Ladruno
     
-    static double ul[12];
+    static thread_local double ul[12];   // Ladruno
     
     ul[0]  = R[0][0]*ug[0] + R[0][1]*ug[1] + R[0][2]*ug[2];
     ul[1]  = R[1][0]*ug[0] + R[1][1]*ug[1] + R[1][2]*ug[2];
@@ -504,7 +504,7 @@ PDeltaCrdTransf3d::getBasicTrialDisp(void)
     ul[10] = R[1][0]*ug[9] + R[1][1]*ug[10] + R[1][2]*ug[11];
     ul[11] = R[2][0]*ug[9] + R[2][1]*ug[10] + R[2][2]*ug[11];
     
-    static double Wu[3];
+    static thread_local double Wu[3];   // Ladruno
     if (nodeIOffset) {
         Wu[0] =  nodeIOffset[2]*ug[4] - nodeIOffset[1]*ug[5];
         Wu[1] = -nodeIOffset[2]*ug[3] + nodeIOffset[0]*ug[5];
@@ -546,7 +546,7 @@ PDeltaCrdTransf3d::getBasicIncrDisp(void)
     const Vector &disp1 = nodeIPtr->getIncrDisp();
     const Vector &disp2 = nodeJPtr->getIncrDisp();
     
-    static double ug[12];
+    static thread_local double ug[12];   // Ladruno
     for (int i = 0; i < 6; i++) {
         ug[i]   = disp1(i);
         ug[i+6] = disp2(i);
@@ -554,9 +554,9 @@ PDeltaCrdTransf3d::getBasicIncrDisp(void)
     
     double oneOverL = 1.0/L;
     
-    static Vector ub(6);
+    static thread_local Vector ub(6);   // Ladruno
     
-    static double ul[12];
+    static thread_local double ul[12];   // Ladruno
     
     ul[0]  = R[0][0]*ug[0] + R[0][1]*ug[1] + R[0][2]*ug[2];
     ul[1]  = R[1][0]*ug[0] + R[1][1]*ug[1] + R[1][2]*ug[2];
@@ -574,7 +574,7 @@ PDeltaCrdTransf3d::getBasicIncrDisp(void)
     ul[10] = R[1][0]*ug[9] + R[1][1]*ug[10] + R[1][2]*ug[11];
     ul[11] = R[2][0]*ug[9] + R[2][1]*ug[10] + R[2][2]*ug[11];
     
-    static double Wu[3];
+    static thread_local double Wu[3];   // Ladruno
     if (nodeIOffset) {
         Wu[0] =  nodeIOffset[2]*ug[4] - nodeIOffset[1]*ug[5];
         Wu[1] = -nodeIOffset[2]*ug[3] + nodeIOffset[0]*ug[5];
@@ -616,7 +616,7 @@ PDeltaCrdTransf3d::getBasicIncrDeltaDisp(void)
     const Vector &disp1 = nodeIPtr->getIncrDeltaDisp();
     const Vector &disp2 = nodeJPtr->getIncrDeltaDisp();
     
-    static double ug[12];
+    static thread_local double ug[12];   // Ladruno
     for (int i = 0; i < 6; i++) {
         ug[i]   = disp1(i);
         ug[i+6] = disp2(i);
@@ -624,9 +624,9 @@ PDeltaCrdTransf3d::getBasicIncrDeltaDisp(void)
     
     double oneOverL = 1.0/L;
     
-    static Vector ub(6);
+    static thread_local Vector ub(6);   // Ladruno
     
-    static double ul[12];
+    static thread_local double ul[12];   // Ladruno
     
     ul[0]  = R[0][0]*ug[0] + R[0][1]*ug[1] + R[0][2]*ug[2];
     ul[1]  = R[1][0]*ug[0] + R[1][1]*ug[1] + R[1][2]*ug[2];
@@ -644,7 +644,7 @@ PDeltaCrdTransf3d::getBasicIncrDeltaDisp(void)
     ul[10] = R[1][0]*ug[9] + R[1][1]*ug[10] + R[1][2]*ug[11];
     ul[11] = R[2][0]*ug[9] + R[2][1]*ug[10] + R[2][2]*ug[11];
     
-    static double Wu[3];
+    static thread_local double Wu[3];   // Ladruno
     if (nodeIOffset) {
         Wu[0] =  nodeIOffset[2]*ug[4] - nodeIOffset[1]*ug[5];
         Wu[1] = -nodeIOffset[2]*ug[3] + nodeIOffset[0]*ug[5];
@@ -686,7 +686,7 @@ PDeltaCrdTransf3d::getBasicTrialVel(void)
 	const Vector &vel1 = nodeIPtr->getTrialVel();
 	const Vector &vel2 = nodeJPtr->getTrialVel();
 	
-	static double vg[12];
+	static thread_local double vg[12];   // Ladruno
 	for (int i = 0; i < 6; i++) {
 		vg[i]   = vel1(i);
 		vg[i+6] = vel2(i);
@@ -694,9 +694,9 @@ PDeltaCrdTransf3d::getBasicTrialVel(void)
 	
 	double oneOverL = 1.0/L;
 	
-	static Vector vb(6);
+	static thread_local Vector vb(6);   // Ladruno
 	
-	static double vl[12];
+	static thread_local double vl[12];   // Ladruno
 	
 	vl[0]  = R[0][0]*vg[0] + R[0][1]*vg[1] + R[0][2]*vg[2];
 	vl[1]  = R[1][0]*vg[0] + R[1][1]*vg[1] + R[1][2]*vg[2];
@@ -714,7 +714,7 @@ PDeltaCrdTransf3d::getBasicTrialVel(void)
 	vl[10] = R[1][0]*vg[9] + R[1][1]*vg[10] + R[1][2]*vg[11];
 	vl[11] = R[2][0]*vg[9] + R[2][1]*vg[10] + R[2][2]*vg[11];
 	
-	static double Wu[3];
+	static thread_local double Wu[3];   // Ladruno
 	if (nodeIOffset) {
 		Wu[0] =  nodeIOffset[2]*vg[4] - nodeIOffset[1]*vg[5];
 		Wu[1] = -nodeIOffset[2]*vg[3] + nodeIOffset[0]*vg[5];
@@ -756,7 +756,7 @@ PDeltaCrdTransf3d::getBasicTrialAccel(void)
 	const Vector &accel1 = nodeIPtr->getTrialAccel();
 	const Vector &accel2 = nodeJPtr->getTrialAccel();
 	
-	static double ag[12];
+	static thread_local double ag[12];   // Ladruno
 	for (int i = 0; i < 6; i++) {
 		ag[i]   = accel1(i);
 		ag[i+6] = accel2(i);
@@ -764,9 +764,9 @@ PDeltaCrdTransf3d::getBasicTrialAccel(void)
 	
 	double oneOverL = 1.0/L;
 	
-	static Vector ab(6);
+	static thread_local Vector ab(6);   // Ladruno
 	
-	static double al[12];
+	static thread_local double al[12];   // Ladruno
 	
 	al[0]  = R[0][0]*ag[0] + R[0][1]*ag[1] + R[0][2]*ag[2];
 	al[1]  = R[1][0]*ag[0] + R[1][1]*ag[1] + R[1][2]*ag[2];
@@ -784,7 +784,7 @@ PDeltaCrdTransf3d::getBasicTrialAccel(void)
 	al[10] = R[1][0]*ag[9] + R[1][1]*ag[10] + R[1][2]*ag[11];
 	al[11] = R[2][0]*ag[9] + R[2][1]*ag[10] + R[2][2]*ag[11];
 	
-	static double Wu[3];
+	static thread_local double Wu[3];   // Ladruno
 	if (nodeIOffset) {
 		Wu[0] =  nodeIOffset[2]*ag[4] - nodeIOffset[1]*ag[5];
 		Wu[1] = -nodeIOffset[2]*ag[3] + nodeIOffset[0]*ag[5];
@@ -823,7 +823,7 @@ const Vector &
 PDeltaCrdTransf3d::getGlobalResistingForce(const Vector &pb, const Vector &p0)
 {
     // transform resisting forces from the basic system to local coordinates
-    static double pl[12];
+    static thread_local double pl[12];   // Ladruno
     
     double q0 = pb(0);
     double q1 = pb(1);
@@ -863,7 +863,7 @@ PDeltaCrdTransf3d::getGlobalResistingForce(const Vector &pb, const Vector &p0)
     pl[8] -= NoverL;
     
     // transform resisting forces  from local to global coordinates
-    static Vector pg(12);
+    static thread_local Vector pg(12);   // Ladruno
     
     pg(0)  = R[0][0]*pl[0] + R[1][0]*pl[1] + R[2][0]*pl[2];
     pg(1)  = R[0][1]*pl[0] + R[1][1]*pl[1] + R[2][1]*pl[2];
@@ -900,9 +900,9 @@ PDeltaCrdTransf3d::getGlobalResistingForce(const Vector &pb, const Vector &p0)
 const Matrix &
 PDeltaCrdTransf3d::getGlobalStiffMatrix(const Matrix &KB, const Vector &pb)
 {
-    static double kb[6][6];		// Basic stiffness
-    static double kl[12][12];	// Local stiffness
-    static double tmp[12][12];	// Temporary storage
+    static thread_local double kb[6][6];		// Basic stiffness   // Ladruno
+    static thread_local double kl[12][12];	// Local stiffness   // Ladruno
+    static thread_local double tmp[12][12];	// Temporary storage   // Ladruno
     double oneOverL = 1.0/L;
     
     int i,j;
@@ -954,7 +954,7 @@ PDeltaCrdTransf3d::getGlobalStiffMatrix(const Matrix &KB, const Vector &pb)
         kl[2][8] -= NoverL;
         kl[8][2] -= NoverL;
         
-        static double RWI[3][3];
+        static thread_local double RWI[3][3];   // Ladruno
         
         if (nodeIOffset) {
             // Compute RWI
@@ -971,7 +971,7 @@ PDeltaCrdTransf3d::getGlobalStiffMatrix(const Matrix &KB, const Vector &pb)
             RWI[2][2] = -R[2][0]*nodeIOffset[1] + R[2][1]*nodeIOffset[0];
         }
         
-        static double RWJ[3][3];
+        static thread_local double RWJ[3][3];   // Ladruno
         
         if (nodeJOffset) {
             // Compute RWJ
@@ -1060,9 +1060,9 @@ PDeltaCrdTransf3d::getGlobalStiffMatrix(const Matrix &KB, const Vector &pb)
 const Matrix &
 PDeltaCrdTransf3d::getInitialGlobalStiffMatrix(const Matrix &KB)
 {
-    static double kb[6][6];		// Basic stiffness
-    static double kl[12][12];	// Local stiffness
-    static double tmp[12][12];	// Temporary storage
+    static thread_local double kb[6][6];		// Basic stiffness   // Ladruno
+    static thread_local double kl[12][12];	// Local stiffness   // Ladruno
+    static thread_local double tmp[12][12];	// Temporary storage   // Ladruno
     double oneOverL = 1.0/L;
     
     int i,j;
@@ -1115,7 +1115,7 @@ PDeltaCrdTransf3d::getInitialGlobalStiffMatrix(const Matrix &KB)
         //kl[8][2] -= NoverL;
         
         
-        static double RWI[3][3];
+        static thread_local double RWI[3][3];   // Ladruno
         
         if (nodeIOffset) {
             // Compute RWI
@@ -1132,7 +1132,7 @@ PDeltaCrdTransf3d::getInitialGlobalStiffMatrix(const Matrix &KB)
             RWI[2][2] = -R[2][0]*nodeIOffset[1] + R[2][1]*nodeIOffset[0];
         }
         
-        static double RWJ[3][3];
+        static thread_local double RWJ[3][3];   // Ladruno
         
         if (nodeJOffset) {
             // Compute RWJ
@@ -1226,7 +1226,7 @@ PDeltaCrdTransf3d::getCopy3d(void)
     
     PDeltaCrdTransf3d *theCopy;
     
-    static Vector xz(3);
+    static thread_local Vector xz(3);   // Ladruno
     xz(0) = R[2][0];
     xz(1) = R[2][1];
     xz(2) = R[2][2];
@@ -1267,7 +1267,7 @@ PDeltaCrdTransf3d::sendSelf(int cTag, Channel &theChannel)
 {
     int res = 0;
     
-    static Vector data(23);
+    static thread_local Vector data(23);   // Ladruno
     data(0) = this->getTag();
     data(1) = L;
     
@@ -1342,7 +1342,7 @@ PDeltaCrdTransf3d::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &the
 {
     int res = 0;
     
-    static Vector data(23);
+    static thread_local Vector data(23);   // Ladruno
     
     res += theChannel.recvVector(this->getDbTag(), cTag, data);
     if (res < 0) {
@@ -1418,7 +1418,7 @@ PDeltaCrdTransf3d::getGlobalMatrixFromLocal(const Matrix &ml)
 const Vector &
 PDeltaCrdTransf3d::getPointGlobalCoordFromLocal(const Vector &xl)
 {
-    static Vector xg(3);
+    static thread_local Vector xg(3);   // Ladruno
     
     //xg = nodeIPtr->getCrds() + nodeIOffset;
     xg = nodeIPtr->getCrds();
@@ -1446,7 +1446,7 @@ PDeltaCrdTransf3d::getPointGlobalDisplFromBasic(double xi, const Vector &uxb)
     const Vector &disp1 = nodeIPtr->getTrialDisp();
     const Vector &disp2 = nodeJPtr->getTrialDisp();
     
-    static double ug[12];
+    static thread_local double ug[12];   // Ladruno
     for (int i = 0; i < 6; i++)
     {
         ug[i]   = disp1(i);
@@ -1465,7 +1465,7 @@ PDeltaCrdTransf3d::getPointGlobalDisplFromBasic(double xi, const Vector &uxb)
     
     // transform global end displacements to local coordinates
     //ul.addMatrixVector(0.0, Tlg,  ug, 1.0);       //  ul = Tlg *  ug;
-    static double ul[12];
+    static thread_local double ul[12];   // Ladruno
     
     ul[0]  = R[0][0]*ug[0] + R[0][1]*ug[1] + R[0][2]*ug[2];
     ul[1]  = R[1][0]*ug[0] + R[1][1]*ug[1] + R[1][2]*ug[2];
@@ -1474,7 +1474,7 @@ PDeltaCrdTransf3d::getPointGlobalDisplFromBasic(double xi, const Vector &uxb)
     ul[7]  = R[1][0]*ug[6] + R[1][1]*ug[7] + R[1][2]*ug[8];
     ul[8]  = R[2][0]*ug[6] + R[2][1]*ug[7] + R[2][2]*ug[8];
     
-    static double Wu[3];
+    static thread_local double Wu[3];   // Ladruno
     if (nodeIOffset) {
         Wu[0] =  nodeIOffset[2]*ug[4] - nodeIOffset[1]*ug[5];
         Wu[1] = -nodeIOffset[2]*ug[3] + nodeIOffset[0]*ug[5];
@@ -1495,8 +1495,8 @@ PDeltaCrdTransf3d::getPointGlobalDisplFromBasic(double xi, const Vector &uxb)
     }
     
     // compute displacements at point xi, in local coordinates
-    static double uxl[3];
-    static Vector uxg(3);
+    static thread_local double uxl[3];   // Ladruno
+    static thread_local Vector uxg(3);   // Ladruno
     
     uxl[0] = uxb(0) +        ul[0];
     uxl[1] = uxb(1) + (1-xi)*ul[1] + xi*ul[7];
@@ -1520,7 +1520,7 @@ PDeltaCrdTransf3d::getPointLocalDisplFromBasic(double xi, const Vector &uxb)
     const Vector &disp1 = nodeIPtr->getTrialDisp();
     const Vector &disp2 = nodeJPtr->getTrialDisp();
     
-    static double ug[12];
+    static thread_local double ug[12];   // Ladruno
     for (int i = 0; i < 6; i++)
     {
         ug[i]   = disp1(i);
@@ -1539,7 +1539,7 @@ PDeltaCrdTransf3d::getPointLocalDisplFromBasic(double xi, const Vector &uxb)
     
     // transform global end displacements to local coordinates
     //ul.addMatrixVector(0.0, Tlg,  ug, 1.0);       //  ul = Tlg *  ug;
-    static double ul[12];
+    static thread_local double ul[12];   // Ladruno
     
     ul[0]  = R[0][0]*ug[0] + R[0][1]*ug[1] + R[0][2]*ug[2];
     ul[1]  = R[1][0]*ug[0] + R[1][1]*ug[1] + R[1][2]*ug[2];
@@ -1548,7 +1548,7 @@ PDeltaCrdTransf3d::getPointLocalDisplFromBasic(double xi, const Vector &uxb)
     ul[7]  = R[1][0]*ug[6] + R[1][1]*ug[7] + R[1][2]*ug[8];
     ul[8]  = R[2][0]*ug[6] + R[2][1]*ug[7] + R[2][2]*ug[8];
     
-    static double Wu[3];
+    static thread_local double Wu[3];   // Ladruno
     if (nodeIOffset) {
         Wu[0] =  nodeIOffset[2]*ug[4] - nodeIOffset[1]*ug[5];
         Wu[1] = -nodeIOffset[2]*ug[3] + nodeIOffset[0]*ug[5];
@@ -1569,7 +1569,7 @@ PDeltaCrdTransf3d::getPointLocalDisplFromBasic(double xi, const Vector &uxb)
     }
     
     // compute displacements at point xi, in local coordinates
-    static Vector uxl(3);
+    static thread_local Vector uxl(3);   // Ladruno
     
     uxl(0) = uxb(0) +        ul[0];
     uxl(1) = uxb(1) + (1-xi)*ul[1] + xi*ul[7];

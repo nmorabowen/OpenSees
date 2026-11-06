@@ -1,0 +1,326 @@
+{
+ "E_A": {
+  "steps": 189,
+  "s_over_B_end": 0.0292275,
+  "q_end": 701.803435,
+  "accepted_by_rung": {
+   "N": 23,
+   "L": 10,
+   "K": 156
+  },
+  "frac_K": 0.8253968253968254,
+  "frac_K_last20": 1.0,
+  "frac_settlement_on_K": 0.8852393579106435,
+  "K_iters_median": 24.0,
+  "K_accepted_at_it1": 14,
+  "first_10_K_in_a_row": [
+   33,
+   0.00904
+  ],
+  "failed_rungs_total": 415,
+  "failed_rung_causes": {
+   "N:DIVERGENCE": 182,
+   "L:DIVERGENCE": 146,
+   "K:DIVERGENCE": 19,
+   "L:REFUSAL": 41,
+   "K:REFUSAL": 12,
+   "N:REFUSAL": 15
+  },
+  "floor_ladder_rungs": 18,
+  "floor_ladder_causes": {
+   "REFUSAL": 17,
+   "DIVERGENCE": 1
+  },
+  "N_fail_norm_over_tol_last40": {
+   "n": 40,
+   "median": 13.5,
+   "min": 3.61,
+   "max": 111.0
+  },
+  "refusals_total": 542,
+  "refusals_last20": 310,
+  "ds_last": 7.8125e-06,
+  "ds_min_accepted": 7.8125e-06,
+  "floor_census": {
+   "ckpt": 185,
+   "steps_after_ckpt": [
+    186,
+    187,
+    188,
+    189
+   ],
+   "refusals_in_those_converged_steps": 30,
+   "capHits_ckpt_to_floor_incl_floor_ladder": 54,
+   "floor_ladder_capHits_est": 24,
+   "forcedAtDTmin_ckpt_to_floor": 848,
+   "rejectedLowP_ckpt_to_floor": 91,
+   "abandonedLowP_ckpt_to_floor": 0,
+   "n_points_refusing": 6,
+   "n_rho_gt_1": 24,
+   "rho_gt_1_x_range": [
+    -0.8978765877365275,
+    0.8978765877365275
+   ],
+   "rho_gt_1_y_range": [
+    -1.5396234122634727,
+    -0.039623412263472574
+   ],
+   "rho_gt_1_p_range": [
+    56.59240729401451,
+    297.65067152858677
+   ],
+   "rho_max": 1.0299377925171387,
+   "p_min": 2.491351156749374,
+   "n_p_lt_1kPa": 0
+  }
+ },
+ "E_B": {
+  "steps": 377,
+  "s_over_B_end": 0.05084208333,
+  "q_end": 966.714653,
+  "accepted_by_rung": {
+   "N": 24,
+   "L": 11,
+   "K": 342
+  },
+  "frac_K": 0.9071618037135278,
+  "frac_K_last20": 1.0,
+  "frac_settlement_on_K": 0.9092615212718211,
+  "K_iters_median": 25.0,
+  "K_accepted_at_it1": 42,
+  "first_10_K_in_a_row": [
+   36,
+   0.01104
+  ],
+  "failed_rungs_total": 868,
+  "failed_rung_causes": {
+   "N:DIVERGENCE": 391,
+   "L:DIVERGENCE": 281,
+   "K:DIVERGENCE": 36,
+   "L:REFUSAL": 119,
+   "N:REFUSAL": 20,
+   "K:REFUSAL": 21
+  },
+  "floor_ladder_rungs": 23,
+  "floor_ladder_causes": {
+   "REFUSAL": 21,
+   "DIVERGENCE": 2
+  },
+  "N_fail_norm_over_tol_last40": {
+   "n": 41,
+   "median": 8.45,
+   "min": 5.87,
+   "max": 14.2
+  },
+  "refusals_total": 442,
+  "refusals_last20": 50,
+  "ds_last": 1.5625e-05,
+  "ds_min_accepted": 3.9063e-06,
+  "floor_census": {
+   "ckpt": 375,
+   "steps_after_ckpt": [
+    376,
+    377
+   ],
+   "refusals_in_those_converged_steps": 4,
+   "refusals_ckpt_to_floor_incl_floor_ladder": 30,
+   "floor_ladder_refusals_est": 26,
+   "by_code_ckpt_to_floor": {
+    "loadingNonPosH": 30
+   },
+   "n_points_refusing": 2,
+   "n_rho_gt_1": 81,
+   "rho_gt_1_x_range": [
+    -0.8978765877365275,
+    0.8978765877365275
+   ],
+   "rho_gt_1_y_range": [
+    -2.617661462168689,
+    -0.039623412263472574
+   ],
+   "rho_gt_1_p_range": [
+    53.29645812796134,
+    123.22264429874483
+   ],
+   "rho_max": 1.0070704901541747,
+   "p_min": 2.1708916473859943,
+   "n_p_lt_1kPa": 0
+  }
+ },
+ "E_D": {
+  "steps": 389,
+  "s_over_B_end": 0.04099833333,
+  "q_end": 808.312102,
+  "accepted_by_rung": {
+   "N": 24,
+   "L": 7,
+   "K": 358
+  },
+  "frac_K": 0.9203084832904884,
+  "frac_K_last20": 1.0,
+  "frac_settlement_on_K": 0.9291028090572785,
+  "K_iters_median": 18.0,
+  "K_accepted_at_it1": 88,
+  "first_10_K_in_a_row": [
+   32,
+   0.008373333333
+  ],
+  "failed_rungs_total": 906,
+  "failed_rung_causes": {
+   "N:DIVERGENCE": 380,
+   "L:DIVERGENCE": 239,
+   "K:DIVERGENCE": 24,
+   "L:REFUSAL": 180,
+   "K:REFUSAL": 37,
+   "N:REFUSAL": 46
+  },
+  "floor_ladder_rungs": 36,
+  "floor_ladder_causes": {
+   "REFUSAL": 36
+  },
+  "N_fail_norm_over_tol_last40": {
+   "n": 40,
+   "median": 9.21,
+   "min": 6.06,
+   "max": 11.5
+  },
+  "refusals_total": 13680,
+  "refusals_last20": 1473,
+  "ds_last": 3.125e-05,
+  "ds_min_accepted": 7.8125e-06,
+  "floor_census": {
+   "ckpt": 385,
+   "steps_after_ckpt": [
+    386,
+    387,
+    388,
+    389
+   ],
+   "refusals_in_those_converged_steps": 9,
+   "refusals_ckpt_to_floor_incl_floor_ladder": 33,
+   "floor_ladder_refusals_est": 24,
+   "by_code_ckpt_to_floor": {
+    "loadingNonPosH": 25,
+    "maxSubsteps": 8
+   },
+   "n_points_refusing": 6,
+   "n_rho_gt_1": 0,
+   "p_min": 3.236513174783482,
+   "n_p_lt_1kPa": 0
+  }
+ },
+ "E_B16": {
+  "steps": 77,
+  "s_over_B_end": 0.01351916667,
+  "q_end": 352.797925,
+  "accepted_by_rung": {
+   "N": 24,
+   "L": 6,
+   "K": 47
+  },
+  "frac_K": 0.6103896103896104,
+  "frac_K_last20": 1.0,
+  "frac_settlement_on_K": 0.8165567404302534,
+  "K_iters_median": 19.0,
+  "K_accepted_at_it1": 3,
+  "first_10_K_in_a_row": [
+   31,
+   0.007706666667
+  ],
+  "failed_rungs_total": 163,
+  "failed_rung_causes": {
+   "N:DIVERGENCE": 59,
+   "L:DIVERGENCE": 44,
+   "K:DIVERGENCE": 6,
+   "L:REFUSAL": 24,
+   "N:REFUSAL": 15,
+   "K:REFUSAL": 15
+  },
+  "floor_ladder_rungs": 36,
+  "floor_ladder_causes": {
+   "REFUSAL": 36
+  },
+  "N_fail_norm_over_tol_last40": {
+   "n": 46,
+   "median": 11.7,
+   "min": 7.8,
+   "max": 15.5
+  },
+  "refusals_total": 126,
+  "refusals_last20": 126,
+  "ds_last": 3.125e-05,
+  "ds_min_accepted": 2e-05,
+  "floor_census": {
+   "ckpt": 75,
+   "steps_after_ckpt": [
+    76,
+    77
+   ],
+   "refusals_in_those_converged_steps": 11,
+   "refusals_ckpt_to_floor_incl_floor_ladder": 35,
+   "floor_ladder_refusals_est": 24,
+   "by_code_ckpt_to_floor": {
+    "loadingNonPosH": 35
+   },
+   "n_points_refusing": 1,
+   "n_rho_gt_1": 2,
+   "rho_gt_1_x_range": [
+    -0.7698117061317363,
+    0.7698117061317363
+   ],
+   "rho_gt_1_y_range": [
+    -0.019811706131736287,
+    -0.019811706131736287
+   ],
+   "rho_gt_1_p_range": [
+    140.9451170052874,
+    141.2220305306302
+   ],
+   "rho_max": 1.0045488410616723,
+   "p_min": 3.9258924735514804,
+   "n_p_lt_1kPa": 0
+  }
+ },
+ "E_C2": {
+  "steps": 2050,
+  "s_over_B_end": 0.01123041667,
+  "q_end": 312.364216,
+  "accepted_by_rung": {
+   "N": 325,
+   "L": 520,
+   "K": 1205
+  },
+  "frac_K": 0.5878048780487805,
+  "frac_K_last20": 0.4,
+  "frac_settlement_on_K": 0.7030757244091471,
+  "K_iters_median": 4.0,
+  "K_accepted_at_it1": 0,
+  "first_10_K_in_a_row": [
+   26,
+   0.002933333333
+  ],
+  "failed_rungs_total": 3853,
+  "failed_rung_causes": {
+   "N:DIVERGENCE": 1169,
+   "L:REFUSAL": 505,
+   "K:DIVERGENCE": 286,
+   "N:REFUSAL": 864,
+   "K:REFUSAL": 21,
+   "L:DIVERGENCE": 1008
+  },
+  "floor_ladder_rungs": 2,
+  "floor_ladder_causes": {
+   "REFUSAL": 2
+  },
+  "N_fail_norm_over_tol_last40": {
+   "n": 6,
+   "median": 162.0,
+   "min": 5.88,
+   "max": 1020.0
+  },
+  "refusals_total": 162784,
+  "refusals_last20": 4961,
+  "ds_last": 1.25e-06,
+  "ds_min_accepted": 3.125e-07
+ }
+}

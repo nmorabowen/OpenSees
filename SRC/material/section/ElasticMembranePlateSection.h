@@ -66,6 +66,9 @@ class ElasticMembranePlateSection : public SectionForceDeformation{
 
     //make a clone of this material
     SectionForceDeformation *getCopy( ) ;
+    // Ladruno WP-192: threaded element loops opt-in (elastic; its stress/tangent/array are thread_local).
+    bool ladrunoThreadSafeUpdate(void) const { return true; }
+    bool ladrunoThreadSafeForm(void) const { return true; }
 
     const char *getClassType(void) const {return "ElasticMembranePlate";};
 
@@ -124,11 +127,11 @@ class ElasticMembranePlateSection : public SectionForceDeformation{
 
     Vector strain ;
 
-    static Vector stress ;
+    static thread_local Vector stress ;   // Ladruno WP-192
 
-    static Matrix tangent ;
+    static thread_local Matrix tangent ;   // Ladruno WP-192
 
-    static ID array ;  
+    static thread_local ID array ;     // Ladruno WP-192
 
 } ; //end of ElasticMembranePlateSection declarations
 

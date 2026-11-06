@@ -1,0 +1,10 @@
+---
+wp: LEGACY
+title: "The Profiler is a process-global singleton and ops.wipe() does NOT reset it — a multi-run script without profiler reset reports the SUM of every run so far"
+legacy_seq: 221
+---
+### The Profiler is a process-global singleton and `ops.wipe()` does NOT reset it — a multi-run script without `profiler reset` reports the SUM of every run so far
+- **Bites:** you write one script that loops over sizes / configs / repeats in a single process, `start`/`stop`/`report` around each, and get a table that is **clean, monotone and completely plausible** — and entirely wrong. Every report after the first contains all preceding runs. Measured on the ADR-75 P1j size sweep: `soe.factor` call counts came out **44, 88, 132, 176 … 936** (should be ~44 every run) and `step_ms` was a running total — 1952 s reported against a 348 s measured wall. Only run #1 was correct. Cost: one full 53-minute sweep, and the bogus trend was *in the same direction as the real one*, which is what makes it dangerous.
+- **Why:** `ops_profiler::theProfiler()` is a process-global; `wipe()` tears down the Domain and touches nothing in the profiler. ADR-40c hit the same thing (its `soe.factor` call-count proof was written off as "inconclusive — in-process profiler accumulation") but it was never written down as a quirk, so it was rediscovered.
+- **Workaround:** call `ops.profiler("reset")` immediately before every `profiler start` in any multi-run script. **And do not trust the profiler to police itself** — accumulation is invisible to every check that only reads the profiler, because every internal number stays self-consistent. The only reliable guard compares the profiler's `step` total against a clock it cannot influence: record `time.perf_counter()` around the same loop and assert agreement (`p1j_size_trend.py` writes `wall_by_run`; `p1j_rollup.py` refuses to print a table if any row is >25% off). One process per run also works and needs no guard.
+- **Not applicable to** the single-run harnesses (`laneB_model.py`, the P1h sweep) — those fork a process per run, which is why P1h was unaffected. *2026-07-27 (ADR-75 P1j).*

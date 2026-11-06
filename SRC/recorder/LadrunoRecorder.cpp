@@ -43,6 +43,7 @@
 #include "Ladruno_DomainResults.h"
 #include "Ladruno_OverlayResults.h"   // Ladruno (ADR-73 P4): -overlay channels
 #include "Ladruno_Sinks.h"
+#include "Ladruno_LaunchEnv.h"   // WP-163 M4/MP-3: shared launcher rank probe
 
 // OpenSees
 #include <Domain.h>
@@ -79,8 +80,14 @@
 #include <LoadPattern.h>              // Ladruno (ADR-73 P4): overlay discovery
 #include <LoadPatternIter.h>
 #include <LadrunoPorousOverlay.h>
+#include <profiler/ProfilerMacros.h>   // Ladruno WP-196: commit-phase split
 #include "section/SectionForceDeformation.h"
 
+#include <algorithm>
+#include <chrono>
+#include <cstdint>
+#include <cstdlib>
+#include <random>
 #include <string>
 #include <vector>
 #include <map>
@@ -91,6 +98,119 @@
 #include <cstdlib>
 
 namespace ladrunons = ladruno; // local alias
+
+// WP-165 (MP-9): a run identity shared by every rank of one launch, when one
+// exists. Order: LADRUNO_RUN_ID (user/launcher-provided), SLURM_JOB_ID[.STEP],
+// OpenMPI's job id; else a process-unique id (scope "process": readers must not
+// cross-check it between part files).
+static void ladrunoResolveRunId(std::string& id, std::string& scope)
+{
+	const char* v = std::getenv("LADRUNO_RUN_ID");
+	if (v && *v) { id = v; scope = "user"; return; }
+	v = std::getenv("SLURM_JOB_ID");
+	if (v && *v) {
+		id = std::string("slurm-") + v;
+		const char* st = std::getenv("SLURM_STEP_ID");
+		if (st && *st) id += std::string(".") + st;
+		scope = "launcher";
+		return;
+	}
+	v = std::getenv("OMPI_MCA_ess_base_jobid");
+	if (v && *v) { id = std::string("ompi-") + v; scope = "launcher"; return; }
+	std::stringstream ss;
+	ss << "proc-" << std::hex
+	   << (unsigned long long)std::chrono::system_clock::now().time_since_epoch().count()
+	   << "-" << (unsigned long long)std::random_device{}();
+	id = ss.str();
+	scope = "process";
+}
+
+// apeGmsh #2034 (option B): the user stage barrier. The interpreters' user
+// `domainChange` command (tcl/commands.cpp, interpreter/OpenSeesMiscCommands.cpp
+// OPS_domainChange) calls ladrunoNoteUserStageBarrier(); the recorder compares
+// the count at each recorded step. Internal Domain::domainChange() callers (an
+// SP pattern, eleLoad, contact -reemit, ...) do not touch it, so WP-165 still
+// folds those re-stamps into the open MODEL_STAGE. The count lives in this TU
+// (the OPS_Recorder library every interpreter executable links), not in the
+// Domain, and is process-local: on openseesmp every rank runs the same command.
+static int s_ladruno_user_stage_barrier = 0;
+
+void ladrunoNoteUserStageBarrier(void)
+{
+	++s_ladruno_user_stage_barrier;
+}
+
+int ladrunoUserStageBarrier(void)
+{
+	return s_ladruno_user_stage_barrier;
+}
+
+// apeGmsh #2034: the transient analysis the classic Tcl `eigen` command builds
+// when none is defined (tcl/commands.cpp eigenAnalysis). openseespy deletes
+// that analysis after the solve; classic Tcl keeps it, so an `eigen ...;
+// record` snapshot would read "transient" in Tcl and nothing in openseespy.
+// While the transient pointer is still this object, it does not count as a
+// running analysis. `analysis` and `analyze` clear the mark (an analyze step
+// on it is a real transient run), as do `wipe` and `wipeAnalysis`.
+static const void* s_ladruno_eigen_only_analysis = 0;
+
+void ladrunoNoteEigenOnlyAnalysis(const void* analysis)
+{
+	s_ladruno_eigen_only_analysis = analysis;
+}
+
+// apeGmsh #2034: the kind of the analysis running on this process right now:
+// "static", "transient", or "" when it cannot be told (no analysis defined, or
+// both pointers set). The interpreter-side analyses are read through the
+// elementAPI accessors (classic Tcl: elementAPI_TCL.cpp; openseespy and the
+// new Tcl wrapper: OpenSeesCommands.cpp). VariableTransient and PFEM set the
+// transient pointer too. A PartitionedDomain (OpenSeesSP) worker runs no
+// interpreter, so it sees neither pointer: its Subdomain holds the
+// DomainDecompositionAnalysis P0 sent, but Subdomain::getDDAnalysis() is
+// protected. There the kind stays unresolved (provisional "static", warned at
+// stage close) -- see 165_ladruno_recorder_stage_semantics.md section 4.
+static std::string ladrunoRunningAnalysisKind()
+{
+	StaticAnalysis** sa = OPS_GetStaticAnalysis();
+	DirectIntegrationAnalysis** ta = OPS_GetTransientAnalysis();
+	const bool is_static = (sa != 0 && *sa != 0);
+	const bool is_transient = (ta != 0 && *ta != 0 &&
+	                           (const void*)(*ta) != s_ladruno_eigen_only_analysis);
+	if (is_static && !is_transient)
+		return "static";
+	if (is_transient && !is_static)
+		return "transient";
+	return "";   // none, or both (ambiguous): unresolved, never a flip
+}
+
+// true when a modal (ModesOfVibration[Rotational]) channel is requested: such a
+// recorder's stages are KIND "eigen" whatever analysis runs.
+static bool ladrunoHasModalRequest(
+	const std::vector<ladruno::detail::NodalResultType::Enum>& reqs)
+{
+	for (size_t i = 0; i < reqs.size(); ++i) {
+		if (reqs[i] == ladruno::detail::NodalResultType::ModesOfVibration ||
+		    reqs[i] == ladruno::detail::NodalResultType::ModesOfVibrationRotational)
+			return true;
+	}
+	return false;
+}
+
+// apeGmsh #2034: replace MODEL_STAGE[<id>]/@KIND (a provisional value written
+// before any analysis existed). Delete + create: the string sizes differ.
+static int ladrunoRewriteStageKind(hid_t h_file, int stage_id, const std::string& kind)
+{
+	std::stringstream ss;
+	ss << "MODEL_STAGE[" << stage_id << "]";
+	hid_t h_stage = H5Gopen2(h_file, ss.str().c_str(), H5P_DEFAULT);
+	if (h_stage < 0)
+		return -1;
+	if (H5Aexists(h_stage, "KIND") > 0)
+		H5Adelete(h_stage, "KIND");
+	herr_t st = ladruno::h5::attribute::write(h_stage, "KIND", kind);
+	H5Gclose(h_stage);
+	return st < 0 ? -1 : 0;
+}
 
 // max number of iterations to guess the number of fibers (frozen MPCO_MAX_TRIAL_NFIB)
 #ifndef LADRUNO_MAX_TRIAL_NFIB
@@ -111,6 +231,20 @@ public:
 		, is_partitioned(false)
 		, initialized(false)
 		, first_domain_changed_done(false)
+		, stage_failed(false)
+		, init_failed(false)
+		, flush_seconds(10.0)
+		, last_flush()
+		, last_seen_stamp(0)
+		, topology_fp(0)
+		, last_barrier(0)
+		, stage_run_kind()
+		, kind_pending(false)
+		, worker_fold_warned(false)
+		, energy_model_state()
+		, energy_region_state()
+		, run_id()
+		, run_id_scope()
 		, info()
 		, output_freq()
 		, has_region(false)
@@ -123,7 +257,7 @@ public:
 		, overlay_all(false)
 		, overlay_tags()
 		, overlay_ptrs()
-		, stage_kind("static")
+		, stage_kind()
 		, envelope_mode(false)
 		, nodal_results_requests()
 		, sens_grad_indices()
@@ -152,6 +286,51 @@ public:
 	// model-stage stamp; thereafter a stamp change triggers a model rebuild
 	// (frozen MPCORecorder::record() multi-stage block).
 	bool first_domain_changed_done;
+	// WP-163 R2: true after a MODEL_STAGE rebuild failed. writeModel() released
+	// every source first, so nothing dangles; recording stays suspended (no
+	// results, no per-step error spam) until the next stamp change rebuilds.
+	bool stage_failed;
+	// WP-163 (ROB-11): true after initialize() failed once — the recorder is
+	// then dead for the run instead of retrying (and leaking) every step.
+	bool init_failed;
+	// WP-164 (P2): wall-clock flush cadence (-flush <seconds>, 0 = every recorded
+	// step). The per-step H5Fflush forced every dirty chunk to be deflated and
+	// written on every step; between flushes HDF5's chunk cache keeps them.
+	double flush_seconds;
+	std::chrono::steady_clock::time_point last_flush;
+	// WP-165 (R6): the domain-change stamp moves for far more than topology —
+	// contact `-reemit` re-sorts (inside commit()), `eleLoad`, a pattern with SPs,
+	// an `sp`/`imposedMotion` — and every move used to start a new MODEL_STAGE
+	// (full model copy, envelope + energy reset). A stamp move now rebuilds only
+	// when this fingerprint of the node/element/pressure-constraint SET changed.
+	int last_seen_stamp;
+	unsigned long long topology_fp;
+	// apeGmsh #2034 (option B): the user stage-barrier count (ladrunoUserStage
+	// Barrier()) when the current MODEL_STAGE opened. A user `domainChange`
+	// bumps it, and a moved count opens a new MODEL_STAGE even when the
+	// topology fingerprint is unchanged. Process-local, never serialized.
+	int last_barrier;
+	// apeGmsh #2034 (option A): the running analysis kind ("static" /
+	// "transient") the current MODEL_STAGE was opened under; "" while it is not
+	// resolved yet (no analysis defined at the stage's first record). A
+	// static<->transient flip opens a new MODEL_STAGE whatever the KIND label
+	// (-kind, eigen), so no stage mixes static and transient steps.
+	std::string stage_run_kind;
+	// true while the open stage's KIND attr is a provisional "static" written
+	// before any analysis existed; the first record() that sees the running
+	// analysis rewrites it.
+	bool kind_pending;
+	// one-time warning on a PartitionedDomain worker, which cannot see the user
+	// barrier (no interpreter runs there).
+	bool worker_fold_warned;
+	// WP-165 (R3): energy integrals owned here, not by the per-stage source.
+	ladrunons::EnergyState energy_model_state;
+	ladrunons::EnergyState energy_region_state;
+	// WP-165 (MP-9): run identity written to INFO, so a reader can tell the
+	// part files of ONE run from stale parts of an earlier one. Broadcast by P0
+	// on the PartitionedDomain path (set in sendSelf, received in recvSelf).
+	std::string run_id;
+	std::string run_id_scope;
 	ladrunons::detail::ProcessInfo info;
 
 	// -T output frequency
@@ -178,11 +357,13 @@ public:
 	std::vector<int> overlay_tags;
 	std::vector<LadrunoPorousOverlay*> overlay_ptrs;
 
-	// -kind <transient|static|eigen>: the MODEL_STAGE/KIND attr. apeGmsh knows the
-	// analysis type when it emits the recorder command (the domain can't be relied
-	// on to distinguish static from transient). Default "static"; auto-promoted to
-	// "eigen" at writeModel time when a modal (ModesOfVibration) channel is present.
-	std::string stage_kind;              // = "static" unless -kind overrides
+	// -kind <transient|static|eigen>: an explicit override of the MODEL_STAGE/KIND
+	// LABEL for every stage; it does not stop a static<->transient flip from
+	// opening a stage. Empty (the default) = automatic (apeGmsh #2034): each
+	// stage's KIND is the analysis running at its first record() (Static ->
+	// "static"; Transient / VariableTransient / PFEM -> "transient"). Either way,
+	// a modal (ModesOfVibration) channel promotes KIND to "eigen" at writeModel.
+	std::string stage_kind;              // "" = automatic, else the -kind value
 
 	// -envelope: record componentwise running extremes (ADR D7) instead of the
 	// per-step time series. Every non-modal node/element/domain channel uses an
@@ -258,12 +439,29 @@ LadrunoRecorder::LadrunoRecorder()
 LadrunoRecorder::~LadrunoRecorder()
 {
 	if (m_data) {
+		// apeGmsh #2034: the last stage never saw a running analysis.
+		if (m_data->initialized && m_data->kind_pending)
+			opserr << "LadrunoRecorder warning: the last MODEL_STAGE closed with no "
+			          "analysis visible at any recorded step; its KIND stays the "
+			          "provisional 'static' (pass -kind to state it)\n";
 		// In envelope mode, write the final ENVELOPES datasets while the sinks +
 		// file are still alive (EnvelopeSink defers all output to finalize()).
+		// WP-163 (ARCH-10): inside H5E_BEGIN_TRY like the closes below — at
+		// process exit HDF5's atexit handler may already have closed every ID,
+		// and this write then spammed HDF5-DIAG stacks (no data is lost: the
+		// envelope was rewritten on the last recorded step).
 		if (m_data->envelope_mode && m_data->initialized &&
-		    m_data->info.h_file_id != ladrunons::HID_INVALID)
-			finalizeAllSinks();
-		clearSources();
+		    m_data->info.h_file_id != ladrunons::HID_INVALID) {
+			H5E_BEGIN_TRY {
+				finalizeAllSinks();
+			} H5E_END_TRY;
+		}
+		// WP-164: sinks hold DATA/TIME/STEP and envelope handles now; closing
+		// them at process exit (IDs already closed by HDF5's atexit) must be
+		// silent too.
+		H5E_BEGIN_TRY {
+			clearSources();
+		} H5E_END_TRY;
 		if (m_data->initialized && m_data->info.h_file_id != ladrunons::HID_INVALID) {
 			// When the recorder dies at process exit (deck never wiped), HDF5's
 			// own atexit handler has usually run first: it flushes + closes every
@@ -333,14 +531,22 @@ void LadrunoRecorder::finalizeAllSinks()
 
 	// Element ENVELOPES carry the same structured per-column COLUMN_MAP as the
 	// time-series ON_ELEMENTS path (gauss/section/fiber column structure, beyond
-	// the result-level COMPONENTS — which is empty for element results). The
-	// EnvelopeSink delete-recreates each leaf group on every flush, so the
-	// COLUMN_MAP must be (re)written AFTER the element sinks finalize. finalizeAllSinks
-	// is only ever called in envelope mode; the envelope_mode guard keeps it correct
-	// if that ever changes.
+	// the result-level COMPONENTS — which is empty for element results). WP-164:
+	// the EnvelopeSink now creates its leaf group once and overwrites it in place,
+	// so the COLUMN_MAP is written ONCE, right after the group first exists (it was
+	// rewritten after every delete-recreate). finalizeAllSinks is only ever called
+	// in envelope mode; the envelope_mode guard keeps it correct if that changes.
 	if (m_data->envelope_mode) {
-		for (size_t i = 0; i < m_data->elem_channels.size(); ++i)
-			writeElementColumnMap((int)i);
+		for (size_t i = 0; i < m_data->elem_channels.size(); ++i) {
+			private_data::ElemChannel& ech = m_data->elem_channels[i];
+			if (ech.column_map_written)
+				continue;
+			ladrunons::EnvelopeSink* es = dynamic_cast<ladrunons::EnvelopeSink*>(ech.sink);
+			if (es != 0 && es->written()) {
+				writeElementColumnMap((int)i);
+				ech.column_map_written = true;
+			}
+		}
 	}
 }
 
@@ -367,8 +573,27 @@ int LadrunoRecorder::domainChanged(void)
 int LadrunoRecorder::record(int commitTag, double timeStamp)
 {
 	ladrunons::detail::ProcessInfo& info = m_data->info;
+	// WP-163 (ROB-11): a recorder whose file could not be created is dead for
+	// the run (the error was printed once by initialize()).
+	if (m_data->init_failed)
+		return 0;
 	info.current_time_step_id = commitTag;
 	info.current_time_step = timeStamp;
+
+	// WP-165 (R3): integrate the energy balance on EVERY commit, before the -T
+	// gate, so IE/DW/ULW are trapezoids over the real steps, not over the -T
+	// samples. advance() is idempotent per commit tag (the recorded-step
+	// evaluate() calls it again) and sweeps the live domain (no cached
+	// Element*), so it is safe even on a commit where the topology changed and
+	// the stage has not been rebuilt yet.
+	if (m_data->initialized && !m_data->stage_failed) {
+		for (size_t i = 0; i < m_data->domain_channels.size(); ++i) {
+			ladrunons::EnergyBalanceSource* es =
+				dynamic_cast<ladrunons::EnergyBalanceSource*>(m_data->domain_channels[i].source);
+			if (es)
+				es->advance(info);
+		}
+	}
 
 	// -T output-frequency gate (frozen record() do_record logic).
 	bool do_record = false;
@@ -381,21 +606,45 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 				do_record = true;
 		}
 		else if (m_data->output_freq.type == ladrunons::detail::OutputFrequency::DeltaTime) {
-			if (std::abs(info.current_time_step - m_data->output_freq.last_time) >= m_data->output_freq.dt)
+			// WP-163 (ROB-13): relative tolerance (as vanilla NodeRecorder's
+			// relDeltaTTol), so a time accumulated by summing steps
+			// (0.19999999999999996 vs 0.2) is not skipped; a time that moved
+			// BACKWARD (setTime between stages) records and restarts the grid.
+			const double dt = m_data->output_freq.dt;
+			const double elapsed = info.current_time_step - m_data->output_freq.last_time;
+			if (elapsed >= dt - 1.0e-5 * dt || elapsed < -1.0e-5 * dt)
 				do_record = true;
 		}
 	}
 	if (do_record) {
 		m_data->output_freq.last_step = info.current_time_step_id;
-		m_data->output_freq.last_time = info.current_time_step;
+		// WP-163 (ROB-13): snap `last_time` to the -T dt grid (last + k*dt)
+		// instead of the actual recorded time, so the record times do not drift
+		// by one analysis step per sample (dt_analysis 0.03, -T dt 0.1 recorded
+		// at 0.12, 0.24, ... instead of on the nearest steps after 0.1, 0.2, ...).
+		const double dt = m_data->output_freq.dt;
+		const double elapsed = info.current_time_step - m_data->output_freq.last_time;
+		if (m_data->initialized &&
+		    m_data->output_freq.type == ladrunons::detail::OutputFrequency::DeltaTime &&
+		    dt > 0.0 && elapsed >= 0.0) {
+			const double k = std::floor((elapsed + 1.0e-5 * dt) / dt);
+			m_data->output_freq.last_time += (k >= 1.0 ? k : 1.0) * dt;
+		}
+		else {
+			m_data->output_freq.last_time = info.current_time_step;
+		}
 	}
 	else {
 		return 0;
 	}
 
 	if (!m_data->initialized) {
-		if (initialize() != 0)
+		if (initialize() != 0) {
+			m_data->init_failed = true;
+			opserr << "LadrunoRecorder: initialization failed; this recorder is "
+			          "disabled for the rest of the run\n";
 			return -1;
+		}
 		m_data->initialized = true;
 	}
 
@@ -413,39 +662,209 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 	// analysis; that is a documented limitation here (single-stage is unaffected).
 	bool rebuild_model = false;
 	int new_stamp = info.domain->hasDomainChanged();
+	// apeGmsh #2034: the two stage boundaries that leave topology unchanged.
+	// (B) a user `domainChange` since the stage opened (the barrier count);
+	// (A) a static<->transient flip of the running analysis, so that no
+	// MODEL_STAGE mixes static and transient steps. The flip splits whatever
+	// the KIND label is (-kind and eigen promotion only set the label). An
+	// unresolved kind ("": no analysis yet) is never a flip; a repeated kind is
+	// never a flip.
+	const int barrier_now = ladrunoUserStageBarrier();
+	const std::string run_kind = ladrunoRunningAnalysisKind();
+	bool user_barrier = false;
+	bool kind_flip = false;
+	if (m_data->first_domain_changed_done && !m_data->stage_failed) {
+		user_barrier = (barrier_now != m_data->last_barrier);
+		kind_flip = !run_kind.empty() &&
+		            !m_data->stage_run_kind.empty() &&
+		            run_kind != m_data->stage_run_kind;
+	}
 	if (!m_data->first_domain_changed_done) {
 		info.current_model_stage_id = new_stamp;
+		m_data->last_seen_stamp = new_stamp;
 		m_data->first_domain_changed_done = true;
 		rebuild_model = true;
 	}
-	else if (new_stamp != info.current_model_stage_id) {
-		info.current_model_stage_id = new_stamp;
+	else if (!user_barrier && !kind_flip &&
+	         new_stamp != m_data->last_seen_stamp &&
+	         !m_data->stage_failed && topologyFingerprint() == m_data->topology_fp) {
+		// WP-165 (R6): the stamp moved but the node/element set did not (contact
+		// re-emit, eleLoad, an SP pattern, ...): keep the MODEL_STAGE, its sources,
+		// envelopes and energy integrals. Every cached Element*/Node* is still the
+		// live object (the fingerprint hashes the pointers, not just the tags).
+		m_data->last_seen_stamp = new_stamp;
+		// apeGmsh #2034: a PartitionedDomain worker runs no interpreter, so a
+		// user `domainChange` on P0 reaches it only as a stamp move; it cannot
+		// be told from an internal re-stamp and is folded here. Say so once.
+		if (m_data->send_self_count < 0 && !m_data->worker_fold_warned) {
+			m_data->worker_fold_warned = true;
+			opserr << "LadrunoRecorder warning: partition " << m_data->p_id
+			       << " folded a domain-change stamp into MODEL_STAGE["
+			       << info.current_model_stage_id << "]: a PartitionedDomain "
+			          "worker cannot see a user `domainChange` stage barrier, so "
+			          "this part file may hold fewer MODEL_STAGEs than part 0\n";
+		}
+	}
+	else if (user_barrier || kind_flip || new_stamp != m_data->last_seen_stamp) {
+		m_data->last_seen_stamp = new_stamp;
+		// WP-164: close out the ending stage BEFORE the stamp moves — envelopes
+		// are now rewritten on the flush cadence, not every step, so their last
+		// extremes (and the element COLUMN_MAP, resolved from the stage stamp)
+		// must land under the OLD MODEL_STAGE; then flush it to disk.
+		if (!m_data->stage_failed) {
+			if (m_data->envelope_mode)
+				finalizeAllSinks();
+			flushFile();
+		}
+		if (m_data->kind_pending) {
+			opserr << "LadrunoRecorder warning: MODEL_STAGE["
+			       << info.current_model_stage_id << "] closed with no analysis "
+			          "visible at any recorded step; its KIND stays the "
+			          "provisional 'static' (pass -kind to state it)\n";
+		}
+		// apeGmsh #2034: a barrier or a kind flip can arrive without a stamp
+		// move, so the id is the stamp only when it is past the current id;
+		// otherwise current+1. Every later stamp move takes max(id+1, stamp)
+		// again, so the ids stay strictly increasing and never collide.
+		info.current_model_stage_id =
+			std::max(info.current_model_stage_id + 1, new_stamp);
 		rebuild_model = true;
 	}
 	if (rebuild_model) {
-		if (writeModel() != 0)
+		m_data->last_barrier = barrier_now;
+		// WP-163 R2: writeModel() releases the prior stage's sources (and their
+		// cached Element*/Response*) BEFORE writing anything, so a failed rebuild
+		// leaves no dangling pointers behind. The stamp is already committed, so
+		// the next record() would not retry: latch stage_failed and record nothing
+		// until the next stamp change rebuilds (one error, not one per step).
+		if (writeModel() != 0) {
+			m_data->stage_failed = true;
+			opserr << "LadrunoRecorder: MODEL_STAGE[" << info.current_model_stage_id
+			       << "] could not be written; recording is suspended until the "
+			          "next domain change\n";
 			return -1;
+		}
+		m_data->stage_failed = false;
+		m_data->topology_fp = topologyFingerprint();
+	}
+	if (m_data->stage_failed)
+		return 0;
+
+	// apeGmsh #2034: the stage opened before the running analysis could be told
+	// (an explicit `record` first, an eigen snapshot): adopt the first kind a
+	// recorded step sees. An automatic KIND label was written as a provisional
+	// "static"; restate it.
+	if (m_data->stage_run_kind.empty() && !run_kind.empty()) {
+		m_data->stage_run_kind = run_kind;
+		if (m_data->kind_pending) {
+			if (ladrunoRewriteStageKind(info.h_file_id, info.current_model_stage_id,
+			                            run_kind) != 0) {
+				opserr << "LadrunoRecorder: could not rewrite MODEL_STAGE["
+				       << info.current_model_stage_id << "]/KIND\n";
+				return -1;
+			}
+			m_data->kind_pending = false;
+		}
 	}
 
+	{ OPS_PROFILE_SCOPE("lr.nodes");   // Ladruno WP-196
 	if (recordResultsOnNodes() != 0)
-		return -1;
+		return -1; }
+	{ OPS_PROFILE_SCOPE("lr.elements");   // Ladruno WP-196
 	if (recordResultsOnElements() != 0)
-		return -1;
+		return -1; }
 	if (recordResultsOnDomain() != 0)
 		return -1;
 	if (recordResultsOnOverlays() != 0)
 		return -1;
 
-	// Envelope mode defers all output to finalize(); rewrite the (small) ENVELOPES
-	// datasets in place every recorded step so the latest extremes are always on
-	// disk (periodic crash safety, ADR D7) before the file flush below.
-	if (m_data->envelope_mode)
-		finalizeAllSinks();
-
-	if (info.h_file_id != ladrunons::HID_INVALID)
-		ladrunons::h5::file::flush(info.h_file_id);
+	// WP-164 (P1/P2): on the -flush cadence (default 10 s of wall clock; 0 =
+	// every recorded step, the old behaviour) rewrite the envelopes in place and
+	// flush the file. Crash safety: at most the last `-flush` seconds of output
+	// are lost; the per-step flush forced every dirty chunk to be deflated and
+	// written on every step, which dominated small/explicit runs (WP-164 bench).
+	const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+	const double since = std::chrono::duration<double>(now - m_data->last_flush).count();
+	const bool due = (m_data->flush_seconds <= 0.0 || since >= m_data->flush_seconds);
+	if (m_data->envelope_mode) {
+		// Small envelopes (<= 8 MiB of accumulators in total) are still
+		// overwritten every recorded step — a plain in-place H5Dwrite, no flush —
+		// so a deck that exits without `wipe` keeps its latest extremes (HDF5's
+		// atexit close writes them out). Larger ones follow the -flush cadence.
+		size_t env_bytes = 0;
+		for (size_t i = 0; i < m_data->node_channels.size(); ++i) {
+			ladrunons::EnvelopeSink* es =
+				dynamic_cast<ladrunons::EnvelopeSink*>(m_data->node_channels[i].sink);
+			if (es) env_bytes += es->payloadBytes();
+		}
+		for (size_t i = 0; i < m_data->elem_channels.size(); ++i) {
+			ladrunons::EnvelopeSink* es =
+				dynamic_cast<ladrunons::EnvelopeSink*>(m_data->elem_channels[i].sink);
+			if (es) env_bytes += es->payloadBytes();
+		}
+		if (due || env_bytes <= ((size_t)8 << 20))
+			finalizeAllSinks();
+	}
+	if (due) {
+		OPS_PROFILE_SCOPE("lr.flush");   // Ladruno WP-196
+		flushFile();
+	}
 
 	return 0;
+}
+
+unsigned long long LadrunoRecorder::topologyFingerprint() const
+{
+	// WP-165 (R6): FNV-1a over the node, element and pressure-constraint sets —
+	// (tag, object address) per entry, plus the counts. Address, not only tag:
+	// `remove element 5; element ... 5` re-uses the tag with a NEW object, and
+	// the cached Response* of the old one must not survive. O(N) per stamp move
+	// (not per step) — cheap next to the full rebuild it avoids.
+	const Domain* dom_c = m_data->info.domain;
+	if (dom_c == 0)
+		return 0ULL;
+	Domain* dom = const_cast<Domain*>(dom_c);
+	unsigned long long h = 1469598103934665603ULL;
+	auto mix = [&h](unsigned long long v) {
+		for (int b = 0; b < 8; ++b) {
+			h ^= (v >> (8 * b)) & 0xFFULL;
+			h *= 1099511628211ULL;
+		}
+	};
+	mix((unsigned long long)dom->getNumNodes());
+	mix((unsigned long long)dom->getNumElements());
+	mix((unsigned long long)dom->getNumPCs());
+	{
+		NodeIter& it = dom->getNodes();
+		Node* n = 0;
+		while ((n = it()) != 0) {
+			mix((unsigned long long)(long long)n->getTag());
+			mix((unsigned long long)(uintptr_t)n);
+		}
+	}
+	{
+		ElementIter& it = dom->getElements();
+		Element* e = 0;
+		while ((e = it()) != 0) {
+			mix((unsigned long long)(long long)e->getTag());
+			mix((unsigned long long)(uintptr_t)e);
+		}
+	}
+	{
+		Pressure_ConstraintIter& it = dom->getPCs();
+		Pressure_Constraint* pc = 0;
+		while ((pc = it()) != 0)
+			mix((unsigned long long)(uintptr_t)pc);
+	}
+	return h;
+}
+
+void LadrunoRecorder::flushFile()
+{
+	// WP-164: the one place the recorder flushes (cadence, stage end, close).
+	if (m_data->initialized && m_data->info.h_file_id != ladrunons::HID_INVALID)
+		ladrunons::h5::file::flush(m_data->info.h_file_id);
+	m_data->last_flush = std::chrono::steady_clock::now();
 }
 
 /* ===================================================================== */
@@ -505,23 +924,27 @@ int LadrunoRecorder::initialize()
 	bool is_partitioned = (m_data->send_self_count != 0);
 	int num_parts = 1;
 	{
-		static const char* const size_rank_env[][2] = {
-			{ "PMI_SIZE",            "PMI_RANK" },              // Intel MPI / MS-MPI
-			{ "OMPI_COMM_WORLD_SIZE", "OMPI_COMM_WORLD_RANK" }, // OpenMPI
-			{ "SLURM_NTASKS",        "SLURM_PROCID" },          // srun (incl. pmix)
-		};
-		const size_t n_pairs = sizeof(size_rank_env) / sizeof(size_rank_env[0]);
-		for (size_t i = 0; i < n_pairs; ++i) {
-			const char* size_env = std::getenv(size_rank_env[i][0]);
-			int np_env = (size_env != 0) ? std::atoi(size_env) : 1;
-			if (np_env > 1) {
-				num_parts = np_env;
-				if (!is_partitioned) {   // interpreter-per-rank: index by the launcher rank
-					const char* rank_env = std::getenv(size_rank_env[i][1]);
-					part_id = (rank_env != 0) ? std::atoi(rank_env) : 0;
-					is_partitioned = true;
-				}
-				break;
+		// WP-163 M4/MP-3: one shared probe (Ladruno_LaunchEnv.h) — SLURM only
+		// inside an srun step, and a SIZE > 1 without a valid RANK is refused
+		// instead of every rank silently writing (truncating) part-0.
+		int env_rank = 0, env_size = 1;
+		std::string env_source, env_error;
+		const ladrunons::launch::Status st =
+			ladrunons::launch::detectRank(env_rank, env_size, env_source, env_error);
+		if (st == ladrunons::launch::Inconsistent) {
+			opserr << "LadrunoRecorder error: " << env_error.c_str()
+			       << " — cannot tell which partition file this rank owns\n";
+			ladrunons::h5::plist::close(info.h_group_proplist);
+			ladrunons::h5::plist::close(info.h_file_proplist);
+			info.h_group_proplist = ladrunons::HID_INVALID;
+			info.h_file_proplist = ladrunons::HID_INVALID;
+			return -1;
+		}
+		if (st == ladrunons::launch::Launched) {
+			num_parts = env_size;
+			if (!is_partitioned) {   // interpreter-per-rank: index by the launcher rank
+				part_id = env_rank;
+				is_partitioned = true;
 			}
 		}
 	}
@@ -550,6 +973,12 @@ int LadrunoRecorder::initialize()
 	if (info.h_file_id == ladrunons::HID_INVALID) {
 		opserr << "LadrunoRecorder error: cannot create file \""
 		       << the_filename.c_str() << "\"\n";
+		// WP-163 (ROB-11): release the property lists created above (they
+		// leaked on every retry when initialize() was re-run each step).
+		ladrunons::h5::plist::close(info.h_group_proplist);
+		ladrunons::h5::plist::close(info.h_file_proplist);
+		info.h_group_proplist = ladrunons::HID_INVALID;
+		info.h_file_proplist = ladrunons::HID_INVALID;
 		return -1;
 	}
 
@@ -558,6 +987,11 @@ int LadrunoRecorder::initialize()
 		info.h_file_id, "INFO", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
 	ladrunons::h5::attribute::write(h_info, "GENERATOR", std::string("Ladruno"));
 	ladrunons::h5::attribute::write(h_info, "FORMAT_VERSION", (int)1);
+	// apeGmsh #2034: minor 1 = per-stage KIND from the running analysis, and a
+	// MODEL_STAGE also opens on a user `domainChange` or a static<->transient
+	// flip. Absent (minor 0): KIND is the recorder-wide -kind (default
+	// "static") and a stage opens only on a topology change.
+	ladrunons::h5::attribute::write(h_info, "FORMAT_MINOR_VERSION", (int)1);
 	ladrunons::h5::attribute::write(h_info, "SOLVER_NAME", std::string("OpenSees"));
 	std::vector<int> solver_version;
 	solver_version.push_back(3);
@@ -587,6 +1021,13 @@ int LadrunoRecorder::initialize()
 	ladrunons::h5::attribute::write(h_info, "PARTITION_ID", part_id);
 	ladrunons::h5::attribute::write(h_info, "PARTITIONED", (int)(is_partitioned ? 1 : 0));
 	ladrunons::h5::attribute::write(h_info, "NUM_PARTITIONS", num_parts);
+	// WP-165 (MP-9): RUN_ID + RUN_ID_SCOPE ("broadcast" | "user" | "launcher" |
+	// "process"). Part files of one run carry the same RUN_ID unless the scope
+	// is "process" (no shared identity was available on this launch path).
+	if (m_data->run_id.empty())
+		ladrunoResolveRunId(m_data->run_id, m_data->run_id_scope);
+	ladrunons::h5::attribute::write(h_info, "RUN_ID", m_data->run_id);
+	ladrunons::h5::attribute::write(h_info, "RUN_ID_SCOPE", m_data->run_id_scope);
 
 	hid_t h_prov = ladrunons::h5::group::create(
 		h_info, "PROVENANCE", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
@@ -613,6 +1054,15 @@ int LadrunoRecorder::writeModel()
 	// (the multi-stage rebuild_model block), so the stamp is consistent across
 	// the MODEL_STAGE group and every result/source path resolved from it.
 
+	// WP-163 R2: release the prior stage's sources, sinks and cached element
+	// Response* FIRST. They wrap Element*/Node* of the previous domain state; if
+	// any writer below fails and returns early, they must already be gone, or
+	// the next record() (same stamp -> no rebuild) would call getResponse() on
+	// deleted elements. (Previously this ran only after all writers succeeded.)
+	if (clearSources() != 0)
+		return -1;
+	m_data->nodes.clear();
+
 	// MODEL_STAGE[<stamp>] + MODEL + RESULTS skeleton (mirror frozen writeModel)
 	std::stringstream ss_stage;
 	ss_stage << "MODEL_STAGE[" << info.current_model_stage_id << "]";
@@ -621,16 +1071,28 @@ int LadrunoRecorder::writeModel()
 		info.h_group_proplist, H5P_DEFAULT);
 	ladrunons::h5::attribute::write(h_stage, "STEP", info.current_time_step_id);
 	ladrunons::h5::attribute::write(h_stage, "TIME", info.current_time_step);
-	// KIND (schema): the -kind option (default "static"), auto-promoted to "eigen"
-	// when a modal result is requested (ModesOfVibration[Rotational]).
-	std::string stage_kind = m_data->stage_kind;
-	for (size_t i = 0; i < m_data->nodal_results_requests.size(); ++i) {
-		ladrunons::detail::NodalResultType::Enum t = m_data->nodal_results_requests[i];
-		if (t == ladrunons::detail::NodalResultType::ModesOfVibration ||
-		    t == ladrunons::detail::NodalResultType::ModesOfVibrationRotational) {
-			stage_kind = "eigen";
-			break;
-		}
+	// KIND (schema; apeGmsh #2034): a modal result (ModesOfVibration[Rotational])
+	// promotes it to "eigen"; else the -kind override; else the analysis running
+	// at this, the stage's first record(). With no analysis visible yet it is a
+	// provisional "static" that record() rewrites once one runs (kind_pending).
+	// stage_run_kind (what the flip test compares) is the running analysis
+	// whatever the label; "" until a recorded step sees one.
+	const std::string run_kind = ladrunoRunningAnalysisKind();
+	std::string stage_kind;
+	m_data->kind_pending = false;
+	m_data->stage_run_kind = run_kind;
+	if (ladrunoHasModalRequest(m_data->nodal_results_requests)) {
+		stage_kind = "eigen";
+	}
+	else if (!m_data->stage_kind.empty()) {
+		stage_kind = m_data->stage_kind;
+	}
+	else if (!run_kind.empty()) {
+		stage_kind = run_kind;
+	}
+	else {
+		stage_kind = "static";
+		m_data->kind_pending = true;
 	}
 	ladrunons::h5::attribute::write(h_stage, "KIND", stage_kind);
 
@@ -670,13 +1132,11 @@ int LadrunoRecorder::writeModel()
 	if (writeSections() != 0)
 		return -1;
 
-	// (Re)build the source/sink channels for this stage. clearSources() releases
-	// the prior stage's sources, sinks, and cached element Response* (which would
-	// otherwise dangle after the domain rebuild); the fresh sinks are not yet
-	// initialized, so they re-create their result groups under the new MODEL_STAGE.
-	// Mirrors frozen writeModel()'s trailing initNodeRecorders()/initElementRecorders().
-	if (clearSources() != 0)
-		return -1;
+	// (Re)build the source/sink channels for this stage. The prior stage's
+	// sources were released at the top of writeModel() (WP-163 R2); the fresh
+	// sinks are not yet initialized, so they re-create their result groups under
+	// the new MODEL_STAGE. Mirrors frozen writeModel()'s trailing
+	// initNodeRecorders()/initElementRecorders().
 	if (initNodeSources() != 0)
 		return -1;
 	if (initElementSources() != 0)
@@ -726,8 +1186,45 @@ int LadrunoRecorder::writeModelNodes()
 
 	const size_t nnodes = m_data->nodes.size();
 	if (nnodes == 0) {
-		opserr << "LadrunoRecorder Error: no nodes to write\n";
-		return -1;
+		// WP-165 (MP-8): no nodes on THIS process is a valid, empty partition —
+		// openseesmp with a `-R` region that lives entirely on other ranks, or a
+		// staged run that removed the whole region. It used to be an error after
+		// the MODEL_STAGE skeleton was written, leaving a part file with no
+		// MODEL/NODES that broke the stitch. Write zero-length NODES/ID and
+		// NODES/COORDINATES, mark the stage EMPTY_PARTITION=1, and carry on (the
+		// node/element channels have nothing to record; ON_DOMAIN still works).
+		std::stringstream ss_empty;
+		ss_empty << "MODEL_STAGE[" << info.current_model_stage_id << "]";
+		hid_t h_stage = H5Gopen2(info.h_file_id, ss_empty.str().c_str(), H5P_DEFAULT);
+		if (h_stage >= 0) {
+			ladrunons::h5::attribute::write(h_stage, "EMPTY_PARTITION", (int)1);
+			ladrunons::h5::group::close(h_stage);
+		}
+		ss_empty << "/MODEL/NODES";
+		hid_t h_nodes = ladrunons::h5::group::create(
+			info.h_file_id, ss_empty.str().c_str(), H5P_DEFAULT,
+			info.h_group_proplist, H5P_DEFAULT);
+		if (h_nodes < 0)
+			return -1;
+		hsize_t d_ids[2] = { 0, 1 };
+		hsize_t d_crd[2] = { 0, (hsize_t)ndim };
+		hid_t s_ids = H5Screate_simple(2, d_ids, NULL);
+		hid_t s_crd = H5Screate_simple(2, d_crd, NULL);
+		hid_t ds_ids = H5Dcreate(h_nodes, "ID", H5T_STD_I32LE, s_ids, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+		hid_t ds_crd = H5Dcreate(h_nodes, "COORDINATES", H5T_IEEE_F64LE, s_crd, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+		const bool ok = (ds_ids >= 0 && ds_crd >= 0);
+		if (ds_crd >= 0) H5Dclose(ds_crd);
+		if (ds_ids >= 0) H5Dclose(ds_ids);
+		H5Sclose(s_crd);
+		H5Sclose(s_ids);
+		ladrunons::h5::group::close(h_nodes);
+		if (!ok) {
+			opserr << "LadrunoRecorder Error: could not write an empty MODEL/NODES\n";
+			return -1;
+		}
+		opserr << "LadrunoRecorder: MODEL_STAGE[" << info.current_model_stage_id
+		       << "] has no nodes on this process; written as an empty partition\n";
+		return 0;
 	}
 
 	std::vector<int> node_ids(nnodes);
@@ -1968,7 +2465,12 @@ int LadrunoRecorder::recordResultsOnNodes()
 
 	// EIGEN/MODES detection (frozen recordResultsOnNodes preamble).
 	info.record_eigen_on_this_step = false;
-	int num_eigen = *OPS_GetNumEigen();
+	// WP-163 R1: gate on the DOMAIN's spectrum, not the interpreter's numEigen.
+	// `wipe` clears the domain eigenvalues but never resets numEigen (Tcl global
+	// / OpenSeesCommands), so after `eigen; wipe; <new model>` the old count
+	// survived and Domain::getEigenvalues() exit(-1)'d the whole process.
+	// getNumEigenvalues() (ADR46) is the non-exiting presence probe.
+	int num_eigen = info.domain->getNumEigenvalues();
 	if (num_eigen > 0) {
 		bool eigen_requested = false;
 		for (size_t i = 0; i < m_data->node_channels.size(); ++i) {
@@ -2011,10 +2513,12 @@ int LadrunoRecorder::recordResultsOnNodes()
 	for (size_t i = 0; i < m_data->node_channels.size(); ++i) {
 		private_data::NodeChannel& ch = m_data->node_channels[i];
 
+		// WP-164 (P7): remember the last flag actually COMPUTED. A non-reaction
+		// channel (-1) used to reset it, so `reactionForce displacement
+		// reactionMoment` swept every element's resisting force twice per step.
 		int curr_reac_type = ch.reaction_flag;
-		if (curr_reac_type != previous_reac_type) {
-			if (curr_reac_type > -1 && curr_reac_type < 3)
-				info.domain->calculateNodalReactions(curr_reac_type);
+		if (curr_reac_type > -1 && curr_reac_type < 3 && curr_reac_type != previous_reac_type) {
+			info.domain->calculateNodalReactions(curr_reac_type);
 			previous_reac_type = curr_reac_type;
 		}
 
@@ -2164,7 +2668,9 @@ int LadrunoRecorder::initDomainSources()
 
 	// whole-model energy -> ON_DOMAIN/energyBalance
 	if (m_data->energy_requested) {
-		ladrunons::ResultSource* src = new ladrunons::EnergyBalanceSource(info);
+		// WP-165 (R3): the recorder-owned state outlives this stage's source.
+		ladrunons::ResultSource* src =
+			new ladrunons::EnergyBalanceSource(info, &m_data->energy_model_state);
 		if (refusePartitionedEnvelope(m_data->envelope_mode, m_data->is_partitioned, src)) {
 			delete src;
 		} else {
@@ -2180,7 +2686,8 @@ int LadrunoRecorder::initDomainSources()
 	// per-region energy -> ON_REGIONS/energyBalance
 	if (!m_data->energy_region_tags.empty()) {
 		ladrunons::ResultSource* src =
-			new ladrunons::EnergyBalanceSource(info, m_data->energy_region_tags);
+			new ladrunons::EnergyBalanceSource(info, m_data->energy_region_tags,
+			                                   &m_data->energy_region_state);
 		if (refusePartitionedEnvelope(m_data->envelope_mode, m_data->is_partitioned, src)) {
 			delete src;
 		} else {
@@ -2377,6 +2884,11 @@ int LadrunoRecorder::sendSelf(int commitTag, Channel& theChannel)
 		return -1;
 	}
 	m_data->send_self_count++;
+	if (m_data->run_id.empty()) {   // WP-165 (MP-9): P0 owns the run identity
+		ladrunoResolveRunId(m_data->run_id, m_data->run_id_scope);
+		if (m_data->run_id_scope == "process")
+			m_data->run_id_scope = "broadcast";
+	}
 
 	LadSer ser;
 	ser.put_i(this->getTag());
@@ -2412,6 +2924,10 @@ int LadrunoRecorder::sendSelf(int commitTag, Channel& theChannel)
 
 	ser.put_i(m_data->envelope_mode ? 1 : 0);    // Ladruno: MP/db config round-trip (lockstep with recvSelf)
 	ser.put_i(m_data->info.store_data_f32 ? 1 : 0);
+	ser.put_i(m_data->info.deflate_level);       // WP-164 (lockstep with recvSelf)
+	ser.put_d(m_data->flush_seconds);            // WP-164
+	ser.put_s(m_data->run_id);                   // WP-165 (MP-9)
+	ser.put_s(m_data->run_id_scope);
 	int msg_data_size = (int)ser.b.size();
 	ID idata(1);
 	idata(0) = msg_data_size;
@@ -2496,6 +3012,10 @@ int LadrunoRecorder::recvSelf(int commitTag, Channel& theChannel,
 	}
 	m_data->envelope_mode = de.get_i() != 0;    // Ladruno: lockstep with sendSelf
 	m_data->info.store_data_f32 = de.get_i() != 0;
+	m_data->info.deflate_level = de.get_i();     // WP-164 (lockstep with sendSelf)
+	m_data->flush_seconds = de.get_d();          // WP-164
+	m_data->run_id = de.get_s();                 // WP-165 (MP-9)
+	m_data->run_id_scope = de.get_s();
 	if (!de.ok) {
 		opserr << "LadrunoRecorder::recvSelf() - failed to de-serialize config\n";
 		return -1;
@@ -2544,8 +3064,10 @@ void* OPS_LadrunoRecorder()
 	bool overlay_requested_opt = false;  // -overlay (ADR-73 P4)
 	bool overlay_all_opt = false;        // bare -overlay = all 33022 patterns
 	std::vector<int> overlay_tags_opt;   // explicit -overlay tags
-	std::string stage_kind_opt = "static"; // -kind <transient|static|eigen>
+	std::string stage_kind_opt;            // -kind <transient|static|eigen>; "" = automatic
 	bool envelope_opt = false;             // -envelope flag
+	int compress_opt = 1;                  // WP-164: -compress <0..9> (default 1)
+	double flush_opt = 10.0;               // WP-164: -flush <seconds>
 	bool store_data_f32 = false;           // -precision f32 (lossy) | f64 (default)
 	int one_item = 1;
 
@@ -2605,6 +3127,17 @@ void* OPS_LadrunoRecorder()
 			if (numdata > 0) {
 				const char* gkind = OPS_GetString();
 				numdata--;
+				// WP-163 (ROB-12): `-G -T nsteps 10` used to eat "-T" with a
+				// warning, read "nsteps"/"10" as region tags and silently drop
+				// the output frequency. An option token is handed back.
+				if (gkind[0] == '-' && gkind[1] != '\0' &&
+				    !(gkind[1] >= '0' && gkind[1] <= '9')) {
+					OPS_ResetCurrentInputArg(-1);
+					numdata++;
+					opserr << "LadrunoRecorder warning: -G expects 'energy' "
+					          "[regionTag...]; got option " << gkind << "\n";
+					continue;
+				}
 				if (strcmp(gkind, "energy") == 0) {
 					energy_requested = true;
 				}
@@ -2712,7 +3245,8 @@ void* OPS_LadrunoRecorder()
 				else
 					opserr << "LadrunoRecorder warning: -kind expects "
 					          "transient|static|eigen; got (" << k << "), keeping "
-					       << stage_kind_opt.c_str() << "\n";
+					       << (stage_kind_opt.empty() ? "the automatic per-stage KIND"
+					                                  : stage_kind_opt.c_str()) << "\n";
 			}
 		}
 		else if (strcmp(data, "-envelope") == 0) {
@@ -2737,6 +3271,47 @@ void* OPS_LadrunoRecorder()
 				else
 					opserr << "LadrunoRecorder warning: -precision expects f32|f64; got ("
 					       << p << "), keeping f64 (lossless)\n";
+			}
+		}
+		else if (strcmp(data, "-compress") == 0) {
+			// WP-164 (P4): -compress <0..9> : deflate level of the time-series DATA
+			// (0 = no shuffle/deflate filter). Default 1: on the WP-164 bench it cut
+			// the large-slab recorder CPU 19 % vs the old hard-coded 4 for +0.6 % file.
+			if (numdata > 0) {
+				int lvl = 1;
+				if (OPS_GetInt(&one_item, &lvl) != 0) {
+					opserr << "LadrunoRecorder error: -compress requires an int level 0..9\n";
+					return 0;
+				}
+				numdata--;
+				if (lvl < 0 || lvl > 9) {
+					opserr << "LadrunoRecorder warning: -compress level " << lvl
+					       << " clamped to [0, 9]\n";
+					lvl = (lvl < 0) ? 0 : 9;
+				}
+				compress_opt = lvl;
+			}
+			else {
+				opserr << "LadrunoRecorder error: -compress requires a level 0..9\n";
+				return 0;
+			}
+		}
+		else if (strcmp(data, "-flush") == 0) {
+			// WP-164 (P2): -flush <seconds> : wall-clock interval between file
+			// flushes (and envelope rewrites). 0 = every recorded step (the old
+			// behaviour). The file is always flushed at a stage change and on close.
+			if (numdata > 0) {
+				double sec = 10.0;
+				if (OPS_GetDouble(&one_item, &sec) != 0) {
+					opserr << "LadrunoRecorder error: -flush requires a number of seconds\n";
+					return 0;
+				}
+				numdata--;
+				flush_opt = (sec < 0.0) ? 0.0 : sec;
+			}
+			else {
+				opserr << "LadrunoRecorder error: -flush requires a number of seconds\n";
+				return 0;
 			}
 		}
 		else {
@@ -2895,6 +3470,52 @@ void* OPS_LadrunoRecorder()
 		}
 	}
 
+	// WP-163 R4: drop repeated requests at parse time (with a notice). Two
+	// channels for one result share one HDF5 group name; the sink now refuses
+	// the second (R5), but the request was the user's typo or an alias pair
+	// (`tieForce` / `constraintTieForce` map to one type) — say so here, once.
+	{
+		std::vector<ladrunons::detail::NodalResultType::Enum> n_keep;
+		std::vector<int> g_keep;
+		for (size_t i = 0; i < nodal_results_requests.size(); ++i) {
+			const int g = (i < sens_grad_indices.size()) ? sens_grad_indices[i] : 0;
+			bool dup = false;
+			for (size_t j = 0; j < n_keep.size(); ++j)
+				if (n_keep[j] == nodal_results_requests[i] && g_keep[j] == g) { dup = true; break; }
+			if (dup) {
+				opserr << "LadrunoRecorder warning: nodal result requested twice (an alias "
+				          "or a repeated -N token); recording it once\n";
+				continue;
+			}
+			n_keep.push_back(nodal_results_requests[i]);
+			g_keep.push_back(g);
+		}
+		nodal_results_requests.swap(n_keep);
+		sens_grad_indices.swap(g_keep);
+
+		std::vector<std::vector<std::string> > e_keep;
+		for (size_t i = 0; i < elemental_results_requests.size(); ++i) {
+			bool dup = false;
+			for (size_t j = 0; j < e_keep.size(); ++j)
+				if (e_keep[j] == elemental_results_requests[i]) { dup = true; break; }
+			if (dup) {
+				opserr << "LadrunoRecorder warning: element result requested twice (-E";
+				for (size_t k = 0; k < elemental_results_requests[i].size(); ++k)
+					opserr << (k ? "." : " ") << elemental_results_requests[i][k].c_str();
+				opserr << "); recording it once\n";
+				continue;
+			}
+			e_keep.push_back(elemental_results_requests[i]);
+		}
+		elemental_results_requests.swap(e_keep);
+
+		std::vector<int> r_keep;
+		for (size_t i = 0; i < energy_region_tags.size(); ++i)
+			if (std::find(r_keep.begin(), r_keep.end(), energy_region_tags[i]) == r_keep.end())
+				r_keep.push_back(energy_region_tags[i]);
+		energy_region_tags.swap(r_keep);
+	}
+
 	LadrunoRecorder* recorder = new LadrunoRecorder();
 	recorder->m_data->filename = filename;
 	recorder->m_data->output_freq = output_freq;
@@ -2914,6 +3535,8 @@ void* OPS_LadrunoRecorder()
 	recorder->m_data->overlay_tags.swap(overlay_tags_opt);
 	recorder->m_data->stage_kind = stage_kind_opt;
 	recorder->m_data->envelope_mode = envelope_opt;
+	recorder->m_data->info.deflate_level = compress_opt;   // WP-164
+	recorder->m_data->flush_seconds = flush_opt;           // WP-164
 	// -precision: carried on ProcessInfo (read by StreamingSink::begin and stamped
 	// into INFO/STORED_PRECISION at initialize()). setDomain() does not overwrite it.
 	recorder->m_data->info.store_data_f32 = store_data_f32;

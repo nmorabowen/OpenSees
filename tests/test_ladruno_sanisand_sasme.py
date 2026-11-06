@@ -114,10 +114,10 @@ def test_existing_schemes_byte_identical():
     bad = []
     for name in ref:
         if name in B.NONDETERMINISTIC:
-            # IntScheme 4: vanilla MaxEnergyInc passes UNINITIALISED `nG, nK`
-            # into ForwardEuler once it sub-steps, so its plastic rows differ
-            # run to run in the SAME process on the unmodified binary too
-            # (LEDGER_quirks, WP-129). Only its elastic-stage rows are pinned.
+            # A deck whose plastic rows are not reproducible: only its
+            # elastic-stage rows are pinned. (Was IntScheme 4 -- MaxEnergyInc's
+            # UNINITIALISED `nG, nK`, WP-129 -- until WP-160 fixed it; the set
+            # is empty now.)
             n0 = B.NONDETERMINISTIC[name]
             if not _rows_equal(cur[name][:n0], ref[name][:n0]):
                 bad.append(f"{name}: elastic-stage rows differ")

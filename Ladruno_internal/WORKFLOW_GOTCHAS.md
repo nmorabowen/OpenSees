@@ -102,12 +102,13 @@ That presents to a human as a vague "ledger CI issue."
 1. `git fetch origin ladruno`; check distance with
    `git rev-list --count HEAD..origin/ladruno`.
 2. `git merge --no-commit --no-ff origin/ladruno` and resolve:
-   - **`LEDGER_implementations.md`** almost always conflicts (every sibling PR
-     edits it). Cleanest: `git checkout --theirs` the ledger, then **re-apply
-     only YOUR row deltas** with targeted edits — don't hand-merge the giant rows.
+   - **The ledgers no longer conflict** (WP-161): each entry is its own
+     fragment file under `Ladruno_implementation/ledger/`. A branch cut before
+     WP-161 that edited a `LEDGER_*.md` converts its edits once with
+     `python ci/ledger.py migrate` and takes the stubs
+     (`Ladruno_implementation/ledger/README.md`, last section).
    - **`FEM_ObjectBrokerAllClasses.cpp`** conflicts when a sibling added a broker
      include+case next to yours → **keep-both** (additive).
-   - Other ledgers usually auto-merge.
 3. **Re-run the gates on the MERGED tree** (`python ci/check_classtags.py` +
    `ci/check_manifest.py`) — CI runs them on the merge, so this is the real check.
 4. **Inherited manifest debt** (see §3): backfill any missing rows the gate
@@ -118,34 +119,30 @@ That presents to a human as a vague "ledger CI issue."
 6. Churn can re-bite between fetch and push — just merge again; the second
    conflict is usually tiny.
 
-### 2a. The ledgers carry `merge=union`, so a clean auto-merge can SILENTLY DUPLICATE a row
+### 2a. Ledgers are per-WP fragments — the union-merge section is retired (WP-161)
 
-`.gitattributes` gives `merge=union` to `LEDGER_vanilla_files.md`,
-`LEDGER_implementations.md`, `LEDGER_quirks.md` and `banner_features.txt`. Union
-takes **both** sides of every hunk with no conflict markers — exactly right for
-the pure appends these files normally get, and exactly wrong when one side
-**edits a row in place**. Neither side deleted a line, so you get the old row
-*and* the new one, a green merge, and no signal at all.
+Until WP-161 the three ledgers were single files with `merge=union`. Union takes
+**both** sides of every hunk: right for pure appends, silently wrong when one
+side edits a row in place (PR #704, 2026-08-05, kept a retracted
+LadrunoLoadControl row next to its correction under a "clean" merge). And
+GitHub's server-side merge ignores the driver (§9), so every ledger append made
+every other open PR read CONFLICTING. Over the 60 PRs before WP-161: 77
+merge-ups, 64 conflicted, 55 on the ledgers only.
 
-Measured (PR #704, 2026-08-05): that branch had merged `ladruno` while #703 was
-in but #706 was not, so it carried the ORIGINAL LadrunoLoadControl registration
-row; `ladruno` carried the same row edited in place by #706. `git merge` reported
-"Merge made by the 'ort' strategy", no conflict — and left **both** copies, one
-still asserting the mechanism #706 had just retracted. A knowingly-wrong ledger
-claim would have shipped under a clean merge.
+Now:
 
-- **`merge=union` does not fix ledger conflicts — it converts them into silent
-  duplicates.** Do not read the attribute as making these files safe.
-- **After ANY merge that touches a ledger, count.** For a row you own,
-  `grep -c '<distinctive phrase from your row>' <ledger>` must be **1**. If a
-  sibling PR corrected a row you also carry, the correction and the stale
-  original will both be present — delete the stale one.
-- Same trap in `banner_features.txt`: a duplicated line prints twice in the
-  splash banner.
-- GitHub's `mergeable` field does **not** apply these merge drivers, so a PR can
-  read `CONFLICTING` on the ledgers yet merge clean locally (#704 did). Trust a
-  local `git merge origin/ladruno` over the GitHub flag — then run the duplicate
-  check above, because "clean" is precisely when this bites.
+- **Write a fragment, never a `LEDGER_*.md`:**
+  `Ladruno_implementation/ledger/<kind>/WP-<nnn>-<slug>.md`. The committed
+  `LEDGER_*.md` are stubs; `python ci/check_ledger_fragments.py` fails on an
+  edited one — which is exactly what a stale branch's union merge produces.
+- **A follow-up edits the older WP's fragment** (`status: "fixed-by WP-<nnn>"`
+  + a `#### Follow-up (WP-<nnn>)` section). Small file, rare concurrency, and
+  a real 3-way merge: an in-place edit now conflicts instead of duplicating.
+- **Duplicates are a gate failure** (F3: same body or same quirk heading), not
+  something to `grep -c` for after every merge.
+- `banner_features.txt` keeps `merge=union` (append-only data); the duplicate
+  trap still applies there — a duplicated line prints twice in the banner.
+- Never add `merge=union` to code, tests or docs that are edited in place.
 
 NB cross-namespace classTags do NOT collide in `check_classtags` (family = text
 before the final `_<Name>`), so e.g. `ELE_TAG_BezierTri6`=33000 and
@@ -432,7 +429,12 @@ Zone-A — the ADR-87 warrant is a *run*, not a green badge.
 
 ## 9. GitHub's server-side merge IGNORES `merge=union`, so a locally-clean branch can read CONFLICTING — and then no workflow runs at all
 
-**The trap.** `.gitattributes:5342-5345` gives the three ledgers and
+> **For the ledgers this is history (WP-161):** they are per-WP fragment
+> files now, so two PRs no longer write the same ledger file and this trap no
+> longer fires on them. It still applies to any file two branches append to —
+> `banner_features.txt` is the one left with `merge=union`.
+
+**The trap.** `.gitattributes` gave the three ledgers and
 `banner_features.txt` the `union` merge driver, precisely so two feature
 branches that each append a row never collide. That driver lives in the
 **working tree's** merge machinery: `git merge` honours it, and so does every
@@ -470,11 +472,10 @@ the push's `synchronize` event starts the run.
 - **Do not push again while that run is in progress.** §8's
   `cancel-in-progress: true` means the second push cancels the first run, and a
   cancelled required check is not a green one.
-- **Expect this on EVERY open PR each time a sibling merges to `ladruno`.** It
-  is not a property of your branch; it is a property of the ledgers being
-  append-only files that every work package touches. On a day with several live
-  work packages, the local-merge-and-push is routine maintenance, not an
-  incident.
+- **Before WP-161 this hit EVERY open PR each time a sibling merged**, because
+  every work package appended to the same three ledger files. The fragments
+  remove that shared anchor; if it still happens, look for another file every
+  WP appends to and give it the same treatment.
 
 Measured on **#783, 2026-09-05**: the branch merged cleanly locally, read
 `CONFLICTING` on GitHub, `gh pr checks` reported no checks at all, and a local

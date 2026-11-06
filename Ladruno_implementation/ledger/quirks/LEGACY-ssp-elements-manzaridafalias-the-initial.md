@@ -1,0 +1,9 @@
+---
+wp: LEGACY
+title: "ssp elements + ManzariDafalias: the initial tangent is built at p = P_atm, reproducing the known ssp stabilization defect — avoid the pairing"
+legacy_seq: 274
+---
+### `ssp` elements + `ManzariDafalias`: the initial tangent is built at `p = P_atm`, reproducing the known `ssp` stabilization defect — avoid the pairing
+- **Bites:** `ManzariDafalias::initialize()` (`SRC/material/nD/UWmaterials/ManzariDafalias.cpp:826-864`, specifically the `GetElasticModuli(mSig, ...)` call at `:855` where `mSig` is hard-set to `(P_atm, P_atm, P_atm, 0, 0, 0)`) builds the material's INITIAL tangent at a reference stress of `p = P_atm`, regardless of the model's actual initial stress state. `ssp` elements (`SSPbrick`/`SSPbrickUP` and the 2D `SSPquad*` family) use exactly this initial tangent to build their stabilization stiffness (the mechanism that suppresses spurious zero-energy/hourglass-like modes in the reduced-integration `ssp` formulation) — so if the model's real initial `p` is far from `P_atm` (e.g. near-surface elements at low confinement, or elements pre-stressed well above 1 atm), the stabilization stiffness is scaled from the wrong reference and can be badly under- or over-damped.
+- **Why:** this is a known, previously-reported `ssp` defect (not specific to this fork), just newly confirmed at source for the `ManzariDafalias` pairing by the TIMs report (item 9). It is not something `updateMaterialStage`/`Elastic2Plastic()` touches — `initialize()` runs once, at construction, before any stage exists.
+- **Workaround/status:** open, fix deferred (TIMs report item 9 is out of scope for this PR — it is an `ssp`-element defect, not a `ManzariDafalias` constructor/diagnostic defect like items 7/8/3/4 above). Until fixed, avoid `ssp`-family elements with `ManzariDafalias` when the model's initial confinement is far from `P_atm`; prefer `stdBrick`/`bbarBrick`/`BezierTet10`/`TenNodeTetrahedron` for this material.

@@ -115,6 +115,8 @@ extern "C" int         OPS_ResetInputNoBuilder(ClientData clientData, Tcl_Interp
 #else
 #include <Domain.h>
 #endif
+#include <RelativeMassDamping.h>  // Ladruno (relativeMassDamping); WP-183: outside the
+                                  // _PARALLEL_PROCESSING #else, OpenSeesSP uses it too
 
 #include <Information.h>
 #include <Element.h>
@@ -166,6 +168,7 @@ extern "C" int         OPS_ResetInputNoBuilder(ClientData clientData, Tcl_Interp
 #include <KrylovNewton.h>
 #include <PeriodicNewton.h>
 #include <AcceleratedNewton.h>
+#include <LadrunoFactorReuse.h>   // Ladruno WP-188
 #include <ExpressNewton.h>
 
 // accelerators
@@ -291,6 +294,9 @@ extern int OPS_LadrunoModalResponseHistory(void);   // P1a: modalResponseHistory
 extern int OPS_LadrunoFrequencyResponse(void);      // P2:  frequencyResponse
 extern int OPS_LadrunoSteadyStateDynamics(void);    // P2:  steadyStateDynamics
 extern int OPS_LadrunoRandomResponse(void);         // P3:  randomResponse
+extern int OPS_LadrunoResidualModes(void);          // Ladruno WP-213: residualModes
+extern int OPS_LadrunoResponseSpectrumPerMode(void); // Ladruno WP-216: responseSpectrumPerMode
+extern int OPS_LadrunoRitzVectors(void);            // Ladruno WP-215: ritzVectors
 
 // Ladruno (ADR-78 P0.5): the contact verbs had the SAME gap, with a sharper
 // consequence. They are implemented once in OpenSeesOutputCommands.cpp and are
@@ -337,6 +343,7 @@ extern int OPS_LadrunoEndAugment(void);             // ADR-41 D1
 //    which is worse than the missing-command error it replaced. Classic Tcl owns
 //    its integrators in theStaticIntegrator / theTransientIntegrator below.
 #include <LadrunoSolverQuery.h>
+#include <LadrunoSymmetryGuardQuery.h>   // Ladruno WP-221: same shape, takes theSOE
 
 extern void OPS_SetReliabilityDomain(ReliabilityDomain *);
 
@@ -688,6 +695,7 @@ static Timer *theTimer = 0;
 
 #include <FileStream.h>
 #include <SimulationInformation.h>
+#include "../interpreter/LadrunoSchema.h"   // Ladruno WP-185 ladrunoSchema
 SimulationInformation simulationInfo;
 SimulationInformation *theSimulationInfoPtr = 0;
 
@@ -735,6 +743,9 @@ int
 ladrunoBuild(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);   // Ladruno build-stamp query
 
 int
+ladrunoSchema(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);   // Ladruno WP-185 capability schema
+
+int
 ladrunoThreads(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);   // Ladruno WP-107 element-loop thread count
 
 int
@@ -759,6 +770,21 @@ opsBarrier(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 
 int 
 domainChange(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
+
+// apeGmsh #2034: Ladruno recorder stage hooks (defined in
+// recorder/LadrunoRecorder.cpp, which is built only with HDF5). A user
+// `domainChange` is a stage barrier; the transient analysis `eigen` builds on
+// its own is not a running analysis until `analysis`/`analyze` (see
+// ladrunoNoteEigenOnlyAnalysis). No-ops without HDF5.
+#ifdef _HDF5
+extern void ladrunoNoteUserStageBarrier(void);
+extern void ladrunoNoteEigenOnlyAnalysis(const void* analysis);
+#define LADRUNO_STAGE_BARRIER() ladrunoNoteUserStageBarrier()
+#define LADRUNO_EIGEN_ONLY_ANALYSIS(p) ladrunoNoteEigenOnlyAnalysis(p)
+#else
+#define LADRUNO_STAGE_BARRIER() ((void)0)
+#define LADRUNO_EIGEN_ONLY_ANALYSIS(p) ((void)0)
+#endif
 
 int 
 record(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
@@ -1242,6 +1268,10 @@ TclCommand_ladrunoStaggeredAnalyze(ClientData clientData, Tcl_Interp *interp, in
 }
 
 
+// Ladruno WP-168: the classic-Tcl Ladruno_registerCommands hook. Included here,
+// after every bridge the command table names is declared or defined.
+#include "LadrunoCommandsClassicTcl.h"   // Ladruno WP-168
+
 int OpenSeesAppInit(Tcl_Interp *interp) {
 
   ops_TheActiveDomain = &theDomain;
@@ -1285,14 +1315,9 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
     Tcl_CreateCommand(interp, "getNDF", &getNDF,
         (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
 
-    Tcl_CreateCommand(interp, "profiler", &TclCommand_profiler,
-		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL); // Ladruno
-
-    Tcl_CreateCommand(interp, "ladrunoNumbering", &TclCommand_ladrunoNumbering,
-		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL); // Ladruno (ADR-74 N0)
-
-    Tcl_CreateCommand(interp, "LadrunoStaggeredAnalyze", &TclCommand_ladrunoStaggeredAnalyze,
-		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL); // Ladruno (ADR-73 P2)
+    // Ladruno WP-168: every fork-only command, from the one table in
+    // SRC/interpreter/LadrunoCommandTable.h (see LadrunoCommandsClassicTcl.h).
+    Ladruno_registerCommands(interp);   // Ladruno WP-168
 
     Tcl_CreateCommand(interp, "wipe", &wipeModel,
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
@@ -1365,46 +1390,6 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
         (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
     Tcl_CreateCommand(interp, "responseSpectrumAnalysis", &responseSpectrumAnalysis,
         (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    // Ladruno (ADR 44): modal-response family into classic-Tcl dispatch (the
-    // splash banner already advertised these; wiring was missing here).
-    Tcl_CreateCommand(interp, "modalResponseHistory", &modalResponseHistory,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "frequencyResponse", &frequencyResponse,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "steadyStateDynamics", &steadyStateDynamics,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "randomResponse", &randomResponse,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    // Ladruno (ADR-78 P0.5): contact family into classic-Tcl dispatch. Without
-    // these, OpenSeesMP — which drives parallelism through this file — cannot
-    // see `contactSurface` at all, so no partitioned contact deck can run.
-    Tcl_CreateCommand(interp, "contactSurface", &ladrunoContactSurface,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "contact", &ladrunoContact,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "contactPlane", &ladrunoContactPlane,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "ladrunoContactInfo", &ladrunoContactInfo,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "ladrunoContactForce", &ladrunoContactForce,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "ladrunoMortarPenetration", &ladrunoMortarPenetration,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "ladrunoMortarTieResidual", &ladrunoMortarTieResidual,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "ladrunoEdgePenetration", &ladrunoEdgePenetration,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "ladrunoBeginAugment", &ladrunoBeginAugment,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "ladrunoEndAugment", &ladrunoEndAugment,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    // Ladruno (#729): solver-state queries into classic-Tcl dispatch. Without
-    // these, a .tcl deck can SET `integrator LadrunoDynamicRelaxation` but cannot
-    // read the settling gate that says when the relaxation is done.
-    Tcl_CreateCommand(interp, "ladrunoArcLength", &ladrunoArcLength,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
-    Tcl_CreateCommand(interp, "ladrunoDR", &ladrunoDR,
-        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
     Tcl_CreateCommand(interp, "video", &videoPlayer,
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);       
     Tcl_CreateCommand(interp, "remove", &removeObject, 
@@ -1464,6 +1449,8 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);       
     Tcl_CreateCommand(interp, "rayleigh", &rayleighDamping, 
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);       
+    Tcl_CreateCommand(interp, OPS_RelativeMassDampingCmdName, &relativeMassDampingCmd,   // Ladruno (relativeMassDamping)
+		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
     Tcl_CreateCommand(interp, "modalDamping", &modalDamping, 
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);       
     Tcl_CreateCommand(interp, "modalDampingQ", &modalDampingQ, 
@@ -1591,14 +1578,6 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
     Tcl_CreateCommand(interp, "systemSize", &systemSize, 
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);  
     Tcl_CreateCommand(interp, "version", &version,
-		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
-    Tcl_CreateCommand(interp, "ladrunoBuild", &ladrunoBuild,   // Ladruno build-stamp query
-		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
-    Tcl_CreateCommand(interp, "ladrunoThreads", &ladrunoThreads,   // Ladruno WP-107 element-loop thread count
-		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
-    Tcl_CreateCommand(interp, "ladrunoMutation", &ladrunoMutation,   // Ladruno ADR-87 D2 mutation-gate query
-		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
-    Tcl_CreateCommand(interp, "ladrunoSANISANDReplay", &ladrunoSANISANDReplay,   // Ladruno WP-127
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
 
     Tcl_CreateCommand(interp, "setParameter", &setParameter, 
@@ -1996,6 +1975,7 @@ wipeModel(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 int 
 wipeAnalysis(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 {
+  LADRUNO_EIGEN_ONLY_ANALYSIS(0);   // apeGmsh #2034
 
 #ifdef _PARALLEL_PROCESSING
   if (OPS_PARTITIONED == true && OPS_NUM_SUBDOMAINS > 1) {
@@ -2421,6 +2401,7 @@ int
 analyzeModel(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 {
   int result = 0;
+  LADRUNO_EIGEN_ONLY_ANALYSIS(0);   // apeGmsh #2034: an analyze step makes it real
 
 #ifdef _PARALLEL_PROCESSING
   if (OPS_PARTITIONED == false && OPS_NUM_SUBDOMAINS > 1) {
@@ -3046,6 +3027,7 @@ int
 specifyAnalysis(ClientData clientData, Tcl_Interp *interp, int argc, 
 		TCL_Char **argv)
 {
+    LADRUNO_EIGEN_ONLY_ANALYSIS(0);   // apeGmsh #2034
     // make sure at least one other argument to contain type of system
     if (argc < 2) {
 	opserr << "WARNING need to specify an analysis type (Static, Transient)\n";
@@ -3566,8 +3548,14 @@ static ExternalClassFunction *theExternalStaticIntegratorCommands = NULL;
 static ExternalClassFunction *theExternalTransientIntegratorCommands = NULL;
 static ExternalClassFunction *theExternalAlgorithmCommands = NULL;
 
-int 
-specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
+// Ladruno WP-172: the body below is the stock specifySOE, renamed; the `system`
+// command is the wrapper after it. Its final `if (theSOE != 0)` read the
+// GLOBAL, so once any system had been set, a call that created nothing (an
+// unknown type, `PFEM -<unknown>`) returned TCL_OK -- and with an analysis
+// present it re-installed the SAME pointer via setLinearSOE(), which deletes
+// the old SOE first: a use-after-free that killed the next `analyze`.
+static int
+ladrunoSpecifySOEImpl(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 {
   // make sure at least one other argument to contain type of system
   if (argc < 2) {
@@ -3694,10 +3682,21 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
       theSolver = new ProfileSPDLinDirectSolver(); 	
     ***************************************************************  */
 
+    // Ladruno WP-221: `system ProfileSPD -strictSymmetry` (the only option
+    // this branch reads; anything else is still ignored, as upstream).
+    int strictSym = 0;
+    for (int i = 2; i < argc; i++)
+      if (strcmp(argv[i], "-strictSymmetry") == 0)
+	strictSym = 1;
 #ifdef _PARALLEL_PROCESSING
     theSOE = new DistributedProfileSPDLinSOE(*theSolver);
+    if (strictSym)
+      opserr << "WARNING system ProfileSPD -strictSymmetry is serial-only "
+                "(DistributedProfileSPDLinSOE solves on its own); ignored\n";
 #else
-    theSOE = new ProfileSPDLinSOE(*theSolver);      
+    ProfileSPDLinSOE *theProfileSOE = new ProfileSPDLinSOE(*theSolver);
+    theProfileSOE->setStrictSymmetry(strictSym);
+    theSOE = theProfileSOE;
 #endif
   }
 
@@ -4049,6 +4048,7 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
     int krylovDigits = 0; // Ladruno ADR-75 P1e: -krylov <L>, 0 = direct only
     int cnrBranch = -1;   // Ladruno WP-132: -deterministic / -cbwr <BRANCH>
     int cnrKeepEnv = 0;   // Ladruno WP-132: bare -deterministic keeps MKL_CBWR
+    int strictSym = 0;    // Ladruno WP-221: -strictSymmetry
     int count = 2;
 
     // Ladruno ADR-75 P1d (adversarial review): this loop originally diverged
@@ -4080,6 +4080,9 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 	matType = 2;
       } else if (strcmp(argv[count],"-spd") == 0) {
 	matType = 1;
+      } else if (strcmp(argv[count],"-strictSymmetry") == 0) {
+	// Ladruno WP-221: bare flag; see OPS_PARDISOGenLinSolver.
+	strictSym = 1;
       } else if (strcmp(argv[count],"-stats") == 0 ||
                  strcmp(argv[count],"-pardisoStats") == 0) {
 	// Ladruno ADR-75 P1k: `-pardisoStats` is a spelled-out alias for
@@ -4143,7 +4146,9 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
       delete theSolver;
       return TCL_ERROR;
     }
-    theSOE = new PARDISOGenLinSOE(*theSolver, matType);
+    PARDISOGenLinSOE *thePardisoSOE = new PARDISOGenLinSOE(*theSolver, matType);
+    thePardisoSOE->setStrictSymmetry(strictSym);   // Ladruno WP-221
+    theSOE = thePardisoSOE;
   }
 #else
   // Ladruno ADR-75 P1d (adversarial review): REFUSE explicitly in builds without
@@ -4284,6 +4289,13 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
     int icntl35 = 0;      // BLR off by default => byte-identical to the pre-BLR solver
     double cntl7 = 0.0;   // BLR dropping tolerance
     int mumpsStats = 0;   // -stats dumps INFOG/RINFOG after the factorization
+    // Ladruno WP-194: -precision single|double (-mixed = single), -refine k.
+    // Fail closed: a bad value, -refine without single, or single on a build
+    // without SMUMPS refuses the command instead of silently factoring double.
+    int mumpsPrecision = 0;
+    int mumpsRefine = 0;
+    bool mumpsSawRefine = false;
+    bool mumpsRefuse = false;
 
     int currentArg = 2;
     while (currentArg < argc) {
@@ -4297,9 +4309,13 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 			 strcmp(opt, "-matrixType") == 0 ||
 			 strcmp(opt, "-ICNTL35") == 0 ||
 			 strcmp(opt, "-CNTL7") == 0 ||
-			 strcmp(opt, "-BLR") == 0);
+			 strcmp(opt, "-BLR") == 0 ||
+			 strcmp(opt, "-precision") == 0 ||   // Ladruno WP-194
+			 strcmp(opt, "-refine") == 0);
       if (needsValue && currentArg + 1 >= argc) {
 	opserr << "Mumps Warning: " << opt << " needs a value -- ignored\n";
+	if (strcmp(opt, "-precision") == 0 || strcmp(opt, "-refine") == 0)
+	  mumpsRefuse = true;   // Ladruno WP-194: fail closed
 	currentArg++;
 	continue;
       }
@@ -4347,6 +4363,29 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 	// had to relax its `> 1' loop guard for the same reason.
 	mumpsStats = 1;
 	currentArg++;
+      } else if (strcmp(opt, "-precision") == 0) {
+	// Ladruno WP-194: factor precision (residual/update stay double)
+	const char *val = argv[currentArg+1];
+	if (strcmp(val, "single") == 0 || strcmp(val, "mixed") == 0)
+	  mumpsPrecision = 1;
+	else if (strcmp(val, "double") == 0)
+	  mumpsPrecision = 0;
+	else {
+	  opserr << "Mumps ERROR: -precision takes single or double, got " << val << "\n";
+	  mumpsRefuse = true;
+	}
+	currentArg += 2;
+      } else if (strcmp(opt, "-mixed") == 0) {
+	mumpsPrecision = 1;   // Ladruno WP-194: alias of -precision single
+	currentArg++;
+      } else if (strcmp(opt, "-refine") == 0) {
+	// Ladruno WP-194: inner mixed-precision refinement steps (default 0)
+	if (Tcl_GetInt(interp, argv[currentArg+1], &mumpsRefine) != TCL_OK || mumpsRefine < 0) {
+	  opserr << "Mumps ERROR: -refine needs an integer >= 0\n";
+	  mumpsRefuse = true;
+	}
+	mumpsSawRefine = true;
+	currentArg += 2;
       } else {
 	// Ladruno ADR-75 P2h: this arm used to skip SILENTLY, so a mistyped or
 	// not-yet-wired option cost you the setting without a trace -- which is
@@ -4379,6 +4418,27 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
       }
     }
 
+    // Ladruno WP-194: refuse rather than factor in a precision not asked for
+    if (mumpsSawRefine && mumpsPrecision == 0) {
+      opserr << "Mumps ERROR: -refine applies to -precision single only\n";
+      mumpsRefuse = true;
+    }
+#if defined(_PARALLEL_PROCESSING) || defined(_PARALLEL_INTERPRETERS)
+    if (mumpsPrecision != 0 && !MumpsParallelSolver::singlePrecisionAvailable()) {
+      opserr << "Mumps ERROR: -precision single needs single-precision MUMPS (libsmumps); "
+	     << "this build has none -- rebuild with MUMPS BUILD_SINGLE=ON, or drop the option\n";
+      mumpsRefuse = true;
+    }
+#else
+    if (mumpsPrecision != 0) {
+      opserr << "Mumps ERROR: -precision single is implemented for the parallel MUMPS solver "
+	     << "(OpenSeesSP/OpenSeesMP) only\n";
+      mumpsRefuse = true;
+    }
+#endif
+    if (mumpsRefuse)
+      return TCL_ERROR;
+
 #ifdef _PARALLEL_PROCESSING
     // Ladruno ADR-75 P2h: the SP SOE ctor takes no matType (vanilla asymmetry,
     // untouched here) -- say so rather than drop it silently.
@@ -4387,11 +4447,13 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
     MumpsParallelSolver *theSolver = new MumpsParallelSolver(icntl7, icntl14,
 							     icntl35, cntl7,
 							     mumpsStats);
+    theSolver->setPrecision(mumpsPrecision, mumpsRefine);   // Ladruno WP-194
     theSOE = new MumpsParallelSOE(*theSolver);
 #elif _PARALLEL_INTERPRETERS
     MumpsParallelSolver *theSolver = new MumpsParallelSolver(icntl7, icntl14,
 							     icntl35, cntl7,
 							     mumpsStats);
+    theSolver->setPrecision(mumpsPrecision, mumpsRefine);   // Ladruno WP-194
     MumpsParallelSOE *theParallelSOE = new MumpsParallelSOE(*theSolver, matType);
     theParallelSOE->setProcessID(OPS_rank);
     theParallelSOE->setChannels(numChannels, theChannels);
@@ -4498,6 +4560,28 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
   }
 }
 
+// Ladruno WP-172: `system` must not report success without a NEW system. The
+// global is cleared before the impl runs so that "created" is simply
+// theSOE != 0 and the impl can never re-install the previous pointer; when
+// nothing was created the previous SOE is restored (the analysis, if any,
+// never stopped holding it) and the command fails.
+int
+specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
+{
+  LinearSOE *prevSOE = theSOE;
+  theSOE = 0;
+
+  int res = ladrunoSpecifySOEImpl(clientData, interp, argc, argv);
+  if (theSOE != 0)
+    return res;
+
+  theSOE = prevSOE;
+  if (prevSOE != 0)
+    opserr << "WARNING system " << (argc > 1 ? argv[1] : "")
+           << " - failed to create the system - previous system left unchanged\n";
+  return TCL_ERROR;
+}
+
 
 
 //
@@ -4584,8 +4668,14 @@ specifyNumberer(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **
 //
 // command invoked to allow the ConstraintHandler object to be built
 //
-int 
-specifyConstraintHandler(ClientData clientData, Tcl_Interp *interp, int argc, 
+// Ladruno WP-172: the body below is the stock specifyConstraintHandler,
+// renamed; the `constraints` command is the wrapper after it. Its Auto /
+// LadrunoProjection / LadrunoContact branches assign the factory result to the
+// GLOBAL and only then check for null, so a refused handler returned
+// TCL_ERROR with the previous handler already discarded (under `catch`, the
+// next `analysis` silently used the PlainHandler default).
+static int
+ladrunoSpecifyConstraintHandlerImpl(ClientData clientData, Tcl_Interp *interp, int argc,
 			 TCL_Char **argv)
 {
   // make sure at least one other argument to contain numberer
@@ -4672,6 +4762,26 @@ specifyConstraintHandler(ClientData clientData, Tcl_Interp *interp, int argc,
   return TCL_OK;
 }
 
+// Ladruno WP-172: `constraints` must not fail with the previous handler gone.
+// "Created" = a non-null handler that was not there before (the previous one
+// is still alive, so a new object cannot alias it) -- the WP-171 shape.
+int
+specifyConstraintHandler(ClientData clientData, Tcl_Interp *interp, int argc,
+			 TCL_Char **argv)
+{
+  ConstraintHandler *prevHandler = theHandler;
+
+  int res = ladrunoSpecifyConstraintHandlerImpl(clientData, interp, argc, argv);
+  if (res == TCL_OK && theHandler != 0 && theHandler != prevHandler)
+    return res;
+
+  theHandler = prevHandler;
+  if (prevHandler != 0)
+    opserr << "WARNING constraints " << (argc > 1 ? argv[1] : "")
+           << " - failed to create the constraint handler - previous constraint handler left unchanged\n";
+  return TCL_ERROR;
+}
+
 
 
 //
@@ -4743,6 +4853,7 @@ specifyAlgorithm(ClientData clientData, Tcl_Interp *interp, int argc,
     int incrementTangent = CURRENT_TANGENT;
     int iterateTangent = CURRENT_TANGENT;
     int maxDim = 3;
+    LadrunoFactorReuseOptions reuseOpts;   // Ladruno WP-188
     for (int i = 2; i < argc; i++) {
       if (strcmp(argv[i],"-iterate") == 0 && i+1 < argc) {
 	i++;
@@ -4766,7 +4877,11 @@ specifyAlgorithm(ClientData clientData, Tcl_Interp *interp, int argc,
 	i++;
 	maxDim = atoi(argv[i]);
       }
+      else if (LadrunoFactorReuse::parseArgv(argc, (const char **)argv, i, reuseOpts) < 0)  // Ladruno WP-188
+	return TCL_ERROR;
     }
+    if (!reuseOpts.consistent())   // Ladruno WP-188
+      return TCL_ERROR;
 
     if (theTest == 0) {
       opserr << "ERROR: No ConvergenceTest yet specified\n";
@@ -4776,7 +4891,10 @@ specifyAlgorithm(ClientData clientData, Tcl_Interp *interp, int argc,
     Accelerator *theAccel;
     theAccel = new KrylovAccelerator(maxDim, iterateTangent);
 
-    theNewAlgo = new AcceleratedNewton(*theTest, theAccel, incrementTangent);
+    AcceleratedNewton *theKrylovAlgo = new AcceleratedNewton(*theTest, theAccel, incrementTangent);
+    if (reuseOpts.maxSteps > 0)   // Ladruno WP-188
+      theKrylovAlgo->setFactorReuse(reuseOpts);
+    theNewAlgo = theKrylovAlgo;
   }
 
   else if (strcmp(argv[1],"RaphsonNewton") == 0) {
@@ -5362,8 +5480,28 @@ specifyCTest(ClientData clientData, Tcl_Interp *interp, int argc,
 //
 // command invoked to allow the Integrator object to be built
 //
-int 
-specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc, 
+// Ladruno WP-171: the body below is the stock specifyIntegrator, renamed; the
+// `integrator` command is the wrapper after it. Two defects in the stock body:
+//   * ~55 branches assign the factory result and then call
+//     `theXAnalysis->setIntegrator(*theXIntegrator)` with no null check, so a
+//     REFUSED integrator (e.g. `ExplicitBathe 0.54 -lnvd 1.5`) dereferenced null
+//     and SEGFAULTED whenever an analysis already existed;
+//   * with no analysis yet it returned TCL_OK and left the global pointer null,
+//     silently discarding the previous integrator (`analysis` then fell back to
+//     a default Newmark).
+// The per-branch calls now go through ladrunoSetIntegratorIfAny (null-safe),
+// and the wrapper restores the previous integrator + returns TCL_ERROR when no
+// new one was created -- the classic-Tcl twin of the OPS_Integrator fix.
+template <class Analysis, class Integrator>
+static void
+ladrunoSetIntegratorIfAny(Analysis *theAnalysis, Integrator *theIntegrator)
+{
+  if (theAnalysis != 0 && theIntegrator != 0)
+    theAnalysis->setIntegrator(*theIntegrator);
+}
+
+static int
+ladrunoSpecifyIntegratorImpl(ClientData clientData, Tcl_Interp *interp, int argc,
 		  TCL_Char **argv)
 {
 
@@ -5405,7 +5543,7 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
 
   // if the analysis exists - we want to change the Integrator
   if (theStaticAnalysis != 0)
-    theStaticAnalysis->setIntegrator(*theStaticIntegrator);
+    ladrunoSetIntegratorIfAny(theStaticAnalysis, theStaticIntegrator);   // Ladruno WP-171
       } else if (strcmp(argv[1],"StagedLoadControl") == 0) {
       double dLambda;
       double minIncr, maxIncr;
@@ -5433,7 +5571,7 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
 
   
       if (theStaticAnalysis != 0)
-        theStaticAnalysis->setIntegrator(*theStaticIntegrator);
+        ladrunoSetIntegratorIfAny(theStaticAnalysis, theStaticIntegrator);   // Ladruno WP-171
       }
 
   //else if (strcmp(argv[1],"HarmonicSteadyState") == 0 || strcmp(argv[1],"HarmonicSS") == 0) {
@@ -5455,13 +5593,13 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
 
   // if the analysis exists - we want to change the Integrator
   if (theStaticAnalysis != 0)
-    theStaticAnalysis->setIntegrator(*theStaticIntegrator);
+    ladrunoSetIntegratorIfAny(theStaticAnalysis, theStaticIntegrator);   // Ladruno WP-171
   }
 
   else if (strcmp(argv[1],"LadrunoArcLength") == 0) {   // Ladruno
     theStaticIntegrator = (StaticIntegrator *)OPS_LadrunoArcLength();
     if (theStaticIntegrator != 0 && theStaticAnalysis != 0)
-      theStaticAnalysis->setIntegrator(*theStaticIntegrator);
+      ladrunoSetIntegratorIfAny(theStaticAnalysis, theStaticIntegrator);   // Ladruno WP-171
   }
 
   else if (strcmp(argv[1],"LadrunoLoadControl") == 0) {   // Ladruno (ADR-80 S1)
@@ -5470,12 +5608,12 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
       return TCL_ERROR;
     // if the analysis exists - we want to change the Integrator
     if (theStaticAnalysis != 0)
-      theStaticAnalysis->setIntegrator(*theStaticIntegrator);
+      ladrunoSetIntegratorIfAny(theStaticAnalysis, theStaticIntegrator);   // Ladruno WP-171
   }
   else if (strcmp(argv[1],"LadrunoIndirectControl") == 0) {   // Ladruno
     theStaticIntegrator = (StaticIntegrator *)OPS_LadrunoIndirectControl();
     if (theStaticIntegrator != 0 && theStaticAnalysis != 0)
-      theStaticAnalysis->setIntegrator(*theStaticIntegrator);
+      ladrunoSetIntegratorIfAny(theStaticAnalysis, theStaticIntegrator);   // Ladruno WP-171
   }
 
   else if (strcmp(argv[1],"ArcLength1") == 0) {
@@ -5493,7 +5631,7 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
 
   // if the analysis exists - we want to change the Integrator
   if (theStaticAnalysis != 0)
-    theStaticAnalysis->setIntegrator(*theStaticIntegrator);
+    ladrunoSetIntegratorIfAny(theStaticAnalysis, theStaticIntegrator);   // Ladruno WP-171
   }
   /************************added for HSConstraint*************************************/
   
@@ -5528,7 +5666,7 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
 	}
     // if the analysis exists - we want to change the Integrator
     if (theStaticAnalysis != 0)
-    	theStaticAnalysis->setIntegrator(*theStaticIntegrator);
+    	ladrunoSetIntegratorIfAny(theStaticAnalysis, theStaticIntegrator);   // Ladruno WP-171
   }
   /*********************************************************************************/
   
@@ -5566,7 +5704,7 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
 
       // if the analysis exists - we want to change the Integrator
       if (theStaticAnalysis != 0)
-	theStaticAnalysis->setIntegrator(*theStaticIntegrator);
+	ladrunoSetIntegratorIfAny(theStaticAnalysis, theStaticIntegrator);   // Ladruno WP-171
   }
 
   else if (strcmp(argv[1], "EQPath") == 0) {
@@ -5604,7 +5742,7 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
 
 		// if the analysis exists - we want to change the Integrator
 		if (theStaticAnalysis != 0)
-			theStaticAnalysis->setIntegrator(*theStaticIntegrator);
+			ladrunoSetIntegratorIfAny(theStaticAnalysis, theStaticIntegrator);   // Ladruno WP-171
   }	
   
   else if (strcmp(argv[1],"DisplacementControl") == 0) {
@@ -5673,7 +5811,7 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
 
       // if the analysis exists - we want to change the Integrator
       if (theStaticAnalysis != 0) 
-	theStaticAnalysis->setIntegrator(*theStaticIntegrator);
+	ladrunoSetIntegratorIfAny(theStaticAnalysis, theStaticIntegrator);   // Ladruno WP-171
   }  
 
 
@@ -5719,7 +5857,7 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
 
       // if the analysis exists - we want to change the Integrator
       if (theStaticAnalysis != 0)
-	theStaticAnalysis->setIntegrator(*theStaticIntegrator);
+	ladrunoSetIntegratorIfAny(theStaticAnalysis, theStaticIntegrator);   // Ladruno WP-171
   }
 #endif
 
@@ -5756,7 +5894,7 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
     
     // if the analysis exists - we want to change the Integrator
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"GimmeMCK") == 0 || strcmp(argv[1],"ZZTop") == 0) {
@@ -5767,42 +5905,42 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
     
     // if the analysis exists - we want to change the Integrator
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   else if (strcmp(argv[1],"PFEM") == 0) {
     theTransientIntegrator = new PFEMIntegrator();
 
     // if the analysis exists - we want to change the Integrator
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   } 
 
   else if (strcmp(argv[1],"NewmarkExplicit") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_NewmarkExplicit();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"NewmarkHSIncrReduct") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_NewmarkHSIncrReduct();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"NewmarkHSIncrLimit") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_NewmarkHSIncrLimit();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"NewmarkHSFixedNumIter") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_NewmarkHSFixedNumIter();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
 // #ifdef _RELIABILITY
@@ -6017,189 +6155,189 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
     theTransientIntegrator = (TransientIntegrator *)OPS_HHT();
 
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
 
   else if (strcmp(argv[1],"LadrunoHHT") == 0) {   // Ladruno (ADR-52 W3-I2): sensitivity/DDM HHT
     theTransientIntegrator = (TransientIntegrator *)OPS_LadrunoHHT();
 
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
 
   else if (strcmp(argv[1],"LadrunoGeneralizedAlpha") == 0) {   // Ladruno (ADR-52 W3-I2): sensitivity/DDM generalized-alpha
     theTransientIntegrator = (TransientIntegrator *)OPS_LadrunoGeneralizedAlpha();
 
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
 
   else if (strcmp(argv[1],"HHT_TP") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_HHT_TP();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"HHTGeneralized") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_HHTGeneralized();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"HHTGeneralized_TP") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_HHTGeneralized_TP();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"HHTExplicit") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_HHTExplicit();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"HHTExplicit_TP") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_HHTExplicit_TP();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"HHTGeneralizedExplicit") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_HHTGeneralizedExplicit();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"HHTGeneralizedExplicit_TP") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_HHTGeneralizedExplicit_TP();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"HHTHSIncrLimit") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_HHTHSIncrLimit();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"HHTHSIncrLimit_TP") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_HHTHSIncrLimit_TP();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"HHTHSIncrReduct") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_HHTHSIncrReduct();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"HHTHSIncrReduct_TP") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_HHTHSIncrReduct_TP();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"HHTHSFixedNumIter") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_HHTHSFixedNumIter();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"HHTHSFixedNumIter_TP") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_HHTHSFixedNumIter_TP();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"GeneralizedAlpha") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_GeneralizedAlpha();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"KRAlphaExplicit") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_KRAlphaExplicit();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"KRAlphaExplicit_TP") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_KRAlphaExplicit_TP();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"AlphaOS") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_AlphaOS();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"AlphaOS_TP") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_AlphaOS_TP();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"AlphaOSGeneralized") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_AlphaOSGeneralized();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"AlphaOSGeneralized_TP") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_AlphaOSGeneralized_TP();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"Collocation") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_Collocation();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"CollocationHSIncrReduct") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_CollocationHSIncrReduct();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"CollocationHSIncrLimit") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_CollocationHSIncrLimit();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"CollocationHSFixedNumIter") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_CollocationHSFixedNumIter();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"Newmark1") == 0) {
@@ -6244,70 +6382,70 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
 
       // if the analysis exists - we want to change the Integrator
 	  if (theTransientAnalysis != 0)
-		theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+		ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"WilsonTheta") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_WilsonTheta();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"ExplicitDifference") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_ExplicitDifference();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
 
   else if (strcmp(argv[1],"CentralDifference") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_CentralDifference();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }  
   
   else if (strcmp(argv[1], "Explicitdifference") == 0) {
   theTransientIntegrator = new ExplicitDifference();
 
   if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
 
   else if (strcmp(argv[1],"CentralDifferenceAlternative") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_CentralDifferenceAlternative();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"CentralDifferenceNoDamping") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_CentralDifferenceNoDamping();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
 
   else if (strcmp(argv[1],"ExplicitBathe") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_ExplicitBathe();
 
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
 
   else if (strcmp(argv[1],"ExplicitBatheLNVD") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_ExplicitBatheLNVD();
 
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
 
   else if (strcmp(argv[1],"CentralDifferenceLadruno") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_CentralDifferenceLadruno();
 
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
 
   // Ladruno: selective mass scaling (lumped + consistent) on the three explicit
@@ -6317,51 +6455,51 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
   else if (strcmp(argv[1],"CentralDifferenceSMS") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_CentralDifferenceSMS();
     if (theTransientIntegrator != 0 && theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
 
   else if (strcmp(argv[1],"CentralDifferenceSMSConsistent") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_CentralDifferenceSMSConsistent();
     if (theTransientIntegrator != 0 && theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
 
   else if (strcmp(argv[1],"ExplicitBatheSMS") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_ExplicitBatheSMS();
     if (theTransientIntegrator != 0 && theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
 
   else if (strcmp(argv[1],"ExplicitBatheSMSConsistent") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_ExplicitBatheSMSConsistent();
     if (theTransientIntegrator != 0 && theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
 
   else if (strcmp(argv[1],"ExplicitBatheLNVDSMS") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_ExplicitBatheLNVDSMS();
     if (theTransientIntegrator != 0 && theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
 
   else if (strcmp(argv[1],"ExplicitBatheLNVDSMSConsistent") == 0) {
     theTransientIntegrator = (TransientIntegrator *)OPS_ExplicitBatheLNVDSMSConsistent();
     if (theTransientIntegrator != 0 && theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
 
   else if (strcmp(argv[1],"LadrunoDynamicRelaxation") == 0) {   // Ladruno
     theTransientIntegrator = (TransientIntegrator *)OPS_LadrunoDynamicRelaxation();
 
     if (theTransientIntegrator != 0 && theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
 
   else if (strcmp(argv[1],"ExplicitDifferenceStatic") == 0) {
     theTransientIntegrator = (TransientIntegrator *) OPS_ExplicitDifferenceStatic();
     
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
   
   else if (strcmp(argv[1],"Transient") == 0) {
@@ -6429,7 +6567,7 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
 
     // if the analysis exists - we want to change the Integrator
     if (theTransientAnalysis != 0)
-      theTransientAnalysis->setIntegrator(*theTransientIntegrator);
+      ladrunoSetIntegratorIfAny(theTransientAnalysis, theTransientIntegrator);   // Ladruno WP-171
   }
 
   else if (strcmp(argv[1],"Static") == 0) {
@@ -6497,7 +6635,7 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
 
     // if the analysis exists - we want to change the Integrator
     if (theStaticAnalysis != 0)
-      theStaticAnalysis->setIntegrator(*theStaticIntegrator);
+      ladrunoSetIntegratorIfAny(theStaticAnalysis, theStaticIntegrator);   // Ladruno WP-171
   }
 
   else {
@@ -6530,6 +6668,34 @@ specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
 #endif
 
   return TCL_OK;
+}
+
+// Ladruno WP-171: `integrator` must not report success without an integrator.
+// Restore the previous integrator and fail when the factory produced nothing.
+// "Created" = a pointer now holds an object that was not there before; a new
+// object cannot alias `prev*` because those are still alive (the impl only
+// hands a NON-null result to the analysis).
+int
+specifyIntegrator(ClientData clientData, Tcl_Interp *interp, int argc,
+		  TCL_Char **argv)
+{
+  StaticIntegrator *prevSI = theStaticIntegrator;
+  TransientIntegrator *prevTI = theTransientIntegrator;
+
+  int res = ladrunoSpecifyIntegratorImpl(clientData, interp, argc, argv);
+
+  bool created = (theStaticIntegrator != 0 && theStaticIntegrator != prevSI) ||
+                 (theTransientIntegrator != 0 && theTransientIntegrator != prevTI);
+  if (created)
+    return res;
+
+  // A branch that already returned TCL_ERROR printed its own reason; say what
+  // happened to the integrator either way (same wording as OPS_Integrator).
+  theStaticIntegrator = prevSI;
+  theTransientIntegrator = prevTI;
+  opserr << "WARNING integrator " << (argc > 1 ? argv[1] : "")
+         << " - failed to create the integrator - previous integrator left unchanged\n";
+  return TCL_ERROR;
 }
 
 
@@ -6672,6 +6838,7 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
   double feastTolExp = 0.0;
   bool   feastVerbose = false, feastCertify = false;
   bool   feastBlockZGate = false, feastRci = false;
+  bool   feastTraceStop = false;   // Ladruno WP-203
   for (int fl = 1; fl < argc; fl++) {
     if (strcmp(argv[fl], "-feast") == 0 || strcmp(argv[fl], "feast") == 0) {
       feast = true;
@@ -6726,6 +6893,8 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
         feastCertify = true;    p += 1;
       } else if (strcmp(argv[p], "-blockZGate") == 0) {
         feastBlockZGate = true; p += 1;
+      } else if (strcmp(argv[p], "-traceStop") == 0) {
+        feastTraceStop = true; p += 1;   // Ladruno WP-203
       } else if (strcmp(argv[p], "-rci") == 0) {
         feastRci = true;        p += 1;
       } else {
@@ -6835,6 +7004,9 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
 							     *theSOE,
 							     *theTransientIntegrator,
 							     theTest);
+	// apeGmsh #2034: openseespy deletes this analysis after the solve; here
+	// it stays, so mark it: not a running analysis for the Ladruno recorder.
+	LADRUNO_EIGEN_ONLY_ANALYSIS(theTransientAnalysis);
     }
 
     //
@@ -6871,6 +7043,7 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
 	f->setCertify(feastCertify);
 	f->setBlockZGate(feastBlockZGate);
 	f->setRci(feastRci);
+	f->setTraceStop(feastTraceStop); // Ladruno WP-203
       }
 #ifdef _PARALLEL_INTERPRETERS
       else if (typeSolver == EigenSOE_TAGS_ArpackSOE) {
@@ -6933,6 +7106,7 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
 	theFeastSOE->setCertify(feastCertify);
 	theFeastSOE->setBlockZGate(feastBlockZGate);
 	theFeastSOE->setRci(feastRci);
+	theFeastSOE->setTraceStop(feastTraceStop); // Ladruno WP-203
 	theEigenSOE = theFeastSOE;
 
       } else {
@@ -7022,11 +7196,8 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
       FeastEigenSOE *fsoe = static_cast<FeastEigenSOE *>(theEigenSOE);
       const int mFound = fsoe->getNumFoundModes();
       if (mFound < numEigen) {
-	const Vector &lam = theDomain.getEigenvalues();
-	Vector trimmed(mFound);
-	for (int i = 0; i < mFound; i++)
-	  trimmed(i) = lam(i);
-	theDomain.setEigenvalues(trimmed);
+	// WP-203: trims the node eigenvectors too (modalProperties abort)
+	FeastEigenSOE::trimDomainModes(theDomain, mFound);
 	numEigen = mFound;
       }
     }
@@ -7061,6 +7232,16 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
       return TCL_ERROR;
     }
 
+    return TCL_OK;
+}
+
+// Ladruno (relativeMassDamping): classic-Tcl bridge, as modalProperties
+int
+relativeMassDampingCmd(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_RelativeMassDamping() < 0)
+	    return TCL_ERROR;
     return TCL_OK;
 }
 
@@ -7121,6 +7302,36 @@ randomResponse(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** a
 {
     OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
     if (OPS_LadrunoRandomResponse() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+// Ladruno WP-213: residualModes, the same OPS_ResetInputNoBuilder bridge.
+int
+residualModes(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_LadrunoResidualModes() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+// Ladruno WP-215: ritzVectors, the same OPS_ResetInputNoBuilder bridge.
+int
+ritzVectors(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_LadrunoRitzVectors() < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+// Ladruno WP-216: responseSpectrumPerMode, the same OPS_ResetInputNoBuilder bridge.
+int
+responseSpectrumPerMode(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_LadrunoResponseSpectrumPerMode() < 0)
 	    return TCL_ERROR;
     return TCL_OK;
 }
@@ -7255,6 +7466,17 @@ ladrunoDR(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
 {
     OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
     if (Ladruno::drCommand(theTransientIntegrator) < 0)
+	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+// Ladruno WP-221: classic Tcl owns its systems in the file-scope `theSOE` /
+// `theEigenSOE`.
+int
+ladrunoSymmetryGuard(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (Ladruno::symmetryGuardCommand(theSOE, theEigenSOE) < 0)
 	    return TCL_ERROR;
     return TCL_OK;
 }
@@ -11327,9 +11549,13 @@ int convertTextToBinary(ClientData clientData, Tcl_Interp *interp, int argc, TCL
   return textToBinary(inputFile, outputFile);
 }
 
+// apeGmsh #2034: a user `domainChange` is a stage barrier for the Ladruno
+// recorder. Only this user command bumps it; internal Domain::domainChange()
+// calls do not.
 int domainChange(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 {
   theDomain.domainChange();
+  LADRUNO_STAGE_BARRIER();
   return TCL_OK;
 }
 
@@ -11595,10 +11821,31 @@ ladrunoBuild(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **arg
   return TCL_OK;
 }
 
+// Ladruno WP-185 (apeGmsh#1667): classic-Tcl twin of `ladrunoSchema`. Same
+// generator as the DL engines (SRC/interpreter/LadrunoSchema.h), with
+// "engine":"classic" and this engine's command rows. No arguments.
+int
+ladrunoSchema(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
+{
+  if (argc > 1) {
+    opserr << "WARNING ladrunoSchema: takes no arguments, got '" << argv[1]
+           << "' (schema v" << ladruno_schema::kSchemaVersion << ")\n";
+    return TCL_ERROR;
+  }
+  std::string json, err;
+  if (!ladruno_schema::render(ladruno_schema::ENGINE_CLASSIC, json, err)) {
+    opserr << "WARNING ladrunoSchema: " << err.c_str() << "\n";
+    return TCL_ERROR;
+  }
+  Tcl_SetResult(interp, (char *)json.c_str(), TCL_VOLATILE);
+  return TCL_OK;
+}
+
 // Ladruno WP-107 (ADR-75b L3-1): classic-Tcl twin of `ladrunoThreads`. The ONE
 // knob for the element state-determination loop's thread count.
 //   ladrunoThreads       -> query
 //   ladrunoThreads <n>   -> request n (clamped to >= 1); returns what was stored
+//   ladrunoThreads <n> -hybrid -> also allow threads on an MPI binary (WP-192)
 int
 ladrunoThreads(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 {
@@ -11615,6 +11862,15 @@ ladrunoThreads(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **a
     // ladruno_setNumThreads (WP-107 red-team S7), so the env path and both
     // interpreter verbs say the same thing in the same words.
     int stored = ladruno_setNumThreads(n);
+    // Ladruno WP-192: `-hybrid` acknowledges hybrid MPI+threads, the one way an
+    // MPI binary honours the count (ladruno_hybridAllowed).
+    for (int a = 2; a < argc; a++) {
+      if (strcmp(argv[a], "-hybrid") == 0)
+        ladruno_setHybridAllowed(true);
+      else
+        opserr << "WARNING ladrunoThreads: unknown option " << argv[a]
+               << " -- ignored (known: -hybrid)\n";
+    }
     if (stored > 1 && !ladruno_openmpCompiledIn())
       opserr << "WARNING ladrunoThreads: this binary was built WITHOUT "
              << "LADRUNO_OPENMP, so the element loop stays SERIAL no matter "
@@ -11642,6 +11898,7 @@ ladrunoMutation(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **
     {"EXPLICIT",  LADRUNO_MUTATE_EXPLICIT},
     {"SANISAND",  LADRUNO_MUTATE_SANISAND},
     {"SHELLMOD",  LADRUNO_MUTATE_SHELLMOD},   // Ladruno: ADR 91
+    {"CPML",      LADRUNO_MUTATE_CPML},       // Ladruno: C-PML wave absorbing element
   };
   const char *modeName[] = {"NONE", "ZERO", "SCALE", "IDENT"};
 

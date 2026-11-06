@@ -659,47 +659,50 @@ ModIMKPinching02::setTrialStrain(double strain, double strainRate)
     } // Filipe Ribeiro and Andre Barbosa
 	
     if(flagdeg == 1){		//this cycle was reformulated // Filipe Ribeiro and Andre Barbosa
-				 
-      if(Enrgtot >= Enrgts && Enrgts != 0.0){      
-        betas = 1.0;
-      } else if (Enrgtot >= Enrgta && Enrgta != 0.0) {  
-        betaa = 1.0;
-      } else if(Enrgtot >= Enrgtd && Enrgtd == 0.0) {  
-        betad = 1.0;
-     
-	  } else {
-     
-      if(Ls != 0.0){
-        betas = pow(Enrgc/(Enrgts-Enrgtot),Cs);        
+      if (Ls != 0.0 && Enrgts != 0.0) {
+        if (Enrgtot >= Enrgts) {
+          betas = 1.0;
+          flagStop = 1;
+        } else {
+          betas = pow(Enrgc / (Enrgts - Enrgtot), Cs);
+          if (fabs(betas) >= 1.0) {
+            betas = 1.0;
+            flagStop = 1;
+          }
+        }
       } else {
         betas = 0.0;
       }
-     
-      if(La != 0.0){
-        betaa = pow(Enrgc/(Enrgta-Enrgtot),Ca);
+
+      if (La != 0.0 && Enrgta != 0.0) {
+        if (Enrgtot >= Enrgta) {
+          betaa = 1.0;
+          flagStop = 1;
+        } else {
+          betaa = pow(Enrgc / (Enrgta - Enrgtot), Ca);
+          if (fabs(betaa) >= 1.0) {
+            betaa = 1.0;
+            flagStop = 1;
+          }
+        }
       } else {
         betaa = 0.0;
       }
-     
-      if(Ld != 0.0){
-        betad = pow(Enrgc/(Enrgtd-Enrgtot),Cd);
+
+      if (Ld != 0.0 && Enrgtd != 0.0) {
+        if (Enrgtot >= Enrgtd) {
+          betad = 1.0;
+          flagStop = 1;
+        } else {
+          betad = pow(Enrgc / (Enrgtd - Enrgtot), Cd);
+          if (fabs(betad) >= 1.0) {
+            betad = 1.0;
+            flagStop = 1;
+          }
+        }
       } else {
         betad = 0.0;
       }
-     
-      if(fabs(betas) >= 1.0) {
-        betas = 1.0;
-        flagStop = 1;
-      }
-      if(fabs(betaa) >= 1.0){
-        betaa = 1.0;
-        flagStop = 1;
-      }
-      if(fabs(betad) >= 1.0){
-        betad = 1.0;
-        flagStop = 1;
-      }
-    }
    
     //  Update values for the next half cycle
     ekexcurs = ekunload;

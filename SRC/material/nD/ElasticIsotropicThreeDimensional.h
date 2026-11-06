@@ -64,6 +64,9 @@ class ElasticIsotropicThreeDimensional : public ElasticIsotropicMaterial
     NDMaterial *getCopy (void);
     const char *getType (void) const;
     int getOrder (void) const;
+    // Ladruno WP-192: threaded element loops opt-in (elastic; sigma/D thread_local).
+    bool ladrunoThreadSafeUpdate(void) const { return true; }
+    bool ladrunoThreadSafeForm(void) const { return true; }
 
     int sendSelf(int commitTag, Channel &theChannel);  
     int recvSelf(int commitTag, Channel &theChannel, 
@@ -75,8 +78,8 @@ class ElasticIsotropicThreeDimensional : public ElasticIsotropicMaterial
  protected:
 
   private:
-    static Vector sigma;	// Stress vector ... class-wide for returns
-    static Matrix D;		// Elastic constants
+    static thread_local Vector sigma;	// Stress vector ... class-wide for returns   // Ladruno WP-192
+    static thread_local Matrix D;		// Elastic constants   // Ladruno WP-192
     Vector epsilon;	        // Trial strains
     Vector Cepsilon;	        // Committed strain
 };

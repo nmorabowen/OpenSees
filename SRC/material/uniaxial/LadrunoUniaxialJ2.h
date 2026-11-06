@@ -65,7 +65,8 @@ class LadrunoUniaxialJ2 : public UniaxialMaterial
                     double sig0, double Qinf, double bIso, double Hiso,
                     int nBack, const double* C, const double* gam,
                     bool dmgOn = false, double dmgR = 0.0, double dmgS = 1.0,
-                    double dmgPD = 0.0, double dmgDc = 1.0, bool dmgImplex = false);
+                    double dmgPD = 0.0, double dmgDc = 1.0, bool dmgImplex = false,
+                    double dmgLchRef = 0.0);
   LadrunoUniaxialJ2();
   ~LadrunoUniaxialJ2();
 
@@ -76,6 +77,10 @@ class LadrunoUniaxialJ2 : public UniaxialMaterial
   double getStress(void)          { return Tstress; }
   double getTangent(void)         { return Ttangent; }
   double getInitialTangent(void)  { return E; }    // elastic — correct for modal
+  double getEnergy(void);
+
+  bool ladrunoThreadSafeUpdate(void) const { return true; }
+  bool ladrunoThreadSafeForm(void) const   { return true; }
 
   int commitState(void);
   int revertToLastCommit(void);
@@ -114,6 +119,7 @@ class LadrunoUniaxialJ2 : public UniaxialMaterial
   double dmgPD;                 // accumulated-plastic-strain damage threshold
   double dmgDc;                 // critical (rupture) damage
   bool   dmgImplex;             // -implex (IMPL-EX: SPD tangent via extrapolated D)
+  double dmgLchRef;             // reference characteristic length for crack-band regularization (0 = off)
 
   // committed history
   double CplasticStrain;        // plastic strain eps^p
@@ -123,6 +129,9 @@ class LadrunoUniaxialJ2 : public UniaxialMaterial
   double CD;                    // committed Lemaitre damage (implicit)
   double CdD;                   // committed implicit damage increment (IMPL-EX extrapolation)
   double Cwp;                   // accumulated plastic work (fracture/LCF hook)
+  double Cstrain;               // committed total strain
+  double Cstress;               // committed nominal stress
+  double Ctangent;              // committed consistent tangent
 
   // trial history
   double TplasticStrain;

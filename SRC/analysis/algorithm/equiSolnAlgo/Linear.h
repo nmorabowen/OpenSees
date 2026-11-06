@@ -50,7 +50,11 @@ class Linear: public EquiSolnAlgo
 
     int solveCurrentStep(void);
     int setConvergenceTest(ConvergenceTest *theNewTest);
-    
+    // Ladruno WP-215: -factorOnce re-arms (factorOnce 2 -> 1) when the
+    // analysis' LinearSOE no longer holds the factor it kept (a renumbered
+    // model, or ritzVectors / residualModes factoring K into it)
+    int domainChanged(void) { if (factorOnce == 2) factorOnce = 1; return 0; }
+
     virtual int sendSelf(int commitTag, Channel &theChannel);
     virtual int recvSelf(int commitTag, Channel &theChannel, 
 			 FEM_ObjectBroker &theBroker);

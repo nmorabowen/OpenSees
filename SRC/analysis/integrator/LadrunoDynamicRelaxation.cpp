@@ -59,6 +59,26 @@
 #include <string.h>
 #include <limits>
 
+// Ladruno: read an optional trailing number. On failure the token is left in
+// place for the option loop: the Python reader advances past a token it cannot
+// convert, the Tcl reader does not, so only un-read when the count dropped.
+static bool
+ladrunoDROptionalDouble(double &value)
+{
+    int before = OPS_GetNumRemainingInputArgs();
+    if (before < 1)
+        return false;
+    int nd = 1;
+    double v;
+    if (OPS_GetDoubleInput(&nd, &v) == 0) {
+        value = v;
+        return true;
+    }
+    if (OPS_GetNumRemainingInputArgs() < before)
+        OPS_ResetCurrentInputArg(-1);
+    return false;
+}
+
 void *OPS_LadrunoDynamicRelaxation(void)
 {
     // Usage: integrator LadrunoDynamicRelaxation
@@ -87,10 +107,7 @@ void *OPS_LadrunoDynamicRelaxation(void)
             if (strcmp(m, "gershgorin") == 0)      massMode = 0;
             else if (strcmp(m, "lumped") == 0) {
                 massMode = 1;
-                if (OPS_GetNumRemainingInputArgs() > 0) {
-                    int nd = 1;
-                    if (OPS_GetDoubleInput(&nd, &massScale) < 0) massScale = 1.0;
-                }
+                ladrunoDROptionalDouble(massScale);
             } else if (strcmp(m, "unity") == 0)    massMode = 2;
             else opserr << "WARNING LadrunoDynamicRelaxation - unknown -mass " << m
                         << " (keeping gershgorin)\n";
@@ -129,10 +146,7 @@ void *OPS_LadrunoDynamicRelaxation(void)
             if (strcmp(d, "kinetic") == 0)      dampMode = 0;
             else if (strcmp(d, "viscous") == 0) {
                 dampMode = 1;
-                if (OPS_GetNumRemainingInputArgs() > 0) {   // optional trailing zeta
-                    int nd = 1; double z;
-                    if (OPS_GetDoubleInput(&nd, &z) == 0) zetaTarget = z;
-                }
+                ladrunoDROptionalDouble(zetaTarget);   // optional trailing zeta
             } else opserr << "WARNING LadrunoDynamicRelaxation - unknown -damping " << d
                           << " (keeping kinetic)\n";
         } else if (strcmp(opt, "-noAutoRefresh") == 0) {

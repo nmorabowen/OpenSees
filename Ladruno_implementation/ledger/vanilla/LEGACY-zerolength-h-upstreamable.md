@@ -1,0 +1,8 @@
+---
+wp: LEGACY
+title: "TBD -- upstreamable-table row(s)"
+files: ["`SRC/element/zeroLength/ZeroLength.h`, `SRC/element/zeroLength/ZeroLength.cpp`"]
+table: "upstreamable"
+legacy_seq: [528]
+---
+| `SRC/element/zeroLength/ZeroLength.h`, `SRC/element/zeroLength/ZeroLength.cpp` | `// Ladruno (ADR-96)`: **passenger DOFs** ([[96_ladruno_contact_passenger_dof_adr]]). In 3-D, a pair of nodes with ndf >= 3 that is not a vanilla `(3,3)`/`(6,6)` pair (a `(3,4)` u-p skin/soil pair, `(4,4)`, `(3,6)`) no longer hits the `differing dof at ends` refusal: `setDomain` keeps the 6-slot translational core (`numDOF = 6`, `D3N6`, vanilla `t1d` and material loop untouched) and every public accessor scatters it into a `dofNd1 + dofNd2` element (`getNumDOF()` reports that size; node 2's translations at offset `dofNd1`); displacement/velocity differences are taken over the first three entries only. Rotational `-dir` 4..6 is refused with a message in passenger mode. New members `numDOFPassenger`, `passengerOffset2`, `passengerMatrix`, `passengerVector` + two `scatterPassenger` overloads + a file-local `ladrunoFirstDiff`. Vanilla path byte-identical (`numDOFPassenger == 0` selects the old expression everywhere); wire format unchanged (re-derived in `setDomain`). Gated by `tests/test_adr96_passenger_dof.py`. Both refusal paths (vanilla's differing-dof and the passenger rotational-dir) now call `ladrunoDisable()` instead of returning half-initialised — vanilla's refusal crashed at `Domain::addElement()`'s post-add `update()` (`t1d` NULL), measured on a `(2,3)` pair (quirks row). | [#TBD](https://github.com/nmorabowen/OpenSees/pull/TBD) |

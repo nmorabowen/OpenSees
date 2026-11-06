@@ -260,6 +260,7 @@
 #include "LadrunoRCConcrete.h"     // Ladruno — RC plastic-damage + MCFT compression softening (ADR 19)
 #include "LadrunoRCFiniteStrain.h" // Ladruno — finite-strain (Hencky) view of the RC plastic-damage material (ADR 19 Phase 4b)
 #include "LadrunoConcrete3D.h"     // Ladruno — CDPM2-grade solid-concrete plastic-damage (ADR 31)
+#include "LadrunoHS.h"             // Ladruno — Hardening Soil + HSsmall with mc/mn Lode cross-section (WP-210)
 #include "ElasticOrthotropicThreeDimensional.h"
 #include "ElasticOrthotropicPlaneStress.h"
 #include "J2PlaneStrain.h"
@@ -493,6 +494,7 @@
 #include "ladrunoPlane/LadrunoQuad.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoPlane/LadrunoCST.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoUP/LadrunoUP.h"	// N. Mora-Bowen (Ladruno) ADR 71
+#include "ladrunoCPML/LadrunoCPML.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoPlane/LadrunoLST.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoPlane/LadrunoCSTPair.h"	// N. Mora-Bowen (Ladruno) ADR 70 P4a
 #include "ladrunoBrick/LadrunoBrick20.h"	// N. Mora-Bowen (Ladruno) ADR 72
@@ -501,6 +503,9 @@
 #include "ladrunoRigidBody/LadrunoRigidBody.h"	// N. Mora-Bowen (Ladruno) ADR 58
 #include "ladrunoDispBeamColumn/LadrunoDispBeamColumn2d.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoDispBeamColumn/LadrunoDispBeamColumn3d.h"	// N. Mora-Bowen (Ladruno)
+#include "ladrunoForceBeamColumn/LadrunoForceBeamColumn2d.h"	// N. Mora-Bowen (Ladruno)
+#include "ladrunoForceBeamColumn/LadrunoForceBeamColumn3d.h"	// N. Mora-Bowen (Ladruno)
+#include "ladrunoMembrane/LadrunoMembrane.h"	// N. Mora-Bowen (Ladruno) ADR 98
 #include "joint/Joint2D.h"		// Arash
 #include "joint/Inno3DPnPJoint.h" // Cristian Miculas
 #include "twoNodeLink/TwoNodeLink.h"
@@ -640,8 +645,10 @@
 // elemental load header files
 #include "ElementalLoad.h"
 #include "Beam2dUniformLoad.h"
+#include "Beam2dPartialUniformLoad.h" // Ladruno: register partial uniform load in broker
 #include "Beam2dPointLoad.h"
 #include "Beam3dUniformLoad.h"
+#include "Beam3dPartialUniformLoad.h" // Ladruno: register partial uniform load in broker
 #include "Beam3dPointLoad.h"
 #include "BeamUniformMoment.h"
 #include "BrickSelfWeight.h"
@@ -1104,6 +1111,12 @@ FEM_ObjectBrokerAllClasses::getNewElement(int classTag)
     case ELE_TAG_LadrunoDispBeamColumn3d:	// N. Mora-Bowen (Ladruno)
       return new LadrunoDispBeamColumn3d();
 
+    case ELE_TAG_LadrunoForceBeamColumn2d:	// N. Mora-Bowen (Ladruno)
+      return new LadrunoForceBeamColumn2d();
+
+    case ELE_TAG_LadrunoForceBeamColumn3d:	// N. Mora-Bowen (Ladruno)
+      return new LadrunoForceBeamColumn3d();
+
     case ELE_TAG_LadrunoIMKBeam:	// N. Mora-Bowen (Ladruno)
       return new LadrunoIMKBeam();
 
@@ -1124,6 +1137,9 @@ FEM_ObjectBrokerAllClasses::getNewElement(int classTag)
 
     case ELE_TAG_LadrunoUP:		// N. Mora-Bowen (Ladruno) ADR 71
       return new LadrunoUP();
+
+    case ELE_TAG_LadrunoCPML:		// N. Mora-Bowen (Ladruno)
+      return new LadrunoCPML();
     case ELE_TAG_LadrunoLST:		// N. Mora-Bowen (Ladruno)
       return new LadrunoLST();
 
@@ -1141,6 +1157,9 @@ FEM_ObjectBrokerAllClasses::getNewElement(int classTag)
 
     case ELE_TAG_LadrunoRigidBody:	// N. Mora-Bowen (Ladruno) ADR 58
       return new LadrunoRigidBody();
+
+    case ELE_TAG_LadrunoMembrane:	// N. Mora-Bowen (Ladruno) ADR 98
+      return new LadrunoMembrane();
 
     case ELE_TAG_SSPquad:
       return new SSPquad();
@@ -1500,12 +1519,18 @@ FEM_ObjectBrokerAllClasses::getNewElementalLoad(int classTag)
     
     case LOAD_TAG_Beam2dUniformLoad:
       return new Beam2dUniformLoad();
+
+    case LOAD_TAG_Beam2dPartialUniformLoad: // Ladruno: register 2D partial uniform load
+      return new Beam2dPartialUniformLoad();
     
     case LOAD_TAG_Beam2dPointLoad:
       return new Beam2dPointLoad();
     
     case LOAD_TAG_Beam3dUniformLoad:
       return new Beam3dUniformLoad();
+
+    case LOAD_TAG_Beam3dPartialUniformLoad: // Ladruno: register 3D partial uniform load
+      return new Beam3dPartialUniformLoad();
     
     case LOAD_TAG_Beam3dPointLoad:
       return new Beam3dPointLoad();
@@ -2437,6 +2462,9 @@ FEM_ObjectBrokerAllClasses::getNewNDMaterial(int classTag)
 
   case ND_TAG_LadrunoConcrete3D:                  // Ladruno — CDPM2-grade solid-concrete plastic-damage (ADR 31)
     return new LadrunoConcrete3D();
+
+  case ND_TAG_LadrunoHS:                          // Ladruno — Hardening Soil + HSsmall (WP-210)
+    return new LadrunoHS();
 
   case ND_TAG_ElasticOrthotropicThreeDimensional:
     return new ElasticOrthotropicThreeDimensional();

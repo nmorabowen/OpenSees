@@ -122,8 +122,8 @@ private:
     double cosTheta, sinTheta;  // direction cosines of undeformed element wrt to global system 
     double L;  // undeformed element length
 
-    static Matrix Tlg;  // matrix that transforms from global to local coordinates
-    static Matrix kg;   // global stiffness matrix
+    static thread_local Matrix Tlg;  // matrix that transforms from global to local coordinates   // Ladruno
+    static thread_local Matrix kg;   // global stiffness matrix   // Ladruno
 
     double *nodeIInitialDisp, *nodeJInitialDisp;
     bool initialDispChecked;

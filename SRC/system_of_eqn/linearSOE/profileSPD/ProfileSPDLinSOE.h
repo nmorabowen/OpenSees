@@ -37,6 +37,7 @@
 
 #include <LinearSOE.h>
 #include <Vector.h>
+#include <LadrunoSymmetryGuard.h>   // Ladruno WP-221
 class ProfileSPDLinSolver;
 
 class ProfileSPDLinSOE : public LinearSOE
@@ -68,6 +69,15 @@ class ProfileSPDLinSOE : public LinearSOE
     virtual double normRHS(void);
 
     virtual int setProfileSPDSolver(ProfileSPDLinSolver &newSolver);    
+
+    // Ladruno WP-221: the asymmetry guard, readable (ladrunoSymmetryGuard)
+    // and optionally fatal (-strictSymmetry: every assembly checked, and
+    // solve() refuses once it has latched). DistributedProfileSPDLinSOE
+    // overrides solve(), so strict refusal is serial-only.
+    const LadrunoSymmetryGuard &getSymmetryGuard(void) const { return symGuard; }
+    void setStrictSymmetry(int flag) { symGuard.strict = flag ? 1 : 0; }
+    int getStrictSymmetry(void) const { return symGuard.strict; }
+    virtual int solve(void);
     virtual int sendSelf(int commitTag, Channel &theChannel);
     virtual int recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBroker);
 
@@ -91,13 +101,14 @@ class ProfileSPDLinSOE : public LinearSOE
 
   private:
     // Ladruno: budgeted, once-per-SOE unsymmetric-tangent detector, modelled
-    // on PARDISOGenLinSOE's asymWarned/asymBudget/asymPass (ADR-75 P1d + the
+    // on PARDISOGenLinSOE's symGuard/asymBudget/asymPass (ADR-75 P1d + the
     // TIMs-item-2 re-arm). ProfileSPD is the DEFAULT solver in both
     // interpreters and addA() below unconditionally keeps only row <= col
     // ("we only add upper and inside profile"), silently discarding the
     // lower triangle -- so a non-associated-plasticity tangent gets
     // symmetrized with no diagnostic at all. See ProfileSPDLinSOE.cpp::addA.
-    int asymWarned;      // half-store asymmetry reported once for this SOE
+    LadrunoSymmetryGuard symGuard; // WP-221: half-store asymmetry latch
+                         // (reported once for this SOE) + what it saw
     int asymBudget;      // ...and how many more element matrices to check
     int asymPass;        // ...and how many tangent assemblies this pattern
                          // (since the last setSize()) has seen

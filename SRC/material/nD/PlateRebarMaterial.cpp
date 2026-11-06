@@ -40,8 +40,8 @@ Earthquake Engineering & Structural Dynamics, 2013, 42(5): 705-723*/
 #include <elementAPI.h>
 
 //static vector and matrices
-Vector  PlateRebarMaterial::stress(5) ;
-Matrix  PlateRebarMaterial::tangent(5,5) ;
+thread_local Vector  PlateRebarMaterial::stress(5) ;   // Ladruno WP-192
+thread_local Matrix  PlateRebarMaterial::tangent(5,5) ;   // Ladruno WP-192
 
 //null constructor
 PlateRebarMaterial::PlateRebarMaterial( ) : 
@@ -328,7 +328,7 @@ PlateRebarMaterial::sendSelf(int commitTag, Channel &theChannel)
 
   int matDbTag;
   
-  static ID idData(3);
+  static thread_local ID idData(3);   // Ladruno WP-192
   idData(0) = dataTag;
   idData(1) = theMat->getClassTag();
   matDbTag = theMat->getDbTag();
@@ -344,7 +344,7 @@ PlateRebarMaterial::sendSelf(int commitTag, Channel &theChannel)
     return res;
   }
 
-  static Vector vecData(1);
+  static thread_local Vector vecData(1);   // Ladruno WP-192
   vecData(0) = angle;
 
   res = theChannel.sendVector(dataTag, commitTag, vecData);
@@ -369,7 +369,7 @@ PlateRebarMaterial::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroke
   int dataTag = this->getDbTag();
 
   // recv an id containing the tag and associated materials class and db tags
-  static ID idData(3);
+  static thread_local ID idData(3);   // Ladruno WP-192
   res = theChannel.recvID(dataTag, commitTag, idData);
   if (res < 0) {
     opserr << "PlateRebarMaterial::sendSelf() - failed to receive ID" << endln;
@@ -388,7 +388,7 @@ PlateRebarMaterial::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroke
   }
   theMat->setDbTag(idData(2));
 
-  static Vector vecData(1);
+  static thread_local Vector vecData(1);   // Ladruno WP-192
   res = theChannel.recvVector(dataTag, commitTag, vecData);
   if (res < 0) {
     opserr << "PlateRebarMaterial::sendSelf() - failed to receive Vector" << endln;

@@ -75,6 +75,12 @@ class Brick : public Element {
     void setDomain( Domain *theDomain ) ;
     int setDamping(Domain *theDomain, Damping *theDamping);
 
+    // Ladruno WP-192: threaded element loops opt-in. The class / function /
+    // shp3d scratch is thread_local; the answer is the materials' (and no
+    // Damping object, which is not audited).
+    bool ladrunoThreadSafeUpdate(void) const;
+    bool ladrunoThreadSafeForm(void) const;
+
     //get the number of external nodes
     int getNumExternalNodes( ) const ;
 
@@ -153,10 +159,10 @@ class Brick : public Element {
     // static attributes
     //
 
-    static Matrix stiff ;
-    static Vector resid ;
-    static Matrix mass ;
-    static Matrix damping ;
+    static thread_local Matrix stiff ;   // Ladruno WP-192
+    static thread_local Vector resid ;   // Ladruno WP-192
+    static thread_local Matrix mass ;   // Ladruno WP-192
+    static thread_local Matrix damping ;   // Ladruno WP-192
 
     //quadrature data
     static const double root3 ;
@@ -165,7 +171,7 @@ class Brick : public Element {
     static const double wg[8] ;
   
     //local nodal coordinates, three coordinates for each of four nodes
-    static double xl[3][8] ; 
+    static thread_local double xl[3][8] ;    // Ladruno WP-192
 
     //
     // private methods
@@ -187,6 +193,33 @@ class Brick : public Element {
     Matrix transpose( int dim1, int dim2, const Matrix &M ) ;
 
     Damping *theDamping[8];
+
+    // Ladruno WP-195: element tangent cache. The 24x24 stiffness of a
+    // small-strain brick is a pure function of the nodal coordinates (xl) and
+    // the eight Gauss-point material tangents. When, at a tangent call, the
+    // RAW BITS of all eight material tangents and of xl equal those that built
+    // the cached stiffness, the cached stiffness is returned instead of the
+    // 8 x 8 x 8 B^T D B products -- bit-identical by construction (same
+    // inputs, same arithmetic). Elasticity is never assumed: it is observed,
+    // on every call, through the material's own getTangent(). Disabled with a
+    // Damping object (its stiffness multiplier is not a material tangent) and
+    // with LADRUNO_BRICK_TANGENT_CACHE=0 in the environment at construction.
+    // Explicitly invalidated by revertToStart, setDomain, setDamping,
+    // setParameter/updateParameter and recvSelf. After 16 consecutive
+    // misses the comparison pauses (plain path, buffer freed); every 64
+    // commits of a paused element it is re-enabled (re-probe). See
+    // Ladruno_implementation/195_ladruno_brick_tangent_cache_adr.md.
+    double *ladrunoKcache;    // [576 stiff | 24 xl | 36 or 288 tangent bits]
+    int ladrunoKcacheState;   // 0 empty, 1 valid (uniform D), 2 valid (per-GP D)
+    int ladrunoKcacheCap;     // doubles allocated in ladrunoKcache
+    int ladrunoKcacheMisses;  // consecutive misses; the cache pauses at 16
+    int ladrunoKcacheIdle;    // commits since the pause; re-probe at 64
+    double ladrunoKcacheReprobes; // pauses ended by the periodic re-probe
+    bool ladrunoKcacheOn;     // enabled for this element
+    void ladrunoInvalidateTangentCache(void);
+    double ladrunoKcacheHits;   // tangent calls served from the cache
+    double ladrunoKcacheBuilds; // tangent calls that (re)built the cache
+    void formResidAndTangentCached(void);
 
 } ; 
 

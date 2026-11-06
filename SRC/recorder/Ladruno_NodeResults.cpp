@@ -45,6 +45,7 @@
 #include "ID.h"
 #include "classTags.h"
 
+#include <algorithm>
 #include <cmath>
 #include <sstream>
 
@@ -92,6 +93,17 @@ namespace ladruno {
 		return info.domain->getNode(tag);
 	}
 
+	Node* NodeResultSource::nodeAt(const detail::ProcessInfo& info, size_t i) const
+	{
+		if (!m_nodes_resolved) {
+			m_nodes.resize(m_ids.size());
+			for (size_t k = 0; k < m_ids.size(); ++k)
+				m_nodes[k] = getNode(info, m_ids[k]);
+			m_nodes_resolved = true;
+		}
+		return (i < m_nodes.size()) ? m_nodes[i] : 0;
+	}
+
 	/* ===================================================================== */
 	/* DisplacementSource                                                    */
 	/* ===================================================================== */
@@ -130,7 +142,7 @@ namespace ladruno {
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		for (size_t i = 0; i < m_ids.size(); i++) {
-			Node* n = getNode(info, m_ids[i]);
+			Node* n = nodeAt(info, i);
 			if (n) utils::misc::bufferNodeResponseVec3u(i, m_ndim, n->getTrialDisp(), buffer);
 		}
 	}
@@ -172,7 +184,7 @@ namespace ladruno {
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		for (size_t i = 0; i < m_ids.size(); i++) {
-			Node* n = getNode(info, m_ids[i]);
+			Node* n = nodeAt(info, i);
 			if (n) utils::misc::bufferNodeResponseVec3u(i, m_ndim, n->getProjectionTieForce(), buffer);
 		}
 	}
@@ -210,7 +222,7 @@ namespace ladruno {
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		for (size_t i = 0; i < m_ids.size(); i++) {
-			Node* n = getNode(info, m_ids[i]);
+			Node* n = nodeAt(info, i);
 			if (n) utils::misc::bufferNodeResponseVec3r(i, m_ndim, n->getTrialDisp(), buffer);
 		}
 	}
@@ -253,7 +265,7 @@ namespace ladruno {
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		for (size_t i = 0; i < m_ids.size(); i++) {
-			Node* n = getNode(info, m_ids[i]);
+			Node* n = nodeAt(info, i);
 			if (n) utils::misc::bufferNodeResponseVec3u(i, m_ndim, n->getTrialVel(), buffer);
 		}
 	}
@@ -291,7 +303,7 @@ namespace ladruno {
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		for (size_t i = 0; i < m_ids.size(); i++) {
-			Node* n = getNode(info, m_ids[i]);
+			Node* n = nodeAt(info, i);
 			if (n) utils::misc::bufferNodeResponseVec3r(i, m_ndim, n->getTrialVel(), buffer);
 		}
 	}
@@ -334,7 +346,7 @@ namespace ladruno {
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		for (size_t i = 0; i < m_ids.size(); i++) {
-			Node* n = getNode(info, m_ids[i]);
+			Node* n = nodeAt(info, i);
 			if (n) utils::misc::bufferNodeResponseVec3u(i, m_ndim, n->getTrialAccel(), buffer);
 		}
 	}
@@ -372,7 +384,7 @@ namespace ladruno {
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		for (size_t i = 0; i < m_ids.size(); i++) {
-			Node* n = getNode(info, m_ids[i]);
+			Node* n = nodeAt(info, i);
 			if (n) utils::misc::bufferNodeResponseVec3r(i, m_ndim, n->getTrialAccel(), buffer);
 		}
 	}
@@ -469,7 +481,7 @@ namespace ladruno {
 		// from the DISP vector for LadrunoUP honest-p nodes (ADR-71 FW-F4).
 		for (size_t i = 0; i < m_ids.size(); i++) {
 			double pressure = 0.0;
-			Node* inode = getNode(info, m_ids[i]);
+			Node* inode = nodeAt(info, i);
 			if (inode) {
 				// Ladruno ADR-71 (FW-F4): pick the response vector per the node's contract.
 				const bool honest_p = (m_ladruno_up_nodes.count(inode->getTag()) != 0);
@@ -529,7 +541,7 @@ namespace ladruno {
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		for (size_t i = 0; i < m_ids.size(); i++) {
-			Node* n = getNode(info, m_ids[i]);
+			Node* n = nodeAt(info, i);
 			if (n) utils::misc::bufferNodeResponseVec3u(i, m_ndim, n->getReaction(), buffer);
 		}
 	}
@@ -585,7 +597,7 @@ namespace ladruno {
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		for (size_t i = 0; i < m_ids.size(); i++) {
-			Node* n = getNode(info, m_ids[i]);
+			Node* n = nodeAt(info, i);
 			if (n) utils::misc::bufferNodeResponseVec3r(i, m_ndim, n->getReaction(), buffer);
 		}
 	}
@@ -646,7 +658,7 @@ namespace ladruno {
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		for (size_t i = 0; i < m_ids.size(); i++) {
-			Node* n = getNode(info, m_ids[i]);
+			Node* n = nodeAt(info, i);
 			if (n) utils::misc::bufferNodeResponseVec3u(i, m_ndim, n->getUnbalancedLoad(), buffer);
 		}
 	}
@@ -664,7 +676,7 @@ namespace ladruno {
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		for (size_t i = 0; i < m_ids.size(); i++) {
-			Node* n = getNode(info, m_ids[i]);
+			Node* n = nodeAt(info, i);
 			if (n) utils::misc::bufferNodeResponseVec3u(i, m_ndim, n->getUnbalancedLoadIncInertia(), buffer);
 		}
 	}
@@ -704,7 +716,7 @@ namespace ladruno {
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		for (size_t i = 0; i < m_ids.size(); i++) {
-			Node* n = getNode(info, m_ids[i]);
+			Node* n = nodeAt(info, i);
 			if (n) utils::misc::bufferNodeResponseVec3r(i, m_ndim, n->getUnbalancedLoad(), buffer);
 		}
 	}
@@ -722,7 +734,7 @@ namespace ladruno {
 	{
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		for (size_t i = 0; i < m_ids.size(); i++) {
-			Node* n = getNode(info, m_ids[i]);
+			Node* n = nodeAt(info, i);
 			if (n) utils::misc::bufferNodeResponseVec3r(i, m_ndim, n->getUnbalancedLoadIncInertia(), buffer);
 		}
 	}
@@ -761,9 +773,12 @@ namespace ladruno {
 		m_schema.result_type = detail::ResultType::Modal;
 	}
 
-	int ModesOfVibrationSource::numModes(const detail::ProcessInfo& /*info*/) const
+	int ModesOfVibrationSource::numModes(const detail::ProcessInfo& info) const
 	{
-		return *OPS_GetNumEigen();
+		// WP-163 R1: the spectrum the recorder actually captured from the domain
+		// (recordResultsOnNodes sets eigen_last_values from getEigenvalues()), not
+		// the interpreter's numEigen, which `wipe` never resets.
+		return info.eigen_last_values.Size();
 	}
 
 	void ModesOfVibrationSource::modeInfo(const detail::ProcessInfo& info, int k,
@@ -782,17 +797,18 @@ namespace ladruno {
 		buffer.assign(m_ids.size() * m_schema.num_components, 0.0);
 		// Translational eigenvector components for the CURRENT mode.
 		for (size_t i = 0; i < m_ids.size(); i++) {
-			Node* n = getNode(info, m_ids[i]);
+			Node* n = nodeAt(info, i);
 			if (!n) continue;
+			// WP-163 R1: Node::getEigenvectors() exit(0)s when unset (a node
+			// added after `eigen`); probe first and leave such nodes zero.
+			if (n->getNumEigenvectors() <= m_current_mode) continue;
 			size_t j = i * m_ndim;
 			const Matrix& inode_eigenvec = n->getEigenvectors();
-			buffer[j] = inode_eigenvec(0, m_current_mode);
-			if (m_ndim > 1) {
-				buffer[j + 1] = inode_eigenvec(1, m_current_mode);
-				if (m_ndim > 2) {
-					buffer[j + 2] = inode_eigenvec(2, m_current_mode);
-				}
-			}
+			// WP-163 (ROB-8): a node with fewer DOFs than ndm (scalar node in a
+			// 2D/3D model) has fewer rows; Matrix() is unchecked in release.
+			const int nr = std::min(m_ndim, inode_eigenvec.noRows());
+			for (int r = 0; r < nr; ++r)
+				buffer[j + (size_t)r] = inode_eigenvec(r, m_current_mode);
 		}
 	}
 
@@ -831,8 +847,9 @@ namespace ladruno {
 		// Rotational eigenvector slice depends on the node's DOF count (rows>2 in
 		// 2D, rows>5 in 3D); nodes without rotational DOFs stay zero.
 		for (size_t i = 0; i < m_ids.size(); i++) {
-			Node* n = getNode(info, m_ids[i]);
+			Node* n = nodeAt(info, i);
 			if (!n) continue;
+			if (n->getNumEigenvectors() <= m_current_mode) continue;  // WP-163 R1
 			const Matrix& inode_eigenvec = n->getEigenvectors();
 			if (m_ndim == 2 && inode_eigenvec.noRows() > 2) {
 				size_t j = i;
@@ -889,7 +906,7 @@ namespace ladruno {
 			return;
 		}
 		for (size_t i = 0; i < m_ids.size(); i++) {
-			Node* inode = getNode(info, m_ids[i]);
+			Node* inode = nodeAt(info, i);
 			if (!inode) continue;
 			size_t j = i * m_ndim;
 			buffer[j] = inode->getDispSensitivity(1, m_grad - 1);
@@ -935,7 +952,7 @@ namespace ladruno {
 			return;
 		}
 		for (size_t i = 0; i < m_ids.size(); i++) {
-			Node* inode = getNode(info, m_ids[i]);
+			Node* inode = nodeAt(info, i);
 			if (!inode) continue;
 			const Vector& iresponse = inode->getTrialDisp(); // aux, just to check for rotational components
 			if (m_ndim == 2) {
@@ -999,7 +1016,7 @@ namespace ladruno {
 			return;
 		}
 		for (size_t i = 0; i < m_ids.size(); i++) {
-			Node* inode = getNode(info, m_ids[i]);
+			Node* inode = nodeAt(info, i);
 			if (!inode) continue;
 			size_t j = i * m_ndim;
 			buffer[j] = inode->getVelSensitivity(1, m_grad - 1);
@@ -1045,7 +1062,7 @@ namespace ladruno {
 			return;
 		}
 		for (size_t i = 0; i < m_ids.size(); i++) {
-			Node* inode = getNode(info, m_ids[i]);
+			Node* inode = nodeAt(info, i);
 			if (!inode) continue;
 			const Vector& iresponse = inode->getTrialVel(); // aux, just to check for angular velocityal components
 			if (m_ndim == 2) {
@@ -1112,7 +1129,7 @@ namespace ladruno {
 		// the frozen bufferResponse uses getVelSensitivity() here (NOT
 		// getAccSensitivity); preserved verbatim for the parity gate.
 		for (size_t i = 0; i < m_ids.size(); i++) {
-			Node* inode = getNode(info, m_ids[i]);
+			Node* inode = nodeAt(info, i);
 			if (!inode) continue;
 			size_t j = i * m_ndim;
 			buffer[j] = inode->getVelSensitivity(1, m_grad - 1);
@@ -1160,7 +1177,7 @@ namespace ladruno {
 		// NOTE: byte-faithful to frozen ResultRecorderAngularAccelerationSensitivity
 		// — uses getVelSensitivity() (NOT acceleration); preserved verbatim.
 		for (size_t i = 0; i < m_ids.size(); i++) {
-			Node* inode = getNode(info, m_ids[i]);
+			Node* inode = nodeAt(info, i);
 			if (!inode) continue;
 			const Vector& iresponse = inode->getTrialVel(); // aux, just to check for angular accelerational components
 			if (m_ndim == 2) {

@@ -9,6 +9,7 @@ the faked launcher environment:
   * ompi       -> .part-5, NUM_PARTITIONS=8   (OpenMPI names)
   * slurm      -> .part-7, NUM_PARTITIONS=16  (srun names, pmix included)
   * precedence -> .part-2, NUM_PARTITIONS=4   (PMI pair outranks ambient SLURM)
+  * sbatch / batchstep -> verbatim, PARTITIONED=0 (SLURM only inside an srun step)
 
 Run with the venv python (has h5py):
     python rank_env_check.py [out_dir]
@@ -36,6 +37,8 @@ EXPECT = [
     ("rank_env_ompi.part-5.ladruno", 1, 5, 8),
     ("rank_env_slurm.part-7.ladruno", 1, 7, 16),
     ("rank_env_precedence.part-2.ladruno", 1, 2, 4),
+    ("rank_env_sbatch.ladruno", 0, 0, 1),       # WP-163 M4: batch shell, no srun
+    ("rank_env_batchstep.ladruno", 0, 0, 1),    # WP-163 M4: batch pseudo-step id
 ]
 
 fails: list[str] = []
