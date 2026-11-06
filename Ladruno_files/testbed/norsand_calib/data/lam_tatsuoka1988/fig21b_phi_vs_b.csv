@@ -1,0 +1,21 @@
+# Lam & Tatsuoka (1988) Fig. 21(b), p. 101: phi at failure vs b = (s2'-s3')/(s1'-s3'), SINGLE-intersection failure mode for TE, e0.3 = 0.70, sigma3' = 98 kPa.
+# Group A = legend column 1 (omega varies, xi = 90), B = column 2 (xi = 0), C = column 3 (omega = 90, xi varies).  b = 0 is TC, b = 1 is TE (b at PSC failure 0.24-0.36, not 0.3 exactly).
+# Points at b = 0 and b = 1 of groups B and C coincide with group A or are the same stress state and are not repeated.  Reading tolerance: phi +-0.3 deg, b +-0.02 (PSC), +-0.01 (TC/TE).
+series,omega_deg,xi_deg,mode,b,phi_deg
+"A: xi=90, omega varies",0,90,TC,0.0,41.86
+"A: xi=90, omega varies",0,90,PSC,0.25,45.36
+"A: xi=90, omega varies",0,90,TE single (theta=0),1.0,46.62
+"A: xi=90, omega varies",30,90,TC,0.0,39.72
+"A: xi=90, omega varies",30,90,PSC,0.25,42.88
+"A: xi=90, omega varies",30,90,TE single (theta=30),1.0,43.94
+"A: xi=90, omega varies",60,90,TC,0.0,38.31
+"A: xi=90, omega varies",60,90,PSC,0.24,39.72
+"A: xi=90, omega varies",60,90,TE single (theta=60),1.0,38.9
+"A: xi=90, omega varies",90,90,TC,0.01,38.34
+"A: xi=90, omega varies",90,90,PSC,0.29,40.2
+"A: xi=90, omega varies",90,90,TE single (theta=90),1.0,41.24
+"B: xi=0, omega varies",30,0,PSC,0.28,44.31
+"B: xi=0, omega varies",60,0,PSC,0.32,43.6
+"B: xi=0, omega varies",90,0,PSC,0.34,43.65
+"C: omega=90, xi varies",90,30,PSC,0.36,44.1
+"C: omega=90, xi varies",90,60,PSC,0.29,41.3

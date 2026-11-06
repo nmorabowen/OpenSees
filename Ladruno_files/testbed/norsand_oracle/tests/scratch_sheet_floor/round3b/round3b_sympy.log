@@ -1,0 +1,28 @@
+=== (a) HAR stress forms of har_patch.py vs direct differentiation of Psi_HAR ===
+  [OK] p = dPsi/deps_v == (S.5h): 0
+  [OK] q = dPsi/deps_s == (S.5h): 0
+  [OK] D11, D12 = D21, D22, q/eps_s stress forms vs strain-form derivatives, 3 states, TIMs (rel): 2.15E-31
+  [OK] (S.5h'') inverse map round trip eps_v: 0
+  [OK] (S.5h'') inverse map round trip eps_s: 2.41E-35
+  [OK] K1.13 eps_s = 0: eps_v,f vs sheet: 3.75E-19
+      K1.13 eps_s = 0: eps*_f = edge - eps_v,f = 0.0000748467  (x = 0.0050000000)
+  [OK] K1.14 eps_s = 2e-4: eps_v,f vs sheet: 3.95E-18
+      K1.14 eps_s = 2e-4: eps*_f = edge - eps_v,f = 0.0000174628  (x = 0.091851984)
+=== (b) (S.56) W_ramp: words vs formula ===
+  [OK] 1 - pi(eta1)/pi(eta2) == displayed formula [(1-c2N)/(1-c1N)]^((1-N)/N), 8 random sets (30 digits): 6.90E-31
+      K2 (c1 0.05, c2 0.15, N 0.4): words 1 - pi(eta2)/pi(eta1) = -0.0645041  (NEGATIVE);  1 - pi(eta1)/pi(eta2) = 0.0605954  (the 0.0606 of the sheet)
+  [OK] words form is negative on K2: True
+  [OK] fixed form = 0.0606 on K2 (to 4 digits): 0.00000457
+  [OK] N -> 0 limit == 1 - exp(-(c2 - c1)) at c1 0.05, c2 0.15: 0
+      c1 0.05, c2 0.07: W_ramp = 0.0122199 (sheet 0.0122)
+      c1 0.05, c2 0.06: W_ramp = 0.00611620 (sheet 0.0061)
+  [OK] floor_fold (C) ratio |pi1 - pi2|/|pi2| == 1 - pi1/pi2 (pi1, pi2 same sign, |pi1| < |pi2|): 1.54E-31
+=== (c) (S.56) at c1 = c2 and at cap = none ===
+  [OK] c1 = c2: W_ramp == 0 identically: 0
+      cap = none: w == 1, no ramp, W_ramp has no meaning (c2 := 0 in (S.53) only); an ungated refusal 'PI_SCAN_REL <= W_ramp/10' with W_ramp = 0 fails for every planar/none model since PI_SCAN_REL = 1e-3 > 0.
+=== (d) HAR floor margin eps*_f(eps_s) ===
+      eps*_f = (p_min/p_a)/(k(1-n) x^n), x >= sqrt(b) = p_min/p_a with equality at eps_s = 0:
+  [OK] eps_s = 0: eps*_f == (p_min/p_a)^(1-n)/(k(1-n)) (TIMs, 30 digits): 0
+      TIMs, p_min = 0.505: eps*_f(0) = 0.000074846666; a plastic contraction |deps^p_v| larger than this from the floor leaves dom Psi (evaluation failure -> backtrack)
+
+ALL OK

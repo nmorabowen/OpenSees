@@ -1,0 +1,15 @@
+# Lam & Tatsuoka (1988) Fig. 8(a): phi in PSC-3, omega = 0, sigma3' = 98 kPa vs e0.3 for four H/W.  kind PS.  H/W = 1.9 is the one the paper uses for PSC.  tolerance e +-0.005, phi +-0.3 deg.
+# b at failure is plotted on the same figure (0.20-0.34, nearly independent of e) but is not transcribed here; use fig9 curves for b.
+sigma3_kPa,e,phi_peak_deg,eps_peak_pct,kind,omega_deg,H_over_W
+98.0,0.6396,48.58,,PS,0,1.9
+98.0,0.6568,47.16,,PS,0,1.9
+98.0,0.7574,41.74,,PS,0,1.9
+98.0,0.7991,40.41,,PS,0,1.9
+98.0,0.8033,39.2,,PS,0,1.9
+98.0,0.8205,38.85,,PS,0,1.9
+98.0,0.6515,47.43,,PS,0,1.0
+98.0,0.8182,39.4,,PS,0,1.0
+98.0,0.6455,48.88,,PS,0,0.5
+98.0,0.8146,42.2,,PS,0,0.5
+98.0,0.6527,49.54,,PS,0,0.25
+98.0,0.8199,44.2,,PS,0,0.25

@@ -1,0 +1,77 @@
+# id: tats86_fig4a_psl24
+# kind: PS
+# sigma3_kPa: 4.9
+# e0: 0.714
+# e0_definition: e_0.05 = void ratio at sigma_c' = 0.05 kgf/cm2 = 4.9 kPa; the void ratio at the test sigma_3' is NOT reported
+# source: Tatsuoka, Sakamoto, Kawamura & Fukushima (1986) Soils and Foundations 26(1):65-84, Fig. 4(a), journal p. 71
+# eps_v_convention: dilation_negative
+# material: saturated air-pluviated Toyoura sand, isotropic consolidation, delta = 90 deg, drained plane strain compression (eps_2 = 0)
+# D_r_assumed: 0.692
+# D_r_basis: (0.977 - e_0.05)/(0.977 - 0.597); e_max/e_min are not in the paper (README)
+# stress_method: C-2-T (membrane and plate-friction corrected)
+# strain_type: eps_a = average axial strain from EXTERNAL boundary displacements; eps_v from specimen volume change
+# digitisation: TIMs Workbench tests_data.py; circle markers of the original figure, auto-detected (TIMs); +-1 px = 0.02 % strain / 0.011 ratio; ratio abscissae are not strictly increasing in the pre-peak part because of overlapping circles
+# units: eps_a_pct [%] compression positive | sr = sigma1'/sigma3' [-] | eps_v_pct [%] dilation negative
+eps_a_pct,sr,eps_v_pct
+0,1,
+0,1.62037,
+0,2.01852,
+0,,0
+0.0185185,2.47222,
+0.037037,2.47222,
+0.0555556,2.87037,
+0.0740741,3.08333,
+0.0740741,3.30556,
+0.0740741,3.57407,
+0.148148,3.82407,
+0.148148,4.03704,
+0.222222,4.28704,
+0.314815,4.69444,
+0.37037,4.88889,
+0.425926,5.11111,
+0.444444,,-0.12963
+0.574074,5.37037,
+0.648148,5.57407,
+0.814815,5.84259,
+0.814815,,-0.388889
+1,6.03704,
+1.2037,6.21296,
+1.22222,,-0.722222
+1.44444,6.32407,
+1.53704,,-1.01852
+1.66667,6.24074,
+1.92593,6,
+1.92593,,-1.37037
+2.18519,5.67593,
+2.33333,,-1.68519
+2.77778,4.94444,
+2.77778,,-1.88889
+3.11111,4.71296,
+3.27778,,-2
+3.46296,4.51852,
+3.81481,,-2.09259
+4.01852,4.41667,
+4.40741,4.37037,
+4.40741,,-2.14815
+4.81481,,-2.22222
+4.83333,4.36111,
+5.25926,4.31481,
+5.25926,,-2.25926
+5.72222,,-2.31481
+5.74074,4.31481,
+6.18519,,-2.37037
+6.2037,4.2963,
+6.68519,,-2.38889
+6.7037,4.33333,
+7.22222,,-2.46296
+7.24074,4.30556,
+7.72222,,-2.53704
+7.74074,,-2.53704
+7.75926,4.36111,
+8.2963,,-2.61111
+8.31481,4.43519,
+8.87037,,-2.68519
+8.88889,,-2.68519
+8.92593,4.4537,
+9.5,,-2.75926
+9.53704,4.47222,

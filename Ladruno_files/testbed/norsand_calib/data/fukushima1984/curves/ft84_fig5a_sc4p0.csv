@@ -1,0 +1,71 @@
+# id: ft84_fig5a_sc4p0
+# kind: TC
+# sigma3_kPa: 392.0
+# e0: 0.679
+# e0_definition: e_0.3 = void ratio at sigma_c' = 0.3 kgf/cm2 (29.4 kPa), the paper's density label (figure legend); for sigma_c' != 0.3 the void ratio at the shear stress is NOT reported (p. 35, Fig. 4)
+# source: Fukushima & Tatsuoka (1984) Soils and Foundations 24(4):30-48, Fig. 5(a), journal p. 36 (PDF page 7), dense, sigma_c' 0.1-4 kgf/cm2; Table 1 test 73 (p. 32)
+# eps_v_convention: dilation_negative
+# eps_a_sign: 1
+# phi_peak_deg: 39.4
+# eps_peak_pct: 7.54
+# phi_peak_note: Table 1 phi (mid-height, UNCORRECTED for membrane forces, t0 = 0.3 mm); the digitised maximum sr 4.457 vs 4.475 from Table 1 (difference -0.018) is the calibration check of the digitisation
+# sigma3_f_kPa: not measured (sigma_c' = 4.0 kgf/cm2)
+# material: Toyoura sand (D50 0.16 mm, Uc 1.46, Gs 2.64, e_max 0.977, e_min 0.605), saturated, air-pluviated, 7 cm diameter x 15 cm, lubricated ends (p. 33)
+# test: drained isotropically consolidated triaxial compression, axial strain rate 0.25 %/min; sr = sigma1'/sigma3' at the MID-HEIGHT of the sample, UNCORRECTED for membrane forces (the figure title says so); eps_a = axial strain
+# caveat_membrane: membrane t0 = 0.3 mm, latex, E_m 15.2 kgf/cm2: at sigma_c' <= 0.1 kgf/cm2 the uncorrected stress ratios are biased (paper Figs. 7, 12-17); at the lowest stresses sigma3' drifted during the test: (sigma3')_f =  kPa vs sigma_c' = 392.00 kPa
+# uncertainty: sr +-0.05 (1 px = 0.01; calibration cross-checked against Table 1 phi, see phi_peak_note), +-0.1 where markers of neighbouring curves merge; eps_a +-0.1 %; eps_v +-0.15 % (scan skew handled by a bilinear map between the frame lines)
+# digitisation: marker-chain / column-cluster tracker on the native 1-bit scan (data/_digitise); rows fill ONE of sr / eps_v (the two traces are digitised at different eps_a); the first row (0,1,0) is the assumed isotropic start, not digitised
+# units: eps_a_pct [%] compression positive | sr [-] | eps_v_pct [%] dilation negative
+eps_a_pct,sr,eps_v_pct
+0,1,0
+0.7111,2.7677,
+0.8868,2.9566,
+1.0735,3.1308,
+1.2534,3.2799,
+1.4411,3.4188,
+1.6318,3.5311,
+1.8343,3.6356,
+2.2144,3.8035,
+2.4842,3.9113,
+2.7778,3.9915,
+3,,-0.4101
+3.0721,4.0723,
+3.5,,-0.532
+3.6643,4.1941,
+3.9484,4.2537,
+4,,-0.7544
+4.2417,4.2951,
+4.5,,-1.0457
+4.5339,4.3296,
+4.7948,4.3587,
+5,,-1.2879
+5.1393,4.3799,
+5.5,,-1.5499
+5.5404,4.4041,
+5.9535,4.4273,
+6,,-1.7234
+6.3456,4.4486,
+6.5,,-2.0051
+6.7331,4.456,
+7,,-2.34
+7.1407,4.4544,
+7.5,,-2.5688
+7.5427,4.457,
+7.9648,4.4376,
+8,,-2.7523
+8.5,,-2.9458
+9,,-3.2279
+9.2027,4.38,
+9.5,,-3.4706
+9.626,4.354,
+10,,-3.6938
+10.051,4.3127,
+10.47,4.2848,
+10.5,,-3.8579
+10.892,4.2461,
+11,,-4.0024
+11.5,,-4.2159
+11.729,4.1813,
+12,,-4.3801
+12.153,4.1552,
+12.5,,-4.377

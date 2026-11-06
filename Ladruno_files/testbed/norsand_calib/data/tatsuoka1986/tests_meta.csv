@@ -1,0 +1,7 @@
+# Tatsuoka et al. 1986 test metadata. D_r_assumed = (0.977 - e_0.05)/(0.977 - 0.597): e_max/e_min are NOT in the paper (see README).
+# R_peak, eps_a_at_peak, phi_peak and dilatancy_max are DERIVED here from the digitised curve (phi = asin((R-1)/(R+1)); dilatancy_max = max(-d eps_v / d eps_a) on a 0.5 % base, compression positive).
+test_id,TIMs_key,figure,journal_page,sigma3_kPa,sigma3_kgf_cm2,e_0.05,D_r_assumed,delta_deg,n_ratio_pts,n_epsv_pts,R_peak,eps_a_at_peak_pct,phi_peak_deg_derived,dilatancy_max_derived,digitisation
+tats86_fig4a_psl24,PSL-24 (Fig. 4a),4(a),71,4.9,0.05,0.714,0.692,90,39,23,6.324,1.44,46.63,0.928,"circles, auto-detected"
+tats86_fig6a_d90,Fig. 6(a) delta90,6(a),73,4.9,0.05,0.7,0.729,90,20,11,6.52,1.74,47.23,0.943,"solid line, read on a 0.05-0.1 % grid"
+tats86_fig16a_iso,Fig. 16(a) iso,16(a),78,49.0,0.5,0.716,0.687,90,17,8,6.32,2.05,46.62,0.676,"solid line, read on a 0.05-0.1 % grid"
+tats86_fig8_s3_4p9,Fig. 8 s3=4.9,8,73,4.9,0.05,0.755,0.584,90,11,0,5.76,1.99,44.76,,"solid line, read on a 0.05-0.1 % grid"
