@@ -127,3 +127,11 @@ node (4 workers), as on 2026-10-02.
   own confinement. A BVP needs 'global'; that choice belongs to the energy decision (§2.5), not to the harness.
 - **e is e_0.05** for every Tatsuoka test (`../data/README.md` §3.1). The 49 kPa and ≥ 98 kPa states are slightly
   denser than modelled. This is stated, not corrected.
+
+## K3 on a Slurm array (2026-11-06)
+
+The first K3 submission, job 151170 on 2026-10-04 (`--lit`, HAR, ρ fitted, 16 starts in one 12 h job), was killed at its time limit with nothing written: `multistart` returned only after every start. Measured on the Esmeralda login node with the `--lit` set (19 curves + 22 point tests): one full evaluation takes 42.4 s, so a start costs 0.5–3.5 h at the smokes' 44–294 evaluations and up to about 16.5 h at `max_nfev` 200 × (k + 1) = 1,400.
+
+- `fit.multistart(..., only=..., checkpoint_dir=...)` writes each start to `start_<k>.json` the moment it finishes (atomic rename) and skips a start already on disk, so a task killed at its limit loses only its own start and a resubmission resumes. The full Sobol set of `--starts` is drawn in every task, so slices of one seed are the slices of one sequence; checkpointed slices give the same starts and costs as one unsplit run (toy check, 2026-11-06).
+- `fit_tatsuoka.py --checkpoint DIR --only 3` runs one slice; `--collect` builds the final record (best start, identifiability, `--profiles`) from the checkpoints and lists missing starts.
+- `run_k3_array.sbatch` (16 tasks × 1 core, 2 days each) and `run_k3_collect.sbatch` (submit with `--dependency=afterany:<array>`). ρ is free (ruling 3); `--rho` pins it only when given.

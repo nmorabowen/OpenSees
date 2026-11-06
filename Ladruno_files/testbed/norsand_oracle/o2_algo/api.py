@@ -84,7 +84,8 @@ def initial_state(params: Params, sigma0: np.ndarray, v0: float, pi_i0: float | 
 
     Floor (sheet §9.7): eps^e := Pi_f(invert(sigma0)) (counted, n_f_init = 1); at a floored point sigma0 is replaced
     by sigma(eps^e_f) (p = -p_min; under HAR q also scaled). sigma0 must have p < 0 (the inverse map needs it; under
-    HAR also eps* > 0, which the closed form (S.5h'') guarantees for p < 0).
+    HAR also eps* > 0, which the closed form (S.5h'') guarantees for p < 0). tangent() of the returned state is the
+    full elastic a^e at eps^e_f (owner decision D2, 2026-10-04), see tangent().
 
     pi_i0 None: the unified rule (S.53) (sheet §5.4, owner decision (d)): the surface through
     (p_init, eta*) with eta* = max(eta_init, c2 M), eta_init = zeta(theta) q/|p| of the FLOORED initial stress (0 on
@@ -132,8 +133,13 @@ def initial_state(params: Params, sigma0: np.ndarray, v0: float, pi_i0: float | 
         pass
     st.flags["at_floor"] = bool(params.p_min > 0.0 and inv.p > -params.p_min * (1.0 + K.AT_FLOOR_TOL))
     st.flags.update(floor_tr=0, floor_post=0, fpattern="")
+    # Initial tangent (owner decision D2, 2026-10-04): the tangent of a FRESHLY FLOORED initial state is the FULL
+    # elastic a^e (S.3) at the floored eps^e_f -- the compressive branch of the one-sided floor, exactly the
+    # kernel's elasticTangent() -- and NOT a^e Phi_init (the (S.32f) elastic form belongs to a floored STEP, whose
+    # last operator is an active Pi_f; no increment has been taken here). Tangent-only: no converged answer depends
+    # on this cache (every step builds its own). Phi_init is kept in the cache for the D2 self-check.
     ae = K.elastic(params, eps_e_p).ae
-    st.cache = dict(eps_tr=eps_e_p, nvec=V, sig=w, atilde=(ae @ fl.Phi if fl.active else ae),
+    st.cache = dict(eps_tr=eps_e_p, nvec=V, sig=w, atilde=ae, Phi_init=(fl.Phi if fl.active else None),
                     floor_events=([(eps_pre, eps_e_p, fl.dfv)] if fl.active else []))
     return st
 
@@ -304,7 +310,9 @@ def run_path(params: Params, state0: State, deps: np.ndarray) -> list[State]:
 def tangent(params: Params, state: State) -> np.ndarray:
     """Small-strain consistent tangent of the last increment: the chained tangent (S.47) when
     the increment was substepped (cache['C_chain'], sheet §9.6), else the closed-form CTO (S.33)
-    (elastic a^e if the last step was elastic, or for a fresh initial state)."""
+    (elastic a^e if the last step was elastic; a^e Phi^tr on an elastic trial-floored step (S.32f)).
+    For a fresh initial state it is the full elastic a^e at the committed eps^e, floored or not
+    (owner decision D2, 2026-10-04: the kernel's elasticTangent())."""
     c = state.cache
     if "C_chain" in c:
         return c["C_chain"]

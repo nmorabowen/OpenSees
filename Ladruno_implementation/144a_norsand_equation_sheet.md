@@ -1581,8 +1581,13 @@ Constraint check for TIMs: with ρ = ρ̄ = 0.71, (S.39) holds for any N̄ ≤ N
   named in §9.7; O2 → O1 first-order convergence on a floored path ((S.55) in O1); kernel-vs-O2 parity on a floored
   path including the counters; the HAR out-of-domain trial (13.13) through the OpenSees shell; the `floor` response
   and the F vs F/2 deck report (K5); under HAR the K1.14b FPf case and the chains FPf,FPf / -P-,-Pf (round 3b).
-  **Owner decision 2026-10-03: option (i) of §9.7, the strain-space projection Π_f (S.48), is APPROVED.** Two design
-  questions stay **OPEN for the owner**; the orchestrator's recommendation is recorded beside each and decides nothing:
+  **Owner decision 2026-10-03: option (i) of §9.7, the strain-space projection Π_f (S.48), is APPROVED.** The two design
+  questions below were answered with the recommendations (owner, 2026-10-03, recorded in commit 428aa1489; this text
+  read "OPEN" until 2026-11-06). Follow-ups: **D2 (owner, 2026-10-04)** — the tangent of a FRESHLY FLOORED initial state
+  is the full elastic a^e at ε^e_f (the kernel's elasticTangent()), not a^e Φ_init; O2 api.initial_state/tangent()
+  follow it, checked by o2_algo.selfcheck d2. **(a) for the B/16 floored free surface (owner, 2026-11-06)** — the deck
+  applies gravity as a ramp (160 steps measured: F vs F/2 0.017 % at s/B 0.01), not in one step; the exact tangent
+  stays; the tangent-only stiffness is built only if K5 stalls on floored patches. As answered:
   (a) the global-solver behaviour on a fully floored patch, where the consistent tangent has zero bulk stiffness
   (δ:C_f = 0, §9.7) — recommendation: the kernel keeps the exact consistent tangent; any added stiffness would be
   TANGENT-ONLY, opt-in, default off, so it changes the convergence path but never the converged answer and leaves the

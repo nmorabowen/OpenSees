@@ -19,10 +19,12 @@ correlation matrix of (J^T J)^-1, and profile scans (cost with one parameter fix
 """
 from __future__ import annotations
 
+import glob
+import json
 import math
 import os
 import time
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -188,10 +190,30 @@ def _one_start(args):
 LS_DEFAULT = dict(method="trf", x_scale=1.0, diff_step=1e-4, ftol=1e-12, xtol=1e-12, gtol=1e-12, max_nfev=200)
 
 
+def _checkpoint_path(checkpoint_dir: str, k: int) -> str:
+    return os.path.join(checkpoint_dir, f"start_{k:03d}.json")
+
+
+def load_checkpoints(checkpoint_dir: str) -> list:
+    """Every finished start written by multistart(checkpoint_dir=...), sorted by cost."""
+    runs = []
+    for p in sorted(glob.glob(os.path.join(checkpoint_dir, "start_*.json"))):
+        with open(p) as f:
+            runs.append(json.load(f))
+    runs.sort(key=lambda r: r["cost"])
+    return runs
+
+
 def multistart(objective, spec: FitSpec, n_starts: int = 8, seed: int = 0, workers: int = 1, extra_starts=(),
-               ls_kw: dict | None = None, margin: float = 0.05, progress: str | None = None):
+               ls_kw: dict | None = None, margin: float = 0.05, progress: str | None = None,
+               only=None, checkpoint_dir: str | None = None):
     """Scrambled Sobol starts in [margin, 1 - margin]^k plus extra_starts (theta dicts). Returns the runs sorted
-    by cost."""
+    by cost.
+
+    only: start indices to run (the full Sobol set of n_starts is still drawn, so array tasks with the same seed
+    share one sequence and each runs its own slice). checkpoint_dir: each start is written to
+    start_<k>.json the moment it finishes, and a start whose file exists is skipped (resumable after a time
+    limit). With checkpoints the returned runs are the ones of THIS call; load_checkpoints() collects all."""
     ls = dict(LS_DEFAULT)
     ls.update(ls_kw or {})
     k = len(spec.free)
@@ -203,13 +225,29 @@ def multistart(objective, spec: FitSpec, n_starts: int = 8, seed: int = 0, worke
     for th in extra_starts:
         starts.append(np.clip(spec.encode(th), 0.0, 1.0))
     jobs = list(enumerate(starts))
+    if only is not None:
+        keep = set(int(i) for i in only)
+        jobs = [j for j in jobs if j[0] in keep]
+    if checkpoint_dir:
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        jobs = [j for j in jobs if not os.path.exists(_checkpoint_path(checkpoint_dir, j[0]))]
+
+    def _save(r):
+        if checkpoint_dir:
+            tmp = _checkpoint_path(checkpoint_dir, r["start"]) + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(r, f, indent=1, default=lambda o: o.tolist() if hasattr(o, "tolist") else str(o))
+            os.replace(tmp, _checkpoint_path(checkpoint_dir, r["start"]))   # atomic: no half-written start
+        return r
+
     if workers <= 1:
         _init_worker(objective, spec, ls, progress)
-        runs = [_one_start(j) for j in jobs]
+        runs = [_save(_one_start(j)) for j in jobs]
     else:
         with ProcessPoolExecutor(max_workers=workers, initializer=_init_worker,
                                  initargs=(objective, spec, ls, progress)) as ex:
-            runs = list(ex.map(_one_start, jobs))
+            futs = [ex.submit(_one_start, j) for j in jobs]
+            runs = [_save(f.result()) for f in as_completed(futs)]
     runs.sort(key=lambda r: r["cost"])
     return runs
 

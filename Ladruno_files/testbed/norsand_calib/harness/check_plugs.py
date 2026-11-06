@@ -10,6 +10,8 @@
      (first-order level, 40 increments vs O1 truth).
   5. ElasticPolicy.bvp() ('global'): one set of energy parameters for every test of a BVP body.
   6. tcl_flags for the deck (global policy) are printed.
+  7. (round 3c) p_min is resolved by the harness and BOTH oracles get the same value: Setup.p_min None -> 5e-3 p_ref
+     (|p0| under BA06, p_a under HAR) on O1 and O2; an explicit number or 0 (off) reaches both unchanged.
 Run (norsand_calib/):  python -m harness.check_plugs
 """
 from __future__ import annotations
@@ -155,6 +157,25 @@ def check_global_policy():
     return good
 
 
+def check_p_min():
+    """O1's dataclass default is off and O2's is on (5e-3 p_ref): make_params must give both the same explicit floor."""
+    good = True
+    sand = toyoura_dm04()
+    for energy in ("BA06", "HAR"):
+        for pol, tag in ((EN.ElasticPolicy(), "per_test"), (EN.ElasticPolicy.bvp(p_rep=49.0, e_rep=0.635), "global")):
+            for p_init in (4.9, 49.0):
+                for pm, expect in ((None, None), (0.0, 0.0), (0.7, 0.7)):
+                    setup = Setup(sand, energy=energy, policy=pol, p_min=pm)
+                    P1 = make_params("O1", setup, THETA, p_init, 0.716)
+                    P2 = make_params("O2", setup, THETA, p_init, 0.716)
+                    if expect is None:
+                        p_ref = sand.p_a if energy == "HAR" else abs(P2.p0)
+                        expect = 5.0e-3 * p_ref
+                    good &= ok(f"{energy} {tag} p_init {p_init} p_min {pm}: O1.pmin {P1.pmin:.6g} = O2.p_min {P2.p_min:.6g} "
+                               f"= {expect:.6g}", max(abs(P1.pmin - expect), abs(P2.p_min - expect)), 1e-15)
+    return good
+
+
 def show_flags():
     sand = toyoura_dm04()
     pol = EN.ElasticPolicy.bvp(p_rep=49.0, e_rep=0.635)
@@ -168,6 +189,7 @@ def main():
     print("unified pi_i0"); g &= check_unified()
     print("global (BVP) policy"); g &= check_global_policy()
     print("short PS drivers"); g &= check_short_ps()
+    print("p_min resolved for both oracles"); g &= check_p_min()
     print("deck flag lists"); show_flags()
     print("CHECK_PLUGS", "PASS" if g else "FAIL")
     return g

@@ -1128,11 +1128,207 @@ def check_pi0():
     return allok
 
 
+# ------------------------------------------------------------------ 11. D2: the initial tangent at a FLOORED initial state
+def _rot3(seed=7):
+    """a fixed proper rotation (QR of a seeded random matrix): sigma0 with a non-trivial spectral basis."""
+    Q, R = np.linalg.qr(np.random.default_rng(seed).standard_normal((3, 3)))
+    Q = Q * np.sign(np.diag(R))
+    if np.linalg.det(Q) < 0:
+        Q[:, 0] = -Q[:, 0]
+    return Q
+
+
+def _elastic_tangent_like_kernel(P, st):
+    """the kernel's elasticTangent(): eigen-decompose the COMMITTED eps^e, a^e (S.3) there, (S.33) with the spin from
+    sigma(eps^e) -- rebuilt here from the state alone (no cache), as an independent reference."""
+    w, V = np.linalg.eigh(sym(st.eps_e))
+    el = K.elastic(P, w)
+    return K.tangent_small(el.ae, el.sig, w, V)
+
+
+def _d2_init_cases():
+    """(label, P, deck sigma0, v0, pi_i0) of the floored-init cases (+ one unfloored control)."""
+    R = _rot3()
+    nh = np.array([-1.0, -0.35, 1.35]); nh -= nh.mean(); nh /= np.linalg.norm(nh)
+    PK = k2_params()                                                       # BA06 K2, p_min 0.5
+    PT = tims_params(p_min=0.505)                                          # HAR TIMs, p_min 0.505
+    sig_k_sh = R @ np.diag(-0.3 + K.SQ23 * 0.2 * nh) @ R.T                # BA06 (p, q) = (-0.3, 0.2), rotated
+    sig_t_sh = R @ np.diag(-0.3 + K.SQ23 * 0.5 * nh) @ R.T                # HAR (p, q) = (-0.3, 0.5) (the G1 test case), rotated
+    return [("BA06 K2 iso p = -0.2", PK, -0.2 * I3, 1.70, -5000.0),
+            ("BA06 K2 (p, q) = (-0.3, 0.2) rotated", PK, sig_k_sh, 1.70, -5000.0),
+            ("HAR TIMs iso p = -0.2, pi_i0 = -50", PT, -0.2 * I3, 1.70, -50.0),
+            ("HAR TIMs iso p = -0.2, (S.53)", PT, -0.2 * I3, 1.70, None),
+            ("HAR TIMs (p, q) = (-0.3, 0.5) rotated", PT, sig_t_sh, 1.70, -5000.0),
+            ("control: BA06 K2 p = -100 (not floored)", PK, -100.0 * I3, 1.72, None)]
+
+
+def _d2_step_cases():
+    """(label, P, floored or plain initial state, increment, fractions or None) covering every floor pattern of the
+    existing groups, a floored INIT followed by a step, a plain plastic step, and substepped increments."""
+    cases = []
+    PK = k2_params()
+    s0 = initial_state(PK, -100 * I3, 1.59, -2.0e4)
+    ev_tr = K.floor_ev(PK, 0.0)[0] + PK.kappa_hat * math.log(2.0)                      # p^tr = -p_min/2 (floor group (a))
+    cases.append(("K1.12 FE- (BA06)", PK, s0, ev_tr / 3 * I3 + 1e-6 * np.array([[0, 1, 0.5], [1, 0, 0], [0.5, 0, 0]]), None))
+    P = k2_params(p_min=50.0)
+    sigB, _, nhB = off_corner_sig(P, -55.0, 1.4)
+    sB = initial_state(P, np.diag(sigB), 1.70, K.pi_of_eta(P, -55.0, 1.4))
+    for sdev in (0.5e-3, 1.0e-3, 2.0e-3, 3.0e-3, 5.0e-3):
+        cand = np.diag(1.0e-3 * K.ONES + sdev * nhB) + 1e-4 * np.array([[0, 1, 0], [1, 0, 0], [0, 0, 0]])
+        if step(P, sB, cand).flags["fpattern"] == "FP-":
+            cases.append(("p50 (B) FP- (BA06)", P, sB, cand, None))
+            cases.append(("p50 (D) FP-,FP- m = 2 (BA06)", P, sB, cand, [0.5, 0.5]))
+            break
+    sigC, _, _ = off_corner_sig(P, -51.0, 0.5 * P.M, direction=(-1.2, -0.1, 1.3))
+    sC = initial_state(P, np.diag(sigC), 1.70, K.pi_of_eta(P, -51.0, 0.5 * P.M))
+    for amp in (2e-3, 3e-3, 4e-3, 6e-3, 8e-3, 1.2e-2):
+        cand = np.diag(amp * np.array([0.55, 0.40, -0.95]) - 1e-5) + 1e-4 * np.array([[0, 0, 1], [0, 0, 0], [1, 0, 0]])
+        if step(P, sC, cand).flags["fpattern"] == "-Pf":
+            cases.append(("p50 (C) -Pf (BA06)", P, sC, cand, None))
+            break
+    PT = tims_params(p_min=0.505)
+    sigF, _, nhF = off_corner_sig(PT, -0.6, 1.2 * PT.M)
+    piF = K.pi_of_eta(PT, -0.6, 1.2 * PT.M)
+    sF = initial_state(PT, np.diag(sigF), v_for_psi(PT, piF, -0.10), piF)
+    dF = np.diag((2e-5 / 3) * K.ONES + 2e-5 * nhF)
+    cases.append(("K1.14b FPf (HAR)", PT, sF, dF, None))
+    cases.append(("K1.14b FPf,FPf m = 2 (HAR)", PT, sF, 2.0 * dF, [0.5, 0.5]))
+    # a FLOORED initial state followed by a step (the kernel_parity FLOOR_HAR_init_above_floor paths)
+    si = initial_state(PT, -0.2 * I3, 1.70, -50.0)
+    cases.append(("floored init (HAR, p = -0.2) + compressive/shear step", PT, si,
+                  -2e-5 / 3 * I3 + 1e-6 * np.array([[0, 1, 0], [1, 0, 0], [0, 0, 0]]), None))
+    si2 = initial_state(PT, -0.2 * I3, 1.70, None)
+    cases.append(("floored init (HAR, (S.53)) + hydrostatic step", PT, si2, -2e-5 / 3 * I3, None))
+    si3 = initial_state(PK, -0.2 * I3, 1.70, -5000.0)
+    cases.append(("floored init (BA06) + expansion step (stays floored, FE-)", PK, si3, 1e-4 / 3 * I3, None))
+    # plain plastic step, no floor anywhere (the pre-round-3 model)
+    Pp = k2_params()
+    sp = initial_state(Pp, -100 * I3, v_for_psi(Pp, -80.0, -0.05), -80.0)
+    cases.append(("plain plastic TXC step (BA06 K2)", Pp, sp, np.diag([3e-3, 3e-3, -1e-2]), None))
+    return cases
+
+
+def check_d2():
+    print("\n=== 11. D2 (owner decision 2026-10-04): the initial tangent at a FLOORED initial state is the full elastic a^e ===")
+    allok = True
+    # (a) tangent(initial_state) == a^e at the floored eps^e_f (the kernel's elasticTangent()); a^e Phi_init NOT returned
+    print("  (a) tangent() of a fresh initial state vs the full a^e (S.33 on the committed eps^e) and vs a^e Phi_init:")
+    init_cases = _d2_init_cases()
+    for label, P, sig0, v0, pi0 in init_cases:
+        st = initial_state(P, sig0, v0, pi0)
+        c = st.cache
+        C = tangent(P, st)
+        C_cache = K.tangent_small(K.elastic(P, c["eps_tr"]).ae, c["sig"], c["eps_tr"], c["nvec"])   # same spectral data
+        C_indep = _elastic_tangent_like_kernel(P, st)                                              # re-diagonalised
+        K_C = float(np.einsum("iijj->", C)) / 9.0
+        D11 = K.elastic(P, c["eps_tr"]).D11
+        print(f"      {label}: n_f_init {st.n_f_init}, p = {np.trace(st.sigma) / 3:.4f}, at_floor {st.flags['at_floor']}; "
+              f"bit-identical to a^e: {np.array_equal(C, C_cache)}; vs re-diagonalised {relmax(C, C_indep):.1e}; "
+              f"delta:C:delta/9 = {K_C:.6f} = D11(p) {D11:.6f}")
+        allok &= ok(f"(a) {label}: tangent == a^e (bit-identical)", float(np.abs(C - C_cache).max()), 0.0)
+        allok &= ok(f"(a) {label}: tangent vs a^e re-diagonalised", relmax(C, C_indep), 1e-12)
+        allok &= ok(f"(a) {label}: bulk stiffness delta:C:delta/9 = D11 (compressive branch)", abs(K_C - D11) / D11, 1e-12)
+        if st.n_f_init:
+            assert c["Phi_init"] is not None
+            C_phi = K.tangent_small(K.elastic(P, c["eps_tr"]).ae @ c["Phi_init"], c["sig"], c["eps_tr"], c["nvec"])
+            gap = relmax(C, C_phi)
+            dCphi = np.abs(np.einsum("iikl->kl", C_phi)).max() / np.abs(C_phi).max()
+            K_gap = float(np.einsum("iijj->", C - C_phi)) / 9.0          # the discarded bulk: a^e (1 - Phi) 1/9 = D11 exactly
+            print(f"          a^e Phi_init would give delta:C/max|C| = {dCphi:.1e} (zero bulk); it is {gap:.3f} away from the returned "
+                  f"tangent (max-norm; 2 mu0 dominates under BA06), bulk part of the difference {K_gap:.6f} = D11")
+            allok &= ok(f"(a) {label}: a^e Phi_init is NOT returned (bulk of C - a^e Phi = D11)", abs(K_gap - D11) / D11, 1e-12)
+            allok &= ok(f"(a) {label}: a^e Phi_init has no bulk stiffness (the discarded operator)", dCphi, 1e-13)
+        else:
+            assert c["Phi_init"] is None
+            allok &= ok(f"(a) {label}: unfloored init, no Phi_init", 0.0, 0.0)
+    # (b) every STEP tangent is independent of the initial-state tangent cache: the same step from the same state with the
+    #     cache carrying the old a^e Phi_init (or garbage) is bit-identical in sigma, pi_i, counters and tangent
+    print("  (b) step tangents do not read the initial tangent cache (bit-identical with the old a^e Phi_init / garbage in it):")
+    for label, P, s0, d, fr in _d2_step_cases():
+        def run(s):
+            return step(P, s, d) if fr is None else step_fractions(P, s, d, fr)
+        st1 = run(s0)
+        assert not st1.flags["refused"], (label, st1.flags["reason"])
+        same = True
+        for variant in ("old a^e Phi", "garbage"):
+            sm = s0.copy()
+            if variant == "old a^e Phi":
+                Phi = s0.cache.get("Phi_init")
+                if Phi is None:
+                    continue
+                sm.cache["atilde"] = K.elastic(P, s0.cache["eps_tr"]).ae @ Phi
+            else:
+                sm.cache["atilde"] = np.full((3, 3), np.nan)
+                sm.cache["sig"] = np.full(3, np.nan)
+            st2 = run(sm)
+            same &= (np.array_equal(st1.sigma, st2.sigma) and st1.pi_i == st2.pi_i and st1.v == st2.v
+                     and np.array_equal(tangent(P, st1), tangent(P, st2)) and st1.flags["fpattern"] == st2.flags["fpattern"]
+                     and (st1.n_f_tr, st1.n_f_post, st1.eps_f_v, st1.W_f) == (st2.n_f_tr, st2.n_f_post, st2.eps_f_v, st2.W_f))
+            # ... and along a 3-increment path
+            a_ = run_path(P, s0, np.array([d] * 3)) if fr is None else None
+            b_ = run_path(P, sm, np.array([d] * 3)) if fr is None else None
+            if a_ is not None:
+                same &= all(np.array_equal(x.sigma, y.sigma) and np.array_equal(tangent(P, x), tangent(P, y)) and x.pi_i == y.pi_i
+                            for x, y in zip(a_, b_))
+        print(f"      {label}: pattern '{st1.flags['fpattern']}', substeps {st1.flags['substeps']}, init floored {bool(s0.n_f_init)}: "
+              f"bit-identical {same}")
+        allok &= ok(f"(b) {label}: step tangent / state unchanged", 0.0 if same else 1.0, 0.0)
+    # (c) the C++ kernel's elasticTangent() at the SAME floored initial states (kernel_parity shim, optional: needs g++ and
+    #     the kernel header next to the repo; skipped with a note elsewhere)
+    print("  (c) kernel elasticTangent() at the floored initial states vs O2 tangent() (kernel_parity shim):")
+    kern, NK, note = _kernel_shim()
+    if kern is None:
+        print(f"      SKIPPED: {note}")
+    else:
+        worst = 0.0
+        for label, P, sig0, v0, pi0 in init_cases:
+            st = initial_state(P, sig0, v0, pi0)
+            rc, ks, msg = kern.initial_state(P, sig0, v0, pi0)
+            assert rc == 0, (label, rc, msg)
+            Ck = kern.elastic_tangent(P, ks)
+            Co = NK.c4_to_c6(tangent(P, st))
+            err = float(np.abs(Ck - Co).max() / np.abs(Co).max())
+            worst = max(worst, err)
+            gap = ""
+            if st.n_f_init:
+                c = st.cache
+                Cphi = NK.c4_to_c6(K.tangent_small(K.elastic(P, c["eps_tr"]).ae @ c["Phi_init"], c["sig"], c["eps_tr"], c["nvec"]))
+                gap = f"; kernel vs the old O2 a^e Phi_init: {np.abs(Ck - Cphi).max() / np.abs(Ck).max():.3f}"
+            print(f"      {label}: kernel n_f_init {int(ks[16])}, |C_k - C_o2|/max|C_o2| = {err:.2e}{gap}")
+            assert int(ks[16]) == st.n_f_init
+        allok &= ok("(c) kernel elasticTangent() == O2 tangent() at every floored initial state (gate 1e-10)", worst, 1e-10)
+    print("  d2 group:", "ALL OK" if allok else "SOME CHECK FAILED")
+    return allok
+
+
+def _kernel_shim():
+    """(Kernel, ns_kernel module, note) from kernel_parity/ when g++ and the header are available, else (None, None, why).
+    O2 itself never imports the kernel; this is only the (c) cross-check of the D2 self-check."""
+    import os
+    import sys
+    import tempfile
+    if sys.platform == "win32":
+        return None, None, "Windows: the kernel_parity shim is a Zone B (Linux / Esmeralda, g++) build"
+    try:
+        kp = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "kernel_parity")
+        if kp not in sys.path:
+            sys.path.insert(0, kp)
+        import ns_kernel as NK
+        if NK.compiler() is None:
+            return None, None, "no g++ on PATH (Zone B: run on Esmeralda)"
+        if not os.path.exists(NK.KERNEL_H):
+            return None, None, f"kernel header not found: {NK.KERNEL_H}"
+        lib = NK.build(tempfile.mkdtemp(prefix="ns_kernel_d2_"))
+        return NK.Kernel(lib), NK, ""
+    except Exception as e:                                   # noqa: BLE001 - the shim is optional here
+        return None, None, f"{type(e).__name__}: {e}"
+
+
 if __name__ == "__main__":
     import sys
     groups = dict(jac=check_jacobian, cto=check_cto, newton=check_quadratic, k1=check_k1,
                   k2=lambda: check_finite_and_k2(full_table="--table" in sys.argv), cap=check_cap,
-                  chain=check_chain, har=check_har, floor=check_floor, pi0=check_pi0)
+                  chain=check_chain, har=check_har, floor=check_floor, pi0=check_pi0, d2=check_d2)
     sel = [a for a in sys.argv[1:] if a in groups] or list(groups)
     for g in sel:
         groups[g]()

@@ -20,6 +20,10 @@ Two variants (--variant clean|noisy|both):
          C = (J'J)^-1 J' diag(var) J (J'J)^-1 (var = Objective.noise_variance), is <= the chi2 0.999 quantile with
          k = #free dof, AND the fit's cost is not worse than the cost at the truth. Report also: z-scores per
          parameter, chi2/dof, and the discretisation floor |r(truth)| of a NOISE-FREE set generated at the other step.
+         Round 3c: the p-value of the Mahalanobis gate is reported (chi2 survival function, k dof); the HEADLINE gate
+         is the chi2 0.99 quantile, the 0.999 quantile is the HARD limit. A fit between the two is labelled MARGINAL
+         (the run still passes but the report says so); above the hard limit, or a cost worse than the truth's, FAILS.
+         The exit status is 0 unless a configuration FAILS.
 Run (compute node; see run_smoke.sbatch):  python -m harness.smoke_recovery [--starts 8] [--workers 8]
     [--configs six,rho_pinned] [--no-profiles] [--variant clean|noisy|both] [--noise-seed 1]
 """
@@ -37,7 +41,7 @@ import numpy as np
 from . import data as DATA
 from . import fit as FIT
 from .drivers import simulate
-from .model import Setup, FIT_NAMES
+from .model import Setup, FIT_NAMES, make_params
 from .objective import Objective, Weights, model_peak
 from .sand import TOYOURA_PLACEHOLDER as TOY, phi_ps
 
@@ -99,6 +103,13 @@ def make_synthetic(setup, W: Weights, outdir: str, gen_deps_pct: float | None = 
     return paths
 
 
+def p_min_resolved(setup, p_init=49.0, e=0.716):
+    """The p' floor (kPa) both oracles get at the first synthetic state (model.resolve_p_min; per_test: 5e-3 p_init)."""
+    P1, P2 = (make_params(o, setup, THETA_TRUE, p_init, e) for o in ("O1", "O2"))
+    assert P1.pmin == P2.p_min, (P1.pmin, P2.p_min)
+    return float(P2.p_min)
+
+
 def map_check(n=2000, seed=1):
     """Every u in [0,1]^k decodes to a set the owner's refusal rules accept (fit.check_admissible) and O2's
     Params.validate() accepts, for the free/fixed configurations the harness uses."""
@@ -132,10 +143,13 @@ def noisy_consistency(obj, spec, best_theta, cost_fit, cost_truth, k_dof):
     sd = np.sqrt(np.clip(np.diag(C), 0.0, None))
     z = d / sd
     m2 = float(d @ np.linalg.pinv(C) @ d)
-    crit = float(chi2.ppf(0.999, k_dof))
+    crit = float(chi2.ppf(0.999, k_dof))             # the hard limit
+    crit99 = float(chi2.ppf(0.99, k_dof))            # the headline gate
+    p_value = float(chi2.sf(m2, k_dof))
     n_eff = float(var.sum())
     return dict(names=names, ln_ratio=dict(zip(names, d.tolist())), sd_ln=dict(zip(names, sd.tolist())),
-                z=dict(zip(names, z.tolist())), mahalanobis2=m2, chi2_crit_0p999=crit, k_dof=k_dof,
+                z=dict(zip(names, z.tolist())), mahalanobis2=m2, chi2_crit_0p999=crit, chi2_crit_0p99=crit99,
+                p_value=p_value, headline_ok=bool(m2 <= crit99 and cost_fit <= cost_truth * (1 + 1e-9)), k_dof=k_dof,
                 chi2_fit=2.0 * cost_fit, chi2_truth=2.0 * cost_truth, expected_chi2_truth=n_eff,
                 expected_chi2_fit=n_eff - k_dof, cost_not_worse_than_truth=bool(cost_fit <= cost_truth * (1 + 1e-9)),
                 ok=bool(m2 <= crit and cost_fit <= cost_truth * (1 + 1e-9)))
@@ -186,11 +200,13 @@ def run(starts=8, workers=8, configs=("six", "rho_pinned"), profiles=True, seed=
                   starts=starts, workers=workers, configs={}, variant=variant,
                   noise=(dict(seed=noise_seed, gen_deps_pct=GEN_DEPS_PCT, model_deps_pct=W.deps_pct,
                               discretisation_floor=floor) if noisy else None),
-                  setup=dict(energy=setup.energy, policy=vars(setup.policy), pi0_rule=setup.pi0_rule, p_min=setup.p_min))
+                  setup=dict(energy=setup.energy, policy=vars(setup.policy), pi0_rule=setup.pi0_rule, p_min=setup.p_min,
+                             p_min_resolved_kPa=p_min_resolved(setup)))
     print(f"synthetic written: {paths}; n_res {r_true.size}; |r(truth)| {np.linalg.norm(r_true):.3e}; "
           f"one residual eval {t_eval:.2f} s")
     sys.stdout.flush()
     all_ok = True
+    marginal = False
     for cfg in configs:
         if cfg == "six":
             spec = FIT.FitSpec(free=FIT_NAMES, fixed={})
@@ -214,18 +230,21 @@ def run(starts=8, workers=8, configs=("six", "rho_pinned"), profiles=True, seed=
             cost_truth = 0.5 * float(np.sum(obj.residuals(THETA_TRUE) ** 2))
             cons = noisy_consistency(obj, spec, best["theta"], best["cost"], cost_truth, len(spec.free))
             n_rec = sum(1 for r in runs if noisy_consistency(obj, spec, r["theta"], r["cost"], cost_truth,
-                                                             len(spec.free))["ok"])
-            ok = cons["ok"]
+                                                             len(spec.free))["headline_ok"])
+            ok = cons["ok"]                       # the hard limit decides pass/fail; cons['headline_ok'] is the 0.99 gate
         else:
             cons = None
             n_rec = sum(1 for r in runs if max(recovery_error(r["theta"], spec.free).values()) <= RECOVERY_TOL)
             ok = max(err.values()) <= RECOVERY_TOL
         all_ok = all_ok and ok
+        marginal = marginal or (cons is not None and ok and not cons["headline_ok"])
         print(f"[{cfg}] {len(runs)} starts, {t_fit:.0f} s wall; best cost {best['cost']:.3e}; "
               f"recovered by {n_rec}/{len(runs)} starts; max rel err {max(err.values()):.2e} -> {'PASS' if ok else 'FAIL'}")
         if cons is not None:
-            print(f"    noisy gate: Mahalanobis^2 {cons['mahalanobis2']:.2f} vs chi2(0.999, {cons['k_dof']}) "
-                  f"{cons['chi2_crit_0p999']:.2f}; chi2 fit {cons['chi2_fit']:.1f} (expected {cons['expected_chi2_fit']:.1f}), "
+            level = "PASS" if cons["headline_ok"] else ("MARGINAL" if cons["ok"] else "FAIL")
+            print(f"    noisy gate {level}: Mahalanobis^2 {cons['mahalanobis2']:.2f}, p-value {cons['p_value']:.3f}; "
+                  f"headline chi2(0.99, {cons['k_dof']}) {cons['chi2_crit_0p99']:.2f}, hard limit chi2(0.999, "
+                  f"{cons['k_dof']}) {cons['chi2_crit_0p999']:.2f}; chi2 fit {cons['chi2_fit']:.1f} (expected {cons['expected_chi2_fit']:.1f}), "
                   f"at truth {cons['chi2_truth']:.1f} (expected {cons['expected_chi2_truth']:.1f}); "
                   f"cost not worse than truth: {cons['cost_not_worse_than_truth']}")
         for n in spec.free:
@@ -259,7 +278,7 @@ def run(starts=8, workers=8, configs=("six", "rho_pinned"), profiles=True, seed=
             rec["profiles"] = prof
         report["configs"][cfg] = rec
     report["wall_seconds"] = time.perf_counter() - t_all
-    report["gate"] = "PASS" if all_ok else "FAIL"
+    report["gate"] = ("MARGINAL" if marginal else "PASS") if all_ok else "FAIL"   # MARGINAL: inside the 0.999 hard limit, outside the 0.99 headline
     os.makedirs(OUT, exist_ok=True)
     report["max_nfev"] = max_nfev
     with open(os.path.join(OUT, f"smoke_recovery{sfx}.json"), "w") as f:
