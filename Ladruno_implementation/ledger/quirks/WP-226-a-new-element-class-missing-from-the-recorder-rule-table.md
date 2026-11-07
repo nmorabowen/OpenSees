@@ -1,6 +1,7 @@
 ---
 wp: WP-226
 title: "A new solid element missing from the recorder's getGeometryAndIntRuleByClassTag writes no GP_PARAM; a class with varying node counts used to vanish from MODEL/ELEMENTS (WP-226)"
+pr: "#1066"
 date: 2026-11-07
 ---
 ### A new solid element missing from the recorder's `getGeometryAndIntRuleByClassTag` writes no `GP_PARAM`; a class with varying node counts used to vanish from MODEL/ELEMENTS (WP-226)

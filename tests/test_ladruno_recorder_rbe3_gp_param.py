@@ -51,6 +51,12 @@ def _model_groups(h):
     return out
 
 
+def _s(v):
+    """h5 string attr -> str (the recorder writes a 1-element byte array)."""
+    v = np.atleast_1d(v).reshape(-1)[0]
+    return v.decode() if isinstance(v, bytes) else str(v)
+
+
 def _file(out):
     files = glob.glob(out) or glob.glob(out + "*")
     assert files, "no .ladruno output produced"
@@ -111,8 +117,7 @@ def test_rbe3_of_different_node_counts_written_csr_and_log_clean(tmp_path, capfd
         rbe3 = [g for k, g in groups.items() if "LadrunoDistributingCoupling" in k]
         assert len(rbe3) == 1, sorted(groups)
         g = rbe3[0]
-        lay = g.attrs["CONNECTIVITY_LAYOUT"]
-        assert (lay.decode() if isinstance(lay, bytes) else str(lay)) == "csr"
+        assert _s(g.attrs["CONNECTIVITY_LAYOUT"]) == "csr"
         assert "CONNECTIVITY" not in g          # pre-§3.4 readers skip, never misread
         assert int(np.atleast_1d(g.attrs["NUM_CTRL"])[0]) == -1
         ids = np.asarray(g["ID"][...]).reshape(-1)
@@ -183,8 +188,7 @@ def test_ladrunobrick_writes_hex_gl2_gp_param(tmp_path, formulation):
         keys = [k for k in groups if "-LadrunoBrick[" in k]
         assert len(keys) == 1, sorted(groups)
         g = groups[keys[0]]
-        topo = g.attrs["TOPOLOGY"]
-        assert (topo.decode() if isinstance(topo, bytes) else str(topo)) == "hex"
+        assert _s(g.attrs["TOPOLOGY"]) == "hex"
         assert int(np.atleast_1d(g.attrs["NUM_GP"])[0]) == 8
         assert int(np.atleast_1d(g.attrs["NDIR"])[0]) == 3
         gp = np.asarray(g["QUADRATURE/GP_PARAM"][...], dtype=float)
