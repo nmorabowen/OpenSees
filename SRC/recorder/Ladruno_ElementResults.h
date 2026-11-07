@@ -1499,12 +1499,17 @@ namespace detail {
 			typedef std::map<ElementIntegrationRuleType::Enum, ElementWithSameIntRuleCollection> submap_type;
 
 			ElementWithSameClassTagCollection()
-				: is_new(true), class_tag(0), class_name("unknown"), num_nodes(0), geom_type(ElementGeometryType::Custom), items() {}
+				: is_new(true), class_tag(0), class_name("unknown"), num_nodes(0), variable_nodes(false), geom_type(ElementGeometryType::Custom), items() {}
 
 			bool is_new;
 			int class_tag;
 			std::string class_name;
-			int num_nodes;
+			int num_nodes;      // node count of the FIRST element (THE count unless variable_nodes)
+			// Ladruno (WP-226): true when elements of this class carry different node
+			// counts (RBE3 / RBE2 couplings: one footprint per element). Such a class is
+			// written with the CSR connectivity layout (ID + CONNECTIVITY_OFFSETS +
+			// CONNECTIVITY_NODES) instead of the rectangular CONNECTIVITY (schema §3.4).
+			bool variable_nodes;
 			ElementGeometryType::Enum geom_type;
 			BasisInfo basis_info; // from the optional "basisInfo" probe (one per class tag)
 			std::map<detail::ElementIntegrationRuleType::Enum, ElementWithSameIntRuleCollection> items;
@@ -1611,13 +1616,15 @@ namespace detail {
 						elem_coll_by_tag.is_new = false;
 					}
 					/*
-					make sure that every element with the same tag have the same number of nodes
+					Ladruno (WP-226): elements of one class tag may carry different node
+					counts (LadrunoDistributingCoupling / LadrunoKinematicCoupling: one
+					footprint per element). Flag the class instead of dropping the
+					element: the old path logged one error per element and left every
+					such element out of MODEL/ELEMENTS (815 RBE3s -> ~4000 lines, none
+					written). The writer switches the class to the CSR layout.
 					*/
-					if (lam_get_num_ext_nodes(current_element) != elem_coll_by_tag.num_nodes) {
-						opserr << "LadrunoRecorder Error while mapping elements: elements with different number of nodes "
-							"exist within the same class tag. This is not supported\n";
-						continue;  // Ladruno: was exit(-1) - skip the inconsistent element, never abort the run
-					}
+					if (lam_get_num_ext_nodes(current_element) != elem_coll_by_tag.num_nodes)
+						elem_coll_by_tag.variable_nodes = true;
 					/*
 					create the integration rule
 					*/
@@ -1783,7 +1790,9 @@ namespace detail {
 				*/
 				else if (
 					// ./triangle
-					elem_class_tag == ELE_TAG_Tri31
+					elem_class_tag == ELE_TAG_Tri31 ||
+					// ./ladrunoPlane — LadrunoCST: one centroid GP, as Tri31.  // Ladruno (WP-226)
+					elem_class_tag == ELE_TAG_LadrunoCST
 					) {
 					geom_type = ElementGeometryType::Triangle_3N;
 					int_type = ElementIntegrationRuleType::Triangle_GaussLegendre_1;
@@ -1865,6 +1874,9 @@ namespace detail {
 					elem_class_tag == ELE_TAG_FourNodeQuad ||
 					elem_class_tag == ELE_TAG_FourNodeQuad3d ||
 					elem_class_tag == ELE_TAG_FourNodeQuadWithSensitivity ||
+					// ./ladrunoPlane — LadrunoQuad pts[4] is FourNodeQuad's CCW 2x2 order;
+					// ssp mirrors slot 0 into all 4.  // Ladruno (WP-226)
+					elem_class_tag == ELE_TAG_LadrunoQuad ||
 					// ./shell
 					elem_class_tag == ELE_TAG_ShellDKGQ ||
 					elem_class_tag == ELE_TAG_ShellNLDKGQ ||
@@ -1950,6 +1962,10 @@ namespace detail {
 					elem_class_tag == ELE_TAG_BbarBrick ||
 					elem_class_tag == ELE_TAG_BbarBrickWithSensitivity ||
 					elem_class_tag == ELE_TAG_Brick ||
+					// ./ladrunoBrick — every -formulation (std|bbar|eas|uri|ssp) answers
+					// "stresses" with 8 GPs in Brick's i,j,k (zeta-fastest) order over
+					// sg = -+1/sqrt(3); single-point uri/ssp mirror slot 0 into all 8.  // Ladruno (WP-226)
+					elem_class_tag == ELE_TAG_LadrunoBrick ||
 					// ./up
 					elem_class_tag == ELE_TAG_BBarBrickUP ||
 					elem_class_tag == ELE_TAG_BrickUP ||
