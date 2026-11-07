@@ -152,6 +152,16 @@ bodies are seen whole).
                 statement's lines or the line above):
                     // ladruno-lint: unknown-ok <reason>
 
+  floating-runner  (no alias; WP-225) A fork workflow
+                (`.github/workflows/ladruno*.yml`) that names a floating runner
+                image (`ubuntu-latest`, `windows-latest`, `macos-latest`). The
+                label moves without a commit: on 2026-11-06 `ubuntu-latest`
+                became ubuntu-26.04 with GCC 15.2 and Zone A failed 16
+                bit-exact and baseline tests that no PR had touched
+                (#1063), while the job pinned to ubuntu-24.04 passed in the
+                same run. Pin the image (`ubuntu-24.04`); move it in its own
+                PR that re-baselines. Comments are ignored; no waiver.
+
 A waiver needs a reason of at least 12 characters, and a waiver that no longer
 suppresses anything is itself a finding (stale).
 
@@ -1359,6 +1369,24 @@ def check_unknown_token(root, rel, used_waivers=None):
     return findings
 
 
+FLOATING_RUNNER = re.compile(r"\b(?:ubuntu|windows|macos)-latest\b")
+
+
+def check_floating_runner(root, rel):
+    """floating-runner (WP-225): a fork workflow that names a `*-latest` runner image."""
+    findings = []
+    wf = root / ".github" / "workflows"
+    for path in sorted(wf.glob("ladruno*.yml")) + sorted(wf.glob("ladruno*.yaml")) if wf.is_dir() else []:
+        for li, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines()):
+            code = line.split("#", 1)[0]
+            m = FLOATING_RUNNER.search(code)
+            if m:
+                findings.append(f"floating-runner {rel(path)}:{li + 1}: '{m.group(0)}' is a floating image "
+                                "(it moved to ubuntu-26.04 / GCC 15 on 2026-11-06 and broke bit-exact "
+                                "baselines); pin it, e.g. ubuntu-24.04")
+    return findings
+
+
 # --------------------------------------------------------------------------
 # the rule registry (WP-162). One entry per rule, named by slug. `alias` is the
 # pre-WP-162 L-number, accepted by --only for one release.
@@ -1403,6 +1431,9 @@ _RULE_LIST = [
     Rule("unknown-token", None, check_unknown_token, "unknown-ok", "fork-stamped",
          "a fork parser that lets an unknown token through: a \"unknown tokens are ignored\" "
          "comment, or an option ladder ending its token loop with no final `else` (WP-167)"),
+    Rule("floating-runner", None, check_floating_runner, None, "fork workflows",
+         "a `ladruno*.yml` workflow that names a floating runner image (`ubuntu-latest`): it moved to "
+         "26.04 / GCC 15 and broke bit-exact baselines (WP-225)"),
 ]
 RULES = {r.slug: r for r in _RULE_LIST}
 ALIASES = {r.alias: r.slug for r in _RULE_LIST if r.alias}
