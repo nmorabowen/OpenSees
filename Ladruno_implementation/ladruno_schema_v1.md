@@ -259,6 +259,38 @@ x_global = R @ X
 apeGmsh implements `B(ξ; FAMILY, ORDER)` **once per family**, not once per element
 class. That is the whole point of the divergence.
 
+### 3.4 Variable node count within a class — CSR connectivity (WP-226)
+
+Some classes carry a **different node count per element**: `LadrunoDistributingCoupling`
+(RBE3) and `LadrunoKinematicCoupling` (RBE2) have one footprint per element. A
+rectangular `CONNECTIVITY` cannot hold them. Before WP-226 the recorder logged one error
+per odd-sized element and left it out of the file. Such a group is now written as
+CSR:
+
+```
+MODEL/ELEMENTS/<classTag>-<ClassName>[<g>]
+   attr     CONNECTIVITY_LAYOUT = "csr"
+   attr     NUM_CTRL            = -1          (varies per element)
+   dataset  ID                    [nElem]          int   element tags
+   dataset  CONNECTIVITY_OFFSETS  [nElem + 1]      int   0 = OFFSETS[0] <= … <= OFFSETS[nElem] = len(NODES)
+   dataset  CONNECTIVITY_NODES    [OFFSETS[nElem]] int   nodes of element e = NODES[OFFSETS[e]:OFFSETS[e+1]]
+   (no CONNECTIVITY, no GLOBAL_GP_COORDS, no CTRL_WEIGHT; BASIS attrs as §3)
+```
+
+- **Data-driven.** The writer switches to CSR only when the class's node counts differ
+  in that file. A class whose elements all share one count (every RBE3 with 4
+  independents, say) keeps the rectangular `CONNECTIVITY`, byte-identical to before.
+  A reader must handle both.
+- **Old readers skip, never misread.** The group has no `CONNECTIVITY`, and every
+  known reader (`ladruno_format`, apeGmsh `FEMData` / results / tag map) guards on
+  its presence. So a reader written before §3.4 drops these elements, as it did
+  before, and never misreads a padded table. This is why there is no
+  `FORMAT_MINOR_VERSION` bump: the change is additive (§9).
+- Node order inside a row is the element's `getExternalNodes()` order. For RBE3/RBE2
+  that is the reference node, then the independents or slaves.
+- `RESULTS/ON_ELEMENTS` buckets are unchanged. They key by element `ID`, so a coupling
+  that answers a request still pairs with its CSR row by tag.
+
 ---
 
 ## 4. `MODEL/NODES`

@@ -1290,27 +1290,61 @@ int LadrunoRecorder::writeModelElements()
 					<< elem_by_custom_rule.custom_int_rule_index << "]";
 				elem_by_custom_rule.name = ss_dset.str();
 
-				// CONNECTIVITY [nElem x (1 + num_nodes)]: (elemTag, c1..cK)
-				std::vector<int> buffer(elem_by_custom_rule.items.size() * (size_t)(1 + elem_by_tag.num_nodes));
-				size_t offset = 0;
-				for (me::ElementWithSameCustomIntRuleCollection::collection_type::iterator it4 = elem_by_custom_rule.items.begin();
-					it4 != elem_by_custom_rule.items.end(); ++it4) {
-					Element* elem = *it4;
-					buffer[offset] = elem->getTag();
-					for (int j = 0; j < elem_by_tag.num_nodes; ++j)
-						buffer[(size_t)j + 1 + offset] = elem->getExternalNodes()(j);
-					offset += (size_t)(1 + elem_by_tag.num_nodes);
-				}
 				// Element group <name> is a GROUP (schema v1) holding CONNECTIVITY +
 				// BASIS attrs + (for custom rules) a QUADRATURE child. A dataset cannot
 				// parent the QUADRATURE group, which silently failed before this.
 				hid_t h_eg = ladrunons::h5::group::create(
 					h_gp_elements, elem_by_custom_rule.name.c_str(), H5P_DEFAULT,
 					info.h_group_proplist, H5P_DEFAULT);
-				hid_t d_conn = ladrunons::h5::dataset::createAndWrite(
-					h_eg, "CONNECTIVITY", buffer,
-					elem_by_custom_rule.items.size(), (size_t)(1 + elem_by_tag.num_nodes));
-				ladrunons::h5::dataset::close(d_conn);
+				const bool csr = elem_by_tag.variable_nodes;
+				if (!csr) {
+					// CONNECTIVITY [nElem x (1 + num_nodes)]: (elemTag, c1..cK)
+					std::vector<int> buffer(elem_by_custom_rule.items.size() * (size_t)(1 + elem_by_tag.num_nodes));
+					size_t offset = 0;
+					for (me::ElementWithSameCustomIntRuleCollection::collection_type::iterator it4 = elem_by_custom_rule.items.begin();
+						it4 != elem_by_custom_rule.items.end(); ++it4) {
+						Element* elem = *it4;
+						buffer[offset] = elem->getTag();
+						for (int j = 0; j < elem_by_tag.num_nodes; ++j)
+							buffer[(size_t)j + 1 + offset] = elem->getExternalNodes()(j);
+						offset += (size_t)(1 + elem_by_tag.num_nodes);
+					}
+					hid_t d_conn = ladrunons::h5::dataset::createAndWrite(
+						h_eg, "CONNECTIVITY", buffer,
+						elem_by_custom_rule.items.size(), (size_t)(1 + elem_by_tag.num_nodes));
+					ladrunons::h5::dataset::close(d_conn);
+				}
+				else {
+					// Ladruno (WP-226) — schema §3.4 CSR layout for a class whose
+					// elements carry different node counts (RBE3/RBE2 footprints):
+					//   ID                    [nElem]      element tags
+					//   CONNECTIVITY_OFFSETS  [nElem + 1]  OFFSETS[0]=0, nodes of element e
+					//                                     = NODES[OFFSETS[e]:OFFSETS[e+1]]
+					//   CONNECTIVITY_NODES    [OFFSETS[nElem]]  node tags, in element order
+					// attr CONNECTIVITY_LAYOUT="csr", NUM_CTRL=-1. No CONNECTIVITY dataset,
+					// so a reader that predates §3.4 skips the group (as it skipped the
+					// missing elements before) instead of misreading a padded table.
+					std::vector<int> ids, offsets, nodes;
+					ids.reserve(elem_by_custom_rule.items.size());
+					offsets.reserve(elem_by_custom_rule.items.size() + 1);
+					offsets.push_back(0);
+					for (me::ElementWithSameCustomIntRuleCollection::collection_type::iterator it4 = elem_by_custom_rule.items.begin();
+						it4 != elem_by_custom_rule.items.end(); ++it4) {
+						Element* elem = *it4;
+						const ID& en = elem->getExternalNodes();
+						ids.push_back(elem->getTag());
+						for (int j = 0; j < en.Size(); ++j)
+							nodes.push_back(en(j));
+						offsets.push_back((int)nodes.size());
+					}
+					hid_t d_id = ladrunons::h5::dataset::createAndWrite(h_eg, "ID", ids);
+					ladrunons::h5::dataset::close(d_id);
+					hid_t d_off = ladrunons::h5::dataset::createAndWrite(h_eg, "CONNECTIVITY_OFFSETS", offsets);
+					ladrunons::h5::dataset::close(d_off);
+					hid_t d_nod = ladrunons::h5::dataset::createAndWrite(h_eg, "CONNECTIVITY_NODES", nodes);
+					ladrunons::h5::dataset::close(d_nod);
+					ladrunons::h5::attribute::write(h_eg, "CONNECTIVITY_LAYOUT", std::string("csr"));
+				}
 
 				// BASIS / QUADRATURE descriptors (schema §3) DERIVED from the
 				// legacy (geometry, integration rule) pair. We keep the legacy
@@ -1378,6 +1412,8 @@ int LadrunoRecorder::writeModelElements()
 						for (int k = 0; k < ndir; ++k) order.push_back(binfo.order);
 					}
 				}
+				if (csr)
+					num_ctrl = -1;  // Ladruno (WP-226): variable per element — read CONNECTIVITY_OFFSETS
 				ladrunons::h5::attribute::write(h_eg, "TOPOLOGY", topology);
 				ladrunons::h5::attribute::write(h_eg, "FAMILY", family);
 				if (order.size() > 0)
@@ -1451,7 +1487,7 @@ int LadrunoRecorder::writeModelElements()
 						Node* n0 = (nd0.Size() > 0) ? info.domain->getNode(nd0(0)) : 0;
 						if (n0) ndim = n0->getCrds().Size();
 					}
-					if (ndim > 0) {
+					if (ndim > 0 && !csr) {  // Ladruno (WP-226): no basis for a variable-node class
 						size_t nElem = elem_by_custom_rule.items.size();
 						std::vector<double> ggp;
 						ggp.reserve(nElem * (size_t)q_num_gp * (size_t)ndim);
