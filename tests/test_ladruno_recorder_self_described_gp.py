@@ -368,7 +368,7 @@ def test_curved_beziertri6_global_gp_uses_bernstein_basis(tmp_path):
     _static()
     ops.wipe()
     with h5py.File(_file(out), "r") as h:
-        name, g = next(iter(_groups(h, "BezierTri6").items()))
+        g = next(iter(_groups(h, "BezierTri6").values()))
         assert _s(g.attrs["FAMILY"]) == "bernstein"
         gp = np.asarray(g["QUADRATURE/GP_PARAM"][...], dtype=float)
         X = np.asarray([nodes[n] for n in (1, 2, 3, 5, 6, 7)], dtype=float)
