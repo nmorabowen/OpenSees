@@ -135,3 +135,35 @@ The first K3 submission, job 151170 on 2026-10-04 (`--lit`, HAR, ρ fitted, 16 s
 - `fit.multistart(..., only=..., checkpoint_dir=...)` writes each start to `start_<k>.json` the moment it finishes (atomic rename) and skips a start already on disk, so a task killed at its limit loses only its own start and a resubmission resumes. The full Sobol set of `--starts` is drawn in every task, so slices of one seed are the slices of one sequence; checkpointed slices give the same starts and costs as one unsplit run (toy check, 2026-11-06).
 - `fit_tatsuoka.py --checkpoint DIR --only 3` runs one slice; `--collect` builds the final record (best start, identifiability, `--profiles`) from the checkpoints and lists missing starts.
 - `run_k3_array.sbatch` (16 tasks × 1 core, 2 days each) and `run_k3_collect.sbatch` (submit with `--dependency=afterany:<array>`). ρ is free (ruling 3); `--rho` pins it only when given.
+
+## K4, the cross-model check (2026-11-07)
+
+`k4_crossmodel.py` runs single-point drained and undrained triaxial (TC, TCU) and plane-strain (PS, PSU)
+compression of Toyoura at p0 100 and 500 kPa and e0 0.735, 0.833 and 0.907, to 20 % axial strain, with three models:
+
+| Model | How | Role |
+|---|---|---|
+| NorSand | O2 through `drivers.simulate`, K3's setup (HAR, p' floor 0.505, unified pi_i0) | the model under test |
+| DM04 | WP-134's reference integrator, Toyoura Table 1 with P_atm 101: the CSL and M are NorSand's exactly (checked in every report) | primary reference; `paper` and `uw_model` option sets |
+| PM4Sand | OpenSees, one SSPquad, plane strain only, via `k4_pm4sand.py` under Python 3.12 (each case in its own process) | secondary: a 2D model with its own CSL, matched through Dr, G0, phi_cv and nu |
+
+Gate (soft): on the drained cases, |d sr_peak| <= 0.10 and |d eps_v at peak| <= 0.10 % against DM04 `paper`,
+K3's scatter model (`objective.Weights`). Undrained cases are reported, not gated (no Toyoura undrained lab data).
+
+```
+python -m harness.k4_crossmodel --theta provisional --pm4          # dry run on smoke_recovery.THETA_TRUE
+python -m harness.k4_crossmodel --theta <K3 result JSON> --pm4     # the K4 run, once K3 reports
+```
+
+The dry run (`out/k4/k4_dryrun.md`, 24 cases, 109 s on 12 workers) exercises the plumbing only: NorSand runs on
+the synthetic smoke parameters, so its differences from DM04 (up to 0.74 in sr_peak and 1.3 % in eps_v) say
+nothing about the calibrated model. Two things it does show:
+- DM04 `paper` and `uw_model` agree to within 0.01 in sr_peak on every drained case: the UW additions do not
+  matter on these monotonic paths.
+- PM4Sand with matched Dr, G0, phi_cv and default dilatancy (nb 0.5, nd 0.1) is far weaker and less dilative
+  than both (PS sr_peak 3.1 to 4.1 against DM04 3.8 to 5.5). Its defaults are calibrated for cyclic strength,
+  not monotonic peaks; it stays a mechanism-level comparison.
+
+PM4Sand driver notes: the force tolerance is 1e-4 p0 (Newton stalls near 1e-3 kPa past ~2 % strain; the
+displacement correction is then ~1e-8); `FirstCall` is reset after the stage switch; 400 and 1000 steps agree
+to three digits.
