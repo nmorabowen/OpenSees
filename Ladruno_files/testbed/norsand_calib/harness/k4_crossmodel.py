@@ -1,5 +1,5 @@
 """K4, the cross-model check (plan 144 §5.2, soft gate): single-point drained and undrained triaxial and plane-strain
-compression of Toyoura, NorSand against DM04 and PM4Sand.
+compression of Toyoura, NorSand against DM04: the paper's equations (Python) and the fork's C++ (LadrunoSANISAND).
 
 Models
   NorSand  O2 (the C++ kernel's contract) through drivers.simulate, with K3's setup: HAR energy, p' floor
@@ -10,8 +10,11 @@ Models
            P_atm = the harness p_a (101 kPa), so its CSL e_c = e0 - lambda_c (p/p_a)^xi and M are EXACTLY NorSand's
            (sand.toyoura_dm04, sheet S.22; checked below). Two option sets: 'paper' (the published model, primary)
            and 'uw_model' (the plan's named oracle: UW additions U1-U5).
-  PM4Sand  OpenSees, plane strain only (a 2D model with its own CSL), run by k4_pm4sand.py under Python 3.12:
-           secondary, mechanism-level (see that file for the parameter matching).
+  LadrunoSANISAND  the fork's C++ DM04 (the material the strip campaign runs), one material point driven by
+           chained ladrunoSANISANDReplay calls in k4_sanisand.py under Python 3.12; same Toyoura set and P_atm,
+           the campaign's integration options. Its distance from DM04 'paper' is reported too: a check of the C++
+           against the paper's equations on these paths.
+  (PM4Sand: k4_pm4sand.py is kept as a standalone driver; owner 2026-11-07: K4 sticks to LadrunoSANISAND.)
 
 Cases: p0 in {100, 500} kPa x e0 in {0.735, 0.833, 0.907} (dense, medium, loose Toyoura; DM04's Verdugo &
 Ishihara range) x {TC, TCU, PS, PSU}, axial strain to --eps-end.
@@ -21,7 +24,7 @@ away'). The scatter is K3's measurement model (objective.Weights: sigma_sr 0.10 
 0.10 % on eps_v). Drained cases: |d(sr_peak)| <= 0.10 and |d(eps_v at peak)| <= 0.10 % against DM04-paper.
 Undrained cases have no Toyoura lab scatter in the project (plan §5.2 K3): reported, not gated.
 
-    python -m harness.k4_crossmodel --theta provisional --out out/k4 [--pm4 --dist <worktree>/dist/bin]
+    python -m harness.k4_crossmodel --theta provisional --out out/k4 [--no-sanisand] [--dist <worktree>/dist/bin]
 """
 from __future__ import annotations
 
@@ -60,7 +63,7 @@ def case_list(eps_end):
 def metrics(kind, ea_pct, s1, s2, s3, ev_pct):
     """ea, ev in % (compression positive); s1 >= s2 >= s3 principal effective stresses (kPa, compression positive).
     Drained: peak sigma1/sigma3 and the strains there, end values. Undrained: the minimum p (phase-transformation
-    proxy) and the deviator at 5 % and at the end. q is 3D (PM4Sand has no s2: it reports in-plane t instead)."""
+    proxy) and q at 5 % and at the end."""
     ea, ev = np.asarray(ea_pct), np.asarray(ev_pct)
     s1, s3 = np.asarray(s1), np.asarray(s3)
     sr = s1 / s3
@@ -79,14 +82,11 @@ def metrics(kind, ea_pct, s1, s2, s3, ev_pct):
         if q is not None:
             out.update(q_peak=float(q[int(np.argmax(q))]))
     else:
-        # plane strain: the in-plane s, t for EVERY model, so PM4Sand (2D, no sigma_zz) compares like with like;
-        # triaxial: p, q
-        pp, dev = (s, t) if kind == "PSU" else (p, q)
+        pp, dev = p, q
         j = int(np.argmin(pp))
         k5 = int(np.argmin(np.abs(ea - 5.0)))
         out.update(p_min=float(pp[j]), ea_at_p_min=float(ea[j]), dev_at_5=float(dev[k5]), dev_end=float(dev[-1]),
-                   p_end=float(pp[-1]), sr_end=float(sr[-1]),
-                   measure="s, t (in-plane)" if kind == "PSU" else "p, q")
+                   p_end=float(pp[-1]), sr_end=float(sr[-1]))
     out["t_end"], out["s_end"] = float(t[-1]), float(s[-1])
     return out
 
@@ -103,7 +103,8 @@ def run_norsand(args):
     t0 = time.perf_counter()
     c = simulate(setup, theta, case["kind"], case["p0"], case["e"], case["eps_a_end"], n)
     s = np.sort(-c.sig, axis=1)[:, ::-1]                      # principal, compression positive, s1 >= s2 >= s3
-    m = metrics(case["kind"], c.eps_a_pct, s[:, 0], s[:, 1], s[:, 2], c.eps_v_pct) if len(c.eps) > 1 else {}
+    # metrics only from a COMPLETE curve: a partial one would report its last point as a 'peak'
+    m = metrics(case["kind"], c.eps_a_pct, s[:, 0], s[:, 1], s[:, 2], c.eps_v_pct) if c.complete else {}
     return case["id"], dict(status=c.status, complete=c.complete, seconds=time.perf_counter() - t0, metrics=m)
 
 
@@ -135,39 +136,37 @@ def run_dm04(args):
     eps = np.array([r["eps"][:3] for r in tab])               # compression positive
     sig = np.array([r["sigma"][:3] for r in tab])
     s = np.sort(sig, axis=1)[:, ::-1]
-    m = metrics(case["kind"], 100.0 * eps[:, 0], s[:, 0], s[:, 1], s[:, 2], 100.0 * eps.sum(axis=1)) if len(tab) > 1 else {}
+    done = res.status == "ok" and len(tab) > 1 and abs(eps[-1, 0] - ea) <= 1e-9 * abs(ea)
+    m = metrics(case["kind"], 100.0 * eps[:, 0], s[:, 0], s[:, 1], s[:, 2], 100.0 * eps.sum(axis=1)) if done else {}
     return (case["id"], variant), dict(status=res.status, reached_eps_pct=float(100 * eps[-1, 0]) if len(tab) else 0.0,
                                        seconds=time.perf_counter() - t0, metrics=m)
 
 
-# ---------------------------------------------------------------------------------------------- PM4Sand (3.12 child)
-def run_pm4sand(cases, dist, outdir, sand, n=1000):
-    spec = dict(sand=sand, cases=[c for c in cases if c["kind"] in ("PS", "PSU")])
+# ---------------------------------------------------------------------------------------------- LadrunoSANISAND (3.12 child)
+def run_sanisand(cases, dist, outdir, n):
     import tempfile
-    cpath = os.path.join(outdir, "pm4sand_cases.json")
-    # the raw curves (~1.5 MB) are regenerated on demand, never left beside the committed summaries
-    opath = os.path.join(tempfile.mkdtemp(prefix="k4_pm4sand_"), "pm4sand_raw.json")
-    json.dump(spec, open(cpath, "w", encoding="utf-8"), indent=1)
-    p = subprocess.run(["py", "-3.12", "-S", os.path.join(HERE, "k4_pm4sand.py"), "--dist", dist, "--cases", cpath,
-                        "--out", opath, "--n", str(n)], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    cpath = os.path.join(outdir, "sanisand_cases.json")
+    opath = os.path.join(tempfile.mkdtemp(prefix="k4_sanisand_"), "sanisand_raw.json")   # raw curves: not committed
+    json.dump(dict(cases=cases), open(cpath, "w", encoding="utf-8"), indent=1)
+    p = subprocess.run(["py", "-3.12", "-S", os.path.join(HERE, "k4_sanisand.py"), "--dist", dist,
+                        "--scripts", SANISAND_REF, "--cases", cpath, "--out", opath, "--n", str(n)],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
     if p.returncode != 0 or not os.path.exists(opath):
-        return dict(error=p.stderr[-500:]), {}
+        return dict(error=p.stderr[-800:]), {}
     raw = json.load(open(opath, encoding="utf-8"))
     out = {}
     for cid, r in raw["results"].items():
         rows = r.get("rows", [])
         kind = next(c["kind"] for c in cases if c["id"] == cid)
-        if len(rows) < 2:
-            out[cid] = dict(status=r["status"], metrics={})
+        if r["status"] != "ok" or len(rows) != r.get("n_target", -1) + 1:
+            out[cid] = dict(status=r["status"], metrics={})      # incomplete: no metrics (no false 'peak')
             continue
-        sxx = np.array([-x["sxx"] for x in rows])
-        syy = np.array([-x["syy"] for x in rows])
-        s1, s3 = np.maximum(sxx, syy), np.minimum(sxx, syy)
-        ea = np.array([-100.0 * x["eyy"] for x in rows])
-        ev = np.array([-100.0 * (x["exx"] + x["eyy"]) for x in rows])
-        out[cid] = dict(status=r["status"], substepped=r.get("substepped_steps"), params=r.get("params"),
-                        metrics=metrics(kind, ea, s1, None, s3, ev))
-    return dict(build=raw.get("build")), out
+        eps = np.array([x["eps"] for x in rows])               # compression positive
+        sig = np.sort(np.array([x["sigma"] for x in rows]), axis=1)[:, ::-1]
+        out[cid] = dict(status=r["status"], seconds=r.get("seconds"), solver_evals_max=r.get("secant_iterations_max"),
+                        jump_steps=r.get("jump_steps"),
+                        metrics=metrics(kind, 100.0 * eps[:, 0], sig[:, 0], sig[:, 1], sig[:, 2], 100.0 * eps.sum(axis=1)))
+    return dict(build=raw.get("build"), opts=raw.get("opts")), out
 
 
 # ---------------------------------------------------------------------------------------------- report
@@ -196,7 +195,7 @@ def write_md(path, rep):
          f"theta: `{rep['theta']}` ({rep['theta_source']}). {rep['verdict_note']}", "",
          f"CSL shared with DM04: {rep['csl']['identical']} ({', '.join(f'{k} {a:g}/{b:g}' for k, (a, b) in rep['csl']['pairs'].items())}).",
          "", "## Drained (gate: |d sr_peak| <= 0.10, |d ev_peak| <= 0.10 %, NorSand against DM04-paper)", "",
-         "| case | NorSand sr_peak / ea / ev | DM04 paper | DM04 uw_model | PM4Sand | d sr | d ev % | within |",
+         "| case | NorSand sr_peak / ea / ev | DM04 paper | DM04 uw_model | LadrunoSANISAND | d sr | d ev % | within |",
          "|---|---|---|---|---|---|---|---|"]
 
     def fmt_d(m):
@@ -210,14 +209,14 @@ def write_md(path, rep):
         ns = rep["norsand"].get(cid, {}).get("metrics")
         dp = rep["dm04"].get(f"{cid}|paper", {}).get("metrics")
         du = rep["dm04"].get(f"{cid}|uw_model", {}).get("metrics")
-        pm = rep["pm4sand"].get(cid, {}).get("metrics")
+        pm = rep["sanisand"].get(cid, {}).get("metrics")
         cmp_ = rep["compare"].get(cid) or {}
         if kind in ("TC", "PS"):
             L.append(f"| {cid} | {fmt_d(ns)} | {fmt_d(dp)} | {fmt_d(du)} | {fmt_d(pm)} | "
                      f"{cmp_.get('d_sr_peak', float('nan')):+.3f} | {cmp_.get('d_ev_peak', float('nan')):+.3f} | "
                      f"{cmp_.get('within', '—')} |")
-    L += ["", "## Undrained (reported: min p @ ea %; deviator at the end. TCU: p, q. PSU: in-plane s, t for every model)", "",
-          "| case | NorSand | DM04 paper | DM04 uw_model | PM4Sand | NorSand/DM04 p_min | NorSand/DM04 dev_end |",
+    L += ["", "## Undrained (reported: min p @ ea % ; q at the end)", "",
+          "| case | NorSand | DM04 paper | DM04 uw_model | LadrunoSANISAND | NorSand/DM04 p_min | NorSand/DM04 dev_end |",
           "|---|---|---|---|---|---|---|"]
     for c in rep["cases"]:
         cid, kind = c["id"], c["kind"]
@@ -226,12 +225,16 @@ def write_md(path, rep):
         ns = rep["norsand"].get(cid, {}).get("metrics")
         dp = rep["dm04"].get(f"{cid}|paper", {}).get("metrics")
         du = rep["dm04"].get(f"{cid}|uw_model", {}).get("metrics")
-        pm = rep["pm4sand"].get(cid, {}).get("metrics")
+        pm = rep["sanisand"].get(cid, {}).get("metrics")
         cmp_ = rep["compare"].get(cid) or {}
         f = lambda x: f"{x:.3f}" if isinstance(x, float) else "—"  # noqa: E731
         L.append(f"| {cid} | {fmt_u(ns)} | {fmt_u(dp)} | {fmt_u(du)} | {fmt_u(pm)} | {f(cmp_.get('r_p_min'))} | "
                  f"{f(cmp_.get('r_dev_end'))} |")
-    bad = [f"{k}: {v['status']}" for k, v in {**rep["norsand"], **rep["dm04"], **rep["pm4sand"]}.items()
+    cv = [v for v in rep.get("cpp_vs_paper", {}).values() if v and "d_sr_peak" in v]
+    if cv:
+        L += ["", f"LadrunoSANISAND (C++) against DM04 paper (Python), drained: max |d sr_peak| "
+                  f"{max(abs(v['d_sr_peak']) for v in cv):.4f}, max |d ev_peak| {max(abs(v['d_ev_peak']) for v in cv):.4f} %."]
+    bad = [f"{k}: {v['status']}" for k, v in {**rep["norsand"], **rep["dm04"], **rep["sanisand"]}.items()
            if v.get("status") not in ("ok",)]
     L += ["", "## Runs that did not finish cleanly", ""] + ([f"- {b}" for b in bad] or ["- none"])
     open(path, "w", encoding="utf-8").write("\n".join(L) + "\n")
@@ -258,7 +261,7 @@ def main(argv=None):
     ap.add_argument("--eps-end", type=float, default=0.20)
     ap.add_argument("--n", type=int, default=400, help="NorSand steps (0.05 %% at 20 %%)")
     ap.add_argument("--workers", type=int, default=8)
-    ap.add_argument("--pm4", action="store_true")
+    ap.add_argument("--no-sanisand", action="store_true", help="skip the LadrunoSANISAND leg (needs dist/bin)")
     ap.add_argument("--dist", default=os.path.join(ROOT, "dist", "bin"))
     ap.add_argument("--only", default=None, help="comma list of case ids (smoke)")
     a = ap.parse_args(argv)
@@ -272,7 +275,7 @@ def main(argv=None):
                theta_source=theta_src, cases=cases, csl=csl_check(TIMS_P_A),
                verdict_note=("Not a K4 verdict: NorSand runs on synthetic parameters until K3 reports."
                              if a.theta == "provisional" else "Soft gate: differences are explained, not tuned away."),
-               norsand={}, dm04={}, pm4sand={}, compare={})
+               norsand={}, dm04={}, sanisand={}, compare={})
     t0 = time.perf_counter()
     with ProcessPoolExecutor(a.workers) as ex:
         fn = ex.map(run_norsand, [(c, theta, a.n) for c in cases])
@@ -281,13 +284,14 @@ def main(argv=None):
             rep["norsand"][cid] = r
         for (cid, v), r in fd:
             rep["dm04"][f"{cid}|{v}"] = r
-    if a.pm4:
-        sand = dict(G0=toyoura_dm04().elastic.G0, nu=toyoura_dm04().elastic.nu, M=toyoura_dm04().M, p_a=TIMS_P_A)
-        info, rep["pm4sand"] = run_pm4sand(cases, a.dist, a.out, sand)
-        rep["pm4sand_info"] = info
+    if not a.no_sanisand:
+        info, rep["sanisand"] = run_sanisand(cases, a.dist, a.out, a.n)
+        rep["sanisand_info"] = info
     for c in cases:
         rep["compare"][c["id"]] = compare(rep["norsand"].get(c["id"], {}).get("metrics"),
                                           rep["dm04"].get(f"{c['id']}|paper", {}).get("metrics"), c["kind"])
+        rep.setdefault("cpp_vs_paper", {})[c["id"]] = compare(rep["sanisand"].get(c["id"], {}).get("metrics"),
+                                                              rep["dm04"].get(f"{c['id']}|paper", {}).get("metrics"), c["kind"])
     rep["seconds"] = time.perf_counter() - t0
     tag = "dryrun" if a.theta == "provisional" else "k4"
     json.dump(rep, open(os.path.join(a.out, f"k4_{tag}.json"), "w", encoding="utf-8"), indent=1, default=float)

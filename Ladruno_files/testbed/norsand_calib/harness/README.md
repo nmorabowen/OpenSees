@@ -139,31 +139,36 @@ The first K3 submission, job 151170 on 2026-10-04 (`--lit`, HAR, ρ fitted, 16 s
 ## K4, the cross-model check (2026-11-07)
 
 `k4_crossmodel.py` runs single-point drained and undrained triaxial (TC, TCU) and plane-strain (PS, PSU)
-compression of Toyoura at p0 100 and 500 kPa and e0 0.735, 0.833 and 0.907, to 20 % axial strain, with three models:
+compression of Toyoura at p0 100 and 500 kPa and e0 0.735, 0.833 and 0.907, to 20 % axial strain:
 
 | Model | How | Role |
 |---|---|---|
 | NorSand | O2 through `drivers.simulate`, K3's setup (HAR, p' floor 0.505, unified pi_i0) | the model under test |
-| DM04 | WP-134's reference integrator, Toyoura Table 1 with P_atm 101: the CSL and M are NorSand's exactly (checked in every report) | primary reference; `paper` and `uw_model` option sets |
-| PM4Sand | OpenSees, one SSPquad, plane strain only, via `k4_pm4sand.py` under Python 3.12 (each case in its own process) | secondary: a 2D model with its own CSL, matched through Dr, G0, phi_cv and nu |
+| DM04 | WP-134's reference integrator, Toyoura Table 1 with P_atm 101: the CSL and M are NorSand's exactly (checked in every report) | the reference; `paper` and `uw_model` option sets |
+| LadrunoSANISAND | the fork's C++ DM04 (what the strip campaign runs), one material point driven by chained `ladrunoSANISANDReplay` calls in `k4_sanisand.py` under Python 3.12, campaign integration options | the production DM04; its distance from `paper` is reported |
 
 Gate (soft): on the drained cases, |d sr_peak| <= 0.10 and |d eps_v at peak| <= 0.10 % against DM04 `paper`,
 K3's scatter model (`objective.Weights`). Undrained cases are reported, not gated (no Toyoura undrained lab data).
+The tolerance is an owner decision still open: K3's scatter is tight for two models fitted to different data.
 
 ```
-python -m harness.k4_crossmodel --theta provisional --pm4          # dry run on smoke_recovery.THETA_TRUE
-python -m harness.k4_crossmodel --theta <K3 result JSON> --pm4     # the K4 run, once K3 reports
+python -m harness.k4_crossmodel --theta provisional               # dry run on smoke_recovery.THETA_TRUE
+python -m harness.k4_crossmodel --theta <K3 result JSON>          # the K4 run, once K3 reports
 ```
 
-The dry run (`out/k4/k4_dryrun.md`, 24 cases, 109 s on 12 workers) exercises the plumbing only: NorSand runs on
-the synthetic smoke parameters, so its differences from DM04 (up to 0.74 in sr_peak and 1.3 % in eps_v) say
-nothing about the calibrated model. Two things it does show:
-- DM04 `paper` and `uw_model` agree to within 0.01 in sr_peak on every drained case: the UW additions do not
-  matter on these monotonic paths.
-- PM4Sand with matched Dr, G0, phi_cv and default dilatancy (nb 0.5, nd 0.1) is far weaker and less dilative
-  than both (PS sr_peak 3.1 to 4.1 against DM04 3.8 to 5.5). Its defaults are calibrated for cyclic strength,
-  not monotonic peaks; it stays a mechanism-level comparison.
+Dry run (`out/k4/k4_dryrun.md`, 24 cases x 4 runs, 33 s on 12 workers, every run complete). It exercises the
+plumbing only: NorSand runs on the synthetic smoke parameters, so its differences from DM04 say nothing about
+the calibrated model. What it does show:
+- LadrunoSANISAND (C++) against DM04 `paper` (Python): drained max |d sr_peak| 0.012 and |d eps_v at peak|
+  0.055 %; undrained p_min and final q within about 0.3 %. The production integrator follows the paper's
+  equations on these paths.
+- DM04 `paper` and `uw_model` agree within 0.01 in sr_peak: the UW additions do not matter here.
 
-PM4Sand driver notes: the force tolerance is 1e-4 p0 (Newton stalls near 1e-3 kPa past ~2 % strain; the
-displacement correction is then ~1e-8); `FirstCall` is reset after the stage switch; 400 and 1000 steps agree
-to three digits.
+LadrunoSANISAND driver: drained steps solve the lateral strain to 1e-6 sigma_0 (secant, then bracket + Illinois);
+the C++ response is only piecewise smooth in that strain (its substep count changes), so a step that lands on a
+jump takes the closer side, up to 1e-3 sigma_0, and is counted (`jump_steps`, at most 3 per case); a step that
+still fails is cut into 4, then 16 (`cut_steps`: the dense TC at 100 kPa cuts its first, elastic-to-plastic step).
+
+PM4Sand: `k4_pm4sand.py` (one SSPquad, plane strain) is kept as a standalone driver but K4 does not run it
+(owner 2026-11-07). Its stage flag survives `wipe` (quirk follow-up in
+`ledger/quirks/LEGACY-manzaridafalias-melastflag-is-static-one.md`), so it runs one process per case.
