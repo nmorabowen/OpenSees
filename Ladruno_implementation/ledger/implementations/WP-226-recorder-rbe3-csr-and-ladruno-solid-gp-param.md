@@ -1,0 +1,9 @@
+---
+wp: WP-226
+title: "WP-226 — Ladruno recorder: RBE3/RBE2 CSR connectivity + LadrunoBrick/Quad/CST GP_PARAM"
+pr: "#1066"
+date: 2026-11-07
+status: "draft"
+section: "table"
+---
+| **WP-226 — Ladruno recorder: variable-node classes + Ladruno solid GP_PARAM** (found on the YOO Guayaquil mat: 95 780 `LadrunoBrick -formulation eas` + 815 RBE3). **(1)** `mapElements` no longer drops an element whose node count differs from its class's first. It flags the class `variable_nodes`, and `writeModelElements` writes that class in the schema §3.4 **CSR layout**: `ID` + `CONNECTIVITY_OFFSETS[nElem+1]` + `CONNECTIVITY_NODES`, attr `CONNECTIVITY_LAYOUT="csr"`, `NUM_CTRL=-1`, no `CONNECTIVITY` / `GLOBAL_GP_COORDS`. The CSR switch is data-driven, so a constant-count class is byte-identical to before. This removes the ~4 000 "different number of nodes within same class tag" lines and puts every RBE3 (and RBE2) in MODEL/ELEMENTS. **(2)** `getGeometryAndIntRuleByClassTag` had no arm for `LadrunoBrick`, `LadrunoQuad` or `LadrunoCST`, so their groups were `TOPOLOGY custom` with no `QUADRATURE/GP_PARAM`. Now `LadrunoBrick` uses Hex GL2 (all formulations: 8 GPs, i,j,k with zeta fastest), `LadrunoQuad` uses Quad GL2 (CCW) and `LadrunoCST` uses Tri GL1. `ladruno_format` validates CSR. Still without GP_PARAM here: LadrunoLST, LadrunoSolidShell, LadrunoUP, LadrunoCPML, LadrunoCSTPair; WP-227 (#1067) adds LST / SolidShell / UP and documents CSTPair / CPML as out of scope. Tests: `tests/test_ladruno_recorder_rbe3_gp_param.py` and the harness CSR tests. | recorder schema (additive) | **none — no new classes** | `SRC/recorder/{Ladruno_ElementResults.h, LadrunoRecorder.cpp}`, `Ladruno_scripts/ladruno_recorder_tests/{ladruno_format.py, test_ladruno_harness.py}`, `Ladruno_implementation/ladruno_schema_v1.md` (§3.4), `tests/test_ladruno_recorder_rbe3_gp_param.py` | draft | [#1066](https://github.com/nmorabowen/OpenSees/pull/1066) |

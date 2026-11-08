@@ -211,6 +211,10 @@ class LadrunoUP : public Element
     const int *shapePCarrierTH(void) const;
     double shapeGPWeight(int gp) const;
 
+    // Ladruno (WP-227): GaussPoint/ResponseType tags for the per-GP responses
+    enum { GP_TAGS_STRESS = 0, GP_TAGS_STRAIN, GP_TAGS_PRESSURE, GP_TAGS_FLUX };
+    void tagGaussPoints(OPS_Stream &output, int kind) const;
+
     // ---- assembly helpers ---------------------------------------------------
     // core-frame TOTAL solid force fu = ∫Bᵀσ′dV − Q·p_trial (ADR 78 §3.2) —
     // the single force vector globalizeForce/Stiff consume under -geom corot,

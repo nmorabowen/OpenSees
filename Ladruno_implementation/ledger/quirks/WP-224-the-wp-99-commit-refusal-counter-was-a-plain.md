@@ -1,0 +1,10 @@
+---
+wp: WP-224
+title: "The WP-99 commit-refusal counter was a plain static int under the WP-192 threaded commit"
+date: 2026-11-06
+---
+### The WP-99 commit-refusal counter was a plain `static int` under the WP-192 threaded commit (lost increments; a probe scope on one thread could silence a refusal on another)
+- **Bites:** WP-192 threads the element COMMIT loop (`Domain::ladrunoThreadedCommit`) and its comment said `ladrunoNoteCommitRefusal` "was made atomic"; it was not. `ladrunoCommitRefusalCounter()` and `ladrunoProbeScopeDepth()` in `SRC/material/LadrunoMaterialStatus.h` were plain process-wide `static int`s. Measured with `tests/ladruno_commit_refusal_threads_check.cpp` on the old header (g++ -O2, 8 threads x 200000 calls): up to 200000 increments lost in one round, and a refusal declared on thread B while thread A held a `LadrunoProbeCommitScope` was NOT counted.
+- **Reach on 2026-11-06:** narrow. The only threaded-commit path that declares refusals is LadrunoForceBeamColumn2d/3d (`trialFailed` at commit); a lost increment cannot bring the count to 0, so the commit still aborted, with a low count in the message. No element that opens a probe scope (LadrunoBrick, LadrunoQuad) and no refusal-declaring nD material (LadrunoSANISAND, LadrunoConcrete3D, LadrunoHS, LadrunoNorSand) opts into the threaded commit. Still a data race (undefined behaviour), and the probe-scope path opens the moment one of them opts in.
+- **Fix (WP-224):** the counter is a `std::atomic<int>` (`++` is the atomic increment; the clear and the read stay serial in `Domain::commit()`), the probe depth is `thread_local` (a probe scope means "this thread commits a throwaway copy"). The `if (ladrunoProbeScopeDepth() == 0) ++ladrunoCommitRefusalCounter()` shape that `tests/test_ladruno_probe_commit_guard.py` pins is unchanged.
+- **Rule:** a process-wide `static` that a material or element writes from `commitState()`/`update()` must be atomic or thread_local before any element that reaches it opts into a WP-192 threaded loop. Test: `tests/test_wp224_commit_refusal_threads.py`.
