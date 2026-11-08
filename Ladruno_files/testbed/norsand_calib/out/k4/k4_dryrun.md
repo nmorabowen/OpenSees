@@ -106,23 +106,42 @@ Shared CSL at e 0.907: p_cs = 166.9 kPa (TCU: q_cs = M p_cs = 208.6 kPa). Undrai
 - LadrunoSANISAND PSU: ends at p_cs within 0.03 % (PASS, 1 %)
 - NorSand PSU: p_end 153.6 (from 100 kPa) and 176.5 (from 500 kPa) bracket p_cs 166.9 (PASS)
 
-LadrunoSANISAND SAS-ME (C++) against DM04 paper (Python), drained: max |d sr_peak| 0.0051, max |d ev_peak| 0.0443 %.
+LadrunoSANISAND SAS-ME, no flags (C++), against DM04 paper (Python), drained: max |d sr_peak| 0.0051, max |d ev_peak| 0.0443 %.
 
-## LadrunoSANISAND IntScheme 1 (ModifiedEuler, the TIMs campaign scheme) against DM04 paper
+## LadrunoSANISAND IntScheme 1 (ModifiedEuler) against DM04 paper
 
-Same steps as every other run (0.05 % axial). Drained: d sr_peak; undrained: NorSand-style ratios of p_min and q_end. Listed when |d sr| > 0.05, a ratio is off 1 by > 2 %, or the run is incomplete; the SAS-ME (129) column above is the accurate C++.
+Same 0.05 % steps as every other run; the SAS-ME column above is the accurate C++. Listed: drained |d sr_peak| > 0.05, undrained p_min or q_end ratio off 1 by > 2 %, or an incomplete run.
 
 - TC_p1_e0.833: failed at step 205 after cutting it to 1/16
-- TC_p1_e0.907: d sr_peak +1.004
+- TC_p1_e0.907: d sr_peak +1.004, d ev_peak +0.072 %
 - TCU_p1_e0.735: p_min ratio 1.025, q_end ratio 1.000
 - TCU_p1_e0.833: p_min ratio 1.082, q_end ratio 0.999
 - TCU_p1_e0.907: p_min ratio 1.500, q_end ratio 0.994
-- PS_p1_e0.735: d sr_peak +1.523
-- PS_p1_e0.833: d sr_peak +27.861
-- PS_p1_e0.907: d sr_peak +10.116
+- PS_p1_e0.735: d sr_peak +1.523, d ev_peak +0.212 %
+- PS_p1_e0.833: d sr_peak +27.861, d ev_peak +0.186 %
+- PS_p1_e0.907: d sr_peak +10.116, d ev_peak +0.049 %
 - PSU_p1_e0.735: p_min ratio 1.022, q_end ratio 1.000
 - PSU_p1_e0.833: p_min ratio 1.080, q_end ratio 0.999
 - PSU_p1_e0.907: p_min ratio 1.454, q_end ratio 0.994
+
+## LadrunoSANISAND, TIMs strip-baseline configuration, against DM04 paper
+
+SAS-ME with the R1 (WP-152) flags, TolR 1e-4, maxSubsteps 2000 (k4_sanisand.CONFIGS['tims']); R1 changes the constitutive response on purpose, so a departure here is R1's effect, not an integration error. Listed: drained |d sr_peak| > 0.05, undrained p_min or q_end ratio off 1 by > 2 %, or an incomplete run.
+
+| p0 kPa | drained max abs(d sr_peak) | drained max abs(d ev_peak) % | undrained p_min ratio | undrained q_end ratio |
+|---|---|---|---|---|
+| 1 | 0.002 | 0.044 | 1.022 to 1.504 | 0.996 to 1.000 |
+| 10 | 0.002 | 0.028 | 1.000 to 1.006 | 0.999 to 1.000 |
+| 25 | 0.001 | 0.012 | 1.000 to 1.002 | 0.999 to 1.000 |
+| 100 | 0.001 | 0.016 | 1.000 to 1.001 | 0.999 to 1.000 |
+| 500 | 0.004 | 0.019 | 1.000 to 1.000 | 0.999 to 1.000 |
+
+- TCU_p1_e0.735: p_min ratio 1.025, q_end ratio 1.000
+- TCU_p1_e0.833: p_min ratio 1.083, q_end ratio 1.000
+- TCU_p1_e0.907: p_min ratio 1.504, q_end ratio 0.996
+- PSU_p1_e0.735: p_min ratio 1.022, q_end ratio 1.000
+- PSU_p1_e0.833: p_min ratio 1.080, q_end ratio 0.999
+- PSU_p1_e0.907: p_min ratio 1.458, q_end ratio 0.996
 
 ## Runs that did not finish cleanly
 

@@ -15,11 +15,17 @@ The scalar x is found by solve_lateral (secant, then bracket + Illinois; each tr
 committed state) to |sigma - sigma_0| <= 1e-6 sigma_0; steps on a response jump (the integrator's substep count
 changing with x) take the closer side, up to 1e-3 sigma_0, and are counted. Compression positive throughout.
 
-Material: Toyoura (DM04 Table 1, P_atm 101 = the harness p_a), e_init = the case's e0, with the TIMs campaign's
-integration options (sanisand_replay.CAMPAIGN_OPTS: TolF = TolR = 1e-7, -Pmin 0.0101, -maxSubsteps 20000,
--flipAlphaIn init) and the integration scheme --scheme: 129 (SAS-ME, WP-129) or 1 (ModifiedEuler, the campaign's).
-At 1 kPa with 0.05 % steps scheme 1 returns wrong states with rc 0 (PS sr 32.7, TC lateral tension; K4 2026-11-08)
-while 129 is exact at that step; 1 converges to the paper only at 0.005 %.
+Material: Toyoura (DM04 Table 1, P_atm 101 = the harness p_a), e_init = the case's e0, with one of CONFIGS
+(--config):
+  sasme   SAS-ME (IntScheme 129, WP-129) with the replay wrapper's options (TolF = TolR = 1e-7, -Pmin 0.0101,
+          -maxSubsteps 20000, -flipAlphaIn init): the DM04 equations, no regularization.
+  me      the same with IntScheme 1 (ModifiedEuler). At 1 kPa with 0.05 % steps it returns wrong states with
+          rc 0 (PS sr 32.7, TC lateral tension; quirk WP-144-intscheme-1-at-1-kpa-...); it converges at 0.005 %.
+  tims    the TIMs strip baseline, verbatim from tims-workbench Tries/2d-model/model/strip.py
+          (kimura_v856_dm04_fp on a build with SAS R1): IntScheme 129, TanType 0, TolF 1e-7, TolR 1e-4,
+          -Presidual 0 -honorTolR 0 -flipAlphaIn init -Pmin 0.0101 -maxSubsteps 2000, and the R1 (WP-152) flags
+          -sasHFloor 1.0 -sasReseatHyst 1 -sasSoftCap 0.5 -sasTensionCutoff 0.5 1.0. P_atm stays 101 here (the
+          preset's TOYOURA_DM04 has 100; owner 2026-11-08: keep 101 so the CSL stays NorSand's).
 
     py -3.12 -S k4_sanisand.py --dist <worktree>/dist/bin --cases cases.json --out sanisand.json
 """
@@ -34,6 +40,17 @@ import time
 
 TOL_ACCEPT = 1.0e-6      # |sigma_lateral - sigma_0| / sigma_0 accepted (K4 compares at the percent level)
 TOL_JUMP = 1.0e-3        # largest residual taken on a response jump (counted in jump_steps, reported)
+
+
+CONFIGS = {
+    "sasme": (129, 0, 1, 1.0e-7, 1.0e-7, "-Presidual", 0.0, "-Pmin", 0.0101, "-maxSubsteps", 20000,
+              "-flipAlphaIn", "init"),
+    "me": (1, 0, 1, 1.0e-7, 1.0e-7, "-Presidual", 0.0, "-Pmin", 0.0101, "-maxSubsteps", 20000,
+           "-flipAlphaIn", "init"),
+    "tims": (129, 0, 1, 1.0e-7, 1.0e-4, "-Presidual", 0.0, "-honorTolR", 0, "-flipAlphaIn", "init",
+             "-Pmin", 0.0101, "-maxSubsteps", 2000,
+             "-sasHFloor", 1.0, "-sasReseatHyst", 1, "-sasSoftCap", 0.5, "-sasTensionCutoff", 0.5, 1.0),
+}
 
 
 def toyoura_params(e):
@@ -202,15 +219,15 @@ def main(argv=None):
     ap.add_argument("--cases", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--n", type=int, default=400)
-    ap.add_argument("--scheme", type=int, default=129, help="IntScheme: 129 SAS-ME (default) or 1 ModifiedEuler")
+    ap.add_argument("--config", default="sasme", choices=sorted(CONFIGS))
     a = ap.parse_args(argv)
     os.add_dll_directory(a.dist)
     sys.path[:0] = [a.dist, a.scripts]
     import opensees as ops
     import sanisand_replay as SR
-    SR.CAMPAIGN_OPTS = (a.scheme,) + tuple(SR.CAMPAIGN_OPTS[1:])
+    SR.CAMPAIGN_OPTS = CONFIGS[a.config]
     spec = json.load(open(a.cases, encoding="utf-8"))
-    out = dict(build=ops.ladrunoBuild(), opts=[str(o) for o in SR.CAMPAIGN_OPTS], results={})
+    out = dict(build=ops.ladrunoBuild(), config=a.config, opts=[str(o) for o in SR.CAMPAIGN_OPTS], results={})
     for i, case in enumerate(spec["cases"]):
         t0 = time.perf_counter()
         res = run_case(ops, SR, case, int(case.get("n", a.n)), 100 + i)

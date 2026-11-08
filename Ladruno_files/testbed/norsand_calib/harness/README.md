@@ -146,7 +146,7 @@ critical-state check (below):
 |---|---|---|
 | NorSand | O2 through `drivers.simulate`, K3's setup (HAR, p' floor 0.505, unified pi_i0) | the model under test |
 | DM04 | WP-134's reference integrator, Toyoura Table 1 with P_atm 101: the CSL and M are NorSand's exactly (checked in every report) | the reference; `paper` and `uw_model` option sets |
-| LadrunoSANISAND | the fork's C++ DM04 (what the strip campaign runs), one material point driven by chained `ladrunoSANISANDReplay` calls in `k4_sanisand.py` under Python 3.12, campaign options with SAS-ME (`IntScheme 129`, the TIMs baseline's scheme); run again with `IntScheme 1` for the list of its departures | the production DM04; its distance from `paper` is reported |
+| LadrunoSANISAND | the fork's C++ DM04 (what the strip campaign runs), one material point driven by chained `ladrunoSANISANDReplay` calls in `k4_sanisand.py` under Python 3.12, three configurations (`k4_sanisand.CONFIGS`): `sasme` (SAS-ME, no flags: the column), `me` (IntScheme 1) and `tims` (the TIMs strip baseline verbatim from `strip.py`: SAS-ME + R1 flags, TolR 1e-4, maxSubsteps 2000; P_atm kept at 101) | the production DM04; each configuration's departures from `paper` are listed |
 
 Gate (soft): on the drained cases, |d sr_peak| <= 0.10 and |d eps_v at peak| <= 0.10 % against DM04 `paper`,
 K3's scatter model (`objective.Weights`). Undrained cases are reported, not gated (no Toyoura undrained lab data).
@@ -162,7 +162,7 @@ to 60 % axial strain. The shared CSL puts the end state at p_cs = 166.9 kPa. DM0
 there (within 1 %); NorSand must approach it from both sides (and, in TCU, reach eta = M within 1 %). How fast
 NorSand gets there depends on theta; where it goes does not.
 
-Dry run (`out/k4/k4_dryrun.md`, 64 cases x 5 runs, 157 s on 12 workers, every NorSand, DM04 and SAS-ME run complete). NorSand runs on the
+Dry run (`out/k4/k4_dryrun.md`, 64 cases x 6 runs, 244 s on 12 workers, every NorSand, DM04 and SAS-ME run complete). NorSand runs on the
 synthetic smoke parameters, so its peak and dilation differences from DM04 say nothing about the calibrated
 model. What it does show:
 - Critical state: DM04 (both sets) and LadrunoSANISAND end at p_cs within 0.04 % (0.10 % C++ PSU); NorSand
@@ -177,6 +177,13 @@ model. What it does show:
   already runs SAS-ME 129; runs still on IntScheme 1 are suspect near the surface.
 - DM04 `paper` and `uw_model` agree within 0.005 in sr_peak from 10 kPa up; at 1 kPa the UW low-p additions act
   (loose TCU p_min 0.6 against 0.9 kPa): they matter only below about 0.05 P_atm (5 kPa).
+- TIMs baseline configuration: the R1 (WP-152) flags change nothing on these paths (against plain SAS-ME: drained
+  |d sr_peak| <= 0.0026, undrained p_min within 0.05 %). R1 acts on states monotonic element tests do not reach
+  (H <= 0, alpha_in re-seats on reversal, softening, tension), so its effect is a boundary-value matter (K5).
+- LadrunoSANISAND in every configuration follows DM04 `uw_model`, not `paper` (drained 0.0005, undrained p_min
+  within 1 %): the C++ carries the UW additions by construction. At 1 kPa they raise loose undrained p_min by 50 %
+  (0.854 against the paper's 0.568 kPa). The DM04 that K5 compares against is therefore `uw_model`; K4's gate
+  still references `paper`, which differs from it only below about 5 kPa.
 - NorSand (O2) at 1 kPa: 0.05 % steps are within 0.3 % of the step-converged answer; its undrained p_min sits
   at its p' floor (0.505 kPa) on these provisional parameters.
 - PSU at critical state: eta 1.207 (DM04) against 1.19 (NorSand, rho 0.712): the Lode-angle shapes differ

@@ -164,14 +164,15 @@ def run_dm04(args):
 
 
 # ---------------------------------------------------------------------------------------------- LadrunoSANISAND (3.12 child)
-def run_sanisand(cases, dist, outdir, n, scheme=129):
+def run_sanisand(cases, dist, outdir, n, config="sasme"):
     import tempfile
-    cpath = os.path.join(tempfile.mkdtemp(prefix="k4_cases_"), "sanisand_cases.json") if scheme != 129 else         os.path.join(outdir, "sanisand_cases.json")
+    cpath = (os.path.join(outdir, "sanisand_cases.json") if config == "sasme"
+             else os.path.join(tempfile.mkdtemp(prefix="k4_cases_"), "sanisand_cases.json"))
     opath = os.path.join(tempfile.mkdtemp(prefix="k4_sanisand_"), "sanisand_raw.json")   # raw curves: not committed
     json.dump(dict(cases=cases), open(cpath, "w", encoding="utf-8"), indent=1)
     p = subprocess.run(["py", "-3.12", "-S", os.path.join(HERE, "k4_sanisand.py"), "--dist", dist,
                         "--scripts", SANISAND_REF, "--cases", cpath, "--out", opath, "--n", str(n),
-                        "--scheme", str(scheme)],
+                        "--config", config],
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     if p.returncode != 0 or not os.path.exists(opath):
         return dict(error=p.stderr[-800:]), {}
@@ -253,6 +254,42 @@ def cs_summary(rep, cases):
     return out
 
 
+def departures(rep, key, title, note, table=False):
+    """Departures of one C++ configuration from DM04 paper: drained |d sr_peak| > 0.05, undrained ratio off 1 by
+    > 2 %, or an incomplete run. table=True also prints the largest departure per confining pressure."""
+    vs, runs = rep.get(f"{key}_vs_paper", {}), rep.get(f"sanisand_{key}", {})
+    if not runs:
+        return []
+    L = ["", f"## {title}", "", note + " Listed: drained |d sr_peak| > 0.05, undrained p_min or q_end ratio off "
+         "1 by > 2 %, or an incomplete run.", ""]
+
+    def rng(xs):
+        return f"{min(xs):.3f} to {max(xs):.3f}" if xs else "—"
+
+    if table:
+        L += ["| p0 kPa | drained max abs(d sr_peak) | drained max abs(d ev_peak) % | undrained p_min ratio | "
+              "undrained q_end ratio |", "|---|---|---|---|---|"]
+        for p0 in P0S:
+            ids = [c["id"] for c in rep["cases"] if c["p0"] == p0 and not c.get("cs")]
+            dr = [vs[i] for i in ids if vs.get(i) and "d_sr_peak" in vs[i]]
+            un = [vs[i] for i in ids if vs.get(i) and vs[i].get("r_p_min") is not None]
+            dsr = max((abs(v["d_sr_peak"]) for v in dr), default=float("nan"))
+            dev = max((abs(v["d_ev_peak"]) for v in dr), default=float("nan"))
+            L.append(f"| {p0:g} | {dsr:.3f} | {dev:.3f} | {rng([v['r_p_min'] for v in un])} | "
+                     f"{rng([v['r_dev_end'] for v in un if v.get('r_dev_end') is not None])} |")
+        L.append("")
+    flagged = []
+    for c in rep["cases"]:
+        v, st = vs.get(c["id"]), runs.get(c["id"], {})
+        if st.get("status") != "ok" or not v:
+            flagged.append(f"- {c['id']}: {st.get('status', 'not run')}")
+        elif "d_sr_peak" in v and abs(v["d_sr_peak"]) > 0.05:
+            flagged.append(f"- {c['id']}: d sr_peak {v['d_sr_peak']:+.3f}, d ev_peak {v['d_ev_peak']:+.3f} %")
+        elif "r_p_min" in v and any(x is not None and abs(x - 1) > 0.02 for x in (v["r_p_min"], v["r_dev_end"])):
+            flagged.append(f"- {c['id']}: p_min ratio {v['r_p_min']:.3f}, q_end ratio {v['r_dev_end']:.3f}")
+    return L + (flagged or ["- none"])
+
+
 def write_md(path, rep):
     L = [f"# K4 cross-model check ({rep['label']})", "",
          f"theta: `{rep['theta']}` ({rep['theta_source']}). {rep['verdict_note']}", "",
@@ -307,24 +344,14 @@ def write_md(path, rep):
         L += [""] + [f"- {v}" for v in cs["verdicts"]]
     cv = [v for v in rep.get("cpp_vs_paper", {}).values() if v and "d_sr_peak" in v]
     if cv:
-        L += ["", f"LadrunoSANISAND SAS-ME (C++) against DM04 paper (Python), drained: max |d sr_peak| "
+        L += ["", f"LadrunoSANISAND SAS-ME, no flags (C++), against DM04 paper (Python), drained: max |d sr_peak| "
                   f"{max(abs(v['d_sr_peak']) for v in cv):.4f}, max |d ev_peak| {max(abs(v['d_ev_peak']) for v in cv):.4f} %."]
-    s1 = rep.get("s1_vs_paper", {})
-    if s1:
-        L += ["", "## LadrunoSANISAND IntScheme 1 (ModifiedEuler, the TIMs campaign scheme) against DM04 paper", "",
-              "Same steps as every other run (0.05 % axial). Drained: d sr_peak; undrained: NorSand-style ratios of p_min "
-              "and q_end. Listed when |d sr| > 0.05, a ratio is off 1 by > 2 %, or the run is incomplete; the "
-              "SAS-ME (129) column above is the accurate C++.", ""]
-        flagged = []
-        for c in rep["cases"]:
-            v, st = s1.get(c["id"]), rep.get("sanisand_s1", {}).get(c["id"], {})
-            if st.get("status") != "ok" or not v:
-                flagged.append(f"- {c['id']}: {st.get('status', 'not run')}")
-            elif "d_sr_peak" in v and abs(v["d_sr_peak"]) > 0.05:
-                flagged.append(f"- {c['id']}: d sr_peak {v['d_sr_peak']:+.3f}")
-            elif "r_p_min" in v and any(x is not None and abs(x - 1) > 0.02 for x in (v["r_p_min"], v["r_dev_end"])):
-                flagged.append(f"- {c['id']}: p_min ratio {v['r_p_min']:.3f}, q_end ratio {v['r_dev_end']:.3f}")
-        L += flagged or ["- none"]
+    L += departures(rep, "s1", "LadrunoSANISAND IntScheme 1 (ModifiedEuler) against DM04 paper",
+                    "Same 0.05 % steps as every other run; the SAS-ME column above is the accurate C++.")
+    L += departures(rep, "tims", "LadrunoSANISAND, TIMs strip-baseline configuration, against DM04 paper",
+                    "SAS-ME with the R1 (WP-152) flags, TolR 1e-4, maxSubsteps 2000 (k4_sanisand.CONFIGS['tims']); "
+                    "R1 changes the constitutive response on purpose, so a departure here is R1's effect, not an "
+                    "integration error.", table=True)
     bad = [f"{k}: {v['status']}" for k, v in {**rep["norsand"], **rep["dm04"], **rep["sanisand"]}.items()
            if v.get("status") not in ("ok",)]
     L += ["", "## Runs that did not finish cleanly", ""] + ([f"- {b}" for b in bad] or ["- none"])
@@ -376,17 +403,17 @@ def main(argv=None):
         for (cid, v), r in fd:
             rep["dm04"][f"{cid}|{v}"] = r
     if not a.no_sanisand:
-        info, rep["sanisand"] = run_sanisand(cases, a.dist, a.out, a.n, 129)
-        rep["sanisand_info"] = info
-        info1, rep["sanisand_s1"] = run_sanisand(cases, a.dist, a.out, a.n, 1)
-        rep["sanisand_s1_info"] = info1
+        for key, cfg in (("sanisand", "sasme"), ("sanisand_s1", "me"), ("sanisand_tims", "tims")):
+            rep[key + "_info"], rep[key] = run_sanisand(cases, a.dist, a.out, a.n, cfg)
     for c in cases:
         rep["compare"][c["id"]] = compare(rep["norsand"].get(c["id"], {}).get("metrics"),
                                           rep["dm04"].get(f"{c['id']}|paper", {}).get("metrics"), c["kind"])
         rep.setdefault("cpp_vs_paper", {})[c["id"]] = compare(rep["sanisand"].get(c["id"], {}).get("metrics"),
                                                               rep["dm04"].get(f"{c['id']}|paper", {}).get("metrics"), c["kind"])
-        rep.setdefault("s1_vs_paper", {})[c["id"]] = compare(rep.get("sanisand_s1", {}).get(c["id"], {}).get("metrics"),
-                                                             rep["dm04"].get(f"{c['id']}|paper", {}).get("metrics"), c["kind"])
+        for key in ("s1", "tims"):
+            rep.setdefault(f"{key}_vs_paper", {})[c["id"]] = compare(
+                rep.get(f"sanisand_{key}", {}).get(c["id"], {}).get("metrics"),
+                rep["dm04"].get(f"{c['id']}|paper", {}).get("metrics"), c["kind"])
     rep["cs"] = cs_summary(rep, cases)
     rep["seconds"] = time.perf_counter() - t0
     tag = "dryrun" if a.theta == "provisional" else "k4"
