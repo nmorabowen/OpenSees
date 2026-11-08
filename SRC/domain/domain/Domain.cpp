@@ -2886,7 +2886,7 @@ Domain::ladrunoThreadedUpdate(int &ok)
 // is true are threaded, everything else commits alone in its serial place.
 // Return values are dropped exactly as the serial loop drops them (upstream
 // contract; WP-99 F7 reaches refusals out of band through
-// ladrunoNoteCommitRefusal, which WP-192 made atomic). The refusals and the
+// ladrunoNoteCommitRefusal, whose counter WP-224 made atomic). The refusals and the
 // announcement belong to the update loop, which always runs first.
 // Returns true when it ran the loop.
 // ---------------------------------------------------------------------------

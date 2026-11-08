@@ -63,6 +63,8 @@
 #ifndef LadrunoMaterialStatus_h
 #define LadrunoMaterialStatus_h
 
+#include <atomic>
+
 // Returned by a Ladruno material whose update did not integrate the increment.
 // The committed state is guaranteed untouched; the caller must fail the step.
 //
@@ -109,14 +111,18 @@ constexpr int LADRUNO_MATERIAL_REFUSED = -33086;
 //  instance across all TUs by the ODR), so no library-dependency edge is added
 //  between SRC/domain and SRC/material.
 //
-//  NOT thread-safe, deliberately: it is written from the commit phase, which is
-//  serial in every analysis class today. If ADR-75b Lane 3 ever threads
-//  commitState(), this becomes an atomic. The same holds for ladrunoProbeScopeDepth()
-//  below (a plain `static int`, non-atomic); both are per-process, not per-domain.
+//  THREADS (WP-224). WP-192 threads the element COMMIT loop (Domain::ladrunoThreadedCommit), so
+//  commitState() can declare a refusal from several threads at once. The counter is therefore a
+//  std::atomic<int> (one process-wide instance; `++` is an atomic increment). Before WP-224 it was a
+//  plain `static int` although the WP-192 comment in Domain.cpp said it had been made atomic: two
+//  elements refusing at once could lose an increment (the count could not reach 0, so the commit
+//  still aborted, but the reported number was low) -- a data race, i.e. undefined behaviour. The
+//  clear and the read happen in Domain::commit() outside the threaded loop. Per-process, not
+//  per-domain, as before.
 // ==========================================================================
-inline int &ladrunoCommitRefusalCounter(void)
+inline std::atomic<int> &ladrunoCommitRefusalCounter(void)
 {
-    static int nCommitRefusals = 0;
+    static std::atomic<int> nCommitRefusals(0);
     return nCommitRefusals;
 }
 
@@ -127,9 +133,13 @@ inline int &ladrunoCommitRefusalCounter(void)
 // is alive ladrunoNoteCommitRefusal() is a no-op. (Nested-safe, unlike snapshot/restore of the counter, and
 // it cannot drop a real refusal declared earlier in the same commit.) tests/test_ladruno_probe_commit_guard.py
 // fails if an element calls commitHgShadows() without opening the scope.
+// THREADS (WP-224): the depth is thread_local. A probe scope means "THIS thread is committing a throwaway
+// copy"; a process-wide depth would let one element's probe on thread A silence a real refusal declared at
+// the same moment on thread B. (Today no element that opens a probe scope opts into the threaded commit, so
+// that path was latent; thread_local keeps it closed if one ever does.)
 inline int &ladrunoProbeScopeDepth(void)
 {
-    static int nDepth = 0;
+    static thread_local int nDepth = 0;
     return nDepth;
 }
 
@@ -155,9 +165,9 @@ inline void ladrunoNoteCommitRefusal(void)
 // Only the OUTERMOST Domain::commit() clears: an in-process Subdomain commits
 // from inside its parent's element loop and must not wipe what the parent has
 // already collected (WP-144 G2 close, Domain.cpp LadrunoCommitDepthGuard).
-inline int ladrunoPendingCommitRefusals(void) { return ladrunoCommitRefusalCounter(); }
+inline int ladrunoPendingCommitRefusals(void) { return ladrunoCommitRefusalCounter().load(); }
 
 // Called by Domain::commit() once it has acted on them.
-inline void ladrunoClearCommitRefusals(void) { ladrunoCommitRefusalCounter() = 0; }
+inline void ladrunoClearCommitRefusals(void) { ladrunoCommitRefusalCounter().store(0); }
 
 #endif
