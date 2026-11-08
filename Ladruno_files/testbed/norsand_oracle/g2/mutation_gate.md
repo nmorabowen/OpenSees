@@ -203,7 +203,7 @@ Source restored after each mutant (SHA-256 of the changed SRC files and `git dif
 every one). Final full `build.bat` from the clean fixed source: 5 targets, exit 0, 0 `error C`, all five mtimes fresh; A 59, B 120,
 L 211 + 1 xfail, W 26, S 17 + 1 skip, all green. `build.bat clean` was not run.
 
-## Round 3b (2026-10-03): the shell mutants of the HAR energy, the p' floor and the unified pi_i0 (NOT RUN: written for the Mutate step)
+## Round 3b (2026-10-03): the shell mutants of the HAR energy, the p' floor and the unified pi_i0 (run 2026-11-08 at 93194c54e)
 
 New gates (all need the round-3b build; Zone A = `tests/`, Zone B = this folder; `--runslow` for the slow one):
 - A: `tests/test_ladruno_norsand_har_floor.py` (52 tests): echo, every parser refusal with its code, the HAR closed forms (K1.1h, K1.11, DM04, the
@@ -232,3 +232,41 @@ New gates (all need the round-3b build; Zone A = `tests/`, Zone B = this folder;
 | S15 | DM04 mapping: (1+nu) <-> (1-nu), f(e) wrong, e_ref ignored | `test_dm04_mapping_gives_the_printed_g_and_k_and_the_same_response` |
 | S16 | provider route off for HAR (LogStrain falls back to inv(D0)) | `test_rigid_rotation_is_objective_under_the_har_energy`, `test_provider_identity_under_har_*` |
 | S17 | floor inside the local Newton (M-F9) or hidden stiffness: the limit load moves > 2 % | `test_g2_floor_sensitivity.py` (slow), parity FLOOR_HAR_FPf_x4 |
+
+### Result (R17, 2026-11-08 at 93194c54e): 17 of 17 killed, no survivors
+
+Windows build (`build.bat`, all 5 targets) per mutant; Zone A = `tests/test_ladruno_norsand.py`, `_element.py`, `_k1.py`, `_har_floor.py`
+(`--runslow`, 111 tests); Zone B = `test_g2_shell_parity.py` + `test_g2_logstrain.py` run from this folder (225 tests). Baseline and the final
+pristine rebuild: A 111 passed, B 225 passed. `git diff -- SRC` empty after every restore. Procedure and environment: `r17_results_2026-11-08.md`.
+
+| # | Zone A failed | Zone B failed | Killers that fired (first of each file) |
+|---|---|---|---|
+| S1 | 17 | 55 | `test_echo_har_says_the_energy_p_ref_floor...`, K1.1h; parity HAR_* paths (47); logstrain HAR paths (8) |
+| S2 | 5 | 0 | `test_har_refuses_each_ba06_constant_code_201` (5 flags) |
+| S3 | 6 | 0 | `test_ba06_refuses_each_har_constant_code_202` (6 flags) |
+| S4 | 1 | 0 | `test_har_kernel_range_refusals_codes_21_to_25[k = 0]` |
+| S5 | 1 | 0 | `test_smooth_cap_scan_gate_code_26_only_for_smooth` |
+| S6 | 6 | 37 | K1.12, K1.13; parity FLOOR_BA06_K112 and the other FLOOR_* paths |
+| S7 | 7 | 58 | K1.12, K1.13; parity FLOOR_* |
+| S8 | 6 | 44 | K1.12 (counters), K1.13; parity FLOOR_* |
+| S9 | 3 | 45 | K1.12, K1.13; parity FLOOR_* |
+| S10 | 4 | 13 | K1.12 (tangent), K1.13; parity FLOOR_* |
+| S11 | 1 | 25 | K1.12; parity FLOOR_* |
+| S12 | 2 | 7 | `test_pi0_auto_is_the_unified_rule_k1_15` (smooth, planar); parity PI0_unified_* |
+| S13 | 1 | 10 | `test_initial_state_is_projected_counted_and_the_stress_replaced_ba06_and_har`; parity FLOOR_HAR_init_above_floor |
+| S14 | 1 | 0 | `test_database_roundtrip_carries_the_floor_counters_and_energy` |
+| S15 | 1 | 0 | `test_dm04_mapping_gives_the_printed_g_and_k_and_the_same_response` |
+| S16 | 0 | 6 | logstrain `test_wrapper_spatial_tangent_equals_o2_s34_assembly[HAR_*]` (6) |
+| S17 | 0 | 17 | parity FLOOR_BA06_p50_C_alpha0 and other FLOOR_* (17) |
+
+Notes:
+- S16 was killed, but not by the expected tests: `test_rigid_rotation_is_objective_under_the_har_energy` and
+  `test_provider_identity_under_har_committed_be_is_exp_two_eps_e` both PASSED under the mutant. The killer is the spatial-tangent
+  assembly check (the inv(D0) fallback gives the right stress on these paths, a wrong tangent). Thin spot: the two named tests do not see
+  the provider route being off; only one test family stands between S16 and a survivor.
+- S17 was killed by the parity FLOOR_* paths alone. Its slow killer, `test_g2_floor_sensitivity.py --runslow`, ERRORS ON THE PRISTINE
+  BUILD at fixture setup (`floor_sensitivity.py:114`, one-step geostatic `analyze(1)` returns -3). It applies gravity in one step, against
+  D21 / fb7636aff (the F vs F/2 result, 0.017 %, came from a 160-step gravity ramp). It has never been green and gives no coverage until the
+  ramp is put in the test.
+- S2 to S5, S14 and S15 are killed by Zone A only (one test each for S4, S5, S14, S15): parser, refusal and database paths that the
+  parity suite does not exercise by design.
