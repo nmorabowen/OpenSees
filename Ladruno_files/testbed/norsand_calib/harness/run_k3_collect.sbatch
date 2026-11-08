@@ -1,10 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=wp144-k3-collect
-#SBATCH --partition=computes
+#SBATCH --partition=computes,new
 #SBATCH --exclude=node5
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
+#SBATCH --mem=8G                  # see run_k3_array.sbatch: no default memory per job on Slurm 24.11
 #SBATCH --time=12:00:00
 #SBATCH --output=%x-%j.log
 # WP-144 K3: collect the array's checkpoints (run_k3_array.sbatch), then identifiability and the chi / h profiles

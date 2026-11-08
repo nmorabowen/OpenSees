@@ -1,10 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=wp144-k3
-#SBATCH --partition=computes
+#SBATCH --partition=computes,new
 #SBATCH --exclude=node5
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
+#SBATCH --mem=2G                  # Slurm 24.11 allocates CR_CORE_MEMORY with no default: without it one task holds the whole node (58 GB); a start uses ~125 MB
 #SBATCH --array=0-15
 #SBATCH --time=2-00:00:00
 #SBATCH --output=%x-%A_%a.log
