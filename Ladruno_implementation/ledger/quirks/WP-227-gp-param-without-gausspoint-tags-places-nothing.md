@@ -1,7 +1,7 @@
 ---
 wp: WP-227
 title: "GP_PARAM alone places nothing: a per-GP response with no GaussPoint tags records as one flat C1..Cn row (GAUSS_ID -1) (WP-227)"
-pr: "TBD"
+pr: "#1068"
 date: 2026-11-07
 ---
 ### GP_PARAM alone places nothing: a per-GP response with no `GaussPoint` tags records as one flat C1..Cn row (GAUSS_ID -1) (WP-227)
