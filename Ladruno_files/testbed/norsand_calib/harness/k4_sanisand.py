@@ -209,7 +209,7 @@ def main(argv=None):
     out = dict(build=ops.ladrunoBuild(), opts=[str(o) for o in SR.CAMPAIGN_OPTS], results={})
     for i, case in enumerate(spec["cases"]):
         t0 = time.perf_counter()
-        res = run_case(ops, SR, case, a.n, 100 + i)
+        res = run_case(ops, SR, case, int(case.get("n", a.n)), 100 + i)
         res["seconds"] = time.perf_counter() - t0
         out["results"][case["id"]] = res
         print(case["id"], res["status"], f"{res['seconds']:.1f} s", flush=True)

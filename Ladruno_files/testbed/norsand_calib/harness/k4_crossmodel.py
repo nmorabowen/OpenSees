@@ -49,14 +49,32 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, *[os.pardir] * 4))
 SANISAND_REF = os.path.join(ROOT, "Ladruno_scripts")
 
-P0S = (100.0, 500.0)
+P0S = (10.0, 25.0, 100.0, 500.0)    # 10 and 25 kPa: the low-p range of the strip deck's near-surface soil (K5)
 E0S = (0.735, 0.833, 0.907)
 KINDS = ("TC", "TCU", "PS", "PSU")
 SIG_SR, SIG_EV_PCT = 0.10, 0.10          # objective.Weights defaults: K3's scatter model
+PEAK_TOL = 1.0e-3
 
 
-def case_list(eps_end):
-    return [dict(id=f"{k}_p{p:g}_e{e:g}", kind=k, p0=p, e=e, eps_a_end=eps_end) for k in KINDS for p in P0S for e in E0S]
+# Critical-state convergence (independent of theta): loose undrained compression from both sides of the CSL point
+# of its void ratio, to large strain. DM04 and NorSand share the CSL, so both must head to the same p_cs.
+CS_E0 = 0.907
+CS_P0S = (100.0, 500.0)
+CS_EPS = 0.60
+
+
+def case_list(eps_end, n):
+    out = [dict(id=f"{k}_p{p:g}_e{e:g}", kind=k, p0=p, e=e, eps_a_end=eps_end, n=n)
+           for k in KINDS for p in P0S for e in E0S]
+    n_cs = int(round(n * CS_EPS / eps_end))
+    out += [dict(id=f"CS_{k}_p{p:g}_e{CS_E0:g}", kind=k, p0=p, e=CS_E0, eps_a_end=CS_EPS, n=n_cs, cs=True)
+            for k in ("TCU", "PSU") for p in CS_P0S]
+    return out
+
+
+def p_cs(sand, e):
+    """p on the shared CSL e_c = e0 - lambda_c (p/p_a)^xi at void ratio e (S.22)."""
+    return sand.p_a * ((sand.e0 - e) / sand.lambda_c) ** (1.0 / sand.xi)
 
 
 # ---------------------------------------------------------------------------------------------- common metrics
@@ -76,8 +94,10 @@ def metrics(kind, ea_pct, s1, s2, s3, ev_pct):
         p, q = None, None
     t, s = 0.5 * (s1 - s3), 0.5 * (s1 + s3)
     if kind in ("TC", "PS"):
-        i = int(np.argmax(sr))
-        out.update(sr_peak=float(sr[i]), ea_peak=float(ea[i]), ev_peak=float(ev[i]), ev_end=float(ev[-1]),
+        # the peak POINT is the first one within PEAK_TOL of the maximum: on a plateau (loose sand, low p) the
+        # argmax wanders along it (TC p10 e0.907: 2.9 % in one model, 13.9 % in the other, same sr to 0.002)
+        i = int(np.argmax(sr >= (1.0 - PEAK_TOL) * sr.max()))
+        out.update(sr_peak=float(sr.max()), ea_peak=float(ea[i]), ev_peak=float(ev[i]), ev_end=float(ev[-1]),
                    sr_end=float(sr[-1]), peak_interior=bool(i < len(sr) - 1))
         if q is not None:
             out.update(q_peak=float(q[int(np.argmax(q))]))
@@ -99,6 +119,7 @@ def k3_setup(p_a=TIMS_P_A):
 
 def run_norsand(args):
     case, theta, n = args
+    n = int(case.get("n", n))
     setup = k3_setup()
     t0 = time.perf_counter()
     c = simulate(setup, theta, case["kind"], case["p0"], case["e"], case["eps_a_end"], n)
@@ -190,6 +211,47 @@ def csl_check(p_a):
     return dict(pairs=pairs, identical=all(abs(a - b) <= 1e-12 for a, b in pairs.values()))
 
 
+def cs_summary(rep, cases):
+    """Critical-state convergence: DM04 and LadrunoSANISAND must END at p_cs (|p/p_cs - 1| <= 1 %); NorSand
+    must approach it from both sides (p_end from p0 below p_cs <= p_cs <= p_end from p0 above) with eta -> M
+    in TCU (within 1 %). How fast NorSand gets there depends on theta; WHERE it goes does not."""
+    sand = toyoura_dm04(p_a=TIMS_P_A)
+    pc = p_cs(sand, CS_E0)
+    out = dict(e0=CS_E0, p_cs=pc, q_cs=sand.M * pc, rows=[], verdicts=[])
+    src = [("NorSand", lambda cid: rep["norsand"].get(cid, {})), ("DM04 paper", lambda cid: rep["dm04"].get(f"{cid}|paper", {})),
+           ("DM04 uw_model", lambda cid: rep["dm04"].get(f"{cid}|uw_model", {})),
+           ("LadrunoSANISAND", lambda cid: rep["sanisand"].get(cid, {}))]
+    ends = {}
+    for c in (c for c in cases if c.get("cs")):
+        for name, get in src:
+            m = get(c["id"]).get("metrics") or {}
+            if "p_end" not in m:
+                out["verdicts"].append(f"{name} {c['id']}: no complete curve")
+                continue
+            row = dict(case=c["id"], model=name, p=m["p_end"], q=m["dev_end"], eta=m["dev_end"] / m["p_end"],
+                       ratio=m["p_end"] / pc)
+            out["rows"].append(row)
+            ends[(name, c["kind"], c["p0"])] = row
+    for kind in ("TCU", "PSU"):
+        for name in ("DM04 paper", "DM04 uw_model", "LadrunoSANISAND"):
+            rr = [ends.get((name, kind, p)) for p in CS_P0S]
+            if all(rr):
+                worst = max(abs(r["ratio"] - 1.0) for r in rr)
+                out["verdicts"].append(f"{name} {kind}: ends at p_cs within {100 * worst:.2f} % "
+                                       f"({'PASS' if worst <= 0.01 else 'FAIL'}, 1 %)")
+        lo, hi = ends.get(("NorSand", kind, min(CS_P0S))), ends.get(("NorSand", kind, max(CS_P0S)))
+        if lo and hi:
+            brk = lo["p"] <= pc <= hi["p"]
+            msg = (f"NorSand {kind}: p_end {lo['p']:.1f} (from {min(CS_P0S):g} kPa) and {hi['p']:.1f} (from "
+                   f"{max(CS_P0S):g} kPa) {'bracket' if brk else 'DO NOT bracket'} p_cs {pc:.1f}")
+            if kind == "TCU":
+                de = max(abs(r["eta"] / sand.M - 1.0) for r in (lo, hi))
+                msg += f"; eta within {100 * de:.2f} % of M"
+                brk = brk and de <= 0.01
+            out["verdicts"].append(msg + f" ({'PASS' if brk else 'FAIL'})")
+    return out
+
+
 def write_md(path, rep):
     L = [f"# K4 cross-model check ({rep['label']})", "",
          f"theta: `{rep['theta']}` ({rep['theta_source']}). {rep['verdict_note']}", "",
@@ -206,6 +268,8 @@ def write_md(path, rep):
 
     for c in rep["cases"]:
         cid, kind = c["id"], c["kind"]
+        if c.get("cs"):
+            continue
         ns = rep["norsand"].get(cid, {}).get("metrics")
         dp = rep["dm04"].get(f"{cid}|paper", {}).get("metrics")
         du = rep["dm04"].get(f"{cid}|uw_model", {}).get("metrics")
@@ -220,7 +284,7 @@ def write_md(path, rep):
           "|---|---|---|---|---|---|---|"]
     for c in rep["cases"]:
         cid, kind = c["id"], c["kind"]
-        if kind in ("TC", "PS"):
+        if kind in ("TC", "PS") or c.get("cs"):
             continue
         ns = rep["norsand"].get(cid, {}).get("metrics")
         dp = rep["dm04"].get(f"{cid}|paper", {}).get("metrics")
@@ -230,6 +294,16 @@ def write_md(path, rep):
         f = lambda x: f"{x:.3f}" if isinstance(x, float) else "—"  # noqa: E731
         L.append(f"| {cid} | {fmt_u(ns)} | {fmt_u(dp)} | {fmt_u(du)} | {fmt_u(pm)} | {f(cmp_.get('r_p_min'))} | "
                  f"{f(cmp_.get('r_dev_end'))} |")
+    cs = rep.get("cs")
+    if cs:
+        L += ["", f"## Critical state (independent of theta): loose undrained, e0 {cs['e0']:g}, to {100 * CS_EPS:g} % axial strain",
+              "", f"Shared CSL at e {cs['e0']:g}: p_cs = {cs['p_cs']:.1f} kPa (TCU: q_cs = M p_cs = {cs['q_cs']:.1f} kPa). "
+              "Undrained, e stays e0, so every model must end at p_cs; PSU's q at critical state depends on each "
+              "model's Lode-angle shape, so only its p is checked.", "",
+              "| case | model | p_end | q_end | eta_end | p_end / p_cs |", "|---|---|---|---|---|---|"]
+        for row in cs["rows"]:
+            L.append(f"| {row['case']} | {row['model']} | {row['p']:.1f} | {row['q']:.1f} | {row['eta']:.3f} | {row['ratio']:.4f} |")
+        L += [""] + [f"- {v}" for v in cs["verdicts"]]
     cv = [v for v in rep.get("cpp_vs_paper", {}).values() if v and "d_sr_peak" in v]
     if cv:
         L += ["", f"LadrunoSANISAND (C++) against DM04 paper (Python), drained: max |d sr_peak| "
@@ -267,7 +341,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     os.makedirs(a.out, exist_ok=True)
     theta, theta_src = load_theta(a.theta)
-    cases = case_list(a.eps_end)
+    cases = case_list(a.eps_end, a.n)
     if a.only:
         keep = set(a.only.split(","))
         cases = [c for c in cases if c["id"] in keep]
@@ -292,6 +366,7 @@ def main(argv=None):
                                           rep["dm04"].get(f"{c['id']}|paper", {}).get("metrics"), c["kind"])
         rep.setdefault("cpp_vs_paper", {})[c["id"]] = compare(rep["sanisand"].get(c["id"], {}).get("metrics"),
                                                               rep["dm04"].get(f"{c['id']}|paper", {}).get("metrics"), c["kind"])
+    rep["cs"] = cs_summary(rep, cases)
     rep["seconds"] = time.perf_counter() - t0
     tag = "dryrun" if a.theta == "provisional" else "k4"
     json.dump(rep, open(os.path.join(a.out, f"k4_{tag}.json"), "w", encoding="utf-8"), indent=1, default=float)

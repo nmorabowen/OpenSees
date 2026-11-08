@@ -139,7 +139,8 @@ The first K3 submission, job 151170 on 2026-10-04 (`--lit`, HAR, ρ fitted, 16 s
 ## K4, the cross-model check (2026-11-07)
 
 `k4_crossmodel.py` runs single-point drained and undrained triaxial (TC, TCU) and plane-strain (PS, PSU)
-compression of Toyoura at p0 100 and 500 kPa and e0 0.735, 0.833 and 0.907, to 20 % axial strain:
+compression of Toyoura at p0 10, 25, 100 and 500 kPa and e0 0.735, 0.833 and 0.907, to 20 % axial strain, plus a
+critical-state check (below):
 
 | Model | How | Role |
 |---|---|---|
@@ -156,13 +157,27 @@ python -m harness.k4_crossmodel --theta provisional               # dry run on s
 python -m harness.k4_crossmodel --theta <K3 result JSON>          # the K4 run, once K3 reports
 ```
 
-Dry run (`out/k4/k4_dryrun.md`, 24 cases x 4 runs, 33 s on 12 workers, every run complete). It exercises the
-plumbing only: NorSand runs on the synthetic smoke parameters, so its differences from DM04 say nothing about
-the calibrated model. What it does show:
-- LadrunoSANISAND (C++) against DM04 `paper` (Python): drained max |d sr_peak| 0.012 and |d eps_v at peak|
-  0.055 %; undrained p_min and final q within about 0.3 %. The production integrator follows the paper's
-  equations on these paths.
-- DM04 `paper` and `uw_model` agree within 0.01 in sr_peak: the UW additions do not matter here.
+Critical-state check (independent of theta): loose undrained TCU and PSU at e0 0.907 from p0 100 and 500 kPa,
+to 60 % axial strain. The shared CSL puts the end state at p_cs = 166.9 kPa. DM04 and LadrunoSANISAND must end
+there (within 1 %); NorSand must approach it from both sides (and, in TCU, reach eta = M within 1 %). How fast
+NorSand gets there depends on theta; where it goes does not.
+
+Dry run (`out/k4/k4_dryrun.md`, 52 cases x 4 runs, 67 s on 12 workers, every run complete). NorSand runs on the
+synthetic smoke parameters, so its peak and dilation differences from DM04 say nothing about the calibrated
+model. What it does show:
+- Critical state: DM04 (both sets) and LadrunoSANISAND end at p_cs within 0.04 % (0.10 % C++ PSU); NorSand
+  brackets it in TCU (145.0 from 100 kPa, 182.2 from 500 kPa) and PSU (153.6, 176.5), eta within 0.16 % of M
+  in TCU. NorSand's CSL, M and p_a are DM04's end to end.
+- LadrunoSANISAND (C++) against DM04 `paper` (Python), drained: max |d sr_peak| 0.012 and |d eps_v at peak|
+  0.055 % at 100-500 kPa, 0.029 and 0.080 % at 10-25 kPa; undrained p_min and final q within about 0.3 %.
+- DM04 `paper` and `uw_model` agree within 0.005 in sr_peak, at 10 kPa too: the UW low-p additions act below
+  0.05 P_atm (about 5 kPa), so K4 does not yet reach the stress range where they matter (the strip deck's
+  surface: p' about 1 kPa).
+- PSU at critical state: eta 1.207 (DM04) against 1.19 (NorSand, rho 0.712): the Lode-angle shapes differ
+  (DM04's g(theta, c) against Willam-Warnke), so only p is checked there.
+
+The peak POINT is the first within 0.1 % of the maximum sigma1/sigma3 (`PEAK_TOL`): on a plateau the argmax
+wanders (TC p10 e0.907: 2.9 % in one model, 13.9 % in the other at the same peak to 0.002).
 
 LadrunoSANISAND driver: drained steps solve the lateral strain to 1e-6 sigma_0 (secant, then bracket + Illinois);
 the C++ response is only piecewise smooth in that strain (its substep count changes), so a step that lands on a
