@@ -16,8 +16,10 @@ committed state) to |sigma - sigma_0| <= 1e-6 sigma_0; steps on a response jump 
 changing with x) take the closer side, up to 1e-3 sigma_0, and are counted. Compression positive throughout.
 
 Material: Toyoura (DM04 Table 1, P_atm 101 = the harness p_a), e_init = the case's e0, with the TIMs campaign's
-integration options (sanisand_replay.CAMPAIGN_OPTS: IntScheme 1, TolF = TolR = 1e-7, -Pmin 0.0101,
--maxSubsteps 20000, -flipAlphaIn init).
+integration options (sanisand_replay.CAMPAIGN_OPTS: TolF = TolR = 1e-7, -Pmin 0.0101, -maxSubsteps 20000,
+-flipAlphaIn init) and the integration scheme --scheme: 129 (SAS-ME, WP-129) or 1 (ModifiedEuler, the campaign's).
+At 1 kPa with 0.05 % steps scheme 1 returns wrong states with rc 0 (PS sr 32.7, TC lateral tension; K4 2026-11-08)
+while 129 is exact at that step; 1 converges to the paper only at 0.005 %.
 
     py -3.12 -S k4_sanisand.py --dist <worktree>/dist/bin --cases cases.json --out sanisand.json
 """
@@ -200,11 +202,13 @@ def main(argv=None):
     ap.add_argument("--cases", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--n", type=int, default=400)
+    ap.add_argument("--scheme", type=int, default=129, help="IntScheme: 129 SAS-ME (default) or 1 ModifiedEuler")
     a = ap.parse_args(argv)
     os.add_dll_directory(a.dist)
     sys.path[:0] = [a.dist, a.scripts]
     import opensees as ops
     import sanisand_replay as SR
+    SR.CAMPAIGN_OPTS = (a.scheme,) + tuple(SR.CAMPAIGN_OPTS[1:])
     spec = json.load(open(a.cases, encoding="utf-8"))
     out = dict(build=ops.ladrunoBuild(), opts=[str(o) for o in SR.CAMPAIGN_OPTS], results={})
     for i, case in enumerate(spec["cases"]):

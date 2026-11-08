@@ -49,7 +49,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, *[os.pardir] * 4))
 SANISAND_REF = os.path.join(ROOT, "Ladruno_scripts")
 
-P0S = (10.0, 25.0, 100.0, 500.0)    # 10 and 25 kPa: the low-p range of the strip deck's near-surface soil (K5)
+P0S = (1.0, 10.0, 25.0, 100.0, 500.0)   # 1 kPa: the strip surface (p_floor, the UW low-p additions); 10, 25: near-surface
 E0S = (0.735, 0.833, 0.907)
 KINDS = ("TC", "TCU", "PS", "PSU")
 SIG_SR, SIG_EV_PCT = 0.10, 0.10          # objective.Weights defaults: K3's scatter model
@@ -164,13 +164,14 @@ def run_dm04(args):
 
 
 # ---------------------------------------------------------------------------------------------- LadrunoSANISAND (3.12 child)
-def run_sanisand(cases, dist, outdir, n):
+def run_sanisand(cases, dist, outdir, n, scheme=129):
     import tempfile
-    cpath = os.path.join(outdir, "sanisand_cases.json")
+    cpath = os.path.join(tempfile.mkdtemp(prefix="k4_cases_"), "sanisand_cases.json") if scheme != 129 else         os.path.join(outdir, "sanisand_cases.json")
     opath = os.path.join(tempfile.mkdtemp(prefix="k4_sanisand_"), "sanisand_raw.json")   # raw curves: not committed
     json.dump(dict(cases=cases), open(cpath, "w", encoding="utf-8"), indent=1)
     p = subprocess.run(["py", "-3.12", "-S", os.path.join(HERE, "k4_sanisand.py"), "--dist", dist,
-                        "--scripts", SANISAND_REF, "--cases", cpath, "--out", opath, "--n", str(n)],
+                        "--scripts", SANISAND_REF, "--cases", cpath, "--out", opath, "--n", str(n),
+                        "--scheme", str(scheme)],
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     if p.returncode != 0 or not os.path.exists(opath):
         return dict(error=p.stderr[-800:]), {}
@@ -257,7 +258,7 @@ def write_md(path, rep):
          f"theta: `{rep['theta']}` ({rep['theta_source']}). {rep['verdict_note']}", "",
          f"CSL shared with DM04: {rep['csl']['identical']} ({', '.join(f'{k} {a:g}/{b:g}' for k, (a, b) in rep['csl']['pairs'].items())}).",
          "", "## Drained (gate: |d sr_peak| <= 0.10, |d ev_peak| <= 0.10 %, NorSand against DM04-paper)", "",
-         "| case | NorSand sr_peak / ea / ev | DM04 paper | DM04 uw_model | LadrunoSANISAND | d sr | d ev % | within |",
+         "| case | NorSand sr_peak / ea / ev | DM04 paper | DM04 uw_model | LadrunoSANISAND SAS-ME | d sr | d ev % | within |",
          "|---|---|---|---|---|---|---|---|"]
 
     def fmt_d(m):
@@ -280,7 +281,7 @@ def write_md(path, rep):
                      f"{cmp_.get('d_sr_peak', float('nan')):+.3f} | {cmp_.get('d_ev_peak', float('nan')):+.3f} | "
                      f"{cmp_.get('within', '—')} |")
     L += ["", "## Undrained (reported: min p @ ea % ; q at the end)", "",
-          "| case | NorSand | DM04 paper | DM04 uw_model | LadrunoSANISAND | NorSand/DM04 p_min | NorSand/DM04 dev_end |",
+          "| case | NorSand | DM04 paper | DM04 uw_model | LadrunoSANISAND SAS-ME | NorSand/DM04 p_min | NorSand/DM04 dev_end |",
           "|---|---|---|---|---|---|---|"]
     for c in rep["cases"]:
         cid, kind = c["id"], c["kind"]
@@ -306,8 +307,24 @@ def write_md(path, rep):
         L += [""] + [f"- {v}" for v in cs["verdicts"]]
     cv = [v for v in rep.get("cpp_vs_paper", {}).values() if v and "d_sr_peak" in v]
     if cv:
-        L += ["", f"LadrunoSANISAND (C++) against DM04 paper (Python), drained: max |d sr_peak| "
+        L += ["", f"LadrunoSANISAND SAS-ME (C++) against DM04 paper (Python), drained: max |d sr_peak| "
                   f"{max(abs(v['d_sr_peak']) for v in cv):.4f}, max |d ev_peak| {max(abs(v['d_ev_peak']) for v in cv):.4f} %."]
+    s1 = rep.get("s1_vs_paper", {})
+    if s1:
+        L += ["", "## LadrunoSANISAND IntScheme 1 (ModifiedEuler, the TIMs campaign scheme) against DM04 paper", "",
+              "Same steps as every other run (0.05 % axial). Drained: d sr_peak; undrained: NorSand-style ratios of p_min "
+              "and q_end. Listed when |d sr| > 0.05, a ratio is off 1 by > 2 %, or the run is incomplete; the "
+              "SAS-ME (129) column above is the accurate C++.", ""]
+        flagged = []
+        for c in rep["cases"]:
+            v, st = s1.get(c["id"]), rep.get("sanisand_s1", {}).get(c["id"], {})
+            if st.get("status") != "ok" or not v:
+                flagged.append(f"- {c['id']}: {st.get('status', 'not run')}")
+            elif "d_sr_peak" in v and abs(v["d_sr_peak"]) > 0.05:
+                flagged.append(f"- {c['id']}: d sr_peak {v['d_sr_peak']:+.3f}")
+            elif "r_p_min" in v and any(x is not None and abs(x - 1) > 0.02 for x in (v["r_p_min"], v["r_dev_end"])):
+                flagged.append(f"- {c['id']}: p_min ratio {v['r_p_min']:.3f}, q_end ratio {v['r_dev_end']:.3f}")
+        L += flagged or ["- none"]
     bad = [f"{k}: {v['status']}" for k, v in {**rep["norsand"], **rep["dm04"], **rep["sanisand"]}.items()
            if v.get("status") not in ("ok",)]
     L += ["", "## Runs that did not finish cleanly", ""] + ([f"- {b}" for b in bad] or ["- none"])
@@ -359,13 +376,17 @@ def main(argv=None):
         for (cid, v), r in fd:
             rep["dm04"][f"{cid}|{v}"] = r
     if not a.no_sanisand:
-        info, rep["sanisand"] = run_sanisand(cases, a.dist, a.out, a.n)
+        info, rep["sanisand"] = run_sanisand(cases, a.dist, a.out, a.n, 129)
         rep["sanisand_info"] = info
+        info1, rep["sanisand_s1"] = run_sanisand(cases, a.dist, a.out, a.n, 1)
+        rep["sanisand_s1_info"] = info1
     for c in cases:
         rep["compare"][c["id"]] = compare(rep["norsand"].get(c["id"], {}).get("metrics"),
                                           rep["dm04"].get(f"{c['id']}|paper", {}).get("metrics"), c["kind"])
         rep.setdefault("cpp_vs_paper", {})[c["id"]] = compare(rep["sanisand"].get(c["id"], {}).get("metrics"),
                                                               rep["dm04"].get(f"{c['id']}|paper", {}).get("metrics"), c["kind"])
+        rep.setdefault("s1_vs_paper", {})[c["id"]] = compare(rep.get("sanisand_s1", {}).get(c["id"], {}).get("metrics"),
+                                                             rep["dm04"].get(f"{c['id']}|paper", {}).get("metrics"), c["kind"])
     rep["cs"] = cs_summary(rep, cases)
     rep["seconds"] = time.perf_counter() - t0
     tag = "dryrun" if a.theta == "provisional" else "k4"
