@@ -1199,6 +1199,19 @@ Response *LadrunoSolidShell::setResponse(const char **argv, int argc,
 
   if (argc < 1) return 0;
 
+  // ── LadrunoRecorder geometry probes (contract Part A) ────────────────────
+  // Ladruno (WP-227): the GP set is 2x2 in-plane x nz through thickness with
+  // a per-element z rule, so no class-tag table entry can describe it. The
+  // recorder takes it as a custom rule: natural (xi,eta,zeta) per GP in the
+  // element's OWN loop order (layer l slowest, in-plane CCW q fastest — the
+  // materialPointers[gp] order) + matching weights. No basisInfo: the
+  // geometry is the plain trilinear 8-node brick (Lagrange default).
+  // Answered BEFORE the ElementOutput tag (LadrunoBrick20 pattern).
+  if (strcmp(argv[0], "integrationPoints") == 0)
+    return new ElementResponse(this, 102, Matrix(numGP, 3));
+  if (strcmp(argv[0], "integrationWeights") == 0)
+    return new ElementResponse(this, 103, Vector(numGP));
+
   output.tag("ElementOutput");
   output.attr("eleType", "LadrunoSolidShell");
   output.attr("eleTag", this->getTag());
@@ -1220,11 +1233,26 @@ Response *LadrunoSolidShell::setResponse(const char **argv, int argc,
       }
     }
   }
-  else if (LadrunoResp::is(argv[0], "stress")) {
-    theResponse = new ElementResponse(this, 1, Vector(6 * numGP));
-  }
-  else if (LadrunoResp::is(argv[0], "strain")) {
-    theResponse = new ElementResponse(this, 2, Vector(6 * numGP));
+  else if (LadrunoResp::is(argv[0], "stress") || LadrunoResp::is(argv[0], "strain")) {
+    // Ladruno (WP-227): one GaussPoint/NdMaterialOutput block per GP so the
+    // Ladruno/MPCO recorders bucket the 6*numGP vector per Gauss point
+    // (GAUSS_ID 0..numGP-1, paired with QUADRATURE/GP_PARAM) instead of one
+    // flat C1..Cn element row. Values and order are unchanged.
+    const bool isStress = LadrunoResp::is(argv[0], "stress");
+    static const char *sNames[6] = {"sigma11", "sigma22", "sigma33", "sigma12", "sigma23", "sigma13"};
+    static const char *eNames[6] = {"eps11", "eps22", "eps33", "eps12", "eps23", "eps13"};
+    for (int i = 0; i < numGP; i++) {
+      output.tag("GaussPoint");
+      output.attr("number", i + 1);
+      output.tag("NdMaterialOutput");
+      output.attr("classType", materialPointers[i]->getClassTag());
+      output.attr("tag", materialPointers[i]->getTag());
+      for (int r = 0; r < 6; r++)
+        output.tag("ResponseType", isStress ? sNames[r] : eNames[r]);
+      output.endTag(); // NdMaterialOutput
+      output.endTag(); // GaussPoint
+    }
+    theResponse = new ElementResponse(this, isStress ? 1 : 2, Vector(6 * numGP));
   }
   else if (LadrunoResp::is(argv[0], "alpha")) {
     // enhanced-parameter diagnostic (the G6 stability gate reads this)
@@ -1292,6 +1320,23 @@ int LadrunoSolidShell::getResponse(int responseID, Information &eleInfo)
   }
   if (responseID == 6)
     return eleInfo.setVector(this->getResistingForce());
+  if (responseID == 102 || responseID == 103) {
+    // Ladruno (WP-227): recorder GP probes — the SAME loop as formANS/mass
+    // (gp = l*4 + q): (ip[q], zp[l]) with weight 1*zw[l] (sum = 8).
+    static const double g2 = 0.5773502691896257;
+    static const double ip[4][2] = {{-g2, -g2}, {g2, -g2}, {g2, g2}, {-g2, g2}};
+    double zp[NZ_MAX], zw[NZ_MAX];
+    if (zRule(zp, zw) != 0) return -1;
+    Matrix pts(numGP, 3);
+    Vector w(numGP);
+    int gp = 0;
+    for (int l = 0; l < nz; l++)
+      for (int q = 0; q < 4; q++, gp++) {
+        pts(gp, 0) = ip[q][0]; pts(gp, 1) = ip[q][1]; pts(gp, 2) = zp[l];
+        w(gp) = zw[l];
+      }
+    return (responseID == 102) ? eleInfo.setMatrix(pts) : eleInfo.setVector(w);
+  }
   if (responseID == 7) {
     static Vector lch(1);
     lch(0) = this->getCharacteristicLength();

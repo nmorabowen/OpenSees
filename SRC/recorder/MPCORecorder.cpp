@@ -3930,7 +3930,8 @@ namespace mpco {
 				*/
 				else if (
 					// ./triangle
-					elem_class_tag == ELE_TAG_Tri31
+					elem_class_tag == ELE_TAG_Tri31 ||
+					elem_class_tag == ELE_TAG_LadrunoCST  // Ladruno (WP-227): 1 centroid GP, as Tri31
 					) {
 					geom_type = ElementGeometryType::Triangle_3N;
 					int_type = ElementIntegrationRuleType::Triangle_GaussLegendre_1;
@@ -3981,6 +3982,7 @@ namespace mpco {
 					elem_class_tag == ELE_TAG_FourNodeQuad ||
 					elem_class_tag == ELE_TAG_FourNodeQuad3d ||
 					elem_class_tag == ELE_TAG_FourNodeQuadWithSensitivity ||
+					elem_class_tag == ELE_TAG_LadrunoQuad ||  // Ladruno (WP-227): FourNodeQuad CCW 2x2 order
 					// ./shell
 					elem_class_tag == ELE_TAG_ShellDKGQ ||
 					elem_class_tag == ELE_TAG_ShellNLDKGQ ||
@@ -4066,6 +4068,7 @@ namespace mpco {
 					elem_class_tag == ELE_TAG_BbarBrick ||
 					elem_class_tag == ELE_TAG_BbarBrickWithSensitivity ||
 					elem_class_tag == ELE_TAG_Brick ||
+					elem_class_tag == ELE_TAG_LadrunoBrick ||  // Ladruno (WP-227): Brick i,j,k (zeta-fastest) 8 GPs, every -formulation
 					// ./up
 					elem_class_tag == ELE_TAG_BBarBrickUP ||
 					elem_class_tag == ELE_TAG_BrickUP ||

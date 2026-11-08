@@ -2034,23 +2034,69 @@ Response *LadrunoUP::setResponse(const char **argv, int argc, OPS_Stream &output
 {
   Response *theResponse = 0;
   if (argc < 1) return 0;
+
+  // -- LadrunoRecorder geometry self-description (contract Part A) ----------
+  // Ladruno (WP-227): ONE class tag carries five topologies (T3/Q4/H8/BT6/
+  // BTET10), each with its own GP set and order -- UP's H8 runs bottom-layer
+  // CCW then top (NOT Brick's i,j,k zeta-fastest) -- so the recorder has no
+  // class-tag arm for it. It probes these three per bucket: basisInfo gives
+  // the topology + family (geometry derived from it), integrationPoints /
+  // integrationWeights give the provider's gpCoord / gpWeight verbatim, in
+  // the gp order every response below uses. Conventions are the donors':
+  // T3 = Tri31 (N0=xi), Q4 = FourNodeQuad CCW, H8 = shp3d, BT6 = BezierTri6
+  // (node0 <-> xi3), BTET10 = BezierTet10. Answered BEFORE ElementOutput.
+  if (strcmp(argv[0], "basisInfo") == 0) {
+    const char *topo = 0, *family = "lagrange", *domain = "[-1,1]";
+    int order = 1;
+    switch (shapeKind_) {
+      case SHAPE_T3:     topo = "tri";  domain = "bary"; break;
+      case SHAPE_Q4:     topo = "quad"; break;
+      case SHAPE_H8:     topo = "hex";  break;
+      case SHAPE_BT6:    topo = "tri";  domain = "bary"; family = "bernstein"; order = 2; break;
+      case SHAPE_BTET10: topo = "tet";  domain = "bary"; family = "bernstein"; order = 2; break;
+      default: return 0;   // SHAPE_NONE: no self-description (TOPOLOGY custom)
+    }
+    output.tag("ElementBasis");
+    output.attr("topology",    topo);
+    output.attr("family",      family);
+    output.attr("paramDomain", domain);
+    output.attr("rational",    0);
+    output.attr("numCtrl",     nNodes_);
+    output.attr("numGP",       this->shapeNGP());
+    output.attr("orderU",      order);
+    output.endTag();                          // ElementBasis
+    return new ElementResponse(this, 101, ID(1));   // non-null sentinel
+  }
+  if (strcmp(argv[0], "integrationPoints") == 0) {
+    if (shapeKind_ == SHAPE_NONE) return 0;
+    return new ElementResponse(this, 102, Matrix(this->shapeNGP(), ndm_));
+  }
+  if (strcmp(argv[0], "integrationWeights") == 0) {
+    if (shapeKind_ == SHAPE_NONE) return 0;
+    return new ElementResponse(this, 103, Vector(this->shapeNGP()));
+  }
+
   output.tag("ElementOutput");
   output.attr("eleType", "LadrunoUP");
   output.attr("eleTag", this->getTag());
 
   if (LadrunoResp::is(argv[0], "stress")) {
     // 1 — EFFECTIVE stress σ′ per GP (the material's vector, nStr comps each)
+    this->tagGaussPoints(output, GP_TAGS_STRESS);
     theResponse = new ElementResponse(this, 1, Vector(nGP_ * nStr_));
   } else if (LadrunoResp::is(argv[0], "stressTotal")) {
     // 2 — TOTAL stress σ = σ′ − α·m·p per GP (normal components carry the
     //     pore-pressure correction; ADR §3.1 sign convention)
+    this->tagGaussPoints(output, GP_TAGS_STRESS);
     theResponse = new ElementResponse(this, 2, Vector(nGP_ * nStr_));
   } else if (strcmp(argv[0], "porePressure") == 0) {
     // 3 — per-GP pore pressure Np·p_nodal (upstream ships NOTHING like this —
     //     the §3.5 "zero element-level pore-pressure responses" fix)
+    this->tagGaussPoints(output, GP_TAGS_PRESSURE);
     theResponse = new ElementResponse(this, 3, Vector(nGP_));
   } else if (LadrunoResp::is(argv[0], "flux")) {
     // 4 — per-GP Darcy flux −k̄·(∇p − ρ_f·drive), ndm comps each
+    this->tagGaussPoints(output, GP_TAGS_FLUX);
     theResponse = new ElementResponse(this, 4, Vector(nGP_ * ndm_));
   } else if (LadrunoResp::is(argv[0], "material")) {
     // family idiom: material $gpNum <...> forwarding
@@ -2063,6 +2109,7 @@ Response *LadrunoUP::setResponse(const char **argv, int argc, OPS_Stream &output
   // stiffInitial / charLength), which this element was missing entirely.
   } else if (LadrunoResp::is(argv[0], "strain")) {
     // 5 — EFFECTIVE strain ε per GP, same layout as response 1
+    this->tagGaussPoints(output, GP_TAGS_STRAIN);
     theResponse = new ElementResponse(this, 5, Vector(nGP_ * nStr_));
   } else if (LadrunoResp::is(argv[0], "force")) {
     theResponse = new ElementResponse(this, 6, Vector(this->getNumDOF()));
@@ -2104,8 +2151,75 @@ Response *LadrunoUP::setResponse(const char **argv, int argc, OPS_Stream &output
   return theResponse;
 }
 
+// Ladruno (WP-227): one GaussPoint block per GP (number = gp+1, the provider's
+// gp order) so the Ladruno/MPCO recorders bucket each per-GP vector by Gauss
+// point (GAUSS_ID 0..nGP-1, paired with the integrationPoints probe) instead
+// of one flat C1..Cn element row. Values and their order are unchanged.
+void LadrunoUP::tagGaussPoints(OPS_Stream &output, int kind) const
+{
+  static const char *s2[3] = {"sigma11", "sigma22", "sigma12"};
+  static const char *s3[6] = {"sigma11", "sigma22", "sigma33", "sigma12", "sigma23", "sigma13"};
+  static const char *e2[3] = {"eps11", "eps22", "eps12"};
+  static const char *e3[6] = {"eps11", "eps22", "eps33", "eps12", "eps23", "eps13"};
+  static const char *q3[3] = {"q1", "q2", "q3"};
+  static const char *p1[1] = {"p"};
+  const char **names = 0;
+  int n = 0;
+  switch (kind) {
+    case GP_TAGS_STRESS:   names = (ndm_ == 2) ? s2 : s3; n = nStr_; break;
+    case GP_TAGS_STRAIN:   names = (ndm_ == 2) ? e2 : e3; n = nStr_; break;
+    case GP_TAGS_PRESSURE: names = p1; n = 1; break;
+    case GP_TAGS_FLUX:     names = q3; n = ndm_; break;
+    default: return;
+  }
+  const bool mat = (kind == GP_TAGS_STRESS || kind == GP_TAGS_STRAIN);
+  for (int gp = 0; gp < nGP_; gp++) {
+    const bool hasMat = mat && theMaterials_ != 0 && theMaterials_[gp] != 0;
+    output.tag("GaussPoint");
+    output.attr("number", gp + 1);
+    if (hasMat) {
+      output.tag("NdMaterialOutput");
+      output.attr("classType", theMaterials_[gp]->getClassTag());
+      output.attr("tag", theMaterials_[gp]->getTag());
+    }
+    for (int k = 0; k < n; k++)
+      output.tag("ResponseType", names[k]);
+    if (hasMat)
+      output.endTag();   // NdMaterialOutput
+    output.endTag();     // GaussPoint
+  }
+}
+
 int LadrunoUP::getResponse(int responseID, Information &eleInfo)
 {
+  // Ladruno (WP-227): recorder geometry probes -- need only shapeKind_, so they
+  // answer before the geometry guard (a zero Matrix would read as GP_PARAM).
+  if (responseID == 101)
+    return 0;   // basisInfo sentinel -- metadata went out through the stream
+  if (responseID == 102 || responseID == 103) {
+    const double *xi = 0, *w = 0;
+    switch (shapeKind_) {
+      case SHAPE_T3:     xi = ladruno_up::shapes::T3::gpCoord;     w = ladruno_up::shapes::T3::gpWeight;     break;
+      case SHAPE_Q4:     xi = ladruno_up::shapes::Q4::gpCoord;     w = ladruno_up::shapes::Q4::gpWeight;     break;
+      case SHAPE_H8:     xi = ladruno_up::shapes::H8::gpCoord;     w = ladruno_up::shapes::H8::gpWeight;     break;
+      case SHAPE_BT6:    xi = ladruno_up::shapes::BT6::gpCoord;    w = ladruno_up::shapes::BT6::gpWeight;    break;
+      case SHAPE_BTET10: xi = ladruno_up::shapes::BTET10::gpCoord; w = ladruno_up::shapes::BTET10::gpWeight; break;
+      default: return -1;
+    }
+    const int ngp = this->shapeNGP();
+    if (responseID == 102) {
+      Matrix pts(ngp, ndm_);
+      for (int g = 0; g < ngp; g++)
+        for (int j = 0; j < ndm_; j++)
+          pts(g, j) = xi[g * ndm_ + j];
+      return eleInfo.setMatrix(pts);
+    }
+    Vector wv(ngp);
+    for (int g = 0; g < ngp; g++)
+      wv(g) = w[g];
+    return eleInfo.setVector(wv);
+  }
+
   if (!geomValid_)
     return -1;
 
