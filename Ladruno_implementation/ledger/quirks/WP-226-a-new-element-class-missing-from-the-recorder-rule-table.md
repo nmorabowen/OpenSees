@@ -21,3 +21,12 @@ date: 2026-11-07
   dropped from the file (815 RBE3s → ~4 000 lines, 0 written). Fixed in WP-226 with
   the schema §3.4 CSR layout. A reader of `MODEL/ELEMENTS` must handle a group with
   `CONNECTIVITY_LAYOUT="csr"` and no `CONNECTIVITY`.
+#### Follow-up (WP-227)
+- `MPCORecorder.cpp` now carries LadrunoBrick / LadrunoQuad / LadrunoCST arms too.
+- LadrunoLST (Tri GL2, its own order), LadrunoSolidShell (custom rule from the
+  element) and LadrunoUP (self-described per bucket) write GP_PARAM.
+  LadrunoCSTPair and LadrunoCPML stay `TOPOLOGY custom` on purpose: CSTPair's GPs
+  are sub-triangle centroids (not fixed parent-domain points on a distorted quad),
+  CPML has no per-GP response.
+- GP_PARAM is only half of placing GPs: the response must also emit GaussPoint
+  tags (quirk WP-227).

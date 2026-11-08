@@ -1296,22 +1296,34 @@ int LadrunoRecorder::writeModelElements()
 				hid_t h_eg = ladrunons::h5::group::create(
 					h_gp_elements, elem_by_custom_rule.name.c_str(), H5P_DEFAULT,
 					info.h_group_proplist, H5P_DEFAULT);
-				const bool csr = elem_by_tag.variable_nodes;
+				// Ladruno (WP-227): node count and CSR decided PER BUCKET. A class
+				// whose node count varies (variable_nodes) may still split into
+				// buckets of one count each — LadrunoUP T3 + Q4 in one mesh land in
+				// two custom-rule buckets — and each such bucket keeps the
+				// rectangular CONNECTIVITY + its own basis. Only a bucket that
+				// itself mixes counts (RBE3/RBE2) goes CSR.
+				const int bucket_nn = elem_by_custom_rule.items.front()->getNumExternalNodes();
+				bool csr = false;
+				if (elem_by_tag.variable_nodes) {
+					for (me::ElementWithSameCustomIntRuleCollection::collection_type::iterator itn = elem_by_custom_rule.items.begin();
+						itn != elem_by_custom_rule.items.end(); ++itn)
+						if ((*itn)->getNumExternalNodes() != bucket_nn) { csr = true; break; }
+				}
 				if (!csr) {
 					// CONNECTIVITY [nElem x (1 + num_nodes)]: (elemTag, c1..cK)
-					std::vector<int> buffer(elem_by_custom_rule.items.size() * (size_t)(1 + elem_by_tag.num_nodes));
+					std::vector<int> buffer(elem_by_custom_rule.items.size() * (size_t)(1 + bucket_nn));
 					size_t offset = 0;
 					for (me::ElementWithSameCustomIntRuleCollection::collection_type::iterator it4 = elem_by_custom_rule.items.begin();
 						it4 != elem_by_custom_rule.items.end(); ++it4) {
 						Element* elem = *it4;
 						buffer[offset] = elem->getTag();
-						for (int j = 0; j < elem_by_tag.num_nodes; ++j)
+						for (int j = 0; j < bucket_nn; ++j)
 							buffer[(size_t)j + 1 + offset] = elem->getExternalNodes()(j);
-						offset += (size_t)(1 + elem_by_tag.num_nodes);
+						offset += (size_t)(1 + bucket_nn);
 					}
 					hid_t d_conn = ladrunons::h5::dataset::createAndWrite(
 						h_eg, "CONNECTIVITY", buffer,
-						elem_by_custom_rule.items.size(), (size_t)(1 + elem_by_tag.num_nodes));
+						elem_by_custom_rule.items.size(), (size_t)(1 + bucket_nn));
 					ladrunons::h5::dataset::close(d_conn);
 				}
 				else {
@@ -1352,6 +1364,20 @@ int LadrunoRecorder::writeModelElements()
 				// AND add the derived self-describing descriptors.
 				ladrunons::detail::ElementGeometryType::Enum geom = elem_by_tag.geom_type;
 				ladrunons::detail::ElementIntegrationRuleType::Enum irule = elem_by_rule.int_rule_type;
+				// Ladruno (WP-227): a self-described multi-topology class (class-tag
+				// arm geom Custom + custom rule, e.g. LadrunoUP) is described PER
+				// BUCKET: probe this bucket's first element for basisInfo and derive
+				// the geometry from (topology, node count). The class-level probe
+				// only saw the class's first element, which may be another topology.
+				me::BasisInfo bucket_binfo = elem_by_tag.basis_info;
+				if (geom == ladrunons::detail::ElementGeometryType::Custom
+					&& irule == ladrunons::detail::ElementIntegrationRuleType::CustomIntegrationRule) {
+					me::BasisInfo probed = m_data->elements.getElementBasisInfo(elem_by_custom_rule.items.front());
+					if (probed.valid) {
+						bucket_binfo = probed;
+						geom = me::geometryFromBasisInfo(probed, bucket_nn);
+					}
+				}
 				ladrunons::h5::attribute::write(h_eg, "GEOMETRY", (int)geom);
 				ladrunons::h5::attribute::write(h_eg, "INTEGRATION_RULE", (int)irule);
 
@@ -1386,10 +1412,10 @@ int LadrunoRecorder::writeModelElements()
 				// "basisInfo" probe (basis_info.valid == false) so the derived defaults
 				// are kept; a Bernstein element (BezierTri6) instead records
 				// FAMILY=bernstein, ORDER=2.
-				const me::BasisInfo& binfo = elem_by_tag.basis_info;
+				const me::BasisInfo& binfo = bucket_binfo;
 				std::string family = "lagrange";
 				int rational = 0;
-				int num_ctrl = elem_by_tag.num_nodes;
+				int num_ctrl = bucket_nn;
 				if (binfo.valid) {
 					if (!binfo.family.empty())       family = binfo.family;
 					if (!binfo.topology.empty())     topology = binfo.topology;
@@ -1487,7 +1513,13 @@ int LadrunoRecorder::writeModelElements()
 						Node* n0 = (nd0.Size() > 0) ? info.domain->getNode(nd0(0)) : 0;
 						if (n0) ndim = n0->getCrds().Size();
 					}
-					if (ndim > 0 && !csr) {  // Ladruno (WP-226): no basis for a variable-node class
+					// Ladruno (WP-227): a Bernstein element (BezierTri6/Tet10, LadrunoUP
+					// BT6/BTET10) shares the geometry enum with the Lagrange T6/Tet10, so
+					// the basis is chosen by FAMILY. Any other non-Lagrange family has no
+					// write-side basis: skip GLOBAL_GP_COORDS rather than write a wrong map.
+					const bool bern_basis = (family == "bernstein");
+					const bool have_basis = bern_basis || family == "lagrange" || family == "serendipity";
+					if (ndim > 0 && !csr && have_basis) {  // Ladruno (WP-226): no basis for a variable-node class
 						size_t nElem = elem_by_custom_rule.items.size();
 						std::vector<double> ggp;
 						ggp.reserve(nElem * (size_t)q_num_gp * (size_t)ndim);
@@ -1496,7 +1528,7 @@ int LadrunoRecorder::writeModelElements()
 							it5 != elem_by_custom_rule.items.end() && ok; ++it5) {
 							Element* elem = *it5;
 							const ID& nd = elem->getExternalNodes();
-							int nn = elem_by_tag.num_nodes;
+							int nn = bucket_nn;
 							std::vector<std::vector<double> > node_xyz(
 								(size_t)nn, std::vector<double>((size_t)ndim, 0.0));
 							for (int j = 0; j < nn && ok; ++j) {
@@ -1509,7 +1541,7 @@ int LadrunoRecorder::writeModelElements()
 							if (!ok) break;
 							std::vector<double> ex;
 							if (!me::computeGlobalGP(geom, nn, node_xyz, ndim,
-								q_gp_param, q_num_gp, q_ndir, ex)) { ok = false; break; }
+								q_gp_param, q_num_gp, q_ndir, ex, bern_basis)) { ok = false; break; }
 							ggp.insert(ggp.end(), ex.begin(), ex.end());
 						}
 						if (ok && !ggp.empty()) {

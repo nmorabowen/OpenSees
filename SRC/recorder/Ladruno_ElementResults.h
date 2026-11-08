@@ -1243,6 +1243,16 @@ namespace detail {
 			// ---- tri, barycentric (ndir=2) -------------------------------
 			case ElementIntegrationRuleType::Triangle_GaussLegendre_1: // Tri31
 				ndir = 2; num_gp = 1; gp_param = { 1.0 / 3.0, 1.0 / 3.0 }; gp_weight = { 0.5 }; return true;
+			case ElementIntegrationRuleType::Triangle_GaussLegendre_2: { // LadrunoLST: 3-pt interior
+				// Ladruno (WP-227): LadrunoLST.cpp lst_init_rule — pts[i] = (L1, L2)
+				// with N0=L1, N1=L2, N2=1-L1-L2 (Tri31 convention), in THIS order:
+				// (2/3,1/6), (1/6,2/3), (1/6,1/6); w = 1/6 each (sum 1/2). NOT the
+				// BezierTri6 order (1/6,1/6),(2/3,1/6),(1/6,2/3) — that one is a
+				// different vertex convention and travels as a custom rule.
+				const double t2 = 2.0 / 3.0, t1 = 1.0 / 6.0;
+				ndir = 2; num_gp = 3;
+				gp_param = { t2, t1,  t1, t2,  t1, t1 };
+				gp_weight = { t1, t1, t1 }; return true; }
 			// ---- tet, barycentric (ndir=3) -------------------------------
 			case ElementIntegrationRuleType::Tetrahedron_GaussLegendre_1: // FourNodeTetrahedron: 1 GP (not 4)
 				ndir = 3; num_gp = 1; gp_param = { 0.25, 0.25, 0.25 }; gp_weight = { 1.0 / 6.0 }; return true;
@@ -1288,8 +1298,34 @@ namespace detail {
 					w0 };                                      // centroid
 				return true; }
 			default:
-				return false; // Tri_GL_2/2B/2C not yet tabulated
+				return false; // Tri_GL_2B/2C not yet tabulated
 			}
+		}
+
+		/* ----------------------------------------------------------------- *
+		 * Ladruno (WP-227): geometry enum of a SELF-DESCRIBED element         *
+		 * (class-tag arm geom == Custom, e.g. LadrunoUP), from its basisInfo  *
+		 * topology + node count. Custom when the pair is unknown (the bucket  *
+		 * then stays TOPOLOGY custom / no GLOBAL_GP_COORDS, as before).       *
+		 * ----------------------------------------------------------------- */
+		inline ElementGeometryType::Enum geometryFromBasisInfo(
+			const BasisInfo& b, int num_nodes)
+		{
+			if (!b.valid) return ElementGeometryType::Custom;
+			const std::string& t = b.topology;
+			if (t == "line" && num_nodes == 2) return ElementGeometryType::Line_2N;
+			if (t == "line" && num_nodes == 3) return ElementGeometryType::Line_3N;
+			if (t == "tri"  && num_nodes == 3) return ElementGeometryType::Triangle_3N;
+			if (t == "tri"  && num_nodes == 6) return ElementGeometryType::Triangle_6N;
+			if (t == "quad" && num_nodes == 4) return ElementGeometryType::Quadrilateral_4N;
+			if (t == "quad" && num_nodes == 8) return ElementGeometryType::Quadrilateral_8N;
+			if (t == "quad" && num_nodes == 9) return ElementGeometryType::Quadrilateral_9N;
+			if (t == "tet"  && num_nodes == 4) return ElementGeometryType::Tetrahedron_4N;
+			if (t == "tet"  && num_nodes == 10) return ElementGeometryType::Tetrahedron_10N;
+			if (t == "hex"  && num_nodes == 8) return ElementGeometryType::Hexahedron_8N;
+			if (t == "hex"  && num_nodes == 20) return ElementGeometryType::Hexahedron_20N;
+			if (t == "hex"  && num_nodes == 27) return ElementGeometryType::Hexahedron_27N;
+			return ElementGeometryType::Custom;
 		}
 
 		/* ----------------------------------------------------------------- *
@@ -1325,7 +1361,8 @@ namespace detail {
 			ElementGeometryType::Enum geom, int num_nodes,
 			const std::vector<std::vector<double> >& node_xyz, int ndim,
 			const std::vector<double>& gp_param, int num_gp, int ndir,
-			std::vector<double>& out)
+			std::vector<double>& out,
+			bool bernstein = false)  // Ladruno (WP-227): FAMILY=bernstein simplex bases
 		{
 			out.clear();
 			if (ndim <= 0 || num_gp <= 0 || ndir <= 0) return false;
@@ -1336,9 +1373,33 @@ namespace detail {
 			// (geom, num_nodes) pair is not a supported write-side basis.
 			struct ShapeEval {
 				static bool eval(ElementGeometryType::Enum g, int nn,
-					const double* natc, int nd, std::vector<double>& N)
+					const double* natc, int nd, std::vector<double>& N, bool bern)
 				{
 					N.assign(nn, 0.0);
+					// Ladruno (WP-227): quadratic BERNSTEIN simplices. They share the
+					// geometry enum with the Lagrange T6/Tet10 below but not the basis
+					// (equal only on straight sides). Node order + GP_PARAM convention
+					// are the elements' own; LadrunoUP's BT6/BTET10 providers copy them.
+					if (bern) {
+						if (g == ElementGeometryType::Triangle_6N && nn >= 6 && nd >= 2) {
+							// BezierTri6::shapeFunctions: GP_PARAM = (xi1, xi2), xi3 = 1-xi1-xi2;
+							// node0 <-> xi3, node1 <-> xi1, node2 <-> xi2.
+							double x1 = natc[0], x2 = natc[1], x3 = 1.0 - x1 - x2;
+							N[0] = x3 * x3; N[1] = x1 * x1; N[2] = x2 * x2;
+							N[3] = 2.0 * x1 * x3; N[4] = 2.0 * x1 * x2; N[5] = 2.0 * x2 * x3;
+							return true;
+						}
+						if (g == ElementGeometryType::Tetrahedron_10N && nn >= 10 && nd >= 3) {
+							// BezierTet10::shapeFunctions: GP_PARAM = (L1, L2, L3), L4 = 1-L1-L2-L3;
+							// edges 4:(1-2) 5:(2-3) 6:(1-3) 7:(1-4) 8:(3-4) 9:(2-4).
+							double L1 = natc[0], L2 = natc[1], L3 = natc[2], L4 = 1.0 - L1 - L2 - L3;
+							N[0] = L1 * L1; N[1] = L2 * L2; N[2] = L3 * L3; N[3] = L4 * L4;
+							N[4] = 2.0 * L1 * L2; N[5] = 2.0 * L2 * L3; N[6] = 2.0 * L1 * L3;
+							N[7] = 2.0 * L1 * L4; N[8] = 2.0 * L3 * L4; N[9] = 2.0 * L2 * L4;
+							return true;
+						}
+						return false;  // no other Bernstein basis on the write side
+					}
 					switch (g) {
 					// ---- line, [-1,1] : 2-node linear -----------------------
 					case ElementGeometryType::Line_2N: {
@@ -1352,6 +1413,21 @@ namespace detail {
 						if (nn < 3 || nd < 2) return false;
 						double xi = natc[0], eta = natc[1];
 						N[0] = xi; N[1] = eta; N[2] = 1.0 - xi - eta;
+						return true; }
+					// ---- tri, quadratic LAGRANGE (LadrunoLST / SixNodeTri) ---
+					// Ladruno (WP-227): corners L1=xi, L2=eta, L3=1-xi-eta; mid-sides
+					// 3:(0-1), 4:(1-2), 5:(2-0) (LadrunoLST::shapeFunction). Lagrange
+					// ONLY — the caller skips GLOBAL_GP_COORDS for a non-lagrange
+					// FAMILY (BezierTri6 shares Triangle_6N with a Bernstein basis).
+					case ElementGeometryType::Triangle_6N: {
+						if (nn < 6 || nd < 2) return false;
+						double xi = natc[0], eta = natc[1], z = 1.0 - xi - eta;
+						N[0] = xi * (2.0 * xi - 1.0);
+						N[1] = eta * (2.0 * eta - 1.0);
+						N[2] = z * (2.0 * z - 1.0);
+						N[3] = 4.0 * xi * eta;
+						N[4] = 4.0 * eta * z;
+						N[5] = 4.0 * z * xi;
 						return true; }
 					// ---- quad, [-1,1]^2 (FourNodeQuad CCW bilinear) ---------
 					case ElementGeometryType::Quadrilateral_4N: {
@@ -1455,7 +1531,7 @@ namespace detail {
 			out.assign((size_t)num_gp * (size_t)ndim, 0.0);
 			std::vector<double> N;
 			for (int g = 0; g < num_gp; ++g) {
-				if (!ShapeEval::eval(geom, num_nodes, &gp_param[(size_t)g * (size_t)ndir], ndir, N))
+				if (!ShapeEval::eval(geom, num_nodes, &gp_param[(size_t)g * (size_t)ndir], ndir, N, bernstein))
 					return false;
 				for (int i = 0; i < num_nodes; ++i) {
 					double Ni = N[(size_t)i];
@@ -1817,6 +1893,51 @@ namespace detail {
 					) {
 					geom_type = ElementGeometryType::Triangle_3N;
 					int_type = ElementIntegrationRuleType::Triangle_GaussLegendre_2C;
+				}
+				/*
+				Ladruno (WP-227): 6-node LAGRANGE triangle with the 3-pt interior
+				rule in LadrunoLST's own order (see getStandardQuadrature). Every
+				-geom shares lst_init_rule, so one arm covers the class.
+				*/
+				else if (
+					// ./ladrunoPlane
+					elem_class_tag == ELE_TAG_LadrunoLST
+					) {
+					geom_type = ElementGeometryType::Triangle_6N;
+					int_type = ElementIntegrationRuleType::Triangle_GaussLegendre_2;
+				}
+				/*
+				Ladruno (WP-227): self-described multi-topology elements. LadrunoUP
+				carries T3/Q4/H8/BT6/BTET10 under ONE class tag, each with its own
+				GP set and order (UP's H8 is NOT Brick's i,j,k order), so no
+				class-tag arm can be right. The element answers "basisInfo" +
+				"integrationPoints" + "integrationWeights"; the writer derives the
+				geometry PER BUCKET from basisInfo (geometryFromBasisInfo). The
+				dimension here only selects the multi-dim probe path; the Matrix
+				the element returns sets the real one (2 or 3).
+				*/
+				else if (
+					// ./ladrunoUP
+					elem_class_tag == ELE_TAG_LadrunoUP
+					) {
+					geom_type = ElementGeometryType::Custom;
+					int_type = ElementIntegrationRuleType::CustomIntegrationRule;
+					custom_rule_dimension = 2;
+				}
+				/*
+				Ladruno (WP-227): LadrunoSolidShell — 8-node brick geometry (shp3d
+				node order), but 2x2 in-plane x nz through-thickness (gauss 2..5 |
+				lobatto 3..7) chosen PER ELEMENT, layer-major (zeta slowest, in-plane
+				CCW fastest). A custom rule from the element's "integrationPoints":
+				elements with different (rule, nz) land in different buckets.
+				*/
+				else if (
+					// ./ladrunoSolidShell
+					elem_class_tag == ELE_TAG_LadrunoSolidShell
+					) {
+					geom_type = ElementGeometryType::Hexahedron_8N;
+					int_type = ElementIntegrationRuleType::CustomIntegrationRule;
+					custom_rule_dimension = 3;
 				}
 				/*
 				6-node Bezier triangle (BezierTri6) with a custom (barycentric)
