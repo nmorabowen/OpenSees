@@ -12,7 +12,10 @@ date: 2026-11-08
   drained plane strain e0 0.833 peaks at sigma1/sigma3 32.7 at the first step (paper 4.805; the out-of-plane
   stress falls to 0.13 kPa); drained TC e0 0.833 loses the symmetry of a symmetric (yy = zz) strain increment
   (sigma_zz 0.025 against sigma_yy 1.0) and reaches lateral TENSION (-3.0 kPa), sigma1/sigma3 13,736. Every step
-  returns rc 0. All 11 cases at 1 kPa depart from the paper (undrained p_min up to 1.5x); none at 10 kPa or above.
+  returns rc 0. Against DM04 `uw_model` (the UW additions LadrunoSANISAND carries; the right reference for the C++),
+  5 of the 6 drained cases at 1 kPa depart and one fails outright; the undrained cases agree. None depart at 10 kPa
+  or above. (A first reading against DM04 `paper` also flagged the undrained 1 kPa cases, p_min up to 1.5x: that
+  was the UW additions, which every LadrunoSANISAND configuration shows, not this integration error.)
 - **Why:** at 1 kPa the elastic range is tiny against a 0.05 % step, and ModifiedEuler's substep error control
   (TolE hardcoded 1e-4 unless honorTolR) does not catch it. WP-129 already measured ModifiedEuler 15-100 % off the
   oracle on hard states; this is the silent form of it at the strip surface's pressure.

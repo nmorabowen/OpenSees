@@ -8,12 +8,15 @@ Models
            not a K4 verdict.
   DM04     WP-134's independent reference integrator (Ladruno_scripts/sanisand_reference), Toyoura Table 1 with
            P_atm = the harness p_a (101 kPa), so its CSL e_c = e0 - lambda_c (p/p_a)^xi and M are EXACTLY NorSand's
-           (sand.toyoura_dm04, sheet S.22; checked below). Two option sets: 'paper' (the published model, primary)
+           (sand.toyoura_dm04, sheet S.22; checked below). Two option sets: 'uw_model' (REF: the UW additions
+           U1-U5, which LadrunoSANISAND carries by construction, so it is the DM04 the TIMs strip runs and K5
+           compares against; owner 2026-11-08) and 'paper' (the published equations, reported beside it; the two
+           differ only below about 5 kPa)
            and 'uw_model' (the plan's named oracle: UW additions U1-U5).
   LadrunoSANISAND  the fork's C++ DM04 (the material the strip campaign runs), one material point driven by
            chained ladrunoSANISANDReplay calls in k4_sanisand.py under Python 3.12; same Toyoura set and P_atm,
-           the campaign's integration options. Its distance from DM04 'paper' is reported too: a check of the C++
-           against the paper's equations on these paths.
+           three configurations (k4_sanisand.CONFIGS); its distance from REF is reported: a check of the C++
+           against the same equations on these paths.
   (PM4Sand: k4_pm4sand.py is kept as a standalone driver; owner 2026-11-07: K4 sticks to LadrunoSANISAND.)
 
 Cases: p0 in {100, 500} kPa x e0 in {0.735, 0.833, 0.907} (dense, medium, loose Toyoura; DM04's Verdugo &
@@ -21,7 +24,7 @@ Ishihara range) x {TC, TCU, PS, PSU}, axial strain to --eps-end.
 
 Gate (soft, plan: 'peak q and eps_v must agree within the triaxial scatter; differences are explained, not tuned
 away'). The scatter is K3's measurement model (objective.Weights: sigma_sr 0.10 on sigma1'/sigma3', sigma_ev
-0.10 % on eps_v). Drained cases: |d(sr_peak)| <= 0.10 and |d(eps_v at peak)| <= 0.10 % against DM04-paper.
+0.10 % on eps_v). Drained cases: |d(sr_peak)| <= 0.10 and |d(eps_v at peak)| <= 0.10 % against DM04 REF.
 Undrained cases have no Toyoura lab scatter in the project (plan §5.2 K3): reported, not gated.
 
     python -m harness.k4_crossmodel --theta provisional --out out/k4 [--no-sanisand] [--dist <worktree>/dist/bin]
@@ -54,6 +57,7 @@ E0S = (0.735, 0.833, 0.907)
 KINDS = ("TC", "TCU", "PS", "PSU")
 SIG_SR, SIG_EV_PCT = 0.10, 0.10          # objective.Weights defaults: K3's scatter model
 PEAK_TOL = 1.0e-3
+REF = "uw_model"                          # the DM04 option set every comparison references (owner 2026-11-08)
 
 
 # Critical-state convergence (independent of theta): loose undrained compression from both sides of the CSL point
@@ -255,9 +259,9 @@ def cs_summary(rep, cases):
 
 
 def departures(rep, key, title, note, table=False):
-    """Departures of one C++ configuration from DM04 paper: drained |d sr_peak| > 0.05, undrained ratio off 1 by
+    """Departures of one C++ configuration from DM04 REF: drained |d sr_peak| > 0.05, undrained ratio off 1 by
     > 2 %, or an incomplete run. table=True also prints the largest departure per confining pressure."""
-    vs, runs = rep.get(f"{key}_vs_paper", {}), rep.get(f"sanisand_{key}", {})
+    vs, runs = rep.get(f"{key}_vs_ref", {}), rep.get(f"sanisand_{key}", {})
     if not runs:
         return []
     L = ["", f"## {title}", "", note + " Listed: drained |d sr_peak| > 0.05, undrained p_min or q_end ratio off "
@@ -294,7 +298,7 @@ def write_md(path, rep):
     L = [f"# K4 cross-model check ({rep['label']})", "",
          f"theta: `{rep['theta']}` ({rep['theta_source']}). {rep['verdict_note']}", "",
          f"CSL shared with DM04: {rep['csl']['identical']} ({', '.join(f'{k} {a:g}/{b:g}' for k, (a, b) in rep['csl']['pairs'].items())}).",
-         "", "## Drained (gate: |d sr_peak| <= 0.10, |d ev_peak| <= 0.10 %, NorSand against DM04-paper)", "",
+         "", f"## Drained (gate: |d sr_peak| <= 0.10, |d ev_peak| <= 0.10 %, NorSand against DM04 {REF})", "",
          "| case | NorSand sr_peak / ea / ev | DM04 paper | DM04 uw_model | LadrunoSANISAND SAS-ME | d sr | d ev % | within |",
          "|---|---|---|---|---|---|---|---|"]
 
@@ -318,7 +322,7 @@ def write_md(path, rep):
                      f"{cmp_.get('d_sr_peak', float('nan')):+.3f} | {cmp_.get('d_ev_peak', float('nan')):+.3f} | "
                      f"{cmp_.get('within', '—')} |")
     L += ["", "## Undrained (reported: min p @ ea % ; q at the end)", "",
-          "| case | NorSand | DM04 paper | DM04 uw_model | LadrunoSANISAND SAS-ME | NorSand/DM04 p_min | NorSand/DM04 dev_end |",
+          f"| case | NorSand | DM04 paper | DM04 uw_model | LadrunoSANISAND SAS-ME | NorSand/{REF} p_min | NorSand/{REF} dev_end |",
           "|---|---|---|---|---|---|---|"]
     for c in rep["cases"]:
         cid, kind = c["id"], c["kind"]
@@ -342,13 +346,15 @@ def write_md(path, rep):
         for row in cs["rows"]:
             L.append(f"| {row['case']} | {row['model']} | {row['p']:.1f} | {row['q']:.1f} | {row['eta']:.3f} | {row['ratio']:.4f} |")
         L += [""] + [f"- {v}" for v in cs["verdicts"]]
-    cv = [v for v in rep.get("cpp_vs_paper", {}).values() if v and "d_sr_peak" in v]
+    cv = [v for v in rep.get("cpp_vs_ref", {}).values() if v and "d_sr_peak" in v]
+    cu = [v for v in rep.get("cpp_vs_ref", {}).values() if v and v.get("r_p_min") is not None]
     if cv:
-        L += ["", f"LadrunoSANISAND SAS-ME, no flags (C++), against DM04 paper (Python), drained: max |d sr_peak| "
-                  f"{max(abs(v['d_sr_peak']) for v in cv):.4f}, max |d ev_peak| {max(abs(v['d_ev_peak']) for v in cv):.4f} %."]
-    L += departures(rep, "s1", "LadrunoSANISAND IntScheme 1 (ModifiedEuler) against DM04 paper",
+        L += ["", f"LadrunoSANISAND SAS-ME, no flags (C++), against DM04 {REF} (Python), drained: max |d sr_peak| "
+                  f"{max(abs(v['d_sr_peak']) for v in cv):.4f}, max |d ev_peak| {max(abs(v['d_ev_peak']) for v in cv):.4f} %; undrained p_min within "
+                  f"{100 * max((abs(v['r_p_min'] - 1) for v in cu), default=0.0):.2f} %."]
+    L += departures(rep, "s1", f"LadrunoSANISAND IntScheme 1 (ModifiedEuler) against DM04 {REF}",
                     "Same 0.05 % steps as every other run; the SAS-ME column above is the accurate C++.")
-    L += departures(rep, "tims", "LadrunoSANISAND, TIMs strip-baseline configuration, against DM04 paper",
+    L += departures(rep, "tims", f"LadrunoSANISAND, TIMs strip-baseline configuration, against DM04 {REF}",
                     "SAS-ME with the R1 (WP-152) flags, TolR 1e-4, maxSubsteps 2000 (k4_sanisand.CONFIGS['tims']); "
                     "R1 changes the constitutive response on purpose, so a departure here is R1's effect, not an "
                     "integration error.", table=True)
@@ -407,13 +413,13 @@ def main(argv=None):
             rep[key + "_info"], rep[key] = run_sanisand(cases, a.dist, a.out, a.n, cfg)
     for c in cases:
         rep["compare"][c["id"]] = compare(rep["norsand"].get(c["id"], {}).get("metrics"),
-                                          rep["dm04"].get(f"{c['id']}|paper", {}).get("metrics"), c["kind"])
-        rep.setdefault("cpp_vs_paper", {})[c["id"]] = compare(rep["sanisand"].get(c["id"], {}).get("metrics"),
-                                                              rep["dm04"].get(f"{c['id']}|paper", {}).get("metrics"), c["kind"])
+                                          rep["dm04"].get(f"{c['id']}|{REF}", {}).get("metrics"), c["kind"])
+        rep.setdefault("cpp_vs_ref", {})[c["id"]] = compare(rep["sanisand"].get(c["id"], {}).get("metrics"),
+                                                            rep["dm04"].get(f"{c['id']}|{REF}", {}).get("metrics"), c["kind"])
         for key in ("s1", "tims"):
-            rep.setdefault(f"{key}_vs_paper", {})[c["id"]] = compare(
+            rep.setdefault(f"{key}_vs_ref", {})[c["id"]] = compare(
                 rep.get(f"sanisand_{key}", {}).get(c["id"], {}).get("metrics"),
-                rep["dm04"].get(f"{c['id']}|paper", {}).get("metrics"), c["kind"])
+                rep["dm04"].get(f"{c['id']}|{REF}", {}).get("metrics"), c["kind"])
     rep["cs"] = cs_summary(rep, cases)
     rep["seconds"] = time.perf_counter() - t0
     tag = "dryrun" if a.theta == "provisional" else "k4"
