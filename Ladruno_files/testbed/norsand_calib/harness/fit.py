@@ -31,21 +31,25 @@ import numpy as np
 from scipy.optimize import least_squares
 from scipy.stats import qmc
 
-from .model import FIT_NAMES
+from .model import CSL_NAMES, FIT_NAMES
 
 CHI_LO, CHI_HI = -8.0, -0.3
 H_LO, H_HI = 5.0, 5000.0
 N_LO, N_HI = 0.0, 0.8
 RHO_LO = 0.5 + 1e-3
 # u is ordered in the DECODING order (rho_bar before rho), which is also the order of FitSpec.free
-DECODE_ORDER = ("chi", "h", "N", "N_bar", "rho_bar", "rho")
+DECODE_ORDER = ("chi", "h", "N", "N_bar", "rho_bar", "rho") + CSL_NAMES
+# K3c (owner 2026-11-09): NorSand's own fork CSL e_c = e0 - lambda_c (p/p_a)^xi, decoded last on independent
+# boxes around Toyoura (DM04 Table 1: 0.934, 0.019, 0.7; e_max 0.977); lambda_c on a log scale
+CSL_BOUNDS = dict(e0=(0.85, 1.05), lambda_c=(0.002, 0.10), xi=(0.2, 1.0))
 
 
 @dataclass
 class FitSpec:
     free: tuple = FIT_NAMES
     fixed: dict = field(default_factory=dict)
-    bounds: dict = field(default_factory=lambda: dict(chi=(CHI_LO, CHI_HI), h=(H_LO, H_HI), N=(N_LO, N_HI)))
+    bounds: dict = field(default_factory=lambda: dict(chi=(CHI_LO, CHI_HI), h=(H_LO, H_HI), N=(N_LO, N_HI),
+                                                      **CSL_BOUNDS))
 
     def __post_init__(self):
         unknown = [n for n in self.free if n not in DECODE_ORDER]
@@ -64,6 +68,8 @@ class FitSpec:
         it = iter(u) if u is not None else None
 
         def take(name, lo, hi, log=False):
+            if name not in self.free and name not in fx and name in CSL_NAMES:
+                return                                  # optional CSL entry: the sand's value applies
             if name not in self.free:
                 th[name] = float(fx[name])
                 return
@@ -101,6 +107,9 @@ class FitSpec:
         rbhi = 1.0 if "rho" not in fx else min(1.0, fx["rho"] / beta)
         take("rho_bar", RHO_LO, rbhi)
         take("rho", max(RHO_LO, beta * th["rho_bar"]), 1.0)
+        take("e0", *self.bounds["e0"])
+        take("lambda_c", *self.bounds["lambda_c"], log=True)
+        take("xi", *self.bounds["xi"])
         return th, np.array([uo[n] for n in self.free])
 
     def decode(self, u) -> dict:

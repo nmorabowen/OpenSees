@@ -35,6 +35,8 @@ import warnings  # noqa: E402
 warnings.filterwarnings("ignore", message=r"rho ?= ?\S+ > rho_bar", category=UserWarning)
 
 FIT_NAMES = ("chi", "h", "N", "N_bar", "rho", "rho_bar")
+# optional: NorSand's OWN fork CSL (K3c, owner 2026-11-09); absent from theta = the sand's (DM04 Table 1) values
+CSL_NAMES = ("e0", "lambda_c", "xi")
 
 P_MIN_FRAC = 5.0e-3     # sheet §9.7 / §1.3: the parser default of the p' floor, p_min = P_MIN_FRAC * p_ref
 
@@ -98,6 +100,9 @@ def common_kwargs(setup: Setup, theta: dict, p_init: float, e_init: float) -> di
               zeta=setup.zeta, cap=setup.cap, c1=setup.c1, c2=setup.c2)
     for k in FIT_NAMES:
         kw[k] = float(theta[k])
+    for k in CSL_NAMES:
+        if k in theta:
+            kw[k] = float(theta[k])
     kw.update(EN.get(setup.energy).params(s, p_init, e_init, setup.policy))
     kw["p_min"] = resolve_p_min(setup, kw)          # always explicit: O1 (default off) and O2 (default on) must agree
     return kw

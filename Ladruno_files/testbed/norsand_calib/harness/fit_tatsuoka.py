@@ -95,6 +95,9 @@ def main(argv=None):
     ap.add_argument("--profiles", action="store_true")
     ap.add_argument("--eval", default=None, help="name=value,... : evaluate once and print the breakdown")
     ap.add_argument("--lit", action="store_true", help="add Lam & Tatsuoka 1988 (omega 0) and Fukushima & Tatsuoka 1984 curves")
+    ap.add_argument("--warm", action="append", default=[],
+                    help="extra start after the Sobol set (start index --starts, --starts + 1, ...): a theta JSON dict, "
+                         "or a file holding one (or a record/checkpoint with a 'theta' key); every free name needs a value")
     ap.add_argument("--out", default=None, help="output directory (default ../out)")
     ap.add_argument("--tag", default="")
     ap.add_argument("--checkpoint", default=None,
@@ -124,6 +127,14 @@ def main(argv=None):
         print(f"one breakdown: {time.perf_counter() - t0:.1f} s")
         return 0
     spec = FIT.FitSpec(free=free, fixed=fixed)
+    warm = []
+    for w in a.warm:
+        d = json.load(open(w, encoding="utf-8")) if os.path.exists(w) else json.loads(w)
+        d = d.get("theta", d)
+        lack = [n for n in free if n not in d]
+        if lack:
+            ap.error(f"--warm {w}: no value for {lack}")
+        warm.append({n: float(d[n]) for n in free})
     t0 = time.perf_counter()
     only = None
     if a.only:
@@ -133,7 +144,7 @@ def main(argv=None):
             only += list(range(int(lo), int(hi) + 1)) if hi else [int(lo)]
     if not a.collect:
         runs = FIT.multistart(obj, spec, n_starts=a.starts, seed=a.seed, workers=a.workers, only=only,
-                              checkpoint_dir=a.checkpoint)
+                              extra_starts=warm, checkpoint_dir=a.checkpoint)
         if a.only:
             for r in sorted(runs, key=lambda r: r["start"]):
                 print(f"start {r['start']}: cost {r['cost']:.6g}, {r['residual_evals']} evals, {r['seconds']:.0f} s")
@@ -141,7 +152,7 @@ def main(argv=None):
             return 0
     if a.checkpoint:
         runs = FIT.load_checkpoints(a.checkpoint)
-        missing = sorted(set(range(a.starts)) - {int(r["start"]) for r in runs})
+        missing = sorted(set(range(a.starts + len(warm))) - {int(r["start"]) for r in runs})
         print(f"collected {len(runs)} starts from {a.checkpoint}; missing {missing if missing else 'none'}")
         if not runs:
             return 1
@@ -151,7 +162,7 @@ def main(argv=None):
                free=list(spec.free), fixed=fixed, weights=obj.W.as_dict(), runs=runs, best=best,
                breakdown=obj.breakdown(best["theta"]), wall_seconds=time.perf_counter() - t0)
     if a.checkpoint:
-        rec["checkpoint"] = dict(dir=a.checkpoint, starts_planned=a.starts, missing=missing)
+        rec["checkpoint"] = dict(dir=a.checkpoint, starts_planned=a.starts, warm=warm, missing=missing)
     rec["identifiability"] = FIT.identifiability(obj, best["theta"], spec.free)
     if a.profiles:
         rec["profiles"] = {nm: FIT.profile(obj, spec, best["theta"], nm, workers=a.workers) for nm in ("chi", "h")}
