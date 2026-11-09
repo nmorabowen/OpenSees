@@ -203,19 +203,29 @@ class HSParams:
                 self.beta_cap = beta_cal
 
 
+PSI_RAMP_FRAC = 0.05  # mirrors HSParams::kPsiRampFrac
+
+
 def mobilised_sin_psi(p: HSParams, s_phim: float) -> Tuple[float, float]:
     """PLAXIS HS mobilised dilatancy: (sin psi_m, d sin psi_m / d sin phi_m).
 
-    psi_m = 0 for sin phi_m < 3/4 sin phi or psi = 0; otherwise max(Rowe, 0). Mirrors
+    psi_m = 0 for sin phi_m < 3/4 sin phi or psi = 0; otherwise max(Rowe, 0), ramped in
+    linearly over the first 5 % of sin phi above the threshold (C0). Mirrors
     HSParams::mobilised_sin_psi in LadrunoHSKernel.h (no contractant branch).
     """
-    if p.sin_psi <= 0.0 or s_phim < 0.75 * p.sin_phi:
+    s_t = 0.75 * p.sin_phi
+    if p.sin_psi <= 0.0 or s_phim < s_t:
         return 0.0, 0.0
     den = 1.0 - s_phim * p.sin_phicv
     rowe = (s_phim - p.sin_phicv) / den
     if rowe <= 0.0:
         return 0.0, 0.0
-    return rowe, (1.0 - p.sin_phicv ** 2) / (den * den)
+    drowe = (1.0 - p.sin_phicv ** 2) / (den * den)
+    delta = PSI_RAMP_FRAC * p.sin_phi
+    if s_phim < s_t + delta:
+        r = (s_phim - s_t) / delta
+        return rowe * r, drowe * r + rowe / delta
+    return rowe, drowe
 
 
 def calibrate_cap_parameters(p: HSParams) -> Tuple[float, float]:

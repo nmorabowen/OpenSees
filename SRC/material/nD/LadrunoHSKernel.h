@@ -159,13 +159,28 @@ struct HSParams {
   // cap's job, and a contractant shear flow parallel to the cap normal makes the
   // two-surface corner (regime 4) kinematically degenerate (0.5 + k*s_psim -> 0).
   // Returns sin(psi_m); dRowe_out (if given) is d sin(psi_m) / d sin(phi_m) (0 where clipped).
+  //
+  // Made C0 (WP-210 round 4): PLAXIS jumps from 0 to Rowe(3/4 sin phi) at the threshold whenever
+  // sin(phi_cv) < 3/4 sin(phi). With d(gamma^p) = c_gam(sin psi_m) d(eps_q^p) (gamma_factor) that
+  // jump leaves the shear return without a root, and it stalls Newton for psi = phi. Rowe is
+  // ramped in linearly over the first kPsiRampFrac * sin(phi) above the threshold; outside that
+  // band this is the PLAXIS rule.
+  static constexpr double kPsiRampFrac = 0.05;
   double mobilised_sin_psi(double s_phim, double* dRowe_out = nullptr) const {
     if (dRowe_out) *dRowe_out = 0.0;
-    if (sin_psi <= 0.0 || s_phim < 0.75 * sin_phi) return 0.0;
+    double s_t = 0.75 * sin_phi;
+    if (sin_psi <= 0.0 || s_phim < s_t) return 0.0;
     double den  = 1.0 - s_phim * sin_phicv;
     double rowe = (s_phim - sin_phicv) / den;
     if (rowe <= 0.0) return 0.0;
-    if (dRowe_out) *dRowe_out = (1.0 - sin_phicv * sin_phicv) / (den * den);
+    double drowe = (1.0 - sin_phicv * sin_phicv) / (den * den);
+    double delta = kPsiRampFrac * sin_phi;
+    if (s_phim < s_t + delta) {
+      double r = (s_phim - s_t) / delta;
+      if (dRowe_out) *dRowe_out = drowe * r + rowe / delta;
+      return rowe * r;
+    }
+    if (dRowe_out) *dRowe_out = drowe;
     return rowe;
   }
 
