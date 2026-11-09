@@ -3,8 +3,8 @@
 The cross-model K4 (k4_crossmodel) compares NorSand with DM04 `uw_model`; the two were fitted to different data
 (NorSand: the K3 set, mostly plane strain; DM04: Verdugo & Ishihara 1996 drained triaxial compression), so a
 difference between them mixes model form with calibration. Here each model meets data, with the same metric and the
-same tolerance as the cross-model gate (K3's scatter model, objective.Weights: |d sr_peak| <= 0.10 and
-|d ev_peak| <= 0.10 %, ev at the peak point, compression positive):
+the cross-model gate's sr tolerance (K3's scatter model, objective.Weights): the GATE is |d sr_peak| <= 0.10 alone
+(owner, 2026-11-08); ev at the peak point (compression positive) is reported against 0.10 %, not gated:
 
                       K3 set (19 curves + 22 point tests)    Verdugo & Ishihara 1996 (6 drained TC curves)
   NorSand (K3 theta)  GATED                                   reported
@@ -12,8 +12,8 @@ same tolerance as the cross-model gate (K3's scatter model, objective.Weights: |
 
 The off-diagonal cells say how much of the cross-model gap is calibration data. Data: data/README.md (Tatsuoka
 1986, Lam & Tatsuoka 1988 omega 0, Fukushima & Tatsuoka 1984 Fig. 5, exactly fit_tatsuoka --lit; V&I = the Wang
-database file 34_Toyoura_sand_Tokyo, data/wang_toyoura/wang34_Tokyo_*). Point tests carry phi_peak only (sr gated,
-ev not available); eps_peak is reported. A data curve without an eps_v branch is gated on sr alone.
+database file 34_Toyoura_sand_Tokyo, data/wang_toyoura/wang34_Tokyo_*). Point tests carry phi_peak only (no ev);
+eps_peak is reported.
 p_a is TIMS_P_A (101 kPa) for both models, as in k4_crossmodel; DM04's own Toyoura runs used 100 (open item O9).
 
   python -m harness.k4_owndata --theta <K3 result JSON | JSON dict> --out out/k4_own [--workers 8]
@@ -98,9 +98,11 @@ def judge(model, data):
     d_sr = model["sr_peak"] - data["sr_peak"]
     d_ev = None if data.get("ev_peak") is None else model["ev_peak"] - data["ev_peak"]
     d_ea = None if data.get("ea_peak") is None else model["ea_peak"] - data["ea_peak"]
-    ok = abs(d_sr) <= SIG_SR and (d_ev is None or abs(d_ev) <= SIG_EV_PCT)
-    return dict(d_sr_peak=d_sr, d_ev_peak=d_ev, d_ea_peak=d_ea, within=bool(ok),
-                sr_only=d_ev is None)
+    # the gate is peak sr alone (owner, 2026-11-08): ev at the peak point is reported, not gated, because on a
+    # flat-topped curve the peak point wanders along the plateau while ev keeps changing (DM04 on its own V&I tests:
+    # sr within 0.052 on all six, ev off by 0.12 to 1.05 %)
+    return dict(d_sr_peak=d_sr, d_ev_peak=d_ev, d_ea_peak=d_ea, within=bool(abs(d_sr) <= SIG_SR),
+                ev_within=None if d_ev is None else bool(abs(d_ev) <= SIG_EV_PCT))
 
 
 def _f(x, fmt="{:+.3f}"):
@@ -110,12 +112,12 @@ def _f(x, fmt="{:+.3f}"):
 def write_md(path, rep):
     L = [f"# K4, own data (O8: each model against its calibration data)", "",
          f"theta: `{rep['theta']}` ({rep['theta_source']}).", "",
-         f"Gate: |d sr_peak| <= {SIG_SR:g} and |d ev_peak| <= {SIG_EV_PCT:g} % (K3's scatter model), on the diagonal "
+         f"Gate: |d sr_peak| <= {SIG_SR:g} (K3's scatter model; ev at the peak reported against {SIG_EV_PCT:g} %, not gated), on the diagonal "
          f"only: NorSand against the K3 set, DM04 `{REF}` against Verdugo & Ishihara (1996). p_a {TIMS_P_A:g} kPa.", ""]
-    L += ["## Summary", "", "| model | data | specimens | within | sr only | median abs(d sr) | median abs(d ev) % | gated |",
+    L += ["## Summary", "", "| model | data | specimens | sr within (gate) | ev within / with ev | median abs(d sr) | median abs(d ev) % | gated |",
           "|---|---|---|---|---|---|---|---|"]
     for row in rep["summary"]:
-        L.append(f"| {row['model']} | {row['dataset']} | {row['n']} | {row['within']} | {row['sr_only']} | "
+        L.append(f"| {row['model']} | {row['dataset']} | {row['n']} | {row['within']} | {row['ev_within']} / {row['n_ev']} | "
                  f"{_f(row['med_sr'], '{:.3f}')} | {_f(row['med_ev'], '{:.3f}')} | {'yes' if row['gated'] else 'no'} |")
     for ds, title in (("K3", "K3 set (NorSand's own data)"), ("VI", "Verdugo & Ishihara 1996 (DM04's own data)")):
         L += ["", f"## {title}", "",
@@ -149,7 +151,8 @@ def summarise(specs):
             dsr = [abs(j["d_sr_peak"]) for j in js if "d_sr_peak" in j]
             dev = [abs(j["d_ev_peak"]) for j in js if j.get("d_ev_peak") is not None]
             rows.append(dict(model=label, dataset=ds, n=len(js), within=sum(j["within"] for j in js),
-                             sr_only=sum(bool(j.get("sr_only")) for j in js),
+                             ev_within=sum(bool(j.get("ev_within")) for j in js),
+                             n_ev=sum(j.get("ev_within") is not None for j in js),
                              med_sr=float(np.median(dsr)) if dsr else None, med_ev=float(np.median(dev)) if dev else None,
                              gated=(m == "norsand") == (ds == "K3")))
     return rows
