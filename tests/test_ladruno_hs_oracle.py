@@ -440,17 +440,38 @@ def test_t2c_consistent_tangent_fd_all_regimes(lode: str) -> None:
         # Purely isotropic cap loading (q_tr = 0): the case whose tangent used to have ZERO
         # shear stiffness. FD perturbs the shear components, so a missing deviatoric block fails.
         ("cap", st_iso, np.array([2.0e-3, 2.0e-3, 2.0e-3, 0.0, 0.0, 0.0])),
+        # Tension cutoff ABOVE the apex (default sigma_t = 0, c > 0): p = p_cut with q kept on
+        # the shear cone (WP-210 round 4); the old apex collapse jumped q to 0 here.
+        ("tension", st_ocr, np.array([-1.3e-3, -1.0e-3, -1.1e-3, 2.0e-3, -5.0e-4, 4.0e-4])),
     ]
 
-    # Apex tension cutoff: the stress map is exactly constant (sigma = p_cut I), so its FD
-    # derivative is zero; the returned tangent is the documented residual 1e-3 C_e.
-    sig_t, C_t, reg_t = hs.return_map_3d(p, st_ocr, np.array([-2.0e-2, -2.0e-2, -2.0e-2, 0.0, 0.0, 0.0]))
+    # Tension cutoff AT the apex (sigma_t >= c cot phi): the stress map is exactly constant
+    # (sigma = p_cut I), so its FD derivative is zero; the tangent is the residual 1e-3 C_e.
+    pa = hs.HSParams(
+        37000.0, 29600.0, 90000.0, 0.50, 5.0, 38.0, 10.0, K0nc=0.38, lode_shape=lode,
+        sigma_t=10.0 * 5.0 / math.tan(math.radians(38.0)),
+    )
+    sig_t, C_t, reg_t = hs.return_map_3d(pa, st_ocr, np.array([-2.0e-2, -2.0e-2, -2.0e-2, 0.0, 0.0, 0.0]))
     assert reg_t == "tension"
-    p_cut = max(p.p_min - p.a_apex, -p.sigma_t)
-    assert np.allclose(sig_t.sig, p_cut * np.array([1, 1, 1, 0, 0, 0.0]), atol=1e-12)
-    s_t2, _, _ = hs.return_map_3d(p, st_ocr, np.array([-2.1e-2, -1.9e-2, -2.0e-2, 1e-3, 0.0, 0.0]))
+    p_cut_a = max(pa.p_min - pa.a_apex, -pa.sigma_t)
+    assert np.allclose(sig_t.sig, p_cut_a * np.array([1, 1, 1, 0, 0, 0.0]), atol=1e-12)
+    s_t2, _, _ = hs.return_map_3d(pa, st_ocr, np.array([-2.1e-2, -1.9e-2, -2.0e-2, 1e-3, 0.0, 0.0]))
     assert np.allclose(s_t2.sig, sig_t.sig, atol=1e-12), "apex return must not depend on the trial deviator"
     assert sig_t.gamma_p > st_ocr.gamma_p
+
+    # Above the apex: p sits on p_cut, and sigma(eps) has no jump across p_tr = p_cut.
+    p_cut = max(p.p_min - p.a_apex, -p.sigma_t)
+    e_tc = np.array([-1.3e-3, -1.0e-3, -1.1e-3, 2.0e-3, -5.0e-4, 4.0e-4])
+    s_tc, _, reg_tc = hs.return_map_3d(p, st_ocr, e_tc)
+    assert reg_tc == "tension" and abs(s_tc.sig[:3].mean() - p_cut) < 1e-10
+    sigs, regs = [], []
+    for t in np.linspace(0.0, 1.5, 1501):
+        s_k, _, r_k = hs.return_map_3d(p, st_ocr, t * e_tc)
+        sigs.append(s_k.sig.copy())
+        regs.append(r_k)
+    steps = np.linalg.norm(np.diff(np.array(sigs), axis=0), axis=1)
+    assert "tension" in regs and regs[0] != "tension"
+    assert steps.max() < 20.0 * steps.mean(), "stress jump across the tension cutoff"
 
     delta = 1.0e-7
     for expected_reg, st_base, eps_target in cases:

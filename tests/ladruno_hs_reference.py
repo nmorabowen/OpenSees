@@ -1364,6 +1364,81 @@ def _solve_regime4_corner(
 # --------------------------------------------------------------------------- #
 #  Full 3D Return Map & 6x6 Consistent Algorithmic Tangent                    #
 # --------------------------------------------------------------------------- #
+def _solve_tension_corner(
+    p: HSParams, p_cut: float, p_tr: float, q_tr: float, x: float,
+    Ke: float, Ge: float, gamma_p_n: float, p_p_n: float, void_ratio: float,
+):
+    """Tension cutoff above the apex: p = p_cut, q continuous with the cone (WP-210 r4).
+
+    Mirrors LadrunoHSKernel.h solve_tension_corner. The shear-mechanism hardening is the
+    PLAXIS measure dgam = c_gam(k1, sin psi_m(q)) (q_tr - q)/(3 Ge), as in regimes 1/2/4.
+    Returns (ok, q, dgam, sens[2x4]); ok is False when shear dilatancy alone lifts p above
+    p_cut (tension inactive).
+    """
+    Theta, dTheta_dx, k3, dk3_dx, Th_sig, dTh_sig_dx = lode_factors_and_derivs(p, x)
+    k1, dk1_dx = k1_and_deriv(p, x)
+    sens = np.zeros((2, 4))
+    alpha2 = p.alpha_cap ** 2
+    p_hat = max(p.p_min, p_cut + p.a_apex)
+    q_fail = p.M_c * p_hat / Theta
+    pp_hat = p_p_n + p.a_apex
+    q_cap = math.sqrt(max(0.0, alpha2 * (pp_hat * pp_hat - p_hat * p_hat)))
+    fail_binds = q_fail <= q_cap
+    q_lim = min(q_fail, q_cap)
+    i3G = 1.0 / (3.0 * Ge)
+
+    def res(q):
+        Phi, _, dPq = _phi_shear(p, p_cut, q, k3, Th_sig)
+        sp, _, dsq = _rowe_dilatancy(p, p_cut, q, void_ratio, k3, Th_sig)
+        cg, _, dcg_ds = gamma_factor(k1, dk1_dx, sp)
+        e = (q_tr - q) * i3G
+        return Phi - gamma_p_n - cg * e, dPq + cg * i3G - dcg_ds * dsq * e
+
+    q_hi = min(q_tr, q_lim)
+    R_hi, _ = res(q_hi)
+    if R_hi <= 0.0:
+        q = q_hi
+        mode = 0 if q_tr <= q_lim else (2 if fail_binds else 3)
+    else:
+        lo, hi, q = 0.0, q_hi, q_hi
+        for _ in range(100):
+            R, Rq = res(q)
+            if abs(R) < 1.0e-14 or (hi - lo) <= 1.0e-15 * max(1.0, hi):
+                break
+            if R > 0.0:
+                hi = q
+            else:
+                lo = q
+            qn = q - R / Rq if Rq > 0.0 else 0.5 * (lo + hi)
+            q = qn if lo < qn < hi else 0.5 * (lo + hi)
+        mode = 1
+
+    if mode == 2:
+        s_psim = 0.0 if (p.emax > 0.0 and void_ratio >= p.emax and p.sin_psi > 0.0) else p.sin_psi
+    elif mode != 0:
+        s_psim = _rowe_dilatancy(p, p_cut, q, void_ratio, k3, Th_sig)[0]
+    else:
+        s_psim = 0.0
+    cg, dcg_dx, dcg_ds = gamma_factor(k1, dk1_dx, s_psim)
+    dgam = 0.0 if mode == 0 else cg * (q_tr - q) * i3G
+    if (p_cut - p_tr) / Ke - s_psim * dgam < 0.0:
+        return False, 0.0, 0.0, sens
+
+    if mode == 0:
+        sens[1, 1] = 1.0
+    elif mode == 1:
+        _, _, dPq, dPx = _phi_shear(p, p_cut, q, k3, Th_sig, dk3_dx, dTh_sig_dx, return_dx=True)
+        _, _, dsq, dsx = _rowe_dilatancy(p, p_cut, q, void_ratio, k3, Th_sig, dk3_dx, dTh_sig_dx, return_dx=True)
+        e = (q_tr - q) * i3G
+        Rq = dPq + cg * i3G - dcg_ds * dsq * e
+        sens[1, 1] = (cg * i3G) / Rq
+        sens[1, 2] = -(dPx - (dcg_dx + dcg_ds * dsx) * e) / Rq
+        sens[1, 3] = -(cg * e / Ge) / Rq
+    elif mode == 2:
+        sens[1, 2] = -q / Theta * dTheta_dx
+    return True, q, dgam, sens
+
+
 def return_map_3d(
     p: HSParams, st_n: HSState, eps_new: np.ndarray
 ) -> Tuple[HSState, np.ndarray, str]:
@@ -1416,18 +1491,34 @@ def return_map_3d(
     )
     _, _, k3_tr, _, Th_sig_tr, _ = lode_factors_and_derivs(p, x_tr)
 
-    # 1. Check Rankine / Apex Tension Cutoff (Surface 4):
-    p_cut = max(p.p_min - p.a_apex, -p.sigma_t)
+    # 1. Tension cutoff on the MEAN stress (Surface 4), mirrors the kernel:
+    #    at the apex -> exact apex stress (residual 1e-3 C_e in the tangent only);
+    #    above the apex (default sigma_t = 0, c > 0) -> p = p_cut, q continuous (WP-210 r4).
+    p_apex = p.p_min - p.a_apex
+    p_cut = max(p_apex, -p.sigma_t)
+    regime = "elastic"
+    p_new, q_new = p_tr, q_tr
+    sens = np.array([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]], dtype=float)
+    solved = False
     if p_tr <= p_cut:
-        # Exact apex return (stress), residual 1e-3 C_e in the tangent only:
-        st_new.sig = p_cut * _I6_M
-        if Ge > 0.0:
-            # PLAXIS gamma^p = 3 k1 d(eps_q^p) - d(eps_v^p)/3 with d(eps_q^p) = q_tr/(3 Ge),
-            # d(eps_v^p) = (p_tr - p_cut)/Ke (mirrors the kernel apex return)
-            k1_tr, _ = k1_and_deriv(p, x_tr)
-            st_new.gamma_p = st_n.gamma_p + k1_tr * q_tr / Ge + (p_cut - p_tr) / (3.0 * Ke)
-        C_floor = 1.0e-3 * C_e_alg
-        return st_new, C_floor, "tension"
+        if p_cut <= p_apex + 1.0e-12 * max(1.0, abs(p_apex)):
+            st_new.sig = p_cut * _I6_M
+            if Ge > 0.0:
+                # PLAXIS gamma^p = 3 k1 d(eps_q^p) - d(eps_v^p)/3, d(eps_q^p) = q_tr/(3 Ge),
+                # d(eps_v^p) = (p_tr - p_cut)/Ke (mirrors the kernel apex return)
+                k1_tr, _ = k1_and_deriv(p, x_tr)
+                st_new.gamma_p = st_n.gamma_p + k1_tr * q_tr / Ge + (p_cut - p_tr) / (3.0 * Ke)
+            C_floor = 1.0e-3 * C_e_alg
+            return st_new, C_floor, "tension"
+        okt, q_t, dgam_t, sens_t = _solve_tension_corner(
+            p, p_cut, p_tr, q_tr, x_tr, Ke, Ge, st_n.gamma_p, st_n.p_p, st_n.void_ratio
+        )
+        if okt:
+            p_new, q_new = p_cut, q_t
+            st_new.gamma_p = st_n.gamma_p + dgam_t
+            sens = sens_t
+            regime = "tension"
+            solved = True
 
     # 2. Evaluate trial yield functions at (p_tr, q_tr, x_tr):
     q_tilde_tr = Theta * q_tr
@@ -1442,21 +1533,17 @@ def return_map_3d(
     pp_hat_n = st_n.p_p + p.a_apex
     f_cap_tr = (q_tr * q_tr) / (p.alpha_cap ** 2) + p_hat_tr * p_hat_tr - pp_hat_n * pp_hat_n
 
-    if float(np.dot(deps, deps)) <= 1.0e-30 or (
+    if (not solved) and (float(np.dot(deps, deps)) <= 1.0e-30 or (
         f_shear_tr <= 1.0e-12 and f_fail_tr <= 1.0e-12 and f_cap_tr <= 1.0e-10
-    ):
+    )):
         st_new.sig = sig_tr
         return st_new, C_e_alg, "elastic"
 
     # 3. Koiter Active-Set Selection & Return Map in (p, q):
-    regime = "elastic"
-    p_new, q_new = p_tr, q_tr
-    sens = np.array([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]], dtype=float)
-    solved = False
 
     # Try single-surface Shear (Regime 1) or Failure (Regime 2) first if shear is violated:
     # Note: e_max dilatancy cutoff is gated on st_n.void_ratio for C^1 Newton-Raphson smoothness.
-    if f_shear_tr > 1.0e-12 or f_fail_tr > 1.0e-12:
+    if (not solved) and (f_shear_tr > 1.0e-12 or f_fail_tr > 1.0e-12):
         ok1, p1, q1, dgam1, sens1 = _solve_regime1_shear(
             p, p_tr, q_tr, x_tr, Ke, Ge, st_n.gamma_p, st_n.void_ratio
         )

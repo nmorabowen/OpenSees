@@ -1595,6 +1595,107 @@ inline bool solve_regime4_corner(
 }
 
 // ---------------------------------------------------------------------------
+//  Tension-cutoff return (Surface 4 on the MEAN stress, p >= p_cut)
+// ---------------------------------------------------------------------------
+//  p is held at p_cut by the tension multiplier; q stays continuous with the cone
+//  regimes: q = q_tr when (p_cut, q_tr) is inside the shear cone, the failure line
+//  and the (non-hardening) cap; otherwise q solves the shear residual at p = p_cut,
+//  R(q) = Phi_s(p_cut, q) - gamma_p_n - c_gam (q_tr - q) / (3 Ge) = 0, or sits on the
+//  failure line / cap if those bind first. Collapsing to the hydrostatic point
+//  (q = 0) is only correct when p_cut IS the cone apex (sigma_t = c cot phi); for the
+//  default sigma_t = 0 it is a stress jump of ~M_c a_apex at p_tr = p_cut (WP-210 r4).
+//  Returns false when the shear dilatancy alone lifts p back above p_cut
+//  (lambda_t = (p_cut - p_tr)/Ke - sin(psi_m) dgamma < 0): the tension surface is then
+//  not active and the ordinary regimes apply. sens rows: (p, q) wrt (p_tr, q_tr, x, Ge).
+inline bool solve_tension_corner(
+    const HSParams& p, double p_cut, double p_tr, double q_tr,
+    double Theta, double dTheta_dx, double k3, double dk3_dx, double Theta_sig, double dTheta_sig_dx,
+    double k1, double dk1_dx, double Ke, double Ge, double gamma_p_n, double p_p_n, double void_ratio,
+    double& q_out, double& dgam_out, double sens[2][4]) {
+  for (int r = 0; r < 2; ++r) for (int c = 0; c < 4; ++c) sens[r][c] = 0.0;
+  const double alpha2 = p.alpha_cap * p.alpha_cap;
+  const double p_hat  = std::max(p.p_min, p_cut + p.a_apex);
+  const double q_fail = p.M_c * p_hat / Theta;
+  const double pp_hat = p_p_n + p.a_apex;
+  const double q_cap  = std::sqrt(std::max(0.0, alpha2 * (pp_hat * pp_hat - p_hat * p_hat)));
+  const bool fail_binds = q_fail <= q_cap;
+  const double q_lim  = std::min(q_fail, q_cap);
+  const double i3G    = 1.0 / (3.0 * Ge);
+
+  // Shear-mechanism hardening increment (PLAXIS gamma^p, same measure as regimes 1/2/4):
+  //   dgam(q) = c_gam(k1, sin psi_m(p_cut, q)) * (q_tr - q) / (3 Ge).
+  // The tension multiplier's own volumetric strain does not harden the shear cone.
+  auto shear_res = [&](double q, double& R, double& Rq) {
+    double Phi = 0.0, dPp = 0.0, dPq = 0.0;
+    phi_shear(p, p_cut, q, Phi, dPp, dPq, k3, Theta_sig);
+    double sp = 0.0, dsp = 0.0, dsq = 0.0;
+    rowe_dilatancy(p, p_cut, q, void_ratio, sp, dsp, dsq, k3, Theta_sig);
+    double cg = 0.0, dcg_dx = 0.0, dcg_ds = 0.0;
+    gamma_factor(k1, dk1_dx, sp, cg, dcg_dx, dcg_ds);
+    double e = (q_tr - q) * i3G;
+    R  = Phi - gamma_p_n - cg * e;
+    Rq = dPq + cg * i3G - dcg_ds * dsq * e;
+  };
+
+  double q = 0.0;
+  int mode = 0;  // 0: q = q_tr, 1: shear root, 2: failure line, 3: cap
+  double q_hi = std::min(q_tr, q_lim);
+  double R_hi = 0.0, Rq_hi = 0.0;
+  shear_res(q_hi, R_hi, Rq_hi);
+  if (R_hi <= 0.0) {
+    q    = q_hi;
+    mode = (q_tr <= q_lim) ? 0 : (fail_binds ? 2 : 3);
+  } else {
+    // R(0) = -gamma_p_n - c_gam q_tr/(3 Ge) < 0 < R(q_hi): safeguarded Newton on the bracket.
+    double lo = 0.0, hi = q_hi;
+    q = q_hi;
+    for (int it = 0; it < 100; ++it) {
+      double R = 0.0, Rq = 0.0;
+      shear_res(q, R, Rq);
+      if (std::abs(R) < 1.0e-14 || (hi - lo) <= 1.0e-15 * std::max(1.0, hi)) break;
+      if (R > 0.0) hi = q; else lo = q;
+      double qn = (Rq > 0.0) ? q - R / Rq : 0.5 * (lo + hi);
+      q = (qn > lo && qn < hi) ? qn : 0.5 * (lo + hi);
+    }
+    mode = 1;
+  }
+
+  double s_psim = 0.0;
+  if (mode == 2) {
+    s_psim = (p.emax > 0.0 && void_ratio >= p.emax && p.sin_psi > 0.0) ? 0.0 : p.sin_psi;
+  } else if (mode != 0) {
+    double d1 = 0.0, d2 = 0.0;
+    rowe_dilatancy(p, p_cut, q, void_ratio, s_psim, d1, d2, k3, Theta_sig);
+  }
+  double cg = 0.0, dcg_dx = 0.0, dcg_ds = 0.0;
+  gamma_factor(k1, dk1_dx, s_psim, cg, dcg_dx, dcg_ds);
+  double dgam = (mode == 0) ? 0.0 : cg * (q_tr - q) * i3G;
+
+  // Tension multiplier >= 0? (shear dilatancy, eps_v^p = -sin(psi_m) dgam, can lift p above
+  // p_cut by itself; then the tension surface is not active and the cone regimes apply.)
+  if ((p_cut - p_tr) / Ke - s_psim * dgam < 0.0) return false;
+
+  q_out    = q;
+  dgam_out = dgam;
+  if (mode == 0) {
+    sens[1][1] = 1.0;
+  } else if (mode == 1) {
+    double Phi = 0.0, dPp = 0.0, dPq = 0.0, dPx = 0.0;
+    phi_shear(p, p_cut, q, Phi, dPp, dPq, k3, Theta_sig, dk3_dx, dTheta_sig_dx, &dPx);
+    double sp = 0.0, dsp = 0.0, dsq = 0.0, dsx = 0.0;
+    rowe_dilatancy(p, p_cut, q, void_ratio, sp, dsp, dsq, k3, Theta_sig, dk3_dx, dTheta_sig_dx, &dsx);
+    double e  = (q_tr - q) * i3G;
+    double Rq = dPq + cg * i3G - dcg_ds * dsq * e;
+    sens[1][1] = (cg * i3G) / Rq;                          // -dR/dq_tr / R_q
+    sens[1][2] = -(dPx - (dcg_dx + dcg_ds * dsx) * e) / Rq;  // -dR/dx / R_q
+    sens[1][3] = -(cg * e / Ge) / Rq;                      // dR/dGe = +c_gam (q_tr - q)/(3 Ge^2)
+  } else if (mode == 2) {
+    sens[1][2] = -q / Theta * dTheta_dx;
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 //  Master 3D Constitutive Return Map (Compression-Positive Mechanics Sign)
 // ---------------------------------------------------------------------------
 inline ActiveRegime return_map_3d_comp(
@@ -1674,25 +1775,42 @@ inline ActiveRegime return_map_3d_comp(
   double k1 = 2.0 / 3.0, dk1_dx = 0.0;
   k1_and_deriv(p, x_tr, k1, dk1_dx);
 
-  // 1. Apex tension cutoff on the MEAN stress (Surface 4). This is NOT a principal-stress
-  //    Rankine cutoff: it only fires when p_tr falls below the cone apex / -sigma_t.
-  //    Below the apex every admissible stress collapses to the apex point, so the return is
-  //    exact and step-size independent: sigma = p_cut * I, the whole trial deviator is
-  //    plastic (PLAXIS gamma^p = 3 k1 d(eps_q^p) - d(eps_v^p)/3 with d(eps_q^p) = q_tr/(3 Ge),
-  //    d(eps_v^p) = (p_tr - p_cut)/Ke, same measure as the shear regimes), and the cap
-  //    does not harden (tension unloads it). The exact tangent of this map is zero; a
-  //    residual 1e-3 * C_e is returned in the TANGENT ONLY so the global stiffness stays
-  //    non-singular -- it changes the Newton rate, never the converged stress.
-  double p_cut = std::max(p.p_min - p.a_apex, -p.sigma_t);
+  // 1. Tension cutoff on the MEAN stress (Surface 4, p >= p_cut). This is NOT a
+  //    principal-stress Rankine cutoff. Two cases:
+  //    (a) p_cut is the cone apex (sigma_t >= c cot phi): every admissible stress there is
+  //        the apex point, so sigma = p_cut * I exactly, the whole trial deviator is plastic
+  //        (PLAXIS gamma^p: 3 k1 q_tr/(3 Ge) - d(eps_v^p)/3, d(eps_v^p) = (p_tr - p_cut)/Ke)
+  //        and the cap does not harden. The exact tangent is
+  //        zero; a residual 1e-3 * C_e goes in the TANGENT ONLY (Newton rate, never stress).
+  //    (b) p_cut is above the apex (the default sigma_t = 0 with c > 0): p = p_cut and q
+  //        stays continuous with the cone regimes (solve_tension_corner). Collapsing to
+  //        q = 0 here was a stress jump of ~M_c a_apex at p_tr = p_cut that stalled Newton
+  //        in footing BVPs (WP-210 round 4).
+  const double p_apex = p.p_min - p.a_apex;
+  double p_cut = std::max(p_apex, -p.sigma_t);
+  ActiveRegime regime = REGIME_ELASTIC;
+  double p_new = p_tr, q_new = q_tr;
+  double sens[2][4] = {{1.0, 0.0, 0.0, 0.0}, {0.0, 1.0, 0.0, 0.0}};
+  bool solved = false;
   if (p_tr <= p_cut) {
-    for (int i = 0; i < 6; ++i) {
-      st_new.sig[i] = p_cut * I6_M[i];
-      for (int j = 0; j < 6; ++j) {
-        C_alg[i][j] = 1.0e-3 * C_e_alg[i][j];
+    double q_t = 0.0, dgam_t = 0.0, sens_t[2][4];
+    if (p_cut <= p_apex + 1.0e-12 * std::max(1.0, std::abs(p_apex))) {
+      for (int i = 0; i < 6; ++i) {
+        st_new.sig[i] = p_cut * I6_M[i];
+        for (int j = 0; j < 6; ++j) {
+          C_alg[i][j] = 1.0e-3 * C_e_alg[i][j];
+        }
       }
+      if (Ge > 0.0) st_new.gamma_p = st_n.gamma_p + k1 * q_tr / Ge + (p_cut - p_tr) / (3.0 * Ke);
+      return REGIME_TENSION;
     }
-    if (Ge > 0.0) st_new.gamma_p = st_n.gamma_p + k1 * q_tr / Ge + (p_cut - p_tr) / (3.0 * Ke);
-    return REGIME_TENSION;
+    if (solve_tension_corner(p, p_cut, p_tr, q_tr, Theta, dTheta_dx, k3, dk3_dx, Theta_sig, dTheta_sig_dx,
+                             k1, dk1_dx, Ke, Ge, st_n.gamma_p, st_n.p_p, st_n.void_ratio, q_t, dgam_t, sens_t)) {
+      p_new = p_cut; q_new = q_t; st_new.gamma_p = st_n.gamma_p + dgam_t;
+      for (int r = 0; r < 2; ++r) for (int c = 0; c < 4; ++c) sens[r][c] = sens_t[r][c];
+      regime = REGIME_TENSION;
+      solved = true;
+    }
   }
 
   // 2. Evaluate trial yield functions at (p_tr, q_tr, x_tr):
@@ -1710,8 +1828,8 @@ inline ActiveRegime return_map_3d_comp(
   double f_cap_tr = (q_tr * q_tr) / (p.alpha_cap * p.alpha_cap)
                   + p_hat_tr * p_hat_tr - pp_hat_n * pp_hat_n;
 
-  if (norm_deps_sq <= 1.0e-30 ||
-      (f_shear_tr <= 1.0e-12 && f_fail_tr <= 1.0e-12 && f_cap_tr <= 1.0e-10)) {
+  if (!solved && (norm_deps_sq <= 1.0e-30 ||
+      (f_shear_tr <= 1.0e-12 && f_fail_tr <= 1.0e-12 && f_cap_tr <= 1.0e-10))) {
     for (int i = 0; i < 6; ++i) {
       st_new.sig[i] = sig_tr[i];
       for (int j = 0; j < 6; ++j) {
@@ -1722,16 +1840,12 @@ inline ActiveRegime return_map_3d_comp(
   }
 
   // 3. Koiter Active-Set Selection & Return Map in (p, q):
-  ActiveRegime regime = REGIME_ELASTIC;
-  double p_new = p_tr, q_new = q_tr;
-  double sens[2][4] = {{1.0, 0.0, 0.0, 0.0}, {0.0, 1.0, 0.0, 0.0}};
-  bool solved = false;
   double alpha2 = p.alpha_cap * p.alpha_cap;
 
   // Note: e_max dilatancy cutoff is intentionally gated on the committed void ratio
   // st_n.void_ratio so that the step return map remains C^1-smooth with respect to
   // trial volumetric strain during global Newton-Raphson iterations.
-  if (f_shear_tr > 1.0e-12 || f_fail_tr > 1.0e-12) {
+  if (!solved && (f_shear_tr > 1.0e-12 || f_fail_tr > 1.0e-12)) {
     double p1 = 0.0, q1 = 0.0, dgam1 = 0.0, sens1[2][4];
     if (solve_regime1_shear(p, p_tr, q_tr, Theta, k3, dk3_dx, Theta_sig, dTheta_sig_dx,
                             k1, dk1_dx, Ke, Ge, st_n.gamma_p, st_n.void_ratio,
