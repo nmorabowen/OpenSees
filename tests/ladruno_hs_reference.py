@@ -248,7 +248,8 @@ def calibrate_cap_parameters(p: HSParams) -> Tuple[float, float]:
     )
 
     Av = 1.0 / p.Eoed_ref - kp / (p.Kur_ref * s_K0) + s_psim_K0 * d_gam_p
-    Aq = 2.0 / (3.0 * p.Eoed_ref) - kq / (3.0 * p.Gur_ref * s_K0) - 0.5 * d_gam_p
+    # PLAXIS gamma^p on the (TXC-like, k1 = 2/3) K0nc path: d(eps_q^p) = dgam (1 - sin psi_m/3)/2
+    Aq = 2.0 / (3.0 * p.Eoed_ref) - kq / (3.0 * p.Gur_ref * s_K0) - 0.5 * (1.0 - s_psim_K0 / 3.0) * d_gam_p
 
     # Guard admissible positive cap compliances:
     floor = 1.0e-3 / p.Eoed_ref
@@ -332,6 +333,31 @@ def lode_factors_and_derivs(
     Theta_sig = (Theta - p.M_c * k3) * inv_alpha_phi
     dTheta_sig_dx = (dTheta_dx - p.M_c * dk3_dx) * inv_alpha_phi
     return Theta, dTheta_dx, k3, dk3_dx, Theta_sig, dTheta_sig_dx
+
+
+def k1_and_deriv(p: HSParams, x: float) -> Tuple[float, float]:
+    """Major principal deviator factor s_1 = k1(x) q (k1(+1) = 2/3 TXC, k1(-1) = 1/3 TXE)."""
+    x_clamped = max(-1.0, min(1.0, float(x)))
+    arg = p.gamma_mc * x_clamped
+    th = math.asin(arg) / 3.0
+    c_max = math.cos(p.th_max_mc)
+    s_max = math.sin(p.th_max_mc)
+    dth_dx = p.gamma_mc / (3.0 * math.sqrt(max(1.0e-30, 1.0 - arg * arg)))
+    c_ratio = math.cos(th) / c_max
+    dc_dx = (-math.sin(th) / c_max) * dth_dx
+    s_norm = math.sin(th) / s_max
+    ds_dx = (math.cos(th) / s_max) * dth_dx
+    return 0.5 * (c_ratio + (1.0 / 3.0) * s_norm), 0.5 * (dc_dx + (1.0 / 3.0) * ds_dx)
+
+
+def gamma_factor(k1: float, dk1_dx: float, s_psim: float) -> Tuple[float, float, float]:
+    """PLAXIS gamma^p = eps1^p - eps2^p - eps3^p (Schanz et al. 1999, Eq. 12).
+
+    d(gamma^p) = c_gam d(eps_q^p), c_gam = 3 k1 / (1 - sin(psi_m)/3); returns
+    (c_gam, d c_gam/dx, d c_gam/d sin psi_m). Mirrors gamma_factor in LadrunoHSKernel.h.
+    """
+    w = 1.0 - s_psim / 3.0
+    return 3.0 * k1 / w, 3.0 * dk1_dx / w, k1 / (w * w)
 
 
 def invariants_and_lode_grad(
@@ -775,42 +801,59 @@ def _solve_regime1_shear(
 ) -> Tuple[bool, float, float, float, np.ndarray]:
     """Solve Regime 1 (Hyperbolic shear cone f^s = 0 only, dlambda_c = 0).
 
-    Unknowns y = [p, q].
-    R0(p, q) = p - p_tr - Ke * sin_psi_m(p, q, x) * (2*(q_tr - q)/(3*Ge)) = 0
-    R1(p, q) = Phi_s(p, q, x) - gamma_p_n - 2*(q_tr - q)/(3*Ge) = 0
+    Unknowns y = [p, q]. With e = (q_tr - q)/(3 Ge) and the PLAXIS plastic shear strain
+    dgam = c_gam(x, sin_psi_m(p, q)) * e (see gamma_factor):
+    R0(p, q) = p - p_tr - Ke * sin_psi_m(p, q, x) * dgam = 0
+    R1(p, q) = Phi_s(p, q, x) - gamma_p_n - dgam = 0
     """
     Theta, _, k3, dk3_dx, Th_sig, dTh_sig_dx = lode_factors_and_derivs(p, x_sin3)
-    kappa_KG = p.Kur_ref / p.Gur_ref
-    inv_3Ge2 = 2.0 / (3.0 * Ge)
+    k1, dk1_dx = k1_and_deriv(p, x_sin3)
+    inv_3Ge = 1.0 / (3.0 * Ge)
     p_min_val = p.p_min - p.a_apex
     p_cur = max(1.0001 * p.p_min - p.a_apex, p_tr)
     q_max_fail = p.M_c * max(p.p_min, p_cur + p.a_apex) / Theta
     q_cur = min(q_tr, 0.98 * q_max_fail)
+    c_max, _, _ = gamma_factor(k1, dk1_dx, max(0.0, p.sin_psi))
+
+    def evaluate(p_v: float, q_v: float):
+        s_psim, dspsi_dp, dspsi_dq, dspsi_dx = _rowe_dilatancy(
+            p, p_v, q_v, void_ratio, k3, Th_sig, dk3_dx, dTh_sig_dx, return_dx=True
+        )
+        Phi_s, dPhi_dp, dPhi_dq, dPhi_dx = _phi_shear(
+            p, p_v, q_v, k3, Th_sig, dk3_dx, dTh_sig_dx, return_dx=True
+        )
+        cg, dcg_dx, dcg_ds = gamma_factor(k1, dk1_dx, s_psim)
+        e = inv_3Ge * (q_tr - q_v)
+        dgam = cg * e
+        dg_dp = e * dcg_ds * dspsi_dp
+        dg_dq = -cg * inv_3Ge + e * dcg_ds * dspsi_dq
+        dg_dx = e * (dcg_dx + dcg_ds * dspsi_dx)
+        dg_dqt = cg * inv_3Ge
+        R0 = p_v - p_tr - Ke * s_psim * dgam
+        R1 = Phi_s - gamma_p_n - dgam
+        J_y = np.array(
+            [
+                [1.0 - Ke * (dspsi_dp * dgam + s_psim * dg_dp), -Ke * (dspsi_dq * dgam + s_psim * dg_dq)],
+                [dPhi_dp - dg_dp, dPhi_dq - dg_dq],
+            ],
+            dtype=float,
+        )
+        # d/d(p_tr, q_tr, x, Ge); Ke * dgam is independent of Ge (Ke = (Kur/Gur) Ge, e ~ 1/Ge).
+        J_tr = np.array(
+            [
+                [-1.0, -Ke * s_psim * dg_dqt, -Ke * (dspsi_dx * dgam + s_psim * dg_dx), 0.0],
+                [0.0, -dg_dqt, dPhi_dx - dg_dx, dgam / Ge],
+            ],
+            dtype=float,
+        )
+        return R0, R1, dgam, J_y, J_tr
 
     def finalize_sens(p_sol: float, q_sol: float):
-        dgam = inv_3Ge2 * (q_tr - q_sol)
+        _, _, dgam, J_y, J_tr = evaluate(p_sol, q_sol)
         if dgam < -1.0e-12:
             return False, p_sol, q_sol, 0.0, np.zeros((2, 4))
         if (Theta * q_sol) > p.M_c * (p_sol + p.a_apex) + 1.0e-10:
             return False, p_sol, q_sol, 0.0, np.zeros((2, 4))
-        s_psim, dspsi_dp, dspsi_dq, dspsi_dx = _rowe_dilatancy(
-            p, p_sol, q_sol, void_ratio, k3, Th_sig, dk3_dx, dTh_sig_dx, return_dx=True
-        )
-        _, dPhi_dp, dPhi_dq, dPhi_dx = _phi_shear(
-            p, p_sol, q_sol, k3, Th_sig, dk3_dx, dTh_sig_dx, return_dx=True
-        )
-        J00 = 1.0 - Ke * dspsi_dp * dgam
-        J01 = -Ke * (dspsi_dq * dgam - s_psim * inv_3Ge2)
-        J10 = dPhi_dp
-        J11 = dPhi_dq + inv_3Ge2
-        J_y = np.array([[J00, J01], [J10, J11]], dtype=float)
-        J_tr = np.array(
-            [
-                [-1.0, -(2.0 / 3.0) * kappa_KG * s_psim, -Ke * dspsi_dx * dgam, 0.0],
-                [0.0, -inv_3Ge2, dPhi_dx, dgam / Ge],
-            ],
-            dtype=float,
-        )
         sens = -np.linalg.solve(J_y, J_tr)
         return True, p_sol, q_sol, max(0.0, dgam), sens
 
@@ -818,27 +861,13 @@ def _solve_regime1_shear(
         p_hat = p_cur + p.a_apex
         if p_hat <= 0.5 * p.p_min:
             break
-
-        dgam = inv_3Ge2 * (q_tr - q_cur)
-        s_psim, dspsi_dp, dspsi_dq, _ = _rowe_dilatancy(
-            p, p_cur, q_cur, void_ratio, k3, Th_sig, dk3_dx, dTh_sig_dx, return_dx=True
-        )
-        Phi_s, dPhi_dp, dPhi_dq, _ = _phi_shear(
-            p, p_cur, q_cur, k3, Th_sig, dk3_dx, dTh_sig_dx, return_dx=True
-        )
-
-        R0 = p_cur - p_tr - Ke * s_psim * dgam
-        R1 = Phi_s - gamma_p_n - dgam
+        R0, R1, _, J_y, _ = evaluate(p_cur, q_cur)
         if max(abs(R0) / max(1.0, p.p_ref), abs(R1)) < 1.0e-13:
             ok_f, p_f, q_f, dg_f, sens_f = finalize_sens(p_cur, q_cur)
             if ok_f:
                 return True, p_f, q_f, dg_f, sens_f
             break
-
-        J00 = 1.0 - Ke * dspsi_dp * dgam
-        J01 = -Ke * (dspsi_dq * dgam - s_psim * inv_3Ge2)
-        J10 = dPhi_dp
-        J11 = dPhi_dq + inv_3Ge2
+        J00, J01, J10, J11 = J_y[0, 0], J_y[0, 1], J_y[1, 0], J_y[1, 1]
         det = J00 * J11 - J01 * J10
         if abs(det) < 1.0e-30:
             break
@@ -860,29 +889,29 @@ def _solve_regime1_shear(
 
     # 1D bracketed Newton-bisection fallback on q in [0, q_tr]:
     def solve_p_for_q(q_val: float) -> float:
-        dgam = inv_3Ge2 * (q_tr - q_val)
+        e = inv_3Ge * (q_tr - q_val)
         p_lo = p_min_val
-        p_hi = max(p_lo, p_tr + Ke * max(0.0, p.sin_psi) * dgam)
+        p_hi = max(p_lo, p_tr + Ke * max(0.0, p.sin_psi) * c_max * e)
         p_est = max(p_lo, min(p_hi, p_tr))
         for _ in range(35):
             s_psim, dspsi_dp, _ = _rowe_dilatancy(p, p_est, q_val, void_ratio, k3, Th_sig)
-            r0 = p_est - p_tr - Ke * s_psim * dgam
+            cg, _, dcg_ds = gamma_factor(k1, dk1_dx, s_psim)
+            r0 = p_est - p_tr - Ke * s_psim * cg * e
             if abs(r0) / max(1.0, p.p_ref) < 1.0e-14:
                 break
             if r0 > 0.0:
                 p_hi = min(p_hi, p_est)
             else:
                 p_lo = max(p_lo, p_est)
-            dr0 = 1.0 - Ke * dspsi_dp * dgam
+            dr0 = 1.0 - Ke * e * dspsi_dp * (cg + s_psim * dcg_ds)
             pn = (p_est - r0 / dr0) if abs(dr0) > 1.0e-30 else 0.5 * (p_lo + p_hi)
             p_est = pn if (p_lo < pn < p_hi) else 0.5 * (p_lo + p_hi)
         return p_est
 
     def eval_r1_at_q(q_val: float) -> Tuple[float, float]:
         p_sol = solve_p_for_q(q_val)
-        dgam = inv_3Ge2 * (q_tr - q_val)
-        Phi_s, _, _ = _phi_shear(p, p_sol, q_val, k3, Th_sig)
-        return Phi_s - gamma_p_n - dgam, p_sol
+        _, R1, _, _, _ = evaluate(p_sol, q_val)
+        return R1, p_sol
 
     q_lo, q_hi = 0.0, q_tr
     p_at_tr = solve_p_for_q(q_tr)
@@ -941,14 +970,19 @@ def _solve_regime2_failure(
 ) -> Tuple[bool, float, float, float, np.ndarray]:
     """Closed-form solution for Regime 2 (Ultimate failure truncation f^f = 0 only)."""
     Theta, dTheta_dx = lode_theta_and_deriv(p, x_sin3)
+    k1, dk1_dx = k1_and_deriv(p, x_sin3)
     s_psi = 0.0 if (p.emax > 0.0 and void_ratio >= p.emax and p.sin_psi > 0.0) else p.sin_psi
-    denom = 1.5 * Ge * Theta + p.M_c * Ke * s_psi
+    # q = q_tr - 3 Ge d(eps_q^p) = q_tr - g Ge dgam, g = 3 / c_gam (= 1.5 in TXC, psi = 0)
+    cg, dcg_dx, _ = gamma_factor(k1, dk1_dx, s_psi)
+    g = 3.0 / cg
+    dg_dx = -3.0 * dcg_dx / (cg * cg)
+    denom = g * Ge * Theta + p.M_c * Ke * s_psi
     dgam = (Theta * q_tr - p.M_c * (p_tr + p.a_apex)) / denom
     if dgam < -1.0e-12:
         return False, p_tr, q_tr, 0.0, np.zeros((2, 4))
     dgam = max(0.0, dgam)
     p_new = p_tr + Ke * s_psi * dgam
-    q_new = max(0.0, q_tr - 1.5 * Ge * dgam)
+    q_new = max(0.0, q_tr - g * Ge * dgam)
     if (p_new + p.a_apex) <= p.p_min:
         return False, p_new, q_new, dgam, np.zeros((2, 4))
 
@@ -957,8 +991,7 @@ def _solve_regime2_failure(
     # are independent of Ge (d(p_new)/dGe = 0, d(q_new)/dGe = 0)!
     ddgam_dptr = -p.M_c / denom
     ddgam_dqtr = Theta / denom
-    ddgam_dTh = (q_tr - 1.5 * Ge * dgam) / denom
-    ddgam_dx = ddgam_dTh * dTheta_dx
+    ddgam_dx = (dTheta_dx * (q_tr - g * Ge * dgam) - dgam * Ge * Theta * dg_dx) / denom
     sens = np.array(
         [
             [
@@ -968,9 +1001,9 @@ def _solve_regime2_failure(
                 0.0,
             ],
             [
-                -1.5 * Ge * ddgam_dptr,
-                1.0 - 1.5 * Ge * ddgam_dqtr,
-                -1.5 * Ge * ddgam_dx,
+                -g * Ge * ddgam_dptr,
+                1.0 - g * Ge * ddgam_dqtr,
+                -Ge * (dg_dx * dgam + g * ddgam_dx),
                 0.0,
             ],
         ],
@@ -1077,6 +1110,8 @@ def _solve_regime4_corner(
     alpha2 = p.alpha_cap * p.alpha_cap
     kappa_KG = p.Kur_ref / p.Gur_ref
     Theta_0, dTheta_dx, k3_0, dk3_dx, Theta_sig_0, dTheta_sig_dx = lode_factors_and_derivs(p, x_sin3)
+    k1_0, dk1_dx = k1_and_deriv(p, x_sin3)
+    c_max, _, _ = gamma_factor(k1_0, dk1_dx, max(0.0, p.sin_psi))
     p_cur = max(p.p_min - p.a_apex, min(p_tr, max(p_p_n, 0.7 * p_tr)))
     q_cur = (
         (p.M_c * max(p.p_min, p_cur + p.a_apex) / Theta_0)
@@ -1095,6 +1130,7 @@ def _solve_regime4_corner(
         Th_v: float,
         k3_v: float,
         Th_sig_v: float,
+        k1_v: float,
         Ke_v: float,
         Ge_v: float,
     ):
@@ -1108,7 +1144,10 @@ def _solve_regime4_corner(
             s_psim, _, _ = _rowe_dilatancy(p, p_val, q_val, void_ratio, k3_v, Th_sig_v)
 
         k_cap = q_val / (alpha2 * p_hat)
-        denom = 0.5 + k_cap * s_psim  # s_psim >= 0, k_cap >= 0 -> denom >= 0.5
+        # d(eps_q^p) = dgam / c_gam + k_cap d(eps_v^pc) (PLAXIS gamma^p, see gamma_factor);
+        # s_psim >= 0, k_cap >= 0 -> denom >= 1 / c_gam > 0
+        c_gam, _, _ = gamma_factor(k1_v, 0.0, s_psim)
+        denom = 1.0 / c_gam + k_cap * s_psim
         dgam_p = (deps_q_p - k_cap * deps_v_p) / denom
         deps_v_pc = deps_v_p + s_psim * dgam_p
 
@@ -1136,41 +1175,41 @@ def _solve_regime4_corner(
         hq = max(1.0e-8, 1.0e-8 * max(1.0, abs(q_sol)))
         hx = 1.0e-8
         hge = max(1.0e-6, 1.0e-8 * Ge)
-        r0p, r1p, _, _, _ = eval_residuals(p_sol + hp, q_sol, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge)
-        r0m, r1m, _, _, _ = eval_residuals(p_sol - hp, q_sol, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge)
+        r0p, r1p, _, _, _ = eval_residuals(p_sol + hp, q_sol, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, k1_0, Ke, Ge)
+        r0m, r1m, _, _, _ = eval_residuals(p_sol - hp, q_sol, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, k1_0, Ke, Ge)
         J_y[0, 0] = (r0p - r0m) / (2.0 * hp)
         J_y[1, 0] = (r1p - r1m) / (2.0 * hp)
 
-        r0p, r1p, _, _, _ = eval_residuals(p_sol, q_sol + hq, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge)
-        r0m, r1m, _, _, _ = eval_residuals(p_sol, q_sol - hq, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge)
+        r0p, r1p, _, _, _ = eval_residuals(p_sol, q_sol + hq, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, k1_0, Ke, Ge)
+        r0m, r1m, _, _, _ = eval_residuals(p_sol, q_sol - hq, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, k1_0, Ke, Ge)
         J_y[0, 1] = (r0p - r0m) / (2.0 * hq)
         J_y[1, 1] = (r1p - r1m) / (2.0 * hq)
 
-        r0p, r1p, _, _, _ = eval_residuals(p_sol, q_sol, p_tr + hp, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge)
-        r0m, r1m, _, _, _ = eval_residuals(p_sol, q_sol, p_tr - hp, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge)
+        r0p, r1p, _, _, _ = eval_residuals(p_sol, q_sol, p_tr + hp, q_tr, Theta_0, k3_0, Theta_sig_0, k1_0, Ke, Ge)
+        r0m, r1m, _, _, _ = eval_residuals(p_sol, q_sol, p_tr - hp, q_tr, Theta_0, k3_0, Theta_sig_0, k1_0, Ke, Ge)
         J_tr[0, 0] = (r0p - r0m) / (2.0 * hp)
         J_tr[1, 0] = (r1p - r1m) / (2.0 * hp)
 
-        r0p, r1p, _, _, _ = eval_residuals(p_sol, q_sol, p_tr, q_tr + hq, Theta_0, k3_0, Theta_sig_0, Ke, Ge)
-        r0m, r1m, _, _, _ = eval_residuals(p_sol, q_sol, p_tr, q_tr - hq, Theta_0, k3_0, Theta_sig_0, Ke, Ge)
+        r0p, r1p, _, _, _ = eval_residuals(p_sol, q_sol, p_tr, q_tr + hq, Theta_0, k3_0, Theta_sig_0, k1_0, Ke, Ge)
+        r0m, r1m, _, _, _ = eval_residuals(p_sol, q_sol, p_tr, q_tr - hq, Theta_0, k3_0, Theta_sig_0, k1_0, Ke, Ge)
         J_tr[0, 1] = (r0p - r0m) / (2.0 * hq)
         J_tr[1, 1] = (r1p - r1m) / (2.0 * hq)
 
         r0p, r1p, _, _, _ = eval_residuals(
             p_sol, q_sol, p_tr, q_tr,
-            Theta_0 + hx * dTheta_dx, k3_0 + hx * dk3_dx, Theta_sig_0 + hx * dTheta_sig_dx,
+            Theta_0 + hx * dTheta_dx, k3_0 + hx * dk3_dx, Theta_sig_0 + hx * dTheta_sig_dx, k1_0 + hx * dk1_dx,
             Ke, Ge,
         )
         r0m, r1m, _, _, _ = eval_residuals(
             p_sol, q_sol, p_tr, q_tr,
-            Theta_0 - hx * dTheta_dx, k3_0 - hx * dk3_dx, Theta_sig_0 - hx * dTheta_sig_dx,
+            Theta_0 - hx * dTheta_dx, k3_0 - hx * dk3_dx, Theta_sig_0 - hx * dTheta_sig_dx, k1_0 - hx * dk1_dx,
             Ke, Ge,
         )
         J_tr[0, 2] = (r0p - r0m) / (2.0 * hx)
         J_tr[1, 2] = (r1p - r1m) / (2.0 * hx)
 
-        r0p, r1p, _, _, _ = eval_residuals(p_sol, q_sol, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, kappa_KG * (Ge + hge), Ge + hge)
-        r0m, r1m, _, _, _ = eval_residuals(p_sol, q_sol, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, kappa_KG * (Ge - hge), Ge - hge)
+        r0p, r1p, _, _, _ = eval_residuals(p_sol, q_sol, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, k1_0, kappa_KG * (Ge + hge), Ge + hge)
+        r0m, r1m, _, _, _ = eval_residuals(p_sol, q_sol, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, k1_0, kappa_KG * (Ge - hge), Ge - hge)
         J_tr[0, 3] = (r0p - r0m) / (2.0 * hge)
         J_tr[1, 3] = (r1p - r1m) / (2.0 * hge)
 
@@ -1178,7 +1217,7 @@ def _solve_regime4_corner(
         return True, p_sol, q_sol, max(0.0, dgam_p), pp_new, sens
 
     for _ in range(0 if force_1d_fallback else 40):
-        R0, R1, dgam_p, deps_v_pc, pp_new = eval_residuals(p_cur, q_cur, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge)
+        R0, R1, dgam_p, deps_v_pc, pp_new = eval_residuals(p_cur, q_cur, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, k1_0, Ke, Ge)
         if max(abs(R0) / scale0, abs(R1) / scale1) < 1.0e-12:
             ok_f, p_f, q_f, dg_f, pp_f, sens_f = finalize_r4_sens(
                 p_cur, q_cur, dgam_p, deps_v_pc, pp_new
@@ -1189,12 +1228,12 @@ def _solve_regime4_corner(
 
         hp = max(1.0e-7, 1.0e-7 * abs(p_cur))
         hq = max(1.0e-7, 1.0e-7 * max(1.0, abs(q_cur)))
-        r0p, r1p, _, _, _ = eval_residuals(p_cur + hp, q_cur, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge)
-        r0m, r1m, _, _, _ = eval_residuals(p_cur - hp, q_cur, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge)
+        r0p, r1p, _, _, _ = eval_residuals(p_cur + hp, q_cur, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, k1_0, Ke, Ge)
+        r0m, r1m, _, _, _ = eval_residuals(p_cur - hp, q_cur, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, k1_0, Ke, Ge)
         J00 = (r0p - r0m) / (2.0 * hp)
         J10 = (r1p - r1m) / (2.0 * hp)
-        r0p, r1p, _, _, _ = eval_residuals(p_cur, q_cur + hq, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge)
-        r0m, r1m, _, _, _ = eval_residuals(p_cur, q_cur - hq, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge)
+        r0p, r1p, _, _, _ = eval_residuals(p_cur, q_cur + hq, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, k1_0, Ke, Ge)
+        r0m, r1m, _, _, _ = eval_residuals(p_cur, q_cur - hq, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, k1_0, Ke, Ge)
         J01 = (r0p - r0m) / (2.0 * hq)
         J11 = (r1p - r1m) / (2.0 * hq)
         det = J00 * J11 - J01 * J10
@@ -1218,19 +1257,19 @@ def _solve_regime4_corner(
 
     if failure_mode:
         p_lo = p.p_min - p.a_apex
-        p_hi = p_tr + Ke * max(0.0, p.sin_psi) * (2.0 * q_tr / (3.0 * Ge))
+        p_hi = p_tr + Ke * max(0.0, p.sin_psi) * (c_max * q_tr / (3.0 * Ge))
         _, r1_lo, _, _, _ = eval_residuals(
-            p_lo, (p.M_c / Theta_0) * (p_lo + p.a_apex), p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge
+            p_lo, (p.M_c / Theta_0) * (p_lo + p.a_apex), p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, k1_0, Ke, Ge
         )
         _, r1_hi, _, _, _ = eval_residuals(
-            p_hi, (p.M_c / Theta_0) * (p_hi + p.a_apex), p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge
+            p_hi, (p.M_c / Theta_0) * (p_hi + p.a_apex), p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, k1_0, Ke, Ge
         )
         if r1_lo <= 0.0 and r1_hi >= 0.0:
             p_est = 0.5 * (p_lo + p_hi)
             for _ in range(50):
                 q_est = (p.M_c / Theta_0) * (p_est + p.a_apex)
                 R0, R1, dgam_p, deps_v_pc, pp_new = eval_residuals(
-                    p_est, q_est, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge
+                    p_est, q_est, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, k1_0, Ke, Ge
                 )
                 res_norm = max(abs(R0) / scale0, abs(R1) / scale1)
                 if res_norm < 1.0e-12 or (
@@ -1248,10 +1287,10 @@ def _solve_regime4_corner(
             q_hi_v = min(q_tr, (p.M_c / Theta_0) * p_hat_v)
             q_lo_v = 0.0
             r0_lo, r1_lo, dg_lo, dv_lo, pp_lo = eval_residuals(
-                p_val, q_lo_v, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge
+                p_val, q_lo_v, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, k1_0, Ke, Ge
             )
             r0_hi, r1_hi, dg_hi, dv_hi, pp_hi = eval_residuals(
-                p_val, q_hi_v, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge
+                p_val, q_hi_v, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, k1_0, Ke, Ge
             )
             if r0_hi <= 0.0:
                 return q_hi_v, r0_hi, r1_hi, dg_hi, dv_hi, pp_hi
@@ -1260,7 +1299,7 @@ def _solve_regime4_corner(
             q_m = 0.5 * (q_lo_v + q_hi_v)
             for it_q in range(60):
                 r0_m, r1_m, dg_m, dv_m, pp_m = eval_residuals(
-                    p_val, q_m, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge
+                    p_val, q_m, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, k1_0, Ke, Ge
                 )
                 if abs(r0_m) / scale0 < 1.0e-14 or abs(q_hi_v - q_lo_v) <= 1.0e-14 * max(1.0, q_hi_v):
                     return q_m, r0_m, r1_m, dg_m, dv_m, pp_m
@@ -1278,12 +1317,12 @@ def _solve_regime4_corner(
                 else:
                     q_m = 0.5 * (q_lo_v + q_hi_v)
             r0_m, r1_m, dg_m, dv_m, pp_m = eval_residuals(
-                p_val, q_m, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, Ke, Ge
+                p_val, q_m, p_tr, q_tr, Theta_0, k3_0, Theta_sig_0, k1_0, Ke, Ge
             )
             return q_m, r0_m, r1_m, dg_m, dv_m, pp_m
 
         p_lo = p.p_min - p.a_apex
-        p_hi = p_tr + Ke * max(0.0, p.sin_psi) * (2.0 * q_tr / (3.0 * Ge))
+        p_hi = p_tr + Ke * max(0.0, p.sin_psi) * (c_max * q_tr / (3.0 * Ge))
         _, _, r1_lo, _, _, _ = solve_q_for_p(p_lo)
         _, _, r1_hi, _, _, _ = solve_q_for_p(p_hi)
         if r1_lo <= 0.0 and r1_hi >= 0.0:
@@ -1373,7 +1412,10 @@ def return_map_3d(
         # Exact apex return (stress), residual 1e-3 C_e in the tangent only:
         st_new.sig = p_cut * _I6_M
         if Ge > 0.0:
-            st_new.gamma_p = st_n.gamma_p + 2.0 * q_tr / (3.0 * Ge)
+            # PLAXIS gamma^p = 3 k1 d(eps_q^p) - d(eps_v^p)/3 with d(eps_q^p) = q_tr/(3 Ge),
+            # d(eps_v^p) = (p_tr - p_cut)/Ke (mirrors the kernel apex return)
+            k1_tr, _ = k1_and_deriv(p, x_tr)
+            st_new.gamma_p = st_n.gamma_p + k1_tr * q_tr / Ge + (p_cut - p_tr) / (3.0 * Ke)
         C_floor = 1.0e-3 * C_e_alg
         return st_new, C_floor, "tension"
 

@@ -753,3 +753,45 @@ def test_t2d_cap_associated_normality_general_lode_angles(lode: str) -> None:
         )
         assert abs(1.0 - cos_ang) < 1.0e-14
 
+
+
+@pytest.mark.parametrize(
+    "label, sig0, deps",
+    [
+        ("txc_dilating", [330.0, 100.0, 100.0], [1.0e-4, -3.0e-5, -3.0e-5]),
+        ("txe", [100.0, 250.0, 250.0], [-5.0e-5, 5.0e-5, 5.0e-5]),
+        ("intermediate_lode", [300.0, 180.0, 100.0], [1.0e-4, 2.0e-5, -5.0e-5]),
+    ],
+)
+def test_t1f_plastic_shear_strain_is_plaxis_principal_measure(label, sig0, deps) -> None:
+    """WP-210 round 4: d(gamma^p) = eps1^p - eps2^p - eps3^p (Schanz et al. 1999, Eq. 12).
+
+    The plastic strain is recovered independently of the return map as
+    d(eps^p) = d(eps) - C_e^-1 d(sigma) (C_e from the committed stress, as in the
+    kernel), and its sorted principal values must reproduce the booked d(gamma^p) and
+    eps_v^p = -sin(psi_m) d(gamma^p). The previous 2 d(eps_q^p) shortcut fails the TXE
+    and dilating cases by 50 % and ~5 %.
+    """
+    p = hs.HSParams(37000.0, 29600.0, 90000.0, 0.50, 0.0, 41.0, 14.0, OCR=20.0)
+    st0 = hs.initialize_state_from_stress(p, np.array(sig0 + [0.0, 0.0, 0.0]))
+    eps1 = np.array(deps + [0.0, 0.0, 0.0])
+    st1, _, regime = hs.return_map_3d(p, st0, eps1)
+    assert regime in ("shear", "failure"), regime
+
+    p_n, q_n, x_n, _, _, _ = hs.invariants_and_lode_grad(p, st0.sig)
+    _, _, k3_n, _, _, _ = hs.lode_factors_and_derivs(p, x_n)
+    s_n, _, _ = hs._stiffness_scale_and_derivs(p, p_n, q_n, k3_n)
+    G, K = p.Gur_ref * s_n, p.Kur_ref * s_n
+    dsig = hs.stress_voigt_to_tensor(st1.sig - st0.sig)
+    dp = np.trace(dsig) / 3.0
+    deps_e = (dsig - dp * np.eye(3)) / (2.0 * G) + (dp / (3.0 * K)) * np.eye(3)
+    deps_p = hs.strain_voigt_to_tensor(eps1) - deps_e
+    e = np.sort(np.linalg.eigvalsh(deps_p))[::-1]  # compression positive: e[0] = major
+    dgam_principal = e[0] - e[1] - e[2]
+    dgam_booked = st1.gamma_p - st0.gamma_p
+    assert dgam_booked > 0.0
+    # k1(x) uses the endpoint-exact C^inf Lode smoothing (th_max = asin(1 - 1e-7)/3, ~1.5e-4 rad short
+    # of pi/6, as k3): exact at TXC/TXE, O(1e-4) relative in between. The old 2 d(eps_q^p) shortcut
+    # misses the TXE case by 100 % and the intermediate case by tens of per cent.
+    tol = 1.0e-8 if label in ("txc_dilating", "txe") else 5.0e-4
+    assert abs(dgam_booked - dgam_principal) <= tol * abs(dgam_booked), (label, dgam_booked, dgam_principal)

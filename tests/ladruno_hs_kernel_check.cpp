@@ -225,14 +225,16 @@ int main() {
     {
       double Th_f = 1.0, dTh_f = 0.0, k3_f = 1.0 / 3.0, dk3_f = 0.0, Ths_f = 1.0, dThs_f = 0.0;
       lode_factors_and_derivs(p, 0.35, Th_f, dTh_f, k3_f, dk3_f, Ths_f, dThs_f);
+      double k1_f = 2.0 / 3.0, dk1_f = 0.0;
+      k1_and_deriv(p, 0.35, k1_f, dk1_f);
       double p_2d = 0.0, q_2d = 0.0, dg_2d = 0.0, pp_2d = 0.0, sens_2d[2][4];
       double p_1d = 0.0, q_1d = 0.0, dg_1d = 0.0, pp_1d = 0.0, sens_1d[2][4];
       bool ok2d = solve_regime4_corner(
-          p, 110.0, 138.5, Th_f, dTh_f, k3_f, dk3_f, Ths_f, dThs_f,
+          p, 110.0, 138.5, Th_f, dTh_f, k3_f, dk3_f, Ths_f, dThs_f, k1_f, dk1_f,
           p.Kur_ref, p.Gur_ref, st_k0.gamma_p, st_k0.p_p, st_k0.void_ratio,
           false, p_2d, q_2d, dg_2d, pp_2d, sens_2d, false);
       bool ok1d = solve_regime4_corner(
-          p, 110.0, 138.5, Th_f, dTh_f, k3_f, dk3_f, Ths_f, dThs_f,
+          p, 110.0, 138.5, Th_f, dTh_f, k3_f, dk3_f, Ths_f, dThs_f, k1_f, dk1_f,
           p.Kur_ref, p.Gur_ref, st_k0.gamma_p, st_k0.p_p, st_k0.void_ratio,
           false, p_1d, q_1d, dg_1d, pp_1d, sens_1d, true);
       if (!ok2d || !ok1d || std::abs(p_2d - p_1d) > 1.0e-10 || std::abs(q_2d - q_1d) > 1.0e-10) {
@@ -250,11 +252,11 @@ int main() {
       double p_hi2d = 0.0, q_hi2d = 0.0, dg_hi2d = 0.0, pp_hi2d = 0.0, sens_hi2d[2][4];
       double p_hi1d = 0.0, q_hi1d = 0.0, dg_hi1d = 0.0, pp_hi1d = 0.0, sens_hi1d[2][4];
       bool ok_hi2d = solve_regime4_corner(
-          p_hi, 65000.0, 30000.0, Th_f, dTh_f, k3_f, dk3_f, Ths_f, dThs_f,
+          p_hi, 65000.0, 30000.0, Th_f, dTh_f, k3_f, dk3_f, Ths_f, dThs_f, k1_f, dk1_f,
           p_hi.Kur_ref, p_hi.Gur_ref, 1.0e-5, 50000.0, 0.65,
           false, p_hi2d, q_hi2d, dg_hi2d, pp_hi2d, sens_hi2d, false);
       bool ok_hi1d = solve_regime4_corner(
-          p_hi, 65000.0, 30000.0, Th_f, dTh_f, k3_f, dk3_f, Ths_f, dThs_f,
+          p_hi, 65000.0, 30000.0, Th_f, dTh_f, k3_f, dk3_f, Ths_f, dThs_f, k1_f, dk1_f,
           p_hi.Kur_ref, p_hi.Gur_ref, 1.0e-5, 50000.0, 0.65,
           false, p_hi1d, q_hi1d, dg_hi1d, pp_hi1d, sens_hi1d, true);
       if (!ok_hi2d || !ok_hi1d ||
