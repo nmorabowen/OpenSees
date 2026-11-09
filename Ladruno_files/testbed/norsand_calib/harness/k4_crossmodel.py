@@ -358,7 +358,8 @@ def write_md(path, rep):
                     "SAS-ME with the R1 (WP-152) flags, TolR 1e-4, maxSubsteps 2000 (k4_sanisand.CONFIGS['tims']); "
                     "R1 changes the constitutive response on purpose, so a departure here is R1's effect, not an "
                     "integration error.", table=True)
-    bad = [f"{k}: {v['status']}" for k, v in {**rep["norsand"], **rep["dm04"], **rep["sanisand"]}.items()
+    # the three dicts share case ids as keys: list them per model, a merged dict would let one model's "ok" hide another's failure
+    bad = [f"{m} {k}: {v['status']}" for m in ("norsand", "dm04", "sanisand") for k, v in rep[m].items()
            if v.get("status") not in ("ok",)]
     L += ["", "## Runs that did not finish cleanly", ""] + ([f"- {b}" for b in bad] or ["- none"])
     open(path, "w", encoding="utf-8").write("\n".join(L) + "\n")
