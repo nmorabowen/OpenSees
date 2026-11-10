@@ -521,8 +521,12 @@ TrussSection::update()
 const Matrix &
 TrussSection::getTangentStiff(void)
 {
+    // Ladruno (WP-228): theMatrix points at a class-static scratch matrix shared by every
+    // element of this class with the same numDOF; only the translational
+    // blocks are written below, so zero it first or the rotational rows/cols
+    // of an ndf>dim truss inherit the last writer's values (upstreamable).
+    theMatrix->Zero();
     if (L == 0.0) { // - problem in setDomain() no further warnings
-	theMatrix->Zero();
 	return *theMatrix;
     }
     
@@ -559,8 +563,12 @@ TrussSection::getTangentStiff(void)
 const Matrix &
 TrussSection::getInitialStiff(void)
 {
+    // Ladruno (WP-228): theMatrix points at a class-static scratch matrix shared by every
+    // element of this class with the same numDOF; only the translational
+    // blocks are written below, so zero it first or the rotational rows/cols
+    // of an ndf>dim truss inherit the last writer's values (upstreamable).
+    theMatrix->Zero();
     if (L == 0.0) { // - problem in setDomain() no further warnings
-	theMatrix->Zero();
 	return *theMatrix;
     }
     
