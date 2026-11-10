@@ -119,15 +119,18 @@ int main() {
     const double e_iso[6]  = {2.0e-3, 2.0e-3, 2.0e-3, 0.0, 0.0, 0.0};
     if (!check_fd_tangent(p, st_iso,      e_iso, REGIME_CAP,        "cap_isotropic")) return 17;
 
-    // Apex tension cutoff: exact apex stress, independent of the trial deviator (the old
-    // 1e-3-leak return was step-size dependent); the tangent is the residual 1e-3 C_e.
+    // Tension cutoff AT the apex (sigma_t >= c cot phi): exact apex stress, independent of
+    // the trial deviator (the old 1e-3-leak return was step-size dependent).
     {
+      HSParams pa = p;
+      pa.sigma_t = 10.0 * pa.c / std::tan(pa.phi_deg * std::acos(-1.0) / 180.0);
+      if (!pa.finalize()) return 7;
       HSState s_a, s_b;
       double C_a[6][6], C_b[6][6];
       const double e_tn2[6] = {-2.1e-2, -1.9e-2, -2.0e-2, 1.0e-3, 0.0, 0.0};
-      if (return_map_3d_comp(p, st_ocr, e_tn,  s_a, C_a) != REGIME_TENSION) return 7;
-      if (return_map_3d_comp(p, st_ocr, e_tn2, s_b, C_b) != REGIME_TENSION) return 7;
-      const double p_cut = std::max(p.p_min - p.a_apex, -p.sigma_t);
+      if (return_map_3d_comp(pa, st_ocr, e_tn,  s_a, C_a) != REGIME_TENSION) return 7;
+      if (return_map_3d_comp(pa, st_ocr, e_tn2, s_b, C_b) != REGIME_TENSION) return 7;
+      const double p_cut = std::max(pa.p_min - pa.a_apex, -pa.sigma_t);
       for (int i = 0; i < 6; ++i) {
         const double expect = (i < 3) ? p_cut : 0.0;
         if (std::abs(s_a.sig[i] - expect) > 1.0e-12 || std::abs(s_b.sig[i] - expect) > 1.0e-12) {
@@ -136,6 +139,53 @@ int main() {
         }
       }
       if (!(s_a.gamma_p > st_ocr.gamma_p)) return 7;
+    }
+
+    // Tension cutoff ABOVE the apex (default sigma_t = 0 with c > 0): p = p_cut, q kept
+    // on the cone (WP-210 round 4). (i) consistent tangent in the shear-root mode;
+    // (ii) no stress jump along a strain path that crosses p_tr = p_cut -- the old apex
+    // collapse jumped q from ~M_c a_apex to 0 there and stalled Newton in footing BVPs.
+    {
+      const double e_tc[6] = {-1.3e-3, -1.0e-3, -1.1e-3, 2.0e-3, -5.0e-4, 4.0e-4};
+      HSState s_t;
+      double C_t[6][6];
+      if (return_map_3d_comp(p, st_ocr, e_tc, s_t, C_t) != REGIME_TENSION) {
+        std::fprintf(stderr, "FAIL [tension_corner]: e_tc is not in the tension regime\n");
+        return 18;
+      }
+      const double pt = (s_t.sig[0] + s_t.sig[1] + s_t.sig[2]) / 3.0;
+      const double p_cut = std::max(p.p_min - p.a_apex, -p.sigma_t);
+      if (std::abs(pt - p_cut) > 1.0e-10 || !(s_t.gamma_p > st_ocr.gamma_p)) {
+        std::fprintf(stderr, "FAIL [tension_corner]: p=%.6g (p_cut %.6g)\n", pt, p_cut);
+        return 18;
+      }
+      if (!check_fd_tangent(p, st_ocr, e_tc, REGIME_TENSION, "tension_corner")) return 18;
+
+      const int N = 4000;
+      double s_prev[6] = {0, 0, 0, 0, 0, 0}, max_jump = 0.0, sum_jump = 0.0;
+      int n_ten = 0;
+      for (int k = 0; k <= N; ++k) {
+        const double t = 1.5 * k / N;
+        double e[6];
+        for (int i = 0; i < 6; ++i) e[i] = t * e_tc[i];
+        HSState s_k;
+        double C_k[6][6];
+        if (return_map_3d_comp(p, st_ocr, e, s_k, C_k) == REGIME_TENSION) ++n_ten;
+        if (k > 0) {
+          double d = 0.0;
+          for (int i = 0; i < 6; ++i) d += (s_k.sig[i] - s_prev[i]) * (s_k.sig[i] - s_prev[i]);
+          d = std::sqrt(d);
+          max_jump = std::max(max_jump, d);
+          sum_jump += d;
+        }
+        for (int i = 0; i < 6; ++i) s_prev[i] = s_k.sig[i];
+      }
+      const double mean_jump = sum_jump / N;
+      if (n_ten == 0 || n_ten == N + 1 || max_jump > 20.0 * mean_jump) {
+        std::fprintf(stderr, "FAIL [tension_continuity]: max |dsig| %.3e vs mean %.3e (%d tension pts)\n",
+                     max_jump, mean_jump, n_ten);
+        return 19;
+      }
     }
 
     // 3D cap normality check at general Lode angle (theta != +/- pi/6):
@@ -225,14 +275,16 @@ int main() {
     {
       double Th_f = 1.0, dTh_f = 0.0, k3_f = 1.0 / 3.0, dk3_f = 0.0, Ths_f = 1.0, dThs_f = 0.0;
       lode_factors_and_derivs(p, 0.35, Th_f, dTh_f, k3_f, dk3_f, Ths_f, dThs_f);
+      double k1_f = 2.0 / 3.0, dk1_f = 0.0;
+      k1_and_deriv(p, 0.35, k1_f, dk1_f);
       double p_2d = 0.0, q_2d = 0.0, dg_2d = 0.0, pp_2d = 0.0, sens_2d[2][4];
       double p_1d = 0.0, q_1d = 0.0, dg_1d = 0.0, pp_1d = 0.0, sens_1d[2][4];
       bool ok2d = solve_regime4_corner(
-          p, 110.0, 138.5, Th_f, dTh_f, k3_f, dk3_f, Ths_f, dThs_f,
+          p, 110.0, 138.5, Th_f, dTh_f, k3_f, dk3_f, Ths_f, dThs_f, k1_f, dk1_f,
           p.Kur_ref, p.Gur_ref, st_k0.gamma_p, st_k0.p_p, st_k0.void_ratio,
           false, p_2d, q_2d, dg_2d, pp_2d, sens_2d, false);
       bool ok1d = solve_regime4_corner(
-          p, 110.0, 138.5, Th_f, dTh_f, k3_f, dk3_f, Ths_f, dThs_f,
+          p, 110.0, 138.5, Th_f, dTh_f, k3_f, dk3_f, Ths_f, dThs_f, k1_f, dk1_f,
           p.Kur_ref, p.Gur_ref, st_k0.gamma_p, st_k0.p_p, st_k0.void_ratio,
           false, p_1d, q_1d, dg_1d, pp_1d, sens_1d, true);
       if (!ok2d || !ok1d || std::abs(p_2d - p_1d) > 1.0e-10 || std::abs(q_2d - q_1d) > 1.0e-10) {
@@ -250,11 +302,11 @@ int main() {
       double p_hi2d = 0.0, q_hi2d = 0.0, dg_hi2d = 0.0, pp_hi2d = 0.0, sens_hi2d[2][4];
       double p_hi1d = 0.0, q_hi1d = 0.0, dg_hi1d = 0.0, pp_hi1d = 0.0, sens_hi1d[2][4];
       bool ok_hi2d = solve_regime4_corner(
-          p_hi, 65000.0, 30000.0, Th_f, dTh_f, k3_f, dk3_f, Ths_f, dThs_f,
+          p_hi, 65000.0, 30000.0, Th_f, dTh_f, k3_f, dk3_f, Ths_f, dThs_f, k1_f, dk1_f,
           p_hi.Kur_ref, p_hi.Gur_ref, 1.0e-5, 50000.0, 0.65,
           false, p_hi2d, q_hi2d, dg_hi2d, pp_hi2d, sens_hi2d, false);
       bool ok_hi1d = solve_regime4_corner(
-          p_hi, 65000.0, 30000.0, Th_f, dTh_f, k3_f, dk3_f, Ths_f, dThs_f,
+          p_hi, 65000.0, 30000.0, Th_f, dTh_f, k3_f, dk3_f, Ths_f, dThs_f, k1_f, dk1_f,
           p_hi.Kur_ref, p_hi.Gur_ref, 1.0e-5, 50000.0, 0.65,
           false, p_hi1d, q_hi1d, dg_hi1d, pp_hi1d, sens_hi1d, true);
       if (!ok_hi2d || !ok_hi1d ||
