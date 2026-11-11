@@ -7,7 +7,7 @@ import numpy as np
 
 from .integrator import State, integrate_increment
 from .model import (continuum_tangent, elastic_strain_from_stress, energy, floor_project, invariants,
-                    plastic, zeta_fun, SQ32, SQ6, R_TOL_REL)
+                    plastic, rule_tangent, zeta_fun, SQ32, SQ6, R_TOL_REL)
 from .params import Params
 
 
@@ -75,15 +75,16 @@ def initial_state(params: Params, sigma0, v0: float, pi_i0: float | None = None,
 
 
 def run_path(params: Params, state0: State, deps, rtol: float = 1e-10,
-             kin: str = "small") -> list[State]:
+             kin: str = "small", floor_rule: bool = True) -> list[State]:
     """Apply n strain increments deps (n,3,3) (full symmetric tensors, tensor shear), each a
-    linear ramp over unit pseudo-time integrated by Radau.  Returns the state after each."""
+    linear ramp over unit pseudo-time integrated by Radau.  Returns the state after each.
+    floor_rule=False integrates the Koiter form (S.55) on the floor everywhere (round-3b O1; sheet 9.7 round 4)."""
     deps = np.asarray(deps, dtype=float)
     out = []
     st = state0
     for k in range(deps.shape[0]):
         d = 0.5 * (deps[k] + deps[k].T)
-        st = integrate_increment(params, st, d, rtol=rtol, kin=kin)
+        st = integrate_increment(params, st, d, rtol=rtol, kin=kin, floor_rule=floor_rule)
         st.flags["step"] = k + 1
         out.append(st)
         if st.flags["status"] != "ok":
@@ -96,11 +97,17 @@ def tangent(params: Params, state: State, plastic_branch: bool | None = None,
     """CONTINUUM tangent (3,3,3,3): a^ep of (S.42) (loading branch) if the last increment
     ended in the plastic mode (state.flags['plastic']), else a^e (S.3)/(S.33).  If it ended on the
     floor (state.flags['floor'], sheet 9.7 / S.55) the floor mechanism is added: the exact one-sided
-    linearisation, with 1:C = 0 (no bulk stiffness at a floored state; owner decision (c))."""
+    linearisation, with 1:C = 0 (no bulk stiffness at a floored state; owner decision (c)).  If it ended in the
+    rate form (S.60) of the image-pressure rule (flags['mode'] == 'floor_rule', sheet 9.7 round 4), the (S.60)
+    tangent on the recorded branch of <P:a^e:eps'> (model.rule_tangent; also 1:C = 0)."""
     if plastic_branch is None:
         plastic_branch = bool(state.flags.get("plastic", False))
     if floor_branch is None:
         floor_branch = bool(state.flags.get("floor", False))
+    if plastic_branch and floor_branch and state.flags.get("mode") == "floor_rule":
+        # the last segment was the rate form (S.60) (sheet 9.7, round 4), on its trial-floor branch
+        C, _ = rule_tangent(state.eps_e, state.pi_i, state.v, params, state.flags.get("rule_branch") or 0)
+        return C
     C, _ = continuum_tangent(state.eps_e, state.pi_i, state.v, params, plastic_branch, floor_branch)
     return C
 

@@ -14,8 +14,8 @@ Derivatives are the sheet's closed forms transcribed by hand (no sympy in the co
 | file | content |
 |---|---|
 | `params.py` | `Params` (sheet §1.3 names; `energy='BA06'|'HAR'` with k, g, n_e, p_a; `p_min`), `validate()` with the owner-approved refusals (§11.2, the §2.4 energy-option refusals, p_min < 0, the (S.56) scan-step contract for cap = smooth) |
-| `kernel.py` | invariants (S.1, S.6, S.7), vertex rule §3.2, ζ WW/GA in y-form (S.8–S.11), BA06 energy (S.3–S.5) and the HAR energy (S.4h–S.5h'', `elastic`/`energy_psi`/`invert_elastic` branch on `P.energy`), the p′ floor Π_f §9.7 (`floor_ev` (S.49)/(S.50), `floor_project` (S.48)+(S.51a), `floor_op4`, `floor_energy` (S.52)), F and Q derivatives (S.12–S.21), cap (S.35–S.37), CSL (S.22), π_i* (S.23–S.24), nested π_i solve, residual/Jacobian (S.29–S.30), ã^ep (S.31–S.32, (S.32f) with the floor), spectral tangents (S.33, S.34), chained substep tangent §9.6 (`chain_data` (S.45), `chain_propagate` (S.46)/(S.54), `chain_assemble` (S.47)) |
-| `api.py` | `State` (+ floor counters, `State.floor`), `initial_state` (floor at init, the unified π_{i0} rule (S.53), `pi0_rule='unified'|'legacy'`), `floor_energy` (E_f on demand), `step` (ladder + chained tangent), `step_fractions` (prescribed α_k, no ladder), `run_path`, `tangent`, `tangent_last_substep`, `tangent_finite`, drivers `triaxial`, `k2_path` |
+| `kernel.py` | invariants (S.1, S.6, S.7), vertex rule §3.2, ζ WW/GA in y-form (S.8–S.11), BA06 energy (S.3–S.5) and the HAR energy (S.4h–S.5h'', `elastic`/`energy_psi`/`invert_elastic` branch on `P.energy`), the p′ floor Π_f §9.7 (`floor_ev` (S.49)/(S.50), `floor_project` (S.48)+(S.51a), `floor_op4`, `floor_energy` (S.52)), the image-pressure rule at a post floor (`floor_pi_rule`, step 5g / (S.57); the (S.59) row in `chain_propagate`), F and Q derivatives (S.12–S.21), cap (S.35–S.37), CSL (S.22), π_i* (S.23–S.24), nested π_i solve, residual/Jacobian (S.29–S.30), ã^ep (S.31–S.32, (S.32f) with the floor), spectral tangents (S.33, S.34), chained substep tangent §9.6 (`chain_data` (S.45), `chain_propagate` (S.46)/(S.54), `chain_assemble` (S.47)) |
+| `api.py` | `State` (+ floor counters, `State.floor`; round 4: `n_f_pi`, `flags['floor_pi'|'floor_pi_guard'|'floor_pi_band'|'rpattern']`), `initial_state` (floor at init, the unified π_{i0} rule (S.53), `pi0_rule='unified'|'legacy'`), `floor_energy` (E_f on demand), `step` (ladder + chained tangent), `step_fractions` (prescribed α_k, no ladder), `run_path`, `tangent`, `tangent_last_substep`, `tangent_finite`, drivers `triaxial`, `k2_path` |
 | `acoustic.py` | `acoustic_min_det` (coarse (θ,φ) sweep + Nelder-Mead), (S.44) transcription for self-check |
 | `selfcheck.py` | the self-checks (not the gate suite) |
 
@@ -23,8 +23,10 @@ Derivatives are the sheet's closed forms transcribed by hand (no sympy in the co
 From `Ladruno_files/testbed/norsand_oracle/`:
 ```
 python -m o2_algo.selfcheck              # all groups
-python -m o2_algo.selfcheck jac cto      # groups: jac | cto | newton | k1 | k2 | cap | chain | har | floor | pi0  (k2 --table for the §14 sensitivity table)
+python -m o2_algo.selfcheck jac cto      # groups: jac | cto | newton | k1 | k2 | cap | chain | har | floor | pi0 | d2 | r4  (k2 --table for the §14 sensitivity table)
+python -m o2_algo.selfcheck r4           # round 4, the image-pressure rule; its parts: r4c | r4wet | r4k116 | r4s59 | r4s58 | r4energy
 ```
+`r4k116`, `r4s59` and `r4energy` read the H19 Gauss-point dumps `../norsand_calib/out/h19/s185.txt` and `stall.txt`.
 Interface (identical in O1): `Params`, `State(sigma, eps_e, pi_i, v, D, eps_p_v, eps_p_s, flags)`,
 `initial_state(params, sigma0, v0, pi_i0)`, `run_path(params, state0, deps[n,3,3])`,
 `tangent(params, state)`, `acoustic_min_det(params, state, tangent4)`,
@@ -57,8 +59,36 @@ closed, general n bracketed Newton/bisection). The tangent is the exact linearis
 always counted) and `State.floor`; `api.floor_energy(P, state)` gives E_f (S.52) of the last increment on demand
 from the closed-form Ψ (the bound p_min Δε^f_v for an out-of-domain trial). A refused increment counts nothing.
 `initial_state` projects `invert_elastic(σ₀)` (n_f_init = 1, σ₀ replaced by σ(ε^e_f)). The dry-side pattern FPf
-(trial floored, plastic, post floored) exists under HAR (round 3b A1, K1.14b) and is an ordinary outcome; no
-F ≤ F_tol is asserted at a floored committed state (A5).
+(trial floored, plastic, post floored) exists under HAR (round 3b A1, K1.14b) and is an ordinary outcome. The
+round-3b sentence "no F ≤ F_tol is asserted at a floored committed state (A5)" is withdrawn by round 4 (next paragraph).
+
+**The image-pressure rule at a post floor (sheet round 4, 6ae9fe5ab: §9.1 step 5g, §9.7 (S.57)–(S.59); owner decision
+O13 option A).** `kernel.floor_pi_rule(P, σ_f, a^e(ε^e_f), π_i^BE)` is called by `return_map` only after an active
+post floor (step 5f), after D, the floor events and the tangent (S.32f) are formed:
+- activation: F(σ_f, π_i^BE) > 0, strict, as evaluated (the same `flow(...).F` as the trial test, no tolerance);
+- η_f = ζ(θ_f, ρ) q_f/|p_f| (0 at the vertex), π_f = `pi_of_eta(P, p_f, η_f)` (the inverse of (S.12));
+- guard: N > 0 and η_f ≥ M/N → π_i unchanged, `RuntimeWarning`, `floor_pi_guard`, no refusal (unreachable);
+- acceptance: π_i := π_f only if π_f < π_i^BE (never shrink); then `floor_pi` and n_f,π += 1.
+
+Nothing else of the step changes: σ_f, ε^e, ε^p, v, Δλ, D, ψ_i, π_i*, η, the floor counters and events, ã^ep. The rule
+is not applied on an elastic step, on a plastic step without a post floor, at `initial_state`, or at step entry (a
+legacy state with F > F_tol is taken as it is; its first converged post-floored step repairs it). With p_min = 0, and
+on every step where the rule does not fire, O2 is bit-identical to the round-3b O2 (proved below).
+- `StepResult` (appended fields): `floor_pi`, `floor_pi_guard`, `floor_pi_band`, `pi_be` (π_i^BE; `pi` is the
+  committed π_i), `F_post` (F(σ_f, π_i^BE)), `eta_f`, `gamma_pi` (γ_b of (S.59); zeros at the vertex).
+- Chain: in a sub-increment where the rule fired `chain_propagate` replaces the S^π row of (S.54) by (S.59),
+  S^π_{k+1} = Σ_b γ_b n^b·S^ε_{k+1}·n^b with S^ε_{k+1} after Φ^post, γ = G·a^e(ε^e_f), G_a = −f_a(σ_f, π_f)/F_π(p_f, π_f)
+  (f_a of (S.14) with its ζ_y q y_a term); no S^π_k, S^v or w_b term. The S^ε row and the single-step tangent are
+  untouched. `cache['S_pi_chain']` holds the increment's ∂π_i/∂Δε_J (six kernel columns) on a chained increment.
+- Counting (sheet §9.7 "Layout: append, never reorder"): `State.n_f_pi` (new LAST dataclass field, committed total;
+  a refused increment counts nothing), `State.floor` gains the key `n_f_pi` (the other keys unchanged),
+  `flags['floor_pi']` and `flags['floor_pi_guard']` per (sub-)increment, summed over a substepped increment like
+  `floor_tr`/`floor_post`. Two O2 diagnostics beside them: `flags['rpattern']` (the sheet's starred pattern, e.g.
+  `-Pf*,-P-`; `flags['fpattern']` is unchanged, no star) and `flags['floor_pi_band']` (number of sub-increments with
+  a post floor and |F(σ_f, π_i^BE)| ≤ `F_BAND_TOL_REL`·p_ref = F_tol, the noise band of the strict test).
+- Noise band contract: the band decides nothing in the step (the activation stays strict). A harness asserts (σ, π_i)
+  parity everywhere, and the parity of `floor_pi` / `n_f_pi` / the chained tangent only where `floor_pi_band == 0`;
+  FD checks of (S.59) are run outside the band (`selfcheck.r4_fd` asserts it at every FD point).
 
 **Unified π_{i0} rule (S.53; owner decision (d)).** `initial_state(…, pi_i0=None, pi0_rule='unified')` puts the surface
 through (p_init after the floor, η* = max(η_init, c₂M)), c₂ := 0 for cap = 'none' (then identical to the pre-round-3
@@ -99,6 +129,7 @@ differ only in the tangent assembly ((S.33) vs (S.34)).
 | `PI_MAX_NEG` | 0 | any π_i iterate ≥ 0 is an evaluation failure |
 | `FLOOR_ACT_TOL` | 1e-12 | Π_f active iff p(ε^e) > −p_min (1 − FLOOR_ACT_TOL) or ε^e ∉ dom Ψ (HAR ε* ≤ 0); idempotent after a projection |
 | `AT_FLOOR_TOL` | 1e-10 | `at_floor` := p_committed > −p_min (1 + AT_FLOOR_TOL) |
+| `F_BAND_TOL_REL` | 1e-10 | noise band of the (S.57) activation: \|F(σ_f, π_i^BE)\| ≤ F_BAND_TOL_REL·p_ref is REPORTED (`floor_pi_band`); the test itself is the strict F > 0 with acceptance π_f < π_i^BE |
 | `FLOOR_X_TOL`, `FLOOR_X_MAX_ITERS` | 1e-14, 100 | general-n HAR floor scalar solve (S.50): \|f(x)\| ≤ FLOOR_X_TOL (b + a x^{2n}) inside the exact bracket [x_s, x_hi] (never refuses; n = ½ is closed form) |
 
 Other contract points: p ≥ 0 or the §7 guard B ≤ 0 at an iterate is an evaluation failure
@@ -260,3 +291,55 @@ default floor (p_min = 5·10⁻³ p_ref) is bit-identical to p_min = 0 on the K2
   path q = 11.354, p = −103.785, η = 0.1094, w = 0.338 (sheet 11.347 / −103.782 / 0.1093 / 0.337 at a finer step).
   (S.56): W_ramp 0.0606 (defaults), c₂ = 0.07 admissible, 0.06 refused; planar / none accepted. All §2.4 parser
   refusals fire; `Params()` defaults: energy BA06, p₀ = −100, p_min = 0.5.
+
+## Self-check record: round 4, the image-pressure rule at a post floor (local Windows, Python 3.11.9 / numpy 2.4.4, 2026-11-11, sheet 6ae9fe5ab)
+`selfcheck r4` (all checks OK; every expected number copied from the sheet before the first run). Sheet value in
+brackets.
+- `r4c`, K1.12 (C): Δλ 1.546466e−3, p_c −48.764495, q_c 46.421589, η_c 0.952607, π_i^BE −40.198569107, σ_f to 2.7e−11 kPa,
+  η_f 0.929068, F(σ_f, π_i^BE) = +0.010899 p_min, pattern -Pf*, **π_i = −40.516314098** [−40.516314098], F(σ_f, π_i) =
+  1.4e−16 p_min, c_N p_min 23.2379. With the rule switched off (round 3b) σ_f, ε^e, v, Δλ, D, ε^p, Δε^f_v, W_f, E_f, ψ_i,
+  π_i*, η and the (S.32f) tangent are bit-identical; only π_i differs.
+- `r4wet`, the wet-floor table (12 cases, all -Pf*, m = 1): max difference to the sheet 4.8e−5 in F/p_min (4 printed
+  decimals), 4.5e−7 kPa in π_i^BE and 4.7e−7 in η_f (6 decimals), 4.1e−10 kPa in π_i by (S.57) (9 decimals);
+  F(σ_f, π_i)/p_min ≤ 6.6e−16 after the rule.
+- `r4k116`, K1.16 (H19 dumps; ε^e₃₃ from σ₃₃ to 4e−16, dumped stresses reproduced to ≤ 3.8e−15 kPa): `e7367g1_s185`
+  steps 1 / 2 / 60, `e7367g2_s185` steps 1 / 2 / 60 and the stall state `e7367g1_m53` steps 1 / 2: σ and π_i within
+  5.0e−11 kPa of the sheet's ten decimals, every step m = 1 and -Pf* (the stall step 1 too: 12 local iterations), F ≤
+  F_tol (|F| ≤ 9e−16 kPa at the printed steps), π_i = π_f(σ_f), p = −p_min, |π_i| ≥ c_N p_min = 0.246558167 at all 122 steps; step-1 details
+  (Δλ, p_c, η_c, π_i^BE, F(σ_f, π_i^BE), η_f, Δε^f_v) to the printed digits. Rule off, 60 steps from `e7367g1_s185`:
+  π_i −0.3894275650, F +0.0929 kPa, q 0.469 (sheet's round-3b values; 0.631 with the rule). Stall state at |Δε| = 1e−6:
+  refused `local_linesearch:pi_fold (substeps exhausted at 2^8)`, state frozen, counters unchanged.
+- `r4s59`, the (S.59) gate (K3 HAR, start = `e7367g1_s185` after one K1.16 step, 2× the increment, fractions (½, ½),
+  pattern -Pf*,-Pf*, F(σ_f, π_i^BE) = +0.162 / +0.099 p_min, committed π_i −0.479306004): chained C vs central FD
+  1.04e−5 / 1.04e−7 / 1.24e−9 at h = 1e−6 / 1e−7 / 1e−8 [1.0e−5 / 1.0e−7 / 1.3e−9; pass ≤ 3e−7 at 1e−7]; S^π vs FD
+  4.71e−6 / 4.71e−8 / 7.1e−10 [4.7e−6 / 4.7e−8 / 9.4e−10]; δ:C 3e−15. Mutants of the row, C vs FD at h = 1e−7: M-R1
+  0.200 [0.20], M-R2 0.189 [0.19], M-R3 0.0200 [0.020], M-R5 0.0159 [0.016], M-R6 0.256 [0.26] (S^π 0.11 … 8.2). m = 1
+  with the rule fired: chain vs (S.33) 7.3e−16 and the tangent bit-identical with the rule off (M-R9). BA06 K1.12 (C)
+  2× + shear 2e−4, (½, ½), -Pf*,-P- (a reset feeding an (S.54) row): 5.9e−8 / 5.8e−10 / 1.9e−9; M-R1 there 0.089 [0.089].
+  Scratch FD census (not a verb): 36 random forced chains ((½,½), (½,¼,¼), (¼,¾)) with a reset in a non-final
+  sub-increment, K3 / TIMs / BA06 α₀ = 5, patterns -Pf*,-Pf* … FPf*,FPf*,FPf*, -P-,-Pf*,FPf*, -Pf*,FP-, -Pf*,FPf*: C vs FD
+  ≤ 1.1e−6 at h = 1e−7 and ≤ 2.2e−8 at 1e−8 (O(h²)), S^π ≤ 1.7e−6; the M-R1 chain is 2.3e−3 … 0.1 off on the same cases.
+- `r4s58`, census (seed 20261111; admissible starts by (S.53); random non-coaxial marches, |Δε| 1e−5 … 1e−3): K3 HAR,
+  TIMs HAR, BA06 K2 (α₀ = 0 and 5) and BA06 N = 0, 10 400 accepted steps, 3287 post-floor events, the rule fired at 3195
+  and not at 92 (none in the noise band, guard never): (a) max (p_min − |p|)/p_min 8.6e−15; (b) max F = 1.0e−2 F_tol;
+  (c) min |π_i|/bound 1.013; where fired |F(σ_f, π_i)| ≤ 1.4e−14 p_min and π_i = π_f(σ_f) to 1.4e−14. K1.14b (never
+  shrink): FPf with F(σ_f, π_i^BE) = −0.004098 p_min, π_i = −0.743350807 unchanged, chains −0.743038708 / −0.743573074,
+  the always-reset value (M-R7) −0.740398976.
+  The two branches no march reaches, called on `floor_pi_rule` directly: vertex (q = 0, π_i^BE inside the tip) → π_f =
+  c_N p_f exactly, γ = 0, for N > 0 (HAR, BA06) and N = 0; forced η_f ≥ M/N → π_i unchanged, one warning,
+  `floor_pi_guard`, no reset. Scratch census at |Δε| 1e−3 … 1e−2 (the H19 size; 3000 steps, 333 substepped, 2357
+  resets, 288 substepped increments carrying resets): (a)–(c) hold, max F = 1.0e−2 F_tol, no refusal.
+- `r4energy` (600 steps of 2e−4 from `e7367g1_s185`): min D 6.22e−5 [6.2e−5], ΣD 4.3839e−2 [4.384e−2], ΣE_f 2.9204e−3
+  [2.920e−3] ≤ W_f 2.9867e−3 [2.987e−3] kPa, 600 post floors and 600 resets, work-balance residual 1.18 % [1.2 %] of ΣD
+  (0.60 % with 1200 steps [0.60 %]); D of every step equals Δλ σ_c:q of the return and each event's E_f ∈ [0, p_min Δε^f_v].
+  Rule off on the same path: ΣE_f 1.520e−2 [1.52e−2], W_f 1.713e−2 [1.71e−2], residual 8.6 % [8.6 %].
+
+**Bit-identity with the pre-round-4 O2.** (1) The pre-existing selfcheck groups (jac … d2) print the same digits before
+and after, one line apart: `state.floor` now shows the appended key `n_f_pi`. (2) Step-by-step comparison against a
+snapshot of the previous `o2_algo` (same input state to both; σ, ε^e, π_i, v, D, Δλ, ε^p, counters, flags and the
+tangent compared with `np.array_equal`), random marches on eight parameter sets: p_min = 0 (K3 HAR, TIMs HAR,
+BA06 K2): 4641 steps, no floor event, all bit-identical (refusals included); p_min > 0 (K3, TIMs, BA06 K2 with α₀ = 0
+and 5, fork + smooth cap): the 5054 steps where the rule did not fire are bit-identical, and at the 2943 m = 1 steps
+where it fired everything except π_i is bit-identical (π_i more negative); 3 substepped increments with a reset
+differ in their later sub-increments, as they must. No unexplained difference.
+(3) Gate suite `python -m pytest tests -q -p no:cacheprovider`: before (HEAD O2) 646 passed, 1 failed (O1 `test_i2_...[O1-apex_start-none]`, eps^p_s 1.6e-14 > 1e-14), 1 skipped. With round 4 the only result changes seen are `test_g1_floor.py::test_o2_converges_to_o1_at_first_order_on_a_floored_path[0.0]` and `[5.0]` (pass -> fail: that path is FPf* at every sub-increment, so the split plateaus at 3.3e-3 / 3.8e-3 against the (S.55) O1; the sheet calls this path FP-, rule-free). Per-file logs in the session scratchpad `round4_o2/pf_*.log`.

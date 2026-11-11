@@ -84,9 +84,12 @@
 //   -k -g [-n 0.5] -p_a, or the DM04 mapping -G0 -nu [-e_ref]); HAR REPLACES the BA06 constants, and giving one
 //   of them (or a HAR one with BA06) is refused, never ignored. -p_a is ONE flag, shared by the HAR energy and the
 //   fork CSL. -pmin p: the floor (default 5e-3 p_ref; 0 = off). The floor never refuses; it is COUNTED (responses
-//   `floor` / `floored`: [at_floor, n_f_tr, n_f_post, eps_f_v, W_f]; `stepInfo` [9], [10] = floor_tr, floor_post of
+//   `floor` / `floored`: [at_floor, n_f_tr, n_f_post, eps_f_v, W_f, n_f_pi]; `stepInfo` [9], [10] = floor_tr, floor_post of
 //   the last step; `floorEnergy`: E_f). The consistent tangent of a floored step is the EXACT one (zero bulk
 //   stiffness at a floored state; no regularisation, owner decision (c)).
+//   Round 4 (sheet 9.7 (S.57), owner decision O13 A): after a post floor that leaves F(sigma_f, pi_i) > 0 the kernel moves
+//   pi_i onto the surface through the floored stress (part of the floor: no option). Counted: `floor`[5] = n_f_pi,
+//   `stepInfo` [11], [12] = floor_pi, floor_pi_guard of the last step (appended; every older entry in place).
 //
 // See Ladruno_implementation/144_ladruno_norsand_plan.md and 144a_norsand_equation_sheet.md.
 // classTags 33023 / 33024 / 33025. Written: N. Mora-Bowen (Ladruno), 2026.
@@ -112,7 +115,7 @@ class LadrunoNorSand : public NDMaterial, public LadrunoElasticStrainProvider {
   // NDMaterial sends nothing, so this is the only Vector under the dbTag (FE_Datastore keys vectors by
   // size: nothing to collide with). The trial stress and tangent are NOT on the wire (Domain::recvSelf's
   // update() recomputes them); recvSelf rebuilds them from the restored trial State.
-  static const int WIRE_LEN = 112;
+  static const int WIRE_LEN = 113;   // round 4: +1 (the committed n_f_pi, appended)
 
   // null constructor (broker / recvSelf): parameters are filled by recvSelf
   LadrunoNorSand();

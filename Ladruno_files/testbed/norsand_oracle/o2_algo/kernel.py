@@ -10,6 +10,7 @@ branch below is part of the kernel's contract (see the CONTRACT constants and RE
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -329,6 +330,9 @@ def floor_energy(P: Params, eps_pre: np.ndarray, eps_f: np.ndarray, dfv: float) 
     except EvalError:
         return P.p_min * dfv
 
+
+F_BAND_TOL_REL = 1.0e-10    # noise band of the strict (S.57) activation: |F(sigma_f, pi_i^BE)| <= F_BAND_TOL_REL p_ref
+                            # (= F_tol, 100x RES_TOL). Reported only (floor_pi_band); it decides NOTHING in the step.
 
 UNIT_SPIN = np.ones((3, 3)) - I3     # spin of Pi_f in the (S.33) form: 1 exactly off the diagonal
 
@@ -769,6 +773,14 @@ class StepResult:
     Phi_tr: np.ndarray = field(default=None)   # (S.51a) block of the trial event (None when inactive)
     Phi_post: np.ndarray = field(default=None) # (S.51a) block of the post event (None when inactive)
     floor_events: list = field(default_factory=list)   # [(eps_pre, eps_f, dfv), ...] for E_f (S.52) on demand
+    # --- §9.1 step 5g / (S.57): the image-pressure rule at a post floor (round 4). `pi` above is the COMMITTED pi_i ---
+    floor_pi: bool = False                     # the rule fired: pi = pi_f(sigma_f) < pi_be
+    floor_pi_guard: bool = False               # F(sigma_f, pi_be) > 0 but eta_f >= M/N (unreachable): pi left unchanged
+    floor_pi_band: bool = False                # post floor acted and |F(sigma_f, pi_be)| <= F_BAND_TOL_REL p_ref (noise band)
+    pi_be: float = float("nan")                # pi_i^BE of the converged return (= pi unless the rule fired; nan if no post floor)
+    F_post: float = float("nan")               # F(sigma_f, pi_i^BE) at the post-floored stress (nan when no post floor)
+    eta_f: float = float("nan")                # eta_f = zeta(theta_f, rho) q_f/|p_f| (0 at the vertex); nan unless F_post > 0
+    gamma_pi: np.ndarray = field(default=None) # (S.59) gamma_b = sum_a G_a a^e_ab(eps^e_f) (zeros at the vertex); None unless floor_pi
 
 
 def chain_data(pe: PointEval, J: np.ndarray) -> ChainData:
@@ -793,9 +805,16 @@ def return_map(P: Params, eps_tr: np.ndarray, pi_n: float, v: float, vfac: float
     Floor (§9.7, p_min > 0): step 1f projects the trial with Pi_f before any stress is formed (a HAR trial outside
     dom Psi included); steps 2-4 see the floored trial; step 5f projects the converged eps^e (pi_i, dlam, q_a, D of
     the step are those already formed). Both events are counted (floor_tr / floor_post, dfv_*), never refused; the
-    pattern 'FPf' (trial floored, plastic, post floored) is an ordinary outcome (round 3b, A1). No F <= F_tol
-    is asserted at a floored committed state (A5). With p_min = 0 the pre-round-3 refusals stand
-    (`trial_p_or_pi_nonneg`, `trial_elastic_domain`)."""
+    pattern 'FPf' (trial floored, plastic, post floored) is an ordinary outcome (round 3b, A1).
+    With p_min = 0 the pre-round-3 refusals stand (`trial_p_or_pi_nonneg`, `trial_elastic_domain`).
+
+    Step 5g (round 4, (S.57)): if 5f acted and F(sigma_f, pi_i^BE) > 0 (strict, as evaluated), pi_i := pi_f(sigma_f),
+    the image pressure of the surface through the floored stress, accepted only if pi_f < pi_i^BE (never shrink);
+    guard eta_f >= M/N (N > 0): pi_i unchanged, warning, floor_pi_guard, no refusal. Nothing else of the step changes
+    (sigma_f, eps^e, dlam, q_a, D, psi, pi*, eta, the floor events, a~^ep (S.32f)); the rule is not applied on an elastic
+    step, on a plastic step without a post floor, or at entry (a legacy state with F > F_tol is taken as it is).
+    (S.58b) F <= F_tol then holds at every committed state reached from an admissible start. With p_min = 0, or
+    whenever the rule does not fire, the result is bit-identical to the round-3b return map."""
     eps_raw = eps_tr
     fl_tr = floor_project(P, eps_tr)                       # 1f
     eps_tr = fl_tr.eps_f
@@ -887,10 +906,55 @@ def return_map(P: Params, eps_tr: np.ndarray, pi_n: float, v: float, vfac: float
     J = jacobian(P, pe)
     at = atilde_ep(P, pe, J, vfac, Phi_tr, Phi_post, ae_c if fl_post.active else None)     # (S.32) / (S.32f)
     fkw.update(floor_events=events)
-    return StepResult(eps_c, sig_c, pe.pi, pe.dlam, pe.fl.q_a, pe.fl.Om, pe.fl.Y.F_p, pe.fl.Y.eta,
+    pi_c = pe.pi
+    if fl_post.active:                                     # 5g, the image-pressure rule (S.57)
+        pkw = floor_pi_rule(P, sig_c, ae_c, pe.pi)
+        pi_c = pkw.pop("pi")
+        fkw.update(pkw)
+    return StepResult(eps_c, sig_c, pi_c, pe.dlam, pe.fl.q_a, pe.fl.Om, pe.fl.Y.F_p, pe.fl.Y.eta,
                       pe.psi, pe.ps, D, at, True, pe.inv.vertex, pe.fl.w < 1.0, False, "", it, pi_total, hist,
                       ae=ae_c, chain=chain_data(pe, J), eps_tr=eps_tr.copy(), eps_c=pe.eps_e.copy(),
                       floor_post=fl_post.active, dfv_post=fl_post.dfv, Phi_post=Phi_post, **fkw)
+
+
+def floor_pi_rule(P: Params, sig_f: np.ndarray, ae_f: np.ndarray, pi_be: float) -> dict:
+    """Sheet §9.1 step 5g / (S.57), called ONLY after an active post floor (step 5f), with the committed floored
+    principal stress sigma_f, a^e(eps^e_f) and pi_i^BE of the converged return. Returns the StepResult fields of the
+    rule plus 'pi', the image pressure to commit.
+
+      activation  F(sigma_f, pi_i^BE) > 0, strict, as evaluated (the same F = zeta q + p eta as the trial test);
+      eta_f = zeta(theta_f, rho) q_f/|p_f| (0 at the vertex);   pi_f = the inverse of (S.12) at (p_f, eta_f);
+      guard       N > 0 and eta_f >= M/N: pi_i unchanged, no refusal, warning + floor_pi_guard (unreachable, §9.7);
+      acceptance  pi_i := pi_f only if pi_f < pi_i^BE (never shrink); then floor_pi.
+    When the rule fires, the chain row (S.59) needs gamma_b = sum_a G_a a^e_ab(eps^e_f), G_a = -f_a(sigma_f, pi_f) /
+    F_pi(p_f, pi_f) with f_a of (S.14) in full (its zeta_y q y_a term included); at the vertex pi_f = c_N p_f is a
+    constant and the row is zero (gamma := 0). floor_pi_band reports the noise band |F| <= F_BAND_TOL_REL p_ref."""
+    inv = invariants(sig_f)
+    F = flow(P, inv, pi_be).F
+    out = dict(pi=pi_be, pi_be=pi_be, F_post=F, floor_pi_band=bool(abs(F) <= F_BAND_TOL_REL * P.p_ref))
+    if not F > 0.0:
+        return out
+    if inv.vertex:
+        eta_f = 0.0
+    else:
+        z, _, _ = zeta_y(inv.theta, P.rho, P.zeta)
+        eta_f = z * inv.q / abs(inv.p)
+    out["eta_f"] = eta_f
+    if P.N > 0.0 and eta_f >= P.M / P.N:
+        warnings.warn(f"LadrunoNORSAND (S.57): eta_f = {eta_f:.6g} >= M/N = {P.M / P.N:.6g} at a post-floored stress; "
+                      "pi_i left unchanged (sheet 9.1 step 5g guard)", RuntimeWarning, stacklevel=2)
+        out["floor_pi_guard"] = True
+        return out
+    pi_f = pi_of_eta(P, inv.p, eta_f)
+    if not pi_f < pi_be:
+        return out
+    if inv.vertex:
+        gam = np.zeros(3)
+    else:
+        fl = flow(P, inv, pi_f)
+        gam = (-fl.f_a / fl.Y.F_pi) @ ae_f
+    out.update(pi=pi_f, floor_pi=True, gamma_pi=gam)
+    return out
 
 
 # --------------------------------------------------------------------------------------
@@ -962,6 +1026,9 @@ def chain_propagate(S_eps: np.ndarray, S_pi: np.ndarray, cum_before: float, alph
       plastic:   S^eps_{k+1} = Phi : T_k - sum_a m^a [ (u_a/c) S^pi_k + u_a Pi_v S^v_{k+1} ]
                  S^pi_{k+1}  = sum_b w_b T^_bb + ((1 - kappa)/c) S^pi_k + (1 - kappa) Pi_v S^v_{k+1}
       elastic:   S^eps_{k+1} = T_k,  S^pi_{k+1} = S^pi_k
+      rule (S.57) fired in this sub-increment (res.floor_pi): the S^pi line is REPLACED by (S.59),
+                 S^pi_{k+1}  = sum_b gamma_b S^^eps_{k+1,bb},  S^^eps_{k+1,bb} = n^b . S^eps_{k+1} . n^b
+                 (S^eps_{k+1} AFTER Phi^post; no S^pi_k, S^v or w_b term; gamma = 0 at the vertex)
     Phi = d eps^e_{k+1} / d eps~ in the (S.33) form: diagonal block b_ab (a, b <= 3), spin
     (eps^e_a - eps^e_b)/(eps~_a - eps~_b), limit b_aa - b_ab (tangent_small with a~ -> b, sigma -> eps^e).
     The full 3x3 column tensors are kept (the (S.33) row convention per operator; each operator
@@ -985,6 +1052,8 @@ def chain_propagate(S_eps: np.ndarray, S_pi: np.ndarray, cum_before: float, alph
     S_pi_new = Tdiag @ ch.w + ((1.0 - ch.kappa) / ch.c) * S_pi + (1.0 - ch.kappa) * ch.Pi_v * S_v
     if res.floor_post:                                            # (S.54): Phi^post_k : [...]
         S_eps_new = np.einsum("ijkl,Jkl->Jij", floor_op4(res.Phi_post, nvec), S_eps_new)
+    if res.floor_pi:                                              # (S.59) replaces the S^pi row of (S.54)
+        S_pi_new = np.einsum("ia,Jij,ja->Ja", nvec, S_eps_new, nvec) @ res.gamma_pi
     return S_eps_new, S_pi_new, cum
 
 

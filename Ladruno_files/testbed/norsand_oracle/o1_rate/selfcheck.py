@@ -4,6 +4,7 @@
     python -m o1_rate.selfcheck            # everything (~3-5 min)
     python -m o1_rate.selfcheck quick      # rtol check without 1e-12
     python -m o1_rate.selfcheck k2 rtol    # named groups only (see GROUPS)
+    python -m o1_rate.selfcheck rule       # round 4: (S.60) vs (S.55) figures, K1.16, rule-free regression
 """
 from __future__ import annotations
 
@@ -728,11 +729,15 @@ def check_floor_rate_record():
         pi = pi_of_eta(P, -50.0, 0.6 * P.M)
         s0 = initial_state(P, sig, 1.70, pi)
         d = np.diag(nhv + 0.02) * 2.0e-3
-        s = run_path(P, s0, [d])[-1]
+        # round 4: the record is of the Koiter form (S.55), so it is integrated with floor_rule=False; on this path the
+        # (S.60) set holds (wet side, contractive flow), and the (S.60) end value is printed beside it
+        s = run_path(P, s0, [d], floor_rule=False)[-1]
+        s60 = run_path(P, s0, [d])[-1]
         pe = plastic(s.sigma, s.pi_i, s.v, P)
         print(f"  alpha0 {a0}: status {s.flags['status']}, modes {[sg['mode'] for sg in s.flags['segments']]}, p_end = "
               f"{pe.p:.8f}, pi_end = {s.pi_i:.6f} (floor_rate.py {ref[a0]:.6f}, diff {s.pi_i - ref[a0]:+.1e}), min lam_f'/|deps| = "
-              f"{s.flags['min_lam_f_rel']:.3e}, F/(M|p|) = {pe.F / (P.M * abs(pe.p)):+.1e}, n_f_init {s0.flags['n_f_init']}")
+              f"{s.flags['min_lam_f_rel']:.3e}, F/(M|p|) = {pe.F / (P.M * abs(pe.p)):+.1e}, n_f_init {s0.flags['n_f_init']}; "
+              f"(S.60): modes {[sg['mode'] for sg in s60.flags['segments']]}, pi_end = {s60.pi_i:.6f}")
         if a0 == 0.0:
             el = energy(s0.eps_e, P)
             from .model import PFLOOR
@@ -815,6 +820,245 @@ def check_pi0_rule():
               f"{st.pi_i:.6f} (closed {pi_of_eta(P, -P.pmin, 0.15 * P.M):.6f}), F/(M|p|) = {st.flags['F_rel']:+.2e} (inside)")
 
 
+# =======================================================================================
+# Round 4 (sheet 9.7 (S.57)-(S.60), 13.16): the rate form (S.60) of the split with the image-pressure rule
+# =======================================================================================
+K3_SET = dict(energy="HAR", k=298.34244992965336, g=383.5831499095543, n_e=0.5, p_a=101.0, M=1.25,
+              N=0.4686136860640983, N_bar=0.16034970350694513, rho=0.5828981510111576, rho_bar=0.7213710496292179,
+              chi=-2.8923322243122183, h=308.3223484879116, csl_mode="fork", e0=0.934, lambda_c=0.019, xi=0.7,
+              cap="smooth", c1=0.05, c2=0.15, p_min=0.505)        # sheet 13.16 (K1.16)
+D_NHAT = (-1.2, -0.1, 1.3)                                         # sheet 9.7 item 3 / 13.12 (C): n^ = dev(d)/|dev(d)|
+_NFAIL = [0]
+
+
+def _ok(cond):
+    if not cond:
+        _NFAIL[0] += 1
+    return "OK" if cond else "FAIL"
+
+
+def _nhat(d=D_NHAT):
+    x = np.asarray(d, dtype=float)
+    x = x - x.mean()
+    return x / np.linalg.norm(x)
+
+
+def _floor_surface_state(P, p, eta, d=D_NHAT, v=None, psi=None):
+    """Principal stress p + sqrt(2/3) q n^ on the surface at stress ratio eta (F = 0); pi_i the inverse of (S.12)."""
+    nh = _nhat(d)
+    th = math.acos(max(-1.0, min(1.0, SQ6 * float(np.sum(nh ** 3))))) / 3.0
+    z, _ = zeta_fun(th, math.cos(3 * th) / SQ6, P.rho, P.zeta)
+    q = eta * abs(p) / z
+    pi = pi_of_eta(P, p, eta)
+    if v is None:
+        v = v_for_psi(P, pi, psi)
+    return np.diag(p + SQ23 * q * nh), np.diag(nh), pi, v
+
+
+def _q(sig):
+    return SQ32 * np.linalg.norm(sig - np.trace(sig) / 3.0 * np.eye(3))
+
+
+def check_rule_rate():
+    hdr("Round 4 (S.60) vs (S.55): the rate-convergence paths of sheet 9.7 ('the split with the rule does NOT converge "
+        "to (S.55)'); O1 integrates both rate forms (floor_rule=True / False)")
+    # sheet figures (9.7 table 'plateau' = the distance of the two rate forms at the path end, sigma-norm
+    # max_a|dsig_a|/max_a|sig_a| with the (S.60)/split state as the norm; 4b text: q, max|dsig|/p_min)
+    cases = [
+        ("BA06 K2 set, p_min 50, eta 0.5M, shear 2e-3 along n^", Params(rho=0.7, rho_bar=0.8, p_min=50.0),
+         dict(p=-50.0, v=1.70), 2e-3,
+         dict(sig=5.1e-3, pi=(1.09e-2, 1.09e-2))),
+        ("HAR K3 set, p_min 0.505, eta 0.5M, psi_i +0.02, shear 2e-4 along n^", Params(**K3_SET),
+         dict(p=-0.505, psi=0.02), 2e-4,
+         dict(sig=9.4e-2, pi=(0.15, 0.18), q=(0.405, 0.293), dq=0.382, dsig_pmin=0.144)),
+        ("HAR K3 set, the same at shear 1e-3", Params(**K3_SET),
+         dict(p=-0.505, psi=0.02), 1e-3,
+         dict(sig=0.14, q=(0.535, 0.349), dq=0.534, dsig_pmin=0.243)),
+    ]
+    for lab, P, st, sh, ex in cases:
+        sig, nh, pi, v = _floor_surface_state(P, st["p"], 0.5 * P.M, v=st.get("v"), psi=st.get("psi"))
+        s0 = initial_state(P, sig, v, pi)
+        d = sh * nh                                   # 'shear X along n^': deps = X n^ (|dev deps| = X, tr deps = 0)
+        a = run_path(P, s0, [d])[-1]
+        b = run_path(P, s0, [d], floor_rule=False)[-1]
+        ma = [sg["mode"] for sg in a.flags["segments"]]
+        mb = [sg["mode"] for sg in b.flags["segments"]]
+        print(f"  {lab}: start psi_i = {plastic(s0.sigma, s0.pi_i, s0.v, P).psi:+.4f}, pi_i = {pi:.6f}, v = {v:.5f}; "
+              f"(S.60) run {a.flags['status']} modes {ma}; (S.55) run {b.flags['status']} modes {mb}  "
+              f"{_ok(a.flags['status'] == 'ok' and ma == ['floor_rule'] and mb == ['plastic_floor'])}")
+        rd = a.flags["rule_diag"]
+        print(f"    along (S.60): max|F| = {rd['max_F']:.1e} kPa (sheet <= 2e-12), max|p + p_min| = {rd['max_floor_dp']:.1e} "
+              f"kPa (<= 6e-14), min lam'/|deps'| = {rd['min_lam']:.3f}, min lam_f'/|deps'| = {rd['min_lam_f']:.3f}, "
+              f"max lam_f^tr' = {rd['max_lam_ftr']:.1e} (sheet 0), max f:a:P = {rd['max_fAP']:.1f} kPa (< 0), "
+              f"min den = {rd['min_den']:.3e} kPa (sheet >= 1.5e4)  "
+              f"{_ok(rd['max_F'] <= 2e-12 and rd['max_floor_dp'] <= 6e-14 and rd['min_lam'] > 0 and rd['min_lam_f'] > 0 and rd['max_lam_ftr'] == 0.0 and rd['max_fAP'] < 0 and rd['min_den'] >= 1.5e4)}")
+        dsig = np.max(np.abs(np.linalg.eigvalsh(a.sigma - b.sigma)))
+        sn = dsig / np.max(np.abs(np.linalg.eigvalsh(a.sigma)))
+        pa_, pb_ = abs(a.pi_i - b.pi_i) / abs(a.pi_i), abs(a.pi_i - b.pi_i) / abs(b.pi_i)
+        line = (f"    gap (S.60)-(S.55) at the path end: sigma-norm {sn:.3e} (sheet {ex['sig']:.2g}: "
+                f"{_ok(abs(sn - ex['sig']) <= 0.06 * ex['sig'])}), pi_i {pa_:.3e} / {pb_:.3e} (normed by (S.60) / (S.55))")
+        if "pi" in ex:
+            lo, hi = ex["pi"]
+            line += (f" (sheet {lo:.3g}" + (f" ... {hi:.3g}" if hi != lo else "") + f": "
+                     f"{_ok(abs(pa_ - lo) <= 0.06 * lo and abs(pb_ - hi) <= 0.06 * hi if hi != lo else abs(pa_ - lo) <= 0.01 * lo)})")
+        print(line)
+        if "q" in ex:
+            qa, qb = _q(a.sigma), _q(b.sigma)
+            print(f"    q = {qa:.4f} kPa with (S.60) vs {qb:.4f} with (S.55) (sheet {ex['q'][0]} vs {ex['q'][1]}: "
+                  f"{_ok(abs(qa - ex['q'][0]) <= 5e-4 and abs(qb - ex['q'][1]) <= 5e-4)}), +{qa / qb - 1:.3f} (sheet "
+                  f"+{ex['dq']:.3f}: {_ok(abs(qa / qb - 1 - ex['dq']) <= 1.5e-3)}); max|dsig| = {dsig / P.pmin:.3f} p_min "
+                  f"(sheet {ex['dsig_pmin']}: {_ok(abs(dsig / P.pmin - ex['dsig_pmin']) <= 1.5e-3)})")
+        # the (S.60) tangent at the end state vs the integrated response (one-sided, along the path direction)
+        C = tangent(P, a)
+        u = d / np.linalg.norm(d)
+        Cu = np.einsum("ijkl,kl->ij", C, u)
+        errs = [np.linalg.norm((integrate_increment(P, a, h * u, rtol=1e-12).sigma - a.sigma) / h - Cu) / np.linalg.norm(Cu)
+                for h in (1e-7, 1e-8)]
+        print(f"    (S.60) tangent (branch {a.flags['rule_branch']}) vs O1 response FD at h = 1e-7, 1e-8: "
+              f"{errs[0]:.1e}, {errs[1]:.1e}; |1:C|/|C| = {np.linalg.norm(np.einsum('iikl->kl', C)) / np.linalg.norm(C):.1e}  "
+              f"{_ok(errs[1] < 1e-4 and errs[1] < errs[0])}")
+
+
+# K1.16 (sheet 13.16): the H19 states.  Legacy starts from out/h19/s185.txt and stall.txt (format of h19_replay.cpp:
+# id ee11 ee22 eg12 s11 s22 s12 s33 pi_i v v0 ... d11 d22 dg12); step rows from the sheet's table.
+_K116_LEGACY = {
+    "e7367g1_s185": ((-0.5100767879440233, -0.6059940516753852, -0.39892916038058873, -0.2373365315574276),
+                     -0.32249629546987785, 1.9352522944653925,
+                     (0.0017300526378768999, -0.00021254327793723826, -0.009541568219878838), 0.2315, 0.458),
+    "e7367g2_s185": ((-0.488250857597471, -0.6323752725912393, -0.3943738698112941, -0.24499494049350506),
+                     -0.3666004636846257, 1.9352522944653987,
+                     (0.0020580128620412974, -0.0005405035021015248, -0.008738158029346854), 0.1472, None),
+    "e7367g1_m53": ((-0.5074726482337255, -0.5635208707163949, -0.44400648104988016, -0.13653808447681343),
+                    -0.11160661856019498, 1.956532170893081,
+                    (0.0018391544802891235, -0.00023597356742177666, -0.01011036554856204), 1.6596, 3.29),
+}
+_K116_INC = {"e7367g1_s185": (4.965401387252e-5, -6.100176746158e-6, -2.738512981529e-4),
+             "e7367g2_s185": (6.298503508381e-5, -1.654199187512e-5, -2.674294219427e-4),
+             "e7367g1_m53": (4.980341391149e-5, -6.390050089011e-6, -2.737838096843e-4)}
+# (s11, s22, s33, s12, pi_i) after `steps` split steps (m = 1, every step -Pf*), sheet 13.16
+_K116_ROWS = {
+    "e7367g1_s185": {1: (-0.5101907038, -0.5976456953, -0.4071636009, -0.2151586912, -0.3989652918),
+                     2: (-0.5082384097, -0.6104039680, -0.3963576223, -0.2510036052, -0.4461726222),
+                     60: (-0.5114970385, -0.6473686614, -0.3561343001, -0.3336845167, -0.5923861407)},
+    "e7367g2_s185": {1: (-0.4889744155, -0.6273143992, -0.3987111852, -0.2332250428, -0.4276028897),
+                     2: (-0.4850426738, -0.6393433615, -0.3906139647, -0.2596017804, -0.4672749361),
+                     60: (-0.4814251232, -0.6764194559, -0.3571554210, -0.3278584883, -0.5976134600)},
+    "e7367g1_m53": {1: (-0.5071972881, -0.5355837599, -0.4722189520, -0.0691517825, -0.2815026983),
+                    2: (-0.5031271070, -0.5765889736, -0.4352839194, -0.1789591553, -0.3671148499)},
+}
+_K116_CNPMIN = 0.246558167
+
+
+def _ps(s11, s22, s33, s12):
+    return np.array([[s11, s12, 0.0], [s12, s22, 0.0], [0.0, 0.0, s33]])
+
+
+def check_rule_k1_16():
+    hdr("K1.16 (sheet 13.16, H19 states, K3 set) as far as a rate oracle addresses them: the legacy starts, the (S.57)/"
+        "(S.58) invariants of the step-1 rows, and (S.60) vs (S.55) from step 1 against the split's step-60 rows")
+    P = Params(**K3_SET)
+    cN = (1.0 - P.N) ** ((1.0 - P.N) / P.N)
+    print(f"  c_N p_min = {cN * P.pmin:.9f} kPa (sheet {_K116_CNPMIN}: {_ok(abs(cN * P.pmin - _K116_CNPMIN) <= 1e-9)})")
+    for name, (s, pi0, v0, dd, Fk, Fp) in _K116_LEGACY.items():
+        sig0 = _ps(*s)
+        pq0 = plastic(sig0, pi0, v0, P)
+        d = np.array([[dd[0], dd[2] / 2, 0.0], [dd[2] / 2, dd[1], 0.0], [0.0, 0.0, 0.0]])
+        d *= 2e-4 / np.linalg.norm(d)                 # |deps| := (d11^2 + d22^2 + dg12^2/2)^(1/2) = 2e-4
+        inc_ok = max(abs(d[0, 0] - _K116_INC[name][0]), abs(d[1, 1] - _K116_INC[name][1]),
+                     abs(2 * d[0, 1] - _K116_INC[name][2])) <= 1e-15
+        s0 = initial_state(P, sig0, v0, pi0)
+        st = integrate_increment(P, s0, d)
+        print(f"  {name}: legacy start F = {pq0.F:+.4f} kPa = {pq0.F / P.pmin:+.3f} p_min (sheet +{Fk}"
+              + (f" = +{Fp} p_min" if Fp else "") + f": {_ok(abs(pq0.F - Fk) <= 5e-5 and (Fp is None or abs(pq0.F / P.pmin - Fp) <= 5e-3))}); "
+              f"increment {_ok(inc_ok)}; O1 from the legacy state: status '{st.flags['status']}' (no entry repair, "
+              f"a rate oracle does not return from outside F: {_ok(st.flags['status'] == 'outside')})")
+        rows = _K116_ROWS[name]
+        r1 = rows[1]
+        sig1 = _ps(r1[0], r1[1], r1[2], r1[3])
+        v1 = v0 * math.exp(float(np.trace(d)))
+        pq1 = plastic(sig1, r1[4], v1, P)
+        pf = pi_of_eta(P, pq1.p, pq1.zeta * pq1.q / -pq1.p)
+        print(f"    step-1 row: p + p_min = {pq1.p + P.pmin:+.1e}, F = {pq1.F:+.1e} kPa, pi_f(sigma) = {pf:.10f} vs pi_i "
+              f"{r1[4]:.10f} (rel {abs(pf / r1[4] - 1):.1e}), |pi_i| / c_N p_min = {abs(r1[4]) / (cN * P.pmin):.3f}  "
+              f"{_ok(abs(pq1.p + P.pmin) <= 1e-9 and abs(pq1.F) <= 1e-9 and abs(pf / r1[4] - 1) <= 1e-9 and abs(r1[4]) >= cN * P.pmin)}")
+        s1 = initial_state(P, sig1, v1, r1[4])
+        nmax = max(rows)
+        res = {}
+        for fr in (True, False):
+            out = run_path(P, s1, np.array([d] * (nmax - 1)), floor_rule=fr)
+            res[fr] = out
+        out = res[True]
+        modes = sorted(set(sg["mode"] for o in out for sg in o.flags["segments"]))
+        worst = max(max(abs(plastic(o.sigma, o.pi_i, o.v, P).F) for o in out), 0.0)
+        mpi = min(abs(o.pi_i) for o in out)
+        print(f"    (S.60) from the step-1 row, {nmax - 1} increments: status {out[-1].flags['status']}, modes {modes} (the "
+              f"split's -Pf* at every step), max|F| = {worst:.1e} kPa, max|p + p_min| = "
+              f"{max(abs(np.trace(o.sigma) / 3 + P.pmin) for o in out):.1e}, min|pi_i| / c_N p_min = {mpi / (cN * P.pmin):.3f}  "
+              f"{_ok(out[-1].flags['status'] == 'ok' and modes == ['floor_rule'] and mpi >= cN * P.pmin)}")
+        for k in sorted(rows):
+            if k == 1:
+                continue
+            rk = rows[k]
+            sk = _ps(rk[0], rk[1], rk[2], rk[3])
+            ga = res[True][k - 2]
+            gb = res[False][k - 2]
+            ea = np.max(np.abs(ga.sigma - sk)) / np.max(np.abs(sk))
+            eb = np.max(np.abs(gb.sigma - sk)) / np.max(np.abs(sk))
+            pa_ = abs(ga.pi_i - rk[4]) / abs(rk[4])
+            pb_ = abs(gb.pi_i - rk[4]) / abs(rk[4])
+            verdict = (f"  {_ok(ea < eb and pa_ < pb_)}" if k == nmax and k > 2 else "  (one step: the m = 1 split is not "
+                       "converged; printed only)")
+            print(f"    step {k}: split q = {_q(sk):.4f}, pi_i = {rk[4]:.6f}; O1 (S.60) q = {_q(ga.sigma):.4f}, pi_i = "
+                  f"{ga.pi_i:.6f} (sigma-norm {ea:.2e}, pi {pa_:.2e}); O1 (S.55) q = {_q(gb.sigma):.4f}, pi_i = "
+                  f"{gb.pi_i:.6f} (sigma-norm {eb:.2e}, pi {pb_:.2e})" + verdict)
+    print("  (the step digits are the m = 1 split's; a rate oracle reaches them only as Delta -> 0 (first order, sheet 9.7),"
+          " so O1 asserts the side: the split with the rule is nearer (S.60) than (S.55))")
+
+
+def check_rule_inactive():
+    hdr("Round 4 regression: where (S.60) does not apply, floor_rule = True is bit-identical to (S.55) only")
+    # K1.14b FPf (HAR dry side, f:a:P >= 0), floor_rate.py (FP-), floor-only isotropic (BA06), floor off (p_min 0)
+    Pt = tims_params(101.0, p_min=0.505)
+    sig, nh, pi, v = _surface_state(Pt, -0.6, 1.2 * Pt.M, 0.271, -0.10)
+    Pk = Params(rho=0.7, rho_bar=0.8, p_min=50.0)
+    sk, nk, pk, _ = _floor_surface_state(Pk, -50.0, 0.6 * Pk.M, v=1.70)
+    rows = [("K1.14b FPf (HAR, dry side)", Pt, initial_state(Pt, sig, v, pi), [np.eye(3) * 2e-5 / 3 + 2e-5 * nh] * 2),
+            ("floor only, isotropic expansion (BA06)", Pk, initial_state(Pk, -50.0 * np.eye(3), 1.70, -300.0),
+             [np.eye(3) * 1e-3]),
+            ("floor off (p_min 0), wet-side shear (the K2 rule path)", Params(rho=0.7, rho_bar=0.8),
+             initial_state(Params(rho=0.7, rho_bar=0.8), sk, 1.70, pk), [2e-3 * nk])]
+    for lab, P, s0, ds in rows:
+        a = run_path(P, s0, np.array(ds))
+        b = run_path(P, s0, np.array(ds), floor_rule=False)
+        same = all(np.array_equal(x.sigma, y.sigma) and x.pi_i == y.pi_i and x.v == y.v and
+                   x.flags["nfev"] == y.flags["nfev"] for x, y in zip(a, b))
+        nr = sum(o.flags.get("rule_segments", 0) for o in a)
+        print(f"  {lab}: modes {[sg['mode'] for o in a for sg in o.flags['segments']]}, (S.60) segments {nr}, "
+              f"bit-identical (sigma, pi_i, v, nfev): {same}  {_ok(same and nr == 0)}")
+    # The floor_rate.py path (sheet 9.7: 'FP-, no post floor ... (S.55) stands'): BA06 alpha0 = 0, eta = 0.6M (wet side),
+    # deviator + slight expansion.  The (S.60) set as the sheet writes it holds there (f:a:P = F_p K < 0, tr q < 0 so
+    # lam_f' - lam_f^tr' = -lam' tr q > 0), so O1 integrates (S.60) on it.  Reported, not asserted (a gap of the sheet).
+    sk6, _, pk6, _ = _floor_surface_state(Pk, -50.0, 0.6 * Pk.M, v=1.70)
+    s0 = initial_state(Pk, sk6, 1.70, pk6)
+    d = np.diag(_nhat() + 0.02) * 2e-3
+    a = run_path(Pk, s0, [d])[-1]
+    b = run_path(Pk, s0, [d], floor_rule=False)[-1]
+    rd = a.flags["rule_diag"] or {}
+    print(f"  floor_rate.py path (sheet: rule-free, (S.55)): (S.60) modes {[sg['mode'] for sg in a.flags['segments']]} "
+          f"(branch {a.flags['rule_branch']}, min (lam_f' - lam_f^tr')/|deps'| = {rd.get('min_rule', float('nan')):.3f}, max f:a:P = "
+          f"{rd.get('max_fAP', float('nan')):.0f} kPa); pi_end (S.60) {a.pi_i:.6f} vs (S.55) {b.pi_i:.6f} (floor_rate.py "
+          f"-41.296567); sigma-norm gap {np.max(np.abs(a.sigma - b.sigma)) / np.max(np.abs(a.sigma)):.2e}  [REPORTED: the sheet "
+          f"calls this path FP-]")
+
+
+def check_rule():
+    _NFAIL[0] = 0
+    check_rule_rate()
+    check_rule_k1_16()
+    check_rule_inactive()
+    print(f"  round-4 checks: {_NFAIL[0]} FAIL")
+
+
 GROUPS = dict(
     basic=[check_zeta, check_elastic_tangent, check_iso, check_loop, check_refusal],
     tangents=[check_finite_tangent, check_cont_tangent_fd],
@@ -825,6 +1069,9 @@ GROUPS = dict(
     floor=[check_floor_k1_12, check_floor_k1_13_14, check_floor_fpf, check_floor_wet, check_floor_rate_record,
            check_floor_inactive],
     pi0=[check_pi0_rule],
+    rule=[check_rule],                  # round 4: (S.60), the K1.16 states, the rule-free regression
+    rule_rate=[check_rule_rate],
+    k1_16=[check_rule_k1_16],
     undrained_cs=[check_undrained_cs],
     drained_cs=[check_drained_cs],
     k2=[check_k2],

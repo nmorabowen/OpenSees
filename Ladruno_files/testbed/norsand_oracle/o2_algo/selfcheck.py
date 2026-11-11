@@ -1301,6 +1301,706 @@ def check_d2():
     return allok
 
 
+# ------------------------------------------------------------------ 12. round 4: the image-pressure rule at a post floor
+# Sheet §9.1 step 5g, §9.7 (S.57)-(S.59), §13.12 (C), §9.7 item 3 (wet-floor table), §13.16 (K1.16). Every expected
+# number below is copied from the sheet (round 4b, 6ae9fe5ab) and was written here BEFORE the first run.
+def k3_params(**kw):
+    """K3 set of sheet §13.16 (K1.16): HAR, WW, fork CSL, smooth cap, p_min 0.505 kPa."""
+    d = dict(energy="HAR", k=298.34244992965336, g=383.5831499095543, n_e=0.5, p_a=101.0, M=1.25,
+             N=0.4686136860640983, N_bar=0.16034970350694513, rho=0.5828981510111576, rho_bar=0.7213710496292179,
+             zeta="WW", chi=-2.8923322243122183, h=308.3223484879116, csl_mode="fork", e0=0.934, lam_c=0.019, xi=0.7,
+             cap="smooth", c1=0.05, c2=0.15, p_min=0.505)
+    d.update(kw)
+    return Params(**d).validate()
+
+
+def c_N(P):
+    """c_N = (1-N)^((1-N)/N) (N > 0), e^-1 (N = 0): |pi_i|/|p| at the tip eta = 0 (S.58)."""
+    return (1.0 - P.N) ** ((1.0 - P.N) / P.N) if P.N > 0.0 else math.exp(-1.0)
+
+
+def F_of(P, sigma, pi):
+    """F(sigma, pi_i) of a 3x3 stress, as the trial test evaluates it."""
+    return K.flow(P, K.invariants(np.linalg.eigvalsh(sym(sigma))), pi).F
+
+
+def pi_f_of(P, sigma):
+    """pi_f(sigma): the inverse of (S.12) at (p, eta = zeta q/|p|) (S.57), recomputed outside the kernel path."""
+    inv = K.invariants(np.linalg.eigvalsh(sym(sigma)))
+    eta = 0.0 if inv.vertex else K.zeta_y(inv.theta, P.rho, P.zeta)[0] * inv.q / abs(inv.p)
+    return K.pi_of_eta(P, inv.p, eta), eta
+
+
+class rule_off:
+    """Context: the round-3b return map (step 5g absent: pi_i := pi_i^BE whatever F(sigma_f)); the M-R4 mutant."""
+
+    def __enter__(self):
+        self._orig = K.floor_pi_rule
+
+        def off(P, sig_f, ae_f, pi_be):
+            return dict(pi=pi_be, pi_be=pi_be)
+        K.floor_pi_rule = off
+
+    def __exit__(self, *a):
+        K.floor_pi_rule = self._orig
+
+
+H19_DIR = None
+
+
+def h19_records():
+    """The dumped H19 Gauss-point states: out/h19/s185.txt and stall.txt. Line format (header of h19_replay.cpp):
+    id ee11 ee22 eg12 s11 s22 s12 s33 pi_i v v0 epv eps at_floor n_f_tr n_f_post eps_f_v W_f d11 d22 dg12
+    (plane strain; eg12 and dg12 are engineering shears; eps^e_33 is not dumped and is recovered from s33)."""
+    import os
+    base = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                        "norsand_calib", "out", "h19")
+    recs = {}
+    for fn in ("s185.txt", "stall.txt"):
+        with open(os.path.join(base, fn)) as fh:
+            for line in fh:
+                t = line.split()
+                if not t or t[0].startswith("#"):
+                    continue
+                x = [float(a) for a in t[1:]]
+                recs[t[0]] = dict(ee=x[0:3], s=x[3:7], pi=x[7], v=x[8], v0=x[9], epv=x[10], eps=x[11], at_floor=int(x[12]),
+                                  ntr=int(x[13]), npost=int(x[14]), efv=x[15], wf=x[16], d=x[17:20])
+    return recs
+
+
+def h19_state(P, rec, norm=2e-4):
+    """(State, increment tensor scaled to |d eps| = (d11^2 + d22^2 + dg12^2/2)^(1/2) = norm, eps^e_33, stress
+    reproduction error). eps^e_33 solves sigma_33(eps^e) = s33 (secant on O2's own elastic law)."""
+    e11, e22, g12 = rec["ee"]
+
+    def sig_of(e33):
+        E = np.array([[e11, 0.5 * g12, 0.0], [0.5 * g12, e22, 0.0], [0.0, 0.0, e33]])
+        w, V = np.linalg.eigh(E)
+        return E, (V * K.elastic(P, w).sig) @ V.T
+    a, b = 0.5 * (e11 + e22), 0.5 * (e11 + e22) + 1e-5
+    fa, fb = sig_of(a)[1][2, 2] - rec["s"][3], sig_of(b)[1][2, 2] - rec["s"][3]
+    for _ in range(60):
+        if fb == fa:
+            break
+        c = b - fb * (b - a) / (fb - fa)
+        a, fa = b, fb
+        b, fb = c, sig_of(c)[1][2, 2] - rec["s"][3]
+        if abs(b - a) <= 1e-17:
+            break
+    E, sig = sig_of(b)
+    err = max(abs(sig[0, 0] - rec["s"][0]), abs(sig[1, 1] - rec["s"][1]), abs(sig[0, 1] - rec["s"][2]),
+              abs(sig[2, 2] - rec["s"][3]))
+    st = State(sig, E, rec["pi"], rec["v"], v0=rec["v0"], eps_p_v=rec["epv"], eps_p_s=rec["eps"],
+               eps_f_v=rec["efv"], W_f=rec["wf"], n_f_tr=rec["ntr"], n_f_post=rec["npost"])
+    st.flags["at_floor"] = bool(rec["at_floor"])
+    d11, d22, dg = rec["d"]
+    sc = norm / math.sqrt(d11 * d11 + d22 * d22 + 0.5 * dg * dg)
+    deps = sc * np.array([[d11, 0.5 * dg, 0.0], [0.5 * dg, d22, 0.0], [0.0, 0.0, 0.0]])
+    return st, deps, b, err
+
+
+def s4(st):
+    return np.array([st.sigma[0, 0], st.sigma[1, 1], st.sigma[2, 2], st.sigma[0, 1]])
+
+
+# ---- sheet §13.12 (C) with the round-4 rule
+K112C = dict(pi0=-33.125471695, theta=0.454427, dlam=1.546466e-3, p_c=-48.764495, q_c=46.421589, eta_c=0.952607,
+             pi_be=-40.198569107, sig_f=(-34.8599764962, -34.1946812138, -80.9453422900), eta_f=0.929068,
+             F_over_pmin=0.010899, pi=-40.516314098, cN_pmin=23.2379)
+
+
+def k112c_case():
+    P = k2_params(p_min=50.0)
+    sig, th, nh = off_corner_sig(P, -51.0, 0.6, direction=(-1.2, -0.1, 1.3))
+    pi0 = K.pi_of_eta(P, -51.0, 0.6)
+    st0 = initial_state(P, np.diag(sig), 1.70, pi0)
+    deps = np.diag(6e-3 * np.array([0.55, 0.40, -0.95]) - 1e-5)
+    return P, st0, deps, th
+
+
+def check_r4_k112c():
+    print("\n=== 12a. K1.12 (C) with the image-pressure rule (S.57) (sheet §13.12; BA06 K2 set, p_min = 50 kPa) ===")
+    allok = True
+    X = K112C
+    P, st0, deps, th = k112c_case()
+    st = step(P, st0, deps)
+    res = st.cache["res"]
+    elc = K.elastic(P, res.eps_c)
+    sf = np.diag(st.sigma)
+    print(f"  start pi_i = {st0.pi_i:.9f} ({X['pi0']}), theta = {th:.6f} ({X['theta']}); pattern {st.flags['rpattern']} (-Pf*), "
+          f"substeps {st.flags['substeps']}")
+    print(f"  return: dlam = {res.dlam:.6e} ({X['dlam']:.6e}), p_c = {elc.p:.6f} ({X['p_c']}), q_c = {elc.q:.6f} ({X['q_c']}), "
+          f"eta_c = {res.eta:.6f} ({X['eta_c']}), pi_BE = {res.pi_be:.9f} ({X['pi_be']})")
+    print(f"  post floor: sigma_f = ({sf[0]:.10f}, {sf[1]:.10f}, {sf[2]:.10f}) (sheet {X['sig_f']}), eta_f = {res.eta_f:.6f} "
+          f"({X['eta_f']}), F(sigma_f, pi_BE)/p_min = {res.F_post / P.p_min:+.6f} (+{X['F_over_pmin']})")
+    Fc = F_of(P, st.sigma, st.pi_i)
+    print(f"  committed pi_i = {st.pi_i:.9f} (sheet {X['pi']}; round 3b {X['pi_be']}), F(sigma_f, pi_i)/p_min = {Fc / P.p_min:.1e} "
+          f"(0 to 3e-16), n_f_pi = {st.n_f_pi}, floor = {st.floor}; c_N p_min = {c_N(P) * P.p_min:.4f} ({X['cN_pmin']})")
+    assert st.flags["rpattern"] == "-Pf*" and st.flags["fpattern"] == "-Pf" and st.flags["substeps"] == 1
+    assert (st.flags["floor_pi"], st.flags["floor_pi_guard"], st.flags["floor_pi_band"], st.n_f_pi) == (1, 0, 0, 1)
+    allok &= ok("K1.12 (C) start pi_i", abs(st0.pi_i - X["pi0"]), 2e-9)
+    allok &= ok("K1.12 (C) dlam", abs(res.dlam - X["dlam"]), 1e-9)
+    allok &= ok("K1.12 (C) p_c", abs(elc.p - X["p_c"]), 1e-6)
+    allok &= ok("K1.12 (C) q_c", abs(elc.q - X["q_c"]), 1e-6)
+    allok &= ok("K1.12 (C) eta_c", abs(res.eta - X["eta_c"]), 1e-6)
+    allok &= ok("K1.12 (C) pi_i^BE", abs(res.pi_be - X["pi_be"]), 2e-9)
+    allok &= ok("K1.12 (C) sigma_f", float(np.abs(sf - np.array(X["sig_f"])).max()), 2e-10)
+    allok &= ok("K1.12 (C) eta_f", abs(res.eta_f - X["eta_f"]), 1e-6)
+    allok &= ok("K1.12 (C) F(sigma_f, pi_BE)/p_min", abs(res.F_post / P.p_min - X["F_over_pmin"]), 1e-6)
+    allok &= ok("K1.12 (C) NEW pi_i = -40.516314098", abs(st.pi_i - X["pi"]), 2e-9)
+    allok &= ok("K1.12 (C) F(sigma_f, pi_i)/p_min = 0", abs(Fc) / P.p_min, 1e-13)
+    allok &= ok("K1.12 (C) c_N p_min", abs(c_N(P) * P.p_min - X["cN_pmin"]), 1e-4)
+    # the rule touches pi_i alone: everything else of the step is the round-3b step, bit for bit (M-R9 included)
+    with rule_off():
+        s3 = step(P, st0, deps)
+    same = (np.array_equal(s3.sigma, st.sigma) and np.array_equal(s3.eps_e, st.eps_e) and s3.v == st.v and s3.D == st.D
+            and s3.dlam == st.dlam and s3.eps_f_v == st.eps_f_v and s3.W_f == st.W_f and s3.n_f_post == st.n_f_post
+            and np.array_equal(tangent(P, s3), tangent(P, st)) and np.array_equal(s3.eps_p, st.eps_p)
+            and floor_energy(P, s3) == floor_energy(P, st) and s3.psi_i == st.psi_i and s3.pi_star == st.pi_star
+            and s3.eta == st.eta)
+    print(f"  rule off (round 3b): pi_i = {s3.pi_i:.9f}; sigma_f, eps^e, v, dlam, D, eps^p, d eps^f_v, W_f, E_f, psi_i, pi*, eta and "
+          f"the (S.32f) tangent bit-identical with the rule on: {same}")
+    assert same and s3.pi_i == res.pi_be
+    # cases (A), (B) of K1.12 at p_min = 50 do not change (no post floor): see `floor` group (d)
+    print("  r4 K1.12 (C):", "ALL OK" if allok else "SOME CHECK FAILED")
+    return allok
+
+
+# ---- sheet §9.7 item 3, the wet-floor table with the rule: psi_i -> (F/p_min, pi_BE, eta_f, pi_i) at d gamma 1e-4/1e-3/1e-2
+WET = {0.0: ((0.2699, 0.3496, 0.3572), (-0.328889, -0.329228, -0.329262), (0.940109, 1.021599, 1.029388),
+             (-0.386215057, -0.406870322, -0.408940969)),
+       0.04: ((0.2717, 0.3670, 0.5322), (-0.328346, -0.324406, -0.287273), (0.938960, 1.012743, 0.951647),
+              (-0.385936497, -0.404537473, -0.389032266)),
+       0.08: ((0.2732, 0.3820, 0.6866), (-0.327887, -0.320380, -0.258876), (0.937988, 1.005324, 0.897090),
+              (-0.385701048, -0.402600177, -0.376005318)),
+       0.12: ((0.2745, 0.3950, 0.8217), (-0.327494, -0.316976, -0.238442), (0.937157, 0.999032, 0.856623),
+              (-0.385499896, -0.400969027, -0.366805331))}
+WET_START = dict(q=0.2583, theta=0.4544, pi=-0.328007)
+
+
+def check_r4_wet():
+    print("\n=== 12b. wet-floor table with the rule (sheet §9.7 item 3; HAR TIMs set, p_min 0.505, eta = 0.5M, pure shear) ===")
+    allok = True
+    P = tims_params()
+    sig, th, nh = off_corner_sig(P, -0.505, 0.5 * P.M, direction=(-1.2, -0.1, 1.3))
+    pi0 = K.pi_of_eta(P, -0.505, 0.5 * P.M)
+    q0 = K.invariants(sig).q
+    print(f"  start: p = -0.505, q = {q0:.4f} ({WET_START['q']}), theta = {th:.4f} ({WET_START['theta']}), pi_i = {pi0:.6f} "
+          f"({WET_START['pi']})")
+    allok &= ok("wet table start (q, theta, pi_i)", max(abs(q0 - WET_START["q"]), abs(th - WET_START["theta"]),
+                                                       abs(pi0 - WET_START["pi"]) * 100), 1e-4)
+    eF = eB = eE = eP = eZ = 0.0
+    for psi, (Fs, Bs, Es, Ps) in WET.items():
+        st0 = initial_state(P, np.diag(sig), v_for_psi(P, pi0, psi), pi0)
+        for j, dg in enumerate((1e-4, 1e-3, 1e-2)):
+            st = step(P, st0, np.diag(dg / math.sqrt(2.0) * nh))
+            res = st.cache["res"]
+            Fc = F_of(P, st.sigma, st.pi_i) / P.p_min
+            print(f"  psi_i {psi:+.2f} dgamma {dg:.0e}: {st.flags['rpattern']} m={st.flags['substeps']}  F/p_min {res.F_post / P.p_min:+.4f} "
+                  f"({Fs[j]:+.4f})  pi_BE {res.pi_be:.6f} ({Bs[j]:.6f})  eta_f {res.eta_f:.6f} ({Es[j]:.6f})  pi_i {st.pi_i:.9f} "
+                  f"({Ps[j]:.9f})  F after {Fc:.1e}")
+            assert st.flags["rpattern"] == "-Pf*" and st.flags["substeps"] == 1 and st.n_f_pi == 1, st.flags
+            eF = max(eF, abs(res.F_post / P.p_min - Fs[j]))
+            eB = max(eB, abs(res.pi_be - Bs[j]))
+            eE = max(eE, abs(res.eta_f - Es[j]))
+            eP = max(eP, abs(st.pi_i - Ps[j]))
+            eZ = max(eZ, abs(Fc))
+    allok &= ok("wet table F(sigma_f, pi_BE)/p_min (12 cases)", eF, 1e-4)
+    allok &= ok("wet table pi_i^BE [kPa]", eB, 1e-6)
+    allok &= ok("wet table eta_f", eE, 1e-6)
+    allok &= ok("wet table pi_i by (S.57) [kPa]", eP, 2e-9)
+    allok &= ok("wet table F(sigma_f, pi_i)/p_min = 0 after the rule (sheet 7e-16)", eZ, 1e-13)
+    print("  r4 wet-floor table:", "ALL OK" if allok else "SOME CHECK FAILED")
+    return allok
+
+
+# ---- sheet §13.16 (K1.16): rows (steps -> s11, s22, s33, s12, pi_i), eps^e_33, the scaled increment, step-1 detail
+K116 = {
+    "e7367g1_s185": dict(
+        e33=2.099254865382e-3, inc=(4.965401387252e-5, -6.100176746158e-6, -2.738512981529e-4), pi0=-0.3224962955, F0=0.2315,
+        rows={1: (-0.5101907038, -0.5976456953, -0.4071636009, -0.2151586912, -0.3989652918),
+              2: (-0.5082384097, -0.6104039680, -0.3963576223, -0.2510036052, -0.4461726222),
+              60: (-0.5114970385, -0.6473686614, -0.3561343001, -0.3336845167, -0.5923861407)},
+        dlam=1.427733871e-4, p_c=-0.365744965, eta_c=1.092426, pi_be=-0.3245384951, F_post=0.175979368, eta_f=0.922543205,
+        dfv=7.223598e-5),
+    "e7367g2_s185": dict(
+        e33=2.100404994193e-3, inc=(6.298503508381e-5, -1.654199187512e-5, -2.674294219427e-4), pi0=-0.3666004637, F0=0.1472,
+        rows={1: (-0.4889744155, -0.6273143992, -0.3987111852, -0.2332250428, -0.4276028897),
+              2: (-0.4850426738, -0.6393433615, -0.3906139647, -0.2596017804, -0.4672749361),
+              60: (-0.4814251232, -0.6764194559, -0.3571554210, -0.3278584883, -0.5976134600)},
+        dlam=1.401240162e-4, p_c=-0.388932212, eta_c=1.177716, pi_be=-0.3676032012, F_post=0.118226999, eta_f=1.026016850,
+        dfv=5.957758e-5),
+    "e7367g1_m53": dict(
+        e33=2.088911465473e-3, inc=(4.980341391149e-5, -6.390050089011e-6, -2.737838096843e-4), pi0=-0.1116066186, F0=1.6596,
+        rows={1: (-0.5071972881, -0.5355837599, -0.4722189520, -0.0691517825, -0.2815026983),
+              2: (-0.5031271070, -0.5765889736, -0.4352839194, -0.1789591553, -0.3671148499)},
+        dlam=1.528227673e-4, p_c=-0.187753246, eta_c=0.484384, pi_be=-0.1150543895, F_post=1.439692306, eta_f=0.294256201,
+        dfv=1.856529e-4, q_c=0.080655979)}
+K116_CN_PMIN = 0.246558167
+# round 3b (rule off) after 60 steps from e7367g1_s185: s11, s22, s33, s12, pi_i, F [kPa]
+K116_R3B_60 = (-0.5098218813, -0.6109439554, -0.3942341633, -0.2483437655, -0.3894275650, 0.0929)
+
+
+def check_r4_k116():
+    print("\n=== 12c. K1.16: the rule on the H19 states (sheet §13.16; K3 HAR set, |d eps| = 2e-4 repeated) ===")
+    allok = True
+    P = k3_params()
+    F_tol = K.F_TRIAL_TOL_REL * P.p_ref
+    recs = h19_records()
+    print(f"  c_N p_min = {c_N(P) * P.p_min:.9f} ({K116_CN_PMIN})")
+    allok &= ok("c_N p_min", abs(c_N(P) * P.p_min - K116_CN_PMIN), 2e-9)
+    for sid, X in K116.items():
+        st, deps, e33, err = h19_state(P, recs[sid])
+        F0 = F_of(P, st.sigma, st.pi_i)
+        inc = (deps[0, 0], deps[1, 1], 2.0 * deps[0, 1])
+        print(f"  {sid}: dumped stresses reproduced to {err:.1e} kPa; eps^e_33 = {e33:.12e} ({X['e33']:.12e}); pi_i = {st.pi_i:.10f} "
+              f"({X['pi0']}), F = {F0:+.4f} kPa = {F0 / P.p_min:+.3f} p_min (sheet {X['F0']:+.4f}); legacy start, F > F_tol")
+        allok &= ok(f"{sid} stress reproduction [kPa]", err, 1e-12)
+        allok &= ok(f"{sid} eps^e_33", abs(e33 - X["e33"]), 2e-15)
+        allok &= ok(f"{sid} scaled increment (d11, d22, dgamma12)", float(np.abs(np.array(inc) - np.array(X["inc"])).max()), 2e-16)
+        allok &= ok(f"{sid} start F [kPa]", abs(F0 - X["F0"]), 1e-4)
+        nmax = max(X["rows"])
+        stall = sid.endswith("m53")
+        cur, all_m1 = st, True
+        for n in range(1, nmax + 1):
+            prev = cur
+            cur = step(P, cur, deps)
+            assert not cur.flags["refused"], (sid, n, cur.flags["reason"])
+            res = cur.cache["res"]
+            m = cur.flags["substeps"]
+            all_m1 &= (m == 1)
+            Fc = F_of(P, cur.sigma, cur.pi_i)
+            p = float(np.trace(cur.sigma)) / 3.0
+            pif, _ = pi_f_of(P, cur.sigma)
+            # (S.58) and the K1.16 assertions at EVERY accepted step
+            assert cur.flags["floor_post"] >= 1 and cur.flags["floor_pi"] >= 1 and res.floor_post and res.floor_pi, (sid, n, cur.flags)
+            assert cur.flags["floor_pi_guard"] == 0 and cur.flags["floor_pi_band"] == 0
+            assert Fc <= F_tol and abs(Fc) <= 1e-13 * P.p_min * 100, (sid, n, Fc)
+            assert abs(cur.pi_i) >= c_N(P) * P.p_min and abs(p + P.p_min) <= 1e-12 * P.p_min
+            assert abs(cur.pi_i - pif) <= 1e-12 * abs(pif) and cur.pi_i < res.pi_be
+            assert cur.n_f_pi == prev.n_f_pi + cur.flags["floor_pi"]
+            if n == 1:
+                elc = K.elastic(P, np.linalg.eigvalsh(sym(_from_pr(res.eps_c, cur.cache["nvec"]))))
+                print(f"    step 1 (m = {m}, {cur.flags['rpattern']}, local iters {cur.flags['local_iters']}): dlam {res.dlam:.9e} ({X['dlam']:.9e}), "
+                      f"p_c {elc.p:.9f} ({X['p_c']}), eta_c {res.eta:.6f} ({X['eta_c']}), pi_BE {res.pi_be:.10f} ({X['pi_be']}), "
+                      f"F(sigma_f, pi_BE) {res.F_post:+.9f} ({X['F_post']:+.9f}) kPa, eta_f {res.eta_f:.9f} ({X['eta_f']}), "
+                      f"d eps^f_v {res.dfv_post:.6e} ({X['dfv']:.6e})")
+                if m == 1:
+                    d1 = max(abs(res.dlam - X["dlam"]) / X["dlam"] * 1e-1, abs(elc.p - X["p_c"]), abs(res.eta - X["eta_c"]) * 1e-3,
+                             abs(res.pi_be - X["pi_be"]), abs(res.F_post - X["F_post"]), abs(res.eta_f - X["eta_f"]),
+                             abs(res.dfv_post - X["dfv"]) * 1e1,
+                             abs(elc.q - X.get("q_c", elc.q)))
+                    allok &= ok(f"{sid} step-1 detail (dlam, p_c, eta_c, pi_BE, F, eta_f, d eps^f_v)", d1, 2e-9)
+                    # the stresses of step 1 are those of round 3b; round 3b commits pi_BE with F = F_post
+                    with rule_off():
+                        s3 = step(P, prev, deps)
+                    assert np.array_equal(s3.sigma, cur.sigma) and s3.pi_i == res.pi_be and s3.D == cur.D
+                    print(f"    step 1 rule off (round 3b, M-R4): same sigma bit for bit, pi_i = {s3.pi_i:.10f}, "
+                          f"F = {F_of(P, s3.sigma, s3.pi_i):+.4f} kPa")
+            if n in X["rows"]:
+                got = np.append(s4(cur), cur.pi_i)
+                e = float(np.abs(got - np.array(X["rows"][n])).max())
+                print(f"    step {n:2d}: m = {m} {cur.flags['rpattern']}  s11 {got[0]:.10f} s22 {got[1]:.10f} s33 {got[2]:.10f} s12 {got[3]:.10f} "
+                      f"pi_i {got[4]:.10f}  |F| = {abs(Fc):.1e} kPa  q = {K.invariants(np.linalg.eigvalsh(cur.sigma)).q:.3f}")
+                print(f"             sheet      s11 {X['rows'][n][0]:.10f} s22 {X['rows'][n][1]:.10f} s33 {X['rows'][n][2]:.10f} "
+                      f"s12 {X['rows'][n][3]:.10f} pi_i {X['rows'][n][4]:.10f}   max diff {e:.1e}")
+                if stall and not all_m1:
+                    print("             (stall row at m > 1: asserted by the invariants only, sheet §13.16 round 4b)")
+                else:
+                    assert all_m1, (sid, n, "the sheet digits need m = 1 at every step")
+                    allok &= ok(f"{sid} step {n} (sigma, pi_i) [kPa]", e, 2e-10)
+        print(f"    {nmax} steps: every step post-floored with the rule fired, F <= F_tol, pi_i = pi_f(sigma_f), p = -p_min, "
+              f"|pi_i| >= c_N p_min; m = 1 throughout: {all_m1}; n_f_pi {st.n_f_pi} -> {cur.n_f_pi}, n_f_post {st.n_f_post} -> {cur.n_f_post}")
+        assert cur.n_f_pi == nmax or not all_m1
+        if sid == "e7367g1_s185":
+            with rule_off():
+                c3 = st
+                for n in range(60):
+                    c3 = step(P, c3, deps)
+            got = np.append(np.append(s4(c3), c3.pi_i), F_of(P, c3.sigma, c3.pi_i))
+            print(f"    rule off, 60 steps (round 3b): s11 {got[0]:.10f} s22 {got[1]:.10f} s33 {got[2]:.10f} s12 {got[3]:.10f} pi_i {got[4]:.10f} "
+                  f"F {got[5]:+.4f}; sheet {K116_R3B_60}; q = {K.invariants(np.linalg.eigvalsh(c3.sigma)).q:.3f} (0.469; 0.631 with the rule)")
+            allok &= ok("round-3b 60-step values with the rule off (sigma, pi_i)", float(np.abs(got[:5] - np.array(K116_R3B_60[:5])).max()), 2e-10)
+            allok &= ok("round-3b 60-step F [kPa]", abs(got[5] - K116_R3B_60[5]), 1e-4)
+    # a non-converging return from the stall state is refused, state frozen, nothing counted (never F > F_tol committed)
+    st, deps, _, _ = h19_state(P, recs["e7367g1_m53"], norm=1e-6)
+    r = step(P, st, deps)
+    print(f"  stall state at |d eps| = 1e-6: refused {r.flags['refused']} '{r.flags['reason']}' (sheet: refused, local_linesearch:pi_fold), "
+          f"pi_i {r.pi_i:.10f} (-0.1116066186), n_f_pi {r.n_f_pi}, n_f_post {r.n_f_post} (unchanged {st.n_f_post})")
+    if r.flags["refused"]:
+        assert r.pi_i == st.pi_i and (r.n_f_pi, r.n_f_post, r.n_f_tr, r.eps_f_v) == (st.n_f_pi, st.n_f_post, st.n_f_tr, st.eps_f_v)
+    else:
+        assert F_of(P, r.sigma, r.pi_i) <= F_tol
+    print("  r4 K1.16:", "ALL OK" if allok else "SOME CHECK FAILED")
+    return allok
+
+
+def _from_pr(vals, V):
+    return (V * vals) @ V.T
+
+
+# ---- (S.59): the chain row, its gate fixture (case (b) of the sheet's FD table) and the named mutants
+S59_GATE = dict(pi_start=-0.3989652918, F_over_pmin=(0.162, 0.099), pi=-0.479306004, C_fd=(1.0e-5, 1.0e-7, 1.3e-9),
+                Spi_fd=(4.7e-6, 4.7e-8, 9.4e-10), gate_h7=3e-7,
+                mutants={"M-R1": 0.20, "M-R2": 0.19, "M-R3": 0.020, "M-R5": 0.016, "M-R6": 0.26})
+
+
+def r4_chain(P, st, deps, fractions, mutant=None):
+    """The increment with prescribed fractions through api._step_once and kernel.chain_propagate, with one named
+    mutant of the (S.59) row applied on every sub-increment where the rule fired (mutant None = the shipped chain).
+    Returns (C (S.47), S^pi (6,), final state, [StepResult per sub-increment])."""
+    from dataclasses import replace
+    from .api import _step_once
+    S_eps, S_pi, cum = K.chain_start()
+    cur, rs = st, []
+    for a in fractions:
+        cur = _step_once(P, cur, a * deps)
+        assert not cur.flags["refused"], cur.flags["reason"]
+        res, nv = cur.cache["res"], cur.cache["nvec"]
+        rs.append(res)
+        if mutant is None or not res.floor_pi:
+            S_eps, S_pi, cum = K.chain_propagate(S_eps, S_pi, cum, a, cur.v, res, nv)
+            continue
+        inv = K.invariants(res.sig)
+        fl = K.flow(P, inv, res.pi)
+        G = -fl.f_a / fl.Y.F_pi
+        if mutant == "M-R1":        # row not replaced: the (S.54) S^pi row kept
+            S_eps, S_pi, cum = K.chain_propagate(S_eps, S_pi, cum, a, cur.v, replace(res, floor_pi=False), nv)
+        elif mutant == "M-R2":      # zeta_y q y_a term dropped from f_a
+            Gm = -(fl.Y.F_p / 3.0 * K.ONES + K.SQ32 * fl.zeta * inv.nhat) / fl.Y.F_pi
+            S_eps, S_pi, cum = K.chain_propagate(S_eps, S_pi, cum, a, cur.v, replace(res, gamma_pi=Gm @ res.ae), nv)
+        elif mutant == "M-R3":      # (S.59) row ADDED to the (S.54) row
+            _, S54, _ = K.chain_propagate(S_eps, S_pi, cum, a, cur.v, replace(res, floor_pi=False), nv)
+            S_eps, S59, cum = K.chain_propagate(S_eps, S_pi, cum, a, cur.v, res, nv)
+            S_pi = S54 + S59
+        elif mutant == "M-R5":      # a^e of the PRE-floor converged state in gamma_b
+            S_eps, S_pi, cum = K.chain_propagate(S_eps, S_pi, cum, a, cur.v,
+                                                 replace(res, gamma_pi=G @ K.elastic(P, res.eps_c).ae), nv)
+        elif mutant == "M-R6":      # the row built from the strain sensitivity BEFORE Phi^post
+            Spre, _, _ = K.chain_propagate(S_eps, S_pi, cum, a, cur.v, replace(res, floor_post=False, floor_pi=False), nv)
+            S_eps, _, cum = K.chain_propagate(S_eps, S_pi, cum, a, cur.v, res, nv)
+            S_pi = np.einsum("ia,Jij,ja->Ja", nv, Spre, nv) @ res.gamma_pi
+        else:
+            raise ValueError(mutant)
+    C = K.chain_assemble(P, cur.cache["res"], cur.cache["nvec"], S_eps)
+    return C, S_pi, cur, rs
+
+
+def r4_fd(P, st, deps, fractions, h):
+    """Central FD over the six kernel columns of the final stress and of the final pi_i; fractions fixed; the SAME
+    branch pattern, floor pattern and reset flags asserted at every FD point; no FD point in the noise band."""
+    ref = step_fractions(P, st, deps, fractions)
+    fdS, fdP = [], np.empty(6)
+    for J in range(6):
+        sp = step_fractions(P, st, deps + h * K.CHAIN_E[J], fractions)
+        sm = step_fractions(P, st, deps - h * K.CHAIN_E[J], fractions)
+        for s_ in (sp, sm):
+            assert not s_.flags["refused"] and s_.flags["rpattern"] == ref.flags["rpattern"], (J, s_.flags)
+            assert s_.flags["pattern"] == ref.flags["pattern"] and s_.flags["floor_pi_band"] == 0
+        fdS.append((sp.sigma - sm.sigma) / (2.0 * h))
+        fdP[J] = (sp.pi_i - sm.pi_i) / (2.0 * h)
+    return np.array(fdS), fdP
+
+
+def _c_err(C, fdS):
+    return max(np.linalg.norm(np.einsum("ijkl,kl->ij", C, K.CHAIN_E[J]) - fdS[J]) /
+               np.linalg.norm(np.einsum("ijkl,kl->ij", C, K.CHAIN_E[J])) for J in range(6))
+
+
+def check_r4_s59():
+    print("\n=== 12d. (S.59) chain row: the forced (1/2, 1/2) HAR gate, FD at h = 1e-6/1e-7/1e-8, mutants M-R1..M-R6 ===")
+    allok = True
+    X = S59_GATE
+    P = k3_params()
+    st0, d1, _, _ = h19_state(P, h19_records()["e7367g1_s185"])
+    st1 = step(P, st0, d1)                                   # ONE K1.16 step
+    deps, fr = 2.0 * d1, (0.5, 0.5)
+    stn = step_fractions(P, st1, deps, fr)
+    C, S_pi, cur, rs = r4_chain(P, st1, deps, fr)
+    Fp = [r.F_post / P.p_min for r in rs]
+    print(f"  fixture: start pi_i = {st1.pi_i:.10f} ({X['pi_start']}), |d eps| = {math.sqrt(deps[0, 0] ** 2 + deps[1, 1] ** 2 + 2 * deps[0, 1] ** 2):.1e}, "
+          f"fractions {fr}, pattern {stn.flags['rpattern']} (-Pf*,-Pf*); F(sigma_f, pi_BE)/p_min = {Fp[0]:+.3f}, {Fp[1]:+.3f} "
+          f"(+{X['F_over_pmin'][0]}, +{X['F_over_pmin'][1]}); band limit F_tol/p_min = {K.F_BAND_TOL_REL * P.p_ref / P.p_min:.1e}")
+    print(f"  committed pi_i = {stn.pi_i:.9f} ({X['pi']}), p = {np.trace(stn.sigma) / 3:.12f} (-0.505); floor_pi = {stn.flags['floor_pi']}, "
+          f"n_f_pi {st1.n_f_pi} -> {stn.n_f_pi}")
+    assert stn.flags["rpattern"] == "-Pf*,-Pf*" and stn.flags["floor_pi"] == 2 and stn.flags["floor_pi_band"] == 0
+    assert stn.n_f_pi == st1.n_f_pi + 2 and rs[0].floor_pi, "the rule must fire in the NON-FINAL sub-increment"
+    allok &= ok("gate start pi_i", abs(st1.pi_i - X["pi_start"]), 2e-10)
+    allok &= ok("gate F(sigma_f, pi_BE)/p_min of the two sub-increments", max(abs(Fp[0] - X["F_over_pmin"][0]), abs(Fp[1] - X["F_over_pmin"][1])), 1e-3)
+    allok &= ok("gate committed pi_i", abs(stn.pi_i - X["pi"]), 2e-9)
+    allok &= ok("gate committed p = -p_min", abs(np.trace(stn.sigma) / 3 + P.p_min) / P.p_min, 1e-12)
+    same = np.array_equal(C, tangent(P, stn)) and np.array_equal(S_pi, stn.cache["S_pi_chain"]) and cur.pi_i == stn.pi_i
+    print(f"  selfcheck chain driver (mutant None) == api.step_fractions chain, bit for bit: {same}")
+    assert same
+    tolC = (3e-5, X["gate_h7"], 3e-8)
+    tolP = (3e-5, 3e-7, 3e-8)
+    fd7 = None
+    for i, h in enumerate((1e-6, 1e-7, 1e-8)):
+        fdS, fdP = r4_fd(P, st1, deps, fr, h)
+        eC = _c_err(C, fdS)
+        eP = float(np.abs(S_pi - fdP).max() / np.abs(S_pi).max())
+        print(f"  h = {h:.0e}: chained C (S.47) vs FD {eC:.2e} (sheet {X['C_fd'][i]:.1e})   S^pi (S.59) vs FD {eP:.2e} (sheet {X['Spi_fd'][i]:.1e})")
+        allok &= ok(f"(S.59) gate: C vs FD at h = {h:.0e}", eC, tolC[i])
+        allok &= ok(f"(S.59) gate: S^pi vs FD at h = {h:.0e}", eP, tolP[i])
+        if h == 1e-7:
+            fd7 = (fdS, fdP)
+    print(f"  delta:C / max|C| = {np.abs(np.einsum('iikl->kl', C)).max() / np.abs(C).max():.1e} (sheet <= 4e-15: the last sub-increment is post-floored)")
+    allok &= ok("delta : C = 0", np.abs(np.einsum("iikl->kl", C)).max() / np.abs(C).max(), 1e-13)
+    print("  mutants of the row, C vs FD at h = 1e-7 (pass threshold 3e-7) and S^pi vs FD:")
+    for name, sheet in X["mutants"].items():
+        Cm, Sm, curm, _ = r4_chain(P, st1, deps, fr, mutant=name)
+        assert np.array_equal(curm.sigma, stn.sigma) and curm.pi_i == stn.pi_i          # a mutant of the ROW only
+        eC = _c_err(Cm, fd7[0])
+        eP = float(np.abs(Sm - fd7[1]).max() / np.abs(Sm).max())
+        print(f"    {name}: C {eC:.3f} (sheet {sheet})   S^pi {eP:.3f}")
+        allok &= ok(f"{name} is far from FD (>= 5e-3, i.e. 1/err <= 200)", 1.0 / eC, 200.0)
+        allok &= ok(f"{name} reproduces the sheet's figure (relative)", abs(eC - sheet) / sheet, 0.1)
+    # m = 1: the single-step tangent is unchanged by the rule (M-R9); the chain at m = 1 reduces to (S.32f)/(S.33)
+    s1 = step_fractions(P, st1, d1, [1.0])
+    with rule_off():
+        s1off = step_fractions(P, st1, d1, [1.0])
+    e1 = relmax(tangent(P, s1), _s33(s1))
+    print(f"  m = 1 ({s1.flags['rpattern']}): chain vs closed form (S.32f)/(S.33) {e1:.1e} (sheet 5e-16); tangent with the rule == rule off, "
+          f"bit for bit: {np.array_equal(tangent(P, s1), tangent(P, s1off))}; pi_i {s1.pi_i:.10f} vs {s1off.pi_i:.10f}")
+    assert s1.flags["rpattern"] == "-Pf*" and np.array_equal(tangent(P, s1), tangent(P, s1off)) and s1.pi_i != s1off.pi_i
+    allok &= ok("m = 1 chain == (S.33) with the rule fired (M-R9)", e1, 1e-13)
+    # the reset sub-increment feeding an ordinary (S.54) row: BA06 K1.12 (C), 2x the increment + shear 2e-4, (1/2, 1/2) (case (d2))
+    Pb, sb, db, _ = k112c_case()
+    dd = 2.0 * db + 2e-4 * np.array([[0, 1, 0], [1, 0, 0], [0, 0, 0]])
+    sd = step_fractions(Pb, sb, dd, fr)
+    Cd, Sd, _, _ = r4_chain(Pb, sb, dd, fr)
+    print(f"  BA06 K1.12 (C) 2x + shear 2e-4, (1/2, 1/2): pattern {sd.flags['rpattern']} (sheet (d2): -Pf*,-P-)")
+    for i, h in enumerate((1e-6, 1e-7, 1e-8)):
+        fdS, fdP = r4_fd(Pb, sb, dd, fr, h)
+        eC, eP = _c_err(Cd, fdS), float(np.abs(Sd - fdP).max() / np.abs(Sd).max())
+        print(f"    h = {h:.0e}: C vs FD {eC:.2e} (sheet {(3.5e-8, 8.4e-9, 7.8e-9)[i]:.1e})   S^pi vs FD {eP:.2e} (sheet {(7.4e-9, 1.4e-8, 1.3e-8)[i]:.1e})")
+        if h == 1e-7:
+            allok &= ok("(d2) BA06 chain with a reset feeding an (S.54) row: C vs FD, h = 1e-7", eC, 3e-7)
+            allok &= ok("(d2) S^pi vs FD, h = 1e-7", eP, 3e-7)
+            if sd.flags["rpattern"] == "-Pf*,-P-":
+                Cm = r4_chain(Pb, sb, dd, fr, mutant="M-R1")[0]
+                print(f"    M-R1 on (d2): C {_c_err(Cm, fdS):.3f} (sheet 0.089)")
+                allok &= ok("M-R1 on (d2) far from FD", 1.0 / _c_err(Cm, fdS), 200.0)
+    print("  r4 (S.59):", "ALL OK" if allok else "SOME CHECK FAILED")
+    return allok
+
+
+# ---- (S.58) on a random census of post-floor events, K1.14b "never shrink" (M-R7)
+def _census_set(name, P, rng, n_paths, n_steps, stats):
+    F_tol = K.F_TRIAL_TOL_REL * P.p_ref
+    dF = F_tol / P.p_min
+    cn = c_N(P)
+    fac = (1.0 + dF * P.N / P.M) ** (-(1.0 - P.N) / P.N) if P.N > 0.0 else math.exp(-dF / P.M)
+    c2 = 0.0 if P.cap == "none" else P.c2
+    worst = dict(a=0.0, b=-1e300, c=1e300, Fz=0.0, pif=0.0)
+    n = dict(steps=0, post=0, fired=0, notfired=0, band=0, guard=0, refused=0, elastic=0, sub=0, tr=0)
+    for _ in range(n_paths):
+        p0 = -P.p_min * rng.uniform(1.0, 2.5)
+        eta0 = rng.uniform(0.0, 1.1) * P.M
+        dvec = rng.normal(size=3)
+        sig, _, _ = off_corner_sig(P, p0, eta0, direction=tuple(dvec))
+        Q, _ = np.linalg.qr(rng.normal(size=(3, 3)))
+        pi_g = K.pi_of_eta(P, p0, max(eta0, c2 * P.M))
+        try:
+            st = initial_state(P, Q @ np.diag(sig) @ Q.T, v_for_psi(P, pi_g, rng.uniform(-0.05, 0.15)), None)   # (S.53): admissible
+        except ValueError:
+            continue
+        assert F_of(P, st.sigma, st.pi_i) <= F_tol
+        A = rng.normal(size=(3, 3))
+        A = sym(A)
+        A -= np.trace(A) / 3.0 * I3
+        A /= np.linalg.norm(A)
+        mag = 10.0 ** rng.uniform(-5.0, -3.0)
+        trv = rng.uniform(-0.3, 1.0)
+        for _k in range(n_steps):
+            B = rng.normal(size=(3, 3))
+            deps = mag * (A + 0.3 * sym(B) / np.linalg.norm(B) + trv / 3.0 * I3)
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")                 # the (S.57) guard warning would be an error here
+                new = step(P, st, deps)
+            if new.flags["refused"]:
+                n["refused"] += 1
+                break
+            n["steps"] += 1
+            n["sub"] += new.flags["substeps"] > 1
+            n["post"] += new.flags["floor_post"]
+            n["tr"] += new.flags["floor_tr"]
+            n["fired"] += new.flags["floor_pi"]
+            n["notfired"] += new.flags["floor_post"] - new.flags["floor_pi"]
+            n["band"] += new.flags["floor_pi_band"]
+            n["guard"] += new.flags["floor_pi_guard"]
+            n["elastic"] += not new.flags["plastic"]
+            p = float(np.trace(new.sigma)) / 3.0
+            Fc = F_of(P, new.sigma, new.pi_i)
+            worst["a"] = max(worst["a"], (P.p_min - abs(p)) / P.p_min)                    # (a) |p| >= p_min (1 - 1e-12)
+            worst["b"] = max(worst["b"], Fc / F_tol)                                      # (b) F <= F_tol
+            worst["c"] = min(worst["c"], abs(new.pi_i) / (cn * abs(p) * fac))             # (c) >= 1
+            assert new.n_f_pi == st.n_f_pi + new.flags["floor_pi"] and new.n_f_post == st.n_f_post + new.flags["floor_post"]
+            res = new.cache["res"]                                                        # the LAST sub-increment
+            if res.floor_post:
+                if res.floor_pi:
+                    pif, _e = pi_f_of(P, new.sigma)
+                    worst["Fz"] = max(worst["Fz"], abs(Fc) / P.p_min)
+                    worst["pif"] = max(worst["pif"], abs(new.pi_i - pif) / abs(pif))
+                    assert res.F_post > 0.0 and new.pi_i < res.pi_be and res.gamma_pi is not None
+                else:
+                    assert new.pi_i == res.pi_be and (res.F_post <= 0.0 or res.floor_pi_band or res.floor_pi_guard)
+            else:
+                assert not res.floor_pi and res.gamma_pi is None
+                if not res.plastic:
+                    assert new.flags["substeps"] > 1 or new.pi_i == st.pi_i
+            st = new
+    stats[name] = (n, worst)
+    print(f"  {name}: {n['steps']} accepted steps ({n['sub']} substepped, {n['elastic']} elastic, {n['refused']} paths refused), "
+          f"trial floors {n['tr']}, post floors {n['post']}: rule fired {n['fired']}, not fired {n['notfired']} (in the band {n['band']}, "
+          f"guard {n['guard']})")
+    print(f"      (a) max (p_min - |p|)/p_min = {worst['a']:.1e} (<= 1e-12)   (b) max F/F_tol = {worst['b']:.3e} (<= 1)   "
+          f"(c) min |pi_i| / (c_N |p| (1 + dF N/M)^(-(1-N)/N)) = {worst['c']:.6f} (>= 1)   fired: max |F(sigma_f, pi_i)|/p_min = "
+          f"{worst['Fz']:.1e}, max |pi_i - pi_f(sigma_f)|/|pi_f| = {worst['pif']:.1e}")
+    return n, worst
+
+
+def check_r4_s58():
+    print("\n=== 12e. (S.58) invariants on a random census of post-floor events (admissible starts by (S.53)); never shrink ===")
+    allok = True
+    rng = np.random.default_rng(20261111)
+    stats = {}
+    sets = [("K3 HAR smooth cap p_min 0.505", k3_params(), 60, 40),
+            ("TIMs HAR no cap p_min 0.505", tims_params(), 60, 40),
+            ("BA06 K2 p_min 50", k2_params(p_min=50.0), 60, 40),
+            ("BA06 K2 alpha0 5 p_min 50", k2_params(p_min=50.0, alpha0=5.0), 40, 40),
+            ("BA06 N = 0 (N_bar 0, rho = rho_bar 0.8) p_min 50", k2_params(rho=0.8, rho_bar=0.8, p_min=50.0, N=0.0, N_bar=0.0), 40, 40)]
+    tot_fired = tot_not = 0
+    for name, P, npth, nst in sets:
+        n, w = _census_set(name, P, rng, npth, nst, stats)
+        tot_fired += n["fired"]
+        tot_not += n["notfired"]
+        allok &= ok(f"{name}: (S.58a) |p| >= p_min (1 - 1e-12)", w["a"], 1e-12)
+        allok &= ok(f"{name}: (S.58b) F <= F_tol at every committed state (F/F_tol)", w["b"], 1.0)
+        allok &= ok(f"{name}: (S.58c) |pi_i| bound (1/ratio <= 1)", 1.0 / w["c"], 1.0)
+        allok &= ok(f"{name}: F(sigma_f, pi_i)/p_min = 0 where the rule fired", w["Fz"], 1e-11)
+        allok &= ok(f"{name}: pi_i = pi_f(sigma_f) where the rule fired", w["pif"], 1e-12)
+        assert n["guard"] == 0
+    print(f"  census total: rule fired at {tot_fired} post-floor events, not fired at {tot_not}")
+    assert tot_fired >= 100 and tot_not >= 10, "the census must contain both outcomes"
+    # K1.14b, the regression point of "never shrink" (sheet §13.14b round 4; M-R7 would commit -0.740398976)
+    P = tims_params()
+    sig, th, nh = off_corner_sig(P, -0.6, 1.2 * P.M, direction=(-1.0, -0.35, 1.35))
+    pi0 = K.pi_of_eta(P, -0.6, 1.2 * P.M)
+    st0 = initial_state(P, np.diag(sig), v_for_psi(P, pi0, -0.10), pi0)
+    st = step(P, st0, np.diag(2e-5 / 3.0 * K.ONES + 2e-5 * nh))
+    res = st.cache["res"]
+    pif, _ = pi_f_of(P, st.sigma)
+    print(f"  K1.14b single {st.flags['rpattern']} (FPf, no star): F(sigma_f, pi_BE)/p_min = {res.F_post / P.p_min:+.6f} (-0.004098), "
+          f"pi_i = {st.pi_i:.9f} (-0.743350807 unchanged), sigma_f = {np.diag(st.sigma)} (sheet -0.8497174515, -0.5790682544, "
+          f"-0.0862142940); the always-reset mutant M-R7 would commit pi_f = {pif:.9f} (-0.740398976)")
+    assert st.flags["rpattern"] == "FPf" and st.n_f_pi == 0 and st.pi_i == res.pi_be
+    allok &= ok("K1.14b F(sigma_f, pi_BE)/p_min = -0.004098", abs(res.F_post / P.p_min + 0.004098), 1e-6)
+    allok &= ok("K1.14b pi_i unchanged = -0.743350807", abs(st.pi_i + 0.743350807), 2e-9)
+    allok &= ok("K1.14b sigma_f", float(np.abs(np.diag(st.sigma) - np.array([-0.8497174515, -0.5790682544, -0.0862142940])).max()), 2e-10)
+    allok &= ok("K1.14b M-R7 value pi_f(sigma_f) = -0.740398976", abs(pif + 0.740398976), 2e-9)
+    for inc, want, pis in ((np.diag(4e-5 / 3.0 * K.ONES + 4e-5 * nh), "FPf,FPf", -0.743038708),
+                           (np.diag(1.4e-5 / 3.0 * K.ONES + 2e-5 * nh), "-P-,-Pf", -0.743573074)):
+        s2 = step_fractions(P, st0, inc, (0.5, 0.5))
+        print(f"  K1.14b chain {s2.flags['rpattern']} ({want}): final pi_i = {s2.pi_i:.9f} ({pis}), floor_pi = {s2.flags['floor_pi']}")
+        assert s2.flags["rpattern"] == want and s2.n_f_pi == 0
+        allok &= ok(f"K1.14b chain {want} final pi_i", abs(s2.pi_i - pis), 2e-9)
+    # the two branches of step 5g no march reaches, called directly on kernel.floor_pi_rule
+    for Pv in (k3_params(), k2_params(p_min=50.0), k2_params(rho=0.8, rho_bar=0.8, p_min=50.0, N=0.0, N_bar=0.0)):
+        sv = -Pv.p_min * K.ONES                                  # vertex (q = 0) at the floor, pi_BE inside the tip: F = p eta > 0
+        aev = K.elastic(Pv, K.invert_elastic(Pv, sv)).ae
+        o = K.floor_pi_rule(Pv, sv, aev, -0.3 * c_N(Pv) * Pv.p_min)
+        assert o["floor_pi"] and o["eta_f"] == 0.0 and not np.any(o["gamma_pi"]) and o["F_post"] > 0.0
+        allok &= ok(f"vertex (N = {Pv.N:.3f}, {Pv.energy}): pi_f = c_N p_f, S^pi row zero", abs(o["pi"] + c_N(Pv) * Pv.p_min) / Pv.p_min, 1e-15)
+        allok &= ok("vertex: F(sigma_f, pi_f) = 0", abs(K.flow(Pv, K.invariants(sv), o["pi"]).F) / Pv.p_min, 1e-14)
+        o = K.floor_pi_rule(Pv, sv, aev, -2.0 * c_N(Pv) * Pv.p_min)       # F < 0: nothing is done
+        assert not o.get("floor_pi", False) and o["pi"] == -2.0 * c_N(Pv) * Pv.p_min and o["F_post"] < 0.0
+        if Pv.N > 0.0:                                           # guard: eta_f >= M/N (unreachable from a return; forced here)
+            nh_ = np.array([1.0, 0.2, -1.2])
+            nh_ /= np.linalg.norm(nh_)
+            sg = -Pv.p_min * K.ONES + K.SQ23 * (1.05 * Pv.M / Pv.N / 0.5) * Pv.p_min * nh_      # zeta >= rho > 0.5
+            with warnings.catch_warnings(record=True) as wl:
+                warnings.simplefilter("always")
+                o = K.floor_pi_rule(Pv, sg, aev, -Pv.p_min)
+            print(f"  guard (N = {Pv.N:.3f}, {Pv.energy}): eta_f = {o['eta_f']:.3f} >= M/N = {Pv.M / Pv.N:.3f}: pi_i unchanged {o['pi'] == -Pv.p_min}, "
+                  f"floor_pi_guard {o.get('floor_pi_guard', False)}, floor_pi {o.get('floor_pi', False)}, warnings {len(wl)}")
+            assert o["pi"] == -Pv.p_min and o["floor_pi_guard"] and not o.get("floor_pi", False) and len(wl) == 1
+    # p_min = 0: nothing of §9.7 acts
+    P0 = k3_params(p_min=0.0)
+    assert not K.floor_project(P0, np.array([1e-3, 1e-3, 1e-3])).active
+    print("  r4 (S.58):", "ALL OK" if allok else "SOME CHECK FAILED")
+    return allok
+
+
+# ---- D >= 0 and the floor energy accounting with the rule (sheet §9.7 "Dissipation, energy")
+R4_MARCH = dict(n=600, minD=6.2e-5, sumD=4.384e-2, sumEf=2.920e-3, Wf=2.987e-3, resid=0.012, resid_1200=0.0060,
+                off_sumEf=1.52e-2, off_Wf=1.71e-2, off_resid=0.086)
+
+
+def _march(P, st, deps, n):
+    sD = sE = sW = wext = 0.0
+    minD, post, fired, cur = 1e300, 0, 0, st
+    psi0 = K.energy_psi(P, np.linalg.eigvalsh(st.eps_e))
+    for _ in range(n):
+        new = step(P, cur, deps)
+        assert not new.flags["refused"], new.flags["reason"]
+        res = new.cache["res"]
+        Ef = floor_energy(P, new)
+        dW = new.W_f - cur.W_f
+        # per event: D of the return formed at the PRE-floor converged state, E_f in [0, p_min d eps^f_v]
+        if new.flags["substeps"] == 1 and res.plastic:
+            sc = K.elastic(P, res.eps_c).sig
+            assert new.D == res.dlam * float(np.dot(sc, res.q_a))
+        assert -1e-18 <= Ef <= dW * (1.0 + 1e-12) + 1e-18 and abs(dW - P.p_min * (new.eps_f_v - cur.eps_f_v)) <= 1e-15
+        sD += new.D
+        sE += Ef
+        sW += dW
+        minD = min(minD, new.D)
+        post += new.flags["floor_post"]
+        fired += new.flags["floor_pi"]
+        wext += 0.5 * float(np.sum((cur.sigma + new.sigma) * deps))
+        cur = new
+    dpsi = K.energy_psi(P, np.linalg.eigvalsh(cur.eps_e)) - psi0
+    return dict(sD=sD, sE=sE, sW=sW, minD=minD, post=post, fired=fired, resid=(wext - (dpsi + sD - sE)) / sD, st=cur)
+
+
+def check_r4_energy():
+    print("\n=== 12f. D >= 0 and the floor energy accounting with the rule (sheet §9.7; 600 steps of 2e-4 from e7367g1_s185) ===")
+    allok = True
+    X = R4_MARCH
+    P = k3_params()
+    st, deps, _, _ = h19_state(P, h19_records()["e7367g1_s185"])
+    m = _march(P, st, deps, 600)
+    print(f"  with the rule: min D = {m['minD']:.2e} ({X['minD']:.1e}) kPa, sum D = {m['sD']:.4e} ({X['sumD']:.3e}), sum E_f = {m['sE']:.4e} "
+          f"({X['sumEf']:.3e}) <= W_f = {m['sW']:.4e} ({X['Wf']:.3e}) kPa, post floors {m['post']} (600), resets {m['fired']} (600), "
+          f"residual of W_ext - (dPsi + sum D - sum E_f) = {100 * m['resid']:.2f} % of sum D (1.2 %)")
+    allok &= ok("march: D > 0 at every step (min D vs sheet 6.2e-5, relative)", abs(m["minD"] - X["minD"]) / X["minD"], 0.01)
+    assert m["minD"] > 0.0 and m["post"] == 600 and m["fired"] == 600
+    allok &= ok("march: sum D (relative)", abs(m["sD"] - X["sumD"]) / X["sumD"], 2e-4)
+    allok &= ok("march: sum E_f (relative)", abs(m["sE"] - X["sumEf"]) / X["sumEf"], 2e-4)
+    allok &= ok("march: W_f (relative)", abs(m["sW"] - X["Wf"]) / X["Wf"], 2e-4)
+    allok &= ok("march: sum E_f <= W_f", max(0.0, m["sE"] - m["sW"]), 0.0)
+    allok &= ok("march: work-balance residual / sum D = 1.2 %", abs(abs(m["resid"]) - X["resid"]), 5e-4)
+    m2 = _march(P, st, 0.5 * deps, 1200)
+    print(f"  1200 steps of 1e-4: residual {100 * m2['resid']:.2f} % (0.60 %: O(d), the truncation of the trapezoid W_ext); min D = {m2['minD']:.2e}")
+    allok &= ok("march 1200: residual / sum D = 0.60 %", abs(abs(m2["resid"]) - X["resid_1200"]), 5e-4)
+    assert m2["minD"] > 0.0
+    with rule_off():
+        m3 = _march(P, st, deps, 600)
+    print(f"  rule off (round 3b) on the same path: sum E_f = {m3['sE']:.3e} ({X['off_sumEf']:.2e}), W_f = {m3['sW']:.3e} ({X['off_Wf']:.2e}), "
+          f"residual {100 * m3['resid']:.1f} % (8.6 %), min D = {m3['minD']:.2e}")
+    allok &= ok("rule off: sum E_f, W_f (relative)", max(abs(m3["sE"] - X["off_sumEf"]) / X["off_sumEf"], abs(m3["sW"] - X["off_Wf"]) / X["off_Wf"]), 5e-3)
+    allok &= ok("rule off: residual 8.6 %", abs(abs(m3["resid"]) - X["off_resid"]), 1e-3)
+    print("  r4 energy:", "ALL OK" if allok else "SOME CHECK FAILED")
+    return allok
+
+
+def check_r4():
+    res = [check_r4_k112c(), check_r4_wet(), check_r4_k116(), check_r4_s59(), check_r4_s58(), check_r4_energy()]
+    print("\n  r4 group:", "ALL OK" if all(res) else "SOME CHECK FAILED")
+    return all(res)
+
+
 def _kernel_shim():
     """(Kernel, ns_kernel module, note) from kernel_parity/ when g++ and the header are available, else (None, None, why).
     O2 itself never imports the kernel; this is only the (c) cross-check of the D2 self-check."""
@@ -1328,7 +2028,10 @@ if __name__ == "__main__":
     import sys
     groups = dict(jac=check_jacobian, cto=check_cto, newton=check_quadratic, k1=check_k1,
                   k2=lambda: check_finite_and_k2(full_table="--table" in sys.argv), cap=check_cap,
-                  chain=check_chain, har=check_har, floor=check_floor, pi0=check_pi0, d2=check_d2)
-    sel = [a for a in sys.argv[1:] if a in groups] or list(groups)
+                  chain=check_chain, har=check_har, floor=check_floor, pi0=check_pi0, d2=check_d2,
+                  r4=check_r4, r4c=check_r4_k112c, r4wet=check_r4_wet, r4k116=check_r4_k116, r4s59=check_r4_s59,
+                  r4s58=check_r4_s58, r4energy=check_r4_energy)
+    # no verb: every group once (the r4 sub-verbs r4c ... r4energy are the parts of r4)
+    sel = [a for a in sys.argv[1:] if a in groups] or [g for g in groups if not (g.startswith('r4') and g != 'r4')]
     for g in sel:
         groups[g]()

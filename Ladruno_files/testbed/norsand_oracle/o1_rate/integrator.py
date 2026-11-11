@@ -19,6 +19,12 @@ Modes and switches (every segment the solver sees is smooth):
             F > ftol at a segment start -> status 'outside' (never projected).
 H = 0 crossings are non-terminal events, recorded in flags['H_zero'] (K1.6 check).
 
+With p_min > 0 (sheet 9.7) the floor modes are 'floor' and 'plastic_floor' (Koiter, S.55) and, since round 4,
+'floor_rule': the rate form (S.60) of the split with the image-pressure rule (S.57), used on the floor and on F
+wherever lam' > 0, lam_f' - lam_f^tr' > 0 and f:a^e:P < 0 hold (checked first at every floor decision); it is left
+at the edges of that set (events rule_off / rule_off_fAP), and re-decided when P:a^e:eps' changes sign
+(rule_branch).  floor_rule=False keeps (S.55) everywhere.
+
 State vector y (19): eps^e (Mandel 6), pi_i, v, W = int sigma:deps, int |sigma:deps|,
 Dp = int lambda' sigma:q, eps_p_v, eps_p_s, total strain (Mandel 6).
 
@@ -45,8 +51,10 @@ OUTSIDE_REL = 1.0e-6     # F / (M |p|) above this at a segment start -> status '
 FLOOR_TOL = 1.0e-8       # (p + p_min) / p_min >= -FLOOR_TOL: "on the floor" (sheet 9.7, S.55)
 FLOOR_OUT = 1.0e-6       # (p + p_min) / p_min above this at a segment start -> status 'floor_outside'
 PM = t2m(PFLOOR)         # Mandel form of the floor direction P = 1/3 (S.55)
-FLOOR_MODES = ("floor", "plastic_floor")
-PLASTIC_MODES = ("plastic", "plastic_floor")
+# 'floor_rule' = the rate form (S.60) of the split with the image-pressure rule (S.57) (sheet 9.7, round 4)
+FLOOR_MODES = ("floor", "plastic_floor", "floor_rule")
+PLASTIC_MODES = ("plastic", "plastic_floor", "floor_rule")
+FAP_TOL = 1.0e-12        # f:a^e:P < -FAP_TOL |f||a^e||P|: the (S.60) condition 'the floor pushes the stress out of F'
 
 
 @dataclass
@@ -73,7 +81,7 @@ def _pack(st: State, floor=False):
 
 
 class _Increment:
-    def __init__(self, P: Params, st: State, deps, smask, dsig, rtol, kin):
+    def __init__(self, P: Params, st: State, deps, smask, dsig, rtol, kin, floor_rule=True):
         self.P = P
         self.kin = kin
         self.v0 = st.flags.get("v0", st.v)
@@ -87,6 +95,9 @@ class _Increment:
         self.T = np.where(self.smask)[0]
         self.pmin = P.pmin
         self.floor = self.pmin > 0.0
+        self.rule = self.floor and bool(floor_rule)   # (S.60) on the floor where it applies; False = (S.55) only
+        self.s60_b = 0          # (S.60): branch of the trial floor rate <P:a:eps'> (1 = active), frozen per segment
+        self.ptr_tol = 0.0
         ny = 20 if self.floor else 19
         emax = max(float(np.max(np.abs(self.dm))), 1e-9)
         pabs = max(abs(float(np.trace(st.sigma))) / 3.0, 1e-3)
@@ -171,12 +182,40 @@ class _Increment:
             den = float(G[0, 0] - G[0, 1] * G[1, 0] / G[1, 1])     # Schur complement: the plastic denominator
             N = lam * den
             info.update(N=N, den=den, PAP=float(G[1, 1]), G=G)
+        elif mode == "floor_rule":              # (S.60), sheet 9.7 round 4: the split with the rule (S.57)
+            # lam_f^tr = <P:a:eps'>/(P:a:P)           (step 1f; branch s60_b frozen for the segment)
+            # lam      = f:a:(eps' - lam_f^tr P)/(f:a:q + H)
+            # lam_f    = P:a:(eps' - lam q)/(P:a:P)   (p' = 0)
+            # pi_i'    = sqrt(2/3) h lam (pi_i* - pi_i) Omega + (f:a:P)(lam_f - lam_f^tr)/F_pi
+            # every multiplier is linear in eps' on a branch: lam = l.eps', lam_f = m.eps'
+            Aq = Am @ qm
+            fA = fm @ Am
+            AP = Am @ PM
+            PA = PM @ Am
+            PAP = float(PM @ AP)
+            fAP = float(fA @ PM)
+            PAq = float(PA @ qm)
+            den = float(fA @ qm) + pq.H
+            b = float(self.s60_b)
+            lv = (fA - b * (fAP / PAP) * PA) / den
+            mv = (PA - PAq * lv) / PAP
+            Cm = Am - np.outer(Aq, lv) - np.outer(AP, mv)
+            d = self._solve_mixed(Cm)
+            lam = float(lv @ d)
+            lam_f = float(mv @ d)
+            ptr = float(PA @ d)                  # P:a:eps' (the trial floor rate times P:a:P)
+            lam_ftr = b * ptr / PAP
+            N = lam * den                        # f:a:(eps' - lam_f^tr P)
+            info.update(N=N, den=den, PAP=PAP, fAP=fAP, lam_ftr=lam_ftr, ptr=ptr,
+                        rule=(lam_f - lam_ftr) * PAP)
         else:
             raise ValueError(mode)
         dee = d - lam * qm
         if lam_f != 0.0:
             dee = dee - lam_f * PM
         dpi = SQ23 * P.h * lam * (pq.pistar - pi) * pq.Omega
+        if mode == "floor_rule":                 # the reset term of (S.60): F' = 0 with p' = 0
+            dpi = dpi + info["fAP"] * (lam_f - info["lam_ftr"]) / pq.Fpi
         trd = float(d[0] + d[1] + d[2])
         dv = v * trd                      # (S.40) v' = v tr eps' (diagnostic copy in y[7])
         sw = float(sm @ d)
@@ -289,6 +328,11 @@ class _Increment:
         if on_yield:
             if P.N > 0 and pq.B <= 0.0:
                 return ("stop", "B_guard")
+            if self.rule:
+                b = self._s60_branch(y, Am, pq, sc_f, sc_p)
+                if b is not None:
+                    self.s60_b = b
+                    return "floor_rule"
             _, ib = self.rates(y, "plastic_floor")
             if ib["lam"] * ib["den"] > sc_f and ib["lam_f"] * ib["PAP"] > sc_p and ib["den"] > 0.0:
                 return "plastic_floor"
@@ -302,6 +346,31 @@ class _Increment:
         if ie["pdot"] <= sc_p and (not on_yield or ie["N"] <= sc_f):
             return "elastic"
         return ("stop", "no_consistent_mode_floor")
+
+    def _s60_branch(self, y, Am, pq, sc_f, sc_p):
+        """(S.60) validity at a state on the floor and on F (sheet 9.7, round 4): lam' > 0, lam_f' - lam_f^tr' > 0 and
+        f:a^e:P < 0 (and the plastic denominator > 0).  Returns the branch b of <P:a:eps'> (1: the trial floor rate is
+        active) for which (S.60) holds self-consistently, or None (then (S.55) applies, unchanged).  Under strain
+        control exactly one branch is consistent; under mixed control b = 1 is tried first.  The probe does not count
+        in nfev, so a floor path on which (S.60) never applies is bit-identical to the round-3b O1."""
+        fAP = float(t2m(pq.f) @ Am @ PM)
+        if not fAP < -FAP_TOL * np.linalg.norm(t2m(pq.f)) * np.linalg.norm(Am) * np.linalg.norm(PM):
+            return None
+        n0, old = self.nfev, self.s60_b
+        try:
+            for b in (1, 0):
+                self.s60_b = b
+                _, ir = self.rates(y, "floor_rule")
+                consistent = ir["ptr"] > sc_p if b == 1 else ir["ptr"] <= sc_p
+                if not consistent:
+                    continue
+                if ir["den"] > 0.0 and ir["N"] > sc_f and ir["rule"] > sc_p:
+                    self.ptr_tol = sc_p
+                    return b
+                return None
+            return None
+        finally:
+            self.nfev, self.s60_b = n0, old
 
     def events(self, mode, y0):
         P = self.P
@@ -333,6 +402,27 @@ class _Increment:
                 ii = self.rates(y, mode)[1]
                 return ii["lam_f"] * ii["PAP"]
             add(e_rel, "floor_release", -1)
+            if mode == "floor_rule":            # the edges of the (S.60) set, and the kink of <P:a:eps'>
+                def e_rule(t, y):               # lam_f' - lam_f^tr' -> 0: the return no longer relaxes p
+                    return self.rates(y, mode)[1]["rule"]
+                add(e_rule, "rule_off", -1)
+
+                def e_fap(t, y):                # f:a^e:P -> 0: the floor no longer pushes the stress out of F
+                    return self.rates(y, mode)[1]["fAP"]
+                add(e_fap, "rule_off_fAP", 1)
+
+                # P:a:eps' changes sign: the other branch of lam_f^tr (a hysteresis of ptr_tol: a pure deviatoric
+                # rate under BA06 alpha0 = 0 has P:a:eps' = 0 identically and must not chatter on its round-off)
+                if self.s60_b == 1:
+                    def e_tr(t, y):
+                        return self.rates(y, mode)[1]["ptr"]
+                    add(e_tr, "rule_branch", -1)
+                else:
+                    tol = self.ptr_tol
+
+                    def e_tr(t, y):
+                        return self.rates(y, mode)[1]["ptr"] - tol
+                    add(e_tr, "rule_branch", 1)
 
         if mode in ("elastic", "floor"):
             F0, _ = self.Frel(y0)
@@ -390,7 +480,7 @@ class _Increment:
 
 
 def integrate_increment(P: Params, st: State, deps, smask=None, dsig=None, rtol=1e-10,
-                        kin="small", max_segments=500) -> State:
+                        kin="small", max_segments=500, floor_rule=True) -> State:
     """Integrate one increment over pseudo-time [0, 1] from state `st`.
 
     deps  : 3x3 strain increment (strain-controlled components; tensor strains).
@@ -398,8 +488,11 @@ def integrate_increment(P: Params, st: State, deps, smask=None, dsig=None, rtol=
             component with stress increment dsig (default 0).
     kin   : 'small' or 'log' (eps = log strain).  Both use v = v_n exp(tr deps) (sheet 1.2/1.4;
             the pre-G2 small-strain rule v' = v0 tr eps' is superseded); kin is recorded only.
+    floor_rule : True (default, sheet round 4): on the floor and on F, the rate form (S.60) wherever its
+            validity set holds, the Koiter form (S.55) elsewhere.  False: (S.55) only (the round-3b O1;
+            used to measure the gap between the two rate forms).  No effect when p_min = 0.
     """
-    inc = _Increment(P, st, deps, smask, dsig, rtol, kin)
+    inc = _Increment(P, st, deps, smask, dsig, rtol, kin, floor_rule)
     y = _pack(st, inc.floor)
     t = 0.0
     status = "ok"
@@ -411,6 +504,9 @@ def integrate_increment(P: Params, st: State, deps, smask=None, dsig=None, rtol=
     min_den = float("inf")
     max_floor_drift = 0.0
     min_lam_f = float("inf")
+    inf = float("inf")
+    rule_diag = dict(min_lam=inf, min_lam_f=inf, max_lam_ftr=-inf, min_rule=inf, max_fAP=-inf, min_den=inf,
+                     max_F=0.0, max_floor_dp=0.0)
     stall = 0
     mode = None
     while t < 1.0:
@@ -465,8 +561,21 @@ def integrate_increment(P: Params, st: State, deps, smask=None, dsig=None, rtol=
             if mode in FLOOR_MODES:
                 max_floor_drift = max(max_floor_drift, abs(pq.p + inc.pmin) / inc.pmin)
                 min_lam_f = min(min_lam_f, info["lam_f"] / max(np.linalg.norm(inc.dm), 1e-30))
+            if mode == "floor_rule":
+                dn = max(np.linalg.norm(inc.dm), 1e-30)
+                rd = rule_diag
+                rd["min_lam"] = min(rd["min_lam"], info["lam"] / dn)
+                rd["min_lam_f"] = min(rd["min_lam_f"], info["lam_f"] / dn)
+                rd["max_lam_ftr"] = max(rd["max_lam_ftr"], info["lam_ftr"] / dn)
+                rd["min_rule"] = min(rd["min_rule"], info["rule"] / (info["PAP"] * dn))
+                rd["max_fAP"] = max(rd["max_fAP"], info["fAP"])
+                rd["min_den"] = min(rd["min_den"], info["den"])
+                rd["max_F"] = max(rd["max_F"], abs(pq.F))
+                rd["max_floor_dp"] = max(rd["max_floor_dp"], abs(pq.p + inc.pmin))
         segments.append(dict(mode=mode, t0=t, t1=float(sol.t[-1]), event=fired,
                              steps=int(len(sol.t) - 1)))
+        if mode == "floor_rule":
+            segments[-1]["s60_b"] = inc.s60_b
         t_new, y_new = float(sol.t[-1]), sol.y[:, -1].copy()
         stall = stall + 1 if t_new - t <= 1e-13 else 0
         t, y = t_new, y_new
@@ -497,6 +606,11 @@ def integrate_increment(P: Params, st: State, deps, smask=None, dsig=None, rtol=
                      at_floor=bool(el.p > -inc.pmin * (1.0 + 1e-10)), floor_segments=nseg_f,
                      n_floor_increments=st.flags.get("n_floor_increments", 0) + (1 if nseg_f else 0),
                      max_floor_drift=max_floor_drift, min_lam_f_rel=min_lam_f, p_min=inc.pmin)
+        # (S.60), sheet 9.7 round 4: segments integrated in the rule's rate form (the split's pattern -Pf*)
+        nseg_r = sum(1 for sg in segments if sg["mode"] == "floor_rule")
+        flags.update(rule_segments=nseg_r, floor_rule=(last_mode == "floor_rule"), rule_branch=(segments[-1].get("s60_b") if segments else None),
+                     n_rule_increments=st.flags.get("n_rule_increments", 0) + (1 if nseg_r else 0),
+                     rule_diag=(rule_diag if nseg_r else None))
     flags.update(
         status=status, plastic=(last_mode in PLASTIC_MODES), mode=last_mode,
         F_rel=Fr, max_F_rel=max_F, min_den=min_den, min_Dp_rate_rel=min_rate,

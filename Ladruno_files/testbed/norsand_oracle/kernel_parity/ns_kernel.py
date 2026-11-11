@@ -13,8 +13,9 @@ kernel API to Python with O2-shaped inputs (o2_algo.Params, 3x3 tensors):
     K.stress(P, state), K.elastic_tangent(P, state)
     K.elastic(P, eps3), K.floor_ev(P, es), K.floor_project(P, eps3), K.energy_psi(P, eps3)   # detail:: pieces
 
-State layout (18): eps_e[6], pi_i, v, v0, eps_p_v, eps_p_s, D_last, eps_f_v, W_f, n_f_tr, n_f_post, n_f_init,
-at_floor (the round-3b floor counters, sheet 9.7). O2 Params fields that are None (the unused energy's values)
+State layout (19): eps_e[6], pi_i, v, v0, eps_p_v, eps_p_s, D_last, eps_f_v, W_f, n_f_tr, n_f_post, n_f_init,
+at_floor (the round-3b floor counters, sheet 9.7), n_f_pi (round 4: resets of pi_i by (S.57)). An 18-entry state (the
+round-3b layout, e.g. built from an O2 State without n_f_pi) is accepted and padded with n_f_pi = 0. O2 Params fields that are None (the unused energy's values)
 are passed as 0.0; energy 'BA06' -> 0, 'HAR' -> 1; p_min is O2's (default 5e-3 p_ref).
 
 Conventions: tensors are 6 TENSOR components {00,11,22,01,12,02}; the kernel tangent is
@@ -44,7 +45,8 @@ REFUSAL = ["OK", "LOCAL_NOCONV", "LOCAL_LINESEARCH", "PI_NOBRACKET", "PI_NOCONV"
            "P_OR_PI_NONNEG", "NEGATIVE_DLAMBDA", "SUBSTEPS_EXHAUSTED"]
 EVALERR = ["", "p_or_pi_nonneg", "pi_nonneg", "B_nonpos", "pi_fold", "pi_nobracket", "pi_noconv",
            "nonfinite", "singular_J", "elastic_domain"]
-NSTATE = 18
+NSTATE = 19
+NINFO = 14
 
 I6 = (0, 1, 2, 0, 1, 0)
 J6 = (0, 1, 2, 1, 2, 2)
@@ -134,6 +136,7 @@ def _info(info, infod):
                 cap_active=bool(info[3]), local_iters=int(info[4]), pi_iters=int(info[5]),
                 substeps=int(info[6]), finest=_name(REFUSAL, info[7]), finest_sub=_name(EVALERR, info[8]),
                 floor_tr=int(info[9]), floor_post=int(info[10]), at_floor=bool(info[11]),
+                floor_pi=int(info[12]), floor_pi_guard=int(info[13]),
                 deps_f_v=float(infod[0]), W_f=float(infod[1]), E_f=float(infod[2]))
 
 
@@ -143,6 +146,15 @@ _I = ctypes.POINTER(ctypes.c_int)
 
 def _dp(a: np.ndarray):
     return a.ctypes.data_as(_D)
+
+
+def _st(st) -> np.ndarray:
+    """a kernel state as the shim reads it (19 doubles); a round-3b 18-entry state gets n_f_pi = 0 appended."""
+    a = np.ascontiguousarray(st, dtype=np.float64)
+    if a.shape == (NSTATE - 1,):
+        a = np.ascontiguousarray(np.append(a, 0.0))
+    assert a.shape == (NSTATE,), a.shape
+    return a
 
 
 class Kernel:
@@ -200,12 +212,12 @@ class Kernel:
 
     def step(self, P, st, deps):
         d, i = self.params(P)
-        stn = np.ascontiguousarray(st, dtype=np.float64)
+        stn = _st(st)
         de = np.ascontiguousarray(t6(deps))
         out = np.zeros(NSTATE)
         sig = np.zeros(6)
         C = np.zeros(36)
-        info = np.zeros(12, dtype=np.int32)
+        info = np.zeros(NINFO, dtype=np.int32)
         infod = np.zeros(3)
         self.lib.ns_step(_dp(d), i.ctypes.data_as(_I), _dp(stn), _dp(de), _dp(out), _dp(sig), _dp(C),
                          info.ctypes.data_as(_I), _dp(infod))
@@ -213,13 +225,13 @@ class Kernel:
 
     def step_fractions(self, P, st, deps, fractions, chain=True):
         d, i = self.params(P)
-        stn = np.ascontiguousarray(st, dtype=np.float64)
+        stn = _st(st)
         de = np.ascontiguousarray(t6(deps))
         fr = np.ascontiguousarray([float(a) for a in fractions], dtype=np.float64)
         out = np.zeros(NSTATE)
         sig = np.zeros(6)
         C = np.zeros(36)
-        info = np.zeros(12, dtype=np.int32)
+        info = np.zeros(NINFO, dtype=np.int32)
         infod = np.zeros(3)
         self.lib.ns_step_fractions(_dp(d), i.ctypes.data_as(_I), _dp(stn), _dp(de), _dp(fr), len(fr), int(chain),
                                    _dp(out), _dp(sig), _dp(C), info.ctypes.data_as(_I), _dp(infod))
@@ -228,14 +240,14 @@ class Kernel:
     def stress(self, P, st):
         d, i = self.params(P)
         sig = np.zeros(6)
-        self.lib.ns_stress(_dp(d), i.ctypes.data_as(_I), _dp(np.ascontiguousarray(st, dtype=np.float64)), _dp(sig))
+        self.lib.ns_stress(_dp(d), i.ctypes.data_as(_I), _dp(_st(st)), _dp(sig))
         return sig
 
     def elastic_tangent(self, P, st):
         d, i = self.params(P)
         C = np.zeros(36)
         self.lib.ns_elastic_tangent(_dp(d), i.ctypes.data_as(_I),
-                                    _dp(np.ascontiguousarray(st, dtype=np.float64)), _dp(C))
+                                    _dp(_st(st)), _dp(C))
         return C.reshape(6, 6)
 
     def elastic(self, P, eps3):

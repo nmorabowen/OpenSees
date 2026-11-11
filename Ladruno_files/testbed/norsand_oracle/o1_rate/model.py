@@ -536,3 +536,26 @@ def continuum_tangent(ee, pi, v, P: Params, plastic_branch=True, floor_branch=Fa
     if not den > 0.0:
         raise FloatingPointError(f"f:a^e:q + H = {den} <= 0 (loss of uniqueness, S.42)")
     return Ae - outer(Aq, fA) / den, dict(den=den, H=pq.H)
+
+
+def rule_tangent(ee, pi, v, P: Params, branch=0):
+    """The continuum tangent of the rate form (S.60) (sheet 9.7, round 4: the split with the image-pressure rule
+    (S.57), on the floor and on F where lam' > 0, lam_f' - lam_f^tr' > 0, f:a^e:P < 0).  branch = 1 when the trial
+    floor rate <P:a^e:eps'> is active (P:a^e:eps' > 0), 0 otherwise; the map eps' -> sigma' is linear on each branch:
+        lam = l:eps',  l = (f:a - b (f:a:P)/(P:a:P) P:a)/(f:a:q + H),   lam_f = m:eps',  m = (P:a - (P:a:q) l)/(P:a:P),
+        C = a - (a:q) (x) l - (a:P) (x) m.          1:C = 0 on both branches (p' = 0).  Returns (C4, info)."""
+    el = energy(ee, P)
+    Ae = el.a4
+    pq = plastic(el.sig, pi, v, P)
+    AP = np.einsum("ijkl,kl->ij", Ae, PFLOOR)
+    PA = np.einsum("ij,ijkl->kl", PFLOOR, Ae)
+    PAP = ddot(PFLOOR, AP)
+    Aq = np.einsum("ijkl,kl->ij", Ae, pq.qflow)
+    fA = np.einsum("ij,ijkl->kl", pq.f, Ae)
+    fAP = ddot(fA, PFLOOR)
+    den = ddot(pq.f, Aq) + pq.H
+    if not den > 0.0:
+        raise FloatingPointError(f"f:a^e:q + H = {den} <= 0 (loss of uniqueness, S.42)")
+    lv = (fA - float(branch) * (fAP / PAP) * PA) / den
+    mv = (PA - ddot(PA, pq.qflow) * lv) / PAP
+    return Ae - outer(Aq, lv) - outer(AP, mv), dict(den=den, PAP=PAP, fAP=fAP, H=pq.H)

@@ -16,6 +16,11 @@
 # swaps (killed by the K1.1h / K1.11 closed forms and by HAR parity, NOT by self-FD: A4), the floor mutants
 # M-F1 ... M-F9 of sheet §9.7 that are kernel-level (M-F3a in its three forms, M-F3d in two), the (S.56) gate
 # (ungated, W_ramp inverted), the (S.53) rule, and E_f. trial_tol_zero follows the p_ref scaling.
+# 2026-11-11 round 4 (sheet 9.1 step 5g, 9.7 (S.57)-(S.59); the image-pressure rule at a post floor): seven mutants
+# MR*, run with the 5th field KEXPR = "self_check": their killers are the round-4 gates of
+# tests/ladrunonorsand_kernel_check.cpp (test_kernel_self_check_driver), which the default -k "not self_check" skips.
+# Measured with that driver (2026-11-11, before O2 had the rule): 7 / 7 killed; the killing CHECK is named beside each.
+# When the parity suite gains rule paths against O2, they may also run with the default filter.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../../.." && pwd)
 H=$ROOT/SRC/material/nD/LadrunoNorSandKernel.h
@@ -24,10 +29,10 @@ NJOBS=${NJOBS:-1}
 WORK=${TMPDIR:-/tmp}/nsmut_$USER
 mkdir -p "$WORK"
 MUTANTS=()
-mut() { MUTANTS+=("$1"$'\x1f'"$2"$'\x1f'"$3"$'\x1f'"${4:-1}"); }
+mut() { MUTANTS+=("$1"$'\x1f'"$2"$'\x1f'"$3"$'\x1f'"${4:-1}"$'\x1f'"${5:-not self_check}"); }
 
 run_one() {
-  local tag="$1" from="$2" to="$3" occ="$4"
+  local tag="$1" from="$2" to="$3" occ="$4" kexpr="${5:-not self_check}"
   local d=$WORK/$tag
   rm -rf "$d"; mkdir -p "$d"; cp "$H" "$d/"
   python - "$d/LadrunoNorSandKernel.h" "$from" "$to" "$occ" <<'EOF'
@@ -43,7 +48,7 @@ open(p, "w").write(s)
 EOF
   [ $? -eq 0 ] || { echo "== $tag: PATTERN NOT FOUND"; return; }
   local out
-  out=$(NS_KERNEL_INCLUDE=$d python -m pytest kernel_parity -q -p no:cacheprovider -x -k "not self_check" \
+  out=$(NS_KERNEL_INCLUDE=$d python -m pytest kernel_parity -q -p no:cacheprovider -x -k "$kexpr" \
         --basetemp="$d/pt" 2>&1 | tail -4)
   if echo "$out" | grep -qE "[0-9]+ failed|error"; then
     echo "== $tag: KILLED $(echo "$out" | grep -E "passed|failed|error" | tail -1)"
@@ -106,6 +111,18 @@ mut S56_ungated 'if (P.cap == 2 && detail::PI_SCAN_REL > W / 10.0 + 1e-15) {' 'i
 mut S56_W_ramp_inverted '1.0 - std::pow((1.0 - P.c2 * P.N) / (1.0 - P.c1 * P.N), (1.0 - P.N) / P.N);' '1.0 - std::pow((1.0 - P.c1 * P.N) / (1.0 - P.c2 * P.N), (1.0 - P.N) / P.N);'
 mut S53_unified_rule_dropped 'eta = std::fmax(eta, c2 * P.M);' '(void)c2;'
 mut S53_c2_for_cap_none 'const double c2 = (P.cap == 0) ? 0.0 : P.c2;' 'const double c2 = P.c2;'
+# ---- round 4: the image-pressure rule (S.57), its chain row (S.59), its counter (sheet 9.7 M-R1 ... M-R9) -----------
+# killers (kernel check CHECK names): rule not applied -> r4_K1_12C_pi_i_new, r4_wetfloor_pi_S57, r4_K1_16_*_digits / _invariants_S58,
+#   r4_S58_census_*; applied when F <= 0 (the surface shrunk, M-R7) -> r4_K1_14b_pi_never_shrunk / _patterns_rule_silent;
+#   chain row not replaced (M-R1, FD 0.20), row added (M-R3, 0.020), zeta_y dropped (M-R2, 0.19), pre-floor a^e in the row (M-R5,
+#   0.016) -> r4_S59_chain_vs_fd_h1e-7 (pass <= 3e-7); counter not incremented -> r4_K1_16_*_invariants_S58, r4_K1_12C_pattern_-Pf*
+mut MR4_rule_not_applied 'const bool fire = have_f &&' 'const bool fire = false &&' 1 self_check
+mut MR7_rule_applied_when_F_le_0 'fl_f.F > 0.0 && pi_f < pe.pi;' 'pi_f != pe.pi;' 1 self_check
+mut MR1_chain_row_not_replaced 'if (res.floor_pi) {   // (S.59)' 'if (false) {   // (S.59)' 1 self_check
+mut MR3_chain_row_added_not_replaced 'c.S_pi[J] = (res.ch.gamma[0] * Sd[0]' 'c.S_pi[J] += (res.ch.gamma[0] * Sd[0]' 1 self_check
+mut MR2_zeta_y_term_dropped 'G[a] = -fl_g.f_a[a] / fl_g.Y.F_pi;' 'G[a] = -(fl_g.Y.F_p / 3.0 + SQ32() * fl_g.zeta * inv_f.nhat[a]) / fl_g.Y.F_pi;' 1 self_check
+mut MR5_pre_floor_ae_in_row '(G[0] * el_c.ae[0][b] + G[1] * el_c.ae[1][b]) + G[2] * el_c.ae[2][b]' '(G[0] * pe.el.ae[0][b] + G[1] * pe.el.ae[1][b]) + G[2] * pe.el.ae[2][b]' 1 self_check
+mut MR_counter_not_incremented 'o.st.n_f_pi = n.n_f_pi + (o.res.floor_pi ? 1 : 0);' 'o.st.n_f_pi = n.n_f_pi;' 1 self_check
 
 if [ -n "${MUT_ONLY:-}" ]; then
   SEL=()
@@ -117,7 +134,7 @@ if [ -n "${MUT_ONLY:-}" ]; then
 fi
 OUT=$WORK/results.txt
 : > "$OUT"
-printf '%s\0' "${MUTANTS[@]}" | xargs -0 -P "$NJOBS" -I{} bash -c 'IFS=$'"'"'\x1f'"'"' read -r t f to oc <<< "$1"; run_one "$t" "$f" "$to" "$oc"' _ {} | tee -a "$OUT"
+printf '%s\0' "${MUTANTS[@]}" | xargs -0 -P "$NJOBS" -I{} bash -c 'IFS=$'"'"'\x1f'"'"' read -r t f to oc kx <<< "$1"; run_one "$t" "$f" "$to" "$oc" "$kx"' _ {} | tee -a "$OUT"
 n=${#MUTANTS[@]}
 k=$(grep -c ": KILLED" "$OUT")
 echo "KILLED $k / $n"

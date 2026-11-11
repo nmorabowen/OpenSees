@@ -54,7 +54,7 @@
 //   pi_residual, solve_pi               kernel.py §8   nested pi_i solve (S.26)-(S.27),(S.37)
 //   evaluate, scaled_norm, jacobian     kernel.py §9   (S.28)-(S.30)
 //   atilde_ep                           kernel.py §9.3 (S.31)-(S.32)
-//   return_map                          kernel.py §9.1 AB06 Box 2
+//   return_map                          kernel.py §9.1 AB06 Box 2 (+ round 4 step 5g, the rule (S.57))
 //   spectral, tangent_small             kernel.py §9.4 (S.33)
 //   chain_data, chain_propagate,        kernel.py §9.6 chained consistent tangent across
 //     chain_assemble                      sub-increments (S.45)-(S.47)
@@ -132,15 +132,30 @@
 // included) and AFTER CONVERGENCE (step 5f) of every (sub-)increment, NEVER inside the local Newton or
 // the nested pi_i solve; it never refuses. The pattern of a sub-increment is (F|-)(P|E)(f|-): trial
 // floored / plastic / post floored; FPf (trial floored, plastic, post floored) is an ordinary outcome
-// under HAR (round 3b, A1). No F <= F_tol is asserted at a floored committed state (A5). The tangent is
+// under HAR (round 3b, A1). The tangent is
 // the EXACT linearisation (owner decision (c)): (S.32f) for m = 1 (b -> b Phi_tr, the v-column on the RAW
 // trial, Phi_post and a^e at the post-floored state), the chain (S.54) for m >= 2; delta : C = 0 when the
 // last operator applied is an active Pi_f (no bulk stiffness is invented here). Counters: State
 // (cumulative, committed) eps_f_v, W_f = p_min eps_f_v (always counted), n_f_tr, n_f_post, n_f_init,
-// at_floor; StepInfo (the increment) floor_tr, floor_post (summed over sub-increments), at_floor,
-// deps_f_v, W_f, E_f. E_f (S.52) is a DIAGNOSTIC of the increment: the closed-form Psi((S.4)/(S.4h))
-// difference over its floor events, evaluated only when an event fired, never fed back into the state,
-// the tangent or a refusal decision (the bound p_min deps_f_v for an out-of-domain HAR trial).
+// at_floor, n_f_pi; StepInfo (the increment) floor_tr, floor_post (summed over sub-increments), at_floor,
+// deps_f_v, W_f, E_f, floor_pi, floor_pi_guard. E_f (S.52) is a DIAGNOSTIC of the increment: the closed-form
+// Psi((S.4)/(S.4h)) difference over its floor events, evaluated only when an event fired, never fed back into
+// the state, the tangent or a refusal decision (the bound p_min deps_f_v for an out-of-domain HAR trial).
+// IMAGE PRESSURE AT A POST FLOOR (round 4, sheet §9.1 step 5g, §9.7 (S.57)-(S.59); owner decision O13 option A;
+// H19: a floored point's pi_i, left at its pre-floor value, contracted step by step towards 0 until every
+// trial started several p_min outside F and every step size was refused). After step 5f acted, with sigma_f
+// the floored stress and pi_i^BE the converged image pressure: if F(sigma_f, pi_i^BE) > 0 (STRICT, as
+// evaluated, no tolerance), form eta_f = zeta(theta_f, rho) q_f/|p_f| (0 at the vertex) and pi_f, the inverse
+// of (S.12) at (p_f, eta_f); guard: eta_f >= M/N (N > 0; proved unreachable) leaves pi_i unchanged, never
+// refuses, and is flagged (StepInfo floor_pi_guard; the shell warns); acceptance: pi_i := pi_f only if
+// pi_f < pi_i^BE (never shrink), counted (floor_pi, n_f_pi). Nothing else of the step changes (sigma_f, eps^e,
+// eps^p, v, D^p, the floor counters, the single-step tangent (S.32f)). In a substepped increment the S^pi row
+// of a sub-increment where the rule fired is REPLACED by (S.59): S^pi_{k+1} = sum_b gamma_b n^b.S^eps_{k+1}.n^b,
+// gamma_b = sum_a G_a a^e_ab(eps^e_f), G_a = -f_a(sigma_f, pi_f)/F_pi(p_f, pi_f) (f_a WITH its zeta_y term),
+// S^eps_{k+1} after Phi^post; 0 at the vertex. Invariant (S.58): F <= F_tol and |pi_i| >= c_N p_min at every
+// committed state reached from an admissible start (the round-3b "no F <= F_tol at a floored state" is
+// withdrawn). Not applied at initialState, at an elastic step, inside the local Newton or the nested pi_i solve,
+// nor as an entry repair of a legacy state with F > 0. With p_min = 0 (no post floor) nothing of this acts.
 //
 // INITIAL IMAGE PRESSURE (sheet §5.4 (S.53), owner decision (d)). initialState() projects the inverted
 // sigma0 with Pi_f (counted, n_f_init = 1; sigma0 is then replaced by sigma(eps_f)), and pi_i0 = NaN
@@ -226,7 +241,9 @@ struct Params {
 // Floor counters (sheet §9.7, cumulative over the history, committed with the state): eps_f_v =
 // sum of d eps^f_v (init, trial and post events), W_f = p_min eps_f_v (the energy-source bound,
 // always counted), n_f_tr / n_f_post the numbers of trial / post floor events, n_f_init = 1 if
-// initialState projected, at_floor = (p > -p_min (1 + AT_FLOOR_TOL)) at this state.
+// initialState projected, at_floor = (p > -p_min (1 + AT_FLOOR_TOL)) at this state. Round 4 (appended): n_f_pi
+// the number of image-pressure resets (S.57) (step 5g fired: a post floor left F(sigma_f, pi_i) > 0 and pi_i
+// was moved onto the surface through sigma_f); 0 at initialState.
 struct State {
   double eps_e[6];
   double pi_i;
@@ -241,6 +258,7 @@ struct State {
   int n_f_post;
   int n_f_init;
   int at_floor;
+  int n_f_pi;          // round 4 (sheet §9.7 "Counted"): appended, never reorder the members above
 };
 
 enum Refusal { OK = 0, LOCAL_NOCONV, LOCAL_LINESEARCH, PI_NOBRACKET, PI_NOCONV, B_NONPOS,
@@ -262,6 +280,9 @@ enum Pi0Rule { PI0_UNIFIED = 0, PI0_LEGACY = 1 };
 // contributes 0 or 1), at_floor of the returned state, deps_f_v the increment's sum of
 // d eps^f_v, W_f the CUMULATIVE p_min eps_f_v of the returned state, E_f the increment's floor
 // energy (S.52) (header THE p' FLOOR; <= p_min deps_f_v).
+// Round 4 (appended): floor_pi the number of sub-increments in which the image-pressure rule (S.57) fired
+// (0 or 1 per sub-increment, summed like floor_post); floor_pi_guard the number in which its unreachable
+// guard eta_f >= M/N was met (pi_i left unchanged, no refusal; the shell warns). Both 0 on a refusal.
 struct StepInfo {
   int refusal;
   int plastic;
@@ -278,6 +299,8 @@ struct StepInfo {
   double deps_f_v;
   double W_f;
   double E_f;
+  int floor_pi;        // round 4: appended, never reorder the members above
+  int floor_pi_guard;
 };
 
 inline int validate(const Params& P, std::string& msg, bool& warn_rho_gt_rhobar);
@@ -1271,8 +1294,11 @@ inline bool atilde_ep(const PointEval& pe, const double J[4][4], double vfac, do
 //   dx/deps~_b = b[:, b]     dpi_i,n+1/deps~_b = w_b
 //   dx/dpi_i,n = -u/c        dpi_i,n+1/dpi_i,n  = (1 - kappa)/c
 //   dx/dv      = -u Pi_v     dpi_i,n+1/dv       = (1 - kappa) Pi_v
+// Round 4 (appended): gamma_b of (S.59), the S^pi row used INSTEAD of the line above in a sub-increment where
+// the image-pressure rule (S.57) fired (ReturnResult::floor_pi); 0 otherwise and at the vertex.
 struct ChainData {
   double b[4][4], u[4], w[3], kappa, c, Pi_v;
+  double gamma[3];
 };
 
 // O2 StepResult (the fields the kernel needs). reason: Refusal code of the refusal at
@@ -1284,6 +1310,8 @@ struct ChainData {
 // SAW (floored when floor_tr), eps_conv the converged eps^e BEFORE step 5f (= eps_e without a post
 // floor; = eps_seen on an elastic step), dfv_* the d eps^f_v of each event, Phi_* their (S.51a)
 // blocks (identity when inactive), ef_* their floor energies E_f (S.52) (0 when inactive).
+// Round 4 (step 5g, appended): pi_be the converged image pressure BEFORE the rule (S.57) (= pi when it did not
+// fire), floor_pi the rule fired (pi = pi_f < pi_be), floor_pi_guard its unreachable eta_f >= M/N guard was met.
 struct ReturnResult {
   double eps_e[3], sig[3], pi, dlam, q_a[3], Om, D, atilde[3][3], ae[3][3];
   bool plastic, vertex, cap_active, refused;
@@ -1293,6 +1321,8 @@ struct ReturnResult {
   double eps_seen[3], eps_conv[3];
   bool floor_tr, floor_post;
   double dfv_tr, dfv_post, Phi_tr[3][3], Phi_post[3][3], ef_tr, ef_post;
+  double pi_be;
+  bool floor_pi, floor_pi_guard;
 };
 
 // O2 chain_data: the (S.45) block data from the converged iterate and b = J^-1 of (S.30).
@@ -1312,6 +1342,7 @@ inline void chain_data(const PointEval& pe, const double b[4][4], ChainData& ch)
     ch.w[j] = ((Pi_x[0] * b[0][j] + Pi_x[1] * b[1][j]) + Pi_x[2] * b[2][j]) + Pi_x[3] * b[3][j];
   ch.c = pe.c;
   ch.Pi_v = pe.Pi_v;
+  for (int a = 0; a < 3; ++a) ch.gamma[a] = 0.0;      // (S.59) row: set by step 5g only when the rule fires
 }
 
 // The floor fields of R from the trial event (fr) with no post event (O2 return_map **fkw).
@@ -1323,6 +1354,7 @@ inline void rr_floor(ReturnResult& R, const double eps_seen[3], const FloorResul
   }
   R.floor_tr = fr.active; R.floor_post = false;
   R.dfv_tr = fr.dfv; R.dfv_post = 0.0; R.ef_tr = ef_tr; R.ef_post = 0.0;
+  R.pi_be = R.pi; R.floor_pi = false; R.floor_pi_guard = false;   // round 4: step 5g sets them after a post floor
 }
 
 // A refused step counts nothing (sheet §9.7): every floor field inactive.
@@ -1501,6 +1533,30 @@ inline void return_map(const Params& P, const double eps_raw[3], double pi_n, do
   R.floor_post = fl_post.active;
   R.dfv_post = fl_post.dfv;
   R.ef_post = fl_post.active ? floor_energy(P, pe.eps_e, fl_post.eps_f, fl_post.dfv) : 0.0;
+  // 5g. image pressure at a post floor (round 4, sheet §9.1 step 5g, §9.7 (S.57)): only if 5f acted. pi_i alone
+  // changes; sigma_f, eps^e, dlam, q_a, D, the floor fields and the single-step tangent (S.32f) are those above.
+  if (fl_post.active) {
+    Invariants inv_f;
+    invariants(el_c.sig, inv_f);
+    Flow fl_f;
+    const bool have_f = flow(P, inv_f, pe.pi, fl_f) == EE_NONE;   // F(sigma_f, pi_i^BE); p_f, pi_i^BE < 0 always
+    const double eta_f = inv_f.vertex ? 0.0 : fl_f.zeta * inv_f.q / std::fabs(inv_f.p);
+    double pi_f = pe.pi;
+    const bool pi_ok = have_f && pi_of_eta(P, inv_f.p, eta_f, pi_f);   // false only if eta_f >= M/N (N > 0)
+    if (have_f && fl_f.F > 0.0 && !pi_ok) R.floor_pi_guard = true;     // unreachable (§9.7): no change, no refusal
+    const bool fire = have_f && pi_ok && fl_f.F > 0.0 && pi_f < pe.pi;   // strict activation; never shrink
+    Flow fl_g;
+    if (fire && flow(P, inv_f, pi_f, fl_g) == EE_NONE) {
+      // (S.59) gamma_b = sum_a G_a a^e_ab(eps^e_f), G_a = -f_a(sigma_f, pi_f) / F_pi(p_f, pi_f); 0 at the vertex
+      double G[3], gam[3] = {0.0, 0.0, 0.0};
+      for (int a = 0; a < 3; ++a) G[a] = -fl_g.f_a[a] / fl_g.Y.F_pi;
+      if (!inv_f.vertex)
+        for (int b = 0; b < 3; ++b) gam[b] = (G[0] * el_c.ae[0][b] + G[1] * el_c.ae[1][b]) + G[2] * el_c.ae[2][b];
+      for (int b = 0; b < 3; ++b) R.ch.gamma[b] = gam[b];
+      R.pi = pi_f;                                                    // (S.57)
+      R.floor_pi = true;
+    }
+  }
 }
 
 // The 4th-order operator of an active Pi_f in the (S.33) form: block Phi (S.51a), unit spin (S.54)
@@ -1637,6 +1693,10 @@ inline void chain_start(Chain& c)
 // Floor (S.54): T^f_k = Phi^tr_k : T_k (the raw trial sensitivity through the trial floor), and
 // S^eps_{k+1} := Phi^post_k : [...] after a post floor; S^v keeps the RAW trace; an elastic
 // sub-increment carries T^f_k. Phi^tr / Phi^post in the (S.33) form with unit spin (floor_op4).
+// Round 4 (S.59): where the image-pressure rule (S.57) fired (res.floor_pi) the S^pi line is REPLACED by
+// S^pi_{k+1} = sum_b gamma_b n^b . S^eps_{k+1} . n^b (S^eps after Phi^post, n^b = V[:, b]): no S^pi_k, no S^v,
+// no w_b term (the history of pi_i before the reset is forgotten, as the state is). The S^eps line and the
+// assembly (S.47) are unchanged (chain_assemble reads only S^eps and the final a^e).
 inline void chain_propagate(Chain& c, double alpha, double v_new, const ReturnResult& res,
                             const double V[3][3])
 {
@@ -1688,6 +1748,17 @@ inline void chain_propagate(Chain& c, double alpha, double v_new, const ReturnRe
     double Op[3][3][3][3];
     floor_op4(res.Phi_post, V, Op);
     apply_op4(Op, c.S_eps);
+  }
+  if (res.floor_pi) {   // (S.59), round 4: the rule (S.57) fired; this row REPLACES the (S.54) S^pi row above
+    for (int J = 0; J < 6; ++J) {
+      double Sd[3];     // S^eps_{k+1} (after Phi^post) in the trial basis: n^b . S^eps . n^b
+      for (int b = 0; b < 3; ++b) {
+        double s = 0.0;
+        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) s += V[i][b] * c.S_eps[J][i][j] * V[j][b];
+        Sd[b] = s;
+      }
+      c.S_pi[J] = (res.ch.gamma[0] * Sd[0] + res.ch.gamma[1] * Sd[1]) + res.ch.gamma[2] * Sd[2];
+    }
   }
 }
 
@@ -1766,6 +1837,7 @@ inline void step_once(const Params& P, const State& n, const double deps[6], Onc
   o.st.W_f = P.p_min * o.st.eps_f_v;
   o.st.n_f_tr = n.n_f_tr + (o.res.floor_tr ? 1 : 0);
   o.st.n_f_post = n.n_f_post + (o.res.floor_post ? 1 : 0);
+  o.st.n_f_pi = n.n_f_pi + (o.res.floor_pi ? 1 : 0);      // round 4: resets (S.57), committed total
   const double p_c = ((o.res.sig[0] + o.res.sig[1]) + o.res.sig[2]) / 3.0;
   o.st.at_floor = (P.p_min > 0.0 && p_c > -P.p_min * (1.0 + AT_FLOOR_TOL)) ? 1 : 0;
 }
@@ -1786,6 +1858,7 @@ struct RunOut {
   double C[6][6];
   int ftr, fpost;
   double dfv, E_f;
+  int fpi, fpig;        // round 4: sub-increments where the rule (S.57) fired / its guard was met
 };
 
 inline void run_fractions(const Params& P, const State& n, const double deps[6], const double* fr, int m,
@@ -1795,7 +1868,7 @@ inline void run_fractions(const Params& P, const State& n, const double deps[6],
   if (chain) chain_start(cs);
   ro.cur.st = n;
   ro.D = 0.0; ro.iters = 0; ro.piters = 0; ro.plastic = false; ro.haveC = false; ro.ok = false;
-  ro.ftr = 0; ro.fpost = 0; ro.dfv = 0.0; ro.E_f = 0.0;
+  ro.ftr = 0; ro.fpost = 0; ro.dfv = 0.0; ro.E_f = 0.0; ro.fpi = 0; ro.fpig = 0;
   OnceOut nxt;
   for (int k = 0; k < m; ++k) {
     double dsub[6];
@@ -1809,6 +1882,8 @@ inline void run_fractions(const Params& P, const State& n, const double deps[6],
     ro.plastic = ro.plastic || ro.cur.res.plastic;
     if (ro.cur.res.floor_tr) { ro.ftr += 1; ro.dfv += ro.cur.res.dfv_tr; ro.E_f += ro.cur.res.ef_tr; }
     if (ro.cur.res.floor_post) { ro.fpost += 1; ro.dfv += ro.cur.res.dfv_post; ro.E_f += ro.cur.res.ef_post; }
+    if (ro.cur.res.floor_pi) ro.fpi += 1;
+    if (ro.cur.res.floor_pi_guard) ro.fpig += 1;
     if (chain) chain_propagate(cs, fr[k], ro.cur.st.v, ro.cur.res, ro.cur.V);   // v_{k+1}
   }
   ro.ok = true;
@@ -1836,6 +1911,7 @@ inline void run_accept(const RunOut& ro, int m, State& np1, double sigma[6], dou
   info.finest = OK; info.finest_sub = EE_NONE;
   info.floor_tr = ro.ftr; info.floor_post = ro.fpost; info.at_floor = np1.at_floor;
   info.deps_f_v = ro.dfv; info.W_f = np1.W_f; info.E_f = ro.E_f;
+  info.floor_pi = ro.fpi; info.floor_pi_guard = ro.fpig;
 }
 
 // Frozen-at-n refusal output (API contract).
@@ -2132,6 +2208,7 @@ inline int initialState(const Params& P, const double sigma0[6], double v0, doub
   out.n_f_post = 0;
   out.n_f_init = n_f_init;
   out.at_floor = (P.p_min > 0.0 && inv.p > -P.p_min * (1.0 + detail::AT_FLOOR_TOL)) ? 1 : 0;
+  out.n_f_pi = 0;                     // round 4: (S.57) is not applied at initialState ((S.53) gives F <= 0)
   msg = warnings;
   return 0;
 }

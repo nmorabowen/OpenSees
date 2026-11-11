@@ -17,7 +17,7 @@ It was written from the sheet alone, independently of O2.
 | File | What it holds |
 |---|---|
 | `params.py` | `Params` (sheet §1.3) and `validate()`, which applies the refusals of §4 and §11 (condition A). Pass `check=False` to bypass them. |
-| `model.py` | The energy (S.2)–(S.5), in coordinate-free tensor form, and ζ (S.8)–(S.11). Also F, Q_A, the cap (S.35)–(S.36), the vertex rule (§3.2), the CSL, π_i* and H (S.22)–(S.25), and a^ep (S.42). |
+| `model.py` | The energy (S.2)–(S.5), in coordinate-free tensor form, and ζ (S.8)–(S.11). Also F, Q_A, the cap (S.35)–(S.36), the vertex rule (§3.2), the CSL, π_i* and H (S.22)–(S.25), and a^ep (S.42), and `rule_tangent`, the continuum tangent of (S.60). |
 | `integrator.py` | `State` and `integrate_increment`: one increment, strain control or mixed control. Specific volume is algebraic, v = v₀ exp(tr ε) (G2 owner decision 2026-10-01, sheet §1.2/(S.40)); under `kin="log"` (log strain) that is v = v₀J. |
 | `api.py` | `initial_state`, `run_path`, `tangent` (the continuum tangent: loading branch if the last segment was plastic), and `triaxial` (axial = x, signed strain). |
 | `localization.py` | `acoustic_min_det`, built from (S.34) + (S.44) with `finite=True`, or from the raw tangent with `finite=False`. Also `k2_path` (S.43). |
@@ -27,7 +27,7 @@ It was written from the sheet alone, independently of O2.
 
 From `Ladruno_files/testbed/norsand_oracle`:
 
-    python -u -m o1_rate.selfcheck [quick] [basic tangents dissipation rtol caps har floor pi0 undrained_cs drained_cs k2 k2_sensitivity]
+    python -u -m o1_rate.selfcheck [quick] [basic tangents dissipation rtol caps har floor pi0 rule rule_rate k1_16 undrained_cs drained_cs k2 k2_sensitivity]
 
 With no group named, every group runs. The whole set takes under 1 minute on 24 cores.
 
@@ -44,3 +44,36 @@ With no group named, every group runs. The whole set takes under 1 minute on 24 
 9. **§9.7, the floor `p_min` (rate form (S.55)).** `p_min=0` (the default) means off. `"default"` means 5·10⁻³ p_ref. A float is used as given; a negative value is refused. On the floor, O1 integrates the second mechanism ε̇^f = λ̇_f·1/3 with ṗ = 0. The modes are `floor` and `plastic_floor` (Koiter, 2×2). The modes are entered at the `floor_hit` event and left at `floor_release` (λ̇_f → 0⁻) or `unload`. The tie-break of §12 is extended to the second multiplier. Counters are `flags['eps_f_v']`, `W_f = p_min·ε^f_v`, `at_floor`, `floor_segments` and `n_floor_increments`, plus `n_f_init` from `initial_state`. In the rate form the floor's stored-energy gain is exactly W_f, because |p| = p_min on the floor. `model.floor_project`/`floor_target`/`floor_phi`/`floor_energy` are the split operator Π_f (S.48)–(S.51a), with (S.52) E_f available on demand. They are used only by `initial_state` (the init floor) and by the self-checks. On the integration path, O1 never projects. `tangent()` adds the floor mechanism when the last segment ended on the floor. Owner decision (c) holds: the tangent is exact and 1:C = 0, with no regularisation.
 10. **§5.4, (S.53).** `initial_state(..., pi_rule="S53")` builds the surface through (p_init, max(η_init, c₂M)). c₂ is the smooth cap's c₂, c₁ for the planar cap (χ_cap), and 0 for no cap. The state is refused if η* ≥ M/N, and the B > 0 guard is checked. The default stays `pi_rule="surface"` (the pre-round-3 O1 rule), so that existing results do not move. With cap = none, the two rules coincide off the axis. An explicit `pi_i0` overrides both.
 11. **Regression.** With the defaults (BA06, `p_min=0`, `pi_rule="surface"`), O1 is bit-identical to the pre-round-3 O1 (428aa1489). This was checked on 17 paths: K1.1, K1.2, eight triaxial cases (paper/fork, α₀ = 5, GA), the three cap modes, the surface-rule start and the K2 path, plus a^ep and a^e.
+12. **§9.7, the image-pressure rule at a post floor: rate form (S.60) (sheet round 4, 6ae9fe5ab).** The split with the
+    rule (S.57) does not converge to the Koiter form (S.55) where the rule fires; its first-order limit is (S.60). On the
+    floor (p = −p_min) and on F, with a = a^e and P = 1/3:
+    λ̇_f^tr = ⟨P:a:ε̇⟩/(P:a:P), λ̇ = f:a:(ε̇ − λ̇_f^tr P)/(f:a:q + H), λ̇_f = P:a:(ε̇ − λ̇q)/(P:a:P), ε̇^e = ε̇ − λ̇q − λ̇_f P,
+    π̇_i = √(2/3) h λ̇ (π_i* − π_i) Ω + (f:a:P)(λ̇_f − λ̇_f^tr)/F_π. Ḟ = 0 and ṗ = 0 hold identically.
+    - **Where.** Mode `floor_rule`. At every floor decision on F it is tried **first**: it is taken when λ̇ > 0,
+      λ̇_f − λ̇_f^tr > 0, f:a:P < 0 and f:a:q + H > 0, with the tie-break tolerances of the floor modes (f:a:P against
+      −10⁻¹²|f||a||P|). Otherwise the (S.55) logic runs unchanged (`plastic_floor`, `plastic`, `floor`, `elastic`).
+    - **Switching.** Terminal events at the edges of the set: `rule_off` (λ̇_f − λ̇_f^tr → 0) and `rule_off_fAP`
+      (f:a:P → 0), after which the next decision picks (S.55). The two forms agree on that boundary (sheet), so the switch
+      is continuous. ⟨P:a:ε̇⟩ is a kink inside the mode: its branch b is frozen per segment and the event `rule_branch`
+      re-decides (hysteresis 10⁻¹²·scale, so a pure-deviatoric BA06 rate with P:a:ε̇ ≡ 0 does not chatter). Under mixed
+      control b = 1 is tried first and kept only if self-consistent. The unload / den / B / vertex / cap events of the
+      plastic modes apply.
+    - **Off switch.** `integrate_increment(..., floor_rule=False)` (and `run_path`) integrates (S.55) everywhere: the
+      round-3b O1, used to measure the gap of the two rate forms. With `p_min = 0` nothing changes.
+    - **Counters.** `rule_segments`, `floor_rule` (last segment), `rule_branch`, `n_rule_increments`, `rule_diag`
+      (min λ̇, λ̇_f, λ̇_f − λ̇_f^tr, max λ̇_f^tr and f:a:P, min den, max |F|, max |p + p_min| along the rule segments).
+      Segments in the mode carry `s60_b`.
+    - **Tangent.** `tangent()` returns `model.rule_tangent` (C = a − (a:q)⊗l − (a:P)⊗m on the recorded branch; 1:C = 0)
+      when the last segment was `floor_rule`.
+    - **Regression.** The probe does not count in `nfev`. With `p_min = 0`, and on every floor path where the (S.60) set
+      never holds, results are bit-identical to the round-3b O1 (σ, π_i, v, nfev; checked by `selfcheck rule` and the
+      test suites before/after).
+    - **Self-checks** (`rule`): the sheet's (S.60) vs (S.55) figures on the two rate-convergence paths (BA06 K2,
+      HAR K3 at 2e−4 and 1e−3), the (S.60) tangent against the O1 response, and K1.16: the legacy starts (O1 stops
+      `outside`; a rate oracle has no return from outside F), the (S.57)/(S.58) invariants of the step-1 rows, and
+      (S.60) vs (S.55) from step 1 against the split's step-60 rows.
+    - **Readings of the sheet.** "shear X along n̂" is Δε = X n̂ (|dev Δε| = X), n̂ from d = (−1.2, −0.1, 1.3); the BA06
+      path uses v = 1.70 (the K1.12 (C) state); the σ-norm is normalised by the (S.60) state. The sheet calls the
+      floor_rate.py path (η = 0.6M, wet side, slight expansion) "FP-, rule-free", but the (S.60) set holds on it in rate
+      form, so O1 integrates (S.60) there (π_end −41.6355 against the (S.55) record −41.2966); `check_floor_rate_record`
+      runs it with `floor_rule=False`.

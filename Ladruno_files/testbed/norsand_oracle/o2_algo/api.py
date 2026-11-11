@@ -57,6 +57,7 @@ class State:
     n_f_tr: int = 0                       # number of trial floor events
     n_f_post: int = 0                     # number of post floor events
     n_f_init: int = 0                     # 1 if initial_state projected
+    n_f_pi: int = 0                       # number of (S.57) image-pressure resets (round 4; appended, sheet §9.7 layout)
 
     def copy(self) -> "State":
         return dataclasses.replace(self, sigma=self.sigma.copy(), eps_e=self.eps_e.copy(), flags=dict(self.flags),
@@ -64,9 +65,10 @@ class State:
 
     @property
     def floor(self) -> dict:
-        """The shell's `floor` response: (at_floor, n_f_tr, n_f_post, eps_f_v, W_f) (+ n_f_init)."""
+        """The shell's `floor` response: (at_floor, n_f_tr, n_f_post, eps_f_v, W_f, n_f_pi) (+ n_f_init). Round 4:
+        n_f_pi appended (sheet §9.7 "Layout: append, never reorder"); the earlier keys are where they were."""
         return dict(at_floor=bool(self.flags.get("at_floor", False)), n_f_tr=self.n_f_tr, n_f_post=self.n_f_post,
-                    n_f_init=self.n_f_init, eps_f_v=self.eps_f_v, W_f=self.W_f)
+                    n_f_init=self.n_f_init, eps_f_v=self.eps_f_v, W_f=self.W_f, n_f_pi=self.n_f_pi)
 
 
 def _eigh(A: np.ndarray):
@@ -132,7 +134,7 @@ def initial_state(params: Params, sigma0: np.ndarray, v0: float, pi_i0: float | 
     except ValueError:
         pass
     st.flags["at_floor"] = bool(params.p_min > 0.0 and inv.p > -params.p_min * (1.0 + K.AT_FLOOR_TOL))
-    st.flags.update(floor_tr=0, floor_post=0, fpattern="")
+    st.flags.update(floor_tr=0, floor_post=0, fpattern="", floor_pi=0, floor_pi_guard=0, floor_pi_band=0, rpattern="")
     # Initial tangent (owner decision D2, 2026-10-04): the tangent of a FRESHLY FLOORED initial state is the FULL
     # elastic a^e (S.3) at the floored eps^e_f -- the compressive branch of the one-sided floor, exactly the
     # kernel's elasticTangent() -- and NOT a^e Phi_init (the (S.32f) elastic form belongs to a floored STEP, whose
@@ -211,6 +213,7 @@ def _run_fractions(params: Params, st: State, deps: np.ndarray, fractions, chain
     cur = st
     D, iters, piters, plastic, pattern = 0.0, 0, 0, False, ""
     ftr, fpost, fpat, fevents = 0, 0, [], []
+    fpi, fguard, fband, rpat = 0, 0, 0, []
     if chain:
         S_eps, S_pi, cum = K.chain_start()
     for a in fractions:
@@ -226,19 +229,27 @@ def _run_fractions(params: Params, st: State, deps: np.ndarray, fractions, chain
         fpost += cur.flags["floor_post"]
         fpat.append(cur.flags["fpattern"])                   # e.g. "FPf,-P-" (trial floored / plastic / post floored)
         fevents += cur.cache.get("floor_events", [])
+        fpi += cur.flags["floor_pi"]                         # (S.57): summed like the floor counters
+        fguard += cur.flags["floor_pi_guard"]
+        fband += cur.flags["floor_pi_band"]
+        rpat.append(cur.flags["rpattern"])                   # the sheet's starred pattern, e.g. "-Pf*,-P-"
         if chain:
             # v_{k+1} = cur.v: the sub-increment's own converged specific volume (S^v closed form, §9.6 G2)
             S_eps, S_pi, cum = K.chain_propagate(S_eps, S_pi, cum, a, cur.v, cur.cache["res"], cur.cache["nvec"])
     cur.D = D
     cur.flags.update(local_iters=iters, pi_iters=piters, plastic=plastic, pattern=pattern,
-                     floor_tr=ftr, floor_post=fpost, fpattern=",".join(fpat))
+                     floor_tr=ftr, floor_post=fpost, fpattern=",".join(fpat),
+                     floor_pi=fpi, floor_pi_guard=fguard, floor_pi_band=fband, rpattern=",".join(rpat))
     cur.cache["floor_events"] = fevents
     C = K.chain_assemble(params, cur.cache["res"], cur.cache["nvec"], S_eps) if chain else None
+    if chain:
+        cur.cache["S_pi_chain"] = S_pi                       # d pi_i / d d_eps_J of the increment ((S.54)/(S.59) rows)
     return cur, True, C
 
 
 def _step_once(params: Params, st: State, deps: np.ndarray) -> State:
-    """One backward-Euler increment without substepping (the floor of §9.7 inside return_map: steps 1f / 5f)."""
+    """One backward-Euler increment without substepping (the floor of §9.7 inside return_map: steps 1f / 5f, and the
+    image-pressure rule 5g (S.57): res.pi is the committed pi_i, res.pi_be the converged return's)."""
     tr = float(np.trace(deps))
     # (S.26) v_{n+1} = v_n exp(tr d_eps), the same law in small-strain and finite mode (§1.2, §1.4; G2
     # owner decision 2026-10-01); d v_{n+1}/d eps~_b = v_{n+1}, so vfac = v (S.31). Was v + v0 tr, vfac = v0.
@@ -250,11 +261,13 @@ def _step_once(params: Params, st: State, deps: np.ndarray) -> State:
     new = State(_from_principal(res.sig, V), _from_principal(res.eps_e, V), res.pi, v,
                 v0=st.v0, finite=st.finite, eps_p=st.eps_p.copy(),
                 eps_p_v=st.eps_p_v, eps_p_s=st.eps_p_s,
-                eps_f_v=st.eps_f_v, W_f=st.W_f, n_f_tr=st.n_f_tr, n_f_post=st.n_f_post, n_f_init=st.n_f_init)
+                eps_f_v=st.eps_f_v, W_f=st.W_f, n_f_tr=st.n_f_tr, n_f_post=st.n_f_post, n_f_init=st.n_f_init,
+                n_f_pi=st.n_f_pi)
     new.flags = dict(plastic=res.plastic, vertex=res.vertex, cap_active=res.cap_active,
                      refused=res.refused, local_iters=res.local_iters, pi_iters=res.pi_iters,
                      reason=res.reason, substeps=1, floor_tr=0, floor_post=0, fpattern="",
-                     at_floor=bool(st.flags.get("at_floor", False)))
+                     at_floor=bool(st.flags.get("at_floor", False)),
+                     floor_pi=0, floor_pi_guard=0, floor_pi_band=0, rpattern="")
     if res.refused:
         # freeze: return the trial-elastic stress with the refusal flag; the driver stops. Counts nothing (§9.7).
         new.cache = dict(eps_tr=w, nvec=V, sig=res.sig, atilde=res.atilde)
@@ -276,10 +289,14 @@ def _step_once(params: Params, st: State, deps: np.ndarray) -> State:
     new.W_f = params.p_min * new.eps_f_v
     new.n_f_tr = st.n_f_tr + int(res.floor_tr)
     new.n_f_post = st.n_f_post + int(res.floor_post)
+    new.n_f_pi = st.n_f_pi + int(res.floor_pi)             # (S.57) resets, committed total (an accepted step only)
     p_c = float(res.sig.sum()) / 3.0
+    fpat = ("F" if res.floor_tr else "-") + ("P" if res.plastic else "E") + ("f" if res.floor_post else "-")
     new.flags.update(floor_tr=int(res.floor_tr), floor_post=int(res.floor_post),
-                     fpattern=("F" if res.floor_tr else "-") + ("P" if res.plastic else "E") + ("f" if res.floor_post else "-"),
-                     at_floor=bool(params.p_min > 0.0 and p_c > -params.p_min * (1.0 + K.AT_FLOOR_TOL)))
+                     fpattern=fpat,
+                     at_floor=bool(params.p_min > 0.0 and p_c > -params.p_min * (1.0 + K.AT_FLOOR_TOL)),
+                     floor_pi=int(res.floor_pi), floor_pi_guard=int(res.floor_pi_guard),
+                     floor_pi_band=int(res.floor_pi_band), rpattern=fpat + ("*" if res.floor_pi else ""))
     new.cache = dict(eps_tr=w, nvec=V, sig=res.sig, atilde=res.atilde, res=res, floor_events=list(res.floor_events))
     return new
 

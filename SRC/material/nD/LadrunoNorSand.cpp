@@ -136,7 +136,11 @@ enum {
   EFC = 109,        // cumulative floor energy E_f over the committed history
   EFT = 110,        // ... including the trial step
   PI0AUTO = 111,    // pi_i0 came from the unified rule (S.53)
-  END = 112
+  // ---- round 4 (image-pressure rule at a post floor, sheet 9.7 (S.57)): appended, exactly ONE double ----
+  NFPI = 112,       // committed n_f_pi (resets of pi_i by (S.57)). The trial's own count and the last StepInfo's
+                    // floor_pi / floor_pi_guard are NOT on the wire: Domain::recvSelf's update() re-integrates the
+                    // trial from the committed state (see the note above); recvSelf sets sT.n_f_pi = sC.n_f_pi.
+  END = 113
 };
 // State packing (12): eps_e[6], pi_i, v, v0, eps_p_v, eps_p_s, D_last
 const int STATE_LEN = 12;
@@ -151,7 +155,8 @@ static_assert(nsw::PARAMS + NPD_BASE == nsw::CSL, "parameter block size");
 static_assert(nsw::XPARAMS + (NPD - NPD_BASE) == nsw::SCF, "round-3 parameter block size");
 static_assert(nsw::SCF + nsw::FLOOR_LEN == nsw::STF && nsw::STF + nsw::FLOOR_LEN == nsw::INFOF, "floor counter block size");
 static_assert(nsw::INFOF + nsw::INFOF_LEN == nsw::EFC && nsw::EFC + 1 == nsw::EFT && nsw::EFT + 1 == nsw::PI0AUTO &&
-              nsw::PI0AUTO + 1 == nsw::END, "round-3 tail block size");
+              nsw::PI0AUTO + 1 == nsw::NFPI, "round-3 tail block size");
+static_assert(nsw::NFPI + 1 == nsw::END, "round-4 tail: one double (n_f_pi)");
 static_assert(nsw::INFO + nsw::INFO_LEN == nsw::ENERGY, "round-3 blocks follow the StepInfo block");
 static_assert(nsw::PI0 + 1 == nsw::SC, "initial-state block size");
 static_assert(nsw::SC + nsw::STATE_LEN == nsw::ST && nsw::ST + nsw::STATE_LEN == nsw::EPSC, "state block size");
@@ -161,7 +166,7 @@ static_assert(nsw::NSUB + 1 == nsw::INFO, "StepInfo block position");
 // sends exactly ONE Vector under its dbTag and commitTag and the NDMaterial base sends none, so there is nothing to
 // collide with. If a base block, a subclass block or a second vector is ever added, its length must differ from
 // WIRE_LEN: extend this list with that length (SANISAND's LWIRE_SIZE != 97 is the pattern).
-static_assert(LadrunoNorSand::WIRE_LEN > 0 && nsw::END == 112, "LadrunoNorSand wire length changed: re-check the FE_Datastore size-uniqueness note above");
+static_assert(LadrunoNorSand::WIRE_LEN > 0 && nsw::END == 113, "LadrunoNorSand wire length changed: re-check the FE_Datastore size-uniqueness note above");
 
 void packState(double* a, const State& s)
 {
@@ -502,6 +507,9 @@ int LadrunoNorSand::integrate(void)
         for (int i = 0; i < 6; i++) sigT[i] = sig[i];
         for (int i = 0; i < 6; i++) for (int j = 0; j < 6; j++) CT[i][j] = C[i][j];
         efT = efC + info.E_f;        // the floor energy of this increment (a diagnostic; never fed back, sheet 9.7)
+        if (info.floor_pi_guard > 0)   // sheet 9.1 step 5g: unreachable (eta_f < eta_c < M/N); logged, never refused
+          opserr << "WARNING LadrunoNorSand tag " << this->getTag() << ": a post-floored state has eta_f >= M/N (sheet 9.7"
+                 << " (S.57) guard, proved unreachable): pi_i was left unchanged (no refusal); please report it" << endln;
         trialRefused = false;
         return 0;
       }
@@ -778,6 +786,7 @@ int LadrunoNorSand::sendSelf(int commitTag, Channel& theChannel)
   data(nsw::EFC) = efC;
   data(nsw::EFT) = efT;
   data(nsw::PI0AUTO) = pi0Auto ? 1.0 : 0.0;
+  data(nsw::NFPI) = sC.n_f_pi;                // round 4: the committed reset count (one double)
   for (int i = 0; i < 6; i++) { data(nsw::EPSC + i) = epsC[i]; data(nsw::EPST + i) = epsT[i]; }
   // the trial stress and tangent are NOT sent (see the wire-layout note at nsw): Domain::recvSelf's update() recomputes them
   data(nsw::LATCHED) = latched ? 1.0 : 0.0;
@@ -848,6 +857,8 @@ int LadrunoNorSand::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroke
   efC = data(nsw::EFC);
   efT = data(nsw::EFT);
   pi0Auto = (data(nsw::PI0AUTO) != 0.0);
+  sC.n_f_pi = (int)data(nsw::NFPI);           // round 4; the trial count is rebuilt by the host's update()
+  sT.n_f_pi = sC.n_f_pi;
   for (int i = 0; i < 6; i++) { epsC[i] = data(nsw::EPSC + i); epsT[i] = data(nsw::EPST + i); }
   latched = (data(nsw::LATCHED) != 0.0);
   trialRefused = (data(nsw::TRIALREF) != 0.0);
@@ -948,7 +959,8 @@ void LadrunoNorSand::Print(OPS_Stream& s, int /*flag*/)
   s << "  refused trials=" << nRefusals << " committed substepped steps=" << nSubstepped
     << " latched=" << (latched ? 1 : 0) << endln;
   s << "  p' floor: p_min=" << kp.p_min << " at_floor=" << sC.at_floor << " n_f_tr=" << sC.n_f_tr << " n_f_post=" << sC.n_f_post
-    << " n_f_init=" << sC.n_f_init << " eps_f_v=" << sC.eps_f_v << " W_f=" << sC.W_f << " E_f(cumulative)=" << efC << endln;
+    << " n_f_init=" << sC.n_f_init << " eps_f_v=" << sC.eps_f_v << " W_f=" << sC.W_f << " E_f(cumulative)=" << efC
+    << " n_f_pi=" << sC.n_f_pi << " (image-pressure resets, sheet 9.7 S.57)" << endln;
 }
 
 // ===========================================================================
@@ -959,12 +971,15 @@ void LadrunoNorSand::Print(OPS_Stream& s, int /*flag*/)
 //    refusal        [last refusal code (-1 non-finite), refused trials, latched, finest, finest_sub]
 //    substeps       [substeps of the last step, committed steps that needed substepping]
 //    stepInfo       [refusal, plastic, vertex, cap_active, local_iters, pi_iters, substeps, finest, finest_sub,
-//                    floor_tr, floor_post]   (the last two: sheet 9.7, floor events of the last step, summed over its sub-increments)
+//                    floor_tr, floor_post, floor_pi, floor_pi_guard]   (sheet 9.7, the last step's floor events summed over its
+//                    sub-increments; round 4 appended floor_pi = resets of pi_i by (S.57), floor_pi_guard = its unreachable
+//                    eta_f >= M/N guard met, 0 in every reachable case)
 //    psi            state parameter psi = v - v_c(p)
 //    elasticStrain  elastic strain, Voigt engineering shear (the POST-FLOORED one: it reproduces the stress)
-//    floor          (alias floored) [at_floor, n_f_tr, n_f_post, eps_f_v, W_f] of the TRIAL state (sheet 9.7): at_floor = 1 if
+//    floor          (alias floored) [at_floor, n_f_tr, n_f_post, eps_f_v, W_f, n_f_pi] of the TRIAL state (sheet 9.7): at_floor = 1 if
 //                   p > -p_min (1 + 1e-10); n_f_* the CUMULATIVE numbers of trial / post floor events; eps_f_v = sum of the
 //                   floor's volumetric strain; W_f = p_min eps_f_v, the bound on the energy the floor injected. Always counted.
+//                   n_f_pi (round 4, appended): the CUMULATIVE number of image-pressure resets (S.57) at post floors.
 //    floorEnergy    [E_f of the last increment, E_f cumulative over the history incl. the trial increment, W_f]: the floor
 //                   energy (S.52) from the closed-form Psi (BA06 (S.4) / HAR (S.4h)), a DIAGNOSTIC (never fed back);
 //                   0 <= E_f <= W_f. The initial-state event (n_f_init) is in W_f but has no E_f.
@@ -990,13 +1005,13 @@ Response* LadrunoNorSand::setResponse(const char** argv, int argc, OPS_Stream& s
   if (strcmp(a, "substeps") == 0)
     return new MaterialResponse(this, 7, Vector(2));
   if (strcmp(a, "stepInfo") == 0)
-    return new MaterialResponse(this, 8, Vector(11));
+    return new MaterialResponse(this, 8, Vector(13));
   if (strcmp(a, "psi") == 0)
     return new MaterialResponse(this, 9, Vector(1));
   if (strcmp(a, "elasticStrain") == 0 || strcmp(a, "elasticStrains") == 0)
     return new MaterialResponse(this, 10, Vector(ncomp));
   if (strcmp(a, "floor") == 0 || strcmp(a, "floored") == 0)
-    return new MaterialResponse(this, 11, Vector(5));
+    return new MaterialResponse(this, 11, Vector(6));
   if (strcmp(a, "floorEnergy") == 0)
     return new MaterialResponse(this, 12, Vector(3));
   if (strcmp(a, "floorInit") == 0)
@@ -1051,6 +1066,7 @@ int LadrunoNorSand::getResponse(int responseID, Information& matInfo)
         v(4) = lastInfo.local_iters; v(5) = lastInfo.pi_iters; v(6) = lastInfo.substeps;
         v(7) = lastInfo.finest; v(8) = lastInfo.finest_sub;
         v(9) = lastInfo.floor_tr; v(10) = lastInfo.floor_post;
+        v(11) = lastInfo.floor_pi; v(12) = lastInfo.floor_pi_guard;      // round 4: appended
       }
       return 0;
     case 9:
@@ -1072,6 +1088,7 @@ int LadrunoNorSand::getResponse(int responseID, Information& matInfo)
       if (matInfo.theVector) {
         Vector& v = *(matInfo.theVector);
         v(0) = sT.at_floor; v(1) = sT.n_f_tr; v(2) = sT.n_f_post; v(3) = sT.eps_f_v; v(4) = sT.W_f;
+        v(5) = sT.n_f_pi;                                                   // round 4: appended
       }
       return 0;
     case 12:

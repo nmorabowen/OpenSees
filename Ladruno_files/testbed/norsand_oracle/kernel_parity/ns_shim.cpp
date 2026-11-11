@@ -6,10 +6,11 @@
 //   params d[24] = p0, kappa_hat, eps_v0, mu0, alpha0, M, N, N_bar, rho, rho_bar, chi, h,
 //                  lambda_tilde, v_c0, e0, lambda_c, xi, p_a, c1, c2, k, g, n_e, p_min;
 //   params i[4]  = csl_mode, zeta, cap, energy
-//   state[18]    = eps_e[6] {00,11,22,01,12,02}, pi_i, v, v0, eps_p_v, eps_p_s, D_last,
-//                  eps_f_v, W_f, n_f_tr, n_f_post, n_f_init, at_floor     (round 3b: the floor counters)
-//   info int[12] = refusal, plastic, vertex, cap_active, local_iters, pi_iters, substeps, finest, finest_sub,
-//                  floor_tr, floor_post, at_floor
+//   state[19]    = eps_e[6] {00,11,22,01,12,02}, pi_i, v, v0, eps_p_v, eps_p_s, D_last,
+//                  eps_f_v, W_f, n_f_tr, n_f_post, n_f_init, at_floor     (round 3b: the floor counters),
+//                  n_f_pi                                                 (round 4: resets by (S.57), appended)
+//   info int[14] = refusal, plastic, vertex, cap_active, local_iters, pi_iters, substeps, finest, finest_sub,
+//                  floor_tr, floor_post, at_floor, floor_pi, floor_pi_guard   (round 4: the last two appended)
 //   infod[3]     = deps_f_v, W_f, E_f
 //   C[36]        = row-major C[I][J] = d sigma_I / d eps_J (tensor shear, see the kernel header)
 #include <LadrunoNorSandKernel.h>
@@ -38,6 +39,7 @@ void s2a(const State& s, double* a)
   for (int k = 0; k < 6; ++k) a[k] = s.eps_e[k];
   a[6] = s.pi_i; a[7] = s.v; a[8] = s.v0; a[9] = s.eps_p_v; a[10] = s.eps_p_s; a[11] = s.D_last;
   a[12] = s.eps_f_v; a[13] = s.W_f; a[14] = s.n_f_tr; a[15] = s.n_f_post; a[16] = s.n_f_init; a[17] = s.at_floor;
+  a[18] = s.n_f_pi;
 }
 
 State a2s(const double* a)
@@ -48,6 +50,7 @@ State a2s(const double* a)
   s.eps_f_v = a[12]; s.W_f = a[13];
   s.n_f_tr = static_cast<int>(a[14]); s.n_f_post = static_cast<int>(a[15]);
   s.n_f_init = static_cast<int>(a[16]); s.at_floor = static_cast<int>(a[17]);
+  s.n_f_pi = static_cast<int>(a[18]);
   return s;
 }
 
@@ -56,6 +59,7 @@ void info2a(const StepInfo& inf, int* info, double* infod)
   info[0] = inf.refusal; info[1] = inf.plastic; info[2] = inf.vertex; info[3] = inf.cap_active;
   info[4] = inf.local_iters; info[5] = inf.pi_iters; info[6] = inf.substeps; info[7] = inf.finest;
   info[8] = inf.finest_sub; info[9] = inf.floor_tr; info[10] = inf.floor_post; info[11] = inf.at_floor;
+  info[12] = inf.floor_pi; info[13] = inf.floor_pi_guard;
   infod[0] = inf.deps_f_v; infod[1] = inf.W_f; infod[2] = inf.E_f;
 }
 
