@@ -161,7 +161,10 @@ What this means for use:
   build without WP-151, still passes with the flag absent.
 - Testbed: `Ladruno_files/testbed/sanisand_plastic_exp/` (`gate_nh_oracle.py`, `gate_nh_cxx.py`,
   `probe_elastic_exponent.py`, outputs).
-- Mutation: MUTATION_LINE
+- Mutation: the option made inert in `GetStateDependent` (`if (false && ...)`), Python module rebuilt: 7 of the
+  23 tests fail (the three oracle agreements at nh 0.25, the direction test, the three one-stage
+  identities); the 16 that pass are the ones that must (bit-identity at 0.5, the oracle at 0.5, the
+  parser, the wire). Source restored.
 
 Not verified: any footing run (the Workbench runs it); plane-strain element paths (the option is in
 the shared 3D kernel, and the tests drive the 3D material). `-implex` is refused with IntScheme 129, so
