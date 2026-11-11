@@ -24,7 +24,8 @@ Gates (ids follow the sheet's K1 numbering)
           forward map and eps'_f = -D12/D11; E_f = Psi difference = the quadrature of |p| d eps_v, in [0, W_f] (S.52)
   count   counters: n_f_tr / n_f_post / n_f_init, eps^f_v, W_f = p_min eps^f_v, at_floor, sub-increments sum, init projection,
           no refusal and the invariant p <= -p_min on every committed state of a random census, D >= 0 under the floor
-  conv    O2 -> O1 first order on a floored path (S.55), alpha0 = 0 and 5: the sheet's printed error ladder
+  conv    O2 -> O1 first order on a floored path, alpha0 = 0 and 5: the sheet's printed error ladder against the Koiter form (S.55) with the round-4 image-pressure
+          rule patched out, and the shipped split against O1's rate form (S.60) (the path is wet side: the rule fires, FPf*, contrary to the sheet's 'rule-free (FP-)').  The round-4 rule (S.57)-(S.60), the K1.12 (C) re-valued pi_i and the wet-floor table are in test_g1_floor_pi_rule.py
 
 MUTANTS (named for the mutation gate, plan 5.3; the numbers are the sheet's).
   M-F1  floor not applied (pass-through or refusal): K1.12 / K1.13 expect a committed p = -p_min and no refusal.
@@ -580,13 +581,15 @@ def test_floor_fd_B_plastic_with_trial_floor_v_column_on_the_raw_trial(a0):
 def test_floor_fd_C_plastic_with_post_floor_wet_side(a0):
     """(S.32f) plastic + post floor, wet side (eta = 0.5 M, F_p < 0): the return RELAXES p (p_c = -48.76 -> -50.00 by the post floor,
     pattern '-Pf', eta_c = 0.953; printed for alpha0 = 0), delta:C_f = 0 (the last operator is an active Pi_f).  FD record 4.6e-8 /
-    5.0e-10, 4.2e-8 / 4.4e-10 (alpha0 = 5); gate 1.5e-7.  Negative control: dropping Phi^post (plain atilde) is 2.0-2.1 off.  F(sigma_f)
-    is NOT asserted <= F_tol at the floored state (9.7 item 2-3): the wet-side post floor leaves F(sigma_f) > 0 by O(p_min).
+    5.0e-10, 4.2e-8 / 4.4e-10 (alpha0 = 5); gate 1.5e-7.  Negative control: dropping Phi^post (plain atilde) is 2.0-2.1 off.  Round 4: the post
+    floor of this case is -Pf* (the image-pressure rule (S.57) fires: F(sigma_f, pi_BE) = +0.0109 p_min > 0 at alpha0 = 0), so the committed state satisfies F(sigma_f, pi_i) <= F_tol
+    (S.58b; the round-3b sentence 'F(sigma_f) > 0 by O(p_min)' no longer holds) while the single-step tangent (S.32f) tested here is unchanged by the rule (M-R9).
     KILLS: M-F3a, M-F3d at m = 1 (Phi^post omitted), M-F9, M-F2 (post event not counted: n_f_post = 1)."""
     P, st0, deps = case_C(a0)
     stn, Cb, errs = best_fd_error(P, st0, deps, single, (1e-6, 1e-7))
     assert stn.flags["fpattern"] == "-Pf" and stn.flags["plastic"]
     assert (stn.n_f_tr, stn.n_f_post) == (0, 1), "post floor event not counted (M-F2)"
+    assert C.F_yield(1.2, 0.4, 0.7, stn.sigma, stn.pi_i) <= 1e-10 * 100.0, "round 4 (S.58b): F(sigma_f, pi_i) <= F_tol after the image-pressure rule"
     pre = stn.cache["floor_events"][-1][0]
     ev, es, _ = C.invariants_eps(pre)
     p_c, _ = C.ba06_pq(ev, es, a0=a0)
@@ -938,29 +941,53 @@ def floored_path_setup(oname, a0):
     return P, st0, np.diag(edot * 2.0e-3)
 
 
+class _rule_off:
+    """Context: the round-3b return map (step 5g, the image-pressure rule (S.57), patched out: pi_i := pi_i^BE whatever F(sigma_f))."""
+
+    def __enter__(self):
+        self._orig = KER.floor_pi_rule
+        KER.floor_pi_rule = lambda P, sig_f, ae_f, pi_be: dict(pi=pi_be, pi_be=pi_be)
+
+    def __exit__(self, *a):
+        KER.floor_pi_rule = self._orig
+
+
+@pytest.mark.parametrize("rule", [False, True], ids=["koiter_S55_rule_off", "rule_S60_rule_on"])
 @pytest.mark.parametrize("a0", [0.0, 5.0])
-def test_o2_converges_to_o1_at_first_order_on_a_floored_path(a0):
-    """Plan 5.1 / 16.3 under the floor: the projection splitting O2 (trial floor -> return -> post floor) converges to the rate
-    solution of the Koiter system (S.55) at FIRST order.  The sheet's printed ladder (floor_rate.py, Radau rtol 1e-10): m = 1, 2, 4, 8,
+def test_o2_converges_to_o1_at_first_order_on_a_floored_path(a0, rule):
+    """Plan 5.1 / 16.3 under the floor: the projection splitting O2 (trial floor -> return -> post floor) converges at FIRST order to the rate solution of the floor
+    system.  Round 4 (sheet 9.7 (S.57)-(S.60)): the limit depends on the image-pressure rule.  rule=False: the round-3b split (step 5g patched out of O2) against the Koiter
+    form (S.55) (O1 floor_rule=False): the sheet's printed ladder.  rule=True: the shipped split against O1's default floor_rule=True, the rate form (S.60).  Sheet round 4c
+    ('The floor_rate.py gate path'): the path is wet side (eta 0.72 -> 0.96 < M) and the split gives FPf* at every sub-increment (asserted below); the end value is pi_i = -41.6355 kPa under (S.60)
+    against -41.2966 kPa under (S.55) (alpha0 = 0, asserted below), gap 3.6e-3 in sigma and 8.1e-3 in pi_i.  The gates
+    are the SAME in both variants (none weakened).  The sheet's printed ladder (floor_rate.py, Radau rtol 1e-10): m = 1, 2, 4, 8,
     16, 32, 64 sub-increments miss the rate solution by 7.2e-3 ... 1.4e-4 in sigma, 2.2e-2 ... 4.1e-4 in pi_i, observed orders 0.87, 0.92,
     0.96, 0.98, 0.99, 0.99 (alpha0 = 0; alpha0 = 5: 7.5e-3 ... 1.4e-4 and 2.4e-2 ... 4.5e-4).  Gates: the O1 truth (one increment)
     completes on the floor, err strictly decreasing, log-log slope of the last four ratios in [0.8, 1.3] (first order), err(m) within
-    1.5x of the printed values at m = 1 and m = 64.
-    KILLS: an O1 floor form (S.55) that is not the Koiter system (the gap does not close), a first-order scheme degraded to O(1) by a
+    1.5x of the printed values at m = 1 and m = 64.  The rule-on variant is at the same bounds, which it meets.
+    KILLS: an O1 floor form that is not the matching rate system (the gap does not close), a first-order scheme degraded to O(1) by a
     floor applied inside the Newton, a wrong E_f/W_f feed-back."""
     P1, st01, d = floored_path_setup("O1", a0)
-    sts = O1.run_path(P1, st01, d[None], rtol=1e-10)
+    sts = O1.run_path(P1, st01, d[None], rtol=1e-10, floor_rule=rule)
     assert sts[-1].flags["status"] == "ok", sts[-1].flags["status"]
+    assert (sts[-1].flags.get("rule_segments", 0) >= 1) == rule, "O1 mode: (S.60) segments iff floor_rule=True"
     sig1, pi1 = sts[-1].sigma, sts[-1].pi_i
+    if a0 == 0.0:
+        assert abs(pi1 - (-41.6355 if rule else -41.2966)) <= 6e-5, pi1          # printed end values (round 4c)
     P2, st02, _ = floored_path_setup("O2", a0)
     errs, pierrs = [], []
     ms = (1, 2, 4, 8, 16, 32, 64)
     for m in ms:
-        out = O2.run_path(P2, st02, np.array([d / m] * m))
+        if rule:
+            out = O2.run_path(P2, st02, np.array([d / m] * m))
+        else:
+            with _rule_off():
+                out = O2.run_path(P2, st02, np.array([d / m] * m))
         assert not any(s.flags["refused"] for s in out), f"O2 m={m} refused"
+        assert all(s.flags["floor_pi"] == int(rule) for s in out) and out[-1].n_f_pi == (m if rule else 0), "the rule fires at every step iff it is on"
         errs.append(float(np.abs(out[-1].sigma - sig1).max() / np.abs(sig1).max()))
         pierrs.append(abs(out[-1].pi_i - pi1) / abs(pi1))
-    print(f"\n[floor conv a0={a0}] m = {ms}\n  sigma {['%.3e' % e for e in errs]}\n  pi_i  {['%.3e' % e for e in pierrs]}")
+    print(f"\n[floor conv a0={a0} rule={rule}] m = {ms}\n  sigma {['%.3e' % e for e in errs]}\n  pi_i  {['%.3e' % e for e in pierrs]}")
     assert all(errs[i + 1] < errs[i] for i in range(len(errs) - 1)), errs
     orders = [math.log(errs[i] / errs[i + 1]) / math.log(2.0) for i in range(len(errs) - 1)]
     assert all(0.8 <= o <= 1.3 for o in orders[2:]), orders

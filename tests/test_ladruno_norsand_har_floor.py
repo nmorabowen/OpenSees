@@ -22,6 +22,11 @@ the Zone B parity of the shell with the O2 oracle on HAR / floor / pi_i0 paths i
       -pmin 0); the assembled free-DOF stiffness under HAR against the central FD of the resisting force (the element file's own gate on the HAR
       law: D12 != 0 and q/eps_s != D22 live in a real Newton iteration); a database round trip carries the floor counters.
 
+  (5) ROUND 4, THE IMAGE-PRESSURE RULE AT A POST FLOOR (sheet 9.1 step 5g, 9.7 (S.57)-(S.58), 13.12 (C), 13.16 / K1.16): the response layout (`floor` has 6 entries with n_f_pi
+      last, `stepInfo` 13 with floor_pi, floor_pi_guard appended), K1.12 (C) through one BA06 material point (pi_i = -40.516314098), the same with -pmin 0, a K1.16-type
+      march from the H19 states of `Ladruno_files/testbed/norsand_oracle/tests/data_h19/` (counter increments, F <= F_tol, the printed rows) and the database round trip
+      carrying n_f_pi.
+
 Every test names, in a `KILLS:` line, the mutant (a silent regression of the shell) that makes it fail.  The numbers are the sheet's; none is
 harvested from the shell.  THESE TESTS NEED THE ROUND-3B BUILD (`-energy`, `-pmin`, `-pi0_auto`, the `floor*` responses): against a pre-round-3b
 binary they fail at construction.
@@ -354,7 +359,7 @@ def test_k1_1h_isotropic_compression_printed_values_and_bulk_modulus():
         nd([ev / 3.0] * 3 + [0, 0, 0])
         p = sum(stress()[:3]) / 3.0
         assert abs(p - har_pq(ev, 0.0)[0]) <= 1e-10 * abs(p), (ev, p)
-    assert resp("floor") == [0.0, 0.0, 0.0, 0.0, 0.0]
+    assert resp("floor") == [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]   # round 4: [5] = n_f_pi appended
 
 
 def test_k1_11_constant_volume_shear_p_grows_and_eta_is_3_g_eps_s():
@@ -495,7 +500,7 @@ def test_floor_off_pmin_zero_is_an_ordinary_elastic_step_and_counts_nothing():
     ba06_floor_material(pmin=0.0)
     nd([DEV_K112 / 3.0] * 3 + [0, 0, 0])
     assert abs(sum(stress()[:3]) / 3.0 + 0.25) <= 1e-10
-    assert resp("floor") == [0.0, 0.0, 0.0, 0.0, 0.0] and resp("stepInfo")[9:11] == [0.0, 0.0] and resp("floorEnergy") == [0.0, 0.0, 0.0]
+    assert resp("floor") == [0.0] * 6 and resp("stepInfo")[9:13] == [0.0] * 4 and resp("floorEnergy") == [0.0, 0.0, 0.0]
 
 
 @pytest.mark.parametrize("dev,dfv_printed,out_of_domain", [(1.0e-4, 6.9522805e-5, False), (1.1e-4, 7.9522805e-5, True)])
@@ -791,3 +796,253 @@ def test_database_roundtrip_carries_the_floor_counters_and_energy():
         ops.wipe()
     assert T0._maxabs(cont["stress"], ref["stress"]) <= 1e-12 * max(abs(x) for x in ref["stress"])
     assert cont["floor"][:3] == ref["floor"][:3] and abs(cont["floor"][3] - ref["floor"][3]) <= 1e-14
+
+
+# ======================================================================================================================
+# 6. ROUND 4: the image-pressure rule at a post floor (sheet 9.1 step 5g, 9.7 (S.57)-(S.58), 13.12 (C), 13.16)
+# ======================================================================================================================
+def _theta_of_dir(n):
+    n = np.asarray(n, float)
+    n = n - n.mean()
+    n = n / np.linalg.norm(n)
+    return math.acos(max(-1.0, min(1.0, math.sqrt(6.0) * float((n ** 3).sum())))) / 3.0, n
+
+
+def _zeta_ww(theta, rho):
+    """(S.11) Willam-Warnke."""
+    c = math.cos(theta)
+    A, B = 4.0 * (1.0 - rho * rho), 2.0 * rho - 1.0
+    return (A * c * c + B * B) / (2.0 * (1.0 - rho * rho) * c + B * math.sqrt(A * c * c + 5.0 * rho * rho - 4.0 * rho))
+
+
+def _inv_pq(sig_voigt):
+    """(p, q, theta) of a Voigt stress, (S.1)."""
+    s = np.array([[sig_voigt[0], sig_voigt[3], sig_voigt[5]], [sig_voigt[3], sig_voigt[1], sig_voigt[4]], [sig_voigt[5], sig_voigt[4], sig_voigt[2]]])
+    w = np.linalg.eigvalsh(s)
+    p = float(w.mean())
+    xi = w - p
+    R = float(np.linalg.norm(xi))
+    return p, SQ32 * R, math.acos(max(-1.0, min(1.0, math.sqrt(6.0) * float((xi ** 3).sum()) / R ** 3))) / 3.0
+
+
+def _F_yield(M, N, rho, sig_voigt, pi):
+    """(S.12): F = zeta(theta, rho) q + p eta(p, pi_i), eta = (M/N)[1 - (1-N)(p/pi)^(N/(1-N))]."""
+    p, q, th = _inv_pq(sig_voigt)
+    return _zeta_ww(th, rho) * q + p * (M / N) * (1.0 - (1.0 - N) * (p / pi) ** (N / (1.0 - N)))
+
+
+def _pi_surface(M, N, p, eta):
+    """The inverse of (S.12) at (p, eta): the image pressure of the surface through that stress ratio."""
+    return p * ((1.0 - N) / (1.0 - eta * N / M)) ** ((1.0 - N) / N)
+
+
+def _pi_f(M, N, rho, sig_voigt):
+    p, q, th = _inv_pq(sig_voigt)
+    return _pi_surface(M, N, p, _zeta_ww(th, rho) * q / abs(p))
+
+
+# K3 (13.16, printed): HAR, WW, fork CSL, smooth cap, p_min 0.505
+_K3 = dict(energy="HAR", k=298.34244992965336, g=383.5831499095543, n=0.5, p_a=101.0, M=1.25, N=0.4686136860640983, N_bar=0.16034970350694513,
+           rho=0.5828981510111576, rho_bar=0.7213710496292179, chi=-2.8923322243122183, h=308.3223484879116, csl="fork", e0=0.934, lambda_c=0.019,
+           xi=0.7, cap="smooth", c1=0.05, c2=0.15, pmin=0.505)
+_PM3 = 0.505
+_FTOL3 = 1.0e-10 * PA
+_CN3 = (1.0 - _K3["N"]) ** ((1.0 - _K3["N"]) / _K3["N"])           # c_N (S.58); c_N p_min = 0.246558167 printed
+
+
+def k3(**over):
+    d = dict(_K3)
+    d.update(over)
+    return d
+
+
+_H19_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "Ladruno_files", "testbed", "norsand_oracle", "tests", "data_h19")
+# 13.16 table rows (sigma11, sigma22, sigma33, sigma12, pi_i) at the listed steps, printed to 10 decimals
+_K116 = {
+    "e7367g1_s185": {1: (-0.5101907038, -0.5976456953, -0.4071636009, -0.2151586912, -0.3989652918),
+                     2: (-0.5082384097, -0.6104039680, -0.3963576223, -0.2510036052, -0.4461726222),
+                     60: (-0.5114970385, -0.6473686614, -0.3561343001, -0.3336845167, -0.5923861407)},
+    "e7367g2_s185": {1: (-0.4889744155, -0.6273143992, -0.3987111852, -0.2332250428, -0.4276028897),
+                     2: (-0.4850426738, -0.6393433615, -0.3906139647, -0.2596017804, -0.4672749361),
+                     60: (-0.4814251232, -0.6764194559, -0.3571554210, -0.3278584883, -0.5976134600)},
+    "e7367g1_m53": {1: (-0.5071972881, -0.5355837599, -0.4722189520, -0.0691517825, -0.2815026983),
+                    2: (-0.5031271070, -0.5765889736, -0.4352839194, -0.1789591553, -0.3671148499)},
+}
+
+
+def _h19(name):
+    """(sigma voigt, pi_i, v, increment voigt) of the ADMISSIBLE state after the printed step 1 of 13.16 (the dumped H19 states themselves are legacy states OUTSIDE F, which the shell refuses
+    at construction: 'the initial stress lies OUTSIDE the yield surface'); sigma and pi_i are the printed row-1 digits, v = v_n exp(tr d eps) of that step, the increment is the listed
+    (d11, d22, dg12) scaled to |d eps| = (d11^2 + d22^2 + dg12^2/2)^(1/2) = 2e-4; so the k-th shell step is the (k+1)-th step of the sheet's table.  File format at the top of out/h19/h19_replay.cpp."""
+    for fn in ("s185.txt", "stall.txt"):
+        with open(os.path.join(_H19_DIR, fn)) as fh:
+            for line in fh:
+                t = line.split()
+                if t and not t[0].startswith("#") and t[0] == name:
+                    x = [float(a) for a in t[1:]]
+                    s11, s22, s12, s33 = x[3:7]
+                    d11, d22, dg = x[17:20]
+                    sc = 2.0e-4 / math.sqrt(d11 * d11 + d22 * d22 + 0.5 * dg * dg)
+                    r1 = _K116[name][1]
+                    return [r1[0], r1[1], r1[2], r1[3], 0.0, 0.0], r1[4], x[8] * math.exp(sc * (d11 + d22)), [sc * d11, sc * d22, 0.0, sc * dg, 0.0, 0.0]
+    raise AssertionError(f"{name} not in {_H19_DIR}")
+
+
+def _k112c_material(pmin=50.0):
+    """13.12 (C) 'Inputs to rebuild': BA06 K2 (p0 -100, kappa 0.01, mu0 5400, alpha0 0; M 1.2, N 0.4, N_bar 0.2, chi -3.5, h 280; WW 0.7 / 0.8; paper CSL), cap none,
+    p_min 50; state p = -51, eta = 0.6, n_hat = dev(-1.2, -0.1, 1.3), pi_i from (S.12), v_n = 1.70."""
+    th, n = _theta_of_dir([-1.2, -0.1, 1.3])
+    q = 0.6 * 51.0 / _zeta_ww(th, 0.7)
+    sig = -51.0 + SQ23 * q * n
+    pi0 = _pi_surface(1.2, 0.4, -51.0, 0.6)
+    assert abs(pi0 + 33.125471695) <= 6e-10 and abs(th - 0.454427) <= 6e-7                 # the printed start
+    fresh()
+    make(k2(sigma0=list(sig) + [0.0, 0.0, 0.0], pi0=pi0, v0=1.70, pmin=pmin))
+    return 6e-3 * np.array([0.55, 0.40, -0.95]) - 1e-5
+
+
+def test_round4_k112c_post_floor_with_the_rule_through_one_material_point():
+    """13.12 (C) with the round-4 rule, through the shell: BA06 K2, p_min 50, start p = -51, eta = 0.6, pi_i = -33.125471695, increment (principal, co-axial) 6e-3 (0.55, 0.40, -0.95) -
+    1e-5: sigma_f = (-34.8599764962, -34.1946812138, -80.9453422900), p = -50, post floor with F(sigma_f, pi^BE) = +0.010899 p_min > 0 -> pi_i = -40.516314098 (the round-3b shell
+    committed -40.198569107), F(sigma_f, pi_i) = 0 to 3e-16 p_min, |pi_i| >= c_N p_min = 23.2379 (S.58c).  Layout (appended, never reordered): `floor` has SIX entries
+    [at_floor, n_f_tr, n_f_post, eps^f_v, W_f, n_f_pi] = [1, 0, 1, d, p_min d, 1]; `stepInfo` has THIRTEEN, [9:13] = (floor_tr, floor_post, floor_pi, floor_pi_guard) = (0, 1, 1, 0),
+    [1] plastic = 1, [6] substeps = 1.  After the commit a second increment to the same strain is elastic (F <= F_tol): stepInfo floor_pi 0 and the committed counter stays 1.
+    KILLS: M-R4 (the rule absent: pi_i -40.198569107, F = +0.0109 p_min), M-R7 / M-R8, a floor_pi_guard slot written with floor_pi, a counter slot (n_f_pi) missing or not last,
+    the counter lost at the commit."""
+    d = _k112c_material()
+    nd(list(d) + [0, 0, 0])
+    assert resp("refusal") == [0.0, 0.0, 0.0, 0.0, 0.0]
+    s = stress()
+    want = np.array([-34.8599764962, -34.1946812138, -80.9453422900])
+    assert np.abs(np.array(s[:3]) - want).max() <= 6e-9 and max(abs(x) for x in s[3:]) <= 1e-9, s
+    pi = resp("state")[0]
+    assert abs(pi - (-40.516314098)) <= 6e-9, pi
+    assert abs(_F_yield(1.2, 0.4, 0.7, s, pi)) <= 1e-12 * 50.0                              # printed 3e-16 p_min
+    assert abs(pi - _pi_f(1.2, 0.4, 0.7, s)) <= 1e-12 * abs(pi)                             # (S.57): the surface through sigma_f
+    cN = 0.6 ** 1.5
+    assert abs(pi) >= cN * 50.0 and abs(cN * 50.0 - 23.2379) <= 6e-5
+    assert abs(sum(s[:3]) / 3.0 + 50.0) <= 1e-12 * 50.0
+    fl = resp("floor")
+    assert len(fl) == 6, fl
+    assert fl[0] == 1.0 and fl[1] == 0.0 and fl[2] == 1.0 and fl[5] == 1.0 and fl[3] > 0.0 and abs(fl[4] - 50.0 * fl[3]) <= 1e-12 * fl[4], fl
+    info = resp("stepInfo")
+    assert len(info) == 13, info
+    assert info[1] == 1.0 and info[6] == 1.0 and info[9:13] == [0.0, 1.0, 1.0, 0.0], info
+    assert abs(resp("state")[2] - 1.70 * math.exp(float(d.sum()))) <= 1e-13                  # v untouched by the rule
+    ops.NDTest("CommitState", 1)
+    nd(list(d) + [0, 0, 0])
+    assert resp("stepInfo")[9:13] == [0.0, 0.0, 0.0, 0.0] and resp("floor")[5] == 1.0
+    assert abs(resp("state")[0] - pi) <= 1e-12 * abs(pi)
+
+
+def test_round4_k112c_pmin_zero_has_no_rule_and_the_layout_is_all_zero():
+    """9.7: with -pmin 0 the post floor never acts and the model is round-3b's: the K1.12 (C) increment is an ordinary plastic step to p_c = -48.764495 with pi_i = pi^BE =
+    -40.198569107 (printed), `floor` = six zeros, stepInfo[9:13] = 0, [1] plastic.
+    KILLS: M-R8 (a reset without a post floor), a rule that does not look at -pmin, a counter moved with the floor off."""
+    d = _k112c_material(pmin=0.0)
+    nd(list(d) + [0, 0, 0])
+    s = stress()
+    assert abs(sum(s[:3]) / 3.0 - (-48.764495)) <= 6e-7
+    assert abs(resp("state")[0] - (-40.198569107)) <= 6e-9
+    assert resp("floor") == [0.0] * 6 and resp("stepInfo")[9:13] == [0.0] * 4 and resp("stepInfo")[1] == 1.0
+
+
+def _k3_material(name):
+    sig0, pi0, v, dvec = _h19(name)
+    fresh()
+    make(k3(sigma0=sig0, pi0=pi0, v0=v))
+    return dvec
+
+
+@pytest.mark.parametrize("name,nsteps", [("e7367g1_s185", 59), ("e7367g2_s185", 59), ("e7367g1_m53", 1)])
+def test_k1_16_march_through_the_shell_counter_increments_and_f_stays_within_tolerance(name, nsteps):
+    """13.16 (K1.16), K3 HAR material started at the admissible state after the printed step 1 of an H19 Gauss point (the dumped legacy states are refused by the shell at construction, F > 1e-6 p_ref), the
+    listed increment scaled to |d eps| = 2e-4 repeated through NDTest as cumulative total strains with a commit after each; the k-th shell step is the (k+1)-th of the sheet's table (pattern -Pf*, m = 1).
+    After every accepted step: (a) the reset counter `floor`[5] has incremented by one (n_f_pi = k) and stepInfo floor_pi = floor_post = 1, floor_tr = 0, plastic; (b) p = -p_min, F <= F_tol = 1e-10 p_a
+    and |pi_i| >= c_N p_min = 0.246558167 (S.58), (c) pi_i is the image pressure of the surface through the committed stress to 1e-12 relative (S.57), from the stress and state responses.  The printed rows
+    (sigma11, sigma22, sigma33, sigma12, pi_i) at the table steps 2 and 60 are reproduced to 3e-9 (the 10-digit rounding of the printed start amplified by the march) -- for the stall state only when the step ran
+    at m = 1 (stepInfo[6] = 1), otherwise by the invariants above (9.7, round 4b).  The `floor` response has 6 entries, `stepInfo` 13.
+    KILLS: M-R4 (the rule absent: F > 0 after a post floor, pi_i collapsing with the pre-floor pressure over the march), M-R7 / M-R8, an uncounted or double-counted reset, a counter not carried by the commit."""
+    dvec = _k3_material(name)
+    rows = _K116[name]
+    for k in range(1, nsteps + 1):
+        nd([k * x for x in dvec])
+        assert resp("refusal")[0] == 0.0, (k, resp("refusal"))
+        info, fl = resp("stepInfo"), resp("floor")
+        assert len(info) == 13 and len(fl) == 6
+        assert info[1] == 1.0 and info[9:13] == [0.0, 1.0, 1.0, 0.0], (k, info)
+        assert fl[5] == float(k), (k, fl)
+        s, pi = stress(), resp("state")[0]
+        p, q, th = _inv_pq(s)
+        assert abs(p + _PM3) <= 1e-12 * _PM3, (k, p)
+        F = _F_yield(_K3["M"], _K3["N"], _K3["rho"], s, pi)
+        assert F <= _FTOL3, (k, F)
+        assert abs(pi) >= _CN3 * _PM3 * (1.0 - 1e-12) and abs(_CN3 * _PM3 - 0.246558167) <= 6e-10, (k, pi)
+        assert abs(pi - _pi_f(_K3["M"], _K3["N"], _K3["rho"], s)) <= 1e-12 * abs(pi), k
+        if (k + 1) in rows and (name != "e7367g1_m53" or info[6] == 1.0):
+            got = np.array([s[0], s[1], s[2], s[3], pi])
+            assert np.abs(got - np.array(rows[k + 1])).max() <= 3e-9, (k, got)
+            assert abs(F) <= 1e-9
+        ops.NDTest("CommitState", 1)
+    assert resp("floor")[5] == float(nsteps)
+
+
+def test_k1_16_start_state_is_on_the_surface_and_nothing_is_counted_at_construction():
+    """Positive control for the K1.16 march: the printed row-1 state of `e7367g1_s185` is built by `initialState` (admissible: F = 0 to the 10 printed digits), p = -p_min, the reset counter and stepInfo
+    floor_pi are 0 before the first step, and `floor`/`stepInfo` already have their 6 / 13 entries.
+    KILLS: a counter initialised non-zero, a layout that is only extended after the first step."""
+    _k3_material("e7367g1_s185")
+    s, pi = stress(), resp("state")[0]
+    assert abs(_F_yield(_K3["M"], _K3["N"], _K3["rho"], s, pi)) <= 1e-9
+    assert abs(_inv_pq(s)[0] + _PM3) <= 1e-12
+    assert len(resp("floor")) == 6 and len(resp("stepInfo")) == 13
+    assert resp("floor")[5] == 0.0 and resp("stepInfo")[11] == 0.0
+
+
+def _k3_deck(n_total=6):
+    """A zero-free-DOF cube of the K3 material from the `e7367g1_s185` printed step-1 state, total strain n_total x the K1.16 increment reached in n_total LoadControl steps."""
+    sig0, pi0, v, dvec = _h19("e7367g1_s185")
+    fresh()
+    make(k3(sigma0=sig0, pi0=pi0, v0=v))
+    ids = T0._cube("stdBrick", 1, 1)
+    ops.timeSeries("Linear", 1)
+    T0._prescribe(ids, [n_total * x for x in dvec], 1, 1)
+    T0._analysis(1.0 / n_total)
+
+
+def test_database_roundtrip_carries_the_reset_counter_n_f_pi():
+    """The round trip of the test above (sendSelf / recvSelf through `database File`, the same mechanism), on a deck where the image-pressure rule fires: the K3 material from the `e7367g1_s185` printed step-1 state in a
+    zero-free-DOF cube driven by 6 K1.16 increments; saved after 3 and restored into a fresh skeleton: the `floor` response (incl. the appended n_f_pi = 3) is the same as before the save, and the
+    continuation (3 more steps) reaches the never-saved reference (stress 1e-12, floor counters equal, n_f_pi = 6).  The committed vector grows by exactly one entry, n_f_pi, appended last (9.7 layout).
+    KILLS: a wire that drops or reorders the n_f_pi entry (counter back to 0 or a shifted floor block after the restore), a counter not restored into the trial state, a restored state that does not continue."""
+    n = 6
+
+    def run_to(m):
+        _k3_deck(n)
+        for _ in range(m):
+            assert ops.analyze(1) == 0
+
+    run_to(n)
+    ref = dict(stress=T0._gp("stress"), floor=T0._gp("floor"))
+    assert ref["floor"][5] == float(n) and len(ref["floor"]) == 6, ref["floor"]
+    run_to(3)
+    before = T0._gp("floor")
+    assert before[5] == 3.0 and T0._gp("stepInfo")[11] == 1.0, before
+    with tempfile.TemporaryDirectory(prefix="ladruno_norsand_", ignore_cleanup_errors=True) as td:
+        db = os.path.join(td, "norsand_pi_rt")
+        ops.database("File", db)
+        ops.save(1)
+        _k3_deck(n)
+        assert T0._gp("floor")[5] == 0.0
+        ops.database("File", db)
+        ops.restore(1)
+        after = T0._gp("floor")
+        assert after == before, (before, after)
+        ops.wipeAnalysis()
+        T0._analysis(1.0 / n)
+        for _ in range(3):
+            assert ops.analyze(1) == 0
+        cont = dict(stress=T0._gp("stress"), floor=T0._gp("floor"))
+        ops.wipe()
+    assert T0._maxabs(cont["stress"], ref["stress"]) <= 1e-12 * max(abs(x) for x in ref["stress"])
+    assert cont["floor"][5] == float(n) and cont["floor"][:3] == ref["floor"][:3] and abs(cont["floor"][3] - ref["floor"][3]) <= 1e-14

@@ -19,7 +19,7 @@
 # 2026-11-11 round 4 (sheet 9.1 step 5g, 9.7 (S.57)-(S.59); the image-pressure rule at a post floor): seven mutants
 # MR*, run with the 5th field KEXPR = "self_check": their killers are the round-4 gates of
 # tests/ladrunonorsand_kernel_check.cpp (test_kernel_self_check_driver), which the default -k "not self_check" skips.
-# Measured with that driver (2026-11-11, before O2 had the rule): 7 / 7 killed; the killing CHECK is named beside each.
+# Measured with that driver (2026-11-11, before O2 had the rule): 9 / 9 killed (7 + M-R6 + increment-flag at the close); the killing CHECK is named beside each.
 # When the parity suite gains rule paths against O2, they may also run with the default filter.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../../.." && pwd)
@@ -122,6 +122,14 @@ mut MR1_chain_row_not_replaced 'if (res.floor_pi) {   // (S.59)' 'if (false) {  
 mut MR3_chain_row_added_not_replaced 'c.S_pi[J] = (res.ch.gamma[0] * Sd[0]' 'c.S_pi[J] += (res.ch.gamma[0] * Sd[0]' 1 self_check
 mut MR2_zeta_y_term_dropped 'G[a] = -fl_g.f_a[a] / fl_g.Y.F_pi;' 'G[a] = -(fl_g.Y.F_p / 3.0 + SQ32() * fl_g.zeta * inv_f.nhat[a]) / fl_g.Y.F_pi;' 1 self_check
 mut MR5_pre_floor_ae_in_row '(G[0] * el_c.ae[0][b] + G[1] * el_c.ae[1][b]) + G[2] * el_c.ae[2][b]' '(G[0] * pe.el.ae[0][b] + G[1] * pe.el.ae[1][b]) + G[2] * pe.el.ae[2][b]' 1 self_check
+# round 4 close (Adversary notes): M-R6 the row read from S^eps BEFORE Phi^post (FD 0.26 / 0.62 / 1.56 / 1.12 on the (1/2,1/2),
+#   mixed A, N = 0, GA chains -> r4_S59_chain_vs_fd_h1e-7, r4_mixed_A_*, r4_N0_*, r4_GA_*); the row switched for every plastic
+#   sub-increment instead of per sub-increment where the rule fired (the increment-level-flag reading) -> r4_mixed_B_-P-,-Pf*
+#   (FD 1.2e-2; the only round-4 killer; the pre-round-4 chain_* gates see it too). No distinct mutant exists for mixed A (it kills
+#   MR1/2/3/5/6 with the (1/2,1/2) gate); a stale gamma is equivalent here (gamma is read only in the sub-increment that set it);
+#   a silent guard on a failed flow() evaluation survives (unreachable branch: p_f, pi_i < 0 always).
+mut MR6_row_from_S_eps_before_Phi_post 'const double (*S_row)[3][3] = c.S_eps;' 'const double (*S_row)[3][3] = S_pre;' 1 self_check
+mut MR_row_switched_by_increment_flag 'if (res.floor_pi) {   // (S.59)' 'if (res.plastic) {   // (S.59)' 1 self_check
 mut MR_counter_not_incremented 'o.st.n_f_pi = n.n_f_pi + (o.res.floor_pi ? 1 : 0);' 'o.st.n_f_pi = n.n_f_pi;' 1 self_check
 
 if [ -n "${MUT_ONLY:-}" ]; then

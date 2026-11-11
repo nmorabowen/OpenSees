@@ -146,7 +146,8 @@
 // trial started several p_min outside F and every step size was refused). After step 5f acted, with sigma_f
 // the floored stress and pi_i^BE the converged image pressure: if F(sigma_f, pi_i^BE) > 0 (STRICT, as
 // evaluated, no tolerance), form eta_f = zeta(theta_f, rho) q_f/|p_f| (0 at the vertex) and pi_f, the inverse
-// of (S.12) at (p_f, eta_f); guard: eta_f >= M/N (N > 0; proved unreachable) leaves pi_i unchanged, never
+// of (S.12) at (p_f, eta_f); guard: eta_f >= M/N (N > 0; proved unreachable), or a failed flow evaluation at sigma_f
+// (unreachable: p_f, pi_i < 0), leaves pi_i unchanged, never
 // refuses, and is flagged (StepInfo floor_pi_guard; the shell warns); acceptance: pi_i := pi_f only if
 // pi_f < pi_i^BE (never shrink), counted (floor_pi, n_f_pi). Nothing else of the step changes (sigma_f, eps^e,
 // eps^p, v, D^p, the floor counters, the single-step tangent (S.32f)). In a substepped increment the S^pi row
@@ -282,7 +283,8 @@ enum Pi0Rule { PI0_UNIFIED = 0, PI0_LEGACY = 1 };
 // energy (S.52) (header THE p' FLOOR; <= p_min deps_f_v).
 // Round 4 (appended): floor_pi the number of sub-increments in which the image-pressure rule (S.57) fired
 // (0 or 1 per sub-increment, summed like floor_post); floor_pi_guard the number in which its unreachable
-// guard eta_f >= M/N was met (pi_i left unchanged, no refusal; the shell warns). Both 0 on a refusal.
+// guard was met (eta_f >= M/N, or a flow evaluation at sigma_f failed; pi_i left unchanged, no refusal; the shell
+// warns once). Both 0 on a refusal.
 struct StepInfo {
   int refusal;
   int plastic;
@@ -1311,7 +1313,8 @@ struct ChainData {
 // floor; = eps_seen on an elastic step), dfv_* the d eps^f_v of each event, Phi_* their (S.51a)
 // blocks (identity when inactive), ef_* their floor energies E_f (S.52) (0 when inactive).
 // Round 4 (step 5g, appended): pi_be the converged image pressure BEFORE the rule (S.57) (= pi when it did not
-// fire), floor_pi the rule fired (pi = pi_f < pi_be), floor_pi_guard its unreachable eta_f >= M/N guard was met.
+// fire), floor_pi the rule fired (pi = pi_f < pi_be), floor_pi_guard its unreachable guard was met (eta_f >= M/N,
+// or a flow evaluation at sigma_f failed).
 struct ReturnResult {
   double eps_e[3], sig[3], pi, dlam, q_a[3], Om, D, atilde[3][3], ae[3][3];
   bool plastic, vertex, cap_active, refused;
@@ -1543,10 +1546,13 @@ inline void return_map(const Params& P, const double eps_raw[3], double pi_n, do
     const double eta_f = inv_f.vertex ? 0.0 : fl_f.zeta * inv_f.q / std::fabs(inv_f.p);
     double pi_f = pe.pi;
     const bool pi_ok = have_f && pi_of_eta(P, inv_f.p, eta_f, pi_f);   // false only if eta_f >= M/N (N > 0)
-    if (have_f && fl_f.F > 0.0 && !pi_ok) R.floor_pi_guard = true;     // unreachable (§9.7): no change, no refusal
+    // guard (unreachable, §9.7): eta_f >= M/N, or either flow evaluation fails -> pi_i unchanged, no refusal, FLAGGED
+    if (!have_f || (fl_f.F > 0.0 && !pi_ok)) R.floor_pi_guard = true;
     const bool fire = have_f && pi_ok && fl_f.F > 0.0 && pi_f < pe.pi;   // strict activation; never shrink
     Flow fl_g;
-    if (fire && flow(P, inv_f, pi_f, fl_g) == EE_NONE) {
+    const bool have_g = fire && flow(P, inv_f, pi_f, fl_g) == EE_NONE;
+    if (fire && !have_g) R.floor_pi_guard = true;
+    if (have_g) {
       // (S.59) gamma_b = sum_a G_a a^e_ab(eps^e_f), G_a = -f_a(sigma_f, pi_f) / F_pi(p_f, pi_f); 0 at the vertex
       double G[3], gam[3] = {0.0, 0.0, 0.0};
       for (int a = 0; a < 3; ++a) G[a] = -fl_g.f_a[a] / fl_g.Y.F_pi;
@@ -1744,17 +1750,22 @@ inline void chain_propagate(Chain& c, double alpha, double v_new, const ReturnRe
     c.S_pi[J] = ((Tdiag[0] * ch.w[0] + Tdiag[1] * ch.w[1]) + Tdiag[2] * ch.w[2])
               + ((1.0 - ch.kappa) / ch.c) * c.S_pi[J] + (1.0 - ch.kappa) * ch.Pi_v * S_v;
   }
+  double S_pre[6][3][3];   // S^eps_{k+1} BEFORE Phi^post: the (S.59) row must NOT read it (sheet M-R6, the mutation gate)
+  if (res.floor_pi)
+    for (int J = 0; J < 6; ++J) for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) S_pre[J][i][j] = c.S_eps[J][i][j];
   if (res.floor_post) {                                       // (S.54): Phi^post_k : [...]
     double Op[3][3][3][3];
     floor_op4(res.Phi_post, V, Op);
     apply_op4(Op, c.S_eps);
   }
   if (res.floor_pi) {   // (S.59), round 4: the rule (S.57) fired; this row REPLACES the (S.54) S^pi row above
+    const double (*S_row)[3][3] = c.S_eps;   // (S.59) row source: S^eps_{k+1} AFTER Phi^post
+    (void)S_pre;                             // read only by the M-R6 mutant (row from S_pre)
     for (int J = 0; J < 6; ++J) {
       double Sd[3];     // S^eps_{k+1} (after Phi^post) in the trial basis: n^b . S^eps . n^b
       for (int b = 0; b < 3; ++b) {
         double s = 0.0;
-        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) s += V[i][b] * c.S_eps[J][i][j] * V[j][b];
+        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) s += V[i][b] * S_row[J][i][j] * V[j][b];
         Sd[b] = s;
       }
       c.S_pi[J] = (res.ch.gamma[0] * Sd[0] + res.ch.gamma[1] * Sd[1]) + res.ch.gamma[2] * Sd[2];

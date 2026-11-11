@@ -115,7 +115,10 @@ class LadrunoNorSand : public NDMaterial, public LadrunoElasticStrainProvider {
   // NDMaterial sends nothing, so this is the only Vector under the dbTag (FE_Datastore keys vectors by
   // size: nothing to collide with). The trial stress and tangent are NOT on the wire (Domain::recvSelf's
   // update() recomputes them); recvSelf rebuilds them from the restored trial State.
-  static const int WIRE_LEN = 113;   // round 4: +1 (the committed n_f_pi, appended)
+  // Round 4 (sheet 9.7 (S.57)): +1 double, the COMMITTED n_f_pi at offset 112. The trial n_f_pi and the last
+  // StepInfo's floor_pi / floor_pi_guard are not on the wire: recvSelf sets sT.n_f_pi = sC.n_f_pi and zeroes the two
+  // flags (unlike sT.n_f_post, which is sent); the host's update() re-integrates the trial and restores them.
+  static const int WIRE_LEN = 113;
 
   // null constructor (broker / recvSelf): parameters are filled by recvSelf
   LadrunoNorSand();
@@ -210,6 +213,8 @@ class LadrunoNorSand : public NDMaterial, public LadrunoElasticStrainProvider {
   bool trialRefused;               // the last setTrialStrain was refused (cleared by a good trial / revert)
   bool latched;                    // a refused trial reached commitState: refuse everything until revertToStart
   bool warnedTrial, warnedLatch;
+  bool warnedPiGuard;              // the (S.57) guard warning was printed (once per object; revertToStart clears)
+  int  nPiGuard;                   // sub-increments where the (S.57) guard was met (unreachable; Print)
   int  lastRefusal;                // kernel Refusal code of the last refused trial; -1 = non-finite input/output
   int  lastFinest, lastFinestSub;  // finest-level cause (StepInfo.finest / finest_sub) of that refusal; 0 if none
   int  nRefusals;                  // trials refused since revertToStart

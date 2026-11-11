@@ -424,8 +424,12 @@ static void round4_checks()
     check("r4_K1_12C_F_BE_over_pmin", fdiff(Fbe / P.p_min, 0.010899), 1e-6, fdiff(Fbe / P.p_min, 0.010899) <= 1e-6);
     check("r4_K1_12C_pi_i_new", fdiff(o.st.pi_i, -40.516314098), 2e-9, fdiff(o.st.pi_i, -40.516314098) <= 2e-9);
     check("r4_K1_12C_F_zero_after", std::fabs(Fnew) / P.p_min, 1e-12, std::fabs(Fnew) <= 1e-12 * P.p_min);
-    // (S.58c) c_N p_min = 23.2379 kPa (1e-4)
-    check("r4_K1_12C_cN_pmin", fdiff(c_N(P) * P.p_min, 23.2379), 1e-4, fdiff(c_N(P) * P.p_min, 23.2379) <= 1e-4);
+    // (S.58c) on this committed post-floored state: the KERNEL's tip image pressure at the committed p (pi_of_eta at
+    // eta = 0, the sharp lower bound of |pi_i|) equals the sheet's c_N p_min = 23.2379 kPa (1e-4), and |pi_i| >= it
+    double ptip = 0.0;
+    const bool tip_ok = detail::pi_of_eta(P, pmean(o.sigma), 0.0, ptip);
+    check("r4_K1_12C_S58c_kernel_bound", fdiff(std::fabs(ptip), 23.2379), 1e-4,
+          tip_ok && fdiff(std::fabs(ptip), 23.2379) <= 1e-4 && std::fabs(o.st.pi_i) >= std::fabs(ptip));
   }
 
   // ---- §9.7 item 3, the wet-floor table with the rule (round 4): HAR TIMs set, one BE step, every case -Pf*, m = 1 ----
@@ -517,7 +521,6 @@ static void round4_checks()
   // ---- K1.16 (sheet §13.16): the H19 regression points. K3 set, |de| = 2e-4 repeated, every step m = 1, -Pf* ----
   const Params P = k3();
   const double cNp = c_N(P) * P.p_min;
-  check("r4_K1_16_cN_pmin", fdiff(cNp, 0.246558167), 1e-9, fdiff(cNp, 0.246558167) <= 1e-9);
   {
     struct Row { int step; double s[4], pi; };
     // sheet table (tol 5e-10 kPa = 1e-9 p_min on sigma and pi_i); eps^e_33 (tol 1e-14); |F| <= F_tol at every step
@@ -555,6 +558,12 @@ static void round4_checks()
         Fmax = std::fmax(Fmax, std::fabs(F)); pmax = std::fmax(pmax, std::fabs(pmean(sg) + P.p_min));
         pirel = std::fmax(pirel, fdiff(np1.pi_i, pif) / std::fabs(pif));
         if (c == 0 && k == 1) {
+          // (S.58c): the KERNEL's tip image pressure at the committed p (sharp bound) = the sheet's c_N p_min 0.246558167
+          // (1e-9 kPa), and the committed |pi_i| is above it
+          double ptip = 0.0;
+          const bool tip_ok = detail::pi_of_eta(P, pmean(sg), 0.0, ptip);
+          check("r4_K1_16_S58c_kernel_bound", fdiff(std::fabs(ptip), 0.246558167), 1e-9,
+                tip_ok && fdiff(std::fabs(ptip), 0.246558167) <= 1e-9 && std::fabs(np1.pi_i) >= std::fabs(ptip));
           // sheet step-1 detail (tol): dlam 1.427733871e-4 (rel 1e-8), p_c -0.365744965 (1e-9), eta_c 1.092426 (1e-6),
           // pi_BE -0.3245384951 (2e-10), F(sigma_f, pi_BE) +0.175979368 kPa (1e-9), eta_f 0.922543205 (1e-9),
           // deps^f_v 7.223598e-5 (rel 1e-6)
@@ -694,6 +703,119 @@ static void round4_checks()
     for (int I = 0; I < 6; ++I) for (int J = 0; J < 6; ++J) dC = std::fmax(dC, std::fabs(Ca[I][J] - Cb[I][J]));
     dC /= maxabs(&Cb[0][0], 36);
     check("r4_S59_case_a_chain_m1_equals_S32f", dC, 1e-12, ia.floor_pi == 1 && ib.floor_pi == 1 && dC <= 1e-12);
+  }
+}
+
+// ---- round 4, the Adversary's close (2026-11-11): mixed-pattern chains, N = 0, GA ------------------------------------
+// Lode shape functions written HERE from the sheet ((S.10) GA, (S.11) WW), not taken from the kernel
+static double zeta_test(int kind, double rho, double th)
+{
+  if (kind == 1) return ((1.0 + rho) + (1.0 - rho) * std::cos(3.0 * th)) / (2.0 * rho);
+  const double c = std::cos(th), A = 4.0 * (1.0 - rho * rho), B = 2.0 * rho - 1.0;
+  return (A * c * c + B * B) / (2.0 * (1.0 - rho * rho) * c + B * std::sqrt(A * c * c + 5.0 * rho * rho - 4.0 * rho));
+}
+// (S.12) and its inverse, written here: eta(p, pi) and the image pressure of the surface through (p, eta)
+static double eta_test(const Params& P, double p, double pi)
+{
+  return P.N == 0.0 ? P.M * (1.0 + std::log(pi / p)) : (P.M / P.N) * (1.0 - (1.0 - P.N) * std::pow(p / pi, P.N / (1.0 - P.N)));
+}
+static double pif_test(const Params& P, double p, double eta)
+{
+  return P.N == 0.0 ? p * std::exp(eta / P.M - 1.0) : p * std::pow((1.0 - P.N) / (1.0 - eta * P.N / P.M), (1.0 - P.N) / P.N);
+}
+// F(sigma, pi) and eta_f = zeta q/|p| of a principal-diagonal stress (the fixtures below are co-axial), all test-side
+static void Ftest(const Params& P, const double sig[6], double pi, double& F, double& eta)
+{
+  const double p = (sig[0] + sig[1] + sig[2]) / 3.0;
+  double xi[3], R2 = 0.0, S3 = 0.0;
+  for (int a = 0; a < 3; ++a) { xi[a] = sig[a] - p; R2 += xi[a] * xi[a]; S3 += xi[a] * xi[a] * xi[a]; }
+  const double R = std::sqrt(R2), q = std::sqrt(1.5) * R;
+  const double th = std::acos(std::fmin(1.0, std::fmax(-1.0, std::sqrt(6.0) * S3 / (R * R * R)))) / 3.0;
+  const double z = zeta_test(P.zeta, P.rho, th);
+  eta = z * q / -p;
+  F = z * q + p * eta_test(P, p, pi);
+}
+
+static void round4b_checks()
+{
+  // (b) forced-fraction HAR chains with MIXED patterns: the row must switch PER SUB-INCREMENT. FD at h = 1e-6 / 1e-7 /
+  // 1e-8 (chain_fd's measure); pass <= 3e-7 (A) / 3e-6 (B) at h = 1e-7 and e(1e-6)/e(1e-7) >= 30 (O(h^2)). Measured
+  // when the fixtures were chosen: A 5.8e-6 / 5.8e-8 / 8.5e-10, B 6.2e-5 / 6.2e-7 / 6.2e-9. Base pattern counts
+  // asserted at every FD point; F(sigma_f, pi_BE) of the firing sub-increment outside the noise band (>= 1e3 F_tol).
+  struct Mix { const char* name; Params P; double dd[3], p0, eta_M, a, b, f1; bool fire_first; double pass; };
+  const Mix mixes[2] = {
+    {"r4_mixed_A_-Pf*,-P-", tims_har(), {-1.0, -0.35, 1.35}, -0.55, 0.5, 1e-3, -3e-4, 0.5, true, 3e-7},
+    {"r4_mixed_B_-P-,-Pf*", k3(), {-1.2, -0.1, 1.3}, -0.55, 0.5, 1e-4, 0.0, 0.5, false, 3e-6}};
+  for (const Mix& x : mixes) {
+    const Params& P = x.P;
+    State s; double nh[3], pi0 = 0.0;
+    bool ok = surface_state(P, x.dd, x.p0, x.eta_M * P.M, std::nan(""), s, nh, &pi0);
+    s.v = s.v0 = 1.0 + P.e0 - P.lambda_c * std::pow(-pi0 / P.p_a, P.xi);
+    double d[6] = {x.a * nh[0] + x.b / 3.0, x.a * nh[1] + x.b / 3.0, x.a * nh[2] + x.b / 3.0, 0.0, 0.0, 0.0}, d1[6], d2[6];
+    for (int i = 0; i < 6; ++i) { d1[i] = x.f1 * d[i]; d2[i] = (1.0 - x.f1) * d[i]; }
+    detail::OnceOut o1, o2;
+    detail::step_once(P, s, d1, o1);
+    detail::step_once(P, o1.st, d2, o2);
+    const detail::OnceOut& of = x.fire_first ? o1 : o2;
+    const detail::OnceOut& oq = x.fire_first ? o2 : o1;
+    double Fb = 0.0; Fval(P, of.sigma, of.res.pi_be, Fb);
+    const bool pat = ok && !o1.res.refused && !o2.res.refused && of.res.plastic && of.res.floor_post && of.res.floor_pi
+                  && !of.res.floor_tr && oq.res.plastic && !oq.res.floor_post && !oq.res.floor_tr && !oq.res.floor_pi
+                  && Fb >= 1e3 * detail::F_TRIAL_TOL_REL * pRef(P);
+    check((std::string(x.name) + "_pattern").c_str(), Fb / P.p_min, 0.0, pat);
+    const std::vector<double> fr = {x.f1, 1.0 - x.f1};
+    double e[3] = {0.0, 0.0, 0.0};
+    const double hs[3] = {1e-6, 1e-7, 1e-8};
+    bool okfd = true;
+    for (int i = 0; i < 3; ++i) okfd = chain_fd_r4(P, s, d, fr, hs[i], e[i]) && okfd;
+    printf("INFO r4b %s: F_BE/pmin %.4f, C vs FD %.2e / %.2e / %.2e at h = 1e-6 / 1e-7 / 1e-8\n", x.name, Fb / P.p_min,
+           e[0], e[1], e[2]);
+    check((std::string(x.name) + "_chain_vs_fd_h1e-7").c_str(), e[1], x.pass, okfd && e[1] <= x.pass);
+    check((std::string(x.name) + "_chain_vs_fd_O(h2)").c_str(), e[0] / e[1], 30.0, okfd && e[0] / e[1] >= 30.0);
+  }
+
+  // (c) the rule under N = 0 (WW) and under GA (zeta = 1): TIMs HAR set, the wet-floor start (p = -p_min, eta = 0.5 M,
+  // psi_i +0.04), one BE step of dgamma = 1e-3 along n^, pattern -Pf*. Expected from the closed form of (S.57) written
+  // in this test (zeta (S.10)/(S.11), eta (S.12), its inverse): pi_i(committed) = pi_f(p_f, eta_f(sigma_f)) (rel 1e-12),
+  // F(sigma_f, pi_i) = 0 (1e-12 p_min), pi_f < pi_BE, F(sigma_f, pi_BE) > 0; and the (1/2, 1/2) chain of the same
+  // increment (-Pf*,-Pf*: G_a = pi_f/M (N = 0) and the GA zeta_y) against FD: pass <= 3e-7 at h = 1e-7 (measured when
+  // chosen: N = 0 7.4e-8, GA 6.4e-8), O(h^2).
+  for (int c = 0; c < 2; ++c) {
+    Params P = tims_har();
+    if (c == 0) { P.N = 0.0; P.N_bar = 0.0; }
+    else { P.zeta = 1; P.rho = 0.8; P.rho_bar = 0.8; }
+    const char* nm = c == 0 ? "r4_N0" : "r4_GA";
+    const double dd[3] = {-1.2, -0.1, 1.3};
+    State s; double nh[3], pi0 = 0.0;
+    bool ok = surface_state(P, dd, -0.505, 0.5 * P.M, std::nan(""), s, nh, &pi0);
+    s.v = s.v0 = 1.0 + P.e0 - P.lambda_c * std::pow(-pi0 / P.p_a, P.xi) + 0.04;
+    const double a = 1e-3 / std::sqrt(2.0);
+    const double de[6] = {a * nh[0], a * nh[1], a * nh[2], 0.0, 0.0, 0.0};
+    detail::OnceOut o;
+    detail::step_once(P, s, de, o);
+    double Fbe = 0.0, Fnew = 0.0, etaf = 0.0;
+    Ftest(P, o.sigma, o.res.pi_be, Fbe, etaf);
+    const double pf = pif_test(P, (o.sigma[0] + o.sigma[1] + o.sigma[2]) / 3.0, etaf);
+    Ftest(P, o.sigma, o.st.pi_i, Fnew, etaf);
+    const double rel = fdiff(o.st.pi_i, pf) / std::fabs(pf);
+    printf("INFO r4b %s: pattern %d%d%d%d, pi_BE %.12f, F_BE/pmin %.4f, eta_f %.9f, pi_f (test) %.12f, pi_i (kernel) %.12f, "
+           "F/pmin %.1e\n", nm, (int)o.res.floor_tr, (int)o.res.plastic, (int)o.res.floor_post, (int)o.res.floor_pi,
+           o.res.pi_be, Fbe / P.p_min, etaf, pf, o.st.pi_i, Fnew / P.p_min);
+    const bool pat = ok && !o.res.refused && !o.res.floor_tr && o.res.plastic && o.res.floor_post && o.res.floor_pi
+                  && Fbe > 1e3 * detail::F_TRIAL_TOL_REL * pRef(P) && pf < o.res.pi_be;
+    check((std::string(nm) + "_pattern_-Pf*").c_str(), Fbe / P.p_min, 0.0, pat);
+    check((std::string(nm) + "_pi_equals_closed_form_S57").c_str(), rel, 1e-12, rel <= 1e-12);
+    check((std::string(nm) + "_F_zero_after").c_str(), std::fabs(Fnew) / P.p_min, 1e-12, std::fabs(Fnew) <= 1e-12 * P.p_min);
+    const std::vector<double> fr = {0.5, 0.5};
+    double e[3] = {0.0, 0.0, 0.0};
+    const double hs[3] = {1e-6, 1e-7, 1e-8};
+    bool okfd = true;
+    for (int i = 0; i < 3; ++i) okfd = chain_fd_r4(P, s, de, fr, hs[i], e[i]) && okfd;
+    State nf; double sf[6], Cf[6][6]; StepInfo inf;
+    detail::step_fractions(P, s, de, fr.data(), 2, true, nf, sf, Cf, inf);
+    printf("INFO r4b %s chain (1/2,1/2): floor_pi %d, C vs FD %.2e / %.2e / %.2e\n", nm, inf.floor_pi, e[0], e[1], e[2]);
+    check((std::string(nm) + "_chain_vs_fd_h1e-7").c_str(), e[1], 3e-7,
+          okfd && inf.floor_pi == 2 && e[1] <= 3e-7 && e[0] / e[1] >= 30.0);
   }
 }
 
@@ -1005,6 +1127,7 @@ int main()
 
   // ---- round 4: the image-pressure rule at a post floor (sheet §9.7 (S.57)-(S.59), §13.12 (C), §13.14b, §13.16) --
   round4_checks();
+  round4b_checks();
 
   printf("SUMMARY %s (%d failed)\n", g_fail ? "FAIL" : "PASS", g_fail);
   return g_fail ? 1 : 0;

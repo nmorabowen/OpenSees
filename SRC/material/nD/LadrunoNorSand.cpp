@@ -137,9 +137,12 @@ enum {
   EFT = 110,        // ... including the trial step
   PI0AUTO = 111,    // pi_i0 came from the unified rule (S.53)
   // ---- round 4 (image-pressure rule at a post floor, sheet 9.7 (S.57)): appended, exactly ONE double ----
-  NFPI = 112,       // committed n_f_pi (resets of pi_i by (S.57)). The trial's own count and the last StepInfo's
-                    // floor_pi / floor_pi_guard are NOT on the wire: Domain::recvSelf's update() re-integrates the
-                    // trial from the committed state (see the note above); recvSelf sets sT.n_f_pi = sC.n_f_pi.
+  NFPI = 112,       // committed n_f_pi (resets of pi_i by (S.57)). NOT on the wire (the round-4 budget is ONE double):
+                    // the TRIAL n_f_pi and the last StepInfo's floor_pi / floor_pi_guard. recvSelf therefore sets
+                    // sT.n_f_pi = sC.n_f_pi and zeroes floor_pi / floor_pi_guard, while every other trial field (sT.pi_i,
+                    // sT.n_f_post, ...) is the SENT trial value: a restored trial that had a reset in flight under-counts
+                    // it by that step's floor_pi until Domain::recvSelf's update() re-integrates the trial from the
+                    // committed state (see the note above), which restores the exact count. The committed count is exact.
   END = 113
 };
 // State packing (12): eps_e[6], pi_i, v, v0, eps_p_v, eps_p_s, D_last
@@ -290,7 +293,7 @@ LadrunoNorSand::LadrunoNorSand()
     density(0.0), v0init(0.0), pi0init(std::numeric_limits<double>::quiet_NaN()),
     F0init(std::numeric_limits<double>::quiet_NaN()), pi0Auto(false),
     initOk(false), dim(DIM_3D), ncomp(6),
-    trialRefused(false), latched(false), warnedTrial(false), warnedLatch(false),
+    trialRefused(false), latched(false), warnedTrial(false), warnedLatch(false), warnedPiGuard(false), nPiGuard(0),
     lastRefusal(0), lastFinest(0), lastFinestSub(0), nRefusals(0), nSubstepped(0), efC(0.0), efT(0.0)
 {
   zeroParams(kp);
@@ -305,7 +308,7 @@ LadrunoNorSand::LadrunoNorSand(int tag, const Params& p, const double sig0[6],
   : NDMaterial(tag, ND_TAG_LadrunoNorSand),
     kp(p), density(dens), v0init(v0), pi0init(pi0), F0init(std::numeric_limits<double>::quiet_NaN()), pi0Auto(false),
     initOk(false), dim(DIM_3D), ncomp(6),
-    trialRefused(false), latched(false), warnedTrial(false), warnedLatch(false),
+    trialRefused(false), latched(false), warnedTrial(false), warnedLatch(false), warnedPiGuard(false), nPiGuard(0),
     lastRefusal(0), lastFinest(0), lastFinestSub(0), nRefusals(0), nSubstepped(0), efC(0.0), efT(0.0)
 {
   for (int i = 0; i < 6; i++) sigma0[i] = sig0[i];
@@ -320,7 +323,7 @@ LadrunoNorSand::LadrunoNorSand(int clsTag, int dimMode)
     density(0.0), v0init(0.0), pi0init(std::numeric_limits<double>::quiet_NaN()),
     F0init(std::numeric_limits<double>::quiet_NaN()), pi0Auto(false),
     initOk(false), dim(dimMode), ncomp(6),
-    trialRefused(false), latched(false), warnedTrial(false), warnedLatch(false),
+    trialRefused(false), latched(false), warnedTrial(false), warnedLatch(false), warnedPiGuard(false), nPiGuard(0),
     lastRefusal(0), lastFinest(0), lastFinestSub(0), nRefusals(0), nSubstepped(0), efC(0.0), efT(0.0)
 {
   zeroParams(kp);
@@ -335,7 +338,7 @@ LadrunoNorSand::LadrunoNorSand(int tag, int clsTag, const Params& p, const doubl
   : NDMaterial(tag, clsTag),
     kp(p), density(dens), v0init(v0), pi0init(pi0), F0init(std::numeric_limits<double>::quiet_NaN()), pi0Auto(false),
     initOk(false), dim(dimMode), ncomp(6),
-    trialRefused(false), latched(false), warnedTrial(false), warnedLatch(false),
+    trialRefused(false), latched(false), warnedTrial(false), warnedLatch(false), warnedPiGuard(false), nPiGuard(0),
     lastRefusal(0), lastFinest(0), lastFinestSub(0), nRefusals(0), nSubstepped(0), efC(0.0), efT(0.0)
 {
   for (int i = 0; i < 6; i++) sigma0[i] = sig0[i];
@@ -507,9 +510,15 @@ int LadrunoNorSand::integrate(void)
         for (int i = 0; i < 6; i++) sigT[i] = sig[i];
         for (int i = 0; i < 6; i++) for (int j = 0; j < 6; j++) CT[i][j] = C[i][j];
         efT = efC + info.E_f;        // the floor energy of this increment (a diagnostic; never fed back, sheet 9.7)
-        if (info.floor_pi_guard > 0)   // sheet 9.1 step 5g: unreachable (eta_f < eta_c < M/N); logged, never refused
-          opserr << "WARNING LadrunoNorSand tag " << this->getTag() << ": a post-floored state has eta_f >= M/N (sheet 9.7"
-                 << " (S.57) guard, proved unreachable): pi_i was left unchanged (no refusal); please report it" << endln;
+        if (info.floor_pi_guard > 0) {   // sheet 9.1 step 5g: unreachable; logged once per object, counted after, never refused
+          nPiGuard += info.floor_pi_guard;
+          if (!warnedPiGuard) {
+            warnedPiGuard = true;
+            opserr << "WARNING LadrunoNorSand tag " << this->getTag() << ": the image-pressure rule (sheet 9.7 (S.57)) met its"
+                   << " guard (eta_f >= M/N, or the flow at the floored stress failed; proved unreachable): pi_i was left"
+                   << " unchanged (no refusal); please report it. Further occurrences are counted silently (Print)." << endln;
+          }
+        }
         trialRefused = false;
         return 0;
       }
@@ -687,6 +696,7 @@ int LadrunoNorSand::revertToStart(void)
   latched = false;
   warnedTrial = false;
   warnedLatch = false;
+  warnedPiGuard = false; nPiGuard = 0;
   lastRefusal = 0;
   lastFinest = 0; lastFinestSub = 0;
   nRefusals = 0;
@@ -726,6 +736,7 @@ void LadrunoNorSand::copyFrom(const LadrunoNorSand& o)
   trialRefused = false;
   latched = false;
   warnedTrial = false; warnedLatch = false;
+  warnedPiGuard = false; nPiGuard = 0;   // the guard record, like the refusal record, is not inherited
   lastRefusal = 0; lastFinest = 0; lastFinestSub = 0;
   nRefusals = 0;
   lastInfo = StepInfo();             // the last attempt's info belongs to the source's (possibly refused) trial
@@ -857,8 +868,8 @@ int LadrunoNorSand::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroke
   efC = data(nsw::EFC);
   efT = data(nsw::EFT);
   pi0Auto = (data(nsw::PI0AUTO) != 0.0);
-  sC.n_f_pi = (int)data(nsw::NFPI);           // round 4; the trial count is rebuilt by the host's update()
-  sT.n_f_pi = sC.n_f_pi;
+  sC.n_f_pi = (int)data(nsw::NFPI);           // round 4: the committed count is exact
+  sT.n_f_pi = sC.n_f_pi;                      // the trial count is not on the wire (nsw::NFPI): the host's update() rebuilds it
   for (int i = 0; i < 6; i++) { epsC[i] = data(nsw::EPSC + i); epsT[i] = data(nsw::EPST + i); }
   latched = (data(nsw::LATCHED) != 0.0);
   trialRefused = (data(nsw::TRIALREF) != 0.0);
@@ -882,6 +893,8 @@ int LadrunoNorSand::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroke
   lastInfo.deps_f_v = data(nsw::INFOF + 3);
   lastInfo.W_f = data(nsw::INFOF + 4);
   lastInfo.E_f = data(nsw::INFOF + 5);
+  lastInfo.floor_pi = 0;                      // round 4: not on the wire (nsw::NFPI); never stale from a live object
+  lastInfo.floor_pi_guard = 0;
   // sigT / CT are not on the wire: rebuild them from the restored trial State (hyperelastic stress and tangent
   // of sT; the consistent plastic tangent of the source's last step is NOT reproduced, and the host's own
   // update() recomputes both anyway).
@@ -960,7 +973,7 @@ void LadrunoNorSand::Print(OPS_Stream& s, int /*flag*/)
     << " latched=" << (latched ? 1 : 0) << endln;
   s << "  p' floor: p_min=" << kp.p_min << " at_floor=" << sC.at_floor << " n_f_tr=" << sC.n_f_tr << " n_f_post=" << sC.n_f_post
     << " n_f_init=" << sC.n_f_init << " eps_f_v=" << sC.eps_f_v << " W_f=" << sC.W_f << " E_f(cumulative)=" << efC
-    << " n_f_pi=" << sC.n_f_pi << " (image-pressure resets, sheet 9.7 S.57)" << endln;
+    << " n_f_pi=" << sC.n_f_pi << " (image-pressure resets, sheet 9.7 S.57); rule guard met " << nPiGuard << " times" << endln;
 }
 
 // ===========================================================================
