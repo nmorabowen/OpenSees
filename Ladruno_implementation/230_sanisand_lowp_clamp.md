@@ -191,7 +191,10 @@ SANISAND suites on Windows (`ci_run_pytest.py`, 15 files + the new one): 250 pas
 before (4a468a246); 294 passed, 3 skipped, 2 xfailed after. Seven pinned widths in two existing test
 files were extended (`sasOptions` 12 → 15, `sasStats` 44 → 46).
 
-MUTATION_LINE
+Mutation: the kept deviator dropped in `ladrunoSasSetClamped` (the clamp then holds p_floor·I), full
+rebuild: 12 of the 44 tests fail (the six element paths that carry a deviator, the three cost-measure
+tests, clamp against separation, both E2 cases). The 32 that pass do not depend on the deviator: the
+isotropic paths, byte-identity when off, the parser, the wire, the tangent. Source restored and rebuilt.
 
 Not verified:
 

@@ -1,6 +1,7 @@
 ---
 wp: WP-230
 title: "\"Clamp p at a floor and keep the deviator\" is a property of the discrete update, not of the model: WHICH deviator is kept decides whether the state is admissible"
+pr: "#1072"
 date: 2026-11-11
 ---
 ### "Clamp p at a floor and keep the deviator" is a property of the discrete update, not of the model: WHICH deviator is kept decides whether the state is admissible (WP-230)

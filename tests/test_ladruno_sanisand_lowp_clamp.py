@@ -18,7 +18,7 @@ What is pinned (Ladruno_implementation/230_sanisand_lowp_clamp.md):
   (c)  clamp against separation on the same path: same entry step, and the clamped point
        carries the deviator the separated one drops;
   (d)  OFF is byte-identical: the WP-152 legs (iso / te / cyc with -sasTensionCutoff) give,
-       bit for bit, what a build WITHOUT this WP gave (tests/data/
+       bit for bit on win32 (1e-6 elsewhere), what a build WITHOUT this WP gave (tests/data/
        wp230_cutoff_byteid_baseline.json), and so does the cutoff absent;
   (e)  E2 (a cost refusal at committed p0 < p_sep under a non-compressing increment) clamps,
        and a clamp entered from p0 > p_floor holds a stress OUTSIDE the bounding surface
@@ -40,6 +40,7 @@ import tempfile
 import pytest
 
 from _testbed import ops
+import wp151_reseat_tools as T151
 import wp152_cutoff_tools as T
 import wp230_clamp_tools as C
 
@@ -186,7 +187,11 @@ def test_off_is_byte_identical(leg):
     ops.wipe()
     assert set(got) == set(base["rows"][leg])
     for name in got:
-        assert got[name] == base["rows"][leg][name], (leg, name)
+        ref = base["rows"][leg][name]
+        assert len(got[name]) == len(ref), (leg, name, len(got[name]), len(ref))
+        # EXACT on win32 (the baseline's platform); the fork's 1e-6 floor elsewhere
+        bad = [k for k, (a, b) in enumerate(zip(got[name], ref)) if not T151.rows_equal(a, b)]
+        assert not bad, f"{leg}/{name}: {len(bad)} of {len(ref)} steps moved, first at step {bad[0]}"
 
 
 # ----------------------------------------------------------------------- (e)
