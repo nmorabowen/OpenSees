@@ -217,6 +217,7 @@ OPS_LadrunoSANISAND(void)
                << " <-errFloor sigRef?> <-alphaBoundTol kappa?> <-alphaEntryTol kappaEntry?> <-alphaProject 0|1>"  // Ladruno WP-129
                << " <-sasAlphaIn reseat|bracket|stale> <-sasErrorVars full|stress>"   // Ladruno WP-129
                << " <-sasHFloor cA?> <-sasReseatHyst cRev?> <-sasSoftCap kappa?>"     // Ladruno WP-151
+               << " <-sasPlasticExp nh?>"                                             // Ladruno WP-229
                << " (-errFloor .. -sasSoftCap: IntScheme 129 = SAS-ME only)"         // Ladruno WP-129/151
                << endln;
         return 0;
@@ -1015,6 +1016,22 @@ OPS_LadrunoSANISAND(void)
             else if (k == 'r') sasOpt.reseatHyst = v;
             else sasOpt.softCap = v;
         }
+        // Ladruno WP-229 (TIMs F26): the pressure exponent of the plastic modulus,
+        // b0 = G0 h0 (1 - ch e) (p/p_at)^-nh. SAS-ME only; 0.5 = DM04 (byte-identical).
+        else if (strcmp(argTok, "-sasPlasticExp") == 0 || strcmp(argTok, "-sasplasticexp") == 0) {
+            seenFlag = true;
+            sawSasToken = true;
+            double v = 0.0;
+            numData = 1;
+            if (OPS_GetDoubleInput(&numData, &v) != 0 || !std::isfinite(v) || v < 0.0 || v > 1.0) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -sasPlasticExp wants one value 0 <= nh <= 1: the pressure exponent of the"
+                          " plastic modulus, b0 = G0 h0 (1 - ch e) (p/p_at)^-nh (0.5 = DM04, the DEFAULT)"
+                       << endln;
+                return 0;
+            }
+            sasOpt.plasticExp = v;
+        }
         // Ladruno WP-152: the tension cutoff (separation), SAS-ME only, OFF by
         // default: -sasTensionCutoff p_sep p_contact (model stress units).
         else if (strcmp(argTok, "-sasTensionCutoff") == 0 || strcmp(argTok, "-sastensioncutoff") == 0) {
@@ -1082,6 +1099,7 @@ OPS_LadrunoSANISAND(void)
                        << " -sasAlphaIn / -sasErrorVars /"                                 // Ladruno WP-129
                        << " -sasHFloor / -sasReseatHyst / -sasSoftCap /"                   // Ladruno WP-151
                        << " -sasTensionCutoff / -sasSepMaxP0 /"                            // Ladruno WP-152
+                       << " -sasPlasticExp /"                                              // Ladruno WP-229
                        << " -cppmOnFail / -cppmHalvings / -cppmLineSearch / -cppmStart /" // Ladruno WP-130
                        << " -cppmTangent / -meFallback" << endln;                  // Ladruno WP-130
                 return 0;
@@ -1153,6 +1171,7 @@ OPS_LadrunoSANISAND(void)
                << ": -errFloor / -alphaBoundTol / -alphaProject / -sasAlphaIn / -sasErrorVars"
                   " / -sasHFloor / -sasReseatHyst / -sasSoftCap"   // Ladruno WP-151
                   " / -sasTensionCutoff / -sasSepMaxP0"             // Ladruno WP-152
+                  " / -sasPlasticExp"                               // Ladruno WP-229
                   " are SAS-ME options and are read ONLY by IntScheme " << LADRUNO_INT_SAS_ME
                << " (this deck asks for IntScheme " << (int)oData[0] << "). Refused rather than"
                   " accepted and ignored." << endln;
@@ -1668,6 +1687,13 @@ LadrunoSANISAND::setLadrunoSasOptions(const LadrunoSasOptions &opt, bool verbose
                           " (small-strain cycles stay on one h branch). Validated for cyclic work"
                           " only at c_rev <= 1." << endln;
         }
+        if (opt.plasticExp != 0.5)   // Ladruno WP-229
+            opserr << "LadrunoSANISAND tag " << this->getTag()
+                   << ": WP-229, an OPT-IN DM04 variant: plastic-modulus pressure exponent nh = "
+                   << opt.plasticExp << " (b0 = G0 h0 (1 - ch e) (p/p_at)^-nh; DM04 is 0.5). b0 is unchanged"
+                      " at p = p_at, " << (opt.plasticExp < 0.5 ? "smaller below it and larger above it"
+                                                                 : "larger below it and smaller above it")
+                   << ". The elastic exponent stays 0.5." << endln;
         if (opt.tcPcontact > 0.0)   // Ladruno WP-152
             opserr << "LadrunoSANISAND tag " << this->getTag()
                    << ": WP-152 tension cutoff (separation), an OPT-IN constitutive choice: a point whose"
@@ -2326,7 +2352,8 @@ LadrunoSANISAND::getCopy(const char *type)
 //      [LWIRE_SAS, +LWIRE_SAS_OPT_N)   WP-129: errFloor, alphaBoundTol, alphaProject,
 //                                      alphaInMode, errorVars, alphaEntryTol;
 //                                      WP-151: hFloor, reseatHyst, softCap;
-//                                      WP-152: tcPsep, tcPcontact, tcP0Max
+//                                      WP-152: tcPsep, tcPcontact, tcP0Max;
+//                                      WP-229: plasticExp
 //      [.., +LSAS_COUNT)               WP-129: the sasStats census (WP-151 appends 3,
 //                                      WP-152 appends 8)
 //      [LWIRE_SEP, +2)                 WP-152: the committed sep_n, sepTr_n
@@ -2388,7 +2415,7 @@ LadrunoSANISAND::getCopy(const char *type)
 // is not this one (a stream from another build, or an overwritten slot).
 // LEDGER_quirks, WP-151. WP-152 changed the layout (the tension-cutoff options
 // and the committed separation state), so the tag is now 152.
-static const double kLadrunoSanWireTag = 152.1;   // 152.1: + tcP0Max and 4 census columns (review)
+static const double kLadrunoSanWireTag = 229.0;   // 229.0: + plasticExp (WP-229); was 152.1 (+ tcP0Max and 4 census columns)
 
 int
 LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
@@ -2495,6 +2522,7 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
         ladrunoData(b + 9) = mLadrunoSas.opt.tcPsep;       // Ladruno WP-152 (LWIRE_SAS_OPT_N 9 -> 11)
         ladrunoData(b + 10) = mLadrunoSas.opt.tcPcontact;  // Ladruno WP-152
         ladrunoData(b + 11) = mLadrunoSas.opt.tcP0Max;     // Ladruno WP-152 review #2 (11 -> 12)
+        ladrunoData(b + 12) = mLadrunoSas.opt.plasticExp;  // Ladruno WP-229 (12 -> 13)
     }
     // Ladruno WP-152: the COMMITTED separation state crosses for the reason the
     // committed stress does -- a restored point must stay separated.
@@ -2570,6 +2598,9 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
         mLadrunoSas.opt.tcPsep     = ladrunoData(b + 9);
         mLadrunoSas.opt.tcPcontact = ladrunoData(b + 10);
         mLadrunoSas.opt.tcP0Max    = ladrunoData(b + 11);
+        mLadrunoSas.opt.plasticExp = ladrunoData(b + 12);   // Ladruno WP-229
+        if (!(mLadrunoSas.opt.plasticExp >= 0.0 && mLadrunoSas.opt.plasticExp <= 1.0))   // the parser's range, else DM04
+            mLadrunoSas.opt.plasticExp = 0.5;
         if (!(std::isfinite(mLadrunoSas.opt.tcPsep) && std::isfinite(mLadrunoSas.opt.tcPcontact)
               && std::isfinite(mLadrunoSas.opt.tcP0Max)
               && mLadrunoSas.opt.tcPsep >= 0.0 && mLadrunoSas.opt.tcPcontact > mLadrunoSas.opt.tcPsep
@@ -5586,7 +5617,8 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
             "sas_errFloor", "sas_alphaBoundTol", "sas_alphaProject", "sas_alphaInMode",
             "sas_errorVars", "sas_alphaEntryTol",
             "sas_hFloor", "sas_reseatHyst", "sas_softCap",                     // Ladruno WP-151
-            "sas_tcPsep", "sas_tcPcontact", "sas_tcP0Max"};                     // Ladruno WP-152
+            "sas_tcPsep", "sas_tcPcontact", "sas_tcP0Max",                      // Ladruno WP-152
+            "sas_plasticExp"};                                                  // Ladruno WP-229
         static_assert(sizeof(names) / sizeof(names[0]) == LWIRE_SAS_OPT_N,   // Ladruno WP-151 (review NIT)
                       "sasOptions names must match LWIRE_SAS_OPT_N (the response and the wire block)");
         output.tag("NdMaterialOutput");
@@ -5790,6 +5822,7 @@ LadrunoSANISAND::getResponse(int responseID, Information &matInformation)
         out(9) = mLadrunoSas.opt.tcPsep;        // Ladruno WP-152
         out(10) = mLadrunoSas.opt.tcPcontact;   // Ladruno WP-152
         out(11) = mLadrunoSas.opt.tcP0Max;      // Ladruno WP-152 review #2
+        out(12) = mLadrunoSas.opt.plasticExp;   // Ladruno WP-229
         return matInformation.setVector(out);
     }
     if (responseID == LadrunoSanisandCppmOptionsResponseID) {
