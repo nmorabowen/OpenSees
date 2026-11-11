@@ -100,6 +100,7 @@ SAS_NAMES = [
     "hFloored", "hSoftCapped", "reseatHeld",   # WP-151 (appended; absent on older builds)
     "sepEntriesTension", "sepEntriesLowP", "sepExits", "sepActive",   # WP-152 (appended)
     "sepLastCode", "sepMaxP0", "sepHeldHighP", "sepHeldCompressing",   # WP-152 review (appended)
+    "clampMaxFRatio", "clampMaxBound",   # WP-230 (appended)
 ]
 SAS_REFUSE_CODES = {0: "none", 1: "startOutsideYield", 2: "startAlphaOutsideBounding",
                     3: "startInadmissible", 4: "errorAtDTmin", 5: "loadingNonPosH",

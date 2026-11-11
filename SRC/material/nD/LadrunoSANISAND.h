@@ -523,8 +523,9 @@ class LadrunoSANISAND : public ManzariDafalias
         LWIRE_CPPM      = LWIRE_CENSUS + LMS_COUNT,
         LWIRE_CPPM_N    = 7,
         LWIRE_SAS       = LWIRE_CPPM + LWIRE_CPPM_N,
-        LWIRE_SAS_OPT_N = 12,  // WP-129's six + WP-151's hFloor, reseatHyst, softCap (b+6..b+8)
+        LWIRE_SAS_OPT_N = 15,  // WP-129's six + WP-151's hFloor, reseatHyst, softCap (b+6..b+8)
                                // + WP-152's tcPsep, tcPcontact, tcP0Max (b+9..b+11)
+                               // + WP-230's lowPMode, lowPFloor, lowPAlpha (b+12..b+14)
         LWIRE_SEP       = LWIRE_SAS + LWIRE_SAS_OPT_N + LSAS_COUNT,   // Ladruno WP-152: sep_n, sepTr_n
         LWIRE_TAG       = LWIRE_SEP + 2,                              // Ladruno WP-151: layout tag
         LWIRE_SIZE      = LWIRE_TAG + 1

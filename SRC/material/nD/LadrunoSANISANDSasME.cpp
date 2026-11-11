@@ -187,6 +187,7 @@ ManzariDafalias::ladrunoResetSasSep(void)
     mLadrunoSas.sepEvent = 0;
     mLadrunoSas.sepCode = 0;
     mLadrunoSas.sepP0 = 0.0;
+    mLadrunoSas.clampFr = mLadrunoSas.clampBound = 0.0;   // Ladruno WP-230
     mLadrunoSas.stats[LSAS_SEP_ACTIVE] = 0.0;
 }
 
@@ -213,6 +214,66 @@ ManzariDafalias::ladrunoSasSetIsotropic(double pModel)
     mCe = GetStiffness(K, G); mCep = mCe; mCep_Consistent = mCe;
     mLadrunoSas.stats[LSAS_LAST_RATIO_B] = 0.0;
     mLadrunoSas.stats[LSAS_LAST_F] = GetF(mSigma, mAlpha);
+}
+
+// Ladruno WP-230 (TIMs F25, the low-pressure CLAMP): put the TRIAL on
+// sigma = (pModel - p_r) I + sDev -- the pressure of the clamp law, the deviator the
+// point had when it lost its confinement (sDev = dev(sigma_committed); it is FROZEN while
+// clamped, so the committed stress itself carries it and no extra state is needed).
+// alpha, alpha_in:
+//   lowPAlpha 0 (leave, DEFAULT): as committed. No plastic flow happens in a clamped
+//       point, so no internal variable moves; the stress then lies OUTSIDE the yield
+//       cone and f / (sqrt(2/3) m p) -- its distance in cone radii -- is measured.
+//   lowPAlpha 1 (project): alpha := the closest point of the yield cone around the
+//       clamped stress, alpha = s/p - sqrt(2/3) m n, n = (s - p alpha)/|s - p alpha|
+//       (f = 0), and alpha_in := alpha.
+//   at RE-CONTACT (both rules) the same projection hands SAS-ME a start with f <= 0,
+//       and alpha_in := alpha: a new loading process starts there (WP-152 does the
+//       same with alpha = alpha_in = 0).
+// Neither adds a stress to a stress RATIO. Fabric kept, elastic strain unchanged,
+// tangent = the elastic stiffness at the state (WP-152's declared regularisation).
+// mVoidRatio must already hold the end-of-increment value.
+void
+ManzariDafalias::ladrunoSasSetClamped(double pModel, const Vector& sDev, bool recontact)
+{
+    mSigma = mI1;
+    mSigma *= (pModel - m_Presidual);
+    mSigma += sDev;
+    mAlpha = mAlpha_n;
+    mAlpha_in = mAlpha_in_n;
+    if (mLadrunoSas.opt.lowPAlpha == 1 || recontact) {
+        Vector x(mAlpha);
+        x *= (-pModel);
+        x += sDev;                                   // s - p alpha
+        const double nx = GetNorm_Contr(x);
+        if (nx > root23 * m_m * pModel) {
+            x *= (root23 * m_m / nx);                // sqrt(2/3) m n
+            mAlpha = sDev;
+            mAlpha /= pModel;
+            mAlpha -= x;
+        }
+        mAlpha_in = mAlpha;
+    }
+    mFabric = mFabric_n;
+    mEpsilonE = mEpsilonE_n;
+    mDGamma = 0.0;
+    double K, G;
+    GetElasticModuli(mSigma, mVoidRatio, K, G);
+    mCe = GetStiffness(K, G); mCep = mCe; mCep_Consistent = mCe;
+    mLadrunoSas.stats[LSAS_LAST_RATIO_B] = ladrunoSasAlphaRatio(mAlpha, mSigma, mVoidRatio);
+    mLadrunoSas.stats[LSAS_LAST_F] = GetF(mSigma, mAlpha);
+    // the two measures of what the clamp costs (trial; recorded when it commits):
+    // f in cone radii, and the stress ratio over the bounding stress ratio at the
+    // stress's own Lode angle -- above 1 no alpha can make the state admissible.
+    mLadrunoSas.clampFr = mLadrunoSas.stats[LSAS_LAST_F] / (root23 * m_m * pModel);
+    mLadrunoSas.clampBound = 0.0;
+    const double ns = GetNorm_Contr(sDev);
+    if (ns > 1.0e-14 * pModel) {
+        Vector u(sDev);
+        u /= ns;
+        const double Mb = g(GetLodeAngle(u), m_c) * m_Mc * exp(-1.0 * m_nb * GetPSI(mVoidRatio, pModel));
+        mLadrunoSas.clampBound = sqrt(1.5) * (ns / pModel) / Mb;
+    }
 }
 
 // h with the alpha_in rule applied: a stage whose (alpha - alpha_in):n is not
@@ -888,14 +949,22 @@ ManzariDafalias::ladrunoSasIntegrate(void)
     mLadrunoSas.sepCode = 0;
     mLadrunoSas.sepP0 = 0.0;
     const bool tcOn = (o.tcPcontact > 0.0);
+    const bool clampOn = (o.lowPMode == 1);                       // Ladruno WP-230
+    const double pBase = clampOn ? o.lowPFloor : m_Pmin;          // Ladruno WP-230: where an open point sits
+    mLadrunoSas.clampFr = mLadrunoSas.clampBound = 0.0;           // Ladruno WP-230
     if (tcOn && mLadrunoSas.sep_n) {
         const double g = GetTrace(NextStrain) - mLadrunoSas.sepTr_n;
         Vector Sc(mI1);
         Sc *= (o.tcPcontact - m_Presidual);
         double Kc, Gc;
         GetElasticModuli(Sc, mVoidRatio, Kc, Gc);
-        const double gc = (o.tcPcontact - m_Pmin) / Kc;
-        ladrunoSasSetIsotropic(m_Pmin + Kc * fmax(g, 0.0));
+        const double gc = (o.tcPcontact - pBase) / Kc;
+        if (clampOn) {                                            // Ladruno WP-230: the frozen deviator
+            Vector sK(mSigma_n);
+            sK.addVector(1.0, mI1, -one3 * GetTrace(mSigma_n));
+            ladrunoSasSetClamped(pBase + Kc * fmax(g, 0.0), sK, g >= gc);
+        } else
+            ladrunoSasSetIsotropic(m_Pmin + Kc * fmax(g, 0.0));
         if (g > 0.0) {
             // closing, and the exit iterate: within THIS update sigma = (p_min + Kc g) I,
             // so the consistent bulk modulus is K(p_contact) (re-review MED-3). The shear
@@ -1114,7 +1183,12 @@ ManzariDafalias::ladrunoSasIntegrate(void)
             mSubstepCapHitInME = false;   // a code 9 set it; the cap was reached by a separating point
             mLadrunoSas.sep = true;
             mLadrunoSas.sepTr = GetTrace(NextStrain);
-            ladrunoSasSetIsotropic(m_Pmin);
+            if (clampOn) {                                        // Ladruno WP-230: keep the committed deviator
+                Vector sK(mSigma_n);
+                sK.addVector(1.0, mI1, -one3 * GetTrace(mSigma_n));
+                ladrunoSasSetClamped(pBase, sK, false);
+            } else
+                ladrunoSasSetIsotropic(m_Pmin);
             mLadrunoLastPath = 8;
             return;
         }

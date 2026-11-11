@@ -1450,3 +1450,35 @@ evidence: [[152_sanisand_tension_cutoff]].
   only p_min, so a displacement test cannot tell a converged separated region from a stalled one.
 - **It is a constitutive choice about near-surface sand.** The owner and TIMs decide p_sep and p_contact, and how
   separated points are reported in the capacity. The p_r bracket (§13.4's cross-check) stays available.
+
+### 13.7 Low-pressure clamp — WP-230, an OPT-IN comparison mode to the separation of §13.5 (TIMs F25)
+
+(§13.6 is WP-229's `-sasPlasticExp`, on its own PR.)
+
+```tcl
+... 129 $TanType $JacoType $TolF $TolR -sasHFloor 1 -sasReseatHyst 1 -sasSoftCap 0.5     -sasLowP clamp $pFloor $pSep $pContact  <-sasLowPAlpha leave|project>
+```
+
+- **What it is for.** An A/B against §13.5 with one thing changed: a point that loses its confinement is held at
+  p = p_floor and KEEPS its last committed deviator, instead of going to p_min·I with no shear. Plan and evidence:
+  [[230_sanisand_lowp_clamp]].
+- **Everything else is §13.5's**: the triggers E1 and E2 with their gates, `-sasSepMaxP0`, the continuous closing
+  law p = p_floor + K(p_contact)·max(g, 0), the volumetric re-contact at p_contact, the tangent, the refusals
+  (`-Presidual`, `-pRe`, no `-sasHFloor`, `-implex`, any scheme but 129). The two modes are alternatives: giving both
+  is refused.
+- **The deviator is frozen while clamped.** A clamped point is not integrated; shear strain does not change its
+  stress. It holds the shear it had at its last committed state, so nothing is invented and nothing grows.
+- **`p_floor` has no default** (it is a stress). The pair for a kPa deck with `-sasTensionCutoff 0.1 1.0` is
+  `-sasLowP clamp 0.1 0.1 1.0`. p_floor ≥ p_min and p_floor < p_contact.
+- **α of a clamped point** (`-sasLowPAlpha`): `leave` (default) keeps α and α_in as committed, so the state is
+  outside the yield cone and `sas_clampMaxFRatio` reports by how many cone radii; `project` moves α to the closest
+  point of the cone around the clamped stress. The stress path is the same under both. At re-contact α is projected
+  to the cone and α_in := α under both. The stress change is never added to α.
+- **Read the two counters together.** `sas_clampMaxFRatio` is large (100–200) whenever α is merely stale, because
+  the cone is thin. `sas_clampMaxBound` is the stress ratio over the bounding stress ratio: above 1 the stress
+  itself is inadmissible. After a tension entry (E1) it stays below 1, since clamping raises p. It can exceed 1 only
+  after an E2 entry at committed p0 > p_floor, i.e. with p_sep > p_floor.
+- **Census:** entries, exits and the active flag are §13.5's columns (`sas_sepEntriesTension`, `sas_sepEntriesLowP`,
+  `sas_sepExits`, `sas_sepActive`, ...), shared by both modes; `sas_clampMaxFRatio` and `sas_clampMaxBound` are
+  appended (columns 44, 45). `sasOptions` gains `sas_lowPMode`, `sas_lowPFloor`, `sas_lowPAlpha`.
+- **It is a comparison mode.** The baseline for near-surface sand stays the separation of §13.5.

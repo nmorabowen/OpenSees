@@ -90,6 +90,7 @@ LadrunoSANISAND — -cppmOnFail refuse / -cppmTangent fixed / -meFallback cppm (
 LadrunoSANISAND — IntScheme 129 SAS-ME (alpha-aware error, refuses, no force-accept)
 LadrunoSANISAND — SAS-ME -sasHFloor / -sasReseatHyst / -sasSoftCap (WP-151 R1)
 LadrunoSANISAND — SAS-ME -sasTensionCutoff (separation at p' ~ 0, WP-152)
+LadrunoSANISAND — SAS-ME -sasLowP clamp (low-pressure clamp, comparison mode, WP-230)
 system Pardiso — -deterministic / -cbwr (MKL CNR, reproducible)
 relativeMassDamping: Rayleigh mass term relative to a v_ref(t)
 LadrunoMembrane — polygonal tributary & FEA load-transfer membrane
