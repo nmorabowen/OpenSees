@@ -851,8 +851,27 @@ Response *LadrunoLST::setResponse(const char **argv, int argc, OPS_Stream &outpu
       if (pointNum > 0 && pointNum <= numgp)
         theResponse = theMaterial[pointNum - 1]->setResponse(&argv[2], argc - 2, output);
     }
-  } else if (LadrunoResp::is(argv[0], "stress")) {
-    theResponse = new ElementResponse(this, 3, Vector(3 * numgp));
+  } else if (LadrunoResp::is(argv[0], "stress") || LadrunoResp::is(argv[0], "strain")) {
+    // Ladruno (WP-227): GaussPoint/NdMaterialOutput blocks so the Ladruno/MPCO
+    // recorders bucket the 3*numgp vector per GP (GAUSS_ID 0..2, paired with
+    // the recorder's Triangle_GaussLegendre_2 GP_PARAM = pts[] order) instead
+    // of one flat C1..C9 row. Values and order unchanged.
+    const bool isStress = LadrunoResp::is(argv[0], "stress");
+    for (int i = 0; i < numgp; i++) {
+      output.tag("GaussPoint");
+      output.attr("number", i + 1);
+      output.attr("eta", pts[i][0]);
+      output.attr("neta", pts[i][1]);
+      output.tag("NdMaterialOutput");
+      output.attr("classType", theMaterial[i]->getClassTag());
+      output.attr("tag", theMaterial[i]->getTag());
+      output.tag("ResponseType", isStress ? "sigma11" : "eps11");
+      output.tag("ResponseType", isStress ? "sigma22" : "eps22");
+      output.tag("ResponseType", isStress ? "sigma12" : "eps12");
+      output.endTag(); // NdMaterialOutput
+      output.endTag(); // GaussPoint
+    }
+    theResponse = new ElementResponse(this, isStress ? 3 : 4, Vector(3 * numgp));
   } else if (LadrunoResp::is(argv[0], "stressPlaneStrain")) {
     // plane-strain stress incl. out-of-plane sigma_zz (NaN when the material
     // doesn't expose it); full GaussPoint/NdMaterialOutput tags so XML-driven
@@ -876,8 +895,6 @@ Response *LadrunoLST::setResponse(const char **argv, int argc, OPS_Stream &outpu
       output.endTag(); // GaussPoint
     }
     theResponse = new ElementResponse(this, 21, Vector(4 * numgp));
-  } else if (LadrunoResp::is(argv[0], "strain")) {
-    theResponse = new ElementResponse(this, 4, Vector(3 * numgp));
   } else if (LadrunoResp::is(argv[0], "charLength")) {
     theResponse = new ElementResponse(this, 5, 0.0);
   } else if (LadrunoResp::is(argv[0], "stiff")) {

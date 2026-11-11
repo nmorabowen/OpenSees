@@ -352,3 +352,49 @@ def test_validator_rejects_bad_element_envelope_column_map(synth):
         cm = f["MODEL_STAGE[0]/RESULTS/ENVELOPES/ON_ELEMENTS/stress/204-Quad[201:0:0]/COLUMN_MAP"]
         cm["NUM_COMP"][...] = 5
     assert any("column total" in p or "NUM_COMP" in p for p in lf.validate(synth))
+
+
+# ---- schema §3.4 (WP-226): CSR connectivity for a variable-node class -------
+
+
+def _add_csr_group(path, offsets=(0, 5, 9), num_ctrl=-1):
+    import h5py
+
+    with h5py.File(path, "a") as f:
+        g = f["MODEL_STAGE[0]/MODEL/ELEMENTS"].create_group(
+            "33011-LadrunoDistributingCoupling[1000:0]")
+        g["ID"] = np.array([11, 12], dtype=np.int32)
+        g["CONNECTIVITY_OFFSETS"] = np.array(offsets, dtype=np.int32)
+        g["CONNECTIVITY_NODES"] = np.array([100, 5, 6, 7, 8, 101, 1, 2, 6], dtype=np.int32)
+        g.attrs["CONNECTIVITY_LAYOUT"] = np.bytes_(b"csr")
+        for k, v in (("TOPOLOGY", b"custom"), ("FAMILY", b"lagrange"),
+                     ("PARAM_DOMAIN", b"[-1,1]")):
+            g.attrs[k] = np.bytes_(v)
+        g.attrs["RATIONAL"] = 0
+        g.attrs["NUM_CTRL"] = num_ctrl
+
+
+def test_validator_accepts_csr_variable_node_group(synth):
+    _add_csr_group(synth)
+    assert lf.validate(synth) == []
+    assert lf.round_trip_oracle(synth) == []
+    with lf.LadrunoReader(synth) as r:
+        g = r.element_groups("MODEL_STAGE[0]")["33011-LadrunoDistributingCoupling[1000:0]"]
+    assert g["layout"] == "csr" and g["connectivity"] is None
+    assert [(t, list(n)) for t, n in g["rows"]] == [
+        (11, [100, 5, 6, 7, 8]), (12, [101, 1, 2, 6])]
+
+
+@pytest.mark.parametrize("offsets,num_ctrl,needle", [
+    ((0, 5), -1, "CONNECTIVITY_OFFSETS len"),
+    ((0, 6, 9), -1, None),            # still monotone and ends at len: accepted
+    ((0, 5, 8), -1, "non-decreasing"),
+    ((0, 5, 9), 4, "NUM_CTRL=-1"),
+])
+def test_validator_checks_csr_invariants(synth, offsets, num_ctrl, needle):
+    _add_csr_group(synth, offsets=offsets, num_ctrl=num_ctrl)
+    problems = lf.validate(synth)
+    if needle is None:
+        assert problems == []
+    else:
+        assert any(needle in p for p in problems), problems

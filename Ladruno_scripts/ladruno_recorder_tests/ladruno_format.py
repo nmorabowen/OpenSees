@@ -112,8 +112,21 @@ class LadrunoReader:
         base = self.f[f"{stage}/MODEL/ELEMENTS"]
         for name in base:
             grp = base[name]
+            # Schema §3.4 (WP-226): a class whose elements carry different node
+            # counts (RBE3/RBE2 footprints) is CSR — ID + CONNECTIVITY_OFFSETS +
+            # CONNECTIVITY_NODES, NUM_CTRL=-1, no rectangular CONNECTIVITY.
+            # ``connectivity`` is then None and ``rows`` lists (tag, nodes) pairs.
+            csr = _attr(grp, "CONNECTIVITY_LAYOUT") == "csr" if "CONNECTIVITY_LAYOUT" in grp.attrs else False
+            if csr:
+                ids = np.asarray(grp["ID"][...]).reshape(-1)
+                offsets = np.asarray(grp["CONNECTIVITY_OFFSETS"][...]).reshape(-1)
+                nodes = np.asarray(grp["CONNECTIVITY_NODES"][...]).reshape(-1)
+                conn = None
+            else:
+                conn = grp["CONNECTIVITY"][...]
             d = {
-                "connectivity": grp["CONNECTIVITY"][...],
+                "layout": "csr" if csr else "rect",
+                "connectivity": conn,
                 "topology": _attr(grp, "TOPOLOGY"),
                 "family": _attr(grp, "FAMILY"),
                 "order": tuple(int(x) for x in np.atleast_1d(_attr(grp, "ORDER")))
@@ -122,6 +135,14 @@ class LadrunoReader:
                 "rational": int(_attr(grp, "RATIONAL")),
                 "num_ctrl": int(_attr(grp, "NUM_CTRL")),
             }
+            if csr:
+                d["ids"] = ids
+                d["offsets"] = offsets
+                d["nodes"] = nodes
+                d["rows"] = [
+                    (int(ids[e]), nodes[int(offsets[e]):int(offsets[e + 1])])
+                    for e in range(ids.shape[0])
+                ] if offsets.shape[0] == ids.shape[0] + 1 else []
             if "QUADRATURE/GP_PARAM" in grp:
                 gp_param = grp["QUADRATURE/GP_PARAM"][...]
                 d["gp_param"] = gp_param
@@ -418,6 +439,21 @@ def validate(path: str) -> list[str]:
             # element groups: BASIS + QUADRATURE invariants
             groups = r.element_groups(stage)
             for name, g in groups.items():
+                if g["layout"] == "csr":
+                    # §3.4: OFFSETS [nElem+1] starts at 0, never decreases, ends at
+                    # len(NODES); NUM_CTRL=-1; no basis-dependent data (QUADRATURE /
+                    # GLOBAL_GP_COORDS / CTRL_WEIGHT) since the node count varies.
+                    off, nel = g["offsets"], g["ids"].shape[0]
+                    if off.shape[0] != nel + 1:
+                        err(f"{stage}/{name}: CONNECTIVITY_OFFSETS len {off.shape[0]} != nElem+1 ({nel + 1})")
+                    elif nel and (off[0] != 0 or np.any(np.diff(off) < 0)
+                                  or off[-1] != g["nodes"].shape[0]):
+                        err(f"{stage}/{name}: CONNECTIVITY_OFFSETS not 0..len(NODES) non-decreasing")
+                    if g["num_ctrl"] != -1:
+                        err(f"{stage}/{name}: CSR group needs NUM_CTRL=-1, got {g['num_ctrl']}")
+                    if "global_gp_coords" in g or g["rational"]:
+                        err(f"{stage}/{name}: CSR group carries GLOBAL_GP_COORDS/RATIONAL")
+                    continue
                 if g["connectivity"].shape[1] != 1 + g["num_ctrl"]:
                     err(f"{stage}/{name}: CONNECTIVITY cols {g['connectivity'].shape[1]} "
                         f"!= 1+NUM_CTRL ({1 + g['num_ctrl']})")
@@ -577,7 +613,8 @@ def round_trip_oracle(path: str, tol: float = 1e-12) -> list[str]:
             nid = np.asarray(nid).reshape(-1)
             coord_of = {int(t): np.asarray(ncoord[i], dtype=float) for i, t in enumerate(nid)}
             for name, g in r.element_groups(stage).items():
-                if g.get("global_gp_coords") is None or g["gp_param"] is None:
+                if (g.get("global_gp_coords") is None or g["gp_param"] is None
+                        or g["layout"] == "csr"):
                     continue
                 topo = g["topology"]
                 conn = g["connectivity"]
