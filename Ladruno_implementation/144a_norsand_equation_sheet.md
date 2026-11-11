@@ -2,13 +2,13 @@
 title: "WP-144a — LadrunoNORSAND equation sheet (AB06/BA06 re-derived, curved CSL, WW ζ, Q-cap)"
 project: Ladruno
 type: equation sheet
-status: "round 3b 2026-10-03 (the Adversary's five round-3 defects fixed on the round-3 sheet: §9.7 items 2–3 — the post floor is a wet-side event under BA06 only; under HAR the D₁₂ coupling of the plastic shear strain makes the dry-side pattern FPf, reproduced on the TIMs set with (S.32f)/(S.54) FD-checked on the HAR law (K1.14b, 2.2e−7 / 2.2e−9 at h = 10⁻⁷/10⁻⁸, O(h²)); the wet-side F(σ_f) = O(p_min) stated with its size (+0.27 … +0.82 p_min) and the self-limiting contraction (|Δε^p_v| ≤ 2.7e−5 < ε*_f = 7.5e−5); §10.2 (S.56) the W_ramp words corrected to 1 − π_i(η₁)/π_i(η₂) and the validate() refusal gated to cap = smooth; §2.4/§15 p_a is one flag for HAR and the fork CSL, TIMs value 101 kPa, and the HAR→BA06 mutant is killed by expected-value tests and O2 parity, not by self-FD; owner approval of option (i) Π_f recorded (§9.7, §16.1, §16.3) with the orchestrator recommendation beside the two still-open §16.3 questions; scripts in gitAPE/ladrunoNORDSAD/handoff/round3b/scratch/). p-floor round 2026-10-03 (§16.6 item 16: §9.7 floor operator Π_f — a strain-space projection at fixed deviatoric elastic strain onto p = −p_min, applied to the trial and to the converged state, counted, never refuses; (S.48)–(S.55) with (S.32f)/(S.46f) FD-checked to ≤ 5e−8 and every named mutant ≥ 2.5e−3 apart; §5.4 unified π_i0 rule (S.53); §2.4 energy-option bookkeeping; §8/§10.2 nested-scan step corrected from 10⁻⁴ to the shipped 10⁻³ with the ramp-width criterion (S.56), O2 and kernel unchanged; scripts in Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_floor/). HAR energy option derived and gated 2026-10-02 (§2.3, §16.6 item 15: HAR05 eq 40 energy, Hessian, inverse map, exact convexity — positive definite at every stress ratio, gate table over the TIMs ring dumps passes with min 0.744 K_iso; BA06 stays the default; scripts in Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_har/). G2 owner decision applied 2026-10-01 (§16.6 item 14: exponential specific-volume update v = v0 exp(tr eps), dv/deps = v; every v-term of (S.26), (S.31)-(S.32), (S.40), (S.45)-(S.46), §1.4, §13, §14 updated and re-verified; scripts in Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_vexp/). G1 revision applied 2026-10-01 (12 items from the G1 oracle/test round, §16.6; owner decision: WW rho = 1/2 refused). G0 fix round 2026-09-30 (Adversary PASS-WITH-FIXES, 7 items; independent Opus numeric check PASSED; owner approved the refusal rule). Every derivative sympy/FD-checked; G0 scripts in the session scratchpad p0a/, G1 scripts in Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_r2/."
+status: "round 4b 2026-11-11 (Adversary PASS-WITH-FIXES on round 4, no formula error; six fixes: the model change on the floor stated plainly with the η_f / π_i* / q measurements, the round-3b collapse also at 2e−4 and the pure m = 1 sequence, (S.58) by induction with its exclusions, the K1.16 stall row asserted by invariants unless m = 1 on both sides, the noise band of the strict activation, step 5g / fixtures / response layout completed, and the forced-m ≥ 2 gate for (S.59)). round 4 2026-11-11 (owner decision O13 option A, the image-pressure rule at a post floor: §9.7 (S.57) π_i := min(π_i, π_f(σ_f)) after step 5f, the surface through the floored stress always exists (η_f < η_c < M/N, both energies); (S.58) F ≤ F_tol and |π_i| ≥ c_N p_min at every committed state; (S.59) the chain row S^π = Σ_b γ_b Ŝ^ε_bb replaces the (S.54) S^π row, the single-step tangent (S.32f) is unchanged, FD-checked 3.0e−7 / 1.0e−7 / 1.3e−7 at h = 10⁻⁷ (O(h²)) on the K3 HAR set and 1.1e−8 on the K1.12 (C) BA06 case; (S.60) the rate-form counterpart — the split with the rule converges at first order to (S.60), NOT to the Koiter form (S.55); §9.7 items 2–3 corrected with H19 as the counterexample; K1.12 (C) and the wet-floor table re-valued, new K1.16 from the H19 states; six decisions listed for the owner in §16.3; scripts in the session scratchpad round4/). round 3b 2026-10-03 (the Adversary's five round-3 defects fixed on the round-3 sheet: §9.7 items 2–3 — the post floor is a wet-side event under BA06 only; under HAR the D₁₂ coupling of the plastic shear strain makes the dry-side pattern FPf, reproduced on the TIMs set with (S.32f)/(S.54) FD-checked on the HAR law (K1.14b, 2.2e−7 / 2.2e−9 at h = 10⁻⁷/10⁻⁸, O(h²)); the wet-side F(σ_f) = O(p_min) stated with its size (+0.27 … +0.82 p_min) and the self-limiting contraction (|Δε^p_v| ≤ 2.7e−5 < ε*_f = 7.5e−5); §10.2 (S.56) the W_ramp words corrected to 1 − π_i(η₁)/π_i(η₂) and the validate() refusal gated to cap = smooth; §2.4/§15 p_a is one flag for HAR and the fork CSL, TIMs value 101 kPa, and the HAR→BA06 mutant is killed by expected-value tests and O2 parity, not by self-FD; owner approval of option (i) Π_f recorded (§9.7, §16.1, §16.3) with the orchestrator recommendation beside the two still-open §16.3 questions; scripts in gitAPE/ladrunoNORDSAD/handoff/round3b/scratch/). p-floor round 2026-10-03 (§16.6 item 16: §9.7 floor operator Π_f — a strain-space projection at fixed deviatoric elastic strain onto p = −p_min, applied to the trial and to the converged state, counted, never refuses; (S.48)–(S.55) with (S.32f)/(S.46f) FD-checked to ≤ 5e−8 and every named mutant ≥ 2.5e−3 apart; §5.4 unified π_i0 rule (S.53); §2.4 energy-option bookkeeping; §8/§10.2 nested-scan step corrected from 10⁻⁴ to the shipped 10⁻³ with the ramp-width criterion (S.56), O2 and kernel unchanged; scripts in Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_floor/). HAR energy option derived and gated 2026-10-02 (§2.3, §16.6 item 15: HAR05 eq 40 energy, Hessian, inverse map, exact convexity — positive definite at every stress ratio, gate table over the TIMs ring dumps passes with min 0.744 K_iso; BA06 stays the default; scripts in Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_har/). G2 owner decision applied 2026-10-01 (§16.6 item 14: exponential specific-volume update v = v0 exp(tr eps), dv/deps = v; every v-term of (S.26), (S.31)-(S.32), (S.40), (S.45)-(S.46), §1.4, §13, §14 updated and re-verified; scripts in Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_vexp/). G1 revision applied 2026-10-01 (12 items from the G1 oracle/test round, §16.6; owner decision: WW rho = 1/2 refused). G0 fix round 2026-09-30 (Adversary PASS-WITH-FIXES, 7 items; independent Opus numeric check PASSED; owner approved the refusal rule). Every derivative sympy/FD-checked; G0 scripts in the session scratchpad p0a/, G1 scripts in Ladruno_files/testbed/norsand_oracle/tests/scratch_sheet_r2/."
 owner: nmora (Deriver: Fable, P0a)
 related:
   - "[[144_ladruno_norsand_plan]] (design §2, oracles §5, roster §6)"
   - "[[134_sanisand_reference_integrator]] (the O1 oracle template)"
 tags: [equation-sheet, norsand, critical-state, hyperelasticity, sand, wp-144]
-updated: 2026-10-03
+updated: 2026-11-11
 ---
 
 # WP-144a — LadrunoNORSAND equation sheet
@@ -99,7 +99,7 @@ Equation numbers `(S.n)` are this sheet's. `(AB06 nn)`, `(BA06 n.nn)` are the pa
 | e₀, λ_c, ξ, p_a | "fork" CSL: e_c = e₀ − λ_c (−p/p_a)^ξ (DM04 form); p_a shared with the HAR energy (one flag, §2.4; TIMs: 101 kPa) | plan §2.3 |
 | c₁, c₂ | Q-cap blend bounds, η₁ = c₁M ≤ η₂ = c₂M (planar cap: c₁ = c₂; BA06's χ_cap = 0.10 → c₁ = c₂ = 0.10) | BA06 2.76, §10 |
 | v₀ | initial specific volume (state input; committed datum for v = v₀ exp(tr ε), `initialState`, `revertToStart`; enters **no** derivative since G2, §1.2) | BA06 Box 2; §1.2 |
-| p_min | p′ floor (§9.7): every trial and committed state has p ≤ −p_min, by the projection Π_f (S.48); ≥ 0, 0 = off (the pre-round-3 refusals). Default 5·10⁻³ p_ref with p_ref := |p₀| (BA06) or p_a (HAR): 0.5 / 0.505 kPa | plan §2.7; §9.7 |
+| p_min | p′ floor (§9.7): every trial and committed state has p ≤ −p_min, by the projection Π_f (S.48); ≥ 0, 0 = off (the pre-round-3 refusals). Default 5·10⁻³ p_ref with p_ref := |p₀| (BA06) or p_a (HAR): 0.5 / 0.505 kPa. Since round 4 a post-floored state that lies outside F has its π_i moved onto the surface through the floored stress, (S.57); with p_min = 0 nothing of §9.7 acts | plan §2.7; §9.7 |
 
 ### 1.4 Finite-strain mapping (stated once; AB06 §3, BA06 §3.3) [E]
 Replace ε^e_a by the principal elastic logarithmic stretches ε^e_a = ln λ^e_a, σ_a by the principal Kirchhoff stresses
@@ -690,6 +690,13 @@ Given ε^e_n (tensor), π_{i,n}, v_n, total strain ε_{n+1} (so Δε); v₀ is c
    5f. **Floor after convergence (§9.7):** if p(ε^e_{n+1}) > −p_min, replace ε^e_{n+1} := Π_f(ε^e_{n+1}) (counted as a
    post floor event); π_i, v, ε^p and D^p of the step are those already formed. The tangent is then (S.32f); a
    substepped increment chains with (S.54).
+   5g. **Image pressure at a post floor (§9.7 (S.57); round 4):** if step 5f acted and F(σ_f, π_i) > 0 (strict) at the
+   floored stress σ_f = σ(ε^e_{n+1}): form η_f = ζ(θ_f) q_f/|p_f| (0 at the vertex) and π_f, the image pressure of the
+   yield surface through σ_f; **guard** — if η_f ≥ M/N (N > 0; unreachable, §9.7) leave π_i unchanged, do not refuse,
+   and log it (a warning and the per-step flag floor_pi_guard = 1; not a committed counter); **acceptance** — replace
+   π_i := π_f only if π_f < π_i (never shrink), and then set floor_pi = 1 and n_f,π += 1. Nothing
+   else of the step changes (σ_f, ε^e, ε^p, v, D^p, the floor counters, the single-step tangent (S.32f)); a substepped
+   increment chains the S^π row with (S.59) instead of the S^π row of (S.54).
 
 Scaling note [I]: r₄ is in stress units, r₁₋₃ in strain; normalise (e.g. r₄/|p₀|) for the convergence test.
 
@@ -985,6 +992,7 @@ recursion (S.46): with T_k := S^ε_k + α_k E_J (raw trial sensitivity) and T^f_
                 S^π_{k+1} = Σ_b w_b T̂^f_bb + ((1−κ)/c) S^π_k + (1−κ) Π_v S^v_{k+1};
       elastic:  S^ε_{k+1} = T^f_k,   S^π_{k+1} = S^π_k;      S^v_{k+1} = v_{k+1} (Σ_{j≤k} α_j) tr E_J unchanged (raw trace),   (S.54)
 
+(round 4: in a sub-increment where the rule (S.57) fires the S^π line is replaced by (S.59), below)
 Φ^tr_k, Φ^post_k in the (S.33) form with the block (S.51a) and unit spin (identity when inactive), all in the
 sub-increment's trial basis (Π_f is co-axial, so the basis of §9.6 is unchanged); the assembly (S.47) uses a^e at the
 final, floored, ε^e_m. Floor events in different sub-increments compose like any other branch decision (one-sided
@@ -992,6 +1000,251 @@ across an activation). FD (floor_fd.py (D), m = 2, pattern FP-/FP-, fractions he
 2.9e−9 / 5.5e−10 (α₀ = 5); the mutant that keeps the floored states but omits the Φ operators: 0.98–0.99. Under HAR
 (round 3b, floor_fd_har.py (D1)–(D2), m = 2, fractions held fixed, K1.14b): pattern FPf,FPf 2.3e−7 / 2.3e−9 and
 pattern -P-,-Pf 1.2e−6 / 1.2e−8 (h = 10⁻⁷/10⁻⁸, ratio 100 both); Φ operators omitted 2.1 for both.
+
+**The image-pressure rule at a post floor (S.57)–(S.60) [I; round 4, 2026-11-11; owner decision O13, option A; sympy-, FD- and rate-checked: r4_sympy.py, r4_fd.py, r4_rate.py, r4_c0.py, r4_values.py, r4_h19_cause.py — session scratchpad round4/].**
+
+*Why (H19, Kimura strip deck at B/16, HAR, p_min 0.505 kPa, K3 set; evidence in `Ladruno_files/testbed/norsand_calib/out/h19/`).*
+Four Gauss points beside the footing edges were committed on the floor with F = +2.8 … +3.3 p_min (p/π_i = 4.0 … 4.5
+against 2.048 at the tip η = 0) and then refused every increment. Cause, re-derived with the Deriver's own integrator
+(r4_h19_cause.py; the dumped stresses reproduced to 2e−15 kPa): step 5f restores p = −p_min but leaves π_i at the value
+of the PRE-floor converged state, whose hardening target is π_i* = p_c B^{(N−1)/N} with the pre-floor |p_c| < p_min, and
+p_c itself lies on the surface of size π_i (|p_c| ≤ |π_i|/c_N, (S.58)): the target is proportional to π_i, there is no
+p_min in the loop, and for a loose state (ψ_i > 0 ⇒ B > 1 ⇒ π_i*/p_c < 1) the map is a contraction towards 0. From
+the `s185.txt` state 1 with its listed increment (|Δε| = 6.97e−3) repeated, round-3b rule: π_i = −0.3225 → −0.2943,
+−0.2669, −0.2276, −0.2042, −0.1736, −0.1540, −0.1358, −0.1146 in 8 steps (the deck: −0.294, −0.267, −0.240, −0.204,
+−0.173, −0.138, −0.112), with π_i*/p_c = 0.990 → 0.946, p_c/π_i = 0.93 … 0.97, |p_c| = 0.281 → 0.109 kPa and
+F(σ_f)/p_min = +0.57 → +3.17 (+9.4 at step 14, π_i = −0.046: no lower bound). On this path η_c = 1.29 … 1.35 > M
+(pattern FPf: the post floor comes from the D₁₂ term, item 2), so the collapse is not a wet-side event only; it needs ψ_i > 0 (π_i*/p_c < 1). **It does not need large steps**
+(round 4b; the round-4 text said so and was wrong): at |Δε| = 2e−4 along the same direction the round-3b rule gives
+π_i = −0.3894 (F(σ_f) = +0.18 p_min) at step 60, −0.3378 (+0.30) at 600, −0.2401 (+0.75) at 1500 and −0.1302
+(+2.34 p_min) at 3000, every step at m = 1 — the same end, later. The 8-step sequence above depends on the ladder
+(the own Newton took steps 3, 5 and 8 at m = 2); at pure m = 1 it is −0.2943, −0.2669, −0.2405, −0.2154, −0.1918,
+−0.1697, −0.1493, −0.1306 (r4b_m1.py: steps 3 and 6 reached by warm-starting the same Newton from the m = 2 solution;
+the Adversary's solver gives the same digits directly). The round-3b closing argument of item
+2 ("with |p| ≥ p_min the hardening target stays bounded away from 0") used the floored p; the algorithm uses p_c.
+
+*The rule.* After step 5f of a (sub-)increment, **if the post floor acted** (floor_post = 1; the step is then plastic),
+with σ_f := σ(ε^e_f) the committed stress, p_f its mean (= −p_min to round-off), q_f, θ_f its invariants (S.1), and
+π_i^{BE} the image pressure of the converged return:
+
+      η_f := ζ(θ_f, ρ) q_f / |p_f|        (:= 0 at the vertex R < R_tol, §3.2),
+      π_f := p_f exp(η_f/M − 1)                               (N = 0),
+      π_f := p_f [ (1−N)/(1 − η_f N/M) ]^{(1−N)/N}              (N > 0)        [the inverse of (S.12) at (p_f, η_f)],
+      if F(σ_f, π_i^{BE}) > 0:   π_i := π_f;    otherwise π_i := π_i^{BE}.          ⇔   π_i := min(π_i^{BE}, π_f).            (S.57)
+
+Activation is the strict test F(σ_f, π_i^{BE}) > 0 as evaluated (no tolerance), and the replacement is accepted only if
+π_f < π_i^{BE} (the two tests are the same statement in exact arithmetic, F_π > 0 (S.13): F(σ_f, π) > 0 ⇔ π > π_f; in
+floating point they can differ within round-off of F = 0, where nothing is then done). **The surface is never shrunk.**
+**Noise band of the strict test (round 4b).** Where the post floor just switches on (p_c → −p_min) σ_f → σ_c and
+F(σ_f, π_i^{BE}) → F(σ_c, π_i^{BE}) = r₄, the converged residual (|r₄| ≤ 10⁻¹² p_ref), whose sign is noise. Define the
+band |F(σ_f, π_i^{BE})| ≤ F_tol (= 10⁻¹⁰ p_ref, 100× the residual tolerance). Inside it the committed state is not
+affected beyond |F|/F_π ≤ F_tol/F_π in π_i (the two outcomes are C⁰-close), but **whether the rule fired is not
+reproducible between implementations**: floor_pi, n_f,π and the chain row used ((S.54) or (S.59); dπ_i/ds = −8.78
+against −748 kPa in the r4_c0.py case) can differ. Contract: the state parity (σ, π_i) is asserted everywhere; the
+parity of floor_pi / n_f,π and of the chained tangent is asserted only on increments none of whose sub-increments
+lies in the band, and FD checks of (S.59) are run outside it (the last reset of every case of the FD table has
+F(σ_f, π_i^{BE}) ≥ +0.011 p_min, 10⁶ times the band).
+The rule acts on π_i alone: σ_f, ε^e_f, ε^p, v, Δλ, D^p, the floor counters and the reported ψ_i, π_i*, η of the step
+are those of the return; ψ_i(v, π_i) of the committed state follows the new π_i at the next step (it rises with |π_i|
+in both CSL modes, so the B > 0 guard of §7 is not approached). It does not act on an elastic step (the committed
+state is the floored trial, F ≤ F_tol by the trial test), on a plastic step without a post floor (F = 0 by the
+return), at `initialState` ((S.53) already gives F ≤ 0), inside the local Newton or the nested π_i solve. With
+p_min = 0 the post floor never acts and the model is the round-3b one, bit for bit.
+
+*The surface through σ_f always exists at a post-floored state; no refusal branch* [I; sympy, r4_sympy.py (e)]. The
+converged state is on the surface, so η_c = ζ q_c/|p_c| = η(p_c, π_i^{BE}) < M/N strictly (p/π_i > 0 in (S.12)). Π_f
+keeps ε_s and θ and raises |p| from |p_c| to p_min, and at fixed ε_s the ratio q/|p| is strictly decreasing in |p|:
+under HAR, with q = 3g p_a ε_s x^n and x² − a x^{2n} = (|p|/p_a)² (S.50), d ln(q/|p|)/d ln|p| = −(1−n) x²/(x² − n a x^{2n}) < 0
+(symbolic); under BA06, ∂(q/|p|)/∂|p| = −3μ₀ε_s/p² < 0 for every α₀ (symbolic). Hence **η_f < η_c < M/N** and (S.57)
+is defined, for both energies and every N. The guard "η_f ≥ M/N" is therefore unreachable; an implementation keeps it
+as a defensive test that **leaves π_i unchanged and does not refuse** (the floor's contract is "never refuses"; decision
+for the owner, §16.3). Checked: 600 + 1200 steps from the H19 state, a reset at every one, F(σ_f, π_i) = 0 to 2.5e−14 p_min.
+
+*What the rule guarantees* [I; r4_sympy.py (f), r4_values.py (E)]. With c_N := (1−N)^{(1−N)/N} (N > 0), c₀ := e⁻¹
+(0.4882 on the K3 set, 0.4648 for N = 0.4; 1/c_N is the tip ratio |p|/|π_i| at η = 0), δ_F := F_tol/p_min (2e−8 at the
+default p_min) and p_min > 0, **at every committed state reached from an admissible start** (by induction over the
+steps; each branch below maps a state satisfying (b) to one satisfying it):
+
+      (a) |p| ≥ p_min (1 − 10⁻¹²);      (b) F(σ, π_i) ≤ F_tol;
+      (c) |π_i| ≥ c_N |p| (1 + δ_F N/M)^{−(1−N)/N} ≥ c_N p_min (1 − 10⁻¹² − δ_F (1−N)/M);
+      admissible start: `initialState` by (S.53). NOT covered: an explicit `-pi0`, a legacy (round-3b) committed state,
+      a restart / `recvSelf` of such a state — there (b), (c) hold from the first accepted post-floored step on,
+      or never if the state does not meet the floor again.                                                          (S.58)
+
+(The three K1.16 fixtures are such legacy states: they start outside F, at +0.458, +0.291 and +3.29 p_min, and the
+assertions of K1.16 apply after the first accepted step.)
+
+(a) is Π_f. (b) branch by branch: `initialState` (S.53) F ≤ 0 (an explicit `-pi0` is the user's responsibility); elastic
+step, trial-floored or not, F^tr ≤ F_tol; plastic without post floor F = r₄ ≤ 10⁻¹² p_ref; plastic with post floor,
+F(σ_f, π_i^{BE}) ≤ 0 nothing to do, > 0 then F(σ_f, π_f) = 0 to round-off by (S.57) (measured ≤ 2.5e−14 p_min over 1800
+steps, against F_tol = 2e−8 p_min). (c) from (b): q ≥ 0 and ζ > 0 give p η(p, π_i) ≤ F_tol, i.e. η ≥ −F_tol/|p| ≥ −δ_F,
+which in (S.12) is (p/π_i)^{N/(1−N)} ≤ (1 + δ_F N/M)/(1−N) (sharp: attained at q = 0, F = F_tol; 40 digits). So π_i can no
+longer collapse with the pre-floor pressure: measured min |π_i| = 0.381 … 0.399 kPa over the marches against
+c_N p_min = 0.2466 kPa. (S.58b) replaces the round-3b sentence "no F ≤ F_tol invariant is claimed at a floored
+committed state", and it is what makes the substepping ladder meaningful at a floored point: every trial is then
+O(Δε) from an admissible state, where before H19 it started 3 p_min outside F whatever the increment.
+
+*Consistent tangent: the single-step tangent is unchanged, the chain row of π_i is replaced* [I; sympy r4_sympy.py
+(a)–(d); FD r4_fd.py]. σ_f does not depend on the replacement, so (S.32f) and the S^ε line of (S.54) stand as they
+are. The image pressure handed to the next sub-increment is now the isotropic scalar function π_f(σ_f) instead of the
+nested root of (S.27), so its sensitivities to the trial strain (w_b), to the previous image pressure ((1−κ)/c) and to
+v ((1−κ)Π_v) are **replaced**, not corrected. Differentiating F(σ, π_f(σ)) ≡ 0 (F_π > 0):
+
+      G_a := ∂π_f/∂σ_a = − f_a(σ_f, π_f) / F_π(p_f, π_f)          [f_a of (S.14) WITH its ζ_y q y_a term; F_π of (S.13)]
+           = π_f/(3p_f) δ_a + (π_f (1−N)/(M − η_f N)) · (1/|p_f|) [ √(3/2) ζ n̂_a + ζ_y q_f y_a + (η_f/3) δ_a ]     (N = 0: π_f/M),
+      γ_b := Σ_a G_a a^e_ab(ε^e_f)                                [a^e (S.3) at the COMMITTED, floored, elastic strain],
+      rule active in sub-increment k:   S^π_{k+1} = Σ_b γ_b Ŝ^ε_{k+1,bb},     Ŝ^ε_{k+1,bb} := n^b · S^ε_{k+1} · n^b,                 (S.59)
+
+with S^ε_{k+1} the plastic line of (S.54) (after Φ^post_k) and n^b the trial eigenvectors of sub-increment k (σ_f is
+co-axial with ε^e_f = ε^e_{k+1}, whose basis is the trial basis; G is diagonal there, so the spin part of a^e does not
+contribute). The two forms of G_a are identical (40 digits, WW and GA, N > 0 and N = 0; the direct derivative was taken
+through ζ(θ(σ))); only the deviatoric part of G acts, because Σ_b (Σ_a δ_a a^e_ab) Ŝ^ε_bb = 3 dp_f = 0 after an active
+Φ^post. At the vertex π_f = c_N p_f is a constant and S^π_{k+1} = 0. The row has no S^π_k, no S^v and no w_b term: the
+history of π_i before the reset is forgotten, exactly as the state is. A sub-increment where the rule is inactive uses
+(S.54) unchanged and reads S^π_k from whichever row produced it. The switch between the two rows is a branch decision
+like every other in §9.6 (one-sided across F(σ_f, π_i^{BE}) = 0). Cost: one flow evaluation at σ_f and a 3-vector.
+
+FD record (r4_fd.py: the shipped O2 with (S.57) and (S.59) wrapped around `return_map`/`chain_propagate` in memory,
+fractions held fixed, the same pattern and reset flags asserted at every FD point; all six Δε columns, non-coaxial
+plane-strain increments from the H19 state `e7367g1_s185` advanced one step with the rule; K3 HAR set, smooth cap,
+p_min 0.505; `*` marks a sub-increment where the rule fired; measure of §9.6, and for the final image pressure
+max_J|S^π_J − FD_J|/max_J|S^π_J|):
+
+| case | pattern | C (S.47) vs FD, h = 10⁻⁶ / 10⁻⁷ / 10⁻⁸ | S^π vs FD |
+|---|---|---|---|
+| (a) HAR K3, m = 1, \|Δε\| 2e−4 | -Pf* | 3.0e−5 / 3.0e−7 / 3.0e−9 | 1.3e−5 / 1.3e−7 / 1.4e−9 |
+| (b) HAR K3, (½, ½), \|Δε\| 4e−4 | -Pf*,-Pf* | 1.0e−5 / 1.0e−7 / 1.3e−9 | 4.7e−6 / 4.7e−8 / 9.4e−10 |
+| (c) HAR K3, (½, ½), \|Δε\| 4.6e−4, tr Δε +4.1e−4 | FPf*,FPf* | 1.2e−5 / 1.3e−7 / 6.3e−9 | 4.2e−5 / 4.6e−7 / 9.0e−8 |
+| (c′) the same, (½, ¼, ¼) | FPf*,FPf*,FPf* | 9.2e−6 / 9.2e−8 / 1.2e−9 | 7.5e−6 / 7.5e−8 / 1.3e−9 |
+| (d1) BA06 K1.12 (C), m = 1 | -Pf* | 1.1e−6 / 1.1e−8 / 6.9e−10 | 7.7e−8 / 7.9e−10 / 1.3e−9 |
+| (d2) BA06 K1.12 (C), 2× the increment + shear 2e−4, (½, ½) | -Pf*,-P- | 3.5e−8 / 8.4e−9 / 7.8e−9 | 7.4e−9 / 1.4e−8 / 1.3e−8 |
+
+O(h²) down to the round-off floor (~1e−8 on (c) and (d2)); (a) and (d1) at m = 1 equal the closed form (S.32f)/(S.33) to
+5e−16 / 3e−16, which is the statement "the single-step tangent is unchanged"; (d2) is the reset sub-increment feeding
+an ordinary (S.54) row. δ:C ≤ 4e−15 max|C| whenever the last sub-increment is post-floored. Mutants, C vs FD at
+h = 10⁻⁷ on the chains (b) / (c) / (c′) / (d2), and S^π vs FD on all six cases: **M-R1** row not replaced (the (S.54)
+S^π row kept): 0.20 / 0.15 / 0.29 / 0.089, S^π 0.12 … 2.1; **M-R2** ζ_y term dropped from f_a: 0.19 / 0.23 / 0.42 / 0.13,
+S^π 0.086 … 16; **M-R3** row added to the (S.54) row instead of replacing it: 0.020 / 0.042 / 0.0084 / 0.16, S^π 0.11 … 1.6;
+**M-R5** a^e of the pre-floor state in γ_b: 0.016 / 0.012 / 0.017 under HAR, **invisible under BA06 α₀ = 0** (the two a^e
+differ in D₁₁ only, which multiplies dp_f = 0 — like M-F3b, the test runs under HAR); **M-R6** the row built from the
+strain sensitivity before Φ^post: 0.26 / 0.40 / 0.65 / 0.097, S^π 0.13 … 6.8. On the single steps (a), (d1) every mutant
+leaves C at its FD level: a single-step stress-tangent test cannot see the row, so the gate needs a chain or the S^π
+check.
+**Gate that makes (S.59) testable (round 4b; kernel and O2).** A forced-ladder test (fractions fixed, m ≥ 2, HAR) in
+which the rule fires in a **non-final** sub-increment, FD of the whole increment over the six columns. Fixture = case
+(b): K3 set of K1.16; start = `e7367g1_s185` after ONE K1.16 step (the first row of the K1.16 table, π_i = −0.3989652918);
+increment = 2× the K1.16 increment (|Δε| = 4e−4); fractions (½, ½); pattern -Pf*,-Pf* (F(σ_f, π_i^{BE}) = +0.162 and
++0.099 p_min: outside the band); committed π_i = −0.479306004 kPa, p = −0.505. Expected chained C vs central FD:
+1.0e−5 / 1.0e−7 / 1.3e−9 at h = 10⁻⁶ / 10⁻⁷ / 10⁻⁸ (the Adversary's independent run of the same direction from the
+`s185` state itself: 8.2e−6 / 8.0e−8 / 3.0e−9); pass ≤ 3e−7 at h = 10⁻⁷. The same test with the (S.54) S^π row kept
+(the H19 prototype) is at 0.20 (Adversary 0.15), so the threshold separates them by six decades. The m = 1 tangent of
+either sub-increment alone passes with or without the row and is not a gate for it.
+
+*Continuity* [I; r4_c0.py]. (S.57) is π_i = min(π_i^{BE}, π_f(σ_f)) on the set where the post floor acts. Its
+activation boundary has two parts: (i) the post floor switching on, p_c = −p_min, where σ_f = σ_c and
+F(σ_f, π_i^{BE}) = F(σ_c, π_i^{BE}) = 0, so π_f = π_i^{BE}; (ii) F(σ_f, π_i^{BE}) = 0 with the post floor active, where
+π_f = π_i^{BE} by definition. The committed state is therefore **C⁰** in the increment across both, the stress of the
+step is unaffected, and the stress of every later (sub-)increment is C⁰. The derivative of π_i jumps (a kink): the
+chained tangent of an increment whose earlier sub-increment sits on the boundary is one-sided, like the
+elastic/plastic switch of (S.33); a single-step tangent has no jump from the rule at all. Measured at boundary (i)
+(TIMs HAR set of K1.14b, surface state at p = −1.02 p_min, η = 0.8M, ψ_i = +0.02, shear s n̂; s* = 6.055e−6, patterns
+-P- | -Pf*): |π_i(s*+δ) − π_i(s*−δ)| = 7.6e−5, 7.6e−6, 7.6e−7, 7.6e−8 kPa for δ = 10⁻⁷ … 10⁻¹⁰ (∝ δ); dπ_i/ds = −8.78 kPa on
+the left (the hardening law) and −748 kPa on the right (the rule; the BE value keeps −8.78), a factor 85; a second
+step from both sides differs by 3.1e−4 and 3.1e−6 kPa in stress (δ = 10⁻⁷, 10⁻⁹). An interior boundary (ii) was looked
+for on the K1.14b FPf map and on states at the floor and not met (F(σ_f, π_i^{BE}) kept one sign over each
+post-floored region); the min() argument covers it.
+
+*Rate form: the split with the rule does NOT converge to (S.55); its limit is (S.60)* [I; r4_rate.py]. In the Koiter
+form (S.55) a state riding the floor in plastic loading satisfies F = 0 and p = −p_min together, so π_i = π_f(σ)
+holds identically and no rule is needed; but (S.55) reaches that by **coupling** the two multipliers, and the split
+with the rule reaches it differently: the F-excess that the post floor creates (−f:a^e:P Δλ_f per step) is absorbed by
+moving the surface, not by more plastic flow at the next step. To first order in the step, on the floor with F = 0,
+a := a^e, P := 1/3:
+
+      λ̇_f^tr := ⟨P:a:ε̇⟩ / (P:a:P)                       (step 1f),
+      λ̇ = ⟨ f:a:(ε̇ − λ̇_f^tr P) ⟩ / ( f:a:q + H )           (the return: single-mechanism consistency, H of (S.41)),
+      λ̇_f = P:a:(ε̇ − λ̇ q) / (P:a:P)                      (ṗ = 0; its post part is λ̇_f − λ̇_f^tr, step 5f),
+      π̇_i = √(2/3) h λ̇ (π_i* − π_i) Ω + (f:a:P) (λ̇_f − λ̇_f^tr) / F_π      (hardening + the rule: Ḟ = 0),
+      ε̇^e = ε̇ − λ̇ q − λ̇_f P,
+      valid while λ̇ > 0,  λ̇_f − λ̇_f^tr > 0 (the return itself relaxes p)  and  f:a:P = F_p D₁₁ + ζ D₁₂ < 0;  otherwise (S.55).   (S.60)
+
+Ḟ = f:a:ε̇^e + F_π π̇_i = 0 and ṗ = 0 hold identically (substitute). The condition f:a:P < 0 is "the floor mechanism
+pushes the stress out of F", the rate form of F(σ_f, π_i^{BE}) > 0: F_p < ζ ε'_f, i.e. η < M + (1−N) ζ ε'_f — the wet
+side under BA06 α₀ = 0 (ε'_f = 0) plus a strip of the dry side under HAR (the FPf* steps of H19, η_c ≈ 1.3 > M = 1.25).
+(S.60) and (S.55) agree on the boundary of that set (f:a:P → 0 or λ̇_f → λ̇_f^tr make both read
+λ̇ = f:a:(ε̇ − λ̇_f^tr P)/(f:a:q + H) and π̇_i the hardening law), so the O1 mode switch is continuous. Where the post floor
+acts with f:a:P ≥ 0 (K1.14b) or does not act (FP-, the floor_rate.py path) nothing changes and (S.55) stands.
+Measured (own integrator against Radau at rtol 10⁻¹⁰ of both rate forms; max|F| ≤ 2e−12 kPa, |p + p_min| ≤ 6e−14 kPa,
+λ̇, λ̇_f > 0, λ̇_f^tr = 0 and f:a:P < 0 along both paths, denominators ≥ 1.5e4 kPa):
+
+| path | split with (S.57) vs (S.60), m = 1 … 256: σ, π_i (observed order) | the same split vs (S.55) | round-3b split (rule off) vs (S.55) |
+|---|---|---|---|
+| BA06 K2 set, p_min 50, state on the floor at η = 0.5M, shear 2e−3 along n̂ | 1.0e−2 → 4.5e−5, 2.2e−2 → 9.9e−5 (0.90, 0.95, 0.97, 0.99, 0.99, 1.00, 1.00, 1.00) | plateau 5.1e−3, 1.09e−2 | 6.5e−3 → 3.1e−5, 2.4e−2 → 1.1e−4 (first order) |
+| HAR K3 set, p_min 0.505, η = 0.5M, ψ_i +0.02, shear 2e−4 along n̂ | 4.6e−2 → 2.2e−4, 5.1e−2 → 2.8e−4 (0.79, 0.88, 0.93, 0.96, 0.98, 0.99, 1.00, 1.00) | plateau 9.4e−2, 0.18 | 4.9e−2 → 7.4e−4, 1.2e−2 → 1.1e−4 (first order) |
+
+The plateaus are the distance between the two rate forms at the path end (5.1e−3 / 1.09e−2; 9.4e−2 / 0.15 … 0.18,
+the π_i figure depending on which of the two values normalises it). Those figures are in the **σ-norm of the table**,
+max_a|Δσ_a|/max_a|σ_a|, which is dominated by p and hides what changes.
+
+**What the continuum model is on the floor with the rule (round 4b; stated plainly).** Wherever the rule fires
+persistently, π_i is **slaved to the stress** by F = 0 at p = −p_min: π_i = π_f(η_f). The hardening law (S.25) no
+longer decides the size of the surface; it only feeds π̇_i together with the reset term, and the quasi-steady state of
+(S.60) is π̇_i = 0, i.e.
+
+      H λ̇ = (f:a:P) λ̇_f      with H < 0 and f:a:P < 0      (softening by (S.25) balanced by the reset),
+
+**not** the Koiter steady state H = 0 ⇔ π_i = π_i* of (S.55). The state stays with |π_i| > |π_i*| (softening branch)
+and the stress ratio it carries is not the one the state parameter asks for: **on the floor the strength stops
+following ψ_i.** Measured with the own integrator (r4b_check.py; the Adversary's adv_long/adv_steady numbers
+reproduced digit for digit), K3 set, 2e−4 steps along the H19 direction from `e7367g1_s185`, the rule firing at every
+step, m = 1 throughout:
+
+| step | ψ_i | η_f with the rule (M = 1.25) | \|π_i\|/\|π_i*\| | η of the state π_i = π_i* at the same v | H, f:a:P [kPa] | round 3b at the same step: η_f, F(σ_f)/p_min |
+|---|---|---|---|---|---|---|
+| 60 | +0.007 | 1.44 | 1.19 | 1.23 | −32, −617 | 1.07, +0.18 |
+| 600 | +0.053 | 1.42 | 1.29 | 1.10 | −45, −682 | 0.95, +0.30 |
+| 1500 | +0.132 | 1.39 | 1.47 | 0.87 | −66, −762 | 0.69, +0.75 |
+| 3000 | +0.272 | 1.36 | 1.80 | 0.48 | −93, −853 | 0.32, +2.34 |
+
+So while the point loosens from ψ_i = +0.007 to +0.27 (e 0.94 → 1.21) the floored stress ratio stays above M
+(1.44 → 1.36), where a surface with π_i = π_i* would have fallen to 0.48. Round 3b falls too, but by leaving the
+surface (its F(σ_f) grows to +2.3 p_min: the H19 collapse), so neither is the Koiter answer at these step sizes. **In
+q** the gap between the two rate forms is far larger than in the σ-norm: on the K3 path of the table q = 0.405 kPa
+with (S.60) against 0.293 kPa with (S.55), **+38 %**, at a total shear of 2e−4 (σ-norm 9.4e−2), and 0.535 against
+0.349 kPa, **+53 %**, at 1e−3 (σ-norm 0.14); K1.16 after 60 steps has q = 0.631 kPa with the rule against 0.469 kPa
+without. In absolute terms the largest stress difference on these paths is 0.123 kPa = **0.24 p_min** (0.14 p_min at
+2e−4): the change is bounded by the floor's own scale, which is what the F vs F/2 report measures, but relative to
+the strength of a floored point it is of order one, and it is a change of model, not of algorithm. It is the first
+decision listed for the owner (§16.3). **Consequence for O1:** the gate "O2 → O1 at first
+order on a floored path" holds against (S.55) only on paths where the rule never fires; on a path where it fires O1
+must integrate (S.60) in the stated set (then first order, table) or the comparison shows the plateau. Until O1 has
+(S.60), the O1–O2 floor gate is restricted to rule-free paths (FP-, FE-, K1.14b-type FPf) and the rule is gated by the
+O2/kernel tests of K1.16 and the FD table above.
+
+*Dissipation, energy* [I; r4_values.py (E)]. The rule changes π_i with no plastic strain and no stress change, so it
+does no work and stores nothing in Ψ: D^p = Δλ σ:q (S.38) is formed at the pre-floor converged state before the rule
+and keeps D^p ≥ 0 under (S.39); each floor event's E_f (S.52) and Δε^f_v depend on the pre- and post-floor ε^e only
+and are unchanged **per event**; the bookkeeping σ:dε = dΨ + D^p − dE_f of item 1 has no new term. In the BA06 reading
+of §11.3 (π_i conjugate to ε^p_s) the replacement is a jump of the internal variable at fixed ε^p_s, i.e. π_i is no
+longer a function of the ε^p_s history alone; the model never forms Ψ^p (§11.3), the conjugate term −π_i ε̇^p_s ≥ 0
+keeps its sign (π_i < 0 before and after, and the rule only makes it more negative), so no inequality the sheet uses
+is touched. What changes is the path, hence the totals: march of 600 steps of 2e−4 from `e7367g1_s185` with the rule —
+D^p > 0 at every step (min 6.2e−5 kPa), ΣD^p = 4.384e−2 kPa, ΣE_f = 2.920e−3 ≤ W_f = 2.987e−3 kPa, 600 post floors and 600
+resets, residual of W_ext − (ΔΨ + ΣD^p − ΣE_f) = 1.2 % of ΣD^p (trapezoid W_ext on backward Euler), 0.60 % with 1200
+steps of 1e−4 (O(Δ), the truncation); without the rule on the same path ΣE_f = 1.52e−2, W_f = 1.71e−2 kPa (5.2× and 5.7×) and the
+residual 8.6 % → 4.2 %. The floor's energy source is smaller with the rule because the return no longer drops |p_c| far
+below p_min.
+
+*A state the rule never commits (legacy states).* (S.57) is not a repair operator applied at step entry. A committed
+state on the floor with F > F_tol (written by a round-3b kernel: `stall.txt`, and `s185.txt` at +0.29 … +0.46 p_min)
+is taken as it is: the trial test finds F^tr > F_tol, the return is attempted, and **if it converges and the post floor
+acts, 5g puts the state on its surface in that one step** (K1.16: from `e7367g1_m53`, F = +3.29 p_min, the first step of
+2e−4 is -Pf* with π_i −0.1116 → −0.2815 and F = 0). If the return does not converge at any ladder level the increment
+is refused as before, state frozen, nothing counted (measured with the patched O2 from the stall states: accepted at
+|Δε| = 2e−4 and at the listed 7e−3, refused at ≤ 1e−6 with `pi_fold`/`local_noconv`: a return from 3 p_min outside F
+is not continuous with the start, whatever the increment). The option "apply (S.57) to the committed state at entry
+when at_floor and F > F_tol" (π_f = −0.3270 at that state; no tangent term, it depends on the committed state only)
+is not adopted: it would be dead code in every round-4 run. Listed for the owner (§16.3).
 
 **What is given up — the stated regularisation.**
 1. Energy. A projection at fixed total strain does no external work and raises the stored energy by
@@ -1021,12 +1274,21 @@ pattern -P-,-Pf 1.2e−6 / 1.2e−8 (h = 10⁻⁷/10⁻⁸, ratio 100 both); Φ 
    The sign of F(σ_f) after a post floor follows dF ≈ F_p dp + ζ dq, F_p = (η − M)/(1−N), dp = −(p_min − |p_c|) < 0,
    dq = q_f − q_c ≥ 0 (= 0 under BA06 α₀ = 0; > 0 under HAR, where q grows with the floored |p| through ϖ): dry side
    (F_p > 0) F(σ_f) < 0, inside, unless the ζ dq term wins (the FPf case: F(σ_f)/p_min = −0.004); wet side (F_p < 0)
-   F(σ_f) > 0 by O(p_min) — the first-order size |F_p| (p_min − |p_c|) + ζ (q_f − q_c), measured in item 3. No F ≤ F_tol
-   invariant is claimed at a floored committed state; the next increment's trial test (§9.1 step 2) sees F^tr > F_tol and
-   returns. π_i is never projected: with |p| ≥ p_min the hardening target |π_i*| = |p| B^{(N−1)/N} stays bounded away
-   from 0 on any bounded ψ_i, which is what keeps π_i from collapsing with p.
-3. The volumetric stiffness at the floor is zero (above), and a floored committed state can sit **outside F by
-   O(p_min)** after a wet-side post floor [round 3b; wet_floor_har.py]: HAR TIMs set, a state at the floor on the surface
+   F(σ_f) > 0 by O(p_min) — the first-order size |F_p| (p_min − |p_c|) + ζ (q_f − q_c), measured in item 3. **Round 4 (corrected; H19 is the counterexample to the
+   round-3b text, which read: "No F ≤ F_tol invariant is claimed at a floored committed state; the next increment's trial
+   test sees F^tr > F_tol and returns. π_i is never projected: with |p| ≥ p_min the hardening target
+   |π_i*| = |p| B^{(N−1)/N} stays bounded away from 0 on any bounded ψ_i, which is what keeps π_i from collapsing with
+   p."):** the hardening target is formed at the PRE-floor state, |π_i*| = |p_c| B^{(N−1)/N} with |p_c| < p_min, and p_c
+   lies on the surface of size π_i, so the target scales with π_i and nothing bounds it from below; under repeated post
+   floors with ψ_i > 0 the image pressure contracted geometrically (H19: −0.322 → −0.112 kPa in 8 steps, then F(σ_f) =
+   +2.8 … +3.3 p_min and no increment returns). The "next trial test returns" half failed with it: a trial that starts
+   several p_min outside F is not continuous with any solution. Since round 4 the rule (S.57) puts π_i on the surface
+   through σ_f whenever F(σ_f, π_i) > 0 after a post floor, the invariant (S.58b) F ≤ F_tol **is** claimed at every
+   committed state, and π_i is bounded by (S.58c), |π_i| ≥ c_N p_min, from the yield surface, not from the hardening law.
+3. The volumetric stiffness at the floor is zero (above). **Before round 4** a floored committed state could sit
+   **outside F by O(p_min)** after a wet-side post floor; the numbers of this item are now the size of
+   F(σ_f, π_i^{BE}), the excess that (S.57) removes in the same step, and the round-3b bound quoted here (up to
+   +1.35 p_min) was exceeded on the H19 path (+3.3 p_min) [round 3b; wet_floor_har.py; round 4: r4_values.py (C)]: HAR TIMs set, a state at the floor on the surface
    at η = 0.5M (θ = 0.454, off-corner), ψ_i ∈ {0, +0.04, +0.08, +0.12}, one backward-Euler pure-shear step along n̂ of
    engineering shear strain Δγ := √2 ‖dev Δε‖ ∈ {10⁻⁴, 10⁻³, 10⁻²} (pattern -Pf throughout): F(σ_f)/p_min = +0.27
    (Δγ 10⁻⁴, any ψ_i) … +0.82 (ψ_i +0.12, Δγ 10⁻²: p_c = −0.239 → −0.505, q 0.304 → 0.414, η_c = 1.327), against the
@@ -1037,7 +1299,23 @@ pattern -P-,-Pf 1.2e−6 / 1.2e−8 (h = 10⁻⁷/10⁻⁸, ratio 100 both); Φ 
    at the K1.14 ε_s = 2e−4), so the converged state never leaves dom Ψ (the Adversary: |Δε^p_v| ≤ 3.5e−5 < 7.5e−5,
    no refusal up to Δγ = 10⁻² at ψ_i ≤ +0.12). The full Newton steps do overshoot the edge (6–37 rejected iterates per
    step at Δγ ≥ 10⁻³, min ε* down to −1.2e−3) and the line-search backtrack of §2.4 absorbs them: no refusal in the
-   table. Nothing else changes: ε^p, π_i, v, D^p, the vertex rule (Π_f at ε_s = 0 is the axis closed form), the cap.
+   table. Nothing else changes: ε^p, v, D^p, the vertex rule (Π_f at ε_s = 0 is the axis closed form), the cap; π_i
+   changes by (S.57) only. **Round 4, the same table with the rule** (own integrator; every case -Pf*, m = 1; p_c, the
+   contraction and the stresses are those of round 3b, F(σ_f, π_i)/p_min = 0 to 7e−16 after the rule):
+
+   | ψ_i | Δγ | F(σ_f, π_i^{BE})/p_min | π_i^{BE} [kPa] | η_f | π_i by (S.57) [kPa] |
+   |---|---|---|---|---|---|
+   | 0 | 10⁻⁴ / 10⁻³ / 10⁻² | +0.2699 / +0.3496 / +0.3572 | −0.328889 / −0.329228 / −0.329262 | 0.940109 / 1.021599 / 1.029388 | −0.386215057 / −0.406870322 / −0.408940969 |
+   | +0.04 | 10⁻⁴ / 10⁻³ / 10⁻² | +0.2717 / +0.3670 / +0.5322 | −0.328346 / −0.324406 / −0.287273 | 0.938960 / 1.012743 / 0.951647 | −0.385936497 / −0.404537473 / −0.389032266 |
+   | +0.08 | 10⁻⁴ / 10⁻³ / 10⁻² | +0.2732 / +0.3820 / +0.6866 | −0.327887 / −0.320380 / −0.258876 | 0.937988 / 1.005324 / 0.897090 | −0.385701048 / −0.402600177 / −0.376005318 |
+   | +0.12 | 10⁻⁴ / 10⁻³ / 10⁻² | +0.2745 / +0.3950 / +0.8217 | −0.327494 / −0.316976 / −0.238442 | 0.937157 / 0.999032 / 0.856623 | −0.385499896 / −0.400969027 / −0.366805331 |
+
+   (start: p = −0.505, q = 0.2583 kPa, θ = 0.4544, π_i = −0.328007 kPa.)
+   *Inputs to rebuild the table (round 4b).* HAR: k 1889.48104361, g 807.80387674, n ½, p_a 101 kPa; M 1.3309, N 0.4,
+   N̄ 0.2, χ −3.5, h 280; WW with ρ = ρ̄ = 0.71; fork CSL e₀ 0.83, λ_c 0.027, ξ 0.45 (p_a 101); cap none; p_min 0.505 kPa.
+   State: n̂ = dev(d)/‖dev(d)‖, d = (−1.2, −0.1, 1.3); p = −0.505 kPa, η = 0.5M = 0.66545, q = η|p|/ζ(θ, ρ); π_i from
+   the inverse of (S.12); v_n = 1 + e₀ − λ_c(−π_i/p_a)^ξ + ψ_i. Increment: Δε = (Δγ/√2) n̂ (pure deviatoric, tr Δε = 0),
+   one backward-Euler step.
 
 **Determinism, counting, interfaces.**
 - Activation: p(ε^e) > −p_min (1 − 10⁻¹²) or ε^e ∉ dom Ψ. After a projection p = −p_min to round-off and the test is
@@ -1046,7 +1324,15 @@ pattern -P-,-Pf 1.2e−6 / 1.2e−8 (h = 10⁻⁷/10⁻⁸, ratio 100 both); Φ 
   and the HAR domain failure at the trial become floor events; `local_*`, `pi_*`, `B_nonpos` and π_i ≥ 0 are unchanged.
   p_min = 0 switches the floor off and restores the pre-round-3 refusals (`-pmin 0`); p_min < 0 is refused.
 - Counted. Per (sub-)increment: floor_tr, floor_post ∈ {0, 1}. Per Gauss point, committed: n_f,tr, n_f,post, n_f,init ∈
-  {0, 1}, ε^f_v = Σ Δε^f_v ≥ 0, W_f = p_min ε^f_v, and at_floor := (p_committed > −p_min (1 + 10⁻¹⁰)). A substepped
+  {0, 1}, ε^f_v = Σ Δε^f_v ≥ 0, W_f = p_min ε^f_v, and at_floor := (p_committed > −p_min (1 + 10⁻¹⁰)). Round 4
+  (proposed; the H19 prototype does not count, owner to confirm, §16.3): floor_pi ∈ {0, 1} per (sub-)increment (the
+  rule (S.57) fired; written `*` after the pattern in this sheet, e.g. -Pf*) and the committed total n_f,π (a
+  substepped increment sums its sub-increments; a refused increment counts nothing). **Layout (round 4b): append,
+  never reorder.** Shell response `floor` = (at_floor, n_f,tr, n_f,post, ε^f_v, W_f, **n_f,π**) — six entries, the first
+  five where they were; `stepInfo` keeps every existing entry in place and appends **floor_pi** after floor_post (and
+  floor_pi_guard after it, 0 in every reachable case); O2's `State.floor` dict gains the key `n_f_pi`. The committed
+  state / `sendSelf`–`recvSelf` vector grows by exactly one entry, n_f,π, appended at the end; a database written
+  before round 4 is not readable by the new layout without that entry (class-tag versioning is the kernel author's). A substepped
   increment sums its sub-increments; a refused increment counts nothing (state frozen). Shell response `floor` =
   (at_floor, n_f,tr, n_f,post, ε^f_v, W_f); `stepInfo` gains floor_tr/floor_post of the last step. Deck report (plan §2.7,
   K5): the number of Gauss points with at_floor at the limit state, Σ W_f over the mesh, and the limit load at p_min and
@@ -1077,7 +1363,9 @@ pattern -P-,-Pf 1.2e−6 / 1.2e−8 (h = 10⁻⁷/10⁻⁸, ratio 100 both); Φ 
   Radau at rtol 10⁻¹⁰; the split with m = 1 … 64 sub-increments misses the rate solution by 7.2e−3 … 1.4e−4 in σ and
   2.2e−2 … 4.1e−4 in π_i with observed orders 0.87, 0.92, 0.96, 0.98, 0.99, 0.99; the floor-only branch under BA06
   α₀ = 0 gives λ̇_f = tr ε̇ to round-off with P:a^e:P = K = 5000 kPa). O2 → O1 first-order convergence on a floored path is a gate test; O1 may also run the
-  split at its output increments, but then it is not an independent oracle for the floor.
+  split at its output increments, but then it is not an independent oracle for the floor. **Round 4:** on a path where
+  the rule (S.57) fires the split's first-order limit is (S.60), not (S.55); the gate against (S.55) holds on rule-free
+  paths only (the floor_rate.py path is one: FP-, no post floor), and O1 needs (S.60) for the others (above).
 
 **Tests and mutants (K1.12–K1.15, §13; named for the mutation gate, plan §5.3).** M-F1 floor not applied (the
 pre-round-3 refusal, or the state passed through with |p| < p_min): K1.13 expects a committed p = −p_min and no refusal.
@@ -1088,11 +1376,21 @@ operators omitted from the chain: 0.98 off the FD of a substepped floored increm
 the BA06 inverse, or HAR replaced by BA06 at the floor: ε_{v,f} differs by orders of magnitude (0.0530 vs 9.84e−4;
 K1.12 vs K1.13). M-F5 trial floor skipped (post only): a HAR out-of-domain trial refuses instead of flooring. M-F6
 projection direction wrong (q kept): under HAR ε_s^e must be unchanged and q_f = 3g p_a ε_s x^n (K1.14). M-F7 π_i or v
-altered by the projection: K1.12 asserts both unchanged. M-F8 default reference wrong (|p₀| vs p_a) or units: parser
+altered by the projection: K1.12 (A), (B) assert both unchanged, K1.12 (C) asserts v unchanged and π_i changed by
+(S.57) only (the stated value; round 4). M-F8 default reference wrong (|p₀| vs p_a) or units: parser
 echo. M-F9 floor applied inside the local Newton: the K1.12 (C) values (BA06, wet side) and the K1.14b FPf values (HAR, dry
 side) differ — Δλ, π_i and q_c are those of the unconstrained return; a floor inside the Newton converges to a
 different iterate (p_c pinned at −p_min) and, under HAR, would also hide the domain overshoots that the line search
 is meant to backtrack (item 3).
+Round 4, the rule (S.57)–(S.59) (K1.12 (C), K1.14b, K1.16; FD table above): M-R1 chain row not replaced (the S^π row of
+(S.54) kept after a reset): 0.089–0.29 off the FD of a substepped increment. M-R2 ζ_y term dropped from f_a in G_a:
+0.13–0.42. M-R3 the (S.59) row added to the (S.54) row: 8e−3–0.16. M-R4 the rule absent, or evaluated at the pre-floor
+stress σ_c (where F = 0, so it never fires): K1.16 expects F = 0 and the stated π_i after one step (round 3b leaves
+F = +0.176 kPa and π_i = −0.3245 there), K1.12 (C) expects −40.516314. M-R5 a^e of the pre-floor state in γ_b: 0.012–0.017
+under HAR only. M-R6 the row built before Φ^post: 0.097–0.65. M-R7 the rule applied when F(σ_f, π_i) ≤ 0 (the surface
+shrunk): K1.14b expects π_i = −0.743350807 unchanged; the mutant commits −0.740398976 (4.0e−3). M-R8 the rule applied
+to a step without a post floor or to an elastic step: K1.12 (A), (B) and every non-floored test assert π_i unchanged.
+M-R9 the single-step tangent altered by the rule: the m = 1 cases (a), (d1) must equal (S.32f) to round-off.
 
 ---
 
@@ -1383,6 +1681,19 @@ loss-of-uniqueness limit (snap-back), to be reported not hidden.
    −50.00 elastic, Δε^f_v = 4.066e−3; (B) plastic from a floored trial, p_c = −50.70 (dry side, FP-: under BA06 α₀ = 0
    the return from a floored trial always compresses p, §9.7 item 2); (C) wet side, p_c = −48.76 → −50.00 by the post
    floor, η = 0.953 (-Pf). The dry-side pattern FPf exists under HAR only: K1.14b.
+   **(C) with the round-4 rule (S.57) [I; r4_values.py (A), own integrator; the patched O2 gives the same digits]:** state
+   p = −51, η = 0.5M = 0.6, θ = 0.454427, π_i = −33.125471695 kPa, v_n = 1.70; Δε (principal) = 6e−3·(0.55, 0.40, −0.95) −
+   1e−5 (the first amplitude of the floor_fd.py scan with pattern -Pf). Return: Δλ = 1.546466e−3, p_c = −48.764495,
+   q_c = 46.421589 kPa, η_c = 0.952607, π_i^{BE} = −40.198569107 kPa; post floor: σ_f = (−34.8599764962, −34.1946812138,
+   −80.9453422900) kPa, η_f = 0.929068, F(σ_f, π_i^{BE}) = +0.010899 p_min > 0 → **π_i = −40.516314098 kPa** (was
+   −40.198569107), F(σ_f, π_i) = 0 to 3e−16 p_min, pattern -Pf*; σ_f, v, Δλ, D^p, Δε^f_v and the tangent (S.32f) are
+   those of round 3b. (S.58c): c_N p_min = 23.2379 kPa. Cases (A), (B) do not change (no post floor).
+   *Inputs to rebuild (C) (round 4b).* BA06: p₀ −100 kPa, κ̂ 0.01, ε_{v0} 0, μ₀ 5400 kPa, α₀ 0; M 1.2, N 0.4, N̄ 0.2,
+   χ −3.5, h 280; WW with ρ 0.7, ρ̄ 0.8; paper CSL λ̃ 0.0135, v_{c0} 1.81; cap none; p_min 50 kPa. State (principal, order
+   1-2-3): n̂ = dev(d)/‖dev(d)‖ with d = (−1.2, −0.1, 1.3); σ_a = p + √(2/3) q n̂_a, p = −51 kPa, q = η|p|/ζ(θ, ρ) with
+   η = 0.6 and θ = 0.454427 of n̂ (F = 0); π_i from the inverse of (S.12) at (p, η); ε^e = the inverse elastic map of σ;
+   v_n = 1.70; ε^p irrelevant. Increment (principal, co-axial): Δε = 6e−3·(0.55, 0.40, −0.95) − 1e−5·(1, 1, 1);
+   v_{n+1} = 1.70 exp(tr Δε).
 13. **HAR floor and the out-of-domain trial (K1.13; (S.50)) [I; floor_sympy.py (g)]:** TIMs set (§2.3), p_min = 5·10⁻³ p_a =
    0.505 kPa: ε_{v,f}(ε_s = 0) = 9.83645033e−4 (domain edge 1/(k(1−n)) = 1.05849170e−3); G(p_min) = g p_a (p_min/p_a)^{1/2} =
    5769.156 kPa, floored shear stiffness 2G = 11 538.31 kPa, volumetric response 0. An isotropic state at p = −1 kPa
@@ -1412,10 +1723,63 @@ loss-of-uniqueness limit (snap-back), to be reported not hidden.
    both. (The Adversary's independent reproduction of the same case: p_c = −0.490, +0.10 vs −0.085 kPa, 8e−9 / 5e−8
    and 9e−9 / 6e−8 at its own h.) A test author runs it with O2's `elastic` swapped for the HAR law until O2 ships
    `-energy HAR`.
+   **Round 4: no value of 14 or 14b changes** [r4_values.py (B), own integrator]. 14 is the elastic operator. In 14b
+   every post floor has F(σ_f, π_i^{BE}) ≤ 0, so (S.57) does not fire: single FPf −0.004098 p_min (π_i = −0.743350807 kPa,
+   σ_f = (−0.8497174515, −0.5790682544, −0.0862142940) kPa); chain FPf,FPf −0.00410, −0.00413 (final π_i = −0.743038708);
+   chain -P-,-Pf −0.00066 in its second sub-increment (final π_i = −0.743573074). This is the regression point for
+   "never shrink the surface" (M-R7: the always-reset mutant commits −0.740398976).
+   *Inputs to rebuild 14b (round 4b).* The HAR / plastic / CSL constants of the wet-floor table of §9.7 item 3 (TIMs
+   HAR set, K2 plastic constants, ρ = ρ̄ = 0.71, fork CSL, cap none, p_min 0.505). State: n̂ from d = (−1, −0.35, 1.35);
+   p = −0.6 kPa, η = 1.2M = 1.59708, q = η|p|/ζ(θ, ρ) = 0.6999 kPa (θ = 0.2711); π_i = −0.743658 from the inverse of
+   (S.12); v = 1 + e₀ − λ_c(−π_i/p_a)^ξ − 0.10 = 1.72704. Increments: single FPf Δε = (2e−5/3)(1,1,1) + 2e−5 n̂; chain
+   FPf,FPf twice that with fractions (½, ½); chain -P-,-Pf Δε = (1.4e−5/3)(1,1,1) + 2e−5 n̂ with (½, ½).
 15. **π_{i0} rule (K1.15; (S.53)) [I; floor_sympy.py (f)]:** K2 set, p_init = −100 kPa: η* = c₂M = 0.18 → π_{i0} = −50.995881;
    η* = 0 → −46.475800 (apex; the §9.6 (F) value); η_init = 0.75 → −71.554175; η* = M → −100. First yield on a drained TXC
    path from the isotropic state with π_{i0} = −50.9959: q = 11.3469, p = −103.7823 kPa, η = 0.1093, w = 0.337; on a
    constant-p path η = 0.18 exactly.
+16. **The image-pressure rule at a post floor, H19 regression points (K1.16; (S.57)–(S.58)) [I; round 4; r4_values.py
+   (D), the Deriver's own integrator ns_own.py — a monolithic 5-unknown Newton, not O2 and not the kernel; the patched
+   O2 agrees to ≤ 1e−11 kPa over the 60 steps].** (Numbered 16: K1.15 is the π_{i0} rule.) K3 set: HAR k = 298.34244992965336,
+   g = 383.5831499095543, n = ½, p_a = 101; M 1.25, N 0.4686136860640983, N̄ 0.16034970350694513, ρ 0.5828981510111576,
+   ρ̄ 0.7213710496292179, χ −2.8923322243122183, h 308.3223484879116; fork CSL e₀ 0.934, λ_c 0.019, ξ 0.7; smooth cap
+   c₁ 0.05, c₂ 0.15; WW; p_min 0.505 kPa; c_N p_min = 0.246558167 kPa. States from `out/h19/s185.txt` and `stall.txt`
+   (plane strain; ε^e₃₃ recovered from σ₃₃; format at the top of `h19_replay.cpp`); increment = the listed
+   (d11, d22, dγ12) scaled to |Δε| := (d11² + d22² + ½ dγ12²)^{1/2} = 2e−4, repeated. All three start states are legacy
+   round-3b states with F > 0 (the rule is not applied at entry, §9.7). Every step below is m = 1, pattern -Pf*
+   (floor_tr 0, plastic, floor_post 1, rule fired), p = −0.505 kPa; stresses and π_i in kPa.
+
+   | start state, ε^e₃₃, increment (d11, d22, dγ12) | steps | σ₁₁ | σ₂₂ | σ₃₃ | σ₁₂ | π_i | F [kPa] |
+   |---|---|---|---|---|---|---|---|
+   | `e7367g1_s185` (π_i −0.3224962955, F = +0.2315 kPa = +0.458 p_min); ε^e₃₃ = 2.099254865382e−3; (4.965401387252e−5, −6.100176746158e−6, −2.738512981529e−4) | 1 | −0.5101907038 | −0.5976456953 | −0.4071636009 | −0.2151586912 | −0.3989652918 | \|F\| ≤ 1e−15 |
+   | | 2 | −0.5082384097 | −0.6104039680 | −0.3963576223 | −0.2510036052 | −0.4461726222 | ≤ 1e−15 |
+   | | 60 | −0.5114970385 | −0.6473686614 | −0.3561343001 | −0.3336845167 | −0.5923861407 | ≤ 1e−15 |
+   | `e7367g2_s185` (π_i −0.3666004637, F = +0.1472 kPa); ε^e₃₃ = 2.100404994193e−3; (6.298503508381e−5, −1.654199187512e−5, −2.674294219427e−4) | 1 | −0.4889744155 | −0.6273143992 | −0.3987111852 | −0.2332250428 | −0.4276028897 | ≤ 4e−15 |
+   | | 2 | −0.4850426738 | −0.6393433615 | −0.3906139647 | −0.2596017804 | −0.4672749361 | ≤ 4e−15 |
+   | | 60 | −0.4814251232 | −0.6764194559 | −0.3571554210 | −0.3278584883 | −0.5976134600 | ≤ 4e−15 |
+   | `e7367g1_m53` (stall; π_i −0.1116066186, F = +1.6596 kPa = +3.29 p_min); ε^e₃₃ = 2.088911465473e−3; (4.980341391149e−5, −6.390050089011e−6, −2.737838096843e−4) | 1 | −0.5071972881 | −0.5355837599 | −0.4722189520 | −0.0691517825 | −0.2815026983 | ≤ 6e−15 |
+   | | 2 | −0.5031271070 | −0.5765889736 | −0.4352839194 | −0.1789591553 | −0.3671148499 | ≤ 6e−15 |
+
+   Step-1 detail. `e7367g1_s185`: Δλ = 1.427733871e−4, p_c = −0.365744965, η_c = 1.092426, w = 1, π_i^{BE} = −0.3245384951,
+   F(σ_f, π_i^{BE}) = +0.175979368 kPa, η_f = 0.922543205, Δε^f_v = 7.223598e−5. `e7367g2_s185`: Δλ = 1.401240162e−4,
+   p_c = −0.388932212, η_c = 1.177716, π_i^{BE} = −0.3676032012, F(σ_f, π_i^{BE}) = +0.118226999 kPa, η_f = 1.026016850,
+   Δε^f_v = 5.957758e−5. `e7367g1_m53`: 11 local iterations of the own solver, Δλ = 1.528227673e−4, p_c = −0.187753246,
+   q_c = 0.080655979, η_c = 0.484384, w = 1, π_i^{BE} = −0.1150543895, F(σ_f, π_i^{BE}) = +1.439692306 kPa, η_f = 0.294256201,
+   Δε^f_v = 1.856529e−4. **The stresses of step 1 are those of round 3b** (the rule does not touch σ_f); round 3b commits
+   π_i = π_i^{BE} with F = +0.1760 / +0.1182 / +1.4397 kPa there, and differs from step 2 on: after 60 steps from
+   `e7367g1_s185` it has π_i = −0.3894275650, F = +0.0929 kPa, σ = (−0.5098218813, −0.6109439554, −0.3942341633; σ₁₂
+   −0.2483437655), i.e. q = 0.469 against 0.631 kPa with the rule. What the first step from the stall state **must** do:
+   attempt the ordinary return; at this increment it converges, the post floor acts, and 5g commits F = 0 (the row
+   above). A refusal is the admissible outcome only when the return does not converge at any ladder level (the patched
+   O2 at |Δε| ≤ 1e−6 from this state: `local_linesearch:pi_fold`, state frozen, π_i = −0.1116066186, counters
+   unchanged); it must never commit a state with F > F_tol. **What is asserted on the stall row (round 4b):** the return
+   from F = +3.29 p_min is far from its start and its path depends on the solver's globalisation (the own Newton: 11
+   iterations; the Adversary's: 64 line-searched iterations; same converged digits; O2 at m = 1). The digits of the
+   two stall rows are asserted **only if both O2 and the kernel take that step at m = 1**; otherwise the test asserts
+   the invariants: the step is accepted, pattern post-floored with the rule fired, F(σ_f, π_i) ≤ F_tol, π_i = π_f(σ_f)
+   (the surface through the committed stress, (S.57), to 1e−12 relative), p = −p_min, |π_i| ≥ c_N p_min. The two `s185`
+   fixtures start at +0.46 / +0.29 p_min, converge in the ordinary way and are asserted by digits. Assertions for the test author: after every accepted step
+   F ≤ F_tol and |π_i| ≥ c_N p_min (S.58); floor_post = 1 and floor_pi = 1; σ and π_i to the kernel–oracle parity
+   tolerance; the 60-step values need m = 1 at every step (a ladder that substeps changes them at O(Δ²)).
 
 ---
 
@@ -1523,6 +1887,8 @@ Constraint check for TIMs: with ρ = ρ̄ = 0.71, (S.39) holds for any N̄ ≤ N
    p′ floor: designed 2026-10-03 (§9.7, owner decision (b)); **option (i), the strain-space projection Π_f (S.48),
    approved by the owner 2026-10-03** (the two solver/reporting questions of §16.3 stay open); π_{i0} rule: §5.4
    (owner decision (c)); the nested-scan step is 10⁻³ (§10.2 (S.56), refusal gated to cap = smooth).
+   **Round 4 (owner decision O13, option A, 2026-11-11):** the image-pressure rule at a post floor, (S.57)–(S.60) of §9.7;
+   the decisions the Deriver took inside it are listed in §16.3 for confirmation.
 6. **G1 (owner, 2026-10-01): Willam–Warnke ρ = ½ exactly is refused**, for ρ and for ρ̄; the admissible WW range is
    (½, 1] (§4.2: at ½ the compression corner is a vertex, ζ'(π/3) = −√3). GA stays [7/9, 1].
 
@@ -1594,6 +1960,27 @@ Constraint check for TIMs: with ρ = ρ̄ = 0.71, (S.39) holds for any N̄ ≤ N
   FD and parity gates valid (they test the exact tangent with the option off); (b) whether the kernel reports E_f
   (needs Ψ) or only W_f — recommendation: W_f is always counted in the kernel; E_f is an on-demand response evaluated
   from the closed-form Ψ ((S.4)/(S.4h)) at the committed state, never on the step path.
+- **[round 4, 2026-11-11] The image-pressure rule (S.57)–(S.60), owner decision O13 option A. Decisions taken by the
+  Deriver, for the owner to confirm:** (1) **the continuum model on the floor changes where the rule fires, and not by a
+  little**: the split's first-order limit is (S.60), not the Koiter form (S.55). With the rule firing persistently π_i
+  is slaved to the stress (π_i = π_f(η_f)), the quasi-steady state is H λ̇ = (f:a:P) λ̇_f with H < 0 instead of
+  π_i = π_i*, and the floored strength stops following the state parameter: on the H19 direction η_f stays at
+  1.44 → 1.36 (above M = 1.25) while ψ_i goes +0.007 → +0.27 and the π_i = π_i* state falls to η = 0.48
+  (|π_i|/|π_i*| 1.19 → 1.80). Gap between the two rate forms: in the σ-norm max|Δσ|/max|σ| 0.5 % (BA06 K2 path) and
+  9 % / 14 % (K3 path, shear 2e−4 / 1e−3); in q +38 % / +53 % on the K3 path (K1.16: q 0.631 against 0.469 kPa at 60
+  steps); in π_i 1.1 % and 15 … 33 %; absolute size ≤ 0.24 p_min in stress, all at floored states. O1 must
+  integrate (S.60) on those paths or the O1–O2 floor gate is restricted to rule-free paths — the sheet specifies
+  (S.60) and restricts the gate until O1 has it; (2) activation is the strict F(σ_f, π_i) > 0, which makes the committed
+  π_i exactly C⁰ across the boundary; inside the noise band |F(σ_f, π_i)| ≤ F_tol the reset counter and the chain row
+  are not reproducible between implementations and parity tests on them exclude it (§9.7); (3) the unreachable case η_f ≥ M/N leaves π_i unchanged and
+  does not refuse (proved unreachable for both energies; the floor never refuses); (4) no entry repair of a legacy
+  state with F > 0 (the first converged post-floored step repairs it; a non-converging return is refused as before);
+  (5) the rule is counted (floor_pi per step, n_f,π committed) — the prototype does not count; (6) the H19 regression
+  points are K1.16, since K1.15 is the π_{i0} rule. Open work: O2 and the kernel implement 5g and (S.59) (the H19
+  prototype has 5g only: its chained tangent after a reset is M-R1, 0.09–0.29 off); O1 implements (S.60); the gate
+  tests of K1.12 (C), K1.14b, K1.16, the FD table of §9.7 with mutants M-R1 … M-R9, and kernel-vs-O2 parity on a
+  reset path. Not verified by the Deriver: the kernel itself and the deck results quoted with the decision (B/16 passes
+  the stall; B/8 peak +0.10 … +0.15 %, failed steps 44 → 0).
 - **[round 3] validate() gains the (S.56) refusal** (PI_SCAN_REL ≤ W_ramp/10, **cap = smooth only**: with c₁ = c₂ or
   no cap W_ramp = 0 and an ungated check would refuse every planar/none model — round 3b) in O2 and the kernel — the
   only code change the scan-step ruling asks for; PI_SCAN_REL = 10⁻³ and PI_SCAN_MAX = 1000 stay.
@@ -1706,6 +2093,42 @@ Round 3b checks (2026-10-03, local py312 venv with the O2 oracle imported read-o
   step with the floor at the trial and after convergence): F(σ_f)/p_min +0.27 … +0.82, converged contraction
   |Δε^p_v| ≤ 2.7e−5 < ε*_f, 0–37 domain overshoots per step backtracked by the line search, no refusal (§9.7 item 3).
 
+Round 4 checks (2026-11-11, local Python 3.11 / numpy 2.4 / sympy 1.14; scripts and logs in the session scratchpad
+`round4/`, to be copied into `tests/scratch_sheet_floor/round4/` with the sheet; nothing under `Ladruno_files/`,
+`SRC/` or `tests/` was edited):
+- ns_own.py: the Deriver's own point integrator, written from the sheet (θ-form flow vector, monolithic 5-unknown
+  Newton on (ε^e, Δλ, π_i) with a complex-step Jacobian, HAR and BA06, WW, smooth cap, fork/paper CSL, Π_f, (S.57));
+  against the shipped O2 with the rule wrapped in memory (r4_o2patch.py): 60 steps of 2e−4 from both `s185.txt`
+  states, max difference 4e−12 kPa in σ and 9e−12 kPa in π_i at the sampled steps (1, 2, 3, 20, 40, 60), same patterns,
+  m = 1 throughout. r4_ident.py: f:a^e:P = F_p D₁₁ + ζ D₁₂ to 2e−14 and the explicit G_a of (S.59) = −f_a/F_π to 5e−16
+  (20 random HAR states).
+- r4_h19_cause.py: the dumped H19 stresses reproduced to 2e−15 kPa from (ε^e, σ₃₃); the round-3b contraction of π_i
+  (the 8-step sequence of §9.7, π_i*/p_c < 1, F(σ_f)/p_min → +3.2 … +9.4) and its removal by the rule (π_i within
+  [−0.514, −0.408] kPa over 14 steps of the listed 7e−3 increment, F = 0 to 4e−16 p_min).
+- r4_sympy.py (40 digits, ALL OK): the inverse of (S.12) and dπ_f/dη = π_f(1−N)/(M − ηN) (π_f/M at N = 0); G_a by
+  direct differentiation through ζ(θ(σ)) = −f_a/F_π with the y-form f_a of (S.14): ≤ 1.6e−40 (WW, GA; N > 0, N = 0; 6
+  random off-corner states each), the ζ_y-dropped form off by ≥ 1.5e−2; F(σ, π_f(σ)) = 0 to 6e−41; the monotonicity of
+  q/|p| in |p| at fixed ε_s (HAR slope −(1−n)x²/(x² − n a x^{2n}), BA06 −3μ₀ε_s/p²: symbolic); the bound (S.58c) sharp.
+- r4_fd.py: the FD table of §9.7 (six cases, six columns, h = 10⁻⁶/10⁻⁷/10⁻⁸, O(h²)) and the mutants M-R1 … M-R6.
+- r4_rate.py: the split with the rule → (S.60) at first order (orders → 1.00) and a plateau against (S.55) equal to
+  the gap of the two rate forms; the round-3b split → (S.55) at first order; F = 0 and p = −p_min to 2e−12 / 6e−14 kPa
+  along both rate solutions.
+- r4_c0.py: C⁰ across the activation boundary (jump ∝ δ), slopes −8.78 | −748 kPa, second-step stress jump ∝ δ.
+- r4_values.py: K1.12 (C), K1.14b, the wet-floor table and K1.16 (§13), the M-R7 value, and the dissipation / floor-
+  energy march of §9.7 (D^p > 0 every step, ΣE_f ≤ W_f, work balance O(Δ)).
+- Could not be verified here: the C++ kernel (not built or run by the Deriver), the Kimura deck results quoted with
+  the owner decision, and O1 (not modified; (S.60) was integrated by r4_rate.py's own Radau, not by `o1_rate`).
+
+Round 4b checks (2026-11-11; Adversary PASS-WITH-FIXES on round 4, its scripts in the session scratchpad `round4_adv/`):
+- r4b_check.py (own integrator): the 3000-step marches with and without the rule (the table of §9.7: η_f 1.4361 /
+  1.4153 / 1.3895 / 1.3603, ψ_i +0.0068 … +0.2719, |π_i|/|π_i*| 1.191 / 1.291 / 1.469 / 1.796, π_i = π_i* state at η
+  1.2307 / 1.0995 / 0.8738 / 0.4773; round 3b π_i −0.240055, F +0.754 p_min at 1500 and −0.130164, +2.337 p_min at
+  3000) — every Adversary figure reproduced; the q gap of the two rate forms +38.2 % (shear 2e−4) and +53.4 % (1e−3),
+  max|Δσ| 0.144 and 0.243 p_min.
+- r4b_m1.py: the pure m = 1 round-3b sequence −0.2943 … −0.1306 reproduced; the own Newton from the trial start
+  fails its line search at steps 3 and 6 and reaches the m = 1 solution from a warm start (3–4 iterations).
+- No formula changed at round 4b; the edits are statements, contracts and fixtures.
+
 ### 16.5 G0 review record (2026-09-30)
 - **Adversary (Fable, independent re-derivation): PASS-WITH-FIXES**, seven items, all applied in this revision:
   (1) §3.2 hydrostatic guard was self-contradictory → vertex rule Ω := 0; (2) §14 K2 "±1 step" → ordering/gap band with
@@ -1721,7 +2144,7 @@ Twelve items raised by the G1 oracle/test round (O1 rate oracle, O2 return map, 
 K2-lag triages), applied in one pass; item 13 added at P1 (owner decision 2026-10-01); item 14 added at G2 (owner
 decision 2026-10-01, exponential v-update); item 15 at the HAR round (2026-10-02); item 16 at the p-floor round
 (2026-10-03); item 17 at round 3b (2026-10-03, the Adversary's round-3 defects and the owner's approval of option
-(i)). Tags: [E] read in the source, [I; G1] / [I; P1] / [I; G2] this revision's
+(i)); item 18 at round 4 (2026-11-11, owner decision O13 option A, the image-pressure rule at a post floor). Tags: [E] read in the source, [I; G1] / [I; P1] / [I; G2] this revision's
 derivation or decision.
 
 | # | section | change | tag | evidence |
@@ -1744,6 +2167,7 @@ derivation or decision.
 | 15 | §1.3, §2.1, §2.2, §2.3, §13.1h, §13.11, §15, §16.1, §16.3, §16.4 | **HAR energy option (paper received 2026-10-02).** HAR05 eq 40 in sheet signs (S.4h) with the paper's origin shift (p = −p_a at ε^e = 0), parameters (k, g, n, p_a) replacing (p₀, κ̂, ε_{v0}, μ₀, α₀) — HAR replaces the α₀ coupling entirely; stresses and Hessian (S.5h)–(S.5h') in strain and stress form, D₁₂ = −J_HAR05 < 0, q/ε_s and its ε_s → 0 limit; closed-form inverse map (S.5h''); exact convexity result (S.5c): det D = 3kg p_a²(ϖ/p_a)^{2n} > 0 and D₁₁ > 0 ⇒ PD at **every** η for 0 ≤ n < 1 — no limiting stress ratio (that belongs to the Houlsby-1985/α₀ family, HAR05 p.386); normalised λ_min closed form (S.5c'); gate table at the TIMs constants (g = 807.80, k = 1889.48): min over all η 0.744 K_iso(p) at η ≈ 1.7, ring dumps 0.7444 … 1.43, 6-D ≥ 0.91 — **VERDICT convex, no fallback to BA06 needed**; DM04 mapping (exact on the axis; off-axis G ratio 1.61 at η = M, 2.10 at η = 2.1); list of downstream changes (none to (S.3), (S.28), (S.30)–(S.34), (S.41)–(S.47); p₀ := −p_a in the §9.1 scalings; §13.1h and §13.11; §15 row); dissipation, v-update, LogStrain unchanged | [E] HAR05 40–46, 55–56, 30–31, 2–3, p.386–387; [I] rearrangements, convexity, mapping, gate | har_sympy3.py (all ≤ 3e−30 / exact), har_gate.py, har_k1.py |
 | 16 | §1.3, §2.3, §2.4 (new), §5.4 (new), §8, §9.1, §9.7 (new), §10.2, §13.12–15, §16.1, §16.3, §16.4 | **p-floor round (2026-10-03; owner decisions (a)–(e) of 2026-10-02).** (1) The p′ floor as the operator Π_f (S.48): a strain-space projection at fixed deviatoric elastic strain onto p = −p_min, applied to the trial (step 1f) and to the converged state (step 5f), never inside the local Newton; closed forms (S.49) BA06 (any α₀) and (S.50) HAR (n = ½ closed, general n bracketed); tangent (S.51)/(S.32f) with the v-column on the raw trial, chain (S.54)/(S.46f); δ:C_f = 0 at a floored point (the exact linearisation; the energy's deviatoric stiffness at |p| = p_min); an energy source E_f ∈ [0, p_min Δε^f_v] (S.52) counted as W_f, with D^p ≥ 0 of the flow untouched; F ≤ F_tol not claimed at a floored committed state; counters and the `floor` response; initialState projects; the LogStrain provider returns the floored ε^e; default p_min = 5·10⁻³ p_ref (0.5 / 0.505 kPa); O1 rate form (S.55) with the split converging at first order; mutants M-F1…M-F9; K1.12–14. (2) The unified π_{i0} rule (S.53) with its limits and the K2 values (K1.15). (3) §2.4 energy-option bookkeeping: the branch table, the parser refusals (BA06 flags with HAR refused, not ignored), the FD re-run list under HAR. (4) The nested-scan step: 10⁻⁴ (G1 text) → 10⁻³ (O2/kernel), with the ramp-width criterion (S.56) and a new validate() refusal; O2 and the kernel unchanged. | [I; round 3], owner decisions 2026-10-02 | floor_sympy.py (all OK), floor_fd.py (all OK), floor_rate.py, floor_fold.py |
 | 17 | §1.3, §2.4, §9.7 (items 2–3, FD record, M-F9), §10.2 (S.56), §13.12, §13.14b (new), §15, §16.1, §16.3, §16.4 | **Round 3b (2026-10-03): the Adversary's five round-3 defects; owner approval of option (i).** (1) MAJOR — the 'dry side: the return compresses p, F(σ_f) < 0; post floor = wet-side event' statement of §9.7 item 2, K1.12 (B) and M-F9 was BA06-only: under HAR the D₁₂ coupling of the plastic shear strain (+0.100 kPa) beats the volumetric compression of the dilative return (−0.084 kPa) and the dry-side pattern is FPf (TIMs set, p = −0.6 kPa, η = 1.2M, p_c = −0.488); reproduced independently, (S.32f) FD-checked on the HAR law 2.2e−7 / 2.2e−9 (O(h²)), the chains FPf,FPf 2.3e−7 / 2.3e−9 and -P-,-Pf 1.2e−6 / 1.2e−8 added (K1.14b); the dF ≈ F_p dp + ζ dq sign rule written for both energies. (2) MINOR — (S.56) words: W_ramp is 1 − π_i(η₁)/π_i(η₂) (the round-3 '1 − π_i(η₂)/π_i(η₁)' is −0.0645 on K2); formula and numbers unchanged. (3) MINOR — the (S.56) validate() refusal gated to cap = smooth (W_ramp ≡ 0 for planar/none). (4) MINOR — p_a is one `-p_a` flag for HAR and the fork CSL (not in the BA06 refusal list); the TIMs value is 101 kPa (campaign `Patm 101`; §15's 101.325 withdrawn; p_min 0.505 kPa and K1.13/K1.14 unchanged); the HAR→BA06 mutant is killed by 13.1h/13.11/13.13/13.14 and O2 parity, not by self-FD. (5) MINOR — §9.7 item 3 states the wet-side F(σ_f) magnitude, +0.27 … +0.82 p_min (first-order size 1.37 p_min; Adversary +0.5 … +1.35), and the self-limiting contraction |Δε^p_v| ≤ 2.7e−5 < ε*_f = 7.5e−5 (Adversary 3.5e−5), Newton overshoots of the HAR domain edge backtracked, no refusal. Owner: option (i) Π_f approved 2026-10-03 (§9.7, §16.1); the two §16.3 questions (E_f vs W_f; floored-patch solver behaviour) stay open with the orchestrator recommendation recorded (exact tangent kept, any added stiffness tangent-only/opt-in/default off; W_f always counted, E_f on demand from the closed-form Ψ). No formula changed. | [I; round 3b], owner approval 2026-10-03 | har_patch.py, round3b_sympy.py (all OK), floor_fd_har.py (all OK), wet_floor_har.py |
+| 18 | §1.3, §9.1 (step 5g), §9.7 (new subsection (S.57)–(S.60); items 2–3 corrected; (S.54) pointer; counting; O1 bullet; M-F7, M-R1 … M-R9), §13.12 (C), §13.14b, §13.16 (new), §16.1, §16.3, §16.4 | **Round 4 (2026-11-11; owner decision O13, option A): the image-pressure rule at a post floor.** H19 (Kimura B/16, HAR, K3): four floored Gauss points committed at F = +2.8 … +3.3 p_min and refused every increment; cause re-derived with an independent integrator — the post floor restores p but π_i keeps the pre-floor value, whose hardening target π_i* ∝ p_c ∝ π_i has no lower bound (π_i −0.32 → −0.11 kPa in 8 steps); §9.7 item 2's closing argument and item 3's bound were wrong on that path and are corrected with H19 as the counterexample. (S.57): after step 5f, if the post floor acted and F(σ_f, π_i) > 0, π_i := π_f(σ_f), the inverse of (S.12) at (p_f, η_f = ζ q_f/\|p_f\|) ⇔ π_i := min(π_i, π_f); strict activation, never shrinks, never refuses; the surface always exists (η_f < η_c < M/N for HAR and BA06, symbolic). (S.58): F ≤ F_tol and \|π_i\| ≥ c_N p_min, c_N = (1−N)^{(1−N)/N}, at every committed state. (S.59): the chain row S^π = Σ_b γ_b Ŝ^ε_bb with γ = −(f·a^e)/F_π at (σ_f, π_f) REPLACES the S^π row of (S.54); the single-step tangent (S.32f) and the S^ε row are unchanged. (S.60): the rate-form counterpart; the split with the rule converges to (S.60) at first order and NOT to the Koiter form (S.55) (a change of the continuum model on the floor where the rule fires; O1 to follow or the O1–O2 floor gate restricted). C⁰ across activation, one-sided chained tangent. Dissipation: D^p ≥ 0 and the per-event E_f, W_f untouched. K1.12 (C) π_i −40.198569 → −40.516314; wet-floor table re-valued; K1.14/14b unchanged; new K1.16 from the H19 states. p_min = 0 is exactly round 3b. | [I; round 4], owner decision O13 2026-11-11 | r4_sympy.py (ALL OK), r4_fd.py: C vs FD 3.0e−7 / 1.0e−7 / 1.3e−7 / 9.2e−8 (K3 HAR: -Pf*; -Pf*,-Pf*; FPf*,FPf*; three FPf*) and 1.1e−8 / 8.4e−9 (BA06 K1.12 (C)) at h = 10⁻⁷, O(h²); mutants 8e−3 … 0.65; r4_rate.py orders → 1.00 against (S.60), plateau 5e−3 … 0.18 against (S.55); r4_c0.py; r4_values.py; r4_h19_cause.py; own integrator vs patched O2 ≤ 9e−12 kPa over 60 steps |
 
 Items 1–13: no FD-checked algebra of the G0 sheet changed; status of (S.34): transcribed → re-derived and FD-checked
 (8.7e−10). Item 14 is the first formula-level change to FD-checked algebra: the v-factor in (S.31) (v₀ → v_{n+1}) and
@@ -1751,4 +2175,12 @@ in the S^v closed form of (S.46) (v₀ → v_{k+1}), both re-verified (§16.4, G
 algebra ((S.48)–(S.55)) and changes no existing formula; its one correction to existing text is the scan-step value of
 §8/§10.2 (10⁻⁴ → 10⁻³), a contract constant, not a derivative. Item 17 changes no formula: it corrects the words of
 (S.56), the energy-dependence of the §9.7 dry/wet statements, the p_a bookkeeping and the mutant-kill list, and adds
-the HAR FD record (K1.14b) and the wet-side magnitudes.
+the HAR FD record (K1.14b) and the wet-side magnitudes. Item 18 adds new FD-checked algebra ((S.57)–(S.60)),
+replaces one row of (S.54) on the sub-increments where the rule fires (the S^π row, by (S.59)), and withdraws two
+statements of §9.7 (item 2's closing argument, item 3's bound); no equation outside the floor is touched, and with
+p_min = 0 the sheet is the round-3b one. Round 4b (same day, Adversary PASS-WITH-FIXES, no formula error) changes no equation:
+it states the model change on the floor in full (π_i slaved to the stress, steady state H λ̇ = (f:a:P) λ̇_f, strength
+no longer following ψ_i; +38 % / +53 % in q), corrects "needs large steps", writes (S.58) as an induction with its
+exclusions, defines the noise band of the strict activation, completes step 5g, the fixtures of K1.12 (C) / the
+wet-floor table / K1.14b, the `floor` / stepInfo layout with n_f,π, the invariant-based assertion of the K1.16 stall
+row, and the forced-m ≥ 2 gate for (S.59).
