@@ -101,10 +101,14 @@ struct LadrunoSasOptions {                                                  // L
     double tcPsep;         // Ladruno WP-152: tension cutoff: a code 4/9 refusal at committed p0 < tcPsep separates (0 = tension only)
     double tcPcontact;     // Ladruno WP-152: tension cutoff: re-contact pressure (> tcPsep, > p_min); <= 0 = cutoff OFF (DEFAULT)
     double tcP0Max;        // Ladruno WP-152 (review #2): a tension refusal separates only at committed p0 <= tcP0Max (else it refuses)
+    int    lowPMode;       // Ladruno WP-230 (TIMs F25): what a point that loses its confinement becomes: 0 = SEPARATED (WP-152, DEFAULT), 1 = CLAMPED (p = lowPFloor, committed deviator kept)
+    double lowPFloor;      // Ladruno WP-230: the clamp pressure (model stress units); read only when lowPMode == 1
+    int    lowPAlpha;      // Ladruno WP-230: alpha of a clamped point: 0 = left as committed (DEFAULT), 1 = projected to the yield cone
     LadrunoSasOptions() : errFloor(-1.0), alphaBoundTol(0.1), alphaEntryTol(2.0), alphaProject(0),
                           alphaInMode(0), errorVars(0),   // Ladruno WP-129
                           hFloor(0.0), reseatHyst(0.0), softCap(0.0),   // Ladruno WP-151
-                          tcPsep(0.0), tcPcontact(0.0), tcP0Max(0.0) {}   // Ladruno WP-152
+                          tcPsep(0.0), tcPcontact(0.0), tcP0Max(0.0),   // Ladruno WP-152
+                          lowPMode(0), lowPFloor(0.0), lowPAlpha(0) {}   // Ladruno WP-230
 };   // Ladruno WP-129
 enum {                                                                      // Ladruno WP-129
     LSAS_UPDATES = 0, LSAS_ELASTIC, LSAS_SUBSTEPS, LSAS_ACCEPTED, LSAS_REJ_ERR,   // Ladruno WP-129
@@ -119,6 +123,7 @@ enum {                                                                      // L
     LSAS_H_FLOORED, LSAS_H_SOFTCAPPED, LSAS_RESEAT_HELD,   // Ladruno WP-151 (appended: earlier columns keep their index)
     LSAS_SEP_ENTRIES_TENSION, LSAS_SEP_ENTRIES_LOWP, LSAS_SEP_EXITS, LSAS_SEP_ACTIVE,   // Ladruno WP-152 (appended)
     LSAS_SEP_LAST_CODE, LSAS_SEP_MAX_P0, LSAS_SEP_HELD_HIGHP, LSAS_SEP_HELD_COMPRESSING,   // Ladruno WP-152 review #1-#3 (appended)
+    LSAS_CLAMP_MAX_FRATIO, LSAS_CLAMP_MAX_BOUND,   // Ladruno WP-230 (appended): the largest f/(sqrt(2/3) m p) and stress ratio / bounding ratio a COMMITTED clamped state held
     LSAS_COUNT   // Ladruno WP-129
 };   // Ladruno WP-129
 struct LadrunoSasState {                                                    // Ladruno WP-129
@@ -133,8 +138,10 @@ struct LadrunoSasState {                                                    // L
     int    sepEvent;            // Ladruno WP-152: this TRIAL's transition (0 none, 1 entry E1, 2 entry E2, 3 exit), counted at commit
     int    sepCode;             // Ladruno WP-152: the refusal code this TRIAL's entry masked (3, 4, 6 or 9), recorded at commit
     double sepP0;               // Ladruno WP-152: the committed p0 at this TRIAL's entry, recorded at commit
+    double clampFr, clampBound; // Ladruno WP-230: this TRIAL's clamped-state measures (f in cone radii; stress ratio over the bounding ratio), recorded at commit
     LadrunoSasState() : allowed(false), refused(false), warned(false), commitRefusalWarned(false),   // Ladruno WP-129
-                        sep(false), sep_n(false), sepTr(0.0), sepTr_n(0.0), sepEvent(0), sepCode(0), sepP0(0.0) {   // Ladruno WP-152
+                        sep(false), sep_n(false), sepTr(0.0), sepTr_n(0.0), sepEvent(0), sepCode(0), sepP0(0.0),   // Ladruno WP-152
+                        clampFr(0.0), clampBound(0.0) {   // Ladruno WP-230
         for (int i = 0; i < LSAS_COUNT; i++) stats[i] = 0.0;   // Ladruno WP-129
     }   // Ladruno WP-129
 };   // Ladruno WP-129
@@ -491,6 +498,7 @@ class ManzariDafalias : public NDMaterial
 	double  ladrunoSasSoftCapH(double h, double bn, double p, double X);   // Ladruno WP-151
 	double  ladrunoSasReseatDelta(void) const;                             // Ladruno WP-151
 	void    ladrunoSasSetIsotropic(double pModel);                           // Ladruno WP-152
+	void    ladrunoSasSetClamped(double pModel, const Vector& sDev, bool recontact);   // Ladruno WP-230
 	Vector  ladrunoSasElastic(const Vector& S, const Vector& dEps, double e0, double e1);  // Ladruno WP-129
 	double  ladrunoSasIntersect(const Vector& S, const Vector& A, const Vector& dEps,   // Ladruno WP-129
 	                double e0, double lo, double hi);   // Ladruno WP-129

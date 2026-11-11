@@ -96,7 +96,7 @@ def test_only_qualifying_refusals_change(replays):
 def _events(records):
     """(step, 'enter' / 'recontact') and the entry causes, from the COMMITTED census
     (counted once per committed transition)."""
-    ev, causes, prev = [], [], [0.0] * 44
+    ev, causes, prev = [], [], [0.0] * 46
     for r in records:
         s = r["sas"]
         for col, cause in ((36, "E1"), (37, "E2")):
@@ -282,7 +282,7 @@ def test_census_names_and_options_response():
                                    "sepLastCode", "sepMaxP0", "sepHeldHighP", "sepHeldCompressing"]
     ops.wipe()
     T.build([[0, 0, 0, 0, 0, 0]], T.BASE + T.R1 + T.CUTOFF)
-    assert len(T.mresp("sasStats")) == 44
+    assert len(T.mresp("sasStats")) == 46        # WP-230: + clampMaxFRatio, clampMaxBound
     assert T.mresp("sasOptions")[9:12] == [0.5, 1.0, 1.0]        # p0max defaults to p_contact
     T.build([[0, 0, 0, 0, 0, 0]], T.BASE + T.R1 + T.CUTOFF + ("-sasSepMaxP0", 2.5))
     assert T.mresp("sasOptions")[11] == 2.5

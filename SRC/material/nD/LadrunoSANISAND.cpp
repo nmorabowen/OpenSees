@@ -217,6 +217,7 @@ OPS_LadrunoSANISAND(void)
                << " <-errFloor sigRef?> <-alphaBoundTol kappa?> <-alphaEntryTol kappaEntry?> <-alphaProject 0|1>"  // Ladruno WP-129
                << " <-sasAlphaIn reseat|bracket|stale> <-sasErrorVars full|stress>"   // Ladruno WP-129
                << " <-sasHFloor cA?> <-sasReseatHyst cRev?> <-sasSoftCap kappa?>"     // Ladruno WP-151
+               << " <-sasLowP clamp pFloor? pSep? pContact?> <-sasLowPAlpha leave|project>"   // Ladruno WP-230
                << " (-errFloor .. -sasSoftCap: IntScheme 129 = SAS-ME only)"         // Ladruno WP-129/151
                << endln;
         return 0;
@@ -283,6 +284,7 @@ OPS_LadrunoSANISAND(void)
     bool sawImplexToken = false;                                                // Ladruno (ADR-92)
     LadrunoSasOptions sasOpt;                                                   // Ladruno WP-129
     bool sawSasToken = false;                                                   // Ladruno WP-129
+    bool sawTensionCutoff = false, sawLowPClamp = false, sawLowPAlpha = false;  // Ladruno WP-230
     bool sawReversalToken = false;                                              // Ladruno WP-129
 
     int numData = 1;
@@ -1037,6 +1039,58 @@ OPS_LadrunoSANISAND(void)
             }
             sasOpt.tcPsep = v2[0];
             sasOpt.tcPcontact = v2[1];
+            sawTensionCutoff = true;                                             // Ladruno WP-230
+        }
+        // Ladruno WP-230 (TIMs F25): the low-pressure CLAMP, the comparison mode to
+        // WP-152's separation: -sasLowP clamp p_floor p_sep p_contact (model stress
+        // units). Same triggers, gates, closing law and re-contact as the cutoff; a
+        // point that loses its confinement keeps its committed deviator at p = p_floor.
+        else if (strcmp(argTok, "-sasLowP") == 0 || strcmp(argTok, "-saslowp") == 0) {
+            seenFlag = true;
+            sawSasToken = true;
+            const char *modeTok = (OPS_GetNumRemainingInputArgs() > 0) ? OPS_GetString() : "";
+            if (strcmp(modeTok, "clamp") != 0) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -sasLowP wants `clamp p_floor p_sep p_contact` (got mode '" << modeTok
+                       << "'). The other low-pressure mode, separation, is -sasTensionCutoff p_sep p_contact."
+                       << endln;
+                return 0;
+            }
+            double v3[3] = {0.0, 0.0, 0.0};
+            numData = 3;
+            if (OPS_GetDoubleInput(&numData, v3) != 0) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -sasLowP clamp wants three values: p_floor p_sep p_contact" << endln;
+                return 0;
+            }
+            if (!(std::isfinite(v3[0]) && std::isfinite(v3[1]) && std::isfinite(v3[2]) && v3[0] > 0.0
+                  && v3[1] >= 0.0 && v3[2] > v3[1] && v3[2] > v3[0])) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -sasLowP clamp wants p_floor > 0, 0 <= p_sep < p_contact and p_floor < p_contact"
+                          " (got " << v3[0] << " " << v3[1] << " " << v3[2] << "): p_floor is the pressure a"
+                          " clamped point is held at, p_sep and p_contact are -sasTensionCutoff's" << endln;
+                return 0;
+            }
+            sasOpt.lowPMode = 1;
+            sasOpt.lowPFloor = v3[0];
+            sasOpt.tcPsep = v3[1];
+            sasOpt.tcPcontact = v3[2];
+            sawLowPClamp = true;
+        }
+        else if (strcmp(argTok, "-sasLowPAlpha") == 0 || strcmp(argTok, "-saslowpalpha") == 0) {
+            seenFlag = true;
+            sawSasToken = true;
+            const char *ruleTok = (OPS_GetNumRemainingInputArgs() > 0) ? OPS_GetString() : "";
+            if (strcmp(ruleTok, "leave") == 0) sasOpt.lowPAlpha = 0;
+            else if (strcmp(ruleTok, "project") == 0) sasOpt.lowPAlpha = 1;
+            else {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -sasLowPAlpha wants leave (DEFAULT: alpha of a clamped point stays as"
+                          " committed) | project (alpha moved to the yield cone around the clamped"
+                          " stress), got '" << ruleTok << "'" << endln;
+                return 0;
+            }
+            sawLowPAlpha = true;
         }
         // Ladruno WP-152 (review #2): the committed p above which a TENSION refusal
         // (code 6 / a p <= 0 start) refuses instead of separating. Default 5 p_contact.
@@ -1082,6 +1136,7 @@ OPS_LadrunoSANISAND(void)
                        << " -sasAlphaIn / -sasErrorVars /"                                 // Ladruno WP-129
                        << " -sasHFloor / -sasReseatHyst / -sasSoftCap /"                   // Ladruno WP-151
                        << " -sasTensionCutoff / -sasSepMaxP0 /"                            // Ladruno WP-152
+                       << " -sasLowP / -sasLowPAlpha /"                                    // Ladruno WP-230
                        << " -cppmOnFail / -cppmHalvings / -cppmLineSearch / -cppmStart /" // Ladruno WP-130
                        << " -cppmTangent / -meFallback" << endln;                  // Ladruno WP-130
                 return 0;
@@ -1153,6 +1208,7 @@ OPS_LadrunoSANISAND(void)
                << ": -errFloor / -alphaBoundTol / -alphaProject / -sasAlphaIn / -sasErrorVars"
                   " / -sasHFloor / -sasReseatHyst / -sasSoftCap"   // Ladruno WP-151
                   " / -sasTensionCutoff / -sasSepMaxP0"             // Ladruno WP-152
+                  " / -sasLowP / -sasLowPAlpha"                     // Ladruno WP-230
                   " are SAS-ME options and are read ONLY by IntScheme " << LADRUNO_INT_SAS_ME
                << " (this deck asks for IntScheme " << (int)oData[0] << "). Refused rather than"
                   " accepted and ignored." << endln;
@@ -1185,6 +1241,30 @@ OPS_LadrunoSANISAND(void)
                << ": -sasSepMaxP0 does nothing without -sasTensionCutoff. Refused rather than"
                   " accepted and ignored." << endln;
         return 0;
+    }
+    // Ladruno WP-230: the two low-pressure modes are alternatives; a rule for a
+    // clamped point's alpha without a clamp would be read by nothing.
+    if (sawLowPClamp && sawTensionCutoff) {
+        opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+               << ": -sasLowP clamp and -sasTensionCutoff are the two low-pressure modes (clamp:"
+                  " keep the deviator at p_floor; cutoff: separate, no shear). Give one. Refused." << endln;
+        return 0;
+    }
+    if (sawLowPAlpha && !sawLowPClamp) {
+        opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+               << ": -sasLowPAlpha does nothing without -sasLowP clamp. Refused rather than accepted"
+                  " and ignored." << endln;
+        return 0;
+    }
+    if (sawLowPClamp) {
+        const double pminEffC = (pmin < 0.0) ? 1.0e-3 * dData[8] : pmin;
+        if (!(sasOpt.lowPFloor >= pminEffC)) {
+            opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                   << ": -sasLowP clamp p_floor = " << sasOpt.lowPFloor << " must be at or above p_min = "
+                   << pminEffC << " (below it the elastic moduli no longer follow the pressure). Refused."
+                   << endln;
+            return 0;
+        }
     }
     if (sasOpt.tcPcontact > 0.0) {
         // the default bound is p_contact (re-review MED-2: it bounds the entry jump to
@@ -1668,7 +1748,21 @@ LadrunoSANISAND::setLadrunoSasOptions(const LadrunoSasOptions &opt, bool verbose
                           " (small-strain cycles stay on one h branch). Validated for cyclic work"
                           " only at c_rev <= 1." << endln;
         }
-        if (opt.tcPcontact > 0.0)   // Ladruno WP-152
+        if (opt.tcPcontact > 0.0 && opt.lowPMode == 1)   // Ladruno WP-230
+            opserr << "LadrunoSANISAND tag " << this->getTag()
+                   << ": WP-230 low-pressure CLAMP, an OPT-IN comparison mode to WP-152's separation: the"
+                      " same triggers (code 4/9 at committed p < p_sep = " << opt.tcPsep
+                   << "; tension, code 6 or a start at p <= 0, at committed p <= " << opt.tcP0Max
+                   << "; non-compressing increments only), but the point is CLAMPED: p = p_floor = "
+                   << opt.lowPFloor << " and it KEEPS its committed deviator, frozen, until it re-contacts"
+                      " at p_contact = " << opt.tcPcontact << " (volumetric only). alpha of a clamped point: "
+                   << (opt.lowPAlpha == 1 ? "PROJECTED to the yield cone around the clamped stress"
+                                          : "left as committed (the state is then outside the yield cone)")
+                   << "; at re-contact alpha is projected to the cone and alpha_in := alpha. Counted: sasStats"
+                      " sepEntriesTension, sepEntriesLowP, sepExits, sepActive (shared with the cutoff),"
+                      " clampMaxFRatio (f in cone radii), clampMaxBound (stress ratio / bounding ratio)."
+                   << endln;
+        else if (opt.tcPcontact > 0.0)   // Ladruno WP-152
             opserr << "LadrunoSANISAND tag " << this->getTag()
                    << ": WP-152 tension cutoff (separation), an OPT-IN constitutive choice: a point whose"
                       " update fails its accuracy/cost limit (code 4/9) at committed p < p_sep = " << opt.tcPsep
@@ -2326,7 +2420,8 @@ LadrunoSANISAND::getCopy(const char *type)
 //      [LWIRE_SAS, +LWIRE_SAS_OPT_N)   WP-129: errFloor, alphaBoundTol, alphaProject,
 //                                      alphaInMode, errorVars, alphaEntryTol;
 //                                      WP-151: hFloor, reseatHyst, softCap;
-//                                      WP-152: tcPsep, tcPcontact, tcP0Max
+//                                      WP-152: tcPsep, tcPcontact, tcP0Max;
+//                                      WP-230: lowPMode, lowPFloor, lowPAlpha
 //      [.., +LSAS_COUNT)               WP-129: the sasStats census (WP-151 appends 3,
 //                                      WP-152 appends 8)
 //      [LWIRE_SEP, +2)                 WP-152: the committed sep_n, sepTr_n
@@ -2388,7 +2483,7 @@ LadrunoSANISAND::getCopy(const char *type)
 // is not this one (a stream from another build, or an overwritten slot).
 // LEDGER_quirks, WP-151. WP-152 changed the layout (the tension-cutoff options
 // and the committed separation state), so the tag is now 152.
-static const double kLadrunoSanWireTag = 152.1;   // 152.1: + tcP0Max and 4 census columns (review)
+static const double kLadrunoSanWireTag = 230.0;   // 230.0: + lowPMode, lowPFloor, lowPAlpha and 2 census columns (WP-230); was 152.1
 
 int
 LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
@@ -2495,6 +2590,9 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
         ladrunoData(b + 9) = mLadrunoSas.opt.tcPsep;       // Ladruno WP-152 (LWIRE_SAS_OPT_N 9 -> 11)
         ladrunoData(b + 10) = mLadrunoSas.opt.tcPcontact;  // Ladruno WP-152
         ladrunoData(b + 11) = mLadrunoSas.opt.tcP0Max;     // Ladruno WP-152 review #2 (11 -> 12)
+        ladrunoData(b + 12) = (double)mLadrunoSas.opt.lowPMode;    // Ladruno WP-230 (12 -> 15)
+        ladrunoData(b + 13) = mLadrunoSas.opt.lowPFloor;           // Ladruno WP-230
+        ladrunoData(b + 14) = (double)mLadrunoSas.opt.lowPAlpha;   // Ladruno WP-230
     }
     // Ladruno WP-152: the COMMITTED separation state crosses for the reason the
     // committed stress does -- a restored point must stay separated.
@@ -2576,6 +2674,21 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
               && mLadrunoSas.opt.tcP0Max >= mLadrunoSas.opt.tcPcontact
               && mLadrunoSas.opt.hFloor > 0.0))
             mLadrunoSas.opt.tcPsep = mLadrunoSas.opt.tcPcontact = mLadrunoSas.opt.tcP0Max = 0.0;
+        // Ladruno WP-230: the clamp, in the parser's ranges; a clamp that cannot be
+        // honoured leaves NO low-pressure mode (it must not turn into a separation)
+        mLadrunoSas.opt.lowPMode  = (ladrunoData(b + 12) == 1.0) ? 1 : 0;
+        mLadrunoSas.opt.lowPFloor = ladrunoData(b + 13);
+        mLadrunoSas.opt.lowPAlpha = (ladrunoData(b + 14) == 1.0) ? 1 : 0;
+        if (mLadrunoSas.opt.lowPMode == 1
+            && !(std::isfinite(mLadrunoSas.opt.lowPFloor) && mLadrunoSas.opt.lowPFloor > 0.0
+                 && mLadrunoSas.opt.lowPFloor < mLadrunoSas.opt.tcPcontact)) {
+            mLadrunoSas.opt.tcPsep = mLadrunoSas.opt.tcPcontact = mLadrunoSas.opt.tcP0Max = 0.0;
+            mLadrunoSas.opt.lowPMode = 0;
+        }
+        if (mLadrunoSas.opt.lowPMode == 0) {
+            mLadrunoSas.opt.lowPFloor = 0.0;
+            mLadrunoSas.opt.lowPAlpha = 0;
+        }
     }
     mLadrunoSas.sep_n   = (ladrunoData(LWIRE_SEP + 0) > 0.5) && (mLadrunoSas.opt.tcPcontact > 0.0);   // Ladruno WP-152
     mLadrunoSas.sepTr_n = std::isfinite(ladrunoData(LWIRE_SEP + 1)) ? ladrunoData(LWIRE_SEP + 1) : 0.0;
@@ -2681,6 +2794,10 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
         && (!(mLadrunoSas.opt.tcPcontact > m_Pmin) || m_Presidual != 0.0     // + review #4
             || m_PreElastic != 0.0)) {                                         // + re-review LOW-7
         mLadrunoSas.opt.tcPsep = mLadrunoSas.opt.tcPcontact = mLadrunoSas.opt.tcP0Max = 0.0;
+        mLadrunoSas.opt.lowPMode = 0;                                         // Ladruno WP-230
+        mLadrunoSas.opt.lowPFloor = 0.0;                                      // Ladruno WP-230
+        mLadrunoSas.opt.lowPAlpha = 0;                                        // Ladruno WP-230
+        mLadrunoSas.clampFr = mLadrunoSas.clampBound = 0.0;                   // Ladruno WP-230
         mLadrunoSas.sep = mLadrunoSas.sep_n = false;
         mLadrunoSas.stats[LSAS_SEP_ACTIVE] = 0.0;                             // re-review LOW-5
     }
@@ -4979,6 +5096,13 @@ LadrunoSANISAND::commitState(void)
         case 3: mLadrunoSas.stats[LSAS_SEP_EXITS] += 1.0; break;
         default: break;
         }
+        // Ladruno WP-230: what a clamped state costs, recorded for the state that COMMITS
+        if (mLadrunoSas.sep && mLadrunoSas.opt.lowPMode == 1) {
+            if (mLadrunoSas.clampFr > mLadrunoSas.stats[LSAS_CLAMP_MAX_FRATIO])
+                mLadrunoSas.stats[LSAS_CLAMP_MAX_FRATIO] = mLadrunoSas.clampFr;
+            if (mLadrunoSas.clampBound > mLadrunoSas.stats[LSAS_CLAMP_MAX_BOUND])
+                mLadrunoSas.stats[LSAS_CLAMP_MAX_BOUND] = mLadrunoSas.clampBound;
+        }
         mLadrunoSas.sepEvent = 0;
         mLadrunoSas.sep_n = mLadrunoSas.sep;
         mLadrunoSas.sepTr_n = mLadrunoSas.sepTr;
@@ -5586,7 +5710,8 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
             "sas_errFloor", "sas_alphaBoundTol", "sas_alphaProject", "sas_alphaInMode",
             "sas_errorVars", "sas_alphaEntryTol",
             "sas_hFloor", "sas_reseatHyst", "sas_softCap",                     // Ladruno WP-151
-            "sas_tcPsep", "sas_tcPcontact", "sas_tcP0Max"};                     // Ladruno WP-152
+            "sas_tcPsep", "sas_tcPcontact", "sas_tcP0Max",                      // Ladruno WP-152
+            "sas_lowPMode", "sas_lowPFloor", "sas_lowPAlpha"};                  // Ladruno WP-230
         static_assert(sizeof(names) / sizeof(names[0]) == LWIRE_SAS_OPT_N,   // Ladruno WP-151 (review NIT)
                       "sasOptions names must match LWIRE_SAS_OPT_N (the response and the wire block)");
         output.tag("NdMaterialOutput");
@@ -5626,7 +5751,8 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
             "sas_rejectedReversal",
             "sas_hFloored", "sas_hSoftCapped", "sas_reseatHeld",    // Ladruno WP-151
             "sas_sepEntriesTension", "sas_sepEntriesLowP", "sas_sepExits", "sas_sepActive",   // Ladruno WP-152
-            "sas_sepLastCode", "sas_sepMaxP0", "sas_sepHeldHighP", "sas_sepHeldCompressing"};   // WP-152 review
+            "sas_sepLastCode", "sas_sepMaxP0", "sas_sepHeldHighP", "sas_sepHeldCompressing",    // WP-152 review
+            "sas_clampMaxFRatio", "sas_clampMaxBound"};                                         // Ladruno WP-230
         output.tag("NdMaterialOutput");
         output.attr("matType", getClassType());
         output.attr("matTag", getTag());
@@ -5790,6 +5916,9 @@ LadrunoSANISAND::getResponse(int responseID, Information &matInformation)
         out(9) = mLadrunoSas.opt.tcPsep;        // Ladruno WP-152
         out(10) = mLadrunoSas.opt.tcPcontact;   // Ladruno WP-152
         out(11) = mLadrunoSas.opt.tcP0Max;      // Ladruno WP-152 review #2
+        out(12) = (double)mLadrunoSas.opt.lowPMode;    // Ladruno WP-230
+        out(13) = mLadrunoSas.opt.lowPFloor;           // Ladruno WP-230
+        out(14) = (double)mLadrunoSas.opt.lowPAlpha;   // Ladruno WP-230
         return matInformation.setVector(out);
     }
     if (responseID == LadrunoSanisandCppmOptionsResponseID) {

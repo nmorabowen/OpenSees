@@ -668,6 +668,7 @@ initopensees(void)
 "        • LadrunoSANISAND — IntScheme 129 SAS-ME (alpha-aware error, refuses, no force-accept)\n"
 "        • LadrunoSANISAND — SAS-ME -sasHFloor / -sasReseatHyst / -sasSoftCap (WP-151 R1)\n"
 "        • LadrunoSANISAND — SAS-ME -sasTensionCutoff (separation at p' ~ 0, WP-152)\n"
+"        • LadrunoSANISAND — SAS-ME -sasLowP clamp (low-pressure clamp, comparison mode, WP-230)\n"
 "        • system Pardiso — -deterministic / -cbwr (MKL CNR, reproducible)\n"
 "        • relativeMassDamping: Rayleigh mass term relative to a v_ref(t)\n"
 "        • LadrunoMembrane — polygonal tributary & FEA load-transfer membrane\n"
