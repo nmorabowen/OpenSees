@@ -45,6 +45,8 @@ class Weights:
     eps_min_pct: float = 0.0          # data points below this axial strain are left out (fit_tatsuoka uses 0.1:
     #                                   the (0, 1) first row is a TIMs prepend and the < 0.1 % branch carries
     #                                   plate seating, data/README.md §3.3)
+    small_strain_pct: float = 0.0     # K3d: sr residuals at axial strains up to this value carry small_strain_weight
+    small_strain_weight: float = 1.0  # (0 / 1 = off: every earlier fit is unchanged)
     refusal_penalty: float = 100.0
 
     def as_dict(self):
@@ -96,6 +98,7 @@ class Objective:
         xs = np.abs(lc.eps_a_sr)
         ms = (xs <= x_end + 1e-12) & (xs >= W.eps_min_pct)
         ws = np.where(xs[ms] <= epk_d + 1e-12, 1.0, W.post_peak_weight)
+        ws = np.where(xs[ms] <= W.small_strain_pct + 1e-12, ws * W.small_strain_weight, ws)
         out["sr"] = wt * ws * (np.interp(xs[ms], xm, srm) - lc.sr[ms]) / W.sigma_sr
         xv = np.abs(lc.eps_a_ev)
         mv = (xv <= x_end + 1e-12) & (xv >= W.eps_min_pct)
@@ -147,6 +150,7 @@ class Objective:
             xs = np.abs(lc.eps_a_sr)
             ms = (xs <= x_end + 1e-12) & (xs >= W.eps_min_pct)
             ws = np.where(xs[ms] <= epk_d + 1e-12, 1.0, W.post_peak_weight)
+            ws = np.where(xs[ms] <= W.small_strain_pct + 1e-12, ws * W.small_strain_weight, ws)
             xv = np.abs(lc.eps_a_ev)
             mv = (xv <= x_end + 1e-12) & (xv >= W.eps_min_pct)
             wv = np.where(xv[mv] <= epk_d + 1e-12, 1.0, W.post_peak_weight)

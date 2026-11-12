@@ -69,7 +69,8 @@ def build(args):
         curves += load_literature()
     points = [] if args.no_points else DATA.load_points(os.path.join(DATA_DIR, "tatsuoka1986", "point_tests.csv"),
                                                          source="Tatsuoka 1986 Figs. 9 / 22")
-    W = Weights(post_peak_pct=args.post_peak, post_peak_weight=args.post_weight, eps_min_pct=args.eps_min)
+    W = Weights(post_peak_pct=args.post_peak, post_peak_weight=args.post_weight, eps_min_pct=args.eps_min,
+                small_strain_pct=args.small_strain, small_strain_weight=args.small_weight)
     return sand, setup, Objective(setup, curves, points, W)
 
 
@@ -91,6 +92,9 @@ def main(argv=None):
     ap.add_argument("--post-peak", type=float, default=2.0)
     ap.add_argument("--post-weight", type=float, default=0.5)
     ap.add_argument("--eps-min", type=float, default=0.1)
+    ap.add_argument("--small-strain", type=float, default=0.0,
+                    help="K3d: sr residuals at axial strains up to this value (%) carry --small-weight")
+    ap.add_argument("--small-weight", type=float, default=1.0)
     ap.add_argument("--no-points", action="store_true")
     ap.add_argument("--profiles", action="store_true")
     ap.add_argument("--eval", default=None, help="name=value,... : evaluate once and print the breakdown")

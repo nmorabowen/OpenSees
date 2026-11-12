@@ -37,6 +37,12 @@ warnings.filterwarnings("ignore", message=r"rho ?= ?\S+ > rho_bar", category=Use
 FIT_NAMES = ("chi", "h", "N", "N_bar", "rho", "rho_bar")
 # optional: NorSand's OWN fork CSL (K3c, owner 2026-11-09); absent from theta = the sand's (DM04 Table 1) values
 CSL_NAMES = ("e0", "lambda_c", "xi")
+# optional (K3d, owner 2026-11-12): the initial state and the elastic stiffness as calibration items.
+#   pi0_ratio : pi_i0 = pi0_ratio x p_init for every test (replaces Setup.pi0_rule; > the on-surface ratio = an
+#               elastic range before first yield, an apparent preconsolidation)
+#   g_fac     : one factor on the energy plug's elastic stiffness (HAR: k and g; BA06: mu0 and 1/kappa_hat), nu held
+# absent from theta = the Setup's rule and the sand's elastic targets (every earlier fit is unchanged)
+INIT_NAMES = ("pi0_ratio", "g_fac")
 
 P_MIN_FRAC = 5.0e-3     # sheet §9.7 / §1.3: the parser default of the p' floor, p_min = P_MIN_FRAC * p_ref
 
@@ -104,6 +110,14 @@ def common_kwargs(setup: Setup, theta: dict, p_init: float, e_init: float) -> di
         if k in theta:
             kw[k] = float(theta[k])
     kw.update(EN.get(setup.energy).params(s, p_init, e_init, setup.policy))
+    if "g_fac" in theta:
+        f = float(theta["g_fac"])
+        if setup.energy == "HAR":
+            kw["g"] *= f
+            kw["k"] *= f
+        else:
+            kw["mu0"] *= f
+            kw["kappa_hat"] /= f
     kw["p_min"] = resolve_p_min(setup, kw)          # always explicit: O1 (default off) and O2 (default on) must agree
     return kw
 
@@ -143,6 +157,8 @@ def initial(oracle: str, setup: Setup, theta: dict, p_init: float, e_init: float
     P = make_params(oracle, setup, theta, p_init, e_init)
     sig0 = -abs(p_init) * np.eye(3)
     mod = oracle_module(oracle)
+    if "pi0_ratio" in theta:                   # K3d: a fitted ratio overrides the Setup's rule
+        return P, mod.initial_state(P, sig0, 1.0 + e_init, -float(theta["pi0_ratio"]) * abs(p_init))
     if setup.pi0_rule == "unified":            # (S.53) by the oracle's own helper, not by the harness's copy
         if oracle == "O2":
             st = mod.initial_state(P, sig0, 1.0 + e_init, None, pi0_rule="unified")
