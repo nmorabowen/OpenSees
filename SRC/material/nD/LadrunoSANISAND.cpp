@@ -216,7 +216,7 @@ OPS_LadrunoSANISAND(void)
                << " <-meFallback cppm|off>"                                      // Ladruno WP-130
                << " <-errFloor sigRef?> <-alphaBoundTol kappa?> <-alphaEntryTol kappaEntry?> <-alphaProject 0|1>"  // Ladruno WP-129
                << " <-sasAlphaIn reseat|bracket|stale> <-sasErrorVars full|stress>"   // Ladruno WP-129
-               << " <-sasHFloor cA?> <-sasReseatHyst cRev?> <-sasSoftCap kappa?>"     // Ladruno WP-151
+               << " <-sasHFloor cA?> <-sasReseatHyst cRev?> <-sasSoftCap kappa?> <-sasCarryDT 0|1?>"     // Ladruno WP-151
                << " (-errFloor .. -sasSoftCap: IntScheme 129 = SAS-ME only)"         // Ladruno WP-129/151
                << endln;
         return 0;
@@ -1053,6 +1053,22 @@ OPS_LadrunoSANISAND(void)
             }
             sasOpt.tcP0Max = v;
         }
+        // Ladruno sasme-speed: -sasCarryDT 0|1 -- the first trial substep of an
+        // update is the one the controller proposed at the end of the point's last
+        // committed plastic update (reset by a re-seat, an elastic or refused update,
+        // a revert). OFF by default (dT = 1 at every update, byte-identical).
+        else if (strcmp(argTok, "-sasCarryDT") == 0 || strcmp(argTok, "-sascarrydt") == 0) {
+            seenFlag = true;
+            sawSasToken = true;
+            numData = 1;
+            if (OPS_GetIntInput(&numData, &sasOpt.carryDT) != 0 ||
+                (sasOpt.carryDT != 0 && sasOpt.carryDT != 1)) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -sasCarryDT wants 0 (DEFAULT: every update starts at dT = 1) or 1"
+                          " (start from the last committed update's proposed substep)" << endln;
+                return 0;
+            }
+        }
         else {
             // Not one of our flags, so it must be a positional optional.
             if (seenFlag) {
@@ -1681,6 +1697,12 @@ LadrunoSANISAND::setLadrunoSasOptions(const LadrunoSasOptions &opt, bool verbose
                       " re-contacts). Every other refusal (loadingNonPosH included) still refuses."
                       " Counted: sasStats sepEntriesTension, sepEntriesLowP, sepExits, sepActive,"
                       " sepLastCode, sepMaxP0, sepHeldHighP, sepHeldCompressing." << endln;
+        if (opt.carryDT != 0)   // Ladruno sasme-speed
+            opserr << "LadrunoSANISAND tag " << this->getTag()
+                   << ": -sasCarryDT 1: an update's first trial substep is the one the controller proposed"
+                      " at the end of the point's last committed plastic update (as a strain norm), not"
+                      " dT = 1; an alpha_in re-seat, an elastic or refused update and a revert reset it."
+                      " The answer moves within the substep error tolerance TolR." << endln;
         if (mHonorTolR != 0)
             opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
                    << ": -honorTolR has NO EFFECT under SAS-ME, which always uses TolR." << endln;
@@ -4982,6 +5004,7 @@ LadrunoSANISAND::commitState(void)
         mLadrunoSas.sepEvent = 0;
         mLadrunoSas.sep_n = mLadrunoSas.sep;
         mLadrunoSas.sepTr_n = mLadrunoSas.sepTr;
+        mLadrunoSas.carryH_n = mLadrunoSas.carryH;     // Ladruno sasme-speed
         mLadrunoSas.stats[LSAS_SEP_ACTIVE] = mLadrunoSas.sep ? 1.0 : 0.0;
 
         this->ladrunoNoteCommitAlphaIn();                  // Ladruno WP-153
@@ -4999,6 +5022,7 @@ LadrunoSANISAND::revertToLastCommit(void)
     mLadrunoSas.sep = mLadrunoSas.sep_n;               // Ladruno WP-152
     mLadrunoSas.sepTr = mLadrunoSas.sepTr_n;           // Ladruno WP-152
     mLadrunoSas.sepEvent = 0;                          // Ladruno WP-152
+    mLadrunoSas.carryH = mLadrunoSas.carryH_n;         // Ladruno sasme-speed
 
     if (!mImplexOpt.enabled)
         return res;

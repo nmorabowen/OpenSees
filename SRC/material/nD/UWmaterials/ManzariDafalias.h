@@ -101,10 +101,12 @@ struct LadrunoSasOptions {                                                  // L
     double tcPsep;         // Ladruno WP-152: tension cutoff: a code 4/9 refusal at committed p0 < tcPsep separates (0 = tension only)
     double tcPcontact;     // Ladruno WP-152: tension cutoff: re-contact pressure (> tcPsep, > p_min); <= 0 = cutoff OFF (DEFAULT)
     double tcP0Max;        // Ladruno WP-152 (review #2): a tension refusal separates only at committed p0 <= tcP0Max (else it refuses)
+    int    carryDT;        // Ladruno sasme-speed: 1 = the first trial substep of an update is the last accepted one carried over; 0 = dT 1 (DEFAULT, byte-identical)
     LadrunoSasOptions() : errFloor(-1.0), alphaBoundTol(0.1), alphaEntryTol(2.0), alphaProject(0),
                           alphaInMode(0), errorVars(0),   // Ladruno WP-129
                           hFloor(0.0), reseatHyst(0.0), softCap(0.0),   // Ladruno WP-151
-                          tcPsep(0.0), tcPcontact(0.0), tcP0Max(0.0) {}   // Ladruno WP-152
+                          tcPsep(0.0), tcPcontact(0.0), tcP0Max(0.0),   // Ladruno WP-152
+                          carryDT(0) {}   // Ladruno sasme-speed
 };   // Ladruno WP-129
 enum {                                                                      // Ladruno WP-129
     LSAS_UPDATES = 0, LSAS_ELASTIC, LSAS_SUBSTEPS, LSAS_ACCEPTED, LSAS_REJ_ERR,   // Ladruno WP-129
@@ -133,8 +135,10 @@ struct LadrunoSasState {                                                    // L
     int    sepEvent;            // Ladruno WP-152: this TRIAL's transition (0 none, 1 entry E1, 2 entry E2, 3 exit), counted at commit
     int    sepCode;             // Ladruno WP-152: the refusal code this TRIAL's entry masked (3, 4, 6 or 9), recorded at commit
     double sepP0;               // Ladruno WP-152: the committed p0 at this TRIAL's entry, recorded at commit
+    double carryH, carryH_n;    // Ladruno sasme-speed (-sasCarryDT): the next substep the controller proposed, as a strain norm; 0 = none; trial / committed
     LadrunoSasState() : allowed(false), refused(false), warned(false), commitRefusalWarned(false),   // Ladruno WP-129
-                        sep(false), sep_n(false), sepTr(0.0), sepTr_n(0.0), sepEvent(0), sepCode(0), sepP0(0.0) {   // Ladruno WP-152
+                        sep(false), sep_n(false), sepTr(0.0), sepTr_n(0.0), sepEvent(0), sepCode(0), sepP0(0.0),   // Ladruno WP-152
+                        carryH(0.0), carryH_n(0.0) {   // Ladruno sasme-speed
         for (int i = 0; i < LSAS_COUNT; i++) stats[i] = 0.0;   // Ladruno WP-129
     }   // Ladruno WP-129
 };   // Ladruno WP-129

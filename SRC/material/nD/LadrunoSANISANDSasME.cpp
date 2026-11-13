@@ -386,6 +386,7 @@ ManzariDafalias::ladrunoResetSasStats(void)
     for (int i = 0; i < LSAS_COUNT; i++)
         mLadrunoSas.stats[i] = 0.0;
     mLadrunoSas.refused = false;
+    mLadrunoSas.carryH = mLadrunoSas.carryH_n = 0.0;   // Ladruno sasme-speed: revertToStart / replay
 }
 
 // Ladruno WP-152: the separation state is STATE, not census, so it is reset
@@ -922,6 +923,17 @@ ManzariDafalias::ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z,
     double ain1[6], ain2[6], tmpN[6], ainEnd[6];
     double T = 0.0, dT = 1.0;
     bool lastRejected = false;
+    // Ladruno sasme-speed (-sasCarryDT 1): the first trial is the substep the
+    // controller proposed at the end of this point's last COMMITTED plastic
+    // update, carried as a strain norm (the portions of two updates differ in
+    // size). OFF: dn = 0 and dT = 1, every line below as before. dTprop is the
+    // controller's proposal before the cut to 1 - T; it is bookkeeping only and
+    // never changes dT.
+    const bool carry = (o.carryDT != 0);
+    const double dn = carry ? sqrt(ddm6(dStrain, dStrain)) : 0.0;
+    if (carry && mLadrunoSas.carryH_n > 0.0 && dn > 0.0 && std::isfinite(dn))
+        dT = fmax(fmin(1.0, mLadrunoSas.carryH_n / dn), kSasDTmin);
+    double dTprop = dT;
     (void)onset;   // the paper rule below needs no onset flag: DM04 re-seats at an
                    // onset only when (alpha - alpha_in):n < 0 there (WP-134 oracle)
     lamSum = 0.0;
@@ -1094,6 +1106,7 @@ ManzariDafalias::ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z,
             if (atMin)
                 return rc;
             dT = fmax(q * dT, kSasDTmin);
+            dTprop = dT;
             lastRejected = true;
             continue;
         }
@@ -1125,9 +1138,13 @@ ManzariDafalias::ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z,
         if (lastRejected)
             q = fmin(q, 1.0);
         lastRejected = false;
+        const bool cut = (dT < dTprop);   // this substep was the remainder 1 - T, not a proposal
         dT = fmax(q * dT, kSasDTmin);
+        dTprop = cut ? fmax(dT, dTprop) : dT;
         dT = fmin(dT, 1.0 - T);
     }
+    if (carry)
+        mLadrunoSas.carryH = dTprop * dn;   // Ladruno sasme-speed: the proposal, in strain norm
     return 0;
 }
 
@@ -1142,6 +1159,8 @@ ManzariDafalias::ladrunoSasIntegrate(void)
     st[LSAS_LAST_SUBSTEPS] = 0.0;
     st[LSAS_LAST_REFUSE_CODE] = 0.0;
     mLadrunoSas.refused = false;
+    mLadrunoSas.carryH = 0.0;   // Ladruno sasme-speed: set again only by an accepted plastic update
+    const double reseats0 = st[LSAS_ALPHA_IN_RESEATS];
 
     double CurStrain[6], NextStrain[6], dStrain[6];
     for (int i = 0; i < 6; i++) {
@@ -1471,6 +1490,10 @@ ManzariDafalias::ladrunoSasIntegrate(void)
         mAlpha_in(i) = ain[i];
     }
     mDGamma = lamSum;
+    // Ladruno sasme-speed: a reversal (an alpha_in re-seat) in this update starts
+    // a new loading process; its next update starts at dT = 1 again.
+    if (st[LSAS_ALPHA_IN_RESEATS] != reseats0)
+        mLadrunoSas.carryH = 0.0;
     {
         OPS_PROFILE_SCOPE("sanisand.sasME.tangent");
         ladrunoSasModuli(S, mVoidRatio, K, G);
