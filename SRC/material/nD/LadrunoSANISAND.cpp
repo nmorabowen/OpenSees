@@ -5005,6 +5005,13 @@ LadrunoSANISAND::commitState(void)
         mLadrunoSas.sep_n = mLadrunoSas.sep;
         mLadrunoSas.sepTr_n = mLadrunoSas.sepTr;
         mLadrunoSas.carryH_n = mLadrunoSas.carryH;     // Ladruno sasme-speed
+        // Ladruno sasme-speed (TanType 3): the next step starts at d_eps = 0, where the
+        // consistent tangent of an update IS the continuum one at the committed state.
+        // The last update's consistent tangent belongs to ITS finite increment; used as
+        // the first-iteration tangent of the next step it overshoots (measured: Newton
+        // refusals at iteration 1, maxSubsteps, on the footing).
+        if ((int)mTangType == 3 && (int)mScheme == LADRUNO_INT_SAS_ME)
+            mCep_Consistent = mCep;
         mLadrunoSas.stats[LSAS_SEP_ACTIVE] = mLadrunoSas.sep ? 1.0 : 0.0;
 
         this->ladrunoNoteCommitAlphaIn();                  // Ladruno WP-153
