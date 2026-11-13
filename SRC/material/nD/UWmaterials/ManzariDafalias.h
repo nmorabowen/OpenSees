@@ -477,23 +477,33 @@ class ManzariDafalias : public NDMaterial
 	void    ladrunoSasIntegrate(void);                                       // Ladruno WP-129
 	void    ladrunoResetSasStats(void);                                      // Ladruno WP-129
 	void    ladrunoResetSasSep(void);                                        // Ladruno WP-152
-	int     ladrunoSasStage(const Vector& s, const Vector& a, const Vector& z, double e,  // Ladruno WP-129
-	                const Vector& ain, double dv, const Vector& ddev,   // Ladruno WP-129
-	                Vector& ds, Vector& da, Vector& dz, Vector& dep, double& lam);   // Ladruno WP-129
-	int     ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z, Vector& ain,  // Ladruno WP-129
-	                const Vector& curStrain, const Vector& nextStrain, bool onset,   // Ladruno WP-129
+	// Ladruno WP-231: the SAS-ME update works on 6-component stack arrays
+	// (double[6], Voigt order of mSigma); no Vector/Matrix is built per substep.
+	int     ladrunoSasStage(const double* s, const double* a, const double* z, double e,  // Ladruno WP-129, WP-231
+	                const double* ain, double dv, const double* ddev,   // Ladruno WP-129, WP-231
+	                double* ds, double* da, double* dz, double* dep, double& lam);   // Ladruno WP-129, WP-231
+	int     ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z, double* ain,  // Ladruno WP-129, WP-231
+	                const double* curStrain, const double* nextStrain, bool onset,   // Ladruno WP-129, WP-231
 	                double& lamSum, bool& lastPlastic);   // Ladruno WP-129
-	bool    ladrunoSasDrift(Vector& S, Vector& A, Vector& Z, Vector& Ee, double e,       // Ladruno WP-129
-	                const Vector& ain, bool bothSides);   // Ladruno WP-129
+	bool    ladrunoSasDrift(double* S, double* A, double* Z, double* Ee, double e,       // Ladruno WP-129, WP-231
+	                const double* ain, bool bothSides);   // Ladruno WP-129, WP-231
 	double  ladrunoSasAlphaRatio(const Vector& a, const Vector& s, double e);           // Ladruno WP-129
-	void    ladrunoSasProject(Vector& S, Vector& A, Vector& Ee, double e);             // Ladruno WP-129
-	double  ladrunoSasBracketH(const Vector& a, const Vector& ain, const Vector& n, double h, double b0); // Ladruno WP-129/151
+	double  ladrunoSasAlphaRatio(const double* a, const double* s, double e);           // Ladruno WP-231
+	void    ladrunoSasProject(double* S, double* A, double* Ee, double e);             // Ladruno WP-129, WP-231
+	double  ladrunoSasBracketH(const double* a, const double* ain, const double* n, double h, double b0); // Ladruno WP-129/151, WP-231
 	double  ladrunoSasSoftCapH(double h, double bn, double p, double X);   // Ladruno WP-151
 	double  ladrunoSasReseatDelta(void) const;                             // Ladruno WP-151
 	void    ladrunoSasSetIsotropic(double pModel);                           // Ladruno WP-152
-	Vector  ladrunoSasElastic(const Vector& S, const Vector& dEps, double e0, double e1);  // Ladruno WP-129
-	double  ladrunoSasIntersect(const Vector& S, const Vector& A, const Vector& dEps,   // Ladruno WP-129
+	void    ladrunoSasElastic(const double* S, const double* dEps, double e0, double e1, double* dS);  // Ladruno WP-129, WP-231
+	double  ladrunoSasIntersect(const double* S, const double* A, const double* dEps,   // Ladruno WP-129, WP-231
 	                double e0, double lo, double hi);   // Ladruno WP-129
+	double  ladrunoSasF(const double* S, const double* A);                   // Ladruno WP-231: GetF
+	void    ladrunoSasNormal(const double* S, const double* A, double* n);    // Ladruno WP-231: GetNormalToYield
+	void    ladrunoSasModuli(const double* S, double e, double& K, double& G); // Ladruno WP-231: GetElasticModuli
+	void    ladrunoSasStateDep(const double* stress, const double* alpha, const double* fabric,   // Ladruno WP-231:
+	                double e, const double* alpha_in, double* n, double* d, double* b,   // GetStateDependent
+	                double& cos3Theta, double& h, double& psi, double& alphaBtheta, double& alphaDtheta,   // Ladruno WP-231
+	                double& b0, double& A, double& D, double& B, double& C, double* R);   // Ladruno WP-231
 	void    ladrunoSasContinuumTangent(const Vector& S, const Vector& A, const Vector& Z,  // Ladruno WP-129
 	                const Vector& ain, double e, Matrix& Cep);   // Ladruno WP-129
 	double	mEPS;			// machine epsilon (for FD jacobian)
