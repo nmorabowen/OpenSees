@@ -118,6 +118,44 @@
 // 97-102 of 320 wall trials singular); the cap closes deep softening (b:n << 0
 // at low p), e.g. the inadmissible ring point b8 1950/3.
 //
+// Ladruno band scaling (an OPT-IN variant; -sasBandScale S, OFF by default and the
+// code path then byte-identical). The model softens without a length: a shear
+// band in a mesh is as thick as the elements. With the option a point that has
+// passed its peak (the LATCH, below) stands for a band of sand of thickness w in
+// series with elastically unloading sand, S = w / (c_b h) being the share of the
+// element that is band (S is given by the driver: one value per element size).
+// After the latch, with Kp, X, R, D the model's own quantities at the state:
+//     lambda = Q:C:d_eps / (Kp + S X)        the plastic multiplier of the BAND
+//     d_eps  = C^-1 : d_sigma + S lambda R   the strain of the element
+//     alpha, z advance with lambda, as in DM04
+//     de     = -(1 + e_init) (d_eps_v + (1 - S) lambda D)   the volume change of
+//              the band: the void ratio is e(strain) + an integrated offset
+//     tangent  C - S (C:R)(x)(Q:C) / (Kp + S X)   (= the DM04 tangent with h / S)
+//     -sasSoftCap kappa becomes H >= kappa S X
+// This is exactly a mixture at ONE stress of a fraction S of DM04 and 1 - S of its
+// own elastic law (the moduli depend on p and e_init only, so both parts share
+// them; the `mUseCurrentVoidRatioInG` seam would break that and no constructor
+// sets it). S = 1 is DM04. S > 1 (an element thinner than the band) slows the
+// softening. Kp + S X <= 0 is the snap-back of the point itself under full strain
+// control: a refusal (loadingWithNonPositiveDenominator), as for DM04.
+// THE LATCH is permanent and committed with the state:
+//   -sasBandTrigger peak (DEFAULT)  an accepted plastic substep over which the
+//        major/minor principal stress ratio fell, ending with b:n <= 0. On a
+//        uniform specimen this is the peak of the specimen itself, so first
+//        loading and the peak are untouched.
+//   -sasBandTrigger bn   an accepted plastic substep ending with b:n <= 0 (Kp <= 0
+//        at the point; it acts 0.1-0.5 % of strain before the peak of a
+//        plane-strain specimen and moves the softening branch with it).
+// Form, latch and limits were chosen on an exact Python integration of DM04 (the
+// rate equations to rtol 1e-8, the latch as an event) before this was written:
+// on a plane-strain point under constant side stress, against a series model of
+// the unmodified band and elastically unloading blocks, the latch `peak` keeps R
+// within 3 % for S from 5 to 0.1 at sigma3 5-300 kPa (0.79 % at S 0.2, 1.76 % at
+// 0.1, 3.9 % at 0.05); the latch `bn` and a latch on loss of ellipticity miss by
+// 5-7 % already at S 0.2 (they move the softening branch to before the peak); a
+// cheaper form that scales the void ratio only misses by 8 % at S 0.2. The scale
+// at which a constant-side-stress specimen snaps back is S 0.01-0.03.
+//
 // Written: N. Mora-Bowen (Ladruno), 2026.
 
 #include "UWmaterials/ManzariDafalias.h"
@@ -404,6 +442,47 @@ ManzariDafalias::ladrunoResetSasSep(void)
     mLadrunoSas.stats[LSAS_SEP_ACTIVE] = 0.0;
 }
 
+// Ladruno band scaling: the latch and the void-ratio offset are STATE (reset as
+// the separation state is: by revertToStart outside InitialStateAnalysis, and by
+// the replay command); the three counters are census.
+void
+ManzariDafalias::ladrunoResetSasBand(void)
+{
+    mLadrunoSas.band = mLadrunoSas.band_n = false;
+    mLadrunoSas.bandS = mLadrunoSas.bandS_n = 0.0;
+    mLadrunoSas.bandDe = mLadrunoSas.bandDe_n = 0.0;
+    mLadrunoSas.bandStages = mLadrunoSas.bandCapped = mLadrunoSas.bandLatches = 0.0;
+}
+
+// Ladruno band scaling: major / minor principal stress of s (compression
+// positive, the true stress: no p_r), from the invariants. With cos(3 theta) =
+// sqrt(6) tr(n^3) of the unit deviator n (1 in triaxial compression), the
+// principal deviatoric stresses are sqrt(2/3) |s_dev| cos(theta - 2 pi k / 3).
+// Returns +inf when the minor one is not positive (such a state never latches).
+// Ladruno sasme-speed: on a stack array; GetTrace, GetDevPart, GetNorm_Contr,
+// Vector::operator/= and GetLodeAngle as tr6, dev6, norm6, div6, lode6 (the
+// Vector form of the band branch, operation for operation).
+double
+ManzariDafalias::ladrunoSasPrincipalRatio(const double* s)
+{
+    const double p = one3 * tr6(s);
+    double dv[6];
+    dev6(dv, s);
+    const double nd = norm6(dv);
+    if (!(nd > 1.0e-14 * fabs(p)) || !std::isfinite(nd))
+        return 1.0;
+    div6(dv, nd);
+    double c3 = lode6(dv);
+    c3 = (c3 > 1.0) ? 1.0 : ((c3 < -1.0) ? -1.0 : c3);
+    const double th = acos(c3) / 3.0;
+    const double r = root23 * nd;
+    const double sMax = p + r * cos(th);
+    const double sMin = p + r * cos(th + 2.0943951023931954923);   // + 2 pi / 3
+    if (!(sMin > 0.0))
+        return std::numeric_limits<double>::infinity();
+    return sMax / sMin;
+}
+
 // Ladruno WP-152 (tension cutoff): put the TRIAL on an isotropic state of model
 // pressure pModel (sigma = (pModel - p_r) I) with alpha = alpha_in = 0 -- the only
 // alpha consistent with an isotropic stress on DM04's thin cone -- the committed
@@ -674,8 +753,16 @@ ManzariDafalias::ladrunoSasIntersect(const double* S, const double* A, const dou
 int
 ManzariDafalias::ladrunoSasStage(const double* s, const double* a, const double* z, double e,
     const double* ain, double dv, const double* ddev,
-    double* ds, double* da, double* dz, double* dep, double& lam)
+    double* ds, double* da, double* dz, double* dep, double& lam,
+    double bandS, double* lamD)
 {
+    // Ladruno band scaling: bandS > 0 = a latched point, a fraction bandS of band in
+    // series with elastic sand. lam is then the multiplier of the BAND (alpha, z),
+    // the plastic strain of the element is bandS lam R, and *lamD returns lam D,
+    // the plastic volume change of the band. bandS == 0: the WP-129 stage, unchanged.
+    const bool bandOn = (bandS > 0.0);
+    if (lamD != 0)
+        *lamD = 0.0;
     const double p = one3 * tr6(s) + m_Presidual;
     if (!(p > 0.0))
         return ST_TENSION;
@@ -711,12 +798,17 @@ ManzariDafalias::ladrunoSasStage(const double* s, const double* a, const double*
     if (mLadrunoSas.opt.softCap > 0.0) {                                  // Ladruno WP-151
         const double X = 2.0 * G * (B - C * trn3) - K * D * qv;
         const double hIn = h;
-        h = ladrunoSasSoftCapH(h, ddc6(b, n), p, X);
-        if (h != hIn)
+        h = ladrunoSasSoftCapH(h, ddc6(b, n), p, bandOn ? bandS * X : X);   // band: H >= kappa S X
+        if (h != hIn) {
             mLadrunoSas.stats[LSAS_H_SOFTCAPPED] += 1.0;
+            if (bandOn)
+                mLadrunoSas.bandCapped += 1.0;                            // Ladruno band scaling
+        }
     }
     const double Kp = two3 * p * h * ddc6(b, n);
-    const double H  = Kp + 2.0 * G * (B - C * trn3) - K * D * qv;
+    double H  = Kp + 2.0 * G * (B - C * trn3) - K * D * qv;
+    if (bandOn)   // Ladruno band scaling: H = Kp + S X (the elastic part belongs to the whole element)
+        H = Kp + bandS * (2.0 * G * (B - C * trn3) - K * D * qv);
     const double N  = 2.0 * G * ddm6(n, ddev) - K * dv * qv;
 
     // elastic trial part, common to both kinds: ToContraviant(ddev) 2G + K dv I
@@ -739,6 +831,8 @@ ManzariDafalias::ladrunoSasStage(const double* s, const double* a, const double*
         return ST_NONPOS_H;
 
     lam = N / H;
+    // Ladruno band scaling: the plastic strain of the ELEMENT is S lam R (OFF: lam)
+    const double lamE = (bandOn ? bandS * lam : lam);
     // C:R = 2G (B n - C (n.n - I/3)) + K D I
     const double fz = (-1.0 * lam * m_cz * Macauley(-1.0 * D));
     for (int i = 0; i < 6; i++) {
@@ -749,7 +843,7 @@ ManzariDafalias::ladrunoSasStage(const double* s, const double* a, const double*
         cr -= t2;
         cr *= (2.0 * G);
         cr += kI1[i] * (K * D);
-        cr *= lam;
+        cr *= lamE;
         ds[i] -= cr;
 
         da[i] = b[i] * (lam * two3 * h);
@@ -761,8 +855,12 @@ ManzariDafalias::ladrunoSasStage(const double* s, const double* a, const double*
         double r = R[i];
         if (i > 2)
             r *= 2.0;                       // ToCovariant
-        dep[i] = r * lam;
+        dep[i] = r * lamE;
     }
+    if (bandOn)
+        mLadrunoSas.bandStages += 1.0;      // Ladruno band scaling
+    if (lamD != 0)
+        *lamD = lam * D;                    // Ladruno band scaling: the plastic volume change of the band
     return ST_PLASTIC;
 }
 
@@ -772,9 +870,14 @@ ManzariDafalias::ladrunoSasStage(const double* s, const double* a, const double*
 // that into a cut / refusal, never into an accepted f > TolF.
 bool
 ManzariDafalias::ladrunoSasDrift(double* S, double* A, double* Z, double* Ee, double e,
-    const double* ain, bool bothSides)
+    const double* ain, bool bothSides, double bandS)
 {
     OPS_PROFILE_SCOPE("sanisand.sasME.drift");
+    // Ladruno band scaling: on a latched point the correction moves the element by
+    // S lam R and the alpha, z of the band by lam: lam = f / (S Q:C:R + p n:abar).
+    // The void-ratio offset is not corrected (lam is of the order of TolF / H).
+    // sB = 1.0 when OFF: every product below is then exact, the WP-129 arithmetic.
+    const double sB = (bandS > 0.0) ? bandS : 1.0;
     bool corrected = false;
     for (int it = 0; it <= kSasDriftIter; it++) {
         const double f = ladrunoSasF(S, A);
@@ -811,7 +914,7 @@ ManzariDafalias::ladrunoSasDrift(double* S, double* A, double* Z, double* Ee, do
         Rc[5] *= 2.0;
         mul36(dSp, M, Rc);
         if (mLadrunoSas.opt.softCap > 0.0)                                // Ladruno WP-151: X = Q:C:R here
-            h = ladrunoSasSoftCapH(h, ddc6(b, n), p, ddc6(Q, dSp));
+            h = ladrunoSasSoftCapH(h, ddc6(b, n), p, sB * ddc6(Q, dSp));
         const double fz = (-1.0 * m_cz * Macauley(-1.0 * D));
         for (int i = 0; i < 6; i++) {
             aBar[i] = b[i] * (two3 * h);
@@ -821,13 +924,13 @@ ManzariDafalias::ladrunoSasDrift(double* S, double* A, double* Z, double* Ee, do
         }
 
         bool moved = false;
-        const double den = ddc6(Q, dSp) + p * ddc6(n, aBar);
+        const double den = sB * ddc6(Q, dSp) + p * ddc6(n, aBar);
         if (den > small && std::isfinite(den)) {
             const double lam = f / den;
             double S1[6], A1[6];
             for (int i = 0; i < 6; i++) {
                 S1[i] = S[i];
-                S1[i] -= dSp[i] * lam;
+                S1[i] -= dSp[i] * (sB * lam);
                 A1[i] = A[i];
                 A1[i] += aBar[i] * lam;
             }
@@ -837,7 +940,7 @@ ManzariDafalias::ladrunoSasDrift(double* S, double* A, double* Z, double* Ee, do
                     S[i] = S1[i];
                     A[i] = A1[i];
                     Z[i] += zBar[i] * lam;
-                    Ee[i] -= Rc[i] * lam;
+                    Ee[i] -= Rc[i] * (sB * lam);
                 }
                 moved = true;
             }
@@ -872,7 +975,7 @@ ManzariDafalias::ladrunoSasDrift(double* S, double* A, double* Z, double* Ee, do
 // keeps the Vector form.
 void
 ManzariDafalias::ladrunoSasContinuumTangent(const Vector& S, const Vector& A, const Vector& Z,
-    const Vector& ain, double e, Matrix& Cep)
+    const Vector& ain, double e, Matrix& Cep, double bandS)
 {
     Vector n(6), d(6), b(6), R(6);
     double cos3Theta, h, psi, aB, aD, b0, Af, D, B, C, K, G;
@@ -887,8 +990,12 @@ ManzariDafalias::ladrunoSasContinuumTangent(const Vector& S, const Vector& A, co
         const double p = one3 * GetTrace(S) + m_Presidual;
         const double qv = DoubleDot2_2_Contr(n, A) + root23 * m_m;
         const double X = 2.0 * G * (B - C * GetTrace(SingleDot(n, SingleDot(n, n)))) - K * D * qv;
-        h = ladrunoSasSoftCapH(h, DoubleDot2_2_Contr(b, n), p, X);
+        h = ladrunoSasSoftCapH(h, DoubleDot2_2_Contr(b, n), p, (bandS > 0.0) ? bandS * X : X);
     }
+    // Ladruno band scaling: C - S (C:R)(x)(Q:C)/(Kp + S X) is the DM04 tangent with
+    // Kp / S, i.e. with h / S (h enters GetElastoPlasticTangent through Kp only).
+    if (bandS > 0.0)
+        h /= bandS;
     Vector dummy(6);
     Cep = GetElastoPlasticTangent(S, 1.0, dummy, dummy, G, K, B, C, D, h, n, d, b);
 }
@@ -909,6 +1016,7 @@ ManzariDafalias::ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z,
     const double sigRef = (o.errFloor < 0.0) ? m_P_atm / 101.0 : o.errFloor;
     const double kappa  = o.alphaBoundTol;
     const double dRev   = ladrunoSasReseatDelta();   // Ladruno WP-151: 0.0 = the paper rule
+    const bool bandOpt  = (o.bandScale > 0.0);       // Ladruno band scaling: OFF = every value below is the WP-129 one
 
     double dStrain[6], devD[6];
     for (int i = 0; i < 6; i++) {
@@ -969,9 +1077,20 @@ ManzariDafalias::ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z,
         }
 
         for (int i = 0; i < 6; i++) { tmp[i] = dStrain[i] * T; tmp[i] += curStrain[i]; }
-        const double e0 = m_e_init - (1 + m_e_init) * tr6(tmp);
+        const double e0s = m_e_init - (1 + m_e_init) * tr6(tmp);
         for (int i = 0; i < 6; i++) { tmp[i] = dStrain[i] * (T + dT); tmp[i] += curStrain[i]; }
-        const double e1 = m_e_init - (1 + m_e_init) * tr6(tmp);
+        const double e1s = m_e_init - (1 + m_e_init) * tr6(tmp);
+        // Ladruno band scaling: on a latched point the void ratio is that of the
+        // band: e(strain) + the offset integrated so far. Stage 1 sees it at the
+        // substep start; stage 2 at the end as stage 1 predicts it (Euler); the
+        // accepted value is their mean (Heun), like every other variable.
+        const bool   bandOn = mLadrunoSas.band;
+        const double bS = bandOn ? mLadrunoSas.bandS : 0.0;
+        const double cE = bandOn ? -(1 + m_e_init) * (1.0 - bS) : 0.0;
+        const double e0 = bandOn ? e0s + mLadrunoSas.bandDe : e0s;
+        double e1 = bandOn ? e1s + mLadrunoSas.bandDe : e1s;
+        double ld1 = 0.0, ld2 = 0.0;   // lam D of the two stages (plastic volume change of the band)
+        const double rat0 = (bandOpt && !bandOn && o.bandTrigger == 0) ? ladrunoSasPrincipalRatio(S) : 0.0;
         const double dv = dT * trD;
         for (int i = 0; i < 6; i++)
             ddev[i] = devD[i] * dT;
@@ -995,7 +1114,7 @@ ManzariDafalias::ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z,
         }
         {
             OPS_PROFILE_SCOPE("sanisand.sasME.stages");
-            k1 = ladrunoSasStage(S, A, Z, e0, ain1, dv, ddev, ds1, da1, dz1, dep1, lam1);
+            k1 = ladrunoSasStage(S, A, Z, e0, ain1, dv, ddev, ds1, da1, dz1, dep1, lam1, bS, &ld1);
         }
         if (k1 == ST_NONPOS_H) {
             // a property of the accepted start of this substep: no cut can change it
@@ -1028,7 +1147,9 @@ ManzariDafalias::ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z,
                 }
                 if (rej == 0) {
                     OPS_PROFILE_SCOPE("sanisand.sasME.stages");
-                    k2 = ladrunoSasStage(S1, A1, Z1, e1, ain2, dv, ddev, ds2, da2, dz2, dep2, lam2);
+                    if (bandOn)
+                        e1 += cE * ld1;   // Ladruno band scaling: the void ratio of the band at the predictor
+                    k2 = ladrunoSasStage(S1, A1, Z1, e1, ain2, dv, ddev, ds2, da2, dz2, dep2, lam2, bS, &ld2);
                 }
                 if (k2 == ST_TENSION)
                     rej = TR_REJ_LOWP2;
@@ -1054,6 +1175,8 @@ ManzariDafalias::ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z,
                     for (int i = 0; i < 6; i++) tmp[i] = dz2[i] - dz1[i];
                     err = fmax(err, norm6(tmp) / fmax(2.0 * norm6(Z), 1.0));
                 }
+                if (bandOn)   // Ladruno band scaling: the void-ratio offset is an integrated variable too
+                    err = fmax(err, fabs(cE * (ld2 - ld1)) / fmax(2.0 * fabs(e0), 1.0));
                 if (!std::isfinite(err) || !finite6(nS) || !finite6(nA) || !finite6(nZ))
                     err = std::numeric_limits<double>::infinity();
                 err = fmax(err, DBL_EPSILON);
@@ -1064,6 +1187,8 @@ ManzariDafalias::ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z,
 
         // the alpha_in this substep ends with (paper rule: the re-seat point)
         cp6(ainEnd, reseat2 ? ain2 : (reseat1 ? ain1 : ain));
+        // Ladruno band scaling: the void ratio this substep ends with (OFF: e1, unchanged)
+        const double eEnd = bandOn ? e1s + mLadrunoSas.bandDe + 0.5 * cE * (ld1 + ld2) : e1;
         if (rej == 0) {
             // candidate accepted by the error test: drift, then alpha
             for (int i = 0; i < 6; i++) {
@@ -1076,7 +1201,7 @@ ManzariDafalias::ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z,
             // ... and only when the substep STARTED on it: a start inside (f < -TolF)
             // is corrected only if it ends outside (review numerics item 3)
             const bool bothSides = anyPlastic && !anyElastic && onSurface;
-            if (!ladrunoSasDrift(nS, nA, nZ, nEe, e1, ainEnd, bothSides)) {
+            if (!ladrunoSasDrift(nS, nA, nZ, nEe, eEnd, ainEnd, bothSides, bS)) {
                 rej = TR_REJ_DRIFT;
             } else {
                 OPS_PROFILE_SCOPE("sanisand.sasME.alphaCheck");
@@ -1084,18 +1209,18 @@ ManzariDafalias::ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z,
                 // 1 + kappa -- measured against the END surface with the start
                 // alpha, so psi moving the surface is never the reason (review
                 // numerics item 2: that was a dead end).
-                const double ratio = ladrunoSasAlphaRatio(nA, nS, e1);
-                const double ratioFixed = ladrunoSasAlphaRatio(A, nS, e1);
+                const double ratio = ladrunoSasAlphaRatio(nA, nS, eEnd);
+                const double ratioFixed = ladrunoSasAlphaRatio(A, nS, eEnd);
                 if (!(ratio <= 1.0 + kappa) && !(ratio <= ratioFixed)) {
                     if (o.alphaProject != 0 && std::isfinite(ratio)) {
-                        ladrunoSasProject(nS, nA, nEe, e1);
+                        ladrunoSasProject(nS, nA, nEe, eEnd);
                         rej = -1;   // accepted, projected
                     } else {
                         rej = TR_REJ_ALPHA;
                     }
                 }
                 if (rej <= 0) {
-                    const double r2 = ladrunoSasAlphaRatio(nA, nS, e1);
+                    const double r2 = ladrunoSasAlphaRatio(nA, nS, eEnd);
                     if (r2 > st[LSAS_MAX_RATIO_B])
                         st[LSAS_MAX_RATIO_B] = r2;
                 }
@@ -1132,6 +1257,8 @@ ManzariDafalias::ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z,
         st[LSAS_ACCEPTED] += 1.0;
         ladrunoTraceSubstep(T, dT, err, rej < 0 ? TR_ACCEPT_PROJECTED : TR_ACCEPT, atMin);
         cp6(S, nS); cp6(A, nA); cp6(Z, nZ); cp6(Ee, nEe);
+        if (bandOn)
+            mLadrunoSas.bandDe += 0.5 * cE * (ld1 + ld2);   // Ladruno band scaling: the volume change of the band
         lamSum += 0.5 * (lam1 + lam2);
         lastPlastic = (k2 == ST_PLASTIC);   // the loading index nearest the end state
         if (reseat1 || reseat2) {
@@ -1149,6 +1276,25 @@ ManzariDafalias::ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z,
                 st[LSAS_ALPHA_IN_RESEATS] += 1.0;
             } else if (xEnd < 0.0)
                 st[LSAS_RESEAT_HELD] += 1.0;                             // Ladruno WP-151
+        }
+        // Ladruno band scaling: THE LATCH, tested on an accepted, fully plastic
+        // substep of a point not yet latched (see the note at the top of the file).
+        // Later substeps of this update already use the scale; the latch becomes
+        // permanent at commit and is undone with a refused or reverted trial.
+        if (bandOpt && !bandOn && k1 == ST_PLASTIC && k2 == ST_PLASTIC) {
+            bool trig = true;
+            if (o.bandTrigger == 0)
+                trig = (ladrunoSasPrincipalRatio(S) < rat0);
+            if (trig) {
+                double nL[6], dL[6], bL[6], RL[6];
+                double c3L, hL, psiL, aBL, aDL, b0L, AL, DL, BL, CL;
+                ladrunoSasStateDep(S, A, Z, eEnd, ain, nL, dL, bL, c3L, hL, psiL, aBL, aDL, b0L, AL, DL, BL, CL, RL);
+                if (ddc6(bL, nL) <= 0.0) {
+                    mLadrunoSas.band = true;
+                    mLadrunoSas.bandS = o.bandScale;
+                    mLadrunoSas.bandLatches += 1.0;
+                }
+            }
         }
         T += dT;
         double q = fmin(fmax(0.9 * sqrt(TolE / err), 0.1), 1.1);
@@ -1186,6 +1332,10 @@ ManzariDafalias::ladrunoSasIntegrate(void)
     mLadrunoSas.refused = false;
     mLadrunoSas.carryH = 0.0;   // Ladruno sasme-speed: set again only by an accepted plastic update
     const double reseats0 = st[LSAS_ALPHA_IN_RESEATS];
+    // Ladruno band scaling: the trial starts from the committed latch and offset
+    mLadrunoSas.band = mLadrunoSas.band_n;
+    mLadrunoSas.bandS = mLadrunoSas.bandS_n;
+    mLadrunoSas.bandDe = mLadrunoSas.bandDe_n;
 
     double CurStrain[6], NextStrain[6], dStrain[6];
     for (int i = 0; i < 6; i++) {
@@ -1193,8 +1343,12 @@ ManzariDafalias::ladrunoSasIntegrate(void)
         NextStrain[i] = mEpsilon(i);
         dStrain[i] = NextStrain[i] - CurStrain[i];
     }
-    const double eN = m_e_init - (1 + m_e_init) * tr6(CurStrain);
+    double eN = m_e_init - (1 + m_e_init) * tr6(CurStrain);
     mVoidRatio = m_e_init - (1 + m_e_init) * tr6(NextStrain);
+    if (mLadrunoSas.band_n) {   // Ladruno band scaling: a latched point carries the void ratio of the band
+        eN += mLadrunoSas.bandDe_n;
+        mVoidRatio += mLadrunoSas.bandDe_n;   // the end value of an elastic update; the plastic portion updates it below
+    }
 
     // ---- Ladruno WP-152: the tension cutoff (separation) ----------------------
     // The trial starts as the committed state. A SEPARATED point carries no
@@ -1491,6 +1645,9 @@ ManzariDafalias::ladrunoSasIntegrate(void)
             mAlpha_in = mAlpha_in_n;
         mDGamma = 0.0;
         mVoidRatio = eN;          // the refused trial carries nothing forward
+        mLadrunoSas.band = mLadrunoSas.band_n;       // Ladruno band scaling: nor a latch, nor an offset
+        mLadrunoSas.bandS = mLadrunoSas.bandS_n;
+        mLadrunoSas.bandDe = mLadrunoSas.bandDe_n;
         GetElasticModuli(mSigma_n, eN, K, G);
         mCe = GetStiffness(K, G); mCep = mCe; mCep_Consistent = mCe;
         // "last" columns describe no valid end state after a refusal
@@ -1515,6 +1672,8 @@ ManzariDafalias::ladrunoSasIntegrate(void)
         mAlpha_in(i) = ain[i];
     }
     mDGamma = lamSum;
+    if (mLadrunoSas.band)   // Ladruno band scaling: the void ratio of the band at the end of this update
+        mVoidRatio = m_e_init - (1 + m_e_init) * tr6(NextStrain) + mLadrunoSas.bandDe;
     // Ladruno sasme-speed: a reversal (an alpha_in re-seat) in this update starts
     // a new loading process; its next update starts at dT = 1 again.
     if (st[LSAS_ALPHA_IN_RESEATS] != reseats0)
@@ -1526,7 +1685,8 @@ ManzariDafalias::ladrunoSasIntegrate(void)
         ladrunoSasModuli(S, mVoidRatio, K, G);
         mCe = GetStiffness(K, G);
         if (lastPlastic)
-            ladrunoSasContinuumTangent(mSigma, mAlpha, mFabric, mAlpha_in, mVoidRatio, mCep);
+            ladrunoSasContinuumTangent(mSigma, mAlpha, mFabric, mAlpha_in, mVoidRatio, mCep,
+                                       mLadrunoSas.band ? mLadrunoSas.bandS : 0.0);   // Ladruno band scaling
         else
             mCep = mCe;
         mCep_Consistent = mCep;

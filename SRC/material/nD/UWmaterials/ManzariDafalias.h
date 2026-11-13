@@ -102,11 +102,14 @@ struct LadrunoSasOptions {                                                  // L
     double tcPcontact;     // Ladruno WP-152: tension cutoff: re-contact pressure (> tcPsep, > p_min); <= 0 = cutoff OFF (DEFAULT)
     double tcP0Max;        // Ladruno WP-152 (review #2): a tension refusal separates only at committed p0 <= tcP0Max (else it refuses)
     int    carryDT;        // Ladruno sasme-speed: 1 = the first trial substep of an update is the last accepted one carried over; 0 = dT 1 (DEFAULT, byte-identical)
+    double bandScale;      // Ladruno band scaling: S = w/(c_b h) given by the driver; after the latch H = Kp + S X; <= 0 = OFF (DEFAULT, byte-identical)
+    int    bandTrigger;    // Ladruno band scaling: the latch. 0 = peak (major/minor principal stress ratio falls with b:n <= 0; DEFAULT), 1 = bn (b:n <= 0)
     LadrunoSasOptions() : errFloor(-1.0), alphaBoundTol(0.1), alphaEntryTol(2.0), alphaProject(0),
                           alphaInMode(0), errorVars(0),   // Ladruno WP-129
                           hFloor(0.0), reseatHyst(0.0), softCap(0.0),   // Ladruno WP-151
                           tcPsep(0.0), tcPcontact(0.0), tcP0Max(0.0),   // Ladruno WP-152
-                          carryDT(0) {}   // Ladruno sasme-speed
+                          carryDT(0),   // Ladruno sasme-speed
+                          bandScale(0.0), bandTrigger(0) {}   // Ladruno band scaling
 };   // Ladruno WP-129
 enum {                                                                      // Ladruno WP-129
     LSAS_UPDATES = 0, LSAS_ELASTIC, LSAS_SUBSTEPS, LSAS_ACCEPTED, LSAS_REJ_ERR,   // Ladruno WP-129
@@ -139,9 +142,17 @@ struct LadrunoSasState {                                                    // L
     int    fdMode;              // Ladruno sasme-speed (TanType 3): 0 = a normal update, 2 = a perturbed replay of the accepted substeps
     std::vector<double> dtLog;  // Ladruno sasme-speed (TanType 3): the accepted dT of the last update (capacity reused, no per-update allocation)
     double fdFallbacks;         // Ladruno sasme-speed (TanType 3): census, FD columns that fell back to the continuum tangent
+    bool   band, band_n;        // Ladruno band scaling: the point is latched (stands for a band in series with elastic sand), trial / committed
+    double bandS, bandS_n;      // Ladruno band scaling: the scale in use since the latch (0 before it), trial / committed
+    double bandDe, bandDe_n;    // Ladruno band scaling: void-ratio offset, e = e(strain) + bandDe (the band's own volume change), trial / committed
+    double bandStages;          // Ladruno band scaling: census, plastic stages evaluated with the scale (since revertToStart)
+    double bandCapped;          // Ladruno band scaling: census, those of them where -sasSoftCap bound (scaled: H >= kappa S X)
+    double bandLatches;         // Ladruno band scaling: census, latch events in accepted updates (a reverted step still counts)
     LadrunoSasState() : allowed(false), refused(false), warned(false), commitRefusalWarned(false),   // Ladruno WP-129
                         sep(false), sep_n(false), sepTr(0.0), sepTr_n(0.0), sepEvent(0), sepCode(0), sepP0(0.0),   // Ladruno WP-152
-                        carryH(0.0), carryH_n(0.0), fdMode(0), fdFallbacks(0.0) {   // Ladruno sasme-speed
+                        carryH(0.0), carryH_n(0.0), fdMode(0), fdFallbacks(0.0),   // Ladruno sasme-speed
+                        band(false), band_n(false), bandS(0.0), bandS_n(0.0), bandDe(0.0), bandDe_n(0.0),   // Ladruno band scaling
+                        bandStages(0.0), bandCapped(0.0), bandLatches(0.0) {   // Ladruno band scaling
         for (int i = 0; i < LSAS_COUNT; i++) stats[i] = 0.0;   // Ladruno WP-129
     }   // Ladruno WP-129
 };   // Ladruno WP-129
@@ -484,16 +495,19 @@ class ManzariDafalias : public NDMaterial
 	void    ladrunoSasIntegrate(void);                                       // Ladruno WP-129
 	void    ladrunoResetSasStats(void);                                      // Ladruno WP-129
 	void    ladrunoResetSasSep(void);                                        // Ladruno WP-152
+	void    ladrunoResetSasBand(void);                                       // Ladruno band scaling
+	double  ladrunoSasPrincipalRatio(const double* s);                       // Ladruno band scaling, sasme-speed
 	// Ladruno sasme-speed: the SAS-ME update works on 6-component stack arrays
 	// (double[6], Voigt order of mSigma); no Vector/Matrix is built per substep.
 	int     ladrunoSasStage(const double* s, const double* a, const double* z, double e,  // Ladruno WP-129, sasme-speed
 	                const double* ain, double dv, const double* ddev,   // Ladruno WP-129, sasme-speed
-	                double* ds, double* da, double* dz, double* dep, double& lam);   // Ladruno WP-129, sasme-speed
+	                double* ds, double* da, double* dz, double* dep, double& lam,   // Ladruno WP-129, sasme-speed
+	                double bandS = 0.0, double* lamD = 0);   // Ladruno band scaling (0 = OFF: the WP-129 stage)
 	int     ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z, double* ain,  // Ladruno WP-129, sasme-speed
 	                const double* curStrain, const double* nextStrain, bool onset,   // Ladruno WP-129, sasme-speed
 	                double& lamSum, bool& lastPlastic);   // Ladruno WP-129
 	bool    ladrunoSasDrift(double* S, double* A, double* Z, double* Ee, double e,       // Ladruno WP-129, sasme-speed
-	                const double* ain, bool bothSides);   // Ladruno WP-129, sasme-speed
+	                const double* ain, bool bothSides, double bandS = 0.0);   // Ladruno WP-129, sasme-speed; band scaling (0 = OFF)
 	double  ladrunoSasAlphaRatio(const Vector& a, const Vector& s, double e);           // Ladruno WP-129
 	double  ladrunoSasAlphaRatio(const double* a, const double* s, double e);           // Ladruno sasme-speed
 	void    ladrunoSasProject(double* S, double* A, double* Ee, double e);             // Ladruno WP-129, sasme-speed
@@ -512,7 +526,7 @@ class ManzariDafalias : public NDMaterial
 	                double& cos3Theta, double& h, double& psi, double& alphaBtheta, double& alphaDtheta,   // Ladruno sasme-speed
 	                double& b0, double& A, double& D, double& B, double& C, double* R);   // Ladruno sasme-speed
 	void    ladrunoSasContinuumTangent(const Vector& S, const Vector& A, const Vector& Z,  // Ladruno WP-129
-	                const Vector& ain, double e, Matrix& Cep);   // Ladruno WP-129
+	                const Vector& ain, double e, Matrix& Cep, double bandS = 0.0);   // Ladruno WP-129; band scaling (0 = OFF)
 	void    ladrunoSasFDTangent(void);   // Ladruno sasme-speed: TanType 3, d sigma/d eps of the update with its substeps frozen
 	double	mEPS;			// machine epsilon (for FD jacobian)
 	// Ladruno (ADR-93 II.1) note for readers of the three GetElasticModuli

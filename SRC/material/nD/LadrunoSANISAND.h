@@ -526,7 +526,11 @@ class LadrunoSANISAND : public ManzariDafalias
         LWIRE_SAS_OPT_N = 12,  // WP-129's six + WP-151's hFloor, reseatHyst, softCap (b+6..b+8)
                                // + WP-152's tcPsep, tcPcontact, tcP0Max (b+9..b+11)
         LWIRE_SEP       = LWIRE_SAS + LWIRE_SAS_OPT_N + LSAS_COUNT,   // Ladruno WP-152: sep_n, sepTr_n
-        LWIRE_TAG       = LWIRE_SEP + 2,                              // Ladruno WP-151: layout tag
+        LWIRE_BAND      = LWIRE_SEP + 2,                              // Ladruno band scaling: its own block, so
+        LWIRE_BAND_N    = 8,                                          //   sasOptions / sasStats keep their columns:
+                                                                      //   bandScale, bandTrigger, band_n, bandS_n,
+                                                                      //   bandDe_n, bandStages, bandCapped, bandLatches
+        LWIRE_TAG       = LWIRE_BAND + LWIRE_BAND_N,                  // Ladruno WP-151: layout tag
         LWIRE_SIZE      = LWIRE_TAG + 1
     };
     // Ladruno WP-151: FE_Datastore keys a sent Vector by its SIZE, so a block of the
