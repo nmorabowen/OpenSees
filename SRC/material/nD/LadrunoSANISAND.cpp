@@ -217,7 +217,8 @@ OPS_LadrunoSANISAND(void)
                << " <-errFloor sigRef?> <-alphaBoundTol kappa?> <-alphaEntryTol kappaEntry?> <-alphaProject 0|1>"  // Ladruno WP-129
                << " <-sasAlphaIn reseat|bracket|stale> <-sasErrorVars full|stress>"   // Ladruno WP-129
                << " <-sasHFloor cA?> <-sasReseatHyst cRev?> <-sasSoftCap kappa?> <-sasCarryDT 0|1?>"     // Ladruno WP-151
-               << " <-sasBandScale S? | -sasBandWidth w? c_b?> <-sasBandTrigger peak|bn>"   // Ladruno band scaling
+               << " <-sasBandScale S? | -sasBandWidth w? c_b?> <-sasBandTrigger peak|bn|commit>"   // Ladruno band scaling
+               << " <-sasBandLatchLambda lambda?>"                                    // Ladruno band latch
                << " (-errFloor .. -sasSoftCap: IntScheme 129 = SAS-ME only)"         // Ladruno WP-129/151
                << endln;
         return 0;
@@ -285,6 +286,7 @@ OPS_LadrunoSANISAND(void)
     LadrunoSasOptions sasOpt;                                                   // Ladruno WP-129
     bool sawSasToken = false;                                                   // Ladruno WP-129
     bool sawBandTrigger = false;                                                // Ladruno band scaling
+    bool sawBandLatchL = false;                                                 // Ladruno band latch
     bool sawReversalToken = false;                                              // Ladruno WP-129
 
     int numData = 1;
@@ -1069,14 +1071,35 @@ OPS_LadrunoSANISAND(void)
             int mode = -1;
             if (strcmp(modeTok, "peak") == 0) mode = 0;
             else if (strcmp(modeTok, "bn") == 0) mode = 1;
+            else if (strcmp(modeTok, "commit") == 0) mode = 2;   // Ladruno band latch
             if (mode < 0) {
                 opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag << ": -sasBandTrigger"
-                          " wants peak (DEFAULT: the major/minor principal stress ratio falls on a plastic"
+                          " wants peak (the major/minor principal stress ratio falls on a plastic"
                           " substep that ends with b:n <= 0) | bn (b:n <= 0 alone; acts before the peak of"
-                          " a plane-strain specimen), got '" << modeTok << "'" << endln;
+                          " a plane-strain specimen) | commit (committed history only: the plastic multiplier"
+                          " committed since the point's own ratio peak reaches -sasBandLatchLambda);"
+                          " DEFAULT " << (LadrunoBandTriggerDefault == 2 ? "commit" : "peak")
+                       << ", got '" << modeTok << "'" << endln;
                 return 0;
             }
             sasOpt.bandTrigger = mode;
+        }
+        // Ladruno band latch: lambda* of the trigger commit (strain units: the DM04
+        // plastic multiplier, d eps_p = L R, committed past the point's own peak).
+        else if (strcmp(argTok, "-sasBandLatchLambda") == 0 || strcmp(argTok, "-sasbandlatchlambda") == 0) {
+            seenFlag = true;
+            sawSasToken = true;
+            sawBandLatchL = true;
+            double v = 0.0;
+            numData = 1;
+            if (OPS_GetDoubleInput(&numData, &v) != 0 || !(std::isfinite(v) && v > 0.0)) {
+                opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+                       << ": -sasBandLatchLambda wants one value lambda > 0 (the plastic multiplier a point"
+                          " commits past its own stress-ratio peak before it latches; DEFAULT "
+                       << LadrunoBandLatchLambdaDefault << ")" << endln;
+                return 0;
+            }
+            sasOpt.bandLatchL = v;
         }
         // Ladruno WP-152: the tension cutoff (separation), SAS-ME only, OFF by
         // default: -sasTensionCutoff p_sep p_contact (model stress units).
@@ -1233,6 +1256,7 @@ OPS_LadrunoSANISAND(void)
                   " / -sasHFloor / -sasReseatHyst / -sasSoftCap"   // Ladruno WP-151
                   " / -sasTensionCutoff / -sasSepMaxP0"             // Ladruno WP-152
                   " / -sasBandScale / -sasBandWidth / -sasBandTrigger"   // Ladruno band scaling
+                  " / -sasBandLatchLambda"                               // Ladruno band latch
                   " are SAS-ME options and are read ONLY by IntScheme " << LADRUNO_INT_SAS_ME
                << " (this deck asks for IntScheme " << (int)oData[0] << "). Refused rather than"
                   " accepted and ignored." << endln;
@@ -1251,6 +1275,15 @@ OPS_LadrunoSANISAND(void)
         opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
                << ": -sasBandTrigger does nothing without -sasBandScale or -sasBandWidth. Refused"
                   " rather than accepted and ignored." << endln;
+        return 0;
+    }
+    if (sawBandLatchL && !(sasOpt.bandOn() && sasOpt.bandTrigger == 2)) {   // Ladruno band latch
+        opserr << "WARNING nDMaterial LadrunoSANISAND tag " << tag
+               << ": -sasBandLatchLambda is read by -sasBandTrigger commit only (with -sasBandScale or"
+                  " -sasBandWidth); this deck has " << (sasOpt.bandOn() ? (sasOpt.bandTrigger == 0 ? "the trigger peak"
+                                                                         : "the trigger bn")
+                                                     : "no band scaling")
+               << ". Refused rather than accepted and ignored." << endln;
         return 0;
     }
     if (sasOpt.bandOn() && sasOpt.alphaInMode != 0) {
@@ -1780,8 +1813,12 @@ LadrunoSANISAND::setLadrunoSasOptions(const LadrunoSasOptions &opt, bool verbose
                    << ": band scaling, an OPT-IN variant: once latched ("
                    << (opt.bandTrigger == 0 ? "peak: the major/minor principal stress ratio falls on a plastic"
                                               " substep that ends with b:n <= 0"
-                                            : "bn: a plastic substep ends with b:n <= 0")
-                   << ") the point stands for a fraction S = ";
+                                            : (opt.bandTrigger == 1 ? "bn: a plastic substep ends with b:n <= 0"
+                                                                    : "commit: the plastic multiplier committed since the"
+                                                                      " point's own stress-ratio peak reaches lambda* = "));   // Ladruno band latch
+            if (opt.bandTrigger == 2)
+                opserr << opt.bandLatchL << "; decided at commit only, it acts from the next step";
+            opserr << ") the point stands for a fraction S = ";
             if (opt.bandScale > 0.0)
                 opserr << opt.bandScale;
             else
@@ -2297,6 +2334,8 @@ LadrunoSANISAND::getCopy(const char *type)
         clone->mLadrunoSas.bandStages  = mLadrunoSas.bandStages;                    // Ladruno band scaling
         clone->mLadrunoSas.bandCapped  = mLadrunoSas.bandCapped;                    // Ladruno band scaling
         clone->mLadrunoSas.bandLatches = mLadrunoSas.bandLatches;                   // Ladruno band scaling
+        clone->mLadrunoSas.bandRmax_n  = mLadrunoSas.bandRmax_n;                    // Ladruno band latch: committed
+        clone->mLadrunoSas.bandLpp_n   = mLadrunoSas.bandLpp_n;                     // Ladruno band latch: committed
         clone->mLadrunoCommits        = mLadrunoCommits;                            // Ladruno WP-153
         clone->mLadrunoCommitReseats  = mLadrunoCommitReseats;                      // Ladruno WP-153
         clone->mLadrunoCommitDAlphaIn = mLadrunoCommitDAlphaIn;                     // Ladruno WP-153
@@ -2342,6 +2381,8 @@ LadrunoSANISAND::getCopy(const char *type)
         clone->mLadrunoSas.bandStages  = mLadrunoSas.bandStages;                    // Ladruno band scaling
         clone->mLadrunoSas.bandCapped  = mLadrunoSas.bandCapped;                    // Ladruno band scaling
         clone->mLadrunoSas.bandLatches = mLadrunoSas.bandLatches;                   // Ladruno band scaling
+        clone->mLadrunoSas.bandRmax_n  = mLadrunoSas.bandRmax_n;                    // Ladruno band latch: committed
+        clone->mLadrunoSas.bandLpp_n   = mLadrunoSas.bandLpp_n;                     // Ladruno band latch: committed
         clone->mLadrunoCommits        = mLadrunoCommits;                            // Ladruno WP-153
         clone->mLadrunoCommitReseats  = mLadrunoCommitReseats;                      // Ladruno WP-153
         clone->mLadrunoCommitDAlphaIn = mLadrunoCommitDAlphaIn;                     // Ladruno WP-153
@@ -2479,8 +2520,9 @@ LadrunoSANISAND::getCopy(const char *type)
 //      [LWIRE_SEP, +2)                 WP-152: the committed sep_n, sepTr_n
 //      [LWIRE_BAND, +LWIRE_BAND_N)     band scaling: bandScale, bandTrigger, the committed
 //                                      band_n, bandS_n, bandDe_n, its three counters, and
-//                                      bandWidth, bandCb, the element scale bandSElem
-//      LWIRE_TAG                       WP-151: the layout tag (kLadrunoSanWireTag)
+//                                      bandWidth, bandCb, the element scale bandSElem;
+//                                      band latch: bandLatchL, the committed bandRmax_n, bandLpp_n
+//      LWIRE_TAG                      WP-151: the layout tag (kLadrunoSanWireTag)
 //      LWIRE_SIZE                      the total (never 97: static_assert in the header)
 //  (Before the merge both WPs indexed their blocks at 35+LMS_COUNT: a restored
 //  point read WP-129's defaults as CPPM options -- review #868 item 1.)
@@ -2540,7 +2582,7 @@ LadrunoSANISAND::getCopy(const char *type)
 // and the committed separation state), so the tag is now 152.
 // Band scaling added the LWIRE_BAND block, so the tag is 152.2 until the work
 // package has its number.
-static const double kLadrunoSanWireTag = 152.3;   // 152.1: + tcP0Max and 4 census columns (review); 152.2: + LWIRE_BAND; 152.3: + band width
+static const double kLadrunoSanWireTag = 152.4;   // 152.1: + tcP0Max and 4 census columns (review); 152.2: + LWIRE_BAND; 152.3: + band width; 152.4: + band latch
 
 int
 LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
@@ -2665,6 +2707,9 @@ LadrunoSANISAND::sendSelf(int commitTag, Channel &theChannel)
     ladrunoData(LWIRE_BAND + 8) = mLadrunoSas.opt.bandWidth;
     ladrunoData(LWIRE_BAND + 9) = mLadrunoSas.opt.bandCb;
     ladrunoData(LWIRE_BAND + 10) = mLadrunoSas.bandSElem;   // geometry: re-read at the next update if 0
+    ladrunoData(LWIRE_BAND + 11) = mLadrunoSas.opt.bandLatchL;   // Ladruno band latch: lambda* and the COMMITTED
+    ladrunoData(LWIRE_BAND + 12) = mLadrunoSas.bandRmax_n;       //   r_max, Lpp of the trigger commit
+    ladrunoData(LWIRE_BAND + 13) = mLadrunoSas.bandLpp_n;
     ladrunoData(LWIRE_TAG) = kLadrunoSanWireTag;                           // Ladruno WP-151
 
     res = theChannel.sendVector(this->getDbTag(), commitTag, ladrunoData);
@@ -2748,7 +2793,15 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
     mLadrunoSas.sepTr   = mLadrunoSas.sepTr_n;
     // Ladruno band scaling: in the ranges of the parser, or OFF (and then no state)
     mLadrunoSas.opt.bandScale   = ladrunoData(LWIRE_BAND + 0);
-    mLadrunoSas.opt.bandTrigger = ((int)ladrunoData(LWIRE_BAND + 1) == 1) ? 1 : 0;
+    {   // Ladruno band latch: 0 peak, 1 bn, 2 commit; anything else the default
+        const int tr = (int)ladrunoData(LWIRE_BAND + 1);
+        mLadrunoSas.opt.bandTrigger = (tr == 0 || tr == 1 || tr == 2) ? tr : LadrunoBandTriggerDefault;
+        const double lw = ladrunoData(LWIRE_BAND + 11);
+        mLadrunoSas.opt.bandLatchL = (std::isfinite(lw) && lw > 0.0) ? lw : LadrunoBandLatchLambdaDefault;
+        const double rw = ladrunoData(LWIRE_BAND + 12), pw = ladrunoData(LWIRE_BAND + 13);
+        mLadrunoSas.bandRmax_n = (std::isfinite(rw) && rw > 0.0) ? rw : 0.0;
+        mLadrunoSas.bandLpp_n  = (std::isfinite(pw) && pw > 0.0) ? pw : 0.0;
+    }
     mLadrunoSas.opt.bandWidth   = ladrunoData(LWIRE_BAND + 8);
     mLadrunoSas.opt.bandCb      = ladrunoData(LWIRE_BAND + 9);
     if (!(std::isfinite(mLadrunoSas.opt.bandScale) && mLadrunoSas.opt.bandScale > 0.0))
@@ -5191,6 +5244,9 @@ LadrunoSANISAND::commitState(void)
         // commit with the stress they produced (refused with -implex, so only
         // this path carries them). The base commit re-derives mVoidRatio from the
         // strain alone, so the offset of a latched point is put back after it.
+        // Ladruno band latch: the trigger commit decides HERE, on the state being
+        // committed (a no-op for every other trigger and with the option off).
+        this->ladrunoSasBandCommit();
         mLadrunoSas.band_n   = mLadrunoSas.band;
         mLadrunoSas.bandS_n  = mLadrunoSas.bandS;
         mLadrunoSas.bandDe_n = mLadrunoSas.bandDe;
@@ -5643,8 +5699,10 @@ constexpr int LadrunoSanisandCommitStatsResponseID     = 33102;   // Ladruno WP-
 // (plastic stages evaluated with the scale, those where the scaled cap bound,
 // latch events), then -sasBandWidth's w and c_b and the scale w/(c_b h) read from
 // the element (0 before the first update). A response of its own, so sasOptions
-// and sasStats keep their columns.
-constexpr int LadrunoSanisandSasBandResponseID         = 33103;   // Ladruno band scaling
+// and sasStats keep their columns. Band latch: 14 values, three appended (the
+// first 11 keep their index): lambda* of the trigger commit (2 in column 1), and
+// its COMMITTED r_max and Lpp (Lpp goes on after the latch with S dL).
+constexpr int LadrunoSanisandSasBandResponseID        = 33103;   // Ladruno band scaling
 constexpr int LadrunoSanisandImplexGuardsResponseID    = 33096;   // Ladruno ADR-92 P2 (33094/33095 taken by TIMs F4 psi/yieldDistance)
 
 Response *
@@ -5842,7 +5900,8 @@ LadrunoSANISAND::setResponse(const char **argv, int argc, OPS_Stream &output)
     if (argc > 0 && (strcmp(argv[0], "sasBand") == 0 || strcmp(argv[0], "SasBand") == 0)) {   // Ladruno band scaling
         static const char *bnames[] = {
             "band_scale", "band_trigger", "band_latched", "band_scaleInUse", "band_voidRatioOffset",
-            "band_stages", "band_stagesCapped", "band_latches", "band_width", "band_cb", "band_elementScale"};
+            "band_stages", "band_stagesCapped", "band_latches", "band_width", "band_cb", "band_elementScale",
+            "band_latchLambda", "band_ratioMax", "band_postPeakLambda"};   // Ladruno band latch
         static_assert(sizeof(bnames) / sizeof(bnames[0]) == LWIRE_BAND_N,
                       "sasBand names must match LWIRE_BAND_N (the response and the wire block)");
         output.tag("NdMaterialOutput");
@@ -6072,6 +6131,9 @@ LadrunoSANISAND::getResponse(int responseID, Information &matInformation)
         out(8) = mLadrunoSas.opt.bandWidth;
         out(9) = mLadrunoSas.opt.bandCb;
         out(10) = mLadrunoSas.bandSElem;
+        out(11) = mLadrunoSas.opt.bandLatchL;   // Ladruno band latch
+        out(12) = mLadrunoSas.bandRmax_n;
+        out(13) = mLadrunoSas.bandLpp_n;
         return matInformation.setVector(out);
     }
     if (responseID == LadrunoSanisandSasStatsResponseID) {

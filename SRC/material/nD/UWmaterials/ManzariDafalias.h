@@ -88,6 +88,11 @@ struct LadrunoMETraceSlot {                                                 // L
 // Everything here is default-constructed, so no ManzariDafalias constructor
 // changes and every existing scheme is byte-identical (tests/wp129_*).
 #define LADRUNO_INT_SAS_ME 129                                              // Ladruno WP-129
+// Ladruno band latch: the default band trigger (0 peak, 1 bn, 2 commit) and the
+// default lambda* of the commit trigger (the oracle sweep of the band-latch work,
+// LadrunoSANISANDSasME.cpp, the note at the top).
+const int    LadrunoBandTriggerDefault     = 0;
+const double LadrunoBandLatchLambdaDefault = 3.0e-5;
 struct LadrunoSasOptions {                                                  // Ladruno WP-129
     double errFloor;       // Ladruno WP-129: sigma_ref of the stress error, stress units; < 0 = P_atm/101 (1 kPa at P_atm 101)
     double alphaBoundTol;  // Ladruno WP-129: kappa: plastic flow may not carry rho_alpha past 1 + kappa
@@ -103,15 +108,19 @@ struct LadrunoSasOptions {                                                  // L
     double tcP0Max;        // Ladruno WP-152 (review #2): a tension refusal separates only at committed p0 <= tcP0Max (else it refuses)
     int    carryDT;        // Ladruno sasme-speed: 1 = the first trial substep of an update is the last accepted one carried over; 0 = dT 1 (DEFAULT, byte-identical)
     double bandScale;      // Ladruno band scaling: S = w/(c_b h) given by the driver; after the latch H = Kp + S X; <= 0 = OFF (DEFAULT, byte-identical)
-    int    bandTrigger;    // Ladruno band scaling: the latch. 0 = peak (major/minor principal stress ratio falls with b:n <= 0; DEFAULT), 1 = bn (b:n <= 0)
+    int    bandTrigger;    // Ladruno band scaling: the latch. 0 = peak (major/minor principal stress ratio falls on an accepted substep with b:n <= 0),
+                           //   1 = bn (b:n <= 0), 2 = commit (committed history only; DEFAULT: LadrunoBandTriggerDefault)
     double bandWidth;      // Ladruno band scaling: w (length units of the mesh); with bandCb, S = w/(c_b h), h from the element; <= 0 = not used
     double bandCb;         // Ladruno band scaling: c_b, the numerical band width in elements (S = w/(c_b h))
+    double bandLatchL;     // Ladruno band latch: trigger commit's lambda*, the plastic multiplier a point accumulates past its own
+                           //   committed ratio peak before it latches (LadrunoBandLatchLambdaDefault)
     LadrunoSasOptions() : errFloor(-1.0), alphaBoundTol(0.1), alphaEntryTol(2.0), alphaProject(0),
                           alphaInMode(0), errorVars(0),   // Ladruno WP-129
                           hFloor(0.0), reseatHyst(0.0), softCap(0.0),   // Ladruno WP-151
                           tcPsep(0.0), tcPcontact(0.0), tcP0Max(0.0),   // Ladruno WP-152
                           carryDT(0),   // Ladruno sasme-speed
-                          bandScale(0.0), bandTrigger(0), bandWidth(0.0), bandCb(0.0) {}   // Ladruno band scaling
+                          bandScale(0.0), bandTrigger(LadrunoBandTriggerDefault), bandWidth(0.0), bandCb(0.0),   // Ladruno band scaling
+                          bandLatchL(LadrunoBandLatchLambdaDefault) {}   // Ladruno band latch
     bool bandOn() const { return bandScale > 0.0 || (bandWidth > 0.0 && bandCb > 0.0); }   // Ladruno band scaling
 };   // Ladruno WP-129
 enum {                                                                      // Ladruno WP-129
@@ -155,11 +164,16 @@ struct LadrunoSasState {                                                    // L
                                 //   point latched (-1 none); a frozen replay must latch at the same one (trial only)
     double bandSElem;           // Ladruno band scaling: -sasBandWidth: S = w/(c_b h) of THIS instance's element, read once from
                                 //   ops_TheActiveElement->getCharacteristicLength() (0 = not read yet; geometry, so not reset)
+    double bandRmax_n;          // Ladruno band latch (trigger commit): the largest committed major/minor principal stress ratio
+                                //   of the current loading process (0 = none yet); COMMITTED state, changed only by commitState
+    double bandLpp_n;           // Ladruno band latch (trigger commit): the plastic multiplier committed since that peak (S dL after
+                                //   the latch, a diagnostic); COMMITTED state
     LadrunoSasState() : allowed(false), refused(false), warned(false), commitRefusalWarned(false),   // Ladruno WP-129
                         sep(false), sep_n(false), sepTr(0.0), sepTr_n(0.0), sepEvent(0), sepCode(0), sepP0(0.0),   // Ladruno WP-152
                         carryH(0.0), carryH_n(0.0), fdMode(0), fdFallbacks(0.0),   // Ladruno sasme-speed
                         band(false), band_n(false), bandS(0.0), bandS_n(0.0), bandDe(0.0), bandDe_n(0.0),   // Ladruno band scaling
-                        bandStages(0.0), bandCapped(0.0), bandLatches(0.0), bandLatchAt(-1), bandSElem(0.0) {   // Ladruno band scaling
+                        bandStages(0.0), bandCapped(0.0), bandLatches(0.0), bandLatchAt(-1), bandSElem(0.0),   // Ladruno band scaling
+                        bandRmax_n(0.0), bandLpp_n(0.0) {   // Ladruno band latch
         for (int i = 0; i < LSAS_COUNT; i++) stats[i] = 0.0;   // Ladruno WP-129
     }   // Ladruno WP-129
 };   // Ladruno WP-129
@@ -503,6 +517,7 @@ class ManzariDafalias : public NDMaterial
 	void    ladrunoResetSasStats(void);                                      // Ladruno WP-129
 	void    ladrunoResetSasSep(void);                                        // Ladruno WP-152
 	void    ladrunoResetSasBand(void);                                       // Ladruno band scaling
+	void    ladrunoSasBandCommit(void);                                      // Ladruno band latch: trigger commit, at commitState
 	double  ladrunoSasPrincipalRatio(const double* s);                       // Ladruno band scaling, sasme-speed
 	// Ladruno sasme-speed: the SAS-ME update works on 6-component stack arrays
 	// (double[6], Voigt order of mSigma); no Vector/Matrix is built per substep.

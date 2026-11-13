@@ -158,6 +158,31 @@
 // cheaper form that scales the void ratio only misses by 8 % at S 0.2. The scale
 // at which a constant-side-stress specimen snaps back is S 0.01-0.03.
 //
+// Ladruno band latch: -sasBandTrigger commit, a latch on COMMITTED history only
+// (ladrunoSasBandCommit, called from LadrunoSANISAND::commitState). The two rules
+// above are tested on the substeps of every trial, and in a Newton loop that went
+// wrong two ways. (1) Under TolR 1e-4 at sigma3 5-20 kPa the converged update
+// keeps b:n slightly POSITIVE past the ratio peak (+0.002 at 5 kPa: b:n = alpha_b -
+// alpha:n is a small difference that the substep error moves by more than its
+// size), so `peak` and `bn` never latch a committed state, while non-converged
+// iterates, with other strain increments, do: their scaled stages change the
+// Newton path but never reach the committed stress. (2) A single substep whose
+// ratio falls by the drift correction or by error control near a flat peak
+// latches 0.1-0.3 % of strain before the peak. The trigger `commit`:
+//   at commit, r = the major/minor principal stress ratio being committed and dL
+//   = the update's plastic multiplier (mDGamma; DM04's L, d eps_p = L R);
+//   r >= r_max or an alpha_in re-seat in the increment: r_max = r, Lpp = 0;
+//   else Lpp += dL; Lpp >= lambda* (-sasBandLatchLambda, default 3e-5) latches,
+//   and the NEXT update runs scaled.
+// No b:n guard (it is what fails in (1)); the re-seat reset makes the peak that
+// of the current loading process. lambda* is in strain units, so the rule does
+// not depend on the step size; 3e-5 is the largest of 1e-5, 3e-5, 1e-4, 3e-4
+// that keeps the accuracy above (S 0.1 within 2 %) on the exact integration with
+// committed increments of 1e-5 (1e-4: 2.03 %); it latches 0.002-0.003 % of strain
+// past the point's peak there. A point that keeps loading plastically past its
+// own peak for lambda* latches, whether or not it unloads later: the rule cannot
+// tell a band's shoulder from the band.
+//
 // Written: N. Mora-Bowen (Ladruno), 2026.
 
 #include "UWmaterials/ManzariDafalias.h"
@@ -455,6 +480,48 @@ ManzariDafalias::ladrunoResetSasBand(void)
     mLadrunoSas.bandS = mLadrunoSas.bandS_n = 0.0;
     mLadrunoSas.bandDe = mLadrunoSas.bandDe_n = 0.0;
     mLadrunoSas.bandStages = mLadrunoSas.bandCapped = mLadrunoSas.bandLatches = 0.0;
+    mLadrunoSas.bandRmax_n = mLadrunoSas.bandLpp_n = 0.0;   // Ladruno band latch
+}
+
+// Ladruno band latch: the trigger `commit` (the note at the top of the file),
+// called by LadrunoSANISAND::commitState() BEFORE the trial latch is copied to the
+// committed one, on the trial state that is about to be committed. It reads the
+// committed history (r_max, Lpp) and this increment's end state only; nothing on
+// the trial path latches under this trigger, so a Newton iterate that is never
+// committed cannot change it. The latch it sets acts from the NEXT update.
+void
+ManzariDafalias::ladrunoSasBandCommit(void)
+{
+    const LadrunoSasOptions& o = mLadrunoSas.opt;
+    if (!o.bandOn() || o.bandTrigger != 2 || mElastFlag == 0 || mLadrunoSas.sep)
+        return;
+    double s[6];
+    for (int i = 0; i < 6; i++)
+        s[i] = mSigma(i);
+    const double r = ladrunoSasPrincipalRatio(s);
+    const double dL = (std::isfinite(mDGamma) && mDGamma > 0.0) ? mDGamma : 0.0;
+    if (mLadrunoSas.band) {                 // latched: Lpp goes on with the element's multiplier (diagnostic)
+        mLadrunoSas.bandLpp_n += mLadrunoSas.bandS * dL;
+        return;
+    }
+    bool reseated = false;
+    for (int i = 0; i < 6 && !reseated; i++)
+        reseated = (mAlpha_in(i) != mAlpha_in_n(i));
+    if (!std::isfinite(r) || r >= mLadrunoSas.bandRmax_n || reseated) {
+        // a new peak of this loading process, or a new process: the count restarts.
+        // A non-finite ratio (minor principal stress <= 0) never latches.
+        mLadrunoSas.bandRmax_n = std::isfinite(r) ? r : 0.0;
+        mLadrunoSas.bandLpp_n = 0.0;
+        return;
+    }
+    mLadrunoSas.bandLpp_n += dL;
+    const double sLatch = (o.bandScale > 0.0) ? o.bandScale : mLadrunoSas.bandSElem;
+    if (mLadrunoSas.bandLpp_n >= o.bandLatchL && sLatch > 0.0) {
+        mLadrunoSas.band = true;
+        mLadrunoSas.bandS = sLatch;         // -sasBandWidth: w/(c_b h), read at the first update
+        mLadrunoSas.bandDe = 0.0;
+        mLadrunoSas.bandLatches += 1.0;
+    }
 }
 
 // Ladruno band scaling: major / minor principal stress of s (compression
@@ -1286,8 +1353,9 @@ ManzariDafalias::ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z,
         // substep of a point not yet latched (see the note at the top of the file).
         // Later substeps of this update already use the scale; the latch becomes
         // permanent at commit and is undone with a refused or reverted trial.
+        // Ladruno band latch: the trigger `commit` (2) never latches here.
         const double sLatch = (o.bandScale > 0.0) ? o.bandScale : mLadrunoSas.bandSElem;
-        if (bandOpt && !bandOn && sLatch > 0.0 && k1 == ST_PLASTIC && k2 == ST_PLASTIC) {
+        if (bandOpt && !bandOn && sLatch > 0.0 && o.bandTrigger != 2 && k1 == ST_PLASTIC && k2 == ST_PLASTIC) {
             bool trig = true;
             if (o.bandTrigger == 0)
                 trig = (ladrunoSasPrincipalRatio(S) < rat0);
