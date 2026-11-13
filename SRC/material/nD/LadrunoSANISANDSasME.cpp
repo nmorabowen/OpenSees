@@ -129,7 +129,7 @@
 #include <cmath>
 #include <limits>
 
-// Ladruno sasme-speed (item 1): the update runs on fixed-size stack arrays, not
+// Ladruno WP-231 (item 1): the update runs on fixed-size stack arrays, not
 // on `Vector` / `Matrix` temporaries. The sampling profile of a footing leg put
 // heap allocation and release at 20 % of the SAS-ME update and `Vector`
 // construction, copies and operators at a further 32 %. Every helper below
@@ -278,7 +278,7 @@ const char* refuseName(int c)
 }
 }  // namespace
 
-// ---- Ladruno sasme-speed: the model's own functions on stack arrays ----------
+// ---- Ladruno WP-231: the model's own functions on stack arrays ----------
 
 // GetF
 double
