@@ -136,9 +136,12 @@ struct LadrunoSasState {                                                    // L
     int    sepCode;             // Ladruno WP-152: the refusal code this TRIAL's entry masked (3, 4, 6 or 9), recorded at commit
     double sepP0;               // Ladruno WP-152: the committed p0 at this TRIAL's entry, recorded at commit
     double carryH, carryH_n;    // Ladruno sasme-speed (-sasCarryDT): the next substep the controller proposed, as a strain norm; 0 = none; trial / committed
+    int    fdMode;              // Ladruno sasme-speed (TanType 3): 0 = a normal update, 2 = a perturbed replay of the accepted substeps
+    std::vector<double> dtLog;  // Ladruno sasme-speed (TanType 3): the accepted dT of the last update (capacity reused, no per-update allocation)
+    double fdFallbacks;         // Ladruno sasme-speed (TanType 3): census, FD columns that fell back to the continuum tangent
     LadrunoSasState() : allowed(false), refused(false), warned(false), commitRefusalWarned(false),   // Ladruno WP-129
                         sep(false), sep_n(false), sepTr(0.0), sepTr_n(0.0), sepEvent(0), sepCode(0), sepP0(0.0),   // Ladruno WP-152
-                        carryH(0.0), carryH_n(0.0) {   // Ladruno sasme-speed
+                        carryH(0.0), carryH_n(0.0), fdMode(0), fdFallbacks(0.0) {   // Ladruno sasme-speed
         for (int i = 0; i < LSAS_COUNT; i++) stats[i] = 0.0;   // Ladruno WP-129
     }   // Ladruno WP-129
 };   // Ladruno WP-129
@@ -510,6 +513,7 @@ class ManzariDafalias : public NDMaterial
 	                double& b0, double& A, double& D, double& B, double& C, double* R);   // Ladruno sasme-speed
 	void    ladrunoSasContinuumTangent(const Vector& S, const Vector& A, const Vector& Z,  // Ladruno WP-129
 	                const Vector& ain, double e, Matrix& Cep);   // Ladruno WP-129
+	void    ladrunoSasFDTangent(void);   // Ladruno sasme-speed: TanType 3, d sigma/d eps of the update with its substeps frozen
 	double	mEPS;			// machine epsilon (for FD jacobian)
 	// Ladruno (ADR-93 II.1) note for readers of the three GetElasticModuli
 	// overloads below: the FIRST of them (sigma, en, en1, nEStrain, cEStrain,

@@ -934,6 +934,21 @@ ManzariDafalias::ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z,
     if (carry && mLadrunoSas.carryH_n > 0.0 && dn > 0.0 && std::isfinite(dn))
         dT = fmax(fmin(1.0, mLadrunoSas.carryH_n / dn), kSasDTmin);
     double dTprop = dT;
+    // Ladruno sasme-speed (TanType 3): a normal update logs its accepted dT; the
+    // perturbed replays of ladrunoSasFDTangent take exactly those dT, accept
+    // every substep the error test would judge (the controller is FROZEN, so the
+    // map is smooth in the strain), and fail on any other rejection.
+    const bool replay = (mLadrunoSas.fdMode == 2);
+    const bool logDT  = (!replay && (int)mTangType == 3);
+    std::vector<double>& dtLog = mLadrunoSas.dtLog;
+    size_t kRep = 0;
+    if (logDT)
+        dtLog.clear();
+    if (replay) {
+        if (dtLog.empty())
+            return RC_DTMIN;
+        dT = dtLog[0];
+    }
     (void)onset;   // the paper rule below needs no onset flag: DM04 re-seats at an
                    // onset only when (alpha - alpha_in):n < 0 there (WP-134 oracle)
     lamSum = 0.0;
@@ -1042,7 +1057,7 @@ ManzariDafalias::ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z,
                 if (!std::isfinite(err) || !finite6(nS) || !finite6(nA) || !finite6(nZ))
                     err = std::numeric_limits<double>::infinity();
                 err = fmax(err, DBL_EPSILON);
-                if (err > TolE)
+                if (err > TolE && !replay)
                     rej = TR_REJ_ERR;
             }
         }
@@ -1087,6 +1102,8 @@ ManzariDafalias::ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z,
             }
         }
 
+        if (rej > 0 && replay)
+            return RC_DTMIN;   // Ladruno sasme-speed: a frozen replay cannot cut
         if (rej > 0) {
             // rejected: cut, or refuse at dT_min
             double q = 0.5;
@@ -1139,9 +1156,17 @@ ManzariDafalias::ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z,
             q = fmin(q, 1.0);
         lastRejected = false;
         const bool cut = (dT < dTprop);   // this substep was the remainder 1 - T, not a proposal
+        if (logDT)
+            dtLog.push_back(dT);
         dT = fmax(q * dT, kSasDTmin);
         dTprop = cut ? fmax(dT, dTprop) : dT;
         dT = fmin(dT, 1.0 - T);
+        if (replay) {                       // Ladruno sasme-speed: the next logged dT, or done
+            if (++kRep < dtLog.size())
+                dT = dtLog[kRep];
+            else
+                break;
+        }
     }
     if (carry)
         mLadrunoSas.carryH = dTprop * dn;   // Ladruno sasme-speed: the proposal, in strain norm
@@ -1473,7 +1498,7 @@ ManzariDafalias::ladrunoSasIntegrate(void)
         st[LSAS_LAST_F] = std::numeric_limits<double>::quiet_NaN();
         // PER-INSTANCE warn-once (review #871 item 2: no process-wide state,
         // nothing to reset on wipe); every refusal is counted in sasStats.
-        if (!mLadrunoSas.warned) {
+        if (!mLadrunoSas.warned && mLadrunoSas.fdMode == 0) {
             mLadrunoSas.warned = true;
             opserr << "WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag " << this->getTag()
                    << ": update REFUSED (" << refuseName(code) << ", code " << code
@@ -1494,6 +1519,8 @@ ManzariDafalias::ladrunoSasIntegrate(void)
     // a new loading process; its next update starts at dT = 1 again.
     if (st[LSAS_ALPHA_IN_RESEATS] != reseats0)
         mLadrunoSas.carryH = 0.0;
+    if (mLadrunoSas.fdMode == 2)
+        return;   // Ladruno sasme-speed: a perturbed replay needs the stress only
     {
         OPS_PROFILE_SCOPE("sanisand.sasME.tangent");
         ladrunoSasModuli(S, mVoidRatio, K, G);
@@ -1506,4 +1533,83 @@ ManzariDafalias::ladrunoSasIntegrate(void)
     }
     st[LSAS_LAST_RATIO_B] = ladrunoSasAlphaRatio(A, S, mVoidRatio);
     st[LSAS_LAST_F] = ladrunoSasF(S, A);
+    if ((int)mTangType == 3 && lastPlastic && mLadrunoSas.fdMode == 0)
+        ladrunoSasFDTangent();   // Ladruno sasme-speed
+}
+
+// Ladruno sasme-speed (TanType 3, a PROTOTYPE of the consistent tangent): the
+// derivative of this update's map eps -> sigma with its substep sequence FROZEN
+// (the accepted dT of the update just made, replayed without error control), by
+// forward differences, one replay per strain column. With the controller frozen
+// the map is smooth, and its derivative is what the analytic chain over the
+// accepted substeps gives (TANGENT_sasme.md of the TIMs speed study). Plane
+// strain (eps_zz, gamma_yz, gamma_zx zero in the committed and the trial
+// strain): columns 0, 1, 3 only; the rest keep the continuum tangent. A column
+// whose replay takes another path (elastic, a rejection, a refusal) keeps the
+// continuum column (counted in fdFallbacks). Every trial quantity the replays
+// touch is restored. Cost: 3 (plane strain) or 6 replays of the accepted
+// substeps per plastic update, on top of the update itself.
+void
+ManzariDafalias::ladrunoSasFDTangent(void)
+{
+    OPS_PROFILE_SCOPE("sanisand.sasME.fdTangent");
+    double s0[6], a0[6], z0[6], ee0[6], ain0[6], eps0[6];
+    for (int i = 0; i < 6; i++) {
+        s0[i] = mSigma(i); a0[i] = mAlpha(i); z0[i] = mFabric(i); ee0[i] = mEpsilonE(i);
+        ain0[i] = mAlpha_in(i); eps0[i] = mEpsilon(i);
+    }
+    double stats0[LSAS_COUNT];
+    for (int i = 0; i < LSAS_COUNT; i++)
+        stats0[i] = mLadrunoSas.stats[i];
+    const double dg0 = mDGamma, vr0 = mVoidRatio, carry0 = mLadrunoSas.carryH;
+    const bool ref0 = mLadrunoSas.refused, warned0 = mLadrunoSas.warned, cap0 = mSubstepCapHitInME;
+    const bool sep0 = mLadrunoSas.sep;
+    const double sepTr0 = mLadrunoSas.sepTr, sepP00 = mLadrunoSas.sepP0;
+    const int sepEvent0 = mLadrunoSas.sepEvent, sepCode0 = mLadrunoSas.sepCode;
+    const int path0 = mLadrunoLastPath, subs0 = mSubstepsTakenInME;
+    const double er0 = mLadrunoLastElasticRatio;
+    LadrunoMESubstepTrace* trace0 = mLadrunoTrace.p;
+    mLadrunoTrace.p = 0;
+    Matrix Ce0(mCe), Cep0(mCep);
+    mCep_Consistent = mCep;
+
+    const bool ps = (eps0[2] == 0.0 && eps0[4] == 0.0 && eps0[5] == 0.0
+                     && mEpsilon_n(2) == 0.0 && mEpsilon_n(4) == 0.0 && mEpsilon_n(5) == 0.0);
+    const int colsPS[3] = {0, 1, 3}, colsAll[6] = {0, 1, 2, 3, 4, 5};
+    const int* cols = ps ? colsPS : colsAll;
+    const int nc = ps ? 3 : 6;
+    const double h = 1.0e-8;
+    mLadrunoSas.fdMode = 2;
+    for (int k = 0; k < nc; k++) {
+        const int c = cols[k];
+        mEpsilon(c) = eps0[c] + h;
+        mSubstepsTakenInME = 0;
+        ladrunoSasIntegrate();
+        bool ok = !mLadrunoSas.refused && mLadrunoLastPath == path0;
+        for (int r = 0; r < 6 && ok; r++)
+            ok = std::isfinite(mSigma(r));
+        if (ok) {
+            const double dc = mEpsilon(c) - eps0[c];   // the perturbation as represented
+            for (int r = 0; r < 6; r++)
+                mCep_Consistent(r, c) = (mSigma(r) - s0[r]) / dc;
+        } else {
+            mLadrunoSas.fdFallbacks += 1.0;
+        }
+        mEpsilon(c) = eps0[c];
+    }
+    mLadrunoSas.fdMode = 0;
+
+    for (int i = 0; i < 6; i++) {
+        mSigma(i) = s0[i]; mAlpha(i) = a0[i]; mFabric(i) = z0[i]; mEpsilonE(i) = ee0[i];
+        mAlpha_in(i) = ain0[i];
+    }
+    for (int i = 0; i < LSAS_COUNT; i++)
+        mLadrunoSas.stats[i] = stats0[i];
+    mDGamma = dg0; mVoidRatio = vr0; mLadrunoSas.carryH = carry0;
+    mLadrunoSas.refused = ref0; mLadrunoSas.warned = warned0; mSubstepCapHitInME = cap0;
+    mLadrunoSas.sep = sep0; mLadrunoSas.sepTr = sepTr0; mLadrunoSas.sepEvent = sepEvent0;
+    mLadrunoSas.sepCode = sepCode0; mLadrunoSas.sepP0 = sepP00;
+    mLadrunoLastPath = path0; mSubstepsTakenInME = subs0; mLadrunoLastElasticRatio = er0;
+    mLadrunoTrace.p = trace0;
+    mCe = Ce0; mCep = Cep0;
 }
