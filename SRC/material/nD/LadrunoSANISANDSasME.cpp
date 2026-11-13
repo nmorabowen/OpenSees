@@ -129,6 +129,17 @@
 #include <cmath>
 #include <limits>
 
+// Ladruno sasme-speed (item 1): the update runs on fixed-size stack arrays, not
+// on `Vector` / `Matrix` temporaries. The sampling profile of a footing leg put
+// heap allocation and release at 20 % of the SAS-ME update and `Vector`
+// construction, copies and operators at a further 32 %. Every helper below
+// repeats, operation for operation and in the same order, the arithmetic of the
+// ManzariDafalias / Vector / Matrix function it stands for (named at each one),
+// so the update is BIT-IDENTICAL to the Vector form on an IEEE build without
+// -ffast-math and without FMA contraction (the fork's x86-64 builds do not pass
+// -march, so there is no FMA to contract into). Signed zeros are kept too: the
+// identity's zero shear terms are multiplied, not skipped.
+
 namespace {
 const double kSasDTmin     = 1.0e-6;   // as ModifiedEuler
 const int    kSasDriftIter = 20;
@@ -142,12 +153,112 @@ enum { RC_START_F = 1, RC_START_ALPHA = 2, RC_START_OTHER = 3, RC_DTMIN = 4,
 // stage kinds
 enum { ST_ELASTIC = 0, ST_PLASTIC = 1, ST_NONPOS_H = -1, ST_TENSION = -2 };
 
-bool finite6(const Vector& v)
+const double kOne3 = 1.0 / 3.0;                              // ManzariDafalias::one3, the same expression
+const double kI1[6] = { 1.0, 1.0, 1.0, 0.0, 0.0, 0.0 };      // ManzariDafalias::mI1
+
+inline bool finite6(const double* v)
 {
-    for (int i = 0; i < v.Size(); i++)
-        if (!std::isfinite(v(i)))
+    for (int i = 0; i < 6; i++)
+        if (!std::isfinite(v[i]))
             return false;
     return true;
+}
+inline void cp6(double* d, const double* s)
+{
+    for (int i = 0; i < 6; i++)
+        d[i] = s[i];
+}
+inline double tr6(const double* v)                            // GetTrace
+{
+    return (v[0] + v[1] + v[2]);
+}
+inline double ddc6(const double* a, const double* b)          // DoubleDot2_2_Contr
+{
+    double r = 0.0;
+    for (int i = 0; i < 6; i++)
+        r += a[i] * b[i] + (i > 2) * a[i] * b[i];
+    return r;
+}
+inline double ddm6(const double* a, const double* b)          // DoubleDot2_2_Mixed
+{
+    double r = 0.0;
+    for (int i = 0; i < 6; i++)
+        r += a[i] * b[i];
+    return r;
+}
+inline double norm6(const double* v)                          // GetNorm_Contr
+{
+    return sqrt(ddc6(v, v));
+}
+inline void dev6(double* r, const double* v)                  // GetDevPart
+{
+    const double p = tr6(v);
+    cp6(r, v);
+    r[0] -= kOne3 * p;
+    r[1] -= kOne3 * p;
+    r[2] -= kOne3 * p;
+}
+inline void sdot6(double* r, const double* v1, const double* v2)   // SingleDot
+{
+    r[0] = v1[0]*v2[0] + v1[3]*v2[3] + v1[5]*v2[5];
+    r[1] = v1[3]*v2[3] + v1[1]*v2[1] + v1[4]*v2[4];
+    r[2] = v1[5]*v2[5] + v1[4]*v2[4] + v1[2]*v2[2];
+    r[3] = 0.5*(v1[0]*v2[3] + v1[3]*v2[0] + v1[3]*v2[1] + v1[1]*v2[3] + v1[5]*v2[4] + v1[4]*v2[5]);
+    r[4] = 0.5*(v1[3]*v2[5] + v1[5]*v2[3] + v1[1]*v2[4] + v1[4]*v2[1] + v1[4]*v2[2] + v1[2]*v2[4]);
+    r[5] = 0.5*(v1[0]*v2[5] + v1[5]*v2[0] + v1[3]*v2[4] + v1[4]*v2[3] + v1[5]*v2[2] + v1[2]*v2[5]);
+}
+inline void div6(double* v, double f)                          // Vector::operator/=
+{
+    if (f == 0.0) {
+        for (int i = 0; i < 6; i++)
+            v[i] = VECTOR_VERY_LARGE_VALUE;
+    } else {
+        for (int i = 0; i < 6; i++)
+            v[i] /= f;
+    }
+}
+inline double lode6(const double* n)                           // GetLodeAngle: cos(3 theta)
+{
+    double t[6], u[6];
+    sdot6(t, n, n);
+    sdot6(u, n, t);
+    double c = sqrt(6.0) * tr6(u);
+    c = c > 1 ? 1 : c;
+    c = c < -1 ? -1 : c;
+    return c;
+}
+// GetStiffness / GetCompliance into a column-major 6x6 (Matrix's layout), and
+// Matrix::operator*(Vector) on it (DoubleDot4_2), with Matrix's loop order.
+inline void stiff36(double* M, double K, double G)
+{
+    for (int i = 0; i < 36; i++)
+        M[i] = 0.0;
+    const double a = K + 4.0*kOne3 * G;
+    const double b = K - 2.0*kOne3 * G;
+    M[0] = M[7] = M[14] = a;
+    M[21] = M[28] = M[35] = G;
+    M[6] = M[12] = M[13] = b;    // (0,1) (0,2) (1,2)
+    M[1] = M[2] = M[8] = b;      // (1,0) (2,0) (2,1)
+}
+inline void compl36(double* M, double K, double G)
+{
+    for (int i = 0; i < 36; i++)
+        M[i] = 0.0;
+    const double a = 1 / (9*K) + 1 / (3*G);
+    const double b = 1 / (9*K) - 1 / (6*G);
+    const double c = 1 / G;
+    M[0] = M[7] = M[14] = a;
+    M[21] = M[28] = M[35] = c;
+    M[6] = M[12] = M[13] = b;
+    M[1] = M[2] = M[8] = b;
+}
+inline void mul36(double* r, const double* M, const double* v)
+{
+    for (int j = 0; j < 6; j++)
+        r[j] = 0.0;
+    for (int i = 0; i < 6; i++)
+        for (int j = 0; j < 6; j++)
+            r[j] += M[i*6 + j] * v[i];
 }
 
 const char* refuseName(int c)
@@ -166,6 +277,108 @@ const char* refuseName(int c)
     }
 }
 }  // namespace
+
+// ---- Ladruno sasme-speed: the model's own functions on stack arrays ----------
+
+// GetF
+double
+ManzariDafalias::ladrunoSasF(const double* S, const double* A)
+{
+    double s[6];
+    dev6(s, S);
+    const double p = one3 * tr6(S) + m_Presidual;
+    for (int i = 0; i < 6; i++)
+        s[i] -= A[i] * p;
+    return norm6(s) - root23 * m_m * p;
+}
+
+// GetNormalToYield
+void
+ManzariDafalias::ladrunoSasNormal(const double* S, const double* A, double* n)
+{
+    const double p = one3 * tr6(S) + m_Presidual;
+    if (fabs(p) < small) {
+        for (int i = 0; i < 6; i++)
+            n[i] = 0.0;
+        return;
+    }
+    double dv[6];
+    dev6(dv, S);
+    for (int i = 0; i < 6; i++) {
+        n[i] = A[i] * (-p);
+        n[i] += dv[i];
+    }
+    double normN = norm6(n);
+    normN = (normN < small) ? 1.0 : normN;
+    div6(n, normN);
+}
+
+// GetElasticModuli (the 4-argument overload, called as it is): a Vector that
+// WRAPS the stack array (Vector(double*, int) does not allocate or free).
+void
+ManzariDafalias::ladrunoSasModuli(const double* S, double e, double& K, double& G)
+{
+    Vector sv(const_cast<double*>(S), 6);
+    GetElasticModuli(sv, e, K, G);
+}
+
+// GetStateDependent
+void
+ManzariDafalias::ladrunoSasStateDep(const double* stress, const double* alpha, const double* fabric,
+    double e, const double* alpha_in, double* n, double* d, double* b, double& cos3Theta, double& h,
+    double& psi, double& alphaBtheta, double& alphaDtheta, double& b0, double& A, double& D,
+    double& B, double& C, double* R)
+{
+    double tmp0[6], tmp1[6], nn[6];
+    double D_factor = 1.0;
+    double p = one3 * tr6(stress) + m_Presidual;
+    p = (p < small) ? small : p;
+
+    ladrunoSasNormal(stress, alpha, n);
+
+    for (int i = 0; i < 6; i++)
+        tmp0[i] = alpha[i] - alpha_in[i];
+    const double AlphaAlphaInDotN = ddc6(tmp0, n);
+
+    psi = GetPSI(e, p);
+    cos3Theta = lode6(n);
+    alphaBtheta = g(cos3Theta, m_c) * m_Mc * exp(-1.0 * m_nb * psi) - m_m;
+    alphaDtheta = g(cos3Theta, m_c) * m_Mc * exp(m_nd * psi) - m_m;
+    b0 = m_G0 * m_h0 * (1.0 - m_ch * e) / sqrt(p / m_P_atm);
+
+    for (int i = 0; i < 6; i++) {
+        d[i] = n[i] * (root23 * alphaDtheta);
+        d[i] -= alpha[i];
+        b[i] = n[i] * (root23 * alphaBtheta);
+        b[i] -= alpha[i];
+    }
+    if (fabs(AlphaAlphaInDotN) < small)
+        h = 1.0e10;
+    else
+        h = b0 / AlphaAlphaInDotN;
+
+    A = m_A0 * (1 + Macauley(ddc6(fabric, n)));
+    D = A * ddc6(d, n);
+    if (p < 0.05 * m_P_atm)
+        D_factor = 1.0 / (1.0 + (exp(7.6349 - 7.2713 * 101.0 / m_P_atm * p)));   // as GetStateDependent
+    else
+        D_factor = 1.0;
+    D *= D_factor;
+
+    B = 1.0 + 1.5 * (1 - m_c)/ m_c * g(cos3Theta, m_c) * cos3Theta;
+    C = 3.0 * sqrt(1.5) * (1 - m_c)/ m_c * g(cos3Theta, m_c);
+
+    sdot6(nn, n, n);
+    for (int i = 0; i < 6; i++) {
+        tmp0[i] = kI1[i] * (-1.0 * one3);
+        tmp0[i] += nn[i];
+        tmp0[i] *= C;
+        tmp1[i] = kI1[i] * (one3 * D);
+        R[i] = n[i] * B;
+        R[i] -= tmp0[i];
+        R[i] += tmp1[i];
+    }
+}
 
 void
 ManzariDafalias::ladrunoResetSasStats(void)
@@ -223,14 +436,15 @@ ManzariDafalias::ladrunoSasSetIsotropic(double pModel)
 // and never the 1e10 sentinel. With the floor OFF the lines below it are the
 // WP-129 ones, unchanged.
 double
-ManzariDafalias::ladrunoSasBracketH(const Vector& a, const Vector& ain, const Vector& n, double h,
+ManzariDafalias::ladrunoSasBracketH(const double* a, const double* ain, const double* n, double h,
     double b0)
 {
     if (mLadrunoSas.opt.alphaInMode == 2)   // stale: ModifiedEuler's behaviour
         return h;
-    Vector t(a);
-    t -= ain;
-    const double x = DoubleDot2_2_Contr(t, n);
+    double t[6];
+    for (int i = 0; i < 6; i++)
+        t[i] = a[i] - ain[i];
+    const double x = ddc6(t, n);
     if (mLadrunoSas.opt.hFloor > 0.0) {                               // Ladruno WP-151
         const double eps = mLadrunoSas.opt.hFloor * root23 * m_m;
         return b0 / (x > eps ? x : eps);
@@ -268,15 +482,16 @@ ManzariDafalias::ladrunoSasReseatDelta(void) const
 
 // rho_alpha: alpha / alpha^b with the Lode angle of alpha itself and psi at (e, p(S)).
 double
-ManzariDafalias::ladrunoSasAlphaRatio(const Vector& a, const Vector& s, double e)
+ManzariDafalias::ladrunoSasAlphaRatio(const double* a, const double* s, double e)
 {
-    const double na = GetNorm_Contr(a);
+    const double na = norm6(a);
     if (!(na > 1.0e-14))
         return (na == 0.0 || std::isfinite(na)) ? 0.0 : std::numeric_limits<double>::infinity();
-    Vector u(a);
-    u /= na;
-    const double c3 = GetLodeAngle(u);
-    double p = one3 * GetTrace(s) + m_Presidual;
+    double u[6];
+    cp6(u, a);
+    div6(u, na);
+    const double c3 = lode6(u);
+    double p = one3 * tr6(s) + m_Presidual;
     p = (p < small) ? small : p;
     const double psi = GetPSI(e, p);
     const double aB = g(c3, m_c) * m_Mc * exp(-1.0 * m_nb * psi) - m_m;
@@ -285,26 +500,42 @@ ManzariDafalias::ladrunoSasAlphaRatio(const Vector& a, const Vector& s, double e
     return sqrt(1.5) * na / aB;
 }
 
+// The Vector form, for the replay command and the census (not on the update path).
+double
+ManzariDafalias::ladrunoSasAlphaRatio(const Vector& a, const Vector& s, double e)
+{
+    double av[6], sv[6];
+    for (int i = 0; i < 6; i++) {
+        av[i] = a(i);
+        sv[i] = s(i);
+    }
+    return ladrunoSasAlphaRatio(av, sv, e);
+}
+
 // -alphaProject 1: alpha -> s*alpha onto the bounding surface (the Lode angle
 // of alpha is unchanged by the scaling, so rho_alpha == 1 exactly), deviatoric
 // stress translated by p*(alpha' - alpha) so dev(S) - p alpha, hence f and n,
 // are unchanged. Elastic strain follows the stress change.
 void
-ManzariDafalias::ladrunoSasProject(Vector& S, Vector& A, Vector& Ee, double e)
+ManzariDafalias::ladrunoSasProject(double* S, double* A, double* Ee, double e)
 {
     const double r = ladrunoSasAlphaRatio(A, S, e);
     if (!(r > 1.0) || !std::isfinite(r))
         return;
     double K, G;
-    GetElasticModuli(S, e, K, G);
-    const double p = one3 * GetTrace(S) + m_Presidual;
-    Vector dA(A);
-    dA *= (1.0 / r - 1.0);
-    A += dA;
-    Vector dS(dA);
-    dS *= p;
-    S += dS;
-    Ee += DoubleDot4_2(GetCompliance(K, G), dS);
+    ladrunoSasModuli(S, e, K, G);
+    const double p = one3 * tr6(S) + m_Presidual;
+    double dA[6], dS[6], M[36], de[6];
+    for (int i = 0; i < 6; i++) {
+        dA[i] = A[i] * (1.0 / r - 1.0);
+        A[i] += dA[i];
+        dS[i] = dA[i] * p;
+        S[i] += dS[i];
+    }
+    compl36(M, K, G);
+    mul36(de, M, dS);
+    for (int i = 0; i < 6; i++)
+        Ee[i] += de[i];
     mLadrunoSas.stats[LSAS_ALPHA_PROJECTED] += 1.0;
 }
 
@@ -318,35 +549,44 @@ ManzariDafalias::ladrunoSasProject(Vector& S, Vector& A, Vector& Ee, double e)
 // first branch and constant on the second, so int_0^1 G dt is exact too.
 // Only the `mUseCurrentVoidRatioInG` seam (G through the CURRENT e) breaks the
 // closed form; that case falls back to 64 Heun sub-steps.
-Vector
-ManzariDafalias::ladrunoSasElastic(const Vector& S, const Vector& dEps, double e0, double e1)
+void
+ManzariDafalias::ladrunoSasElastic(const double* S, const double* dEps, double e0, double e1,
+    double* dS)
 {
     if (mUseCurrentVoidRatioInG) {
         const int nsub = 64;
-        Vector Sx(S), dE(dEps), d1(6), d2(6), S1(6);
-        dE /= (double)nsub;
+        double Sx[6], dE[6], d1[6], d2[6], S1[6], M[36];
+        cp6(Sx, S);
+        cp6(dE, dEps);
+        div6(dE, (double)nsub);
         double K, G;
         for (int k = 0; k < nsub; k++) {
             const double ea = e0 + (e1 - e0) * (double)k / nsub;
             const double eb = e0 + (e1 - e0) * (double)(k + 1) / nsub;
-            GetElasticModuli(Sx, ea, K, G);
-            d1 = DoubleDot4_2(GetStiffness(K, G), dE);
-            S1 = Sx; S1 += d1;
-            GetElasticModuli(S1, eb, K, G);
-            d2 = DoubleDot4_2(GetStiffness(K, G), dE);
-            d1 += d2; d1 *= 0.5;
-            Sx += d1;
+            ladrunoSasModuli(Sx, ea, K, G);
+            stiff36(M, K, G);
+            mul36(d1, M, dE);
+            for (int i = 0; i < 6; i++) { S1[i] = Sx[i]; S1[i] += d1[i]; }
+            ladrunoSasModuli(S1, eb, K, G);
+            stiff36(M, K, G);
+            mul36(d2, M, dE);
+            for (int i = 0; i < 6; i++) {
+                d1[i] += d2[i];
+                d1[i] *= 0.5;
+                Sx[i] += d1[i];
+            }
         }
-        Sx -= S;
-        return Sx;
+        for (int i = 0; i < 6; i++)
+            dS[i] = Sx[i] - S[i];
+        return;
     }
     double K0, G0;
-    GetElasticModuli(S, e0, K0, G0);
-    const double x0 = one3 * GetTrace(S) + m_PreElastic;
+    ladrunoSasModuli(S, e0, K0, G0);
+    const double x0 = one3 * tr6(S) + m_PreElastic;
     const double xe0 = (x0 <= m_Pmin) ? m_Pmin : x0;
     const double g = G0 / sqrt(xe0);
     const double c = K0 / G0;
-    const double dv = GetTrace(dEps);
+    const double dv = tr6(dEps);
     const double spm = sqrt(m_Pmin);
     double t = 0.0, x = x0, I = 0.0;   // I = int_0^1 G(t) dt
     for (int seg = 0; seg < 4 && t < 1.0; seg++) {
@@ -380,26 +620,30 @@ ManzariDafalias::ladrunoSasElastic(const Vector& S, const Vector& dEps, double e
             t += dt;
         }
     }
-    Vector dS = ToContraviant(GetDevPart(dEps));
-    dS *= (2.0 * I);
-    Vector dp(mI1);
-    dp *= (x - x0);
-    dS += dp;
-    return dS;
+    double dd[6];
+    dev6(dd, dEps);
+    dd[3] *= 0.5;   // ToContraviant
+    dd[4] *= 0.5;
+    dd[5] *= 0.5;
+    for (int i = 0; i < 6; i++) {
+        dS[i] = dd[i] * (2.0 * I);
+        dS[i] += kI1[i] * (x - x0);
+    }
 }
 
 // Where the EXACT elastic path from S along dEps meets the yield surface of A:
 // Pegasus on [lo, hi] with f(lo) < 0 < f(hi) (the same path the predictor uses,
 // so the plastic portion starts ON the surface -- review numerics item 3).
 double
-ManzariDafalias::ladrunoSasIntersect(const Vector& S, const Vector& A, const Vector& dEps,
+ManzariDafalias::ladrunoSasIntersect(const double* S, const double* A, const double* dEps,
     double e0, double lo, double hi)
 {
-    Vector dE(dEps), St(6);
+    double dE[6], St[6], dSe[6];
     auto fAt = [&](double a) {
-        dE = dEps; dE *= a;
-        St = S; St += ladrunoSasElastic(S, dE, e0, e0);
-        return GetF(St, A);
+        for (int i = 0; i < 6; i++) dE[i] = dEps[i] * a;
+        ladrunoSasElastic(S, dE, e0, e0, dSe);
+        for (int i = 0; i < 6; i++) { St[i] = S[i]; St[i] += dSe[i]; }
+        return ladrunoSasF(St, A);
     };
     double f0 = fAt(lo), f1 = fAt(hi);
     if (!(f0 < 0.0 && f1 > 0.0))
@@ -427,29 +671,30 @@ ManzariDafalias::ladrunoSasIntersect(const Vector& S, const Vector& A, const Vec
 // One rate-form stage, everything evaluated at (s, a, z, e).
 // Returns ST_ELASTIC / ST_PLASTIC / ST_NONPOS_H / ST_TENSION.
 int
-ManzariDafalias::ladrunoSasStage(const Vector& s, const Vector& a, const Vector& z, double e,
-    const Vector& ain, double dv, const Vector& ddev,
-    Vector& ds, Vector& da, Vector& dz, Vector& dep, double& lam)
+ManzariDafalias::ladrunoSasStage(const double* s, const double* a, const double* z, double e,
+    const double* ain, double dv, const double* ddev,
+    double* ds, double* da, double* dz, double* dep, double& lam)
 {
-    const double p = one3 * GetTrace(s) + m_Presidual;
+    const double p = one3 * tr6(s) + m_Presidual;
     if (!(p > 0.0))
         return ST_TENSION;
 
-    Vector n(6), d(6), b(6), R(6);
+    double n[6], d[6], b[6], R[6];
     double cos3Theta, h, psi, aB, aD, b0, A, D, B, C, K, G;
     {
         OPS_PROFILE_SCOPE("sanisand.sasME.stateDependent");
-        GetStateDependent(s, a, z, e, ain, n, d, b, cos3Theta, h, psi, aB, aD, b0, A, D, B, C, R);
-        GetElasticModuli(s, e, K, G);                      // U9: the stage's own moduli
+        ladrunoSasStateDep(s, a, z, e, ain, n, d, b, cos3Theta, h, psi, aB, aD, b0, A, D, B, C, R);
+        ladrunoSasModuli(s, e, K, G);                      // U9: the stage's own moduli
     }
     OPS_PROFILE_SCOPE("sanisand.sasME.stageArithmetic");
     {
         const double hIn = h;
         h = ladrunoSasBracketH(a, ain, n, h, b0);
         if (mLadrunoSas.opt.hFloor > 0.0) {                               // Ladruno WP-151
-            Vector t(a);
-            t -= ain;
-            if (DoubleDot2_2_Contr(t, n) < mLadrunoSas.opt.hFloor * root23 * m_m)
+            double t[6];
+            for (int i = 0; i < 6; i++)
+                t[i] = a[i] - ain[i];
+            if (ddc6(t, n) < mLadrunoSas.opt.hFloor * root23 * m_m)
                 mLadrunoSas.stats[LSAS_H_FLOORED] += 1.0;
         } else if (h != hIn)   // (alpha - alpha_in):n <= -small: a reversal the stale alpha_in hides
             mLadrunoSas.stats[LSAS_H_BRACKETS] += 1.0;
@@ -457,29 +702,34 @@ ManzariDafalias::ladrunoSasStage(const Vector& s, const Vector& a, const Vector&
 
     // U10: the TRUE yield gradient Q = n - (1/3)(n:alpha + sqrt(2/3) m) I, so
     // Q : C : d_eps = 2G n:de_dev - K dv (n:alpha + sqrt(2/3) m)
-    const double qv = DoubleDot2_2_Contr(n, a) + root23 * m_m;
+    double nn[6], nnn[6];
+    sdot6(nn, n, n);
+    sdot6(nnn, n, nn);
+    const double trn3 = tr6(nnn);                  // GetTrace(SingleDot(n, SingleDot(n, n)))
+    const double qv = ddc6(n, a) + root23 * m_m;
     if (mLadrunoSas.opt.softCap > 0.0) {                                  // Ladruno WP-151
-        const double X = 2.0 * G * (B - C * GetTrace(SingleDot(n, SingleDot(n, n)))) - K * D * qv;
+        const double X = 2.0 * G * (B - C * trn3) - K * D * qv;
         const double hIn = h;
-        h = ladrunoSasSoftCapH(h, DoubleDot2_2_Contr(b, n), p, X);
+        h = ladrunoSasSoftCapH(h, ddc6(b, n), p, X);
         if (h != hIn)
             mLadrunoSas.stats[LSAS_H_SOFTCAPPED] += 1.0;
     }
-    const double Kp = two3 * p * h * DoubleDot2_2_Contr(b, n);
-    const double H  = Kp + 2.0 * G * (B - C * GetTrace(SingleDot(n, SingleDot(n, n)))) - K * D * qv;
-    const double N  = 2.0 * G * DoubleDot2_2_Mixed(n, ddev) - K * dv * qv;
+    const double Kp = two3 * p * h * ddc6(b, n);
+    const double H  = Kp + 2.0 * G * (B - C * trn3) - K * D * qv;
+    const double N  = 2.0 * G * ddm6(n, ddev) - K * dv * qv;
 
-    // elastic trial part, common to both kinds
-    ds = ToContraviant(ddev);
-    ds *= (2.0 * G);
-    Vector tmp(mI1);
-    tmp *= (K * dv);
-    ds += tmp;
+    // elastic trial part, common to both kinds: ToContraviant(ddev) 2G + K dv I
+    for (int i = 0; i < 6; i++) {
+        double c = ddev[i];
+        if (i > 2)
+            c *= 0.5;
+        ds[i] = c * (2.0 * G);
+        ds[i] += kI1[i] * (K * dv);
+    }
 
     if (!(N > 0.0)) {                       // unloading / neutral: elastic stage
-        da.Zero();
-        dz.Zero();
-        dep.Zero();
+        for (int i = 0; i < 6; i++)
+            da[i] = dz[i] = dep[i] = 0.0;
         lam = 0.0;
         mLadrunoSas.stats[LSAS_ELASTIC_STAGES] += 1.0;
         return ST_ELASTIC;
@@ -489,31 +739,29 @@ ManzariDafalias::ladrunoSasStage(const Vector& s, const Vector& a, const Vector&
 
     lam = N / H;
     // C:R = 2G (B n - C (n.n - I/3)) + K D I
-    Vector nn = SingleDot(n, n);
-    Vector cr(n);
-    cr *= B;
-    Vector t2(mI1);
-    t2 *= (-one3);
-    t2 += nn;
-    t2 *= C;
-    cr -= t2;
-    cr *= (2.0 * G);
-    Vector t3(mI1);
-    t3 *= (K * D);
-    cr += t3;
-    cr *= lam;
-    ds -= cr;
+    const double fz = (-1.0 * lam * m_cz * Macauley(-1.0 * D));
+    for (int i = 0; i < 6; i++) {
+        double cr = n[i] * B;
+        double t2 = kI1[i] * (-one3);
+        t2 += nn[i];
+        t2 *= C;
+        cr -= t2;
+        cr *= (2.0 * G);
+        cr += kI1[i] * (K * D);
+        cr *= lam;
+        ds[i] -= cr;
 
-    da = b;
-    da *= (lam * two3 * h);
+        da[i] = b[i] * (lam * two3 * h);
 
-    dz = n;
-    dz *= m_z_max;
-    dz += z;
-    dz *= (-1.0 * lam * m_cz * Macauley(-1.0 * D));
+        dz[i] = n[i] * m_z_max;
+        dz[i] += z[i];
+        dz[i] *= fz;
 
-    dep = ToCovariant(R);
-    dep *= lam;
+        double r = R[i];
+        if (i > 2)
+            r *= 2.0;                       // ToCovariant
+        dep[i] = r * lam;
+    }
     return ST_PLASTIC;
 }
 
@@ -522,13 +770,13 @@ ManzariDafalias::ladrunoSasStage(const Vector& s, const Vector& a, const Vector&
 // direction reduces |f|, the iteration limit, or tension -- the caller turns
 // that into a cut / refusal, never into an accepted f > TolF.
 bool
-ManzariDafalias::ladrunoSasDrift(Vector& S, Vector& A, Vector& Z, Vector& Ee, double e,
-    const Vector& ain, bool bothSides)
+ManzariDafalias::ladrunoSasDrift(double* S, double* A, double* Z, double* Ee, double e,
+    const double* ain, bool bothSides)
 {
     OPS_PROFILE_SCOPE("sanisand.sasME.drift");
     bool corrected = false;
     for (int it = 0; it <= kSasDriftIter; it++) {
-        const double f = GetF(S, A);
+        const double f = ladrunoSasF(S, A);
         if (!std::isfinite(f))
             return false;
         if ((bothSides ? fabs(f) : f) <= mTolF) {
@@ -538,60 +786,80 @@ ManzariDafalias::ladrunoSasDrift(Vector& S, Vector& A, Vector& Z, Vector& Ee, do
         }
         if (it == kSasDriftIter)
             return false;
-        const double p = one3 * GetTrace(S) + m_Presidual;
+        const double p = one3 * tr6(S) + m_Presidual;
         if (!(p > 0.0))
             return false;
 
-        Vector n(6), d(6), b(6), R(6);
+        double n[6], d[6], b[6], R[6], M[36];
         double cos3Theta, h, psi, aB, aD2, b0, Af, D, B, C, K, G;
-        GetStateDependent(S, A, Z, e, ain, n, d, b, cos3Theta, h, psi, aB, aD2, b0, Af, D, B, C, R);
-        GetElasticModuli(S, e, K, G);
+        ladrunoSasStateDep(S, A, Z, e, ain, n, d, b, cos3Theta, h, psi, aB, aD2, b0, Af, D, B, C, R);
+        ladrunoSasModuli(S, e, K, G);
         h = ladrunoSasBracketH(A, ain, n, h, b0);
-        const Matrix aC = GetStiffness(K, G);
+        stiff36(M, K, G);
 
         // exact df/dsigma = n - (1/3)(n:alpha + sqrt(2/3) m) I ; df/dalpha = -p n
-        Vector Q(mI1);
-        Q *= (-one3 * (DoubleDot2_2_Contr(n, A) + root23 * m_m));
-        Q += n;
-        Vector Rc = ToCovariant(R);
-        Vector dSp = DoubleDot4_2(aC, Rc);
+        double Q[6], Rc[6], dSp[6], aBar[6], zBar[6];
+        const double qs = (-one3 * (ddc6(n, A) + root23 * m_m));
+        for (int i = 0; i < 6; i++) {
+            Q[i] = kI1[i] * qs;
+            Q[i] += n[i];
+            Rc[i] = R[i];
+        }
+        Rc[3] *= 2.0;   // ToCovariant
+        Rc[4] *= 2.0;
+        Rc[5] *= 2.0;
+        mul36(dSp, M, Rc);
         if (mLadrunoSas.opt.softCap > 0.0)                                // Ladruno WP-151: X = Q:C:R here
-            h = ladrunoSasSoftCapH(h, DoubleDot2_2_Contr(b, n), p, DoubleDot2_2_Contr(Q, dSp));
-        Vector aBar(b);
-        aBar *= (two3 * h);
-        Vector zBar(n);
-        zBar *= m_z_max;
-        zBar += Z;
-        zBar *= (-1.0 * m_cz * Macauley(-1.0 * D));
+            h = ladrunoSasSoftCapH(h, ddc6(b, n), p, ddc6(Q, dSp));
+        const double fz = (-1.0 * m_cz * Macauley(-1.0 * D));
+        for (int i = 0; i < 6; i++) {
+            aBar[i] = b[i] * (two3 * h);
+            zBar[i] = n[i] * m_z_max;
+            zBar[i] += Z[i];
+            zBar[i] *= fz;
+        }
 
         bool moved = false;
-        const double den = DoubleDot2_2_Contr(Q, dSp) + p * DoubleDot2_2_Contr(n, aBar);
+        const double den = ddc6(Q, dSp) + p * ddc6(n, aBar);
         if (den > small && std::isfinite(den)) {
             const double lam = f / den;
-            Vector S1(S), A1(A);
-            Vector t(dSp); t *= lam; S1 -= t;
-            Vector ta(aBar); ta *= lam; A1 += ta;
-            const double f1 = GetF(S1, A1);
-            if (std::isfinite(f1) && fabs(f1) < fabs(f) && one3 * GetTrace(S1) + m_Presidual > 0.0) {
-                S = S1;
-                A = A1;
-                Vector tz(zBar); tz *= lam; Z += tz;
-                Vector te(Rc); te *= lam; Ee -= te;
+            double S1[6], A1[6];
+            for (int i = 0; i < 6; i++) {
+                S1[i] = S[i];
+                S1[i] -= dSp[i] * lam;
+                A1[i] = A[i];
+                A1[i] += aBar[i] * lam;
+            }
+            const double f1 = ladrunoSasF(S1, A1);
+            if (std::isfinite(f1) && fabs(f1) < fabs(f) && one3 * tr6(S1) + m_Presidual > 0.0) {
+                for (int i = 0; i < 6; i++) {
+                    S[i] = S1[i];
+                    A[i] = A1[i];
+                    Z[i] += zBar[i] * lam;
+                    Ee[i] -= Rc[i] * lam;
+                }
                 moved = true;
             }
         }
         if (!moved) {
-            const double qq = DoubleDot2_2_Contr(Q, Q);
+            const double qq = ddc6(Q, Q);
             if (!(qq > 0.0))
                 return false;
             const double lam = f / qq;
-            Vector S1(S);
-            Vector t(Q); t *= lam; S1 -= t;
-            const double f1 = GetF(S1, A);
-            if (!(std::isfinite(f1) && fabs(f1) < fabs(f) && one3 * GetTrace(S1) + m_Presidual > 0.0))
+            double S1[6], t[6], de[6];
+            for (int i = 0; i < 6; i++) {
+                t[i] = Q[i] * lam;
+                S1[i] = S[i];
+                S1[i] -= t[i];
+            }
+            const double f1 = ladrunoSasF(S1, A);
+            if (!(std::isfinite(f1) && fabs(f1) < fabs(f) && one3 * tr6(S1) + m_Presidual > 0.0))
                 return false;    // the give-up: FAIL, never hand back f > TolF
-            S = S1;
-            Ee -= DoubleDot4_2(GetCompliance(K, G), t);
+            cp6(S, S1);
+            compl36(M, K, G);
+            mul36(de, M, t);
+            for (int i = 0; i < 6; i++)
+                Ee[i] -= de[i];
         }
         corrected = true;
     }
@@ -599,7 +867,8 @@ ManzariDafalias::ladrunoSasDrift(Vector& S, Vector& A, Vector& Z, Vector& Ee, do
 }
 
 // The continuum elastoplastic tangent at (S, A, Z), plastic loading assumed,
-// moduli at that state.
+// moduli at that state. Once per accepted update (not in the substep loop), so it
+// keeps the Vector form.
 void
 ManzariDafalias::ladrunoSasContinuumTangent(const Vector& S, const Vector& A, const Vector& Z,
     const Vector& ain, double e, Matrix& Cep)
@@ -608,7 +877,11 @@ ManzariDafalias::ladrunoSasContinuumTangent(const Vector& S, const Vector& A, co
     double cos3Theta, h, psi, aB, aD, b0, Af, D, B, C, K, G;
     GetStateDependent(S, A, Z, e, ain, n, d, b, cos3Theta, h, psi, aB, aD, b0, Af, D, B, C, R);
     GetElasticModuli(S, e, K, G);
-    h = ladrunoSasBracketH(A, ain, n, h, b0);
+    {
+        double av[6], ainv[6], nv[6];
+        for (int i = 0; i < 6; i++) { av[i] = A(i); ainv[i] = ain(i); nv[i] = n(i); }
+        h = ladrunoSasBracketH(av, ainv, nv, h, b0);
+    }
     if (mLadrunoSas.opt.softCap > 0.0) {                                  // Ladruno WP-151: the stage's X
         const double p = one3 * GetTrace(S) + m_Presidual;
         const double qv = DoubleDot2_2_Contr(n, A) + root23 * m_m;
@@ -623,8 +896,8 @@ ManzariDafalias::ladrunoSasContinuumTangent(const Vector& S, const Vector& A, co
 // or a refusal code (RC_*). On 0, (S, Ee, A, Z, ain) hold the end state.
 // `onset`: the portion starts at a plastic onset (paper alpha_in rule).
 int
-ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z, Vector& ain,
-    const Vector& curStrain, const Vector& nextStrain, bool onset,
+ManzariDafalias::ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z, double* ain,
+    const double* curStrain, const double* nextStrain, bool onset,
     double& lamSum, bool& lastPlastic)
 {
     OPS_PROFILE_SCOPE("sanisand.sasME.substeps");
@@ -636,14 +909,17 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
     const double kappa  = o.alphaBoundTol;
     const double dRev   = ladrunoSasReseatDelta();   // Ladruno WP-151: 0.0 = the paper rule
 
-    Vector dStrain(nextStrain);
-    dStrain -= curStrain;
-    const double trD = GetTrace(dStrain);
-    const Vector devD = GetDevPart(dStrain);
+    double dStrain[6], devD[6];
+    for (int i = 0; i < 6; i++) {
+        dStrain[i] = nextStrain[i];
+        dStrain[i] -= curStrain[i];
+    }
+    const double trD = tr6(dStrain);
+    dev6(devD, dStrain);
 
-    Vector ds1(6), da1(6), dz1(6), dep1(6), ds2(6), da2(6), dz2(6), dep2(6);
-    Vector S1(6), A1(6), Z1(6), nS(6), nA(6), nZ(6), nEe(6), tmp(6), ddev(6);
-    Vector ain1(6), ain2(6), tmpN(6);
+    double ds1[6], da1[6], dz1[6], dep1[6], ds2[6], da2[6], dz2[6], dep2[6];
+    double S1[6], A1[6], Z1[6], nS[6], nA[6], nZ[6], nEe[6], tmp[6], ddev[6];
+    double ain1[6], ain2[6], tmpN[6], ainEnd[6];
     double T = 0.0, dT = 1.0;
     bool lastRejected = false;
     (void)onset;   // the paper rule below needs no onset flag: DM04 re-seats at an
@@ -665,12 +941,13 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
             return RC_CAP;
         }
 
-        tmp = dStrain; tmp *= T; tmp += curStrain;
-        const double e0 = m_e_init - (1 + m_e_init) * GetTrace(tmp);
-        tmp = dStrain; tmp *= (T + dT); tmp += curStrain;
-        const double e1 = m_e_init - (1 + m_e_init) * GetTrace(tmp);
+        for (int i = 0; i < 6; i++) { tmp[i] = dStrain[i] * T; tmp[i] += curStrain[i]; }
+        const double e0 = m_e_init - (1 + m_e_init) * tr6(tmp);
+        for (int i = 0; i < 6; i++) { tmp[i] = dStrain[i] * (T + dT); tmp[i] += curStrain[i]; }
+        const double e1 = m_e_init - (1 + m_e_init) * tr6(tmp);
         const double dv = dT * trD;
-        ddev = devD; ddev *= dT;
+        for (int i = 0; i < 6; i++)
+            ddev[i] = devD[i] * dT;
 
         double lam1 = 0.0, lam2 = 0.0;
         int k1, k2 = ST_ELASTIC;
@@ -680,13 +957,13 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
         // Only ON the surface (the oracle decides modes, and re-seats, only
         // there -- review numerics item 7).
         bool reseat1 = false, reseat2 = false;
-        const bool onSurface = (fabs(GetF(S, A)) <= mTolF);
-        ain1 = ain;
+        const bool onSurface = (fabs(ladrunoSasF(S, A)) <= mTolF);
+        cp6(ain1, ain);
         if (paperRule && onSurface) {
-            tmpN = GetNormalToYield(S, A);
-            tmp = A; tmp -= ain;
-            const double x1 = DoubleDot2_2_Contr(tmp, tmpN);
-            if (x1 < -dRev) { ain1 = A; reseat1 = true; }
+            ladrunoSasNormal(S, A, tmpN);
+            for (int i = 0; i < 6; i++) tmp[i] = A[i] - ain[i];
+            const double x1 = ddc6(tmp, tmpN);
+            if (x1 < -dRev) { cp6(ain1, A); reseat1 = true; }
             else if (x1 < 0.0) st[LSAS_RESEAT_HELD] += 1.0;   // Ladruno WP-151: a sub-threshold reversal
         }
         {
@@ -702,21 +979,23 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
         if (k1 == ST_TENSION) {
             rej = TR_REJ_LOWP1;
         } else {
-            S1 = S; S1 += ds1;
-            A1 = A; A1 += da1;
-            Z1 = Z; Z1 += dz1;
-            if (!(one3 * GetTrace(S1) + m_Presidual > 0.0)) {
+            for (int i = 0; i < 6; i++) {
+                S1[i] = S[i]; S1[i] += ds1[i];
+                A1[i] = A[i]; A1[i] += da1[i];
+                Z1[i] = Z[i]; Z1[i] += dz1[i];
+            }
+            if (!(one3 * tr6(S1) + m_Presidual > 0.0)) {
                 rej = TR_REJ_LOWP1;
             } else {
-                ain2 = ain1;
+                cp6(ain2, ain1);
                 if (paperRule && k1 == ST_PLASTIC) {
                     // a reversal INSIDE a plastic substep: locate it at a substep
                     // start (cut) rather than re-seating on the Euler predictor;
                     // at dT_min re-seat at the stage state.
-                    tmpN = GetNormalToYield(S1, A1);
-                    tmp = A1; tmp -= ain1;
-                    if (DoubleDot2_2_Contr(tmp, tmpN) < -dRev) {   // Ladruno WP-151: -dRev (0 = paper)
-                        if (atMin) { ain2 = A1; reseat2 = true; }
+                    ladrunoSasNormal(S1, A1, tmpN);
+                    for (int i = 0; i < 6; i++) tmp[i] = A1[i] - ain1[i];
+                    if (ddc6(tmp, tmpN) < -dRev) {   // Ladruno WP-151: -dRev (0 = paper)
+                        if (atMin) { cp6(ain2, A1); reseat2 = true; }
                         else rej = TR_REJ_REVERSAL;
                     }
                 }
@@ -732,19 +1011,21 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
         }
         double err = std::numeric_limits<double>::quiet_NaN();
         if (rej == 0) {
-            nS = ds1; nS += ds2; nS *= 0.5; nS += S;
-            nA = da1; nA += da2; nA *= 0.5; nA += A;
-            nZ = dz1; nZ += dz2; nZ *= 0.5; nZ += Z;
-            if (!(one3 * GetTrace(nS) + m_Presidual > 0.0))
+            for (int i = 0; i < 6; i++) {
+                nS[i] = ds1[i]; nS[i] += ds2[i]; nS[i] *= 0.5; nS[i] += S[i];
+                nA[i] = da1[i]; nA[i] += da2[i]; nA[i] *= 0.5; nA[i] += A[i];
+                nZ[i] = dz1[i]; nZ[i] += dz2[i]; nZ[i] *= 0.5; nZ[i] += Z[i];
+            }
+            if (!(one3 * tr6(nS) + m_Presidual > 0.0))
                 rej = TR_REJ_LOWP2;
             else {
-                tmp = ds2; tmp -= ds1;
-                err = GetNorm_Contr(tmp) / fmax(2.0 * GetNorm_Contr(S), sigRef);
+                for (int i = 0; i < 6; i++) tmp[i] = ds2[i] - ds1[i];
+                err = norm6(tmp) / fmax(2.0 * norm6(S), sigRef);
                 if (o.errorVars == 0) {
-                    tmp = da2; tmp -= da1;
-                    err = fmax(err, GetNorm_Contr(tmp) / fmax(2.0 * GetNorm_Contr(A), 1.0));
-                    tmp = dz2; tmp -= dz1;
-                    err = fmax(err, GetNorm_Contr(tmp) / fmax(2.0 * GetNorm_Contr(Z), 1.0));
+                    for (int i = 0; i < 6; i++) tmp[i] = da2[i] - da1[i];
+                    err = fmax(err, norm6(tmp) / fmax(2.0 * norm6(A), 1.0));
+                    for (int i = 0; i < 6; i++) tmp[i] = dz2[i] - dz1[i];
+                    err = fmax(err, norm6(tmp) / fmax(2.0 * norm6(Z), 1.0));
                 }
                 if (!std::isfinite(err) || !finite6(nS) || !finite6(nA) || !finite6(nZ))
                     err = std::numeric_limits<double>::infinity();
@@ -755,11 +1036,13 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
         }
 
         // the alpha_in this substep ends with (paper rule: the re-seat point)
-        Vector ainEnd(reseat2 ? ain2 : (reseat1 ? ain1 : ain));
+        cp6(ainEnd, reseat2 ? ain2 : (reseat1 ? ain1 : ain));
         if (rej == 0) {
             // candidate accepted by the error test: drift, then alpha
-            nEe = dStrain; nEe *= dT; nEe += Ee;
-            tmp = dep1; tmp += dep2; tmp *= 0.5; nEe -= tmp;
+            for (int i = 0; i < 6; i++) {
+                nEe[i] = dStrain[i] * dT; nEe[i] += Ee[i];
+                tmp[i] = dep1[i]; tmp[i] += dep2[i]; tmp[i] *= 0.5; nEe[i] -= tmp[i];
+            }
             const bool anyElastic = (k1 == ST_ELASTIC || k2 == ST_ELASTIC);
             const bool anyPlastic = (k1 == ST_PLASTIC || k2 == ST_PLASTIC);
             // the plastic portion belongs ON the surface; an unloading stage may leave it inside
@@ -818,21 +1101,21 @@ ManzariDafalias::ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z,
         // accept
         st[LSAS_ACCEPTED] += 1.0;
         ladrunoTraceSubstep(T, dT, err, rej < 0 ? TR_ACCEPT_PROJECTED : TR_ACCEPT, atMin);
-        S = nS; A = nA; Z = nZ; Ee = nEe;
+        cp6(S, nS); cp6(A, nA); cp6(Z, nZ); cp6(Ee, nEe);
         lamSum += 0.5 * (lam1 + lam2);
         lastPlastic = (k2 == ST_PLASTIC);   // the loading index nearest the end state
         if (reseat1 || reseat2) {
-            ain = ainEnd;
+            cp6(ain, ainEnd);
             st[LSAS_ALPHA_IN_RESEATS] += 1.0;
         }
         // (alpha - alpha_in):n reaching 0 re-seats alpha_in (the paper's rule),
         // on the surface only
-        if (paperRule && fabs(GetF(S, A)) <= mTolF) {
-            Vector nEnd = GetNormalToYield(S, A);
-            tmp = A; tmp -= ain;
-            const double xEnd = DoubleDot2_2_Contr(tmp, nEnd);
+        if (paperRule && fabs(ladrunoSasF(S, A)) <= mTolF) {
+            ladrunoSasNormal(S, A, tmpN);
+            for (int i = 0; i < 6; i++) tmp[i] = A[i] - ain[i];
+            const double xEnd = ddc6(tmp, tmpN);
             if (xEnd < -dRev) {                                          // Ladruno WP-151: -dRev (0 = paper)
-                ain = A;
+                cp6(ain, A);
                 st[LSAS_ALPHA_IN_RESEATS] += 1.0;
             } else if (xEnd < 0.0)
                 st[LSAS_RESEAT_HELD] += 1.0;                             // Ladruno WP-151
@@ -860,13 +1143,14 @@ ManzariDafalias::ladrunoSasIntegrate(void)
     st[LSAS_LAST_REFUSE_CODE] = 0.0;
     mLadrunoSas.refused = false;
 
-    const Vector& CurStrain = mEpsilon_n;
-    const Vector& NextStrain = mEpsilon;
-
-    Vector dStrain(NextStrain);
-    dStrain -= CurStrain;
-    const double eN = m_e_init - (1 + m_e_init) * GetTrace(CurStrain);
-    mVoidRatio = m_e_init - (1 + m_e_init) * GetTrace(NextStrain);
+    double CurStrain[6], NextStrain[6], dStrain[6];
+    for (int i = 0; i < 6; i++) {
+        CurStrain[i] = mEpsilon_n(i);
+        NextStrain[i] = mEpsilon(i);
+        dStrain[i] = NextStrain[i] - CurStrain[i];
+    }
+    const double eN = m_e_init - (1 + m_e_init) * tr6(CurStrain);
+    mVoidRatio = m_e_init - (1 + m_e_init) * tr6(NextStrain);
 
     // ---- Ladruno WP-152: the tension cutoff (separation) ----------------------
     // The trial starts as the committed state. A SEPARATED point carries no
@@ -889,7 +1173,7 @@ ManzariDafalias::ladrunoSasIntegrate(void)
     mLadrunoSas.sepP0 = 0.0;
     const bool tcOn = (o.tcPcontact > 0.0);
     if (tcOn && mLadrunoSas.sep_n) {
-        const double g = GetTrace(NextStrain) - mLadrunoSas.sepTr_n;
+        const double g = tr6(NextStrain) - mLadrunoSas.sepTr_n;
         Vector Sc(mI1);
         Sc *= (o.tcPcontact - m_Presidual);
         double Kc, Gc;
@@ -923,27 +1207,33 @@ ManzariDafalias::ladrunoSasIntegrate(void)
     // exact ring runs reach h < 0; with the paper's, 0/960.) bracket / stale
     // keep UW's pre-decision.
     const bool paperRule = (o.alphaInMode == 0);
-    Vector S(mSigma_n), A(mAlpha_n), Z(mFabric_n), Ee(mEpsilonE_n),
-           ain(paperRule ? mAlpha_in_n : mAlpha_in);
+    double S[6], A[6], Z[6], Ee[6], ain[6];
+    for (int i = 0; i < 6; i++) {
+        S[i] = mSigma_n(i);
+        A[i] = mAlpha_n(i);
+        Z[i] = mFabric_n(i);
+        Ee[i] = mEpsilonE_n(i);
+        ain[i] = paperRule ? mAlpha_in_n(i) : mAlpha_in(i);
+    }
     int code = 0;
-    const double p0c = one3 * GetTrace(S) + m_Presidual;   // Ladruno WP-152: committed p (the E2 test)
-    bool startTension = false;                             // Ladruno WP-152: code 3 BECAUSE p0 <= 0 (E1)
+    const double p0c = one3 * tr6(S) + m_Presidual;   // Ladruno WP-152: committed p (the E2 test)
+    bool startTension = false;                        // Ladruno WP-152: code 3 BECAUSE p0 <= 0 (E1)
 
     // ---- 0. entry: the committed state must be admissible ------------------
     {
-        const double p0 = one3 * GetTrace(S) + m_Presidual;
-        const double ta = GetTrace(A), tz = GetTrace(Z);
+        const double p0 = one3 * tr6(S) + m_Presidual;
+        const double ta = tr6(A), tz = tr6(Z);
         if (!finite6(S) || !finite6(A) || !finite6(Z) || !finite6(ain) || !(p0 > 0.0)
-            || fabs(ta) > 1.0e-6 * fmax(GetNorm_Contr(A), m_m)
-            || fabs(tz) > 1.0e-6 * fmax(GetNorm_Contr(Z), m_m)) {
+            || fabs(ta) > 1.0e-6 * fmax(norm6(A), m_m)
+            || fabs(tz) > 1.0e-6 * fmax(norm6(Z), m_m)) {
             code = RC_START_OTHER;
             // Ladruno WP-152: only "finite, traces clean, p0 <= 0" is a tension
             // start; a non-finite value or a trace violation stays a loud refusal.
             startTension = finite6(S) && finite6(A) && finite6(Z) && finite6(ain) && !(p0 > 0.0)
-                && !(fabs(ta) > 1.0e-6 * fmax(GetNorm_Contr(A), m_m))
-                && !(fabs(tz) > 1.0e-6 * fmax(GetNorm_Contr(Z), m_m));
+                && !(fabs(ta) > 1.0e-6 * fmax(norm6(A), m_m))
+                && !(fabs(tz) > 1.0e-6 * fmax(norm6(Z), m_m));
         }
-        else if (GetF(S, A) > mTolF)
+        else if (ladrunoSasF(S, A) > mTolF)
             code = RC_START_F;
         else {
             // ENTRY threshold 1 + kappa_entry (review numerics item 2): the
@@ -973,19 +1263,21 @@ ManzariDafalias::ladrunoSasIntegrate(void)
         bool elastic = false, onset = false;
         {
             OPS_PROFILE_SCOPE("sanisand.sasME.predictor");
-            Vector dSe = ladrunoSasElastic(S, dStrain, eN, mVoidRatio);
-            Vector St(S);
-            St += dSe;
-            const double ft = GetF(St, A);
-            const double pt = one3 * GetTrace(St) + m_Presidual;
+            double dSe[6], St[6];
+            ladrunoSasElastic(S, dStrain, eN, mVoidRatio, dSe);
+            for (int i = 0; i < 6; i++) { St[i] = S[i]; St[i] += dSe[i]; }
+            const double ft = ladrunoSasF(St, A);
+            const double pt = one3 * tr6(St) + m_Presidual;
             if (!(pt < m_Presidual) && ft <= mTolF) {
                 elastic = true;
-                S = St;
-                Ee += dStrain;
+                cp6(S, St);
+                for (int i = 0; i < 6; i++)
+                    Ee[i] += dStrain[i];
                 mLadrunoLastPath = 0;
             } else {
-                const double f0 = GetF(S, A);
-                Vector nY = GetNormalToYield(S, A);
+                const double f0 = ladrunoSasF(S, A);
+                double nY[6];
+                ladrunoSasNormal(S, A, nY);
                 // Paper alpha_in rule at the increment START (review numerics
                 // item 4) with WP-134's convention exactly: a start is ON the
                 // surface unless f0 < -1e-8 of the cone radius sqrt(2/3) m p, and
@@ -995,28 +1287,32 @@ ManzariDafalias::ladrunoSasIntegrate(void)
                 // is what separates b16 5496 (re-seat) from b16 5471 / b8 1961
                 // (no re-seat) on the ring, all within 4e-8 of the cone radius.
                 if (paperRule) {
-                    const double pS = one3 * GetTrace(S) + m_Presidual;
+                    const double pS = one3 * tr6(S) + m_Presidual;
                     if (f0 >= -1.0e-8 * root23 * m_m * pS) {
-                        Vector t0(A); t0 -= ain;
-                        const double x0 = DoubleDot2_2_Contr(t0, nY);
+                        double t0[6];
+                        for (int i = 0; i < 6; i++) t0[i] = A[i] - ain[i];
+                        const double x0 = ddc6(t0, nY);
                         if (x0 < -ladrunoSasReseatDelta()) {                // Ladruno WP-151: 0 = paper
-                            ain = A;
+                            cp6(ain, A);
                             st[LSAS_ALPHA_IN_RESEATS] += 1.0;
                         } else if (x0 < 0.0)
                             st[LSAS_RESEAT_HELD] += 1.0;                     // Ladruno WP-151
                     }
                 }
                 // U10: the loading test on the TRUE gradient
-                Vector Q(mI1);
-                Q *= (-one3 * (DoubleDot2_2_Contr(nY, A) + root23 * m_m));
-                Q += nY;
-                const double qn = GetNorm_Contr(Q), nd = GetNorm_Contr(dSe);
+                double Q[6];
+                const double qs = (-one3 * (ddc6(nY, A) + root23 * m_m));
+                for (int i = 0; i < 6; i++) {
+                    Q[i] = kI1[i] * qs;
+                    Q[i] += nY[i];
+                }
+                const double qn = norm6(Q), nd = norm6(dSe);
                 if (f0 < -mTolF) {
                     a = ladrunoSasIntersect(S, A, dStrain, eN, 0.0, 1.0);
                     if (a < 0.0) { st[LSAS_INTERSECT_FAIL] += 1.0; a = 0.0; }
                     mLadrunoLastPath = 2;
                     onset = true;
-                } else if (DoubleDot2_2_Contr(Q, dSe) / ((qn == 0 ? 1.0 : qn) * (nd == 0 ? 1.0 : nd))
+                } else if (ddc6(Q, dSe) / ((qn == 0 ? 1.0 : qn) * (nd == 0 ? 1.0 : nd))
                            > (-sqrt(mTolF))) {
                     a = 0.0;
                     mLadrunoLastPath = 3;
@@ -1025,14 +1321,15 @@ ManzariDafalias::ladrunoSasIntegrate(void)
                     // then the first one back outside, and Pegasus between them
                     a = -1.0;
                     const int ns = 64;
-                    Vector dE(6), St2(6);
+                    double dE[6], St2[6], dS2[6];
                     double prevA = -1.0;
                     bool inside = false;
                     for (int k = 1; k <= ns; k++) {
                         const double ak = (double)k / ns;
-                        dE = dStrain; dE *= ak;
-                        St2 = S; St2 += ladrunoSasElastic(S, dE, eN, eN);
-                        const double fk = GetF(St2, A);
+                        for (int i = 0; i < 6; i++) dE[i] = dStrain[i] * ak;
+                        ladrunoSasElastic(S, dE, eN, eN, dS2);
+                        for (int i = 0; i < 6; i++) { St2[i] = S[i]; St2[i] += dS2[i]; }
+                        const double fk = ladrunoSasF(St2, A);
                         if (!inside) {
                             if (fk < -mTolF) inside = true;
                         } else if (fk > 0.0) {
@@ -1047,29 +1344,36 @@ ManzariDafalias::ladrunoSasIntegrate(void)
                 }
                 mLadrunoLastElasticRatio = a;
                 if (a > 0.0) {
-                    Vector dEa(dStrain);
-                    dEa *= a;
-                    const double ea = eN - (1 + m_e_init) * GetTrace(dEa);
-                    S += ladrunoSasElastic(S, dEa, eN, ea);
-                    Ee += dEa;
+                    double dEa[6], dSa[6];
+                    for (int i = 0; i < 6; i++) dEa[i] = dStrain[i] * a;
+                    const double ea = eN - (1 + m_e_init) * tr6(dEa);
+                    ladrunoSasElastic(S, dEa, eN, ea, dSa);
+                    for (int i = 0; i < 6; i++) {
+                        S[i] += dSa[i];
+                        Ee[i] += dEa[i];
+                    }
                 }
             }
         }
         if (elastic) {
             st[LSAS_ELASTIC] += 1.0;
-            mSigma = S; mAlpha = A; mFabric = Z; mEpsilonE = Ee;
-            mAlpha_in = ain;
+            for (int i = 0; i < 6; i++) {
+                mSigma(i) = S[i]; mAlpha(i) = A[i]; mFabric(i) = Z[i]; mEpsilonE(i) = Ee[i];
+                mAlpha_in(i) = ain[i];
+            }
             mDGamma = 0.0;
-            GetElasticModuli(S, mVoidRatio, K, G);
+            ladrunoSasModuli(S, mVoidRatio, K, G);
             mCe = GetStiffness(K, G); mCep = mCe; mCep_Consistent = mCe;
             st[LSAS_LAST_RATIO_B] = ladrunoSasAlphaRatio(A, S, mVoidRatio);
-            st[LSAS_LAST_F] = GetF(S, A);
+            st[LSAS_LAST_F] = ladrunoSasF(S, A);
             return;
         }
         // ---- 2. the plastic portion ------------------------------------------
-        Vector curP(dStrain);
-        curP *= a;
-        curP += CurStrain;
+        double curP[6];
+        for (int i = 0; i < 6; i++) {
+            curP[i] = dStrain[i] * a;
+            curP[i] += CurStrain[i];
+        }
         code = ladrunoSasSubsteps(S, Ee, A, Z, ain, curP, NextStrain, onset, lamSum, lastPlastic);
     } else {
         mLadrunoLastPath = 7;
@@ -1102,7 +1406,7 @@ ManzariDafalias::ladrunoSasIntegrate(void)
         // "compressing" with a tolerance scaled to the increment: a trace built from
         // B u is round-off, not zero, under isochoric shear -- an exact `> 0.0` split one
         // homogeneous stdBrick's 8 GPs into 6 separating and 2 refusing (re-review test).
-        const bool compressing = (GetTrace(dStrain) > 1.0e-10 * GetNorm_Contr(dStrain));
+        const bool compressing = (tr6(dStrain) > 1.0e-10 * norm6(dStrain));
         const bool e1 = e1q && (p0c <= o.tcP0Max) && !compressing;
         const bool e2 = e2q && !compressing;
         if (e1q && !(p0c <= o.tcP0Max)) st[LSAS_SEP_HELD_HIGHP] += 1.0;
@@ -1113,7 +1417,7 @@ ManzariDafalias::ladrunoSasIntegrate(void)
             mLadrunoSas.sepP0 = p0c;
             mSubstepCapHitInME = false;   // a code 9 set it; the cap was reached by a separating point
             mLadrunoSas.sep = true;
-            mLadrunoSas.sepTr = GetTrace(NextStrain);
+            mLadrunoSas.sepTr = tr6(NextStrain);
             ladrunoSasSetIsotropic(m_Pmin);
             mLadrunoLastPath = 8;
             return;
@@ -1162,19 +1466,21 @@ ManzariDafalias::ladrunoSasIntegrate(void)
     }
 
     // ---- 3. accepted: state and ONE end-state tangent -----------------------
-    mSigma = S; mAlpha = A; mFabric = Z; mEpsilonE = Ee;
-    mAlpha_in = ain;
+    for (int i = 0; i < 6; i++) {
+        mSigma(i) = S[i]; mAlpha(i) = A[i]; mFabric(i) = Z[i]; mEpsilonE(i) = Ee[i];
+        mAlpha_in(i) = ain[i];
+    }
     mDGamma = lamSum;
     {
         OPS_PROFILE_SCOPE("sanisand.sasME.tangent");
-        GetElasticModuli(S, mVoidRatio, K, G);
+        ladrunoSasModuli(S, mVoidRatio, K, G);
         mCe = GetStiffness(K, G);
         if (lastPlastic)
-            ladrunoSasContinuumTangent(S, A, Z, ain, mVoidRatio, mCep);
+            ladrunoSasContinuumTangent(mSigma, mAlpha, mFabric, mAlpha_in, mVoidRatio, mCep);
         else
             mCep = mCe;
         mCep_Consistent = mCep;
     }
     st[LSAS_LAST_RATIO_B] = ladrunoSasAlphaRatio(A, S, mVoidRatio);
-    st[LSAS_LAST_F] = GetF(S, A);
+    st[LSAS_LAST_F] = ladrunoSasF(S, A);
 }
