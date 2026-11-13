@@ -1060,6 +1060,7 @@ ManzariDafalias::ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z,
             return RC_DTMIN;
         dT = dtLog[0];
     }
+    int nAcc = 0;  // Ladruno band scaling x TanType 3: accepted substeps of this update
     (void)onset;   // the paper rule below needs no onset flag: DM04 re-seats at an
                    // onset only when (alpha - alpha_in):n < 0 there (WP-134 oracle)
     lamSum = 0.0;
@@ -1258,6 +1259,7 @@ ManzariDafalias::ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z,
 
         // accept
         st[LSAS_ACCEPTED] += 1.0;
+        ++nAcc;
         ladrunoTraceSubstep(T, dT, err, rej < 0 ? TR_ACCEPT_PROJECTED : TR_ACCEPT, atMin);
         cp6(S, nS); cp6(A, nA); cp6(Z, nZ); cp6(Ee, nEe);
         if (bandOn)
@@ -1297,6 +1299,7 @@ ManzariDafalias::ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z,
                     mLadrunoSas.band = true;
                     mLadrunoSas.bandS = sLatch;   // -sasBandWidth: w/(c_b h), read at the first update
                     mLadrunoSas.bandLatches += 1.0;
+                    mLadrunoSas.bandLatchAt = nAcc;   // TanType 3: the replays must latch here too
                 }
             }
         }
@@ -1340,6 +1343,7 @@ ManzariDafalias::ladrunoSasIntegrate(void)
     mLadrunoSas.band = mLadrunoSas.band_n;
     mLadrunoSas.bandS = mLadrunoSas.bandS_n;
     mLadrunoSas.bandDe = mLadrunoSas.bandDe_n;
+    mLadrunoSas.bandLatchAt = -1;
 
     double CurStrain[6], NextStrain[6], dStrain[6];
     for (int i = 0; i < 6; i++) {
@@ -1755,6 +1759,15 @@ ManzariDafalias::ladrunoSasFDTangent(void)
     const double sepTr0 = mLadrunoSas.sepTr, sepP00 = mLadrunoSas.sepP0;
     const int sepEvent0 = mLadrunoSas.sepEvent, sepCode0 = mLadrunoSas.sepCode;
     const int path0 = mLadrunoLastPath, subs0 = mSubstepsTakenInME;
+    // Ladruno band scaling x TanType 3: the band's trial state and census are
+    // trial quantities too; a replay must end latched as the update did, at the
+    // same accepted substep (a latch elsewhere is a jump in the map, not its
+    // derivative), or the column keeps the continuum one.
+    const bool band0 = mLadrunoSas.band;
+    const double bandS0 = mLadrunoSas.bandS, bandDe0 = mLadrunoSas.bandDe;
+    const double bandStages0 = mLadrunoSas.bandStages, bandCapped0 = mLadrunoSas.bandCapped;
+    const double bandLatches0 = mLadrunoSas.bandLatches, bandSElem0 = mLadrunoSas.bandSElem;
+    const int bandLatchAt0 = mLadrunoSas.bandLatchAt;
     const double er0 = mLadrunoLastElasticRatio;
     LadrunoMESubstepTrace* trace0 = mLadrunoTrace.p;
     mLadrunoTrace.p = 0;
@@ -1773,7 +1786,8 @@ ManzariDafalias::ladrunoSasFDTangent(void)
         mEpsilon(c) = eps0[c] + h;
         mSubstepsTakenInME = 0;
         ladrunoSasIntegrate();
-        bool ok = !mLadrunoSas.refused && mLadrunoLastPath == path0;
+        bool ok = !mLadrunoSas.refused && mLadrunoLastPath == path0
+                  && mLadrunoSas.band == band0 && mLadrunoSas.bandLatchAt == bandLatchAt0;   // band scaling
         for (int r = 0; r < 6 && ok; r++)
             ok = std::isfinite(mSigma(r));
         if (ok) {
@@ -1798,6 +1812,10 @@ ManzariDafalias::ladrunoSasFDTangent(void)
     mLadrunoSas.sep = sep0; mLadrunoSas.sepTr = sepTr0; mLadrunoSas.sepEvent = sepEvent0;
     mLadrunoSas.sepCode = sepCode0; mLadrunoSas.sepP0 = sepP00;
     mLadrunoLastPath = path0; mSubstepsTakenInME = subs0; mLadrunoLastElasticRatio = er0;
+    mLadrunoSas.band = band0; mLadrunoSas.bandS = bandS0; mLadrunoSas.bandDe = bandDe0;   // band scaling
+    mLadrunoSas.bandStages = bandStages0; mLadrunoSas.bandCapped = bandCapped0;
+    mLadrunoSas.bandLatches = bandLatches0; mLadrunoSas.bandSElem = bandSElem0;
+    mLadrunoSas.bandLatchAt = bandLatchAt0;
     mLadrunoTrace.p = trace0;
     mCe = Ce0; mCep = Cep0;
 }
