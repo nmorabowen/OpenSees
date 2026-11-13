@@ -90,8 +90,10 @@ struct LadrunoMETraceSlot {                                                 // L
 #define LADRUNO_INT_SAS_ME 129                                              // Ladruno WP-129
 // Ladruno band latch: the default band trigger (0 peak, 1 bn, 2 commit) and the
 // default lambda* of the commit trigger (the oracle sweep of the band-latch work,
-// LadrunoSANISANDSasME.cpp, the note at the top).
-const int    LadrunoBandTriggerDefault     = 0;
+// LadrunoSANISANDSasME.cpp, the note at the top). The default is commit: it passes
+// every single-point gate where peak fails at sigma3 5-20 kPa (never commits) and
+// at tight TolR (latches early); on a specimen both latch the shoulder of the band.
+const int    LadrunoBandTriggerDefault     = 2;
 const double LadrunoBandLatchLambdaDefault = 3.0e-5;
 struct LadrunoSasOptions {                                                  // Ladruno WP-129
     double errFloor;       // Ladruno WP-129: sigma_ref of the stress error, stress units; < 0 = P_atm/101 (1 kPa at P_atm 101)

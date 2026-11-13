@@ -141,7 +141,7 @@
 // softening. Kp + S X <= 0 is the snap-back of the point itself under full strain
 // control: a refusal (loadingWithNonPositiveDenominator), as for DM04.
 // THE LATCH is permanent and committed with the state:
-//   -sasBandTrigger peak (DEFAULT)  an accepted plastic substep over which the
+//   -sasBandTrigger peak   an accepted plastic substep over which the
 //        major/minor principal stress ratio fell, ending with b:n <= 0. On a
 //        uniform specimen this is the peak of the specimen itself, so first
 //        loading and the peak are untouched.
