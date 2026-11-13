@@ -181,6 +181,10 @@
 // -march, so there is no FMA to contract into). Signed zeros are kept too: the
 // identity's zero shear terms are multiplied, not skipped.
 
+#include <cstdlib>
+// DIAG (throwaway, not for merge): per-update latch census, printed when LADRUNO_BAND_DIAG is set
+double gBandDiag[8];
+bool gBandDiagOn = (std::getenv("LADRUNO_BAND_DIAG") != 0);
 namespace {
 const double kSasDTmin     = 1.0e-6;   // as ModifiedEuler
 const int    kSasDriftIter = 20;
@@ -1287,6 +1291,20 @@ ManzariDafalias::ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z,
         // Later substeps of this update already use the scale; the latch becomes
         // permanent at commit and is undone with a refused or reverted trial.
         const double sLatch = (o.bandScale > 0.0) ? o.bandScale : mLadrunoSas.bandSElem;
+        if (gBandDiagOn && bandOpt && !bandOn) {   // DIAG
+            gBandDiag[0] += 1.0;
+            if (k1 == ST_PLASTIC && k2 == ST_PLASTIC) gBandDiag[1] += 1.0;
+            if (k1 != ST_PLASTIC) gBandDiag[6] += 1.0;
+            if (k2 != ST_PLASTIC) gBandDiag[7] += 1.0;
+            if (ladrunoSasPrincipalRatio(S) < rat0) gBandDiag[2] += 1.0;
+            double nL[6], dL[6], bL[6], RL[6];
+            double c3L, hL, psiL, aBL, aDL, b0L, AL, DL, BL, CL;
+            ladrunoSasStateDep(S, A, Z, eEnd, ain, nL, dL, bL, c3L, hL, psiL, aBL, aDL, b0L, AL, DL, BL, CL, RL);
+            const double bn = ddc6(bL, nL);
+            if (bn <= 0.0) gBandDiag[3] += 1.0;
+            if (bn < gBandDiag[4]) gBandDiag[4] = bn;
+            gBandDiag[5] = bn;
+        }
         if (bandOpt && !bandOn && sLatch > 0.0 && k1 == ST_PLASTIC && k2 == ST_PLASTIC) {
             bool trig = true;
             if (o.bandTrigger == 0)
@@ -1344,6 +1362,8 @@ ManzariDafalias::ladrunoSasIntegrate(void)
     mLadrunoSas.bandS = mLadrunoSas.bandS_n;
     mLadrunoSas.bandDe = mLadrunoSas.bandDe_n;
     mLadrunoSas.bandLatchAt = -1;
+    for (int i = 0; i < 8; i++) gBandDiag[i] = 0.0;   // DIAG
+    gBandDiag[4] = 1.0e300;
 
     double CurStrain[6], NextStrain[6], dStrain[6];
     for (int i = 0; i < 6; i++) {
@@ -1504,6 +1524,7 @@ ManzariDafalias::ladrunoSasIntegrate(void)
                 for (int i = 0; i < 6; i++)
                     Ee[i] += dStrain[i];
                 mLadrunoLastPath = 0;
+            if (gBandDiagOn) opserr << "BANDDIAG upd elastic eps1 " << mEpsilon(1) << endln;   // DIAG
             } else {
                 const double f0 = ladrunoSasF(S, A);
                 double nY[6];
@@ -1704,6 +1725,12 @@ ManzariDafalias::ladrunoSasIntegrate(void)
         mAlpha_in(i) = ain[i];
     }
     mDGamma = lamSum;
+    if (gBandDiagOn && mLadrunoSas.fdMode == 0)   // DIAG
+        opserr << "BANDDIAG upd tag " << this->getTag() << " eps1 " << mEpsilon(1) << " path " << mLadrunoLastPath
+               << " a " << mLadrunoLastElasticRatio << " acc " << gBandDiag[0] << " bothPl " << gBandDiag[1]
+               << " k1el " << gBandDiag[6] << " k2el " << gBandDiag[7] << " fell " << gBandDiag[2]
+               << " bnle0 " << gBandDiag[3] << " bnmin " << gBandDiag[4] << " bnlast " << gBandDiag[5]
+               << " band " << (mLadrunoSas.band ? 1 : 0) << endln;
     if (mLadrunoSas.band)   // Ladruno band scaling: the void ratio of the band at the end of this update
         mVoidRatio = m_e_init - (1 + m_e_init) * tr6(NextStrain) + mLadrunoSas.bandDe;
     // Ladruno sasme-speed: a reversal (an alpha_in re-seat) in this update starts

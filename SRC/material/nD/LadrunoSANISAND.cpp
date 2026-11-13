@@ -35,6 +35,7 @@
 //
 // Written: N. Mora-Bowen (Ladruno), 2026.
 
+#include <stdlib.h>   // DIAG
 #include "LadrunoSANISAND.h"
 #include "LadrunoSANISAND3D.h"            // Ladruno: written by stage S2
 #include "LadrunoSANISANDPlaneStrain.h"   // Ladruno: written by stage S2
@@ -5194,6 +5195,8 @@ LadrunoSANISAND::commitState(void)
         mLadrunoSas.band_n   = mLadrunoSas.band;
         mLadrunoSas.bandS_n  = mLadrunoSas.bandS;
         mLadrunoSas.bandDe_n = mLadrunoSas.bandDe;
+        if (getenv("LADRUNO_BAND_DIAG") != 0)   // DIAG
+            opserr << "BANDDIAG commit tag " << this->getTag() << " eps1 " << mEpsilon(1) << " band " << (mLadrunoSas.band ? 1 : 0) << endln;
 
         this->ladrunoNoteCommitAlphaIn();                  // Ladruno WP-153
         const int rcCommit = ManzariDafalias::commitState();
