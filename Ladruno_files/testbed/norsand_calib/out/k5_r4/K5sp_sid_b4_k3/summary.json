@@ -1,0 +1,471 @@
+{
+ "mode": "TARGET",
+ "s_over_B": 0.2,
+ "q_end": 1335.8270878338628,
+ "q_max": 1570.3117417498192,
+ "steps": 329,
+ "failed_attempts": 0,
+ "push_wall_s": 32.06193995475769,
+ "total_wall_s": 32.268667221069336,
+ "build": "0d38e57b45823f72ca4df74cc4423b8dc1306437",
+ "engine": "/mnt/deadmanschest/nmorabowen/wp144/bin/k5_0d38e57b4/opensees.so",
+ "args": {
+  "sand": "toyoura",
+  "fine_depth": null,
+  "bproto": 0.5,
+  "dr": 0.8342,
+  "k0": null,
+  "gamma": 15.6,
+  "dom_w": 14.0,
+  "dom_d": 8.0,
+  "nu_push": null,
+  "kimura": null,
+  "kimura_meta": null,
+  "mat": "norsand",
+  "scheme": 1,
+  "extra": "",
+  "maxsub": 2000,
+  "tantype": 0,
+  "tolr": 1e-07,
+  "dp_phi": 38.0,
+  "dp_g": 30000.0,
+  "target": 0.2,
+  "wall": 3000.0,
+  "ckpt_every": 50,
+  "field_every_step": 1,
+  "deterministic": 0,
+  "ds_min": 6.666666666666665e-08,
+  "probe_test_step": 0,
+  "krylov_tol_mult": 10.0,
+  "mesh": "b4",
+  "mesh_perturb": "",
+  "presidual": 0.0,
+  "einit": 0.660004,
+  "zmax": 4.0,
+  "nb": 1.1,
+  "nd": 3.5,
+  "A0": 0.704,
+  "h0": 7.05,
+  "c": 0.712,
+  "ns_params": "/mnt/deadmanschest/nmorabowen/wp144/deck/ns_params_toyoura_k3.json",
+  "energy": "HAR",
+  "pmin": null,
+  "p_rep": null,
+  "pi0": null,
+  "init_only": false,
+  "system": "Pardiso",
+  "out": "/mnt/deadmanschest/nmorabowen/wp144/deck/runs/K5sp_sid_b4_k3"
+ },
+ "matdesc": "LadrunoNorSand per row: 14 rows, e_init 0.66000 (v0 1.66000), K0 0.50000 (the Kimura-mode default 0.5 (Loukidis & Salgado 2011 series, via nu* = K0/(1+K0))), energy HAR, p_min_eff 0.5050 kPa (0 rows below it at the initial state), flags [['-M', 1.25], ['-N', 0.4686136860640983], ['-N_bar', 0.16034970350694513], ['-rho', 0.5828981510111576], ['-rho_bar', 0.7213710496292179], ['-chi', -2.8923322243122183], ['-h', 308.3223484879116], ['-csl', 'fork'], ['-e0', 0.934], ['-lambda_c', 0.019], ['-xi', 0.7], ['-p_a', 101.0], ['-cap', 'smooth'], ['-c1', 0.05], ['-c2', 0.15], ['-energy', 'HAR'], ['-k', 312.5207549710054], ['-g', 401.8123992484355], ['-n', 0.5]], pi0 rule unified; row p' 36.9791 .. 0.650 kPa, pi_i0/p 0.7099 .. 0.7099",
+ "solver": "Pardiso",
+ "k0_patch_err": 1.3664283380001927e-14,
+ "grav_resultant_err": 4.440892098500626e-16,
+ "applied": 436.8,
+ "ptol": 0.004368,
+ "dead_end_first_step": {},
+ "toyoura": {
+  "B": 0.5,
+  "dom_w_B": 14.0,
+  "dom_d_B": 8.0,
+  "XLIM": 3.5,
+  "YBOT": -4.0,
+  "gamma": 15.6,
+  "K0": 0.5,
+  "nu_star": 0.3333333333333333,
+  "nu_push": 0.05,
+  "Dr": 0.8342,
+  "e_init": 0.660004,
+  "emax": 0.977,
+  "emin": 0.597,
+  "ds_scale": 0.3333333333333333,
+  "ds": [
+   6.666666666666667e-06,
+   6.666666666666665e-08,
+   0.0003333333333333333
+  ],
+  "SAN": [
+   125.0,
+   0.3333333333333333,
+   0.660004,
+   1.25,
+   0.712,
+   0.019,
+   0.934,
+   0.7,
+   100.0,
+   0.01,
+   7.05,
+   0.968,
+   1.1,
+   0.704,
+   3.5,
+   4.0,
+   600.0,
+   1.5902140672782874
+  ],
+  "fine_depth_B": 1.5
+ },
+ "seating": {
+  "q0_kPa": -1.2037062152420224e-23,
+  "W_FOOT_kN_m": 0.0,
+  "note": "no seating stage in this deck: q0 = (stage-0b footing weight - REF reaction)/B at the push start"
+ },
+ "norsand": {
+  "params": "/mnt/deadmanschest/nmorabowen/wp144/deck/ns_params_toyoura_k3.json",
+  "params_md5": "d6c725f6ccfde3e32f1a462131c1913f",
+  "params_name": "toyoura_K3_start11_20261110",
+  "status": "K3 fit (fit/K3_20261106, best start 11, cost 6245.31, 15 of 16 starts, DM04 CSL, HAR, cap smooth c1 0.05 c2 0.15, unified pi_i0). Written 2026-11-11 from ns_params_toyoura.json; only the six fitted constants and the cap flags differ.",
+  "K0": 0.5,
+  "K0_source": "the Kimura-mode default 0.5 (Loukidis & Salgado 2011 series, via nu* = K0/(1+K0))",
+  "energy": "HAR",
+  "material_flags_final": [
+   [
+    "-M",
+    1.25
+   ],
+   [
+    "-N",
+    0.4686136860640983
+   ],
+   [
+    "-N_bar",
+    0.16034970350694513
+   ],
+   [
+    "-rho",
+    0.5828981510111576
+   ],
+   [
+    "-rho_bar",
+    0.7213710496292179
+   ],
+   [
+    "-chi",
+    -2.8923322243122183
+   ],
+   [
+    "-h",
+    308.3223484879116
+   ],
+   [
+    "-csl",
+    "fork"
+   ],
+   [
+    "-e0",
+    0.934
+   ],
+   [
+    "-lambda_c",
+    0.019
+   ],
+   [
+    "-xi",
+    0.7
+   ],
+   [
+    "-p_a",
+    101.0
+   ],
+   [
+    "-cap",
+    "smooth"
+   ],
+   [
+    "-c1",
+    0.05
+   ],
+   [
+    "-c2",
+    0.15
+   ],
+   [
+    "-energy",
+    "HAR"
+   ],
+   [
+    "-k",
+    312.5207549710054
+   ],
+   [
+    "-g",
+    401.8123992484355
+   ],
+   [
+    "-n",
+    0.5
+   ]
+  ],
+  "p_min_eff": 0.505,
+  "pi0_mode": "unified",
+  "pi0_check": {
+   "n_rows_passed": 14,
+   "max_dev_passed": 0.0,
+   "n_rows_kernel_auto": 0,
+   "max_dev_kernel_vs_closed": null,
+   "n_rows_floored_kernel": 0,
+   "floored_ratio_range": null
+  },
+  "floor_init": {
+   "n_at_floor": 0,
+   "n_f_tr": 0,
+   "n_f_post": 0,
+   "eps_f_v": 0.0,
+   "W_f": 0.0,
+   "n_f_init": 0
+  },
+  "floor_end": {
+   "n_at_floor": 14,
+   "n_f_tr": 2726,
+   "n_f_post": 1348,
+   "eps_f_v": 0.30538753757335013,
+   "W_f": 0.15422070647454184,
+   "n_f_init": 0
+  },
+  "kimura": {},
+  "rows": [
+   {
+    "row": 0,
+    "mat": 1,
+    "z": 3.555679305576,
+    "sigma_v": 55.4685971669856,
+    "p": 36.9790647779904,
+    "pi_i0": -26.25197596123342,
+    "ratio_pi_p": 0.7099145454013308,
+    "ratio_surface": null,
+    "pi_i0_source": "S.53 closed form",
+    "floored_init": false,
+    "pi_i0_closed": -26.25197596123342,
+    "eta_init": 0.75,
+    "eta_star": 0.75
+   },
+   {
+    "row": 1,
+    "mat": 2,
+    "z": 2.775614451827,
+    "sigma_v": 43.2995854485012,
+    "p": 28.8663902990008,
+    "pi_i0": -20.492670346492538,
+    "ratio_pi_p": 0.7099145454013308,
+    "ratio_surface": null,
+    "pi_i0_source": "S.53 closed form",
+    "floored_init": false,
+    "pi_i0_closed": -20.492670346492538,
+    "eta_init": 0.75,
+    "eta_star": 0.75
+   },
+   {
+    "row": 2,
+    "mat": 3,
+    "z": 2.186170336737,
+    "sigma_v": 34.104257253097195,
+    "p": 22.736171502064796,
+    "pi_i0": -16.140738856055023,
+    "ratio_pi_p": 0.7099145454013308,
+    "ratio_surface": null,
+    "pi_i0_source": "S.53 closed form",
+    "floored_init": false,
+    "pi_i0_closed": -16.140738856055023,
+    "eta_init": 0.75,
+    "eta_star": 0.75
+   },
+   {
+    "row": 3,
+    "mat": 4,
+    "z": 1.7407658769095,
+    "sigma_v": 27.1559476797882,
+    "p": 18.1039651198588,
+    "pi_i0": -12.852268168026109,
+    "ratio_pi_p": 0.7099145454013308,
+    "ratio_surface": null,
+    "pi_i0_source": "S.53 closed form",
+    "floored_init": false,
+    "pi_i0_closed": -12.852268168026109,
+    "eta_init": 0.75,
+    "eta_star": 0.75
+   },
+   {
+    "row": 4,
+    "mat": 5,
+    "z": 1.404202786778,
+    "sigma_v": 21.9055634737368,
+    "p": 14.6037089824912,
+    "pi_i0": -10.367385423478572,
+    "ratio_pi_p": 0.7099145454013308,
+    "ratio_surface": null,
+    "pi_i0_source": "S.53 closed form",
+    "floored_init": false,
+    "pi_i0_closed": -10.367385423478572,
+    "eta_init": 0.75,
+    "eta_star": 0.75
+   },
+   {
+    "row": 5,
+    "mat": 6,
+    "z": 1.1498840184330001,
+    "sigma_v": 17.9381906875548,
+    "p": 11.9587937917032,
+    "pi_i0": -8.489721658185235,
+    "ratio_pi_p": 0.7099145454013308,
+    "ratio_surface": null,
+    "pi_i0_source": "S.53 closed form",
+    "floored_init": false,
+    "pi_i0_closed": -8.489721658185235,
+    "eta_init": 0.75,
+    "eta_star": 0.75
+   },
+   {
+    "row": 6,
+    "mat": 7,
+    "z": 0.9577119180785,
+    "sigma_v": 14.9403059220246,
+    "p": 9.9602039480164,
+    "pi_i0": -7.070893657860602,
+    "ratio_pi_p": 0.7099145454013308,
+    "ratio_surface": null,
+    "pi_i0_source": "S.53 closed form",
+    "floored_init": false,
+    "pi_i0_closed": -7.070893657860602,
+    "eta_init": 0.75,
+    "eta_star": 0.75
+   },
+   {
+    "row": 7,
+    "mat": 8,
+    "z": 0.8125,
+    "sigma_v": 12.674999999999999,
+    "p": 8.45,
+    "pi_i0": -5.9987779086412445,
+    "ratio_pi_p": 0.7099145454013308,
+    "ratio_surface": null,
+    "pi_i0_source": "S.53 closed form",
+    "floored_init": false,
+    "pi_i0_closed": -5.9987779086412445,
+    "eta_init": 0.75,
+    "eta_star": 0.75
+   },
+   {
+    "row": 8,
+    "mat": 9,
+    "z": 0.6875,
+    "sigma_v": 10.725,
+    "p": 7.1499999999999995,
+    "pi_i0": -5.075888999619515,
+    "ratio_pi_p": 0.7099145454013308,
+    "ratio_surface": null,
+    "pi_i0_source": "S.53 closed form",
+    "floored_init": false,
+    "pi_i0_closed": -5.075888999619515,
+    "eta_init": 0.75,
+    "eta_star": 0.75
+   },
+   {
+    "row": 9,
+    "mat": 10,
+    "z": 0.5625,
+    "sigma_v": 8.775,
+    "p": 5.8500000000000005,
+    "pi_i0": -4.153000090597786,
+    "ratio_pi_p": 0.7099145454013308,
+    "ratio_surface": null,
+    "pi_i0_source": "S.53 closed form",
+    "floored_init": false,
+    "pi_i0_closed": -4.153000090597786,
+    "eta_init": 0.75,
+    "eta_star": 0.75
+   },
+   {
+    "row": 10,
+    "mat": 11,
+    "z": 0.4375,
+    "sigma_v": 6.825,
+    "p": 4.55,
+    "pi_i0": -3.230111181576055,
+    "ratio_pi_p": 0.7099145454013308,
+    "ratio_surface": null,
+    "pi_i0_source": "S.53 closed form",
+    "floored_init": false,
+    "pi_i0_closed": -3.230111181576055,
+    "eta_init": 0.75,
+    "eta_star": 0.75
+   },
+   {
+    "row": 11,
+    "mat": 12,
+    "z": 0.3125,
+    "sigma_v": 4.875,
+    "p": 3.25,
+    "pi_i0": -2.307222272554325,
+    "ratio_pi_p": 0.7099145454013308,
+    "ratio_surface": null,
+    "pi_i0_source": "S.53 closed form",
+    "floored_init": false,
+    "pi_i0_closed": -2.307222272554325,
+    "eta_init": 0.75,
+    "eta_star": 0.75
+   },
+   {
+    "row": 12,
+    "mat": 13,
+    "z": 0.1875,
+    "sigma_v": 2.925,
+    "p": 1.95,
+    "pi_i0": -1.384333363532595,
+    "ratio_pi_p": 0.7099145454013308,
+    "ratio_surface": null,
+    "pi_i0_source": "S.53 closed form",
+    "floored_init": false,
+    "pi_i0_closed": -1.384333363532595,
+    "eta_init": 0.75,
+    "eta_star": 0.75
+   },
+   {
+    "row": 13,
+    "mat": 14,
+    "z": 0.0625,
+    "sigma_v": 0.975,
+    "p": 0.65,
+    "pi_i0": -0.461444454510865,
+    "ratio_pi_p": 0.7099145454013308,
+    "ratio_surface": null,
+    "pi_i0_source": "S.53 closed form",
+    "floored_init": false,
+    "pi_i0_closed": -0.461444454510865,
+    "eta_init": 0.75,
+    "eta_star": 0.75
+   }
+  ],
+  "latched_points": 0,
+  "refused_trials": 0,
+  "p_floor_counts": {
+   "0.5": 0,
+   "0.25": 0
+  },
+  "min_p_end": 0.504999999999998,
+  "max_eta_end": 1.6366869862490248,
+  "min_psi_end": -0.27442144244068956,
+  "max_psi_end": 0.034989304290297216
+ },
+ "plateau": {
+  "rule": "WP1 (04 sec. 11)",
+  "eps": 0.02,
+  "window_sB": 0.01,
+  "steps": 329,
+  "mode": "TARGET",
+  "k0_source": "step 1 vs push start (q_start from summary.json seating.q0_kPa)",
+  "k0_kPa_per_sB": 2366.0248819169046,
+  "s_end_over_B": 0.2,
+  "q_end_kPa": 1335.8270878338628,
+  "q_max_kPa": 1570.3117417498192,
+  "s_at_q_max_over_B": 0.16104000000000027,
+  "k_tail_kPa_per_sB": -9203.982401936035,
+  "k_tail_secant_kPa_per_sB": -9180.857251719786,
+  "n_in_window": 16,
+  "k_norm": -3.890061542581563,
+  "k_norm_secant": -3.8802877019119277,
+  "k_prev_kPa_per_sB": -7658.716666810774,
+  "k_prev_norm": -3.2369552515465685,
+  "trend": "falling",
+  "verdict": "plateau_softening"
+ }
+}
