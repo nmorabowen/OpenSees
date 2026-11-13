@@ -101,10 +101,13 @@ struct LadrunoSasOptions {                                                  // L
     double tcPsep;         // Ladruno WP-152: tension cutoff: a code 4/9 refusal at committed p0 < tcPsep separates (0 = tension only)
     double tcPcontact;     // Ladruno WP-152: tension cutoff: re-contact pressure (> tcPsep, > p_min); <= 0 = cutoff OFF (DEFAULT)
     double tcP0Max;        // Ladruno WP-152 (review #2): a tension refusal separates only at committed p0 <= tcP0Max (else it refuses)
+    double bandScale;      // Ladruno band scaling: S = w/(c_b h) given by the driver; after the latch H = Kp + S X; <= 0 = OFF (DEFAULT, byte-identical)
+    int    bandTrigger;    // Ladruno band scaling: the latch. 0 = peak (major/minor principal stress ratio falls with b:n <= 0; DEFAULT), 1 = bn (b:n <= 0)
     LadrunoSasOptions() : errFloor(-1.0), alphaBoundTol(0.1), alphaEntryTol(2.0), alphaProject(0),
                           alphaInMode(0), errorVars(0),   // Ladruno WP-129
                           hFloor(0.0), reseatHyst(0.0), softCap(0.0),   // Ladruno WP-151
-                          tcPsep(0.0), tcPcontact(0.0), tcP0Max(0.0) {}   // Ladruno WP-152
+                          tcPsep(0.0), tcPcontact(0.0), tcP0Max(0.0),   // Ladruno WP-152
+                          bandScale(0.0), bandTrigger(0) {}   // Ladruno band scaling
 };   // Ladruno WP-129
 enum {                                                                      // Ladruno WP-129
     LSAS_UPDATES = 0, LSAS_ELASTIC, LSAS_SUBSTEPS, LSAS_ACCEPTED, LSAS_REJ_ERR,   // Ladruno WP-129
@@ -133,8 +136,16 @@ struct LadrunoSasState {                                                    // L
     int    sepEvent;            // Ladruno WP-152: this TRIAL's transition (0 none, 1 entry E1, 2 entry E2, 3 exit), counted at commit
     int    sepCode;             // Ladruno WP-152: the refusal code this TRIAL's entry masked (3, 4, 6 or 9), recorded at commit
     double sepP0;               // Ladruno WP-152: the committed p0 at this TRIAL's entry, recorded at commit
+    bool   band, band_n;        // Ladruno band scaling: the point is latched (stands for a band in series with elastic sand), trial / committed
+    double bandS, bandS_n;      // Ladruno band scaling: the scale in use since the latch (0 before it), trial / committed
+    double bandDe, bandDe_n;    // Ladruno band scaling: void-ratio offset, e = e(strain) + bandDe (the band's own volume change), trial / committed
+    double bandStages;          // Ladruno band scaling: census, plastic stages evaluated with the scale (since revertToStart)
+    double bandCapped;          // Ladruno band scaling: census, those of them where -sasSoftCap bound (scaled: H >= kappa S X)
+    double bandLatches;         // Ladruno band scaling: census, latch events in accepted updates (a reverted step still counts)
     LadrunoSasState() : allowed(false), refused(false), warned(false), commitRefusalWarned(false),   // Ladruno WP-129
-                        sep(false), sep_n(false), sepTr(0.0), sepTr_n(0.0), sepEvent(0), sepCode(0), sepP0(0.0) {   // Ladruno WP-152
+                        sep(false), sep_n(false), sepTr(0.0), sepTr_n(0.0), sepEvent(0), sepCode(0), sepP0(0.0),   // Ladruno WP-152
+                        band(false), band_n(false), bandS(0.0), bandS_n(0.0), bandDe(0.0), bandDe_n(0.0),   // Ladruno band scaling
+                        bandStages(0.0), bandCapped(0.0), bandLatches(0.0) {   // Ladruno band scaling
         for (int i = 0; i < LSAS_COUNT; i++) stats[i] = 0.0;   // Ladruno WP-129
     }   // Ladruno WP-129
 };   // Ladruno WP-129
@@ -477,14 +488,17 @@ class ManzariDafalias : public NDMaterial
 	void    ladrunoSasIntegrate(void);                                       // Ladruno WP-129
 	void    ladrunoResetSasStats(void);                                      // Ladruno WP-129
 	void    ladrunoResetSasSep(void);                                        // Ladruno WP-152
+	void    ladrunoResetSasBand(void);                                       // Ladruno band scaling
+	double  ladrunoSasPrincipalRatio(const Vector& s);                       // Ladruno band scaling
 	int     ladrunoSasStage(const Vector& s, const Vector& a, const Vector& z, double e,  // Ladruno WP-129
 	                const Vector& ain, double dv, const Vector& ddev,   // Ladruno WP-129
-	                Vector& ds, Vector& da, Vector& dz, Vector& dep, double& lam);   // Ladruno WP-129
+	                Vector& ds, Vector& da, Vector& dz, Vector& dep, double& lam,   // Ladruno WP-129
+	                double bandS = 0.0, double* lamD = 0);   // Ladruno band scaling (0 = OFF: the WP-129 stage)
 	int     ladrunoSasSubsteps(Vector& S, Vector& Ee, Vector& A, Vector& Z, Vector& ain,  // Ladruno WP-129
 	                const Vector& curStrain, const Vector& nextStrain, bool onset,   // Ladruno WP-129
 	                double& lamSum, bool& lastPlastic);   // Ladruno WP-129
 	bool    ladrunoSasDrift(Vector& S, Vector& A, Vector& Z, Vector& Ee, double e,       // Ladruno WP-129
-	                const Vector& ain, bool bothSides);   // Ladruno WP-129
+	                const Vector& ain, bool bothSides, double bandS = 0.0);   // Ladruno WP-129; band scaling (0 = OFF)
 	double  ladrunoSasAlphaRatio(const Vector& a, const Vector& s, double e);           // Ladruno WP-129
 	void    ladrunoSasProject(Vector& S, Vector& A, Vector& Ee, double e);             // Ladruno WP-129
 	double  ladrunoSasBracketH(const Vector& a, const Vector& ain, const Vector& n, double h, double b0); // Ladruno WP-129/151
@@ -495,7 +509,7 @@ class ManzariDafalias : public NDMaterial
 	double  ladrunoSasIntersect(const Vector& S, const Vector& A, const Vector& dEps,   // Ladruno WP-129
 	                double e0, double lo, double hi);   // Ladruno WP-129
 	void    ladrunoSasContinuumTangent(const Vector& S, const Vector& A, const Vector& Z,  // Ladruno WP-129
-	                const Vector& ain, double e, Matrix& Cep);   // Ladruno WP-129
+	                const Vector& ain, double e, Matrix& Cep, double bandS = 0.0);   // Ladruno WP-129; band scaling (0 = OFF)
 	double	mEPS;			// machine epsilon (for FD jacobian)
 	// Ladruno (ADR-93 II.1) note for readers of the three GetElasticModuli
 	// overloads below: the FIRST of them (sigma, en, en1, nEStrain, cEStrain,
