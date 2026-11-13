@@ -30,16 +30,18 @@ that admits them — so 232c (fork writer) and 232d (apeGmsh readers) can build 
 
 Fork half — branch wp/232a-mpm-contracts from origin/ladruno:
   1. Ladruno_implementation/232a_mpm_contracts.md — Contract 1 (particle set) and Contract 2
-     (the .ladruno particle group, FORMAT_VERSION 1 → 2): every field with name, dtype, shape,
+     (the .ladruno particle group — an additive change: FORMAT_MINOR_VERSION 1 → 2,
+     FORMAT_VERSION stays 1, because apeGmsh refuses any other major): every field with name, dtype, shape,
      units, required/optional, default, validation rule; versioning; id rules (stable, never
      reused, removal and addition); output cadence and field selection; precision (float64
      positions); chunking and compression; grid metadata. Read the format docs first:
      Ladruno_implementation/03_ladruno_recorder.md, 164_ladruno_recorder_write_path.md,
      165_ladruno_recorder_stage_semantics.md.
   2. tests/mpm_contract_fixtures.py (python3.12, h5py + numpy) writing two tiny fixtures:
-     tests/data/mpm/particle_set_v1.h5 and tests/data/mpm/particles_v2.ladruno (a minimal
-     .ladruno shell with INFO/FORMAT_VERSION = 2 and the particle group; a few particles, a few
-     outputs, one removal).
+     tests/data/mpm/particle_set_v1.h5 and tests/data/mpm/particles_v1m2.ladruno (a minimal
+     .ladruno shell with INFO/FORMAT_VERSION = 1, FORMAT_MINOR_VERSION = 2 and the particle
+     group; a few particles, a few outputs, one removal). Cover the fork's own format tooling:
+     Ladruno_scripts/ladruno_recorder_tests/ladruno_format.py and make_synthetic.py.
   3. tests/test_mpm_contracts.py — a schema validator that accepts both fixtures and refuses
      each malformed variant (missing field, negative volume, reused id, wrong dtype).
 
@@ -65,6 +67,8 @@ draft complete; ledger gate clean. Report per the Worker rules.
 Goal: an independent reference implementation of the explicit MPM step and of the incremental
 hypo-kernel entry, and a frozen interface the C++ worker codes against.
 Independence: read NOTHING under SRC/. Use the ADR, the literature, and numpy (python3.12).
+Conventions: the hypo kernel's Voigt order {00, 11, 22, 01, 12, 20}, engineering shear in strain —
+from tests/hypo_reference.py (test-side, allowed) and ADR-79 §3.
 
 Push FIRST (the interface freeze — 232c waits on it):
   1. tests/mpm_interface.md — particle state layout; grid indexing; GIMP weights and gradients
@@ -104,19 +108,26 @@ Build (see fork-checklist.md for every registration and gate):
   - The incremental entry in SRC/element/solidTransformation/LadrunoHypoKernel.h, plus
     tests/hypo_incremental_kernel_check.cpp against tests/hypo_incremental_cases.txt (the
     g++ header-check pattern of tests/hypo_kernel_check.cpp).
-  - The `mpm` command: one LadrunoCommandTable.h row, both analysis bridges.
-  - The .ladruno particle group writer (FORMAT_VERSION 2), matching 232a's fixture layout.
-  - Admitted materials and loud refusals (architecture.md, "Materials").
-  - Tests: tests/test_ladruno_mpm_*.py for every S1 row of ADR §8, run in all three engines;
-    tests/test_mutation_mpm.py with -DLADRUNO_MUTATE_MPM=<n> for the five named mutants.
+  - The `mpm` command: one LadrunoCommandTable.h row; no analysis bridge in slice 1 (mode F has no
+    analysis); refused in OpenSeesSP / MP.
+  - The .ladruno particle group writer (FORMAT_MINOR_VERSION 2; FORMAT_VERSION stays 1), matching
+    232a's fixture layout, with ladruno_format.py and make_synthetic.py updated.
+  - The stage path: `parameter <t> loadPattern <mpmTag> …` (classic Tcl's `pattern` keyword is
+    only `pattern <tag> lambda`).
+  - Admitted materials and loud refusals (architecture.md, "Materials"); a commit refusal aborts
+    the run (W17).
+  - Tests: tests/test_ladruno_mpm_*.py for every S1 row of ADR §8, marked zone_a, run in classic Tcl
+    and Python; h5py added to Zone-A's pip line if a test needs it; code that builds with GCC.
+  - The mutation gate: the MPM family through the existing mechanism (fork-checklist.md, "Tests").
   - Warrant package: manifest row (feature_class: loadpattern), implementations fragment,
     vanilla fragment for every upstream file touched, quirks learned, banner line, header
-    stamps, the guide Ladruno_implementation/232_ladruno_mpm_guide.md.
-Batch edits; ask the orchestrator for each build (all five targets).
+    stamps, the guide Ladruno_implementation/232_ladruno_mpm_guide.md, and the ADR-87 D4 handoff
+    pack for the owner's out-of-family verdict.
+Batch edits; ask the orchestrator for each build (all five targets) and each mutant build.
 
-Done when: every S1 test green against 232b's cases in the three engines; every mutant red; all
-ci/ gates clean; Zone-A green on a dispatched run; ladrunoBuild matches your head on both the
-exe and the pyd. Report per the Worker rules.
+Done when: every S1 test green against 232b's cases in classic Tcl and Python; the MPM family's
+ZERO and SCALE mutants red; all ci/ gates clean; Zone-A green on a dispatched run; ladrunoBuild
+matches your head on both the exe and the pyd. Report per the Worker rules.
 ```
 
 ## 232d — apeGmsh seeding, readers and the points layer (opus · high; sonnet · medium for seeding plumbing)

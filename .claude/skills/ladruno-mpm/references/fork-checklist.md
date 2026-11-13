@@ -19,6 +19,9 @@ when a WP adds an element (mode A's particle element) or changes a material.
       `OpenSeesPatternCommands.cpp` (Python) and the Tcl pattern command.
 - [ ] **CMake:** a `CMakeLists.txt` in the new directory and its `add_subdirectory` line, the
       way `SRC/domain/pattern/ladrunoPorousOverlay` is wired.
+- [ ] **Object broker** (`FEM_ObjectBrokerAllClasses.cpp`): needed for database restart and for
+      OpenSeesSP / MP. v1 refuses both, so the entry waits for phase 1's restart test; say so in
+      the PR.
 - [ ] **Upstream files** you edit carry a `// Ladruno …` marker at the edit, and each gets a row
       in your WP's `ledger/vanilla/` fragment.
 - [ ] **Header stamps:** add the new files to `GLOBS` in `Ladruno_scripts/stamp_headers.py`, run it.
@@ -41,6 +44,9 @@ python3.12 ci/check_manifest.py
 python3.12 ci/check_ladruno_commands.py
 python3.12 ci/check_ledger_fragments.py
 python3.12 ci/check_quirk_patterns.py
+python3.12 ci/check_duplicate_defs.py
+python3.12 -m ruff check --no-cache --select F811 ci tests Ladruno_scripts   # CI pins ruff 0.16.10
+python3.12 Ladruno_scripts/stamp_headers.py --check
 python3.12 -m pytest -q ci/test_quirk_*.py ci/test_duplicate_defs.py
 ```
 
@@ -63,23 +69,33 @@ print the worker's head on both `dist\bin\OpenSees.exe` and `dist\bin\opensees.p
 
 ## Tests
 
-- pytest files `tests/test_ladruno_mpm_*.py`, run in the three engines (classic Tcl, DL Tcl,
-  Python) for the parity row.
+- pytest files `tests/test_ladruno_mpm_*.py` carry `pytestmark = pytest.mark.zone_a`. Zone-A runs
+  only `pytest -m zone_a`, on Ubuntu with a GCC build (`.github/workflows/ladruno.yml:287`), so an
+  unmarked test never gates, and code must build with GCC as well as MSVC.
+- Zone-A installs no h5py. A test that reads a `.ladruno` or particle-set file needs `h5py` added
+  to that workflow's pip line in the same PR.
+- Engine parity runs in the two shipped engines: classic Tcl (`OpenSees.exe`) and Python
+  (`opensees.pyd`). The DL Tcl engine is registered but never instantiated.
 - Oracles: `tests/*_reference.py` with `tests/*_cases.txt`; kernel header checks as
   `tests/*_kernel_check.cpp` (the pattern of `tests/hypo_kernel_check.cpp`).
-- Mutation gate (ADR-87 D2): `tests/test_mutation_mpm.py` builds with `-DLADRUNO_MUTATE_MPM=<n>`
-  and asserts each named mutant turns its oracle red (the model is `tests/test_mutation_membrane.py`).
-  The five mutants: flip the P2G momentum sign; drop the G2P position update; move G2P after
-  `Domain::commit`; drop the `ops_TheActiveElement = 0` guard; make mode A's `domainChange()`
-  conditional (phase 1).
+- Mutation gate (ADR-87 D2), through the existing family mechanism: add `MPM` to the
+  `LADRUNO_MUTATE_FAMILY` list in `CMakeLists.txt` (a vanilla-ledgered line), to the options of
+  `.github/workflows/ladruno_mutation.yml` and to `Ladruno_scripts/mutation_gate.py`; hook the
+  engine through `SRC/Ladruno_mutation.h`. `ZERO` sabotages the P2G internal force and `SCALE` the
+  G2P position increment (ADR §8). The orchestrator builds the mutant with
+  `Ladruno_scripts/mutation_build.bat`, or dispatches the CI lane; score with `mutation_gate.py`.
+  Ordering hazards (G2P after `Domain::commit`; mode A's conditional `domainChange()`) are guarded
+  by regression tests, not by mutants.
 
 ## Warrant package (ADR-87) — the PR flips to ready only with all of it
 
 - [ ] oracles that are not self-referential (closed form, MMS, cross-code or two-leg), each with
       its test;
-- [ ] the mutation gate, every mutant red;
+- [ ] the mutation gate: the MPM family's ZERO and SCALE mutants each turn their oracle red;
 - [ ] the guide, `Ladruno_implementation/232_ladruno_mpm_guide.md`, updated for what the WP adds;
-- [ ] both interpreters (all three engines) exercised;
+- [ ] both shipped engines exercised (classic Tcl and Python);
+- [ ] for a family PR (232c and later): the out-of-family verdict and its handoff pack, committed
+      per ADR-87 D4 (`reviews/handoff_<adr>.md`, `reviews/<adr>_verdict.md`);
 - [ ] the manifest row, the ledger fragments and the banner line;
 - [ ] Zone-A green on a dispatched run (`gh workflow run ladruno.yml --ref <branch>`; a ready-flip
       starts none).

@@ -2,7 +2,7 @@
 title: "WP-232 orchestration plan — work packages, models, effort, and protocol for the general MPM driver"
 project: Ladruno
 status: draft — awaiting the owner's approval (§5). Third review folded (ADR §14.3)
-orchestrator: "Fable @ high, a fresh session (independent of the author's context); max at the decision points"
+orchestrator: "the authoring session (Opus 5.5), the owner's choice on 2026-11-13; for a fresh session the recommendation stays Fable @ high, max at the decision points"
 companion: 232_ladruno_mpm_general_driver_adr
 updated: 2026-11-13
 ---
@@ -31,7 +31,7 @@ first and names the GitHub homes for the second. It supersedes the ADR-98 orches
 
 | Role | Model · effort | Why |
 |---|---|---|
-| Orchestrator — sequencing, synthesis, decisions, launching builds and long runs | **Fable · high**; **max** at the decision points (adjudicating a review, declaring the M0b result, the D-list) | house precedent (ADR-90, ADR-94); a fresh session is independent of the author's context |
+| Orchestrator — sequencing, synthesis, decisions, launching builds and long runs | **Fable · high**; **max** at the decision points (adjudicating a review, declaring the M0b result, the D-list) | house precedent (ADR-90, ADR-94); a fresh session is independent of the author's context. For this program the owner chose the authoring Opus session (2026-11-13) |
 | Critics — the next review of the folded ADR, and each family PR | **Fable · high** lead; Opus lenses added for family PRs | Fable found every blocker in this lineage; critics must not share the author's context |
 | Numpy oracles — the incremental kernel entry, the explicit engine reference, two-phase checks | **Opus · high** | correctness-critical numerics; independence protocol (the oracle reads nothing under `SRC/`) |
 | Fork C++ — the explicit engine and its `LoadPattern` host, the `mpm` commands, particle elements, the kernel entry, the `.ladruno` particle group | **Opus · high**, one agent per WP continued across review rounds | integrator interaction, commit ordering, three-engine registration, a format bump |
@@ -69,7 +69,7 @@ The operating layer is the `ladruno-mpm` skill (`.claude/skills/ladruno-mpm/`): 
 the fork checklist and the frozen design. The rules below are its summary.
 
 1. Boot from the board and the program issue; claim with `in-flight`; post a handoff before stopping.
-2. Every WP opens as a draft PR on day one; the owner merges; never `--auto`.
+2. Every WP opens as a draft PR on day one; merges follow rule 8; never `--auto`.
 3. Launch builds and long runs yourself (WMI-launched build, a bounded foreground loop on the
    artifact's mtime); never let a subagent background its own build.
 4. Read result files, not transcripts; verify every review finding in-tree before accepting it, and
@@ -83,7 +83,9 @@ the fork checklist and the frozen design. The rules below are its summary.
    WP PRs — merge commits, only on green required checks, never `--auto` or `--admin`. Recorded on
    the program issue.
 9. **apeGmsh (owner, 2026-11-13):** every apeGmsh PR, merge and board change goes through
-   apeGmsh's T coordinator session (`/apegmsh-program T`, #1202, #1203).
+   apeGmsh's T coordinator session (`/apegmsh-program T`, #1202, #1203). The owner approved its
+   routing the same day: apeGmsh chain M, nmorabowen/apeGmsh#2972 — M1 the ADR, M2 = 232d,
+   M3 = the `FORK_PIN` bump + 232e.
 
 ## 4. Standing rules for every agent (verbatim in the prompt)
 

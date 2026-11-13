@@ -1,7 +1,7 @@
 ---
 title: "WP-232 — A general MPM driver for OpenSees: architecture, contracts, apeGmsh integration, and the first slice"
 project: Ladruno
-status: draft — NO code. Supersedes the unmerged ADR-98 draft. Three adversarial reviews folded (§14.1–§14.3); the next review is of this folded text
+status: draft — NO code. Supersedes the unmerged ADR-98 draft. Four adversarial reviews folded (§14.1–§14.4)
 priority: high
 owner: nmora
 wp: "WP-232 (provisional — confirmed when the MPM program issue claims it)"
@@ -63,7 +63,7 @@ updated: 2026-11-13
 | **Implicit and quasi-static mode** | **A — particle-as-element**, connectivity re-pointed and `Domain::domainChange()` raised **unconditionally every step** — Kratos and Berkeley both rebuild every step. Transient integrators are restricted by class tag to Newmark, HHT and Generalized-α, whose own `domainChanged()` re-reads committed disp, vel and accel — **no new integrator hook**. Quasi-static calls `StaticAnalysis::analyze(1, false)`, because `StaticAnalysis` has no `analyzeStep` (W16, §5.3). |
 | **Deferred / rejected** | C (sparse cell kernels) deferred as an optimization, only if M0b's numbers demand it. Rejected: B (dense grid), C′ (handler adapters), D (vendor Berkeley), E (co-simulation only), a zero-node Domain element as the explicit host (W15), and a Domain hook for mode F's commit (§5.5). |
 | **Particle and material contract** | Each particle carries its own F, rotation and strain feed; a **new incremental entry** to the hypo kernel (its numerics reused, its entry point not); an **admitted-material table** with loud refusal for the rest — v1 admits `ElasticIsotropic`, `LadrunoJ2` and the post-`31322a47a` `DruckerPrager`. The engine zeroes `ops_TheActiveElement` around particle updates, and v1 offers no regularization at particles (§6). |
-| **apeGmsh** | Rewritten against apeGmsh's current architecture (its ADRs 0112, 0116, 0121, 0122, 0131). **Particle results are a new group inside `.ladruno`** (the fork owns its `FORMAT_VERSION`), read by apeGmsh's `.ladruno` readers in Python and TypeScript and drawn as a three.js points layer in apeGmshViewer — not a new results file, and not the frozen Qt viewers. The particle set is a field-by-field contract tied to apeGmsh's emit (charter P4: the bridge owns tags). All of it under a new apeGmsh ADR that the maintainer accepts. Bridge primitives only after the fork slice merges **and** a fork release is pinned in apeGmsh's `FORK_PIN` (§7). |
+| **apeGmsh** | Rewritten against apeGmsh's current architecture (its ADRs 0112, 0116, 0121, 0122, 0131). **Particle results are a new group inside `.ladruno`** — an additive change: `FORMAT_MINOR_VERSION` 1 → 2, `FORMAT_VERSION` stays 1, so today's apeGmsh keeps opening the files — read by apeGmsh's `.ladruno` readers in Python and TypeScript and drawn as a three.js points layer in apeGmshViewer — not a new results file, and not the frozen Qt viewers. The particle set is a field-by-field contract tied to apeGmsh's emit (charter P4: the bridge owns tags). All of it under a new apeGmsh ADR that the maintainer accepts. Bridge primitives only after the fork slice merges **and** a fork release is pinned in apeGmsh's `FORK_PIN` (§7). |
 | **Seeding** | **Lattice first**: n particles per grid cell per axis, kept where they fall inside a body — positive volumes, uniform particles per cell, GIMP half-lengths by construction. Gauss-point seeding later, with positive-weight rules only: apeGmsh's tetrahedron rule has a negative weight (§7.4). |
 | **Instant Meshes** | Studied at the owner's request: a BSD-3-style field-aligned **surface** remesher with a batch mode and point-cloud input. Useful later for MPM → FE remeshing; not for seeding or the grid. Adopt only if it beats Gmsh's own discrete-surface remeshing on the same surfaces, passes a closure check, and comes through a binding whose licence is verified (§7.5). |
 | **First slice** | Explicit, 2D plane strain and 3D, serial; linear + GIMP; MUSL + PIC/FLIP; three admitted materials; one stage path (`DruckerPrager` `materialState`); gravity ramp, grid planes, frictional wall, quiet K0 start, local damping for quasi-static checks, a critical-Δt check; particle output into `.ladruno` — **with the apeGmsh ADR, lattice seeding, the readers and the points layer in the same slice** (§9). |
@@ -170,11 +170,11 @@ limit that bounds its reuse, in its own words where it has them.
 | `LadrunoUPKernel.h` — `addQ/addH/addS/addHtilde/addFseep` over `(N, dN, dv)` | two-phase particles | equal-order stabilized u-p inflates the first undrained settlement **1.71×** in TIMs' C0-up runs (stabilization off: 0.94, but an early checkerboard of 1.35 p₀) |
 | `Newmark` / `HHT` / `GeneralizedAlpha` `domainChanged()` | re-seeding the implicit integrator after a per-step rebuild | each re-reads committed disp, vel and accel per DOF group (`Newmark.cpp:398-414`, `HHT.cpp:329-345`, `GeneralizedAlpha.cpp:337-353`) — but only when the domain stamp moved (`DirectIntegrationAnalysis.cpp:207-217`). `LadrunoHHT` (33013) and `LadrunoGeneralizedAlpha` (33014) are subclasses with their own tags and inherit it (no override in their files). **Ill-defined** for CentralDifferenceLadruno (a re-seed forces a starter step, `firstStep = true` at `:362`, `:523`), the SMS integrators, LadrunoDynamicRelaxation and the multi-step methods (TRBDF2, Houbolt, …) |
 | `LadrunoStaggeredAnalyze` (`SRC/domain/pattern/ladrunoPorousOverlay/LadrunoStaggeredDriver.{h,cpp}`) | the driver pattern: a command that composes the user's analysis | its header's own scope: it "**decomposes** `analyzeStep`" and "omits analyzeStep's `_RELIABILITY` sensitivity pass and the numSubLevels dt subdivision" (`.h:44-48`). It is **transient-only** — an active static analysis is a hard error (`OpenSeesCommands.cpp:4083-4092`). Its Newmark / HHT / Generalized-α whitelist exists because it repeats the same step through `revertToLastStep` + `newStep` (`.cpp:152-172`), detected by `getClassTag()`; it says nothing about re-seeding. One row of `LadrunoCommandTable.h` (`:101`) |
-| `LadrunoPorousOverlay` (ADR-73) | the host for the explicit engine | a `LoadPattern` subclass. `Domain::applyLoad` calls every pattern's `applyLoad` (`Domain.cpp:2148`); `wipe` deletes every pattern (`Domain::clearAll`, `:1114`); the `parameter … pattern <tag>` target reaches a pattern's `setParameter` (`OpenSeesParameterCommands.cpp:156-176`, used by Python and DL-Tcl; classic Tcl has its own `parameter`, `TclModelBuilder.cpp:468`, whose pattern support is unverified). `Domain::commit` drives the overlay by its class tag (`:2386-2389`), a dispatch the MPM host does not need. `revertToLastCommit` and `revertToStart` reach a pattern only as a re-`applyLoad` (`:2458`, `:2503`) |
-| WP-99 commit-refusal counter | failing a step whose particle materials refuse at commit | a process-global atomic (`LadrunoMaterialStatus.h:162-165`), read and cleared only inside `Domain::commit`, after the element loop and before recorders (`Domain.cpp:2343-2345`); nothing resets it at the start of a commit |
+| `LadrunoPorousOverlay` (ADR-73) | the host for the explicit engine | a `LoadPattern` subclass. `Domain::applyLoad` calls every pattern's `applyLoad` (`Domain.cpp:2148`); `wipe` deletes every pattern (`Domain::clearAll`, `:1114`); the `parameter … loadPattern <tag>` target reaches a pattern's `setParameter` in Python (`OpenSeesParameterCommands.cpp:156-176`) and in classic Tcl through its generic branch (`TclParameterCommands.cpp:235`, `:248`) — classic Tcl's `pattern` keyword means only `pattern <tag> lambda` (`:134-135`), so the spelling is `loadPattern`. `Domain::commit` drives the overlay by its class tag (`:2386-2389`), a dispatch the MPM host does not need. `revertToLastCommit` and `revertToStart` reach a pattern only as a re-`applyLoad` (`:2458`, `:2503`) |
+| WP-99 commit-refusal counter | detecting a particle material's refusal at commit | a process-global atomic (`LadrunoMaterialStatus.h:162-165`), read and cleared only inside `Domain::commit`, after the element loop and before recorders (`Domain.cpp:2343-2345`); nothing resets it at the start of a commit. A refusal is seen after sibling points have committed, so it cannot be undone: `Domain::commit` calls the state "INCONSISTENT" and aborts the analysis (W17). Only `LadrunoConcrete3D`, `LadrunoHS` and `LadrunoSANISAND` declare one |
 | `Domain::commit` order | where G2P must sit | nodes → elements → refusal check → contact → overlay → committed time → recorders (`Domain.cpp:2294-2423`); element `commitState()` return codes are dropped |
 | The `nDMaterial` library | particle constitutive updates | admitted by table, not wholesale (§6); stage switches reach materials only through Domain elements (W12) |
-| `LadrunoRecorder` and the `.ladruno` format | particle output (Contract 2) | the fork owns the format version (`FORMAT_VERSION = 1`, `LadrunoRecorder.cpp:989`; `INFO/PROVENANCE`, `:1033`). Since WP-165 a new model stage opens only when a topology fingerprint of tags **and object addresses** changes (`:664-694`): mode-A re-pointing keeps the same objects, so element output would keep stale connectivity, and per-step node churn would write one model stage per step. Particle output is therefore its own group |
+| `LadrunoRecorder` and the `.ladruno` format | particle output (Contract 2) | the fork owns the format versions: `FORMAT_VERSION = 1` (`LadrunoRecorder.cpp:989`) and `FORMAT_MINOR_VERSION = 1` for additive changes (`:990-994`); `INFO/PROVENANCE` (`:1033`). apeGmsh treats a major bump as breaking and opens only `FORMAT_VERSION` 1 (its `schema/_versions.py:73-90`). A new model stage opens when the topology fingerprint of tags **and object addresses** changes, on a user `domainChange` command, or on a static↔transient flip (`:664-694`) — not on a C++ `Domain::domainChange()` that leaves the fingerprint alone. Mode-A re-pointing keeps the same objects, so element output would keep stale connectivity; per-step node churn would write one model stage per step. Particle output is therefore its own group |
 | `LadrunoHS` (WP-210, from 2026-10-24) | a later particle material | young: fix rounds ran to 2026-11-09 (#1069) |
 | `LadrunoNORSAND` (WP-144, draft PR #896) | the matched-material cross-code track with Berkeley | not merged; Berkeley's NorSand formulation must be aligned on an element test first |
 | TIMs C0-up (`tims-workbench`, 2026-11-08) | Terzaghi and Mandel closed forms for two-phase checks | LadrunoUP Q4 passes Mandel (peak 1.0754 vs 1.0757) |
@@ -184,7 +184,7 @@ limit that bounds its reuse, in its own words where it has them.
 | W1 | Transient integrators cache U, U̇, Ü and re-read the Nodes only in `domainChanged()` | node writes between steps are discarded — so explicit mode does not use an OpenSees integrator, and implicit mode rebuilds every step | `Newmark.cpp:206-208`, `:398-414`; `CentralDifferenceLadruno.cpp:360`, `:518` |
 | W2 | One `ConstraintHandler` per model; the contact handler is Plain-only | handler-emitted MPM adapters (C′) inherit the Plain-only restriction | `LadrunoContactHandler.h:22-29` |
 | W3 | A `DOF_Group` for every Domain node | empty-support grid nodes are singular unless excluded or ghost-regularized | `PlainHandler.cpp:123-132` |
-| W4 | Stock recorders cache `Node*` / `Element*`; `Domain` never calls `Recorder::domainChanged()`. `LadrunoRecorder` re-maps only when its topology fingerprint changes | stock recorders must not watch grid entities; no recorder follows an element whose nodes change in place | `Domain.cpp` calls `record / restart / flush` only; `LadrunoRecorder.cpp:664-694` |
+| W4 | Stock recorders cache `Node*` / `Element*`; `Domain` never calls `Recorder::domainChanged()`. `LadrunoRecorder` opens a new stage only on a topology-fingerprint change, a user `domainChange` command or a static↔transient flip | stock recorders must not watch grid entities; no recorder follows an element whose nodes change in place; the engine raises `Domain::domainChange()` from C++, never through the user command, or `recorder ladruno` opens a stage per step | `Domain.cpp` calls `record / restart / flush` only; `LadrunoRecorder.cpp:664-694` |
 | W5 | `removeElement` / `removeNode` clean nothing (loads, SP/MP, recorder pointers) | gravity is a particle body force through P2G by design; never reuse a retired tag | `Domain.cpp:1198-1241`; `OpenSeesMiscCommands.cpp:269-275` |
 | W6 | `PartitionedDomain::repartition()` is a stub, and its subdomain `domainChange()` loop is dead code | no parallel MPM without new infrastructure; an upstream bug | `PartitionedDomain.cpp:1147-1156` |
 | W7 | PFEM `BackgroundMesh` | precedent that the Domain tolerates churn — not reusable code, and not proof that recorders or constraints survive it | ADR-86 §5.1 |
@@ -197,6 +197,7 @@ limit that bounds its reuse, in its own words where it has them.
 | W14 | The WP-107 thread allowlist contains no soil model | `ManzariDafalias` refuses unconditionally (`:1235`); `LadrunoSANISAND` delegates (`:2758`); the allowlisted nD materials are `ElasticIsotropic` (3D, PlaneStrain2D) and `ASDConcrete3D` | allowlist on `origin/ladruno` |
 | W15 | `FE_Element` exits the process on an element with no DOFs, and `PlainHandler` builds an `FE_Element` for every Domain element, active or not | no zero-node element may sit in a Domain: the first analysis set up there kills the process. The explicit host is a `LoadPattern`, never an element | `FE_Element.cpp:126-129`; `PlainHandler.cpp:291-327` (other handlers unverified) |
 | W16 | `StaticAnalysis` exposes only `analyze(numSteps, flush)` — no `analyzeStep`, `getModel` or `checkDomainChange` — and has no sub-levels | quasi-static mode calls `analyze(1, false)` and flushes recorders itself | `StaticAnalysis.h:66`; `StaticAnalysis.cpp:128-236` |
+| W17 | A material's commit refusal cannot be undone: `Domain::commit` sees it after sibling points committed and aborts the analysis ("INCONSISTENT … aborted") | a refusal at particles aborts the run in both modes — no retry; no v1 material declares one (only `LadrunoConcrete3D`, `LadrunoHS`, `LadrunoSANISAND` do) | `Domain.cpp:2343-2355`; `LadrunoMaterialStatus.h:162-165` |
 
 ---
 
@@ -205,10 +206,14 @@ limit that bounds its reuse, in its own words where it has them.
 ### 5.1 A command family, not an analysis type
 
 `mpm grid …`, `mpm body …`, `mpm particles -file …`, `mpm analyze …` — one `LADRUNO_COMMAND` row in
-`SRC/interpreter/LadrunoCommandTable.h`, which feeds the three engines (classic Tcl, DL Tcl, Python);
-`tests/test_ladruno_command_registry.py` fails a command registered anywhere else. Classic Tcl holds
-its analysis in different engine state from the `cmds` singleton (the table's header comment), so
-`mpm analyze` needs two bridges to the user's analysis, as `LadrunoStaggeredAnalyze` does.
+`SRC/interpreter/LadrunoCommandTable.h`, which registers it in the three engines (classic Tcl, DL
+Tcl, Python); `ci/check_ladruno_commands.py` fails a command registered anywhere else. Two of the
+three run in shipped binaries — classic Tcl (`OpenSees.exe`) and Python (`opensees.pyd`); the DL Tcl
+engine is compiled but never instantiated (`TclInterpreter.cpp` is commented out,
+`SRC/tcl/CMakeLists.txt:94`). Classic Tcl holds its analysis in different engine state from the
+`cmds` singleton (the table's header comment), so mode A's `mpm analyze` needs two bridges to the
+user's analysis, as `LadrunoStaggeredAnalyze` has (phase 1); mode F has no analysis and needs none.
+v1 refuses `mpm` in OpenSeesSP and OpenSeesMP.
 
 - **Mode A, transient:** composes the user's `Transient` analysis through `DirectIntegrationAnalysis`'s
   public `analyzeStep`, `checkDomainChange` and `getModel` (`DirectIntegrationAnalysis.h:71`, `:87`,
@@ -231,8 +236,8 @@ a class tag from the pattern band, ledgered), after ADR-73's `LadrunoPorousOverl
 Domain edit, that gives:
 
 - `wipe` deletes it with the other patterns (`Domain.cpp:1114`), and `remove loadPattern` removes it;
-- the `parameter … pattern <tag>` target reaches its `setParameter`, which forwards to its
-  particles' materials (W12);
+- the `parameter … loadPattern <tag>` target reaches its `setParameter` in both shipped engines,
+  and it forwards to its particles' materials (W12);
 - its own `TimeSeries` drives gravity ramps and prescribed grid motion.
 
 What it does not give: `reset` / `revertToStart` reach a pattern only as a re-`applyLoad` (`:2503`),
@@ -259,8 +264,9 @@ engine orders G2P before `Domain::commit` itself — and an unadmitted vanilla e
    (§6), with shape functions evaluated at the step-start positions; `ops_TheActiveElement = 0` on
    every worker thread (W9); the constitutive update. The particle loop threads only for allowlisted
    materials (W14) and must give the same result at any thread count.
-6. **Commit particle materials.** If `ladrunoPendingCommitRefusals() > 0`, revert the particles'
-   trial states, clear the counter and fail the step — before any particle moves.
+6. **Commit particle materials.** A declared refusal cannot be undone once sibling points have
+   committed (W17): if `ladrunoPendingCommitRefusals() > 0`, the engine aborts the run, as
+   `Domain::commit` does — before any particle moves. No v1 material declares one.
 7. **G2P kinematics:** position, velocity, F and volume take their trial values. A failed step
    leaves them untouched.
 8. **`Domain::commit()`:** commits FE nodes and elements (none free in v1), sets the committed time
@@ -272,8 +278,8 @@ engine orders G2P before `Domain::commit` itself — and an unadmitted vanilla e
 
 At the end of `mpm analyze`: `Domain::flushRecorders()` (it lives in `analyze()`, not in `commit`).
 
-**v1 refuses:** a Domain with free FE DOFs, a non-admitted material, and database save or restore
-while particles exist.
+**v1 refuses:** a Domain with free FE DOFs, a non-admitted material, database save or restore
+while particles exist, and `mpm` in OpenSeesSP / OpenSeesMP.
 
 ### 5.3 Implicit and quasi-static mode — particle-as-element (A)
 
@@ -295,10 +301,11 @@ admits them; everything else is refused loudly.
 
 **Element obligations.**
 - G2P sits in `commitState()` (the Kratos `FinalizeSolutionStep` pattern), which runs before
-  recorders. Because `Domain::commit` drops its return code (W11), it must not fail. A material
-  refusal reaches the step through the WP-99 counter, which `Domain::commit` reads after the element
-  loop and before recorders; the driver, seeing the failed step, restores every particle's previous
-  kinematics before retrying. The element keeps xₙ and Fₙ until the step is accepted.
+  recorders and only on an accepted step. Because `Domain::commit` drops its return code (W11), it
+  must not fail. A step that fails before commit (Newton divergence) is cut and retried by the
+  driver with no G2P to undo; a material refusal at commit aborts the analysis (W17).
+- Raise `Domain::domainChange()` from C++, never through the user `domainChange` command, which
+  would open a `recorder ladruno` stage every step (W4).
 - The element does not opt into the WP-192 threaded commit path (`ladrunoThreadSafeForm`).
 - Particle output is the particle group (§7.3), never the element / GP layout (W4, W13).
 
@@ -315,8 +322,8 @@ nodes are excluded or ghost-regularized — the choice is measured at M0b.
    unconditionally (§5.3).
 3. G2P happens before recorders: in each particle element's `commitState()` (mode A), or before the
    engine calls `Domain::commit()` (mode F). No Domain hook in either mode.
-4. A failed and retried step neither repeats nor keeps G2P: mode F moves particles only after the
-   refusal check; mode A restores the previous kinematics.
+4. G2P runs once per accepted step. Mode A retries only steps that failed before commit, so there
+   is nothing to undo; a refusal at commit aborts the run in both modes (W17).
 
 ### 5.5 What was not chosen
 
@@ -356,7 +363,7 @@ The plane-strain embedding is new work (the shipped lane is 3D-only).
 
 **Parameters and stages.** Mode A: particles are elements, so the stock element walks
 (`updateMaterialStage`, `parameter … material`) reach them (W12). Mode F:
-`parameter <t> pattern <mpmTag> …` reaches the host, which forwards to its particles' materials;
+`parameter <t> loadPattern <mpmTag> …` reaches the host, which forwards to its particles' materials;
 `updateMaterialStage` does not reach mode F, and the manual says so. v1's one stage path is
 `DruckerPrager` `materialState` through `parameter` + `updateParameter`. `MaterialStageParameter`
 stops at the first element that answers, which relies on process-static stage flags; the table's
@@ -433,9 +440,16 @@ chunked and compressed.
 ### 7.3 Contract 2 — particle results (fork → apeGmsh)
 
 A **new particle group inside `.ladruno`**, written by `LadrunoRecorder` or by an MPM writer that
-shares its file, with a `FORMAT_VERSION` bump (today 1, `LadrunoRecorder.cpp:989`) and a fork
-format-document PR. apeGmsh reads it in `src/apeGmsh/results/readers/_ladruno.py` and in
-`apeGmshViewer/src/reader/` (the `ladruno*.ts` readers).
+shares its file. It is an **additive** change: `FORMAT_MINOR_VERSION` goes from 1 to 2 and
+`FORMAT_VERSION` stays 1 (`LadrunoRecorder.cpp:989-994`). A major bump would be wrong: apeGmsh
+treats one as a breaking layout change and its readers refuse anything outside `FORMAT_VERSION` 1
+(`schema/_versions.py:73-90`, `_ladruno.py:633-637`, `ladruno.ts:56`), so every new file would stop
+opening. With the minor bump, today's readers keep opening the files and ignore the new group until
+232d teaches them to read it. The change also needs a fork format-document PR and the fork's own
+format tooling updated (`Ladruno_scripts/ladruno_recorder_tests/ladruno_format.py`, which requires
+`FORMAT_VERSION == 1`, and `make_synthetic.py`). apeGmsh reads the group in
+`src/apeGmsh/results/readers/_ladruno.py` and in `apeGmshViewer/src/reader/` (the `ladruno*.ts`
+readers, which already read `FORMAT_MINOR_VERSION`).
 
 - **Per output:** time and step; the particle id list (particles may be removed or added; ids are
   never reused); positions (float64); velocities; stress; named state variables; volumes or GIMP
@@ -526,12 +540,12 @@ Slice column: **S1** = slice 1; **P*n*** = phase *n* of §9.
 | | quiet start under K0 | staged initial stress | S1 |
 | | small-mass stability | the mass cutoff | S1 |
 | | critical Δt: stable just below the estimate; refused above it | the CFL check | S1 |
-| | failed-step retry | mode F refuses before G2P; mode A restores kinematics | S1, P1 |
+| | failed-step retry (mode A): a step that fails before commit is cut and retried, and G2P runs once | retry without a double G2P | P1 |
+| | refusal at commit aborts the run cleanly, particles unmoved — with the first refusing material | W17 | P5 |
 | | recorder synchrony | positions and stresses from the same step | S1 |
 | | lifecycle: `wipe`, `reset` with and without `mpm reset`, `remove loadPattern` | the host's lifecycle | S1 |
-| | refusals: each non-admitted material, a non-whitelisted integrator, free FE DOFs, `VariableTransient`, database save with particles | loud refusal, never a wrong answer | S1, P1 |
-| | stale length: a `LadrunoJ2` particle created after an FE element existed reads no element's length | the `ops_TheActiveElement` guard | S1 |
-| | three-engine parity: classic Tcl, DL Tcl and Python give the same particle output | registration and both analysis bridges | S1 |
+| | refusals: each non-admitted material, a non-whitelisted integrator, free FE DOFs, `VariableTransient`, database save with particles, `mpm` in OpenSeesSP / MP | loud refusal, never a wrong answer | S1, P1 |
+| | engine parity: classic Tcl and Python give the same particle output (DL Tcl is registered but runs in no shipped binary) | registration; the `loadPattern` stage path | S1 |
 | | thread-count determinism (allowlisted materials) | the threaded particle loop | S1 |
 | | contract round trips: a fixture file each way, read by the other side | both contracts | S1 |
 | | particle-id stability across outputs, with removal | Contract 2 | S1 |
@@ -544,14 +558,21 @@ Slice column: **S1** = slice 1; **P*n*** = phase *n* of §9.
 | | tailings flow liquefaction → runout (NorSand) | the flow-slide case | P5 |
 | | cross-code against Berkeley and Kratos; NorSand matched-material track once WP-144 lands | Tier-2 screens, never gates | — |
 
-**Mutation gate (ADR-87 D2).** Named mutants, each paired with the oracle that catches it:
+**Mutation gate (ADR-87 D2)**, through the fork's existing mechanism: a new family `MPM` in the
+`LADRUNO_MUTATE_FAMILY` list (`CMakeLists.txt`, a vanilla-ledgered line), in the options of
+`.github/workflows/ladruno_mutation.yml` and in `Ladruno_scripts/mutation_gate.py`; the mutant is
+built with `Ladruno_scripts/mutation_build.bat` (the orchestrator launches it) or the CI lane. The
+engine defines what each mode sabotages:
 
-- flip the P2G momentum sign — the vibrating bar;
-- drop the G2P position update — the self-weight column or a large-amplitude bar (a small-amplitude
-  bar can stay green);
-- move G2P after `Domain::commit` — recorder synchrony;
-- drop the `ops_TheActiveElement = 0` guard — the stale-length test;
-- make mode A's `domainChange()` conditional — the no-cell-crossing re-seed test (P1).
+- `ZERO` — the P2G internal force; the vibrating bar catches it;
+- `SCALE` — the G2P position increment; the self-weight column or a large-amplitude bar catches it
+  (a small-amplitude bar can stay green).
+
+Ordering hazards — G2P after `Domain::commit`, and a conditional `domainChange()` in mode A — are
+not expressible as these modes. Their regression tests (recorder synchrony; the no-cell-crossing
+re-seed) guard them. The `ops_TheActiveElement = 0` guard stays a rule without a test in v1: no
+admitted material observes it (`LadrunoJ2` reads the global only under `-autoRegularization`,
+which the driver refuses); its test arrives with the first admitted length consumer.
 
 ---
 
@@ -559,15 +580,18 @@ Slice column: **S1** = slice 1; **P*n*** = phase *n* of §9.
 
 **Slice 1 — the fork and apeGmsh together, contract first.**
 
-- **Gate before code (232a):** the apeGmsh ADR accepted by its maintainer; both contracts as
-  field-by-field schemas with both repos' checklists ticked; a fixture file each way.
+- **Gate before contract-bound code (232a):** the apeGmsh ADR accepted by its maintainer; both
+  contracts as field-by-field schemas with both repos' checklists ticked; a fixture file each way.
+  The engine's numerics start earlier, on 232b's frozen interface; only the particle-set reader and
+  the `.ladruno` writer wait for 232a.
 - **Fork:** explicit mode only, hosted as a `LoadPattern`; 2D plane strain and 3D; serial (threads
   only for allowlisted materials); linear + GIMP; MUSL with PIC/FLIP; `ElasticIsotropic`,
   `LadrunoJ2` and `DruckerPrager` through the new kernel entry; the `materialState` stage path
   through `parameter … pattern`; gravity ramp through the host's time series, grid planes, a
   frictional wall, quiet K0 start; local non-viscous damping (the FLAC form) for quasi-static
-  checks; the critical-Δt estimate and refusal; `mpm` as one `LadrunoCommandTable.h` row; particle
-  output as a `.ladruno` group with the `FORMAT_VERSION` bump and its format document.
+  checks; the critical-Δt estimate and refusal; `mpm` as one `LadrunoCommandTable.h` row, refused in
+  OpenSeesSP / MP; particle output as a `.ladruno` group with the `FORMAT_MINOR_VERSION` bump and
+  its format document.
 - **apeGmsh:** lattice seeding writing the particle set; the `.ladruno` particle readers (Python,
   TypeScript); the three.js points layer. Bridge primitives follow once 232c has merged and a fork
   release is pinned.
@@ -621,8 +645,8 @@ dispatch briefs, worker rules, fork checklist — is `.claude/skills/ladruno-mpm
 - **New numerics.** The incremental kernel entry and the plane-strain embedding each need an oracle
   before C++.
 - **The host.** A `LoadPattern` host has one precedent (ADR-73). `reset` reaches it only as a
-  re-`applyLoad`, so `mpm reset` exists and is tested; classic Tcl's `parameter … pattern` support
-  is unverified until the three-engine parity test runs.
+  re-`applyLoad`, so `mpm reset` exists and is tested; the stage path must be spelled
+  `loadPattern` (classic Tcl's `pattern` keyword means only `pattern <tag> lambda`).
 - **Stage routing.** `updateMaterialStage` does not reach mode F; soil models staged in mode F use
   `parameter … pattern`.
 - **Empty-support nodes** in mode A; decided by measurement.
@@ -757,3 +781,22 @@ ADR-88 is the H5DRM higher-order-elements work (#778 / #800), while the state-tr
 first version cited as "ADR-88" (and "ADR-88 D5") is uncommitted in the owner's main checkout. It is
 now cited by file name. The review did not re-verify arXiv 2605.28525 or Sordo et al.; they come
 from the predecessor's survey.
+
+### 14.4 Fourth review — 2026-11-13, Fable, of #1074 @ `bc8b8f11c` (ADR, plan, skill). Not clean: two blockers, six majors, nine minors.
+
+Read on fork `origin/ladruno` @ `0103c1017` and apeGmsh `origin/main` @ `963d8ac9d`. The verdict:
+the architecture and the declined M6 fix survive (W15 confirmed; the `LoadPattern` host sound for
+`wipe`, `applyLoad` and reset); #1074 can merge once findings 1–8 are fixed in the text. Every
+finding was checked by the author before acceptance.
+
+| # | Finding | Author's check | Disposition |
+|---|---|---|---|
+| 1 | **Blocker:** the "`-DLADRUNO_MUTATE_MPM=<n>`" mutation gate does not exist — the mechanism is a closed family list with ZERO / SCALE / IDENT modes; two of the five mutants could not go red | confirmed: `CMakeLists.txt:243-268`; `ladruno_mutation.yml` options; `Ladruno_scripts/mutation_gate.py`, `mutation_build.bat` | §8: a new `MPM` family through the existing mechanism; ZERO and SCALE defined; ordering hazards guarded by regression tests |
+| 2 | **Blocker:** "`FORMAT_VERSION` 1 → 2" would make every new `.ladruno` unreadable by current apeGmsh | confirmed: `LadrunoRecorder.cpp:989-994` has `FORMAT_MINOR_VERSION`; apeGmsh `_versions.py:73-90`, `_ladruno.py:633-637`, `ladruno.ts:56`; fork `ladruno_format.py` | §7.3, §0, §9: a minor bump (1 → 2), the major stays 1; the running 232a worker corrected before it froze the contract |
+| 3 | classic Tcl's `parameter … pattern` means only `pattern <tag> lambda` | confirmed: `TclParameterCommands.cpp:134-135`; the generic branch matches `loadPattern` (`:235`, `:248`) | spelled `loadPattern` everywhere |
+| 4 | "three interpreter engines": the DL Tcl engine runs in no shipped binary | confirmed: `SRC/tcl/CMakeLists.txt:94` (`TclInterpreter.cpp` commented out); `build.bat:156` | §5.1, §8: registered in three, run in two |
+| 5 | "Zone-A green" is unreachable as briefed: CI runs `pytest -m zone_a` on Ubuntu without h5py | confirmed: `ladruno.yml:287`; its pip line installs no h5py | fork checklist: the `zone_a` marker, h5py added to the CI install, the GCC / Linux build, and the other gates (`check_duplicate_defs.py`, ruff F811, `stamp_headers.py --check`) |
+| 6 | "revert the particles' trial states and fail the step" is impossible: a refusal is seen after siblings committed, and `Domain::commit` aborts | confirmed: `Domain.cpp:2343-2355`; only `LadrunoConcrete3D`, `LadrunoHS` and `LadrunoSANISAND` declare refusals | W17; §5.2 step 6, §5.3, §5.4: a refusal aborts the run; mode A retries only pre-commit failures; the refusal test moves to P5 |
+| 7 | the stale-length test and its mutant cannot go red: `LadrunoJ2` reads the global only under `-autoRegularization`, which the driver refuses | confirmed: `LadrunoJ2.cpp:352-356`; `dmgRegOn` private (`LadrunoJ2.h:128`) | test and mutant dropped; the guard stays a rule until the first admitted length consumer |
+| 8 | the merge delegation contradicts AGENTS.md ("The owner merges; agents do not") and the plan's own rule 2 | confirmed | AGENTS.md carries the scoped exception (a program issue records the owner's delegation); the skill map and plan rule 2 aligned |
+| m | the D4 verdict and handoff pack missing from the warrant; 232c's start vs §9's gate; the plan's front matter still naming a Fable orchestrator; "never edits `SRC/`" vs "takes it on the third round"; 232b's Voigt conventions; `mpm` in OpenSeesSP / MP and the object broker; "both analysis bridges" in slice 1; W4's other stage triggers; `LadrunoDamage.h` listed as a length reader | all confirmed (`87_…adr.md:146-153`; `LadrunoRecorder.cpp:664-694`; no `ops_TheActiveElement` in `LadrunoDamage.h`) | each fixed in the ADR, plan, skill or the LEGACY follow-up; 232b sent the convention (`tests/hypo_reference.py:15`) while running |

@@ -44,7 +44,7 @@ then 232f+ = the ADR's §9 phases, each started with /ladruno-mpm 232f, 232g, �
 - **232d starts when the owner accepts the apeGmsh ADR.** It builds against 232a's fixture files,
   not against a fork build.
 - **R needs 232c merged; 232e needs R.**
-- **Merge order on `ladruno`:** WP-232 → 232b → 232a (fork half) → 232c. The owner merges every PR.
+- **Merge order on `ladruno`:** WP-232 → 232b → 232a (fork half) → 232c. Who merges: §5 below.
 
 ## Roster — set `model` and `effort` on every Agent call
 
@@ -150,6 +150,16 @@ arranged with it (the owner's rule, 2026-11-13).
   the brief or the draft, and report to it at every landing, blocker and handoff, as its protocol
   asks of every program session.
 - If no T session is live, post on #1202 and wait. Never land apeGmsh work around it.
+- **The routing (owner-approved 2026-11-13):** apeGmsh **chain M**, issue nmorabowen/apeGmsh#2972
+  — link M1 is the ADR, M2 is 232d, M3 is the `FORK_PIN` bump plus 232e. Each link is run by an
+  Opus orchestrator that T starts, carded with Owned files, and landed by T. The ADR draft goes to T; a
+  program mechanic opens it as a `human-gate` PR (Status Proposed), numbered from
+  `architecture/decisions/` on `origin/main` at that moment; T lands it after the owner ratifies
+  the text, and the Accepted flip is a maintainer merge.
+- **Tell T before 232d starts**, so it can put `lock:` labels on the files 232d owns.
+- **Evidence apeGmsh accepts:** a fork-sensitive apeGmsh change needs `live-fork.yml` green on its
+  head; a local live pass is not evidence at `FORK_PIN`. Viewer stills for the points layer are an
+  owner gate.
 - A worker isolated in a fork worktree cannot write in the apeGmsh checkout. apeGmsh changes are
   made by a session in apeGmsh, as T arranges; fork workers only draft apeGmsh text in the fork
   branch.
@@ -169,7 +179,8 @@ arranged with it (the owner's rule, 2026-11-13).
    W4: recorders cache pointers. W9: `ops_TheActiveElement` is a live global — set it to 0 around
    particle updates. W10: `analyze()` sub-steps — call `analyzeStep`. W11: G2P before recorders.
    W12: stage switches walk Domain elements only. W15: never a zero-DOF element in a Domain.
-   W16: `StaticAnalysis` has no `analyzeStep`.
+   W16: `StaticAnalysis` has no `analyzeStep`. W17: a material's commit refusal aborts the run —
+   there is no retry.
 5. **Licences.** Never open GPL, LGPL or unlicensed source (Anura3D, Karamelo, AMPLE, GeoTaichi,
    Matter, NairnMPM). Kratos (BSD-4) may enter the fork with its acknowledgement, never apeGmsh.
 6. **Independence.** The oracle (232b) reads nothing under `SRC/`. The C++ worker (232c) reads
@@ -188,5 +199,5 @@ arranged with it (the owner's rule, 2026-11-13).
 - One build per round, all five targets.
 - Owner decisions batched: D1–D7 in one sitting. The apeGmsh ADR acceptance is the one
   mid-stream owner gate besides merges.
-- A worker on its third fix round for the same finding stops; the orchestrator takes it at max
-  effort.
+- A worker on its third fix round for the same finding stops; the orchestrator re-briefs it at max
+  effort or dispatches a fresh worker — it still never edits `SRC/` itself.
