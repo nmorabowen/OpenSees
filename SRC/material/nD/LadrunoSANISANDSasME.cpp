@@ -877,7 +877,12 @@ ManzariDafalias::ladrunoSasStage(const double* s, const double* a, const double*
     }
     const double Kp = two3 * p * h * ddc6(b, n);
     double H  = Kp + 2.0 * G * (B - C * trn3) - K * D * qv;
-    if (bandOn)   // Ladruno band scaling: H = Kp + S X (the elastic part belongs to the whole element)
+    // Ladruno band scaling: H = Kp + S X (the elastic part belongs to the whole element).
+    // Ladruno band latch: at S exactly 1 the DM04 expression above is kept, so a latched
+    // point at S = 1 is DM04 bit for bit (every other S-product is exact at S = 1; this
+    // sum alone was associated differently, and the element test amplified that round-off
+    // to the Newton tolerance, 1e-5 at 5-20 kPa).
+    if (bandOn && bandS != 1.0)
         H = Kp + bandS * (2.0 * G * (B - C * trn3) - K * D * qv);
     const double N  = 2.0 * G * ddm6(n, ddev) - K * dv * qv;
 
