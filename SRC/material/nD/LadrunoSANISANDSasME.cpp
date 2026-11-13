@@ -118,12 +118,14 @@
 // 97-102 of 320 wall trials singular); the cap closes deep softening (b:n << 0
 // at low p), e.g. the inadmissible ring point b8 1950/3.
 //
-// Ladruno band scaling (an OPT-IN variant; -sasBandScale S, OFF by default and the
-// code path then byte-identical). The model softens without a length: a shear
-// band in a mesh is as thick as the elements. With the option a point that has
-// passed its peak (the LATCH, below) stands for a band of sand of thickness w in
-// series with elastically unloading sand, S = w / (c_b h) being the share of the
-// element that is band (S is given by the driver: one value per element size).
+// Ladruno band scaling (an OPT-IN variant; -sasBandScale S or -sasBandWidth w c_b,
+// OFF by default and the code path then byte-identical). The model softens without
+// a length: a shear band in a mesh is as thick as the elements. With the option a
+// point that has passed its peak (the LATCH, below) stands for a band of sand of
+// thickness w in series with elastically unloading sand, S = w / (c_b h) being the
+// share of the element that is band: given by the driver (-sasBandScale S, one
+// material per element size), or computed once per point from the element's
+// characteristic length h (-sasBandWidth w c_b; see ladrunoSasIntegrate).
 // After the latch, with Kp, X, R, D the model's own quantities at the state:
 //     lambda = Q:C:d_eps / (Kp + S X)        the plastic multiplier of the BAND
 //     d_eps  = C^-1 : d_sigma + S lambda R   the strain of the element
@@ -161,6 +163,7 @@
 #include "UWmaterials/ManzariDafalias.h"
 #include <profiler/ProfilerMacros.h>
 #include <OPS_Globals.h>
+#include <Element.h>                          // Ladruno band scaling: ops_TheActiveElement->getCharacteristicLength()
 
 #include <cfloat>
 #include <climits>
@@ -1016,7 +1019,7 @@ ManzariDafalias::ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z,
     const double sigRef = (o.errFloor < 0.0) ? m_P_atm / 101.0 : o.errFloor;
     const double kappa  = o.alphaBoundTol;
     const double dRev   = ladrunoSasReseatDelta();   // Ladruno WP-151: 0.0 = the paper rule
-    const bool bandOpt  = (o.bandScale > 0.0);       // Ladruno band scaling: OFF = every value below is the WP-129 one
+    const bool bandOpt  = o.bandOn();                // Ladruno band scaling: OFF = every value below is the WP-129 one
 
     double dStrain[6], devD[6];
     for (int i = 0; i < 6; i++) {
@@ -1281,7 +1284,8 @@ ManzariDafalias::ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z,
         // substep of a point not yet latched (see the note at the top of the file).
         // Later substeps of this update already use the scale; the latch becomes
         // permanent at commit and is undone with a refused or reverted trial.
-        if (bandOpt && !bandOn && k1 == ST_PLASTIC && k2 == ST_PLASTIC) {
+        const double sLatch = (o.bandScale > 0.0) ? o.bandScale : mLadrunoSas.bandSElem;
+        if (bandOpt && !bandOn && sLatch > 0.0 && k1 == ST_PLASTIC && k2 == ST_PLASTIC) {
             bool trig = true;
             if (o.bandTrigger == 0)
                 trig = (ladrunoSasPrincipalRatio(S) < rat0);
@@ -1291,7 +1295,7 @@ ManzariDafalias::ladrunoSasSubsteps(double* S, double* Ee, double* A, double* Z,
                 ladrunoSasStateDep(S, A, Z, eEnd, ain, nL, dL, bL, c3L, hL, psiL, aBL, aDL, b0L, AL, DL, BL, CL, RL);
                 if (ddc6(bL, nL) <= 0.0) {
                     mLadrunoSas.band = true;
-                    mLadrunoSas.bandS = o.bandScale;
+                    mLadrunoSas.bandS = sLatch;   // -sasBandWidth: w/(c_b h), read at the first update
                     mLadrunoSas.bandLatches += 1.0;
                 }
             }
@@ -1448,6 +1452,30 @@ ManzariDafalias::ladrunoSasIntegrate(void)
                     code = RC_START_ALPHA;
             } else if (r0 > 1.0 + o.alphaBoundTol) {
                 st[LSAS_ENTRY_OVER_KAPPA] += 1.0;
+            }
+        }
+    }
+
+    // Ladruno band scaling (-sasBandWidth w c_b): S = w/(c_b h), h the
+    // characteristic length of the element that drives this point, read ONCE, on
+    // the first SAS-ME update, from the element under update (Domain::update sets
+    // ops_TheActiveElement before Element::update; LadrunoQuad hands sqrt(area),
+    // LadrunoBrick cbrt(volume); the crack-band materials read it the same way).
+    // No usable length (a material-point driver, a degenerate element) REFUSES:
+    // the option must not fall back to DM04 silently.
+    if (code == 0 && !(o.bandScale > 0.0) && o.bandOn() && !(mLadrunoSas.bandSElem > 0.0)) {
+        const double h = (ops_TheActiveElement != 0) ? ops_TheActiveElement->getCharacteristicLength() : 0.0;
+        const double sE = (std::isfinite(h) && h > 0.0) ? o.bandWidth / (o.bandCb * h) : 0.0;
+        if (std::isfinite(sE) && sE > 0.0) {
+            mLadrunoSas.bandSElem = sE;
+        } else {
+            code = RC_START_OTHER;
+            if (!mLadrunoSas.warned) {
+                mLadrunoSas.warned = true;
+                opserr << "WARNING LadrunoSANISAND (SAS-ME) material tag " << this->getTag()
+                       << ": -sasBandWidth needs the element's characteristic length and got "
+                       << h << " (no element under update, or a degenerate one); update REFUSED."
+                          " Drive the point from an element, or give -sasBandScale S." << endln;
             }
         }
     }
