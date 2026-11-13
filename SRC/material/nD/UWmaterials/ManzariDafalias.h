@@ -103,11 +103,14 @@ struct LadrunoSasOptions {                                                  // L
     double tcP0Max;        // Ladruno WP-152 (review #2): a tension refusal separates only at committed p0 <= tcP0Max (else it refuses)
     double bandScale;      // Ladruno band scaling: S = w/(c_b h) given by the driver; after the latch H = Kp + S X; <= 0 = OFF (DEFAULT, byte-identical)
     int    bandTrigger;    // Ladruno band scaling: the latch. 0 = peak (major/minor principal stress ratio falls with b:n <= 0; DEFAULT), 1 = bn (b:n <= 0)
+    double bandWidth;      // Ladruno band scaling: w (length units of the mesh); with bandCb, S = w/(c_b h), h from the element; <= 0 = not used
+    double bandCb;         // Ladruno band scaling: c_b, the numerical band width in elements (S = w/(c_b h))
     LadrunoSasOptions() : errFloor(-1.0), alphaBoundTol(0.1), alphaEntryTol(2.0), alphaProject(0),
                           alphaInMode(0), errorVars(0),   // Ladruno WP-129
                           hFloor(0.0), reseatHyst(0.0), softCap(0.0),   // Ladruno WP-151
                           tcPsep(0.0), tcPcontact(0.0), tcP0Max(0.0),   // Ladruno WP-152
-                          bandScale(0.0), bandTrigger(0) {}   // Ladruno band scaling
+                          bandScale(0.0), bandTrigger(0), bandWidth(0.0), bandCb(0.0) {}   // Ladruno band scaling
+    bool bandOn() const { return bandScale > 0.0 || (bandWidth > 0.0 && bandCb > 0.0); }   // Ladruno band scaling
 };   // Ladruno WP-129
 enum {                                                                      // Ladruno WP-129
     LSAS_UPDATES = 0, LSAS_ELASTIC, LSAS_SUBSTEPS, LSAS_ACCEPTED, LSAS_REJ_ERR,   // Ladruno WP-129
@@ -142,10 +145,12 @@ struct LadrunoSasState {                                                    // L
     double bandStages;          // Ladruno band scaling: census, plastic stages evaluated with the scale (since revertToStart)
     double bandCapped;          // Ladruno band scaling: census, those of them where -sasSoftCap bound (scaled: H >= kappa S X)
     double bandLatches;         // Ladruno band scaling: census, latch events in accepted updates (a reverted step still counts)
+    double bandSElem;           // Ladruno band scaling: -sasBandWidth: S = w/(c_b h) of THIS instance's element, read once from
+                                //   ops_TheActiveElement->getCharacteristicLength() (0 = not read yet; geometry, so not reset)
     LadrunoSasState() : allowed(false), refused(false), warned(false), commitRefusalWarned(false),   // Ladruno WP-129
                         sep(false), sep_n(false), sepTr(0.0), sepTr_n(0.0), sepEvent(0), sepCode(0), sepP0(0.0),   // Ladruno WP-152
                         band(false), band_n(false), bandS(0.0), bandS_n(0.0), bandDe(0.0), bandDe_n(0.0),   // Ladruno band scaling
-                        bandStages(0.0), bandCapped(0.0), bandLatches(0.0) {   // Ladruno band scaling
+                        bandStages(0.0), bandCapped(0.0), bandLatches(0.0), bandSElem(0.0) {   // Ladruno band scaling
         for (int i = 0; i < LSAS_COUNT; i++) stats[i] = 0.0;   // Ladruno WP-129
     }   // Ladruno WP-129
 };   // Ladruno WP-129

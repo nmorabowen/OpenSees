@@ -527,9 +527,10 @@ class LadrunoSANISAND : public ManzariDafalias
                                // + WP-152's tcPsep, tcPcontact, tcP0Max (b+9..b+11)
         LWIRE_SEP       = LWIRE_SAS + LWIRE_SAS_OPT_N + LSAS_COUNT,   // Ladruno WP-152: sep_n, sepTr_n
         LWIRE_BAND      = LWIRE_SEP + 2,                              // Ladruno band scaling: its own block, so
-        LWIRE_BAND_N    = 8,                                          //   sasOptions / sasStats keep their columns:
+        LWIRE_BAND_N    = 11,                                         //   sasOptions / sasStats keep their columns:
                                                                       //   bandScale, bandTrigger, band_n, bandS_n,
-                                                                      //   bandDe_n, bandStages, bandCapped, bandLatches
+                                                                      //   bandDe_n, bandStages, bandCapped, bandLatches,
+                                                                      //   bandWidth, bandCb, bandSElem
         LWIRE_TAG       = LWIRE_BAND + LWIRE_BAND_N,                  // Ladruno WP-151: layout tag
         LWIRE_SIZE      = LWIRE_TAG + 1
     };
