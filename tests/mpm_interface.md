@@ -245,10 +245,17 @@ velocity `v^{n+1}`, not the blended particle velocity.
 
 ### 6.7 Step 6 — commit and refusal
 
-The particle materials commit. If any refuses (the WP-99 counter), or any particle's kernel status
-was −1 in §6.6, the step **fails**: every particle keeps its committed state from step n, the
-counter is cleared, and the engine reports the failure. The oracle's elastic material never
-refuses.
+(As amended by Amendment 1.)
+
+- **Kernel refusal fails the step.** If any particle's kernel status was −1 in §6.6, the step
+  fails **before any material commits**: every particle keeps its committed state from step n, the
+  materials' trial states revert, and the engine reports the failure.
+- **A material refusal at commit aborts the run.** The particle materials then commit. If any
+  refuses (the WP-99 counter), the run is **aborted**, not failed and retried: a refusal cannot be
+  undone once sibling points have committed (ADR W17; `Domain::commit` itself aborts the analysis
+  in that case).
+
+The oracle's elastic material never refuses.
 
 ### 6.8 Step 7 — G2P kinematics take their trial values
 
@@ -460,4 +467,25 @@ question Q1).
 
 ## Amendments
 
-None yet.
+The interface was frozen at `8383758d5` (declared on #1075, 2026-11-13). Every change after that
+is listed here, with a date.
+
+### Amendment 1 — 2026-11-13 — refusals (§6.7)
+
+Source: the fork ADR's W17, from a review of #1074. A material refusal cannot be undone once
+sibling points have committed; `Domain::commit` itself aborts the analysis ("INCONSISTENT …
+aborted").
+
+- A kernel status of −1 in §6.6 fails the step **before** any material commits: every particle
+  keeps its committed state, and the materials' trial states revert.
+- A material refusal **at commit** (the WP-99 counter) **aborts the run**. It does not fail and
+  retry the step.
+- No case changes: the oracle's elastic material never refuses.
+
+### Rulings on the open questions — 2026-11-13 (orchestrator, on #1075)
+
+- **Q1:** `s = 0.5` stays. Phase 2 measures the 2D/3D spectral limit; any change comes by
+  amendment.
+- **Q2:** initial stress for non-elastic materials is 232c's design; the elastic offset of §9 stays.
+- **Q3:** v1 has grid-face conditions and stationary walls only.
+- **Q4:** 232c provides the test hooks.
