@@ -398,3 +398,43 @@ def test_validator_checks_csr_invariants(synth, offsets, num_ctrl, needle):
         assert problems == []
     else:
         assert any(needle in p for p in problems), problems
+
+
+# ---- WP-232a: the MPM particle group (FORMAT_MINOR_VERSION 2) -------------------
+
+
+@pytest.fixture()
+def synth_particles(tmp_path):
+    p = str(tmp_path / "synthetic_particles.ladruno")
+    make_synthetic.build(p, particles=True)
+    return p
+
+
+def test_particle_group_in_fe_file_validates(synth_particles):
+    """The shared-file case: FE results and a particle group in one stage. FORMAT_VERSION
+    stays 1 (additive), the minor is 2, and the v1 invariants still hold."""
+    assert lf.validate(synth_particles) == []
+    with lf.LadrunoReader(synth_particles) as r:
+        assert int(r.info()["FORMAT_VERSION"]) == lf.FORMAT_VERSION == 1
+        assert int(r.info()["FORMAT_MINOR_VERSION"]) == lf.FORMAT_MINOR_VERSION_PARTICLES
+        assert r.particle_stages() == ["MODEL_STAGE[0]"]
+        ids, pos = r.particle_output("MODEL_STAGE[0]", "POSITION", 1)
+    assert ids.tolist() == [0, 1, 2]
+    assert np.allclose(pos[:, 1], [2.24, 2.24, 2.74])
+
+
+def test_particle_group_needs_minor_2(synth_particles):
+    import h5py
+    with h5py.File(synth_particles, "r+") as f:
+        f["INFO"].attrs["FORMAT_MINOR_VERSION"] = 1
+    assert any(p.startswith("C2-MINOR") for p in lf.validate(synth_particles))
+
+
+def test_particle_group_refuses_a_repeated_id(synth_particles):
+    import h5py
+    with h5py.File(synth_particles, "r+") as f:
+        ds = f["MODEL_STAGE[0]/RESULTS/ON_PARTICLES/ID"]
+        ids = ds[...]
+        ids[1] = ids[0]
+        ds[...] = ids
+    assert any(p.startswith("C2-ID") for p in lf.validate(synth_particles))
