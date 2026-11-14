@@ -35,6 +35,7 @@ Python is the same with `ops.mpm('grid', 1, '-origin', 0.0, 0.0, ...)`.
 |---|---|
 | `mpm grid <tag> -origin <x0..> -h <h> -cells <n..> [-basis gimp\|linear]` | creates the host (load pattern `<tag>`); one per Domain in v1. `gimp` (uGIMP) is the production basis; `linear` is the cell-crossing contrast |
 | `mpm body <id> box <lo..> <hi..> -ppc <n> -mat <tag> -rho <ρ>` | lattice seeding (interface §5): `n` particles per cell per axis at `x0 + (a+½)h/n`, `V0 = (h/n)^ndm`, `lp = h/(2n)`; also `disc cx cy R` (2D) and `ball cx cy cz R` (3D). Ids run 0, 1, 2, … in seeding order. Returns the count |
+| `mpm shift <body> <dx..>` | translate a seeded body, before the first step |
 | `mpm particle <id> <body> <mat> <ρ> <V0> -x .. -lp .. [-v ..] [-s ..]` | one explicit particle (`-s`: initial stress, Voigt, tensor shear) |
 | `mpm velocity <body> uniform <v..>` / `sine <comp> <axis> <v0> <β> <x_ref>` | initial velocity of a body |
 | `mpm stress <body> uniform <s..>` / `geostatic <y_top> <ρ> <g> <K0>` | initial stress of a body (2D geostatic: σyy = −ρg(y_top − y), σxx = K0 σyy) |
@@ -54,7 +55,7 @@ Python is the same with `ops.mpm('grid', 1, '-origin', 0.0, 0.0, ...)`.
 
 ## One step
 
-1. refuse if a particle centre left the grid (interface A2) or `Δt > s·Δt_c`;
+1. refuse if a particle centre left the real grid (interface A2; the error names the lowest such id) or `Δt > s·Δt_c`;
 2. `Domain::applyLoad(t+Δt)`: the domain time advances and the host reads its series factor;
 3. P2G of mass, momentum and forces over the particles' support nodes; nodes below the cutoff drop;
 4. damping, grid momentum update, grid conditions (walls, then fixes);
@@ -67,8 +68,8 @@ Python is the same with `ops.mpm('grid', 1, '-origin', 0.0, 0.0, ...)`.
 The engine grid carries one ghost node layer beyond every face (interface A5), so a particle's
 GIMP support is never cut: the partition of unity holds right up to the face, and a body slides
 along a face without drag. A face's `fix` or `wall` acts on its face nodes and its ghost layer
-alike; a face with no condition just has free ghost nodes. Ghost nodes appear in the
-`mpm debug` hooks with negative ids.
+alike; a face with no condition just has free ghost nodes. Node ids count the ghost layer
+(interface §2): `id = (i+1) + (nx+3)·((j+1) + (ny+3)·(k+1))`, with the ghost layer at index −1.
 
 ## Materials
 

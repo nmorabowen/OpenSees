@@ -32,6 +32,7 @@
 //   mpm grid <tag> -origin <x0..> -h <h> -cells <n..> [-basis gimp|linear]
 //   mpm body <bodyId> box <lo..> <hi..> -ppc <n> -mat <matTag> -rho <rho>
 //   mpm body <bodyId> disc <cx> <cy> <R> -ppc ... (2D) | ball <cx> <cy> <cz> <R> ... (3D)
+//   mpm shift <body> <dx..>              translate a seeded body (before the first step)
 //   mpm particle <id> <body> <matTag> <rho> <V0> -x <..> -lp <..> [-v <..>] [-s <nv>]
 //   mpm velocity <body> uniform <v..> | sine <comp> <axis> <v0> <beta> <xref>
 //   mpm stress <body> uniform <nv values> | geostatic <yTop> <rho> <g> <K0>   (2D)
@@ -387,7 +388,7 @@ int OPS_LadrunoMPM(void)
   Domain *dom = OPS_GetDomain();
   if (dom == 0) return fail("-- no Domain");
   if (OPS_GetNumRemainingInputArgs() < 1)
-    return fail("<grid|body|particle|velocity|stress|fix|wall|gravity|timeSeries|damping|flip|"
+    return fail("<grid|body|shift|particle|velocity|stress|fix|wall|gravity|timeSeries|damping|flip|"
                 "massCutoff|safety|criticalTimeStep|analyze|reset|info|particleData|debug> ...");
   const std::string sub = OPS_GetString();
   if (sub == "grid") return cmdGrid(dom);
@@ -399,6 +400,14 @@ int OPS_LadrunoMPM(void)
 
   if (sub == "body") return cmdBody(h);
   if (sub == "particle") return cmdParticle(h);
+  if (sub == "shift") {
+    // mpm shift <body> <dx..>: translate a seeded body before the first step (A5)
+    int body;
+    double dx[3] = {0, 0, 0};
+    if (!readInt(body) || !readDoubles(nd, dx)) return fail("shift <body> <dx..>");
+    if (h->hasStepped()) return fail("shift -- particles cannot move by hand after the first step");
+    return outInt(E.shiftBody(body, dx));
+  }
   if (sub == "velocity") return cmdVelocity(h);
   if (sub == "stress") return cmdStress(h);
   if (sub == "fix") return cmdFix(h, false);

@@ -28,7 +28,7 @@ case is therefore here or in the case file. Written without reading anything und
 | Voigt, plane strain | `[xx, yy, xy]`, same shear convention. ε_zz = ε_yz = ε_zx = 0 by construction; σ_zz is **not carried by the engine** (it is the material's business; no comparison in this file uses it). |
 | Plane-strain thickness | Masses and volumes in 2D are **full** values (area × thickness). Thickness never enters the kinematics; every 2D case uses thickness 1. |
 | Indices | 0-based everywhere: nodes, cells, particles, components. |
-| Time | `t_{n+1} = t_n + Δt`. The step that starts at `t_n` uses the load factor at `t_{n+1}` (ADR §5.2 step 2: `Domain::applyLoad(t + Δt)` runs before P2G). |
+| Time | `t_{n+1} = t_n + Δt`, **accumulated** step by step in double precision (`t += Δt`, starting from 0), not recomputed as `n·Δt` (Amendment 5). The step that starts at `t_n` uses the load factor at `t_{n+1}` (ADR §5.2 step 2: `Domain::applyLoad(t + Δt)` runs before P2G). |
 
 ## 2. The grid
 
@@ -37,21 +37,31 @@ One uniform Cartesian background grid per engine, rebuilt (zeroed) every step (A
 - **Geometry:** origin `x0` (the minimum corner, `ndm` floats), one cell size `h > 0` for every
   axis, cell counts `n = (n_x[, n_y[, n_z]])`, each ≥ 1. The grid spans `[x0_d, x0_d + n_d·h]` on
   axis d.
-- **Nodes:** `(n_x+1)·(n_y+1)·(n_z+1)` of them. Node `(i, j, k)` sits at `x0 + (i·h, j·h, k·h)`,
-  with `0 ≤ i ≤ n_x` etc. Its id is
+- **Nodes, with ghost layers (Amendment 5).** Beyond each face the grid carries `G = 1` ghost node
+  layer. Node `(i, j, k)` sits at `x0 + (i·h, j·h, k·h)` with `−1 ≤ i ≤ n_x + 1` etc.; the real
+  nodes are `0 ≤ i ≤ n_x`. There are `(n_x+3)·(n_y+3)·(n_z+3)` nodes. Ids count the ghosts:
 
   ```
-  1D: id = i
-  2D: id = i + (n_x+1)·j
-  3D: id = i + (n_x+1)·(j + (n_y+1)·k)
+  1D: id = (i+1)
+  2D: id = (i+1) + (n_x+3)·(j+1)
+  3D: id = (i+1) + (n_x+3)·((j+1) + (n_y+3)·(k+1))
   ```
   (x fastest, then y, then z).
+
+  **Why one layer is enough.** An admissible particle has its centre in the real grid (§4.1) and
+  `lp ≤ h/2`. Its uGIMP support is the open interval `|x_p − x_i| < h + lp ≤ 3h/2`. From
+  `x_p ≥ x0`, node `i = −2` is at distance `≥ 2h`, outside the support. Node `i = −1` is at
+  distance `≥ h` and carries weight once the domain overhangs the face (`x_p − x0 < lp`). The same
+  holds at the maximum face. The linear basis never reaches a ghost node: its two nodes per axis
+  bound the clamped cell.
 - **Cells:** cell `(i, j, k)` spans `[x0 + i·h, x0 + (i+1)·h]` per axis, `0 ≤ i < n_x`; id
   `i + n_x·(j + n_y·k)`. A coordinate `x` lies in cell `floor((x − x0)/h)`, clamped to `n − 1` so
   the maximum face belongs to the last cell.
-- **Faces** (where grid conditions live, §7): `xmin, xmax, ymin, ymax, zmin, zmax` — the node
-  sets `i = 0`, `i = n_x`, `j = 0`, `j = n_y`, `k = 0`, `k = n_z`. Each has an **inward unit
-  normal** `n` pointing into the grid: `xmin → +e_x`, `xmax → −e_x`, and so on.
+- **Faces** (where grid conditions live, §7): `xmin, xmax, ymin, ymax, zmin, zmax`. A face's
+  node set is its face layer **and its ghost layer**: `xmin` is `i ∈ {−1, 0}`, `xmax` is
+  `i ∈ {n_x, n_x+1}`, and so on (Amendment 5). Each has an **inward unit normal** `n` pointing into
+  the grid: `xmin → +e_x`, `xmax → −e_x`, and so on. A face with no condition simply extends the
+  grid with free nodes.
 - Interior planes are not grid conditions in v1 (open question Q3).
 
 ## 3. Particle state
@@ -105,15 +115,14 @@ gradient of node i's function, evaluated at the particle, is `dS/dr` (since `r =
 derivative with respect to `x_p` is `+dS/dr`).
 
 **Support enumeration.** On axis d, with `c = floor((x_p − x0_d)/h)`, the candidate nodes are
-`c−1, c, c+1, c+2`; drop those outside `[0, n_d]`. Candidates with `S = 0` may be kept or dropped
-(their weight and gradient are both 0). At most 3 per axis carry weight.
+`c−1, c, c+1, c+2`. Any candidate outside the ghost range `[−1, n_d + 1]` has `S = 0` and a zero
+gradient (§2); skip it. Candidates with `S = 0` may be kept or dropped. At most 3 per axis carry
+weight. **Nothing with weight is ever dropped** (Amendment 5).
 
-**Admissibility (as amended by Amendment 2).** A particle is admissible iff on every axis its
-**centre** lies in the grid, `x0_d ≤ x_p ≤ x0_d + n_d·h`, and `0 < lp_d ≤ h/2`. Support candidates
-outside `[0, n_d]` are **dropped**: their weight and gradient are lost. When the whole domain is
-inside the grid (`x0_d ≤ x_p − lp_d` and `x_p + lp_d ≤ x0_d + n_d·h`), `Σ_i S_ip = 1` and
-`Σ_i ∇S_ip = 0` exactly (partition of unity). A domain that overhangs a face by `δ < lp` loses the
-weight `δ²/(4·h·lp)` of the missing node.
+**Admissibility (Amendment 2, kept by Amendment 5).** A particle is admissible iff on every axis
+its **centre** lies in the real grid, `x0_d ≤ x_p ≤ x0_d + n_d·h`, and `0 < lp_d ≤ h/2`. Then its
+whole support lies in the ghost-extended grid, and `Σ_i S_ip = 1` and `Σ_i ∇S_ip = 0` hold exactly
+(partition of unity), overhanging a face or not.
 
 ### 4.2 Linear hat, 1D factor
 
@@ -141,6 +150,9 @@ The cases describe bodies, not particle lists, so that a case is reproducible fr
   axis; `disc` (2D) — `|x − c|² < R²`; `ball` (3D) — same, strict.
 - Each particle gets `V0 = (h/n)^ndm` (× thickness 1 in 2D), `m = ρ·V0`, `lp_d = h/(2n)`, `F = R = I`,
   `eps_hat = 0`, the body's initial velocity and initial stress (`sig_hat = sig = sig0_hat`).
+- **Exact coordinate (Amendment 5):** in double precision, sub-lattice point `a` on axis d is
+  `x0_d + ((a + 0.5) * h) / n`, evaluated as written: `(a + 0.5)` first, then `* h`, then `/ n`,
+  then `x0_d +`. A body's `shift` (cases only) is added after that.
 - **Ordering and ids:** bodies in file order; inside a body, sub-lattice points in order of
   `a_x` fastest, then `a_y`, then `a_z`. Ids run 0, 1, 2, … across all bodies in that order.
 - A case may also list explicit particles (`particle` lines); they come after the lattice bodies,
@@ -154,12 +166,12 @@ The numbering follows ADR §5.2. All sums run over the support nodes of each par
 ### 6.1 Step 1 — admissibility and the critical time step
 
 1. Every particle must be admissible (§4.1, §4.2) at `x^n`; otherwise the step is **refused**
-   (error naming the first offending particle id), and nothing changes.
+   (error naming the offending particle with the **lowest id**), and nothing changes.
 2. Critical time step, from the committed state:
 
    ```
    c_p   = sqrt(M_p / ρ_p),   ρ_p = m_p / V_p
-   M_p   = the largest normal diagonal entry of the particle's current material tangent
+   M_p   = the largest normal diagonal entry of the particle's COMMITTED material tangent
            (Voigt rows xx, yy[, zz]); for isotropic elasticity M = λ + 2μ
    Δt_c  = h / max_p ( c_p + |v_p| )            (|·| the Euclidean norm)
    ```
@@ -267,7 +279,8 @@ The oracle's elastic material never refuses.
 
 ## 7. Grid conditions
 
-Conditions are attached to grid **faces** (§2) and act on the active nodes of that face.
+Conditions are attached to grid **faces** (§2) and act on the active nodes of that face's node
+set — its face layer **and its ghost layer alike** (Amendment 5).
 
 - **`fix <face> <components>`** — the listed velocity components are set to 0 (`components` is a
   subset of `x y z`). A slip (roller) face is `fix` of the face's normal component only.
@@ -375,6 +388,8 @@ All sums run over all particles of the engine unless a case names a body.
 | `cell_crossing_meter ρ0 g l0 y_base` | the same residual as RMS: `sqrt(mean_p (sig_yy,p − σ_exact(Y_p))²) / (ρ0·|g|·l0)` |
 | `max_speed` | `max` over every recorded step and every particle of `|v_p|` |
 | `com_disp_x <body>` | `com_x(end) − com_x(0)` of the named body |
+| `com_disp <body>` | `com(end) − com(0)` of the named body (`ndm` values) |
+| `com_v <body>` | `com_v` of the named body after the last step (`ndm` values) |
 | `com_v_x <body>` | `com_v_x` of the named body after the last step |
 | `translation_error <v0>` | `max_p |x_p(end) − (X_p + v0·t_end)|` (Euclidean), `X_p` the initial position |
 | `F_error` | `max_p max_ab |F_ab − δ_ab|` after the last step |
@@ -506,6 +521,10 @@ case, not an edge case.
 - Partition of unity still holds exactly for any particle whose whole domain is inside.
 - The linear basis was already centre-based; unchanged.
 - No case's frozen value changes. The basis cases keep their domains inside the grid.
+- Accepted by the orchestrator (2026-11-13), with a limitation: dropping is exact only at faces
+  with a fixed normal velocity.
+- **The truncation is withdrawn by Amendment 5:** it is not exact even there. Ghost layers replace
+  it. The centre-in-grid admissibility rule stays.
 
 ### Amendment 3 — 2026-11-13 — case corrections (`tests/mpm_cases.txt`)
 
@@ -544,4 +563,113 @@ Found by the phase-2 oracle. Each is a fault in the case, not in the interface.
   - The linear basis gives 0.47.
   - The small-deformation column (`ρ0·g·l0/E` = 0.002) gives 0.013, which is O(lp/l0).
   - The tolerance stays frozen at 0.03. The pytest marks this check as a strict xfail until the
-    orchestrator rules: change the gate, or the case.
+    orchestrator rules: change the gate, or the case. (Ruled: Amendment 4.)
+
+### Amendment 4 — 2026-11-13 — the self-weight column is split
+
+The orchestrator's ruling on the shortfall above. The error grows under refinement
+(0.067 → 0.106), so it is a limitation of the basis, not noise. The tolerance is **not** loosened,
+and the gate is **not** moved to the RMS meter.
+
+- **New case `column_selfweight_small_2d_gimp`:** the same column with `E = 5e7`
+  (`ρ0·g·l0/E` = 0.002), `dt = 0.001`, 6000 steps. Its `selfweight_error` is gated at the frozen
+  0.03; the oracle gives 0.0128. **This is the slice-1 gate for the closed form.**
+- **`column_selfweight_2d_gimp` (20% compression) stays a strict xfail** at 0.03. Measured
+  numbers, also in the case file's comments: max error 0.072 (h = 0.5), 0.067 (h = 0.25),
+  0.106 (h = 0.125); RMS meter 0.021. It is the acceptance test for phase 3's domain-tracking
+  GIMP or B-spline basis.
+- **The RMS `cell_crossing_meter` is an observable, not a gate.** Its `eq` lines are cross-checks
+  of the C++ engine against the oracle's number. Only the GIMP < linear relation is asserted on it.
+- Quirk ledger: `Ladruno_implementation/ledger/quirks/WP-232b-ugimp-fixed-domains-do-not-converge-under-large-compression.md`.
+
+### Amendment 5 — 2026-11-13 — ghost layers, pinning checks, case corrections (the Fable review of #1076)
+
+**F1 — ghost layers replace A2's truncation (§2, §4.1, §7).**
+- The review's probe, re-run by the orchestrator: dropping out-of-grid support nodes is exact only
+  for the *normal* component at a fixed face. For motion *along* a face, `Σ∇S ≠ 0` gives a
+  spurious `L_tn` and a net drag. A block sliding at 0.3 m/s along `fix ymin y` with δ/lp = 0.5
+  ends at `v_x ≈ −0.03` under PIC, with about 1 kPa of stress.
+- **New rule:** the grid carries `G = 1` ghost node layer beyond every face. One layer holds the
+  whole support of any admissible uGIMP particle with `lp ≤ h/2`; §2 gives the proof. Nothing is
+  dropped.
+- A face's condition acts on its face layer and its ghost layer alike. A face with no condition is
+  free nodes.
+- Admissibility is unchanged: the centre inside the real grid.
+- **Node ids now count the ghosts** (§2): `id = (i+1) + (n_x+3)·((j+1) + (n_y+3)·(k+1))`.
+- **New closed-form cases:**
+  - `overhang_fix_02_2d`, `overhang_fix_05_2d`, `overhang_wall_02_2d`, `overhang_wall_05_2d`: an
+    unstressed block translating along `fix ymin y` and along `wall ymin 0.3` at δ/lp = 0.2 and
+    0.5. Exact: `F = I`, `σ = 0`, `v_x = v0`.
+  - `roller_slide_2d`: a soft block under gravity sliding on a roller face; `com_v_x` stays
+    exactly `v0`.
+- **New case key** `shift <body> <ndm floats>`; **new observables** `com_v <body>` and
+  `com_disp <body>`.
+
+**Values that changed for 232c** (`tests/mpm_cases.txt`; every other value is identical,
+including all `field` lines):
+
+| Case | Line | Change |
+|---|---|---|
+| `shape_gimp_2d`, `shape_gimp_3d`, `shape_linear_2d`, `shape_linear_top_face_2d` | `expect node` | ids renumbered; weights unchanged |
+| `masscut_2d` | `active_nodes` | now `18 19 25 26` |
+| `masscut_zero_2d` | `active_nodes` | now `17 18 19 24 25 26` |
+| `bar_flip_2d`, `bar_flip_3d`, `bar_dt_limit_2d` | `energy_ratio_end eq` | about 2e-8 relative — more than the 1e-8 tolerance |
+| `column_selfweight_2d_gimp` | `cell_crossing_meter eq` | 0.020675 → 0.020542 |
+| `column_selfweight_small_2d_gimp` | both `eq` lines | below 1e-7 relative |
+| `small_mass_run_2d` | the whole case | replaced (F4) |
+
+**F2 — mutants that survived.** These oracle mutants passed every non-circular check: L
+transposed, G doubled, no stress push, friction in both projections, load factor at `t_n`, V
+frozen at V0, α_D halved, cutoff ignored in `step()`. Three checks now catch them:
+- **The affine-field unit check** (pytest): nodal `v = A·x` with a non-symmetric `A` must give
+  `L = A`.
+- **The case `freefall_damped_2d`:** a damped free fall under a ramp. It pins `α_D`,
+  `sign(0) = 0` and the load factor at `t_{n+1}`. The closed form is a scalar recurrence stated in
+  the case.
+- **Invariants on the stored `field` lines** (pytest), with a polar factor computed
+  independently (eigen-decomposition of FᵀF): `V = det F·V0`, `sig_hat = sig0 + D·eps_hat`,
+  `sig = R·sig_hat·Rᵀ`.
+
+Each of the eight mutants was then run against the suite after regenerating every
+oracle-derived value with the mutant, so that the circular checks pass trivially. Six died on a
+non-circular check:
+
+| Mutant | Killed by |
+|---|---|
+| L transposed | the affine-field check |
+| G doubled | the basis cases |
+| no stress push | the field invariants |
+| V frozen at V0 | the field invariants |
+| load factor at `t_n` | `freefall_damped_2d` |
+| α_D halved | `freefall_damped_2d` |
+
+Two survived, because each changes nothing a closed form at observable level can see. Two
+step-level hand checks were added, and each kills its mutant:
+- **Friction in both projections.** The second projection only shapes `L`, never momentum. New
+  check `test_second_projection_applies_no_penetration_only`: with one particle, `v* = v^{n+1}` at
+  every support node, minus the wall-normal part at wall nodes, so `F^{n+1}` is known by hand.
+- **Cutoff ignored in `step()`.** New check `test_step_applies_the_mass_cutoff`: one stressed
+  particle gives `v^{n+1} = −Δt·(V/m)·σ·Σ_active ∇S_i`. That is 0 with every node active, and the
+  dropped nodes' part with the cutoff.
+
+**F3.** The `selfweight_error eq` line of `column_selfweight_small_2d_gimp` has tolerance
+`0 1e-4`. Its `le 0.03` gate and its meter line are unchanged.
+
+**F4.** `small_mass_run_2d` was vacuous: without the cutoff, one self-stressed particle gives
+`max_speed` exactly 0. It is replaced by two particles of different stress that share a tiny-mass
+node. With a case-level cutoff `c_m = 1e-4`, under PIC, `max_speed` is 7.1e-5; without the
+cutoff it is 3.2e-5.
+
+**F5 — wording.**
+- The small column's gate has a floor of `h/(4·l0)` = 0.0125. Particle stresses sit O(lp) off the
+  exact line.
+- The impact gate is "energy growth ≤ 1%"; the oracle shows 0.31%. It is not "no energy is
+  created".
+- `bar_dt_limit_2d` tests acceptance just below the estimate, and states the measured 1D limit
+  (1.74·Δt_c).
+
+**F6 — specified.**
+- A refused step names the offending particle with the lowest id (§6.1).
+- `M_p` comes from the committed tangent (§6.1).
+- The exact lattice coordinate expression (§5).
+- `t_{n+1} = t_n + Δt`, accumulated (§1).

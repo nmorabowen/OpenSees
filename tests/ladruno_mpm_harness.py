@@ -36,7 +36,7 @@ def parse_cases(path=CASES):
             continue
         k = t[0]
         if k == "case":
-            cur = {"name": t[1], "ndm": 2, "basis": "gimp", "mats": {}, "bodies": [],
+            cur = {"name": t[1], "ndm": 2, "basis": "gimp", "mats": {}, "bodies": [], "shifts": [],
                    "velocities": [], "stresses": [], "particles": [], "fixes": [], "walls": [],
                    "gravity": None, "series": None, "damping": 0.0, "flip": 1.0,
                    "masscut": 1e-10, "safety": 0.5, "dt": 0.0, "steps": 0, "tol": (0.0, 0.0),
@@ -65,6 +65,8 @@ def parse_cases(path=CASES):
             cur["mats"][int(t[1])] = (float(t[3]), float(t[4]))
         elif k == "body":
             cur["bodies"].append(t)
+        elif k == "shift":
+            cur["shifts"].append(t)
         elif k == "velocity":
             cur["velocities"].append(t)
         elif k == "stress":
@@ -146,6 +148,8 @@ def setup_commands(c):
         rest = b[3 + ng:]
         ppc, mat, rho = int(rest[1]), int(rest[3]), float(rest[5])
         cmds.append(("mpm", ["body", bid, shape, *geom, "-ppc", ppc, "-mat", mat, "-rho", rho]))
+    for sh in c["shifts"]:
+        cmds.append(("mpm", ["shift", int(sh[1]), *[float(w) for w in sh[2:2 + nd]]]))
     nv = 6 if nd == 3 else 3
     for p in c["particles"]:
         pid, body, mat, rho, V0 = int(p[1]), int(p[2]), int(p[3]), float(p[4]), float(p[5])
@@ -418,6 +422,16 @@ def observables(c, r):
             out[key] = [max(s[1 + nd] for s in r["summary"])]
         elif ob == "momentum":
             out[key] = [max(abs(s[1 + d]) for s in r["summary"]) for d in range(nd)]
+        elif ob in ("com_disp", "com_v"):
+            b = int(e["args"][0])
+            body, m = r["init_body"], r["init_m"]
+            sel = [p for p in range(len(m)) if int(round(body[p])) == b]
+            mt = sum(m[p] for p in sel)
+            if ob == "com_v":
+                out[key] = [sum(m[p] * r["end_v"][nd * p + d] for p in sel) / mt for d in range(nd)]
+            else:
+                out[key] = [sum(m[p] * (r["end_x"][nd * p + d] - r["init_x"][nd * p + d]) for p in sel) / mt
+                            for d in range(nd)]
         elif ob in ("com_disp_x", "com_v_x"):
             b = int(e["args"][0])
             body, m = r["init_body"], r["init_m"]

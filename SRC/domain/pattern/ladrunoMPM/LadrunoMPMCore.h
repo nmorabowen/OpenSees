@@ -111,9 +111,9 @@ inline void gimpFactor(double r, double h, double lp, double &S, double &dS)
 // grid condition acts on its face nodes and on its ghost layers alike; a face
 // with no condition just has free ghost nodes.
 //
-// Two numberings: the ENGINE index (extId) runs over the extended lattice
-// i in [-ghost, n+ghost], x fastest; the INTERFACE id (nodeId, §2) numbers the
-// real nodes only and is what the hooks report (publicId maps one to the other).
+// Numbering: the engine index (extId) runs over the extended lattice
+// i in [-ghost, n+ghost], x fastest; with ghost = 1 it IS the interface §2 id of
+// Amendment 5, which the hooks report (publicId).
 struct Grid {
   int    ndm = 0;
   double x0[3] = {0.0, 0.0, 0.0};
@@ -127,12 +127,6 @@ struct Grid {
     long c = 1;
     for (int d = 0; d < ndm; d++) c *= (long)extCount(d);
     return c;
-  }
-  // interface §2 id of a REAL node (0 <= i <= n per axis)
-  long nodeId(const int ijk[3]) const
-  {
-    if (ndm == 2) return ijk[0] + (long)(n[0] + 1) * ijk[1];
-    return ijk[0] + (long)(n[0] + 1) * (ijk[1] + (long)(n[1] + 1) * ijk[2]);
   }
   // engine index of a node, -ghost <= i <= n + ghost per axis
   long extId(const int ijk[3]) const
@@ -157,14 +151,10 @@ struct Grid {
       if (ijk[d] < 0 || ijk[d] > n[d]) return false;
     return true;
   }
-  // The id a hook reports: the interface id for a real node; for a ghost node
-  // -(1 + engine index), provisional until the amended interface numbers ghosts.
-  long publicId(long ext) const
-  {
-    int ijk[3];
-    extIJK(ext, ijk);
-    return isReal(ijk) ? nodeId(ijk) : -(1 + ext);
-  }
+  // The id a hook reports. Amendment 5 numbers the nodes WITH their ghost layer:
+  // id = (i+1) + (nx+3)((j+1) + (ny+3)(k+1)), which is exactly the engine index
+  // for ghost = 1 (asserted by the g++ core check).
+  long publicId(long ext) const { return ext; }
   // cell index of coordinate x on axis d: floor((x - x0)/h), clamped to n-1
   int cellOf(int d, double x) const
   {
@@ -449,14 +439,32 @@ class Engine {
 
   // Index of the first particle not admissible at its committed position
   // (interface §4.1 as amended by A2 and A5, §4.2), or -1.
+  // When several are inadmissible, the one with the LOWEST id (A5 F6).
   int firstInadmissible() const
   {
     const int nd = grid.ndm;
+    int worst = -1;
     for (int p = 0; p < P.size(); p++)
       for (int d = 0; d < nd; d++)
-        if (!admissibleAxis(grid, par.basis, d, P.x[nd * p + d], P.lp[nd * p + d]))
-          return p;
-    return -1;
+        if (!admissibleAxis(grid, par.basis, d, P.x[nd * p + d], P.lp[nd * p + d])) {
+          if (worst < 0 || P.id[p] < P.id[worst]) worst = p;
+          break;
+        }
+    return worst;
+  }
+
+  // Translate every particle of a body (the cases' `shift`, A5). Before the
+  // first step only; the host enforces that. Returns the count.
+  int shiftBody(int body, const double *dx)
+  {
+    const int nd = grid.ndm;
+    int count = 0;
+    for (int p = 0; p < P.size(); p++) {
+      if (P.body[p] != body) continue;
+      for (int d = 0; d < nd; d++) P.x[nd * p + d] += dx[d];
+      count++;
+    }
+    return count;
   }
 
   // Critical time step (interface §6.1) from the committed state; +inf with no

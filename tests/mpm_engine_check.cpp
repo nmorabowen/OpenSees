@@ -77,7 +77,7 @@ struct Case {
   double origin[3] = {0, 0, 0}, h = 1.0;
   int cells[3] = {1, 1, 1};
   std::map<int, std::pair<double, double>> mats;
-  std::vector<std::vector<std::string>> bodies, velocities, stresses, particles, fixes, walls;
+  std::vector<std::vector<std::string>> bodies, shifts, velocities, stresses, particles, fixes, walls;
   double point[3] = {0, 0, 0}, plp[3] = {0, 0, 0};
   double gravity[3] = {0, 0, 0};
   double seriesTr = -1.0;
@@ -124,6 +124,7 @@ static std::vector<Case> parse(const char *path)
     else if (k == "cells") for (int d = 0; d < c.ndm; d++) c.cells[d] = std::stoi(t[1 + d]);
     else if (k == "material") c.mats[std::stoi(t[1])] = {D(t[3]), D(t[4])};
     else if (k == "body") c.bodies.push_back(t);
+    else if (k == "shift") c.shifts.push_back(t);
     else if (k == "velocity") c.velocities.push_back(t);
     else if (k == "stress") c.stresses.push_back(t);
     else if (k == "particle") c.particles.push_back(t);
@@ -188,6 +189,11 @@ static bool build(const Case &c, Engine &E, Hypoelastic &M, std::vector<double> 
     if (E.seedLattice(shape, geom.data(), ppc, bid, mat, rho, next, err) < 0) {
       std::printf("FAIL: %s seed: %s\n", c.name.c_str(), err.c_str()); g_fail++; return false;
     }
+  }
+  for (const auto &sh : c.shifts) {   // shift <body> <ndm floats> (A5): seeded particles move
+    double dx[3] = {0, 0, 0};
+    for (int d = 0; d < nd; d++) dx[d] = D(sh[2 + d]);
+    E.shiftBody(std::stoi(sh[1]), dx);
   }
   for (const auto &pt : c.particles) {
     // particle id body mat rho V0 x .. lp .. v .. s ..
@@ -506,6 +512,16 @@ static void runCase(const Case &c)
       got = {o.maxSpeed};
     } else if (ob == "momentum") {
       got = momMax;
+    } else if (ob == "com_disp" || ob == "com_v") {
+      const int bid = std::stoi(e.args[0]);
+      double mt = 0.0, a[3] = {0, 0, 0};
+      for (int p = 0; p < N; p++) {
+        if (E.P.body[p] != bid) continue;
+        mt += E.P.m[p];
+        for (int d = 0; d < nd; d++)
+          a[d] += E.P.m[p] * ((ob == "com_v") ? E.P.v[nd * p + d] : (E.P.x[nd * p + d] - X0[nd * p + d]));
+      }
+      for (int d = 0; d < nd; d++) got.push_back(a[d] / mt);
     } else if (ob == "com_disp_x" || ob == "com_v_x") {
       const int bid = std::stoi(e.args[0]);
       double mt = 0.0, a = 0.0, a0 = 0.0;
@@ -569,6 +585,23 @@ int main(int argc, char **argv)
     std::printf("%s: A5 roller slide with overhang, max |v - v0| = %.3e\n",
                 worst < 1e-12 ? "ok  " : "FAIL", worst);
     if (!(worst < 1e-12)) g_fail++;
+  }
+  {  // A5 numbering: id = (i+1) + (nx+3)((j+1) + (ny+3)(k+1)), ghosts included
+    Grid g;
+    g.ndm = 3; g.h = 1.0; g.n[0] = 3; g.n[1] = 2; g.n[2] = 4;
+    bool ok = true;
+    for (int k = -1; k <= 5; k++)
+      for (int j = -1; j <= 3; j++)
+        for (int i = -1; i <= 4; i++) {
+          const int ijk[3] = {i, j, k};
+          const long want = (i + 1) + 6L * ((j + 1) + 5L * (k + 1));
+          int back[3];
+          g.extIJK(g.extId(ijk), back);
+          ok = ok && g.publicId(g.extId(ijk)) == want && back[0] == i && back[1] == j && back[2] == k;
+        }
+    g_checks++;
+    std::printf("%s: A5 node numbering (3D, ghosts included)\n", ok ? "ok  " : "FAIL");
+    if (!ok) g_fail++;
   }
   auto cases = parse(argc > 1 ? argv[1] : "tests/mpm_cases.txt");
   for (const auto &c : cases) runCase(c);
