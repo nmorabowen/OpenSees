@@ -80,6 +80,8 @@ machine, different layout — not a contradiction, and not a Windows recipe.
 | `mpm_crash_tests/kill_stress.py` | Kill stress of the MPM particle writer (WP-232c): runs the real `dist\bin\opensees.pyd`, kills it N times at fixed and random waits, and checks that each `.ladruno` reads by the reader rule and crash rule (232a §2.5) |
 | `mpm_crash_tests/reset_stress.py` | Kill stress across `mpm reset` (WP-232c): kills the real binary while it alternates `mpm analyze` and `mpm reset`, classifies each file by the reader rule (plain, SWMR-read, or refused) and recovers refused files on a copy with `recover_particle_file` (232a §2.5 step 3) |
 | `mpm_crash_tests/hdf5_crash_replay.py` | Byte-level crash replay model of the MPM writer's HDF5 call pattern in h5py (no binary): rebuilds the file at every kill point and checks every committed output; shows the pre-SWMR index-split tear and that SWMR removes it |
+| `ladruno_recorder_tests/recorder_crash_replay.py` | The same byte-level crash replay for `recorder ladruno`'s streaming write path (h5py mirror, no binary): every result's DATA/TIME/STEP checked exactly at every kill point, per `-flush` cadence, `-compress`, layout scale, with or without SWMR |
+| `ladruno_recorder_tests/recorder_kill_stress.py` | Real-time kill stress of that h5py mirror (sec2 driver, wall-clock `-flush`): TerminateProcess at random waits, then the replay's checker |
 
 ### Environment wiring
 | Script | Purpose |
