@@ -100,10 +100,13 @@ FAMILIES = {
         # The 20 survivors are physics-free for the internal force by design:
         # the unit hooks (shape, critdt, masscut), the stress-free closed forms
         # (translation, overhang, freefall) and the PIC<FLIP / linear>GIMP
-        # orderings. Every stress-bearing case dies. SCALE: placeholder until
-        # its run.
+        # orderings. Every stress-bearing case dies. SCALE (778145f3a): 22/38 =
+        # 0.579; survivors are the unit hooks, the orderings, and three cases
+        # that never test a position increment: incline_stick (8.6e-5 m of
+        # motion, x1.5 still inside its 0.005 m band), k0_quiet_start (exactly
+        # at rest) and roller_slide (a velocity check).
         "paths": ["test_ladruno_mpm_engine.py"],   # the cases suite; lifecycle/refusal tests are physics-free
-        "min_score": {"ZERO": 0.45, "SCALE": 0.30, "IDENT": 0.0},
+        "min_score": {"ZERO": 0.45, "SCALE": 0.55, "IDENT": 0.0},
     },
     # --- WP-3 lanes: gates NOT yet inserted in these families' elements. -----
     # Registering the paths here is deliberate (it documents the intended

@@ -119,5 +119,14 @@ Stock recorders cannot see particles. Use `mpm particleData`. The `.ladruno` par
   and the two engines against each other. The MPM mutation family's suite.
 - `tests/test_ladruno_mpm_lifecycle.py` — refusals, lifecycle, admitted materials, the stage path,
   thread-count determinism.
+- **Mutation gate (ADR-87 D2), family `MPM`:** `ZERO` drops the P2G internal force, `SCALE`
+  multiplies the G2P position increment by 1.5. The suite is `tests/test_ladruno_mpm_engine.py`.
+  Run conditions: the mutant `opensees.pyd` on `PYTHONPATH`, the default tests directory (not
+  `--module-dir`, which runs pytest where the test files are not), and `LADRUNO_TCL_EXE` pointing
+  at a nonexistent path in BOTH the baseline and the mutant run — a mutant build has no
+  `OpenSees.exe`, so the Tcl half would otherwise run the normal binary and score as survivors.
+  Measured on the Python half: ZERO 18/38 = 0.474 (floor 0.45), SCALE 22/38 = 0.579 (floor 0.55).
+  The survivors are the unit hooks, the case orderings, the stress-free closed forms under ZERO,
+  and the cases that never test a position increment under SCALE.
 - Known: the 20%-compression self-weight column misses its frozen 0.03 (0.072, as in the oracle;
   uGIMP cell crossing) — a strict xfail per interface A4.
