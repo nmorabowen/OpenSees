@@ -133,8 +133,9 @@ group or dataset anywhere in Contract 1 is C1-REQ.
 - **The `-file` line is not a `command()` row.** It stays out of apeGmsh's `/opensees/commands` and
   `model_hash`. A replay reproduces the particle content under a **new `SET_ID`**, not a
   byte-identical file.
-- **Its stem is the deck's.** The model archive (`<stem>.h5`) need not share it; the two files pair
-  through `PROVENANCE` (§1.5).
+- **Its stem is the deck's, and should be the model's.** apeGmsh's viewer pairs by stem only (the
+  owner's ruling on apeGmsh#2976, 2026-11-14). The set pairs with its model `<stem>.h5` only when the
+  deck stem equals the model stem. A set at another stem opens without a model.
 - **Overwrites.** The emitter replaces an existing `<deck stem>.particles.h5` only when that file is
   a Contract-1 file written by an apeGmsh emit: `FORMAT = "ladruno-mpm-particles"` and
   `GENERATOR = "apeGmsh"`. Any other file refuses the emit, and a refused set means no deck is
@@ -225,10 +226,12 @@ Producer-written attributes with lowercase names. Readers ignore the ones they d
 |---|---|---|---|
 | `apegmsh_version` | string | when `GENERATOR = "apeGmsh"` | the apeGmsh version that wrote the file |
 | `apegmsh_commit` | string | when `GENERATOR = "apeGmsh"` | 40 lowercase hex characters, or `"unknown"` |
-| `session_id` | string | when `GENERATOR = "apeGmsh"` | the session's uuid4 (`/meta/session_id` of the paired `<stem>.h5`) |
-| `fem_hash`, `model_hash` | string | no | copied byte-equal from the paired `<stem>.h5` `/meta/lineage`, when it has them |
+| `session_id` | string | when `GENERATOR = "apeGmsh"` | the emitting session's uuid4 |
+| `fem_hash`, `model_hash` | string | no | the session's lineage hashes, when it has them |
 
-C1-PROV checks the three required attributes.
+C1-PROV checks the three required attributes. apeGmsh's emitter takes these values from the
+session's in-memory lineage at emit, because `model.h5` may not be on disk yet. They record where
+the set came from; they do not pair it with a model, which is done by stem (§1).
 
 ### 1.6 `SEEDING` (optional group, attributes only)
 
@@ -608,6 +611,8 @@ after loading `particle_set_v1.h5`; `tests/test_mpm_contracts.py` checks the map
   - MPM emits are serial only;
   - the `-file` line is per deck target and not a `command()` row, so a replay gets a new `SET_ID`;
   - both emitters anchor the path to the deck's folder, and the fork opens the path as given (§1).
+- **2026-11-14, the owner's answer on apeGmsh#2976 ("Yes, same stem"):** pairing is by stem only.
+  The provenance hashes come from the in-memory lineage at emit and do not pair (§1, §1.5).
 - **Gate before code.** The owner must ratify apeGmsh ADR 0134 (`232a_apegmsh_adr_draft.md`, through
   apeGmsh's T coordinator and maintainer) before 232c's particle-set reader and `.ladruno` writer,
   and before 232d, start (ADR §9, "Gate before code (232a)").

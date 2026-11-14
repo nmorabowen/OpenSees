@@ -90,9 +90,11 @@ There is one rule for the stem, the folder, the path in the deck, overwrites, an
   The archive carries the MPM declarations (D2). A replay re-emits the line for its own target and
   reproduces the particle **content**, under a new `SET_ID`. It does not reproduce a byte-identical
   file.
-- **Its stem is the deck's.** `model.h5` keeps its own path (the script stem or `save_to=`) and need
-  not share this stem. The two files pair through the particle file's provenance (below), not
-  through their names.
+- **Its stem is the deck's, and it should be the model's** (the owner's ruling on #2976,
+  2026-11-14: "Yes, same stem"). The viewer pairs by stem only. A particle set pairs with its
+  model only when the deck stem equals the model stem, so `ops.tcl("slab.tcl")` beside `slab.h5`
+  writes `slab.particles.h5`. A deck, or a particle set, at another stem opens without a model,
+  under the viewer's existing "no model is open" banner. M2 builds no discovery by hash.
 - **Overwrites: a rule of its own.** `src/apeGmsh/_artifact_policy.py` cannot govern this file.
   Its `is_apegmsh_artifact` needs `/meta` zone keys, which a Contract-1 file does not have, and its
   P4 never replaces a file. The emitter therefore overwrites an existing `<deck stem>.particles.h5`
@@ -116,9 +118,13 @@ a fork PR.
 
 **Pairing.** The file's `PROVENANCE` group carries:
 
-- `session_id`, equal to the archive's `/meta/session_id`;
+- `session_id`;
 - `apegmsh_version` and `apegmsh_commit`;
-- `fem_hash` and `model_hash`, copied byte-equal when the archive has them.
+- `fem_hash` and `model_hash`, when the session has them.
+
+The emitter takes these values from the **in-memory lineage** at emit, not from `model.h5`, which may
+not be on disk yet (the deck and its set are written before `after_emit` writes the archive). They
+record where the set came from. Pairing is by stem (above), not by these values.
 
 `SET_ID`, a uuid4 at the file's root, is copied by the fork into the `.ladruno` it writes
 (`MODEL/PARTICLES@SOURCE_SET_ID`). The results then name the exact particle set they came from.
@@ -143,8 +149,8 @@ D1's `.workspace.h5`:
 - The open set (`OpenSet`, `candidates`) gains a `particles` slot.
 - `classify`'s refusal message lists the new suffix.
 - `<s>.particles.h5` pairs by stem with `<s>.ladruno` and `<s>.h5` when they are present. The fork
-  writes `<s>.ladruno` beside the deck when the deck names it so. A model archive at another stem is
-  paired through the provenance hashes, not by name.
+  writes `<s>.ladruno` beside the deck when the deck names it so. Pairing is by stem only: a file at
+  another stem opens without a model, under the existing "no model is open" banner.
 
 ### D2 — Where seeding runs: in the bridge's emitter, from FEMData alone
 
