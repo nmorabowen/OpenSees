@@ -184,20 +184,23 @@ def test_engine_parity_bar():
 
 
 def test_cantilever_qs_data():
-    """Freeze decisions 2 and 9, DATA not gates: the cantilever QS tip at massCutoff 1e-6
-    (mode-A default) and 1e-10, exclude against ghost (gamma 1e-6), and Newton iterations per
-    step (the hypo tangent is not the exact linearisation). Printed for the handoff."""
+    """Freeze decision 9 and the D2.3 study, DATA not gates: the cantilever QS tip under the
+    mode-A default (renormalize, c_m 5e-2), the old default (exclude 1e-6, which diverges at
+    step 7), exclude 1e-3 and ghost 1e-2 at c_m 1e-2; Newton iterations per step (the hypo
+    tangent is not the exact linearisation). Printed for the handoff; only the default must
+    converge."""
     ops = _ops()
     c = H.case_by_name("cantilever_qs_r1")
     rows = []
-    for label, mc, en in (("exclude, c_m 1e-6", None, None), ("exclude, c_m 1e-10", 1e-10, None),
-                          ("ghost 1e-6, c_m 1e-6", None, ("ghost", 1e-6))):
+    for label, mc, en in (("renormalize, c_m 5e-2", None, None),
+                          ("exclude, c_m 1e-6", 1e-6, ("exclude",)),
+                          ("exclude, c_m 1e-3", 1e-3, ("exclude",)),
+                          ("ghost 1e-2, c_m 1e-2", 1e-2, ("ghost", 1e-2))):
         r = H.run_python(c, ops, mass_cutoff=mc, empty_nodes=en)
         rows.append((label, r["hist_tip"][9.875][-1], r["stopped"]))
-    print("\ncantilever_qs_r1 tip_disp_y:")
+    print("\ncantilever_qs_r1 tip_disp_y (reference -2.3723):")
     for lab, tip, st in rows:
         print(f"  {lab:24s} {tip:.6f}  stopped={st}")
-    # Newton iterations per step
     for name, args in H.model_commands(c):
         getattr(ops, name)(*H._py_args(args))
     for name, args in H.analysis_commands(c):
@@ -206,5 +209,40 @@ def test_cantilever_qs_data():
     for _ in range(c["steps"]):
         ops.mpm("analyze", 1, c["dt"])
         its.append(int(ops.testIter()))
-    print("  Newton iterations per step:", its)
-    assert all(st is None for _, _, st in rows)
+    print("  Newton iterations per step (default):", its)
+    assert rows[0][2] is None, "the mode-A default must converge on the cantilever QS r1"
+
+
+def test_condforce_is_the_reaction():
+    """Footing diagnosis, step 2: on a laterally confined block compressed by a full-width
+    gridvel, `mpm condForce` equals the particle stress times the loaded width (one QS step),
+    for ElasticIsotropic and DruckerPrager. The footing observable measures what it says."""
+    ops = _ops()
+    for mat in ("elastic", "dp"):
+        ops.wipe()
+        ops.model("basic", "-ndm", 2, "-ndf", 2)
+        if mat == "elastic":
+            ops.nDMaterial("ElasticIsotropic", 1, 1.0e5, 0.3)
+        else:
+            ops.nDMaterial("DruckerPrager", 1, 1.5e5, 15517.241379310342, 0.2, 0.21012821217029673,
+                           0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        ops.mpm("grid", 232, "-origin", 0.0, 0.0, "-h", 0.25, "-cells", 8, 10)
+        ops.mpm("mode", "quasiStatic")
+        ops.mpm("body", 1, "box", 0.0, 0.0, 2.0, 2.0, "-ppc", 2, "-mat", 1, "-rho", 1.0)
+        ops.mpm("fix", "xmin", "x")
+        ops.mpm("fix", "xmax", "x")
+        ops.mpm("fix", "ymin", "y")
+        ops.mpm("gridvel", "top", "box", -1.0, 2.0, 3.0, 1.0e9, "v", "free", -0.001)
+        ops.constraints("Transformation")
+        ops.numberer("RCM")
+        ops.system("UmfPack")
+        ops.test("NormDispIncr", 1e-12, 30)
+        ops.algorithm("Newton")
+        ops.integrator("LoadControl", 1.0)
+        ops.analysis("Static")
+        ops.mpm("analyze", 1, 1.0)
+        cf = list(ops.mpm("condForce", "top"))
+        syy = list(ops.mpm("particleData", "sig"))[1::3]
+        load = 2.0 * sum(syy) / len(syy)
+        assert max(syy) - min(syy) <= 1e-9 * abs(load), (mat, min(syy), max(syy))
+        assert abs(cf[1] - load) <= 1e-9 * abs(load), (mat, cf[1], load)

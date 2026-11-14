@@ -337,6 +337,16 @@ nodes are excluded or ghost-regularized — the choice is measured at M0b.
 > `DisplacementControl` and every arc-length variant is refused. A failed quasi-static step is cut
 > through `LoadControl::setDeltaLambda`; the driver also sets Δλ = Δt on every step.
 
+> **Amendment (232f, 2026-11-14) — empty support: `renormalize`, cutoff 5e-2 (amends interface
+> D2.3).** Mode A drops every support node with m_a <= 5e-2 max m_p (mode F keeps 1e-10) and
+> renormalises the kept shape functions to a partition of unity (S' = S / sum S, grad S' =
+> (grad S - S' sum grad S) / sum S), so a dropped node is absent, not held at zero increment.
+> `exclude` and `ghost <gamma>` stay switchable for M0b. The study (r1, PR #1083): at the old
+> default 1e-6 every treatment diverges in quasi-static Newton (nodes held by one particle's GIMP
+> tail carry about 1e-8 of the strongest node's stiffness); `exclude` anchors free surfaces (the
+> cantilever tip -0.22 m at 5e-2 against -2.372); `ghost` changes nothing below the cutoff;
+> `renormalize` 5e-2 converges on the cantilever (-2.3748) and the footing (110 / 110 steps).
+
 ### 5.4 The step order, summarized
 
 1. Mode A transient: the driver calls `analyzeStep(dt)` directly (no sub-levels, W10) and owns any
@@ -739,6 +749,8 @@ ADR-88).
 - **2026-11-14** — 232f (phase 1, mode A): interface frozen (`tests/mpm_implicit_interface.md`
   @ `41b0d68d9`); its five proposed amendments accepted and written in as "Amendment (232f,
   2026-11-14)" notes at §5.3, §5.4, §6 and W4.
+- **2026-11-14** — 232f: the empty-node study decided D2.3 — `renormalize` at cutoff 5e-2 is the
+  mode-A default (amendment note at §5.3).
 
 ---
 

@@ -263,3 +263,8 @@ The harness drives every case with `mpm analyze 1 <dt>` per step and reads after
    renormalize` drops the weak nodes and renormalises the kept S, grad S to a partition of unity
    (S' = S / sum S, grad S' = (grad S - S' sum grad S) / sum S).
 5. §5: `gridvel` reads each value as 'free' or a double after peeking (Python passes floats).
+6. D2.3 AMENDMENT (232f, 2026-11-14, decided on #1083 from the study): the mode-A default is
+   `renormalize` with cutoff 5e-2 (mode F keeps 1e-10); `exclude` and `ghost <gamma>` stay
+   switchable for M0b. Item 4 above was the proposal; the ADR carries the note at §5.3.
+7. `mpm debug tangentCheck <scale> <eps>`: a diagnosis hook (the footing round) -- every particle
+   element armed at the committed state, its tangent against central differences of its force.

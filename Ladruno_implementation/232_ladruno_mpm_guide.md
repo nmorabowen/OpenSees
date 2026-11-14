@@ -219,12 +219,13 @@ acceleration take FLIP increments (`mpm flip`, default 1); quasi-static leaves v
   regrowth: the cut dt holds to the end of that `mpm analyze`, which still ends at t₀ + n·dt.
   `mpm info dtHistory` lists the accepted steps. A failure after a commit began aborts the run
   (`mpm reset`); a material refusal at commit leaves the particles unmoved (ADR W17).
-- **Empty support.** `mpm emptyNodes exclude` (default): nodes below the mass cutoff are neither
-  Domain nodes nor in any connectivity (held at zero increment). Mode A's default cutoff is
-  **1e-6** (mode F's stays 1e-10); `mpm massCutoff` sets both. `mpm emptyNodes ghost <γ>` keeps
-  them, tied to their step-start position by a spring γ M₀ V / h² (for M0b).
-  `mpm emptyNodes renormalize` drops them too, but renormalises the kept shape functions to a
-  partition of unity, so a dropped node is absent rather than held (WP-232f round 2, proposed).
+- **Empty support.** `mpm emptyNodes renormalize` (the default, ADR §5.3 amendment 232f): a
+  support node with m_a <= c_m max m_p is dropped and the kept shape functions are renormalised
+  to a partition of unity, so the dropped node is absent rather than held. Mode A's default
+  cutoff is **5e-2** (mode F's stays 1e-10); `mpm massCutoff` sets both. With a small cutoff,
+  nodes held by one particle's GIMP tail make quasi-static Newton diverge. For M0b:
+  `mpm emptyNodes exclude` (dropped nodes held at zero increment — it anchors free surfaces) and
+  `mpm emptyNodes ghost <γ>` (kept, tied to their step-start position by a spring γ M₀ V / h²).
 - **Tags.** Grid nodes and particle elements take tags above every tag in use at the first
   mode-A step (`mpm tagBase <node> <ele>` to choose). Create your FE components first.
 

@@ -372,7 +372,7 @@ def analysis_commands(c, override_integrator=True):
     test, tol, it = c["newton"] or ("NormDispIncr", 1e-10, 30)
     cmds = [("constraints", ["Transformation" if _has_prescribed(c) else "Plain"]),
             ("numberer", ["RCM"]), ("system", ["UmfPack"]), ("test", [test, tol, it]),
-            ("algorithm", ["Newton"])]
+            ("algorithm", [os.environ.get("LADRUNO_MPM_ALGORITHM", "Newton")])]   # env: data runs only
     if c["integrator_command"] and override_integrator:
         integ = c["integrator_command"]
         cmds.append(("integrator", [_num(x) for x in integ]))
