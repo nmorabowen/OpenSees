@@ -1,0 +1,417 @@
+"""WP-232b: the numpy MPM oracle checked against closed forms and its own frozen cases.
+
+Every `expect` and `compare` line of tests/mpm_cases.txt, and every case of
+tests/hypo_incremental_cases.txt, becomes one test, so each case is reproduced from the case files
+alone (interface: tests/mpm_interface.md). The closed forms of the 232b brief are cases there:
+the 1D vibrating bar (period; PIC vs FLIP dissipation), the self-weight column and the
+cell-crossing meter, rigid translation (engine) and rigid rotation (kernel), the two-disc
+impact, the frictional incline, the critical time step (refused above, stable just below).
+The direct tests at the end check properties that need no case file.
+
+numpy only (zone_a). Wall time about 55 s, dominated by the run cases, each run once per
+session (cached).
+
+Amendment 5 (F2) added the checks that do not rest on the oracle's own stored numbers: the
+affine-field gradient, the damped free fall (a case), the overhang and roller cases, and
+invariants on the stored field lines with an independent polar factor.
+"""
+from __future__ import annotations
+
+import functools
+import os
+import sys
+
+import numpy as np
+import pytest
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+
+import hypo_incremental_reference as H  # noqa: E402
+import mpm_reference as M  # noqa: E402
+
+pytestmark = pytest.mark.zone_a
+
+CASES = M.parse_cases()
+HYPO = H.parse_cases()
+
+# The frozen tolerance uGIMP cannot meet (interface Amendment 4; ledger quirk
+# WP-232b-ugimp-fixed-domains-do-not-converge-under-large-compression). strict=True: when phase 3's
+# domain-tracking basis makes it pass, the xfail must be removed. The closed-form gate for slice 1
+# is column_selfweight_small_2d_gimp.
+KNOWN_SHORTFALLS = {
+    ("column_selfweight_2d_gimp", "selfweight_error"):
+        "uGIMP with fixed domains does not converge at 20% compression (0.072 at h=0.5, "
+        "0.067 at 0.25, 0.106 at 0.125 > 0.03); acceptance test for the phase-3 basis",
+}
+
+
+@functools.lru_cache(maxsize=None)
+def result(name):
+    return M.run_case(CASES[name])
+
+
+def _close(got, exp, tol):
+    got = np.asarray(got, dtype=float).ravel()
+    exp = np.asarray(exp, dtype=float).ravel()
+    assert got.shape == exp.shape, (got, exp)
+    a, r = tol
+    bad = np.abs(got - exp) > a + r * np.abs(exp)
+    assert not np.any(bad), f"got {got[bad]} expected {exp[bad]} (tol abs {a}, rel {r})"
+
+
+# --------------------------------------------------------------------------- #
+#  Case-driven tests                                                          #
+# --------------------------------------------------------------------------- #
+
+def _expect_items():
+    for name, lines in CASES.items():
+        k = 0
+        for t in lines:
+            if t[0] in ("expect", "compare"):
+                yield pytest.param(name, k, id=f"{name}:{k}:{t[0]}-{t[1]}")
+                k += 1
+
+
+def _line(name, k):
+    return [t for t in CASES[name] if t[0] in ("expect", "compare")][k]
+
+
+def _case_tol(lines):
+    t = M._get(lines, "tol")
+    return (float(t[0]), float(t[1])) if t else (0.0, 0.0)
+
+
+@pytest.mark.parametrize("name,k", list(_expect_items()))
+def test_case_expectation(name, k, request):
+    lines = CASES[name]
+    tok = _line(name, k)
+    kind = M._get(lines, "kind")[0]
+
+    if tok[0] == "compare":
+        obs_args, op, other = tok[1:-2], tok[-2], tok[-1]
+        obs, args = obs_args[0], obs_args[1:]
+        a = M.observable(result(name), obs, args)[0]
+        b = M.observable(result(other), obs, args)[0]
+        assert (a < b) if op == "lt" else (a > b), f"{name} {obs}={a} not {op} {other}'s {b}"
+        return
+
+    body = tok[1:]
+    if body[0] == "refused":
+        assert result(name)["refused"], f"{name} was not refused"
+        return
+    if body[0] == "accepted":
+        assert not result(name)["refused"], result(name).get("refusal")
+        return
+    if kind == "shape1d":
+        assert body[0] == "s1"
+        k_eq = body.index("eq")
+        _close(M.shape1d_values(body), M._floats(body[k_eq + 1:k_eq + 3]), _case_tol(lines))
+        return
+    if body[0] == "node":
+        nodes = result(name)["node"]
+        nid = int(body[1])
+        assert nid in nodes, f"node {nid} not in the support {sorted(nodes)}"
+        _close(nodes[nid], M._floats(body[3:]), _case_tol(lines))
+        return
+
+    obs, args, op, vals, tol = M.split_expect(body)
+    if (name, obs) in KNOWN_SHORTFALLS:
+        request.applymarker(pytest.mark.xfail(reason=KNOWN_SHORTFALLS[(name, obs)], strict=True))
+    res = result(name)
+    assert not res.get("refused"), res.get("refusal")
+
+    if obs == "particle_fields":
+        assert vals == ["fields"], "particle_fields still pending"
+        ndm = res["engine"].ndm
+        stored = {int(t[1]): t[2:] for t in lines if t[0] == "field"}
+        assert set(stored) == set(res["fields"]), "particle ids differ"
+        for pid, toks in stored.items():
+            nums = [float(x) for x in toks if x not in ("x", "v", "F", "V", "sig", "sighat", "epshat")]
+            _close(res["fields"][pid], nums, tol or _case_tol(lines))
+        assert ndm in (2, 3)
+        return
+
+    assert M.PENDING not in vals, f"{name}: {obs} still pending"
+    got = M.observable(res, obs, args)
+    if op == "eq":
+        _close(got, M._floats(vals), tol or _case_tol(lines))
+    elif op == "le":
+        assert np.all(got <= float(vals[0])), f"{name}: {obs}={got} > {vals[0]}"
+    elif op == "ge":
+        assert np.all(got >= float(vals[0])), f"{name}: {obs}={got} < {vals[0]}"
+
+
+def test_shape_cases_list_the_whole_support():
+    """A 'kind shape' case lists every node with non-zero S or gradient; no other node has any."""
+    for name, lines in CASES.items():
+        if M._get(lines, "kind")[0] != "shape":
+            continue
+        listed = {int(t[2]) for t in lines if t[0] == "expect" and t[1] == "node"}
+        assert set(result(name)["node"]) == listed, name
+
+
+def test_no_pending_values_remain():
+    for path in (M.CASES_PATH, H.CASES_PATH):
+        with open(path, encoding="ascii") as fh:
+            body = [ln for ln in fh if not ln.lstrip().startswith("#")]
+        assert not any(M.PENDING in ln for ln in body), path
+
+
+@pytest.mark.parametrize("idx", range(len(HYPO)), ids=[c["name"][0] for c in HYPO])
+def test_hypo_incremental_case(idx):
+    case = HYPO[idx]
+    got = H.evaluate_case(case)
+    assert int(got["status"][0]) == int(case["status"][0])
+    if int(case["status"][0]) != 0:
+        return
+    tol = (float(case["tol"][0]), float(case["tol"][1]))
+    for key in ("deps", "R1", "J1", "scauchy"):
+        if key in case:
+            assert case[key] != [H.PENDING], f"{key} pending"
+            _close(got[key], H._arr(case[key]), tol)
+
+
+# --------------------------------------------------------------------------- #
+#  Direct property tests (no case file)                                       #
+# --------------------------------------------------------------------------- #
+
+def _rot(rng, max_angle):
+    axis = rng.normal(size=3)
+    axis /= np.linalg.norm(axis)
+    th = rng.uniform(-max_angle, max_angle)
+    K = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+    return np.eye(3) + np.sin(th) * K + (1 - np.cos(th)) * (K @ K)
+
+
+def test_kernel_objective_under_rotation_increments():
+    """F1 = Q Fn: deps = 0 and R1 = Q polar(Fn) (Hughes & Winget 1980; Cayley transform)."""
+    rng = np.random.default_rng(2321)
+    for _ in range(50):
+        S = 0.2 * (lambda A: 0.5 * (A + A.T))(rng.normal(size=(3, 3)))
+        Fn = _rot(rng, 1.0) @ (np.eye(3) + S)
+        Q = _rot(rng, 3.0)
+        st, deps, R1, J1 = H.hypo_increment_from_F(Fn, Q @ Fn)
+        assert st == 0
+        assert np.max(np.abs(deps)) < 1e-12
+        assert np.allclose(R1, Q @ H.polar_rotation(Fn), atol=1e-12)
+        assert np.isclose(J1, np.linalg.det(Fn), rtol=1e-13)
+
+
+def test_kernel_plane_strain_is_the_exact_embedding():
+    rng = np.random.default_rng(2322)
+    for _ in range(20):
+        th = rng.uniform(-1, 1)
+        R = np.array([[np.cos(th), -np.sin(th)], [np.sin(th), np.cos(th)]])
+        Fn = R @ (np.eye(2) + 0.1 * rng.normal(size=(2, 2)))
+        F1 = (np.eye(2) + 0.05 * rng.normal(size=(2, 2))) @ Fn
+        st, d6, R3, J = H.hypo_increment_from_F(H.embed_plane_strain(Fn), H.embed_plane_strain(F1))
+        assert st == 0
+        assert d6[2] == 0.0 and d6[4] == 0.0 and d6[5] == 0.0   # exactly, by structure
+        assert R3[2, 2] == 1.0 and not np.any(R3[:2, 2]) and not np.any(R3[2, :2])
+        st2, d3, R2, J2 = H.hypo_increment_from_F_plane_strain(Fn, F1)
+        assert np.array_equal(d3, d6[[0, 1, 3]]) and np.array_equal(R2, R3[:2, :2]) and J2 == J
+
+
+def test_kernel_small_increment_is_the_symmetric_velocity_gradient():
+    """For F1 = (I + dt L) Fn with small dt: deps -> R^T sym(L) R dt to O(dt^2)."""
+    rng = np.random.default_rng(2323)
+    L = rng.normal(size=(3, 3))
+    Fn = _rot(rng, 0.7) @ (np.eye(3) + 0.1 * np.diag(rng.normal(size=3)))
+    R = H.polar_rotation(Fn)
+    D = 0.5 * (L + L.T)
+    for dt in (1e-3, 1e-4):
+        _, deps, _, _ = H.hypo_increment_from_F(Fn, (np.eye(3) + dt * L) @ Fn)
+        Dm = R.T @ D @ R * dt
+        ref = np.array([Dm[0, 0], Dm[1, 1], Dm[2, 2], 2 * Dm[0, 1], 2 * Dm[1, 2], 2 * Dm[2, 0]])
+        assert np.max(np.abs(deps - ref)) < 50 * dt ** 2
+
+
+def test_basis_partition_of_unity():
+    """Sum S = 1 and sum grad S = 0 for every particle whose domain lies inside the grid."""
+    rng = np.random.default_rng(2324)
+    for ndm, basis in ((2, "gimp"), (3, "gimp"), (2, "linear"), (3, "linear")):
+        g = M.Grid(np.zeros(ndm), 0.5, [6] * ndm)
+        lp = rng.uniform(0.02, 0.25, size=(200, ndm))
+        x = rng.uniform(lp, 3.0 - lp)
+        nid, S, G = g.shape(x, lp, basis)
+        assert np.allclose(S.sum(axis=1), 1.0, atol=1e-14)
+        assert np.allclose(G.sum(axis=1), 0.0, atol=1e-12)
+
+
+def test_basis_partition_of_unity_with_overhang():
+    """Ghost layers (Amendment 5): any admissible centre, domains overhanging faces included."""
+    rng = np.random.default_rng(2325)
+    for ndm in (2, 3):
+        g = M.Grid(np.full(ndm, -1.0), 0.5, [4] * ndm)
+        lp = rng.uniform(0.02, 0.25, size=(300, ndm))
+        x = rng.uniform(-1.0, 1.0, size=(300, ndm))
+        x[:20] = -1.0          # centres exactly on the minimum faces
+        x[20:40] = 1.0         # and on the maximum faces
+        assert np.all(g.admissible(x, lp, "gimp"))
+        nid, S, G = g.shape(x, lp, "gimp")
+        assert np.allclose(S.sum(axis=1), 1.0, atol=1e-14)
+        assert np.allclose(G.sum(axis=1), 0.0, atol=1e-12)
+        assert nid.min() >= 0 and nid.max() < g.nnodes
+
+
+def test_affine_velocity_field_gives_its_gradient():
+    """F2: nodal v = A x (A non-symmetric) gives L = A exactly, for every basis and dimension.
+    Catches a transposed L and a scaled gradient."""
+    rng = np.random.default_rng(2326)
+    for ndm in (2, 3):
+        A = rng.normal(size=(ndm, ndm))
+        assert not np.allclose(A, A.T)
+        g = M.Grid(np.zeros(ndm), 0.5, [4] * ndm)
+        xn = g.x0 + g.ijk * g.h                       # every node's position, ghosts included
+        v_grid = xn @ A.T
+        for basis in ("gimp", "linear"):
+            lp = np.full((50, ndm), 0.2)
+            x = rng.uniform(0.0, 2.0, size=(50, ndm))
+            nid, S, G = g.shape(x, lp, basis)
+            L = M.velocity_gradient(v_grid, nid, G)
+            assert np.allclose(L, A[None], atol=1e-12), basis
+            # and G2P of the same field reproduces v(x_p) (linear completeness)
+            assert np.allclose(np.einsum("pk,pka->pa", S, v_grid[nid]), x @ A.T, atol=1e-12)
+
+
+def _polar_eig(F):
+    """R = F U^-1 with U = sqrt(F^T F) from an eigen-decomposition (not the SVD of the oracle)."""
+    w, Q = np.linalg.eigh(F.T @ F)
+    U_inv = Q @ np.diag(1.0 / np.sqrt(w)) @ Q.T
+    return F @ U_inv
+
+
+def _field_cases():
+    return [n for n, lines in CASES.items() if any(t[0] == "field" for t in lines)]
+
+
+@pytest.mark.parametrize("name", _field_cases())
+def test_stored_fields_satisfy_the_kinematic_and_material_invariants(name):
+    """F2: on the stored field lines, with an independent polar factor:
+    V = det F V0, sig_hat = sig0 + D eps_hat, sig = R sig_hat R^T."""
+    lines = CASES[name]
+    ndm = int(M._get(lines, "ndm")[0])
+    nv = 6 if ndm == 3 else 3
+    mats = {int(t[1]): (float(t[3]), float(t[4])) for t in lines if t[0] == "material"}
+    parts = {}
+    for t in lines:
+        if t[0] == "particle":
+            pt = t[1:]
+            i = pt.index("x")
+            parts[int(pt[0])] = dict(mat=int(pt[2]), V0=float(pt[4]),
+                                     s0=np.array(M._floats(pt[i + 4 + 3 * ndm:i + 4 + 3 * ndm + nv])))
+    fields = [t[1:] for t in lines if t[0] == "field"]
+    assert fields and len(fields) == len(parts)
+    for f in fields:
+        pid = int(f[0])
+        nums = np.array([float(x) for x in f[1:] if x not in ("x", "v", "F", "V", "sig", "sighat", "epshat")])
+        k = 2 * ndm
+        F = nums[k:k + ndm * ndm].reshape(ndm, ndm)
+        k += ndm * ndm
+        V = nums[k]
+        k += 1
+        sig, sig_hat, eps_hat = nums[k:k + nv], nums[k + nv:k + 2 * nv], nums[k + 2 * nv:k + 3 * nv]
+        p = parts[pid]
+        assert np.isclose(V, np.linalg.det(F) * p["V0"], rtol=1e-13)
+        lam, mu = M.lame(*mats[p["mat"]])
+        D = M.elastic_D(lam, mu, ndm)[0]
+        assert np.allclose(sig_hat, p["s0"] + D @ eps_hat, rtol=1e-12, atol=1e-12)
+        R = _polar_eig(F)
+        if ndm == 3:
+            S = H.voigt_to_tensor_stress(sig_hat)
+            ref = H.tensor_to_voigt_stress(R @ S @ R.T)
+        else:
+            S = H.voigt3_to_tensor(sig_hat)
+            ref = H.tensor_to_voigt3(R @ S @ R.T)
+        assert np.allclose(sig, ref, rtol=1e-11, atol=1e-11)
+
+
+def test_second_projection_applies_no_penetration_only():
+    """Interface section 7: on v* a wall removes only the normal component; friction acts once.
+
+    With a single particle, p*_i / m_i = v_p^{n+1} at every support node, so the expected v* is
+    known by hand: v_new everywhere, except that wall nodes (face and ghost layers) moving into the
+    wall lose their normal component, tangential untouched. Then L = sum v*_i (x) grad S_i and
+    F^{n+1} = (I + dt L) F^n. A friction step in the second projection changes F here and
+    nowhere visible to a closed form (it alters only L, never momentum)."""
+    lines = [["kind", "run"], ["ndm", "2"], ["origin", "0.0", "0.0"], ["h", "1.0"], ["cells", "4", "4"],
+             ["material", "1", "elastic", "1.0e4", "0.3"],
+             ["particle", "0", "1", "1", "1000.0", "0.25", "x", "1.6", "0.3", "lp", "0.25", "0.25",
+              "v", "1.0", "-1.0", "s", "0", "0", "0"],
+             ["wall", "ymin", "0.4"], ["flip", "1.0"], ["masscut", "0"]]
+    eng = M.build_engine(lines)
+    nid, S, G = eng.grid.shape(eng.x, eng.lp, eng.basis)
+    dt = 1e-3
+    eng.step(dt)
+    v_new = eng.v[0]
+    wall_nodes, n = eng.grid.face_nodes("ymin")
+    vstar = np.tile(v_new, (eng.grid.nnodes, 1))
+    on_wall = np.isin(np.arange(eng.grid.nnodes), wall_nodes)
+    vn = vstar @ n
+    into = on_wall & (vn < 0.0)
+    assert np.any(into[nid[0]]), "the particle's support must reach wall nodes moving into the wall"
+    vstar[into] -= vn[into, None] * n[None, :]
+    L = np.einsum("ka,kb->ab", vstar[nid[0]], G[0])
+    assert np.allclose(eng.F[0], np.eye(2) + dt * L, rtol=0, atol=1e-15)
+
+
+def test_step_applies_the_mass_cutoff():
+    """Interface section 6.4, inside step(): one stressed particle, no loads or conditions.
+    Node i carries m_i = S_i m and f_i = -V sigma grad S_i, so S_i a_i = -(V/m) sigma grad S_i and
+    FLIP gives v_new = -dt (V/m) sigma . sum_{active} grad S_i. With every node active the sum is 0
+    (partition of unity); with the cutoff the tiny nodes drop out and v_new is their missing part."""
+    base = [["kind", "run"], ["ndm", "2"], ["origin", "0.0", "0.0"], ["h", "1.0"], ["cells", "4", "4"],
+            ["material", "1", "elastic", "1.0e4", "0.3"],
+            ["particle", "0", "1", "1", "8.0", "0.25", "x", "3.249999", "1.5", "lp", "0.25", "0.25",
+             "v", "0", "0", "s", "100.0", "-40.0", "25.0"], ["flip", "1.0"]]
+    sigma = np.array([[100.0, 25.0], [25.0, -40.0]])
+    dt = 1e-3
+    for cut in (1e-10, 0.0):
+        eng = M.build_engine(base + [["masscut", repr(cut)]])
+        nid, S, G = eng.grid.shape(eng.x, eng.lp, eng.basis)
+        m, V = eng.m[0], eng.V[0]
+        active = S[0] * m > cut * m
+        expect = -dt * (V / m) * sigma @ G[0][active].sum(axis=0)
+        eng.step(dt)
+        assert np.allclose(eng.v[0], expect, rtol=0, atol=1e-14), (cut, eng.v[0], expect)
+        if cut > 0:
+            assert np.linalg.norm(expect) > 1e-9      # the cutoff matters in this geometry
+        else:
+            assert np.linalg.norm(expect) < 1e-14
+
+
+def test_basis_gradient_is_the_derivative():
+    """dS/dr equals a central difference of S, in all four regions (C1 uGIMP)."""
+    h, lp = 1.0, 0.3
+    r = np.linspace(-1.35, 1.35, 541)
+    r = r[np.min(np.abs(r[:, None] - np.array([-1.3, -0.7, -0.3, 0.3, 0.7, 1.3])[None]), axis=1) > 1e-3]
+    e = 1e-6
+    S_p, _ = M.gimp_1d(r + e, h, np.full(r.shape, lp))
+    S_m, _ = M.gimp_1d(r - e, h, np.full(r.shape, lp))
+    _, dS = M.gimp_1d(r, h, np.full(r.shape, lp))
+    assert np.max(np.abs((S_p - S_m) / (2 * e) - dS)) < 1e-6
+
+
+def test_momentum_is_conserved_without_conditions():
+    """No faces, no gravity, no damping, no cutoff: total momentum is exact for FLIP and PIC."""
+    for flip in (1.0, 0.0, 0.6):
+        lines = [t[:] for t in CASES["impact_discs_2d"]]
+        lines = [t for t in lines if t[0] not in ("steps", "flip", "expect")]
+        lines += [["steps", "200"], ["flip", repr(flip)]]
+        eng = M.build_engine(lines)
+        p0 = np.sum(eng.m[:, None] * eng.v, axis=0)
+        for _ in range(200):
+            eng.step(0.001)
+        assert np.allclose(np.sum(eng.m[:, None] * eng.v, axis=0), p0, atol=1e-11)
+
+
+def test_failed_step_changes_nothing():
+    """A refused step (dt above the estimate) leaves every particle array untouched."""
+    eng = M.build_engine(CASES["critdt_refuse_above_2d"])
+    before = {k: getattr(eng, k).copy() for k in ("x", "v", "F", "V", "sig", "eps_hat")}
+    with pytest.raises(M.StepRefused):
+        eng.step(1.01 * eng.critical_dt() * eng.safety)
+    for k, a in before.items():
+        assert np.array_equal(getattr(eng, k), a), k
