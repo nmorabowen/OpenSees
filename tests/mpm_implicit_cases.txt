@@ -90,11 +90,12 @@
 #   recorder_sync                every output record's positions and stresses equal the engine's
 #                                in-memory particle state of the SAME accepted step (exactly)
 #   refused                      the command or analysis is refused loudly and changes nothing
-#   compare <obs> [args] errle <case> ref <value>  |obs(this) - value| <= |obs(case) - value|
+#   compare <obs> [args] relerrle <case>  the relative error of this case's <obs> against its
+#                                own 'expect <obs> [args] eq' value is <= that of <case> against
+#                                <case>'s own (the 'error non-increasing' relation)
 #
 # Resolution series: '_r1', '_r2', '_r3' are coarse, medium, fine. Per the gate table the gate
 # applies at the finest (_r3); _r1 and _r2 are 'report' plus the errle relations.
-# 'TBD' marks a reference value not yet filled by 232f-V; the case inputs and tolerances are final.
 
 # ============================================================================
 # P1 row: large-deflection cantilever, quasi-static (gravity ramp)
@@ -123,9 +124,13 @@ series linear 1.0
 dt 0.05
 steps 20
 newton NormDispIncr 1e-10 30
-ref TBD
-gap TBD
-expect tip_disp_y 9.875 eq TBD tol 0 0.05
+ref fork FE: LadrunoBrick -geom hypo (std), plane-strain slab, 20-step gravity ramp; ny = 4..64 through
+ref the depth, O(h^2) (observed order 2.00); Richardson of ny 32/64 at this case's tip
+ref particle points. Record tests/data/mpm/implicit/fe_cantilever_qs.json (build f37e2ff19, 2026-11-14).
+gap tip at x = L: FE -2.3917 (hypo), -2.4046 (EICR corotational, ny 32), elastica -2.3851
+gap (inextensible, shear-rigid): the kinematic families differ by < 1 %; MPM and the FE share the hypo
+gap kernel family (Hughes-Winget, polar R).
+expect tip_disp_y 9.875 eq -2.3723257583194455 tol 0 0.05
 end
 
 case cantilever_qs_r2
@@ -146,9 +151,9 @@ series linear 1.0
 dt 0.05
 steps 20
 newton NormDispIncr 1e-10 30
-ref TBD
-expect tip_disp_y 9.9375 eq TBD tol 0 0.05
-compare tip_disp_y 9.9375 errle cantilever_qs_r1 ref TBD
+ref as cantilever_qs_r1 (same record)
+expect tip_disp_y 9.9375 eq -2.3821333395087922 tol 0 0.05
+compare tip_disp_y 9.9375 relerrle cantilever_qs_r1
 end
 
 case cantilever_qs_r3
@@ -168,9 +173,9 @@ series linear 1.0
 dt 0.05
 steps 20
 newton NormDispIncr 1e-10 30
-ref TBD
-expect tip_disp_y 9.96875 eq TBD tol 0 0.05
-compare tip_disp_y 9.96875 errle cantilever_qs_r2 ref TBD
+ref as cantilever_qs_r1 (same record)
+expect tip_disp_y 9.96875 eq -2.387037028749992 tol 0 0.05
+compare tip_disp_y 9.96875 relerrle cantilever_qs_r2
 end
 
 # ============================================================================
@@ -428,7 +433,8 @@ end
 #   Volume = the exact area of the cell [theta_i +- dtheta/2] x [s_j +- ds/2], i.e.
 #   integral over theta of (r(theta, s+)^2 - r(theta, s-)^2)/2, by 8-point Gauss-Legendre in theta
 #   per cell (rho_o is smooth inside each cell: n_theta is even, no cell straddles pi/4).
-#   GIMP half-lengths lp = sqrt(V)/2 on both axes. Ids 0 .. n_theta n_r - 1 in that order.
+#   GIMP half-lengths lp_x = min(sqrt(V)/2, x, W/2 - x), lp_y = min(sqrt(V)/2, y, W/2 - y): no
+#   domain leaves [0, W/2]^2 (Contract 1, C1-POS). Ids 0 .. n_theta n_r - 1 in that order.
 #   Upper block (body 2): the lattice rule of tests/mpm_interface.md §5 over x in [0, 2],
 #   y in [2, 4], ppc 2 (128 x 128 = 16384 particles), ids after the O-grid.
 #   Total 30720 + 16384 = 47104 particles; sum of volumes = 8 - pi/4 (exact to 1e-12).
@@ -451,11 +457,16 @@ gridvel load box -1.0 4.0 3.0 4.1 v free 4.0e-4 start 0.0
 dt 1.0
 steps 1
 newton NormDispIncr 1e-12 30
-ref Howland (1930) K_tn = 2.16 at d/W = 0.5 (Peterson Chart 4.1); fork FE TBD
-gap TBD
-expect seed_count eq TBD tol 0 0
-expect seed_volume_sum eq TBD tol 1e-12 0
-expect seed_moment eq TBD TBD tol 1e-11 0
+ref Howland (1930) K_tn = 2.16 at d/W = 0.5 (Peterson Chart 4.1). Cross-check, fork FE (quad, the
+ref case's O-grid cells as elements, 188416 quads): 2.1773 on this geometry, 2.1754 for a 4W-long
+ref strip under end traction (Howland's condition) -- 0.8 % above Howland; Heywood's fit 2.125.
+ref Record: tests/data/mpm/implicit/fe_plate.json (build f37e2ff19, 2026-11-14).
+gap sampling floor: sigma_yy at the innermost particle centre (r = a + 0.0042) is 2.152 by the FE
+gap field, -1.2 % from the edge value; MPM resolves the hole-edge gradient (7 sigma/a) with
+gap h = a/32. Howland vs this finite plate: < 0.2 %.
+expect seed_count eq 47104 tol 0 0
+expect seed_volume_sum eq 7.214601836602543 tol 1e-12 0
+expect seed_moment eq 7.666638592050472 15.666638592050472 tol 1e-11 0
 expect peak_sthth_over_snet 0.0 0.0 1.0 eq 2.16 tol 0 0.05
 end
 
@@ -486,7 +497,8 @@ dt 0.01
 steps 3000
 newton NormDispIncr 1e-12 30
 ref closed form T = 4L/c = 10 (fixed-free bar, first mode)
-gap TBD
+gap numpy: a 25-element linear bar with Newmark 0.5/0.25 at this dt gives 10.0017 (lumped mass) /
+gap 9.9984 (consistent): the discretization and integrator gap is 2e-4, 50x inside the 1 % gate.
 expect period_comx eq 10.0 tol 0 0.01
 end
 
