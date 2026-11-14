@@ -45,8 +45,8 @@ reference scripts were not read. Decisions are numbered (D*n.m*) so a review can
 - **D1.6 Force and tangent** — LadrunoBrick's hypo assembly with the particle as its single
   point (`LadrunoBrick.cpp:2062`, `resid(3*a + i) += fi * dv;`; `:2078`,
   `pushTangent6(R1, Dmat, Dcur)`; `:2116`, the geometric term). g_a = ∇S_a·F_rel⁻¹,
-  V = J₁V₀ (as mode F, `LadrunoMPMCore.h:672`); f_a = V σ g_a − S_a m_p λ b (gravity as a body
-  force, W5); K_ab = V B_aᵀ c B_b + V (g_a·σ·g_b) I, c the pushed tangent. Plane strain needs a
+  V = J₁V₀ (as mode F, `LadrunoMPMCore.h:672`); f_a = V σ g_a − S_a λ (m_p b + f_p) (gravity and
+  `pforce` as particle forces, W5; the internal part is cached for `mpm condForce`); K_ab = V B_aᵀ c B_b + V (g_a·σ·g_b) I, c the pushed tangent. Plane strain needs a
   new `pushTangentPlaneStrain` in `LadrunoHypoKernel.h` (the {xx, yy, xy} block of `bond6` for an
   in-plane R), g++-checked against the 6×6 embedding. As in the shipped `-geom hypo` lane, K is
   not the exact linearisation of the Hughes–Winget increment. `getInitialStiff` is the same
@@ -70,7 +70,7 @@ reference scripts were not read. Decisions are numbered (D*n.m*) so a review can
   V, ε̂, σ̂, σ take their trial values; v_p ← α_F(v_p + Σ S_a(v_a − v̂_a)) + (1 − α_F)Σ S_a v_a,
   a_p likewise with a (α_F = `mpm flip`); quasi-static leaves v_p, a_p alone. Then COMMITTED:
   `update()` returns −1 loudly ("a step not prepared by `mpm analyze`"), so a plain `analyze`
-  cannot run the particles; `getResistingForce*` return the converged cache (reactions).
+  cannot run the particles; `getResistingForce*` return the converged cache.
 
 ## 2. Grid nodes as Domain nodes
 
@@ -109,15 +109,18 @@ reference scripts were not read. Decisions are numbered (D*n.m*) so a review can
    `int stamp = the_Domain->hasDomainChanged();`), and that is where Newmark re-reads the
    committed disp, vel and accel (`Newmark.cpp:398`, `getCommittedDisp()`; W1).
 6. t₀ = Domain time. Transient: `dia->analyzeStep(dt)` — never `analyze`, which sub-steps
-   (W10). Quasi-static: `sa->analyze(1, false)` (W16).
-7. Return ≥ 0: accepted. G2P must have run once for all N (else a loud abort); reactions (§5);
+   (W10). Quasi-static: dt is a pseudo-time increment; the driver sets it on the user's
+   `LoadControl` with `setDeltaLambda(dt)` (`LoadControl.h:61`) and calls `sa->analyze(1, false)`
+   (W16). The host's series is then evaluated at the pseudo-time in both modes.
+7. Return ≥ 0: accepted. G2P must have run once for all N (else a loud abort); `condForce` (§5);
    the particle writer, after `Domain::commit`, as in mode F.
 8. Return < 0 and no G2P in this attempt: `analyzeStep` has already reverted the Domain and the
-   integrator (`DirectIntegrationAnalysis.cpp:229-236`). Cut dt by `<factor>` (quasi-static:
-   `LoadControl::setDeltaLambda`, `LoadControl.h:61`; no other static integrator is admitted),
-   re-seed from the unchanged particles and retry; the sub-steps fill the original interval.
-   `mpm cut <factor> <maxCuts>` (default 2, 4); exhausted → `mpm analyze` fails with the particles
-   at the last accepted step. Nothing to undo.
+   integrator (`DirectIntegrationAnalysis.cpp:229-236`). Cut dt by `<factor>`, re-seed from the
+   unchanged particles and retry. **No regrowth:** the cut dt holds for the rest of this
+   `mpm analyze`, which still ends at t₀ + n·dt (the last step is shortened to land on it) — the
+   cases file's `retry_bar_reference` schedule; the accepted sequence is logged
+   (`mpm info dtHistory`). `mpm cut <factor> <maxCuts>` (default 2, 4); exhausted →
+   `mpm analyze` fails with the particles at the last accepted step. Nothing to undo.
 9. Return < 0 after a commit began (`Domain::commit` returned −1 on a refusal → −4): the run is
    aborted (W17); `mpm reset` clears it.
 10. After the last step: `Domain::flushRecorders()`.
@@ -127,7 +130,7 @@ reference scripts were not read. Decisions are numbered (D*n.m*) so a review can
 | Mode (`mpm mode …`) | Needs | Admitted | Refused, loudly |
 |---|---|---|---|
 | `implicit` | a transient analysis | `getClassTag()` ∈ {Newmark 1, HHT 2, GeneralizedAlpha 44}, as `LadrunoStaggeredDriver.cpp:160` | LadrunoHHT 33013, LadrunoGeneralizedAlpha 33014, every other tag; `VariableTransient` by `dynamic_cast<VariableTimeStepDirectIntegrationAnalysis*>` (both engines store it as the transient analysis: `commands.cpp:3386`, `OpenSeesCommands.cpp:884`); `PFEMAnalysis` likewise |
-| `quasiStatic` | a static analysis | `LoadControl` (6) | DisplacementControl (7) — on a grid node by ADR §5.3, and phase 1 has no free FE node to drive (free FE DOFs stay refused); ArcLength (8), ArcLength1 (13), LadrunoArcLength (33004), every other static integrator |
+| `quasiStatic` | a static analysis | `LoadControl` (6), its Δλ set per step by the driver | DisplacementControl (7) — on a grid node by ADR §5.3, and phase 1 has no free FE node to drive (free FE DOFs stay refused); ArcLength (8), ArcLength1 (13), LadrunoArcLength (33004), every other static integrator |
 | both | — | Plain handler for homogeneous conditions | a prescribed-velocity condition under `PlainHandler`, which warns and assumes homogeneous (`PlainHandler.cpp:92`); `betaK0` / `betaKc`; ground-motion patterns; `mpm wall`, `mpm damping local` (mode F only) |
 
 `mpm mode explicit | implicit | quasiStatic` (default `explicit`: slice 1 unchanged) is fixed at
@@ -147,20 +150,25 @@ StaticIntegrator*; TransientIntegrator*; ConstraintHandler*; }` and a shared
 
 | Command | Meaning |
 |---|---|
-| `mpm mode explicit\|implicit\|quasiStatic` | §4 |
-| `mpm analyze <n> <dt>` (implicit) / `mpm analyze <n>` (quasiStatic) | §3; quasi-static steps are the user's `LoadControl` increments |
-| `mpm velocityBC <id> box <lo..> <hi..> -v <v..> [-comps <xyz>] [-moving]` | every active node in the closed box gets Δu_d = v_d (t − t₀) on the listed components: a host-pattern `SP_Constraint(node, d, v_d, false)` whose value the host's `applyLoad` sets with `applyConstraint(t − t₀)` (`valueC = loadFactor*valueR;`, `SP_Constraint.cpp:335`). `-moving`: the box translates with v. The rough rigid footing is `-comps xy` with v = (0, −v_f) |
+Spellings follow `tests/mpm_implicit_cases.txt` (232f-V's grammar); its keys map one to one.
+
+| Command | Meaning |
+|---|---|
+| `mpm mode explicit\|implicit\|quasiStatic` | §4 (cases `mode transient\|quasistatic`) |
+| `mpm analyze <n> <dt>` | §3, both modes; quasi-static dt is the pseudo-time increment |
+| `mpm gridvel <name> box <lo..> <hi..> v <value\|free ..> [start <t0>] [track <axis>]` | the cases' `gridvel`, its semantics verbatim (node set = every real or ghost grid node in the closed box, tolerance 1e-9 h; absent before t0; `track` moves the box's lower bound by v·max(t_n − t0, 0) at the START of step n). Each non-`free` component becomes a host-pattern `SP_Constraint(node, d, v_d, false)` per step, its value set by the host's `applyLoad` through `applyConstraint(t − t₀)` (`valueC = loadFactor*valueR;`, `SP_Constraint.cpp:335`): Δu = v·dt in both modes |
+| `mpm condForce <name>` | ndm doubles: Σ over the gridvel's node set of the grid internal force Σ_p V_p σ_p·∇S_i (resisting sign) at the last accepted step, from the elements' converged caches — the cases' `cond_force`. Full precision in classic Tcl through the slice-1 double-query path |
+| `mpm pforce <body> box <lo..> <hi..> <f..>` | the cases' `pforce`: a constant force per particle (initial centre in the box), scaled by the host series λ, entering f_a as −S_a λ f_p |
 | `mpm fix <face> <comps>` (mode A) | homogeneous host SPs on the face nodes and their ghost layer — mode F's face set (`LadrunoMPMCore.h:794`) |
-| `mpm reaction <id>` | Σ `getReaction()` over the condition's nodes at the last accepted step, after `Domain::calculateNodalReactions(flag)` (`Domain.cpp:4589`; flag 0 quasi-static, 1 transient). ndm doubles (classic Tcl: full precision, the slice-1 double-query path) |
 | `mpm emptyNodes exclude\|ghost <γ>`, `mpm cut <f> <k>`, `mpm tagBase <n> <e>` | §2, §3 |
-| `mpm info acceptedSteps\|g2p\|retries\|domainChanges\|connectivityChanges\|gridNodes\|mode` | g2p = particle G2P updates (= N × accepted steps); connectivityChanges = steps in which any support changed |
-| `mpm debug failAttempt <k>` | the first attempt of the k-th next step fails before commit (every element's `update()` returns −1 once) |
-| `mpm debug skipReseed 0\|1` | when 1, `domainChange()` is skipped on a step whose node set and every connectivity are unchanged (with GIMP that is stricter than "no cell change": the support edge is at h + l_p). P2G still writes the nodes, so the integrator keeps last step's U, U̇, Ü — the W1 failure, made visible |
+| `mpm info g2p\|acceptedSteps\|retries\|dtHistory\|domainChanges\|connectivityChanges\|gridNodes\|gridNodeTags\|mode` | g2p = batched G2P passes (the cases' `g2p_count`; = acceptedSteps); connectivityChanges = steps in which any support changed; gridNodeTags = the live tags (the `refuse_dispcontrol_gridnode` case needs one) |
+| `mpm debug failAttempt <k> [<attempts>]` | the cases' `inject fail_attempt step k attempts m`: the first m attempts of step k (1-based in the epoch) fail before commit — every element's `update()` returns −1 |
+| `mpm debug reseed default\|always\|skip` | `default`: shipped (unconditional `domainChange()`, nodes kept while active). `always` (`force_domainchange_every_step`): also retire and recreate every grid node each step with fresh tags, so node continuity is shown not to matter. `skip` (`skip_domainchange_without_crossing`): no `domainChange()` on a step whose node set and every connectivity are unchanged (with GIMP stricter than "no cell change": the support edge is at h + l_p); P2G still writes the nodes, so the integrator keeps the last step's U, U̇, Ü — W1, made visible |
 
 ## 6. Restart (database)
 
 - The slice-1 refusal (`LadrunoMPMPattern.cpp:185-197`) stays in mode F and is lifted in mode A.
-- **Host `sendSelf`:** grid, parameters, faces, velocity conditions, mode and options,
+- **Host `sendSelf`:** grid, parameters, faces, `gridvel` and `pforce` definitions, mode and options,
   `Particles` (with `a`) and the reset snapshot, epoch, the abort flag, `nodeBase`, the node
   counter, `eleBase`, the lattice → tag map, its `TimeSeries` (class tag + db tag, as
   `LoadPattern::sendSelf` does). Not sent: the writer (re-issue `mpm output`), the per-step SPs
@@ -201,18 +209,20 @@ quasi-static with `KIND` transient / static, already pinned by 232a §2.3), `Lad
 
 ## 9. Gate rows → observables
 
-| Row (wp-briefs "232f") | Observable |
+The harness drives every case with `mpm analyze 1 <dt>` per step and reads after each:
+
+| Row (wp-briefs "232f") | Cases observable ← command |
 |---|---|
-| cantilever QS / transient | `mpm particleData x` of the cases file's tip particle(s), minus the initial x; transient: after each `mpm analyze 1 dt` → first peak, period |
-| footing | `mpm reaction <id>` per step → q = −R_y / B (thickness 1) |
-| self-weight column, QS | `mpm particleData sig` against ρ₀g(l₀ − Y), Y from the initial `x` |
-| plate with a hole | `mpm particleData sig` at the cases file's hole-edge particles; σ_net from `mpm reaction` or the applied traction |
-| 1D bar, Newmark | `mpm particleData x` / `v` history → frequency |
-| failed-step retry | `mpm debug failAttempt k`; `mpm info g2p` = N × `acceptedSteps`; `retries`; `particleData x v F` against a run given the cut schedule |
-| no-cell-crossing re-seed | `mpm info connectivityChanges` proves the step; normal vs `mpm debug skipReseed 1`; `particleData` |
-| recorder synchrony | `mpm output -every 1` file against `particleData x sig` read after each step |
-| restart | `database File`, `save n`, `wipe` + `restore n`, rebuild the analysis, continue; `particleData` rel 1e-10, both engines |
-| refusals | each case of §4: `mpm analyze` raises (Tcl error / Python exception) with the named rule |
+| cantilever QS / transient | `tip_disp_y(_history)`, `first_peak_…`, `first_period_tip` ← `mpm particleData m x` (mass-weighted, initial x from step 0) |
+| footing | `cond_pressure_max / _plateau` ← `mpm condForce footing` |
+| self-weight column, QS | `selfweight_error` ← `mpm particleData sig x` |
+| plate with a hole | `peak_sthth_over_snet` ← `mpm particleData sig x`, σ_net from `mpm condForce load` |
+| 1D bar, Newmark | `period_comx` ← `mpm particleData m x` |
+| failed-step retry | `g2p_count eq accepted_steps` ← `mpm info g2p`, `acceptedSteps`; `particle_fields` ← `particleData`; schedule ← `mpm info dtHistory` |
+| no-cell-crossing re-seed | `particle_fields`, `relerr_ge` ← `particleData`, under `mpm debug reseed default\|always\|skip`; `mpm info connectivityChanges` = 0 shows the case has no crossing |
+| recorder synchrony | `recorder_sync` ← `mpm output … -every 7 -fields POSITION STRESS` against `particleData x sig` |
+| restart | `database File`, `save n`, `wipe`, rebuild the model, `restore n`, rebuild the analysis, continue; `particle_fields` rel 1e-10, both engines |
+| refusals | `refused` ← `mpm analyze` raises (Tcl error / Python exception) with the named rule, particles unchanged |
 
 ## 10. Proposed ADR amendments (none applied)
 
@@ -233,3 +243,5 @@ quasi-static with `KIND` transient / static, already pinned by 232a §2.3), `Lad
    mode-A default such as 1e-6? M0b measures either.
 3. `ELE_TAG` 33026 and `SRC/element/ladrunoMPMPoint/` (one upstream CMake line).
 4. Restart test by `wipe` + `restore` in one process, or a second process as well?
+5. Quasi-static `mpm analyze <n> <dt>` overrides the user's `LoadControl` Δλ with dt (the cases'
+   pseudo-time): acceptable, or refuse a mismatch instead?
