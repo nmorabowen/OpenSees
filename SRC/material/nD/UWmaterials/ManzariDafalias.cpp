@@ -5740,6 +5740,12 @@ ManzariDafalias::GetStateDependent(const Vector &stress, const Vector &alpha, co
     alphaDtheta = g(cos3Theta, m_c) * m_Mc * exp(m_nd * psi) - m_m;
 
     b0 = m_G0 * m_h0 * (1.0 - m_ch * e) / sqrt(p / m_P_atm);
+    // Ladruno WP-229 (TIMs F26): a separate pressure exponent for the plastic modulus,
+    // b0 = G0 h0 (1 - ch e) (p/p_at)^-nh, set by LadrunoSANISAND's -sasPlasticExp (SAS-ME,
+    // IntScheme 129 only: the parser refuses it elsewhere, and the CPPM Jacobians hard-code
+    // the 1/2). nh = 0.5 (the default, DM04) keeps the line above, bit for bit.
+    if (mLadrunoSas.opt.plasticExp != 0.5)                                              // Ladruno WP-229
+        b0 = m_G0 * m_h0 * (1.0 - m_ch * e) * pow(p / m_P_atm, -mLadrunoSas.opt.plasticExp);   // Ladruno WP-229
     
     // d    = root23 * alphaDtheta * n - alpha;
 	d = n; d *= (root23 * alphaDtheta); d -= alpha;

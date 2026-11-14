@@ -169,6 +169,10 @@ class Options:
     #                                  elastic part) | "frozen_increment" (U9, UW
     #                                  ModifiedEuler: K, G of the committed state for
     #                                  the WHOLE increment, plastic substeps included)
+    # --- fork model-form option (not UW, not DM04) -----------------------
+    plastic_exp: float = 0.5        # WP-229 (TIMs F26): nh in b0 = G0 h0 (1 - ch e)
+    #                                  (p/p_at)^-nh.  0.5 = DM04 (the sqrt branch, bit
+    #                                  for bit).  The ELASTIC exponent stays 0.5.
     # --- integrator policy (not constitutive) ---------------------------
     start_outside: str = "stop"     # f0 > tol at t = 0: "stop" | "plastic"
     p_floor: float = 1.0e-6         # stop (status p_floor) when p_eff <= this (kPa)
@@ -295,7 +299,10 @@ def quantities(sig, alpha, z, e, alpha_in, P, O, moduli=None):
     ad = g * P.Mc * math.exp(P.nd * psi) - P.m
     b = SQ23 * ab * n - alpha
     d = SQ23 * ad * n - alpha
-    b0 = P.G0 * P.h0 * (1.0 - P.ch * e) / math.sqrt(pp / P.P_atm)
+    if O.plastic_exp == 0.5:      # DM04: the original expression, bit for bit
+        b0 = P.G0 * P.h0 * (1.0 - P.ch * e) / math.sqrt(pp / P.P_atm)
+    else:                         # WP-229 (TIMs F26): b0 = G0 h0 (1 - ch e) (p/p_at)^-nh
+        b0 = P.G0 * P.h0 * (1.0 - P.ch * e) * (pp / P.P_atm) ** (-O.plastic_exp)
     a = ddot(alpha - alpha_in, n)
     zn = ddot(z, n)
     A = P.A0 * (1.0 + mac(zn))
