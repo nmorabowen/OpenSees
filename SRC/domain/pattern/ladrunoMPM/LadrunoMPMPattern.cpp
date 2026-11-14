@@ -39,6 +39,9 @@
 #include <Matrix.h>
 #include <Parameter.h>
 #include <Information.h>
+#include <Channel.h>
+#include <FEM_ObjectBroker.h>
+#include <ID.h>
 #include <classTags.h>
 #include <elementAPI.h>
 #include <OPS_Globals.h>
@@ -111,9 +114,16 @@ LadrunoMPMPattern::LadrunoMPMPattern(int tag)
     inStep(false), stepped(false), nextLatticeId(0), haveSnapshot(false),
     epoch(0), writer(0), thickness(1.0), thicknessFixed(false),
     unitL("unspecified"), unitF("unspecified"), unitT("unspecified"), unitsFromFile(false),
-    stepsSinceOutput(0), nextOutputTime(0.0), aborted(false)
+    stepsSinceOutput(0), nextOutputTime(0.0), aborted(false),
+    theMode(MODE_EXPLICIT), masscutUser(false), ghostGamma(EMPTY_RENORMALIZE), cutFactor(2.0), maxCutCount(4),
+    rayAlphaM(0.0), rayBetaK(0.0), link(std::make_shared<LadrunoMPMHostLink>()), basesSet(false),
+    nodeBase(1), nextNodeTag(1), eleBase(1), hostPayloadDbTag(0), elementsRestored(false),
+    stepT0(0.0), failNow(false), failStep(0), failAttempts(0), reseedMode(0), armedCount(0),
+    committedCount(0), g2pRan(false), g2pSkipped(false), nG2P(0), nAccepted(0), nRetries(0),
+    nDomainChanges(0), nConnChanges(0), epochSteps(0)
 {
   adapter = new Mats(mats);
+  link->host = this;
 }
 
 LadrunoMPMPattern::LadrunoMPMPattern()
@@ -121,16 +131,34 @@ LadrunoMPMPattern::LadrunoMPMPattern()
     inStep(false), stepped(false), nextLatticeId(0), haveSnapshot(false),
     epoch(0), writer(0), thickness(1.0), thicknessFixed(false),
     unitL("unspecified"), unitF("unspecified"), unitT("unspecified"), unitsFromFile(false),
-    stepsSinceOutput(0), nextOutputTime(0.0), aborted(false)
+    stepsSinceOutput(0), nextOutputTime(0.0), aborted(false),
+    theMode(MODE_EXPLICIT), masscutUser(false), ghostGamma(EMPTY_RENORMALIZE), cutFactor(2.0), maxCutCount(4),
+    rayAlphaM(0.0), rayBetaK(0.0), link(std::make_shared<LadrunoMPMHostLink>()), basesSet(false),
+    nodeBase(1), nextNodeTag(1), eleBase(1), hostPayloadDbTag(0), elementsRestored(false),
+    stepT0(0.0), failNow(false), failStep(0), failAttempts(0), reseedMode(0), armedCount(0),
+    committedCount(0), g2pRan(false), g2pSkipped(false), nG2P(0), nAccepted(0), nRetries(0),
+    nDomainChanges(0), nConnChanges(0), epochSteps(0)
 {
   adapter = new Mats(mats);
+  link->host = this;
 }
 
 LadrunoMPMPattern::~LadrunoMPMPattern()
 {
   closeOutput();
   detachParameters();    // review F2: no Parameter may keep a pointer into our materials
-  for (NDMaterial *m : mats) delete m;
+  // Mode A: `remove loadPattern` takes the elements and grid nodes with it (their
+  // materials come back first). Under `wipe` the Domain already deleted them --
+  // each element told us (mpmElementGone) -- and every lookup misses. A restored
+  // host relinks first, so its elements leave the Domain before their nodes do.
+  if (elementsRestored) {
+    std::string err;
+    relinkElements(err);
+  }
+  teardownModeA();
+  link->host = 0;        // an element that outlives us is an orphan, never a dangling caller
+  for (size_t p = 0; p < mats.size(); p++)
+    if (p >= matOwnedByEle.size() || !matOwnedByEle[p]) delete mats[p];
   delete adapter;
 }
 
@@ -166,6 +194,14 @@ LadrunoMPMPattern::applyLoad(double pseudoTime)
   if (!inStep) return;
   if (isConstant != 0)                  // `loadConst` freezes the factor, as for any pattern
     lambda = (series != 0) ? series->getFactor(pseudoTime) : 1.0;
+  // Mode A: a prescribed-velocity grid condition prescribes du = v (t - t0) on
+  // the reset grid (interface section 5): valueC = (t - t0) v through applyConstraint.
+  if (theMode != MODE_EXPLICIT) {
+    SP_ConstraintIter &it = this->getSPs();
+    SP_Constraint *sp;
+    while ((sp = it()) != 0)
+      if (!sp->isHomogeneous()) sp->applyConstraint(pseudoTime - stepT0);
+  }
 }
 
 void
@@ -181,20 +217,91 @@ LadrunoMPMPattern::getLoadFactor(void)
   return lambda;
 }
 
+// Database save / restore: refused in mode F (slice 1, ADR 232 §5.2); admitted
+// in mode A (WP-232f, interface §6) between `mpm analyze` calls, once the first
+// mode-A step has made the particle elements (they carry the materials).
 int
-LadrunoMPMPattern::sendSelf(int, Channel &)
+LadrunoMPMPattern::sendSelf(int commitTag, Channel &theChannel)
 {
-  opserr << "ERROR LadrunoMPMPattern " << this->getTag()
-         << " -- database save is refused in v1 (ADR 232 §5.2): the particle state"
-            " has no restart path yet (phase 1).\n";
-  return -1;
+  if (theMode == MODE_EXPLICIT) {
+    opserr << "ERROR LadrunoMPMPattern " << this->getTag()
+           << " -- database save is refused in mode F (ADR 232 §5.2): the explicit engine has no"
+              " restart path; mode A (`mpm mode implicit|quasiStatic`) has one.\n";
+    return -1;
+  }
+  if (eles.empty() && eng.P.size() > 0) {
+    opserr << "ERROR LadrunoMPMPattern " << this->getTag()
+           << " -- database save in mode A needs the particle elements: save after the first"
+              " `mpm analyze` step (interface §6).\n";
+    return -1;
+  }
+  Vector payload;
+  packState(payload);
+  // FileDatastore files by (type, size, dbTag, commitTag): the payload goes under
+  // a second dbTag (LEGACY quirk "FileDatastore silently CLOBBERS").
+  if (hostPayloadDbTag == 0) hostPayloadDbTag = theChannel.getDbTag();
+  int seriesClass = -1, seriesDb = 0;
+  if (series != 0) {
+    seriesClass = series->getClassTag();
+    seriesDb = series->getDbTag();
+    if (seriesDb == 0) {
+      seriesDb = theChannel.getDbTag();
+      series->setDbTag(seriesDb);
+    }
+  }
+  static ID hdr(8);
+  hdr(0) = this->getTag();
+  hdr(1) = isConstant;
+  hdr(2) = payload.Size();
+  hdr(3) = hostPayloadDbTag;
+  hdr(4) = seriesClass;
+  hdr(5) = seriesDb;
+  hdr(6) = 232;
+  hdr(7) = 0;
+  if (theChannel.sendID(this->getDbTag(), commitTag, hdr) < 0 ||
+      theChannel.sendVector(hostPayloadDbTag, commitTag, payload) < 0) {
+    opserr << "ERROR LadrunoMPMPattern::sendSelf -- the channel failed\n";
+    return -1;
+  }
+  if (series != 0 && series->sendSelf(commitTag, theChannel) < 0) {
+    opserr << "ERROR LadrunoMPMPattern::sendSelf -- the time series failed to send itself\n";
+    return -1;
+  }
+  return 0;
 }
 
 int
-LadrunoMPMPattern::recvSelf(int, Channel &, FEM_ObjectBroker &)
+LadrunoMPMPattern::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 {
-  opserr << "ERROR LadrunoMPMPattern -- database restore is refused in v1 (ADR 232 §5.2).\n";
-  return -1;
+  static ID hdr(8);
+  if (theChannel.recvID(this->getDbTag(), commitTag, hdr) < 0 || hdr(6) != 232) {
+    opserr << "ERROR LadrunoMPMPattern::recvSelf -- failed to receive the header\n";
+    return -1;
+  }
+  this->setTag(hdr(0));
+  isConstant = hdr(1);
+  hostPayloadDbTag = hdr(3);
+  Vector payload(hdr(2));
+  if (theChannel.recvVector(hostPayloadDbTag, commitTag, payload) < 0 || unpackState(payload) < 0) {
+    opserr << "ERROR LadrunoMPMPattern::recvSelf -- the particle state could not be restored\n";
+    return -1;
+  }
+  if (hdr(4) >= 0) {
+    TimeSeries *ts = theBroker.getNewTimeSeries(hdr(4));
+    if (ts == 0) {
+      opserr << "ERROR LadrunoMPMPattern::recvSelf -- the broker has no time series " << hdr(4) << "\n";
+      return -1;
+    }
+    ts->setDbTag(hdr(5));
+    if (ts->recvSelf(commitTag, theChannel, theBroker) < 0) {
+      delete ts;
+      opserr << "ERROR LadrunoMPMPattern::recvSelf -- the time series failed to receive itself\n";
+      return -1;
+    }
+    this->setTimeSeries(ts);
+  }
+  closeOutput();          // the writer is not restored: re-issue `mpm output`
+  return 0;
 }
 
 void
@@ -487,12 +594,14 @@ LadrunoMPMPattern::domainHasFreeDOF(std::string &which)
   }
   NodeIter &nodes = dom->getNodes();
   Node *nd;
-  while ((nd = nodes()) != 0)
+  while ((nd = nodes()) != 0) {
+    if (this->isGridNode(nd->getTag())) continue;     // mode A's own grid nodes (WP-232f)
     for (int k = 0; k < nd->getNumberDOF(); k++)
       if (fixed.count(std::make_pair(nd->getTag(), k)) == 0) {
         which = "node " + std::to_string(nd->getTag()) + " dof " + std::to_string(k + 1);
         return true;
       }
+  }
   return false;
 }
 
@@ -650,6 +759,16 @@ LadrunoMPMPattern::reset(void)
 {
   epoch++;                          // PARTICLE_EPOCH: the next output opens a new stage
   aborted = false;
+  // Mode A: elements and grid nodes leave the Domain; their materials come back
+  // to the host (a removed tag is never reused: eleBase moves on, W5).
+  if (elementsRestored) {
+    std::string err;
+    if (relinkElements(err) < 0) opserr << "WARNING mpm reset -- " << err.c_str() << "\n";
+  }
+  teardownModeA();
+  epochSteps = 0;
+  nG2P = nAccepted = nRetries = nDomainChanges = nConnChanges = 0;
+  for (GridVel &g : gridVels) { g.nodes.clear(); g.force.assign(eng.ndm(), 0.0); }
   for (NDMaterial *m : mats) m->revertToStart();
   lambda = 1.0;
   // Before any accepted step the particles ARE the initial state, bodies and
@@ -836,7 +955,8 @@ LadrunoMPMPattern::openOutputStage(std::string &err)
   ladruno_mpm_io::StageMeta m;
   m.epoch = epoch;
   m.patternTag = this->getTag();
-  m.mode = "explicit";
+  m.mode = (theMode == MODE_IMPLICIT) ? "implicit"
+         : (theMode == MODE_QUASISTATIC) ? "quasi-static" : "explicit";
   m.thickness = thickness;
   m.unitLength = unitL; m.unitForce = unitF; m.unitTime = unitT; m.unitSystem = unitSystem;
   m.sourceSetIds = sourceSetIds;

@@ -105,7 +105,11 @@ FAMILIES = {
         # that never test a position increment: incline_stick (8.6e-5 m of
         # motion, x1.5 still inside its 0.005 m band), k0_quiet_start (exactly
         # at rest) and roller_slide (a velocity check).
-        "paths": ["test_ladruno_mpm_engine.py"],   # the cases suite; lifecycle/refusal tests are physics-free
+        # WP-232f adds mode A's suite: ZERO drops the particle element's internal
+        # force, SCALE the batched G2P position increment. The floors below were
+        # measured on mode F alone; re-measure them on the combined suite.
+        "paths": ["test_ladruno_mpm_engine.py",       # the cases suite; lifecycle/refusal tests are physics-free
+                  "test_ladruno_mpm_implicit_engine.py"],
         "min_score": {"ZERO": 0.45, "SCALE": 0.55, "IDENT": 0.0},
     },
     # --- WP-3 lanes: gates NOT yet inserted in these families' elements. -----

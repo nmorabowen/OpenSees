@@ -98,3 +98,4 @@ LadrunoCPML — 2D/3D CFS-PML absorber (9 shapes, box/plane, Biot -up)
 
 LadrunoHS/HSSmall — Hardening Soil + HSsmall (mc/mn Lode, WP-210)
 mpm — explicit MPM engine: uGIMP, MUSL PIC/FLIP, frictional walls (WP-232)
+mpm — implicit / quasi-static MPM (mode A): LadrunoMPMPoint particle elements (WP-232f)

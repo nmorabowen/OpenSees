@@ -15,6 +15,7 @@ target_sources(OPS_Domain
     LadrunoMPMPattern.cpp           # Ladruno (WP-232): the host LoadPattern
     OPS_LadrunoMPM.cpp              # Ladruno (WP-232): the `mpm` command
     LadrunoMPMIO.cpp                # Ladruno (WP-232 c2): contract 1 reader, contract 2 writer
+    LadrunoMPMImplicit.cpp          # Ladruno (WP-232f): mode A, particles as LadrunoMPMPoint elements
     PUBLIC
     LadrunoMPMPattern.h
     LadrunoMPMCore.h

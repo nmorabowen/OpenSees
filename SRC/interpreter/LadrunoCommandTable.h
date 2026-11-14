@@ -110,4 +110,4 @@ LADRUNO_COMMAND("ritzVectors",               OPS_LadrunoRitzVectors,           r
 LADRUNO_COMMAND("responseSpectrumPerMode",   OPS_LadrunoResponseSpectrumPerMode, responseSpectrumPerMode)   // WP-216
 
 // ---- WP-232: the explicit MPM engine (mode F; a LoadPattern host, no analysis) --
-LADRUNO_COMMAND("mpm",                       OPS_LadrunoMPM,                   ladrunoMPM)                    // WP-232
+LADRUNO_COMMAND("mpm",                       OPS_LadrunoMPMDL,                 ladrunoMPM)                    // WP-232; DL bridge WP-232f
