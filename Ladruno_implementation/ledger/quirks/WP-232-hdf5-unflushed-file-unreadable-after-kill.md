@@ -14,9 +14,15 @@ date: 2026-11-14
 - **Why:** without SWMR, the on-disk structure is consistent only at a flush or a close. Raw
   chunk data written after the last flush lands beyond the end-of-allocation the file records,
   so it is ignored on reopen, but only if a flush ever happened.
-- **Workaround:** flush right after the first structure is written (the stage skeleton and its
-  first output), then on a wall-clock cadence (`LadrunoRecorder -flush`, WP-164; `mpm output
-  -flush`), and at the end of every run, failed or not. Readers then apply the contract's crash
+- **Between flushes a kill can CORRUPT, not just truncate.** Without SWMR, HDF5 may evict
+  metadata and partly written deflated chunks to disk at any time; a kill then leaves headers that
+  open but data that fail with "filter returned failure during read" (measured on build 5 with a
+  10 s cadence, killed at 1 s and 3 s). A file is crash-consistent only at a flush.
+- **Workaround:** `mpm output` flushes after every output by default (outputs are throttled by
+  `-every` / `-dt`), lays the data out so a flushed output is never rewritten (one chunk per output
+  for `ID` and `DATA`; uncompressed index datasets), and flushes at the end of every run, failed or
+  not. A wall-clock cadence (`-flush s`, as `LadrunoRecorder -flush`, WP-164) trades that safety
+  for speed. The full fix is HDF5 SWMR, deferred. Readers then apply the contract's crash
   rule for a partial last output (232a §2.5). `tests/test_ladruno_mpm_contracts_io.py::
   test_a_killed_run_leaves_a_readable_file` kills a writer mid-run.
 - Learned 2026-11-14 (WP-232c, the c2 review).

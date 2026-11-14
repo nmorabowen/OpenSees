@@ -78,8 +78,10 @@ struct WriterConfig {
   int    every = 1;          // output every N steps (when dtOut <= 0)
   double dtOut = -1.0;       // or every dtOut of Domain time
   int    compress = 1;       // deflate level (0: no filter)
-  double flushSeconds = 10.0;   // wall-clock H5Fflush cadence, as LadrunoRecorder -flush (WP-164);
-                                // <= 0: after every output
+  double flushSeconds = 0.0;    // wall-clock H5Fflush cadence (LadrunoRecorder -flush, WP-164);
+                                // <= 0 (the default): after every output -- particle outputs are
+                                // already throttled by -every / -dt, and a file is crash-
+                                // consistent only at a flush (c2 review 2)
   std::vector<std::string> fields;   // POSITION always first
 };
 

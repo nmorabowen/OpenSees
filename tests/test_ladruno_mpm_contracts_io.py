@@ -439,15 +439,18 @@ ops.nDMaterial("ElasticIsotropic", 1, 2.0e5, 0.3)
 ops.nDMaterial("ElasticIsotropic", 2, 2.0e4, 0.3)
 ops.mpm("grid", 232, "-origin", 0.0, 0.0, "-h", 0.5, "-cells", 4, 4, "-basis", "gimp")
 ops.mpm("particles", "-file", fixture)
-ops.mpm("output", out, "-every", 1, "-flush", 0.2)
+ops.mpm("output", out, "-every", 1, "-fields", "POSITION", "VELOCITY", "STRESS", "VOLUME")
 print("CHILD START", flush=True)
 ops.mpm("analyze", 50000000, 1e-6)
 """
 
 
-def test_a_killed_run_leaves_a_readable_file(tmp_path):
-    """Review 2: with the wall-clock flush cadence, a run killed mid-analyze leaves a
-    file that opens, and the contract's crash rule (232a §2.5) recovers its outputs."""
+@pytest.mark.parametrize("wait", [0.5, 1.0, 1.5, 2.0, 3.0, 4.0])
+def test_a_killed_run_leaves_a_readable_file(tmp_path, wait):
+    """Review 2 (and its follow-up ruling): under the DEFAULT settings (a flush after
+    every output) a run killed mid-analyze at any point leaves a file that opens, and
+    the contract's crash rule (232a §2.5) recovers every completed output, data
+    included -- never a filter failure on rows already flushed."""
     import time
     _ops()
     out = tmp_path / "killed.ladruno"
@@ -458,16 +461,24 @@ def test_a_killed_run_leaves_a_readable_file(tmp_path):
                          stdin=subprocess.DEVNULL, env=env)
     try:
         assert "CHILD START" in p.stdout.readline()
-        time.sleep(2.0)
+        time.sleep(wait)
     finally:
         p.kill()
         p.wait()
+    S = _set()
     with h5py.File(out, "r") as f:                       # must open
         op = f["MODEL_STAGE[0]/RESULTS/ON_PARTICLES"]
-        steps, times, offs, ids = op["STEP"][...], op["TIME"][...], op["OFFSETS"][...], op["ID"][...]
+        steps, times, offs = op["STEP"][...], op["TIME"][...], op["OFFSETS"][...]
         T = min(len(steps), len(times), len(offs) - 1)    # the crash rule
-        assert T >= 1
-        assert offs[T] <= len(ids) and offs[T] <= op["POSITION/DATA"].shape[0]
-        S = _set()
+        nid = op["ID"].shape[0]
+        while T > 0 and (offs[T] > nid or any(offs[T] > op[k]["DATA"].shape[0]
+                                              for k in ("POSITION", "VELOCITY", "STRESS", "VOLUME"))):
+            T -= 1
+        assert T >= 1, (T, len(steps), len(offs), nid)
+        ids = op["ID"][:offs[T]]
+        for k in ("POSITION", "VELOCITY", "STRESS", "VOLUME"):
+            data = op[k]["DATA"][:offs[T]]                 # readable, every completed output
+            assert np.all(np.isfinite(data)), k
         for k in range(T):
             assert np.array_equal(ids[offs[k]:offs[k + 1]], S["ID"])
+        assert np.all(np.diff(steps[:T]) > 0)

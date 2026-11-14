@@ -755,12 +755,24 @@ ParticleWriter::openStage(const StageMeta &m, int step, double time, std::string
   // ---- RESULTS/ON_PARTICLES (232a §2.5) -----------------------------------------
   hid_t op = H5Gcreate2(res, "ON_PARTICLES", H5P_DEFAULT, impl->gplist, H5P_DEFAULT);
   h5w::attribute::write(op, "PARTITION_REDUCTION", std::string("NONE"));
-  impl->dsStep = h5w::dataset::createRows(op, "STEP", H5T_STD_I32LE, 0, 1024, cmp);
-  impl->dsTime = h5w::dataset::createRows(op, "TIME", H5T_IEEE_F64LE, 0, 1024, cmp);
-  impl->dsOff = h5w::dataset::createRows(op, "OFFSETS", H5T_STD_I64LE, 0, 1024, cmp);
+  // Crash layout (c2 review 2; quirk WP-232-hdf5-unflushed-file-unreadable-after-kill):
+  // the writer flushes after every output by default, and lays the data out so a
+  // flushed output is never rewritten. The three index datasets are tiny and stay
+  // UNcompressed (an in-place rewrite of their last chunk keeps the earlier entries
+  // valid, where a half-rewritten deflated chunk fails its filter); ID and every
+  // DATA get one chunk per output (M rows) while it fits 16 MiB, so an output
+  // appends new chunks and never touches an old one.
+  impl->dsStep = h5w::dataset::createRows(op, "STEP", H5T_STD_I32LE, 0, 1024, 0);
+  impl->dsTime = h5w::dataset::createRows(op, "TIME", H5T_IEEE_F64LE, 0, 1024, 0);
+  impl->dsOff = h5w::dataset::createRows(op, "OFFSETS", H5T_STD_I64LE, 0, 1024, 0);
   const long long zero = 0;
   const bool offOk = impl->dsOff >= 0 && h5w::dataset::appendRows(impl->dsOff, H5T_NATIVE_LLONG, &zero, 1, 0) >= 0;
-  impl->dsId = h5w::dataset::createRows(op, "ID", H5T_STD_I64LE, 0, (1 << 20) / 8, cmp);
+  auto perOutput = [&](int nc) -> hsize_t {
+    const hsize_t one = std::max<hsize_t>(1, M);
+    return (one * (hsize_t)nc * 8 <= (hsize_t)(16 << 20)) ? one
+                                                           : std::max<hsize_t>(1, (hsize_t)((1 << 20) / (8 * nc)));
+  };
+  impl->dsId = h5w::dataset::createRows(op, "ID", H5T_STD_I64LE, 0, perOutput(1), cmp);
   struct Meta { const char *name, *display, *dim; int dataType; };
   static const Meta metas[] = {
     {"POSITION", "Position", "L", 1}, {"VELOCITY", "Velocity", "L/t", 1},
@@ -781,8 +793,7 @@ ParticleWriter::openStage(const StageMeta &m, int step, double time, std::string
     h5w::attribute::write(fg, "TYPE", (int)0);
     h5w::attribute::write(fg, "DATA_TYPE", mt ? mt->dataType : 0);
     h5w::attribute::write(fg, "PARTITION_REDUCTION", std::string("NONE"));
-    const hsize_t rows = std::max<hsize_t>(1, (hsize_t)((1 << 20) / (8 * nc2)));
-    impl->dsData.push_back(h5w::dataset::createRows(fg, "DATA", H5T_IEEE_F64LE, (hsize_t)nc2, rows, cmp));
+    impl->dsData.push_back(h5w::dataset::createRows(fg, "DATA", H5T_IEEE_F64LE, (hsize_t)nc2, perOutput(nc2), cmp));
     impl->ncomp.push_back(nc2);
     H5Gclose(fg);
   }

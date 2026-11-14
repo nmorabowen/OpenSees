@@ -142,10 +142,13 @@ stage (`EMPTY_PARTITION = 1`, empty nodes, elements and result groups) plus `MOD
   state before that step; so bodies and initial conditions set after a refused or zero-step analyze
   reach the file. `mpm reset` starts a new epoch, hence a new stage (`PARTICLE_EPOCH` + 1). The
   particle set is fixed once a stage is open; a mismatch is refused, never written short.
-- **Flush:** the stage skeleton and output 0 are flushed at once, then on the recorder's wall-clock
-  cadence (`-flush s`, default 10 s as `recorder ladruno`; `<= 0` after every output) and at the end
-  of every `mpm analyze`, failed or not. A killed run then leaves a file that opens; a reader applies
-  the contract's crash rule (232a §2.5). The `-dt` cadence re-arms when the Domain time goes back
+- **Flush:** by default the file is flushed after EVERY output (`-flush 0`): particle outputs are
+  already throttled by `-every` / `-dt`, and an HDF5 file is crash-consistent only at a flush —
+  between flushes a kill can corrupt it (unreadable headers, or deflated chunks that fail their
+  filter), not merely truncate it. `-flush s` relaxes it to a wall-clock cadence, at that risk. The
+  data are laid out so a flushed output is never rewritten (one chunk per output for `ID` and every
+  `DATA`, uncompressed `STEP` / `TIME` / `OFFSETS`). A killed run then leaves a file that opens; a
+  reader applies the contract's crash rule (232a §2.5). The full fix, HDF5 SWMR, is deferred. The `-dt` cadence re-arms when the Domain time goes back
   (`reset`, `setTime`).
 - Outputs are written after `Domain::commit` (positions and stresses of the same step), every `N`
   steps or every `Δt` of time, and the last step of every `mpm analyze` is always written.

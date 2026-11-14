@@ -493,7 +493,7 @@ int OPS_LadrunoMPM(void)
       } else if (opt == "-dt") {
         if (!readDoubles(1, &cfg.dtOut) || !(cfg.dtOut > 0.0)) return fail("output -dt needs dt > 0");
       } else if (opt == "-flush") {
-        if (!readDoubles(1, &cfg.flushSeconds)) return fail("output -flush needs seconds (<= 0: every output)");
+        if (!readDoubles(1, &cfg.flushSeconds)) return fail("output -flush needs seconds (<= 0, the default: after every output)");
       } else if (opt == "-compress") {
         if (!readInt(cfg.compress) || cfg.compress < 0 || cfg.compress > 9) return fail("output -compress needs 0..9");
       } else if (opt == "-fields") {
