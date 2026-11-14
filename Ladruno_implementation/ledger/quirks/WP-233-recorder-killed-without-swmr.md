@@ -32,8 +32,11 @@ date: 2026-11-14
   grew from 2.6 MB to **206 MB**. HDF5's own `H5D_CHUNK_DONT_FILTER_PARTIAL_CHUNKS` leaks
   too (1.75–2x), because it deflates the edge chunk on completion and frees the unfiltered
   copy. The fix is a layout whose chunks never move:
-  - `-compress N > 0` (default 1): one step per chunk, compressed and written once. The
-    file size is the same as WP-164's, but reading one id's history is 2–15x slower;
+  - `-compress N > 0` (default 1) and a slab of at least 4 KiB: one step per chunk,
+    compressed and written once. The file size is about WP-164's, but reading one id's
+    history is 2–15x slower. Under 4 KiB a per-step chunk compresses worse than raw: the
+    C++ bench measured 5.5 MB vs WP-164's 3.5 MB and 2x the time for 10 ids x 2
+    components. Such a slab is written unfiltered whatever `-compress` says;
   - `-compress 0`: unfiltered ~64 KiB chunks, rewritten in place. Fastest, but the file is
     1.13x (real nonlinear runs) to 1.7x (a static slab) larger.
 

@@ -25,8 +25,9 @@ Two writers:
   envelope accumulators rewritten in place with ``--envelope``); ``H5Fflush`` when the cadence
   is due (``--flush-every K`` recorded steps; 0 = every step, ``-flush 0``);
 - ``DATA`` layout = ``Ladruno_Hdf5.h::planTimeSeries``: ``-compress N > 0`` (the default 1)
-  one step per chunk, ids tiled to 1 MiB, shuffle + deflate N; ``-compress 0`` unfiltered,
-  ~64 KiB chunks stacking up to 1024 steps. ``TIME``/``STEP`` chunk 1024, unfiltered.
+  and a slab of >= 4 KiB: one step per chunk, ids tiled to 1 MiB, shuffle + deflate N;
+  otherwise unfiltered, ~64 KiB chunks stacking up to 1024 steps. ``TIME``/``STEP`` chunk
+  1024, unfiltered.
 
 ``--writer wp164`` (the recorder before WP-233, kept for the evidence on #1082): default file
 access list (v1 B-tree chunk indexes), no SWMR, one stage, the WP-164 ~1 MiB chunk plan with
@@ -291,9 +292,10 @@ class SwmrWriter:
             g.attrs["DATA_TYPE"] = 1
             g.attrs["PARTITION_REDUCTION"] = "NONE"
             g.create_dataset("ID", data=ids.reshape(-1, 1))
-            ct, cids, cache, slots = plan_swmr(n_ids, nc, eb, self.a.compress > 0, self.a.chunk_scale)
+            comp = self.a.compress > 0 and n_ids * nc * eb >= 4096   # timeSeriesCompressed
+            ct, cids, cache, slots = plan_swmr(n_ids, nc, eb, comp, self.a.chunk_scale)
             kw = ({"compression": "gzip", "compression_opts": self.a.compress, "shuffle": True}
-                  if self.a.compress > 0 else {})
+                  if comp else {})
             g.create_dataset("DATA", shape=(0, n_ids, nc), maxshape=(None, n_ids, nc),
                              chunks=(ct, cids, nc), dtype=disk, rdcc_nbytes=cache,
                              rdcc_nslots=slots, rdcc_w0=1.0, **kw)

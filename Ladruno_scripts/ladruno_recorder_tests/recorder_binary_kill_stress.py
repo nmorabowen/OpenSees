@@ -7,7 +7,8 @@ TerminateProcess (``Popen.kill``), and checks the file against a REFERENCE: the 
 to completion and closed (the analysis is deterministic, so a killed run's rows are a prefix
 of the reference's, bit for bit).
 
-The deck: a 2-D cantilever of 60 ``elasticBeamColumn`` (61 nodes, lumped masses, a sine tip
+The deck: a 2-D cantilever of 200 ``elasticBeamColumn`` (201 nodes, so the displacement slab
+is 4.8 KiB and ``-compress 1`` takes the deflated layout; lumped masses, a sine tip
 load, Newmark), ``recorder ladruno -N displacement velocity -E force``, one step per
 ``analyze(1)``. ``--mode`` drives the recorder's lifecycle windows (the points where it leaves
 SWMR to create objects), so a random kill lands in them often:
@@ -79,7 +80,7 @@ os.add_dll_directory(pyd); sys.path.insert(0, pyd)
 import opensees as ops
 ops.wipe()
 ops.model("basic", "-ndm", 2, "-ndf", 3)
-N = 60
+N = 200            # 201 nodes: a 4.8 KiB displacement slab, so -compress 1 deflates (>= 4 KiB)
 for i in range(N + 1):
     ops.node(i + 1, 0.0, 0.1 * i)
     if i:

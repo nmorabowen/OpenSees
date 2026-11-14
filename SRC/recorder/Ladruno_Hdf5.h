@@ -371,10 +371,13 @@ namespace h5 {
 		// grew 2.6 -> 206 MB). Two layouts survive SWMR; both write a chunk's
 		// final bytes in place or once:
 		//
-		//  * deflate > 0 (the default, -compress 1): ONE STEP PER CHUNK, ids tiled
-		//    to <= 1 MiB, shuffle + deflate. A step's write completes every chunk
-		//    it touches, so each chunk is compressed and written exactly once.
-		//    Same size as WP-164; reading one id's history touches T chunks.
+		//  * deflate > 0 (the default, -compress 1) and a slab of >= 4 KiB: ONE STEP
+		//    PER CHUNK, ids tiled to <= 1 MiB, shuffle + deflate. A step's write
+		//    completes every chunk it touches, so each chunk is compressed and
+		//    written exactly once. About WP-164's size; reading one id's history
+		//    touches T chunks. Below 4 KiB a per-step chunk compresses worse than
+		//    raw (per-chunk overhead) and costs time: such a slab takes the
+		//    unfiltered layout whatever -compress says (measured, WP-233 bench).
 		//  * deflate == 0 (-compress 0): UNFILTERED, ~64 KiB chunks stacking up to
 		//    1024 steps (ct <= 16 for a large slab). An unfiltered chunk keeps its
 		//    size, so a partial chunk is rewritten in place (old rows byte-equal).
@@ -390,6 +393,12 @@ namespace h5 {
 			size_t cache_bytes;  // chunk-cache size for the dataset access list
 			size_t cache_slots;  // hash slots for the chunk cache
 		};
+
+		// WP-233: does this slab get the compressed (one step per chunk) layout?
+		inline bool timeSeriesCompressed(hsize_t n_ids, hsize_t n_comp, hsize_t elem_bytes,
+		                                 int deflate) {
+			return deflate > 0 && n_ids * n_comp * elem_bytes >= ((hsize_t)4 << 10);
+		}
 
 		inline TimeSeriesPlan planTimeSeries(hsize_t n_ids, hsize_t n_comp, hsize_t elem_bytes,
 		                                     bool compressed) {
@@ -439,7 +448,8 @@ namespace h5 {
 		// chunks first) for a time-series DATA, at create and at every reopen.
 		inline hid_t timeSeriesAccessList(hsize_t n_ids, hsize_t n_comp, hid_t disk_type, int deflate) {
 			hsize_t elem_bytes = (H5Tequal(disk_type, H5T_IEEE_F32LE) > 0) ? 4 : 8;
-			TimeSeriesPlan p = planTimeSeries(n_ids, n_comp, elem_bytes, deflate > 0);
+			TimeSeriesPlan p = planTimeSeries(n_ids, n_comp, elem_bytes,
+				timeSeriesCompressed(n_ids, n_comp, elem_bytes, deflate));
 			hid_t dapl = H5Pcreate(H5P_DATASET_ACCESS);
 			if (dapl >= 0 && H5Pset_chunk_cache(dapl, p.cache_slots, p.cache_bytes, 1.0) < 0) {
 				H5Pclose(dapl);
@@ -454,7 +464,8 @@ namespace h5 {
 		                                    hsize_t n_comp, hid_t disk_type, int deflate) {
 			if (n_ids < 1 || n_comp < 1) return HID_INVALID;
 			hsize_t elem_bytes = (H5Tequal(disk_type, H5T_IEEE_F32LE) > 0) ? 4 : 8;
-			TimeSeriesPlan p = planTimeSeries(n_ids, n_comp, elem_bytes, deflate > 0);
+			const bool compressed = timeSeriesCompressed(n_ids, n_comp, elem_bytes, deflate);
+			TimeSeriesPlan p = planTimeSeries(n_ids, n_comp, elem_bytes, compressed);
 			hsize_t dims[3]    = { 0, n_ids, n_comp };
 			hsize_t maxdims[3] = { H5S_UNLIMITED, n_ids, n_comp };
 			hsize_t chunk[3]   = { p.ct, p.chunk_ids, n_comp };
@@ -463,7 +474,7 @@ namespace h5 {
 			hid_t dcpl = H5Pcreate(H5P_DATASET_CREATE);
 			hid_t dapl = timeSeriesAccessList(n_ids, n_comp, disk_type, deflate);
 			herr_t st = (dcpl >= 0 && dapl >= 0) ? H5Pset_chunk(dcpl, 3, chunk) : -1;
-			if (st >= 0 && deflate > 0) {
+			if (st >= 0 && compressed) {
 				st = H5Pset_shuffle(dcpl);
 				if (st >= 0) st = H5Pset_deflate(dcpl, (unsigned)(deflate > 9 ? 9 : deflate));
 			}

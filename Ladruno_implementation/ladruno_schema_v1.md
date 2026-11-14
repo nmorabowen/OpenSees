@@ -762,10 +762,11 @@ seconds", did not hold (quirk `WP-233-recorder-killed-without-swmr`).
   1,024 stages.
 - **Streaming layout.** Under SWMR no freed file space is reused. A `DATA` chunk is
   therefore written so that it never moves:
-  - with `-compress N > 0` (the default, 1), it holds one step (ids tiled to 1 MiB) and is
-    compressed and written once;
-  - with `-compress 0`, it is unfiltered (about 64 KiB, stacking up to 1,024 steps), keeps
-    its size and is rewritten in place.
+  - with `-compress N > 0` (the default, 1) and a slab (one step of the result) of at
+    least 4 KiB, it holds one step (ids tiled to 1 MiB) and is compressed and written once;
+  - otherwise (`-compress 0`, or a slab under 4 KiB, where a per-step chunk compresses worse
+    than raw and costs time), it is unfiltered (about 64 KiB, stacking up to 1,024 steps),
+    keeps its size and is rewritten in place.
 
   `TIME`/`STEP` stay unfiltered, chunk 1,024.
 - **What survives a kill:**
