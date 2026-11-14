@@ -8,8 +8,12 @@ cell-crossing meter, rigid translation (engine) and rigid rotation (kernel), the
 impact, the frictional incline, the critical time step (refused above, stable just below).
 The direct tests at the end check properties that need no case file.
 
-numpy only (zone_a). Wall time about 45 s, dominated by the run cases, each run once per
+numpy only (zone_a). Wall time about 55 s, dominated by the run cases, each run once per
 session (cached).
+
+Amendment 5 (F2) added the checks that do not rest on the oracle's own stored numbers: the
+affine-field gradient, the damped free fall (a case), the overhang and roller cases, and
+invariants on the stored field lines with an independent polar factor.
 """
 from __future__ import annotations
 
@@ -234,6 +238,94 @@ def test_basis_partition_of_unity():
         nid, S, G = g.shape(x, lp, basis)
         assert np.allclose(S.sum(axis=1), 1.0, atol=1e-14)
         assert np.allclose(G.sum(axis=1), 0.0, atol=1e-12)
+
+
+def test_basis_partition_of_unity_with_overhang():
+    """Ghost layers (Amendment 5): any admissible centre, domains overhanging faces included."""
+    rng = np.random.default_rng(2325)
+    for ndm in (2, 3):
+        g = M.Grid(np.full(ndm, -1.0), 0.5, [4] * ndm)
+        lp = rng.uniform(0.02, 0.25, size=(300, ndm))
+        x = rng.uniform(-1.0, 1.0, size=(300, ndm))
+        x[:20] = -1.0          # centres exactly on the minimum faces
+        x[20:40] = 1.0         # and on the maximum faces
+        assert np.all(g.admissible(x, lp, "gimp"))
+        nid, S, G = g.shape(x, lp, "gimp")
+        assert np.allclose(S.sum(axis=1), 1.0, atol=1e-14)
+        assert np.allclose(G.sum(axis=1), 0.0, atol=1e-12)
+        assert nid.min() >= 0 and nid.max() < g.nnodes
+
+
+def test_affine_velocity_field_gives_its_gradient():
+    """F2: nodal v = A x (A non-symmetric) gives L = A exactly, for every basis and dimension.
+    Catches a transposed L and a scaled gradient."""
+    rng = np.random.default_rng(2326)
+    for ndm in (2, 3):
+        A = rng.normal(size=(ndm, ndm))
+        assert not np.allclose(A, A.T)
+        g = M.Grid(np.zeros(ndm), 0.5, [4] * ndm)
+        xn = g.x0 + g.ijk * g.h                       # every node's position, ghosts included
+        v_grid = xn @ A.T
+        for basis in ("gimp", "linear"):
+            lp = np.full((50, ndm), 0.2)
+            x = rng.uniform(0.0, 2.0, size=(50, ndm))
+            nid, S, G = g.shape(x, lp, basis)
+            L = M.velocity_gradient(v_grid, nid, G)
+            assert np.allclose(L, A[None], atol=1e-12), basis
+            # and G2P of the same field reproduces v(x_p) (linear completeness)
+            assert np.allclose(np.einsum("pk,pka->pa", S, v_grid[nid]), x @ A.T, atol=1e-12)
+
+
+def _polar_eig(F):
+    """R = F U^-1 with U = sqrt(F^T F) from an eigen-decomposition (not the SVD of the oracle)."""
+    w, Q = np.linalg.eigh(F.T @ F)
+    U_inv = Q @ np.diag(1.0 / np.sqrt(w)) @ Q.T
+    return F @ U_inv
+
+
+def _field_cases():
+    return [n for n, lines in CASES.items() if any(t[0] == "field" for t in lines)]
+
+
+@pytest.mark.parametrize("name", _field_cases())
+def test_stored_fields_satisfy_the_kinematic_and_material_invariants(name):
+    """F2: on the stored field lines, with an independent polar factor:
+    V = det F V0, sig_hat = sig0 + D eps_hat, sig = R sig_hat R^T."""
+    lines = CASES[name]
+    ndm = int(M._get(lines, "ndm")[0])
+    nv = 6 if ndm == 3 else 3
+    mats = {int(t[1]): (float(t[3]), float(t[4])) for t in lines if t[0] == "material"}
+    parts = {}
+    for t in lines:
+        if t[0] == "particle":
+            pt = t[1:]
+            i = pt.index("x")
+            parts[int(pt[0])] = dict(mat=int(pt[2]), V0=float(pt[4]),
+                                     s0=np.array(M._floats(pt[i + 4 + 3 * ndm:i + 4 + 3 * ndm + nv])))
+    fields = [t[1:] for t in lines if t[0] == "field"]
+    assert fields and len(fields) == len(parts)
+    for f in fields:
+        pid = int(f[0])
+        nums = np.array([float(x) for x in f[1:] if x not in ("x", "v", "F", "V", "sig", "sighat", "epshat")])
+        k = 2 * ndm
+        F = nums[k:k + ndm * ndm].reshape(ndm, ndm)
+        k += ndm * ndm
+        V = nums[k]
+        k += 1
+        sig, sig_hat, eps_hat = nums[k:k + nv], nums[k + nv:k + 2 * nv], nums[k + 2 * nv:k + 3 * nv]
+        p = parts[pid]
+        assert np.isclose(V, np.linalg.det(F) * p["V0"], rtol=1e-13)
+        lam, mu = M.lame(*mats[p["mat"]])
+        D = M.elastic_D(lam, mu, ndm)[0]
+        assert np.allclose(sig_hat, p["s0"] + D @ eps_hat, rtol=1e-12, atol=1e-12)
+        R = _polar_eig(F)
+        if ndm == 3:
+            S = H.voigt_to_tensor_stress(sig_hat)
+            ref = H.tensor_to_voigt_stress(R @ S @ R.T)
+        else:
+            S = H.voigt3_to_tensor(sig_hat)
+            ref = H.tensor_to_voigt3(R @ S @ R.T)
+        assert np.allclose(sig, ref, rtol=1e-11, atol=1e-11)
 
 
 def test_basis_gradient_is_the_derivative():

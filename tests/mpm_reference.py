@@ -62,37 +62,50 @@ def gimp_1d(r, h, lp):
     return S, dS
 
 
+GHOST = 1   # ghost node layers beyond each face (interface section 2, Amendment 5)
+
+
 class Grid:
+    """Real grid [x0, x0 + n h] plus GHOST node layers beyond every face.
+
+    Node indices run from -GHOST to n_d + GHOST per axis; the id of node (i, j, k) is
+    (i+G) + (n_x+1+2G)*((j+G) + (n_y+1+2G)*(k+G)), x fastest (interface section 2).
+    """
+
     def __init__(self, origin, h, cells):
         self.x0 = np.asarray(origin, dtype=float)
         self.h = float(h)
         self.n = np.asarray(cells, dtype=int)
         self.ndm = len(self.n)
-        self.nn_axis = self.n + 1
+        self.nn_axis = self.n + 1 + 2 * GHOST
         self.nnodes = int(np.prod(self.nn_axis))
-        # multi-index of every node id (x fastest)
         ids = np.arange(self.nnodes)
-        self.ijk = np.zeros((self.nnodes, self.ndm), dtype=int)
+        self.ijk = np.zeros((self.nnodes, self.ndm), dtype=int)   # signed node indices
         rem = ids.copy()
         for a in range(self.ndm):
-            self.ijk[:, a] = rem % self.nn_axis[a]
+            self.ijk[:, a] = rem % self.nn_axis[a] - GHOST
             rem //= self.nn_axis[a]
 
     def node_id(self, idx):
         nid, mult = 0, 1
         for a in range(self.ndm):
-            nid = nid + idx[a] * mult
+            nid = nid + (np.asarray(idx[a]) + GHOST) * mult
             mult *= self.nn_axis[a]
         return nid
 
     def face_nodes(self, face):
+        """The face layer and its ghost layers, with the face's inward normal."""
         a = AXIS[face[0]]
         if a >= self.ndm:
             raise ValueError(f"face {face} not in {self.ndm}D")
-        k = 0 if face.endswith("min") else self.n[a]
         normal = np.zeros(self.ndm)
-        normal[a] = 1.0 if face.endswith("min") else -1.0
-        return np.nonzero(self.ijk[:, a] == k)[0], normal
+        if face.endswith("min"):
+            sel = self.ijk[:, a] <= 0
+            normal[a] = 1.0
+        else:
+            sel = self.ijk[:, a] >= self.n[a]
+            normal[a] = -1.0
+        return np.nonzero(sel)[0], normal
 
     def shape(self, x, lp, basis):
         """Support of every particle: node ids (N, K), S (N, K), grad S (N, K, ndm)."""
@@ -104,10 +117,12 @@ class Grid:
                 cand = c[:, None] + np.arange(-1, 3)[None, :]
                 r = x[:, a, None] - (self.x0[a] + cand * self.h)
                 S, dS = gimp_1d(r, self.h, np.broadcast_to(lp[:, a, None], r.shape).copy())
-                out = (cand < 0) | (cand > self.n[a])
+                out = (cand < -GHOST) | (cand > self.n[a] + GHOST)
+                # only zero-weight candidates may fall outside the ghost layers
+                assert not np.any(S[out] != 0.0) and not np.any(dS[out] != 0.0)
                 S[out] = 0.0
                 dS[out] = 0.0
-                cand = np.clip(cand, 0, self.n[a])
+                cand = np.clip(cand, -GHOST, self.n[a] + GHOST)
             elif basis == "linear":
                 c = np.floor((x[:, a] - self.x0[a]) / self.h).astype(int)
                 c = np.clip(c, 0, self.n[a] - 1)
@@ -119,7 +134,7 @@ class Grid:
                 raise ValueError(basis)
             Ss.append(S)
             dSs.append(dS)
-            idx.append(cand)
+            idx.append(cand + GHOST)
         S = np.ones((N, 1))
         G = [np.ones((N, 1)) for _ in range(self.ndm)]
         nid = np.zeros((N, 1), dtype=int)
@@ -134,13 +149,12 @@ class Grid:
         return nid, S, np.stack(G, axis=-1)
 
     def admissible(self, x, lp, basis):
+        """The particle centre inside the real grid (and 0 < lp <= h/2 for GIMP)."""
         lo = self.x0
         hi = self.x0 + self.n * self.h
+        ok = np.all((x >= lo) & (x <= hi), axis=1)
         if basis == "gimp":
-            # Amendment 2: the particle centre inside the grid; support nodes outside are dropped
-            ok = np.all((x >= lo) & (x <= hi) & (lp > 0) & (lp <= 0.5 * self.h), axis=1)
-        else:
-            ok = np.all((x >= lo) & (x <= hi), axis=1)
+            ok &= np.all((lp > 0) & (lp <= 0.5 * self.h), axis=1)
         return ok
 
 
@@ -177,6 +191,11 @@ def elastic_D(lam, mu, ndm):
 # --------------------------------------------------------------------------- #
 #  Engine                                                                     #
 # --------------------------------------------------------------------------- #
+
+def velocity_gradient(v_grid, nid, G):
+    """L_p[a][b] = sum_k v_grid[nid_pk, a] * dS_pk/dx_b (interface section 6.6)."""
+    return np.einsum("pka,pkb->pab", v_grid[nid], G)
+
 
 class StepRefused(Exception):
     pass
@@ -231,6 +250,7 @@ class Engine:
 
     # -- section 6.1 / 6.2 ---------------------------------------------------
     def critical_dt(self):
+        # M_p from the COMMITTED tangent; for this hypoelastic law the tangent is constant D
         M = self.lam + 2 * self.mu
         rho = self.m / self.V
         c = np.sqrt(M / rho)
@@ -317,7 +337,7 @@ class Engine:
                        for a in range(ndm)], axis=1)
         vs_i = np.where(active[:, None], ps / m_safe[:, None], 0.0)
         vs_i = self._apply_conditions(vs_i, active, full=False)
-        L = np.einsum("pka,pkb->pab", vs_i[nid], G)
+        L = velocity_gradient(vs_i, nid, G)
         F_new = (np.eye(ndm)[None] + dt * L) @ self.F
         if ndm == 3:
             status, deps, R1, J1 = hypo_increment_from_F(self.F, F_new)
@@ -437,10 +457,13 @@ def build_engine(lines):
         mats[int(t[0])] = (float(t[2]), float(t[3]))
     vel = {int(t[0]): t[1:] for t in _all(lines, "velocity")}
     stress = {int(t[0]): t[1:] for t in _all(lines, "stress")}
+    shifts = {int(t[0]): t[1:] for t in _all(lines, "shift")}
     next_id = 0
     for bt in _all(lines, "body"):
         bid = int(bt[0])
         pts, V0, lp, mat, rho = _lattice(grid, bt)
+        if bid in shifts:
+            pts = pts + np.array(_floats(shifts[bid][:ndm]))
         N = pts.shape[0]
         v = np.zeros((N, ndm))
         if bid in vel:
@@ -559,6 +582,8 @@ def run_case(lines) -> dict:
     res["max_speed"] = np.array([max(vmax)])
     res["com_disp_x"] = {b: np.array([eng.com(b)[0] - com0[b][0]]) for b in com0}
     res["com_v_x"] = {b: np.array([eng.com_v(b)[0]]) for b in com0}
+    res["com_v"] = {b: eng.com_v(b) for b in com0}
+    res["com_disp"] = {b: eng.com(b) - com0[b] for b in com0}
     res["F_error"] = np.array([np.max(np.abs(eng.F - np.eye(eng.ndm)))])
     res["max_abs_stress"] = np.array([np.max(np.abs(eng.sig))])
     res["fields"] = particle_fields(eng)
@@ -585,7 +610,7 @@ def observable(res, obs, args):
     if obs in ("period_comx", "energy_ratio_end", "momentum", "max_speed", "F_error",
                "max_abs_stress", "dt_crit", "active_nodes"):
         return res[obs]
-    if obs in ("com_disp_x", "com_v_x"):
+    if obs in ("com_disp_x", "com_v_x", "com_v", "com_disp"):
         return res[obs][int(args[0])]
     if obs == "translation_error":
         eng = res["engine"]

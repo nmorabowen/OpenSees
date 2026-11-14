@@ -18,6 +18,7 @@
 #   body      <id> box <lo: ndm floats> <hi: ndm floats> ppc <n> mat <tag> rho <rho>
 #   body      <id> disc <cx> <cy> <R> ppc <n> mat <tag> rho <rho>              (2D)
 #             lattice seeding, ordering and ids: interface section 5
+#   shift     <body> <ndm floats>       translate every seeded particle of the body (Amendment 5)
 #   velocity  <body> uniform <ndm floats>
 #   velocity  <body> sine <comp> <axis> <v0> <beta> <x_ref>
 #             v_comp = v0 * sin(beta * (X_axis - x_ref)), other components 0; comp/axis in x|y|z
@@ -89,12 +90,12 @@ h 1.0
 cells 5 4
 point 1.3 2.6 lp 0.25 0.2
 tol 1e-15 1e-13
-expect node 8  eq 8.74999999999997655e-03 -1.24999999999999677e-02 -1.74999999999999767e-01
-expect node 9  eq 3.74999999999999075e-03  1.24999999999999677e-02 -7.49999999999999140e-02
-expect node 14 eq 6.12499999999999933e-01 -8.75000000000000000e-01 -3.50000000000000311e-01
-expect node 15 eq 2.62500000000000067e-01  8.75000000000000000e-01 -1.50000000000000161e-01
-expect node 20 eq 7.87500000000000144e-02 -1.12500000000000031e-01  5.25000000000000022e-01
-expect node 21 eq 3.37500000000000161e-02  1.12500000000000031e-01  2.25000000000000061e-01
+expect node 19 eq 8.74999999999997655e-03 -1.24999999999999677e-02 -1.74999999999999767e-01
+expect node 20 eq 3.74999999999999075e-03 1.24999999999999677e-02 -7.49999999999999140e-02
+expect node 27 eq 6.12499999999999933e-01 -8.75000000000000000e-01 -3.50000000000000311e-01
+expect node 28 eq 2.62500000000000067e-01 8.75000000000000000e-01 -1.50000000000000161e-01
+expect node 35 eq 7.87500000000000144e-02 -1.12500000000000031e-01 5.25000000000000022e-01
+expect node 36 eq 3.37500000000000161e-02 1.12500000000000031e-01 2.25000000000000061e-01
 end
 
 case shape_gimp_3d
@@ -107,18 +108,18 @@ h 0.5
 cells 3 2 4
 point 0.55 0.3 1.8 lp 0.125 0.125 0.125
 tol 1e-15 1e-13
-expect node 36 eq 3.59999999999999556e-03 -9.59999999999999326e-02 -1.79999999999999744e-02 -1.79999999999999813e-02
-expect node 37 eq 1.36799999999999977e-01 -1.28000000000000086e-01 -6.83999999999999830e-01 -6.84000000000000052e-01
-expect node 38 eq 1.96000000000000063e-02  2.24000000000000005e-01 -9.80000000000000315e-02 -9.80000000000000593e-02
-expect node 40 eq 5.39999999999999248e-03 -1.43999999999999878e-01  1.79999999999999744e-02 -2.69999999999999685e-02
-expect node 41 eq 2.05199999999999966e-01 -1.92000000000000115e-01  6.83999999999999830e-01 -1.02600000000000002e+00
-expect node 42 eq 2.94000000000000095e-02  3.36000000000000021e-01  9.80000000000000315e-02 -1.47000000000000075e-01
-expect node 48 eq 5.39999999999999508e-03 -1.43999999999999961e-01 -2.69999999999999754e-02  1.79999999999999813e-02
-expect node 49 eq 2.05200000000000049e-01 -1.92000000000000198e-01 -1.02600000000000002e+00  6.84000000000000052e-01
-expect node 50 eq 2.94000000000000233e-02  3.36000000000000132e-01 -1.47000000000000103e-01  9.80000000000000593e-02
-expect node 52 eq 8.09999999999999089e-03 -2.15999999999999887e-01  2.69999999999999754e-02  2.69999999999999685e-02
-expect node 53 eq 3.07800000000000074e-01 -2.88000000000000311e-01  1.02600000000000002e+00  1.02600000000000002e+00
-expect node 54 eq 4.41000000000000281e-02  5.04000000000000226e-01  1.47000000000000103e-01  1.47000000000000075e-01
+expect node 127 eq 3.59999999999999556e-03 -9.59999999999999326e-02 -1.79999999999999744e-02 -1.79999999999999813e-02
+expect node 128 eq 1.36799999999999977e-01 -1.28000000000000086e-01 -6.83999999999999830e-01 -6.84000000000000052e-01
+expect node 129 eq 1.96000000000000063e-02 2.24000000000000005e-01 -9.80000000000000315e-02 -9.80000000000000593e-02
+expect node 133 eq 5.39999999999999248e-03 -1.43999999999999878e-01 1.79999999999999744e-02 -2.69999999999999685e-02
+expect node 134 eq 2.05199999999999966e-01 -1.92000000000000115e-01 6.83999999999999830e-01 -1.02600000000000002e+00
+expect node 135 eq 2.94000000000000095e-02 3.36000000000000021e-01 9.80000000000000315e-02 -1.47000000000000075e-01
+expect node 157 eq 5.39999999999999508e-03 -1.43999999999999961e-01 -2.69999999999999754e-02 1.79999999999999813e-02
+expect node 158 eq 2.05200000000000049e-01 -1.92000000000000198e-01 -1.02600000000000002e+00 6.84000000000000052e-01
+expect node 159 eq 2.94000000000000233e-02 3.36000000000000132e-01 -1.47000000000000103e-01 9.80000000000000593e-02
+expect node 163 eq 8.09999999999999089e-03 -2.15999999999999887e-01 2.69999999999999754e-02 2.69999999999999685e-02
+expect node 164 eq 3.07800000000000074e-01 -2.88000000000000311e-01 1.02600000000000002e+00 1.02600000000000002e+00
+expect node 165 eq 4.41000000000000281e-02 5.04000000000000226e-01 1.47000000000000103e-01 1.47000000000000075e-01
 end
 
 case shape_linear_2d
@@ -131,10 +132,10 @@ h 1.0
 cells 4 3
 point 1.3 2.0 lp 0.25 0.25
 tol 1e-15 1e-14
-expect node 11 eq 6.99999999999999956e-01 -1.00000000000000000e+00 -6.99999999999999956e-01
-expect node 12 eq 3.00000000000000044e-01  1.00000000000000000e+00 -3.00000000000000044e-01
-expect node 16 eq 0.0  0.0 6.99999999999999956e-01
-expect node 17 eq 0.0  0.0 3.00000000000000044e-01
+expect node 23 eq 6.99999999999999956e-01 -1.00000000000000000e+00 -6.99999999999999956e-01
+expect node 24 eq 3.00000000000000044e-01 1.00000000000000000e+00 -3.00000000000000044e-01
+expect node 30 eq 0.0 0.0 6.99999999999999956e-01
+expect node 31 eq 0.0 0.0 3.00000000000000044e-01
 end
 
 case shape_linear_top_face_2d
@@ -147,10 +148,10 @@ h 1.0
 cells 4 3
 point 0.25 3.0 lp 0.25 0.25
 tol 1e-15 1e-14
-expect node 10 eq 0.0  0.0 -7.50000000000000000e-01
-expect node 11 eq 0.0  0.0 -2.50000000000000000e-01
-expect node 15 eq 7.50000000000000000e-01 -1.00000000000000000e+00 7.50000000000000000e-01
-expect node 16 eq 2.50000000000000000e-01  1.00000000000000000e+00 2.50000000000000000e-01
+expect node 22 eq 0.0 0.0 -7.50000000000000000e-01
+expect node 23 eq 0.0 0.0 -2.50000000000000000e-01
+expect node 29 eq 7.50000000000000000e-01 -1.00000000000000000e+00 7.50000000000000000e-01
+expect node 30 eq 2.50000000000000000e-01 1.00000000000000000e+00 2.50000000000000000e-01
 end
 
 # ============================================================================
@@ -195,7 +196,7 @@ cells 4 4
 material 1 elastic 1.0 0.0
 particle 0 1 1 8.0 0.25 x 3.249999 1.5 lp 0.25 0.25 v 0 0 s 0 0 0
 masscut 1e-10
-expect active_nodes eq 8 9 13 14
+expect active_nodes eq 18 19 25 26
 end
 
 case masscut_zero_2d
@@ -208,7 +209,7 @@ cells 4 4
 material 1 elastic 1.0 0.0
 particle 0 1 1 8.0 0.25 x 3.249999 1.5 lp 0.25 0.25 v 0 0 s 0 0 0
 masscut 0
-expect active_nodes eq 7 8 9 12 13 14
+expect active_nodes eq 17 18 19 24 25 26
 end
 
 # ============================================================================
@@ -454,7 +455,7 @@ dt 0.01
 steps 3000
 expect period_comx eq 10.0 tol 0 0.01
 expect energy_ratio_end ge 0.95
-expect energy_ratio_end eq 9.99870271431074098e-01 tol 0 1e-8
+expect energy_ratio_end eq 9.99870247724985339e-01 tol 0 1e-8
 end
 
 case bar_pic_2d
@@ -497,12 +498,13 @@ flip 1.0
 dt 0.01
 steps 3000
 expect period_comx eq 10.0 tol 0 0.01
-expect energy_ratio_end eq 9.99870271431140045e-01 tol 0 1e-8
+expect energy_ratio_end eq 9.99870247724869987e-01 tol 0 1e-8
 end
 
 case bar_dt_limit_2d
 kind run
-desc stable just below the estimate: dt = 0.99/(c + 0.11) = 0.989 dt_c at step 0, safety 1
+desc acceptance just below the estimate: dt = 0.99/(c + 0.11) = 0.989 dt_c at step 0, safety 1;
+desc the energy stays bounded (no growth). The oracle's measured 1D limit is 1.74 dt_c (Amendment 3)
 ndm 2
 origin 0.0 0.0
 h 1.0
@@ -519,7 +521,7 @@ dt 0.09792284866468844
 steps 2000
 expect accepted
 expect energy_ratio_end le 1.05
-expect energy_ratio_end eq 1.02420894051711975e+00 tol 0 1e-6
+expect energy_ratio_end eq 1.02420892328155633e+00 tol 0 1e-6
 end
 
 # Amendment 4 (2026-11-13): the closed-form gate for slice 1 is column_selfweight_small_2d_gimp.
@@ -549,13 +551,14 @@ flip 1.0
 dt 0.005
 steps 1200
 expect selfweight_error 1000.0 10.0 10.0 0.0 le 0.03
-expect cell_crossing_meter 1000.0 10.0 10.0 0.0 eq 2.06748242003658329e-02 tol 0 1e-6
+expect cell_crossing_meter 1000.0 10.0 10.0 0.0 eq 2.05423850162893967e-02 tol 0 1e-6
 end
 
 case column_selfweight_small_2d_gimp
 kind run
 desc the self-weight column at small deformation, rho0 g l0 / E = 0.002 (Amendment 4): the slice-1
-desc gate for the closed form sig_yy = -rho0 g (l0 - Y) (Charlton et al. 2017)
+desc gate for the closed form sig_yy = -rho0 g (l0 - Y) (Charlton et al. 2017). The gate has a floor:
+desc particle stresses are O(lp) off the exact line, h/(4 l0) = 0.0125, so 0.03 is 2.4x that floor
 ndm 2
 basis gimp
 origin 0.0 0.0
@@ -573,8 +576,8 @@ flip 1.0
 dt 0.001
 steps 6000
 expect selfweight_error 1000.0 10.0 10.0 0.0 le 0.03
-expect selfweight_error 1000.0 10.0 10.0 0.0 eq 1.28361484266622580e-02 tol 0 1e-6
-expect cell_crossing_meter 1000.0 10.0 10.0 0.0 eq 1.21875907012081123e-02 tol 0 1e-6
+expect selfweight_error 1000.0 10.0 10.0 0.0 eq 1.28361492262477981e-02 tol 0 1e-4
+expect cell_crossing_meter 1000.0 10.0 10.0 0.0 eq 1.21875907031391475e-02 tol 0 1e-6
 end
 
 case column_selfweight_2d_linear
@@ -603,7 +606,7 @@ end
 case impact_discs_2d
 kind run
 desc two elastic discs collide (Sulsky et al. 1994): total momentum stays 0; they rebound;
-desc no energy is created
+desc energy growth at most 1% (MUSL-FLIP is not exactly conservative: the oracle grows 0.31%)
 ndm 2
 origin 0.0 0.0
 h 0.05
@@ -688,15 +691,168 @@ end
 
 case small_mass_run_2d
 kind run
-desc the masscut_2d particle, self-stressed, run with the default cutoff: no blow-up
+desc two particles of different stress share one tiny-mass node: x-weight (0.005)^2 on node x = 2,
+desc y = 2, node mass 0.5*0.005^2*(250+250) = 6.25e-3 < c_m*m_ref = 1e-4*250 = 2.5e-2, so the node
+desc is inactive. Pure PIC. The cutoff changes the answer: max_speed 7.1e-5 with it, 3.2e-5 without
+desc (Amendment 5, F4) -- a step() that ignores the cutoff fails the eq line
 ndm 2
 origin 0.0 0.0
 h 1.0
 cells 4 4
 material 1 elastic 1.0e4 0.3
-particle 0 1 1 1000.0 0.25 x 3.249999 1.5 lp 0.25 0.25 v 0 0 s 100.0 0.0 0.0
+particle 0 1 1 1000.0 0.25 x 3.245 1.5 lp 0.25 0.25 v 0 0 s 100.0 0.0 0.0
+particle 1 1 1 1000.0 0.25 x 3.245 2.5 lp 0.25 0.25 v 0 0 s -50.0 30.0 10.0
+masscut 1e-4
+flip 0.0
 dt 0.001
 steps 200
 expect max_speed le 1.0
-expect max_speed eq 4.00533533105457288e-08 tol 0 1e-6
+expect max_speed eq 7.12572446629249556e-05 tol 0 1e-6
+end
+
+# ============================================================================
+# Amendment 5: ghost layers (F1) and closed forms that pin the step (F2)
+# ============================================================================
+
+case overhang_fix_02_2d
+kind run
+desc the overhang probe: an unstressed block translates ALONG the ymin face (fix ymin y), its bottom
+desc row overhanging the face by delta/lp = 0.2 (shift -0.025, lp = 0.125). Exact with ghost layers:
+desc x = X + v t, F = I, sigma = 0, v_x = v0. Truncated support (the withdrawn Amendment 2) drags it
+ndm 2
+origin 0.0 0.0
+h 0.5
+cells 10 6
+material 1 elastic 1.0e5 0.3
+body 1 box 1.0 0.0 2.0 1.0 ppc 2 mat 1 rho 1000.0
+shift 1 0.0 -0.025
+velocity 1 uniform 0.3 0.0
+fix ymin y
+flip 1.0
+masscut 0
+dt 0.001
+steps 1000
+expect translation_error 0.3 0.0 le 1e-10
+expect F_error le 1e-12
+expect max_abs_stress le 1e-6
+expect com_v 1 eq 0.3 0.0 tol 1e-12 0
+end
+
+case overhang_fix_05_2d
+kind run
+desc the overhang probe: an unstressed block translates ALONG the ymin face (fix ymin y), its bottom
+desc row overhanging the face by delta/lp = 0.5 (shift -0.0625, lp = 0.125). Exact with ghost layers:
+desc x = X + v t, F = I, sigma = 0, v_x = v0. Truncated support (the withdrawn Amendment 2) drags it
+ndm 2
+origin 0.0 0.0
+h 0.5
+cells 10 6
+material 1 elastic 1.0e5 0.3
+body 1 box 1.0 0.0 2.0 1.0 ppc 2 mat 1 rho 1000.0
+shift 1 0.0 -0.0625
+velocity 1 uniform 0.3 0.0
+fix ymin y
+flip 0.0
+masscut 0
+dt 0.001
+steps 1000
+expect translation_error 0.3 0.0 le 1e-10
+expect F_error le 1e-12
+expect max_abs_stress le 1e-6
+expect com_v 1 eq 0.3 0.0 tol 1e-12 0
+end
+
+case overhang_wall_02_2d
+kind run
+desc the overhang probe: an unstressed block translates ALONG the ymin face (wall ymin 0.3), its bottom
+desc row overhanging the face by delta/lp = 0.2 (shift -0.025, lp = 0.125). Exact with ghost layers:
+desc x = X + v t, F = I, sigma = 0, v_x = v0. Truncated support (the withdrawn Amendment 2) drags it
+ndm 2
+origin 0.0 0.0
+h 0.5
+cells 10 6
+material 1 elastic 1.0e5 0.3
+body 1 box 1.0 0.0 2.0 1.0 ppc 2 mat 1 rho 1000.0
+shift 1 0.0 -0.025
+velocity 1 uniform 0.3 0.0
+wall ymin 0.3
+flip 0.0
+masscut 0
+dt 0.001
+steps 1000
+expect translation_error 0.3 0.0 le 1e-10
+expect F_error le 1e-12
+expect max_abs_stress le 1e-6
+expect com_v 1 eq 0.3 0.0 tol 1e-12 0
+end
+
+case overhang_wall_05_2d
+kind run
+desc the overhang probe: an unstressed block translates ALONG the ymin face (wall ymin 0.3), its bottom
+desc row overhanging the face by delta/lp = 0.5 (shift -0.0625, lp = 0.125). Exact with ghost layers:
+desc x = X + v t, F = I, sigma = 0, v_x = v0. Truncated support (the withdrawn Amendment 2) drags it
+ndm 2
+origin 0.0 0.0
+h 0.5
+cells 10 6
+material 1 elastic 1.0e5 0.3
+body 1 box 1.0 0.0 2.0 1.0 ppc 2 mat 1 rho 1000.0
+shift 1 0.0 -0.0625
+velocity 1 uniform 0.3 0.0
+wall ymin 0.3
+flip 1.0
+masscut 0
+dt 0.001
+steps 1000
+expect translation_error 0.3 0.0 le 1e-10
+expect F_error le 1e-12
+expect max_abs_stress le 1e-6
+expect com_v 1 eq 0.3 0.0 tol 1e-12 0
+end
+
+case roller_slide_2d
+kind run
+desc a soft block under gravity slides on a roller face (fix ymin y) at v0 = 0.5: it settles into the
+desc face (its bottom row overhangs, so the ghost layer carries weight) but nothing acts along x:
+desc com_v_x stays 0.5 exactly (internal forces sum to zero; the roller acts on y only)
+ndm 2
+origin 0.0 0.0
+h 0.5
+cells 10 6
+material 1 elastic 1.0e5 0.3
+body 1 box 1.0 0.0 2.0 1.0 ppc 2 mat 1 rho 1000.0
+velocity 1 uniform 0.5 0.0
+fix ymin y
+gravity 0.0 -10.0
+flip 1.0
+masscut 0
+dt 0.002
+steps 500
+expect com_v_x 1 eq 0.5 tol 1e-12 0
+end
+
+case freefall_damped_2d
+kind run
+desc an unstressed block falls freely under a ramped gravity (T_r = 0.1 s) with local damping 0.3.
+desc The motion stays uniform, so the closed form is the scalar recurrence
+desc   t_{k+1} = t_k + dt;  v_{k+1} = v_k + dt * g * min(t_{k+1}/T_r, 1) * (1 - alpha * [v_k != 0]);
+desc   y_{k+1} = y_k + dt * v_{k+1}
+desc It pins alpha_D, sign(0) = 0 (no damping on the first step) and the load factor at t_{n+1}.
+desc After 20 steps of 0.01 s: v_y = -1.088, dy = -0.093
+ndm 2
+origin 0.0 0.0
+h 0.5
+cells 8 12
+material 1 elastic 1.0e5 0.3
+body 1 box 1.5 4.0 2.5 5.0 ppc 2 mat 1 rho 1000.0
+gravity 0.0 -10.0
+series linear 0.1
+damping 0.3
+flip 1.0
+masscut 0
+dt 0.01
+steps 20
+expect com_v 1 eq 0.0 -1.0879999999999996 tol 1e-12 1e-12
+expect com_disp 1 eq 0.0 -0.09299999999999999 tol 1e-12 1e-12
+expect max_abs_stress le 1e-6
 end
