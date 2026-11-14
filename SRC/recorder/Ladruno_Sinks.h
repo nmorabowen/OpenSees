@@ -84,7 +84,8 @@ namespace ladruno {
 			: m_family(family), m_initialized(false), m_dead(false),
 			  m_warned_short(false), m_data(HID_INVALID), m_time(HID_INVALID),
 			  m_step(HID_INVALID), m_mspace(HID_INVALID), m_mspace1(HID_INVALID),
-			  m_t(0), m_n_ids(0), m_n_comp(0) {}
+			  m_t(0), m_n_ids(0), m_n_comp(0), m_disk_type(HID_INVALID), m_deflate(0),
+			  m_has_pending(false), m_pending_time(0.0), m_pending_step(0) {}
 		// WP-164: closes the DATA/TIME/STEP handles held open for the stage
 		// (the recorder deletes sinks on a stage change and before H5Fclose).
 		~StreamingSink() override;
@@ -94,10 +95,21 @@ namespace ladruno {
 		            const std::vector<double>& buffer) override;
 		void finalize(detail::ProcessInfo& info) override;
 
+		// WP-233: the result group is created on the stage's layout step; a
+		// row accepted during a layout step is held and appended by
+		// commitPending() once SWMR is armed.
+		bool needsLayout() const override { return !m_initialized && !m_dead; }
+		void releaseHandles() override;
+		bool reacquireHandles(detail::ProcessInfo& info) override;
+		void commitPending(detail::ProcessInfo& info) override;
+
 		// New MODEL_STAGE / re-begin: forget that the group was created.
 		void reset() { m_initialized = false; m_dead = false; m_warned_short = false; }
 
 	private:
+		void writeRow(const double* row, double t_val, int s_val);
+		void failNamed(const char* why);
+
 		// WP-163 R5: report a write failure ONCE and stop this channel, instead
 		// of silently returning on every later step (the result used to vanish
 		// from the file with only HDF5-DIAG noise on stderr).
@@ -116,6 +128,17 @@ namespace ladruno {
 		hid_t m_mspace, m_mspace1;   // reused [1 x nIds x nComp] and [1] memory spaces
 		hsize_t m_t;
 		size_t m_n_ids, m_n_comp;
+		// WP-233: where the result group lives and how DATA was laid out, to
+		// reopen the handles after a layout step's close + reopen; and the row
+		// held back during a layout step (appended once SWMR is armed).
+		std::string m_path;
+		std::string m_name;
+		hid_t m_disk_type;
+		int m_deflate;
+		bool m_has_pending;
+		std::vector<double> m_pending;
+		double m_pending_time;
+		int m_pending_step;
 	};
 
 	/*
@@ -152,6 +175,12 @@ namespace ladruno {
 		bool written() const { return m_created; }
 		// WP-164: bytes rewritten per envelope write (MIN/MAX/ABSMAX f64 + ARG_STEP i32).
 		size_t payloadBytes() const { return m_n_ids * m_n_comp * 28; }
+
+		// WP-233: the ENVELOPES group is created on a layout step (it needs the
+		// first sample); while SWMR is armed only in-place rewrites happen.
+		bool needsLayout() const override { return m_seeded && !m_created; }
+		void releaseHandles() override;
+		bool reacquireHandles(detail::ProcessInfo& info) override;
 
 		void begin(detail::ProcessInfo& info, const ResultSource& src) override;
 		void accept(detail::ProcessInfo& info, const ResultSource& src,
@@ -192,6 +221,7 @@ namespace ladruno {
 		// recreated the whole group, attrs and COLUMN_MAP on every flush.
 		bool m_created;
 		hid_t m_dmin, m_dmax, m_dabs, m_darg;
+		std::string m_path;   // WP-233: the leaf group, for reacquireHandles()
 	};
 
 } // namespace ladruno

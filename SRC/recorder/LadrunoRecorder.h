@@ -87,6 +87,24 @@ private:
 	void finalizeAllSinks();
 	// WP-164: H5Fflush + restart the -flush cadence clock.
 	void flushFile();
+
+	// WP-233 (#1082): the SWMR lifecycle. The file is in SWMR-write mode except
+	// during a LAYOUT STEP: a recorded step that creates objects (a stage's
+	// first step, the KIND rewrite, a modes snapshot, an envelope created late).
+	// openLayout(): if armed, flush, release every sink's handles, close the file
+	// (which clears its SWMR flags) and reopen it read-write. closeLayout():
+	// flush, release, H5Fstart_swmr_write, reacquire, append the held rows, flush.
+	// Both return false after disabling the recorder (it never writes on
+	// without SWMR).
+	bool openLayout();
+	bool closeLayout();
+	bool anySinkNeedsLayout() const;
+	void releaseAllHandles();
+	bool reacquireAllHandles();
+	void disableRecorder(const char* why);
+	// WP-233: decide before recording whether this step takes a modes snapshot
+	// (moved out of recordResultsOnNodes, so the layout step is known up front).
+	void detectEigenChange();
 	// WP-165 (R6): hash of the node/element/pressure-constraint set (tags and
 	// object addresses). A domain-change stamp move rebuilds the MODEL_STAGE only
 	// when this changed.

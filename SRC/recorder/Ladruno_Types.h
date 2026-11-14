@@ -638,9 +638,7 @@ namespace detail {
 			// some handles in the hdf5 file
 			, h_file_id(HID_INVALID)
 			, h_file_proplist(HID_INVALID)
-#ifdef LADRUNO_USE_SWMR
 			, h_file_acc_proplist(HID_INVALID)
-#endif // LADRUNO_USE_SWMR
 			, h_group_proplist(HID_INVALID)
 			// time step info
 			, current_time_step_id(0)
@@ -652,6 +650,7 @@ namespace detail {
 			, eigen_last_values()
 			, store_data_f32(false)
 			, deflate_level(1)
+			, layout_open(true)
 		{}
 	public:
 		// domain and model information
@@ -661,9 +660,9 @@ namespace detail {
 		// some handles in the hdf5 file
 		hid_t h_file_id;
 		hid_t h_file_proplist;
-#ifdef LADRUNO_USE_SWMR
+		// WP-233: the file access list (latest format), kept
+		// for every read-write reopen of a layout step.
 		hid_t h_file_acc_proplist;
-#endif // LADRUNO_USE_SWMR
 		hid_t h_group_proplist;
 		// time step info
 		int current_time_step_id;
@@ -683,6 +682,12 @@ namespace detail {
 		// decision 2026-10-03 — was a hard-coded 4). Compression runs on the
 		// solver thread, once per chunk.
 		int deflate_level;
+		// WP-233 (#1082): true while the file is NOT in SWMR-write mode (from
+		// H5Fcreate, or a layout step's read-write reopen, to H5Fstart_swmr_write).
+		// Objects and attributes may be created only then; while it is false the
+		// sinks only append to (or rewrite in place) datasets that already exist,
+		// and defer any creation to the recorder's next layout step.
+		bool layout_open;
 	};
 
 }
