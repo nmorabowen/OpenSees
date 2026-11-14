@@ -1,0 +1,16 @@
+# Wang database Toyoura tests (33 HKU, 34 Tokyo) in the harness lab-curve schema. R_peak, eps_a_at_peak, phi_peak_deg_derived, dilatancy_max_derived are DERIVED here from the curve
+# (phi = asin((R-1)/(R+1)); dilatancy_max = max(-d eps_v/d eps_a) on a 1 % base). peak_at_end = max R within the last 3 points (no interior peak: contractive/loose tests).
+test_id,database_file,database_test_id,sigma3_kPa,e0,Dr0_pct_database,n_points,eps_a_first_pct,eps_a_end_pct,R_peak,eps_a_at_peak_pct,phi_peak_deg_derived,peak_at_end,eps_v_end_pct,eps_v_at_eps_a0_pct,dilatancy_max_derived,database_note
+wang33_HKU_TMD1,33_Toyoura_sand_HKU,TMD1,100.0,0.698,75,121,0,12,4.66,3.3,40.29,false,-1.306,0,0.565,
+wang33_HKU_TMD2,33_Toyoura_sand_HKU,TMD2,200.0,0.77,55.6,121,0,12,3.573,7.9,34.24,false,-0.5296,0,0.154,
+wang33_HKU_TMD3,33_Toyoura_sand_HKU,TMD3,200.0,0.64,90.6,121,0,12,4.899,3.3,41.37,false,-1.579,0,0.7,
+wang33_HKU_TMD4,33_Toyoura_sand_HKU,TMD4,400.0,0.7,74.5,121,0,12,3.997,5.6,36.85,false,-1.463,0,0.44,
+wang33_HKU_TMD5,33_Toyoura_sand_HKU,TMD5,200.0,0.834,38.4,121,0,12,3.308,9.7,32.39,false,0.6121,0,0.0712,
+wang33_HKU_TMD6,33_Toyoura_sand_HKU,TMD6,200.0,0.696,75.5,121,0,12,4.156,4.3,37.74,false,-1.529,-0.0267,0.491,
+wang33_HKU_TMD7,33_Toyoura_sand_HKU,TMD7,400.0,0.833,38.7,121,0,12,3.241,8.4,31.9,false,1.139,0,0.0308,
+wang34_Tokyo_TMD1,34_Toyoura_sand_Tokyo,TMD1,500.0,0.81,44,262,0,26.1,3.347,10,32.68,false,-1.136,0.0617,0.149,
+wang34_Tokyo_TMD2,34_Toyoura_sand_Tokyo,TMD2,500.0,0.886,23.9,317,0,31.6,3.157,26.1,31.25,false,2.401,0,-0.0017,
+wang34_Tokyo_TMD3,34_Toyoura_sand_Tokyo,TMD3,500.0,0.96,4.5,309,0,30.8,3.073,30.8,30.59,true,5.781,0,-0.0117,
+wang34_Tokyo_TMD4,34_Toyoura_sand_Tokyo,TMD4,100.0,0.831,38.4,298,0,29.7,3.407,9.9,33.1,false,-2.835,0,0.497,
+wang34_Tokyo_TMD5,34_Toyoura_sand_Tokyo,TMD5,100.0,0.917,15.8,299,0,29.8,3.169,19.9,31.35,false,1.354,0,0.0324,
+wang34_Tokyo_TMD6,34_Toyoura_sand_Tokyo,TMD6,100.0,0.996,-5,298,0,29.7,3.134,29.7,31.08,true,4.323,0,-0.0118,"very loose specimen; e_0 exceeds reported e_max, hence negative Dr_0"

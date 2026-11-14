@@ -1,0 +1,11 @@
+# Kimura, Kusakabe & Saitoh (1985) Geotechnique 35(1):33-45, Fig. 9 (journal p. 40): strip footing B = 30 mm, 30 g, Toyoura sand, pouring method, anisotropy series.
+# Case V = load perpendicular to the bedding plane, H = parallel (p. 39, Fig. 8). D_r from the curve labels (Fig. 9). Prototype B = 30 mm x 30 = 0.90 m.
+# e_assumed = 0.977 - D_r*(0.977-0.597) and gamma_derived = Gs*9.81/(1+e) with Gs = 2.64 are DERIVED/ASSUMED here: Kimura 1985 gives NO e_max, e_min, Gs or unit weight for the pouring series.
+# q_peak, s_over_B_at_peak, S_at_peak and s_over_B_max are read from the digitised curve (source/kimura1985_fig9_digitized.csv).
+test_id,case,D_r_pct,e_assumed,gamma_derived_kN_m3,B_model_mm,g_level,B_prototype_m,n_points,q_peak_kPa,s_over_B_at_peak,S_model_mm_at_peak,s_over_B_max
+V85.6,V,85.6,0.6517,15.68,30,30,0.9,349,1952.7,0.0906,2.718,0.2466
+H86.7,H,86.7,0.6475,15.72,30,30,0.9,272,1733.8,0.163,4.889,0.2618
+V75.1,V,75.1,0.6916,15.31,30,30,0.9,234,1236,0.1047,3.142,0.248
+H76.5,H,76.5,0.6863,15.36,30,30,0.9,220,1161,0.1307,3.922,0.2525
+V64.6,V,64.6,0.7315,14.96,30,30,0.9,151,813.7,0.08206,2.462,0.1563
+H61.0,H,61.0,0.7452,14.84,30,30,0.9,178,791.7,0.2004,6.011,0.2483

@@ -1,0 +1,73 @@
+# id: ft84_fig5b_sc0p02
+# kind: TC
+# sigma3_kPa: 1.96
+# e0: 0.679
+# e0_definition: e_0.3 = void ratio at sigma_c' = 0.3 kgf/cm2 (29.4 kPa), the paper's density label (figure legend); for sigma_c' != 0.3 the void ratio at the shear stress is NOT reported (p. 35, Fig. 4)
+# source: Fukushima & Tatsuoka (1984) Soils and Foundations 24(4):30-48, Fig. 5(b), journal p. 36 (PDF page 7), dense, sigma_c' 0.02-0.1 kgf/cm2; Table 1 test 9 (p. 32)
+# eps_v_convention: dilation_negative
+# eps_a_sign: 1
+# phi_peak_deg: 47.2
+# eps_peak_pct: 5.25
+# phi_peak_note: Table 1 phi (mid-height, UNCORRECTED for membrane forces, t0 = 0.3 mm); the digitised maximum sr 6.480 vs 6.511 from Table 1 (difference -0.031) is the calibration check of the digitisation
+# sigma3_f_kPa: 3.72
+# material: Toyoura sand (D50 0.16 mm, Uc 1.46, Gs 2.64, e_max 0.977, e_min 0.605), saturated, air-pluviated, 7 cm diameter x 15 cm, lubricated ends (p. 33)
+# test: drained isotropically consolidated triaxial compression, axial strain rate 0.25 %/min; sr = sigma1'/sigma3' at the MID-HEIGHT of the sample, UNCORRECTED for membrane forces (the figure title says so); eps_a = axial strain
+# caveat_membrane: membrane t0 = 0.3 mm, latex, E_m 15.2 kgf/cm2: at sigma_c' <= 0.1 kgf/cm2 the uncorrected stress ratios are biased (paper Figs. 7, 12-17); at the lowest stresses sigma3' drifted during the test: (sigma3')_f = 3.72 kPa vs sigma_c' = 1.96 kPa
+# uncertainty: sr +-0.05 (1 px = 0.01; calibration cross-checked against Table 1 phi, see phi_peak_note), +-0.1 where markers of neighbouring curves merge; eps_a +-0.1 %; eps_v +-0.15 % (scan skew handled by a bilinear map between the frame lines)
+# digitisation: marker-chain / column-cluster tracker on the native 1-bit scan (data/_digitise); rows fill ONE of sr / eps_v (the two traces are digitised at different eps_a); the first row (0,1,0) is the assumed isotropic start, not digitised
+# units: eps_a_pct [%] compression positive | sr [-] | eps_v_pct [%] dilation negative
+# trace_note: ev trace shared by sigma_c' 0.02 and 0.05 (not separable)
+eps_a_pct,sr,eps_v_pct
+0,1,0
+1,,-0.286
+1.25,,-0.4632
+1.5,,-0.601
+1.75,,-0.7684
+2,,-1.0832
+2.25,,-1.2014
+2.5,,-1.4276
+3.25,,-2.0968
+3.5,,-2.3034
+3.75,,-2.5002
+4,,-2.7168
+4.25,,-2.9234
+4.5,,-3.0614
+4.75,,-3.2188
+5,,-3.4452
+5.25,6.4801,
+5.25,,-3.6322
+5.5,6.4114,
+5.5,,-3.839
+5.75,6.387,
+5.75,,-4.026
+6,6.3872,
+6,,-4.1934
+6.2336,6.348,
+6.25,,-4.3508
+6.5,6.2499,
+6.5,,-4.5182
+6.75,6.2353,
+6.75,,-4.7152
+7,,-4.9414
+7.0262,6.2876,
+7.25,6.2406,
+7.25,,-5.04
+7.5,6.1768,
+7.5,,-5.2074
+7.75,,-5.365
+7.8375,6.1616,
+8,6.12,
+8,,-5.5
+8.2342,6.0407,
+8.25,,-5.68
+8.5,5.9415,
+8.5,,-5.7786
+8.6615,5.8704,
+8.75,,-6.0248
+9,,-6.0644
+9.0831,5.7109,
+9.25,5.652,
+9.25,,-6.163
+9.5,,-6.3204
+9.5002,5.5205,
+9.75,,-6.3306

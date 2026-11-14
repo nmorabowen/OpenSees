@@ -1,0 +1,65 @@
+# id: lt88_fig9_psc_w00_hw1p0
+# kind: PS
+# sigma3_kPa: 98.0
+# e0: 0.652
+# e0_definition: e_0.3 = void ratio at sigma3' = 0.3 kgf/cm2 (29.4 kPa), the paper's density label (legend); the specimen was then consolidated to 1.0 kgf/cm2 = 98 kPa and the void ratio at the start of shear is NOT reported (lower than e_0.3 by an unknown amount)
+# source: Lam & Tatsuoka (1988) Soils and Foundations 28(1):89-106, Fig. 9, journal p. 97 (PDF page 8), PSC-3, omega = 0, H/W = 1.0
+# eps_v_convention: dilation_negative
+# eps_a_sign: 1
+# material: Toyoura sand (D50 0.16 mm, Uc 1.46, Gs 2.64, e_max 0.977, e_min 0.605), saturated, air-pluviated, prismatic specimens, lubricated rigid planes + flexible planes (mixed boundaries, Type 4 lubrication)
+# test: drained isotropically consolidated plane strain compression (PSC-3), sigma3' = 98 kPa held, eps2 = 0 (rigid lubricated planes), axial strain rate 0.25 %/min
+# omega_deg: 0
+# xi_deg: 90
+# H_over_W: 1.0
+# b_at_failure_range: 0.20-0.34 (Fig. 8(a) lower lines, not transcribed)
+# x_conversion: paper abscissa D = eps1 - eps3; plane strain (eps2 = 0): eps_v = eps1 + eps3 -> eps_a = eps1 = (D + eps_v)/2; eps_v(D) for D < 8 % is the centre line of the overlapped triangle+circle eps_v band (both tests, +-0.15 %), for D >= 8 % the test's own markers
+# uncertainty: sr and sigma2'/sigma3' +-0.05 (marker centres; 64 px per unit); D +-0.15 % (32 px per %); eps_v +-0.15 % (band) / +-0.1 % (markers); eps_a +-0.2 % after conversion
+# gaps: only markers that are individually resolved are read: sigma1'/sigma3' from D ~1.4 % (initial rise not resolved); sigma2'/sigma3' only 4 markers (the triangle and circle curves overlap in a thick band for D = 6-11 %); eps_v band + markers; the square (H/W 0.5) and cross (H/W 0.25) series are NOT digitised (strong end restraint)
+# extra_columns: s2_over_s3 = sigma2'/sigma3' (rows with only this column filled)
+# units: eps_a_pct [%] compression positive | sr [-] = sigma1'/sigma3' | eps_v_pct [%] dilation negative | s2_over_s3 [-]
+# phi_peak_deg: 47.68
+# eps_peak_pct: 3.06
+eps_a_pct,sr,eps_v_pct,s2_over_s3
+0,1,0,1
+0,,-0,
+0.57,,0.14,
+1.0662,4.1289,,
+1.1,,0.2,
+1.36,,0.22,
+1.3679,,,1.4586
+1.37,,-0.26,
+1.4875,4.8473,,
+1.6,,-0.3,
+1.78,,-0.44,
+1.9212,,,1.957
+1.9361,5.5972,,
+1.96,,-0.58,
+2.13,,-0.74,
+2.32,,-0.86,
+2.4337,6.2913,,
+2.49,,-1.02,
+2.67,,-1.16,
+2.88,,-1.24,
+3.02,,-1.46,
+3.063,6.6743,,
+3.19,,-1.62,
+3.5553,,-1.8162,
+3.6984,6.156,,
+4.1407,,-2.119,
+4.3502,5.3944,,
+4.8844,4.8625,,
+5.1312,,,2.0562
+5.3285,,-2.615,
+5.6481,4.5962,,
+6.0749,,,2.087
+6.2851,,-2.685,
+6.6086,4.6262,,
+7.3889,4.7583,,
+8.1937,,-2.9564,
+8.2242,4.8176,,
+9.0725,,-3.0914,
+9.0906,4.8617,,
+10.017,,-3.1948,
+10.039,4.8768,,
+10.963,,-3.345,
+10.98,4.9794,,

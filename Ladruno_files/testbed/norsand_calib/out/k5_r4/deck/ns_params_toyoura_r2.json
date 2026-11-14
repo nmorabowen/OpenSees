@@ -1,0 +1,56 @@
+{
+  "name": "toyoura_placeholder_v1",
+  "status": "PLACEHOLDER. Every entry whose note says PLACEHOLDER is a stand-in so the deck wiring can be proven; the WP-144 P3 calibration (plan 144 sec.3 P3, sec.5.2 K3) replaces it. Nothing in this file is a calibrated Toyoura value.",
+  "energy": "BA06 (label only: the deck never branches on it; the energy's own flags are the pass-through list material_flags, so an HAR energy is a new flag list, not a deck change)",
+  "K0": 0.5,
+  "K0_note": "K0 of the geostatic state, used as sigma_h/sigma_v for every row. 0.5 = Loukidis & Salgado (2011) main series as adopted by the ladder deck (footing_ab.py header, 'K0 = 0.5'); Jaky with the DM04 critical-state angle gives 1 - sin 31.2 = 0.48 (same header). OPEN CALIBRATION/DECK DECISION, not a measurement.",
+  "e_init": null,
+  "e_init_note": "null = take the deck's own void ratio (--sand toyoura: e = e_max - Dr (e_max - e_min) with e_max 0.977, e_min 0.597, ladder deck footing_ab.py TYR_EMAX/TYR_EMIN, quoting DM04 p.631 = Verdugo & Ishihara; --dr sets Dr). v0 = 1 + e. A number here overrides.",
+  "material_flags": [
+    ["-p0", -100.0],
+    ["-kappa_hat", 0.003085],
+    ["-mu0", 41680.0],
+    ["-M", 1.25],
+    ["-N", 0.4],
+    ["-N_bar", 0.2],
+    ["-rho", 0.7],
+    ["-rho_bar", 0.8],
+    ["-chi", -3.5],
+    ["-h", 280.0],
+    ["-csl", "fork"],
+    ["-e0", 0.934],
+    ["-lambda_c", 0.019],
+    ["-xi", 0.7],
+    ["-p_a", 100.0]
+  ],
+  "material_flags_notes": {
+    "-p0": "energy reference pressure (kPa, tension positive). PLACEHOLDER = K2 / AB06 sec.6.1 (tests/test_ladruno_norsand_element.py _P0).",
+    "-kappa_hat": "PLACEHOLDER (BA06 energy). Chosen so the bulk modulus p/kappa_hat = 32 418 kPa at p = 100 kPa = DM04's K for Toyoura (K = 2(1+nu) G / (3(1-2nu)), nu = 0.05, G = G0 p_at (2.97-e)^2/(1+e) sqrt(p/p_at), G0 = 125, e = 0.635, p = 100 = 41 680 kPa: DM04 Table 1 constants as carried in the ladder deck TYR dict). The K2 value 0.01 would be ~3x softer. Calibration replaces it.",
+    "-mu0": "PLACEHOLDER (BA06, alpha0 = 0 so constant shear modulus). = DM04's G at p = 100 kPa, e = 0.635 (41 680 kPa, derivation above). With alpha0 = 0 it does NOT scale with sqrt(p); the HAR energy is the P0 decision (plan sec.2.5).",
+    "-M": "DM04 Table 1 Toyoura Mc = 1.25 (ladder deck TYR['Mc']; = phi_c 31.2 deg).",
+    "-N": "PLACEHOLDER = K2 / AB06 sec.6.1 (0.4). Calibration from Tatsuoka 1986 plane strain (plan sec.3 P3).",
+    "-N_bar": "PLACEHOLDER = K2 (0.2). Calibration.",
+    "-rho": "PLACEHOLDER = K2 (0.7; ellipticity). Pinned by P3 from the plane-strain vs triaxial friction difference.",
+    "-rho_bar": "PLACEHOLDER = K2 (0.8). Calibration.",
+    "-chi": "PLACEHOLDER = K2 (-3.5, A&B's value for sands). Calibration.",
+    "-h": "PLACEHOLDER = K2 (280, constant-h law, plan sec.2.6). Calibration refits h.",
+    "-csl": "fork-form CSL (needs -p_a): e_c = e0 - lambda_c (-p/p_a)^xi, the p -> 0 safe form (plan sec.2.3).",
+    "-e0": "DM04 Table 1 Toyoura e0 = 0.934 (ladder deck TYR['e0']).",
+    "-lambda_c": "DM04 Table 1 Toyoura lambda_c = 0.019 (ladder deck TYR['lamc']).",
+    "-xi": "DM04 Table 1 Toyoura xi = 0.7 (ladder deck TYR['xi']).",
+    "-p_a": "100 kPa: DM04 does not tabulate p_at; the ladder deck's own choice (footing_ab.py: 'Gate 0 / WP-150 memo section 12'). Must equal the p_a the calibration used."
+  },
+  "pi0": {
+    "mode": "on_surface",
+    "margin": 0.02,
+    "ratio": null,
+    "note": "Initial image pressure of every geostatic row (no default in the material: -pi0 is required). on_surface: the deck finds, per row, the smallest |pi_i0| the material accepts (bisection on the constructor, which refuses a start outside the surface) and takes |pi_i0| = (1 + margin) x that, i.e. a K0-normally-consolidated start just inside the yield surface. ratio: pi_i0 = -ratio x p (a fixed fraction, K2's pair is 60.4/100). WHICH INITIAL pi_i0 (normally consolidated vs over-consolidated Toyoura) IS A CALIBRATION DECISION the deck cannot make."
+  },
+  "p_floor_report_kPa": [0.5, 0.25],
+  "p_floor_note": "Deck-side census only: the deck counts Gauss points with p' below each value at every step (steps.csv n_p_lt_F, first value) and at the end (summary.json). The material has NO p' floor at HEAD 4cf47419b (grep of SRC/material/nD/LadrunoNorSand*: no Pmin/floor); plan sec.2.7 specifies Pmin <= 0.5 kPa, projected and counted. When the material gains it, add its flag to material_flags (e.g. [\"-Pmin\", 0.5]) and run F vs F/2 (the 2 % rule, plan sec.5.2).",
+  "sources": {
+    "K2": "AB06 sec.6.1 as recorded in tests/test_ladruno_norsand_element.py (_P0.._PI0) and ladrunonorsand plan 144 sec.5",
+    "DM04_Toyoura": "Dafalias & Manzari 2004 Table 1, as transcribed in Esmeralda ~/ladruno_wp152/deck_toyoura_ladder/footing_ab.py (TYR dict, lines 662-665; copy: ~/wp144/deck/ref_ladder/footing_ab.py)",
+    "geometry": "TIMs Workbench Tries/2d-model/04 -- How the Strip Is Built.md (read-only)"
+  }
+}

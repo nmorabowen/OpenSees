@@ -1,0 +1,9 @@
+# Chakraborty & Salgado (2009) ICSMGE 17, pp. 652-655, Table 2, Toyoura sand (plane-strain compression, Tatsuoka et al. 1986 and Tatsuoka 1987 data; phi_c = 36 deg). I_R = I_D (Q - ln(100 sigma'_mp/p_A)) - R (eq. 3), p_A = 100 kPa, I_D = D_R/100;
+# fitted by eq. 9 to the peak-strength data of each sigma'_3p level (relative densities 30-90 %).  Transcribed by eye from the PDF page image; no tolerance expected on the digits.
+# sigma_mp from eq. 11 ((s1+s2+s3)/3) with b = (s2-s3)/(s1-s3) assumed 0.25 (paper: b = 0.2-0.3 at peak).
+sigma3p_kPa,sigma_mp_kPa,data_points,b,Q_best,R_best,r2_best,Q_R1,R_R1,r2_R1
+4.9,15.7,10,0.25,9.2,1.57,0.971,8.4,1,0.963
+9.8,29.7,5,0.25,10.4,2.1,0.985,8.8,1,0.961
+49.0,151.2,4,0.25,10.2,0.88,0.998,10.3,1,0.998
+68.6,196.7,6,0.25,10.1,0.9,0.993,10.2,1,0.993
+98.0,297.1,6,0.25,11.0,1.2,0.992,10.7,1,0.99
