@@ -78,6 +78,7 @@ private:
 	// helpers (operate on the channel at the given index in m_data, so the
 	// header never has to name private_data's nested channel types)
 	void recordModeChannel(int node_channel_index);
+	void ensureModesGroup(int node_channel_index);   // WP-233
 	void writeElementColumnMap(int elem_channel_index);
 
 	int clearSources();

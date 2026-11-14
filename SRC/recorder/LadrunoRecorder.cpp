@@ -197,7 +197,19 @@ static bool ladrunoHasModalRequest(
 }
 
 // apeGmsh #2034: replace MODEL_STAGE[<id>]/@KIND (a provisional value written
-// before any analysis existed). Delete + create: the string sizes differ.
+// before any analysis existed). WP-233 (#1082): the provisional KIND is written
+// as a fixed-length string of LADRUNO_KIND_LEN bytes (the longest KIND,
+// "transient", NULLTERM, so it reads back "static"), and rewritten IN PLACE: one
+// write of the stage group's header. The old delete + create left the stage with
+// no KIND, or a torn header, for a kill inside the layout step.
+static const size_t LADRUNO_KIND_LEN = 9;
+static herr_t ladrunoWriteProvisionalKind(hid_t h_stage, const std::string& kind)
+{
+	char buf[LADRUNO_KIND_LEN];
+	std::memset(buf, 0, sizeof(buf));
+	std::memcpy(buf, kind.c_str(), std::min(kind.size(), LADRUNO_KIND_LEN));
+	return ladruno::h5::attribute::writes(h_stage, "KIND", buf, LADRUNO_KIND_LEN);
+}
 static int ladrunoRewriteStageKind(hid_t h_file, int stage_id, const std::string& kind)
 {
 	std::stringstream ss;
@@ -205,9 +217,19 @@ static int ladrunoRewriteStageKind(hid_t h_file, int stage_id, const std::string
 	hid_t h_stage = H5Gopen2(h_file, ss.str().c_str(), H5P_DEFAULT);
 	if (h_stage < 0)
 		return -1;
-	if (H5Aexists(h_stage, "KIND") > 0)
-		H5Adelete(h_stage, "KIND");
-	herr_t st = ladruno::h5::attribute::write(h_stage, "KIND", kind);
+	herr_t st = -1;
+	hid_t h_attr = H5Aopen(h_stage, "KIND", H5P_DEFAULT);
+	if (h_attr >= 0) {
+		hid_t h_type = H5Aget_type(h_attr);
+		if (h_type >= 0 && H5Tget_size(h_type) == LADRUNO_KIND_LEN) {
+			char buf[LADRUNO_KIND_LEN];
+			std::memset(buf, 0, sizeof(buf));
+			std::memcpy(buf, kind.c_str(), std::min(kind.size(), LADRUNO_KIND_LEN));
+			st = H5Awrite(h_attr, h_type, buf);
+		}
+		if (h_type >= 0) H5Tclose(h_type);
+		H5Aclose(h_attr);
+	}
 	H5Gclose(h_stage);
 	return st < 0 ? -1 : 0;
 }
@@ -1105,6 +1127,10 @@ int LadrunoRecorder::initialize()
 	info.h_file_proplist = ladrunons::h5::plist::crate(ladrunons::h5::plist::FileCreate);
 	ladrunons::h5::plist::setLinkCreationOrder(
 		info.h_file_proplist, H5P_CRT_ORDER_TRACKED | H5P_CRT_ORDER_INDEXED);
+	// WP-233 (#1082): the root gains one MODEL_STAGE link per stage, inside a
+	// layout step (no SWMR): keep its links compact in a header presized for 256
+	// stages, so each new stage is one in-place write of the root's header.
+	ladrunons::h5::plist::presizeLinks(info.h_file_proplist, 256, 20);
 	info.h_group_proplist = ladrunons::h5::plist::crate(ladrunons::h5::plist::GroupCreate);
 	ladrunons::h5::plist::setLinkCreationOrder(
 		info.h_group_proplist, H5P_CRT_ORDER_TRACKED | H5P_CRT_ORDER_INDEXED);
@@ -1311,7 +1337,10 @@ int LadrunoRecorder::writeModel()
 		stage_kind = "static";
 		m_data->kind_pending = true;
 	}
-	ladrunons::h5::attribute::write(h_stage, "KIND", stage_kind);
+	if (m_data->kind_pending)
+		ladrunoWriteProvisionalKind(h_stage, stage_kind);   // WP-233: rewritten in place
+	else
+		ladrunons::h5::attribute::write(h_stage, "KIND", stage_kind);
 
 	hid_t h_model = ladrunons::h5::group::create(
 		h_stage, "MODEL", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
@@ -1362,6 +1391,14 @@ int LadrunoRecorder::writeModel()
 		return -1;
 	if (initOverlaySources() != 0)   // Ladruno (ADR-73 P4)
 		return -1;
+
+	// WP-233 (#1082): a modes result's group, ID and DATA group are part of the
+	// stage's layout, not of its first snapshot: a later snapshot then only links
+	// a STEP_<k> into the presized DATA (one in-place write), and never touches
+	// ON_NODES, which holds the streaming results' links.
+	for (size_t i = 0; i < m_data->node_channels.size(); ++i)
+		if (m_data->node_channels[i].is_modes)
+			ensureModesGroup((int)i);
 
 	return 0;
 }
@@ -2812,28 +2849,7 @@ void LadrunoRecorder::recordModeChannel(int node_channel_index)
 	std::stringstream ss_result;
 	ss_result << "MODEL_STAGE[" << info.current_model_stage_id
 		<< "]/RESULTS/ON_NODES/" << schema.name;
-	if (H5Lexists(info.h_file_id, ss_result.str().c_str(), H5P_DEFAULT) <= 0) {
-		std::stringstream ss_family;
-		ss_family << "MODEL_STAGE[" << info.current_model_stage_id << "]/RESULTS/ON_NODES";
-		hid_t h_family = H5Gopen2(info.h_file_id, ss_family.str().c_str(), H5P_DEFAULT);
-		if (h_family >= 0) {
-			hid_t h_gp_result = ladrunons::h5::group::createResultGroup(
-				h_family, info.h_group_proplist,
-				schema.name, schema.display_name,
-				schema.components_csv, schema.num_components,
-				schema.dimension, schema.description,
-				(int)schema.result_type, (int)schema.data_type);
-			const std::vector<int>& mode_ids = msrc->ids();
-			hid_t h_dset_id = ladrunons::h5::dataset::createAndWrite(
-				h_gp_result, "ID", mode_ids, mode_ids.size(), (size_t)1);
-			ladrunons::h5::dataset::close(h_dset_id);
-			hid_t h_data_grp = ladrunons::h5::group::create(
-				h_gp_result, "DATA", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
-			ladrunons::h5::group::close(h_data_grp);
-			ladrunons::h5::group::close(h_gp_result);
-			ladrunons::h5::group::close(h_family);
-		}
-	}
+	ensureModesGroup(node_channel_index);   // WP-233: normally laid out with the stage
 
 	// create the per-step group under DATA: <name>/DATA/STEP_<step>
 	std::stringstream ss_step;
@@ -2867,6 +2883,50 @@ void LadrunoRecorder::recordModeChannel(int node_channel_index)
 	}
 
 	ladrunons::h5::group::close(h_gp_step);
+}
+
+/* WP-233: create <stage>/RESULTS/ON_NODES/<modes>/{ID, DATA} once per stage (a
+   no-op when it exists). DATA gains one STEP_<k> group per snapshot, so its links
+   are presized (plist::presizeLinks) and adding one is a single header write. */
+void LadrunoRecorder::ensureModesGroup(int node_channel_index)
+{
+	ladrunons::detail::ProcessInfo& info = m_data->info;
+	private_data::NodeChannel& ch = m_data->node_channels[(size_t)node_channel_index];
+	ladrunons::ModesOfVibrationSource* msrc =
+		dynamic_cast<ladrunons::ModesOfVibrationSource*>(ch.source);
+	if (msrc == 0)
+		return;
+	const ladrunons::ResultSchema& schema = msrc->schema();
+	if (schema.num_components < 1)
+		return;
+	std::stringstream ss_result;
+	ss_result << "MODEL_STAGE[" << info.current_model_stage_id
+		<< "]/RESULTS/ON_NODES/" << schema.name;
+	if (H5Lexists(info.h_file_id, ss_result.str().c_str(), H5P_DEFAULT) > 0)
+		return;
+	std::stringstream ss_family;
+	ss_family << "MODEL_STAGE[" << info.current_model_stage_id << "]/RESULTS/ON_NODES";
+	hid_t h_family = H5Gopen2(info.h_file_id, ss_family.str().c_str(), H5P_DEFAULT);
+	if (h_family < 0)
+		return;
+	hid_t h_gp_result = ladrunons::h5::group::createResultGroup(
+		h_family, info.h_group_proplist,
+		schema.name, schema.display_name,
+		schema.components_csv, schema.num_components,
+		schema.dimension, schema.description,
+		(int)schema.result_type, (int)schema.data_type);
+	const std::vector<int>& mode_ids = msrc->ids();
+	hid_t h_dset_id = ladrunons::h5::dataset::createAndWrite(
+		h_gp_result, "ID", mode_ids, mode_ids.size(), (size_t)1);
+	ladrunons::h5::dataset::close(h_dset_id);
+	hid_t gcpl = H5Pcopy(info.h_group_proplist);
+	ladrunons::h5::plist::presizeLinks(gcpl, 1024, 16);
+	hid_t h_data_grp = ladrunons::h5::group::create(
+		h_gp_result, "DATA", H5P_DEFAULT, gcpl, H5P_DEFAULT);
+	H5Pclose(gcpl);
+	ladrunons::h5::group::close(h_data_grp);
+	ladrunons::h5::group::close(h_gp_result);
+	ladrunons::h5::group::close(h_family);
 }
 
 int LadrunoRecorder::recordResultsOnElements()

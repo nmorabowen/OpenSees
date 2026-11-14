@@ -66,11 +66,21 @@ def _decode_lines(raw: Any) -> list[str]:
 
 
 class LadrunoReader:
-    """Minimal schema-v1 reader. Open with a path; use as a context manager."""
+    """Minimal schema-v1 reader. Open with a path; use as a context manager.
+
+    Opens by the reader rule (schema §7b.2, ``open_ladruno``): a killed run's file
+    opens in SWMR-read mode. ``committed_steps(stage)`` is the crash rule's T'; the
+    per-step iterators cut every result to it."""
 
     def __init__(self, path: str):
         self.path = path
-        self.f = h5py.File(path, "r")
+        self.f = open_ladruno(path)
+        self.killed = superblock_flags(path) not in (None, 0)
+
+    def committed_steps(self, stage: str) -> int | None:
+        """Schema §7b.2 crash rule: the steps of ``stage`` every streaming result
+        holds in DATA, TIME and STEP (None: no streaming result)."""
+        return committed_steps(self.f[stage])
 
     def __enter__(self) -> "LadrunoReader":
         return self
@@ -307,7 +317,211 @@ def _iter_envelope_leaves(grp, prefix: str = ""):
             yield from _iter_envelope_leaves(child, f"{rel}/")
 
 
-def iter_step_slices(grp):
+# ---------------------------------------------------------------------------
+# Opening a .ladruno, and what a killed run keeps (schema §7b.2, WP-233 #1082)
+# ---------------------------------------------------------------------------
+#
+# Both writers (``recorder ladruno`` since WP-233, ``mpm output`` since WP-232c) write
+# the latest HDF5 format and keep the file in SWMR-write mode except while a layout
+# is being written. A clean close clears the superblock's consistency flags; a killed
+# run leaves them set:
+#   0x05 (WRITE_ACCESS | SWMR_WRITE): killed while SWMR was armed (almost always);
+#   0x01 (WRITE_ACCESS only): killed during a layout step (a stage opening, a KIND
+#        rewrite, a modes snapshot, an envelope created late).
+# The reader rule:
+#   1. open plainly;
+#   2. on "already open for write" / "truncated file": open with swmr=True (never
+#      h5clear first: the stored end-of-allocation lags the data);
+#   3. if that refuses and the flags are 0x01: recover a COPY (repair_copy) and open
+#      the copy plainly. Only the stage being laid out may be torn.
+# A reader that cannot open in SWMR-read mode (e.g. h5wasm) may apply step 3's repair
+# to a copy of ANY file step 1 refuses (flags 0x05 included).
+
+#: version-2/3 superblock (8-byte offsets): flags at 11, end-of-file address at 28,
+#: lookup3 over bytes 0..43 stored at 44
+_SB_SIG = b"\x89HDF\r\n\x1a\n"
+
+
+class StageLayoutKilledError(OSError):
+    """A .ladruno killed while a layout was being written (schema §7b.2, reader rule
+    step 3): both the plain and the SWMR-read open refuse it. Recover a copy with
+    ``repair_copy`` (or ``recover_ladruno``)."""
+
+
+def lookup3(data: bytes, initval: int = 0) -> int:
+    """HDF5's metadata checksum, ``H5_checksum_lookup3`` (Bob Jenkins' hashlittle)."""
+    m32 = 0xFFFFFFFF
+
+    def rot(x, k):
+        return ((x << k) | (x >> (32 - k))) & m32
+
+    n = len(data)
+    a = b = c = (0xDEADBEEF + n + initval) & m32
+    k = 0
+    while n > 12:
+        a = (a + int.from_bytes(data[k:k + 4], "little")) & m32
+        b = (b + int.from_bytes(data[k + 4:k + 8], "little")) & m32
+        c = (c + int.from_bytes(data[k + 8:k + 12], "little")) & m32
+        a = (a - c) & m32; a ^= rot(c, 4); c = (c + b) & m32
+        b = (b - a) & m32; b ^= rot(a, 6); a = (a + c) & m32
+        c = (c - b) & m32; c ^= rot(b, 8); b = (b + a) & m32
+        a = (a - c) & m32; a ^= rot(c, 16); c = (c + b) & m32
+        b = (b - a) & m32; b ^= rot(a, 19); a = (a + c) & m32
+        c = (c - b) & m32; c ^= rot(b, 4); b = (b + a) & m32
+        n -= 12
+        k += 12
+    if n == 0:
+        return c
+    tail = bytes(data[k:k + n]) + b"\0" * (12 - n)
+    a = (a + int.from_bytes(tail[0:4], "little")) & m32
+    b = (b + int.from_bytes(tail[4:8], "little")) & m32
+    c = (c + int.from_bytes(tail[8:12], "little")) & m32
+    c ^= b; c = (c - rot(b, 14)) & m32
+    a ^= c; a = (a - rot(c, 11)) & m32
+    b ^= a; b = (b - rot(a, 25)) & m32
+    c ^= b; c = (c - rot(b, 16)) & m32
+    a ^= c; a = (a - rot(c, 4)) & m32
+    b ^= a; b = (b - rot(a, 14)) & m32
+    c ^= b; c = (c - rot(b, 24)) & m32
+    return c
+
+
+def set_superblock(path, flags: int | None = None, eoa: int | None = None) -> tuple[int, int]:
+    """Rewrite a v2/v3 superblock's consistency flags and/or stored end-of-allocation,
+    and re-checksum it. Returns the (flags, eoa) it held. Refuses any other layout."""
+    with open(path, "r+b") as fh:
+        sb = bytearray(fh.read(48))
+        if bytes(sb[:8]) != _SB_SIG or sb[8] not in (2, 3) or sb[9] != 8:
+            raise ValueError(f"{path}: not a version-2/3 superblock with 8-byte offsets")
+        if lookup3(bytes(sb[:44])) != int.from_bytes(sb[44:48], "little"):
+            raise ValueError(f"{path}: superblock checksum mismatch")
+        old = (sb[11], int.from_bytes(sb[28:36], "little"))
+        if flags is not None:
+            sb[11] = flags
+        if eoa is not None:
+            sb[28:36] = int(eoa).to_bytes(8, "little")
+        sb[44:48] = lookup3(bytes(sb[:44])).to_bytes(4, "little")
+        fh.seek(0)
+        fh.write(sb)
+    return old
+
+
+def superblock_flags(path) -> int | None:
+    """The consistency flags of a v2/v3 superblock (0 after a clean close), or None
+    for any other layout (a v0 superblock from a pre-WP-233 recorder)."""
+    with open(path, "rb") as fh:
+        sb = fh.read(12)
+    return sb[11] if len(sb) == 12 and sb[:8] == _SB_SIG and sb[8] in (2, 3) else None
+
+
+def open_ladruno(path) -> h5py.File:
+    """Open a .ladruno read-only by the reader rule (schema §7b.2), steps 1-2.
+
+    Step 3 (flags 0x01, both opens refuse) raises ``StageLayoutKilledError``; recover a
+    copy with ``repair_copy`` / ``recover_ladruno``. The file itself is never
+    repaired here. Any other refusal re-raises the plain open's error. No
+    ``HDF5_USE_FILE_LOCKING=FALSE`` is needed after a kill (measured, Windows)."""
+    try:
+        return h5py.File(path, "r")
+    except OSError as e:
+        if "already open for write" not in str(e) and "truncated file" not in str(e):
+            raise
+        plain = e
+    try:
+        return h5py.File(path, "r", swmr=True)
+    except OSError as e:
+        if "not already open for SWMR writing" not in str(e) or superblock_flags(path) != 0x01:
+            raise plain from e
+        raise StageLayoutKilledError(
+            f"{path}: the run was killed while a layout was being written (superblock "
+            "flags hold WRITE_ACCESS only, which neither a plain nor an SWMR-read open "
+            "accepts); recover a copy with repair_copy(src, dst) (schema section 7b.2, "
+            "reader rule step 3)") from e
+
+
+def repair_copy(src, dst) -> None:
+    """Reader rule step 3 (schema §7b.2) on a COPY; ``src`` is never modified.
+
+    Copy ``src`` to ``dst``; set the superblock consistency flags to 0x00; set the
+    stored end-of-allocation to max(stored EOA, file size); pad the copy with zeros up
+    to the stored EOA when the file is shorter; re-checksum the superblock. The copy
+    then opens plainly. Works for every killed file (flags 0x05 too), so a reader
+    without SWMR-read support can read any killed file through it."""
+    import shutil
+    from pathlib import Path
+    if Path(src).resolve() == Path(dst).resolve():
+        raise ValueError("repair_copy repairs a copy: dst must differ from src")
+    shutil.copyfile(src, dst)
+    size = Path(dst).stat().st_size
+    with open(dst, "rb") as fh:
+        stored_eoa = int.from_bytes(fh.read(48)[28:36], "little")
+    eoa = max(stored_eoa, size)
+    set_superblock(dst, flags=0x00, eoa=eoa)
+    if size < eoa:
+        with open(dst, "ab") as fh:
+            fh.write(b"\0" * (eoa - size))
+
+
+def _streaming_results(stage_grp):
+    """Every streaming result group of a stage: a group holding a DATA *dataset* and
+    TIME / STEP (ON_NODES, ON_DOMAIN, ON_REGIONS, ON_ELEMENTS/<display>/<bucket>)."""
+    res = stage_grp.get("RESULTS")
+    if res is None:
+        return
+    for fam in ("ON_NODES", "ON_ELEMENTS", "ON_DOMAIN", "ON_REGIONS"):
+        if fam not in res:
+            continue
+        stack = [res[fam]]
+        while stack:
+            g = stack.pop()
+            for name in g:
+                item = g[name]
+                if not isinstance(item, h5py.Group):
+                    continue
+                cls = item.get("DATA", getclass=True)
+                if cls is h5py.Dataset and "STEP" in item and "TIME" in item:
+                    yield item
+                elif cls is None:              # ON_ELEMENTS/<display>: descend
+                    stack.append(item)         # (a modes result's DATA is a group)
+
+
+def committed_steps(stage_grp) -> int | None:
+    """The steps of a stage a reader may use (schema §7b.2 crash rule): one recorder
+    writes a file, so every streaming result of a stage shares one step axis, and
+    T' = min over them of min(len DATA, len TIME, len STEP). Rows past T' are ignored.
+    A closed file has every length equal; a killed one may not (DATA, TIME and STEP
+    are separate datasets, and SWMR orders only each dataset's own writes). None
+    when the stage has no streaming result (envelope or modes only)."""
+    n = None
+    for g in _streaming_results(stage_grp):
+        m = min(g["DATA"].shape[0], g["TIME"].shape[0], g["STEP"].shape[0])
+        n = m if n is None else min(n, m)
+    return n
+
+
+def recover_ladruno(src, dst) -> list[dict]:
+    """Reader rule step 3 for a recorder file: ``repair_copy(src, dst)``, then report
+    each MODEL_STAGE in order as ``{"stage": name, "committed": T'}`` (``committed_steps``;
+    None for a stage with no streaming result), or ``{"stage": name, "torn": True,
+    "error": msg}`` for the LAST stage when it will not open (it was being laid out).
+    An earlier stage that will not open is corruption: raises ``ValueError``."""
+    repair_copy(src, dst)
+    report = []
+    with h5py.File(dst, "r") as f:
+        names = sorted((k for k in f if k.startswith("MODEL_STAGE[")), key=_stage_id)
+        for i, name in enumerate(names):
+            try:
+                report.append({"stage": name, "committed": committed_steps(f[name])})
+            except Exception as e:  # noqa: BLE001
+                if i < len(names) - 1:
+                    raise ValueError(f"{dst}: {name} will not open but is not the last "
+                                     f"stage: corruption ({e})") from e
+                report.append({"stage": name, "torn": True,
+                               "error": str(e).splitlines()[0]})
+    return report
+
+
+def iter_step_slices(grp, n: int | None = None):
     """Yield (step_id:int, arr2d[nIds×nComp]) for a result/bucket group, handling
     BOTH layouts transparently:
 
@@ -317,13 +531,21 @@ def iter_step_slices(grp):
       carrying a scalar STEP attribute.
 
     This lets every reader/checker diff a chunked .ladruno against a per-step
-    .mpco with one code path."""
+    .mpco with one code path.
+
+    Chunked layout: yields at most ``n`` steps (the stage's ``committed_steps``), and
+    never past the shortest of DATA / STEP / TIME (schema §7b.2 crash rule)."""
     data = grp["DATA"]
     if isinstance(data, h5py.Dataset):
         full = np.asarray(data[...])
         steps = (np.asarray(grp["STEP"][...]).reshape(-1) if "STEP" in grp
                  else np.arange(full.shape[0]))
-        for t in range(full.shape[0]):
+        T = min(full.shape[0], steps.shape[0])
+        if "TIME" in grp:
+            T = min(T, grp["TIME"].shape[0])
+        if n is not None:
+            T = min(T, n)
+        for t in range(T):
             yield int(steps[t]), np.atleast_2d(full[t])
     else:
         for sname in data:
@@ -371,7 +593,7 @@ def normalize_nodal(reader: LadrunoReader, stage: str) -> dict[tuple, float]:
         grp = base[rname]
         ids = np.asarray(grp["ID"][...]).reshape(-1)
         comps = [c for c in _attr(grp, "COMPONENTS").split(",") if c]
-        for k, arr in iter_step_slices(grp):
+        for k, arr in iter_step_slices(grp, reader.committed_steps(stage)):
             for r, tag in enumerate(ids):
                 for c, cn in enumerate(comps):
                     out[(int(tag), f"{rname}:{cn}", k)] = float(arr[r, c])
@@ -393,7 +615,7 @@ def normalize_element(reader: LadrunoReader, stage: str) -> dict[tuple, float]:
                 continue
             cols = decode_columns(bucket["COLUMN_MAP"])
             ids = np.asarray(bucket["ID"][...]).reshape(-1)
-            for k, arr in iter_step_slices(bucket):
+            for k, arr in iter_step_slices(bucket, reader.committed_steps(stage)):
                 for r, tag in enumerate(ids):
                     for cd in cols:
                         out[
@@ -422,6 +644,12 @@ def validate(path: str) -> list[str]:
         problems.append(msg)
 
     with LadrunoReader(path) as r:
+        # WP-233: the validator checks CLOSED files. A killed run's file opens (the
+        # reader rule) and reads by the crash rule, but it is not conformant.
+        if r.killed:
+            err("FILE-KILLED: the superblock consistency flags are set (the writer was "
+                "killed, not closed); read it by the crash rule (schema §7b.2), do not "
+                "validate it")
         info = r.info()
         if info.get("GENERATOR") != GENERATOR:
             err(f"INFO/GENERATOR must be {GENERATOR!r}, got {info.get('GENERATOR')!r}")

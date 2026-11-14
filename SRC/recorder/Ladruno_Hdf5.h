@@ -745,6 +745,19 @@ namespace h5 {
 		inline herr_t setLibVerBounds(hid_t plist_id, unsigned int minor, unsigned int major) {
 			return H5Pset_libver_bounds(plist_id, (H5F_libver_t)minor, (H5F_libver_t)major);
 		}
+		// WP-233 (#1082): a group that gains links during a run (the root gains a
+		// MODEL_STAGE per stage; a modes result's DATA gains a STEP_<k> per
+		// snapshot) keeps its links COMPACT for good and gets an object header
+		// sized for `n_links` up front, so adding one link is ONE in-place write of
+		// that header. By default a group goes dense after 8 links (a fractal heap
+		// and v2 B-trees rewritten in place) or grows a continuation chunk, and a
+		// kill inside the layout flush (which runs without SWMR) then left the
+		// group unreadable: measured on the root, every stage lost
+		// (recorder_crash_replay.py, --no-presize).
+		inline herr_t presizeLinks(hid_t gcpl, unsigned n_links, unsigned name_len) {
+			if (H5Pset_link_phase_change(gcpl, 65535, 65534) < 0) return -1;
+			return H5Pset_est_link_info(gcpl, n_links, name_len);
+		}
 	}
 
 }
