@@ -4,7 +4,7 @@ The orchestrator hands it to apeGmsh's T coordinator, which lands it in
 architecture/decisions/<next>-mpm-particles.md under apeGmsh's own rules
 (apegmsh-adr-docs: next number from origin/main, regenerate the index with
 scripts/adr_index.py, changelog fragment). Only apeGmsh's maintainer accepts it
-(ADR 0121 D4). Checked against apeGmsh origin/main 963d8ac9d (2026-11-13); the highest
+(ADR 0121 D4). Checked against apeGmsh origin/main 704f6249a (2026-11-13); the highest
 ADR there is 0133. Nothing below has been verified in an apeGmsh checkout beyond reading.
 -->
 
@@ -22,7 +22,8 @@ on #1203 by T. The two file contracts are specified field by field in the fork's
 `Ladruno_implementation/232a_mpm_contracts.md`, with fixtures in `tests/data/mpm/` there.
 
 **Amends** [ADR 0112](0112-files-are-the-model-and-a-read-only-app.md) D1 (one more artifact,
-D1 here). **Builds on** ADRs 0116, 0121, 0122, 0131 and the charter's P4. **Supersedes** nothing.
+D1 here). **Excepts** this file's integer version key from ADRs 0023 and 0113 (D1). **Builds on**
+ADRs 0116, 0121, 0122, 0127, 0130, 0131, 0132 and the charter's P4. **Supersedes** nothing.
 
 ## Context
 
@@ -56,19 +57,45 @@ registries.
 
 ### D1 — The particle set is an emit artifact, `<stem>.particles.h5`, beside the deck
 
-The particle set is **not** a FEMData stream in `model.h5`. It is a file the emitter writes,
-next to the deck it emits, named `<stem>.particles.h5`, and the deck names it brace-quoted:
-`mpm particles -file {<stem>.particles.h5}`. Live runs write it before the `mpm particles`
-call. The layout is Contract 1 (`FORMAT = "ladruno-mpm-particles"`, `FORMAT_VERSION = 1`),
-which the fork owns, as it owns `.ladruno` (ADR 0122 D4): the fork's reader is the one that
-admits or refuses the file, and a user may write one without apeGmsh. apeGmsh changes it only
-through a fork PR.
+The particle set is **not** a FEMData stream in `model.h5`. It is a file the emitter writes
+**next to the script**, in ADR 0112 D1's words, beside `<stem>.h5`, named `<stem>.particles.h5`.
+The deck names it brace-quoted: `mpm particles -file {<stem>.particles.h5}`. The fork resolves a
+relative `-file` path from **the directory of the deck that names it**, not from the process's
+working directory (contract §1). An emitted deck therefore names the file by its bare name and
+stays valid when the folder moves. Live runs write the file before the `mpm particles` call. The
+layout is Contract 1 (`FORMAT = "ladruno-mpm-particles"`, `FORMAT_VERSION = 1`). The fork owns it
+as it owns `.ladruno` (ADR 0122 D4): the fork's reader admits or refuses the file, and a user may
+write one without apeGmsh. apeGmsh changes it only through a fork PR.
 
-This adds a row to ADR 0112 D1's artifact table — "particle set, after emit, new" — and is
-recorded as an amendment there when this ADR is accepted. D1's rule holds for it: it is written
-unconditionally whenever the model has MPM bodies, at a conventional path, and overwritten on
-the next run. D2's rule holds too: it is its own optional artifact with its own version key
-(`FORMAT_VERSION` at its root), and a reader that ignores it is unaffected.
+This adds a row to ADR 0112 D1's artifact table: "particle set, after emit, new". It is recorded as
+an amendment there when this ADR is accepted. ADR 0112 already carries a pointer of 2026-11-10 that
+widens D1 to a file a run does not rewrite, `<stem>.workspace.h5` ([ADR 0132](0132-workspace-file-and-variants-manifest.md)).
+The particle set is the opposite case: a run writes it. D1's rule holds for it:
+
+- it is written unconditionally whenever the model has MPM bodies;
+- it sits at a conventional path next to the script;
+- the next run overwrites it.
+
+D2's rule holds as well. The file is its own optional artifact with its own version key, and a
+reader that ignores it is unaffected. Like `.user.h5`
+([ADR 0130](0130-states-quantities-and-the-user-results-file.md)) and `.workspace.h5`, it is a file
+of the set, not a zone of `model.h5`.
+
+**The viewer's pairing.** `.particles.h5` joins the set's pairing rule as a suffix of its own,
+modelled on ADR 0132 D1's `.workspace.h5`:
+
+- `apeGmshViewer/src/main/pairing.ts` matches it case-insensitively and before `.h5` in `SUFFIXES`
+  (:55-60), so `slab.particles.h5` pairs with `slab.h5` and is never opened as a model with the stem
+  `slab.particles`;
+- the open set gains a `particles` slot beside `model`, `geometry`, `results`, `user` and
+  `workspace` (`OpenSet` and `candidates`, :41-50 and :84-89);
+- `classify`'s refusal message lists it.
+
+**Its version key is an exception to ADRs 0023 and 0113.** apeGmsh's files carry semver zone keys
+with a floor per zone (ADR 0113). This file instead carries an **integer** `FORMAT_VERSION` that the
+fork owns, as `.ladruno` does. apeGmsh's readers gate on the exact integer, which today means
+`(1,)`. They take no floor and no shim ledger, and the schema-corpus machinery does not cover the
+file. ADR 0113's floor rule does not apply to it. This ADR records that exception by name.
 
 It pairs with its model like the geometry sibling: the file's `PROVENANCE` group carries
 `session_id` (equal to `<stem>.h5` `/meta/session_id`), `apegmsh_version`,
@@ -94,6 +121,9 @@ Contract 2.
   `INFO/FORMAT_MINOR_VERSION ≥ 2` and the stage has `MODEL/PARTICLES`. They accept the fork's
   attribute encodings (1-element arrays, fixed-length strings, an empty string written as an
   absent attribute) and the int64 ids, converted to `Number` with the existing safe-integer check.
+- A particle-only stage is written exactly as the fork's recorder writes an empty stage
+  (`EMPTY_PARTITION = 1`, zero-length `MODEL/NODES`, empty FE result groups), so a reader that
+  predates minor 2 opens it as an empty stage instead of failing.
 - A part file (`<stem>.part-<N>.ladruno`) with particles is refused by name: the fork's v1
   driver is serial and Contract 2 forbids it.
 - apeGmsh's own `.ladruno` writers (`_ladruno_writer.py`, the MPCO converter) write no
@@ -166,11 +196,17 @@ pass; no public API asks for a tag.
 
 ### D7 — Bridge primitives only after a pinned fork release; staged MPM runs are deck-only
 
-- The `mpm` primitives are consumed only after the fork PR that adds `mpm` has merged into
-  `ladruno` **and** a fork release containing it is named in `FORK_PIN` (its four keys bumped
-  together). They carry the `ladruno_fork` marker, a stock refusal that names the fork (ADR 0121
-  D4, ruling 1), a row in `docs/concepts/backend-capabilities.md`, and capability probes that
-  return `None` when inconclusive.
+- apeGmsh consumes the `mpm` primitives only when two things hold: the fork PR that adds `mpm` has
+  merged into `ladruno`, **and** `FORK_PIN` names a fork release that contains it, with its four
+  keys bumped together.
+- Each member carries:
+  - the `ladruno_fork` marker;
+  - a stock refusal that names the fork, raised at build time or as a `_FORK_ONLY_*` entry (ADR
+    0121 D4, ruling 1);
+  - **a warrant-row test**. That test stays Inventory until it *passes*, not skips, in the nightly
+    `live-fork` lane (ruling 1; ruling 3 for skips);
+  - a row in `docs/concepts/backend-capabilities.md`;
+  - capability probes that return `None` when they are inconclusive.
 - **Staged MPM runs are deck-only.** Live runs are flat (charter fix, ADR 0121 D7, ruling 2). A
   K0 start followed by a plastic stage uses `parameter … pattern <mpmTag>` + `updateParameter`
   in an emitted deck; the live route refuses a staged MPM program by name.
@@ -178,14 +214,26 @@ pass; no public API asks for a tag.
 
 ### D8 — The registries this ADR admits (ADR 0121 D4)
 
-When accepted, this ADR is the Accepted ADR that the census entries cite for:
+When accepted, this ADR is the Accepted ADR that the census entries cite. It follows the shape of
+[ADR 0127](0127-modal-basis-primitive-family.md), which admitted `ModalBasis`, as far as that shape
+is known today:
 
-- the primitive family **`mpm`** in `tests/families.py::FAMILIES` (grid, body, particles, grid
-  conditions, damping, output, analyze);
-- the emitter verb family **`mpm`** in `emitter/verbs.py::FAMILIES`.
+- **Base class.** `apeGmsh.opensees._internal.types.MPM(Primitive)` is the abstract base for the
+  `mpm` sub-commands: grid, body, particles, grid conditions, damping, output and analyze.
+- **Allocator kind.** `mpm`, as one row in `apesees._KIND_BY_FAMILY`, so the registry lock
+  (`test_verbs_lock.py` check (h)) finds it.
+- **The Family line.** `tests/families.py` gains `Family("mpm", MPM, …:ALL_MPM)`, and
+  `tests/freeze_census.py` gains `ADMITTED["primitive families"]["mpm"] = "<next>"`.
+- **The verb family.** `emitter/verbs.py::FAMILIES` gains `"mpm"`, with its census entry citing this
+  ADR.
+- **The contract test.** A parity test checks every member's fork command line on all five emitters,
+  as `tests/opensees/parity/test_chain_m_command_parity.py` does for `ModalBasis`.
 
-It admits no new constraint kind and no MCP tool or habitat verb. The exact member list is the
-bridge slice's, after the fork's guide fixes the command names.
+Unlike `ModalBasis` (ADR 0127 D2), `mpm` members are registered on the bridge and reach decks and
+`model.h5`, because the particle-set declaration is archived (D1). Their exact names, arguments and
+census entries depend on the fork guide's command names, which do not exist yet. **The bridge slice
+(chain M, link M3) amends this D8 with the exact census entries** before it lands. This ADR admits
+no new constraint kind and no MCP tool or habitat verb.
 
 ## Consequences
 
@@ -226,6 +274,10 @@ bridge slice's, after the fork's guide fixes the command names.
   [ADR 0116](0116-render-technologies.md),
   [ADR 0121](0121-charter-v2-b-with-amendments.md),
   [ADR 0122](0122-ladruno-canonical-results-format.md),
-  [ADR 0131](0131-all-in-ladruno.md), `architecture/charter.md` P4,
+  [ADR 0131](0131-all-in-ladruno.md),
+  [ADR 0127](0127-modal-basis-primitive-family.md),
+  [ADR 0130](0130-states-quantities-and-the-user-results-file.md),
+  [ADR 0132](0132-workspace-file-and-variants-manifest.md), ADRs 0023 and 0113 (the semver keys D1
+  excepts), `architecture/charter.md` P4, `apeGmshViewer/src/main/pairing.ts`,
   `architecture/h5-schema.md` ("Integer policy for the ADR 0112 zones", the geometry sibling),
   `results/schema/_versions.py`, `FORK_PIN`, `docs/concepts/backend-capabilities.md`.

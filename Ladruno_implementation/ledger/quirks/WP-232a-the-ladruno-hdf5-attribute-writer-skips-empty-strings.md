@@ -15,6 +15,19 @@ date: 2026-11-13
   `writed` with `data_size = 1`) and strings as fixed-length `NULLTERM` in a 1-element array
   (`writes`), not as scalar dataspaces or variable-length strings. `ladruno_format._attr` already
   squeezes the arrays; apeGmsh's readers must accept both encodings.
+- **Datasets too:** the `h5::dataset::createAndWrite` overloads (`Ladruno_Hdf5.h:241-282`) return
+  `HID_INVALID` for an empty `std::vector` or an empty string and create no dataset, so a zero-length
+  dataset (an empty output, an empty registry) needs a direct `H5Dcreate`, as the WP-165 empty-stage
+  branch of `writeModelNodes` does. The wrapper also has **no int64 dataset writer** (only
+  `createAndWritei1/i2`, `H5T_STD_I32LE`) and **no string-array dataset writer** (`createAndWrites`
+  writes one string). The MPM particle group needs int64 `ID` / `OFFSETS` / registry `ID` and a
+  string `BODIES/NAME` dataset (232a contract §2.4-§2.5), so 232c must add those writers.
+- **h5py trap when mimicking the C++ strings:** writing a fixed-length `NULLTERM` type of exactly
+  `len(s)` bytes through h5py's normal path (`attrs.create(..., dtype=<NULLTERM type>)` with a numpy
+  `S` array) converts NULLPAD → NULLTERM and **drops the last byte** (`"NONE"` reads back `"NON"`),
+  because the size leaves no room for a terminator. The C++ `H5Awrite(attr, atype, …)` passes the
+  file type as the memory type, so nothing is converted. Mimic it with the low-level
+  `h5a.create(...).write(data, mtype=tid)`, as `make_synthetic._as` does.
 - **Workaround/status:** treat an absent string attribute as `""` wherever `""` is a legal value
   (232a contract §0), and write test fixtures through `make_synthetic._ai/_ad/_as`, which mimic the
   C++ wrapper (including the skip), so readers are built against what the fork really writes.

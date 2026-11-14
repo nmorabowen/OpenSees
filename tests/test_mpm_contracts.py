@@ -1,33 +1,39 @@
 """WP-232a: the MPM contracts -- fixtures, validators, malformed variants.
 
-Pure h5py + numpy, no OpenSees build (run by the static-gates job of ladruno.yml). The
-contracts are Ladruno_implementation/232a_mpm_contracts.md; the validators are
-tests/mpm_contracts.py (Contract 1) and Ladruno_scripts/ladruno_recorder_tests/
-ladruno_format.py (Contract 2, via mpm_contracts.validate_particle_results). Each malformed
-variant must be refused by the rule code the contract names for it.
+Pure h5py + numpy, no OpenSees build (run by the static-gates job of ladruno.yml, which
+installs h5py: the import is hard on purpose, so a missing h5py fails the gate instead of
+skipping it green). The contracts are Ladruno_implementation/232a_mpm_contracts.md; the
+validators are tests/mpm_contracts.py (Contract 1) and
+Ladruno_scripts/ladruno_recorder_tests/ladruno_format.py (Contract 2, through
+mpm_contracts.validate_particle_results). Every rule code the page names has a refusal
+case here (test_every_rule_code_has_a_refusal_case).
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
+import h5py
 import numpy as np
 import pytest
-
-h5py = pytest.importorskip("h5py")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mpm_contract_fixtures as fx  # noqa: E402
 import mpm_contracts as mc  # noqa: E402
 
 lf = mc.lf
+DOC = Path(__file__).resolve().parents[1] / "Ladruno_implementation" / "232a_mpm_contracts.md"
+STAGE = "MODEL_STAGE[1]"
+OP = f"{STAGE}/RESULTS/ON_PARTICLES"
+MP = f"{STAGE}/MODEL/PARTICLES"
 
 
 # --------------------------------------------------------------------------- helpers
 
 
 def _content(path) -> dict:
-    """Every object's dtype / shape / values and every attribute, for a content diff."""
+    """Every object's dtype / shape / values / filters and every attribute."""
     out = {}
 
     def norm(v):
@@ -81,23 +87,40 @@ def test_committed_fixtures_match_the_generator(tmp_path):
 
 
 def test_contract2_is_an_additive_minor_not_a_major():
-    """The orchestrator's ruling: FORMAT_VERSION stays 1, the minor is 2 (232a §2.1)."""
+    """FORMAT_VERSION stays 1; the minor is 2 (232a §2.1)."""
     with lf.LadrunoReader(str(fx.PARTICLE_RESULTS)) as r:
         info = r.info()
     assert int(info["FORMAT_VERSION"]) == lf.FORMAT_VERSION == 1
     assert int(info["FORMAT_MINOR_VERSION"]) == lf.FORMAT_MINOR_VERSION_PARTICLES == 2
 
 
-def test_contract2_fixture_uses_the_fork_attribute_encodings():
-    """1-element int arrays, fixed-length strings, empty strings absent (232a §0)."""
+def test_contract2_stage_is_the_recorders_empty_stage():
+    """232a §2.3: EMPTY_PARTITION = 1, NODES/ID int32 [0 x 1], empty FE groups."""
     with h5py.File(fx.PARTICLE_RESULTS, "r") as f:
-        fv = f["INFO"].attrs["FORMAT_VERSION"]
-        assert fv.shape == (1,) and fv.dtype == np.dtype("<i4")
-        kind = f["MODEL_STAGE[1]"].attrs["KIND"]
-        assert kind.shape == (1,) and kind.dtype.kind == "S"
-        fg = f["MODEL_STAGE[1]/RESULTS/ON_PARTICLES/DEFORMATION_GRADIENT"]
+        st = f[STAGE]
+        assert int(st.attrs["EMPTY_PARTITION"][0]) == 1
+        assert int(st.attrs["PARTICLE_EPOCH"][0]) == 0
+        assert st["MODEL/NODES/ID"].shape == (0, 1)
+        assert st["MODEL/NODES/ID"].dtype == np.dtype("<i4")
+        assert len(st["MODEL/ELEMENTS"]) == 0
+        for g in lf.EMPTY_RESULT_GROUPS:
+            assert len(st[f"RESULTS/{g}"]) == 0
+
+
+def test_contract2_fixture_uses_the_fork_attribute_encodings():
+    """1-element int32 arrays; fixed-length NULLTERM strings of exactly len bytes;
+    empty strings absent (232a §0, Ladruno_Hdf5.h writei / writes)."""
+    with h5py.File(fx.PARTICLE_RESULTS, "r") as f:
+        for name in ("FORMAT_VERSION", "FORMAT_MINOR_VERSION"):
+            v = f["INFO"].attrs[name]
+            assert v.shape == (1,) and v.dtype == np.dtype("<i4")
+        kind = f[STAGE].attrs["KIND"]
+        assert kind.shape == (1,) and kind.dtype.kind == "S" and kind[0] == b"transient"
+        t = f[STAGE].attrs.get_id("KIND").get_type()
+        assert t.get_strpad() == h5py.h5t.STR_NULLTERM and t.get_size() == len(b"transient")
+        fg = f[f"{OP}/DEFORMATION_GRADIENT"]
         assert "DIMENSION" not in fg.attrs and "DESCRIPTION" not in fg.attrs
-        assert f["MODEL_STAGE[1]/MODEL/PARTICLES/BODIES/NAME"].dtype.kind == "S"
+        assert f[f"{MP}/BODIES/NAME"].dtype.kind == "S"
 
 
 def test_round_trip_contract1_to_contract2():
@@ -122,9 +145,10 @@ def test_round_trip_contract1_to_contract2():
         assert ids.tolist() == P["ID"][...].tolist()
         assert np.array_equal(x0, P["POSITION"][...])
         _, s0 = r.particle_output(stage, "STRESS", 0)
-        assert np.array_equal(s0, P["STRESS"][...])
+        assert s0.shape[1] == 3 and np.array_equal(s0, P["STRESS"][...])   # [11, 22, 12]
         _, v0 = r.particle_output(stage, "VOLUME", 0)
         assert np.array_equal(v0[:, 0], P["VOLUME"][...])
+        assert "STRESS33" not in r.f[f"{stage}/RESULTS/ON_PARTICLES"]   # no v1 material exposes it
 
 
 def test_contract2_removal_and_state_nan():
@@ -164,12 +188,12 @@ def test_contract1_mass_source_and_optional_fields(tmp_path):
     m["attrs"]["MASS_SOURCE"] = "mass"
     p["VELOCITY"] = np.zeros_like(p["POSITION"])
     p["FLAGS"] = np.zeros(len(p["ID"]), dtype="<u4")
+    del p["STRESS33"]
     fx.write_contract1(tmp_path / "c1.h5", m)
     assert mc.validate_particle_set(str(tmp_path / "c1.h5")) == []
 
 
-def test_contract1_three_dimensional_set(tmp_path):
-    m = fx.deep_copy_model()
+def _three_d(m):
     a, p = m["attrs"], m["particles"]
     a["NDM"] = np.int32(3)
     a["VOIGT_ORDER"] = mc.VOIGT[3]
@@ -181,6 +205,12 @@ def test_contract1_three_dimensional_set(tmp_path):
     p["GIMP_HALF_LENGTH"] = np.full((n, 3), 0.125)
     p["VOLUME"] = np.full(n, 0.25 ** 3)
     p["STRESS"] = np.zeros((n, 6))
+    del p["STRESS33"]
+
+
+def test_contract1_three_dimensional_set(tmp_path):
+    m = fx.deep_copy_model()
+    _three_d(m)
     fx.write_contract1(tmp_path / "c1.h5", m)
     assert mc.validate_particle_set(str(tmp_path / "c1.h5")) == []
 
@@ -190,7 +220,7 @@ def test_contract2_accepts_an_added_particle(tmp_path):
     m = fx.deep_copy_model()
     outs = fx.contract2_outputs(m)
     p = m["particles"]
-    for k in ("ID", "BODY_ID", "MATERIAL_TAG", "VOLUME", "DENSITY"):
+    for k in ("ID", "BODY_ID", "MATERIAL_TAG", "VOLUME", "DENSITY", "STRESS33"):
         p[k] = np.r_[p[k], p[k][-1:] + (1 if k == "ID" else 0)]
     for k in ("POSITION", "GIMP_HALF_LENGTH", "STRESS"):
         p[k] = np.vstack([p[k], p[k][-1:]])
@@ -199,6 +229,58 @@ def test_contract2_accepts_an_added_particle(tmp_path):
     last["fields"] = {k: np.vstack([v, v[-1:]]) for k, v in last["fields"].items()}
     fx.write_contract2(tmp_path / "c2.ladruno", m, outs)
     assert mc.validate_particle_results(str(tmp_path / "c2.ladruno")) == []
+
+
+def test_contract2_time_may_restart_and_source_is_optional(tmp_path):
+    """TIME is only finite (`loadConst -time 0`, `setTime`); SOURCE_SET_ID is absent when
+    no contract-1 file was loaded (232a §2.4, §2.5)."""
+    outs = fx.contract2_outputs()
+    outs[2]["time"] = 0.0
+    fx.write_contract2(tmp_path / "c2.ladruno", outputs=outs, source=False)
+    assert mc.validate_particle_results(str(tmp_path / "c2.ladruno")) == []
+
+
+def test_contract2_quasi_static_mode_runs_under_a_static_stage(tmp_path):
+    fx.write_contract2(tmp_path / "c2.ladruno", mode="quasi-static")
+    assert mc.validate_particle_results(str(tmp_path / "c2.ladruno")) == []
+
+
+def _second_stage(f, epoch, ids_back):
+    """Copy MODEL_STAGE[1] to MODEL_STAGE[2] with PARTICLE_EPOCH = epoch; its outputs carry
+    `ids_back` again (particle 11 was removed in stage 1)."""
+    f.copy(STAGE, "MODEL_STAGE[2]")
+    st = f["MODEL_STAGE[2]"]
+    st.attrs["PARTICLE_EPOCH"] = np.array([epoch], dtype="<i4")
+    op = st["RESULTS/ON_PARTICLES"]
+    off = op["OFFSETS"][...]
+    keep = slice(int(off[0]), int(off[1]))           # output 0 of stage 1: all 12 ids
+    n = keep.stop - keep.start
+    for name in list(op):
+        if isinstance(op[name], h5py.Group):
+            op[name]["DATA"].resize((n,) + op[name]["DATA"].shape[1:])
+    op["ID"].resize((n,))
+    op["ID"][...] = ids_back
+    for k, v in (("STEP", [30]), ("TIME", [3e-3]), ("OFFSETS", [0, n])):
+        op[k].resize((len(v),))
+        op[k][...] = v
+
+
+def test_mpm_reset_starts_a_new_epoch(tmp_path):
+    """`mpm reset` brings removed ids back: legal in a new epoch (232a §2.7)."""
+    p = tmp_path / "c2.ladruno"
+    fx.write_contract2(p)
+    with h5py.File(p, "r+") as f:
+        _second_stage(f, 1, np.arange(12))
+    assert mc.validate_particle_results(str(p)) == []
+
+
+def test_contract2_shared_file_case_in_make_synthetic(tmp_path):
+    lf_dir = Path(lf.__file__).parent
+    sys.path.insert(0, str(lf_dir))
+    import make_synthetic
+    p = str(tmp_path / "shared.ladruno")
+    make_synthetic.build(p, particles=True)
+    assert lf.validate(p) == []
 
 
 # --------------------------------------------------------------------------- Contract 1 refusals
@@ -240,33 +322,18 @@ def _particle(name, fn):
     return f
 
 
+def _first(value, col=None):
+    def f(a):
+        if col is None:
+            a[0] = value
+        else:
+            a[0, col] = value
+        return a
+    return f
+
+
 def _repeat_id(a):
     a[1] = a[0]
-    return a
-
-
-def _neg_first(a):
-    a[0] = -a[0]
-    return a
-
-
-def _zero_first(a):
-    a[0] = 0.0
-    return a
-
-
-def _nan_first(a):
-    a[0, 0] = np.nan
-    return a
-
-
-def _outside(a):
-    a[0, 0] = 0.05                       # x - l = -0.075 < grid origin
-    return a
-
-
-def _too_big(a):
-    a[0, 0] = 0.3                        # > CELL_SIZE / 2 = 0.25
     return a
 
 
@@ -287,41 +354,57 @@ def _scaleoffset(f):
     f["PARTICLES"].create_dataset("VOLUME", data=v, chunks=(len(v),), scaleoffset=6)
 
 
+def _stress33_in_3d(m):
+    _three_d(m)
+    m["particles"]["STRESS33"] = np.zeros(len(m["particles"]["ID"]))
+
+
+def _ndm_int64(f):
+    f.attrs["NDM"] = np.int64(2)
+
+
 C1_CASES = {
     "missing VOLUME": (dict(mutate=_pop(["particles", "VOLUME"])), "C1-REQ"),
-    "missing BODY_ID": (dict(mutate=_pop(["particles", "BODY_ID"])), "C1-REQ"),
     "missing GRID": (dict(h5_mutate=lambda f: f.__delitem__("GRID")), "C1-REQ"),
-    "negative volume": (dict(mutate=_particle("VOLUME", _neg_first)), "C1-VOL"),
-    "zero volume": (dict(mutate=_particle("VOLUME", _zero_first)), "C1-VOL"),
+    "wrong FORMAT": (dict(mutate=_set(["attrs", "FORMAT"], "ladruno-particles")), "C1-FMT"),
+    "format version 2": (dict(mutate=_set(["attrs", "FORMAT_VERSION"], np.int32(2))), "C1-VER"),
+    "empty GENERATOR": (dict(h5_mutate=lambda f: f.attrs.__setitem__("GENERATOR", "")),
+                        "C1-GEN"),
+    "bad set id": (dict(mutate=_set(["attrs", "SET_ID"], "not-a-uuid")), "C1-SETID"),
+    "NDM 1": (dict(mutate=_set(["attrs", "NDM"], np.int32(1))), "C1-NDM"),
+    "NDM stored int64": (dict(h5_mutate=_ndm_int64), "C1-DTYPE"),
+    "empty UNIT_FORCE": (dict(h5_mutate=lambda f: f.attrs.__setitem__("UNIT_FORCE", "")),
+                         "C1-UNIT"),
+    "NUM_PARTICLES wrong": (dict(mutate=_set(["attrs", "NUM_PARTICLES"], np.int64(13))),
+                            "C1-N"),
+    "2D without thickness": (dict(mutate=_pop(["attrs", "PLANE_STRAIN_THICKNESS"])), "C1-THK"),
+    "mass and density": (dict(mutate=_both_mass), "C1-MASS"),
+    "compression-positive sign": (dict(mutate=_set(["attrs", "STRESS_SIGN"],
+                                                   "compression-positive")), "C1-SIGN"),
+    "old 2D Voigt order": (dict(mutate=_set(["attrs", "VOIGT_ORDER"], "11,22,33,12")),
+                           "C1-VOIGT"),
+    "zero cell size": (dict(mutate=_set(["grid", "CELL_SIZE"], np.array([0.5, 0.0]))),
+                       "C1-GRID"),
+    "unknown basis": (dict(mutate=_set(["grid", "BASIS"], "bspline")), "C1-BASIS"),
+    "duplicate body name": (dict(mutate=_set(["bodies"], [(0, "soil"), (1, "soil")])),
+                            "C1-BODY"),
+    "unknown body": (dict(mutate=_particle("BODY_ID", lambda a: a + 5)), "C1-BODYREF"),
     "repeated id": (dict(mutate=_particle("ID", _repeat_id)), "C1-ID"),
     "position float32": (dict(mutate=_particle("POSITION", lambda a: a.astype("<f4"))),
                          "C1-DTYPE"),
-    "id int32": (dict(mutate=_particle("ID", lambda a: a.astype("<i4"))), "C1-DTYPE"),
-    "stress NaN": (dict(mutate=_particle("STRESS", _nan_first)), "C1-FINITE"),
-    "stress 6 columns in 2D": (dict(mutate=_particle("STRESS", lambda a: np.c_[a, a[:, :2]])),
+    "stress 4 columns in 2D": (dict(mutate=_particle("STRESS", lambda a: np.c_[a, a[:, :1]])),
                                "C1-SHAPE"),
-    "outside the grid": (dict(mutate=_particle("POSITION", _outside)), "C1-POS"),
-    "half-length > h/2": (dict(mutate=_particle("GIMP_HALF_LENGTH", _too_big)), "C1-GIMP"),
-    "unknown body": (dict(mutate=_particle("BODY_ID", lambda a: a + 5)), "C1-BODYREF"),
+    "STRESS33 in 3D": (dict(mutate=_stress33_in_3d), "C1-STRESS33"),
+    "stress NaN": (dict(mutate=_particle("STRESS", _first(np.nan, 0))), "C1-FINITE"),
+    "negative volume": (dict(mutate=_particle("VOLUME", _first(-0.0625))), "C1-VOL"),
+    "zero volume": (dict(mutate=_particle("VOLUME", _first(0.0))), "C1-VOL"),
+    "half-length > h/2": (dict(mutate=_particle("GIMP_HALF_LENGTH", _first(0.3, 0))),
+                          "C1-GIMP"),
+    "outside the grid box": (dict(mutate=_particle("POSITION", _first(0.05, 0))), "C1-POS"),
     "material tag 0": (dict(mutate=_particle("MATERIAL_TAG", lambda a: a * 0)), "C1-MAT"),
     "flag bit set": (dict(mutate=_add_flags), "C1-FLAGS"),
-    "mass and density": (dict(mutate=_both_mass), "C1-MASS"),
     "unknown field": (dict(mutate=_set(["particles", "PORE_PRESSURE"], np.zeros(12))),
                       "C1-UNKNOWN"),
-    "2D without thickness": (dict(mutate=_pop(["attrs", "PLANE_STRAIN_THICKNESS"])), "C1-THK"),
-    "wrong Voigt order": (dict(mutate=_set(["attrs", "VOIGT_ORDER"], "11,22,12,33")),
-                          "C1-VOIGT"),
-    "compression-negative sign": (dict(mutate=_set(["attrs", "STRESS_SIGN"],
-                                                   "compression-positive")), "C1-SIGN"),
-    "format version 2": (dict(mutate=_set(["attrs", "FORMAT_VERSION"], np.int32(2))), "C1-VER"),
-    "bad set id": (dict(mutate=_set(["attrs", "SET_ID"], "not-a-uuid")), "C1-SETID"),
-    "NUM_PARTICLES wrong": (dict(mutate=_set(["attrs", "NUM_PARTICLES"], np.int64(13))),
-                            "C1-N"),
-    "unknown basis": (dict(mutate=_set(["grid", "BASIS"], "bspline")), "C1-BASIS"),
-    "zero cell size": (dict(mutate=_set(["grid", "CELL_SIZE"], np.array([0.5, 0.0]))),
-                       "C1-GRID"),
-    "duplicate body name": (dict(mutate=_set(["bodies"], [(0, "soil"), (1, "soil")])),
-                            "C1-BODY"),
     "apeGmsh without session": (dict(mutate=_pop(["provenance", "session_id"])), "C1-PROV"),
     "scale-offset filter": (dict(h5_mutate=_scaleoffset), "C1-FILTER"),
 }
@@ -385,81 +468,125 @@ def _field(name, fn):
     return f
 
 
-def _position_f32(f):
-    ds = f["MODEL_STAGE[1]/RESULTS/ON_PARTICLES/POSITION/DATA"]
-    v = ds[...]
-    del f["MODEL_STAGE[1]/RESULTS/ON_PARTICLES/POSITION/DATA"]
-    f["MODEL_STAGE[1]/RESULTS/ON_PARTICLES/POSITION"].create_dataset("DATA", data=v.astype("<f4"))
+def _h5(fn):
+    return dict(h5_mutate=fn)
 
 
-def _bad_offsets(f):
-    ds = f["MODEL_STAGE[1]/RESULTS/ON_PARTICLES/OFFSETS"]
+def _setattr(path, name, value):
+    def f(h):
+        h[path].attrs[name] = value
+    return f
+
+
+def _delattr(path, name):
+    def f(h):
+        del h[path].attrs[name]
+    return f
+
+
+def _replace(path, data, **kw):
+    def f(h):
+        parent, leaf = path.rsplit("/", 1)
+        del h[path]
+        h[parent].create_dataset(leaf, data=data, **kw)
+    return f
+
+
+def _bad_offsets(h):
+    ds = h[f"{OP}/OFFSETS"]
     v = ds[...]
     v[1] = v[2] + 1
     ds[...] = v
 
 
-def _stress_comps(f):
-    g = f["MODEL_STAGE[1]/RESULTS/ON_PARTICLES/STRESS"]
-    g.attrs["COMPONENTS"] = np.array([b"s11,s22,s33,s12"])
-
-
-def _neg_mass(f):
-    ds = f["MODEL_STAGE[1]/MODEL/PARTICLES/MASS"]
+def _neg_mass(h):
+    ds = h[f"{MP}/MASS"]
     v = ds[...]
     v[0] = -1.0
     ds[...] = v
 
 
-def _drop_results(f):
-    del f["MODEL_STAGE[1]/RESULTS/ON_PARTICLES"]
+def _partitioned(h):
+    h["INFO"].attrs["PARTITIONED"] = np.array([1], dtype="<i4")
+    h["INFO"].attrs["NUM_PARTITIONS"] = np.array([2], dtype="<i4")
 
 
-def _partitioned(f):
-    f["INFO"].attrs["PARTITIONED"] = np.array([1], dtype="<i4")
-    f["INFO"].attrs["NUM_PARTITIONS"] = np.array([2], dtype="<i4")
+def _short_data(h):
+    d = h[f"{OP}/VOLUME/DATA"]
+    d.resize((d.shape[0] - 1, 1))
 
 
-def _major_2(f):
-    f["INFO"].attrs["FORMAT_VERSION"] = np.array([2], dtype="<i4")
+def _extra_dataset(h):
+    h[OP].create_dataset("NOTES", data=np.zeros(3))
 
 
-def _eigen(f):
-    f["MODEL_STAGE[1]"].attrs["KIND"] = np.array([b"eigen"])
+def _volume_scaleoffset(h):
+    v = h[f"{OP}/VOLUME/DATA"][...]
+    del h[f"{OP}/VOLUME/DATA"]
+    h[f"{OP}/VOLUME"].create_dataset("DATA", data=v, chunks=v.shape, scaleoffset=6)
 
 
-def _no_grid(f):
-    del f["MODEL_STAGE[1]/MODEL/PARTICLES/GRID"]
+def _nodes_not_empty_shape(h):
+    del h[f"{STAGE}/MODEL/NODES/ID"]
+    h[f"{STAGE}/MODEL/NODES"].create_dataset("ID", data=np.zeros(0, dtype="<i4"))
 
 
-def _moved_far(a):
-    a[0, 0] = 5.0
-    return a
+def _epoch_back(h):
+    _second_stage(h, 0, np.arange(12))
+    h[STAGE].attrs["PARTICLE_EPOCH"] = np.array([1], dtype="<i4")
 
 
-def _nan_stress(a):
-    a[0, 0] = np.nan
-    return a
+def _same_epoch_reuse(h):
+    _second_stage(h, 0, np.arange(12))
 
 
 C2_CASES = {
-    "removed id comes back": (dict(outputs=_outs(_reuse_removed)), "C2-REUSE"),
+    "minor 1": (dict(minor=1), "C2-MINOR"),
+    "partitioned": (_h5(_partitioned), "C2-PART"),
+    "SPATIAL_DIM 1": (_h5(_setattr("INFO", "SPATIAL_DIM", np.array([1], dtype="<i4"))),
+                      "C2-NDM"),
+    "model without results": (_h5(lambda h: h.__delitem__(OP)), "C2-PAIR"),
+    "eigen stage": (_h5(_setattr(STAGE, "KIND", np.array([b"eigen"]))), "C2-KIND"),
+    "unknown mode": (dict(mode="dynamic"), "C2-MODE"),
+    "explicit under a static stage": (_h5(_setattr(STAGE, "KIND", np.array([b"static"]))),
+                                      "C2-MODEKIND"),
+    "no PATTERN_TAG": (_h5(_delattr(MP, "PATTERN_TAG")), "C2-PATTERN"),
+    "no PARTICLE_EPOCH": (_h5(_delattr(STAGE, "PARTICLE_EPOCH")), "C2-EPOCH"),
+    "PARTICLE_EPOCH goes back": (_h5(_epoch_back), "C2-EPOCH"),
+    "no EMPTY_PARTITION": (_h5(_delattr(STAGE, "EMPTY_PARTITION")), "C2-EMPTY"),
+    "NODES/ID not [0 x 1]": (_h5(_nodes_not_empty_shape), "C2-EMPTY"),
+    "bad SOURCE_SET_ID": (_h5(_setattr(MP, "SOURCE_SET_ID", np.array([b"nope"]))), "C2-SRC"),
+    "no thickness in 2D": (_h5(_delattr(MP, "PLANE_STRAIN_THICKNESS")), "C2-THK"),
+    "no UNIT_TIME": (_h5(_delattr(MP, "UNIT_TIME")), "C2-UNIT"),
+    "no grid": (_h5(lambda h: h.__delitem__(f"{MP}/GRID")), "C2-GRID"),
+    "duplicate body name": (_h5(_replace(f"{MP}/BODIES/NAME", np.array([b"soil", b"soil"]))),
+                            "C2-BODY"),
+    "negative registry mass": (_h5(_neg_mass), "C2-REG"),
+    "PARTITION_REDUCTION SUM": (_h5(_setattr(OP, "PARTITION_REDUCTION", np.array([b"SUM"]))),
+                                "C2-RED"),
+    "STEP not increasing": (_h5(_replace(f"{OP}/STEP", np.array([0, 20, 10], dtype="<i4"))),
+                            "C2-AXES"),
+    "bad OFFSETS": (_h5(_bad_offsets), "C2-OFF"),
     "id repeated in an output": (dict(outputs=_outs(_repeat_in_output)), "C2-ID"),
     "id not in the registry": (dict(outputs=_outs(_foreign_id)), "C2-ID"),
+    "removed id comes back": (dict(outputs=_outs(_reuse_removed)), "C2-REUSE"),
+    "removed id comes back in the same epoch": (_h5(_same_epoch_reuse), "C2-REUSE"),
     "no POSITION": (dict(outputs=_outs(_drop_field("POSITION"))), "C2-POS"),
-    "POSITION outside the grid": (dict(outputs=_outs(_field("POSITION", _moved_far))),
-                                  "C2-POS"),
-    "NaN stress": (dict(outputs=_outs(_field("STRESS", _nan_stress))), "C2-FINITE"),
-    "POSITION float32": (dict(h5_mutate=_position_f32), "C2-DTYPE"),
-    "bad OFFSETS": (dict(h5_mutate=_bad_offsets), "C2-OFF"),
-    "STRESS labels": (dict(h5_mutate=_stress_comps), "C2-CAT"),
-    "negative registry mass": (dict(h5_mutate=_neg_mass), "C2-REG"),
-    "model without results": (dict(h5_mutate=_drop_results), "C2-PAIR"),
-    "minor 1": (dict(minor=1), "C2-MINOR"),
-    "partitioned": (dict(h5_mutate=_partitioned), "C2-PART"),
-    "eigen stage": (dict(h5_mutate=_eigen), "C2-KIND"),
-    "unknown mode": (dict(mode="dynamic"), "C2-MODE"),
-    "no grid": (dict(h5_mutate=_no_grid), "C2-GRID"),
+    "POSITION outside the grid box": (dict(outputs=_outs(_field("POSITION",
+                                                                _first(5.0, 0)))), "C2-POS"),
+    "POSITION float32": (_h5(_replace(f"{OP}/POSITION/DATA",
+                                      np.zeros((35, 2), dtype="<f4"))), "C2-DTYPE"),
+    "VOLUME DATA one row short": (_h5(_short_data), "C2-DATA"),
+    "no DISPLAY_NAME": (_h5(_delattr(f"{OP}/VOLUME", "DISPLAY_NAME")), "C2-ATTR"),
+    "repeated component label": (_h5(_setattr(f"{OP}/VELOCITY", "COMPONENTS",
+                                              np.array([b"Vx,Vx"]))), "C2-COMP"),
+    "STRESS labelled as the old 2D order": (_h5(_setattr(f"{OP}/STRESS", "COMPONENTS",
+                                                         np.array([b"sigma11,sigma22,sigma33"]))),
+                                            "C2-CAT"),
+    "NaN stress": (dict(outputs=_outs(_field("STRESS", _first(np.nan, 0)))), "C2-FINITE"),
+    "lowercase field name": (_h5(lambda h: h[OP].move("VOLUME", "volume")), "C2-NAME"),
+    "stray dataset": (_h5(_extra_dataset), "C2-UNKNOWN"),
+    "scale-offset filter": (_h5(_volume_scaleoffset), "C2-FILTER"),
 }
 
 
@@ -472,5 +599,15 @@ def test_contract2_refuses(tmp_path, case):
 
 def test_contract2_major_version_bump_is_refused(tmp_path):
     """A particle file stamped FORMAT_VERSION 2 is refused: the change is a minor (232a §2.1)."""
-    problems = _c2(tmp_path, h5_mutate=_major_2)
+    problems = _c2(tmp_path, h5_mutate=_setattr("INFO", "FORMAT_VERSION",
+                                                np.array([2], dtype="<i4")))
     assert any("FORMAT_VERSION must be 1" in p for p in problems), problems
+
+
+def test_every_rule_code_has_a_refusal_case():
+    """Each C1-/C2- code the contract page names is fired by at least one case above."""
+    named = set(re.findall(r"\bC[12]-[A-Z0-9]+\b", DOC.read_text(encoding="utf-8")))
+    covered = {code for _, code in C1_CASES.values()} | {code for _, code in C2_CASES.values()}
+    assert named, "no rule codes found in the contract page"
+    assert named <= covered, sorted(named - covered)
+    assert covered <= named, sorted(covered - named)

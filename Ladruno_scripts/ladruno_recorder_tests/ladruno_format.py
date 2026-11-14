@@ -738,13 +738,25 @@ PARTICLE_FIELDS = {
     "POSITION": ("x,y", "x,y,z"),
     "VELOCITY": ("Vx,Vy", "Vx,Vy,Vz"),
     "ACCELERATION": ("Ax,Ay", "Ax,Ay,Az"),
-    "STRESS": ("sigma11,sigma22,sigma33,sigma12",
+    "STRESS": ("sigma11,sigma22,sigma12",
                "sigma11,sigma22,sigma33,sigma12,sigma23,sigma13"),
+    "STRESS33": ("sigma33", None),          # plane strain only; in 3D it is in STRESS
+    "STRAIN": ("eps11,eps22,gamma12", "eps11,eps22,eps33,gamma12,gamma23,gamma13"),
     "VOLUME": ("V", "V"),
     "GIMP_HALF_LENGTH": ("lx,ly", "lx,ly,lz"),
     "DEFORMATION_GRADIENT": ("F11,F12,F21,F22", "F11,F12,F13,F21,F22,F23,F31,F32,F33"),
 }
 FIELD_ATTRS = ("DISPLAY_NAME", "COMPONENTS", "TYPE", "DATA_TYPE", "PARTITION_REDUCTION")
+#: MODE -> the stage KIND it runs under (232a §2.3)
+MODE_KIND = {"explicit": "transient", "implicit": "transient", "quasi-static": "static"}
+#: the empty FE skeleton of a particle-only stage, as LadrunoRecorder writes it (WP-165 MP-8)
+EMPTY_RESULT_GROUPS = ("ON_NODES", "ON_ELEMENTS", "ON_DOMAIN", "ON_REGIONS")
+
+
+def int_attr_ok(obj, name: str, width: int = 4) -> bool:
+    """An integer attribute of the stated width (int32 unless the contract says int64)."""
+    v = np.asarray(obj.attrs[name])
+    return v.dtype.kind in "iu" and v.dtype.itemsize == width and v.size >= 1
 
 
 def _stage_id(name: str) -> int:
@@ -792,9 +804,21 @@ def _validate_particles(r: LadrunoReader, info: dict, ndim: int, err) -> None:
     if ndim not in (2, 3):
         err(f"C2-NDM: INFO/SPATIAL_DIM {ndim} must be 2 or 3 for particles")
         return
-    removed: set[int] = set()      # ids that left the run: never seen again (C2-REUSE)
+    removed: set[int] = set()      # ids that left the epoch: never seen again (C2-REUSE)
     alive: set[int] = set()
+    epoch = None
     for stage in stages:
+        sg = r.f[stage]
+        if "PARTICLE_EPOCH" not in sg.attrs or not int_attr_ok(sg, "PARTICLE_EPOCH"):
+            err(f"C2-EPOCH: {stage}: PARTICLE_EPOCH (int32) missing")
+            ep = epoch if epoch is not None else 0
+        else:
+            ep = int(_attr(sg, "PARTICLE_EPOCH"))
+            if ep < 0 or (epoch is not None and ep < epoch):
+                err(f"C2-EPOCH: {stage}: PARTICLE_EPOCH {ep} is negative or decreases")
+        if ep != epoch:            # `mpm reset` starts a new epoch: the id rules restart
+            alive, removed = set(), set()
+        epoch = ep
         alive, removed = _validate_particle_stage(r, stage, ndim, err, alive, removed)
 
 
@@ -804,8 +828,8 @@ def _validate_particle_model(r, stage, ndim, err):
     ctx = f"{stage}/MODEL/PARTICLES"
     a = {k: _attr(mp, k) for k in mp.attrs}
 
-    sid = a.get("SOURCE_SET_ID")
-    if not isinstance(sid, str) or not UUID4.match(sid):
+    sid = a.get("SOURCE_SET_ID")     # optional: absent when no contract-1 file was loaded
+    if sid is not None and (not isinstance(sid, str) or not UUID4.match(sid)):
         err(f"C2-SRC: {ctx}: SOURCE_SET_ID {sid!r} is not a canonical uuid4")
     if "SOURCE_SET_IDS" in a:
         try:
@@ -814,10 +838,15 @@ def _validate_particle_model(r, stage, ndim, err):
             ok = False
         if not ok:
             err(f"C2-SRC: {ctx}: SOURCE_SET_IDS is not a JSON array")
-    if "PATTERN_TAG" not in a:
-        err(f"C2-MODE: {ctx}: PATTERN_TAG missing")
-    if a.get("MODE") not in ("explicit", "implicit", "quasi-static"):
+    if "PATTERN_TAG" not in a or not int_attr_ok(mp, "PATTERN_TAG"):
+        err(f"C2-PATTERN: {ctx}: PATTERN_TAG (int32) missing")
+    if a.get("MODE") not in MODE_KIND:
         err(f"C2-MODE: {ctx}: MODE {a.get('MODE')!r} not explicit|implicit|quasi-static")
+    else:
+        kind = r.stage_attrs(stage).get("KIND")
+        if kind in ("transient", "static") and MODE_KIND[a["MODE"]] != kind:
+            err(f"C2-MODEKIND: {ctx}: MODE {a['MODE']} runs under KIND "
+                f"{MODE_KIND[a['MODE']]}, the stage says {kind}")
     thk = a.get("PLANE_STRAIN_THICKNESS")
     if ndim == 2 and (thk is None or not np.isfinite(thk) or thk <= 0):
         err(f"C2-THK: {ctx}: PLANE_STRAIN_THICKNESS must be > 0 when SPATIAL_DIM = 2")
@@ -912,6 +941,7 @@ def _validate_particle_stage(r, stage, ndim, err, alive, removed):
     if kind not in ("transient", "static"):
         err(f"C2-KIND: {stage}: KIND {kind!r} must be transient|static for particles")
     lo, hi, reg_ids = _validate_particle_model(r, stage, ndim, err)
+    _validate_particle_only_stage(r, stage, ndim, err)
 
     op = r.f[f"{stage}/RESULTS/ON_PARTICLES"]
     octx = f"{stage}/RESULTS/ON_PARTICLES"
@@ -939,8 +969,10 @@ def _validate_particle_stage(r, stage, ndim, err, alive, removed):
         return alive, removed
     if np.any(np.diff(steps) <= 0):
         err(f"C2-AXES: {octx}/STEP not strictly increasing")
-    if np.any(~np.isfinite(times)) or np.any(np.diff(times) < 0):
-        err(f"C2-AXES: {octx}/TIME not finite and non-decreasing")
+    # TIME may restart inside a stage (`loadConst -time 0`, `setTime`), as on ON_NODES;
+    # readers key outputs by index / STEP, never by TIME.
+    if np.any(~np.isfinite(times)):
+        err(f"C2-AXES: {octx}/TIME not finite")
     if (offs.shape[0] != T + 1 or offs[0] != 0 or np.any(np.diff(offs) < 0)
             or offs[-1] != ids.shape[0]):
         err(f"C2-OFF: {octx}/OFFSETS must be [T+1], start at 0, never decrease, end at len(ID)")
@@ -969,6 +1001,43 @@ def _validate_particle_stage(r, stage, ndim, err, alive, removed):
     return alive, removed
 
 
+def _validate_particle_only_stage(r, stage, ndim, err) -> None:
+    """C2-EMPTY (232a §2.3): a particle stage with no FE nodes is written exactly as
+    LadrunoRecorder writes an empty stage (LadrunoRecorder.cpp, writeModel + the WP-165
+    MP-8 branch of writeModelNodes): EMPTY_PARTITION = 1, NODES/ID int32 [0 x 1],
+    NODES/COORDINATES float64 [0 x ndm], an empty MODEL/ELEMENTS, and empty
+    RESULTS/ON_NODES, ON_ELEMENTS, ON_DOMAIN, ON_REGIONS. Today's readers skip it as an
+    empty stage. A stage with nodes must not claim EMPTY_PARTITION."""
+    sg = r.f[stage]
+    nodes = r.f.get(f"{stage}/MODEL/NODES")
+    if nodes is None or "ID" not in nodes or "COORDINATES" not in nodes:
+        err(f"C2-EMPTY: {stage}: MODEL/NODES/ID and COORDINATES are required")
+        return
+    n = nodes["ID"].shape[0] if nodes["ID"].ndim else 0
+    empty = "EMPTY_PARTITION" in sg.attrs and int(_attr(sg, "EMPTY_PARTITION")) == 1
+    if n > 0:
+        if empty:
+            err(f"C2-EMPTY: {stage}: EMPTY_PARTITION = 1 on a stage with {n} nodes")
+        return
+    probs = []
+    if not empty:
+        probs.append("EMPTY_PARTITION = 1 missing")
+    if nodes["ID"].shape != (0, 1) or nodes["ID"].dtype != np.dtype("<i4"):
+        probs.append(f"NODES/ID {nodes['ID'].dtype} {nodes['ID'].shape} != int32 (0, 1)")
+    if nodes["COORDINATES"].shape != (0, ndim):
+        probs.append(f"NODES/COORDINATES {nodes['COORDINATES'].shape} != (0, {ndim})")
+    el = r.f.get(f"{stage}/MODEL/ELEMENTS")
+    if el is None or len(el):
+        probs.append("MODEL/ELEMENTS missing or not empty")
+    for g in EMPTY_RESULT_GROUPS:
+        grp = r.f.get(f"{stage}/RESULTS/{g}")
+        if grp is None or len(grp):
+            probs.append(f"RESULTS/{g} missing or not empty")
+    if probs:
+        err(f"C2-EMPTY: {stage}: particle-only stage is not the recorder's empty stage: "
+            + "; ".join(probs))
+
+
 def _validate_particle_field(item, name, fctx, ndim, S, lo, hi, err) -> None:
     if not isinstance(item, h5py.Group):
         err(f"C2-UNKNOWN: {fctx}: unexpected dataset in ON_PARTICLES")
@@ -981,10 +1050,15 @@ def _validate_particle_field(item, name, fctx, ndim, S, lo, hi, err) -> None:
         err(f"C2-ATTR: {fctx}: attributes missing {lacking}")
     if fa.get("PARTITION_REDUCTION", "NONE") != "NONE":
         err(f"C2-RED: {fctx}: PARTITION_REDUCTION must be NONE")
-    comps = [c for c in str(fa.get("COMPONENTS", "")).split(",") if c]
+    raw = str(fa.get("COMPONENTS", ""))
+    comps = raw.split(",") if raw else []
+    if not comps or "" in comps or len(set(comps)) != len(comps):
+        err(f"C2-COMP: {fctx}: COMPONENTS {raw!r} has no, an empty or a repeated label")
     if name in PARTICLE_FIELDS:
         expect = PARTICLE_FIELDS[name][ndim - 2]
-        if ",".join(comps) != expect:
+        if expect is None:
+            err(f"C2-CAT: {fctx}: {name} is a plane-strain field; in 3D it is part of STRESS")
+        elif ",".join(comps) != expect:
             err(f"C2-CAT: {fctx}: COMPONENTS {','.join(comps)!r} != {expect!r}")
     if "DATA" not in item or not isinstance(item["DATA"], h5py.Dataset):
         err(f"C2-DATA: {fctx}: DATA dataset missing")
@@ -996,8 +1070,11 @@ def _validate_particle_field(item, name, fctx, ndim, S, lo, hi, err) -> None:
             err(f"C2-DTYPE: {fctx}/DATA dtype {data.dtype}: POSITION is float64 only")
     elif not _dtype_is(data, "<f8", "<f4"):
         err(f"C2-DTYPE: {fctx}/DATA dtype {data.dtype} not float64|float32")
-    if data.ndim != 2 or data.shape != (S, len(comps)):
-        err(f"C2-DATA: {fctx}/DATA shape {data.shape} != (S={S}, nComp={len(comps)})")
+    if data.ndim != 2 or data.shape[0] != S:
+        err(f"C2-DATA: {fctx}/DATA shape {data.shape} is not [S={S}, nComp]")
+        return
+    if data.shape[1] != len(comps):
+        err(f"C2-COMP: {fctx}: {len(comps)} COMPONENTS for {data.shape[1]} DATA columns")
         return
     vals = np.asarray(data[...])
     # NaN is allowed only in STATE_* (the material does not answer the token)

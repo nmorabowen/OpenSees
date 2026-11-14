@@ -26,8 +26,10 @@ import ladruno_format as lf  # noqa: E402  (the fork's .ladruno executable spec)
 
 FORMAT = "ladruno-mpm-particles"
 FORMAT_VERSION = 1
-VOIGT = {2: "11,22,33,12", 3: "11,22,33,12,23,13"}
-NSTRESS = {2: 4, 3: 6}
+#: Voigt order of STRESS: 3D [xx, yy, zz, xy, yz, zx]; plane strain [xx, yy, xy] (232b
+#: mpm_interface.md section 1, the hypo kernel's order). In 2D sigma_33 is STRESS33.
+VOIGT = {2: "11,22,12", 3: "11,22,33,12,23,13"}
+NSTRESS = {2: 3, 3: 6}
 
 #: dataset -> (dtype, second dimension: None | "ndm" | "stress", required)
 PARTICLE_DATASETS = {
@@ -39,6 +41,7 @@ PARTICLE_DATASETS = {
     "GIMP_HALF_LENGTH": ("<f8", "ndm", True),
     "VELOCITY": ("<f8", "ndm", False),
     "STRESS": ("<f8", "stress", False),
+    "STRESS33": ("<f8", None, False),
     "BODY_ID": ("<i4", None, True),
     "MATERIAL_TAG": ("<i4", None, True),
     "FLAGS": ("<u4", None, False),
@@ -78,6 +81,9 @@ def validate_particle_set(path: str, warnings: list | None = None) -> list[str]:
         if "STRESS_SIGN" in root and root["STRESS_SIGN"] != "tension-positive":
             err(f"C1-SIGN: STRESS_SIGN {root['STRESS_SIGN']!r} != 'tension-positive'")
 
+        for k, width in (("FORMAT_VERSION", 4), ("NDM", 4), ("NUM_PARTICLES", 8)):
+            if k in root and not lf.int_attr_ok(f, k, width):
+                err(f"C1-DTYPE: root attribute {k} must be int{8 * width}")
         ndm = int(root.get("NDM", 0))
         if ndm not in (2, 3):
             err(f"C1-NDM: NDM {root.get('NDM')!r} must be 2 or 3")
@@ -89,6 +95,8 @@ def validate_particle_set(path: str, warnings: list | None = None) -> list[str]:
             err("C1-THK: PLANE_STRAIN_THICKNESS must be finite and > 0 when NDM = 2")
         if ndm == 3 and thk is not None:
             err("C1-THK: PLANE_STRAIN_THICKNESS present when NDM = 3")
+        if ndm == 3 and "PARTICLES" in f and "STRESS33" in f["PARTICLES"]:
+            err("C1-STRESS33: STRESS33 is plane-strain only; in 3D sigma_33 is in STRESS")
         if root.get("GENERATOR") == "apeGmsh":
             prov = f["PROVENANCE"] if "PROVENANCE" in f else None
             need = ("apegmsh_version", "apegmsh_commit", "session_id")
@@ -102,6 +110,8 @@ def validate_particle_set(path: str, warnings: list | None = None) -> list[str]:
             err("C1-REQ: group GRID missing")
         else:
             lo, hi = lf.check_grid(f["GRID"], ndm, "GRID", err, "C1-GRID", "C1-BASIS")
+            if "NUM_CELLS" in f["GRID"].attrs and not lf.int_attr_ok(f["GRID"], "NUM_CELLS"):
+                err("C1-GRID: GRID/NUM_CELLS must be int32")
             if lo is not None:
                 h = np.atleast_1d(np.asarray(_a(f["GRID"], "CELL_SIZE"), dtype=float))
 
@@ -160,7 +170,7 @@ def validate_particle_set(path: str, warnings: list | None = None) -> list[str]:
             if ids.size and (ids.min() < 0 or ids.max() > lf.MAX_SAFE_ID):
                 err("C1-ID: PARTICLES/ID outside [0, 2^53 - 1]")
         for name in ("POSITION", "VOLUME", "MASS", "DENSITY", "GIMP_HALF_LENGTH",
-                     "VELOCITY", "STRESS"):
+                     "VELOCITY", "STRESS", "STRESS33"):
             v = arrays.get(name)
             if v is not None and v.dtype.kind == "f" and not np.all(np.isfinite(v)):
                 err(f"C1-FINITE: PARTICLES/{name} has non-finite values")

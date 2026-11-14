@@ -52,6 +52,7 @@ def build(path: str, particles: bool = False) -> None:
         info = f.create_group("INFO")
         _s(info, "GENERATOR", "Ladruno")
         info.attrs["FORMAT_VERSION"] = 1
+        info.attrs["FORMAT_MINOR_VERSION"] = 1   # schema §2a; build(particles=True) sets 2
         _s(info, "SOLVER_NAME", "OpenSees")
         info.attrs["SOLVER_VERSION"] = np.array([3, 5, 1], dtype=np.int32)
         info.attrs["SPATIAL_DIM"] = 2
@@ -237,6 +238,8 @@ PARTICLE_FIELD_META = {
     "VELOCITY": ("Velocity", "L/t", 1),
     "ACCELERATION": ("Acceleration", "L/t^2", 1),
     "STRESS": ("Stress", "F/L^2", 2),
+    "STRESS33": ("Out-of-plane stress", "F/L^2", 0),
+    "STRAIN": ("Strain (unrotated, engineering shear)", "", 2),
     "VOLUME": ("Volume", "L^3", 0),
     "GIMP_HALF_LENGTH": ("GIMP half-length", "L", 1),
     "DEFORMATION_GRADIENT": ("Deformation gradient", "", 2),
@@ -252,9 +255,21 @@ def _ad(g, name: str, v) -> None:
 
 
 def _as(g, name: str, v: str) -> None:
-    if v:  # the C++ wrapper skips an empty string: absent == ""
+    """A fixed-length NULLTERM string of exactly len(v) bytes in a 1-element array, as
+    h5::attribute::writes does (H5Tset_size(len), H5Tset_strpad(NULLTERM)). The C++
+    wrapper skips an empty string, so absent == ""."""
+    if v:
         b = v.encode("utf-8")
-        g.attrs[name] = np.array([b], dtype=f"S{len(b)}")
+        tid = h5py.h5t.C_S1.copy()
+        tid.set_size(len(b))
+        tid.set_strpad(h5py.h5t.STR_NULLTERM)
+        if name in g.attrs:
+            del g.attrs[name]
+        aid = h5py.h5a.create(g.id, name.encode(), tid, h5py.h5s.create_simple((1,)))
+        # memory type == file type, as H5Awrite(attr, atype, ...) in C++: no conversion.
+        # (Writing through a numpy "S" memory type would convert NULLPAD -> NULLTERM and
+        # drop the last byte, because the size leaves no room for the terminator.)
+        aid.write(np.array([b], dtype=f"S{len(b)}"), mtype=tid)
 
 
 def _ext(g, name: str, data: np.ndarray, rows_per_chunk: int, compress: int = 1) -> None:
@@ -268,7 +283,7 @@ def _ext(g, name: str, data: np.ndarray, rows_per_chunk: int, compress: int = 1)
 
 def write_particle_group(stage, *, ndm: int, grid: dict, bodies: list, registry: dict,
                          outputs: list, meta: dict, field_meta: dict | None = None,
-                         compress: int = 1) -> None:
+                         compress: int = 1, epoch: int = 0) -> None:
     """Write MODEL/PARTICLES + RESULTS/ON_PARTICLES into a MODEL_STAGE group.
 
     grid:     {"ORIGIN", "CELL_SIZE", "NUM_CELLS", "BASIS"}
@@ -280,6 +295,7 @@ def write_particle_group(stage, *, ndm: int, grid: dict, bodies: list, registry:
     """
     import ladruno_format as lf
 
+    _ai(stage, "PARTICLE_EPOCH", epoch)        # incremented by `mpm reset` (232a §2.7)
     model = stage.require_group("MODEL")
     mp = model.create_group("PARTICLES")
     for k, v in meta.items():
@@ -333,7 +349,7 @@ def _add_synthetic_particles(path: str) -> None:
     """The shared-file case: three particles in the FE stage of the synthetic file
     (a quasi-static mode-A stage), two outputs, minor version 2."""
     with h5py.File(path, "r+") as f:
-        f["INFO"].attrs["FORMAT_MINOR_VERSION"] = 2
+        _ai(f["INFO"], "FORMAT_MINOR_VERSION", 2)
         stage = f["MODEL_STAGE[0]"]
         x0 = np.array([[2.25, 2.25], [2.75, 2.25], [2.25, 2.75]])
         write_particle_group(

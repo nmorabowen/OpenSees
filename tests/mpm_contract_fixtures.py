@@ -12,7 +12,8 @@
 One model seen from both sides (232a §3-§4): 2D plane strain, t = 1 m, kN_m_s; a 4 x 4 grid
 of 0.5 m cells (GIMP); body ``soil`` (8 particles, tag 2, K0 stress, rho 2.0) and body
 ``block`` (4 particles, tag 1, rho 7.85), 2 x 2 particles per cell. Contract 2: one
-transient stage, outputs at steps 0, 10, 20; particle 11 is removed after output 1.
+transient stage (LadrunoRecorder's empty stage plus the particle groups), outputs at steps
+0, 10, 20; particle 11 is removed after output 1.
 
 The builders take the model as data so ``tests/test_mpm_contracts.py`` can write each
 malformed variant from a mutated copy. Everything is deterministic (no clock, no uuid4()).
@@ -30,6 +31,8 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import mpm_contracts as mc  # noqa: E402  (puts the fork's format tools on sys.path)
 import make_synthetic  # noqa: E402
+
+lf = mc.lf
 
 DATA = HERE / "data" / "mpm"
 PARTICLE_SET = DATA / "particle_set_v1.h5"
@@ -57,9 +60,11 @@ def contract1_model() -> dict:
     x = np.vstack([soil, block])
     n = x.shape[0]
     rho = np.r_[np.full(len(soil), 2.0), np.full(len(block), 7.85)]
-    stress = np.zeros((n, 4))
+    stress = np.zeros((n, 3))                           # plane strain: [11, 22, 12]
+    stress33 = np.zeros(n)                              # sigma_33, its own dataset
     syy = -2.0 * G * (SOIL_TOP - soil[:, 1])            # tension positive: compression < 0
-    stress[: len(soil)] = np.c_[K0 * syy, syy, K0 * syy, np.zeros(len(soil))]
+    stress[: len(soil)] = np.c_[K0 * syy, syy, np.zeros(len(soil))]
+    stress33[: len(soil)] = K0 * syy                    # completes the K0 state
     return {
         "attrs": {
             "FORMAT": mc.FORMAT, "FORMAT_VERSION": np.int32(1), "GENERATOR": "apeGmsh",
@@ -82,6 +87,7 @@ def contract1_model() -> dict:
             "DENSITY": rho,
             "GIMP_HALF_LENGTH": np.full((n, 2), 0.125),
             "STRESS": stress,
+            "STRESS33": stress33,
             "BODY_ID": np.r_[np.zeros(len(soil)), np.ones(len(block))].astype("<i4"),
             "MATERIAL_TAG": np.r_[np.full(len(soil), 2), np.full(len(block), 1)].astype("<i4"),
         },
@@ -134,6 +140,7 @@ def contract2_outputs(model: dict | None = None) -> list[dict]:
         fields = {
             "POSITION": x, "VELOCITY": v, "STRESS": p["STRESS"].copy(),
             "VOLUME": p["VOLUME"].reshape(-1, 1).copy(),
+            "STRAIN": np.zeros((n, 3)),                  # eps_hat: unrotated, engineering shear
             "DEFORMATION_GRADIENT": np.tile([1.0, 0.0, 0.0, 1.0], (n, 1)),
             "STATE_eqPlasticStrain": eps,
         }
@@ -149,8 +156,11 @@ def _mass(m: dict) -> np.ndarray:
 
 
 def write_contract2(path, model: dict | None = None, outputs: list | None = None,
-                    minor: int = 2, mode: str = "explicit", compress: int = 1) -> None:
-    """A minimal .ladruno shell with the particle group, as the fork writes it."""
+                    minor: int = 2, mode: str = "explicit", compress: int = 1,
+                    epoch: int = 0, source: bool = True) -> None:
+    """A minimal .ladruno shell with the particle group, as the fork writes it: the stage
+    is LadrunoRecorder's empty stage (EMPTY_PARTITION = 1, NODES/ID int32 [0 x 1], empty
+    ELEMENTS and ON_NODES / ON_ELEMENTS / ON_DOMAIN / ON_REGIONS) plus the particle groups."""
     m = contract1_model() if model is None else model
     outs = contract2_outputs(m) if outputs is None else outputs
     a, p = m["attrs"], m["particles"]
@@ -174,18 +184,23 @@ def write_contract2(path, model: dict | None = None, outputs: list | None = None
         st = f.create_group("MODEL_STAGE[1]")
         ai(st, "STEP", 0)
         ad(st, "TIME", 0.0)
-        as_(st, "KIND", "transient")
+        as_(st, "KIND", "static" if mode == "quasi-static" else "transient")
+        ai(st, "EMPTY_PARTITION", 1)
         model = st.create_group("MODEL")
         nodes = model.create_group("NODES")
         ndm = int(a["NDM"])
-        nodes.create_dataset("ID", data=np.zeros(0, dtype="<i4"))
+        nodes.create_dataset("ID", data=np.zeros((0, 1), dtype="<i4"))
         nodes.create_dataset("COORDINATES", data=np.zeros((0, ndm), dtype="<f8"))
         model.create_group("ELEMENTS")
-        st.create_group("RESULTS")
+        res = st.create_group("RESULTS")
+        for g in lf.EMPTY_RESULT_GROUPS:
+            res.create_group(g)
 
-        meta = {"SOURCE_SET_ID": a["SET_ID"], "PATTERN_TAG": 1, "MODE": mode,
+        meta = {"PATTERN_TAG": 1, "MODE": mode,
                 "UNIT_LENGTH": a["UNIT_LENGTH"], "UNIT_FORCE": a["UNIT_FORCE"],
                 "UNIT_TIME": a["UNIT_TIME"]}
+        if source:
+            meta["SOURCE_SET_ID"] = a["SET_ID"]
         if "UNIT_SYSTEM" in a:
             meta["UNIT_SYSTEM"] = a["UNIT_SYSTEM"]
         if ndm == 2:
@@ -197,7 +212,7 @@ def write_contract2(path, model: dict | None = None, outputs: list | None = None
             outputs=outs, meta=meta,
             field_meta={"STATE_eqPlasticStrain": (
                 "Equivalent plastic strain (illustrative token)", "epsPeq", "", 0)},
-            compress=compress)
+            compress=compress, epoch=epoch)
 
 
 def deep_copy_model() -> dict:
