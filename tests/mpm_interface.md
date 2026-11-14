@@ -171,8 +171,9 @@ The numbering follows ADR §5.2. All sums run over the support nodes of each par
 
    ```
    c_p   = sqrt(M_p / ρ_p),   ρ_p = m_p / V_p
-   M_p   = the largest normal diagonal entry of the particle's COMMITTED material tangent
-           (Voigt rows xx, yy[, zz]); for isotropic elasticity M = λ + 2μ
+   M_p   = the largest normal diagonal entry of the particle's INITIAL (elastic) material
+           tangent, OpenSees getInitialTangent() (Amendment 6) (Voigt rows xx, yy[, zz]);
+           for isotropic elasticity M = λ + 2μ
    Δt_c  = h / max_p ( c_p + |v_p| )            (|·| the Euclidean norm)
    ```
    The step is refused iff `Δt > s·Δt_c`, with the safety factor `s` (default 0.5, §11).
@@ -670,6 +671,19 @@ cutoff it is 3.2e-5.
 
 **F6 — specified.**
 - A refused step names the offending particle with the lowest id (§6.1).
-- `M_p` comes from the committed tangent (§6.1).
+- `M_p` comes from the initial (elastic) tangent (§6.1; as corrected by Amendment 6).
 - The exact lattice coordinate expression (§5).
 - `t_{n+1} = t_n + Δt`, accumulated (§1).
+
+### Amendment 6 — 2026-11-13 — the critical time step uses the initial (elastic) tangent (§6.1)
+
+Source: the review of 232c's C++.
+
+- §6.1 takes `M_p` from the material's **initial (elastic) tangent**, OpenSees
+  `getInitialTangent()`, not from its current or committed tangent.
+- A plastic tangent can be far softer and then gives an **unsafe**, too-large Δt. Drucker–Prager's
+  apex uses `mCep = 1e-3·mCe`, which cuts `c_p` by 31×. The elastic bound is the conservative one.
+- F6's line in Amendment 5 ("`M_p` comes from the committed tangent") now reads "from the initial
+  (elastic) tangent".
+- **Text only.** For the oracle's hypoelastic material the initial and current tangents are both
+  `D`, so no case value changes.

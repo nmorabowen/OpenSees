@@ -14,6 +14,7 @@ that explains it; the guides point into the ledgers, they do not replace them.
 | Adding or changing an element (`SRC/element/`) | [`.claude/skills/ladruno-new-element/SKILL.md`](.claude/skills/ladruno-new-element/SKILL.md) |
 | Adding or changing a material (`SRC/material/`) | [`.claude/skills/ladruno-new-material/SKILL.md`](.claude/skills/ladruno-new-material/SKILL.md) |
 | Changing the profiler or monitor viewers (`Ladruno_tools/`) | [`.claude/skills/ladruno-viewer-tools/SKILL.md`](.claude/skills/ladruno-viewer-tools/SKILL.md) |
+| Running or implementing the MPM program (WP-232, `/ladruno-mpm <wp>`) | [`.claude/skills/ladruno-mpm/SKILL.md`](.claude/skills/ladruno-mpm/SKILL.md) |
 
 The mechanical items are enforced by `python ci/check_quirk_patterns.py` (a
 static gate in `ladruno.yml`). When a quirk names a greppable pattern, add it
@@ -145,7 +146,10 @@ The micro-PR/auto-merge era is over. The working shape:
   continuously to the WP branch — no intermediate PRs.
 - **One deliberate merge event**: flip to ready only when the warrant package
   is complete (verification manifest + mutation gate + guide for family work,
-  Zone-A green). The owner merges; agents do not.
+  Zone-A green). The owner merges; agents do not — unless the owner has delegated
+  merges for a program in its `program` issue (first case: the MPM program, #1075,
+  2026-11-13). Then that program's orchestrator merges its fork WP PRs: merge
+  commits, only on green required checks, never `--auto` or `--admin`.
 - **Merge commits for WP PRs; squash only for small fixes.** Never
   `gh pr merge --auto`.
 - Branch protection is live on `ladruno` (Zone-A + classTag/manifest checks
