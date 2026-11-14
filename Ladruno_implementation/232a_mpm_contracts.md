@@ -121,16 +121,26 @@ group or dataset anywhere in Contract 1 is C1-REQ.
 **Placement and path resolution.**
 
 - **Who writes it.** apeGmsh's deck emitter writes the file **next to the deck it emits**, as
-  `<deck stem>.particles.h5`, whenever the model declares MPM bodies. Emitting `runs/case1.tcl`
-  writes `runs/case1.particles.h5`.
-- **How the deck names it.** By its bare name: `mpm particles -file {case1.particles.h5}`.
-- **How the fork finds it.** A relative `-file` path resolves from the directory of the deck that
-  names it, not from the process's working directory. The engine resolves it once and records the
-  absolute path it opened.
+  `<deck stem>.particles.h5`, in the same call that writes the deck, whenever the model declares MPM
+  bodies. Emitting `runs/case1.tcl` writes `runs/case1.particles.h5`.
+- **How the deck names it.** Each deck emitter generates the `mpm particles -file …` line for its
+  own target. The line anchors the path to the deck's own folder:
+  - Tcl: `mpm particles -file [file join [file dirname [info script]] {case1.particles.h5}]`
+  - Python: `os.path.join(os.path.dirname(os.path.abspath(__file__)), "case1.particles.h5")`
+- **How the fork opens it.** Exactly as given. A relative path resolves from the process's working
+  directory, as for any other file argument; the deck's anchoring is what makes it work from
+  anywhere. The engine records the absolute path it opened (232c).
+- **The `-file` line is not a `command()` row.** It stays out of apeGmsh's `/opensees/commands` and
+  `model_hash`. A replay reproduces the particle content under a **new `SET_ID`**, not a
+  byte-identical file.
 - **Its stem is the deck's.** The model archive (`<stem>.h5`) need not share it; the two files pair
   through `PROVENANCE` (§1.5).
-- **Overwrites and MPI.** Overwrites follow apeGmsh's artifact policy, and under MPI only rank 0
-  writes.
+- **Overwrites.** The emitter replaces an existing `<deck stem>.particles.h5` only when that file is
+  a Contract-1 file written by an apeGmsh emit: `FORMAT = "ladruno-mpm-particles"` and
+  `GENERATOR = "apeGmsh"`. Any other file refuses the emit, and a refused set means no deck is
+  written either.
+- **Serial only.** The fork refuses `mpm` in OpenSeesSP and OpenSeesMP, so apeGmsh refuses MPM on a
+  partitioned or per-rank emit. There is one writer.
 - **No live path.** MPM is deck-only.
 
 All of this is apeGmsh ADR 0134 (draft) D1.
@@ -589,9 +599,15 @@ after loading `particle_set_v1.h5`; `tests/test_mpm_contracts.py` checks the map
   - the older-reader claim is scoped (§2.1);
   - a particle stage's `KIND` is pinned, and an absent or empty `KIND` is C2-KIND;
   - a second fixture, `particles_mixed_v1m2.ladruno`, is added;
-  - the placement is one rule: beside the emitted deck as `<deck stem>.particles.h5`, deck-only,
-    rank 0, under the artifact policy (§1);
+  - the placement is one rule: beside the emitted deck as `<deck stem>.particles.h5`, deck-only
+    (§1);
   - seeding runs in apeGmsh's emitter, from FEMData (ADR 0134 draft D2).
+- **2026-11-13, second apeGmsh review of ADR 0134 (`changes`) applied:**
+  - the particle file has an overwrite rule of its own (Contract-1 provenance), and a refused set
+    means no deck;
+  - MPM emits are serial only;
+  - the `-file` line is per deck target and not a `command()` row, so a replay gets a new `SET_ID`;
+  - both emitters anchor the path to the deck's folder, and the fork opens the path as given (§1).
 - **Gate before code.** The owner must ratify apeGmsh ADR 0134 (`232a_apegmsh_adr_draft.md`, through
   apeGmsh's T coordinator and maintainer) before 232c's particle-set reader and `.ladruno` writer,
   and before 232d, start (ADR §9, "Gate before code (232a)").
