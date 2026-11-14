@@ -1,0 +1,647 @@
+# mpm_implicit_cases.txt -- cases for mode A, implicit and quasi-static MPM (WP-232f, ADR-232 §9
+# phase 1). Format version: mpm-implicit-cases 1.
+#
+# Written by the verification worker (232f-V). Every expected number comes from a reference that
+# is not the mode-A code: a closed form, an independent numpy solve, or a fork FE run (a different
+# code path). The tolerances are the pre-registered gates of
+# .claude/skills/ladruno-mpm/references/wp-briefs.md, section "232f" -- copied, never widened.
+# The C++ worker (232f-C) reads THIS file; it never reads tests/mpm_implicit_reference.py.
+#
+# FORMAT -- that of tests/mpm_cases.txt (its header is authoritative for every key it defines:
+# ndm, basis, origin, h, cells, material ... elastic, body ... box, shift, velocity, stress, fix,
+# gravity, series, masscut, dt, steps, tol, expect, compare, note; the lattice seeding rule and the
+# node / face numbering of tests/mpm_interface.md §2, §5). Units: any consistent set, stated per
+# case. Sign: tension positive. Plane strain, thickness 1, when ndm = 2.
+#
+# Keys added or changed here:
+#   kind      run | refusal | protocol
+#             'protocol' cases state a behaviour test between two runs (retry, re-seed, restart,
+#             recorder synchrony); their inputs are another case plus the listed switches.
+#   mode      transient | quasistatic                 (mode A; required)
+#   integrator newmark <gamma> <beta>                 (transient; this file uses 0.5 0.25 only)
+#   newton    <test> <tol> <maxIter>                  suggested convergence test, OpenSees names
+#             (NormDispIncr | NormUnbalance); the driver may tighten it, never loosen it
+#   material  <tag> elastic <E> <nu> [rho]            nDMaterial ElasticIsotropic
+#   material  <tag> druckerprager <K> <G> <sigma_y> <rho_dp> <rho_bar> <Kinf> <Ko> <delta1>
+#             <delta2> <H> <theta> <massDen>          nDMaterial DruckerPrager (UW), arguments in
+#             the order of its OpenSees command
+#   series    none | linear <T_r>                     load factor lambda(t) = min(t/T_r, 1); it
+#             scales gravity AND every pforce. dt is a pseudo-time increment when quasistatic.
+#   schedule  <dt> <nSteps>                           repeatable; replaces dt/steps: the run takes
+#             nSteps steps of dt, then the next schedule line (used by the retry reference)
+#   pforce    <body> box <lo: ndm> <hi: ndm> <f: ndm> a constant external force on every particle
+#             of the body whose INITIAL centre lies in the closed box, per particle (per unit
+#             thickness in 2D), scaled by lambda(t). P2G'd as a particle external force.
+#   gridvel   <name> box <lo: ndm> <hi: ndm> v <ndm tokens: value | free> [start <t0>] [track <axis>]
+#             a prescribed-velocity grid condition (ADR §5.3: never a DisplacementControl
+#             integrator on a grid node). Its node set at step n is every grid node (real or
+#             ghost) inside the box, closed, with tolerance 1e-9 h. Before t0 the condition is
+#             absent (its nodes are free). 'track <axis>': the box's lower bound on that axis
+#             moves with the prescribed motion, lo(t_n) = lo + v_axis * max(t_n - t0, 0) evaluated
+#             at the START of step n (a rigid body pushed into the material: rows the body
+#             reaches join the set). In quasi-static mode the prescribed increment per step is
+#             v * dt. Where a gridvel and a 'fix' act on one node component, both prescribe the
+#             same value (0) or the case is malformed.
+#   particles <filename> contract1                    the case's bodies are NOT seeded by the engine:
+#             the harness seeds them by the rules here, writes them as one Contract-1 particle set
+#             (ADR §7.2; the writer pattern of tests/mpm_contract_fixtures.py write_contract1,
+#             validated by tests/mpm_contracts.py validate_particle_set) to <tmpdir>/<filename>,
+#             and loads it with 'mpm particles -file {<path>}'. The 'seed_*' expects check that the
+#             harness's seeding matches the reference's, before any step.
+#   body      <id> holeplate <a> <half_width> <n_theta> <n_r> mat <tag> rho <rho>
+#             the body-fitted O-grid seeding of the plate-with-a-hole case; the rule is stated in
+#             full in that case's comment block.
+#   status    gate | report | xfail                   gate (default): every expect is a pass/fail
+#             gate. report: computed and printed, never failed. xfail: strict expected failure.
+#             A single expect line may end in the token 'report' (that line only is report).
+#   ref       <free text>                             where the expected number comes from
+#   gap       <free text>                             the model-form gap between reference and MPM
+#
+# Observables added here (all at committed states; 'track' particles are chosen by INITIAL position):
+#   tip_disp_y <x_from>          mass-weighted mean of (y_p - Y_p) over the particles whose initial
+#                                x is >= x_from (the tip particle column), after the last step
+#   tip_disp_y_history <x_from>  the same, recorded after every committed step (with t_k)
+#   first_peak_tip_disp_y <x_from>  transient: the most negative value of the history before its
+#                                first upward turn (the first local minimum; refined by the parabola
+#                                through the minimum sample and its two neighbours)
+#   first_period_tip <x_from>    transient: time between the first and second local minima of the
+#                                history (each refined as above)
+#   cond_force <name> <comp>     sum over the gridvel node set of the GRID INTERNAL FORCE
+#                                f_int,i = sum_p V_p sigma_p . grad S_i(x_p) (OpenSees resisting-
+#                                force sign), component comp, at each committed step. In a quasi-
+#                                static step this equals the OpenSees nodal reaction plus the
+#                                external (pforce) load lumped on those nodes -- the r_corr of the
+#                                FE deck (Ladruno_files/testbed/hypo_bearing/dp_strip.py).
+#   cond_pressure_max <name> <comp> <width>  max over committed steps of -cond_force / width
+#   cond_pressure_plateau <name> <comp> <width> <t_from>  mean of -cond_force / width over the
+#                                committed steps with t >= t_from
+#   peak_sthth_over_snet <xc> <yc> <lig>  max over particles of sigma_thth,p / sigma_net, with
+#                                theta = atan2(y_p - yc, x_p - xc),
+#                                sigma_thth = sxx sin^2 + syy cos^2 - 2 sxy sin cos, and
+#                                sigma_net = cond_force(load, y) / lig (the gridvel set named
+#                                'load'; no pforce acts, so this is its reaction), after the last step
+#   seed_count / seed_volume_sum / seed_moment   the seeded set before any step: N, sum V_p, and
+#                                (sum V_p x_p, sum V_p y_p)
+#   selfweight_error, period_comx, particle_fields   as tests/mpm_interface.md §10
+#   g2p_count                    number of G2P passes the driver ran (an 'info' counter)
+#   accepted_steps               number of accepted (committed) steps
+#   relerr_ge <case> <field> <r> particle_fields of this run differ from <case>'s by at least r,
+#                                max_p |a - b| / max_p |b| over the named field (v or x)
+#   recorder_sync                every output record's positions and stresses equal the engine's
+#                                in-memory particle state of the SAME accepted step (exactly)
+#   refused                      the command or analysis is refused loudly and changes nothing
+#   compare <obs> [args] errle <case> ref <value>  |obs(this) - value| <= |obs(case) - value|
+#
+# Resolution series: '_r1', '_r2', '_r3' are coarse, medium, fine. Per the gate table the gate
+# applies at the finest (_r3); _r1 and _r2 are 'report' plus the errle relations.
+# 'TBD' marks a reference value not yet filled by 232f-V; the case inputs and tolerances are final.
+
+# ============================================================================
+# P1 row: large-deflection cantilever, quasi-static (gravity ramp)
+# ============================================================================
+# Beam L = 10 m, H = 1 m, clamped at x = 0 (grid face xmin, both components: its face and ghost
+# node layers), free elsewhere. Elastic, nu = 0 (plane strain = plane stress = beam), rho = 1000,
+# g = 10: q L^3 / (E I) = 12 rho g L^3 / (E H^2) = 2.0 with E = 6e7 (linear tip deflection
+# q L^4 / 8EI = 2.5 m; the elastica gives less). Max bending strain about 0.05 -- large rotation,
+# moderate strain. Gravity ramped over 20 quasi-static steps.
+# Particles (ppc 2 per axis): r1 640, r2 2560, r3 10240.
+case cantilever_qs_r1
+kind run
+mode quasistatic
+status report
+desc large-deflection cantilever under a gravity ramp, h = 0.25 (4 cells through the depth)
+ndm 2
+basis gimp
+origin 0.0 -4.0
+h 0.25
+cells 44 22
+material 1 elastic 6.0e7 0.0
+body 1 box 0.0 0.0 10.0 1.0 ppc 2 mat 1 rho 1000.0
+fix xmin xy
+gravity 0.0 -10.0
+series linear 1.0
+dt 0.05
+steps 20
+newton NormDispIncr 1e-10 30
+ref TBD
+gap TBD
+expect tip_disp_y 9.875 eq TBD tol 0 0.05
+end
+
+case cantilever_qs_r2
+kind run
+mode quasistatic
+status report
+desc as cantilever_qs_r1, h = 0.125 (8 cells through the depth)
+ndm 2
+basis gimp
+origin 0.0 -4.0
+h 0.125
+cells 88 44
+material 1 elastic 6.0e7 0.0
+body 1 box 0.0 0.0 10.0 1.0 ppc 2 mat 1 rho 1000.0
+fix xmin xy
+gravity 0.0 -10.0
+series linear 1.0
+dt 0.05
+steps 20
+newton NormDispIncr 1e-10 30
+ref TBD
+expect tip_disp_y 9.9375 eq TBD tol 0 0.05
+compare tip_disp_y 9.9375 errle cantilever_qs_r1 ref TBD
+end
+
+case cantilever_qs_r3
+kind run
+mode quasistatic
+desc as cantilever_qs_r1, h = 0.0625 (16 cells through the depth): THE GATE
+ndm 2
+basis gimp
+origin 0.0 -4.0
+h 0.0625
+cells 176 88
+material 1 elastic 6.0e7 0.0
+body 1 box 0.0 0.0 10.0 1.0 ppc 2 mat 1 rho 1000.0
+fix xmin xy
+gravity 0.0 -10.0
+series linear 1.0
+dt 0.05
+steps 20
+newton NormDispIncr 1e-10 30
+ref TBD
+expect tip_disp_y 9.96875 eq TBD tol 0 0.05
+compare tip_disp_y 9.96875 errle cantilever_qs_r2 ref TBD
+end
+
+# ============================================================================
+# P1 row: large-deflection cantilever, transient (Newmark average acceleration)
+# ============================================================================
+# The same beam with E = 1.2e8 (q L^3 / EI = 1.0), gravity applied suddenly at t = 0 (series
+# none), from rest, no damping. Linear first period 2 pi / (1.8751^2 sqrt(EI / (rho H L^4)))
+# = 1.787 s; 4 s covers two minima. Particles: r1 640, r2 2560, r3 10240.
+case cantilever_dyn_r1
+kind run
+mode transient
+status report
+desc cantilever under suddenly applied gravity, Newmark average acceleration, h = 0.25
+ndm 2
+basis gimp
+origin 0.0 -4.0
+h 0.25
+cells 44 22
+material 1 elastic 1.2e8 0.0
+body 1 box 0.0 0.0 10.0 1.0 ppc 2 mat 1 rho 1000.0
+fix xmin xy
+gravity 0.0 -10.0
+series none
+integrator newmark 0.5 0.25
+dt 0.01
+steps 400
+newton NormDispIncr 1e-10 30
+ref TBD
+expect first_peak_tip_disp_y 9.875 eq TBD tol 0 0.05
+expect first_period_tip 9.875 eq TBD tol 0 0.05
+end
+
+case cantilever_dyn_r2
+kind run
+mode transient
+status report
+desc as cantilever_dyn_r1, h = 0.125
+ndm 2
+basis gimp
+origin 0.0 -4.0
+h 0.125
+cells 88 44
+material 1 elastic 1.2e8 0.0
+body 1 box 0.0 0.0 10.0 1.0 ppc 2 mat 1 rho 1000.0
+fix xmin xy
+gravity 0.0 -10.0
+series none
+integrator newmark 0.5 0.25
+dt 0.01
+steps 400
+newton NormDispIncr 1e-10 30
+ref TBD
+expect first_peak_tip_disp_y 9.9375 eq TBD tol 0 0.05
+expect first_period_tip 9.9375 eq TBD tol 0 0.05
+end
+
+case cantilever_dyn_r3
+kind run
+mode transient
+desc as cantilever_dyn_r1, h = 0.0625: THE GATE
+ndm 2
+basis gimp
+origin 0.0 -4.0
+h 0.0625
+cells 176 88
+material 1 elastic 1.2e8 0.0
+body 1 box 0.0 0.0 10.0 1.0 ppc 2 mat 1 rho 1000.0
+fix xmin xy
+gravity 0.0 -10.0
+series none
+integrator newmark 0.5 0.25
+dt 0.01
+steps 400
+newton NormDispIncr 1e-10 30
+ref TBD
+expect first_peak_tip_disp_y 9.96875 eq TBD tol 0 0.05
+expect first_period_tip 9.96875 eq TBD tol 0 0.05
+end
+
+# ============================================================================
+# P1 row: non-associated mild-cone footing (Prandtl-Reissner), plane strain
+# ============================================================================
+# The ADR-79 control (Ladruno_implementation/79_ladruno_geom_hypo_adr.md, "Validation, and two
+# things it exposed"; deck Ladruno_files/testbed/hypo_bearing/dp_strip.py, leg nq20_nonassoc):
+# weightless soil, surcharge q0 = 10 kPa, rigid strip footing B = 2 m, DruckerPrager (UW, built
+# after 31322a47a) on the phi_txc = 20 deg cone, alpha = 2 sin20 / (sqrt3 (3 - sin20)) = 0.148583,
+# rho_dp = sqrt2 alpha = 0.210128, NON-associated (rho_bar = 0), sigma_y = 0.2 kPa (the deck's
+# apex regularizer), K = 1.5e5 kPa, nu = 0.45 (G = 3K(1-2nu)/(2(1+nu)) = 15517.24 kPa).
+# Chen-Han plane-strain match: tan phi_ps = 3 alpha / sqrt(1 - 12 alpha^2) -> phi_ps = 27.47 deg,
+# N_q = exp(pi tan phi) tan^2(45 + phi/2) = 13.89, q_u = q0 N_q = 138.9 kPa EXACT (Prandtl-
+# Reissner; the bounds coincide; independent of footing roughness for weightless soil).
+# Units kN, m, s (kPa). Half model (symmetry at x = 0): soil x in [0, 12], y in [-6, 0]; two empty
+# cell rows above the surface for heave. Sides x = 0 and x = 12: rollers (fix x); base: fix xy.
+# Stage 1, t in [0, 10]: the surcharge ramps on the top particle row (lambda = t/10), footing free.
+#   Each top-row particle carries q0 * (h/2) downward (ppc 2: one particle per h/2 of surface).
+# Stage 2, t > 10: the rough rigid footing = a gridvel on the nodes with x in [-h, B/2], both
+#   components, v = (0, -0.002) m per unit pseudo-time, dt = 1: 2 mm per step, 100 steps to
+#   s = 0.2 m (s/B = 0.10; the FE control plateaus from s/B ~ 0.05). 'track y' lowers the set's
+#   bottom with the footing, so rows the footing reaches join it.
+# Footing pressure q = -cond_force(footing, y) / (B/2), B/2 = 1 m per unit thickness.
+# Gate (pre-registered): q_max at the finest within [0.90, 1.10] x 138.907 kPa = [125.02, 152.80].
+# Particles (ppc 2): r1 (4 cells across B) 1152, r2 (8) 4608, r3 (16) 18432.
+case footing_mildcone_r1
+kind run
+mode quasistatic
+status report
+desc non-associated mild-cone strip footing, h = 0.5 (4 cells across B)
+ndm 2
+basis gimp
+origin 0.0 -6.0
+h 0.5
+cells 24 14
+material 1 druckerprager 1.5e5 15517.241379310342 0.2 0.21012821217029673 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0
+body 1 box 0.0 -6.0 12.0 0.0 ppc 2 mat 1 rho 2.0
+pforce 1 box 0.0 -0.25 12.0 0.0 0.0 -2.5
+fix xmin x
+fix xmax x
+fix ymin xy
+gridvel footing box -0.5 0.0 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
+series linear 10.0
+dt 1.0
+steps 110
+newton NormUnbalance 1e-6 40
+ref TBD
+expect cond_pressure_max footing y 1.0 eq 138.907 tol 0 0.10
+expect cond_pressure_plateau footing y 1.0 95.0 eq 138.907 tol 0 0.10 report
+end
+
+case footing_mildcone_r2
+kind run
+mode quasistatic
+status report
+desc as footing_mildcone_r1, h = 0.25 (8 cells across B)
+ndm 2
+basis gimp
+origin 0.0 -6.0
+h 0.25
+cells 48 28
+material 1 druckerprager 1.5e5 15517.241379310342 0.2 0.21012821217029673 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0
+body 1 box 0.0 -6.0 12.0 0.0 ppc 2 mat 1 rho 2.0
+pforce 1 box 0.0 -0.125 12.0 0.0 0.0 -1.25
+fix xmin x
+fix xmax x
+fix ymin xy
+gridvel footing box -0.25 0.0 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
+series linear 10.0
+dt 1.0
+steps 110
+newton NormUnbalance 1e-6 40
+ref TBD
+expect cond_pressure_max footing y 1.0 eq 138.907 tol 0 0.10
+expect cond_pressure_plateau footing y 1.0 95.0 eq 138.907 tol 0 0.10 report
+end
+
+case footing_mildcone_r3
+kind run
+mode quasistatic
+desc as footing_mildcone_r1, h = 0.125 (16 cells across B): THE GATE
+ndm 2
+basis gimp
+origin 0.0 -6.0
+h 0.125
+cells 96 56
+material 1 druckerprager 1.5e5 15517.241379310342 0.2 0.21012821217029673 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0
+body 1 box 0.0 -6.0 12.0 0.0 ppc 2 mat 1 rho 2.0
+pforce 1 box 0.0 -0.0625 12.0 0.0 0.0 -0.625
+fix xmin x
+fix xmax x
+fix ymin xy
+gridvel footing box -0.125 0.0 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
+series linear 10.0
+dt 1.0
+steps 110
+newton NormUnbalance 1e-6 40
+ref TBD
+expect cond_pressure_max footing y 1.0 eq 138.907 tol 0 0.10
+expect cond_pressure_plateau footing y 1.0 95.0 eq 138.907 tol 0 0.10 report
+end
+
+# ============================================================================
+# P1 row: elastic column under self-weight, implicit quasi-static
+# ============================================================================
+# The implicit QS leg of column_selfweight_small_2d_gimp (tests/mpm_cases.txt, Amendment 4):
+# same geometry, material, grid and seeding; gravity ramped over 10 quasi-static steps, no
+# damping. Closed form sigma_yy = -rho0 g (l0 - Y) (Charlton, Coombs & Augarde 2017), exact by
+# equilibrium for the laterally confined column. Frozen tolerance 0.03 (floor h/(4 l0) = 0.0125).
+# Particles: 80.
+case column_selfweight_small_qs
+kind run
+mode quasistatic
+desc implicit QS leg of the slice-1 small-compression self-weight column (rho0 g l0 / E = 0.002)
+ndm 2
+basis gimp
+origin 0.0 0.0
+h 0.5
+cells 1 22
+material 1 elastic 5.0e7 0.0
+body 1 box 0.0 0.0 0.5 10.0 ppc 2 mat 1 rho 1000.0
+fix xmin x
+fix xmax x
+fix ymin y
+gravity 0.0 -10.0
+series linear 1.0
+dt 0.1
+steps 10
+newton NormDispIncr 1e-12 30
+ref closed form sigma_yy = -rho0 g (l0 - Y); Charlton, Coombs & Augarde (2017)
+gap particle stresses sit O(lp) off the exact line: floor h/(4 l0) = 0.0125
+expect selfweight_error 1000.0 10.0 10.0 0.0 le 0.03
+end
+
+# Amendment 4's 20 % compression column stays a strict xfail in the implicit QS leg too
+# (quirk WP-232b-ugimp-fixed-domains-do-not-converge-under-large-compression).
+case column_selfweight_qs
+kind run
+mode quasistatic
+status xfail
+desc implicit QS leg of the 20 % compression column: STRICT XFAIL at the frozen 0.03
+ndm 2
+basis gimp
+origin 0.0 0.0
+h 0.5
+cells 1 22
+material 1 elastic 5.0e5 0.0
+body 1 box 0.0 0.0 0.5 10.0 ppc 2 mat 1 rho 1000.0
+fix xmin x
+fix xmax x
+fix ymin y
+gravity 0.0 -10.0
+series linear 1.0
+dt 0.05
+steps 20
+newton NormDispIncr 1e-12 30
+ref closed form, as column_selfweight_small_qs
+expect selfweight_error 1000.0 10.0 10.0 0.0 le 0.03
+end
+
+# ============================================================================
+# P1 row: plate with a hole, d/W = 0.5
+# ============================================================================
+# Strip of width W = 4 m with a central circular hole of diameter d = 2 m (a = 1 m): d/W = 0.5.
+# Howland's factor (Howland 1930, Phil. Trans. R. Soc. A 229:49-86, as tabulated in Pilkey &
+# Pilkey, Peterson's Stress Concentration Factors, 3rd ed. 2008, Chart 4.1): K_tg = 4.32 at
+# d/W = 0.5, so K_tn = sigma_max / sigma_net = K_tg (1 - d/W) = 2.16. Plane strain is the same
+# stress field (traction-free hole, zero resultant on it: Michell). Quarter model (symmetry
+# x = 0 and y = 0), x in [0, 2], y in [0, 4] (plate length 2W). The top edge y = 4 is pulled by a
+# gridvel 'load' (v_y prescribed, v_x free): uniform end displacement, 1e-4 strain in one step.
+# sigma_net = reaction(load, y) / (W/2 - a), ligament 1 m per unit thickness.
+# Grid h = a/32 = 0.03125 (64 x 128 cells + 1 row above).
+# SEEDING (both bodies written as ONE Contract-1 file, then read with 'mpm particles -file'):
+#   O-grid region [0, 2]^2 minus r < a: n_theta = 256 cells in theta over [0, pi/2],
+#   theta_i = (i + 1/2) (pi/2) / n_theta; n_r = 120 cells in s over [0, 1], s_j = (j + 1/2)/n_r;
+#   rho_o(theta) = (W/2) / max(cos theta, sin theta) (the ray to the square's edge);
+#   r(theta, s) = a + s (rho_o(theta) - a); particle i + n_theta j at r(theta_i, s_j) (cos, sin).
+#   Volume = the exact area of the cell [theta_i +- dtheta/2] x [s_j +- ds/2], i.e.
+#   integral over theta of (r(theta, s+)^2 - r(theta, s-)^2)/2, by 8-point Gauss-Legendre in theta
+#   per cell (rho_o is smooth inside each cell: n_theta is even, no cell straddles pi/4).
+#   GIMP half-lengths lp = sqrt(V)/2 on both axes. Ids 0 .. n_theta n_r - 1 in that order.
+#   Upper block (body 2): the lattice rule of tests/mpm_interface.md §5 over x in [0, 2],
+#   y in [2, 4], ppc 2 (128 x 128 = 16384 particles), ids after the O-grid.
+#   Total 30720 + 16384 = 47104 particles; sum of volumes = 8 - pi/4 (exact to 1e-12).
+case plate_hole_dw050
+kind run
+mode quasistatic
+desc quarter plate with a hole, d/W = 0.5, uniform end displacement, one linear step
+ndm 2
+basis gimp
+origin 0.0 0.0
+h 0.03125
+cells 64 129
+material 1 elastic 2.0e5 0.25
+body 1 holeplate 1.0 2.0 256 120 mat 1 rho 1.0
+body 2 box 0.0 2.0 2.0 4.0 ppc 2 mat 1 rho 1.0
+particles plate_hole_dw050_h32.h5 contract1
+fix xmin x
+fix ymin y
+gridvel load box -1.0 4.0 3.0 4.1 v free 4.0e-4 start 0.0
+dt 1.0
+steps 1
+newton NormDispIncr 1e-12 30
+ref Howland (1930) K_tn = 2.16 at d/W = 0.5 (Peterson Chart 4.1); fork FE TBD
+gap TBD
+expect seed_count eq TBD tol 0 0
+expect seed_volume_sum eq TBD tol 1e-12 0
+expect seed_moment eq TBD TBD tol 1e-11 0
+expect peak_sthth_over_snet 0.0 0.0 1.0 eq 2.16 tol 0 0.05
+end
+
+# ============================================================================
+# P1 row: 1D vibrating bar, implicit (Newmark average acceleration, small dt)
+# ============================================================================
+# bar_flip_2d of tests/mpm_cases.txt run in mode A: L = 25, c = sqrt(E/rho) = 10, fixed at x = 0,
+# first mode v = v0 sin(pi x / 2L), period 4L/c = 10. Displacement amplitude v0/omega = 0.16 h:
+# NO particle changes cell, so every step is the W1 re-seed leg (the unconditional
+# domainChange()). Particles: 100.
+case bar_implicit_2d
+kind run
+mode transient
+desc 1D vibrating bar (plane-strain strip, nu = 0, rollers top and bottom), Newmark average accel.
+ndm 2
+basis gimp
+origin 0.0 0.0
+h 1.0
+cells 30 1
+material 1 elastic 100.0 0.0
+body 1 box 0.0 0.0 25.0 1.0 ppc 2 mat 1 rho 1.0
+velocity 1 sine x x 0.1 0.06283185307179587 0.0
+fix xmin x
+fix ymin y
+fix ymax y
+integrator newmark 0.5 0.25
+dt 0.01
+steps 3000
+newton NormDispIncr 1e-12 30
+ref closed form T = 4L/c = 10 (fixed-free bar, first mode)
+gap TBD
+expect period_comx eq 10.0 tol 0 0.01
+end
+
+# ============================================================================
+# P1 rows checked between two runs (protocols). Inputs: the named base case plus switches whose
+# command names 232f-C fixes in tests/mpm_implicit_interface.md.
+# ============================================================================
+
+# Failed-step retry: a step that fails before commit is cut and retried; G2P runs once per
+# accepted step; the final kinematics equal a run that used the accepted dt sequence from the
+# start. Switch: fail the first Newton attempt of step 5 (a debug hook); cut factor 1/2.
+case retry_bar
+kind protocol
+mode transient
+desc bar_implicit_2d with dt 0.02 for 200 steps; step 5's first attempt is forced to fail
+base bar_implicit_2d
+schedule 0.02 200
+inject fail_attempt step 5 attempts 1
+ref two-leg: retry_bar_reference
+expect g2p_count eq accepted_steps
+compare particle_fields eq retry_bar_reference tol 0 1e-12
+end
+
+case retry_bar_reference
+kind protocol
+mode transient
+desc the accepted dt sequence of retry_bar from the start: 4 steps of 0.02, then the cut 0.01 to
+desc the same end time 4.0 (if the driver regrows dt, this reference is the logged sequence)
+base bar_implicit_2d
+schedule 0.02 4
+schedule 0.01 392
+end
+
+# No-cell-crossing re-seed: bar_implicit_2d has no cell crossing, so every step is a step in which
+# no particle changes cell. The shipped run equals a run that forces the re-seed every step
+# (rel 1e-12); a debug switch that SKIPS the unconditional domainChange() on such a step must give
+# a measurably different (wrong) answer. bar_implicit_2d's period gate is the physical check.
+case reseed_bar_normal
+kind protocol
+mode transient
+desc bar_implicit_2d truncated to 300 steps, the shipped behaviour (the reference of the protocols)
+base bar_implicit_2d
+steps 300
+end
+
+case reseed_bar_forced
+kind protocol
+mode transient
+desc reseed_bar_normal with the debug switch force_domainchange_every_step ON
+base bar_implicit_2d
+steps 300
+inject force_domainchange_every_step
+compare particle_fields eq reseed_bar_normal tol 0 1e-12
+end
+
+case reseed_bar_skip
+kind protocol
+mode transient
+desc reseed_bar_normal with the debug switch skip_domainchange_without_crossing ON: must differ
+base bar_implicit_2d
+steps 300
+inject skip_domainchange_without_crossing
+expect relerr_ge reseed_bar_normal v 1e-6
+end
+
+# Recorder synchrony: positions and stresses of every output come from the same accepted step.
+case recorder_sync_cantilever
+kind protocol
+mode transient
+desc cantilever_dyn_r1, 60 steps, particle output every 7 steps (cell crossings occur)
+base cantilever_dyn_r1
+steps 60
+output every 7 fields position stress
+expect recorder_sync
+end
+
+# Restart (database): save at step n, restore, continue to N; equal to the uninterrupted run
+# (rel 1e-10), in both shipped engines (classic Tcl and Python).
+case restart_bar
+kind protocol
+mode transient
+desc bar_implicit_2d: save at step 150, restore into a fresh model, continue to 300
+base bar_implicit_2d
+steps 300
+restart save 150
+engines tcl python
+compare particle_fields eq reseed_bar_normal tol 0 1e-10
+end
+
+case restart_footing_reference
+kind protocol
+mode quasistatic
+desc footing_mildcone_r1 truncated to 40 steps (the footing is pushed from step 11)
+base footing_mildcone_r1
+steps 40
+end
+
+case restart_footing
+kind protocol
+mode quasistatic
+desc footing_mildcone_r1 (plastic history in DruckerPrager): save at step 20, restore, continue to 40
+base footing_mildcone_r1
+steps 40
+restart save 20
+engines tcl python
+compare particle_fields eq restart_footing_reference tol 0 1e-10
+end
+
+# ============================================================================
+# P1 row: refusals -- each loud, none a wrong answer (expect refused)
+# ============================================================================
+case refuse_integrator_centraldifference
+kind refusal
+desc a non-whitelisted transient integrator (CentralDifference) in mode A
+base bar_implicit_2d
+integrator_command CentralDifference
+expect refused
+end
+
+case refuse_ladrunohht
+kind refusal
+desc LadrunoHHT (classTag 33013) stays refused until a test admits it
+base bar_implicit_2d
+integrator_command LadrunoHHT 0.9
+expect refused
+end
+
+case refuse_ladrunogeneralizedalpha
+kind refusal
+desc LadrunoGeneralizedAlpha (classTag 33014) stays refused
+base bar_implicit_2d
+integrator_command LadrunoGeneralizedAlpha 0.9 0.8
+expect refused
+end
+
+case refuse_variabletransient
+kind refusal
+desc VariableTransient analysis (detected by dynamic_cast) is refused
+base bar_implicit_2d
+analysis_command VariableTransient
+expect refused
+end
+
+case refuse_arclength
+kind refusal
+desc arc-length in quasi-static mode A (out of scope, ADR §5.3)
+base column_selfweight_small_qs
+integrator_command ArcLength 0.1 1.0
+expect refused
+end
+
+case refuse_dispcontrol_gridnode
+kind refusal
+desc DisplacementControl on a grid node (ADR §5.3); the footing uses a gridvel instead
+base column_selfweight_small_qs
+integrator_command DisplacementControl <grid node> 2 -0.001
+expect refused
+end
