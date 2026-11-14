@@ -67,9 +67,9 @@ def _data(f, name="DISPLACEMENT"):
 
 
 @pytest.mark.parametrize("n,compress,deflated", [
-    (200, 1, True),     # 201 nodes x 3 x 8 B = 4.8 KiB: one deflated step per chunk
-    (20, 1, False),     # 21 nodes: 504 B, under 4 KiB: unfiltered ~64 KiB chunks
-    (200, 0, False),    # -compress 0: unfiltered
+    (300, 1, True),     # 301 nodes x 2 (2-D displacement) x 8 B = 4.8 KiB: one deflated step per chunk
+    (20, 1, False),     # 21 nodes: 336 B, under 4 KiB: unfiltered ~64 KiB chunks
+    (300, 0, False),    # -compress 0: unfiltered
 ])
 def test_streaming_layout(tmp_path, n, compress, deflated):
     path = str(tmp_path / f"lay{n}_{compress}.ladruno")
@@ -78,7 +78,7 @@ def test_streaming_layout(tmp_path, n, compress, deflated):
     _transient(n, 30)
     with h5py.File(path, "r") as f:
         d = _data(f)
-        assert d.shape == (30, n + 1, 3)
+        assert d.shape == (30, n + 1, 2)
         if deflated:
             assert d.compression == "gzip" and d.chunks[0] == 1, (d.compression, d.chunks)
         else:
@@ -104,11 +104,11 @@ def test_flush_every_step_does_not_bloat(tmp_path, compress):
     """The WP-164 layout under SWMR leaked the space of every recompressed partial chunk
     (a 300-step run at -flush 0: 2.6 -> 206 MB). Chunks that never move do not leak."""
     path = str(tmp_path / f"bloat{compress}.ladruno")
-    n, steps = 200, 300
+    n, steps = 300, 300
     _chain(n)
     ops.recorder("ladruno", path, "-N", "displacement", "-flush", 0, "-compress", compress)
     _transient(n, steps)
-    payload = steps * (n + 1) * 3 * 8
+    payload = steps * (n + 1) * 2 * 8
     assert os.path.getsize(path) < 2.0 * payload + (1 << 20), (os.path.getsize(path), payload)
 
 
@@ -117,7 +117,7 @@ import os, sys
 sys.path.insert(0, os.environ["LADRUNO_TESTS"])
 from _testbed import ops
 import test_ladruno_recorder_swmr as t
-out, every = sys.argv[1], int(sys.argv[2])
+out, every, limit = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
 t._chain(60)
 ops.recorder("ladruno", out, "-N", "displacement", "velocity", "-E", "force", "-flush", 0)
 ops.timeSeries("Sine", 1, 0.0, 1.0e9, 0.37); ops.pattern("Plain", 1, 1); ops.load(61, 10.0, 0.0, 0.0)
@@ -125,31 +125,32 @@ ops.constraints("Plain"); ops.numberer("RCM"); ops.system("BandGen")
 ops.test("NormDispIncr", 1.0e-12, 10); ops.algorithm("Linear")
 ops.integrator("Newmark", 0.5, 0.25); ops.analysis("Transient")
 k = 0
-while True:
+while not limit or k < limit:
     assert ops.analyze(1, 0.001) == 0
     k += 1
     if k == 50:
         print("STEP 50", flush=True)
     if every and k % every == 0:
         ops.domainChange()
+ops.wipe()
+print("DONE", flush=True)
 """
 
 
+def _child(out, every, limit):
+    env = dict(os.environ, LADRUNO_TESTS=str(ROOT / "tests"), LADRUNO_OPENSEES_QUIET="1")
+    env.pop("HDF5_USE_FILE_LOCKING", None)
+    return subprocess.Popen([sys.executable, "-c", _KILL_CHILD, out, str(every), str(limit)],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            stdin=subprocess.DEVNULL, text=True, env=env)
+
+
 def _reference(path, steps, every):
-    """The same deck run to completion (deterministic: a killed run is its prefix)."""
-    _chain(60)
-    ops.recorder("ladruno", path, "-N", "displacement", "velocity", "-E", "force", "-flush", 0)
-    ops.timeSeries("Sine", 1, 0.0, 1.0e9, 0.37)
-    ops.pattern("Plain", 1, 1)
-    ops.load(61, 10.0, 0.0, 0.0)
-    ops.constraints("Plain"); ops.numberer("RCM"); ops.system("BandGen")
-    ops.test("NormDispIncr", 1.0e-12, 10); ops.algorithm("Linear")
-    ops.integrator("Newmark", 0.5, 0.25); ops.analysis("Transient")
-    for k in range(1, steps + 1):
-        assert ops.analyze(1, 0.001) == 0
-        if every and k % every == 0:
-            ops.domainChange()
-    ops.wipe()
+    """The same deck run to completion in a FRESH process (commit tags and time start
+    where the killed child's did; the analysis is deterministic: a killed run is its
+    prefix)."""
+    o, e = _child(path, every, steps).communicate()
+    assert "DONE" in o, e[-2000:]
 
 
 @pytest.mark.parametrize("every", [0, 25])
@@ -157,13 +158,7 @@ def test_a_killed_run_reads_by_the_rule(tmp_path, every):
     """TerminateProcess mid-run (in one stage, or with a new stage every 25 steps): the
     file reads by schema §7b.2 and every committed row equals a completed run's."""
     out = str(tmp_path / "killed.ladruno")
-    env = dict(os.environ, LADRUNO_TESTS=str(ROOT / "tests"), LADRUNO_OPENSEES_QUIET="1",
-               PYTHONPATH=os.pathsep.join(p for p in (os.environ.get("PYTHONPATH", ""),
-                                                      str(ROOT / "tests")) if p))
-    env.pop("HDF5_USE_FILE_LOCKING", None)
-    p = subprocess.Popen([sys.executable, "-c", _KILL_CHILD, out, str(every)],
-                         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                         stdin=subprocess.DEVNULL, text=True, env=env)
+    p = _child(out, every, 0)
     try:
         line = p.stdout.readline()
         assert "STEP 50" in line, line + p.stderr.read()[-2000:]
