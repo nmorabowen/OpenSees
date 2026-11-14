@@ -207,7 +207,8 @@ ref fork FE: LadrunoBrick -geom hypo (std) slab, consistent mass, Newmark 0.5/0.
 ref Richardson (p = 2) of ny 16/32 at this case's tip points (ny 4/8/16/32: peak r3 -2.4121,
 ref -2.4659, -2.4798, -2.4833; period 1.7586, 1.7807, 1.7864, 1.7877 s). Build f37e2ff19,
 ref 2026-11-14; record tests/data/mpm/implicit/fe_cantilever_dyn.json.
-gap lumped mass (ny 16) moves peak / period by -0.0005 % / +0.002 %; linear first period 1.7870 s.
+gap lumped mass (ny 16) moves peak / period by -0.0005 % / +0.002 %; dt/2 by +0.04 % / -0.04 %.
+gap Linear first period 1.7870 s; the MPM-vs-FE gap is the clamp (grid face) and the basis.
 expect first_peak_tip_disp_y 9.875 eq -2.468550 tol 0 0.05
 expect first_period_tip 9.875 eq 1.788042 tol 0 0.05
 end
