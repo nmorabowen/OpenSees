@@ -32,11 +32,14 @@ pytestmark = pytest.mark.zone_a
 CASES = M.parse_cases()
 HYPO = H.parse_cases()
 
-# The frozen tolerance this oracle cannot meet; kept frozen and reported (interface,
-# "Phase-2 measurements"). strict=True: if it starts passing, the xfail must be removed.
+# The frozen tolerance uGIMP cannot meet (interface Amendment 4; ledger quirk
+# WP-232b-ugimp-fixed-domains-do-not-converge-under-large-compression). strict=True: when phase 3's
+# domain-tracking basis makes it pass, the xfail must be removed. The closed-form gate for slice 1
+# is column_selfweight_small_2d_gimp.
 KNOWN_SHORTFALLS = {
     ("column_selfweight_2d_gimp", "selfweight_error"):
-        "explicit GIMP at 20% compression gives 0.072 > 0.03; awaiting the orchestrator's ruling",
+        "uGIMP with fixed domains does not converge at 20% compression (0.072 at h=0.5, "
+        "0.067 at 0.25, 0.106 at 0.125 > 0.03); acceptance test for the phase-3 basis",
 }
 
 

@@ -522,6 +522,12 @@ expect energy_ratio_end le 1.05
 expect energy_ratio_end eq 1.02420894051711975e+00 tol 0 1e-6
 end
 
+# Amendment 4 (2026-11-13): the closed-form gate for slice 1 is column_selfweight_small_2d_gimp.
+# column_selfweight_2d_gimp (20% compression) is a STRICT XFAIL at the frozen 0.03: uGIMP with
+# fixed domains does not converge under large compression. Measured by the oracle:
+# selfweight_error 0.072 (h = 0.5), 0.067 (h = 0.25), 0.106 (h = 0.125, same duration);
+# RMS cell_crossing_meter 0.021 (an observable, not a gate). It is the acceptance test for
+# phase 3's domain-tracking GIMP or B-spline basis.
 case column_selfweight_2d_gimp
 kind run
 desc laterally confined elastic column under self-weight, gravity ramped over 2 s, local damping 0.8.
@@ -544,6 +550,31 @@ dt 0.005
 steps 1200
 expect selfweight_error 1000.0 10.0 10.0 0.0 le 0.03
 expect cell_crossing_meter 1000.0 10.0 10.0 0.0 eq 2.06748242003658329e-02 tol 0 1e-6
+end
+
+case column_selfweight_small_2d_gimp
+kind run
+desc the self-weight column at small deformation, rho0 g l0 / E = 0.002 (Amendment 4): the slice-1
+desc gate for the closed form sig_yy = -rho0 g (l0 - Y) (Charlton et al. 2017)
+ndm 2
+basis gimp
+origin 0.0 0.0
+h 0.5
+cells 1 22
+material 1 elastic 5.0e7 0.0
+body 1 box 0.0 0.0 0.5 10.0 ppc 2 mat 1 rho 1000.0
+fix xmin x
+fix xmax x
+fix ymin y
+gravity 0.0 -10.0
+series linear 2.0
+damping 0.8
+flip 1.0
+dt 0.001
+steps 6000
+expect selfweight_error 1000.0 10.0 10.0 0.0 le 0.03
+expect selfweight_error 1000.0 10.0 10.0 0.0 eq 1.28361484266622580e-02 tol 0 1e-6
+expect cell_crossing_meter 1000.0 10.0 10.0 0.0 eq 1.21875907012081123e-02 tol 0 1e-6
 end
 
 case column_selfweight_2d_linear

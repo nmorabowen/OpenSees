@@ -115,6 +115,12 @@ inside the grid (`x0_d ≤ x_p − lp_d` and `x_p + lp_d ≤ x0_d + n_d·h`), `�
 `Σ_i ∇S_ip = 0` exactly (partition of unity). A domain that overhangs a face by `δ < lp` loses the
 weight `δ²/(4·h·lp)` of the missing node.
 
+**Limitation.** Dropping the support nodes outside the grid is exact only where those nodes would
+be constrained anyway: faces with a fixed normal velocity. A particle within `lp` of an
+**unconstrained** grid face loses partition of unity, and mass and momentum go to the dropped
+nodes. The C++ engine therefore **warns** about such particles, and a grid must extend at least
+one cell plus `lp` beyond every free surface.
+
 ### 4.2 Linear hat, 1D factor
 
 With `c` the particle's cell (clamped, §2) and `ξ = (x_p − (x0 + c·h))/h ∈ [0, 1]`: node `c` gets
@@ -506,6 +512,10 @@ case, not an edge case.
 - Partition of unity still holds exactly for any particle whose whole domain is inside.
 - The linear basis was already centre-based; unchanged.
 - No case's frozen value changes. The basis cases keep their domains inside the grid.
+- Accepted by the orchestrator (2026-11-13), with the limitation now stated in §4.1: dropping is
+  exact only at faces with a fixed normal velocity. Near an unconstrained face it loses partition
+  of unity, so the C++ engine warns, and grids extend one cell plus `lp` beyond every free
+  surface.
 
 ### Amendment 3 — 2026-11-13 — case corrections (`tests/mpm_cases.txt`)
 
@@ -544,4 +554,21 @@ Found by the phase-2 oracle. Each is a fault in the case, not in the interface.
   - The linear basis gives 0.47.
   - The small-deformation column (`ρ0·g·l0/E` = 0.002) gives 0.013, which is O(lp/l0).
   - The tolerance stays frozen at 0.03. The pytest marks this check as a strict xfail until the
-    orchestrator rules: change the gate, or the case.
+    orchestrator rules: change the gate, or the case. (Ruled: Amendment 4.)
+
+### Amendment 4 — 2026-11-13 — the self-weight column is split
+
+The orchestrator's ruling on the shortfall above. The error grows under refinement
+(0.067 → 0.106), so it is a limitation of the basis, not noise. The tolerance is **not** loosened,
+and the gate is **not** moved to the RMS meter.
+
+- **New case `column_selfweight_small_2d_gimp`:** the same column with `E = 5e7`
+  (`ρ0·g·l0/E` = 0.002), `dt = 0.001`, 6000 steps. Its `selfweight_error` is gated at the frozen
+  0.03; the oracle gives 0.0128. **This is the slice-1 gate for the closed form.**
+- **`column_selfweight_2d_gimp` (20% compression) stays a strict xfail** at 0.03. Measured
+  numbers, also in the case file's comments: max error 0.072 (h = 0.5), 0.067 (h = 0.25),
+  0.106 (h = 0.125); RMS meter 0.021. It is the acceptance test for phase 3's domain-tracking
+  GIMP or B-spline basis.
+- **The RMS `cell_crossing_meter` is an observable, not a gate.** Its `eq` lines are cross-checks
+  of the C++ engine against the oracle's number. Only the GIMP < linear relation is asserted on it.
+- Quirk ledger: `Ladruno_implementation/ledger/quirks/WP-232b-ugimp-fixed-domains-do-not-converge-under-large-compression.md`.
