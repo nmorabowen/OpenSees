@@ -393,6 +393,59 @@ LadrunoMPMPoint::g2p(ladruno_mpm::Particles &PP, double flip, bool quasiStatic)
   st = COMMITTED;
 }
 
+int
+LadrunoMPMPoint::tangentCheck(double scale, double eps, double &rel, double &normK)
+{
+  if (st != ARMED || mat == 0) return -1;
+  const int n = nen * ndm;
+  std::vector<Vector> saved;
+  for (int k = 0; k < nen; k++) saved.push_back(nodes[k]->getTrialDisp());
+  std::vector<double> U(n);
+  for (int j = 0; j < n; j++) U[j] = scale * std::sin(1.7 * j + 0.3);
+  Vector u(ndm);
+  auto setU = [&](const std::vector<double> &W) {
+    for (int k = 0; k < nen; k++) {
+      for (int a = 0; a < ndm; a++) u(a) = W[ndm * k + a];
+      nodes[k]->setTrialDisp(u);
+    }
+  };
+  auto restore = [&]() {
+    for (int k = 0; k < nen; k++) nodes[k]->setTrialDisp(saved[k]);
+    mat->revertToLastCommit();
+    needUpdate = true;
+    trialValid = false;
+  };
+  setU(U);
+  if (this->update() < 0) { restore(); return -1; }
+  Matrix K(this->getTangentStiff());
+  Matrix KFD(n, n);
+  int bad = 0;
+  for (int j = 0; j < n; j++) {
+    const double u0 = U[j];
+    U[j] = u0 + eps;
+    setU(U);
+    bad += this->update() < 0;
+    Vector Pp(this->getResistingForce());
+    U[j] = u0 - eps;
+    setU(U);
+    bad += this->update() < 0;
+    Vector Pm(this->getResistingForce());
+    U[j] = u0;
+    for (int i = 0; i < n; i++) KFD(i, j) = (Pp(i) - Pm(i)) / (2.0 * eps);
+  }
+  double d2 = 0.0, k2 = 0.0;
+  for (int i = 0; i < n; i++)
+    for (int j = 0; j < n; j++) {
+      d2 += (K(i, j) - KFD(i, j)) * (K(i, j) - KFD(i, j));
+      k2 += K(i, j) * K(i, j);
+    }
+  restore();
+  if (bad) return -1;
+  normK = std::sqrt(k2);
+  rel = (k2 > 0.0) ? std::sqrt(d2 / k2) : 0.0;
+  return 0;
+}
+
 // ---------------------------------------------------------------------------
 //  Force, tangent, mass (interface D1.6, D1.7)
 // ---------------------------------------------------------------------------

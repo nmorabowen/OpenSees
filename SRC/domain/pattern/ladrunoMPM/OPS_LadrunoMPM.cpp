@@ -462,6 +462,14 @@ int cmdDebug(LadrunoMPMPattern *h)
     h->setDebugFail(k, m);
     return 0;
   }
+  if (what == "tangentCheck") {                                        // WP-232f footing diagnosis
+    double a[2];
+    if (!readDoubles(2, a)) return fail("debug tangentCheck <scale> <eps>");
+    std::vector<double> out;
+    std::string err;
+    if (h->debugTangentCheck(a[0], a[1], out, err) < 0) return fail("debug tangentCheck -- " + err);
+    return outDoubles(out);
+  }
   if (what == "reseed") {                                              // WP-232f re-seed test hook
     const std::string m = OPS_GetNumRemainingInputArgs() > 0 ? OPS_GetString() : "";
     if (m == "default") h->setDebugReseed(0);

@@ -159,7 +159,9 @@ LadrunoMPMPattern::setMode(Mode m, std::string &err)
 double
 LadrunoMPMPattern::modeAMassCutoff(void) const
 {
-  return masscutUser ? eng.par.masscut : 1.0e-6;   // freeze decision 2: mode A 1e-6, mode F 1e-10
+  // D2.3 amendment (232f, 2026-11-14): mode A 5e-2 with `renormalize` (the study on #1083);
+  // mode F keeps 1e-10. `mpm massCutoff` sets both.
+  return masscutUser ? eng.par.masscut : 5.0e-2;
 }
 
 int
@@ -724,6 +726,36 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
     dom->domainChange();
     nDomainChanges++;
   }
+  return 0;
+}
+
+// `mpm debug tangentCheck <scale> <eps>` (WP-232f footing diagnosis): every particle element
+// is armed at the committed state (a prepareStep with no analysis), given the trial nodal
+// displacement scale * sin(1.7 j + 0.3) on its DOFs, and its getTangentStiff compared with a
+// central difference of getResistingForce. Out: [max rel, mean rel, index of the max, ||K|| of
+// it, count]; rel = ||K - K_FD||_F / ||K||_F. Nothing is committed: trial displacements and
+// materials are reverted, and the next `mpm analyze` prepares its own step.
+int
+LadrunoMPMPattern::debugTangentCheck(double scale, double eps, std::vector<double> &out,
+                                     std::string &err)
+{
+  if (theMode == MODE_EXPLICIT) { err = "tangentCheck needs mode implicit or quasiStatic"; return -1; }
+  if (elementsRestored && relinkElements(err) < 0) return -1;
+  if (prepareStep(0.0, err) < 0) return -1;
+  inStep = true;
+  stepT0 = this->getDomain()->getCurrentTime();
+  double worst = 0.0, sum = 0.0, normW = 0.0;
+  int worstP = -1, count = 0;
+  for (int p = 0; p < (int)eles.size(); p++) {
+    if (eles[p] == 0) continue;
+    double rel = 0.0, nk = 0.0;
+    if (eles[p]->tangentCheck(scale, eps, rel, nk) < 0) continue;
+    sum += rel;
+    count++;
+    if (rel > worst) { worst = rel; worstP = p; normW = nk; }
+  }
+  inStep = false;
+  out = {worst, count > 0 ? sum / count : 0.0, (double)worstP, normW, (double)count};
   return 0;
 }
 

@@ -196,6 +196,7 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   void   setRayleighMPM(double am, double bk) { rayAlphaM = am; rayBetaK = bk; }
   void   setDebugFail(int step, int attempts) { failStep = step; failAttempts = attempts; }
   void   setDebugReseed(int m) { reseedMode = m; }               // 0 default, 1 always, 2 skip
+  int    debugTangentCheck(double scale, double eps, std::vector<double> &out, std::string &err);
   // `mpm info` counters (interface §5)
   long   infoCounter(const std::string &what, bool &ok) const;
   const std::vector<double> &dtHistory(void) const { return dtLog; }

@@ -130,6 +130,9 @@ class LadrunoMPMPoint : public Element
   // converged trial state; SCALE mutant on the position increment. flip = α_F;
   // quasiStatic leaves v and a alone. The element is COMMITTED afterwards.
   void g2p(ladruno_mpm::Particles &P, double flip, bool quasiStatic);
+  // `mpm debug tangentCheck`: ||K - K_FD||_F / ||K||_F at the trial displacement
+  // scale * sin(1.7 j + 0.3) (central differences of step eps); state restored.
+  int  tangentCheck(double scale, double eps, double &rel, double &normK);
   // Internal force V σ·g_a at node slot k (ndm entries) of the last trial /
   // converged state — the cases' cond_force (interface §5).
   const double *internalForceAt(int k) const { return &fInt[ndm * k]; }
