@@ -91,4 +91,7 @@ add_subdirectory(drm)
 # so <LadrunoPorousOverlay.h> resolves for Domain.cpp and the ObjectBroker.
 add_subdirectory(ladrunoPorousOverlay)
 
+# N. Mora-Bowen (Ladruno) WP-232: the explicit MPM engine host pattern (mode F).
+add_subdirectory(ladrunoMPM)
+
 

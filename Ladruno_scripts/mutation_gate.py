@@ -87,6 +87,16 @@ FAMILIES = {
         ],
         "min_score": {"ZERO": 0.60, "SCALE": 0.40, "IDENT": 0.0},
     },
+    # WP-232 explicit MPM engine. It has no Element accessor, so the gates sit
+    # in the engine step (LadrunoMPMCore.h): ZERO drops the P2G internal force,
+    # SCALE multiplies the G2P position increment by 1.5 (ADR 232 section 8).
+    # The suite is the binary-driven one; the standalone g++ core check
+    # (test_mpm_engine_core_cpp.py) compiles its own unmutated copy and is
+    # deliberately NOT selected, so it cannot deflate the score.
+    "MPM": {
+        "paths": ["test_ladruno_mpm_engine.py"],   # the cases suite; lifecycle/refusal tests are physics-free
+        "min_score": {"ZERO": 0.50, "SCALE": 0.30, "IDENT": 0.0},
+    },
     # --- WP-3 lanes: gates NOT yet inserted in these families' elements. -----
     # Registering the paths here is deliberate (it documents the intended
     # evidence suite), but running a gate before the call sites exist would
@@ -101,7 +111,7 @@ FAMILIES = {
 # Families whose C++ call sites are live. WP-3 moves the rest across as it
 # inserts their gates; `run` refuses an ungated family so a 0.0 score can never
 # be mistaken for "this suite is worthless".
-GATED_FAMILIES = {"CONTINUUM", "SHELLMOD", "CPML"}
+GATED_FAMILIES = {"CONTINUUM", "SHELLMOD", "CPML", "MPM"}
 
 PROBE = (
     "import json,sys\n"

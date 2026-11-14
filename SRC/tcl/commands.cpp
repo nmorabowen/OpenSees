@@ -759,6 +759,20 @@ ladrunoSANISANDReplay(ClientData clientData, Tcl_Interp *interp, int argc, TCL_C
   return (OPS_LadrunoSANISANDReplay() < 0) ? TCL_ERROR : TCL_OK;          // Ladruno WP-127
 }
 
+int OPS_LadrunoMPM(void);   // Ladruno WP-232 (defined in ladrunoMPM/OPS_LadrunoMPM.cpp)
+static int
+ladrunoMPM(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)   // Ladruno WP-232
+{
+  // Ladruno WP-232: the shared entry reads OPS_GetNDM(), which in this engine
+  // dereferences the model builder -- refuse before it can be null.
+  if (theBuilder == 0) {
+    opserr << "WARNING mpm -- define the model first (model basic -ndm 2|3 ...)" << endln;
+    return TCL_ERROR;
+  }
+  OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);   // Ladruno WP-232
+  return (OPS_LadrunoMPM() < 0) ? TCL_ERROR : TCL_OK;                      // Ladruno WP-232
+}
+
 int
 getPID(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 
@@ -11899,6 +11913,7 @@ ladrunoMutation(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **
     {"SANISAND",  LADRUNO_MUTATE_SANISAND},
     {"SHELLMOD",  LADRUNO_MUTATE_SHELLMOD},   // Ladruno: ADR 91
     {"CPML",      LADRUNO_MUTATE_CPML},       // Ladruno: C-PML wave absorbing element
+    {"MPM",       LADRUNO_MUTATE_MPM},        // Ladruno WP-232: explicit MPM engine
   };
   const char *modeName[] = {"NONE", "ZERO", "SCALE", "IDENT"};
 

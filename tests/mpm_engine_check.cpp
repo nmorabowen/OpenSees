@@ -528,6 +528,16 @@ static void runCase(const Case &c)
 
 int main(int argc, char **argv)
 {
+  {  // v1 has one cell size for every axis: unequal per-axis sizes are refused
+    Engine E;
+    std::string err;
+    const double x0[2] = {0.0, 0.0}, hs[2] = {0.1, 0.2}, heq[2] = {0.1, 0.1};
+    const int n[2] = {4, 4};
+    g_checks++;
+    if (E.setGrid(2, x0, hs, n, err) || err.empty()) { std::printf("FAIL: unequal cell sizes accepted\n"); g_fail++; }
+    g_checks++;
+    if (!E.setGrid(2, x0, heq, n, err)) { std::printf("FAIL: equal per-axis cell sizes refused\n"); g_fail++; }
+  }
   auto cases = parse(argc > 1 ? argv[1] : "tests/mpm_cases.txt");
   for (const auto &c : cases) runCase(c);
   for (const auto &c : cases)

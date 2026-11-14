@@ -106,6 +106,11 @@ class LadrunoJ2 : public NDMaterial {
   Response* setResponse(const char** argv, int argc, OPS_Stream& s);
   int getResponse(int responseID, Information& matInfo);
 
+  // WP-232: true when -autoRegularization reads the active element's length
+  // (integrate(), the ops_TheActiveElement read). The MPM host refuses such a
+  // copy at particles: v1 offers no length there (ADR 232 §6, W9).
+  bool usesAutoRegularization(void) const { return dmgRegOn; }
+
  private:
   // material parameters
   double bulk;     // K

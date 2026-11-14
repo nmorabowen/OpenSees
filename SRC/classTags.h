@@ -647,6 +647,7 @@
 #define PATTERN_TAG_DRMLoadPattern        5
 #define PATTERN_TAG_H5DRM                 6
 #define PATTERN_TAG_LadrunoPorousOverlay  33022 // N. Mora-Bowen (Ladruno) — ADR-73 persistent-fluid staggered u-p overlay (LoadPattern-subclass domain engine owning the pore-pressure field OUTSIDE the DOF graph; fixed-stress split, fluid life-cycle survives `remove element`). PATTERN registry; ladruno private band >=33000. Numerically equals EigenSOE_TAGS_FeastEigenSOE 33022 (ADR 43) — per-registry namespaces, deliberately NOT a collision (see Ladruno_implementation/73_ladruno_porous_overlay_adr.md §5)
+#define PATTERN_TAG_LadrunoMPM           33027 // N. Mora-Bowen (Ladruno) — WP-232 explicit MPM engine host (mode F): a LoadPattern subclass owning the background grid, the particles and one NDMaterial copy per particle; driven by the `mpm` command. PATTERN registry; ladruno private band >=33000. 33027 is used by no other registry
 
 #define LOAD_TAG_Beam2dUniformLoad        3
 #define LOAD_TAG_Beam2dPointLoad          4

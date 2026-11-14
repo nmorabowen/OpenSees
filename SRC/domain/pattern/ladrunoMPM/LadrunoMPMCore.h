@@ -1,3 +1,24 @@
+// LADRUNO-HEADER-START
+// ==========================================================================
+//
+//   ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+//  ███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+//  ███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+//  ███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+//  ███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+//  █████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+//  ▀                                   ███    ███
+//
+//  Ladruno — a research fork of OpenSees
+//  Created by:  Nicolas Mora Bowen  ·  Patricio Palacios  ·  José Abell  ·  Guppi
+//
+// Header auto-stamped by Ladruno_scripts/stamp_headers.py (art: banner_ASCII.txt).
+// Do not hand-edit between the markers; edit the script/art and re-run instead.
+// ==========================================================================
+// LADRUNO-HEADER-END
+
 // Authors: Nicolas Mora Bowen, Guppi (Ladruno)
 // Created: 11/2026
 //
@@ -282,6 +303,20 @@ class Engine {
     P.ndm = ndm;
     P.nv = nv();
     return true;
+  }
+
+  // Per-axis cell sizes (a grid read from a file, whose format allows unequal
+  // sizes): v1 has one h for every axis (interface §2), so unequal components
+  // are refused loudly.
+  bool setGrid(int ndm, const double *x0, const double *hAxis, const int *n, std::string &err)
+  {
+    for (int d = 1; d < ndm; d++)
+      if (hAxis[d] != hAxis[0]) {
+        err = "the grid's cell size differs between axes; v1 has one cell size h for every"
+              " axis (interface §2)";
+        return false;
+      }
+    return setGrid(ndm, x0, hAxis[0], n, err);
   }
 
   // Add one particle in its initial state (F = R = I, eps = 0, sig = sig0).

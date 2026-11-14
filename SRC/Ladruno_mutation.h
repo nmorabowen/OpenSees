@@ -137,6 +137,14 @@
 #ifndef LADRUNO_MUTATE_CPML
 #  define LADRUNO_MUTATE_CPML LADRUNO_MUT_NONE
 #endif
+// WP-232: the explicit MPM engine (SRC/domain/pattern/ladrunoMPM). It has no
+// Element accessor, so its gates sit in the engine step itself
+// (LadrunoMPMCore.h, which repeats this default to stay OpenSees-free): ZERO
+// drops the P2G internal force, SCALE multiplies the G2P position increment by
+// SCALE_FACTOR (ADR 232 §8).
+#ifndef LADRUNO_MUTATE_MPM
+#  define LADRUNO_MUTATE_MPM LADRUNO_MUT_NONE
+#endif
 
 namespace LadrunoMutation {
 
@@ -155,7 +163,8 @@ inline bool anyActive(void)
          (LADRUNO_MUTATE_EXPLICIT  != LADRUNO_MUT_NONE) ||
          (LADRUNO_MUTATE_SANISAND  != LADRUNO_MUT_NONE) ||
          (LADRUNO_MUTATE_SHELLMOD  != LADRUNO_MUT_NONE) ||
-         (LADRUNO_MUTATE_CPML      != LADRUNO_MUT_NONE);
+         (LADRUNO_MUTATE_CPML      != LADRUNO_MUT_NONE) ||
+         (LADRUNO_MUTATE_MPM       != LADRUNO_MUT_NONE);
 }
 
 // Sabotage an internal-force vector. Placed AFTER the force is formed and

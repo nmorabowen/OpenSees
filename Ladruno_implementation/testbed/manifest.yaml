@@ -2313,3 +2313,35 @@ features:
       SRC/material/nD/LadrunoHSKernel.h (4-surface Koiter active-set return map +
       Rowe stress-dilatancy with void-ratio cutoff + Benz 2007 6D strain-history
       tensor + exact 6x6 consistent algorithmic tangent).
+  - feature: LadrunoMPMPattern
+    classtag: 33027          # PATTERN_TAG family; 33027 is used by no other registry
+    tag_symbol: PATTERN_TAG_LadrunoMPM
+    pr: null
+    feature_class: loadpattern
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladruno_mpm_engine.py   # every case of 232b's tests/mpm_cases.txt in Python AND classic Tcl, plus engine parity
+    tests:
+      - tests/test_ladruno_mpm_engine.py
+      - tests/test_ladruno_mpm_lifecycle.py
+      - tests/test_mpm_engine_core_cpp.py
+    tcl: WAIVED(classic-Tcl runs through OpenSees.exe inside the pytest files -- tests/ladruno_mpm_harness.py writes one deck per case, and test_ladruno_mpm_lifecycle.py carries the refusal / loadPattern-stage deck)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/domain/pattern/CMakeLists.txt
+      - SRC/interpreter/OpenSeesCommands.h
+      - SRC/tcl/commands.cpp
+      - SRC/interpreter/OpenSeesOutputCommands.cpp
+      - CMakeLists.txt
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      WP-232 slice 1 (mode F): the explicit MPM engine hosted as a LoadPattern
+      (PATTERN_TAG_LadrunoMPM 33027), driven by the `mpm` command (one
+      LadrunoCommandTable.h row; refused in OpenSeesSP / MP). Numerics in the
+      OpenSees-free SRC/domain/pattern/ladrunoMPM/LadrunoMPMCore.h (uGIMP and
+      linear hat, MUSL with PIC/FLIP, mass cutoff, local damping, critical dt,
+      grid-face fix and Coulomb wall) over the incremental hypo-kernel entry
+      hypoIncrementFromF (LadrunoHypoKernel.h). Object-broker entry deliberately
+      absent: v1 refuses database save / restore (sendSelf / recvSelf) until the
+      phase-1 restart test.
