@@ -1,6 +1,7 @@
 ---
 wp: WP-232a
 title: "The Ladruno HDF5 attribute writer skips empty strings and empty vectors, so an attribute whose value is \"\" is ABSENT in a .ladruno (WP-232a)"
+pr: "#1077"
 date: 2026-11-13
 ---
 ### The Ladruno HDF5 attribute writer skips empty strings and empty vectors, so an attribute whose value is `""` is ABSENT in a `.ladruno` (WP-232a)
