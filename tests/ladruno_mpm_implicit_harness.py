@@ -223,14 +223,17 @@ def seed_contract1(c, path):
                     th = (i + 0.5) * dth
                     ro = rho_o(th)
                     r = a + s * (ro - a)
-                    xs.append((r * math.cos(th), r * math.sin(th)))
+                    px, py = r * math.cos(th), r * math.sin(th)
+                    xs.append((px, py))
                     tq = th + 0.5 * dth * gx
                     rq = rho_o(tq)
                     rp = a + (s + 0.5 * ds) * (rq - a)
                     rm = a + (s - 0.5 * ds) * (rq - a)
                     V = float(np.sum(gw * 0.5 * (rp ** 2 - rm ** 2)) * 0.5 * dth)
                     vols.append(V)
-                    lps.append((math.sqrt(V) / 2,) * nd)
+                    # clipped so no GIMP domain leaves [0, W/2]^2 (C1-POS; cases amendment)
+                    l0 = math.sqrt(V) / 2
+                    lps.append((min(l0, px, hw - px), min(l0, py, hw - py)))
                     bodies.append(bid)
                     mats.append(int(opts["mat"]))
                     rhos.append(float(opts["rho"]))
@@ -354,6 +357,14 @@ def model_commands(c, particle_path=None):
         cmds.append(("mpm", ["timeSeries", TS_TAG]))
     if c["masscut"] is not None:
         cmds.append(("mpm", ["massCutoff", c["masscut"]]))
+    # data runs only (never set in CI): the empty-node treatment and cutoff of every case
+    en = os.environ.get("LADRUNO_MPM_EMPTY_NODES")
+    if en:
+        mode, _, g = en.partition(":")
+        cmds.append(("mpm", ["emptyNodes", mode] + ([float(g)] if g else [])))
+    mc = os.environ.get("LADRUNO_MPM_MASSCUT")
+    if mc and c["masscut"] is None:
+        cmds.append(("mpm", ["massCutoff", float(mc)]))
     return cmds
 
 
@@ -458,7 +469,7 @@ def _as_list(v):
 
 def run_python(c, ops, workdir=None, mass_cutoff=None, empty_nodes=None):
     """Run a case through opensees.pyd. Returns the result dict."""
-    td = tempfile.TemporaryDirectory() if workdir is None else None
+    td = tempfile.TemporaryDirectory(ignore_cleanup_errors=True) if workdir is None else None
     wd = Path(workdir) if workdir else Path(td.name)
     try:
         ppath = None
@@ -689,7 +700,7 @@ def _run_deck(text, exe, cwd, name, timeout):
 
 
 def run_tcl(c, exe, timeout=3600, inproc=False):
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         ppath = None
         if c["particles_file"]:
             ppath = Path(td) / c["particles_file"]
@@ -888,6 +899,24 @@ def evaluate(c, r, runs=None):
             worst = max(field_relerr(r, other, f) for f in PROTOCOL_FIELDS)
             res.append((f"{c['name']} particle_fields vs {cp[2]}", "pass" if worst <= tol else "fail",
                         f"worst field relerr {worst:.3g} (tol {tol})"))
+        elif "relerrle" in cp:
+            i = cp.index("relerrle")
+            oc = case_by_name(cp[i + 1])
+            e = {"obs": cp[0], "args": cp[1:i]}
+
+            def own(cc, rr):
+                ex = [x for x in cc["expects"] if x["obs"] == e["obs"] and x["args"] == e["args"]][0]
+                if ex["tbd"]:
+                    return None
+                v = ex["vals"][0]
+                return abs(observable(cc, rr, e)[0] - v) / abs(v)
+            a = own(c, r)
+            b = own(oc, runs(cp[i + 1]))
+            if a is None or b is None:
+                res.append((f"{c['name']} compare {' '.join(cp)}", "tbd", "reference value TBD"))
+                continue
+            res.append((f"{c['name']} compare {' '.join(cp)}", "pass" if a <= b else "fail",
+                        f"relerr {a:.4g} vs {cp[i + 1]} {b:.4g}"))
         elif "errle" in cp:
             i = cp.index("errle")
             if cp[-1] == "TBD":
@@ -929,7 +958,7 @@ print("JSON " + json.dumps(out))
 
 def run_python_two_process(c, ops):
     """Save at the restart step in this process, restore and continue in a fresh one."""
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         db = str(Path(td) / "mpmdb")
         for name, args in model_commands(c):
             getattr(ops, name)(*_py_args(args))

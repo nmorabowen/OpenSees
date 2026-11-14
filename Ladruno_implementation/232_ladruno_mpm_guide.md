@@ -223,6 +223,8 @@ acceleration take FLIP increments (`mpm flip`, default 1); quasi-static leaves v
   Domain nodes nor in any connectivity (held at zero increment). Mode A's default cutoff is
   **1e-6** (mode F's stays 1e-10); `mpm massCutoff` sets both. `mpm emptyNodes ghost <γ>` keeps
   them, tied to their step-start position by a spring γ M₀ V / h² (for M0b).
+  `mpm emptyNodes renormalize` drops them too, but renormalises the kept shape functions to a
+  partition of unity, so a dropped node is absent rather than held (WP-232f round 2, proposed).
 - **Tags.** Grid nodes and particle elements take tags above every tag in use at the first
   mode-A step (`mpm tagBase <node> <ele>` to choose). Create your FE components first.
 

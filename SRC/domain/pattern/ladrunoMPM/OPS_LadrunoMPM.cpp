@@ -63,7 +63,7 @@
 //   mpm gridvel <name> box <lo..> <hi..> v <value|free ..> [start <t0>] [track <axis>]
 //   mpm condForce <name>                  -> ndm doubles at the last accepted step
 //   mpm pforce <body> box <lo..> <hi..> <f..>   -> count
-//   mpm emptyNodes exclude | ghost <gamma>
+//   mpm emptyNodes exclude | renormalize | ghost <gamma>
 //   mpm cut <factor> <maxCuts>  |  mpm tagBase <nodeBase> <eleBase>  |  mpm rayleigh <alphaM> <betaK>
 //   mpm info g2p|acceptedSteps|retries|domainChanges|connectivityChanges|gridNodes|mode
 //   mpm info dtHistory | gridNodeTags     -> lists
@@ -393,11 +393,14 @@ int cmdGridVel(LadrunoMPMPattern *h)
   if (OPS_GetNumRemainingInputArgs() < nd + 1 || std::string(OPS_GetString()) != "v") return fail(usage);
   unsigned freeMask = 0;
   for (int d = 0; d < nd; d++) {
+    // A value is 'free' or a number. Peek as a string, then step back and read a
+    // double: in Python a float token reads as the literal "Invalid String Input!"
+    // (element guide, Parser), so parsing the peeked text would refuse it.
     const std::string tok = OPS_GetString();
     if (tok == "free") { freeMask |= 1u << d; continue; }
-    char *end = 0;
-    v[d] = strtod(tok.c_str(), &end);
-    if (end == tok.c_str() || *end != '\0') return fail(std::string("gridvel -- '") + tok + "' is not a number or 'free'");
+    OPS_ResetCurrentInputArg(-1);
+    if (!readDoubles(1, &v[d]))
+      return fail("gridvel -- component " + std::to_string(d) + " is not a number or 'free'");
   }
   double start = -1e300;
   int track = -1;
@@ -696,10 +699,11 @@ int OPS_LadrunoMPM(void)
   }
   if (sub == "emptyNodes") {
     const std::string m = OPS_GetNumRemainingInputArgs() > 0 ? OPS_GetString() : "";
-    if (m == "exclude") { h->setEmptyNodes(-1.0); return 0; }
+    if (m == "exclude") { h->setEmptyNodes(LadrunoMPMPattern::EMPTY_EXCLUDE); return 0; }
+    if (m == "renormalize") { h->setEmptyNodes(LadrunoMPMPattern::EMPTY_RENORMALIZE); return 0; }
     double g;
     if (m == "ghost" && readDoubles(1, &g) && g >= 0.0) { h->setEmptyNodes(g); return 0; }
-    return fail("emptyNodes exclude | ghost <gamma >= 0>");
+    return fail("emptyNodes exclude | renormalize | ghost <gamma >= 0>");
   }
   if (sub == "cut") {
     double fct;

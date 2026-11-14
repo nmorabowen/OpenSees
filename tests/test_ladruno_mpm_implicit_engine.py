@@ -130,10 +130,13 @@ def test_retry_counts_and_schedule():
     assert all(abs(d - 0.01) < 1e-15 for d in r["dtHistory"][4:]), r["dtHistory"][4:8]
 
 
-def test_reseed_bar_has_no_crossing():
-    """The re-seed protocols are only meaningful if no support changes in the run."""
-    r = run("python", "reseed_bar_normal")
-    assert r["info_connectivityChanges"] == 1, r["info_connectivityChanges"]   # the first step builds it
+def test_reseed_counters():
+    """The shipped run raises domainChange() on every step; the skip switch really skipped
+    some (the bar's supports change only where a GIMP edge h + lp is crossed, so most steps
+    of reseed_bar_skip have no support change)."""
+    rn, rs = run("python", "reseed_bar_normal"), run("python", "reseed_bar_skip")
+    assert rn["info_domainChanges"] == rn["info_acceptedSteps"]
+    assert 0 < rs["info_domainChanges"] < rs["info_acceptedSteps"], rs["info_domainChanges"]
 
 
 @pytest.mark.parametrize("engine", ["python", "tcl"])

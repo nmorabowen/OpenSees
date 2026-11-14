@@ -186,7 +186,11 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   // `mpm pforce <body> box <lo> <hi> <f>`: returns the count of particles
   int    addPointForce(int body, const double *lo, const double *hi, const double *f, std::string &err);
   void   setMassCutoffUser(double c) { eng.par.masscut = c; masscutUser = true; }
-  void   setEmptyNodes(double gamma) { ghostGamma = gamma; }      // < 0: exclude
+  // emptyNodes: -1 exclude (held at zero increment), EMPTY_RENORMALIZE exclude with
+  // the kept shape functions renormalised, >= 0 ghost spring factor gamma
+  static constexpr double EMPTY_EXCLUDE = -1.0;
+  static constexpr double EMPTY_RENORMALIZE = -2.0;
+  void   setEmptyNodes(double gamma) { ghostGamma = gamma; }
   void   setCut(double factor, int maxCuts) { cutFactor = factor; maxCutCount = maxCuts; }
   int    setTagBases(int nodeBase, int eleBase, std::string &err);
   void   setRayleighMPM(double am, double bk) { rayAlphaM = am; rayBetaK = bk; }

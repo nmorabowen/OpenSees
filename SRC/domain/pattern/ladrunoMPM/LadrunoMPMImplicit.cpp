@@ -517,6 +517,24 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
             " mass is below the cutoff everywhere); refused (W15: a zero-DOF element)";
       return -1;
     }
+    // `mpm emptyNodes renormalize` (WP-232f round 2, proposed amendment to D2.3): the
+    // excluded nodes are dropped AND the kept S, ∇S are renormalised to a partition
+    // of unity -- S' = S / ΣS, ∇S' = (∇S − S' Σ∇S) / ΣS over the kept nodes -- so an
+    // excluded node is absent, not held at zero increment (no anchoring of the surface).
+    if (ghostGamma == EMPTY_RENORMALIZE) {
+      double sum = 0.0, gsum[3] = {0.0, 0.0, 0.0};
+      for (long k = supStart[p]; k < supStart[p + 1]; k++)
+        if (keep[k]) {
+          sum += Sv[k];
+          for (int a = 0; a < nd; a++) gsum[a] += dSv[nd * k + a];
+        }
+      if (sum > 0.0)
+        for (long k = supStart[p]; k < supStart[p + 1]; k++)
+          if (keep[k]) {
+            Sv[k] /= sum;
+            for (int a = 0; a < nd; a++) dSv[nd * k + a] = (dSv[nd * k + a] - Sv[k] * gsum[a]) / sum;
+          }
+    }
   }
 
   // ---- the grid conditions, in lattice terms ------------------------------------------

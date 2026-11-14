@@ -256,3 +256,10 @@ The harness drives every case with `mpm analyze 1 <dt>` per step and reads after
    where used (as slice 1 declares `OPS_LadrunoMPM`).
 3. §5: `mpm rayleigh <alphaM> <betaK>` added — the particle elements are created at the first
    mode-A step, after any user `rayleigh` command could reach them.
+4. D2.3, PROPOSED amendment (data in the round-2 report): `exclude` holds a dropped node at zero
+   increment, which anchors free surfaces (cantilever QS tip -0.22 m at c_m 5e-2 against -2.37);
+   with the 1e-6 default, weakly supported nodes (stiffness 1e-8 of the strongest) make quasi-static
+   Newton diverge (cantilever QS r1 fails at step 7; footing r1 at t = 22). `mpm emptyNodes
+   renormalize` drops the weak nodes and renormalises the kept S, grad S to a partition of unity
+   (S' = S / sum S, grad S' = (grad S - S' sum grad S) / sum S).
+5. §5: `gridvel` reads each value as 'free' or a double after peeking (Python passes floats).
