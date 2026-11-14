@@ -509,6 +509,17 @@ Reference: `tests/mpm_contracts.py::open_particle_file` (steps 1–2; step 3 rai
 `StageLayoutKilledError`), which `committed_outputs(path)` uses, and
 `recover_particle_file(src, dst)` (step 3).
 
+**Since WP-233 (#1082) this open rule applies to every `.ladruno`** (schema §7b.2), because
+`recorder ladruno` writes under SWMR too. Its reference implementation is
+`ladruno_format.open_ladruno` / `repair_copy`, and the helpers above delegate to them. Two
+findings from the recorder's exhaustive replay apply to this writer as well:
+- the last stage may also be torn after a **plain** open: sec2 writes WRITE_ACCESS to the
+  superblock lazily, so a file killed inside a layout can carry flags 0x00;
+- the root group gains a `MODEL_STAGE` link at each `mpm reset`, in a layout written without
+  SWMR. If its header is not presized, a kill there can make the root unreadable, and with
+  it every earlier stage. The recorder presizes it (`plist::presizeLinks`); this writer
+  does not yet: #1085.
+
 A file left by a crash can hold a partial output beyond the last committed one. The case that
 matters is a kill **after `OFFSETS` is extended for output `k` but before its value is written**.
 The new last entry then holds the HDF5 fill value 0, while that output's `DATA`, `ID`, `STEP` and

@@ -364,7 +364,7 @@ dataset** rather than a `DATA` *group* of per-step datasets:
 ```
 <result-or-bucket>/
    ID    [nIds × 1] int
-   DATA  [T × nIds × nComp] double   ← extensible on T, chunked + shuffle + deflate(4)
+   DATA  [T × nIds × nComp] double   ← extensible on T, chunked (layout: §7b.2)
    STEP  [T] int                     ← commit/step id per slab (was the STEP attr)
    TIME  [T] double                  ← pseudo-time per slab (was the TIME attr)
 ```
@@ -637,7 +637,9 @@ source (the user's stated priority: performance + robustness on OpenSees first):
   files-unflushed history ([[project_mpco_exit_crash]]), Ladruno must: flush every
   recorded step (as MPCO does), **rewrite envelope/aggregate datasets periodically**
   (§7.4), and provide an **explicit flush/close recorder control** so a user can force a
-  clean close in the same cell before copying off local disk.
+  clean close in the same cell before copying off local disk. (WP-164 replaced the
+  per-step flush with the `-flush` cadence. What a killed run actually keeps, and how to
+  read it, is §7b.2.)
 - **Provenance / lineage slot.** The recorder creates `INFO/PROVENANCE` as an
   **empty group** at open (`LadrunoRecorder.cpp`, beside the `RUN_ID` stamps) and
   writes nothing into it. It is the one place in a `.ladruno` file that a consumer may
@@ -707,6 +709,137 @@ stamped only partly (a consumer that stopped part-way) is unpaired.
 `FORMAT_MINOR_VERSION` does not move: the recorder writes nothing new, and a v1 reader
 that ignores `PROVENANCE` still reads every file. `ladruno_format.validate()` does not
 inspect `PROVENANCE`, so a stamped file stays conformant.
+
+### 7b.2 A killed run: the writer's guarantees and the reader rule (WP-233, #1082)
+
+*Applies to every `.ladruno`: `recorder ladruno` since WP-233 (#1082), and the MPM particle
+writer since WP-232c (#1081), whose particle-specific crash rule stays in
+[[232a_mpm_contracts]] §2.5.*
+
+**What a kill used to do.** Before WP-233 the recorder wrote the earliest HDF5 format (v1
+B-tree chunk indexes), without SWMR. It deflated a partially filled `DATA` chunk at every
+flush, so the chunk moved and its old space was reused, while the chunk index still pointed
+there. A kill (TerminateProcess, a scheduler kill, a hard Ctrl-C) could therefore leave
+`DATA` that would not read ("filter returned failure during read"), losing the whole
+unfinished chunk (up to 1,024 steps, often the whole run). It could also leave `DATA` that
+read silently wrong: zeros, or another result's bytes. That happened at 72–79 % of the kill
+points inside a flush. The old promise here, "a hard crash loses at most the last `-flush`
+seconds", did not hold (quirk `WP-233-recorder-killed-without-swmr`).
+
+**The writer's guarantees.**
+
+- **SWMR except during a layout step.** The file uses the latest format
+  (`H5Pset_libver_bounds(LATEST, LATEST)`; extensible-array chunk indexes). It is in
+  SWMR-write mode (`H5Fstart_swmr_write`) except during a **layout step**: a recorded step
+  that creates objects. SWMR forbids creating objects or attributes. The layout steps are:
+  - a stage's first recorded step (`writeModel`, every result's group with its `ID` and
+    empty `DATA`/`TIME`/`STEP`, the element `COLUMN_MAP`s, the envelope groups, and the
+    groups of a modes result);
+  - the rewrite of a provisional `KIND` (§2a), at most once per stage;
+  - a modes snapshot (`DATA/STEP_<k>/MODE_<j>`, each time the eigenvalues change);
+  - an envelope whose first sample arrives after the stage's first step.
+- **How a layout step runs.** If SWMR is armed, the recorder flushes, closes the file (a
+  clean close clears the SWMR flags) and reopens it read-write. It then creates the objects
+  and holds the step's rows. Next it flushes and arms SWMR with no object open. Finally it
+  appends the held rows and flushes. No streaming row is ever written outside SWMR. If SWMR
+  cannot be armed, the recorder disables itself with an error rather than writing on
+  without it.
+- **What a layout step may touch.** It writes new objects, the superblock, and one
+  in-place header write:
+  - the root's header gains the new stage's `MODEL_STAGE` link;
+  - a modes result's `DATA` gains a `STEP_<k>` link;
+  - the stage's header gets the new `KIND`.
+
+  That is one write because the root and each modes `DATA` keep their links compact in an
+  object header presized for 1,024 stages (1,024 snapshots; about 44 KB each, and HDF5 caps
+  one header chunk near 1,500 such links), and because the provisional `KIND` is a
+  fixed-length 9-byte string rewritten in place. Without that, the replay showed a kill
+  inside the layout flush leaving the root unreadable, with every stage lost.
+  **Past 1,024 stages** (or 1,024 snapshots in one modes result), adding a link needs a new
+  header chunk, and a kill in a later layout step can again make earlier stages (snapshots)
+  unreadable. This was measured with the root presized for 8 and 21 stages: 416 of 2,607
+  kill points left `MODEL_STAGE[1]` unreadable. The recorder warns when a file reaches
+  1,024 stages.
+- **Streaming layout.** Under SWMR no freed file space is reused. A `DATA` chunk is
+  therefore written so that it never moves:
+  - with `-compress N > 0` (the default, 1) and a slab (one step of the result) of at
+    least 4 KiB, it holds one step (ids tiled to 1 MiB) and is compressed and written once;
+  - otherwise (`-compress 0`, or a slab under 4 KiB, where a per-step chunk compresses worse
+    than raw and costs time), it is unfiltered (about 64 KiB, stacking up to 1,024 steps),
+    keeps its size and is rewritten in place.
+
+  `TIME`/`STEP` stay unfiltered, chunk 1,024.
+- **What survives a kill:**
+  - every step up to the last completed flush (`-flush` cadence; the first recorded step of
+    a stage always flushes), exact;
+  - every stage that ended, in full;
+  - the modes snapshots and envelopes as below.
+
+  What is in flight may be partly present. `DATA`, `TIME` and `STEP` are separate datasets,
+  and SWMR orders each dataset's own writes, not one dataset against another. So a killed
+  file can hold them at different lengths ("ragged"); in the replay this happened at about
+  40 % of the in-flush kill points.
+
+**The reader rule (opening any `.ladruno`).**
+
+1. Open read-only. A clean close leaves the superblock's consistency flags at 0x00, and a
+   plain open works.
+2. If that fails with "already open for write" (or "truncated file", which is checked
+   first), open in SWMR-read mode (h5py: `h5py.File(path, "r", swmr=True)`). This is a
+   kill while SWMR was armed (flags 0x05), which is almost every kill. Never `h5clear` first:
+   the stored end-of-allocation lags the data, and only an SWMR-read open skips that check.
+   No `HDF5_USE_FILE_LOCKING=FALSE` is needed after a kill (measured, Windows).
+3. If that also refuses ("not already open for SWMR writing") and the flags are 0x01, the
+   run was killed during a layout step. Recover a **copy**, never the original:
+   - set the flags to 0x00;
+   - set the stored end-of-allocation (superblock offset 28) to max(stored EOA, file size);
+   - pad the copy with zeros up to it if the file is shorter;
+   - re-checksum the superblock (lookup3 over bytes 0–43, stored at 44);
+   - open the copy plainly.
+
+After any of the three steps, **the last stage may fail to open or read**: the kill fell
+while it was being laid out, and it holds no committed step, so skip it. An earlier stage
+that will not open is corruption. This can follow a plain open too. sec2 writes
+WRITE_ACCESS into the superblock only when it next flushes it, so a file killed inside a
+layout step can still carry flags 0x00. The real-binary kill stress found that at 7 of 16
+kills with a stage every 20 steps.
+
+A reader that cannot open in SWMR-read mode (e.g. h5wasm) may apply step 3's repair to a
+copy of any file that step 1 refuses, flags 0x05 included.
+
+**The crash rule (what to read).**
+
+- A file is written by one recorder, so every streaming result of a stage shares one step
+  axis. Read **T' = the minimum, over the stage's streaming results, of min(len `DATA`,
+  len `TIME`, len `STEP`)**, and ignore rows past T'. A closed file has all these lengths
+  equal.
+- A modes snapshot (`DATA/STEP_<k>`) that does not open, or lacks a `MODE_<j>`, is the
+  snapshot being written: skip it, along with any later snapshot.
+- An envelope's `MIN`/`MAX`/`ABSMAX`/`ARG_STEP` entries are each the extreme over some
+  prefix of the stage's recorded steps. An in-place rewrite torn between two steps can mix
+  two neighbouring prefixes. Each value is a true extreme of the run so far, but entries
+  may come from consecutive steps.
+- `KIND` is `static`, `transient` or `eigen`. A provisional `static` that was never
+  rewritten means no analysis was visible at any recorded step (§2a).
+
+**Reference implementation:** `ladruno_format.py`:
+- `open_ladruno(path)` (steps 1–2; step 3 raises `StageLayoutKilledError`);
+- `repair_copy(src, dst)` (step 3);
+- `stage_report(f)` (every stage's T', or the torn last stage);
+- `recover_ladruno(src, dst)` (step 3, then `stage_report`);
+- `committed_steps(stage)` (T');
+- `LadrunoReader`, which applies both rules.
+
+`validate()` checks **closed** files and refuses a killed one (`FILE-KILLED`). Read a killed
+file by these rules; do not validate it. The particle file's helpers in
+`tests/mpm_contracts.py` delegate to the same functions.
+
+**Evidence:**
+- `Ladruno_scripts/ladruno_recorder_tests/recorder_crash_replay.py` is the exhaustive replay:
+  every byte-level kill point of an h5py mirror of the writer, read by these rules;
+- `recorder_binary_kill_stress.py` is the kill stress of the real binary, per lifecycle
+  window;
+- the numbers are on #1082 and in the quirk.
 
 ## 7c. apeGmsh consumption contract (interop summary)
 
@@ -894,6 +1027,12 @@ in STKO). Fiber section as today.
   `opensees_backend` (`ladruno`/`stock`/`unknown`) and `opensees_build_sha` (the
   `ladrunoBuild` hash). Both are optional, so older files stay valid. Doc only: no
   recorder change, no version bump.
+- 2026-11-14 — **WP-233 (#1082): a killed run (§7b.2).** The recorder writes under HDF5
+  SWMR (latest format), the time-series `DATA` layout changes so that SWMR does not bloat
+  the file, and every reader applies the reader rule and the crash rule of §7b.2. The
+  contents of a closed file are unchanged: same groups, datasets, attributes and dtypes.
+  Readers need HDF5 ≥ 1.10. No version bump (owner, #1082): a killed file must be opened
+  before `INFO` can be read, so the rule cannot be gated on an attribute.
 - 2026-10-19 — **apeGmsh #2214: every `ON_NODES` group's name and labels (§7.1.2).**
   Adds velocity, acceleration, reaction, Rayleigh, unbalanced and tie-force groups, the
   angular groups, `PRESSURE`, `overlayPressure_<tag>` and the `-NS` sensitivity groups,

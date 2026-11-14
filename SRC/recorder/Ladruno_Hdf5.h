@@ -362,20 +362,31 @@ namespace h5 {
 			return (dset < 0) ? HID_INVALID : dset;
 		}
 
-		// ---- WP-164: write-path layout for datasets that stay OPEN for a stage --
+		// ---- WP-164 / WP-233: write-path layout for datasets that stay OPEN -----
 		//
-		// The old layout chunked {ct, nIds, nComp}: one chunk spanned every id, so
-		// reading ONE entity's history inflated the whole dataset (P3), and each
-		// step's chunk was the whole slab. The sink also reopened DATA every step,
-		// which evicted the per-dataset chunk cache, so a partially filled chunk
-		// was re-read, inflated and re-deflated on every step (P2).
+		// WP-164 chunked DATA at ~1 MiB, stacking up to 1024 steps per chunk, and
+		// deflated a partially filled chunk at every flush. Under SWMR (WP-233,
+		// #1082) that layout leaks: the recompressed chunk grows, HDF5 moves it,
+		// and SWMR never reuses the space it frees (a 300-step run at -flush 0
+		// grew 2.6 -> 206 MB). Two layouts survive SWMR; both write a chunk's
+		// final bytes in place or once:
 		//
-		// Now: chunks target ~1 MiB. A small slab (<= 1 MiB) keeps every id in one
-		// chunk and stacks up to 1024 steps in it; a large slab tiles the id axis
-		// and stacks ct (<= 16) steps, so one entity's history touches T/ct chunks
-		// of ~1 MiB. The dataset access list sizes the chunk cache to hold a whole
-		// row of chunks (ct steps x every id tile), so with the handle kept open a
-		// chunk is filled in memory and deflated ONCE, when it is complete.
+		//  * deflate > 0 (the default, -compress 1) and a slab of >= 4 KiB: ONE STEP
+		//    PER CHUNK, ids tiled to <= 1 MiB, shuffle + deflate. A step's write
+		//    completes every chunk it touches, so each chunk is compressed and
+		//    written exactly once. About WP-164's size; reading one id's history
+		//    touches T chunks. Below 4 KiB a per-step chunk compresses worse than
+		//    raw (per-chunk overhead) and costs time: such a slab takes the
+		//    unfiltered layout whatever -compress says (measured, WP-233 bench).
+		//  * deflate == 0 (-compress 0): UNFILTERED, ~64 KiB chunks stacking up to
+		//    1024 steps (ct <= 16 for a large slab). An unfiltered chunk keeps its
+		//    size, so a partial chunk is rewritten in place (old rows byte-equal).
+		//    It is allocated in full, so the 64 KiB target bounds the cost of the
+		//    last, partial chunk of every result. Fastest writes and history reads.
+		//
+		// Measured: Ladruno_scripts/ladruno_recorder_tests/recorder_swmr_layout_bench.py.
+		// The dataset access list sizes the chunk cache to one row of chunks (every
+		// id tile x ct steps) so a chunk is completed in memory.
 		struct TimeSeriesPlan {
 			hsize_t ct;          // steps per chunk
 			hsize_t chunk_ids;   // ids per chunk
@@ -383,25 +394,41 @@ namespace h5 {
 			size_t cache_slots;  // hash slots for the chunk cache
 		};
 
-		inline TimeSeriesPlan planTimeSeries(hsize_t n_ids, hsize_t n_comp, hsize_t elem_bytes) {
-			const hsize_t target = (hsize_t)1 << 20;          // ~1 MiB per chunk
-			const hsize_t row_budget = (hsize_t)32 << 20;     // ct x slab held in cache
+		// WP-233: does this slab get the compressed (one step per chunk) layout?
+		inline bool timeSeriesCompressed(hsize_t n_ids, hsize_t n_comp, hsize_t elem_bytes,
+		                                 int deflate) {
+			return deflate > 0 && n_ids * n_comp * elem_bytes >= ((hsize_t)4 << 10);
+		}
+
+		inline TimeSeriesPlan planTimeSeries(hsize_t n_ids, hsize_t n_comp, hsize_t elem_bytes,
+		                                     bool compressed) {
 			const hsize_t row_bytes = n_comp * elem_bytes;
 			const hsize_t slab = n_ids * row_bytes;
 			TimeSeriesPlan p;
-			if (slab <= target) {
-				p.chunk_ids = n_ids;
-				p.ct = slab ? target / slab : 1;
-				if (p.ct < 1) p.ct = 1;
-				if (p.ct > 1024) p.ct = 1024;
-			}
-			else {
-				p.ct = row_budget / slab;
-				if (p.ct < 1) p.ct = 1;
-				if (p.ct > 16) p.ct = 16;
-				p.chunk_ids = target / (p.ct * row_bytes);
+			if (compressed) {
+				const hsize_t target = (hsize_t)1 << 20;      // <= 1 MiB per chunk
+				p.ct = 1;
+				p.chunk_ids = row_bytes ? target / row_bytes : 1;
 				if (p.chunk_ids < 1) p.chunk_ids = 1;
 				if (p.chunk_ids > n_ids) p.chunk_ids = n_ids;
+			}
+			else {
+				const hsize_t target = (hsize_t)64 << 10;     // ~64 KiB per chunk
+				const hsize_t row_budget = (hsize_t)2 << 20;  // ct x slab held in cache
+				if (slab <= target) {
+					p.chunk_ids = n_ids;
+					p.ct = slab ? target / slab : 1;
+					if (p.ct < 1) p.ct = 1;
+					if (p.ct > 1024) p.ct = 1024;
+				}
+				else {
+					p.ct = row_budget / slab;
+					if (p.ct < 1) p.ct = 1;
+					if (p.ct > 16) p.ct = 16;
+					p.chunk_ids = target / (p.ct * row_bytes);
+					if (p.chunk_ids < 1) p.chunk_ids = 1;
+					if (p.chunk_ids > n_ids) p.chunk_ids = n_ids;
+				}
 			}
 			const hsize_t tiles = (n_ids + p.chunk_ids - 1) / p.chunk_ids;
 			const hsize_t chunk_bytes = p.ct * p.chunk_ids * row_bytes;
@@ -417,27 +444,40 @@ namespace h5 {
 			return p;
 		}
 
-		// Create a [0 x nIds x nComp] extensible dataset with the WP-164 plan and a
-		// sized chunk cache; deflate 0 disables the shuffle+deflate filters.
+		// The dataset access list (sized chunk cache, w0 = 1: evict fully written
+		// chunks first) for a time-series DATA, at create and at every reopen.
+		inline hid_t timeSeriesAccessList(hsize_t n_ids, hsize_t n_comp, hid_t disk_type, int deflate) {
+			hsize_t elem_bytes = (H5Tequal(disk_type, H5T_IEEE_F32LE) > 0) ? 4 : 8;
+			TimeSeriesPlan p = planTimeSeries(n_ids, n_comp, elem_bytes,
+				timeSeriesCompressed(n_ids, n_comp, elem_bytes, deflate));
+			hid_t dapl = H5Pcreate(H5P_DATASET_ACCESS);
+			if (dapl >= 0 && H5Pset_chunk_cache(dapl, p.cache_slots, p.cache_bytes, 1.0) < 0) {
+				H5Pclose(dapl);
+				return HID_INVALID;
+			}
+			return dapl;
+		}
+
+		// Create a [0 x nIds x nComp] extensible dataset with the plan above;
+		// deflate 0 = unfiltered 64 KiB layout, deflate > 0 = one step per chunk.
 		inline hid_t createTimeSeries3dOpen(hid_t obj, const char *name, hsize_t n_ids,
 		                                    hsize_t n_comp, hid_t disk_type, int deflate) {
 			if (n_ids < 1 || n_comp < 1) return HID_INVALID;
 			hsize_t elem_bytes = (H5Tequal(disk_type, H5T_IEEE_F32LE) > 0) ? 4 : 8;
-			TimeSeriesPlan p = planTimeSeries(n_ids, n_comp, elem_bytes);
+			const bool compressed = timeSeriesCompressed(n_ids, n_comp, elem_bytes, deflate);
+			TimeSeriesPlan p = planTimeSeries(n_ids, n_comp, elem_bytes, compressed);
 			hsize_t dims[3]    = { 0, n_ids, n_comp };
 			hsize_t maxdims[3] = { H5S_UNLIMITED, n_ids, n_comp };
 			hsize_t chunk[3]   = { p.ct, p.chunk_ids, n_comp };
 			hid_t space = H5Screate_simple(3, dims, maxdims);
 			if (space < 0) return HID_INVALID;
 			hid_t dcpl = H5Pcreate(H5P_DATASET_CREATE);
-			hid_t dapl = H5Pcreate(H5P_DATASET_ACCESS);
+			hid_t dapl = timeSeriesAccessList(n_ids, n_comp, disk_type, deflate);
 			herr_t st = (dcpl >= 0 && dapl >= 0) ? H5Pset_chunk(dcpl, 3, chunk) : -1;
-			if (st >= 0 && deflate > 0) {
+			if (st >= 0 && compressed) {
 				st = H5Pset_shuffle(dcpl);
 				if (st >= 0) st = H5Pset_deflate(dcpl, (unsigned)(deflate > 9 ? 9 : deflate));
 			}
-			// w0 = 1.0: evict fully written chunks first.
-			if (st >= 0) st = H5Pset_chunk_cache(dapl, p.cache_slots, p.cache_bytes, 1.0);
 			hid_t dset = (st >= 0)
 				? H5Dcreate(obj, name, disk_type, space, H5P_DEFAULT, dcpl, dapl)
 				: HID_INVALID;
@@ -653,11 +693,35 @@ namespace h5 {
 		inline hid_t create(const char *filename, hid_t create_plist, hid_t acc_plist) {
 			return H5Fcreate(filename, H5F_ACC_TRUNC, create_plist, acc_plist);
 		}
-#ifdef LADRUNO_USE_SWMR
+		// WP-233: reopen read-write to lay out objects SWMR may not create.
+		inline hid_t openRW(const char *filename, hid_t acc_plist) {
+			return H5Fopen(filename, H5F_ACC_RDWR, acc_plist);
+		}
+		// WP-233: arm SWMR writing (latest format required; only appends after).
 		inline herr_t startSWMR(hid_t file_id) {
 			return H5Fstart_swmr_write(file_id);
 		}
-#endif // LADRUNO_USE_SWMR
+		// WP-233: the recorder's file access list: the latest format (SWMR needs
+		// it; extensible-array chunk indexes). The close degree stays the default
+		// (weak): HDF5's atexit close of a deck that never wipes must still flush
+		// and close the file; openLayout() checks openObjects() before closing.
+		inline hid_t accessList() {
+			hid_t fapl = H5Pcreate(H5P_FILE_ACCESS);
+			if (fapl < 0) return HID_INVALID;
+			if (H5Pset_libver_bounds(fapl, H5F_LIBVER_LATEST, H5F_LIBVER_LATEST) < 0) {
+				H5Pclose(fapl);
+				return HID_INVALID;
+			}
+			return fapl;
+		}
+		// WP-233: objects (datasets, groups, named types, attributes) still open
+		// in the file. With a weak close degree, H5Fclose with any of them open
+		// would leave the file open, still in SWMR mode, and the reopen would
+		// then hand back that same open file.
+		inline ssize_t openObjects(hid_t file_id) {
+			return H5Fget_obj_count(file_id, H5F_OBJ_DATASET | H5F_OBJ_GROUP |
+			                                 H5F_OBJ_DATATYPE | H5F_OBJ_ATTR | H5F_OBJ_LOCAL);
+		}
 	}
 
 	namespace plist {
@@ -691,6 +755,20 @@ namespace h5 {
 		}
 		inline herr_t setLibVerBounds(hid_t plist_id, unsigned int minor, unsigned int major) {
 			return H5Pset_libver_bounds(plist_id, (H5F_libver_t)minor, (H5F_libver_t)major);
+		}
+		// WP-233 (#1082): a group that gains links during a run (the root gains a
+		// MODEL_STAGE per stage; a modes result's DATA gains a STEP_<k> per
+		// snapshot) keeps its links COMPACT for good and gets an object header
+		// sized for `n_links` up front (at most ~1,500: one 64 KiB header chunk; past
+		// that HDF5 ignores the estimate), so adding one link is ONE in-place write of
+		// that header. By default a group goes dense after 8 links (a fractal heap
+		// and v2 B-trees rewritten in place) or grows a continuation chunk, and a
+		// kill inside the layout flush (which runs without SWMR) then left the
+		// group unreadable: measured on the root, every stage lost
+		// (recorder_crash_replay.py, --no-presize).
+		inline herr_t presizeLinks(hid_t gcpl, unsigned n_links, unsigned name_len) {
+			if (H5Pset_link_phase_change(gcpl, 65535, 65534) < 0) return -1;
+			return H5Pset_est_link_info(gcpl, n_links, name_len);
 		}
 	}
 

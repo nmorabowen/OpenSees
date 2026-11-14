@@ -80,6 +80,10 @@ machine, different layout — not a contradiction, and not a Windows recipe.
 | `mpm_crash_tests/kill_stress.py` | Kill stress of the MPM particle writer (WP-232c): runs the real `dist\bin\opensees.pyd`, kills it N times at fixed and random waits, and checks that each `.ladruno` reads by the reader rule and crash rule (232a §2.5) |
 | `mpm_crash_tests/reset_stress.py` | Kill stress across `mpm reset` (WP-232c): kills the real binary while it alternates `mpm analyze` and `mpm reset`, classifies each file by the reader rule (plain, SWMR-read, or refused) and recovers refused files on a copy with `recover_particle_file` (232a §2.5 step 3) |
 | `mpm_crash_tests/hdf5_crash_replay.py` | Byte-level crash replay model of the MPM writer's HDF5 call pattern in h5py (no binary): rebuilds the file at every kill point and checks every committed output; shows the pre-SWMR index-split tear and that SWMR removes it |
+| `ladruno_recorder_tests/recorder_crash_replay.py` | The same byte-level crash replay for `recorder ladruno` (h5py mirror, no binary): the WP-233 SWMR writer with its layout steps (stages, KIND rewrite, modes snapshots, envelopes), or the pre-WP-233 writer (`--writer wp164`); every kill point read by schema §7b.2 and checked exactly |
+| `ladruno_recorder_tests/recorder_kill_stress.py` | Real-time kill stress of that h5py mirror (sec2 driver, wall-clock `-flush`): TerminateProcess at random waits, then the replay's checker |
+| `ladruno_recorder_tests/recorder_swmr_layout_bench.py` | WP-233 (#1082): file size, write time and one-id history read time of the candidate streaming `DATA` layouts under SWMR (WP-164 deflate, unfiltered at several chunk targets, one step per chunk, unfiltered partial edge chunks), real file, recorder call pattern |
+| `ladruno_recorder_tests/recorder_binary_kill_stress.py` | WP-233 (#1082): kill stress of `recorder ladruno` on the REAL binary (`dist/bin/opensees.pyd`), per lifecycle window (`--mode steady/stages/kind/modes/envelope`); each killed file is read by schema §7b.2 and compared bit-exactly with a reference run of the same deck |
 
 ### Environment wiring
 | Script | Purpose |

@@ -7,8 +7,10 @@ are written (Ladruno_implementation/164_ladruno_recorder_write_path.md):
     cadence (`-flush <s>`, default 10 s; `-flush 0` = every step, the old path).
     Gate: the two produce IDENTICAL arrays.
   * chunks target ~1 MiB; a slab above 1 MiB tiles the id axis (one entity's
-    history no longer inflates the whole dataset).
-  * `-compress <0..9>` sets the deflate level; 0 drops the shuffle+deflate filters.
+    history no longer inflates the whole dataset). WP-233 changed the plan for SWMR
+    (tests/test_ladruno_recorder_swmr.py): one step per chunk when compressed.
+  * `-compress <0..9>` sets the deflate level; 0 drops the shuffle+deflate filters
+    (WP-233: so does a slab under 4 KiB).
   * `-envelope` creates its datasets once and overwrites them in place (it used to
     delete and recreate every group every step, so the file grew with the step
     count). Gate: the file size does not grow with the number of steps.
@@ -120,8 +122,10 @@ def test_large_slab_tiles_the_id_axis(tmp_path):
 
 @pytest.mark.parametrize("level,expect", [(0, None), (1, "gzip"), (9, "gzip")])
 def test_compress_option_sets_the_filter(tmp_path, level, expect):
+    # WP-233: a 343-node block (an 8 KiB displacement slab): only a slab of >= 4 KiB
+    # takes the compressed layout (one step per chunk)
     path = str(tmp_path / f"c{level}.ladruno")
-    top = _brick_block(2, 2, 2)
+    top = _brick_block(6, 6, 6)
     ops.recorder("ladruno", path, "-N", "displacement", "-compress", level)
     _run_static(top, 2)
     with h5py.File(path, "r") as f:
@@ -135,7 +139,7 @@ def test_compress_option_sets_the_filter(tmp_path, level, expect):
 def test_default_compress_level_is_1(tmp_path):
     """Default deflate level is 1 (owner decision 2026-10-03; was a hard-coded 4)."""
     path = str(tmp_path / "cdef.ladruno")
-    top = _brick_block(2, 2, 2)
+    top = _brick_block(6, 6, 6)        # WP-233: an 8 KiB slab (>= 4 KiB compresses)
     ops.recorder("ladruno", path, "-N", "displacement")
     _run_static(top, 2)
     with h5py.File(path, "r") as f:

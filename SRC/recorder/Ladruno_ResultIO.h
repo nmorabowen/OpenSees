@@ -117,7 +117,8 @@ namespace ladruno {
 
 		// Create groups + the ID dataset for this source's result. The recorder
 		// does not call this directly: both sinks begin lazily on their first
-		// accept() (the sink is new for every MODEL_STAGE).
+		// accept() (the sink is new for every MODEL_STAGE), and the recorder makes
+		// that step a layout step (WP-233), so the creation happens before SWMR.
 		virtual void begin(detail::ProcessInfo& info, const ResultSource& src) = 0;
 
 		// Persist one step's buffer. NOT partition-reduced: each rank writes its
@@ -129,6 +130,19 @@ namespace ladruno {
 		// Flush any deferred datasets (envelope writes its accumulators here).
 		// Called on stage change, periodically, and at recorder teardown.
 		virtual void finalize(detail::ProcessInfo& info) = 0;
+
+		// ---- WP-233 (#1082): the SWMR lifecycle ------------------------------
+		// The file is in SWMR-write mode except during a layout step (see
+		// ProcessInfo::layout_open), and SWMR forbids creating objects. A sink
+		// creates only while info.layout_open, and says here when it still must.
+		virtual bool needsLayout() const { return false; }
+		// Close / reopen every HDF5 object handle the sink holds, around the
+		// recorder's close + read-write reopen + H5Fstart_swmr_write.
+		virtual void releaseHandles() {}
+		virtual bool reacquireHandles(detail::ProcessInfo& /*info*/) { return true; }
+		// Append the row held back during a layout step, once SWMR is armed (no
+		// streaming row is ever written outside SWMR).
+		virtual void commitPending(detail::ProcessInfo& /*info*/) {}
 	};
 
 } // namespace ladruno
