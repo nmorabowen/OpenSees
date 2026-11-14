@@ -264,6 +264,9 @@ struct Obs {
   double momDev = 0.0;            // max |momentum| component deviation from the expectation
   double E0 = 0.0, Eend = 0.0;
   bool refused = false, accepted = true;
+  int refusedStep = 0;            // 1-based (A7), 0 when none
+  long long refusedId = -1;
+  bool inside = true;             // every committed state inside the real grid (A7)
 };
 
 static double energy(const Engine &E, const Hypoelastic &M)
@@ -413,6 +416,8 @@ static void runCase(const Case &c)
     if (bad >= 0 || c.dt > E.par.safety * dtc) {
       if (s == 0) o.refused = true;
       o.accepted = false;
+      o.refusedStep = s + 1;
+      if (bad >= 0) o.refusedId = (long long)E.P.id[bad];
       std::printf("note: %s refused at step %d (%s)\n", c.name.c_str(), s,
                   bad >= 0 ? "inadmissible particle" : "dt above s*dt_crit");
       break;
@@ -422,10 +427,14 @@ static void runCase(const Case &c)
     std::string err;
     if (E.advance(c.dt, lam, M, err) != 0) {
       o.accepted = false;
+      o.refusedStep = s + 1;
+      const size_t at = err.find("particle ");
+      if (at != std::string::npos) o.refusedId = std::stoll(err.substr(at + 9));
       std::printf("note: %s failed at step %d: %s\n", c.name.c_str(), s, err.c_str());
       break;
     }
     t = t1;
+    o.inside = o.inside && E.firstInadmissible() < 0;
     sample(E, o, t);
     momentum(mv);
     for (int d = 0; d < nd; d++) momMax[d] = std::max(momMax[d], std::fabs(mv[d]));
@@ -435,6 +444,15 @@ static void runCase(const Case &c)
   for (const auto &e : c.expects) {
     const std::string &ob = e.obs;
     std::vector<double> got;
+    if (ob == "committed_inside_grid") {
+      g_checks++;
+      const bool ok = o.inside && E.firstInadmissible() < 0;
+      std::printf("%s: %s committed_inside_grid\n", ok ? "ok  " : "FAIL", c.name.c_str());
+      if (!ok) g_fail++;
+      continue;
+    }
+    if (ob == "refused_step") { verdict(c, e, {(double)o.refusedStep}); continue; }
+    if (ob == "refused_id") { verdict(c, e, {(double)o.refusedId}); continue; }
     if (ob == "refused") { g_checks++; if (!o.refused) { std::printf("FAIL: %s expected refused\n", c.name.c_str()); g_fail++; } else std::printf("ok  : %s refused\n", c.name.c_str()); continue; }
     if (ob == "accepted") { g_checks++; if (!o.accepted) { std::printf("FAIL: %s expected accepted\n", c.name.c_str()); g_fail++; } else std::printf("ok  : %s accepted\n", c.name.c_str()); continue; }
     if (ob == "particle_fields") {
