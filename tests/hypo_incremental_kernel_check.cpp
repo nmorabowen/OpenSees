@@ -181,6 +181,22 @@ static void selfTests()
     pushStress6(R3, s6, o6);
     check(std::fabs(o3[0] - o6[0]) + std::fabs(o3[1] - o6[1]) + std::fabs(o3[2] - o6[3]) < 1e-14,
           "ps: pushStressPlaneStrain == pushStress6 embedded");
+    // WP-232f: the plane-strain tangent push equals the {xx,yy,xy} block of
+    // pushTangent6 on a 6x6 tangent whose out-of-plane rows/columns are arbitrary.
+    const double D3[9] = {7.0, 2.5, 0.3,  2.1, 6.0, -0.4,  0.2, -0.6, 1.9};
+    double D6[36];
+    for (int k = 0; k < 36; k++) D6[k] = 0.37 * (k % 7) - 0.5;   // out-of-plane junk
+    const int ix[3] = {0, 1, 3};
+    for (int r = 0; r < 3; r++)
+      for (int c = 0; c < 3; c++) D6[6 * ix[r] + ix[c]] = D3[3 * r + c];
+    double O3[9], O6[36];
+    pushTangentPlaneStrain(R2, D3, O3);
+    pushTangent6(R3, D6, O6);
+    double dmax = 0.0;
+    for (int r = 0; r < 3; r++)
+      for (int c = 0; c < 3; c++)
+        dmax = std::max(dmax, std::fabs(O3[3 * r + c] - O6[6 * ix[r] + ix[c]]));
+    check(dmax < 1e-13, "ps: pushTangentPlaneStrain == pushTangent6 embedded block");
   }
 }
 

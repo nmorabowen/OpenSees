@@ -52,16 +52,27 @@
 // table; LadrunoJ2 -autoRegularization (a length consumer); initial stress on a
 // non-elastic material (Q2: no yield-consistent seeding in v1); database
 // save / restore (sendSelf / recvSelf); OpenSeesSP / OpenSeesMP (the command).
+//
+// MODE A (WP-232f, ADR 232 §5.3, tests/mpm_implicit_interface.md): `mpm mode
+// implicit | quasiStatic` makes every particle a LadrunoMPMPoint element and the
+// active support nodes Domain nodes, re-pointed every step; the user's
+// Transient / Static analysis solves the step (LadrunoMPMImplicit.cpp). The
+// host implements LadrunoMPMPointHost: it owns the particle state, runs the
+// batched G2P at the last particle commit, and owns the grid conditions as its
+// own SP_Constraints. Database save / restore is admitted in mode A only.
 
 #ifndef LadrunoMPMPattern_h
 #define LadrunoMPMPattern_h
 
 #include <LoadPattern.h>
-#include <LadrunoMPMCore.h>
+#include "LadrunoMPMCore.h"
 #include "LadrunoMPMIO.h"
+#include "../../../element/ladrunoMPMPoint/LadrunoMPMPoint.h"
 
 #include <map>
+#include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 class NDMaterial;
@@ -71,8 +82,27 @@ class FEM_ObjectBroker;
 class OPS_Stream;
 class Parameter;
 class Information;
+class StaticAnalysis;
+class DirectIntegrationAnalysis;
+class StaticIntegrator;
+class TransientIntegrator;
+class ConstraintHandler;
+class SP_Constraint;
+class Node;
 
-class LadrunoMPMPattern : public LoadPattern
+// The user's analysis, as each engine's bridge sees it (interface §4): classic
+// Tcl from its globals (commands.cpp), Python from the `cmds` singleton
+// (OpenSeesCommands.cpp). Mode F needs none.
+struct LadrunoMPMAnalysisRefs {
+  StaticAnalysis            *sa = 0;
+  DirectIntegrationAnalysis *ta = 0;
+  StaticIntegrator          *si = 0;
+  TransientIntegrator       *ti = 0;
+  ConstraintHandler         *handler = 0;
+  bool                       bridged = false;   // an engine bridge filled it
+};
+
+class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
 {
  public:
   explicit LadrunoMPMPattern(int tag);
@@ -141,6 +171,40 @@ class LadrunoMPMPattern : public LoadPattern
   // Run nSteps explicit steps of dt. 0 on success; -1 on a refusal or failure
   // (message printed).
   int    analyze(int nSteps, double dt);
+
+  // ---- mode A (WP-232f) -----------------------------------------------------------
+  enum Mode { MODE_EXPLICIT = 0, MODE_IMPLICIT = 1, MODE_QUASISTATIC = 2 };
+  int    setMode(Mode m, std::string &err);
+  Mode   mode(void) const { return theMode; }
+  // `mpm analyze` in mode A (interface §3): nSteps of dt through the user's analysis
+  int    analyzeImplicit(int nSteps, double dt, const LadrunoMPMAnalysisRefs &A);
+  // `mpm gridvel <name> box <lo> <hi> v <value|free ..> [start t0] [track axis]`
+  int    addGridVel(const std::string &name, const double *lo, const double *hi,
+                    const double *v, unsigned freeMask, double start, int track, std::string &err);
+  // `mpm condForce <name>`: ndm doubles at the last accepted step
+  int    condForce(const std::string &name, std::vector<double> &out, std::string &err);
+  // `mpm pforce <body> box <lo> <hi> <f>`: returns the count of particles
+  int    addPointForce(int body, const double *lo, const double *hi, const double *f, std::string &err);
+  void   setMassCutoffUser(double c) { eng.par.masscut = c; masscutUser = true; }
+  void   setEmptyNodes(double gamma) { ghostGamma = gamma; }      // < 0: exclude
+  void   setCut(double factor, int maxCuts) { cutFactor = factor; maxCutCount = maxCuts; }
+  int    setTagBases(int nodeBase, int eleBase, std::string &err);
+  void   setRayleighMPM(double am, double bk) { rayAlphaM = am; rayBetaK = bk; }
+  void   setDebugFail(int step, int attempts) { failStep = step; failAttempts = attempts; }
+  void   setDebugReseed(int m) { reseedMode = m; }               // 0 default, 1 always, 2 skip
+  // `mpm info` counters (interface §5)
+  long   infoCounter(const std::string &what, bool &ok) const;
+  const std::vector<double> &dtHistory(void) const { return dtLog; }
+  void   gridNodeTags(std::vector<double> &out) const;
+
+  // ---- LadrunoMPMPointHost --------------------------------------------------------
+  ladruno_mpm::Particles &mpmParticles(void) { return eng.P; }
+  const double *mpmBodyForce(int p);
+  bool   mpmTrialAdmissible(int p, const double *x);
+  bool   mpmFailThisAttempt(void) { return failNow; }
+  void   mpmParticleCommitted(int p);
+  void   mpmElementGone(int p);
+  double mpmGhostSpring(int p);
   // Particles back to the state at the first `mpm analyze` (materials
   // revertToStart). The Domain time is the user's (`reset` / `setTime`).
   int    reset(void);
@@ -174,12 +238,67 @@ class LadrunoMPMPattern : public LoadPattern
   std::vector<int>        idOrder;         // storage index of each particle, by id
 
   bool                    aborted;         // a commit refusal aborted the run (W17); `mpm reset` clears it
+
+  // ---- mode A state (WP-232f) -----------------------------------------------------
+  struct GridVel {
+    std::string name;
+    double lo[3], hi[3], v[3];
+    unsigned freeMask;          // bit d: component d free
+    double start;               // absent before start
+    int    track;               // -1, or the axis whose lower bound moves with v
+    std::vector<int> nodes;     // the node set of the current / last accepted step
+    std::vector<double> force;  // cond_force at the last accepted step
+  };
+  Mode                    theMode;
+  bool                    masscutUser;     // `mpm massCutoff` given: wins in both modes
+  double                  ghostGamma;      // < 0 exclude (phase 1), else ghost spring factor γ
+  double                  cutFactor;
+  int                     maxCutCount;
+  double                  rayAlphaM, rayBetaK;
+  std::vector<GridVel>    gridVels;
+  std::vector<double>     pforce;          // ndm per particle, scaled by λ
+  std::shared_ptr<LadrunoMPMHostLink> link;
+  std::vector<LadrunoMPMPoint *> eles;     // per particle; null before the first mode-A step
+  std::vector<char>       matOwnedByEle;   // per particle: the element owns mats[p]
+  std::unordered_map<long, int> liveTag;   // engine lattice index -> live grid node tag
+  bool                    basesSet;
+  int                     nodeBase, nextNodeTag, eleBase;
+  std::vector<int>        hostSPTags;      // this step's grid-condition SPs, by tag (owned by the
+                                           // pattern; `wipe` may delete them first, so never by pointer)
+  struct SpecRow { long ext; int dof; double value; bool constant;
+                   bool operator==(const SpecRow &o) const
+                   { return ext == o.ext && dof == o.dof && value == o.value && constant == o.constant; } };
+  std::vector<SpecRow>    lastSpec;        // the SP set those tags realise, in lattice terms
+  int                     hostPayloadDbTag;
+  bool                    elementsRestored; // restored with elements in the Domain: relink first
+  double                  stepT0;          // Domain time at the start of the attempt
+  bool                    failNow;
+  int                     failStep, failAttempts, reseedMode;
+  int                     armedCount, committedCount;
+  bool                    g2pRan, g2pSkipped;
+  long                    nG2P, nAccepted, nRetries, nDomainChanges, nConnChanges, epochSteps;
+  std::vector<double>     dtLog;
+  std::vector<double>     bfBuf;
+
+  double modeAMassCutoff(void) const;
+  int    prepareStep(double h, std::string &err);
+  int    createElements(std::string &err);
+  int    relinkElements(std::string &err);
+  void   removeHostSPs(void);
+  void   retireNode(long ext);
+  void   teardownModeA(void);
+  void   updateCondForces(void);
+  int    admitAnalysis(const LadrunoMPMAnalysisRefs &A, std::string &err);
+  int    writeAfterStep(std::string &err);
+  int    packState(Vector &v);
+  int    unpackState(const Vector &v);
   struct ParamRef { Domain *domain; int tag; Parameter *param; };
   std::vector<ParamRef>   paramRefs;       // Parameters that hold our materials (F2)
 
   void detachParameters(void);
   int  admitMaterial(int matTag, NDMaterial *&copy, bool &isElastic, std::string &err);
   bool domainHasFreeDOF(std::string &which);
+  bool isGridNode(int tag) const;
   void nameBody(int body);
   int  openOutputStage(std::string &err);
   int  writeOutputNow(std::string &err);

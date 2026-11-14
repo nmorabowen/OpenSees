@@ -51,12 +51,26 @@
 //   mpm reset
 //   mpm info <numParticles|epoch|time|summary>  summary: [mass, momentum.., max |v|, KE]
 //   mpm particleData <field>              -> flat list over particles in storage order;
-//        field: id body mat m V0 V x v lp F R sig sigHat epsHat sig0
+//        field: id body mat m V0 V x v a lp F R sig sigHat epsHat sig0
 //   mpm debug shape <x..> -lp <lp..>      -> [node S dS..]* (interface Q4)
 //   mpm debug shape1d <h> <lp> <r>        -> S dS
 //   mpm debug activeNodes                 -> sorted active node ids at the committed state
 //   mpm debug injectRefusal | staleRefusal | aborted   W17 test hooks (a refusal at the next
 //                                         particle commit; a stale WP-99 count; the abort latch)
+//
+// Mode A (WP-232f, tests/mpm_implicit_interface.md §5):
+//   mpm mode explicit|implicit|quasiStatic
+//   mpm gridvel <name> box <lo..> <hi..> v <value|free ..> [start <t0>] [track <axis>]
+//   mpm condForce <name>                  -> ndm doubles at the last accepted step
+//   mpm pforce <body> box <lo..> <hi..> <f..>   -> count
+//   mpm emptyNodes exclude | ghost <gamma>
+//   mpm cut <factor> <maxCuts>  |  mpm tagBase <nodeBase> <eleBase>  |  mpm rayleigh <alphaM> <betaK>
+//   mpm info g2p|acceptedSteps|retries|domainChanges|connectivityChanges|gridNodes|mode
+//   mpm info dtHistory | gridNodeTags     -> lists
+//   mpm debug failAttempt <k> [<attempts>] | reseed default|always|skip
+// `mpm analyze` in mode A needs the user's analysis: the engine bridges hand it
+// in through OPS_LadrunoMPMWithAnalysis (classic Tcl: commands.cpp; Python /
+// DL Tcl: OPS_LadrunoMPMDL in OpenSeesCommands.cpp).
 //
 // Refused in OpenSeesSP / OpenSeesMP (ADR 232 §5.1, v1).
 
@@ -78,6 +92,9 @@
 extern TimeSeries *OPS_getTimeSeries(int tag);
 
 namespace {
+
+// The analysis of the engine whose bridge is running this command (WP-232f).
+const LadrunoMPMAnalysisRefs *g_refs = 0;
 
 int fail(const std::string &msg)
 {
@@ -331,6 +348,7 @@ int particleField(const ladruno_mpm::Particles &P, const std::string &f, std::ve
   else if (f == "V") out = P.V;
   else if (f == "x") out = P.x;
   else if (f == "v") out = P.v;
+  else if (f == "a") out = P.a;
   else if (f == "lp") out = P.lp;
   else if (f == "F") out = P.F;
   else if (f == "R") out = P.R;
@@ -360,6 +378,44 @@ void summary(const ladruno_mpm::Particles &P, int nd, std::vector<double> &out)
   for (int d = 0; d < nd; d++) out.push_back(mom[d]);
   out.push_back(vmax);
   out.push_back(ke);
+}
+
+// gridvel <name> box <lo..> <hi..> v <value|free ..> [start <t0>] [track <axis>]
+int cmdGridVel(LadrunoMPMPattern *h)
+{
+  const int nd = h->engine().ndm();
+  const char *usage = "gridvel <name> box <lo..> <hi..> v <value|free ..> [start <t0>] [track x|y|z]";
+  if (OPS_GetNumRemainingInputArgs() < 2) return fail(usage);
+  const std::string name = OPS_GetString();
+  if (std::string(OPS_GetString()) != "box") return fail(usage);
+  double lo[3] = {0, 0, 0}, hi[3] = {0, 0, 0}, v[3] = {0, 0, 0};
+  if (!readDoubles(nd, lo) || !readDoubles(nd, hi)) return fail(usage);
+  if (OPS_GetNumRemainingInputArgs() < nd + 1 || std::string(OPS_GetString()) != "v") return fail(usage);
+  unsigned freeMask = 0;
+  for (int d = 0; d < nd; d++) {
+    const std::string tok = OPS_GetString();
+    if (tok == "free") { freeMask |= 1u << d; continue; }
+    char *end = 0;
+    v[d] = strtod(tok.c_str(), &end);
+    if (end == tok.c_str() || *end != '\0') return fail(std::string("gridvel -- '") + tok + "' is not a number or 'free'");
+  }
+  double start = -1e300;
+  int track = -1;
+  while (OPS_GetNumRemainingInputArgs() > 0) {
+    const std::string opt = OPS_GetString();
+    if (opt == "start") {
+      if (!readDoubles(1, &start)) return fail(usage);
+    } else if (opt == "track") {
+      const std::string ax = OPS_GetNumRemainingInputArgs() > 0 ? OPS_GetString() : "";
+      track = ax.empty() ? -1 : ax[0] - 'x';
+      if (ax.size() != 1 || track < 0 || track >= nd) return fail("gridvel track x|y[|z]");
+    } else {
+      return fail("gridvel -- unknown option '" + opt + "'");
+    }
+  }
+  std::string err;
+  if (h->addGridVel(name, lo, hi, v, freeMask, start, track, err) < 0) return fail("gridvel -- " + err);
+  return 0;
 }
 
 int cmdDebug(LadrunoMPMPattern *h)
@@ -396,6 +452,21 @@ int cmdDebug(LadrunoMPMPattern *h)
   if (what == "injectRefusal") { h->injectCommitRefusal(); return 0; }   // W17 test hook
   if (what == "staleRefusal") { h->injectStaleRefusal(); return 0; }     // W17 test hook
   if (what == "aborted") return outInt(h->isAborted() ? 1 : 0);
+  if (what == "failAttempt") {                                         // WP-232f retry test hook
+    int k, m = 1;
+    if (!readInt(k)) return fail("debug failAttempt <step> [<attempts>]");
+    if (OPS_GetNumRemainingInputArgs() > 0 && !readInt(m)) return fail("debug failAttempt <step> [<attempts>]");
+    h->setDebugFail(k, m);
+    return 0;
+  }
+  if (what == "reseed") {                                              // WP-232f re-seed test hook
+    const std::string m = OPS_GetNumRemainingInputArgs() > 0 ? OPS_GetString() : "";
+    if (m == "default") h->setDebugReseed(0);
+    else if (m == "always") h->setDebugReseed(1);
+    else if (m == "skip") h->setDebugReseed(2);
+    else return fail("debug reseed default|always|skip");
+    return 0;
+  }
   if (what == "activeNodes") {
     std::vector<long> act;
     E.activeNodes(act);
@@ -418,8 +489,9 @@ int ladrunoMPMDoubleQuery(Domain *dom, const std::vector<std::string> &a, std::v
   out.clear();
   if (a.empty()) return 0;
   const std::string &sub = a[0];
-  const bool q = sub == "criticalTimeStep" || sub == "particleData" ||
-                 (sub == "info" && a.size() > 1 && (a[1] == "time" || a[1] == "summary"));
+  const bool q = sub == "criticalTimeStep" || sub == "particleData" || sub == "condForce" ||
+                 (sub == "info" && a.size() > 1 && (a[1] == "time" || a[1] == "summary" ||
+                                                     a[1] == "dtHistory" || a[1] == "gridNodeTags"));
   if (!q) return 0;
   if (ladruno_parallelBuild())
     return fail("-- refused in OpenSeesSP / OpenSeesMP: v1 MPM is serial (ADR 232 §5.1)");
@@ -431,9 +503,40 @@ int ladrunoMPMDoubleQuery(Domain *dom, const std::vector<std::string> &a, std::v
     if (a.size() < 2) return fail("particleData <field>");
     return particleField(E.P, a[1], out) < 0 ? -1 : 1;
   }
+  if (sub == "condForce") {
+    if (a.size() < 2) return fail("condForce <name>");
+    std::string err;
+    if (h->condForce(a[1], out, err) < 0) return fail("condForce -- " + err);
+    return 1;
+  }
   if (a[1] == "time") { out.assign(1, dom->getCurrentTime()); return 1; }
+  if (a[1] == "dtHistory") { out = h->dtHistory(); return 1; }
+  if (a[1] == "gridNodeTags") { h->gridNodeTags(out); return 1; }
   summary(E.P, E.ndm(), out);
   return 1;
+}
+
+int OPS_LadrunoMPM(void);
+
+// The engine bridges (WP-232f, interface §4): classic Tcl (commands.cpp) and
+// Python / DL Tcl (OPS_LadrunoMPMDL, OpenSeesCommands.cpp) hand in the user's
+// analysis; `mpm analyze` in mode A uses it.
+int OPS_LadrunoMPMWithAnalysis(StaticAnalysis *sa, DirectIntegrationAnalysis *ta,
+                               StaticIntegrator *si, TransientIntegrator *ti,
+                               ConstraintHandler *handler)
+{
+  LadrunoMPMAnalysisRefs r;
+  r.sa = sa;
+  r.ta = ta;
+  r.si = si;
+  r.ti = ti;
+  r.handler = handler;
+  r.bridged = true;
+  const LadrunoMPMAnalysisRefs *saved = g_refs;
+  g_refs = &r;
+  const int rc = OPS_LadrunoMPM();
+  g_refs = saved;
+  return rc;
 }
 
 int OPS_LadrunoMPM(void)
@@ -444,7 +547,8 @@ int OPS_LadrunoMPM(void)
   if (dom == 0) return fail("-- no Domain");
   if (OPS_GetNumRemainingInputArgs() < 1)
     return fail("<grid|body|particles|units|output|shift|particle|velocity|stress|fix|wall|gravity|timeSeries|damping|flip|"
-                "massCutoff|safety|criticalTimeStep|analyze|reset|info|particleData|debug> ...");
+                "massCutoff|safety|criticalTimeStep|analyze|reset|info|particleData|debug|mode|gridvel|"
+                "condForce|pforce|emptyNodes|cut|tagBase|rayleigh> ...");
   const std::string sub = OPS_GetString();
   if (sub == "grid") return cmdGrid(dom);
 
@@ -564,7 +668,58 @@ int OPS_LadrunoMPM(void)
   if (sub == "massCutoff") {
     double a;
     if (!readDoubles(1, &a) || a < 0.0) return fail("massCutoff -- c_m >= 0");
-    E.par.masscut = a;
+    h->setMassCutoffUser(a);      // wins in both modes (mode-A default 1e-6, mode F 1e-10)
+    return 0;
+  }
+  if (sub == "mode") {
+    const std::string m = OPS_GetNumRemainingInputArgs() > 0 ? OPS_GetString() : "";
+    LadrunoMPMPattern::Mode md;
+    if (m == "explicit") md = LadrunoMPMPattern::MODE_EXPLICIT;
+    else if (m == "implicit") md = LadrunoMPMPattern::MODE_IMPLICIT;
+    else if (m == "quasiStatic") md = LadrunoMPMPattern::MODE_QUASISTATIC;
+    else return fail("mode explicit|implicit|quasiStatic");
+    std::string err;
+    if (h->setMode(md, err) < 0) return fail("mode -- " + err);
+    return 0;
+  }
+  if (sub == "gridvel") return cmdGridVel(h);
+  if (sub == "pforce") {
+    int body;
+    double lo[3], hi[3], f[3];
+    if (!readInt(body) || OPS_GetNumRemainingInputArgs() < 1 || strcmp(OPS_GetString(), "box") != 0 ||
+        !readDoubles(nd, lo) || !readDoubles(nd, hi) || !readDoubles(nd, f))
+      return fail("pforce <body> box <lo..> <hi..> <f..>");
+    std::string err;
+    const int n = h->addPointForce(body, lo, hi, f, err);
+    if (n < 0) return fail("pforce -- " + err);
+    return outInt(n);
+  }
+  if (sub == "emptyNodes") {
+    const std::string m = OPS_GetNumRemainingInputArgs() > 0 ? OPS_GetString() : "";
+    if (m == "exclude") { h->setEmptyNodes(-1.0); return 0; }
+    double g;
+    if (m == "ghost" && readDoubles(1, &g) && g >= 0.0) { h->setEmptyNodes(g); return 0; }
+    return fail("emptyNodes exclude | ghost <gamma >= 0>");
+  }
+  if (sub == "cut") {
+    double fct;
+    int k;
+    if (!readDoubles(1, &fct) || !readInt(k) || !(fct > 1.0) || k < 0)
+      return fail("cut <factor > 1> <maxCuts >= 0>");
+    h->setCut(fct, k);
+    return 0;
+  }
+  if (sub == "tagBase") {
+    int nb, eb;
+    if (!readInt(nb) || !readInt(eb)) return fail("tagBase <nodeBase> <eleBase>");
+    std::string err;
+    if (h->setTagBases(nb, eb, err) < 0) return fail("tagBase -- " + err);
+    return 0;
+  }
+  if (sub == "rayleigh") {
+    double r[2];
+    if (!readDoubles(2, r)) return fail("rayleigh <alphaM> <betaK> (betaK0 / betaKc are refused at particles)");
+    h->setRayleighMPM(r[0], r[1]);
     return 0;
   }
   if (sub == "safety") {
@@ -573,7 +728,7 @@ int OPS_LadrunoMPM(void)
     E.par.safety = a;
     return 0;
   }
-  if (sub == "criticalTimeStep" || sub == "particleData" ||
+  if (sub == "criticalTimeStep" || sub == "particleData" || sub == "condForce" ||
       (sub == "info" && OPS_GetNumRemainingInputArgs() > 0)) {
     std::vector<std::string> a(1, sub);
     if (sub != "criticalTimeStep" && OPS_GetNumRemainingInputArgs() > 0) a.push_back(OPS_GetString());
@@ -585,11 +740,17 @@ int OPS_LadrunoMPM(void)
     if (q > 0) return scalar ? outDouble(out[0]) : outDoubles(out);
     if (sub == "info") OPS_ResetCurrentInputArg(-1);   // not a double query: the int forms below
     if (sub == "particleData") return fail("particleData <field>");
+    if (sub == "condForce") return fail("condForce <name>");
   }
   if (sub == "analyze") {
     int n;
     double dt;
     if (!readInt(n) || !readDoubles(1, &dt)) return fail("analyze <nSteps> <dt>");
+    if (h->mode() != LadrunoMPMPattern::MODE_EXPLICIT) {
+      LadrunoMPMAnalysisRefs none;
+      if (h->analyzeImplicit(n, dt, g_refs != 0 ? *g_refs : none) < 0) return -1;
+      return outInt(0);
+    }
     if (h->analyze(n, dt) < 0) return -1;
     return outInt(0);
   }
@@ -598,7 +759,11 @@ int OPS_LadrunoMPM(void)
     const std::string what = OPS_GetNumRemainingInputArgs() > 0 ? OPS_GetString() : "numParticles";
     if (what == "numParticles") return outInt(E.P.size());
     if (what == "epoch") return outInt(h->particleEpoch());
-    return fail("info -- numParticles, epoch, time or summary");
+    bool ok = false;
+    const long c = h->infoCounter(what, ok);
+    if (ok) return outInt((int)c);
+    return fail("info -- numParticles, epoch, time, summary, g2p, acceptedSteps, retries, dtHistory,"
+                " domainChanges, connectivityChanges, gridNodes, gridNodeTags or mode");
   }
   if (sub == "debug") return cmdDebug(h);
   return fail("-- unknown sub-command '" + sub + "'");

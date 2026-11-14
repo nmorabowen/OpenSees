@@ -502,6 +502,7 @@
 #include "ladrunoDispBeamColumn/LadrunoDispBeamColumn3d.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoForceBeamColumn/LadrunoForceBeamColumn2d.h"	// N. Mora-Bowen (Ladruno)
 #include "ladrunoForceBeamColumn/LadrunoForceBeamColumn3d.h"	// N. Mora-Bowen (Ladruno)
+#include "ladrunoMPMPoint/LadrunoMPMPoint.h"	// Ladruno WP-232f: mode-A MPM particle element (restart)
 #include "ladrunoMembrane/LadrunoMembrane.h"	// N. Mora-Bowen (Ladruno) ADR 98
 #include "joint/Joint2D.h"		// Arash
 #include "joint/Inno3DPnPJoint.h" // Cristian Miculas
@@ -780,6 +781,7 @@
 #endif
 
 #include "ladrunoPorousOverlay/LadrunoPorousOverlay.h"	// N. Mora-Bowen (Ladruno) ADR 73
+#include "ladrunoMPM/LadrunoMPMPattern.h"	// Ladruno WP-232f: the MPM host (mode-A restart)
 
 #include "Parameter.h"
 #include "ElementParameter.h"
@@ -1113,6 +1115,9 @@ FEM_ObjectBrokerAllClasses::getNewElement(int classTag)
 
     case ELE_TAG_LadrunoForceBeamColumn3d:	// N. Mora-Bowen (Ladruno)
       return new LadrunoForceBeamColumn3d();
+
+    case ELE_TAG_LadrunoMPMPoint:	// Ladruno WP-232f: database restart of mode-A MPM particles
+      return new LadrunoMPMPoint();
 
     case ELE_TAG_LadrunoIMKBeam:	// N. Mora-Bowen (Ladruno)
       return new LadrunoIMKBeam();
@@ -2792,6 +2797,10 @@ FEM_ObjectBrokerAllClasses::getNewLoadPattern(int classTag)
 	// DB/MPI restore. Requires a default (tag-less) LadrunoPorousOverlay() ctor.
 	case PATTERN_TAG_LadrunoPorousOverlay:
 	     return new LadrunoPorousOverlay();
+
+	// Ladruno WP-232f: the MPM host, restored in mode A (mode F still refuses a save).
+	case PATTERN_TAG_LadrunoMPM:
+	     return new LadrunoMPMPattern();
 
 	default:
 	     opserr << "FEM_ObjectBrokerAllClasses::getPtrLoadPattern - ";
