@@ -84,7 +84,7 @@ reference scripts were not read. Decisions are numbered (D*n.m*) so a review can
   (phase 1 never removes a particle). Both bases default to 1 + the largest tag in use at the
   first mode-A step; `mpm tagBase <node> <ele>` overrides. A later collision fails loudly at add.
 - **D2.3 Empty support — phase-1 pick: exclude.** Active iff m_a > c_m·max m_p (mode F's rule,
-  `LadrunoMPMCore.h:544`; `mpm massCutoff`, default 1e-10). An inactive support node is neither
+  `LadrunoMPMCore.h:544`; `mpm massCutoff`; mode-A default 1e-6, mode F stays 1e-10 — freeze decision 2). An inactive support node is neither
   a Domain node nor in the particle's connectivity: it is held at zero increment, which is mode
   F's inactive-node semantics, with no renormalisation of S. A particle left with no active node
   is refused (W15: a zero-DOF element exits the process, `FE_Element.cpp:126-129`).
@@ -148,8 +148,6 @@ StaticIntegrator*; TransientIntegrator*; ConstraintHandler*; }` and a shared
 
 ## 5. Commands added to `mpm`
 
-| Command | Meaning |
-|---|---|
 Spellings follow `tests/mpm_implicit_cases.txt` (232f-V's grammar); its keys map one to one.
 
 | Command | Meaning |

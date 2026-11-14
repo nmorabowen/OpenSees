@@ -200,6 +200,11 @@ limit that bounds its reuse, in its own words where it has them.
 | W16 | `StaticAnalysis` exposes only `analyze(numSteps, flush)` — no `analyzeStep`, `getModel` or `checkDomainChange` — and has no sub-levels | quasi-static mode calls `analyze(1, false)` and flushes recorders itself | `StaticAnalysis.h:66`; `StaticAnalysis.cpp:128-236` |
 | W17 | A material's commit refusal cannot be undone: `Domain::commit` sees it after sibling points committed and aborts the analysis ("INCONSISTENT … aborted") | a refusal at particles aborts the run in both modes — no retry; no v1 material declares one (only `LadrunoConcrete3D`, `LadrunoHS`, `LadrunoSANISAND` do) | `Domain.cpp:2343-2355`; `LadrunoMaterialStatus.h:162-165` |
 
+> **Amendment (232f, 2026-11-14) to W4:** mode A also adds and retires grid nodes every step, which
+> changes `LadrunoRecorder`'s topology fingerprint: `recorder ladruno` would open a stage per step.
+> Mode-A output is `mpm output` only, and no recorder may watch grid nodes or particle elements
+> (their tags start above the user's and churn).
+
 ---
 
 ## 5. Architecture — the MPM driver
@@ -314,6 +319,24 @@ admits them; everything else is refused loudly.
 control on a rigid body or FE node, never on a grid node; arc-length is out of scope. Empty-support
 nodes are excluded or ghost-regularized — the choice is measured at M0b.
 
+> **Amendment (232f, 2026-11-14) — G2P batched at the last particle commit.** G2P still runs inside
+> `commitState()`, but once per step: each particle element commits its material and counts in;
+> the N-th particle commit of that `Domain::commit` runs G2P for every particle, unless
+> `ladrunoPendingCommitRefusals() > 0` (a read that does not clear). A refusal then leaves every
+> particle unmoved, as in mode F, and `Domain::commit` aborts (W17). A per-element G2P would move
+> the siblings committed before the refusing one. (`tests/mpm_implicit_interface.md` D1.9.)
+>
+> **Amendment (232f, 2026-11-14) — grid conditions are host-owned SPs.** Mode-A grid conditions
+> (`mpm fix`, `mpm gridvel`) are `SP_Constraint`s owned by the host pattern and rebuilt every step;
+> a prescribed velocity sets the value Δu = v·Δt through `applyConstraint(t − t₀)`. A
+> non-homogeneous one needs a non-Plain handler: `PlainHandler` assumes homogeneous
+> (`PlainHandler.cpp:92`), so `mpm analyze` refuses it there.
+>
+> **Amendment (232f, 2026-11-14) — quasi-static admits `LoadControl` only in phase 1.** There is no
+> FE–MPM seam (free FE DOFs stay refused), so no displacement-control node is admissible; every
+> `DisplacementControl` and every arc-length variant is refused. A failed quasi-static step is cut
+> through `LoadControl::setDeltaLambda`; the driver also sets Δλ = Δt on every step.
+
 ### 5.4 The step order, summarized
 
 1. Mode A transient: the driver calls `analyzeStep(dt)` directly (no sub-levels, W10) and owns any
@@ -325,6 +348,9 @@ nodes are excluded or ghost-regularized — the choice is measured at M0b.
    engine calls `Domain::commit()` (mode F). No Domain hook in either mode.
 4. G2P runs once per accepted step. Mode A retries only steps that failed before commit, so there
    is nothing to undo; a refusal at commit aborts the run in both modes (W17).
+
+> **Amendment (232f, 2026-11-14):** in mode A, item 3's G2P is batched at the last particle
+> element's `commitState()` (§5.3), so item 4's abort leaves the particles unmoved in both modes.
 
 ### 5.5 What was not chosen
 
@@ -375,6 +401,10 @@ stops at the first element that answers, which relies on process-static stage fl
 no length API; a length channel is later work, and before any length is declared for MPM, the band
 width is measured as a function of basis and particles per cell — cell size is not assumed to be the
 right length.
+
+> **Amendment (232f, 2026-11-14) — Rayleigh at particle elements.** `alphaM` and `betaK` (current
+> tangent) are admitted. `betaK0` and `betaKc` are refused at `mpm analyze`: the initial and the
+> committed stiffness belong to an earlier support, which re-pointing replaces every step.
 
 ---
 
@@ -706,6 +736,9 @@ ADR-88).
   apeGmsh's T coordinator session. 232a and 232b launched in parallel.
 - **2026-11-13** — the owner approved D7: ADR-86 D2's FE → MPM handoff moves to phase 9 (amendment
   note added to ADR-86 D2).
+- **2026-11-14** — 232f (phase 1, mode A): interface frozen (`tests/mpm_implicit_interface.md`
+  @ `41b0d68d9`); its five proposed amendments accepted and written in as "Amendment (232f,
+  2026-11-14)" notes at §5.3, §5.4, §6 and W4.
 
 ---
 
