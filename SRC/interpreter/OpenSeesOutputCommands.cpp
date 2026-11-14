@@ -1825,6 +1825,7 @@ int OPS_LadrunoMutation()   // Ladruno
         {"SANISAND",  LADRUNO_MUTATE_SANISAND},
         {"SHELLMOD",  LADRUNO_MUTATE_SHELLMOD},   // Ladruno: ADR 91
         {"CPML",      LADRUNO_MUTATE_CPML},       // Ladruno: C-PML wave absorbing element
+        {"MPM",       LADRUNO_MUTATE_MPM},        // Ladruno WP-232: explicit MPM engine
     };
     const char *modeName[] = {"NONE", "ZERO", "SCALE", "IDENT"};
 

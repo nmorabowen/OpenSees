@@ -248,6 +248,112 @@ inline bool hypoIncrement(int nNodes, const double *dNdX,
 }
 
 // --------------------------------------------------------------------------- //
+//  The incremental entry on (F_n, F_1) — WP-232 (MPM), interface §8           //
+// --------------------------------------------------------------------------- //
+//
+// hypoIncrement() above builds F from reference gradients and committed / trial
+// NODAL displacements. A material point carried by the MPM engine has neither:
+// the background grid is reset every step, so the particle carries F_n itself
+// and the step supplies F_1 = ΔF·F_n. This entry takes the two deformation
+// gradients directly and runs the same Hughes–Winget algebra
+// (tests/mpm_interface.md §8.2, frozen by WP-232b):
+//
+//   F_mid = ½ (F_n + F_1)                      refuse if det F_mid ≤ 0
+//   G     = (F_1 − F_n) · F_mid⁻¹
+//   Δε    = sym(G)
+//   R_mid = polar(F_mid)
+//   deps  = Voigt(R_midᵀ · Δε · R_mid), engineering shear
+//   R1    = polar(F_1),  J1 = det F_1          refuse if J1 ≤ 0
+//
+// With F_1 = I + Σ u_1 ⊗ ∇N and F_n = I + Σ u_n ⊗ ∇N this is the existing entry
+// (G = Σ Δu ⊗ ∇N · F_mid⁻¹ = (F_1 − F_n)·F_mid⁻¹); it is written separately, not
+// as a refactor, so the -geom hypo lane's arithmetic stays bit-for-bit as
+// verified (ADR-79). tests/hypo_incremental_kernel_check.cpp checks the two
+// entries against each other and against tests/hypo_incremental_cases.txt.
+//
+// Returns 0, or -1 when det(F_mid) ≤ 0, det(F_1) ≤ 0 or a polar fails; on -1
+// the outputs are left untouched.
+inline int hypoIncrementFromF(const double Fn[9], const double F1[9],
+                              double deps[6], double R1[9], double* J1)
+{
+  double Fmid[9], dF[9];
+  for (int i = 0; i < 9; i++) {
+    Fmid[i] = 0.5 * (Fn[i] + F1[i]);
+    dF[i]   = F1[i] - Fn[i];
+  }
+
+  double FmidInv[9];
+  if (!(inv3(Fmid, FmidInv) > 0.0)) return -1;     // midpoint collapsed/inverted
+  const double j1 = det3(F1);
+  if (!(j1 > 0.0)) return -1;                      // trial collapsed/inverted
+
+  // G = (F_1 − F_n) · F_mid⁻¹ ; Δε = sym(G)
+  double G[9];
+  for (int i = 0; i < 3; i++)
+    for (int j = 0; j < 3; j++) {
+      double s = 0.0;
+      for (int k = 0; k < 3; k++) s += dF[3*i+k] * FmidInv[3*k+j];
+      G[3*i+j] = s;
+    }
+  double e[9];
+  for (int i = 0; i < 3; i++)
+    for (int j = 0; j < 3; j++)
+      e[3*i+j] = 0.5 * (G[3*i+j] + G[3*j+i]);
+
+  // De-rotate: em = R_midᵀ · Δε · R_mid
+  double Rmid[9];
+  if (!polar3(Fmid, Rmid)) return -1;
+  double tmp[9];
+  for (int i = 0; i < 3; i++)
+    for (int j = 0; j < 3; j++) {
+      double s = 0.0;
+      for (int k = 0; k < 3; k++) s += e[3*i+k] * Rmid[3*k+j];
+      tmp[3*i+j] = s;
+    }
+  double em[9];
+  for (int i = 0; i < 3; i++)
+    for (int j = 0; j < 3; j++) {
+      double s = 0.0;
+      for (int k = 0; k < 3; k++) s += Rmid[3*k+i] * tmp[3*k+j];
+      em[3*i+j] = s;
+    }
+
+  double R1loc[9];
+  if (!polar3(F1, R1loc)) return -1;
+
+  deps[0] = em[0];
+  deps[1] = em[4];
+  deps[2] = em[8];
+  deps[3] = em[1] + em[3];    // 2·ε01
+  deps[4] = em[5] + em[7];    // 2·ε12
+  deps[5] = em[2] + em[6];    // 2·ε20
+  for (int i = 0; i < 9; i++) R1[i] = R1loc[i];
+  *J1 = j1;
+  return 0;
+}
+
+// Plane strain (interface §8.3): embed each 2×2 F as [[F00 F01 0][F10 F11 0]
+// [0 0 1]], run the 3D entry, return deps = [xx yy xy] (engineering shear), R1 =
+// the upper-left 2×2 block and J1 = the 3×3 determinant. By the block structure
+// the out-of-plane strain components are exactly zero and R1 is a rotation about
+// z. Same return codes; outputs untouched on -1.
+inline int hypoIncrementFromFPlaneStrain(const double Fn[4], const double F1[4],
+                                         double deps[3], double R1[4], double* J1)
+{
+  const double Fn3[9] = {Fn[0], Fn[1], 0.0,  Fn[2], Fn[3], 0.0,  0.0, 0.0, 1.0};
+  const double F13[9] = {F1[0], F1[1], 0.0,  F1[2], F1[3], 0.0,  0.0, 0.0, 1.0};
+  double d6[6], R3[9], j1;
+  if (hypoIncrementFromF(Fn3, F13, d6, R3, &j1) != 0) return -1;
+  deps[0] = d6[0];
+  deps[1] = d6[1];
+  deps[2] = d6[3];
+  R1[0] = R3[0]; R1[1] = R3[1];
+  R1[2] = R3[3]; R1[3] = R3[4];
+  *J1 = j1;
+  return 0;
+}
+
+// --------------------------------------------------------------------------- //
 //  Voigt push-forwards (assembly side)                                        //
 // --------------------------------------------------------------------------- //
 
@@ -286,6 +392,22 @@ inline void pushStress6(const double R[9], const double sMat[6], double sOut[6])
     for (int c = 0; c < 6; c++) s += M[6*r+c] * sMat[c];
     sOut[r] = s;
   }
+}
+
+// Plane-strain analogue of pushStress6 on [xx, yy, xy] (tensor shear):
+// σ_out = R σ Rᵀ with R row-major 2×2 (WP-232, interface §8.4). Exact for an
+// in-plane rotation because the unrotated stress has no xz / yz part. sOut may
+// NOT alias sMat.
+inline void pushStressPlaneStrain(const double R[4], const double sMat[3], double sOut[3])
+{
+  const double s00 = sMat[0], s11 = sMat[1], s01 = sMat[2];
+  // T = R σ
+  const double t00 = R[0]*s00 + R[1]*s01, t01 = R[0]*s01 + R[1]*s11;
+  const double t10 = R[2]*s00 + R[3]*s01, t11 = R[2]*s01 + R[3]*s11;
+  // σ_out = T Rᵀ
+  sOut[0] = t00*R[0] + t01*R[1];
+  sOut[1] = t10*R[2] + t11*R[3];
+  sOut[2] = t00*R[2] + t01*R[3];
 }
 
 // D_out = M D Mᵀ — push the material 6×6 tangent (eng-shear Voigt convention)
