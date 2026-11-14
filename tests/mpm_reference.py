@@ -250,7 +250,7 @@ class Engine:
 
     # -- section 6.1 / 6.2 ---------------------------------------------------
     def critical_dt(self):
-        # M_p from the COMMITTED tangent; for this hypoelastic law the tangent is constant D
+        # M_p from the INITIAL (elastic) tangent (Amendment 6); for this hypoelastic law it is D
         M = self.lam + 2 * self.mu
         rho = self.m / self.V
         c = np.sqrt(M / rho)
