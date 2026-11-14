@@ -108,9 +108,12 @@ derivative with respect to `x_p` is `+dS/dr`).
 `c−1, c, c+1, c+2`; drop those outside `[0, n_d]`. Candidates with `S = 0` may be kept or dropped
 (their weight and gradient are both 0). At most 3 per axis carry weight.
 
-**Admissibility.** A particle is admissible iff on every axis `x0_d ≤ x_p − lp_d` and
-`x_p + lp_d ≤ x0_d + n_d·h` (its whole domain inside the grid), and `0 < lp_d ≤ h/2`. Then
-`Σ_i S_ip = 1` and `Σ_i ∇S_ip = 0` exactly (partition of unity).
+**Admissibility (as amended by Amendment 2).** A particle is admissible iff on every axis its
+**centre** lies in the grid, `x0_d ≤ x_p ≤ x0_d + n_d·h`, and `0 < lp_d ≤ h/2`. Support candidates
+outside `[0, n_d]` are **dropped**: their weight and gradient are lost. When the whole domain is
+inside the grid (`x0_d ≤ x_p − lp_d` and `x_p + lp_d ≤ x0_d + n_d·h`), `Σ_i S_ip = 1` and
+`Σ_i ∇S_ip = 0` exactly (partition of unity). A domain that overhangs a face by `δ < lp` loses the
+weight `δ²/(4·h·lp)` of the missing node.
 
 ### 4.2 Linear hat, 1D factor
 
@@ -489,3 +492,56 @@ aborted").
 - **Q2:** initial stress for non-elastic materials is 232c's design; the elastic offset of §9 stays.
 - **Q3:** v1 has grid-face conditions and stationary walls only.
 - **Q4:** 232c provides the test hooks.
+
+### Amendment 2 — 2026-11-13 — admissibility (§4.1)
+
+Found by the phase-2 oracle. The frozen rule required each particle's whole GIMP domain inside
+the grid. Every body that rests on a face condition then gets refused within a few steps: a bar
+fixed at `x = 0` compresses toward the face, and a self-weight column compresses into its base,
+so their domains cross the face. Since conditions live on grid faces (Q3), that is the normal
+case, not an edge case.
+
+- **New rule:** a particle is admissible iff its centre lies in the grid and `0 < lp ≤ h/2`.
+  Support nodes outside the grid are dropped, with their weight and gradient.
+- Partition of unity still holds exactly for any particle whose whole domain is inside.
+- The linear basis was already centre-based; unchanged.
+- No case's frozen value changes. The basis cases keep their domains inside the grid.
+
+### Amendment 3 — 2026-11-13 — case corrections (`tests/mpm_cases.txt`)
+
+Found by the phase-2 oracle. Each is a fault in the case, not in the interface.
+
+- **`incline_slide_2d`, `incline_stick_2d`:** gravity is now ramped, `series linear 0.2`.
+  - Applied suddenly, gravity makes the elastic block bounce on the wall. The normal force then
+    drops to zero for part of each cycle, and the "stick" block crept 0.13 m.
+  - Ramped, the stick block moves 9e-5 m (tolerance 0.005 m).
+  - The slide's closed form becomes `a·(T_r²/6 + T_r·(T − T_r)/2 + (T − T_r)²/2)` = 0.97678 m at
+    `T = 1 s`, `T_r = 0.2 s`. The oracle gives 0.97229 (0.46%); tolerance 3%.
+- **`bar_dt_limit_2d`:** the energy bound goes from `le 1.02` to `le 1.05`.
+  - At 0.989·Δt_c the measured energy oscillates within ±3.3%, with the same maximum in each third
+    of a 6000-step run. It is bounded, not growing.
+  - 1.02 was a guess, not a closed form.
+- **`particle_fields` layout:** a filled case reads `expect particle_fields eq fields tol …`,
+  followed by one `field` line per particle.
+- **`k0_quiet_start_2d`:** the oracle's `max_speed` is exactly 0. GIMP equilibrium is exact for a
+  linear stress field, and here every number is dyadic. The `eq` line's tolerance goes from
+  `0 1e-6` (relative to 0, so no tolerance at all) to `1e-12 0` (absolute), so the C++ engine's
+  summation order cannot fail it. The `le 0.006` bound stays.
+
+### Phase-2 measurements — 2026-11-13
+
+- **Q1 (stability limit), measured on the oracle.** The largest stable Δt, as a multiple of the
+  §6.1 estimate:
+  - 1D GIMP bar: 1.74
+  - 2D free block (ppc 2, ν = 0.3; GIMP and linear alike): 1.66
+  - 3D free block: 1.31
+
+  The default `s = 0.5` is safe by a factor of at least 2.6. No change.
+- **`column_selfweight_2d_gimp` misses its frozen tolerance.** The oracle gives
+  `selfweight_error` = 0.072 against the frozen 0.03. Refining does not help: 0.067 at h = 0.25, and
+  0.106 at h = 0.125 over the same duration, which is not yet quiescent. The error is explicit-GIMP
+  cell-crossing noise at 20% compression.
+  - The linear basis gives 0.47.
+  - The small-deformation column (`ρ0·g·l0/E` = 0.002) gives 0.013, which is O(lp/l0).
+  - The tolerance stays frozen at 0.03. The pytest marks this check as a strict xfail until the
+    orchestrator rules: change the gate, or the case.
