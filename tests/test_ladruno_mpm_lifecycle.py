@@ -37,8 +37,9 @@ TAG = 232
 
 
 def _scalar(v):
-    """A scalar query result (a float; tolerate a one-element list)."""
-    return float(v[0]) if isinstance(v, (list, tuple)) else float(v)
+    """A scalar query result: a float, never a one-element list (c2 review 5)."""
+    assert isinstance(v, float), f"expected a float, got {v!r}"
+    return v
 
 def _ops():
     try:
@@ -341,10 +342,10 @@ def test_reset_after_a_refused_first_analyze():
     assert len(ops.mpm("particleData", "mat")) == n1 + n2
 
 
-def test_reset_drops_particles_added_after_the_snapshot_with_their_materials():
-    """Review F1, probe_snap2: particles added between a refused analyze and the first
-    accepted step belong to the snapshot; particles added after a reset that is then
-    reset again (no step) are dropped with their materials and ids."""
+def test_reset_keeps_bodies_added_after_a_reset_and_their_materials():
+    """Review F1, probe_snap2: bodies added after a reset are the new initial state.
+    A re-seeded stiff body gets its own (stiff) materials and the critical dt follows;
+    the next reset (after an accepted step) restores ALL of them (c2 review 3)."""
     ops = _ops()
     ops.wipe()
     ops.model("basic", "-ndm", 2, "-ndf", 2)
@@ -435,6 +436,82 @@ def test_parameter_update_after_remove_loadpattern_does_not_crash():
     assert proc.returncode == 0 and "SURVIVED" in proc.stdout, (proc.returncode, proc.stdout, proc.stderr)
 
 
+def test_scalar_queries_answer_floats():
+    """c2 review 5: `mpm info time` and `mpm criticalTimeStep` are floats, not lists."""
+    ops = _ops()
+    _block(ops)
+    assert isinstance(ops.mpm("info", "time"), float)
+    assert isinstance(ops.mpm("criticalTimeStep"), float)
+
+
+def test_reset_before_any_accepted_step_keeps_bodies_and_initial_conditions():
+    """c2 review 3: a refused analyze, then a body and a velocity, then `mpm reset`:
+    nothing is dropped, nothing zeroed."""
+    ops = _ops()
+    _block(ops)
+    n1 = int(ops.mpm("info", "numParticles"))
+    dtc = _scalar(ops.mpm("criticalTimeStep"))
+    with pytest.raises(Exception):
+        ops.mpm("analyze", 1, 10 * dtc)
+    n2 = int(ops.mpm("body", 2, "box", 0.7, 0.7, 0.8, 0.8, "-ppc", 2, "-mat", 1, "-rho", 2000.0))
+    ops.mpm("velocity", 1, "uniform", 0.3, 0.0)
+    before = _fields(ops)
+    ops.mpm("reset")
+    assert int(ops.mpm("info", "numParticles")) == n1 + n2
+    assert _fields(ops) == before
+
+
+def test_commit_refusal_aborts_until_reset_and_stale_counts_do_not():
+    """c2 review 6: the host half of W17. A stale WP-99 count left before the commit
+    does not abort; a refusal declared AT the particle commit aborts with the particles
+    unmoved, latches (every analyze refused), and `mpm reset` clears the latch."""
+    ops = _ops()
+    _block(ops)
+    ops.mpm("debug", "staleRefusal")
+    ops.mpm("analyze", 1, 1.0e-4)                       # cleared before the loop: no abort
+    assert int(ops.mpm("debug", "aborted")) == 0
+    before = _fields(ops)
+    ops.mpm("debug", "injectRefusal")
+    with pytest.raises(Exception):
+        ops.mpm("analyze", 1, 1.0e-4)
+    assert int(ops.mpm("debug", "aborted")) == 1
+    assert _fields(ops) == before
+    with pytest.raises(Exception):
+        ops.mpm("analyze", 1, 1.0e-4)                   # latched
+    ops.mpm("reset")
+    assert int(ops.mpm("debug", "aborted")) == 0
+    ops.mpm("analyze", 1, 1.0e-4)
+
+
+def test_detach_leaves_an_unrelated_parameter_with_a_reused_tag():
+    """c2 review 4: parameter 1 on the host, removed, then tag 1 reused on a truss's A:
+    deleting the host must not clean the new parameter 1."""
+    ops = _ops()
+    _block(ops, ("DruckerPrager", 1, 8.0e5, 4.8e5, 1.0e9, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+    ops.parameter(1, "loadPattern", TAG, "materialState")
+    ops.remove("parameter", 1)
+    ops.node(1, 0.0, 0.0)
+    ops.node(2, 2.0, 0.0)
+    ops.fix(1, 1, 1)
+    ops.fix(2, 0, 1)
+    ops.uniaxialMaterial("Elastic", 7, 200.0)
+    ops.element("truss", 1, 1, 2, 1.0, 7)
+    ops.parameter(1, "element", 1, "A")
+    ops.remove("loadPattern", TAG)                      # the host dies here
+    ops.updateParameter(1, 2.0)                         # must still reach the truss
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, 10.0, 0.0)
+    ops.system("BandGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.integrator("LoadControl", 1.0)
+    ops.algorithm("Linear")
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    assert abs(ops.nodeDisp(2, 1) - 10.0 * 2.0 / (200.0 * 2.0)) < 1e-12
+
+
 # --------------------------------------------------------------------------- #
 #  Classic Tcl: the same refusals and the `loadPattern` stage spelling        #
 # --------------------------------------------------------------------------- #
@@ -462,6 +539,7 @@ set dtc [mpm criticalTimeStep]
 expectError dt-above { mpm analyze 1 [expr {0.6 * $dtc}] }
 mpm analyze 5 1.0e-4
 if {abs([mpm info time] - 5.0e-4) < 1e-12} { puts "PASS time" } else { puts "FAIL time" }
+if {[llength [mpm info time]] == 1 && [llength [mpm criticalTimeStep]] == 1} { puts "PASS scalar" } else { puts "FAIL scalar" }
 database File mpm_db
 expectError database-save { save 1 }
 node 1 0 0
@@ -485,5 +563,5 @@ def test_classic_tcl_refusals_and_stage_spelling():
     out = proc.stdout + proc.stderr
     assert "SELF-TEST: done" in out, out
     assert "FAIL" not in out, out
-    assert out.count("PASS ") == 10, out
+    assert out.count("PASS ") == 11, out
     assert "database save is refused" in out, out

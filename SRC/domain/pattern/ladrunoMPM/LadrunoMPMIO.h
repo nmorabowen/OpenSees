@@ -78,6 +78,8 @@ struct WriterConfig {
   int    every = 1;          // output every N steps (when dtOut <= 0)
   double dtOut = -1.0;       // or every dtOut of Domain time
   int    compress = 1;       // deflate level (0: no filter)
+  double flushSeconds = 10.0;   // wall-clock H5Fflush cadence, as LadrunoRecorder -flush (WP-164);
+                                // <= 0: after every output
   std::vector<std::string> fields;   // POSITION always first
 };
 
@@ -103,9 +105,12 @@ class ParticleWriter {
  public:
   ParticleWriter();
   ~ParticleWriter();
-  // Create the file and its INFO group. -1 with `err` on failure.
+  // Configure the writer. The file (and its INFO group) is created only when
+  // the first stage opens, so a writer that never outputs leaves no file
+  // (an INFO-only file would not validate). -1 with `err` on bad input.
   int  open(const WriterConfig &cfg, int ndm, std::string &err);
-  bool isOpen(void) const;
+  bool isConfigured(void) const;
+  bool isOpen(void) const;      // the file exists
   // Open MODEL_STAGE[<next>] at commit tag `step`, time `time`.
   int  openStage(const StageMeta &meta, int step, double time, std::string &err);
   bool stageOpen(void) const;
@@ -116,13 +121,17 @@ class ParticleWriter {
                    const std::vector<std::vector<double> > &fieldRows, std::string &err);
   int  numOutputs(void) const;
   void flush(void);
+  // Flush when cfg.flushSeconds of wall clock passed since the last flush: a
+  // killed run then leaves a readable file (an HDF5 file never flushed is not).
+  void flushIfDue(void);
   void close(void);
   const WriterConfig &config(void) const;
   // Components of a reserved field for ndm (232a §2.6), or "" if not written by v1.
   static std::string components(const std::string &field, int ndm);
 
+  struct Impl;              // the HDF5 state (LadrunoMPMIO.cpp)
+
  private:
-  struct Impl;
   Impl *impl;
 };
 

@@ -327,3 +327,147 @@ def test_classic_tcl_round_trip(tmp_path):
     assert mc.validate_particle_results(str(out)) == []
     with h5py.File(out, "r") as f:
         assert lf._attr(f["MODEL_STAGE[0]/MODEL/PARTICLES"], "SOURCE_SET_ID") == _set()["SET_ID"]
+
+
+# --------------------------------------------------------------------------- #
+#  The c2 review (Fable, ba7ab310e..742b9981c): writer lifecycle               #
+# --------------------------------------------------------------------------- #
+def _counts(path, stage="MODEL_STAGE[0]"):
+    with h5py.File(path, "r") as f:
+        op = f[f"{stage}/RESULTS/ON_PARTICLES"]
+        return np.diff(op["OFFSETS"][...]).tolist(), op
+
+
+def test_particles_added_after_a_refused_analyze_reach_the_file(tmp_path):
+    """Review 1: the stage opens only once a step passes its refusals."""
+    ops = _ops()
+    _deck(ops)
+    ops.mpm("body", 1, "box", 0.5, 0.5, 1.0, 1.0, "-ppc", 2, "-mat", 1, "-rho", 2.0)
+    out = tmp_path / "late.ladruno"
+    ops.mpm("output", str(out), "-every", 1)
+    dtc = float(ops.mpm("criticalTimeStep"))
+    with pytest.raises(Exception):
+        ops.mpm("analyze", 1, 10 * dtc)
+    ops.mpm("body", 2, "box", 1.0, 1.0, 1.5, 1.5, "-ppc", 2, "-mat", 2, "-rho", 2.0)
+    ops.mpm("analyze", 3, 0.2 * float(ops.mpm("criticalTimeStep")))
+    n = int(ops.mpm("info", "numParticles"))
+    ops.mpm("output", "-close")
+    assert mc.validate_particle_results(str(out)) == []
+    counts, _ = _counts(out)
+    assert counts == [n] * 4 and n == 8
+
+
+def test_output0_holds_initial_conditions_set_after_a_zero_step_analyze(tmp_path):
+    """Review 1: `analyze 0` opens no stage, so a later velocity is in output 0."""
+    ops = _ops()
+    _deck(ops)
+    ops.mpm("body", 1, "box", 0.5, 0.5, 1.0, 1.0, "-ppc", 2, "-mat", 1, "-rho", 2.0)
+    out = tmp_path / "zero.ladruno"
+    ops.mpm("output", str(out), "-every", 1)
+    ops.mpm("analyze", 0, 1e-5)
+    ops.mpm("velocity", 1, "uniform", 0.3, 0.0)
+    ops.mpm("analyze", 2, 1e-5)
+    ops.mpm("output", "-close")
+    with h5py.File(out, "r") as f:
+        op = f["MODEL_STAGE[0]/RESULTS/ON_PARTICLES"]
+        a, b = op["OFFSETS"][0], op["OFFSETS"][1]
+        assert np.allclose(op["VELOCITY/DATA"][a:b], [0.3, 0.0])
+
+
+def test_a_failed_analyze_keeps_its_accepted_steps(tmp_path):
+    """Review 7: a block leaving the grid is refused mid-run; the steps it took are
+    written (the last one too), and the file validates."""
+    ops = _ops()
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.nDMaterial("ElasticIsotropic", 1, 1.0e6, 0.25)
+    ops.mpm("grid", TAG, "-origin", 0.0, 0.0, "-h", 0.1, "-cells", 10, 10)
+    ops.mpm("body", 1, "box", 0.1, 0.4, 0.3, 0.6, "-ppc", 2, "-mat", 1, "-rho", 2000.0)
+    ops.mpm("velocity", 1, "uniform", -20.0, 0.0)
+    out = tmp_path / "fail.ladruno"
+    ops.mpm("output", str(out), "-every", 4)
+    dt = 0.3 * float(ops.mpm("criticalTimeStep"))
+    with pytest.raises(Exception):
+        ops.mpm("analyze", 400, dt)
+    t_end = float(ops.mpm("info", "time"))
+    ops.mpm("output", "-close")
+    assert mc.validate_particle_results(str(out)) == []
+    with h5py.File(out, "r") as f:
+        times = f["MODEL_STAGE[0]/RESULTS/ON_PARTICLES/TIME"][...]
+        assert times[-1] == t_end and len(times) >= 2
+
+
+def test_no_file_without_a_stage(tmp_path):
+    """Nit: `mpm output` then `-close` with no analyze writes no INFO-only file."""
+    ops = _ops()
+    _deck(ops)
+    ops.mpm("particles", "-file", str(FIXTURE))
+    out = tmp_path / "never.ladruno"
+    ops.mpm("output", str(out))
+    ops.mpm("output", "-close")
+    assert not out.exists()
+
+
+def test_dt_cadence_rearms_when_time_goes_back(tmp_path):
+    """Nit: after the Domain's `reset` (time back to 0, same epoch) the -dt cadence
+    keeps writing."""
+    ops = _ops()
+    _deck(ops)
+    ops.mpm("particles", "-file", str(FIXTURE))
+    out = tmp_path / "rearm.ladruno"
+    ops.mpm("output", str(out), "-dt", 2.0e-4)
+    ops.mpm("analyze", 6, 1.0e-4)
+    ops.reset()
+    ops.mpm("analyze", 6, 1.0e-4)
+    ops.mpm("output", "-close")
+    assert lf.validate(str(out)) == []
+    with h5py.File(out, "r") as f:
+        times = f["MODEL_STAGE[0]/RESULTS/ON_PARTICLES/TIME"][...]
+    after = [t for k, t in enumerate(times) if k > 0 and times[k] < times[k - 1]]
+    assert after, times                      # the time went back inside the stage
+    restart = int(np.argmax(np.diff(times) < 0)) + 1
+    assert len(times) - restart >= 3, times   # 2e-4, 4e-4, 6e-4 after the restart
+
+
+_KILL_CHILD = r"""
+import os, sys
+sys.path.insert(0, os.environ["LADRUNO_MPM_TESTS"])
+from _testbed import ops
+out, fixture = sys.argv[1], sys.argv[2]
+ops.wipe(); ops.model("basic", "-ndm", 2, "-ndf", 2)
+ops.nDMaterial("ElasticIsotropic", 1, 2.0e5, 0.3)
+ops.nDMaterial("ElasticIsotropic", 2, 2.0e4, 0.3)
+ops.mpm("grid", 232, "-origin", 0.0, 0.0, "-h", 0.5, "-cells", 4, 4, "-basis", "gimp")
+ops.mpm("particles", "-file", fixture)
+ops.mpm("output", out, "-every", 1, "-flush", 0.2)
+print("CHILD START", flush=True)
+ops.mpm("analyze", 50000000, 1e-6)
+"""
+
+
+def test_a_killed_run_leaves_a_readable_file(tmp_path):
+    """Review 2: with the wall-clock flush cadence, a run killed mid-analyze leaves a
+    file that opens, and the contract's crash rule (232a §2.5) recovers its outputs."""
+    import time
+    _ops()
+    out = tmp_path / "killed.ladruno"
+    env = dict(os.environ, LADRUNO_OPENSEES_QUIET="1",
+               LADRUNO_MPM_TESTS=os.path.dirname(os.path.abspath(__file__)))
+    p = subprocess.Popen([sys.executable, "-c", _KILL_CHILD, str(out), str(FIXTURE)],
+                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                         stdin=subprocess.DEVNULL, env=env)
+    try:
+        assert "CHILD START" in p.stdout.readline()
+        time.sleep(2.0)
+    finally:
+        p.kill()
+        p.wait()
+    with h5py.File(out, "r") as f:                       # must open
+        op = f["MODEL_STAGE[0]/RESULTS/ON_PARTICLES"]
+        steps, times, offs, ids = op["STEP"][...], op["TIME"][...], op["OFFSETS"][...], op["ID"][...]
+        T = min(len(steps), len(times), len(offs) - 1)    # the crash rule
+        assert T >= 1
+        assert offs[T] <= len(ids) and offs[T] <= op["POSITION/DATA"].shape[0]
+        S = _set()
+        for k in range(T):
+            assert np.array_equal(ids[offs[k]:offs[k + 1]], S["ID"])

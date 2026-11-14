@@ -34,7 +34,7 @@
 //   mpm body <bodyId> disc <cx> <cy> <R> -ppc ... (2D) | ball <cx> <cy> <cz> <R> ... (3D)
 //   mpm particles -file <path>           load a Contract-1 particle set (232a), path as given
 //   mpm units <L> <F> <T> [-system <id>]  units Contract 2 carries when no set declared them
-//   mpm output <path> [-every N | -dt dt] [-fields F..] [-compress k] | -close
+//   mpm output <path> [-every N | -dt dt] [-fields F..] [-compress k] [-flush s] | -close
 //                                         the .ladruno particle group (232a contract 2)
 //   mpm shift <body> <dx..>              translate a seeded body (before the first step)
 //   mpm particle <id> <body> <matTag> <rho> <V0> -x <..> -lp <..> [-v <..>] [-s <nv>]
@@ -55,6 +55,8 @@
 //   mpm debug shape <x..> -lp <lp..>      -> [node S dS..]* (interface Q4)
 //   mpm debug shape1d <h> <lp> <r>        -> S dS
 //   mpm debug activeNodes                 -> sorted active node ids at the committed state
+//   mpm debug injectRefusal | staleRefusal | aborted   W17 test hooks (a refusal at the next
+//                                         particle commit; a stale WP-99 count; the abort latch)
 //
 // Refused in OpenSeesSP / OpenSeesMP (ADR 232 §5.1, v1).
 
@@ -391,6 +393,9 @@ int cmdDebug(LadrunoMPMPattern *h)
     }
     return outDoubles(out);
   }
+  if (what == "injectRefusal") { h->injectCommitRefusal(); return 0; }   // W17 test hook
+  if (what == "staleRefusal") { h->injectStaleRefusal(); return 0; }     // W17 test hook
+  if (what == "aborted") return outInt(h->isAborted() ? 1 : 0);
   if (what == "activeNodes") {
     std::vector<long> act;
     E.activeNodes(act);
@@ -487,6 +492,8 @@ int OPS_LadrunoMPM(void)
         cfg.dtOut = -1.0;
       } else if (opt == "-dt") {
         if (!readDoubles(1, &cfg.dtOut) || !(cfg.dtOut > 0.0)) return fail("output -dt needs dt > 0");
+      } else if (opt == "-flush") {
+        if (!readDoubles(1, &cfg.flushSeconds)) return fail("output -flush needs seconds (<= 0: every output)");
       } else if (opt == "-compress") {
         if (!readInt(cfg.compress) || cfg.compress < 0 || cfg.compress > 9) return fail("output -compress needs 0..9");
       } else if (opt == "-fields") {

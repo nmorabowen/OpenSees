@@ -1,0 +1,22 @@
+---
+wp: WP-232
+title: "An HDF5 file written without periodic flushes is unreadable after a kill"
+date: 2026-11-14
+---
+### An HDF5 file written without periodic flushes is unreadable after a kill
+
+- **Bites:** a writer that creates an HDF5 file and appends to it without `H5Fflush` until it
+  closes. A process killed mid-run (a timeout, a scheduler kill, Ctrl-C hard) leaves a file h5py
+  cannot open ("bad object header version number"): the object headers and chunk indexes live in
+  HDF5's metadata cache and were never written. Measured on the first `mpm output` writer
+  (WP-232c, 742b9981c): killed after 1 s (19 MB) and 3 s (59 MB), both files unreadable; a graceful
+  exit was fine.
+- **Why:** without SWMR, the on-disk structure is consistent only at a flush or a close. Raw
+  chunk data written after the last flush lands beyond the end-of-allocation the file records,
+  so it is ignored on reopen, but only if a flush ever happened.
+- **Workaround:** flush right after the first structure is written (the stage skeleton and its
+  first output), then on a wall-clock cadence (`LadrunoRecorder -flush`, WP-164; `mpm output
+  -flush`), and at the end of every run, failed or not. Readers then apply the contract's crash
+  rule for a partial last output (232a §2.5). `tests/test_ladruno_mpm_contracts_io.py::
+  test_a_killed_run_leaves_a_readable_file` kills a writer mid-run.
+- Learned 2026-11-14 (WP-232c, the c2 review).

@@ -80,10 +80,13 @@ class LadrunoMPMPattern::Mats : public ladruno_mpm::MaterialPoints
   int revertToLastCommit(int p) override { return mats[p]->revertToLastCommit(); }
   int pendingRefusals() override
   {
-    const int n = ladrunoPendingCommitRefusals();
+    int n = ladrunoPendingCommitRefusals();
     if (n > 0) ladrunoClearCommitRefusals();
+    n += injected;            // `mpm debug injectRefusal`: one refusal, at this commit
+    injected = 0;
     return n;
   }
+  int injected = 0;
   void clearRefusals() override { ladrunoClearCommitRefusals(); }
   // The INITIAL (elastic) tangent bounds the wave speed (interface Amendment 6,
   // review F6): a softened current tangent (DruckerPrager's apex mCep =
@@ -138,10 +141,12 @@ LadrunoMPMPattern::~LadrunoMPMPattern()
 void
 LadrunoMPMPattern::detachParameters(void)
 {
-  for (const std::pair<Domain *, int> &pt : paramRefs) {
-    if (pt.first == 0) continue;
-    Parameter *p = pt.first->getParameter(pt.second);
-    if (p != 0) p->clean();
+  // Keyed by the Parameter object itself, not only its tag: a tag the user
+  // freed and reused names an unrelated parameter, which is left alone.
+  for (const ParamRef &r : paramRefs) {
+    if (r.domain == 0) continue;
+    Parameter *p = r.domain->getParameter(r.tag);
+    if (p != 0 && p == r.param) p->clean();
   }
   paramRefs.clear();
 }
@@ -221,7 +226,7 @@ LadrunoMPMPattern::setParameter(const char **argv, int argc, Parameter &param)
   for (NDMaterial *m : mats)
     if (m->setParameter(argv, argc, param) >= 0) res = 0;
   if (res >= 0)
-    paramRefs.push_back(std::make_pair(this->getDomain(), param.getTag()));
+    paramRefs.push_back(ParamRef{this->getDomain(), param.getTag(), &param});
   if (res < 0)
     opserr << "WARNING LadrunoMPMPattern " << this->getTag()
            << " -- no particle material answers parameter '" << (argc > 0 ? argv[0] : "") << "'\n";
@@ -531,18 +536,11 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
     snapshot = eng.P;
     haveSnapshot = true;
   }
-  // .ladruno particle group (232a §2.8): a new stage at the first `mpm analyze`
-  // of an epoch, and its output 0 is the state before the first step.
-  if (writer != 0 && writer->isOpen() &&
-      (!writer->stageOpen() || writer->stageEpoch() != epoch)) {
-    std::string err;
-    if (openOutputStage(err) < 0 || writeOutputNow(err) < 0) {
-      opserr << "ERROR mpm analyze -- particle output: " << err.c_str() << "\n";
-      return -1;
-    }
-  }
 
-  for (int s = 0; s < nSteps; s++) {
+  // ONE exit path (c2 review 7): whatever stops the loop, the accepted steps
+  // not yet written are written and the file is flushed.
+  int rc = 0;
+  for (int s = 0; s < nSteps && rc == 0; s++) {
     OPS_PROFILE_SCOPE("step");
     // ---- 1. admissibility and the critical time step ----------------------
     const int bad = eng.firstInadmissible();
@@ -550,14 +548,30 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
       opserr << "ERROR mpm analyze -- particle " << std::to_string((long long)eng.P.id[bad]).c_str()
              << " is not admissible (its centre left the grid, or lp is out of (0, h/2]);"
                 " step refused, nothing changed\n";
-      return -1;
+      rc = -1;
+      break;
     }
     const double dtc = eng.criticalTimeStep(*adapter);
     if (dt > eng.par.safety * dtc) {
       opserr << "ERROR mpm analyze -- dt = " << dt << " exceeds s * dt_crit = "
              << eng.par.safety << " * " << dtc << " = " << eng.par.safety * dtc
              << "; step refused, nothing changed (ADR 232 §5.2 step 1)\n";
-      return -1;
+      rc = -1;
+      break;
+    }
+    // .ladruno particle group (232a §2.8): the stage opens, with the state
+    // before this step as output 0, only once a step has passed its refusals
+    // (c2 review 1: a refused analyze opens nothing, so particles and initial
+    // conditions added before the first accepted step all reach the file).
+    std::string err;
+    if (writer != 0 && writer->isConfigured() &&
+        (!writer->stageOpen() || writer->stageEpoch() != epoch)) {
+      if (openOutputStage(err) < 0 || writeOutputNow(err) < 0) {
+        opserr << "ERROR mpm analyze -- particle output: " << err.c_str() << "\n";
+        rc = -1;
+        break;
+      }
+      writer->flush();      // the stage skeleton and output 0 survive a kill
     }
     // ---- 2. loads and time -------------------------------------------------
     const double t0 = dom->getCurrentTime();
@@ -567,7 +581,6 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
     // ---- 3-7. the core, with no active element (W9) ----------------------
     Element *saved = ops_TheActiveElement;
     ops_TheActiveElement = 0;
-    std::string err;
     int res;
     { OPS_PROFILE_SCOPE("mpm.advance");
       res = eng.advance(dt, lambda, *adapter, err); }
@@ -576,22 +589,24 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
       dom->revertToLastCommit();
       opserr << "ERROR mpm analyze -- step failed at t = " << t0 + dt << ": " << err.c_str()
              << "; particles keep their committed state\n";
-      return -1;
+      rc = -1;
+      break;
     }
     if (res == -2) {
       dom->revertToLastCommit();
       aborted = true;      // W17: only `mpm reset` makes the state usable again
-      if (writer != 0) writer->flush();
       opserr << "ERROR mpm analyze -- " << err.c_str() << ". Particles were not moved; the run is"
                 " aborted until `mpm reset`.\n";
-      return -1;
+      rc = -1;
+      break;
     }
     stepped = true;
     // ---- 8. Domain::commit: committed time, commit tag, recorders ----------
     { OPS_PROFILE_SCOPE("commit");
       if (dom->commit() < 0) {
         opserr << "ERROR mpm analyze -- Domain::commit failed at t = " << t0 + dt << "\n";
-        return -1;
+        rc = -1;
+        break;
       } }
     // ---- 9. the profiler's per-step row --------------------------------------
     OPS_PROFILE_STEP(dom->getCommitTag(), dom->getCurrentTime(), dt, 1);
@@ -602,27 +617,32 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
       const ladruno_mpm_io::WriterConfig &cfg = writer->config();
       const double t = dom->getCurrentTime();
       bool due;
-      if (cfg.dtOut > 0.0)
+      if (cfg.dtOut > 0.0) {
+        // re-arm when the Domain time went back (`reset`, `setTime`)
+        if (nextOutputTime - t > cfg.dtOut * (1.0 + 1e-12)) nextOutputTime = t;
         due = t >= nextOutputTime - 1e-12 * std::max(1.0, std::fabs(nextOutputTime));
-      else
+      } else {
         due = stepsSinceOutput >= cfg.every;
+      }
       if (due && writeOutputNow(err) < 0) {
         opserr << "ERROR mpm analyze -- particle output: " << err.c_str() << "\n";
-        return -1;
+        rc = -1;
+        break;
       }
+      writer->flushIfDue();   // the recorder's wall-clock cadence (-flush, WP-164)
     }
   }
-  // the last step is never lost (232a §2.8)
+  // the last accepted step is never lost (232a §2.8), whatever stopped the loop
   if (writer != 0 && writer->stageOpen() && stepsSinceOutput > 0) {
     std::string err;
     if (writeOutputNow(err) < 0) {
       opserr << "ERROR mpm analyze -- particle output: " << err.c_str() << "\n";
-      return -1;
+      rc = -1;
     }
   }
   if (writer != 0) writer->flush();
   dom->flushRecorders();
-  return 0;
+  return rc;
 }
 
 int
@@ -630,27 +650,24 @@ LadrunoMPMPattern::reset(void)
 {
   epoch++;                          // PARTICLE_EPOCH: the next output opens a new stage
   aborted = false;
-  if (!haveSnapshot) return 0;      // nothing has run: already initial
-  // Particles added after the snapshot are dropped WITH their materials, flags
-  // and ids (review F1): the set returns to exactly the snapshot.
-  const size_t keep = (size_t)snapshot.size();
-  if (mats.size() > keep) {
-    if (!paramRefs.empty()) {
-      opserr << "WARNING mpm reset -- particles added after the first step's snapshot are dropped;"
-                " the parameters set through `parameter ... loadPattern` are detached\n";
-      detachParameters();
-    }
-    for (size_t q = keep; q < mats.size(); q++) delete mats[q];
-    mats.resize(keep);
-    elastic.resize(keep);
+  for (NDMaterial *m : mats) m->revertToStart();
+  lambda = 1.0;
+  // Before any accepted step the particles ARE the initial state, bodies and
+  // initial conditions included: keep them (c2 review 3).
+  if (!stepped || !haveSnapshot) return 0;
+  // After a step: back to the snapshot. Particles are frozen once a step is
+  // accepted, so the snapshot has the same particles; a mismatch is refused
+  // loudly rather than restored half-way.
+  if ((size_t)snapshot.size() != mats.size()) {
+    opserr << "ERROR mpm reset -- internal: the snapshot has " << snapshot.size()
+           << " particles, the engine " << (int)mats.size() << "; nothing restored\n";
+    return -1;
   }
   eng.setParticles(snapshot);
   nextLatticeId = 0;
   for (int64_t pid : eng.P.id) nextLatticeId = std::max<int64_t>(nextLatticeId, pid + 1);
-  for (NDMaterial *m : mats) m->revertToStart();
   stepped = false;
   haveSnapshot = false;     // recaptured at the next analyze (particles may be added again)
-  lambda = 1.0;
   return 0;
 }
 
@@ -850,6 +867,11 @@ LadrunoMPMPattern::writeOutputNow(std::string &err)
   const ladruno_mpm::Particles &P = eng.P;
   const ladruno_mpm_io::WriterConfig &cfg = writer->config();
   std::vector<long long> ids;
+  if ((int)idOrder.size() != P.size()) {
+    err = "the particle set changed after its output stage opened (" + std::to_string(idOrder.size()) +
+          " rows registered, " + std::to_string(P.size()) + " particles); refused rather than written short";
+    return -1;
+  }
   ids.reserve(idOrder.size());
   for (int q : idOrder) ids.push_back((long long)P.id[q]);
   std::vector<std::vector<double> > rows(cfg.fields.size());
@@ -873,6 +895,18 @@ LadrunoMPMPattern::writeOutputNow(std::string &err)
     while (nextOutputTime <= t + 1e-12 * std::max(1.0, std::fabs(t))) nextOutputTime += cfg.dtOut;
   }
   return 0;
+}
+
+void
+LadrunoMPMPattern::injectCommitRefusal(void)
+{
+  adapter->injected = 1;
+}
+
+void
+LadrunoMPMPattern::injectStaleRefusal(void)
+{
+  ladrunoCommitRefusalCounter().fetch_add(1);
 }
 
 // ---------------------------------------------------------------------------

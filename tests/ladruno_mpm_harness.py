@@ -30,8 +30,9 @@ HOST_TAG = 232         # the MPM host pattern tag
 # --------------------------------------------------------------------------- #
 
 def _scalar(v):
-    """A scalar query result (a float; tolerate a one-element list)."""
-    return float(v[0]) if isinstance(v, (list, tuple)) else float(v)
+    """A scalar query result: a float, never a one-element list (c2 review 5)."""
+    assert isinstance(v, float), f"expected a float, got {v!r}"
+    return v
 
 def parse_cases(path=CASES):
     cases, cur = [], None

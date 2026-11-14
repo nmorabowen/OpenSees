@@ -51,7 +51,7 @@ Python is the same with `ops.mpm('grid', 1, '-origin', 0.0, 0.0, ...)`.
 | `mpm reset` | particles and materials back to the state before the first ACCEPTED step; counts an epoch (`mpm info epoch`); clears an abort |
 | `mpm particles -file <path>` | load a Contract-1 particle set (232a), all or nothing; the path is opened as given (apeGmsh's emitters anchor it to the deck's folder) |
 | `mpm units <L> <F> <T> [-system <id>]` | the units the `.ladruno` group carries when no particle set declared them (default `unspecified`) |
-| `mpm output <path> [-every N \| -dt Δt] [-fields F..] [-compress k]` / `mpm output -close` | the `.ladruno` particle group (Contract 2); fields `POSITION` (always) `VELOCITY STRESS STRAIN VOLUME GIMP_HALF_LENGTH DEFORMATION_GRADIENT`, default `POSITION VELOCITY STRESS VOLUME`; no `STATE_*` token is admitted in v1 |
+| `mpm output <path> [-every N \| -dt Δt] [-fields F..] [-compress k] [-flush s]` / `mpm output -close` | the `.ladruno` particle group (Contract 2); fields `POSITION` (always) `VELOCITY STRESS STRAIN VOLUME GIMP_HALF_LENGTH DEFORMATION_GRADIENT`, default `POSITION VELOCITY STRESS VOLUME`; no `STATE_*` token is admitted in v1 |
 | `mpm info numParticles\|epoch\|time\|summary` | `summary` = [mass, momentum.., max \|v\|, kinetic energy] |
 | `mpm particleData <field>` | flat list in storage order: `id body mat m V0 V x v lp F R sig sigHat epsHat sig0` |
 | `mpm debug shape <x..> -lp <lp..>` / `shape1d <h> <lp> <r>` / `activeNodes` | unit-level hooks (interface Q4) |
@@ -103,8 +103,9 @@ particles **stay where they are**. `mpm reset` puts them back. For a clean resta
 
 - **The snapshot** `mpm reset` restores is the state before the first ACCEPTED step: every
   `mpm analyze` retakes it until a step is accepted, so bodies added after a refused or zero-step
-  analyze are part of it. Particles added after the snapshot (after a reset) are dropped by the next
-  reset with their materials and ids.
+  analyze are part of it. Before any accepted step, `mpm reset` keeps the particles as they are
+  (they ARE the initial state, bodies and initial conditions included) and only reverts the
+  materials and clears an abort.
 - **What it restores:** kinematics (x, v, F, R, V, strain feed, stress) and each material's
   committed state (`revertToStart`). **Not** stage flags or moduli set through
   `parameter … loadPattern` — DruckerPrager's `materialState` and its moduli survive a reset
@@ -133,8 +134,17 @@ Contract 2): `FORMAT_VERSION` 1, `FORMAT_MINOR_VERSION` 2 (only a file that carr
 stage (`EMPTY_PARTITION = 1`, empty nodes, elements and result groups) plus `MODEL/PARTICLES` and
 `RESULTS/ON_PARTICLES` — with `KIND = "transient"` and `MODE = "explicit"`.
 
-- A stage opens at the first `mpm analyze` of an epoch, and its output 0 is the state before the
-  first step; `mpm reset` starts a new epoch, hence a new stage (`PARTICLE_EPOCH` + 1).
+- The file is created when the first stage opens: `mpm output` followed by `-close` with no step
+  leaves no file.
+- A stage opens when the first step of an epoch has passed its refusals, and its output 0 is the
+  state before that step; so bodies and initial conditions set after a refused or zero-step analyze
+  reach the file. `mpm reset` starts a new epoch, hence a new stage (`PARTICLE_EPOCH` + 1). The
+  particle set is fixed once a stage is open; a mismatch is refused, never written short.
+- **Flush:** the stage skeleton and output 0 are flushed at once, then on the recorder's wall-clock
+  cadence (`-flush s`, default 10 s as `recorder ladruno`; `<= 0` after every output) and at the end
+  of every `mpm analyze`, failed or not. A killed run then leaves a file that opens; a reader applies
+  the contract's crash rule (232a §2.5). The `-dt` cadence re-arms when the Domain time goes back
+  (`reset`, `setTime`).
 - Outputs are written after `Domain::commit` (positions and stresses of the same step), every `N`
   steps or every `Δt` of time, and the last step of every `mpm analyze` is always written.
 - Ids are int64 (≤ 2⁵³ − 1), sorted within an output, stable within an epoch. A second particle
@@ -142,6 +152,8 @@ stage (`EMPTY_PARTITION = 1`, empty nodes, elements and result groups) plus `MOD
 - When a particle set was loaded, its `SET_ID`, units, thickness and body names are copied; lattice
   bodies are named `body<id>`.
 - v1 writes FE output and particles to separate files: a mixed FE + particle stage is later work.
+- Moving 232a's Contract 2 (§2) into `ladruno_schema_v1.md` (the contract's §2.9) is deferred to the
+  232a follow-up.
 - Classic Tcl returns `mpm criticalTimeStep`, `mpm particleData` and `mpm info time|summary` as
   full-precision doubles (the elementAPI's `%35.20f` does not round-trip).
 

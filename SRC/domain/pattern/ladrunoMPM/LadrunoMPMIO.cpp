@@ -560,7 +560,8 @@ struct ParticleWriter::Impl {
   int ndm = 0;
   hid_t file = -1, gplist = -1;
   int nextStage = 0, epoch = -1;
-  bool stage = false;
+  bool stage = false, configured = false;
+  std::chrono::steady_clock::time_point lastFlush;
   hid_t dsStep = -1, dsTime = -1, dsOff = -1, dsId = -1;
   std::vector<hid_t> dsData;
   std::vector<int> ncomp;
@@ -606,6 +607,7 @@ ladrunoMPMRunId(std::string &id, std::string &scope)   // LadrunoRecorder's WP-1
 ParticleWriter::ParticleWriter() : impl(new Impl) {}
 ParticleWriter::~ParticleWriter() { close(); delete impl; }
 bool ParticleWriter::isOpen(void) const { return impl->file >= 0; }
+bool ParticleWriter::isConfigured(void) const { return impl->configured; }
 bool ParticleWriter::stageOpen(void) const { return impl->stage; }
 int  ParticleWriter::stageEpoch(void) const { return impl->epoch; }
 int  ParticleWriter::numOutputs(void) const { return impl->T; }
@@ -615,8 +617,19 @@ int
 ParticleWriter::open(const WriterConfig &cfg, int ndm, std::string &err)
 {
   close();
+  if (cfg.path.empty()) { err = "an output path is required"; return -1; }
   impl->cfg = cfg;
   impl->ndm = ndm;
+  impl->configured = true;
+  return 0;
+}
+
+// The file and its INFO group, created at the first stage (see open()).
+static int
+createFile(ParticleWriter::Impl *impl, std::string &err)
+{
+  const WriterConfig &cfg = impl->cfg;
+  const int ndm = impl->ndm;
   hid_t fcpl = H5Pcreate(H5P_FILE_CREATE);
   H5Pset_link_creation_order(fcpl, H5P_CRT_ORDER_TRACKED | H5P_CRT_ORDER_INDEXED);
   impl->gplist = H5Pcreate(H5P_GROUP_CREATE);
@@ -653,13 +666,15 @@ ParticleWriter::open(const WriterConfig &cfg, int ndm, std::string &err)
   hid_t prov = H5Gcreate2(info, "PROVENANCE", H5P_DEFAULT, impl->gplist, H5P_DEFAULT);
   H5Gclose(prov);
   H5Gclose(info);
+  impl->lastFlush = std::chrono::steady_clock::now();
   return 0;
 }
 
 int
 ParticleWriter::openStage(const StageMeta &m, int step, double time, std::string &err)
 {
-  if (impl->file < 0) { err = "no output file open"; return -1; }
+  if (!impl->configured) { err = "no output configured"; return -1; }
+  if (impl->file < 0 && createFile(impl, err) < 0) return -1;
   impl->closeStage();
   const int ndm = impl->ndm;
   std::stringstream ss;
@@ -726,14 +741,15 @@ ParticleWriter::openStage(const StageMeta &m, int step, double time, std::string
   const hsize_t M = (hsize_t)m.id.size();
   const hsize_t regChunk = std::max<hsize_t>(1, std::min<hsize_t>(1 << 17, M));
   hid_t d;
+  bool regOk = true;
   d = h5w::dataset::createRows(mp, "ID", H5T_STD_I64LE, 0, regChunk, cmp);
-  h5w::dataset::appendRows(d, H5T_NATIVE_LLONG, m.id.data(), M, 0); H5Dclose(d);
+  regOk = regOk && d >= 0 && h5w::dataset::appendRows(d, H5T_NATIVE_LLONG, m.id.data(), M, 0) >= 0; if (d >= 0) H5Dclose(d);
   d = h5w::dataset::createRows(mp, "BODY_ID", H5T_STD_I32LE, 0, regChunk, cmp);
-  h5w::dataset::appendRows(d, H5T_NATIVE_INT, m.body.data(), M, 0); H5Dclose(d);
+  regOk = regOk && d >= 0 && h5w::dataset::appendRows(d, H5T_NATIVE_INT, m.body.data(), M, 0) >= 0; if (d >= 0) H5Dclose(d);
   d = h5w::dataset::createRows(mp, "MATERIAL_TAG", H5T_STD_I32LE, 0, regChunk, cmp);
-  h5w::dataset::appendRows(d, H5T_NATIVE_INT, m.mat.data(), M, 0); H5Dclose(d);
+  regOk = regOk && d >= 0 && h5w::dataset::appendRows(d, H5T_NATIVE_INT, m.mat.data(), M, 0) >= 0; if (d >= 0) H5Dclose(d);
   d = h5w::dataset::createRows(mp, "MASS", H5T_IEEE_F64LE, 0, regChunk, cmp);
-  h5w::dataset::appendRows(d, H5T_NATIVE_DOUBLE, m.mass.data(), M, 0); H5Dclose(d);
+  regOk = regOk && d >= 0 && h5w::dataset::appendRows(d, H5T_NATIVE_DOUBLE, m.mass.data(), M, 0) >= 0; if (d >= 0) H5Dclose(d);
   H5Gclose(mp);
 
   // ---- RESULTS/ON_PARTICLES (232a §2.5) -----------------------------------------
@@ -743,7 +759,7 @@ ParticleWriter::openStage(const StageMeta &m, int step, double time, std::string
   impl->dsTime = h5w::dataset::createRows(op, "TIME", H5T_IEEE_F64LE, 0, 1024, cmp);
   impl->dsOff = h5w::dataset::createRows(op, "OFFSETS", H5T_STD_I64LE, 0, 1024, cmp);
   const long long zero = 0;
-  h5w::dataset::appendRows(impl->dsOff, H5T_NATIVE_LLONG, &zero, 1, 0);
+  const bool offOk = impl->dsOff >= 0 && h5w::dataset::appendRows(impl->dsOff, H5T_NATIVE_LLONG, &zero, 1, 0) >= 0;
   impl->dsId = h5w::dataset::createRows(op, "ID", H5T_STD_I64LE, 0, (1 << 20) / 8, cmp);
   struct Meta { const char *name, *display, *dim; int dataType; };
   static const Meta metas[] = {
@@ -774,6 +790,11 @@ ParticleWriter::openStage(const StageMeta &m, int step, double time, std::string
   H5Gclose(res);
   H5Gclose(model);
   H5Gclose(st);
+  if (!regOk || !offOk) {
+    err = "cannot write the particle registry or OFFSETS of " + sname;
+    impl->closeStage();
+    return -1;
+  }
   impl->stage = true;
   return 0;
 }
@@ -792,8 +813,11 @@ ParticleWriter::writeOutput(int step, double time, const std::vector<long long> 
                                  (hsize_t)impl->ncomp[k]) < 0) { err = "cannot append DATA"; return -1; }
   }
   if (h5w::dataset::appendRows(impl->dsId, H5T_NATIVE_LLONG, ids.data(), n, 0) < 0) { err = "cannot append ID"; return -1; }
-  h5w::dataset::appendRows(impl->dsStep, H5T_NATIVE_INT, &step, 1, 0);
-  h5w::dataset::appendRows(impl->dsTime, H5T_NATIVE_DOUBLE, &time, 1, 0);
+  if (h5w::dataset::appendRows(impl->dsStep, H5T_NATIVE_INT, &step, 1, 0) < 0 ||
+      h5w::dataset::appendRows(impl->dsTime, H5T_NATIVE_DOUBLE, &time, 1, 0) < 0) {
+    err = "cannot append STEP / TIME";
+    return -1;
+  }
   impl->S += (long long)n;
   const long long off = impl->S;
   if (h5w::dataset::appendRows(impl->dsOff, H5T_NATIVE_LLONG, &off, 1, 0) < 0) { err = "cannot append OFFSETS"; return -1; }
@@ -805,6 +829,15 @@ void
 ParticleWriter::flush(void)
 {
   if (impl->file >= 0) H5Fflush(impl->file, H5F_SCOPE_GLOBAL);
+  impl->lastFlush = std::chrono::steady_clock::now();
+}
+
+void
+ParticleWriter::flushIfDue(void)
+{
+  if (impl->file < 0) return;
+  const double since = std::chrono::duration<double>(std::chrono::steady_clock::now() - impl->lastFlush).count();
+  if (impl->cfg.flushSeconds <= 0.0 || since >= impl->cfg.flushSeconds) flush();
 }
 
 void
@@ -814,6 +847,7 @@ ParticleWriter::close(void)
   if (impl->file >= 0) { H5Fflush(impl->file, H5F_SCOPE_GLOBAL); H5Fclose(impl->file); }
   if (impl->gplist >= 0) H5Pclose(impl->gplist);
   impl->file = impl->gplist = -1;
+  impl->configured = false;
 }
 
 #else  // no HDF5 in this build: refuse loudly
@@ -831,6 +865,8 @@ struct ParticleWriter::Impl { WriterConfig cfg; };
 ParticleWriter::ParticleWriter() : impl(new Impl) {}
 ParticleWriter::~ParticleWriter() { delete impl; }
 bool ParticleWriter::isOpen(void) const { return false; }
+bool ParticleWriter::isConfigured(void) const { return false; }
+void ParticleWriter::flushIfDue(void) {}
 bool ParticleWriter::stageOpen(void) const { return false; }
 int  ParticleWriter::stageEpoch(void) const { return -1; }
 int  ParticleWriter::numOutputs(void) const { return 0; }

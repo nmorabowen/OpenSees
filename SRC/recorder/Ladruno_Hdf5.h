@@ -559,18 +559,6 @@ namespace h5 {
 		// dataset (createAndWrite skips an empty vector, returning HID_INVALID).
 		// These write what they are given, empty included.
 
-		// A [n] int64 (H5T_STD_I64LE) dataset; n may be 0.
-		inline hid_t createAndWritel1(hid_t obj, const char *name, const long long *data, hsize_t n)
-		{
-			hsize_t dim[1] = { n };
-			hid_t space = H5Screate_simple(1, dim, NULL);
-			hid_t dset = H5Dcreate(obj, name, H5T_STD_I64LE, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-			if (dset >= 0 && n > 0)
-				H5Dwrite(dset, H5T_NATIVE_LLONG, H5S_ALL, H5S_ALL, H5P_DEFAULT, data);
-			H5Sclose(space);
-			return dset;
-		}
-
 		// A [n] array of fixed-length NULLTERM strings, the width the longest
 		// string plus its terminator (empty strings are written as "").
 		inline hid_t createAndWriteStrings(hid_t obj, const char *name, const std::vector<std::string> &data)

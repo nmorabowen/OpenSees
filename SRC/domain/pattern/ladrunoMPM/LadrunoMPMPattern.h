@@ -130,6 +130,12 @@ class LadrunoMPMPattern : public LoadPattern
   int setUnits(const std::string &L, const std::string &F, const std::string &T,
                const std::string &system, std::string &err);
   const std::vector<std::string> &loadedFiles(void) const { return sourcePaths; }
+  // Test hooks for the W17 path (`mpm debug injectRefusal | staleRefusal`):
+  // a refusal declared at the next particle commit, or a stale count left in
+  // the WP-99 counter before it (which must NOT abort).
+  void injectCommitRefusal(void);
+  void injectStaleRefusal(void);
+  bool isAborted(void) const { return aborted; }
 
   double criticalTimeStep(void);
   // Run nSteps explicit steps of dt. 0 on success; -1 on a refusal or failure
@@ -168,7 +174,8 @@ class LadrunoMPMPattern : public LoadPattern
   std::vector<int>        idOrder;         // storage index of each particle, by id
 
   bool                    aborted;         // a commit refusal aborted the run (W17); `mpm reset` clears it
-  std::vector<std::pair<Domain *, int> > paramRefs;   // Parameters that hold our materials (F2)
+  struct ParamRef { Domain *domain; int tag; Parameter *param; };
+  std::vector<ParamRef>   paramRefs;       // Parameters that hold our materials (F2)
 
   void detachParameters(void);
   int  admitMaterial(int matTag, NDMaterial *&copy, bool &isElastic, std::string &err);
