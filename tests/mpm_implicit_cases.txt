@@ -435,6 +435,12 @@ end
 #   per cell (rho_o is smooth inside each cell: n_theta is even, no cell straddles pi/4).
 #   GIMP half-lengths lp_x = min(sqrt(V)/2, x, W/2 - x), lp_y = min(sqrt(V)/2, y, W/2 - y): no
 #   domain leaves [0, W/2]^2 (Contract 1, C1-POS). Ids 0 .. n_theta n_r - 1 in that order.
+#   (Amended 2026-11-14 on 232f-C's report: the first rule, lp = sqrt(V)/2 on both axes, put
+#   domains of the cells next to y = 0 below the grid origin and the reader refused the file.)
+#   Effect on the reference: none. Positions, volumes and the grid are unchanged; only the GIMP
+#   support of 342 of 47104 particles (those touching x = 0, y = 0 or the outer edges) narrows
+#   (clipped lp >= 0.66 sqrt(V)/2). Howland's 2.16 is a continuum value, and the FE
+#   cross-check uses the cells as elements, independent of lp. No grid shift, no extra roller.
 #   Upper block (body 2): the lattice rule of tests/mpm_interface.md §5 over x in [0, 2],
 #   y in [2, 4], ppc 2 (128 x 128 = 16384 particles), ids after the O-grid.
 #   Total 30720 + 16384 = 47104 particles; sum of volumes = 8 - pi/4 (exact to 1e-12).
