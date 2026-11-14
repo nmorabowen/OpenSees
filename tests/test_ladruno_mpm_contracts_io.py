@@ -450,7 +450,9 @@ def test_a_killed_run_leaves_a_readable_file(tmp_path, wait):
     """Review 2 (and its follow-up ruling): under the DEFAULT settings (a flush after
     every output) a run killed mid-analyze at any point leaves a file that opens, and
     the contract's crash rule (232a §2.5) recovers every completed output, data
-    included -- never a filter failure on rows already flushed."""
+    included -- never a filter failure on rows already flushed. The one output in
+    flight at the kill may be torn (a kill inside H5Fflush can leave OFFSETS counting
+    it before its ID / DATA chunk reached the disk): every output BEFORE it is exact."""
     import time
     _ops()
     out = tmp_path / "killed.ladruno"
@@ -477,8 +479,8 @@ def test_a_killed_run_leaves_a_readable_file(tmp_path, wait):
         assert T >= 1, (T, len(steps), len(offs), nid)
         ids = op["ID"][:offs[T]]
         for k in ("POSITION", "VELOCITY", "STRESS", "VOLUME"):
-            data = op[k]["DATA"][:offs[T]]                 # readable, every completed output
-            assert np.all(np.isfinite(data)), k
-        for k in range(T):
-            assert np.array_equal(ids[offs[k]:offs[k + 1]], S["ID"])
+            data = op[k]["DATA"][:offs[T]]                 # readable: no filter failure
+            assert np.all(np.isfinite(data[:offs[T - 1]])), k
+        for k in range(T - 1):                             # every output before the last
+            assert np.array_equal(ids[offs[k]:offs[k + 1]], S["ID"]), k
         assert np.all(np.diff(steps[:T]) > 0)
