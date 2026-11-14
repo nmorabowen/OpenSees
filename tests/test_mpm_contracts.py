@@ -773,3 +773,73 @@ def test_the_reader_rule_opens_a_killed_swmr_file(tmp_path):
         f.swmr_mode = True
     with mc.open_particle_file(q) as f:
         assert not f.swmr_mode
+
+
+def _layout_killed(path, extra_eoa=0, last_stage_partial=False, first_stage_broken=False):
+    """A particle-like file in the latest format, two complete stages (copies of the
+    fixture's), its superblock flags then set to WRITE_ACCESS only (0x01): the state a
+    kill leaves between a reset's read-write reopen and H5Fstart_swmr_write."""
+    with h5py.File(fx.PARTICLE_RESULTS, "r") as s, h5py.File(path, "w", libver="latest") as f:
+        s.copy(s["INFO"], f, "INFO")
+        for k in (0, 1):
+            s.copy(s[STAGE], f, f"MODEL_STAGE[{k}]")
+        if first_stage_broken:
+            del f["MODEL_STAGE[0]/RESULTS"]
+        if last_stage_partial:
+            f.create_group("MODEL_STAGE[2]").create_group("MODEL")
+    flags, _ = mc.set_superblock(path, flags=0x01)
+    assert flags == 0x00
+    if extra_eoa:
+        mc.set_superblock(path, eoa=path.stat().st_size + extra_eoa)
+
+
+def test_a_file_killed_mid_layout_is_refused_by_both_opens_and_recovers(tmp_path):
+    """232a §2.5 reader rule step 3: flags 0x01 (WRITE_ACCESS only) are refused by the
+    plain AND the SWMR-read open; open_particle_file names the recovery; the recovery
+    works on a copy and returns every stage."""
+    p, q = tmp_path / "killed.ladruno", tmp_path / "recovered.ladruno"
+    _layout_killed(p)
+    before = p.read_bytes()
+    with pytest.raises(OSError, match="already open for write"):
+        h5py.File(p, "r")
+    with pytest.raises(OSError, match="not already open for SWMR writing"):
+        h5py.File(p, "r", swmr=True)
+    with pytest.raises(mc.StageLayoutKilledError, match="recover_particle_file"):
+        mc.open_particle_file(p)
+    assert mc.recover_particle_file(p, q) == [
+        {"stage": "MODEL_STAGE[0]", "committed": 3},
+        {"stage": "MODEL_STAGE[1]", "committed": 3}]
+    assert p.read_bytes() == before                      # the source is never repaired
+    with h5py.File(q, "r") as f:                          # the copy opens plainly
+        assert not f.swmr_mode
+    with pytest.raises(ValueError, match="copy"):
+        mc.recover_particle_file(p, p)
+
+
+def test_recovery_pads_a_file_shorter_than_its_stored_eoa(tmp_path):
+    """eof < stored EOA (seen in 1 of the 21 measured refusals): the copy is padded with
+    zeros up to the stored EOA, then opens plainly."""
+    p, q = tmp_path / "short.ladruno", tmp_path / "recovered.ladruno"
+    _layout_killed(p, extra_eoa=4096)
+    size = p.stat().st_size
+    with pytest.raises(OSError, match="truncated file"):  # checked before the flags
+        h5py.File(p, "r")
+    with pytest.raises(mc.StageLayoutKilledError):
+        mc.open_particle_file(p)
+    rep = mc.recover_particle_file(p, q)
+    assert q.stat().st_size == size + 4096
+    assert [r["committed"] for r in rep] == [3, 3]
+
+
+def test_recovery_reports_the_stage_being_laid_out_and_refuses_an_earlier_broken_one(tmp_path):
+    """Only the LAST stage may be torn while laid out; an earlier stage that will not
+    read is corruption."""
+    p, q = tmp_path / "partial.ladruno", tmp_path / "recovered.ladruno"
+    _layout_killed(p, last_stage_partial=True)
+    rep = mc.recover_particle_file(p, q)
+    assert [r.get("committed") for r in rep[:2]] == [3, 3]
+    assert rep[2]["stage"] == "MODEL_STAGE[2]" and rep[2]["torn_while_laid_out"]
+    p2, q2 = tmp_path / "broken.ladruno", tmp_path / "recovered2.ladruno"
+    _layout_killed(p2, first_stage_broken=True)
+    with pytest.raises(mc.TornStageError, match="not the last stage"):
+        mc.recover_particle_file(p2, q2)

@@ -157,7 +157,10 @@ stage (`EMPTY_PARTITION = 1`, empty nodes, elements and result groups) plus `MOD
   metadata-cache eviction disabled). A new stage closes and reopens the file to lay itself out.
   A killed run leaves the SWMR flags set: read it by the contract's reader rule (a plain
   read-only open, else `h5py.File(path, "r", swmr=True)`; never `h5clear`), then apply the crash
-  rule (232a §2.5). Readers need HDF5 ≥ 1.10. The `-dt` cadence re-arms when the Domain time goes back
+  rule (232a §2.5). Readers need HDF5 ≥ 1.10. The stage layout itself (at the start, and at each
+  `mpm reset`) is written without SWMR: a kill inside it leaves a file that neither open accepts,
+  and the reader rule's step 3 recovers a copy (`recover_particle_file`); every earlier stage
+  survives. The `-dt` cadence re-arms when the Domain time goes back
   (`reset`, `setTime`).
 - Outputs are written after `Domain::commit` (positions and stresses of the same step), every `N`
   steps or every `Δt` of time, and the last step of every `mpm analyze` is always written.

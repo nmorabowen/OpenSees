@@ -452,7 +452,9 @@ order, each step being an extend and then a write:
   a kill inside the flush that splits a dataset's chunk index (a v1 B-tree) can leave a parent node
   pointing past the stored end of the file, and the committed outputs that the split moved become
   unreadable ("addr overflow"; 1 kill in 137 on the pre-SWMR writer). If SWMR cannot be armed, the
-  output is refused, never written without it.
+  output is refused, never written without it. **The layout itself is written without SWMR**: at
+  the start of the run, and at each `mpm reset`, where the writer closes the file, reopens it
+  read-write and lays the new stage out. A kill in that window is reader rule step 3.
 - **A write barrier before the commit.** After steps 1–3 the writer flushes the file, and only then
   appends the output's `OFFSETS` entry (step 4), and flushes again. HDF5 does not reach the disk in
   API order across datasets (SWMR orders each dataset's own writes, not `OFFSETS` against `DATA`):
@@ -470,15 +472,37 @@ order, each step being an extend and then a write:
 A closed file satisfies every rule above, and the validator checks closed files only: it requires
 `OFFSETS[T] = len(ID)` and refuses anything else (C2-OFF).
 
-**The reader rule: opening a particle file.** A clean close clears the file's SWMR consistency
-flags, and a plain read-only open works. A killed run leaves them set: a plain open then fails with
-"file is already open for write". So a reader opens read-only, and if that fails for that reason,
-opens in **SWMR-read mode** (h5py: `h5py.File(path, "r", swmr=True)`). It never runs `h5clear`
-first: the end-of-allocation stored in the file lags the data, and only an SWMR-read open skips
-that check. After a kill no writer is live, and the SWMR-read open needs no
-`HDF5_USE_FILE_LOCKING=FALSE` (measured on Windows, h5py 3.16 / HDF5 2.0.0); a reader tailing a
-*live* run is a different case (the monitor's note, `08_analysis_monitor.md`). Reference:
-`tests/mpm_contracts.py::open_particle_file`, which `committed_outputs(path)` uses.
+**The reader rule: opening a particle file.**
+
+1. **Open read-only.** A clean close clears the file's consistency flags, and a plain read-only
+   open works.
+2. **Else open in SWMR-read mode.** A run killed while SWMR was armed leaves the flags at
+   WRITE_ACCESS | SWMR_WRITE (0x05): a plain open fails with "file is already open for write" (or
+   with "truncated file" when the file is shorter than its stored end-of-allocation, which is
+   checked first). Open with **SWMR-read** (h5py: `h5py.File(path, "r", swmr=True)`). Never run
+   `h5clear` first: the end-of-allocation stored in the file lags the data, and only an SWMR-read
+   open skips that check. After a kill no writer is live, and the SWMR-read open needs no
+   `HDF5_USE_FILE_LOCKING=FALSE` (measured on Windows, h5py 3.16 / HDF5 2.0.0); a reader tailing a
+   *live* run is a different case (the monitor's note, `08_analysis_monitor.md`).
+3. **Both refuse: recover a copy.** If the SWMR-read open also refuses ("file is not already open
+   for SWMR writing") and the flags are WRITE_ACCESS only (0x01), the run was killed while a stage
+   was being laid out (between a reset's read-write reopen and `H5Fstart_swmr_write`, or before
+   the first stage armed SWMR). A read-write open of a version-3 file always writes WRITE_ACCESS
+   (HDF5 1.14.6 `H5Fint.c:2164-2179`; the flag is set whenever the driver has a lock method,
+   `H5Fint.c:1977-1979`, and sec2 has one), and an SWMR-read open accepts only 0x05 or 0x00
+   (`H5Fint.c:2196-2208`), so nothing opens the file as it is. Recover a **copy**, never the
+   original: set the flags to 0x00, set the stored end-of-allocation (superblock offset 28) to
+   max(stored EOA, file size), pad the copy with zeros up to the stored EOA if the file is
+   shorter, re-checksum the superblock (lookup3 over bytes 0–43, stored at 44), and open the copy
+   plainly. Every earlier stage reads; the stage being laid out holds no committed output, and
+   may not open at all ("torn while laid out"). Only the last stage may be torn this way: an
+   earlier stage that will not open is corruption. Measured: 21 of 400 kills with a reset every
+   100 steps; 21 of 21 recovered every earlier stage, and in 2 the stage being laid out did not
+   open.
+
+Reference: `tests/mpm_contracts.py::open_particle_file` (steps 1–2; step 3 raises
+`StageLayoutKilledError`), which `committed_outputs(path)` uses, and
+`recover_particle_file(src, dst)` (step 3).
 
 A file left by a crash can hold a partial output beyond the last committed one. The case that
 matters is a kill **after `OFFSETS` is extended for output `k` but before its value is written**.
@@ -698,7 +722,8 @@ after loading `particle_set_v1.h5`; `tests/test_mpm_contracts.py` checks the map
   barrier before each `OFFSETS` entry; the registry written once per stage; SWMR from the end of
   the stage layout to close) and the reader rule (plain open, else SWMR-read; never `h5clear`);
   the crash rule gains step 0 (a stage torn while opening); §2.2 notes the latest HDF5 format
-  (readers need HDF5 ≥ 1.10).
+  (readers need HDF5 ≥ 1.10). Then the stage-layout window: the layout is written without SWMR,
+  and reader rule step 3 recovers a copy of a file killed inside it.
 - **Gate before code.** The owner must ratify apeGmsh ADR 0134 (`232a_apegmsh_adr_draft.md`, through
   apeGmsh's T coordinator and maintainer) before 232c's particle-set reader and `.ladruno` writer,
   and before 232d, start (ADR §9, "Gate before code (232a)").

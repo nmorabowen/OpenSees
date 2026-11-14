@@ -78,6 +78,7 @@ machine, different layout — not a contradiction, and not a Windows recipe.
 | `bezier_tests/`, `rigidbody_tests/`, `ladruno_recorder_tests/`, `robust_solve_tests/`, `zfp_benchmark/` | Per-feature test batteries |
 | `verify_*.tcl` | Tcl parity checks (classic / modal / FEAST / ARPACK-MP-MUMPS) |
 | `mpm_crash_tests/kill_stress.py` | Kill stress of the MPM particle writer (WP-232c): runs the real `dist\bin\opensees.pyd`, kills it N times at fixed and random waits, and checks that each `.ladruno` reads by the reader rule and crash rule (232a §2.5) |
+| `mpm_crash_tests/reset_stress.py` | Kill stress across `mpm reset` (WP-232c): kills the real binary while it alternates `mpm analyze` and `mpm reset`, classifies each file by the reader rule (plain, SWMR-read, or refused) and recovers refused files on a copy with `recover_particle_file` (232a §2.5 step 3) |
 | `mpm_crash_tests/hdf5_crash_replay.py` | Byte-level crash replay model of the MPM writer's HDF5 call pattern in h5py (no binary): rebuilds the file at every kill point and checks every committed output; shows the pre-SWMR index-split tear and that SWMR removes it |
 
 ### Environment wiring

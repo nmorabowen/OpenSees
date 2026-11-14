@@ -31,7 +31,7 @@ HDF5 2.0 + fileobj quirk: under SWMR the fileobj driver writes only the 0x04 con
 flag into the superblock, where the sec2 driver (the real writer) writes 0x05, and an
 SWMR-read open requires 0x05. So when a rebuilt image is refused as "already open for
 write", the model sets the flags to 0x05 and re-checksums the version-3 superblock with
-HDF5's lookup3 hash before the SWMR-read open (``swmr_flags``).
+HDF5's lookup3 hash before the SWMR-read open (``mc.set_superblock``).
 
 Run from anywhere (no OpenSees binary needed; ~minutes per few hundred outputs):
 
@@ -121,54 +121,6 @@ class LogFile:
 
     def seekable(self):
         return True
-
-
-def lookup3(data, initval=0):
-    """HDF5's H5_checksum_lookup3 (Bob Jenkins' hashlittle)."""
-    M32 = 0xFFFFFFFF
-    def rot(x, k):
-        return ((x << k) | (x >> (32 - k))) & M32
-    n = len(data)
-    a = b = c = (0xDEADBEEF + n + initval) & M32
-    k = 0
-    while n > 12:
-        a = (a + int.from_bytes(data[k:k + 4], "little")) & M32
-        b = (b + int.from_bytes(data[k + 4:k + 8], "little")) & M32
-        c = (c + int.from_bytes(data[k + 8:k + 12], "little")) & M32
-        a = (a - c) & M32; a ^= rot(c, 4); c = (c + b) & M32
-        b = (b - a) & M32; b ^= rot(a, 6); a = (a + c) & M32
-        c = (c - b) & M32; c ^= rot(b, 8); b = (b + a) & M32
-        a = (a - c) & M32; a ^= rot(c, 16); c = (c + b) & M32
-        b = (b - a) & M32; b ^= rot(a, 19); a = (a + c) & M32
-        c = (c - b) & M32; c ^= rot(b, 4); b = (b + a) & M32
-        n -= 12
-        k += 12
-    if n == 0:
-        return c
-    tail = bytes(data[k:k + n]) + b"\0" * (12 - n)
-    a = (a + int.from_bytes(tail[0:4], "little")) & M32
-    b = (b + int.from_bytes(tail[4:8], "little")) & M32
-    c = (c + int.from_bytes(tail[8:12], "little")) & M32
-    c ^= b; c = (c - rot(b, 14)) & M32
-    a ^= c; a = (a - rot(c, 11)) & M32
-    b ^= a; b = (b - rot(a, 25)) & M32
-    c ^= b; c = (c - rot(b, 16)) & M32
-    a ^= c; a = (a - rot(c, 4)) & M32
-    b ^= a; b = (b - rot(a, 14)) & M32
-    c ^= b; c = (c - rot(b, 24)) & M32
-    return c
-
-
-def swmr_flags(path, flags=0x05):
-    """Set a v3 superblock's consistency flags (offset 11) and re-checksum it."""
-    with open(path, "r+b") as fh:
-        sb = bytearray(fh.read(48))
-        assert bytes(sb[:4]) == bytes([0x89, 0x48, 0x44, 0x46]) and sb[8] == 3, "not a v3 superblock"
-        assert lookup3(bytes(sb[:44])) == int.from_bytes(sb[44:48], "little"), "lookup3 mismatch"
-        sb[11] = flags
-        sb[44:48] = lookup3(bytes(sb[:44])).to_bytes(4, "little")
-        fh.seek(0)
-        fh.write(sb)
 
 
 def rows(k, nc):
@@ -273,7 +225,7 @@ def check(path):
     except Exception as e:  # noqa: BLE001
         try:
             if "already open for write" in str(e):
-                swmr_flags(path)          # sec2's SWMR flags (0x05); fileobj writes 0x04
+                mc.set_superblock(path, flags=0x05)   # sec2's SWMR flags; fileobj writes 0x04
             f = h5py.File(path, "r", swmr=True)
         except Exception as e2:  # noqa: BLE001
             return "OPEN_FAIL", -1, (str(e).splitlines()[0][:120] + " | swmr: " + str(e2).splitlines()[0][:120])

@@ -58,4 +58,19 @@ date: 2026-11-14
   `h5clear` first (the stored EOA lags; only an SWMR-read open skips that check). After a kill the
   SWMR-read open needs no `HDF5_USE_FILE_LOCKING=FALSE` on Windows (measured, h5py 3.16 /
   HDF5 2.0.0). Reader rule: 232a §2.5, `tests/mpm_contracts.py::open_particle_file`.
+- **The stage layout is a window SWMR does not cover; a kill there leaves a file NOTHING opens.**
+  The layout (at the start of the run, and at each `mpm reset`, after the writer closes and
+  reopens the file read-write) is written without SWMR. A read-write open of a version-3 file
+  always writes WRITE_ACCESS (0x01) to the superblock (HDF5 1.14.6 `H5Fint.c:2164-2179`; the flag
+  is set whenever the driver has a lock method, `H5Fint.c:1977-1979`, and sec2 has one). A plain
+  open refuses 0x01 ("already open for write", or "truncated file" first when the file is shorter
+  than its stored EOA), and an SWMR-read open accepts only 0x05 or 0x00 (`H5Fint.c:2196-2208`:
+  "not already open for SWMR writing"). Measured on build 9 with a reset every 100 steps
+  (`Ladruno_scripts/mpm_crash_tests/reset_stress.py`): 21 of 400 kills (5.25 %) were refused by
+  both opens. Recovery, on a COPY (`tests/mpm_contracts.py::recover_particle_file`): flags 0x00,
+  stored EOA (superblock offset 28) = max(stored EOA, file size), zero-pad the copy up to the
+  stored EOA when it is shorter (1 of the 21), re-checksum the superblock (lookup3 over bytes
+  0–43, at 44), then open plainly. 21 of 21 recovered every earlier stage; in 2 the stage being
+  laid out did not open ("bad object header version number"), and it held no committed output.
+  Real runs reset rarely, but a hit locks out every earlier stage until the copy is recovered.
 - Learned 2026-11-14 (WP-232c, the c2 review).
