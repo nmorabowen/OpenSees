@@ -630,6 +630,28 @@ frozen at V0, α_D halved, cutoff ignored in `step()`. Three checks now catch th
   independently (eigen-decomposition of FᵀF): `V = det F·V0`, `sig_hat = sig0 + D·eps_hat`,
   `sig = R·sig_hat·Rᵀ`.
 
+Each of the eight mutants was then run against the suite after regenerating every
+oracle-derived value with the mutant, so that the circular checks pass trivially. Six died on a
+non-circular check:
+
+| Mutant | Killed by |
+|---|---|
+| L transposed | the affine-field check |
+| G doubled | the basis cases |
+| no stress push | the field invariants |
+| V frozen at V0 | the field invariants |
+| load factor at `t_n` | `freefall_damped_2d` |
+| α_D halved | `freefall_damped_2d` |
+
+Two survived, because each changes nothing a closed form at observable level can see. Two
+step-level hand checks were added, and each kills its mutant:
+- **Friction in both projections.** The second projection only shapes `L`, never momentum. New
+  check `test_second_projection_applies_no_penetration_only`: with one particle, `v* = v^{n+1}` at
+  every support node, minus the wall-normal part at wall nodes, so `F^{n+1}` is known by hand.
+- **Cutoff ignored in `step()`.** New check `test_step_applies_the_mass_cutoff`: one stressed
+  particle gives `v^{n+1} = −Δt·(V/m)·σ·Σ_active ∇S_i`. That is 0 with every node active, and the
+  dropped nodes' part with the cutoff.
+
 **F3.** The `selfweight_error eq` line of `column_selfweight_small_2d_gimp` has tolerance
 `0 1e-4`. Its `le 0.03` gate and its meter line are unchanged.
 

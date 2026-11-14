@@ -328,6 +328,60 @@ def test_stored_fields_satisfy_the_kinematic_and_material_invariants(name):
         assert np.allclose(sig, ref, rtol=1e-11, atol=1e-11)
 
 
+def test_second_projection_applies_no_penetration_only():
+    """Interface section 7: on v* a wall removes only the normal component; friction acts once.
+
+    With a single particle, p*_i / m_i = v_p^{n+1} at every support node, so the expected v* is
+    known by hand: v_new everywhere, except that wall nodes (face and ghost layers) moving into the
+    wall lose their normal component, tangential untouched. Then L = sum v*_i (x) grad S_i and
+    F^{n+1} = (I + dt L) F^n. A friction step in the second projection changes F here and
+    nowhere visible to a closed form (it alters only L, never momentum)."""
+    lines = [["kind", "run"], ["ndm", "2"], ["origin", "0.0", "0.0"], ["h", "1.0"], ["cells", "4", "4"],
+             ["material", "1", "elastic", "1.0e4", "0.3"],
+             ["particle", "0", "1", "1", "1000.0", "0.25", "x", "1.6", "0.3", "lp", "0.25", "0.25",
+              "v", "1.0", "-1.0", "s", "0", "0", "0"],
+             ["wall", "ymin", "0.4"], ["flip", "1.0"], ["masscut", "0"]]
+    eng = M.build_engine(lines)
+    nid, S, G = eng.grid.shape(eng.x, eng.lp, eng.basis)
+    dt = 1e-3
+    eng.step(dt)
+    v_new = eng.v[0]
+    wall_nodes, n = eng.grid.face_nodes("ymin")
+    vstar = np.tile(v_new, (eng.grid.nnodes, 1))
+    on_wall = np.isin(np.arange(eng.grid.nnodes), wall_nodes)
+    vn = vstar @ n
+    into = on_wall & (vn < 0.0)
+    assert np.any(into[nid[0]]), "the particle's support must reach wall nodes moving into the wall"
+    vstar[into] -= vn[into, None] * n[None, :]
+    L = np.einsum("ka,kb->ab", vstar[nid[0]], G[0])
+    assert np.allclose(eng.F[0], np.eye(2) + dt * L, rtol=0, atol=1e-15)
+
+
+def test_step_applies_the_mass_cutoff():
+    """Interface section 6.4, inside step(): one stressed particle, no loads or conditions.
+    Node i carries m_i = S_i m and f_i = -V sigma grad S_i, so S_i a_i = -(V/m) sigma grad S_i and
+    FLIP gives v_new = -dt (V/m) sigma . sum_{active} grad S_i. With every node active the sum is 0
+    (partition of unity); with the cutoff the tiny nodes drop out and v_new is their missing part."""
+    base = [["kind", "run"], ["ndm", "2"], ["origin", "0.0", "0.0"], ["h", "1.0"], ["cells", "4", "4"],
+            ["material", "1", "elastic", "1.0e4", "0.3"],
+            ["particle", "0", "1", "1", "8.0", "0.25", "x", "3.249999", "1.5", "lp", "0.25", "0.25",
+             "v", "0", "0", "s", "100.0", "-40.0", "25.0"], ["flip", "1.0"]]
+    sigma = np.array([[100.0, 25.0], [25.0, -40.0]])
+    dt = 1e-3
+    for cut in (1e-10, 0.0):
+        eng = M.build_engine(base + [["masscut", repr(cut)]])
+        nid, S, G = eng.grid.shape(eng.x, eng.lp, eng.basis)
+        m, V = eng.m[0], eng.V[0]
+        active = S[0] * m > cut * m
+        expect = -dt * (V / m) * sigma @ G[0][active].sum(axis=0)
+        eng.step(dt)
+        assert np.allclose(eng.v[0], expect, rtol=0, atol=1e-14), (cut, eng.v[0], expect)
+        if cut > 0:
+            assert np.linalg.norm(expect) > 1e-9      # the cutoff matters in this geometry
+        else:
+            assert np.linalg.norm(expect) < 1e-14
+
+
 def test_basis_gradient_is_the_derivative():
     """dS/dr equals a central difference of S, in all four regions (C1 uGIMP)."""
     h, lp = 1.0, 0.3
