@@ -843,3 +843,61 @@ def test_recovery_reports_the_stage_being_laid_out_and_refuses_an_earlier_broken
     _layout_killed(p2, first_stage_broken=True)
     with pytest.raises(mc.TornStageError, match="not the last stage"):
         mc.recover_particle_file(p2, q2)
+
+
+def test_the_repair_reads_a_file_killed_in_swmr_mode_like_the_swmr_read_open(tmp_path):
+    """232a §2.5: a reader without SWMR-read (e.g. h5wasm) may apply step 3's repair to
+    ANY file step 1 refuses, flags 0x05 included. The image of a live SWMR writer (what a
+    kill leaves) reads the same through the repair as through the SWMR-read open."""
+    live, image, rec = tmp_path / "live.ladruno", tmp_path / "image.ladruno", tmp_path / "rec.ladruno"
+    m = 5
+    f = h5py.File(live, "w", libver="latest")
+    try:
+        with h5py.File(fx.PARTICLE_RESULTS, "r") as s:
+            s.copy(s["INFO"], f, "INFO")
+        st = f.create_group("MODEL_STAGE[0]")
+        mp = st.create_group("MODEL/PARTICLES")
+        for name, dt, val in (("ID", "<i8", np.arange(m)), ("BODY_ID", "<i4", np.ones(m)),
+                              ("MATERIAL_TAG", "<i4", np.ones(m)), ("MASS", "<f8", np.full(m, 2.0))):
+            mp.create_dataset(name, data=np.asarray(val, dtype=dt))
+        op = st.create_group("RESULTS/ON_PARTICLES")
+        ds = {k: op.create_dataset(k, shape=(0,), maxshape=(None,), chunks=(64,), dtype=dt)
+              for k, dt in (("STEP", "<i4"), ("TIME", "<f8"), ("OFFSETS", "<i8"), ("ID", "<i8"))}
+        pos = op.create_group("POSITION").create_dataset(
+            "DATA", shape=(0, 2), maxshape=(None, 2), chunks=(m, 2), dtype="<f8")
+        ds["OFFSETS"].resize((1,))
+        ds["OFFSETS"][0] = 0
+        f.flush()
+        f.swmr_mode = True
+        for k in range(4):                                # rows, barrier, OFFSETS, flush
+            pos.resize((pos.shape[0] + m, 2))
+            pos[-m:] = k + np.arange(2 * m).reshape(m, 2) / 10.0
+            for name, val in (("ID", np.arange(m)), ("STEP", [k + 1]), ("TIME", [(k + 1) * 1e-3])):
+                d = ds[name]
+                d.resize((d.shape[0] + len(val),))
+                d[-len(val):] = val
+            f.flush()
+            ds["OFFSETS"].resize((k + 2,))
+            ds["OFFSETS"][k + 1] = (k + 1) * m
+            f.flush()
+        image.write_bytes(live.read_bytes())              # the image a kill leaves
+    finally:
+        f.close()
+    assert mc._superblock_flags(image) == 0x05
+    with pytest.raises(OSError, match="already open for write|truncated file"):
+        h5py.File(image, "r")
+
+    def rows(h):
+        n = mc.committed_outputs(h["MODEL_STAGE[0]"])
+        op = h["MODEL_STAGE[0]/RESULTS/ON_PARTICLES"]
+        end = int(op["OFFSETS"][n])
+        return n, op["ID"][:end], op["POSITION/DATA"][:end]
+
+    with mc.open_particle_file(image) as h:
+        assert h.swmr_mode
+        n1, ids1, pos1 = rows(h)
+    rep = mc.recover_particle_file(image, rec)
+    with h5py.File(rec, "r") as h:
+        n2, ids2, pos2 = rows(h)
+    assert n1 == n2 == 4 and rep == [{"stage": "MODEL_STAGE[0]", "committed": 4}]
+    assert np.array_equal(ids1, ids2) and pos1.tobytes() == pos2.tobytes()

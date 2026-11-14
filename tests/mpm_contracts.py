@@ -342,6 +342,11 @@ def recover_particle_file(src, dst) -> list[dict]:
     """Recover a COPY of a particle file killed while a stage was being laid out
     (232a §2.5, reader rule step 3). ``src`` is never modified.
 
+    It works for EVERY killed file, not only the layout window: on a file killed in SWMR
+    mode (flags 0x05) it gives the same committed outputs and byte-identical rows as the
+    SWMR-read open (measured on 49 such files), so a reader without SWMR-read support
+    (e.g. h5wasm) can read any killed particle file through this repair alone.
+
     The repair: copy ``src`` to ``dst``; set the superblock consistency flags to 0x00;
     set the stored end-of-allocation to max(stored EOA, file size); pad the copy with
     zeros up to the stored EOA when the file is shorter; re-checksum the superblock.

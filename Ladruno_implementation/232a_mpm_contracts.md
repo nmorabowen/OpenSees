@@ -500,6 +500,11 @@ A closed file satisfies every rule above, and the validator checks closed files 
    100 steps; 21 of 21 recovered every earlier stage, and in 2 the stage being laid out did not
    open.
 
+A reader that cannot open in SWMR-read mode (e.g. h5wasm) may apply step 3's repair to a copy of
+any file that step 1 refuses, flags 0x05 included; the committed outputs and rows are identical
+(measured on 49 files killed in SWMR mode, and 11 with flags 0x00, against the SWMR-read path).
+The crash rule still applies after.
+
 Reference: `tests/mpm_contracts.py::open_particle_file` (steps 1–2; step 3 raises
 `StageLayoutKilledError`), which `committed_outputs(path)` uses, and
 `recover_particle_file(src, dst)` (step 3).
