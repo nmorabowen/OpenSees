@@ -219,6 +219,25 @@ def validate_particle_results(path: str) -> list[str]:
     return problems
 
 
+def open_particle_file(path) -> h5py.File:
+    """Open a particle ``.ladruno`` read-only by the reader rule (232a §2.5).
+
+    The writer keeps the file in SWMR-write mode from the end of a stage's layout until
+    it closes. A clean close clears the file's consistency flags, so a plain read-only
+    open works. A killed run leaves them set, and a plain open then fails with "file is
+    already open for write": open it in SWMR-read mode instead, which skips that check
+    and the stale stored end-of-allocation. Never ``h5clear`` the file first (the stored
+    EOA lags the data; only an SWMR-read open tolerates it). No
+    ``HDF5_USE_FILE_LOCKING=FALSE`` is needed after a kill (measured, Windows).
+    """
+    try:
+        return h5py.File(path, "r")
+    except OSError as e:
+        if "already open for write" not in str(e):
+            raise
+    return h5py.File(path, "r", swmr=True)
+
+
 class TornStageError(ValueError):
     """A particle stage whose OFFSETS decrease before the last entry: corruption, not a
     torn append (232a §2.5). The reader refuses the stage."""
@@ -234,7 +253,7 @@ def committed_outputs(src, stage: str | None = None) -> int:
     ``OFFSETS`` entry. A closed, conformant stage returns ``len(STEP)``.
     """
     if isinstance(src, (str, Path)):
-        with h5py.File(src, "r") as f:
+        with open_particle_file(src) as f:
             if stage is None:
                 stages = [s for s in f if s.startswith("MODEL_STAGE[")
                           and f"{s}/RESULTS/ON_PARTICLES" in f]

@@ -22,7 +22,7 @@ date: 2026-11-14
   `-every` / `-dt`), lays the data out so a flushed output is never rewritten (one chunk per output
   for `ID` and `DATA`; uncompressed index datasets), and flushes at the end of every run, failed or
   not. A wall-clock cadence (`-flush s`, as `LadrunoRecorder -flush`, WP-164) trades that safety
-  for speed. The full fix is HDF5 SWMR, deferred. Readers then apply the contract's crash
+  for speed. The full fix is HDF5 SWMR (below). Readers then apply the contract's crash
   rule for a partial last output (232a §2.5). `tests/test_ladruno_mpm_contracts_io.py::
   test_a_killed_run_leaves_a_readable_file` kills a writer mid-run.
 - **"Last in the API" is not "last on disk".** Without SWMR, an eviction can put a later write
@@ -30,16 +30,28 @@ date: 2026-11-14
   a kill then leaves an output the crash rule counts whose ids are fill (all zero), measured at
   0.5 s and 1.5 s kills. Fix: a write barrier, `H5Fflush` after the output's rows and before its
   `OFFSETS` append (WP-232c follow-up), so a counted entry always has its rows on disk.
-- **A flush barrier is not enough: metadata-cache EVICTION corrupts between flushes.** Without
-  SWMR, HDF5's metadata cache may evict a dirty object header or chunk-index B-tree node at any
-  time. It then reaches disk pointing at a node allocated past the end-of-allocation that the
-  superblock recorded at the last flush, and a kill leaves a file whose reads fail with
-  "addr overflow, addr = …, size = 2096, eoa = …" (the size of a rank-1 v1 B-tree node). Measured
-  on build 7, with the barrier: 1 kill in 137 (at 0.8 s). Fix: the particle file's access property
-  list turns eviction off (`H5Pget_mdc_config`; `evictions_enabled = 0`, which HDF5 accepts only
-  with `incr_mode`, `flash_incr_mode` and `decr_mode` off; an 8 MiB initial cache; then
-  `H5Pset_mdc_config`). Metadata then reaches disk only at the writer's explicit flushes, so a kill
-  between flushes leaves the last flushed, consistent state; raw chunks written past it are
-  unreferenced. The cost: the cache never shrinks, so it holds the file's metadata (a few KiB per
-  output). Only the MPM particle writer does this; `LadrunoRecorder` keeps the default cache.
+- **A flush barrier is not enough: a kill INSIDE a flush tears a chunk-index split.** Behind the
+  barrier, kills still left unreadable files: "addr overflow, addr = …, size = 2096, eoa = …"
+  (1 kill in 137 on build 7; 3 in 400 on build 8). The cause, pinned by a replay model that
+  rebuilds the file at every byte-level kill point (`scratchpad\w232c\replay\crash_replay.py`,
+  the coordinator's, mirroring the writer's HDF5 calls in h5py): all failing kill points fall
+  inside the BARRIER flush at the outputs where a dataset's v1 B-tree chunk index splits (64 and
+  121; an `ID` node is 2096 B, a `DATA` node 2616 B). A split of the rightmost node keeps 57 of
+  64 entries and moves the newest 7 (committed outputs) into a new node at the end of the file; a
+  root split moves every entry (HDF5 1.14.6 `H5B.c:395-418`). `H5Fflush` writes the user ring
+  (the in-place parent) before the superblock ring (the new EOA), so a kill between them leaves a
+  parent pointing past the stored EOA. Metadata-cache eviction plays no part: the model fails
+  identically with eviction on or off, and so did a build with eviction disabled (build 8; that
+  change was reverted). Larger chunks only make the splits rarer, never absent.
+- **Fix: SWMR.** The particle file uses the latest format (`H5Pset_libver_bounds(LATEST, LATEST)`;
+  extensible-array chunk indexes) and the writer arms `H5Fstart_swmr_write` once a stage's layout
+  is complete and flushed; it then only appends. A new stage closes the file, reopens it, lays the
+  stage out and arms SWMR again (no object or attribute may be created while SWMR is armed). The
+  barrier stays: SWMR orders each dataset's writes, not `OFFSETS` against `DATA`. In the replay
+  model, SWMR recovers every completed output, bit-exact, at all 3,769 kill points.
+- **A killed SWMR file needs an SWMR-read open.** Its consistency flags stay set, so a plain
+  read-only open fails ("file is already open for write"). Open with `swmr=True`; never
+  `h5clear` first (the stored EOA lags; only an SWMR-read open skips that check). After a kill the
+  SWMR-read open needs no `HDF5_USE_FILE_LOCKING=FALSE` on Windows (measured, h5py 3.16 /
+  HDF5 2.0.0). Reader rule: 232a §2.5, `tests/mpm_contracts.py::open_particle_file`.
 - Learned 2026-11-14 (WP-232c, the c2 review).

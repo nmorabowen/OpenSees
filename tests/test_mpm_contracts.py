@@ -729,3 +729,47 @@ def test_a_stage_torn_while_opening_holds_no_committed_output(tmp_path):
         del mp["MASS"]
         mp.create_dataset("MASS", data=mass[:-1])
     assert mc.committed_outputs(p) == 0
+
+
+_SWMR_CHILD = r"""
+import sys, h5py
+f = h5py.File(sys.argv[1], "w", libver="latest")
+d = f.create_dataset("D", shape=(0,), maxshape=(None,), chunks=(16,), dtype="i8")
+f.flush()
+f.swmr_mode = True
+print("GO", flush=True)
+while True:
+    d.resize((d.shape[0] + 16,)); d[-16:] = 1; f.flush()
+"""
+
+
+def test_the_reader_rule_opens_a_killed_swmr_file(tmp_path):
+    """232a §2.5 reader rule, against an h5py SWMR writer killed mid-run: a plain
+    read-only open is refused, `open_particle_file` falls back to SWMR-read, with no
+    HDF5_USE_FILE_LOCKING override; a cleanly closed file opens plainly."""
+    import os
+    import subprocess
+    import sys
+    import time
+    p = tmp_path / "killed.h5"
+    env = dict(os.environ)
+    env.pop("HDF5_USE_FILE_LOCKING", None)
+    w = subprocess.Popen([sys.executable, "-c", _SWMR_CHILD, str(p)], stdout=subprocess.PIPE,
+                         stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, text=True, env=env)
+    try:
+        assert "GO" in w.stdout.readline()
+        time.sleep(0.5)
+    finally:
+        w.kill()
+        w.wait()
+    with pytest.raises(OSError, match="already open for write"):
+        h5py.File(p, "r")
+    with mc.open_particle_file(p) as f:
+        assert f.swmr_mode and f["D"].shape[0] > 0
+        assert (f["D"][...] == 1).all()
+    q = tmp_path / "closed.h5"
+    with h5py.File(q, "w", libver="latest") as f:
+        f.create_dataset("D", shape=(0,), maxshape=(None,), chunks=(16,), dtype="i8")
+        f.swmr_mode = True
+    with mc.open_particle_file(q) as f:
+        assert not f.swmr_mode

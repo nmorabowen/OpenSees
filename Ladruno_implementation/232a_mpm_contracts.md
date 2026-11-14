@@ -318,6 +318,10 @@ As schema §2, with these values:
 `STORED_PRECISION` keeps its schema-§2 meaning for `ON_NODES` / `ON_ELEMENTS`. A particle field's
 precision is the dtype of its own dataset (§2.6).
 
+**HDF5 format.** The fork's particle writer creates the file in the **latest HDF5 file format**
+(libver bounds `LATEST`, superblock 3, extensible-array chunk indexes), because it writes in SWMR
+mode (§2.5). Readers therefore need **HDF5 ≥ 1.10** (h5py built against 1.10 or later).
+
 ### 2.3 The `MODEL_STAGE` that holds particles
 
 - `MODEL_STAGE[<id>]` follows schema §2a for its id and its `STEP` / `TIME` / `KIND` attributes.
@@ -440,12 +444,22 @@ order, each step being an extend and then a write:
 
 **The writer's guarantees (232c, PR #1081).**
 
+- **SWMR from the end of the stage layout to close.** The writer lays a stage out in full (groups,
+  attributes, the registry, the empty result datasets and `OFFSETS[0]`), flushes it, and then
+  arms HDF5 SWMR writing (`H5Fstart_swmr_write`). Until the file is closed it only appends to the
+  open datasets; no object or attribute is created. A new stage closes the file, reopens it, lays
+  the stage out and arms SWMR again. SWMR is what makes a chunk-index update crash-safe: without it,
+  a kill inside the flush that splits a dataset's chunk index (a v1 B-tree) can leave a parent node
+  pointing past the stored end of the file, and the committed outputs that the split moved become
+  unreadable ("addr overflow"; 1 kill in 137 on the pre-SWMR writer). If SWMR cannot be armed, the
+  output is refused, never written without it.
 - **A write barrier before the commit.** After steps 1–3 the writer flushes the file, and only then
-  appends the output's `OFFSETS` entry (step 4), and flushes again. Without SWMR, HDF5 does not
-  reach the disk in API order: an eviction could put a later write (the `OFFSETS` entry) on disk
-  before an earlier one (the output's `ID` / `DATA` chunks). The barrier rules that out, so **an
-  entry the crash rule counts always has its rows on disk**. (Measured before the barrier: kills at
-  0.5 s and 1.5 s left a counted output whose ids were the fill value.)
+  appends the output's `OFFSETS` entry (step 4), and flushes again. HDF5 does not reach the disk in
+  API order across datasets (SWMR orders each dataset's own writes, not `OFFSETS` against `DATA`):
+  an eviction could put a later write (the `OFFSETS` entry) on disk before an earlier one (the
+  output's `ID` / `DATA` chunks). The barrier rules that out, so **an entry the crash rule counts
+  always has its rows on disk**. (Measured before the barrier: kills at 0.5 s and 1.5 s left a
+  counted output whose ids were the fill value.)
 - **The registry is written once per stage.** `MODEL/PARTICLES` (attributes, `GRID`, `BODIES` and
   the four registry datasets) is written in full when the stage opens, before output 0, and is
   never appended mid-stage in v1: the v1 engine fixes the particle set before its first step, and a
@@ -455,6 +469,16 @@ order, each step being an extend and then a write:
 
 A closed file satisfies every rule above, and the validator checks closed files only: it requires
 `OFFSETS[T] = len(ID)` and refuses anything else (C2-OFF).
+
+**The reader rule: opening a particle file.** A clean close clears the file's SWMR consistency
+flags, and a plain read-only open works. A killed run leaves them set: a plain open then fails with
+"file is already open for write". So a reader opens read-only, and if that fails for that reason,
+opens in **SWMR-read mode** (h5py: `h5py.File(path, "r", swmr=True)`). It never runs `h5clear`
+first: the end-of-allocation stored in the file lags the data, and only an SWMR-read open skips
+that check. After a kill no writer is live, and the SWMR-read open needs no
+`HDF5_USE_FILE_LOCKING=FALSE` (measured on Windows, h5py 3.16 / HDF5 2.0.0); a reader tailing a
+*live* run is a different case (the monitor's note, `08_analysis_monitor.md`). Reference:
+`tests/mpm_contracts.py::open_particle_file`, which `committed_outputs(path)` uses.
 
 A file left by a crash can hold a partial output beyond the last committed one. The case that
 matters is a kill **after `OFFSETS` is extended for output `k` but before its value is written**.
@@ -670,6 +694,11 @@ after loading `particle_set_v1.h5`; `tests/test_mpm_contracts.py` checks the map
     the reference `committed_outputs` and the torn fixture;
   - §2.8 notes the fork writer's chunk layout;
   - the move into the schema document is deferred, with a pointer there.
+- **2026-11-14, 232c crash safety (PR #1081):** §2.5 states the writer's guarantees (a flush
+  barrier before each `OFFSETS` entry; the registry written once per stage; SWMR from the end of
+  the stage layout to close) and the reader rule (plain open, else SWMR-read; never `h5clear`);
+  the crash rule gains step 0 (a stage torn while opening); §2.2 notes the latest HDF5 format
+  (readers need HDF5 ≥ 1.10).
 - **Gate before code.** The owner must ratify apeGmsh ADR 0134 (`232a_apegmsh_adr_draft.md`, through
   apeGmsh's T coordinator and maintainer) before 232c's particle-set reader and `.ladruno` writer,
   and before 232d, start (ADR §9, "Gate before code (232a)").
