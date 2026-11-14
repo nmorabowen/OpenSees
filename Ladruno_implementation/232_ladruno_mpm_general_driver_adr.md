@@ -40,7 +40,8 @@ updated: 2026-11-13
 > **Amends ADR-86 D2.** D2 reads "A **and** B": the MPM lane built in-tree, *and* driven from the
 > FEM initiation lane through the sequential handoff (`86_…report.md:500-501`). This document keeps
 > A and moves B — the FE → MPM handoff — from the v1 driver to phase 9 (§9), because the
-> state-transfer primitive it needs has not landed (§1). The owner decides (§10, D7).
+> state-transfer primitive it needs has not landed (§1). The owner approved this on 2026-11-13
+> (§10, D7), and ADR-86 D2 carries the amendment note.
 >
 > **Discipline.** The three documents before this one each shipped a claim refuted by something the
 > fork already said about itself (an implementation log, an integrator's cached state, a
@@ -633,6 +634,7 @@ dispatch briefs, worker rules, fork checklist — is `.claude/skills/ladruno-mpm
   verified binding licence.
 - **D6** The orchestrator session (see the plan).
 - **D7** Amend ADR-86 D2: the FE → MPM handoff (D2's "and B") moves from the v1 driver to phase 9.
+  **Approved by the owner, 2026-11-13.**
 
 ---
 
@@ -702,6 +704,8 @@ ADR-88).
 - **2026-11-13** — the owner's go. Orchestrated from the authoring session (Opus 5.5) at the
   owner's choice; fork merges delegated to the orchestrator; apeGmsh PRs and merges go through
   apeGmsh's T coordinator session. 232a and 232b launched in parallel.
+- **2026-11-13** — the owner approved D7: ADR-86 D2's FE → MPM handoff moves to phase 9 (amendment
+  note added to ADR-86 D2).
 
 ---
 

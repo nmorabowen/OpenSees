@@ -113,6 +113,7 @@ Owner's "go" on 2026-11-13 ("go, orchestrate from here"): items 1–4 are settle
 3. ~~Choose the orchestrator session.~~ The owner chose the authoring session (Opus), not a fresh
    Fable one.
 4. ~~Approve contract-first co-design across the two repos.~~ Approved.
-5. Decide ADR D7: amend ADR-86 D2, moving the FE → MPM handoff to phase 9. **Open.**
+5. ~~Decide ADR D7: amend ADR-86 D2, moving the FE → MPM handoff to phase 9.~~ **Approved by
+   the owner, 2026-11-13.**
 6. As apeGmsh's maintainer, accept (or reject) the apeGmsh ADR when 232a drafts it — an agent
    cannot. **Pending 232a.**

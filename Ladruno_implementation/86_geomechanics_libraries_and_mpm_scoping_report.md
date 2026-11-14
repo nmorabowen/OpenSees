@@ -500,6 +500,11 @@ anything currently on the roadmap, and it should be chosen deliberately.
 **DECIDED 2026-08-23 — D2 = A **and** B.** The MPM lane is built in-tree, and it
 is driven from the FEM initiation lane through the sequential handoff.
 
+**Amended 2026-11-13 (WP-232, the owner's decision D7):** A stands — the MPM lane is
+built in-tree as a general driver. B, the sequential FE → MPM handoff, moves from the
+first MPM driver to phase 9 of [[232_ladruno_mpm_general_driver_adr]], after a material
+state-transfer primitive lands.
+
 **Stated plainly, after review (§11, finding 5):** the owner chose the larger
 program, and reasons 1–3 above were never refuted — they were fenced. The
 earlier gloss here ("B is the workflow, A implements its second half") quietly
