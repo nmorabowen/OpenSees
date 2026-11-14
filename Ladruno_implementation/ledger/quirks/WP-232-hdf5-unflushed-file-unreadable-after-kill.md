@@ -33,8 +33,9 @@ date: 2026-11-14
 - **A flush barrier is not enough: a kill INSIDE a flush tears a chunk-index split.** Behind the
   barrier, kills still left unreadable files: "addr overflow, addr = …, size = 2096, eoa = …"
   (1 kill in 137 on build 7; 3 in 400 on build 8). The cause, pinned by a replay model that
-  rebuilds the file at every byte-level kill point (`scratchpad\w232c\replay\crash_replay.py`,
-  the coordinator's, mirroring the writer's HDF5 calls in h5py): all failing kill points fall
+  rebuilds the file at every byte-level kill point
+  (`Ladruno_scripts/mpm_crash_tests/hdf5_crash_replay.py`, mirroring the writer's HDF5 call
+  pattern in h5py, not the C++ itself): all failing kill points fall
   inside the BARRIER flush at the outputs where a dataset's v1 B-tree chunk index splits (64 and
   121; an `ID` node is 2096 B, a `DATA` node 2616 B). A split of the rightmost node keeps 57 of
   64 entries and moves the newest 7 (committed outputs) into a new node at the end of the file; a
@@ -48,7 +49,10 @@ date: 2026-11-14
   is complete and flushed; it then only appends. A new stage closes the file, reopens it, lays the
   stage out and arms SWMR again (no object or attribute may be created while SWMR is armed). The
   barrier stays: SWMR orders each dataset's writes, not `OFFSETS` against `DATA`. In the replay
-  model, SWMR recovers every completed output, bit-exact, at all 3,769 kill points.
+  model, SWMR recovers every completed output, bit-exact, at all 17,439 kill points of a
+  600-output run. On the real binary (build 9, cbe1b7149) the kill stress
+  (`Ladruno_scripts/mpm_crash_tests/kill_stress.py`) left 0 unreadable files in 400 kills
+  (build 8: 3 in 400).
 - **A killed SWMR file needs an SWMR-read open.** Its consistency flags stay set, so a plain
   read-only open fails ("file is already open for write"). Open with `swmr=True`; never
   `h5clear` first (the stored EOA lags; only an SWMR-read open skips that check). After a kill the
