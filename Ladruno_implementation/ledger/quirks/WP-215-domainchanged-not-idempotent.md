@@ -13,11 +13,19 @@ pr: "#1027"
   velocity. Separately, `Linear -factorOnce` (factorOnce = 2 after the first
   step) skipped `formTangent` forever, even after a renumbering or after
   another command factored K into the analysis' LinearSOE.
-- **Why:** `domainChanged()` re-reads the nodes into the integrator (W1 in
-  ADR 98: integrators cache U/U̇/Ü and read nodes only there); `Linear` had
-  no `domainChanged()` override.
+- **Why:** `domainChanged()` re-reads the nodes into the integrator (W1 of
+  the MPM driver ADR, WP-232: integrators cache U/U̇/Ü and read nodes only
+  there — `WP-232-transient-integrators-ignore-node-writes-between-steps.md`);
+  `Linear` had no `domainChanged()` override.
 - **Fix/status:** renumber only when `Domain::hasDomainChanged()` differs
   from the analysis' stamp (`ladrunoDomainStamp()`, eigen's rule), and
   `Linear::domainChanged()` re-arms `-factorOnce`. Tested by comparing a
   transient history with and without a `ritzVectors` call in the middle.
   Learned 2026-10-26 (WP-215, review of #1027).
+
+#### Follow-up (WP-232)
+The "Why" line pointed at "W1 in ADR 98", the MPM scoping draft. That draft was never merged (it is
+rescued on `origin/rescue/adr98-mpm-scoping`), and 98 is now the membrane ADR. The wall lives on as
+W1 of `232_ladruno_mpm_general_driver_adr.md` and as the quirk
+`WP-232-transient-integrators-ignore-node-writes-between-steps.md`; the pointer was updated
+2026-11-13.
