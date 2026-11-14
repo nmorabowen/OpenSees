@@ -35,6 +35,11 @@ REPO = Path(__file__).resolve().parents[1]
 TAG = 232
 
 
+
+def _scalar(v):
+    """A scalar query result (a float; tolerate a one-element list)."""
+    return float(v[0]) if isinstance(v, (list, tuple)) else float(v)
+
 def _ops():
     try:
         from _testbed import ops
@@ -131,7 +136,7 @@ def test_refuses_second_grid_and_tag_clash():
 def test_refuses_dt_and_changes_nothing():
     ops = _ops()
     _block(ops)
-    dtc = float(ops.mpm("criticalTimeStep"))
+    dtc = _scalar(ops.mpm("criticalTimeStep"))
     before = _fields(ops)
     with pytest.raises(Exception):
         ops.mpm("analyze", 1, 0.51 * dtc)
@@ -165,12 +170,12 @@ def test_wipe_and_remove_delete_the_host():
 def test_reset_and_mpm_reset():
     ops = _ops()
     _block(ops)
-    dt = 0.4 * float(ops.mpm("criticalTimeStep"))
+    dt = 0.4 * _scalar(ops.mpm("criticalTimeStep"))
     init = _fields(ops)
     ops.mpm("analyze", 20, dt)
     run1 = _fields(ops)
     assert run1["x"] != init["x"]
-    assert abs(float(ops.mpm("info", "time")) - 20 * dt) < 1e-12
+    assert abs(_scalar(ops.mpm("info", "time")) - 20 * dt) < 1e-12
     # Domain reset reaches the host only as a re-applyLoad: particles stay put
     ops.reset()
     assert _fields(ops) == run1
@@ -312,7 +317,7 @@ def test_critical_dt_reads_the_initial_tangent():
     V = np.array(ops.mpm("particleData", "V"))
     v = np.array(ops.mpm("particleData", "v")).reshape(-1, 2)
     c = np.sqrt((K + 4.0 * G / 3.0) / (m / V)) + np.linalg.norm(v, axis=1)
-    assert abs(float(ops.mpm("criticalTimeStep")) - 0.1 / c.max()) <= 1e-12 * (0.1 / c.max())
+    assert abs(_scalar(ops.mpm("criticalTimeStep")) - 0.1 / c.max()) <= 1e-12 * (0.1 / c.max())
 
 
 def test_reset_after_a_refused_first_analyze():
@@ -326,7 +331,7 @@ def test_reset_after_a_refused_first_analyze():
     ops.nDMaterial("ElasticIsotropic", 2, 1.0e10, 0.25)
     ops.mpm("grid", TAG, "-origin", 0.0, 0.0, "-h", 0.1, "-cells", 10, 10)
     n1 = int(ops.mpm("body", 1, "box", 0.2, 0.2, 0.4, 0.4, "-ppc", 2, "-mat", 1, "-rho", 2000.0))
-    dtc = float(ops.mpm("criticalTimeStep"))
+    dtc = _scalar(ops.mpm("criticalTimeStep"))
     with pytest.raises(Exception):
         ops.mpm("analyze", 1, 10 * dtc)                       # refused: nothing changed
     n2 = int(ops.mpm("body", 2, "box", 0.6, 0.6, 0.8, 0.8, "-ppc", 2, "-mat", 1, "-rho", 2000.0))
@@ -347,7 +352,7 @@ def test_reset_drops_particles_added_after_the_snapshot_with_their_materials():
     ops.nDMaterial("ElasticIsotropic", 2, 1.0e10, 0.25)
     ops.mpm("grid", TAG, "-origin", 0.0, 0.0, "-h", 0.1, "-cells", 10, 10)
     ops.mpm("body", 1, "box", 0.2, 0.2, 0.4, 0.4, "-ppc", 2, "-mat", 1, "-rho", 2000.0)
-    dtc = float(ops.mpm("criticalTimeStep"))
+    dtc = _scalar(ops.mpm("criticalTimeStep"))
     with pytest.raises(Exception):
         ops.mpm("analyze", 1, 10 * dtc)
     ops.mpm("body", 2, "box", 0.6, 0.6, 0.8, 0.8, "-ppc", 2, "-mat", 1, "-rho", 2000.0)
@@ -357,7 +362,7 @@ def test_reset_drops_particles_added_after_the_snapshot_with_their_materials():
     mats = list(ops.mpm("particleData", "mat"))
     assert mats[-1] == 2.0
     M = 1.0e10 * 0.75 / (1.25 * 0.5)
-    assert abs(float(ops.mpm("criticalTimeStep")) - 0.1 / np.sqrt(M / 2000.0)) < 1e-15
+    assert abs(_scalar(ops.mpm("criticalTimeStep")) - 0.1 / np.sqrt(M / 2000.0)) < 1e-15
     ops.mpm("analyze", 1, 1.0e-7)
     ops.mpm("reset")
     assert int(ops.mpm("info", "numParticles")) == len(mats)
@@ -390,16 +395,16 @@ def test_kernel_refusal_fails_the_step_and_changes_nothing():
     ops.mpm("particle", 0, 2, 1, 1000.0, 0.0025, "-x", 0.805, 0.85, "-lp", 0.025, 0.025)
     ops.mpm("particle", 1, 1, 1, 1000.0, 0.0025, "-x", 0.405, 0.45, "-lp", 0.025, 0.025, "-v", v, 0.0)
     ops.mpm("particle", 2, 1, 1, 1000.0, 0.0025, "-x", 0.495, 0.45, "-lp", 0.025, 0.025, "-v", -v, 0.0)
-    dtc = float(ops.mpm("criticalTimeStep"))
+    dtc = _scalar(ops.mpm("criticalTimeStep"))
     ops.mpm("analyze", 1, 1e-3 * dtc)
-    t0, before = float(ops.mpm("info", "time")), _fields(ops)
-    dtc = float(ops.mpm("criticalTimeStep"))
+    t0, before = _scalar(ops.mpm("info", "time")), _fields(ops)
+    dtc = _scalar(ops.mpm("criticalTimeStep"))
     with pytest.raises(Exception):
         ops.mpm("analyze", 3, 0.999 * dtc)
     assert _fields(ops) == before
-    assert float(ops.mpm("info", "time")) == t0
+    assert _scalar(ops.mpm("info", "time")) == t0
     ops.mpm("analyze", 1, 1e-3 * dtc)
-    assert float(ops.mpm("info", "time")) > t0
+    assert _scalar(ops.mpm("info", "time")) > t0
 
 
 _DANGLING = r"""

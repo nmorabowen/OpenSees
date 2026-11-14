@@ -28,6 +28,11 @@ HOST_TAG = 232         # the MPM host pattern tag
 # --------------------------------------------------------------------------- #
 #  The case file                                                               #
 # --------------------------------------------------------------------------- #
+
+def _scalar(v):
+    """A scalar query result (a float; tolerate a one-element list)."""
+    return float(v[0]) if isinstance(v, (list, tuple)) else float(v)
+
 def parse_cases(path=CASES):
     cases, cur = [], None
     for raw in Path(path).read_text(encoding="utf-8").splitlines():
@@ -225,7 +230,7 @@ def run_python(c, ops):
         r["shape"] = list(ops.mpm("debug", "shape", *c["point"], "-lp", *c["plp"]))
         return r
     if kind == "critdt":
-        r["dt_crit"] = float(ops.mpm("criticalTimeStep"))
+        r["dt_crit"] = _scalar(ops.mpm("criticalTimeStep"))
         return r
     if kind == "masscut":
         r["active"] = [int(round(v)) for v in _as_list(ops.mpm("debug", "activeNodes"))]
@@ -243,7 +248,7 @@ def run_python(c, ops):
         r["summary"].append(_as_list(ops.mpm("info", "summary")))
     for f in FIELDS_END:
         r["end_" + f] = _as_list(ops.mpm("particleData", f))
-    r["time"] = float(ops.mpm("info", "time"))
+    r["time"] = _scalar(ops.mpm("info", "time"))
     return r
 
 

@@ -779,7 +779,7 @@ ladrunoMPM(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
     const int q = ladrunoMPMDoubleQuery(&theDomain, args, out);
     if (q < 0) return TCL_ERROR;
     if (q > 0) {
-      if (args[0] == "criticalTimeStep") {
+      if (args[0] == "criticalTimeStep" || (args[0] == "info" && args.size() > 1 && args[1] == "time")) {
         Tcl_SetObjResult(interp, Tcl_NewDoubleObj(out[0]));
       } else {
         Tcl_Obj *list = Tcl_NewListObj(0, NULL);

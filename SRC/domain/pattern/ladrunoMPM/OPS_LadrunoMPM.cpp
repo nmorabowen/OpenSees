@@ -573,7 +573,9 @@ int OPS_LadrunoMPM(void)
     std::vector<double> out;
     const int q = ladrunoMPMDoubleQuery(dom, a, out);
     if (q < 0) return -1;
-    if (q > 0) return (sub == "criticalTimeStep") ? outDouble(out[0]) : outDoubles(out);
+    // a scalar query answers a scalar (criticalTimeStep, info time); the rest are lists
+    const bool scalar = sub == "criticalTimeStep" || (sub == "info" && a.size() > 1 && a[1] == "time");
+    if (q > 0) return scalar ? outDouble(out[0]) : outDoubles(out);
     if (sub == "info") OPS_ResetCurrentInputArg(-1);   // not a double query: the int forms below
     if (sub == "particleData") return fail("particleData <field>");
   }
