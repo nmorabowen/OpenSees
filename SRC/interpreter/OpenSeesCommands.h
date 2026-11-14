@@ -291,6 +291,7 @@ int OPS_LadrunoBuild();                // Ladruno: build-stamp query (git hash t
 int OPS_LadrunoSchema();               // Ladruno WP-185: machine-readable capability schema (JSON)
 int OPS_LadrunoThreads();              // Ladruno WP-107: element-loop thread count (get/set)
 int OPS_LadrunoSANISANDReplay();      // Ladruno WP-127: LadrunoSANISAND material-point state replay (defined in LadrunoSANISAND.cpp)
+int OPS_LadrunoMPM();                 // Ladruno WP-232: the `mpm` command (defined in ladrunoMPM/OPS_LadrunoMPM.cpp)
 int OPS_LadrunoMutation();             // Ladruno: ADR-87 D2 mutation-gate query ("none" or e.g. "CONTINUUM=ZERO")
 int OPS_nodeEigenvector();
 int OPS_getTime();

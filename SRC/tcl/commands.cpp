@@ -759,6 +759,40 @@ ladrunoSANISANDReplay(ClientData clientData, Tcl_Interp *interp, int argc, TCL_C
   return (OPS_LadrunoSANISANDReplay() < 0) ? TCL_ERROR : TCL_OK;          // Ladruno WP-127
 }
 
+int OPS_LadrunoMPM(void);   // Ladruno WP-232 (defined in ladrunoMPM/OPS_LadrunoMPM.cpp)
+int ladrunoMPMDoubleQuery(Domain *, const std::vector<std::string> &, std::vector<double> &);   // Ladruno WP-232
+static int
+ladrunoMPM(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)   // Ladruno WP-232
+{
+  // Ladruno WP-232: the shared entry reads OPS_GetNDM(), which in this engine
+  // dereferences the model builder -- refuse before it can be null.
+  if (theBuilder == 0) {
+    opserr << "WARNING mpm -- define the model first (model basic -ndm 2|3 ...)" << endln;
+    return TCL_ERROR;
+  }
+  // Ladruno WP-232 (review Q8): the double-valued queries are published as Tcl
+  // doubles, full precision; OPS_SetDoubleOutput's %35.20f does not round-trip.
+  {
+    std::vector<std::string> args;
+    for (int i = 1; i < argc; i++) args.push_back(argv[i]);
+    std::vector<double> out;
+    const int q = ladrunoMPMDoubleQuery(&theDomain, args, out);
+    if (q < 0) return TCL_ERROR;
+    if (q > 0) {
+      if (args[0] == "criticalTimeStep" || (args[0] == "info" && args.size() > 1 && args[1] == "time")) {
+        Tcl_SetObjResult(interp, Tcl_NewDoubleObj(out[0]));
+      } else {
+        Tcl_Obj *list = Tcl_NewListObj(0, NULL);
+        for (double v : out) Tcl_ListObjAppendElement(interp, list, Tcl_NewDoubleObj(v));
+        Tcl_SetObjResult(interp, list);
+      }
+      return TCL_OK;
+    }
+  }
+  OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);   // Ladruno WP-232
+  return (OPS_LadrunoMPM() < 0) ? TCL_ERROR : TCL_OK;                      // Ladruno WP-232
+}
+
 int
 getPID(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 
@@ -11899,6 +11933,7 @@ ladrunoMutation(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **
     {"SANISAND",  LADRUNO_MUTATE_SANISAND},
     {"SHELLMOD",  LADRUNO_MUTATE_SHELLMOD},   // Ladruno: ADR 91
     {"CPML",      LADRUNO_MUTATE_CPML},       // Ladruno: C-PML wave absorbing element
+    {"MPM",       LADRUNO_MUTATE_MPM},        // Ladruno WP-232: explicit MPM engine
   };
   const char *modeName[] = {"NONE", "ZERO", "SCALE", "IDENT"};
 

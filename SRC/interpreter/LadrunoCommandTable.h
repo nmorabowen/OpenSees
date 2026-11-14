@@ -108,3 +108,6 @@ LADRUNO_COMMAND("randomResponse",            OPS_LadrunoRandomResponse,        r
 LADRUNO_COMMAND("residualModes",             OPS_LadrunoResidualModes,         residualModes)                 // WP-213
 LADRUNO_COMMAND("ritzVectors",               OPS_LadrunoRitzVectors,           ritzVectors)                   // WP-215
 LADRUNO_COMMAND("responseSpectrumPerMode",   OPS_LadrunoResponseSpectrumPerMode, responseSpectrumPerMode)   // WP-216
+
+// ---- WP-232: the explicit MPM engine (mode F; a LoadPattern host, no analysis) --
+LADRUNO_COMMAND("mpm",                       OPS_LadrunoMPM,                   ladrunoMPM)                    // WP-232

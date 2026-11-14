@@ -87,6 +87,27 @@ FAMILIES = {
         ],
         "min_score": {"ZERO": 0.60, "SCALE": 0.40, "IDENT": 0.0},
     },
+    # WP-232 explicit MPM engine. It has no Element accessor, so the gates sit
+    # in the engine step (LadrunoMPMCore.h): ZERO drops the P2G internal force,
+    # SCALE multiplies the G2P position increment by 1.5 (ADR 232 section 8).
+    # The suite is the binary-driven one; the standalone g++ core check
+    # (test_mpm_engine_core_cpp.py) compiles its own unmutated copy and is
+    # deliberately NOT selected, so it cannot deflate the score.
+    "MPM": {
+        # Measured 2026-11-13 on 8143d88af (Python half; the mutant build has
+        # no OpenSees.exe, so run with LADRUNO_TCL_EXE pointing nowhere in BOTH
+        # runs, or the Tcl half scores as immune survivors): ZERO 18/38 = 0.474.
+        # The 20 survivors are physics-free for the internal force by design:
+        # the unit hooks (shape, critdt, masscut), the stress-free closed forms
+        # (translation, overhang, freefall) and the PIC<FLIP / linear>GIMP
+        # orderings. Every stress-bearing case dies. SCALE (778145f3a): 22/38 =
+        # 0.579; survivors are the unit hooks, the orderings, and three cases
+        # that never test a position increment: incline_stick (8.6e-5 m of
+        # motion, x1.5 still inside its 0.005 m band), k0_quiet_start (exactly
+        # at rest) and roller_slide (a velocity check).
+        "paths": ["test_ladruno_mpm_engine.py"],   # the cases suite; lifecycle/refusal tests are physics-free
+        "min_score": {"ZERO": 0.45, "SCALE": 0.55, "IDENT": 0.0},
+    },
     # --- WP-3 lanes: gates NOT yet inserted in these families' elements. -----
     # Registering the paths here is deliberate (it documents the intended
     # evidence suite), but running a gate before the call sites exist would
@@ -101,7 +122,7 @@ FAMILIES = {
 # Families whose C++ call sites are live. WP-3 moves the rest across as it
 # inserts their gates; `run` refuses an ungated family so a 0.0 score can never
 # be mistaken for "this suite is worthless".
-GATED_FAMILIES = {"CONTINUUM", "SHELLMOD", "CPML"}
+GATED_FAMILIES = {"CONTINUUM", "SHELLMOD", "CPML", "MPM"}
 
 PROBE = (
     "import json,sys\n"

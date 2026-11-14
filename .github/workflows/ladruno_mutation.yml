@@ -25,7 +25,7 @@ on:
         required: true
         default: CONTINUUM
         type: choice
-        options: [CONTINUUM, UP, CONTACT, EXPLICIT, SANISAND]
+        options: [CONTINUUM, UP, CONTACT, EXPLICIT, SANISAND, MPM]   # MPM: WP-232
 
 jobs:
   mutation-gate:

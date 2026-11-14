@@ -552,6 +552,92 @@ namespace h5 {
 			return appendScalar1d(dset, H5T_NATIVE_INT, &value);
 		}
 
+		// ---- WP-232 (MPM particle group, 232a contract 2) ---------------------
+		// The writers above cannot express three things the particle group
+		// needs (quirk WP-232a-the-ladruno-hdf5-attribute-writer-skips-empty-
+		// strings): an int64 dataset, a string-array dataset, and an EMPTY
+		// dataset (createAndWrite skips an empty vector, returning HID_INVALID).
+		// These write what they are given, empty included.
+
+		// A [n] array of fixed-length NULLTERM strings, the width the longest
+		// string plus its terminator (empty strings are written as "").
+		inline hid_t createAndWriteStrings(hid_t obj, const char *name, const std::vector<std::string> &data)
+		{
+			size_t width = 1;
+			for (size_t i = 0; i < data.size(); ++i)
+				width = std::max(width, data[i].size() + 1);
+			std::vector<char> buf(width * data.size(), '\0');
+			for (size_t i = 0; i < data.size(); ++i)
+				std::copy(data[i].begin(), data[i].end(), buf.begin() + i * width);
+			hsize_t dim[1] = { (hsize_t)data.size() };
+			hid_t space = H5Screate_simple(1, dim, NULL);
+			hid_t atype = H5Tcopy(H5T_C_S1);
+			H5Tset_size(atype, width);
+			H5Tset_strpad(atype, H5T_STR_NULLTERM);
+			hid_t dset = H5Dcreate(obj, name, atype, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+			if (dset >= 0 && !data.empty())
+				H5Dwrite(dset, atype, H5S_ALL, H5S_ALL, H5P_DEFAULT, buf.data());
+			H5Sclose(space);
+			H5Tclose(atype);
+			return dset;
+		}
+
+		// An empty dataset of any type and rank (dims may hold zeros), e.g. the
+		// int32 [0 x 1] MODEL/NODES/ID of an empty stage.
+		inline hid_t createEmpty(hid_t obj, const char *name, hid_t file_type, int rank, const hsize_t *dims)
+		{
+			hid_t space = H5Screate_simple(rank, dims, NULL);
+			hid_t dset = H5Dcreate(obj, name, file_type, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+			H5Sclose(space);
+			return dset;
+		}
+
+		// A row-extensible dataset [0 x cols] (cols = 0: 1-D [0]), maxshape
+		// [UNLIM (x cols)], chunked rows_per_chunk rows, shuffle + deflate at
+		// `compress` (0 = no filter). Rows are appended by appendRows.
+		inline hid_t createRows(hid_t obj, const char *name, hid_t file_type, hsize_t cols,
+		                        hsize_t rows_per_chunk, int compress)
+		{
+			const int rank = cols > 0 ? 2 : 1;
+			hsize_t dims[2] = { 0, cols };
+			hsize_t maxd[2] = { H5S_UNLIMITED, cols };
+			hsize_t chunk[2] = { rows_per_chunk > 0 ? rows_per_chunk : 1, cols };
+			hid_t space = H5Screate_simple(rank, dims, maxd);
+			hid_t dcpl = H5Pcreate(H5P_DATASET_CREATE);
+			H5Pset_chunk(dcpl, rank, chunk);
+			if (compress > 0) {
+				H5Pset_shuffle(dcpl);
+				H5Pset_deflate(dcpl, (unsigned)compress);
+			}
+			hid_t dset = H5Dcreate(obj, name, file_type, space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
+			H5Pclose(dcpl);
+			H5Sclose(space);
+			return dset;
+		}
+
+		// Append nrows rows (cols per row, 0 = 1-D) of mem_type data to a
+		// dataset made by createRows. nrows = 0 is a no-op.
+		inline herr_t appendRows(hid_t dset, hid_t mem_type, const void *data, hsize_t nrows, hsize_t cols)
+		{
+			if (nrows == 0) return 0;
+			const int rank = cols > 0 ? 2 : 1;
+			hid_t fspace = H5Dget_space(dset);
+			hsize_t cur[2] = { 0, 0 };
+			H5Sget_simple_extent_dims(fspace, cur, NULL);
+			H5Sclose(fspace);
+			hsize_t newd[2] = { cur[0] + nrows, cols };
+			if (H5Dset_extent(dset, newd) < 0) return -1;
+			fspace = H5Dget_space(dset);
+			hsize_t start[2] = { cur[0], 0 };
+			hsize_t count[2] = { nrows, cols };
+			H5Sselect_hyperslab(fspace, H5S_SELECT_SET, start, NULL, count, NULL);
+			hid_t mspace = H5Screate_simple(rank, count, NULL);
+			herr_t status = H5Dwrite(dset, mem_type, mspace, fspace, H5P_DEFAULT, data);
+			H5Sclose(mspace);
+			H5Sclose(fspace);
+			return status;
+		}
+
 	}
 
 	namespace file {
