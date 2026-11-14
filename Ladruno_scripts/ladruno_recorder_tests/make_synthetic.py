@@ -45,7 +45,9 @@ def _chunked(g: h5py.Group, slabs, steps, times) -> None:
     g.create_dataset("TIME", data=np.asarray(times, dtype=np.float64), maxshape=(None,))
 
 
-def build(path: str) -> None:
+def build(path: str, particles: bool = False) -> None:
+    """Write the synthetic file. ``particles=True`` adds an MPM particle group to its
+    stage and sets FORMAT_MINOR_VERSION = 2 (WP-232a, the shared-file case)."""
     with h5py.File(path, "w") as f:
         info = f.create_group("INFO")
         _s(info, "GENERATOR", "Ladruno")
@@ -216,9 +218,144 @@ def build(path: str) -> None:
         _chunked(fb, [np.arange(6, dtype=np.float64).reshape(1, 6) * 10.0], steps=[0], times=[0.0])
 
 
+    if particles:
+        _add_synthetic_particles(path)
+
+
+# ---------------------------------------------------------------------------
+# MPM particle group (WP-232a, contract 2; FORMAT_MINOR_VERSION 2)
+# ---------------------------------------------------------------------------
+# The reference writer for Ladruno_implementation/232a_mpm_contracts.md §2. It writes
+# attributes the way the fork's C++ wrapper does (SRC/recorder/Ladruno_Hdf5.h,
+# h5::attribute::writei/writed/writes): ints and doubles as 1-element (or n-element) 1-D
+# arrays, strings as fixed-length NULLTERM, and an EMPTY string not at all. Readers
+# built against this output therefore read what the fork will really write.
+
+#: field -> (DISPLAY_NAME, DIMENSION, DATA_TYPE)  (232a §2.6; COMPONENTS from ladruno_format)
+PARTICLE_FIELD_META = {
+    "POSITION": ("Position", "L", 1),
+    "VELOCITY": ("Velocity", "L/t", 1),
+    "ACCELERATION": ("Acceleration", "L/t^2", 1),
+    "STRESS": ("Stress", "F/L^2", 2),
+    "VOLUME": ("Volume", "L^3", 0),
+    "GIMP_HALF_LENGTH": ("GIMP half-length", "L", 1),
+    "DEFORMATION_GRADIENT": ("Deformation gradient", "", 2),
+}
+
+
+def _ai(g, name: str, v) -> None:
+    g.attrs[name] = np.atleast_1d(np.asarray(v, dtype="<i4"))
+
+
+def _ad(g, name: str, v) -> None:
+    g.attrs[name] = np.atleast_1d(np.asarray(v, dtype="<f8"))
+
+
+def _as(g, name: str, v: str) -> None:
+    if v:  # the C++ wrapper skips an empty string: absent == ""
+        b = v.encode("utf-8")
+        g.attrs[name] = np.array([b], dtype=f"S{len(b)}")
+
+
+def _ext(g, name: str, data: np.ndarray, rows_per_chunk: int, compress: int = 1) -> None:
+    """An axis-0 extensible dataset, chunked, shuffle + deflate (232a §2.8)."""
+    data = np.asarray(data)
+    rows = max(1, min(rows_per_chunk, data.shape[0] or 1))
+    kw = {"compression": "gzip", "compression_opts": compress, "shuffle": True} if compress else {}
+    g.create_dataset(name, data=data, maxshape=(None,) + data.shape[1:],
+                     chunks=(rows,) + data.shape[1:], **kw)
+
+
+def write_particle_group(stage, *, ndm: int, grid: dict, bodies: list, registry: dict,
+                         outputs: list, meta: dict, field_meta: dict | None = None,
+                         compress: int = 1) -> None:
+    """Write MODEL/PARTICLES + RESULTS/ON_PARTICLES into a MODEL_STAGE group.
+
+    grid:     {"ORIGIN", "CELL_SIZE", "NUM_CELLS", "BASIS"}
+    bodies:   [(id, name), ...]
+    registry: {"ID", "BODY_ID", "MATERIAL_TAG", "MASS"} arrays (one row per particle)
+    outputs:  [{"step", "time", "ids", "fields": {name: [n x nComp] array}}, ...]
+    meta:     MODEL/PARTICLES attributes (SOURCE_SET_ID, PATTERN_TAG, MODE, UNIT_*, ...)
+    field_meta: {name: (DISPLAY_NAME, COMPONENTS, DIMENSION, DATA_TYPE)} for STATE_* fields
+    """
+    import ladruno_format as lf
+
+    model = stage.require_group("MODEL")
+    mp = model.create_group("PARTICLES")
+    for k, v in meta.items():
+        if isinstance(v, str):
+            _as(mp, k, v)
+        elif isinstance(v, (int, np.integer)):
+            _ai(mp, k, v)
+        else:
+            _ad(mp, k, v)
+    g = mp.create_group("GRID")
+    _ad(g, "ORIGIN", grid["ORIGIN"])
+    _ad(g, "CELL_SIZE", grid["CELL_SIZE"])
+    _ai(g, "NUM_CELLS", grid["NUM_CELLS"])
+    _as(g, "BASIS", grid["BASIS"])
+    b = mp.create_group("BODIES")
+    b.create_dataset("ID", data=np.array([i for i, _ in bodies], dtype="<i4"))
+    names = [n.encode("utf-8") for _, n in bodies]
+    b.create_dataset("NAME", data=np.array(names, dtype=f"S{max(len(n) for n in names)}"))
+    for k, dt in (("ID", "<i8"), ("BODY_ID", "<i4"), ("MATERIAL_TAG", "<i4"), ("MASS", "<f8")):
+        _ext(mp, k, np.asarray(registry[k], dtype=dt), 1 << 17, compress)
+
+    res = stage.require_group("RESULTS")
+    op = res.create_group("ON_PARTICLES")
+    _as(op, "PARTITION_REDUCTION", "NONE")
+    counts = [len(o["ids"]) for o in outputs]
+    offsets = np.concatenate([[0], np.cumsum(counts)]).astype("<i8")
+    _ext(op, "STEP", np.array([o["step"] for o in outputs], dtype="<i4"), 1024, compress)
+    _ext(op, "TIME", np.array([o["time"] for o in outputs], dtype="<f8"), 1024, compress)
+    _ext(op, "OFFSETS", offsets, 1024, compress)
+    _ext(op, "ID", np.concatenate([np.asarray(o["ids"], dtype="<i8") for o in outputs]),
+         1 << 17, compress)
+    for name in outputs[0]["fields"]:
+        if name in PARTICLE_FIELD_META:
+            disp, dim, dtype_code = PARTICLE_FIELD_META[name]
+            comps = lf.PARTICLE_FIELDS[name][ndm - 2]
+        else:
+            disp, comps, dim, dtype_code = (field_meta or {})[name]
+        data = np.concatenate([np.asarray(o["fields"][name], dtype="<f8") for o in outputs])
+        fg = op.create_group(name)
+        _as(fg, "DISPLAY_NAME", disp)
+        _as(fg, "COMPONENTS", comps)
+        _as(fg, "DIMENSION", dim)
+        _as(fg, "DESCRIPTION", "")
+        _ai(fg, "TYPE", 0)
+        _ai(fg, "DATA_TYPE", dtype_code)
+        _as(fg, "PARTITION_REDUCTION", "NONE")
+        _ext(fg, "DATA", data, max(1, (1 << 20) // (8 * data.shape[1])), compress)
+
+
+def _add_synthetic_particles(path: str) -> None:
+    """The shared-file case: three particles in the FE stage of the synthetic file
+    (a quasi-static mode-A stage), two outputs, minor version 2."""
+    with h5py.File(path, "r+") as f:
+        f["INFO"].attrs["FORMAT_MINOR_VERSION"] = 2
+        stage = f["MODEL_STAGE[0]"]
+        x0 = np.array([[2.25, 2.25], [2.75, 2.25], [2.25, 2.75]])
+        write_particle_group(
+            stage, ndm=2,
+            grid={"ORIGIN": [2.0, 2.0], "CELL_SIZE": [1.0, 1.0], "NUM_CELLS": [2, 2],
+                  "BASIS": "gimp"},
+            bodies=[(0, "body")],
+            registry={"ID": [0, 1, 2], "BODY_ID": [0, 0, 0], "MATERIAL_TAG": [1, 1, 1],
+                      "MASS": [0.5, 0.5, 0.5]},
+            outputs=[{"step": 0, "time": 0.0, "ids": [0, 1, 2], "fields": {"POSITION": x0}},
+                     {"step": 1, "time": 1.0, "ids": [0, 1, 2],
+                      "fields": {"POSITION": x0 + [0.0, -0.01]}}],
+            meta={"SOURCE_SET_ID": "00000000-0000-4000-8000-000000000000",
+                  "PATTERN_TAG": -1, "MODE": "quasi-static",
+                  "PLANE_STRAIN_THICKNESS": 1.0, "UNIT_LENGTH": "m", "UNIT_FORCE": "kN",
+                  "UNIT_TIME": "s"},
+        )
+
+
 if __name__ == "__main__":
     import sys
 
     out = sys.argv[1] if len(sys.argv) > 1 else "synthetic.ladruno"
-    build(out)
+    build(out, particles="--particles" in sys.argv[2:])
     print(f"wrote {out}")

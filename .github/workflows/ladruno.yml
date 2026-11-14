@@ -78,6 +78,11 @@ jobs:
           pip install h5py numpy pytest
           cd Ladruno_scripts/ladruno_recorder_tests
           pytest -q test_ladruno_harness.py
+      # MPM contracts (WP-232a): the particle-set validator, the .ladruno particle group
+      # (FORMAT_MINOR_VERSION 2, checked through ladruno_format), the committed fixtures and
+      # one refusal per rule. Pure Python, no build -- so it gates drafts too.
+      - name: MPM contracts -- particle set + .ladruno particle group (WP-232a)
+        run: pytest -q -p no:cacheprovider tests/test_mpm_contracts.py
       # Header-stamp gate (WP-122): the LADRUNO-HEADER-START stamp IS the quirk
       # lint's scope, so every file in stamp_headers.py GLOBS must carry a current
       # stamp, and every tracked SRC source upstream OpenSees does not have (per the

@@ -16,6 +16,8 @@ this validates it immediately.
 
 from __future__ import annotations
 
+import json
+import re
 import sys
 from typing import Any
 
@@ -26,6 +28,10 @@ import ladruno_basis
 
 GENERATOR = "Ladruno"
 FORMAT_VERSION = 1
+# WP-232a: INFO/FORMAT_MINOR_VERSION 2 = minor 1 (schema §2a) + the MPM particle group
+# (MODEL/PARTICLES + RESULTS/ON_PARTICLES, Ladruno_implementation/232a_mpm_contracts.md §2).
+# Additive: FORMAT_VERSION stays 1. A file with a particle group must write minor >= 2.
+FORMAT_MINOR_VERSION_PARTICLES = 2
 
 # COLUMN_MAP/LEVELS path codes (schema §7.2)
 LEVEL_ELEMENT, LEVEL_GAUSS, LEVEL_SECTION, LEVEL_FIBER, LEVEL_MATERIAL = 0, 1, 2, 3, 4
@@ -203,6 +209,19 @@ class LadrunoReader:
                     d["columns"] = decode_columns(g["COLUMN_MAP"])
                 out[fam][name] = d
         return out
+
+    # -- MPM particles (WP-232a, contract 2) --
+    def particle_stages(self) -> list[str]:
+        """Stages that carry a particle group, in numeric stage-id order."""
+        out = [s for s in self.stages() if f"{s}/MODEL/PARTICLES" in self.f]
+        return sorted(out, key=_stage_id)
+
+    def particle_output(self, stage: str, field: str, k: int) -> tuple[np.ndarray, np.ndarray]:
+        """(ids [n], values [n x nComp]) of output ``k`` of ``field`` (232a §2.5)."""
+        g = self.f[f"{stage}/RESULTS/ON_PARTICLES"]
+        off = np.asarray(g["OFFSETS"][...]).reshape(-1)
+        a, b = int(off[k]), int(off[k + 1])
+        return np.asarray(g["ID"][a:b]), np.asarray(g[field]["DATA"][a:b])
 
     def section_assignments(self, stage: str) -> dict[str, dict]:
         out: dict[str, dict] = {}
@@ -514,6 +533,8 @@ def validate(path: str) -> list[str]:
             _validate_envelopes(r, stage, err)
             _validate_partition_reduction(r, stage, err, bool(int(info.get("PARTITIONED", 0))))
 
+        _validate_particles(r, info, ndim, err)
+
     return problems
 
 
@@ -697,3 +718,293 @@ def _validate_element_results(r: LadrunoReader, stage: str, err) -> None:
                 if sm.shape[0] != ids.shape[0]:
                     err(f"{stage}/ON_ELEMENTS/{rname}/{bname}: SECTION_MAP rows "
                         f"{sm.shape[0]} != nElem {ids.shape[0]}")
+
+
+# ---------------------------------------------------------------------------
+# MPM particle group (WP-232a, contract 2) -- FORMAT_MINOR_VERSION 2
+# ---------------------------------------------------------------------------
+# The rules are Ladruno_implementation/232a_mpm_contracts.md §2; every message starts
+# with the rule's code (C2-...), so a test can name the rule it expects to fire.
+
+H5Z_ALLOWED_FILTERS = {1: "deflate", 2: "shuffle", 3: "fletcher32"}  # H5Z_FILTER_* ids
+
+PARTICLE_INDEX = ("STEP", "TIME", "OFFSETS", "ID")
+PARTICLE_FIELD_NAME = re.compile(r"^(?:[A-Z][A-Z0-9_]*|STATE_[A-Za-z0-9_]+)$")
+UUID4 = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+MAX_SAFE_ID = 2**53 - 1
+
+#: reserved field -> (COMPONENTS for ndm 2, COMPONENTS for ndm 3)  (232a §2.6)
+PARTICLE_FIELDS = {
+    "POSITION": ("x,y", "x,y,z"),
+    "VELOCITY": ("Vx,Vy", "Vx,Vy,Vz"),
+    "ACCELERATION": ("Ax,Ay", "Ax,Ay,Az"),
+    "STRESS": ("sigma11,sigma22,sigma33,sigma12",
+               "sigma11,sigma22,sigma33,sigma12,sigma23,sigma13"),
+    "VOLUME": ("V", "V"),
+    "GIMP_HALF_LENGTH": ("lx,ly", "lx,ly,lz"),
+    "DEFORMATION_GRADIENT": ("F11,F12,F21,F22", "F11,F12,F13,F21,F22,F23,F31,F32,F33"),
+}
+FIELD_ATTRS = ("DISPLAY_NAME", "COMPONENTS", "TYPE", "DATA_TYPE", "PARTITION_REDUCTION")
+
+
+def _stage_id(name: str) -> int:
+    """MODEL_STAGE[<id>] -> id (stages sort numerically, schema §2a)."""
+    return int(name[name.index("[") + 1:name.index("]")])
+
+
+def _dtype_is(ds, *want: str) -> bool:
+    return any(ds.dtype == np.dtype(w) for w in want)
+
+
+def filters_of(ds) -> list[int]:
+    """HDF5 filter ids on a dataset's creation plist (empty for contiguous)."""
+    dcpl = ds.id.get_create_plist()
+    return [dcpl.get_filter(i)[0] for i in range(dcpl.get_nfilters())]
+
+
+def check_filters(ds, ctx: str, err, code: str) -> None:
+    """Only shuffle / deflate / fletcher32: what h5wasm and the fork's HDF5 both read."""
+    bad = [f for f in filters_of(ds) if f not in H5Z_ALLOWED_FILTERS]
+    if bad:
+        err(f"{code}: {ctx}: filters {bad} outside shuffle/deflate/fletcher32")
+
+
+def str_dataset(ds) -> list[str]:
+    """A string dataset, fixed- or variable-length, as a list of str."""
+    return [str(x) for x in ds.asstr()[...].reshape(-1)]
+
+
+def _validate_particles(r: LadrunoReader, info: dict, ndim: int, err) -> None:
+    for stage in r.stages():
+        has_model = f"{stage}/MODEL/PARTICLES" in r.f
+        has_res = f"{stage}/RESULTS/ON_PARTICLES" in r.f
+        if has_model != has_res:
+            err(f"C2-PAIR: {stage}: MODEL/PARTICLES and RESULTS/ON_PARTICLES must come together")
+    stages = [s for s in r.particle_stages() if f"{s}/RESULTS/ON_PARTICLES" in r.f]
+    if not stages:
+        return
+    minor = int(info.get("FORMAT_MINOR_VERSION", 0))
+    if minor < FORMAT_MINOR_VERSION_PARTICLES:
+        err(f"C2-MINOR: INFO/FORMAT_MINOR_VERSION is {minor}; a file with a particle "
+            f"group needs >= {FORMAT_MINOR_VERSION_PARTICLES}")
+    if int(info.get("PARTITIONED", 0)):
+        err("C2-PART: a partitioned part file carries a particle group (serial only)")
+    if ndim not in (2, 3):
+        err(f"C2-NDM: INFO/SPATIAL_DIM {ndim} must be 2 or 3 for particles")
+        return
+    removed: set[int] = set()      # ids that left the run: never seen again (C2-REUSE)
+    alive: set[int] = set()
+    for stage in stages:
+        alive, removed = _validate_particle_stage(r, stage, ndim, err, alive, removed)
+
+
+def _validate_particle_model(r, stage, ndim, err):
+    """MODEL/PARTICLES: attributes, GRID, BODIES, registry. Returns (grid lo, hi, ids)."""
+    mp = r.f[f"{stage}/MODEL/PARTICLES"]
+    ctx = f"{stage}/MODEL/PARTICLES"
+    a = {k: _attr(mp, k) for k in mp.attrs}
+
+    sid = a.get("SOURCE_SET_ID")
+    if not isinstance(sid, str) or not UUID4.match(sid):
+        err(f"C2-SRC: {ctx}: SOURCE_SET_ID {sid!r} is not a canonical uuid4")
+    if "SOURCE_SET_IDS" in a:
+        try:
+            ok = isinstance(json.loads(a["SOURCE_SET_IDS"]), list)
+        except (TypeError, ValueError):
+            ok = False
+        if not ok:
+            err(f"C2-SRC: {ctx}: SOURCE_SET_IDS is not a JSON array")
+    if "PATTERN_TAG" not in a:
+        err(f"C2-MODE: {ctx}: PATTERN_TAG missing")
+    if a.get("MODE") not in ("explicit", "implicit", "quasi-static"):
+        err(f"C2-MODE: {ctx}: MODE {a.get('MODE')!r} not explicit|implicit|quasi-static")
+    thk = a.get("PLANE_STRAIN_THICKNESS")
+    if ndim == 2 and (thk is None or not np.isfinite(thk) or thk <= 0):
+        err(f"C2-THK: {ctx}: PLANE_STRAIN_THICKNESS must be > 0 when SPATIAL_DIM = 2")
+    if ndim == 3 and thk is not None:
+        err(f"C2-THK: {ctx}: PLANE_STRAIN_THICKNESS present in 3D")
+    for u in ("UNIT_LENGTH", "UNIT_FORCE", "UNIT_TIME"):
+        if not isinstance(a.get(u), str) or not a[u]:
+            err(f"C2-UNIT: {ctx}: {u} missing or empty")
+
+    lo = hi = None
+    if "GRID" not in mp:
+        err(f"C2-GRID: {ctx}: GRID group missing")
+    else:
+        lo, hi = check_grid(mp["GRID"], ndim, f"{ctx}/GRID", err, "C2-GRID")
+
+    body_ids: set[int] = set()
+    if "BODIES" not in mp or "ID" not in mp["BODIES"] or "NAME" not in mp["BODIES"]:
+        err(f"C2-BODY: {ctx}: BODIES/ID and BODIES/NAME are required")
+    else:
+        body_ids = check_bodies(mp["BODIES"], f"{ctx}/BODIES", err, "C2-BODY")
+
+    reg_ids = np.zeros(0, dtype=np.int64)
+    want = {"ID": "<i8", "BODY_ID": "<i4", "MATERIAL_TAG": "<i4", "MASS": "<f8"}
+    missing = [k for k in want if k not in mp]
+    if missing:
+        err(f"C2-REG: {ctx}: registry datasets missing {missing}")
+        return lo, hi, reg_ids
+    for k, dt in want.items():
+        if not _dtype_is(mp[k], dt):
+            err(f"C2-REG: {ctx}/{k} dtype {mp[k].dtype} != {np.dtype(dt)}")
+    shapes = {mp[k].shape for k in want}
+    if len(shapes) != 1 or len(next(iter(shapes))) != 1:
+        err(f"C2-REG: {ctx}: registry datasets must be 1-D and of one length")
+        return lo, hi, reg_ids
+    reg_ids = np.asarray(mp["ID"][...])
+    if np.any(np.diff(reg_ids) <= 0):
+        err(f"C2-REG: {ctx}/ID not strictly increasing")
+    if reg_ids.size and (reg_ids.min() < 0 or reg_ids.max() > MAX_SAFE_ID):
+        err(f"C2-REG: {ctx}/ID outside [0, 2^53-1]")
+    if body_ids and not set(np.asarray(mp["BODY_ID"][...]).tolist()) <= body_ids:
+        err(f"C2-REG: {ctx}/BODY_ID names a body not in BODIES/ID")
+    if np.any(np.asarray(mp["MATERIAL_TAG"][...]) <= 0):
+        err(f"C2-REG: {ctx}/MATERIAL_TAG must be > 0")
+    m = np.asarray(mp["MASS"][...])
+    if np.any(~np.isfinite(m)) or np.any(m <= 0):
+        err(f"C2-REG: {ctx}/MASS must be finite and > 0")
+    return lo, hi, reg_ids
+
+
+def check_grid(g, ndim: int, ctx: str, err, code: str, basis_code: str | None = None):
+    """GRID attributes (contract 1 §1.2 == contract 2 §2.4). Returns the box (lo, hi)."""
+    lo = hi = None
+    try:
+        org = np.atleast_1d(np.asarray(_attr(g, "ORIGIN"), dtype=float))
+        h = np.atleast_1d(np.asarray(_attr(g, "CELL_SIZE"), dtype=float))
+        nc = np.atleast_1d(np.asarray(_attr(g, "NUM_CELLS")))
+    except KeyError as exc:
+        err(f"{code}: {ctx}: missing attribute {exc}")
+        org = h = nc = None
+    if org is not None:
+        if not (org.shape == h.shape == nc.shape == (ndim,)):
+            err(f"{code}: {ctx}: ORIGIN/CELL_SIZE/NUM_CELLS must each be [{ndim}]")
+        elif nc.dtype.kind not in "iu":
+            err(f"{code}: {ctx}: NUM_CELLS must be integer")
+        elif not np.all(np.isfinite(org)) or not np.all(np.isfinite(h)) or np.any(h <= 0) \
+                or np.any(nc < 1):
+            err(f"{code}: {ctx}: non-finite origin, CELL_SIZE <= 0 or NUM_CELLS < 1")
+        else:
+            lo, hi = org, org + nc * h
+    if "BASIS" not in g.attrs or _attr(g, "BASIS") not in ("gimp", "linear"):
+        err(f"{basis_code or code}: {ctx}: BASIS must be gimp|linear")
+    return lo, hi
+
+
+def check_bodies(bg, ctx: str, err, code: str) -> set[int]:
+    """BODIES/{ID int32, NAME str}: one length >= 1, unique ids, unique non-empty names."""
+    bid = bg["ID"]
+    names = str_dataset(bg["NAME"])
+    if not _dtype_is(bid, "<i4"):
+        err(f"{code}: {ctx}/ID dtype {bid.dtype} != int32")
+    vals = np.asarray(bid[...]).reshape(-1)
+    if len(vals) != len(names) or len(vals) < 1:
+        err(f"{code}: {ctx}: ID and NAME lengths differ or are empty")
+    if (len(set(vals.tolist())) != len(vals) or len(set(names)) != len(names)
+            or "" in names or np.any(vals < 0)):
+        err(f"{code}: {ctx}: ids (>= 0) and names must be unique, names non-empty")
+    return set(vals.tolist())
+
+
+def _validate_particle_stage(r, stage, ndim, err, alive, removed):
+    kind = r.stage_attrs(stage).get("KIND")
+    if kind not in ("transient", "static"):
+        err(f"C2-KIND: {stage}: KIND {kind!r} must be transient|static for particles")
+    lo, hi, reg_ids = _validate_particle_model(r, stage, ndim, err)
+
+    op = r.f[f"{stage}/RESULTS/ON_PARTICLES"]
+    octx = f"{stage}/RESULTS/ON_PARTICLES"
+    if "PARTITION_REDUCTION" not in op.attrs or _attr(op, "PARTITION_REDUCTION") != "NONE":
+        err(f"C2-RED: {octx}: PARTITION_REDUCTION must be NONE")
+    miss = [k for k in PARTICLE_INDEX if k not in op or not isinstance(op[k], h5py.Dataset)]
+    if miss:
+        err(f"C2-AXES: {octx}: index datasets missing {miss}")
+        return alive, removed
+    for k, dt, code in (("STEP", "<i4", "C2-AXES"), ("TIME", "<f8", "C2-AXES"),
+                        ("OFFSETS", "<i8", "C2-OFF"), ("ID", "<i8", "C2-ID")):
+        ds = op[k]
+        if not _dtype_is(ds, dt):
+            err(f"{code}: {octx}/{k} dtype {ds.dtype} != {np.dtype(dt)}")
+        if ds.ndim != 1:
+            err(f"{code}: {octx}/{k} must be 1-D")
+        check_filters(ds, f"{octx}/{k}", err, "C2-FILTER")
+    steps = np.asarray(op["STEP"][...]).reshape(-1)
+    times = np.asarray(op["TIME"][...]).reshape(-1)
+    offs = np.asarray(op["OFFSETS"][...]).reshape(-1)
+    ids = np.asarray(op["ID"][...]).reshape(-1)
+    T = steps.shape[0]
+    if T < 1 or times.shape[0] != T:
+        err(f"C2-AXES: {octx}: need T >= 1 outputs, STEP and TIME of one length")
+        return alive, removed
+    if np.any(np.diff(steps) <= 0):
+        err(f"C2-AXES: {octx}/STEP not strictly increasing")
+    if np.any(~np.isfinite(times)) or np.any(np.diff(times) < 0):
+        err(f"C2-AXES: {octx}/TIME not finite and non-decreasing")
+    if (offs.shape[0] != T + 1 or offs[0] != 0 or np.any(np.diff(offs) < 0)
+            or offs[-1] != ids.shape[0]):
+        err(f"C2-OFF: {octx}/OFFSETS must be [T+1], start at 0, never decrease, end at len(ID)")
+        return alive, removed
+    S = ids.shape[0]
+    reg_set = set(reg_ids.tolist())
+    for k in range(T):
+        out = ids[offs[k]:offs[k + 1]]
+        if np.any(np.diff(out) <= 0):
+            err(f"C2-ID: {octx}: output {k} ids not strictly increasing (repeated or unsorted)")
+        cur = set(out.tolist())
+        if not cur <= reg_set:
+            err(f"C2-ID: {octx}: output {k} has ids not in the registry {sorted(cur - reg_set)[:5]}")
+        back = cur & removed
+        if back:
+            err(f"C2-REUSE: {octx}: output {k} reuses removed ids {sorted(back)[:5]}")
+        removed |= alive - cur
+        alive = cur
+
+    if "POSITION" not in op:
+        err(f"C2-POS: {octx}: POSITION is required")
+    for name in op:
+        if name in PARTICLE_INDEX:
+            continue
+        _validate_particle_field(op[name], name, f"{octx}/{name}", ndim, S, lo, hi, err)
+    return alive, removed
+
+
+def _validate_particle_field(item, name, fctx, ndim, S, lo, hi, err) -> None:
+    if not isinstance(item, h5py.Group):
+        err(f"C2-UNKNOWN: {fctx}: unexpected dataset in ON_PARTICLES")
+        return
+    if not PARTICLE_FIELD_NAME.match(name):
+        err(f"C2-NAME: {fctx}: field name breaks the naming rule")
+    fa = {k: _attr(item, k) for k in item.attrs}
+    lacking = [k for k in FIELD_ATTRS if k not in fa]
+    if lacking:
+        err(f"C2-ATTR: {fctx}: attributes missing {lacking}")
+    if fa.get("PARTITION_REDUCTION", "NONE") != "NONE":
+        err(f"C2-RED: {fctx}: PARTITION_REDUCTION must be NONE")
+    comps = [c for c in str(fa.get("COMPONENTS", "")).split(",") if c]
+    if name in PARTICLE_FIELDS:
+        expect = PARTICLE_FIELDS[name][ndim - 2]
+        if ",".join(comps) != expect:
+            err(f"C2-CAT: {fctx}: COMPONENTS {','.join(comps)!r} != {expect!r}")
+    if "DATA" not in item or not isinstance(item["DATA"], h5py.Dataset):
+        err(f"C2-DATA: {fctx}: DATA dataset missing")
+        return
+    data = item["DATA"]
+    check_filters(data, f"{fctx}/DATA", err, "C2-FILTER")
+    if name == "POSITION":
+        if not _dtype_is(data, "<f8"):
+            err(f"C2-DTYPE: {fctx}/DATA dtype {data.dtype}: POSITION is float64 only")
+    elif not _dtype_is(data, "<f8", "<f4"):
+        err(f"C2-DTYPE: {fctx}/DATA dtype {data.dtype} not float64|float32")
+    if data.ndim != 2 or data.shape != (S, len(comps)):
+        err(f"C2-DATA: {fctx}/DATA shape {data.shape} != (S={S}, nComp={len(comps)})")
+        return
+    vals = np.asarray(data[...])
+    # NaN is allowed only in STATE_* (the material does not answer the token)
+    bad = np.isinf(vals) if name.startswith("STATE_") else ~np.isfinite(vals)
+    if np.any(bad):
+        err(f"C2-FINITE: {fctx}/DATA has non-finite values")
+    if name == "POSITION" and lo is not None and vals.shape[1] == ndim:
+        tol = 1e-9 * float(np.max(hi - lo))
+        if np.any(vals < lo - tol) or np.any(vals > hi + tol):
+            err(f"C2-POS: {fctx}: a position lies outside the grid box")
