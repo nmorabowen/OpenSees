@@ -240,7 +240,7 @@ jobs:
           max-size: 2G
       - name: Install conan
         run: |
-          pip install conan pytest pyyaml numpy sympy scipy  # sympy: hex20 oracle (ADR-72 P0); scipy: CMS oracle (ADR-1000)
+          pip install conan pytest pyyaml numpy sympy scipy h5py  # sympy: hex20 oracle (ADR-72 P0); scipy: CMS oracle (ADR-1000); h5py: MPM contracts (WP-232a, collected here)
           conan profile detect --force
       - name: Build OpenSees + OpenSeesPy
         run: |
