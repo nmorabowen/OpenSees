@@ -124,7 +124,7 @@ particles **stay where they are**. `mpm reset` puts them back. For a clean resta
 ## Refused in v1
 
 - a Domain with a free FE DOF (no FE–MPM seam yet): fix every node or remove the FE model;
-- database `save` / `restore` while the host exists (no particle restart path yet);
+- database `save` / `restore` while the host exists in mode F (mode A has a restart path);
 - `mpm` in OpenSeesSP / OpenSeesMP;
 - adding particles after the first step (until `mpm reset`).
 
@@ -173,6 +173,99 @@ stage (`EMPTY_PARTITION = 1`, empty nodes, elements and result groups) plus `MOD
   232a follow-up.
 - Classic Tcl returns `mpm criticalTimeStep`, `mpm particleData` and `mpm info time|summary` as
   full-precision doubles (the elementAPI's `%35.20f` does not round-trip).
+
+## Mode A — implicit dynamic and quasi-static (WP-232f)
+
+Phase 1 of the ADR (§5.3; frozen interface `tests/mpm_implicit_interface.md`). `mpm mode
+implicit` or `mpm mode quasiStatic` makes every particle a `LadrunoMPMPoint` element (class tag
+33026) and its active grid support Domain nodes, and **your own analysis** solves each step.
+Explicit stays the default (`mpm mode explicit`); the mode is fixed at the first step of an epoch
+(`mpm reset` to change it).
+
+```tcl
+model basic -ndm 2 -ndf 2
+nDMaterial ElasticIsotropic 1 6.0e7 0.0
+mpm grid 232 -origin 0.0 -4.0 -h 0.25 -cells 44 22
+mpm mode quasiStatic
+mpm body 1 box 0.0 0.0 10.0 1.0 -ppc 2 -mat 1 -rho 1000.0
+mpm fix xmin xy
+mpm gravity 0.0 -10.0
+timeSeries Path 9 -time {0 1 1e9} -values {0 1 1}
+mpm timeSeries 9
+constraints Plain; numberer RCM; system UmfPack
+test NormDispIncr 1e-10 30; algorithm Newton
+integrator LoadControl 0.05; analysis Static
+mpm analyze 20 0.05
+```
+
+For `implicit`, build `integrator Newmark 0.5 0.25` (or `HHT`, `GeneralizedAlpha`) and
+`analysis Transient` instead. Python is the same through `ops.mpm(...)`.
+
+**One step.** Supports at the committed positions; the active nodes (`m_a > c_m max m_p`) become
+Domain nodes — a node that stays active keeps its tag, one that leaves is removed, one that enters
+gets a NEW tag (a retired tag is never reused); P2G writes displacement 0 and the projected
+velocity and acceleration and commits them; every particle element is re-pointed in place; the
+grid conditions become this pattern's `SP_Constraint`s; the C++ `Domain::domainChange()` is raised
+every step (the integrator re-reads the nodes only then); then `analyzeStep(dt)` (transient) or
+`StaticAnalysis::analyze(1, false)` (quasi-static). G2P runs once, in the last particle element's
+`commitState()`: positions move by Σ S u, F / stress take the converged trial state, velocity and
+acceleration take FLIP increments (`mpm flip`, default 1); quasi-static leaves v and a alone.
+
+- **Quasi-static dt is a pseudo time.** `mpm analyze <n> <dt>` steps your `LoadControl` with
+  Δλ = dt (and its clamp to [dt, dt]) and puts your Δλ, min and max back afterwards; it says so once
+  per call when that changes your value. The host's time series is evaluated at that pseudo time.
+- **Retry.** A step that fails before any commit (Newton divergence, an inverted particle, a trial
+  centre leaving the grid) is cut by `mpm cut <factor> <maxCuts>` (default 2, 4) and retried — no
+  regrowth: the cut dt holds to the end of that `mpm analyze`, which still ends at t₀ + n·dt.
+  `mpm info dtHistory` lists the accepted steps. A failure after a commit began aborts the run
+  (`mpm reset`); a material refusal at commit leaves the particles unmoved (ADR W17).
+- **Empty support.** `mpm emptyNodes exclude` (default): nodes below the mass cutoff are neither
+  Domain nodes nor in any connectivity (held at zero increment). Mode A's default cutoff is
+  **1e-6** (mode F's stays 1e-10); `mpm massCutoff` sets both. `mpm emptyNodes ghost <γ>` keeps
+  them, tied to their step-start position by a spring γ M₀ V / h² (for M0b).
+- **Tags.** Grid nodes and particle elements take tags above every tag in use at the first
+  mode-A step (`mpm tagBase <node> <ele>` to choose). Create your FE components first.
+
+| Command | What it does |
+|---|---|
+| `mpm mode explicit\|implicit\|quasiStatic` | the engine mode |
+| `mpm gridvel <name> box <lo..> <hi..> v <value\|free ..> [start <t0>] [track x\|y\|z]` | prescribed grid velocity on every grid node in the closed box: Δu = v·dt per step; absent before `start`; `track` moves the box's lower bound with v. A non-zero value needs `constraints Transformation`, `Penalty` or `Lagrange` (Plain assumes homogeneous: refused) |
+| `mpm condForce <name>` | the grid internal force Σ V σ·∇S over the gridvel's nodes at the last accepted step (resisting-force sign) — e.g. a footing load |
+| `mpm pforce <body> box <lo..> <hi..> <f..>` | a constant force per particle (initial centre in the box), scaled by the time series |
+| `mpm rayleigh <alphaM> <betaK>` | Rayleigh damping on the particle elements |
+| `mpm emptyNodes`, `mpm cut`, `mpm tagBase` | above |
+| `mpm info g2p\|acceptedSteps\|retries\|domainChanges\|connectivityChanges\|gridNodes\|mode` | counters (`g2p` counts G2P passes, one per accepted step) |
+| `mpm info dtHistory\|gridNodeTags` | lists |
+| `mpm debug failAttempt <k> [<m>]` / `mpm debug reseed default\|always\|skip` | test hooks: fail the first m attempts of step k; recreate every node each step, or skip `domainChange()` on a step with no support change (wrong on purpose: W1) |
+
+**Refused in mode A (loudly):** any transient integrator but Newmark, HHT, GeneralizedAlpha
+(`LadrunoHHT`, `LadrunoGeneralizedAlpha` included, until a test admits them);
+`VariableTransient`; any static integrator but `LoadControl` (every `DisplacementControl` — never
+on a grid node, and phase 1 has no FE node to drive — and every arc-length); a prescribed velocity
+under the Plain handler; `betaK0` / `betaKc` Rayleigh on particles (they name the stiffness of an
+earlier support); ground-motion patterns; `mpm wall` and `mpm damping local` (mode F only); free FE
+DOFs (no FE–MPM seam yet); element loads on particles.
+
+**Recorders.** No stock recorder and no `recorder ladruno` may watch grid nodes or particle
+elements: their tags start above yours and churn every step (ADR W4, amendment 232f), and
+`recorder ladruno` would open a model stage per step. Particle output is `mpm output` (MODE
+`implicit` / `quasi-static`, KIND `transient` / `static`).
+
+**Restart.** `database File <name>`, `save <n>` between `mpm analyze` calls (after the first
+mode-A step), then `restore <n>` — in the same process after `wipe` and `model basic …`, or in a
+new one — rebuild your analysis and continue. The particle state, the elements and their
+materials, the grid nodes and the counters come back; re-issue `mpm output`. Mode F still refuses
+a save.
+
+**Verification (mode A).** `tests/test_ladruno_mpm_implicit_engine.py` (Zone-A, Python and classic
+Tcl): the implicit self-weight column, the Newmark bar (the re-seed leg), the failed-step retry,
+the no-cell-crossing re-seed (normal = forced re-creation, skipped differs), recorder synchrony,
+restart both ways in both engines, every refusal, engine parity, and the data rows (cantilever QS
+tip at two cutoffs, exclude against ghost, Newton iterations per step).
+`tests/test_ladruno_mpm_implicit_gates.py` holds the fine-resolution gates (cantilever and footing
+r2 / r3, the plate with a hole) — `LADRUNO_MPM_GATES=1`, too long for Zone-A. Both read
+`tests/mpm_implicit_cases.txt` (232f-V); a `TBD` expected value is skipped loudly. The suite
+joins the MPM mutation family.
 
 ## Verification
 

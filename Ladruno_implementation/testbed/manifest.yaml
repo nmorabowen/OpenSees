@@ -2343,6 +2343,40 @@ features:
       OpenSees-free SRC/domain/pattern/ladrunoMPM/LadrunoMPMCore.h (uGIMP and
       linear hat, MUSL with PIC/FLIP, mass cutoff, local damping, critical dt,
       grid-face fix and Coulomb wall) over the incremental hypo-kernel entry
-      hypoIncrementFromF (LadrunoHypoKernel.h). Object-broker entry deliberately
-      absent: v1 refuses database save / restore (sendSelf / recvSelf) until the
-      phase-1 restart test.
+      hypoIncrementFromF (LadrunoHypoKernel.h). Database save / restore stays
+      refused in mode F; WP-232f admits it in mode A (the object-broker entry
+      arrived with it).
+  - feature: LadrunoMPMPoint
+    classtag: 33026          # ELE_TAG (element) family; next free ELE slot after LadrunoForceBeamColumn3d=33025 (numerically equals EigenSOLVER_TAGS_LadrunoCMS 33026 -- different registry, not a collision)
+    tag_symbol: ELE_TAG_LadrunoMPMPoint
+    pr: 1083
+    feature_class: element
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladruno_mpm_implicit_engine.py   # mode A in Python AND classic Tcl: column, bar, retry, re-seed, synchrony, restart both ways, refusals, parity
+    tests:
+      - tests/test_ladruno_mpm_implicit_engine.py
+      - tests/test_ladruno_mpm_implicit_gates.py
+      - tests/test_mpm_engine_core_cpp.py
+    tcl: WAIVED(classic-Tcl runs through OpenSees.exe inside tests/test_ladruno_mpm_implicit_engine.py -- tests/ladruno_mpm_implicit_harness.py writes one deck per case, the restart decks included)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+      - SRC/element/CMakeLists.txt
+      - SRC/interpreter/OpenSeesCommands.cpp
+      - SRC/interpreter/OpenSeesCommands.h
+      - SRC/tcl/commands.cpp
+      - SRC/analysis/integrator/LoadControl.h
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      WP-232f, ADR 232 phase 1 (mode A): the MPM particle element. One per
+      particle, created and re-pointed in place every step by the MPM host
+      (LadrunoMPMPattern) -- not user-creatable, so no parser and no element
+      command dispatch; the `mpm` command (mode implicit | quasiStatic) is the
+      surface. Nodes = the particle's active GIMP support at the step-start
+      position (4-9 in 2D, 8-27 in 3D); hypo-kernel kinematics on the reset grid
+      (hypoIncrementFromF / PlaneStrain), LadrunoBrick's hypo assembly at one
+      point with the geometric term, lumped mass, alphaM / betaK Rayleigh; G2P
+      batched at the last particle commit (ADR 232 §5.3 amendment). Database
+      restart through the broker in mode A.

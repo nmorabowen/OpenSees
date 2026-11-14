@@ -243,3 +243,16 @@ The harness drives every case with `mpm analyze 1 <dt>` per step and reads after
 4. Restart test by `wipe` + `restore` in one process, or a second process as well?
 5. Quasi-static `mpm analyze <n> <dt>` overrides the user's `LoadControl` Δλ with dt (the cases'
    pseudo-time): acceptable, or refuse a mismatch instead?
+
+## 12. Round-2 implementation notes (deviations from the frozen text, each disclosed)
+
+1. §3 step 6 / §4: `LoadControl::setDeltaLambda` is not enough — `newStep` clamps Δλ to
+   `[dLambdaMin, dLambdaMax]`, which default to the user's Δλ (quirk
+   `WP-232-loadcontrol-setdeltalambda-is-clamped`). `LoadControl.h` gains inline
+   `ladrunoGetIncrement` / `ladrunoSetIncrement` (a vanilla row); the driver steps with
+   min = max = dt and restores the user's three values.
+2. §4: no separate `LadrunoMPMBridge.h`; `LadrunoMPMAnalysisRefs` lives in `LadrunoMPMPattern.h`,
+   and both bridges call `OPS_LadrunoMPMWithAnalysis(sa, ta, si, ti, handler)`, declared by hand
+   where used (as slice 1 declares `OPS_LadrunoMPM`).
+3. §5: `mpm rayleigh <alphaM> <betaK>` added — the particle elements are created at the first
+   mode-A step, after any user `rayleigh` command could reach them.

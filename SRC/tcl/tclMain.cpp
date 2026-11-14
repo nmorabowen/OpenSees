@@ -229,6 +229,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • LadrunoCPML — 2D/3D CFS-PML absorber (9 shapes, box/plane, Biot -up)\n"
 "        • LadrunoHS/HSSmall — Hardening Soil + HSsmall (mc/mn Lode, WP-210)\n"
 "        • mpm — explicit MPM engine: uGIMP, MUSL PIC/FLIP, frictional walls (WP-232)\n"
+"        • mpm — implicit / quasi-static MPM (mode A): LadrunoMPMPoint particle elements (WP-232f)\n"
 "\n";
     // FEATURES-END
 
