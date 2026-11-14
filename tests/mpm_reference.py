@@ -198,7 +198,11 @@ def velocity_gradient(v_grid, nid, G):
 
 
 class StepRefused(Exception):
-    pass
+    """A refused step; `pid` is the lowest offending particle id when a particle is at fault."""
+
+    def __init__(self, msg, pid=None):
+        super().__init__(msg)
+        self.pid = pid
 
 
 class Engine:
@@ -298,7 +302,8 @@ class Engine:
         # 6.1 admissibility and the critical time step
         ok = g.admissible(self.x, self.lp, self.basis)
         if not np.all(ok):
-            raise StepRefused(f"particle {int(self.id[np.argmin(ok)])} leaves the grid")
+            pid = int(self.id[np.argmin(ok)])
+            raise StepRefused(f"particle {pid} lies outside the grid", pid)
         dtc = self.critical_dt()
         if dt > self.safety * dtc:
             raise StepRefused(f"dt {dt!r} > {self.safety} * dt_crit {dtc!r}")
@@ -333,6 +338,12 @@ class Engine:
         Sv1 = np.einsum("pk,pka->pa", S, v1_i[nid])
         v_new = self.flip * (self.v + dt * Sa) + (1.0 - self.flip) * Sv1
         x_new = self.x + dt * Sv1
+        # Amendment 7: an accepted step never leaves a centre outside the real grid. Checked on the
+        # trial centres before the second projection and any material update; nothing has changed.
+        ok_new = g.admissible(x_new, self.lp, self.basis)
+        if not np.all(ok_new):
+            pid = int(self.id[np.argmin(ok_new)])
+            raise StepRefused(f"particle {pid} would leave the grid in the step to t = {self.t + dt!r}", pid)
         ps = np.stack([np.bincount(flat, weights=(mS * v_new[:, a, None]).ravel(), minlength=nn)
                        for a in range(ndm)], axis=1)
         vs_i = np.where(active[:, None], ps / m_safe[:, None], 0.0)
@@ -563,17 +574,22 @@ def run_case(lines) -> dict:
     com0 = {int(b): eng.com(int(b)) for b in np.unique(eng.body)}
     t_hist, vcx, vmax = [0.0], [eng.com_v()[0]], [float(np.max(np.linalg.norm(eng.v, axis=1)))]
     res["refused"] = False
+    inside = bool(np.all(eng.grid.admissible(eng.x, eng.lp, eng.basis)))
     try:
         for _ in range(steps):
             eng.step(dt)
             t_hist.append(eng.t)
             vcx.append(eng.com_v()[0])
             vmax.append(float(np.max(np.linalg.norm(eng.v, axis=1))))
+            inside = inside and bool(np.all(eng.grid.admissible(eng.x, eng.lp, eng.basis)))
     except StepRefused as exc:
+        # the refused step changed nothing: observables below describe the last accepted state
         res["refused"] = True
         res["refused_at"] = len(t_hist) - 1
         res["refusal"] = str(exc)
-        return res
+        res["refused_step"] = np.array([float(len(t_hist))])     # 1-based index of the refused step
+        res["refused_id"] = np.array([float(exc.pid if exc.pid is not None else -1)])
+    res["committed_inside_grid"] = inside
     res["engine"] = eng
     res["period_comx"] = np.array([_period(t_hist, vcx)])
     E1 = eng.kinetic() + eng.strain_energy()
@@ -608,7 +624,7 @@ def selfweight_residual(eng, rho0, g, l0, ybase):
 def observable(res, obs, args):
     """The value of observable `obs` with its arguments, as a float array."""
     if obs in ("period_comx", "energy_ratio_end", "momentum", "max_speed", "F_error",
-               "max_abs_stress", "dt_crit", "active_nodes"):
+               "max_abs_stress", "dt_crit", "active_nodes", "refused_step", "refused_id"):
         return res[obs]
     if obs in ("com_disp_x", "com_v_x", "com_v", "com_disp"):
         return res[obs][int(args[0])]

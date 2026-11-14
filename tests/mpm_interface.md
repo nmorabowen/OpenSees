@@ -166,7 +166,9 @@ The numbering follows ADR §5.2. All sums run over the support nodes of each par
 ### 6.1 Step 1 — admissibility and the critical time step
 
 1. Every particle must be admissible (§4.1, §4.2) at `x^n`; otherwise the step is **refused**
-   (error naming the offending particle with the **lowest id**), and nothing changes.
+   (error naming the offending particle with the **lowest id**), and nothing changes. This
+   step-start check guards the initial placement. Since Amendment 7 an accepted step never
+   leaves a centre outside the grid: §6.6 checks every trial centre before the second projection.
 2. Critical time step, from the committed state:
 
    ```
@@ -236,6 +238,8 @@ consistent with its constrained velocity (a fixed component gives `a_id = −v_i
 ```
 v_p^{n+1}   = α_F · ( v_p^n + Δt Σ_i S_ip a_i ) + (1 − α_F) · Σ_i S_ip v_i^{n+1}
 x_p^{n+1}   = x_p^n + Δt · Σ_i S_ip v_i^{n+1}
+step-end admissibility (Amendment 7): if any trial centre x_p^{n+1} lies outside the real
+    grid, the step is REFUSED here, naming the lowest offending id; nothing changes
 
 p_i*        = Σ_p S_ip m_p v_p^{n+1}                      (second projection)
 v_i*        = p_i* / m_i   (active nodes; 0 otherwise)
@@ -398,6 +402,9 @@ All sums run over all particles of the engine unless a case names a body.
 | `accepted` | every step of the case runs without refusal |
 | `particle_fields` | per particle, by id: `x, v, F (row-major), V, sig, sig_hat, eps_hat` at the end |
 | `refused` | the engine refuses the first step (§6.1) and changes nothing |
+| `refused_step` | the 1-based index of the refused step; the steps before it are accepted (Amendment 7) |
+| `refused_id` | the particle id the refusal names: the lowest offending id (Amendment 7) |
+| `committed_inside_grid` | every accepted state, and the initial one, has every centre inside the real grid (Amendment 7) |
 | `dt_crit` | `Δt_c` of §6.1 at the initial state |
 | `active_nodes` | sorted ids of the active nodes after P2G of the first step (§6.4) |
 | `shape` | for one particle: every support node id with `S`, `∂S/∂x_d` (§4) |
@@ -687,3 +694,28 @@ Source: the review of 232c's C++.
   (elastic) tangent".
 - **Text only.** For the oracle's hypoelastic material the initial and current tangents are both
   `D`, so no case value changes.
+
+### Amendment 7 — 2026-11-13 — step-end admissibility (§6.1, §6.6)
+
+Source: 232c's test run on build 5.
+
+**The problem.** §6.1 checked admissibility only at the start of a step (`x^n`). So the step that
+carried a centre out of the grid was *accepted*, and only the next step was refused. Any output of
+the accepted state then recorded a centre outside the grid, and the contract's C2-POS rule
+(positions inside the grid box) refused the file.
+
+**The rule.** An accepted step never leaves a particle centre outside the real grid.
+- In §6.6, right after `x_p^{n+1} = x_p^n + Δt·Σ_i S_ip v_i^{n+1}` is computed for all particles,
+  and **before** the second projection and any material update, every trial centre is checked.
+- If any lies outside the real grid, the step is **refused**. Nothing changes: kinematics,
+  materials and Domain time all stay at step n.
+- The message names the **lowest** offending id (F6).
+- The step-start check of §6.1 stays, for the initial placement.
+
+**New case `leave_grid_step_end_2d`.** Three unstressed particles translate rigidly toward `xmax`.
+- Ids 3 and 5 would cross at step 8. Steps 1–7 are accepted, and step 8 is refused naming id 3.
+- New observables: `refused_step`, `refused_id`, `committed_inside_grid` (§10).
+- A pytest check also asserts that every particle array and the time are unchanged by the
+  refused step.
+
+No existing case value changes; all were regenerated and compared.

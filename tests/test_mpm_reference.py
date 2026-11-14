@@ -104,6 +104,9 @@ def test_case_expectation(name, k, request):
     if body[0] == "accepted":
         assert not result(name)["refused"], result(name).get("refusal")
         return
+    if body[0] == "committed_inside_grid":
+        assert result(name)["committed_inside_grid"], f"{name}: a committed centre left the grid"
+        return
     if kind == "shape1d":
         assert body[0] == "s1"
         k_eq = body.index("eq")
@@ -120,7 +123,8 @@ def test_case_expectation(name, k, request):
     if (name, obs) in KNOWN_SHORTFALLS:
         request.applymarker(pytest.mark.xfail(reason=KNOWN_SHORTFALLS[(name, obs)], strict=True))
     res = result(name)
-    assert not res.get("refused"), res.get("refusal")
+    expects_refusal = any(t[0] == "expect" and t[1] == "refused_step" for t in lines)
+    assert expects_refusal or not res.get("refused"), res.get("refusal")
 
     if obs == "particle_fields":
         assert vals == ["fields"], "particle_fields still pending"
@@ -380,6 +384,24 @@ def test_step_applies_the_mass_cutoff():
             assert np.linalg.norm(expect) > 1e-9      # the cutoff matters in this geometry
         else:
             assert np.linalg.norm(expect) < 1e-14
+
+
+def test_step_end_admissibility_refuses_and_changes_nothing():
+    """Amendment 7: the step that would carry a centre out of the real grid is refused, every
+    particle array and the time stay at step n, and the refusal names the lowest offending id."""
+    eng = M.build_engine(CASES["leave_grid_step_end_2d"])
+    dt = float(M._get(CASES["leave_grid_step_end_2d"], "dt")[0])
+    for _ in range(7):
+        eng.step(dt)
+        assert np.all(eng.grid.admissible(eng.x, eng.lp, eng.basis))
+    before = {k: getattr(eng, k).copy() for k in ("x", "v", "F", "R", "V", "sig", "sig_hat", "eps_hat")}
+    t_before = eng.t
+    with pytest.raises(M.StepRefused) as exc:
+        eng.step(dt)
+    assert exc.value.pid == 3
+    assert eng.t == t_before
+    for k, a in before.items():
+        assert np.array_equal(getattr(eng, k), a), k
 
 
 def test_basis_gradient_is_the_derivative():
