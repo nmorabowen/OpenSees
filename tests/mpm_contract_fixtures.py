@@ -40,6 +40,7 @@ DATA = HERE / "data" / "mpm"
 PARTICLE_SET = DATA / "particle_set_v1.h5"
 PARTICLE_RESULTS = DATA / "particles_v1m2.ladruno"
 PARTICLE_MIXED = DATA / "particles_mixed_v1m2.ladruno"
+PARTICLE_TORN = DATA / "particles_torn_v1m2.ladruno"
 
 SET_ID = "3f6c1d2e-8a4b-4c5d-9e7f-0a1b2c3d4e5f"
 SESSION_ID = "9b2e7c41-5d3a-4f6e-8c1b-2a3d4e5f6a7b"
@@ -244,11 +245,48 @@ def write_mixed(path, model: dict | None = None) -> None:
         write_particle_stage(f, "MODEL_STAGE[1]", m, contract2_outputs(m), step=1)
 
 
+def tear_last_output(path, stage: str = "MODEL_STAGE[1]") -> None:
+    """Append one in-flight output the way a kill leaves it (232a §2.5): its DATA rows, ID
+    rows, STEP and TIME are written, and OFFSETS is EXTENDED by one entry whose value was
+    never written, so it holds the HDF5 fill value 0. The output copies the last one,
+    with STEP + 10."""
+    with h5py.File(path, "r+") as f:
+        op = f[f"{stage}/RESULTS/ON_PARTICLES"]
+        off = op["OFFSETS"][...]
+        a, b = int(off[-2]), int(off[-1])
+        n = b - a
+        for name in op:                                   # 1. every field's DATA
+            item = op[name]
+            if isinstance(item, h5py.Group):
+                d = item["DATA"]
+                rows = d[a:b]
+                d.resize((d.shape[0] + n,) + d.shape[1:])
+                d[b:b + n] = rows
+        ids = op["ID"][a:b]                               # 2. ID
+        op["ID"].resize((b + n,))
+        op["ID"][b:b + n] = ids
+        for k, extra in (("STEP", 10), ("TIME", 1.0e-3)):  # 3. STEP and TIME
+            ds = op[k]
+            last = ds[-1]
+            ds.resize((ds.shape[0] + 1,))
+            ds[-1] = last + extra
+        op["OFFSETS"].resize((off.shape[0] + 1,))         # 4. extended, never written
+
+
+def write_torn(path) -> None:
+    """The all-particle fixture with a torn last output (232a §2.5): 4 STEP / TIME
+    entries, OFFSETS [0, 12, 24, 35, 0], ID and DATA rows for the in-flight output.
+    The crash rule reads 3 committed outputs; the validator refuses it as not closed."""
+    write_contract2(path)
+    tear_last_output(path)
+
+
 def main() -> None:
     DATA.mkdir(parents=True, exist_ok=True)
     write_contract1(PARTICLE_SET)
     write_contract2(PARTICLE_RESULTS)
     write_mixed(PARTICLE_MIXED)
+    write_torn(PARTICLE_TORN)
     for path, check in ((PARTICLE_SET, mc.validate_particle_set),
                         (PARTICLE_RESULTS, mc.validate_particle_results),
                         (PARTICLE_MIXED, mc.validate_particle_results)):
