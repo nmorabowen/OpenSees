@@ -586,6 +586,99 @@ int main(int argc, char **argv)
                 worst < 1e-12 ? "ok  " : "FAIL", worst);
     if (!(worst < 1e-12)) g_fail++;
   }
+  {  // Hand check 1 (A5 F2): friction acts ONCE per step. One unstressed particle
+     // moving into a ymin wall. With one particle v_i^n = v_p at every support
+     // node; the full operator gives wall nodes v1 = (vx - mu|vy|, 0); FLIP from a
+     // single particle gives v_p1 = sum S v1; the second projection gives v* = v_p1
+     // at every node, minus ONLY the wall-normal part at wall nodes. So F1 = I + dt L
+     // with L = sum v*_i (x) grad S_i, known by hand. Friction applied in both
+     // projections changes L_xy.
+    Engine E;
+    Hypoelastic M;
+    std::string err;
+    const double x0[2] = {0.0, 0.0};
+    const int n[2] = {4, 4};
+    E.setGrid(2, x0, 1.0, n, err);
+    E.par.masscut = 0.0;
+    const double mu = 0.3, dt = 1.0e-3, vp[2] = {0.5, -0.1};
+    E.fc.wallMu[2] = mu;
+    const double xp[2] = {2.3, 0.2}, lp[2] = {0.25, 0.25};
+    E.addParticle(0, 1, 1, 4.0, 0.25, xp, lp, vp, 0, err);
+    M.nd = 2; M.lam.assign(1, 100.0); M.mu.assign(1, 100.0);
+    std::vector<long> node; std::vector<double> S, dS;
+    particleSupport(E.grid, BASIS_GIMP, xp, lp, node, S, dS);
+    std::vector<double> v1(2 * node.size());
+    double vp1[2] = {0.0, 0.0}, dx[2] = {0.0, 0.0};
+    for (size_t k = 0; k < node.size(); k++) {
+      int ijk[3];
+      E.grid.extIJK(node[k], ijk);
+      const bool wall = ijk[1] <= 0;
+      v1[2 * k] = wall ? vp[0] - std::min(mu * std::fabs(vp[1]), std::fabs(vp[0])) : vp[0];
+      v1[2 * k + 1] = wall ? 0.0 : vp[1];
+      for (int a = 0; a < 2; a++) { vp1[a] += S[k] * v1[2 * k + a]; dx[a] += dt * S[k] * v1[2 * k + a]; }
+    }
+    double L[4] = {0, 0, 0, 0}, Ltwice_xy = 0.0;   // Ltwice: the friction-in-both mutant
+    for (size_t k = 0; k < node.size(); k++) {
+      int ijk[3];
+      E.grid.extIJK(node[k], ijk);
+      double vs[2] = {vp1[0], vp1[1]};
+      double vsx_twice = vs[0];
+      if (ijk[1] <= 0 && vs[1] < 0.0) {
+        vsx_twice = vs[0] - std::min(mu * std::fabs(vs[1]), std::fabs(vs[0]));
+        vs[1] = 0.0;                                          // no-penetration part only
+      }
+      for (int a = 0; a < 2; a++)
+        for (int b = 0; b < 2; b++) L[2 * a + b] += vs[a] * dS[2 * k + b];
+      Ltwice_xy += vsx_twice * dS[2 * k + 1];
+    }
+    const double Fexp[4] = {1.0 + dt * L[0], dt * L[1], dt * L[2], 1.0 + dt * L[3]};
+    E.advance(dt, 1.0, M, err);
+    double worst = 0.0;
+    for (int k = 0; k < 4; k++) worst = std::max(worst, std::fabs(E.P.F[k] - Fexp[k]));
+    for (int a = 0; a < 2; a++) {
+      worst = std::max(worst, std::fabs(E.P.x[a] - (xp[a] + dx[a])));
+      worst = std::max(worst, std::fabs(E.P.v[a] - vp1[a]));
+    }
+    g_checks++;
+    // non-vacuous: friction in both projections would make L_xy non-zero
+    const bool ok = worst < 1e-14 && std::fabs(Ltwice_xy - L[1]) > 1e-3;
+    std::printf("%s: hand check, friction once per step (max diff %.3e; L_xy %.3e, twice-mutant %.4e)\n",
+                ok ? "ok  " : "FAIL", worst, L[1], Ltwice_xy);
+    if (!ok) g_fail++;
+  }
+  {  // Hand check 2 (A5 F2): the mass cutoff acts inside the step. One stressed
+     // particle at rest: v_p1 = -dt (V/m) sigma . sum_{active} grad S_i, with node i
+     // active iff S_i > c_m (m_i = S_i m, m_ref = m). Without the cutoff the sum
+     // runs over every node and is exactly 0 (sum grad S = 0).
+    Engine E;
+    Hypoelastic M;
+    std::string err;
+    const double x0[2] = {0.0, 0.0};
+    const int n[2] = {4, 4};
+    E.setGrid(2, x0, 1.0, n, err);
+    E.par.masscut = 1.0e-4;
+    const double dt = 1.0e-3, V = 0.25, m = 250.0, sg[3] = {100.0, -40.0, 25.0};
+    const double xp[2] = {3.245, 1.5}, lp[2] = {0.25, 0.25}, v0[2] = {0.0, 0.0};
+    E.addParticle(0, 1, 1, m / V, V, xp, lp, v0, sg, err);
+    M.nd = 2; M.lam.assign(1, 4.0e3); M.mu.assign(1, 4.0e3);
+    std::vector<long> node; std::vector<double> S, dS;
+    particleSupport(E.grid, BASIS_GIMP, xp, lp, node, S, dS);
+    double gsum[2] = {0, 0};
+    int dropped = 0;
+    for (size_t k = 0; k < node.size(); k++) {
+      if (!(S[k] > E.par.masscut)) { dropped++; continue; }
+      gsum[0] += dS[2 * k]; gsum[1] += dS[2 * k + 1];
+    }
+    const double vexp[2] = {-dt * (V / m) * (sg[0] * gsum[0] + sg[2] * gsum[1]),
+                            -dt * (V / m) * (sg[2] * gsum[0] + sg[1] * gsum[1])};
+    E.advance(dt, 1.0, M, err);
+    const double worst = std::max(std::fabs(E.P.v[0] - vexp[0]), std::fabs(E.P.v[1] - vexp[1]));
+    g_checks++;
+    const bool ok = worst < 1e-16 && dropped > 0 && std::fabs(vexp[0]) > 1e-9;
+    std::printf("%s: hand check, cutoff inside the step (%d node(s) dropped, v = %.6e %.6e, diff %.3e)\n",
+                ok ? "ok  " : "FAIL", dropped, E.P.v[0], E.P.v[1], worst);
+    if (!ok) g_fail++;
+  }
   {  // A5 numbering: id = (i+1) + (nx+3)((j+1) + (ny+3)(k+1)), ghosts included
     Grid g;
     g.ndm = 3; g.h = 1.0; g.n[0] = 3; g.n[1] = 2; g.n[2] = 4;
