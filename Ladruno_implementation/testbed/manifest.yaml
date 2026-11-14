@@ -2316,7 +2316,7 @@ features:
   - feature: LadrunoMPMPattern
     classtag: 33027          # PATTERN_TAG family; 33027 is used by no other registry
     tag_symbol: PATTERN_TAG_LadrunoMPM
-    pr: null
+    pr: 1078
     feature_class: loadpattern
     required_tiers: [T0, T1]
     pytest: tests/test_ladruno_mpm_engine.py   # every case of 232b's tests/mpm_cases.txt in Python AND classic Tcl, plus engine parity
