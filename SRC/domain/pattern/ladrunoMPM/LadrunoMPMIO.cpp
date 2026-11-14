@@ -561,6 +561,7 @@ struct ParticleWriter::Impl {
   hid_t file = -1, gplist = -1;
   int nextStage = 0, epoch = -1;
   bool stage = false, configured = false;
+  bool swmr = false;                       // SWMR-write armed: no new objects/attributes
   std::chrono::steady_clock::time_point lastFlush;
   hid_t dsStep = -1, dsTime = -1, dsOff = -1, dsId = -1;
   std::vector<hid_t> dsData;
@@ -624,6 +625,23 @@ ParticleWriter::open(const WriterConfig &cfg, int ndm, std::string &err)
   return 0;
 }
 
+// SWMR (232a §2.5; quirk WP-232-hdf5-unflushed-file-unreadable-after-kill). Without
+// SWMR a kill can corrupt the file even behind the flush barrier: when a chunk index
+// (a v1 B-tree) splits, H5Fflush writes the in-place parent node (the user ring)
+// before the superblock with the new end-of-allocation, and a kill in between leaves
+// a parent pointing past the stored EOA ("addr overflow"; 1 kill in 137, and the
+// split moves already committed outputs). The file therefore uses the latest format
+// (extensible-array chunk indexes) and is in SWMR-write mode from the end of each
+// stage's layout until it is closed. Nothing may create an object or attribute
+// while SWMR is armed: a new stage closes and reopens the file first.
+static hid_t
+particleFapl(void)
+{
+  hid_t fapl = H5Pcreate(H5P_FILE_ACCESS);
+  H5Pset_libver_bounds(fapl, H5F_LIBVER_LATEST, H5F_LIBVER_LATEST);   // as LadrunoMonitorSink
+  return fapl;
+}
+
 // The file and its INFO group, created at the first stage (see open()).
 static int
 createFile(ParticleWriter::Impl *impl, std::string &err)
@@ -634,10 +652,12 @@ createFile(ParticleWriter::Impl *impl, std::string &err)
   H5Pset_link_creation_order(fcpl, H5P_CRT_ORDER_TRACKED | H5P_CRT_ORDER_INDEXED);
   impl->gplist = H5Pcreate(H5P_GROUP_CREATE);
   H5Pset_link_creation_order(impl->gplist, H5P_CRT_ORDER_TRACKED | H5P_CRT_ORDER_INDEXED);
+  hid_t fapl = particleFapl();
   {
     QuietH5 quiet;
-    impl->file = H5Fcreate(cfg.path.c_str(), H5F_ACC_TRUNC, fcpl, H5P_DEFAULT);
+    impl->file = H5Fcreate(cfg.path.c_str(), H5F_ACC_TRUNC, fcpl, fapl);
   }
+  H5Pclose(fapl);
   H5Pclose(fcpl);
   if (impl->file < 0) {
     H5Pclose(impl->gplist);
@@ -676,6 +696,21 @@ ParticleWriter::openStage(const StageMeta &m, int step, double time, std::string
   if (!impl->configured) { err = "no output configured"; return -1; }
   if (impl->file < 0 && createFile(impl, err) < 0) return -1;
   impl->closeStage();
+  if (impl->swmr) {
+    // SWMR is armed: no object may be created in this open. Close the file (which
+    // clears its SWMR flags) and reopen it read-write to lay out the new stage.
+    H5Fflush(impl->file, H5F_SCOPE_GLOBAL);
+    H5Fclose(impl->file);
+    impl->file = -1;
+    impl->swmr = false;
+    hid_t fapl = particleFapl();
+    {
+      QuietH5 quiet;
+      impl->file = H5Fopen(impl->cfg.path.c_str(), H5F_ACC_RDWR, fapl);
+    }
+    H5Pclose(fapl);
+    if (impl->file < 0) { err = "cannot reopen '" + impl->cfg.path + "' for a new stage"; return -1; }
+  }
   const int ndm = impl->ndm;
   std::stringstream ss;
   ss << "MODEL_STAGE[" << impl->nextStage << "]";
@@ -806,6 +841,18 @@ ParticleWriter::openStage(const StageMeta &m, int step, double time, std::string
     impl->closeStage();
     return -1;
   }
+  // The layout is complete (every group, attribute, the registry, the empty result
+  // datasets and OFFSETS[0]): flush it, then arm SWMR. From here to the next stage
+  // or close() the writer only appends to the open datasets. A refusal refuses the
+  // output; the file is never written on without SWMR.
+  if (H5Fflush(impl->file, H5F_SCOPE_GLOBAL) < 0 || H5Fstart_swmr_write(impl->file) < 0) {
+    err = "cannot start SWMR writing on '" + impl->cfg.path + "' (the particle file "
+          "requires HDF5 SWMR to survive a kill)";
+    impl->closeStage();
+    return -1;
+  }
+  impl->swmr = true;
+  impl->lastFlush = std::chrono::steady_clock::now();
   impl->stage = true;
   return 0;
 }
@@ -831,6 +878,13 @@ ParticleWriter::writeOutput(int step, double time, const std::vector<long long> 
   }
   impl->S += (long long)n;
   const long long off = impl->S;
+  // WRITE BARRIER (232a §2.5). HDF5 does not reach the disk in API order across
+  // datasets (SWMR orders each dataset's own writes, not OFFSETS against DATA): an
+  // eviction can put this output's OFFSETS entry on disk before its ID / DATA
+  // chunks, and a crash reader would then count an output whose rows are fill.
+  // Flushing here, before the OFFSETS append, means a committed OFFSETS entry always
+  // has its rows on disk; the caller's flush after the output commits the entry.
+  if (H5Fflush(impl->file, H5F_SCOPE_GLOBAL) < 0) { err = "cannot flush before the OFFSETS commit"; return -1; }
   if (h5w::dataset::appendRows(impl->dsOff, H5T_NATIVE_LLONG, &off, 1, 0) < 0) { err = "cannot append OFFSETS"; return -1; }
   impl->T++;
   return 0;
@@ -858,6 +912,7 @@ ParticleWriter::close(void)
   if (impl->file >= 0) { H5Fflush(impl->file, H5F_SCOPE_GLOBAL); H5Fclose(impl->file); }
   if (impl->gplist >= 0) H5Pclose(impl->gplist);
   impl->file = impl->gplist = -1;
+  impl->swmr = false;                      // H5Fclose cleared the file's SWMR flags
   impl->configured = false;
 }
 

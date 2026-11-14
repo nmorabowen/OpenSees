@@ -715,3 +715,189 @@ def test_an_output_whose_rows_are_missing_is_not_committed(tmp_path):
         d = f[f"{OP}/VELOCITY/DATA"]
         d.resize((d.shape[0] - 1,) + d.shape[1:])
     assert mc.committed_outputs(p) == 2
+
+
+def test_a_stage_torn_while_opening_holds_no_committed_output(tmp_path):
+    """Step 0: the registry is written once, before output 0. Registry columns of
+    different lengths mean a kill while the stage opened: nothing is committed."""
+    p = tmp_path / "opening.ladruno"
+    fx.write_contract2(p)
+    assert mc.committed_outputs(p) == 3
+    with h5py.File(p, "r+") as f:
+        mp = f[f"{STAGE}/MODEL/PARTICLES"]
+        mass = mp["MASS"][...]
+        del mp["MASS"]
+        mp.create_dataset("MASS", data=mass[:-1])
+    assert mc.committed_outputs(p) == 0
+
+
+_SWMR_CHILD = r"""
+import sys, h5py
+f = h5py.File(sys.argv[1], "w", libver="latest")
+d = f.create_dataset("D", shape=(0,), maxshape=(None,), chunks=(16,), dtype="i8")
+f.flush()
+f.swmr_mode = True
+print("GO", flush=True)
+while True:
+    d.resize((d.shape[0] + 16,)); d[-16:] = 1; f.flush()
+"""
+
+
+def test_the_reader_rule_opens_a_killed_swmr_file(tmp_path):
+    """232a §2.5 reader rule, against an h5py SWMR writer killed mid-run: a plain
+    read-only open is refused, `open_particle_file` falls back to SWMR-read, with no
+    HDF5_USE_FILE_LOCKING override; a cleanly closed file opens plainly."""
+    import os
+    import subprocess
+    import sys
+    import time
+    p = tmp_path / "killed.h5"
+    env = dict(os.environ)
+    env.pop("HDF5_USE_FILE_LOCKING", None)
+    w = subprocess.Popen([sys.executable, "-c", _SWMR_CHILD, str(p)], stdout=subprocess.PIPE,
+                         stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, text=True, env=env)
+    try:
+        assert "GO" in w.stdout.readline()
+        time.sleep(0.5)
+    finally:
+        w.kill()
+        w.wait()
+    with pytest.raises(OSError, match="already open for write"):
+        h5py.File(p, "r")
+    with mc.open_particle_file(p) as f:
+        assert f.swmr_mode and f["D"].shape[0] > 0
+        assert (f["D"][...] == 1).all()
+    q = tmp_path / "closed.h5"
+    with h5py.File(q, "w", libver="latest") as f:
+        f.create_dataset("D", shape=(0,), maxshape=(None,), chunks=(16,), dtype="i8")
+        f.swmr_mode = True
+    with mc.open_particle_file(q) as f:
+        assert not f.swmr_mode
+
+
+def _layout_killed(path, extra_eoa=0, last_stage_partial=False, first_stage_broken=False):
+    """A particle-like file in the latest format, two complete stages (copies of the
+    fixture's), its superblock flags then set to WRITE_ACCESS only (0x01): the state a
+    kill leaves between a reset's read-write reopen and H5Fstart_swmr_write."""
+    with h5py.File(fx.PARTICLE_RESULTS, "r") as s, h5py.File(path, "w", libver="latest") as f:
+        s.copy(s["INFO"], f, "INFO")
+        for k in (0, 1):
+            s.copy(s[STAGE], f, f"MODEL_STAGE[{k}]")
+        if first_stage_broken:
+            del f["MODEL_STAGE[0]/RESULTS"]
+        if last_stage_partial:
+            f.create_group("MODEL_STAGE[2]").create_group("MODEL")
+    flags, _ = mc.set_superblock(path, flags=0x01)
+    assert flags == 0x00
+    if extra_eoa:
+        mc.set_superblock(path, eoa=path.stat().st_size + extra_eoa)
+
+
+def test_a_file_killed_mid_layout_is_refused_by_both_opens_and_recovers(tmp_path):
+    """232a §2.5 reader rule step 3: flags 0x01 (WRITE_ACCESS only) are refused by the
+    plain AND the SWMR-read open; open_particle_file names the recovery; the recovery
+    works on a copy and returns every stage."""
+    p, q = tmp_path / "killed.ladruno", tmp_path / "recovered.ladruno"
+    _layout_killed(p)
+    before = p.read_bytes()
+    with pytest.raises(OSError, match="already open for write"):
+        h5py.File(p, "r")
+    with pytest.raises(OSError, match="not already open for SWMR writing"):
+        h5py.File(p, "r", swmr=True)
+    with pytest.raises(mc.StageLayoutKilledError, match="recover_particle_file"):
+        mc.open_particle_file(p)
+    assert mc.recover_particle_file(p, q) == [
+        {"stage": "MODEL_STAGE[0]", "committed": 3},
+        {"stage": "MODEL_STAGE[1]", "committed": 3}]
+    assert p.read_bytes() == before                      # the source is never repaired
+    with h5py.File(q, "r") as f:                          # the copy opens plainly
+        assert not f.swmr_mode
+    with pytest.raises(ValueError, match="copy"):
+        mc.recover_particle_file(p, p)
+
+
+def test_recovery_pads_a_file_shorter_than_its_stored_eoa(tmp_path):
+    """eof < stored EOA (seen in 1 of the 21 measured refusals): the copy is padded with
+    zeros up to the stored EOA, then opens plainly."""
+    p, q = tmp_path / "short.ladruno", tmp_path / "recovered.ladruno"
+    _layout_killed(p, extra_eoa=4096)
+    size = p.stat().st_size
+    with pytest.raises(OSError, match="truncated file"):  # checked before the flags
+        h5py.File(p, "r")
+    with pytest.raises(mc.StageLayoutKilledError):
+        mc.open_particle_file(p)
+    rep = mc.recover_particle_file(p, q)
+    assert q.stat().st_size == size + 4096
+    assert [r["committed"] for r in rep] == [3, 3]
+
+
+def test_recovery_reports_the_stage_being_laid_out_and_refuses_an_earlier_broken_one(tmp_path):
+    """Only the LAST stage may be torn while laid out; an earlier stage that will not
+    read is corruption."""
+    p, q = tmp_path / "partial.ladruno", tmp_path / "recovered.ladruno"
+    _layout_killed(p, last_stage_partial=True)
+    rep = mc.recover_particle_file(p, q)
+    assert [r.get("committed") for r in rep[:2]] == [3, 3]
+    assert rep[2]["stage"] == "MODEL_STAGE[2]" and rep[2]["torn_while_laid_out"]
+    p2, q2 = tmp_path / "broken.ladruno", tmp_path / "recovered2.ladruno"
+    _layout_killed(p2, first_stage_broken=True)
+    with pytest.raises(mc.TornStageError, match="not the last stage"):
+        mc.recover_particle_file(p2, q2)
+
+
+def test_the_repair_reads_a_file_killed_in_swmr_mode_like_the_swmr_read_open(tmp_path):
+    """232a §2.5: a reader without SWMR-read (e.g. h5wasm) may apply step 3's repair to
+    ANY file step 1 refuses, flags 0x05 included. The image of a live SWMR writer (what a
+    kill leaves) reads the same through the repair as through the SWMR-read open."""
+    live, image, rec = tmp_path / "live.ladruno", tmp_path / "image.ladruno", tmp_path / "rec.ladruno"
+    m = 5
+    f = h5py.File(live, "w", libver="latest")
+    try:
+        with h5py.File(fx.PARTICLE_RESULTS, "r") as s:
+            s.copy(s["INFO"], f, "INFO")
+        st = f.create_group("MODEL_STAGE[0]")
+        mp = st.create_group("MODEL/PARTICLES")
+        for name, dt, val in (("ID", "<i8", np.arange(m)), ("BODY_ID", "<i4", np.ones(m)),
+                              ("MATERIAL_TAG", "<i4", np.ones(m)), ("MASS", "<f8", np.full(m, 2.0))):
+            mp.create_dataset(name, data=np.asarray(val, dtype=dt))
+        op = st.create_group("RESULTS/ON_PARTICLES")
+        ds = {k: op.create_dataset(k, shape=(0,), maxshape=(None,), chunks=(64,), dtype=dt)
+              for k, dt in (("STEP", "<i4"), ("TIME", "<f8"), ("OFFSETS", "<i8"), ("ID", "<i8"))}
+        pos = op.create_group("POSITION").create_dataset(
+            "DATA", shape=(0, 2), maxshape=(None, 2), chunks=(m, 2), dtype="<f8")
+        ds["OFFSETS"].resize((1,))
+        ds["OFFSETS"][0] = 0
+        f.flush()
+        f.swmr_mode = True
+        for k in range(4):                                # rows, barrier, OFFSETS, flush
+            pos.resize((pos.shape[0] + m, 2))
+            pos[-m:] = k + np.arange(2 * m).reshape(m, 2) / 10.0
+            for name, val in (("ID", np.arange(m)), ("STEP", [k + 1]), ("TIME", [(k + 1) * 1e-3])):
+                d = ds[name]
+                d.resize((d.shape[0] + len(val),))
+                d[-len(val):] = val
+            f.flush()
+            ds["OFFSETS"].resize((k + 2,))
+            ds["OFFSETS"][k + 1] = (k + 1) * m
+            f.flush()
+        image.write_bytes(live.read_bytes())              # the image a kill leaves
+    finally:
+        f.close()
+    assert mc._superblock_flags(image) == 0x05
+    with pytest.raises(OSError, match="already open for write|truncated file"):
+        h5py.File(image, "r")
+
+    def rows(h):
+        n = mc.committed_outputs(h["MODEL_STAGE[0]"])
+        op = h["MODEL_STAGE[0]/RESULTS/ON_PARTICLES"]
+        end = int(op["OFFSETS"][n])
+        return n, op["ID"][:end], op["POSITION/DATA"][:end]
+
+    with mc.open_particle_file(image) as h:
+        assert h.swmr_mode
+        n1, ids1, pos1 = rows(h)
+    rep = mc.recover_particle_file(image, rec)
+    with h5py.File(rec, "r") as h:
+        n2, ids2, pos2 = rows(h)
+    assert n1 == n2 == 4 and rep == [{"stage": "MODEL_STAGE[0]", "committed": 4}]
+    assert np.array_equal(ids1, ids2) and pos1.tobytes() == pos2.tobytes()

@@ -445,19 +445,14 @@ ops.mpm("analyze", 50000000, 1e-6)
 """
 
 
-@pytest.mark.parametrize("wait", [0.5, 1.0, 1.5, 2.0, 3.0, 4.0])
-def test_a_killed_run_leaves_a_readable_file(tmp_path, wait):
-    """Review 2 (and its follow-up ruling): under the DEFAULT settings (a flush after
-    every output) a run killed mid-analyze at any point leaves a file that opens, and
-    the contract's crash rule (232a §2.5) recovers every completed output, data
-    included -- never a filter failure on rows already flushed. The one output in
-    flight at the kill may be torn (a kill inside H5Fflush can leave OFFSETS counting
-    it before its ID / DATA chunk reached the disk): every output BEFORE it is exact."""
+def _killed_run(tmp_path, wait):
+    """Run the kill child, kill it `wait` s after its analyze starts, return the file."""
     import time
     _ops()
     out = tmp_path / "killed.ladruno"
     env = dict(os.environ, LADRUNO_OPENSEES_QUIET="1",
                LADRUNO_MPM_TESTS=os.path.dirname(os.path.abspath(__file__)))
+    env.pop("HDF5_USE_FILE_LOCKING", None)          # the reader rule needs no lock override
     p = subprocess.Popen([sys.executable, "-c", _KILL_CHILD, str(out), str(FIXTURE)],
                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
                          stdin=subprocess.DEVNULL, env=env)
@@ -467,20 +462,60 @@ def test_a_killed_run_leaves_a_readable_file(tmp_path, wait):
     finally:
         p.kill()
         p.wait()
+    return out
+
+
+@pytest.mark.parametrize("wait", [0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 3.0, 4.0])
+def test_a_killed_run_leaves_a_readable_file(tmp_path, wait):
+    """Review 2 (and its follow-up ruling): under the DEFAULT settings (a flush after
+    every output) a run killed mid-analyze at any point leaves a file that opens by the
+    reader rule (`open_particle_file`: SWMR-read after a kill), and the contract's crash
+    rule (232a §2.5) recovers every completed output, data included. STRICT: every
+    output the crash rule counts is exact. The writer's barrier (a flush after the rows
+    and before the OFFSETS entry) makes a counted entry always have its rows; SWMR
+    makes the chunk-index updates crash-safe (an index split no longer tears)."""
+    out = _killed_run(tmp_path, wait)
     S = _set()
-    with h5py.File(out, "r") as f:                       # must open
+    with mc.open_particle_file(out) as f:                # must open
+        T = mc.committed_outputs(f["MODEL_STAGE[0]"])     # the crash rule
         op = f["MODEL_STAGE[0]/RESULTS/ON_PARTICLES"]
-        steps, times, offs = op["STEP"][...], op["TIME"][...], op["OFFSETS"][...]
-        T = min(len(steps), len(times), len(offs) - 1)    # the crash rule
-        nid = op["ID"].shape[0]
-        while T > 0 and (offs[T] > nid or any(offs[T] > op[k]["DATA"].shape[0]
-                                              for k in ("POSITION", "VELOCITY", "STRESS", "VOLUME"))):
-            T -= 1
-        assert T >= 1, (T, len(steps), len(offs), nid)
+        steps, offs = op["STEP"][:T], op["OFFSETS"][:T + 1]
+        assert T >= 1, (T, op["STEP"].shape, op["OFFSETS"].shape)
         ids = op["ID"][:offs[T]]
         for k in ("POSITION", "VELOCITY", "STRESS", "VOLUME"):
-            data = op[k]["DATA"][:offs[T]]                 # readable: no filter failure
-            assert np.all(np.isfinite(data[:offs[T - 1]])), k
-        for k in range(T - 1):                             # every output before the last
-            assert np.array_equal(ids[offs[k]:offs[k + 1]], S["ID"]), k
-        assert np.all(np.diff(steps[:T]) > 0)
+            data = op[k]["DATA"][:offs[T]]                 # readable, every completed output
+            assert np.all(np.isfinite(data)), k
+        assert np.all(np.diff(offs) >= 0)
+        vol = op["VOLUME"]["DATA"][:offs[T], 0]
+        for k in range(T):                                 # every COUNTED output, the last too
+            assert np.array_equal(ids[offs[k]:offs[k + 1]], S["ID"]), (k, T)
+            assert np.all(vol[offs[k]:offs[k + 1]] > 0.0), (k, T)   # fill would be 0
+        assert np.all(np.diff(steps) > 0)
+
+
+def test_a_killed_file_needs_the_swmr_read_open(tmp_path):
+    """The reader rule (232a §2.5): a killed run leaves the SWMR consistency flags set,
+    so a plain read-only open is refused ("already open for write"); the rule's
+    SWMR-read open reads it, with no HDF5_USE_FILE_LOCKING override."""
+    out = _killed_run(tmp_path, 1.0)
+    with pytest.raises(OSError, match="already open for write"):
+        h5py.File(out, "r")
+    with mc.open_particle_file(out) as f:
+        assert f.swmr_mode
+        assert f["MODEL_STAGE[0]/RESULTS/ON_PARTICLES/OFFSETS"].shape[0] >= 2
+    assert mc.committed_outputs(out) >= 1
+
+
+def test_a_closed_file_opens_plainly_in_the_latest_format(tmp_path):
+    """A clean close clears the SWMR flags: a plain read-only open works (no SWMR
+    mode). The file uses the latest HDF5 format (superblock 3), as SWMR requires."""
+    ops = _ops()
+    _deck(ops)
+    ops.mpm("particles", "-file", str(FIXTURE))
+    out = tmp_path / "closed.ladruno"
+    _run_and_write(ops, out, steps=5, every=2)
+    with h5py.File(out, "r") as f:
+        assert not f.swmr_mode
+        assert f.id.get_create_plist().get_version()[0] >= 3
+    with mc.open_particle_file(out) as f:
+        assert not f.swmr_mode

@@ -147,8 +147,20 @@ stage (`EMPTY_PARTITION = 1`, empty nodes, elements and result groups) plus `MOD
   between flushes a kill can corrupt it (unreadable headers, or deflated chunks that fail their
   filter), not merely truncate it. `-flush s` relaxes it to a wall-clock cadence, at that risk. The
   data are laid out so a flushed output is never rewritten (one chunk per output for `ID` and every
-  `DATA`, uncompressed `STEP` / `TIME` / `OFFSETS`). A killed run then leaves a file that opens; a
-  reader applies the contract's crash rule (232a §2.5). The full fix, HDF5 SWMR, is deferred. The `-dt` cadence re-arms when the Domain time goes back
+  `DATA`, uncompressed `STEP` / `TIME` / `OFFSETS`), and every output is written behind a barrier: a
+  flush after its rows and before its `OFFSETS` entry, so an entry the crash rule counts always has
+  its rows on disk. The file is also written in **SWMR mode** (latest HDF5 format) from the end of
+  each stage's layout to close: without it, a kill inside the flush where a dataset's chunk index
+  (a v1 B-tree) splits leaves a parent node pointing past the stored end of the file, because
+  HDF5 writes the parent before the superblock, and the committed outputs the split moved become
+  unreadable ("addr overflow"; 1 kill in 137 behind the barrier alone, the same with
+  metadata-cache eviction disabled). A new stage closes and reopens the file to lay itself out.
+  A killed run leaves the SWMR flags set: read it by the contract's reader rule (a plain
+  read-only open, else `h5py.File(path, "r", swmr=True)`; never `h5clear`), then apply the crash
+  rule (232a §2.5). Readers need HDF5 ≥ 1.10. The stage layout itself (at the start, and at each
+  `mpm reset`) is written without SWMR: a kill inside it leaves a file that neither open accepts,
+  and the reader rule's step 3 recovers a copy (`recover_particle_file`); every earlier stage
+  survives. The `-dt` cadence re-arms when the Domain time goes back
   (`reset`, `setTime`).
 - Outputs are written after `Domain::commit` (positions and stresses of the same step), every `N`
   steps or every `Δt` of time, and the last step of every `mpm analyze` is always written.
