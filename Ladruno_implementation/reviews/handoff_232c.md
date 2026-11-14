@@ -7,13 +7,16 @@ tags: [review, handoff, mpm, wp-232]
 
 # Review handoff — WP-232c: the explicit MPM engine, slice 1
 
-**PR:** nmorabowen/OpenSees#1078 (`wp/232c-mpm-explicit-slice`), head `742b9981c`. **Program:** #1075.
+**PR:** nmorabowen/OpenSees#1078 (`wp/232c-mpm-explicit-slice`); last binary built and tested
+`251131db4` (later commits are test code and docs). **Program:** #1075.
 **Specifications it codes against:**
-- the engine interface `tests/mpm_interface.md` from WP-232b (#1076) @ `309c9222a`, Amendments 1–5
-  (Amendment 6, the critical Δt from the initial tangent, is implemented; its text lands with 232b);
-- the file contracts `Ladruno_implementation/232a_mpm_contracts.md` (WP-232a, #1077, merged into
-  `ladruno` as `0287884f7`) with their executable specs `tests/mpm_contracts.py` and
-  `Ladruno_scripts/ladruno_recorder_tests/ladruno_format.py`; the branch carries byte-identical copies.
+- the engine interface `tests/mpm_interface.md` from WP-232b (#1076, merged), Amendments 1–6;
+  Amendment 7 (the step-end admissibility refusal) is implemented, its interface half is PR #1079
+  (`wp/232b-oracle-a7` @ `c597ff063`), and the branch takes it by a merge of `ladruno` when #1079
+  lands;
+- the file contracts `Ladruno_implementation/232a_mpm_contracts.md` (WP-232a, #1077, merged) with
+  their executable specs `tests/mpm_contracts.py` and
+  `Ladruno_scripts/ladruno_recorder_tests/ladruno_format.py`.
 
 **Authority:** `Ladruno_implementation/232_ladruno_mpm_general_driver_adr.md` (WP-232): §4 (walls
 W1–W17), §5.1, §5.2, §5.4, §6, §7.2–7.3, §8 (S1 rows), §9. **User guide:** [[232_ladruno_mpm_guide]].
@@ -25,7 +28,7 @@ Verdict to be committed as `Ladruno_implementation/reviews/232c_verdict.md`.
 | Piece | Where |
 |---|---|
 | Incremental hypo-kernel entry on (Fₙ, F₁), its plane-strain embedding, the plane-strain stress push | `SRC/element/solidTransformation/LadrunoHypoKernel.h` (`hypoIncrementFromF`, `hypoIncrementFromFPlaneStrain`, `pushStressPlaneStrain`) |
-| The engine core — pure C++17, no OpenSees | `SRC/domain/pattern/ladrunoMPM/LadrunoMPMCore.h` (~800 lines) |
+| The engine core — pure C++17, no OpenSees | `SRC/domain/pattern/ladrunoMPM/LadrunoMPMCore.h` |
 | The host: a `LoadPattern` (PATTERN_TAG 33027) | `SRC/domain/pattern/ladrunoMPM/LadrunoMPMPattern.{h,cpp}` |
 | Particle I/O: Contract-1 reader, Contract-2 writer (phase c2) | `SRC/domain/pattern/ladrunoMPM/LadrunoMPMIO.{h,cpp}`; new writers in `SRC/recorder/Ladruno_Hdf5.h` |
 | The `mpm` command (one `LadrunoCommandTable.h` row) | `SRC/domain/pattern/ladrunoMPM/OPS_LadrunoMPM.cpp`; classic-Tcl bridge in `SRC/tcl/commands.cpp` |
@@ -40,93 +43,135 @@ Upstream files touched (vanilla ledger fragment `WP-232-mpm-explicit-slice-1.md`
 
 ## 2. Where to read it
 
-**The step.** `LadrunoMPMPattern::analyze` (`LadrunoMPMPattern.cpp:495`) runs ADR §5.2 in order:
-(1) admissibility (centre in the real grid; the lowest offending id is named) and `Δt ≤ s·Δt_c`;
-(2) `Domain::applyLoad(t+Δt)`, whose call into the host's `applyLoad` reads the series factor;
-(3–7) `Engine::advance` (`LadrunoMPMCore.h:511`) with `ops_TheActiveElement = 0` around it — P2G,
-damping + grid update + conditions (walls, then fixes; on face AND ghost layers), MUSL with PIC/FLIP
-and the second projection, the kernel entry, the material update, the commit with the WP-99 refusal
-counter (`:657`, cleared before the loop), G2P; (8) `Domain::commit()`; (9) the profiler's "step"
-scope and `OPS_PROFILE_STEP`; then the particle output (after the commit) and
+**The step.** `LadrunoMPMPattern::analyze` runs ADR §5.2 in order, with ONE exit path:
+(1) step-start admissibility (centre in the real grid; the lowest offending id is named) and
+`Δt ≤ s·Δt_c` (Δt_c from the initial tangent); then, at the first step of an epoch that passed these
+refusals, the output stage opens with output 0; (2) `Domain::applyLoad(t+Δt)`, whose call into the
+host's `applyLoad` reads the series factor; (3–7) `Engine::advance` (`LadrunoMPMCore.h`) with
+`ops_TheActiveElement = 0` around it — P2G, damping + grid update + conditions (walls, then fixes; on
+the face AND ghost layers), MUSL with PIC/FLIP, **the step-end admissibility check of every trial
+centre (Amendment 7)**, the second projection, the kernel entry, the material update, the commit
+with the WP-99 refusal counter (cleared before the loop), G2P; (8) `Domain::commit()`; (9) the
+profiler's "step" scope and `OPS_PROFILE_STEP`; the particle output after the commit. Whatever stops
+the loop, the accepted steps not yet written are written and the file is flushed, then
 `Domain::flushRecorders()`.
 
 **Ghost layers (interface A5).** `Grid` in `LadrunoMPMCore.h`: one layer beyond every face, enough for
 any admissible uGIMP particle (`|x_p − x_i| < h + lp ≤ 1.5h`); node ids count the ghosts,
 `id = (i+1) + (nx+3)·((j+1) + (ny+3)·(k+1))`.
 
-**Lifecycle.** `reset` (`:629`), `detachParameters` (`:139`), the abort latch and the snapshot rule in
-`analyze`.
+**Lifecycle.** `LadrunoMPMPattern::reset`, `detachParameters`, the abort latch and the snapshot rule
+in `analyze`, the test hooks `injectCommitRefusal` / `injectStaleRefusal`.
 
 **Particle I/O (phase c2).**
-- *Contract 1 in* — `readParticleSet` (`LadrunoMPMIO.cpp:285`) checks every C1 rule of the contract
+- *Contract 1 in* — `readParticleSet` (`LadrunoMPMIO.cpp`) checks every C1 rule of the contract
   (format, version, uuid4 `SET_ID`, NDM, int64 `NUM_PARTICLES`, thickness, units, sign and Voigt
   order, PROVENANCE for apeGmsh, GRID, BODIES, exact dtypes and shapes, unknown datasets, ids strictly
   increasing in [0, 2⁵³−1], finite values, positive volume and mass, GIMP half-lengths, positions with
   their GIMP domain in the box, body references, material tags, flags, filters) and reports every
-  problem with its code. `LadrunoMPMPattern::loadParticleSet` (`:661`) then applies the engine
-  refusals — NDM, unequal `CELL_SIZE`, a grid or basis other than the deck's `mpm grid`, thickness or
-  units that disagree with an earlier set, body-name conflicts, non-admitted or undefined materials,
-  initial stress (`STRESS` or a nonzero `STRESS33`) on a non-elastic material, ids met in the epoch —
-  before loading anything. The path is opened as given; the absolute path is recorded.
-- *Contract 2 out* — `ParticleWriter` (`LadrunoMPMIO.cpp:615`, `:660`, `:782`), driven by
-  `openOutputStage` / `writeOutputNow` (`LadrunoMPMPattern.cpp:810`, `:846`): its own `.ladruno` file,
-  `INFO` as LadrunoRecorder writes it with `FORMAT_VERSION` 1 and `FORMAT_MINOR_VERSION` 2 (only a
-  particle file is 2; `recorder ladruno` is untouched and stays at 1); each stage is particle-only,
-  written as the recorder's empty stage (`EMPTY_PARTITION = 1`, int32 `[0 × 1]` node ids, float64
-  `[0 × ndm]` coordinates, empty `ELEMENTS` and result groups) plus `MODEL/PARTICLES` (attributes,
-  `GRID`, `BODIES`, the id-sorted registry) and `RESULTS/ON_PARTICLES` (`STEP`, `TIME`, `OFFSETS`,
-  `ID`, one group per field, appended in the contract's order with `OFFSETS` last); `KIND` pinned to
-  `transient`, `MODE = explicit`, `PARTICLE_EPOCH` bumped by `mpm reset`; int64 ids; NULLTERM strings.
-  A stage opens at the first `mpm analyze` of an epoch with the pre-step state as output 0; outputs
-  every N steps or Δt, and the last step of each analyze always. Fields: `POSITION` (always),
-  `VELOCITY`, `STRESS`, `STRAIN`, `VOLUME`, `GIMP_HALF_LENGTH`, `DEFORMATION_GRADIENT`; no `STATE_*`
-  token in v1.
-- *Wrapper writers* — `Ladruno_Hdf5.h:563-650`: an int64 dataset, a fixed-length NULLTERM
-  string-array dataset, an empty dataset of any rank, row-extensible chunked datasets with
-  shuffle + deflate (232a's quirk: the old writers skip empty vectors and have no int64 or string
-  array).
+  problem with its code. `LadrunoMPMPattern::loadParticleSet` then applies the engine refusals — NDM,
+  unequal `CELL_SIZE`, a grid or basis other than the deck's `mpm grid`, thickness or units that
+  disagree with an earlier set, body-name conflicts, non-admitted or undefined materials, initial
+  stress (`STRESS` or a nonzero `STRESS33`) on a non-elastic material, ids met in the epoch — before
+  loading anything. The path is opened as given; the absolute path is recorded.
+- *Contract 2 out* — `ParticleWriter` (`LadrunoMPMIO.cpp`), driven by `openOutputStage` /
+  `writeOutputNow`: its own `.ladruno` file, created at the first stage (`mpm output` then `-close`
+  with no step leaves no file); `INFO` as LadrunoRecorder writes it with `FORMAT_VERSION` 1 and
+  `FORMAT_MINOR_VERSION` 2 (only a particle file is 2; `recorder ladruno` is untouched and stays at
+  1); each stage particle-only, written as the recorder's empty stage (`EMPTY_PARTITION = 1`, int32
+  `[0 × 1]` node ids, float64 `[0 × ndm]` coordinates, empty `ELEMENTS` and result groups) plus
+  `MODEL/PARTICLES` (attributes, `GRID`, `BODIES`, the id-sorted registry) and
+  `RESULTS/ON_PARTICLES` (`STEP`, `TIME`, `OFFSETS`, `ID`, one group per field, appended in the
+  contract's order with `OFFSETS` last; every append checked); `KIND` pinned to `transient`,
+  `MODE = explicit`, `PARTICLE_EPOCH` bumped by `mpm reset`; int64 ids; NULLTERM strings. Outputs
+  every N steps or Δt (re-armed when the Domain time goes back), and the last accepted step of each
+  analyze always, failed or not. Fields: `POSITION` (always), `VELOCITY`, `STRESS`, `STRAIN`,
+  `VOLUME`, `GIMP_HALF_LENGTH`, `DEFORMATION_GRADIENT`; no `STATE_*` token in v1.
+- *Crash safety* — a flush after EVERY output by default (`-flush s` relaxes it to a wall-clock
+  cadence); one chunk per output for `ID` and every `DATA` (while it fits 16 MiB), so a flushed output
+  is never rewritten; `STEP` / `TIME` / `OFFSETS` uncompressed, so an in-place rewrite of their last
+  chunk cannot make earlier entries fail a filter. Contract §2.8 suggests ~1 MiB chunks and
+  1024-entry index chunks; readers must not depend on chunk shape, and this layout trades that
+  guidance for crash consistency.
+- *Wrapper writers* — `Ladruno_Hdf5.h`: a fixed-length NULLTERM string-array dataset, an empty
+  dataset of any rank, row-extensible chunked datasets with optional shuffle + deflate (232a's quirk:
+  the old writers skip empty vectors and have no string array).
 
 ## 3. The c1 review (Fable, of `ba7ab310e`) and how each finding was closed
 
 | # | Finding | Fix | Pinned by |
 |---|---|---|---|
-| F1 (major) | the `mpm reset` snapshot was taken before a refused or zero-step analyze; bodies added afterwards left `mats`, flags and the id registry larger than the restored particles (a re-seeded stiff body reused soft materials; `criticalTimeStep` 100× too large) | the snapshot is retaken by every `mpm analyze` until a step is accepted; `reset` truncates materials, flags and ids to the snapshot (`Engine::setParticles` rebuilds the registry); `analyze` refuses on a materials/particles count mismatch | `test_reset_after_a_refused_first_analyze`, `test_reset_drops_particles_added_after_the_snapshot_with_their_materials` |
-| F2 (major) | `parameter … loadPattern` → `remove loadPattern` → `updateParameter` segfaulted | the host records the Parameters that registered its materials and calls `Parameter::clean()` on them when it is deleted, or when a reset drops particles | `test_parameter_update_after_remove_loadpattern_does_not_crash` (a subprocess: a crash is a failed test, not a dead runner) |
-| F3 (major) | the W17 paths were untested | core mock tests of both paths (a kernel refusal fails the step, materials reverted, nothing committed, a retry accepted; a commit refusal returns −2 with particles unmoved; a stale count does not abort); an `aborted` latch only `mpm reset` clears; the WP-99 counter cleared before the commit loop; a binary test of the kernel refusal (state and Domain time unchanged) | `mpm_engine_check.cpp` ("W17 …" checks), `test_kernel_refusal_fails_the_step_and_changes_nothing` |
-| F4 | `mpm stress` / `mpm velocity` were accepted after the first step | refused, like `body`, `particle`, `particles` and `shift` | `test_initial_conditions_refused_after_the_first_step` |
-| F5 | DruckerPrager's `materialState` and moduli survive `mpm reset` | documented in the guide: reset restores kinematics and committed material state, not stage flags or parameters | guide, "What `reset` does" |
-| F6 | the critical Δt read the current tangent (DruckerPrager's apex tangent is 1e-3·mCe: c_p 31× too small) | `getInitialTangent()` (interface Amendment 6) | `test_critical_dt_reads_the_initial_tangent` |
-| F7 | the class-tag comment claimed 33027 was free in every registry | amended: equals `ND_TAG_LadrunoHySand3D` (reserved by WP-145), a per-registry number, not a collision | `ci/check_classtags.py` |
-| F8 | thread-count test was vacuous (serial loop); plasticity tested only as "differs from elastic" | thread test removed (the loop is serial in v1); a two-leg check: every particle's stress after every step against perfect J2 plasticity driven through that particle's own strain path, for LadrunoJ2 and DruckerPrager (ρ = 0, no hardening), with a guard that the path yields | `test_two_leg_plastic_particles_match_the_material_law[LadrunoJ2, DruckerPrager]` |
-| Q8 | classic Tcl printed doubles as `%35.20f` | `mpm criticalTimeStep`, `particleData` and `info time|summary` go through `ladrunoMPMDoubleQuery`; the classic bridge publishes Tcl double objects (full precision); scalar queries answer scalars in both engines | engine parity tests; quirk fragment `WP-232-tcl-double-output-fixed-point.md` |
+| F1 (major) | the `mpm reset` snapshot was taken before a refused or zero-step analyze; bodies added afterwards left `mats`, flags and the id registry larger than the restored particles (`criticalTimeStep` 100× too large) | the snapshot is retaken by every `mpm analyze` until a step is accepted; `Engine::setParticles` rebuilds the id registry; `analyze` refuses on a materials/particles count mismatch | `test_reset_after_a_refused_first_analyze`, `test_reset_keeps_bodies_added_after_a_reset_and_their_materials` |
+| F2 (major) | `parameter … loadPattern` → `remove loadPattern` → `updateParameter` segfaulted | the host records the Parameters that registered its materials (by object, see c2 #4) and calls `Parameter::clean()` when it is deleted | `test_parameter_update_after_remove_loadpattern_does_not_crash` (a subprocess) |
+| F3 (major) | the W17 paths were untested | core mock tests of both paths; an `aborted` latch only `mpm reset` clears; the WP-99 counter cleared before the commit loop; a binary test of the kernel refusal; host hooks (c2 #6) | `mpm_engine_check.cpp` ("W17 …"), `test_kernel_refusal_fails_the_step_and_changes_nothing`, `test_commit_refusal_aborts_until_reset_and_stale_counts_do_not` |
+| F4 | `mpm stress` / `mpm velocity` accepted after the first step | refused, like `body`, `particle`, `particles`, `shift` | `test_initial_conditions_refused_after_the_first_step` |
+| F5 | DruckerPrager's `materialState` and moduli survive `mpm reset` | documented: reset restores kinematics and committed material state, not stage flags or parameters | guide, "What `reset` does" |
+| F6 | the critical Δt read the current tangent (DruckerPrager's apex tangent: c_p 31× too small) | `getInitialTangent()` (interface Amendment 6) | `test_critical_dt_reads_the_initial_tangent` |
+| F7 | class-tag comment claimed 33027 was free everywhere | amended: equals `ND_TAG_LadrunoHySand3D` (WP-145), a per-registry number | `ci/check_classtags.py` |
+| F8 | vacuous thread test; plasticity tested only as "differs from elastic" | thread test removed (the v1 loop is serial); two-leg check of every particle's stress against perfect J2 plasticity driven through its own strain path, with a yield guard | `test_two_leg_plastic_particles_match_the_material_law[LadrunoJ2, DruckerPrager]` |
+| Q8 | classic Tcl printed doubles as `%35.20f` | `ladrunoMPMDoubleQuery`; the classic bridge publishes Tcl doubles; scalar queries are scalars in both engines | engine parity tests; `test_scalar_queries_answer_floats`; Tcl deck `llength` check |
 
 The c1 numerics were reviewed as merge-quality: an independent numpy step written from the interface
 matched the binary to about 1e-12 over 40 steps, ghost corners and edges included.
 
-## 4. Evidence
+## 4. The c2 review (Fable, of `ba7ab310e..742b9981c`) and how each finding was closed
+
+Contract conformance held (all 32 malformed variants refused with the Python validator's codes;
+FORMAT 1 / minor 2, the empty-stage shape, epochs, int64 ids, [11,22,12], NULLTERM; the two-leg check
+yields on 64 of 64 particles, matching to 1e-12). The findings were lifecycle defects that lost data
+silently.
+
+| # | Finding | Fix | Pinned by |
+|---|---|---|---|
+| 1 (major) | the stage and output 0 were written before the step refusals: particles added after a refused analyze, and initial conditions set after `analyze 0`, never reached the file, and both validators passed | the stage opens (with output 0) only once a step has passed its refusals; a particle-set change after a stage opens is refused, never written short | `test_particles_added_after_a_refused_analyze_reach_the_file`, `test_output0_holds_initial_conditions_set_after_a_zero_step_analyze` |
+| 2 (major) | no flush cadence: a killed run left a file h5py could not open | flush at stage open and after every output by default; one chunk per output; uncompressed indices (the crash-safety ruling, below) | `test_a_killed_run_leaves_a_readable_file[0.5, 1, 1.5, 2, 3, 4 s]` |
+| 3 (major) | `mpm reset` before any accepted step silently dropped bodies and zeroed initial conditions | before an accepted step, reset keeps the particles (they ARE the initial state) and only reverts materials and clears an abort | `test_reset_before_any_accepted_step_keeps_bodies_and_initial_conditions` |
+| 4 | parameter detach keyed by (Domain, tag): a reused tag was cleaned | keyed by the Parameter object | `test_detach_leaves_an_unrelated_parameter_with_a_reused_tag` |
+| 5 | the scalar `mpm info time` was only tolerated by the harness | pinned: `float` in Python, `llength 1` in Tcl; the harness no longer accepts a list | `test_scalar_queries_answer_floats`, Tcl deck |
+| 6 | the host half of W17 untested | `mpm debug injectRefusal | staleRefusal | aborted` | `test_commit_refusal_aborts_until_reset_and_stale_counts_do_not` |
+| 7 | a failed analyze skipped the final output and the flush | one exit path | `test_a_failed_analyze_keeps_its_accepted_steps` |
+| nits | INFO-only file after `output` + `-close`; `-dt` not re-armed after time went back; unchecked appends; unused int64 writer; §2.9 schema move; no crash quirk | file created at the first stage; re-arm; appends checked; writer removed; schema move deferred to the 232a follow-up (guide); quirk `WP-232-hdf5-unflushed-file-unreadable-after-kill.md` | `test_no_file_without_a_stage`, `test_dt_cadence_rearms_when_time_goes_back` |
+
+**Amendment 7 (step-end admissibility), from the build-5 run.** `test_a_failed_analyze_keeps_its_accepted_steps`
+failed C2-POS: admissibility was checked at step START, so the step that carried a particle out was
+accepted and its output left the box. Ruling: an accepted step never leaves a centre outside the real
+grid. After the trial position update, before the second projection and any material update, every
+trial centre is checked; a step that would carry one out is refused with nothing changed (kinematics,
+materials, Domain time), naming the lowest offending id; the step-start check stays. Pinned by the
+g++ "A7" check and 232b's case `leave_grid_step_end_2d` (steps 1–7 accepted, step 8 refused naming
+id 3), which this C++ reproduces.
+
+**Crash-safety ruling, and the measured kill result.** An HDF5 file is crash-consistent only at a
+flush; between flushes a hard kill can CORRUPT it (unreadable headers, or deflated chunks that fail
+their filter), not merely truncate it. The writer therefore flushes after every output by default,
+with the layout above. Measured by the orchestrator at `251131db4` with the c2 critic's
+`p4_crash.py`: every graceful mode validates; a kill at 1 s leaves a file that opens and validates; a
+kill at 3 s leaves a file that opens with every completed output recoverable, only the in-flight output
+torn (`ID` 12 rows ahead of `DATA`), which the contract's crash rule (232a §2.5) drops. HDF5 SWMR, the
+full fix, is deferred.
+
+## 5. Evidence
 
 - **Independence.** The C++ was written from the interface, the case files and the contract text; the
   232c worker never opened `tests/mpm_reference.py` or `tests/hypo_incremental_reference.py`.
-- **g++ core check** (`mpm_engine_check.cpp`, no OpenSees) reproduces every value of 232b's
-  `mpm_cases.txt` @ `309c9222a`: 37 cases, 117 checks — the oracle's particle fields after 1, 3 and
-  5 steps (worst diff 3.5e-4 of tolerance), the closed forms (translation, bar period, PIC vs FLIP,
-  impact, incline slide/stick, K0 quiet start, the overhang probes, roller slide, damped free fall),
-  the regenerated A5 values — plus its own checks: A5 numbering, the roller slide with overhanging
-  domains (|v − v0| = 1e-16; truncated support drags 0.11 m/s), friction once per step (a
-  friction-twice mutant of the core fails it), the mass cutoff inside the step, both W17 paths. The A4
-  column (`column_selfweight_2d_gimp`, 20% compression) is a strict xfail at 0.0717 vs 0.03, as in the
+- **g++ core check** (`mpm_engine_check.cpp`, no OpenSees) reproduces every value of 232b's cases
+  including Amendment 7 (`c597ff063`): 38 cases, 123 checks — the oracle's particle fields after 1, 3
+  and 5 steps, the closed forms (translation, bar period, PIC vs FLIP, impact, incline slide/stick,
+  K0 quiet start, the overhang probes, roller slide, damped free fall), the A5 values, the A7 refusal —
+  plus its own checks: A5 numbering, the roller slide with overhanging domains (|v − v0| = 1e-16;
+  truncated support drags 0.11 m/s), friction once per step (a friction-twice mutant of the core fails
+  it), the mass cutoff inside the step, both W17 paths, the A7 trial-centre refusal. The A4 column
+  (`column_selfweight_2d_gimp`, 20% compression) is a strict xfail at 0.0717 vs 0.03, as in the
   oracle (0.072).
 - **Kernel check:** 26/26 cases of `hypo_incremental_cases.txt`; agreement with the ADR-79 nodal entry
   to 1e-13; refusals leave outputs untouched; plane strain equals the embedded 3D entry bit for bit.
-- **Binaries at `742b9981c`** (`ladrunoBuild` verified on `OpenSees.exe` and `opensees.pyd`, by the
-  worker and by the orchestrator): the four MPM test files give **127 passed, 3 xfailed** — every case
-  in Python AND classic Tcl, Python-vs-Tcl parity on 7 cases, the lifecycle and refusal tests, the F1–F3
-  regressions, the two-leg plasticity check, and the c2 contract tests: the 232a Contract-1 fixture
-  loaded exactly, a relative path opened as given, 11 malformed variants refused with their rule codes
-  and nothing loaded, grid mismatch / non-elastic `STRESS33` / id reuse refused, every written file
-  passing `ladruno_format.validate()` and `mpm_contracts.validate_particle_results()`, the round trip
-  (SET_ID, units, thickness, bodies, registry, output 0), outputs synchronous with the committed step,
-  ids identical across outputs, a new stage per epoch, lattice bodies, and the classic-Tcl round trip.
+- **Binaries at `251131db4`** (`ladrunoBuild` verified on `OpenSees.exe` and `opensees.pyd` by the
+  orchestrator): every MPM test file gives **383 passed, 4 xfailed**, in Python AND classic Tcl —
+  every case in both engines with Python-vs-Tcl parity, the lifecycle and refusal tests, the c1 and c2
+  review regressions, the two-leg plasticity check, the contract tests (the 232a fixture loaded
+  exactly, a relative path opened as given, malformed variants refused with their codes, every written
+  file passing `ladruno_format.validate()` and `mpm_contracts.validate_particle_results()`, the round
+  trip, output synchrony, id stability, epochs, the Tcl round trip) and the six-point kill test.
 - **Mutation gate (ADR-87 D2), family `MPM`**, suite `tests/test_ladruno_mpm_engine.py`. Run
   conditions: the mutant `opensees.pyd` on `PYTHONPATH`, the default tests directory, and
   `LADRUNO_TCL_EXE` pointing at a nonexistent path in BOTH the baseline and the mutant run (a mutant
@@ -135,49 +180,51 @@ matched the binary to about 1e-12 over 40 steps, ghost corners and edges include
   0.45; **SCALE** (G2P position increment × 1.5) 22/38 = 0.579, floor 0.55. Survivors: the unit
   hooks, the case orderings, the stress-free closed forms under ZERO, and under SCALE the cases that
   test no position increment (`incline_stick` moves 8.6e-5 m, inside its 0.005 m band at ×1.5;
-  `k0_quiet_start` is exactly at rest; `roller_slide` checks a velocity). The mutated lines are
-  unchanged since the mutant builds (`778145f3a`); c2 added `clearRefusals()` and `setParticles()`.
+  `k0_quiet_start` is exactly at rest; `roller_slide` checks a velocity). The two mutated lines are
+  untouched since the mutant builds (`778145f3a`); later changes (refusal clearing, `setParticles`,
+  the A7 check, the writer) are elsewhere, so the scores stand.
 
-## 5. Questions for the reviewer
+## 6. Questions for the reviewer
 
-1. **Failure semantics (W17).** A kernel refusal reverts every material already set, returns −1 before
-   any commit, and the host calls `Domain::revertToLastCommit()` to undo step 2's time advance. A
-   commit refusal is read from the WP-99 counter by the host (cleared before the loop), aborts with
-   particles unmoved, and latches until `mpm reset`. Is consuming the counter in the host, rather than
-   leaving it to `Domain::commit`, sound? Is clearing it before the loop safe when FE elements share
-   the Domain (v1 refuses free FE DOFs, but fixed FE elements may exist)?
-2. **The reset snapshot.** It is the state before the first ACCEPTED step, retaken by every analyze
-   until then. Is there a sequence (output stages, epochs, parameters) where that rule still restores
-   an inconsistent state?
-3. **Ghost layers.** One layer, by `|x_p − x_i| < h + lp ≤ 1.5h`. Conditions act on `ijk[d] ≤ 0` /
+1. **Failure semantics (W17).** A kernel refusal or an A7 refusal reverts every material already set,
+   returns −1 before any commit, and the host calls `Domain::revertToLastCommit()` to undo step 2's
+   time advance. A commit refusal is read from the WP-99 counter by the host (cleared before the
+   loop), aborts with particles unmoved, and latches until `mpm reset`. Is consuming the counter in
+   the host sound? Is clearing it before the loop safe when fixed FE elements share the Domain?
+2. **The step-end refusal (A7).** The trial centres are checked after G2P's position update and before
+   the second projection. A particle moving fast toward a face is now refused one step earlier than
+   before. Is refusal the right behaviour for v1 (rather than, e.g., a wall at every face or particle
+   removal), and does any admitted case reach a face slowly enough that the refusal hides a physical
+   result?
+3. **Crash consistency.** Flush after every output, one chunk per output for `ID` and `DATA`,
+   uncompressed index datasets. The measured kill at 3 s left only the in-flight output torn. Is
+   there a kill point — inside `H5Fflush` itself, or while a new chunk is allocated — where a
+   completed output can still be lost, and is that acceptable until SWMR? Is the 16 MiB one-chunk-per-
+   output ceiling right for large particle sets?
+4. **The reset snapshot.** The state before the first ACCEPTED step, retaken until then; before any
+   accepted step a reset keeps the particles. Is there a sequence (output stages, epochs, parameters,
+   an abort on the first step) where reset still restores an inconsistent state?
+5. **Ghost layers.** One layer, by `|x_p − x_i| < h + lp ≤ 1.5h`. Conditions act on `ijk[d] ≤ 0` /
    `≥ n_d`, walls in face order then fixes. Any corner or edge where this differs from the interface?
-4. **Contract 1 completeness.** Does `readParticleSet` miss a rule the contract states, or accept an
+6. **Contract 1 completeness.** Does `readParticleSet` miss a rule the contract states, or accept an
    encoding the contract refuses (scalar vs 1-element attributes, fixed vs variable-length strings,
-   UTF-8, filters)? Is the engine's grid comparison tolerance (1e-12 relative) right for sets written
-   by another program?
-5. **Contract 2 conformance.** The writer's own file, particle-only stages as the recorder's empty
-   stage, minor 2 only on particle files. Does any reader the contract names (apeGmsh's Python
-   `_ladruno.py`, the TypeScript viewer) see something unexpected — e.g. stage numbering from 0 per
-   file, `STEP` from the Domain commit tag, `TIME` restarting after `reset`?
-6. **Critical Δt from the initial tangent.** Safe for every admitted material, including LadrunoJ2 with
-   damage (its initial tangent is undamaged)? Is `s = 0.5` still the right default given the measured
-   1.31–1.74 margins?
-7. **Initial stress (interface Q2).** v1 refuses initial stress on LadrunoJ2 and DruckerPrager, and a
-   nonzero `STRESS33` on them from a particle set. Right for v1, or should yield-consistent seeding
-   come now?
-8. **The two-leg check.** It compares each particle against a perfect-plasticity J2 return map driven
-   by the particle's own unrotated strain feed. Is that independent enough, or should a single-element
-   FE leg (same strain path, the material driven by an element) be added?
-9. **Admission by class tag and length consumers (W9).** `ops_TheActiveElement` is zeroed around the
-   particle loop; LadrunoJ2 `-autoRegularization` is refused. Any admitted material that still reads
-   an element length?
-10. **Parameters.** Detached on host deletion and on a reset that drops particles. Is
-    `Parameter::clean()` the right tool, given that a cleaned Parameter silently does nothing on
-    `updateParameter`?
+   UTF-8, filters)? Is the 1e-12 relative grid tolerance right for sets written by another program?
+7. **Contract 2 conformance.** The writer's own file, particle-only stages, minor 2 only on particle
+   files, stage numbering from 0 per file, `STEP` from the Domain commit tag, `TIME` restarting after
+   `reset`. Does any reader the contract names (apeGmsh's `_ladruno.py`, the TypeScript viewer) see
+   something unexpected?
+8. **Critical Δt from the initial tangent.** Safe for every admitted material, including LadrunoJ2 with
+   damage? Is `s = 0.5` still the right default given the measured 1.31–1.74 margins?
+9. **Initial stress (interface Q2).** v1 refuses initial stress on LadrunoJ2 and DruckerPrager, and a
+   nonzero `STRESS33` on them from a particle set. Right for v1?
+10. **The two-leg check.** Each particle against a perfect-plasticity J2 return map driven by its own
+    strain feed. Independent enough, or should a single-element FE leg be added?
+11. **Parameters.** Detached by object identity on host deletion. Is `Parameter::clean()` the right
+    tool, given that a cleaned Parameter silently does nothing on `updateParameter`?
 
-## 6. Not in this PR (by plan)
+## 7. Not in this PR (by plan)
 
 The object-broker entry (v1 refuses database save/restore); a real refusing material for the W17
 binary test (ADR §8: P5); the threaded particle loop; `STATE_*` output tokens; FE and particles in one
-`.ladruno` stage; the format-document PR that moves 232a §2 into `ladruno_schema_v1.md` (the contract
-§2.9 asks for it when 232c lands).
+`.ladruno` stage; HDF5 SWMR; the format-document move of 232a §2 into `ladruno_schema_v1.md` (deferred
+to the 232a follow-up).
