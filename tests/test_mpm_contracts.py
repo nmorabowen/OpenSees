@@ -82,8 +82,39 @@ def test_committed_fixtures_match_the_generator(tmp_path):
     """The committed files are what tests/mpm_contract_fixtures.py writes today."""
     fx.write_contract1(tmp_path / "c1.h5")
     fx.write_contract2(tmp_path / "c2.ladruno")
+    fx.write_mixed(tmp_path / "mixed.ladruno")
     assert _same(_content(fx.PARTICLE_SET), _content(tmp_path / "c1.h5"))
     assert _same(_content(fx.PARTICLE_RESULTS), _content(tmp_path / "c2.ladruno"))
+    assert _same(_content(fx.PARTICLE_MIXED), _content(tmp_path / "mixed.ladruno"))
+
+
+def test_mixed_fixture_fe_stage_then_particle_stage():
+    """232a §4: an FE stage today's readers open, then a particle stage they ignore."""
+    assert mc.validate_particle_results(str(fx.PARTICLE_MIXED)) == []
+    assert lf.round_trip_oracle(str(fx.PARTICLE_MIXED)) == []
+    with lf.LadrunoReader(str(fx.PARTICLE_MIXED)) as r:
+        assert int(r.info()["FORMAT_VERSION"]) == 1
+        assert int(r.info()["FORMAT_MINOR_VERSION"]) == 2
+        assert sorted(r.stages(), key=lf._stage_id) == ["MODEL_STAGE[0]", "MODEL_STAGE[1]"]
+        assert r.particle_stages() == ["MODEL_STAGE[1]"]
+        fe = r.stage_attrs("MODEL_STAGE[0]")
+        assert fe["KIND"] == "static" and "EMPTY_PARTITION" not in fe
+        assert r.nodes("MODEL_STAGE[0]")[0].shape[0] > 0
+        assert len(r.element_groups("MODEL_STAGE[0]")) > 0
+        ps = r.stage_attrs("MODEL_STAGE[1]")
+        assert ps["KIND"] == "transient" and int(ps["EMPTY_PARTITION"]) == 1
+        ids, _ = r.particle_output("MODEL_STAGE[1]", "POSITION", 0)
+        assert ids.tolist() == list(range(12))
+
+
+@pytest.mark.parametrize("mode,kind", sorted(lf.MODE_KIND.items()))
+def test_particle_stage_kind_is_pinned_from_mode(tmp_path, mode, kind):
+    """232a §2.3: transient for explicit and implicit-dynamic, static for quasi-static."""
+    p = tmp_path / "c2.ladruno"
+    fx.write_contract2(p, mode=mode)
+    with lf.LadrunoReader(str(p)) as r:
+        assert r.stage_attrs(STAGE)["KIND"] == kind
+    assert mc.validate_particle_results(str(p)) == []
 
 
 def test_contract2_is_an_additive_minor_not_a_major():
@@ -547,6 +578,8 @@ C2_CASES = {
                       "C2-NDM"),
     "model without results": (_h5(lambda h: h.__delitem__(OP)), "C2-PAIR"),
     "eigen stage": (_h5(_setattr(STAGE, "KIND", np.array([b"eigen"]))), "C2-KIND"),
+    "KIND absent": (_h5(_delattr(STAGE, "KIND")), "C2-KIND"),
+    "KIND empty": (_h5(_setattr(STAGE, "KIND", np.array([b""]))), "C2-KIND"),
     "unknown mode": (dict(mode="dynamic"), "C2-MODE"),
     "explicit under a static stage": (_h5(_setattr(STAGE, "KIND", np.array([b"static"]))),
                                       "C2-MODEKIND"),

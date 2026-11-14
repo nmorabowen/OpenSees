@@ -4,6 +4,8 @@
 
 * ``tests/data/mpm/particle_set_v1.h5`` -- Contract 1, written the way apeGmsh (h5py) will
   write it: scalar attributes, variable-length UTF-8 strings.
+* ``tests/data/mpm/particles_mixed_v1m2.ladruno`` -- Contract 2 after an FE stage:
+  make_synthetic's static FE stage, then the same particle stage (232a §4).
 * ``tests/data/mpm/particles_v1m2.ladruno`` -- Contract 2: a minimal .ladruno shell
   (FORMAT_VERSION 1, FORMAT_MINOR_VERSION 2) holding only the particle group, written the
   way the fork's C++ wrapper writes attributes (1-element arrays, fixed-length strings,
@@ -37,6 +39,7 @@ lf = mc.lf
 DATA = HERE / "data" / "mpm"
 PARTICLE_SET = DATA / "particle_set_v1.h5"
 PARTICLE_RESULTS = DATA / "particles_v1m2.ladruno"
+PARTICLE_MIXED = DATA / "particles_mixed_v1m2.ladruno"
 
 SET_ID = "3f6c1d2e-8a4b-4c5d-9e7f-0a1b2c3d4e5f"
 SESSION_ID = "9b2e7c41-5d3a-4f6e-8c1b-2a3d4e5f6a7b"
@@ -163,8 +166,8 @@ def write_contract2(path, model: dict | None = None, outputs: list | None = None
     ELEMENTS and ON_NODES / ON_ELEMENTS / ON_DOMAIN / ON_REGIONS) plus the particle groups."""
     m = contract1_model() if model is None else model
     outs = contract2_outputs(m) if outputs is None else outputs
-    a, p = m["attrs"], m["particles"]
-    ai, ad, as_ = make_synthetic._ai, make_synthetic._ad, make_synthetic._as
+    a = m["attrs"]
+    ai, as_ = make_synthetic._ai, make_synthetic._as
     with h5py.File(path, "w", track_order=True) as f:
         info = f.create_group("INFO")
         as_(info, "GENERATOR", "Ladruno")
@@ -181,50 +184,74 @@ def write_contract2(path, model: dict | None = None, outputs: list | None = None
         as_(info, "RUN_ID_SCOPE", "user")
         info.create_group("PROVENANCE")
 
-        st = f.create_group("MODEL_STAGE[1]")
-        ai(st, "STEP", 0)
-        ad(st, "TIME", 0.0)
-        as_(st, "KIND", "static" if mode == "quasi-static" else "transient")
-        ai(st, "EMPTY_PARTITION", 1)
-        model = st.create_group("MODEL")
-        nodes = model.create_group("NODES")
-        ndm = int(a["NDM"])
-        nodes.create_dataset("ID", data=np.zeros((0, 1), dtype="<i4"))
-        nodes.create_dataset("COORDINATES", data=np.zeros((0, ndm), dtype="<f8"))
-        model.create_group("ELEMENTS")
-        res = st.create_group("RESULTS")
-        for g in lf.EMPTY_RESULT_GROUPS:
-            res.create_group(g)
+        write_particle_stage(f, "MODEL_STAGE[1]", m, outs, mode=mode, compress=compress,
+                             epoch=epoch, source=source)
 
-        meta = {"PATTERN_TAG": 1, "MODE": mode,
-                "UNIT_LENGTH": a["UNIT_LENGTH"], "UNIT_FORCE": a["UNIT_FORCE"],
-                "UNIT_TIME": a["UNIT_TIME"]}
-        if source:
-            meta["SOURCE_SET_ID"] = a["SET_ID"]
-        if "UNIT_SYSTEM" in a:
-            meta["UNIT_SYSTEM"] = a["UNIT_SYSTEM"]
-        if ndm == 2:
-            meta["PLANE_STRAIN_THICKNESS"] = float(a["PLANE_STRAIN_THICKNESS"])
-        make_synthetic.write_particle_group(
-            st, ndm=ndm, grid=m["grid"], bodies=m["bodies"],
-            registry={"ID": p["ID"], "BODY_ID": p["BODY_ID"],
-                      "MATERIAL_TAG": p["MATERIAL_TAG"], "MASS": _mass(m)},
-            outputs=outs, meta=meta,
-            field_meta={"STATE_eqPlasticStrain": (
-                "Equivalent plastic strain (illustrative token)", "epsPeq", "", 0)},
-            compress=compress, epoch=epoch)
+
+def write_particle_stage(f, name: str, m: dict, outs: list, mode: str = "explicit",
+                         compress: int = 1, epoch: int = 0, source: bool = True,
+                         step: int = 0) -> None:
+    """One particle-only stage: LadrunoRecorder's empty stage plus the particle groups.
+    KIND is pinned from MODE (232a §2.3)."""
+    a, p = m["attrs"], m["particles"]
+    ai, ad, as_ = make_synthetic._ai, make_synthetic._ad, make_synthetic._as
+    st = f.create_group(name)
+    ai(st, "STEP", step)
+    ad(st, "TIME", 0.0)
+    as_(st, "KIND", lf.MODE_KIND.get(mode, "transient"))
+    ai(st, "EMPTY_PARTITION", 1)
+    model = st.create_group("MODEL")
+    nodes = model.create_group("NODES")
+    ndm = int(a["NDM"])
+    nodes.create_dataset("ID", data=np.zeros((0, 1), dtype="<i4"))
+    nodes.create_dataset("COORDINATES", data=np.zeros((0, ndm), dtype="<f8"))
+    model.create_group("ELEMENTS")
+    res = st.create_group("RESULTS")
+    for g in lf.EMPTY_RESULT_GROUPS:
+        res.create_group(g)
+
+    meta = {"PATTERN_TAG": 1, "MODE": mode,
+            "UNIT_LENGTH": a["UNIT_LENGTH"], "UNIT_FORCE": a["UNIT_FORCE"],
+            "UNIT_TIME": a["UNIT_TIME"]}
+    if source:
+        meta["SOURCE_SET_ID"] = a["SET_ID"]
+    if "UNIT_SYSTEM" in a:
+        meta["UNIT_SYSTEM"] = a["UNIT_SYSTEM"]
+    if ndm == 2:
+        meta["PLANE_STRAIN_THICKNESS"] = float(a["PLANE_STRAIN_THICKNESS"])
+    make_synthetic.write_particle_group(
+        st, ndm=ndm, grid=m["grid"], bodies=m["bodies"],
+        registry={"ID": p["ID"], "BODY_ID": p["BODY_ID"],
+                  "MATERIAL_TAG": p["MATERIAL_TAG"], "MASS": _mass(m)},
+        outputs=outs, meta=meta,
+        field_meta={"STATE_eqPlasticStrain": (
+            "Equivalent plastic strain (illustrative token)", "epsPeq", "", 0)},
+        compress=compress, epoch=epoch)
 
 
 def deep_copy_model() -> dict:
     return copy.deepcopy(contract1_model())
 
 
+def write_mixed(path, model: dict | None = None) -> None:
+    """An FE stage, then a particle stage (232a §4): make_synthetic's static FE file as
+    MODEL_STAGE[0], minor raised to 2, and the particle stage of write_contract2 as
+    MODEL_STAGE[1]. Today's apeGmsh readers open it and ignore the particles."""
+    m = contract1_model() if model is None else model
+    make_synthetic.build(str(path))
+    with h5py.File(path, "r+") as f:
+        make_synthetic._ai(f["INFO"], "FORMAT_MINOR_VERSION", 2)
+        write_particle_stage(f, "MODEL_STAGE[1]", m, contract2_outputs(m), step=1)
+
+
 def main() -> None:
     DATA.mkdir(parents=True, exist_ok=True)
     write_contract1(PARTICLE_SET)
     write_contract2(PARTICLE_RESULTS)
+    write_mixed(PARTICLE_MIXED)
     for path, check in ((PARTICLE_SET, mc.validate_particle_set),
-                        (PARTICLE_RESULTS, mc.validate_particle_results)):
+                        (PARTICLE_RESULTS, mc.validate_particle_results),
+                        (PARTICLE_MIXED, mc.validate_particle_results)):
         problems = check(str(path))
         print(f"wrote {path.relative_to(HERE.parent)}: "
               f"{'conformant' if not problems else problems}")

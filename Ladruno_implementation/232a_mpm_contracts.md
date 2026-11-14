@@ -22,11 +22,11 @@ Two HDF5 contracts between apeGmsh and the fork, written so that the fork's C++ 
 | | Contract 1 — particle set | Contract 2 — particle results |
 |---|---|---|
 | Direction | apeGmsh → fork | fork → apeGmsh |
-| File | a standalone HDF5 file, `<stem>.particles.h5` (placement: the apeGmsh ADR draft, D1) | a group inside a `.ladruno` file: `FORMAT_VERSION = 1`, `FORMAT_MINOR_VERSION = 2` |
+| File | a standalone HDF5 file, `<deck stem>.particles.h5`, written beside the deck that names it (apeGmsh ADR 0134 draft, D1) | a group inside a `.ladruno` file: `FORMAT_VERSION = 1`, `FORMAT_MINOR_VERSION = 2` |
 | Read by | `mpm particles -file {path}` (232c) | `_ladruno.py`, `apeGmshViewer/src/reader/ladruno*.ts` (232d) |
 | Owner of the layout | the fork (this page and its validator) | the fork (as all of `.ladruno`, schema §7b.1, apeGmsh ADR 0122 D4) |
 | Executable spec | `tests/mpm_contracts.py::validate_particle_set` | `Ladruno_scripts/ladruno_recorder_tests/ladruno_format.py::validate` (its `_validate_particles`); `tests/mpm_contracts.py::validate_particle_results` calls it |
-| Fixture | `tests/data/mpm/particle_set_v1.h5` | `tests/data/mpm/particles_v1m2.ladruno` |
+| Fixtures | `tests/data/mpm/particle_set_v1.h5` | `tests/data/mpm/particles_v1m2.ladruno` (all particles), `tests/data/mpm/particles_mixed_v1m2.ladruno` (an FE stage, then a particle stage) |
 
 `tests/mpm_contract_fixtures.py` writes the fixtures and `tests/test_mpm_contracts.py` checks them.
 That test also refuses at least one malformed variant for **every rule code on this page**: it
@@ -118,9 +118,22 @@ are from the file root `/`. `mpm particles` refuses a file that breaks any rule,
 names the rule's code; 232c's refusal text should carry the code. A missing required attribute,
 group or dataset anywhere in Contract 1 is C1-REQ.
 
-**Path resolution.** A relative `-file` path resolves from the directory of the deck that names it,
-not from the process's working directory. The engine resolves it once and records the absolute path
-it opened.
+**Placement and path resolution.**
+
+- **Who writes it.** apeGmsh's deck emitter writes the file **next to the deck it emits**, as
+  `<deck stem>.particles.h5`, whenever the model declares MPM bodies. Emitting `runs/case1.tcl`
+  writes `runs/case1.particles.h5`.
+- **How the deck names it.** By its bare name: `mpm particles -file {case1.particles.h5}`.
+- **How the fork finds it.** A relative `-file` path resolves from the directory of the deck that
+  names it, not from the process's working directory. The engine resolves it once and records the
+  absolute path it opened.
+- **Its stem is the deck's.** The model archive (`<stem>.h5`) need not share it; the two files pair
+  through `PROVENANCE` (§1.5).
+- **Overwrites and MPI.** Overwrites follow apeGmsh's artifact policy, and under MPI only rank 0
+  writes.
+- **No live path.** MPM is deck-only.
+
+All of this is apeGmsh ADR 0134 (draft) D1.
 
 ### 1.1 Root attributes
 
@@ -253,10 +266,20 @@ unchanged. Minor 2 adds `MODEL/PARTICLES` and `RESULTS/ON_PARTICLES` to a `MODEL
   (`Ladruno_scripts/ladruno_recorder_tests/stage_kind_check.py:99`,
   `tests/test_ladruno_recorder_stage_semantics.py:183`) keep holding. If 232c writes 2 everywhere, it
   relaxes both to `>= 1` in the same PR.
-- **What an older reader does.** A particle-only stage is written as the recorder's empty stage
-  (§2.3), so a reader written for minor 1 opens the file and sees an empty stage with no nodes. That
-  is acceptable while apeGmsh cannot draw particles. A reader that wants particles checks
-  `FORMAT_MINOR_VERSION >= 2` and then looks for the groups.
+- **What an older reader does**, by scope. A particle-only stage is written as the recorder's empty
+  stage (§2.3).
+  - **A file with at least one FE stage** opens in today's apeGmsh Python reader and ignores the
+    particle groups. So does any file opened with `model_h5=`. The fixture
+    `particles_mixed_v1m2.ladruno` is that case.
+  - **An all-particle file** is **refused** by today's Python reader. `LadrunoReader.fem()` skips
+    every `EMPTY_PARTITION` stage, and `Results.from_ladruno` then raises "carries no MODEL group …
+    Pass model_h5=". The fixture `particles_v1m2.ladruno` is that case.
+  - **Today's TypeScript reader** does not read `EMPTY_PARTITION`. It throws a whole-file layout
+    error on any stage `KIND` outside its `KIND_MAP`, so a particle stage's `KIND` is pinned (§2.3).
+    With the pin, it opens both kinds of file and shows no particles.
+
+  This is acceptable until apeGmsh's reader slice (M2) reads particles. A reader that wants particles
+  checks `FORMAT_MINOR_VERSION >= 2` and then looks for the groups.
 - **apeGmsh** keeps `LADRUNO_SUPPORTED_FORMAT_VERSIONS = (1,)` (232d). Its own `.ladruno` writers
   (`_ladruno_writer.py`, the MPCO converter) keep minor 1, since they never write particles.
 - **The fork's executable spec**, `Ladruno_scripts/ladruno_recorder_tests/ladruno_format.py`:
@@ -285,7 +308,11 @@ precision is the dtype of its own dataset (§2.6).
 ### 2.3 The `MODEL_STAGE` that holds particles
 
 - `MODEL_STAGE[<id>]` follows schema §2a for its id and its `STEP` / `TIME` / `KIND` attributes.
-- **`KIND` and `MODE` agree** (C2-MODEKIND):
+- **`KIND` is pinned.** It is `"transient"` for explicit runs (mode F) and implicit-dynamic runs
+  (mode A), and `"static"` for quasi-static runs (mode A). It is never empty and never any other
+  value: absent, `""`, `"eigen"` or anything else is C2-KIND. Today's apeGmsh TypeScript reader
+  throws a whole-file layout error on any other `KIND` (§2.1). **`KIND` and `MODE` agree**
+  (C2-MODEKIND):
 
   | `MODE` | `KIND` |
   |---|---|
@@ -293,8 +320,9 @@ precision is the dtype of its own dataset (§2.6).
   | `implicit` (mode A) | `transient` |
   | `quasi-static` (mode A) | `static` |
 
-  `KIND` is never `"eigen"` on a particle stage (C2-KIND). Mode F has no running `Analysis` object,
-  so a writer that shares `LadrunoRecorder`'s stage logic must set `KIND` itself (232c).
+  Mode F has no running `Analysis` object. A writer that shares `LadrunoRecorder`'s stage logic must
+  therefore set `KIND` itself (232c), and must not leave the recorder's provisional `"static"` on an
+  explicit stage.
 - **`PARTICLE_EPOCH`** (int32, required on a particle stage): 0 at the start of a run, incremented
   by each `mpm reset`, and never decreasing in stage order (C2-EPOCH). The id rules of §2.7 apply
   within an epoch.
@@ -489,7 +517,8 @@ opt-in like `-precision f32` on the recorder (C2-DTYPE).
 ## 3. Round trip between the contracts
 
 The fixtures are one model seen from both sides. `particles_v1m2.ladruno` is what the fork would write
-after loading `particle_set_v1.h5`, and `tests/test_mpm_contracts.py` checks the mapping:
+after loading `particle_set_v1.h5`; `tests/test_mpm_contracts.py` checks the mapping below.
+`particles_mixed_v1m2.ladruno` carries the same particle stage after an FE stage.
 
 | Contract 1 | becomes in Contract 2 |
 |---|---|
@@ -515,6 +544,11 @@ after loading `particle_set_v1.h5`, and `tests/test_mpm_contracts.py` checks the
 - **Contract 2** is one transient stage: the recorder's empty stage plus the particle groups, with
   `PARTICLE_EPOCH 0` and outputs at steps 0, 10 and 20. Particle 11 is removed after output 1; this
   is valid in the file even though the v1 engine never removes a particle.
+- **The mixed fixture**, `particles_mixed_v1m2.ladruno`, holds two stages:
+  - `MODEL_STAGE[0]`: `make_synthetic`'s static FE stage, with its nodes, elements and results;
+  - `MODEL_STAGE[1]`: the particle stage above.
+
+  This is the case where today's readers open the file and ignore the particles (§2.1).
 - **Fields:** `POSITION`, `VELOCITY`, `STRESS`, `STRAIN`, `VOLUME`, `DEFORMATION_GRADIENT` (no
   `DIMENSION`, as the fork writes it) and `STATE_eqPlasticStrain`. The last is `NaN` for the block's
   elastic particles. The token `eqPlasticStrain` is illustrative; 232c's guide names the real ones.
@@ -551,6 +585,13 @@ after loading `particle_set_v1.h5`, and `tests/test_mpm_contracts.py` checks the
   - `SOURCE_SET_ID` is optional;
   - fixture strings are `NULLTERM`, and the base synthetic file writes minor 1;
   - every rule code has a refusal case.
-- **Gate before code.** The owner must ratify the apeGmsh ADR (`232a_apegmsh_adr_draft.md`, through
+- **2026-11-13, apeGmsh review of ADR 0134 (PR #2976, `changes`) applied:**
+  - the older-reader claim is scoped (§2.1);
+  - a particle stage's `KIND` is pinned, and an absent or empty `KIND` is C2-KIND;
+  - a second fixture, `particles_mixed_v1m2.ladruno`, is added;
+  - the placement is one rule: beside the emitted deck as `<deck stem>.particles.h5`, deck-only,
+    rank 0, under the artifact policy (§1);
+  - seeding runs in apeGmsh's emitter, from FEMData (ADR 0134 draft D2).
+- **Gate before code.** The owner must ratify apeGmsh ADR 0134 (`232a_apegmsh_adr_draft.md`, through
   apeGmsh's T coordinator and maintainer) before 232c's particle-set reader and `.ladruno` writer,
   and before 232d, start (ADR §9, "Gate before code (232a)").
