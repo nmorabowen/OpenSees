@@ -203,9 +203,13 @@ integrator newmark 0.5 0.25
 dt 0.01
 steps 400
 newton NormDispIncr 1e-10 30
-ref TBD
-expect first_peak_tip_disp_y 9.875 eq TBD tol 0 0.05
-expect first_period_tip 9.875 eq TBD tol 0 0.05
+ref fork FE: LadrunoBrick -geom hypo (std) slab, consistent mass, Newmark 0.5/0.25, dt 0.01;
+ref Richardson (p = 2) of ny 16/32 at this case's tip points (ny 4/8/16/32: peak r3 -2.4121,
+ref -2.4659, -2.4798, -2.4833; period 1.7586, 1.7807, 1.7864, 1.7877 s). Build f37e2ff19,
+ref 2026-11-14; record tests/data/mpm/implicit/fe_cantilever_dyn.json.
+gap lumped mass (ny 16) moves peak / period by -0.0005 % / +0.002 %; linear first period 1.7870 s.
+expect first_peak_tip_disp_y 9.875 eq -2.468550 tol 0 0.05
+expect first_period_tip 9.875 eq 1.788042 tol 0 0.05
 end
 
 case cantilever_dyn_r2
@@ -227,9 +231,9 @@ integrator newmark 0.5 0.25
 dt 0.01
 steps 400
 newton NormDispIncr 1e-10 30
-ref TBD
-expect first_peak_tip_disp_y 9.9375 eq TBD tol 0 0.05
-expect first_period_tip 9.9375 eq TBD tol 0 0.05
+ref as cantilever_dyn_r1 (same record)
+expect first_peak_tip_disp_y 9.9375 eq -2.479135 tol 0 0.05
+expect first_period_tip 9.9375 eq 1.788089 tol 0 0.05
 end
 
 case cantilever_dyn_r3
@@ -250,9 +254,9 @@ integrator newmark 0.5 0.25
 dt 0.01
 steps 400
 newton NormDispIncr 1e-10 30
-ref TBD
-expect first_peak_tip_disp_y 9.96875 eq TBD tol 0 0.05
-expect first_period_tip 9.96875 eq TBD tol 0 0.05
+ref as cantilever_dyn_r1 (same record)
+expect first_peak_tip_disp_y 9.96875 eq -2.484425 tol 0 0.05
+expect first_period_tip 9.96875 eq 1.788113 tol 0 0.05
 end
 
 # ============================================================================
@@ -299,7 +303,13 @@ series linear 10.0
 dt 1.0
 steps 110
 newton NormUnbalance 1e-6 40
-ref TBD
+ref closed form q0 N_q = 138.907 kPa (Prandtl-Reissner, phi_ps 27.47 deg): the gate value.
+ref Context: fork FE (LadrunoBrick B-bar, rough) on THIS domain and staging: q_max 141.43 kPa = 1.0182 of exact.
+gap sigma_y = 0.2 kPa apex regularizer: c N_c ~ 3.3 kPa (2.4 %) in the associated match.
+gap ADR-79's graded 30 x 20 m box: 1.0020 / 0.9517 / 0.9260. The same H8 WITHOUT B-bar (full
+gap integration, as 2 x 2 particles per cell integrate; psi = 0 flow is isochoric) LOCKS:
+gap 219.1 kPa (1.577) at 4 and 179.1 kPa (1.290) at 8 across B. Mode A has no anti-locking
+gap until ADR-232 section 9 phase 4.
 expect cond_pressure_max footing y 1.0 eq 138.907 tol 0 0.10
 expect cond_pressure_plateau footing y 1.0 95.0 eq 138.907 tol 0 0.10 report
 end
@@ -325,7 +335,8 @@ series linear 10.0
 dt 1.0
 steps 110
 newton NormUnbalance 1e-6 40
-ref TBD
+ref closed form q0 N_q = 138.907 kPa (Prandtl-Reissner, phi_ps 27.47 deg): the gate value.
+ref Context: fork FE (LadrunoBrick B-bar, rough) on THIS domain and staging: q_max 130.66 kPa = 0.9407 of exact.
 expect cond_pressure_max footing y 1.0 eq 138.907 tol 0 0.10
 expect cond_pressure_plateau footing y 1.0 95.0 eq 138.907 tol 0 0.10 report
 end
@@ -350,7 +361,8 @@ series linear 10.0
 dt 1.0
 steps 110
 newton NormUnbalance 1e-6 40
-ref TBD
+ref closed form q0 N_q = 138.907 kPa (Prandtl-Reissner, phi_ps 27.47 deg): the gate value.
+ref Context: the fork FE on this domain at 16 across B: record fe_footing.json.
 expect cond_pressure_max footing y 1.0 eq 138.907 tol 0 0.10
 expect cond_pressure_plateau footing y 1.0 95.0 eq 138.907 tol 0 0.10 report
 end
