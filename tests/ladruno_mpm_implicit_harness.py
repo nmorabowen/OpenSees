@@ -905,11 +905,13 @@ def evaluate(c, r, runs=None):
             e = {"obs": cp[0], "args": cp[1:i]}
 
             def own(cc, rr):
-                ex = [x for x in cc["expects"] if x["obs"] == e["obs"] and x["args"] == e["args"]][0]
+                # each case against its OWN expect line of that observable (its own args:
+                # the tip column moves with the resolution)
+                ex = [x for x in cc["expects"] if x["obs"] == e["obs"] and x["op"] == "eq"][0]
                 if ex["tbd"]:
                     return None
                 v = ex["vals"][0]
-                return abs(observable(cc, rr, e)[0] - v) / abs(v)
+                return abs(observable(cc, rr, ex)[0] - v) / abs(v)
             a = own(c, r)
             b = own(oc, runs(cp[i + 1]))
             if a is None or b is None:
@@ -971,7 +973,8 @@ def run_python_two_process(c, ops):
         ops.save(c["restart"])
         script = _RESTORE_SCRIPT.format(tests=str(REPO / "tests"), name=c["name"], db=db)
         proc = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
-                              timeout=3600, env=dict(os.environ), cwd=str(REPO / "tests"))
+                              timeout=3600, env=dict(os.environ), cwd=str(REPO / "tests"),
+                              stdin=subprocess.DEVNULL)
         line = [x for x in proc.stdout.splitlines() if x.startswith("JSON ")]
         if not line:
             raise RuntimeError("the restore process failed:\n" + (proc.stdout + proc.stderr)[-4000:])
