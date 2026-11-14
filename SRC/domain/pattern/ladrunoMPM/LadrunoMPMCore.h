@@ -582,6 +582,25 @@ class Engine {
         tx[nd * p + a] = P.x[nd * p + a] + dx;
       }
     }
+    // Interface Amendment 7: an accepted step never leaves a centre outside the
+    // real grid. Every TRIAL centre is checked before the second projection and
+    // before any material is touched; a step that would carry one out is refused
+    // with nothing changed, naming the lowest offending id.
+    {
+      int worst = -1;
+      for (int p = 0; p < N; p++)
+        for (int a = 0; a < nd; a++)
+          if (!admissibleAxis(grid, par.basis, a, tx[nd * p + a], P.lp[nd * p + a])) {
+            if (worst < 0 || P.id[p] < P.id[worst]) worst = p;
+            break;
+          }
+      if (worst >= 0) {
+        err = "the step would carry particle " + std::to_string((long long)P.id[worst]) +
+              " out of the grid (interface A7); step refused, nothing changed";
+        clearGrid();
+        return -1;
+      }
+    }
     // second projection of the updated particle momentum
     for (long i : touched)
       for (int a = 0; a < nd; a++) gvs[nd * i + a] = 0.0;

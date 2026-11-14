@@ -58,11 +58,13 @@ Python is the same with `ops.mpm('grid', 1, '-origin', 0.0, 0.0, ...)`.
 
 ## One step
 
-1. refuse if a particle centre left the real grid (interface A2; the error names the lowest such id) or `Δt > s·Δt_c`;
+1. refuse if a particle centre is outside the real grid (interface A2; the error names the lowest such id) or `Δt > s·Δt_c`;
 2. `Domain::applyLoad(t+Δt)`: the domain time advances and the host reads its series factor;
 3. P2G of mass, momentum and forces over the particles' support nodes; nodes below the cutoff drop;
 4. damping, grid momentum update, grid conditions (walls, then fixes);
-5. MUSL: particle velocity (PIC/FLIP blend) and position from the grid, a second projection,
+5. MUSL: particle velocity (PIC/FLIP blend) and position from the grid — a step whose TRIAL
+   positions would carry a centre out of the real grid is refused with nothing changed (interface
+   A7), so an accepted step never leaves a particle outside — then a second projection,
    ΔF and the incremental hypo-kernel entry (Hughes–Winget, unrotated frame), the material
    update — with no active element (`ops_TheActiveElement = 0`);
 6. commit the particle materials (a declared refusal aborts the run);

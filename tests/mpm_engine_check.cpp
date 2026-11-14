@@ -747,6 +747,36 @@ int main(int argc, char **argv)
       if (!(r == -2 && same)) g_fail++;
     }
   }
+  {  // Interface A7: a step that would carry a centre out of the real grid is refused
+     // with nothing changed (no material touched), naming the lowest offending id.
+    Engine E;
+    Hypoelastic M;
+    std::string err;
+    const double x0[2] = {0.0, 0.0};
+    const int n[2] = {10, 10};
+    E.setGrid(2, x0, 0.1, n, err);
+    const double lp[2] = {0.025, 0.025};
+    for (int64_t id : {7, 3}) {   // two particles near xmin moving out; id 3 is the lowest
+      const double x[2] = {0.02 + 0.001 * (double)id, 0.5}, v[2] = {-20.0, 0.0};
+      E.addParticle(id, 1, 1, 1000.0, 0.0025, x, lp, v, 0, err);
+    }
+    M.nd = 2; M.lam.assign(2, 4.0e5); M.mu.assign(2, 4.0e5);
+    const Particles before = E.P;
+    int r = 0, steps = 0;
+    while ((r = E.advance(1.0e-4, 1.0, M, err)) == 0 && steps < 1000) steps++;
+    bool inside = true;
+    for (int p = 0; p < E.P.size(); p++) inside = inside && E.P.x[2 * p] >= 0.0;
+    const Particles kept = E.P;
+    const int r2 = E.advance(1.0e-4, 1.0, M, err);
+    const bool same = E.P.x == kept.x && E.P.v == kept.v && E.P.sig == kept.sig;
+    const bool ok = r == -1 && r2 == -1 && steps > 0 && inside && same &&
+                    err.find("particle 3 ") != std::string::npos;
+    g_checks++;
+    std::printf("%s: A7 trial-centre refusal after %d accepted steps, centres in the grid, nothing changed: %s\n",
+                ok ? "ok  " : "FAIL", steps, err.c_str());
+    if (!ok) g_fail++;
+    (void)before;
+  }
   {  // A5 numbering: id = (i+1) + (nx+3)((j+1) + (ny+3)(k+1)), ghosts included
     Grid g;
     g.ndm = 3; g.h = 1.0; g.n[0] = 3; g.n[1] = 2; g.n[2] = 4;
