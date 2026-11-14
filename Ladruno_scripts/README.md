@@ -82,6 +82,7 @@ machine, different layout — not a contradiction, and not a Windows recipe.
 | `mpm_crash_tests/hdf5_crash_replay.py` | Byte-level crash replay model of the MPM writer's HDF5 call pattern in h5py (no binary): rebuilds the file at every kill point and checks every committed output; shows the pre-SWMR index-split tear and that SWMR removes it |
 | `ladruno_recorder_tests/recorder_crash_replay.py` | The same byte-level crash replay for `recorder ladruno`'s streaming write path (h5py mirror, no binary): every result's DATA/TIME/STEP checked exactly at every kill point, per `-flush` cadence, `-compress`, layout scale, with or without SWMR |
 | `ladruno_recorder_tests/recorder_kill_stress.py` | Real-time kill stress of that h5py mirror (sec2 driver, wall-clock `-flush`): TerminateProcess at random waits, then the replay's checker |
+| `ladruno_recorder_tests/recorder_swmr_layout_bench.py` | WP-233 (#1082): file size, write time and one-id history read time of the candidate streaming `DATA` layouts under SWMR (WP-164 deflate, unfiltered at several chunk targets, one step per chunk, unfiltered partial edge chunks), real file, recorder call pattern |
 
 ### Environment wiring
 | Script | Purpose |
