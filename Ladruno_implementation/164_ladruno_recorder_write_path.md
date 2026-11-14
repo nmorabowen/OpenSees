@@ -31,9 +31,21 @@ updated: 2026-10-03
 | P5 | `Domain::getNode(tag)` (a `std::map` walk) per node per channel per step | `Node*` resolved once per source (sources are rebuilt on every stamp change) |
 | P7 | a non-reaction channel reset the reaction flag → repeated `calculateNodalReactions` | the last computed flag is remembered |
 
-Crash-safety trade-off: between flushes, the newest output lives in HDF5's chunk cache. A hard
-crash (not a normal exit — HDF5's atexit close still writes it out) loses at most the last
-`-flush` seconds; `-flush 0` restores the per-step behaviour.
+Crash-safety trade-off (**corrected by WP-233, #1082**): between flushes, the newest output
+lives in HDF5's chunk cache. A normal exit is fine, because HDF5's atexit close still writes
+the cache out. This section used to say that a hard crash "loses at most the last `-flush`
+seconds". That was false for the writer described here. With v1 B-tree chunk indexes, no
+SWMR, and a deflated partial chunk rewritten (and moved) at every flush, a kill inside a
+flush could:
+- leave `DATA` unreadable, losing the whole unfinished chunk (up to 1,024 steps, often the
+  whole run);
+- or leave `DATA` silently wrong: zeros, or another result's bytes.
+
+That happened at 72–79 % of the kill points inside a flush, measured by
+`recorder_crash_replay.py --writer wp164`. Large models also had a window between flushes,
+when a completed row of chunks was evicted. WP-233 writes under SWMR, changes the chunk
+plan of §1 P3/P4 (`-compress N > 0`: one step per chunk; `-compress 0`: unfiltered ~64 KiB
+chunks) and defines what a killed run keeps and how to read it: schema §7b.2.
 
 ## 2. Benchmark (`Ladruno_scripts/ladruno_recorder_tests/bench/recorder_bench.py`)
 

@@ -364,9 +364,12 @@ index of each extreme; `commitTag` is global across ranks so it's a valid local 
 Envelopes are **per `MODEL_STAGE`** — flush-and-reset on `hasDomainChanged()`.
 Because `finalize()` has no clean OpenSees callback (only destructor / stage change),
 the sink rewrites the envelope datasets in place — every recorded step for envelopes up
-to 8 MiB, on the `-flush` cadence (default 10 s) above that (WP-164) — so a kernel crash
-([[project_mpco_exit_crash]]) loses at most the last `-flush` seconds of envelope. (Before
-WP-164 it deleted and recreated every envelope group on every recorded step.)
+to 8 MiB, on the `-flush` cadence (default 10 s) above that (WP-164). (Before WP-164 it
+deleted and recreated every envelope group on every recorded step.) What a killed run
+keeps is schema §7b.2 (WP-233, #1082). The file is written under SWMR, and each envelope
+entry is the extreme over some prefix of the stage's steps, up to the last rewrite that
+reached the disk. The old "loses at most the last `-flush` seconds" did not hold before
+WP-233: a kill could leave the whole file unreadable.
 
 ### Testing — layered, frozen-MPCO-as-oracle
 

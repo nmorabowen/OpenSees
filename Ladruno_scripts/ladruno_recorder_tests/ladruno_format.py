@@ -499,26 +499,34 @@ def committed_steps(stage_grp) -> int | None:
     return n
 
 
-def recover_ladruno(src, dst) -> list[dict]:
-    """Reader rule step 3 for a recorder file: ``repair_copy(src, dst)``, then report
-    each MODEL_STAGE in order as ``{"stage": name, "committed": T'}`` (``committed_steps``;
-    None for a stage with no streaming result), or ``{"stage": name, "torn": True,
-    "error": msg}`` for the LAST stage when it will not open (it was being laid out).
-    An earlier stage that will not open is corruption: raises ``ValueError``."""
-    repair_copy(src, dst)
+def stage_report(f) -> list[dict]:
+    """Schema §7b.2 for every MODEL_STAGE of an open file, in order:
+    ``{"stage": name, "committed": T'}`` (``committed_steps``; None for a stage with no
+    streaming result), or ``{"stage": name, "torn": True, "error": msg}`` for the LAST
+    stage when it will not open or read: a kill fell while it was being laid out, and it
+    holds no committed step. This can follow ANY step of the reader rule, a plain open
+    included (sec2 writes WRITE_ACCESS to the superblock only when it next flushes it, so
+    a layout step's flags can still read 0x00). An earlier stage that will not open is
+    corruption: raises ``ValueError``."""
     report = []
-    with h5py.File(dst, "r") as f:
-        names = sorted((k for k in f if k.startswith("MODEL_STAGE[")), key=_stage_id)
-        for i, name in enumerate(names):
-            try:
-                report.append({"stage": name, "committed": committed_steps(f[name])})
-            except Exception as e:  # noqa: BLE001
-                if i < len(names) - 1:
-                    raise ValueError(f"{dst}: {name} will not open but is not the last "
-                                     f"stage: corruption ({e})") from e
-                report.append({"stage": name, "torn": True,
-                               "error": str(e).splitlines()[0]})
+    names = sorted((k for k in f if k.startswith("MODEL_STAGE[")), key=_stage_id)
+    for i, name in enumerate(names):
+        try:
+            report.append({"stage": name, "committed": committed_steps(f[name])})
+        except Exception as e:  # noqa: BLE001
+            if i < len(names) - 1:
+                raise ValueError(f"{f.filename}: {name} will not open but is not the last "
+                                 f"stage: corruption ({e})") from e
+            report.append({"stage": name, "torn": True, "error": str(e).splitlines()[0]})
     return report
+
+
+def recover_ladruno(src, dst) -> list[dict]:
+    """Reader rule step 3 for a recorder file: ``repair_copy(src, dst)``, then the
+    ``stage_report`` of the copy."""
+    repair_copy(src, dst)
+    with h5py.File(dst, "r") as f:
+        return stage_report(f)
 
 
 def iter_step_slices(grp, n: int | None = None):

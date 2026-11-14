@@ -573,9 +573,11 @@ def _check_envelope(st, a, results, k0, n_written):
     return "OK", n_written, ""
 
 
-def check_swmr(path, a, results, phase, stages, committed, inflight=None):
-    """stages: [(name, k0, n_written)]; committed: {name: steps a completed flush holds}."""
-    flags = {"layout": 0x01, "armed": 0x05, "closing": 0x05, "closed": 0x00}[phase]
+def check_swmr(path, a, results, phase, stages, committed, inflight=None, flags=None):
+    """stages: [(name, k0, n_written)]; committed: {name: steps a completed flush holds}.
+    ``flags``: the superblock flags to set (default: what sec2 writes in ``phase``)."""
+    if flags is None:
+        flags = {"layout": 0x01, "armed": 0x05, "closing": 0x05, "closed": 0x00}[phase]
     try:
         lf.set_superblock(path, flags=flags)
     except ValueError:
@@ -746,6 +748,16 @@ def main():
         else:
             status, n, detail, lost = check_swmr(
                 path, a, results, phase, [tuple(s) for s in stages], committed, cur_step)
+            if phase == "layout":
+                # sec2 writes WRITE_ACCESS into the superblock only when it next flushes
+                # it, so a layout step's flags may still read 0x00 (a plain open): check
+                # that image too, and keep the worse outcome
+                with open(path, "wb") as fh:
+                    fh.write(image)
+                s2 = check_swmr(path, a, results, phase, [tuple(s) for s in stages],
+                                committed, cur_step, flags=0x00)
+                if not s2[0].startswith("OK") and (status.startswith("OK") or s2[0] != "TORN_LAYOUT"):
+                    status, n, detail, lost = s2
         if status == "OPEN_FAIL" and not committed:
             status = "NO_FILE"       # before the first flush ends: nothing committed yet
         stats[status] += 1
