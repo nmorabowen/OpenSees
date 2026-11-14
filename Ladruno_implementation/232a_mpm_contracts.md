@@ -517,8 +517,8 @@ findings from the recorder's exhaustive replay apply to this writer as well:
   superblock lazily, so a file killed inside a layout can carry flags 0x00;
 - the root group gains a `MODEL_STAGE` link at each `mpm reset`, in a layout written without
   SWMR. If its header is not presized, a kill there can make the root unreadable, and with
-  it every earlier stage. The recorder presizes it (`plist::presizeLinks`); this writer's
-  issue is filed separately.
+  it every earlier stage. The recorder presizes it (`plist::presizeLinks`); this writer
+  does not yet: #1085.
 
 A file left by a crash can hold a partial output beyond the last committed one. The case that
 matters is a kill **after `OFFSETS` is extended for output `k` but before its value is written**.

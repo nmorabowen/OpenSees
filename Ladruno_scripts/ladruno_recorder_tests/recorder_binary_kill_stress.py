@@ -38,7 +38,8 @@ The check (``check``):
    lazily): ``TORN_LAST``, not a failure.
 
 Statuses: ``OK`` (plain / swmr / repaired), ``TORN_LAST``, ``CHILD_EXITED`` (the child
-finished before the kill; harmless), and the failures ``UNREADABLE``, ``MISMATCH``,
+finished before the kill; harmless), ``NO_FILE`` (killed before the first flush wrote the
+superblock: nothing committed), and the failures ``UNREADABLE``, ``MISMATCH``,
 ``LOST``, ``EXTRA_STAGE``. Failing trials keep their file under ``<out>/t<nnnn>/``.
 
 Run from the repo root after a full ``build.bat`` (the pyd must be current):
@@ -253,6 +254,14 @@ def trial(i, wait, a, ref):
     if st != "KILLED":
         shutil.rmtree(d, ignore_errors=True)
         return {"i": i, "wait": round(wait, 3), "status": st.split(":")[0], "detail": st[:300]}
+    with open(out, "rb") as fh:
+        head = fh.read(8)
+    if head != lf._SB_SIG:
+        # killed before the recorder's first flush wrote the superblock: nothing was
+        # committed yet (the replay's NO_FILE)
+        shutil.rmtree(d, ignore_errors=True)
+        return {"i": i, "wait": round(wait, 3), "status": "NO_FILE",
+                "detail": f"{len(head)} bytes at offset 0"}
     try:
         status, detail, how, ns, tl = check(out, ref, a, d)
     except Exception as e:  # noqa: BLE001
@@ -300,17 +309,17 @@ def main():
         for k, fu in enumerate(cf.as_completed(futs), 1):
             r = fu.result()
             results.append(r)
-            if r["status"] not in ("OK", "TORN_LAST", "CHILD_EXITED"):
+            if r["status"] not in ("OK", "TORN_LAST", "CHILD_EXITED", "NO_FILE"):
                 print("FAIL", json.dumps(r), flush=True)
             if k % 50 == 0:
-                bad = sum(1 for x in results if x["status"] not in ("OK", "TORN_LAST", "CHILD_EXITED"))
+                bad = sum(1 for x in results if x["status"] not in ("OK", "TORN_LAST", "CHILD_EXITED", "NO_FILE"))
                 print(f"progress {k}/{a.trials} failures={bad} elapsed={time.time() - t0:.0f}s", flush=True)
     results.sort(key=lambda r: r["i"])
     with open(os.path.join(a.out, "results.json"), "w") as fh:
         json.dump(results, fh, indent=1)
     c = Counter(r["status"] for r in results)
     how = Counter(r.get("how") for r in results if r["status"] in ("OK", "TORN_LAST"))
-    bad = sum(v for s, v in c.items() if s not in ("OK", "TORN_LAST", "CHILD_EXITED"))
+    bad = sum(v for s, v in c.items() if s not in ("OK", "TORN_LAST", "CHILD_EXITED", "NO_FILE"))
     print(f"SUMMARY mode={a.mode} every={a.every} flush={a.flush} compress={a.compress}: "
           f"{dict(c)}; opened {dict(how)}; failures {bad} of {len(results)}; "
           f"{time.time() - t0:.0f} s", flush=True)

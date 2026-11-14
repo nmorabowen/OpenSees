@@ -48,17 +48,20 @@ date: 2026-11-14
   left the **root**, and every earlier stage, unreadable. Likewise, a `KIND` delete +
   create left a stage with no `KIND`, and a modes snapshot rewrote `ON_NODES`' links. Fix:
   - groups that gain links during a run (the root; a modes result's `DATA`) keep compact
-    links in a header presized for 256 stages / 1,024 snapshots
-    (`Ladruno_Hdf5.h::plist::presizeLinks`), so adding one is a single in-place write;
+    links in a header presized for 1,024 stages / 1,024 snapshots, about 44 KB each
+    (`Ladruno_Hdf5.h::plist::presizeLinks`), so adding one is a single in-place write. HDF5
+    caps one header chunk near 1,500 such links and silently ignores a larger estimate;
   - the provisional `KIND` is a fixed-length 9-byte string, rewritten in place;
   - the modes groups are laid out with the stage.
 
   A kill in a layout step now leaves at most the stage being laid out unreadable, and it
-  holds no committed step. Beyond 256 stages a new header chunk is needed again; that is a
-  residual, documented in schema §7b.2.
+  holds no committed step. Past 1,024 stages a new header chunk is needed again, and the
+  window reopens. That is measured (root presized for 8 links, 21 stages: 416 of 2,607 kill
+  points left `MODEL_STAGE[1]` unreadable), documented in schema §7b.2, and warned about by
+  the recorder.
 - **The MPM particle writer has the same unsized root.** It creates `MODEL_STAGE[n]` at
   every `mpm reset` without presizing (`LadrunoMPMIO.cpp`). Its 21-kill sample never hit
-  the window; the issue is filed separately.
+  the window: #1085.
 - **Reader:** a killed file needs schema §7b.2:
   - a plain open, else SWMR-read (flags 0x05), else repair a copy (flags 0x01: killed in a
     layout step);

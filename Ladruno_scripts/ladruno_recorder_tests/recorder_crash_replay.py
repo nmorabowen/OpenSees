@@ -671,7 +671,7 @@ def main():
     ap.add_argument("--no-presize", dest="presize", action="store_false",
                     help="the first WP-233 cut: no presized link headers, KIND delete + create, "
                          "MODES created at the first snapshot")
-    ap.add_argument("--presize-root", type=int, default=256, help="root links presized for")
+    ap.add_argument("--presize-root", type=int, default=1024, help="root links presized for")
     ap.add_argument("--presize-modes", type=int, default=1024, help="modes snapshots presized for")
     ap.add_argument("--check-from", type=int, default=1, help="first step whose kill points are checked")
     ap.add_argument("--check-to", type=int, default=0, help="stop the run after this step (0 = --steps)")

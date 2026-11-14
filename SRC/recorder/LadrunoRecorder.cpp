@@ -203,6 +203,8 @@ static bool ladrunoHasModalRequest(
 // write of the stage group's header. The old delete + create left the stage with
 // no KIND, or a torn header, for a kill inside the layout step.
 static const size_t LADRUNO_KIND_LEN = 9;
+// WP-233: links the root's header is presized for (one per MODEL_STAGE, + INFO).
+static const unsigned LADRUNO_ROOT_LINKS = 1024;
 static herr_t ladrunoWriteProvisionalKind(hid_t h_stage, const std::string& kind)
 {
 	char buf[LADRUNO_KIND_LEN];
@@ -264,6 +266,7 @@ public:
 		, stage_run_kind()
 		, kind_pending(false)
 		, worker_fold_warned(false)
+		, stages_written(0)
 		, energy_model_state()
 		, energy_region_state()
 		, run_id()
@@ -348,6 +351,9 @@ public:
 	// one-time warning on a PartitionedDomain worker, which cannot see the user
 	// barrier (no interpreter runs there).
 	bool worker_fold_warned;
+	// WP-233: MODEL_STAGEs laid out so far; past LADRUNO_ROOT_LINKS the root's
+	// presized header is full and a kill in a layout step can reach earlier stages.
+	int stages_written;
 	// WP-165 (R3): energy integrals owned here, not by the per-stage source.
 	ladrunons::EnergyState energy_model_state;
 	ladrunons::EnergyState energy_region_state;
@@ -781,6 +787,11 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 		}
 		m_data->stage_failed = false;
 		m_data->topology_fp = topologyFingerprint();
+		if ((unsigned)(++m_data->stages_written) == LADRUNO_ROOT_LINKS)
+			opserr << "LadrunoRecorder warning: " << LADRUNO_ROOT_LINKS << " MODEL_STAGEs in '"
+			       << m_data->file_path.c_str() << "': the file's root is presized for this "
+			          "many, so from here a kill while a new stage is laid out can make "
+			          "earlier stages unreadable (schema 7b.2)\n";
 	}
 	if (m_data->stage_failed)
 		return 0;
@@ -1128,9 +1139,10 @@ int LadrunoRecorder::initialize()
 	ladrunons::h5::plist::setLinkCreationOrder(
 		info.h_file_proplist, H5P_CRT_ORDER_TRACKED | H5P_CRT_ORDER_INDEXED);
 	// WP-233 (#1082): the root gains one MODEL_STAGE link per stage, inside a
-	// layout step (no SWMR): keep its links compact in a header presized for 256
-	// stages, so each new stage is one in-place write of the root's header.
-	ladrunons::h5::plist::presizeLinks(info.h_file_proplist, 256, 20);
+	// layout step (no SWMR): keep its links compact in a header presized for
+	// LADRUNO_ROOT_LINKS stages (~44 KB; HDF5 caps a header chunk near 1,500
+	// such links), so each new stage is one in-place write of the root's header.
+	ladrunons::h5::plist::presizeLinks(info.h_file_proplist, LADRUNO_ROOT_LINKS, 20);
 	info.h_group_proplist = ladrunons::h5::plist::crate(ladrunons::h5::plist::GroupCreate);
 	ladrunons::h5::plist::setLinkCreationOrder(
 		info.h_group_proplist, H5P_CRT_ORDER_TRACKED | H5P_CRT_ORDER_INDEXED);

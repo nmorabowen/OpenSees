@@ -751,12 +751,15 @@ seconds", did not hold (quirk `WP-233-recorder-killed-without-swmr`).
   - the stage's header gets the new `KIND`.
 
   That is one write because the root and each modes `DATA` keep their links compact in an
-  object header presized for 256 stages (1,024 snapshots), and because the provisional
-  `KIND` is a fixed-length 9-byte string rewritten in place. Without that, the replay showed
-  a kill inside the layout flush leaving the root unreadable, with every stage lost. Beyond
-  256 stages or 1,024 snapshots in one modes result, adding a link can need a new header
-  chunk, and the guarantee below weakens to "the earlier stages or snapshots usually
-  survive".
+  object header presized for 1,024 stages (1,024 snapshots; about 44 KB each, and HDF5 caps
+  one header chunk near 1,500 such links), and because the provisional `KIND` is a
+  fixed-length 9-byte string rewritten in place. Without that, the replay showed a kill
+  inside the layout flush leaving the root unreadable, with every stage lost.
+  **Past 1,024 stages** (or 1,024 snapshots in one modes result), adding a link needs a new
+  header chunk, and a kill in a later layout step can again make earlier stages (snapshots)
+  unreadable. This was measured with the root presized for 8 and 21 stages: 416 of 2,607
+  kill points left `MODEL_STAGE[1]` unreadable. The recorder warns when a file reaches
+  1,024 stages.
 - **Streaming layout.** Under SWMR no freed file space is reused. A `DATA` chunk is
   therefore written so that it never moves:
   - with `-compress N > 0` (the default, 1), it holds one step (ids tiled to 1 MiB) and is

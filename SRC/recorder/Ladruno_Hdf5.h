@@ -748,7 +748,8 @@ namespace h5 {
 		// WP-233 (#1082): a group that gains links during a run (the root gains a
 		// MODEL_STAGE per stage; a modes result's DATA gains a STEP_<k> per
 		// snapshot) keeps its links COMPACT for good and gets an object header
-		// sized for `n_links` up front, so adding one link is ONE in-place write of
+		// sized for `n_links` up front (at most ~1,500: one 64 KiB header chunk; past
+		// that HDF5 ignores the estimate), so adding one link is ONE in-place write of
 		// that header. By default a group goes dense after 8 links (a fractal heap
 		// and v2 B-trees rewritten in place) or grows a continuation chunk, and a
 		// kill inside the layout flush (which runs without SWMR) then left the
