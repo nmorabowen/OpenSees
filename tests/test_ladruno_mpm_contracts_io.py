@@ -445,12 +445,14 @@ ops.mpm("analyze", 50000000, 1e-6)
 """
 
 
-@pytest.mark.parametrize("wait", [0.5, 1.0, 1.5, 2.0, 3.0, 4.0])
+@pytest.mark.parametrize("wait", [0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 3.0, 4.0])
 def test_a_killed_run_leaves_a_readable_file(tmp_path, wait):
     """Review 2 (and its follow-up ruling): under the DEFAULT settings (a flush after
     every output) a run killed mid-analyze at any point leaves a file that opens, and
     the contract's crash rule (232a §2.5) recovers every completed output, data
-    included -- never a filter failure on rows already flushed."""
+    included -- never a filter failure on rows already flushed. STRICT: every output
+    the crash rule counts is exact. The writer's barrier (a flush after the rows and
+    before the OFFSETS entry) is what makes a counted entry always have its rows."""
     import time
     _ops()
     out = tmp_path / "killed.ladruno"
@@ -479,6 +481,9 @@ def test_a_killed_run_leaves_a_readable_file(tmp_path, wait):
         for k in ("POSITION", "VELOCITY", "STRESS", "VOLUME"):
             data = op[k]["DATA"][:offs[T]]                 # readable, every completed output
             assert np.all(np.isfinite(data)), k
-        for k in range(T):
-            assert np.array_equal(ids[offs[k]:offs[k + 1]], S["ID"])
+        assert np.all(np.diff(offs[:T + 1]) >= 0)
+        vol = op["VOLUME"]["DATA"][:offs[T], 0]
+        for k in range(T):                                 # every COUNTED output, the last too
+            assert np.array_equal(ids[offs[k]:offs[k + 1]], S["ID"]), (k, T)
+            assert np.all(vol[offs[k]:offs[k + 1]] > 0.0), (k, T)   # fill would be 0
         assert np.all(np.diff(steps[:T]) > 0)

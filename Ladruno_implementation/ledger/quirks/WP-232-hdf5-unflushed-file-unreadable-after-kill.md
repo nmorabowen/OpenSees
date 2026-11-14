@@ -25,4 +25,9 @@ date: 2026-11-14
   for speed. The full fix is HDF5 SWMR, deferred. Readers then apply the contract's crash
   rule for a partial last output (232a §2.5). `tests/test_ladruno_mpm_contracts_io.py::
   test_a_killed_run_leaves_a_readable_file` kills a writer mid-run.
+- **"Last in the API" is not "last on disk".** Without SWMR, an eviction can put a later write
+  (the output's `OFFSETS` commit entry) on disk before an earlier one (its `ID` / `DATA` chunks):
+  a kill then leaves an output the crash rule counts whose ids are fill (all zero), measured at
+  0.5 s and 1.5 s kills. Fix: a write barrier, `H5Fflush` after the output's rows and before its
+  `OFFSETS` append (WP-232c follow-up), so a counted entry always has its rows on disk.
 - Learned 2026-11-14 (WP-232c, the c2 review).

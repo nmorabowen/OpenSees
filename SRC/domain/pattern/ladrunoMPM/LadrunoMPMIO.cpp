@@ -831,6 +831,13 @@ ParticleWriter::writeOutput(int step, double time, const std::vector<long long> 
   }
   impl->S += (long long)n;
   const long long off = impl->S;
+  // WRITE BARRIER (232a §2.5). Without SWMR, HDF5 does not reach the disk in API
+  // order: a chunk or metadata eviction can put this output's OFFSETS entry on disk
+  // before its ID / DATA chunks, and a crash reader would then count an output whose
+  // rows are fill. Flushing here, before the OFFSETS append, means a committed
+  // OFFSETS entry always has its rows on disk; the caller's flush after the output
+  // then commits the entry itself.
+  if (H5Fflush(impl->file, H5F_SCOPE_GLOBAL) < 0) { err = "cannot flush before the OFFSETS commit"; return -1; }
   if (h5w::dataset::appendRows(impl->dsOff, H5T_NATIVE_LLONG, &off, 1, 0) < 0) { err = "cannot append OFFSETS"; return -1; }
   impl->T++;
   return 0;
