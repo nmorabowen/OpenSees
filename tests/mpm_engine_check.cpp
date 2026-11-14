@@ -679,6 +679,74 @@ int main(int argc, char **argv)
                 ok ? "ok  " : "FAIL", dropped, E.P.v[0], E.P.v[1], worst);
     if (!ok) g_fail++;
   }
+  {  // W17 paths (review F3), on a mock material that can refuse at commit.
+    struct Mock : public Hypoelastic {
+      int refuseAt = -1, counter = 0, reverts = 0, commits = 0;
+      int commitState(int p) override { commits++; if (p == refuseAt) counter++; return 0; }
+      int revertToLastCommit(int) override { reverts++; return 0; }
+      int pendingRefusals() override { const int n = counter; counter = 0; return n; }
+      void clearRefusals() override { counter = 0; }
+    };
+    auto build2 = [](Engine &E, Mock &M, double vx) {
+      std::string err;
+      const double x0[2] = {0.0, 0.0};
+      const int n[2] = {10, 10};
+      E.setGrid(2, x0, 0.1, n, err);
+      E.par.basis = BASIS_LINEAR;
+      E.par.masscut = 0.0;
+      const double lp[2] = {0.025, 0.025};
+      const double xa[2] = {0.405, 0.45}, xb[2] = {0.495, 0.45}, xc[2] = {0.805, 0.85};
+      const double va[2] = {vx, 0.0}, vb[2] = {-vx, 0.0}, vc[2] = {0.0, 0.0};
+      // the far particle first: it takes its trial state before the collision fails
+      E.addParticle(0, 2, 1, 1000.0, 0.0025, xc, lp, vc, 0, err);
+      E.addParticle(1, 1, 1, 1000.0, 0.0025, xa, lp, va, 0, err);
+      E.addParticle(2, 1, 1, 1000.0, 0.0025, xb, lp, vb, 0, err);
+      M.nd = 2;
+      M.lam.assign(3, 4.0e5);
+      M.mu.assign(3, 4.0e5);
+    };
+    std::string err;
+    // (1) a kernel refusal (head-on particles, det F <= 0) fails the step with
+    // every particle unchanged and the materials reverted; a small dt is accepted.
+    {
+      Engine E;
+      Mock M;
+      build2(E, M, 1.0e6);
+      const Particles before = E.P;
+      const int r = E.advance(1.0e-7, 1.0, M, err);
+      const bool same = E.P.x == before.x && E.P.v == before.v && E.P.F == before.F &&
+                        E.P.sig == before.sig && E.P.V == before.V;
+      g_checks++;
+      const bool ok1 = (r == -1) && same && M.commits == 0 && M.reverts == 1;
+      std::printf("%s: W17 kernel refusal -> -1, state unchanged, no commit (%d reverts): %s\n",
+                  ok1 ? "ok  " : "FAIL", M.reverts, err.c_str());
+      if (!ok1) g_fail++;
+      const int r2 = E.advance(1.0e-12, 1.0, M, err);
+      g_checks++;
+      std::printf("%s: W17 retry with a small dt accepted\n", r2 == 0 ? "ok  " : "FAIL");
+      if (r2 != 0) g_fail++;
+    }
+    // (2) a material refusal at commit aborts (-2) with the particles unmoved;
+    // a STALE count from before the step does not abort (it is cleared first).
+    {
+      Engine E;
+      Mock M;
+      build2(E, M, 0.1);
+      M.counter = 5;                                // stale, from before this commit
+      const int r0 = E.advance(1.0e-4, 1.0, M, err);
+      g_checks++;
+      std::printf("%s: a stale refusal count does not abort\n", r0 == 0 ? "ok  " : "FAIL");
+      if (r0 != 0) g_fail++;
+      const Particles before = E.P;
+      M.refuseAt = 1;
+      const int r = E.advance(1.0e-4, 1.0, M, err);
+      const bool same = E.P.x == before.x && E.P.v == before.v && E.P.F == before.F &&
+                        E.P.sig == before.sig;
+      g_checks++;
+      std::printf("%s: W17 commit refusal -> -2, particles unmoved\n", (r == -2 && same) ? "ok  " : "FAIL");
+      if (!(r == -2 && same)) g_fail++;
+    }
+  }
   {  // A5 numbering: id = (i+1) + (nx+3)((j+1) + (ny+3)(k+1)), ghosts included
     Grid g;
     g.ndm = 3; g.h = 1.0; g.n[0] = 3; g.n[1] = 2; g.n[2] = 4;

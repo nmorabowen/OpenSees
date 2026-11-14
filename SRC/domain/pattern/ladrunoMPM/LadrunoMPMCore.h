@@ -248,6 +248,9 @@ class MaterialPoints {
   virtual int    revertToLastCommit(int p) = 0;
   // Number of commit refusals declared since the last call (then cleared).
   virtual int    pendingRefusals() = 0;
+  // Discard a stale refusal count before the particle commit loop, so only a
+  // refusal declared by THIS commit can abort the run (review F3).
+  virtual void   clearRefusals() {}
   // M_p: largest normal diagonal entry of the current tangent (interface §6.1).
   virtual double normalModulus(int p) = 0;
 };
@@ -652,6 +655,7 @@ class Engine {
     clearGrid();
 
     // ---- step 6: commit the particle materials; a refusal aborts (W17) -----
+    mats.clearRefusals();
     for (int p = 0; p < N; p++) mats.commitState(p);
     const int nRef = mats.pendingRefusals();
     if (nRef > 0) {
@@ -668,6 +672,14 @@ class Engine {
 
   // Forget the id registry (used when the host clears its particles).
   void clearParticles() { P.clear(); ids.clear(); P.ndm = grid.ndm; P.nv = nv(); }
+  // Replace the particle set (e.g. `mpm reset` restoring a snapshot) and rebuild
+  // the id registry from it, so ids added after the snapshot are free again.
+  void setParticles(const Particles &s)
+  {
+    P = s;
+    ids.clear();
+    for (int64_t pid : P.id) ids.insert(pid);
+  }
   bool hasId(int64_t pid) const { return ids.count(pid) != 0; }
 
  private:

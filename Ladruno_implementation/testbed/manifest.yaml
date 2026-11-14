@@ -2324,6 +2324,7 @@ features:
       - tests/test_ladruno_mpm_engine.py
       - tests/test_ladruno_mpm_lifecycle.py
       - tests/test_mpm_engine_core_cpp.py
+      - tests/test_ladruno_mpm_contracts_io.py
     tcl: WAIVED(classic-Tcl runs through OpenSees.exe inside the pytest files -- tests/ladruno_mpm_harness.py writes one deck per case, and test_ladruno_mpm_lifecycle.py carries the refusal / loadPattern-stage deck)
     zone_b: []
     core_files:

@@ -23,6 +23,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -248,19 +249,185 @@ def test_druckerprager_stage_path_through_loadpattern():
     assert max(abs(a - b) for a, b in zip(plastic["sig"], ref["sig"])) > 1.0
 
 
-def test_thread_count_determinism():
+# (The v1 particle loop is serial, so thread-count determinism holds by
+# construction; the test arrives with the threaded loop. Review F8.)
+
+
+def _j2_oracle(eps_path, K, G, sy):
+    """Perfect-plasticity von Mises radial return in plane strain, ||s|| <= sqrt(2/3) sy,
+    driven through the particle's own strain path ([exx, eyy, gxy] per step). The
+    independent leg of the two-leg check (review F8)."""
+    ep = np.zeros((3, 3))
+    out = []
+    R = np.sqrt(2.0 / 3.0) * sy
+    for e in eps_path:
+        eps = np.array([[e[0], e[2] / 2, 0.0], [e[2] / 2, e[1], 0.0], [0.0, 0.0, 0.0]])
+        tr = np.trace(eps)
+        dev = eps - tr / 3.0 * np.eye(3)
+        s = 2.0 * G * (dev - ep)
+        ns = np.linalg.norm(s)
+        if ns > R:
+            n = s / ns
+            ep = ep + (ns - R) / (2.0 * G) * n
+            s = R * n
+        sig = s + K * tr * np.eye(3)
+        out.append([sig[0, 0], sig[1, 1], sig[0, 1]])
+    return np.array(out)
+
+
+@pytest.mark.parametrize("which", ["LadrunoJ2", "DruckerPrager"])
+def test_two_leg_plastic_particles_match_the_material_law(which):
+    """Every particle's stress after every step equals perfect J2 plasticity driven
+    through that particle's own unrotated strain path (DruckerPrager with rho = 0
+    and no hardening IS J2 with ||s|| <= sqrt(2/3) sigma_y)."""
     ops = _ops()
-    if not hasattr(ops, "ladrunoThreads"):
-        pytest.skip("no ladrunoThreads")
-    outs = []
-    for n in (1, 4):
-        try:
-            ops.ladrunoThreads(n)
-        except Exception:
-            pytest.skip("ladrunoThreads unavailable in this build")
-        outs.append(_run_block(ops, ("ElasticIsotropic", 1, 1.0e6, 0.25)))
-    ops.ladrunoThreads(1)
-    assert outs[0] == outs[1]
+    E, nu, sy = 1.0e6, 0.25, 2.0e3
+    K, G = _KG(E, nu)
+    mat = (("LadrunoJ2", 1, K, G, "-iso", "voce", sy, 0.0, 0.0, 0.0) if which == "LadrunoJ2"
+           else ("DruckerPrager", 1, K, G, sy, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+    _block(ops, mat)
+    eps, sig = [], []
+    for _ in range(40):
+        ops.mpm("analyze", 1, 1.0e-4)
+        eps.append(np.array(ops.mpm("particleData", "epsHat")).reshape(-1, 3))
+        sig.append(np.array(ops.mpm("particleData", "sigHat")).reshape(-1, 3))
+    eps, sig = np.array(eps), np.array(sig)            # [steps, particles, 3]
+    plastic = 0
+    for p in range(eps.shape[1]):
+        ref = _j2_oracle(eps[:, p, :], K, G, sy)
+        assert np.allclose(sig[:, p, :], ref, rtol=1e-7, atol=1e-6 * sy), (which, p)
+        plastic += int(np.any(np.abs(ref - _j2_oracle(eps[:, p, :], K, G, 1e30)) > 1.0))
+    assert plastic > 0, "the path never yielded: the check would be elastic only"
+
+
+def test_critical_dt_reads_the_initial_tangent():
+    """Amendment 6 / review F6: after plastic flow, Δt_c still uses the elastic
+    modulus K + 4G/3 (DruckerPrager's softened tangent would overestimate it)."""
+    ops = _ops()
+    E, nu, sy = 1.0e6, 0.25, 2.0e3
+    K, G = _KG(E, nu)
+    _block(ops, ("DruckerPrager", 1, K, G, sy, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+    ops.mpm("analyze", 40, 1.0e-4)
+    m = np.array(ops.mpm("particleData", "m"))
+    V = np.array(ops.mpm("particleData", "V"))
+    v = np.array(ops.mpm("particleData", "v")).reshape(-1, 2)
+    c = np.sqrt((K + 4.0 * G / 3.0) / (m / V)) + np.linalg.norm(v, axis=1)
+    assert abs(float(ops.mpm("criticalTimeStep")) - 0.1 / c.max()) <= 1e-12 * (0.1 / c.max())
+
+
+def test_reset_after_a_refused_first_analyze():
+    """Review F1: the snapshot is the state before the first ACCEPTED step. A body
+    added after a refused analyze survives `mpm reset`; after a reset, a re-seeded
+    stiff body gets its own (stiff) materials and the critical Δt follows."""
+    ops = _ops()
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.nDMaterial("ElasticIsotropic", 1, 1.0e6, 0.25)
+    ops.nDMaterial("ElasticIsotropic", 2, 1.0e10, 0.25)
+    ops.mpm("grid", TAG, "-origin", 0.0, 0.0, "-h", 0.1, "-cells", 10, 10)
+    n1 = int(ops.mpm("body", 1, "box", 0.2, 0.2, 0.4, 0.4, "-ppc", 2, "-mat", 1, "-rho", 2000.0))
+    dtc = float(ops.mpm("criticalTimeStep"))
+    with pytest.raises(Exception):
+        ops.mpm("analyze", 1, 10 * dtc)                       # refused: nothing changed
+    n2 = int(ops.mpm("body", 2, "box", 0.6, 0.6, 0.8, 0.8, "-ppc", 2, "-mat", 1, "-rho", 2000.0))
+    ops.mpm("analyze", 5, 0.2 * dtc)
+    ops.mpm("reset")
+    assert int(ops.mpm("info", "numParticles")) == n1 + n2   # the snapshot includes body 2
+    assert len(ops.mpm("particleData", "mat")) == n1 + n2
+
+
+def test_reset_drops_particles_added_after_the_snapshot_with_their_materials():
+    """Review F1, probe_snap2: particles added between a refused analyze and the first
+    accepted step belong to the snapshot; particles added after a reset that is then
+    reset again (no step) are dropped with their materials and ids."""
+    ops = _ops()
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.nDMaterial("ElasticIsotropic", 1, 1.0e6, 0.25)
+    ops.nDMaterial("ElasticIsotropic", 2, 1.0e10, 0.25)
+    ops.mpm("grid", TAG, "-origin", 0.0, 0.0, "-h", 0.1, "-cells", 10, 10)
+    ops.mpm("body", 1, "box", 0.2, 0.2, 0.4, 0.4, "-ppc", 2, "-mat", 1, "-rho", 2000.0)
+    dtc = float(ops.mpm("criticalTimeStep"))
+    with pytest.raises(Exception):
+        ops.mpm("analyze", 1, 10 * dtc)
+    ops.mpm("body", 2, "box", 0.6, 0.6, 0.8, 0.8, "-ppc", 2, "-mat", 1, "-rho", 2000.0)
+    ops.mpm("analyze", 1, 0.2 * dtc)
+    ops.mpm("reset")
+    ops.mpm("body", 3, "box", 0.6, 0.2, 0.8, 0.4, "-ppc", 2, "-mat", 2, "-rho", 2000.0)
+    mats = list(ops.mpm("particleData", "mat"))
+    assert mats[-1] == 2.0
+    M = 1.0e10 * 0.75 / (1.25 * 0.5)
+    assert abs(float(ops.mpm("criticalTimeStep")) - 0.1 / np.sqrt(M / 2000.0)) < 1e-15
+    ops.mpm("analyze", 1, 1.0e-7)
+    ops.mpm("reset")
+    assert int(ops.mpm("info", "numParticles")) == len(mats)
+
+
+def test_initial_conditions_refused_after_the_first_step():
+    """Review F4: stress and velocity are initial conditions, like shift and body."""
+    ops = _ops()
+    _block(ops)
+    ops.mpm("analyze", 2, 1.0e-4)
+    for cmd in (("stress", 1, "uniform", -5.0, -5.0, 0.0), ("velocity", 1, "uniform", 9.0, 0.0),
+                ("shift", 1, 0.1, 0.0),
+                ("body", 2, "box", 0.7, 0.7, 0.8, 0.8, "-ppc", 2, "-mat", 1, "-rho", 2000.0)):
+        with pytest.raises(Exception):
+            ops.mpm(*cmd)
+    ops.mpm("reset")
+    ops.mpm("velocity", 1, "uniform", 0.0, 0.0)
+
+
+def test_kernel_refusal_fails_the_step_and_changes_nothing():
+    """Review F3, binary leg: head-on particles invert F; the step fails, the
+    particles and the Domain time are unchanged, and a small Δt is accepted."""
+    ops = _ops()
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.nDMaterial("ElasticIsotropic", 1, 1.0e6, 0.25)
+    ops.mpm("grid", TAG, "-origin", 0.0, 0.0, "-h", 0.1, "-cells", 10, 10, "-basis", "linear")
+    ops.mpm("safety", 1.0)
+    v = 1.0e6
+    ops.mpm("particle", 0, 2, 1, 1000.0, 0.0025, "-x", 0.805, 0.85, "-lp", 0.025, 0.025)
+    ops.mpm("particle", 1, 1, 1, 1000.0, 0.0025, "-x", 0.405, 0.45, "-lp", 0.025, 0.025, "-v", v, 0.0)
+    ops.mpm("particle", 2, 1, 1, 1000.0, 0.0025, "-x", 0.495, 0.45, "-lp", 0.025, 0.025, "-v", -v, 0.0)
+    dtc = float(ops.mpm("criticalTimeStep"))
+    ops.mpm("analyze", 1, 1e-3 * dtc)
+    t0, before = float(ops.mpm("info", "time")), _fields(ops)
+    dtc = float(ops.mpm("criticalTimeStep"))
+    with pytest.raises(Exception):
+        ops.mpm("analyze", 3, 0.999 * dtc)
+    assert _fields(ops) == before
+    assert float(ops.mpm("info", "time")) == t0
+    ops.mpm("analyze", 1, 1e-3 * dtc)
+    assert float(ops.mpm("info", "time")) > t0
+
+
+_DANGLING = r"""
+import os, sys
+sys.path.insert(0, os.environ["LADRUNO_MPM_TESTS"])
+from _testbed import ops
+K, G = 666666.6666666666, 400000.0
+ops.wipe(); ops.model("basic", "-ndm", 2, "-ndf", 2)
+ops.nDMaterial("DruckerPrager", 1, K, G, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+ops.mpm("grid", 232, "-origin", 0.0, 0.0, "-h", 0.1, "-cells", 10, 10)
+ops.mpm("body", 1, "box", 0.2, 0.2, 0.6, 0.6, "-ppc", 2, "-mat", 1, "-rho", 2000.0)
+ops.parameter(1, "loadPattern", 232, "materialState")
+ops.updateParameter(1, 0.0)
+ops.remove("loadPattern", 232)
+ops.updateParameter(1, 1.0)
+ops.wipe()
+print("SURVIVED")
+"""
+
+
+def test_parameter_update_after_remove_loadpattern_does_not_crash():
+    """Review F2: the host detaches its Parameters when it is deleted."""
+    _ops()
+    env = dict(os.environ, LADRUNO_OPENSEES_QUIET="1",
+               LADRUNO_MPM_TESTS=os.path.dirname(os.path.abspath(__file__)))
+    proc = subprocess.run([sys.executable, "-c", _DANGLING], capture_output=True, text=True,
+                          timeout=120, env=env, stdin=subprocess.DEVNULL)
+    assert proc.returncode == 0 and "SURVIVED" in proc.stdout, (proc.returncode, proc.stdout, proc.stderr)
 
 
 # --------------------------------------------------------------------------- #

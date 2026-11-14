@@ -14,9 +14,11 @@ target_sources(OPS_Domain
     PRIVATE
     LadrunoMPMPattern.cpp           # Ladruno (WP-232): the host LoadPattern
     OPS_LadrunoMPM.cpp              # Ladruno (WP-232): the `mpm` command
+    LadrunoMPMIO.cpp                # Ladruno (WP-232 c2): contract 1 reader, contract 2 writer
     PUBLIC
     LadrunoMPMPattern.h
     LadrunoMPMCore.h
+    LadrunoMPMIO.h
 )
 
 target_include_directories(OPS_Domain PUBLIC ${CMAKE_CURRENT_LIST_DIR})

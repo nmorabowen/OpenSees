@@ -58,7 +58,9 @@
 
 #include <LoadPattern.h>
 #include <LadrunoMPMCore.h>
+#include "LadrunoMPMIO.h"
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -116,6 +118,19 @@ class LadrunoMPMPattern : public LoadPattern
   int setBodyStressGeostatic(int body, double yTop, double rho, double g, double K0,
                              std::string &err);
 
+  // ---- phase c2: the two contracts (LadrunoMPMIO.h) ----------------------------
+  // `mpm particles -file <path>`: load a Contract-1 set, all or nothing. The path
+  // is opened as given. Returns the count, or -1 (every problem printed).
+  int loadParticleSet(const std::string &path);
+  // `mpm output ...`: the .ladruno particle-group writer. 0, or -1 with err.
+  int setOutput(const ladruno_mpm_io::WriterConfig &cfg, std::string &err);
+  void closeOutput(void);
+  // `mpm units <L> <F> <T> [-system <id>]`: the units Contract 2 carries when no
+  // Contract-1 file declared them.
+  int setUnits(const std::string &L, const std::string &F, const std::string &T,
+               const std::string &system, std::string &err);
+  const std::vector<std::string> &loadedFiles(void) const { return sourcePaths; }
+
   double criticalTimeStep(void);
   // Run nSteps explicit steps of dt. 0 on success; -1 on a refusal or failure
   // (message printed).
@@ -140,11 +155,36 @@ class LadrunoMPMPattern : public LoadPattern
   int                     epoch;
   ladruno_mpm::Particles  snapshot;
 
+  // phase c2 state
+  ladruno_mpm_io::ParticleWriter *writer;
+  double                  thickness;       // 2D; 1 for lattice-seeded particles
+  bool                    thicknessFixed;
+  std::string             unitL, unitF, unitT, unitSystem;
+  bool                    unitsFromFile;
+  std::vector<std::string> sourceSetIds, sourcePaths;
+  std::map<int, std::string> bodyNames;
+  int                     stepsSinceOutput;
+  double                  nextOutputTime;
+  std::vector<int>        idOrder;         // storage index of each particle, by id
+
+  bool                    aborted;         // a commit refusal aborted the run (W17); `mpm reset` clears it
+  std::vector<std::pair<Domain *, int> > paramRefs;   // Parameters that hold our materials (F2)
+
+  void detachParameters(void);
   int  admitMaterial(int matTag, NDMaterial *&copy, bool &isElastic, std::string &err);
   bool domainHasFreeDOF(std::string &which);
+  void nameBody(int body);
+  int  openOutputStage(std::string &err);
+  int  writeOutputNow(std::string &err);
 };
 
 // The host in the Domain, or 0 (v1 allows one per Domain).
 LadrunoMPMPattern *ladrunoMPMFindHost(Domain *theDomain);
+
+// `mpm criticalTimeStep | particleData <f> | info time|summary` as doubles
+// (OPS_LadrunoMPM.cpp): 1 handled, 0 not such a query, -1 error (printed).
+// The classic-Tcl bridge uses it to publish full-precision Tcl doubles.
+int ladrunoMPMDoubleQuery(Domain *dom, const std::vector<std::string> &args,
+                          std::vector<double> &out);
 
 #endif

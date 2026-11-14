@@ -760,6 +760,7 @@ ladrunoSANISANDReplay(ClientData clientData, Tcl_Interp *interp, int argc, TCL_C
 }
 
 int OPS_LadrunoMPM(void);   // Ladruno WP-232 (defined in ladrunoMPM/OPS_LadrunoMPM.cpp)
+int ladrunoMPMDoubleQuery(Domain *, const std::vector<std::string> &, std::vector<double> &);   // Ladruno WP-232
 static int
 ladrunoMPM(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)   // Ladruno WP-232
 {
@@ -768,6 +769,25 @@ ladrunoMPM(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
   if (theBuilder == 0) {
     opserr << "WARNING mpm -- define the model first (model basic -ndm 2|3 ...)" << endln;
     return TCL_ERROR;
+  }
+  // Ladruno WP-232 (review Q8): the double-valued queries are published as Tcl
+  // doubles, full precision; OPS_SetDoubleOutput's %35.20f does not round-trip.
+  {
+    std::vector<std::string> args;
+    for (int i = 1; i < argc; i++) args.push_back(argv[i]);
+    std::vector<double> out;
+    const int q = ladrunoMPMDoubleQuery(&theDomain, args, out);
+    if (q < 0) return TCL_ERROR;
+    if (q > 0) {
+      if (args[0] == "criticalTimeStep") {
+        Tcl_SetObjResult(interp, Tcl_NewDoubleObj(out[0]));
+      } else {
+        Tcl_Obj *list = Tcl_NewListObj(0, NULL);
+        for (double v : out) Tcl_ListObjAppendElement(interp, list, Tcl_NewDoubleObj(v));
+        Tcl_SetObjResult(interp, list);
+      }
+      return TCL_OK;
+    }
   }
   OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);   // Ladruno WP-232
   return (OPS_LadrunoMPM() < 0) ? TCL_ERROR : TCL_OK;                      // Ladruno WP-232

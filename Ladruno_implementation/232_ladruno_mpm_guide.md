@@ -46,9 +46,12 @@ Python is the same with `ops.mpm('grid', 1, '-origin', 0.0, 0.0, ...)`.
 | `mpm damping local <α>` | local non-viscous (FLAC) damping, α ∈ [0, 1) — for quasi-static runs |
 | `mpm flip <α_F>` | FLIP fraction: 1 pure FLIP (default), 0 pure PIC |
 | `mpm massCutoff <c_m>` / `mpm safety <s>` | node active iff `m_i > c_m · max m_p` (default 1e-10); Δt refused iff `Δt > s · Δt_c` (default 0.5) |
-| `mpm criticalTimeStep` | `Δt_c = h / max_p (c_p + |v_p|)`, `c_p = sqrt(M_p/ρ_p)` from the current tangent |
+| `mpm criticalTimeStep` | `Δt_c = h / max_p (c_p + |v_p|)`, `c_p = sqrt(M_p/ρ_p)` from the material's INITIAL (elastic) tangent (interface A6): a softened current tangent would overestimate it |
 | `mpm analyze <n> <Δt>` | n explicit steps; recorders run at each `Domain::commit`, then flush |
-| `mpm reset` | particles and materials back to the state at the first `mpm analyze`; counts an epoch (`mpm info epoch`) |
+| `mpm reset` | particles and materials back to the state before the first ACCEPTED step; counts an epoch (`mpm info epoch`); clears an abort |
+| `mpm particles -file <path>` | load a Contract-1 particle set (232a), all or nothing; the path is opened as given (apeGmsh's emitters anchor it to the deck's folder) |
+| `mpm units <L> <F> <T> [-system <id>]` | the units the `.ladruno` group carries when no particle set declared them (default `unspecified`) |
+| `mpm output <path> [-every N \| -dt Δt] [-fields F..] [-compress k]` / `mpm output -close` | the `.ladruno` particle group (Contract 2); fields `POSITION` (always) `VELOCITY STRESS STRAIN VOLUME GIMP_HALF_LENGTH DEFORMATION_GRADIENT`, default `POSITION VELOCITY STRESS VOLUME`; no `STATE_*` token is admitted in v1 |
 | `mpm info numParticles\|epoch\|time\|summary` | `summary` = [mass, momentum.., max \|v\|, kinetic energy] |
 | `mpm particleData <field>` | flat list in storage order: `id body mat m V0 V x v lp F R sig sigHat epsHat sig0` |
 | `mpm debug shape <x..> -lp <lp..>` / `shape1d <h> <lp> <r>` / `activeNodes` | unit-level hooks (interface Q4) |
@@ -98,6 +101,23 @@ updateParameter 1 0           ;# DruckerPrager elastic
 particles **stay where they are**. `mpm reset` puts them back. For a clean restart use both.
 `wipe` and `remove loadPattern <tag>` delete the host and its particles.
 
+- **The snapshot** `mpm reset` restores is the state before the first ACCEPTED step: every
+  `mpm analyze` retakes it until a step is accepted, so bodies added after a refused or zero-step
+  analyze are part of it. Particles added after the snapshot (after a reset) are dropped by the next
+  reset with their materials and ids.
+- **What it restores:** kinematics (x, v, F, R, V, strain feed, stress) and each material's
+  committed state (`revertToStart`). **Not** stage flags or moduli set through
+  `parameter … loadPattern` — DruckerPrager's `materialState` and its moduli survive a reset
+  (`DruckerPrager.cpp`, `revertToStart` leaves them). Re-issue `updateParameter` after a reset when
+  the run must start from the original stage.
+- **Parameters** that reach particle materials are detached when the host is deleted (`wipe`,
+  `remove loadPattern`) or when a reset drops particles: a later `updateParameter` does nothing
+  instead of touching freed memory.
+- **Abort (ADR W17):** a material refusal at commit aborts the run with the particles unmoved;
+  every later `mpm analyze` is refused until `mpm reset`.
+- **Initial conditions** (`mpm body`, `mpm particle`, `mpm particles`, `mpm stress`,
+  `mpm velocity`, `mpm shift`) are refused after the first step, until `mpm reset`.
+
 ## Refused in v1
 
 - a Domain with a free FE DOF (no FE–MPM seam yet): fix every node or remove the FE model;
@@ -107,18 +127,43 @@ particles **stay where they are**. `mpm reset` puts them back. For a clean resta
 
 ## Output
 
-Stock recorders cannot see particles. Use `mpm particleData`. The `.ladruno` particle group
-(Contract 2, `FORMAT_MINOR_VERSION` 2) arrives with phase c2.
+Stock recorders cannot see particles. `mpm output` writes a `.ladruno` file of its own (232a
+Contract 2): `FORMAT_VERSION` 1, `FORMAT_MINOR_VERSION` 2 (only a file that carries particles is
+2; `recorder ladruno`'s FE-only files stay at 1). Each stage is particle-only — the recorder's empty
+stage (`EMPTY_PARTITION = 1`, empty nodes, elements and result groups) plus `MODEL/PARTICLES` and
+`RESULTS/ON_PARTICLES` — with `KIND = "transient"` and `MODE = "explicit"`.
+
+- A stage opens at the first `mpm analyze` of an epoch, and its output 0 is the state before the
+  first step; `mpm reset` starts a new epoch, hence a new stage (`PARTICLE_EPOCH` + 1).
+- Outputs are written after `Domain::commit` (positions and stresses of the same step), every `N`
+  steps or every `Δt` of time, and the last step of every `mpm analyze` is always written.
+- Ids are int64 (≤ 2⁵³ − 1), sorted within an output, stable within an epoch. A second particle
+  set whose ids meet the epoch's is refused.
+- When a particle set was loaded, its `SET_ID`, units, thickness and body names are copied; lattice
+  bodies are named `body<id>`.
+- v1 writes FE output and particles to separate files: a mixed FE + particle stage is later work.
+- Classic Tcl returns `mpm criticalTimeStep`, `mpm particleData` and `mpm info time|summary` as
+  full-precision doubles (the elementAPI's `%35.20f` does not round-trip).
 
 ## Verification
 
 - `tests/test_mpm_engine_core_cpp.py` — the pure core (`LadrunoMPMCore.h`) and the kernel entry,
   standalone with g++, against every case of `tests/mpm_cases.txt` and
   `tests/hypo_incremental_cases.txt` (232b's independent numpy oracle).
+- `tests/test_ladruno_mpm_contracts_io.py` — Contract 1 in (232a's fixture; every malformed
+  variant refused with its rule code), Contract 2 out (every file passes `ladruno_format.validate`
+  and `tests/mpm_contracts.py`), the round trip, output synchrony, id stability, epochs, Tcl.
 - `tests/test_ladruno_mpm_engine.py` — every case through `OpenSees.exe` **and** `opensees.pyd`,
   and the two engines against each other. The MPM mutation family's suite.
-- `tests/test_ladruno_mpm_lifecycle.py` — refusals, lifecycle, admitted materials, the stage path,
-  thread-count determinism.
+- `tests/test_ladruno_mpm_lifecycle.py` — refusals, lifecycle (the reset snapshot, parameters
+  after `remove loadPattern`, initial conditions after the first step, a kernel refusal changing
+  nothing), the stage path, the critical Δt from the initial tangent, and a two-leg check: every
+  plastic particle's stress (LadrunoJ2, DruckerPrager) against perfect J2 plasticity driven through
+  that particle's own strain path. The v1 particle loop is serial, so thread-count determinism holds
+  by construction; its test arrives with the threaded loop.
+- The ADR W17 paths (a kernel refusal fails the step; a commit refusal aborts with particles unmoved;
+  a stale refusal count does not abort) are tested on the core with a mock material
+  (`mpm_engine_check.cpp`): no admitted v1 material declares a refusal.
 - **Mutation gate (ADR-87 D2), family `MPM`:** `ZERO` drops the P2G internal force, `SCALE`
   multiplies the G2P position increment by 1.5. The suite is `tests/test_ladruno_mpm_engine.py`.
   Run conditions: the mutant `opensees.pyd` on `PYTHONPATH`, the default tests directory (not

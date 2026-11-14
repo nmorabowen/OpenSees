@@ -32,6 +32,10 @@
 //   mpm grid <tag> -origin <x0..> -h <h> -cells <n..> [-basis gimp|linear]
 //   mpm body <bodyId> box <lo..> <hi..> -ppc <n> -mat <matTag> -rho <rho>
 //   mpm body <bodyId> disc <cx> <cy> <R> -ppc ... (2D) | ball <cx> <cy> <cz> <R> ... (3D)
+//   mpm particles -file <path>           load a Contract-1 particle set (232a), path as given
+//   mpm units <L> <F> <T> [-system <id>]  units Contract 2 carries when no set declared them
+//   mpm output <path> [-every N | -dt dt] [-fields F..] [-compress k] | -close
+//                                         the .ladruno particle group (232a contract 2)
 //   mpm shift <body> <dx..>              translate a seeded body (before the first step)
 //   mpm particle <id> <body> <matTag> <rho> <V0> -x <..> -lp <..> [-v <..>] [-s <nv>]
 //   mpm velocity <body> uniform <v..> | sine <comp> <axis> <v0> <beta> <xref>
@@ -314,12 +318,9 @@ int cmdFix(LadrunoMPMPattern *h, bool wall)
   return 0;
 }
 
-int cmdData(LadrunoMPMPattern *h)
+int particleField(const ladruno_mpm::Particles &P, const std::string &f, std::vector<double> &out)
 {
-  if (OPS_GetNumRemainingInputArgs() < 1) return fail("particleData <field>");
-  const std::string f = OPS_GetString();
-  const ladruno_mpm::Particles &P = h->engine().P;
-  std::vector<double> out;
+  out.clear();
   if (f == "id") for (int64_t i : P.id) out.push_back((double)i);
   else if (f == "body") for (int b : P.body) out.push_back(b);
   else if (f == "mat") for (int m : P.mat) out.push_back(m);
@@ -336,7 +337,27 @@ int cmdData(LadrunoMPMPattern *h)
   else if (f == "epsHat") out = P.eps;
   else if (f == "sig0") out = P.sig0;
   else return fail("particleData -- unknown field '" + f + "'");
-  return outDoubles(out);
+  return 0;
+}
+
+// [total mass, momentum (ndm), max |v|, kinetic energy] of the committed state
+void summary(const ladruno_mpm::Particles &P, int nd, std::vector<double> &out)
+{
+  double mt = 0.0, mom[3] = {0, 0, 0}, vmax = 0.0, ke = 0.0;
+  for (int p = 0; p < P.size(); p++) {
+    double v2 = 0.0;
+    for (int d = 0; d < nd; d++) {
+      mom[d] += P.m[p] * P.v[nd * p + d];
+      v2 += P.v[nd * p + d] * P.v[nd * p + d];
+    }
+    mt += P.m[p];
+    ke += 0.5 * P.m[p] * v2;
+    vmax = std::max(vmax, std::sqrt(v2));
+  }
+  out.assign(1, mt);
+  for (int d = 0; d < nd; d++) out.push_back(mom[d]);
+  out.push_back(vmax);
+  out.push_back(ke);
 }
 
 int cmdDebug(LadrunoMPMPattern *h)
@@ -381,6 +402,35 @@ int cmdDebug(LadrunoMPMPattern *h)
 
 }  // namespace
 
+// The double-valued queries (`mpm criticalTimeStep`, `mpm particleData <f>`,
+// `mpm info time|summary`), shared by the shared entry and the classic-Tcl
+// bridge. The bridge publishes them as Tcl double objects (full precision),
+// because classic Tcl's OPS_SetDoubleOutput prints %35.20f, which does not
+// round-trip below about 1e-3 (review Q8). Returns 1 (handled, `out` filled),
+// 0 (not one of these queries), or -1 (an error, printed).
+int ladrunoMPMDoubleQuery(Domain *dom, const std::vector<std::string> &a, std::vector<double> &out)
+{
+  out.clear();
+  if (a.empty()) return 0;
+  const std::string &sub = a[0];
+  const bool q = sub == "criticalTimeStep" || sub == "particleData" ||
+                 (sub == "info" && a.size() > 1 && (a[1] == "time" || a[1] == "summary"));
+  if (!q) return 0;
+  if (ladruno_parallelBuild())
+    return fail("-- refused in OpenSeesSP / OpenSeesMP: v1 MPM is serial (ADR 232 §5.1)");
+  LadrunoMPMPattern *h = host(dom, sub.c_str());
+  if (h == 0) return -1;
+  ladruno_mpm::Engine &E = h->engine();
+  if (sub == "criticalTimeStep") { out.assign(1, h->criticalTimeStep()); return 1; }
+  if (sub == "particleData") {
+    if (a.size() < 2) return fail("particleData <field>");
+    return particleField(E.P, a[1], out) < 0 ? -1 : 1;
+  }
+  if (a[1] == "time") { out.assign(1, dom->getCurrentTime()); return 1; }
+  summary(E.P, E.ndm(), out);
+  return 1;
+}
+
 int OPS_LadrunoMPM(void)
 {
   if (ladruno_parallelBuild())
@@ -388,7 +438,7 @@ int OPS_LadrunoMPM(void)
   Domain *dom = OPS_GetDomain();
   if (dom == 0) return fail("-- no Domain");
   if (OPS_GetNumRemainingInputArgs() < 1)
-    return fail("<grid|body|shift|particle|velocity|stress|fix|wall|gravity|timeSeries|damping|flip|"
+    return fail("<grid|body|particles|units|output|shift|particle|velocity|stress|fix|wall|gravity|timeSeries|damping|flip|"
                 "massCutoff|safety|criticalTimeStep|analyze|reset|info|particleData|debug> ...");
   const std::string sub = OPS_GetString();
   if (sub == "grid") return cmdGrid(dom);
@@ -400,6 +450,70 @@ int OPS_LadrunoMPM(void)
 
   if (sub == "body") return cmdBody(h);
   if (sub == "particle") return cmdParticle(h);
+  if (sub == "particles") {
+    // mpm particles -file <path>: a Contract-1 set (232a §1), opened as given
+    if (OPS_GetNumRemainingInputArgs() < 2 || std::string(OPS_GetString()) != "-file")
+      return fail("particles -file <path>");
+    const std::string path = OPS_GetString();
+    const int n = h->loadParticleSet(path);
+    if (n < 0) return -1;
+    return outInt(n);
+  }
+  if (sub == "units") {
+    // mpm units <L> <F> <T> [-system <id>]
+    if (OPS_GetNumRemainingInputArgs() < 3) return fail("units <L> <F> <T> [-system <id>]");
+    const std::string L = OPS_GetString(), F = OPS_GetString(), T = OPS_GetString();
+    std::string system;
+    if (OPS_GetNumRemainingInputArgs() >= 2 && std::string(OPS_GetString()) == "-system")
+      system = OPS_GetString();
+    std::string err;
+    if (h->setUnits(L, F, T, system, err) < 0) return fail("units -- " + err);
+    return 0;
+  }
+  if (sub == "output") {
+    // mpm output <path> [-every <N> | -dt <dt>] [-fields <F>...] [-compress <k>]
+    // mpm output -close
+    if (OPS_GetNumRemainingInputArgs() < 1) return fail("output <path> [-every N | -dt dt] [-fields ...] [-compress k] | -close");
+    const std::string first = OPS_GetString();
+    if (first == "-close") { h->closeOutput(); return 0; }
+    ladruno_mpm_io::WriterConfig cfg;
+    cfg.path = first;
+    std::vector<std::string> fields;
+    bool explicitFields = false;
+    while (OPS_GetNumRemainingInputArgs() > 0) {
+      const std::string opt = OPS_GetString();
+      if (opt == "-every") {
+        if (!readInt(cfg.every) || cfg.every < 1) return fail("output -every needs N >= 1");
+        cfg.dtOut = -1.0;
+      } else if (opt == "-dt") {
+        if (!readDoubles(1, &cfg.dtOut) || !(cfg.dtOut > 0.0)) return fail("output -dt needs dt > 0");
+      } else if (opt == "-compress") {
+        if (!readInt(cfg.compress) || cfg.compress < 0 || cfg.compress > 9) return fail("output -compress needs 0..9");
+      } else if (opt == "-fields") {
+        explicitFields = true;
+        while (OPS_GetNumRemainingInputArgs() > 0) {
+          const std::string f = OPS_GetString();
+          if (!f.empty() && f[0] == '-') { OPS_ResetCurrentInputArg(-1); break; }
+          if (f.compare(0, 6, "STATE_") == 0)
+            return fail("output -fields " + f + " -- v1 admits no STATE_ token (the guide lists the admitted ones)");
+          if (ladruno_mpm_io::ParticleWriter::components(f, nd).empty())
+            return fail("output -fields " + f + " -- not a v1 particle field (POSITION VELOCITY STRESS "
+                        "STRAIN VOLUME GIMP_HALF_LENGTH DEFORMATION_GRADIENT)");
+          fields.push_back(f);
+        }
+      } else {
+        return fail("output -- unknown option '" + opt + "'");
+      }
+    }
+    if (!explicitFields) fields = {"VELOCITY", "STRESS", "VOLUME"};
+    cfg.fields.push_back("POSITION");          // always written, always first
+    for (const std::string &f : fields)
+      if (std::find(cfg.fields.begin(), cfg.fields.end(), f) == cfg.fields.end())
+        cfg.fields.push_back(f);
+    std::string err;
+    if (h->setOutput(cfg, err) < 0) return fail("output -- " + err);
+    return 0;
+  }
   if (sub == "shift") {
     // mpm shift <body> <dx..>: translate a seeded body before the first step (A5)
     int body;
@@ -452,7 +566,17 @@ int OPS_LadrunoMPM(void)
     E.par.safety = a;
     return 0;
   }
-  if (sub == "criticalTimeStep") return outDouble(h->criticalTimeStep());
+  if (sub == "criticalTimeStep" || sub == "particleData" ||
+      (sub == "info" && OPS_GetNumRemainingInputArgs() > 0)) {
+    std::vector<std::string> a(1, sub);
+    if (sub != "criticalTimeStep" && OPS_GetNumRemainingInputArgs() > 0) a.push_back(OPS_GetString());
+    std::vector<double> out;
+    const int q = ladrunoMPMDoubleQuery(dom, a, out);
+    if (q < 0) return -1;
+    if (q > 0) return (sub == "criticalTimeStep") ? outDouble(out[0]) : outDoubles(out);
+    if (sub == "info") OPS_ResetCurrentInputArg(-1);   // not a double query: the int forms below
+    if (sub == "particleData") return fail("particleData <field>");
+  }
   if (sub == "analyze") {
     int n;
     double dt;
@@ -465,30 +589,8 @@ int OPS_LadrunoMPM(void)
     const std::string what = OPS_GetNumRemainingInputArgs() > 0 ? OPS_GetString() : "numParticles";
     if (what == "numParticles") return outInt(E.P.size());
     if (what == "epoch") return outInt(h->particleEpoch());
-    if (what == "time") return outDouble(dom->getCurrentTime());
-    if (what == "summary") {
-      // [total mass, momentum (ndm), max |v|, kinetic energy] of the committed state
-      const ladruno_mpm::Particles &P = E.P;
-      double mt = 0.0, mom[3] = {0, 0, 0}, vmax = 0.0, ke = 0.0;
-      for (int p = 0; p < P.size(); p++) {
-        double v2 = 0.0;
-        for (int d = 0; d < nd; d++) {
-          mom[d] += P.m[p] * P.v[nd * p + d];
-          v2 += P.v[nd * p + d] * P.v[nd * p + d];
-        }
-        mt += P.m[p];
-        ke += 0.5 * P.m[p] * v2;
-        vmax = std::max(vmax, std::sqrt(v2));
-      }
-      std::vector<double> out = {mt};
-      for (int d = 0; d < nd; d++) out.push_back(mom[d]);
-      out.push_back(vmax);
-      out.push_back(ke);
-      return outDoubles(out);
-    }
     return fail("info -- numParticles, epoch, time or summary");
   }
-  if (sub == "particleData") return cmdData(h);
   if (sub == "debug") return cmdDebug(h);
   return fail("-- unknown sub-command '" + sub + "'");
 }
