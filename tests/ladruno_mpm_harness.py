@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import math
 import os
+import re
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -217,6 +219,59 @@ FIELDS_INIT = ("x", "m", "id", "body", "mat", "V")
 # --------------------------------------------------------------------------- #
 #  Running                                                                     #
 # --------------------------------------------------------------------------- #
+#: interface Amendment 7: observables of a refused step (232b, #1079)
+A7_OBS = ("refused_step", "refused_id", "committed_inside_grid")
+_REFUSED_ID = re.compile(r"ERROR mpm analyze -- .*?particle (\d+)")
+
+
+def _needs_a7(c):
+    return any(e["obs"] in A7_OBS for e in c["expects"])
+
+
+def _inside(c, x):
+    """Every centre of the flat position list x inside the closed real grid box."""
+    nd = c["ndm"]
+    for d in range(nd):
+        lo = c["origin"][d]
+        hi = lo + c["cells"][d] * c["h"]
+        for v in x[d::nd]:
+            if v < lo or v > hi:
+                return False
+    return True
+
+
+def _refused_id(text):
+    """The particle id a refused `mpm analyze` names (the engine's opserr line)."""
+    ids = _REFUSED_ID.findall(text)
+    return int(ids[-1]) if ids else -1
+
+
+class _StderrCapture:
+    """Capture opserr around one call: the engine names the refused particle there,
+    and the Python exception does not carry it. opensees.pyd routes opserr through
+    Python's sys.stderr; a C-level write would go to fd 2. Both are captured."""
+
+    def __enter__(self):
+        import io
+        sys.stderr.flush()
+        self.py = io.StringIO()
+        self.saved = sys.stderr
+        sys.stderr = self.py
+        self.tmp = tempfile.TemporaryFile(mode="w+b")
+        self.old = os.dup(2)
+        os.dup2(self.tmp.fileno(), 2)
+        return self
+
+    def __exit__(self, *exc):
+        os.dup2(self.old, 2)
+        os.close(self.old)
+        sys.stderr = self.saved
+        self.tmp.seek(0)
+        self.text = self.py.getvalue() + self.tmp.read().decode("utf-8", "replace")
+        self.tmp.close()
+        return False
+
+
 def run_python(c, ops):
     """Run a case through opensees.pyd. Returns the result dict."""
     for name, args in setup_commands(c):
@@ -240,12 +295,28 @@ def run_python(c, ops):
         r["init_" + f] = _as_list(ops.mpm("particleData", f))
     r["summary"] = [_as_list(ops.mpm("info", "summary"))]
     r["stopped"] = None
+    a7 = _needs_a7(c)
+    r["inside"] = _inside(c, r["init_x"])
+    r["refused_id"] = -1
     for s in range(c["steps"]):
-        try:
-            ops.mpm("analyze", 1, c["dt"])
-        except Exception:
-            r["stopped"] = s
-            break
+        if a7:
+            failed = False
+            with _StderrCapture() as cap:
+                try:
+                    ops.mpm("analyze", 1, c["dt"])
+                except Exception:
+                    failed = True
+            if failed:
+                r["stopped"] = s
+                r["refused_id"] = _refused_id(cap.text)
+                break
+            r["inside"] = r["inside"] and _inside(c, _as_list(ops.mpm("particleData", "x")))
+        else:
+            try:
+                ops.mpm("analyze", 1, c["dt"])
+            except Exception:
+                r["stopped"] = s
+                break
         r["summary"].append(_as_list(ops.mpm("info", "summary")))
     for f in FIELDS_END:
         r["end_" + f] = _as_list(ops.mpm("particleData", f))
@@ -283,6 +354,8 @@ def tcl_deck(c):
         lines.append("for {set s 0} {$s < %d} {incr s} {" % c["steps"])
         lines.append("  if {[catch {mpm analyze 1 %r}]} { puts \"STOP $s\"; break }" % c["dt"])
         lines.append("  puts \"SUM [mpm info summary]\"")
+        if _needs_a7(c):
+            lines.append("  puts \"XS [mpm particleData x]\"")
         lines.append("}")
         for f in FIELDS_END:
             lines.append("dump END %s" % f)
@@ -303,7 +376,8 @@ def run_tcl(c, exe, timeout=900):
     if "DECK-DONE" not in out:
         raise RuntimeError(f"Tcl deck for {c['name']} did not finish (rc={proc.returncode}):\n"
                            + out[-4000:])
-    r = {"engine": "tcl", "summary": [], "stopped": None, "s1": [], "log": out}
+    r = {"engine": "tcl", "summary": [], "stopped": None, "s1": [], "log": out,
+         "inside": True, "refused_id": _refused_id(out)}
     for line in out.splitlines():
         t = line.split()
         if not t:
@@ -320,10 +394,14 @@ def run_tcl(c, exe, timeout=900):
             r["summary"].append([float(v) for v in t[1:]])
         elif t[0] == "STOP":
             r["stopped"] = int(t[1])
+        elif t[0] == "XS":
+            r["inside"] = r["inside"] and _inside(c, [float(v) for v in t[1:]])
         elif t[0] in ("INIT", "END") and len(t) >= 2:
             r[t[0].lower() + "_" + t[1]] = [float(v) for v in t[2:]]
         elif t[0] == "TIME":
             r["time"] = float(t[1])
+    if "init_x" in r:
+        r["inside"] = r["inside"] and _inside(c, r["init_x"])
     return r
 
 
@@ -387,6 +465,12 @@ def observables(c, r):
             out[key] = [r["dt_crit"]]
         elif ob == "active_nodes":
             out[key] = [float(v) for v in r["active"]]
+        elif ob == "refused_step":
+            out[key] = [float(r["stopped"] + 1) if r.get("stopped") is not None else 0.0]
+        elif ob == "refused_id":
+            out[key] = [float(r.get("refused_id", -1))]
+        elif ob == "committed_inside_grid":
+            out[key] = [1.0 if r.get("inside", False) else 0.0]
         elif ob in ("refused", "accepted"):
             out[key] = [1.0 if (r["stopped"] == 0 if ob == "refused" else r["stopped"] is None) else 0.0]
         elif ob == "particle_fields":
@@ -499,7 +583,7 @@ def evaluate(c, r):
             bad = check_fields(c, r, tol)
             res.append((label, not bad, "; ".join(bad[:5])))
             continue
-        if e["obs"] in ("refused", "accepted"):
+        if e["obs"] in ("refused", "accepted", "committed_inside_grid"):
             res.append((label, got[0] == 1.0, f"stopped at {r['stopped']}"))
             continue
         at, rt = e["tol"] or c["tol"]
@@ -510,7 +594,8 @@ def evaluate(c, r):
             ok = got[0] <= e["vals"][0]
         else:
             ok = got[0] >= e["vals"][0]
-        if r.get("stopped") is not None and c["kind"] == "run" and e["obs"] != "refused":
+        expects_refusal = any(x["obs"] in ("refused", "refused_step") for x in c["expects"])
+        if r.get("stopped") is not None and c["kind"] == "run" and not expects_refusal:
             ok = False
         res.append((label, ok, f"got {got} {e['op']} {e['vals']}"))
     return res

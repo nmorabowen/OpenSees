@@ -121,6 +121,7 @@ instructions ask). At boot, confirm the Agent tool still exposes `effort`; if it
   `gh pr merge <n> --merge` (a merge commit; `--squash` only for a small fix), and only when every
   required check is green and the WP's done-when holds. Never `--auto`, never `--admin`, never
   around a red check. Without a delegation: add `human-gate` and say what is ready.
+- **Interacting PRs merge serially.** When one PR adds oracle cases or interface observables and another adds the engine or its harness, merge one, then re-run EVERY affected test file — the Python and Tcl binary harness, not only the g++ check — on the merged combination before merging the next. (Learned 2026-11-14: #1079 + #1078 in parallel turned ladruno red.)
 - **apeGmsh PRs are never merged from here** — see "apeGmsh — only through its T coordinator".
 
 ### 6. Record and chain

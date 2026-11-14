@@ -431,7 +431,7 @@ offset table, the CSR form schema §3.4 already uses for connectivity, instead o
   there (C2-UNKNOWN).
 
 **Append order, and the reader's rule after a crash.** For each output the writer appends, in this
-order:
+order, each step being an extend and then a write:
 
 1. every field's `DATA` rows;
 2. the `ID` rows;
@@ -439,10 +439,36 @@ order:
 4. last, `OFFSETS[T+1]`, which commits the output.
 
 The registry rows for added particles are appended before step 1. A closed file satisfies every rule
-above. A file left by a crash can hold a partial output beyond the last committed one. A reader then
-uses `T' = min(len(STEP), len(TIME), len(OFFSETS) − 1)` outputs, keeps only the outputs whose
-`OFFSETS[k+1]` does not exceed `len(ID)` or any field's `len(DATA)`, and ignores rows beyond
-`OFFSETS[T']`. The validator checks closed files and requires `OFFSETS[T] = len(ID)`.
+above, and the validator checks closed files only: it requires `OFFSETS[T] = len(ID)` and refuses
+anything else (C2-OFF).
+
+A file left by a crash can hold a partial output beyond the last committed one. The case that
+matters is a kill **after `OFFSETS` is extended for output `k` but before its value is written**.
+The new last entry then holds the HDF5 fill value 0, while that output's `DATA`, `ID`, `STEP` and
+`TIME` are already written. (This is the 232c writer's order, `LadrunoMPMIO.cpp` on PR #1078.) Read
+literally, `OFFSETS` would then decrease and a strict reader would refuse the whole stage. Instead, a
+reader computes the committed outputs like this:
+
+1. Read `OFFSETS` (length `c`), and the lengths of `STEP`, `TIME`, `ID` and every field's `DATA`. If
+   `c = 0`, nothing is committed. If `OFFSETS[0] ≠ 0`, refuse the stage.
+2. **A torn last entry.** If `c ≥ 2` and `OFFSETS[c−1] < OFFSETS[c−2]`, the last entry is a torn
+   extension (the fill value). Drop it, and with it the in-flight output it would have committed.
+   Every output before it is kept.
+3. **Corruption.** If `OFFSETS` still decreases anywhere (that is, before what was the last entry),
+   refuse the stage.
+4. `T' = min(len(STEP), len(TIME), len(OFFSETS) − 1)`, using the `OFFSETS` left after step 2.
+5. While `T' > 0` and `OFFSETS[T']` exceeds `len(ID)` or any field's `len(DATA)`, lower `T'` by one.
+6. Outputs `0 … T'−1` are committed and readable. Rows beyond `OFFSETS[T']` are ignored.
+
+The reference implementation is `tests/mpm_contracts.py::committed_outputs`. The fixture
+`tests/data/mpm/particles_torn_v1m2.ladruno` is the all-particle fixture with a torn fourth output,
+`OFFSETS = [0, 12, 24, 35, 0]`: it reads 3 committed outputs.
+
+- **Only the last entry can be torn.** `OFFSETS` is written last, and the writer flushes after every
+  output by default, so an earlier entry is complete on disk once a later output has begun.
+- **Every output so far empty.** When all offsets are 0, a torn entry equals its predecessor. It is
+  then not detected at step 2 and reads as one more empty output. That is harmless, because the
+  output's `STEP` and `TIME` were written before `OFFSETS` was extended.
 
 **Reading output `k` of field `F`** (Python; the TypeScript reader does the same with hyperslabs):
 
@@ -515,6 +541,13 @@ opt-in like `-precision f32` on the recorder (C2-DTYPE).
 - **Chunks.** For `ID` and each `DATA`: about `2²⁰ / (nComp · itemsize)` rows per chunk, with shuffle +
   deflate at the `-compress` level (default 1). For `STEP`, `TIME` and `OFFSETS`: 1024 entries per
   chunk.
+- **What the fork's writer does instead** (232c, PR #1078). It departs from the chunk guidance
+  above, for crash safety:
+  - `ID` and every `DATA` use **one chunk per output**, capped at 16 MiB;
+  - `STEP`, `TIME` and `OFFSETS` are **uncompressed**.
+
+  Both layouts are conformant. Readers must not depend on the chunk shape or the filters, beyond §0's
+  list of allowed filters.
 
 ### 2.9 Executable spec and where this goes when 232c lands
 
@@ -522,8 +555,9 @@ opt-in like `-precision f32` on the recorder (C2-DTYPE).
   (`_validate_particles`), together with every schema-v1 invariant of the rest of the file.
   `tests/mpm_contracts.py::validate_particle_results(path)` is a thin wrapper that also requires the
   file to have a particle group. apeGmsh SHOULD import `ladruno_format`, as for v1 (schema §9).
-- When 232c lands the writer, its format-document PR moves §2 into `ladruno_schema_v1.md` (a new §7.5
-  `ON_PARTICLES`, a §2 line for minor 2 and a §9 versioning line) and links this page from there.
+- **Moving §2 into `ladruno_schema_v1.md` is deferred.** The plan is a new §7.5 `ON_PARTICLES`, a
+  §2 line for minor 2, and a §9 versioning line. Until the move, this page is the only copy, so the
+  two documents cannot drift. Until then, `ladruno_schema_v1.md` points here.
 
 ---
 
@@ -613,6 +647,12 @@ after loading `particle_set_v1.h5`; `tests/test_mpm_contracts.py` checks the map
   - both emitters anchor the path to the deck's folder, and the fork opens the path as given (§1).
 - **2026-11-14, the owner's answer on apeGmsh#2976 ("Yes, same stem"):** pairing is by stem only.
   The provenance hashes come from the in-memory lineage at emit and do not pair (§1, §1.5).
+- **2026-11-14, contract follow-up (after #1077 merged), for apeGmsh's M2 reader review (apeGmsh
+  PR #2985):**
+  - §2.5's crash rule handles a torn last `OFFSETS` entry (the fill value 0), in numbered steps, with
+    the reference `committed_outputs` and the torn fixture;
+  - §2.8 notes the fork writer's chunk layout;
+  - the move into the schema document is deferred, with a pointer there.
 - **Gate before code.** The owner must ratify apeGmsh ADR 0134 (`232a_apegmsh_adr_draft.md`, through
   apeGmsh's T coordinator and maintainer) before 232c's particle-set reader and `.ladruno` writer,
   and before 232d, start (ADR §9, "Gate before code (232a)").

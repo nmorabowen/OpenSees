@@ -611,6 +611,20 @@ ENVELOPES/ON_ELEMENTS/<display>/<bucket>/           (element: nested + COLUMN_MA
 
 ---
 
+## 7.5 `ON_PARTICLES` — MPM particle results (`FORMAT_MINOR_VERSION = 2`; WP-232a)
+
+`MODEL_STAGE[*]/MODEL/PARTICLES` and `RESULTS/ON_PARTICLES` add MPM particle output.
+The change is additive. `FORMAT_VERSION` stays 1, and a file that holds a particle group writes
+`FORMAT_MINOR_VERSION = 2`.
+
+**The full contract is
+[[232a_mpm_contracts]] §2. It is the only copy until the move into this document, which is
+deferred.** It covers the field-by-field layout, the rule codes, the crash rule for a torn
+`OFFSETS` entry, and the fixtures under `tests/data/mpm/`. Its executable form is
+`ladruno_format.validate()` (`_validate_particles`).
+
+---
+
 ## 7b. File robustness & provenance (OpenSees-side)
 
 The apeGmsh consultation surfaced two robustness failures the recorder owns at the

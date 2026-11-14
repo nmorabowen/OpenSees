@@ -644,3 +644,74 @@ def test_every_rule_code_has_a_refusal_case():
     assert named, "no rule codes found in the contract page"
     assert named <= covered, sorted(named - covered)
     assert covered <= named, sorted(covered - named)
+
+
+# --------------------------------------------------------------------------- the crash rule (§2.5)
+
+
+def test_torn_fixture_reads_its_committed_outputs():
+    """A kill after OFFSETS was extended but before its value was written: the last entry
+    holds the fill value 0. The in-flight output is dropped; the 3 before it read."""
+    with h5py.File(fx.PARTICLE_TORN, "r") as f:
+        op = f[OP]
+        assert op["OFFSETS"][...].tolist() == [0, 12, 24, 35, 0]
+        assert op["STEP"].shape == (4,) and op["TIME"].shape == (4,)
+        assert op["ID"].shape == (46,)
+    assert mc.committed_outputs(fx.PARTICLE_TORN) == 3
+    with lf.LadrunoReader(str(fx.PARTICLE_TORN)) as r:
+        ids, _ = r.particle_output(STAGE, "POSITION", 2)
+    assert ids.tolist() == list(range(11))
+
+
+def test_validator_still_refuses_a_torn_file():
+    """The validator checks closed files: a torn one is C2-OFF."""
+    assert "C2-OFF" in _codes(mc.validate_particle_results(str(fx.PARTICLE_TORN)))
+
+
+def test_torn_fixture_matches_the_generator(tmp_path):
+    fx.write_torn(tmp_path / "torn.ladruno")
+    assert _same(_content(fx.PARTICLE_TORN), _content(tmp_path / "torn.ladruno"))
+
+
+@pytest.mark.parametrize("path,stage,n", [
+    (fx.PARTICLE_RESULTS, None, 3),
+    (fx.PARTICLE_MIXED, "MODEL_STAGE[1]", 3),
+])
+def test_closed_fixtures_are_unchanged_by_the_rule(path, stage, n):
+    assert mc.committed_outputs(path, stage) == n
+    with h5py.File(path, "r") as f:
+        st = f[stage or STAGE]
+        assert mc.committed_outputs(st) == st["RESULTS/ON_PARTICLES/STEP"].shape[0] == n
+        assert mc.committed_outputs(st["RESULTS/ON_PARTICLES"]) == n
+
+
+def test_a_decrease_before_the_last_entry_is_refused(tmp_path):
+    p = tmp_path / "corrupt.ladruno"
+    fx.write_contract2(p)
+    with h5py.File(p, "r+") as f:
+        f[f"{OP}/OFFSETS"][1] = 30                 # [0, 30, 24, 35]: 30 > 24 inside
+    with pytest.raises(mc.TornStageError):
+        mc.committed_outputs(p)
+
+
+def test_all_empty_outputs_read_a_torn_entry_as_one_more_empty_output(tmp_path):
+    """When every offset is 0, the torn 0 equals its predecessor: one more empty output,
+    harmless because its STEP and TIME were written before OFFSETS (232a §2.5)."""
+    p = tmp_path / "empty.ladruno"
+    fx.write_contract2(p)
+    with h5py.File(p, "r+") as f:
+        f[f"{OP}/OFFSETS"][...] = 0
+    fx.tear_last_output(p)
+    with h5py.File(p, "r") as f:
+        assert f[f"{OP}/OFFSETS"][...].tolist() == [0, 0, 0, 0, 0]
+    assert mc.committed_outputs(p) == 4
+
+
+def test_an_output_whose_rows_are_missing_is_not_committed(tmp_path):
+    """The len(ID) / len(DATA) bound: an output whose rows did not all reach disk."""
+    p = tmp_path / "short.ladruno"
+    fx.write_contract2(p)
+    with h5py.File(p, "r+") as f:
+        d = f[f"{OP}/VELOCITY/DATA"]
+        d.resize((d.shape[0] - 1,) + d.shape[1:])
+    assert mc.committed_outputs(p) == 2
