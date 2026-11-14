@@ -246,3 +246,26 @@ def test_condforce_is_the_reaction():
         load = 2.0 * sum(syy) / len(syy)
         assert max(syy) - min(syy) <= 1e-9 * abs(load), (mat, min(syy), max(syy))
         assert abs(cf[1] - load) <= 1e-9 * abs(load), (mat, cf[1], load)
+
+
+def test_particle_tangent_against_finite_differences():
+    """Footing diagnosis, step 1, kept as a regression: the particle element's tangent against
+    central differences of its resisting force (`mpm debug tangentCheck`), ElasticIsotropic,
+    plane strain, on the self-weight column -- undeformed (consistent to 3e-6: the hypo
+    kinematics) and after five quasi-static steps (about 1e-3: the tangent is LadrunoBrick's
+    hypo assembly, not the exact linearisation of the Hughes-Winget increment). The FD has
+    converged when eps 1e-8 and 1e-9 agree."""
+    ops = _ops()
+    c = H.case_by_name("column_selfweight_small_qs")
+    for name, args in H.model_commands(c):
+        getattr(ops, name)(*H._py_args(args))
+    for name, args in H.analysis_commands(c):
+        getattr(ops, name)(*H._py_args(args))
+    a = list(ops.mpm("debug", "tangentCheck", 1e-6, 1e-8))
+    b = list(ops.mpm("debug", "tangentCheck", 1e-6, 1e-9))
+    assert a[4] == 80 and a[0] < 1e-5 and abs(a[0] - b[0]) < 0.1 * a[0] + 1e-9, (a, b)
+    for _ in range(5):
+        ops.mpm("analyze", 1, c["dt"])
+    a = list(ops.mpm("debug", "tangentCheck", 1e-6, 1e-8))
+    b = list(ops.mpm("debug", "tangentCheck", 1e-6, 1e-9))
+    assert a[0] < 5e-3 and abs(a[0] - b[0]) < 0.01 * a[0], (a, b)
