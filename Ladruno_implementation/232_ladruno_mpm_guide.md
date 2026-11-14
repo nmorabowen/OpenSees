@@ -149,7 +149,11 @@ stage (`EMPTY_PARTITION = 1`, empty nodes, elements and result groups) plus `MOD
   data are laid out so a flushed output is never rewritten (one chunk per output for `ID` and every
   `DATA`, uncompressed `STEP` / `TIME` / `OFFSETS`), and every output is written behind a barrier: a
   flush after its rows and before its `OFFSETS` entry, so an entry the crash rule counts always has
-  its rows on disk. A killed run then leaves a file that opens; a
+  its rows on disk. Metadata-cache eviction is off for this file: without SWMR, an evicted header
+  or chunk-index node can reach disk between flushes, pointing past the last flushed end of the
+  file, and a kill then leaves reads that fail ("addr overflow"; 1 kill in 137 behind the barrier
+  alone). With eviction off, metadata reaches disk only at the writer's flushes; the cache holds
+  the file's metadata, a few KiB per output. A killed run then leaves a file that opens; a
   reader applies the contract's crash rule (232a §2.5). The full fix, HDF5 SWMR, is deferred. The `-dt` cadence re-arms when the Domain time goes back
   (`reset`, `setTime`).
 - Outputs are written after `Domain::commit` (positions and stresses of the same step), every `N`

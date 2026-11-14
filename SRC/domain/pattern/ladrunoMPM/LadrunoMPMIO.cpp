@@ -634,10 +634,49 @@ createFile(ParticleWriter::Impl *impl, std::string &err)
   H5Pset_link_creation_order(fcpl, H5P_CRT_ORDER_TRACKED | H5P_CRT_ORDER_INDEXED);
   impl->gplist = H5Pcreate(H5P_GROUP_CREATE);
   H5Pset_link_creation_order(impl->gplist, H5P_CRT_ORDER_TRACKED | H5P_CRT_ORDER_INDEXED);
+  // NO METADATA EVICTION (232a §2.5). Without SWMR the metadata cache may evict a
+  // dirty entry between our flushes: an object header or a parent B-tree node then
+  // reaches disk pointing at a node allocated past the end-of-allocation the
+  // superblock recorded at the last flush, and a kill leaves a file whose reads fail
+  // ("addr overflow"; 1 kill in 137 with the write barrier alone). With evictions
+  // off, metadata reaches disk only at our explicit flushes (the barrier and the
+  // flush after OFFSETS), so a kill between flushes leaves the last flushed,
+  // consistent state; raw chunks written past it are unreferenced. HDF5 requires
+  // the resize modes off when evictions are off. The cache cannot shrink and grows
+  // past its size only as the file's metadata grows; it starts large enough for
+  // many outputs' metadata (one output dirties a few KiB: a header and a chunk-index
+  // node per dataset). This file only: LadrunoRecorder keeps the default cache.
+  hid_t fapl = H5Pcreate(H5P_FILE_ACCESS);
+  {
+    H5AC_cache_config_t mdc;
+    mdc.version = H5AC__CURR_CACHE_CONFIG_VERSION;
+    bool ok = H5Pget_mdc_config(fapl, &mdc) >= 0;
+    if (ok) {
+      const size_t initial = (size_t)8 * 1024 * 1024;
+      mdc.evictions_enabled = 0;
+      mdc.incr_mode = H5C_incr__off;
+      mdc.flash_incr_mode = H5C_flash_incr__off;
+      mdc.decr_mode = H5C_decr__off;
+      mdc.set_initial_size = 1;
+      mdc.initial_size = initial;
+      if (mdc.max_size < initial) mdc.max_size = initial;
+      if (mdc.min_size > initial) mdc.min_size = initial;
+      ok = H5Pset_mdc_config(fapl, &mdc) >= 0;
+    }
+    if (!ok) {
+      H5Pclose(fapl);
+      H5Pclose(fcpl);
+      H5Pclose(impl->gplist);
+      impl->gplist = -1;
+      err = "cannot disable metadata-cache eviction for '" + cfg.path + "'";
+      return -1;
+    }
+  }
   {
     QuietH5 quiet;
-    impl->file = H5Fcreate(cfg.path.c_str(), H5F_ACC_TRUNC, fcpl, H5P_DEFAULT);
+    impl->file = H5Fcreate(cfg.path.c_str(), H5F_ACC_TRUNC, fcpl, fapl);
   }
+  H5Pclose(fapl);
   H5Pclose(fcpl);
   if (impl->file < 0) {
     H5Pclose(impl->gplist);
