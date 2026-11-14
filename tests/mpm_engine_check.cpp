@@ -360,7 +360,7 @@ static void runCase(const Case &c)
     for (size_t k = 0; k < node.size(); k++) {
       std::vector<double> v = {S[k]};
       for (int d = 0; d < nd; d++) v.push_back(dS[nd * k + d]);
-      got[node[k]] = v;
+      got[E.grid.publicId(node[k])] = v;
     }
     std::map<long, bool> listed;
     for (const auto &e : c.expects) {
@@ -537,6 +537,38 @@ int main(int argc, char **argv)
     if (E.setGrid(2, x0, hs, n, err) || err.empty()) { std::printf("FAIL: unequal cell sizes accepted\n"); g_fail++; }
     g_checks++;
     if (!E.setGrid(2, x0, heq, n, err)) { std::printf("FAIL: equal per-axis cell sizes refused\n"); g_fail++; }
+  }
+  {  // A5 ghost layers: a block sliding along a roller face, its particle domains
+     // overhanging the face (delta/lp = 0.5), keeps its velocity exactly — with
+     // truncated support the overhang made sum(grad S) != 0 and the block dragged.
+    Engine E;
+    Hypoelastic M;
+    std::string err;
+    const double x0[2] = {0.0, 0.0};
+    const int n[2] = {20, 10};
+    E.setGrid(2, x0, 0.1, n, err);
+    E.fc.fixMask[2] |= 1u << 1;                       // ymin roller
+    const double lp[2] = {0.025, 0.025};
+    int64_t id = 0;
+    for (int j = 0; j < 4; j++)
+      for (int i = 0; i < 8; i++) {
+        const double x[2] = {0.5 + 0.05 * i, 0.0125 + 0.05 * j};   // bottom row: y - lp = -0.0125
+        const double v[2] = {0.3, 0.0};
+        E.addParticle(id++, 1, 1, 1000.0, 0.0025, x, lp, v, 0, err);
+      }
+    M.nd = 2;
+    M.lam.assign(E.P.size(), 1.0e6 * 0.3 / (1.3 * 0.4));
+    M.mu.assign(E.P.size(), 1.0e6 / 2.6);
+    double worst = 0.0;
+    for (int s = 0; s < 200; s++) {
+      if (E.advance(1.0e-4, 1.0, M, err) != 0) { worst = 1.0; break; }
+      for (int p = 0; p < E.P.size(); p++)
+        worst = std::max(worst, std::fabs(E.P.v[2 * p] - 0.3) + std::fabs(E.P.v[2 * p + 1]));
+    }
+    g_checks++;
+    std::printf("%s: A5 roller slide with overhang, max |v - v0| = %.3e\n",
+                worst < 1e-12 ? "ok  " : "FAIL", worst);
+    if (!(worst < 1e-12)) g_fail++;
   }
   auto cases = parse(argc > 1 ? argv[1] : "tests/mpm_cases.txt");
   for (const auto &c : cases) runCase(c);

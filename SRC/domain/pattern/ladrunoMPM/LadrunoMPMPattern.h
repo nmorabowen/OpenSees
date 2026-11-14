@@ -137,7 +137,6 @@ class LadrunoMPMPattern : public LoadPattern
   int64_t                 nextLatticeId;
   // the initial state, captured at the first step, restored by reset()
   bool                    haveSnapshot;
-  bool                    warnedFreeFace;
   int                     epoch;
   ladruno_mpm::Particles  snapshot;
 

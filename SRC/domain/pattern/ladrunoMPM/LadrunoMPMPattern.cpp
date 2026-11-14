@@ -100,7 +100,7 @@ class LadrunoMPMPattern::Mats : public ladruno_mpm::MaterialPoints
 LadrunoMPMPattern::LadrunoMPMPattern(int tag)
   : LoadPattern(tag, PATTERN_TAG_LadrunoMPM), adapter(0), series(0), lambda(1.0),
     inStep(false), stepped(false), nextLatticeId(0), haveSnapshot(false),
-    warnedFreeFace(false), epoch(0)
+    epoch(0)
 {
   adapter = new Mats(mats);
 }
@@ -108,7 +108,7 @@ LadrunoMPMPattern::LadrunoMPMPattern(int tag)
 LadrunoMPMPattern::LadrunoMPMPattern()
   : LoadPattern(0, PATTERN_TAG_LadrunoMPM), adapter(0), series(0), lambda(1.0),
     inStep(false), stepped(false), nextLatticeId(0), haveSnapshot(false),
-    warnedFreeFace(false), epoch(0)
+    epoch(0)
 {
   adapter = new Mats(mats);
 }
@@ -457,14 +457,6 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
   if (!haveSnapshot) {
     snapshot = eng.P;
     haveSnapshot = true;
-  }
-  {
-    const int pf = warnedFreeFace ? -1 : eng.firstNearFreeFace();
-    if (pf >= 0) warnedFreeFace = true;
-    if (pf >= 0)
-      opserr << "WARNING mpm analyze -- particle " << std::to_string((long long)eng.P.id[pf]).c_str()
-             << " reaches within lp of a grid face with no grid condition: its GIMP support"
-                " is truncated there and it loses partition of unity (interface A2)\n";
   }
 
   for (int s = 0; s < nSteps; s++) {

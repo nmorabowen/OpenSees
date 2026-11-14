@@ -64,8 +64,11 @@ Python is the same with `ops.mpm('grid', 1, '-origin', 0.0, 0.0, ...)`.
 6. commit the particle materials (a declared refusal aborts the run);
 7. particles take their trial state; 8. `Domain::commit()` (recorders); 9. profiler rows.
 
-Particles near a grid face with **no** grid condition get a warning once: their GIMP support is
-truncated there and loses partition of unity (A2). Give bodies room, or put a condition on the face.
+The engine grid carries one ghost node layer beyond every face (interface A5), so a particle's
+GIMP support is never cut: the partition of unity holds right up to the face, and a body slides
+along a face without drag. A face's `fix` or `wall` acts on its face nodes and its ghost layer
+alike; a face with no condition just has free ghost nodes. Ghost nodes appear in the
+`mpm debug` hooks with negative ids.
 
 ## Materials
 

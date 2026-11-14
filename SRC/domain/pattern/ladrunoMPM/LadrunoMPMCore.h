@@ -102,31 +102,68 @@ inline void gimpFactor(double r, double h, double lp, double &S, double &dS)
 //  Grid (interface §2)                                                         //
 // --------------------------------------------------------------------------- //
 
+// GHOST LAYERS (interface Amendment 5, replacing A2's truncation). The engine
+// grid carries `ghost` node layers beyond every face, enough to hold every
+// support node of an admissible particle: centre in the real grid and
+// lp <= h/2 give |r| < h + lp <= 1.5 h, so one layer suffices. Nothing is
+// dropped, so the partition of unity and Σ∇S = 0 hold for every admissible
+// particle (truncation broke Σ∇S along a face: spurious L_tn and drag). A face's
+// grid condition acts on its face nodes and on its ghost layers alike; a face
+// with no condition just has free ghost nodes.
+//
+// Two numberings: the ENGINE index (extId) runs over the extended lattice
+// i in [-ghost, n+ghost], x fastest; the INTERFACE id (nodeId, §2) numbers the
+// real nodes only and is what the hooks report (publicId maps one to the other).
 struct Grid {
   int    ndm = 0;
   double x0[3] = {0.0, 0.0, 0.0};
   double h = 0.0;
   int    n[3] = {1, 1, 1};
+  int    ghost = 1;
 
-  long numNodes() const
+  int  extCount(int d) const { return n[d] + 1 + 2 * ghost; }
+  long numNodes() const       // engine (extended) node count
   {
     long c = 1;
-    for (int d = 0; d < ndm; d++) c *= (long)(n[d] + 1);
+    for (int d = 0; d < ndm; d++) c *= (long)extCount(d);
     return c;
   }
+  // interface §2 id of a REAL node (0 <= i <= n per axis)
   long nodeId(const int ijk[3]) const
   {
     if (ndm == 2) return ijk[0] + (long)(n[0] + 1) * ijk[1];
     return ijk[0] + (long)(n[0] + 1) * (ijk[1] + (long)(n[1] + 1) * ijk[2]);
   }
-  void nodeIJK(long id, int ijk[3]) const
+  // engine index of a node, -ghost <= i <= n + ghost per axis
+  long extId(const int ijk[3]) const
+  {
+    const long a = ijk[0] + ghost, b = ijk[1] + ghost;
+    if (ndm == 2) return a + (long)extCount(0) * b;
+    const long c = ijk[2] + ghost;
+    return a + (long)extCount(0) * (b + (long)extCount(1) * c);
+  }
+  void extIJK(long id, int ijk[3]) const
   {
     ijk[2] = 0;
-    ijk[0] = (int)(id % (n[0] + 1));
-    long rest = id / (n[0] + 1);
-    if (ndm == 2) { ijk[1] = (int)rest; return; }
-    ijk[1] = (int)(rest % (n[1] + 1));
-    ijk[2] = (int)(rest / (n[1] + 1));
+    ijk[0] = (int)(id % extCount(0)) - ghost;
+    long rest = id / extCount(0);
+    if (ndm == 2) { ijk[1] = (int)rest - ghost; return; }
+    ijk[1] = (int)(rest % extCount(1)) - ghost;
+    ijk[2] = (int)(rest / extCount(1)) - ghost;
+  }
+  bool isReal(const int ijk[3]) const
+  {
+    for (int d = 0; d < ndm; d++)
+      if (ijk[d] < 0 || ijk[d] > n[d]) return false;
+    return true;
+  }
+  // The id a hook reports: the interface id for a real node; for a ghost node
+  // -(1 + engine index), provisional until the amended interface numbers ghosts.
+  long publicId(long ext) const
+  {
+    int ijk[3];
+    extIJK(ext, ijk);
+    return isReal(ijk) ? nodeId(ijk) : -(1 + ext);
   }
   // cell index of coordinate x on axis d: floor((x - x0)/h), clamped to n-1
   int cellOf(int d, double x) const
@@ -146,9 +183,9 @@ struct AxisSupport {
   double dS[4];
 };
 
-// Admissibility on one axis (interface §4.1 as amended by A2, §4.2): the
-// particle CENTRE inside the closed grid box, and for GIMP 0 < lp <= h/2.
-// Support nodes outside the grid are dropped by axisSupport (truncation).
+// Admissibility on one axis (interface §4.1 as amended by A2 and A5, §4.2): the
+// particle CENTRE inside the closed real grid box, and for GIMP 0 < lp <= h/2.
+// Its support nodes beyond a face live in the ghost layers (A5): none dropped.
 inline bool admissibleAxis(const Grid &g, Basis b, int d, double x, double lp)
 {
   const double lo = g.x0[d], hi = g.x0[d] + g.n[d] * g.h;
@@ -171,7 +208,7 @@ inline void axisSupport(const Grid &g, Basis b, int d, double x, double lp, Axis
   }
   const int c = (int)std::floor((x - g.x0[d]) / h);
   for (int i = c - 1; i <= c + 2; i++) {
-    if (i < 0 || i > g.n[d]) continue;
+    if (i < -g.ghost || i > g.n[d] + g.ghost) continue;   // never hit when admissible
     double S, dS;
     gimpFactor(x - (g.x0[d] + i * h), h, lp, S, dS);
     if (S == 0.0 && dS == 0.0) continue;
@@ -180,7 +217,8 @@ inline void axisSupport(const Grid &g, Basis b, int d, double x, double lp, Axis
   }
 }
 
-// Tensor-product support (interface §4.3). Appends (node, S, dS[ndm]) entries.
+// Tensor-product support (interface §4.3). Appends (engine node index, S,
+// dS[ndm]) entries; Grid::publicId turns an index into the reported id.
 inline void particleSupport(const Grid &g, Basis b, const double *x, const double *lp,
                             std::vector<long> &node, std::vector<double> &S,
                             std::vector<double> &dS)
@@ -195,7 +233,7 @@ inline void particleSupport(const Grid &g, Basis b, const double *x, const doubl
         int ijk[3] = {ax[0].idx[kx], ax[1].idx[ky], (nd == 3) ? ax[2].idx[kz] : 0};
         const double sx = ax[0].S[kx], sy = ax[1].S[ky], sz = (nd == 3) ? ax[2].S[kz] : 1.0;
         const double gx = ax[0].dS[kx], gy = ax[1].dS[ky], gz = (nd == 3) ? ax[2].dS[kz] : 0.0;
-        node.push_back(g.nodeId(ijk));
+        node.push_back(g.extId(ijk));
         S.push_back(sx * sy * sz);
         dS.push_back(gx * sy * sz);
         dS.push_back(sx * gy * sz);
@@ -410,7 +448,7 @@ class Engine {
   }
 
   // Index of the first particle not admissible at its committed position
-  // (interface §4.1 as amended by A2, §4.2), or -1.
+  // (interface §4.1 as amended by A2 and A5, §4.2), or -1.
   int firstInadmissible() const
   {
     const int nd = grid.ndm;
@@ -418,24 +456,6 @@ class Engine {
       for (int d = 0; d < nd; d++)
         if (!admissibleAxis(grid, par.basis, d, P.x[nd * p + d], P.lp[nd * p + d]))
           return p;
-    return -1;
-  }
-
-  // Index of the first GIMP particle whose domain reaches within lp of a grid
-  // face that carries no grid condition (no fix, no wall), or -1. Such a
-  // particle loses partition of unity there (A2): the host warns once per run.
-  int firstNearFreeFace() const
-  {
-    if (par.basis != BASIS_GIMP) return -1;
-    const int nd = grid.ndm;
-    for (int p = 0; p < P.size(); p++)
-      for (int d = 0; d < nd; d++) {
-        const double x = P.x[nd * p + d], lp = P.lp[nd * p + d];
-        const double lo = grid.x0[d], hi = grid.x0[d] + grid.n[d] * grid.h;
-        const bool freeLo = fc.fixMask[2 * d] == 0u && fc.wallMu[2 * d] < 0.0;
-        const bool freeHi = fc.fixMask[2 * d + 1] == 0u && fc.wallMu[2 * d + 1] < 0.0;
-        if ((freeLo && x - lp < lo) || (freeHi && x + lp > hi)) return p;
-      }
     return -1;
   }
 
@@ -458,8 +478,9 @@ class Engine {
     return grid.h / wmax;
   }
 
-  // Sorted ids of the nodes that would be active after P2G at the committed
-  // positions (interface §6.4) — the unit-level hook of interface Q4.
+  // Sorted reported ids (Grid::publicId) of the nodes that would be active
+  // after P2G at the committed positions (interface §6.4) — the unit-level
+  // hook of interface Q4.
   void activeNodes(std::vector<long> &out)
   {
     buildSupports();
@@ -467,7 +488,7 @@ class Engine {
     out.clear();
     const double mcut = par.masscut * massRef();
     for (long i : touched)
-      if (gm[i] > 0.0 && gm[i] > mcut) out.push_back(i);
+      if (gm[i] > 0.0 && gm[i] > mcut) out.push_back(grid.publicId(i));
     std::sort(out.begin(), out.end());
     clearGrid();
   }
@@ -723,15 +744,16 @@ class Engine {
   // Grid-face conditions on one active node (interface §7). full = the
   // operator on v^{n+1} (walls with friction, then fixes); otherwise the
   // second-projection operator (walls' no-penetration part only, then fixes).
+  // A face's condition acts on its face nodes AND its ghost layers (A5).
   void applyConditions(long i, double *v, bool full) const
   {
     const int nd = grid.ndm;
     int ijk[3];
-    grid.nodeIJK(i, ijk);
+    grid.extIJK(i, ijk);
     bool on[6];
     for (int d = 0; d < 3; d++) {
-      on[2 * d]     = (d < nd) && ijk[d] == 0;
-      on[2 * d + 1] = (d < nd) && ijk[d] == grid.n[d];
+      on[2 * d]     = (d < nd) && ijk[d] <= 0;
+      on[2 * d + 1] = (d < nd) && ijk[d] >= grid.n[d];
     }
     for (int f = 0; f < 2 * nd; f++) {
       if (!on[f] || fc.wallMu[f] < 0.0) continue;

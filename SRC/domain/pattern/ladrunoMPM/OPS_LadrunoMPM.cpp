@@ -363,7 +363,7 @@ int cmdDebug(LadrunoMPMPattern *h)
     std::vector<double> S, dS, out;
     ladruno_mpm::particleSupport(E.grid, E.par.basis, x, lp, node, S, dS);
     for (size_t k = 0; k < node.size(); k++) {
-      out.push_back((double)node[k]);
+      out.push_back((double)E.grid.publicId(node[k]));
       out.push_back(S[k]);
       for (int d = 0; d < nd; d++) out.push_back(dS[nd * k + d]);
     }
