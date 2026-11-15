@@ -845,6 +845,34 @@ def test_recovery_reports_the_stage_being_laid_out_and_refuses_an_earlier_broken
         mc.recover_particle_file(p2, q2)
 
 
+def test_a_torn_last_stage_can_follow_a_plain_open(tmp_path):
+    """232a §2.5 (WP-232h, #1085): the last stage may be torn after a plain open too
+    (sec2 writes WRITE_ACCESS lazily, so a file killed inside a layout can carry flags
+    0x00). particle_stage_report applies the same rule to a file opened by step 1 as
+    recover_particle_file does after step 3; after the SWMR-read open it refuses."""
+    p = tmp_path / "plain.ladruno"
+    _layout_killed(p, last_stage_partial=True)
+    mc.set_superblock(p, flags=0x00)                     # the lazy flags: a plain open works
+    with mc.open_particle_file(p) as f:
+        assert not f.swmr_mode
+        rep = mc.particle_stage_report(f)
+    assert [r.get("committed") for r in rep[:2]] == [3, 3]
+    assert rep[2]["stage"] == "MODEL_STAGE[2]" and rep[2]["torn_while_laid_out"]
+    p2 = tmp_path / "broken.ladruno"
+    _layout_killed(p2, first_stage_broken=True)
+    mc.set_superblock(p2, flags=0x00)
+    with mc.open_particle_file(p2) as f, pytest.raises(mc.TornStageError, match="not the last stage"):
+        mc.particle_stage_report(f)
+    # flags 0x05 (killed with SWMR armed: no layout was running) need the SWMR-read
+    # open, and there a last stage that will not read is corruption, not a torn layout
+    p3 = tmp_path / "armed.ladruno"
+    _layout_killed(p3, last_stage_partial=True)
+    mc.set_superblock(p3, flags=0x05)
+    with mc.open_particle_file(p3) as f, pytest.raises(mc.TornStageError, match="SWMR armed"):
+        assert f.swmr_mode
+        mc.particle_stage_report(f)
+
+
 def test_the_repair_reads_a_file_killed_in_swmr_mode_like_the_swmr_read_open(tmp_path):
     """232a §2.5: a reader without SWMR-read (e.g. h5wasm) may apply step 3's repair to
     ANY file step 1 refuses, flags 0x05 included. The image of a live SWMR writer (what a
