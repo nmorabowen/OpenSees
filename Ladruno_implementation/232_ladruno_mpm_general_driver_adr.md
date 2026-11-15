@@ -769,8 +769,8 @@ ADR-88).
   the column, the bar, retry, re-seed, recorder synchrony, restart, the refusals. Recorded misses
   (strict xfails): the cantilever's error trend across resolutions, and the footing. The owner
   chose to land and redesign the footing gate (amendment note after the §8 table). The
-  out-of-family verdict (ADR-87 D4) was not run: the orchestrator applied 232c's waiver as
-  precedent, and the owner can still ask for one after the merge.
+  owner waived the out-of-family verdict (ADR-87 D4) as for 232c; the Fable critic and
+  `/code-review high` are the review of record (both answers recorded on #1083).
 
 ---
 
