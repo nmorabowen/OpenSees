@@ -599,6 +599,20 @@ Slice column: **S1** = slice 1; **P*n*** = phase *n* of §9.
 | | tailings flow liquefaction → runout (NorSand) | the flow-slide case | P5 |
 | | cross-code against Berkeley and Kratos; NorSand matched-material track once WP-144 lands | Tier-2 screens, never gates | — |
 
+> **Amendment (232f, 2026-11-15) — the footing gate is redesigned, not met (owner's decision).**
+> Phase 1 lands with the footing recorded as a strict-xfail miss
+> (`tests/test_ladruno_mpm_implicit_gates.py::test_footing_gate`, PR #1083). The band
+> [0.90, 1.10] x 138.9 kPa is not reachable at the finest resolution by the fork's own FE on the
+> same domain: H8 B-bar 122.53 kPa (0.882x) and standard (locked) H8 154.68 kPa (1.114x) at
+> 16 cells across B (`tests/data/mpm/implicit/fe_footing.json`). With non-associated flow the
+> collapse load is mesh dependent (ADR-79), so a band around the exact value is not a valid
+> acceptance test. MPM r1 gives 188.6 kPa (1.36x), inside the locked-FE range at that
+> resolution; r2 and r3 stop on Newton divergence at Drucker-Prager apex particles, recorded in
+> the same test. The band stays in the record unchanged and was never widened. The redesigned
+> gate is owed before any phase that takes up the footing again (phase 4, anti-locking, at the
+> latest). It must be fixed at that phase's kickoff, before any MPM number, and be one that the
+> fork's own discretisations reach on the same domain at the same resolutions.
+
 **Mutation gate (ADR-87 D2)**, through the fork's existing mechanism: a new family `MPM` in the
 `LADRUNO_MUTATE_FAMILY` list (`CMakeLists.txt`, a vanilla-ledgered line), in the options of
 `.github/workflows/ladruno_mutation.yml` and in `Ladruno_scripts/mutation_gate.py`; the mutant is
@@ -751,6 +765,12 @@ ADR-88).
   2026-11-14)" notes at §5.3, §5.4, §6 and W4.
 - **2026-11-14** — 232f: the empty-node study decided D2.3 — `renormalize` at cutoff 5e-2 is the
   mode-A default (amendment note at §5.3).
+- **2026-11-15** — 232f landed (PR #1083). Gates met: cantilever QS and transient, the plate,
+  the column, the bar, retry, re-seed, recorder synchrony, restart, the refusals. Recorded misses
+  (strict xfails): the cantilever's error trend across resolutions, and the footing. The owner
+  chose to land and redesign the footing gate (amendment note after the §8 table). The
+  out-of-family verdict (ADR-87 D4) was not run: the orchestrator applied 232c's waiver as
+  precedent, and the owner can still ask for one after the merge.
 
 ---
 

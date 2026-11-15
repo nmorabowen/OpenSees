@@ -201,7 +201,7 @@ after a run — a miss is reported as a miss, with its diagnosis):
 |---|---|
 | large-deflection cantilever, quasi-static (gravity ramp) | tip deflection within 5 % of the reference at the finest of three resolutions; error non-increasing across them |
 | large-deflection cantilever, transient (Newmark) | first-peak tip deflection and first period within 5 % of the transient reference |
-| non-associated mild-cone footing (φ_ps = 27.47°, plane strain, exact q₀·N_q = 138.9 kPa) | the peak / plateau at the finest of three resolutions (cells across B × particles per cell) within [0.90, 1.10] × 138.9 kPa; all three reported. FE's own monotone sequence 1.0020 / 0.9517 / 0.9260 (ADR-79) is context, not the gate |
+| non-associated mild-cone footing (φ_ps = 27.47°, plane strain, exact q₀·N_q = 138.9 kPa) | the peak / plateau at the finest of three resolutions (cells across B × particles per cell) within [0.90, 1.10] × 138.9 kPa; all three reported. FE's own monotone sequence 1.0020 / 0.9517 / 0.9260 (ADR-79) is context, not the gate **Outcome (2026-11-15):** unreachable at r3 even by the fork's FE (B-bar 0.882x, locked 1.114x); recorded as a strict xfail, and the owner chose to redesign the gate before phase 4 (ADR 232, amendment after the §8 table). |
 | elastic column under self-weight, implicit quasi-static | the slice-1 small-compression case's closed form σ = ρ₀g(l₀ − Y) at its frozen tolerance (`tests/mpm_cases.txt`, Amendment 4; the 20 % case stays an XFAIL — quirk `WP-232b-ugimp-fixed-domains-…`) |
 | plate with a hole, stated d/W | peak σ_θθ / σ_net within 5 % of Howland's factor at that d/W |
 | 1D vibrating bar, implicit (Newmark average acceleration, small Δt) | frequency within 1 % of closed form — the transient re-seed (W1) leg |
