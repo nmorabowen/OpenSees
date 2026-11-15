@@ -104,6 +104,26 @@ def test_mode_a_selfweight_column_20pct():
     check("python", "column_selfweight_qs")
 
 
+def _band(c, r, obs):
+    e = [x for x in c["expects"] if x["obs"] == obs][0]
+    got = H.observable(c, r, e)[0]
+    at, rt = e["tol"]
+    return got, e["vals"][0], abs(got - e["vals"][0]) <= at + rt * abs(e["vals"][0])
+
+
+@pytest.mark.parametrize("name, obs", [("cantilever_qs_r1", "tip_disp_y"),
+                                       ("cantilever_dyn_r1", "first_peak_tip_disp_y"),
+                                       ("cantilever_dyn_r1", "first_period_tip")])
+def test_mode_a_r1_band(name, obs):
+    """Review item 4: the coarse cantilever rows are `report` in the cases file, but they sit
+    inside their pre-registered 5 % bands -- asserted here, so Zone-A enforces a physical P1
+    band (and SCALE has a second mode-A position oracle)."""
+    c = H.case_by_name(name)
+    r = run("python", name)
+    got, ref, ok = _band(c, r, obs)
+    assert r["stopped"] is None and ok, f"{name} {obs}: {got} against {ref} (5 %)"
+
+
 @pytest.mark.parametrize("name", REPORT_RUN)
 def test_mode_a_report_case(name):
     """Coarse rows: status `report` -- computed and printed, failed only if the run stops."""
@@ -139,10 +159,24 @@ def test_reseed_counters():
     assert 0 < rs["info_domainChanges"] < rs["info_acceptedSteps"], rs["info_domainChanges"]
 
 
+REFUSAL_RULE = {
+    "refuse_integrator_centraldifference": "transient integrator class tag",
+    "refuse_ladrunohht": "LadrunoHHT (33013)",
+    "refuse_ladrunogeneralizedalpha": "LadrunoGeneralizedAlpha (33014)",
+    "refuse_variabletransient": "VariableTransient is refused",
+    "refuse_arclength": "arc-length is out of scope",
+    "refuse_dispcontrol_gridnode": "DisplacementControl is refused",
+}
+
+
 @pytest.mark.parametrize("engine", ["python", "tcl"])
 @pytest.mark.parametrize("name", REFUSALS)
 def test_mode_a_refusal(engine, name):
+    """Each refusal is loud, changes nothing, and is refused for ITS rule (review item 12:
+    any exception used to pass)."""
     check(engine, name)
+    text = run(engine, name).get("err_text", "")
+    assert REFUSAL_RULE[name] in text, f"{name}: rule text missing from:\n{text[-1500:]}"
 
 
 @pytest.mark.parametrize("engine", ["python", "tcl"])
@@ -300,3 +334,225 @@ def test_mode_a_rigid_translation():
     err = max(abs(x[k] - (X[k] + 5.0 * v[k % 2])) for k in range(len(x)))
     assert err < 1e-12, f"rigid translation off by {err}"
     assert max(abs(s) for s in sig) < 1e-6, max(abs(s) for s in sig)
+
+
+
+# --------------------------------------------------------------------------- #
+#  Review round 1 (PR #1083)                                                   #
+# --------------------------------------------------------------------------- #
+def _small_block(ops, mode="quasiStatic", mat="elastic", ndm=2, cells=(12, 12)):
+    ops.wipe()
+    ops.model("basic", "-ndm", ndm, "-ndf", ndm)
+    if mat == "elastic":
+        ops.nDMaterial("ElasticIsotropic", 1, 1.0e5, 0.3)
+    else:
+        ops.nDMaterial("DruckerPrager", 1, 1.5e5, 15517.241379310342, 0.2, 0.21012821217029673,
+                       0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    ops.mpm("grid", 232, "-origin", *([0.0] * ndm), "-h", 0.25, "-cells", *cells[:ndm])
+    ops.mpm("mode", mode)
+
+
+def _analysis(ops, mode, handler="Transformation", integ=("Newmark", 0.5, 0.25), test=1e-12):
+    ops.constraints(handler, *((1.0e12, 1.0e12) if handler == "Penalty" else ()))
+    ops.numberer("RCM")
+    ops.system("UmfPack")
+    ops.test("NormDispIncr", test, 20)
+    ops.algorithm("Newton")
+    if mode == "quasiStatic":
+        ops.integrator("LoadControl", 1.0)
+        ops.analysis("Static")
+    else:
+        ops.integrator(*integ)
+        ops.analysis("Transient")
+
+
+def test_plain_analyze_after_failed_mpm_analyze_is_refused():
+    """Review item 1: after an `mpm analyze` that exhausts its cuts the particle elements are
+    still armed; a plain `analyze` must not run them (no G2P, particles unchanged)."""
+    ops = _ops()
+    c = H.case_by_name("column_selfweight_small_qs")
+    for name, args in H.model_commands(c):
+        getattr(ops, name)(*H._py_args(args))
+    for name, args in H.analysis_commands(c):
+        getattr(ops, name)(*H._py_args(args))
+    ops.mpm("analyze", 2, c["dt"])
+    ops.mpm("cut", 2.0, 1)
+    ops.mpm("debug", "failAttempt", 3, 5)
+    with pytest.raises(Exception):
+        ops.mpm("analyze", 1, c["dt"])
+    x0 = list(ops.mpm("particleData", "x"))
+    g0 = int(ops.mpm("info", "g2p"))
+    rc = ops.analyze(1)
+    assert rc != 0, "a plain analyze ran the MPM particle elements"
+    assert list(ops.mpm("particleData", "x")) == x0 and int(ops.mpm("info", "g2p")) == g0
+
+
+@pytest.mark.parametrize("handler", ["Transformation", "Penalty"])
+@pytest.mark.parametrize("flip", [1.0, 0.0])
+def test_transient_gridvel_translation(handler, flip):
+    """Review item 2: a whole-grid gridvel in TRANSIENT mode A from rest. The prescribed nodes
+    must start each step at v (not the projected particle velocity): every particle then
+    moves at exactly v, FLIP and PIC alike, under the Transformation and the Penalty handler."""
+    ops = _ops()
+    _small_block(ops, mode="implicit")
+    ops.mpm("body", 1, "box", 1.0, 1.0, 2.0, 2.0, "-ppc", 2, "-mat", 1, "-rho", 1.0)
+    ops.mpm("flip", flip)
+    v = (0.01, -0.02)
+    ops.mpm("gridvel", "all", "box", -1.0, -1.0, 4.0, 4.0, "v", *v)
+    _analysis(ops, "implicit", handler=handler)
+    X = list(ops.mpm("particleData", "x"))
+    tol = 1e-10 if handler == "Transformation" else 1e-6
+    for k in range(1, 6):
+        ops.mpm("analyze", 1, 0.1)
+        x = list(ops.mpm("particleData", "x"))
+        vp = list(ops.mpm("particleData", "v"))
+        ex = max(abs(x[i] - (X[i] + 0.1 * k * v[i % 2])) for i in range(len(x)))
+        ev = max(abs(vp[i] - v[i % 2]) for i in range(len(vp)))
+        assert ex < tol and ev < tol * 100, (k, ex, ev)
+
+
+def _peaks(t, y):
+    out = []
+    for k in range(1, len(y) - 1):
+        if y[k] > y[k - 1] and y[k] >= y[k + 1] and y[k] > 0:
+            mins = H._minima(t[k - 1:k + 2], [-a for a in y[k - 1:k + 2]])
+            out.append(-mins[0][1] if mins else y[k])
+    return out
+
+
+def test_dynamic_rayleigh_betak():
+    """The element guide's mandatory dynamic Rayleigh regression (betaK != 0, transient), on
+    the Newmark bar: stiffness-proportional damping betaK = 0.1 at omega = 2 pi / 10 gives
+    zeta = betaK omega / 2 = 0.0314, so successive positive velocity peaks of the first mode
+    decay by exp(-2 pi zeta / sqrt(1 - zeta^2)) = 0.8209 (2 %)."""
+    ops = _ops()
+    c = H.case_by_name("bar_implicit_2d")
+    for name, args in H.model_commands(c):
+        getattr(ops, name)(*H._py_args(args))
+    ops.mpm("rayleigh", 0.0, 0.1)
+    for name, args in H.analysis_commands(c):
+        getattr(ops, name)(*H._py_args(args))
+    t, cv = [0.0], []
+    s0 = list(ops.mpm("info", "summary"))
+    cv.append(s0[1] / s0[0])
+    for k in range(2500):
+        ops.mpm("analyze", 1, 0.01)
+        sm = list(ops.mpm("info", "summary"))
+        t.append((k + 1) * 0.01)
+        cv.append(sm[1] / sm[0])
+    pk = _peaks(t, cv)
+    assert len(pk) >= 2, pk
+    zeta = 0.1 * (2 * 3.141592653589793 / 10.0) / 2
+    want = __import__("math").exp(-2 * 3.141592653589793 * zeta / (1 - zeta * zeta) ** 0.5)
+    assert abs(pk[1] / pk[0] - want) <= 0.02 * want, (pk[:3], want)
+
+
+@pytest.mark.parametrize("integ", [("HHT", 0.9), ("GeneralizedAlpha", 1.0, 0.9)])
+def test_bar_period_other_integrators(integ):
+    """Review item 5: the whitelisted HHT and GeneralizedAlpha re-seed through their own
+    domainChanged(); the Newmark bar's period (10, 1 %) holds under both."""
+    ops = _ops()
+    c = H.case_by_name("bar_implicit_2d")
+    c["integrator_command"] = [str(x) for x in integ]
+    r = H.run_python(c, ops)
+    e = [x for x in c["expects"] if x["obs"] == "period_comx"][0]
+    got = H.observable(c, r, e)[0]
+    assert r["stopped"] is None and abs(got - 10.0) <= 0.1, got
+
+
+def test_3d_rigid_translation():
+    """Review item 5: mode A in 3D -- the whole-grid gridvel translation, closed form."""
+    ops = _ops()
+    _small_block(ops, ndm=3, cells=(6, 6, 6))
+    ops.mpm("body", 1, "box", 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, "-ppc", 2, "-mat", 1, "-rho", 1.0)
+    v = (0.01, -0.02, 0.015)
+    ops.mpm("gridvel", "all", "box", -1.0, -1.0, -1.0, 3.0, 3.0, 3.0, "v", *v)
+    _analysis(ops, "quasiStatic")
+    X = list(ops.mpm("particleData", "x"))
+    ops.mpm("analyze", 4, 1.0)
+    x = list(ops.mpm("particleData", "x"))
+    err = max(abs(x[k] - (X[k] + 4.0 * v[k % 3])) for k in range(len(x)))
+    assert err < 1e-12, err
+    assert max(abs(s) for s in ops.mpm("particleData", "sig")) < 1e-6
+
+
+def test_3d_bar_period():
+    """Review item 5: the vibrating bar in 3D (rollers on y and z faces), Newmark average
+    acceleration, dt 0.02: period 10 within 1 %."""
+    ops = _ops()
+    c = H.case_by_name("bar_implicit_2d")
+    c["ndm"] = 3
+    c["origin"] = [0.0, 0.0, 0.0]
+    c["cells"] = [30, 1, 1]
+    c["bodies"] = [["1", "box", "0.0", "0.0", "0.0", "25.0", "1.0", "1.0", "ppc", "2", "mat", "1",
+                    "rho", "1.0"]]
+    c["fixes"] = c["fixes"] + [("zmin", "z"), ("zmax", "z")]
+    c["dt"], c["steps"] = 0.02, 1000
+    r = H.run_python(c, ops)
+    e = [x for x in c["expects"] if x["obs"] == "period_comx"][0]
+    got = H.observable(c, r, e)[0]
+    assert r["stopped"] is None and abs(got - 10.0) <= 0.1, got
+
+
+def test_mpm_reset_after_a_removed_particle_element():
+    """Review item 6: `remove element` on a particle element, then `mpm reset`: no crash (the
+    host had a null material slot), and the next `mpm analyze` is refused loudly."""
+    ops = _ops()
+    _small_block(ops)
+    ops.mpm("body", 1, "box", 1.0, 1.0, 2.0, 2.0, "-ppc", 2, "-mat", 1, "-rho", 1.0)
+    ops.mpm("gridvel", "all", "box", -1.0, -1.0, 4.0, 4.0, "v", 0.0, -0.001)
+    _analysis(ops, "quasiStatic")
+    ops.mpm("analyze", 1, 1.0)
+    tag = int(min(ops.getEleTags()))
+    ops.remove("element", tag)
+    ops.mpm("reset")
+    with pytest.raises(Exception):
+        ops.mpm("analyze", 1, 1.0)
+
+
+def test_plain_reset_keeps_particle_plastic_state():
+    """Review item 7: a plain `reset` must not revert particle materials behind the host's back
+    (it used to drop DruckerPrager's plastic history while x / F / strain stayed deformed). A
+    block compressed by a gridvel: 3 steps, `reset`, 1 step equals 4 steps straight."""
+    ops = _ops()
+    out = []
+    for do_reset in (False, True):
+        _small_block(ops, mat="dp")
+        ops.mpm("body", 1, "box", 0.0, 0.0, 2.0, 2.0, "-ppc", 2, "-mat", 1, "-rho", 1.0)
+        ops.mpm("fix", "xmin", "x")
+        ops.mpm("fix", "ymin", "y")
+        ops.mpm("gridvel", "top", "box", -1.0, 2.0, 4.0, 1.0e9, "v", "free", -0.004)
+        _analysis(ops, "quasiStatic")
+        ops.mpm("analyze", 3, 1.0)
+        if do_reset:
+            ops.reset()
+        ops.mpm("analyze", 1, 1.0)
+        out.append(list(ops.mpm("particleData", "sig")))
+    a, b = out
+    assert max(abs(x - y) for x, y in zip(a, b)) <= 1e-9 * max(abs(x) for x in a), "plain reset reverted particles"
+
+
+def test_retry_after_trial_on_a_plastic_state():
+    """Review item 13: the forced failure now happens AFTER the trial (materials carry a trial
+    state), on DruckerPrager in compression; the retried step equals the cut-dt run (1e-12)."""
+    ops = _ops()
+    runs = []
+    for variant in ("retry", "reference"):
+        _small_block(ops, mat="dp")
+        ops.mpm("body", 1, "box", 0.0, 0.0, 2.0, 2.0, "-ppc", 2, "-mat", 1, "-rho", 1.0)
+        ops.mpm("fix", "xmin", "x")
+        ops.mpm("fix", "ymin", "y")
+        ops.mpm("gridvel", "top", "box", -1.0, 2.0, 4.0, 1.0e9, "v", "free", -0.004)
+        _analysis(ops, "quasiStatic")
+        if variant == "retry":
+            ops.mpm("debug", "failAttempt", 3, 1, "afterTrial")
+            ops.mpm("analyze", 6, 1.0)
+            assert int(ops.mpm("info", "retries")) == 1
+        else:
+            ops.mpm("analyze", 2, 1.0)
+            ops.mpm("analyze", 8, 0.5)
+        runs.append({f: list(ops.mpm("particleData", f)) for f in ("x", "sig", "F")})
+    for f in ("x", "sig", "F"):
+        a, b = runs[0][f], runs[1][f]
+        den = max(abs(v) for v in b) or 1.0
+        assert max(abs(x - y) for x, y in zip(a, b)) / den <= 1e-12, f

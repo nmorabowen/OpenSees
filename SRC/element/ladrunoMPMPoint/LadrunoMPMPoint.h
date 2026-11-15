@@ -82,8 +82,10 @@ class LadrunoMPMPointHost
   virtual const double *mpmBodyForce(int p) = 0;
   // the trial centre x stays admissible (interface A7)
   virtual bool   mpmTrialAdmissible(int p, const double *x) = 0;
-  // the debug hook `mpm debug failAttempt`: this attempt fails before commit
-  virtual bool   mpmFailThisAttempt(void) = 0;
+  // the debug hook `mpm debug failAttempt`: 0 no, 1 fail before the trial, 2 after it
+  virtual int    mpmFailThisAttempt(void) = 0;
+  // inside the host's `mpm analyze` / tangentCheck: the only window update() may run in
+  virtual bool   mpmInStep(void) = 0;
   // the batched G2P: every ARMED particle element counts in at commit
   virtual void   mpmParticleCommitted(int p) = 0;
   // the element is being destroyed (its material with it)

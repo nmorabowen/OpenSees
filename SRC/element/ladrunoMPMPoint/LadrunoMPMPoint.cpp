@@ -120,8 +120,7 @@ LadrunoMPMPoint::releaseMaterial(void)
 void
 LadrunoMPMPoint::setRayleigh(double am, double bk)
 {
-  if (am != 0.0 || bk != 0.0)
-    this->Element::setRayleighDampingFactors(am, bk, 0.0, 0.0);
+  this->Element::setRayleighDampingFactors(am, bk, 0.0, 0.0);   // zero clears them (item 9)
 }
 
 void
@@ -297,7 +296,9 @@ LadrunoMPMPoint::update(void)
     return 0;
   }
   LadrunoMPMPointHost *h = host();
-  if (h == 0 || st != ARMED) {
+  // review item 1: armed AND inside the host's `mpm analyze` / tangentCheck window; a plain
+  // `analyze` after a failed `mpm analyze` finds the elements still ARMED.
+  if (h == 0 || st != ARMED || !h->mpmInStep()) {
     static int nWarn = 0;
     if (nWarn++ < 3)
       opserr << "ERROR LadrunoMPMPoint " << this->getTag() << " -- "
@@ -306,11 +307,16 @@ LadrunoMPMPoint::update(void)
              << ": mode-A particle elements move only through `mpm analyze` (ADR 232 §5.3)\n";
     return -1;
   }
-  if (h->mpmFailThisAttempt()) {       // `mpm debug failAttempt`
+  const int failMode = h->mpmFailThisAttempt();     // `mpm debug failAttempt`
+  if (failMode == 1) {
     trialValid = false;
     return -1;
   }
   const int rc = computeTrial();
+  if (failMode == 2) {                 // after the trial: the material carries a trial state
+    trialValid = false;
+    return -1;
+  }
   if (rc < 0) {
     trialValid = false;
     const char *why = (rc == -2) ? "det(F_mid) <= 0 or det(F) <= 0 (inverted or collapsed)"
@@ -350,6 +356,16 @@ LadrunoMPMPoint::revertToLastCommit(void)
 int
 LadrunoMPMPoint::revertToStart(void)
 {
+  // review item 7: a plain `reset` (Domain::revertToStart) would revert the material while the
+  // host keeps the particle's deformed x / F / strain -- plastic history lost silently. While a
+  // host owns the particle, refuse it loudly; `mpm reset` reverts particles and materials together.
+  if (host() != 0) {
+    static int nWarn = 0;
+    if (nWarn++ < 1)
+      opserr << "WARNING LadrunoMPMPoint -- `reset` does not reach MPM particles: their state is"
+                " the host's; use `mpm reset` (particles and materials together). Nothing reverted.\n";
+    return 0;
+  }
   int rc = (mat != 0) ? mat->revertToStart() : 0;
   needUpdate = true;
   trialValid = false;

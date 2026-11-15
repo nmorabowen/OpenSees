@@ -459,6 +459,12 @@ def _inject_commands(c):
     return out
 
 
+def _stderr_capture():
+    """opserr around one call (slice 1's capture: Python's sys.stderr and fd 2)."""
+    import ladruno_mpm_harness as h1
+    return h1._StderrCapture()
+
+
 def _as_list(v):
     if v is None:
         return []
@@ -514,9 +520,14 @@ def run_python(c, ops, workdir=None, mass_cutoff=None, empty_nodes=None):
             per_step = not c["schedule"]
             calls = [(1, dt)] * n if per_step else [(n, dt)]
             for k, (m, h) in enumerate(calls):
-                try:
-                    ops.mpm("analyze", m, h)
-                except Exception:
+                failed = False
+                with _stderr_capture() as cap:      # review item 12: the refusal's own words
+                    try:
+                        ops.mpm("analyze", m, h)
+                    except Exception:
+                        failed = True
+                r["err_text"] = r.get("err_text", "") + cap.text
+                if failed:
                     r["stopped"] = done
                     break
                 done += m
@@ -630,6 +641,7 @@ def tcl_deck(c, particle_path=None, phase="all", db=None):
     for name, args in analysis_commands(c, override_integrator=not dc):
         lines.append("  " + name + " " + " ".join(_tcl_arg(a) for a in args))
     lines.append("}]")
+    lines.append("puts \"SETUP $ok\"")
     if dc:      # one admitted step first, so a grid node exists to name
         lines.append("mpm analyze 1 %r" % schedule_of(c)[0][0])
         lines.append("set gt [lindex [mpm info gridNodeTags] 0]")
@@ -719,7 +731,11 @@ def run_tcl(c, exe, timeout=3600, inproc=False):
                 r["init_" + f] = init.get("init_" + f, [])
             return r
         out = _run_deck(tcl_deck(c, ppath), exe, td, c["name"], timeout)
-        return _parse_tcl(c, out)
+        r = _parse_tcl(c, out)
+        if c["kind"] != "refusal" and r.get("setup_rc", 0) != 0:
+            raise RuntimeError(f"{c['name']}: the Tcl analysis set-up failed:\n" + out[-3000:])
+        r["err_text"] = out
+        return r
 
 
 def _parse_tcl(c, out):
@@ -747,6 +763,8 @@ def _parse_tcl(c, out):
             r["info_" + t[1]] = int(float(t[2]))
         elif t[0] == "XB":
             r["x_before_dc"] = [float(v) for v in t[1:]]
+        elif t[0] == "SETUP":
+            r["setup_rc"] = int(t[1])
         elif t[0] == "DTH":
             r["dtHistory"] = [float(v) for v in t[1:]]
     if "init_x" in r:

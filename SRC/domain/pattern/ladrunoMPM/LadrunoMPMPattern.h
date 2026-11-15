@@ -73,6 +73,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 class NDMaterial;
@@ -193,8 +194,9 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   void   setEmptyNodes(double gamma) { ghostGamma = gamma; }
   void   setCut(double factor, int maxCuts) { cutFactor = factor; maxCutCount = maxCuts; }
   int    setTagBases(int nodeBase, int eleBase, std::string &err);
-  void   setRayleighMPM(double am, double bk) { rayAlphaM = am; rayBetaK = bk; }
-  void   setDebugFail(int step, int attempts) { failStep = step; failAttempts = attempts; }
+  void   setRayleighMPM(double am, double bk);
+  void   setDebugFail(int step, int attempts, bool afterTrial = false)
+    { failStep = step; failAttempts = attempts; failAfterTrial = afterTrial; }
   void   setDebugReseed(int m) { reseedMode = m; }               // 0 default, 1 always, 2 skip
   int    debugTangentCheck(double scale, double eps, std::vector<double> &out, std::string &err);
   // `mpm info` counters (interface §5)
@@ -206,7 +208,8 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   ladruno_mpm::Particles &mpmParticles(void) { return eng.P; }
   const double *mpmBodyForce(int p);
   bool   mpmTrialAdmissible(int p, const double *x);
-  bool   mpmFailThisAttempt(void) { return failNow; }
+  int    mpmFailThisAttempt(void) { return failNow; }
+  bool   mpmInStep(void) { return armedWindow; }
   void   mpmParticleCommitted(int p);
   void   mpmElementGone(int p);
   double mpmGhostSpring(int p);
@@ -277,7 +280,10 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   int                     hostPayloadDbTag;
   bool                    elementsRestored; // restored with elements in the Domain: relink first
   double                  stepT0;          // Domain time at the start of the attempt
-  bool                    failNow;
+  int                     failNow;         // 0, 1 fail before the trial, 2 after it (review item 13)
+  bool                    failAfterTrial;
+  bool                    armedWindow;     // inside `mpm analyze` / tangentCheck (review item 1)
+  std::unordered_set<int> liveTags;        // the live grid node tags (review item 10)
   int                     failStep, failAttempts, reseedMode;
   int                     armedCount, committedCount;
   bool                    g2pRan, g2pSkipped;

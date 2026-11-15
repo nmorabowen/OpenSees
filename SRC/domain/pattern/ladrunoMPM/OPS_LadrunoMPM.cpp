@@ -457,9 +457,18 @@ int cmdDebug(LadrunoMPMPattern *h)
   if (what == "aborted") return outInt(h->isAborted() ? 1 : 0);
   if (what == "failAttempt") {                                         // WP-232f retry test hook
     int k, m = 1;
-    if (!readInt(k)) return fail("debug failAttempt <step> [<attempts>]");
-    if (OPS_GetNumRemainingInputArgs() > 0 && !readInt(m)) return fail("debug failAttempt <step> [<attempts>]");
-    h->setDebugFail(k, m);
+    bool after = false;
+    if (!readInt(k)) return fail("debug failAttempt <step> [<attempts>] [afterTrial]");
+    if (OPS_GetNumRemainingInputArgs() > 0) {
+      const std::string t = OPS_GetString();
+      if (t == "afterTrial") after = true;
+      else { OPS_ResetCurrentInputArg(-1); if (!readInt(m)) return fail("debug failAttempt <step> [<attempts>] [afterTrial]"); }
+    }
+    if (OPS_GetNumRemainingInputArgs() > 0) {
+      if (std::string(OPS_GetString()) != "afterTrial") return fail("debug failAttempt <step> [<attempts>] [afterTrial]");
+      after = true;
+    }
+    h->setDebugFail(k, m, after);
     return 0;
   }
   if (what == "tangentCheck") {                                        // WP-232f footing diagnosis
@@ -679,7 +688,7 @@ int OPS_LadrunoMPM(void)
   if (sub == "massCutoff") {
     double a;
     if (!readDoubles(1, &a) || a < 0.0) return fail("massCutoff -- c_m >= 0");
-    h->setMassCutoffUser(a);      // wins in both modes (mode-A default 1e-6, mode F 1e-10)
+    h->setMassCutoffUser(a);      // wins in both modes (mode-A default 5e-2 with renormalize, mode F 1e-10)
     return 0;
   }
   if (sub == "mode") {

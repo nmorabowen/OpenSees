@@ -164,6 +164,17 @@ LadrunoMPMPattern::modeAMassCutoff(void) const
   return masscutUser ? eng.par.masscut : 5.0e-2;
 }
 
+// `mpm rayleigh <alphaM> <betaK>`: stored for elements made later AND applied to the live
+// ones at once (review item 9: it used to be applied only when the elements were created).
+void
+LadrunoMPMPattern::setRayleighMPM(double am, double bk)
+{
+  rayAlphaM = am;
+  rayBetaK = bk;
+  for (LadrunoMPMPoint *e : eles)
+    if (e != 0) e->setRayleigh(am, bk);
+}
+
 int
 LadrunoMPMPattern::setTagBases(int nb, int eb, std::string &err)
 {
@@ -184,9 +195,7 @@ LadrunoMPMPattern::setTagBases(int nb, int eb, std::string &err)
 bool
 LadrunoMPMPattern::isGridNode(int tag) const
 {
-  for (const auto &kv : liveTag)
-    if (kv.second == tag) return true;
-  return false;
+  return liveTags.count(tag) != 0;      // review item 10: O(1), not a scan per Domain node
 }
 
 long
@@ -392,6 +401,7 @@ LadrunoMPMPattern::retireNode(long ext)
     Node *n = dom->removeNode(it->second);
     delete n;
   }
+  liveTags.erase(it->second);
   liveTag.erase(it);
 }
 
@@ -595,6 +605,8 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
         if (liveTag.find(x) == liveTag.end()) { nodeSetChanged = true; break; }
   }
   const bool specChanged = nodeSetChanged || !(newSpec == lastSpec);
+  // From here on the grid state is being changed: a failure is -2 (the driver aborts and
+  // `mpm reset` is required -- review item 8), never "nothing changed".
   if (specChanged) removeHostSPs();
   if (nodeSetChanged) {
     std::vector<long> drop;
@@ -615,7 +627,7 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
     }
     for (long x : want) {
       if (liveTag.count(x)) continue;
-      if (nextNodeTag == INT_MAX) { err = "grid node tags would overflow int (W5: never reused)"; return -1; }
+      if (nextNodeTag == INT_MAX) { err = "grid node tags would overflow int (W5: never reused)"; return -2; }
       int ijk[3];
       G.extIJK(x, ijk);
       const double c0 = G.x0[0] + ijk[0] * G.h, c1 = G.x0[1] + ijk[1] * G.h;
@@ -624,8 +636,9 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
       if (!dom->addNode(n)) {
         delete n;
         err = "could not add grid node " + std::to_string(nextNodeTag) + " (a tag in use? see `mpm tagBase`)";
-        return -1;
+        return -2;
       }
+      liveTags.insert(nextNodeTag);
       liveTag[x] = nextNodeTag++;
     }
   }
@@ -646,14 +659,34 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
           r[1 + nd + a] += w * P.a[nd * p + a];
         }
     }
+  // The NODE's committed v, a take the grid conditions (review item 2): a fixed component
+  // v = a = 0, a prescribed-velocity component v = v_d (transient) and a = 0. The analysis
+  // never writes a constrained DOF's committed v / a back (DOF_Group::setNodeVel skips
+  // loc < 0), so Newmark's start, Rayleigh and Penalty / Lagrange would see the raw
+  // projection otherwise. The ELEMENT's vH, aH (the FLIP reference) stay the unconditioned
+  // projection -- mode F's v_n = p / m: a velocity a condition imposes at the step start is
+  // then part of the FLIP increment, so a body driven from rest picks it up (with the
+  // conditioned value as reference, FLIP would never see the jump).
+  for (auto &kv : mv) {
+    std::vector<double> &r = kv.second;
+    for (int a = 0; a < nd; a++) {          // r becomes [m, v, a], unconditioned
+      r[1 + a] = (r[0] > 0.0) ? r[1 + a] / r[0] : 0.0;
+      r[1 + nd + a] = (r[0] > 0.0) ? r[1 + nd + a] / r[0] : 0.0;
+    }
+  }
   Vector zero(nd), vel(nd), acc(nd);
   for (auto &kv : mv) {
     Node *n = dom->getNode(liveTag[kv.first]);
-    if (n == 0) { err = "internal: grid node missing"; return -1; }
+    if (n == 0) { err = "internal: grid node missing"; return -2; }
     const std::vector<double> &r = kv.second;
     for (int a = 0; a < nd; a++) {
-      vel(a) = (r[0] > 0.0) ? r[1 + a] / r[0] : 0.0;
-      acc(a) = (r[0] > 0.0) ? r[1 + nd + a] / r[0] : 0.0;
+      vel(a) = r[1 + a];
+      acc(a) = r[1 + nd + a];
+      auto it = spec.find(std::make_pair(kv.first, a));
+      if (it != spec.end()) {
+        vel(a) = qs ? 0.0 : it->second.first;
+        acc(a) = 0.0;
+      }
     }
     n->setTrialDisp(zero);
     n->setTrialVel(vel);
@@ -662,9 +695,8 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
   }
 
   // ---- elements: created, or re-pointed in place ------------------------------------------
-  if (eles.empty() && createElements(err) < 0) return -1;
+  if (eles.empty() && createElements(err) < 0) return -2;
   bool connChanged = false;
-  const bool fresh = !eles.empty() && eles[0] != 0 && eles[0]->getDomain() == 0;
   for (int p = 0; p < N; p++) {
     int nk = 0;
     for (long k = supStart[p]; k < supStart[p + 1]; k++) nk += keep[k];
@@ -680,24 +712,28 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
       const std::vector<double> &r = mv[node[k]];
       for (int a = 0; a < nd; a++) {
         dS[nd * j + a] = dSv[nd * k + a];
-        vH[nd * j + a] = (r[0] > 0.0) ? r[1 + a] / r[0] : 0.0;
-        aH[nd * j + a] = (r[0] > 0.0) ? r[1 + nd + a] / r[0] : 0.0;
+        vH[nd * j + a] = r[1 + a];          // the unconditioned projection (FLIP reference)
+        aH[nd * j + a] = r[1 + nd + a];
       }
       j++;
     }
     LadrunoMPMPoint *e = eles[p];
-    if (e == 0) { err = "internal: particle element " + std::to_string(p) + " is gone"; return -1; }
+    if (e == 0) {
+      err = "particle element " + std::to_string(p) + " is gone (removed by hand?)";
+      return -2;
+    }
     if (!e->connectivityEquals(tags)) connChanged = true;
-    if (e->repoint(tags, S, dS, ina, vH, aH) < 0) { err = "re-pointing failed"; return -1; }
+    if (e->repoint(tags, S, dS, ina, vH, aH) < 0) { err = "re-pointing failed"; return -2; }
   }
-  if (fresh) {
-    for (int p = 0; p < N; p++) {
-      eles[p]->setRayleigh(rayAlphaM, rayBetaK);
-      if (!dom->addElement(eles[p])) {
-        err = "could not add particle element " + std::to_string(eles[p]->getTag()) +
-              " (a tag in use? see `mpm tagBase`)";
-        return -1;
-      }
+  // review item 8: whether an element is in the Domain is decided per element, so a
+  // partial add earlier never strands the rest
+  for (int p = 0; p < N; p++) {
+    if (eles[p]->getDomain() != 0) continue;
+    eles[p]->setRayleigh(rayAlphaM, rayBetaK);
+    if (!dom->addElement(eles[p])) {
+      err = "could not add particle element " + std::to_string(eles[p]->getTag()) +
+            " (a tag in use? see `mpm tagBase`)";
+      return -2;
     }
     connChanged = true;
   }
@@ -710,7 +746,7 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
       if (!this->addSP_Constraint(sp)) {
         delete sp;
         err = "could not add a grid-condition SP";
-        return -1;
+        return -2;
       }
       hostSPTags.push_back(sp->getTag());
     }
@@ -741,7 +777,13 @@ LadrunoMPMPattern::debugTangentCheck(double scale, double eps, std::vector<doubl
 {
   if (theMode == MODE_EXPLICIT) { err = "tangentCheck needs mode implicit or quasiStatic"; return -1; }
   if (elementsRestored && relinkElements(err) < 0) return -1;
-  if (prepareStep(0.0, err) < 0) return -1;
+  armedWindow = true;
+  const int prc = prepareStep(0.0, err);
+  if (prc < 0) {
+    armedWindow = false;
+    if (prc == -2) aborted = true;
+    return -1;
+  }
   inStep = true;
   stepT0 = this->getDomain()->getCurrentTime();
   double worst = 0.0, sum = 0.0, normW = 0.0;
@@ -755,6 +797,7 @@ LadrunoMPMPattern::debugTangentCheck(double scale, double eps, std::vector<doubl
     if (rel > worst) { worst = rel; worstP = p; normW = nk; }
   }
   inStep = false;
+  armedWindow = false;              // review item 1: no plain `analyze` may run them
   out = {worst, count > 0 ? sum / count : 0.0, (double)worstP, normW, (double)count};
   return 0;
 }
@@ -817,10 +860,10 @@ LadrunoMPMPattern::analyzeImplicit(int nSteps, double dt, const LadrunoMPMAnalys
   dtLog.clear();
 
   LoadControl *lc = 0;
-  double ud = 0.0, umin = 0.0, umax = 0.0;
+  double ud = 0.0, umin = 0.0, umax = 0.0, ulast = 0.0;
   if (theMode == MODE_QUASISTATIC) {
     lc = static_cast<LoadControl *>(A.si);           // class tag checked by admitAnalysis
-    lc->ladrunoGetIncrement(ud, umin, umax);
+    lc->ladrunoGetIncrement(ud, umin, umax, ulast);
     if (ud != dt || umin != dt || umax != dt)
       opserr << "mpm analyze (quasiStatic): the LoadControl increment is dt = " << dt
              << " for this call (the user's " << ud << " [" << umin << ", " << umax
@@ -857,13 +900,23 @@ LadrunoMPMPattern::analyzeImplicit(int nSteps, double dt, const LadrunoMPMAnalys
     int attempt = 0;
     for (;;) {
       attempt++;
-      if (prepareStep(h, err) < 0) {
-        opserr << "ERROR mpm analyze -- " << err.c_str() << "; step refused, nothing changed\n";
+      armedWindow = true;
+      const int prc = prepareStep(h, err);
+      if (prc < 0) {
+        if (prc == -2) {
+          aborted = true;
+          opserr << "ERROR mpm analyze -- " << err.c_str() << ". The grid state was already being"
+                    " changed: the run is aborted until `mpm reset` (particles keep the last"
+                    " accepted step)\n";
+        } else {
+          opserr << "ERROR mpm analyze -- " << err.c_str() << "; step refused, nothing changed\n";
+        }
         rc = -1;
         break;
       }
       stepT0 = dom->getCurrentTime();
-      failNow = (failStep > 0 && failStep == epochSteps + 1 && attempt <= failAttempts);
+      failNow = (failStep > 0 && failStep == epochSteps + 1 && attempt <= failAttempts)
+                ? (failAfterTrial ? 2 : 1) : 0;
       if (failNow)
         opserr << "mpm debug failAttempt: attempt " << attempt << " of step " << failStep
                << " is made to fail before commit\n";
@@ -875,11 +928,11 @@ LadrunoMPMPattern::analyzeImplicit(int nSteps, double dt, const LadrunoMPMAnalys
       if (theMode == MODE_IMPLICIT) {
         res = A.ta->analyzeStep(h);
       } else {
-        lc->ladrunoSetIncrement(h, h, h);
+        lc->ladrunoSetIncrement(h, h, h, -1.0);
         res = A.sa->analyze(1, false);
       }
       inStep = false;
-      failNow = false;
+      failNow = 0;
       if (res >= 0 && g2pRan) break;                                // accepted
       if (res >= 0 || committedCount > 0) {
         aborted = true;
@@ -926,7 +979,8 @@ LadrunoMPMPattern::analyzeImplicit(int nSteps, double dt, const LadrunoMPMAnalys
     }
   }
   if (writer != 0) writer->flush();
-  if (lc != 0) lc->ladrunoSetIncrement(ud, umin, umax);
+  if (lc != 0) lc->ladrunoSetIncrement(ud, umin, umax, ulast);   // review item 11
+  armedWindow = false;                     // review item 1
   dom->flushRecorders();                                          // W16
   return rc;
 }
@@ -1066,8 +1120,13 @@ LadrunoMPMPattern::unpackState(const Vector &in)
   u.getv(elastic);
   u.getv(pforce);
   liveTag.clear();
+  liveTags.clear();
   const int nl = (int)u.get();
-  for (int i = 0; i < nl && !u.bad; i++) { const long x = (long)u.get(); liveTag[x] = (int)u.get(); }
+  for (int i = 0; i < nl && !u.bad; i++) {
+    const long x = (long)u.get();
+    liveTag[x] = (int)u.get();
+    liveTags.insert(liveTag[x]);
+  }
   gridVels.clear();
   const int ng = (int)u.get();
   for (int i = 0; i < ng && !u.bad; i++) {

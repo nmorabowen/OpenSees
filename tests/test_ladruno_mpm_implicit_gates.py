@@ -76,22 +76,21 @@ def test_cantilever_error_trend():
 
 
 FOOTING_MISS = (
-    "pre-registered miss, recorded 2026-11-14 (WP-232f footing diagnosis, PR #1083): the "
-    "mild-cone footing does not reach the band [0.90, 1.10] x 138.907 kPa at r3. Two findings. "
-    "(a) PLATEAU OVERSHOOT: r1 q_max 188.6 (1.36x), in the locked-FE range (232f-V: H8 without "
-    "B-bar 1.577 / 1.290 at 4 / 8 cells across B, with B-bar 1.018 / 0.941); the measurement is "
-    "exact (condForce = sigma * width, ratio 1.000000, test_condforce_is_the_reaction) and a "
-    "lower elastic nu does not move it (nu 0.3 / 0.2: 190.3 / 190.5), so the diagnosis is "
-    "plastic-incompressibility locking under isochoric flow (psi = 0) with 2x2 particles per "
-    "cell -- the ADR's phase 4 (anti-locking), not phase 1. (b) NEWTON DIVERGENCE at r2 / r3 "
-    "(r2 stops near t = 30, r3 at step 42): iterates invert particles and carry centres out of "
-    "the grid; NewtonLineSearch (t = 28) and KrylovNewton (t = 29) do not help. The element "
-    "tangent is not the cause: ||K - K_FD|| / ||K|| (FD converged over eps 1e-8..1e-10) is "
-    "3e-6 elastic undeformed, 1e-3 at 0.2 % strain, mean 3.7 % on the plastic footing state; the "
-    "worst particles (rel ~1) carry |K| ~ 75 against ~1e5 elastic: DruckerPrager at its apex "
-    "(weightless soil, sigma_y 0.2 kPa near the free surface) returns its regularised 1e-3 Ce "
-    "tangent where the response is perfectly plastic, so the nodes they support are nearly "
-    "singular. The band is not touched.")
+    "pre-registered miss, recorded 2026-11-14/15 (WP-232f, PR #1083). The band [0.90, 1.10] x "
+    "138.907 = [125.0, 152.8] kPa is NOT REACHABLE at r3 by any of the fork's own discretisations: "
+    "with NON-ASSOCIATED flow the collapse load is mesh dependent (ADR-79), and 232f-V's FE on this "
+    "case's domain at 16 cells across B gives B-bar 122.53 (0.882x) and std, locked, 154.68 (1.114x) "
+    "-- both outside (tests/data/mpm/implicit/fe_footing.json). So anti-locking (phase 4) alone would "
+    "not bring MPM into the band; the gate itself is the owner's to redesign. Separately, (b) NEWTON "
+    "DIVERGENCE at r2 / r3 (r2 stops near t = 30, r3 at step 42): iterates invert particles and carry "
+    "centres out of the grid; NewtonLineSearch (t = 28) and KrylovNewton (t = 29) do not help. The "
+    "element tangent is not the cause (||K - K_FD|| / ||K||, FD converged over eps 1e-8..1e-10: 3e-6 "
+    "elastic undeformed, 1e-3 at 0.2 % strain, mean 3.7 % on the plastic footing state); the worst "
+    "particles (rel ~1, |K| ~ 75 against ~1e5) are DruckerPrager at its apex near the free surface "
+    "(weightless soil, sigma_y 0.2 kPa), returning its regularised 1e-3 Ce tangent where the response "
+    "is perfectly plastic, so the nodes they support are nearly singular. Context: r1 q_max 188.6 "
+    "(1.36x) sits in the locked-FE range (std H8 219.1 / 179.1 at 4 / 8 across B); the observable is "
+    "exact (test_condforce_is_the_reaction). The band is not touched.")
 
 
 @pytest.mark.xfail(strict=True, reason=FOOTING_MISS)

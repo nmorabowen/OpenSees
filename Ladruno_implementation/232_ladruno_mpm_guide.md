@@ -235,11 +235,11 @@ acceleration take FLIP increments (`mpm flip`, default 1); quasi-static leaves v
 | `mpm gridvel <name> box <lo..> <hi..> v <value\|free ..> [start <t0>] [track x\|y\|z]` | prescribed grid velocity on every grid node in the closed box: Δu = v·dt per step; absent before `start`; `track` moves the box's lower bound with v. A non-zero value needs `constraints Transformation`, `Penalty` or `Lagrange` (Plain assumes homogeneous: refused) |
 | `mpm condForce <name>` | the grid internal force Σ V σ·∇S over the gridvel's nodes at the last accepted step (resisting-force sign) — e.g. a footing load |
 | `mpm pforce <body> box <lo..> <hi..> <f..>` | a constant force per particle (initial centre in the box), scaled by the time series |
-| `mpm rayleigh <alphaM> <betaK>` | Rayleigh damping on the particle elements |
+| `mpm rayleigh <alphaM> <betaK>` | Rayleigh damping on the particle elements (applied at once to live ones; `0 0` clears it) |
 | `mpm emptyNodes`, `mpm cut`, `mpm tagBase` | above |
 | `mpm info g2p\|acceptedSteps\|retries\|domainChanges\|connectivityChanges\|gridNodes\|mode` | counters (`g2p` counts G2P passes, one per accepted step) |
 | `mpm info dtHistory\|gridNodeTags` | lists |
-| `mpm debug failAttempt <k> [<m>]` / `mpm debug reseed default\|always\|skip` | test hooks: fail the first m attempts of step k; recreate every node each step, or skip `domainChange()` on a step with no support change (wrong on purpose: W1) |
+| `mpm debug failAttempt <k> [<m>] [afterTrial]` / `mpm debug reseed default\|always\|skip` / `mpm debug tangentCheck <scale> <eps>` | test hooks: fail the first m attempts of step k (`afterTrial`: after the material update, so the retry starts from a reverted trial state); the element tangent against central differences; recreate every node each step, or skip `domainChange()` on a step with no support change (wrong on purpose: W1) |
 
 **Refused in mode A (loudly):** any transient integrator but Newmark, HHT, GeneralizedAlpha
 (`LadrunoHHT`, `LadrunoGeneralizedAlpha` included, until a test admits them);
@@ -253,6 +253,11 @@ DOFs (no FE–MPM seam yet); element loads on particles.
 elements: their tags start above yours and churn every step (ADR W4, amendment 232f), and
 `recorder ladruno` would open a model stage per step. Particle output is `mpm output` (MODE
 `implicit` / `quasi-static`, KIND `transient` / `static`).
+
+**`reset` in mode A.** A plain `reset` does NOT reach the particles (it warns once): their state is
+the host's, and reverting only their materials would drop plastic history under deformed
+positions. Use `mpm reset` (particles, materials and the grid together). A plain `analyze` cannot
+run the particle elements either: they move only inside `mpm analyze`.
 
 **Restart.** `database File <name>`, `save <n>` between `mpm analyze` calls (after the first
 mode-A step), then `restore <n>` — in the same process after `wipe` and `model basic …`, or in a

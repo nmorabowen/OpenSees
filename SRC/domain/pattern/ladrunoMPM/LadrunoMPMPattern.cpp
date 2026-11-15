@@ -118,7 +118,7 @@ LadrunoMPMPattern::LadrunoMPMPattern(int tag)
     theMode(MODE_EXPLICIT), masscutUser(false), ghostGamma(EMPTY_RENORMALIZE), cutFactor(2.0), maxCutCount(4),
     rayAlphaM(0.0), rayBetaK(0.0), link(std::make_shared<LadrunoMPMHostLink>()), basesSet(false),
     nodeBase(1), nextNodeTag(1), eleBase(1), hostPayloadDbTag(0), elementsRestored(false),
-    stepT0(0.0), failNow(false), failStep(0), failAttempts(0), reseedMode(0), armedCount(0),
+    stepT0(0.0), failNow(0), failAfterTrial(false), armedWindow(false), failStep(0), failAttempts(0), reseedMode(0), armedCount(0),
     committedCount(0), g2pRan(false), g2pSkipped(false), nG2P(0), nAccepted(0), nRetries(0),
     nDomainChanges(0), nConnChanges(0), epochSteps(0)
 {
@@ -135,7 +135,7 @@ LadrunoMPMPattern::LadrunoMPMPattern()
     theMode(MODE_EXPLICIT), masscutUser(false), ghostGamma(EMPTY_RENORMALIZE), cutFactor(2.0), maxCutCount(4),
     rayAlphaM(0.0), rayBetaK(0.0), link(std::make_shared<LadrunoMPMHostLink>()), basesSet(false),
     nodeBase(1), nextNodeTag(1), eleBase(1), hostPayloadDbTag(0), elementsRestored(false),
-    stepT0(0.0), failNow(false), failStep(0), failAttempts(0), reseedMode(0), armedCount(0),
+    stepT0(0.0), failNow(0), failAfterTrial(false), armedWindow(false), failStep(0), failAttempts(0), reseedMode(0), armedCount(0),
     committedCount(0), g2pRan(false), g2pSkipped(false), nG2P(0), nAccepted(0), nRetries(0),
     nDomainChanges(0), nConnChanges(0), epochSteps(0)
 {
@@ -769,7 +769,8 @@ LadrunoMPMPattern::reset(void)
   epochSteps = 0;
   nG2P = nAccepted = nRetries = nDomainChanges = nConnChanges = 0;
   for (GridVel &g : gridVels) { g.nodes.clear(); g.force.assign(eng.ndm(), 0.0); }
-  for (NDMaterial *m : mats) m->revertToStart();
+  for (NDMaterial *m : mats)
+    if (m != 0) m->revertToStart();   // review item 6: a hand-removed particle element took its material
   lambda = 1.0;
   // Before any accepted step the particles ARE the initial state, bodies and
   // initial conditions included: keep them (c2 review 3).
