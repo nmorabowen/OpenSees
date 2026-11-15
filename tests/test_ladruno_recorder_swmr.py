@@ -137,11 +137,11 @@ print("DONE", flush=True)
 """
 
 
-def _child(out, every, limit):
+def _child(out, every, limit, stderr=subprocess.PIPE):
     env = dict(os.environ, LADRUNO_TESTS=str(ROOT / "tests"), LADRUNO_OPENSEES_QUIET="1")
     env.pop("HDF5_USE_FILE_LOCKING", None)
     return subprocess.Popen([sys.executable, "-c", _KILL_CHILD, out, str(every), str(limit)],
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            stdout=subprocess.PIPE, stderr=stderr,
                             stdin=subprocess.DEVNULL, text=True, env=env)
 
 
@@ -195,35 +195,48 @@ def test_a_killed_run_reads_by_the_rule(tmp_path, every):
         assert any("FILE-KILLED" in e for e in lf.validate(out))
 
 
-def test_a_reader_holding_the_file_does_not_stop_the_recorder(tmp_path):
-    """A layout step closes the file and reopens it read-write. With HDF5 file locking on,
-    a reader holding the file at that moment (a viewer, an h5py session, a tailing
-    monitor) made the reopen fail and the recorder disable itself for the rest of the run
-    (measured, WP-233). The writer now opens without file locking: hammer the file with
-    reads (plain, then SWMR-read) through 300 steps with a new stage every 20, and the
-    run must record every step of every stage."""
+@pytest.mark.parametrize("locking", [True, False])
+def test_a_live_reader_does_not_disturb_the_recorder(tmp_path, locking):
+    """Readers polling a live file through 300 steps with a new stage every 20.
+
+    locking=True (h5py's default): before WP-233's guard lock, such a reader made the
+    writer's writes fail on Windows ("Permission denied": HDF5's SWMR writer releases its
+    lock once armed, and Windows locks are mandatory) or its reopen fail, and the recorder
+    disabled itself. Now the reader is refused ("unable to lock file", WriterBusyError).
+    locking=False (how the live monitor reads): the reader takes no lock and reads the
+    live file through SWMR. Either way the finished file equals a run nobody read."""
     out = str(tmp_path / "live.ladruno")
-    p = _child(out, 20, 300)
-    assert "STEP 50" in p.stdout.readline()
-    opened = 0
-    while p.poll() is None:
-        try:
-            f = lf.open_ladruno(out)
-        except OSError:
-            continue                      # a layout step (step 3) or a lock: retry
-        with f:
-            opened += 1
-            time.sleep(0.002)             # hold it a moment, as a viewer would
-    o, e = p.communicate()
+    err = str(tmp_path / "live.err")
+    with open(err, "w") as fe:
+        p = _child(out, 20, 300, stderr=fe)
+        assert "STEP 50" in p.stdout.readline()
+        outcomes = {"open": 0, "busy": 0, "other": 0}
+        while p.poll() is None:
+            try:
+                f = (lf.open_ladruno(out) if locking
+                     else h5py.File(out, "r", swmr=True, locking=False))
+            except lf.WriterBusyError:
+                outcomes["busy"] += 1
+                continue
+            except OSError:
+                outcomes["other"] += 1        # a layout step half-written: retry
+                continue
+            with f:
+                outcomes["open"] += 1
+                time.sleep(0.002)             # hold it a moment, as a viewer would
+        o, _ = p.communicate()
+    e = open(err).read()
     assert "DONE" in o, e[-2000:]
-    assert "disabled" not in e, e[-2000:]
-    assert opened > 0
-    with h5py.File(out, "r") as f:
-        report = lf.stage_report(f)
-    assert len(report) == 300 // 20 + 1 - (300 % 20 == 0), report      # a stage per 20 steps
-    assert sum(_steps(out, r["stage"]) for r in report) == 300
-
-
-def _steps(path, stage):
-    with h5py.File(path, "r") as f:
-        return f[f"{stage}/RESULTS/ON_NODES/DISPLACEMENT/STEP"].shape[0]
+    assert "disabled" not in e and "Permission denied" not in e, e[-3000:]
+    ref = str(tmp_path / "ref.ladruno")
+    _reference(ref, 300, 20)
+    with h5py.File(out, "r") as f, h5py.File(ref, "r") as r:
+        names = sorted(k for k in r if k.startswith("MODEL_STAGE"))
+        assert names == sorted(k for k in f if k.startswith("MODEL_STAGE"))
+        assert len(names) == 15
+        for n in names:
+            for g in lf._streaming_results(r[n]):
+                rel = g.name.split("/RESULTS/", 1)[1]
+                for ds in ("DATA", "TIME", "STEP"):
+                    assert np.array_equal(f[n][f"RESULTS/{rel}/{ds}"][...], g[ds][...]), (n, rel, ds)
+    assert sum(outcomes.values()) > 0, outcomes

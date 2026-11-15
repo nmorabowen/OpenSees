@@ -706,17 +706,26 @@ namespace h5 {
 		// (weak): HDF5's atexit close of a deck that never wipes must still flush
 		// and close the file; openLayout() checks openObjects() before closing.
 		//
-		// File locking stays ON (HDF5's default). It was tried OFF: on Windows a
-		// reader with locking on holds a whole-file byte-range lock while its handle
-		// is open, and the unlocked writer's next write then fails ("Permission
-		// denied") and the recorder disables itself. With locking on, HDF5 locks the
-		// file while it is laid out (the reopen retries, LadrunoRecorder::openLayout),
-		// and the recorder's own guard lock covers the armed phase, when HDF5 has
-		// released its lock (ladrunoGuardAcquire). Measured, WP-233.
+		// File locking (measured, WP-233). Windows byte-range locks are MANDATORY:
+		// a reader with HDF5 locking on holds a whole-file shared lock while it
+		// opens, and any write of the recorder in that instant fails ("Permission
+		// denied"). HDF5's own writer lock does not prevent that: an SWMR writer
+		// releases it to arm SWMR, and H5Fstart_swmr_write even writes the
+		// superblock AFTER releasing it. So on Windows HDF5's locking is OFF for the
+		// recorder's file and the recorder holds its own guard lock for the whole
+		// life of the file (LadrunoRecorder.cpp, ladrunoGuardAcquire), which every
+		// locking reader overlaps and is refused by. On POSIX, locks are advisory
+		// and never block a write: HDF5's locking stays ON (a live writer then
+		// shows as a lock error during a layout step) and openLayout() retries a
+		// reopen a reader's lock refuses.
 		inline hid_t accessList() {
 			hid_t fapl = H5Pcreate(H5P_FILE_ACCESS);
 			if (fapl < 0) return HID_INVALID;
-			if (H5Pset_libver_bounds(fapl, H5F_LIBVER_LATEST, H5F_LIBVER_LATEST) < 0) {
+			herr_t st = H5Pset_libver_bounds(fapl, H5F_LIBVER_LATEST, H5F_LIBVER_LATEST);
+#if defined(_WIN32)
+			if (st >= 0) st = H5Pset_file_locking(fapl, false, true);
+#endif
+			if (st < 0) {
 				H5Pclose(fapl);
 				return HID_INVALID;
 			}
