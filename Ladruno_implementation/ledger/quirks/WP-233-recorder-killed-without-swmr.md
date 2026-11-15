@@ -65,6 +65,22 @@ date: 2026-11-14
 - **The MPM particle writer has the same unsized root.** It creates `MODEL_STAGE[n]` at
   every `mpm reset` without presizing (`LadrunoMPMIO.cpp`). Its 21-kill sample never hit
   the window: #1085.
+- **On Windows, a READER can break an SWMR writer.** Windows byte-range locks are
+  mandatory. A reader with HDF5 file locking on (h5py's default, HDFView) takes a
+  whole-file shared lock while it opens, and every write of the writer in that instant
+  fails ("Permission denied"). HDF5's writer lock does not prevent this: an SWMR writer
+  releases it to arm SWMR, and `H5Fstart_swmr_write` writes the superblock AFTER releasing
+  it. Measured: a polling reader made the recorder lose writes, fail its close or its
+  arm, disable itself and leave the file inconsistent. A layout step's read-write reopen
+  was also refused by a reader holding the file.
+
+  Fix (Windows): HDF5 locking off for the recorder's file, plus a guard lock. The guard is
+  an exclusive lock on one byte at offset 2^62, through a separate handle, held from just
+  after `H5Fcreate` until after the close. Every locking reader overlaps it and is refused
+  ("unable to lock file"), as before WP-233. A reader with locking off takes no lock and
+  reads live through SWMR, as the live monitor requires. POSIX locks are advisory: HDF5
+  locking stays on there, and a refused reopen is retried for 60 s. The MPM particle writer
+  is exposed the same way: #1085.
 - **Reader:** a killed file needs schema §7b.2:
   - a plain open, else SWMR-read (flags 0x05), else repair a copy (flags 0x01: killed in a
     layout step);
