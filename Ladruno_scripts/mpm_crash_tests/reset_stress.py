@@ -22,6 +22,11 @@ Measured (2026-11-14, build 9 cbe1b7149, a reset every 100 steps, 400 kills): 29
 with SWMR-read, 89 plainly, 21 (5.25 %) refused by both opens; 21 / 21 recovered every
 earlier stage (in 2, the stage being laid out did not open: no committed output).
 
+WP-232h (#1085; build 1d64d529e: presized root, guard lock): a reset every 100 steps, 0 bad in
+400 (up to 138 stages; 16 refused, 16 recovered, 2 with the last stage torn); a reset every 10,
+0 bad in 400 (up to 400 stages; 43 refused, 43 recovered). Only the LAST stage may be torn,
+after any open (232a section 2.5); every earlier stage must read.
+
 Run from the repo root, after a full ``build.bat`` (the pyd must be current):
 
     python3.12 Ladruno_scripts/mpm_crash_tests/reset_stress.py 400 4 <out_dir> [nsteps]
@@ -92,11 +97,11 @@ def check_file(f, set_ids):
     """Every particle stage of an open file: [(name, status, committed)]."""
     out = []
     for name in sorted((k for k in f if k.startswith("MODEL_STAGE[")), key=lambda s: int(s[12:-1])):
-        st = f[name]
-        if "RESULTS/ON_PARTICLES/OFFSETS" not in st:
-            out.append((name, "NO_RESULTS", 0))
-            continue
         try:
+            st = f[name]      # WP-232h: inside the try; a torn last stage may not open
+            if "RESULTS/ON_PARTICLES/OFFSETS" not in st:
+                out.append((name, "NO_RESULTS", 0))
+                continue
             out.append((name, *check_stage(st, set_ids)))
         except Exception as e:  # noqa: BLE001
             out.append((name, "STAGE_FAIL: " + str(e).splitlines()[0][:100], -1))

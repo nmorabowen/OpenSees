@@ -27,6 +27,13 @@ Measured (2026-11-14, h5py 3.16 / HDF5 2.0.0):
 - with SWMR (``--swmr``, the writer since cbe1b7149): 0 failing kill points of 17,439 in
   600 outputs; every completed output recovers bit-exact.
 
+The ``mpm reset`` window (``--resets N``, WP-232h / #1085; measured 2026-11-15, 240 outputs, a
+reset every 10, 24 stages, every kill point from output 0 on): each reset closes the file,
+reopens it read-write, lays out a stage WITHOUT SWMR and re-arms. Before the fix
+(``--no-presize``: the root's header unsized) 634 of 9,376 kill points lost the ROOT, and with
+it every earlier stage ("addr overflow" on ``/``); after it (``plist::presizeLinks`` on the
+fcpl) 0 of 9,249, every earlier stage exact; only the stage being laid out may be torn.
+
 HDF5 2.0 + fileobj quirk: under SWMR the fileobj driver writes only the 0x04 consistency
 flag into the superblock, where the sec2 driver (the real writer) writes 0x05, and an
 SWMR-read open requires 0x05. So when a rebuilt image is refused as "already open for
@@ -38,6 +45,8 @@ Run from anywhere (no OpenSees binary needed; ~minutes per few hundred outputs):
     python3.12 Ladruno_scripts/mpm_crash_tests/hdf5_crash_replay.py --outputs 300
     python3.12 Ladruno_scripts/mpm_crash_tests/hdf5_crash_replay.py --outputs 300 --evict-off
     python3.12 Ladruno_scripts/mpm_crash_tests/hdf5_crash_replay.py --outputs 600 --swmr
+    python3.12 Ladruno_scripts/mpm_crash_tests/hdf5_crash_replay.py --outputs 240 --resets 10
+    python3.12 Ladruno_scripts/mpm_crash_tests/hdf5_crash_replay.py --outputs 240 --resets 10 --no-presize
 """
 from __future__ import annotations
 
