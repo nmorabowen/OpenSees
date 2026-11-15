@@ -95,6 +95,7 @@
 #include <sstream>
 #include <cmath>
 #include <cstring>
+#include <thread>   // WP-233: openLayout() retries a reopen the file lock refuses
 #include <cstdlib>
 
 namespace ladrunons = ladruno; // local alias
@@ -1021,13 +1022,47 @@ bool LadrunoRecorder::openLayout()
 		disableRecorder("cannot close the file to lay out new objects (a handle is still open)");
 		return false;
 	}
-	info.h_file_id = ladrunons::h5::file::openRW(m_data->file_path.c_str(),
-	                                             info.h_file_acc_proplist);
+	// The reopen can find the file held: on Windows a reader with HDF5 file
+	// locking on keeps a whole-file shared lock while its handle is open, and a
+	// plain read-only open can only get in in the instant between this close and
+	// the reopen (the flags then read 0x00). Retry, with backoff, until the reader
+	// lets go: a viewer or an h5py session normally closes within moments.
+	// Measured (WP-233): a reader polling the file through a run with a new stage
+	// every 20 steps disabled the recorder within seconds before this retry.
+	{
+		const double max_wait_s = 60.0;
+		double waited = 0.0;
+		int pause_ms = 5;
+		bool warned = false;
+		for (;;) {
+			H5E_BEGIN_TRY {
+				info.h_file_id = ladrunons::h5::file::openRW(m_data->file_path.c_str(),
+				                                             info.h_file_acc_proplist);
+			} H5E_END_TRY;
+			if (info.h_file_id >= 0 || waited >= max_wait_s)
+				break;
+			if (!warned && waited >= 1.0) {
+				warned = true;
+				opserr << "LadrunoRecorder warning: '" << m_data->file_path.c_str()
+				       << "' is held open by another process (a viewer or a reader?); "
+				          "waiting up to " << max_wait_s << " s to reopen it for a new "
+				          "stage\n";
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(pause_ms));
+			waited += pause_ms / 1000.0;
+			pause_ms = std::min(pause_ms * 2, 500);
+		}
+	}
 	if (info.h_file_id == ladrunons::HID_INVALID || info.h_file_id < 0) {
 		info.h_file_id = ladrunons::HID_INVALID;
-		disableRecorder("cannot reopen the file read-write to lay out new objects");
+		disableRecorder("cannot reopen the file read-write to lay out new objects "
+		                "(held open by another process for 60 s)");
 		return false;
 	}
+	// Write the superblock now: its WRITE_ACCESS flag is otherwise written lazily,
+	// and until it is on disk a plain read-only open can get in (and hold the
+	// file) while this layout step runs.
+	ladrunons::h5::file::flush(info.h_file_id);
 	info.layout_open = true;
 	if (!reacquireAllHandles()) {
 		// a sink that could not reopen has stopped itself and said so

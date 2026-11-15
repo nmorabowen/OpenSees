@@ -193,3 +193,37 @@ def test_a_killed_run_reads_by_the_rule(tmp_path, every):
     if lf.superblock_flags(out) == 0x05:
         # the validator checks closed files: a killed one is refused, loudly
         assert any("FILE-KILLED" in e for e in lf.validate(out))
+
+
+def test_a_reader_holding_the_file_does_not_stop_the_recorder(tmp_path):
+    """A layout step closes the file and reopens it read-write. With HDF5 file locking on,
+    a reader holding the file at that moment (a viewer, an h5py session, a tailing
+    monitor) made the reopen fail and the recorder disable itself for the rest of the run
+    (measured, WP-233). The writer now opens without file locking: hammer the file with
+    reads (plain, then SWMR-read) through 300 steps with a new stage every 20, and the
+    run must record every step of every stage."""
+    out = str(tmp_path / "live.ladruno")
+    p = _child(out, 20, 300)
+    assert "STEP 50" in p.stdout.readline()
+    opened = 0
+    while p.poll() is None:
+        try:
+            f = lf.open_ladruno(out)
+        except OSError:
+            continue                      # a layout step (step 3) or a lock: retry
+        with f:
+            opened += 1
+            time.sleep(0.002)             # hold it a moment, as a viewer would
+    o, e = p.communicate()
+    assert "DONE" in o, e[-2000:]
+    assert "disabled" not in e, e[-2000:]
+    assert opened > 0
+    with h5py.File(out, "r") as f:
+        report = lf.stage_report(f)
+    assert len(report) == 300 // 20 + 1 - (300 % 20 == 0), report      # a stage per 20 steps
+    assert sum(_steps(out, r["stage"]) for r in report) == 300
+
+
+def _steps(path, stage):
+    with h5py.File(path, "r") as f:
+        return f[f"{stage}/RESULTS/ON_NODES/DISPLACEMENT/STEP"].shape[0]

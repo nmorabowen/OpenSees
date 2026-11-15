@@ -706,19 +706,16 @@ namespace h5 {
 		// (weak): HDF5's atexit close of a deck that never wipes must still flush
 		// and close the file; openLayout() checks openObjects() before closing.
 		//
-		// File locking OFF for the writer (as HDF5_USE_FILE_LOCKING=FALSE does, but
-		// for this file only): a layout step closes the file and reopens it
-		// read-write, and with locking on, ANY reader holding the file open at that
-		// moment (a viewer, an h5py session, a tailing monitor) made the reopen fail
-		// ("unable to lock file", Win32 error 33) and the recorder disable itself
-		// for the rest of the run (measured, WP-233). A reader is never blocked by
-		// this either: SWMR is what keeps it consistent, and a reader that opens
-		// during a layout step meets reader rule step 3 (schema 7b.2) and retries.
+		// File locking stays ON (HDF5's default). It was tried OFF: on Windows a
+		// reader with locking on holds a whole-file byte-range lock while its handle
+		// is open, and the unlocked writer's next write then fails ("Permission
+		// denied") and the recorder disables itself. With locking on, such a reader
+		// can only make the layout step's read-write REOPEN wait, and the recorder
+		// retries it (LadrunoRecorder::openLayout). Measured, WP-233.
 		inline hid_t accessList() {
 			hid_t fapl = H5Pcreate(H5P_FILE_ACCESS);
 			if (fapl < 0) return HID_INVALID;
-			if (H5Pset_libver_bounds(fapl, H5F_LIBVER_LATEST, H5F_LIBVER_LATEST) < 0 ||
-			    H5Pset_file_locking(fapl, false, true) < 0) {
+			if (H5Pset_libver_bounds(fapl, H5F_LIBVER_LATEST, H5F_LIBVER_LATEST) < 0) {
 				H5Pclose(fapl);
 				return HID_INVALID;
 			}
