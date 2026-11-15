@@ -709,9 +709,10 @@ namespace h5 {
 		// File locking stays ON (HDF5's default). It was tried OFF: on Windows a
 		// reader with locking on holds a whole-file byte-range lock while its handle
 		// is open, and the unlocked writer's next write then fails ("Permission
-		// denied") and the recorder disables itself. With locking on, such a reader
-		// can only make the layout step's read-write REOPEN wait, and the recorder
-		// retries it (LadrunoRecorder::openLayout). Measured, WP-233.
+		// denied") and the recorder disables itself. With locking on, HDF5 locks the
+		// file while it is laid out (the reopen retries, LadrunoRecorder::openLayout),
+		// and the recorder's own guard lock covers the armed phase, when HDF5 has
+		// released its lock (ladrunoGuardAcquire). Measured, WP-233.
 		inline hid_t accessList() {
 			hid_t fapl = H5Pcreate(H5P_FILE_ACCESS);
 			if (fapl < 0) return HID_INVALID;

@@ -344,6 +344,20 @@ def _iter_envelope_leaves(grp, prefix: str = ""):
 _SB_SIG = b"\x89HDF\r\n\x1a\n"
 
 
+class WriterBusyError(OSError):
+    """A LIVE writer holds a lock on the file (schema §7b.2): the open failed with
+    "unable to lock file", or (Windows) a raw read was refused. A killed process holds
+    no locks, so this is never a killed file. A reader with HDF5 file locking on (the
+    default) meets it for as long as the run is live: HDF5's lock during a layout step,
+    the recorder's guard lock while SWMR is armed (Windows). Wait, or read the live file
+    with locking OFF (h5py ``locking=False``) and ``swmr=True``, as the live monitor
+    does. Never repair or copy a file in this state."""
+
+
+def _busy(e) -> bool:
+    return isinstance(e, PermissionError) or "unable to lock file" in str(e)
+
+
 class StageLayoutKilledError(OSError):
     """A .ladruno killed while a layout was being written (schema §7b.2, reader rule
     step 3): both the plain and the SWMR-read open refuse it. Recover a copy with
@@ -419,20 +433,33 @@ def superblock_flags(path) -> int | None:
 def open_ladruno(path) -> h5py.File:
     """Open a .ladruno read-only by the reader rule (schema §7b.2), steps 1-2.
 
-    Step 3 (flags 0x01, both opens refuse) raises ``StageLayoutKilledError``; recover a
-    copy with ``repair_copy`` / ``recover_ladruno``. The file itself is never
-    repaired here. Any other refusal re-raises the plain open's error. No
-    ``HDF5_USE_FILE_LOCKING=FALSE`` is needed after a kill (measured, Windows)."""
+    A live writer in a layout step holds the file's lock: raises ``WriterBusyError``
+    (retry later). Step 3 (flags 0x01, both opens refuse, no lock) raises
+    ``StageLayoutKilledError``; recover a copy with ``repair_copy`` /
+    ``recover_ladruno``. The file itself is never repaired here. Any other refusal
+    re-raises the plain open's error. No ``HDF5_USE_FILE_LOCKING=FALSE`` is needed after
+    a kill (measured, Windows)."""
     try:
         return h5py.File(path, "r")
     except OSError as e:
+        if _busy(e):
+            raise WriterBusyError(f"{path}: a live writer holds the file (a layout step); "
+                                  "open it again in a moment") from e
         if "already open for write" not in str(e) and "truncated file" not in str(e):
             raise
         plain = e
     try:
         return h5py.File(path, "r", swmr=True)
     except OSError as e:
-        if "not already open for SWMR writing" not in str(e) or superblock_flags(path) != 0x01:
+        if _busy(e):
+            raise WriterBusyError(f"{path}: a live writer holds the file (a layout step); "
+                                  "open it again in a moment") from e
+        try:
+            flags = superblock_flags(path)
+        except PermissionError as e2:
+            raise WriterBusyError(f"{path}: a live writer holds the file (a layout "
+                                  "step); open it again in a moment") from e2
+        if "not already open for SWMR writing" not in str(e) or flags != 0x01:
             raise plain from e
         raise StageLayoutKilledError(
             f"{path}: the run was killed while a layout was being written (superblock "

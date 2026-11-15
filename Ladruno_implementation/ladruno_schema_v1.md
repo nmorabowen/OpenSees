@@ -807,6 +807,38 @@ kills with a stage every 20 steps.
 A reader that cannot open in SWMR-read mode (e.g. h5wasm) may apply step 3's repair to a
 copy of any file that step 1 refuses, flags 0x05 included.
 
+**A file a live run is writing.** The reader must never write to or repair the original.
+
+- **A reader with HDF5 file locking on** (the default in h5py, HDFView and most tools) is
+  refused for as long as the run is live. Its open fails with "unable to lock file", and on
+  Windows even a raw read can be refused (`ladruno_format.WriterBusyError`). Two locks do
+  this:
+  - HDF5's own exclusive lock, held while a layout step runs;
+  - on Windows, the recorder's **guard lock**, held while SWMR is armed: an exclusive lock
+    on one byte at offset 2^62 that any whole-file lock overlaps.
+
+  A killed process holds no locks. So a lock error always means a live writer: wait, and
+  open again. Flags 0x01 without a lock error means a kill.
+- **Why the guard exists.** HDF5's SWMR writer releases its lock once SWMR is armed. On
+  Windows, locks are mandatory, so a locking reader's brief whole-file lock then made the
+  writer's writes fail ("Permission denied"). Measured: a polling reader made the recorder
+  lose writes, disable itself and leave the file inconsistent. Before WP-233 the writer
+  held an exclusive lock for the whole run, so such a reader only got a lock error; the
+  guard restores that. POSIX locks are advisory and never block a write, so there is no
+  guard there.
+- **To read a live file, open with file locking OFF** (h5py
+  `h5py.File(path, "r", swmr=True, locking=False)`, or `HDF5_USE_FILE_LOCKING=FALSE`), as
+  the live monitor requires (`08_analysis_monitor.md`). Such a reader takes no lock and
+  never blocks the writer. While SWMR is armed (flags 0x05) it reads a consistent prefix,
+  and the crash rule applies. Re-open to refresh. During a layout step (flags 0x01, or
+  0x00 at the instant of the reopen) it can see a half-written layout: retry. A live file
+  and a killed one cannot be told apart from the bytes; a locking reader tells them apart
+  by the lock error.
+- **The reopen waits for readers.** A locking reader can still get a plain open in the
+  instant between a layout step's close and its reopen, when nothing is locked. While it
+  holds that handle, the writer's reopen waits. The recorder retries for up to 60 s,
+  warning after 1 s, and then stops recording.
+
 **The crash rule (what to read).**
 
 - The recorder appends one row to every streaming result of a stage at each recorded

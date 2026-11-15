@@ -96,6 +96,18 @@
 #include <cmath>
 #include <cstring>
 #include <thread>   // WP-233: openLayout() retries a reopen the file lock refuses
+#if defined(_WIN32)  // WP-233: the SWMR guard lock (ladrunoGuardAcquire)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOGDI
+#define NOGDI
+#endif
+#include <windows.h>
+#endif
 #include <cstdlib>
 
 namespace ladrunons = ladruno; // local alias
@@ -206,6 +218,61 @@ static bool ladrunoHasModalRequest(
 static const size_t LADRUNO_KIND_LEN = 9;
 // WP-233: links the root's header is presized for (one per MODEL_STAGE, + INFO).
 static const unsigned LADRUNO_ROOT_LINKS = 1024;
+
+// WP-233 (#1082): the SWMR guard lock. HDF5's SWMR writer RELEASES its file lock
+// once H5Fstart_swmr_write arms SWMR, so that SWMR readers can attach. On Windows
+// file locks are mandatory: a reader with HDF5 file locking on (h5py's default,
+// HDFView, ...) takes a whole-file shared lock for the length of its open, and the
+// writer's writes in that instant fail ("Permission denied"). Measured: a reader
+// polling a live file made the recorder lose writes, fail its next close, disable
+// itself and leave the file inconsistent. Before WP-233 the writer held an
+// exclusive lock for the whole run, so such a reader just got "unable to lock
+// file". The guard restores that: while SWMR is armed the recorder holds an
+// EXCLUSIVE lock on one byte at offset 2^62 through a separate handle. A reader's
+// whole-file lock overlaps it and is refused ("unable to lock file"), while the
+// writer's own writes never reach that offset. A reader with locking OFF (as the
+// live monitor requires, 08_analysis_monitor.md) takes no lock and reads the live
+// file through SWMR. Released around each layout step (HDF5 then takes its own
+// exclusive lock) and at close; the OS releases it if the process is killed.
+// POSIX locks are advisory and never block a write: no guard is needed there.
+static void* ladrunoGuardAcquire(const std::string& path)
+{
+#if defined(_WIN32)
+	for (int attempt = 0, pause_ms = 2; attempt < 12; ++attempt, pause_ms *= 2) {
+		HANDLE h = CreateFileA(path.c_str(), GENERIC_READ,
+		                       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+		                       NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		if (h == INVALID_HANDLE_VALUE)
+			return 0;
+		OVERLAPPED ov;
+		std::memset(&ov, 0, sizeof(ov));
+		ov.Offset = 0;
+		ov.OffsetHigh = 0x40000000u;   // byte 2^62: far past any data
+		if (LockFileEx(h, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &ov))
+			return (void*)h;
+		CloseHandle(h);   // a reader holds a shared lock this instant: retry
+		std::this_thread::sleep_for(std::chrono::milliseconds(pause_ms));
+	}
+	return 0;
+#else
+	(void)path;
+	return 0;
+#endif
+}
+
+static void ladrunoGuardRelease(void*& guard)
+{
+#if defined(_WIN32)
+	if (guard) {
+		OVERLAPPED ov;
+		std::memset(&ov, 0, sizeof(ov));
+		ov.OffsetHigh = 0x40000000u;
+		UnlockFileEx((HANDLE)guard, 0, 1, 0, &ov);
+		CloseHandle((HANDLE)guard);
+	}
+#endif
+	guard = 0;
+}
 static herr_t ladrunoWriteProvisionalKind(hid_t h_stage, const std::string& kind)
 {
 	char buf[LADRUNO_KIND_LEN];
@@ -261,6 +328,8 @@ public:
 		, flush_seconds(10.0)
 		, last_flush()
 		, file_path()
+		, guard(0)
+		, guard_warned(false)
 		, last_seen_stamp(0)
 		, topology_fp(0)
 		, last_barrier(0)
@@ -327,6 +396,9 @@ public:
 	std::chrono::steady_clock::time_point last_flush;
 	// WP-233: the file this process writes (for the layout step's reopen).
 	std::string file_path;
+	// WP-233: the SWMR guard lock (ladrunoGuardAcquire), held while SWMR is armed.
+	void* guard;
+	bool guard_warned;
 	// WP-165 (R6): the domain-change stamp moves for far more than topology —
 	// contact `-reemit` re-sorts (inside commit()), `eleLoad`, a pattern with SPs,
 	// an `sp`/`imposedMotion` — and every move used to start a new MODEL_STAGE
@@ -514,6 +586,7 @@ LadrunoRecorder::~LadrunoRecorder()
 				ladrunons::h5::plist::close(m_data->info.h_file_acc_proplist);
 			} H5E_END_TRY;
 		}
+		ladrunoGuardRelease(m_data->guard);   // WP-233: after the file is closed
 		delete m_data;
 	}
 }
@@ -1000,6 +1073,7 @@ void LadrunoRecorder::disableRecorder(const char* why)
 		}
 	} H5E_END_TRY;
 	info.h_file_id = ladrunons::HID_INVALID;
+	ladrunoGuardRelease(m_data->guard);
 	m_data->init_failed = true;
 }
 
@@ -1013,6 +1087,7 @@ bool LadrunoRecorder::openLayout()
 	// in SWMR mode across the "close", so refuse instead of laying out into it.
 	ladrunons::h5::file::flush(info.h_file_id);
 	releaseAllHandles();
+	ladrunoGuardRelease(m_data->guard);   // HDF5 takes its own exclusive lock at the reopen
 	if (ladrunons::h5::file::openObjects(info.h_file_id) != 0) {
 		disableRecorder("cannot close the file to lay out new objects (a handle is still open)");
 		return false;
@@ -1084,6 +1159,16 @@ bool LadrunoRecorder::closeLayout()
 		return false;
 	}
 	info.layout_open = false;
+	m_data->guard = ladrunoGuardAcquire(m_data->file_path);
+#if defined(_WIN32)
+	if (!m_data->guard && !m_data->guard_warned) {
+		m_data->guard_warned = true;
+		opserr << "LadrunoRecorder warning: could not take the SWMR guard lock on '"
+		       << m_data->file_path.c_str() << "': a reader with HDF5 file locking on "
+		          "that opens the file while it is written can make writes fail "
+		          "(schema 7b.2)\n";
+	}
+#endif
 	reacquireAllHandles();
 	LADRUNO_FOR_EACH_SINK(s_->commitPending(info));
 	flushFile();
