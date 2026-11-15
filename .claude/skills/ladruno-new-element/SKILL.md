@@ -93,9 +93,12 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       (`getPMDerivative()`) column into basic axial column 0 (`FB-6`).
       (d) When pairing a softening fiber section with an embedded cohesive hinge, enforce the
       Double-Localization Guard $\eta = M_c f_{\text{pm}}(N) / M_{\text{peak,fib}}(N) \le 0.90$ (`DR-2`).
-- [ ] **Clear-span `-endZones` + `-beamUniform` equilibrium (`FB-3`):** On `LadrunoIMKBeam`,
-      `ladrunoIMKClearSpanBeamUniformReactions2d/3d` must integrate fixed-end moments ($-w L_c^2/12$)
-      over the clear span $L_c = L - d_I - d_J$ and transfer clear-span shear across rigid offsets.
+- [ ] **Element loads under `-endZones` (`LadrunoIMKBeam`):** positions are on the full L;
+      each load splits into i-zone, clear and j-zone parts (`addLoadEndZones`). A zone part
+      goes to its node as force + moment; the clear part gives q0 on Lc plus face reactions,
+      whose lever arm dI / dJ goes into `dM0`, folded in by `effectiveBasic()`. Hinge
+      responses report face moments. Oracle: a stiff-stub `elasticBeamColumn` member.
+      Quirks: "`LadrunoIMKBeam` under `eleLoad` or a `LadrunoMembrane`".
 - [ ] **Axial release under rigid diaphragms (`-axialRelease` / `axial_release`, Enhancement C):**
       When `axialRelease == 1`, release basic axial force ($N = 0$) — in `LadrunoDispBeamColumn`,
       iterate neutral-axis strain $\varepsilon_0(x_i)$ at each IP so $N(\varepsilon_0, \kappa) = N_{\text{target}}$

@@ -90,6 +90,8 @@ LadrunoIMKBeam::LadrunoIMKBeam()
     q0[i] = 0.0;
     p0[i] = 0.0;
   }
+  for (int i = 0; i < 4; i++)
+    dM0[i] = 0.0;  // Ladruno (end-zone load fix)
   for (int i = 0; i < 6; i++)
     vCommit[i] = 0.0;
   theNodes[0] = 0;
@@ -188,6 +190,8 @@ LadrunoIMKBeam::LadrunoIMKBeam(int tag, int Nd1, int Nd2,
     q0[i] = 0.0;
     p0[i] = 0.0;
   }
+  for (int i = 0; i < 4; i++)
+    dM0[i] = 0.0;  // Ladruno (end-zone load fix)
   for (int i = 0; i < 6; i++)
     vCommit[i] = 0.0;
 
@@ -498,7 +502,9 @@ const Matrix &LadrunoIMKBeam::getTangentStiff(void)
 {
   if (q0Dirty && theNodes[0] != 0 && theNodes[1] != 0)
     this->update();
-  return theCoordTransf->getGlobalStiffMatrix(kb, q);
+  static thread_local Vector qe(6), p0e(5);   // Ladruno (end-zone load fix)
+  this->effectiveBasic(qe, p0e);
+  return theCoordTransf->getGlobalStiffMatrix(kb, qe);
 }
 
 const Matrix &LadrunoIMKBeam::getInitialStiff(void)
@@ -587,6 +593,8 @@ void LadrunoIMKBeam::zeroLoad(void)
     q0[i] = 0.0;
     p0[i] = 0.0;
   }
+  for (int i = 0; i < 4; i++)
+    dM0[i] = 0.0;  // Ladruno (end-zone load fix)
 }
 
 int LadrunoIMKBeam::addLoad(ElementalLoad *theLoad, double loadFactor)
@@ -595,6 +603,14 @@ int LadrunoIMKBeam::addLoad(ElementalLoad *theLoad, double loadFactor)
   const Vector &data = theLoad->getData(type, loadFactor);
   double L = theCoordTransf->getInitialLength();
   const double Lc = ((dI > 0.0 || dJ > 0.0) && (dI + dJ < L)) ? (L - dI - dJ) : L;
+
+  // Ladruno (end-zone load fix): with end zones, positions are on the full L
+  // and each load splits into zone and clear parts (LadrunoIMKHinge.h). The
+  // branches below are the no-zone path, unchanged.
+  if (Lc < L && (type == LOAD_TAG_Beam3dUniformLoad ||
+                 type == LOAD_TAG_Beam3dPartialUniformLoad ||
+                 type == LOAD_TAG_Beam3dPointLoad))
+    return this->addLoadEndZones(type, data, loadFactor, L);
 
   if (type == LOAD_TAG_Beam3dUniformLoad) {
     double wy = data(0) * loadFactor;  // Transverse Y
@@ -773,6 +789,179 @@ int LadrunoIMKBeam::addLoad(ElementalLoad *theLoad, double loadFactor)
   return 0;
 }
 
+// ---------------------------------------------------------------------------
+// Ladruno (end-zone load fix): element loads under -endZones dI dJ.
+//
+// Positions are on the full length L. Each load splits into an i-zone part
+// [0, dI], a clear part [dI, L-dJ] and a j-zone part [L-dJ, L]:
+//   * a zone part goes to its node: p0 takes the force, dM0 the moment;
+//   * the clear part gives the clear-span fixed-end moments q0 and face
+//     reactions (into p0), and each face reaction adds its lever-arm moment
+//     (dI at i, dJ at j) to dM0.
+// Axial load is the exception: the axial stiffness is EA/L over the full L
+// (the zones are rigid in bending only), so it is shared on the full length,
+// as without end zones.
+// A force f (resisting sense, f = -load) at abscissa x assigned to node i adds
+// Mz_i += x f_y and My_i -= x f_z; assigned to node j the arm is (x - L).
+// ---------------------------------------------------------------------------
+int LadrunoIMKBeam::addLoadEndZones(int type, const Vector &data, double loadFactor, double L)
+{
+  const double xI = dI;
+  const double xJ = L - dJ;
+  const double Lc = xJ - xI;
+  const double PhiY = (GAvy > 0.0) ? 12.0 * E * Iz / (GAvy * Lc * Lc) : 0.0;
+  const double PhiZ = (GAvz > 0.0) ? 12.0 * E * Iy / (GAvz * Lc * Lc) : 0.0;
+
+  // a load varying linearly from (wy1, wz1, wx1) at x1 to (wy2, wz2, wx2) at x2
+  auto segment = [&](double x1, double x2,
+                     double wy1, double wz1, double wx1,
+                     double wy2, double wz2, double wx2) {
+    const double len = x2 - x1;
+    auto at = [&](double w1, double w2, double x) { return w1 + (w2 - w1) * (x - x1) / len; };
+    double c1, c2, Fy, Sy, Fz, Sz;
+
+    // axial: on the full length (EA/L over L)
+    {
+      double P, PJ;
+      ladrunoIMKLinearSegmentAxial(x1, x2, wx1, wx2, L, P, PJ);
+      p0[0] -= P;
+      q0[0] -= PJ;
+    }
+
+    // i-zone part -> node i
+    c1 = x1;  c2 = (x2 < xI) ? x2 : xI;
+    if (c2 > c1) {
+      ladrunoIMKSegmentResultant(c1, c2, at(wy1, wy2, c1), at(wy1, wy2, c2), Fy, Sy);
+      ladrunoIMKSegmentResultant(c1, c2, at(wz1, wz2, c1), at(wz1, wz2, c2), Fz, Sz);
+      p0[1] -= Fy;
+      p0[3] -= Fz;
+      dM0[0] -= Sy;
+      dM0[2] += Sz;
+    }
+
+    // j-zone part -> node j
+    c1 = (x1 > xJ) ? x1 : xJ;  c2 = x2;
+    if (c2 > c1) {
+      ladrunoIMKSegmentResultant(c1, c2, at(wy1, wy2, c1), at(wy1, wy2, c2), Fy, Sy);
+      ladrunoIMKSegmentResultant(c1, c2, at(wz1, wz2, c1), at(wz1, wz2, c2), Fz, Sz);
+      p0[2] -= Fy;
+      p0[4] -= Fz;
+      dM0[1] -= (Sy - L * Fy);
+      dM0[3] += (Sz - L * Fz);
+    }
+
+    // clear part -> fixed-end forces of the clear span + face reactions
+    c1 = (x1 > xI) ? x1 : xI;  c2 = (x2 < xJ) ? x2 : xJ;
+    if (c2 > c1) {
+      const double a = c1 - xI, b = c2 - xI;
+      double V1y, V2y, M1y, M2y, V1z, V2z, M1z, M2z;
+      ladrunoIMKLinearSegmentFEF(a, b, at(wy1, wy2, c1), at(wy1, wy2, c2), Lc, PhiY, V1y, V2y, M1y, M2y);
+      ladrunoIMKLinearSegmentFEF(a, b, at(wz1, wz2, c1), at(wz1, wz2, c2), Lc, PhiZ, V1z, V2z, M1z, M2z);
+      p0[1] -= V1y;
+      p0[2] -= V2y;
+      p0[3] -= V1z;
+      p0[4] -= V2z;
+      q0[1] += M1y;
+      q0[2] += M2y;
+      q0[3] -= M1z;
+      q0[4] -= M2z;
+      dM0[0] -= dI * V1y;    // f_y = -V1y at x = dI
+      dM0[1] += dJ * V2y;    // f_y = -V2y at x = L - dJ
+      dM0[2] += dI * V1z;
+      dM0[3] -= dJ * V2z;
+    }
+  };
+
+  if (type == LOAD_TAG_Beam3dUniformLoad) {
+    const double wy = data(0) * loadFactor;
+    const double wz = data(1) * loadFactor;
+    const double wx = data(2) * loadFactor;
+    segment(0.0, L, wy, wz, wx, wy, wz, wx);
+  }
+  else if (type == LOAD_TAG_Beam3dPartialUniformLoad) {
+    const double x1 = data(3) * L;
+    const double x2 = data(4) * L;
+    if (x2 <= x1 || x1 < 0.0 || x2 > L)
+      return 0;
+    segment(x1, x2,
+            data(0) * loadFactor, data(1) * loadFactor, data(2) * loadFactor,
+            data(5) * loadFactor, data(6) * loadFactor, data(7) * loadFactor);
+  }
+  else if (type == LOAD_TAG_Beam3dPointLoad) {
+    const double Py = data(0) * loadFactor;
+    const double Pz = data(1) * loadFactor;
+    const double N  = data(2) * loadFactor;
+    const double aOverL = data(3);
+    if (aOverL < 0.0 || aOverL > 1.0)
+      return 0;
+    const double x = aOverL * L;
+    p0[0] -= N;                       // axial: on the full length (EA/L over L)
+    q0[0] -= N * aOverL;
+    if (x < xI) {                     // on the i zone -> node i
+      p0[1] -= Py;
+      p0[3] -= Pz;
+      dM0[0] -= x * Py;
+      dM0[2] += x * Pz;
+    } else if (x > xJ) {              // on the j zone -> node j
+      p0[2] -= Py;
+      p0[4] -= Pz;
+      dM0[1] -= (x - L) * Py;
+      dM0[3] += (x - L) * Pz;
+    } else {                          // on the clear span
+      const double a = x - xI;
+      double V1y, V2y, M1y, M2y, V1z, V2z, M1z, M2z;
+      ladrunoIMKPointFEF(a, Py, Lc, PhiY, V1y, V2y, M1y, M2y);
+      ladrunoIMKPointFEF(a, Pz, Lc, PhiZ, V1z, V2z, M1z, M2z);
+      p0[1] -= V1y;
+      p0[2] -= V2y;
+      p0[3] -= V1z;
+      p0[4] -= V2z;
+      q0[1] += M1y;
+      q0[2] += M2y;
+      q0[3] -= M1z;
+      q0[4] -= M2z;
+      dM0[0] -= dI * V1y;
+      dM0[1] += dJ * V2y;
+      dM0[2] += dI * V1z;
+      dM0[3] -= dJ * V2z;
+    }
+  }
+  q0Dirty = true;
+  return 0;
+}
+
+// Node basic forces handed to the transform: q with dM0 added to the end
+// moments, and p0 with the matching shear taken back out, so the transform's
+// (q_i + q_j) / L term does not see dM0 (the node shears stay q- and p0-based).
+void LadrunoIMKBeam::effectiveBasic(Vector &qe, Vector &p0e) const
+{
+  qe = q;
+  for (int i = 0; i < 5; i++)
+    p0e(i) = p0[i];
+  if (dM0[0] == 0.0 && dM0[1] == 0.0 && dM0[2] == 0.0 && dM0[3] == 0.0)
+    return;
+  const double L = theCoordTransf->getInitialLength();
+  const double sZ = (dM0[0] + dM0[1]) / L;   // Mz pair -> local-y shear
+  const double sY = (dM0[2] + dM0[3]) / L;   // My pair -> local-z shear
+  qe(1) += dM0[0];
+  qe(2) += dM0[1];
+  qe(3) += dM0[2];
+  qe(4) += dM0[3];
+  p0e(1) -= sZ;
+  p0e(2) += sZ;
+  p0e(3) += sY;
+  p0e(4) -= sY;
+}
+
+// Hinge (face) moments [Mz_i, Mz_j, My_i, My_j] from the kernel's node basic
+// moments q; equal to q without end zones.
+void LadrunoIMKBeam::hingeFaceMoments(double m[4]) const
+{
+  const double L = theCoordTransf->getInitialLength();
+  ladrunoIMKFaceMoments(q(1), q(2), L, dI, dJ, m[0], m[1]);
+  ladrunoIMKFaceMoments(q(3), q(4), L, dI, dJ, m[2], m[3]);
+}
+
 int LadrunoIMKBeam::addInertiaLoadToUnbalance(const Vector &accel)
 {
   if (rho == 0.0)
@@ -816,9 +1005,11 @@ const Vector &LadrunoIMKBeam::getResistingForce(void)
   if (q0Dirty && theNodes[0] != 0 && theNodes[1] != 0)
     this->update();
 
-  Vector p0Vec(p0, 5);
+  // Ladruno (end-zone load fix): node basic forces with dM0 folded in.
+  static thread_local Vector qe(6), p0Vec(5);
+  this->effectiveBasic(qe, p0Vec);
 
-  P = theCoordTransf->getGlobalResistingForce(q, p0Vec);
+  P = theCoordTransf->getGlobalResistingForce(qe, p0Vec);
 
   // subtract element nodal loads (inertia unbalance accumulated in Q)
   P.addVector(1.0, Q, -1.0);
@@ -943,7 +1134,7 @@ int LadrunoIMKBeam::sendSelf(int cTag, Channel &theChannel)
     return res;
   }
 
-  static thread_local Vector dData(105);
+  static thread_local Vector dData(109);  // Ladruno: +dM0[4]
   dData(0) = A;  dData(1) = E;  dData(2) = G;  dData(3) = Jx;
   dData(4) = Iy; dData(5) = Iz; dData(6) = rho;
   dData(7) = thetaHcommit[0];  dData(8) = thetaHcommit[1];
@@ -978,6 +1169,8 @@ int LadrunoIMKBeam::sendSelf(int cTag, Channel &theChannel)
   dData(102) = P0t;
   dData(103) = Pbal;
   dData(104) = muBal;
+  for (int i = 0; i < 4; i++)
+    dData(105 + i) = dM0[i];  // Ladruno (end-zone load fix)
 
   res += theChannel.sendVector(dbTag, cTag, dData);
   if (res < 0) {
@@ -1037,7 +1230,7 @@ int LadrunoIMKBeam::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &th
   connectedExternalNodes(1) = idData(2);
   cMass = idData(13);
 
-  static thread_local Vector dData(105);
+  static thread_local Vector dData(109);  // Ladruno: +dM0[4]
   res += theChannel.recvVector(dbTag, cTag, dData);
   if (res < 0) {
     opserr << "LadrunoIMKBeam::recvSelf -- failed to recv Vector\n";
@@ -1082,6 +1275,8 @@ int LadrunoIMKBeam::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &th
   P0t = dData(102);
   Pbal = dData(103);
   muBal = dData(104);
+  for (int i = 0; i < 4; i++)
+    dM0[i] = dData(105 + i);  // Ladruno (end-zone load fix)
   stepDtLatched = false;
   q0Dirty = false;
   committedAtCurrentV = true;
@@ -1470,41 +1665,50 @@ int LadrunoIMKBeam::getResponse(int responseID, Information &info)
     return info.setVector(th);
   }
   case 5: {
+    // Ladruno (end-zone load fix): the hinge (face) moments, not the node
+    // basic moments; identical without end zones.
     static thread_local Vector m(4);
-    m(0) = q(1);  m(1) = q(2);  m(2) = q(3);  m(3) = q(4);
+    double fm[4];
+    this->hingeFaceMoments(fm);
+    m(0) = fm[0];  m(1) = fm[1];  m(2) = fm[2];  m(3) = fm[3];
     return info.setVector(m);
   }
   case 6: {
     // Ladruno — local-frame end forces from the basic
     // q = [N, Mz_i, Mz_j, My_i, My_j, T], same mapping as DispBeamColumn3d
-    // including p0 reactions.
+    // including p0 reactions. Under -endZones the node moments also carry
+    // dM0 (the end-zone load fix): qe / pe are the node basic forces.
     static thread_local Vector Pl(12);
+    static thread_local Vector qe(6), pe(5);
+    this->effectiveBasic(qe, pe);
     const double L = theCoordTransf->getInitialLength();
     const double oneOverL = (L > 0.0) ? 1.0 / L : 0.0;
 
-    Pl(0)  = -q(0) + p0[0];   Pl(6)  = q(0);          // axial
-    Pl(3)  = -q(5);           Pl(9)  = q(5);          // torsion
+    Pl(0)  = -qe(0) + pe(0);  Pl(6)  = qe(0);         // axial
+    Pl(3)  = -qe(5);          Pl(9)  = qe(5);         // torsion
 
-    double V = (q(1) + q(2)) * oneOverL;              // Mz -> shear along y
-    Pl(5)  = q(1);            Pl(11) = q(2);
-    Pl(1)  =  V + p0[1];      Pl(7)  = -V + p0[2];
+    double V = (qe(1) + qe(2)) * oneOverL;            // Mz -> shear along y
+    Pl(5)  = qe(1);           Pl(11) = qe(2);
+    Pl(1)  =  V + pe(1);      Pl(7)  = -V + pe(2);
 
-    V = (q(3) + q(4)) * oneOverL;                     // My -> shear along z
-    Pl(4)  = q(3);            Pl(10) = q(4);
-    Pl(2)  = -V + p0[3];      Pl(8)  =  V + p0[4];
+    V = (qe(3) + qe(4)) * oneOverL;                   // My -> shear along z
+    Pl(4)  = qe(3);           Pl(10) = qe(4);
+    Pl(2)  = -V + pe(3);      Pl(8)  =  V + pe(4);
 
     return info.setVector(Pl);
   }
   case 8: {
     static thread_local Vector hs(8);
+    double fm[4];
+    this->hingeFaceMoments(fm);  // Ladruno (end-zone load fix)
     hs(0) = thetaH[0];
-    hs(1) = q(1);
+    hs(1) = fm[0];
     hs(2) = thetaH[1];
-    hs(3) = q(2);
+    hs(3) = fm[1];
     hs(4) = thetaH[2];
-    hs(5) = q(3);
+    hs(5) = fm[2];
     hs(6) = thetaH[3];
-    hs(7) = q(4);
+    hs(7) = fm[3];
     return info.setVector(hs);
   }
   case 10: {
@@ -1615,18 +1819,22 @@ int LadrunoIMKBeam::getResponse(int responseID, Information &info)
   }
   case 20: {
     static thread_local Vector hbi(4);
+    double fm[4];
+    this->hingeFaceMoments(fm);  // Ladruno (end-zone load fix)
     hbi(0) = thetaH[0];
-    hbi(1) = q(1);
+    hbi(1) = fm[0];
     hbi(2) = thetaH[2];
-    hbi(3) = q(3);
+    hbi(3) = fm[2];
     return info.setVector(hbi);
   }
   case 21: {
     static thread_local Vector hbj(4);
+    double fm[4];
+    this->hingeFaceMoments(fm);  // Ladruno (end-zone load fix)
     hbj(0) = thetaH[1];
-    hbj(1) = q(2);
+    hbj(1) = fm[1];
     hbj(2) = thetaH[3];
-    hbj(3) = q(4);
+    hbj(3) = fm[3];
     return info.setVector(hbj);
   }
   case 19:
@@ -1657,16 +1865,18 @@ int LadrunoIMKBeam::getResponse(int responseID, Information &info)
   case 71:
   case 72: {
     static thread_local Vector sf(4);
+    static thread_local Vector qe(6), p0e(5);   // Ladruno (end-zone load fix)
+    this->effectiveBasic(qe, p0e);
     if (responseID == 71) {
-      sf(0) = q(0) - p0[0];
-      sf(1) = -q(1);
-      sf(2) = -q(3);
-      sf(3) = q(5);
+      sf(0) = qe(0) - p0e(0);
+      sf(1) = -qe(1);
+      sf(2) = -qe(3);
+      sf(3) = qe(5);
     } else {
-      sf(0) = q(0);
-      sf(1) = q(2);
-      sf(2) = q(4);
-      sf(3) = q(5);
+      sf(0) = qe(0);
+      sf(1) = qe(2);
+      sf(2) = qe(4);
+      sf(3) = qe(5);
     }
     return info.setVector(sf);
   }

@@ -112,6 +112,12 @@ class LadrunoIMKBeam : public Element
   bool ladrunoEnergyRayleighOnly(void) const { return true; }
 
  private:
+  // Ladruno (end-zone load fix): element loads under -endZones, the node
+  // basic forces with dM0 folded in, and the hinge (face) moments.
+  int addLoadEndZones(int type, const Vector &data, double loadFactor, double L);
+  void effectiveBasic(Vector &qe, Vector &p0e) const;
+  void hingeFaceMoments(double m[4]) const;
+
   // --- geometry / elastic properties of the member ---
   double A, E, G, Jx, Iy, Iz;
   double rho;
@@ -151,6 +157,10 @@ class LadrunoIMKBeam : public Element
   Vector Q;   // 12-dof element load (inertia unbalance)
   double q0[5];  // Fixed end forces in basic system
   double p0[5];  // Reactions in basic system
+  // Ladruno (end-zone load fix): node-moment corrections [Mz_i, Mz_j, My_i, My_j]
+  // from element loads under -endZones (zone loads and the face reactions'
+  // lever arm dI, dJ); all zero without end zones. See LadrunoIMKHinge.h.
+  double dM0[4];
   double vCommit[6];  // Committed basic deformations
   bool q0Dirty;  // True when zeroLoad/addLoad modified q0 since last update()
   bool committedAtCurrentV;  // True immediately after recvSelf at vCommit

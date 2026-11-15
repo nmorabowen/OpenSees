@@ -2903,13 +2903,16 @@ def test_t15_review_bug_regressions(tmp_path):
         assert abs(th_ez[0]) > 1.0e-5
         assert th_ez[0] == pytest.approx(-th_ez[1], rel=1e-10)
         assert abs(hm_ez[0]) == pytest.approx(My_ez + bh_ez * k0_ez * (abs(th_ez[0]) - My_ez / k0_ez), rel=1e-10)
-        # Nodal moment at node 1 must equal T^T * [hm_I, hm_J] (and decrease from elastic FEM 90 kN*m due to hinge yielding)
-        T00 = (L_ez - dJ) / Lc
-        T10 = dI / Lc
-        mz_node1_expected = abs(T00 * hm_ez[0] + T10 * hm_ez[1])
+        # Nodal moment at node 1 = face (hinge) moment + the face shear's lever arm
+        # + the rigid-zone load's moment (end-zone load fix, 2026-11-15; this used
+        # to assert T^T * [hm_I, hm_J], which leaves both arms out). Symmetric
+        # case: face shear |w| Lc / 2, zone load |w| dI at dI / 2; the node shear
+        # carries the whole half-load |w| L / 2 (the zone load is no longer dropped).
+        mz_node1_expected = (abs(hm_ez[0]) + abs(wy_ez) * Lc / 2.0 * dI
+                             + abs(wy_ez) * dI * dI / 2.0)
         mz_idx = 2 if ndm == 2 else 5
         assert abs(ef_ez[mz_idx]) == pytest.approx(mz_node1_expected, rel=1e-10)
-        assert My_ez < abs(ef_ez[mz_idx]) < abs(wy_ez) * (L_ez ** 2) / 12.0
+        assert abs(ef_ez[1]) == pytest.approx(abs(wy_ez) * L_ez / 2.0, rel=1e-10)
 
     # --- Bug 6: Timoshenko -shear fixed-end moments for point/partial loads & parameter aliases ---
     # Propped cantilever (node 1 fixed, node 2 pinned in y/z): under midspan point load P,

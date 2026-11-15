@@ -37,6 +37,20 @@
 //           [, '-matYi', tag] [, '-matYj', tag]   # per-end weak-axis  (asymmetric)
 //           [, '-mass', rho])             # mass per unit length (lumped)
 //
+// WP-200 options (full list: the option loop below):
+//           [, '-endZones', dI, dJ]       # rigid end zones; hinges sit at the faces
+//           [, '-pm', P0 [, alpha]]       # parabolic P-M scaling of My
+//           [, '-pmBal', P0c, P0t, Pbal, muBal]  # balance-point P-M envelope.
+//                 All four are POSITIVE: P0c = squash load (compression),
+//                 P0t = tension capacity as a magnitude (NOT signed),
+//                 Pbal = balance-point axial load (0 < Pbal < P0c),
+//                 muBal = M_bal / M_y(P=0) >= 1.
+//           [, '-shear', GAy [, GAz]] [, '-shearHinge' ...] [, '-implex']
+// Element loads (eleLoad -beamUniform / -beamPoint, and the partial-uniform
+// loads LadrunoMembrane pushes to its -frames) act on the elastic interior as
+// fixed-end forces q0 + reactions p0; each hinge then sees gravity + seismic.
+// Builds before WP-200 (34df942c7) refused them: see the WP-200 quirk.
+//
 // matZ/matY are pre-built uniaxialMaterial tags (the element is material-
 // agnostic: steel -> IMKBilin/Bilin, concrete -> ModIMKPeakOriented/pinching).
 // Omitting an axis material leaves that axis elastic. The column-face offset is
@@ -373,9 +387,16 @@ void *OPS_LadrunoIMKBeam()
       }
       double pmb[4] = {0.0, 0.0, 0.0, 1.0};
       num = 4;
-      if (OPS_GetDoubleInput(&num, pmb) < 0 ||
-          pmb[0] <= 0.0 || pmb[1] <= 0.0 || pmb[2] <= 0.0 || pmb[0] <= pmb[2] || pmb[3] < 1.0) {
-        opserr << "WARNING LadrunoIMKBeam -- invalid -pmBal P0c P0t Pbal muBal\n";
+      if (OPS_GetDoubleInput(&num, pmb) < 0) {
+        opserr << "WARNING LadrunoIMKBeam -- invalid -pmBal P0c P0t Pbal muBal (four numbers)\n";
+        return 0;
+      }
+      // Ladruno: say which rule failed. P0t is the tension capacity as a
+      // POSITIVE magnitude; a signed (negative) P0t is the common mistake.
+      if (pmb[0] <= 0.0 || pmb[1] <= 0.0 || pmb[2] <= 0.0 || pmb[0] <= pmb[2] || pmb[3] < 1.0) {
+        opserr << "WARNING LadrunoIMKBeam -- invalid -pmBal " << pmb[0] << " " << pmb[1] << " "
+               << pmb[2] << " " << pmb[3] << ": need P0c > Pbal > 0, P0t > 0 (tension "
+               << "capacity as a positive magnitude, not signed) and muBal >= 1\n";
         return 0;
       }
       P0    = pmb[0];

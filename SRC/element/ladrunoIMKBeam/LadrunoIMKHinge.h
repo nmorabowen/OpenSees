@@ -1328,6 +1328,109 @@ inline void ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
   }
 }
 
+// ---------------------------------------------------------------------------
+// Element loads with rigid end zones (Ladruno, end-zone load fix).
+//
+// With -endZones dI dJ a load position is measured on the full length L
+// (the OpenSees eleLoad convention, and what LadrunoMembrane pushes). The
+// element splits each load into its i-zone part [0, dI], its clear part
+// [dI, L-dJ] and its j-zone part [L-dJ, L]. A zone part goes straight to its
+// node, as a force and a moment (the zone is rigid). The clear part gives the
+// fixed-end moments q0 of the clear span and its face reactions; a face
+// reaction acts at the face, dI (dJ) away from its node, so it also adds a
+// node moment. The helpers below are the per-piece math; the elements
+// accumulate the node moments in dM0 = [Mz_i, Mz_j, My_i, My_j].
+// ---------------------------------------------------------------------------
+
+// Fixed-end response of a transverse load varying linearly from wa at a to wb
+// at b (clear-span abscissae, 0 <= a < b <= Lc) on a clear span Lc. V1, V2 are
+// the load shares at faces i and j (V1 + V2 = resultant); M1, M2 the fixed-end
+// moments in the sign the elements add to q0[1], q0[2] for a local-y load.
+// Phi = 12 EI / (GAv Lc^2) applies the Timoshenko correction (0: none).
+inline void ladrunoIMKLinearSegmentFEF(double a, double b, double wa, double wb,
+                                       double Lc, double Phi,
+                                       double &V1, double &V2,
+                                       double &M1, double &M2)
+{
+  const double ell = b - a;
+  const double J0 = 0.5 * ell * (wa + wb);
+  const double J1 = (ell * ell / 6.0) * (wa + 2.0 * wb);
+  const double J2 = (ell * ell * ell / 12.0) * (wa + 3.0 * wb);
+  const double J3 = (ell * ell * ell * ell / 20.0) * (wa + 4.0 * wb);
+  const double I0 = J0;
+  const double I1 = a * J0 + J1;
+  const double I2 = a * a * J0 + 2.0 * a * J1 + J2;
+  const double I3 = a * a * a * J0 + 3.0 * a * a * J1 + 3.0 * a * J2 + J3;
+  V2 = I1 / Lc;
+  V1 = I0 - V2;
+  M1 = -I1 + (2.0 / Lc) * I2 - (1.0 / (Lc * Lc)) * I3;
+  M2 = (1.0 / Lc) * I2 - (1.0 / (Lc * Lc)) * I3;
+  if (Phi > 0.0) {
+    const double inv = 1.0 / (1.0 + Phi);
+    const double m1 = ((1.0 + 0.5 * Phi) * M1 - 0.5 * Phi * M2) * inv;
+    const double m2 = (-0.5 * Phi * M1 + (1.0 + 0.5 * Phi) * M2) * inv;
+    M1 = m1;
+    M2 = m2;
+  }
+}
+
+// The same for a transverse point load P at clear-span abscissa a.
+inline void ladrunoIMKPointFEF(double a, double P, double Lc, double Phi,
+                               double &V1, double &V2, double &M1, double &M2)
+{
+  const double b = Lc - a;
+  V1 = P * b / Lc;
+  V2 = P * a / Lc;
+  M1 = -a * b * b * P / (Lc * Lc);
+  M2 =  a * a * b * P / (Lc * Lc);
+  if (Phi > 0.0) {
+    const double inv = 1.0 / (1.0 + Phi);
+    const double m1 = ((1.0 + 0.5 * Phi) * M1 - 0.5 * Phi * M2) * inv;
+    const double m2 = (-0.5 * Phi * M1 + (1.0 + 0.5 * Phi) * M2) * inv;
+    M1 = m1;
+    M2 = m2;
+  }
+}
+
+// Axial load varying linearly from wa at a to wb at b on the clear span:
+// its resultant P and the share PJ carried to face j.
+inline void ladrunoIMKLinearSegmentAxial(double a, double b, double wa, double wb,
+                                         double Lc, double &P, double &PJ)
+{
+  const double ell = b - a;
+  P  = 0.5 * ell * (wa + wb);
+  PJ = (a * P + (ell * ell / 6.0) * (wa + 2.0 * wb)) / Lc;
+}
+
+// Resultant F and first moment S (about x = 0) of a load varying linearly
+// from w1 at x1 to w2 at x2.
+inline void ladrunoIMKSegmentResultant(double x1, double x2, double w1, double w2,
+                                       double &F, double &S)
+{
+  const double ell = x2 - x1;
+  F = 0.5 * ell * (w1 + w2);
+  S = x1 * F + (ell * ell / 6.0) * (w1 + 2.0 * w2);
+}
+
+// Face moments [Mi, Mj] of the clear span from the node basic moments the
+// kernel returns (q_node = T^T q_face, T the rigid-offset transform).
+inline void ladrunoIMKFaceMoments(double qi, double qj, double L, double dI, double dJ,
+                                  double &Mi, double &Mj)
+{
+  const bool hasEZ = (dI > 0.0 || dJ > 0.0) && (dI + dJ < L);
+  if (!hasEZ) {
+    Mi = qi;
+    Mj = qj;
+    return;
+  }
+  const double Lc = L - dI - dJ;
+  const double T00 = (L - dJ) / Lc, T01 = dJ / Lc;
+  const double T10 = dI / Lc,       T11 = (L - dI) / Lc;
+  const double det = T00 * T11 - T10 * T01;   // = L / Lc
+  Mi = ( T11 * qi - T10 * qj) / det;
+  Mj = (-T01 * qi + T00 * qj) / det;
+}
+
 #endif
 
 
