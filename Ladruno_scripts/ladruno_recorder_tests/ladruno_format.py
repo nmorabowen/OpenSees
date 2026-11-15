@@ -348,10 +348,9 @@ class WriterBusyError(OSError):
     """A LIVE writer holds a lock on the file (schema §7b.2): the open failed with
     "unable to lock file", or (Windows) a raw read was refused. A killed process holds
     no locks, so this is never a killed file. A reader with HDF5 file locking on (the
-    default) meets it for as long as the run is live on Windows (the recorder's guard
-    lock), and during a layout step on POSIX (HDF5's own lock). Wait, or read the live
-    file with locking OFF (h5py ``locking=False``) and ``swmr=True``, as the live monitor
-    does. Never repair or copy a file in this state."""
+    default) meets it for as long as the run is live (the recorder's guard lock). Wait,
+    or read the live file with locking OFF (h5py ``locking=False``) and ``swmr=True``, as
+    the live monitor does. Never repair or copy a file in this state."""
 
 
 def _busy(e) -> bool:

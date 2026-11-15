@@ -810,24 +810,26 @@ copy of any file that step 1 refuses, flags 0x05 included.
 **A file a live run is writing.** The reader must never write to or repair the original.
 
 - **A reader with HDF5 file locking on** (the default in h5py, HDFView and most tools) gets
-  "unable to lock file" from a live run (`ladruno_format.WriterBusyError`):
-  - on Windows, for the whole life of the file. The recorder holds a **guard lock** from
-    just after creating the file until after closing it: an exclusive lock on one byte at
-    offset 2^62, which any whole-file lock overlaps;
-  - on POSIX, while a layout step runs, through HDF5's own exclusive lock.
+  "unable to lock file" from a live run, for the whole life of the file
+  (`ladruno_format.WriterBusyError`). The recorder holds a **guard lock** from just after
+  creating the file until after closing it:
+  - Windows: an exclusive lock on one byte at offset 2^62, which any whole-file lock
+    overlaps;
+  - POSIX: `flock(LOCK_EX)` on a separate descriptor.
 
   A killed process holds no locks. So a lock error always means a live writer: wait, and
   open again. Flags 0x01 without a lock error means a kill.
-- **Why the guard exists (Windows).** Windows locks are mandatory: a locking reader's brief
-  whole-file shared lock makes every write of the recorder in that instant fail
-  ("Permission denied"). HDF5's writer lock cannot prevent this. An SWMR writer releases it
-  to arm SWMR, and `H5Fstart_swmr_write` writes the superblock after releasing it.
-  Measured: a polling reader made the recorder lose writes, fail its close or its
-  `H5Fstart_swmr_write`, disable itself and leave the file inconsistent. So on Windows
-  HDF5's locking is off for the recorder's file and the guard replaces it. That restores
-  what held before WP-233, when the writer kept HDF5's exclusive lock all run. POSIX locks
-  are advisory and never block a write, so there HDF5's locking stays on and there is no
-  guard.
+- **Why the guard exists.** With HDF5's own locking, a locking reader's brief shared lock
+  breaks the SWMR writer, and it was measured on both platforms:
+  - `H5Fstart_swmr_write` and a layout step's reopen must take the lock, and are refused
+    (Linux: EAGAIN; the recorder stopped);
+  - on Windows, where byte-range locks are mandatory, the writer's very writes fail
+    ("Permission denied"), even inside `H5Fstart_swmr_write`, which writes the superblock
+    after releasing HDF5's lock. A polling reader made the recorder lose writes, disable
+    itself and leave the file inconsistent.
+
+  So HDF5's locking is off for the recorder's file and the guard replaces it. That restores
+  what held before WP-233, when the writer kept HDF5's exclusive lock all run.
 - **To read a live file, open with file locking OFF** (h5py
   `h5py.File(path, "r", swmr=True, locking=False)`, or `HDF5_USE_FILE_LOCKING=FALSE`), as
   the live monitor requires (`08_analysis_monitor.md`). Such a reader takes no lock and
@@ -836,11 +838,9 @@ copy of any file that step 1 refuses, flags 0x05 included.
   0x00 at the instant of the reopen) it can see a half-written layout: retry. A live file
   and a killed one cannot be told apart from the bytes; a locking reader tells them apart
   by the lock error.
-- **The reopen waits for readers (POSIX).** A locking reader can get a plain open in the
-  instant between a layout step's close and its reopen. While it holds that handle, HDF5
-  refuses the writer's reopen. The recorder retries for up to 60 s, warning after 1 s, and
-  then stops recording. On Windows the guard keeps locking readers out of that instant
-  too.
+- **No instant is unguarded.** The guard is held across layout steps, so a locking reader
+  cannot get in between a layout step's close and its reopen either. (The reopen still
+  retries for up to 60 s, warning after 1 s, in case something else holds the file.)
 
 **The crash rule (what to read).**
 

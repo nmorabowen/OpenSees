@@ -706,25 +706,21 @@ namespace h5 {
 		// (weak): HDF5's atexit close of a deck that never wipes must still flush
 		// and close the file; openLayout() checks openObjects() before closing.
 		//
-		// File locking (measured, WP-233). Windows byte-range locks are MANDATORY:
-		// a reader with HDF5 locking on holds a whole-file shared lock while it
-		// opens, and any write of the recorder in that instant fails ("Permission
-		// denied"). HDF5's own writer lock does not prevent that: an SWMR writer
-		// releases it to arm SWMR, and H5Fstart_swmr_write even writes the
-		// superblock AFTER releasing it. So on Windows HDF5's locking is OFF for the
-		// recorder's file and the recorder holds its own guard lock for the whole
-		// life of the file (LadrunoRecorder.cpp, ladrunoGuardAcquire), which every
-		// locking reader overlaps and is refused by. On POSIX, locks are advisory
-		// and never block a write: HDF5's locking stays ON (a live writer then
-		// shows as a lock error during a layout step) and openLayout() retries a
-		// reopen a reader's lock refuses.
+		// File locking OFF (measured, WP-233). A reader with HDF5 locking on (h5py's
+		// default, HDFView) holds a shared lock while it opens, and HDF5's own
+		// locking then breaks the SWMR writer: H5Fstart_swmr_write and every layout
+		// step's read-write reopen must take the lock and are refused (Linux: EAGAIN,
+		// the recorder disabled itself), and on Windows, where byte-range locks are
+		// mandatory, the writer's very writes fail ("Permission denied"), even inside
+		// H5Fstart_swmr_write, which writes the superblock after releasing the lock.
+		// So HDF5 never locks the recorder's file; the recorder holds its own guard
+		// lock for the whole life of the file instead (LadrunoRecorder.cpp,
+		// ladrunoGuardAcquire), which every locking reader is refused by.
 		inline hid_t accessList() {
 			hid_t fapl = H5Pcreate(H5P_FILE_ACCESS);
 			if (fapl < 0) return HID_INVALID;
 			herr_t st = H5Pset_libver_bounds(fapl, H5F_LIBVER_LATEST, H5F_LIBVER_LATEST);
-#if defined(_WIN32)
 			if (st >= 0) st = H5Pset_file_locking(fapl, false, true);
-#endif
 			if (st < 0) {
 				H5Pclose(fapl);
 				return HID_INVALID;

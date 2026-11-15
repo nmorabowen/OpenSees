@@ -107,6 +107,10 @@
 #define NOGDI
 #endif
 #include <windows.h>
+#else
+#include <fcntl.h>      // WP-233: the guard lock (flock on a separate descriptor)
+#include <sys/file.h>
+#include <unistd.h>
 #endif
 #include <cstdlib>
 
@@ -219,23 +223,23 @@ static const size_t LADRUNO_KIND_LEN = 9;
 // WP-233: links the root's header is presized for (one per MODEL_STAGE, + INFO).
 static const unsigned LADRUNO_ROOT_LINKS = 1024;
 
-// WP-233 (#1082): the guard lock (Windows). Windows file locks are mandatory: a
-// reader with HDF5 file locking on (h5py's default, HDFView, ...) takes a
-// whole-file shared lock for the length of its open, and any write of the
-// recorder in that instant fails ("Permission denied"). HDF5's own writer lock
-// cannot prevent it: an SWMR writer releases that lock to arm SWMR, and
-// H5Fstart_swmr_write writes the superblock after releasing it. Measured: a
-// reader polling a live file made the recorder lose writes, fail its close or its
-// H5Fstart_swmr_write, disable itself and leave the file inconsistent. So on
-// Windows HDF5's locking is off for this file (Ladruno_Hdf5.h accessList) and the
-// recorder holds, from right after H5Fcreate until after the final close, an
-// EXCLUSIVE lock on one byte at offset 2^62 through a separate handle. Every
-// locking reader's whole-file lock overlaps it and is refused ("unable to lock
-// file"), as before WP-233, when the writer held HDF5's exclusive lock all run;
-// the recorder's own writes never reach that offset. A reader with locking OFF
-// (as the live monitor requires, 08_analysis_monitor.md) takes no lock and reads
-// the live file through SWMR. The OS releases the guard if the process is killed.
-// POSIX locks are advisory and never block a write: no guard there.
+// WP-233 (#1082): the guard lock. A reader with HDF5 file locking on (h5py's
+// default, HDFView, ...) holds a shared lock while it opens the file, and with
+// HDF5's own locking that breaks the SWMR writer (measured): H5Fstart_swmr_write
+// and a layout step's reopen must lock and are refused (Linux), and on Windows,
+// where byte-range locks are mandatory, the writer's very writes fail
+// ("Permission denied"). So HDF5's locking is off for this file (Ladruno_Hdf5.h
+// accessList) and the recorder holds its own EXCLUSIVE lock, from right after
+// H5Fcreate until after the final close, through a separate descriptor:
+//   * Windows: LockFileEx on one byte at offset 2^62, which every reader's
+//     whole-file lock overlaps; the recorder's own writes never reach it;
+//   * POSIX: flock(LOCK_EX), which every reader's flock(LOCK_SH) conflicts with;
+//     flock is advisory, so it never blocks the recorder's writes.
+// A locking reader is then refused ("unable to lock file") for as long as the
+// run is live, as before WP-233, when the writer held HDF5's exclusive lock all
+// run. A reader with locking OFF (as the live monitor requires,
+// 08_analysis_monitor.md) takes no lock and reads the live file through SWMR.
+// The OS releases the guard if the process is killed.
 static void* ladrunoGuardAcquire(const std::string& path)
 {
 #if defined(_WIN32)
@@ -258,7 +262,16 @@ static void* ladrunoGuardAcquire(const std::string& path)
 	}
 	return 0;
 #else
-	(void)path;
+	for (int attempt = 0, pause_ms = 2; attempt < 130; ++attempt,
+	     pause_ms = std::min(pause_ms * 2, 500)) {
+		const int fd = ::open(path.c_str(), O_RDONLY);
+		if (fd < 0)
+			return 0;
+		if (::flock(fd, LOCK_EX | LOCK_NB) == 0)
+			return (void*)(intptr_t)(fd + 1);   // + 1: fd 0 is valid, 0 means none
+		::close(fd);      // a reader holds a shared lock this instant: retry
+		std::this_thread::sleep_for(std::chrono::milliseconds(pause_ms));
+	}
 	return 0;
 #endif
 }
@@ -272,6 +285,12 @@ static void ladrunoGuardRelease(void*& guard)
 		ov.OffsetHigh = 0x40000000u;
 		UnlockFileEx((HANDLE)guard, 0, 1, 0, &ov);
 		CloseHandle((HANDLE)guard);
+	}
+#else
+	if (guard) {
+		const int fd = (int)(intptr_t)guard - 1;
+		::flock(fd, LOCK_UN);
+		::close(fd);
 	}
 #endif
 	guard = 0;
@@ -399,7 +418,7 @@ public:
 	std::chrono::steady_clock::time_point last_flush;
 	// WP-233: the file this process writes (for the layout step's reopen).
 	std::string file_path;
-	// WP-233: the guard lock (ladrunoGuardAcquire; Windows), held for the file's life.
+	// WP-233: the guard lock (ladrunoGuardAcquire), held for the file's life.
 	void* guard;
 	bool guard_warned;
 	// WP-165 (R6): the domain-change stamp moves for far more than topology —
@@ -1348,17 +1367,15 @@ int LadrunoRecorder::initialize()
 		return -1;
 	}
 	info.layout_open = true;
-	// WP-233: the guard lock (Windows), held until the file is closed.
+	// WP-233: the guard lock, held until the file is closed.
 	m_data->guard = ladrunoGuardAcquire(the_filename);
-#if defined(_WIN32)
 	if (!m_data->guard && !m_data->guard_warned) {
 		m_data->guard_warned = true;
 		opserr << "LadrunoRecorder warning: could not take the guard lock on '"
 		       << the_filename.c_str() << "': a reader with HDF5 file locking on "
-		          "that opens the file while it is written can make writes fail "
+		          "that opens the file while it is written is not refused "
 		          "(schema 7b.2)\n";
 	}
-#endif
 
 	// INFO group (schema v1 §2)
 	hid_t h_info = ladrunons::h5::group::create(
