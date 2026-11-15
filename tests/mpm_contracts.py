@@ -11,7 +11,6 @@ of the rule it breaks (``C1-...`` / ``C2-...``), as listed in
 """
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
 
@@ -223,115 +222,19 @@ def validate_particle_results(path: str) -> list[str]:
 def open_particle_file(path) -> h5py.File:
     """Open a particle ``.ladruno`` read-only by the reader rule (232a §2.5).
 
-    The writer keeps the file in SWMR-write mode from the end of a stage's layout until
-    it closes. A clean close clears the file's consistency flags, so a plain read-only
-    open works. A killed run leaves them set, and a plain open then fails with "file is
-    already open for write": open it in SWMR-read mode instead, which skips that check
-    and the stale stored end-of-allocation. Never ``h5clear`` the file first (the stored
-    EOA lags the data; only an SWMR-read open tolerates it). No
-    ``HDF5_USE_FILE_LOCKING=FALSE`` is needed after a kill (measured, Windows).
-
-    A killed file shorter than its stored end-of-allocation fails the plain open with
-    "truncated file" before the flags are checked; it takes the same SWMR-read path.
-
-    Step 3: when the SWMR-read open also refuses ("not already open for SWMR writing")
-    and the superblock flags are WRITE_ACCESS only (0x01), the run was killed while a
-    stage was being laid out. Raises ``StageLayoutKilledError``; recover a COPY with
-    ``recover_particle_file``. The file itself is never repaired here. Any other
-    refusal re-raises the plain open's error.
-    """
-    try:
-        return h5py.File(path, "r")
-    except OSError as e:
-        if "already open for write" not in str(e) and "truncated file" not in str(e):
-            raise
-        plain = e
-    try:
-        return h5py.File(path, "r", swmr=True)
-    except OSError as e:
-        if "not already open for SWMR writing" not in str(e) or _superblock_flags(path) != 0x01:
-            raise plain from e
-        raise StageLayoutKilledError(
-            f"{path}: the run was killed while a stage was being laid out (superblock "
-            "flags hold WRITE_ACCESS only, which neither a plain nor an SWMR-read open "
-            "accepts); recover a copy with recover_particle_file(src, dst) "
-            "(232a section 2.5, reader rule step 3)") from e
+    Since WP-233 (#1082) the rule is ``.ladruno``-wide (schema §7b.2), because the
+    recorder writes under SWMR too; it lives in the fork's executable spec as
+    ``ladruno_format.open_ladruno``. Step 3 raises ``StageLayoutKilledError``; recover a
+    COPY with ``recover_particle_file``. The file itself is never repaired here."""
+    return lf.open_ladruno(path)
 
 
-class StageLayoutKilledError(OSError):
-    """A particle file killed while a stage was being laid out (232a §2.5, reader rule
-    step 3): both the plain and the SWMR-read open refuse it. Recover a copy with
-    ``recover_particle_file``."""
-
-
-def lookup3(data: bytes, initval: int = 0) -> int:
-    """HDF5's metadata checksum, ``H5_checksum_lookup3`` (Bob Jenkins' hashlittle)."""
-    m32 = 0xFFFFFFFF
-
-    def rot(x, k):
-        return ((x << k) | (x >> (32 - k))) & m32
-
-    n = len(data)
-    a = b = c = (0xDEADBEEF + n + initval) & m32
-    k = 0
-    while n > 12:
-        a = (a + int.from_bytes(data[k:k + 4], "little")) & m32
-        b = (b + int.from_bytes(data[k + 4:k + 8], "little")) & m32
-        c = (c + int.from_bytes(data[k + 8:k + 12], "little")) & m32
-        a = (a - c) & m32; a ^= rot(c, 4); c = (c + b) & m32
-        b = (b - a) & m32; b ^= rot(a, 6); a = (a + c) & m32
-        c = (c - b) & m32; c ^= rot(b, 8); b = (b + a) & m32
-        a = (a - c) & m32; a ^= rot(c, 16); c = (c + b) & m32
-        b = (b - a) & m32; b ^= rot(a, 19); a = (a + c) & m32
-        c = (c - b) & m32; c ^= rot(b, 4); b = (b + a) & m32
-        n -= 12
-        k += 12
-    if n == 0:
-        return c
-    tail = bytes(data[k:k + n]) + b"\0" * (12 - n)
-    a = (a + int.from_bytes(tail[0:4], "little")) & m32
-    b = (b + int.from_bytes(tail[4:8], "little")) & m32
-    c = (c + int.from_bytes(tail[8:12], "little")) & m32
-    c ^= b; c = (c - rot(b, 14)) & m32
-    a ^= c; a = (a - rot(c, 11)) & m32
-    b ^= a; b = (b - rot(a, 25)) & m32
-    c ^= b; c = (c - rot(b, 16)) & m32
-    a ^= c; a = (a - rot(c, 4)) & m32
-    b ^= a; b = (b - rot(a, 14)) & m32
-    c ^= b; c = (c - rot(b, 24)) & m32
-    return c
-
-
-#: version-2/3 superblock (8-byte offsets): flags at 11, end-of-file address at 28,
-#: lookup3 over bytes 0..43 stored at 44
-_SB_SIG = b"\x89HDF\r\n\x1a\n"
-
-
-def set_superblock(path, flags: int | None = None, eoa: int | None = None) -> tuple[int, int]:
-    """Rewrite a v2/v3 superblock's consistency flags and/or stored end-of-allocation,
-    and re-checksum it. Returns the (flags, eoa) it held. Refuses any other layout."""
-    with open(path, "r+b") as fh:
-        sb = bytearray(fh.read(48))
-        if bytes(sb[:8]) != _SB_SIG or sb[8] not in (2, 3) or sb[9] != 8:
-            raise ValueError(f"{path}: not a version-2/3 superblock with 8-byte offsets")
-        if lookup3(bytes(sb[:44])) != int.from_bytes(sb[44:48], "little"):
-            raise ValueError(f"{path}: superblock checksum mismatch")
-        old = (sb[11], int.from_bytes(sb[28:36], "little"))
-        if flags is not None:
-            sb[11] = flags
-        if eoa is not None:
-            sb[28:36] = int(eoa).to_bytes(8, "little")
-        sb[44:48] = lookup3(bytes(sb[:44])).to_bytes(4, "little")
-        fh.seek(0)
-        fh.write(sb)
-    return old
-
-
-def _superblock_flags(path) -> int | None:
-    """The consistency flags of a v2/v3 superblock, or None for any other layout."""
-    with open(path, "rb") as fh:
-        sb = fh.read(12)
-    return sb[11] if len(sb) == 12 and sb[:8] == _SB_SIG and sb[8] in (2, 3) else None
+#: 232a §2.5 step 3 (the same class as ``ladruno_format.StageLayoutKilledError``)
+StageLayoutKilledError = lf.StageLayoutKilledError
+#: HDF5's metadata checksum, the superblock rewrite and its flags (``ladruno_format``)
+lookup3 = lf.lookup3
+set_superblock = lf.set_superblock
+_superblock_flags = lf.superblock_flags
 
 
 def _stage_names(f) -> list[str]:
@@ -359,15 +262,7 @@ def recover_particle_file(src, dst) -> list[dict]:
     src, dst = Path(src), Path(dst)
     if src.resolve() == dst.resolve():
         raise ValueError("recover_particle_file repairs a copy: dst must differ from src")
-    shutil.copyfile(src, dst)
-    size = dst.stat().st_size
-    with open(dst, "rb") as fh:
-        stored_eoa = int.from_bytes(fh.read(48)[28:36], "little")
-    eoa = max(stored_eoa, size)
-    set_superblock(dst, flags=0x00, eoa=eoa)
-    if size < eoa:
-        with open(dst, "ab") as fh:
-            fh.write(b"\0" * (eoa - size))
+    lf.repair_copy(src, dst)   # schema §7b.2 step 3, shared with the recorder (WP-233)
     report = []
     with h5py.File(dst, "r") as f:
         names = _stage_names(f)
