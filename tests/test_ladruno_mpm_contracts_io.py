@@ -519,3 +519,129 @@ def test_a_closed_file_opens_plainly_in_the_latest_format(tmp_path):
         assert f.id.get_create_plist().get_version()[0] >= 3
     with mc.open_particle_file(out) as f:
         assert not f.swmr_mode
+
+
+# --------------------------------------------------------------------------- #
+#  WP-232h (#1085): the presized root and the guard lock                       #
+# --------------------------------------------------------------------------- #
+_RESET_CHILD = r"""
+import os, sys
+sys.path.insert(0, os.environ["LADRUNO_MPM_TESTS"])
+from _testbed import ops
+out, fixture, stages, steps = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
+ops.wipe(); ops.model("basic", "-ndm", 2, "-ndf", 2)
+ops.nDMaterial("ElasticIsotropic", 1, 2.0e5, 0.3)
+ops.nDMaterial("ElasticIsotropic", 2, 2.0e4, 0.3)
+ops.mpm("grid", 232, "-origin", 0.0, 0.0, "-h", 0.5, "-cells", 4, 4, "-basis", "gimp")
+ops.mpm("particles", "-file", fixture)
+ops.mpm("output", out, "-every", 1, "-fields", "POSITION", "VELOCITY", "STRESS", "VOLUME")
+for s in range(stages):
+    ops.mpm("analyze", steps, 1e-6)
+    if s == 1:
+        print("STAGE 1", flush=True)
+    if s < stages - 1:
+        ops.mpm("reset")
+ops.mpm("output", "-close")
+print("DONE", flush=True)
+"""
+
+
+def _reset_child(out, stages, steps, stderr=subprocess.PIPE):
+    _ops()
+    env = dict(os.environ, LADRUNO_OPENSEES_QUIET="1",
+               LADRUNO_MPM_TESTS=os.path.dirname(os.path.abspath(__file__)))
+    env.pop("HDF5_USE_FILE_LOCKING", None)
+    return subprocess.Popen([sys.executable, "-c", _RESET_CHILD, str(out), str(FIXTURE),
+                             str(stages), str(steps)],
+                            stdout=subprocess.PIPE, stderr=stderr, text=True,
+                            stdin=subprocess.DEVNULL, env=env)
+
+
+def _h5lib():
+    import ctypes
+    lib = ctypes.CDLL(os.path.join(os.path.dirname(h5py.__file__), "hdf5.dll")) \
+        if os.name == "nt" else ctypes.CDLL(h5py.h5.__file__)
+    return ctypes, lib
+
+
+def test_the_root_is_presized_and_stays_compact(tmp_path):
+    """#1085: the root gains a MODEL_STAGE link at every `mpm reset`, in a layout written
+    without SWMR. Its header is presized (``plist::presizeLinks``: links compact for good,
+    sized for 1024) so adding one is ONE in-place write of the header. Unsized, it goes
+    dense after 8 links (here 13: INFO + 12 stages) or grows a continuation chunk, and a
+    kill in that flush could make the root, and every earlier stage, unreadable
+    (``hdf5_crash_replay.py --resets 10 --no-presize``)."""
+    out = tmp_path / "presized.ladruno"
+    o, e = _reset_child(out, 12, 2).communicate(timeout=600)
+    assert "DONE" in o, e[-2000:]
+    assert lf.validate(str(out)) == []
+    ctypes, lib = _h5lib()
+    with h5py.File(out, "r") as f:
+        assert sum(1 for k in f if k.startswith("MODEL_STAGE")) == 12
+        gcpl = f["/"].id.get_create_plist()     # the root group's (stored) link info
+        mx, mn = ctypes.c_uint(), ctypes.c_uint()
+        lib.H5Pget_link_phase_change.argtypes = (ctypes.c_int64, ctypes.c_void_p, ctypes.c_void_p)
+        assert lib.H5Pget_link_phase_change(gcpl.id, ctypes.byref(mx), ctypes.byref(mn)) >= 0
+        assert (mx.value, mn.value) == (65535, 65534)
+
+        class GInfo(ctypes.Structure):    # H5G_info_t
+            _fields_ = [("storage_type", ctypes.c_int), ("nlinks", ctypes.c_uint64),
+                        ("max_corder", ctypes.c_int64), ("mounted", ctypes.c_bool)]
+        gi = GInfo()
+        lib.H5Gget_info.argtypes = (ctypes.c_int64, ctypes.c_void_p)
+        assert lib.H5Gget_info(f.id.id, ctypes.byref(gi)) >= 0
+        assert gi.nlinks == 13
+        assert gi.storage_type == 1          # H5G_STORAGE_TYPE_COMPACT (2 = dense)
+
+
+@pytest.mark.parametrize("locking", [True, False])
+def test_a_live_reader_does_not_disturb_the_writer(tmp_path, locking):
+    """#1085: readers poll a live particle file through 15 stages (an `mpm reset` every
+    20 steps). locking=True (h5py's default): HDF5's own locking would let the reader's
+    shared lock break the SWMR writer (Linux: H5Fstart_swmr_write refused, EAGAIN;
+    Windows: the writes themselves fail). The writer turns HDF5 locking off and holds the
+    guard lock for the file's life, so the reader is refused cleanly
+    (``WriterBusyError``). locking=False (the live monitor's way): no lock, the reader
+    reads through SWMR. Either way the writer reports no error and the finished file
+    equals a run nobody read."""
+    import time
+    out = tmp_path / "live.ladruno"
+    err = tmp_path / "live.err"
+    with open(err, "w") as fe:
+        p = _reset_child(out, 15, 20, stderr=fe)
+        assert "STAGE 1" in p.stdout.readline()
+        outcomes = {"open": 0, "busy": 0, "other": 0}
+        while p.poll() is None:
+            try:
+                f = (lf.open_ladruno(str(out)) if locking
+                     else h5py.File(out, "r", swmr=True, locking=False))
+            except lf.WriterBusyError:
+                outcomes["busy"] += 1
+                continue
+            except OSError:
+                outcomes["other"] += 1        # a stage being laid out: retry
+                continue
+            with f:
+                outcomes["open"] += 1
+                time.sleep(0.002)             # hold it a moment, as a viewer would
+        o, _ = p.communicate()
+    e = err.read_text()
+    assert "DONE" in o, e[-3000:]
+    assert "ERROR" not in e and "Permission denied" not in e, e[-3000:]
+    if locking:
+        assert outcomes["busy"] > 0, outcomes     # refused, never let in to break the writer
+    else:
+        assert outcomes["open"] > 0, outcomes
+    ref = tmp_path / "ref.ladruno"
+    o, e2 = _reset_child(ref, 15, 20).communicate(timeout=600)
+    assert "DONE" in o, e2[-2000:]
+    assert lf.validate(str(out)) == []
+    with h5py.File(out, "r") as f, h5py.File(ref, "r") as r:
+        names = sorted(k for k in r if k.startswith("MODEL_STAGE"))
+        assert names == sorted(k for k in f if k.startswith("MODEL_STAGE"))
+        assert len(names) == 15
+        for n in names:
+            op, rp = f[f"{n}/RESULTS/ON_PARTICLES"], r[f"{n}/RESULTS/ON_PARTICLES"]
+            for ds in ("STEP", "TIME", "OFFSETS", "ID", "POSITION/DATA", "VELOCITY/DATA",
+                       "STRESS/DATA", "VOLUME/DATA"):
+                assert np.array_equal(op[ds][...], rp[ds][...]), (n, ds)

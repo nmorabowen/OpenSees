@@ -263,21 +263,33 @@ def recover_particle_file(src, dst) -> list[dict]:
     if src.resolve() == dst.resolve():
         raise ValueError("recover_particle_file repairs a copy: dst must differ from src")
     lf.repair_copy(src, dst)   # schema §7b.2 step 3, shared with the recorder (WP-233)
-    report = []
     with h5py.File(dst, "r") as f:
-        names = _stage_names(f)
-        for i, name in enumerate(names):
-            try:
-                st = f[name]
-                if "RESULTS/ON_PARTICLES/OFFSETS" not in st:
-                    raise KeyError(f"{name}: no RESULTS/ON_PARTICLES/OFFSETS")
-                report.append({"stage": name, "committed": committed_outputs(st)})
-            except Exception as e:
-                if i < len(names) - 1:
-                    raise TornStageError(f"{dst}: {name} will not open but is not the last "
-                                         f"stage: corruption ({e})") from e
-                report.append({"stage": name, "torn_while_laid_out": True,
-                               "error": str(e).splitlines()[0]})
+        return particle_stage_report(f)
+
+
+def particle_stage_report(f) -> list[dict]:
+    """Every particle stage of a file opened by ANY step of the reader rule (232a §2.5),
+    in order: ``{"stage": name, "committed": n}``, or ``{"stage": name,
+    "torn_while_laid_out": True, "error": msg}`` for the LAST stage when it will not open
+    or has no complete layout. A kill while a stage is laid out can tear that stage
+    whichever step opened the file, a plain open included: sec2 writes WRITE_ACCESS into
+    the superblock lazily, so such a file can still carry flags 0x00 (WP-232h, #1085).
+    The stage being laid out holds no committed output. An earlier stage that will not
+    open is corruption: raises ``TornStageError``."""
+    report = []
+    names = _stage_names(f)
+    for i, name in enumerate(names):
+        try:
+            st = f[name]
+            if "RESULTS/ON_PARTICLES/OFFSETS" not in st:
+                raise KeyError(f"{name}: no RESULTS/ON_PARTICLES/OFFSETS")
+            report.append({"stage": name, "committed": committed_outputs(st)})
+        except Exception as e:
+            if i < len(names) - 1:
+                raise TornStageError(f"{f.filename}: {name} will not open but is not the "
+                                     f"last stage: corruption ({e})") from e
+            report.append({"stage": name, "torn_while_laid_out": True,
+                           "error": str(e).splitlines()[0]})
     return report
 
 

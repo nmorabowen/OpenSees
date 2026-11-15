@@ -128,7 +128,12 @@ def trial(i, wait, out_dir, nsteps, set_ids):
         with mc.open_particle_file(out) as f:
             res["mode"] = "swmr" if f.swmr_mode else "plain"
             res["stages"] = check_file(f, set_ids)
-        bad = any(s[1] not in ("OK", "NO_RESULTS") for s in res["stages"])
+        # 232a section 2.5 (WP-232h): only the LAST stage may be torn while laid out, after
+        # any step of the reader rule (a plain open included); every earlier stage must read
+        st = res["stages"]
+        torn_last = bool(st) and (st[-1][1] == "NO_RESULTS" or st[-1][1].startswith("STAGE_FAIL"))
+        res["torn_last"] = torn_last
+        bad = any(s[1] != "OK" for s in (st[:-1] if torn_last else st))
     except mc.StageLayoutKilledError:
         res["mode"] = "refused"
         try:
@@ -184,6 +189,11 @@ def main():
     print("open modes:", dict(Counter(r["mode"] for r in results)))
     print("stage statuses (opened files):",
           dict(Counter(s[1] for r in results for s in r.get("stages", []))))
+    print("opened files with the last stage torn while laid out:",
+          sum(1 for r in results if r.get("torn_last")))
+    print("stages per file (opened or recovered): max",
+          max([len(r.get("stages", r.get("recovered") if isinstance(r.get("recovered"), list) else []))
+               for r in results] or [0]))
     print(f"refused files: {len(refused)}, recovered "
           f"{sum(1 for r in refused if isinstance(r.get('recovered'), list))}, "
           f"with the last stage torn while laid out: {torn}")
