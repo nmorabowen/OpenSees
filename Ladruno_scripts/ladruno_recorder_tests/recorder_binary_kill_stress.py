@@ -256,8 +256,10 @@ def trial(i, wait, a, ref):
     if st != "KILLED":
         shutil.rmtree(d, ignore_errors=True)
         return {"i": i, "wait": round(wait, 3), "status": st.split(":")[0], "detail": st[:300]}
-    with open(out, "rb") as fh:
-        head = fh.read(8)
+    head = b""
+    if os.path.exists(out):              # killed before the recorder created it: no file
+        with open(out, "rb") as fh:
+            head = fh.read(8)
     if head != lf._SB_SIG:
         # killed before the recorder's first flush wrote the superblock: nothing was
         # committed yet (the replay's NO_FILE)
