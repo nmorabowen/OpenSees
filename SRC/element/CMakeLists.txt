@@ -46,6 +46,7 @@ add_subdirectory(ladrunoForceBeamColumn) # Ladruno — regularized force/flexibi
 add_subdirectory(ladrunoUP) # Ladruno — Biot u-p saturated-porous continuum family: LadrunoUP 33017 (ADR 71)
 add_subdirectory(ladrunoMembrane) # Ladruno — polygonal surface-to-frame load distribution & CST diaphragm: LadrunoMembrane 33022 (ADR 98)
 add_subdirectory(ladrunoCPML) # Ladruno — unified 2D/3D C-PML wave absorbing element: LadrunoCPML 33023
+add_subdirectory(ladrunoMPMPoint) # Ladruno WP-232f — mode-A MPM particle element: LadrunoMPMPoint 33026
 add_subdirectory(twoNodeLink)
 add_subdirectory(tetrahedron)
 add_subdirectory(triangle)

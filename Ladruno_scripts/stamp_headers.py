@@ -53,6 +53,7 @@ GLOBS = [
     "SRC/element/ladrunoDistributingCoupling/*.cpp", "SRC/element/ladrunoDistributingCoupling/*.h",
     "SRC/element/ladrunoKinematicCoupling/*.cpp", "SRC/element/ladrunoKinematicCoupling/*.h",
     "SRC/element/ladrunoRigidBody/*.cpp", "SRC/element/ladrunoRigidBody/*.h",
+    "SRC/element/ladrunoMPMPoint/*.cpp", "SRC/element/ladrunoMPMPoint/*.h",   # WP-232f: mode-A MPM particle
     "SRC/element/ladrunoDispBeamColumn/*.cpp", "SRC/element/ladrunoDispBeamColumn/*.h",   # WP-116: was unstamped, so the quirk lint skipped it
     "SRC/element/ladrunoForceBeamColumn/*.cpp", "SRC/element/ladrunoForceBeamColumn/*.h", # WP-200: regularized force beam + cohesive hinges
     "SRC/element/ladrunoMembrane/*.cpp", "SRC/element/ladrunoMembrane/*.h",

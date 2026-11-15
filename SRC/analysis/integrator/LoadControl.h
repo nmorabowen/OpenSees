@@ -59,6 +59,18 @@ class LoadControl : public StaticIntegrator
     int newStep(void);    
     int update(const Vector &deltaU);
     int setDeltaLambda(double newDeltaLambda);
+    // Ladruno WP-232f: the MPM quasi-static driver (`mpm analyze` in mode A) sets
+    // the step itself. setDeltaLambda alone is not enough: newStep clamps the
+    // increment to [dLambdaMin, dLambdaMax], which default to dLambda. The driver
+    // reads the user's (dLambda, min, max), steps with min = max = its dt, and
+    // puts the user's values back at the end.
+    // numLast: J(i-1); restored too (review item 11). Pass a negative numLast to reset it to
+    // Jd, so the driver's step is not rescaled by the iteration-count factor.
+    void ladrunoGetIncrement(double &d, double &dMin, double &dMax, double &numLast) const   // Ladruno WP-232f
+      { d = deltaLambda; dMin = dLambdaMin; dMax = dLambdaMax; numLast = numIncrLastStep; }
+    void ladrunoSetIncrement(double d, double dMin, double dMax, double numLast)            // Ladruno WP-232f
+      { deltaLambda = d; dLambdaMin = dMin; dLambdaMax = dMax;
+        numIncrLastStep = (numLast < 0.0) ? specNumIncrStep : numLast; }
 
     // Public methods for Output
     int sendSelf(int commitTag, Channel &theChannel);

@@ -1,0 +1,203 @@
+{
+ "leg": "fe_footing",
+ "build": "f37e2ff197ed17319493686972378c4bc2a218fa",
+ "engine": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\dist\\bin\\opensees.pyd",
+ "deck": "tests/mpm_implicit_reference.py::leg_footing",
+ "date": "2026-11-15",
+ "std_no_antilocking": [
+  {
+   "n_across_b": 4,
+   "h": 0.5,
+   "hexes": 288,
+   "rough": true,
+   "geom": "linear",
+   "form": "std",
+   "q_max": 219.10186932888632,
+   "s_at_qmax": 0.2,
+   "s_end": 0.2,
+   "q_plateau": 218.70950931391985,
+   "q_at": {
+    "0.010": 181.40660335078186,
+    "0.020": 199.84846170130078,
+    "0.050": 213.99278390643798,
+    "0.075": 217.2047443646539,
+    "0.100": 219.10186932888632
+   },
+   "steps": 101,
+   "failed_attempts": 80,
+   "relaxed": 1,
+   "wall_s": 197.3
+  },
+  {
+   "n_across_b": 8,
+   "h": 0.25,
+   "hexes": 1152,
+   "rough": true,
+   "geom": "linear",
+   "form": "std",
+   "q_max": 179.12897491604423,
+   "s_at_qmax": 0.19700000000000015,
+   "s_end": 0.2,
+   "q_plateau": 178.97549455774694,
+   "q_at": {
+    "0.010": 154.71564626920713,
+    "0.020": 166.864548667985,
+    "0.050": 175.5728407570623,
+    "0.075": 178.2396214593465,
+    "0.100": 178.98485200631106
+   },
+   "steps": 102,
+   "failed_attempts": 104,
+   "relaxed": 20,
+   "wall_s": 1218.9
+  },
+  {
+   "n_across_b": 16,
+   "h": 0.125,
+   "hexes": 4608,
+   "rough": true,
+   "geom": "linear",
+   "form": "std",
+   "q_max": 154.68456941434812,
+   "s_at_qmax": 0.18924999999999978,
+   "s_end": 0.2,
+   "q_plateau": 154.0227952918286,
+   "q_at": {
+    "0.010": 139.5977395295115,
+    "0.020": 146.91832809780342,
+    "0.050": 151.20882634037432,
+    "0.075": 153.47439866776827,
+    "0.100": 153.88642061157785
+   },
+   "steps": 181,
+   "failed_attempts": 524,
+   "relaxed": 4,
+   "wall_s": 13390.3
+  }
+ ],
+ "element": "LadrunoBrick -formulation bbar -geom linear (the ADR-79 control's element), plane-strain slab, DruckerPrager (UW) mild cone",
+ "closed": {
+  "alpha": 0.14858308374422244,
+  "rho_dp": 0.21012821217029673,
+  "phi_ps": 27.47016138536508,
+  "Nq": 13.890700970835823,
+  "q_exact": 138.90700970835823,
+  "band": [
+   125.01630873752241,
+   152.79771067919404
+  ],
+  "c_regularizer": 0.13467996916896677,
+  "cNc": 3.3392987896104422,
+  "cNc_fraction": 0.02403981481295621,
+  "phi_davis": 24.763243514329602,
+  "q_davis": 104.00098991406013
+ },
+ "rough": [
+  {
+   "n_across_b": 4,
+   "h": 0.5,
+   "hexes": 288,
+   "rough": true,
+   "geom": "linear",
+   "form": "bbar",
+   "q_max": 141.43340282783544,
+   "s_at_qmax": 0.2,
+   "s_end": 0.2,
+   "q_plateau": 141.43179462155524,
+   "q_at": {
+    "0.010": 140.26430546677665,
+    "0.020": 141.36692746812744,
+    "0.050": 141.38265249687643,
+    "0.075": 141.42533110151376,
+    "0.100": 141.43340282783544
+   },
+   "steps": 100,
+   "failed_attempts": 47,
+   "relaxed": 0,
+   "wall_s": 87.0
+  },
+  {
+   "n_across_b": 8,
+   "h": 0.25,
+   "hexes": 1152,
+   "rough": true,
+   "geom": "linear",
+   "form": "bbar",
+   "q_max": 130.66407633378248,
+   "s_at_qmax": 0.1443749999999999,
+   "s_end": 0.2,
+   "q_plateau": 127.84889388566135,
+   "q_at": {
+    "0.010": 126.65064738070713,
+    "0.020": 127.77443909469181,
+    "0.050": 128.04253827540214,
+    "0.075": 128.53642675416054,
+    "0.100": 127.94909832656062
+   },
+   "steps": 166,
+   "failed_attempts": 438,
+   "relaxed": 3,
+   "wall_s": 3869.3
+  },
+  {
+   "n_across_b": 16,
+   "h": 0.125,
+   "hexes": 4608,
+   "rough": true,
+   "geom": "linear",
+   "form": "bbar",
+   "q_max": 122.53099759083796,
+   "s_at_qmax": 0.035625000000000004,
+   "s_end": 0.2,
+   "q_plateau": 119.39285824234216,
+   "q_at": {
+    "0.010": 117.42774195463221,
+    "0.020": 119.08527857339726,
+    "0.050": 119.24451554545239,
+    "0.075": 118.29135989861368,
+    "0.100": 117.27129364854385
+   },
+   "steps": 248,
+   "failed_attempts": 887,
+   "relaxed": 8,
+   "wall_s": 17409.3
+  }
+ ],
+ "smooth_4": {
+  "n_across_b": 4,
+  "h": 0.5,
+  "hexes": 288,
+  "rough": false,
+  "geom": "linear",
+  "form": "bbar",
+  "q_max": 137.1074716405344,
+  "s_at_qmax": 0.2,
+  "s_end": 0.2,
+  "q_plateau": 137.09806958851095,
+  "q_at": {
+   "0.010": 134.68930222781847,
+   "0.020": 136.64298679675167,
+   "0.050": 136.9857506125489,
+   "0.075": 137.06998899213414,
+   "0.100": 137.1074716405344
+  },
+  "steps": 100,
+  "failed_attempts": 50,
+  "relaxed": 0,
+  "wall_s": 50.0
+ },
+ "adr79_context": {
+  "source": "Ladruno_implementation/79_ladruno_geom_hypo_adr.md (nq20_nonassoc, graded 30 m x 20 m box, smooth footing, H8 B-bar)",
+  "q_over_exact": [
+   1.002,
+   0.9517,
+   0.926
+  ],
+  "cells_across_b": [
+   4,
+   8,
+   16
+  ]
+ },
+ "output": "tests/data/mpm/implicit/fe_footing.json"
+}

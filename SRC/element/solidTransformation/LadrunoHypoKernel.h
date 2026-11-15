@@ -430,6 +430,34 @@ inline void pushTangent6(const double R[9], const double Dmat[36], double Dout[3
     }
 }
 
+// Plane-strain analogue of pushTangent6 on {xx, yy, xy} (engineering shear):
+// D_out = M3 D M3ᵀ with M3 the {00, 11, 01} rows and columns of bond6 for the
+// in-plane rotation R (row-major 2×2) embedded as [[R 0][0 1]] (WP-232f, mode-A
+// particle tangent). Exact: for an in-plane R those three rows of bond6 have no
+// entry in the {22, 12, 20} columns. Dout may NOT alias Dmat.
+inline void pushTangentPlaneStrain(const double R[4], const double Dmat[9], double Dout[9])
+{
+  const double R3[9] = {R[0], R[1], 0.0,  R[2], R[3], 0.0,  0.0, 0.0, 1.0};
+  double M[36];
+  bond6(R3, M);
+  const int idx[3] = {0, 1, 3};
+  double M3[9], T[9];
+  for (int r = 0; r < 3; r++)
+    for (int c = 0; c < 3; c++) M3[3*r + c] = M[6*idx[r] + idx[c]];
+  for (int r = 0; r < 3; r++)          // T = M3 · D
+    for (int c = 0; c < 3; c++) {
+      double s = 0.0;
+      for (int k = 0; k < 3; k++) s += M3[3*r+k] * Dmat[3*k+c];
+      T[3*r+c] = s;
+    }
+  for (int r = 0; r < 3; r++)          // Dout = T · M3ᵀ
+    for (int c = 0; c < 3; c++) {
+      double s = 0.0;
+      for (int k = 0; k < 3; k++) s += T[3*r+k] * M3[3*c+k];
+      Dout[3*r+c] = s;
+    }
+}
+
 } // namespace ladruno_hypo
 
 #endif
