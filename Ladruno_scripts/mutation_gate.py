@@ -105,8 +105,33 @@ FAMILIES = {
         # that never test a position increment: incline_stick (8.6e-5 m of
         # motion, x1.5 still inside its 0.005 m band), k0_quiet_start (exactly
         # at rest) and roller_slide (a velocity check).
-        "paths": ["test_ladruno_mpm_engine.py"],   # the cases suite; lifecycle/refusal tests are physics-free
-        "min_score": {"ZERO": 0.45, "SCALE": 0.55, "IDENT": 0.0},
+        # WP-232f adds mode A's suite (test_ladruno_mpm_implicit_engine.py): ZERO
+        # drops the particle element's internal force, SCALE the batched G2P
+        # position increment. Re-measured 2026-11-15 on the COMBINED suite, mutants
+        # built from c24eeae45 (C++ of the review round), same Python-half run
+        # conditions as above:
+        #   ZERO : 37/80 = 0.463 (mode F 18/39, mode A 19/41). Mode-A kills: the
+        #     column and the Newmark bar rows, the 3D bar, the HHT / GeneralizedAlpha
+        #     bar, the betaK Rayleigh decay, the r1 bands (cantilever QS tip,
+        #     transient first peak and period), the cantilever QS / transient /
+        #     footing r1 report rows, the cantilever data row, the reaction check,
+        #     recorder synchrony, the FD tangent check, the footing fresh-process
+        #     restart, the plain-analyze refusal (its set-up steps no longer
+        #     converge) and the DisplacementControl refusal (its admitted first step
+        #     fails). Survivors: the other refusals (physics-free), the retry /
+        #     re-seed / bar-restart protocols and counters (the binary against
+        #     ITSELF), the translations (stress-free) and the reset / removed-element
+        #     lifecycle tests.
+        #   SCALE: 31/80 = 0.388 (mode F 23/39, mode A 8/41). Mode-A kills: the 2D
+        #     and 3D rigid translations (quasi-static), the transient gridvel
+        #     translations (Transformation / Penalty x flip 1 / 0), and the r1
+        #     cantilever bands that read positions (QS tip, transient first peak).
+        #     Survivors: rows that read stresses (from F, not x), velocities or
+        #     periods, refusals, lifecycle, and protocols comparing the binary with
+        #     itself.
+        "paths": ["test_ladruno_mpm_engine.py",       # the cases suite; lifecycle/refusal tests are physics-free
+                  "test_ladruno_mpm_implicit_engine.py"],
+        "min_score": {"ZERO": 0.46, "SCALE": 0.38, "IDENT": 0.0},
     },
     # --- WP-3 lanes: gates NOT yet inserted in these families' elements. -----
     # Registering the paths here is deliberate (it documents the intended

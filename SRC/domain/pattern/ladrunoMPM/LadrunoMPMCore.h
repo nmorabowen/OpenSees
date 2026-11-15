@@ -291,13 +291,14 @@ struct Particles {
   std::vector<unsigned> flags;
   std::vector<double>   m, V0, lp;                 // constant
   std::vector<double>   x, v, V, F, R, eps, sigHat, sig, sig0;   // committed
+  std::vector<double>   a;      // particle acceleration: mode A only (WP-232f); mode F leaves it 0
 
   int size() const { return (int)id.size(); }
   void clear()
   {
     id.clear(); body.clear(); mat.clear(); flags.clear();
     m.clear(); V0.clear(); lp.clear();
-    x.clear(); v.clear(); V.clear(); F.clear(); R.clear();
+    x.clear(); v.clear(); V.clear(); F.clear(); R.clear(); a.clear();
     eps.clear(); sigHat.clear(); sig.clear(); sig0.clear();
   }
 };
@@ -373,6 +374,7 @@ class Engine {
     for (int d = 0; d < nd; d++) {
       P.x.push_back(x[d]);
       P.v.push_back(v ? v[d] : 0.0);
+      P.a.push_back(0.0);
       P.lp.push_back(lp[d]);
     }
     for (int i = 0; i < nd; i++)

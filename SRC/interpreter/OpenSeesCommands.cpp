@@ -3993,6 +3993,20 @@ int OPS_profiler()
 //   LadrunoStaggeredAnalyze -stats
 //     -> {nSteps totalFluidSolves meanIters maxIters lastResidual maxResidual}
 //        (last run's telemetry; zeros before any run)
+// Ladruno WP-232f: the `mpm` command of the DL engines (Python, DL Tcl). Mode A's
+// `mpm analyze` composes the user's analysis, which this engine keeps in the
+// `cmds` singleton; classic Tcl has its own bridge in commands.cpp
+// (tests/mpm_implicit_interface.md §4, the LadrunoStaggeredAnalyze pattern).
+int OPS_LadrunoMPMWithAnalysis(StaticAnalysis *, DirectIntegrationAnalysis *, StaticIntegrator *,
+                               TransientIntegrator *, ConstraintHandler *);   // Ladruno WP-232f
+int OPS_LadrunoMPMDL()
+{
+    if (cmds == 0) return OPS_LadrunoMPMWithAnalysis(0, 0, 0, 0, 0);   // Ladruno WP-232f
+    return OPS_LadrunoMPMWithAnalysis(cmds->getStaticAnalysis(), cmds->getTransientAnalysis(),
+                                      cmds->getStaticIntegrator(), cmds->getTransientIntegrator(),
+                                      cmds->getHandler());           // Ladruno WP-232f
+}
+
 int OPS_LadrunoStaggeredAnalyze()
 {
     if (cmds == 0) return 0;

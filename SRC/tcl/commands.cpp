@@ -760,6 +760,8 @@ ladrunoSANISANDReplay(ClientData clientData, Tcl_Interp *interp, int argc, TCL_C
 }
 
 int OPS_LadrunoMPM(void);   // Ladruno WP-232 (defined in ladrunoMPM/OPS_LadrunoMPM.cpp)
+int OPS_LadrunoMPMWithAnalysis(StaticAnalysis *, DirectIntegrationAnalysis *, StaticIntegrator *,
+                               TransientIntegrator *, ConstraintHandler *);   // Ladruno WP-232f
 int ladrunoMPMDoubleQuery(Domain *, const std::vector<std::string> &, std::vector<double> &);   // Ladruno WP-232
 static int
 ladrunoMPM(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)   // Ladruno WP-232
@@ -790,7 +792,10 @@ ladrunoMPM(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
     }
   }
   OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);   // Ladruno WP-232
-  return (OPS_LadrunoMPM() < 0) ? TCL_ERROR : TCL_OK;                      // Ladruno WP-232
+  // Ladruno WP-232f: mode A composes the user's analysis, which classic Tcl keeps in
+  // these globals (not in the DL `cmds` singleton): the classic bridge hands them in.
+  return (OPS_LadrunoMPMWithAnalysis(theStaticAnalysis, theTransientAnalysis, theStaticIntegrator,
+                                     theTransientIntegrator, theHandler) < 0) ? TCL_ERROR : TCL_OK;   // Ladruno WP-232f
 }
 
 int
