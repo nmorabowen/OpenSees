@@ -352,11 +352,11 @@ def _small_block(ops, mode="quasiStatic", mat="elastic", ndm=2, cells=(12, 12)):
     ops.mpm("mode", mode)
 
 
-def _analysis(ops, mode, handler="Transformation", integ=("Newmark", 0.5, 0.25), test=1e-12):
+def _analysis(ops, mode, handler="Transformation", integ=("Newmark", 0.5, 0.25), test=1e-12, iters=20):
     ops.constraints(handler, *((1.0e12, 1.0e12) if handler == "Penalty" else ()))
     ops.numberer("RCM")
     ops.system("UmfPack")
-    ops.test("NormDispIncr", test, 20)
+    ops.test("NormDispIncr", test, iters)
     ops.algorithm("Newton")
     if mode == "quasiStatic":
         ops.integrator("LoadControl", 1.0)
@@ -534,7 +534,9 @@ def test_plain_reset_keeps_particle_plastic_state():
 
 def test_retry_after_trial_on_a_plastic_state():
     """Review item 13: the forced failure now happens AFTER the trial (materials carry a trial
-    state), on DruckerPrager in compression; the retried step equals the cut-dt run (1e-12)."""
+    state), on DruckerPrager in compression; the retried step equals the cut-dt run (1e-12).
+    The compression rate (1 mm per step) and Newton (1e-10, 60 iterations) are chosen so the
+    run itself never needs a natural cut: the one retry is the forced one."""
     ops = _ops()
     runs = []
     for variant in ("retry", "reference"):
@@ -542,8 +544,8 @@ def test_retry_after_trial_on_a_plastic_state():
         ops.mpm("body", 1, "box", 0.0, 0.0, 2.0, 2.0, "-ppc", 2, "-mat", 1, "-rho", 1.0)
         ops.mpm("fix", "xmin", "x")
         ops.mpm("fix", "ymin", "y")
-        ops.mpm("gridvel", "top", "box", -1.0, 2.0, 4.0, 1.0e9, "v", "free", -0.004)
-        _analysis(ops, "quasiStatic")
+        ops.mpm("gridvel", "top", "box", -1.0, 2.0, 4.0, 1.0e9, "v", "free", -0.001)
+        _analysis(ops, "quasiStatic", test=1e-10, iters=60)
         if variant == "retry":
             ops.mpm("debug", "failAttempt", 3, 1, "afterTrial")
             ops.mpm("analyze", 6, 1.0)
