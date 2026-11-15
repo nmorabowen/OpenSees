@@ -868,8 +868,21 @@ copy of any file that step 1 refuses, flags 0x05 included.
 - `LadrunoReader`, which applies both rules.
 
 `validate()` checks **closed** files and refuses a killed one (`FILE-KILLED`). Read a killed
-file by these rules; do not validate it. The particle file's helpers in
-`tests/mpm_contracts.py` delegate to the same functions.
+file by these rules; do not validate it.
+
+**The MPM particle file shares the open, not the stage rule.** In `tests/mpm_contracts.py`,
+`open_particle_file` and `recover_particle_file` delegate the three open steps to
+`open_ladruno` and `repair_copy`. The per-stage rule after the open is the particle file's own,
+`particle_stage_report` ([[232a_mpm_contracts]] §2.5), and it is stricter than `stage_report`:
+- after a step-2 (SWMR-read) open it refuses a torn last stage as corruption, where
+  `stage_report` skips it;
+- after step 1 or step 3 the two rules agree.
+
+A reader that serves both writers therefore chooses the stage rule by file: a file with
+`RESULTS/ON_PARTICLES` follows 232a §2.5, and every other file follows this section. Both
+writers lay out each stage outside SWMR and arm SWMR only once the layout is complete. The
+particle writer guarantees the stricter rule (WP-232h, #1088). The recorder makes no such claim
+yet: its replay counts a torn last stage as legal in every mode.
 
 **Evidence:**
 - `Ladruno_scripts/ladruno_recorder_tests/recorder_crash_replay.py` is the exhaustive replay:
