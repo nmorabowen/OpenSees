@@ -133,10 +133,12 @@ def trial(i, wait, out_dir, nsteps, set_ids):
         with mc.open_particle_file(out) as f:
             res["mode"] = "swmr" if f.swmr_mode else "plain"
             res["stages"] = check_file(f, set_ids)
-        # 232a section 2.5 (WP-232h): only the LAST stage may be torn while laid out, after
-        # any step of the reader rule (a plain open included); every earlier stage must read
+        # 232a section 2.5 (WP-232h): only the LAST stage may be torn while laid out, after a
+        # plain open (lazy WRITE_ACCESS: flags 0x00) or the step-3 repair; a file that needed
+        # the SWMR-read open was killed with SWMR armed (no layout running): every stage reads
         st = res["stages"]
-        torn_last = bool(st) and (st[-1][1] == "NO_RESULTS" or st[-1][1].startswith("STAGE_FAIL"))
+        torn_last = res["mode"] == "plain" and bool(st) and (
+            st[-1][1] == "NO_RESULTS" or st[-1][1].startswith("STAGE_FAIL"))
         res["torn_last"] = torn_last
         bad = any(s[1] != "OK" for s in (st[:-1] if torn_last else st))
     except mc.StageLayoutKilledError:

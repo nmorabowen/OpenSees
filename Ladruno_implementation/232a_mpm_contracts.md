@@ -474,12 +474,14 @@ A closed file satisfies every rule above, and the validator checks closed files 
 
 **The reader rule: opening a particle file.**
 
-**Only the last stage may be torn, after any step of the rule.** A kill while a stage is laid
-out (the first stage, or an `mpm reset`) can leave that stage unreadable, whichever step opens
-the file, a plain open (step 1) included: sec2 writes WRITE_ACCESS into the superblock lazily,
-so a file killed inside a layout can still carry flags 0x00 and open plainly. That stage holds
-no committed output; skip it. Every earlier stage must read: one that does not is corruption.
-The writer guarantees this by presizing the root's links (WP-232h, #1085; below).
+**Only the last stage may be torn, and only by a kill inside its layout.** A kill while a stage
+is laid out (the first stage, or an `mpm reset`) can leave that stage unreadable. Such a file
+opens by step 3 (flags 0x01), or by a plain open (step 1): sec2 writes WRITE_ACCESS into the
+superblock lazily, so a file killed inside a layout can still carry flags 0x00. That stage
+holds no committed output; skip it. Every earlier stage must read: one that does not is
+corruption. A file that needs step 2 (flags 0x05) was killed with SWMR armed, after its last
+layout completed: there every stage, the last included, must read. The writer guarantees this
+by presizing the root's links (WP-232h, #1085; below).
 
 1. **Open read-only.** A clean close clears the file's consistency flags, and a plain read-only
    open works. While the run is live, a reader with HDF5 file locking on (h5py's default) is
@@ -510,10 +512,11 @@ The writer guarantees this by presizing the root's links (WP-232h, #1085; below)
    100 steps; 21 of 21 recovered every earlier stage, and in 2 the stage being laid out did not
    open.
 
-Each step can meet the torn last stage: a reader applies the crash rule below to every stage,
-and treats a LAST stage that does not open, or whose `MODEL/PARTICLES` registry is torn (crash
-rule step 0), as holding no output. Reference: `tests/mpm_contracts.py::particle_stage_report`
-(on a file opened by any step; `recover_particle_file` applies it after step 3).
+After step 1 or step 3 a reader applies the crash rule below to every stage, and treats a LAST
+stage that does not open, or whose `MODEL/PARTICLES` registry is torn (crash rule step 0), as
+holding no output; after step 2 it refuses such a stage. Reference:
+`tests/mpm_contracts.py::particle_stage_report` (on a file opened by any step;
+`recover_particle_file` applies it after step 3).
 
 A reader that cannot open in SWMR-read mode (e.g. h5wasm) may apply step 3's repair to a copy of
 any file that step 1 refuses, flags 0x05 included; the committed outputs and rows are identical
@@ -771,7 +774,8 @@ after loading `particle_set_v1.h5`; `tests/test_mpm_contracts.py` checks the map
   (readers need HDF5 ≥ 1.10). Then the stage-layout window: the layout is written without SWMR,
   and reader rule step 3 recovers a copy of a file killed inside it.
 - **2026-11-15, WP-232h (#1085, PR #1088):** §2.5 states that only the last stage may be torn,
-  after any step of the reader rule, a plain open included (`mpm_contracts.particle_stage_report`);
+  by a kill inside its layout, after a plain open as well as after step 3, never after the
+  SWMR-read open (`mpm_contracts.particle_stage_report`);
   that a live run refuses a locking reader; and the two writer fixes ported from WP-233 (a
   presized root, HDF5 locking off with the guard lock), with the reset-window replay.
 - **Gate before code.** The owner must ratify apeGmsh ADR 0134 (`232a_apegmsh_adr_draft.md`, through

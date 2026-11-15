@@ -92,7 +92,9 @@ date: 2026-11-14
 - **The last stage can be torn after a PLAIN open too.** sec2 writes WRITE_ACCESS into the
   superblock lazily, so a file killed inside a layout can still carry flags 0x00. The writer now
   flushes right after the reset's read-write reopen, but a reader must still treat a torn LAST
-  stage as holding no output after any step of the rule (`mpm_contracts.particle_stage_report`).
+  stage as holding no output after a plain open as after step 3, and refuse it after the
+  SWMR-read open, which only a file killed with SWMR armed (no layout running) needs
+  (`mpm_contracts.particle_stage_report`).
   A checker that opens `f[name]` outside its `try` reports such a file as unrecoverable: that
   was `reset_stress.py` (2 false "RECOVERY_FAILED" in 400 before the fix of the checker).
 - **A reader with HDF5 locking on breaks the SWMR writer** (as found for the recorder, #1084):

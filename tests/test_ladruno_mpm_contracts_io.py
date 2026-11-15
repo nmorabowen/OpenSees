@@ -592,12 +592,15 @@ def test_the_root_is_presized_and_stays_compact(tmp_path):
         assert lib.H5Gget_info(f.id.id, ctypes.byref(gi)) >= 0
         assert gi.nlinks == 13
         assert gi.storage_type == 1          # H5G_STORAGE_TYPE_COMPACT (2 = dense)
+        # sized up front (H5Pset_est_link_info): the 13 links sit in ONE header chunk; an
+        # unsized compact root would have grown continuation chunks instead
+        assert h5py.h5o.get_info(f.id).hdr.nchunks == 1
 
 
 @pytest.mark.parametrize("locking", [True, False])
 def test_a_live_reader_does_not_disturb_the_writer(tmp_path, locking):
     """#1085: readers poll a live particle file through 15 stages (an `mpm reset` every
-    20 steps). locking=True (h5py's default): HDF5's own locking would let the reader's
+    200 steps: ~1 s of writing, so the poll overlaps it on a slow runner too). locking=True (h5py's default): HDF5's own locking would let the reader's
     shared lock break the SWMR writer (Linux: H5Fstart_swmr_write refused, EAGAIN;
     Windows: the writes themselves fail). The writer turns HDF5 locking off and holds the
     guard lock for the file's life, so the reader is refused cleanly
@@ -608,10 +611,14 @@ def test_a_live_reader_does_not_disturb_the_writer(tmp_path, locking):
     out = tmp_path / "live.ladruno"
     err = tmp_path / "live.err"
     with open(err, "w") as fe:
-        p = _reset_child(out, 15, 20, stderr=fe)
+        p = _reset_child(out, 15, 200, stderr=fe)
         assert "STAGE 1" in p.stdout.readline()
         outcomes = {"open": 0, "busy": 0, "other": 0}
+        deadline = time.monotonic() + 600.0
         while p.poll() is None:
+            if time.monotonic() > deadline:
+                p.kill()
+                pytest.fail(f"the writer did not finish in 600 s; reader outcomes {outcomes}")
             try:
                 f = (lf.open_ladruno(str(out)) if locking
                      else h5py.File(out, "r", swmr=True, locking=False))
@@ -633,7 +640,7 @@ def test_a_live_reader_does_not_disturb_the_writer(tmp_path, locking):
     else:
         assert outcomes["open"] > 0, outcomes
     ref = tmp_path / "ref.ladruno"
-    o, e2 = _reset_child(ref, 15, 20).communicate(timeout=600)
+    o, e2 = _reset_child(ref, 15, 200).communicate(timeout=600)
     assert "DONE" in o, e2[-2000:]
     assert lf.validate(str(out)) == []
     with h5py.File(out, "r") as f, h5py.File(ref, "r") as r:

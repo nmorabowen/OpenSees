@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <random>
 #include <set>
@@ -659,11 +660,14 @@ particleFapl(void)
   return h5w::file::accessList();
 }
 
-// WP-232h (#1085): reopen the existing file read-write to lay out a stage. A reader
-// with locking OFF may hold the file in the instant between the close and this
-// reopen (a plain read-only open sees flags 0x00 then); retry with backoff for up to
-// 60 s, as LadrunoRecorder::openLayout does. Then flush, so WRITE_ACCESS reaches the
-// superblock now (sec2 writes it lazily) and no plain open gets in during the layout.
+// WP-232h (#1085): reopen the existing file read-write to lay out a stage. Another
+// process may hold the file in the instant between the close and this reopen (on
+// Windows a reader with HDF5 locking on holds a whole-file lock while its open runs,
+// until the guard refuses it; a plain read-only open can only get in in this
+// instant, when the flags read 0x00): retry with backoff for up to 60 s, as
+// LadrunoRecorder::openLayout does. A file that is gone fails at once. Then flush,
+// so WRITE_ACCESS reaches the superblock now (sec2 writes it lazily) and no plain
+// open gets in during the layout.
 static int
 reopenFile(ParticleWriter::Impl *impl, std::string &err)
 {
@@ -679,6 +683,11 @@ reopenFile(ParticleWriter::Impl *impl, std::string &err)
       impl->file = H5Fopen(impl->cfg.path.c_str(), H5F_ACC_RDWR, fapl);
     }
     if (impl->file >= 0 || waited >= maxWait) break;
+    if (FILE *fp = std::fopen(impl->cfg.path.c_str(), "rb")) {
+      std::fclose(fp);          // still there: held by another process, retry
+    } else {
+      break;                    // gone (deleted, moved): no point in waiting
+    }
     if (!warned && waited >= 1.0) {
       warned = true;
       opserr << "WARNING mpm output -- '" << impl->cfg.path.c_str() << "' is held open by "
@@ -692,8 +701,8 @@ reopenFile(ParticleWriter::Impl *impl, std::string &err)
   H5Pclose(fapl);
   if (impl->file < 0) {
     impl->file = -1;
-    err = "cannot reopen '" + impl->cfg.path + "' for a new stage (held open by another "
-          "process for 60 s?)";
+    err = "cannot reopen '" + impl->cfg.path + "' for a new stage (the file is gone, or "
+          "another process held it open for 60 s)";
     return -1;
   }
   H5Fflush(impl->file, H5F_SCOPE_GLOBAL);
