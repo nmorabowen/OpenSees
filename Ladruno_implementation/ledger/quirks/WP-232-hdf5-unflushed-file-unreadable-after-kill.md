@@ -74,3 +74,42 @@ date: 2026-11-14
   laid out did not open ("bad object header version number"), and it held no committed output.
   Real runs reset rarely, but a hit locks out every earlier stage until the copy is recovered.
 - Learned 2026-11-14 (WP-232c, the c2 review).
+
+#### Follow-up (WP-232h, #1085, PR #1088): the reset window can lose the ROOT; a locking reader breaks the writer
+
+- **An unsized root header turns a torn stage into a lost file.** At each `mpm reset` the root
+  gains a `MODEL_STAGE` link inside the layout written without SWMR. By default a group goes
+  dense after 8 links or grows a continuation chunk, so adding the link is several in-place
+  writes in no causal order, and a kill between them leaves `/` unreadable ("addr overflow" or
+  "incorrect metadata checksum"): every earlier stage lost, and reader rule step 3 cannot
+  recover it. Measured by `hdf5_crash_replay.py --outputs 240 --resets 10 --no-presize` (every
+  kill point, 24 stages): 634 of 9,376 kill points lost the root. Fix (as WP-233 did for the
+  recorder): `Ladruno_Hdf5.h::plist::presizeLinks(fcpl, 1024, 20)` on the particle file's fcpl
+  (links compact for good, header sized up front), so adding a stage is ONE in-place header
+  write: 0 of 9,249. No other group of the particle file gains a link after its stage's layout.
+  The stored fcpl does not carry the setting (`H5Fget_create_plist` reads back 8/6): check the
+  ROOT GROUP's gcpl, or that the root's storage is compact past 8 links.
+- **The last stage can be torn after a PLAIN open too.** sec2 writes WRITE_ACCESS into the
+  superblock lazily, so a file killed inside a layout can still carry flags 0x00. The writer now
+  flushes right after the reset's read-write reopen, but a reader must still treat a torn LAST
+  stage as holding no output after a plain open as after step 3, and refuse it after the
+  SWMR-read open, which only a file killed with SWMR armed (no layout running) needs
+  (`mpm_contracts.particle_stage_report`).
+  A checker that opens `f[name]` outside its `try` reports such a file as unrecoverable: that
+  was `reset_stress.py` (2 false "RECOVERY_FAILED" in 400 before the fix of the checker).
+- **A reader with HDF5 locking on breaks the SWMR writer** (as found for the recorder, #1084):
+  measured on the pre-fix pyd (bf7ad4ee8), a reader polling with h5py's default locking made the
+  writer's reset reopen fail ("cannot reopen ... for a new stage") and the run abort. Fix: HDF5
+  locking off for the particle file (`h5::file::accessList`) and the guard lock
+  (`SRC/recorder/Ladruno_GuardLock.h`, shared with the recorder) held from `H5Fcreate` to after
+  the final close; the reset's reopen retries for 60 s. A locking reader is refused
+  (`WriterBusyError`) and the finished file equals an unread run
+  (`test_a_live_reader_does_not_disturb_the_writer`).
+- **A created file is never `H5Fcreate`'d again.** Before WP-232h a failed reset reopen left the
+  writer with no file, and the next stage called `createFile` (`H5F_ACC_TRUNC`): every earlier
+  stage truncated away. The writer now retries the reopen instead.
+- Real binary (8a46dd04b, the ready head): `kill_stress.py` 0 bad in 400; `reset_stress.py` 0
+  bad in 400 with a reset every 100 steps (up to 124 stages; 23 refused by both opens, 23
+  recovered, 1 with the last stage torn) and 0 in 400 with a reset every 10 (up to 380 stages;
+  50 refused, 50 recovered, 2 torn). Same on the first build (1d64d529e).
+- Learned 2026-11-15 (WP-232h).

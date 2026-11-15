@@ -74,6 +74,7 @@ if(HDF5_FOUND)
          LadrunoMonitorSink.h
          Ladruno_Types.h
          Ladruno_Hdf5.h
+         Ladruno_GuardLock.h
          Ladruno_ResultIO.h
          Ladruno_NodeResults.h
          Ladruno_ElementResults.h

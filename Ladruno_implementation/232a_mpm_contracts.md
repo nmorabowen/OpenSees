@@ -474,8 +474,20 @@ A closed file satisfies every rule above, and the validator checks closed files 
 
 **The reader rule: opening a particle file.**
 
+**Only the last stage may be torn, and only by a kill inside its layout.** A kill while a stage
+is laid out (the first stage, or an `mpm reset`) can leave that stage unreadable. Such a file
+opens by step 3 (flags 0x01), or by a plain open (step 1): sec2 writes WRITE_ACCESS into the
+superblock lazily, so a file killed inside a layout can still carry flags 0x00. That stage
+holds no committed output; skip it. Every earlier stage must read: one that does not is
+corruption. A file that needs step 2 (flags 0x05) was killed with SWMR armed, after its last
+layout completed: there every stage, the last included, must read. The writer guarantees this
+by presizing the root's links (WP-232h, #1085; below).
+
 1. **Open read-only.** A clean close clears the file's consistency flags, and a plain read-only
-   open works.
+   open works. While the run is live, a reader with HDF5 file locking on (h5py's default) is
+   refused ("unable to lock file"; `ladruno_format.WriterBusyError`): the writer holds a guard
+   lock for the file's life. Retry after the run, or read the live file with locking off
+   through SWMR (`h5py.File(path, "r", swmr=True, locking=False)`, as the monitor does).
 2. **Else open in SWMR-read mode.** A run killed while SWMR was armed leaves the flags at
    WRITE_ACCESS | SWMR_WRITE (0x05): a plain open fails with "file is already open for write" (or
    with "truncated file" when the file is shorter than its stored end-of-allocation, which is
@@ -500,6 +512,12 @@ A closed file satisfies every rule above, and the validator checks closed files 
    100 steps; 21 of 21 recovered every earlier stage, and in 2 the stage being laid out did not
    open.
 
+After step 1 or step 3 a reader applies the crash rule below to every stage, and treats a LAST
+stage that does not open, or whose `MODEL/PARTICLES` registry is torn (crash rule step 0), as
+holding no output; after step 2 it refuses such a stage. Reference:
+`tests/mpm_contracts.py::particle_stage_report` (on a file opened by any step;
+`recover_particle_file` applies it after step 3).
+
 A reader that cannot open in SWMR-read mode (e.g. h5wasm) may apply step 3's repair to a copy of
 any file that step 1 refuses, flags 0x05 included; the committed outputs and rows are identical
 (measured on 49 files killed in SWMR mode, and 11 with flags 0x00, against the SWMR-read path).
@@ -512,13 +530,28 @@ Reference: `tests/mpm_contracts.py::open_particle_file` (steps 1–2; step 3 rai
 **Since WP-233 (#1082) this open rule applies to every `.ladruno`** (schema §7b.2), because
 `recorder ladruno` writes under SWMR too. Its reference implementation is
 `ladruno_format.open_ladruno` / `repair_copy`, and the helpers above delegate to them. Two
-findings from the recorder's exhaustive replay apply to this writer as well:
-- the last stage may also be torn after a **plain** open: sec2 writes WRITE_ACCESS to the
-  superblock lazily, so a file killed inside a layout can carry flags 0x00;
-- the root group gains a `MODEL_STAGE` link at each `mpm reset`, in a layout written without
-  SWMR. If its header is not presized, a kill there can make the root unreadable, and with
-  it every earlier stage. The recorder presizes it (`plist::presizeLinks`); this writer
-  does not yet: #1085.
+findings from the recorder's exhaustive replay apply to this writer as well, and WP-232h
+(#1085) ported both fixes:
+- **the root's links are presized.** The root gains a `MODEL_STAGE` link at each `mpm reset`,
+  in a layout written without SWMR. Unsized, it goes dense after 8 links or grows a
+  continuation chunk, and a kill in that layout's flush can leave the root unreadable, and
+  with it every earlier stage; no step of this rule recovers it. The writer presizes the
+  root (`Ladruno_Hdf5.h::plist::presizeLinks`: links compact for good, a header sized for
+  1024 stages, a warning when a file reaches that many), so adding a stage is one in-place
+  write of the root's header. Exhaustive replay of the reset window
+  (`Ladruno_scripts/mpm_crash_tests/hdf5_crash_replay.py --outputs 240 --resets 10`, 24
+  stages, every kill point): before the fix (`--no-presize`) 634 of 9,376 kill points lost
+  the root, and with it every earlier stage ("addr overflow" on `/`, under the lazy 0x00
+  flags a plain open reads); after it, 0 of 9,249 (the stage being laid out torn at 1,863,
+  every earlier stage exact);
+- **a locking reader is refused, never breaks the writer.** HDF5 file locking is off for the
+  particle file, and the writer holds the recorder's guard lock (`Ladruno_GuardLock.h`:
+  Windows `LockFileEx` on byte 2^62, POSIX `flock(LOCK_EX)`) from right after `H5Fcreate`
+  until after the final close. With HDF5's own locking, a reader's shared lock broke the
+  SWMR writer: `H5Fstart_swmr_write` refused (Linux, EAGAIN), and on Windows the writes
+  themselves failed. A reset's read-write reopen also retries for 60 s, for a reader with
+  locking off that holds the file at that instant
+  (`tests/test_ladruno_mpm_contracts_io.py::test_a_live_reader_does_not_disturb_the_writer`).
 
 A file left by a crash can hold a partial output beyond the last committed one. The case that
 matters is a kill **after `OFFSETS` is extended for output `k` but before its value is written**.
@@ -740,6 +773,11 @@ after loading `particle_set_v1.h5`; `tests/test_mpm_contracts.py` checks the map
   the crash rule gains step 0 (a stage torn while opening); §2.2 notes the latest HDF5 format
   (readers need HDF5 ≥ 1.10). Then the stage-layout window: the layout is written without SWMR,
   and reader rule step 3 recovers a copy of a file killed inside it.
+- **2026-11-15, WP-232h (#1085, PR #1088):** §2.5 states that only the last stage may be torn,
+  by a kill inside its layout, after a plain open as well as after step 3, never after the
+  SWMR-read open (`mpm_contracts.particle_stage_report`);
+  that a live run refuses a locking reader; and the two writer fixes ported from WP-233 (a
+  presized root, HDF5 locking off with the guard lock), with the reset-window replay.
 - **Gate before code.** The owner must ratify apeGmsh ADR 0134 (`232a_apegmsh_adr_draft.md`, through
   apeGmsh's T coordinator and maintainer) before 232c's particle-set reader and `.ladruno` writer,
   and before 232d, start (ADR §9, "Gate before code (232a)").
