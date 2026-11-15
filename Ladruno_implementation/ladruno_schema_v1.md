@@ -797,15 +797,31 @@ seconds", did not hold (quirk `WP-233-recorder-killed-without-swmr`).
    - re-checksum the superblock (lookup3 over bytes 0–43, stored at 44);
    - open the copy plainly.
 
-After any of the three steps, **the last stage may fail to open or read**: the kill fell
-while it was being laid out, and it holds no committed step, so skip it. An earlier stage
-that will not open is corruption. This can follow a plain open too. sec2 writes
-WRITE_ACCESS into the superblock only when it next flushes it, so a file killed inside a
-layout step can still carry flags 0x00. The real-binary kill stress found that at 7 of 16
-kills with a stage every 20 steps.
+**Only the last stage may be torn, and only by a kill inside its layout.**
+
+After step 1 or step 3, the last stage may fail to open or read. The kill fell while it was
+being laid out, and it holds no committed step, so skip it.
+- Step 1 can apply too, because sec2 writes WRITE_ACCESS into the superblock lazily: a file
+  killed inside a layout can still carry flags 0x00. The recorder flushes right after a
+  layout step's reopen, which narrows that to the instant around the reopen.
+- **After step 2 (flags 0x05) every stage, the last included, must read.** The file was
+  killed with SWMR armed, after its last layout completed.
+
+An earlier stage that will not open is corruption, whichever step opened the file. This is
+the same rule as the particle file's (232a §2.5, aligned with WP-232h).
+
+Measured on the real binary (WP-233 kill stress, 4,694 readable kills over four builds, a
+stage, `KIND` rewrite or modes snapshot every 20 steps):
+- the last stage was torn in 15 kills, all of them with flags 0x01 (step 3);
+- none of the 2,584 kills with flags 0x05 and none of the 1,544 with flags 0x00 had a torn
+  stage.
+
+Reference: `ladruno_format.stage_report` refuses a torn stage on an SWMR-read open (or a
+repaired copy of a 0x05 file, `recover_ladruno`).
 
 A reader that cannot open in SWMR-read mode (e.g. h5wasm) may apply step 3's repair to a
-copy of any file that step 1 refuses, flags 0x05 included.
+copy of any file that step 1 refuses, flags 0x05 included. A repaired copy of a 0x05 file
+keeps the step-2 rule: no stage may be torn.
 
 **A file a live run is writing.** The reader must never write to or repair the original.
 
@@ -862,7 +878,8 @@ copy of any file that step 1 refuses, flags 0x05 included.
 **Reference implementation:** `ladruno_format.py`:
 - `open_ladruno(path)` (steps 1–2; step 3 raises `StageLayoutKilledError`);
 - `repair_copy(src, dst)` (step 3);
-- `stage_report(f)` (every stage's T', or the torn last stage);
+- `stage_report(f)` (every stage's T', or the torn last stage, which it refuses after an
+  SWMR-read open);
 - `recover_ladruno(src, dst)` (step 3, then `stage_report`);
 - `committed_steps(stage)` (T');
 - `LadrunoReader`, which applies both rules.
