@@ -269,3 +269,34 @@ def test_particle_tangent_against_finite_differences():
     a = list(ops.mpm("debug", "tangentCheck", 1e-6, 1e-8))
     b = list(ops.mpm("debug", "tangentCheck", 1e-6, 1e-9))
     assert a[0] < 5e-3 and abs(a[0] - b[0]) < 0.01 * a[0], (a, b)
+
+
+def test_mode_a_rigid_translation():
+    """Closed form, the G2P position increment: every grid node carries the same prescribed
+    velocity (a gridvel over the whole grid), so every particle moves by exactly v * t with no
+    strain and no stress -- quasi-static mode A over five steps. This is the mode-A oracle the
+    MPM mutation family's SCALE mode (the batched G2P position increment x1.5) turns red; the
+    other Zone-A mode-A rows read stresses, velocities or a second run of the same binary."""
+    ops = _ops()
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.nDMaterial("ElasticIsotropic", 1, 1.0e5, 0.3)
+    ops.mpm("grid", 232, "-origin", 0.0, 0.0, "-h", 0.25, "-cells", 12, 12)
+    ops.mpm("mode", "quasiStatic")
+    ops.mpm("body", 1, "box", 1.0, 1.0, 2.0, 2.0, "-ppc", 2, "-mat", 1, "-rho", 1.0)
+    v = (0.01, -0.02)
+    ops.mpm("gridvel", "all", "box", -1.0, -1.0, 4.0, 4.0, "v", *v)
+    ops.constraints("Transformation")
+    ops.numberer("RCM")
+    ops.system("UmfPack")
+    ops.test("NormDispIncr", 1e-12, 10)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0)
+    ops.analysis("Static")
+    X = list(ops.mpm("particleData", "x"))
+    ops.mpm("analyze", 5, 1.0)
+    x = list(ops.mpm("particleData", "x"))
+    sig = list(ops.mpm("particleData", "sig"))
+    err = max(abs(x[k] - (X[k] + 5.0 * v[k % 2])) for k in range(len(x)))
+    assert err < 1e-12, f"rigid translation off by {err}"
+    assert max(abs(s) for s in sig) < 1e-6, max(abs(s) for s in sig)
