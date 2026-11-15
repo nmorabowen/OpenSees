@@ -638,6 +638,7 @@ initopensees(void)
 "        • Ladruno recorder — fail-loud HDF5, eigen-after-wipe, MP rank probe (WP-163)\n"
 "        • Ladruno recorder — -flush / -compress, 1 MiB chunks, in-place envelopes (WP-164)\n"
 "        • Ladruno recorder — topology-keyed stages, persistent energy, RUN_ID (WP-165)\n"
+"        • Ladruno recorder — SWMR writes, survives a hard kill (WP-233)\n"
 "        • LadrunoMonitor — live SWMR-HDF5 analysis monitor\n"
 "        • LadrunoRigidBody — 6-DOF rigid body (finite-rotation slaving)\n"
 "        • LadrunoSolidShell — 8-node ANS/EAS solid-shell\n"

@@ -95,6 +95,23 @@
 #include <sstream>
 #include <cmath>
 #include <cstring>
+#include <thread>   // WP-233: openLayout() retries a reopen the file lock refuses
+#if defined(_WIN32)  // WP-233: the guard lock (ladrunoGuardAcquire)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOGDI
+#define NOGDI
+#endif
+#include <windows.h>
+#else
+#include <fcntl.h>      // WP-233: the guard lock (flock on a separate descriptor)
+#include <sys/file.h>
+#include <unistd.h>
+#endif
 #include <cstdlib>
 
 namespace ladrunons = ladruno; // local alias
@@ -197,7 +214,94 @@ static bool ladrunoHasModalRequest(
 }
 
 // apeGmsh #2034: replace MODEL_STAGE[<id>]/@KIND (a provisional value written
-// before any analysis existed). Delete + create: the string sizes differ.
+// before any analysis existed). WP-233 (#1082): the provisional KIND is written
+// as a fixed-length string of LADRUNO_KIND_LEN bytes (the longest KIND,
+// "transient", NULLTERM, so it reads back "static"), and rewritten IN PLACE: one
+// write of the stage group's header. The old delete + create left the stage with
+// no KIND, or a torn header, for a kill inside the layout step.
+static const size_t LADRUNO_KIND_LEN = 9;
+// WP-233: links the root's header is presized for (one per MODEL_STAGE, + INFO).
+static const unsigned LADRUNO_ROOT_LINKS = 1024;
+
+// WP-233 (#1082): the guard lock. A reader with HDF5 file locking on (h5py's
+// default, HDFView, ...) holds a shared lock while it opens the file, and with
+// HDF5's own locking that breaks the SWMR writer (measured): H5Fstart_swmr_write
+// and a layout step's reopen must lock and are refused (Linux), and on Windows,
+// where byte-range locks are mandatory, the writer's very writes fail
+// ("Permission denied"). So HDF5's locking is off for this file (Ladruno_Hdf5.h
+// accessList) and the recorder holds its own EXCLUSIVE lock, from right after
+// H5Fcreate until after the final close, through a separate descriptor:
+//   * Windows: LockFileEx on one byte at offset 2^62, which every reader's
+//     whole-file lock overlaps; the recorder's own writes never reach it;
+//   * POSIX: flock(LOCK_EX), which every reader's flock(LOCK_SH) conflicts with;
+//     flock is advisory, so it never blocks the recorder's writes.
+// A locking reader is then refused ("unable to lock file") for as long as the
+// run is live, as before WP-233, when the writer held HDF5's exclusive lock all
+// run. A reader with locking OFF (as the live monitor requires,
+// 08_analysis_monitor.md) takes no lock and reads the live file through SWMR.
+// The OS releases the guard if the process is killed.
+static void* ladrunoGuardAcquire(const std::string& path)
+{
+#if defined(_WIN32)
+	// A locking reader may hold a shared lock this instant: retry for up to ~60 s.
+	for (int attempt = 0, pause_ms = 2; attempt < 130; ++attempt,
+	     pause_ms = std::min(pause_ms * 2, 500)) {
+		HANDLE h = CreateFileA(path.c_str(), GENERIC_READ,
+		                       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+		                       NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		if (h == INVALID_HANDLE_VALUE)
+			return 0;
+		OVERLAPPED ov;
+		std::memset(&ov, 0, sizeof(ov));
+		ov.Offset = 0;
+		ov.OffsetHigh = 0x40000000u;   // byte 2^62: far past any data
+		if (LockFileEx(h, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &ov))
+			return (void*)h;
+		CloseHandle(h);   // a reader holds a shared lock this instant: retry
+		std::this_thread::sleep_for(std::chrono::milliseconds(pause_ms));
+	}
+	return 0;
+#else
+	for (int attempt = 0, pause_ms = 2; attempt < 130; ++attempt,
+	     pause_ms = std::min(pause_ms * 2, 500)) {
+		const int fd = ::open(path.c_str(), O_RDONLY);
+		if (fd < 0)
+			return 0;
+		if (::flock(fd, LOCK_EX | LOCK_NB) == 0)
+			return (void*)(intptr_t)(fd + 1);   // + 1: fd 0 is valid, 0 means none
+		::close(fd);      // a reader holds a shared lock this instant: retry
+		std::this_thread::sleep_for(std::chrono::milliseconds(pause_ms));
+	}
+	return 0;
+#endif
+}
+
+static void ladrunoGuardRelease(void*& guard)
+{
+#if defined(_WIN32)
+	if (guard) {
+		OVERLAPPED ov;
+		std::memset(&ov, 0, sizeof(ov));
+		ov.OffsetHigh = 0x40000000u;
+		UnlockFileEx((HANDLE)guard, 0, 1, 0, &ov);
+		CloseHandle((HANDLE)guard);
+	}
+#else
+	if (guard) {
+		const int fd = (int)(intptr_t)guard - 1;
+		::flock(fd, LOCK_UN);
+		::close(fd);
+	}
+#endif
+	guard = 0;
+}
+static herr_t ladrunoWriteProvisionalKind(hid_t h_stage, const std::string& kind)
+{
+	char buf[LADRUNO_KIND_LEN];
+	std::memset(buf, 0, sizeof(buf));
+	std::memcpy(buf, kind.c_str(), std::min(kind.size(), LADRUNO_KIND_LEN));
+	return ladruno::h5::attribute::writes(h_stage, "KIND", buf, LADRUNO_KIND_LEN);
+}
 static int ladrunoRewriteStageKind(hid_t h_file, int stage_id, const std::string& kind)
 {
 	std::stringstream ss;
@@ -205,9 +309,19 @@ static int ladrunoRewriteStageKind(hid_t h_file, int stage_id, const std::string
 	hid_t h_stage = H5Gopen2(h_file, ss.str().c_str(), H5P_DEFAULT);
 	if (h_stage < 0)
 		return -1;
-	if (H5Aexists(h_stage, "KIND") > 0)
-		H5Adelete(h_stage, "KIND");
-	herr_t st = ladruno::h5::attribute::write(h_stage, "KIND", kind);
+	herr_t st = -1;
+	hid_t h_attr = H5Aopen(h_stage, "KIND", H5P_DEFAULT);
+	if (h_attr >= 0) {
+		hid_t h_type = H5Aget_type(h_attr);
+		if (h_type >= 0 && H5Tget_size(h_type) == LADRUNO_KIND_LEN) {
+			char buf[LADRUNO_KIND_LEN];
+			std::memset(buf, 0, sizeof(buf));
+			std::memcpy(buf, kind.c_str(), std::min(kind.size(), LADRUNO_KIND_LEN));
+			st = H5Awrite(h_attr, h_type, buf);
+		}
+		if (h_type >= 0) H5Tclose(h_type);
+		H5Aclose(h_attr);
+	}
 	H5Gclose(h_stage);
 	return st < 0 ? -1 : 0;
 }
@@ -235,12 +349,16 @@ public:
 		, init_failed(false)
 		, flush_seconds(10.0)
 		, last_flush()
+		, file_path()
+		, guard(0)
+		, guard_warned(false)
 		, last_seen_stamp(0)
 		, topology_fp(0)
 		, last_barrier(0)
 		, stage_run_kind()
 		, kind_pending(false)
 		, worker_fold_warned(false)
+		, stages_written(0)
 		, energy_model_state()
 		, energy_region_state()
 		, run_id()
@@ -298,6 +416,11 @@ public:
 	// written on every step; between flushes HDF5's chunk cache keeps them.
 	double flush_seconds;
 	std::chrono::steady_clock::time_point last_flush;
+	// WP-233: the file this process writes (for the layout step's reopen).
+	std::string file_path;
+	// WP-233: the guard lock (ladrunoGuardAcquire), held for the file's life.
+	void* guard;
+	bool guard_warned;
 	// WP-165 (R6): the domain-change stamp moves for far more than topology —
 	// contact `-reemit` re-sorts (inside commit()), `eleLoad`, a pattern with SPs,
 	// an `sp`/`imposedMotion` — and every move used to start a new MODEL_STAGE
@@ -323,6 +446,9 @@ public:
 	// one-time warning on a PartitionedDomain worker, which cannot see the user
 	// barrier (no interpreter runs there).
 	bool worker_fold_warned;
+	// WP-233: MODEL_STAGEs laid out so far; past LADRUNO_ROOT_LINKS the root's
+	// presized header is full and a kill in a layout step can reach earlier stages.
+	int stages_written;
 	// WP-165 (R3): energy integrals owned here, not by the per-stage source.
 	ladrunons::EnergyState energy_model_state;
 	ladrunons::EnergyState energy_region_state;
@@ -453,6 +579,10 @@ LadrunoRecorder::~LadrunoRecorder()
 		if (m_data->envelope_mode && m_data->initialized &&
 		    m_data->info.h_file_id != ladrunons::HID_INVALID) {
 			H5E_BEGIN_TRY {
+				// WP-233: an envelope first seeded on an armed step is created
+				// only on a layout step; give it one before the final write.
+				if (anySinkNeedsLayout())
+					openLayout();
 				finalizeAllSinks();
 			} H5E_END_TRY;
 		}
@@ -475,8 +605,10 @@ LadrunoRecorder::~LadrunoRecorder()
 				ladrunons::h5::file::close(m_data->info.h_file_id);
 				ladrunons::h5::plist::close(m_data->info.h_group_proplist);
 				ladrunons::h5::plist::close(m_data->info.h_file_proplist);
+				ladrunons::h5::plist::close(m_data->info.h_file_acc_proplist);
 			} H5E_END_TRY;
 		}
+		ladrunoGuardRelease(m_data->guard);   // WP-233: after the file is closed
 		delete m_data;
 	}
 }
@@ -711,6 +843,10 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 		// are now rewritten on the flush cadence, not every step, so their last
 		// extremes (and the element COLUMN_MAP, resolved from the stage stamp)
 		// must land under the OLD MODEL_STAGE; then flush it to disk.
+		// WP-233: a new stage is a layout step. Open it first, so a close-out
+		// envelope that still needs its group can be created now.
+		if (!openLayout())
+			return -1;
 		if (!m_data->stage_failed) {
 			if (m_data->envelope_mode)
 				finalizeAllSinks();
@@ -742,10 +878,16 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 			opserr << "LadrunoRecorder: MODEL_STAGE[" << info.current_model_stage_id
 			       << "] could not be written; recording is suspended until the "
 			          "next domain change\n";
+			closeLayout();   // WP-233: back to SWMR, whatever was laid out
 			return -1;
 		}
 		m_data->stage_failed = false;
 		m_data->topology_fp = topologyFingerprint();
+		if ((unsigned)(++m_data->stages_written) == LADRUNO_ROOT_LINKS)
+			opserr << "LadrunoRecorder warning: " << LADRUNO_ROOT_LINKS << " MODEL_STAGEs in '"
+			       << m_data->file_path.c_str() << "': the file's root is presized for this "
+			          "many, so from here a kill while a new stage is laid out can make "
+			          "earlier stages unreadable (schema 7b.2)\n";
 	}
 	if (m_data->stage_failed)
 		return 0;
@@ -754,6 +896,22 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 	// (an explicit `record` first, an eigen snapshot): adopt the first kind a
 	// recorded step sees. An automatic KIND label was written as a provisional
 	// "static"; restate it.
+	// WP-233 (#1082): is this a layout step? Everything that creates an object
+	// must happen while the file is out of SWMR mode, so decide it up front:
+	// a new stage (opened above), the KIND rewrite, a modes snapshot, or a sink
+	// that still has to create its group (an envelope seeded after the stage's
+	// first step). On a layout step the streaming rows are held and appended
+	// after SWMR is armed again (closeLayout), so no row is written outside SWMR.
+	const bool kind_rewrite = m_data->stage_run_kind.empty() && !run_kind.empty() &&
+	                          m_data->kind_pending;
+	detectEigenChange();
+	if (kind_rewrite || info.record_eigen_on_this_step || anySinkNeedsLayout()) {
+		if (!openLayout())
+			return -1;
+	}
+	const bool layout_step = info.layout_open;
+
+	int rc = 0;
 	if (m_data->stage_run_kind.empty() && !run_kind.empty()) {
 		m_data->stage_run_kind = run_kind;
 		if (m_data->kind_pending) {
@@ -761,22 +919,22 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 			                            run_kind) != 0) {
 				opserr << "LadrunoRecorder: could not rewrite MODEL_STAGE["
 				       << info.current_model_stage_id << "]/KIND\n";
-				return -1;
+				rc = -1;
 			}
 			m_data->kind_pending = false;
 		}
 	}
 
-	{ OPS_PROFILE_SCOPE("lr.nodes");   // Ladruno WP-196
+	if (rc == 0) { OPS_PROFILE_SCOPE("lr.nodes");   // Ladruno WP-196
 	if (recordResultsOnNodes() != 0)
-		return -1; }
-	{ OPS_PROFILE_SCOPE("lr.elements");   // Ladruno WP-196
+		rc = -1; }
+	if (rc == 0) { OPS_PROFILE_SCOPE("lr.elements");   // Ladruno WP-196
 	if (recordResultsOnElements() != 0)
-		return -1; }
-	if (recordResultsOnDomain() != 0)
-		return -1;
-	if (recordResultsOnOverlays() != 0)
-		return -1;
+		rc = -1; }
+	if (rc == 0 && recordResultsOnDomain() != 0)
+		rc = -1;
+	if (rc == 0 && recordResultsOnOverlays() != 0)
+		rc = -1;
 
 	// WP-164 (P1/P2): on the -flush cadence (default 10 s of wall clock; 0 =
 	// every recorded step, the old behaviour) rewrite the envelopes in place and
@@ -802,15 +960,24 @@ int LadrunoRecorder::record(int commitTag, double timeStamp)
 				dynamic_cast<ladrunons::EnvelopeSink*>(m_data->elem_channels[i].sink);
 			if (es) env_bytes += es->payloadBytes();
 		}
-		if (due || env_bytes <= ((size_t)8 << 20))
+		// WP-233: a layout step always writes them, so an envelope seeded on
+		// this step gets its group (and element COLUMN_MAP) before SWMR.
+		if (layout_step || due || env_bytes <= ((size_t)8 << 20))
 			finalizeAllSinks();
 	}
-	if (due) {
+	if (layout_step) {
+		// WP-233: arm SWMR, then append the held rows and flush. This flush
+		// also keeps "the first recorded step of a stage always flushes".
+		OPS_PROFILE_SCOPE("lr.flush");   // Ladruno WP-196
+		if (!closeLayout())
+			return -1;
+	}
+	else if (due) {
 		OPS_PROFILE_SCOPE("lr.flush");   // Ladruno WP-196
 		flushFile();
 	}
 
-	return 0;
+	return rc;
 }
 
 unsigned long long LadrunoRecorder::topologyFingerprint() const
@@ -868,6 +1035,209 @@ void LadrunoRecorder::flushFile()
 }
 
 /* ===================================================================== */
+/* WP-233 (#1082): the SWMR lifecycle                                    */
+/*                                                                       */
+/* Without SWMR a kill can leave a .ladruno unreadable, or reading zeros  */
+/* or another result's bytes, even behind completed flushes (v1 B-tree    */
+/* chunk indexes, a recompressed partial chunk moved and its old space    */
+/* reused, chunk-index entries / extents / the end-of-allocation landing  */
+/* in separate writes; quirk WP-233-recorder-killed-without-swmr). The    */
+/* file is therefore in SWMR-write mode except during a layout step.     */
+/* SWMR forbids creating objects or attributes, so every creation happens */
+/* on a layout step, between openLayout() and closeLayout(). A kill        */
+/* inside that window leaves superblock flags 0x01 (reader rule step 3,   */
+/* schema §7b.2).                                                          */
+/* ===================================================================== */
+
+#define LADRUNO_FOR_EACH_SINK(BODY) \
+	do { \
+		for (size_t i_ = 0; i_ < m_data->node_channels.size(); ++i_) \
+			{ ladrunons::ResultSink* s_ = m_data->node_channels[i_].sink; if (s_) { BODY; } } \
+		for (size_t i_ = 0; i_ < m_data->elem_channels.size(); ++i_) \
+			{ ladrunons::ResultSink* s_ = m_data->elem_channels[i_].sink; if (s_) { BODY; } } \
+		for (size_t i_ = 0; i_ < m_data->domain_channels.size(); ++i_) \
+			{ ladrunons::ResultSink* s_ = m_data->domain_channels[i_].sink; if (s_) { BODY; } } \
+		for (size_t i_ = 0; i_ < m_data->overlay_channels.size(); ++i_) \
+			{ ladrunons::ResultSink* s_ = m_data->overlay_channels[i_].sink; if (s_) { BODY; } } \
+	} while (0)
+
+bool LadrunoRecorder::anySinkNeedsLayout() const
+{
+	bool need = false;
+	LADRUNO_FOR_EACH_SINK(if (s_->needsLayout()) need = true);
+	return need;
+}
+
+void LadrunoRecorder::releaseAllHandles()
+{
+	LADRUNO_FOR_EACH_SINK(s_->releaseHandles());
+}
+
+bool LadrunoRecorder::reacquireAllHandles()
+{
+	bool ok = true;
+	ladrunons::detail::ProcessInfo& info = m_data->info;
+	LADRUNO_FOR_EACH_SINK(if (!s_->reacquireHandles(info)) ok = false);
+	return ok;   // a sink that failed stopped itself; the others record on
+}
+
+void LadrunoRecorder::disableRecorder(const char* why)
+{
+	ladrunons::detail::ProcessInfo& info = m_data->info;
+	opserr << "LadrunoRecorder error: " << why << " ('" << m_data->file_path.c_str()
+	       << "'); the recorder requires HDF5 SWMR to survive a kill and is "
+	          "disabled for the rest of the run (the file keeps what was written)\n";
+	H5E_BEGIN_TRY {
+		releaseAllHandles();
+		if (info.h_file_id != ladrunons::HID_INVALID) {
+			ladrunons::h5::file::flush(info.h_file_id);
+			ladrunons::h5::file::close(info.h_file_id);
+		}
+	} H5E_END_TRY;
+	info.h_file_id = ladrunons::HID_INVALID;
+	ladrunoGuardRelease(m_data->guard);
+	m_data->init_failed = true;
+}
+
+bool LadrunoRecorder::openLayout()
+{
+	ladrunons::detail::ProcessInfo& info = m_data->info;
+	if (info.layout_open)
+		return true;
+	// Close (which clears the SWMR flags) and reopen read-write. Every sink
+	// releases its datasets first; a handle left open would keep the file open
+	// in SWMR mode across the "close", so refuse instead of laying out into it.
+	ladrunons::h5::file::flush(info.h_file_id);
+	releaseAllHandles();
+	if (ladrunons::h5::file::openObjects(info.h_file_id) != 0) {
+		disableRecorder("cannot close the file to lay out new objects (a handle is still open)");
+		return false;
+	}
+	if (ladrunons::h5::file::close(info.h_file_id) < 0) {
+		info.h_file_id = ladrunons::HID_INVALID;
+		disableRecorder("cannot close the file to lay out new objects (a handle is still open)");
+		return false;
+	}
+	// The reopen can find the file held: on Windows a reader with HDF5 file
+	// locking on keeps a whole-file shared lock while its handle is open, and a
+	// plain read-only open can only get in in the instant between this close and
+	// the reopen (the flags then read 0x00). Retry, with backoff, until the reader
+	// lets go: a viewer or an h5py session normally closes within moments.
+	// Measured (WP-233): a reader polling the file through a run with a new stage
+	// every 20 steps disabled the recorder within seconds before this retry.
+	{
+		const double max_wait_s = 60.0;
+		double waited = 0.0;
+		int pause_ms = 5;
+		bool warned = false;
+		for (;;) {
+			H5E_BEGIN_TRY {
+				info.h_file_id = ladrunons::h5::file::openRW(m_data->file_path.c_str(),
+				                                             info.h_file_acc_proplist);
+			} H5E_END_TRY;
+			if (info.h_file_id >= 0 || waited >= max_wait_s)
+				break;
+			if (!warned && waited >= 1.0) {
+				warned = true;
+				opserr << "LadrunoRecorder warning: '" << m_data->file_path.c_str()
+				       << "' is held open by another process (a viewer or a reader?); "
+				          "waiting up to " << max_wait_s << " s to reopen it for a new "
+				          "stage\n";
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(pause_ms));
+			waited += pause_ms / 1000.0;
+			pause_ms = std::min(pause_ms * 2, 500);
+		}
+	}
+	if (info.h_file_id == ladrunons::HID_INVALID || info.h_file_id < 0) {
+		info.h_file_id = ladrunons::HID_INVALID;
+		disableRecorder("cannot reopen the file read-write to lay out new objects "
+		                "(held open by another process for 60 s)");
+		return false;
+	}
+	// Write the superblock now: its WRITE_ACCESS flag is otherwise written lazily,
+	// and until it is on disk a plain read-only open can get in (and hold the
+	// file) while this layout step runs.
+	ladrunons::h5::file::flush(info.h_file_id);
+	info.layout_open = true;
+	if (!reacquireAllHandles()) {
+		// a sink that could not reopen has stopped itself and said so
+	}
+	return true;
+}
+
+bool LadrunoRecorder::closeLayout()
+{
+	ladrunons::detail::ProcessInfo& info = m_data->info;
+	if (!info.layout_open)
+		return true;
+	// The layout is complete: flush it, arm SWMR with no object open, then
+	// reopen the handles and append the rows held during the layout step.
+	ladrunons::h5::file::flush(info.h_file_id);
+	releaseAllHandles();
+	if (ladrunons::h5::file::startSWMR(info.h_file_id) < 0) {
+		disableRecorder("cannot start HDF5 SWMR writing");
+		return false;
+	}
+	info.layout_open = false;
+	reacquireAllHandles();
+	LADRUNO_FOR_EACH_SINK(s_->commitPending(info));
+	flushFile();
+	return true;
+}
+
+void LadrunoRecorder::detectEigenChange()
+{
+	ladrunons::detail::ProcessInfo& info = m_data->info;
+	// EIGEN/MODES detection (frozen recordResultsOnNodes preamble). WP-233: run
+	// before recording, so a step that takes a modes snapshot (it creates
+	// DATA/STEP_<k>/MODE_<j>) is known to be a layout step.
+	info.record_eigen_on_this_step = false;
+	if (m_data->nodes.empty() || m_data->node_channels.empty())
+		return;
+	// WP-163 R1: gate on the DOMAIN's spectrum, not the interpreter's numEigen.
+	// `wipe` clears the domain eigenvalues but never resets numEigen (Tcl global
+	// / OpenSeesCommands), so after `eigen; wipe; <new model>` the old count
+	// survived and Domain::getEigenvalues() exit(-1)'d the whole process.
+	// getNumEigenvalues() (ADR46) is the non-exiting presence probe.
+	int num_eigen = info.domain->getNumEigenvalues();
+	if (num_eigen > 0) {
+		bool eigen_requested = false;
+		for (size_t i = 0; i < m_data->node_channels.size(); ++i) {
+			if (m_data->node_channels[i].is_modes) { eigen_requested = true; break; }
+		}
+		if (eigen_requested) {
+			double eigen_set_time = info.domain->getTimeEigenvaluesSet();
+			const Vector& new_eigenvalues = info.domain->getEigenvalues();
+			if (info.eigen_first_initialization_done) {
+				if (std::abs(eigen_set_time - info.eigen_last_time_set) > 1.0e-10) {
+					info.record_eigen_on_this_step = true;
+				}
+				else if (num_eigen != info.eigen_last_values.Size()) {
+					info.record_eigen_on_this_step = true;
+				}
+				else {
+					for (int i = 0; i < num_eigen; ++i) {
+						if (std::abs(new_eigenvalues[i] - info.eigen_last_values[i]) > 1.0e-10) {
+							info.record_eigen_on_this_step = true;
+							break;
+						}
+					}
+				}
+			}
+			else {
+				info.record_eigen_on_this_step = true;
+				info.eigen_first_initialization_done = true;
+			}
+			if (info.record_eigen_on_this_step) {
+				info.eigen_last_time_set = eigen_set_time;
+				info.eigen_last_values = new_eigenvalues;
+			}
+		}
+	}
+}
+
+/* ===================================================================== */
 /* file creation                                                         */
 /* ===================================================================== */
 
@@ -899,6 +1269,11 @@ int LadrunoRecorder::initialize()
 	info.h_file_proplist = ladrunons::h5::plist::crate(ladrunons::h5::plist::FileCreate);
 	ladrunons::h5::plist::setLinkCreationOrder(
 		info.h_file_proplist, H5P_CRT_ORDER_TRACKED | H5P_CRT_ORDER_INDEXED);
+	// WP-233 (#1082): the root gains one MODEL_STAGE link per stage, inside a
+	// layout step (no SWMR): keep its links compact in a header presized for
+	// LADRUNO_ROOT_LINKS stages (~44 KB; HDF5 caps a header chunk near 1,500
+	// such links), so each new stage is one in-place write of the root's header.
+	ladrunons::h5::plist::presizeLinks(info.h_file_proplist, LADRUNO_ROOT_LINKS, 20);
 	info.h_group_proplist = ladrunons::h5::plist::crate(ladrunons::h5::plist::GroupCreate);
 	ladrunons::h5::plist::setLinkCreationOrder(
 		info.h_group_proplist, H5P_CRT_ORDER_TRACKED | H5P_CRT_ORDER_INDEXED);
@@ -967,19 +1342,39 @@ int LadrunoRecorder::initialize()
 		the_filename = ss.str();
 	}
 
-	// create the file (Phase 1: no SWMR; H5P_DEFAULT file access)
-	info.h_file_id = ladrunons::h5::file::create(
-		the_filename.c_str(), info.h_file_proplist, H5P_DEFAULT);
-	if (info.h_file_id == ladrunons::HID_INVALID) {
+	// create the file. WP-233 (#1082): the latest format (SWMR needs it; the
+	// chunk indexes become extensible arrays) and close degree SEMI. The file
+	// is laid out now and armed for SWMR at the end of the first recorded step
+	// (closeLayout); it stays in SWMR-write mode except during layout steps.
+	info.h_file_acc_proplist = ladrunons::h5::file::accessList();
+	m_data->file_path = the_filename;
+	info.h_file_id = (info.h_file_acc_proplist == ladrunons::HID_INVALID)
+		? ladrunons::HID_INVALID
+		: ladrunons::h5::file::create(
+			the_filename.c_str(), info.h_file_proplist, info.h_file_acc_proplist);
+	if (info.h_file_id == ladrunons::HID_INVALID || info.h_file_id < 0) {
+		info.h_file_id = ladrunons::HID_INVALID;
 		opserr << "LadrunoRecorder error: cannot create file \""
 		       << the_filename.c_str() << "\"\n";
 		// WP-163 (ROB-11): release the property lists created above (they
 		// leaked on every retry when initialize() was re-run each step).
 		ladrunons::h5::plist::close(info.h_group_proplist);
 		ladrunons::h5::plist::close(info.h_file_proplist);
+		ladrunons::h5::plist::close(info.h_file_acc_proplist);
 		info.h_group_proplist = ladrunons::HID_INVALID;
 		info.h_file_proplist = ladrunons::HID_INVALID;
+		info.h_file_acc_proplist = ladrunons::HID_INVALID;
 		return -1;
+	}
+	info.layout_open = true;
+	// WP-233: the guard lock, held until the file is closed.
+	m_data->guard = ladrunoGuardAcquire(the_filename);
+	if (!m_data->guard && !m_data->guard_warned) {
+		m_data->guard_warned = true;
+		opserr << "LadrunoRecorder warning: could not take the guard lock on '"
+		       << the_filename.c_str() << "': a reader with HDF5 file locking on "
+		          "that opens the file while it is written is not refused "
+		          "(schema 7b.2)\n";
 	}
 
 	// INFO group (schema v1 §2)
@@ -1094,7 +1489,10 @@ int LadrunoRecorder::writeModel()
 		stage_kind = "static";
 		m_data->kind_pending = true;
 	}
-	ladrunons::h5::attribute::write(h_stage, "KIND", stage_kind);
+	if (m_data->kind_pending)
+		ladrunoWriteProvisionalKind(h_stage, stage_kind);   // WP-233: rewritten in place
+	else
+		ladrunons::h5::attribute::write(h_stage, "KIND", stage_kind);
 
 	hid_t h_model = ladrunons::h5::group::create(
 		h_stage, "MODEL", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
@@ -1145,6 +1543,14 @@ int LadrunoRecorder::writeModel()
 		return -1;
 	if (initOverlaySources() != 0)   // Ladruno (ADR-73 P4)
 		return -1;
+
+	// WP-233 (#1082): a modes result's group, ID and DATA group are part of the
+	// stage's layout, not of its first snapshot: a later snapshot then only links
+	// a STEP_<k> into the presized DATA (one in-place write), and never touches
+	// ON_NODES, which holds the streaming results' links.
+	for (size_t i = 0; i < m_data->node_channels.size(); ++i)
+		if (m_data->node_channels[i].is_modes)
+			ensureModesGroup((int)i);
 
 	return 0;
 }
@@ -2531,48 +2937,8 @@ int LadrunoRecorder::recordResultsOnNodes()
 	if (m_data->nodes.empty() || m_data->node_channels.empty())
 		return 0;
 
-	// EIGEN/MODES detection (frozen recordResultsOnNodes preamble).
-	info.record_eigen_on_this_step = false;
-	// WP-163 R1: gate on the DOMAIN's spectrum, not the interpreter's numEigen.
-	// `wipe` clears the domain eigenvalues but never resets numEigen (Tcl global
-	// / OpenSeesCommands), so after `eigen; wipe; <new model>` the old count
-	// survived and Domain::getEigenvalues() exit(-1)'d the whole process.
-	// getNumEigenvalues() (ADR46) is the non-exiting presence probe.
-	int num_eigen = info.domain->getNumEigenvalues();
-	if (num_eigen > 0) {
-		bool eigen_requested = false;
-		for (size_t i = 0; i < m_data->node_channels.size(); ++i) {
-			if (m_data->node_channels[i].is_modes) { eigen_requested = true; break; }
-		}
-		if (eigen_requested) {
-			double eigen_set_time = info.domain->getTimeEigenvaluesSet();
-			const Vector& new_eigenvalues = info.domain->getEigenvalues();
-			if (info.eigen_first_initialization_done) {
-				if (std::abs(eigen_set_time - info.eigen_last_time_set) > 1.0e-10) {
-					info.record_eigen_on_this_step = true;
-				}
-				else if (num_eigen != info.eigen_last_values.Size()) {
-					info.record_eigen_on_this_step = true;
-				}
-				else {
-					for (int i = 0; i < num_eigen; ++i) {
-						if (std::abs(new_eigenvalues[i] - info.eigen_last_values[i]) > 1.0e-10) {
-							info.record_eigen_on_this_step = true;
-							break;
-						}
-					}
-				}
-			}
-			else {
-				info.record_eigen_on_this_step = true;
-				info.eigen_first_initialization_done = true;
-			}
-			if (info.record_eigen_on_this_step) {
-				info.eigen_last_time_set = eigen_set_time;
-				info.eigen_last_values = new_eigenvalues;
-			}
-		}
-	}
+	// EIGEN/MODES detection now runs in record(), before this step's layout
+	// decision (WP-233 detectEigenChange): info.record_eigen_on_this_step is set.
 
 	// Drive each channel. Group by reaction flag (frozen previous_reac_type),
 	// priming Domain::calculateNodalReactions(flag) only when the flag changes.
@@ -2635,28 +3001,7 @@ void LadrunoRecorder::recordModeChannel(int node_channel_index)
 	std::stringstream ss_result;
 	ss_result << "MODEL_STAGE[" << info.current_model_stage_id
 		<< "]/RESULTS/ON_NODES/" << schema.name;
-	if (H5Lexists(info.h_file_id, ss_result.str().c_str(), H5P_DEFAULT) <= 0) {
-		std::stringstream ss_family;
-		ss_family << "MODEL_STAGE[" << info.current_model_stage_id << "]/RESULTS/ON_NODES";
-		hid_t h_family = H5Gopen2(info.h_file_id, ss_family.str().c_str(), H5P_DEFAULT);
-		if (h_family >= 0) {
-			hid_t h_gp_result = ladrunons::h5::group::createResultGroup(
-				h_family, info.h_group_proplist,
-				schema.name, schema.display_name,
-				schema.components_csv, schema.num_components,
-				schema.dimension, schema.description,
-				(int)schema.result_type, (int)schema.data_type);
-			const std::vector<int>& mode_ids = msrc->ids();
-			hid_t h_dset_id = ladrunons::h5::dataset::createAndWrite(
-				h_gp_result, "ID", mode_ids, mode_ids.size(), (size_t)1);
-			ladrunons::h5::dataset::close(h_dset_id);
-			hid_t h_data_grp = ladrunons::h5::group::create(
-				h_gp_result, "DATA", H5P_DEFAULT, info.h_group_proplist, H5P_DEFAULT);
-			ladrunons::h5::group::close(h_data_grp);
-			ladrunons::h5::group::close(h_gp_result);
-			ladrunons::h5::group::close(h_family);
-		}
-	}
+	ensureModesGroup(node_channel_index);   // WP-233: normally laid out with the stage
 
 	// create the per-step group under DATA: <name>/DATA/STEP_<step>
 	std::stringstream ss_step;
@@ -2690,6 +3035,50 @@ void LadrunoRecorder::recordModeChannel(int node_channel_index)
 	}
 
 	ladrunons::h5::group::close(h_gp_step);
+}
+
+/* WP-233: create <stage>/RESULTS/ON_NODES/<modes>/{ID, DATA} once per stage (a
+   no-op when it exists). DATA gains one STEP_<k> group per snapshot, so its links
+   are presized (plist::presizeLinks) and adding one is a single header write. */
+void LadrunoRecorder::ensureModesGroup(int node_channel_index)
+{
+	ladrunons::detail::ProcessInfo& info = m_data->info;
+	private_data::NodeChannel& ch = m_data->node_channels[(size_t)node_channel_index];
+	ladrunons::ModesOfVibrationSource* msrc =
+		dynamic_cast<ladrunons::ModesOfVibrationSource*>(ch.source);
+	if (msrc == 0)
+		return;
+	const ladrunons::ResultSchema& schema = msrc->schema();
+	if (schema.num_components < 1)
+		return;
+	std::stringstream ss_result;
+	ss_result << "MODEL_STAGE[" << info.current_model_stage_id
+		<< "]/RESULTS/ON_NODES/" << schema.name;
+	if (H5Lexists(info.h_file_id, ss_result.str().c_str(), H5P_DEFAULT) > 0)
+		return;
+	std::stringstream ss_family;
+	ss_family << "MODEL_STAGE[" << info.current_model_stage_id << "]/RESULTS/ON_NODES";
+	hid_t h_family = H5Gopen2(info.h_file_id, ss_family.str().c_str(), H5P_DEFAULT);
+	if (h_family < 0)
+		return;
+	hid_t h_gp_result = ladrunons::h5::group::createResultGroup(
+		h_family, info.h_group_proplist,
+		schema.name, schema.display_name,
+		schema.components_csv, schema.num_components,
+		schema.dimension, schema.description,
+		(int)schema.result_type, (int)schema.data_type);
+	const std::vector<int>& mode_ids = msrc->ids();
+	hid_t h_dset_id = ladrunons::h5::dataset::createAndWrite(
+		h_gp_result, "ID", mode_ids, mode_ids.size(), (size_t)1);
+	ladrunons::h5::dataset::close(h_dset_id);
+	hid_t gcpl = H5Pcopy(info.h_group_proplist);
+	ladrunons::h5::plist::presizeLinks(gcpl, 1024, 16);
+	hid_t h_data_grp = ladrunons::h5::group::create(
+		h_gp_result, "DATA", H5P_DEFAULT, gcpl, H5P_DEFAULT);
+	H5Pclose(gcpl);
+	ladrunons::h5::group::close(h_data_grp);
+	ladrunons::h5::group::close(h_gp_result);
+	ladrunons::h5::group::close(h_family);
 }
 
 int LadrunoRecorder::recordResultsOnElements()
@@ -3345,6 +3734,10 @@ void* OPS_LadrunoRecorder()
 			// WP-164 (P4): -compress <0..9> : deflate level of the time-series DATA
 			// (0 = no shuffle/deflate filter). Default 1: on the WP-164 bench it cut
 			// the large-slab recorder CPU 19 % vs the old hard-coded 4 for +0.6 % file.
+			// WP-233 (#1082, owner: size first): > 0 lays DATA out one step per
+			// chunk (written once under SWMR, same size as WP-164; slower one-id
+			// history reads); 0 = unfiltered ~64 KiB chunks (fastest writes and
+			// reads, larger file).
 			if (numdata > 0) {
 				int lvl = 1;
 				if (OPS_GetInt(&one_item, &lvl) != 0) {

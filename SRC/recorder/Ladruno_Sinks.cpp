@@ -116,10 +116,18 @@ namespace ladruno {
 
 	void StreamingSink::fail(const ResultSchema& schema, const char* why)
 	{
-		opserr << "LadrunoRecorder error: result \"" << schema.name.c_str()
+		m_name = schema.name;
+		failNamed(why);
+	}
+
+	void StreamingSink::failNamed(const char* why)
+	{
+		opserr << "LadrunoRecorder error: result \"" << m_name.c_str()
 		       << "\" " << why << "; it will NOT be recorded from here on\n";
 		m_dead = true;
 		m_initialized = true;   // never re-run begin() (no per-step retry/spam)
+		m_has_pending = false;
+		m_pending.clear();
 	}
 
 	void StreamingSink::begin(detail::ProcessInfo& info, const ResultSource& src)
@@ -133,6 +141,15 @@ namespace ladruno {
 		if (src.ids().empty()) {
 			m_dead = true;
 			m_initialized = true;
+			return;
+		}
+
+		// WP-233: objects are created only on a layout step (SWMR forbids it
+		// once armed). The recorder makes a stage's first recorded step a layout
+		// step, so reaching here while armed is an internal error: refuse loudly.
+		if (!info.layout_open) {
+			fail(schema, "would be created while the file is in SWMR-write mode "
+			             "(internal error: not on a layout step)");
 			return;
 		}
 
@@ -185,8 +202,20 @@ namespace ladruno {
 		// On-disk DATA type is f64 (default, lossless) or f32 (opt-in
 		// `-precision f32` lossy mode); TIME/STEP stay f64/int either way.
 		hid_t data_disk_type = info.store_data_f32 ? H5T_IEEE_F32LE : H5T_IEEE_F64LE;
-		// WP-164: the WP-164 chunk plan + sized chunk cache, deflate level from
-		// `-compress`, and the handles are KEPT OPEN until the sink is destroyed.
+		// WP-233: remember where and how, to reopen after a layout step.
+		{
+			std::stringstream ss_path;
+			ss_path << stageGroupName(info) << "/RESULTS/"
+			        << ResultFamily::groupName(m_family) << "/" << schema.name;
+			m_path = ss_path.str();
+		}
+		m_name = schema.name;
+		m_disk_type = data_disk_type;
+		m_deflate = info.deflate_level;
+		// WP-164/WP-233: the SWMR-safe chunk plan + sized chunk cache, deflate
+		// level from `-compress` (0 = unfiltered 64 KiB chunks; > 0 = one deflated
+		// step per chunk), and the handles are KEPT OPEN until the sink is
+		// destroyed or a layout step releases them.
 		m_data = h5::dataset::createTimeSeries3dOpen(
 			h_gp_result, "DATA", (hsize_t)n_ids, (hsize_t)n_comp, data_disk_type,
 			info.deflate_level);
@@ -249,26 +278,84 @@ namespace ladruno {
 			return;
 		}
 
+		const double t_val = info.current_time_step;
+		const int s_val = info.current_time_step_id;
+		// WP-233: on a layout step the file is not in SWMR mode yet; hold the row
+		// and append it in commitPending(), after the recorder arms SWMR, so no
+		// streaming row is ever written outside SWMR.
+		if (info.layout_open) {
+			m_pending.assign(buffer.begin(), buffer.begin() + n_ids * n_comp);
+			m_pending_time = t_val;
+			m_pending_step = s_val;
+			m_has_pending = true;
+			return;
+		}
+		writeRow(&buffer[0], t_val, s_val);
+	}
+
+	void StreamingSink::writeRow(const double* row, double t_val, int s_val)
+	{
 		// WP-164 (P2): write into the handles held open since begin(). The slab
-		// lands in the dataset's chunk cache; a chunk is deflated once, when it is
-		// complete or at a flush, instead of being re-read and re-deflated on every
-		// step (the old open/close-per-step path evicted the cache each time).
-		herr_t st = h5::dataset::writeSlab3dAt(m_data, m_t, &buffer[0],
-			(hsize_t)n_ids, (hsize_t)n_comp, m_mspace);
+		// lands in the dataset's chunk cache and reaches the file at the next
+		// flush or eviction. Under SWMR (WP-233) each dataset's own writes reach
+		// the disk in order, but DATA, TIME and STEP are separate datasets: a kill
+		// can leave them at different lengths, and a reader cuts to the shortest
+		// (schema §7b.2).
+		herr_t st = h5::dataset::writeSlab3dAt(m_data, m_t, row,
+			(hsize_t)m_n_ids, (hsize_t)m_n_comp, m_mspace);
 		if (st < 0) {
 			// WP-163 R5: if DATA was extended before the write failed, that row
 			// exists (fill value) — give it its TIME/STEP so the axes stay aligned,
 			// then stop the channel.
 			const bool grew = h5::dataset::extent0(m_data) > m_t;
-			fail(schema, "failed to append a step to DATA (disk full or quota?)");
+			failNamed("failed to append a step to DATA (disk full or quota?)");
 			if (!grew)
 				return;
 		}
-		const double t_val = info.current_time_step;
-		const int s_val = info.current_time_step_id;
 		h5::dataset::writeScalar1dAt(m_time, m_t, H5T_NATIVE_DOUBLE, &t_val, m_mspace1);
 		h5::dataset::writeScalar1dAt(m_step, m_t, H5T_NATIVE_INT, &s_val, m_mspace1);
 		++m_t;
+	}
+
+	void StreamingSink::commitPending(detail::ProcessInfo& /*info*/)
+	{
+		if (!m_has_pending)
+			return;
+		m_has_pending = false;
+		if (!m_dead && m_data >= 0)
+			writeRow(&m_pending[0], m_pending_time, m_pending_step);
+		m_pending.clear();
+	}
+
+	void StreamingSink::releaseHandles()
+	{
+		// WP-233: the datasets only; the memory spaces are not file objects.
+		if (m_step >= 0) H5Dclose(m_step);
+		if (m_time >= 0) H5Dclose(m_time);
+		if (m_data >= 0) H5Dclose(m_data);
+		m_data = m_time = m_step = HID_INVALID;
+	}
+
+	bool StreamingSink::reacquireHandles(detail::ProcessInfo& info)
+	{
+		if (m_dead || !m_initialized || m_path.empty())
+			return true;
+		hid_t h_grp = H5Gopen2(info.h_file_id, m_path.c_str(), H5P_DEFAULT);
+		if (h_grp >= 0) {
+			hid_t dapl = h5::dataset::timeSeriesAccessList(
+				(hsize_t)m_n_ids, (hsize_t)m_n_comp, m_disk_type, m_deflate);
+			m_data = H5Dopen2(h_grp, "DATA", dapl >= 0 ? dapl : H5P_DEFAULT);
+			if (dapl >= 0) H5Pclose(dapl);
+			m_time = H5Dopen2(h_grp, "TIME", H5P_DEFAULT);
+			m_step = H5Dopen2(h_grp, "STEP", H5P_DEFAULT);
+			H5Gclose(h_grp);
+		}
+		if (h_grp < 0 || m_data < 0 || m_time < 0 || m_step < 0) {
+			releaseHandles();
+			failNamed("could not reopen its DATA/TIME/STEP after a layout step");
+			return false;
+		}
+		return true;
 	}
 
 	void StreamingSink::closeHandles()
@@ -401,6 +488,13 @@ namespace ladruno {
 			return;
 		}
 
+		// WP-233: the group is created on a layout step only (SWMR forbids it
+		// once armed). An envelope first seeded on an armed step waits: the
+		// recorder sees needsLayout() and makes the next recorded step a layout
+		// step, which creates it holding the extremes so far.
+		if (!info.layout_open)
+			return;
+
 		// ENVELOPES/<family>/<name> lives under the stage's RESULTS tree.
 		hid_t h_stage = openOrCreateGroup(info.h_file_id,
 			stageGroupName(info).c_str(), info.h_group_proplist);
@@ -468,10 +562,48 @@ namespace ladruno {
 		m_dabs = h5::dataset::createAndWrite(h_name, "ABSMAX", m_absmax, m_n_ids, m_n_comp);
 		m_darg = h5::dataset::createAndWrite(h_name, "ARG_STEP", m_arg_step, m_n_ids, m_n_comp);
 		m_created = true;
+		{
+			std::stringstream ss_path;
+			ss_path << stageGroupName(info) << "/RESULTS/ENVELOPES/"
+			        << ResultFamily::groupName(m_family) << "/" << m_name;
+			m_path = ss_path.str();
+		}
 
 		h5::dataset::close(d_id);
 		h5::group::close(h_name);
 		h5::group::close(h_family);
+	}
+
+	void EnvelopeSink::releaseHandles()
+	{
+		if (m_darg >= 0) H5Dclose(m_darg);
+		if (m_dabs >= 0) H5Dclose(m_dabs);
+		if (m_dmax >= 0) H5Dclose(m_dmax);
+		if (m_dmin >= 0) H5Dclose(m_dmin);
+		m_dmin = m_dmax = m_dabs = m_darg = HID_INVALID;
+	}
+
+	bool EnvelopeSink::reacquireHandles(detail::ProcessInfo& info)
+	{
+		if (!m_created || m_path.empty())
+			return true;
+		hid_t h_grp = H5Gopen2(info.h_file_id, m_path.c_str(), H5P_DEFAULT);
+		if (h_grp >= 0) {
+			m_dmin = H5Dopen2(h_grp, "MIN", H5P_DEFAULT);
+			m_dmax = H5Dopen2(h_grp, "MAX", H5P_DEFAULT);
+			m_dabs = H5Dopen2(h_grp, "ABSMAX", H5P_DEFAULT);
+			m_darg = H5Dopen2(h_grp, "ARG_STEP", H5P_DEFAULT);
+			H5Gclose(h_grp);
+		}
+		if (h_grp < 0 || m_dmin < 0 || m_dmax < 0 || m_dabs < 0 || m_darg < 0) {
+			releaseHandles();
+			opserr << "LadrunoRecorder error: envelope \"" << m_name.c_str()
+			       << "\" could not be reopened after a layout step; its last "
+			          "written extremes stay in the file\n";
+			m_path.clear();
+			return false;
+		}
+		return true;
 	}
 
 	EnvelopeSink::~EnvelopeSink()
