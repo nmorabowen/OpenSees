@@ -153,7 +153,11 @@ StaticAnalysis::analyze(int numSteps, bool flush)
 	if (stamp != domainStamp) {
 	    domainStamp = stamp;
 
+	    // Ladruno WP-232g: the set-up a changed Domain triggers, bracketed as in
+	    // DirectIntegrationAnalysis::analyzeStep (a profiler scope, a no-op when off).
+	    { OPS_PROFILE_SCOPE("domainChanged");
 	    result = this->domainChanged();
+	    }
 
 	    if (result < 0) {
 		opserr << "StaticAnalysis::analyze() - domainChanged failed";
@@ -389,8 +393,14 @@ StaticAnalysis::domainChanged(void)
     // Timer theTimer; theTimer.start();
     // opserr << "StaticAnalysis::domainChanged(void)\n";
 
+    // Ladruno WP-232g: dc.* profiler scopes, mirroring DirectIntegrationAnalysis::
+    // domainChanged() (dc.handle, dc.numberDOF, dc.setSize, dc.s.graph), plus dc.clearAll,
+    // dc.integrator and dc.algorithm, so a mode-A MPM step's rebuild splits with no
+    // remainder. Scopes only: every call and every return is unchanged.
+    { OPS_PROFILE_SCOPE("dc.clearAll");   // Ladruno WP-232g
     theAnalysisModel->clearAll();    
     theConstraintHandler->clearAll();
+    }
 
     // theTimer.pause(); 
     // cout <<  "StaticAnalysis::clearAll() " << theTimer.getReal();
@@ -401,23 +411,27 @@ StaticAnalysis::domainChanged(void)
     // causes the creation of FE_Element and DOF_Group objects
     // and their addition to the AnalysisModel.
 
+    { OPS_PROFILE_SCOPE("dc.handle");   // Ladruno WP-232g
     result = theConstraintHandler->handle();
     if (result < 0) {
 	opserr << "StaticAnalysis::handle() - ";
 	opserr << "ConstraintHandler::handle() failed";
 	return -1;
     }
+    }
 
     // we now invoke number() on the numberer which causes
     // equation numbers to be assigned to all the DOFs in the
     // AnalysisModel.
 
+    { OPS_PROFILE_SCOPE("dc.numberDOF");   // Ladruno WP-232g
     result = theDOF_Numberer->numberDOF();
     if (result < 0) {
 	opserr << "StaticAnalysis::handle() - ";
 	opserr << "DOF_Numberer::numberDOF() failed";
 	return -2;
     }	    
+    }
 
     result = theConstraintHandler->doneNumberingDOF();
     if (result < 0) {
@@ -429,7 +443,12 @@ StaticAnalysis::domainChanged(void)
     // we invoke setSize() on the LinearSOE which
     // causes that object to determine its size
 
-    Graph &theGraph = theAnalysisModel->getDOFGraph();
+    { OPS_PROFILE_SCOPE("dc.setSize");   // Ladruno WP-232g
+    Graph *theGraphPtr;
+    { OPS_PROFILE_SCOPE("dc.s.graph");   // Ladruno WP-232g
+    theGraphPtr = &theAnalysisModel->getDOFGraph();
+    }
+    Graph &theGraph = *theGraphPtr;
 
     result = theSOE->setSize(theGraph);
     if (result < 0) {
@@ -446,25 +465,30 @@ StaticAnalysis::domainChanged(void)
 	return -3;
       }	    
     }
+    }
 
     theAnalysisModel->clearDOFGraph();
 
     // finally we invoke domainChanged on the Integrator and Algorithm
     // objects .. informing them that the model has changed
 
+    { OPS_PROFILE_SCOPE("dc.integrator");   // Ladruno WP-232g
     result = theIntegrator->domainChanged();
     if (result < 0) {
 	opserr << "StaticAnalysis::setAlgorithm() - ";
 	opserr << "Integrator::domainChanged() failed";
 	return -4;
     }	    
+    }
 
+    { OPS_PROFILE_SCOPE("dc.algorithm");   // Ladruno WP-232g
     result = theAlgorithm->domainChanged();
     if (result < 0) {
 	opserr << "StaticAnalysis::setAlgorithm() - ";
 	opserr << "Algorithm::domainChanged() failed";
 	return -5;
     }	        
+    }
 
     // if get here successful
     return 0;

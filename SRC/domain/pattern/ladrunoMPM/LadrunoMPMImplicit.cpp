@@ -63,12 +63,35 @@
 #include <StaticIntegrator.h>
 #include <LoadControl.h>
 #include <ConstraintHandler.h>
+#include <profiler/ProfilerMacros.h>
 
 #include <algorithm>
 #include <climits>
 #include <cmath>
 #include <map>
+#include <optional>
 #include <set>
+
+// WP-232g (M0b): sequential profiler phases inside one function whose locals outlive the
+// phase, so a braced OPS_PROFILE_SCOPE cannot hold them. MPM_PHASE_BEGIN opens a scope
+// held in a std::optional, MPM_PHASE_END closes it; every phase ends before the next
+// begins, so the profiler's cursor nests them as siblings. Same gate as OPS_PROFILE_SCOPE
+// (ProfilerMacros.h: the name is passed only when the profiler is enabled), and nothing
+// at all under OPS_PROFILE_DISABLE. An early return closes an open phase through the
+// optional's destructor.
+#ifndef OPS_PROFILE_DISABLE
+#define MPM_PHASE_BEGIN(var, name)                                                       \
+  std::optional<::ops_profiler::ScopedTimerOpt> var;                                     \
+  var.emplace(::ops_profiler::theProfiler().enabled() ? (name) : nullptr)
+#define MPM_PHASE_NEXT(var, name)                                                        \
+  do { var.reset();                                                                      \
+       var.emplace(::ops_profiler::theProfiler().enabled() ? (name) : nullptr); } while (0)
+#define MPM_PHASE_END(var) var.reset()
+#else
+#define MPM_PHASE_BEGIN(var, name) ((void)0)
+#define MPM_PHASE_NEXT(var, name) ((void)0)
+#define MPM_PHASE_END(var) ((void)0)
+#endif
 
 // ---------------------------------------------------------------------------
 //  LadrunoMPMPointHost
@@ -110,6 +133,7 @@ LadrunoMPMPattern::mpmParticleCommitted(int)
     g2pSkipped = true;
     return;
   }
+  OPS_PROFILE_SCOPE("mpm.a.g2p");   // WP-232g (M0b): the batched G2P of every particle
   const bool qs = (theMode == MODE_QUASISTATIC);
   for (LadrunoMPMPoint *e : eles)
     if (e != 0) e->g2p(eng.P, eng.par.flip, qs);
@@ -496,6 +520,9 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
   const int N = P.size(), nd = eng.ndm();
   const double t = dom->getCurrentTime();
 
+  // WP-232g (M0b): the host's preparation, split into phases (profiler scopes only).
+  OPS_PROFILE_SCOPE("mpm.a.prepare");
+  MPM_PHASE_BEGIN(ph, "mpm.a.support");      // supports, nodal mass, active set
   // ---- supports at the committed positions --------------------------------------
   std::vector<long> supStart(1, 0), node;
   std::vector<double> Sv, dSv;
@@ -549,6 +576,7 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
     }
   }
 
+  MPM_PHASE_NEXT(ph, "mpm.a.sp");            // WP-232g: the grid conditions' spec
   // ---- the grid conditions, in lattice terms ------------------------------------------
   std::map<std::pair<long, int>, std::pair<double, bool>> spec;   // (ext,dof) -> (valueR, constant)
   std::vector<std::vector<long>> gvExt(gridVels.size());
@@ -596,6 +624,7 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
   for (const auto &kv : spec)
     newSpec.push_back(SpecRow{kv.first.first, kv.first.second, kv.second.first, kv.second.second});
 
+  MPM_PHASE_NEXT(ph, "mpm.a.churn");         // WP-232g: grid-node retire / create
   // ---- the node diff -------------------------------------------------------------------
   bool nodeSetChanged = (reseedMode == 1);
   if (!nodeSetChanged) {
@@ -607,7 +636,9 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
   const bool specChanged = nodeSetChanged || !(newSpec == lastSpec);
   // From here on the grid state is being changed: a failure is -2 (the driver aborts and
   // `mpm reset` is required -- review item 8), never "nothing changed".
+  MPM_PHASE_NEXT(ph, "mpm.a.sp");            // WP-232g
   if (specChanged) removeHostSPs();
+  MPM_PHASE_NEXT(ph, "mpm.a.churn");         // WP-232g
   if (nodeSetChanged) {
     std::vector<long> drop;
     for (const auto &kv : liveTag)
@@ -643,6 +674,7 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
     }
   }
 
+  MPM_PHASE_NEXT(ph, "mpm.a.p2g");           // WP-232g
   // ---- P2G onto the Domain nodes (interface §3 step 3) -------------------------------
   const bool qs = (theMode == MODE_QUASISTATIC);
   std::map<long, std::vector<double>> mv;     // m, m v (nd), m a (nd)
@@ -694,6 +726,7 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
     n->commitState();
   }
 
+  MPM_PHASE_NEXT(ph, "mpm.a.repoint");       // WP-232g
   // ---- elements: created, or re-pointed in place ------------------------------------------
   if (eles.empty() && createElements(err) < 0) return -2;
   bool connChanged = false;
@@ -739,6 +772,7 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
   }
   if (connChanged) nConnChanges++;
 
+  MPM_PHASE_NEXT(ph, "mpm.a.sp");            // WP-232g: SP_Constraints rebuilt
   // ---- the grid conditions as this pattern's SPs ----------------------------------------
   if (specChanged) {
     for (const SpecRow &r : newSpec) {
@@ -757,11 +791,13 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
     for (long x : gvExt[gi]) gridVels[gi].nodes.push_back(liveTag[x]);
   }
 
+  MPM_PHASE_NEXT(ph, "mpm.a.domainChange");  // WP-232g: the raise itself
   // ---- Domain::domainChange() from C++, unconditionally (W1, W4) -------------------------
   if (!(reseedMode == 2 && !nodeSetChanged && !connChanged && !specChanged)) {
     dom->domainChange();
     nDomainChanges++;
   }
+  MPM_PHASE_END(ph);
   return 0;
 }
 
@@ -897,6 +933,9 @@ LadrunoMPMPattern::analyzeImplicit(int nSteps, double dt, const LadrunoMPMAnalys
       if (remaining <= 1e-9 * cur) break;
       h = (remaining < cur * (1.0 - 1e-9)) ? remaining : cur;
     }
+    // WP-232g (M0b): the wall of one step (prepare, attempts, cuts, output), opened after
+    // the loop's exit tests so the last pass of the loop adds no empty call.
+    OPS_PROFILE_SCOPE("mpm.a.step");
     int attempt = 0;
     for (;;) {
       attempt++;
