@@ -22,10 +22,11 @@ Measured (2026-11-14, build 9 cbe1b7149, a reset every 100 steps, 400 kills): 29
 with SWMR-read, 89 plainly, 21 (5.25 %) refused by both opens; 21 / 21 recovered every
 earlier stage (in 2, the stage being laid out did not open: no committed output).
 
-WP-232h (#1085; build 1d64d529e: presized root, guard lock): a reset every 100 steps, 0 bad in
-400 (up to 138 stages; 16 refused, 16 recovered, 2 with the last stage torn); a reset every 10,
-0 bad in 400 (up to 400 stages; 43 refused, 43 recovered). Only the LAST stage may be torn,
-after any open (232a section 2.5); every earlier stage must read.
+WP-232h (#1085; build 8a46dd04b: presized root, guard lock): a reset every 100 steps, 0 bad in
+400 (up to 124 stages; 23 refused, 23 recovered, 1 with the last stage torn); a reset every 10,
+0 bad in 400 (up to 380 stages; 50 refused, 50 recovered, 2 torn). Only the LAST stage may be
+torn, after a plain open or the repair, never after the SWMR-read open (232a section 2.5);
+every earlier stage must read.
 
 Run from the repo root, after a full ``build.bat`` (the pyd must be current):
 

@@ -108,7 +108,8 @@ date: 2026-11-14
 - **A created file is never `H5Fcreate`'d again.** Before WP-232h a failed reset reopen left the
   writer with no file, and the next stage called `createFile` (`H5F_ACC_TRUNC`): every earlier
   stage truncated away. The writer now retries the reopen instead.
-- Real binary (1d64d529e): `kill_stress.py` 0 bad in 400; `reset_stress.py` 0 bad in 400 with a reset every 100 steps
-  (up to 138 stages; 16 refused by both opens, 16 recovered, 2 with the last stage torn) and 0
-  in 400 with a reset every 10 (up to 400 stages; 43 refused, 43 recovered).
+- Real binary (8a46dd04b, the ready head): `kill_stress.py` 0 bad in 400; `reset_stress.py` 0
+  bad in 400 with a reset every 100 steps (up to 124 stages; 23 refused by both opens, 23
+  recovered, 1 with the last stage torn) and 0 in 400 with a reset every 10 (up to 380 stages;
+  50 refused, 50 recovered, 2 torn). Same on the first build (1d64d529e).
 - Learned 2026-11-15 (WP-232h).
