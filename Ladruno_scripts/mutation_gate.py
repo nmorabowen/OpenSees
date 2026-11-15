@@ -107,25 +107,31 @@ FAMILIES = {
         # at rest) and roller_slide (a velocity check).
         # WP-232f adds mode A's suite (test_ladruno_mpm_implicit_engine.py): ZERO
         # drops the particle element's internal force, SCALE the batched G2P
-        # position increment. Re-measured 2026-11-15 on the COMBINED suite (mutants
-        # built from 0e793fcbf, same Python-half run conditions as above):
-        #   ZERO : 29/64 = 0.453 (mode F 18/39, mode A 11/25). Mode-A kills: the
-        #     column, the bar, the cantilever QS / transient / footing r1 rows, the
-        #     reaction check, recorder synchrony, the FD tangent check, the
-        #     footing restart. Survivors: the six refusals (physics-free), and the
-        #     retry / re-seed / bar-restart protocols and counters, which compare
-        #     the binary with ITSELF (two runs of one mutant agree).
-        #   SCALE: 24/64 = 0.375 (mode F 23/39, mode A 1/25). The one mode-A kill
-        #     is test_mode_a_rigid_translation (closed form x = X + v t). The other
-        #     mode-A rows read stresses (from F, not x), velocities (the bar
-        #     period), refusals or a second run of the same binary; the position-
-        #     reading cantilever rows are `report` at r1 and gates only at r2 / r3
-        #     (test_ladruno_mpm_implicit_gates.py, outside Zone-A).
-        # The SCALE floor drops from mode F's 0.55 because the combined denominator
-        # grows by 25 mode-A tests that mostly cannot see a position increment.
+        # position increment. Re-measured 2026-11-15 on the COMBINED suite, mutants
+        # built from c24eeae45 (C++ of the review round), same Python-half run
+        # conditions as above:
+        #   ZERO : 37/80 = 0.463 (mode F 18/39, mode A 19/41). Mode-A kills: the
+        #     column and the Newmark bar rows, the 3D bar, the HHT / GeneralizedAlpha
+        #     bar, the betaK Rayleigh decay, the r1 bands (cantilever QS tip,
+        #     transient first peak and period), the cantilever QS / transient /
+        #     footing r1 report rows, the cantilever data row, the reaction check,
+        #     recorder synchrony, the FD tangent check, the footing fresh-process
+        #     restart, the plain-analyze refusal (its set-up steps no longer
+        #     converge) and the DisplacementControl refusal (its admitted first step
+        #     fails). Survivors: the other refusals (physics-free), the retry /
+        #     re-seed / bar-restart protocols and counters (the binary against
+        #     ITSELF), the translations (stress-free) and the reset / removed-element
+        #     lifecycle tests.
+        #   SCALE: 31/80 = 0.388 (mode F 23/39, mode A 8/41). Mode-A kills: the 2D
+        #     and 3D rigid translations (quasi-static), the transient gridvel
+        #     translations (Transformation / Penalty x flip 1 / 0), and the r1
+        #     cantilever bands that read positions (QS tip, transient first peak).
+        #     Survivors: rows that read stresses (from F, not x), velocities or
+        #     periods, refusals, lifecycle, and protocols comparing the binary with
+        #     itself.
         "paths": ["test_ladruno_mpm_engine.py",       # the cases suite; lifecycle/refusal tests are physics-free
                   "test_ladruno_mpm_implicit_engine.py"],
-        "min_score": {"ZERO": 0.45, "SCALE": 0.37, "IDENT": 0.0},
+        "min_score": {"ZERO": 0.46, "SCALE": 0.38, "IDENT": 0.0},
     },
     # --- WP-3 lanes: gates NOT yet inserted in these families' elements. -----
     # Registering the paths here is deliberate (it documents the intended
