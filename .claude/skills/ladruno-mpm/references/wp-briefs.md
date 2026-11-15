@@ -293,3 +293,101 @@ widened band); MPM ZERO and SCALE mutants red on a mode-A oracle; ci/ gates clea
 a dispatched run; ladrunoBuild matches your head on the exe and the pyd. Report per the Worker
 rules.
 ```
+
+## 232g — phase 2: the M0b measurements
+
+Kickoff 2026-11-15 (orchestrator, Opus 5.5 — the program's orchestrator session). The roster's
+"max when declaring M0b" is met by a Fable critic pass at max that checks the application of the
+table below before the ADR amendment is written. Branch `wp/232g-mpm-m0b-measurements`, one draft
+PR for the WP, one worker. Done when the four measurements are recorded and the mode-C decision is
+written into the ADR as an amendment.
+
+**Model and effort, re-decided at kickoff.** Worker: opus · medium. The roster's harness row is
+sonnet · medium, but this harness must design 3D mode-A models that converge at 10⁵ particles and
+add profiler scopes in `SRC/` (one vanilla file); the rules it serves are fixed here, so medium.
+Ready-flip critic: fable · high (the author is Opus), briefed with the data and the pre-registered
+table, not with the orchestrator's reading. `/code-review medium`. No out-of-family verdict is
+pre-booked (measurement and instrumentation, no new numerics); ask the owner at ready-flip.
+
+**Pinned conditions** (every number carries them): one build, its `ladrunoBuild` printed by the
+harness from the binary it runs; machine i7-13700KF (8 P + 8 E cores), 64 GB; Python 3.12;
+`MKL_NUM_THREADS` and `OMP_NUM_THREADS` stated per run (implicit: 8; explicit: 1, plus one row at
+the default); no build or other heavy job on the machine during a timed run (the orchestrator
+launches them); median of 3 repeats with the spread; warm-up steps excluded and stated.
+
+**Definitions.**
+- *Rebuild* t_rb: everything a mode-A step spends because the Domain changed — the host's
+  preparation (P2G, grid-node churn, re-pointing, SP rebuild, the `domainChange()` raise), the
+  analysis's `domainChanged()` (handler, numberer, `setSize` and graph), and every `soe.symbolic`
+  that the structure change triggers. Symbolic analysis counts as rebuild: a fixed-structure scheme
+  (mode C) would reuse it.
+- *Newton iteration* t_it: formTangent + linearSolve numeric (factor + solve) + formUnbalance +
+  update + convTest, per iteration, without the symbolic phase.
+- R = t_rb / t_it; k = Newton iterations per accepted step; f = t_rb / (wall time of the step).
+
+**Pre-registered decisions** (fixed here, before any M0b number exists; a threshold is never moved
+after a run — an outcome that fits no row is reported as such and goes to the owner):
+
+| # | Measurement | Decides | Rule |
+|---|---|---|---|
+| M1 | t_rb, t_it, R, k, f at N = 10³, 10⁴, 10⁵ particle-elements, 3D; quasi-static (LoadControl) and transient (Newmark); elastic and Drucker–Prager; PARDISO and UmfPack; each empty-node treatment | **whether mode C is ever needed** | Read on the default (PARDISO, `renormalize` 5e-2) at every N, taking the worst of QS / transient and elastic / DP. **C-closed:** f ≤ 0.25 and R ≤ 1 at every N, and R does not grow with N (log-log slope of R against N ≤ 0.1) → C moves from deferred to rejected for implicit, reopened only by a new measurement in phase 11 (parallel). **C-cheaper-first:** f > 0.25, but the largest rebuild sub-phase is avoidable without C (numbering, `setSize` / graph or symbolic analysis on a step whose connectivity did not change — `mpm info connectivityChanges` — or host bookkeeping) → C is not needed; a targeted rebuild optimisation is filed as its own issue. **C-needed:** f > 0.5 at N = 10⁵ and symbolic analysis of a changed graph is ≥ 50 % of t_rb → C is scheduled and the owner places it in §9. **C-deferred:** anything else → C stays deferred, the numbers are recorded, revisit at phase 11. UmfPack decides nothing alone: if it falls in a worse row than PARDISO, the guide recommends PARDISO for mode A. |
+| M1-t | the three empty-node treatments (`renormalize` 5e-2 default, `exclude`, `ghost`), same models | whether the default treatment changes | `exclude` anchors free surfaces (232f study): cost only, never a candidate. `ghost` replaces the default only if its answer is within 0.5 % of `renormalize`'s (the case's tip or settlement observable) **and** it is ≥ 25 % cheaper per step at every N → proposed as an amendment for the owner. Otherwise the default stands. |
+| M2 | explicit (mode F) throughput in particle-steps per second at N = 10³, 10⁴, 10⁵, 3D, `ElasticIsotropic` → `DruckerPrager` → `LadrunoJ2`, threads 1 (and the default for elastic); the material update's share of the step | baselines; **cannot reopen C** (F owns explicit, ADR §5.5) | SANISAND is not admitted at particles in v1 (`LadrunoMPMPattern.cpp:375-382`), so its row is *projected*: its per-call cost from a non-MPM single-point driver, composed with F's measured non-material cost per particle. The composition is validated on DP, measured both ways: if the DP projection misses the DP measurement by > 25 %, the SANISAND row is reported as unreliable. If F's non-material share exceeds 70 % for elastic at 10⁵ on one thread, a performance issue on F's transfer loops is filed. The SANISAND / DP cost ratio is recorded for phase 5. |
+| M3 | memory per particle-element: the slope of private bytes against N (10⁴ → 10⁵) after the first step, mode A and mode F, elastic and DP, with what holds it (element, material copy, `FE_Element` and its matrices, grid share) | the memory side of C | Mode A ≤ 8 kB per particle-element → no memory case for C. > 32 kB → a memory case for C at 10⁶ particles (> 32 GB) — unless one storage item that is ≥ 50 % of it is removable without C (per-element dense matrices that a shared scratch would replace), which is then filed as its own issue instead. Between → recorded, revisit at phase 11. |
+| M4 | the 232f data owed: Newton iterations per step on the cantilever QS case (`tests/mpm_implicit_cases.txt`, r1–r3); the tip deflection at `massCutoff` 1e-6 and 1e-10 against 5e-2, under `renormalize` (a divergence and its step are data); formTangent's share of t_it | whether 5e-2 biases the answer; the declined 232f review item 15 | Data, not a gate. If `renormalize` converges at 1e-6 or 1e-10 at all three resolutions and its tip differs from 5e-2's by more than the 232f gate tolerance (5 %), the default is biased → an issue for the owner; otherwise the default stands. If formTangent is > 30 % of t_it at 10⁵, item 15 (the tangent B-build cleanup) is filed as an issue. |
+
+**Then** the orchestrator applies the table, a Fable critic at max checks the application, and the
+ADR gets "Amendment (232g, <date>) — M0b result" at §5.5 and an implementation-log line.
+
+```text
+<header>  ADR sections: §5.3 (and its 232f amendments), §5.5, §8 (mutation note), §9 phase 2.
+Your PR: #<pr>. Branch: work detached on origin/wp/232g-mpm-m0b-measurements; commit; `git pull
+--rebase origin wp/232g-mpm-m0b-measurements`; `git push origin HEAD:wp/232g-mpm-m0b-measurements`.
+Read the "232g" section of .claude/skills/ladruno-mpm/references/wp-briefs.md first: its
+definitions and pre-registered table bind you. You never apply the table: you produce the numbers
+and the orchestrator decides.
+Goal: a harness that produces every number in that table, reproducibly, from one build.
+
+ROUND 1 (stop and report after it; the orchestrator builds, then reviews a 10^3 smoke run):
+  1. Instrumentation, profiler scopes only. No behaviour change: OPS_PROFILE_SCOPE is a no-op
+     when the profiler is off; quote SRC/utility/profiler/ProfilerMacros.h:77 in the PR.
+     - SRC/analysis/analysis/StaticAnalysis.cpp: a "domainChanged" scope around the call in
+       analyze() and dc.* scopes inside domainChanged(), mirroring DirectIntegrationAnalysis.cpp
+       (:212, :433-461). A vanilla file: `// Ladruno WP-232g` markers and a row in
+       Ladruno_implementation/ledger/vanilla/WP-232g-mpm-m0b-measurements.md.
+     - SRC/domain/pattern/ladrunoMPM/LadrunoMPMImplicit.cpp: "mpm.a.prepare" with children for
+       P2G, grid-node churn, re-pointing and the SP rebuild; "mpm.a.g2p" in the batched G2P.
+     - Mode F (LadrunoMPMPattern.cpp:653-714) has "mpm.advance": add "mpm.f.material" around
+       the particle material update so M2's share is measured, not inferred (if that loop is
+       threaded, say how you measured the share instead). Check that the profiler's per-thread
+       trees neither double-count nor drop threaded scopes.
+  2. Ladruno_scripts/mpm_m0b/: the harness (python3.12, opensees.pyd, following
+     tests/ladruno_mpm_implicit_harness.py's conventions): m1_rebuild.py, m2_explicit.py,
+     m3_memory.py, m4_cantilever.py and run_all.py, each writing JSON under
+     Ladruno_scripts/mpm_m0b/results/ with ladrunoBuild, the pinned conditions, the model
+     parameters, raw per-step profiler totals, and the derived quantities exactly as the brief
+     defines them. Memory through ctypes GetProcessMemoryInfo (psutil is not installed; h5py
+     is). Every run in a fresh process.
+     Models: 3D cases that converge at 10^3-10^5 particle-elements and cross cells during the
+     timed steps (report connectivityChanges per step), e.g. a soft block under a gravity ramp
+     or a 3D extrusion of the 232f cantilever, plus a DP variant that yields. M2: a 3D granular
+     column collapse (DP yields) and its elastic and J2 twins. The SANISAND per-call driver is
+     the same driver for ElasticIsotropic, DP and SANISAND (the composition is validated on DP).
+     State every choice and its reason in a README.
+  3. `--smoke` runs N = 10^3 with one repeat in under 2 minutes per script. You cannot run it
+     before the orchestrator's build.
+  Report: worktree path and head sha; files; the cases and why; anything in the table you think
+  cannot be measured as defined (say why, and propose the closest measurable quantity: the
+  orchestrator decides).
+
+ROUND 2 (after the build and the smoke review): fix what the smoke showed. The orchestrator
+launches the full runs (WMI, logged) and gives you the results directory. You write
+Ladruno_implementation/232g_mpm_m0b_measurements.md: method, pinned conditions, one table per
+measurement with every number, the sub-phase breakdown of t_rb, the scaling fits, and an
+"Applying the pre-registered table" section stating which row each measurement falls in,
+labelled as your proposal (the orchestrator's application is the decision).
+Never start build.bat or a full run yourself. Ledger: an implementations fragment for the
+harness (status shipped, no class tags), the vanilla fragment, a quirk entry for anything
+learned. python3.12; ruff F811 clean; the fork-checklist gates before every push. Report per the
+Worker rules.
+```
