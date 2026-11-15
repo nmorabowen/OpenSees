@@ -309,7 +309,7 @@ ref Context: fork FE (LadrunoBrick B-bar, rough) on THIS domain and staging: q_m
 gap sigma_y = 0.2 kPa apex regularizer: c N_c ~ 3.3 kPa (2.4 %) in the associated match.
 gap ADR-79's graded 30 x 20 m box: 1.0020 / 0.9517 / 0.9260. The same H8 WITHOUT B-bar (full
 gap integration, as 2 x 2 particles per cell integrate; psi = 0 flow is isochoric) LOCKS:
-gap 219.1 kPa (1.577) at 4 and 179.1 kPa (1.290) at 8 across B. Mode A has no anti-locking
+gap 219.1 kPa (1.577), 179.1 (1.290), 154.7 (1.114) at 4 / 8 / 16 across B. Mode A has no anti-locking
 gap until ADR-232 section 9 phase 4.
 expect cond_pressure_max footing y 1.0 eq 138.907 tol 0 0.10
 expect cond_pressure_plateau footing y 1.0 95.0 eq 138.907 tol 0 0.10 report
@@ -363,7 +363,10 @@ dt 1.0
 steps 110
 newton NormUnbalance 1e-6 40
 ref closed form q0 N_q = 138.907 kPa (Prandtl-Reissner, phi_ps 27.47 deg): the gate value.
-ref Context: the fork FE on this domain at 16 across B: record fe_footing.json.
+ref Context: fork FE (B-bar, rough) on THIS domain at 16 across B: q_max 122.53 kPa = 0.8821 of exact
+ref (peak at s = 0.036 m, then softening to 0.860) -- BELOW the band. The FE sequence 1.018 / 0.941 /
+ref 0.882 falls monotonically, as ADR-79's 1.0020 / 0.9517 / 0.9260: non-associated flow past the
+ref localization threshold, band width set by the mesh. Record fe_footing.json (build f37e2ff19).
 expect cond_pressure_max footing y 1.0 eq 138.907 tol 0 0.10
 expect cond_pressure_plateau footing y 1.0 95.0 eq 138.907 tol 0 0.10 report
 end
