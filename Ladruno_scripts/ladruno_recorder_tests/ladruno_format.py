@@ -78,9 +78,11 @@ class LadrunoReader:
         self.killed = superblock_flags(path) not in (None, 0)
 
     def committed_steps(self, stage: str) -> int | None:
-        """Schema §7b.2 crash rule: the steps of ``stage`` every streaming result
-        holds in DATA, TIME and STEP (None: no streaming result)."""
-        return committed_steps(self.f[stage])
+        """Schema §7b.2 crash rule for a KILLED file (superblock flags set): the steps
+        of ``stage`` every streaming result holds in DATA, TIME and STEP. None for a
+        closed file (no cut: each result is read whole) or a stage with no streaming
+        result."""
+        return committed_steps(self.f[stage]) if self.killed else None
 
     def __enter__(self) -> "LadrunoReader":
         return self
@@ -435,7 +437,8 @@ def open_ladruno(path) -> h5py.File:
         raise StageLayoutKilledError(
             f"{path}: the run was killed while a layout was being written (superblock "
             "flags hold WRITE_ACCESS only, which neither a plain nor an SWMR-read open "
-            "accepts); recover a copy with repair_copy(src, dst) (schema section 7b.2, "
+            "accepts); recover a copy with repair_copy(src, dst), or for a particle file "
+            "recover_particle_file(src, dst) (schema section 7b.2 / 232a section 2.5, "
             "reader rule step 3)") from e
 
 
@@ -486,12 +489,13 @@ def _streaming_results(stage_grp):
 
 
 def committed_steps(stage_grp) -> int | None:
-    """The steps of a stage a reader may use (schema §7b.2 crash rule): one recorder
-    writes a file, so every streaming result of a stage shares one step axis, and
-    T' = min over them of min(len DATA, len TIME, len STEP). Rows past T' are ignored.
-    A closed file has every length equal; a killed one may not (DATA, TIME and STEP
-    are separate datasets, and SWMR orders only each dataset's own writes). None
-    when the stage has no streaming result (envelope or modes only)."""
+    """The steps of a stage a reader may use from a KILLED file (schema §7b.2 crash
+    rule): the recorder appends one row to every streaming result of a stage at each
+    recorded step, so T' = min over them of min(len DATA, len TIME, len STEP); rows
+    past T' are ignored. A killed file can leave them ragged (DATA, TIME and STEP are
+    separate datasets, and SWMR orders only each dataset's own writes). Apply it to a
+    killed file (``superblock_flags`` not 0); a closed file is read as it is. None when
+    the stage has no streaming result (envelope or modes only)."""
     n = None
     for g in _streaming_results(stage_grp):
         m = min(g["DATA"].shape[0], g["TIME"].shape[0], g["STEP"].shape[0])

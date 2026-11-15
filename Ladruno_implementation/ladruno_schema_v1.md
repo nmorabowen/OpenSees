@@ -809,10 +809,12 @@ copy of any file that step 1 refuses, flags 0x05 included.
 
 **The crash rule (what to read).**
 
-- A file is written by one recorder, so every streaming result of a stage shares one step
-  axis. Read **T' = the minimum, over the stage's streaming results, of min(len `DATA`,
-  len `TIME`, len `STEP`)**, and ignore rows past T'. A closed file has all these lengths
-  equal.
+- The recorder appends one row to every streaming result of a stage at each recorded
+  step. In a **killed** file (superblock flags not 0x00), read **T' = the minimum, over the
+  stage's streaming results, of min(len `DATA`, len `TIME`, len `STEP`)**, and ignore rows
+  past T'. A cleanly closed file is read as it is. A killed file whose flags still read
+  0x00 (killed in a layout step) is never ragged: a layout step holds its rows until SWMR
+  is armed, and the file was closed cleanly just before.
 - A modes snapshot (`DATA/STEP_<k>`) that does not open, or lacks a `MODE_<j>`, is the
   snapshot being written: skip it, along with any later snapshot.
 - An envelope's `MIN`/`MAX`/`ABSMAX`/`ARG_STEP` entries are each the extreme over some
