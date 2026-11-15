@@ -33,9 +33,12 @@
 #include <random>
 #include <set>
 #include <sstream>
+#include <thread>
 
 #ifdef _HDF5
 #include <Ladruno_Hdf5.h>
+#include <Ladruno_GuardLock.h>   // WP-232h (#1085): the recorder's guard lock
+#include <OPS_Globals.h>
 #endif
 
 namespace ladruno_mpm_io {
@@ -555,6 +558,11 @@ readParticleSet(const std::string &path, ParticleSet &P, std::vector<std::string
 // ---------------------------------------------------------------------------
 namespace h5w = ladruno::h5;
 
+// WP-232h (#1085): MODEL_STAGE links the root's header is presized for (as
+// LadrunoRecorder's LADRUNO_ROOT_LINKS: ~44 KB; HDF5 caps one header chunk near
+// 1,500 such links). Past it a kill in an `mpm reset` layout can reach earlier stages.
+static const unsigned MPM_ROOT_LINKS = 1024;
+
 struct ParticleWriter::Impl {
   WriterConfig cfg;
   int ndm = 0;
@@ -562,6 +570,9 @@ struct ParticleWriter::Impl {
   int nextStage = 0, epoch = -1;
   bool stage = false, configured = false;
   bool swmr = false;                       // SWMR-write armed: no new objects/attributes
+  bool created = false;                    // the file exists: never H5Fcreate (truncate) it again
+  void *guard = 0;                         // the guard lock (Ladruno_GuardLock.h), file's life
+  bool guardWarned = false;
   std::chrono::steady_clock::time_point lastFlush;
   hid_t dsStep = -1, dsTime = -1, dsOff = -1, dsId = -1;
   std::vector<hid_t> dsData;
@@ -634,12 +645,59 @@ ParticleWriter::open(const WriterConfig &cfg, int ndm, std::string &err)
 // (extensible-array chunk indexes) and is in SWMR-write mode from the end of each
 // stage's layout until it is closed. Nothing may create an object or attribute
 // while SWMR is armed: a new stage closes and reopens the file first.
+//
+// WP-232h (#1085): the recorder's access list (h5::file::accessList, WP-233): the
+// latest format AND HDF5 file locking OFF. A reader with locking on (h5py's default,
+// HDFView) takes a shared lock while it opens, and HDF5's own locking then breaks
+// this SWMR writer: H5Fstart_swmr_write and the reset's read-write reopen are refused
+// (Linux: EAGAIN), and on Windows, where byte-range locks are mandatory, the writes
+// themselves fail. The writer holds the guard lock instead (Ladruno_GuardLock.h),
+// which every locking reader is refused by.
 static hid_t
 particleFapl(void)
 {
-  hid_t fapl = H5Pcreate(H5P_FILE_ACCESS);
-  H5Pset_libver_bounds(fapl, H5F_LIBVER_LATEST, H5F_LIBVER_LATEST);   // as LadrunoMonitorSink
-  return fapl;
+  return h5w::file::accessList();
+}
+
+// WP-232h (#1085): reopen the existing file read-write to lay out a stage. A reader
+// with locking OFF may hold the file in the instant between the close and this
+// reopen (a plain read-only open sees flags 0x00 then); retry with backoff for up to
+// 60 s, as LadrunoRecorder::openLayout does. Then flush, so WRITE_ACCESS reaches the
+// superblock now (sec2 writes it lazily) and no plain open gets in during the layout.
+static int
+reopenFile(ParticleWriter::Impl *impl, std::string &err)
+{
+  hid_t fapl = particleFapl();
+  if (fapl < 0) { err = "cannot create the particle file's access list"; return -1; }
+  const double maxWait = 60.0;
+  double waited = 0.0;
+  int pauseMs = 5;
+  bool warned = false;
+  for (;;) {
+    {
+      QuietH5 quiet;
+      impl->file = H5Fopen(impl->cfg.path.c_str(), H5F_ACC_RDWR, fapl);
+    }
+    if (impl->file >= 0 || waited >= maxWait) break;
+    if (!warned && waited >= 1.0) {
+      warned = true;
+      opserr << "WARNING mpm output -- '" << impl->cfg.path.c_str() << "' is held open by "
+                "another process (a viewer or a reader?); waiting up to " << maxWait
+             << " s to reopen it for a new stage\n";
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(pauseMs));
+    waited += pauseMs / 1000.0;
+    pauseMs = std::min(pauseMs * 2, 500);
+  }
+  H5Pclose(fapl);
+  if (impl->file < 0) {
+    impl->file = -1;
+    err = "cannot reopen '" + impl->cfg.path + "' for a new stage (held open by another "
+          "process for 60 s?)";
+    return -1;
+  }
+  H5Fflush(impl->file, H5F_SCOPE_GLOBAL);
+  return 0;
 }
 
 // The file and its INFO group, created at the first stage (see open()).
@@ -650,6 +708,14 @@ createFile(ParticleWriter::Impl *impl, std::string &err)
   const int ndm = impl->ndm;
   hid_t fcpl = H5Pcreate(H5P_FILE_CREATE);
   H5Pset_link_creation_order(fcpl, H5P_CRT_ORDER_TRACKED | H5P_CRT_ORDER_INDEXED);
+  // WP-232h (#1085): the root gains one MODEL_STAGE link per `mpm reset`, inside a
+  // layout written without SWMR. Keep its links compact in a header presized for
+  // MPM_ROOT_LINKS stages, so each new stage is ONE in-place write of the root's
+  // header. Unsized, the root goes dense after 8 links or grows a continuation chunk,
+  // and a kill in the layout flush can leave "/" failing its checksum: every earlier
+  // stage lost (recorder_crash_replay.py --no-presize; hdf5_crash_replay.py --resets).
+  // No other group of this file gains a link after its stage's layout.
+  h5w::plist::presizeLinks(fcpl, MPM_ROOT_LINKS, 20);
   impl->gplist = H5Pcreate(H5P_GROUP_CREATE);
   H5Pset_link_creation_order(impl->gplist, H5P_CRT_ORDER_TRACKED | H5P_CRT_ORDER_INDEXED);
   hid_t fapl = particleFapl();
@@ -664,6 +730,15 @@ createFile(ParticleWriter::Impl *impl, std::string &err)
     impl->gplist = -1;
     err = "cannot create '" + cfg.path + "'";
     return -1;
+  }
+  impl->created = true;
+  // WP-232h (#1085): the guard lock, held until the file is closed (close()).
+  impl->guard = ladruno::guardlock::acquire(cfg.path);
+  if (!impl->guard && !impl->guardWarned) {
+    impl->guardWarned = true;
+    opserr << "WARNING mpm output -- could not take the guard lock on '" << cfg.path.c_str()
+           << "': a reader with HDF5 file locking on that opens the file while it is "
+              "written is not refused (232a section 2.5)\n";
   }
   // INFO, as LadrunoRecorder::initialize writes it, with minor 2: this file
   // carries particles (232a §2.1, ruling 1: only a file with particles is 2).
@@ -694,22 +769,27 @@ int
 ParticleWriter::openStage(const StageMeta &m, int step, double time, std::string &err)
 {
   if (!impl->configured) { err = "no output configured"; return -1; }
-  if (impl->file < 0 && createFile(impl, err) < 0) return -1;
+  // WP-232h: a file this writer created is never H5Fcreate'd again (ACC_TRUNC would
+  // drop every earlier stage): after a failed reopen, the next stage retries the reopen.
+  if (impl->file < 0) {
+    if (!impl->created) { if (createFile(impl, err) < 0) return -1; }
+    else if (reopenFile(impl, err) < 0) return -1;
+  }
   impl->closeStage();
   if (impl->swmr) {
     // SWMR is armed: no object may be created in this open. Close the file (which
-    // clears its SWMR flags) and reopen it read-write to lay out the new stage.
+    // clears its SWMR flags) and reopen it read-write to lay out the new stage. Every
+    // dataset was closed above: an object left open would keep the file open, still
+    // in SWMR mode, across the close (weak close degree).
     H5Fflush(impl->file, H5F_SCOPE_GLOBAL);
+    if (h5w::file::openObjects(impl->file) != 0) {
+      err = "cannot close '" + impl->cfg.path + "' to lay out a new stage (a handle is still open)";
+      return -1;
+    }
     H5Fclose(impl->file);
     impl->file = -1;
     impl->swmr = false;
-    hid_t fapl = particleFapl();
-    {
-      QuietH5 quiet;
-      impl->file = H5Fopen(impl->cfg.path.c_str(), H5F_ACC_RDWR, fapl);
-    }
-    H5Pclose(fapl);
-    if (impl->file < 0) { err = "cannot reopen '" + impl->cfg.path + "' for a new stage"; return -1; }
+    if (reopenFile(impl, err) < 0) return -1;
   }
   const int ndm = impl->ndm;
   std::stringstream ss;
@@ -719,6 +799,11 @@ ParticleWriter::openStage(const StageMeta &m, int step, double time, std::string
   if (st < 0) { err = "cannot create " + sname; return -1; }
   impl->nextStage++;
   impl->epoch = m.epoch;
+  if ((unsigned)impl->nextStage == MPM_ROOT_LINKS)
+    opserr << "WARNING mpm output -- " << (int)MPM_ROOT_LINKS << " MODEL_STAGEs in '"
+           << impl->cfg.path.c_str() << "': the file's root is presized for this many, so "
+              "from here a kill while a new stage is laid out can make earlier stages "
+              "unreadable (232a section 2.5)\n";
   // the recorder's stage skeleton (LadrunoRecorder::writeModel), KIND pinned
   h5w::attribute::write(st, "STEP", step);
   h5w::attribute::write(st, "TIME", time);
@@ -914,6 +999,9 @@ ParticleWriter::close(void)
   impl->file = impl->gplist = -1;
   impl->swmr = false;                      // H5Fclose cleared the file's SWMR flags
   impl->configured = false;
+  impl->created = false;                   // a new `mpm output` starts a new file
+  ladruno::guardlock::release(impl->guard);   // WP-232h: after the file is closed
+  impl->guardWarned = false;
 }
 
 #else  // no HDF5 in this build: refuse loudly
