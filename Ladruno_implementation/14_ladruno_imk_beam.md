@@ -365,3 +365,39 @@ fiber laws if a fiber-section hinge variant is ever wanted), and the
 ZeroLength/SectionAggregator reference in
 `Ladruno_implementation/zerolength_and_link_springs_guide.md` (the vanilla path
 this element packages).
+
+---
+
+## 10. Amendment (2026-11-15): element loads, P-M, end zones
+
+WP-200 (34df942c7) superseded several v1 statements above: the element now takes element
+loads, `-pm P0 [alpha]` and `-pmBal P0c P0t Pbal muBal` P-M scaling, `-endZones dI dJ`
+(rigid end zones, hinges at the faces), `-shear`, `-shearHinge*` and `-implex`. The §1.2
+"no P-M" and §9 "no element loads" non-goals, and the §4.1 command sketch, are historical;
+the factory's usage comment (`OPS_LadrunoIMKBeam.cpp`) and the option loop are current.
+
+**Element loads.** `-beamUniform` (full and partial/trapezoidal), `-beamPoint`, and the
+partial-uniform loads `LadrunoMembrane` pushes to its `-frames` act on the elastic interior
+as fixed-end forces q0 plus reactions p0; the hinge solve uses q = K_e (v - theta_h) + q0,
+so each hinge sees the gravity moment plus the seismic one.
+
+**With `-endZones`** (fixed 2026-11-15; the quirk "`LadrunoIMKBeam` under `eleLoad` or a
+`LadrunoMembrane`" records what was wrong): load positions are on the full L. Each load
+splits into its i-zone part [0, dI], clear part [dI, L-dJ] and j-zone part [L-dJ, L]. A zone
+part goes to its node as a force and a moment (the zone is rigid). The clear part gives q0 on
+the clear span Lc and face reactions; a face reaction acts dI (dJ) from its node, so it adds
+a node moment. Axial load is the exception: the axial stiffness is EA/L over the full L
+(the zones are rigid in bending only), so axial load is shared on the full length, as
+without end zones. These node moments live in `dM0` and are folded into the basic forces the
+transform receives, into `localForce` and into the end-section responses. `hingeMoment`,
+`hingeSummary` and `hingeBiaxialI|J` report the face moments the hinges carry. Oracle:
+`tests/test_ladruno_imk_endzone_loads.py`, an `elasticBeamColumn` member whose end pieces
+are 1e6 times stiffer, carrying the same load.
+
+**`-pmBal`.** All four values are positive: P0c the squash load, P0t the tension capacity as
+a magnitude (not signed), Pbal the balance-point axial load (0 < Pbal < P0c), muBal =
+M_bal / M_y(P = 0) >= 1.
+
+**`plasticRotation`.** Despite its name the response returns the total hinge-spring rotation
+theta_h (the elastic spring part included), the same as `hingeRotation`.
+

@@ -82,6 +82,7 @@ LadrunoIMKBeam2d::LadrunoIMKBeam2d()
   }
   q0[0] = q0[1] = q0[2] = 0.0;
   p0[0] = p0[1] = p0[2] = 0.0;
+  dM0[0] = dM0[1] = 0.0;  // Ladruno (end-zone load fix)
   vCommit[0] = vCommit[1] = vCommit[2] = 0.0;
   theNodes[0] = 0;
   theNodes[1] = 0;
@@ -153,6 +154,7 @@ LadrunoIMKBeam2d::LadrunoIMKBeam2d(int tag, int Nd1, int Nd2,
 
   q0[0] = q0[1] = q0[2] = 0.0;
   p0[0] = p0[1] = p0[2] = 0.0;
+  dM0[0] = dM0[1] = 0.0;  // Ladruno (end-zone load fix)
   vCommit[0] = vCommit[1] = vCommit[2] = 0.0;
 
   theNodes[0] = 0;
@@ -387,7 +389,9 @@ const Matrix &LadrunoIMKBeam2d::getTangentStiff(void)
 {
   if (q0Dirty && theNodes[0] != 0 && theNodes[1] != 0)
     this->update();
-  return theCoordTransf->getGlobalStiffMatrix(kb, q);
+  static thread_local Vector qe(3), p0e(3);   // Ladruno (end-zone load fix)
+  this->effectiveBasic(qe, p0e);
+  return theCoordTransf->getGlobalStiffMatrix(kb, qe);
 }
 
 const Matrix &LadrunoIMKBeam2d::getInitialStiff(void)
@@ -449,6 +453,7 @@ void LadrunoIMKBeam2d::zeroLoad(void)
     q0Dirty = true;
   q0[0] = q0[1] = q0[2] = 0.0;
   p0[0] = p0[1] = p0[2] = 0.0;
+  dM0[0] = dM0[1] = 0.0;  // Ladruno (end-zone load fix)
 }
 
 int LadrunoIMKBeam2d::addLoad(ElementalLoad *theLoad, double loadFactor)
@@ -457,6 +462,14 @@ int LadrunoIMKBeam2d::addLoad(ElementalLoad *theLoad, double loadFactor)
   const Vector &data = theLoad->getData(type, loadFactor);
   double L = theCoordTransf->getInitialLength();
   const double Lc = ((dI > 0.0 || dJ > 0.0) && (dI + dJ < L)) ? (L - dI - dJ) : L;
+
+  // Ladruno (end-zone load fix): with end zones, positions are on the full L
+  // and each load splits into zone and clear parts (LadrunoIMKHinge.h). The
+  // branches below are the no-zone path, unchanged.
+  if (Lc < L && (type == LOAD_TAG_Beam2dUniformLoad ||
+                 type == LOAD_TAG_Beam2dPartialUniformLoad ||
+                 type == LOAD_TAG_Beam2dPointLoad))
+    return this->addLoadEndZones(type, data, loadFactor, L);
 
   if (type == LOAD_TAG_Beam2dUniformLoad) {
     double wt = data(0) * loadFactor;  // Transverse (+ve upward)
@@ -572,6 +585,129 @@ int LadrunoIMKBeam2d::addLoad(ElementalLoad *theLoad, double loadFactor)
   return 0;
 }
 
+// ---------------------------------------------------------------------------
+// Ladruno (end-zone load fix): element loads under -endZones dI dJ. Positions
+// are on the full length L; each load splits into an i-zone part [0, dI], a
+// clear part [dI, L-dJ] and a j-zone part [L-dJ, L]. A zone part goes to its
+// node (force into p0, moment into dM0); the clear part gives the clear-span
+// fixed-end moments q0 and face reactions, whose lever arm (dI, dJ) adds to
+// dM0. A force f (resisting sense) at x assigned to node i adds Mz_i += x f;
+// assigned to node j the arm is (x - L). Axial load is shared on the full
+// length (EA/L over L; the zones are rigid in bending only). Mirrors
+// LadrunoIMKBeam (3D).
+// ---------------------------------------------------------------------------
+int LadrunoIMKBeam2d::addLoadEndZones(int type, const Vector &data, double loadFactor, double L)
+{
+  const double xI = dI;
+  const double xJ = L - dJ;
+  const double Lc = xJ - xI;
+  const double Phi = (GAvy > 0.0) ? 12.0 * E * Iz / (GAvy * Lc * Lc) : 0.0;
+
+  // a load varying linearly from (wt1, wa1) at x1 to (wt2, wa2) at x2
+  auto segment = [&](double x1, double x2, double wt1, double wa1, double wt2, double wa2) {
+    const double len = x2 - x1;
+    auto at = [&](double w1, double w2, double x) { return w1 + (w2 - w1) * (x - x1) / len; };
+    double c1, c2, Ft, St;
+
+    {                                                  // axial: full length
+      double P, PJ;
+      ladrunoIMKLinearSegmentAxial(x1, x2, wa1, wa2, L, P, PJ);
+      p0[0] -= P;
+      q0[0] -= PJ;
+    }
+
+    c1 = x1;  c2 = (x2 < xI) ? x2 : xI;               // i zone -> node i
+    if (c2 > c1) {
+      ladrunoIMKSegmentResultant(c1, c2, at(wt1, wt2, c1), at(wt1, wt2, c2), Ft, St);
+      p0[1] -= Ft;
+      dM0[0] -= St;
+    }
+    c1 = (x1 > xJ) ? x1 : xJ;  c2 = x2;               // j zone -> node j
+    if (c2 > c1) {
+      ladrunoIMKSegmentResultant(c1, c2, at(wt1, wt2, c1), at(wt1, wt2, c2), Ft, St);
+      p0[2] -= Ft;
+      dM0[1] -= (St - L * Ft);
+    }
+    c1 = (x1 > xI) ? x1 : xI;  c2 = (x2 < xJ) ? x2 : xJ;  // clear span
+    if (c2 > c1) {
+      const double a = c1 - xI, b = c2 - xI;
+      double V1, V2, M1, M2;
+      ladrunoIMKLinearSegmentFEF(a, b, at(wt1, wt2, c1), at(wt1, wt2, c2), Lc, Phi, V1, V2, M1, M2);
+      p0[1] -= V1;
+      p0[2] -= V2;
+      q0[1] += M1;
+      q0[2] += M2;
+      dM0[0] -= dI * V1;
+      dM0[1] += dJ * V2;
+    }
+  };
+
+  if (type == LOAD_TAG_Beam2dUniformLoad) {
+    const double wt = data(0) * loadFactor;
+    const double wa = data(1) * loadFactor;
+    segment(0.0, L, wt, wa, wt, wa);
+  }
+  else if (type == LOAD_TAG_Beam2dPartialUniformLoad) {
+    const double x1 = data(4) * L;
+    const double x2 = data(5) * L;
+    if (x2 <= x1 || x1 < 0.0 || x2 > L)
+      return 0;
+    segment(x1, x2, data(0) * loadFactor, data(2) * loadFactor,
+            data(1) * loadFactor, data(3) * loadFactor);
+  }
+  else if (type == LOAD_TAG_Beam2dPointLoad) {
+    const double Pt = data(0) * loadFactor;
+    const double N  = data(1) * loadFactor;
+    const double aOverL = data(2);
+    if (aOverL < 0.0 || aOverL > 1.0)
+      return 0;
+    const double x = aOverL * L;
+    p0[0] -= N;                       // axial: on the full length (EA/L over L)
+    q0[0] -= N * aOverL;
+    if (x < xI) {
+      p0[1] -= Pt;
+      dM0[0] -= x * Pt;
+    } else if (x > xJ) {
+      p0[2] -= Pt;
+      dM0[1] -= (x - L) * Pt;
+    } else {
+      const double a = x - xI;
+      double V1, V2, M1, M2;
+      ladrunoIMKPointFEF(a, Pt, Lc, Phi, V1, V2, M1, M2);
+      p0[1] -= V1;
+      p0[2] -= V2;
+      q0[1] += M1;
+      q0[2] += M2;
+      dM0[0] -= dI * V1;
+      dM0[1] += dJ * V2;
+    }
+  }
+  q0Dirty = true;
+  return 0;
+}
+
+// Node basic forces handed to the transform: q with dM0 added to the end
+// moments, p0 with the matching shear taken back out (node shears unchanged).
+void LadrunoIMKBeam2d::effectiveBasic(Vector &qe, Vector &p0e) const
+{
+  qe = q;
+  for (int i = 0; i < 3; i++)
+    p0e(i) = p0[i];
+  if (dM0[0] == 0.0 && dM0[1] == 0.0)
+    return;
+  const double s = (dM0[0] + dM0[1]) / theCoordTransf->getInitialLength();
+  qe(1) += dM0[0];
+  qe(2) += dM0[1];
+  p0e(1) -= s;
+  p0e(2) += s;
+}
+
+// Hinge (face) moments [Mz_i, Mz_j]; equal to q without end zones.
+void LadrunoIMKBeam2d::hingeFaceMoments(double m[2]) const
+{
+  ladrunoIMKFaceMoments(q(1), q(2), theCoordTransf->getInitialLength(), dI, dJ, m[0], m[1]);
+}
+
 int LadrunoIMKBeam2d::addInertiaLoadToUnbalance(const Vector &accel)
 {
   if (rho == 0.0)
@@ -615,9 +751,11 @@ const Vector &LadrunoIMKBeam2d::getResistingForce(void)
   if (q0Dirty && theNodes[0] != 0 && theNodes[1] != 0)
     this->update();
 
-  Vector p0Vec(p0, 3);
+  // Ladruno (end-zone load fix): node basic forces with dM0 folded in.
+  static thread_local Vector qe(3), p0Vec(3);
+  this->effectiveBasic(qe, p0Vec);
 
-  P = theCoordTransf->getGlobalResistingForce(q, p0Vec);
+  P = theCoordTransf->getGlobalResistingForce(qe, p0Vec);
 
   // subtract element nodal loads (inertia unbalance accumulated in Q)
   if (rho != 0.0)
@@ -725,7 +863,7 @@ int LadrunoIMKBeam2d::sendSelf(int cTag, Channel &theChannel)
     return res;
   }
 
-  static thread_local Vector dData(52);
+  static thread_local Vector dData(54);  // Ladruno: +dM0[2]
   dData(0) = A;  dData(1) = E;  dData(2) = Iz;  dData(3) = rho;
   dData(4) = thetaHcommit[0];  dData(5) = thetaHcommit[1];
   dData(6) = alphaM;  dData(7) = betaK;  dData(8) = betaK0;  dData(9) = betaKc;
@@ -754,6 +892,8 @@ int LadrunoIMKBeam2d::sendSelf(int cTag, Channel &theChannel)
   dData(49) = P0t;
   dData(50) = Pbal;
   dData(51) = muBal;
+  dData(52) = dM0[0];  // Ladruno (end-zone load fix)
+  dData(53) = dM0[1];
 
   res += theChannel.sendVector(dbTag, cTag, dData);
   if (res < 0) {
@@ -804,7 +944,7 @@ int LadrunoIMKBeam2d::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &
   connectedExternalNodes(1) = idData(2);
   cMass = idData(9);
 
-  static thread_local Vector dData(52);
+  static thread_local Vector dData(54);  // Ladruno: +dM0[2]
   res += theChannel.recvVector(dbTag, cTag, dData);
   if (res < 0) {
     opserr << "LadrunoIMKBeam2d::recvSelf -- failed to recv Vector\n";
@@ -846,6 +986,8 @@ int LadrunoIMKBeam2d::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &
   P0t = dData(49);
   Pbal = dData(50);
   muBal = dData(51);
+  dM0[0] = dData(52);  // Ladruno (end-zone load fix)
+  dM0[1] = dData(53);
   stepDtLatched = false;
   q0Dirty = false;
   committedAtCurrentV = true;
@@ -1111,26 +1253,35 @@ int LadrunoIMKBeam2d::getResponse(int responseID, Information &info)
     return info.setVector(th);
   }
   case 5: {
+    // Ladruno (end-zone load fix): the hinge (face) moments, not the node
+    // basic moments; identical without end zones.
     static thread_local Vector m(2);
-    m(0) = q(1);  m(1) = q(2);
+    double fm[2];
+    this->hingeFaceMoments(fm);
+    m(0) = fm[0];  m(1) = fm[1];
     return info.setVector(m);
   }
   case 6: {
     // Ladruno — local-frame end forces from the basic q = [N, Mz_i, Mz_j],
-    // same mapping as DispBeamColumn2d including p0 reactions.
+    // same mapping as DispBeamColumn2d including p0 reactions. Under
+    // -endZones the node moments also carry dM0 (the end-zone load fix).
     static thread_local Vector Pl(6);
+    static thread_local Vector qe(3), pe(3);
+    this->effectiveBasic(qe, pe);
     const double L = theCoordTransf->getInitialLength();
-    const double V = (L > 0.0) ? (q(1) + q(2)) / L : 0.0;
-    Pl(0) = -q(0) + p0[0];  Pl(1) =  V + p0[1];  Pl(2) = q(1);
-    Pl(3) =  q(0);          Pl(4) = -V + p0[2];  Pl(5) = q(2);
+    const double V = (L > 0.0) ? (qe(1) + qe(2)) / L : 0.0;
+    Pl(0) = -qe(0) + pe(0);  Pl(1) =  V + pe(1);  Pl(2) = qe(1);
+    Pl(3) =  qe(0);          Pl(4) = -V + pe(2);  Pl(5) = qe(2);
     return info.setVector(Pl);
   }
   case 8: {
     static thread_local Vector hs(4);
+    double fm[2];
+    this->hingeFaceMoments(fm);  // Ladruno (end-zone load fix)
     hs(0) = thetaH[0];
-    hs(1) = q(1);
+    hs(1) = fm[0];
     hs(2) = thetaH[1];
-    hs(3) = q(2);
+    hs(3) = fm[1];
     return info.setVector(hs);
   }
   case 10: {
@@ -1221,12 +1372,14 @@ int LadrunoIMKBeam2d::getResponse(int responseID, Information &info)
   case 71:
   case 72: {
     static thread_local Vector sf(2);
+    static thread_local Vector qe(3), p0e(3);   // Ladruno (end-zone load fix)
+    this->effectiveBasic(qe, p0e);
     if (responseID == 71) {
-      sf(0) = q(0) - p0[0];
-      sf(1) = -q(1);
+      sf(0) = qe(0) - p0e(0);
+      sf(1) = -qe(1);
     } else {
-      sf(0) = q(0);
-      sf(1) = q(2);
+      sf(0) = qe(0);
+      sf(1) = qe(2);
     }
     return info.setVector(sf);
   }

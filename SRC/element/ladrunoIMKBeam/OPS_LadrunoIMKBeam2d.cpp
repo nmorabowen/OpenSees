@@ -250,9 +250,16 @@ void *OPS_LadrunoIMKBeam2d()
       }
       double pmb[4] = {0.0, 0.0, 0.0, 1.0};
       num = 4;
-      if (OPS_GetDoubleInput(&num, pmb) < 0 ||
-          pmb[0] <= 0.0 || pmb[1] <= 0.0 || pmb[2] <= 0.0 || pmb[0] <= pmb[2] || pmb[3] < 1.0) {
-        opserr << "WARNING LadrunoIMKBeam (2D) -- invalid -pmBal P0c P0t Pbal muBal\n";
+      if (OPS_GetDoubleInput(&num, pmb) < 0) {
+        opserr << "WARNING LadrunoIMKBeam (2D) -- invalid -pmBal P0c P0t Pbal muBal (four numbers)\n";
+        return 0;
+      }
+      // Ladruno: say which rule failed. P0t is the tension capacity as a
+      // POSITIVE magnitude; a signed (negative) P0t is the common mistake.
+      if (pmb[0] <= 0.0 || pmb[1] <= 0.0 || pmb[2] <= 0.0 || pmb[0] <= pmb[2] || pmb[3] < 1.0) {
+        opserr << "WARNING LadrunoIMKBeam (2D) -- invalid -pmBal " << pmb[0] << " " << pmb[1] << " "
+               << pmb[2] << " " << pmb[3] << ": need P0c > Pbal > 0, P0t > 0 (tension "
+               << "capacity as a positive magnitude, not signed) and muBal >= 1\n";
         return 0;
       }
       P0    = pmb[0];
