@@ -470,7 +470,29 @@ legs (PIC reported).
 | G5 cubic, if delivered (K1) | G2–G4 at the same thresholds for `bspline3` |
 | G6 mutation | the MPM family's ZERO and SCALE mutants each turn G2 (or G3) red |
 | G7 contracts and refusals | `-basis bspline2` round-trips through `mpm info summary`, the `.ladruno` output (per K3) and the database restart in mode A; `mpm particles -file` into a B-spline grid refused (K2); an inadmissible particle refused as today |
+| G1-K4 (added at the freeze, before any number) | folded `S′` within 2h of each `fix` face at the G1 tolerances: odd component `Σ S′ (x_ι − x_face)_n = (x_p − x_face)_n`; even component `Σ S′ = 1` and `Σ S′ x_t = x_{p,t}`; `S′ ≥ 0` |
+| G8 images (added at the freeze) | mode F, `bspline2`: a body symmetric about an interior grid plane, run on the full grid, against its half on a grid whose face is that plane with a roller (`fix`, images): particle positions and stresses equal to rel 1e-10 after ≥ 100 steps, at small and large amplitude |
 | R1 reported, not gated | G2 and G3 for `gimp` and `linear` (literature expectation: GIMP near 2 at small amplitude; linear erratic once particles cross cells) — a GIMP small-amplitude order below 1.5 is filed as an issue against shipped code; PIC legs; the 3×3 leg; the 3D small-amplitude MMS at `1/h = 4, 8, 16`; mode A transient (Newmark average acceleration) MMS; the slice-1 self-weight column at both compressions (the 20 % case is the uGIMP XFAIL) per basis at three resolutions; the cell-crossing meter (S1 row) per basis, as a number |
+
+**Freeze (2026-11-16, orchestrator, on `tests/mpm_bspline_interface.md` @ `b25586c8b`).**
+Frozen as B1–B12 with the following conditions:
+- K4 = mirrored ghosts by images on `fix` faces of B-spline grids (B5). `wall` stays A5 and is
+  first order there, documented.
+- Amendments 1 (`mpm info basis`), 2 (G1-K4 above) and 4 (cubic in both modes) are accepted.
+- Amendment 3: the gate keeps `e` at one period. `e(T/4)` and `max_t e(t)` are reported, not
+  gated.
+- **F1 — K3 per T:** write `bspline2` and `bspline3`. Amend C2-GRID in `232a_mpm_contracts.md` §2
+  to list exactly `gimp | linear | bspline2 | bspline3`, with no minor bump, and say that a reader
+  older than the amendment refuses the value by name (the safe outcome). Split `check_grid`'s value
+  set per contract. G7's `.ladruno` leg is a round trip.
+- **F2 — memory:** raising `MAX_DOF` must not grow per-element storage for `gimp`, `linear` or
+  `bspline2`. Size by the actual support, or keep cubic on its own pool. Report bytes per
+  particle-element at 10⁴ (the M0b M3 method) before and after: growth over 5 % for GIMP is a
+  defect.
+- **F3 — unchanged answers:** B8's per-component path must reproduce GIMP and linear bit for bit.
+  The whole existing MPM suite (slice 1, the 232f gates, contracts, lifecycle, the g++ core check)
+  passes unchanged, with the counts in the report.
+- **F4 — G8**, the images-against-full-domain equality, is required.
 
 ```text
 <header>  ADR sections: §4 (walls W1–W17), §5.2, §5.3 (and its 232f amendments), §5.4, §6, §8
