@@ -40,19 +40,91 @@ PINNED_MACHINE = "i7-13700KF (8 P + 8 E cores), 64 GB"
 # --------------------------------------------------------------------------- #
 #  Parent side: arguments, children, results                                  #
 # --------------------------------------------------------------------------- #
+P_CORES_MASK = 0xFFFF          # i7-13700KF: logical 0-15 are the 8 P-cores (HT); 16-23 E-cores
+
+
+def _csv(t):
+    return lambda s: [t(x.strip()) for x in s.split(",") if x.strip()]
+
+
 def base_parser(desc):
     ap = argparse.ArgumentParser(description=desc)
     ap.add_argument("--pyd", default=str(DEFAULT_PYD),
-                    help="the opensees.pyd to measure (default: this worktree's dist/bin)")
+                    help="the opensees.pyd to measure (default: this worktree's dist/bin); a relative "
+                         "path is taken from the current directory")
     ap.add_argument("--smoke", action="store_true",
                     help="N = 10^3, one repeat, short runs (the round-1 smoke)")
     ap.add_argument("--repeats", type=int, default=None, help="repeats per configuration (default 3)")
+    ap.add_argument("--repeats-by-N", dest="repeats_by_N", default=None,
+                    help="per-N repeats overriding --repeats, e.g. 100000=1")
     ap.add_argument("--out", default=None, help="results directory (default results/<script>_<stamp>)")
     ap.add_argument("--only", default=None,
                     help="comma-separated key=value filters on the configuration (e.g. N=1000,solver=Pardiso)")
+    # subset flags (comma lists); a flag a script's configurations do not carry is ignored
+    ap.add_argument("--N", type=_csv(int), default=None, help="particle counts, e.g. 1000,10000")
+    ap.add_argument("--modes", type=_csv(str), default=None, help="M1: qs,transient; M3: A,F")
+    ap.add_argument("--mats", type=_csv(str), default=None, help="elastic,dp[,j2,sanisand]")
+    ap.add_argument("--solvers", type=_csv(str), default=None, help="Pardiso,UmfPack")
+    ap.add_argument("--treatments", type=_csv(str), default=None, help="renormalize,exclude,ghost")
+    ap.add_argument("--timeout-s", "--timeout", dest="timeout", type=float, default=6 * 3600.0,
+                    help="per-run timeout [s]; a timeout is recorded (ok=false, reason=timeout)")
+    ap.add_argument("--affinity", default=hex(P_CORES_MASK),
+                    help="process affinity mask of every child (default 0xFFFF, the P-cores); 'none' "
+                         "leaves it")
+    ap.add_argument("--list", action="store_true",
+                    help="print the selected runs as JSON and exit (run_all --dry-run uses it)")
     ap.add_argument("--child", default=None, help=argparse.SUPPRESS)
-    ap.add_argument("--timeout", type=float, default=6 * 3600.0, help="per-child timeout [s]")
     return ap
+
+
+def parse_args(ap):
+    args = ap.parse_args()
+    # resolve in the PARENT: the child runs in the results directory (review fix, round 2)
+    args.pyd = str(Path(args.pyd).resolve())
+    if args.out:
+        args.out = str(Path(args.out).resolve())
+    args.affinity_mask = None if str(args.affinity).lower() == "none" else int(str(args.affinity), 0)
+    return args
+
+
+_FLAG_KEYS = (("N", "N"), ("modes", "mode"), ("mats", "mat"), ("solvers", "solver"),
+              ("treatments", "treatment"))
+
+
+def select(cfgs, args):
+    """Apply the subset flags and --only to a configuration list."""
+    out = []
+    for c in cfgs:
+        ok = True
+        for flag, key in _FLAG_KEYS:
+            vals = getattr(args, flag, None)
+            if key == "N" and c.get("N") == 0:      # N-free runs (the M2 single-point driver)
+                continue
+            if vals is not None and key in c and c[key] not in vals:
+                ok = False
+        if ok and keep(c, args.only):
+            out.append(c)
+    return out
+
+
+def repeats_for(c, args, default):
+    """--repeats, overridden per N by --repeats-by-N (e.g. 100000=1)."""
+    n = args.repeats or default
+    for kv in (args.repeats_by_N or "").split(","):
+        if "=" in kv:
+            k, _, v = kv.partition("=")
+            if "N" in c and int(k) == c["N"]:
+                n = int(v)
+    return n
+
+
+def list_runs(cfgs, args, script, tag_of, default_reps, extra=None):
+    """--list: every run this invocation would start, as one JSON line on stdout."""
+    rows = [{"script": script, "tag": tag_of(c, r), "config": c, "timeout_s": args.timeout,
+             **(extra or {})}
+            for c in cfgs for r in range(repeats_for(c, args, default_reps))]
+    print("M0B-LIST " + json.dumps(rows))
+    return 0
 
 
 def out_dir(args, name):
@@ -91,12 +163,14 @@ def child_env(threads):
     return env
 
 
-def run_child(script, cfg, workdir, tag, timeout):
-    """One configuration in a fresh process. Returns (result dict | None, log path)."""
+def run_child(script, cfg, workdir, tag, timeout, affinity=P_CORES_MASK):
+    """One configuration in a fresh process. Returns (result dict, log path). A timeout or a
+    crash is a result too (ok=false with its reason and wall time), never a dropped run."""
     workdir = Path(workdir)
     cfg = dict(cfg)
     cfg["_result"] = str(workdir / f"{tag}.json")
     cfg["_h5"] = str(workdir / f"{tag}.h5")
+    cfg["_affinity"] = affinity
     cfgp = workdir / f"{tag}.cfg.json"
     cfgp.write_text(json.dumps(cfg, indent=1), encoding="utf-8")
     for p in (cfg["_result"], cfg["_h5"]):
@@ -104,6 +178,7 @@ def run_child(script, cfg, workdir, tag, timeout):
             os.remove(p)
     log = workdir / f"{tag}.log"
     t0 = time.perf_counter()
+    timed_out = False
     with open(log, "w", encoding="utf-8", errors="replace") as fh:
         try:
             proc = subprocess.run([sys.executable, "-X", "utf8", str(script), "--child", str(cfgp)],
@@ -112,17 +187,35 @@ def run_child(script, cfg, workdir, tag, timeout):
                                   timeout=timeout)
             rc = proc.returncode
         except subprocess.TimeoutExpired:
-            rc = "timeout"
+            rc, timed_out = "timeout", True
     wall = time.perf_counter() - t0
     res = None
     if os.path.exists(cfg["_result"]):
-        res = json.loads(Path(cfg["_result"]).read_text(encoding="utf-8"))
+        try:
+            res = json.loads(Path(cfg["_result"]).read_text(encoding="utf-8"))
+        except ValueError:
+            res = None
     if res is None:
-        res = {"ok": False, "error": f"child exited {rc} without a result (see {log.name})"}
+        res = {"ok": False, "config": {k: v for k, v in cfg.items() if not k.startswith("_")},
+               "error": f"child exited {rc} without a result (see {log.name})"}
+    if timed_out:
+        res["ok"] = False
+        res["reason"] = "timeout"
+        res["timeout_s"] = timeout
+    elif not res.get("ok") and "reason" not in res:
+        res["reason"] = "error"
     res["child_rc"] = rc
     res["child_wall_s"] = wall
     res["log"] = log.name
     return res, log
+
+
+def safe_read_profile(path):
+    """read_profile, but a file a killed child left unreadable is recorded, not fatal."""
+    try:
+        return read_profile(path), None
+    except Exception as e:                    # noqa: BLE001 -- an unreadable file is data
+        return {}, repr(e)
 
 
 def parent_conditions(args):
@@ -133,6 +226,8 @@ def parent_conditions(args):
         "python": sys.version.split()[0],
         "pyd": str(Path(args.pyd).resolve()),
         "smoke": bool(args.smoke),
+        "affinity_requested": None if args.affinity_mask is None else hex(args.affinity_mask),
+        "timeout_s": args.timeout,
         "started": _dt.datetime.now().isoformat(timespec="seconds"),
         "note": "no build or other heavy job may run during a timed run (232g pinned conditions)",
     }
@@ -229,9 +324,33 @@ def load_cfg(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def import_ops(pyd):
-    """Import opensees from exactly `pyd` (refuse anything else: an installed .pth or a
-    stale tests/ copy must never be measured by mistake)."""
+_AFFINITY = {"requested": None, "process_mask": None, "system_mask": None, "set_ok": None}
+
+
+def set_affinity(mask):
+    """SetProcessAffinityMask on this (child) process, BEFORE opensees / MKL start threads;
+    records the request and the mask the OS reports back."""
+    if os.name != "nt":
+        return dict(_AFFINITY)
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.GetCurrentProcess.restype = ctypes.c_void_p
+    h = k32.GetCurrentProcess()
+    if mask is not None:
+        k32.SetProcessAffinityMask.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+        _AFFINITY["requested"] = hex(mask)
+        _AFFINITY["set_ok"] = bool(k32.SetProcessAffinityMask(h, ctypes.c_size_t(mask)))
+    pm, sm = ctypes.c_size_t(0), ctypes.c_size_t(0)
+    k32.GetProcessAffinityMask.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t),
+                                           ctypes.POINTER(ctypes.c_size_t)]
+    if k32.GetProcessAffinityMask(h, ctypes.byref(pm), ctypes.byref(sm)):
+        _AFFINITY["process_mask"], _AFFINITY["system_mask"] = hex(pm.value), hex(sm.value)
+    return dict(_AFFINITY)
+
+
+def import_ops(pyd, affinity=None):
+    """Pin the affinity, then import opensees from exactly `pyd` (refuse anything else: an
+    installed .pth or a stale tests/ copy must never be measured by mistake)."""
+    set_affinity(affinity)
     pyd = Path(pyd).resolve()
     if not pyd.exists():
         raise SystemExit(f"no binary at {pyd}")
@@ -249,7 +368,7 @@ def child_conditions(ops):
     cond = {"ladrunoBuild": str(ops.ladrunoBuild()),
             "OMP_NUM_THREADS": os.environ.get("OMP_NUM_THREADS", "default (unset)"),
             "MKL_NUM_THREADS": os.environ.get("MKL_NUM_THREADS", "default (unset)"),
-            "python": sys.version.split()[0], "pid": os.getpid()}
+            "python": sys.version.split()[0], "pid": os.getpid(), "affinity": dict(_AFFINITY)}
     try:                                            # the WP-107 element-loop threads (informative)
         cond["ladrunoThreads"] = ops.ladrunoThreads()
     except Exception as e:
@@ -493,7 +612,21 @@ def m1_run_summary(steps):
         for p, v in s["rebuild_phases_ns"].items():
             phases[p] = phases.get(p, 0.0) + v / n
     ft = [s["formTangent_share_of_t_it"] for s in ok if s["formTangent_share_of_t_it"] is not None]
-    return {"n_timed_steps": n, "t_rb_ns": t_rb, "t_it_ns": t_it, "k": ksum / n,
+    # the C-cheaper-first row: rebuild on steps whose connectivity changed against steps whose
+    # did not (`mpm info connectivityChanges`); a rebuild of an unchanged graph is avoidable
+    ch = [s for s in ok if s.get("connectivity_changed")]
+    un = [s for s in ok if not s.get("connectivity_changed")]
+
+    def mean(rows, f):
+        return sum(f(s) for s in rows) / len(rows) if rows else None
+    split = {"n_changed": len(ch), "n_unchanged": len(un),
+             "t_rb_changed_ns": mean(ch, lambda s: s["t_rb_ns"]),
+             "t_rb_unchanged_ns": mean(un, lambda s: s["t_rb_ns"]),
+             "symbolic_changed_ns": mean(ch, lambda s: s["symbolic_ns"]["total"]),
+             "symbolic_unchanged_ns": mean(un, lambda s: s["symbolic_ns"]["total"]),
+             "rebuild_phases_unchanged_ns": {p: mean(un, lambda s, p=p: s["rebuild_phases_ns"][p])
+                                             for p in (un[0]["rebuild_phases_ns"] if un else {})}}
+    return {**split, "n_timed_steps": n, "t_rb_ns": t_rb, "t_it_ns": t_it, "k": ksum / n,
             "R": (t_rb / t_it) if t_it else None,
             "f": (sum(s["t_rb_ns"] for s in ok) / wall_tot) if wall_tot else None,
             "step_wall_ns": wall_tot / n,

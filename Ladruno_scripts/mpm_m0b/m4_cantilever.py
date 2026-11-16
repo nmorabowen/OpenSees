@@ -33,7 +33,7 @@ def configs(smoke):
 def child(cfg):
     res = {"ok": False, "config": {k: v for k, v in cfg.items() if not k.startswith("_")}}
     try:
-        ops = C.import_ops(cfg["pyd"])
+        ops = C.import_ops(cfg["pyd"], cfg.get("_affinity"))
         res["conditions"] = C.child_conditions(ops)
         sys.path.insert(0, str(C.REPO / "tests"))
         import ladruno_mpm_implicit_harness as H
@@ -56,6 +56,7 @@ def child(cfg):
         steps = []
         for k in range(c["steps"]):
             r0 = C.info(ops, "retries")
+            c0 = C.info(ops, "connectivityChanges")
             err = None
             try:
                 _, wall, run = prof(lambda: ops.mpm("analyze", 1, dt))
@@ -65,6 +66,7 @@ def child(cfg):
             steps.append({"k": k, "run": run, "py_wall_s": wall, "error": err,
                           "testIter": int(ops.testIter()),
                           "retries": C.info(ops, "retries") - r0,
+                          "connectivity_changed": C.info(ops, "connectivityChanges") - c0,
                           "tip": H._tip(nd, X, x, m, xf),
                           # the accepted sub-steps of this call (a cut step shows several)
                           "dtHistory": H._as_list(ops.mpm("info", "dtHistory"))})
@@ -88,42 +90,57 @@ def tag_of(c, rep):
 
 def main():
     ap = C.base_parser(__doc__)
-    args = ap.parse_args()
+    ap.add_argument("--cases", default=None, help="comma list of r1,r2,r3 (or full case names)")
+    ap.add_argument("--cutoffs", default=None, help="comma list of mass cutoffs, e.g. 5e-2,1e-6")
+    args = C.parse_args(ap)
     if args.child:
         return child(C.load_cfg(args.child))
-    reps = args.repeats or (1 if args.smoke else 3)
+    default_reps = 1 if args.smoke else 3
+    cfgs = C.select(configs(args.smoke), args)
+    if args.cases:
+        want = {x if x.startswith("cantilever") else f"cantilever_qs_{x}" for x in args.cases.split(",")}
+        cfgs = [c for c in cfgs if c["case"] in want]
+    if args.cutoffs:
+        cut = [float(x) for x in args.cutoffs.split(",")]
+        cfgs = [c for c in cfgs if any(abs(c["masscut"] - x) <= 1e-12 * x for x in cut)]
+    if args.list:
+        return C.list_runs(cfgs, args, "m4", tag_of, default_reps)
+    reps = args.repeats or default_reps
     od = C.out_dir(args, "m4" + ("_smoke" if args.smoke else ""))
     doc = {"script": "m4_cantilever", "conditions": C.parent_conditions(args),
            "pinned": {"threads": THREADS, "repeats": reps, "warmup_steps": 0,
                       "note": "every step is data (the ramp's 20 steps); timing medians over repeats"},
            "runs": [], "summary": []}
     t0 = time.time()
-    for c in configs(args.smoke):
-        if not C.keep(c, args.only):
-            continue
+    for c in cfgs:
         per = []
         for rep in range(reps):
             cfg = dict(c, pyd=args.pyd, threads=THREADS)
             tag = tag_of(c, rep)
             print(f"[m4] {tag} ...", flush=True)
-            r, _ = C.run_child(__file__, cfg, od, tag, args.timeout)
-            prof = C.read_profile(str(od / f"{tag}.h5"))
+            r, _ = C.run_child(__file__, cfg, od, tag, args.timeout, args.affinity_mask)
+            prof, perr = C.safe_read_profile(str(od / f"{tag}.h5"))
+            if perr:
+                r["profile_error"] = perr
             for s in r.get("steps", []):
                 p = prof.get(s["run"])
                 s["profile"] = p["tree"] if p else None
                 s["derived"] = C.m1_step(p["tree"]) if p and p["tree"] else {"ok": False}
+                s["derived"]["connectivity_changed"] = bool(s.get("connectivity_changed"))
             ok_steps = [s["derived"] for s in r.get("steps", []) if s.get("error") is None]
             r["run_summary"] = C.m1_run_summary(ok_steps)
             r["newton_iterations_per_step"] = [s["derived"].get("k") for s in r.get("steps", [])]
             r["tag"] = tag
             doc["runs"].append(r)
             per.append(r)
-            print(f"[m4]   ok={r.get('ok')} steps={r.get('completed_steps')} tip={r.get('tip_end')} "
+            print(f"[m4]   ok={r.get('ok')} {r.get('reason', '')} steps={r.get('completed_steps')} tip={r.get('tip_end')} "
                   f"first_retry={r.get('first_retry_step')} ({r.get('child_wall_s', 0):.1f} s)", flush=True)
         rs = [r.get("run_summary") or {} for r in per]
         doc["summary"].append({
             "config": c, "repeats": len(per),
             "completed_steps": [r.get("completed_steps") for r in per],
+            "failures": [{"rep": i, "reason": r.get("reason"), "child_wall_s": r.get("child_wall_s")}
+                         for i, r in enumerate(per) if not r.get("ok")],
             "first_retry_step": [r.get("first_retry_step") for r in per],
             "tip_end": C.median_spread([r.get("tip_end") for r in per]),
             "newton_iterations_per_step": per[0].get("newton_iterations_per_step") if per else None,

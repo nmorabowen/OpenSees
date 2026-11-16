@@ -6,16 +6,52 @@ The definitions there bind this code; this file says how each one is measured an
 model and setting was chosen. The worker never applies the table: the orchestrator does.
 
 ```bat
-python3.12 Ladruno_scripts\mpm_m0b\run_all.py --pyd dist\bin\opensees.pyd            :: full
 python3.12 Ladruno_scripts\mpm_m0b\run_all.py --smoke                                 :: N = 10^3
-python3.12 Ladruno_scripts\mpm_m0b\m1_rebuild.py --only N=100000,solver=Pardiso       :: a subset
+python3.12 Ladruno_scripts\mpm_m0b\run_all.py --plan full --dry-run                   :: list + estimate
+python3.12 Ladruno_scripts\mpm_m0b\run_all.py --plan full                             :: the orchestrator's plan
+python3.12 Ladruno_scripts\mpm_m0b\m1_rebuild.py --N 100000 --solvers Pardiso --treatments renormalize
 ```
 
-`--pyd` selects the binary (default: this worktree's `dist\bin\opensees.pyd`); the child refuses
-to run if `import opensees` resolves anywhere else. `--only key=value,...` filters the
-configurations; `--repeats`, `--warmup`, `--timed` override the pinned counts; `--out` the
-directory. Results: `results/<script>_<stamp>/<script>_results.json` (the aggregated file; the
-per-run JSON, the profiler HDF5 and each child's log sit beside it and are git-ignored).
+`--pyd` selects the binary (default: this worktree's `dist\bin\opensees.pyd`); a relative path is
+resolved in the parent, from the current directory, before any child starts (the children run
+in their results directories). The child refuses to run if `import opensees` resolves anywhere
+else. Subset flags (comma lists; a flag a script's configurations do not carry is ignored):
+`--N`, `--modes` (M1 `qs,transient`; M3 `A,F`), `--mats`, `--solvers`, `--treatments`, M4's
+`--cases r1,r2,r3` and `--cutoffs`; `--repeats`, `--repeats-by-N 100000=1`, `--warmup`,
+`--timed`; `--timeout-s` per run; `--only key=value,...`; `--list` prints the selected runs.
+**A timeout or a crash is data**: the run is kept with `ok: false`, its `reason` (`timeout` or
+`error`) and its wall time, and every summary lists its `failures`.
+
+**Affinity.** Each child sets its process affinity, before `opensees` (and MKL's threads) start,
+through `SetProcessAffinityMask`: default `0xFFFF`, the eight P-cores with their hyperthreads
+(logical 16–23 are the E-cores of the i7-13700KF); `--affinity none` leaves it. The requested
+mask, the mask the OS reports back and the system mask are in each run's `conditions.affinity`.
+The thread counts are unchanged.
+
+**`--plan full`** is the orchestrator's run decision (2026-11-15; it moves no threshold), one
+script invocation per item, each in `<out>/<item>/`:
+
+| Item | What |
+|---|---|
+| `m1_pardiso_renormalize` | the decision row: N 10³, 10⁴, 10⁵ × {qs, transient} × {elastic, dp}, 3 repeats |
+| `m1_umfpack_renormalize` | the same, 3 repeats at 10³ and 10⁴, 1 at 10⁵; 2700 s timeout per run |
+| `m1_pardiso_ghost` | the same pairs, every N; 3 repeats at 10³ and 10⁴, 1 at 10⁵ |
+| `m1_pardiso_exclude` | 10³ and 10⁴, 1 repeat (cost only) |
+| `m2` | the full design, 3 repeats |
+| `m3` | N 10³, 10⁴, 10⁵; modes A and F; elastic and dp; 2 repeats; slope on 10⁴ → 10⁵ |
+| `m4` | r1–r3 × cutoffs {5e-2, 1e-6, 1e-10}, 1 repeat |
+
+UmfPack × ghost / exclude is not run (it decides nothing). At N = 10⁵ M1 keeps at least 4 timed
+steps. `--dry-run` prints every run and a wall-time estimate scaled from a smoke
+(`--smoke-dir`, default the latest `results/run_all_smoke_*`): the stepping part of each smoke
+run (its Python wall around `mpm analyze`) is scaled by (N / 10³)^p and by the ratio of step
+counts, the rest of the child's wall is fixed; p = 1.5 for PARDISO and mode A (the pre-232g
+plumbing build gave ×20–27 in step time for ×10.6 in N on the DP block), 2.0 for UmfPack, 1.0 for
+explicit; the cantilever scales by its own particle count with p = 1.5; a run is capped at its
+timeout. It does not know Newton's iteration count at 10⁵, so read it as ±2×.
+
+Results: `results/<script>_<stamp>/<script>_results.json` (the aggregated file; the per-run JSON,
+the profiler HDF5 and each child's log sit beside it and are git-ignored).
 
 ## Pinned conditions (every result JSON carries them)
 
@@ -123,13 +159,17 @@ t_it, f = Σ t_rb / Σ step wall. Across repeats: the median and the spread. `fi
 slope against N of R, t_rb, t_it and f per (mode, material, solver, treatment). A step that was cut
 (`attempts` > 1, `substeps` > 1, `retries`) stays in the record and is flagged.
 
+**Changed against unchanged connectivity** (for the C-cheaper-first row): every step carries
+whether `mpm info connectivityChanges` moved during it; each run also reports `t_rb_changed_ns`,
+`t_rb_unchanged_ns`, `symbolic_changed_ns`, `symbolic_unchanged_ns`, the counts `n_changed` /
+`n_unchanged` and the rebuild sub-phases over the unchanged steps alone. On a step whose
+connectivity did not change, every nanosecond of t_rb is avoidable without mode C.
+
 Smoke (`--smoke`): N = 10³, one repeat, a covering design of 10 children — every solver × mode ×
 material on `renormalize`, plus `exclude` and `ghost` on (qs, elastic, Pardiso).
 
-Full matrix: 3 N × 2 modes × 2 materials × 2 solvers × 3 treatments = 72 configurations × 3
-repeats × 8 steps. At 10⁴ a quasi-static PARDISO step takes 1–12 s on the plumbing build; 10⁵ is
-an order of magnitude more and UmfPack slower still, so the full matrix is many hours: trim with
-`--only` (e.g. UmfPack and the non-default treatments at 10⁵) if the orchestrator wishes.
+The script's own default is the whole cross product (3 N × 2 modes × 2 materials × 2 solvers × 3
+treatments); `run_all --plan full` runs the orchestrator's subset of it.
 
 ## M2 — explicit throughput (`m2_explicit.py`)
 
@@ -152,13 +192,24 @@ Material share (deep) = Σ `mpm.f.material` rows / Σ `step` wall; non-material 
 
 - *the single-point driver* (`models.point_build`): one `stdBrick` with every DOF prescribed
   (zero free equations), on the fork's confine-first SANISAND deck (`tests/test_ladruno_sanisand.py`,
-  `_build_confined`): an isotropic leg, then an isochoric deviatoric ramp. The same deck runs
-  ElasticIsotropic, DruckerPrager, LadrunoJ2 and LadrunoSANISAND; only the two strain amplitudes
-  differ, so each material sits at the column's stress level (p ≈ 10 kPa) and yields early in the
-  deviatoric leg. Per-call cost = `elem.update` wall (deep, per class tag) / (updates × 8 points)
-  + `commit.elements` / (commits × 8). A first pass classifies every step elastic or plastic
-  (DP, J2: the point on its yield surface; SANISAND: stage 0 / 1); a second pass on a rebuilt
-  point profiles each run of same-class steps as one profiler run;
+  `_build_confined`), in three legs: `confine` (isotropic, to the column's p ≈ 10 kPa, 50 steps),
+  `pre` (isochoric, past first yield, 50 steps), `measure` (200 isochoric steps of a fixed strain
+  increment). The same deck runs ElasticIsotropic, DruckerPrager, LadrunoJ2 and LadrunoSANISAND;
+  only the confinement and pre-yield amplitudes differ per material. Per-call cost =
+  `elem.update` wall (deep, per class tag) / (updates × 8 points) + `commit.elements` /
+  (commits × 8). A first pass classifies every step elastic or plastic (DP, J2: the point on its
+  yield surface; SANISAND: stage 0 / 1); a second pass on a rebuilt point profiles each run of
+  same-class steps of one leg as one profiler run. The **plastic** per-call cost is taken from the
+  `measure` leg only; the elastic one from every elastic step;
+- *the strain increment per call*: the `measure` leg's increment norm is matched to the DP
+  column's **median per-step particle strain-increment norm** (`strain_increment_norm.median`:
+  per particle, the norm of epsHat(n+1) − epsHat(n) with engineering shear,
+  √(Σ ε_ii² + ½ Σ γ²), over one unprofiled step right after the timed window; the median over
+  the yielded particles is recorded beside it), from the largest N whose DP coarse column ran.
+  An isochoric step of axial strain a has norm a √1.5. Every driver material also runs at ×0.5
+  and ×2 of that increment (`driver_plastic_per_call_band_ns`, `sanisand_over_dp_ratio_band`):
+  a per-call cost that moves with the increment is an increment artefact, one that does not is
+  the material's. Each leg's increment norm per step is in the result (`path.increment_norm_per_step`);
 - *the composition*: c(X, φ) = (1 − φ) c_el(X) + φ c_pl(X), with φ(DP) the DP column's measured
   yield fraction and φ = 1 for SANISAND (a bounding-surface model loads plastically; φ(DP) is
   given beside it). **literal**: t(X) = non-material(elastic column, deep) + c(X, φ).
@@ -173,7 +224,7 @@ report evicts what the next call needs. Blocks of steps measure the call, not th
 ## M3 — memory per particle-element (`m3_memory.py`)
 
 Mode A: the M1 block (quasi-static, PARDISO, renormalize). Mode F: the M2 column. Elastic and DP,
-N = 10⁴ and 10⁵ (smoke: 10³ and about 2 × 10³). Private bytes at s0 (model), s1 (every command:
+N = 10³, 10⁴ and 10⁵, slope on the two largest (smoke: 10³ and about 2 × 10³). Private bytes at s0 (model), s1 (every command:
 particles, material copies, analysis objects), s2 (after step 1), s3 (after step 2); three
 profiler `-memory` windows (the commands, step 1, step 2) give the Matrix / Vector / ID bytes each
 window still holds and the live-object census per class tag. The result is the slope of private
@@ -181,6 +232,24 @@ bytes against N after the first step (the brief's definition), with the same slo
 and every counted item: that is the attribution (element and FE_Element matrices in the step-1
 window's Matrix bytes; the material copies in s1 − s0; the grid share through `gridNodes`;
 the solver's factor is the private bytes the profiler does not count).
+
+**The analytical count** (`analytic`, per run; `analytic_per_particle` and
+`measured_minus_analytic` beside each slope) adds, per particle: the material copy
+(ElasticIsotropicThreeDimensional: 2 Vector(6); DruckerPrager3D: 8 Vector(6), 4 Matrix(6,6), 26
+scalars), the particle state held twice (state and `mpm reset` snapshot, 57 doubles + ids), and
+- mode A: the `LadrunoMPMPoint` (its ID, node pointers, S, ∇S, v̂, â, ghost springs, g, f_int,
+  u_T, two Vectors of 3·nen; the tangent is a class-wide pool), the `FE_Element` (two IDs, and
+  its OWN numDOF² tangent plus residual only when numDOF = 3·nen > 64 — `FE_Element.cpp:188-219`,
+  `MAX_NUM_DOF` 64; else the class pool), at the run's measured support-size histogram
+  (`support_histogram`, from `eleNodes`), and the grid share (`gridNodes` / N × Node + DOF_Group +
+  host map entries);
+- mode F: the support arrays (node id, S, ∇S per support node) at the counted support sizes
+  (from each particle's position and l_p), the trial arrays (43 doubles), and the dense grid's
+  share (19 doubles + 2 flags per grid node, ghost layer included).
+Object and heap-block sizes are estimates for MSVC x64 (`ANALYTIC_NOTE` in the result). What the
+count leaves out is the disagreement: in mode A the SOE matrix and PARDISO's factor (MKL-internal),
+in both modes allocator slack. On the smoke (10³ → 1.7 × 10³) mode F agrees within 3–6 %; mode A's
+measured slope is about twice the count, the rest being the solver.
 
 ## M4 — the cantilever data (`m4_cantilever.py`)
 

@@ -57,7 +57,7 @@ def configs(smoke):
 def child(cfg):
     res = {"ok": False, "config": {k: v for k, v in cfg.items() if not k.startswith("_")}}
     try:
-        ops = C.import_ops(cfg["pyd"])
+        ops = C.import_ops(cfg["pyd"], cfg.get("_affinity"))
         res["conditions"] = C.child_conditions(ops)
         n_steps = cfg["warmup"] + cfg["timed"]
         cmds, params = Mo.block_commands(cfg["N"], cfg["mat"], cfg["mode"], cfg["solver"],
@@ -125,39 +125,49 @@ def tag_of(c, rep):
     return f"m1_N{c['N']}_{c['mode']}_{c['mat']}_{c['solver']}_{c['treatment']}_r{rep}"
 
 
+MIN_TIMED_AT_1E5 = 4      # the orchestrator's round-2 floor at N = 10^5
+
+
 def main():
     ap = C.base_parser(__doc__)
     ap.add_argument("--warmup", type=int, default=None)
     ap.add_argument("--timed", type=int, default=None)
-    args = ap.parse_args()
+    args = C.parse_args(ap)
     if args.child:
         return child(C.load_cfg(args.child))
-    reps = args.repeats or (1 if args.smoke else 3)
+    default_reps = 1 if args.smoke else 3
     warm = args.warmup if args.warmup is not None else (SMOKE_WARMUP if args.smoke else WARMUP)
     timed = args.timed if args.timed is not None else (SMOKE_TIMED if args.smoke else TIMED)
+    cfgs = C.select(configs(args.smoke), args)
+    if args.list:
+        return C.list_runs(cfgs, args, "m1", tag_of, default_reps, {"warmup": warm, "timed": timed})
     od = C.out_dir(args, "m1" + ("_smoke" if args.smoke else ""))
     doc = {"script": "m1_rebuild", "conditions": C.parent_conditions(args),
            "pinned": {"threads": THREADS, "warmup_steps": warm, "timed_steps": timed,
-                      "repeats": reps, "statistic": "median of the repeats, spread = (max-min)/median"},
+                      "timed_steps_floor_at_1e5": MIN_TIMED_AT_1E5,
+                      "repeats": args.repeats or default_reps, "repeats_by_N": args.repeats_by_N,
+                      "statistic": "median of the repeats, spread = (max-min)/median"},
            "definitions": "232g brief: t_rb = prepare + domainChanged + every soe.symbolic; "
                           "t_it = (formTangent + linearSolve - symbolic + formUnbalance + update + "
                           "convTest) / k; R = t_rb / t_it; f = t_rb / step wall (mpm.a.step)",
            "runs": [], "summary": []}
     t0 = time.time()
-    for c in configs(args.smoke):
-        if not C.keep(c, args.only):
-            continue
+    for c in cfgs:
         per_rep = []
-        for rep in range(reps):
-            cfg = dict(c, pyd=args.pyd, threads=THREADS, warmup=warm, timed=timed)
+        tc = max(timed, MIN_TIMED_AT_1E5) if c["N"] >= 100000 else timed
+        for rep in range(C.repeats_for(c, args, default_reps)):
+            cfg = dict(c, pyd=args.pyd, threads=THREADS, warmup=warm, timed=tc)
             tag = tag_of(c, rep)
             print(f"[m1] {tag} ...", flush=True)
-            r, _ = C.run_child(__file__, cfg, od, tag, args.timeout)
-            prof = C.read_profile(cfg.get("_h5") or str(od / f"{tag}.h5"))
+            r, _ = C.run_child(__file__, cfg, od, tag, args.timeout, args.affinity_mask)
+            prof, perr = C.safe_read_profile(str(od / f"{tag}.h5"))
+            if perr:
+                r["profile_error"] = perr
             for s in r.get("steps", []):
                 p = prof.get(s["run"])
                 s["profile"] = p["tree"] if p else None
                 s["derived"] = C.m1_step(p["tree"]) if p and p["tree"] else {"ok": False}
+                s["derived"]["connectivity_changed"] = bool(s.get("connectivity_changed"))
             timed_steps = [s["derived"] for s in r.get("steps", []) if not s["warmup"]
                            and s.get("error") is None]
             r["run_summary"] = C.m1_run_summary(timed_steps)
@@ -167,8 +177,8 @@ def main():
             doc["runs"].append(r)
             per_rep.append(r)
             rs = r["run_summary"] or {}
-            print(f"[m1]   ok={r.get('ok')} R={rs.get('R')} f={rs.get('f')} k={rs.get('k')} "
-                  f"({r.get('child_wall_s', 0):.1f} s)", flush=True)
+            print(f"[m1]   ok={r.get('ok')} {r.get('reason', '')} R={rs.get('R')} f={rs.get('f')} "
+                  f"k={rs.get('k')} ({r.get('child_wall_s', 0):.1f} s)", flush=True)
         doc["summary"].append(summarize(c, per_rep))
         C.write_json(od / "m1_results.json", doc)
     doc["fits"] = fits(doc["summary"])
@@ -181,8 +191,12 @@ def main():
 def summarize(c, reps):
     rs = [r.get("run_summary") or {} for r in reps]
     out = {"config": c, "ok_runs": sum(1 for r in reps if r.get("ok")), "repeats": len(reps)}
+    out["failures"] = [{"rep": i, "reason": r.get("reason"), "error": r.get("error"),
+                        "child_wall_s": r.get("child_wall_s")} for i, r in enumerate(reps) if not r.get("ok")]
+    out["child_wall_s"] = [r.get("child_wall_s") for r in reps]
     for q in ("t_rb_ns", "t_it_ns", "R", "k", "f", "step_wall_ns", "symbolic_share_of_t_rb",
-              "formTangent_share_of_t_it"):
+              "formTangent_share_of_t_it", "t_rb_changed_ns", "t_rb_unchanged_ns",
+              "symbolic_changed_ns", "symbolic_unchanged_ns", "n_changed", "n_unchanged"):
         out[q] = C.median_spread([x.get(q) for x in rs])
     phases = {}
     for x in rs:

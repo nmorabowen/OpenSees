@@ -36,6 +36,9 @@ SMOKE_WARMUP, SMOKE_TIMED = 2, 5
 STD_BRICK_GP = 8
 
 
+DRIVER_SCALES = (0.5, 1.0, 2.0)     # the plastic per-call sensitivity band (round 2, item 6)
+
+
 def configs(smoke):
     out = []
     for N in ((1000,) if smoke else NS):
@@ -44,8 +47,9 @@ def configs(smoke):
                 out.append(dict(kind="column", N=N, mat=mat, threads=1, profile=prof))
         for prof in ("coarse", "deep"):
             out.append(dict(kind="column", N=N, mat="elastic", threads=None, profile=prof))
-    for mat in DRIVER_MATS:
-        out.append(dict(kind="driver", N=0, mat=mat, threads=1, profile="deep"))
+    for mat in DRIVER_MATS:                       # after every column: they set the increment
+        for sc in ((1.0,) if mat == "elastic" else DRIVER_SCALES):
+            out.append(dict(kind="driver", N=0, mat=mat, scale=sc, threads=1, profile="deep"))
     return out
 
 
@@ -55,7 +59,7 @@ def configs(smoke):
 def child(cfg):
     res = {"ok": False, "config": {k: v for k, v in cfg.items() if not k.startswith("_")}}
     try:
-        ops = C.import_ops(cfg["pyd"])
+        ops = C.import_ops(cfg["pyd"], cfg.get("_affinity"))
         res["conditions"] = C.child_conditions(ops)
         if cfg["kind"] == "driver":
             child_driver(ops, cfg, res)
@@ -73,10 +77,19 @@ def _yield(ops, mat, params):
     return Mo.yield_fraction(C.particle_field(ops, "sig"), mat, params[mat])
 
 
+def _median(v):
+    v = sorted(v)
+    n = len(v)
+    if n == 0:
+        return None
+    return v[n // 2] if n % 2 else 0.5 * (v[n // 2 - 1] + v[n // 2])
+
+
 def child_column(ops, cfg, res):
     """Warm-up steps in one unprofiled call; the timed steps in ONE `mpm analyze` call under one
     profiler run with -perStep (the per-step wall series), so no report or reset interrupts the
-    stepping (a report between steps evicts the caches the next step then pays for)."""
+    stepping (a report between steps evicts the caches the next step then pays for). One more,
+    unprofiled step afterwards measures the per-step particle strain increment (epsHat)."""
     cmds, params = Mo.column_commands(cfg["N"], cfg["mat"])
     res["model"] = params
     res["commands"] = [[c, [str(a) for a in args]] for c, args in cmds]
@@ -101,43 +114,63 @@ def child_column(ops, cfg, res):
     res["yield_fraction_timed_start"] = yf0
     res["yield_fraction_end"] = yf1
     res["yield_fraction_timed_mean"] = (0.5 * (yf0 + yf1)) if (yf0 is not None and yf1 is not None) else None
+    # the per-step strain increment the driver matches (round 2, item 6): one more step
+    e0 = C.particle_field(ops, "epsHat")
+    ops.mpm("analyze", 1, dt)
+    e1 = C.particle_field(ops, "epsHat")
+    nv = 6
+    norms = [Mo.strain_norm([e1[nv * p + k] - e0[nv * p + k] for k in range(nv)])
+             for p in range(len(e0) // nv)]
+    res["strain_increment_norm"] = {"median": _median(norms), "mean": sum(norms) / len(norms) if norms else None,
+                                    "max": max(norms) if norms else None,
+                                    "definition": "per particle, ||epsHat(n+1) - epsHat(n)|| with "
+                                                  "engineering shear, one step after the timed window"}
+    if cfg["mat"] in ("dp", "j2"):
+        sig = C.particle_field(ops, "sig")
+        on = [p for p in range(len(norms))
+              if Mo.yield_fraction(sig[6 * p:6 * p + 6], cfg["mat"], params[cfg["mat"]]) == 1.0]
+        res["strain_increment_norm"]["median_yielded"] = _median([norms[p] for p in on])
+        res["strain_increment_norm"]["n_yielded"] = len(on)
     res["ok"] = True
 
 
 def child_driver(ops, cfg, res):
     """Two passes over the same deterministic path. Pass 1 (unprofiled) classifies every step
     elastic or plastic; pass 2 rebuilds the point and profiles each contiguous run of
-    same-class steps as one profiler run (no report between the steps of a run)."""
+    same-class steps of one leg as one profiler run (no report between its steps)."""
     mat = cfg["mat"]
     sanisand = mat == "sanisand"
-    legs = (("confine", Mo.POINT_N_CONF, 0), ("deviator", Mo.POINT_N_DEV, 1))
+    inc = cfg["increment"] * cfg["scale"]
+    legs, _ = Mo.point_legs(mat, inc)
 
     def stage(s):
         if sanisand:      # explicit stage switches, as the fork's deck does (static mElastFlag)
             ops.updateMaterialStage("-material", 1, "-stage", s)
 
-    res["path"] = Mo.point_build(ops, mat)
+    res["path"] = Mo.point_build(ops, mat, inc)
     res["material_command"] = [str(a) for a in Mo.point_material(mat)]
+    res["increment"] = {"matched": cfg["increment"], "scale": cfg["scale"], "used": inc,
+                        "source": cfg.get("increment_source")}
     flags = []
-    for name, n, st in legs:
+    for name, n, st, _ in legs:
         stage(st)
         for i in range(n):
             if ops.analyze(1) != 0:
                 raise RuntimeError(f"{name} step {i + 1} failed (pass 1)")
             stress = [float(v) for v in ops.eleResponse(1, "material", 1, "stress")]
-            flags.append((name, (st == 1) if sanisand else Mo.point_on_yield(mat, stress)))
+            flags.append((st == 1) if sanisand else Mo.point_on_yield(mat, stress))
     res["stress_end"] = [float(v) for v in ops.eleResponse(1, "material", 1, "stress")]
     # pass 2
-    Mo.point_build(ops, mat)
+    Mo.point_build(ops, mat, inc)
     prof = C.StepProfiler(ops, cfg["_h5"], ["-deep"])
     segs, k = [], 0
-    for name, n, st in legs:
+    for name, n, st, leg_inc in legs:
         stage(st)
         i = 0
         while i < n:
-            plastic = flags[k + i][1]
+            plastic = flags[k + i]
             j = i
-            while j < n and flags[k + j][1] == plastic:
+            while j < n and flags[k + j] == plastic:
                 j += 1
             m = j - i
 
@@ -147,7 +180,7 @@ def child_driver(ops, cfg, res):
                         raise RuntimeError(f"{name} step failed (pass 2)")
             _, wall, run = prof(block)
             segs.append({"leg": name, "first": i, "steps": m, "plastic": plastic, "run": run,
-                         "py_wall_s": wall})
+                         "increment_norm": leg_inc, "py_wall_s": wall})
             i = j
         k += n
     res["steps"] = segs           # one row per profiled segment
@@ -196,20 +229,23 @@ def driver_percall(tree):
 
 
 def driver_summary(r):
-    """Elastic and plastic per-call costs (trial + commit, ns per point-step) over the run's
-    steps, classified by the step's flag; plus the deviatoric-leg-only plastic figure."""
+    """Per-call costs (trial + commit, ns per point-step): elastic over every elastic step,
+    plastic over the measure leg's plastic steps (the matched increment) only."""
     acc = {}
     for s in r.get("steps", []):
         d = s.get("derived")
         if not d:
             continue
-        key = "plastic" if s["plastic"] else "elastic"
+        if s["plastic"] and s["leg"] != "measure":
+            key = "plastic_pre"
+        else:
+            key = "plastic" if s["plastic"] else "elastic"
         a = acc.setdefault(key, {"tw": 0, "tc": 0, "cw": 0, "cc": 0, "n": 0})
         a["tw"] += d["trial_wall_ns"]
         a["tc"] += d["trial_calls"]
         a["cw"] += d["commit_wall_ns"]
         a["cc"] += d["commit_calls"]
-        a["n"] += 1
+        a["n"] += s["steps"]
     out = {}
     for key, a in acc.items():
         if a["tc"] and a["cc"]:
@@ -217,43 +253,71 @@ def driver_summary(r):
             out[f"{key}_commit_ns"] = a["cw"] / a["cc"]
             out[f"{key}_per_point_step_ns"] = a["tw"] / a["tc"] + a["cw"] / a["cc"]
             out[f"{key}_steps"] = a["n"]
+    inc = (r.get("increment") or {}).get("used")
+    if inc is not None:
+        out["measure_increment_norm"] = inc
     return out
 
 
 def tag_of(c, rep):
     th = "def" if c["threads"] is None else c["threads"]
-    return f"m2_{c['kind']}_N{c['N']}_{c['mat']}_t{th}_{c['profile']}_r{rep}"
+    sc = f"_x{c['scale']:g}" if c["kind"] == "driver" else ""
+    return f"m2_{c['kind']}_N{c['N']}_{c['mat']}{sc}_t{th}_{c['profile']}_r{rep}"
+
+
+def matched_increment(summary):
+    """The DP column's median per-step particle strain-increment norm, at the largest N that
+    ran (coarse run, median over repeats). None when no DP column ran."""
+    rows = [s for s in summary if s["config"]["kind"] == "column" and s["config"]["mat"] == "dp"
+            and s["config"]["profile"] == "coarse" and s.get("strain_increment_norm_median")]
+    if not rows:
+        return None, None
+    s = max(rows, key=lambda s: s["config"]["N"])
+    return s["strain_increment_norm_median"]["median"], f"DP column, N = {s['config']['N']}, coarse"
 
 
 def main():
     ap = C.base_parser(__doc__)
     ap.add_argument("--warmup", type=int, default=None)
     ap.add_argument("--timed", type=int, default=None)
-    args = ap.parse_args()
+    ap.add_argument("--increment", type=float, default=None,
+                    help="the driver's matched strain-increment norm (default: measured in this run's "
+                         "DP column)")
+    args = C.parse_args(ap)
     if args.child:
         return child(C.load_cfg(args.child))
-    reps = args.repeats or (1 if args.smoke else 3)
+    default_reps = 1 if args.smoke else 3
     warm = args.warmup if args.warmup is not None else (SMOKE_WARMUP if args.smoke else WARMUP)
     timed = args.timed if args.timed is not None else (SMOKE_TIMED if args.smoke else TIMED)
+    cfgs = C.select(configs(args.smoke), args)
+    if args.list:
+        return C.list_runs(cfgs, args, "m2", tag_of, default_reps, {"warmup": warm, "timed": timed})
     od = C.out_dir(args, "m2" + ("_smoke" if args.smoke else ""))
     doc = {"script": "m2_explicit", "conditions": C.parent_conditions(args),
            "pinned": {"threads": "1, plus the default (unset) row for elastic", "warmup_steps": warm,
-                      "timed_steps": timed, "repeats": reps,
+                      "timed_steps": timed, "repeats": args.repeats or default_reps,
                       "throughput": "N * timed / sum of the profiler's `step` wall (coarse run)",
                       "material share": "sum of mpm.f.material elem_by_type wall / sum of step wall"
                                         " (deep run)"},
            "runs": [], "summary": []}
     t0 = time.time()
-    for c in configs(args.smoke):
-        if not C.keep(c, args.only):
-            continue
+    for c in cfgs:                         # columns first: the driver needs their increment
         per_rep = []
-        for rep in range(reps):
-            cfg = dict(c, pyd=args.pyd, warmup=warm, timed=timed)
+        extra = {}
+        if c["kind"] == "driver":
+            inc, src = (args.increment, "--increment") if args.increment else matched_increment(doc["summary"])
+            if inc is None:
+                inc, src = Mo.POINT_DEFAULT_INCREMENT, "default (no DP column in this run)"
+            extra = {"increment": inc, "increment_source": src}
+            doc["driver_increment"] = {"norm": inc, "source": src}
+        for rep in range(C.repeats_for(c, args, default_reps)):
+            cfg = dict(c, pyd=args.pyd, warmup=warm, timed=timed, **extra)
             tag = tag_of(c, rep)
             print(f"[m2] {tag} ...", flush=True)
-            r, _ = C.run_child(__file__, cfg, od, tag, args.timeout)
-            prof = C.read_profile(str(od / f"{tag}.h5"))
+            r, _ = C.run_child(__file__, cfg, od, tag, args.timeout, args.affinity_mask)
+            prof, perr = C.safe_read_profile(str(od / f"{tag}.h5"))
+            if perr:
+                r["profile_error"] = perr
             N = r.get("numParticles") or c["N"]
             if c["kind"] == "column":
                 p = prof.get((r.get("timed") or {}).get("run", ""))
@@ -270,7 +334,7 @@ def main():
             r["tag"] = tag
             doc["runs"].append(r)
             per_rep.append(r)
-            print(f"[m2]   ok={r.get('ok')} {short(r.get('run_summary'))} "
+            print(f"[m2]   ok={r.get('ok')} {r.get('reason', '')} {short(r.get('run_summary'))} "
                   f"({r.get('child_wall_s', 0):.1f} s)", flush=True)
         doc["summary"].append(summarize(c, per_rep))
         C.write_json(od / "m2_results.json", doc)
@@ -317,6 +381,9 @@ def column_summary(r, N):
             out["nonmaterial_ns_per_particle_step_median"] = out["ns_per_particle_step_median"] *                 out["nonmaterial_share"]
     if r.get("yield_fraction_timed_mean") is not None:
         out["yield_fraction_timed_mean"] = r["yield_fraction_timed_mean"]
+    for k, v in (r.get("strain_increment_norm") or {}).items():
+        if isinstance(v, (int, float)):
+            out["strain_increment_norm_" + k] = v
     return out
 
 
@@ -325,7 +392,9 @@ def summarize(c, reps):
     keys = set()
     for x in rs:
         keys |= {k for k, v in x.items() if isinstance(v, (int, float)) and not isinstance(v, bool)}
-    out = {"config": c, "ok_runs": sum(1 for r in reps if r.get("ok")), "repeats": len(reps)}
+    out = {"config": c, "ok_runs": sum(1 for r in reps if r.get("ok")), "repeats": len(reps),
+           "failures": [{"rep": i, "reason": r.get("reason"), "child_wall_s": r.get("child_wall_s")}
+                        for i, r in enumerate(reps) if not r.get("ok")]}
     for k in sorted(keys):
         out[k] = C.median_spread([x.get(k) for x in rs])
     yf = [r.get("yield_fraction_end") for r in reps if r.get("yield_fraction_end") is not None]
@@ -349,11 +418,11 @@ def projection(summary):
     difference   t(X) = t(elastic column, coarse run) + c(X, phi) - c_el(elastic)
                  (the stdBrick's own per-point strain work, inside every driver figure, cancels)
     Both forms are reported; the orchestrator picks."""
-    def get(kind, N, mat, prof, threads=1):
+    def get(kind, N, mat, prof, threads=1, scale=1.0):
         for s in summary:
             c = s["config"]
             if c["kind"] == kind and c["N"] == N and c["mat"] == mat and c["profile"] == prof \
-                    and c["threads"] == threads:
+                    and c["threads"] == threads and (kind != "driver" or c.get("scale") == scale):
                 return s
         return None
 
@@ -376,7 +445,13 @@ def projection(summary):
             return pl if phi == 1 else None
         return (1.0 - phi) * el + phi * pl
 
+    band = {m: {f"x{sc:g}": med(get("driver", 0, m, "deep", scale=sc), "plastic_per_point_step_ns")
+                for sc in DRIVER_SCALES} for m in DRIVER_MATS if m != "elastic"}
     out = {"driver_per_call_ns": drv,
+           "driver_plastic_per_call_band_ns": band,
+           "sanisand_over_dp_ratio_band": {k: (band["sanisand"][k] / band["dp"][k])
+                                           if band["sanisand"][k] and band["dp"][k] else None
+                                           for k in band["dp"]},
            "sanisand_over_dp_cost_ratio_plastic":
                (drv["sanisand"]["plastic"] / drv["dp"]["plastic"])
                if drv["sanisand"]["plastic"] and drv["dp"]["plastic"] else None,

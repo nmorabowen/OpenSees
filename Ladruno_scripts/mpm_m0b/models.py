@@ -212,37 +212,62 @@ def yield_fraction(sig, kind, params, rel=1.0e-3):
 # One unit stdBrick, every DOF prescribed (rollers on the negative faces, sp on every positive-face
 # DOF): zero free equations, so a step's element work is its 8 material points and nothing else
 # worth timing. The deck is the fork's confine-first SANISAND driver (tests/test_ladruno_sanisand.py,
-# `_build_confined`): an isotropic compression leg, then an isochoric deviatoric ramp. The SAME
-# deck runs every material; only the two strain amplitudes differ, chosen so each material sits
-# at the column's stress level (mean stress about 10 kPa: rho g H / 2 = 19.6 kPa vertical at
-# mid-height) and so the deviatoric leg yields early. Every step is profiled on its own and
-# classified elastic or plastic (DP / J2: the point on its yield surface after the step;
-# SANISAND: stage 0 = elastic, stage 1 = plastic; ElasticIsotropic: elastic), so the driver
-# gives an elastic and a plastic per-call cost for each material.
+# `_build_confined`), extended to three legs and run by every material:
+#   confine   isotropic compression to the column's stress level (p ~ 10 kPa) in POINT_N_CONF steps;
+#   pre       an isochoric deviatoric ramp (axial -e, lateral +e/2) past first yield in POINT_N_PRE steps;
+#   measure   POINT_N_MEAS isochoric steps of a FIXED strain increment, whose norm is matched to the
+#             DP column's median per-step particle strain-increment norm (round 2, item 6), times
+#             a scale (0.5, 1, 2: the sensitivity band).
+# Strain-increment norm: the tensor norm of the Voigt increment with engineering shear,
+# sqrt(sum normal^2 + 1/2 sum gamma^2); an isochoric step of axial a has norm a sqrt(1.5).
+# Every step is classified elastic or plastic (DP / J2: the point on its yield surface after the
+# step; SANISAND: stage 0 = elastic, stage 1 = plastic; ElasticIsotropic: elastic). The elastic
+# per-call cost comes from every elastic step, the plastic one from the measure leg only.
 SANISAND_PARAMS = [264.32, 0.3129, 0.6944, 1.33090, 0.71, 0.027, 0.83, 0.45, 101.0, 0.005, 1.3,
                    0.968, 3.5, 0.05, 5.75, 12.5, 1100.0, 2.0]          # kPa (the fork's test deck)
 POINT_P_TARGET = 10.0e3                    # [Pa] the column's mean-stress level
 # isotropic strain per direction: p / (3 K) for the column's K (833 kPa); SANISAND (kPa):
 # about 2 p / (3 K(p)) with K(10 kPa) = 6e4 kPa (G ~ sqrt p), rounded
 POINT_E_CONF = {"elastic": 4.0e-3, "dp": 4.0e-3, "j2": 4.0e-3, "sanisand": 1.0e-4}
-# axial compression of the isochoric leg: DP needs q ~ 12 kPa at p = 10 kPa (3 G e = 58 kPa at
-# 5e-2); SANISAND keeps the fork deck's 5e-3
-POINT_E_AX = {"elastic": 5.0e-2, "dp": 5.0e-2, "j2": 5.0e-2, "sanisand": 5.0e-3}
+# axial strain of the pre-yield ramp: DP yields near 1.0e-2 at p = 10 kPa (q ~ 12 kPa, 3G = 1.15 MPa),
+# J2 near 1.7e-3; SANISAND is in its plastic stage from the first deviatoric step
+POINT_E_PRE = {"elastic": 2.0e-2, "dp": 2.0e-2, "j2": 2.0e-2, "sanisand": 1.0e-3}
 POINT_LAT = 0.5
 POINT_N_CONF = 50
-POINT_N_DEV = 200
+POINT_N_PRE = 50
+POINT_N_MEAS = 200
+POINT_DEFAULT_INCREMENT = 1.0e-5           # used only when no DP column ran (flagged in the result)
 _XY = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
+SQRT15 = math.sqrt(1.5)
 
 
-def point_series(e_conf, e_ax, n_conf=POINT_N_CONF, n_dev=POINT_N_DEV, lat=POINT_LAT):
+def strain_norm(d):
+    """Tensor norm of a Voigt strain increment with engineering shear (OpenSees nD order)."""
+    return math.sqrt(sum(x * x for x in d[:3]) + 0.5 * sum(x * x for x in d[3:6]))
+
+
+def point_series(e_conf, e_pre, a_meas, n_conf=POINT_N_CONF, n_pre=POINT_N_PRE,
+                 n_meas=POINT_N_MEAS, lat=POINT_LAT):
+    """The two Path factors (lateral, axial), multiplied by the sp magnitude -e_conf."""
     s_lat = [i / n_conf for i in range(n_conf + 1)]
     s_ax = list(s_lat)
-    for i in range(1, n_dev + 1):
-        s_lat.append(1.0 - lat * e_ax / e_conf * i / n_dev)
-        s_ax.append(1.0 + e_ax / e_conf * i / n_dev)
+    e_ax = [e_pre * i / n_pre for i in range(1, n_pre + 1)]
+    e_ax += [e_pre + a_meas * i for i in range(1, n_meas + 1)]
+    for e in e_ax:
+        s_lat.append(1.0 - lat * e / e_conf)
+        s_ax.append(1.0 + e / e_conf)
     s_lat.append(s_lat[-1])           # PathSeries returns 0 past its last point: hold it
     s_ax.append(s_ax[-1])
     return s_lat, s_ax
+
+
+def point_legs(mat, increment):
+    """[(leg, n_steps, stage, per-step increment norm)] and the measure leg's axial step."""
+    e_conf, e_pre = POINT_E_CONF[mat], POINT_E_PRE[mat]
+    a_meas = increment / SQRT15
+    return [("confine", POINT_N_CONF, 0, math.sqrt(3.0) * e_conf / POINT_N_CONF),
+            ("pre", POINT_N_PRE, 1, SQRT15 * e_pre / POINT_N_PRE),
+            ("measure", POINT_N_MEAS, 1, increment)], a_meas
 
 
 def point_material(mat):
@@ -271,8 +296,9 @@ def point_on_yield(mat, stress):
     return False
 
 
-def point_build(ops, mat):
-    e_conf, e_ax = POINT_E_CONF[mat], POINT_E_AX[mat]
+def point_build(ops, mat, increment):
+    e_conf, e_pre = POINT_E_CONF[mat], POINT_E_PRE[mat]
+    legs, a_meas = point_legs(mat, increment)
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     for k in range(2):
@@ -283,7 +309,7 @@ def point_build(ops, mat):
     for k in range(2):
         for j, (x, y) in enumerate(_XY):
             ops.fix(4 * k + j + 1, 1 if x == 0.0 else 0, 1 if y == 0.0 else 0, 1 if k == 0 else 0)
-    s_lat, s_ax = point_series(e_conf, e_ax)
+    s_lat, s_ax = point_series(e_conf, e_pre, a_meas)
     ops.timeSeries("Path", 1, "-dt", 1.0, "-values", *s_lat)
     ops.timeSeries("Path", 2, "-dt", 1.0, "-values", *s_ax)
     ops.pattern("Plain", 1, 1)
@@ -306,6 +332,7 @@ def point_build(ops, mat):
     ops.algorithm("Newton")
     ops.integrator("LoadControl", 1.0)
     ops.analysis("Static")
-    return {"e_conf": e_conf, "e_ax": e_ax, "lat": POINT_LAT, "n_conf": POINT_N_CONF,
-            "n_dev": POINT_N_DEV, "p_target_Pa": POINT_P_TARGET,
-            "deck": "tests/test_ladruno_sanisand.py _build_confined (stdBrick, 0 free DOF)"}
+    return {"e_conf": e_conf, "e_pre": e_pre, "lat": POINT_LAT, "measure_axial_step": a_meas,
+            "increment_norm_per_step": {leg: inc for leg, _, _, inc in legs},
+            "steps": {leg: n for leg, n, _, _ in legs}, "p_target_Pa": POINT_P_TARGET,
+            "deck": "tests/test_ladruno_sanisand.py _build_confined (stdBrick, 0 free DOF), 3 legs"}
