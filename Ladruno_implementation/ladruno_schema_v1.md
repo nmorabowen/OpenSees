@@ -885,8 +885,16 @@ keeps the step-2 rule: no stage may be torn.
 - `LadrunoReader`, which applies both rules.
 
 `validate()` checks **closed** files and refuses a killed one (`FILE-KILLED`). Read a killed
-file by these rules; do not validate it. The particle file's helpers in
-`tests/mpm_contracts.py` delegate to the same functions.
+file by these rules; do not validate it.
+
+**The MPM particle file** follows the same open steps and the same torn-last-stage clause.
+Its post-open crash rule is its own:
+- in `tests/mpm_contracts.py`, `open_particle_file` and `recover_particle_file` delegate the
+  three open steps to `open_ladruno` and `repair_copy`;
+- the torn-last-stage clause above is the same for both writers: skip a torn last stage after
+  step 1 or step 3, and refuse it after step 2;
+- the particle file's post-open crash rule (the `OFFSETS` rule, the `MODEL/PARTICLES`
+  registry, `particle_stage_report`) stays in [[232a_mpm_contracts]] §2.5.
 
 **Evidence:**
 - `Ladruno_scripts/ladruno_recorder_tests/recorder_crash_replay.py` is the exhaustive replay:
