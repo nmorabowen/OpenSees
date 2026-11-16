@@ -568,7 +568,9 @@ def m1_step(tree):
     phases["dc.setSize.soe"] = dcp["dc.setSize"] - graph - sym_in_setsize
     phases["dc.integrator"] = dcp["dc.integrator"]
     phases["dc.algorithm"] = dcp["dc.algorithm"]
-    phases["dc.other"] = t_dc - sum(dcp.values())
+    # symbolic run under domainChanged but outside dc.setSize is counted in "soe.symbolic"
+    # below, so it is taken out of the remainder here (review, PR #1089)
+    phases["dc.other"] = t_dc - sum(dcp.values()) - (sym_dc - sym_in_setsize)
     phases["soe.symbolic"] = sym_all              # wherever it ran (setSize or first solve)
     largest = max(phases, key=lambda p: phases[p]) if phases else None
     commit = sub(an, "commit")
@@ -611,7 +613,15 @@ def m1_run_summary(steps):
     for s in ok:
         for p, v in s["rebuild_phases_ns"].items():
             phases[p] = phases.get(p, 0.0) + v / n
-    ft = [s["formTangent_share_of_t_it"] for s in ok if s["formTangent_share_of_t_it"] is not None]
+    # formTangent / t_it as a ratio of sums over the timed steps (the document's form), not a
+    # mean of per-step ratios (review, PR #1089)
+    ft_num = sum(s["newton_ns"]["formTangent"] for s in ok)
+    ft_den = sum((s["t_it_ns"] or 0.0) * s["k"] for s in ok)
+    # R per rebuild cycle and per accepted sub-step: a cut harness step runs several cycles
+    # (one per prepare call) and several accepted sub-steps (review, PR #1089)
+    cycles = sum(s.get("attempts") or 1 for s in ok)
+    subs = sum(s.get("substeps") or 1 for s in ok)
+    t_rb_cycle = sum(s["t_rb_ns"] for s in ok) / cycles
     # the C-cheaper-first row: rebuild on steps whose connectivity changed against steps whose
     # did not (`mpm info connectivityChanges`); a rebuild of an unchanged graph is avoidable
     ch = [s for s in ok if s.get("connectivity_changed")]
@@ -634,4 +644,9 @@ def m1_run_summary(steps):
                                        / sum(s["t_rb_ns"] for s in ok)) if t_rb else None,
             "rebuild_phases_ns": phases,
             "largest_rebuild_phase": max(phases, key=lambda p: phases[p]) if phases else None,
-            "formTangent_share_of_t_it": (sum(ft) / len(ft)) if ft else None}
+            "formTangent_share_of_t_it": (ft_num / ft_den) if ft_den else None,
+            "rebuild_cycles": cycles, "accepted_substeps": subs,
+            "t_rb_per_cycle_ns": t_rb_cycle,
+            "R_per_cycle": (t_rb_cycle / t_it) if t_it else None,
+            "R_per_accepted_substep": ((sum(s["t_rb_ns"] for s in ok) / subs) / t_it)
+                                      if t_it else None}
