@@ -438,3 +438,32 @@ def test_particle_group_refuses_a_repeated_id(synth_particles):
         ids[1] = ids[0]
         ds[...] = ids
     assert any(p.startswith("C2-ID") for p in lf.validate(synth_particles))
+
+
+def _torn_last_stage_file(path):
+    """Two stages; the last one's streaming result is unreadable (its STEP is a group, as a
+    stage torn while laid out reads), the first one is whole."""
+    import h5py
+    with h5py.File(path, "w") as f:
+        for sid, torn in ((1, False), (2, True)):
+            g = f.create_group(f"MODEL_STAGE[{sid}]/RESULTS/ON_NODES/DISPLACEMENT")
+            g.create_dataset("DATA", data=np.zeros((3, 2, 2)))
+            g.create_dataset("TIME", data=np.arange(3.0))
+            if torn:
+                g.create_group("STEP")
+            else:
+                g.create_dataset("STEP", data=np.arange(3, dtype="<i4"))
+
+
+def test_stage_report_allows_a_torn_last_stage_only_outside_step_2(tmp_path):
+    """Schema §7b.2 (aligned with 232a §2.5): a torn LAST stage is skipped after step 1 or
+    step 3, and is corruption after step 2 (a file killed with SWMR armed)."""
+    import h5py
+    p = str(tmp_path / "torn.ladruno")
+    _torn_last_stage_file(p)
+    with h5py.File(p, "r") as f:
+        rep = lf.stage_report(f)                      # a plain open: step 1
+        assert rep[0] == {"stage": "MODEL_STAGE[1]", "committed": 3}
+        assert rep[1]["torn"] is True
+        with pytest.raises(ValueError, match="SWMR armed"):
+            lf.stage_report(f, swmr_armed=True)       # step 2: refused

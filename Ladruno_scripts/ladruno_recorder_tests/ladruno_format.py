@@ -529,21 +529,30 @@ def committed_steps(stage_grp) -> int | None:
     return n
 
 
-def stage_report(f) -> list[dict]:
-    """Schema §7b.2 for every MODEL_STAGE of an open file, in order:
+def stage_report(f, swmr_armed: bool | None = None) -> list[dict]:
+    """Schema §7b.2 for every MODEL_STAGE of a file opened by the reader rule, in order:
     ``{"stage": name, "committed": T'}`` (``committed_steps``; None for a stage with no
     streaming result), or ``{"stage": name, "torn": True, "error": msg}`` for the LAST
-    stage when it will not open or read: a kill fell while it was being laid out, and it
-    holds no committed step. This can follow ANY step of the reader rule, a plain open
-    included (sec2 writes WRITE_ACCESS to the superblock only when it next flushes it, so
-    a layout step's flags can still read 0x00). An earlier stage that will not open is
+    stage when it will not open or read.
+
+    That torn last stage is accepted only after step 1 (a plain open) or step 3 (the
+    repaired copy of a 0x01 file): a kill fell while the stage was being laid out, and it
+    holds no committed step. A file that needed step 2 (``swmr_armed``: flags 0x05; by
+    default ``f.swmr_mode``, the SWMR-read open) was killed with SWMR armed, after its last
+    layout completed: there every stage, the last included, must read (as 232a §2.5 for
+    the particle file). Any stage that will not open where the rule does not allow it is
     corruption: raises ``ValueError``."""
+    if swmr_armed is None:
+        swmr_armed = bool(getattr(f, "swmr_mode", False))
     report = []
     names = sorted((k for k in f if k.startswith("MODEL_STAGE[")), key=_stage_id)
     for i, name in enumerate(names):
         try:
             report.append({"stage": name, "committed": committed_steps(f[name])})
         except Exception as e:  # noqa: BLE001
+            if swmr_armed:
+                raise ValueError(f"{f.filename}: {name} will not open in a file killed with "
+                                 f"SWMR armed (no layout was running): corruption ({e})") from e
             if i < len(names) - 1:
                 raise ValueError(f"{f.filename}: {name} will not open but is not the last "
                                  f"stage: corruption ({e})") from e
@@ -554,9 +563,12 @@ def stage_report(f) -> list[dict]:
 def recover_ladruno(src, dst) -> list[dict]:
     """Reader rule step 3 for a recorder file: ``repair_copy(src, dst)``, then the
     ``stage_report`` of the copy."""
+    flags = superblock_flags(src)
     repair_copy(src, dst)
     with h5py.File(dst, "r") as f:
-        return stage_report(f)
+        # a repaired copy of a file killed with SWMR armed (0x05, the h5wasm path) is a
+        # step-2 file: no stage may be torn
+        return stage_report(f, swmr_armed=(flags == 0x05))
 
 
 def iter_step_slices(grp, n: int | None = None):
