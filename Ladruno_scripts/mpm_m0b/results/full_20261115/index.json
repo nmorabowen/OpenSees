@@ -1,0 +1,133 @@
+{
+ "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\dist\\bin\\opensees.pyd",
+ "smoke": false,
+ "plan": "full",
+ "items": {
+  "m1_pardiso_renormalize": {
+   "script": "m1",
+   "args": [
+    "--solvers",
+    "Pardiso",
+    "--treatments",
+    "renormalize",
+    "--N",
+    "1000,10000,100000",
+    "--modes",
+    "qs,transient",
+    "--mats",
+    "elastic,dp",
+    "--repeats",
+    "3"
+   ],
+   "rc": 0,
+   "wall_s": 14098.551810026169,
+   "dir": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\Ladruno_scripts\\mpm_m0b\\results\\full_20261115\\m1_pardiso_renormalize"
+  },
+  "m1_umfpack_renormalize": {
+   "script": "m1",
+   "args": [
+    "--solvers",
+    "UmfPack",
+    "--treatments",
+    "renormalize",
+    "--N",
+    "1000,10000,100000",
+    "--modes",
+    "qs,transient",
+    "--mats",
+    "elastic,dp",
+    "--repeats",
+    "3",
+    "--repeats-by-N",
+    "100000=1",
+    "--timeout-s",
+    "2700"
+   ],
+   "rc": 0,
+   "wall_s": 6323.973678827286,
+   "dir": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\Ladruno_scripts\\mpm_m0b\\results\\full_20261115\\m1_umfpack_renormalize"
+  },
+  "m1_pardiso_ghost": {
+   "script": "m1",
+   "args": [
+    "--solvers",
+    "Pardiso",
+    "--treatments",
+    "ghost",
+    "--N",
+    "1000,10000,100000",
+    "--modes",
+    "qs,transient",
+    "--mats",
+    "elastic,dp",
+    "--repeats",
+    "3",
+    "--repeats-by-N",
+    "100000=1"
+   ],
+   "rc": 0,
+   "wall_s": 4717.10528588295,
+   "dir": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\Ladruno_scripts\\mpm_m0b\\results\\full_20261115\\m1_pardiso_ghost"
+  },
+  "m1_pardiso_exclude": {
+   "script": "m1",
+   "args": [
+    "--solvers",
+    "Pardiso",
+    "--treatments",
+    "exclude",
+    "--N",
+    "1000,10000",
+    "--modes",
+    "qs,transient",
+    "--mats",
+    "elastic,dp",
+    "--repeats",
+    "1"
+   ],
+   "rc": 0,
+   "wall_s": 77.82351851463318,
+   "dir": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\Ladruno_scripts\\mpm_m0b\\results\\full_20261115\\m1_pardiso_exclude"
+  },
+  "m2": {
+   "script": "m2",
+   "args": [
+    "--repeats",
+    "3"
+   ],
+   "rc": 0,
+   "wall_s": 90.0497829914093,
+   "dir": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\Ladruno_scripts\\mpm_m0b\\results\\full_20261115\\m2"
+  },
+  "m3": {
+   "script": "m3",
+   "args": [
+    "--N",
+    "1000,10000,100000",
+    "--modes",
+    "A,F",
+    "--mats",
+    "elastic,dp",
+    "--repeats",
+    "2"
+   ],
+   "rc": 0,
+   "wall_s": 153.20644068717957,
+   "dir": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\Ladruno_scripts\\mpm_m0b\\results\\full_20261115\\m3"
+  },
+  "m4": {
+   "script": "m4",
+   "args": [
+    "--cases",
+    "r1,r2,r3",
+    "--cutoffs",
+    "5e-2,1e-6,1e-10",
+    "--repeats",
+    "1"
+   ],
+   "rc": 0,
+   "wall_s": 41.99479937553406,
+   "dir": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\Ladruno_scripts\\mpm_m0b\\results\\full_20261115\\m4"
+  }
+ }
+}

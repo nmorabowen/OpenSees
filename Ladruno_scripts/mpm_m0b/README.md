@@ -202,10 +202,13 @@ Material share (deep) = Σ `mpm.f.material` rows / Σ `step` wall; non-material 
   same-class steps of one leg as one profiler run. The **plastic** per-call cost is taken from the
   `measure` leg only; the elastic one from every elastic step;
 - *the strain increment per call*: the `measure` leg's increment norm is matched to the DP
-  column's **median per-step particle strain-increment norm** (`strain_increment_norm.median`:
-  per particle, the norm of epsHat(n+1) − epsHat(n) with engineering shear,
-  √(Σ ε_ii² + ½ Σ γ²), over one unprofiled step right after the timed window; the median over
-  the yielded particles is recorded beside it), from the largest N whose DP coarse column ran.
+  column's **median per-step strain-increment norm over its yielded particles**
+  (`strain_increment_norm.median_yielded`: per particle, the norm of epsHat(n+1) − epsHat(n)
+  with engineering shear, √(Σ ε_ii² + ½ Σ γ²), over one unprofiled step right after the timed
+  window), from the largest N whose DP coarse column ran; `--increment` overrides it. The
+  all-particle median is recorded too but never used: in a mostly-at-rest column it is ~0
+  (8.8e-12 at 10⁵ in the full run of 2026-11-15, whose driver legs were measured at it and had
+  to be re-run).
   An isochoric step of axial strain a has norm a √1.5. Every driver material also runs at ×0.5
   and ×2 of that increment (`driver_plastic_per_call_band_ns`, `sanisand_over_dp_ratio_band`):
   a per-call cost that moves with the increment is an increment artefact, one that does not is

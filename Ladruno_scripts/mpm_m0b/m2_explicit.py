@@ -266,14 +266,22 @@ def tag_of(c, rep):
 
 
 def matched_increment(summary):
-    """The DP column's median per-step particle strain-increment norm, at the largest N that
-    ran (coarse run, median over repeats). None when no DP column ran."""
+    """The DP column's median per-step strain-increment norm over its YIELDED particles, at the
+    largest N that ran (coarse run, median over repeats). None when no DP column ran.
+
+    Not the all-particle median: in a mostly-at-rest column that median is ~0 (8.8e-12 at 10^5
+    in the 2026-11-15 full run, where 98 % of the particles were at rest in the timed window), and
+    a material whose cost grows with the increment (SANISAND) is then measured at a meaningless
+    increment. The all-particle median is kept in the return as `all_particles`, labelled."""
     rows = [s for s in summary if s["config"]["kind"] == "column" and s["config"]["mat"] == "dp"
-            and s["config"]["profile"] == "coarse" and s.get("strain_increment_norm_median")]
+            and s["config"]["profile"] == "coarse" and s.get("strain_increment_norm_median_yielded")]
     if not rows:
         return None, None
     s = max(rows, key=lambda s: s["config"]["N"])
-    return s["strain_increment_norm_median"]["median"], f"DP column, N = {s['config']['N']}, coarse"
+    allp = (s.get("strain_increment_norm_median") or {}).get("median")
+    return (s["strain_increment_norm_median_yielded"]["median"],
+            f"DP column, N = {s['config']['N']}, coarse: median over the yielded particles "
+            f"(the all-particle median, NOT used: {allp})")
 
 
 def main():
