@@ -28,9 +28,10 @@ Data: `Ladruno_scripts/mpm_m0b/results/full_20261115/` (the aggregates `*/m*_res
   - Per run, over the timed steps: t_it = Σ iteration time / Σ k, and f = Σ t_rb / Σ wall.
   - Across repeats: the median, with the spread (max − min) / median in parentheses. n = repeats that produced data.
 - **Normalisation of cut steps** (the orchestrator's instruction, 2026-11-16). One harness step (`mpm analyze 1 dt`) that fails and is cut runs several rebuild cycles: one `Domain::domainChange()` per attempt, plus the accepted sub-steps.
-  - The brief defines R, k and f per accepted step, and t_rb as the cost of one rebuild cycle.
-  - So the **headline R is per rebuild cycle**: (Σ t_rb / Σ `domainChanges`) / t_it. The aggregate's per-harness-step R stands next to it, labelled.
-  - On a step without a cut the two are identical.
+  - The brief does not define how a cut step is normalised. It defines k per accepted step, and t_rb as "everything a mode-A step spends because the Domain changed".
+  - **The per-rebuild-cycle normalisation was the orchestrator's choice, made after the run (2026-11-16).** The headline R is (Σ t_rb / Σ `domainChanges`) / t_it.
+  - Two other readings are given beside it, labelled: the aggregate's **R per harness step** (t_rb summed over every attempt of `mpm analyze 1 dt`), and **R per accepted sub-step** (Σ t_rb / Σ accepted sub-steps, over t_it).
+  - On a step without a cut, all three are identical. No row depends on the choice: R ≤ 1 already fails on cut-free cells (10⁴, all four cases).
   - f is the share of all step time spent rebuilding, failed attempts included. That is the cost a user pays, and it is reported as is.
 - **Models** (README). M1 and M3 mode A use a laterally confined 3D soft block (1 m cube, ppc 2, uGIMP, n = 5 / 11 / 23 cells: N = 1,000 / 10,648 / 97,336), in two loadings:
   - QS: a `LoadControl` ramp to 0.75 g in 8 steps.
@@ -57,14 +58,14 @@ Data: `Ladruno_scripts/mpm_m0b/results/full_20261115/` (the aggregates `*/m*_res
 
 The failures, as the orchestrator decided to treat them:
 
-- The **10⁵ QS DP** block reaches its limit load inside the timed window, at load factor ≈ 0.68.
-  - PARDISO renormalize r0 and r1, and PARDISO ghost r0, fail at step 7 after 4 cuts. Their accepted timed steps 2–6 are the data, labelled **"partial: limit load reached at step 7"**.
+- The **10⁵ QS DP** block fails to converge at step 7 (zero-based step index; load factor ≈ 0.68). Newton stalls just above the tolerance at 10⁵ only: the attempts at the smaller cut increments run 50 iterations and end at 1.1e-6 to 6.1e-6 against 1e-6 (renormalize; ghost 1.05e-6 to 1.0e-5). The first two attempts of the failing step, at the full and half increment, end at 1.2e-3 to 7.6e-3. N = 10³ and 10⁴ pass the same load, in 10 and 21 iterations at their last step. This is not a limit load: a confined block has none (`Ladruno_scripts/mpm_m0b/README.md:107`).
+  - PARDISO renormalize r0 and r1, and PARDISO ghost r0, fail at step 7 after 4 cuts. Their accepted timed steps 2–6 are the data, labelled **"partial: Newton stalls at step 7 (10⁵ only)"**.
   - **PARDISO renormalize r2 crashed** during the cut 3 → 4 retry, with `Matrix::operator*(Vector): incompatible sizes` (end of its log), and wrote no result. The orchestrator is filing it as its own issue. The default 10⁵ QS DP cell therefore has **2 partial repeats, not 3**.
   - **UmfPack renormalize QS DP 10⁵**: a timeout at 2700 s, recorded as a timeout. UmfPack decides nothing alone.
 
 ## M1 — the rebuild against one Newton iteration
 
-Columns: k = Newton iterations per harness step (all attempts); t_rb per rebuild cycle; R per cycle (headline) and per harness step (the aggregate's); f; the symbolic share of t_rb; formTangent's share of t_it; retries per repeat.
+Columns: k = Newton iterations per harness step (all attempts); t_rb per rebuild cycle; R per cycle (headline) and per harness step (the aggregate's); f; the symbolic share of t_rb; formTangent's share of t_it; retries per repeat. Both shares are ratios of sums over the timed steps. The aggregate's own `formTangent_share_of_t_it` field is a per-step mean and differs where k varies (10⁵ QS DP: 0.760 against 0.68 here); both are above 0.30.
 
 ### M1 — PARDISO, renormalize (default)
 
@@ -79,7 +80,7 @@ Columns: k = Newton iterations per harness step (all attempts); t_rb per rebuild
 | 10,000 | transient elastic | 3 | 6 (0 %) | 260.6 (0 %) | 224.9 (2 %) | **1.16 (2 %)** | 1.16 (2 %) | 0.161 (2 %) | 0.1 (2 %) | 0.87 (1 %) | 0/0/0 |  |
 | 10,000 | transient dp | 3 | 7.67 (2 %) | 486.4 (1 %) | 453.1 (1 %) | **1.07 (0 %)** | 1.07 (0 %) | 0.122 (2 %) | 0.088 (1 %) | 0.86 (0 %) | 0/0/0 |  |
 | 100,000 | qs elastic | 3 | 6.33 (0 %) | 4,852.6 (0 %) | 4,034.7 (5 %) | **1.2 (5 %)** | 1.2 (5 %) | 0.159 (5 %) | 0.081 (1 %) | 0.77 (4 %) | 0/0/0 |  |
-| 100,000 | qs dp | 2 | 26.6 (0 %) | 5,572.6 (2 %) | 5,920.0 (4 %) | **0.941 (1 %)** | 1.32 (1 %) | 0.0472 (1 %) | 0.079 (4 %) | 0.68 (2 %) | 1/1 | **partial**: r0, r1 limit load reached at step 7 (steps 2–6 used); r2 crashed (`Matrix::operator*(Vector): incompatible sizes`), no result |
+| 100,000 | qs dp | 2 | 26.6 (0 %) | 5,572.6 (2 %) | 5,920.0 (4 %) | **0.941 (1 %)** | 1.32 (1 %) | 0.0472 (1 %) | 0.079 (4 %) | 0.68 (2 %) | 1/1 | **partial**: r0, r1 Newton stalls at step 7, just above tolerance (steps 2–6 used); r2 crashed (`Matrix::operator*(Vector): incompatible sizes`), no result |
 | 100,000 | transient elastic | 3 | 6.83 (0 %) | 4,002.2 (0 %) | 3,494.6 (1 %) | **1.15 (1 %)** | 1.15 (1 %) | 0.143 (0 %) | 0.083 (2 %) | 0.82 (0 %) | 0/0/0 |  |
 | 100,000 | transient dp | 3 | 37.7 (0 %) | 6,208.8 (3 %) | 5,989.9 (5 %) | **1.02 (5 %)** | 2.37 (5 %) | 0.0589 (5 %) | 0.078 (3 %) | 0.71 (3 %) | 4/4/4 |  |
 
@@ -113,7 +114,7 @@ Columns: k = Newton iterations per harness step (all attempts); t_rb per rebuild
 | 10,000 | transient elastic | 3 | 6 (0 %) | 412.7 (0 %) | 361.7 (0 %) | **1.14 (0 %)** | 1.14 (0 %) | 0.159 (0 %) | 0.086 (3 %) | 0.88 (0 %) | 0/0/0 |  |
 | 10,000 | transient dp | 3 | 7.67 (0 %) | 546.8 (0 %) | 502.7 (1 %) | **1.09 (0 %)** | 1.09 (0 %) | 0.124 (0 %) | 0.085 (1 %) | 0.86 (1 %) | 0/0/0 |  |
 | 100,000 | qs elastic | 1 | 6.33 | 5,110.8 | 4,227.2 | **1.21** | 1.21 | 0.16 | 0.083 | 0.77 | 0 |  |
-| 100,000 | qs dp | 1 | 15 | 4,802.5 | 5,094.3 | **0.943** | 0.943 | 0.0591 | 0.085 | 0.72 | 0 | **partial**: limit load reached at step 7 (steps 2–6 used) |
+| 100,000 | qs dp | 1 | 15 | 4,802.5 | 5,094.3 | **0.943** | 0.943 | 0.0591 | 0.085 | 0.72 | 0 | **partial**: Newton stalls at step 7, just above tolerance (steps 2–6 used) |
 | 100,000 | transient elastic | 1 | 6.83 | 4,906.8 | 4,465.2 | **1.1** | 1.1 | 0.138 | 0.079 | 0.78 | 0 |  |
 | 100,000 | transient dp | 1 | 37.8 | 6,374.1 | 6,055.9 | **1.05** | 2.46 | 0.0608 | 0.08 | 0.73 | 4 |  |
 
@@ -147,12 +148,13 @@ Every cell with retries > 0, in any item. "test" means a failed attempt that ran
 So at 10⁵ the large aggregate R values (2.3–2.5 transient DP; 1.31–1.33 QS DP) come from the cuts:
 
 - One harness step runs 2–3 rebuild cycles: a failed attempt, then two accepted halves. Normalised per rebuild cycle, **R is 0.99–1.05** (transient DP) and **0.94–0.95** (QS DP).
-- The rebuild cycle itself is slightly dearer on a cut step: 5.5–6.4 s against 4.0–4.3 s. t_it rises too, from 3.4–3.7 s to 6.0 s per iteration in a cut step.
+- The rebuild cycle on these late steps is **30–60 % dearer**: 5.5–6.4 s against 4.0–4.3 s. t_it rises too, from 3.4–3.7 s to 6.0 s per iteration. The cut is not the cause. The uncut QS elastic block shows the same rise at the same stage (10⁵, step 6: `dc.s.graph` 1.93 → 2.97 s, formTangent 2.73 → 3.76 s per call, private memory 2,302 → 3,606 MB). Support growth causes both (see "Steps with and without a connectivity change").
+- **R per accepted sub-step** (the third reading): transient DP 10⁵ **1.42** (1.39–1.46), QS DP 10⁵ 1.10.
 - Transient DP k: 37.7 per harness step, but 2.6–12.4 per accepted sub-step. The failed attempts take 100 iterations plus two refusals.
 
-### QS DP at 10⁵: with and without the near-collapse step 6
+### QS DP at 10⁵: with and without step 6 (the last accepted step before the stall)
 
-Step 6 is kept in the headline numbers, as instructed. Its iterations (37 in the accepted attempt, 103 in the harness step, 46 in ghost) pull f down.
+Step 6 is kept in the headline numbers, as instructed. Its iterations (37 in the accepted attempt, 103 in the harness step, 46 in ghost) pull f down. They come from Newton approaching the stall of step 7, not from a limit load (see Pinned conditions).
 
 | item | run | timed steps used | R per cycle | f | k per harness step | R per cycle without step 6 | f without step 6 | k without step 6 | step 6: iterations (testIter), retries | failed step 7: cuts, iterations |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -280,13 +282,14 @@ Step 6 is kept in the headline numbers, as instructed. Its iterations (37 in the
 | pardiso_exclude | 10,000 | transient elastic | 4/2 | 261.1 | 256.0 | 1.02 | 0.1 |
 | pardiso_exclude | 10,000 | transient dp | 4/2 | 597.7 | 257.9 | 2.32 | 0.086 |
 
-- **The full rebuild runs whether or not the connectivity changed.** For elastic, t_rb per cycle on unchanged steps equals t_rb on changed steps within noise (ratio 0.98–1.05) at 10³, 10⁴ and 10⁵, in every item. The rebuild does not look at whether anything moved. This is an observation; it triggers no row, because f ≤ 0.25.
+- **The full rebuild runs whether or not the connectivity changed.** On the default treatment, for elastic, t_rb per cycle on unchanged steps equals t_rb on changed steps within noise (ratio 0.98–1.05) at 10³, 10⁴ and 10⁵. Not in every item: ghost transient elastic gives 1.62 (10⁴) and 1.27 (10⁵), ghost 10⁴ QS elastic 1.09, exclude 1.06–1.07. In those items, too, the larger values sit on the late steps. The rebuild does not look at whether anything moved. This is an observation; it triggers no row, because f ≤ 0.25.
 - **Why DP's t_rb on changed steps is 1.5–2.7× its unchanged t_rb** (QS DP 10³: 31.7 ms against 14.7), with no retries. The phase breakdown shows the cause, but the cause is the step index, not the connectivity change.
   - DP's changed steps are its late, plastic steps. In QS DP 10³ r0, t_rb is 14.6–16.4 ms at steps 2–5 and 39.5–40.1 ms at steps 6–7.
   - The jump is in the phases whose cost grows with the size of the DOF graph: `dc.s.graph` 5.8 → 16.7 ms (×2.9), `dc.numberDOF` 4.2 → 11.8 (×2.8), `dc.setSize.soe` 0.6 → 2.4 (×4), `dc.handle` 0.3 → 1.4 (×4).
   - The phases that are linear in the particle–node pairs grow less: `mpm.a.support` 0.8 → 1.4 (×1.75), `mpm.a.repoint` 0.9 → 2.0.
   - That pattern fits particles whose uGIMP support grows from 8 or 12 nodes to 18 or 27 as the plastic block deforms. The graph's edge count grows with the square of the element's DOFs (a ×1.75 support gives about ×3 in edges). An element with more than 21 support nodes (numDOF > 64) also gets its own tangent in `FE_Element` instead of the pool (`dc.handle`).
-  - Elastic steps at the same load do not jump. The per-step support histogram was not recorded in M1, so this is an inference from the phase pattern, not a measurement.
+  - **Elastic runs jump too, later.** At 10⁵ QS elastic step 6, all three repeats show it: `dc.s.graph` 1.93 → 2.97 s, `dc.numberDOF` 1.16 → 1.72 s, formTangent 2.73 → 3.76 s per call, private 2,302 → 3,606 MB. Ghost transient elastic jumps as well (its changed/unchanged ratio of 1.62 and 1.27). So the late cost jumps come from support growth as the block deforms, in elastic and DP runs alike, with or without a cut. DP reaches that state earlier.
+  - The support histogram per step was not recorded in M1, so the mechanism is an inference from the phase pattern and the memory jump. M3's profiler counts support it (see M3).
 - The **symbolic share of t_rb on connectivity-changed steps**, default: 0.10–0.18 at 10³, 0.085–0.10 at 10⁴, **0.078–0.082 at 10⁵**.
 
 ### Scaling fits (default)
@@ -304,7 +307,7 @@ Step 6 is kept in the headline numbers, as instructed. Its iterations (37 in the
 | 10,000 | 1.26 (qs elastic) | 1.26 (qs elastic) | 0.173 (qs elastic) |
 | 100,000 | 1.2 (qs elastic) | 2.37 (transient dp) | 0.159 (qs elastic) |
 
-Worst-case slope of R per cycle: 0.0133 (points 1.13, 1.26, 1.2); per harness step: 0.161 (points 1.13, 1.26, 2.37).
+Slope of the worst-case envelope (the worst R at each N): 0.0133 per cycle (points 1.13, 1.26, 1.2) and 0.161 per harness step (points 1.13, 1.26, 2.37). **The worst slope of any single case per cycle is 0.030** (transient elastic). Per accepted sub-step the slopes are 0.013 / 0.019 / 0.030 / **0.077** (QS elastic / QS DP / transient elastic / transient DP; points for transient DP 0.997, 1.073, 1.424). All are ≤ 0.1.
 
 ## M1-t — empty-node treatments
 
@@ -337,7 +340,7 @@ Observable: the top-layer settlement, after the last step that both runs accepte
 | 10,000 | transient dp | -0.144495 | +0.293 % | 4.510 |
 
 - Exclude gives the same answer as ghost at 10³: the same particles, the same support. At 10⁴ transient it differs by 0.3–0.45 %.
-- Ghost's step costs more at 10⁴ (13–17 %). It keeps every support node, so the graph is larger: its t_rb per cycle on changed steps is 1.6× renormalize's at 10⁴ transient elastic.
+- Ghost's step costs more at 10⁴ (13–17 %). It keeps every support node, so the graph is larger: its t_rb per cycle on changed steps is 1.82× renormalize's at 10⁴ transient elastic (473.0 against 259.8 ms).
 
 ## M2 — explicit throughput, material share, the SANISAND projection
 
@@ -359,7 +362,7 @@ Observable: the top-layer settlement, after the last step that both runs accepte
 | 100,000 | elastic | default | 3+3 | 1,370,607 (0 %) | 1,377,515 (1 %) | 730 (0 %) | 0.0906 (2 %) | 0.909 (0 %) | 72.9 (3 %) | — |
 
 - **The default-threads elastic row equals the 1-thread row** (1.37 against 1.38 × 10⁶ at 10⁵). Mode F's particle loop is serial in v1, so threads change nothing.
-- **What the DP and J2 columns measure at large N.** The yield fraction over the timed window (the DP column's `yield_fraction_timed_mean`) is **0.389 at 10³, 0.071 at 10⁴ and 0.017 at 10⁵**. In 25 steps of Δt = 0.25 Δt_c, a column 36 cells high hardly starts to collapse. So **the 10⁵ DP and J2 throughputs are mostly elastic-branch throughputs**: 98 % of the DP particles never yield in the window, and J2 is the same (0.042). **The N representative of a collapsing column is 10³** (39 % of the particles yielding).
+- **What the DP and J2 columns measure at large N.** The yield fraction over the timed window (the DP column's `yield_fraction_timed_mean`) is **0.389 at 10³, 0.071 at 10⁴ and 0.017 at 10⁵**. In 25 steps of Δt = 0.25 Δt_c, a column 36 cells high hardly starts to collapse. So **the 10⁵ DP and J2 throughputs are mostly elastic-branch throughputs**: 96.6 % of the DP particles never yield in the window (end yield fraction 0.0343; the window mean is 0.017), and J2 is the same (0.042). **The N representative of a collapsing column is 10³** (39 % of the particles yielding).
   - The DP material cost per particle-step reflects this: 1,036 ns at 10³, 811 at 10⁴, 755 at 10⁵. The driver's DP cost is 661 ns per elastic call and 1,792 ns per plastic call.
 - **Non-material share, elastic, 10⁵, 1 thread: 0.910** (spread 0 %). It is 0.937 at 10³ and 0.916 at 10⁴.
 
@@ -386,7 +389,7 @@ Observable: the top-layer settlement, after the last step that both runs accepte
 
 **The defective first measurement** (kept for the record; labelled defective).
 
-- In the full run, `matched_increment()` matched the driver to the DP column's median over **all** particles at the largest N. At 10⁵ that median is 8.8e-12, because 98 % of the column is at rest in the timed window. The driver legs were measured at 8.8e-12 (band 4.4e-12 / 1.8e-11), which gave:
+- In the full run, `matched_increment()` matched the driver to the DP column's median over **all** particles at the largest N. At 10⁵ that median is 8.8e-12, because most of the column is at rest in the timed window (yield fraction 0.017 on average, 0.034 at its end). The driver legs were measured at 8.8e-12 (band 4.4e-12 / 1.8e-11), which gave:
   - SANISAND plastic 7,270 / 7,140 / 6,996 ns, so SANISAND/DP = 4.03 / 3.96 / 3.83;
   - DP 1,802 ns, flat;
   - the SANISAND projection of `m2/m2_results.json` (`projection`): 7,946 ns per particle-step, about 126,000 particle-steps/s.
@@ -449,10 +452,23 @@ Where they disagree:
    - The SOE has 0.39 equations per particle, so its CSR matrix is about 2 kB per particle at 3D GIMP's stencil. The factor's fill would be most of the rest. That is an inference: MKL's memory is not itemised.
    - The **growth from step 1 to step 2 (+4.3 kB per particle)** is in the same unattributed share: the second rebuild's factor, or allocator retention.
 2. **The FE_Element's own tangent is the largest counted item in mode A: 2.0 kB per particle.** That is 52 kB × the 3.8 % of particles with 27 support nodes.
-   - The profiler's `-memory` window counts only 1.33 kB per particle of `Matrix` storage in step 1, less than the count's 2.0 kB. I cannot reconcile that from the data.
-   - The share of 27-node particles grows as a body deforms (see the DP phase pattern in M1), so this item grows with deformation.
+   - This reconciles with the profiler. An FE_Element owns an 81×81 tangent (52,488 B) once numDOF > 64 (`FE_Element.cpp:188-219`). The `-memory` window holds 115.75 MB of `Matrix` storage after step 1 (about 2,205 own tangents, 1.33 kB per particle by the slope). Step 2 adds 80.4 MB (about 1,532 more): 3,737, against the 3,729 elements with 27 nodes in the histogram. The histogram, and with it the 2.0 kB, is taken after step 2; the slope, after step 1.
+   - The share of 27-node particles grows as the block deforms, and this item grows with it (below).
 3. **The DP material copy:** the measured build slope difference DP − elastic is 2,538 B, against 2,048 B counted. DruckerPrager3D holds about 490 B more than its header count.
 4. **Mode F:** the count is 14–16 % short. That is allocator slack and the id registry (`unordered_set`), not modelled.
+
+**The same quantity later in the run.** The M1 runs of the same block record private bytes after every step. Their slope (10,648 → 97,336, default treatment, median of the repeats), in kB per particle:
+
+| case | step 0 (= M3's "after the first step") | steps 1–5 | late steps |
+|---|---|---|---|
+| QS elastic | 17.9 | 22.3–22.8 | **37.5** (steps 6–7) |
+| QS DP | 20.5 | 24.9–25.2 | **39.0** (step 6) |
+| transient elastic | 18.0 | 21.3–22.6 | 20.8–21.6 (steps 6–7: no jump) |
+| transient DP | 20.5 | 24.7–25.2 (steps 1–3) | **37.5–39.3** (steps 4–7) |
+
+- **Cause.** The jump of about +15 kB per particle happens at the step where `dc.s.graph`, `dc.numberDOF` and formTangent jump (M1). It is the same +1.3–1.4 GB at 10⁵ under UmfPack, so it is not PARDISO's factor. It fits elements whose support grows to 27 nodes and which then own a 52,488 B tangent each (numDOF 81 > 64, `FE_Element.cpp:188-219`). Roughly 29 % more particles would cross into that state.
+- **Bound.** If the whole jump were own tangents, they would hold (0.29 + 0.038) × 52.5 kB ≈ 17 kB of the 37.5 kB: **at most about 46 %**.
+- **The pre-registered instant is the model's minimum.** "After the first step" is the state with the smallest supports: particles start on a GIMP support boundary and the block deforms in one direction.
 
 ## M4 — the 232f data owed (cantilever QS, UmfPack, renormalize)
 
@@ -468,7 +484,7 @@ Where they disagree:
 | r3 | 10,240 | 1e-6 | 4 | 5 (5 cuts) | 5 6 6 6 | — |
 | r3 | 10,240 | 1e-10 | 3 | 4 (5 cuts) | 5 15 6 | — |
 
-- **The tip at the small cutoffs, against 5e-2, at the last step both reached.**
+- **The tip at the small cutoffs, against 5e-2, at the last step both reached.** For every overlapping step, see "Applying the pre-registered table", M4: the largest difference is at step 2.
 
   | case | step | 5e-2 | 1e-6 | 1e-10 |
   |---|---|---|---|---|
@@ -478,7 +494,7 @@ Where they disagree:
   | r3 | 3 | −0.3668 | — | −0.3768 (+2.7 %) |
 
   At no resolution does renormalize converge through the ramp at 1e-6 or 1e-10.
-- **The 5e-2 tips reproduce 232f** (r1 −2.37476) and converge toward the FE reference (r3 −2.3963).
+- **The 5e-2 tips reproduce 232f** (r1 −2.37476). The series −2.3748, −2.3876, −2.3963 passes the FE hypo value −2.3917 (`tests/mpm_implicit_cases.txt:130`; EICR −2.4046) between r2 and r3.
 - **formTangent's share of t_it.**
   - Cantilever (2D, UmfPack): 0.43–0.49 at 5e-2.
   - **At 10⁵ (M1, 3D, the default PARDISO): 0.68 (QS DP) – 0.82 (transient elastic).** With UmfPack at 10⁵: 0.39–0.48.
@@ -500,23 +516,27 @@ This is a proposal; the orchestrator applies the table. Each item quotes the rul
   | 10⁵ | **1.20**, QS elastic (spread 5 %) | **0.159**, QS elastic |
 
   The aggregate's per-harness-step R, labelled, is worst at 10⁵ for transient DP: 2.37, from cut steps.
-- **Slope** of the worst-case R per cycle against N: **0.013** (points 1.13, 1.26, 1.20). Per mode and material: 0.013 (QS elastic), −0.014 (QS DP), 0.030 (transient elastic), 0.004 (transient DP). On the per-harness-step R it would be 0.16, driven by the cut steps at 10⁵.
+- **Slope** of R against N, per rebuild cycle: **worst single case 0.030** (transient elastic). By case: 0.013 (QS elastic), −0.014 (QS DP), 0.030 (transient elastic), 0.004 (transient DP); the worst-case envelope gives 0.013. Per accepted sub-step the worst is 0.077 (transient DP). Per harness step it is 0.188 (transient DP, envelope 0.16), driven by the cut steps at 10⁵.
 - **Symbolic share of t_rb on connectivity-changed steps:** 0.078–0.082 at 10⁵ (≤ 0.18 at any N). **Largest rebuild sub-phase:** `dc.s.graph` (47–48 % at 10⁵), then `dc.numberDOF` (26–28 %).
-- **C-closed** needs f ≤ 0.25 ✓ (≤ 0.185 everywhere), R ≤ 1 ✗ (1.13 / 1.26 / 1.20) and slope ≤ 0.1 ✓ (0.013). **Not met:** R exceeds 1 at every N, by 13–26 %.
-- **C-cheaper-first** needs f > 0.25 ✗. Not met (f ≤ 0.185). It would otherwise apply: the largest sub-phases (graph and numbering) are avoidable without C, and on unchanged steps the full rebuild runs anyway.
+- **C-closed** needs f ≤ 0.25 ✓ (≤ 0.185 everywhere), R ≤ 1 ✗ (1.13 / 1.26 / 1.20) and slope ≤ 0.1 ✓ (≤ 0.030 per cycle, ≤ 0.077 per accepted sub-step; 0.188 per harness step ✗). **Not met:** R exceeds 1 at every N, by 13–26 % in the worst case. At 10⁴ it does so in all four cases (1.03–1.26, 12 cut-free runs), under every normalisation.
+- **C-cheaper-first** needs f > 0.25 ✗. Not met (f ≤ 0.185). Its avoidable-without-C argument covers only steps whose connectivity did not change, where the full rebuild (graph and numbering first) runs anyway. At 10⁵ those are 0–3 of 18 timed steps per case (QS elastic 0 of 18, transient 3 of 18; QS DP 0 of 10 kept).
 - **C-needed** needs f > 0.5 at 10⁵ ✗ (0.159) and a symbolic share ≥ 50 % ✗ (8 %). Not met.
-- → **Proposed row: C-deferred**, reached through its catch-all clause ("anything else"). **This outcome fits no specific row.** f is small (rebuilding is 5–19 % of a step at every N, falling with N), and R stays flat in N (slope 0.013). But R is just above 1: one rebuild costs 1.0–1.3 Newton iterations. The pre-registered rows did not anticipate f ≤ 0.25 together with R > 1. Two readings:
+- → **Proposed row: C-deferred** ("anything else"). f is small: rebuilding is 5–19 % of a step at every N. For elastic it holds at 0.17 / 0.17 / 0.16; the DP fall at 10⁵ comes from the iteration count (26.6, 37.7). R stays flat in N (slope ≤ 0.030 per cycle). But R is just above 1: one rebuild costs 1.0–1.3 Newton iterations. Two near misses:
   - C-closed fails only on R ≤ 1;
   - C-cheaper-first fails only on its f > 0.25 entry condition.
 
-  Per the table this goes to the owner, recorded under C-deferred.
+  Per the table, C stays deferred; the numbers are recorded and revisited at phase 11.
+- **Conditions of this reading.**
+  - f ≤ 0.25 was measured with **k ≥ 4 Newton iterations on every timed step**. f ≈ R / (R + k): the excluded first step at 10⁵ QS elastic has k = 4 and f 0.253 (all three repeats); at 10⁴ (k = 3–4, with one-time element creation) it is 0.35–0.39. A workload converging in 3 iterations or fewer per step, with the same t_rb and t_it, would sit above 0.25.
+  - R and f are measured for **today's formTangent**, which is 68–87 % of t_it (ratio of sums; 73–87 % as the per-step mean) and which M4's rule sends to an issue (item 15). A what-if from the measured cells, not a measurement: halving formTangent puts f at about **0.27 (10⁴ QS elastic) and 0.28 (10³ transient elastic)**, above 0.25.
+  - So "revisit" means at phase 11 **and after item 15**.
 - *UmfPack* (decides nothing alone): R per cycle is 0.62–0.94 at 10³–10⁴ and 0.72–0.79 at 10⁵ (QS DP 10⁵ timed out); f ≤ 0.14; flat in N. It is not in a worse row than PARDISO: its iteration is dearer, so R is lower. → No guide change from the UmfPack clause.
 
 **M1-t — whether the default treatment changes.**
 
 - **Inputs:** ghost against renormalize, the top-layer settlement and the per-step cost, at every N.
-- **Answer clause** (within 0.5 %): met at 10³ and 10⁴ (≤ 0.34 %) and for three of four cases at 10⁵ (≤ 0.39 %). **Not met for 10⁵ QS DP: −0.547 %**, compared at step 6, the near-collapse step, single repeat.
-- **Cost clause** (≥ 25 % cheaper at every N): **not met anywhere**. Ghost ranges from 23 % dearer to 7 % cheaper.
+- **Answer clause** (within 0.5 %): met at 10³ and 10⁴ (≤ 0.34 %) and for three of four cases at 10⁵ (≤ 0.39 %). **Not met for 10⁵ QS DP: −0.547 %**, compared at step 6 (the last accepted step before the stall), single repeat.
+- **Cost clause** (≥ 25 % cheaper at every N): **not met at 10³ or 10⁴**. By the median per-step wall, ghost ranges from 23 % dearer to 7 % cheaper. By the mean, from 60 % dearer (10⁴ transient elastic, 2.60 against 1.62 s) to 51 % cheaper (10⁵ QS DP, partial: one ghost run, 81 against 165 s). The clause fails either way at 10³ and 10⁴.
 - → **Proposed row: the default stands** (`renormalize` 5e-2). `exclude` is cost-only and anchors free surfaces: never a candidate.
 
 **M2 — baselines (cannot reopen C).**
@@ -530,23 +550,27 @@ This is a proposal; the orchestrator applies the table. Each item quotes the rul
 
 - **Input:** mode A, private bytes per particle-element after the first step, 10⁴ → 10⁵.
 - **Deciding numbers:** **17.8 kB (elastic) and 20.3 kB (DP)**; 22.0 and 24.6 kB after step 2.
-- → **Proposed row: between 8 and 32 kB → recorded, revisit at phase 11.** At 10⁶ particles that is 18–25 GB.
-- The ">32 kB unless one removable item is ≥ 50 %" clause does not apply. For the record, the largest counted removable item is the FE_Element's own 81×81 tangent: 2.0 kB, 11 %. The unattributed solver share is about 10 kB, 51–55 %.
+- → **Proposed row, by the letter: between 8 and 32 kB → recorded, revisit at phase 11.**
+- **For the owner:** the pre-registered instant is the model's minimum. The same slope, read later in the same runs, is **37.5–39.3 kB** in three of the four default cases (QS elastic, QS DP, transient DP); transient elastic stays at 21–23 kB.
+  - Read late, the row would be **"> 32 kB"**. Its escape clause (one storage item ≥ 50 % removable without C) is then not met by the measured state: FE_Element's own tangents are at most about 46 % of 37.5 kB.
+  - A block with 27-node supports everywhere was not measured.
+  - The orchestrator applies "between" by the letter and puts the late reading to the owner.
 
 **M4 — data.**
 
-- **Bias clause:** renormalize does **not** converge at 1e-6 or 1e-10 at any of r1–r3; it stops at steps 7/7, 9/9 and 5/4. The clause's precondition ("converges … at all three resolutions") is not met → **the default 5e-2 stands.** Where the runs overlap, the small-cutoff tips are 1.7–3.5 % larger in magnitude, inside the 5 % tolerance.
+- **Bias clause:** renormalize does **not** converge at 1e-6 or 1e-10 at any of r1–r3; it stops at steps 7/7, 9/9 and 5/4. The clause's precondition ("converges … at all three resolutions") is not met → **the default 5e-2 stands.** **The default stands because the small-cutoff runs could not finish, not because the tips agree.** Where the runs overlap, the small-cutoff tips are larger in magnitude by up to **8.7 % (r1), 4.9 % (r2) and 3.2 % (r3)**, each at step 2. They are 7.3 % and 7.9 % at r1 steps 3–4, and 1.7–3.6 % at the last common step. Step 1 is identical. r1 is outside the 5 % tolerance on three steps.
 - **Item 15:** formTangent / t_it at 10⁵ = **0.68–0.82 > 30 %** (default PARDISO; 0.39–0.48 with UmfPack) → **item 15 (the tangent B-build cleanup) is filed as an issue.**
 
 **What the table cannot decide, or decides only by a catch-all.**
 
-1. **M1's outcome** (f ≤ 0.19, R 1.13–1.26 flat in N): no specific row; C-deferred by its catch-all clause. To the owner.
+1. **M1's outcome** (f ≤ 0.19, R 1.13–1.26 flat in N) fits C-deferred ("anything else"). It is a near miss of C-closed on R ≤ 1, and of C-cheaper-first on f > 0.25. The latter also depends on the iteration count and on formTangent's cost (Conditions, above).
 2. **R per rebuild cycle against R per harness step:**
-   - The worst-case slope is 0.013 per cycle and 0.16 per harness step. The headline follows the orchestrator's per-cycle instruction.
-   - The per-harness-step slope would fail C-closed's slope clause too, at the 10⁵ transient DP point where every timed step is cut.
+   - The worst single-case slope is 0.030 per cycle, 0.077 per accepted sub-step and 0.188 per harness step. The headline follows the orchestrator's per-cycle choice, made after the run.
+   - The per-harness-step slope would fail C-closed's slope clause too, at the 10⁵ transient DP point, where 4 of the 6 timed steps are cut. No row changes: R ≤ 1 fails on cut-free cells.
 3. **SANISAND's cost depends on the strain increment per call:**
    - The driver gives 7 µs at 8.8e-12, 0.61 ms at 2.6e-4 and 1.16 ms at 9.4e-4. Which increment a SANISAND MPM particle would see cannot be measured while SANISAND is not admitted at particles. The DP composition check, the rule's only safeguard, is blind to it.
    - The proposed phase-5 ratio is therefore a range (222–920), not a number.
    - Also: at 10⁵ the DP and J2 columns barely yield (1.7 %, 4.2 %), so their 10⁵ throughputs are elastic-branch figures; 10³ is the collapsing-column N.
-4. **The 10⁵ QS DP cell** reaches its limit load in the timed window. It holds 2 partial repeats, a crash (filed by the orchestrator) and a UmfPack timeout. Its numbers carry step 6's near-collapse iterations; without step 6, R per cycle is 1.11–1.18 and f is 0.13–0.14.
-5. **The 10⁵ M1-t QS DP comparison** (−0.547 %) is a single near-collapse step. It does not change the M1-t outcome, which the cost clause decides.
+4. **The 10⁵ QS DP cell:** Newton stalls just above tolerance at step 7, at 10⁵ only (10³ and 10⁴ pass the same load). The cell holds 2 partial repeats, a crash (filed by the orchestrator) and a UmfPack timeout. Its numbers carry step 6's 37–46 iterations; without step 6, R per cycle is 1.11–1.18 and f is 0.13–0.14.
+5. **The 10⁵ M1-t QS DP comparison** (−0.547 %) is a single step just before the stall. It does not change the M1-t outcome, which the cost clause decides.
+6. **M3's instant.** Read by the letter (after the first step), M3 is "between". Read a few steps later in the same runs, it is "> 32 kB" in three of four cases, with the escape clause unmet (own tangents ≤ ~46 %). To the owner.
