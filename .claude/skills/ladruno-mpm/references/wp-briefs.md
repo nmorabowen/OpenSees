@@ -425,6 +425,13 @@ decides):
   at kickoff whether apeGmsh's merged particle reader refuses an unknown `BASIS` value. The worker
   implements whichever the orchestrator relays before Round 2 (write the new value and amend
   `232a_mpm_contracts.md` §2, or hold the value behind a contract amendment T schedules).
+  **Answered by T, 2026-11-16 (apeGmsh main `df1869079`):** write the new value and amend
+  Contract 2 §2 in this PR, listing the exact allowed values. Until apeGmsh releases a reader
+  that takes the merged contract text, the TypeScript viewer refuses `"bspline2"` by name
+  (`ladrunoParticles.ts` `readGrid`, C2-GRID). The Python reader passes the value through and
+  nothing reads it. Neither shows wrong values. Holding the value back would make the file lie
+  about its grid. Contract 1 v2, the reader change and the bridge's `-basis` value are
+  nmorabowen/apeGmsh#3013.
 - **K4 — the boundary treatment is the Round-1 decision.** Today a face's `fix`/`wall` zeroes the
   face nodes and the ghost layer alike (interface A5). That keeps linear reproduction for GIMP
   (its support near a face never reaches the ghost layer), but not for a uniform quadratic
