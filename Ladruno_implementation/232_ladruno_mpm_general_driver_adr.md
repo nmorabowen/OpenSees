@@ -426,8 +426,8 @@ nodes are excluded or ghost-regularized — the choice is measured at M0b.
 >   `FE_Element`s allocate their own 81 × 81 tangents, and the same runs reach 37.6–39.4 kB at
 >   late steps. Read there, the outcome would be "> 32 kB", with the removable item at about
 >   46 %, short of the 50 % escape.
-> - Removing that item needs no C (#1098). Whether the late reading should count is the owner's
->   call; until then the letter stands.
+> - Removing that item needs no C (#1098). **Owner's decision (2026-11-16): the letter stands;**
+>   the late-step reading does not count.
 >
 > **M4 — the 232f data owed.**
 > - `renormalize` never converges through the cantilever ramp at cutoff 1e-6 or 1e-10, at any
@@ -838,7 +838,9 @@ ADR-88).
   The pre-registered table gives **C-deferred**: C stays deferred, revisited at phase 11 and after
   #1096 (amendment note at §5.5). The defaults stand (`renormalize` 5e-2). Issues filed: #1095
   (cut-retry crash), #1096 (tangent B-build), #1097 (F transfer loops), #1098 (FE_Element's own
-  tangent; the owner is asked about M3's late-step reading).
+  tangent). Owner decisions (2026-11-16): M3 stands by the letter (the late-step reading does
+  not count; #1098 removes it); the out-of-family verdict (ADR-87 D4) is waived as for 232c and
+  232f, with the Fable critic and `/code-review medium` as the review of record.
 
 ---
 
