@@ -33,7 +33,7 @@ Python is the same with `ops.mpm('grid', 1, '-origin', 0.0, 0.0, ...)`.
 
 | Command | What it does |
 |---|---|
-| `mpm grid <tag> -origin <x0..> -h <h> -cells <n..> [-basis gimp\|linear]` | creates the host (load pattern `<tag>`); one per Domain in v1. `gimp` (uGIMP) is the production basis; `linear` is the cell-crossing contrast |
+| `mpm grid <tag> -origin <x0..> -h <h> -cells <n..> [-basis gimp\|linear\|bspline2\|bspline3]` | creates the host (load pattern `<tag>`); one per Domain in v1. `gimp` (uGIMP) is the production basis; `linear` is the cell-crossing contrast; `bspline2` / `bspline3` are the quadratic / cubic B-splines (WP-232i, below; ≥ 2 cells per axis) |
 | `mpm body <id> box <lo..> <hi..> -ppc <n> -mat <tag> -rho <ρ>` | lattice seeding (interface §5): `n` particles per cell per axis at `x0 + (a+½)h/n`, `V0 = (h/n)^ndm`, `lp = h/(2n)`; also `disc cx cy R` (2D) and `ball cx cy cz R` (3D). Ids run 0, 1, 2, … in seeding order. Returns the count |
 | `mpm shift <body> <dx..>` | translate a seeded body, before the first step |
 | `mpm particle <id> <body> <mat> <ρ> <V0> -x .. -lp .. [-v ..] [-s ..]` | one explicit particle (`-s`: initial stress, Voigt, tensor shear) |
@@ -274,6 +274,61 @@ tip at two cutoffs, exclude against ghost, Newton iterations per step).
 r2 / r3, the plate with a hole) — `LADRUNO_MPM_GATES=1`, too long for Zone-A. Both read
 `tests/mpm_implicit_cases.txt` (232f-V); a `TBD` expected value is skipped loudly. The suite
 joins the MPM mutation family.
+
+## B-spline bases, images, the particle body force (WP-232i)
+
+Frozen interface: `tests/mpm_bspline_interface.md` (B1–B12); ADR 232 §8 P3.
+
+**The bases.** `-basis bspline2` (quadratic, support `|r| < 3h/2`, 3 nodes per axis) and
+`-basis bspline3` (cubic, `|r| < 2h`, 4 nodes per axis): node-centred uniform B-splines on the same
+vertex lattice as GIMP, with the same single ghost layer and node ids. `S(0) = 3/4`,
+`S(±h/2) = 1/2`, `S(±h) = 1/8` (quadratic); `S(0) = 2/3`, `S(±h) = 1/6` (cubic); C¹ (cubic C²).
+Admissibility is the centre rule (`lp` is ignored, as for `linear`). A B-spline grid needs at least
+two cells on every axis (`mpm grid` refuses fewer). In mode A every particle element has the full
+3ᵈ (quadratic) or 4ᵈ (cubic) support, so a 3D quadratic run sits at the top of mode A's memory per
+particle-element (27 nodes).
+
+**The boundary treatment (K4): images on `fix` faces.** A B-spline's support reaches the ghost
+layer from inside the grid, so zeroing the ghosts (what `fix` does on GIMP and linear grids) would
+leave a first-order boundary layer. On a B-spline grid every ghost behind a face with `fix` is the
+**image** of its mirror node: for a component the face fixes, its velocity is the mirror's negated
+(odd); for a free component, the mirror's (even). This is the method of images — the body plus its
+reflection across a symmetry plane — so a roller face (fix the normal component) is reproduced
+exactly, and a clamped face (fix all) to second order. The face-layer node lies on that plane: its
+fixed components carry no momentum or force. In mode A the ghosts behind a `fix` face are never
+Domain nodes: their shape functions are folded into their mirrors per component (no MP constraint,
+so any constraint handler works). GIMP and linear grids are unchanged. **`wall`** faces keep the
+slice-1 treatment (face and ghost layers alike) and are first order on a B-spline grid; a face with
+both `fix` and `wall` is refused there, and so is a `gridvel` box reaching the ghost layer behind a
+`fix` face. A prescribed B-spline node velocity (`gridvel`) is a control-point value, not the
+material velocity at that node.
+
+| Command | What it does |
+|---|---|
+| `mpm particleBodyForce <ndm·N values> \| -clear` | a body force per unit **mass** for every particle, one flat list in `mpm particleData` order, **not** scaled by the load factor; set it between any two `mpm analyze` calls (each step, for a manufactured solution); held until replaced; cleared by `mpm reset`; carried by a mode-A database restart; a stale length (particles added since) is refused at `mpm analyze`. Mode F adds it to gravity in P2G; mode A to the particle element's external force. A step that mode A cuts and retries keeps it constant over its sub-steps |
+| `mpm particleVelocity <ndm·N values>` | the initial velocity of every particle, before the first step (kept by the `mpm reset` snapshot) |
+| `mpm info basis` | 0 gimp, 1 linear, 2 bspline2, 3 bspline3 |
+| `mpm debug shape <x..> [-lp ..] -folded` | per own node: id, then per component `S′`, `∇S′` (the images' fold) |
+| `mpm debug shape1d <h> <lp> <r> -basis bspline2\|bspline3` | the 1D factor (default `gimp`) |
+
+**Tcl.** Both list commands read through the shared argument cursor, so classic Tcl accepts them
+(`mpm particleBodyForce {*}$b`), but computing a body force per particle per step is a Python idiom;
+the manufactured-solution harness is Python only.
+
+**Contracts.** The `.ladruno` particle group writes `GRID/BASIS = "bspline2" | "bspline3"` (232a §2
+as amended; no minor bump — a reader older than the amendment refuses the value by name). Contract 1
+is unchanged: `mpm particles -file` into a B-spline grid is refused (the set's basis differs from
+the deck's).
+
+**Verification (WP-232i).** `tests/mpm_bspline_cases.txt` holds every row with its pre-registered
+gate. `tests/test_mpm_engine_core_cpp.py::test_cpp_mpm_bspline_core` (g++, `tests/mpm_bspline_core_check.cpp`):
+G1, G1-K4, G8 and the body force on the core. `tests/test_mpm_mms_reference.py`: the manufactured
+solution's derivation (`tests/mpm_mms.py`) by centred differences, never against MPM.
+`tests/test_ladruno_mpm_bspline_basis.py`: G1, G1-K4, G7, G8 through the binaries, classic Tcl too.
+`tests/test_ladruno_mpm_bspline_mms.py`: the MMS rows on 1/h = 8, 16, 32 (Zone-A; in the MPM
+mutation suite). The full ladders are the warrant run, `tests/mpm_bspline_warrant.py`, results in
+`tests/data/mpm/bspline/` (checked by `tests/test_mpm_bspline_warrant_results.py`); method and
+tables in [[232i_mpm_bspline_mms]].
 
 ## Verification
 

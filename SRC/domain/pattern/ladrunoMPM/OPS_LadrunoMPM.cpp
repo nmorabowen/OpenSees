@@ -29,7 +29,7 @@
 // OPS_ResetInputNoBuilder, the pattern of the WP-127 replay command). It needs
 // no engine state: mode F has no Analysis object.
 //
-//   mpm grid <tag> -origin <x0..> -h <h> -cells <n..> [-basis gimp|linear]
+//   mpm grid <tag> -origin <x0..> -h <h> -cells <n..> [-basis gimp|linear|bspline2|bspline3]
 //   mpm body <bodyId> box <lo..> <hi..> -ppc <n> -mat <matTag> -rho <rho>
 //   mpm body <bodyId> disc <cx> <cy> <R> -ppc ... (2D) | ball <cx> <cy> <cz> <R> ... (3D)
 //   mpm particles -file <path>           load a Contract-1 particle set (232a), path as given
@@ -53,7 +53,8 @@
 //   mpm particleData <field>              -> flat list over particles in storage order;
 //        field: id body mat m V0 V x v a lp F R sig sigHat epsHat sig0
 //   mpm debug shape <x..> -lp <lp..>      -> [node S dS..]* (interface Q4)
-//   mpm debug shape1d <h> <lp> <r>        -> S dS
+//   mpm debug shape <x..> [-lp <..>] -folded  -> [node (S'_a dS'_a..)_a]* (WP-232i B5, B8)
+//   mpm debug shape1d <h> <lp> <r> [-basis b]  -> S dS (default gimp)
 //   mpm debug activeNodes                 -> sorted active node ids at the committed state
 //   mpm debug injectRefusal | staleRefusal | aborted   W17 test hooks (a refusal at the next
 //                                         particle commit; a stale WP-99 count; the abort latch)
@@ -68,6 +69,11 @@
 //   mpm info g2p|acceptedSteps|retries|domainChanges|connectivityChanges|gridNodes|mode
 //   mpm info dtHistory | gridNodeTags     -> lists
 //   mpm debug failAttempt <k> [<attempts>] | reseed default|always|skip
+// WP-232i (tests/mpm_bspline_interface.md):
+//   mpm info basis                        -> 0 gimp, 1 linear, 2 bspline2, 3 bspline3
+//   mpm particleBodyForce <ndm*N doubles> | -clear   body force per unit mass, storage order,
+//                                         not scaled by the load factor (B11)
+//   mpm particleVelocity <ndm*N doubles>  initial velocity, storage order (B12)
 // `mpm analyze` in mode A needs the user's analysis: the engine bridges hand it
 // in through OPS_LadrunoMPMWithAnalysis (classic Tcl: commands.cpp; Python /
 // DL Tcl: OPS_LadrunoMPMDL in OpenSeesCommands.cpp).
@@ -147,11 +153,12 @@ LadrunoMPMPattern *host(Domain *dom, const char *sub)
   return h;
 }
 
-// mpm grid <tag> -origin .. -h .. -cells .. [-basis gimp|linear]
+// mpm grid <tag> -origin .. -h .. -cells .. [-basis gimp|linear|bspline2|bspline3]
 int cmdGrid(Domain *dom)
 {
   int tag;
-  if (!readInt(tag)) return fail("grid <tag> -origin <x0..> -h <h> -cells <n..> [-basis gimp|linear]");
+  if (!readInt(tag))
+    return fail("grid <tag> -origin <x0..> -h <h> -cells <n..> [-basis gimp|linear|bspline2|bspline3]");
   if (ladrunoMPMFindHost(dom) != 0) return fail("grid -- this Domain already has an MPM grid (v1: one per Domain)");
   if (dom->getLoadPattern(tag) != 0) return fail("grid -- a load pattern with tag " + std::to_string(tag) + " exists");
   const int ndm = OPS_GetNDM();
@@ -175,14 +182,17 @@ int cmdGrid(Domain *dom)
       haveN = true;
     } else if (strcmp(opt, "-basis") == 0) {
       const char *b = OPS_GetNumRemainingInputArgs() > 0 ? OPS_GetString() : "";
-      if (strcmp(b, "gimp") == 0) basis = ladruno_mpm::BASIS_GIMP;
-      else if (strcmp(b, "linear") == 0) basis = ladruno_mpm::BASIS_LINEAR;
-      else return fail("grid -basis must be gimp or linear");
+      if (!ladruno_mpm::basisFromName(b, basis))
+        return fail("grid -basis must be gimp, linear, bspline2 or bspline3");
     } else {
       return fail(std::string("grid -- unknown option '") + opt + "'");
     }
   }
   if (!haveO || !haveH || !haveN) return fail("grid needs -origin, -h and -cells");
+  // WP-232i B3: a ghost's image must be a node off its own face
+  if (ladruno_mpm::isBSpline(basis))
+    for (int d = 0; d < ndm; d++)
+      if (n[d] < 2) return fail("grid -- a B-spline grid needs at least 2 cells on every axis");
   LadrunoMPMPattern *p = new LadrunoMPMPattern(tag);
   std::string err;
   if (!p->engine().setGrid(ndm, x0, h, n, err)) {
@@ -429,21 +439,50 @@ int cmdDebug(LadrunoMPMPattern *h)
   const int nd = E.ndm();
   if (what == "shape1d") {
     double a[3];
-    if (!readDoubles(3, a)) return fail("debug shape1d <h> <lp> <r>");
+    if (!readDoubles(3, a)) return fail("debug shape1d <h> <lp> <r> [-basis gimp|bspline2|bspline3]");
+    ladruno_mpm::Basis b = ladruno_mpm::BASIS_GIMP;
+    if (OPS_GetNumRemainingInputArgs() > 0) {
+      const std::string opt = OPS_GetString();
+      const std::string bn = OPS_GetNumRemainingInputArgs() > 0 ? OPS_GetString() : "";
+      if (opt != "-basis" || !ladruno_mpm::basisFromName(bn, b) || b == ladruno_mpm::BASIS_LINEAR)
+        return fail("debug shape1d <h> <lp> <r> [-basis gimp|bspline2|bspline3]");
+    }
     double S, dS;
-    ladruno_mpm::gimpFactor(a[2], a[0], a[1], S, dS);
+    if (ladruno_mpm::isBSpline(b))
+      ladruno_mpm::bsplineFactor(b == ladruno_mpm::BASIS_BSPLINE2 ? 2 : 3, a[2], a[0], S, dS);
+    else
+      ladruno_mpm::gimpFactor(a[2], a[0], a[1], S, dS);
     std::vector<double> out = {S, dS};
     return outDoubles(out);
   }
   if (what == "shape") {
     double x[3], lp[3] = {0, 0, 0};
-    if (!readDoubles(nd, x)) return fail("debug shape <x..> -lp <lp..>");
-    if (OPS_GetNumRemainingInputArgs() > 0) {
+    if (!readDoubles(nd, x)) return fail("debug shape <x..> -lp <lp..> [-folded]");
+    bool folded = false;
+    while (OPS_GetNumRemainingInputArgs() > 0) {
       const char *opt = OPS_GetString();
-      if (strcmp(opt, "-lp") != 0 || !readDoubles(nd, lp)) return fail("debug shape <x..> -lp <lp..>");
+      if (strcmp(opt, "-folded") == 0) {
+        folded = true;
+      } else if (strcmp(opt, "-lp") == 0) {
+        if (!readDoubles(nd, lp)) return fail("debug shape <x..> -lp <lp..> [-folded]");
+      } else {
+        return fail(std::string("debug shape -- unknown option '") + opt + "'");
+      }
     }
     std::vector<long> node;
     std::vector<double> S, dS, out;
+    if (folded) {          // WP-232i B5/B8: per own node, id then per component S'_a, grad S'_a
+      std::vector<double> W, dW, Sc, dSc;
+      ladruno_mpm::foldedSupport(E.grid, E.par.basis, E.fc, x, lp, node, W, dW, Sc, dSc);
+      for (size_t k = 0; k < node.size(); k++) {
+        out.push_back((double)E.grid.publicId(node[k]));
+        for (int a = 0; a < nd; a++) {
+          out.push_back(Sc[nd * k + a]);
+          for (int d = 0; d < nd; d++) out.push_back(dSc[(nd * k + a) * nd + d]);
+        }
+      }
+      return outDoubles(out);
+    }
     ladruno_mpm::particleSupport(E.grid, E.par.basis, x, lp, node, S, dS);
     for (size_t k = 0; k < node.size(); k++) {
       out.push_back((double)E.grid.publicId(node[k]));
@@ -566,7 +605,8 @@ int OPS_LadrunoMPM(void)
   Domain *dom = OPS_GetDomain();
   if (dom == 0) return fail("-- no Domain");
   if (OPS_GetNumRemainingInputArgs() < 1)
-    return fail("<grid|body|particles|units|output|shift|particle|velocity|stress|fix|wall|gravity|timeSeries|damping|flip|"
+    return fail("<grid|body|particles|units|output|shift|particle|velocity|particleVelocity|particleBodyForce|"
+                "stress|fix|wall|gravity|timeSeries|damping|flip|"
                 "massCutoff|safety|criticalTimeStep|analyze|reset|info|particleData|debug|mode|gridvel|"
                 "condForce|pforce|emptyNodes|cut|tagBase|rayleigh> ...");
   const std::string sub = OPS_GetString();
@@ -654,6 +694,23 @@ int OPS_LadrunoMPM(void)
     return outInt(E.shiftBody(body, dx));
   }
   if (sub == "velocity") return cmdVelocity(h);
+  if (sub == "particleBodyForce" || sub == "particleVelocity") {
+    // WP-232i B11 / B12: one flat list, ndm per particle, in storage order
+    std::vector<double> v;
+    std::string err;
+    if (sub == "particleBodyForce" && OPS_GetNumRemainingInputArgs() == 1) {
+      const char *t = OPS_GetString();
+      if (strcmp(t, "-clear") == 0) { E.bodyForce.clear(); return 0; }
+      OPS_ResetCurrentInputArg(-1);
+    }
+    const int n = OPS_GetNumRemainingInputArgs();
+    v.resize(n > 0 ? n : 0);
+    if (n > 0 && !readDoubles(n, v.data())) return fail(sub + " -- every value must be a number");
+    const int rc = (sub == "particleBodyForce") ? h->setParticleBodyForce(v, err)
+                                                : h->setParticleVelocity(v, err);
+    if (rc < 0) return fail(sub + " -- " + err);
+    return 0;
+  }
   if (sub == "stress") return cmdStress(h);
   if (sub == "fix") return cmdFix(h, false);
   if (sub == "wall") return cmdFix(h, true);
@@ -780,11 +837,12 @@ int OPS_LadrunoMPM(void)
     const std::string what = OPS_GetNumRemainingInputArgs() > 0 ? OPS_GetString() : "numParticles";
     if (what == "numParticles") return outInt(E.P.size());
     if (what == "epoch") return outInt(h->particleEpoch());
+    if (what == "basis") return outInt((int)E.par.basis);            // WP-232i (G7)
     bool ok = false;
     const long c = h->infoCounter(what, ok);
     if (ok) return outInt((int)c);
-    return fail("info -- numParticles, epoch, time, summary, g2p, acceptedSteps, retries, dtHistory,"
-                " domainChanges, connectivityChanges, gridNodes, gridNodeTags or mode");
+    return fail("info -- numParticles, epoch, basis, time, summary, g2p, acceptedSteps, retries,"
+                " dtHistory, domainChanges, connectivityChanges, gridNodes, gridNodeTags or mode");
   }
   if (sub == "debug") return cmdDebug(h);
   return fail("-- unknown sub-command '" + sub + "'");

@@ -170,6 +170,22 @@ were not read. Decisions are numbered (B*n*) so a review can cite them. Conventi
   [-folded]` (folded: per node, id then per component `S′` and `∇S′`);
   `mpm debug shape1d <h> <lp> <r> [-basis b]`.
 
+## 5b. Round-2 implementation notes (each disclosed; found before any gated number)
+
+1. **B6, the face-layer node (found by G8 on the g++ core).** The face-layer node of a `fix` face
+   lies on the symmetry plane and is its own image, so the components the face fixes carry no
+   momentum and no force: they are zeroed before the update (mode F) and in the projected v̂, â
+   (mode A). B6's "the face-layer fixes zero their components as today" gave the fixed component
+   A5's FLIP increment `a = −vⁿ/Δt`; the body plus its reflection gives `a = 0`. Without it the
+   half model differs from the full one by 2e-5 (positions) and 24 % (stresses) after 120 steps;
+   with it, by 1e-15. Quirk `WP-232i-mpm-images-face-node-flip-increment`.
+2. **B8, the fold is per axis.** `foldedSupport` folds each axis's 1D support and takes the tensor
+   product (the image map is separable and the signs are a product of per-axis signs), and a
+   B-spline's `r` is measured from the nearer face. Folding node by node from `x0 + i·h` gave
+   `S′ = −6e-16` at the face by round-off (G1-K4's `S′ ≥ 0`); per axis it is exactly ≥ 0.
+3. **Restart format.** The host's pack version goes 1 → 2 (it carries the body force); a version-1
+   database is refused.
+
 ## 6. Proposed amendments and objections (for the orchestrator)
 
 1. **G7 wording.** `mpm info summary` carries no basis (it returns `[mass, momentum.., max |v|,

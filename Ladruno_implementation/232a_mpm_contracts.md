@@ -377,6 +377,16 @@ mode (§2.5). Readers therefore need **HDF5 ≥ 1.10** (h5py built against 1.10 
 **`GRID`** is a subgroup with the same four attributes as Contract 1 §1.2 (`ORIGIN`, `CELL_SIZE`,
 `NUM_CELLS`, `BASIS`), constant for the stage (C2-GRID).
 
+> **Amendment (232i, 2026-11-16) — C2-GRID `BASIS`.** In Contract 2, `GRID/BASIS` is exactly one
+> of `"gimp" | "linear" | "bspline2" | "bspline3"` (the quadratic and cubic node-centred uniform
+> B-splines of `tests/mpm_bspline_interface.md` B1). There is **no** `FORMAT_MINOR_VERSION` bump:
+> a reader older than this amendment refuses the new value by name, which is the safe outcome
+> (apeGmsh's TypeScript viewer does, `ladrunoParticles.ts` `readGrid`; its Python reader passes the
+> value through; follow-up nmorabowen/apeGmsh#3013). Contract 1 is unchanged: its `BASIS` stays
+> `"gimp" | "linear"` (C1-BASIS), so a particle set cannot be loaded into a B-spline grid (the
+> deck's basis differs from the set's; K2). The fork checker holds the two value sets apart
+> (`ladruno_format.py`: `C1_BASES`, `C2_BASES`).
+
 **`BODIES`** is a subgroup with `ID` (int32 `[B]`) and `NAME` (string `[B]`), copied from Contract 1
 (C2-BODY). In a fork-written file `NAME` is a fixed-length string dataset. Readers accept fixed or
 variable length.

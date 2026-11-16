@@ -1,0 +1,290 @@
+# WP-232i — the B-spline basis and the manufactured-solution orders: each row's parameters and
+# its gate, copied from the pre-registered table in .claude/skills/ladruno-mpm/references/
+# wp-briefs.md ("232i", fixed before any B-spline number existed; G1-K4 and G8 added at the
+# freeze, before any number). A band is never widened: a miss is reported as a miss.
+#
+# Format: `row <name>` ... `end`. Keys:
+#   status   gate | report
+#   gate     the gate, verbatim from the table (documentation; the test asserts the parsed form)
+#   p_ge     order threshold p (least-squares slope of log e vs log h over the three finest rungs)
+#   nonincr  1: e must be non-increasing along the whole ladder
+#   mode     explicit | quasiStatic | implicit (mode A transient, Newmark average acceleration)
+#   basis, ndm, ppc, fmax (max |F_ii - 1| = 2 pi A), flip (alpha_F), ladder (1/h rungs),
+#   steps (quasi-static load steps), dt_rule (explicit: a multiple of the finest rung's critical
+#   dt), validity (|e(dt/2) - e(dt)| / e(dt) < this at the finest rung, else dt is halved)
+#
+# Common to every MMS row (tests/mpm_mms.py): unit square / cube, rollers on every face
+# (`mpm fix xmin x`, `xmax x`, `ymin y`, ... ; K4 images on B-spline grids), ElasticIsotropic
+# E = 1, nu = 0.3, rho0 = 1, u_i = A sin(2 pi X_i) sin(c pi t) with c = 2 (period T = 1),
+# t_end = T. The body force is set every step with `mpm particleBodyForce`, at t_n (mode F) or
+# at t_{n+1} / lambda_{n+1} (mode A); the initial velocity with `mpm particleVelocity`.
+# e = sqrt(mean_p |u_p - u(X_p, t_end)|^2) / A. Reported with every leg: e(T/4), max_t e(t),
+# cell crossings per rung (particle-steps whose cell index changed), dt, wall time.
+
+row G1
+status gate
+gate at >= 1e4 random admissible positions incl. every position within 2h of each face: S >= 0; |sum S - 1| <= 1e-13; |sum grad S| <= 1e-11/h; |sum S x_i - x_p| <= 1e-12 h; |sum x_i (x) grad S - I| <= 1e-11; cardinal values to 1e-14; C1 across knots (max dS jump <= 1e-8/h); g++ core check and `mpm debug shape`
+basis bspline2 bspline3
+ndm 2 3
+tol_pu 1e-13
+tol_grad 1e-11
+tol_lin 1e-12
+tol_lingrad 1e-11
+tol_cardinal 1e-14
+tol_c1 1e-8
+end
+
+row G1-K4
+status gate
+gate folded S' within 2h of each `fix` face at the G1 tolerances: odd component sum S' (x_i - x_face)_n = (x_p - x_face)_n; even component sum S' = 1 and sum S' x_t = x_{p,t}; S' >= 0
+basis bspline2 bspline3
+ndm 2 3
+end
+
+row G2
+status gate
+gate MMS, mode F, 2D plane strain, small amplitude (max |F_ii - 1| = 1e-3): bspline2 p >= 1.8 and e non-increasing along the whole ladder
+mode explicit
+basis bspline2
+ndm 2
+ppc 2
+fmax 1e-3
+flip 1.0
+ladder 8 16 32 64
+p_ge 1.8
+nonincr 1
+dt_rule 0.1
+validity 0.05
+end
+
+row G3
+status gate
+gate MMS, mode F, 2D plane strain, large amplitude (max |F_ii - 1| = 0.1; crossings per rung reported): bspline2 p >= 1.5 and e non-increasing
+mode explicit
+basis bspline2
+ndm 2
+ppc 2
+fmax 0.1
+flip 1.0
+ladder 8 16 32 64
+p_ge 1.5
+nonincr 1
+dt_rule 0.1
+validity 0.05
+end
+
+row G4
+status gate
+gate MMS, mode A, quasi-static, 2D, small amplitude (u = lam A sin(2 pi X_i), lam ramped in >= 4 load steps, body force updated per step): bspline2 p >= 1.8 and e non-increasing
+mode quasiStatic
+basis bspline2
+ndm 2
+ppc 2
+fmax 1e-3
+ladder 8 16 32 64
+steps 4
+p_ge 1.8
+nonincr 1
+end
+
+row G5-G2
+status gate
+gate cubic (K1, delivered): G2 at the same thresholds for bspline3
+mode explicit
+basis bspline3
+ndm 2
+ppc 2
+fmax 1e-3
+flip 1.0
+ladder 8 16 32 64
+p_ge 1.8
+nonincr 1
+dt_rule 0.1
+validity 0.05
+end
+
+row G5-G3
+status gate
+gate cubic (K1, delivered): G3 at the same thresholds for bspline3
+mode explicit
+basis bspline3
+ndm 2
+ppc 2
+fmax 0.1
+flip 1.0
+ladder 8 16 32 64
+p_ge 1.5
+nonincr 1
+dt_rule 0.1
+validity 0.05
+end
+
+row G5-G4
+status gate
+gate cubic (K1, delivered): G4 at the same thresholds for bspline3
+mode quasiStatic
+basis bspline3
+ndm 2
+ppc 2
+fmax 1e-3
+ladder 8 16 32 64
+steps 4
+p_ge 1.8
+nonincr 1
+end
+
+row G6
+status gate
+gate mutation: the MPM family's ZERO and SCALE mutants each turn G2 (or G3) red
+rows G2 G3
+end
+
+row G7
+status gate
+gate -basis bspline2 round-trips through `mpm info basis` (amendment 1), the .ladruno output (C2-GRID amended, F1) and the database restart in mode A; `mpm particles -file` into a B-spline grid refused (K2); an inadmissible particle refused as today
+end
+
+row G8
+status gate
+gate mode F, bspline2: a body symmetric about an interior grid plane, run on the full grid, against its half on a grid whose face is that plane with a roller (fix, images): particle positions and stresses equal to rel 1e-10 after >= 100 steps, at small and large amplitude
+loading plane x = 0; full grid [-1, 1] x [0, 1], half grid [0, 1] x [0, 1] with `fix xmin x`; h = 0.125; body [-0.5, 0.5] x [0.25, 0.75], ppc 2, ElasticIsotropic E = 1e3, nu = 0.3, rho = 1; initial velocity odd in x for v_x and even for v_y: v_x = V sin(pi x / 0.5) (1 + y), v_y = 0.5 V cos(pi x / 1.0) sin(pi y); dt = 0.1 h / c_p; 120 steps; small V = 0.02 (max |F_ii - 1| ~ 1e-3), large V = 3 (~ 0.1)
+steps 120
+v_small 0.02
+v_large 3.0
+tol 1e-10
+end
+
+# ---- R1: reported, not gated -------------------------------------------------------------
+row R1-gimp-G2
+status report
+gate R1: G2 for gimp (literature: near 2 at small amplitude; an order below 1.5 is filed as an issue against shipped code)
+mode explicit
+basis gimp
+ndm 2
+ppc 2
+fmax 1e-3
+flip 1.0
+ladder 8 16 32 64
+dt_rule 0.1
+validity 0.05
+issue_below 1.5
+end
+
+row R1-gimp-G3
+status report
+gate R1: G3 for gimp
+mode explicit
+basis gimp
+ndm 2
+ppc 2
+fmax 0.1
+flip 1.0
+ladder 8 16 32 64
+dt_rule 0.1
+validity 0.05
+end
+
+row R1-linear-G2
+status report
+gate R1: G2 for linear (literature: erratic once particles cross cells)
+mode explicit
+basis linear
+ndm 2
+ppc 2
+fmax 1e-3
+flip 1.0
+ladder 8 16 32 64
+dt_rule 0.1
+validity 0.05
+end
+
+row R1-linear-G3
+status report
+gate R1: G3 for linear
+mode explicit
+basis linear
+ndm 2
+ppc 2
+fmax 0.1
+flip 1.0
+ladder 8 16 32 64
+dt_rule 0.1
+validity 0.05
+end
+
+row R1-pic-G2
+status report
+gate R1: the PIC leg of G2 (alpha_F = 0)
+mode explicit
+basis bspline2
+ndm 2
+ppc 2
+fmax 1e-3
+flip 0.0
+ladder 8 16 32 64
+dt_rule 0.1
+validity 0.05
+end
+
+row R1-pic-G3
+status report
+gate R1: the PIC leg of G3 (alpha_F = 0)
+mode explicit
+basis bspline2
+ndm 2
+ppc 2
+fmax 0.1
+flip 0.0
+ladder 8 16 32 64
+dt_rule 0.1
+validity 0.05
+end
+
+row R1-3x3-G2
+status report
+gate R1: the 3 x 3 particles-per-cell leg of G2
+mode explicit
+basis bspline2
+ndm 2
+ppc 3
+fmax 1e-3
+flip 1.0
+ladder 8 16 32 64
+dt_rule 0.1
+validity 0.05
+end
+
+row R1-3d
+status report
+gate R1: the 3D small-amplitude MMS at 1/h = 4, 8, 16
+mode explicit
+basis bspline2
+ndm 3
+ppc 2
+fmax 1e-3
+flip 1.0
+ladder 4 8 16
+dt_rule 0.1
+validity 0.05
+end
+
+row R1-modeA-transient
+status report
+gate R1: mode A transient (Newmark average acceleration) MMS
+mode implicit
+basis bspline2
+ndm 2
+ppc 2
+fmax 1e-3
+flip 1.0
+ladder 8 16 32
+dt_fixed 0.005
+end
+
+row R1-column
+status report
+gate R1: the slice-1 self-weight column at both compressions (the 20 % case is the uGIMP XFAIL) per basis at three resolutions, and the cell-crossing meter per basis
+bases gimp linear bspline2 bspline3
+cases column_selfweight_small_2d_gimp column_selfweight_2d_gimp
+refine 1 2 4
+end

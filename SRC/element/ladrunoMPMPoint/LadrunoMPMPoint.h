@@ -27,7 +27,8 @@
 //
 // One element per particle: one integration point, one owned NDMaterial copy.
 // Its nodes are the active GIMP support of the particle at the STEP-START
-// position (2 or 3 per axis: 4-9 nodes in 2D, 8-27 in 3D; linear hat 4 / 8);
+// position (2 or 3 per axis: 4-9 nodes in 2D, 8-27 in 3D; linear hat 4 / 8;
+// WP-232i: bspline2 <= 3 per axis, bspline3 <= 4, so <= 64 nodes in 3D);
 // every grid node has ndf = ndm. Not user-creatable: the MPM host
 // (LadrunoMPMPattern) creates it, re-points it in place every step and owns the
 // particle's kinematic state (ladruno_mpm::Particles); the element writes that
@@ -123,9 +124,15 @@ class LadrunoMPMPoint : public Element
   // spatial at the step-start position), inactive flags (ghost mode), the
   // projected step-start nodal velocity / acceleration (ndm per node).
   // Refetches Node* when the element is in a Domain. Leaves the element ARMED.
+  // WP-232i (tests/mpm_bspline_interface.md B8): Sc, dSc are the per-component
+  // S'_{k,a} (ndm per node) and grad S'_{k,a} (ndm x ndm per node, component-major)
+  // of a support folded by images with a sign -1; empty for every other particle,
+  // which keeps the scalar path bit for bit. S then holds the unsigned weight W
+  // (the lumped mass), dS its gradient.
   int  repoint(const ID &tags, const std::vector<double> &S, const std::vector<double> &dS,
               const std::vector<char> &inactive, const std::vector<double> &vHat,
-              const std::vector<double> &aHat);
+              const std::vector<double> &aHat, const std::vector<double> &Sc,
+              const std::vector<double> &dSc);
   bool connectivityEquals(const ID &tags) const;
   State state(void) const { return st; }
   // The host's batched G2P (interface D1.9): writes particle p of P from the
@@ -182,6 +189,8 @@ class LadrunoMPMPoint : public Element
   ID connect;
   std::vector<Node *> nodes;
   std::vector<double> S, dS, vHat, aHat, ghostK;   // per support node (ghostK: spring, 0 = none)
+  // WP-232i B8: per-component S', grad S' and spatial g' (empty = the scalar path)
+  std::vector<double> Sc, dSc, gc;
 
   // trial cache (interface D1.5 / D1.6)
   double Frel[9], F1[9], R1[9], J1;
@@ -203,6 +212,8 @@ class LadrunoMPMPoint : public Element
   int  computeTrial(void);
   void assembleForce(void);
   void tangent(Matrix &K, bool initial);
+  void tangentPerComponent(Matrix &K, bool initial, const double *Rm, double volm,
+                           const double *sg, const double *Dc);
   void refetchNodes(void);
 };
 

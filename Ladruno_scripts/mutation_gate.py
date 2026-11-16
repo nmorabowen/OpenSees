@@ -129,8 +129,13 @@ FAMILIES = {
         #     Survivors: rows that read stresses (from F, not x), velocities or
         #     periods, refusals, lifecycle, and protocols comparing the binary with
         #     itself.
+        # WP-232i adds the B-spline MMS legs (test_ladruno_mpm_bspline_mms.py, 6 tests: G2,
+        # G3, G4 and their cubic rows on 1/h = 8, 16, 32). Its basis / G7 / G8 file is NOT
+        # selected (unit and self-equality checks, physics-free by design). Re-measure owed
+        # on the 232i mutants (G6).
         "paths": ["test_ladruno_mpm_engine.py",       # the cases suite; lifecycle/refusal tests are physics-free
-                  "test_ladruno_mpm_implicit_engine.py"],
+                  "test_ladruno_mpm_implicit_engine.py",
+                  "test_ladruno_mpm_bspline_mms.py"],
         "min_score": {"ZERO": 0.46, "SCALE": 0.38, "IDENT": 0.0},
     },
     # --- WP-3 lanes: gates NOT yet inserted in these families' elements. -----

@@ -328,7 +328,7 @@ LadrunoMPMPattern::Print(OPS_Stream &s, int)
     << ", h " << g.h << ", cells";
   for (int d = 0; d < g.ndm; d++) s << " " << g.n[d];
   s << ", " << eng.P.size() << " particles, basis "
-    << (eng.par.basis == ladruno_mpm::BASIS_GIMP ? "gimp" : "linear") << ", flip " << eng.par.flip
+    << ladruno_mpm::basisName(eng.par.basis) << ", flip " << eng.par.flip
     << ", damping " << eng.par.damping << endln;
 }
 
@@ -622,6 +622,61 @@ LadrunoMPMPattern::domainHasFreeDOF(std::string &which)
 }
 
 int
+LadrunoMPMPattern::setParticleBodyForce(const std::vector<double> &b, std::string &err)
+{
+  const int nd = eng.ndm(), N = eng.P.size();
+  if ((long)b.size() != (long)nd * N) {
+    err = "needs ndm * N = " + std::to_string((long long)nd * N) + " values (ndm per particle, in"
+          " `mpm particleData` order), got " + std::to_string((long long)b.size());
+    return -1;
+  }
+  for (double v : b)
+    if (!std::isfinite(v)) { err = "every value must be finite"; return -1; }
+  eng.bodyForce = b;
+  return 0;
+}
+
+int
+LadrunoMPMPattern::setParticleVelocity(const std::vector<double> &v, std::string &err)
+{
+  if (stepped) {
+    err = "initial conditions cannot change after the first step (`mpm reset` first)";
+    return -1;
+  }
+  const int nd = eng.ndm(), N = eng.P.size();
+  if ((long)v.size() != (long)nd * N) {
+    err = "needs ndm * N = " + std::to_string((long long)nd * N) + " values (ndm per particle, in"
+          " `mpm particleData` order), got " + std::to_string((long long)v.size());
+    return -1;
+  }
+  for (double x : v)
+    if (!std::isfinite(x)) { err = "every value must be finite"; return -1; }
+  eng.P.v = v;
+  return 0;
+}
+
+std::string
+LadrunoMPMPattern::bsplineFaceConflict() const
+{
+  if (!ladruno_mpm::isBSpline(eng.par.basis)) return "";
+  static const char *names[6] = {"xmin", "xmax", "ymin", "ymax", "zmin", "zmax"};
+  const ladruno_mpm::Grid &G = eng.grid;
+  for (int f = 0; f < 2 * G.ndm; f++)
+    if (eng.fc.fixMask[f] != 0u && eng.fc.wallMu[f] >= 0.0)
+      return std::string("face ") + names[f] + " carries both `fix` and `wall`: refused on a"
+             " B-spline grid (its `fix` ghosts are images, a wall is not; WP-232i B5)";
+  for (const GridVel &gv : gridVels)
+    for (int d = 0; d < G.ndm; d++) {
+      const double lo = G.x0[d], hi = G.x0[d] + G.n[d] * G.h, tol = 1e-9 * G.h;
+      if ((eng.fc.fixMask[2 * d] != 0u && gv.lo[d] < lo - tol) ||
+          (eng.fc.fixMask[2 * d + 1] != 0u && gv.hi[d] > hi + tol))
+        return "gridvel '" + gv.name + "' reaches the ghost layer behind a `fix` face: refused on a"
+               " B-spline grid (those ghosts are images; WP-232i B10)";
+    }
+  return "";
+}
+
+int
 LadrunoMPMPattern::analyze(int nSteps, double dt)
 {
   Domain *dom = this->getDomain();
@@ -653,6 +708,13 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
     opserr << "ERROR mpm analyze -- internal: " << (int)mats.size() << " particle materials for "
            << eng.P.size() << " particles; refused\n";
     return -1;
+  }
+  {
+    const std::string why = bsplineFaceConflict();   // WP-232i B5, B10
+    if (!why.empty()) {
+      opserr << "ERROR mpm analyze -- " << why.c_str() << "\n";
+      return -1;
+    }
   }
   // The `mpm reset` snapshot is the state before the first ACCEPTED step: it is
   // retaken by every analyze until a step is accepted, so a refused or
@@ -798,6 +860,7 @@ LadrunoMPMPattern::reset(void)
   for (NDMaterial *m : mats)
     if (m != 0) m->revertToStart();   // review item 6: a hand-removed particle element took its material
   lambda = 1.0;
+  eng.bodyForce.clear();            // WP-232i B11: a loading, re-set by the caller
   // Before any accepted step the particles ARE the initial state, bodies and
   // initial conditions included: keep them (c2 review 3).
   if (!stepped || !haveSnapshot) return 0;
@@ -857,7 +920,7 @@ LadrunoMPMPattern::loadParticleSet(const std::string &path)
     }
     if (!same)
       refuse.push_back("the set's GRID (ORIGIN, CELL_SIZE, NUM_CELLS) differs from the deck's `mpm grid`");
-    const std::string basis = eng.par.basis == ladruno_mpm::BASIS_GIMP ? "gimp" : "linear";
+    const std::string basis = ladruno_mpm::basisName(eng.par.basis);   // WP-232i: K2 refusal
     if (S.basis != basis)
       refuse.push_back("the set's GRID/BASIS '" + S.basis + "' differs from the deck's '" + basis + "'");
   }
@@ -992,7 +1055,7 @@ LadrunoMPMPattern::openOutputStage(std::string &err)
     m.cellSize[d] = eng.grid.h;
     m.numCells[d] = eng.grid.n[d];
   }
-  m.basis = eng.par.basis == ladruno_mpm::BASIS_GIMP ? "gimp" : "linear";
+  m.basis = ladruno_mpm::basisName(eng.par.basis);   // WP-232i: K3 / F1, Contract 2 amended
   for (const auto &kv : bodyNames) { m.bodyId.push_back(kv.first); m.bodyName.push_back(kv.second); }
   for (int q : idOrder) {
     m.id.push_back((long long)P.id[q]);

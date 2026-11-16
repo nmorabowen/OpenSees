@@ -2325,6 +2325,9 @@ features:
       - tests/test_ladruno_mpm_lifecycle.py
       - tests/test_mpm_engine_core_cpp.py
       - tests/test_ladruno_mpm_contracts_io.py
+      - tests/test_ladruno_mpm_bspline_basis.py      # WP-232i: G1, G1-K4, G7, G8 (+ classic Tcl deck)
+      - tests/test_ladruno_mpm_bspline_mms.py        # WP-232i: MMS rows on 1/h = 8, 16, 32
+      - tests/test_mpm_mms_reference.py              # WP-232i: the MMS derivation by finite differences
     tcl: WAIVED(classic-Tcl runs through OpenSees.exe inside the pytest files -- tests/ladruno_mpm_harness.py writes one deck per case, and test_ladruno_mpm_lifecycle.py carries the refusal / loadPattern-stage deck)
     zone_b: []
     core_files:

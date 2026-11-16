@@ -1138,7 +1138,7 @@ def _validate_particle_model(r, stage, ndim, err):
     if "GRID" not in mp:
         err(f"C2-GRID: {ctx}: GRID group missing")
     else:
-        lo, hi = check_grid(mp["GRID"], ndim, f"{ctx}/GRID", err, "C2-GRID")
+        lo, hi = check_grid(mp["GRID"], ndim, f"{ctx}/GRID", err, "C2-GRID", bases=C2_BASES)
 
     body_ids: set[int] = set()
     if "BODIES" not in mp or "ID" not in mp["BODIES"] or "NAME" not in mp["BODIES"]:
@@ -1174,7 +1174,15 @@ def _validate_particle_model(r, stage, ndim, err):
     return lo, hi, reg_ids
 
 
-def check_grid(g, ndim: int, ctx: str, err, code: str, basis_code: str | None = None):
+# The allowed GRID/BASIS values per contract (WP-232i, 232a_mpm_contracts.md):
+# Contract 1 is unchanged (K2: a new value would be a FORMAT_VERSION bump);
+# Contract 2's C2-GRID was amended to add the B-spline bases, with no minor bump.
+C1_BASES = ("gimp", "linear")
+C2_BASES = ("gimp", "linear", "bspline2", "bspline3")
+
+
+def check_grid(g, ndim: int, ctx: str, err, code: str, basis_code: str | None = None,
+               bases: tuple = C1_BASES):
     """GRID attributes (contract 1 §1.2 == contract 2 §2.4). Returns the box (lo, hi)."""
     lo = hi = None
     try:
@@ -1194,8 +1202,8 @@ def check_grid(g, ndim: int, ctx: str, err, code: str, basis_code: str | None = 
             err(f"{code}: {ctx}: non-finite origin, CELL_SIZE <= 0 or NUM_CELLS < 1")
         else:
             lo, hi = org, org + nc * h
-    if "BASIS" not in g.attrs or _attr(g, "BASIS") not in ("gimp", "linear"):
-        err(f"{basis_code or code}: {ctx}: BASIS must be gimp|linear")
+    if "BASIS" not in g.attrs or _attr(g, "BASIS") not in bases:
+        err(f"{basis_code or code}: {ctx}: BASIS must be {'|'.join(bases)}")
     return lo, hi
 
 
