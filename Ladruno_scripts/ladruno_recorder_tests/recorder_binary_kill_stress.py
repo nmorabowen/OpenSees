@@ -35,9 +35,10 @@ The check (``check``):
    holds all of the reference's steps; modes snapshots equal the reference's; KIND is one of
    static / transient / eigen; envelopes equal the reference's envelope over SOME prefix of
    the stage's steps, entry by entry;
-4. only the LAST stage may fail to open (it was being laid out and holds no committed step;
-   the open may be any step of the rule, since sec2 writes WRITE_ACCESS to the superblock
-   lazily): ``TORN_LAST``, not a failure.
+4. only the LAST stage may fail to open (it was being laid out and holds no committed step),
+   and only after step 1 or step 3 (sec2 writes WRITE_ACCESS to the superblock lazily, so a
+   plain open can meet it): ``TORN_LAST``, not a failure. After step 2 (flags 0x05, killed
+   with SWMR armed) every stage must read.
 
 Statuses: ``OK`` (plain / swmr / repaired), ``TORN_LAST``, ``CHILD_EXITED`` (the child
 finished before the kill; harmless), ``NO_FILE`` (killed before the first flush wrote the
@@ -218,7 +219,9 @@ def check(path, ref, a, work):
             try:
                 status, detail = check_stage(f[name], fr[name], last, a)
             except Exception as e:  # noqa: BLE001
-                if last:   # schema 7b.2: the stage being laid out (any open path)
+                # schema 7b.2: the stage being laid out, after step 1 or 3 only; a file
+                # killed with SWMR armed (step 2) must read whole
+                if last and how != "swmr":
                     return "TORN_LAST", str(e).splitlines()[0][:160], how, len(names), -1
                 return "UNREADABLE", f"{name}: " + str(e).splitlines()[0][:160], how, len(names), -1
             if status != "OK":
