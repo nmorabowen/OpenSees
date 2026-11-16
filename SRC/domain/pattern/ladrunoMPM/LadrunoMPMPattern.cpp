@@ -66,11 +66,21 @@ static_assert(ladruno_mpm::MUT_SCALE == LADRUNO_MUT_SCALE, "MPM mutation code SC
 class LadrunoMPMPattern::Mats : public ladruno_mpm::MaterialPoints
 {
  public:
-  Mats(std::vector<NDMaterial *> &m) : mats(m), eps3(3), eps6(6) {}
+  Mats(std::vector<NDMaterial *> &m) : mats(m), eps3(3), eps6(6), idleTmr(nullptr), matTmr(&idleTmr) {}
+
+  // WP-232g (M0b): the material update's share of a mode-F step. The core
+  // (LadrunoMPMCore.h) stays OpenSees-free and interleaves the material call with
+  // the kinematics in one particle loop, so the share is measured here, per call:
+  // each setTrialStrain and commitState runs under an ElemScope that folds its wall
+  // into the deep scope "mpm.f.material" (the host's, around eng.advance), bucketed
+  // by the material's class tag (elem_by_type). Inert -- no clock read -- unless the
+  // profiler runs with -deep; the loop is serial (v1), so no worker-thread tree.
+  void setTimer(ops_profiler::ScopedTimerOpt *t) { matTmr = (t != 0) ? t : &idleTmr; }
 
   int setTrialStrain(int p, const double *e, double *s) override
   {
     NDMaterial *mat = mats[p];
+    OPS_PROFILE_ELEMPTR_SCOPE((*matTmr), mat);   // WP-232g
     const int nv = mat->getOrder();
     Vector &eps = (nv == 6) ? eps6 : eps3;
     for (int k = 0; k < nv; k++) eps(k) = e[k];
@@ -79,7 +89,11 @@ class LadrunoMPMPattern::Mats : public ladruno_mpm::MaterialPoints
     for (int k = 0; k < nv; k++) s[k] = sig(k);
     return (res < 0) ? -1 : 0;
   }
-  int commitState(int p) override { return mats[p]->commitState(); }
+  int commitState(int p) override
+  {
+    OPS_PROFILE_ELEMPTR_SCOPE((*matTmr), mats[p]);   // WP-232g
+    return mats[p]->commitState();
+  }
   int revertToLastCommit(int p) override { return mats[p]->revertToLastCommit(); }
   int pendingRefusals() override
   {
@@ -106,6 +120,8 @@ class LadrunoMPMPattern::Mats : public ladruno_mpm::MaterialPoints
  private:
   std::vector<NDMaterial *> &mats;
   Vector eps3, eps6;
+  ops_profiler::ScopedTimerOpt idleTmr;      // WP-232g: never engaged (a null name)
+  ops_profiler::ScopedTimerOpt *matTmr;      // WP-232g: idleTmr, or the host's deep scope
 };
 
 // ---------------------------------------------------------------------------
@@ -692,7 +708,17 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
     ops_TheActiveElement = 0;
     int res;
     { OPS_PROFILE_SCOPE("mpm.advance");
-      res = eng.advance(dt, lambda, *adapter, err); }
+#ifndef OPS_PROFILE_DISABLE
+      // WP-232g (M0b): a deep scope whose elem_by_type rows carry the material calls'
+      // wall (the adapter's ElemScopes); the scope's own wall is the whole advance.
+      OPS_PROFILE_SCOPE_DEEP_NAMED(matTmr, "mpm.f.material");
+      adapter->setTimer(&matTmr);
+#endif
+      res = eng.advance(dt, lambda, *adapter, err);
+#ifndef OPS_PROFILE_DISABLE
+      adapter->setTimer(0);
+#endif
+    }
     ops_TheActiveElement = saved;
     if (res == -1) {
       dom->revertToLastCommit();

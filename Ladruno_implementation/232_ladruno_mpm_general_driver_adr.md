@@ -366,13 +366,76 @@ nodes are excluded or ghost-regularized — the choice is measured at M0b.
 
 | Candidate | Status | Reason |
 |---|---|---|
-| C — sparse cell kernels, materialized on demand | **deferred** | its advantage is explicit throughput, which F now owns; revisit only if M0b shows the per-step rebuild of A dominates implicit runs |
+| C — sparse cell kernels, materialized on demand | **deferred** (M0b, 232g: still deferred) | its advantage is explicit throughput, which F now owns; M0b found the per-step rebuild of A is ≤ 19 % of a step and about one Newton iteration, flat in N (amendment below) |
 | B — dense fixed grid | rejected | full-box factorization; 1–2 orders of magnitude of waste on sparse problems |
 | C′ — handler-emitted adapters | rejected on cost | a full `domainChanged()` per re-emit and the Plain-only restriction (W2) |
 | D — vendor Berkeley's engine | rejected as the implementation | stateless-material contract, its own solve loop, no MSVC path, permanent drift; kept as a cross-code oracle |
 | E — co-simulation only | excluded | ADR-86 D2 chose an in-tree lane |
 | A zero-node Domain element as the explicit host (§14.3 M6) | rejected | W15: the first analysis set up in that Domain exits the process |
 | A `Domain::commit` hook for mode F (first draft) | rejected | unnecessary — the engine orders G2P before `Domain::commit` — and an unadmitted vanilla edit |
+
+> **Amendment (232g, 2026-11-16) — M0b result: C stays deferred.**
+>
+> **How it was measured.**
+> - WP-232g (PR #1089) measured against the decision table pre-registered in
+>   `.claude/skills/ladruno-mpm/references/wp-briefs.md` ("232g", commit `26099cf43`); no
+>   threshold was moved.
+> - One build, `9db5803f6`. Numbers and method: [[232g_mpm_m0b_measurements]].
+> - The orchestrator applied the table; a Fable critic at max confirmed every row, from the raw
+>   profiler data. It asked for document corrections, which are made.
+>
+> **M1 — whether C is ever needed.**
+> - **Setup.** On the default (PARDISO, `renormalize` 5e-2), 3D, 10³–10⁵ particle-elements, QS
+>   and transient, elastic and DP.
+> - **Share of a step.** One mode-A rebuild (host preparation, `domainChanged()`, and the
+>   symbolic analysis it triggers) is **f ≤ 0.19** of a step at every N, falling with N.
+> - **Against one Newton iteration.** One rebuild costs **R = 1.13 / 1.26 / 1.20** Newton
+>   iterations at 10³ / 10⁴ / 10⁵ (worst: QS elastic). It is flat in N: the worst log-log slope
+>   per rebuild cycle is 0.030.
+> - **What it is made of.** Symbolic analysis is 8 % of a rebuild at 10⁵. Building and numbering
+>   the DOF graph is 65–75 %. The full rebuild runs whether or not the connectivity changed.
+> - **The rows.**
+>   - C-closed fails only on R ≤ 1, and at 10⁴ in all four cases, with no cut or failed step.
+>   - C-cheaper-first and C-needed fail on their f thresholds (> 0.25, > 0.5).
+>   - So the outcome is **C-deferred**, the table's "anything else" row: C stays deferred.
+> - **Robustness.** The row holds however the failed 10⁵ QS DP runs and the cut steps are
+>   treated.
+> - **Conditions it rests on.**
+>   - Every timed step took k ≥ 4 Newton iterations; a workload converging in 3 would put f above
+>     0.25.
+>   - It is measured with today's formTangent (#1096). Halving it would put f near 0.27 at 10⁴
+>     (arithmetic, not a measurement).
+>   - Either would move the row to C-cheaper-first, never to C-needed: the rebuild's cost is graph
+>     and numbering work that a targeted rebuild removes without C.
+> - **Revisit at phase 11, and after #1096 lands.**
+>
+> **M1-t — the empty-node default.** The `renormalize` default stands: `ghost` is never ≥ 25 %
+> cheaper per step.
+>
+> **M2 — mode F baselines.**
+> - Mode F's elastic step is 91 % non-material at 10⁵ on one thread, and threads change nothing →
+>   #1097.
+> - The SANISAND/DP cost ratio recorded for phase 5 is 341 (222–477) at a strain increment of
+>   2.6e-4, and 647 (462–920) at 9.4e-4. SANISAND's cost per call grows with the increment.
+>
+> **M3 — memory.**
+> - At the pre-registered instant (after the first step), mode A is 17.8 / 20.3 kB per
+>   particle-element (elastic / DP), in the "between 8 and 32 kB" row → recorded, revisit at
+>   phase 11.
+> - **For the owner:** that instant is the model's minimum. As supports grow to 27 nodes, the
+>   `FE_Element`s allocate their own 81 × 81 tangents, and the same runs reach 37.6–39.4 kB at
+>   late steps. Read there, the outcome would be "> 32 kB", with the removable item at about
+>   46 %, short of the 50 % escape.
+> - Removing that item needs no C (#1098). **Owner's decision (2026-11-16): the letter stands;**
+>   the late-step reading does not count.
+>
+> **M4 — the 232f data owed.**
+> - `renormalize` never converges through the cantilever ramp at cutoff 1e-6 or 1e-10, at any
+>   resolution. The 5e-2 default therefore stands, by default rather than by agreement: the tips
+>   differ by up to 8.7 % at the early common steps.
+> - formTangent is 67–82 % of a Newton iteration at 10⁵ → #1096 (232f review item 15).
+>
+> **Also found.** A mode-A access violation on a step-cut retry at 10⁵ (#1095).
 
 ---
 
@@ -771,6 +834,13 @@ ADR-88).
   chose to land and redesign the footing gate (amendment note after the §8 table). The
   owner waived the out-of-family verdict (ADR-87 D4) as for 232c; the Fable critic and
   `/code-review high` are the review of record (both answers recorded on #1083).
+- **2026-11-16** — 232g (phase 2, M0b): measured from one build (`9db5803f6`, 235 runs, 230 ok).
+  The pre-registered table gives **C-deferred**: C stays deferred, revisited at phase 11 and after
+  #1096 (amendment note at §5.5). The defaults stand (`renormalize` 5e-2). Issues filed: #1095
+  (cut-retry crash), #1096 (tangent B-build), #1097 (F transfer loops), #1098 (FE_Element's own
+  tangent). Owner decisions (2026-11-16): M3 stands by the letter (the late-step reading does
+  not count; #1098 removes it); the out-of-family verdict (ADR-87 D4) is waived as for 232c and
+  232f, with the Fable critic and `/code-review medium` as the review of record.
 
 ---
 

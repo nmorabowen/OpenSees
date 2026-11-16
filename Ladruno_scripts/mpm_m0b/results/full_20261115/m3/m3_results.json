@@ -1,0 +1,3906 @@
+{
+ "script": "m3_memory",
+ "conditions": {
+  "pinned_machine": "i7-13700KF (8 P + 8 E cores), 64 GB",
+  "machine_seen": {
+   "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+   "cpu_count": 24,
+   "total_ram_bytes": 68560179200,
+   "platform": "Windows-11-10.0.26100-SP0"
+  },
+  "python": "3.12.10",
+  "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\dist\\bin\\opensees.pyd",
+  "smoke": false,
+  "affinity_requested": "0xffff",
+  "timeout_s": 21600.0,
+  "started": "2026-11-16T02:19:08",
+  "note": "no build or other heavy job may run during a timed run (232g pinned conditions)"
+ },
+ "pinned": {
+  "threads": "mode A 8, mode F 1",
+  "repeats": 2,
+  "definition": "slope of private bytes against N after the first step (s2), fitted on the two largest N (10^4 -> 10^5)"
+ },
+ "analytic_constants": {
+  "heap_block_overhead_B": 16,
+  "Vector_object_B": 24,
+  "Matrix_object_B": 32,
+  "ID_object_B": 32,
+  "std_vector_B": 24,
+  "polymorphic_base_B": 48,
+  "sources": "LadrunoMPMPoint.h members; FE_Element.cpp:188-219 (own tangent and residual only when numDOF > MAX_NUM_DOF = 64, else the class pool); ElasticIsotropicThreeDimensional.h (2 Vector(6)); DruckerPrager.h (8 Vector(6), 4 Matrix(6,6), 26 scalars); Node.h (Crd, disp/vel/accel arrays and Vector views, unbalLoad); LadrunoMPMCore.h Particles (57 doubles + 20 B of ids per particle, held twice: the state and the `mpm reset` snapshot)",
+  "not counted": "the SOE's matrix and PARDISO's factor (MKL-internal); the allocator's page slack; Python"
+ },
+ "runs": [
+  {
+   "ok": true,
+   "config": {
+    "mode": "A",
+    "N": 1000,
+    "mat": "elastic",
+    "threads": 8,
+    "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\dist\\bin\\opensees.pyd"
+   },
+   "conditions": {
+    "ladrunoBuild": "9db5803f6d20672e7f73e89615af33a42a449dac",
+    "OMP_NUM_THREADS": "8",
+    "MKL_NUM_THREADS": "8",
+    "python": "3.12.10",
+    "pid": 42876,
+    "affinity": {
+     "requested": "0xffff",
+     "process_mask": "0xffff",
+     "system_mask": "0xffffff",
+     "set_ok": true
+    },
+    "ladrunoThreads": 1
+   },
+   "model": {
+    "n_cells": 5,
+    "h": 0.2,
+    "dt": 0.09375,
+    "B": 1.0,
+    "rho": 1000.0,
+    "g": 10.0,
+    "E": 50000.0,
+    "nu": 0.3,
+    "K": 41666.66666666666,
+    "G": 19230.76923076923,
+    "dp": null,
+    "ghost_gamma": null,
+    "massCutoff": 0.05,
+    "test": [
+     "NormDispIncr",
+     1e-06,
+     50
+    ],
+    "grid_cells": [
+     5,
+     5,
+     7
+    ],
+    "ppc": 2,
+    "basis": "gimp",
+    "fixes": "xmin/xmax x, ymin/ymax y, zmin xyz",
+    "loading": "gravity ramp 0->0.75 over 8 steps",
+    "period_T": 0.48755952017603527
+   },
+   "numParticles": 1000,
+   "stages": {
+    "s0_model": {
+     "private": 31662080,
+     "working_set": 26943488,
+     "peak_working_set": 26943488,
+     "peak_pagefile": 31662080
+    },
+    "s1_built": {
+     "private": 40210432,
+     "working_set": 31731712,
+     "peak_working_set": 32251904,
+     "peak_pagefile": 40730624
+    },
+    "s2_step1": {
+     "private": 66084864,
+     "working_set": 54943744,
+     "peak_working_set": 54943744,
+     "peak_pagefile": 66084864
+    },
+    "s3_step2": {
+     "private": 68730880,
+     "working_set": 56688640,
+     "peak_working_set": 56688640,
+     "peak_pagefile": 68730880
+    }
+   },
+   "runs": {
+    "build": "s0000",
+    "step1": "s0001",
+    "step2": "s0002"
+   },
+   "gridNodes": 216,
+   "nEqn": 420,
+   "support_histogram": {
+    "8": 600,
+    "12": 400
+   },
+   "child_rc": 0,
+   "child_wall_s": 0.3085116000002017,
+   "log": "m3_A_N1000_elastic_r0.log",
+   "analytic": {
+    "material_copy": 272,
+    "particle_state_and_snapshot": 1038,
+    "element": 3208.0,
+    "fe_element": 385.6,
+    "of_which_fe_own_tangent": 0.0,
+    "grid_nodes": 301.536,
+    "grid_nodes_per_particle": 0.216,
+    "share_numDOF_gt_64": 0.0,
+    "mean_support_nodes": 9.6,
+    "total": 5205.136
+   },
+   "profiler_memory": {
+    "build": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 96568,
+     "vector_live": 96568,
+     "components_live": {
+      "1": 4,
+      "2": 2,
+      "3": 2,
+      "6": 1,
+      "10": 1,
+      "16": 1000,
+      "33000": 1,
+      "33027": 1,
+      "99990": 1
+     }
+    },
+    "step1": {
+     "id_live": 163904,
+     "matrix_live": 230784,
+     "peak_bytes": 910904,
+     "vector_live": 405176,
+     "components_live": {
+      "1": 444,
+      "33026": 1000
+     }
+    },
+    "step2": {
+     "id_live": 32000,
+     "matrix_live": 20736,
+     "peak_bytes": 296648,
+     "vector_live": 77088,
+     "components_live": {}
+    }
+   },
+   "tag": "m3_A_N1000_elastic_r0"
+  },
+  {
+   "ok": true,
+   "config": {
+    "mode": "A",
+    "N": 1000,
+    "mat": "elastic",
+    "threads": 8,
+    "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\dist\\bin\\opensees.pyd"
+   },
+   "conditions": {
+    "ladrunoBuild": "9db5803f6d20672e7f73e89615af33a42a449dac",
+    "OMP_NUM_THREADS": "8",
+    "MKL_NUM_THREADS": "8",
+    "python": "3.12.10",
+    "pid": 33016,
+    "affinity": {
+     "requested": "0xffff",
+     "process_mask": "0xffff",
+     "system_mask": "0xffffff",
+     "set_ok": true
+    },
+    "ladrunoThreads": 1
+   },
+   "model": {
+    "n_cells": 5,
+    "h": 0.2,
+    "dt": 0.09375,
+    "B": 1.0,
+    "rho": 1000.0,
+    "g": 10.0,
+    "E": 50000.0,
+    "nu": 0.3,
+    "K": 41666.66666666666,
+    "G": 19230.76923076923,
+    "dp": null,
+    "ghost_gamma": null,
+    "massCutoff": 0.05,
+    "test": [
+     "NormDispIncr",
+     1e-06,
+     50
+    ],
+    "grid_cells": [
+     5,
+     5,
+     7
+    ],
+    "ppc": 2,
+    "basis": "gimp",
+    "fixes": "xmin/xmax x, ymin/ymax y, zmin xyz",
+    "loading": "gravity ramp 0->0.75 over 8 steps",
+    "period_T": 0.48755952017603527
+   },
+   "numParticles": 1000,
+   "stages": {
+    "s0_model": {
+     "private": 31715328,
+     "working_set": 26996736,
+     "peak_working_set": 26996736,
+     "peak_pagefile": 31715328
+    },
+    "s1_built": {
+     "private": 40259584,
+     "working_set": 31784960,
+     "peak_working_set": 32309248,
+     "peak_pagefile": 40787968
+    },
+    "s2_step1": {
+     "private": 66011136,
+     "working_set": 54939648,
+     "peak_working_set": 54939648,
+     "peak_pagefile": 66011136
+    },
+    "s3_step2": {
+     "private": 68399104,
+     "working_set": 56852480,
+     "peak_working_set": 56852480,
+     "peak_pagefile": 68399104
+    }
+   },
+   "runs": {
+    "build": "s0000",
+    "step1": "s0001",
+    "step2": "s0002"
+   },
+   "gridNodes": 216,
+   "nEqn": 420,
+   "support_histogram": {
+    "8": 600,
+    "12": 400
+   },
+   "child_rc": 0,
+   "child_wall_s": 0.3034957000018039,
+   "log": "m3_A_N1000_elastic_r1.log",
+   "analytic": {
+    "material_copy": 272,
+    "particle_state_and_snapshot": 1038,
+    "element": 3208.0,
+    "fe_element": 385.6,
+    "of_which_fe_own_tangent": 0.0,
+    "grid_nodes": 301.536,
+    "grid_nodes_per_particle": 0.216,
+    "share_numDOF_gt_64": 0.0,
+    "mean_support_nodes": 9.6,
+    "total": 5205.136
+   },
+   "profiler_memory": {
+    "build": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 96568,
+     "vector_live": 96568,
+     "components_live": {
+      "1": 4,
+      "2": 2,
+      "3": 2,
+      "6": 1,
+      "10": 1,
+      "16": 1000,
+      "33000": 1,
+      "33027": 1,
+      "99990": 1
+     }
+    },
+    "step1": {
+     "id_live": 163904,
+     "matrix_live": 230784,
+     "peak_bytes": 910904,
+     "vector_live": 405176,
+     "components_live": {
+      "1": 444,
+      "33026": 1000
+     }
+    },
+    "step2": {
+     "id_live": 32000,
+     "matrix_live": 20736,
+     "peak_bytes": 296648,
+     "vector_live": 77088,
+     "components_live": {}
+    }
+   },
+   "tag": "m3_A_N1000_elastic_r1"
+  },
+  {
+   "ok": true,
+   "config": {
+    "mode": "F",
+    "N": 1000,
+    "mat": "elastic",
+    "threads": 1,
+    "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\dist\\bin\\opensees.pyd"
+   },
+   "conditions": {
+    "ladrunoBuild": "9db5803f6d20672e7f73e89615af33a42a449dac",
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "python": "3.12.10",
+    "pid": 40200,
+    "affinity": {
+     "requested": "0xffff",
+     "process_mask": "0xffff",
+     "system_mask": "0xffffff",
+     "set_ok": true
+    },
+    "ladrunoThreads": 1
+   },
+   "model": {
+    "m_cells": 4,
+    "h": 0.25,
+    "a": 1.0,
+    "height": 2.0,
+    "rho": 2000.0,
+    "g": 9.81,
+    "E": 1000000.0,
+    "nu": 0.3,
+    "K": 833333.3333333333,
+    "G": 384615.3846153846,
+    "grid_cells": [
+     16,
+     16,
+     10
+    ],
+    "ppc": 2,
+    "basis": "gimp",
+    "floor": "mpm wall zmin 0.4",
+    "symmetry": "xmin x, ymin y (quarter column)",
+    "dp": null,
+    "j2": null,
+    "dt_factor": 0.25
+   },
+   "numParticles": 1024,
+   "stages": {
+    "s0_model": {
+     "private": 31707136,
+     "working_set": 26988544,
+     "peak_working_set": 26988544,
+     "peak_pagefile": 31707136
+    },
+    "s1_built": {
+     "private": 40181760,
+     "working_set": 31522816,
+     "peak_working_set": 32047104,
+     "peak_pagefile": 40706048
+    },
+    "s2_step1": {
+     "private": 42721280,
+     "working_set": 34197504,
+     "peak_working_set": 34197504,
+     "peak_pagefile": 42721280
+    },
+    "s3_step2": {
+     "private": 43253760,
+     "working_set": 34742272,
+     "peak_working_set": 34742272,
+     "peak_pagefile": 43253760
+    }
+   },
+   "runs": {
+    "build": "s0000",
+    "step1": "s0001",
+    "step2": "s0002"
+   },
+   "support_histogram": {
+    "8": 467,
+    "12": 494,
+    "18": 59,
+    "27": 4
+   },
+   "child_rc": 0,
+   "child_wall_s": 0.08330520000163233,
+   "log": "m3_F_N1000_elastic_r0.log",
+   "analytic": {
+    "material_copy": 272,
+    "particle_state_and_snapshot": 1038,
+    "support_arrays": 431.203125,
+    "trial_arrays": 344,
+    "dense_grid": 705.783203125,
+    "dense_grid_nodes_per_particle": 4.5830078125,
+    "mean_support_nodes": 10.580078125,
+    "total": 2790.986328125
+   },
+   "profiler_memory": {
+    "build": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 98376,
+     "vector_live": 98376,
+     "components_live": {
+      "10": 1,
+      "16": 1024,
+      "33027": 1
+     }
+    },
+    "step1": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 0,
+     "vector_live": 0,
+     "components_live": {}
+    },
+    "step2": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 0,
+     "vector_live": 0,
+     "components_live": {}
+    }
+   },
+   "tag": "m3_F_N1000_elastic_r0"
+  },
+  {
+   "ok": true,
+   "config": {
+    "mode": "F",
+    "N": 1000,
+    "mat": "elastic",
+    "threads": 1,
+    "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\dist\\bin\\opensees.pyd"
+   },
+   "conditions": {
+    "ladrunoBuild": "9db5803f6d20672e7f73e89615af33a42a449dac",
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "python": "3.12.10",
+    "pid": 11164,
+    "affinity": {
+     "requested": "0xffff",
+     "process_mask": "0xffff",
+     "system_mask": "0xffffff",
+     "set_ok": true
+    },
+    "ladrunoThreads": 1
+   },
+   "model": {
+    "m_cells": 4,
+    "h": 0.25,
+    "a": 1.0,
+    "height": 2.0,
+    "rho": 2000.0,
+    "g": 9.81,
+    "E": 1000000.0,
+    "nu": 0.3,
+    "K": 833333.3333333333,
+    "G": 384615.3846153846,
+    "grid_cells": [
+     16,
+     16,
+     10
+    ],
+    "ppc": 2,
+    "basis": "gimp",
+    "floor": "mpm wall zmin 0.4",
+    "symmetry": "xmin x, ymin y (quarter column)",
+    "dp": null,
+    "j2": null,
+    "dt_factor": 0.25
+   },
+   "numParticles": 1024,
+   "stages": {
+    "s0_model": {
+     "private": 31621120,
+     "working_set": 26963968,
+     "peak_working_set": 26963968,
+     "peak_pagefile": 31621120
+    },
+    "s1_built": {
+     "private": 40050688,
+     "working_set": 31477760,
+     "peak_working_set": 32006144,
+     "peak_pagefile": 40583168
+    },
+    "s2_step1": {
+     "private": 42590208,
+     "working_set": 34152448,
+     "peak_working_set": 34152448,
+     "peak_pagefile": 42590208
+    },
+    "s3_step2": {
+     "private": 43122688,
+     "working_set": 34701312,
+     "peak_working_set": 34701312,
+     "peak_pagefile": 43122688
+    }
+   },
+   "runs": {
+    "build": "s0000",
+    "step1": "s0001",
+    "step2": "s0002"
+   },
+   "support_histogram": {
+    "8": 467,
+    "12": 494,
+    "18": 59,
+    "27": 4
+   },
+   "child_rc": 0,
+   "child_wall_s": 0.08108829999764566,
+   "log": "m3_F_N1000_elastic_r1.log",
+   "analytic": {
+    "material_copy": 272,
+    "particle_state_and_snapshot": 1038,
+    "support_arrays": 431.203125,
+    "trial_arrays": 344,
+    "dense_grid": 705.783203125,
+    "dense_grid_nodes_per_particle": 4.5830078125,
+    "mean_support_nodes": 10.580078125,
+    "total": 2790.986328125
+   },
+   "profiler_memory": {
+    "build": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 98376,
+     "vector_live": 98376,
+     "components_live": {
+      "10": 1,
+      "16": 1024,
+      "33027": 1
+     }
+    },
+    "step1": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 0,
+     "vector_live": 0,
+     "components_live": {}
+    },
+    "step2": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 0,
+     "vector_live": 0,
+     "components_live": {}
+    }
+   },
+   "tag": "m3_F_N1000_elastic_r1"
+  },
+  {
+   "ok": true,
+   "config": {
+    "mode": "A",
+    "N": 1000,
+    "mat": "dp",
+    "threads": 8,
+    "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\dist\\bin\\opensees.pyd"
+   },
+   "conditions": {
+    "ladrunoBuild": "9db5803f6d20672e7f73e89615af33a42a449dac",
+    "OMP_NUM_THREADS": "8",
+    "MKL_NUM_THREADS": "8",
+    "python": "3.12.10",
+    "pid": 31856,
+    "affinity": {
+     "requested": "0xffff",
+     "process_mask": "0xffff",
+     "system_mask": "0xffffff",
+     "set_ok": true
+    },
+    "ladrunoThreads": 1
+   },
+   "model": {
+    "n_cells": 5,
+    "h": 0.2,
+    "dt": 0.09375,
+    "B": 1.0,
+    "rho": 1000.0,
+    "g": 10.0,
+    "E": 50000.0,
+    "nu": 0.3,
+    "K": 41666.66666666666,
+    "G": 19230.76923076923,
+    "dp": {
+     "sigmaY": 400.0,
+     "rho": 0.21,
+     "rhoBar": 0.0
+    },
+    "ghost_gamma": null,
+    "massCutoff": 0.05,
+    "test": [
+     "NormDispIncr",
+     1e-06,
+     50
+    ],
+    "grid_cells": [
+     5,
+     5,
+     7
+    ],
+    "ppc": 2,
+    "basis": "gimp",
+    "fixes": "xmin/xmax x, ymin/ymax y, zmin xyz",
+    "loading": "gravity ramp 0->0.75 over 8 steps",
+    "period_T": 0.48755952017603527
+   },
+   "numParticles": 1000,
+   "stages": {
+    "s0_model": {
+     "private": 31408128,
+     "working_set": 26763264,
+     "peak_working_set": 26763264,
+     "peak_pagefile": 31408128
+    },
+    "s1_built": {
+     "private": 43008000,
+     "working_set": 34639872,
+     "peak_working_set": 34639872,
+     "peak_pagefile": 43008000
+    },
+    "s2_step1": {
+     "private": 68218880,
+     "working_set": 57380864,
+     "peak_working_set": 57380864,
+     "peak_pagefile": 68218880
+    },
+    "s3_step2": {
+     "private": 70914048,
+     "working_set": 59359232,
+     "peak_working_set": 59359232,
+     "peak_pagefile": 70914048
+    }
+   },
+   "runs": {
+    "build": "s0000",
+    "step1": "s0001",
+    "step2": "s0002"
+   },
+   "gridNodes": 216,
+   "nEqn": 420,
+   "support_histogram": {
+    "8": 600,
+    "12": 400
+   },
+   "child_rc": 0,
+   "child_wall_s": 0.3222981999970216,
+   "log": "m3_A_N1000_dp_r0.log",
+   "analytic": {
+    "material_copy": 2320,
+    "particle_state_and_snapshot": 1038,
+    "element": 3208.0,
+    "fe_element": 385.6,
+    "of_which_fe_own_tangent": 0.0,
+    "grid_nodes": 301.536,
+    "grid_nodes_per_particle": 0.216,
+    "share_numDOF_gt_64": 0.0,
+    "mean_support_nodes": 9.6,
+    "total": 7253.136
+   },
+   "profiler_memory": {
+    "build": {
+     "id_live": 0,
+     "matrix_live": 1153152,
+     "peak_bytes": 1882816,
+     "vector_live": 729296,
+     "components_live": {
+      "0": 1,
+      "1": 4,
+      "2": 2,
+      "3": 2,
+      "6": 1,
+      "14006": 1000,
+      "33000": 1,
+      "33027": 1,
+      "99990": 1
+     }
+    },
+    "step1": {
+     "id_live": 163904,
+     "matrix_live": 230784,
+     "peak_bytes": 910904,
+     "vector_live": 405176,
+     "components_live": {
+      "1": 444,
+      "33026": 1000
+     }
+    },
+    "step2": {
+     "id_live": 32000,
+     "matrix_live": 20736,
+     "peak_bytes": 296648,
+     "vector_live": 77088,
+     "components_live": {}
+    }
+   },
+   "tag": "m3_A_N1000_dp_r0"
+  },
+  {
+   "ok": true,
+   "config": {
+    "mode": "A",
+    "N": 1000,
+    "mat": "dp",
+    "threads": 8,
+    "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\dist\\bin\\opensees.pyd"
+   },
+   "conditions": {
+    "ladrunoBuild": "9db5803f6d20672e7f73e89615af33a42a449dac",
+    "OMP_NUM_THREADS": "8",
+    "MKL_NUM_THREADS": "8",
+    "python": "3.12.10",
+    "pid": 42600,
+    "affinity": {
+     "requested": "0xffff",
+     "process_mask": "0xffff",
+     "system_mask": "0xffffff",
+     "set_ok": true
+    },
+    "ladrunoThreads": 1
+   },
+   "model": {
+    "n_cells": 5,
+    "h": 0.2,
+    "dt": 0.09375,
+    "B": 1.0,
+    "rho": 1000.0,
+    "g": 10.0,
+    "E": 50000.0,
+    "nu": 0.3,
+    "K": 41666.66666666666,
+    "G": 19230.76923076923,
+    "dp": {
+     "sigmaY": 400.0,
+     "rho": 0.21,
+     "rhoBar": 0.0
+    },
+    "ghost_gamma": null,
+    "massCutoff": 0.05,
+    "test": [
+     "NormDispIncr",
+     1e-06,
+     50
+    ],
+    "grid_cells": [
+     5,
+     5,
+     7
+    ],
+    "ppc": 2,
+    "basis": "gimp",
+    "fixes": "xmin/xmax x, ymin/ymax y, zmin xyz",
+    "loading": "gravity ramp 0->0.75 over 8 steps",
+    "period_T": 0.48755952017603527
+   },
+   "numParticles": 1000,
+   "stages": {
+    "s0_model": {
+     "private": 31707136,
+     "working_set": 26976256,
+     "peak_working_set": 26976256,
+     "peak_pagefile": 31707136
+    },
+    "s1_built": {
+     "private": 43298816,
+     "working_set": 34840576,
+     "peak_working_set": 34840576,
+     "peak_pagefile": 43298816
+    },
+    "s2_step1": {
+     "private": 68775936,
+     "working_set": 57688064,
+     "peak_working_set": 57688064,
+     "peak_pagefile": 68775936
+    },
+    "s3_step2": {
+     "private": 71868416,
+     "working_set": 59957248,
+     "peak_working_set": 59957248,
+     "peak_pagefile": 71868416
+    }
+   },
+   "runs": {
+    "build": "s0000",
+    "step1": "s0001",
+    "step2": "s0002"
+   },
+   "gridNodes": 216,
+   "nEqn": 420,
+   "support_histogram": {
+    "8": 600,
+    "12": 400
+   },
+   "child_rc": 0,
+   "child_wall_s": 0.3199734999980137,
+   "log": "m3_A_N1000_dp_r1.log",
+   "analytic": {
+    "material_copy": 2320,
+    "particle_state_and_snapshot": 1038,
+    "element": 3208.0,
+    "fe_element": 385.6,
+    "of_which_fe_own_tangent": 0.0,
+    "grid_nodes": 301.536,
+    "grid_nodes_per_particle": 0.216,
+    "share_numDOF_gt_64": 0.0,
+    "mean_support_nodes": 9.6,
+    "total": 7253.136
+   },
+   "profiler_memory": {
+    "build": {
+     "id_live": 0,
+     "matrix_live": 1153152,
+     "peak_bytes": 1882816,
+     "vector_live": 729296,
+     "components_live": {
+      "0": 1,
+      "1": 4,
+      "2": 2,
+      "3": 2,
+      "6": 1,
+      "14006": 1000,
+      "33000": 1,
+      "33027": 1,
+      "99990": 1
+     }
+    },
+    "step1": {
+     "id_live": 163904,
+     "matrix_live": 230784,
+     "peak_bytes": 910904,
+     "vector_live": 405176,
+     "components_live": {
+      "1": 444,
+      "33026": 1000
+     }
+    },
+    "step2": {
+     "id_live": 32000,
+     "matrix_live": 20736,
+     "peak_bytes": 296648,
+     "vector_live": 77088,
+     "components_live": {}
+    }
+   },
+   "tag": "m3_A_N1000_dp_r1"
+  },
+  {
+   "ok": true,
+   "config": {
+    "mode": "F",
+    "N": 1000,
+    "mat": "dp",
+    "threads": 1,
+    "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\dist\\bin\\opensees.pyd"
+   },
+   "conditions": {
+    "ladrunoBuild": "9db5803f6d20672e7f73e89615af33a42a449dac",
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "python": "3.12.10",
+    "pid": 35592,
+    "affinity": {
+     "requested": "0xffff",
+     "process_mask": "0xffff",
+     "system_mask": "0xffffff",
+     "set_ok": true
+    },
+    "ladrunoThreads": 1
+   },
+   "model": {
+    "m_cells": 4,
+    "h": 0.25,
+    "a": 1.0,
+    "height": 2.0,
+    "rho": 2000.0,
+    "g": 9.81,
+    "E": 1000000.0,
+    "nu": 0.3,
+    "K": 833333.3333333333,
+    "G": 384615.3846153846,
+    "grid_cells": [
+     16,
+     16,
+     10
+    ],
+    "ppc": 2,
+    "basis": "gimp",
+    "floor": "mpm wall zmin 0.4",
+    "symmetry": "xmin x, ymin y (quarter column)",
+    "dp": {
+     "phi_deg": 30.0,
+     "rho": 0.32659863237109044,
+     "rhoBar": 0.0,
+     "sigmaY": 10.0
+    },
+    "j2": null,
+    "dt_factor": 0.25
+   },
+   "numParticles": 1024,
+   "stages": {
+    "s0_model": {
+     "private": 31490048,
+     "working_set": 26800128,
+     "peak_working_set": 26800128,
+     "peak_pagefile": 31490048
+    },
+    "s1_built": {
+     "private": 43069440,
+     "working_set": 34488320,
+     "peak_working_set": 34488320,
+     "peak_pagefile": 43069440
+    },
+    "s2_step1": {
+     "private": 45182976,
+     "working_set": 36753408,
+     "peak_working_set": 36753408,
+     "peak_pagefile": 45182976
+    },
+    "s3_step2": {
+     "private": 45711360,
+     "working_set": 37298176,
+     "peak_working_set": 37298176,
+     "peak_pagefile": 45711360
+    }
+   },
+   "runs": {
+    "build": "s0000",
+    "step1": "s0001",
+    "step2": "s0002"
+   },
+   "support_histogram": {
+    "8": 467,
+    "12": 494,
+    "18": 59,
+    "27": 4
+   },
+   "child_rc": 0,
+   "child_wall_s": 0.08216600000014296,
+   "log": "m3_F_N1000_dp_r0.log",
+   "analytic": {
+    "material_copy": 2320,
+    "particle_state_and_snapshot": 1038,
+    "support_arrays": 431.203125,
+    "trial_arrays": 344,
+    "dense_grid": 705.783203125,
+    "dense_grid_nodes_per_particle": 4.5830078125,
+    "mean_support_nodes": 10.580078125,
+    "total": 4838.986328125
+   },
+   "profiler_memory": {
+    "build": {
+     "id_live": 0,
+     "matrix_live": 1180800,
+     "peak_bytes": 1927936,
+     "vector_live": 746272,
+     "components_live": {
+      "0": 1,
+      "14006": 1024,
+      "33027": 1
+     }
+    },
+    "step1": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 464,
+     "vector_live": 0,
+     "components_live": {}
+    },
+    "step2": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 464,
+     "vector_live": 0,
+     "components_live": {}
+    }
+   },
+   "tag": "m3_F_N1000_dp_r0"
+  },
+  {
+   "ok": true,
+   "config": {
+    "mode": "F",
+    "N": 1000,
+    "mat": "dp",
+    "threads": 1,
+    "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\dist\\bin\\opensees.pyd"
+   },
+   "conditions": {
+    "ladrunoBuild": "9db5803f6d20672e7f73e89615af33a42a449dac",
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "python": "3.12.10",
+    "pid": 27508,
+    "affinity": {
+     "requested": "0xffff",
+     "process_mask": "0xffff",
+     "system_mask": "0xffffff",
+     "set_ok": true
+    },
+    "ladrunoThreads": 1
+   },
+   "model": {
+    "m_cells": 4,
+    "h": 0.25,
+    "a": 1.0,
+    "height": 2.0,
+    "rho": 2000.0,
+    "g": 9.81,
+    "E": 1000000.0,
+    "nu": 0.3,
+    "K": 833333.3333333333,
+    "G": 384615.3846153846,
+    "grid_cells": [
+     16,
+     16,
+     10
+    ],
+    "ppc": 2,
+    "basis": "gimp",
+    "floor": "mpm wall zmin 0.4",
+    "symmetry": "xmin x, ymin y (quarter column)",
+    "dp": {
+     "phi_deg": 30.0,
+     "rho": 0.32659863237109044,
+     "rhoBar": 0.0,
+     "sigmaY": 10.0
+    },
+    "j2": null,
+    "dt_factor": 0.25
+   },
+   "numParticles": 1024,
+   "stages": {
+    "s0_model": {
+     "private": 31547392,
+     "working_set": 26886144,
+     "peak_working_set": 26886144,
+     "peak_pagefile": 31547392
+    },
+    "s1_built": {
+     "private": 43143168,
+     "working_set": 34590720,
+     "peak_working_set": 34590720,
+     "peak_pagefile": 43143168
+    },
+    "s2_step1": {
+     "private": 45187072,
+     "working_set": 36782080,
+     "peak_working_set": 36782080,
+     "peak_pagefile": 45187072
+    },
+    "s3_step2": {
+     "private": 45715456,
+     "working_set": 37330944,
+     "peak_working_set": 37330944,
+     "peak_pagefile": 45715456
+    }
+   },
+   "runs": {
+    "build": "s0000",
+    "step1": "s0001",
+    "step2": "s0002"
+   },
+   "support_histogram": {
+    "8": 467,
+    "12": 494,
+    "18": 59,
+    "27": 4
+   },
+   "child_rc": 0,
+   "child_wall_s": 0.08493689999886556,
+   "log": "m3_F_N1000_dp_r1.log",
+   "analytic": {
+    "material_copy": 2320,
+    "particle_state_and_snapshot": 1038,
+    "support_arrays": 431.203125,
+    "trial_arrays": 344,
+    "dense_grid": 705.783203125,
+    "dense_grid_nodes_per_particle": 4.5830078125,
+    "mean_support_nodes": 10.580078125,
+    "total": 4838.986328125
+   },
+   "profiler_memory": {
+    "build": {
+     "id_live": 0,
+     "matrix_live": 1180800,
+     "peak_bytes": 1927936,
+     "vector_live": 746272,
+     "components_live": {
+      "0": 1,
+      "14006": 1024,
+      "33027": 1
+     }
+    },
+    "step1": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 464,
+     "vector_live": 0,
+     "components_live": {}
+    },
+    "step2": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 464,
+     "vector_live": 0,
+     "components_live": {}
+    }
+   },
+   "tag": "m3_F_N1000_dp_r1"
+  },
+  {
+   "ok": true,
+   "config": {
+    "mode": "A",
+    "N": 10000,
+    "mat": "elastic",
+    "threads": 8,
+    "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\dist\\bin\\opensees.pyd"
+   },
+   "conditions": {
+    "ladrunoBuild": "9db5803f6d20672e7f73e89615af33a42a449dac",
+    "OMP_NUM_THREADS": "8",
+    "MKL_NUM_THREADS": "8",
+    "python": "3.12.10",
+    "pid": 42376,
+    "affinity": {
+     "requested": "0xffff",
+     "process_mask": "0xffff",
+     "system_mask": "0xffffff",
+     "set_ok": true
+    },
+    "ladrunoThreads": 1
+   },
+   "model": {
+    "n_cells": 11,
+    "h": 0.09090909090909091,
+    "dt": 0.09375,
+    "B": 1.0,
+    "rho": 1000.0,
+    "g": 10.0,
+    "E": 50000.0,
+    "nu": 0.3,
+    "K": 41666.66666666666,
+    "G": 19230.76923076923,
+    "dp": null,
+    "ghost_gamma": null,
+    "massCutoff": 0.05,
+    "test": [
+     "NormDispIncr",
+     1e-06,
+     50
+    ],
+    "grid_cells": [
+     11,
+     11,
+     13
+    ],
+    "ppc": 2,
+    "basis": "gimp",
+    "fixes": "xmin/xmax x, ymin/ymax y, zmin xyz",
+    "loading": "gravity ramp 0->0.75 over 8 steps",
+    "period_T": 0.48755952017603527
+   },
+   "numParticles": 10648,
+   "stages": {
+    "s0_model": {
+     "private": 31698944,
+     "working_set": 26984448,
+     "peak_working_set": 26984448,
+     "peak_pagefile": 31698944
+    },
+    "s1_built": {
+     "private": 50544640,
+     "working_set": 40771584,
+     "peak_working_set": 40771584,
+     "peak_pagefile": 50544640
+    },
+    "s2_step1": {
+     "private": 243552256,
+     "working_set": 145182720,
+     "peak_working_set": 147779584,
+     "peak_pagefile": 246251520
+    },
+    "s3_step2": {
+     "private": 288481280,
+     "working_set": 169242624,
+     "peak_working_set": 173367296,
+     "peak_pagefile": 292995072
+    }
+   },
+   "runs": {
+    "build": "s0000",
+    "step1": "s0001",
+    "step2": "s0002"
+   },
+   "gridNodes": 1728,
+   "nEqn": 4224,
+   "support_histogram": {
+    "8": 4800,
+    "12": 4960,
+    "18": 848,
+    "27": 40
+   },
+   "child_rc": 0,
+   "child_wall_s": 2.2439792000004672,
+   "log": "m3_A_N10000_elastic_r0.log",
+   "analytic": {
+    "material_copy": 272,
+    "particle_state_and_snapshot": 1038,
+    "element": 3456.8264462809916,
+    "fe_element": 603.7565740045079,
+    "of_which_fe_own_tangent": 200.0601051840721,
+    "grid_nodes": 226.54845980465817,
+    "grid_nodes_per_particle": 0.1622839969947408,
+    "share_numDOF_gt_64": 0.003756574004507889,
+    "mean_support_nodes": 10.731029301277236,
+    "total": 5597.131480090157
+   },
+   "profiler_memory": {
+    "build": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 1022776,
+     "vector_live": 1022776,
+     "components_live": {
+      "1": 4,
+      "2": 2,
+      "3": 2,
+      "6": 1,
+      "10": 1,
+      "16": 10648,
+      "33000": 1,
+      "33027": 1,
+      "99990": 1
+     }
+    },
+    "step1": {
+     "id_live": 1974816,
+     "matrix_live": 856752,
+     "peak_bytes": 9783104,
+     "vector_live": 4774520,
+     "components_live": {
+      "1": 2688,
+      "33026": 10648
+     }
+    },
+    "step2": {
+     "id_live": 355488,
+     "matrix_live": 1679616,
+     "peak_bytes": 6197864,
+     "vector_live": 833280,
+     "components_live": {}
+    }
+   },
+   "tag": "m3_A_N10000_elastic_r0"
+  },
+  {
+   "ok": true,
+   "config": {
+    "mode": "A",
+    "N": 10000,
+    "mat": "elastic",
+    "threads": 8,
+    "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\dist\\bin\\opensees.pyd"
+   },
+   "conditions": {
+    "ladrunoBuild": "9db5803f6d20672e7f73e89615af33a42a449dac",
+    "OMP_NUM_THREADS": "8",
+    "MKL_NUM_THREADS": "8",
+    "python": "3.12.10",
+    "pid": 41960,
+    "affinity": {
+     "requested": "0xffff",
+     "process_mask": "0xffff",
+     "system_mask": "0xffffff",
+     "set_ok": true
+    },
+    "ladrunoThreads": 1
+   },
+   "model": {
+    "n_cells": 11,
+    "h": 0.09090909090909091,
+    "dt": 0.09375,
+    "B": 1.0,
+    "rho": 1000.0,
+    "g": 10.0,
+    "E": 50000.0,
+    "nu": 0.3,
+    "K": 41666.66666666666,
+    "G": 19230.76923076923,
+    "dp": null,
+    "ghost_gamma": null,
+    "massCutoff": 0.05,
+    "test": [
+     "NormDispIncr",
+     1e-06,
+     50
+    ],
+    "grid_cells": [
+     11,
+     11,
+     13
+    ],
+    "ppc": 2,
+    "basis": "gimp",
+    "fixes": "xmin/xmax x, ymin/ymax y, zmin xyz",
+    "loading": "gravity ramp 0->0.75 over 8 steps",
+    "period_T": 0.48755952017603527
+   },
+   "numParticles": 10648,
+   "stages": {
+    "s0_model": {
+     "private": 31567872,
+     "working_set": 26869760,
+     "peak_working_set": 26869760,
+     "peak_pagefile": 31567872
+    },
+    "s1_built": {
+     "private": 50450432,
+     "working_set": 40431616,
+     "peak_working_set": 40431616,
+     "peak_pagefile": 50450432
+    },
+    "s2_step1": {
+     "private": 243699712,
+     "working_set": 145276928,
+     "peak_working_set": 147841024,
+     "peak_pagefile": 246349824
+    },
+    "s3_step2": {
+     "private": 299167744,
+     "working_set": 172396544,
+     "peak_working_set": 176848896,
+     "peak_pagefile": 303665152
+    }
+   },
+   "runs": {
+    "build": "s0000",
+    "step1": "s0001",
+    "step2": "s0002"
+   },
+   "gridNodes": 1728,
+   "nEqn": 4224,
+   "support_histogram": {
+    "8": 4800,
+    "12": 4960,
+    "18": 848,
+    "27": 40
+   },
+   "child_rc": 0,
+   "child_wall_s": 2.209061699999438,
+   "log": "m3_A_N10000_elastic_r1.log",
+   "analytic": {
+    "material_copy": 272,
+    "particle_state_and_snapshot": 1038,
+    "element": 3456.8264462809916,
+    "fe_element": 603.7565740045079,
+    "of_which_fe_own_tangent": 200.0601051840721,
+    "grid_nodes": 226.54845980465817,
+    "grid_nodes_per_particle": 0.1622839969947408,
+    "share_numDOF_gt_64": 0.003756574004507889,
+    "mean_support_nodes": 10.731029301277236,
+    "total": 5597.131480090157
+   },
+   "profiler_memory": {
+    "build": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 1022776,
+     "vector_live": 1022776,
+     "components_live": {
+      "1": 4,
+      "2": 2,
+      "3": 2,
+      "6": 1,
+      "10": 1,
+      "16": 10648,
+      "33000": 1,
+      "33027": 1,
+      "99990": 1
+     }
+    },
+    "step1": {
+     "id_live": 1974816,
+     "matrix_live": 856752,
+     "peak_bytes": 9783104,
+     "vector_live": 4774520,
+     "components_live": {
+      "1": 2688,
+      "33026": 10648
+     }
+    },
+    "step2": {
+     "id_live": 355488,
+     "matrix_live": 1679616,
+     "peak_bytes": 6197864,
+     "vector_live": 833280,
+     "components_live": {}
+    }
+   },
+   "tag": "m3_A_N10000_elastic_r1"
+  },
+  {
+   "ok": true,
+   "config": {
+    "mode": "F",
+    "N": 10000,
+    "mat": "elastic",
+    "threads": 1,
+    "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\dist\\bin\\opensees.pyd"
+   },
+   "conditions": {
+    "ladrunoBuild": "9db5803f6d20672e7f73e89615af33a42a449dac",
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "python": "3.12.10",
+    "pid": 37128,
+    "affinity": {
+     "requested": "0xffff",
+     "process_mask": "0xffff",
+     "system_mask": "0xffffff",
+     "set_ok": true
+    },
+    "ladrunoThreads": 1
+   },
+   "model": {
+    "m_cells": 9,
+    "h": 0.1111111111111111,
+    "a": 1.0,
+    "height": 2.0,
+    "rho": 2000.0,
+    "g": 9.81,
+    "E": 1000000.0,
+    "nu": 0.3,
+    "K": 833333.3333333333,
+    "G": 384615.3846153846,
+    "grid_cells": [
+     36,
+     36,
+     20
+    ],
+    "ppc": 2,
+    "basis": "gimp",
+    "floor": "mpm wall zmin 0.4",
+    "symmetry": "xmin x, ymin y (quarter column)",
+    "dp": null,
+    "j2": null,
+    "dt_factor": 0.25
+   },
+   "numParticles": 11664,
+   "stages": {
+    "s0_model": {
+     "private": 31674368,
+     "working_set": 26968064,
+     "peak_working_set": 26968064,
+     "peak_pagefile": 31674368
+    },
+    "s1_built": {
+     "private": 50589696,
+     "working_set": 40820736,
+     "peak_working_set": 40820736,
+     "peak_pagefile": 50589696
+    },
+    "s2_step1": {
+     "private": 73871360,
+     "working_set": 62107648,
+     "peak_working_set": 62107648,
+     "peak_pagefile": 73871360
+    },
+    "s3_step2": {
+     "private": 73871360,
+     "working_set": 62107648,
+     "peak_working_set": 62107648,
+     "peak_pagefile": 73871360
+    }
+   },
+   "runs": {
+    "build": "s0000",
+    "step1": "s0001",
+    "step2": "s0002"
+   },
+   "support_histogram": {
+    "8": 3447,
+    "12": 5490,
+    "18": 2403,
+    "27": 324
+   },
+   "child_rc": 0,
+   "child_wall_s": 0.11621349999768427,
+   "log": "m3_F_N10000_elastic_r0.log",
+   "analytic": {
+    "material_copy": 272,
+    "particle_state_and_snapshot": 1038,
+    "support_arrays": 506.82716049382714,
+    "trial_arrays": 344,
+    "dense_grid": 461.8811728395062,
+    "dense_grid_nodes_per_particle": 2.9992283950617282,
+    "mean_support_nodes": 12.470679012345679,
+    "total": 2622.7083333333335
+   },
+   "profiler_memory": {
+    "build": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 1119816,
+     "vector_live": 1119816,
+     "components_live": {
+      "10": 1,
+      "16": 11664,
+      "33027": 1
+     }
+    },
+    "step1": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 0,
+     "vector_live": 0,
+     "components_live": {}
+    },
+    "step2": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 0,
+     "vector_live": 0,
+     "components_live": {}
+    }
+   },
+   "tag": "m3_F_N10000_elastic_r0"
+  },
+  {
+   "ok": true,
+   "config": {
+    "mode": "F",
+    "N": 10000,
+    "mat": "elastic",
+    "threads": 1,
+    "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\dist\\bin\\opensees.pyd"
+   },
+   "conditions": {
+    "ladrunoBuild": "9db5803f6d20672e7f73e89615af33a42a449dac",
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "python": "3.12.10",
+    "pid": 27360,
+    "affinity": {
+     "requested": "0xffff",
+     "process_mask": "0xffff",
+     "system_mask": "0xffffff",
+     "set_ok": true
+    },
+    "ladrunoThreads": 1
+   },
+   "model": {
+    "m_cells": 9,
+    "h": 0.1111111111111111,
+    "a": 1.0,
+    "height": 2.0,
+    "rho": 2000.0,
+    "g": 9.81,
+    "E": 1000000.0,
+    "nu": 0.3,
+    "K": 833333.3333333333,
+    "G": 384615.3846153846,
+    "grid_cells": [
+     36,
+     36,
+     20
+    ],
+    "ppc": 2,
+    "basis": "gimp",
+    "floor": "mpm wall zmin 0.4",
+    "symmetry": "xmin x, ymin y (quarter column)",
+    "dp": null,
+    "j2": null,
+    "dt_factor": 0.25
+   },
+   "numParticles": 11664,
+   "stages": {
+    "s0_model": {
+     "private": 31666176,
+     "working_set": 26968064,
+     "peak_working_set": 26968064,
+     "peak_pagefile": 31666176
+    },
+    "s1_built": {
+     "private": 50663424,
+     "working_set": 40931328,
+     "peak_working_set": 40931328,
+     "peak_pagefile": 50663424
+    },
+    "s2_step1": {
+     "private": 73945088,
+     "working_set": 62214144,
+     "peak_working_set": 62214144,
+     "peak_pagefile": 73945088
+    },
+    "s3_step2": {
+     "private": 73945088,
+     "working_set": 62214144,
+     "peak_working_set": 62214144,
+     "peak_pagefile": 73945088
+    }
+   },
+   "runs": {
+    "build": "s0000",
+    "step1": "s0001",
+    "step2": "s0002"
+   },
+   "support_histogram": {
+    "8": 3447,
+    "12": 5490,
+    "18": 2403,
+    "27": 324
+   },
+   "child_rc": 0,
+   "child_wall_s": 0.11691140000039013,
+   "log": "m3_F_N10000_elastic_r1.log",
+   "analytic": {
+    "material_copy": 272,
+    "particle_state_and_snapshot": 1038,
+    "support_arrays": 506.82716049382714,
+    "trial_arrays": 344,
+    "dense_grid": 461.8811728395062,
+    "dense_grid_nodes_per_particle": 2.9992283950617282,
+    "mean_support_nodes": 12.470679012345679,
+    "total": 2622.7083333333335
+   },
+   "profiler_memory": {
+    "build": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 1119816,
+     "vector_live": 1119816,
+     "components_live": {
+      "10": 1,
+      "16": 11664,
+      "33027": 1
+     }
+    },
+    "step1": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 0,
+     "vector_live": 0,
+     "components_live": {}
+    },
+    "step2": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 0,
+     "vector_live": 0,
+     "components_live": {}
+    }
+   },
+   "tag": "m3_F_N10000_elastic_r1"
+  },
+  {
+   "ok": true,
+   "config": {
+    "mode": "A",
+    "N": 10000,
+    "mat": "dp",
+    "threads": 8,
+    "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\dist\\bin\\opensees.pyd"
+   },
+   "conditions": {
+    "ladrunoBuild": "9db5803f6d20672e7f73e89615af33a42a449dac",
+    "OMP_NUM_THREADS": "8",
+    "MKL_NUM_THREADS": "8",
+    "python": "3.12.10",
+    "pid": 39632,
+    "affinity": {
+     "requested": "0xffff",
+     "process_mask": "0xffff",
+     "system_mask": "0xffffff",
+     "set_ok": true
+    },
+    "ladrunoThreads": 1
+   },
+   "model": {
+    "n_cells": 11,
+    "h": 0.09090909090909091,
+    "dt": 0.09375,
+    "B": 1.0,
+    "rho": 1000.0,
+    "g": 10.0,
+    "E": 50000.0,
+    "nu": 0.3,
+    "K": 41666.66666666666,
+    "G": 19230.76923076923,
+    "dp": {
+     "sigmaY": 400.0,
+     "rho": 0.21,
+     "rhoBar": 0.0
+    },
+    "ghost_gamma": null,
+    "massCutoff": 0.05,
+    "test": [
+     "NormDispIncr",
+     1e-06,
+     50
+    ],
+    "grid_cells": [
+     11,
+     11,
+     13
+    ],
+    "ppc": 2,
+    "basis": "gimp",
+    "fixes": "xmin/xmax x, ymin/ymax y, zmin xyz",
+    "loading": "gravity ramp 0->0.75 over 8 steps",
+    "period_T": 0.48755952017603527
+   },
+   "numParticles": 10648,
+   "stages": {
+    "s0_model": {
+     "private": 31449088,
+     "working_set": 26763264,
+     "peak_working_set": 26763264,
+     "peak_pagefile": 31449088
+    },
+    "s1_built": {
+     "private": 77275136,
+     "working_set": 67170304,
+     "peak_working_set": 67170304,
+     "peak_pagefile": 77275136
+    },
+    "s2_step1": {
+     "private": 266006528,
+     "working_set": 172322816,
+     "peak_working_set": 174813184,
+     "peak_pagefile": 268636160
+    },
+    "s3_step2": {
+     "private": 311406592,
+     "working_set": 198668288,
+     "peak_working_set": 203108352,
+     "peak_pagefile": 315928576
+    }
+   },
+   "runs": {
+    "build": "s0000",
+    "step1": "s0001",
+    "step2": "s0002"
+   },
+   "gridNodes": 1728,
+   "nEqn": 4224,
+   "support_histogram": {
+    "8": 4800,
+    "12": 4960,
+    "18": 848,
+    "27": 40
+   },
+   "child_rc": 0,
+   "child_wall_s": 2.3696366000003763,
+   "log": "m3_A_N10000_dp_r0.log",
+   "analytic": {
+    "material_copy": 2320,
+    "particle_state_and_snapshot": 1038,
+    "element": 3456.8264462809916,
+    "fe_element": 603.7565740045079,
+    "of_which_fe_own_tangent": 200.0601051840721,
+    "grid_nodes": 226.54845980465817,
+    "grid_nodes_per_particle": 0.1622839969947408,
+    "share_numDOF_gt_64": 0.003756574004507889,
+    "mean_support_nodes": 10.731029301277236,
+    "total": 7645.131480090157
+   },
+   "profiler_memory": {
+    "build": {
+     "id_live": 0,
+     "matrix_live": 12267648,
+     "peak_bytes": 20021056,
+     "vector_live": 7753040,
+     "components_live": {
+      "0": 1,
+      "1": 4,
+      "2": 2,
+      "3": 2,
+      "6": 1,
+      "14006": 10648,
+      "33000": 1,
+      "33027": 1,
+      "99990": 1
+     }
+    },
+    "step1": {
+     "id_live": 1974816,
+     "matrix_live": 856752,
+     "peak_bytes": 9783104,
+     "vector_live": 4774520,
+     "components_live": {
+      "1": 2688,
+      "33026": 10648
+     }
+    },
+    "step2": {
+     "id_live": 355488,
+     "matrix_live": 1679616,
+     "peak_bytes": 6197864,
+     "vector_live": 833280,
+     "components_live": {}
+    }
+   },
+   "tag": "m3_A_N10000_dp_r0"
+  },
+  {
+   "ok": true,
+   "config": {
+    "mode": "A",
+    "N": 10000,
+    "mat": "dp",
+    "threads": 8,
+    "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\dist\\bin\\opensees.pyd"
+   },
+   "conditions": {
+    "ladrunoBuild": "9db5803f6d20672e7f73e89615af33a42a449dac",
+    "OMP_NUM_THREADS": "8",
+    "MKL_NUM_THREADS": "8",
+    "python": "3.12.10",
+    "pid": 34880,
+    "affinity": {
+     "requested": "0xffff",
+     "process_mask": "0xffff",
+     "system_mask": "0xffffff",
+     "set_ok": true
+    },
+    "ladrunoThreads": 1
+   },
+   "model": {
+    "n_cells": 11,
+    "h": 0.09090909090909091,
+    "dt": 0.09375,
+    "B": 1.0,
+    "rho": 1000.0,
+    "g": 10.0,
+    "E": 50000.0,
+    "nu": 0.3,
+    "K": 41666.66666666666,
+    "G": 19230.76923076923,
+    "dp": {
+     "sigmaY": 400.0,
+     "rho": 0.21,
+     "rhoBar": 0.0
+    },
+    "ghost_gamma": null,
+    "massCutoff": 0.05,
+    "test": [
+     "NormDispIncr",
+     1e-06,
+     50
+    ],
+    "grid_cells": [
+     11,
+     11,
+     13
+    ],
+    "ppc": 2,
+    "basis": "gimp",
+    "fixes": "xmin/xmax x, ymin/ymax y, zmin xyz",
+    "loading": "gravity ramp 0->0.75 over 8 steps",
+    "period_T": 0.48755952017603527
+   },
+   "numParticles": 10648,
+   "stages": {
+    "s0_model": {
+     "private": 31629312,
+     "working_set": 26931200,
+     "peak_working_set": 26931200,
+     "peak_pagefile": 31629312
+    },
+    "s1_built": {
+     "private": 77418496,
+     "working_set": 67084288,
+     "peak_working_set": 67084288,
+     "peak_pagefile": 77418496
+    },
+    "s2_step1": {
+     "private": 271142912,
+     "working_set": 172343296,
+     "peak_working_set": 174788608,
+     "peak_pagefile": 273682432
+    },
+    "s3_step2": {
+     "private": 316563456,
+     "working_set": 198627328,
+     "peak_working_set": 203079680,
+     "peak_pagefile": 321069056
+    }
+   },
+   "runs": {
+    "build": "s0000",
+    "step1": "s0001",
+    "step2": "s0002"
+   },
+   "gridNodes": 1728,
+   "nEqn": 4224,
+   "support_histogram": {
+    "8": 4800,
+    "12": 4960,
+    "18": 848,
+    "27": 40
+   },
+   "child_rc": 0,
+   "child_wall_s": 2.354859099999885,
+   "log": "m3_A_N10000_dp_r1.log",
+   "analytic": {
+    "material_copy": 2320,
+    "particle_state_and_snapshot": 1038,
+    "element": 3456.8264462809916,
+    "fe_element": 603.7565740045079,
+    "of_which_fe_own_tangent": 200.0601051840721,
+    "grid_nodes": 226.54845980465817,
+    "grid_nodes_per_particle": 0.1622839969947408,
+    "share_numDOF_gt_64": 0.003756574004507889,
+    "mean_support_nodes": 10.731029301277236,
+    "total": 7645.131480090157
+   },
+   "profiler_memory": {
+    "build": {
+     "id_live": 0,
+     "matrix_live": 12267648,
+     "peak_bytes": 20021056,
+     "vector_live": 7753040,
+     "components_live": {
+      "0": 1,
+      "1": 4,
+      "2": 2,
+      "3": 2,
+      "6": 1,
+      "14006": 10648,
+      "33000": 1,
+      "33027": 1,
+      "99990": 1
+     }
+    },
+    "step1": {
+     "id_live": 1974816,
+     "matrix_live": 856752,
+     "peak_bytes": 9783104,
+     "vector_live": 4774520,
+     "components_live": {
+      "1": 2688,
+      "33026": 10648
+     }
+    },
+    "step2": {
+     "id_live": 355488,
+     "matrix_live": 1679616,
+     "peak_bytes": 6197864,
+     "vector_live": 833280,
+     "components_live": {}
+    }
+   },
+   "tag": "m3_A_N10000_dp_r1"
+  },
+  {
+   "ok": true,
+   "config": {
+    "mode": "F",
+    "N": 10000,
+    "mat": "dp",
+    "threads": 1,
+    "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\dist\\bin\\opensees.pyd"
+   },
+   "conditions": {
+    "ladrunoBuild": "9db5803f6d20672e7f73e89615af33a42a449dac",
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "python": "3.12.10",
+    "pid": 33052,
+    "affinity": {
+     "requested": "0xffff",
+     "process_mask": "0xffff",
+     "system_mask": "0xffffff",
+     "set_ok": true
+    },
+    "ladrunoThreads": 1
+   },
+   "model": {
+    "m_cells": 9,
+    "h": 0.1111111111111111,
+    "a": 1.0,
+    "height": 2.0,
+    "rho": 2000.0,
+    "g": 9.81,
+    "E": 1000000.0,
+    "nu": 0.3,
+    "K": 833333.3333333333,
+    "G": 384615.3846153846,
+    "grid_cells": [
+     36,
+     36,
+     20
+    ],
+    "ppc": 2,
+    "basis": "gimp",
+    "floor": "mpm wall zmin 0.4",
+    "symmetry": "xmin x, ymin y (quarter column)",
+    "dp": {
+     "phi_deg": 30.0,
+     "rho": 0.32659863237109044,
+     "rhoBar": 0.0,
+     "sigmaY": 10.0
+    },
+    "j2": null,
+    "dt_factor": 0.25
+   },
+   "numParticles": 11664,
+   "stages": {
+    "s0_model": {
+     "private": 31621120,
+     "working_set": 26898432,
+     "peak_working_set": 26898432,
+     "peak_pagefile": 31621120
+    },
+    "s1_built": {
+     "private": 80343040,
+     "working_set": 70217728,
+     "peak_working_set": 70217728,
+     "peak_pagefile": 80343040
+    },
+    "s2_step1": {
+     "private": 103845888,
+     "working_set": 91643904,
+     "peak_working_set": 91643904,
+     "peak_pagefile": 103845888
+    },
+    "s3_step2": {
+     "private": 103845888,
+     "working_set": 91643904,
+     "peak_working_set": 91643904,
+     "peak_pagefile": 103845888
+    }
+   },
+   "runs": {
+    "build": "s0000",
+    "step1": "s0001",
+    "step2": "s0002"
+   },
+   "support_histogram": {
+    "8": 3447,
+    "12": 5490,
+    "18": 2403,
+    "27": 324
+   },
+   "child_rc": 0,
+   "child_wall_s": 0.14957369999683578,
+   "log": "m3_F_N10000_dp_r0.log",
+   "analytic": {
+    "material_copy": 2320,
+    "particle_state_and_snapshot": 1038,
+    "support_arrays": 506.82716049382714,
+    "trial_arrays": 344,
+    "dense_grid": 461.8811728395062,
+    "dense_grid_nodes_per_particle": 2.9992283950617282,
+    "mean_support_nodes": 12.470679012345679,
+    "total": 4670.708333333333
+   },
+   "profiler_memory": {
+    "build": {
+     "id_live": 0,
+     "matrix_live": 13438080,
+     "peak_bytes": 21931136,
+     "vector_live": 8492192,
+     "components_live": {
+      "0": 1,
+      "14006": 11664,
+      "33027": 1
+     }
+    },
+    "step1": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 464,
+     "vector_live": 0,
+     "components_live": {}
+    },
+    "step2": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 464,
+     "vector_live": 0,
+     "components_live": {}
+    }
+   },
+   "tag": "m3_F_N10000_dp_r0"
+  },
+  {
+   "ok": true,
+   "config": {
+    "mode": "F",
+    "N": 10000,
+    "mat": "dp",
+    "threads": 1,
+    "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\dist\\bin\\opensees.pyd"
+   },
+   "conditions": {
+    "ladrunoBuild": "9db5803f6d20672e7f73e89615af33a42a449dac",
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "python": "3.12.10",
+    "pid": 41228,
+    "affinity": {
+     "requested": "0xffff",
+     "process_mask": "0xffff",
+     "system_mask": "0xffffff",
+     "set_ok": true
+    },
+    "ladrunoThreads": 1
+   },
+   "model": {
+    "m_cells": 9,
+    "h": 0.1111111111111111,
+    "a": 1.0,
+    "height": 2.0,
+    "rho": 2000.0,
+    "g": 9.81,
+    "E": 1000000.0,
+    "nu": 0.3,
+    "K": 833333.3333333333,
+    "G": 384615.3846153846,
+    "grid_cells": [
+     36,
+     36,
+     20
+    ],
+    "ppc": 2,
+    "basis": "gimp",
+    "floor": "mpm wall zmin 0.4",
+    "symmetry": "xmin x, ymin y (quarter column)",
+    "dp": {
+     "phi_deg": 30.0,
+     "rho": 0.32659863237109044,
+     "rhoBar": 0.0,
+     "sigmaY": 10.0
+    },
+    "j2": null,
+    "dt_factor": 0.25
+   },
+   "numParticles": 11664,
+   "stages": {
+    "s0_model": {
+     "private": 31604736,
+     "working_set": 26955776,
+     "peak_working_set": 26955776,
+     "peak_pagefile": 31604736
+    },
+    "s1_built": {
+     "private": 80216064,
+     "working_set": 70230016,
+     "peak_working_set": 70230016,
+     "peak_pagefile": 80216064
+    },
+    "s2_step1": {
+     "private": 103739392,
+     "working_set": 91910144,
+     "peak_working_set": 91910144,
+     "peak_pagefile": 103739392
+    },
+    "s3_step2": {
+     "private": 103739392,
+     "working_set": 91910144,
+     "peak_working_set": 91910144,
+     "peak_pagefile": 103739392
+    }
+   },
+   "runs": {
+    "build": "s0000",
+    "step1": "s0001",
+    "step2": "s0002"
+   },
+   "support_histogram": {
+    "8": 3447,
+    "12": 5490,
+    "18": 2403,
+    "27": 324
+   },
+   "child_rc": 0,
+   "child_wall_s": 0.14836039999863715,
+   "log": "m3_F_N10000_dp_r1.log",
+   "analytic": {
+    "material_copy": 2320,
+    "particle_state_and_snapshot": 1038,
+    "support_arrays": 506.82716049382714,
+    "trial_arrays": 344,
+    "dense_grid": 461.8811728395062,
+    "dense_grid_nodes_per_particle": 2.9992283950617282,
+    "mean_support_nodes": 12.470679012345679,
+    "total": 4670.708333333333
+   },
+   "profiler_memory": {
+    "build": {
+     "id_live": 0,
+     "matrix_live": 13438080,
+     "peak_bytes": 21931136,
+     "vector_live": 8492192,
+     "components_live": {
+      "0": 1,
+      "14006": 11664,
+      "33027": 1
+     }
+    },
+    "step1": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 464,
+     "vector_live": 0,
+     "components_live": {}
+    },
+    "step2": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 464,
+     "vector_live": 0,
+     "components_live": {}
+    }
+   },
+   "tag": "m3_F_N10000_dp_r1"
+  },
+  {
+   "ok": true,
+   "config": {
+    "mode": "A",
+    "N": 100000,
+    "mat": "elastic",
+    "threads": 8,
+    "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\dist\\bin\\opensees.pyd"
+   },
+   "conditions": {
+    "ladrunoBuild": "9db5803f6d20672e7f73e89615af33a42a449dac",
+    "OMP_NUM_THREADS": "8",
+    "MKL_NUM_THREADS": "8",
+    "python": "3.12.10",
+    "pid": 40364,
+    "affinity": {
+     "requested": "0xffff",
+     "process_mask": "0xffff",
+     "system_mask": "0xffffff",
+     "set_ok": true
+    },
+    "ladrunoThreads": 1
+   },
+   "model": {
+    "n_cells": 23,
+    "h": 0.043478260869565216,
+    "dt": 0.09375,
+    "B": 1.0,
+    "rho": 1000.0,
+    "g": 10.0,
+    "E": 50000.0,
+    "nu": 0.3,
+    "K": 41666.66666666666,
+    "G": 19230.76923076923,
+    "dp": null,
+    "ghost_gamma": null,
+    "massCutoff": 0.05,
+    "test": [
+     "NormDispIncr",
+     1e-06,
+     50
+    ],
+    "grid_cells": [
+     23,
+     23,
+     25
+    ],
+    "ppc": 2,
+    "basis": "gimp",
+    "fixes": "xmin/xmax x, ymin/ymax y, zmin xyz",
+    "loading": "gravity ramp 0->0.75 over 8 steps",
+    "period_T": 0.48755952017603527
+   },
+   "numParticles": 97336,
+   "stages": {
+    "s0_model": {
+     "private": 31612928,
+     "working_set": 26959872,
+     "peak_working_set": 26959872,
+     "peak_pagefile": 31612928
+    },
+    "s1_built": {
+     "private": 127938560,
+     "working_set": 109903872,
+     "peak_working_set": 109903872,
+     "peak_pagefile": 127938560
+    },
+    "s2_step1": {
+     "private": 1782743040,
+     "working_set": 1394741248,
+     "peak_working_set": 1436393472,
+     "peak_pagefile": 1824591872
+    },
+    "s3_step2": {
+     "private": 2200305664,
+     "working_set": 1757806592,
+     "peak_working_set": 1812672512,
+     "peak_pagefile": 2255298560
+    }
+   },
+   "runs": {
+    "build": "s0000",
+    "step1": "s0001",
+    "step2": "s0002"
+   },
+   "gridNodes": 13824,
+   "nEqn": 37536,
+   "support_histogram": {
+    "8": 26092,
+    "12": 44541,
+    "18": 22974,
+    "27": 3729
+   },
+   "child_rc": 0,
+   "child_wall_s": 34.2473252000018,
+   "log": "m3_A_N100000_elastic_r0.log",
+   "analytic": {
+    "material_copy": 272,
+    "particle_state_and_snapshot": 1038,
+    "element": 3938.0878195117944,
+    "fe_element": 2478.9663022930877,
+    "of_which_fe_own_tangent": 2040.2690063285938,
+    "grid_nodes": 198.26481466261197,
+    "grid_nodes_per_particle": 0.14202350620530943,
+    "share_numDOF_gt_64": 0.03831059423029506,
+    "mean_support_nodes": 12.918580997780882,
+    "total": 7925.3189364674945
+   },
+   "profiler_memory": {
+    "build": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 9344824,
+     "vector_live": 9344824,
+     "components_live": {
+      "1": 4,
+      "2": 2,
+      "3": 2,
+      "6": 1,
+      "10": 1,
+      "16": 97336,
+      "33000": 1,
+      "33027": 1,
+      "99990": 1
+     }
+    },
+    "step1": {
+     "id_live": 23374132,
+     "matrix_live": 115752984,
+     "peak_bytes": 226633044,
+     "vector_live": 57667472,
+     "components_live": {
+      "1": 17760,
+      "33026": 97336
+     }
+    },
+    "step2": {
+     "id_live": 2260960,
+     "matrix_live": 80411616,
+     "peak_bytes": 127685560,
+     "vector_live": 5784000,
+     "components_live": {}
+    }
+   },
+   "tag": "m3_A_N100000_elastic_r0"
+  },
+  {
+   "ok": true,
+   "config": {
+    "mode": "A",
+    "N": 100000,
+    "mat": "elastic",
+    "threads": 8,
+    "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\dist\\bin\\opensees.pyd"
+   },
+   "conditions": {
+    "ladrunoBuild": "9db5803f6d20672e7f73e89615af33a42a449dac",
+    "OMP_NUM_THREADS": "8",
+    "MKL_NUM_THREADS": "8",
+    "python": "3.12.10",
+    "pid": 9608,
+    "affinity": {
+     "requested": "0xffff",
+     "process_mask": "0xffff",
+     "system_mask": "0xffffff",
+     "set_ok": true
+    },
+    "ladrunoThreads": 1
+   },
+   "model": {
+    "n_cells": 23,
+    "h": 0.043478260869565216,
+    "dt": 0.09375,
+    "B": 1.0,
+    "rho": 1000.0,
+    "g": 10.0,
+    "E": 50000.0,
+    "nu": 0.3,
+    "K": 41666.66666666666,
+    "G": 19230.76923076923,
+    "dp": null,
+    "ghost_gamma": null,
+    "massCutoff": 0.05,
+    "test": [
+     "NormDispIncr",
+     1e-06,
+     50
+    ],
+    "grid_cells": [
+     23,
+     23,
+     25
+    ],
+    "ppc": 2,
+    "basis": "gimp",
+    "fixes": "xmin/xmax x, ymin/ymax y, zmin xyz",
+    "loading": "gravity ramp 0->0.75 over 8 steps",
+    "period_T": 0.48755952017603527
+   },
+   "numParticles": 97336,
+   "stages": {
+    "s0_model": {
+     "private": 31367168,
+     "working_set": 26710016,
+     "peak_working_set": 26710016,
+     "peak_pagefile": 31367168
+    },
+    "s1_built": {
+     "private": 127676416,
+     "working_set": 109780992,
+     "peak_working_set": 109780992,
+     "peak_pagefile": 127676416
+    },
+    "s2_step1": {
+     "private": 1782669312,
+     "working_set": 1393999872,
+     "peak_working_set": 1435639808,
+     "peak_pagefile": 1824514048
+    },
+    "s3_step2": {
+     "private": 2205581312,
+     "working_set": 1758031872,
+     "peak_working_set": 1812922368,
+     "peak_pagefile": 2260643840
+    }
+   },
+   "runs": {
+    "build": "s0000",
+    "step1": "s0001",
+    "step2": "s0002"
+   },
+   "gridNodes": 13824,
+   "nEqn": 37536,
+   "support_histogram": {
+    "8": 26073,
+    "12": 44539,
+    "18": 23001,
+    "27": 3723
+   },
+   "child_rc": 0,
+   "child_wall_s": 34.08279559999937,
+   "log": "m3_A_N100000_elastic_r1.log",
+   "analytic": {
+    "material_copy": 272,
+    "particle_state_and_snapshot": 1038,
+    "element": 3938.422330895044,
+    "fe_element": 2475.707816224213,
+    "of_which_fe_own_tangent": 2036.986192159119,
+    "grid_nodes": 198.26481466261197,
+    "grid_nodes_per_particle": 0.14202350620530943,
+    "share_numDOF_gt_64": 0.03824895208350456,
+    "mean_support_nodes": 12.920101504068382,
+    "total": 7922.394961781869
+   },
+   "profiler_memory": {
+    "build": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 9344824,
+     "vector_live": 9344824,
+     "components_live": {
+      "1": 4,
+      "2": 2,
+      "3": 2,
+      "6": 1,
+      "10": 1,
+      "16": 97336,
+      "33000": 1,
+      "33027": 1,
+      "99990": 1
+     }
+    },
+    "step1": {
+     "id_live": 23374132,
+     "matrix_live": 115752984,
+     "peak_bytes": 226633044,
+     "vector_live": 57667472,
+     "components_live": {
+      "1": 17760,
+      "33026": 97336
+     }
+    },
+    "step2": {
+     "id_live": 2263920,
+     "matrix_live": 80096688,
+     "peak_bytes": 127385768,
+     "vector_live": 5787216,
+     "components_live": {}
+    }
+   },
+   "tag": "m3_A_N100000_elastic_r1"
+  },
+  {
+   "ok": true,
+   "config": {
+    "mode": "F",
+    "N": 100000,
+    "mat": "elastic",
+    "threads": 1,
+    "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\dist\\bin\\opensees.pyd"
+   },
+   "conditions": {
+    "ladrunoBuild": "9db5803f6d20672e7f73e89615af33a42a449dac",
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "python": "3.12.10",
+    "pid": 30700,
+    "affinity": {
+     "requested": "0xffff",
+     "process_mask": "0xffff",
+     "system_mask": "0xffffff",
+     "set_ok": true
+    },
+    "ladrunoThreads": 1
+   },
+   "model": {
+    "m_cells": 18,
+    "h": 0.05555555555555555,
+    "a": 1.0,
+    "height": 2.0,
+    "rho": 2000.0,
+    "g": 9.81,
+    "E": 1000000.0,
+    "nu": 0.3,
+    "K": 833333.3333333333,
+    "G": 384615.3846153846,
+    "grid_cells": [
+     72,
+     72,
+     38
+    ],
+    "ppc": 2,
+    "basis": "gimp",
+    "floor": "mpm wall zmin 0.4",
+    "symmetry": "xmin x, ymin y (quarter column)",
+    "dp": null,
+    "j2": null,
+    "dt_factor": 0.25
+   },
+   "numParticles": 93312,
+   "stages": {
+    "s0_model": {
+     "private": 31424512,
+     "working_set": 26730496,
+     "peak_working_set": 26730496,
+     "peak_pagefile": 31424512
+    },
+    "s1_built": {
+     "private": 127139840,
+     "working_set": 106790912,
+     "peak_working_set": 106790912,
+     "peak_pagefile": 127139840
+    },
+    "s2_step1": {
+     "private": 311087104,
+     "working_set": 281493504,
+     "peak_working_set": 281493504,
+     "peak_pagefile": 311087104
+    },
+    "s3_step2": {
+     "private": 311091200,
+     "working_set": 281497600,
+     "peak_working_set": 281497600,
+     "peak_pagefile": 311091200
+    }
+   },
+   "runs": {
+    "build": "s0000",
+    "step1": "s0001",
+    "step2": "s0002"
+   },
+   "support_histogram": {
+    "8": 34413,
+    "12": 45723,
+    "18": 12243,
+    "27": 933
+   },
+   "child_rc": 0,
+   "child_wall_s": 0.42022519999954966,
+   "log": "m3_F_N100000_elastic_r0.log",
+   "analytic": {
+    "material_copy": 272,
+    "particle_state_and_snapshot": 1038,
+    "support_arrays": 466.4812242798354,
+    "trial_arrays": 344,
+    "dense_grid": 380.6182484567901,
+    "dense_grid_nodes_per_particle": 2.4715470679012346,
+    "mean_support_nodes": 11.462030606995885,
+    "total": 2501.0994727366256
+   },
+   "profiler_memory": {
+    "build": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 8958024,
+     "vector_live": 8958024,
+     "components_live": {
+      "10": 1,
+      "16": 93312,
+      "33027": 1
+     }
+    },
+    "step1": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 0,
+     "vector_live": 0,
+     "components_live": {}
+    },
+    "step2": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 0,
+     "vector_live": 0,
+     "components_live": {}
+    }
+   },
+   "tag": "m3_F_N100000_elastic_r0"
+  },
+  {
+   "ok": true,
+   "config": {
+    "mode": "F",
+    "N": 100000,
+    "mat": "elastic",
+    "threads": 1,
+    "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\dist\\bin\\opensees.pyd"
+   },
+   "conditions": {
+    "ladrunoBuild": "9db5803f6d20672e7f73e89615af33a42a449dac",
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "python": "3.12.10",
+    "pid": 4836,
+    "affinity": {
+     "requested": "0xffff",
+     "process_mask": "0xffff",
+     "system_mask": "0xffffff",
+     "set_ok": true
+    },
+    "ladrunoThreads": 1
+   },
+   "model": {
+    "m_cells": 18,
+    "h": 0.05555555555555555,
+    "a": 1.0,
+    "height": 2.0,
+    "rho": 2000.0,
+    "g": 9.81,
+    "E": 1000000.0,
+    "nu": 0.3,
+    "K": 833333.3333333333,
+    "G": 384615.3846153846,
+    "grid_cells": [
+     72,
+     72,
+     38
+    ],
+    "ppc": 2,
+    "basis": "gimp",
+    "floor": "mpm wall zmin 0.4",
+    "symmetry": "xmin x, ymin y (quarter column)",
+    "dp": null,
+    "j2": null,
+    "dt_factor": 0.25
+   },
+   "numParticles": 93312,
+   "stages": {
+    "s0_model": {
+     "private": 31363072,
+     "working_set": 26734592,
+     "peak_working_set": 26734592,
+     "peak_pagefile": 31363072
+    },
+    "s1_built": {
+     "private": 126894080,
+     "working_set": 106774528,
+     "peak_working_set": 106774528,
+     "peak_pagefile": 126894080
+    },
+    "s2_step1": {
+     "private": 311468032,
+     "working_set": 281595904,
+     "peak_working_set": 281595904,
+     "peak_pagefile": 311468032
+    },
+    "s3_step2": {
+     "private": 311468032,
+     "working_set": 281595904,
+     "peak_working_set": 281595904,
+     "peak_pagefile": 311468032
+    }
+   },
+   "runs": {
+    "build": "s0000",
+    "step1": "s0001",
+    "step2": "s0002"
+   },
+   "support_histogram": {
+    "8": 34413,
+    "12": 45723,
+    "18": 12243,
+    "27": 933
+   },
+   "child_rc": 0,
+   "child_wall_s": 0.41409420000127284,
+   "log": "m3_F_N100000_elastic_r1.log",
+   "analytic": {
+    "material_copy": 272,
+    "particle_state_and_snapshot": 1038,
+    "support_arrays": 466.4812242798354,
+    "trial_arrays": 344,
+    "dense_grid": 380.6182484567901,
+    "dense_grid_nodes_per_particle": 2.4715470679012346,
+    "mean_support_nodes": 11.462030606995885,
+    "total": 2501.0994727366256
+   },
+   "profiler_memory": {
+    "build": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 8958024,
+     "vector_live": 8958024,
+     "components_live": {
+      "10": 1,
+      "16": 93312,
+      "33027": 1
+     }
+    },
+    "step1": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 0,
+     "vector_live": 0,
+     "components_live": {}
+    },
+    "step2": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 0,
+     "vector_live": 0,
+     "components_live": {}
+    }
+   },
+   "tag": "m3_F_N100000_elastic_r1"
+  },
+  {
+   "ok": true,
+   "config": {
+    "mode": "A",
+    "N": 100000,
+    "mat": "dp",
+    "threads": 8,
+    "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\dist\\bin\\opensees.pyd"
+   },
+   "conditions": {
+    "ladrunoBuild": "9db5803f6d20672e7f73e89615af33a42a449dac",
+    "OMP_NUM_THREADS": "8",
+    "MKL_NUM_THREADS": "8",
+    "python": "3.12.10",
+    "pid": 13432,
+    "affinity": {
+     "requested": "0xffff",
+     "process_mask": "0xffff",
+     "system_mask": "0xffffff",
+     "set_ok": true
+    },
+    "ladrunoThreads": 1
+   },
+   "model": {
+    "n_cells": 23,
+    "h": 0.043478260869565216,
+    "dt": 0.09375,
+    "B": 1.0,
+    "rho": 1000.0,
+    "g": 10.0,
+    "E": 50000.0,
+    "nu": 0.3,
+    "K": 41666.66666666666,
+    "G": 19230.76923076923,
+    "dp": {
+     "sigmaY": 400.0,
+     "rho": 0.21,
+     "rhoBar": 0.0
+    },
+    "ghost_gamma": null,
+    "massCutoff": 0.05,
+    "test": [
+     "NormDispIncr",
+     1e-06,
+     50
+    ],
+    "grid_cells": [
+     23,
+     23,
+     25
+    ],
+    "ppc": 2,
+    "basis": "gimp",
+    "fixes": "xmin/xmax x, ymin/ymax y, zmin xyz",
+    "loading": "gravity ramp 0->0.75 over 8 steps",
+    "period_T": 0.48755952017603527
+   },
+   "numParticles": 97336,
+   "stages": {
+    "s0_model": {
+     "private": 31313920,
+     "working_set": 26677248,
+     "peak_working_set": 26677248,
+     "peak_pagefile": 31313920
+    },
+    "s1_built": {
+     "private": 374599680,
+     "working_set": 351903744,
+     "peak_working_set": 351903744,
+     "peak_pagefile": 374599680
+    },
+    "s2_step1": {
+     "private": 2029199360,
+     "working_set": 1636147200,
+     "peak_working_set": 1677787136,
+     "peak_pagefile": 2071044096
+    },
+    "s3_step2": {
+     "private": 2453565440,
+     "working_set": 2002800640,
+     "peak_working_set": 2057654272,
+     "peak_pagefile": 2508554240
+    }
+   },
+   "runs": {
+    "build": "s0000",
+    "step1": "s0001",
+    "step2": "s0002"
+   },
+   "gridNodes": 13824,
+   "nEqn": 37536,
+   "support_histogram": {
+    "8": 26085,
+    "12": 44549,
+    "18": 22978,
+    "27": 3724
+   },
+   "child_rc": 0,
+   "child_wall_s": 35.217562000001635,
+   "log": "m3_A_N100000_dp_r0.log",
+   "analytic": {
+    "material_copy": 2320,
+    "particle_state_and_snapshot": 1038,
+    "element": 3938.0358346346675,
+    "fe_element": 2476.226843100189,
+    "of_which_fe_own_tangent": 2037.5333278540313,
+    "grid_nodes": 198.26481466261197,
+    "grid_nodes_per_particle": 0.14202350620530943,
+    "share_numDOF_gt_64": 0.038259225774636314,
+    "mean_support_nodes": 12.918344702884852,
+    "total": 9970.527492397468
+   },
+   "profiler_memory": {
+    "build": {
+     "id_live": 0,
+     "matrix_live": 112132224,
+     "peak_bytes": 182994496,
+     "vector_live": 70861904,
+     "components_live": {
+      "0": 1,
+      "1": 4,
+      "2": 2,
+      "3": 2,
+      "6": 1,
+      "14006": 97336,
+      "33000": 1,
+      "33027": 1,
+      "99990": 1
+     }
+    },
+    "step1": {
+     "id_live": 23374132,
+     "matrix_live": 115752984,
+     "peak_bytes": 226633044,
+     "vector_live": 57667472,
+     "components_live": {
+      "1": 17760,
+      "33026": 97336
+     }
+    },
+    "step2": {
+     "id_live": 2260500,
+     "matrix_live": 80149176,
+     "peak_bytes": 127420236,
+     "vector_live": 5779656,
+     "components_live": {}
+    }
+   },
+   "tag": "m3_A_N100000_dp_r0"
+  },
+  {
+   "ok": true,
+   "config": {
+    "mode": "A",
+    "N": 100000,
+    "mat": "dp",
+    "threads": 8,
+    "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\dist\\bin\\opensees.pyd"
+   },
+   "conditions": {
+    "ladrunoBuild": "9db5803f6d20672e7f73e89615af33a42a449dac",
+    "OMP_NUM_THREADS": "8",
+    "MKL_NUM_THREADS": "8",
+    "python": "3.12.10",
+    "pid": 25560,
+    "affinity": {
+     "requested": "0xffff",
+     "process_mask": "0xffff",
+     "system_mask": "0xffffff",
+     "set_ok": true
+    },
+    "ladrunoThreads": 1
+   },
+   "model": {
+    "n_cells": 23,
+    "h": 0.043478260869565216,
+    "dt": 0.09375,
+    "B": 1.0,
+    "rho": 1000.0,
+    "g": 10.0,
+    "E": 50000.0,
+    "nu": 0.3,
+    "K": 41666.66666666666,
+    "G": 19230.76923076923,
+    "dp": {
+     "sigmaY": 400.0,
+     "rho": 0.21,
+     "rhoBar": 0.0
+    },
+    "ghost_gamma": null,
+    "massCutoff": 0.05,
+    "test": [
+     "NormDispIncr",
+     1e-06,
+     50
+    ],
+    "grid_cells": [
+     23,
+     23,
+     25
+    ],
+    "ppc": 2,
+    "basis": "gimp",
+    "fixes": "xmin/xmax x, ymin/ymax y, zmin xyz",
+    "loading": "gravity ramp 0->0.75 over 8 steps",
+    "period_T": 0.48755952017603527
+   },
+   "numParticles": 97336,
+   "stages": {
+    "s0_model": {
+     "private": 31555584,
+     "working_set": 26890240,
+     "peak_working_set": 26890240,
+     "peak_pagefile": 31555584
+    },
+    "s1_built": {
+     "private": 374796288,
+     "working_set": 351752192,
+     "peak_working_set": 351752192,
+     "peak_pagefile": 374796288
+    },
+    "s2_step1": {
+     "private": 2029768704,
+     "working_set": 1635999744,
+     "peak_working_set": 1677660160,
+     "peak_pagefile": 2071625728
+    },
+    "s3_step2": {
+     "private": 2440572928,
+     "working_set": 1990893568,
+     "peak_working_set": 2045984768,
+     "peak_pagefile": 2495594496
+    }
+   },
+   "runs": {
+    "build": "s0000",
+    "step1": "s0001",
+    "step2": "s0002"
+   },
+   "gridNodes": 13824,
+   "nEqn": 37536,
+   "support_histogram": {
+    "8": 26100,
+    "12": 44547,
+    "18": 22964,
+    "27": 3725
+   },
+   "child_rc": 0,
+   "child_wall_s": 35.54189920000135,
+   "log": "m3_A_N100000_dp_r1.log",
+   "analytic": {
+    "material_copy": 2320,
+    "particle_state_and_snapshot": 1038,
+    "element": 3937.7442672803486,
+    "fe_element": 2476.7527738966055,
+    "of_which_fe_own_tangent": 2038.080463548944,
+    "grid_nodes": 198.26481466261197,
+    "grid_nodes_per_particle": 0.14202350620530943,
+    "share_numDOF_gt_64": 0.03826949946576806,
+    "mean_support_nodes": 12.917019396728858,
+    "total": 9970.761855839566
+   },
+   "profiler_memory": {
+    "build": {
+     "id_live": 0,
+     "matrix_live": 112132224,
+     "peak_bytes": 182994496,
+     "vector_live": 70861904,
+     "components_live": {
+      "0": 1,
+      "1": 4,
+      "2": 2,
+      "3": 2,
+      "6": 1,
+      "14006": 97336,
+      "33000": 1,
+      "33027": 1,
+      "99990": 1
+     }
+    },
+    "step1": {
+     "id_live": 23374132,
+     "matrix_live": 115752984,
+     "peak_bytes": 226633044,
+     "vector_live": 57667472,
+     "components_live": {
+      "1": 17760,
+      "33026": 97336
+     }
+    },
+    "step2": {
+     "id_live": 2257920,
+     "matrix_live": 80201664,
+     "peak_bytes": 127442680,
+     "vector_live": 5774112,
+     "components_live": {}
+    }
+   },
+   "tag": "m3_A_N100000_dp_r1"
+  },
+  {
+   "ok": true,
+   "config": {
+    "mode": "F",
+    "N": 100000,
+    "mat": "dp",
+    "threads": 1,
+    "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\dist\\bin\\opensees.pyd"
+   },
+   "conditions": {
+    "ladrunoBuild": "9db5803f6d20672e7f73e89615af33a42a449dac",
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "python": "3.12.10",
+    "pid": 16128,
+    "affinity": {
+     "requested": "0xffff",
+     "process_mask": "0xffff",
+     "system_mask": "0xffffff",
+     "set_ok": true
+    },
+    "ladrunoThreads": 1
+   },
+   "model": {
+    "m_cells": 18,
+    "h": 0.05555555555555555,
+    "a": 1.0,
+    "height": 2.0,
+    "rho": 2000.0,
+    "g": 9.81,
+    "E": 1000000.0,
+    "nu": 0.3,
+    "K": 833333.3333333333,
+    "G": 384615.3846153846,
+    "grid_cells": [
+     72,
+     72,
+     38
+    ],
+    "ppc": 2,
+    "basis": "gimp",
+    "floor": "mpm wall zmin 0.4",
+    "symmetry": "xmin x, ymin y (quarter column)",
+    "dp": {
+     "phi_deg": 30.0,
+     "rho": 0.32659863237109044,
+     "rhoBar": 0.0,
+     "sigmaY": 10.0
+    },
+    "j2": null,
+    "dt_factor": 0.25
+   },
+   "numParticles": 93312,
+   "stages": {
+    "s0_model": {
+     "private": 31821824,
+     "working_set": 27107328,
+     "peak_working_set": 27107328,
+     "peak_pagefile": 31821824
+    },
+    "s1_built": {
+     "private": 363601920,
+     "working_set": 338735104,
+     "peak_working_set": 338735104,
+     "peak_pagefile": 363601920
+    },
+    "s2_step1": {
+     "private": 548564992,
+     "working_set": 514002944,
+     "peak_working_set": 514002944,
+     "peak_pagefile": 548564992
+    },
+    "s3_step2": {
+     "private": 548564992,
+     "working_set": 514002944,
+     "peak_working_set": 514002944,
+     "peak_pagefile": 548564992
+    }
+   },
+   "runs": {
+    "build": "s0000",
+    "step1": "s0001",
+    "step2": "s0002"
+   },
+   "support_histogram": {
+    "8": 34413,
+    "12": 45723,
+    "18": 12243,
+    "27": 933
+   },
+   "child_rc": 0,
+   "child_wall_s": 0.693628400000307,
+   "log": "m3_F_N100000_dp_r0.log",
+   "analytic": {
+    "material_copy": 2320,
+    "particle_state_and_snapshot": 1038,
+    "support_arrays": 466.4812242798354,
+    "trial_arrays": 344,
+    "dense_grid": 380.6182484567901,
+    "dense_grid_nodes_per_particle": 2.4715470679012346,
+    "mean_support_nodes": 11.462030606995885,
+    "total": 4549.099472736625
+   },
+   "profiler_memory": {
+    "build": {
+     "id_live": 0,
+     "matrix_live": 107496576,
+     "peak_bytes": 175429376,
+     "vector_live": 67931936,
+     "components_live": {
+      "0": 1,
+      "14006": 93312,
+      "33027": 1
+     }
+    },
+    "step1": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 464,
+     "vector_live": 0,
+     "components_live": {}
+    },
+    "step2": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 464,
+     "vector_live": 0,
+     "components_live": {}
+    }
+   },
+   "tag": "m3_F_N100000_dp_r0"
+  },
+  {
+   "ok": true,
+   "config": {
+    "mode": "F",
+    "N": 100000,
+    "mat": "dp",
+    "threads": 1,
+    "pyd": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\agent-ae57ef58bd6906efc\\dist\\bin\\opensees.pyd"
+   },
+   "conditions": {
+    "ladrunoBuild": "9db5803f6d20672e7f73e89615af33a42a449dac",
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "python": "3.12.10",
+    "pid": 29336,
+    "affinity": {
+     "requested": "0xffff",
+     "process_mask": "0xffff",
+     "system_mask": "0xffffff",
+     "set_ok": true
+    },
+    "ladrunoThreads": 1
+   },
+   "model": {
+    "m_cells": 18,
+    "h": 0.05555555555555555,
+    "a": 1.0,
+    "height": 2.0,
+    "rho": 2000.0,
+    "g": 9.81,
+    "E": 1000000.0,
+    "nu": 0.3,
+    "K": 833333.3333333333,
+    "G": 384615.3846153846,
+    "grid_cells": [
+     72,
+     72,
+     38
+    ],
+    "ppc": 2,
+    "basis": "gimp",
+    "floor": "mpm wall zmin 0.4",
+    "symmetry": "xmin x, ymin y (quarter column)",
+    "dp": {
+     "phi_deg": 30.0,
+     "rho": 0.32659863237109044,
+     "rhoBar": 0.0,
+     "sigmaY": 10.0
+    },
+    "j2": null,
+    "dt_factor": 0.25
+   },
+   "numParticles": 93312,
+   "stages": {
+    "s0_model": {
+     "private": 31625216,
+     "working_set": 26984448,
+     "peak_working_set": 26984448,
+     "peak_pagefile": 31625216
+    },
+    "s1_built": {
+     "private": 363438080,
+     "working_set": 338558976,
+     "peak_working_set": 338558976,
+     "peak_pagefile": 363438080
+    },
+    "s2_step1": {
+     "private": 547741696,
+     "working_set": 513626112,
+     "peak_working_set": 513626112,
+     "peak_pagefile": 547758080
+    },
+    "s3_step2": {
+     "private": 547741696,
+     "working_set": 513626112,
+     "peak_working_set": 513626112,
+     "peak_pagefile": 547758080
+    }
+   },
+   "runs": {
+    "build": "s0000",
+    "step1": "s0001",
+    "step2": "s0002"
+   },
+   "support_histogram": {
+    "8": 34413,
+    "12": 45723,
+    "18": 12243,
+    "27": 933
+   },
+   "child_rc": 0,
+   "child_wall_s": 0.6981040999999095,
+   "log": "m3_F_N100000_dp_r1.log",
+   "analytic": {
+    "material_copy": 2320,
+    "particle_state_and_snapshot": 1038,
+    "support_arrays": 466.4812242798354,
+    "trial_arrays": 344,
+    "dense_grid": 380.6182484567901,
+    "dense_grid_nodes_per_particle": 2.4715470679012346,
+    "mean_support_nodes": 11.462030606995885,
+    "total": 4549.099472736625
+   },
+   "profiler_memory": {
+    "build": {
+     "id_live": 0,
+     "matrix_live": 107496576,
+     "peak_bytes": 175429376,
+     "vector_live": 67931936,
+     "components_live": {
+      "0": 1,
+      "14006": 93312,
+      "33027": 1
+     }
+    },
+    "step1": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 464,
+     "vector_live": 0,
+     "components_live": {}
+    },
+    "step2": {
+     "id_live": 0,
+     "matrix_live": 0,
+     "peak_bytes": 464,
+     "vector_live": 0,
+     "components_live": {}
+    }
+   },
+   "tag": "m3_F_N100000_dp_r1"
+  }
+ ],
+ "slopes": [
+  {
+   "mode": "A",
+   "mat": "elastic",
+   "N": [
+    10648,
+    97336
+   ],
+   "bytes_per_particle_after_step1": 17754.247323735697,
+   "analytic_per_particle": {
+    "material_copy": 272,
+    "particle_state_and_snapshot": 1038,
+    "element": 3938.0878195117944,
+    "fe_element": 2478.9663022930877,
+    "of_which_fe_own_tangent": 2040.2690063285938,
+    "grid_nodes": 198.26481466261197,
+    "grid_nodes_per_particle": 0.14202350620530943,
+    "share_numDOF_gt_64": 0.03831059423029506,
+    "mean_support_nodes": 12.918580997780882,
+    "total": 7925.3189364674945
+   },
+   "measured_minus_analytic": 9828.928387268203,
+   "note": "the difference is what the analytic count leaves out: mode A the SOE matrix and the factor (MKL), mode F allocator slack; a negative one means an over-count (e.g. the 27-node support assumed in mode F)",
+   "slopes_per_particle": {
+    "private.s3_step2": 22022.874861572534,
+    "census.step1.classTag1": 0.17386489479512734,
+    "profiler.build.id_live": 0.0,
+    "private.s2_step1": 17754.247323735697,
+    "census.build.classTag99990": 0.0,
+    "census.build.classTag16": 1.0,
+    "census.build.classTag33027": 0.0,
+    "profiler.step2.vector_live": 57.1281838316722,
+    "profiler.build.peak_bytes": 96.0,
+    "census.build.classTag6": 0.0,
+    "delta.step1": 16862.428940568476,
+    "census.build.classTag33000": 0.0,
+    "census.build.classTag10": 0.0,
+    "profiler.build.matrix_live": 0.0,
+    "profiler.step1.peak_bytes": 2501.498938722776,
+    "private.s1_built": 891.8183831672204,
+    "profiler.step1.matrix_live": 1325.3995016611295,
+    "gridNodes": 0.13953488372093023,
+    "private.s0_model": -1.6537467700258397,
+    "profiler.step2.matrix_live": 906.406146179402,
+    "profiler.step2.id_live": 21.997877445551865,
+    "nEqn": 0.3842746400885936,
+    "census.step1.classTag33026": 1.0,
+    "profiler.step2.peak_bytes": 1399.7069952011811,
+    "delta.build": 893.4721299372462,
+    "profiler.build.vector_live": 96.0,
+    "census.build.classTag2": 0.0,
+    "census.build.classTag1": 0.0,
+    "profiler.step1.id_live": 246.8544204503507,
+    "census.build.classTag3": 0.0,
+    "profiler.step1.vector_live": 610.1531007751938
+   },
+   "per_particle_at_N": {
+    "1000": {
+     "private.s3_step2": 68564.992,
+     "census.step1.classTag1": 0.444,
+     "profiler.build.id_live": 0.0,
+     "private.s2_step1": 66048.0,
+     "census.build.classTag99990": 0.001,
+     "census.build.classTag16": 1.0,
+     "census.build.classTag33027": 0.001,
+     "profiler.step2.vector_live": 77.088,
+     "profiler.build.peak_bytes": 96.568,
+     "census.build.classTag6": 0.001,
+     "delta.step1": 25812.992,
+     "census.build.classTag33000": 0.001,
+     "census.build.classTag10": 0.001,
+     "profiler.build.matrix_live": 0.0,
+     "profiler.step1.peak_bytes": 910.904,
+     "private.s1_built": 40235.008,
+     "profiler.step1.matrix_live": 230.784,
+     "gridNodes": 0.216,
+     "private.s0_model": 31688.704,
+     "profiler.step2.matrix_live": 20.736,
+     "profiler.step2.id_live": 32.0,
+     "nEqn": 0.42,
+     "census.step1.classTag33026": 1.0,
+     "profiler.step2.peak_bytes": 296.648,
+     "delta.build": 8546.304,
+     "profiler.build.vector_live": 96.568,
+     "census.build.classTag2": 0.002,
+     "census.build.classTag1": 0.004,
+     "profiler.step1.id_live": 163.904,
+     "census.build.classTag3": 0.002,
+     "profiler.step1.vector_live": 405.176
+    },
+    "10648": {
+     "private.s3_step2": 27594.338091660407,
+     "census.step1.classTag1": 0.25244177310293014,
+     "profiler.build.id_live": 0.0,
+     "private.s2_step1": 22879.97595792637,
+     "census.build.classTag99990": 9.391435011269723e-05,
+     "census.build.classTag16": 1.0,
+     "census.build.classTag33027": 9.391435011269723e-05,
+     "profiler.step2.vector_live": 78.25694966190834,
+     "profiler.build.peak_bytes": 96.05334335086401,
+     "census.build.classTag6": 9.391435011269723e-05,
+     "delta.step1": 18137.53268219384,
+     "census.build.classTag33000": 9.391435011269723e-05,
+     "census.build.classTag10": 9.391435011269723e-05,
+     "profiler.build.matrix_live": 0.0,
+     "profiler.step1.peak_bytes": 918.7738542449287,
+     "private.s1_built": 4742.443275732532,
+     "profiler.step1.matrix_live": 80.46130728775357,
+     "gridNodes": 0.1622839969947408,
+     "private.s0_model": 2970.830954169797,
+     "profiler.step2.matrix_live": 157.74004507888804,
+     "profiler.step2.id_live": 33.38542449286251,
+     "nEqn": 0.39669421487603307,
+     "census.step1.classTag33026": 1.0,
+     "profiler.step2.peak_bytes": 582.068369646882,
+     "delta.build": 1771.6123215627347,
+     "profiler.build.vector_live": 96.05334335086401,
+     "census.build.classTag2": 0.00018782870022539445,
+     "census.build.classTag1": 0.0003756574004507889,
+     "profiler.step1.id_live": 185.46356123215628,
+     "census.build.classTag3": 0.00018782870022539445,
+     "profiler.step1.vector_live": 448.3959429000751
+    },
+    "97336": {
+     "private.s3_step2": 22632.360976411604,
+     "census.step1.classTag1": 0.18246075449987673,
+     "profiler.build.id_live": 0.0,
+     "private.s2_step1": 18314.972630886827,
+     "census.build.classTag99990": 1.0273691131749815e-05,
+     "census.build.classTag16": 1.0,
+     "census.build.classTag33027": 1.0273691131749815e-05,
+     "profiler.step2.vector_live": 59.43954960138078,
+     "profiler.build.peak_bytes": 96.00583545656283,
+     "census.build.classTag6": 1.0273691131749815e-05,
+     "delta.step1": 17001.917974850003,
+     "census.build.classTag33000": 1.0273691131749815e-05,
+     "census.build.classTag10": 1.0273691131749815e-05,
+     "profiler.build.matrix_live": 0.0,
+     "profiler.step1.peak_bytes": 2328.3578943042658,
+     "private.s1_built": 1313.054656036821,
+     "profiler.step1.matrix_live": 1189.2104051943782,
+     "gridNodes": 0.14202350620530943,
+     "private.s0_model": 323.519026875976,
+     "profiler.step2.matrix_live": 824.5063696885016,
+     "profiler.step2.id_live": 23.24360976411605,
+     "nEqn": 0.3856332703213611,
+     "census.step1.classTag33026": 1.0,
+     "profiler.step2.peak_bytes": 1310.2620202186242,
+     "delta.build": 989.5356291608449,
+     "profiler.build.vector_live": 96.00583545656283,
+     "census.build.classTag2": 2.054738226349963e-05,
+     "census.build.classTag1": 4.109476452699926e-05,
+     "profiler.step1.id_live": 240.13861264074956,
+     "census.build.classTag3": 2.054738226349963e-05,
+     "profiler.step1.vector_live": 592.4577956768308
+    }
+   }
+  },
+  {
+   "mode": "F",
+   "mat": "elastic",
+   "N": [
+    11664,
+    93312
+   ],
+   "bytes_per_particle_after_step1": 2907.227905153831,
+   "analytic_per_particle": {
+    "material_copy": 272,
+    "particle_state_and_snapshot": 1038,
+    "support_arrays": 466.4812242798354,
+    "trial_arrays": 344,
+    "dense_grid": 380.6182484567901,
+    "dense_grid_nodes_per_particle": 2.4715470679012346,
+    "mean_support_nodes": 11.462030606995885,
+    "total": 2501.0994727366256
+   },
+   "measured_minus_analytic": 406.12843241720566,
+   "note": "the difference is what the analytic count leaves out: mode A the SOE matrix and the factor (MKL), mode F allocator slack; a negative one means an over-count (e.g. the 27-node support assumed in mode F)",
+   "slopes_per_particle": {
+    "private.s3_step2": 2907.252988438174,
+    "profiler.build.id_live": 0.0,
+    "private.s2_step1": 2907.227905153831,
+    "census.build.classTag16": 1.0,
+    "census.build.classTag33027": 0.0,
+    "profiler.step2.vector_live": 0.0,
+    "profiler.build.peak_bytes": 96.0,
+    "delta.step1": 1971.6213991769548,
+    "census.build.classTag10": 0.0,
+    "profiler.build.matrix_live": 0.0,
+    "profiler.step1.peak_bytes": 0.0,
+    "private.s1_built": 935.6065059768763,
+    "profiler.step1.matrix_live": 0.0,
+    "private.s0_model": -3.386243386243386,
+    "profiler.step2.matrix_live": 0.0,
+    "profiler.step2.id_live": 0.0,
+    "profiler.step2.peak_bytes": 0.0,
+    "delta.build": 938.9927493631197,
+    "profiler.build.vector_live": 96.0,
+    "profiler.step1.id_live": 0.0,
+    "profiler.step1.vector_live": 0.0
+   },
+   "per_particle_at_N": {
+    "1024": {
+     "private.s3_step2": 42176.0,
+     "profiler.build.id_live": 0.0,
+     "private.s2_step1": 41656.0,
+     "census.build.classTag16": 1.0,
+     "census.build.classTag33027": 0.0009765625,
+     "profiler.step2.vector_live": 0.0,
+     "profiler.build.peak_bytes": 96.0703125,
+     "delta.step1": 2480.0,
+     "census.build.classTag10": 0.0009765625,
+     "profiler.build.matrix_live": 0.0,
+     "profiler.step1.peak_bytes": 0.0,
+     "private.s1_built": 39176.0,
+     "profiler.step1.matrix_live": 0.0,
+     "private.s0_model": 30922.0,
+     "profiler.step2.matrix_live": 0.0,
+     "profiler.step2.id_live": 0.0,
+     "profiler.step2.peak_bytes": 0.0,
+     "delta.build": 8254.0,
+     "profiler.build.vector_live": 96.0703125,
+     "profiler.step1.id_live": 0.0,
+     "profiler.step1.vector_live": 0.0
+    },
+    "11664": {
+     "private.s3_step2": 6336.438957475994,
+     "profiler.build.id_live": 0.0,
+     "private.s2_step1": 6336.438957475994,
+     "census.build.classTag16": 1.0,
+     "census.build.classTag33027": 8.573388203017832e-05,
+     "profiler.step2.vector_live": 0.0,
+     "profiler.build.peak_bytes": 96.00617283950618,
+     "delta.step1": 1996.0274348422497,
+     "census.build.classTag10": 8.573388203017832e-05,
+     "profiler.build.matrix_live": 0.0,
+     "profiler.step1.peak_bytes": 0.0,
+     "private.s1_built": 4340.411522633744,
+     "profiler.step1.matrix_live": 0.0,
+     "private.s0_model": 2715.2153635116597,
+     "profiler.step2.matrix_live": 0.0,
+     "profiler.step2.id_live": 0.0,
+     "profiler.step2.peak_bytes": 0.0,
+     "delta.build": 1625.196159122085,
+     "profiler.build.vector_live": 96.00617283950618,
+     "profiler.step1.id_live": 0.0,
+     "profiler.step1.vector_live": 0.0
+    },
+    "93312": {
+     "private.s3_step2": 3335.901234567901,
+     "profiler.build.id_live": 0.0,
+     "private.s2_step1": 3335.8792866941017,
+     "census.build.classTag16": 1.0,
+     "census.build.classTag33027": 1.071673525377229e-05,
+     "profiler.step2.vector_live": 0.0,
+     "profiler.build.peak_bytes": 96.00077160493827,
+     "delta.step1": 1974.6721536351165,
+     "census.build.classTag10": 1.071673525377229e-05,
+     "profiler.build.matrix_live": 0.0,
+     "profiler.step1.peak_bytes": 0.0,
+     "private.s1_built": 1361.207133058985,
+     "profiler.step1.matrix_live": 0.0,
+     "private.s0_model": 336.4389574759945,
+     "profiler.step2.matrix_live": 0.0,
+     "profiler.step2.id_live": 0.0,
+     "profiler.step2.peak_bytes": 0.0,
+     "delta.build": 1024.7681755829904,
+     "profiler.build.vector_live": 96.00077160493827,
+     "profiler.step1.id_live": 0.0,
+     "profiler.step1.vector_live": 0.0
+    }
+   }
+  },
+  {
+   "mode": "A",
+   "mat": "dp",
+   "N": [
+    10648,
+    97336
+   ],
+   "bytes_per_particle_after_step1": 20313.18420081211,
+   "analytic_per_particle": {
+    "material_copy": 2320,
+    "particle_state_and_snapshot": 1038,
+    "element": 3938.0358346346675,
+    "fe_element": 2476.226843100189,
+    "of_which_fe_own_tangent": 2037.5333278540313,
+    "grid_nodes": 198.26481466261197,
+    "grid_nodes_per_particle": 0.14202350620530943,
+    "share_numDOF_gt_64": 0.038259225774636314,
+    "mean_support_nodes": 12.918344702884852,
+    "total": 9970.527492397468
+   },
+   "measured_minus_analytic": 10342.65670841464,
+   "note": "the difference is what the analytic count leaves out: mode A the SOE matrix and the factor (MKL), mode F allocator slack; a negative one means an over-count (e.g. the 27-node support assumed in mode F)",
+   "slopes_per_particle": {
+    "private.s3_step2": 24606.452565522333,
+    "census.step1.classTag1": 0.17386489479512734,
+    "profiler.build.id_live": 0.0,
+    "private.s2_step1": 20313.18420081211,
+    "census.build.classTag99990": 0.0,
+    "census.build.classTag14006": 1.0,
+    "census.build.classTag33027": 0.0,
+    "profiler.step2.vector_live": 57.027547065337764,
+    "census.build.classTag0": 0.0,
+    "profiler.build.peak_bytes": 1880.0,
+    "census.build.classTag6": 0.0,
+    "delta.step1": 16883.053525286083,
+    "census.build.classTag33000": 0.0,
+    "profiler.build.matrix_live": 1152.0,
+    "profiler.step1.peak_bytes": 2501.498938722776,
+    "private.s1_built": 3430.1306755260243,
+    "profiler.step1.matrix_live": 1325.3995016611295,
+    "gridNodes": 0.13953488372093023,
+    "private.s0_model": -1.204872646733112,
+    "profiler.step2.matrix_live": 905.4979235880398,
+    "profiler.step2.id_live": 21.960617386489478,
+    "nEqn": 0.3842746400885936,
+    "census.step1.classTag33026": 1.0,
+    "profiler.step2.peak_bytes": 1398.5049141749723,
+    "delta.build": 3431.3355481727576,
+    "profiler.build.vector_live": 728.0,
+    "census.build.classTag2": 0.0,
+    "census.build.classTag1": 0.0,
+    "profiler.step1.id_live": 246.8544204503507,
+    "census.build.classTag3": 0.0,
+    "profiler.step1.vector_live": 610.1531007751938
+   },
+   "per_particle_at_N": {
+    "1000": {
+     "private.s3_step2": 71391.232,
+     "census.step1.classTag1": 0.444,
+     "profiler.build.id_live": 0.0,
+     "private.s2_step1": 68497.408,
+     "census.build.classTag99990": 0.001,
+     "census.build.classTag14006": 1.0,
+     "census.build.classTag33027": 0.001,
+     "profiler.step2.vector_live": 77.088,
+     "census.build.classTag0": 0.001,
+     "profiler.build.peak_bytes": 1882.816,
+     "census.build.classTag6": 0.001,
+     "delta.step1": 25344.0,
+     "census.build.classTag33000": 0.001,
+     "profiler.build.matrix_live": 1153.152,
+     "profiler.step1.peak_bytes": 910.904,
+     "private.s1_built": 43153.408,
+     "profiler.step1.matrix_live": 230.784,
+     "gridNodes": 0.216,
+     "private.s0_model": 31557.632,
+     "profiler.step2.matrix_live": 20.736,
+     "profiler.step2.id_live": 32.0,
+     "nEqn": 0.42,
+     "census.step1.classTag33026": 1.0,
+     "profiler.step2.peak_bytes": 296.648,
+     "delta.build": 11595.776,
+     "profiler.build.vector_live": 729.296,
+     "census.build.classTag2": 0.002,
+     "census.build.classTag1": 0.004,
+     "profiler.step1.id_live": 163.904,
+     "census.build.classTag3": 0.002,
+     "profiler.step1.vector_live": 405.176
+    },
+    "10648": {
+     "private.s3_step2": 29487.69947407964,
+     "census.step1.classTag1": 0.25244177310293014,
+     "profiler.build.id_live": 0.0,
+     "private.s2_step1": 25223.020285499624,
+     "census.build.classTag99990": 9.391435011269723e-05,
+     "census.build.classTag14006": 1.0,
+     "census.build.classTag33027": 9.391435011269723e-05,
+     "profiler.step2.vector_live": 78.25694966190834,
+     "census.build.classTag0": 9.391435011269723e-05,
+     "profiler.build.peak_bytes": 1880.2644628099174,
+     "census.build.classTag6": 9.391435011269723e-05,
+     "delta.step1": 17959.044327573254,
+     "census.build.classTag33000": 9.391435011269723e-05,
+     "profiler.build.matrix_live": 1152.1081893313299,
+     "profiler.step1.peak_bytes": 918.7738542449287,
+     "private.s1_built": 7263.975957926371,
+     "profiler.step1.matrix_live": 80.46130728775357,
+     "gridNodes": 0.1622839969947408,
+     "private.s0_model": 2961.9834710743803,
+     "profiler.step2.matrix_live": 157.74004507888804,
+     "profiler.step2.id_live": 33.38542449286251,
+     "nEqn": 0.39669421487603307,
+     "census.step1.classTag33026": 1.0,
+     "profiler.step2.peak_bytes": 582.068369646882,
+     "delta.build": 4301.992486851991,
+     "profiler.build.vector_live": 728.121712997746,
+     "census.build.classTag2": 0.00018782870022539445,
+     "census.build.classTag1": 0.0003756574004507889,
+     "profiler.step1.id_live": 185.46356123215628,
+     "census.build.classTag3": 0.00018782870022539445,
+     "profiler.step1.vector_live": 448.3959429000751
+    },
+    "97336": {
+     "private.s3_step2": 25140.432974439056,
+     "census.step1.classTag1": 0.18246075449987673,
+     "profiler.build.id_live": 0.0,
+     "private.s2_step1": 20850.29210158626,
+     "census.build.classTag99990": 1.0273691131749815e-05,
+     "census.build.classTag14006": 1.0,
+     "census.build.classTag33027": 1.0273691131749815e-05,
+     "profiler.step2.vector_live": 59.3499219199474,
+     "census.build.classTag0": 1.0273691131749815e-05,
+     "profiler.build.peak_bytes": 1880.028930714227,
+     "census.build.classTag6": 1.0273691131749815e-05,
+     "delta.step1": 17000.760746280925,
+     "census.build.classTag33000": 1.0273691131749815e-05,
+     "profiler.build.matrix_live": 1152.0118352921838,
+     "profiler.step1.peak_bytes": 2328.3578943042658,
+     "private.s1_built": 3849.5313553053343,
+     "profiler.step1.matrix_live": 1189.2104051943782,
+     "gridNodes": 0.14202350620530943,
+     "private.s0_model": 322.9509328511548,
+     "profiler.step2.matrix_live": 823.6975014383167,
+     "profiler.step2.id_live": 23.2104257417605,
+     "nEqn": 0.3856332703213611,
+     "census.step1.classTag33026": 1.0,
+     "profiler.step2.peak_bytes": 1309.1914399605491,
+     "delta.build": 3526.5804224541794,
+     "profiler.build.vector_live": 728.0133147037068,
+     "census.build.classTag2": 2.054738226349963e-05,
+     "census.build.classTag1": 4.109476452699926e-05,
+     "profiler.step1.id_live": 240.13861264074956,
+     "census.build.classTag3": 2.054738226349963e-05,
+     "profiler.step1.vector_live": 592.4577956768308
+    }
+   }
+  },
+  {
+   "mode": "F",
+   "mat": "dp",
+   "N": [
+    11664,
+    93312
+   ],
+   "bytes_per_particle_after_step1": 5442.395453654713,
+   "analytic_per_particle": {
+    "material_copy": 2320,
+    "particle_state_and_snapshot": 1038,
+    "support_arrays": 466.4812242798354,
+    "trial_arrays": 344,
+    "dense_grid": 380.6182484567901,
+    "dense_grid_nodes_per_particle": 2.4715470679012346,
+    "mean_support_nodes": 11.462030606995885,
+    "total": 4549.099472736625
+   },
+   "measured_minus_analytic": 893.2959809180875,
+   "note": "the difference is what the analytic count leaves out: mode A the SOE matrix and the factor (MKL), mode F allocator slack; a negative one means an over-count (e.g. the 27-node support assumed in mode F)",
+   "slopes_per_particle": {
+    "private.s3_step2": 5442.395453654713,
+    "profiler.build.id_live": 0.0,
+    "private.s2_step1": 5442.395453654713,
+    "census.build.classTag14006": 1.0,
+    "census.build.classTag33027": 0.0,
+    "profiler.step2.vector_live": 0.0,
+    "census.build.classTag0": 0.0,
+    "profiler.build.peak_bytes": 1880.0,
+    "delta.step1": 1973.3521457965903,
+    "profiler.build.matrix_live": 1152.0,
+    "profiler.step1.peak_bytes": 0.0,
+    "private.s1_built": 3469.0433078581227,
+    "profiler.step1.matrix_live": 0.0,
+    "private.s0_model": 1.3544973544973544,
+    "profiler.step2.matrix_live": 0.0,
+    "profiler.step2.id_live": 0.0,
+    "profiler.step2.peak_bytes": 0.0,
+    "delta.build": 3467.6888105036255,
+    "profiler.build.vector_live": 728.0,
+    "profiler.step1.id_live": 0.0,
+    "profiler.step1.vector_live": 0.0
+   },
+   "per_particle_at_N": {
+    "1024": {
+     "private.s3_step2": 44642.0,
+     "profiler.build.id_live": 0.0,
+     "private.s2_step1": 44126.0,
+     "census.build.classTag14006": 1.0,
+     "census.build.classTag33027": 0.0009765625,
+     "profiler.step2.vector_live": 0.0,
+     "census.build.classTag0": 0.0009765625,
+     "profiler.build.peak_bytes": 1882.75,
+     "delta.step1": 2030.0,
+     "profiler.build.matrix_live": 1153.125,
+     "profiler.step1.peak_bytes": 0.453125,
+     "private.s1_built": 42096.0,
+     "profiler.step1.matrix_live": 0.0,
+     "private.s0_model": 30780.0,
+     "profiler.step2.matrix_live": 0.0,
+     "profiler.step2.id_live": 0.0,
+     "profiler.step2.peak_bytes": 0.453125,
+     "delta.build": 11316.0,
+     "profiler.build.vector_live": 728.78125,
+     "profiler.step1.id_live": 0.0,
+     "profiler.step1.vector_live": 0.0
+    },
+    "11664": {
+     "private.s3_step2": 8898.545953360768,
+     "profiler.build.id_live": 0.0,
+     "private.s2_step1": 8898.545953360768,
+     "census.build.classTag14006": 1.0,
+     "census.build.classTag33027": 8.573388203017832e-05,
+     "profiler.step2.vector_live": 0.0,
+     "census.build.classTag0": 8.573388203017832e-05,
+     "profiler.build.peak_bytes": 1880.241426611797,
+     "delta.step1": 2015.8683127572017,
+     "profiler.build.matrix_live": 1152.0987654320988,
+     "profiler.step1.peak_bytes": 0.039780521262002745,
+     "private.s1_built": 6882.677640603567,
+     "profiler.step1.matrix_live": 0.0,
+     "private.s0_model": 2710.299039780521,
+     "profiler.step2.matrix_live": 0.0,
+     "profiler.step2.id_live": 0.0,
+     "profiler.step2.peak_bytes": 0.039780521262002745,
+     "delta.build": 4172.378600823045,
+     "profiler.build.vector_live": 728.0685871056241,
+     "profiler.step1.id_live": 0.0,
+     "profiler.step1.vector_live": 0.0
+    },
+    "93312": {
+     "private.s3_step2": 5874.414266117969,
+     "profiler.build.id_live": 0.0,
+     "private.s2_step1": 5874.414266117969,
+     "census.build.classTag14006": 1.0,
+     "census.build.classTag33027": 1.071673525377229e-05,
+     "profiler.step2.vector_live": 0.0,
+     "census.build.classTag0": 1.071673525377229e-05,
+     "profiler.build.peak_bytes": 1880.0301783264747,
+     "delta.step1": 1978.6666666666667,
+     "profiler.build.matrix_live": 1152.0123456790122,
+     "profiler.step1.peak_bytes": 0.004972565157750343,
+     "private.s1_built": 3895.7475994513034,
+     "profiler.step1.matrix_live": 0.0,
+     "private.s0_model": 339.97256515775035,
+     "profiler.step2.matrix_live": 0.0,
+     "profiler.step2.id_live": 0.0,
+     "profiler.step2.peak_bytes": 0.004972565157750343,
+     "delta.build": 3555.775034293553,
+     "profiler.build.vector_live": 728.008573388203,
+     "profiler.step1.id_live": 0.0,
+     "profiler.step1.vector_live": 0.0
+    }
+   }
+  }
+ ],
+ "failures": [],
+ "wall_s": 153.09267258644104
+}

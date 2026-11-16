@@ -419,8 +419,13 @@ DirectIntegrationAnalysis::domainChanged(void)
     int stamp = the_Domain->hasDomainChanged();
     domainStamp = stamp;
 
+    // Ladruno WP-232g: clearAll, the integrator's and the algorithm's domainChanged() get
+    // scopes too, so a mode-A MPM step's rebuild splits with no remainder (Newmark
+    // re-reads every node here, W1). Scopes only: no call or return changes.
+    { OPS_PROFILE_SCOPE("dc.clearAll");   // Ladruno WP-232g
     theAnalysisModel->clearAll();    
     theConstraintHandler->clearAll();
+    }
     
     // now we invoke handle() on the constraint handler which
     // causes the creation of FE_Element and DOF_Group objects
@@ -489,11 +494,15 @@ DirectIntegrationAnalysis::domainChanged(void)
     // its error but the analysis ran on anyway, defeating the -projectICs IC-safety gate.
     // Mirrors BasicAnalysisBuilder::domainChanged(), which already checks this. Additive:
     // a healthy integrator returns >=0, so this is a no-op except on a genuine failure.
+    { OPS_PROFILE_SCOPE("dc.integrator");   // Ladruno WP-232g
     if (theIntegrator->domainChanged() < 0) {
         opserr << "DirectIntegrationAnalysis::domainChanged() - Integrator::domainChanged() failed\n";
         return -1;
     }
+    }
+    { OPS_PROFILE_SCOPE("dc.algorithm");   // Ladruno WP-232g
     theAlgorithm->domainChanged();
+    }
 
     return 0;
 }
