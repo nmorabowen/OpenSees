@@ -262,33 +262,53 @@ def recover_particle_file(src, dst) -> list[dict]:
     src, dst = Path(src), Path(dst)
     if src.resolve() == dst.resolve():
         raise ValueError("recover_particle_file repairs a copy: dst must differ from src")
+    flags = lf.superblock_flags(src)
     lf.repair_copy(src, dst)   # schema §7b.2 step 3, shared with the recorder (WP-233)
     with h5py.File(dst, "r") as f:
-        return particle_stage_report(f)
+        # a repaired copy of a file killed with SWMR armed (0x05, the h5wasm path) is a
+        # step-2 file: no stage may be torn (as recover_ladruno, #1092)
+        return particle_stage_report(f, swmr_armed=(flags == 0x05))
 
 
-def particle_stage_report(f) -> list[dict]:
+def particle_stage_report(f, swmr_armed: bool | None = None) -> list[dict]:
     """Every particle stage of a file opened by the reader rule (232a §2.5), in order:
     ``{"stage": name, "committed": n}``, or ``{"stage": name, "torn_while_laid_out":
     True, "error": msg}`` for the LAST stage when it will not open or has no complete
-    layout. A kill while a stage is laid out can tear that stage after a plain open
-    (step 1: sec2 writes WRITE_ACCESS into the superblock lazily, so such a file can
-    still carry flags 0x00; WP-232h, #1085) or after the step-3 repair. It holds no
-    committed output. A file that needed the SWMR-read open (step 2, flags 0x05) was
-    killed after its last layout armed SWMR, so there every stage, the last included,
-    must read. Any other stage that will not open is corruption: raises
+    layout.
+
+    A stage that opens and holds neither ``MODEL/PARTICLES`` nor ``RESULTS/ON_PARTICLES``
+    is not a particle stage (C2-PAIR: the two are present or absent together): an FE
+    stage of a mixed file (232a §4) is skipped, not reported. A particle stage killed
+    before its ``MODEL/PARTICLES`` group was created reads the same way; it holds no
+    committed output, so skipping it loses nothing. A stage holding only one of the two
+    groups is a particle stage without a complete layout.
+
+    A kill while a stage is laid out can tear that stage after a plain open (step 1: sec2
+    writes WRITE_ACCESS into the superblock lazily, so such a file can still carry flags
+    0x00; WP-232h, #1085) or after the step-3 repair of a 0x01 file. It holds no committed
+    output. A file that needed the SWMR-read open (step 2, flags 0x05; ``swmr_armed``, by
+    default ``f.swmr_mode``), or the repaired copy of such a file, was killed after its
+    last layout armed SWMR, so there every particle stage, the last included, must read.
+    Any other particle stage that will not open is corruption: raises
     ``TornStageError``."""
+    if swmr_armed is None:
+        swmr_armed = bool(getattr(f, "swmr_mode", False))
     report = []
     names = _stage_names(f)
-    swmr = bool(getattr(f, "swmr_mode", False))
     for i, name in enumerate(names):
         try:
             st = f[name]
+            has_model = "MODEL/PARTICLES" in st
+            has_results = "RESULTS/ON_PARTICLES" in st
+            if not (has_model or has_results):
+                continue                       # an FE stage (or a layout not yet begun)
             if "RESULTS/ON_PARTICLES/OFFSETS" not in st:
                 raise KeyError(f"{name}: no RESULTS/ON_PARTICLES/OFFSETS")
+            if not has_model:
+                raise KeyError(f"{name}: no MODEL/PARTICLES")
             report.append({"stage": name, "committed": committed_outputs(st)})
         except Exception as e:
-            if swmr:
+            if swmr_armed:
                 raise TornStageError(f"{f.filename}: {name} will not open in a file killed "
                                      f"with SWMR armed (no layout was running): corruption "
                                      f"({e})") from e

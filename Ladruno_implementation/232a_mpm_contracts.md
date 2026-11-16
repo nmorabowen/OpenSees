@@ -512,10 +512,12 @@ by presizing the root's links (WP-232h, #1085; below).
    100 steps; 21 of 21 recovered every earlier stage, and in 2 the stage being laid out did not
    open.
 
-After step 1 or step 3 a reader applies the crash rule below to every stage, and treats a LAST
-stage that does not open, or whose `MODEL/PARTICLES` registry is torn (crash rule step 0), as
-holding no output; after step 2 it refuses such a stage. Reference:
-`tests/mpm_contracts.py::particle_stage_report` (on a file opened by any step;
+After step 1 or step 3 a reader applies the crash rule below to every particle stage, and treats
+a LAST stage that does not open, or whose `MODEL/PARTICLES` registry is torn (crash rule step 0),
+as holding no output; after step 2, or after step 3 on a copy of a 0x05 file, it refuses such a
+stage. A stage that opens and holds neither `MODEL/PARTICLES` nor `RESULTS/ON_PARTICLES` is not a
+particle stage (C2-PAIR): the FE stage of a mixed file (§4) is skipped, never reported as torn.
+Reference: `tests/mpm_contracts.py::particle_stage_report` (on a file opened by any step;
 `recover_particle_file` applies it after step 3).
 
 A reader that cannot open in SWMR-read mode (e.g. h5wasm) may apply step 3's repair to a copy of
