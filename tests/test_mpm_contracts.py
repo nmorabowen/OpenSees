@@ -107,6 +107,27 @@ def test_mixed_fixture_fe_stage_then_particle_stage():
         assert ids.tolist() == list(range(12))
 
 
+def test_the_stage_report_skips_the_fe_stage_of_a_mixed_file(tmp_path):
+    """232a §4 (found by the apeGmsh #3008 review): the FE stage of a clean mixed file
+    holds no particle group, so it is not a particle stage. The report skips it on the
+    plain open and after the step-3 repair; an FE stage is no torn particle stage."""
+    with mc.open_particle_file(fx.PARTICLE_MIXED) as f:
+        assert mc.particle_stage_report(f) == [{"stage": "MODEL_STAGE[1]", "committed": 3}]
+    # the same mixed file in the latest format, killed mid-layout (0x01), repaired
+    p, q = tmp_path / "mixed_killed.ladruno", tmp_path / "mixed_recovered.ladruno"
+    with h5py.File(fx.PARTICLE_MIXED, "r") as s, h5py.File(p, "w", libver="latest") as f:
+        for k in s:
+            s.copy(s[k], f, k)
+    mc.set_superblock(p, flags=0x01)
+    assert mc.recover_particle_file(p, q) == [{"stage": "MODEL_STAGE[1]", "committed": 3}]
+    # a particle stage holding only one of the two groups is not an FE stage (C2-PAIR)
+    p = tmp_path / "half.ladruno"
+    _layout_killed(p, first_stage_broken=True)
+    mc.set_superblock(p, flags=0x00)
+    with mc.open_particle_file(p) as f, pytest.raises(mc.TornStageError, match="not the last stage"):
+        mc.particle_stage_report(f)
+
+
 @pytest.mark.parametrize("mode,kind", sorted(lf.MODE_KIND.items()))
 def test_particle_stage_kind_is_pinned_from_mode(tmp_path, mode, kind):
     """232a §2.3: transient for explicit and implicit-dynamic, static for quasi-static."""
@@ -786,7 +807,9 @@ def _layout_killed(path, extra_eoa=0, last_stage_partial=False, first_stage_brok
         if first_stage_broken:
             del f["MODEL_STAGE[0]/RESULTS"]
         if last_stage_partial:
-            f.create_group("MODEL_STAGE[2]").create_group("MODEL")
+            # killed after MODEL/PARTICLES, before RESULTS/ON_PARTICLES (the writer's
+            # layout order, LadrunoMPMIO.cpp)
+            f.create_group("MODEL_STAGE[2]").create_group("MODEL/PARTICLES")
     flags, _ = mc.set_superblock(path, flags=0x01)
     assert flags == 0x00
     if extra_eoa:
