@@ -92,7 +92,8 @@ def test_rn_adds_nodes_without_adding_elements(tmp_path, order):
         sets = g["MODEL/SETS"]
         assert sorted(sets) == ["SET_1", "SET_2"]
         assert np.asarray(sets["SET_2/NODES"]).ravel().tolist() == [4]
-        # a -node region has no elements; the SETS writer skips an empty dataset
+        # node 4 alone encloses no element (MeshRegion derives a -node region's
+        # elements on demand); the SETS writer skips an empty dataset
         assert ("ELEMENTS" not in sets["SET_2"]
                 or np.asarray(sets["SET_2/ELEMENTS"]).size == 0)
 
