@@ -12,6 +12,8 @@ from mode A (LadrunoBrick, quad, DruckerPrager through an FE element).
     python3.12 tests/mpm_implicit_reference.py fe_cantilever_dyn
     python3.12 tests/mpm_implicit_reference.py fe_footing
     python3.12 tests/mpm_implicit_reference.py fe_plate
+    python3.12 tests/mpm_implicit_reference.py fe_footing_j2 [--n 4 8 16] [--form bbar std]
+                                                              [--fresh]   # WP-232j gate L3
     python3.12 tests/mpm_implicit_reference.py contract1 <out.h5>  # the plate particle set
 
 FE legs need a built fork binary: dist/bin of this worktree, or LADRUNO_BIN=<dir with
@@ -99,6 +101,46 @@ def davis_phi(phi_deg: float, psi_deg: float = 0.0) -> float:
     sin phi sin psi) -- context for the non-associated leg (it is NOT the gate)."""
     p, s = math.radians(phi_deg), math.radians(psi_deg)
     return math.degrees(math.atan(math.cos(s) * math.sin(p) / (1.0 - math.sin(p) * math.sin(s))))
+
+
+def footing_j2_closed(sy: float = 100.0 * math.sqrt(3.0), band=(0.97, 1.08)) -> dict:
+    """WP-232j gate L3: the rough strip footing on a weightless von Mises half-space.
+
+    Plane strain, isochoric plastic flow: at collapse eps_zz-dot = 0 makes sigma_zz the mean of
+    the in-plane principal stresses, so sqrt(J2) = (sigma_1 - sigma_2) / 2 = tau_max and the von
+    Mises surface sqrt(3 J2) = sigma_y is Tresca's tau_max = k with k = sigma_y / sqrt(3).
+
+    q_u = (2 + pi) k: Prandtl, L. (1920), "Ueber die Haerte plastischer Koerper", Nachr. Ges.
+    Wiss. Goettingen, Math.-Phys. Kl., 74-85 (the rough punch: a rigid wedge under the footing,
+    two Prandtl fans, two passive Rankine wedges); Hill, R. (1950), The Mathematical Theory of
+    Plasticity, Oxford (the smooth punch: a different field, the same load).
+
+    Why roughness does not matter (weightless, cohesive, no surcharge): Hill's stress field
+    carries zero shear on the footing base, so it is statically admissible for a rough base too
+    (a rough base admits any shear |tau| <= k, zero included): (2 + pi) k is a lower bound for
+    both. Prandtl's rigid-wedge mechanism has no slip on the base, so it is kinematically
+    admissible for the rough base: (2 + pi) k is an upper bound there. The bounds coincide, so the
+    rough and smooth limit loads are both (2 + pi) k. Without weight there is no N_gamma term and
+    no length scale, so B drops out too. This holds for a frictional soil only when phi = 0."""
+    k = sy / math.sqrt(3.0)
+    qu = (2.0 + math.pi) * k
+    return dict(sy=sy, k=k, q_u=qu, band_factor=list(band), band=[band[0] * qu, band[1] * qu])
+
+
+def q_lim(curve, lo: float = 0.03, hi: float = 0.05) -> dict:
+    """L3's observable: the mean footing pressure over s in [lo, hi] m. `mean` is the plain mean
+    over the accepted steps inside the window (11 points at 2 mm per step, the definition the
+    cases file gates); `trapz` is the s-weighted mean (equal to `mean` up to the end points'
+    half weight, and robust to halved steps), reported only."""
+    s = np.array([c[0] for c in curve])
+    q = np.array([c[1] for c in curve])
+    m = (s >= lo - 1e-9) & (s <= hi + 1e-9)
+    if s.size == 0 or s[-1] < hi - 1e-9 or m.sum() < 2:
+        return dict(mean=None, trapz=None, n=int(m.sum()))
+    ss, qq = s[m], q[m]
+    return dict(mean=float(qq.mean()),
+                trapz=float(np.sum(0.5 * (qq[1:] + qq[:-1]) * np.diff(ss)) / (ss[-1] - ss[0])),
+                n=int(m.sum()))
 
 
 def footing_closed() -> dict:
@@ -405,32 +447,61 @@ def fe_cantilever_dyn(nys=(4, 8, 16, 32), geom="hypo", form="std", lumped=False,
 # ----------------------------------------------------------------------------------------------
 FOOT = dict(B=2.0, X=12.0, D=6.0, q0=10.0, K=1.5e5, nu=0.45, sy=0.2, ds=0.002, s_max=0.2)
 
+# WP-232j (232j-V), gate L3: the same domain and staging, weightless von Mises soil, no surcharge.
+# LadrunoJ2, perfectly plastic. The factory's syntax line (SRC/material/nD/LadrunoJ2.cpp:54,
+# above OPS_LadrunoJ2 at :56):
+#   nDMaterial LadrunoJ2 tag K G -iso voce s0 Qinf b Hiso -kin N C1 g1 ... [-rho r]
+# with Qinf = b = Hiso = 0 and no -kin ("defaults: perfectly plastic, no kinematic hardening,
+# no damage", :80); its yield function is ||s|| - sqrt(2/3) s0
+# (LadrunoJ2Kernel.h returnMap, f_tr = normM - root23*sy0), so s0 is the uniaxial yield stress.
+FOOT_J2 = dict(E=1.0e5, nu=0.3, sy=100.0 * math.sqrt(3.0), q0=0.0, ds=0.002, s_max=0.1,
+               s_lim=(0.03, 0.05), band=(0.97, 1.08))
 
-def fe_footing(n_across_b=4, rough=True, geom="linear", form="bbar", ds=None, s_max=None):
+
+def j2_moduli(E: float = FOOT_J2["E"], nu: float = FOOT_J2["nu"]) -> tuple:
+    """K = E / (3 (1 - 2 nu)), G = E / (2 (1 + nu))."""
+    return E / (3.0 * (1.0 - 2.0 * nu)), E / (2.0 * (1.0 + nu))
+
+
+def _footing_material(ops, material: str) -> None:
+    f = FOOT
+    if material == "dp":
+        a = alpha_from_phi_txc(20.0)
+        G = 3 * f["K"] * (1 - 2 * f["nu"]) / (2 * (1 + f["nu"]))
+        ops.nDMaterial("DruckerPrager", 1, f["K"], G, f["sy"], math.sqrt(2) * a, 0.0,
+                       0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    elif material == "j2":
+        K, G = j2_moduli()
+        ops.nDMaterial("LadrunoJ2", 1, K, G, "-iso", "voce", FOOT_J2["sy"], 0.0, 0.0, 0.0)
+    else:
+        raise ValueError(f"unknown footing material {material!r}")
+
+
+def fe_footing(n_across_b=4, rough=True, geom="linear", form="bbar", ds=None, s_max=None,
+               material="dp", q0=None, curve=False):
     """Half model, x in [0, 12], y in [-6, 0], uniform h = B / n_across_b, plane-strain slab of
     LadrunoBrick (H8, B-bar, small-strain geometry: the ADR-79 control's element) with the case's
-    DruckerPrager. Stage 1: the surcharge ramps on every top node (tributary) in 10 steps.
+    DruckerPrager (material="dp", the default) or the L3 LadrunoJ2 (material="j2"). Stage 1: the
+    surcharge q0 (FOOT's 10 kPa unless given) ramps on every top node (tributary) in 10 steps.
     Stage 2: the footing nodes (top, x <= B/2) are pushed down 2 mm per step to s = 0.2 m; rough =
     u_x held (as the MPM gridvel), else free (the deck's smooth footing). q = (-sum R_y + the
     surcharge lumped on the footing nodes) / (B/2 t): dp_strip.py's r_corr convention, the MPM
     case's cond_force. Each step: a retry ladder (KrylovNewton, NewtonLineSearch, relaxed
-    KrylovNewton), then halving."""
+    KrylovNewton), then halving. curve=True adds the accepted steps' (s, q) as `curve`."""
     ops = fe_engine()
     f = FOOT
     ds = ds or f["ds"]
     s_max = s_max or f["s_max"]
+    q0 = f["q0"] if q0 is None else q0
     h = f["B"] / n_across_b
     nx, ny = int(round(f["X"] / h)), int(round(f["D"] / h))
     xs, ys, t, nid, nodes, hexes = _slab(nx, ny, f["X"], f["D"])
     ys = ys - f["D"]
-    a = alpha_from_phi_txc(20.0)
-    G = 3 * f["K"] * (1 - 2 * f["nu"]) / (2 * (1 + f["nu"]))
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     for n, (x, y, z) in nodes.items():
         ops.node(n, float(x), float(y - f["D"]), float(z))
-    ops.nDMaterial("DruckerPrager", 1, f["K"], G, f["sy"], math.sqrt(2) * a, 0.0,
-                   0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    _footing_material(ops, material)
     extra = ["-geom", geom] + (["-formulation", form] if form != "std" else [])
     for e, c in enumerate(hexes, start=1):
         ops.element("LadrunoBrick", e, *c, 1, *extra)
@@ -443,11 +514,11 @@ def fe_footing(n_across_b=4, rough=True, geom="linear", form="bbar", ds=None, s_
     top = [(i, k) for k in (0, 1) for i in range(nx + 1)]
     trib = {nid(i, ny, k): (h * t / 4.0) * (1 if i in (0, nx) else 2) for i, k in top}
     foot = [nid(i, ny, k) for i, k in top if xs[i] <= f["B"] / 2 + 1e-9]
-    r_corr = f["q0"] * sum(trib[n] for n in foot)
+    r_corr = q0 * sum(trib[n] for n in foot)
     ops.timeSeries("Linear", 1)
     ops.pattern("Plain", 1, 1)
     for n, A in trib.items():
-        ops.load(n, 0.0, -f["q0"] * A, 0.0)
+        ops.load(n, 0.0, -q0 * A, 0.0)
     ops.constraints("Transformation")
     ops.numberer("RCM")
     ops.system("UmfPack")
@@ -508,7 +579,11 @@ def fe_footing(n_across_b=4, rough=True, geom="linear", form="bbar", ds=None, s_
                      for sb in (0.01, 0.02, 0.05, 0.075, 0.1) if sb * f["B"] <= s[-1]},
                steps=len(rows), failed_attempts=nfail, relaxed=nrelax,
                wall_s=round(time.time() - t0, 1))
-    print(f"FOOT n={n_across_b} rough={rough}: q_max {out['q_max']:.3f} at s {out['s_at_qmax']:.4f}"
+    if material != "dp":
+        out["material"] = material
+    if curve:
+        out["curve"] = [[float(a), float(b)] for a, b in rows]
+    print(f"FOOT {material} {form} n={n_across_b} rough={rough}: q_max {out['q_max']:.3f} at s {out['s_at_qmax']:.4f}"
           f" plateau {out['q_plateau']} end s {out['s_end']:.4f} ({out['wall_s']} s)", flush=True)
     return out
 
@@ -827,6 +902,95 @@ def leg_footing() -> dict:
                     q_over_exact=[1.0020, 0.9517, 0.9260], cells_across_b=[4, 8, 16]))
 
 
+J2_NS = (4, 8, 16)
+J2_FORMS = ("bbar", "std")
+
+
+def fe_footing_j2_one(n: int, form: str) -> dict:
+    """One L3 FE leg: fe_footing's slab, staging, rough footing and ladder with the LadrunoJ2
+    soil, weightless, q0 = 0, 2 mm per step to s = 0.1 m."""
+    fj = FOOT_J2
+    r = fe_footing(n, rough=True, form=form, ds=fj["ds"], s_max=fj["s_max"], material="j2",
+                   q0=fj["q0"], curve=True)
+    ql = q_lim(r["curve"], *fj["s_lim"])
+    qu = footing_j2_closed()["q_u"]
+    r.update(q_lim=ql["mean"], q_lim_trapz=ql["trapz"], q_lim_n=ql["n"],
+             q_lim_over_exact=None if ql["mean"] is None else ql["mean"] / qu,
+             q_max_over_exact=r["q_max"] / qu, reached_s_max=r["s_end"] >= fj["s_max"] - 1e-9)
+    ops = fe_engine()
+    r.update(build=ops.ladrunoBuild(), date=_dt.date.today().isoformat())
+    print(f"  q_lim {ql['mean']} ({r['q_lim_over_exact']}) failed {r['failed_attempts']} "
+          f"relaxed {r['relaxed']} wall {r['wall_s']} s", flush=True)
+    return r
+
+
+def footing_j2_admission(legs: dict) -> dict:
+    """Gate L3's admission (wp-briefs.md "232j"): the B-bar q_lim at 16 across B inside
+    [0.97, 1.08] x (2 + pi) k admits the closed-form band; otherwise L3 falls back to L4's form
+    (MPM within +-10 % of the FE B-bar value at each rung). std (locked) inside it at 16 records
+    L3 as non-discriminating at r3. The band is fixed; this only reads it."""
+    c = footing_j2_closed()
+    lo, hi = c["band"]
+
+    def verdict(form):
+        r = legs.get(form, {}).get("16")
+        if r is None or r.get("q_lim") is None:
+            return None
+        return dict(q_lim=r["q_lim"], ratio=r["q_lim"] / c["q_u"],
+                    inside=bool(lo <= r["q_lim"] <= hi))
+
+    b, s = verdict("bbar"), verdict("std")
+    out = dict(band=[lo, hi], q_u=c["q_u"], bbar_16=b, std_16=s)
+    if b is not None:
+        out["admitted"] = b["inside"]
+        out["gate"] = ("closed-form band [0.97, 1.08] x (2 + pi) k at r3" if b["inside"] else
+                       "fallback to L4's form: MPM within +-10 % of the FE B-bar q_lim per rung")
+    if s is not None:
+        out["non_discriminating_at_r3"] = s["inside"]
+    return out
+
+
+def leg_footing_j2(ns=J2_NS, forms=J2_FORMS, merge=True) -> dict:
+    """WP-232j (232j-V) gate L3's FE references. Runs the requested (form, n) legs and merges
+    them into an existing tests/data/mpm/implicit/fe_footing_j2.json from the same build, so the
+    long legs can run as separate processes (each re-reads the file just before writing)."""
+    new = {form: {str(n): fe_footing_j2_one(n, form) for n in ns} for form in forms}
+    return _merge_footing_j2(new, merge)
+
+
+def _merge_footing_j2(new: dict, merge: bool = True) -> dict:
+    ops = fe_engine()
+    p = DATA / "fe_footing_j2.json"
+    legs = {}
+    if merge and p.exists():
+        old = json.loads(p.read_text(encoding="utf-8"))
+        if old.get("build") != ops.ladrunoBuild():
+            raise SystemExit(f"{p} is from build {old.get('build')}, this engine is "
+                             f"{ops.ladrunoBuild()}: rerun every leg (no --merge) or use that "
+                             "build")
+        legs = old.get("legs", {})
+    for form, d in new.items():
+        legs.setdefault(form, {}).update(d)
+    K, G = j2_moduli()
+    fj = FOOT_J2
+    return dict(**_provenance("fe_footing_j2", "leg_footing_j2"),
+                element="LadrunoBrick -geom linear, -formulation bbar (B-bar) or std (full "
+                        "integration, locked), plane-strain slab (u_z = 0), uniform h = B / n",
+                material=dict(command=["LadrunoJ2", 1, K, G, "-iso", "voce", fj["sy"], 0.0, 0.0,
+                                       0.0],
+                              factory="SRC/material/nD/LadrunoJ2.cpp:54 nDMaterial LadrunoJ2 "
+                                      "tag K G -iso voce s0 Qinf b Hiso -kin N C1 g1 ... "
+                                      "[-rho r]",
+                              E=fj["E"], nu=fj["nu"], K=K, G=G, s0=fj["sy"]),
+                setup=dict(B=FOOT["B"], X=FOOT["X"], D=FOOT["D"], q0=fj["q0"], weight=0.0,
+                           rough=True, ds=fj["ds"], s_max=fj["s_max"], s_lim=list(fj["s_lim"]),
+                           ladder=[["KrylovNewton", 1e-6, 40], ["NewtonLineSearch", 1e-6, 60],
+                                   ["KrylovNewton", 1e-5, 80]],
+                           q_lim_definition="plain mean of q over the accepted steps with s in "
+                                            "[0.03, 0.05] m (11 points at 2 mm per step)"),
+                closed=footing_j2_closed(), legs=legs, admission=footing_j2_admission(legs))
+
+
 def leg_plate() -> dict:
     levels = [fe_plate(64, 30), fe_plate(128, 60), fe_plate(256, 120), fe_plate(512, 240)]
     long_traction = fe_plate(256, 120, top=16.0, load="traction")
@@ -843,7 +1007,8 @@ def main(argv=None) -> None:
     argv = list(sys.argv[1:] if argv is None else argv)
     what = argv[0] if argv else "closed"
     if what == "closed":
-        print(json.dumps(dict(footing=footing_closed(), bar=bar_closed(),
+        print(json.dumps(dict(footing=footing_closed(), footing_j2=footing_j2_closed(),
+                              bar=bar_closed(),
                               bar_discrete=bar_discrete(), howland=howland_ktn(0.5),
                               heywood=heywood_ktn(0.5),
                               cantilever_qs=cantilever_linear(6e7),
@@ -860,6 +1025,24 @@ def main(argv=None) -> None:
         leg = {"fe_cantilever_qs": leg_cantilever_qs, "fe_cantilever_dyn": leg_cantilever_dyn,
                "fe_footing": leg_footing, "fe_plate": leg_plate}[what]
         print("wrote", _save(what, leg()))
+    elif what == "fe_footing_j2":
+        # fe_footing_j2 [--n 4 8 16] [--form bbar std] [--fresh]
+        ns, forms, cur = [], [], None
+        for a in argv[1:]:
+            if a in ("--n", "--form"):
+                cur = a
+            elif a == "--fresh":
+                cur = None
+            elif cur == "--n":
+                ns.append(int(a))
+            elif cur == "--form":
+                forms.append(a)
+            else:
+                raise SystemExit(f"fe_footing_j2: unexpected argument {a!r}")
+        rec = leg_footing_j2(tuple(ns) or J2_NS, tuple(forms) or J2_FORMS,
+                             merge="--fresh" not in argv)
+        print("wrote", _save("fe_footing_j2", rec))
+        print(json.dumps(rec["admission"], indent=1))
     else:
         raise SystemExit(__doc__)
 

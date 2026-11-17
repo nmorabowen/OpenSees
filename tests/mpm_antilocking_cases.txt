@@ -1,0 +1,137 @@
+# mpm_antilocking_cases.txt -- cases for MPM anti-locking (WP-232j, ADR-232 §9 phase 4).
+#
+# FORMAT -- that of tests/mpm_implicit_cases.txt (its header, and through it tests/mpm_cases.txt's,
+# is authoritative for every key it defines). The gates are the pre-registered rows of
+# .claude/skills/ladruno-mpm/references/wp-briefs.md, section "232j" -- copied, never widened.
+# Blocks: L3 (below) is written by the verification worker 232j-V from references that are not
+# the MPM code (a closed form and the fork's FE). The C++ worker 232j-C adds L1, L2, L4, L5, L7.
+
+# ============================================================================
+# L3: von Mises strip footing, closed form (232j-V)
+# ============================================================================
+# Keys and observables added by this block:
+#   material  <tag> ladrunoj2 <K> <G> <s0>        nDMaterial LadrunoJ2 <tag> K G -iso voce s0 0 0 0
+#             (perfectly plastic von Mises; SRC/material/nD/LadrunoJ2.cpp:54, the factory's
+#             syntax line; s0 is the uniaxial yield stress, yield ||s|| = sqrt(2/3) s0)
+#   ladder    <alg> <tol> <maxIter> ... relaxed <k> halve
+#             K6's per-step solution ladder: the tries in order (OpenSees algorithm names, test
+#             NormUnbalance); a step accepted at try k or later is a 'relaxed' step; when every
+#             try fails the step is halved (and grows back x2 per accepted step, to dt). The FE
+#             reference ran exactly this (tests/mpm_implicit_reference.py::fe_footing). Report the
+#             failed attempts and the relaxed steps per run.
+#   cond_pressure_window <name> <comp> <width> <t_from> <t_to>
+#             the plain mean of -cond_force(name, comp) / width over the committed steps with
+#             t in [t_from, t_to] (closed, tolerance 1e-9). Here s = 0.002 (t - 10) m, so
+#             t in [25, 35] is s in [0.03, 0.05] m: L3's q_lim (11 steps at 2 mm per step).
+#
+# Problem: the rough rigid strip footing on a weightless von Mises half-space, no surcharge.
+# Closed form q_u = (2 + pi) k, k = s0 / sqrt(3) = 100 kPa, q_u = 514.159 kPa: Prandtl (1920),
+# "Ueber die Haerte plastischer Koerper", Nachr. Ges. Wiss. Goettingen, Math.-Phys. Kl., 74-85;
+# Hill (1950), The Mathematical Theory of Plasticity, Oxford. Plane strain with isochoric plastic
+# flow makes sigma_zz the in-plane mean at collapse, so von Mises sqrt(3 J2) = s0 is Tresca
+# tau_max = s0 / sqrt(3) = k. Roughness does not matter: Hill's field carries no shear on the
+# footing base, so it is statically admissible for a rough base too (lower bound (2 + pi) k for
+# both); Prandtl's rigid-wedge mechanism has no slip on the base, so it is kinematically
+# admissible for a rough base (upper bound (2 + pi) k). The bounds coincide. Weightless: no N_gamma,
+# no length scale, so B drops out.
+# Material: E = 1.0e5 kPa, nu = 0.3 -> K = E/(3(1-2nu)) = 83333.333 kPa, G = E/(2(1+nu)) =
+# 38461.538 kPa; s0 = 100 sqrt(3) = 173.205 kPa.
+# Domain, grid, staging and footing: those of footing_mildcone_r1..r3 (tests/mpm_implicit_cases.txt)
+# with no surcharge (no pforce), no gravity, anti-locking ON. Units kN, m, s (kPa). Half model,
+# soil x in [0, 12], y in [-6, 0], two empty cell rows above. Sides rollers, base fixed. Stage 1,
+# t in [0, 10]: nothing is loaded (the staging is kept so both codes run the same steps).
+# Stage 2, t > 10: the rough footing gridvel on x in [-h, B/2], v = (0, -0.002), dt = 1: 2 mm per
+# step, 50 steps to s = 0.1 m. q = -cond_force(footing, y) / (B/2), B/2 = 1 m.
+# Gate (pre-registered, wp-briefs.md "232j" row L3): at r3, q_lim / ((2 + pi) k) in [0.97, 1.08],
+# that is q_lim in [498.734, 555.292] kPa.
+# ADMISSION (row L3): the band holds only if the fork's FE B-bar q_lim at 16 across B (same
+# domain, staging, ladder) lands inside it, measured before any MPM number. If it does not, the
+# row's gate becomes L4's form: MPM q_lim within +-10 % of the FE B-bar q_lim at each rung. The FE
+# std (locked) legs are reported; if std is inside the band at r3, L3 is non-discriminating at r3.
+# The FE record is tests/data/mpm/implicit/fe_footing_j2.json (its 'admission' block).
+# Particles (ppc 2): r1 1152, r2 4608, r3 18432.
+case footing_j2_r1
+kind run
+mode quasistatic
+status report
+desc L3 rough strip footing on weightless von Mises soil, h = 0.5 (4 cells across B), anti-locking on
+ndm 2
+basis gimp
+origin 0.0 -6.0
+h 0.5
+cells 24 14
+material 1 ladrunoj2 83333.33333333333 38461.53846153846 173.20508075688772
+body 1 box 0.0 -6.0 12.0 0.0 ppc 2 mat 1 rho 2.0
+fix xmin x
+fix xmax x
+fix ymin xy
+gridvel footing box -0.5 0.0 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
+series linear 10.0
+dt 1.0
+steps 60
+newton NormUnbalance 1e-6 40
+ladder KrylovNewton 1e-6 40 NewtonLineSearch 1e-6 60 KrylovNewton 1e-5 80 relaxed 3 halve
+ref closed form (2 + pi) k = 514.159 kPa (Prandtl 1920; Hill 1950): the gate value.
+ref FE B-bar (LadrunoBrick, rough, 4 across B, build 1d2a692ba): q_lim 570.10 kPa = 1.1088 of exact, q_max 612.30 at s = 0.1, 0 failed, 0 relaxed.
+ref FE std (locked) at 4 across B: q_lim 650.72 kPa = 1.2656 of exact, q_max 841.55 at s = 0.1.
+gap the window s in [0.03, 0.05] sits before the FE B-bar plateau at this rung (612 kPa from s ~ 0.07).
+expect cond_pressure_window footing y 1.0 25.0 35.0 ge 498.734
+expect cond_pressure_window footing y 1.0 25.0 35.0 le 555.292
+expect cond_pressure_max footing y 1.0 eq 514.159 tol 0 0.08 report
+end
+
+case footing_j2_r2
+kind run
+mode quasistatic
+status report
+desc as footing_j2_r1, h = 0.25 (8 cells across B)
+ndm 2
+basis gimp
+origin 0.0 -6.0
+h 0.25
+cells 48 28
+material 1 ladrunoj2 83333.33333333333 38461.53846153846 173.20508075688772
+body 1 box 0.0 -6.0 12.0 0.0 ppc 2 mat 1 rho 2.0
+fix xmin x
+fix xmax x
+fix ymin xy
+gridvel footing box -0.25 0.0 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
+series linear 10.0
+dt 1.0
+steps 60
+newton NormUnbalance 1e-6 40
+ladder KrylovNewton 1e-6 40 NewtonLineSearch 1e-6 60 KrylovNewton 1e-5 80 relaxed 3 halve
+ref closed form (2 + pi) k = 514.159 kPa (Prandtl 1920; Hill 1950): the gate value.
+ref FE B-bar and std at 8 across B: PENDING (the orchestrator's run of fe_footing_j2 --n 8).
+expect cond_pressure_window footing y 1.0 25.0 35.0 ge 498.734
+expect cond_pressure_window footing y 1.0 25.0 35.0 le 555.292
+expect cond_pressure_max footing y 1.0 eq 514.159 tol 0 0.08 report
+end
+
+case footing_j2_r3
+kind run
+mode quasistatic
+desc as footing_j2_r1, h = 0.125 (16 cells across B): THE GATE (admission pending)
+ndm 2
+basis gimp
+origin 0.0 -6.0
+h 0.125
+cells 96 56
+material 1 ladrunoj2 83333.33333333333 38461.53846153846 173.20508075688772
+body 1 box 0.0 -6.0 12.0 0.0 ppc 2 mat 1 rho 2.0
+fix xmin x
+fix xmax x
+fix ymin xy
+gridvel footing box -0.125 0.0 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
+series linear 10.0
+dt 1.0
+steps 60
+newton NormUnbalance 1e-6 40
+ladder KrylovNewton 1e-6 40 NewtonLineSearch 1e-6 60 KrylovNewton 1e-5 80 relaxed 3 halve
+ref closed form (2 + pi) k = 514.159 kPa (Prandtl 1920; Hill 1950): the gate value.
+ref FE B-bar and std at 16 across B: PENDING (the orchestrator's run of fe_footing_j2 --n 16);
+ref the admission verdict is written here and in fe_footing_j2.json once it exists.
+expect cond_pressure_window footing y 1.0 25.0 35.0 ge 498.734
+expect cond_pressure_window footing y 1.0 25.0 35.0 le 555.292
+expect cond_pressure_max footing y 1.0 eq 514.159 tol 0 0.08 report
+end
