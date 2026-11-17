@@ -421,9 +421,20 @@ def extract_oracle_r_disp_up(
             a_vel_g[i] = (k1 * k2) * vg0 + (k0 * k2) * vg1 + (k0 * k1) * vg2
 
         rho_w = oracle.rho * w
-        for a in range(n_nodes):
-            ua = oracle.u_off[a]
-            r_vel[ua : ua + ndm] += rho_w * gp.N_u[a] * a_vel_g
+        if oracle.lumped:
+            # HRZ-lumped inertial memory (WP-199 fix): node a's own filters, weight hrz_w[a]
+            def _y(f):
+                return f.c0 * f.x_trial + f.c1 * f.zeta_trial
+            for a, fs in enumerate(gp.lumped_nodes):
+                ua = oracle.u_off[a]
+                for i in range(ndm):
+                    r_vel[ua + i] += rho_w * gp.hrz_w[a] * (
+                        (k1 * k2) * _y(fs["v0"][i]) + (k0 * k2) * _y(fs["v1"][i]) + (k0 * k1) * _y(fs["v2"][i])
+                    )
+        else:
+            for a in range(n_nodes):
+                ua = oracle.u_off[a]
+                r_vel[ua : ua + ndm] += rho_w * gp.N_u[a] * a_vel_g
 
         g_p_local = p_vec @ gp.Phi_p_local
         for j in range(ndm):

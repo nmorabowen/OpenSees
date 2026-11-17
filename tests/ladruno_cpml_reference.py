@@ -722,11 +722,62 @@ class GaussPointState:
             + self.disp_phi2_g1_g0
         ):
             c.commit()
+        for node_set in getattr(self, "lumped_nodes", []):
+            for filters in node_set.values():
+                for f in filters:
+                    f.commit()
+
+    def enable_lumped(self, n_nodes: int) -> None:
+        """HRZ-lumped inertial memory (WP-199 late-time stability fix).
+
+        Each node a gets its own copy of the inertial filters (fed with that
+        node's own velocity / displacement), weighted by the per-GP HRZ factor
+        N_a^2 / sum_b N_b^2 -- the same diagonal rule as the lumped mass.
+        """
+        d, kappa, alpha, ndm = self.d, self.kappa, self.alpha, self.ndm
+        n2 = self.N * self.N
+        self.hrz_w = n2 / float(np.sum(n2))
+        self.lumped_nodes = []
+        for _ in range(n_nodes):
+            g = lambda m: make_g_filter(d[m], kappa[m], alpha[m])
+            self.lumped_nodes.append({
+                "v0": [g(0) for _ in range(ndm)],
+                "v1": [g(1) for _ in range(ndm)],
+                "v2": [g(2) for _ in range(ndm)],
+                "u10": [FilterCascade([g(0), g(1)]) for _ in range(ndm)],
+                "u20": [FilterCascade([g(0), g(2)]) for _ in range(ndm)],
+                "u21": [FilterCascade([g(1), g(2)]) for _ in range(ndm)],
+                "uphi": [FilterCascade([g(0), g(1), make_phi_filter(d[2], kappa[2], alpha[2])])
+                         for _ in range(ndm)],
+            })
 
 
 # ============================================================================ #
 # 6 & 7. Full Element Reference Oracle (Stiffness + Inertial + HRZ Lumping)    #
 # ============================================================================ #
+
+def _lumped_inertial_terms(gp, u_nodes, v_nodes, dt, rho_w, f_vel, f_disp, C_scalar, K_inert_scalar):
+    """HRZ-lumped inertial velocity / displacement memory at one GP (diagonal)."""
+    k0, k1, k2 = gp.kappa[0], gp.kappa[1], gp.kappa[2]
+    for a, fs in enumerate(gp.lumped_nodes):
+        wa = rho_w * gp.hrz_w[a]
+        D_vel = D_disp = 0.0
+        for i in range(gp.ndm):
+            vi, ui = float(v_nodes[a, i]), float(u_nodes[a, i])
+            vg0, dg0 = fs["v0"][i].evaluate_trial(vi, dt)
+            vg1, dg1 = fs["v1"][i].evaluate_trial(vi, dt)
+            vg2, dg2 = fs["v2"][i].evaluate_trial(vi, dt)
+            f_vel[a, i] += wa * ((k1 * k2) * vg0 + (k0 * k2) * vg1 + (k0 * k1) * vg2)
+            D_vel = (k1 * k2) * dg0 + (k0 * k2) * dg1 + (k0 * k1) * dg2
+            u10, d10 = fs["u10"][i].evaluate_trial(ui, dt)
+            u20, d20 = fs["u20"][i].evaluate_trial(ui, dt)
+            u21, d21 = fs["u21"][i].evaluate_trial(ui, dt)
+            uph, dph = fs["uphi"][i].evaluate_trial(ui, dt)
+            f_disp[a, i] += wa * (k2 * u10 + k1 * u20 + k0 * u21 + uph)
+            D_disp = k2 * d10 + k1 * d20 + k0 * d21 + dph
+        C_scalar[a, a] += wa * D_vel
+        K_inert_scalar[a, a] += wa * D_disp
+
 
 class ReferenceCPMLElement:
     """Standalone reference implementation of a single LadrunoCPML element."""
@@ -775,6 +826,9 @@ class ReferenceCPMLElement:
                     alpha=alpha,
                 )
             )
+        if self.lumped:
+            for gp in self.gps:
+                gp.enable_lumped(self.n_nodes)
 
         # Precompute static effective mass matrix M_eff (depends only on kappa_0*kappa_1*kappa_2)
         M_scalar_cons = np.zeros((self.n_nodes, self.n_nodes), dtype=np.float64)
@@ -859,6 +913,11 @@ class ReferenceCPMLElement:
                                 ) * np.outer(Phi[:, j], Phi[:, l])
                         if s_il != 0.0:
                             f_K_local[:, i] += (w * s_il) * Phi[:, j]
+
+            if self.lumped:
+                _lumped_inertial_terms(gp, u_nodes, v_nodes, dt, self.rho * w,
+                                       f_vel, f_disp, C_scalar, K_inert_scalar)
+                continue
 
             # Inertial velocity and displacement filter evaluations at Gauss point g
             u_g = gp.N @ u_nodes  # (ndm,)
@@ -1602,6 +1661,16 @@ class GaussPointStateUP:
             + self.disp_phi2_g1_g0
         ):
             c.commit()
+        for node_set in getattr(self, "lumped_nodes", []):
+            for filters in node_set.values():
+                for f in filters:
+                    f.commit()
+
+    @property
+    def N(self) -> np.ndarray:
+        return self.N_u
+
+    enable_lumped = GaussPointState.enable_lumped
 
 
 class ReferenceCPMLUPElement:
@@ -1676,6 +1745,10 @@ class ReferenceCPMLUPElement:
                     alpha=alpha,
                 )
             )
+
+        if self.lumped:
+            for gp in self.gps:
+                gp.enable_lumped(self.n_nodes)
 
         # Element volume and mean local solid gradient for B-bar
         self.V_e = sum(gp.w_vol for gp in self.gps)
@@ -1866,6 +1939,10 @@ class ReferenceCPMLUPElement:
             S_eff += (w * self.one_over_Qbar * D_Js) * np.outer(N_p, N_p)
 
             # 5. Solid inertial velocity and displacement filters
+            if self.lumped:
+                _lumped_inertial_terms(gp, u_nodes, v_nodes, dt, self.rho * w,
+                                       f_vel, f_disp, C_scalar, K_inert_scalar)
+                continue
             u_g = gp.N_u @ u_nodes
             v_g = gp.N_u @ v_nodes
             k0, k1, k2 = gp.kappa[0], gp.kappa[1], gp.kappa[2]

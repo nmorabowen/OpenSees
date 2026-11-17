@@ -786,6 +786,75 @@ struct CPMLGaussState {
   RCVectorCascade<3, 2> g2_g1{};
   RCVectorCascade<3, 3> phi2_g1_g0{};
 
+  // HRZ-lumped (-lumped) inertial memory (WP-199 late-time stability fix).
+  // The whole stretched inertial operator J_s(w)(iw)^2 must be lumped with ONE
+  // rule. The acceleration piece uses the HRZ diagonal; if the velocity and
+  // displacement-inertial memory pieces kept the consistent N_a N_b coupling,
+  // the semi-discrete layer is no longer a stretched copy of the lumped lattice,
+  // and its backward-in-normal grid modes near the tangential Nyquist grow
+  // without bound (energy x10 per ~0.1 s after ~1 s). With -lumped each node's
+  // own velocity/displacement is filtered with the GP's cascade and weighted by
+  // the per-GP HRZ factor hrz_w[a] = N_a^2 / sum_b N_b^2. For every supported
+  // (symmetric) quadrature rule sum_b N_b^2 is the same at all GPs, so these
+  // weights reproduce the element-level HRZ mass exactly.
+  int nLumpNodes = 0;
+  double hrz_w[shapes::MAX_NODES]{};
+  std::vector<RCVectorCascade<3, 1>> g_vel_n[3];
+  std::vector<RCVectorCascade<3, 2>> g1_g0_n;
+  std::vector<RCVectorCascade<3, 2>> g2_g0_n;
+  std::vector<RCVectorCascade<3, 2>> g2_g1_n;
+  std::vector<RCVectorCascade<3, 3>> phi2_g1_g0_n;
+
+  // (Re)size the per-node lumped inertial memory: nNodes > 0 when -lumped,
+  // 0 when consistent. Copies are cloned from the configured GP cascades and
+  // start from zero memory.
+  void setLumpedNodes(int nNodes) {
+    nLumpNodes = (nNodes > 0) ? nNodes : 0;
+    double s = 0.0;
+    for (int a = 0; a < nLumpNodes; ++a) s += N[a] * N[a];
+    for (int a = 0; a < shapes::MAX_NODES; ++a) {
+      hrz_w[a] = (a < nLumpNodes && s > 0.0) ? (N[a] * N[a] / s) : 0.0;
+    }
+    auto cloneZero = [this](auto& vec, const auto& proto) {
+      vec.assign((size_t)nLumpNodes, proto);
+      for (auto& c : vec) c.revertToStart();
+    };
+    for (int m = 0; m < 3; ++m) cloneZero(g_vel_n[m], g_vel[m]);
+    cloneZero(g1_g0_n, g1_g0);
+    cloneZero(g2_g0_n, g2_g0);
+    cloneZero(g2_g1_n, g2_g1);
+    cloneZero(phi2_g1_g0_n, phi2_g1_g0);
+  }
+
+  // Apply op(cascade) to every lumped per-node inertial copy whose GP-level
+  // cascade is active (same activity flags as the GP-level cascades).
+  template <class Op>
+  void forEachActiveLumped(Op op) {
+    if (!has_any_d) return;
+    for (int m = 0; m < 3; ++m)
+      if (has_d[m]) for (auto& c : g_vel_n[m]) op(c);
+    if (has_d01)  for (auto& c : g1_g0_n) op(c);
+    if (has_d02)  for (auto& c : g2_g0_n) op(c);
+    if (has_d12)  for (auto& c : g2_g1_n) op(c);
+    if (has_d012) for (auto& c : phi2_g1_g0_n) op(c);
+  }
+  template <class Op>
+  void forEachLumped(Op op) {
+    for (int m = 0; m < 3; ++m) for (auto& c : g_vel_n[m]) op(c);
+    for (auto& c : g1_g0_n) op(c);
+    for (auto& c : g2_g0_n) op(c);
+    for (auto& c : g2_g1_n) op(c);
+    for (auto& c : phi2_g1_g0_n) op(c);
+  }
+  template <class Op>
+  void forEachLumped(Op op) const {
+    for (int m = 0; m < 3; ++m) for (const auto& c : g_vel_n[m]) op(c);
+    for (const auto& c : g1_g0_n) op(c);
+    for (const auto& c : g2_g0_n) op(c);
+    for (const auto& c : g2_g1_n) op(c);
+    for (const auto& c : phi2_g1_g0_n) op(c);
+  }
+
   // Biot u-p filter cascades
   RCFilterCascade<3> F_p[3][3]{};  // Darcy permeability cascades F_{jl}^{(p)}
   RCFilterCascade<2> E_p[3]{};     // Coupling pressure cascades E_j^{(p)} on u-rows
@@ -1098,6 +1167,14 @@ struct CPMLGaussState {
     g2_g1.reconfigureCoeffs(ndm, 2, stg_g2_g1);
     const RCFilter1D stg_phi2_g1_g0[3] = {g_flt[0], g_flt[1], phi_flt[2]};
     phi2_g1_g0.reconfigureCoeffs(ndm, 3, stg_phi2_g1_g0);
+    for (int m = 0; m < 3; ++m) {
+      const RCFilter1D stg_v[1] = {g_flt[m]};
+      for (auto& c : g_vel_n[m]) c.reconfigureCoeffs(ndm, 1, stg_v);
+    }
+    for (auto& c : g1_g0_n) c.reconfigureCoeffs(ndm, 2, stg_g1_g0);
+    for (auto& c : g2_g0_n) c.reconfigureCoeffs(ndm, 2, stg_g2_g0);
+    for (auto& c : g2_g1_n) c.reconfigureCoeffs(ndm, 2, stg_g2_g1);
+    for (auto& c : phi2_g1_g0_n) c.reconfigureCoeffs(ndm, 3, stg_phi2_g1_g0);
   }
 
   void commit(int ndm, bool biot_enabled = false) {
@@ -1113,6 +1190,7 @@ struct CPMLGaussState {
       if (has_d12)  g2_g1.commit();
       if (has_d012) phi2_g1_g0.commit();
     }
+    forEachActiveLumped([](auto& c) { c.commit(); });
     if (biot_enabled) {
       for (int j = 0; j < ndm; ++j) {
         for (int l = 0; l < ndm; ++l) F_p[j][l].commit();
@@ -1136,6 +1214,7 @@ struct CPMLGaussState {
       if (has_d12)  g2_g1.revertToLastCommit();
       if (has_d012) phi2_g1_g0.revertToLastCommit();
     }
+    forEachActiveLumped([](auto& c) { c.revertToLastCommit(); });
     if (biot_enabled) {
       for (int j = 0; j < ndm; ++j) {
         for (int l = 0; l < ndm; ++l) F_p[j][l].revertToLastCommit();
@@ -1155,6 +1234,7 @@ struct CPMLGaussState {
     g2_g0.revertToStart();
     g2_g1.revertToStart();
     phi2_g1_g0.revertToStart();
+    forEachLumped([](auto& c) { c.revertToStart(); });
     if (biot_enabled) {
       for (int j = 0; j < ndm; ++j) {
         for (int l = 0; l < ndm; ++l) F_p[j][l].revertToStart();
@@ -1175,6 +1255,7 @@ struct CPMLGaussState {
     total += g2_g0.numStateDoubles();
     total += g2_g1.numStateDoubles();
     total += phi2_g1_g0.numStateDoubles();
+    forEachLumped([&total](const auto& c) { total += c.numStateDoubles(); });
     if (biot_enabled) {
       for (int j = 0; j < ndm; ++j) {
         for (int l = 0; l < ndm; ++l) total += F_p[j][l].numStateDoubles();
@@ -1195,6 +1276,7 @@ struct CPMLGaussState {
     g2_g0.packState(ptr);
     g2_g1.packState(ptr);
     phi2_g1_g0.packState(ptr);
+    forEachLumped([&ptr](const auto& c) { c.packState(ptr); });
     if (biot_enabled) {
       for (int j = 0; j < ndm; ++j) {
         for (int l = 0; l < ndm; ++l) F_p[j][l].packState(ptr);
@@ -1214,6 +1296,7 @@ struct CPMLGaussState {
     g2_g0.unpackState(ptr);
     g2_g1.unpackState(ptr);
     phi2_g1_g0.unpackState(ptr);
+    forEachLumped([&ptr](auto& c) { c.unpackState(ptr); });
     if (biot_enabled) {
       for (int j = 0; j < ndm; ++j) {
         for (int l = 0; l < ndm; ++l) F_p[j][l].unpackState(ptr);
@@ -1337,6 +1420,7 @@ public:
       }
       gpStates_[g].init(ndm_, nNodes_, x_gp, detJ, w_vol, N_g, dNdx_g,
                         mat_, grading_, geom_, biot_, nP_g, Np_g, dNpdx_g);
+      gpStates_[g].setLumpedNodes(lumped_ ? nNodes_ : 0);
     }
 
     // Precompute element-mean local solid gradients Phi_bar_local_ and B_local
@@ -1420,9 +1504,11 @@ public:
       return false;
     }
     mat_ = mat;
+    const bool lumpedChanged = (lumped != lumped_);
     lumped_ = lumped;
     for (int g = 0; g < nGP_; ++g) {
       gpStates_[g].updateMaterialParams(ndm_, mat_, grading_, geom_, biot_);
+      if (lumpedChanged) gpStates_[g].setLumpedNodes(lumped_ ? nNodes_ : 0);
     }
     rebuildStaticAndMassMatrices();
     if (static_mode_ || last_dt_ <= 0.0) {
@@ -1824,7 +1910,60 @@ public:
       }
 
       // ---- 2 & 3. Inertial Velocity & Corner Displacement Parts ---------- //
-      if (gs.has_any_d) {
+      if (gs.has_any_d && lumped_ && gs.nLumpNodes == nNodes_) {
+        // HRZ-lumped inertial memory (see CPMLGaussState::setLumpedNodes):
+        // each node's own v_a / u_a is filtered, weighted by hrz_w[a].
+        const double k0 = gs.kappa[0];
+        const double k1 = gs.kappa[1];
+        const double k2 = gs.kappa[2];
+        const bool cornerCross = !LADRUNO_CPML_MUT_ACTIVE(CPML_NO_CORNER_CROSS) &&
+                                 (gs.has_d01 || gs.has_d02 || gs.has_d12);
+        const double rho_w = mat_.rho * w_vol;
+        for (int nodeA = 0; nodeA < nNodes_; ++nodeA) {
+          const int uBaseA = uOff_[nodeA];
+          double v_a[3] = {0.0, 0.0, 0.0};
+          double u_a[3] = {0.0, 0.0, 0.0};
+          for (int d = 0; d < ndm_; ++d) {
+            v_a[d] = v[uBaseA + d];
+            u_a[d] = u[uBaseA + d];
+          }
+          double gv_out[3][3]{};
+          for (int m = 0; m < 3; ++m) {
+            if (gs.has_d[m]) gs.g_vel_n[m][nodeA].evalTrial(v_a, dt, gv_out[m]);
+          }
+          double y_g1g0[3]{}, y_g2g0[3]{}, y_g2g1[3]{}, y_phi2g1g0[3]{};
+          if (gs.has_d01)  gs.g1_g0_n[nodeA].evalTrial(u_a, dt, y_g1g0);
+          if (gs.has_d02)  gs.g2_g0_n[nodeA].evalTrial(u_a, dt, y_g2g0);
+          if (gs.has_d12)  gs.g2_g1_n[nodeA].evalTrial(u_a, dt, y_g2g1);
+          if (gs.has_d012) gs.phi2_g1_g0_n[nodeA].evalTrial(u_a, dt, y_phi2g1g0);
+
+          const double D_vel_a = (gs.has_d[0] ? (k1 * k2) * gs.g_vel_n[0][nodeA].D_t : 0.0)
+                               + (gs.has_d[1] ? (k0 * k2) * gs.g_vel_n[1][nodeA].D_t : 0.0)
+                               + (gs.has_d[2] ? (k0 * k1) * gs.g_vel_n[2][nodeA].D_t : 0.0);
+          double D_disp_a = 0.0;
+          if (cornerCross) {
+            D_disp_a = (gs.has_d01  ? k2 * gs.g1_g0_n[nodeA].D_t : 0.0)
+                     + (gs.has_d02  ? k1 * gs.g2_g0_n[nodeA].D_t : 0.0)
+                     + (gs.has_d12  ? k0 * gs.g2_g1_n[nodeA].D_t : 0.0)
+                     + (gs.has_d012 ? gs.phi2_g1_g0_n[nodeA].D_t : 0.0);
+          }
+          const double wA = rho_w * gs.hrz_w[nodeA];
+          for (int d = 0; d < ndm_; ++d) {
+            const int dof = uBaseA + d;
+            R_vel_[dof] += wA * ((k1 * k2) * gv_out[0][d]
+                               + (k0 * k2) * gv_out[1][d]
+                               + (k0 * k1) * gv_out[2][d]);
+            if (cornerCross) {
+              R_disp_[dof] += wA * (k2 * y_g1g0[d] + k1 * y_g2g0[d]
+                                  + k0 * y_g2g1[d] + y_phi2g1g0[d]);
+            }
+            if (rebuildTangents) {
+              C_eff_[(size_t)dof * nDOF_ + dof] += wA * D_vel_a;
+              K_eff_[(size_t)dof * nDOF_ + dof] += wA * D_disp_a;
+            }
+          }
+        }
+      } else if (gs.has_any_d) {
         double v_gp[3] = {0.0, 0.0, 0.0};
         double u_gp[3] = {0.0, 0.0, 0.0};
         for (int nodeB = 0; nodeB < nNodes_; ++nodeB) {
