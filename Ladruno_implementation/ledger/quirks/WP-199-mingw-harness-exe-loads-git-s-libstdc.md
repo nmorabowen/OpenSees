@@ -20,7 +20,7 @@ the program opens). The `FD K_T_dyn ...` line is only where buffered stdout
 stopped. The `-O0` build passed only because it inlined different code, not
 because the kernel had a bug.
 
-**Fix (this PR).** On Windows the test links the GCC runtime statically
+**Fix ([#1101](https://github.com/nmorabowen/OpenSees/pull/1101)).** On Windows the test links the GCC runtime statically
 (`-static`), so the exe carries its own libstdc++ and PATH order no longer matters.
 Check: `objdump -p <exe> | grep "DLL Name"` lists no `libstdc++-6.dll`.
 
