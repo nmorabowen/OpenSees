@@ -684,6 +684,66 @@ Frozen as J1–J13, before any phase-4 MPM number, with these conditions:
 - **F2 — L3's MPM legs at r2 and r3 wait for its admission.** The admission is the FE B-bar
   at 16 across B, which the orchestrator's FE run records. Until then, no L3 run at r2 or r3.
 
+
+**Critic round (2026-11-17, Fable · high, verdict AMEND at `d09ee3ee6`; each finding verified
+in-tree by the orchestrator).** The warrant run on `d09ee3ee6` was stopped after L4 r2. That build
+gave:
+- L5: G2 p = 2.040 and G4 p ≈ 2.0, both non-increasing.
+- L3 at r1, reported: q_lim 550.0 = 1.070×.
+- L4 r1: q_max 127.39, inside [127.29, 155.58] by 0.08 %.
+- L4 r2: **stopped** at t = 74.5 on the halving floor, with q_max 119.06 before the stop. That is
+  a miss under "a stop is a miss".
+- L4 r3 was not run.
+
+These numbers are context for the corrected code, not its warrant. No band changes.
+
+- **C1 (major, a defect, reproduced by the orchestrator).** In mode F, `fbar` does not conserve
+  energy.
+  - The probe: a soft free block (E = 2e5, ν = 0.45, gravity, FLIP α = 1). KE_max is 503 with
+    `fbar` off and 1.33e4 with it on, still growing. The same happens at 0.05 dt_crit and with
+    ppc 3. With v0 = 1 m/s, particles leave the grid.
+  - It stays stable when the block is stiff or confined.
+  - The cause: J1–J9 drive the stress with ℓ̄ = ℓ + βI_d, β = (1/d)(tr ℓ_c − tr ℓ). But the force
+    w̄σ̄·g_a is not work-conjugate to ℓ̄, so the scheme has no energy balance.
+  - **Decision: the force becomes the conjugate one, in both modes** (one scheme, K1):
+    f_a = w̄ [σ̄ g_a + p̄_d (ĝ_a − g_a)], with p̄_d = (1/d) Σ_{i<d} σ̄_ii, and ĝ_a = ∇N_a(x_c)·ΔF_c⁻¹
+    on the cell's corners and 0 elsewhere. Then Σ_a f_a·v_a = w̄ σ̄ : ℓ̄ exactly. This is the
+    B-bar force (Hughes 1980), carried in rate form beside the F-bar kinematics.
+  - J9 and J10 are re-derived for it, and the L2 FD check re-verifies the tangent.
+  - If the conjugate form cannot pass L9 in mode F, `fbar` is refused in mode F. That refusal is
+    recorded as a miss, with the ADR amendment saying so; mode A keeps `fbar` if its L9 leg passes.
+- **C2 (major).** Mode F's L1 did not run the production path: `affineCheck` re-assembled ΔF and
+  ΔF_c itself. The fix: one shared helper that both `Engine::advance` and `affineCheck` call, or a
+  mode-F affine run through `advance` itself.
+- **C3 (major).** The symmetric-storage refusal has gaps. It misses SProfileSPD and the
+  distributed SPD SOEs, and it misses `system Mumps -matrixType 1|2`, which needs a matType
+  getter. The refusal message must not recommend Mumps without its unsymmetric type.
+- **C4 (minor).** J5's fallback almost never fires: 0 in every warrant record. The guide's
+  "free surface's outer cells" text is corrected to what the code does. F1 is still reported.
+- **C5 (minor, L2 strengthened, thresholds unchanged).** New rows:
+  - ν = 0.3 and 0.45;
+  - 3D;
+  - `bspline2` with a `fix`-face image (the B8 path);
+  - strained states at 1 % and 5 %, at the same bars: ≤ 1e-5 undeformed, ≤ 2× off when
+    strained.
+- **C6 (minor).**
+  - `judge` "out" must fail on NaN.
+  - `debug packVersion` must not be sticky.
+  - L1b rotates a pre-stressed body, as the gate says.
+  - A mode-A debug hook must not block a later `mpm antiLocking` before the first step.
+- **New gate L9 — energy (pre-registered here, before any number on the conjugate form).**
+  The critic's probe: 2D free block 1 × 1.5 m on `fix ymin xy`, h = 0.25, ppc 2, ρ = 1800,
+  ElasticIsotropic E = 2e5, gravity. The bases are `gimp`, `linear` and `bspline2`, with
+  ν = 0.3 and 0.45.
+  - **Mode F, FLIP α = 1, dt = 0.15 dt_crit, 4000 steps:** KE_max(on) ≤ 1.5 × KE_max(off), and
+    no particle leaves the grid. The variant with v0 = 1 m/s runs at 0.05 dt_crit for 9000 steps
+    under the same bar.
+  - **Mode A, Newmark average acceleration, 400 steps of the off run's stable Δt:**
+    KE_max(on) ≤ 1.5 × KE_max(off).
+  - **The S1 explicit energy-ledger case, with `fbar` on:** its frozen tolerance holds.
+- **The L4 r2 stop:** diagnose it on the conjugate build (which particles, which material state,
+  why the ladder fails where the FE ladder survived), never by changing a band or the ladder.
+
 ### 232j-V — verification references for L3 (opus · high; never reads the anti-locking C++)
 
 ```text
