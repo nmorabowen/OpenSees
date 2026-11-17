@@ -656,6 +656,34 @@ on, "off" means off.
 `test_footing_gate` (the 232f strict xfail on the old band) is replaced by the L4 test. The old
 band's verdict stays in the results record and is never re-gated.
 
+**Freeze (2026-11-17, orchestrator, on `tests/mpm_antilocking_interface.md` @ `ba201819e`).**
+Frozen as J1–J13, before any phase-4 MPM number, with these conditions:
+- **K1 = J1:** a cell-centre F-bar on the step increment, one rule for all four bases and both
+  modes. The quadrature weight is the carried volume, J9. The critic is asked to check that
+  choice against de Souza Neto's actual-J weight.
+- **Amendments 1–5 are accepted.**
+  - L1(a) covers particles whose support is not truncated; the truncated result is reported.
+  - L8 round-trips through `mpm info antiLocking`.
+  - **L7's switch oracle at r1** uses L3's fallback form. On must lie within ±10 % of the FE
+    B-bar q_lim at r1 (570.10 kPa; band [513.09, 627.11]). Off must lie outside it. The reason:
+    L3's closed-form band is an r3 gate, and the FE B-bar itself sits at 1.109× at r1.
+  - The citation is corrected.
+  - Mode A refuses `fbar` with symmetric-storage SOEs, PARDISO's symmetric mode included.
+- **Q1, the halving floor:** the FE stops when a sub-step falls below 1e-6 m of footing
+  displacement (`fe_footing`'s `dsc < 1e-6`). That is h < 5e-4 in the cases' pseudo-time
+  (v = 0.002 per unit). Put it in the `ladder` key, and count halvings.
+- **Q2:** cases default to on unless they say `antilocking off`. Accepted. Every off leg is
+  explicit.
+- **Q3:** the setting is fixed per epoch, like `mpm mode`. Accepted.
+- **Q4:** measure the switch oracle's Zone-A cost in Round 2. If both legs together exceed
+  ~3 min, propose a smaller case before any number.
+- **F1 — the fallback fraction is reported.** J5's fallback is the identity wherever a cell has
+  an inactive corner. Every L3 and L4 run reports the number of averaged and fallback
+  particle-steps, and the fallback share inside the footing's plastic zone (x ≤ 3B, y ≥ −2B).
+  A miss with a large fallback share there is diagnosed as that, never re-tuned.
+- **F2 — L3's MPM legs at r2 and r3 wait for its admission.** The admission is the FE B-bar
+  at 16 across B, which the orchestrator's FE run records. Until then, no L3 run at r2 or r3.
+
 ### 232j-V — verification references for L3 (opus · high; never reads the anti-locking C++)
 
 ```text
