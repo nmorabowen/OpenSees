@@ -676,6 +676,50 @@ Slice column: **S1** = slice 1; **P*n*** = phase *n* of §9.
 > latest). It must be fixed at that phase's kickoff, before any MPM number, and be one that the
 > fork's own discretisations reach on the same domain at the same resolutions.
 
+> **Amendment (232i, 2026-11-16) — phase 3: the B-spline basis and the MMS orders.**
+>
+> - **Basis.** `mpm grid … -basis bspline2 | bspline3` gives node-centred uniform B-splines of
+>   degree 2 and 3 on the same vertex lattice and ghost layer. One ghost layer holds both degrees.
+>   A B-spline grid needs at least 2 cells per axis. The design is
+>   `tests/mpm_bspline_interface.md` (B1–B12).
+> - **Boundary.** On a `fix` face of a B-spline grid the ghost nodes are images: each is slaved
+>   to its mirror node, odd for a fixed component and even for a free one. This is the method of
+>   images, reduced exactly in both modes (mode F folds mass, momentum and forces; mode A folds
+>   per component inside `LadrunoMPMPoint`). There is no MP constraint, because `PlainHandler`
+>   ignores a −1 factor. Two consequences:
+>   - A face-layer node's fixed components project to zero.
+>   - The active-node cutoff tests a face-layer node's mass × 2^k, k = the number of `fix`
+>     faces through it. This was found by the ready-flip critic; it made a half model differ from
+>     its full symmetric model by 3–53 % at the default cutoffs.
+>
+>   `wall` faces keep A5's zeroed ghosts and are first order there. A face with both `fix` and
+>   `wall` is refused, and so is a `gridvel` that reaches a `fix` ghost. GIMP and linear are
+>   unchanged bit for bit.
+> - **Contracts.**
+>   - Contract 1 is unchanged: loading a particle-set file into a B-spline grid is refused.
+>     Contract 1 v2 is nmorabowen/apeGmsh#3013.
+>   - Contract 2's C2-GRID now admits `gimp | linear | bspline2 | bspline3`, without a minor
+>     bump. A reader older than the amendment refuses the new value by name.
+> - **New commands.** `mpm particleBodyForce` (per unit mass, not scaled by the load factor,
+>   cleared by `mpm reset`) and `mpm particleVelocity`, both one flat list in storage order. The
+>   mode-A restart pack goes to version 2, and a version-1 database is refused (#1103).
+> - **The P3 row, the method of manufactured solutions.**
+>   - Gates pre-registered at kickoff (`wp-briefs.md` "232i"), measured on build `4673949fe`.
+>     Quadratic orders: 2.015 (explicit, small amplitude), 1.828 (explicit, large amplitude,
+>     679,048 cell crossings at 1/h = 128) and 2.005 (mode A quasi-static). Cubic: 2.018 / 2.017
+>     / 2.475.
+>   - Reported: GIMP 2.09 / 1.87; linear 2.10 / 0.42.
+>   - Disclosed: at large amplitude the quadratic's peak-displacement error (T/4) converges at
+>     about 1.24, the cubic's at about 1.79, which is quadrature error under cell crossing. The
+>     quadratic's local order also falls to 1.69 at the finest rung.
+>   - At 20 % compression of the self-weight column the cubic meets the frozen 0.03 tolerance at
+>     every resolution; the quadratic does not.
+>   - In mode A, quadratic 3D supports take about 82 kB per particle-element, because each
+>     `FE_Element` owns a 27-node tangent (#1098).
+>   - The results are `Ladruno_implementation/232i_mpm_bspline_mms.md`.
+> - **For phase 4 and later.** Large-deformation work should prefer `bspline3`, or accept the
+>   quadratic's reduced peak-error order.
+
 **Mutation gate (ADR-87 D2)**, through the fork's existing mechanism: a new family `MPM` in the
 `LADRUNO_MUTATE_FAMILY` list (`CMakeLists.txt`, a vanilla-ledgered line), in the options of
 `.github/workflows/ladruno_mutation.yml` and in `Ladruno_scripts/mutation_gate.py`; the mutant is
@@ -841,6 +885,16 @@ ADR-88).
   tangent). Owner decisions (2026-11-16): M3 stands by the letter (the late-step reading does
   not count; #1098 removes it); the out-of-family verdict (ADR-87 D4) is waived as for 232c and
   232f, with the Fable critic and `/code-review medium` as the review of record.
+- **2026-11-16** — 232i (phase 3, #1099): `bspline2` and `bspline3`, images on `fix` faces, the
+  per-particle body force, and the MMS orders (amendment after the §8 table). Every
+  pre-registered gate passes on `4673949fe`. The ZERO mutant scores 0.506 against a 0.46 floor;
+  SCALE scores 0.391 against 0.38, a margin that rests on the quarter-period oracle. The Fable
+  critic returned AMEND (the face-node cutoff defect, fixed before the final run), and
+  `/code-review high` follow-ups are #1103.
+  Contract 2 is amended; Contract 1 v2 is with T (nmorabowen/apeGmsh#3013).
+  ADR-87 D4: the owner's kickoff instruction for 232i named the other-family critic at ready-flip,
+  followed by landing. The Fable critic and `/code-review high` are therefore the review of
+  record, as for 232c, 232f and 232g.
 
 ---
 
