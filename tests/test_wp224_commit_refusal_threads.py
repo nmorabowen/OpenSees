@@ -9,6 +9,7 @@ Skipped without a C++ compiler (CI Zone-A/Ubuntu has g++).
 import os
 import shutil
 import subprocess
+from _cxx import cxx_runtime_flags  # WP-199: static GCC runtime on Windows
 import tempfile
 
 import pytest
@@ -24,7 +25,7 @@ def test_commit_refusal_seam_is_thread_safe():
     src = os.path.join(_HERE, "ladruno_commit_refusal_threads_check.cpp")
     with tempfile.TemporaryDirectory() as td:
         exe = os.path.join(td, "crt.exe")
-        cc = subprocess.run([gpp, "-O2", "-std=c++17", "-pthread", "-I", _SRC_MAT, src, "-o", exe],
+        cc = subprocess.run([gpp, "-O2", "-std=c++17", "-pthread", "-I", _SRC_MAT, src, "-o", exe, *cxx_runtime_flags()],
                             capture_output=True, text=True)
         assert cc.returncode == 0, cc.stderr
         run = subprocess.run([exe], capture_output=True, text=True, timeout=120)

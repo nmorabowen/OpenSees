@@ -11,6 +11,7 @@ absent (CI Zone-A/Ubuntu has it).
 import os
 import shutil
 import subprocess
+from _cxx import cxx_runtime_flags  # WP-199: static GCC runtime on Windows
 import tempfile
 
 import numpy as np
@@ -57,7 +58,7 @@ def _run_cpp():
     out = {}
     with tempfile.TemporaryDirectory() as td:
         exe = os.path.join(td, "lsk.exe")
-        cc = subprocess.run([gpp, "-O2", "-std=c++17", "-I", _SRC_ND, src, "-o", exe],
+        cc = subprocess.run([gpp, "-O2", "-std=c++17", "-I", _SRC_ND, src, "-o", exe, *cxx_runtime_flags()],
                             stdin=subprocess.DEVNULL, capture_output=True, text=True)
         assert cc.returncode == 0, f"g++ failed:\n{cc.stderr}"
         rr = subprocess.run([exe], stdin=subprocess.DEVNULL, capture_output=True, text=True)

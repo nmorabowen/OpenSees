@@ -3,6 +3,7 @@
 import os
 import shutil
 import subprocess
+from _cxx import cxx_runtime_flags  # WP-199: static GCC runtime on Windows
 import tempfile
 
 import pytest
@@ -39,6 +40,7 @@ def test_ladruno_cms_pure_cpp_core():
                 implementation,
                 "-o",
                 executable,
+                *cxx_runtime_flags(),
             ],
             stdin=subprocess.DEVNULL, capture_output=True,
             text=True,

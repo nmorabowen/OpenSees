@@ -28,3 +28,22 @@ Check: `objdump -p <exe> | grep "DLL Name"` lists no `libstdc++-6.dll`.
 `shutil.which("g++")` and no `-static`, so they hit the same trap on any box
 with this PATH order. A crash inside `libstdc++-6.dll` from a `...\Git\mingw64\bin`
 path is this quirk, not your kernel. (2026-11-16)
+
+#### Follow-up: every g++ harness links statically, and the gate enforces it (2026-11-16)
+
+All 23 harness tests now append `*cxx_runtime_flags()` from `tests/_cxx.py`
+(`["-static"]` on Windows, `[]` elsewhere) to their g++ compile command, the
+CPML one included. The grep in the paragraph above found 21. The new rule found
+two more that look up g++ with single quotes and a `path=` argument:
+`test_ladruno_membrane_kernel_cpp.py` and `test_mutation_membrane.py`.
+
+The quirk gate rule `gxx-static` (`ci/check_quirk_patterns.py`, self-test
+`ci/test_quirk_gxx_static.py`) fails any `tests/**/*.py` that calls
+`which("g++" | "c++" | "clang++")` unless its code uses `cxx_runtime_flags` or
+passes `"-static"`. It reads the AST, so comments, docstrings and a bare import
+of the helper do not count. It has no waiver. A new harness copied from an old
+one without the flag goes red in the static gate, not on someone's Windows box.
+
+Static linking also fixes the sibling failure described in `tests/conftest.py`
+(`_native_path_resync`): an exe that dies at load with 0xC0000135 because the
+inherited PATH lost the compiler's `bin`. A static exe needs no MinGW DLL on PATH.

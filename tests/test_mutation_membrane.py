@@ -19,6 +19,7 @@ import math
 import os
 import shutil
 import subprocess
+from _cxx import cxx_runtime_flags  # WP-199: static GCC runtime on Windows
 from pathlib import Path
 
 import pytest
@@ -97,7 +98,7 @@ def _compile_and_run_probe(tmp_path: Path, mutate: bool) -> dict[str, float]:
     define_cl = ["/DLADRUNO_MUTATE_MEMBRANE=1"] if mutate else []
 
     if gpp:
-        cmd = [gpp, "-O2", "-std=c++17", *define_gpp, f"-I{include_dir}", str(cpp_file), "-o", str(exe_file)]
+        cmd = [gpp, "-O2", "-std=c++17", *define_gpp, f"-I{include_dir}", str(cpp_file), "-o", str(exe_file), *cxx_runtime_flags()]
         res = subprocess.run(cmd, cwd=str(tmp_path), env=env, capture_output=True, text=True, check=False)
     elif cl:
         cmd = [cl, "/nologo", "/EHsc", "/O2", "/std:c++17", *define_cl, f"/I{include_dir}", str(cpp_file), f"/Fe:{exe_file}"]

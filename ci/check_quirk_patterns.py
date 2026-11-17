@@ -162,6 +162,17 @@ bodies are seen whole).
                 same run. Pin the image (`ubuntu-24.04`); move it in its own
                 PR that re-baselines. Comments are ignored; no waiver.
 
+  gxx-static  (no alias; WP-199) A test (`tests/**/*.py`) that looks up a GCC-style
+                compiler (`shutil.which("g++")`, `"c++"` or `"clang++"`) to
+                build a standalone harness, but neither uses
+                `cxx_runtime_flags()` (tests/_cxx.py) nor passes `-static`. On
+                Windows such an exe resolves libstdc++-6.dll through PATH; with
+                Git for Windows' mingw64/bin ahead of the compiler's bin it runs
+                against Git's older libstdc++ and segfaults (0xC0000005) in
+                `std::ifstream` construction -- it looked like UB in the CPML
+                kernel (#1101). Append `*cxx_runtime_flags()` to the compile
+                command. Comments and docstrings are ignored; no waiver.
+
 A waiver needs a reason of at least 12 characters, and a waiver that no longer
 suppresses anything is itself a finding (stale).
 
@@ -1387,6 +1398,57 @@ def check_floating_runner(root, rel):
     return findings
 
 
+GXX_NAMES = {"g++", "c++", "clang++"}
+GXX_HELPER = "cxx_runtime_flags"
+
+
+def _gxx_lookups(tree):
+    """Line numbers of `which("g++")` / `shutil.which("c++")` / ... calls."""
+    out = []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call) and n.args and isinstance(n.args[0], ast.Constant)                 and n.args[0].value in GXX_NAMES:
+            f = n.func
+            name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None)
+            if name == "which":
+                out.append(n.lineno)
+    return sorted(out)
+
+
+def _gxx_static_ok(tree):
+    """True if the file uses the helper or passes `-static` anywhere in code."""
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Name) and n.id == GXX_HELPER:
+            return True
+        if isinstance(n, ast.Attribute) and n.attr == GXX_HELPER:
+            return True
+        if isinstance(n, ast.Constant) and n.value == "-static":
+            return True
+    return False
+
+
+def check_gxx_static(root, rel):
+    """gxx-static (WP-199): a g++ harness test that does not link the GCC runtime statically on Windows."""
+    findings = []
+    for path in _test_files(root):
+        if path.name == "_cxx.py":
+            continue
+        src = path.read_text(encoding="utf-8", errors="replace")
+        if "which" not in src:
+            continue
+        try:
+            tree = ast.parse(src)
+        except SyntaxError as e:
+            findings.append(f"gxx-static {rel(path)}:{e.lineno}: cannot parse ({e.msg})")
+            continue
+        lookups = _gxx_lookups(tree)
+        if lookups and not _gxx_static_ok(tree):
+            findings.append(
+                f"gxx-static {rel(path)}:{lookups[0]}: compiles a g++ harness without the static GCC "
+                "runtime -- on Windows the exe can load Git for Windows' older libstdc++-6.dll and "
+                "segfault (0xC0000005). Append '*cxx_runtime_flags()' (from _cxx import "
+                "cxx_runtime_flags) to the compile command")
+    return findings
+
 # --------------------------------------------------------------------------
 # the rule registry (WP-162). One entry per rule, named by slug. `alias` is the
 # pre-WP-162 L-number, accepted by --only for one release.
@@ -1434,6 +1496,9 @@ _RULE_LIST = [
     Rule("floating-runner", None, check_floating_runner, None, "fork workflows",
          "a `ladruno*.yml` workflow that names a floating runner image (`ubuntu-latest`): it moved to "
          "26.04 / GCC 15 and broke bit-exact baselines (WP-225)"),
+    Rule("gxx-static", None, check_gxx_static, None, "tests",
+         "a test that builds a g++ harness without `cxx_runtime_flags()` / `-static`: on Windows the "
+         "exe loads Git for Windows' older libstdc++-6.dll and segfaults (WP-199, #1101)"),
 ]
 RULES = {r.slug: r for r in _RULE_LIST}
 ALIASES = {r.alias: r.slug for r in _RULE_LIST if r.alias}

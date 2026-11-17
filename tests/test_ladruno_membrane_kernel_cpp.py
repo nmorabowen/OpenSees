@@ -10,6 +10,7 @@ import math
 import os
 import shutil
 import subprocess
+from _cxx import cxx_runtime_flags  # WP-199: static GCC runtime on Windows
 import sys
 from pathlib import Path
 
@@ -230,7 +231,7 @@ def _compile_and_run_cpp_driver(tmp_path: Path) -> dict:
     gpp = shutil.which("g++", path=env.get("PATH"))
     cl = shutil.which("cl", path=env.get("PATH"))
     if gpp:
-        cmd = [gpp, "-O2", "-std=c++17", f"-I{include_dir}", str(cpp_file), "-o", str(exe_file)]
+        cmd = [gpp, "-O2", "-std=c++17", f"-I{include_dir}", str(cpp_file), "-o", str(exe_file), *cxx_runtime_flags()]
     elif cl:
         cmd = [cl, "/nologo", "/EHsc", "/O2", "/std:c++17", f"/I{include_dir}", str(cpp_file), f"/Fe:{exe_file}"]
     elif os.name == "nt":  # ci-coverage: portable fall back to MSVC detection on Windows when g++ is absent

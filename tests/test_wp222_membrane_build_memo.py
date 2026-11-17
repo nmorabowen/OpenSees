@@ -18,6 +18,7 @@ prints identical hex floats on panels full of ties.
 import os
 import shutil
 import subprocess
+from _cxx import cxx_runtime_flags  # WP-199: static GCC runtime on Windows
 from pathlib import Path
 
 import pytest
@@ -175,7 +176,7 @@ def _ab_run(tmp_path, gpp, name, defines):
     src = tmp_path / "ab.cpp"
     src.write_text(_AB_DRIVER, encoding="utf-8")
     exe = tmp_path / (name + (".exe" if os.name == "nt" else ""))
-    subprocess.run([gpp, "-O2", "-std=c++17", *defines, f"-I{_KERNEL_DIR}", str(src), "-o", str(exe)],
+    subprocess.run([gpp, "-O2", "-std=c++17", *defines, f"-I{_KERNEL_DIR}", str(src), "-o", str(exe), *cxx_runtime_flags()],
                    check=True, capture_output=True, text=True, stdin=subprocess.DEVNULL)
     return subprocess.run([str(exe)], check=True, capture_output=True, text=True,
                           stdin=subprocess.DEVNULL).stdout

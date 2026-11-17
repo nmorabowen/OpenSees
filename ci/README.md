@@ -65,4 +65,5 @@ Named by slug (WP-162): a new rule takes a new slug in `RULES` (`ci/check_quirk_
 | `revert` | L10 | `// ladruno-lint: revert-ok <reason>` | fork-stamped | a fork integrator with its own `Vector*` march state that inherits the no-op `revertToLastStep()` (WP-153, #899) |
 | `unknown-token` | — | `// ladruno-lint: unknown-ok <reason>` | fork-stamped | a fork parser that lets an unknown token through: a "unknown tokens are ignored" comment, or an option ladder ending its token loop with no final `else` (WP-167) |
 | `floating-runner` | — | — | fork workflows | a `ladruno*.yml` workflow that names a floating runner image (`ubuntu-latest`): it moved to 26.04 / GCC 15 and broke bit-exact baselines (WP-225) |
+| `gxx-static` | — | — | tests | a test that builds a g++ harness without `cxx_runtime_flags()` / `-static`: on Windows the exe loads Git for Windows' older libstdc++-6.dll and segfaults (WP-199, #1101) |
 <!-- quirk-rules:end -->

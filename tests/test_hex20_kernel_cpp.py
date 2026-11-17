@@ -13,6 +13,7 @@ facts that justify HRZ-only lumping. Skipped if no C++ compiler is present.
 import os
 import shutil
 import subprocess
+from _cxx import cxx_runtime_flags  # WP-199: static GCC runtime on Windows
 import tempfile
 
 import numpy as np
@@ -36,7 +37,7 @@ def _run_cpp():
         cc = subprocess.run([gpp, "-O2", "-std=c++17",
                              "-I", _SRC_BRICK, "-I", _SRC_INTEG,
                              "-DLADRUNO_MASSLUMPING_STANDALONE",
-                             src, "-o", exe], stdin=subprocess.DEVNULL, capture_output=True, text=True)
+                             src, "-o", exe, *cxx_runtime_flags()], stdin=subprocess.DEVNULL, capture_output=True, text=True)
         assert cc.returncode == 0, f"g++ failed:\n{cc.stderr}"
         rr = subprocess.run([exe], stdin=subprocess.DEVNULL, capture_output=True, text=True)
         assert rr.returncode == 0, f"run failed:\n{rr.stderr}"

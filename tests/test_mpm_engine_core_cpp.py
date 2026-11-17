@@ -21,6 +21,7 @@ import os
 import re
 import shutil
 import subprocess
+from _cxx import cxx_runtime_flags  # WP-199: static GCC runtime on Windows
 import tempfile
 
 import pytest
@@ -47,7 +48,7 @@ def _compile_and_run(src, cases, extra_inc):
         cmd = [gpp, "-O2", "-std=c++17", "-Wall", "-Wextra"]
         for d in extra_inc:
             cmd += ["-I", d]
-        cc = subprocess.run(cmd + [src, "-o", exe], stdin=subprocess.DEVNULL,
+        cc = subprocess.run(cmd + [src, "-o", exe, *cxx_runtime_flags()], stdin=subprocess.DEVNULL,
                             capture_output=True, text=True, encoding="utf-8", errors="replace")
         assert cc.returncode == 0, f"compile failed:\n{cc.stderr}"
         rr = subprocess.run([exe, cases], stdin=subprocess.DEVNULL, capture_output=True,

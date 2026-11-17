@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import subprocess
+from _cxx import cxx_runtime_flags  # WP-199: static GCC runtime on Windows
 import tempfile
 from typing import Dict, List
 
@@ -46,16 +47,10 @@ def _compile_all(td: str) -> Dict[str, str]:
 
     gpp = shutil.which("g++") or shutil.which("clang++") or shutil.which("c++")
     if gpp is not None:
-        # On Windows, link the GCC runtime statically. A dynamically linked exe
-        # resolves libstdc++-6.dll through PATH, and Git for Windows'
-        # /mingw64/bin often precedes the compiler's own bin. A g++ 15 binary
-        # then runs against an older libstdc++ and segfaults (0xC0000005)
-        # constructing the std::ifstream for the cases file.
-        rt_flags = ["-static"] if os.name == "nt" else []
         for name, defs in targets.items():
             dflags = [f"-D{d}=1" for d in defs]
             cc = subprocess.run(
-                [gpp, "-O2", "-std=c++17", "-Wall", "-Wextra", *dflags, "-I", _SRC_CPML, _CHECK_CPP, "-o", exes[name], *rt_flags],
+                [gpp, "-O2", "-std=c++17", "-Wall", "-Wextra", *dflags, "-I", _SRC_CPML, _CHECK_CPP, "-o", exes[name], *cxx_runtime_flags()],
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
