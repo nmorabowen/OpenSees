@@ -49,6 +49,13 @@
 # row's gate becomes L4's form: MPM q_lim within +-10 % of the FE B-bar q_lim at each rung. The FE
 # std (locked) legs are reported; if std is inside the band at r3, L3 is non-discriminating at r3.
 # The FE record is tests/data/mpm/implicit/fe_footing_j2.json (its 'admission' block).
+# ADMISSION VERDICT (FE, build 4fc274d51, all six legs one build, before any MPM L3 number):
+#   ADMITTED. FE B-bar q_lim at 16 across B = 510.34 kPa = 0.9926 x (2 + pi) k, inside
+#   [0.97, 1.08]. The B-bar sequence 1.1088 / 1.0327 / 0.9926 at 4 / 8 / 16 falls toward exact.
+#   L3's r3 gate is the closed-form band above, unchanged.
+# NON-DISCRIMINATING AT r3 (as pre-registered): FE std (locked) q_lim at 16 across B = 548.81 kPa
+#   = 1.0674 x, also inside the band. At r3 the band does not separate locked from unlocked; the
+#   std sequence 1.2656 / 1.1401 / 1.0674 is outside it at r1 and r2 only.
 # Particles (ppc 2): r1 1152, r2 4608, r3 18432.
 case footing_j2_r1
 kind run
@@ -72,7 +79,7 @@ steps 60
 newton NormUnbalance 1e-6 40
 ladder KrylovNewton 1e-6 40 NewtonLineSearch 1e-6 60 KrylovNewton 1e-5 80 relaxed 3 halve
 ref closed form (2 + pi) k = 514.159 kPa (Prandtl 1920; Hill 1950): the gate value.
-ref FE B-bar (LadrunoBrick, rough, 4 across B, build 1d2a692ba): q_lim 570.10 kPa = 1.1088 of exact, q_max 612.30 at s = 0.1, 0 failed, 0 relaxed.
+ref FE B-bar (LadrunoBrick, rough, 4 across B, build 4fc274d51): q_lim 570.10 kPa = 1.1088 of exact, q_max 612.30 at s = 0.1, 0 failed, 0 relaxed.
 ref FE std (locked) at 4 across B: q_lim 650.72 kPa = 1.2656 of exact, q_max 841.55 at s = 0.1.
 gap the window s in [0.03, 0.05] sits before the FE B-bar plateau at this rung (612 kPa from s ~ 0.07).
 expect cond_pressure_window footing y 1.0 25.0 35.0 ge 498.734
@@ -102,7 +109,8 @@ steps 60
 newton NormUnbalance 1e-6 40
 ladder KrylovNewton 1e-6 40 NewtonLineSearch 1e-6 60 KrylovNewton 1e-5 80 relaxed 3 halve
 ref closed form (2 + pi) k = 514.159 kPa (Prandtl 1920; Hill 1950): the gate value.
-ref FE B-bar and std at 8 across B: PENDING (the orchestrator's run of fe_footing_j2 --n 8).
+ref FE B-bar (LadrunoBrick, rough, 8 across B, build 4fc274d51): q_lim 530.96 kPa = 1.0327 of exact, q_max 567.57 at s = 0.1, 0 failed, 0 relaxed.
+ref FE std (locked) at 8 across B: q_lim 586.20 kPa = 1.1401 of exact, q_max 722.85 at s = 0.1, 0 failed, 0 relaxed.
 expect cond_pressure_window footing y 1.0 25.0 35.0 ge 498.734
 expect cond_pressure_window footing y 1.0 25.0 35.0 le 555.292
 expect cond_pressure_max footing y 1.0 eq 514.159 tol 0 0.08 report
@@ -111,7 +119,7 @@ end
 case footing_j2_r3
 kind run
 mode quasistatic
-desc as footing_j2_r1, h = 0.125 (16 cells across B): THE GATE (admission pending)
+desc as footing_j2_r1, h = 0.125 (16 cells across B): THE GATE (band admitted)
 ndm 2
 basis gimp
 origin 0.0 -6.0
@@ -129,8 +137,9 @@ steps 60
 newton NormUnbalance 1e-6 40
 ladder KrylovNewton 1e-6 40 NewtonLineSearch 1e-6 60 KrylovNewton 1e-5 80 relaxed 3 halve
 ref closed form (2 + pi) k = 514.159 kPa (Prandtl 1920; Hill 1950): the gate value.
-ref FE B-bar and std at 16 across B: PENDING (the orchestrator's run of fe_footing_j2 --n 16);
-ref the admission verdict is written here and in fe_footing_j2.json once it exists.
+ref FE B-bar (LadrunoBrick, rough, 16 across B, build 4fc274d51): q_lim 510.34 kPa = 0.9926 of exact, q_max 542.85 at s = 0.1, 4 failed, 0 relaxed.
+ref FE std (locked) at 16 across B: q_lim 548.81 kPa = 1.0674 of exact, q_max 649.25 at s = 0.1, 9 failed, 0 relaxed.
+ref Admission: ADMITTED (B-bar inside [0.97, 1.08]); non-discriminating at r3 (std also inside).
 expect cond_pressure_window footing y 1.0 25.0 35.0 ge 498.734
 expect cond_pressure_window footing y 1.0 25.0 35.0 le 555.292
 expect cond_pressure_max footing y 1.0 eq 514.159 tol 0 0.08 report

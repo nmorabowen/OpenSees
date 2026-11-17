@@ -457,6 +457,12 @@ def test_antilocking_cases_l3_block():
             assert "PENDING" not in refs, name
         else:
             assert "PENDING" in refs, name
+    # the r3 refs state the record's admission verdict
+    a = _json("fe_footing_j2")["admission"]
+    if "admitted" in a:
+        r3 = " ".join(" ".join(t) for t in cases["footing_j2_r3"]["kv"]["ref"])
+        assert ("ADMITTED" in r3) == a["admitted"]
+        assert ("non-discriminating at r3" in r3) == bool(a.get("non_discriminating_at_r3"))
     # the gate is at r3; r1 and r2 report
     assert cases["footing_j2_r1"]["kv"]["status"] == [["report"]]
     assert cases["footing_j2_r2"]["kv"]["status"] == [["report"]]
