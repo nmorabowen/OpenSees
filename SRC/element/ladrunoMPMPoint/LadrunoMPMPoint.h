@@ -52,6 +52,13 @@
 // counts in with the host; the host's N-th count runs g2p() on every particle
 // unless a commit refusal is pending — then nothing moves.
 //
+// ANTI-LOCKING (WP-232j, tests/mpm_antilocking_interface.md J7-J12): with the
+// host's `mpm antiLocking fbar`, repoint() also receives the slots of the 2^d
+// corners of the particle's cell (always inside its own support, J3). The trial
+// increment becomes dFbar = (det dF_c / det dF)^(1/d) dF (J1), the residual
+// weight the carried volume det(dFbar F_n) V_0 (J9), and the tangent gains the
+// rank-one F-bar term h d^T (J10). No corners = the shipped arithmetic, bit for bit.
+//
 // The element overrides no threading opt-in: it stays off every WP-107 / WP-192
 // path (its scratch is static, shared by size).
 
@@ -132,7 +139,14 @@ class LadrunoMPMPoint : public Element
   int  repoint(const ID &tags, const std::vector<double> &S, const std::vector<double> &dS,
               const std::vector<char> &inactive, const std::vector<double> &vHat,
               const std::vector<double> &aHat, const std::vector<double> &Sc,
-              const std::vector<double> &dSc);
+              const std::vector<double> &dSc, const int *corners = 0, int nCorners = 0,
+              double cellH = 0.0);
+  // WP-232j: 0 not averaged (no corners), 1 averaged, 2 fallback (a corner absent)
+  int  antiLockingPath(void) const { return alMode == 0 ? 0 : (corner[0] < 0 ? 2 : 1); }
+  // `mpm debug tangentCheck -antiLocking off|fbar`: 1 suppresses the F-bar for the check
+  void setAntiLockingSuppressed(bool s) { alSuppressed = s; needUpdate = true; trialValid = false; }
+  // `mpm debug affineCheck` (L1): the last trial's dF (actual) and dFbar, and its deps
+  void antiLockingTrial(double &rel, double &depsMax) const;
   bool connectivityEquals(const ID &tags) const;
   State state(void) const { return st; }
   // The host's batched G2P (interface D1.9): writes particle p of P from the
@@ -185,6 +199,13 @@ class LadrunoMPMPoint : public Element
   State st;
   bool  needUpdate;      // re-pointed or reverted, no update() since
   bool  trialValid;      // the trial cache holds a successful update()
+  // WP-232j (J8): alMode 0 off; 1 corners given (corner[0] < 0 = fallback, J5)
+  int    alMode, nCorner, corner[8];
+  bool   alSuppressed;
+  double cellH, Jc, alRel;   // alRel: |dFbar - dF|_max / |dF - I|_max of the last trial
+  double Fci[9];          // dF_c^-1 of the last trial (the tangent's g-hat)
+  double depsT[6];        // the last trial's unrotated strain increment (affineCheck)
+  bool   alActive(void) const { return alMode != 0 && !alSuppressed && corner[0] >= 0; }
 
   ID connect;
   std::vector<Node *> nodes;
@@ -215,6 +236,8 @@ class LadrunoMPMPoint : public Element
   void tangentPerComponent(Matrix &K, bool initial, const double *Rm, double volm,
                            const double *sg, const double *Dc);
   void refetchNodes(void);
+  void addFbarTangent(Matrix &K, bool initial, double volm, const double *sg, const double *Dc);
+  void cornerGradients(double gN[8][3]) const;
 };
 
 #endif

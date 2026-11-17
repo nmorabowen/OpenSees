@@ -42,6 +42,7 @@
 #include <Ladruno_mutation.h>
 #include <LadrunoElementShell.h>
 
+#include <algorithm>
 #include <cmath>
 #include <string.h>
 
@@ -84,8 +85,12 @@ void voigtToTensor(int nd, const double *s, double t[9])
 LadrunoMPMPoint::LadrunoMPMPoint(int tag, int particle, int hostTag, int nd, NDMaterial *ownedMat)
   : Element(tag, ELE_TAG_LadrunoMPMPoint), p(particle), hostPatternTag(hostTag), ndm(nd),
     nv(nd == 3 ? 6 : 3), nen(0), mat(ownedMat), st(ARMED), needUpdate(true), trialValid(false),
+    alMode(0), nCorner(0), alSuppressed(false), cellH(0.0), Jc(1.0), alRel(0.0),
     connect(0), J1(1.0), vol(0.0), mp(0.0), payloadDbTag(0), P(0), Pinc(0), Ki(0)
 {
+  for (int k = 0; k < 8; k++) corner[k] = -1;
+  for (int k = 0; k < 9; k++) Fci[k] = (k % 4 == 0) ? 1.0 : 0.0;
+  for (int k = 0; k < 6; k++) depsT[k] = 0.0;
   for (int k = 0; k < 9; k++) Frel[k] = F1[k] = R1[k] = (k % 4 == 0) ? 1.0 : 0.0;
   for (int k = 0; k < 6; k++) epsT[k] = sigHatT[k] = sigT[k] = 0.0;
   bf[0] = bf[1] = bf[2] = 0.0;
@@ -93,9 +98,13 @@ LadrunoMPMPoint::LadrunoMPMPoint(int tag, int particle, int hostTag, int nd, NDM
 
 LadrunoMPMPoint::LadrunoMPMPoint()
   : Element(0, ELE_TAG_LadrunoMPMPoint), p(-1), hostPatternTag(0), ndm(2), nv(3), nen(0),
-    mat(0), st(RESTORED), needUpdate(true), trialValid(false), connect(0), J1(1.0), vol(0.0),
+    mat(0), st(RESTORED), needUpdate(true), trialValid(false), alMode(0), nCorner(0),
+    alSuppressed(false), cellH(0.0), Jc(1.0), alRel(0.0), connect(0), J1(1.0), vol(0.0),
     mp(0.0), payloadDbTag(0), P(0), Pinc(0), Ki(0)
 {
+  for (int k = 0; k < 8; k++) corner[k] = -1;
+  for (int k = 0; k < 9; k++) Fci[k] = (k % 4 == 0) ? 1.0 : 0.0;
+  for (int k = 0; k < 6; k++) depsT[k] = 0.0;
   for (int k = 0; k < 9; k++) Frel[k] = F1[k] = R1[k] = (k % 4 == 0) ? 1.0 : 0.0;
   for (int k = 0; k < 6; k++) epsT[k] = sigHatT[k] = sigT[k] = 0.0;
   bf[0] = bf[1] = bf[2] = 0.0;
@@ -175,7 +184,8 @@ int
 LadrunoMPMPoint::repoint(const ID &tags, const std::vector<double> &Sk,
                          const std::vector<double> &dSk, const std::vector<char> &inactive,
                          const std::vector<double> &vH, const std::vector<double> &aH,
-                         const std::vector<double> &Sck, const std::vector<double> &dSck)
+                         const std::vector<double> &Sck, const std::vector<double> &dSck,
+                         const int *corners, int nCorners, double cellh)
 {
   nen = tags.Size();
   if (nen < 1 || nen * ndm > MAX_DOF) {
@@ -197,6 +207,22 @@ LadrunoMPMPoint::repoint(const ID &tags, const std::vector<double> &Sk,
   else gc.assign(nen * ndm * ndm, 0.0);
   vHat = vH;
   aHat = aH;
+  // WP-232j (J11): the corner slots of the particle's cell, or none (off). A slot
+  // < 0 anywhere = the fallback (J5), kept as corner[0] = -1.
+  alMode = 0;
+  nCorner = 0;
+  for (int k = 0; k < 8; k++) corner[k] = -1;
+  if (corners != 0 && nCorners == (1 << ndm) && cellh > 0.0) {
+    alMode = 1;
+    nCorner = nCorners;
+    cellH = cellh;
+    bool all = true;
+    for (int k = 0; k < nCorners; k++) {
+      if (corners[k] < 0 || corners[k] >= nen) all = false;
+      corner[k] = corners[k];
+    }
+    if (!all) corner[0] = -1;
+  }
   ghostK.assign(nen, 0.0);
   LadrunoMPMPointHost *h = host();
   if (h != 0) {
@@ -241,15 +267,44 @@ LadrunoMPMPoint::computeTrial(void)
     }
   const double *Fn = &PP.F[nn * p];
   double F1loc[9], R1loc[9], deps[6], J;
+  // WP-232j (J1, J9): the kernel takes dFbar F_n; Frel stays the actual increment
+  // (the spatial gradients g_a, the trial centre, G2P's position all use it).
+  double Fuse[9];
+  for (int k = 0; k < nn; k++) Fuse[k] = Frel[k];
+  alRel = 0.0;
+  if (alActive()) {
+    double Fc[9], gN[8][3];
+    cornerGradients(gN);
+    for (int a = 0; a < nd; a++)
+      for (int c = 0; c < nd; c++) {
+        double s = (a == c) ? 1.0 : 0.0;
+        for (int k = 0; k < nCorner; k++) s += uT[nd * corner[k] + a] * gN[k][c];
+        Fc[nd * a + c] = s;
+      }
+    if (ladruno_mpm::fbarIncrement(nd, Frel, Fc, Fuse) != 0) return -2;
+    Jc = ladruno_mpm::detN(nd, Fc);
+    if (nd == 3) ladruno_hypo::inv3(Fc, Fci);
+    else {
+      Fci[0] = Fc[3] / Jc;  Fci[1] = -Fc[1] / Jc;
+      Fci[2] = -Fc[2] / Jc; Fci[3] = Fc[0] / Jc;
+    }
+    double num = 0.0, den = 0.0;
+    for (int k = 0; k < nn; k++) {
+      num = std::max(num, std::fabs(Fuse[k] - Frel[k]));
+      den = std::max(den, std::fabs(Frel[k] - ((k % (nd + 1) == 0) ? 1.0 : 0.0)));
+    }
+    alRel = (den > 0.0) ? num / den : num;
+  }
   for (int a = 0; a < nd; a++)
     for (int c = 0; c < nd; c++) {
       double s = 0.0;
-      for (int e = 0; e < nd; e++) s += Frel[nd * a + e] * Fn[nd * e + c];
+      for (int e = 0; e < nd; e++) s += Fuse[nd * a + e] * Fn[nd * e + c];
       F1loc[nd * a + c] = s;
     }
   const int kst = (nd == 3) ? ladruno_hypo::hypoIncrementFromF(Fn, F1loc, deps, R1loc, &J)
                             : ladruno_hypo::hypoIncrementFromFPlaneStrain(Fn, F1loc, deps, R1loc, &J);
   if (kst != 0) return -2;
+  for (int k = 0; k < nv; k++) depsT[k] = deps[k];
   // the trial centre stays in the real grid (interface A7)
   double x[3] = {0.0, 0.0, 0.0};
   for (int a = 0; a < nd; a++) {
@@ -585,6 +640,7 @@ LadrunoMPMPoint::tangent(Matrix &K, bool initial)
   }
   if (!Sc.empty()) {                     // WP-232i B8
     tangentPerComponent(K, initial, Rm, volm, sg, Dc);
+    addFbarTangent(K, initial, volm, sg, Dc);      // WP-232j (J10)
     return;
   }
   // material part: B_a rows {xx,yy,zz,xy,yz,zx} (3D) or {xx,yy,xy} (2D)
@@ -635,6 +691,78 @@ LadrunoMPMPoint::tangent(Matrix &K, bool initial)
     }
     for (int i = 0; i < nd; i++) K(nd * a + i, nd * a + i) += ghostK[a];   // ghost spring (D2.3)
   }
+  addFbarTangent(K, initial, volm, sg, Dc);        // WP-232j (J10)
+}
+
+// WP-232j (tests/mpm_antilocking_interface.md J10): the F-bar part of the
+// consistent tangent, rank one: K += h d^T with
+//   h_ai = w sum_j Q_ij g_aj,  Q = (1/d) (c:I_d + 2 sigma),
+//   d_bk = ghat_bk - g_bk,     ghat_b = gradN_b(x_c) . dF_c^-1 (corners only),
+// under the same Truesdell-of-Kirchhoff model that makes the shipped assembly
+// exact (w the carried volume, c the pushed tangent, sigma the trial stress). The
+// per-component (B8) path uses g'_{a,i} in h and g'_{b,k,k} in d. Initial: dF_c = I,
+// sigma = 0, the initial tangent. Nothing for a fallback particle or with it off.
+void
+LadrunoMPMPoint::addFbarTangent(Matrix &K, bool initial, double volm, const double *sg,
+                                const double *Dc)
+{
+  if (!alActive()) return;
+  const int nd = ndm, n = nen * nd;
+  double Qv[6], Q[9];
+  for (int r = 0; r < nv; r++) {
+    double s = 0.0;
+    for (int q = 0; q < nd; q++) s += Dc[nv * r + q];
+    Qv[r] = s;
+  }
+  voigtToTensor(nd, Qv, Q);
+  for (int k = 0; k < 9; k++) Q[k] = (Q[k] + 2.0 * sg[k]) / nd;
+  const bool pc = !Sc.empty();
+  const double *grad = pc ? (initial ? dSc.data() : gc.data()) : (initial ? dS.data() : g.data());
+  static std::vector<double> h, d;
+  h.assign(n, 0.0);
+  d.assign(n, 0.0);
+  for (int a = 0; a < nen; a++)
+    for (int i = 0; i < nd; i++) {
+      const double *ga = pc ? &grad[(nd * a + i) * nd] : &grad[nd * a];
+      double s = 0.0;
+      for (int j = 0; j < nd; j++) s += Q[3 * i + j] * ga[j];
+      h[nd * a + i] = volm * s;
+      d[nd * a + i] = pc ? -grad[(nd * a + i) * nd + i] : -grad[nd * a + i];
+    }
+  double gN[8][3];
+  cornerGradients(gN);
+  for (int k = 0; k < nCorner; k++) {
+    const int b = corner[k];
+    for (int j = 0; j < nd; j++) {
+      double s = 0.0;
+      if (initial) s = gN[k][j];
+      else
+        for (int L = 0; L < nd; L++) s += gN[k][L] * Fci[nd * L + j];
+      d[nd * b + j] += s;
+    }
+  }
+  for (int r = 0; r < n; r++) {
+    if (h[r] == 0.0) continue;
+    for (int c = 0; c < n; c++) K(r, c) += h[r] * d[c];
+  }
+}
+
+// The Q1 gradients at the cell centre in the host's corner order
+// (ladruno_mpm::cellCorners: bit d of k = the +h side on axis d).
+void
+LadrunoMPMPoint::cornerGradients(double gN[8][3]) const
+{
+  const double a = (ndm == 3) ? 0.25 / cellH : 0.5 / cellH;
+  for (int k = 0; k < 8; k++)
+    for (int d = 0; d < 3; d++) gN[k][d] = (d < ndm) ? (((k >> d) & 1) ? a : -a) : 0.0;
+}
+
+void
+LadrunoMPMPoint::antiLockingTrial(double &rel, double &depsMax) const
+{
+  rel = alRel;
+  depsMax = 0.0;
+  for (int k = 0; k < nv; k++) depsMax = std::max(depsMax, std::fabs(depsT[k]));
 }
 
 // WP-232i B8: the tangent with each displacement component's own gradient,

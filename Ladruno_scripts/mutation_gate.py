@@ -140,9 +140,16 @@ FAMILIES = {
         #     one-period rows G2, G3, G5-G2, G5-G3 survive (at one period e is a drift norm;
         #     SCALE dies on the warrant run's G3 ladder, G6). The margin RESTS ON THE ORACLE:
         #     without it SCALE scores 33/87 = 0.379, under its floor. Floors unchanged.
+        # WP-232j adds test_ladruno_mpm_antilocking_switch.py (gate row L7, the switch oracle
+        # footing_j2_r1 on / off): ZERO drops the footing reaction (both legs die); SCALE moves
+        # the particles 1.5x the grid under the footing. Its kinematics / tangent files are NOT
+        # selected: the affine hooks never touch the internal force or G2P, and the tangent
+        # check is blind to SCALE -- they would only add survivors. Scores re-measured on the
+        # 232j mutants by the orchestrator (wp-briefs.md "232j" L7).
         "paths": ["test_ladruno_mpm_engine.py",       # the cases suite; lifecycle/refusal tests are physics-free
                   "test_ladruno_mpm_implicit_engine.py",
-                  "test_ladruno_mpm_bspline_mms.py"],
+                  "test_ladruno_mpm_bspline_mms.py",
+                  "test_ladruno_mpm_antilocking_switch.py"],
         "min_score": {"ZERO": 0.46, "SCALE": 0.38, "IDENT": 0.0},
     },
     # --- WP-3 lanes: gates NOT yet inserted in these families' elements. -----

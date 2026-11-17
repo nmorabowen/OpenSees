@@ -761,7 +761,8 @@ ladrunoSANISANDReplay(ClientData clientData, Tcl_Interp *interp, int argc, TCL_C
 
 int OPS_LadrunoMPM(void);   // Ladruno WP-232 (defined in ladrunoMPM/OPS_LadrunoMPM.cpp)
 int OPS_LadrunoMPMWithAnalysis(StaticAnalysis *, DirectIntegrationAnalysis *, StaticIntegrator *,
-                               TransientIntegrator *, ConstraintHandler *);   // Ladruno WP-232f
+                               TransientIntegrator *, ConstraintHandler *,
+                               LinearSOE *, int);   // Ladruno WP-232f; WP-232j: + the SOE
 int ladrunoMPMDoubleQuery(Domain *, const std::vector<std::string> &, std::vector<double> &);   // Ladruno WP-232
 static int
 ladrunoMPM(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)   // Ladruno WP-232
@@ -794,8 +795,15 @@ ladrunoMPM(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
   OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);   // Ladruno WP-232
   // Ladruno WP-232f: mode A composes the user's analysis, which classic Tcl keeps in
   // these globals (not in the DL `cmds` singleton): the classic bridge hands them in.
+  // Ladruno WP-232j: the system too (mode A refuses a symmetric-storage SOE with
+  // `mpm antiLocking fbar`); PARDISO's symmetric modes are known only under _PARDISO.
+  int pardisoMatType = -1;   // Ladruno WP-232j
+#ifdef _PARDISO
+  if (PARDISOGenLinSOE *ps = dynamic_cast<PARDISOGenLinSOE *>(theSOE)) pardisoMatType = ps->getMatType();   // Ladruno WP-232j
+#endif
   return (OPS_LadrunoMPMWithAnalysis(theStaticAnalysis, theTransientAnalysis, theStaticIntegrator,
-                                     theTransientIntegrator, theHandler) < 0) ? TCL_ERROR : TCL_OK;   // Ladruno WP-232f
+                                     theTransientIntegrator, theHandler, theSOE,
+                                     pardisoMatType) < 0) ? TCL_ERROR : TCL_OK;   // Ladruno WP-232f / 232j
 }
 
 int

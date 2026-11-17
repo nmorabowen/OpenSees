@@ -197,3 +197,17 @@ Xie, Navas & López-Querol (2023), IJNAMG 47:2741–2761, doi 10.1002/nag.3599.
 Zhao, Jiang & Choo (2022), arXiv:2209.02466. Elguedj, Bazilevs, Calo & Hughes (2008), CMAME
 197:2732–2762. Telikicherla & Moutsanidis (2022), CMAME 395:114985. Hughes (1980), IJNME
 15(9):1413–1418. Moutsanidis, Long & Bazilevs (2020), CMAME 372:113346.
+
+## 10. Round-2 implementation notes (each disclosed; before any number)
+
+1. **F1 surfaces.** `mpm particleData antiLocking` (per particle, last accepted step: 0 / 1
+   averaged / 2 fallback) and `mpm info antiLockingCounts` ([averaged, fallback] particle-steps,
+   per epoch; `mpm reset` zeroes them). The harness computes the plastic-zone share from them.
+2. **L8 hook.** `mpm debug packVersion 2|3` writes the next database in the 232i layout, so the
+   "v2 restores off" test needs no committed binary fixture.
+3. **J10 in code.** `LadrunoMPMPoint::addFbarTangent` (scalar and B8 per-component paths, current
+   and initial); the element members are J8's plus `depsT[6]`, `alRel` (≈ 190 B).
+4. **K3 refusal scope.** The symmetric-storage list is J's plus PARDISO matType > 0; a MUMPS
+   symmetric option is not detected (it is not a separate SOE class).
+5. **Mutation suite.** Only `test_ladruno_mpm_antilocking_switch.py` joins the MPM family: the
+   kinematics and tangent files would add physics-free survivors (affine hooks; SCALE-blind tangent).

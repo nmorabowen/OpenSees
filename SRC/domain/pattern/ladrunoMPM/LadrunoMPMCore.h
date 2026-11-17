@@ -335,7 +335,57 @@ struct Params {
   double masscut = 1.0e-10;    // c_m
   double safety = 0.5;         // s
   double gravity[3] = {0.0, 0.0, 0.0};
+  // WP-232j (tests/mpm_antilocking_interface.md J1, K3): 0 off (default, the shipped
+  // arithmetic bit for bit), 1 fbar (the cell-centre F-bar on the step increment)
+  int    antiLocking = 0;
 };
+
+// --------------------------------------------------------------------------- //
+//  Anti-locking (WP-232j, tests/mpm_antilocking_interface.md J1-J5)            //
+// --------------------------------------------------------------------------- //
+
+// The background cell holding the centre x (Grid::cellOf per axis, clamped to
+// n-1) and its 2^d corners: engine indices ext[k] (bit d of k set = the +h side
+// on axis d) and the Q1 shape-function gradients at the cell centre, gN[k][d] =
+// +-1/(2h) in 2D, +-1/(4h) in 3D (J1). Returns 2^d. The corners always lie in
+// the particle's own support, for every basis (J3).
+inline int cellCorners(const Grid &g, const double *x, long ext[8], double gN[8][3])
+{
+  const int nd = g.ndm, nc = 1 << nd;
+  int c[3] = {0, 0, 0};
+  for (int d = 0; d < nd; d++) c[d] = g.cellOf(d, x[d]);
+  const double a = (nd == 3) ? 0.25 / g.h : 0.5 / g.h;
+  for (int k = 0; k < nc; k++) {
+    int ijk[3] = {0, 0, 0};
+    for (int d = 0; d < 3; d++) {
+      const int s = (k >> d) & 1;
+      if (d < nd) { ijk[d] = c[d] + s; gN[k][d] = s ? a : -a; }
+      else gN[k][d] = 0.0;
+    }
+    ext[k] = g.extId(ijk);
+  }
+  return nc;
+}
+
+inline double detN(int nd, const double *A)
+{
+  if (nd == 2) return A[0] * A[3] - A[1] * A[2];
+  return A[0] * (A[4] * A[8] - A[5] * A[7]) - A[1] * (A[3] * A[8] - A[5] * A[6]) +
+         A[2] * (A[3] * A[7] - A[4] * A[6]);
+}
+
+// J1: dFbar = (det dFc / det dF)^(1/d) dF on the step increment (d = ndm; in plane
+// strain the 2x2 in-plane block, F_zz = 1 untouched). Returns 0, or -1 when either
+// determinant is <= 0 (dFbar untouched). An equal pair gives the factor 1 exactly.
+inline int fbarIncrement(int nd, const double *dF, const double *dFc, double *dFbar)
+{
+  const double J = detN(nd, dF), Jc = detN(nd, dFc);
+  if (!(J > 0.0) || !(Jc > 0.0)) return -1;
+  const double r = Jc / J;
+  const double s = (r == 1.0) ? 1.0 : ((nd == 3) ? std::cbrt(r) : std::sqrt(r));
+  for (int k = 0; k < nd * nd; k++) dFbar[k] = s * dF[k];
+  return 0;
+}
 
 // Faces: 0 xmin, 1 xmax, 2 ymin, 3 ymax, 4 zmin, 5 zmax (interface §2).
 struct FaceConditions {
@@ -509,6 +559,20 @@ class Engine {
   // WP-232i (B11): per-particle body force per unit MASS (acceleration units),
   // ndm per particle in storage order, NOT scaled by the load factor; empty = none.
   std::vector<double> bodyForce;
+  // WP-232j (J5, freeze F1): per particle, the anti-locking path of the last
+  // ACCEPTED step -- 0 not averaged (off), 1 averaged, 2 fallback (a corner of its
+  // cell not active); empty until a step with anti-locking on. Cumulative
+  // particle-step counts over accepted steps (both modes; `mpm reset` zeroes them).
+  std::vector<unsigned char> alFlag;
+  long alAveraged = 0, alFallback = 0;
+  void countAntiLocking(const std::vector<unsigned char> &f)
+  {
+    alFlag = f;
+    for (unsigned char c : f) {
+      if (c == 1) alAveraged++;
+      else if (c == 2) alFallback++;
+    }
+  }
 
   int ndm() const { return grid.ndm; }
   int nv() const { return grid.ndm == 3 ? 6 : 3; }
@@ -856,6 +920,7 @@ class Engine {
     // velocity gradient, F, the kernel, the constitutive update
     const int nn = nd * nd;
     tF.resize(P.F.size()); tR.resize(P.R.size()); tV.resize(N);
+    if (par.antiLocking) talFlag.assign(N, 0);
     teps.resize(P.eps.size()); tsh.resize(P.sigHat.size()); tsig.resize(P.sig.size());
     for (int p = 0; p < N; p++) {
       double L[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
@@ -871,6 +936,34 @@ class Engine {
       for (int a = 0; a < nd; a++)
         for (int c = 0; c < nd; c++)
           dF[nd * a + c] = (a == c ? 1.0 : 0.0) + dt * L[nd * a + c];
+      // WP-232j (J1, interface §2): the cell-centre F-bar on the increment, after the
+      // grid update and the second projection, before the kernel and the material.
+      if (par.antiLocking) {
+        long ce[8];
+        double gN[8][3];
+        const int nc = cellCorners(grid, &P.x[nd * p], ce, gN);
+        bool all = true;
+        for (int k = 0; k < nc && all; k++) all = gact[ce[k]] != 0;
+        talFlag[p] = 2;                           // J5: a corner not active -> the identity
+        if (all) {
+          double dFc[9], dFb[9];
+          for (int a = 0; a < nd; a++)
+            for (int c = 0; c < nd; c++) {
+              double s = (a == c) ? 1.0 : 0.0;
+              for (int k = 0; k < nc; k++) s += dt * gvs[nd * ce[k] + a] * gN[k][c];
+              dFc[nd * a + c] = s;
+            }
+          if (fbarIncrement(nd, dF, dFc, dFb) != 0) {
+            err = "the anti-locking increment of particle " + std::to_string((long long)P.id[p]) +
+                  " refused: det(dF) <= 0 or det(dF_cell) <= 0 (inverted or collapsed)";
+            revertAll(mats, p);
+            clearGrid();
+            return -1;
+          }
+          for (int k = 0; k < nd * nd; k++) dF[k] = dFb[k];
+          talFlag[p] = 1;
+        }
+      }
       for (int a = 0; a < nd; a++)
         for (int c = 0; c < nd; c++) {
           double s = 0.0;
@@ -921,7 +1014,68 @@ class Engine {
     // ---- step 7: G2P kinematics take their trial values ---------------------
     P.x.swap(tx); P.v.swap(tv); P.F.swap(tF); P.R.swap(tR); P.V.swap(tV);
     P.eps.swap(teps); P.sigHat.swap(tsh); P.sig.swap(tsig);
+    if (par.antiLocking) countAntiLocking(talFlag);
     return 0;
+  }
+
+  // `mpm debug affineCheck` in mode F (WP-232j L1): every support node of every
+  // particle (at its committed centre) carries du_a = A x_a + b (A row-major ndm x
+  // ndm), dt = 1: the increment with (J1) and without anti-locking, every node
+  // active (no fallback). out = [max_p |dFbar - dF|_max / |dF - I|_max,
+  // max_p |deps|_max of the kernel on (F_n, dFbar F_n), #averaged, #fallback].
+  void affineCheck(const double *A, const double *b, std::vector<double> &out)
+  {
+    const int N = P.size(), nd = grid.ndm, nn = nd * nd;
+    buildSupports();
+    double worst = 0.0, depsMax = 0.0;
+    long nAvg = 0, nFb = 0;
+    auto field = [&](long ext, double *u) {
+      int ijk[3];
+      grid.extIJK(ext, ijk);
+      for (int a = 0; a < nd; a++) {
+        double s = b[a];
+        for (int c = 0; c < nd; c++) s += A[nd * a + c] * (grid.x0[c] + ijk[c] * grid.h);
+        u[a] = s;
+      }
+    };
+    for (int p = 0; p < N; p++) {
+      double dF[9], dFc[9], dFb[9], u[3];
+      for (int k = 0; k < nn; k++) dF[k] = dFc[k] = (k % (nd + 1) == 0) ? 1.0 : 0.0;
+      for (long k = supStart[p]; k < supStart[p + 1]; k++) {
+        field(supNode[k], u);
+        for (int a = 0; a < nd; a++)
+          for (int c = 0; c < nd; c++) dF[nd * a + c] += u[a] * supdS[nd * k + c];
+      }
+      long ce[8];
+      double gN[8][3];
+      const int nc = cellCorners(grid, &P.x[nd * p], ce, gN);
+      for (int k = 0; k < nc; k++) {
+        field(ce[k], u);
+        for (int a = 0; a < nd; a++)
+          for (int c = 0; c < nd; c++) dFc[nd * a + c] += u[a] * gN[k][c];
+      }
+      if (fbarIncrement(nd, dF, dFc, dFb) != 0) { nFb++; continue; }
+      nAvg++;
+      double num = 0.0, den = 0.0;
+      for (int k = 0; k < nn; k++) {
+        num = std::max(num, std::fabs(dFb[k] - dF[k]));
+        den = std::max(den, std::fabs(dF[k] - ((k % (nd + 1) == 0) ? 1.0 : 0.0)));
+      }
+      if (den > 0.0) worst = std::max(worst, num / den);
+      const double *Fn = &P.F[nn * p];
+      double F1[9], deps[6], R1[9], J1;
+      for (int a = 0; a < nd; a++)
+        for (int c = 0; c < nd; c++) {
+          double s = 0.0;
+          for (int e = 0; e < nd; e++) s += dFb[nd * a + e] * Fn[nd * e + c];
+          F1[nd * a + c] = s;
+        }
+      const int st = (nd == 3) ? ladruno_hypo::hypoIncrementFromF(Fn, F1, deps, R1, &J1)
+                               : ladruno_hypo::hypoIncrementFromFPlaneStrain(Fn, F1, deps, R1, &J1);
+      if (st != 0) { nFb++; nAvg--; continue; }
+      for (int k = 0; k < nv(); k++) depsMax = std::max(depsMax, std::fabs(deps[k]));
+    }
+    out = {worst, depsMax, (double)nAvg, (double)nFb};
   }
 
   // Forget the id registry (used when the host clears its particles).
@@ -950,6 +1104,7 @@ class Engine {
   std::vector<double> slaveSg;
   // trial particle arrays
   std::vector<double> tx, tv, tF, tR, tV, teps, tsh, tsig;
+  std::vector<unsigned char> talFlag;     // WP-232j: this step's anti-locking path per particle
 
   double massRef() const
   {

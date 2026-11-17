@@ -63,6 +63,7 @@
 #include <StaticIntegrator.h>
 #include <LoadControl.h>
 #include <ConstraintHandler.h>
+#include <LinearSOE.h>
 #include <profiler/ProfilerMacros.h>
 
 #include <algorithm>
@@ -179,6 +180,18 @@ LadrunoMPMPattern::setMode(Mode m, std::string &err)
     return -1;
   }
   theMode = m;
+  return 0;
+}
+
+int
+LadrunoMPMPattern::setAntiLocking(int on, std::string &err)
+{
+  if ((on ? 1 : 0) == eng.par.antiLocking) return 0;
+  if (stepped || !eles.empty()) {
+    err = "the anti-locking setting is fixed at the first step of an epoch; `mpm reset` first";
+    return -1;
+  }
+  eng.par.antiLocking = on ? 1 : 0;
   return 0;
 }
 
@@ -386,6 +399,22 @@ LadrunoMPMPattern::admitAnalysis(const LadrunoMPMAnalysisRefs &A, std::string &e
   if (eng.par.damping != 0.0) {
     err = "`mpm damping local` is mode F only";
     return -1;
+  }
+  // WP-232j (K3, amendment 5): the F-bar tangent is unsymmetric even for elastic
+  // materials (J10); a symmetric-storage system would solve a different matrix.
+  if (eng.par.antiLocking && A.soe != 0) {
+    const int t = A.soe->getClassTag();
+    const bool sym = t == LinSOE_TAGS_BandSPDLinSOE || t == LinSOE_TAGS_ProfileSPDLinSOE ||
+                     t == LinSOE_TAGS_SymSparseLinSOE || t == LinSOE_TAGS_ProfileSPDLinSOEGather ||
+                     (t == LinSOE_TAGS_PARDISOGenLinSOE && A.pardisoMatType > 0);
+    if (sym) {
+      err = "`mpm antiLocking fbar` makes the particle tangent unsymmetric (even for elastic"
+            " materials): the symmetric-storage system (class tag " + std::to_string(t) +
+            (t == LinSOE_TAGS_PARDISOGenLinSOE ? ", PARDISO in a symmetric mode" : "") +
+            ") is refused; use an unsymmetric one (UmfPack, SparseGEN, FullGeneral, Mumps,"
+            " `system Pardiso` without a symmetric option)";
+      return -1;
+    }
   }
   LoadPatternIter &pats = dom->getLoadPatterns();
   LoadPattern *pat;
@@ -771,6 +800,7 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
   // ---- elements: created, or re-pointed in place ------------------------------------------
   if (eles.empty() && createElements(err) < 0) return -2;
   bool connChanged = false;
+  alPend.assign(eng.par.antiLocking ? N : 0, 0);
   for (int p = 0; p < N; p++) {
     int nk = 0;
     for (long k = supStart[p]; k < supStart[p + 1]; k++) nk += keep[k];
@@ -805,7 +835,32 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
       return -2;
     }
     if (!e->connectivityEquals(tags)) connChanged = true;
-    if (e->repoint(tags, S, dS, ina, vH, aH, Spc, dSpc) < 0) { err = "re-pointing failed"; return -2; }
+    // WP-232j (J11): the slots of the particle's cell corners in its kept support; a
+    // corner dropped by the cutoff (renormalize / exclude) or inactive (ghost) makes
+    // the particle a fallback (J5).
+    int cs[8];
+    int nc = 0;
+    if (eng.par.antiLocking) {
+      long ce[8];
+      double gN[8][3];
+      nc = ladruno_mpm::cellCorners(G, &P.x[nd * p], ce, gN);
+      bool all = true;
+      for (int kc = 0; kc < nc; kc++) {
+        cs[kc] = -1;
+        int jj = 0;
+        for (long k = supStart[p]; k < supStart[p + 1]; k++) {
+          if (!keep[k]) continue;
+          if (node[k] == ce[kc] && !inact[k]) { cs[kc] = jj; break; }
+          jj++;
+        }
+        if (cs[kc] < 0) all = false;
+      }
+      alPend[p] = all ? 1 : 2;
+    }
+    if (e->repoint(tags, S, dS, ina, vH, aH, Spc, dSpc, nc ? cs : 0, nc, G.h) < 0) {
+      err = "re-pointing failed";
+      return -2;
+    }
   }
   // review item 8: whether an element is in the Domain is decided per element, so a
   // partial add earlier never strands the rest
@@ -858,8 +913,12 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
 // materials are reverted, and the next `mpm analyze` prepares its own step.
 int
 LadrunoMPMPattern::debugTangentCheck(double scale, double eps, std::vector<double> &out,
-                                     std::string &err)
+                                     std::string &err, int alOverride)
 {
+  if (alOverride == 1 && !eng.par.antiLocking) {
+    err = "-antiLocking fbar needs the deck's `mpm antiLocking fbar` (the corners are set per step)";
+    return -1;
+  }
   if (theMode == MODE_EXPLICIT) { err = "tangentCheck needs mode implicit or quasiStatic"; return -1; }
   if (elementsRestored && relinkElements(err) < 0) return -1;
   armedWindow = true;
@@ -876,7 +935,10 @@ LadrunoMPMPattern::debugTangentCheck(double scale, double eps, std::vector<doubl
   for (int p = 0; p < (int)eles.size(); p++) {
     if (eles[p] == 0) continue;
     double rel = 0.0, nk = 0.0;
-    if (eles[p]->tangentCheck(scale, eps, rel, nk) < 0) continue;
+    if (alOverride == 0) eles[p]->setAntiLockingSuppressed(true);     // WP-232j L2
+    const int trc = eles[p]->tangentCheck(scale, eps, rel, nk);
+    if (alOverride == 0) eles[p]->setAntiLockingSuppressed(false);
+    if (trc < 0) continue;
     sum += rel;
     count++;
     if (rel > worst) { worst = rel; worstP = p; normW = nk; }
@@ -884,6 +946,69 @@ LadrunoMPMPattern::debugTangentCheck(double scale, double eps, std::vector<doubl
   inStep = false;
   armedWindow = false;              // review item 1: no plain `analyze` may run them
   out = {worst, count > 0 ? sum / count : 0.0, (double)worstP, normW, (double)count};
+  return 0;
+}
+
+// `mpm debug affineCheck <A: ndm x ndm, row-major> <b: ndm>` (WP-232j, L1). Mode F: the
+// engine's header-level check. Mode A: every particle element armed at the committed state
+// (as tangentCheck), every live grid node given the trial displacement A X + b, every element
+// updated once. Out: [max_p |dFbar - dF|_max / |dF - I|_max over averaged particles, max_p
+// |deps|_max over them, #averaged, #fallback, #refused]. Nothing is committed.
+int
+LadrunoMPMPattern::debugAffineCheck(const double *A, const double *b, std::vector<double> &out,
+                                    std::string &err)
+{
+  if (theMode == MODE_EXPLICIT) {
+    eng.affineCheck(A, b, out);
+    out.push_back(0.0);
+    return 0;
+  }
+  if (elementsRestored && relinkElements(err) < 0) return -1;
+  armedWindow = true;
+  const int prc = prepareStep(0.0, err);
+  if (prc < 0) {
+    armedWindow = false;
+    if (prc == -2) aborted = true;
+    return -1;
+  }
+  inStep = true;
+  Domain *dom = this->getDomain();
+  const int nd = eng.ndm();
+  Vector u(nd), zero(nd);
+  for (const auto &kv : liveTag) {
+    Node *n = dom->getNode(kv.second);
+    if (n == 0) continue;
+    const Vector &X = n->getCrds();
+    for (int a = 0; a < nd; a++) {
+      double s = b[a];
+      for (int c = 0; c < nd; c++) s += A[nd * a + c] * X(c);
+      u(a) = s;
+    }
+    n->setTrialDisp(u);
+  }
+  double worst = 0.0, depsMax = 0.0;
+  int nAvg = 0, nFb = 0, nBad = 0;
+  for (LadrunoMPMPoint *e : eles) {
+    if (e == 0) continue;
+    if (e->update() < 0) { nBad++; continue; }
+    const int path = e->antiLockingPath();
+    if (path == 2) { nFb++; continue; }
+    if (path != 1) continue;
+    double rel = 0.0, dm = 0.0;
+    e->antiLockingTrial(rel, dm);
+    worst = std::max(worst, rel);
+    depsMax = std::max(depsMax, dm);
+    nAvg++;
+  }
+  for (const auto &kv : liveTag) {
+    Node *n = dom->getNode(kv.second);
+    if (n != 0) n->setTrialDisp(zero);
+  }
+  for (LadrunoMPMPoint *e : eles)
+    if (e != 0) e->revertToLastCommit();
+  inStep = false;
+  armedWindow = false;
+  out = {worst, depsMax, (double)nAvg, (double)nFb, (double)nBad};
   return 0;
 }
 
@@ -1062,6 +1187,7 @@ LadrunoMPMPattern::analyzeImplicit(int nSteps, double dt, const LadrunoMPMAnalys
     }
     if (rc != 0) break;
     stepped = true;
+    if (eng.par.antiLocking) eng.countAntiLocking(alPend);     // WP-232j (F1)
     done++;
     nAccepted++;
     epochSteps++;
@@ -1142,14 +1268,25 @@ void getParticles(Unpacker &u, ladruno_mpm::Particles &P)
 }
 }  // namespace
 
-const int MPM_PACK_VERSION = 2;     // WP-232i: + the particle body force
+// WP-232i: 2, + the particle body force. WP-232j (J13): 3, + the anti-locking setting;
+// a version-2 pack restores with anti-locking off.
+const int MPM_PACK_VERSION = 3;
+
+int
+LadrunoMPMPattern::setPackVersion(int v)
+{
+  if (v != 2 && v != MPM_PACK_VERSION) return -1;
+  packVersionOut = (v == MPM_PACK_VERSION) ? 0 : v;
+  return 0;
+}
 
 int
 LadrunoMPMPattern::packState(Vector &out)
 {
   Packer k;
   const ladruno_mpm::Grid &G = eng.grid;
-  k.put(MPM_PACK_VERSION);
+  const int ver = packVersionOut ? packVersionOut : MPM_PACK_VERSION;   // WP-232j (L8 hook)
+  k.put(ver);
   k.put(G.ndm);
   for (int d = 0; d < 3; d++) k.put(G.x0[d]);
   k.put(G.h);
@@ -1182,6 +1319,7 @@ LadrunoMPMPattern::packState(Vector &out)
   for (const auto &kv : bodyNames) { k.put(kv.first); k.puts(kv.second); }
   k.puts(unitL); k.puts(unitF); k.puts(unitT); k.puts(unitSystem); k.put(unitsFromFile);
   k.putv(eng.bodyForce);
+  if (ver >= 3) k.put(eng.par.antiLocking);        // WP-232j (J13)
   out.resize((int)k.d.size());
   for (int i = 0; i < (int)k.d.size(); i++) out(i) = k.d[i];
   return 0;
@@ -1191,7 +1329,8 @@ int
 LadrunoMPMPattern::unpackState(const Vector &in)
 {
   Unpacker u(in);
-  if ((int)u.get() != MPM_PACK_VERSION) return -1;
+  const int ver = (int)u.get();
+  if (ver != MPM_PACK_VERSION && ver != 2) return -1;    // WP-232j (J13): 2 restores as off
   int ndm = (int)u.get();
   double x0[3], h;
   int n[3];
@@ -1248,6 +1387,7 @@ LadrunoMPMPattern::unpackState(const Vector &in)
   unitL = u.gets(); unitF = u.gets(); unitT = u.gets(); unitSystem = u.gets();
   unitsFromFile = u.get() != 0.0;
   u.getv(eng.bodyForce);
+  eng.par.antiLocking = (ver >= 3) ? ((int)u.get() != 0 ? 1 : 0) : 0;
   if (u.bad) return -1;
   // the per-step SPs are rebuilt by the next step; the materials live in the
   // restored elements (relinked at the next `mpm analyze`)

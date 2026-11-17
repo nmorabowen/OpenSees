@@ -511,11 +511,33 @@ int cmdDebug(LadrunoMPMPattern *h)
     return 0;
   }
   if (what == "tangentCheck") {                                        // WP-232f footing diagnosis
+    const char *usage = "debug tangentCheck <scale> <eps> [-antiLocking off|fbar]";
     double a[2];
-    if (!readDoubles(2, a)) return fail("debug tangentCheck <scale> <eps>");
+    if (!readDoubles(2, a)) return fail(usage);
+    int al = -1;                                                       // WP-232j (L2)
+    if (OPS_GetNumRemainingInputArgs() > 0) {
+      const std::string opt = OPS_GetString();
+      const std::string v = OPS_GetNumRemainingInputArgs() > 0 ? OPS_GetString() : "";
+      if (opt != "-antiLocking" || (v != "off" && v != "fbar")) return fail(usage);
+      al = (v == "fbar") ? 1 : 0;
+    }
     std::vector<double> out;
     std::string err;
-    if (h->debugTangentCheck(a[0], a[1], out, err) < 0) return fail("debug tangentCheck -- " + err);
+    if (h->debugTangentCheck(a[0], a[1], out, err, al) < 0) return fail("debug tangentCheck -- " + err);
+    return outDoubles(out);
+  }
+  if (what == "packVersion") {                                         // WP-232j (L8)
+    int v;
+    if (!readInt(v) || h->setPackVersion(v) < 0) return fail("debug packVersion 2|3");
+    return 0;
+  }
+  if (what == "affineCheck") {                                         // WP-232j (L1)
+    double A[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0}, b[3] = {0, 0, 0};
+    if (!readDoubles(nd * nd, A) || !readDoubles(nd, b))
+      return fail("debug affineCheck <A: ndm*ndm, row-major> <b: ndm>");
+    std::vector<double> out;
+    std::string err;
+    if (h->debugAffineCheck(A, b, out, err) < 0) return fail("debug affineCheck -- " + err);
     return outDoubles(out);
   }
   if (what == "reseed") {                                              // WP-232f re-seed test hook
@@ -560,6 +582,12 @@ int ladrunoMPMDoubleQuery(Domain *dom, const std::vector<std::string> &a, std::v
   if (sub == "criticalTimeStep") { out.assign(1, h->criticalTimeStep()); return 1; }
   if (sub == "particleData") {
     if (a.size() < 2) return fail("particleData <field>");
+    if (a[1] == "antiLocking") {         // WP-232j (F1): last accepted step, 0 / 1 averaged / 2 fallback
+      out.assign(E.P.size(), 0.0);
+      if ((int)E.alFlag.size() == E.P.size())
+        for (int p = 0; p < E.P.size(); p++) out[p] = E.alFlag[p];
+      return 1;
+    }
     return particleField(E.P, a[1], out) < 0 ? -1 : 1;
   }
   if (sub == "condForce") {
@@ -582,7 +610,7 @@ int OPS_LadrunoMPM(void);
 // analysis; `mpm analyze` in mode A uses it.
 int OPS_LadrunoMPMWithAnalysis(StaticAnalysis *sa, DirectIntegrationAnalysis *ta,
                                StaticIntegrator *si, TransientIntegrator *ti,
-                               ConstraintHandler *handler)
+                               ConstraintHandler *handler, LinearSOE *soe, int pardisoMatType)
 {
   LadrunoMPMAnalysisRefs r;
   r.sa = sa;
@@ -590,6 +618,8 @@ int OPS_LadrunoMPMWithAnalysis(StaticAnalysis *sa, DirectIntegrationAnalysis *ta
   r.si = si;
   r.ti = ti;
   r.handler = handler;
+  r.soe = soe;                       // WP-232j (K3): the symmetric-storage refusal
+  r.pardisoMatType = pardisoMatType;
   r.bridged = true;
   const LadrunoMPMAnalysisRefs *saved = g_refs;
   g_refs = &r;
@@ -608,7 +638,7 @@ int OPS_LadrunoMPM(void)
     return fail("<grid|body|particles|units|output|shift|particle|velocity|particleVelocity|particleBodyForce|"
                 "stress|fix|wall|gravity|timeSeries|damping|flip|"
                 "massCutoff|safety|criticalTimeStep|analyze|reset|info|particleData|debug|mode|gridvel|"
-                "condForce|pforce|emptyNodes|cut|tagBase|rayleigh> ...");
+                "condForce|pforce|emptyNodes|cut|tagBase|rayleigh|antiLocking> ...");
   const std::string sub = OPS_GetString();
   if (sub == "grid") return cmdGrid(dom);
 
@@ -771,6 +801,13 @@ int OPS_LadrunoMPM(void)
     if (n < 0) return fail("pforce -- " + err);
     return outInt(n);
   }
+  if (sub == "antiLocking") {                                          // WP-232j (K3)
+    const std::string m = OPS_GetNumRemainingInputArgs() > 0 ? OPS_GetString() : "";
+    if (m != "off" && m != "fbar") return fail("antiLocking off|fbar");
+    std::string err;
+    if (h->setAntiLocking(m == "fbar" ? 1 : 0, err) < 0) return fail("antiLocking -- " + err);
+    return 0;
+  }
   if (sub == "emptyNodes") {
     const std::string m = OPS_GetNumRemainingInputArgs() > 0 ? OPS_GetString() : "";
     if (m == "exclude") { h->setEmptyNodes(LadrunoMPMPattern::EMPTY_EXCLUDE); return 0; }
@@ -838,11 +875,17 @@ int OPS_LadrunoMPM(void)
     if (what == "numParticles") return outInt(E.P.size());
     if (what == "epoch") return outInt(h->particleEpoch());
     if (what == "basis") return outInt((int)E.par.basis);            // WP-232i (G7)
+    if (what == "antiLocking") return outInt(E.par.antiLocking);     // WP-232j (L8)
+    if (what == "antiLockingCounts") {                               // WP-232j (F1)
+      std::vector<double> c = {(double)E.alAveraged, (double)E.alFallback};
+      return outDoubles(c);
+    }
     bool ok = false;
     const long c = h->infoCounter(what, ok);
     if (ok) return outInt((int)c);
-    return fail("info -- numParticles, epoch, basis, time, summary, g2p, acceptedSteps, retries,"
-                " dtHistory, domainChanges, connectivityChanges, gridNodes, gridNodeTags or mode");
+    return fail("info -- numParticles, epoch, basis, antiLocking, antiLockingCounts, time, summary,"
+                " g2p, acceptedSteps, retries, dtHistory, domainChanges, connectivityChanges,"
+                " gridNodes, gridNodeTags or mode");
   }
   if (sub == "debug") return cmdDebug(h);
   return fail("-- unknown sub-command '" + sub + "'");

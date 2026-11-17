@@ -329,7 +329,8 @@ LadrunoMPMPattern::Print(OPS_Stream &s, int)
   for (int d = 0; d < g.ndm; d++) s << " " << g.n[d];
   s << ", " << eng.P.size() << " particles, basis "
     << ladruno_mpm::basisName(eng.par.basis) << ", flip " << eng.par.flip
-    << ", damping " << eng.par.damping << endln;
+    << ", damping " << eng.par.damping << ", antiLocking "
+    << (eng.par.antiLocking ? "fbar" : "off") << endln;
 }
 
 LoadPattern *
@@ -856,6 +857,8 @@ LadrunoMPMPattern::reset(void)
   teardownModeA();
   epochSteps = 0;
   nG2P = nAccepted = nRetries = nDomainChanges = nConnChanges = 0;
+  eng.alFlag.clear();               // WP-232j (F1): the counts are per epoch
+  eng.alAveraged = eng.alFallback = 0;
   for (GridVel &g : gridVels) { g.nodes.clear(); g.force.assign(eng.ndm(), 0.0); }
   for (NDMaterial *m : mats)
     if (m != 0) m->revertToStart();   // review item 6: a hand-removed particle element took its material

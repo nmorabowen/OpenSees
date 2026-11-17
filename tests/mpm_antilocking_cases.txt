@@ -135,3 +135,512 @@ expect cond_pressure_window footing y 1.0 25.0 35.0 ge 498.734
 expect cond_pressure_window footing y 1.0 25.0 35.0 le 555.292
 expect cond_pressure_max footing y 1.0 eq 514.159 tol 0 0.08 report
 end
+
+# ============================================================================
+# 232j-C's blocks (L1, L2, L4, L5, L7). Interface: tests/mpm_antilocking_interface.md (J1-J13,
+# frozen 2026-11-17 with amendments 1-5 and conditions F1, F2 in wp-briefs.md "232j").
+# ============================================================================
+# Keys and observables added by these blocks (the harness is tests/ladruno_mpm_antilocking_harness.py):
+#   antilocking off | fbar     every case in THIS file runs with `mpm antiLocking fbar` unless it
+#             says `antilocking off` (freeze Q2); a `base` case's setting is inherited.
+#   ladder ... halve [<h_min>] the K6 ladder of the L3 block; h_min is the halving floor in the
+#             cases' pseudo-time, default 5e-4 (freeze Q1: the FE's dsc < 1e-6 m at v = 0.002).
+#             Below it the run stops (a miss). Halvings are counted.
+#   kind affine               L1: no step is taken. Each `affine <name> A <ndm*ndm> b <ndm>
+#             [rel_le <r>] [deps_le <d>]` line runs `mpm debug affineCheck A b` at the committed
+#             state (mode F: the engine's support of every particle; mode A: every particle element
+#             armed, every live grid node at A X + b) and gates: rel = max_p |dFbar - dF|_max /
+#             |dF - I|_max <= r, max_p |deps|_max <= d (the rotation), every particle averaged
+#             (#averaged = N, #fallback = 0, #refused = 0). `masscut 1e-12` keeps every support
+#             untruncated (amendment 1).
+#   kind tangent              L2: `mpm debug tangentCheck 1e-6 <eps>` per tangent_eps, undeformed
+#             and after the case's steps (the strained state), on and with `-antiLocking off`.
+#             tangent_rel_undeformed le r: max rel on, undeformed; tangent_ratio_strained le k:
+#             max rel on / max rel off at the strained state; both at the converged eps (the
+#             first two eps agree to 10 %).
+#   kind mms                  L5: `row <G2|G4>` of tests/mpm_bspline_cases.txt, run with anti-locking
+#             on, on the row's own ladder and definitions; p_ge / nonincr are the row's.
+#   cond_pressure_argmax <name> <comp> <width>  t at the max (s = 0.002 (t - 10) m), reported
+#   reach_t                   the last committed time (every step accepted = steps * dt)
+#   expect <obs> ... out <lo> <hi>   the value lies OUTSIDE [lo, hi] (the switch oracle's off leg)
+# Every L3 / L4 / L7 run also reports (freeze F1): averaged and fallback particle-steps over all
+# accepted steps, and the fallback share inside the footing's plastic zone x <= 3B = 6 m,
+# y >= -2B = -4 m (positions at the step start); failed attempts, relaxed steps, halvings, wall.
+
+# ============================================================================
+# L1: kinematics (232j-C) -- affine fields, every basis, both modes, 2D and 3D
+# ============================================================================
+# Grid 6^d cells of h = 0.5 from the origin; body [1, 2]^d (ppc 2: 16 / 64 particles); elastic
+# E = 1e7, nu = 0.3. A rotation turns about the body centre (b = -(Q - I) c), so mode A's trial
+# centres stay in the grid. Gate (wp-briefs.md "232j" L1a, L1b; amendment 1): rel <= 1e-12 for
+# every field, max |deps| <= 1e-12 for the rotation (the frozen tolerance of the kernel's
+# rigid_rotation cases, tests/hypo_incremental_cases.txt). L1c (F_zz = 1) is header-level only
+# (tests/mpm_antilocking_core_check.cpp): the engine has no z in plane strain.
+case affine_F_gimp_2d
+kind affine
+mode explicit
+desc L1 affine fields, mode F, gimp, 2D
+ndm 2
+basis gimp
+origin 0.0 0.0
+h 0.5
+cells 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+affine deviatoric A 0.01 0.007 -0.003 -0.01 b 0.001 0.002 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.012 b 0.001 0.002 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 b 0.001 0.002 rel_le 1e-12
+affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12
+end
+
+case affine_F_gimp_3d
+kind affine
+mode explicit
+desc L1 affine fields, mode F, gimp, 3D
+ndm 3
+basis gimp
+origin 0.0 0.0 0.0
+h 0.5
+cells 6 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 1.0 2.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+affine deviatoric A 0.01 0.007 0.0 -0.003 -0.01 0.0 0.0 0.0 0.0 b 0.001 0.002 0.003 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.0 0.012 0.0 0.0 0.0 0.012 b 0.001 0.002 0.003 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 -0.006312666378723209 0.005784397643882001 0.009407305566797726 -0.000751511204618093 -0.009809362300664915 b 0.001 0.002 0.003 rel_le 1e-12
+affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12
+end
+
+case affine_F_linear_2d
+kind affine
+mode explicit
+desc L1 affine fields, mode F, linear, 2D
+ndm 2
+basis linear
+origin 0.0 0.0
+h 0.5
+cells 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+affine deviatoric A 0.01 0.007 -0.003 -0.01 b 0.001 0.002 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.012 b 0.001 0.002 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 b 0.001 0.002 rel_le 1e-12
+affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12
+end
+
+case affine_F_linear_3d
+kind affine
+mode explicit
+desc L1 affine fields, mode F, linear, 3D
+ndm 3
+basis linear
+origin 0.0 0.0 0.0
+h 0.5
+cells 6 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 1.0 2.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+affine deviatoric A 0.01 0.007 0.0 -0.003 -0.01 0.0 0.0 0.0 0.0 b 0.001 0.002 0.003 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.0 0.012 0.0 0.0 0.0 0.012 b 0.001 0.002 0.003 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 -0.006312666378723209 0.005784397643882001 0.009407305566797726 -0.000751511204618093 -0.009809362300664915 b 0.001 0.002 0.003 rel_le 1e-12
+affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12
+end
+
+case affine_F_bspline2_2d
+kind affine
+mode explicit
+desc L1 affine fields, mode F, bspline2, 2D
+ndm 2
+basis bspline2
+origin 0.0 0.0
+h 0.5
+cells 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+affine deviatoric A 0.01 0.007 -0.003 -0.01 b 0.001 0.002 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.012 b 0.001 0.002 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 b 0.001 0.002 rel_le 1e-12
+affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12
+end
+
+case affine_F_bspline2_3d
+kind affine
+mode explicit
+desc L1 affine fields, mode F, bspline2, 3D
+ndm 3
+basis bspline2
+origin 0.0 0.0 0.0
+h 0.5
+cells 6 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 1.0 2.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+affine deviatoric A 0.01 0.007 0.0 -0.003 -0.01 0.0 0.0 0.0 0.0 b 0.001 0.002 0.003 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.0 0.012 0.0 0.0 0.0 0.012 b 0.001 0.002 0.003 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 -0.006312666378723209 0.005784397643882001 0.009407305566797726 -0.000751511204618093 -0.009809362300664915 b 0.001 0.002 0.003 rel_le 1e-12
+affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12
+end
+
+case affine_F_bspline3_2d
+kind affine
+mode explicit
+desc L1 affine fields, mode F, bspline3, 2D
+ndm 2
+basis bspline3
+origin 0.0 0.0
+h 0.5
+cells 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+affine deviatoric A 0.01 0.007 -0.003 -0.01 b 0.001 0.002 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.012 b 0.001 0.002 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 b 0.001 0.002 rel_le 1e-12
+affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12
+end
+
+case affine_F_bspline3_3d
+kind affine
+mode explicit
+desc L1 affine fields, mode F, bspline3, 3D
+ndm 3
+basis bspline3
+origin 0.0 0.0 0.0
+h 0.5
+cells 6 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 1.0 2.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+affine deviatoric A 0.01 0.007 0.0 -0.003 -0.01 0.0 0.0 0.0 0.0 b 0.001 0.002 0.003 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.0 0.012 0.0 0.0 0.0 0.012 b 0.001 0.002 0.003 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 -0.006312666378723209 0.005784397643882001 0.009407305566797726 -0.000751511204618093 -0.009809362300664915 b 0.001 0.002 0.003 rel_le 1e-12
+affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12
+end
+
+case affine_A_gimp_2d
+kind affine
+mode quasistatic
+desc L1 affine fields, mode A, gimp, 2D
+ndm 2
+basis gimp
+origin 0.0 0.0
+h 0.5
+cells 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+affine deviatoric A 0.01 0.007 -0.003 -0.01 b 0.001 0.002 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.012 b 0.001 0.002 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 b 0.001 0.002 rel_le 1e-12
+affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12
+end
+
+case affine_A_gimp_3d
+kind affine
+mode quasistatic
+desc L1 affine fields, mode A, gimp, 3D
+ndm 3
+basis gimp
+origin 0.0 0.0 0.0
+h 0.5
+cells 6 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 1.0 2.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+affine deviatoric A 0.01 0.007 0.0 -0.003 -0.01 0.0 0.0 0.0 0.0 b 0.001 0.002 0.003 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.0 0.012 0.0 0.0 0.0 0.012 b 0.001 0.002 0.003 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 -0.006312666378723209 0.005784397643882001 0.009407305566797726 -0.000751511204618093 -0.009809362300664915 b 0.001 0.002 0.003 rel_le 1e-12
+affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12
+end
+
+case affine_A_linear_2d
+kind affine
+mode quasistatic
+desc L1 affine fields, mode A, linear, 2D
+ndm 2
+basis linear
+origin 0.0 0.0
+h 0.5
+cells 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+affine deviatoric A 0.01 0.007 -0.003 -0.01 b 0.001 0.002 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.012 b 0.001 0.002 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 b 0.001 0.002 rel_le 1e-12
+affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12
+end
+
+case affine_A_linear_3d
+kind affine
+mode quasistatic
+desc L1 affine fields, mode A, linear, 3D
+ndm 3
+basis linear
+origin 0.0 0.0 0.0
+h 0.5
+cells 6 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 1.0 2.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+affine deviatoric A 0.01 0.007 0.0 -0.003 -0.01 0.0 0.0 0.0 0.0 b 0.001 0.002 0.003 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.0 0.012 0.0 0.0 0.0 0.012 b 0.001 0.002 0.003 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 -0.006312666378723209 0.005784397643882001 0.009407305566797726 -0.000751511204618093 -0.009809362300664915 b 0.001 0.002 0.003 rel_le 1e-12
+affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12
+end
+
+case affine_A_bspline2_2d
+kind affine
+mode quasistatic
+desc L1 affine fields, mode A, bspline2, 2D
+ndm 2
+basis bspline2
+origin 0.0 0.0
+h 0.5
+cells 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+affine deviatoric A 0.01 0.007 -0.003 -0.01 b 0.001 0.002 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.012 b 0.001 0.002 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 b 0.001 0.002 rel_le 1e-12
+affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12
+end
+
+case affine_A_bspline2_3d
+kind affine
+mode quasistatic
+desc L1 affine fields, mode A, bspline2, 3D
+ndm 3
+basis bspline2
+origin 0.0 0.0 0.0
+h 0.5
+cells 6 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 1.0 2.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+affine deviatoric A 0.01 0.007 0.0 -0.003 -0.01 0.0 0.0 0.0 0.0 b 0.001 0.002 0.003 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.0 0.012 0.0 0.0 0.0 0.012 b 0.001 0.002 0.003 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 -0.006312666378723209 0.005784397643882001 0.009407305566797726 -0.000751511204618093 -0.009809362300664915 b 0.001 0.002 0.003 rel_le 1e-12
+affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12
+end
+
+case affine_A_bspline3_2d
+kind affine
+mode quasistatic
+desc L1 affine fields, mode A, bspline3, 2D
+ndm 2
+basis bspline3
+origin 0.0 0.0
+h 0.5
+cells 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+affine deviatoric A 0.01 0.007 -0.003 -0.01 b 0.001 0.002 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.012 b 0.001 0.002 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 b 0.001 0.002 rel_le 1e-12
+affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12
+end
+
+case affine_A_bspline3_3d
+kind affine
+mode quasistatic
+desc L1 affine fields, mode A, bspline3, 3D
+ndm 3
+basis bspline3
+origin 0.0 0.0 0.0
+h 0.5
+cells 6 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 1.0 2.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+affine deviatoric A 0.01 0.007 0.0 -0.003 -0.01 0.0 0.0 0.0 0.0 b 0.001 0.002 0.003 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.0 0.012 0.0 0.0 0.0 0.012 b 0.001 0.002 0.003 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 -0.006312666378723209 0.005784397643882001 0.009407305566797726 -0.000751511204618093 -0.009809362300664915 b 0.001 0.002 0.003 rel_le 1e-12
+affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12
+end
+
+# ============================================================================
+# L2: the mode-A tangent (232j-C)
+# ============================================================================
+# column_selfweight_small_qs of tests/mpm_implicit_cases.txt (80 particles, nu = 0), anti-locking
+# on. Undeformed: the committed initial state. Strained: after its 10 quasi-static steps, the full
+# gravity, rho0 g l0 / E = 0.002 -- the 0.2 % strain of the gate (the harness reports the max
+# |epsHat| it reached). Gate (wp-briefs.md "232j" L2): undeformed ||K - K_FD|| / ||K|| <= 1e-5;
+# strained, at most 2x the off value at the same state (`-antiLocking off` on the same elements).
+case tangent_column_on
+kind tangent
+mode quasistatic
+desc L2 element tangent against central differences, anti-locking on
+ndm 2
+basis gimp
+origin 0.0 0.0
+h 0.5
+cells 1 22
+material 1 elastic 5.0e7 0.0
+body 1 box 0.0 0.0 0.5 10.0 ppc 2 mat 1 rho 1000.0
+fix xmin x
+fix xmax x
+fix ymin y
+gravity 0.0 -10.0
+series linear 1.0
+dt 0.1
+steps 10
+newton NormDispIncr 1e-12 30
+tangent_eps 1e-8 1e-9 1e-10
+expect tangent_rel_undeformed le 1e-5
+expect tangent_ratio_strained le 2.0
+end
+
+# ============================================================================
+# L4: the non-associated mild-cone footing, redesigned (232j-C)
+# ============================================================================
+# footing_mildcone_r1..r3 of tests/mpm_implicit_cases.txt unchanged except anti-locking on and
+# K6's ladder (the L3 block's line, floor 5e-4). Gate (wp-briefs.md "232j" L4; ADR 232 amendment
+# "232j kickoff"): q_max within +-10 % of the FE B-bar q_max on the same domain at that resolution
+# (tests/data/mpm/implicit/fe_footing.json, build f37e2ff19): 141.43 / 130.66 / 122.53 kPa, bands
+# [127.29, 155.58], [117.60, 143.73], [110.28, 134.78]; every run reaches s = 0.2 m (t = 110). A
+# stop is a miss. Reported: q/exact against 138.907 (the retired [0.90, 1.10] band's verdict), the
+# plateau (t >= 95), s at q_max, failed attempts, relaxed steps, halvings, F1's fallback shares.
+case footing_mildcone_r1_al
+kind run
+mode quasistatic
+desc L4 non-associated mild-cone footing, h = 0.5 (4 cells across B), anti-locking on, K6 ladder
+ndm 2
+basis gimp
+origin 0.0 -6.0
+h 0.5
+cells 24 14
+material 1 druckerprager 1.5e5 15517.241379310342 0.2 0.21012821217029673 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0
+body 1 box 0.0 -6.0 12.0 0.0 ppc 2 mat 1 rho 2.0
+pforce 1 box 0.0 -0.25 12.0 0.0 0.0 -2.5
+fix xmin x
+fix xmax x
+fix ymin xy
+gridvel footing box -0.5 0.0 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
+series linear 10.0
+dt 1.0
+steps 110
+newton NormUnbalance 1e-6 40
+ladder KrylovNewton 1e-6 40 NewtonLineSearch 1e-6 60 KrylovNewton 1e-5 80 relaxed 3 halve 5e-4
+ref FE B-bar (LadrunoBrick, rough, this domain and staging, build f37e2ff19): q_max 141.43 kPa.
+expect cond_pressure_max footing y 1.0 ge 127.29
+expect cond_pressure_max footing y 1.0 le 155.58
+expect reach_t eq 110.0 tol 1e-9 0
+expect cond_pressure_max footing y 1.0 eq 138.907 tol 0 0.10 report
+expect cond_pressure_plateau footing y 1.0 95.0 eq 138.907 tol 0 0.10 report
+expect cond_pressure_argmax footing y 1.0 report
+end
+
+case footing_mildcone_r2_al
+kind run
+mode quasistatic
+desc L4 non-associated mild-cone footing, h = 0.25 (8 cells across B), anti-locking on, K6 ladder
+ndm 2
+basis gimp
+origin 0.0 -6.0
+h 0.25
+cells 48 28
+material 1 druckerprager 1.5e5 15517.241379310342 0.2 0.21012821217029673 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0
+body 1 box 0.0 -6.0 12.0 0.0 ppc 2 mat 1 rho 2.0
+pforce 1 box 0.0 -0.125 12.0 0.0 0.0 -1.25
+fix xmin x
+fix xmax x
+fix ymin xy
+gridvel footing box -0.25 0.0 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
+series linear 10.0
+dt 1.0
+steps 110
+newton NormUnbalance 1e-6 40
+ladder KrylovNewton 1e-6 40 NewtonLineSearch 1e-6 60 KrylovNewton 1e-5 80 relaxed 3 halve 5e-4
+ref FE B-bar (LadrunoBrick, rough, this domain and staging, build f37e2ff19): q_max 130.66 kPa.
+expect cond_pressure_max footing y 1.0 ge 117.6
+expect cond_pressure_max footing y 1.0 le 143.73
+expect reach_t eq 110.0 tol 1e-9 0
+expect cond_pressure_max footing y 1.0 eq 138.907 tol 0 0.10 report
+expect cond_pressure_plateau footing y 1.0 95.0 eq 138.907 tol 0 0.10 report
+expect cond_pressure_argmax footing y 1.0 report
+end
+
+case footing_mildcone_r3_al
+kind run
+mode quasistatic
+desc L4 non-associated mild-cone footing, h = 0.125 (16 cells across B), anti-locking on, K6 ladder
+ndm 2
+basis gimp
+origin 0.0 -6.0
+h 0.125
+cells 96 56
+material 1 druckerprager 1.5e5 15517.241379310342 0.2 0.21012821217029673 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0
+body 1 box 0.0 -6.0 12.0 0.0 ppc 2 mat 1 rho 2.0
+pforce 1 box 0.0 -0.0625 12.0 0.0 0.0 -0.625
+fix xmin x
+fix xmax x
+fix ymin xy
+gridvel footing box -0.125 0.0 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
+series linear 10.0
+dt 1.0
+steps 110
+newton NormUnbalance 1e-6 40
+ladder KrylovNewton 1e-6 40 NewtonLineSearch 1e-6 60 KrylovNewton 1e-5 80 relaxed 3 halve 5e-4
+ref FE B-bar (LadrunoBrick, rough, this domain and staging, build f37e2ff19): q_max 122.53 kPa.
+expect cond_pressure_max footing y 1.0 ge 110.28
+expect cond_pressure_max footing y 1.0 le 134.78
+expect reach_t eq 110.0 tol 1e-9 0
+expect cond_pressure_max footing y 1.0 eq 138.907 tol 0 0.10 report
+expect cond_pressure_plateau footing y 1.0 95.0 eq 138.907 tol 0 0.10 report
+expect cond_pressure_argmax footing y 1.0 report
+end
+
+# ============================================================================
+# L5: the MMS orders kept, anti-locking on (232j-C)
+# ============================================================================
+# Rows G2 (mode F, small amplitude) and G4 (mode A, quasi-static) of tests/mpm_bspline_cases.txt,
+# bspline2, their 232i ladders and definitions, `mpm antiLocking fbar` added before the first
+# step. Gate (wp-briefs.md "232j" L5): p >= 1.8 and e non-increasing (the rows' own p_ge, nonincr).
+case mms_G2_al
+kind mms
+row G2
+desc L5 MMS G2 (mode F, bspline2, small amplitude), anti-locking on
+expect mms_p ge 1.8
+expect mms_nonincr eq 1.0 tol 0 0
+end
+
+case mms_G4_al
+kind mms
+row G4
+desc L5 MMS G4 (mode A quasi-static, bspline2, small amplitude), anti-locking on
+expect mms_p ge 1.8
+expect mms_nonincr eq 1.0 tol 0 0
+end
+
+# ============================================================================
+# L7: the Zone-A switch oracle (232j-C; freeze amendment 3)
+# ============================================================================
+# footing_j2_r1 (the L3 block above), on and off. L3's closed-form band is an r3 gate and the FE
+# B-bar itself sits at 1.109x at r1, so the oracle uses L3's fallback form at r1: on within +-10 %
+# of the FE B-bar q_lim at r1, 570.10 kPa (tests/data/mpm/implicit/fe_footing_j2.json, build
+# 1d2a692ba): [513.09, 627.11]; off OUTSIDE it (FE std, locked: 650.72). The oracle goes red if
+# the averaging is the identity. Fixed at the freeze, before any MPM number. Only these r1 legs
+# of L3 run before L3's admission (freeze F2).
+case switch_j2_r1_on
+kind run
+base footing_j2_r1
+status gate
+desc L7 switch oracle, on: footing_j2_r1 with anti-locking on
+expect cond_pressure_window footing y 1.0 25.0 35.0 ge 513.09
+expect cond_pressure_window footing y 1.0 25.0 35.0 le 627.11
+end
+
+case switch_j2_r1_off
+kind run
+base footing_j2_r1
+status gate
+antilocking off
+desc L7 switch oracle, off: footing_j2_r1 with anti-locking off (locked)
+expect cond_pressure_window footing y 1.0 25.0 35.0 out 513.09 627.11
+end

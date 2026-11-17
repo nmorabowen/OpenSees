@@ -88,6 +88,7 @@ class DirectIntegrationAnalysis;
 class StaticIntegrator;
 class TransientIntegrator;
 class ConstraintHandler;
+class LinearSOE;
 class SP_Constraint;
 class Node;
 
@@ -101,6 +102,10 @@ struct LadrunoMPMAnalysisRefs {
   TransientIntegrator       *ti = 0;
   ConstraintHandler         *handler = 0;
   bool                       bridged = false;   // an engine bridge filled it
+  // WP-232j (K3 refusal): the user's system, and PARDISO's matType when it is the
+  // PARDISO SOE (-1 otherwise; only the bridges compile with _PARDISO)
+  LinearSOE                 *soe = 0;
+  int                        pardisoMatType = -1;
 };
 
 class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
@@ -206,7 +211,16 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   void   setDebugFail(int step, int attempts, bool afterTrial = false)
     { failStep = step; failAttempts = attempts; failAfterTrial = afterTrial; }
   void   setDebugReseed(int m) { reseedMode = m; }               // 0 default, 1 always, 2 skip
-  int    debugTangentCheck(double scale, double eps, std::vector<double> &out, std::string &err);
+  // alOverride: -1 the deck's setting, 0 anti-locking suppressed for the check (WP-232j L2)
+  int    debugTangentCheck(double scale, double eps, std::vector<double> &out, std::string &err,
+                           int alOverride = -1);
+  // WP-232j (L1): `mpm debug affineCheck <A> <b>`, both modes
+  int    debugAffineCheck(const double *A, const double *b, std::vector<double> &out, std::string &err);
+  // WP-232j (K3): `mpm antiLocking off|fbar`, fixed for an epoch like the mode
+  int    setAntiLocking(int on, std::string &err);
+  // WP-232j (J13, L8): `mpm debug packVersion 2|3` -- the restart pack's layout for the next
+  // database save (2 = the 232i layout, no anti-locking field: the v2-restores-as-off test)
+  int    setPackVersion(int v);
   // `mpm info` counters (interface §5)
   long   infoCounter(const std::string &what, bool &ok) const;
   const std::vector<double> &dtHistory(void) const { return dtLog; }
@@ -298,6 +312,8 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   long                    nG2P, nAccepted, nRetries, nDomainChanges, nConnChanges, epochSteps;
   std::vector<double>     dtLog;
   std::vector<double>     bfBuf;
+  std::vector<unsigned char> alPend;       // WP-232j: this attempt's anti-locking path per particle
+  int                     packVersionOut = 0;   // WP-232j: 0 = the current layout
 
   double modeAMassCutoff(void) const;
   int    prepareStep(double h, std::string &err);
