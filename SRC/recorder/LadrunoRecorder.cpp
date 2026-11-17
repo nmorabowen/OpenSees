@@ -293,6 +293,7 @@ public:
 		, output_freq()
 		, has_region(false)
 		, region_tag(0)
+		, node_region_tag(0)
 		, node_set()
 		, elem_set()
 		, energy_requested(false)
@@ -391,6 +392,7 @@ public:
 	// -R region restriction
 	bool has_region;
 	int region_tag;              // the -R region tag (0 if none); for MODEL/SETS
+	int node_region_tag;         // Ladruno: the -RN node region tag (0 if none); for MODEL/SETS
 	std::vector<int> node_set;
 	std::vector<int> elem_set;
 
@@ -1910,6 +1912,10 @@ int LadrunoRecorder::writeModelSets()
 			if (seen.insert(m_data->region_tag).second)
 				set_tags.push_back(m_data->region_tag);
 		}
+		if (m_data->has_region && m_data->node_region_tag != 0) {
+			if (seen.insert(m_data->node_region_tag).second)
+				set_tags.push_back(m_data->node_region_tag);
+		}
 		for (size_t i = 0; i < m_data->energy_region_tags.size(); ++i) {
 			int t = m_data->energy_region_tags[i];
 			if (seen.insert(t).second)
@@ -3282,6 +3288,7 @@ int LadrunoRecorder::sendSelf(int commitTag, Channel& theChannel)
 	ser.put_i(m_data->output_freq.nsteps);
 	ser.put_i(m_data->has_region ? 1 : 0);
 	ser.put_i(m_data->region_tag);
+	ser.put_i(m_data->node_region_tag);   // Ladruno: -RN (lockstep with recvSelf)
 	ser.put_vi(m_data->node_set);
 	ser.put_vi(m_data->elem_set);
 	ser.put_i(m_data->energy_requested ? 1 : 0);
@@ -3367,6 +3374,7 @@ int LadrunoRecorder::recvSelf(int commitTag, Channel& theChannel,
 	m_data->output_freq.nsteps = de.get_i();
 	m_data->has_region = de.get_i() != 0;
 	m_data->region_tag = de.get_i();
+	m_data->node_region_tag = de.get_i(); // Ladruno: -RN (lockstep with sendSelf)
 	m_data->node_set = de.get_vi();
 	m_data->elem_set = de.get_vi();
 	m_data->energy_requested = de.get_i() != 0;
@@ -3417,7 +3425,7 @@ void* OPS_LadrunoRecorder()
 	if (numdata < 1) {
 		opserr << "LadrunoRecorder error: insufficient args; expected a filename\n"
 		       << "  usage: recorder ladruno <file> [-N <res...>] [-NS <res...> <grad>] "
-		          "[-E <res...>] [-R <regionTag>] [-G energy <regionTag...>] "
+		          "[-E <res...>] [-R <regionTag> [-RN <nodeRegionTag>]] [-G energy <regionTag...>] "
 		          "[-overlay <tag...>] [-T dt|nsteps <v>]\n";
 		return 0;
 	}
@@ -3440,6 +3448,9 @@ void* OPS_LadrunoRecorder()
 	ladrunons::detail::OutputFrequency output_freq;
 	bool has_region = false;
 	int region_tag = 0;                  // -R region tag (for MODEL/SETS)
+	bool has_node_region = false;        // -RN given
+	int node_region_tag = 0;             // -RN node region tag (for MODEL/SETS)
+	std::set<int> node_region_set;       // -RN nodes, merged into node_set after the parse
 	std::set<int> node_set;
 	std::set<int> elem_set;
 	bool energy_requested = false;       // -G energy
@@ -3498,6 +3509,33 @@ void* OPS_LadrunoRecorder()
 				return 0;
 			}
 			has_region = true;
+		}
+		else if (strcmp(data, "-RN") == 0) {
+			// Ladruno: -RN <nodeRegionTag> — the node channel gets its own
+			// region. A MeshRegion cannot hold an explicit node list and an
+			// element list together (setNodes/setElements each wipe both, and
+			// -ele rebuilds the nodes from the elements), so one -R region can
+			// never say "these elements, plus these extra nodes" (embedded
+			// rebar nodes with no recorded element, for example). -R keeps
+			// restricting MODEL/ELEMENTS and the -E rows; -RN adds its nodes to
+			// MODEL/NODES and the -N rows. Requires -R (checked after the parse).
+			curr_opt = ladrunons::utils::parsing::opt_region;
+			int rtag = 0;
+			if (numdata < 1 || OPS_GetInt(&one_item, &rtag) != 0) {
+				opserr << "LadrunoRecorder error: option -RN (node region) requires an int region tag\n";
+				return 0;
+			}
+			numdata--;
+			MeshRegion* nregion = domain->getRegion(rtag);
+			if (nregion == 0) {
+				opserr << "LadrunoRecorder error: -RN region " << rtag << " is null\n";
+				return 0;
+			}
+			const ID& rn_ids = nregion->getNodes();
+			for (int i = 0; i < rn_ids.Size(); ++i)
+				node_region_set.insert(rn_ids(i));
+			node_region_tag = rtag;
+			has_node_region = true;
 		}
 		else if (strcmp(data, "-G") == 0) {
 			// -G energy <regionTag...> : whole-model energy balance (ON_DOMAIN)
@@ -3903,6 +3941,21 @@ void* OPS_LadrunoRecorder()
 		energy_region_tags.swap(r_keep);
 	}
 
+	// Ladruno: -RN only widens the node channel of a -R restriction. Alone it
+	// would leave the elements unrestricted while MODEL/NODES is not, and the
+	// element connectivity would point at nodes the file does not have.
+	if (has_node_region) {
+		if (!has_region) {
+			opserr << "LadrunoRecorder error: -RN <nodeRegionTag> needs -R <regionTag> "
+			          "(-R restricts the elements, -RN adds the nodes); for nodes alone "
+			          "use -R with a -node region\n";
+			return 0;
+		}
+		// union: the -R region's own nodes (the nodes of its elements) stay, so
+		// every recorded element's connectivity resolves in MODEL/NODES
+		node_set.insert(node_region_set.begin(), node_region_set.end());
+	}
+
 	LadrunoRecorder* recorder = new LadrunoRecorder();
 	recorder->m_data->filename = filename;
 	recorder->m_data->output_freq = output_freq;
@@ -3911,6 +3964,7 @@ void* OPS_LadrunoRecorder()
 	recorder->m_data->elemental_results_requests.swap(elemental_results_requests);
 	recorder->m_data->has_region = has_region;
 	recorder->m_data->region_tag = region_tag;
+	recorder->m_data->node_region_tag = node_region_tag;
 	for (std::set<int>::const_iterator it = node_set.begin(); it != node_set.end(); ++it)
 		recorder->m_data->node_set.push_back(*it);
 	for (std::set<int>::const_iterator it = elem_set.begin(); it != elem_set.end(); ++it)

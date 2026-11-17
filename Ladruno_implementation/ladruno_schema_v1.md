@@ -84,7 +84,7 @@ apeGmsh reads.
     │   ├── ELEMENTS      { <group> … }           ← see §3 (BASIS/QUADRATURE)
     │   ├── LOCAL_AXES    { <classTag>-<ClassName>[<g>]/{ FRAME[nE×4], ID[nE] } }  ← §5
     │   ├── SECTION_ASSIGNMENTS  { SECTION_<tag>[<Class>] … }   ← fiber + resultant (§6)
-    │   └── SETS          { SET_<regionTag> { NODES, ELEMENTS } }   ← self-contained regions
+    │   └── SETS          { SET_<regionTag> { NODES, ELEMENTS } }   ← self-contained regions (-R, -RN, -G tags)
     └── RESULTS
         ├── ON_NODES      { <RESULT> … }          ← §7.1
         ├── ON_ELEMENTS   { <result> … }          ← §7.2 (structured column map)
@@ -113,6 +113,12 @@ apeGmsh reads.
 `MODEL_STAGE[<stamp>]` may carry `EMPTY_PARTITION = 1` (WP-165, MP-8): this process had
 no nodes of the recorded set (e.g. a `-R` region that lives on other ranks); its
 `MODEL/NODES/ID` and `COORDINATES` are zero-length and it holds no node/element results.
+
+**The recorded node set** (`MODEL/NODES`, and the ids of every `ON_NODES` result) is
+every domain node with no `-R`; with `-R <tag>`, that region's nodes; with
+`-R <tag> -RN <nodeTag>` (WP-234), the union of both regions' nodes. The element set
+(`MODEL/ELEMENTS`, `ON_ELEMENTS`) follows `-R` alone, so with `-RN` the node set may
+hold nodes that no recorded element references (e.g. embedded rebar nodes).
 
 ### 2a. `MODEL_STAGE` boundaries and `KIND` (`FORMAT_MINOR_VERSION = 1`, apeGmsh #2034)
 

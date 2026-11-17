@@ -98,6 +98,14 @@ static const char* const kCapabilities[] = {
   // keeps every MD material plastic. Fix 43b235bbb (fork PR #1005, apeGmsh#2444);
   // marker apeGmsh#2517. Test: tests/test_md_stage_flag_capability.py.
   "mdStageFlagPreserved",
+  // `recorder ladruno ... -R <eleRegion> -RN <nodeRegion>`: the node channel
+  // (MODEL/NODES and the -N rows) takes the -R region's nodes plus the -RN
+  // region's nodes, while -R alone still restricts the elements; -RN without -R
+  // is refused. A MeshRegion cannot carry a node list and an element list
+  // together, so before this a deck had no way to record nodes outside the
+  // recorded elements (apeGmsh nodes_pg + elements_pg). WP-234.
+  // Test: tests/test_ladruno_recorder_node_region.py.
+  "recorderLadrunoNodeRegion",
 };
 
 inline void appendJsonString(std::string& o, const char* s)

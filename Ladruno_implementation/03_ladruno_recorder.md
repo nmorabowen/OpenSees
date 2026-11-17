@@ -248,8 +248,23 @@ v1 mirrors `recorder mpco` exactly (parity), with the new verb:
 ```
 recorder ladruno <file.mpco> -N displacement reactionForce \
                                  -E force section.fiber.stress \
-                                 -T dt 0.0  -R <region?>
+                                 -T dt 0.0  -R <region?> [-RN <nodeRegion>]
 ```
+
+`-R <tag>` restricts both channels to one `MeshRegion`: `MODEL/ELEMENTS` and the
+`-E` rows to its elements, `MODEL/NODES` and the `-N` rows to its nodes (for an
+`-ele` region, the nodes of those elements). A `MeshRegion` cannot carry an
+explicit node list and an element list together (`MeshRegion::setNodes` /
+`setElements` each delete both; `-ele` rebuilds the nodes), so one region cannot
+say "these elements plus these other nodes". **`-RN <tag>` (WP-234)** adds a
+second region for the node channel: `MODEL/NODES` and the `-N` rows hold the `-R`
+region's nodes **plus** the `-RN` region's nodes (the union keeps every recorded
+element's connectivity inside `MODEL/NODES`), while `-E` and `MODEL/ELEMENTS`
+stay on the `-R` elements. `-RN` needs `-R` (refused alone, by name), may come
+before or after it, and both tags get a `MODEL/SETS/SET_<tag>`. Use case: embedded
+rebar nodes whose minted truss elements must stay out of the file. Schema
+capability `recorderLadrunoNodeRegion` advertises it. In an `openseesmp` run every
+rank must define both regions (as for `-R` today).
 
 Forward-looking additions (reserved now, implemented v2/v3):
 
