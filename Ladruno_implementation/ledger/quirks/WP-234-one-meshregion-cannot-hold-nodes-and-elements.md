@@ -1,7 +1,7 @@
 ---
 wp: WP-234
 title: "region -node ... -ele ... keeps only the element nodes"
-pr: "TBD"
+pr: "#1104"
 date: 2026-11-16
 ---
 ### `region $t -node ... -ele ...` silently keeps only the elements' nodes (`both elements & nodes set, ONLY set using elements`)
